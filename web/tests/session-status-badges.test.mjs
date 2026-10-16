@@ -96,29 +96,36 @@ const metaSource = fs.readFileSync(metaPath, "utf8");
 assert.match(metaSource, /aux_flags:\s*payload\.session\.aux_flags !== undefined/, "cache merge must overwrite aux_flags only when the payload carries it");
 assert.match(metaSource, /worktree_missing:\s*typeof payload\.session\.worktree_missing === "boolean"/, "cache merge must overwrite worktree_missing only when the payload carries a boolean");
 
-// ── 4. 视图接线：SessionCard 左侧渲染徽标条 + 问号由 aux 驱动 ──
-// 问号与图标位住在 SessionCardIcon（2026-10-16 从 SessionCard 整块抽出，纯行数门禁），
-// 所以断言分两处读：徽标条看 SessionCard，图标位看 SessionCardIcon。
+// ── 4. 视图接线：会话名上方一排徽标 + 问号由 aux 驱动 ──
+// 2026-10-16 用户要求「小状态图标都放到会话名上面，会话行下面不留任何东西」：
+// 排布落在 SessionCardTopBadges（绝对定位、悬在名字上方），SessionCard 只负责挂它。
 const card = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCard.tsx"), "utf8");
+const top = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCardTopBadges.tsx"), "utf8");
 const icon = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCardIcon.tsx"), "utf8");
-assert.match(card, /<SessionStatusBadges/, "SessionCard must render the badge strip");
-assert.match(card, /<SessionWorktreeTag/, "SessionCard must render the green worktree tag");
+assert.match(card, /<SessionCardTopBadges/, "SessionCard must render the top badge row");
 assert.match(card, /<SessionCardIcon/, "SessionCard must render the icon cell");
+assert.equal(card.includes("<SessionStatusBadges"), false, "the aux badges must no longer render under the name");
+assert.equal(card.includes("<SessionWorktreeTag"), false, "the worktree tag must no longer render under the name");
+assert.match(top, /<SessionWorktreeTag/, "the top row must carry the green worktree tag");
+assert.match(top, /<SessionStatusBadges/, "the top row must carry the aux badges");
 assert.match(
-  icon,
+  top,
   /session\.aux_flags\?\.ask_user_waiting/,
   "the question-mark pulse is driven by aux_flags.ask_user_waiting",
 );
 assert.match(
-  icon,
+  top,
   /renderToolIcon\("ask_user"\)/,
   "the question-mark reuses the task card ask_user icon, not a bespoke SVG",
 );
 assert.match(
-  icon,
+  top,
   /taskAuxBadgeStyle\(true\)/,
   "the question-mark reuses taskAuxBadgeStyle(true) like the task card attention badge",
 );
+assert.match(top, /<SubSessionIcon/, "the subagent marker moved up to the top row");
+assert.equal(icon.includes("SubSessionIcon"), false, "the subagent marker must leave the icon cell");
+assert.equal(icon.includes("ask_user"), false, "the question-mark must leave the icon cell");
 assert.equal(card.includes("session.awaiting_user"), false, "the orphan awaiting_user field must be gone");
 const listTypes = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/sessionListTypes.ts"), "utf8");
 assert.equal(listTypes.includes("awaiting_user?:"), false, "the orphan awaiting_user field must be gone from the view type");
@@ -129,20 +136,25 @@ assert.match(badges, /from "\.\.\/task\/taskIcons"/, "badge icons/styles reuse t
 assert.match(badges, /renderToolIcon\("todo"\)/, "todo icon reuses the stream tool icon");
 assert.match(badges, /renderToolIcon\("task"\)/, "task icon reuses the stream tool icon");
 
-// ── 6. 绿 worktree 标签：只活树显示 + 悬在名字左上方且不占流（用户 2026-10-16 定）──
+// ── 6. 绿 worktree 标签：只活树显示；定位归上方那排（用户 2026-10-16 定）──
 const tag = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionWorktreeTag.tsx"), "utf8");
 assert.match(tag, /taskWorktreeTagStyle\("enabled"\)/, "the tag reuses the task card worktree tag style");
-assert.match(tag, /position: "absolute"/, "the tag must not occupy flow — the name and icons keep their places");
-assert.match(tag, /bottom: "100%"/, "the tag hangs above the session name, not below or beside it");
-assert.match(tag, /left: 0/, "the tag is left-aligned with the session name");
+assert.equal(tag.includes('position: "absolute"'), false, "the tag no longer positions itself — the top row owns placement now");
 // 判据只认活树：无 path = 没开过，worktreeMissing = 目录已删（已收尾），两者都不渲染。
 assert.match(tag, /Boolean\(path\) && !worktreeMissing/, "only a live worktree (path present, dir not deleted) renders the tag");
 assert.equal(tag.includes("NoWorktreeIcon"), false, "no-worktree and finished sessions show nothing at all");
 assert.equal(tag.includes("worktreeFinishedLabel"), false, "finished sessions show nothing at all");
 assert.equal(badges.includes("NoWorktreeIcon"), false, "the badge strip no longer carries the worktree tag");
 assert.equal(badges.includes("worktreeFinishedLabel"), false, "the badge strip no longer carries the worktree tag");
-// 徽标条空着就整块不渲染：空的 marginTop 会把只有名字的行顶高。
+// 整排悬在名字上方且不占流：绝对定位 + bottom:100%，行高一个像素都不变。
+assert.match(top, /position: "absolute"/, "the top row must not occupy flow — the name and icons keep their places");
+assert.match(top, /bottom: "100%"/, "the row hangs above the session name, not below or beside it");
+assert.match(top, /left: 0/, "the row is left-aligned with the session name");
+// 一排全空就整块不渲染：空容器会在上方白占一段 gap。
+assert.match(top, /if \(!hasSessionTopBadges\(session, isSubagent\)\)/, "an empty top row renders nothing");
+// 徽标条空着也整块不渲染（防它自己被单独复用时留一段空 gap）。
 assert.match(badges, /if \(badges\.length === 0\)/, "an empty badge strip renders nothing");
+assert.equal(badges.includes('marginTop: "2px"'), false, "the badge strip no longer sits under the name");
 assert.equal(badges.includes("from \"../../app/"), false, "view layer must not import app/");
 assert.equal(badges.includes("services/"), false, "view layer must not import services/");
 // 会话行间距在三个列表容器里各写一份字面量（2026-10-16 用户要求调大几个 px，
@@ -158,6 +170,22 @@ for (const listFile of ["SessionList", "MultiProjectSessionList", "ExternalSessi
     `${listFile} 的会话行容器间距必须与另外两个列表一致`,
   );
 }
+// 列表顶端留白 ≥ 拓位高度（用户 2026-10-16「间距固定存在」）：第一行选中时底色要向上
+// 拓 TOP_BADGE_LIFT_PX 包住徽标，滚动容器按 padding box 裁剪，少 1px 就会被削平。
+// 绑同一个常量而不是写死数字：改拓位高度时这几处必须跟着走。
+// ExternalSessionList 不在其列 —— 它自己画行、不渲染 SessionCard，没有拓位可言。
+const multiList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/MultiProjectSessionList.tsx"), "utf8");
+assert.match(
+  multiList,
+  /gap: "6px", paddingTop: TOP_BADGE_LIFT_PX/,
+  "项目名与第一个会话之间必须有固定的借位留白，且随拓位高度同步",
+);
+const singleList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionList.tsx"), "utf8");
+assert.match(
+  singleList,
+  /padding: `\$\{TOP_BADGE_LIFT_PX\}px 8px 8px`/,
+  "SessionList 顶端留白必须容得下向上拓展的底色",
+);
 
 // ── 7. 徽标尺寸：其他小图标缩到和 worktree 标签一样大（用户 2026-10-16）──
 const styles = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/task/taskStyles.ts"), "utf8");
@@ -174,9 +202,24 @@ assert.match(
 // 缩放只能落在图标外面：attention 的脉冲动画自己就在动 transform（index.css 的
 // mindfs-task-ask-user-pulse），写进 taskAuxBadgeStyle 会被动画盖掉、问号跳回原尺寸。
 assert.match(badges, /taskAuxIconScaleStyle\(\)/, "the badge strip wraps its icons in the scale");
-assert.match(icon, /taskAuxIconScaleStyle\(\)/, "the question-mark badge wraps its icon in the scale");
+assert.match(top, /taskAuxIconScaleStyle\(\)/, "the question-mark badge wraps its icon in the scale");
+assert.equal(icon.includes("taskAuxIconScaleStyle"), false, "the icon cell no longer carries a scaled aux badge");
 const taskRows = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/task/TaskCardRows.tsx"), "utf8");
 assert.match(taskRows, /taskAuxIconScaleStyle\(\)/, "the task card badge strip wraps its icons in the scale");
+
+// ── 7.5 选中底色向上拓展，包住名字上方那排徽标（用户 2026-10-16）──
+// 拓展块绝对定位挂在盒顶之上（bottom:100%），所以**不占实际高度** —— 行高、行距、
+// 下一个会话的位置全都不变，只是把上一行的留白借来当底色。
+assert.match(card, /hasSessionTopBadges\(session, isSubagent\)/, "the lift must use the same predicate as the top row");
+assert.match(card, /data-session-top-lift/, "the lift block must be identifiable");
+assert.match(card, /height: `\$\{TOP_BADGE_LIFT_PX\}px`/, "the lift height must come from the shared constant");
+assert.match(card, /background: "inherit"/, "the lift must follow the row background (incl. the imperative hover), not a second colour source");
+assert.match(card, /pointerEvents: "none"/, "the lift is decoration — it must not swallow clicks on the row above");
+assert.match(top, /export const TOP_BADGE_LIFT_PX/, "the lift height lives next to the row it covers");
+// 拓展只能是 overlay：一旦改用 margin/padding 去撑，行高就真被占了。
+assert.match(card, /padding: editing \? "7px 0 7px 2px" : "7px 4px 7px 2px"/, "the row padding must not grow to pay for the lift");
+// 编辑态名字上方那排不渲染，拓展也得跟着停，否则拓出一块盖着空气的深色底。
+assert.match(card, /!editing && hasSessionTopBadges/, "no lift while renaming — the top row is not rendered then");
 
 // ── 8. 后端三处 payload + 存储列（源码守卫，防静默回退）──
 const list = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/api/http_sessions.go"), "utf8");

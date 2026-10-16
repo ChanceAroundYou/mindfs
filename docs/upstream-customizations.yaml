@@ -843,6 +843,7 @@ groups:
       - web/src/app/realtimeWsSessionMeta.ts
       - web/src/components/session/sessionListTypes.ts
       - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionCardTopBadges.tsx
       - web/src/components/session/SessionCardIcon.tsx
       - web/src/components/session/SessionWorktreeTag.tsx
       - web/src/components/session/SessionStatusBadges.tsx
@@ -851,14 +852,20 @@ groups:
       - web/src/components/session/ExternalSessionList.tsx
       - web/src/components/task/taskStyles.ts
     anchors:
-      # 绿 worktree 标签：只认活树 + 悬在名字左上方且不占流（2026-10-16）。
+      # 绿 worktree 标签：只认活树；定位归上方那排，本组件不再自己绝对定位（2026-10-16）。
       - 'web/src/components/session/SessionWorktreeTag.tsx:Boolean(path) && !worktreeMissing'
-      - 'web/src/components/session/SessionWorktreeTag.tsx:bottom: "100%"'
+      # 名字上方那排徽标（worktree + 子代理 + 问号 + aux）：整排悬在盒顶之上，不占行高。
+      - 'web/src/components/session/SessionCardTopBadges.tsx:hasSessionTopBadges'
+      - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_LIFT_PX'
+      # 选中底色向上拓展去包住那排徽标（不占实际高度）：overlay 挂在盒顶之上。
+      - 'web/src/components/session/SessionCard.tsx:data-session-top-lift'
       # 小图标缩到 worktree 标签大小：盒子 14px + 图标 0.75 缩放。
       - 'web/src/components/task/taskStyles.ts:export function taskAuxIconScaleStyle'
-      - 'web/src/components/session/SessionCardIcon.tsx:taskAuxIconScaleStyle'
-      # 会话行间距：三个列表容器各写一份字面量，必须同值（2026-10-16 由 2px 调大到 6px）。
+      - 'web/src/components/session/SessionCardIcon.tsx:if (isSearchResult || isSubagent)'
+      # 会话行间距：三个列表容器各写一份字面量，必须同值（2026-10-16 由 2px 调大到 6px）；
+      # 列表顶端留白绑拓位高度，否则第一行选中时底色被滚动容器削掉 1px。
       - 'web/src/components/session/SessionList.tsx:flexDirection: "column", gap: "6px"'
+      - 'web/src/components/session/MultiProjectSessionList.tsx:paddingTop: TOP_BADGE_LIFT_PX'
     tests:
       - web/tests/session-list-merge.test.mjs
       - web/tests/session-tree.test.mjs

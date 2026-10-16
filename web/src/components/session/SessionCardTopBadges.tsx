@@ -1,0 +1,99 @@
+import { useI18n } from "../../i18n/index";
+import { renderToolIcon } from "../stream/toolCallIcons";
+import { taskAuxBadgeStyle, taskAuxIconScaleStyle } from "../task/taskIcons";
+import { SubSessionIcon } from "./sessionCardHelpers";
+import { SessionStatusBadges, hasSessionStatusBadges } from "./SessionStatusBadges";
+import { SessionWorktreeTag, isWorktreeActive } from "./SessionWorktreeTag";
+import type { SessionItem } from "./sessionListTypes";
+
+/**
+ * 会话名上方那排徽标（G-AD，用户 2026-10-16 定）：worktree → 子代理 → 问号 → error/plan/todo/task。
+ *
+ * 绝对定位、不占流：整排悬在名字上方（bottom:100%），会话名与左右两侧图标一格都不动。
+ * 定位基准是 SessionCard 里那个 position:relative 的名字按钮，所以 left:0 就是
+ * 「名字的左边缘」。**这一排是唯一的上方徽标来源** —— SessionCard 的选中底色靠
+ * hasSessionTopBadges 决定要不要向上拓展来包住它，两边必须用同一个判据。
+ *
+ * 排空时整块不渲染（return null）：没徽标却留一个空盒子，等于白占一行。
+ *
+ * 高度上限：这排最多 14px（worktree 标签与 aux 徽标同高），而上下两行之间
+ * 有 24px 留白（盒内 padding 7 + 行 padding 2 + 列表 gap 6 + 行 padding 2 + 盒内 padding 7），
+ * 所以它只吃掉上一个会话留白里的一小截，不会压到上一行的文字。
+ */
+export function SessionCardTopBadges({
+  session,
+  isSubagent,
+  nodeColor,
+}: {
+  session: SessionItem;
+  isSubagent: boolean;
+  nodeColor?: string;
+}) {
+  const { t } = useI18n();
+  if (!hasSessionTopBadges(session, isSubagent)) {
+    return null;
+  }
+  return (
+    <span
+      style={{
+        position: "absolute",
+        left: 0,
+        bottom: "100%",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "3px",
+        whiteSpace: "nowrap",
+        pointerEvents: "none",
+      }}
+    >
+      {/* 子代理行不开 worktree，标签自身也会对无活树返回 null */}
+      <SessionWorktreeTag
+        relatedWorktree={session.related_worktree}
+        worktreeMissing={session.worktree_missing}
+      />
+      {isSubagent ? (
+        <span style={{ display: "inline-flex", ...taskAuxIconScaleStyle() }}>
+          <SubSessionIcon
+            color={nodeColor ? `color-mix(in srgb, ${nodeColor} 78%, var(--text-secondary))` : undefined}
+          />
+        </span>
+      ) : null}
+      {!isSubagent && session.aux_flags?.ask_user_waiting ? (
+        <span
+          aria-label={t("sessionList.awaitingUser")}
+          title={t("sessionList.awaitingUser")}
+          style={{ ...taskAuxBadgeStyle(true), pointerEvents: "auto" }}
+        >
+          <span style={taskAuxIconScaleStyle()}>{renderToolIcon("ask_user")}</span>
+        </span>
+      ) : null}
+      {!isSubagent ? (
+        <SessionStatusBadges auxFlags={session.aux_flags} nodeColor={nodeColor} />
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * 「这行上方有没有徽标」—— SessionCard 决定选中底色要不要向上拓展的唯一判据。
+ * 与上面的渲染分支必须同源：多算一处就会拓出一块盖着空气的深色底。
+ */
+export function hasSessionTopBadges(session: SessionItem, isSubagent: boolean): boolean {
+  if (isSubagent) {
+    return true; // 子代理标记恒在（它就是「这是子代理」这件事本身）
+  }
+  if (isWorktreeActive(session.related_worktree, session.worktree_missing)) {
+    return true;
+  }
+  if (session.aux_flags?.ask_user_waiting) {
+    return true;
+  }
+  return hasSessionStatusBadges(session.aux_flags);
+}
+
+/**
+ * 选中底色向上拓展的高度。徽标排最多探出盒子上沿 6px（名字顶 = 盒顶 + 边框 1 + 内边距 7，
+ * 徽标高 14），取 9px 留 1px 富余，正好把它整排包进底色里。
+ * 拓展靠绝对定位实现 —— **不占流**，行高与相邻行的位置一个像素都不变。
+ */
+export const TOP_BADGE_LIFT_PX = 9;

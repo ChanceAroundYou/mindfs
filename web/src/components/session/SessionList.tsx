@@ -3,6 +3,7 @@ import { ViewHeader } from "../../layout/ViewHeader";
 import { pruneChildState } from "../../shared/sessionTree";
 import { useI18n } from "../../i18n/index";
 import { SessionCardMemo } from "./SessionCard";
+import { TOP_BADGE_LIFT_PX } from "./SessionCardTopBadges";
 import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardHelpers";
 import {
   ArchiveHeaderButton,
@@ -370,7 +371,9 @@ export function SessionList({
         </div>
       ) : null}
 
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px" }}>
+      {/* 顶部留白 ≥ 徽标拓位高度：第一行选中时底色要向上拓 TOP_BADGE_LIFT_PX 包住徽标，
+          留 8px 会把它削掉 1px（滚动容器按 padding box 裁剪）。 */}
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: `${TOP_BADGE_LIFT_PX}px 8px 8px` }}>
         {!sessions.length ? (
           emptyText ? (
             <div

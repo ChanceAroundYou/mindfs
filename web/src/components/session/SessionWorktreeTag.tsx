@@ -3,12 +3,10 @@ import { taskWorktreeTagStyle } from "../task/taskIcons";
 import type { RelatedWorktree } from "../../shared/sessionTypes";
 
 /**
- * 会话行的绿 worktree 标签（G-AD）：只在**有活树**时出现，悬在会话名上方、
- * 与名字左对齐（用户 2026-10-16 定）。
+ * 会话行的绿 worktree 标签（G-AD）：只在**有活树**时出现。
  *
- * 绝对定位、不占流：无论标签出不出现，会话名与左右两侧图标的位置一格都不动。
- * 定位基准是 SessionCard 里那个 position:relative 的按钮（= 名字区），
- * 所以 left:0 就是「名字的左边缘」，bottom:100% 就是「名字的上方」。
+ * 位置由外层 SessionCardTopBadges 决定（整排悬在会话名上方、与名字左对齐，用户 2026-10-16 定）——
+ * 本组件只负责「长什么样、什么时候显示」，不再自己绝对定位。
  *
  * 无 worktree 与已收尾一律不渲染：「没有树」不是会话进展，每行挂个灰标签只是噪声。
  * 任务卡那套三态（enabled/finished/none）在会话行只留 enabled —— 判据见
@@ -34,10 +32,12 @@ export function SessionWorktreeTag({
       aria-label={t("task.worktreeTitle")}
       style={{
         ...taskWorktreeTagStyle("enabled"),
-        position: "absolute",
-        left: 0,
-        bottom: "100%",
+        // 任务卡的标签靠 marginLeft:auto 顶到行尾；在上方这排里它排第一，
+        // 留着 auto 会把后面的徽标一起推到右边去。
         marginLeft: 0,
+        // 整排容器是 pointerEvents:none（悬在上一行留白上，不该挡点击），
+        // 标签自己要收回来，否则 title 提示不出来。
+        pointerEvents: "auto",
       }}
     >
       worktree
@@ -47,7 +47,8 @@ export function SessionWorktreeTag({
 
 // 会话没有任务的 worktree_built 位：path 在且目录没被删 = 有活树；
 // path 还在但目录已删 = 已收尾；本来就没 path = 没开过。
-function isWorktreeActive(
+// 导出给 SessionCardTopBadges 的 hasSessionTopBadges 共用 —— 判据只能有一处。
+export function isWorktreeActive(
   relatedWorktree?: RelatedWorktree | null,
   worktreeMissing?: boolean,
 ): boolean {

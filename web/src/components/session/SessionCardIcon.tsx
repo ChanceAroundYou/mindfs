@@ -1,20 +1,23 @@
 import React from "react";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
-import { renderToolIcon } from "../stream/toolCallIcons";
-import { taskAuxBadgeStyle, taskAuxIconScaleStyle } from "../task/taskIcons";
-import { useI18n } from "../../i18n/index";
 import { shellBadgeLabel } from "./sessionListShared";
-import { SubSessionIcon } from "./sessionCardHelpers";
 import type { SessionItem } from "./sessionListTypes";
 
 /**
- * 会话行最左侧的图标位（G-AD）：模式图标 + 右下角角标（等回答的问号 / shell / agent 圆点）。
+ * 会话行最左侧的图标位（G-AD）：会话类型图标（ModeIcon）+ 右下角角标（shell / agent 圆点）。
  * 2026-10-16 从 SessionCard 整块抽出（原文 110–185 行），纯搬移、零行为变化 ——
  * 抽出来只为行数门禁：SessionCard 当时 492 行，离 500 的硬线只剩 8 行。
  *
- * 18px 的定位盒是角标的基准：三个角标都是 position:absolute 挂在右下角，
+ * 2026-10-16 二次收窄：子代理图标与等回答的问号**搬到会话名上方那排**去了
+ * （SessionCardTopBadges，用户要求「小状态图标都放到名字上面，会话行下面不留东西」）。
+ * 剩下这两个角标是「这条会话是什么」的常驻标识（跑在哪个 agent / 哪个 shell），
+ * 不是状态，留在原位。
+ *
+ * 18px 的定位盒是角标的基准：两个角标都是 position:absolute 挂在右下角，
  * 所以盒子尺寸不能随手改，否则角标跟着漂。
+ * 子代理行整格不渲染 —— 它的标记已经在名字上方，这里再放一个就是同一个信号响两遍；
+ * 行缩进由 SessionCard 的 paddingLeft 保住。
  */
 export function SessionCardIcon({
   session,
@@ -27,8 +30,7 @@ export function SessionCardIcon({
   isSearchResult: boolean;
   nodeColor?: string;
 }) {
-  const { t } = useI18n();
-  if (isSearchResult) {
+  if (isSearchResult || isSubagent) {
     return null;
   }
   return (
@@ -43,27 +45,12 @@ export function SessionCardIcon({
         justifyContent: "center",
       }}
     >
-      {isSubagent ? (
-        <SubSessionIcon
-          color={nodeColor ? `color-mix(in srgb, ${nodeColor} 78%, var(--text-secondary))` : undefined}
-        />
-      ) : (
-        <ModeIcon
-          type={session.task_id ? "task" : session.type || "chat"}
-          size={16}
-          color={nodeColor || undefined}
-        />
-      )}
-      {!isSubagent && session.aux_flags?.ask_user_waiting ? (
-        <span
-          aria-label={t("sessionList.awaitingUser")}
-          title={t("sessionList.awaitingUser")}
-          style={taskAuxBadgeStyle(true)}
-        >
-          <span style={taskAuxIconScaleStyle()}>{renderToolIcon("ask_user")}</span>
-        </span>
-      ) : null}
-      {!isSubagent && session.type === "command" ? (
+      <ModeIcon
+        type={session.task_id ? "task" : session.type || "chat"}
+        size={16}
+        color={nodeColor || undefined}
+      />
+      {session.type === "command" ? (
         <span
           title={session.shell || "shell"}
           style={{
@@ -92,7 +79,7 @@ export function SessionCardIcon({
         >
           {shellBadgeLabel(session.shell)}
         </span>
-      ) : !isSubagent ? (
+      ) : (
         <span
           style={{
             position: "absolute",
@@ -114,7 +101,7 @@ export function SessionCardIcon({
             style={{ width: "10px", height: "10px", display: "block" }}
           />
         </span>
-      ) : null}
+      )}
     </span>
   );
 }

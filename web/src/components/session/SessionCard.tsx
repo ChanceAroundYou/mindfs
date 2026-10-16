@@ -12,8 +12,11 @@ import { sessionActivityAt } from "../../shared/sessionActivityAt";
 import { useSessionCard } from "./useSessionCard";
 import { SessionCardIcon } from "./SessionCardIcon";
 import { SessionCardOverflowMenu } from "./SessionCardOverflowMenu";
-import { SessionStatusBadges } from "./SessionStatusBadges";
-import { SessionWorktreeTag } from "./SessionWorktreeTag";
+import {
+  SessionCardTopBadges,
+  TOP_BADGE_LIFT_PX,
+  hasSessionTopBadges,
+} from "./SessionCardTopBadges";
 
 function SessionCard({
   session,
@@ -73,6 +76,11 @@ function SessionCard({
     hexToRgbaApp,
   } = card;
 
+  // 选中底色要不要向上拓展去包住名字上方那排徽标（用户 2026-10-16）。
+  // 徽标全隐藏时 false —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
+  // 也就不该拓出一块盖着空气的深色底。
+  const liftTopBackground = !editing && hasSessionTopBadges(session, isSubagent);
+
   return (
     <div
       style={{
@@ -83,7 +91,9 @@ function SessionCard({
         padding: "2px 0",
         borderRadius: "8px",
         position: "relative",
-        paddingLeft: isSubagent ? "10px" : 0,
+        // 子代理行整格不再渲染左侧图标位（它的标记搬到了名字上方），
+        // 31px = 原 10px 行缩进 + 18px 图标盒 + 3px 间距，缩进视觉不变。
+        paddingLeft: isSubagent ? "31px" : 0,
       }}
     >
       <div
@@ -99,8 +109,31 @@ function SessionCard({
           alignItems: "center",
           gap: isSubagent ? "3px" : "6px",
           transition: "all 0.15s ease",
+          // 向上拓展的定位基准（G-AD）：拓展块挂在盒顶之上，left/right 对齐盒的边框盒。
+          position: "relative",
         }}
       >
+        {liftTopBackground ? (
+          <span
+            aria-hidden="true"
+            data-session-top-lift=""
+            style={{
+              position: "absolute",
+              // ±1px 抵消盒的 1px 透明边框，否则接缝两侧各差 1px。
+              left: "-1px",
+              right: "-1px",
+              bottom: "100%",
+              height: `${TOP_BADGE_LIFT_PX}px`,
+              // inherit 而不是写 rowBackground：悬停高亮是 onMouseEnter 直接改父盒的
+              // inline style，React 不知道，写死值会让悬停底色在徽标处齐刷刷截断。
+              background: "inherit",
+              borderTopLeftRadius: "8px",
+              borderTopRightRadius: "8px",
+              // 纯装饰：不挡点击，也不参与布局（绝对定位，行高一个像素都不变）。
+              pointerEvents: "none",
+            }}
+          />
+        ) : null}
         <SessionCardIcon
           session={session}
           isSubagent={isSubagent}
@@ -189,7 +222,11 @@ function SessionCard({
               }
             }}
           >
-            {!isSubagent ? <SessionWorktreeTag relatedWorktree={session.related_worktree} worktreeMissing={session.worktree_missing} /> : null}
+            <SessionCardTopBadges
+              session={session}
+              isSubagent={isSubagent}
+              nodeColor={effectiveNodeColor || undefined}
+            />
             <span
               style={{
                 display: "block",
@@ -204,12 +241,6 @@ function SessionCard({
                 color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
               })}
             </span>
-            {!isSubagent ? (
-              <SessionStatusBadges
-                auxFlags={session.aux_flags}
-                nodeColor={effectiveNodeColor || undefined}
-              />
-            ) : null}
             {snippet ? (
               <span
                 style={{
