@@ -5995,6 +5995,8 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B10
+      - server/internal/scheduled/tasks_runner.go
+      - server/internal/scheduled/tasks_service.go
       - server/internal/fs/shared_watcher.go
       - server/internal/fs/shared_watcher_events.go
       - server/internal/fs/shared_watcher_related.go
