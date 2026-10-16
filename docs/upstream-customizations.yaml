@@ -155,7 +155,7 @@ groups:
     files:
       - server/internal/session/manager.go
       - server/internal/session/types.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_incremental_test.go
       - server/internal/session/manager_cursor_test.go
       - server/internal/session/manager_cursor_migration_test.go
       - server/internal/session/manager_window_test.go
@@ -409,7 +409,7 @@ groups:
       - server/internal/session/manager_agent_bindings.go
       - server/internal/session/manager_aliases.go
       - server/internal/session/types.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_fork_test.go
       - web/src/components/session/ExternalSessionList.tsx
       - web/src/app/useExternalSessionImport.ts
       - web/tests/fork-session-name.test.mjs
@@ -418,7 +418,7 @@ groups:
       - server/internal/agent/codex/importer_test.go
       - server/internal/api/usecase/external_sessions_test.go
       - server/internal/api/session_created_broadcast_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_fork_test.go
       - web/tests/fork-session-name.test.mjs
 
   # G-AB（会话投影 session_projection.go + 审计 audit.go）已于 2026-10-12 随 main
@@ -1724,7 +1724,12 @@ groups:
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
-      - server/internal/session/blocks.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
       - server/internal/session/manager_identity_fields_test.go
       - server/internal/session/manager_native_identity_test.go
       - server/internal/session/blocks_build_test.go
@@ -2070,7 +2075,12 @@ groups:
       - server/internal/api/kanban_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
     files:
-      - server/internal/session/blocks.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
       - server/internal/session/blocks_build_test.go
       - server/internal/session/manager.go
       - server/internal/session/manager_duplicate_seq_test.go
@@ -2174,7 +2184,12 @@ groups:
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
-      - server/internal/session/blocks.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
       - server/internal/api/usecase/session.go
       - web/src/shared/sessionOverlay.ts
       - web/src/app/useSessionStreamCache.ts
@@ -3875,7 +3890,7 @@ groups:
     why: "Aux path safety and append encoding belong with the aux read/store module so readers and writers share one owner while the session-key validation contract is preserved."
     boundary: "appendExchangeAux and auxPath move unchanged into manager_aux_reads.go; AddExchangeAux's public validation and locking stay in manager.go and the exchange-log path/write stays in manager_exchanges.go. The parent is 2,702 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_incremental_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_aux_reads.go
@@ -3894,7 +3909,7 @@ groups:
     why: "The agent-to-session binding contract and its SQLite operations belong together so agent inference, external cursor continuity and empty-id semantics stay reviewable in one module."
     boundary: "UpdateAgentState, UpsertAgentBinding, external cursor update and the binding lookup/ensure/list/scan/upsert helpers move unchanged to manager_agent_bindings.go; the AgentBinding shape, SQL schema/constants and the standalone RepointAgentBinding transaction are unchanged. Parent is 2,456 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_exchange_test.go
       - server/internal/session/manager_cursor_test.go
       - server/internal/session/manager_cursor_migration_test.go
     files:
@@ -3918,7 +3933,7 @@ groups:
     tests:
       - server/internal/session/session_db_migration_order_test.go
       - server/internal/session/manager_cursor_migration_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_db_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
     files:
       - server/internal/session/manager.go
@@ -3939,7 +3954,7 @@ groups:
     why: "The session list query surface and its metadata-only performance boundary belong together so list changes stay reviewable without traversing transcript and persistence code."
     boundary: "Public List/ListByKeys/Count/LatestSessionUpdatedAt/ListMetas and the internal meta list/query, binding fill, filter and where helpers move unchanged to manager_session_list.go; Search keeps calling the same package-private query method and SQL semantics and ordering are unchanged. Parent is 1,926 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_agent_binding_test.go
       - server/internal/session/manager_latest_updated_at_test.go
       - server/internal/session/manager_search_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
@@ -3962,7 +3977,7 @@ groups:
     why: "Local naming, imported external names and alias projection belong together so rename/import/fork naming behavior and the empty external-id guard can be reviewed as one storage domain."
     boundary: "Alias upsert, external name upsert/lookup, agent session identity projection and single/bulk alias application move unchanged to manager_aliases.go; the empty agent_session_id guard and the existing SQLite schema/API are unchanged. Parent is 1,746 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_db_test.go
       - server/internal/session/manager_rename_compat_test.go
       - server/internal/api/usecase/usecase_test.go
     files:
@@ -3984,7 +3999,7 @@ groups:
     why: "The SQLite Session row contract and its JSON/time normalization belong together so metadata schema changes can be reviewed against read and write projection in one place."
     boundary: "getSessionMetaUnsafe, the metadata-with-bindings projection, upsertSessionMetaUnsafe, argument serialization, the row scanner/decoder, normalization and the shared rowScanner/error helpers move unchanged to manager_meta.go; schema/constants and session loading/cache orchestration are unchanged. Parent is 1,492 lines, below the 1,500 hardline."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_list_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
       - server/internal/session/manager_rename_compat_test.go
       - server/internal/session/session_db_migration_order_test.go
@@ -4008,7 +4023,7 @@ groups:
     why: "The transient-to-persisted tool-call handoff and ask-user answer semantics belong in a focused module that keeps the in-memory-first lookup behavior and lock boundaries."
     boundary: "GetFullToolCall, pending aux upsert/answer/clear, mergeToolCall, pending lookup and the clone helpers move unchanged to manager_pending_aux.go; aux JSONL append/path handling and the wrapper methods stay in manager.go for a separate batch. Parent is 2,735 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_fork_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_pending_aux.go
@@ -4028,7 +4043,7 @@ groups:
     why: "The persisted related-file identity and the parent/child propagation contract belong together so generated-file attribution changes can be reviewed without involving worktree ownership or repoint flows."
     boundary: "The add/remove/record related-file methods and related-file identity/path normalization move unchanged to manager_related_files.go; RecordRelatedWorktree and ClearRelatedWorktree stay in manager.go and repoint behavior is out of scope. Parent is 1,345 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_exchange_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_related_files.go
@@ -4051,7 +4066,7 @@ groups:
       - server/internal/api/usecase/session_blocks_write_test.go
       - server/internal/api/usecase/session_identity_dedup_test.go
       - server/internal/api/stream_hub_turn_identity_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_repair_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_exchange_identity.go
@@ -4070,7 +4085,7 @@ groups:
     why: "Session metadata lifecycle and destructive cleanup ordering belong together so deletion, archive and state mutation can be reviewed independently from exchange read paths."
     boundary: "Close/Delete/Rename/SetArchived, model/shell/plan/context-window updates, the internal close/delete and Shutdown move unchanged to manager_lifecycle.go; related-worktree ownership and repoint methods stay untouched. Parent is 934 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_pending_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
     files:
       - server/internal/session/manager.go
@@ -5887,15 +5902,15 @@ groups:
       - server/internal/session/manager_cache.go
       - server/internal/session/manager_sql_statements.go
       - server/internal/session/manager_repoint.go
-      - server/internal/session/manager_test_worktree.go
-      - server/internal/session/manager_test_list.go
-      - server/internal/session/manager_test_exchange.go
-      - server/internal/session/manager_test_incremental.go
-      - server/internal/session/manager_test_pending.go
-      - server/internal/session/manager_test_repair.go
-      - server/internal/session/manager_test_agent_binding.go
-      - server/internal/session/manager_test_fork.go
-      - server/internal/session/manager_test_db.go
+      - server/internal/session/manager_worktree_test.go
+      - server/internal/session/manager_list_test.go
+      - server/internal/session/manager_exchange_test.go
+      - server/internal/session/manager_incremental_test.go
+      - server/internal/session/manager_pending_test.go
+      - server/internal/session/manager_repair_test.go
+      - server/internal/session/manager_agent_binding_test.go
+      - server/internal/session/manager_fork_test.go
+      - server/internal/session/manager_db_test.go
       - server/internal/fs/meta_dir_test.go
       - server/internal/fs/read_decode_test.go
       - server/internal/fs/entries_test.go
