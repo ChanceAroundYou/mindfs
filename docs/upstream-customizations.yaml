@@ -6158,6 +6158,7 @@ groups:
       - web/src/shared/sessionTypes.ts
       - web/src/i18n/locales/zh-CN-sessions.ts
       - web/src/i18n/locales/en-US-sessions.ts
+      - docs/plans/session-header-menu-repoint.md
     tests:
       - web/tests/session-header-menu.test.mjs
       - server/internal/api/http_session_work_dir_test.go
