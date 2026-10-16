@@ -147,7 +147,9 @@ func TestAPIHandlersDoNotConstructAppContextDirectly(t *testing.T) {
 			continue
 		}
 		content, err := os.ReadFile(name)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		if regexp.MustCompile(`\b(?:&\s*)?AppContext\s*\{`).Match(content) {
 			t.Errorf("%s constructs AppContext directly; use the scoped workspace provider", name)
 		}

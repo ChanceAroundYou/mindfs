@@ -4170,23 +4170,28 @@ groups:
     kind: arch
     symptom: "Git status/diff/history/branch/action/related-file/worktree HTTP handlers and their request/response helpers are mixed into the oversized general http.go."
     why: "The Git HTTP domain belongs together, preserving the existing route table and usecase dispatch boundary, so Git endpoint changes don't require navigating session and file handlers."
-    boundary: "The Git handlers from handleGitStatus through handleGitWorktreeRemove, plus gitActionRequest, decodeGitActionRequest and respondGitAction, move unchanged to http_git.go; routes and handler names are unchanged. Parent is 2,588 lines, still over the 1,500 hardline."
+    boundary: "The Git handlers split by family: http_git_read.go (status/diff/history/commit
+      files/stats/branches), http_git_write.go (checkout/pull/push/commit/stage/unstage/
+      discard + decodeGitActionRequest), http_git_wt.go (worktree list/create/remove).
+      Same package: no API/route changes."
     tests:
       - server/internal/api/http_git_related_files_stats_test.go
       - web/tests/conditional-request.test.mjs
     files:
       - server/internal/api/http.go
-      - server/internal/api/http_git.go
+      - server/internal/api/http_git_read.go
+      - server/internal/api/http_git_write.go
+      - server/internal/api/http_git_wt.go
       - web/tests/conditional-request.test.mjs
       - docs/agent/rules/backend/TODO.md
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitStatus
-      - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitRelatedFileStats
-      - server/internal/api/http_git.go:func decodeGitActionRequest
-      - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitWorktreeRemove
+      - server/internal/api/http_git_read.go:func (h *HTTPHandler) handleGitStatus
+      - server/internal/api/http_git_read.go:func (h *HTTPHandler) handleGitRelatedFileStats
+      - server/internal/api/http_git_write.go:func decodeGitActionRequest
+      - server/internal/api/http_git_wt.go:func (h *HTTPHandler) handleGitWorktreeRemove
 
   - id: G-EY
     title: API HTTP file and managed-directory handlers split
