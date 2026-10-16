@@ -153,3 +153,52 @@ func TestFinishAllUnregistersActiveTurns(t *testing.T) {
 		t.Fatal("FinishAll 之后活跃轮次仍在：下一次回合的取消会命中一个已死的子代理")
 	}
 }
+
+// 卡死 + 停止无效的根因回归。
+//
+// 子代理的订阅上下文是从**父回合的 turnCtx** 派生的（session_subagents.go:189），
+// 而落盘用的正是这个上下文。父回合一结束 turnCtx 就被掐，`defer FinishAll()`
+// 此时才跑 close()→done()→落盘 —— 全部撞上 context canceled：
+//   - 正文/aux/块表写不进去（日志形态 `[subagent] persist.blocks.error err=context canceled`）；
+//   - 用户看到子会话停在中途、灯常亮、点停止没反应（取消命中的是一个已死的会话）。
+//
+// 这里钉住：父 turnCtx 已取消之后，子代理的落盘与终帧必须仍然成功。
+func TestFinishAllAfterParentTurnContextCancelStillPersists(t *testing.T) {
+	var doneKeys []string
+	router, manager, _ := newClaudeSubagentTestRouter(t, func(sessionKey string, update agenttypes.Event) {
+		if update.Type == agenttypes.EventTypeMessageDone {
+			doneKeys = append(doneKeys, sessionKey)
+		}
+	})
+	// 换成真实世界里那个可取消的父回合上下文（现有 helper 用的是 Background，
+	// 这正是它测不出这个 bug 的原因）。
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	router.in.Ctx = parentCtx
+
+	child := openClaudeSubagentChild(t, router)
+	defer unregisterActiveTurn(router.in.RootID, child.Key)
+
+	// 父回合结束：真实世界里 session.done / 取消 / 出错都会走到这一步。
+	cancelParent()
+
+	router.FinishAll()
+
+	if len(doneKeys) == 0 || doneKeys[0] != child.Key {
+		t.Fatalf("父回合上下文取消后子代理没发出终帧：前端清不掉这盏灯（doneKeys=%v）", doneKeys)
+	}
+	loaded, err := manager.Get(context.Background(), child.Key, 0)
+	if err != nil {
+		t.Fatalf("get child: %v", err)
+	}
+	if len(loaded.Exchanges) == 0 {
+		t.Fatal("父回合上下文取消后子代理正文没落盘：取消/收尾会把子代理的输出整段丢掉")
+	}
+	blocks, err := manager.ReadBlocks(context.Background(), child.Key)
+	if err != nil {
+		t.Fatalf("list blocks: %v", err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("父回合上下文取消后子代理块表没落盘：双写块流（S2a）在子会话上整轮回退，" +
+			"而 finish 只 log 不返回，这条丢失是静默的（线上形态 persist.blocks.error err=context canceled）")
+	}
+}

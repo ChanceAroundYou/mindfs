@@ -663,17 +663,18 @@ groups:
     anchors:
       # 绿 worktree 标签：只认活树；定位归上方那排，本组件不再自己绝对定位（2026-10-16）。
       - 'web/src/components/session/SessionWorktreeTag.tsx:Boolean(path) && !worktreeMissing'
-      # 名字上方那排徽标（worktree + 子代理 + 问号 + aux）：整排悬在盒顶之上，不占行高。
-      - 'web/src/components/session/SessionCardTopBadges.tsx:hasSessionTopBadges'
+      # 名字上方仅放 worktree / 问号 / aux 状态；子代理折角是类型标识，固定留在名字前。
+      - 'web/src/components/session/SessionCardTopBadges.tsx:if (isSubagent || !hasSessionTopBadges(session, isSubagent))'
       - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_LIFT_PX'
-      # 选中底色向上拓展去包住那排徽标（不占实际高度）：overlay 挂在盒顶之上。
+      # 只有选中行的底色向上拓展去包住状态徽标（不占实际高度）。
+      - 'web/src/components/session/SessionCard.tsx:selected && !editing && hasSessionTopBadges'
       - 'web/src/components/session/SessionCard.tsx:data-session-top-lift'
-      # 小图标缩到 worktree 标签大小：盒子 14px + 图标 0.75 缩放。
+      - 'web/src/components/session/SessionCard.tsx:height: `calc(100% + ${TOP_BADGE_LIFT_PX}px + 1px)`'
+      # 子代理折角回到名字前；其它小图标缩到 worktree 标签大小。
       - 'web/src/components/task/taskStyles.ts:export function taskAuxIconScaleStyle'
-      - 'web/src/components/session/SessionCardIcon.tsx:if (isSearchResult || isSubagent)'
-      # 会话行间距：三个列表容器各写一份字面量，必须同值（2026-10-16 由 2px 调大到 6px）；
-      # 列表顶端留白绑拓位高度，否则第一行选中时底色被滚动容器削掉 1px。
-      - 'web/src/components/session/SessionList.tsx:flexDirection: "column", gap: "6px"'
+      - 'web/src/components/session/SessionCardIcon.tsx:if (isSubagent)'
+      # 会话行保持 2px；顶部留白仍绑拓位高度，第一行不被滚动容器裁掉。
+      - 'web/src/components/session/SessionList.tsx:flexDirection: "column", gap: "2px"'
       - 'web/src/components/session/MultiProjectSessionList.tsx:paddingTop: TOP_BADGE_LIFT_PX'
     tests:
       - web/tests/session-list-merge.test.mjs
@@ -1405,8 +1406,8 @@ groups:
   - id: G-IZ
     title: Claude 合成子代理可取消（停止按钮不再是空操作）
     kind: fix
-    symptom: "子会话（Claude Task 子代理）卡住不动、在会话列表里永远亮着「在回复」，点停止按钮完全没反应（点几次都一样）；刷新、切换、等多久都不消失，只能重启服务。"
-    why: "三处叠加缺一不可：① claudeSubagentRouter.attach 从不 registerActiveTurn（Codex 协作路径有），Service.CancelSessionTurn 拿到 active==nil 直接 return nil —— 静默「成功」；② syntheticAgentSession.CancelCurrentTurn() 无条件 return nil，第二个空操作；③ 父轮收尾 FinishAll 原先不是 defer、也不注销活跃轮次。于是 pending 只等 MessageDone 一条路，CLI 已死则灯永久常亮。改法：attach 建可取消上下文 + registerActiveTurn + setActiveTurnSession 并注入关闭函数；新增幂等 close()（done 落盘发终帧 → cancel 掐订阅 → unregisterActiveTurn，顺序不可换：先掐上下文会丢正文）；终帧与 FinishAll 都挂 defer。"
+    symptom: "子会话（Claude Task 子代理）卡住不动、在会话列表里永远亮着「在回复」，点停止按钮完全没反应（点几次都一样）；刷新、切换、等多久都不消失，只能重启服务。另一条独立症状：父回合一结束（正常结束/取消/报错都算），子会话停在半句话上、块内容整段不见，日志里只有一行 `[subagent] persist.blocks.error ... err=context canceled` —— 因为 finish 对这个错误只 log 不返回，丢失是静默的。"
+    why: "四处叠加缺一不可：① claudeSubagentRouter.attach 从不 registerActiveTurn（Codex 协作路径有），Service.CancelSessionTurn 拿到 active==nil 直接 return nil —— 静默「成功」；② syntheticAgentSession.CancelCurrentTurn() 无条件 return nil，第二个空操作；③ 父轮收尾 FinishAll 原先不是 defer、也不注销活跃轮次。于是 pending 只等 MessageDone 一条路，CLI 已死则灯永久常亮；④ finish 的落盘用的是订阅上下文，而子代理订阅上下文是从父回合 turnCtx 派生的（session_subagents.go:189），`defer FinishAll()` 跑在父回合尾部、正是 turnCtx 刚被掐的时刻 —— 正文/aux/块表/agent_state 四处 DB 写全撞 context canceled。改法：attach 建可取消上下文 + registerActiveTurn + setActiveTurnSession 并注入关闭函数；新增幂等 close()（done 落盘发终帧 → cancel 掐订阅 → unregisterActiveTurn，顺序不可换：先掐上下文会丢正文）；终帧与 FinishAll 都挂 defer；落盘改用脱离订阅取消的 persistCtx（只影响「写不写得进 DB」，不影响订阅什么时候断 —— ClearPendingExchangeAux 早就用 Background 了，这里把其余四处补齐）。"
     boundary: "子代理的生命周期归属与取消。不碰父 turn（取消子代理不打断父的 CLI），也不改 session.cancel 的 stale 门（ActiveTurnID 在读循环同步取证那条契约不变）。合成子代理没有可中断的进程（输出来自父进程的 CLI 流），能掐的只有订阅本身。"
     tests:
       - server/internal/api/usecase/session_subagent_cancel_test.go
@@ -1417,6 +1418,7 @@ groups:
     anchors:
       - server/internal/api/usecase/session.go:func (c *claudeSyntheticSubagent) close()
       - server/internal/api/usecase/session.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
+      - server/internal/api/usecase/session.go:persistCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceLive)
       - server/internal/api/usecase/session_subagents.go:registerActiveTurn(in.RootID, child.Key, cancel)
       - server/internal/api/usecase/session_subagents.go:return true
       - server/internal/api/usecase/session_send.go:defer claudeSubagents.FinishAll()

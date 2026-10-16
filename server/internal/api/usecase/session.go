@@ -947,10 +947,18 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		}
 		ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 		defer in.Manager.ClearPendingExchangeAux(context.Background(), child.Key)
+		// 落盘一律走**脱离订阅取消**的上下文。子代理订阅上下文是从父回合 turnCtx
+		// 派生的（session_subagents.go:189），父回合一结束它就被掐 —— 而 FinishAll
+		// 正是 defer 在父回合尾部跑的。用订阅上下文落盘会整段撞上 context canceled：
+		// 正文/aux/块表写不进去，而 finish 对这些失败只 log 不返回，丢失是静默的
+		// （线上形态：[subagent] persist.blocks.error err=context canceled）。
+		// ClearPendingExchangeAux 早就用 Background 了，这里补齐其余四处。
+		// 只影响"写不写得进 DB"，不影响订阅本身什么时候断。
+		persistCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceLive)
 		flushThought()
 		var subTurnID string
 		subAgentSeq, err := in.Manager.AddExchangeForAgentAtWithIdentityFactory(
-			ctx, child, "agent", responseText, in.Agent, in.Mode, in.Effort, in.FastService, time.Time{},
+			persistCtx, child, "agent", responseText, in.Agent, in.Mode, in.Effort, in.FastService, time.Time{},
 			func(seq int) session.ExchangeIdentity {
 				subTurnID = newMindFSID("", fmt.Sprintf("%s|agent|%d", child.Key, seq))
 				return session.ExchangeIdentity{MindFSID: subTurnID}
@@ -963,18 +971,18 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		subAux := dedupeExchangeAuxBuffer(auxBuffer)
 		for i := range subAux {
 			subAux[i].Seq = subAgentSeq
-			subAux[i] = hydratePendingToolCallAux(ctx, in.Manager, child.Key, subAux[i])
-			if err := in.Manager.AddExchangeAux(ctx, child.Key, subAux[i]); err != nil {
+			subAux[i] = hydratePendingToolCallAux(persistCtx, in.Manager, child.Key, subAux[i])
+			if err := in.Manager.AddExchangeAux(persistCtx, child.Key, subAux[i]); err != nil {
 				log.Printf("[subagent] persist.aux.error root=%s session=%s err=%v", in.RootID, child.Key, err)
 				return
 			}
 		}
 		// 双写块流（方案 S2a）。子代理块带 parentToolUseId / taskId / subagentType（D16）由
 		// aux 的既有归属字段承载，S2c 接线；这里先保证正文不丢。
-		if err := persistTurnBlocks(ctx, in.Manager, child.Key, subAgentSeq, subTurnID, responseText, subAux); err != nil {
+		if err := persistTurnBlocks(persistCtx, in.Manager, child.Key, subAgentSeq, subTurnID, responseText, subAux); err != nil {
 			log.Printf("[subagent] persist.blocks.error root=%s session=%s seq=%d err=%v", in.RootID, child.Key, subAgentSeq, err)
 		}
-		if err := in.Manager.UpdateAgentState(ctx, child, in.Agent, contextLineCount(child.Exchanges), runtime.SessionID()); err != nil {
+		if err := in.Manager.UpdateAgentState(persistCtx, child, in.Agent, contextLineCount(child.Exchanges), runtime.SessionID()); err != nil {
 			log.Printf("[subagent] persist.agent_state.error root=%s session=%s err=%v", in.RootID, child.Key, err)
 		}
 	}
