@@ -5995,6 +5995,9 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/http_window_get_test.go
+      - server/internal/api/http_window_sync_test.go
+      - server/internal/api/http_window_blocks_test.go
       - server/internal/api/http_routes.go
       - server/internal/api/http_local_cli.go
       - server/internal/api/http_preferences.go
