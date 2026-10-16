@@ -275,6 +275,11 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		for subKey, id := range subs {
 			h.AppContext.EndSessionTurn(rootID, subKey, "", id)
 		}
+		// 取队列必须排在收尾**之后**：EndSessionTurn → ClearSessionPending 才把 pending
+		// 的 Active 置回 false，而 PopQueuedSessionMessage 的闸门正是「Active 就不许再起
+		// 一轮」。原先这一步写在函数尾，defer 要等 return 才跑，于是取队列时 Active 仍是
+		// true —— 排队消息永远取不出来（症状：回答结束后排队消息不动，得手动点「立即发送」）。
+		h.startNextQueuedSessionMessage(rootID, key)
 	}()
 
 	err := uc.SendMessage(msgCtx, usecase.SendMessageInput{
@@ -357,7 +362,6 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		log.Printf("[ws] session.message.error root=%s session=%s request=%s err=%v", rootID, key, requestID, err)
 		h.AppContext.BroadcastSessionError(rootID, key, err.Error())
 	}
-	h.startNextQueuedSessionMessage(rootID, key)
 }
 
 func (h *WSHandler) startNextQueuedSessionMessage(rootID, key string) {

@@ -1655,19 +1655,21 @@ groups:
   - id: G-BE
     title: pending 的回合身份与单一终结器（迟到 done 不误抹新轮 + 终态边必达）
     kind: fix
-    symptom: "「完成回答但还显示正在思考」（灯不灭）与「正在运行但会话列表灯不亮」（灯不亮）两个相反症状并存。"
-    why: "根因不是超时，而是 pending 条目没有回合身份：灯不亮 —— 第 A 轮迟到的 session.done 落地时 ClearSessionPending 无条件删条目，把第 B 轮刚开始的灯抹掉；灯不灭 —— 子会话只有 MessageDone 一条清理边，error/取消/父轮先结束都会让 pending 永久残留。改法：SessionPendingState 带回合身份（G-BH/S2e 起是 turn_id），ClearSessionPending 只在两侧都有身份且一致时才清；抽出唯一终结器 AppContext.EndSessionTurn，所有终态边都走它并用 defer 覆盖成功/出错/取消/panic。这套身份比对机制项目里本就有（ActiveTurnID 用于取消定位），pending 缺的不是新机制，是把同一份纪律用上去。"
-    boundary: "服务端 pending 条目的身份与生命周期：谁有权清理、迟到/重复 done 的处置、子会话 pending 的终态收边。不做静态判死/超时（已于 G-AY 证伪）。"
+    symptom: "「完成回答但还显示正在思考」（灯不灭）与「正在运行但会话列表灯不亮」（灯不亮）两个相反症状并存。第三条（2026-10-16 实测）：模型回答时发的消息进了排队序列，上一轮结束后它一直躺在队列里不动，得手动点「立即发送」才跑 —— 排队功能等于失效。"
+    why: "根因不是超时，而是 pending 条目没有回合身份：灯不亮 —— 第 A 轮迟到的 session.done 落地时 ClearSessionPending 无条件删条目，把第 B 轮刚开始的灯抹掉；灯不灭 —— 子会话只有 MessageDone 一条清理边，error/取消/父轮先结束都会让 pending 永久残留。改法：SessionPendingState 带回合身份（G-BH/S2e 起是 turn_id），ClearSessionPending 只在两侧都有身份且一致时才清；抽出唯一终结器 AppContext.EndSessionTurn，所有终态边都走它并用 defer 覆盖成功/出错/取消/panic。这套身份比对机制项目里本就有（ActiveTurnID 用于取消定位），pending 缺的不是新机制，是把同一份纪律用上去。取队列（startNextQueuedSessionMessage）必须排在终结器**之后**：PopQueuedSessionMessage 的闸门是「pending 的 Active 还立着就不许再起一轮」，而 Active 正是由终结器里的 ClearSessionPending 置回 false —— 2026-10-09 把函数尾的 BroadcastSessionDone 改成 defer 里的 EndSessionTurn 时，取队列被落在了 defer 外面，于是取队列时 Active 仍是 true、闸门永远挡住，队列从此不再自动排空。"
+    boundary: "服务端 pending 条目的身份与生命周期：谁有权清理、迟到/重复 done 的处置、子会话 pending 的终态收边，以及「上一轮结束后取队列」相对终结器的先后。不做静态判死/超时（已于 G-AY 证伪），不改 QueueFrozen 的语义（取消后队列继续停在原地等用户）。"
     tests:
       - server/internal/api/stream_hub_turn_identity_test.go
       - server/internal/api/kanban_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
       - server/internal/agent/codex/session_test.go
+      - server/internal/api/ws_session_queue_drain_test.go
       - web/tests/e2e-pending-indicators.test.mjs
     files:
       - server/internal/api/stream_hub.go
       - server/internal/api/appcontext.go
       - server/internal/api/ws.go
+      - server/internal/api/ws_session_message.go
       - server/internal/scheduled/tasks.go
       - server/internal/agent/codex/session.go
     anchors:
@@ -1677,6 +1679,7 @@ groups:
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/appcontext.go:RunAgentStage
       - server/internal/api/ws_session_message.go:runSessionMessage
+      - "server/internal/api/ws_session_message.go:h.startNextQueuedSessionMessage(rootID, key)\n\t}()"
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
       - server/internal/agent/codex/session.go:handleStreamedEvents
 
