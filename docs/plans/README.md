@@ -7,13 +7,13 @@ to resume their old TODOs or baselines.
 ## Active
 
 | [Delegated presence and flicker](delegated-presence-and-flicker.md) | Active | Delegated-parent hollow presence + switch-flash fix in progress |
-| [Session header menu and repoint](session-header-menu-repoint.md) | Active | Session title-bar ⋯ menu (change directory / rename / archive / delete) in progress |
 
 
 ## Completed or superseded history
 
 | Plan | Status | Current interpretation |
 |---|---|---|
+| [Session header menu and repoint](session-header-menu-repoint.md) | Completed 2026-10-16 | ⋯ menu shipped + deployed (G-JB); gate fully green (go + tsc + 349 web tests + check-upstream). |
 | [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Completed 2026-10-14 | All frontend tests use Vitest; frontend/backend rules and gates apply without path-based waivers. Full gates and upstream coverage passed; no-restart ship installed matching artifacts locally and on WSL/fn. No node was restarted. |
 | [Frontend export and filename alignment](frontend-export-naming.md) | Completed 2026-10-14 | Naming docs and AST gates now agree; standalone components/hooks match filenames, `.tsx` contains JSX, and `.ts` does not. Cohesive multi-export modules remain responsibility-named. Frontend tests, typecheck, build, and upstream coverage passed. |
 |---|---|---|
