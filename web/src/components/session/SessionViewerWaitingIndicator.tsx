@@ -29,7 +29,9 @@ export function SessionViewerWaitingIndicator({
       <span
         style={
           hollow
-            ? { width: "8px", height: "8px", borderRadius: "50%", background: "transparent", border: `1.5px solid ${awaitingColor}`, boxSizing: "border-box" }
+            ? // 与下一行实心版同一个 keyframes（pulse 1s），同一节奏只是空心 ——
+              // 在「正在生成」旁边看到同频闪烁的空心点，才读得出「在等」不是「在跑」。
+              { width: "8px", height: "8px", borderRadius: "50%", background: "transparent", border: `1.5px solid ${awaitingColor}`, boxSizing: "border-box", animation: "pulse 1s infinite" }
             : { width: "8px", height: "8px", borderRadius: "50%", background: awaitingColor, animation: "pulse 1s infinite" }
         }
       />

@@ -188,7 +188,7 @@ export function MultiProjectSessionList({
                       悬在盒顶之上，选中时底色还要再向上拓 TOP_BADGE_LIFT_PX 去包住它 ——
                       这段留白就是给它借位的，所以直接绑同一个常量，改一处两处同步。
                       没徽标、没选中时这段留白照旧在，行距不因状态变化而抖。 */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", paddingTop: TOP_BADGE_LIFT_PX }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingTop: TOP_BADGE_LIFT_PX }}>
                     {rows.map((row) => {
                       if (row.type === "child-toggle") {
                         const stateKey = childStateKey(row.parent, group.rootId, groupNodeId);
@@ -273,6 +273,10 @@ export function MultiProjectSessionList({
         @keyframes mindfs-bound-pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 1.5px rgba(37,99,235,0.14); }
           50% { opacity: 0.18; box-shadow: 0 0 0 4px rgba(37,99,235,0.08); }
+        }
+        @keyframes mindfs-hollow-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.35; }
         }
         @keyframes spin {
           from { transform: rotate(0deg); }

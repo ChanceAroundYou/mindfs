@@ -1,15 +1,15 @@
 import { useI18n } from "../../i18n/index";
 import { renderToolIcon } from "../stream/toolCallIcons";
 import { taskAuxBadgeStyle, taskAuxIconScaleStyle } from "../task/taskIcons";
-import { SubSessionIcon } from "./sessionCardHelpers";
 import { SessionStatusBadges, hasSessionStatusBadges } from "./SessionStatusBadges";
 import { SessionWorktreeTag, isWorktreeActive } from "./SessionWorktreeTag";
 import type { SessionItem } from "./sessionListTypes";
 
 /**
- * 会话名上方那排徽标（G-AD，用户 2026-10-16 定）：worktree → 子代理 → 问号 → error/plan/todo/task。
+ * 会话名上方那排状态徽标（G-AD）：worktree → 问号 → error/plan/todo/task。
  *
- * 绝对定位、不占流：整排悬在名字上方（bottom:100%），会话名与左右两侧图标一格都不动。
+ * 子代理的折角是它的常驻类型图标，固定留在名字前（SessionCardIcon）；子代理不渲染
+ * 任何状态徽标，所以不进入本组件，也不触发选中底色向上拓展。
  * 定位基准是 SessionCard 里那个 position:relative 的名字按钮，所以 left:0 就是
  * 「名字的左边缘」。**这一排是唯一的上方徽标来源** —— SessionCard 的选中底色靠
  * hasSessionTopBadges 决定要不要向上拓展来包住它，两边必须用同一个判据。
@@ -17,7 +17,7 @@ import type { SessionItem } from "./sessionListTypes";
  * 排空时整块不渲染（return null）：没徽标却留一个空盒子，等于白占一行。
  *
  * 高度上限：这排最多 14px（worktree 标签与 aux 徽标同高），而上下两行之间
- * 有 24px 留白（盒内 padding 7 + 行 padding 2 + 列表 gap 6 + 行 padding 2 + 盒内 padding 7），
+ * 有 20px 留白（盒内 padding 7 + 行 padding 2 + 列表 gap 2 + 行 padding 2 + 盒内 padding 7），
  * 所以它只吃掉上一个会话留白里的一小截，不会压到上一行的文字。
  */
 export function SessionCardTopBadges({
@@ -30,7 +30,7 @@ export function SessionCardTopBadges({
   nodeColor?: string;
 }) {
   const { t } = useI18n();
-  if (!hasSessionTopBadges(session, isSubagent)) {
+  if (isSubagent || !hasSessionTopBadges(session, isSubagent)) {
     return null;
   }
   return (
@@ -46,19 +46,11 @@ export function SessionCardTopBadges({
         pointerEvents: "none",
       }}
     >
-      {/* 子代理行不开 worktree，标签自身也会对无活树返回 null */}
       <SessionWorktreeTag
         relatedWorktree={session.related_worktree}
         worktreeMissing={session.worktree_missing}
       />
-      {isSubagent ? (
-        <span style={{ display: "inline-flex", ...taskAuxIconScaleStyle() }}>
-          <SubSessionIcon
-            color={nodeColor ? `color-mix(in srgb, ${nodeColor} 78%, var(--text-secondary))` : undefined}
-          />
-        </span>
-      ) : null}
-      {!isSubagent && session.aux_flags?.ask_user_waiting ? (
+      {session.aux_flags?.ask_user_waiting ? (
         <span
           aria-label={t("sessionList.awaitingUser")}
           title={t("sessionList.awaitingUser")}
@@ -67,9 +59,7 @@ export function SessionCardTopBadges({
           <span style={taskAuxIconScaleStyle()}>{renderToolIcon("ask_user")}</span>
         </span>
       ) : null}
-      {!isSubagent ? (
-        <SessionStatusBadges auxFlags={session.aux_flags} nodeColor={nodeColor} />
-      ) : null}
+      <SessionStatusBadges auxFlags={session.aux_flags} nodeColor={nodeColor} />
     </span>
   );
 }
@@ -80,7 +70,7 @@ export function SessionCardTopBadges({
  */
 export function hasSessionTopBadges(session: SessionItem, isSubagent: boolean): boolean {
   if (isSubagent) {
-    return true; // 子代理标记恒在（它就是「这是子代理」这件事本身）
+    return false;
   }
   if (isWorktreeActive(session.related_worktree, session.worktree_missing)) {
     return true;

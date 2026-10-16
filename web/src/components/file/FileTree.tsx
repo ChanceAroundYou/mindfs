@@ -481,6 +481,10 @@ function FileTreeInner({
           0%, 100% { opacity: 1; box-shadow: 0 0 0 1.5px rgba(37,99,235,0.14); }
           50% { opacity: 0.18; box-shadow: 0 0 0 4px rgba(37,99,235,0.08); }
         }
+        @keyframes mindfs-hollow-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.35; }
+        }
       `}</style>
     </div>
   );

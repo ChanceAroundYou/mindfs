@@ -122,7 +122,7 @@ export function ExternalSessionList({
               : t("externalSession.empty")}
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {error ? <div style={errorStyle}>{error}</div> : null}
             {sessions.map((session) => (
               <ExternalSessionCard

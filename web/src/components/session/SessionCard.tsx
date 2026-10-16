@@ -79,7 +79,7 @@ function SessionCard({
   // 选中底色要不要向上拓展去包住名字上方那排徽标（用户 2026-10-16）。
   // 徽标全隐藏时 false —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
   // 也就不该拓出一块盖着空气的深色底。
-  const liftTopBackground = !editing && hasSessionTopBadges(session, isSubagent);
+  const liftTopBackground = selected && !editing && hasSessionTopBadges(session, isSubagent);
 
   return (
     <div
@@ -91,49 +91,46 @@ function SessionCard({
         padding: "2px 0",
         borderRadius: "8px",
         position: "relative",
-        // 子代理行整格不再渲染左侧图标位（它的标记搬到了名字上方），
-        // 31px = 原 10px 行缩进 + 18px 图标盒 + 3px 间距，缩进视觉不变。
-        paddingLeft: isSubagent ? "31px" : 0,
+        isolation: "isolate",
+        // 子代理的折角回到名字前：保留原有 10px 子层级缩进，和普通会话图标位一起布局。
+        paddingLeft: isSubagent ? "10px" : 0,
       }}
     >
+      {liftTopBackground ? (
+        <span
+          aria-hidden="true"
+          data-session-top-lift=""
+          style={{
+            // 整行只画这一张底：从名字上方的徽标一直到内容盒底，没有两块圆角相接。
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: `calc(2px - ${TOP_BADGE_LIFT_PX}px)`,
+            bottom: "2px",
+            background: rowBackground,
+            borderRadius: "8px",
+            pointerEvents: "none",
+            zIndex: -1,
+          }}
+        />
+      ) : null}
       <div
         style={{
           textAlign: "left" as const,
           padding: editing ? "7px 0 7px 2px" : "7px 4px 7px 2px",
           borderRadius: "8px",
           border: "1px solid transparent",
-          background: rowBackground,
+          // 有上方徽标的选中行由外层唯一 surface 着色，内容盒本身不再重复绘制。
+          background: liftTopBackground ? "transparent" : rowBackground,
           flex: 1,
           minWidth: 0,
           display: "flex",
           alignItems: "center",
           gap: isSubagent ? "3px" : "6px",
           transition: "all 0.15s ease",
-          // 向上拓展的定位基准（G-AD）：拓展块挂在盒顶之上，left/right 对齐盒的边框盒。
           position: "relative",
         }}
       >
-        {liftTopBackground ? (
-          <span
-            aria-hidden="true"
-            data-session-top-lift=""
-            style={{
-              position: "absolute",
-              // ±1px 抵消盒的 1px 透明边框，否则接缝两侧各差 1px。
-              left: "-1px",
-              right: "-1px",
-              bottom: "100%",
-              height: `${TOP_BADGE_LIFT_PX}px`,
-              // inherit 而不是写 rowBackground：悬停高亮是 onMouseEnter 直接改父盒的
-              // inline style，React 不知道，写死值会让悬停底色在徽标处齐刷刷截断。
-              background: "inherit",
-              borderTopLeftRadius: "8px",
-              borderTopRightRadius: "8px",
-              // 纯装饰：不挡点击，也不参与布局（绝对定位，行高一个像素都不变）。
-              pointerEvents: "none",
-            }}
-          />
-        ) : null}
         <SessionCardIcon
           session={session}
           isSubagent={isSubagent}
@@ -378,6 +375,8 @@ function SessionCard({
                 boxSizing: "border-box",
                 border: `1.5px solid ${effectiveNodeColor || "var(--accent-color)"}`,
                 background: "transparent",
+                // 空心圆整个是边框，压得太狠就看不清了；实心版那个 0.18 是给实心块用的。
+                animation: "mindfs-hollow-pulse 2.2s ease-in-out infinite",
               }}
             />
           ) : session.pending ? (

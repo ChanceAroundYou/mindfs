@@ -96,9 +96,11 @@ const metaSource = fs.readFileSync(metaPath, "utf8");
 assert.match(metaSource, /aux_flags:\s*payload\.session\.aux_flags !== undefined/, "cache merge must overwrite aux_flags only when the payload carries it");
 assert.match(metaSource, /worktree_missing:\s*typeof payload\.session\.worktree_missing === "boolean"/, "cache merge must overwrite worktree_missing only when the payload carries a boolean");
 
-// ── 4. 视图接线：会话名上方一排徽标 + 问号由 aux 驱动 ──
-// 2026-10-16 用户要求「小状态图标都放到会话名上面，会话行下面不留任何东西」：
-// 排布落在 SessionCardTopBadges（绝对定位、悬在名字上方），SessionCard 只负责挂它。
+// ── 4. 视图接线：aux 徽标在名字上方一排，子代理折角回到名字前 ──
+// 2026-10-16 用户先要求「小状态图标都放到会话名上面」，随后同一天改主意：
+// 折角图标固定出现在子会话名前面（它是子代理的类型标识，不是状态徽标），
+// 子会话本身不渲染任何状态徽标。所以这里钉的是**修正后**的布局：
+// 上方那排只装 aux/worktree 状态徽标，折角留在 SessionCardIcon。
 const card = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCard.tsx"), "utf8");
 const top = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCardTopBadges.tsx"), "utf8");
 const icon = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCardIcon.tsx"), "utf8");
@@ -123,8 +125,12 @@ assert.match(
   /taskAuxBadgeStyle\(true\)/,
   "the question-mark reuses taskAuxBadgeStyle(true) like the task card attention badge",
 );
-assert.match(top, /<SubSessionIcon/, "the subagent marker moved up to the top row");
-assert.equal(icon.includes("SubSessionIcon"), false, "the subagent marker must leave the icon cell");
+// 子代理折角回到名字前的图标格（用户 2026-10-16 修正）：它是类型标识，不是状态徽标，
+// 所以上方那排对子代理整块不渲染。
+assert.match(icon, /<SubSessionIcon/, "the subagent marker returns to the icon cell before the name");
+assert.equal(top.includes("SubSessionIcon"), false, "the top row must not carry the subagent marker");
+// 子代理不渲染任何状态徽标：靠 top 组件开头的早退实现，不是靠条件包单个徽标。
+assert.match(top, /if \(isSubagent \|\| /, "子代理整块不渲染：上面那排对子代理直接 return null");
 assert.equal(icon.includes("ask_user"), false, "the question-mark must leave the icon cell");
 assert.equal(card.includes("session.awaiting_user"), false, "the orphan awaiting_user field must be gone");
 const listTypes = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/sessionListTypes.ts"), "utf8");
@@ -150,15 +156,20 @@ assert.equal(badges.includes("worktreeFinishedLabel"), false, "the badge strip n
 assert.match(top, /position: "absolute"/, "the top row must not occupy flow — the name and icons keep their places");
 assert.match(top, /bottom: "100%"/, "the row hangs above the session name, not below or beside it");
 assert.match(top, /left: 0/, "the row is left-aligned with the session name");
-// 一排全空就整块不渲染：空容器会在上方白占一段 gap。
-assert.match(top, /if \(!hasSessionTopBadges\(session, isSubagent\)\)/, "an empty top row renders nothing");
+// 一排全空就整块不渲染：空容器会在上方白占一段 gap。子代理直接 return null（它不渲染状态徽标）。
+assert.match(
+  top,
+  /if \(isSubagent \|\| !hasSessionTopBadges\(session, isSubagent\)\)/,
+  "an empty top row renders nothing",
+);
 // 徽标条空着也整块不渲染（防它自己被单独复用时留一段空 gap）。
 assert.match(badges, /if \(badges\.length === 0\)/, "an empty badge strip renders nothing");
 assert.equal(badges.includes('marginTop: "2px"'), false, "the badge strip no longer sits under the name");
 assert.equal(badges.includes("from \"../../app/"), false, "view layer must not import app/");
 assert.equal(badges.includes("services/"), false, "view layer must not import services/");
-// 会话行间距在三个列表容器里各写一份字面量（2026-10-16 用户要求调大几个 px，
-// 顺带把 worktree 标签头顶的空隙从 18px 拉到 22px）。改一处漏两处 = 列表之间不一致。
+// 徽标最坏情况顶端在本行上方 4px，选中底色拓位顶端在上方 7px；2px 行距时
+// 前一行仍留有 8px 盒内下内边距 + 2px 外内边距，所以不会压到前一行正文。
+// 三个会话列表保持原来的 2px 行距，避免为绝对定位的徽标白占真实布局高度。
 for (const listFile of ["SessionList", "MultiProjectSessionList", "ExternalSessionList"]) {
   const list = fs.readFileSync(
     path.resolve(import.meta.dirname, `../src/components/session/${listFile}.tsx`),
@@ -166,7 +177,7 @@ for (const listFile of ["SessionList", "MultiProjectSessionList", "ExternalSessi
   );
   assert.match(
     list,
-    /flexDirection: "column", gap: "6px"/,
+    /flexDirection: "column", gap: "2px"/,
     `${listFile} 的会话行容器间距必须与另外两个列表一致`,
   );
 }
@@ -177,7 +188,7 @@ for (const listFile of ["SessionList", "MultiProjectSessionList", "ExternalSessi
 const multiList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/MultiProjectSessionList.tsx"), "utf8");
 assert.match(
   multiList,
-  /gap: "6px", paddingTop: TOP_BADGE_LIFT_PX/,
+  /gap: "2px", paddingTop: TOP_BADGE_LIFT_PX/,
   "项目名与第一个会话之间必须有固定的借位留白，且随拓位高度同步",
 );
 const singleList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionList.tsx"), "utf8");
@@ -212,9 +223,15 @@ assert.match(taskRows, /taskAuxIconScaleStyle\(\)/, "the task card badge strip w
 // 下一个会话的位置全都不变，只是把上一行的留白借来当底色。
 assert.match(card, /hasSessionTopBadges\(session, isSubagent\)/, "the lift must use the same predicate as the top row");
 assert.match(card, /data-session-top-lift/, "the lift block must be identifiable");
-assert.match(card, /height: `\$\{TOP_BADGE_LIFT_PX\}px`/, "the lift height must come from the shared constant");
-assert.match(card, /background: "inherit"/, "the lift must follow the row background (incl. the imperative hover), not a second colour source");
-assert.match(card, /pointerEvents: "none"/, "the lift is decoration — it must not swallow clicks on the row above");
+assert.match(card, /selected && !editing && hasSessionTopBadges/, "only the selected row gets an upward lift");
+// 一个连续的绝对定位 surface 覆盖「徽标区 + 主卡」：不能拼一个独立顶盖，
+// 否则两个圆角盒会在接缝重叠、露出空白。仍不占流，行高不变。
+assert.match(card, /height: `calc\(100% \+ \$\{TOP_BADGE_LIFT_PX\}px \+ 1px\)`/, "the seamless surface height must use the shared lift constant");
+assert.match(card, /bottom: "-1px"/, "the seamless surface must cover the full selected card, not stop at its top edge");
+assert.match(card, /background: rowBackground/, "the seamless surface has the same single background source as the selected row");
+assert.match(card, /borderRadius: "8px"/, "the seamless surface has one coherent rounded outline");
+assert.match(card, /zIndex: -1/, "the surface stays behind the card content");
+assert.match(card, /isolation: "isolate"/, "the surface stacking stays inside its card");
 assert.match(top, /export const TOP_BADGE_LIFT_PX/, "the lift height lives next to the row it covers");
 // 拓展只能是 overlay：一旦改用 margin/padding 去撑，行高就真被占了。
 assert.match(card, /padding: editing \? "7px 0 7px 2px" : "7px 4px 7px 2px"/, "the row padding must not grow to pay for the lift");

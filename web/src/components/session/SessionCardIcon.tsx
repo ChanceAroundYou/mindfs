@@ -2,6 +2,7 @@ import React from "react";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
 import { shellBadgeLabel } from "./sessionListShared";
+import { SubSessionIcon } from "./sessionCardHelpers";
 import type { SessionItem } from "./sessionListTypes";
 
 /**
@@ -9,15 +10,11 @@ import type { SessionItem } from "./sessionListTypes";
  * 2026-10-16 从 SessionCard 整块抽出（原文 110–185 行），纯搬移、零行为变化 ——
  * 抽出来只为行数门禁：SessionCard 当时 492 行，离 500 的硬线只剩 8 行。
  *
- * 2026-10-16 二次收窄：子代理图标与等回答的问号**搬到会话名上方那排**去了
- * （SessionCardTopBadges，用户要求「小状态图标都放到名字上面，会话行下面不留东西」）。
- * 剩下这两个角标是「这条会话是什么」的常驻标识（跑在哪个 agent / 哪个 shell），
- * 不是状态，留在原位。
+ * 子代理的折角是「这条会话是什么」的常驻标识，不是运行状态：它固定放在名字前；
+ * 问号与其它状态徽标仍归 SessionCardTopBadges。子代理没有状态徽标排。
  *
  * 18px 的定位盒是角标的基准：两个角标都是 position:absolute 挂在右下角，
  * 所以盒子尺寸不能随手改，否则角标跟着漂。
- * 子代理行整格不渲染 —— 它的标记已经在名字上方，这里再放一个就是同一个信号响两遍；
- * 行缩进由 SessionCard 的 paddingLeft 保住。
  */
 export function SessionCardIcon({
   session,
@@ -30,8 +27,26 @@ export function SessionCardIcon({
   isSearchResult: boolean;
   nodeColor?: string;
 }) {
-  if (isSearchResult || isSubagent) {
+  if (isSearchResult) {
     return null;
+  }
+  if (isSubagent) {
+    return (
+      <span
+        style={{
+          width: "18px",
+          height: "18px",
+          flexShrink: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <SubSessionIcon
+          color={nodeColor ? `color-mix(in srgb, ${nodeColor} 78%, var(--text-secondary))` : undefined}
+        />
+      </span>
+    );
   }
   return (
     <span

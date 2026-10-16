@@ -134,6 +134,18 @@
   }
 }
 
+/* 空心版脉冲：委托态/等回答用的「不在跑但也没闲着」。
+   与实心版同一节奏（2.2s ease-in-out），差异只在一点：opacity 只压到 0.35 ——
+   空心圆整个是边框，压太狠会看不见，实心版的 0.18 是给实心块用的。 */
+@keyframes mindfs-hollow-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .mindfs-git-status-header {
   overflow: visible;
 }

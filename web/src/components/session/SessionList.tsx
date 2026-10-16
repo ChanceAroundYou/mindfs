@@ -393,7 +393,7 @@ export function SessionList({
             </div>
           ) : null
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {visibleSessions.map((row) => {
               if (row.type === "child-toggle") {
                 const loading = !!loadingChildren[row.parent.key];
@@ -472,6 +472,10 @@ export function SessionList({
         @keyframes mindfs-bound-pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 1.5px rgba(37,99,235,0.14); }
           50% { opacity: 0.18; box-shadow: 0 0 0 4px rgba(37,99,235,0.08); }
+        }
+        @keyframes mindfs-hollow-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.35; }
         }
         @keyframes spin {
           from { transform: rotate(0deg); }
