@@ -8,6 +8,8 @@ to resume their old TODOs or baselines.
 
 | [Delegated presence and flicker](delegated-presence-and-flicker.md) | Active | Delegated-parent hollow presence + switch-flash fix in progress |
 
+| [Backend file size 300/500 and folder reorg](backend-file-size-300-500.md) | Active | Backend Go files (incl. tests) on soft 300 / hard 500, split in place with same-package reorganization |
+
 ## Completed or superseded history
 
 | Plan | Status | Current interpretation |

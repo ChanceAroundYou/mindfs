@@ -164,6 +164,10 @@ groups:
       - server/internal/fs/fs.go
       - server/internal/api/http_window_test.go
       - server/internal/api/usecase/exchange_repeat_test.go
+      - server/internal/fs/root.go
+      - server/internal/fs/meta_dir.go
+      - server/internal/fs/read_decode.go
+      - server/internal/fs/file_meta.go
     tests:
       - server/internal/session/manager_cursor_test.go
       - server/internal/session/manager_cursor_migration_test.go
@@ -228,6 +232,16 @@ groups:
       # 手工探针（对着 home/pc 两台真实服务跑），是 fork 新增文件故须登记；
       # 但它是 files 不是 tests —— tests 栏只列门禁真会执行的用例（见下方注释）。
       - web/tests/cross-machine-account.behavior.mjs
+      - server/internal/auth/store_persist.go
+      - server/internal/auth/store_query.go
+      - server/internal/auth/store_mutate.go
+      - server/internal/commandexec/long_shell.go
+      - server/internal/commandexec/long_shell_command.go
+      - server/internal/commandexec/long_shell_output.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_idle.go
+      - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_config.go
     tests:
       - server/app/workspace_test.go
       - server/internal/api/workspace_test.go
@@ -279,6 +293,13 @@ groups:
       - web/src/hooks/useSessionStream.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/components/session/SessionViewer.tsx
+      - server/internal/agent/types/session_type.go
+      - server/internal/agent/types/external_import.go
+      - server/internal/agent/types/model.go
+      - server/internal/agent/types/event.go
+      - server/internal/agent/types/toolcall.go
+      - server/internal/agent/types/turn.go
+      - server/internal/agent/types/import_input.go
     tests:
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/api/stream_hub_user_message_test.go
@@ -419,6 +440,11 @@ groups:
       - server/internal/agent/claude/zz_replay_live_test.go
       - web/src/components/AgentSelector.tsx
       - web/src/components/AgentMenuList.tsx
+      - server/internal/agent/probe_types.go
+      - server/internal/agent/probe_status_query.go
+      - server/internal/agent/probe_status_caps.go
+      - server/internal/agent/probe_run.go
+      - server/internal/agent/probe_verify.go
     tests:
       - server/internal/agent/probe_models_test.go
       - server/internal/agent/claude/session_test.go
@@ -839,7 +865,7 @@ groups:
     symptom: "定时任务按错误的账户跑；提示词库跨账户串；更新按钮闪烁。"
     why: "定时任务与看板一样必须每账户一个实例（执行时用本账户的 session manager）；偏好是共享的（全账户），提示词/模板不共享；更新走主节点的控制面。"
     anchors:
-      - 'server/internal/webpush/service.go:CUSTOM(G-AJ)'
+      - 'server/internal/webpush/store.go:CUSTOM(G-AJ)'
       - 'server/internal/scheduled/tasks.go:BroadcastSessionCreated'
       - 'web/src/services/webPush.ts:controlPath("/api/web-push/'
       - 'web/src/components/agent/useCodexRateLimit.ts:fetchCodexRateLimits(agent, nodeId)'
@@ -858,6 +884,18 @@ groups:
       - web/src/services/codexRateLimits.ts
       - web/src/components/editor/PromptEditor.tsx
       - web/src/components/agent/CodexRateLimitIndicator.tsx
+      - server/internal/webpush/config.go
+      - server/internal/webpush/store.go
+      - server/internal/webpush/notify_payload.go
+      - server/internal/webpush/send.go
+      - server/internal/update/types.go
+      - server/internal/update/release_fetch.go
+      - server/internal/update/manifest.go
+      - server/internal/update/download.go
+      - server/internal/update/install.go
+      - server/internal/update/archive.go
+      - server/internal/update/version.go
+      - server/internal/update/webassets.go
     tests:
       - server/internal/preferences/store_test.go
       - server/internal/update/service_test.go
@@ -1049,6 +1087,9 @@ groups:
       # （web/src/services/launcherNodeSync.ts）已随 2026-10-08 那批删除。
       # 只能做文本级复活检测 —— 本仓库没有 ArkTS 构建环境，改它无法编译验证。
       - harmony/entry/src/main/ets/pages/Index.ets
+      - server/internal/agent/config_types.go
+      - server/internal/agent/config_shell.go
+      - server/internal/agent/config_defaults.go
     tests:
       - web/tests/upstream-removals.test.mjs
 
@@ -2103,7 +2144,7 @@ groups:
       - server/internal/api/appcontext.go:RunAgentStage
       - server/internal/api/ws.go:runSessionMessage
       - server/internal/agent/acp/process.go:SendMessage
-      - server/internal/agent/types/types.go:WithPromptTurnID
+      - server/internal/agent/types/turn.go:WithPromptTurnID
       - server/internal/session/types.go:CompactExchangeAux
       - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
