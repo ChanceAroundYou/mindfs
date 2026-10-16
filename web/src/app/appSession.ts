@@ -61,6 +61,8 @@ export type SessionItem = {
   related_files?: RelatedFile[];
   related_worktree?: RelatedWorktree | null;
   worktree_missing?: boolean;
+  /** 会话的工作目录（cwd），空 = 项目主 checkout。见 shared/sessionTypes.ts 的同名字段。 */
+  work_dir?: string;
   // aux_flags 是会话行的内容徽标数据源（G-AD）：toSessionItem 从列表 payload 透传，
   // 与 sessionListTypes.SessionItem 的同名字段同义（WS 增量另见 realtimeWsSessionMeta）。
   aux_flags?: SessionAuxFlags;
@@ -301,6 +303,8 @@ export function toSessionItem(
           : undefined,
     worktree_missing:
       typeof session?.worktree_missing === "boolean" ? session.worktree_missing : undefined,
+    // 白名单构造器：漏了这行，换过目录的会话在标题栏里就显示不出新目录。
+    work_dir: typeof session?.work_dir === "string" ? session.work_dir : undefined,
     aux_flags: normalizeSessionAuxFlags(session?.aux_flags),
     pending: typeof session?.pending === "boolean" ? session.pending : undefined,
     // 多节点同名项目：记录会话归属节点，选择会话时按节点路由

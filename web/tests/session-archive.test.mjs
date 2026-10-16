@@ -4,6 +4,7 @@ import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { readGoPackage } from "./go-source.mjs";
 
 /**
  * 归档：后端 archived=only 的列表过滤 + 前端字段透传。
@@ -106,7 +107,7 @@ test("归档面板只拉顶级会话（子会话已在归档时被删，这里�
 
 test("归档语义：只归档自己，子会话走删除", () => {
   // 后端 ArchiveSession 的返回值带出「被删掉的子会话」，供 handler 解绑任务。
-  const src = read("../server/internal/api/usecase/session_lifecycle.go");
+  const src = readGoPackage("server/internal/api/usecase");
   const start = src.indexOf("func (s *Service) ArchiveSession(");
   assert.ok(start >= 0, "usecase 应有 ArchiveSession");
   const body = src.slice(start, src.indexOf("\n}\n", start));
@@ -120,7 +121,7 @@ test("归档语义：只归档自己，子会话走删除", () => {
 
 test("归档 handler 用被删的子会话解绑任务", () => {
   // 子会话可能绑着别的任务，不解绑任务点进去就是空白（和 handleSessionDelete 同一套）。
-  const src = read("../server/internal/api/http_sessions.go");
+  const src = readGoPackage("server/internal/api");
   const start = src.indexOf("func (h *HTTPHandler) handleSessionArchive(");
   const body = src.slice(start, src.indexOf("\n}\n", start));
   assert.match(body, /out\.DeletedKeys/);

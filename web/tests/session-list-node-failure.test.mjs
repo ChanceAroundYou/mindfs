@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { test } from "vitest";
+import { readGoPackage } from "./go-source.mjs";
 
 test("session-list-node-failure", async () => {
 // 2026-10-02 三个缺陷的回归守卫：
@@ -22,11 +23,11 @@ const read = (rel) => fs.readFileSync(path.resolve(import.meta.dirname, "..", re
 // readRepo: 仓库根相对（tests → web → 仓库根）
 const readRepo = (rel) => fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", rel), "utf8");
 
-const appcontext = readRepo("server/internal/api/appcontext.go");
-const http = readRepo("server/internal/api/http.go");
-const httpSessions = readRepo("server/internal/api/http_sessions.go");
-const httpSessionDomain = `${http}\n${httpSessions}`;
-const scheduled = readRepo("server/internal/scheduled/tasks.go");
+// Go 侧按**包**读，不钉文件名：2026-10-16 的 B1–B10 拆分把 appcontext.go /
+// http.go / http_sessions.go 切成职责文件，实现没少、只是搬了家。
+const httpSessionDomain = readGoPackage("server/internal/api");
+const appcontext = httpSessionDomain;
+const scheduled = readGoPackage("server/internal/scheduled");
 const api = read("src/services/api.ts");
 const realtime = read("src/app/useRealtimeEvents.ts");
 const app = read("src/App.tsx");

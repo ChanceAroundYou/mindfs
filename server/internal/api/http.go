@@ -90,6 +90,9 @@ func (h *HTTPHandler) handleSessionRepoint(w http.ResponseWriter, r *http.Reques
 	var req struct {
 		RootID         string `json:"root_id"`
 		AgentSessionID string `json:"agent_session_id"`
+		// TargetPath 是会话搬过去之后干活的那个目录。留空 = 项目主 checkout（改造前唯一的目标）。
+		// 会话标题栏菜单的「修改目录」传它；wt-finish 那条收尾路径不传。
+		TargetPath string `json:"target_path"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
@@ -108,6 +111,7 @@ func (h *HTTPHandler) handleSessionRepoint(w http.ResponseWriter, r *http.Reques
 		RootID:         strings.TrimSpace(req.RootID),
 		Key:            key,
 		AgentSessionID: agentSessionID,
+		TargetPath:     strings.TrimSpace(req.TargetPath),
 	})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)

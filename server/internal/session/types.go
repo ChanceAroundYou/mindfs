@@ -35,6 +35,13 @@ type Session struct {
 	Exchanges        []Exchange       `json:"exchanges"`
 	RelatedFiles     []RelatedFile    `json:"related_files"`
 	RelatedWorktree  *RelatedWorktree `json:"related_worktree,omitempty"`
+	// WorkDir 是这个会话运行时的工作目录（cwd）。空 = 项目主 checkout。
+	//
+	// 与 RelatedWorktree 的区别是刻意的：RelatedWorktree 表达「这个会话属于哪个工作树」
+	// （任务收尾会清它、UI 按它显示工作树徽标），WorkDir 表达「它在哪个目录里干活」——
+	// 用户在标题栏菜单里手选一个目录时，只该改后者。两者混用会让一次纯换目录的操作
+	// 触发工作树收尾流程、并在会话上亮出一个并不存在的工作树徽标。
+	WorkDir string `json:"work_dir,omitempty"`
 	// Aux 是会话行的内容徽标数据源（G-AD）：ask_user/plan/todo/task/error。
 	// 与任务行的 kanban.TaskAuxFlags 同名同义，但按会话落盘 —— 无 task_id 的
 	// 普通聊天会话也有这份数据（任务行 aux 只写给有 task_id 的会话）。

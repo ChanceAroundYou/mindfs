@@ -77,9 +77,9 @@ function SessionCard({
   } = card;
 
   // 选中底色要不要向上拓展去包住名字上方那排徽标（用户 2026-10-16）。
-  // 徽标全隐藏时 false —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
+  // 徽标全隐藏时 0 —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
   // 也就不该拓出一块盖着空气的深色底。
-  const liftTopBackground = selected && !editing && hasSessionTopBadges(session, isSubagent);
+  const liftTop = selected && !editing && hasSessionTopBadges(session, isSubagent) ? TOP_BADGE_LIFT_PX : 0;
 
   return (
     <div
@@ -91,39 +91,23 @@ function SessionCard({
         padding: "2px 0",
         borderRadius: "8px",
         position: "relative",
-        isolation: "isolate",
-        // 菜单是行内浮层；isolate 把它限制在本行层叠上下文时，打开的行必须压过后续兄弟行。
-        zIndex: menuOpen ? 1 : 0,
         // 子代理的折角回到名字前：保留原有 10px 子层级缩进，和普通会话图标位一起布局。
         paddingLeft: isSubagent ? "10px" : 0,
       }}
     >
-      {liftTopBackground ? (
-        <span
-          aria-hidden="true"
-          data-session-top-lift=""
-          style={{
-            // 整行只画这一张底：从名字上方的徽标一直到内容盒底，没有两块圆角相接。
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: `calc(2px - ${TOP_BADGE_LIFT_PX}px)`,
-            bottom: "2px",
-            background: rowBackground,
-            borderRadius: "8px",
-            pointerEvents: "none",
-            zIndex: -1,
-          }}
-        />
-      ) : null}
       <div
+        data-session-top-lift={liftTop ? "" : undefined}
         style={{
           textAlign: "left" as const,
-          padding: editing ? "7px 0 7px 2px" : "7px 4px 7px 2px",
+          // 借位就是这一张底本身：负外边距把盒顶提上去，等量补进上内边距让名字留在原位，
+          // 外边距盒总高不变 —— 行高、行距、后面的会话都不动。
+          // 横向也就只到这里（不含时间列与 ⋯ 菜单），和没徽标的选中行同宽；
+          // 另起一块绝对定位的底会铺满整行，那才是「借位版选中框面积过大」。
+          marginTop: liftTop ? `-${liftTop}px` : 0,
+          padding: editing ? "7px 0 7px 2px" : `${7 + liftTop}px 4px 7px 2px`,
           borderRadius: "8px",
           border: "1px solid transparent",
-          // 有上方徽标的选中行由外层唯一 surface 着色，内容盒本身不再重复绘制。
-          background: liftTopBackground ? "transparent" : rowBackground,
+          background: rowBackground,
           flex: 1,
           minWidth: 0,
           display: "flex",

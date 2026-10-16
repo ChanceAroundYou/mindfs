@@ -21,6 +21,7 @@ import {
   setSessionArchived,
   syncExternalSession,
 } from "./sessionApi";
+import { repointSession } from "./sessionRepointApi";
 import { compactContext } from "./sessionContext";
 import {
   buildAnswerQuestionMessage,
@@ -360,6 +361,16 @@ class SessionService {
     nodeId?: string,
   ): Promise<Session | null> {
     return setSessionArchived(rootId, sessionKey, archived, nodeId);
+  }
+
+  /** 换会话的工作目录：转录跟着搬、related 清空、cwd 钉在新目录上。 */
+  async repointSession(
+    rootId: string,
+    sessionKey: string,
+    targetPath: string,
+    nodeId?: string,
+  ): Promise<{ session_key: string; agent_session_id: string } | null> {
+    return repointSession(rootId, sessionKey, targetPath, nodeId);
   }
 
   async forkSession(

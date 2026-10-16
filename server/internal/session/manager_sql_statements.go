@@ -14,7 +14,7 @@ const (
 	// CUSTOM(G-X): 不再 SELECT/写入 pinned_at —— 置顶的唯一权威是主节点的 pins 表
 	// （server/internal/pins）。两处一起断：只断一半会留下「写进去但读不回」的假退役。
 	selectSessionSQL = `
-	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
+	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, work_dir, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
 	FROM sessions`
 	deleteSessionSQL = `
 DELETE FROM sessions
@@ -24,8 +24,8 @@ DELETE FROM session_agent_bindings
 WHERE session_key = ?`
 	upsertSessionMetaSQL = `
 INSERT INTO sessions (
-		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, work_dir, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
 	type = excluded.type,
 	parent_session_key = excluded.parent_session_key,
@@ -38,6 +38,7 @@ ON CONFLICT(key) DO UPDATE SET
 	name = excluded.name,
 	related_files_json = excluded.related_files_json,
 	related_worktree_json = excluded.related_worktree_json,
+	work_dir = excluded.work_dir,
 	aux_ask_user_waiting = excluded.aux_ask_user_waiting,
 	aux_has_plan = excluded.aux_has_plan,
 	aux_has_todos = excluded.aux_has_todos,
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 	name TEXT NOT NULL,
 	related_files_json TEXT NOT NULL,
 	related_worktree_json TEXT NOT NULL DEFAULT '',
+	work_dir TEXT NOT NULL DEFAULT '',
 	aux_ask_user_waiting INTEGER NOT NULL DEFAULT 0,
 	aux_has_plan INTEGER NOT NULL DEFAULT 0,
 	aux_has_todos INTEGER NOT NULL DEFAULT 0,

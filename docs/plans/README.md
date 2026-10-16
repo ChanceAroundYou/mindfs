@@ -7,6 +7,7 @@ to resume their old TODOs or baselines.
 ## Active
 
 | [Delegated presence and flicker](delegated-presence-and-flicker.md) | Active | Delegated-parent hollow presence + switch-flash fix in progress |
+| [Session header menu and repoint](session-header-menu-repoint.md) | Active | Session title-bar ⋯ menu (change directory / rename / archive / delete) in progress |
 
 
 ## Completed or superseded history

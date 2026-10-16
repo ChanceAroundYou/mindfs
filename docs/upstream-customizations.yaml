@@ -693,12 +693,12 @@ groups:
       # 名字上方仅放 worktree / 问号 / aux 状态；子代理折角是类型标识，固定留在名字前。
       - 'web/src/components/session/SessionCardTopBadges.tsx:if (isSubagent || !hasSessionTopBadges(session, isSubagent))'
       - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_LIFT_PX'
-      # 只有选中行的底色向上拓展去包住状态徽标（不占实际高度）。
+      # 只有选中行的底色向上拓展去包住状态徽标：就是内容盒那一张底，负外边距提顶、
+      # 等量补进上内边距，名字不动、行高不变，横向也不比未借位的选中行宽。
       - 'web/src/components/session/SessionCard.tsx:selected && !editing && hasSessionTopBadges'
       - 'web/src/components/session/SessionCard.tsx:data-session-top-lift'
-      - 'web/src/components/session/SessionCard.tsx:top: `calc(2px - ${TOP_BADGE_LIFT_PX}px)`'
-      # 行内溢出菜单不是 portal；隔离层叠上下文时，打开的会话行必须高于后续兄弟行。
-      - 'web/src/components/session/SessionCard.tsx:zIndex: menuOpen ? 1 : 0'
+      - 'web/src/components/session/SessionCard.tsx:liftTop = selected && !editing'
+      - 'web/src/components/session/SessionCard.tsx:marginTop: liftTop ? `-${liftTop}px` : 0'
       # 子代理折角回到名字前；其它小图标缩到 worktree 标签大小。
       - 'web/src/components/task/taskStyles.ts:export function taskAuxIconScaleStyle'
       - 'web/src/components/session/SessionCardIcon.tsx:if (isSubagent)'
@@ -6069,7 +6069,7 @@ groups:
       - server/internal/api/http_tasks_begin_finish_helpers_test.go
       - server/internal/api/http_tasks_begin_finish_teardown_test.go
       - server/internal/api/http_tasks_begin_finish_agent_test.go
-      - server/internal/api/http_sessions_list.go
+
       - server/internal/api/http_sessions_detail.go
       - server/internal/api/http_sessions_actions.go
       - server/internal/api/http_sessions_external.go
@@ -6118,7 +6118,50 @@ groups:
       - server/internal/agent/codex/importer_transcript_test.go
       - server/internal/agent/codex/importer_tool_calls_test.go
       - server/internal/agent/codex/importer_scan_test.go
+      # 拆分的连带：前端源码守卫原先钉 Go 文件名（readFileSync("…/http.go")），
+      # 文件一拆就集体假红 —— 实现一行没少，只是搬了家。这个助手让守卫按**包**读，
+      # 判据回到「这段实现还在不在」。没有它，每次拆后端文件都要再修一遍守卫。
+      - web/tests/go-source.mjs
     anchors:
       - docs/agent/rules/backend/file-size.md:软线**：300 行
       - docs/plans/backend-file-size-300-500.md:B2
       - server/internal/session/types_aux_compact.go:CUSTOM(G-AT)
+      - web/tests/go-source.mjs:export function readGoPackage
+
+  - id: G-JB
+    title: 会话标题栏 ⋯ 菜单（修改目录 / 重命名 / 归档 / 删除）+ 会话工作目录 WorkDir
+    kind: feature
+    symptom: "从会话聊天面板里只能逛会话usement列表去改名/归档/删除/搬目录；换目录一旦用 repoint（fork 转录、 Moving worktree →主 checkout 时清 related、钉 cwd），前端 WorkDir 必须穿过 list/detail/ws 三处白名单，否则标题栏就显示不出新目录。"
+    why: "为正式 chat 面板的标题栏加 ⋯ 菜单（按钮 copied 于文件面板 FileTreeHeaderOverlays，菜单项复用 SessionCardOverflowMenu），最后一项「修改目录」下方灰字显示当前工作目录（长路径换行、目录不存在标红）。换目录复用新建项目的 LocalPanel 选路径控件，校验由 /api/local_dirs 404 完成。后端新增 Session.WorkDir（独立于 RelatedWorktree，避免触发工作树收尾徽标），并把 repoint 的目标目录抽成 RepointSessionInput.TargetPath（空 = 主 checkout，向后兼容 wt-finish）。 WorkDir  priority 于 RelatedWorktree，保证 cwd 语义准确。"
+    boundary: "只影响 services/session、shared/sessionTypes、appSession、realtimeWsSessionMeta 与 SessionViewerHeader/SessionMenu；API/会话库按账户分， controls 仍只在主节点。"
+    files:
+      - server/internal/session/types.go
+      - server/internal/session/manager_repoint.go
+      - server/internal/session/manager_related_files.go
+      - server/internal/session/manager_meta.go
+      - server/internal/session/manager_sql_statements.go
+      - server/internal/session/manager_sqlite.go
+      - server/internal/api/http.go
+      - server/internal/api/http_sessions_detail.go
+      - server/internal/api/ws_broadcast.go
+      - server/internal/api/http_sessions_list.go
+      - server/internal/api/ws_session_message.go
+      - server/internal/api/usecase/session_repoint.go
+      - web/src/components/session/SessionViewerHeader.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/sessionViewerTypes.ts
+      - web/src/app/useAppSessionView.tsx
+      - web/src/app/useAppViewComposition.ts
+      - web/src/app/appSession.ts
+      - web/src/app/realtimeWsSessionMeta.ts
+      - web/src/services/session/sessionService.ts
+      - web/src/shared/sessionTypes.ts
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+    tests:
+      - web/tests/session-header-menu.test.mjs
+      - server/internal/api/http_session_work_dir_test.go
+      - server/internal/session/manager_work_dir_test.go
+      - server/internal/api/usecase/session_repoint_target_test.go
+    anchors:
+      - 'server/internal/api/http_sessions_list.go:s.WorkDir'

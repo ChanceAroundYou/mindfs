@@ -344,6 +344,7 @@ func (h *HTTPHandler) sessionResponse(
 		"related_files":       s.RelatedFiles,
 		"related_worktree":    s.RelatedWorktree,
 		"worktree_missing":    s.RelatedWorktree.WorktreeMissing(),
+		"work_dir":            s.WorkDir,
 		"context_window":      contextWindow,
 		"pinned_at":           s.PinnedAt,
 		"archived_at":         s.ArchivedAt,

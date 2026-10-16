@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { test } from "vitest";
+import { readGoPackage } from "./go-source.mjs";
 
 test("task-panel-unification", async () => {
 const root = path.resolve(import.meta.dirname, "..");
@@ -25,10 +26,11 @@ const taskComposer = read("src/app/useTaskComposer.ts");
 const css = read("src/index.css");
 const boardView = read("src/components/TaskBoardView.tsx");
 const viteConfig = read("vite.config.ts");
-const serviceGo = ["service.go", "service_tasks.go"]
-  .map((file) => fs.readFileSync(path.join(root, `../server/internal/kanban/${file}`), "utf8"))
-  .join("\n");
-const templateStore = fs.readFileSync(path.join(root, "../server/internal/kanban/template_store.go"), "utf8");
+// Go 侧按**包**读，不钉文件名：2026-10-16 的 B1–B10 拆分把 service.go /
+// service_tasks.go 切成职责文件（service_run_moves.go、service_create.go…），
+// 实现没少、只是搬了家。
+const serviceGo = readGoPackage("server/internal/kanban");
+const templateStore = serviceGo;
 
 // 三张面板深度统一：任务模板编辑（新建+编辑同一个组件）、任务详情、新建任务
 // 都在编辑同一种东西（阶段定义 + prompt），以前各拼各的。

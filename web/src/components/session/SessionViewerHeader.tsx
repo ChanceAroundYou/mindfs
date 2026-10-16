@@ -2,8 +2,9 @@ import React from "react";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { useI18n } from "../../i18n";
+import { SessionHeaderMenu } from "./SessionHeaderMenu";
 
-export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDisplayName, displayName, isDelegating, isAwaitingAnswer, onRootClick }: any) {
+export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDisplayName, displayName, isDelegating, isAwaitingAnswer, onRootClick, menu }: any) {
   const { t } = useI18n();
   const accent = String(rootColor || "").trim() || "var(--accent-color)";
   // 两档空心共用同一个灯形态，只有文案不同（等回答 = 轮到你说话；委托 = 等子代理）。
@@ -23,6 +24,7 @@ export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDi
       fontWeight: 600,
       margin: 0,
       minWidth: 0,
+      flex: 1,
     }}
   >
     {rootId ? (
@@ -67,6 +69,10 @@ export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDi
       />
     ) : null}
   </h1>
+  {/* ⋯ 在 h1 之后：h1 撑满剩余宽度，菜单就贴在标题栏最右。
+      移动端 ViewHeader 会把 children 收进中间弹性容器，于是排布是
+      「⋯ 再外侧才是侧栏三横」，与文件面板逐字一致。 */}
+  {menu ? <SessionHeaderMenu {...menu} /> : null}
 </ViewHeader>
   );
 }

@@ -144,6 +144,32 @@ B8 记录：`claude/importer.go` 1398 → `importer.go` 240 + `importer_subagent
 不再拆（G-GK 刚拆过，按工具类型拆会把同一个归一化 switch 切成三份），登记在 TODO.md
 的「论证过边界、本轮及以后都不再拆」里。
 
+**收尾补漏（2026-10-16，同日晚）**：B10 只修了 **Go 侧**两处钉文件名的守卫，
+漏了 **前端侧**同样钉 Go 文件名的那批 —— 它们住在 `web/tests/`，由 Vitest 跑，
+`make test`（go test）根本扫不到，所以 B1–B10 期间一直是红的没人发现。
+`scripts/deploy-all.sh` 的门禁把 web 测试跑出来才暴露：7 个文件假红，
+实现一行没少，只是搬了家（`http.go` → `http_routes.go`、`stream_hub.go` →
+`stream_hub_build.go`、`appcontext.go` → `appcontext_broadcast.go`、
+`service.go` → `service_run_moves.go`、`http_sessions.go` → `http_sessions_detail.go`
+/ `http_sessions_actions.go`、`gitview/worktree_finish.go` → `worktree_merge.go`、
+`scheduled/tasks.go` → `tasks_runner.go`）。
+
+假红已用两个 worktree 证明与本次改动无关：`12a7f4e5`（B 系列之前）7 个全绿，
+`024c3dbe`（B10 完成）7 个全红。
+
+修法是新增 `web/tests/go-source.mjs` 的 `readGoPackage(relDir)`：按**包**读全部非测试
+`.go`，按文件名排序后拼接（顺序稳定，因为守卫里有按 `indexOf` 比先后的断言）。
+7 个文件改的只是「从哪儿读」，判据一条没动。改完逐条核对过包级读取不会让**负例**
+假红：`"branch", "-D"` 只出现在 `_test.go`（已被过滤）、`"merge", "--abort"` /
+`ReplayPending(rootID, clientID, …)` / `claudeModelSupportsEffortAt` / `if first.AutoAdvance`
+全包皆无、`respondJSONConditional(…"items": items)` 全包恰好 2 处（与断言相等）。
+`conditional-request.test.mjs` 的 `helpers.go` 保持单文件读 —— 那几条是带
+`[\s\S]{0,80}` 窗口的负例，摊到整包上会撞别的文件的无关代码而假红。
+
+涉及文件：`worktree-finish` / `upstream-restore` / `session-window` /
+`task-panel-unification` / `session-list-node-failure` / `conditional-request` /
+`session-archive` 七个 `.test.mjs` + 新增 `go-source.mjs`（登记在 G-IY）。
+
 ## 六、验收
 
 ```bash

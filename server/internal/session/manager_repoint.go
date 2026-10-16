@@ -111,6 +111,39 @@ func (m *Manager) ClearRelatedWorktree(_ context.Context, key string) (bool, err
 	return true, nil
 }
 
+// SetWorkDir 设置（空串 = 清除）会话的工作目录，返回是否真的改了。
+//
+// 与 RelatedWorktree 无关：那个是「属于哪个工作树」，这个是「在哪个目录里干活」。
+// 空串是合法值，代表「回项目主 checkout」，所以它没有 ClearRelatedWorktree 那种
+// 「拒绝空 path」的语义 —— 一次写入覆盖两种意图。
+func (m *Manager) SetWorkDir(_ context.Context, key, dir string) (bool, error) {
+	key = strings.TrimSpace(key)
+	dir = strings.TrimSpace(dir)
+	if key == "" {
+		return false, errors.New("session key required")
+	}
+	if dir != "" && !filepath.IsAbs(dir) {
+		return false, errors.New("work dir must be absolute")
+	}
+	if dir != "" {
+		dir = filepath.Clean(dir)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, err := m.getSessionUnsafe(key, 0)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(session.WorkDir) == dir {
+		return false, nil
+	}
+	session.WorkDir = dir
+	if err := m.upsertSessionMetaUnsafe(session); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (m *Manager) RepointAgentBinding(sessionKey, agent, previousAgentSessionID, agentSessionID string, cursor agenttypes.ExternalSessionCursor) error {
 	sessionKey = strings.TrimSpace(sessionKey)
 	agent = strings.TrimSpace(agent)

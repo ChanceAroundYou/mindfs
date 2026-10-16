@@ -34,6 +34,10 @@ export type SessionItem = {
   closed_at?: string;
   source?: string;
   related_files?: RelatedFile[];
+  /** 工作目录（cwd），空 = 项目主 checkout。标题栏菜单的「修改目录」行读它。 */
+  work_dir?: string;
+  /** 会话归属节点，跨节点会话的目录浏览要按它路由。 */
+  _nodeId?: string;
   exchange_aux?: Record<string, ExchangeAux[]>;
   // 正文块（CUSTOM(G-BH)，方案 §7）：与 exchange_aux 同形、同生命周期。
   blocks?: Record<string, SessionBlock[]>;
@@ -88,6 +92,12 @@ export type SessionViewerProps = {
   agents?: AgentStatus[];
   composerOverlayInset?: number;
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
+  /**
+   * 标题栏 ⋯ 菜单的全部 props（含 rename/archive/delete/repoint 回调与路径信息）。
+   * 由 useAppSessionView 组装 —— 那里才拿得到会话快照与 app 层 handler。
+   * null = 不渲染菜单（drawer 形态的 header 本就不渲染）。
+   */
+  headerMenu?: Record<string, unknown> | null;
 };
 
 export type AskUserQuestionOption = {

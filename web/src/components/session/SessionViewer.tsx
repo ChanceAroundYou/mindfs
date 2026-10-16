@@ -28,8 +28,6 @@ import {
   TurnTokenUsage,
 } from "./SessionViewerTokenViews";
 import {
-} from "./SessionViewerCards";
-import {
   extractUploadAttachments,
   formatAssistantExchangeMeta,
   formatTime,
@@ -76,7 +74,7 @@ function SessionViewerInner({
   onForkAgentMessage,
   agents,
   composerOverlayInset = 0,
-  scrollContainerRef,
+  scrollContainerRef, headerMenu = null,
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
   const { mergeVisibleExchanges, keepPersistedExchanges } = useSessionViewerExchangeProjection();
@@ -419,7 +417,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"} onRootClick={onRootClick} />
+        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"} onRootClick={onRootClick} menu={headerMenu} />
       )}
 
       {/* 滚动容器 */}

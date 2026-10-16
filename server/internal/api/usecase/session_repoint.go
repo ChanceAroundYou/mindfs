@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"mindfs/server/internal/agent/claude"
@@ -19,6 +21,9 @@ type RepointSessionInput struct {
 	// wt-finish 手里只有 CLAUDE_CODE_SESSION_ID 和 worktree 路径，没有 mindfs 的 key。
 	// Key 与 AgentSessionID 二选一，Key 优先。
 	AgentSessionID string
+	// TargetPath 是搬过去之后会话干活的那个目录（绝对路径）。留空 = 本项目主 checkout，
+	// 也就是改造前唯一的那个目标。给了就搬过去并把会话的工作目录钉在那儿（WorkDir）。
+	TargetPath string
 }
 
 type RepointSessionOutput struct {
@@ -103,9 +108,26 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	}
 	rootAbs, _ := root.RootDir()
 
-	worktreePath := sessionRuntimeRootPathFor(current)
-	if worktreePath == "" {
-		return out, errors.New("session is not bound to a worktree")
+	// 目标目录：显式给了就用它（校验过再动手），没给就是主 checkout —— 与改造前同义。
+	oldDir := sessionRuntimeRootPathFor(current)
+	currentDir := oldDir
+	if currentDir == "" {
+		currentDir = rootAbs
+	}
+	targetAbs := rootAbs
+	if strings.TrimSpace(in.TargetPath) != "" {
+		targetAbs, err = validateRepointTarget(in.TargetPath)
+		if err != nil {
+			return out, err
+		}
+	}
+	if targetAbs == "" {
+		return out, errors.New("project root path unavailable")
+	}
+	// 已经在目标目录里就什么都不做。继续往下走会 fork 出一份新转录、换掉 agent session id、
+	// 清掉工作树归属 —— 全是副作用，而用户看到的目录一个字都没变。宁可直说。
+	if filepath.Clean(targetAbs) == filepath.Clean(currentDir) {
+		return out, fmt.Errorf("会话已经在这个目录里：%s", filepath.Clean(currentDir))
 	}
 
 	// 掐断活进程之前先确认转录还在：RepointTranscript 最主要的失败原因就是「找不到
@@ -121,8 +143,8 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		pool.Close(agentPoolSessionKey(key, agentName))
 	}
 
-	// 2+3. fork 出新 id 并把转录搬进主 checkout 的 slug 目录。
-	moved, err := claude.RepointTranscript(rootAbs, binding.AgentSessionID)
+	// 2+3. fork 出新 id 并把转录搬进目标目录的 slug 目录。
+	moved, err := claude.RepointTranscript(targetAbs, binding.AgentSessionID)
 	if err != nil {
 		return out, err
 	}
@@ -140,10 +162,31 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		return out, err
 	}
 
-	// 5. 解除 worktree 归属：此后 sessionRuntimeRootPath 返回空，运行时 cwd 回到主 checkout。
+	// 5. 解除 worktree 归属：此后 sessionRuntimeRootPath 不再因工作树而指向旧目录。
 	cleared, err := manager.ClearRelatedWorktree(ctx, key)
 	if err != nil {
 		return out, err
+	}
+
+	// 5b. 旧工作树里的 related 条目清掉：那些路径已经不在会话干活的地方了（目录多半已被删），
+	// 留着会让「相关文件」面板指着一堆不存在的路径。只在旧目录确实是工作树时才清 ——
+	// 从主 checkout 搬走时那批文件还在原地，是有效条目。
+	if oldDir != "" {
+		if removed, err := manager.RemoveRelatedFilesUnder(ctx, key, oldDir); err != nil {
+			log.Printf("[session/repoint] clear.related.error root=%s session=%s dir=%s err=%v", strings.TrimSpace(in.RootID), key, oldDir, err)
+		} else if removed > 0 {
+			log.Printf("[session/repoint] clear.related root=%s session=%s dir=%s removed=%d", strings.TrimSpace(in.RootID), key, oldDir, removed)
+		}
+	}
+
+	// 5c. 把会话的工作目录钉在目标上。目标是主 checkout 时写空串 —— 空就是「回主 checkout」，
+	// 别在库里留一条与项目目录同义的冗余路径（项目改名/搬盘时它会变成假的）。
+	workDir := targetAbs
+	if filepath.Clean(targetAbs) == filepath.Clean(rootAbs) {
+		workDir = ""
+	}
+	if _, err := manager.SetWorkDir(ctx, key, workDir); err != nil {
+		log.Printf("[session/repoint] set.work_dir.error root=%s session=%s dir=%s err=%v", strings.TrimSpace(in.RootID), key, workDir, err)
 	}
 
 	// 6. 清掉全部 native id（方案 §14 C1）。
@@ -172,9 +215,9 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	// 任务侧该清的时候由收尾流程清：FinishTaskWorktree 第 4 步本来就会 ClearWorktreeRefs
 	//（worktree_finish.go），语义正确，也不需要谁来代劳。
 
-	log.Printf("[session/repoint] done root=%s session=%s agent=%s old=%s new=%s transcript=%s bytes=%d worktree=%s",
+	log.Printf("[session/repoint] done root=%s session=%s agent=%s old=%s new=%s transcript=%s bytes=%d from=%s to=%s",
 		strings.TrimSpace(in.RootID), key, agentName, binding.AgentSessionID, moved.AgentSessionID,
-		moved.TranscriptPath, moved.TranscriptBytes, worktreePath)
+		moved.TranscriptPath, moved.TranscriptBytes, currentDir, targetAbs)
 
 	return RepointSessionOutput{
 		SessionKey:             key,
@@ -186,10 +229,43 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	}, nil
 }
 
+// validateRepointTarget 校验用户手填的目标目录，返回 Clean 过的绝对路径。
+//
+// 只做「能不能当工作目录用」这一件事：绝对路径、存在、是目录。刻意不校验「是不是 git 仓库」
+// 或「是不是本项目下的目录」—— 换目录的用处之一正是把会话搬到项目之外（比如另一个 checkout），
+// 而 claude 的转录 slug 只跟 cwd 字符串有关，跟仓库与否无关。
+func validateRepointTarget(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("目标目录不能为空")
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("目标目录必须是绝对路径：%s", path)
+	}
+	clean := filepath.Clean(path)
+	info, err := os.Stat(clean)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("目标目录不存在：%s", clean)
+		}
+		return "", fmt.Errorf("目标目录不可用：%s（%v）", clean, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("目标不是目录：%s", clean)
+	}
+	return clean, nil
+}
+
 // sessionRuntimeRootPathFor 与 api 包里的 sessionRuntimeRootPath 同口径：空 = 主 checkout。
 // 这里复制而不是跨包引用，是因为 ws.go 那个在 api 包、且带 websocket 相关上下文。
 func sessionRuntimeRootPathFor(current *session.Session) string {
-	if current == nil || current.RelatedWorktree == nil {
+	if current == nil {
+		return ""
+	}
+	if workDir := strings.TrimSpace(current.WorkDir); workDir != "" {
+		return workDir
+	}
+	if current.RelatedWorktree == nil {
 		return ""
 	}
 	if strings.TrimSpace(current.TaskID) == "" && strings.TrimSpace(current.Source) != "worktree" {

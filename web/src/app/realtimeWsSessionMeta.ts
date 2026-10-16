@@ -99,6 +99,11 @@ export function createSessionMetaHandlers(
                 payload.session.related_worktree !== undefined
                   ? payload.session.related_worktree
                   : (cached as any).related_worktree,
+              // work_dir 与 related_worktree 同一合并语义：payload 带才覆盖，不带沿用缓存。
+              work_dir:
+                typeof payload.session.work_dir === "string"
+                  ? payload.session.work_dir
+                  : (cached as any).work_dir,
               // worktree_missing 与 aux_flags 都是服务端派生：payload 带才覆盖，
               // 不带（旧广播/部分更新）沿用缓存 —— 与 related_worktree 同一合并语义。
               worktree_missing:
@@ -171,6 +176,10 @@ export function createSessionMetaHandlers(
                       payload.session.related_worktree !== undefined
                         ? payload.session.related_worktree
                         : (prev as any).related_worktree,
+                    work_dir:
+                      typeof payload.session.work_dir === "string"
+                        ? payload.session.work_dir
+                        : (prev as any).work_dir,
                     worktree_missing:
                       typeof payload.session.worktree_missing === "boolean"
                         ? payload.session.worktree_missing

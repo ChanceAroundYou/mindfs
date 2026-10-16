@@ -4,6 +4,9 @@ import type { ManagedRootPayload } from "./appMisc";
 import type { AgentStatus } from "../services/agents";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { useSessionPending } from "./useSessionPending";
+import { sessionService } from "../services/session/sessionService";
+import { promptDialog } from "../services/dialog";
+import { useI18n } from "../i18n/index";
 
 /**
  * 主对话区那一个 <SessionViewer>，连同它的 key 与全部回传回调。
@@ -27,6 +30,10 @@ export type UseAppSessionViewParams = {
   handleAskUserAnswer: (input: { rootId: string; sessionKey: string; agent?: string; toolUseId: string; answers: Record<string, string>; }) => Promise<void>;
   handleEditUserMessage: (content: string) => void;
   handleForkAgentMessage: (rootID: string | null | undefined, sessionKey: string | null | undefined, seq: number) => Promise<void>;
+  handleRenameSession: (session: SessionItem, nextName: string) => Promise<boolean | void>;
+  handleArchiveSession: (session: SessionItem, archived: boolean) => Promise<boolean | void>;
+  handleDeleteSession: (session: SessionItem) => Promise<void>;
+  getNodeIdForRoot: (rootId: string) => string | undefined;
 };
 
 /**
@@ -43,7 +50,64 @@ export type UseAppSessionViewParams = {
  * 不该自己拼键。
  */
 export function useAppSessionView(params: UseAppSessionViewParams) {
-  const { selectedSessionSnapshot, selectedSessionPresence = "idle", availableAgents, slashCommandResultForSession, selectedSession, currentRootId, sessionViewerComposerOverlayInset, selectedSessionLoading, getRootDisplayName, getDisplayNodeColor, managedRootByIdRef, gitFileStatsByPath, handleSelectedSessionFileClick, actionHandlers, handleRemoveSessionRelatedFile, handleAskUserAnswer, handleEditUserMessage, handleForkAgentMessage } = params;
+  const { selectedSessionSnapshot, selectedSessionPresence = "idle", availableAgents, slashCommandResultForSession, selectedSession, currentRootId, sessionViewerComposerOverlayInset, selectedSessionLoading, getRootDisplayName, getDisplayNodeColor, managedRootByIdRef, gitFileStatsByPath, handleSelectedSessionFileClick, actionHandlers, handleRemoveSessionRelatedFile, handleAskUserAnswer, handleEditUserMessage, handleForkAgentMessage, handleRenameSession, handleArchiveSession, handleDeleteSession, getNodeIdForRoot } = params;
+  const { t } = useI18n();
+
+  // 标题栏 ⋯ 菜单：会话对象取快照（它有 work_dir / agent），root 取会话自己的 root
+  // 再退回当前项目 —— 与下面 rootId 的算法同口径，别用两套。
+  const headerMenuRootId = selectedSession?.root_id || currentRootId;
+  const headerMenuNodeId =
+    String((selectedSessionSnapshot as any)?._nodeId || "") ||
+    (headerMenuRootId ? getNodeIdForRoot(headerMenuRootId) : "");
+  const headerMenu = selectedSessionSnapshot
+    ? {
+        agent: selectedSessionSnapshot.agent,
+        rootId: headerMenuRootId,
+        nodeId: headerMenuNodeId,
+        rootPath:
+          managedRootByIdRef.current[headerMenuRootId || ""]?.root_path || null,
+        workDir: selectedSessionSnapshot.work_dir,
+        archived: !!selectedSession?.archived_at,
+        // 重命名走应用内输入弹窗（视图层不许直接调 dialog 服务，所以这里做）。
+        onRename: () => {
+          void (async () => {
+            const next = await promptDialog({
+              message: t("sessionList.rename"),
+              defaultValue:
+                selectedSessionSnapshot.name ||
+                selectedSessionSnapshot.key ||
+                selectedSessionSnapshot.session_key ||
+                "",
+              confirmLabel: t("sessionList.confirmRename"),
+              cancelLabel: t("sessionList.cancelRename"),
+            });
+            if (next === null) return;
+            void handleRenameSession(selectedSessionSnapshot, next);
+          })();
+        },
+        onArchive: (archived: boolean) => {
+          void handleArchiveSession(selectedSessionSnapshot, archived);
+        },
+        onDelete: () => {
+          void handleDeleteSession(selectedSessionSnapshot);
+        },
+        // 换目录：搬转录 + 清 related + 钉新 cwd 由后端一次做完，成功后服务端广播
+        // session.repointed，前端靠那条帧失效重拉（realtimeWsHandlers 已消费）。
+        // 这里不自己刷新视图，避免与广播打架出两份状态。
+        onRepoint: async (targetPath: string) => {
+          if (!headerMenuRootId) return;
+          const key =
+            selectedSessionSnapshot.key || selectedSessionSnapshot.session_key || "";
+          if (!key) return;
+          await sessionService.repointSession(
+            headerMenuRootId,
+            key,
+            targetPath,
+            headerMenuNodeId,
+          );
+        },
+      }
+    : null;
 
   const sessionView = (
     <SessionViewer
@@ -96,6 +160,7 @@ export function useAppSessionView(params: UseAppSessionViewParams) {
       }
       onAskUserAnswer={handleAskUserAnswer}
       onEditUserMessage={handleEditUserMessage}
+      headerMenu={headerMenu}
       onForkAgentMessage={(seq) =>
         void handleForkAgentMessage(
           selectedSession?.root_id || currentRootId,

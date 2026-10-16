@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { test } from "vitest";
+import { readGoPackage } from "./go-source.mjs";
 
 test("session-window", async () => {
 // overlay 判定由 src/shared/sessionOverlay.ts 的纯函数实现。
@@ -16,10 +17,6 @@ const sessionViewerProjectionPath = path.resolve(import.meta.dirname, "../src/co
 const sessionWindowingPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionWindowing.ts");
 const targetSeqScrollPath = path.resolve(import.meta.dirname, "../src/components/session/useTargetSeqScroll.ts");
 const viewerControlsPath = path.resolve(import.meta.dirname, "../src/components/session/SessionViewerFloatingControls.tsx");
-const managerPath = path.resolve(import.meta.dirname, "../../server/internal/session/manager.go");
-const managerWindowPath = path.resolve(import.meta.dirname, "../../server/internal/session/manager_window_reads.go");
-const httpPath = path.resolve(import.meta.dirname, "../../server/internal/api/http.go");
-const httpSessionsPath = path.resolve(import.meta.dirname, "../../server/internal/api/http_sessions.go");
 
 const sessionSrc = [
   ...fs.readdirSync(sessionServiceDir)
@@ -38,11 +35,13 @@ function buildEvictFrom(toPersistentSession) {
   return (exchanges) =>
     toPersistentSession({ key: "probe", exchanges, exchange_aux: {} }).exchanges;
 }
-const managerSrc = fs.readFileSync(managerPath, "utf8");
-const managerWindowSrc = fs.readFileSync(managerWindowPath, "utf8");
-const httpSrc = fs.readFileSync(httpPath, "utf8");
-const httpSessionsSrc = fs.readFileSync(httpSessionsPath, "utf8");
-const httpSessionContract = `${httpSrc}\n${httpSessionsSrc}`;
+// Go 侧按**包**读，不钉文件名：2026-10-16 的 B1–B10 拆分把 manager.go /
+// http.go / http_sessions.go 切成了职责文件（manager_window_reads.go、
+// http_sessions_detail.go…），实现没少、只是搬了家。
+const managerSrc = readGoPackage("server/internal/session");
+const managerWindowSrc = managerSrc;
+const httpSessionContract = readGoPackage("server/internal/api");
+const httpSessionsSrc = httpSessionContract;
 
 // ── session service/session domain 导出与隔离 ──────────────────────────────────────────────
 assert.match(sessionSrc, /export type SessionWindowMeta/, "SessionWindowMeta type missing");

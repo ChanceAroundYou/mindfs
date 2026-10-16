@@ -138,6 +138,7 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		`ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN task_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN related_worktree_json TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN work_dir TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN aux_ask_user_waiting INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN aux_has_plan INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN aux_has_todos INTEGER NOT NULL DEFAULT 0`,

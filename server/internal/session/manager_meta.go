@@ -106,6 +106,7 @@ func sessionMetaUpsertArgs(session *Session) ([]any, error) {
 		session.Name,
 		string(relatedFilesJSON),
 		relatedWorktreeJSON,
+		strings.TrimSpace(session.WorkDir),
 		boolToSQLiteInt(session.Aux.AskUserWaiting),
 		boolToSQLiteInt(session.Aux.HasPlan),
 		boolToSQLiteInt(session.Aux.HasTodos),
@@ -149,6 +150,7 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		name                string
 		relatedFilesJSON    string
 		relatedWorktreeJSON string
+		workDir             string
 		auxAskUserWaiting   int
 		auxHasPlan          int
 		auxHasTodos         int
@@ -174,6 +176,7 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		&name,
 		&relatedFilesJSON,
 		&relatedWorktreeJSON,
+		&workDir,
 		&auxAskUserWaiting,
 		&auxHasPlan,
 		&auxHasTodos,
@@ -199,6 +202,7 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		Shell:            shell,
 		PlanMode:         planMode != 0,
 		Name:             name,
+		WorkDir:          workDir,
 		Exchanges:        []Exchange{},
 		RelatedFiles:     []RelatedFile{},
 		Aux: SessionAuxFlags{
@@ -281,6 +285,7 @@ func normalizeSessionMeta(s *Session) {
 	s.ParentSessionKey = strings.TrimSpace(s.ParentSessionKey)
 	s.ParentToolCallID = strings.TrimSpace(s.ParentToolCallID)
 	s.Source = strings.TrimSpace(s.Source)
+	s.WorkDir = strings.TrimSpace(s.WorkDir)
 }
 
 var errSessionNotFound = errors.New("session not found")

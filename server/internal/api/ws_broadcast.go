@@ -78,28 +78,36 @@ func (h *WSHandler) broadcastSessionMetaUpdated(rootID string, sess *session.Ses
 		Type: "session.meta.updated",
 		Payload: map[string]any{
 			"root_id": rootID,
-			"session": map[string]any{
-				"key":                 sess.Key,
-				"type":                sess.Type,
-				"parent_session_key":  sess.ParentSessionKey,
-				"parent_tool_call_id": sess.ParentToolCallID,
-				"source":              sess.Source,
-				"task_id":             sess.TaskID,
-				"name":                sess.Name,
-				"model":               sess.Model,
-				"mode":                session.InferModeFromSession(sess),
-				"effort":              session.InferEffortFromSession(sess),
-				"fast_service":        session.InferFastServiceFromSession(sess),
-				"plan_mode":           sess.PlanMode,
-				"related_worktree":    sess.RelatedWorktree,
-				"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
-				"aux_flags":           sess.Aux.AuxFlagsPayload(),
-				"pinned_at":           sess.PinnedAt,
-				"updated_at":          sess.UpdatedAt,
-			},
+			"session": sessionMetaUpdatedPayload(sess),
 		},
 	}
 	h.broadcastWS(resp)
+}
+
+// sessionMetaUpdatedPayload 是 session.meta.updated 的会话体白名单。抽成函数是为了
+// 能被测试直接调用 —— 它与会话列表/详情两处 payload 是**各自独立**的白名单，
+// 加字段时漏掉任何一处都只会静默少一个字段（见 http_session_work_dir_test.go）。
+func sessionMetaUpdatedPayload(sess *session.Session) map[string]any {
+	return map[string]any{
+		"key":                 sess.Key,
+		"type":                sess.Type,
+		"parent_session_key":  sess.ParentSessionKey,
+		"parent_tool_call_id": sess.ParentToolCallID,
+		"source":              sess.Source,
+		"task_id":             sess.TaskID,
+		"name":                sess.Name,
+		"model":               sess.Model,
+		"mode":                session.InferModeFromSession(sess),
+		"effort":              session.InferEffortFromSession(sess),
+		"fast_service":        session.InferFastServiceFromSession(sess),
+		"plan_mode":           sess.PlanMode,
+		"related_worktree":    sess.RelatedWorktree,
+		"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
+		"work_dir":            sess.WorkDir,
+		"aux_flags":           sess.Aux.AuxFlagsPayload(),
+		"pinned_at":           sess.PinnedAt,
+		"updated_at":          sess.UpdatedAt,
+	}
 }
 
 func (h *WSHandler) broadcastAgentStatusChange(status agent.Status) {

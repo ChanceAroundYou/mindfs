@@ -396,7 +396,15 @@ func (h *WSHandler) startNextQueuedSessionMessage(rootID, key string) {
 }
 
 func sessionRuntimeRootPath(current *session.Session) string {
-	if current == nil || current.RelatedWorktree == nil {
+	if current == nil {
+		return ""
+	}
+	// WorkDir 优先：它是用户在会话菜单里显式选定的工作目录，比工作树归属更直接。
+	// 两者同时存在时以它为准（repoint 换目录后 RelatedWorktree 已被清掉，正常不会并存）。
+	if workDir := strings.TrimSpace(current.WorkDir); workDir != "" {
+		return workDir
+	}
+	if current.RelatedWorktree == nil {
 		return ""
 	}
 	if strings.TrimSpace(current.TaskID) == "" && strings.TrimSpace(current.Source) != "worktree" {

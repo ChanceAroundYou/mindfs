@@ -115,6 +115,13 @@ export type Session = {
   };
   related_files?: RelatedFile[];
   related_worktree?: RelatedWorktree | null;
+  /**
+   * work_dir 是这个会话运行时的工作目录（cwd），空 = 项目主 checkout。
+   * 与 related_worktree 是两件事：后者表达「属于哪个工作树」（任务收尾会清它、
+   * 列表按它显示工作树徽标），前者表达「在哪个目录里干活」，由标题栏菜单的
+   * 「修改目录」写入。两者同时存在时以 work_dir 为准。
+   */
+  work_dir?: string;
   // worktree_missing 是派生状态（目录被删了）：后端按需计算、不落库（G-AD 列表透传）。
   worktree_missing?: boolean;
   // aux_flags 是会话行的内容徽标数据源（G-AD）：ask_user/plan/todo/task/error，

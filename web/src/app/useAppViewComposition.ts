@@ -187,7 +187,8 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     currentRootId, sessionViewerComposerOverlayInset, selectedSessionLoading, getRootDisplayName,
     getDisplayNodeColor, managedRootByIdRef, gitFileStatsByPath, handleSelectedSessionFileClick,
     actionHandlers, handleRemoveSessionRelatedFile, handleAskUserAnswer, handleEditUserMessage,
-    handleForkAgentMessage,
+    handleForkAgentMessage, handleRenameSession, handleArchiveSession, handleDeleteSession,
+    getNodeIdForRoot,
   });
 
 

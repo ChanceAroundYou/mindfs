@@ -138,6 +138,62 @@ func (m *Manager) RecordRelatedOutputFile(ctx context.Context, key string, file 
 	})
 }
 
+// RemoveRelatedFilesUnder 清掉落在 dir 之下（含 dir 自身）的 related 条目。
+//
+// 用途只有一个：repoint 换目录之后，旧工作树里那批文件已经不在会话干活的地方了
+// （目录多半已被删），留着它们会让「相关文件」面板指向一堆不存在的路径。按前缀删，
+// 不按 identity 逐条删 —— 调用方手里只有旧目录，没有那批条目的 head/kind。
+// 判前缀时两侧都先 Clean 并补上分隔符，避免 /a/bc 被 /a/b 误伤。
+func (m *Manager) RemoveRelatedFilesUnder(_ context.Context, key, dir string) (int, error) {
+	key = strings.TrimSpace(key)
+	dir = strings.TrimSpace(dir)
+	if key == "" {
+		return 0, errors.New("session key required")
+	}
+	if dir == "" || !filepath.IsAbs(dir) {
+		return 0, errors.New("absolute directory required")
+	}
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, err := m.getSessionUnsafe(key, 0)
+	if err != nil {
+		return 0, err
+	}
+	next := make([]RelatedFile, 0, len(session.RelatedFiles))
+	removed := 0
+	for _, item := range session.RelatedFiles {
+		if relatedFileUnderDir(item, prefix) {
+			removed++
+			continue
+		}
+		next = append(next, item)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	session.RelatedFiles = next
+	if err := m.upsertSessionMetaUnsafe(session); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
+// relatedFileUnderDir：Path 或 RepoPath 任一落在 dir 下就算命中。工作树里记的条目
+// 两个字段都是工作树路径（RepoPath = 那个工作树的仓库根），任一个命中都该清。
+func relatedFileUnderDir(file RelatedFile, prefix string) bool {
+	for _, candidate := range []string{file.Path, file.RepoPath} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || !filepath.IsAbs(candidate) {
+			continue
+		}
+		if strings.HasPrefix(filepath.Clean(candidate)+string(filepath.Separator), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func relatedFileIdentity(file RelatedFile) string {
 	return strings.Join([]string{
 		strings.TrimSpace(file.RepoKind),

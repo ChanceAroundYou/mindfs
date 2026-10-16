@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { readGoPackage } from "./go-source.mjs";
 
 // 收尾（wt-finish 的服务端那一半）的接线契约。
 // 钉的是「结构对不对」：按钮长在哪、什么条件下给、冲突走哪条路。真 git 的行为
@@ -15,11 +16,14 @@ const panel = read("src/components/TaskDetailPanel.tsx");
 const panelHook = read("src/components/task/useTaskDetailPanel.ts");
 const app = read("src/App.tsx");
 const tasks = read("src/services/tasks.ts");
-const gitviewFinish = read("../server/internal/gitview/worktree_finish.go");
-const kanbanFinish = read("../server/internal/kanban/worktree_finish.go");
-const serviceSrc = read("../server/internal/kanban/service.go");
-const httpTasks = read("../server/internal/api/http_tasks.go");
-const httpRoutes = read("../server/internal/api/http.go");
+// Go 侧一律按**包**读，不钉文件名：2026-10-16 的 B1–B10 拆分把
+// worktree_finish.go / service.go / http.go 切成了职责文件，实现一行没少、
+// 只是搬了家，钉文件名的守卫集体假红。判据是「这段实现还在不在」。
+const gitviewFinish = readGoPackage("server/internal/gitview");
+const kanbanFinish = readGoPackage("server/internal/kanban");
+const serviceSrc = kanbanFinish;
+const httpTasks = readGoPackage("server/internal/api");
+const httpRoutes = httpTasks;
 const zh = read("src/i18n/locales/zh-CN.ts");
 const en = read("src/i18n/locales/en-US.ts");
 

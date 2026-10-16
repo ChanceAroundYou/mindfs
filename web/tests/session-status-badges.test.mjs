@@ -225,36 +225,35 @@ const taskRows = fs.readFileSync(path.resolve(import.meta.dirname, "../src/compo
 assert.match(taskRows, /taskAuxIconScaleStyle\(\)/, "the task card badge strip wraps its icons in the scale");
 
 // ── 7.5 选中底色向上拓展，包住名字上方那排徽标（用户 2026-10-16）──
-// 拓展块绝对定位挂在盒顶之上（bottom:100%），所以**不占实际高度** —— 行高、行距、
-// 下一个会话的位置全都不变，只是把上一行的留白借来当底色。
+// 借位 = 内容盒这一张底自己长高：负外边距把盒顶提上去，等量补进上内边距让名字留在原位，
+// 外边距盒总高不变 —— 行高、行距、后面会话的位置全都不动，只是把上一行的留白借来当底色。
 assert.match(card, /hasSessionTopBadges\(session, isSubagent\)/, "the lift must use the same predicate as the top row");
-assert.match(card, /data-session-top-lift/, "the lift block must be identifiable");
+assert.match(card, /data-session-top-lift/, "the lift must be identifiable on the box it grows");
 assert.match(card, /selected && !editing && hasSessionTopBadges/, "only the selected row gets an upward lift");
-// 一个连续的绝对定位 surface 放在**外层行**：从徽标区到内容盒底只有一次绘制，
-// 内容盒透明，不能再以负像素扩张另一张底，否则又会出现接缝、圆角漏底与重叠。
-assert.match(card, /top: `calc\(2px - \$\{TOP_BADGE_LIFT_PX\}px\)`/, "the outer surface must begin exactly at the shared lift height");
-assert.match(card, /bottom: "2px"/, "the outer surface must end at the row content boundary");
-assert.match(card, /background: liftTopBackground \? "transparent" : rowBackground/, "the inner card must not paint a second selected background");
-assert.match(card, /background: rowBackground/, "the outer surface uses the selected row background");
-assert.match(card, /borderRadius: "8px"/, "the outer surface has one coherent rounded outline");
-assert.match(card, /zIndex: -1/, "the surface stays behind the row content");
-assert.match(card, /isolation: "isolate"/, "the surface stacking stays inside its row");
-assert.match(card, /zIndex: menuOpen \? 1 : 0/, "an open overflow menu must elevate its row above later session siblings");
-assert.equal(card.includes('left: "-1px"'), false, "the old negative-pixel surface expansion must be gone");
-assert.equal(card.includes('bottom: "-1px"'), false, "the old negative-pixel surface expansion must be gone");
+// 只能有**一个**绘制面。另起一块绝对定位的底会横向铺满整行（含时间列与 ⋯ 菜单），
+// 面积比未借位的选中行大一圈 —— 那正是用户 2026-10-16 报的「借位版选中框面积过大」。
+assert.equal(card.split("background: rowBackground").length - 1, 1, "the selected row paints exactly one background surface");
+assert.match(card, /marginTop: liftTop \? `-\$\{liftTop\}px` : 0/, "the lift is a negative margin on the content box itself");
+assert.match(card, /`\$\{7 \+ liftTop\}px 4px 7px 2px`/, "the same amount returns as top padding so the name stays put");
+// 不再有第二张绝对定位的底，也就不需要把整行关进层叠上下文。
+assert.equal(card.includes("position: \"absolute\""), false, "the lift must not be a second, separately positioned surface");
+assert.equal(card.includes('isolation: "isolate"'), false, "no per-row stacking context — it trapped the row's ⋯ menu under later rows");
 assert.match(top, /export const TOP_BADGE_LIFT_PX/, "the lift height lives next to the row it covers");
-// 拓展只能是 overlay：一旦改用 margin/padding 去撑，行高就真被占了。
-assert.match(card, /padding: editing \? "7px 0 7px 2px" : "7px 4px 7px 2px"/, "the row padding must not grow to pay for the lift");
 // 编辑态名字上方那排不渲染，拓展也得跟着停，否则拓出一块盖着空气的深色底。
 assert.match(card, /!editing && hasSessionTopBadges/, "no lift while renaming — the top row is not rendered then");
 
 // ── 8. 后端三处 payload + 存储列（源码守卫，防静默回退）──
-const list = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/api/http_sessions.go"), "utf8");
-assert.match(list, /"aux_flags":\s*s\.Aux\.AuxFlagsPayload\(\)/, "session list must carry aux_flags");
-const broadcast = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/api/appcontext.go"), "utf8");
-assert.match(broadcast, /"aux_flags":\s*sess\.Aux\.AuxFlagsPayload\(\)/, "appcontext broadcast must carry aux_flags");
-const ws = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/api/ws.go"), "utf8");
-assert.match(ws, /"aux_flags":\s*sess\.Aux\.AuxFlagsPayload\(\)/, "ws broadcast must carry aux_flags");
+// 按**包**扫，不钉单个文件名：2026-10-16 后端拆文件（http_sessions.go → http_sessions_list.go、
+// appcontext.go → appcontext_broadcast.go、ws.go → ws_broadcast.go）让钉文件名的守卫假红。
+// 它挡的是「字段被删」，不是「文件被搬」，所以判据是调用点数量而不是路径。
+const apiDir = path.resolve(import.meta.dirname, "../../server/internal/api");
+const apiSources = fs
+  .readdirSync(apiDir)
+  .filter((name) => name.endsWith(".go") && !name.endsWith("_test.go"))
+  .map((name) => fs.readFileSync(path.join(apiDir, name), "utf8"))
+  .join("\n");
+const auxPayloadSites = apiSources.match(/"aux_flags":\s*\w+\.Aux\.AuxFlagsPayload\(\)/g) || [];
+assert.ok(auxPayloadSites.length >= 3, `列表 + appcontext 广播 + ws 广播三处 payload 都必须带 aux_flags，实际 ${auxPayloadSites.length} 处`);
 const schema = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/session/manager_sqlite.go"), "utf8");
 for (const col of ["aux_ask_user_waiting", "aux_has_plan", "aux_has_todos", "aux_has_task", "aux_session_error"]) {
   assert.ok(schema.includes(col), `sqlite schema must carry ${col}`);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "./source-map-fs.mjs";
 import { test } from "vitest";
+import { readGoPackage } from "./go-source.mjs";
 
 test("upstream-restore", async () => {
 const uploadSrc = readFileSync(new URL("../src/services/upload.ts", import.meta.url), "utf8");
@@ -29,8 +30,10 @@ const sessionDomainSvc = [
     .filter((n) => n.startsWith("session") && n.endsWith(".ts") && n !== "session.ts")
     .map((n) => readFileSync(new URL(`../src/services/${n}`, import.meta.url), "utf8")),
 ].join("\n");
-const claudeSession = readFileSync(new URL("../../server/internal/agent/claude/session_models.go", import.meta.url), "utf8");
-const streamHub = readFileSync(new URL("../../server/internal/api/stream_hub.go", import.meta.url), "utf8");
+// Go 侧按**包**读，不钉文件名：2026-10-16 的 B1–B10 拆分把 stream_hub.go /
+// session_models.go 切成了职责文件，实现没少、只是搬了家。
+const claudeSession = readGoPackage("server/internal/agent/claude");
+const streamHub = readGoPackage("server/internal/api");
 
 // 3951aa4 — task→non-task relatedFiles: preserveTaskSelection + showAllFiles removal
 const taskDrawer = readFileSync(new URL("../src/app/useAppTaskDrawer.ts", import.meta.url), "utf8");

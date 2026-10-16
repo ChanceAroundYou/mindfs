@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { test } from "vitest";
+import { readGoPackage } from "./go-source.mjs";
 
 test("conditional-request", async () => {
 /**
@@ -16,12 +17,13 @@ const root = path.resolve(import.meta.dirname, "..");
 // tests/ 的 `..` 是 web/，Go 侧文件在仓库根
 const repoRoot = path.resolve(root, "..");
 const api = fs.readFileSync(path.join(root, "src/services/api.ts"), "utf8");
-const http = fs.readFileSync(path.join(repoRoot, "server/internal/api/http.go"), "utf8");
-const httpGit = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_git.go"), "utf8");
-const httpFiles = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_files.go"), "utf8");
-const httpSessions = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_sessions.go"), "utf8");
-const httpDomain = `${http}\n${httpGit}\n${httpFiles}\n${httpSessions}`;
-const httpTasks = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_tasks.go"), "utf8");
+// Go 侧按**包**读，不钉文件名：2026-10-16 的 B1–B10 拆分把 http.go /
+// http_sessions.go / http_tasks.go 切成职责文件（http_routes.go、
+// http_sessions_list.go、http_task_templates.go…），实现没少、只是搬了家。
+const httpDomain = readGoPackage("server/internal/api");
+const httpTasks = httpDomain;
+// helpers.go 单独读：下面几条断言是带 `[\s\S]{0,80}` 窗口的**负例**，
+// 摊到整包上会撞上别的文件里的无关代码而假红。它是单职责小文件，不受拆分影响。
 const helpers = fs.readFileSync(path.join(repoRoot, "server/internal/api/helpers.go"), "utf8");
 
 // ── 服务端：列表端点必须走 respondJSONList（瘦身 + 协商）────────────
