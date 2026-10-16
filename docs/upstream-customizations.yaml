@@ -72,7 +72,7 @@ groups:
     tests:
       - server/internal/api/http_test.go
     anchors:
-      - server/internal/api/http.go:handleTree
+      - server/internal/api/http_routes.go:handleTree
 
   - id: G-C
     title: Markdown / Mermaid 渲染与文件服务缓存
@@ -786,7 +786,7 @@ groups:
       - 'web/src/components/git/GitDiffViewer.tsx:rootBadgeButtonStyle'
       - 'web/src/services/upload.ts:getRootNodeId'
       - 'server/internal/gitview/gitview_history.go:func ReadRelatedFileStats'
-      - 'server/internal/api/http.go:/api/git/related-files/stats'
+      - 'server/internal/api/http_routes.go:/api/git/related-files/stats'
     files:
       - web/src/components/file/CodeViewer.tsx
       - web/src/components/DocumentViewer.tsx
@@ -1174,7 +1174,7 @@ groups:
     anchors:
       - server/internal/kanban/service_run_moves.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
-      - server/internal/api/http.go:r.Delete("/api/tasks/{id}"
+      - server/internal/api/http_routes.go:r.Delete("/api/tasks/{id}"
       - web/src/services/task/crud.ts:export async function deleteTask
       - web/src/components/task/taskIcons.tsx:export function TaskCancelIcon
       - web/src/components/task/TaskCardRows.tsx:"delete-task"
@@ -4168,8 +4168,8 @@ groups:
     anchors:
       - server/internal/api/http_files.go:func (h *HTTPHandler) handleTree
       - server/internal/api/http_files.go:func (h *HTTPHandler) handleUpload
-      - server/internal/api/http_files.go:func (h *HTTPHandler) handleAddDir
-      - server/internal/api/http_files.go:func managedDirResponse
+      - server/internal/api/http_managed_dirs.go:func (h *HTTPHandler) handleAddDir
+      - server/internal/api/http_managed_dirs.go:func managedDirResponse
 
   - id: G-EZ
     title: API HTTP session handlers split, excluding repoint
@@ -5995,6 +5995,11 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_preferences.go
+      - server/internal/api/http_query.go
+      - server/internal/api/http_managed_dirs.go
       - server/internal/api/agent_config_backup.go
       - server/internal/api/agent_config_switch.go
       - server/internal/api/agent_config_env.go
