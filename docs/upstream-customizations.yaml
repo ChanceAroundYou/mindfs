@@ -310,7 +310,7 @@ groups:
       - web/tests/session-list-node-failure.test.mjs
     anchors:
       - server/internal/api/ws.go:go h.handle
-      - 'server/internal/agent/acp/process.go:CUSTOM(G-G)'
+      - 'server/internal/agent/acp/process_lifecycle.go:CUSTOM(G-G)'
 
   - id: G-T
     title: 流式重放与正文正确性（快照重建协议）
@@ -1263,16 +1263,16 @@ groups:
       - server/internal/agent/acp/elicitation.go:func (p *Process) AnswerElicitation
       - server/internal/agent/acp/elicitation.go:func elicitationContent
       - server/internal/agent/acp/elicitation.go:func acpAskUserToolCall
-      - server/internal/agent/acp/process.go:func (c *mindfsClient) UnstableCreateElicitation
-      - 'server/internal/agent/acp/process.go:CUSTOM(G-AS)'
+      - server/internal/agent/acp/process_client.go:func (c *mindfsClient) UnstableCreateElicitation
+      - 'server/internal/agent/acp/process_lifecycle.go:CUSTOM(G-AS)'
       - 'server/internal/agent/acp/session.go:CUSTOM(G-AS)'
-      - server/internal/agent/acp/process.go:func acpClientCapabilities(agentName string) acp.ClientCapabilities
+      - server/internal/agent/acp/process_lifecycle.go:func acpClientCapabilities(agentName string) acp.ClientCapabilities
       - server/internal/agent/acp/session.go:func (s *session) AnswerQuestion
-      - server/internal/agent/acp/session_test.go:func TestConvertEventRetagsACPAskUserToolCard
+      - server/internal/agent/acp/session_event_test.go:func TestConvertEventRetagsACPAskUserToolCard
       - server/internal/agent/acp/elicitation_test.go:func TestElicitationContentMapsLabelsToOptionIndexes
-      - server/internal/agent/acp/elicitation_test.go:func TestAskUserRawInputAndElicitationMetaAgree
-      - server/internal/agent/acp/elicitation_test.go:func TestElicitationWireShape
-      - server/internal/agent/acp/elicitation_test.go:func TestACPClientCapabilitiesOnlyAdvertisesElicitationForDsh
+      - server/internal/agent/acp/elicitation_wire_test.go:func TestAskUserRawInputAndElicitationMetaAgree
+      - server/internal/agent/acp/elicitation_wire_test.go:func TestElicitationWireShape
+      - server/internal/agent/acp/elicitation_wire_test.go:func TestACPClientCapabilitiesOnlyAdvertisesElicitationForDsh
 
   - id: G-AR
     title: 移动端侧栏切换按钮移入主视图 header
@@ -2153,7 +2153,7 @@ groups:
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/appcontext.go:RunAgentStage
       - server/internal/api/ws.go:runSessionMessage
-      - server/internal/agent/acp/process.go:SendMessage
+      - server/internal/agent/acp/process_lifecycle.go:SendMessage
       - server/internal/agent/types/turn.go:WithPromptTurnID
       - server/internal/session/types_aux_compact.go:CompactExchangeAux
       - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
@@ -4307,10 +4307,10 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/agent/claude/session_messages.go:func (s *session) handlePartialAssistantMessage
-      - server/internal/agent/claude/session_messages.go:func (s *session) handleAssistantMessage
+      - server/internal/agent/claude/session_messages_deltas.go:func (s *session) handlePartialAssistantMessage
+      - server/internal/agent/claude/session_messages_deltas.go:func (s *session) handleAssistantMessage
       - server/internal/agent/claude/session_messages.go:func (s *session) awaitAskUserQuestion
-      - server/internal/agent/claude/session_messages.go:func (s *session) taskType
+      - server/internal/agent/claude/session_messages_tasks.go:func (s *session) taskType
 
 
   - id: G-FG
@@ -5966,6 +5966,34 @@ groups:
       - server/internal/kanban/worktree_finish_guard_test.go
       - server/internal/kanban/worktree_finish_upload_test.go
       - server/internal/kanban/worktree_finish_terminal_test.go
+      # B7
+      - server/internal/agent/acp/process_client.go
+      - server/internal/agent/acp/process_lifecycle.go
+      - server/internal/agent/acp/process_prompt_state.go
+      - server/internal/agent/acp/process_session_state.go
+      - server/internal/agent/acp/process_model_mode.go
+      - server/internal/agent/acp/session_runtime.go
+      - server/internal/agent/acp/session_event.go
+      - server/internal/agent/acp/elicitation_wire_test.go
+      - server/internal/agent/acp/elicitation_reap_test.go
+      - server/internal/agent/acp/session_event_test.go
+      - server/internal/agent/acp/session_usage_test.go
+      - server/internal/agent/claude/session_open.go
+      - server/internal/agent/claude/session_ask_user.go
+      - server/internal/agent/claude/session_turn.go
+      - server/internal/agent/claude/session_message_loop.go
+      - server/internal/agent/claude/session_tool_names.go
+      - server/internal/agent/claude/session_messages_deltas.go
+      - server/internal/agent/claude/session_messages_tasks.go
+      - server/internal/agent/claude/session_task_test.go
+      - server/internal/agent/claude/session_models_test.go
+      - server/internal/agent/codex/session_open.go
+      - server/internal/agent/codex/session_events.go
+      - server/internal/agent/codex/session_ask_user.go
+      - server/internal/agent/codex/session_models.go
+      - server/internal/agent/pool_idle_test.go
+      - server/internal/agent/config_load_test.go
+      - server/internal/api/usecase/fs_file_ops_test.go
     anchors:
       - docs/agent/rules/backend/file-size.md:软线**：300 行
       - docs/plans/backend-file-size-300-500.md:B2
