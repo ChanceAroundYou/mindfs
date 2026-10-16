@@ -4355,9 +4355,9 @@ groups:
       - docs/plans/rule-completion-rollout.md
     anchors:
       - server/internal/api/agent_api_provider_apply.go:func applyAgentAPIProvider
-      - server/internal/api/agent_api_provider_apply.go:func mergeCodexAPIProviderConfig
+      - server/internal/api/agent_api_provider_codex.go:func mergeCodexAPIProviderConfig
       - server/internal/api/agent_api_provider_apply.go:func applyPiAPIProvider
-      - server/internal/api/agent_api_provider_apply.go:func writeAgentEnvConfig
+      - server/internal/api/agent_api_provider_env.go:func writeAgentEnvConfig
 
 
   - id: G-GI
@@ -5995,6 +5995,15 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/agent_api_provider_handlers.go
+      - server/internal/api/agent_api_provider_sync_ops.go
+      - server/internal/api/agent_api_provider_urls.go
+      - server/internal/api/agent_api_provider_names.go
+      - server/internal/api/agent_api_provider_caps.go
+      - server/internal/api/agent_api_provider_probe.go
+      - server/internal/api/agent_api_provider_modeltest.go
+      - server/internal/api/agent_api_provider_codex.go
+      - server/internal/api/agent_api_provider_env.go
       - server/internal/api/stream_hub_types.go
       - server/internal/api/stream_hub_build.go
       - server/internal/api/stream_hub_pending.go
