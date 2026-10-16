@@ -224,14 +224,17 @@ assert.match(taskRows, /taskAuxIconScaleStyle\(\)/, "the task card badge strip w
 assert.match(card, /hasSessionTopBadges\(session, isSubagent\)/, "the lift must use the same predicate as the top row");
 assert.match(card, /data-session-top-lift/, "the lift block must be identifiable");
 assert.match(card, /selected && !editing && hasSessionTopBadges/, "only the selected row gets an upward lift");
-// 一个连续的绝对定位 surface 覆盖「徽标区 + 主卡」：不能拼一个独立顶盖，
-// 否则两个圆角盒会在接缝重叠、露出空白。仍不占流，行高不变。
-assert.match(card, /height: `calc\(100% \+ \$\{TOP_BADGE_LIFT_PX\}px \+ 1px\)`/, "the seamless surface height must use the shared lift constant");
-assert.match(card, /bottom: "-1px"/, "the seamless surface must cover the full selected card, not stop at its top edge");
-assert.match(card, /background: rowBackground/, "the seamless surface has the same single background source as the selected row");
-assert.match(card, /borderRadius: "8px"/, "the seamless surface has one coherent rounded outline");
-assert.match(card, /zIndex: -1/, "the surface stays behind the card content");
-assert.match(card, /isolation: "isolate"/, "the surface stacking stays inside its card");
+// 一个连续的绝对定位 surface 放在**外层行**：从徽标区到内容盒底只有一次绘制，
+// 内容盒透明，不能再以负像素扩张另一张底，否则又会出现接缝、圆角漏底与重叠。
+assert.match(card, /top: `calc\(2px - \$\{TOP_BADGE_LIFT_PX\}px\)`/, "the outer surface must begin exactly at the shared lift height");
+assert.match(card, /bottom: "2px"/, "the outer surface must end at the row content boundary");
+assert.match(card, /background: liftTopBackground \? "transparent" : rowBackground/, "the inner card must not paint a second selected background");
+assert.match(card, /background: rowBackground/, "the outer surface uses the selected row background");
+assert.match(card, /borderRadius: "8px"/, "the outer surface has one coherent rounded outline");
+assert.match(card, /zIndex: -1/, "the surface stays behind the row content");
+assert.match(card, /isolation: "isolate"/, "the surface stacking stays inside its row");
+assert.equal(card.includes('left: "-1px"'), false, "the old negative-pixel surface expansion must be gone");
+assert.equal(card.includes('bottom: "-1px"'), false, "the old negative-pixel surface expansion must be gone");
 assert.match(top, /export const TOP_BADGE_LIFT_PX/, "the lift height lives next to the row it covers");
 // 拓展只能是 overlay：一旦改用 margin/padding 去撑，行高就真被占了。
 assert.match(card, /padding: editing \? "7px 0 7px 2px" : "7px 4px 7px 2px"/, "the row padding must not grow to pay for the lift");

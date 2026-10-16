@@ -669,7 +669,7 @@ groups:
       # 只有选中行的底色向上拓展去包住状态徽标（不占实际高度）。
       - 'web/src/components/session/SessionCard.tsx:selected && !editing && hasSessionTopBadges'
       - 'web/src/components/session/SessionCard.tsx:data-session-top-lift'
-      - 'web/src/components/session/SessionCard.tsx:height: `calc(100% + ${TOP_BADGE_LIFT_PX}px + 1px)`'
+      - 'web/src/components/session/SessionCard.tsx:top: `calc(2px - ${TOP_BADGE_LIFT_PX}px)`'
       # 子代理折角回到名字前；其它小图标缩到 worktree 标签大小。
       - 'web/src/components/task/taskStyles.ts:export function taskAuxIconScaleStyle'
       - 'web/src/components/session/SessionCardIcon.tsx:if (isSubagent)'
