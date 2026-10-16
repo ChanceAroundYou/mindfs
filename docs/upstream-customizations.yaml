@@ -309,7 +309,7 @@ groups:
       - web/tests/session-archive.test.mjs
       - web/tests/session-list-node-failure.test.mjs
     anchors:
-      - server/internal/api/ws.go:go h.handle
+      - server/internal/api/ws_upgrade.go:go h.handle
       - 'server/internal/agent/acp/process_lifecycle.go:CUSTOM(G-G)'
 
   - id: G-T
@@ -1637,7 +1637,7 @@ groups:
       - server/internal/api/stream_hub.go:SetPendingReply
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/appcontext.go:RunAgentStage
-      - server/internal/api/ws.go:runSessionMessage
+      - server/internal/api/ws_session_message.go:runSessionMessage
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
       - server/internal/agent/codex/session.go:handleStreamedEvents
 
@@ -2152,7 +2152,7 @@ groups:
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/appcontext.go:RunAgentStage
-      - server/internal/api/ws.go:runSessionMessage
+      - server/internal/api/ws_session_message.go:runSessionMessage
       - server/internal/agent/acp/process_lifecycle.go:SendMessage
       - server/internal/agent/types/turn.go:WithPromptTurnID
       - server/internal/session/types_aux_compact.go:CompactExchangeAux
@@ -4505,8 +4505,8 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/api/ws_test.go:func TestWSRequestHandlersAreDispatchedAsynchronously
-      - server/internal/api/ws.go:func (h *WSHandler) handleWSRequest
+      - server/internal/api/ws_dispatch_test.go:func TestWSRequestHandlersAreDispatchedAsynchronously
+      - server/internal/api/ws_upgrade.go:func (h *WSHandler) handleWSRequest
 
   - id: G-GP
     title: Agent documentation entry and plan link checks
@@ -5995,6 +5995,15 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/ws_upgrade.go
+      - server/internal/api/ws_broadcast.go
+      - server/internal/api/ws_session_message.go
+      - server/internal/api/ws_session_queue.go
+      - server/internal/api/ws_session_slash.go
+      - server/internal/api/ws_turn_tracker.go
+      - server/internal/api/ws_replay_test.go
+      - server/internal/api/ws_dispatch_test.go
+      - server/internal/api/ws_session_context_test.go
       - server/internal/api/appcontext_broadcast.go
       - server/internal/api/appcontext_notify.go
       - server/internal/api/appcontext_roots.go
