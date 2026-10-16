@@ -2,7 +2,7 @@
 
 > 范围：`web/src` + `web/tests`。后端另开第二轮。
 > 原则：零行为变化优先；新代码与存量统一遵守规则。一次性工作完成后从 `TODO.md` 移除。
-> 配套：`docs/upstream-customizations.md` 登记制度不变（fork 定制三件套照旧）。
+> 配套：`docs/upstream-customizations.yaml` 登记制度不变（fork 定制三件套照旧）。
 
 | 文件 | 主题 | 一句话 |
 |---|---|---|

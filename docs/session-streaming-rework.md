@@ -393,7 +393,7 @@ JSONL 增量同步、`session_projection.go` 的读取投影折叠）。
 | **B** | `fix(stream): 重放批次只走一条分发路径` | `emitDecrypted` 归一形状 + 删 `handleSessionStream` 批处理分支 | 控制台不再有 `onStream` TypeError（探针抓 0 次） |
 | **C** | `refactor(stream): 删除 done(replay) 回执与 completed 表` | §3.2 最后两行 + 客户端守卫 | `session-done-replay-no-reanchor.test.mjs` 可放宽 |
 | **D** | `fix(web): 瞬时行不再按位置编造 seq` | 删 `inferredSeq` | 探针尾部结构一致；可独立回滚 |
-| **E** | `docs(stream): 重写 G-T 组与守卫测试` | `docs/upstream-customizations.md` §G-T + `web/tests/upstream-restore.test.mjs`（现有 :58/59/66/67 断言的是**旧契约定**，必须反向重写） | 全量门禁 |
+| **E** | `docs(stream): 重写 G-T 组与守卫测试` | `docs/upstream-customizations.yaml` 的 G-T + `web/tests/upstream-restore.test.mjs`（现有 :58/59/66/67 断言的是**旧契约定**，必须反向重写） | 全量门禁 |
 
 ### 3.6 记录：将来还能再扒掉什么
 
@@ -410,7 +410,7 @@ JSONL 增量同步、`session_projection.go` 的读取投影折叠）。
 |---|---|
 | `reset` 空帧被当成内容 | 空 `events` 不调 `handleSessionStream`，只清尾；单测钉住 |
 | 用户乐观行被误清 | 谓词显式排除 `role === "user"`；加用例 |
-| 与上游永久分叉 | 记进 `docs/upstream-customizations.md` §G-T，反向重写守卫测试，提交带 `Scope: G-T` |
+| 与上游永久分叉 | 记进 `docs/upstream-customizations.yaml` 的 G-T，反向重写守卫测试，提交带 `Scope: G-T` |
 | 删 `inferredSeq` 引发视觉回归 | 独立提交 D，探针比对尾部结构，可单独回滚 |
 | 快照重建放大重放开销 | 与今天**完全一样**（今天游标恒空 ⇒ 本来就是全量重发）—— 零回归 |
 

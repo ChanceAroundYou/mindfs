@@ -21,7 +21,7 @@
 
 **为什么坚持零行为变化**：本仓库是上游 fork，每次改动都是会被上游合并冲掉的定制；
 拆分本身不产生功能，一旦掺入行为改动，合上游时无法区分「拆分没合好」还是
-「行为本来就这样」。边界见 `docs/upstream-customizations.md` 的 G-BA 组。
+「行为本来就这样」。边界见 `docs/upstream-customizations.yaml` 的 G-BA 组。
 
 ## 2. 已完成（本分支）
 
@@ -96,8 +96,7 @@ web/src/
    「逻辑路径 → 物理文件列表」补上。**测试与断言都不用动**。
    - 多文件（拆分模块）：`"src/services/x.ts": ["src/services/x/types.ts", …]`
    - 单文件（只搬移）：`"src/components/Old.tsx": ["src/components/<域>/Old.tsx"]`
-3. **门禁登记**：`docs/upstream-customizations.yaml` 的 **G-BA** 组补 `files:`；
-   `docs/upstream-customizations.md` 补 `### G-BA` 标题（组 id 必须两边一致）。
+3. **门禁登记**：`docs/upstream-customizations.yaml` 的 **G-BA** 组补 `files:`（清单只有这一份，2026-10-16 起不再有并行的 md）。
    锚点写 `path:子串`，`files` 写路径（前缀 `/` 表示目录、`*` 走 `path.Match`）。
 4. **提交信息标 `Scope: G-BA`**。
 5. **验证**：见第 5 节。

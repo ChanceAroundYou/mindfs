@@ -10,7 +10,7 @@
 ## 0. 方法
 
 1. `git log --oneline` 全量扫，按关键词筛（消息/流式/重放/渲染/正文/重复/会话/session/stream/replay/exchange/seq/overlay/窗口/window/transient/瞬时/done/reconnect/同步/导入）
-2. `docs/upstream-customizations.md` 的消息相关组（G-T 流式重放与正文正确性、G-G 会话生命周期与 WS、G-F 前端流式与渲染性能、G-R）
+2. `docs/upstream-customizations.yaml` 的消息相关组（G-T 流式重放与正文正确性、G-G 会话生命周期与 WS、G-F 前端流式与渲染性能、G-R）
 3. `docs/session-streaming-rework.md`、`docs/session-flicker-root-cause.md`
 4. 每个 `web/tests/*.test.mjs` 与 `server/internal/api/*_test.go` 的**注释** —— 它们记录了当年的事故与实测数据
 5. 未提交的工作区改动（`git status` / `git diff`）

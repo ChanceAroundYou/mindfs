@@ -6,12 +6,11 @@
 //
 // 六条断言，任一失败即非零退出：
 //
-//	1 覆盖  —— 每个 delta 文件必须被某组 files 命中（新增定制未登记）
+//	1 覆盖  —— 每个 delta 文件必须被某组 files 命中（新增定制未登记；已删除的文件不算）
 //	2 尚存  —— 每个 files 条目必须仍在 delta 里（定制已被上游覆盖 / 已被上游吸收）
 //	3 测试  —— 每个 tests 路径不仅存在，还得真能被测试运行器跑到
 //	4 锚点  —— 每个 anchors 的 path:子串在源码里命中
 //	5 非空  —— 每组至少有一个针对性测试
-//	6 对齐  —— yaml 的组 id 与 md 的 `### G-X` 标题双向一致
 //
 // 断言 2 是「静默丢失」的主检测器：定制被上游实现顶掉时，该文件往往仍因上游自身的改动
 // 留在 delta 里，光看文件级差异查不出来；而一旦整份定制连同上游改动一起被替换，
@@ -32,7 +31,6 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -41,7 +39,6 @@ import (
 
 const (
 	registryPath = "docs/upstream-customizations.yaml"
-	docPath      = "docs/upstream-customizations.md"
 	kindDocs     = "docs"
 )
 
@@ -175,20 +172,32 @@ func run(root, baselineFlag string, explain bool) error {
 
 	var failures []string
 
-	// 断言 1：delta 全覆盖
+	// present = delta 全部路径（断言 2 用）；alive = 其中仍存在于 HEAD 的（断言 1 用）。
+	//
+	// 两者分开是因为「删掉一个文件」不是定制：文件已不在 HEAD，没道理要求某组登记它
+	// （断言 1）。但断言 2 仍然把 D 当作「尚存」—— 这是历史行为，刻意不动：改成不算，
+	// 会一次性炸出 71 条陈旧路径（都是 fork 内部改名/挪目录后的**旧路径**，如
+	// web/src/components/FileTree.tsx → web/src/components/file/FileTree.tsx），
+	// 那是登记表的存量债，该另开一轮清，不该顺手混进别的改动里。
 	present := make(map[string]bool, len(delta))
+	alive := make(map[string]bool, len(delta))
 	for _, f := range delta {
 		present[f.path] = true
+		if f.status != "D" {
+			alive[f.path] = true
+		}
 	}
+
+	// 断言 1：delta 全覆盖（只算仍存在的文件）
 	var uncovered []string
-	for _, f := range delta {
-		if !coveredByAny(reg.Groups, f.path) {
-			uncovered = append(uncovered, f.path)
+	for f := range alive {
+		if !coveredByAny(reg.Groups, f) {
+			uncovered = append(uncovered, f)
 		}
 	}
 	if len(uncovered) > 0 {
 		sort.Strings(uncovered)
-		fmt.Printf("✗ 未覆盖的 delta 文件：%d / %d\n", len(uncovered), len(delta))
+		fmt.Printf("✗ 未覆盖的 delta 文件：%d / %d\n", len(uncovered), len(alive))
 		for _, p := range uncovered {
 			fmt.Printf("    %s\n", p)
 			if explain {
@@ -276,15 +285,10 @@ func run(root, baselineFlag string, explain bool) error {
 		failures = append(failures, fmt.Sprintf("%d 处分组不自洽", len(selfBad)))
 	}
 
-	// 断言 6：yaml 与 md 的组 id 双向一致
-	if err := checkIDParity(root, reg); err != nil {
-		failures = append(failures, err.Error())
-	}
-
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "；"))
 	}
-	fmt.Printf("✓ 全部通过：%d 个 delta 文件被 %d 组完整覆盖\n", len(delta), len(reg.Groups))
+	fmt.Printf("✓ 全部通过：%d 个 delta 文件被 %d 组完整覆盖\n", len(alive), len(reg.Groups))
 	return nil
 }
 
@@ -397,44 +401,3 @@ func matchesAnyDelta(pattern string, present map[string]bool) bool {
 	return false
 }
 
-var groupHeading = regexp.MustCompile(`(?m)^### (G-[A-Z]+)\b`)
-
-func checkIDParity(root string, reg *registry) error {
-	data, err := os.ReadFile(filepath.Join(root, docPath))
-	if err != nil {
-		return fmt.Errorf("读不到 %s", docPath)
-	}
-	inDoc := map[string]bool{}
-	for _, m := range groupHeading.FindAllStringSubmatch(string(data), -1) {
-		inDoc[m[1]] = true
-	}
-	inYAML := map[string]bool{}
-	for _, g := range reg.Groups {
-		inYAML[g.ID] = true
-	}
-
-	var onlyDoc, onlyYAML []string
-	for id := range inDoc {
-		if !inYAML[id] {
-			onlyDoc = append(onlyDoc, id)
-		}
-	}
-	for id := range inYAML {
-		if !inDoc[id] {
-			onlyYAML = append(onlyYAML, id)
-		}
-	}
-	if len(onlyDoc) == 0 && len(onlyYAML) == 0 {
-		return nil
-	}
-	sort.Strings(onlyDoc)
-	sort.Strings(onlyYAML)
-	if len(onlyDoc) > 0 {
-		fmt.Printf("✗ 只在 md 里有标题、yaml 里没有的组：%s\n", strings.Join(onlyDoc, ", "))
-	}
-	if len(onlyYAML) > 0 {
-		fmt.Printf("✗ 只在 yaml 里有、md 里缺 `### ` 标题的组：%s\n", strings.Join(onlyYAML, ", "))
-	}
-	fmt.Println()
-	return fmt.Errorf("yaml 与 md 的组 id 不一致")
-}

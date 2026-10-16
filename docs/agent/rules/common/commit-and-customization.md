@@ -7,11 +7,11 @@
 
 - Conventional Commits，**中文描述**：`<type>: <简述>`（`feat`/`fix`/`refactor`/`docs`/`test`/`chore`）。
 - 涉及 fork 定制的改动，信息末尾标 **`Scope: G-X`**（组号对应
-  `docs/upstream-customizations.md` 的 §1 分组），便于 `git log` 反查。
+  `docs/upstream-customizations.yaml` 的分组），便于 `git log` 反查。
 
 ## 三件套（缺一不可）
 
-1. **登记** `docs/upstream-customizations.md`：按 §1 分组格式写「哪个文件、改了什么、
+1. **登记** `docs/upstream-customizations.yaml`：按分组格式写「哪个文件、改了什么、
    **为什么必须保留**」，并写明**可见症状**（用户看到什么）。
    新开一组的前提是有**独立的互斥边界**（一组 = 合上游时要么全留要么全弃的改动面）。
 2. **针对性测试**：在该组「针对性测试」表列出「测试 → 钉住什么」。合上游时测试红=定制被冲掉。
