@@ -1495,7 +1495,7 @@ groups:
     anchors:
       - server/internal/api/stream_hub.go:func (h *StreamHub) MarkSessionAwaiting(
       - server/internal/api/stream_hub.go:if state.AwaitingAnswer {
-      - server/internal/api/appcontext.go:func askUserStreamEvent(
+      - server/internal/api/appcontext_notify.go:func askUserStreamEvent(
       - server/internal/api/http_sessions.go:item["awaiting_answer"] = true
       - server/internal/api/ws.go:MarkSessionAwaiting(rootID, key, "", false)
       - web/src/shared/sessionPresence.ts:export function getSessionPresence(
@@ -5994,6 +5994,13 @@ groups:
       - server/internal/agent/pool_idle_test.go
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
+      # B9
+      - server/internal/api/appcontext_broadcast.go
+      - server/internal/api/appcontext_notify.go
+      - server/internal/api/appcontext_roots.go
+      - server/internal/api/appcontext_services.go
+      - server/internal/api/appcontext_task_flags.go
+      - server/internal/api/appcontext_worktree.go
       # B8
       - server/internal/agent/claude/importer_subagents.go
       - server/internal/agent/claude/importer_files.go
