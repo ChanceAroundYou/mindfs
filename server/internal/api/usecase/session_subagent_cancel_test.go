@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 
 	agenttypes "mindfs/server/internal/agent/types"
@@ -200,5 +202,106 @@ func TestFinishAllAfterParentTurnContextCancelStillPersists(t *testing.T) {
 	if len(blocks) == 0 {
 		t.Fatal("父回合上下文取消后子代理块表没落盘：双写块流（S2a）在子会话上整轮回退，" +
 			"而 finish 只 log 不返回，这条丢失是静默的（线上形态 persist.blocks.error err=context canceled）")
+	}
+}
+
+// 子会话灯永久残留（「主会话运行状况没有被结束」）的根因回归。
+//
+// 完整因果链（证据来自 PC 节点线上，session 1792108831-a090328fbb21）：
+//   - 一个 **普通 Bash 工具调用**（claude 转录里的 tool_use:Bash）被上游带上了
+//     ParentToolUseID，于是 ensure() 的**认领已有 binding 分支**被走中；
+//   - 该分支只 r.attach() + bindKeys()，**从不调 in.OnCreated**（只有 create 分支调）。
+//     OnCreated 是置 pending 的唯一入口，于是这条子会话要么根本没灯，要么灯由**别的**
+//     回合置下 —— 两种情况都没有任何代码持有它的 turn id；
+//   - close()/FinishAll() 只注销活跃轮次并落盘，**从不调终结器**，pending 无人清理；
+//   - ws.go / appcontext.go / tasks.go 的 defer drain 只扫自己 map 里登记过的 key，
+//     这条从未登记，永久漏在 drain 之外；
+//   - 前端 descendantRunning() 沿 parent_session_key 读到这条 Active 的 pending，
+//     把父会话解析成 delegating —— 用户手动停了子代理，父会话依旧显示在跑。
+//
+// 这里钉住：无论子会话走哪条分支进来，attach 时就必须发到 turn id，且 close() 必须
+// 自己终结自己那一轮。
+func TestAdoptedSubagentTurnIsClosedByClose(t *testing.T) {
+	// attached / closed **分开记**：合成一个 map 会让「attach 登记过、但 close 从不
+	// 调用终结器」这个正是要抓的缺陷被误判成通过。
+	var attachedMu, closedMu sync.Mutex
+	attachedIDs := map[string]string{}
+	closedIDs := map[string]string{}
+	router, manager, _ := newClaudeSubagentTestRouter(t, nil)
+	router.in.OnSubAgentAttached = func(child *session.Session, turnID string) {
+		if child == nil {
+			return
+		}
+		attachedMu.Lock()
+		attachedIDs[child.Key] = turnID
+		attachedMu.Unlock()
+	}
+	router.in.OnSubAgentTurnFinished = func(sessionKey, turnID string) {
+		closedMu.Lock()
+		closedIDs[sessionKey] = turnID
+		closedMu.Unlock()
+	}
+
+	// 造一条**已有 binding** 的子会话，再让 router 通过认领分支接管它 —— 这正是
+	// 线上那条泄漏子会话的创建路径。
+	existing, err := manager.Create(context.Background(), session.CreateInput{
+		Type:             session.TypeChat,
+		ParentSessionKey: router.in.Parent.Key,
+		ParentToolCallID: "call_QmtkKWzGDduNk8p61epcsyzs",
+		Agent:            "claude",
+		Name:             "Bash",
+	})
+	if err != nil {
+		t.Fatalf("create existing child: %v", err)
+	}
+	if err := manager.UpsertAgentBinding(context.Background(), session.AgentBinding{
+		SessionKey:     existing.Key,
+		Agent:          "claude",
+		AgentSessionID: "claude-subagent:call_QmtkKWzGDduNk8p61epcsyzs",
+	}); err != nil {
+		t.Fatalf("upsert binding: %v", err)
+	}
+
+	consumed := router.Handle(context.Background(), agenttypes.Event{
+		Type: agenttypes.EventTypeMessageChunk,
+		Data: agenttypes.MessageChunk{
+			Content:         "child response",
+			ParentToolUseID: "call_QmtkKWzGDduNk8p61epcsyzs",
+		},
+	})
+	if !consumed {
+		t.Fatal("认领分支没有接管这个子会话")
+	}
+	if len(router.children) != 1 {
+		t.Fatalf("children = %#v, want exactly one adopted child", router.children)
+	}
+	defer unregisterActiveTurn(router.in.RootID, existing.Key)
+
+	// 认领分支也必须是「发到 id 的一轮」。
+	attachedMu.Lock()
+	attachedID := attachedIDs[existing.Key]
+	attachedMu.Unlock()
+	if strings.TrimSpace(attachedID) == "" {
+		t.Fatal("认领分支 attach 时没有拿到 turn id：这条子会话永远没有可终结的回合，" +
+			"pending 会永久残留（线上 1792108831 的症状）")
+	}
+	// 收尾之前先确认 close 确实没被提前调用过（否则下面的断言是空转）。
+	closedMu.Lock()
+	premature := closedIDs[existing.Key]
+	closedMu.Unlock()
+	if premature != "" {
+		t.Fatalf("close 之前终结器就被调用了 id=%q：这不是一次由收尾触发的终结", premature)
+	}
+	// close() 自己终结自己那一轮，不依赖任何调用方的 drain map。
+	router.FinishAll()
+	closedMu.Lock()
+	closedID := closedIDs[existing.Key]
+	closedMu.Unlock()
+	if closedID == "" {
+		t.Fatal("close() 之后终结器从未被调用：pending 无人清理，父会话会被前端 " +
+			"descendantRunning() 永久判成 delegating（用户停了子代理，主会话依旧显示在跑）")
+	}
+	if closedID != attachedID {
+		t.Fatalf("close() 终结用的 id = %q, attach 时发的 id = %q：身份不匹配会让清理变成 no-op", closedID, attachedID)
 	}
 }

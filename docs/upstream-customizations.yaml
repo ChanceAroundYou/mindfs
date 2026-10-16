@@ -654,6 +654,7 @@ groups:
       - web/src/components/session/SessionCard.tsx
       - web/src/components/session/SessionCardTopBadges.tsx
       - web/src/components/session/SessionCardIcon.tsx
+      - web/src/components/session/sessionListShared.tsx
       - web/src/components/session/SessionWorktreeTag.tsx
       - web/src/components/session/SessionStatusBadges.tsx
       - web/src/components/session/SessionList.tsx
@@ -670,9 +671,15 @@ groups:
       - 'web/src/components/session/SessionCard.tsx:selected && !editing && hasSessionTopBadges'
       - 'web/src/components/session/SessionCard.tsx:data-session-top-lift'
       - 'web/src/components/session/SessionCard.tsx:top: `calc(2px - ${TOP_BADGE_LIFT_PX}px)`'
+      # 行内溢出菜单不是 portal；隔离层叠上下文时，打开的会话行必须高于后续兄弟行。
+      - 'web/src/components/session/SessionCard.tsx:zIndex: menuOpen ? 1 : 0'
       # 子代理折角回到名字前；其它小图标缩到 worktree 标签大小。
       - 'web/src/components/task/taskStyles.ts:export function taskAuxIconScaleStyle'
       - 'web/src/components/session/SessionCardIcon.tsx:if (isSubagent)'
+      # 子会话折叠提示只额外留 2px 下方安全间距，避免遮住紧随的会话行。
+      - 'web/src/components/session/sessionListShared.tsx:marginBottom = "0"'
+      - 'web/src/components/session/SessionList.tsx:marginBottom="2px"'
+      - 'web/src/components/session/MultiProjectSessionList.tsx:marginBottom="2px"'
       # 会话行保持 2px；顶部留白仍绑拓位高度，第一行不被滚动容器裁掉。
       - 'web/src/components/session/SessionList.tsx:flexDirection: "column", gap: "2px"'
       - 'web/src/components/session/MultiProjectSessionList.tsx:paddingTop: TOP_BADGE_LIFT_PX'
@@ -1406,20 +1413,33 @@ groups:
   - id: G-IZ
     title: Claude 合成子代理可取消（停止按钮不再是空操作）
     kind: fix
-    symptom: "子会话（Claude Task 子代理）卡住不动、在会话列表里永远亮着「在回复」，点停止按钮完全没反应（点几次都一样）；刷新、切换、等多久都不消失，只能重启服务。另一条独立症状：父回合一结束（正常结束/取消/报错都算），子会话停在半句话上、块内容整段不见，日志里只有一行 `[subagent] persist.blocks.error ... err=context canceled` —— 因为 finish 对这个错误只 log 不返回，丢失是静默的。"
-    why: "四处叠加缺一不可：① claudeSubagentRouter.attach 从不 registerActiveTurn（Codex 协作路径有），Service.CancelSessionTurn 拿到 active==nil 直接 return nil —— 静默「成功」；② syntheticAgentSession.CancelCurrentTurn() 无条件 return nil，第二个空操作；③ 父轮收尾 FinishAll 原先不是 defer、也不注销活跃轮次。于是 pending 只等 MessageDone 一条路，CLI 已死则灯永久常亮；④ finish 的落盘用的是订阅上下文，而子代理订阅上下文是从父回合 turnCtx 派生的（session_subagents.go:189），`defer FinishAll()` 跑在父回合尾部、正是 turnCtx 刚被掐的时刻 —— 正文/aux/块表/agent_state 四处 DB 写全撞 context canceled。改法：attach 建可取消上下文 + registerActiveTurn + setActiveTurnSession 并注入关闭函数；新增幂等 close()（done 落盘发终帧 → cancel 掐订阅 → unregisterActiveTurn，顺序不可换：先掐上下文会丢正文）；终帧与 FinishAll 都挂 defer；落盘改用脱离订阅取消的 persistCtx（只影响「写不写得进 DB」，不影响订阅什么时候断 —— ClearPendingExchangeAux 早就用 Background 了，这里把其余四处补齐）。"
-    boundary: "子代理的生命周期归属与取消。不碰父 turn（取消子代理不打断父的 CLI），也不改 session.cancel 的 stale 门（ActiveTurnID 在读循环同步取证那条契约不变）。合成子代理没有可中断的进程（输出来自父进程的 CLI 流），能掐的只有订阅本身。"
+    symptom: "子会话（Claude Task 子代理）卡住不动、在会话列表里永远亮着「在回复」，点停止按钮完全没反应（点几次都一样）；刷新、切换、等多久都不消失，只能重启服务。另一条独立症状：父回合一结束（正常结束/取消/报错都算），子会话停在半句话上、块内容整段不见，日志里只有一行 `[subagent] persist.blocks.error ... err=context canceled` —— 因为 finish 对这个错误只 log 不返回，丢失是静默的。第三种症状（2026-10-16 PC 节点实测，session 1792108831-a090328fbb21）：用户手动停止了卡死的子代理，**主会话的运行状态却没有结束**，空心「子代理运行中」灯一直亮。根因不是父回合没收尾 —— 父轮每次都正常 `[ws] session.done`；而是这条子会话由**一个普通 Bash 工具调用**（claude 转录里是 tool_use:Bash，不是 Task）带上 ParentToolUseID 触发创建，走中 ensure() 的**认领已有 binding 分支**，该分支只 attach 不调 OnCreated，于是没有任何代码持有它的 turn id；ws.go / appcontext.go / tasks.go 的 defer drain 只扫各自 map 里登记过的 key，close()/FinishAll() 也只注销活跃轮次、从不调终结器 —— pending 永久残留，前端 descendantRunning() 沿 parent_session_key 读到这条 Active pending，把父会话永久判成 delegating。服务重启也修不掉（新的 attach 会再造一条同形的）。"
+    why: "五处叠加缺一不可：① claudeSubagentRouter.attach 从不 registerActiveTurn（Codex 协作路径有），Service.CancelSessionTurn 拿到 active==nil 直接 return nil —— 静默「成功」；② syntheticAgentSession.CancelCurrentTurn() 无条件 return nil，第二个空操作；③ 父轮收尾 FinishAll 原先不是 defer、也不注销活跃轮次。于是 pending 只等 MessageDone 一条路，CLI 已死则灯永久常亮；④ finish 的落盘用的是订阅上下文，而子代理订阅上下文是从父回合 turnCtx 派生的（session_subagents.go:189），`defer FinishAll()` 跑在父回合尾部、正是 turnCtx 刚被掐的时刻 —— 正文/aux/块表/agent_state 四处 DB 写全撞 context canceled。改法：attach 建可取消上下文 + registerActiveTurn + setActiveTurnSession 并注入关闭函数；新增幂等 close()（done 落盘发终帧 → cancel 掐订阅 → unregisterActiveTurn，顺序不可换：先掐上下文会丢正文）；终帧与 FinishAll 都挂 defer；落盘改用脱离订阅取消的 persistCtx（只影响「写不写得进 DB」，不影响订阅什么时候断 —— ClearPendingExchangeAux 早就用 Background 了，这里把其余四处补齐）。⑤ 子会话的回合身份只在 create 分支发过，认领分支与导入路径都缺它，drain 也扫不到没登记过的 key。改法：attach() 是三条路径的唯一公共点，由它统一发 id（subagentTurnID 单一来源，原先那段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go / scheduled/tasks.go 三处各抄一遍），close() 自己终结自己那一轮。"
+    boundary: "子代理的生命周期归属与取消。不碰父 turn（取消子代理不打断父的 CLI），也不改 session.cancel 的 stale 门（ActiveTurnID 在读循环同步取证那条契约不变）。合成子代理没有可中断的进程（输出来自父进程的 CLI 流），能掐的只有订阅本身。回合身份的发放点收敛到 attach()、终结汇聚到 close()，但不改 EndSessionTurn 的身份比对语义（PendingTurnIDMatches / ClearSessionPending 不变），也不改「上游为什么会给普通 Bash 调用带上 ParentToolUseID」这一 agent 侧协议问题。"
     tests:
       - server/internal/api/usecase/session_subagent_cancel_test.go
+      - server/internal/api/kanban_turn_identity_guard_test.go
+      - server/internal/scheduled/pending_identity_test.go
     files:
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_subagents.go
       - server/internal/api/usecase/session_send.go
+      - server/internal/api/ws.go
+      - server/internal/api/appcontext.go
+      - server/internal/scheduled/tasks.go
     anchors:
       - server/internal/api/usecase/session.go:func (c *claudeSyntheticSubagent) close()
       - server/internal/api/usecase/session.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
       - server/internal/api/usecase/session.go:persistCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceLive)
+      - server/internal/api/usecase/session.go:func subagentTurnID(child *session.Session) string
+      - server/internal/api/usecase/session.go:c.in.OnSubAgentTurnFinished(c.key, c.turnID)
       - server/internal/api/usecase/session_subagents.go:registerActiveTurn(in.RootID, child.Key, cancel)
+      - server/internal/api/usecase/session_subagents.go:in.OnSubAgentAttached(child, attached.turnID)
+      - server/internal/api/usecase/session_subagents.go:func (r *claudeSubagentRouter) ensure(ctx context.Context, ref claudeSubagentRef, source *agenttypes.ToolCall) (*claudeSyntheticSubagent, error)
+      - "server/internal/api/ws.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
+      - "server/internal/api/ws.go:OnSubAgentTurnFinished: func(sessionKey, id string)"
+      - "server/internal/api/appcontext.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
+      - "server/internal/scheduled/tasks.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
       - server/internal/api/usecase/session_subagents.go:return true
       - server/internal/api/usecase/session_send.go:defer claudeSubagents.FinishAll()
 

@@ -126,24 +126,28 @@ type BuildPromptInput struct {
 }
 
 type SendMessageInput struct {
-	RootID                 string
-	RuntimeRootPath        string
-	Key                    string
-	Agent                  string
-	Model                  string
-	Mode                   string
-	Effort                 string
-	FastService            string
-	PlanMode               *bool
-	Shell                  string
-	TerminalCols           int
-	Content                string
-	UserTimestamp          time.Time
-	ClientCtx              ClientContext
-	OnStart                func(MessageStart)
-	OnUpdate               func(agenttypes.Event)
-	OnSubSessionCreated    func(*session.Session)
-	OnSubSessionUpdate     func(sessionKey string, update agenttypes.Event)
+	RootID              string
+	RuntimeRootPath     string
+	Key                 string
+	Agent               string
+	Model               string
+	Mode                string
+	Effort              string
+	FastService         string
+	PlanMode            *bool
+	Shell               string
+	TerminalCols        int
+	Content             string
+	UserTimestamp       time.Time
+	ClientCtx           ClientContext
+	OnStart             func(MessageStart)
+	OnUpdate            func(agenttypes.Event)
+	OnSubSessionCreated func(*session.Session)
+	OnSubSessionUpdate  func(sessionKey string, update agenttypes.Event)
+	// OnSubAgentAttached / OnSubAgentTurnFinished 是子会话回合身份的收发两端，由
+	// attach() 与 close() 配对调用。详见 subagentSessionInput 上的同名字段。
+	OnSubAgentAttached     func(child *session.Session, turnID string)
+	OnSubAgentTurnFinished func(sessionKey, turnID string)
 	OnAgentDefaultsChanged func(agentName string)
 }
 
@@ -728,8 +732,18 @@ type subagentSessionInput struct {
 	Pool        *agent.Pool
 	Manager     *session.Manager
 	ToolCall    agenttypes.ToolCall
-	OnCreated   func(*session.Session)
-	OnUpdate    func(sessionKey string, update agenttypes.Event)
+	// OnCreated 只在「新建」子会话时触发一次，语义是「把它加进列表」。
+	OnCreated func(*session.Session)
+	// OnSubAgentAttached 在**每一条** attach 路径（新建 + 认领已有 binding）上触发，
+	// 返回不对 —— 是**交出**这条子会话本轮的身份（turn mindfs_id）。它必须由 attach()
+	// 统一发放：认领分支此前从不调 OnCreated，于是那条子会话没有任何代码持有它的
+	// 回合身份，defer drain 扫不到它、close() 也不终结它 —— pending 永久残留，
+	// 父会话被前端 descendantRunning() 判成 delegating（线上 1792108831 的症状）。
+	OnSubAgentAttached func(child *session.Session, turnID string)
+	// OnSubAgentTurnFinished 由 close() 自己调用，交还同一枚 turn id。是谁收尾都行
+	// （正常 done / 取消 / 父轮 defer drain / FinishAll），终结都汇聚到这一处。
+	OnSubAgentTurnFinished func(sessionKey, turnID string)
+	OnUpdate               func(sessionKey string, update agenttypes.Event)
 }
 
 type claudeSubagentRouter struct {
@@ -747,13 +761,33 @@ type claudeSyntheticSubagent struct {
 	// cancel 掐断本子代理的订阅上下文。它同时是登记进 activeTurns 的取消函数，
 	// 因此「停止按钮」能命中这个子代理（见 attach）。
 	cancel context.CancelFunc
+	// turnID 是 attach() 时发放的本轮身份。close() 必须原样交还给终结器 ——
+	// EndSessionTurn 按它比对（见 PendingTurnIDMatches），缺了它清理会退化成
+	// 无身份的「保守清」，把下一轮的灯误抹。
+	turnID string
+	in     subagentSessionInput
 	closed bool
+}
+
+// subagentTurnID 铸一条子会话的回合身份。
+//
+// 此前这段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go /
+// scheduled/tasks.go 三处各抄一遍。收敛到这里的理由不只是去重：三条路径必须
+// **铸出同一种形状的 id**，否则「attach 发放身份 / close 终结」在某个调用方上
+// 就会静默地拿不到 id（那正是认领分支此前的处境）。
+func subagentTurnID(child *session.Session) string {
+	if child == nil {
+		return ""
+	}
+	return session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", child.Key, session.MaxExchangeSeq(child.Exchanges)+1))
 }
 
 // close 是合成子代理的**唯一**收尾点，幂等。
 //
-// 必须做的三件事缺一不可：走 done() 落盘并发出终帧（前端清灯的唯一来源）、掐断
-// 订阅（此后不再有更新进来）、注销活跃轮次（否则下一轮取消会命中一个已死的子代理）。
+// 必须做的四件事缺一不可：走 done() 落盘并发出终帧（前端清灯的来源之一）、掐断
+// 订阅（此后不再有更新进来）、注销活跃轮次（否则下一轮取消会命中一个已死的子代理）、
+// **终结本子会话自己的回合**（否则它的 pending 永久残留，父会话被前端
+// descendantRunning() 判成 delegating —— 用户停了子代理，主会话依旧显示在跑）。
 // 顺序上 done() 必须早于 cancel()：done() 用订阅上下文落盘，先掐上下文会让这条
 // 子代理的正文写不下去 —— 灯是灭了，字也丢了。
 func (c *claudeSyntheticSubagent) close() {
@@ -768,6 +802,11 @@ func (c *claudeSyntheticSubagent) close() {
 		c.cancel()
 	}
 	unregisterActiveTurn(c.rootID, c.key)
+	// 终结放在最后：done() 会同步发出终帧（OnUpdate → EventTypeMessageDone），
+	// 那条路径自己也会走一次终结。放前面会让它拿到已清理后的状态。
+	if c.turnID != "" && c.in.OnSubAgentTurnFinished != nil {
+		c.in.OnSubAgentTurnFinished(c.key, c.turnID)
+	}
 }
 
 func (s *syntheticAgentSession) SendMessage(context.Context, string) error { return nil }

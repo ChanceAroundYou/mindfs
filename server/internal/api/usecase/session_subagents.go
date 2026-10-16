@@ -188,6 +188,10 @@ func (r *claudeSubagentRouter) attach(child *session.Session, ref claudeSubagent
 	}
 	ctx, cancel := context.WithCancel(parentCtx)
 	done := attachBackgroundSessionUpdates(ctx, in, child, runtime)
+	// 回合身份在**每一条** attach 路径上统一发放（新建 + 认领已有 binding）。
+	// 认领分支此前只 attach 不发身份，于是那条子会话没有任何代码持有它的回合：
+	// defer drain 扫不到、close() 也不终结它，pending 永久残留。
+	turnID := subagentTurnID(child)
 	attached := &claudeSyntheticSubagent{
 		rootID:  in.RootID,
 		key:     child.Key,
@@ -195,6 +199,8 @@ func (r *claudeSubagentRouter) attach(child *session.Session, ref claudeSubagent
 		runtime: runtime,
 		done:    done,
 		cancel:  cancel,
+		turnID:  turnID,
+		in:      in,
 	}
 	// 合成子代理也是一轮"在跑"：不登记的话 Service.CancelSessionTurn 会走
 	// active==nil 那条路静默返回 —— 表现就是停止按钮点了没反应。
@@ -204,6 +210,11 @@ func (r *claudeSubagentRouter) attach(child *session.Session, ref claudeSubagent
 	}
 	registerActiveTurn(in.RootID, child.Key, cancel)
 	setActiveTurnSession(in.RootID, child.Key, runtime)
+	// 由调用方在这里置 pending（拿到同一枚 turn id）并登记进自己的 drain map。
+	// 认领分支此前不走这里，是这条子会话身份缺失的直接原因。
+	if in.OnSubAgentAttached != nil {
+		in.OnSubAgentAttached(child, attached.turnID)
+	}
 	r.children = append(r.children, attached)
 	return attached
 }

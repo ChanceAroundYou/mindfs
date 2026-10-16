@@ -540,15 +540,29 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			// 子会话同样是「新会话」：列表里要把它挂到父会话下面。发 created 才触发
 			// 前端重拉，meta.updated 不会（前端 handler 只写已缓存条目）。
 			broadcaster.BroadcastSessionCreated(current.RootID, created)
-			if created != nil {
-				nextSeq := session.MaxExchangeSeq(created.Exchanges) + 1
-				mindfsID := session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", created.Key, nextSeq))
-				id := broadcaster.SetSessionPendingReply(current.RootID, created.Key, created.Name, mindfsID)
-				turnMu.Lock()
-				turnIDs[created.Key] = id
-				subSessionKeys = append(subSessionKeys, created.Key)
-				turnMu.Unlock()
+		},
+		// 每条 attach 路径都发一枚 turn id。置 pending 并登记进 drain map —— 认领分支
+		// 此前不走 OnCreated，那条子会话没有任何代码持有它的回合，defer drain 扫不到、
+		// close() 也不终结它，pending 永久残留（线上 1792108831 的症状）。
+		OnSubAgentAttached: func(child *session.Session, turnID string) {
+			if child == nil || turnID == "" {
+				return
 			}
+			broadcaster.BroadcastSessionMetaUpdated(current.RootID, child)
+			broadcaster.BroadcastSessionCreated(current.RootID, child)
+			id := broadcaster.SetSessionPendingReply(current.RootID, child.Key, child.Name, turnID)
+			turnMu.Lock()
+			turnIDs[child.Key] = id
+			subSessionKeys = append(subSessionKeys, child.Key)
+			turnMu.Unlock()
+		},
+		// close() 自己终结自己那一轮（正常 done / 取消 / FinishAll 都汇聚到这里），
+		// 因此漏掉 defer 快照之后才注册进来的子会话也不会永久残留。
+		OnSubAgentTurnFinished: func(sessionKey, id string) {
+			if sessionKey == "" || id == "" {
+				return
+			}
+			broadcaster.EndSessionTurn(current.RootID, sessionKey, "", id)
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
 			broadcaster.BroadcastSessionUpdate(current.RootID, sessionKey, update)

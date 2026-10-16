@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -934,14 +933,27 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		},
 		OnSubSessionCreated: func(created *session.Session) {
 			h.broadcastSessionMetaUpdated(rootID, created)
-			if created != nil {
-				nextSeq := session.MaxExchangeSeq(created.Exchanges) + 1
-				mindfsID := session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", created.Key, nextSeq))
-				id := streamHub.SetPendingReply(rootID, created.Key, created.Name, mindfsID)
-				subIDsMu.Lock()
-				subIDs[created.Key] = id
-				subIDsMu.Unlock()
+		},
+		// 每条 attach 路径（新建 + 认领已有 binding）都发一枚 turn id。这里置 pending
+		// 并登记进 subIDs —— 认领分支此前不走 OnCreated，那条子会话因此没有任何代码
+		// 持有它的回合，defer drain 扫不到、close() 也不终结它，pending 永久残留。
+		OnSubAgentAttached: func(child *session.Session, turnID string) {
+			if child == nil || turnID == "" {
+				return
 			}
+			h.broadcastSessionMetaUpdated(rootID, child)
+			id := streamHub.SetPendingReply(rootID, child.Key, child.Name, turnID)
+			subIDsMu.Lock()
+			subIDs[child.Key] = id
+			subIDsMu.Unlock()
+		},
+		// close() 自己终结自己那一轮（正常 done / 取消 / FinishAll 都汇聚到这里），
+		// 因此漏掉 defer 快照之后才注册进来的子会话也不会永久残留。
+		OnSubAgentTurnFinished: func(sessionKey, id string) {
+			if sessionKey == "" || id == "" {
+				return
+			}
+			h.AppContext.EndSessionTurn(rootID, sessionKey, "", id)
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
 			tracker := subTrackerFor(sessionKey)

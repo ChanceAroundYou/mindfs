@@ -52,9 +52,19 @@ func TestKanbanStagePathCarriesTurnIdentity(t *testing.T) {
 				strings.TrimSpace(line))
 		}
 	}
-	if !strings.Contains(code, "session.MaxExchangeSeq(created.Exchanges) + 1") ||
-		!strings.Contains(code, "session.NewMindFSID(\"\", fmt.Sprintf(\"%s|agent|%d\", created.Key, nextSeq))") {
-		t.Fatal("RunAgentStage 子会话 pending 必须使用与落盘一致的 assistant mindfs_id")
+	// 3：子会话的回合身份必须来自**单一来源** subagentTurnID()。
+	//
+	// 2026-10-16 之前这段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go /
+	// scheduled/tasks.go 三处各抄一遍。收敛到 usecase.subagentTurnID 的理由不只是去重：
+	// 三条 attach 路径必须铸出同一种形状的 id，否则某个调用方会静默拿不到身份 ——
+	// 那正是 claude 认领分支此前的处境（子会话无人持有回合 ⇒ pending 永久残留）。
+	// 所以这里从「这段字面必须出现在本文件」改成「本文件必须用那个共享函数」。
+	if strings.Contains(code, "session.NewMindFSID(") {
+		t.Fatal("appcontext.go 又在自己铸子会话回合身份：请改用 usecase.subagentTurnID()，" +
+			"三处各自铸会让某条 attach 路径静默拿不到 id")
+	}
+	if !strings.Contains(code, "turnID") {
+		t.Fatal("appcontext.go 的 RunAgentStage 没有接收子会话回合身份：请把它交给收尾路径")
 	}
 
 	// 2：收尾不得传哨兵身份。新旧哨兵都拦。

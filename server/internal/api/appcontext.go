@@ -399,17 +399,29 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		},
 		OnSubSessionCreated: func(created *session.Session) {
 			s.BroadcastSessionMetaUpdated(exec.RootID, created)
-			if created != nil {
-				nextSeq := session.MaxExchangeSeq(created.Exchanges) + 1
-				mindfsID := session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", created.Key, nextSeq))
-				id := s.SetSessionPendingReply(exec.RootID, created.Key, created.Name, mindfsID)
-				turnMu.Lock()
-				turnIDs[created.Key] = id
-				subMu.Lock()
-				subSessionKeys = append(subSessionKeys, created.Key)
-				subMu.Unlock()
-				turnMu.Unlock()
+		},
+		// 每条 attach 路径都发一枚 turn id。置 pending 并登记进 drain map —— 认领分支
+		// 此前不走 OnCreated，那条子会话没有任何代码持有它的回合，defer drain 扫不到、
+		// close() 也不终结它，pending 永久残留（线上 1792108831 的症状）。
+		OnSubAgentAttached: func(child *session.Session, turnID string) {
+			if child == nil || turnID == "" {
+				return
 			}
+			id := s.SetSessionPendingReply(exec.RootID, child.Key, child.Name, turnID)
+			turnMu.Lock()
+			turnIDs[child.Key] = id
+			subMu.Lock()
+			subSessionKeys = append(subSessionKeys, child.Key)
+			subMu.Unlock()
+			turnMu.Unlock()
+		},
+		// close() 自己终结自己那一轮（正常 done / 取消 / FinishAll 都汇聚到这里），
+		// 因此漏掉 defer 快照之后才注册进来的子会话也不会永久残留。
+		OnSubAgentTurnFinished: func(sessionKey, id string) {
+			if sessionKey == "" || id == "" {
+				return
+			}
+			s.EndSessionTurn(exec.RootID, sessionKey, "", id)
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
 			updateTracker.Begin()

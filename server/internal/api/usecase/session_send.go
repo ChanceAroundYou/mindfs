@@ -176,18 +176,20 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	lastResponseUpdateType := ""
 	claudeSubagents := newClaudeSubagentRouter(subagentSessionInput{
-		Ctx:         turnCtx,
-		RootID:      in.RootID,
-		Parent:      current,
-		Agent:       in.Agent,
-		Model:       in.Model,
-		Mode:        in.Mode,
-		Effort:      in.Effort,
-		FastService: in.FastService,
-		RootAbs:     rootAbs,
-		Manager:     manager,
-		OnCreated:   in.OnSubSessionCreated,
-		OnUpdate:    in.OnSubSessionUpdate,
+		Ctx:                    turnCtx,
+		RootID:                 in.RootID,
+		Parent:                 current,
+		Agent:                  in.Agent,
+		Model:                  in.Model,
+		Mode:                   in.Mode,
+		Effort:                 in.Effort,
+		FastService:            in.FastService,
+		RootAbs:                rootAbs,
+		Manager:                manager,
+		OnCreated:              in.OnSubSessionCreated,
+		OnSubAgentAttached:     in.OnSubAgentAttached,
+		OnSubAgentTurnFinished: in.OnSubAgentTurnFinished,
+		OnUpdate:               in.OnSubSessionUpdate,
 	})
 	// 收尾必须是 defer：本轮任何一条提前返回/panic 的路径漏掉它，都会留下一盏
 	// 永远亮着的子代理灯（用户看到"卡死"）。
