@@ -980,7 +980,7 @@ groups:
       - server/internal/api/helpers.go:func respondJSONList
       - server/internal/api/helpers.go:func respondJSONConditional
       - server/internal/api/http.go:respondJSONConditional
-      - server/internal/api/http_tasks.go:func projectOverviewTask
+      - server/internal/api/http_task_overview.go:func projectOverviewTask
       - web/src/services/net/api.ts:304
       - web/src/services/net/api.ts:conditionalRequestBytesMax
       - web/src/services/net/api.ts:rememberConditionalResponse
@@ -1137,9 +1137,9 @@ groups:
       - server/internal/gitview/worktree_finish.go:func RemoveToolStateOnlyOrphanDirs
       - server/internal/gitview/worktree_finish.go:func trackedDirtyPaths
       - server/internal/gitview/worktree_finish.go:func MergeBranch
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
-      - server/internal/api/http_tasks.go:func agentFallbackPlan
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) respondFinishTeardownFailure
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
+      - server/internal/api/http_task_begin_finish.go:func agentFallbackPlan
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) respondFinishTeardownFailure
       - server/internal/kanban/service_stage_edit.go:ByRequest bool
       - server/internal/kanban/service_stage_edit.go:canLeave := canAdvanceFromStage
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
@@ -1220,12 +1220,12 @@ groups:
       - web/tests/worktree-badge.test.mjs
       - web/tests/worktree-finish.test.mjs
     anchors:
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) teardownFinishWorktree
-      - server/internal/api/http_tasks.go:func projectOverviewTask
-      - server/internal/api/http_tasks.go:type overviewStageProjection
-      - server/internal/api/http_tasks.go:type overviewAuxFlags
-      - server/internal/api/http_tasks.go:func projectOverviewAuxFlags
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) teardownFinishWorktree
+      - server/internal/api/http_task_overview.go:func projectOverviewTask
+      - server/internal/api/http_task_overview.go:type overviewStageProjection
+      - server/internal/api/http_task_overview.go:type overviewAuxFlags
+      - server/internal/api/http_task_overview.go:func projectOverviewAuxFlags
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskFinishWorktree
       - server/internal/api/http_tasks_finish_teardown.go:type FinishTeardownReport
       - server/internal/kanban/worktree_finish.go:type FinishWorktreeDirty
@@ -5995,6 +5995,13 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/http_task_templates.go
+      - server/internal/api/http_task_stages.go
+      - server/internal/api/http_task_overview.go
+      - server/internal/api/http_task_begin_finish.go
+      - server/internal/api/http_tasks_begin_finish_helpers_test.go
+      - server/internal/api/http_tasks_begin_finish_teardown_test.go
+      - server/internal/api/http_tasks_begin_finish_agent_test.go
       - server/internal/api/http_sessions_list.go
       - server/internal/api/http_sessions_detail.go
       - server/internal/api/http_sessions_actions.go
