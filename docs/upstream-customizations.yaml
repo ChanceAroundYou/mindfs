@@ -1671,7 +1671,7 @@ groups:
       - server/internal/session/manager_window_reads.go:countExchangeRecords
       - server/internal/session/manager_aux_tail.go:GetCommandShell
       - server/internal/session/manager_aux_tail.go:readAuxTailEntries
-      - server/internal/api/http_sessions.go:handleSessionSync
+      - server/internal/api/http_sessions_detail.go:handleSessionSync
       - server/internal/api/usecase/session_list.go:fillCommandShells
 
   - id: G-BF
@@ -2165,7 +2165,7 @@ groups:
       - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
       - server/internal/api/usecase/session_fork.go:copyForkBlocks
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
-      - server/internal/api/http_sessions.go:windowSeqsForExchanges
+      - server/internal/api/http_sessions_detail.go:windowSeqsForExchanges
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
       - web/src/hooks/sessionBlocks.ts:blocksForSeq
       - web/src/services/session/sessionExchangeMerge.ts:export function toPersistentBlocks(
@@ -4198,9 +4198,9 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/api/http_sessions.go:func (h *HTTPHandler) handleSessions
-      - server/internal/api/http_sessions.go:func (h *HTTPHandler) handleSessionSync
-      - server/internal/api/http_sessions.go:func (h *HTTPHandler) sessionResponse
+      - server/internal/api/http_sessions_list.go:func (h *HTTPHandler) handleSessions
+      - server/internal/api/http_sessions_detail.go:func (h *HTTPHandler) handleSessionSync
+      - server/internal/api/http_sessions_detail.go:func (h *HTTPHandler) sessionResponse
       - server/internal/api/http.go:func (h *HTTPHandler) handleSessionRepoint
 
   - id: G-FA
@@ -5995,6 +5995,11 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/http_sessions_list.go
+      - server/internal/api/http_sessions_detail.go
+      - server/internal/api/http_sessions_actions.go
+      - server/internal/api/http_sessions_external.go
+      - server/internal/api/http_sessions_command_shell.go
       - server/internal/api/agent_api_provider_handlers.go
       - server/internal/api/agent_api_provider_sync_ops.go
       - server/internal/api/agent_api_provider_urls.go
