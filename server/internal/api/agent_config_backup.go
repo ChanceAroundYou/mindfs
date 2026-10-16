@@ -56,7 +56,7 @@ func (h *HTTPHandler) handleAgentConfigBackupCreate(w http.ResponseWriter, r *ht
 func (h *HTTPHandler) handleAgentConfigBackupDelete(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("backup id required"))
+		respondError(w, http.StatusBadRequest, apperrInvalid("请提供备份 ID"))
 		return
 	}
 	manifest, err := deleteAgentConfigBackup(id)
@@ -119,7 +119,7 @@ func createAgentConfigBackup(req agentConfigBackupRequest) (agentConfigManifestE
 		return agentConfigManifestEntry{}, err
 	}
 	if len(sources) == 0 && len(envLines) == 0 {
-		return agentConfigManifestEntry{}, errors.New("config source or environment variables required")
+		return agentConfigManifestEntry{}, apperrInvalid("需要配置来源或环境变量")
 	}
 	if err := os.RemoveAll(filepath.Join(configRoot, id)); err != nil {
 		return agentConfigManifestEntry{}, apperr.Wrap("remove", filepath.Join(configRoot, id), err)
@@ -166,7 +166,7 @@ func createAgentConfigBackup(req agentConfigBackupRequest) (agentConfigManifestE
 func deleteAgentConfigBackup(id string) ([]agentConfigManifestEntry, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return nil, errors.New("backup id required")
+		return nil, apperrInvalid("请提供备份 ID")
 	}
 	manifest, err := readAgentConfigManifest()
 	if err != nil {
@@ -182,7 +182,7 @@ func deleteAgentConfigBackup(id string) ([]agentConfigManifestEntry, error) {
 		next = append(next, item)
 	}
 	if !found {
-		return nil, errors.New("backup not found")
+		return nil, apperrInvalid("备份不存在")
 	}
 	if err := writeAgentConfigManifest(next); err != nil {
 		return nil, err

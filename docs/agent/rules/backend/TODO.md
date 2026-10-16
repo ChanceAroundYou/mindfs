@@ -86,8 +86,14 @@
 要再拆 `importer_tool_calls.go` 的前置仍是把 `normalizeXxx` 抽成表驱动，那是独立一轮；
 现在它已在硬线内，不再有必须拆的压力。）
 
-## 顺带发现的待办（与拆文件无关）
+## 真 TODO（与拆文件无关，已清）
 
-- [ ] `server/internal/api/agent_config.go` 裸 error 绕过 `apperr` 中文消息层：`errors.New("backup id required")`、`"backup not found"`、`errAgentConfigConflict` 等业务文案匹配不上 `apperr.Classify` 的关键字兜底，原样进 `respondError` payload，用户看到英文原文。修法：包一层 `apperr`（参考同文件已有的 `apperr.Wrap` 用法）。下次动 agent_config 相关代码时顺手修（2026-10-15 后端体检发现，LOW）。
+- [x] `server/internal/api/agent_config.go` 与同包 `*_env.go` / `*_backup.go` /
+      `*_switch.go` 的身份校验/备份/切换错误。原本全部是 `errors.New("backup id required")`
+      之类的英文裸 error，虽然部分已有 `apperr.Wrap` 用法，但校验/查找分支完全绕过了
+      apperr 中文消息层 —— 原样进 `respondError` payload，用户看到英文原文。
+      2026-10-16 走完 `apperrInvalid(...)` 助手，统一成
+      `&apperr.Error{Code: "invalid_request", Message: <中文>}`，`errAgentConfigConflict`
+      哨兵改成中文字符串；所有消息翻译成中文，并保持 `errors.Is` 语义不变（测试绿）。
 
 长期约束见同目录规则文档；历史拆分记录保留在对应计划和提交记录中。

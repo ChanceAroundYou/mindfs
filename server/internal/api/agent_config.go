@@ -15,6 +15,12 @@ import (
 	configpkg "mindfs/server/internal/config"
 )
 
+// apperrInvalid 把校验失败包成 apperr.Error，使 respondError 走中文消息层，
+// 而不是把英文原文直接给用户看（backend/TODO.md 2026-10-15 发现的那条真 TODO）。
+func apperrInvalid(message string) error {
+	return &apperr.Error{Code: "invalid_request", Message: message}
+}
+
 type agentConfigSource struct {
 	SourcePath string `json:"sourcePath"`
 	BackupPath string `json:"backupPath"`
@@ -72,7 +78,7 @@ func (h *HTTPHandler) handleAgentConfigDefaults(w http.ResponseWriter, r *http.R
 	})
 }
 
-var errAgentConfigConflict = errors.New("backup already exists")
+var errAgentConfigConflict = errors.New("备份已存在")
 
 func readAgentConfigManifest() ([]agentConfigManifestEntry, error) {
 	path, err := agentConfigManifestPath()

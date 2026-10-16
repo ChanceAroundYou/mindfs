@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -62,7 +61,7 @@ func (h *HTTPHandler) handleAgentRestart(w http.ResponseWriter, r *http.Request)
 func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConfigManifestEntry, bool, error) {
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
-		return agentConfigManifestEntry{}, false, errors.New("backup id required")
+		return agentConfigManifestEntry{}, false, apperrInvalid("请提供备份 ID")
 	}
 	manifest, err := readAgentConfigManifest()
 	if err != nil {
@@ -76,10 +75,10 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 		}
 	}
 	if entry.ID == "" {
-		return agentConfigManifestEntry{}, false, errors.New("backup not found")
+		return agentConfigManifestEntry{}, false, apperrInvalid("备份不存在")
 	}
 	if len(entry.Sources) == 0 && len(entry.EnvKeys) == 0 {
-		return agentConfigManifestEntry{}, false, errors.New("backup has no config content")
+		return agentConfigManifestEntry{}, false, apperrInvalid("备份没有配置内容")
 	}
 	exists := false
 	for _, source := range entry.Sources {
@@ -156,7 +155,7 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 		}
 		lines, ok := envBackups[entry.ID]
 		if !ok {
-			return agentConfigManifestEntry{}, false, errors.New("environment backup not found")
+			return agentConfigManifestEntry{}, false, apperrInvalid("环境备份不存在")
 		}
 		parsedEnv, _, err := envLinesToMap(lines)
 		if err != nil {
@@ -196,10 +195,10 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 func restartAgent(agentName string, app *AppContext) error {
 	agentName = strings.TrimSpace(agentName)
 	if agentName == "" {
-		return errors.New("agent required")
+		return apperrInvalid("请指定 agent")
 	}
 	if app == nil || app.GetAgentPool() == nil {
-		return errors.New("agent pool not configured")
+		return apperrInvalid("agent pool 未配置")
 	}
 	if _, ok := app.GetAgentPool().Config().GetAgent(agentName); !ok {
 		return fmt.Errorf("agent not configured: %s", agentName)

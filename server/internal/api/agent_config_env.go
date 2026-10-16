@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,13 +14,13 @@ func normalizeAgentConfigRequest(agentName, backupName string) (string, string, 
 	agentName = strings.TrimSpace(agentName)
 	backupName = strings.TrimSpace(backupName)
 	if agentName == "" {
-		return "", "", "", errors.New("agent required")
+		return "", "", "", apperrInvalid("请指定 agent")
 	}
 	if backupName == "" {
-		return "", "", "", errors.New("backup name required")
+		return "", "", "", apperrInvalid("请提供备份名称")
 	}
 	if !agentConfigNamePattern.MatchString(backupName) || strings.Contains(backupName, "..") {
-		return "", "", "", errors.New("backup name may only contain letters, numbers, dot, underscore, and hyphen")
+		return "", "", "", apperrInvalid("备份名称只能包含字母、数字、点、下划线和连字符")
 	}
 	return agentName, backupName, agentName + "-" + backupName, nil
 }
