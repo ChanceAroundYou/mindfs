@@ -808,7 +808,7 @@ groups:
       - web/src/hooks/useRelatedFileStats.ts
       - server/internal/gitview/gitview.go
       - server/internal/gitview/gitview_history.go
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_history_test.go
       - server/internal/api/http_git_related_files_stats_test.go
       - web/tests/related-file-stats-batch.test.mjs
       - web/tests/git-cache-bounds.test.mjs
@@ -819,7 +819,7 @@ groups:
       - web/tests/related-file-stats-batch.test.mjs
       - web/tests/git-cache-bounds.test.mjs
       - web/tests/node-url-normalize.test.mjs
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_history_test.go
       - server/internal/api/http_git_related_files_stats_test.go
 
   - id: G-AI
@@ -1371,12 +1371,12 @@ groups:
       # `gitview_test.go:TestX`，锚点格式套到了 tests 上，门禁直接判「测试不存在」。
       # 本文件里钉住的是 TestSamePathResolvesSymlinks /
       # TestValidateTargetDoesNotSelfBlockViaSymlink / TestListWorktreesCurrentViaSymlink。
-      - server/internal/gitview/gitview_test.go
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_repo_test.go
+      - server/internal/gitview/gitview_repo_test.go
     files:
       - server/internal/gitview/gitview.go
       - server/internal/gitview/worktree_finish.go
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_repo_test.go
   - id: G-AW
     title: 工作台移除 attention bar + 统一 task card wrapper
     kind: feature
@@ -4458,7 +4458,7 @@ groups:
     why: "The read-only diff/history implementation belongs together so history and related-file behavior can be reviewed independently from status and worktree actions."
     boundary: "ReadDiff through ReadRelatedFileStats and repoContext.commitExists through parseHistoryItems move unchanged to gitview_history.go (653 lines); path mapping, history ordering, commit/diff selection and result shapes are unchanged. Parent gitview.go is 933 lines."
     tests:
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_stats_test.go
     files:
       - server/internal/gitview/gitview.go
       - server/internal/gitview/gitview_history.go
@@ -5995,6 +5995,10 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B10
+      - server/internal/gitview/gitview_test_helpers_test.go
+      - server/internal/gitview/gitview_history_test.go
+      - server/internal/gitview/gitview_repo_test.go
+      - server/internal/gitview/gitview_stats_test.go
       - server/internal/gitview/gitview_history_read.go
       - server/internal/gitview/gitview_history_stats.go
       - server/internal/gitview/gitview_history_parse.go
