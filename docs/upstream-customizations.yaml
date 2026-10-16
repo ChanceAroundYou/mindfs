@@ -5929,6 +5929,22 @@ groups:
       - server/internal/api/usecase/candidates_file_skill.go
       - server/internal/api/usecase/external_sessions_sync.go
       - server/internal/api/usecase/external_sessions_names.go
+      # B5 测试文件
+      - server/internal/api/usecase/fs_git_test.go
+      - server/internal/api/usecase/candidates_file_skill_test.go
+      - server/internal/api/usecase/candidates_registry_test.go
+      - server/internal/api/usecase/candidates_managed_dirs_test.go
+      - server/internal/api/usecase/session_lifecycle_test.go
+      - server/internal/api/usecase/session_command_shell_test.go
+      - server/internal/api/usecase/session_subagent_stream_test.go
+      - server/internal/api/usecase/session_turn_registry_test.go
+      - server/internal/api/usecase/session_search_test.go
+      - server/internal/api/usecase/session_prompt_test.go
+      - server/internal/api/usecase/session_recovery_test.go
+      - server/internal/api/usecase/usecase_test_helpers_test.go
+      - server/internal/api/usecase/external_sessions_names_test.go
+      - server/internal/api/usecase/external_sessions_import_test.go
+      - server/internal/api/usecase/external_sessions_ownership_test.go
     anchors:
       - docs/agent/rules/backend/file-size.md:软线**：300 行
       - docs/plans/backend-file-size-300-500.md:B2
