@@ -395,7 +395,7 @@ groups:
       - 'server/internal/session/manager_agent_bindings.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
       - 'server/internal/session/manager_aliases.go:func (m *Manager) upsertExternalSessionNameUnsafe'
       - 'server/internal/session/manager_aliases.go:func (m *Manager) lookupSessionAliasForAgentUnsafe'
-      - 'server/internal/session/types.go:func InferAgentFromSession'
+      - 'server/internal/session/types_infer.go:func InferAgentFromSession'
     files:
       - server/internal/agent/claude/importer.go
       - server/internal/agent/claude/importer_test.go
@@ -1331,16 +1331,16 @@ groups:
       - web/tests/pins-refresh-dedup.test.mjs
       - web/tests/session-window.test.mjs
     anchors:
-      - server/internal/session/types.go:func CompactExchangeAuxLight
-      - server/internal/session/types.go:func lightCompactToolCall
-      - server/internal/session/types.go:func dropEditRedundantMeta
+      - server/internal/session/types_aux_compact.go:func CompactExchangeAuxLight
+      - server/internal/session/types_aux_compact.go:func lightCompactToolCall
+      - server/internal/session/types_aux_compact.go:func dropEditRedundantMeta
       - server/internal/session/manager_aux_reads.go:CompactExchangeAuxLight(entry)
       - web/src/services/session/sessionWindowFetch.ts:const windowInflight = new Map
       - web/src/services/session/sessionService.ts:export const SESSION_WINDOW_SIZE = 8;
       - web/src/app/useRealtimeEvents.ts:const relatedFilesRefreshTimers = useRef(new Map<string, number>());
       - web/src/hooks/sessionTimeline.ts:export function groupConsecutiveToolCalls
       - web/src/components/stream/ToolCallGroupCard.tsx:export const ToolCallGroupCard
-      - 'server/internal/session/types.go:CUSTOM(G-AT)'
+      - 'server/internal/session/types_aux_compact.go:CUSTOM(G-AT)'
       - 'server/internal/session/manager_aux_reads.go:CUSTOM(G-AT)'
       - 'web/src/services/session/sessionService.ts:CUSTOM(G-AT)'
       - 'web/src/services/session/sessionWindowFetch.ts:CUSTOM(G-AT)'
@@ -1766,8 +1766,8 @@ groups:
     anchors:
       - server/internal/session/manager_exchange_identity.go:NewMindFSID
       - server/internal/session/manager_exchange_identity.go:IsMindFSIDShape
-      - server/internal/session/types.go:func (e *Exchange) UnmarshalJSON
-      - server/internal/session/blocks.go:func (b *Block) UnmarshalJSON
+      - server/internal/session/types_exchange.go:func (e *Exchange) UnmarshalJSON
+      - server/internal/session/blocks_type.go:func (b *Block) UnmarshalJSON
       - server/internal/api/usecase/session_turn_identity.go:exchangeAgentKey
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/api/stream_hub.go:AppendReplyEvent
@@ -2121,12 +2121,12 @@ groups:
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
     anchors:
-      - server/internal/session/blocks.go:BuildTurnBlocks
-      - server/internal/session/blocks.go:ClearNativeIdentity
-      - server/internal/session/blocks.go:GetBlocksWindow
-      - server/internal/session/blocks.go:readBlocksWindowTail
-      - server/internal/session/blocks.go:CompactBlocksLight
-      - server/internal/session/blocks.go:GroupBlocksBySeq
+      - server/internal/session/blocks_build.go:BuildTurnBlocks
+      - server/internal/session/blocks_compact.go:ClearNativeIdentity
+      - server/internal/session/blocks_window.go:GetBlocksWindow
+      - server/internal/session/blocks_window.go:readBlocksWindowTail
+      - server/internal/session/blocks_compact.go:CompactBlocksLight
+      - server/internal/session/blocks_build.go:GroupBlocksBySeq
       - server/internal/session/manager_exchange_identity.go:WithExchangeIdentity
       - server/internal/api/usecase/session.go:newMindFSID
       - server/internal/api/usecase/session_turn_identity.go:exchangeAlreadyRecorded
@@ -2145,7 +2145,7 @@ groups:
       - server/internal/api/ws.go:runSessionMessage
       - server/internal/agent/acp/process.go:SendMessage
       - server/internal/agent/types/turn.go:WithPromptTurnID
-      - server/internal/session/types.go:CompactExchangeAux
+      - server/internal/session/types_aux_compact.go:CompactExchangeAux
       - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
@@ -2181,7 +2181,7 @@ groups:
       - web/src/app/realtimeWsUserMessage.ts
       - web/src/components/session/SessionViewer.tsx
     anchors:
-      - server/internal/session/types.go:UnmarshalJSON
+      - server/internal/session/types_exchange.go:UnmarshalJSON
       - server/internal/session/manager_exchange_identity.go:NewMindFSID
       - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
@@ -5816,3 +5816,90 @@ groups:
       - "web/src/components/session/SessionViewer.tsx:scrollPaddingBottom"
       - "web/src/components/session/SessionViewerTimeline.tsx:copyResetTimersRef"
       - "web/tests/queued-overlay-and-copy.test.mjs:C1: timeline passes copy props"
+
+  - id: G-IY
+    title: 后端文件长度规则对齐前端（软 300 / 硬 500）+ 存量分批拆分
+    kind: arch
+    symptom: "后端规则是软 2000 / 硬 4000，前端是软 300 / 硬 500，同一目的两套数值差 6 倍；结果是 server/internal/api/usecase/session.go 1496 行、api/appcontext.go 1465 行这类「一个文件四五个不相干职责」的形态能长期存在。改造前存量 43 个源码 + 18 个测试文件超硬线。"
+    why: "两条规则服务同一个目的（「一个文件一个职责，改哪读哪」），数值差 6 倍没有技术理由。软线的语义是判据（超过就判断职责边界并记录拆分安排），不是一次性清理项——与前端同区间 77 个文件的口径一致。合上游时 rules/plans 文档本身也会被整份覆盖，规则数值会被静默退回 2000/4000，而下游没人会注意到。"
+    boundary: "改后端规则数值（docs/agent/rules/backend/file-size.md）+ 存量的分批清理登记（docs/agent/rules/backend/TODO.md）+ 执行计划（docs/plans/backend-file-size-300-500.md）。全部为同包内移动或同包内新增文件：无签名变化、无 type 位置变化（跨文件同包可见）、无 import 路径变化、零数据迁移。agent/codex/importer_tool_calls.go 与 kanban/worktree_finish_stage.go 已论证过边界，本轮不再拆。"
+    tests:
+      - server/internal/auth/auth_test.go
+      - server/internal/auth/resolve_live_test.go
+    files:
+      - docs/agent/rules/backend/file-size.md
+      - docs/agent/rules/backend/TODO.md
+      - docs/plans/backend-file-size-300-500.md
+      # B2 拆出的新文件（各职责文件，源文件的 groups 已逐条登记，这里只登记
+      # 「拆分」这件事本身与规划产物）。
+      - server/internal/auth/store_persist.go
+      - server/internal/auth/store_query.go
+      - server/internal/auth/store_mutate.go
+      - server/internal/commandexec/long_shell_command.go
+      - server/internal/commandexec/long_shell_output.go
+      - server/internal/agent/pool_idle.go
+      - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_config.go
+      - server/internal/agent/config_types.go
+      - server/internal/agent/config_shell.go
+      - server/internal/agent/config_defaults.go
+      - server/internal/agent/probe_types.go
+      - server/internal/agent/probe_status_query.go
+      - server/internal/agent/probe_status_caps.go
+      - server/internal/agent/probe_run.go
+      - server/internal/agent/probe_verify.go
+      - server/internal/agent/types/session_type.go
+      - server/internal/agent/types/external_import.go
+      - server/internal/agent/types/model.go
+      - server/internal/agent/types/event.go
+      - server/internal/agent/types/toolcall.go
+      - server/internal/agent/types/turn.go
+      - server/internal/agent/types/import_input.go
+      - server/internal/update/types.go
+      - server/internal/update/release_fetch.go
+      - server/internal/update/manifest.go
+      - server/internal/update/download.go
+      - server/internal/update/install.go
+      - server/internal/update/archive.go
+      - server/internal/update/version.go
+      - server/internal/update/webassets.go
+      - server/internal/webpush/config.go
+      - server/internal/webpush/store.go
+      - server/internal/webpush/notify_payload.go
+      - server/internal/webpush/send.go
+      - server/internal/fs/root.go
+      - server/internal/fs/meta_dir.go
+      - server/internal/fs/read_decode.go
+      - server/internal/fs/file_meta.go
+      # B3
+      - server/internal/session/types_exchange.go
+      - server/internal/session/types_aux_compact.go
+      - server/internal/session/types_infer.go
+      - server/internal/session/types_worktree.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
+      - server/internal/session/manager_paths.go
+      - server/internal/session/manager_exchange_write.go
+      - server/internal/session/manager_cache.go
+      - server/internal/session/manager_sql_statements.go
+      - server/internal/session/manager_repoint.go
+      - server/internal/session/manager_test_worktree.go
+      - server/internal/session/manager_test_list.go
+      - server/internal/session/manager_test_exchange.go
+      - server/internal/session/manager_test_incremental.go
+      - server/internal/session/manager_test_pending.go
+      - server/internal/session/manager_test_repair.go
+      - server/internal/session/manager_test_agent_binding.go
+      - server/internal/session/manager_test_fork.go
+      - server/internal/session/manager_test_db.go
+      - server/internal/fs/meta_dir_test.go
+      - server/internal/fs/read_decode_test.go
+      - server/internal/fs/entries_test.go
+    anchors:
+      - docs/agent/rules/backend/file-size.md:软线**：300 行
+      - docs/plans/backend-file-size-300-500.md:B2
+      - server/internal/session/types_aux_compact.go:CUSTOM(G-AT)
