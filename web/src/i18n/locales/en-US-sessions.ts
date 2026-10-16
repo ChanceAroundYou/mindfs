@@ -58,12 +58,12 @@ export const enUSSessions = {
   "session.askSubmitting": "Submitting...",
   "session.askSubmit": "Submit answer",
   "session.toolGroupCount": "{count} {kind}",
-  // Header ⋯ menu: "Change directory" and its path picker.
+  // Header ⋯ menu: "Change directory" and its path picker. One box, one confirm:
+  // the browse area reuses LocalPanel without its own frame and action button.
   "session.changeDir": "Change directory",
-  "session.dirPicker.title": "Choose a working directory",
+  "session.changeDirRunning": "The session is replying — wait for it to stop",
   "session.dirPicker.placeholder": "Type a directory path",
   "session.dirPicker.loadFailed": "Cannot read that directory",
-  "session.dirPicker.use": "Use this directory",
   "session.dirPicker.confirm": "Confirm",
   "session.dirPicker.moving": "Moving...",
   "session.dirPicker.failed": "Failed to change directory",

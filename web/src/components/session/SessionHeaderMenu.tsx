@@ -11,8 +11,9 @@ import { useSessionDirExists } from "./useSessionDirBrowser";
  * 最后一项「修改目录」是这里独有的：下面再挂一行小字显示会话当前的工作目录
  * （长路径换行、目录不存在标红）。点它开选路径弹层。
  *
- * 只有 claude 会话能换目录 —— repoint 要 fork 转录，别的 agent 没有这条路径，
- * 所以那一项对非 claude 会话置灰而不是点了报错。
+ * 两个置灰条件，都不是「点了才报错」：
+ *   - 非 claude 会话：repoint 要 fork 转录，别的 agent 没有这条路径。
+ *   - 会话正在回复：repoint 第一件事是掐掉 agent 进程，跑着的回合会被腰斩在半句上。
  */
 export function SessionHeaderMenu({
   agent,
@@ -21,6 +22,7 @@ export function SessionHeaderMenu({
   rootPath,
   workDir,
   archived,
+  running,
   onRename,
   onArchive,
   onDelete,
@@ -33,6 +35,8 @@ export function SessionHeaderMenu({
   /** 会话显式选定的工作目录；空 = 项目主 checkout。 */
   workDir?: string;
   archived?: boolean;
+  /** 有回合在跑（presence !== idle）。换目录要掐进程，此时不许点。 */
+  running?: boolean;
   /** 重命名：弹输入框与落库都在 app 层（视图层不许直接调 dialog 服务）。 */
   onRename: () => void;
   onArchive: (archived: boolean) => void;
@@ -47,7 +51,9 @@ export function SessionHeaderMenu({
   const [pickerError, setPickerError] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  const canRepoint = String(agent || "") === "claude" && !!rootId;
+  const canRepoint = String(agent || "") === "claude" && !!rootId && !running;
+  // 置灰的原因要写出来，否则「点了没反应」比报错还费解。
+  const repointBlockedReason = running ? t("session.changeDirRunning") : "";
   // 显示的是「这个会话在哪个目录里干活」：显式选过就是那个，没选过就是项目主 checkout。
   const displayDir = String(workDir || "").trim() || String(rootPath || "").trim();
   // 只有显式选过的目录才可能「不存在」——项目主 checkout 是注册表里登记着的，
@@ -117,7 +123,7 @@ export function SessionHeaderMenu({
               position: "absolute",
               top: "calc(100% + 6px)",
               right: 0,
-              width: "min(280px, calc(100vw - 16px))",
+              width: "min(140px, calc(100vw - 16px))",
               padding: "6px",
               borderRadius: "10px",
               border: "1px solid var(--border-color)",
@@ -174,6 +180,7 @@ export function SessionHeaderMenu({
             <button
               type="button"
               disabled={!canRepoint}
+              title={repointBlockedReason || undefined}
               onClick={() => {
                 if (!canRepoint) return;
                 closeMenu();

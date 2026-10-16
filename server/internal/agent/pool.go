@@ -196,6 +196,18 @@ func (p *Pool) BeginSessionUse(sessionKey string) func() {
 	}
 }
 
+// HasActiveUse 报告这个会话当前有没有回合在跑。session_send / 命令 shell / 子代理流
+// 都用 BeginSessionUse 把自己圈起来，所以 activeUses > 0 就是「正在回复」。
+//
+// 换目录（repoint）第一件事是 pool.Close 掐掉 agent 进程：跑着的回合会被腰斩在半句上、
+// 转录停在中间。调用方必须先用这一句问过。开着但空闲的会话不算 —— 那种 Close 是无害的。
+func (p *Pool) HasActiveUse(sessionKey string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry := p.sessions[sessionKey]
+	return entry != nil && entry.activeUses > 0
+}
+
 // Close closes a session (not the underlying runtime pool).
 func (p *Pool) Close(sessionKey string) {
 	p.mu.Lock()

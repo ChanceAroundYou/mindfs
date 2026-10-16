@@ -12,3 +12,11 @@ export const projectAddPopoverStyle: React.CSSProperties = {
   flexDirection: "column",
   gap: "10px",
 };
+
+/** 嵌进别人弹层时的形态：外框与动作按钮由调用方负责（见 LocalPanel 的 localBare）。 */
+export const localBareStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+  minWidth: 0,
+};

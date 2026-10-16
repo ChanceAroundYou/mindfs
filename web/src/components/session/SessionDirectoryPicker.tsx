@@ -6,9 +6,13 @@ import { useSessionDirBrowser } from "./useSessionDirBrowser";
 /**
  * 换会话工作目录的选路径弹层。
  *
- * 复用的是新建项目那套 LocalPanel（同一个组件、同一个 /api/local_dirs 端点），
- * 所以「随便填」与「点进去浏览」两条路都走同一份校验：路径不存在时端点返回 404，
- * 这里就把错误显示出来、确认按钮禁用 —— 不需要另加一个存在性检查接口。
+ * 一个框、一个确定。浏览区复用新建项目那套 LocalPanel（同一个组件、同一个
+ * /api/local_dirs 端点），但**不带它自己的外框和动作按钮**（localBare）——
+ * 那是给「新建项目」的独立气泡用的，套进弹层里就成了框里框、两个确定按钮。
+ * 点目录名 = 进去（不是选中），确定 = 把会话搬到我正在看的这个目录。
+ *
+ * 路径不存在时端点返回 404，这里就把错误显示出来、确定禁用 —— 不需要另加
+ * 一个存在性检查接口。
  *
  * 刻意不复用 useProjectDirectoryBrowser：那个 hook 绑着 projectAddMode / 项目注册表刷新 /
  * 建 worktree 等一串只对「新建项目」成立的分支，在这里调它等于把那些副作用也带进来。
@@ -38,12 +42,12 @@ export function SessionDirectoryPicker({
   return (
     <div style={overlayStyle} onClick={onCancel}>
       <div style={panelStyle} onClick={(event) => event.stopPropagation()}>
-        <div style={{ fontSize: "13px", fontWeight: 600 }}>{t("session.dirPicker.title")}</div>
+        {/* 输入框兼作路径显示：直接粘一个路径 + Enter 就是确定。 */}
         <input
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") void load(input);
+            if (event.key === "Enter" && canConfirm) onConfirm(targetPath);
           }}
           onBlur={() => {
             if (input.trim() && input.trim() !== localState.path) void load(input);
@@ -55,11 +59,12 @@ export function SessionDirectoryPicker({
         <LocalPanel
           localState={localState}
           onLocalNavigate={(path) => void load(path)}
-          onLocalSelect={() => undefined}
-          onLocalAdd={() => onConfirm(targetPath)}
-          localActionLabel={t("session.dirPicker.use")}
+          onLocalSelect={(path) => void load(path)}
+          onLocalAdd={() => undefined}
+          localActionLabel=""
           localDisabledAddedRoot={false}
-          localBrowseOnly
+          localBrowseOnly={false}
+          localBare
         />
         {error ? <div style={{ fontSize: "12px", color: "#dc2626", overflowWrap: "anywhere" }}>{error}</div> : null}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
@@ -98,7 +103,7 @@ const overlayStyle: React.CSSProperties = {
 const panelStyle: React.CSSProperties = {
   width: "360px",
   maxWidth: "calc(100vw - 32px)",
-  padding: "16px",
+  padding: "12px",
   borderRadius: "14px",
   border: "1px solid var(--border-color)",
   background: "var(--menu-bg)",
@@ -106,7 +111,7 @@ const panelStyle: React.CSSProperties = {
   boxShadow: "0 18px 48px rgba(15, 23, 42, 0.24)",
   display: "flex",
   flexDirection: "column",
-  gap: "12px",
+  gap: "10px",
 };
 
 const inputStyle: React.CSSProperties = {

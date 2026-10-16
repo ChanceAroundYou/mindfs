@@ -6146,9 +6146,9 @@ groups:
   - id: G-JB
     title: 会话标题栏 ⋯ 菜单（修改目录 / 重命名 / 归档 / 删除）+ 会话工作目录 WorkDir
     kind: feature
-    symptom: "从会话聊天面板里只能逛会话usement列表去改名/归档/删除/搬目录；换目录一旦用 repoint（fork 转录、 Moving worktree →主 checkout 时清 related、钉 cwd），前端 WorkDir 必须穿过 list/detail/ws 三处白名单，否则标题栏就显示不出新目录。"
-    why: "为正式 chat 面板的标题栏加 ⋯ 菜单（按钮 copied 于文件面板 FileTreeHeaderOverlays，菜单项复用 SessionCardOverflowMenu），最后一项「修改目录」下方灰字显示当前工作目录（长路径换行、目录不存在标红）。换目录复用新建项目的 LocalPanel 选路径控件，校验由 /api/local_dirs 404 完成。后端新增 Session.WorkDir（独立于 RelatedWorktree，避免触发工作树收尾徽标），并把 repoint 的目标目录抽成 RepointSessionInput.TargetPath（空 = 主 checkout，向后兼容 wt-finish）。 WorkDir  priority 于 RelatedWorktree，保证 cwd 语义准确。"
-    boundary: "只影响 services/session、shared/sessionTypes、appSession、realtimeWsSessionMeta 与 SessionViewerHeader/SessionMenu；API/会话库按账户分， controls 仍只在主节点。"
+    symptom: "从会话聊天面板里只能回会话列表去改名/归档/删除/搬目录；换目录走 repoint（fork 转录、清 related、钉 cwd）时，前端 WorkDir 必须穿过 list/detail/ws 三处白名单，否则标题栏显示不出新目录。另一条相反方向的坑：repoint 第一件事是掐掉 agent 进程，会话正在回复时换目录会把这一轮腰斩在半句上。"
+    why: "为正式 chat 面板的标题栏加 ⋯ 菜单（按钮照搬文件面板 FileTreeHeaderOverlays，菜单项复用 SessionCardOverflowMenu），最后一项「修改目录」下方灰字显示当前工作目录（长路径换行、目录不存在标红）。换目录复用新建项目的 LocalPanel 选路径控件（localBare：只借面包屑+列表，不带它自己的外框和「用这个目录」按钮 —— 否则弹层里就是框里框、两个确定按钮），校验由 /api/local_dirs 404 完成。后端新增 Session.WorkDir（独立于 RelatedWorktree，避免触发工作树收尾徽标），并把 repoint 的目标目录抽成 RepointSessionInput.TargetPath（空 = 主 checkout，向后兼容 wt-finish）。WorkDir 优先于 RelatedWorktree，保证 cwd 语义准确。换目录**不限制**会话是否绑着 worktree（2026-10-16 去掉那道守卫：它让主 checkout 里的普通会话永远换不了目录），只限制「有回合在跑」—— 前端按 presence 置灰，后端用 Pool.HasActiveUse 兜住直接打 API 的调用方。"
+    boundary: "只影响 services/session、shared/sessionTypes、appSession、realtimeWsSessionMeta、agent/pool 的只读查询与 SessionViewerHeader/SessionMenu；API/会话库按账户分，控制面仍只在主节点。"
     files:
       - server/internal/session/types.go
       - server/internal/session/manager_repoint.go
@@ -6162,9 +6162,14 @@ groups:
       - server/internal/api/http_sessions_list.go
       - server/internal/api/ws_session_message.go
       - server/internal/api/usecase/session_repoint.go
+      - server/internal/agent/pool.go
       - web/src/components/session/SessionViewerHeader.tsx
       - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionHeaderMenu.tsx
+      - web/src/components/session/SessionDirectoryPicker.tsx
       - web/src/components/session/sessionViewerTypes.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/components/file/projectAddStyles.ts
       - web/src/app/useAppSessionView.tsx
       - web/src/app/useAppViewComposition.ts
       - web/src/app/appSession.ts
@@ -6179,5 +6184,7 @@ groups:
       - server/internal/api/http_session_work_dir_test.go
       - server/internal/session/manager_work_dir_test.go
       - server/internal/api/usecase/session_repoint_target_test.go
+      - server/internal/agent/pool_active_use_test.go
     anchors:
       - 'server/internal/api/http_sessions_list.go:s.WorkDir'
+      - 'server/internal/agent/pool.go:func (p *Pool) HasActiveUse'

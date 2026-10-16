@@ -68,6 +68,8 @@ export function useAppSessionView(params: UseAppSessionViewParams) {
           managedRootByIdRef.current[headerMenuRootId || ""]?.root_path || null,
         workDir: selectedSessionSnapshot.work_dir,
         archived: !!selectedSession?.archived_at,
+        // 有回合在跑就不给换目录：repoint 第一件事是掐掉 agent 进程。
+        running: selectedSessionPresence !== "idle",
         // 重命名走应用内输入弹窗（视图层不许直接调 dialog 服务，所以这里做）。
         onRename: () => {
           void (async () => {

@@ -59,11 +59,11 @@ export const zhCNSessions = {
   "session.askSubmit": "提交回答",
   "session.toolGroupCount": "{count} 个{kind}",
   // 标题栏 ⋯ 菜单的「修改目录」及其选路径弹层。目录行本身不加文案，直接显示路径。
+  // 弹层只有一个框一个确定：浏览区复用 LocalPanel 但不带它自己的外框和动作按钮。
   "session.changeDir": "修改目录",
-  "session.dirPicker.title": "选择工作目录",
+  "session.changeDirRunning": "会话正在回复，停下来才能换目录",
   "session.dirPicker.placeholder": "直接输入目录路径",
   "session.dirPicker.loadFailed": "无法读取该目录",
-  "session.dirPicker.use": "用这个目录",
   "session.dirPicker.confirm": "确定",
   "session.dirPicker.moving": "正在搬...",
   "session.dirPicker.failed": "换目录失败",

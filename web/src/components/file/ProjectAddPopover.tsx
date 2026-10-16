@@ -5,7 +5,7 @@ import { useI18n } from "../../i18n/index";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 import { AsyncStateMessage } from "../common/AsyncStateMessage";
 import { ProjectAddModePanel } from "./ProjectAddModePanel";
-import { projectAddPopoverStyle } from "./projectAddStyles";
+import { localBareStyle, projectAddPopoverStyle } from "./projectAddStyles";
 import type { GitHubImportState, LocalDirBrowserState, ProjectAddMode } from "../../shared/projectAddTypes";
 export type { GitHubImportState, LocalDirBrowserState, LocalDirItem, ProjectAddMode } from "../../shared/projectAddTypes";
 
@@ -26,6 +26,13 @@ type ProjectAddPopoverProps = {
   localActionLabel: string;
   localDisabledAddedRoot: boolean;
   localBrowseOnly: boolean;
+  /**
+   * 去掉自带的外框与动作按钮，只留「面包屑 + 目录列表」。
+   *
+   * 给把它嵌进自己弹层的调用方用（会话标题栏的「修改目录」）：那边已经有框、
+   * 有确定按钮，再叠一层就是框里框、两个确定。默认 false = 新建项目那个独立气泡。
+   */
+  localBare?: boolean;
   githubState: GitHubImportState;
   onGitHubUrlChange: (value: string) => void;
   onGitHubImport: () => void;
@@ -53,6 +60,7 @@ export function LocalPanel({
   localActionLabel,
   localDisabledAddedRoot,
   localBrowseOnly,
+  localBare,
 }: Pick<
   ProjectAddPopoverProps,
   | "localState"
@@ -64,6 +72,7 @@ export function LocalPanel({
   | "localActionLabel"
   | "localDisabledAddedRoot"
   | "localBrowseOnly"
+  | "localBare"
 >) {
   const { t } = useI18n();
   const actionDisabled =
@@ -79,7 +88,7 @@ export function LocalPanel({
 
   const nodes = useProjectAddNodes();
   return (
-    <div style={projectAddPopoverStyle}>
+    <div style={localBare ? localBareStyle : projectAddPopoverStyle}>
       {nodes.length > 1 && onSelectedNodeChange ? (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingBottom: 6, borderBottom: "1px solid var(--border-color)" }}>
           {nodes.map((n) => {
@@ -243,24 +252,26 @@ export function LocalPanel({
             );
           })}
       </div>
-      <button
-        type="button"
-        disabled={actionDisabled}
-        onClick={onLocalAdd}
-        style={{
-          border: "none",
-          background: actionBackground,
-          color: "#fff",
-          borderRadius: "8px",
-          padding: "9px 10px",
-          fontSize: "12px",
-          fontWeight: 600,
-          opacity: 1,
-          cursor: actionCursor,
-        }}
-      >
-        {localState.adding ? t("projectAdd.processing") : localActionLabel}
-      </button>
+      {localBare ? null : (
+        <button
+          type="button"
+          disabled={actionDisabled}
+          onClick={onLocalAdd}
+          style={{
+            border: "none",
+            background: actionBackground,
+            color: "#fff",
+            borderRadius: "8px",
+            padding: "9px 10px",
+            fontSize: "12px",
+            fontWeight: 600,
+            opacity: 1,
+            cursor: actionCursor,
+          }}
+        >
+          {localState.adding ? t("projectAdd.processing") : localActionLabel}
+        </button>
+      )}
     </div>
   );
 }

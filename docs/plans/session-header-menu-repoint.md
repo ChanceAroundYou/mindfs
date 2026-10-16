@@ -59,3 +59,19 @@
   `sessionRuntimeRootPath` 优先 `WorkDir`。
 - 前端：菜单四项渲染与可见性（非 claude 会话「修改目录」置灰）、目录行换行与转红、i18n key 契约。
 - 端到端：隔离实例（`XDG_CONFIG_HOME` + 新端口）点一次「修改目录」验证落盘与续聊。
+
+## 六、上线后的修订（2026-10-16 晚，实测反馈）
+
+1. **菜单宽度 280 → 140**：280px 撑得浮层像抽屉。目录行本来就是 `pre-wrap + overflowWrap:anywhere`
+   且没有 `line-clamp`/`maxHeight`，长路径一直换行到底 —— 这一条只是收窄，没动换行。
+2. **选目录弹层从三层压成一层**：原先「外层弹层（标题 + 输入框）+ LocalPanel 自带的外框 +
+   LocalPanel 的「用这个目录」+ 弹层的「确定」」= 框里框、两个确定。现在 `LocalPanel` 多一个
+   `localBare` 开关（只留面包屑 + 列表，去掉自带外框与动作按钮），弹层只留输入框 + 浏览区 +
+   `取消/确定`；点目录名 = 进去（不是选中），确定搬的就是「我正在看的这个目录」。
+   随之退役两个 i18n key：`session.dirPicker.title` / `session.dirPicker.use`。
+3. **「session is not bound to a worktree」不是 bug，是没重启**：那道守卫在 `ec4e3e90` 就删了，
+   但本机 systemd 单元跑的还是 15:13 启动的旧镜像（用户自重启）。实测新后端把主 checkout 里的
+   普通会话搬到项目外的 `/tmp/mindfs-iso` 返回 200、标题栏目录行随之更新。
+   本轮真正新增的是**运行中不给换**：前端按 `presence !== "idle"` 置灰（带 tooltip），
+   后端 `Pool.HasActiveUse` 兜住直接打 API 的调用方 —— repoint 第一件事是 `pool.Close`，
+   跑着的回合会被腰斩在半句上。

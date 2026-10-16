@@ -108,6 +108,14 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	}
 	rootAbs, _ := root.RootDir()
 
+	// 正在回复的会话不能换目录：下面第一件事就是 pool.Close 掐掉 agent 进程，跑着的
+	// 回合会被腰斩在半句上、转录停在中间 —— 搬过去的就是一份截断的历史。这是纯内存
+	// 判断，放在所有文件校验之前：它比「目标目录填错了」更根本。
+	// 前端那一项此时是灰的，这里兜住直接打 API 的调用方（脚本、并发标签页）。
+	if pool := s.Registry.GetAgentPool(); pool != nil && pool.HasActiveUse(agentPoolSessionKey(key, agentName)) {
+		return out, errors.New("会话正在回复，等这一轮结束再换目录")
+	}
+
 	// 目标目录：显式给了就用它（校验过再动手），没给就是主 checkout —— 与改造前同义。
 	oldDir := sessionRuntimeRootPathFor(current)
 	currentDir := oldDir
