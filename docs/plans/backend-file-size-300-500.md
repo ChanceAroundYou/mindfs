@@ -77,6 +77,34 @@
    本轮不拆。** 二者分别是 G-GK / G-GI 刚拆过、边界已论证过的产物，再拆等于推翻
    前一轮结论。登记到软线待办。
 
+## 六、执行进度
+
+| 批次 | 状态 | 提交 |
+|---|---|---|
+| B1 规则文档 + TODO + 计划 | 完成 | `4a84505b` |
+| B2 叶包（agent/types、update、webpush、auth、fs、commandexec） | 完成 | `c92d597c` |
+| B3 session 包源 + 测试 | 完成 | `1ea6b593` / `219aaa8d` / `5ebbc50b` |
+| B4 api/usecase 源 | 完成 | 本次 |
+| B5 api/usecase 测试 | 待做 | — |
+| B6 kanban 源 + 测试 | 待做 | — |
+| B7 agent 运行时源 | 待做 | — |
+| B8 agent 导入器 + 测试 | 待做 | — |
+| B9 api 源 + 测试（逐文件提交） | 待做 | — |
+| B10 收尾：全量门禁 + TODO 勾项 + 索引标 Completed | 待做 | — |
+
+B4 记录：`session.go` 1496 → `session.go` 339 + `session_turn_registry` 114 +
+`session_agent_open` 218 + `session_recovery` 142 + `session_command_shell` 294 +
+`session_subagent_synthetic` 108 + `session_subagent_stream` 260；
+`fs.go` 1158 → `fs.go` 203 + `fs_git` 396 + `fs_upload` 244 + `fs_managed_dirs` 350；
+`candidates.go` 733 → `candidates.go` 217 + `candidates_registry` 202 +
+`candidates_file_skill` 334；`external_sessions.go` 778 → `external_sessions.go` 271 +
+`external_sessions_sync` 423 + `external_sessions_names` 102。
+
+过程中发现解析器缺陷并修掉：`func f(` 形式的多行签名（如
+`sendCommandMessage(`、`appendImportedExchange(`）被误判成「单行声明」，
+导致跨 2..300 行的大段被吞进下一个声明的尾部。修法是单行判定加
+「不以 `(` 结尾」条件。
+
 ## 六、验收
 
 ```bash

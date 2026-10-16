@@ -273,7 +273,7 @@ groups:
       - web/tests/session-archive.test.mjs
     anchors:
       - server/internal/fs/registry.go:UpdateDisplayName
-      - 'server/internal/api/usecase/fs.go:CUSTOM(G-P)'
+      - 'server/internal/api/usecase/fs_managed_dirs.go:CUSTOM(G-P)'
 
   - id: G-G
     title: 会话生命周期与 WS 正确性
@@ -1456,8 +1456,8 @@ groups:
       - server/internal/api/usecase/session_subagents.go
       - server/internal/api/usecase/session_send.go
     anchors:
-      - server/internal/api/usecase/session.go:func (c *claudeSyntheticSubagent) close()
-      - server/internal/api/usecase/session.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
+      - server/internal/api/usecase/session_subagent_synthetic.go:func (c *claudeSyntheticSubagent) close()
+      - server/internal/api/usecase/session_subagent_synthetic.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
       - server/internal/api/usecase/session_subagents.go:registerActiveTurn(in.RootID, child.Key, cancel)
       - server/internal/api/usecase/session_subagents.go:return true
       - server/internal/api/usecase/session_send.go:defer claudeSubagents.FinishAll()
@@ -1688,8 +1688,8 @@ groups:
       - server/internal/api/usecase/external_sessions.go
     anchors:
       - server/internal/agent/claude/importer.go:readClaudeImportedExchangeLocators
-      - server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta
-      - server/internal/api/usecase/external_sessions.go:externalSessionDeltaAfterCtxSeq
+      - server/internal/api/usecase/external_sessions_sync.go:SyncExternalSessionDelta
+      - server/internal/api/usecase/external_sessions_sync.go:externalSessionDeltaAfterCtxSeq
 
   - id: G-BI
     title: 会话身份收敛为两套 id（mindfs_id + agent_id，NativeTurn/NativePrompt/NativeID 合并）
@@ -1827,10 +1827,10 @@ groups:
       - server/internal/api/usecase/usecase_test.go
       - server/internal/api/usecase/session_model_switch_test.go
     anchors:
-      - server/internal/api/usecase/session.go:currentModelForRuntime
+      - server/internal/api/usecase/session_runtime.go:currentModelForRuntime
       - server/internal/api/usecase/session_send.go:requestedModel := strings.TrimSpace(in.Model)
       - server/internal/api/usecase/session_send.go:manager.UpdateModel(ctx, current, resolvedModel)
-      - server/internal/api/usecase/session.go:currentModel := currentModelForRuntime(current, existing)
+      - server/internal/api/usecase/session_agent_open.go:currentModel := currentModelForRuntime(current, existing)
   - id: G-BL
     title: 看板新建任务的 worktree 节点路由
     kind: fix
@@ -2138,7 +2138,7 @@ groups:
       - server/internal/session/blocks_compact.go:CompactBlocksLight
       - server/internal/session/blocks_build.go:GroupBlocksBySeq
       - server/internal/session/manager_exchange_identity.go:WithExchangeIdentity
-      - server/internal/api/usecase/session.go:newMindFSID
+      - server/internal/api/usecase/session_turn_identity.go:newMindFSID
       - server/internal/api/usecase/session_turn_identity.go:exchangeAlreadyRecorded
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
@@ -2159,7 +2159,7 @@ groups:
       - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
-      - server/internal/api/usecase/session.go:persistTurnBlocks
+      - server/internal/api/usecase/session_turn_identity.go:persistTurnBlocks
       - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAndGetSeq
       - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAtWithIdentityFactory
       - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
@@ -2241,7 +2241,7 @@ groups:
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_send.go
     anchors:
-      - server/internal/api/usecase/session.go:validateAgentModel
+      - server/internal/api/usecase/session_model_validation.go:validateAgentModel
       - server/internal/api/usecase/session_send.go:UpdateModel
 
   - id: G-BL

@@ -9,7 +9,6 @@
 
 | 文件 | 行数 | 批次 |
 |---|---|---|
-| `server/internal/api/usecase/session.go` | 1496 | B4 |
 | `server/internal/api/appcontext.go` | 1465 | B9 |
 | `server/internal/kanban/service.go` | 1422 | B6 |
 | `server/internal/api/ws.go` | 1408 | B9 |
@@ -19,7 +18,6 @@
 | `server/internal/api/agent_api_provider.go` | 1291 | B9 |
 | `server/internal/api/http_sessions.go` | 1192 | B9 |
 | `server/internal/agent/codex/session.go` | 1164 | B7 |
-| `server/internal/api/usecase/fs.go` | 1158 | B4 |
 | `server/internal/agent/claude/session.go` | 1076 | B7 |
 | `cli/cmd/mindfs.go` | 1059 | B10 |
 | `server/internal/api/http_tasks.go` | 1048 | B9 |
@@ -30,9 +28,7 @@
 | `server/internal/session/manager.go` | 797 | B3 |
 | `server/internal/agent/acp/session.go` | 795 | B7 |
 | `server/internal/api/agent_config.go` | 786 | B9 |
-| `server/internal/api/usecase/external_sessions.go` | 778 | B4 |
 | `server/internal/api/agent_api_provider_apply.go` | 769 | B9 |
-| `server/internal/api/usecase/candidates.go` | 733 | B4 |
 | `server/internal/session/blocks.go` | 720 | B3 |
 | `server/internal/agent/claude/session_messages.go` | 684 | B7 |
 | `server/internal/scheduled/tasks.go` | 661 | B10 |
@@ -85,7 +81,7 @@
 - [ ] `server/internal/api/agent_api_provider_files.go` — 供应商配置文件的读写备份。
 - [ ] `server/internal/api/http_git.go` — git 只读端点集合，按端点分文件。
 - [ ] `server/internal/api/usecase/git_worktree.go` — worktree 生命周期（建/删/收尾）。
-- [ ] `server/internal/api/usecase/session_fork.go` — fork 与 repoint 周边逻辑。
+- [ ] `server/internal/api/usecase/session_fork.go`（426）— fork 与 repoint 周边逻辑。
 - [ ] `server/internal/api/usecase/session_send.go` — 发送主路径（与 session.go 双向耦合，须同批拆）。
 - [ ] `server/internal/api/usecase/session_subagents.go` — 子代理会话装配。
 - [ ] `server/internal/api/usecase/session_turn_identity.go` — 回合身份写入。
