@@ -785,7 +785,7 @@ groups:
       - 'web/src/components/git/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
       - 'web/src/components/git/GitDiffViewer.tsx:rootBadgeButtonStyle'
       - 'web/src/services/upload.ts:getRootNodeId'
-      - 'server/internal/gitview/gitview_history.go:func ReadRelatedFileStats'
+      - 'server/internal/gitview/gitview_history_stats.go:func ReadRelatedFileStats'
       - 'server/internal/api/http_routes.go:/api/git/related-files/stats'
     files:
       - web/src/components/file/CodeViewer.tsx
@@ -4467,10 +4467,10 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/gitview/gitview_history.go:func ReadDiff
-      - server/internal/gitview/gitview_history.go:func ListHistory
-      - server/internal/gitview/gitview_history.go:func ReadRelatedFileStats
-      - server/internal/gitview/gitview_history.go:func parseHistoryItems
+      - server/internal/gitview/gitview_history_read.go:func ReadDiff
+      - server/internal/gitview/gitview_history_read.go:func ListHistory
+      - server/internal/gitview/gitview_history_stats.go:func ReadRelatedFileStats
+      - server/internal/gitview/gitview_history_read.go:func parseHistoryItems
 
   - id: G-GN
     title: Release and development entrypoint contract
@@ -5995,6 +5995,9 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B10
+      - server/internal/gitview/gitview_history_read.go
+      - server/internal/gitview/gitview_history_stats.go
+      - server/internal/gitview/gitview_history_parse.go
       - server/internal/gitview/gitview_types.go
       - server/internal/gitview/gitview_actions.go
       - server/internal/gitview/gitview_status.go
