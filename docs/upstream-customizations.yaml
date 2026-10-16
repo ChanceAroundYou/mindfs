@@ -5995,6 +5995,10 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B10
+      - server/internal/gitview/worktree_merge_test.go
+      - server/internal/gitview/worktree_merge_edge_test.go
+      - server/internal/gitview/worktree_feasibility_test.go
+      - server/internal/gitview/worktree_remove_test.go
       - server/internal/gitview/worktree_merge.go
       - server/internal/gitview/worktree_merge_feasibility.go
       - server/internal/gitview/worktree_orphans.go

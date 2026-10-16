@@ -48,9 +48,3 @@ func TestMergeBranchTellsResolvedButUncommittedApartFromConflict(t *testing.T) {
 		t.Fatal("a fully resolved merge must not be reported as a conflict")
 	}
 }
-
-// ── CanMergeCleanly：只读合并判定 ──────────────────────────────────
-
-// ── RemoveWorktreeDir ───────────────────────────────────────────────
-
-// ── MigrateWorktreeUploads ──────────────────────────────────────────
