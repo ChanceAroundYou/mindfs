@@ -109,7 +109,10 @@ const kanbanTypes = fs.readFileSync(path.join(root, "server/internal/kanban/type
 assert.ok(/Stages\s+\[\]StageTemplate/.test(kanbanTypes), "Task.Stages 快照字段丢失");
 assert.ok(/type StageTemplate struct/.test(kanbanTypes), "StageTemplate 类型丢失");
 
-const templateStore = fs.readFileSync(path.join(root, "server/internal/kanban/template_store.go"), "utf8");
+const templateStore = [
+  fs.readFileSync(path.join(root, "server/internal/kanban/template_store.go"), "utf8"),
+  fs.readFileSync(path.join(root, "server/internal/kanban/template_store_stage.go"), "utf8"),
+].join("\n");
 assert.ok(templateStore.includes("ListStageTemplates"), "阶段模板库（新建任务时的可套用模板）丢失");
 
 const worktreeFinish = fs.readFileSync(path.join(root, "server/internal/kanban/worktree_finish.go"), "utf8");
