@@ -42,7 +42,7 @@
 - [ ] `server/internal/agent/pool.go`（303，B2 已拆一轮）— 剩获取/关闭主路径。
 - [ ] `server/internal/agent/probe_run.go`（440，B2 已拆一轮）— 探测执行：可按 configured / installed 两条线拆。
 - [ ] `server/internal/agent/probe_status_query.go`（357，B2 已拆一轮）— 状态查询与广播。
-- [ ] `server/internal/api/agent_api_provider_files.go` — 供应商配置文件的读写备份。
+- [x] `server/internal/api/agent_api_provider_files.go` — JSON family (read/writeJSONObject + normalize* + ensureJSONObject) 拆出 `agent_api_provider_json.go`；YAML/env/model/URL/managed-block 留原文件。
 - [ ] `server/internal/api/http_git.go` — git 只读端点集合，按端点分文件。
 - [ ] `server/internal/api/usecase/git_worktree.go` — worktree 生命周期（建/删/收尾）。
 - [ ] `server/internal/api/usecase/session_fork.go`（426）— fork 与 repoint 周边逻辑。
