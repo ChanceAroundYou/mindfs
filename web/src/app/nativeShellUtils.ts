@@ -169,6 +169,58 @@ export function isIOSWebKit(): boolean {
 export let largestNativeViewportHeight = 0;
 
 
+type VirtualKeyboardLike = {
+  overlaysContent: boolean;
+  boundingRect?: { height?: number };
+  addEventListener?: (type: string, listener: () => void) => void;
+  removeEventListener?: (type: string, listener: () => void) => void;
+};
+
+
+function readVirtualKeyboard(): VirtualKeyboardLike | null {
+  if (typeof navigator === "undefined") {
+    return null;
+  }
+  const virtualKeyboard = (navigator as Navigator & { virtualKeyboard?: VirtualKeyboardLike }).virtualKeyboard;
+  return virtualKeyboard && typeof virtualKeyboard.overlaysContent === "boolean" ? virtualKeyboard : null;
+}
+
+
+function readVirtualKeyboardImeBottom(virtualKeyboard: VirtualKeyboardLike): number {
+  const height = virtualKeyboard.boundingRect?.height;
+  return typeof height === "number" && Number.isFinite(height) ? Math.max(0, height) : 0;
+}
+
+
+/**
+ * 让键盘**覆盖**内容，而不是把视口挤小。
+ *
+ * 装成 PWA（Edge/Chrome 添加到主屏）后，键盘弹出会把视觉视口挤小：页面只画到视觉视口
+ * 底边，下面那段（窗口里、页面外）由**壳自己的窗口底色**填充 —— 而那份底色是安装时从
+ * manifest 的 background_color 烧进 WebAPK 的，运行时改不了（meta theme-color 管不到它），
+ * 于是暗色主题闪白、浅色主题闪黑，怎么选 manifest 都是错的。
+ *
+ * overlaysContent 让浏览器不缩视口：页面始终铺满窗口，键盘盖在上面，那条缝根本不存在。
+ * 代价是键盘不再自动把输入框顶上来 —— 由 syncViewportHeight 用 boundingRect 自己抬
+ * （与原生壳的 --mindfs-ime-bottom 同一套算法）。浏览器不支持时原样不动。
+ */
+export function installVirtualKeyboardOverlay(): () => void {
+  const virtualKeyboard = readVirtualKeyboard();
+  if (!virtualKeyboard || isNativeShellRuntime()) {
+    return () => {};
+  }
+  try {
+    virtualKeyboard.overlaysContent = true;
+  } catch {
+    return () => {};
+  }
+  const onChange = () => syncViewportHeightAfterKeyboardChange();
+  virtualKeyboard.addEventListener?.("geometrychange", onChange);
+  syncViewportHeight();
+  return () => virtualKeyboard.removeEventListener?.("geometrychange", onChange);
+}
+
+
 
 
 
@@ -185,6 +237,23 @@ export function readRootPixelVar(name: string): number {
 
 
 
+/**
+ * 键盘盖在内容上时，视口高度该扣多少：只扣「还没被视口缩小吃掉」的那部分键盘高度。
+ * resizedBy 已经缩掉的部分不能再扣一次 —— 否则输入框会被顶高一整个键盘。
+ * 两个来源共用同一套换算：原生壳注入的 --mindfs-ime-bottom、浏览器的 VirtualKeyboard
+ * boundingRect（overlaysContent 已开，视口不缩，全靠这里抬）。
+ */
+export function keyboardAdjustedViewportHeight(input: {
+  rawViewportHeight: number;
+  largestViewportHeight: number;
+  imeBottom: number;
+}): number {
+  const resizedBy = Math.max(0, input.largestViewportHeight - input.rawViewportHeight);
+  const remainingImeOverlay = Math.max(0, input.imeBottom - resizedBy);
+  return Math.max(320, input.rawViewportHeight - remainingImeOverlay);
+}
+
+
 export function syncViewportHeight(): void {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return;
@@ -192,20 +261,26 @@ export function syncViewportHeight(): void {
 
   const visualViewport = window.visualViewport;
   const isNativeShell = isNativeShellRuntime();
+  const virtualKeyboard = isNativeShell ? null : readVirtualKeyboard();
   const rawViewportHeight = isNativeShell || !visualViewport
     ? window.innerHeight
     : visualViewport.height;
   let viewportHeight = rawViewportHeight;
-  if (isNativeShell) {
-    const imeBottom = readRootPixelVar("--mindfs-ime-bottom");
+  if (isNativeShell || virtualKeyboard) {
+    // 原生壳报的是注入的 IME 内边距；浏览器里由 VirtualKeyboard API 报键盘高度。
+    const imeBottom = isNativeShell
+      ? readRootPixelVar("--mindfs-ime-bottom")
+      : readVirtualKeyboardImeBottom(virtualKeyboard as VirtualKeyboardLike);
     if (imeBottom > 0) {
       largestNativeViewportHeight ||= rawViewportHeight;
     } else {
       largestNativeViewportHeight = rawViewportHeight;
     }
-    const resizedBy = Math.max(0, largestNativeViewportHeight - rawViewportHeight);
-    const remainingImeOverlay = Math.max(0, imeBottom - resizedBy);
-    viewportHeight = Math.max(320, rawViewportHeight - remainingImeOverlay);
+    viewportHeight = keyboardAdjustedViewportHeight({
+      rawViewportHeight,
+      largestViewportHeight: largestNativeViewportHeight,
+      imeBottom,
+    });
   }
   const viewportOffsetTop = isNativeShell || !visualViewport
     ? 0

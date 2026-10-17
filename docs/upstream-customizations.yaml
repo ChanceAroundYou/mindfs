@@ -6208,8 +6208,8 @@ groups:
     title: 移动端键盘上浮白屏 — 锁死布局视口不缩 + 窗口底色跟随主题
     kind: fix
     symptom: "暗色主题下键盘上浮时，WebView 让出的区域先闪一块近白（实测 #F8FAFC = manifest 的 background_color），键盘再滑上来盖住它。装成 PWA（Edge/Chrome 添加到主屏）时同样闪、且比浏览器里更明显。"
-    why: "三处叠加：① 布局视口跟着键盘缩（旧 Chromium / 部分 WebView 浏览器默认 resizes-content），画布随之变小，键盘尚未覆盖的那段空隙就由宿主窗口底色填充 —— 显式写 interactive-widget=resizes-visual 锁死；② Android 壳按 adjustResize 缩 WebView 时露出的缝是 Activity 窗口底色（AppCompat DayNight 默认浅色），新增 MindFSThemeBackground 桥把窗口/WebView 背景推成应用主题色，初值来自 values/values-night 的 mindfsWindowBackground；③ 装成 PWA 后那条缝是**壳自己的窗口底色**，取自 manifest 的 background_color，安装时定死 —— meta theme-color 管不到它（实测 14:07 录像里 meta 已是 #0f172a，缝仍是 #F8FAFC），页面也画不出去，只能按当前主题换 manifest（manifest-dark.webmanifest），暗色装暗色壳。"
-    boundary: "只影响 Android 壳、web 的 viewport 声明与 PWA manifest 选择；不动会话/存储/多账户，控制面边界不变。"
+    why: "四处叠加：① 布局视口跟着键盘缩（旧 Chromium / 部分 WebView 浏览器默认 resizes-content），画布随之变小，键盘尚未覆盖的那段空隙就由宿主窗口底色填充 —— 显式写 interactive-widget=resizes-visual 锁死；② Android 壳按 adjustResize 缩 WebView 时露出的缝是 Activity 窗口底色（AppCompat DayNight 默认浅色），新增 MindFSThemeBackground 桥把窗口/WebView 背景推成应用主题色，初值来自 values/values-night 的 mindfsWindowBackground；③ 装成 PWA 后那条缝是**壳自己的窗口底色**，取自 manifest 的 background_color，安装时定死 —— meta theme-color 管不到它（实测 14:07 录像里 meta 已是 #0f172a，缝仍是 #F8FAFC），页面也画不出去，只能按当前主题换 manifest（manifest-dark.webmanifest），暗色装暗色壳；④ ③ 只是按安装时的主题二选一，切主题后要等 WebAPK 更新，于是根治：用 VirtualKeyboard API 的 overlaysContent 让键盘**覆盖**内容、视口不缩，页面始终铺满窗口，那条缝根本不存在 —— 代价是输入框要自己按 boundingRect 抬，与原生壳的 --mindfs-ime-bottom 共用同一套换算（keyboardAdjustedViewportHeight，已缩掉的部分不重复扣）。"
+    boundary: "只影响 Android 壳、web 的 viewport 声明、PWA manifest 选择与移动端键盘抬升算法；不动会话/存储/多账户，控制面边界不变。"
     files:
       - android/app/src/main/res/values/styles.xml
       - android/app/src/main/res/values/colors.xml
@@ -6217,10 +6217,14 @@ groups:
       - android/app/src/main/java/com/mindfs/app/MainActivity.java
       - web/index.html
       - web/public/manifest-dark.webmanifest
+      - web/src/app/nativeShellUtils.ts
+      - web/src/app/useNativeShellLifecycle.ts
       - web/src/services/prefs/appearance.ts
     tests:
       - web/tests/keyboard-no-white-flash.test.mjs
+      - web/tests/keyboard-viewport-height.test.mjs
     anchors:
       - 'web/index.html:interactive-widget=resizes-visual'
       - 'web/index.html:manifest-dark.webmanifest'
+      - 'web/src/app/nativeShellUtils.ts:installVirtualKeyboardOverlay'
       - 'web/src/services/prefs/appearance.ts:syncNativeWindowBackground'

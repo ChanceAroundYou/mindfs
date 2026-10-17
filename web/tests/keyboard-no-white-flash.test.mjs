@@ -44,4 +44,13 @@ test("keyboard-no-white-flash", async () => {
   assert.notEqual(lightManifest.background_color, darkManifest.background_color);
   assert.match(html, /link\[rel="manifest"\]/);
   assert.match(html, /manifest-dark\.webmanifest/);
+
+  // 根治那条缝：让键盘**覆盖**内容而不是挤小视口 —— 视口不缩，页面铺满窗口，
+  // 壳的窗口底色就没机会露出来（与主题无关，PWA 与浏览器都管用）。
+  // 代价是输入框要自己抬：boundingRect 的高度走同一套换算。
+  const native = read("src/app/nativeShellUtils.ts");
+  assert.match(native, /export function installVirtualKeyboardOverlay/);
+  assert.match(native, /overlaysContent = true/);
+  assert.match(native, /boundingRect/);
+  assert.match(read("src/app/useNativeShellLifecycle.ts"), /installVirtualKeyboardOverlay\(\)/);
 });
