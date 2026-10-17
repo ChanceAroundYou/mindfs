@@ -2,12 +2,6 @@
 @import "tailwindcss/utilities.css";
 @source "../node_modules/@json-render/shadcn/dist/index.js";
 
-/* 防止键盘弹出/viewport resize 期间露出默认白底（暗色下尤其明显） */
-html, body, #root {
-  background-color: var(--bg-gradient-start, #f3f4f6);
-  min-height: 100%;
-}
-
 :root {
   color-scheme: light;
   --mindfs-safe-area-top: 0px;

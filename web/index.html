@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" type="image/svg+xml" href="<!--MINDFS_FAVICON_HREF-->" />
     <!--APP_SHELL_PWA_LINKS-->
     <meta name="theme-color" content="#f3f4f6" />
@@ -30,10 +30,6 @@
             : "light";
         }
         var color = effective === "dark" ? "#0f172a" : effective === "meadow" ? "#f4efe6" : effective === "moss" ? "#dfe5d4" : "#f3f4f6";
-        document.documentElement.style.backgroundColor = color;
-        if (document.body) document.body.style.backgroundColor = color;
-        var rootEl = document.getElementById("root");
-        if (rootEl) rootEl.style.backgroundColor = color;
         var metas = document.querySelectorAll('meta[name="theme-color"]');
         for (var i = 0; i < metas.length; i += 1) {
           metas[i].setAttribute("content", color);

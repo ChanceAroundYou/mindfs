@@ -273,7 +273,7 @@ export function AppShell({
     boxSizing: "border-box",
     transition: isResizing
       ? "none"
-      : "grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 180ms cubic-bezier(0.4, 0, 0.2, 1), min-height 180ms cubic-bezier(0.4, 0, 0.2, 1)",
+      : "grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
     willChange: isResizing ? "grid-template-columns" : undefined,
     userSelect: isResizing ? "none" : undefined,
     "--mindfs-actionbar-bottom-padding": "calc(var(--mindfs-safe-area-bottom) + 12px)",
