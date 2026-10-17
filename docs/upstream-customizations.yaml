@@ -4311,9 +4311,9 @@ groups:
       - docs/plans/rule-completion-rollout.md
     anchors:
       - server/internal/agent/claude/session_tool_summaries.go:func summarizeToolCall
-      - server/internal/agent/claude/session_tool_summaries.go:func summarizeTaskListToolCall
-      - server/internal/agent/claude/session_tool_summaries.go:func summarizeAskUserToolCall
-      - server/internal/agent/claude/session_tool_summaries.go:func cloneToolMeta
+      - server/internal/agent/claude/session_tool_task_summaries.go:func summarizeTaskListToolCall
+      - server/internal/agent/claude/session_tool_task_summaries.go:func summarizeAskUserToolCall
+      - server/internal/agent/claude/session_tool_task_summaries.go:func cloneToolMeta
 
 
   - id: G-FD
@@ -4338,7 +4338,7 @@ groups:
       - server/internal/agent/claude/session_tool_pending.go:func (s *session) trackPendingToolCall
       - server/internal/agent/claude/session_tool_results.go:func (s *session) toolResultUpdate
       - server/internal/agent/claude/session_tool_results.go:func taskListToolResultUpdate
-      - server/internal/agent/claude/session_tool_results.go:func summarizeGenericToolResultValue
+      - server/internal/agent/claude/session_tool_result_summaries.go:func summarizeGenericToolResultValue
 
 
   - id: G-FE
