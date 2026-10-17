@@ -54,7 +54,7 @@ assert.equal(pins.sessionPinKey(" CMAI ", " s1 "), "CMAI::s1");
 assert.equal(pins.sessionPinKey("CMAI", "  "), "", "空会话键必须拒绝，否则会写进一条垃圾记录");
 
 // Go 侧 pins.SessionScopeKey 与之同形（服务端另有 sessionPinKey，形状相同）
-const goStore = fs.readFileSync(path.resolve(SRC, "../../server/internal/pins/store.go"), "utf8");
+const goStore = [fs.readFileSync(path.resolve(SRC, "../../server/internal/pins/store.go"), "utf8"), fs.readFileSync(path.resolve(SRC, "../../server/internal/pins/store_session.go"), "utf8")].join("\n");
 assert.ok(
   goStore.includes('return n + ScopeSep + r + ScopeSep + k'),
   "服务端 ScopeKey 仍是三段式；会话置顶键改为两段（rootID::key）后这里必须同步改",
