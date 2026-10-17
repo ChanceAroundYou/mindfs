@@ -18,12 +18,14 @@ type fakeUsecaseAgentSession struct {
 	cancelCalls int
 	closeCalls  int
 	onUpdate    func(agenttypes.Event)
+	// answerErr 让用例模拟「答案投递失败」（waiter 已不在、ctx 结束、agent 进程没了）。
+	answerErr error
 }
 
 func (s *fakeUsecaseAgentSession) SendMessage(context.Context, string) error { return nil }
 
 func (s *fakeUsecaseAgentSession) AnswerQuestion(context.Context, agenttypes.AskUserAnswer) error {
-	return nil
+	return s.answerErr
 }
 
 func (s *fakeUsecaseAgentSession) CurrentModel() string { return s.model }

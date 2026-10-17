@@ -45,10 +45,25 @@ func (s *Service) AnswerQuestion(ctx context.Context, in AnswerQuestionInput) er
 		ToolUseID: strings.TrimSpace(in.ToolUseID),
 		Answers:   in.Answers,
 	}
-	if err := manager.MarkPendingAskUserAnswered(ctx, sessionKey, answer.ToolUseID, answer.Answers, time.Now()); err != nil {
+	answeredAt := time.Now()
+	if err := manager.MarkPendingAskUserAnswered(ctx, sessionKey, answer.ToolUseID, answer.Answers, answeredAt); err != nil {
 		return err
 	}
+	return deliverAskUserAnswer(ctx, manager, sess, sessionKey, answer, answeredAt)
+}
+
+// deliverAskUserAnswer 把答案投给 agent，投递失败时撤回刚写下的「已回答」标记。
+//
+// 两步的先后是刻意的，两边都不能挪：
+//   - 标记先写：投递成功会让 agent 立刻继续，pending 条目随后可能被收尾清掉，那时再写就
+//     写不进去了（MarkPendingAskUserAnswered 找不到条目会报 pending tool call not found），
+//     结果是答案送出去了、库里却没有，刷新后卡片又变回「可回答」。
+//   - 但标记写下之后投递失败，这个标记就成了谎：卡片显示「已回答」而 agent 仍在等这次
+//     权限应答 —— 该轮永久卡死，用户也没有第二次机会（前端提交后本地就把卡片翻成已回答，
+//     且不消费服务端的失败回执）。所以失败必须撤回，让卡片回到可回答状态。
+func deliverAskUserAnswer(ctx context.Context, manager *session.Manager, sess agenttypes.Session, sessionKey string, answer agenttypes.AskUserAnswer, answeredAt time.Time) error {
 	if err := sess.AnswerQuestion(ctx, answer); err != nil {
+		manager.UnmarkPendingAskUserAnswered(ctx, sessionKey, answer.ToolUseID, answeredAt)
 		return err
 	}
 	return nil

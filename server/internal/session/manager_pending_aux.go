@@ -121,6 +121,45 @@ func (m *Manager) MarkPendingAskUserAnswered(_ context.Context, sessionKey, call
 	return nil
 }
 
+// UnmarkPendingAskUserAnswered 撤回一次「已回答」标记，把卡片放回可回答状态。
+//
+// 与 MarkPendingAskUserAnswered 配对：标记必须先写（投递成功会让 agent 立刻继续，pending
+// 条目随后可能被收尾清掉，那时再写就写不进去了），但投递失败时这个标记就成了谎 ——
+// 卡片显示「已回答」而 agent 仍在等，该轮永久卡死且用户没有第二次机会。
+//
+// answeredAt 用来确认「这中间没人动过」：只有 meta 里记的还是我们写进去的那一刻才撤。
+// 不一致说明 agent 的 tool_result 已经把它推进到终态，撤回去反而是倒退。
+func (m *Manager) UnmarkPendingAskUserAnswered(_ context.Context, sessionKey, callID string, answeredAt time.Time) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	callID = strings.TrimSpace(callID)
+	if sessionKey == "" || callID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byCallID := m.pendingToolCalls[sessionKey]
+	if byCallID == nil {
+		return
+	}
+	existing, ok := byCallID[callID]
+	if !ok || existing.Kind != agenttypes.ToolKindAskUser {
+		return
+	}
+	if got, _ := existing.Meta["answeredAt"].(string); got != answeredAt.UTC().Format(time.RFC3339Nano) {
+		return
+	}
+	meta := make(map[string]any, len(existing.Meta))
+	for key, value := range existing.Meta {
+		if key == "answers" || key == "answeredAt" {
+			continue
+		}
+		meta[key] = value
+	}
+	existing.Status = "running"
+	existing.Meta = meta
+	byCallID[callID] = existing
+}
+
 func (m *Manager) ClearPendingExchangeAux(_ context.Context, sessionKey string) {
 	sessionKey = strings.TrimSpace(sessionKey)
 	if sessionKey == "" {

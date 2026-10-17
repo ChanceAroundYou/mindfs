@@ -129,6 +129,143 @@ func TestManagerMarkPendingAskUserAnsweredMergesAnswers(t *testing.T) {
 	}
 }
 
+func TestManagerUnmarkPendingAskUserAnsweredRestoresAnswerable(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+
+	created, err := manager.Create(context.Background(), CreateInput{
+		Type: TypeChat,
+		Name: "Chat",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	callID := "ask-unmark"
+	questions := []agenttypes.AskUserQuestionItem{{Question: "Pick one"}}
+	if err := manager.UpsertPendingExchangeAux(context.Background(), created.Key, ExchangeAux{
+		Seq:  2,
+		Line: 0,
+		ToolCall: &agenttypes.ToolCall{
+			CallID: callID,
+			Title:  "ask user",
+			Status: "running",
+			Kind:   agenttypes.ToolKindAskUser,
+			Meta: map[string]any{
+				"toolUseId": callID,
+				"questions": questions,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("upsert pending ask user: %v", err)
+	}
+
+	answeredAt := time.Date(2026, 6, 22, 1, 2, 3, 0, time.UTC)
+	if err := manager.MarkPendingAskUserAnswered(context.Background(), created.Key, callID, map[string]string{
+		"q_0": "Yes",
+	}, answeredAt); err != nil {
+		t.Fatalf("mark answered: %v", err)
+	}
+	// 投递失败：答案没送出去，标记必须撤回，卡片回到「可回答」。
+	manager.UnmarkPendingAskUserAnswered(context.Background(), created.Key, callID, answeredAt)
+
+	toolCall, err := manager.GetFullToolCall(context.Background(), created.Key, callID)
+	if err != nil {
+		t.Fatalf("get full toolcall: %v", err)
+	}
+	if toolCall.Status != "running" {
+		t.Fatalf("status = %q, want running（卡片要重新可回答）", toolCall.Status)
+	}
+	if _, ok := toolCall.Meta["answers"]; ok {
+		t.Fatalf("answers 仍留在 meta 里：%#v", toolCall.Meta)
+	}
+	if _, ok := toolCall.Meta["answeredAt"]; ok {
+		t.Fatalf("answeredAt 仍留在 meta 里：%#v", toolCall.Meta)
+	}
+	if toolCall.Meta["questions"] == nil {
+		t.Fatalf("题目被一起抹掉了，卡片渲染不出来：%#v", toolCall.Meta)
+	}
+}
+
+// 时间戳对不上说明 agent 的 tool_result 已经把它推进过，撤回去是倒退。
+func TestManagerUnmarkPendingAskUserAnsweredIgnoresStaleStamp(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+
+	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Chat"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	callID := "ask-stale"
+	if err := manager.UpsertPendingExchangeAux(context.Background(), created.Key, ExchangeAux{
+		Seq:  2,
+		Line: 0,
+		ToolCall: &agenttypes.ToolCall{
+			CallID: callID,
+			Status: "running",
+			Kind:   agenttypes.ToolKindAskUser,
+		},
+	}); err != nil {
+		t.Fatalf("upsert pending ask user: %v", err)
+	}
+
+	answeredAt := time.Date(2026, 6, 22, 1, 2, 3, 0, time.UTC)
+	if err := manager.MarkPendingAskUserAnswered(context.Background(), created.Key, callID, map[string]string{
+		"q_0": "Yes",
+	}, answeredAt); err != nil {
+		t.Fatalf("mark answered: %v", err)
+	}
+	manager.UnmarkPendingAskUserAnswered(context.Background(), created.Key, callID, answeredAt.Add(time.Second))
+
+	toolCall, err := manager.GetFullToolCall(context.Background(), created.Key, callID)
+	if err != nil {
+		t.Fatalf("get full toolcall: %v", err)
+	}
+	if toolCall.Status != "complete" {
+		t.Fatalf("status = %q, want complete（时间戳不符就不该撤）", toolCall.Status)
+	}
+	if _, ok := toolCall.Meta["answers"]; !ok {
+		t.Fatalf("answers 被误撤：%#v", toolCall.Meta)
+	}
+}
+
+// 只有 ask_user 的条目才归这个标记管，别的工具卡不能被它翻回 running。
+func TestManagerUnmarkPendingAskUserAnsweredIgnoresOtherKinds(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+
+	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Chat"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	callID := "exec-1"
+	answeredAt := time.Date(2026, 6, 22, 1, 2, 3, 0, time.UTC)
+	if err := manager.UpsertPendingExchangeAux(context.Background(), created.Key, ExchangeAux{
+		Seq:  2,
+		Line: 0,
+		ToolCall: &agenttypes.ToolCall{
+			CallID: callID,
+			Status: "complete",
+			Kind:   agenttypes.ToolKindExecute,
+			Meta:   map[string]any{"answeredAt": answeredAt.Format(time.RFC3339Nano)},
+		},
+	}); err != nil {
+		t.Fatalf("upsert pending exec: %v", err)
+	}
+
+	manager.UnmarkPendingAskUserAnswered(context.Background(), created.Key, callID, answeredAt)
+
+	toolCall, err := manager.GetFullToolCall(context.Background(), created.Key, callID)
+	if err != nil {
+		t.Fatalf("get full toolcall: %v", err)
+	}
+	if toolCall.Status != "complete" {
+		t.Fatalf("status = %q, want complete（非 ask_user 不该被撤）", toolCall.Status)
+	}
+}
+
 func TestExchangeSourceComesFromContext(t *testing.T) {
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	manager := NewManager(root)
