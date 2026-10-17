@@ -6216,7 +6216,6 @@ groups:
       - android/app/src/main/res/values-night/colors.xml
       - android/app/src/main/java/com/mindfs/app/MainActivity.java
       - web/index.html
-      - web/public/manifest-dark.webmanifest
       - web/public/manifest.webmanifest
       - web/public/manifest-light.webmanifest
       - web/src/app/nativeShellUtils.ts
