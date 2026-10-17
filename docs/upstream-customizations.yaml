@@ -4321,18 +4321,21 @@ groups:
     kind: arch
     symptom: "Pending tool-call state transitions, task tool result matching and stdout/stderr/content normalization are spread through the large Claude session event file, making the lock and state contracts hard to audit."
     why: "Pending tool-call lifecycle and tool-result projection belong together so state transitions and result-shape changes can be reviewed independently from the streaming event consumer."
-    boundary: "The pending tool-call lifecycle and the tool-result matching/normalization/projection helpers move unchanged to session_tool_results.go (486 lines); lock scope, pending consumption timing, task-list status mapping and returned output shapes are unchanged. Parent is 1,746 lines, still above the hardline."
+    boundary: "The pending tool-call lifecycle and the tool-result matching/normalization/projection helpers move unchanged to session_tool_results.go (283) + session_tool_pending.go (88) + session_tool_result_summaries.go (133) + session_tool_task_summaries.go (283); lock scope, pending consumption timing, task-list status mapping and returned output shapes are unchanged. Parent is 1,746 lines, still above the hardline."
     tests:
       - server/internal/agent/claude/session_test.go
     files:
       - server/internal/agent/claude/session.go
       - server/internal/agent/claude/session_tool_results.go
+      - server/internal/agent/claude/session_tool_pending.go
+      - server/internal/agent/claude/session_tool_result_summaries.go
+      - server/internal/agent/claude/session_tool_task_summaries.go
       - docs/agent/rules/backend/TODO.md
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/agent/claude/session_tool_results.go:func (s *session) trackPendingToolCall
+      - server/internal/agent/claude/session_tool_pending.go:func (s *session) trackPendingToolCall
       - server/internal/agent/claude/session_tool_results.go:func (s *session) toolResultUpdate
       - server/internal/agent/claude/session_tool_results.go:func taskListToolResultUpdate
       - server/internal/agent/claude/session_tool_results.go:func summarizeGenericToolResultValue
