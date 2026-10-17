@@ -6264,7 +6264,33 @@ groups:
     boundary: "Only changes default value of groupDefaultExpanded to true; expandedProjects state, localStorage, handleProjectHeaderToggle and bottom load-more untouched."
     files:
       - web/src/components/session/useMultiProjectSessionList.ts
+      - docs/plans/session-sidebar-expand-collapse-removal.md
     tests:
       - web/tests/session-list-merge.test.mjs
+      - web/tests/archived-panel.test.mjs
     anchors:
       - 'web/src/components/session/useMultiProjectSessionList.ts:groupDefaultExpanded'
+
+  - id: G-JI
+    title: Shared child-session tree state machine
+    kind: arch
+    symptom: "Single-project and multi-project sidebars could diverge: one child-session expansion, pagination, or collapse fix had to be duplicated and could be missed on the other path."
+    why: "Both views must apply the same selected-ancestor visibility, three-child limit, pagination cursor, collapse baseline, and scoped state semantics."
+    boundary: "useSessionChildTree owns only child-tree state and row derivation; project-group expansion, search, archive, import, and node/root state-key construction remain in their existing owners."
+    files:
+      - web/src/components/session/useSessionChildTree.ts
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/session/useMultiProjectSessionList.ts
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/tests/archived-panel.test.mjs
+      - web/tests/session-child-tree.test.mjs
+      - docs/plans/session-child-tree-consolidation.md
+      - docs/plans/README.md
+    tests:
+      - web/tests/archived-panel.test.mjs
+      - web/tests/session-child-tree.test.mjs
+    anchors:
+      - 'web/src/components/session/useSessionChildTree.ts:export function useSessionChildTree'
+      - 'web/src/components/session/useSessionChildTree.ts:const toggleChild = async'
+      - 'web/src/components/session/SessionList.tsx:const childTree = useSessionChildTree'
+      - 'web/src/components/session/useMultiProjectSessionList.ts:const childTree = useSessionChildTree'

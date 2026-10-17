@@ -1,21 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { ViewHeader } from "../../layout/ViewHeader";
-import { pruneChildState } from "../../shared/sessionTree";
 import { useI18n } from "../../i18n/index";
 import { SessionCardMemo } from "./SessionCard";
 import { TOP_BADGE_LIFT_PX } from "./SessionCardTopBadges";
 import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardHelpers";
 import {
   ArchiveHeaderButton,
-  COLLAPSED_CHILD_SESSION_LIMIT,
   MAIN_SESSION_ICON_OFFSET,
   SUB_SESSION_ICON_OFFSET,
   ToggleRowButton,
   forkSessionDisplayName,
   isSessionSyncing,
-  parseForkSessionSource,
 } from "./sessionListShared";
 import type { SessionItem, SessionListProps, VisibleSessionRow } from "./sessionListTypes";
+import { useSessionChildTree } from "./useSessionChildTree";
 
 export type {
   SessionType,
@@ -57,85 +55,16 @@ export function SessionList({
   const effectiveEmptyText = emptyText || t("sessionList.empty");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchBlurTimerRef = useRef<number | null>(null);
-  const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
-  const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
-  const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
-  // 折叠态的子会话基数：展开**之前**记下当时的已加载数，折叠态的「还有几个」用它算。
-  // 展开会再拉一批子会话合并进 sessions，若按新的总数算，收起后的数字会大于展开前。
-  const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
-  // 展开态回收：会话被删除/归档后，其条目必须随之消失（见 pruneChildState 注释）
-  useEffect(() => {
-    const live = new Set(sessions.map((item) => item.key).filter(Boolean));
-    setExpandedChildren((prev) => pruneChildState(prev, live));
-    setLoadingChildren((prev) => pruneChildState(prev, live));
-    setChildrenHasMore((prev) => pruneChildState(prev, live));
-  }, [sessions]);
-  const visibleSessions = useMemo(() => {
-    if (searchResultsMode) {
-      return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
-    }
-    const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
-    const childrenByParent = new Map<string, SessionItem[]>();
-    const topLevel: SessionItem[] = [];
-    const keys = new Set(sessions.map((item) => item.key));
-    const parentByKey = new Map<string, string>();
-    for (const item of sessions) {
-      if (isForkItem(item)) {
-        topLevel.push(item);
-        continue;
-      }
-      const parentKey = String(item.parent_session_key || "").trim();
-      if (parentKey && keys.has(parentKey)) {
-        const children = childrenByParent.get(parentKey) || [];
-        children.push(item);
-        childrenByParent.set(parentKey, children);
-        parentByKey.set(item.key, parentKey);
-      } else {
-        topLevel.push(item);
-      }
-    }
-    const activeParentKeys = new Set<string>();
-    if (selectedKey) {
-      activeParentKeys.add(selectedKey);
-      let parentKey = parentByKey.get(selectedKey) || "";
-      while (parentKey) {
-        activeParentKeys.add(parentKey);
-        parentKey = parentByKey.get(parentKey) || "";
-      }
-    }
-    const out: VisibleSessionRow[] = [];
-    const append = (item: SessionItem) => {
-      out.push({ type: "session", session: item });
-      const children = childrenByParent.get(item.key) || [];
-      const active = activeParentKeys.has(item.key);
-      const expanded = !!expandedChildren[item.key];
-      const visibleChildren = active
-        ? expanded
-          ? children
-          : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)
-        : [];
-      for (const child of visibleChildren) {
-        append(child);
-      }
-      // 折叠态显示的是「**展开那一刻**已加载的子会话里还剩几个」，不是当前总数：
-      // 展开会再拉一批（每批最多 50 条）合并进 children，总数只增不减。用总数算，
-      // 收起后的数字就会大于展开前的（用户报的 a=2 收起变 102 就是这么来的）。
-      // 基数在**展开前**钉一次（见 handleChildToggle），来回切换多少次都稳定。
-      const collapsedBase = collapsedBaseCount[item.key] ?? children.length;
-      const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
-      if (active && (hiddenCount > 0 || expanded || childrenHasMore[item.key])) {
-        out.push({
-          type: "child-toggle",
-          parent: item,
-          loadedChildCount: collapsedBase,
-          hiddenCount,
-          expanded,
-        });
-      }
-    };
-    topLevel.forEach((item) => append(item));
-    return out;
-  }, [collapsedBaseCount, childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
+  const childTree = useSessionChildTree({
+    sessions,
+    selectedKey,
+    stateKey: (session) => session.key,
+    onLoadChildren,
+  });
+  const { expandedChildren, loadingChildren, childrenHasMore } = childTree;
+  const visibleSessions = searchResultsMode
+    ? sessions.map((session): VisibleSessionRow => ({ type: "session", session }))
+    : childTree.buildRows(sessions);
   const selectedParentKey = useMemo(() => {
     if (!selectedKey) return "";
     return sessions.find((item) => item.key === selectedKey)?.parent_session_key || "";
@@ -162,42 +91,8 @@ export function SessionList({
     };
   }, []);
 
-  const loadChildren = async (parent: SessionItem, beforeTime?: string) => {
-    if (!onLoadChildren || loadingChildren[parent.key]) {
-      return;
-    }
-    setLoadingChildren((prev) => ({ ...prev, [parent.key]: true }));
-    try {
-      const result = await onLoadChildren(parent, beforeTime ? { beforeTime } : undefined);
-      setChildrenHasMore((prev) => ({ ...prev, [parent.key]: !!result?.hasMore }));
-    } finally {
-      setLoadingChildren((prev) => ({ ...prev, [parent.key]: false }));
-    }
-  };
-
-
-  const handleChildToggle = async (row: Extract<VisibleSessionRow, { type: "child-toggle" }>) => {
-    const parentKey = row.parent.key;
-    if (!row.expanded) {
-      // 折叠基数在**展开前**钉，不是收起时：展开会再拉一批子会话合并进 sessions，
-      // 收起后若按新的总数算，「还有 N 个」必然大于展开前（用户报的 a=2 → b=102）。
-      setCollapsedBaseCount((prev) => ({
-        ...prev,
-        [parentKey]: sessions.filter((item) => item.parent_session_key === parentKey).length,
-      }));
-      setExpandedChildren((prev) => ({ ...prev, [parentKey]: true }));
-      await loadChildren(row.parent);
-      return;
-    }
-    if (childrenHasMore[parentKey]) {
-      const lastChild = sessions
-        .filter((item) => item.parent_session_key === parentKey)
-        .sort((left, right) => (Date.parse(left.updated_at || "") || 0) - (Date.parse(right.updated_at || "") || 0))[0];
-      await loadChildren(row.parent, lastChild?.updated_at);
-    } else {
-      setExpandedChildren((prev) => ({ ...prev, [parentKey]: false }));
-    }
-  };
+  const handleChildToggle = (row: Extract<VisibleSessionRow, { type: "child-toggle" }>) =>
+    childTree.toggleChild(row, sessions);
 
   return (
     <div
@@ -417,14 +312,7 @@ export function SessionList({
                     marginLeft={SUB_SESSION_ICON_OFFSET}
                     marginBottom="2px"
                     onClick={() => void handleChildToggle(row)}
-                    onCollapse={() =>
-                      // 整行点 = 收起。折叠基数已在展开那一刻钉好，这里不再动它 ——
-                      // 收起时按当时的总数钉，钉进去的就是展开拉回来的新批次（b > a）。
-                      setExpandedChildren((prev) => ({
-                        ...prev,
-                        [row.parent.key]: false,
-                      }))
-                    }
+                    onCollapse={() => childTree.collapseChild(row.parent)}
                   />
                 );
               }

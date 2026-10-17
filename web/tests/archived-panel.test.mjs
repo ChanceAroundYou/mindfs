@@ -318,7 +318,6 @@ test("图标只看展开态：还有下一批时不再把收起图标换成展�
   assert.doesNotMatch(code, /showCollapseIcon=\{[^}]*\|\|[^}]*\}/, "收起图标不该被 hasMore 掺和");
   assert.match(list, /showExpandIcon=\{!loading && !row\.expanded\}/);
   assert.match(list, /showExpandIcon=\{!loadingChild && !row\.expanded\}/);
-  assert.match(list, /showExpandIcon=\{!projectLoading && !expanded\}/);
 });
 
 test("只有行内收起，没有顶部「全部收起」兜底行", () => {
@@ -338,10 +337,10 @@ test("只有行内收起，没有顶部「全部收起」兜底行", () => {
       "i18n 里的兜底文案应一并删掉",
     );
   }
-  // 行内收起仍然在：两处子会话行 + 一处项目分组行
+  // 行内收起现在只有：两处子会话行；项目分组已移除底部收起入口
   const wired = code.match(/onCollapse=/g) || [];
-  assert.equal(wired.length, 3, "子会话行两处 + 项目分组行一处");
-  assert.match(code, /onCollapse=\{\(\) => handleProjectCollapse\(group\)\}/);
+  assert.equal(wired.length, 2, "子会话行两处");
+  assert.doesNotMatch(code, /onCollapse=\{\(\) => handleProjectCollapse\(group\)\}/);
 });
 
 test("收起后的「还有 N 个」按展开**那一刻**的已加载数算，不含展开时新拉回的批次", () => {
@@ -352,38 +351,24 @@ test("收起后的「还有 N 个」按展开**那一刻**的已加载数算，�
   // 固化 —— 收起那一刻 sessions 里已经含新拉回的批次，钉进去的正是那个虚高的数。
   const list = read("src/components/SessionList.tsx");
   const multiList = read("src/components/session/MultiProjectSessionList.tsx");
-  const hook = read("src/components/session/useMultiProjectSessionList.ts");
-  const code = list.replace(/^\s*\/\/.*$/gm, "");
-  const hookCode = hook.replace(/^\s*\/\/.*$/gm, "");
-  // 两个列表各一份 collapsedBaseCount state
-  const states = (code.match(/const \[collapsedBaseCount, setCollapsedBaseCount\]/g) || []).concat(
-    hookCode.match(/const \[collapsedBaseCount, setCollapsedBaseCount\]/g) || [],
-  );
-  assert.equal(states.length, 2, "SessionList 和 MultiProjectSessionList 各一份");
+  const childTree = read("src/components/session/useSessionChildTree.ts");
+  // 折叠基数 state 仅由共享 hook 保存
+  const states = childTree.match(/const \[collapsedBaseCount, setCollapsedBaseCount\]/g) || [];
+  assert.equal(states.length, 1, "共享 hook 只有一份 collapsedBaseCount state");
   // 折叠计数必须读这份 state，不能直接用 children.length
-  const reads = (code.match(/const collapsedBase = collapsedBaseCount\[([^\]]+)\] \?\? children\.length;/g) || []).concat(
-    hookCode.match(/const collapsedBase = collapsedBaseCount\[([^\]]+)\] \?\? children\.length;/g) || [],
-  );
-  assert.equal(reads.length, 2, "两处 buildRows 都要按折叠基数算 hiddenCount");
-  // 不得再有「按总数算」的旧写法
-  assert.doesNotMatch(
-    code,
-    /const hiddenCount = Math\.max\(0, children\.length - COLLAPSED_CHILD_SESSION_LIMIT\)/,
-    "这就是 b > a 的那行：按总数算",
-  );
+  const reads = childTree.match(/const collapsedBase = collapsedBaseCount\[key\] \?\? children\.length;/g) || [];
+  assert.equal(reads.length, 1, "共享 buildRows 要按折叠基数算 hiddenCount");
+  const code = list.replace(/^\s*\/\/.*$/gm, "");
+  const hookCode = childTree.replace(/^\s*\/\/.*$/gm, "");
   assert.doesNotMatch(
     hookCode,
     /const hiddenCount = Math\.max\(0, children\.length - COLLAPSED_CHILD_SESSION_LIMIT\)/,
     "这就是 b > a 的那行：按总数算",
   );
-  // 钉基数只发生在两处展开分支（各一次），收起路径一处都不许有
-  const pins = (code.match(/setCollapsedBaseCount\(/g) || []).concat(
-    hookCode.match(/setCollapsedBaseCount\(/g) || [],
-  );
-  assert.equal(pins.length, 2, `只在两处展开分支钉基数，实得 ${pins.length}`);
-  const allFns = [...code.matchAll(/const handleChildToggle = async \([\s\S]*?\n  \};/g)]
-    .map((m) => m[0])
-    .concat([...hookCode.matchAll(/const handleChildToggle = async \([\s\S]*?\n  \};/g)].map((m) => m[0]));
+  // 钉基数只发生在共享 hook 的展开分支，收起路径一处都不许有
+  const pins = childTree.match(/setCollapsedBaseCount\(/g) || [];
+  assert.equal(pins.length, 1, `共享 hook 只在展开分支钉一次基数，实得 ${pins.length}`);
+  const allFns = [...childTree.matchAll(/const toggleChild = async \([\s\S]*?\n  \};/g)].map((m) => m[0]);
   for (const fn of allFns) {
     const expandAt = fn.indexOf("!row.expanded");
     const pinAt = fn.indexOf("setCollapsedBaseCount(");
@@ -404,7 +389,7 @@ test("收起后的「还有 N 个」按展开**那一刻**的已加载数算，�
       .map((m) => multiCode.slice(m.index, multiCode.indexOf("}", m.index))));
   assert.equal(onCollapse.length, 3, "两处子会话行都有 onCollapse");
   for (const body of onCollapse) {
-    assert.match(body, /setExpandedChildren\(/, "onCollapse 应翻展开态");
+    assert.match(body, /collapseChild\(/, "onCollapse 必须委托共享 hook 收起");
     assert.doesNotMatch(body, /setCollapsedBaseCount\(/, "收起时不得钉基数");
   }
 });
@@ -417,29 +402,20 @@ test("buildRows 的读键与写键用同一个 childStateKey 调用形状（含 
   // 铺出来」，键算错就等于展开态写进去却读不出来。
   const list = read("src/components/SessionList.tsx");
   const multiList = read("src/components/session/MultiProjectSessionList.tsx");
-  const hook = read("src/components/session/useMultiProjectSessionList.ts");
+  const childTree = read("src/components/session/useSessionChildTree.ts");
+  assert.match(
+    childTree,
+    /const key = stateKey\(item, scope\);/,
+    "共享 buildRows 必须通过同一个 stateKey 读取作用域状态",
+  );
+  assert.match(
+    childTree,
+    /const key = stateKey\(row\.parent, scope\);/,
+    "共享 toggleChild 必须通过同一个 stateKey 写入作用域状态",
+  );
   assert.match(
     multiList,
-    /const stateKey = childStateKey\(row\.parent, group\.rootId, groupNodeId\);/,
-    "render 里的读键少传了 nodeId，会算到另一个键上",
+    /collapseChild\(row\.parent, group\.rootId, groupNodeId\)/,
+    "多项目收起必须传 rootId 和 nodeId",
   );
-  assert.match(
-    hook,
-    /const stateKey = childStateKey\(item, fallbackRootId, fallbackNodeId\);/,
-    "buildRows 里的读键也必须带 nodeId",
-  );
-  // 写键与 render 读键必须算出同一个键：onCollapse 里的内联写法
-  // [childStateKey(row.parent, group.rootId, groupNodeId)]: false
-  const writes = multiList.match(
-    /\[childStateKey\(row\.parent, group\.rootId, groupNodeId\)\]: false,/g,
-  ) || [];
-  assert.equal(writes.length, 1, "onCollapse 的写键应与读键同形");
-  // 任何 childStateKey 调用都不得只剩两参（那正是本 bug 的形状）。按实参个数判定，
-  // 别靠逗号切串 —— 键里本来就带 `::` 和 `:`。
-  const calls = [...list.matchAll(/childStateKey\(([^)]*)\)/g)].map((m) => m[1])
-    .concat([...multiList.matchAll(/childStateKey\(([^)]*)\)/g)].map((m) => m[1]))
-    .concat([...hook.matchAll(/childStateKey\(([^)]*)\)/g)].map((m) => m[1]));
-  assert.ok(calls.length >= 4, "至少应覆盖 buildRows / handleChildToggle / render 三处");
-  const twoArg = calls.filter((args) => args.split(",").length !== 3);
-  assert.deepEqual(twoArg, [], "不得有非三参数的 childStateKey 调用（少传 nodeId 即本 bug）");
 });

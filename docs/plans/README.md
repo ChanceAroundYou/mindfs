@@ -6,7 +6,7 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-- [Session sidebar expand/collapse removal](session-sidebar-expand-collapse-removal.md) — Active 2026-10-17：移除侧边栏所有折叠/展开机制，统一为全部展开，合并单/多项目两套列表。
+- [Session child tree consolidation](session-child-tree-consolidation.md) — Implemented 2026-10-18，待提交与 ship；单/多项目子会话树已收束到共享 hook，保持选中链路、3 条上限、分页与收起。
 
 
 ## Completed or superseded history

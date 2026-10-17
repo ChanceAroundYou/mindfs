@@ -53,8 +53,7 @@ export function MultiProjectSessionList({
     orderedGroups,
     sessionByKey,
     togglePinnedProject,
-    handleProjectToggle,
-    handleProjectCollapse,
+    loadMoreProject,
     handleProjectHeaderToggle,
     expandedProjects,
     loadingProjects,
@@ -62,7 +61,7 @@ export function MultiProjectSessionList({
     groupScopeKey,
     buildRows,
     handleChildToggle,
-    setExpandedChildren,
+    collapseChild,
     loadingChildren,
     childrenHasMore,
     childStateKey,
@@ -213,12 +212,7 @@ export function MultiProjectSessionList({
                             marginLeft={SUB_SESSION_ICON_OFFSET}
                             marginBottom="2px"
                             onClick={() => void handleChildToggle(row, group.sessions, group.rootId, groupNodeId)}
-                            onCollapse={() =>
-                              setExpandedChildren((prev) => ({
-                                ...prev,
-                                [childStateKey(row.parent, group.rootId, groupNodeId)]: false,
-                              }))
-                            }
+                            onCollapse={() => collapseChild(row.parent, group.rootId, groupNodeId)}
                           />
                         );
                       }
@@ -244,23 +238,13 @@ export function MultiProjectSessionList({
                         />
                       );
                     })}
-                    {expanded && group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT ? (
+                    {expanded && group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT && Math.max(0, group.totalCount - topLevelSessions.length) > 0 ? (
                       <ToggleRowButton
                         loading={projectLoading}
-                        label={
-                          projectLoading
-                            ? t("sessionList.loading")
-                            : expanded
-                              ? remaining > 0
-                                ? t("sessionList.remainingSessions", { count: remaining })
-                                : t("common.collapse")
-                              : t("sessionList.remainingSessions", { count: Math.max(0, group.totalCount - MULTI_PROJECT_VISIBLE_LIMIT) })
-                        }
-                        showExpandIcon={!projectLoading && !expanded}
-                        showCollapseIcon={!projectLoading && expanded}
+                        label={projectLoading ? t("sessionList.loading") : t("sessionList.remainingSessions", { count: Math.max(0, group.totalCount - topLevelSessions.length) })}
+                        showExpandIcon={!projectLoading}
                         marginLeft={MAIN_SESSION_ICON_OFFSET}
-                        onClick={() => void handleProjectToggle(group)}
-                        onCollapse={() => handleProjectCollapse(group)}
+                        onClick={() => void loadMoreProject(group)}
                       />
                     ) : null}
                   </div>
