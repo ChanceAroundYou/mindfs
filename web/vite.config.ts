@@ -281,7 +281,7 @@ function appShellHTMLPlugin(opts: {
 
 const PWA_ONLY_ASSETS = new Set([
   "manifest.webmanifest",
-  "manifest-dark.webmanifest",
+  "manifest-light.webmanifest",
   "apple-touch-icon.png",
   "pwa-192.png",
   "pwa-512.png",

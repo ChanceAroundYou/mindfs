@@ -3,10 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <!-- interactive-widget=resizes-visual：键盘弹出时只缩视觉视口，布局视口保持满屏。
-         默认若是 resizes-content（旧 Chromium / 部分 WebView 浏览器），布局视口会当场缩小，
-         画布跟着缩，键盘还没滑上来之前那块空隙就由宿主窗口底色填充 —— 手机上表现为一闪的白块
-         （实测 #F8FAFC，正是 manifest 的 background_color）。应用自己按视觉视口收缩 #root，
-         所以这里显式锁死「不缩布局视口」。 -->
+         浏览器里这样键盘就不会把画布挤小。装成 PWA 后拦不住 —— 壳自己缩 WebView（实测：
+         闪的那一帧页面像素与前一帧完全相同、在 y=970 处被裁断），视口层面的开关一律无效。
+         那条缝只能靠壳的窗口底色（见下方 manifest 切换）。 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual" />
     <link rel="icon" type="image/svg+xml" href="<!--MINDFS_FAVICON_HREF-->" />
     <!--APP_SHELL_PWA_LINKS-->
@@ -41,15 +40,16 @@
         }
 
         // 装成 PWA（Edge/Chrome 添加到主屏）后，键盘上浮时露出的那条缝由 **壳的窗口底色**
-        // 填充，而它取自 manifest 的 background_color —— 安装时定死，运行时唯一的主题通道
-        // （meta theme-color）管不到它，实测暗色主题下仍闪 #F8FAFC。
-        // 所以按当前主题挑一份 manifest：暗色装暗色壳，其余装浅色壳。
+        // 填充，而它取自 manifest 的 background_color —— 安装/更新时烧死，运行时唯一的主题
+        // 通道（meta theme-color）管不到它，实测暗色主题下仍闪 #F8FAFC。
+        // 静态那份 manifest.webmanifest 按主用主题烧成暗色；亮色系主题时改指 manifest-light，
+        // 壳会在下次 WebAPK 更新（或重装）时跟上。切主题不会立刻变 —— 这是壳的限制，不是 bug。
         var manifestLink = document.querySelector('link[rel="manifest"]');
         if (manifestLink) {
           var manifestHref = manifestLink.getAttribute("href") || "";
           var manifestNext = manifestHref.replace(
-            /manifest(?:-dark)?\.webmanifest$/,
-            effective === "dark" ? "manifest-dark.webmanifest" : "manifest.webmanifest"
+            /manifest(?:-light)?\.webmanifest$/,
+            effective === "dark" ? "manifest.webmanifest" : "manifest-light.webmanifest"
           );
           if (manifestNext !== manifestHref) {
             manifestLink.setAttribute("href", manifestNext);

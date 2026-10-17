@@ -7,9 +7,9 @@ test("keyboard-no-white-flash", async () => {
   const root = path.resolve(import.meta.dirname, "..");
   const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
-  // 关键一条：布局视口不能跟着键盘缩。缩了 → 画布跟着缩 → 键盘滑上来之前那块空隙
-  // 由宿主窗口底色填充（手机上实测是 #F8FAFC，即 manifest 的 background_color）。
-  // 显式声明 resizes-visual，别依赖浏览器默认值。
+  // 关键一条：浏览器里布局视口不能跟着键盘缩。缩了 → 画布跟着缩 → 键盘滑上来之前那块空隙
+  // 由宿主窗口底色填充。显式声明 resizes-visual，别依赖浏览器默认值。
+  // （装成 PWA 后这条拦不住：壳自己缩 WebView，见下方 manifest 那一段。）
   const html = read("index.html");
   assert.match(html, /interactive-widget=resizes-visual/);
   assert.doesNotMatch(html, /interactive-widget=resizes-content/);
@@ -34,23 +34,15 @@ test("keyboard-no-white-flash", async () => {
   assert.match(html, /MindFSThemeBackground\.setBackgroundColor/);
 
   // PWA（Edge/Chrome 装到主屏）另有第三条缝：壳自己的窗口底色，取自 manifest 的
-  // background_color，安装时定死 —— 运行时改不了（meta theme-color 管不到它，
-  // 实测暗色主题下仍闪 #F8FAFC）。所以按主题换 manifest：暗色装暗色壳。
-  const lightManifest = JSON.parse(read("public/manifest.webmanifest"));
-  const darkManifest = JSON.parse(read("public/manifest-dark.webmanifest"));
-  assert.equal(darkManifest.background_color, "#0f172a");
-  assert.equal(lightManifest.start_url, darkManifest.start_url);
-  assert.equal(lightManifest.scope, darkManifest.scope);
-  assert.notEqual(lightManifest.background_color, darkManifest.background_color);
+  // background_color，安装/更新时烧死 —— 运行时改不了（meta theme-color 管不到它，
+  // 视口开关也拦不住壳缩 WebView）。静态那份按主用主题烧成暗色，亮色系主题改指
+  // manifest-light；壳要等下次 WebAPK 更新才跟上，这是壳的限制。
+  const defaultManifest = JSON.parse(read("public/manifest.webmanifest"));
+  const lightManifest = JSON.parse(read("public/manifest-light.webmanifest"));
+  assert.equal(defaultManifest.background_color, "#0f172a");
+  assert.equal(lightManifest.background_color, "#f8fafc");
+  assert.equal(lightManifest.start_url, defaultManifest.start_url);
+  assert.equal(lightManifest.scope, defaultManifest.scope);
   assert.match(html, /link\[rel="manifest"\]/);
-  assert.match(html, /manifest-dark\.webmanifest/);
-
-  // 根治那条缝：让键盘**覆盖**内容而不是挤小视口 —— 视口不缩，页面铺满窗口，
-  // 壳的窗口底色就没机会露出来（与主题无关，PWA 与浏览器都管用）。
-  // 代价是输入框要自己抬：boundingRect 的高度走同一套换算。
-  const native = read("src/app/nativeShellUtils.ts");
-  assert.match(native, /export function installVirtualKeyboardOverlay/);
-  assert.match(native, /overlaysContent = true/);
-  assert.match(native, /boundingRect/);
-  assert.match(read("src/app/useNativeShellLifecycle.ts"), /installVirtualKeyboardOverlay\(\)/);
+  assert.match(html, /manifest-light\.webmanifest/);
 });
