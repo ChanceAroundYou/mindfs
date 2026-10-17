@@ -291,13 +291,7 @@ export function useMultiProjectSessionList({
   const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
     sessions.filter((session) => !String(session.parent_session_key || "").trim());
 
-  const groupIsCurrentNode = (group: ProjectSessionGroup) => {
-    const groupNodeId = String((group as any)?._nodeId || "").trim();
-    const selectedNid = String(selectedNodeId || "").trim();
-    return !!groupNodeId && !!selectedNid && groupNodeId === selectedNid;
-  };
-
-  const groupDefaultExpanded = (group: ProjectSessionGroup) => groupIsCurrentNode(group);
+  const groupDefaultExpanded = (_group: ProjectSessionGroup) => true;
 
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
     const groupKey = groupScopeKey(group);

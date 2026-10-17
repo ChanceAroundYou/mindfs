@@ -709,9 +709,9 @@ groups:
       - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_LIFT_PX'
       # 只有选中行的底色向上拓展去包住状态徽标：就是内容盒那一张底，负外边距提顶、
       # 等量补进上内边距，名字不动、行高不变，横向也不比未借位的选中行宽。
-      - 'web/src/components/session/SessionCard.tsx:selected && !editing && hasSessionTopBadges'
+      - 'web/src/components/session/SessionCard.tsx:(selected || hovered) && !editing && hasSessionTopBadges'
       - 'web/src/components/session/SessionCard.tsx:data-session-top-lift'
-      - 'web/src/components/session/SessionCard.tsx:liftTop = selected && !editing'
+      - 'web/src/components/session/SessionCard.tsx:liftTop = (selected || hovered)'
       - 'web/src/components/session/SessionCard.tsx:marginTop: liftTop ? `-${liftTop}px` : 0'
       # 子代理折角回到名字前；其它小图标缩到 worktree 标签大小。
       - 'web/src/components/task/taskStyles.ts:export function taskAuxIconScaleStyle'
@@ -6255,3 +6255,16 @@ groups:
       - 'web/index.html:manifest-light.webmanifest'
       - 'web/src/app/nativeShellUtils.ts:keyboardAdjustedViewportHeight'
       - 'web/src/services/prefs/appearance.ts:syncNativeWindowBackground'
+
+  - id: G-JH
+    title: Remove node-switch auto expand/collapse of project groups
+    kind: fix
+    symptom: "Switching selected node auto-expands all project groups on that node and collapses groups on other nodes."
+    why: "Project group default expanded state must not depend on selected node; manual header toggle and persisted choice remain authoritative."
+    boundary: "Only changes default value of groupDefaultExpanded to true; expandedProjects state, localStorage, handleProjectHeaderToggle and bottom load-more untouched."
+    files:
+      - web/src/components/session/useMultiProjectSessionList.ts
+    tests:
+      - web/tests/session-list-merge.test.mjs
+    anchors:
+      - 'web/src/components/session/useMultiProjectSessionList.ts:groupDefaultExpanded'

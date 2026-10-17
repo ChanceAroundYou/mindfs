@@ -6,7 +6,7 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-_（无。下一个多阶段目标开工前先在这里登记。）_
+- [Session sidebar expand/collapse removal](session-sidebar-expand-collapse-removal.md) — Active 2026-10-17：移除侧边栏所有折叠/展开机制，统一为全部展开，合并单/多项目两套列表。
 
 
 ## Completed or superseded history
