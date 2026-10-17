@@ -2,7 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- interactive-widget=resizes-visual：键盘弹出时只缩视觉视口，布局视口保持满屏。
+         默认若是 resizes-content（旧 Chromium / 部分 WebView 浏览器），布局视口会当场缩小，
+         画布跟着缩，键盘还没滑上来之前那块空隙就由宿主窗口底色填充 —— 手机上表现为一闪的白块
+         （实测 #F8FAFC，正是 manifest 的 background_color）。应用自己按视觉视口收缩 #root，
+         所以这里显式锁死「不缩布局视口」。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual" />
     <link rel="icon" type="image/svg+xml" href="<!--MINDFS_FAVICON_HREF-->" />
     <!--APP_SHELL_PWA_LINKS-->
     <meta name="theme-color" content="#f3f4f6" />

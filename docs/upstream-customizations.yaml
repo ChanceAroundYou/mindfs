@@ -6205,21 +6205,20 @@ groups:
       - 'server/internal/agent/pool.go:func (p *Pool) HasActiveUse'
 
   - id: G-JC
-    title: 移动端键盘上浮白屏 — 窗口背景跟随主题 + adjustNothing
+    title: 移动端键盘上浮白屏 — 锁死布局视口不缩 + 窗口底色跟随主题
     kind: fix
-    symptom: "暗色主题下移动端键盘上浮时，WebView 让出的区域先露出系统 DayNight 浅底（#FBF8F7）闪 ~4 帧，再被键盘盖住，形成白闪。"
-    why: "adjustResize 瞬间收缩 WebView，IME 窗口滑入有 ~750ms 延迟，差额由 Activity 窗口背景（系统 DayNight，非应用主题）填充，Web CSS 无法触达。改为 adjustNothing 让差额落在 WebView 内部，由 html/body 背景色兜底；同时新增 MindFSThemeBackground 桥把窗口/WebView 背景推成应用主题色，双层保险。"
+    symptom: "暗色主题下键盘上浮时，WebView 让出的区域先闪一块近白（实测 #F8FAFC = manifest 的 background_color），键盘再滑上来盖住它。"
+    why: "两处叠加：① 布局视口跟着键盘缩（旧 Chromium / 部分 WebView 浏览器默认 resizes-content），画布随之变小，键盘尚未覆盖的那段空隙就由宿主窗口底色填充 —— 显式写 interactive-widget=resizes-visual 锁死；② Android 壳按 adjustResize 缩 WebView 时露出的缝是 Activity 窗口底色（AppCompat DayNight 默认浅色），新增 MindFSThemeBackground 桥把窗口/WebView 背景推成应用主题色，初值来自 values/values-night 的 mindfsWindowBackground。"
+    boundary: "只影响 Android 壳与 web 的 viewport 声明；不动会话/存储/多账户，控制面边界不变。"
     files:
-      - android/app/src/main/AndroidManifest.xml
       - android/app/src/main/res/values/styles.xml
       - android/app/src/main/res/values/colors.xml
       - android/app/src/main/res/values-night/colors.xml
       - android/app/src/main/java/com/mindfs/app/MainActivity.java
       - web/index.html
-      - web/src/index.css
       - web/src/services/prefs/appearance.ts
     tests:
       - web/tests/keyboard-no-white-flash.test.mjs
     anchors:
-      - 'android/app/src/main/AndroidManifest.xml:adjustNothing'
+      - 'web/index.html:interactive-widget=resizes-visual'
       - 'web/src/services/prefs/appearance.ts:syncNativeWindowBackground'
