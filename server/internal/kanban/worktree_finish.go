@@ -346,22 +346,3 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 // 只在**要拆它**的时候才需要——目录不在 git 登记里（已拆）就随它去，那是幂等；
 // 登记在但分支不是任务记的那个，说明有人手工 checkout 过或路径被复用，这时拆掉
 // 的是别人的活，必须停下来。
-func (s *Service) assertWorktreeMatches(ctx context.Context, mainDir, worktreePath, branch string) error {
-	binding, err := gitview.InspectWorktree(ctx, mainDir, worktreePath)
-	if err != nil {
-		return err
-	}
-	if !binding.Registered {
-		return nil
-	}
-	actual := binding.BranchName()
-	if actual == "" {
-		return fmt.Errorf("%s 现在是 detached HEAD（%s），不再是 %s 分支 —— 先确认那里有没有要保留的活再收尾",
-			worktreePath, gitview.ShortSHA(binding.Head), branch)
-	}
-	if branch != "" && actual != branch {
-		return fmt.Errorf("%s 现在挂在 %s 上，不是任务记的 %s —— 拆它会连别人的活一起拆掉，先人工确认",
-			worktreePath, actual, branch)
-	}
-	return nil
-}
