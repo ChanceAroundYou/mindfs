@@ -1931,13 +1931,12 @@ groups:
     title: Agent 中立的规则入口与计划索引
     kind: docs
     symptom: "不同 agent 可能加载不同规范或执行过期计划；同一规则被复制维护后会出现漂移。另有一种更隐蔽的坏法：新增一个「只导入、无正文」的 CLAUDE.md 壳，Claude Code 就不再发现 AGENTS.md（agents-md 插件在 cwd 或其任一祖先见到 CLAUDE.md 即让位），共享正文被整个挡在外面。"
-    why: "以 AGENTS.md 为**唯一**项目指令入口，docs/agent/rules 为代码规范唯一正文；两个索引由 AGENTS.md 内联加载。2026-10-17 收束：删掉 CLAUDE.md / GEMINI.md 两个导入壳 —— Claude Code 自 2.1.277 起原生发现 AGENTS.md（内建插件 agents-md，缺省模式 claude-md-or-agents-md），壳反而有害；Gemini CLI 不走自动发现，由 .gemini/settings.json 的 context.fileName 点名。Claude 专属运行配置保留在 .claude。docs/plans/README.md 是唯一计划状态索引，计划遗漏登记时由测试失败。"
-    boundary: "只约束项目指令入口、规则正文的唯一来源和计划索引，不改变具体代码规范内容。"
+    why: "以 AGENTS.md 为**唯一**项目指令入口，docs/agent/rules 为代码规范唯一正文；两个索引由 AGENTS.md 内联加载。2026-10-17 收束：删掉 CLAUDE.md / GEMINI.md 两个导入壳 —— Claude Code 自 2.1.277 起原生发现 AGENTS.md（内建插件 agents-md，缺省模式 claude-md-or-agents-md），壳反而有害。同日再收一刀：连 .gemini/settings.json 也删了 —— 本机没装 gemini，那份 context.fileName 没有消费者，预埋配置只会腐烂；等真有工具不认自动发现时再加。Claude 专属运行配置保留在 .claude。docs/plans/README.md 是唯一计划状态索引，计划遗漏登记时由测试失败。"
+    boundary: "只约束项目指令入口、规则正文的唯一来源和计划索引，不改变具体代码规范内容。不预埋任何「某工具的点名配置」——没有第二个消费者就不加。"
     tests:
       - web/tests/agent-docs.test.mjs
     files:
       - AGENTS.md
-      - .gemini/settings.json
       - .claude/rules/
       - docs/agent/rules/
       - docs/plans/README.md
@@ -1947,7 +1946,6 @@ groups:
       - web/tests/agent-docs.test.mjs
     anchors:
       - AGENTS.md:Agent 指令入口与规范
-      - .gemini/settings.json:fileName
       - docs/agent/rules/README.md:执行方式
       - docs/plans/README.md:Active
       - .claude/skills/upstream-merge/SKILL.md:sudo systemctl restart mindfs
@@ -4576,7 +4574,7 @@ groups:
     kind: arch
     symptom: "Rule/plan entrypoints, relative links or Claude/Gemini include targets can go stale while agents keep working against the wrong rules or an obsolete plan."
     why: "Shared agent documentation entrypoints and the unique Active plan must be verifiable as repository tests."
-    boundary: "agent-docs-contract.test.mjs validates local links in AGENTS/rule docs/plan index and at most one Active plan (zero is valid when no work is underway); it checks local presence and entry contracts only. 单入口契约（AGENTS.md 内联两个索引、不得存在 CLAUDE.md/GEMINI.md 壳、Gemini 由 .gemini/settings.json 点名）自 2026-10-17 起归 agent-docs.test.mjs / G-BM，此处不再重复。"
+    boundary: "agent-docs-contract.test.mjs validates local links in AGENTS/rule docs/plan index and at most one Active plan (zero is valid when no work is underway); it checks local presence and entry contracts only. 单入口契约（AGENTS.md 内联两个索引、不得存在 CLAUDE.md/GEMINI.md 壳）自 2026-10-17 起归 agent-docs.test.mjs / G-BM，此处不再重复。"
     tests:
       - web/tests/agent-docs-contract.test.mjs
     files:

@@ -14,9 +14,9 @@ WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监
 - **不要新增 `CLAUDE.md` / `GEMINI.md` 这类「只导入、无正文」的壳**（2026-10-17 收束）。
   Claude Code 自 2.1.277 起原生发现 `AGENTS.md`（内建插件 `agents-md`，缺省模式 `claude-md-or-agents-md`），
   但**当前目录或其任一祖先**存在 `CLAUDE.md`（或 `CLAUDE.local.md`、`.claude/CLAUDE.md`）时就不再发现它 ——
-  留壳不是无害的重复，是把共享正文挡在外面。Gemini CLI 不走自动发现，由 `.gemini/settings.json` 的
-  `context.fileName` 点名本文件。两条路径都由 `web/tests/agent-docs.test.mjs` 钉住。
-- 新增工具适配器同理：只指向本文件，不复制规则正文。
+  留壳不是无害的重复，是把共享正文挡在外面。由 `web/tests/agent-docs.test.mjs` 钉住。
+- 新增工具适配器同理：只指向本文件，不复制规则正文。**只在确有必要时**加配置（例如某工具不认
+  `AGENTS.md` 自动发现，才写它自己的点名文件）；没有第二个消费者就不要预埋。
 - 代码规范索引：[docs/agent/rules/README.md](docs/agent/rules/README.md)。按任务读取对应规则；前端/后端 TODO 是各自存量事项的唯一清单。
 - 执行计划索引：[docs/plans/README.md](docs/plans/README.md)。只有标为 Active 的计划可作为当前执行清单；其余是历史记录。
 - Claude 专属 skills、hooks、settings 与会话状态继续放在 `.claude/`；`.claude/rules/README.md` 仅为旧路径指引。

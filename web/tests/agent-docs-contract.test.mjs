@@ -46,8 +46,8 @@ test("agent rules and plan index contain no broken local Markdown links", () => 
   assert.deepEqual(broken, [], `broken links:\n${broken.join("\n")}`);
 });
 
-// 单入口契约（AGENTS.md 必须导入两个索引、不得存在 CLAUDE.md/GEMINI.md 壳、
-// Gemini 由 .gemini/settings.json 点名）由 agent-docs.test.mjs 统一守着，此处不重复。
+// 单入口契约（AGENTS.md 必须导入两个索引、不得存在 CLAUDE.md/GEMINI.md 壳）
+// 由 agent-docs.test.mjs 统一守着，此处不重复。
 
 test("ship instructions match the sole frontend test runner", () => {
   const ship = readFileSync(path.join(root, ".claude/skills/ship/SKILL.md"), "utf8");

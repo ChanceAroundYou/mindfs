@@ -46,8 +46,9 @@ test("AGENTS.md is the sole agent entrypoint and imports the shared indexes", ()
     const path = imported.slice(1);
     assert.ok(statSync(join(ROOT, path), { throwIfNoEntry: false }), `AGENTS.md imports missing ${path}`);
   }
-  // Gemini CLI 不走 AGENTS.md 自动发现，由 workspace 设置点名（用户级设置会被它覆盖）。
-  assert.deepEqual(JSON.parse(read(".gemini/settings.json")).context.fileName, ["AGENTS.md"]);
+  // 这里**故意不钉**「某个工具的点名文件」：Gemini CLI 的 .gemini/settings.json 曾经加过，
+  // 后来删了（本机没装 gemini，没有消费者；预埋一份配置只会腐烂）。等真有工具不认
+  // AGENTS.md 自动发现时再加，并连同它的点名文件一起钉。
   assert.ok(read(".claude/rules/README.md").includes("docs/agent/rules/"));
   const claudeSkill = read(".claude/skills/upstream-merge/SKILL.md");
   assert.ok(claudeSkill.includes("sudo systemctl restart mindfs"));
