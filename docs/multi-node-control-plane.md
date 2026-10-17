@@ -24,7 +24,7 @@ $ ssh wsl cat ~/.config/mindfs/nodes.json     # PC
 
 | | 是什么 | 归属 |
 |---|---|---|
-| **控制面** | 只有一份真相的状态：账户表、偏好、提示词库、看板模板、节点表、WebPush 订阅、relay/e2ee 绑定、应用更新 | **只在主节点** |
+| **控制面** | 只有一份真相的状态：账户表、偏好、提示词库、看板模板、节点表、WebPush 订阅、应用更新 | **只在主节点** |
 | **数据面** | 天然按机器分的状态：项目列表、会话库、任务库、文件、git、agent 进程池、定时任务 | 每台机器各一份（本就如此） |
 
 节点角色由 `nodeinfo.Role` 决定，启动参数 `-role worker` 或配置文件 `{"role":"worker"}`：
@@ -62,7 +62,7 @@ export function controlPath(path: string, params?: URLSearchParams): string
 | `/api/users*`、`/api/auth/*`、`/api/preferences/*`、`/api/prompts*` | 控制面 |
 | `/api/task-templates*`、`/api/task-stage-templates*` | 控制面 |
 | `/api/web-push*`、`/api/nodes`、`/api/node-info` | 控制面 |
-| `/api/relay*`、`/api/e2ee*`、`/api/token-station*`、`/api/app/update*` | 控制面 |
+| `/api/app/update*` | 控制面 |
 | `/api/dirs`、`/api/sessions*`、`/api/tasks*`、`/api/tree`、`/api/file`、`/api/git/*` | 数据面 |
 | `/api/agents*`、`/api/agent-config/*`、`/api/agent-api-providers` | **数据面** |
 | `/ws`、`/health` | 数据面 |

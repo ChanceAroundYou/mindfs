@@ -46,17 +46,8 @@ test("agent rules and plan index contain no broken local Markdown links", () => 
   assert.deepEqual(broken, [], `broken links:\n${broken.join("\n")}`);
 });
 
-test("Claude and Gemini entry files point to the shared instruction and indexes", () => {
-  for (const file of ["CLAUDE.md", "GEMINI.md"]) {
-    const text = readFileSync(path.join(root, file), "utf8");
-    for (const entry of ["@AGENTS.md", "@docs/agent/rules/README.md", "@docs/plans/README.md"]) {
-      assert.ok(text.includes(entry), `${file} must include ${entry}`);
-      assert.ok(existsSync(path.join(root, entry.slice(1))), `${file} points to missing ${entry}`);
-    }
-  }
-});
-
-
+// 单入口契约（AGENTS.md 必须导入两个索引、不得存在 CLAUDE.md/GEMINI.md 壳、
+// Gemini 由 .gemini/settings.json 点名）由 agent-docs.test.mjs 统一守着，此处不重复。
 
 test("ship instructions match the sole frontend test runner", () => {
   const ship = readFileSync(path.join(root, ".claude/skills/ship/SKILL.md"), "utf8");

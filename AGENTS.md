@@ -6,9 +6,17 @@ WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监
 
 ## Agent 指令入口与规范
 
-`AGENTS.md` 是项目共用的操作与架构事实源。Claude Code 的 `CLAUDE.md` 和 Gemini CLI 的 `GEMINI.md`
-导入本文件，并加载两个索引；新增工具适配器也应只导入这些共用文档，不复制规则正文。
+`AGENTS.md` 是**唯一**的项目指令入口（操作与架构事实源）；两个索引由它内联加载：
 
+@docs/agent/rules/README.md
+@docs/plans/README.md
+
+- **不要新增 `CLAUDE.md` / `GEMINI.md` 这类「只导入、无正文」的壳**（2026-10-17 收束）。
+  Claude Code 自 2.1.277 起原生发现 `AGENTS.md`（内建插件 `agents-md`，缺省模式 `claude-md-or-agents-md`），
+  但**当前目录或其任一祖先**存在 `CLAUDE.md`（或 `CLAUDE.local.md`、`.claude/CLAUDE.md`）时就不再发现它 ——
+  留壳不是无害的重复，是把共享正文挡在外面。Gemini CLI 不走自动发现，由 `.gemini/settings.json` 的
+  `context.fileName` 点名本文件。两条路径都由 `web/tests/agent-docs.test.mjs` 钉住。
+- 新增工具适配器同理：只指向本文件，不复制规则正文。
 - 代码规范索引：[docs/agent/rules/README.md](docs/agent/rules/README.md)。按任务读取对应规则；前端/后端 TODO 是各自存量事项的唯一清单。
 - 执行计划索引：[docs/plans/README.md](docs/plans/README.md)。只有标为 Active 的计划可作为当前执行清单；其余是历史记录。
 - Claude 专属 skills、hooks、settings 与会话状态继续放在 `.claude/`；`.claude/rules/README.md` 仅为旧路径指引。
@@ -47,11 +55,10 @@ server/internal/agent/        Agent 运行时抽象
   ├─ types/types.go           Session 接口 + Event/ToolCall/ContextWindow 等类型
   ├─ pool.go                  会话池（创建/复用/探测）
   ├─ protocol.go              协议发现
-  ├─ claude/session.go        Claude Code 后端（claude-sdk CLI）
-  └─ codex/session.go         Codex 后端
-server/internal/relay/        远程隧道（a9gent.com）
+  ├─ claude/                  Claude Code 后端（claude-sdk CLI）
+  ├─ codex/                   Codex 后端
+  └─ acp/                     ACP 后端（含 elicitation 权限应答）
 server/internal/kanban/       看板任务（任务自带流水快照 + 预设解耦，无并发调度）
-server/internal/e2ee/         端到端加密
 server/internal/config/       配置管理
 server/internal/fs/           文件浏览/读写
 server/internal/gitview/      Git 视图
@@ -65,7 +72,7 @@ web/src/                      React/TS 前端（Vite 构建，dist/ 由后端静
   ├─ app/                     状态与路由（AppRootView、useApp* hooks、realtimeWs*、appSession 等）
   ├─ components/              UI 组件（ActionBar, SessionViewer, stream/ 等）
   ├─ hooks/                   React hooks（useSessionStream 等）
-  ├─ services/session.ts      WS 通信层（前端 ↔ 后端）
+  ├─ services/session/        WS 通信层（前端 ↔ 后端；session.ts 是再导出门面）
   └─ i18n/                    国际化
 ```
 
@@ -136,7 +143,7 @@ make dev-web          # 仅 Vite
       |---|---|
       | 项目列表 `registry.json` | 偏好、节点表、WebPush 订阅、提示词、看板模板 |
       | **会话库**（`MetaDir()`：会话 DB + exchange/aux） | **上传的文件、文件批注**（`SharedMetaDir()`） |
-      | **看板任务库**、定时任务 | agent 配置、**agent 进程池**、探针、relay/update/e2ee/auth/notify |
+      | **看板任务库**、定时任务 | agent 配置、**agent 进程池**、探针、update/auth/notify |
       - 两个 meta 解析器：`MetaDir()` 是账户私有的会话/任务目录；`SharedMetaDir()` 是上传与批注，
         按注册表记的 `MetaLocation` 算、**不看账户**（两个账户必须算出同一个答案）。
         主账户两者相同。改路径相关代码别用错。
@@ -167,7 +174,7 @@ make dev-web          # 仅 Vite
       会话当场全灭，节点请求失败也会被误当成「没有在回复」。只重算本轮成功节点的键，其余原样保留，
       实现见 `appSession.ts` 的 `mergeReplyingStateByNode` + `scope.ts` 的 `sessionKeyNodeId`。
       建键用 `scopeSessionKey(nid,…)` 而非 `rootSessionKey()`：后者走 `getNodeIdForRoot`，同名项目跨节点会错记。
-      远端节点的 `session.done` 收不到（没订阅那些会话），靠 `App.tsx` 里 5s/visible-only 轮询兜。
+      远端节点的 `session.done` 收不到（没订阅那些会话），靠 `app/useReplyingSessionPoll.ts` 的 5s/visible-only 轮询兜。
       回归测试 `web/tests/cross-node-replying-state.test.mjs`。
 
 13. **看板模型（2026-09 重做）**：卡=任务，列=全局状态（待开始/进行中/等待你/已完成/失败·取消，前端 `kanbanStageColumns`）；
@@ -208,7 +215,7 @@ make dev-web          # 仅 Vite
       反过来，转录真在 `--worktree-*` 目录下时才必须走完整 repoint。判断法：看 `session_agent_bindings
       .external_source_path` 落在哪个 slug 目录。实测清完直接点「继续聊」即可无感续上。
 15. **控制面只在主节点，数据面按机器分**（2026-10-04，详见 `docs/multi-node-control-plane.md`）：
-    - **控制面**（账户表、偏好、提示词库、看板模板、节点表、WebPush 订阅、relay/e2ee 绑定、应用更新）
+    - **控制面**（账户表、偏好、提示词库、看板模板、节点表、WebPush 订阅、应用更新）
       **只有一份真相，在主节点**；**数据面**（项目列表、会话库、任务库、文件、git、agent 进程池、定时任务）
       每台机器各一份 —— 这本该如此。原先两类混在一起，控制面被复制并在各机漂移：
       两个节点的 `nodes.json` 互相矛盾（同一台机器在两边拿到**不同 node id**，跨节点 bug 的根源），
@@ -314,6 +321,9 @@ sudo systemctl restart mindfs   # 本机生效（用户执行）；worker 重启
    条目里必须写明**可见症状**（用户看到什么），因为那才是判定「这条还得不该留」的依据 —— 只写代码位置，未来没人能判断它还有没有意义。
 2. **留下针对性测试**，并在该组的「针对性测试」表里列出「测试 → 钉住什么」。测试是防覆盖的另一半：合上游时测试红了，就知道定制被冲掉了。
 3. **提交信息标 `Scope: G-X`**（见 §7 附录的约定），与清单里的组号对应，便于 `git log` 反查。
+4. **跑 `make check-upstream`** 做机器对账：它取 `merge-base HEAD upstream/main..HEAD` 的文件级
+   delta，逐个要求在清单里登记。**它只看已提交的文件** —— 所以提交前跑红是「清单没写全」，
+   提交后跑红才是「定制被上游冲掉了」。刻意不并入 `make test`：它依赖 upstream ref，无网机器应跳过。
 
 **合上游之后**：跑全量门禁。清单里每一组的测试都必须绿 —— 红了就是那一组被覆盖了，按清单里记的「为什么必须保留」逐条恢复，不要按上游实现重写。
 

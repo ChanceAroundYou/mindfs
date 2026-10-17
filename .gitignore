@@ -10,7 +10,11 @@
 .worktree/
 .mindfs/
 .specify/
-.gemini/
+# .gemini/ 里只有 settings.json 是人工维护的约定（把 Gemini CLI 指向 AGENTS.md），
+# 其余（会话状态、缓存）忽略。**不能写成 `.gemini/`**：父目录一旦被排除，
+# 后面再 `!.gemini/settings.json` 也放行不了 —— 必须只排除内容。
+.gemini/*
+!.gemini/settings.json
 .DS_Store
 Thumbs.db
 *.tmp

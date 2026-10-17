@@ -11,7 +11,7 @@ server/
 │                       + claude/ + codex/ + acp/（各后端实现）
 ├── internal/kanban/    看板任务（自带流水快照，预设解耦，无并发调度）
 ├── internal/<domain>/  fs / gitview / scheduled / preferences / auth / notify /
-│                       relay / e2ee / config / update / pins / nodes / webpush …各守一域
+│                       config / update / pins / nodes / webpush …各守一域
 └── cmd/mindfs-server/  后端入口（仅 make dev-backend 用；发布二进制是 cli/cmd）
 cli/cmd/                发布二进制入口 + 启动配置（StartOptions.Role 为 string，
                         归一化在 app.Start；internal 不可 import，Go internal 规则）

@@ -12,7 +12,7 @@ WS/HTTP (api/) → usecase/ → session/kanban/等域包 → SQLite (WAL)
    对端不 ack 会永久挂起（SDK 用 `context.Background()`）；调用方必须 `WithTimeout` 包装。
    定时任务、后台轮询、进程生命周期等场景用 `Background()` 是合法的，不在本条约束内。
    守卫：`server/internal/agent/cancel_rpc_timeout_guard_test.go`。
-3. **共享实例禁双跑**：共享服务（偏好/节点表/relay/update/e2ee）用同一份实例；
+3. **共享实例禁双跑**：共享服务（偏好/节点表/update）用同一份实例；
    按账户分的（看板/定时任务/session manager）每账户一份。同一份文件两份实例会双跑调度。
 
 ## 分层铁律

@@ -161,6 +161,22 @@ for (const locale of ["zh-CN", "en-US"]) {
   );
 }
 
+// 文档残留（G-H，2026-10-17）：包、路由、前端入口都删了，但**描述当前状态**的文档里
+// 还留着它们的位置 —— 架构文档列一个不存在的包、规则文档把已删服务当共享实例举例，
+// 排查者会据此以为能力仍在。与上面的 i18n 死键是同一类「删了一半」。
+// **只扫描述当前状态的文档**：README.md 与 upstream/main 逐字节相同（改它等于新增一份
+// 定制），docs/plans/ 与 docs/*-prd.md 是历史记录，它们提到 relay 是正确的。
+for (const file of [
+  "AGENTS.md",
+  "docs/multi-node-control-plane.md",
+  "docs/agent/rules/backend/directory.md",
+  "docs/agent/rules/backend/layering.md",
+]) {
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+  const hit = /\brelay\b|\be2ee\b|token-station/i.exec(src);
+  assert.ok(!hit, `${file} 又把已删的 relay/e2ee 当成现存能力：${hit?.[0]}`);
+}
+
 // relay 时代的「资源别名前缀」也一并清掉（G-H，2026-10-09）：服务端的
 // RelayAssetsAlias()、前端的 RELAY_ASSETS_PREFIX、SW 里注入的 RELAY_ALIAS，
 // 都只为「relay 会把相对 bundle 改写成 /<前缀>-assets/」这一种形态存在。

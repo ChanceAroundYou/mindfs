@@ -33,18 +33,21 @@ function brokenRelativeLinks(markdownFiles) {
   return failures;
 }
 
-test("agent entrypoints import the shared instructions and indexes", () => {
-  for (const file of ["CLAUDE.md", "GEMINI.md"]) {
-    const text = read(file);
-    for (const imported of ["@AGENTS.md", "@docs/agent/rules/README.md", "@docs/plans/README.md"]) {
-      assert.ok(text.includes(imported), `${file} must import ${imported}`);
-      const path = imported.slice(1);
-      assert.ok(statSync(join(ROOT, path), { throwIfNoEntry: false }), `${file} imports missing ${path}`);
-    }
+test("AGENTS.md is the sole agent entrypoint and imports the shared indexes", () => {
+  // 收束为单入口（2026-10-17）：CLAUDE.md / GEMINI.md 这两个「只导入、无正文」的壳已删。
+  // 留壳不是无害的重复 —— Claude Code 的 agents-md 插件在**当前目录或其任一祖先**存在
+  // CLAUDE.md 时就不再发现 AGENTS.md，壳会把共享正文整个挡在外面。
+  for (const shell of ["CLAUDE.md", "GEMINI.md", "CLAUDE.local.md", ".claude/CLAUDE.md"]) {
+    assert.ok(!statSync(join(ROOT, shell), { throwIfNoEntry: false }), `${shell} 复活了：它会顶掉 AGENTS.md`);
   }
   const instructions = read("AGENTS.md");
-  assert.ok(instructions.includes("docs/agent/rules/README.md"));
-  assert.ok(instructions.includes("docs/plans/README.md"));
+  for (const imported of ["@docs/agent/rules/README.md", "@docs/plans/README.md"]) {
+    assert.ok(instructions.includes(imported), `AGENTS.md must import ${imported}`);
+    const path = imported.slice(1);
+    assert.ok(statSync(join(ROOT, path), { throwIfNoEntry: false }), `AGENTS.md imports missing ${path}`);
+  }
+  // Gemini CLI 不走 AGENTS.md 自动发现，由 workspace 设置点名（用户级设置会被它覆盖）。
+  assert.deepEqual(JSON.parse(read(".gemini/settings.json")).context.fileName, ["AGENTS.md"]);
   assert.ok(read(".claude/rules/README.md").includes("docs/agent/rules/"));
   const claudeSkill = read(".claude/skills/upstream-merge/SKILL.md");
   assert.ok(claudeSkill.includes("sudo systemctl restart mindfs"));
