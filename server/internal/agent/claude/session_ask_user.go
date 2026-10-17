@@ -16,6 +16,13 @@ import (
 // claimAskUserEmit 为一次 AskUserQuestion 的发证：首次调用返回 true（调用方负责发射），
 // 重复调用返回 false。SDK 的两条路径（CanUseTool / AssistantMessage）都可能触发，
 // 用集合让「先到者发射、后到者跳过」，不依赖两条路径的先后次序。
+//
+// 条目**刻意不回收**：它必须活到两条路径都跑完为止。CanUseTool 先到时，delta 那条
+// 路径可能晚于答案到达 —— 若在 awaitAskUserQuestion 返回处回收，那次迟到的 delta 会
+// 再发一张同 callID 的卡，而该提问的应答通道已经关掉，用户看到一张永远答不了的卡
+// （正是 G-JA 修掉的形态）。可回收的安全时点是工具结果回来时（tool_result 必然晚于
+// 带 tool_use 的 assistant 消息），但为此把清理钩进 pendingToolCalls 的三处移除路径，
+// 换来的只是每会话几十个 ~40 字节的条目 —— 不值得，故只记边界不回收。
 func (s *session) claimAskUserEmit(callID string) bool {
 	callID = strings.TrimSpace(callID)
 	if callID == "" {
@@ -89,6 +96,8 @@ var askUserWaiterGrace = 2 * time.Second
 // 所以这里等真值出现再判死：短轮询到上限仍未登记，才认为这个 callID 确实不是待答提问。
 func (s *session) askUserWaiter(ctx context.Context, callID string) (chan askUserAnswerResult, error) {
 	deadline := time.Now().Add(askUserWaiterGrace)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		s.questionMu.Lock()
 		waiter, ok := s.questionWaits[callID]
@@ -102,7 +111,7 @@ func (s *session) askUserWaiter(ctx context.Context, callID string) (chan askUse
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(10 * time.Millisecond):
+		case <-ticker.C:
 		}
 	}
 }

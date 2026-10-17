@@ -82,6 +82,7 @@ type session struct {
 	// 以及 AssistantMessage 的 tool_use 块 → handleAssistantMessage），两者 CallID
 	// 相同但来自不同 goroutine、先后次序不定。谁先到谁发射，后者跳过，避免同一张
 	// ask_user 卡被发两次（实测 2026-09-12 症状 1：卡片与推理文本各出现两份）。
+	// 条目随会话结束释放，不回收 —— 为什么不能提前回收见 claimAskUserEmit 的注释。
 	emittedAskUsers map[string]struct{}
 }
 
