@@ -268,12 +268,13 @@ groups:
       - server/internal/api/usecase/fs.go
       - server/internal/api/usecase/local_dirs.go
       - server/internal/api/usecase/usecase_test.go
+      - server/internal/api/usecase/fs_managed_dirs_helpers.go
     tests:
       - server/internal/api/usecase/usecase_test.go
       - web/tests/session-archive.test.mjs
     anchors:
       - server/internal/fs/registry.go:UpdateDisplayName
-      - 'server/internal/api/usecase/fs_managed_dirs.go:CUSTOM(G-P)'
+      - 'server/internal/api/usecase/fs_managed_dirs_helpers.go:CUSTOM(G-P)'
 
   - id: G-G
     title: 会话生命周期与 WS 正确性
@@ -573,7 +574,7 @@ groups:
       - 'web/src/components/task/useScheduledAgentTaskDialog.ts:confirmDialog'
       # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
       - server/internal/kanban/types.go:Stages             []StageTemplate
-      - server/internal/kanban/template_store.go:ListStageTemplates
+      - server/internal/kanban/template_store_stage.go:ListStageTemplates
       - server/internal/kanban/worktree_finish.go:FinishTaskWorktree
       # 存量 queued 必须被折进 pending：前端已按「不可能出现」删掉了该分支
       - server/internal/kanban/task_store_migrate.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
@@ -1164,7 +1165,7 @@ groups:
       - server/internal/api/http_task_begin_finish.go:func agentFallbackPlan
       - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) respondFinishTeardownFailure
       - server/internal/kanban/service_stage_edit.go:ByRequest bool
-      - server/internal/kanban/service_stage_edit.go:canLeave := canAdvanceFromStage
+      - server/internal/kanban/service_stage_edit_ops.go:canLeave := canAdvanceFromStage
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
       - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
@@ -1274,6 +1275,7 @@ groups:
       - server/internal/agent/acp/elicitation.go
       - server/internal/agent/acp/process.go
       - server/internal/agent/acp/session.go
+      - server/internal/agent/acp/elicitation_questions.go
     tests:
       - server/internal/agent/acp/elicitation_test.go
       - server/internal/agent/acp/session_test.go
@@ -1284,8 +1286,8 @@ groups:
       - server/internal/agent/acp/elicitation.go:func (p *Process) matchAndBindPendingAskUser
       - server/internal/agent/acp/elicitation.go:func (p *Process) reapPendingAskUser
       - server/internal/agent/acp/elicitation.go:func (p *Process) AnswerElicitation
-      - server/internal/agent/acp/elicitation.go:func elicitationContent
-      - server/internal/agent/acp/elicitation.go:func acpAskUserToolCall
+      - server/internal/agent/acp/elicitation_questions.go:func elicitationContent
+      - server/internal/agent/acp/elicitation_questions.go:func acpAskUserToolCall
       - server/internal/agent/acp/process_client.go:func (c *mindfsClient) UnstableCreateElicitation
       - 'server/internal/agent/acp/process_lifecycle.go:CUSTOM(G-AS)'
       - 'server/internal/agent/acp/session.go:CUSTOM(G-AS)'
@@ -2172,6 +2174,9 @@ groups:
       - web/tests/session-blocks-render.test.mjs
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
+      - server/internal/agent/acp/importer_collector.go
+      - server/internal/api/usecase/session_fork_helpers.go
+      - server/internal/api/usecase/session_turn_identity_persist.go
     anchors:
       - server/internal/session/blocks_build.go:BuildTurnBlocks
       - server/internal/session/blocks_compact.go:ClearNativeIdentity
@@ -2180,14 +2185,14 @@ groups:
       - server/internal/session/blocks_compact.go:CompactBlocksLight
       - server/internal/session/blocks_build.go:GroupBlocksBySeq
       - server/internal/session/manager_exchange_identity.go:WithExchangeIdentity
-      - server/internal/api/usecase/session_turn_identity.go:newMindFSID
+      - server/internal/api/usecase/session_turn_identity_persist.go:newMindFSID
       - server/internal/api/usecase/session_turn_identity.go:exchangeAlreadyRecorded
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
-      - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
+      - server/internal/api/usecase/session_turn_identity_persist.go:recordedUserExchangeTurnID
       - server/internal/api/usecase/session_turn_identity.go:noteIdentitylessGuess
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
-      - server/internal/agent/acp/importer.go:messageIDOf
-      - server/internal/agent/acp/importer.go:isUUIDShape
+      - server/internal/agent/acp/importer_collector.go:messageIDOf
+      - server/internal/agent/acp/importer_collector.go:isUUIDShape
       - server/internal/api/stream_hub_pending.go:SetPendingUserAt
       - server/internal/api/stream_hub_pending.go:nextPendingTurnIDLocked
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
@@ -2201,11 +2206,11 @@ groups:
       - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
-      - server/internal/api/usecase/session_turn_identity.go:persistTurnBlocks
+      - server/internal/api/usecase/session_turn_identity_persist.go:persistTurnBlocks
       - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAndGetSeq
       - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAtWithIdentityFactory
       - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
-      - server/internal/api/usecase/session_fork.go:copyForkBlocks
+      - server/internal/api/usecase/session_fork_helpers.go:copyForkBlocks
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
       - server/internal/api/http_sessions_detail.go:windowSeqsForExchanges
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
@@ -2240,7 +2245,7 @@ groups:
     anchors:
       - server/internal/session/types_exchange.go:UnmarshalJSON
       - server/internal/session/manager_exchange_identity.go:NewMindFSID
-      - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
+      - server/internal/api/usecase/session_turn_identity_persist.go:recordedUserExchangeTurnID
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
       - web/src/app/useSessionStreamCache.ts:hasSameMindFSID
 
@@ -3631,7 +3636,7 @@ groups:
       - docs/plans/rule-completion-rollout.md
     anchors:
       - server/internal/api/usecase/session_fork.go:func (s *Service) ForkSession
-      - server/internal/api/usecase/session_fork.go:func copyForkHistory
+      - server/internal/api/usecase/session_fork_helpers.go:func copyForkHistory
 
   - id: G-DY
     title: Session usecase read/query split
@@ -3750,7 +3755,7 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/api/usecase/session_turn_identity.go:func persistUserTurnExchange
+      - server/internal/api/usecase/session_turn_identity_persist.go:func persistUserTurnExchange
       - server/internal/api/usecase/session_turn_identity.go:func exchangeAlreadyRecorded
 
   - id: G-EE
@@ -4244,10 +4249,11 @@ groups:
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
+      - server/internal/api/http_sessions_detail_response.go
     anchors:
       - server/internal/api/http_sessions_list.go:func (h *HTTPHandler) handleSessions
       - server/internal/api/http_sessions_detail.go:func (h *HTTPHandler) handleSessionSync
-      - server/internal/api/http_sessions_detail.go:func (h *HTTPHandler) sessionResponse
+      - server/internal/api/http_sessions_detail_response.go:func (h *HTTPHandler) sessionResponse
       - server/internal/api/http.go:func (h *HTTPHandler) handleSessionRepoint
 
   - id: G-FA
@@ -4288,10 +4294,11 @@ groups:
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
+      - server/internal/agent/claude/session_models_helpers.go
     anchors:
-      - server/internal/agent/claude/session_models.go:func isClaudeAliasModel
-      - server/internal/agent/claude/session_models.go:func ClaudeEffectiveEnv
-      - server/internal/agent/claude/session_models.go:func ResolveClaudeModelArg
+      - server/internal/agent/claude/session_models_helpers.go:func isClaudeAliasModel
+      - server/internal/agent/claude/session_models_helpers.go:func ClaudeEffectiveEnv
+      - server/internal/agent/claude/session_models_helpers.go:func ResolveClaudeModelArg
       - server/internal/agent/claude/session_models.go:func (s *session) ListModels
 
   - id: G-FC
@@ -4379,9 +4386,10 @@ groups:
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
+      - server/internal/api/agent_api_provider_json.go
     anchors:
       - server/internal/api/agent_api_provider_files.go:func firstModelOrDefault
-      - server/internal/api/agent_api_provider_files.go:func normalizeJSONLikeConfig
+      - server/internal/api/agent_api_provider_json.go:func normalizeJSONLikeConfig
       - server/internal/api/agent_api_provider_files.go:func readYAMLMap
       - server/internal/api/agent_api_provider_files.go:func formatSimpleEnv
 
@@ -4403,10 +4411,11 @@ groups:
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
+      - server/internal/api/agent_api_provider_apply_providers.go
     anchors:
       - server/internal/api/agent_api_provider_apply.go:func applyAgentAPIProvider
       - server/internal/api/agent_api_provider_codex.go:func mergeCodexAPIProviderConfig
-      - server/internal/api/agent_api_provider_apply.go:func applyPiAPIProvider
+      - server/internal/api/agent_api_provider_apply_providers.go:func applyPiAPIProvider
       - server/internal/api/agent_api_provider_env.go:func writeAgentEnvConfig
 
 
@@ -4428,9 +4437,9 @@ groups:
       - docs/plans/rule-completion-rollout.md
     anchors:
       - server/internal/kanban/service_execution.go:func (s *Service) executeTask
-      - server/internal/kanban/service_execution.go:func (s *Service) runAgentStage
-      - server/internal/kanban/service_execution.go:func (s *Service) finishTask
-      - server/internal/kanban/service_execution.go:func (s *Service) recordTaskError
+      - server/internal/kanban/service_execution_run.go:func (s *Service) runAgentStage
+      - server/internal/kanban/service_execution_run.go:func (s *Service) finishTask
+      - server/internal/kanban/service_execution_run.go:func (s *Service) recordTaskError
 
 
   - id: G-GJ
@@ -4474,9 +4483,10 @@ groups:
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
+      - server/internal/agent/codex/importer_tool_calls_helpers.go
     anchors:
       - server/internal/agent/codex/importer_tool_calls.go:func parseImportedCodexToolCall
-      - server/internal/agent/codex/importer_tool_calls.go:func importedCodexWrappedTool
+      - server/internal/agent/codex/importer_tool_calls_helpers.go:func importedCodexWrappedTool
       - server/internal/agent/codex/importer_tool_call_javascript.go:func quoteImportedJavaScriptObjectKeys
       - server/internal/agent/codex/importer_tool_call_output.go:func parseImportedCodexPatch
       - server/internal/agent/codex/importer_tool_call_output.go:func importedCodexToolOutput
@@ -4497,11 +4507,12 @@ groups:
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
+      - server/internal/agent/codex/session_tools_extra.go
     anchors:
       - server/internal/agent/codex/session_tools.go:func mapToolItem
-      - server/internal/agent/codex/session_tools.go:func mapDynamicToolCall
-      - server/internal/agent/codex/session_tools.go:func collabToolContent
-      - server/internal/agent/codex/session_tools.go:func truncateRunes
+      - server/internal/agent/codex/session_tools_extra.go:func mapDynamicToolCall
+      - server/internal/agent/codex/session_tools_extra.go:func collabToolContent
+      - server/internal/agent/codex/session_tools_extra.go:func truncateRunes
 
 
   - id: G-GM
@@ -5899,6 +5910,27 @@ groups:
       - docs/agent/rules/backend/file-size.md
       - docs/agent/rules/backend/TODO.md
       - docs/plans/backend-file-size-300-500.md
+      - server/app/server_helpers.go
+      - server/app/workspace_build.go
+      - server/internal/agent/acp/process_lifecycle_helpers.go
+      - server/internal/agent/claude/importer_files_helpers.go
+      - server/internal/agent/claude/importer_transcript_helpers.go
+      - server/internal/agent/claude/session_message_loop_helpers.go
+      - server/internal/agent/codex/session_events_parse.go
+      - server/internal/agent/probe_run_agents.go
+      - server/internal/agent/probe_session_store.go
+      - server/internal/api/http_files_upload.go
+      - server/internal/api/http_tasks_helpers.go
+      - server/internal/api/usecase/external_sessions_sync_helpers.go
+      - server/internal/api/usecase/fs_git_helpers.go
+      - server/internal/api/usecase/session_subagents_helpers.go
+      - server/internal/api/ws_session_message_queue.go
+      - server/internal/commandexec/runner.go
+      - server/internal/commandexec/runner_helpers.go
+      - server/internal/fs/registry_upsert.go
+      - server/internal/pins/store_session.go
+      - server/internal/preferences/store_cors_pins.go
+      - server/internal/update/release_fetch_helpers.go
       # B2 拆出的新文件（各职责文件，源文件的 groups 已逐条登记，这里只登记
       # 「拆分」这件事本身与规划产物）。
       - server/internal/auth/store_persist.go
