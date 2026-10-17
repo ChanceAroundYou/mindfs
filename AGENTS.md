@@ -61,7 +61,8 @@ server/internal/preferences/  用户偏好
 server/internal/auth/         账户表（users.json + bcrypt + 主账户）
 server/internal/update/       自动更新
 web/src/                      React/TS 前端（Vite 构建，dist/ 由后端静态服务）
-  ├─ App.tsx                  核心状态 + 会话路由（最大文件，~15k 行）
+  ├─ App.tsx                  组合根（16 行，只拼装；状态与路由已拆到 app/）
+  ├─ app/                     状态与路由（AppRootView、useApp* hooks、realtimeWs*、appSession 等）
   ├─ components/              UI 组件（ActionBar, SessionViewer, stream/ 等）
   ├─ hooks/                   React hooks（useSessionStream 等）
   ├─ services/session.ts      WS 通信层（前端 ↔ 后端）
@@ -116,7 +117,9 @@ make dev-web          # 仅 Vite
 
 1. **单读 goroutine 架构**：`ws.go` 中每个 WebSocket 连接只有一个读 goroutine，串行调用所有 handler。**所有 handler 必须异步派发**（`go h.handleXxx(...)`），否则一个阻塞的 handler 会冻结整个连接。`session.cancel` 曾因同步派发导致"停止按钮失效"。
 2. **agent session 的 `Interrupt` 可能永久阻塞**：SDK 内部用 `context.Background()`，CLI 迟迟不 ack 时不返回。调用方必须加超时包装。
-3. **前端 `App.tsx` 是巨文件**（~15k 行）：所有状态逻辑集中在此，修改前务必定位准确行号。
+3. **前端 `App.tsx` 已是组合根（16 行）**：核心状态、会话路由与 WS 分发都在 `web/src/app/`
+   （`AppRootView.tsx` + `useApp*` hooks + `realtimeWs*`）。改前端状态逻辑前先在 `app/` 里定位；
+   `App.tsx` 只剩拼装，别再往里加逻辑（软 300 / 硬 500，见 `docs/agent/rules/frontend/file-size.md`）。
 4. **静态 web 资源不走 go:embed**：由 `make install` 拷贝到 `~/.local/share/mindfs/web/`，修改前端后需重新 `make build-web && make install`。
 5. **systemd 服务**：重启本机会杀掉所有托管的 claude 子进程。单元路径本机是 system、WSL 与 fn 是 user，重启权限见上方节点表。
 6. **BottomSheet 拖拽**：默认 50% 高度，支持任意高度悬停，上沿 10% 吸顶；`pointercancel` 回弹 50%（避免异常悬停），触摸拖拽需防手势抢占。
@@ -172,9 +175,12 @@ make dev-web          # 仅 Vite
       预设（`task_templates`）退化为「新建时可套用的模板」。旧任务（无快照）在 `loadForMove` 里惰性从模板回填。
     - **无并发调度**：`queued` 与调度槽位已删除（迁移时 queued→pending），新建任务恒为 `waiting_user`；同一 agent 阶段的重复执行由 `taskRun/taskPend` 去重守卫拦。
     - 任意状态可追加 comment 作为下一段 prompt（`POST /api/tasks/{id}/add-stage`，运行中排队尾；waiting_user 时追加即批准当前段并开跑）。
-    - **跨项目工作台**：无项目时任务视图渲染 `web/src/components/WorkspaceKanban.tsx`，数据来自 `GET /api/tasks/overview`（`Service.Overview` 汇总各项目，单项目失败跳过）。
+    - **跨项目工作台**：无项目时任务视图渲染 `web/src/components/workspace/WorkspaceBoard.tsx`
+      （`useWorkspaceBoard` + `WorkspaceProjectRow/WorkspaceTaskRow`，卡片两行与看板共用 `TaskCardRows`），
+      数据来自 `GET /api/tasks/overview`（`Service.Overview` 汇总各项目，单项目失败跳过）。
       卡片操作按卡片自带 `root_id` 派发（完成/立即执行/跳会话/跳项目），详情先切项目再选中任务。
-    - 前端守卫：`web/tests/workspace-kanban.test.mjs`（接线与 i18n key 契约）。
+    - 前端守卫：`web/tests/workspace-board.test.mjs`（接线与 i18n key 契约；扇出看
+      `workspace-node-fanout.test.mjs`，新鲜度看 `workspace-realtime-freshness.test.mjs`）。
 14. **worktree 会话靠 repoint 彻底搬家**（`server/internal/api/usecase/session_repoint.go`）：
     - **问题**：mindfs 为会话在 `<root>/.worktree/` 开工作树（`AppContext.CreateTaskWorktree`）。worktree 删掉后，
       转录仍在 `~/.claude/projects/-home-...-mindfs--worktree-<name>/` 下、cwd 指向已不存在的目录 —— 会话能读，
@@ -256,6 +262,21 @@ make dev-web          # 仅 Vite
       - 项目置顶从共享偏好**一次性回填**（`NeedsLegacySeed`，并集语义）：
         回填必须只做一次，否则用户在新存储里取消掉的置顶会在每次重启后复活 ——
         共享偏好里的旧值可从没被删过。
+
+16. **PWA 键盘上浮露出的色带是壳的窗口底色，运行时改不了**（2026-10-17，定制组 G-JC）：
+    - 现象只在**装到主屏的 PWA**（Edge/Chrome mobile）里出现，浏览器标签页没有 —— 用户报
+      「网页版不闪、装成 PWA 才闪」时直接指这里，别再去改 viewport 或 CSS。
+    - 那条带由**壳自己的窗口底色**填充，取自 manifest 的 `background_color`，
+      **安装 / 更新 WebAPK 时烧死**。meta `theme-color`（运行时）够不着它，页面也画不到视口之外。
+    - **已排除、别再试**：`interactive-widget=resizes-visual`、VirtualKeyboard API
+      `overlaysContent = true` + `boundingRect` 自抬。录像逐像素比对证明壳是**原生缩 WebView**
+      （闪的那一帧页面像素与前一帧完全相同、在 y=970 处被裁断），视口层面的开关一律无效。
+    - **唯一通道是 manifest**：`web/public/manifest.webmanifest`（静态那份，烧**暗色** `#0f172a`，
+      按主用主题选）+ `manifest-light.webmanifest`（亮色变体），`web/index.html` 首帧脚本按
+      `effective` 换 `link[rel=manifest]` 的 href。**壳要等下次 WebAPK 更新或重装才跟上** ——
+      所以「自适应」在这里只能是「有延迟的自适应」；同一时刻壳里只有一种底色，必然有一种主题
+      在切主题的瞬间看到色带。改配色时两份都要动。守卫测试
+      `web/tests/keyboard-no-white-flash.test.mjs`。
 
 
 

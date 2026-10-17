@@ -6,13 +6,14 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-| [Delegated presence and flicker](delegated-presence-and-flicker.md) | Active | Delegated-parent hollow presence + switch-flash fix in progress |
+_（无。下一个多阶段目标开工前先在这里登记。）_
 
 
 ## Completed or superseded history
 
 | Plan | Status | Current interpretation |
 |---|---|---|
+| [Delegated presence and flicker](delegated-presence-and-flicker.md) | Completed 2026-10-17 | A 委托态空心灯 + 切换首帧去闪 `eafa86b3`(G-AY)、B 合成子代理可取消 `da320483`(G-IZ)、C 等回答空心灯 `a33f630b`(G-JA) 全部落地并登记。遗留：真实 CLI 的 AskUserQuestion 未进 MindFS 的 SDK 适配缺口（C 之外，刻意未越界）。 |
 | [File size hard-line cleanup](file-size-hard-line-cleanup.md) | Completed 2026-10-16 | 4 个超硬线文件拆完（web/tests ×3 + codex importer），`file-size.md` 适用范围补上 `web/tests`，500 行门禁扩到 `.mjs` 并变异验证过。全门禁绿。 |
 | [Session header menu and repoint](session-header-menu-repoint.md) | Completed 2026-10-16 | ⋯ menu shipped + deployed (G-JB); gate fully green (go + tsc + 349 web tests + check-upstream). |
 | [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Completed 2026-10-14 | All frontend tests use Vitest; frontend/backend rules and gates apply without path-based waivers. Full gates and upstream coverage passed; no-restart ship installed matching artifacts locally and on WSL/fn. No node was restarted. |
@@ -28,7 +29,7 @@ to resume their old TODOs or baselines.
 | [Next-stage decision](next-stage-decision.md) | Executed / superseded | The proposal and session split were carried out; its original baseline is not current. |
 | [Worktree finish stage](worktree-finish-stage-plan.md) | Implemented | The described workflow landed; this document is the design and implementation record. |
 | [Agent governance and task-38 repoint](agent-governance-and-repoint.md) | Superseded 2026-10-14 by user direction | Governance work completed. The user explicitly discontinued task-38 repoint; do not resume that work from this historical plan. |
-| [Backend file size 300/500 and folder reorg](backend-file-size-300-500.md) | Completed 2026-10-16 | 除 `codex/importer_tool_calls.go`（边界已论证，见 backend/TODO.md 的「不再拆」条目）外，后端 Go 文件（含测试）全部降到硬线 500 以内。B1–B10 完成；两处钉文件名的源码守卫改为扫包级并用变异验证过。 |
+| [Backend file size 300/500 and folder reorg](backend-file-size-300-500.md) | Completed 2026-10-16 | B1–B10 完成后端 Go 文件（含测试）全部降到硬线 500 以内；`codex/importer_tool_calls.go` 的拆分边界单独论证过（见 backend/TODO.md），当天晚些的硬线清零轮把最后两个例外也拆了，现在全仓无超线文件。两处钉文件名的源码守卫改为扫包级并用变异验证过。 |
 
 ## Plan rules
 

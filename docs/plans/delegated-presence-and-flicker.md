@@ -1,12 +1,16 @@
-# 委托态空心灯 + 切换闪烁（A/B 已提交；C 已实现待提交）
+# 委托态空心灯 + 切换闪烁（A/B/C 全部落地，已完成）
 
-> 状态：**A（委托态空心灯）+ 切换首帧去闪已实现并提交**（`eafa86b3 feat(G-AY)`，`Scope: G-AY`）；
-> **B（Claude 合成子代理可取消）已提交**（`da320483 fix(G-IZ)`，`Scope: G-IZ`）；
-> **C（AskUserQuestion 等回答空心灯）已按方向 b 实现，待完成登记与提交**，见 §四。
-> 日期：2026-10-16。约定的验收：隔离实例复现 + 落盘为准（刷新/切换一致）+ 全门禁 + fork 三件套（登记 + 针对性测试 + `Scope: G-X`）。
-> C 的真实 CLI 隔离探针已确认发出了 AskUserQuestion，却因当前 Claude SDK 适配未将该 finalized tool_use
-> 送入 MindFS（没有 tool_call/done）而卡在 agent 边界；这是 C 之外的既有适配缺口。C 的状态机与
-> HTTP 列表响应已由后端回归覆盖，门禁与隔离环境本身均已复核。
+> 状态：**Completed 2026-10-17**。三项全部实现、登记（fork 三件套）并提交：
+> **A（委托态空心灯）+ 切换首帧去闪** `eafa86b3 feat(G-AY)`；
+> **B（Claude 合成子代理可取消）** `da320483 fix(G-IZ)`；
+> **C（AskUserQuestion 等回答空心灯，方向 b）** `a33f630b fix(G-JA)`。
+> 日期：2026-10-16 开工，2026-10-17 收口。验收口径：隔离实例复现 + 落盘为准（刷新/切换一致）
+> + 全门禁 + fork 三件套（登记 + 针对性测试 + `Scope: G-X`）。
+> **本轮唯一未修的边界**：真实 CLI 隔离探针确认发出了 AskUserQuestion，却因 Claude SDK 适配
+> 未将该 finalized tool_use 送入 MindFS（没有 tool_call/done）而卡在 agent 边界 ——
+> 这是 C 之外的既有适配缺口，刻意未越界修改；C 的状态机与 HTTP 列表响应已由后端回归覆盖。
+> 本文以下内容是当时的分析与实现记录，不再是待办清单。
+
 
 ## 一、委托态（父闲 + 子在跑）—— 缺一态，不是闪烁
 

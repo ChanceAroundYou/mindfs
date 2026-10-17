@@ -2,6 +2,9 @@
 
 日期：2026-10-05 · 复现环境：本机 `127.0.0.1:7331`，headless Chromium 经 CDP 真实点击复现
 
+> **历史定位报告**：当时只查清了切换首帧的成因。后续按 A/B/C 修完（委托态空心灯、
+> 合成子代理可取消、等回答空心灯），见 `docs/plans/delegated-presence-and-flicker.md`（已完成）。
+
 ## 一、实测证据
 
 被测会话（`root=mindfs`）：

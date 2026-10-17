@@ -30,37 +30,36 @@
 所以每项都附上**已看过的边界**，下次动这个文件时照着拆，不用重新想。
 
 - [ ] `cli/cmd/autostart.go` — 启动/自引导一条线，可按平台（systemd / launchd / windows）拆。
-- [ ] `server/app/server.go` — 组装 server：路由装配、静态目录、优雅关停三段。
-- [ ] `server/app/workspace.go` — 每账户 AppContext 的惰性构建与缓存，可按「构建」「缓存淘汰」拆。
-- [ ] `server/internal/agent/acp/elicitation.go` — AskUserQuestion 的 ACP 解冻与回填。
-- [ ] `server/internal/agent/acp/importer.go` — 转录导入：读文件、解析、写库三段。
-- [ ] `server/internal/agent/claude/session_models.go` — 模型列表拉取与规范化。
-- [ ] `server/internal/agent/claude/session_tool_results.go` — 工具结果回填。
-- [ ] `server/internal/agent/claude/session_tool_summaries.go` — 工具摘要渲染。
-- [ ] `server/internal/agent/codex/session_tools.go` — 工具调用分发（按工具类型分文件）。
+- [x] `server/app/server.go`（171 行，已达标）
+- [x] `server/app/workspace.go`（290 行，已达标）
+- [x] `server/internal/agent/acp/elicitation.go`（260 行，已达标）
+- [x] `server/internal/agent/acp/importer.go`（225 行，已达标）
+- [x] `server/internal/agent/claude/session_models.go`（62 行，已达标）
+- [x] `server/internal/agent/claude/session_tool_results.go`（283 行，已达标）
+- [x] `server/internal/agent/claude/session_tool_summaries.go`（201 行，已达标）
+- [x] `server/internal/agent/codex/session_tools.go`（211 行，已达标）
 - [ ] `server/internal/agent/config.go`（335，B2 已拆一轮）— 剩装载/合并一条线，可按「装载」「合并」再拆。
 - [ ] `server/internal/agent/pool.go`（303，B2 已拆一轮）— 剩获取/关闭主路径。
 - [ ] `server/internal/agent/probe_run.go`（440，B2 已拆一轮）— 探测执行：可按 configured / installed 两条线拆。
-- [ ] `server/internal/agent/probe_status_query.go`（357，B2 已拆一轮）— 状态查询与广播。
+- [x] `server/internal/agent/probe_status_query.go`（232 行，已达标）
 - [x] `server/internal/api/agent_api_provider_files.go` — JSON family (read/writeJSONObject + normalize* + ensureJSONObject) 拆出 `agent_api_provider_json.go`；YAML/env/model/URL/managed-block 留原文件。
-- [ ] `server/internal/api/http_git.go` — git 只读端点集合，按端点分文件。
 - [ ] `server/internal/api/usecase/git_worktree.go` — worktree 生命周期（建/删/收尾）。
-- [ ] `server/internal/api/usecase/session_fork.go`（426）— fork 与 repoint 周边逻辑。
+- [x] `server/internal/api/usecase/session_fork.go`（170 行，已达标）
 - [ ] `server/internal/api/usecase/session_send.go` — 发送主路径（与 session.go 双向耦合，须同批拆）。
-- [ ] `server/internal/api/usecase/session_subagents.go` — 子代理会话装配。
-- [ ] `server/internal/api/usecase/session_turn_identity.go` — 回合身份写入。
+- [x] `server/internal/api/usecase/session_subagents.go`（235 行，已达标）
+- [x] `server/internal/api/usecase/session_turn_identity.go`（172 行，已达标）
 - [ ] `server/internal/commandexec/process_windows.go` — Windows 进程树；平台相关，凑巧超线。
-- [ ] `server/internal/commandexec/runner.go` — 一次性进程执行（与 long_shell 的三份文件分开）。
-- [ ] `server/internal/fs/registry.go` — 项目注册表：结构 / 持久化 / 查询三段。
-- [ ] `server/internal/kanban/service_execution.go` — 阶段执行与调度守卫。
+- [x] `server/internal/commandexec/runner.go`（154 行，已达标）
+- [x] `server/internal/fs/registry.go`（258 行，已达标）
+- [x] `server/internal/kanban/service_execution.go`（103 行，已达标）
 - [ ] `server/internal/kanban/template_store.go` — 模板库持久化。
-- [ ] `server/internal/pins/store.go` — 置顶表（每账户一份，落 session_pins.json）。
+- [x] `server/internal/pins/store.go`（205 行，已达标）
 - [ ] `server/internal/preferences/store.go` — 偏好存储（全账户共享）。
 - [ ] `server/internal/session/manager_aux_reads.go` — aux 表读路径。
 - [ ] `server/internal/session/manager_exchanges.go` — exchange 表读写。
 - [ ] `server/internal/session/manager_search.go` — 正文搜索。
 - [ ] `server/internal/session/manager_sqlite.go` — schema 与迁移。
-- [ ] `server/internal/update/release_fetch.go`（338，B2 已拆一轮）— 发布信息拉取。
+- [x] `server/internal/update/release_fetch.go`（253 行，已达标）
 
 测试文件同样按此口径登记（软线是判据，不是清理项）：
 
@@ -73,6 +72,52 @@
 - [ ] `server/internal/kanban/worktree_finish_dispatch_test.go` — 按派发路径拆。
 - [ ] `server/internal/pins/store_test.go` — 按账户分区 / 回填拆。
 - [ ] `server/internal/update/service_test.go` — 按拉取 / 校验 / 安装三段对齐 B2 拆出的源码文件拆。
+
+## 软线区间里尚未判断边界的文件（下次动它时补上边界）
+
+> 拆分轮会把 500+ 的文件拆成两个 300+ 的文件，所以本区间的数量会随拆分**上升** ——
+> 这是软线的正常形态（软线是判据，不是清理项）。下列文件还没写过拆分安排，
+> 动到它们时按上面同款格式补一行「已看过的边界」。
+
+- [ ] `server/internal/kanban/worktree_finish_stage_test.go`（499）
+- [ ] `server/internal/kanban/worktree_finish_test.go`（484）
+- [ ] `server/internal/api/usecase/session_prompt_test.go`（443）
+- [ ] `server/internal/kanban/service_agent_stage_test.go`（424）
+- [ ] `server/internal/api/usecase/external_sessions_test.go`（420）
+- [ ] `server/internal/api/usecase/fs_git_test.go`（417）
+- [ ] `server/internal/api/stream_hub.go`（413）
+- [ ] `server/internal/agent/acp/process_lifecycle.go`（405）
+- [ ] `server/internal/kanban/task_store.go`（402）
+- [ ] `server/internal/agent/acp/session_event_test.go`（390）
+- [ ] `server/internal/api/http_tasks.go`（388）
+- [ ] `server/internal/agent/acp/elicitation_test.go`（385）
+- [ ] `server/internal/api/ws_session_message.go`（382）
+- [ ] `server/internal/api/usecase/session_command_shell.go`（381）
+- [ ] `server/internal/kanban/service_stage_edit_test.go`（377）
+- [ ] `server/internal/agent/claude/session_models_helpers.go`（353）
+- [ ] `server/internal/kanban/service_run_moves_test.go`（349）
+- [ ] `server/internal/api/http_tasks_begin_finish_test.go`（349）
+- [ ] `server/internal/kanban/worktree_finish.go`（348）
+- [ ] `server/internal/kanban/template_store_test.go`（345）
+- [ ] `server/internal/api/usecase/session.go`（343）
+- [ ] `server/internal/agent/claude/session_messages_tasks.go`（340）
+- [ ] `server/internal/agent/claude/importer_transcript_test.go`（339）
+- [ ] `server/internal/api/usecase/session_lifecycle_test.go`（334）
+- [ ] `server/internal/api/usecase/candidates_file_skill.go`（334）
+- [ ] `server/internal/scheduled/tasks_runner.go`（333）
+- [ ] `cli/cmd/mindfs.go`（331）
+- [ ] `server/internal/api/usecase/fs_git.go`（330）
+- [ ] `server/internal/kanban/service_lifecycle_test.go`（320）
+- [ ] `server/internal/kanban/service_worktree_test.go`（318）
+- [ ] `server/internal/api/agent_api_provider_sync_ops.go`（317）
+- [ ] `server/internal/gitview/gitview.go`（314）
+- [ ] `server/internal/api/agent_api_provider_codex.go`（310）
+- [ ] `server/internal/agent/claude/session_task_test.go`（309）
+- [ ] `server/internal/api/usecase/fs_managed_dirs_helpers.go`（309）
+- [ ] `server/internal/gitview/worktree_merge_test.go`（307）
+- [ ] `server/internal/api/appcontext.go`（307）
+- [ ] `server/internal/api/usecase/session_subagent_cancel_test.go`（307）
+- [ ] `server/internal/kanban/service_session_link_test.go`（303）
 
 ## 论证过边界、本轮及以后都不再拆
 

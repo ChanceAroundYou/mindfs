@@ -1,6 +1,8 @@
 # 主视图切换规则设计（侧栏底部四态切换）
 
-> 状态：**待批准**（批准后才动代码）
+> 状态：**已实施**（2026-10-17 复核：`mainContentViewByRoot` / `mainViewPreferenceByRootRef` 已从
+> `web/src` 消失，切换器落在 `web/src/components/shell/MainViewSwitcher.tsx`，契约由
+> `web/tests/main-content-view-memory.test.mjs` 重写后守住）。以下是当时的设计与验收记录。
 > 目标：主区内容由**唯一一个显式状态**决定，切换只发生在用户点击时，杜绝"随手一跳"。
 
 ## 一、现状（为什么会乱跳）
@@ -72,9 +74,10 @@ R11 是 2026-09-28 补的（「返回上一级」）：它是**用户**主动触
 2. `App.tsx`：`currentMainContentView`（喂给 `DefaultListView` 的 `task-kanban|file-browser`）改为派生值；`workspaceOpen = mainView === "workspace"`。
 3. `App.tsx`：按 R2/R3/R4/R5/R6/R7 在打开流程里显式设置模式；删掉 `mainViewPreferenceByRootRef` 这套死代码（或收敛为"上一次非 chat 模式"的单一 ref）。
 4. `DefaultListView.tsx`：移除菜单里的「当前视图」切换项（避免第二个真相源），改为只读展示当前模式。
-5. 新增 `web/src/components/MainViewSwitcher.tsx`：四态分段控件（图标+短标签，激活态用节点主题色），挂在**左侧栏底部**（`FileTree` 下方的固定条）。
+5. 新增 `web/src/components/MainViewSwitcher.tsx`（落地位置：`web/src/components/shell/MainViewSwitcher.tsx`）：四态分段控件（图标+短标签，激活态用节点主题色），挂在**左侧栏底部**（`FileTree` 下方的固定条）。
 6. i18n：`view.workspace / view.board / view.files / view.chat`（中英）。
-7. 测试：重写 `web/tests/main-content-view-memory.test.mjs` 为新契约（单一状态、持久化键、R1–R10 的源码守卫），新增 `web/tests/main-view-switcher.test.mjs`（切换器存在、四态、无第二真相源）。
+7. 测试：重写 `web/tests/main-content-view-memory.test.mjs` 为新契约（单一状态、持久化键、R1–R10 的源码守卫），把切换器四态与「无第二真相源」并入重写后的 `web/tests/main-content-view-memory.test.mjs`
+   （原计划另开 `main-view-switcher.test.mjs`，实际合并了）。
 
 ## 四、验收
 

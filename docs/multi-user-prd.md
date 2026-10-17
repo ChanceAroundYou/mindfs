@@ -169,7 +169,9 @@ func (m *WorkspaceManager) For(userID string) (*api.AppContext, error) // 未知
 
 - 登录卡片加**用户名**（`components/AuthGate.tsx`）
 - 当前账户存 localStorage，`appPath()` 注入 `?user=`
-- 用户管理面板（仅 admin 可见）：列表 / 新建 / 改密 / 禁用 / 删除 —— 新组件，不侵入 15k 行的 `App.tsx`
+- 用户管理面板（仅 admin 可见）：列表 / 新建 / 改密 / 禁用 / 删除 —— 新组件，不侵入当时的 `App.tsx`
+  （**历史备注**：写这份 PRD 时 `App.tsx` 是 15k 行的巨文件；此后已拆成 16 行组合根，
+  状态在 `web/src/app/`，管理面板按普通组件放 `components/` 即可）
 - 「我的账户」改自己密码
 - 退出登录（回到登录卡片，换账户）
 
@@ -212,7 +214,7 @@ func (m *WorkspaceManager) For(userID string) (*api.AppContext, error) // 未知
 | 风险 | 说明 |
 |---|---|
 | 构造函数改造漏改 | 漏一处即两账户共用状态。构造后断言目录前缀 + 双账户 E2E 覆盖 |
-| `App.tsx` 15k 行 | 账户态挂 `services/session.ts`（已持有 rootId/nodeId）；管理面板独立组件 |
+| ~~`App.tsx` 15k 行~~（已不成立） | 账户态挂 `services/session.ts`（已持有 rootId/nodeId）；管理面板独立组件。**历史行**：当时担心巨文件难改，现 `App.tsx` 已是 16 行组合根 |
 | agent 进程翻倍 | 每用户独立池，进程数随账户数线性增长 |
 | 存量迁移不可逆 | 迁移前备份 `~/.config/mindfs/`，只做**复制**不删原文件 |
 | **误以为这是隔离** | §1.1。README / UI 文案都不得暗示"账户隔离了数据" |
