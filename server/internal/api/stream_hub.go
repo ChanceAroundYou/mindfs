@@ -169,16 +169,27 @@ func (h *StreamHub) ListReplyingSessions() []ReplyingSessionState {
 	defer h.mu.RUnlock()
 	items := make([]ReplyingSessionState, 0, len(h.pendingSessions))
 	for sessionKey, state := range h.pendingSessions {
-		if state == nil || !state.Active || blank(sessionKey) || blank(state.RootID) {
+		if state == nil || blank(sessionKey) || blank(state.RootID) {
 			continue
 		}
+		// Active 与 AwaitingAnswer 任一为真即纳入：这是「sidecar 状态」的统一出口，
+		// 客户端按 AwaitingAnswer 区分空心灯、按 Active/Status 区分实心灯。
+		// 之前 awaiting 被排除在外（怕点亮实心灯），代价是跨节点轮询永远看不到它。
+		if !state.Active && !state.AwaitingAnswer {
+			continue
+		}
+		status := ""
+		if state.Active {
+			status = "replying"
+		}
 		items = append(items, ReplyingSessionState{
-			RootID:       state.RootID,
-			SessionKey:   sessionKey,
-			SessionTitle: state.SessionTitle,
-			Status:       "replying",
-			Summary:      state.Summary,
-			UpdatedAt:    state.UpdatedAt,
+			RootID:         state.RootID,
+			SessionKey:     sessionKey,
+			SessionTitle:   state.SessionTitle,
+			Status:         status,
+			Summary:        state.Summary,
+			UpdatedAt:      state.UpdatedAt,
+			AwaitingAnswer: state.AwaitingAnswer,
 		})
 	}
 	return items

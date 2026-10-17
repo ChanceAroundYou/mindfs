@@ -36,6 +36,32 @@ type UseMultiProjectSessionListOptions = {
   ) => Promise<{ hasMore?: boolean } | void> | { hasMore?: boolean } | void;
 };
 
+const EXPANDED_PROJECTS_STORAGE_KEY = "mindfs:sessionPanelExpandedProjects:v1";
+const EXPANDED_CHILDREN_STORAGE_KEY = "mindfs:sessionPanelExpandedChildren:v1";
+
+function loadExpandedMap(key: string): Record<string, boolean> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (k && typeof v === "boolean") out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function persistExpandedMap(key: string, value: Record<string, boolean>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value || {}));
+  } catch {}
+}
 export function useMultiProjectSessionList({
   groups,
   selectedKey,
@@ -45,13 +71,23 @@ export function useMultiProjectSessionList({
   onLoadMoreProject,
   onLoadChildren,
 }: UseMultiProjectSessionListOptions) {
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>(
+    () => loadExpandedMap(EXPANDED_PROJECTS_STORAGE_KEY),
+  );
   const [loadingProjects, setLoadingProjects] = useState<Record<string, boolean>>({});
-  const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
+  const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>(
+    () => loadExpandedMap(EXPANDED_CHILDREN_STORAGE_KEY),
+  );
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
   const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
-  const nodes = getNodes();
+  useEffect(() => {
+    persistExpandedMap(EXPANDED_PROJECTS_STORAGE_KEY, expandedProjects);
+  }, [expandedProjects]);
+
+  useEffect(() => {
+    persistExpandedMap(EXPANDED_CHILDREN_STORAGE_KEY, expandedChildren);
+  }, [expandedChildren]);
 
   useEffect(() => {
     void refreshPinsFromServer().catch(() => {
@@ -61,6 +97,7 @@ export function useMultiProjectSessionList({
 
   const pinsSnapshot = useSyncExternalStore(subscribePins, readPins, readPins);
   const pinnedProjects = pinsSnapshot.projects;
+  const nodes = getNodes();
 
   useEffect(() => {
     const live = new Set<string>();
@@ -260,8 +297,7 @@ export function useMultiProjectSessionList({
     return !!groupNodeId && !!selectedNid && groupNodeId === selectedNid;
   };
 
-  const groupDefaultExpanded = (group: ProjectSessionGroup) =>
-    groupIsCurrentNode(group) || !!pinnedProjects[groupScopeKey(group)];
+  const groupDefaultExpanded = (group: ProjectSessionGroup) => groupIsCurrentNode(group);
 
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
     const groupKey = groupScopeKey(group);

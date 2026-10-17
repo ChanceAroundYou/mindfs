@@ -66,6 +66,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     multiProjectSessionGroups, setMultiProjectSessionGroups, multiProjectSessionGroupsRef,
     multiProjectSessionsLoading, setMultiProjectSessionsLoading, multiProjectLoadSeqRef,
     multiProjectPendingByKey, setMultiProjectPendingByKey, multiProjectPendingRef, applyPinSnapshot,
+    multiProjectAwaitingByKey, setMultiProjectAwaitingByKey, multiProjectAwaitingRef,
     syncingSessionKeys, setSyncingSessionKeys, archivedGroups, setArchivedGroups, archiveOpen,
     setArchiveOpen, archiveLoading, setArchiveLoading, archiveReloadToken, setArchiveReloadToken,
     hasMoreSessions, setHasMoreSessions, loadingOlderSessions, setLoadingOlderSessions,
@@ -144,7 +145,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     t,
   });
 
-
   const {
     loadTaskWorktreeBranches,
     openTaskCreateDialog,
@@ -184,9 +184,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     t,
     applyTaskDetails,
   });
-
-
-
 
   const {
     slashCopyResetTimersRef,
@@ -305,8 +302,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     knownTaskWorktreePathsRef, refreshTaskWorktreeRef,
   });
 
-
-
   useAppRefSync({
     currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId,
     setAvailableAgents, agentsVersion, getNodeIdForRoot,
@@ -317,6 +312,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     selectedSessionRef, selectedSession, activeBoundSessionKey, setActiveBoundSessionKey,
     interactionMode, setPendingPlanMode, sessionsRef, sessions,
     multiProjectSessionGroupsRef, multiProjectSessionGroups, multiProjectPendingRef, multiProjectPendingByKey,
+    multiProjectAwaitingRef, multiProjectAwaitingByKey,
     currentSessionRef, currentSession, interactionModeRef, treeSortMode,
     directorySortOverrides, scopedRootKey, boundSessionByRootRef, setCurrentSession,
     drawerSessionByRootRef, setIsDrawerOpen, drawerOpenByRootRef,
@@ -440,7 +436,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     mainDirectoryError, mainDirectoryErrorRef, mainEntries, mainEntriesRef,
     mainView, mainViewRef, managedRootByIdRef, managedRootByKeyRef,
     managedRootIds, managedRootIdsRef, managedRootsRequestRef, mobileEnterKeySends,
-    multiProjectLoadSeqRef, multiProjectPendingByKey, multiProjectPendingRef, multiProjectSessionGroups,
+    multiProjectLoadSeqRef, multiProjectPendingByKey, multiProjectPendingRef, multiProjectAwaitingByKey, multiProjectAwaitingRef, multiProjectSessionGroups,
     multiProjectSessionGroupsRef, multiProjectSessionsEnabled, multiProjectSessionsLoading, nodeLoadFailuresRef,
     notifiedNodeFailuresRef, notifyNodeLoadFailedRef, onboardingOpen, openTaskCreateDialog,
     openTaskTemplateEditor, optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
@@ -469,7 +465,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setGitStatusExpandedByRoot, setHasMoreSessions, setInteractionMode, setIsDrawerOpen,
     setIsLeftOpen, setIsRightOpen, setLoadingOlderSessions, setMainDirectoryError,
     setMainEntries, setMainView, setManagedRootIds, setMobileEnterKeySends,
-    setMultiProjectPendingByKey, setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setOnboardingMainContentViewRoot,
+    setMultiProjectPendingByKey, setMultiProjectAwaitingByKey, setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setOnboardingMainContentViewRoot,
     setOnboardingOpen, setPendingPlanMode, setPendingPluginTrust, setPluginBypass,
     setPluginLoading, setPluginQuery, setPluginVersion, setProjectTreeTab,
     setProjectTreeTabRequest, setQueueVersion, setRelatedSelectedFileKey, setRootEntries,

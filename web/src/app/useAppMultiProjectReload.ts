@@ -10,18 +10,22 @@ export function useAppMultiProjectReload({
   loadMultiProjectSessionGroups,
   managedRootByKeyRef,
   multiProjectPendingRef,
+  multiProjectAwaitingRef,
   multiProjectSessionsEnabled,
   setMultiProjectPendingByKey,
+  setMultiProjectAwaitingByKey,
   setMultiProjectSessionGroups,
 }: {
   MULTI_PROJECT_RELOAD_DEBOUNCE_MS: number;
-  applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pending: Record<string, boolean>) => MultiProjectSessionGroup[];
+  applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pending: Record<string, boolean>, awaiting?: Record<string, boolean>) => MultiProjectSessionGroup[];
   currentRootNodeIdRef: React.RefObject<string | null>;
   loadMultiProjectSessionGroups: () => Promise<void>;
   managedRootByKeyRef: UseAppSessionLayerParams["managedRootByKeyRef"];
   multiProjectPendingRef: React.RefObject<Record<string, boolean>>;
+  multiProjectAwaitingRef: React.RefObject<Record<string, boolean>>;
   multiProjectSessionsEnabled: true;
   setMultiProjectPendingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setMultiProjectAwaitingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: React.Dispatch<React.SetStateAction<MultiProjectSessionGroup[]>>;
 }) {
   const multiProjectReloadTimerRef = useRef<number | null>(null);
@@ -68,8 +72,10 @@ export function useAppMultiProjectReload({
     loadMultiProjectSessionGroups,
     managedRootByKeyRef,
     multiProjectPendingRef,
+    multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
     setMultiProjectPendingByKey,
+    setMultiProjectAwaitingByKey,
     setMultiProjectSessionGroups,
   });
 

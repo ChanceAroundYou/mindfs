@@ -168,18 +168,32 @@ export function mergeReplyingStateByNode(
   return Object.assign(next, fresh);
 }
 
+export function mergeAwaitingStateByNode(
+  previous: Record<string, boolean>,
+  fresh: Record<string, boolean>,
+  okNodeIds: Iterable<string>,
+): Record<string, boolean> {
+  return mergeReplyingStateByNode(previous, fresh, okNodeIds);
+}
+
 export function applyPendingToMultiProjectGroups(
   groups: MultiProjectSessionGroup[],
   pendingByKey: Record<string, boolean>,
+  awaitingByKey?: Record<string, boolean>,
 ): MultiProjectSessionGroup[] {
   return groups.map((group) => ({
     ...group,
-    sessions: group.sessions.map((session) => ({
-      ...(session as any),
-      pending: !!pendingByKey[
-        scopeSessionKey(group._nodeId || "", group.rootId, session.key || session.session_key)
-      ],
-    }) as SessionItem),
+    sessions: group.sessions.map((session) => {
+      const key = scopeSessionKey(group._nodeId || "", group.rootId, session.key || session.session_key);
+      const next: any = {
+        ...(session as any),
+        pending: !!pendingByKey[key],
+      };
+      if (awaitingByKey) {
+        next.awaiting_answer = !!awaitingByKey[key];
+      }
+      return next as SessionItem;
+    }) as SessionItem[],
   }));
 }
 export function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {

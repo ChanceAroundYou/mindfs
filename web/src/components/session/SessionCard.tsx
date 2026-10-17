@@ -68,6 +68,8 @@ function SessionCard({
     saving,
     effectiveNodeColor,
     rowBackground,
+    hovered,
+    setHovered,
     menuRef,
     inputRef,
     composingRef,
@@ -79,7 +81,7 @@ function SessionCard({
   // 选中底色要不要向上拓展去包住名字上方那排徽标（用户 2026-10-16）。
   // 徽标全隐藏时 0 —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
   // 也就不该拓出一块盖着空气的深色底。
-  const liftTop = selected && !editing && hasSessionTopBadges(session, isSubagent) ? TOP_BADGE_LIFT_PX : 0;
+  const liftTop = (selected || hovered) && !editing && hasSessionTopBadges(session, isSubagent) ? TOP_BADGE_LIFT_PX : 0;
 
   return (
     <div
@@ -192,17 +194,11 @@ function SessionCard({
               position: "relative",
               color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
             }}
-            onMouseEnter={(e) => {
-              const container = e.currentTarget.parentElement;
-              if (container && !selected && !parentHighlighted) {
-                container.style.background = "rgba(0,0,0,0.03)";
-              }
+            onMouseEnter={() => {
+              if (!selected && !parentHighlighted) setHovered(true);
             }}
-            onMouseLeave={(e) => {
-              const container = e.currentTarget.parentElement;
-              if (container && !selected && !parentHighlighted) {
-                container.style.background = "transparent";
-              }
+            onMouseLeave={() => {
+              if (!selected && !parentHighlighted) setHovered(false);
             }}
           >
             <SessionCardTopBadges

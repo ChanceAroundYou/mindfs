@@ -239,7 +239,7 @@ assert.match(taskRows, /taskAuxIconScaleStyle\(\)/, "the task card badge strip w
 // 外边距盒总高不变 —— 行高、行距、后面会话的位置全都不动，只是把上一行的留白借来当底色。
 assert.match(card, /hasSessionTopBadges\(session, isSubagent\)/, "the lift must use the same predicate as the top row");
 assert.match(card, /data-session-top-lift/, "the lift must be identifiable on the box it grows");
-assert.match(card, /selected && !editing && hasSessionTopBadges/, "only the selected row gets an upward lift");
+assert.match(card, /(selected || hovered) && !editing && hasSessionTopBadges/, "only the selected row gets an upward lift");
 // 只能有**一个**绘制面。另起一块绝对定位的底会横向铺满整行（含时间列与 ⋯ 菜单），
 // 面积比未借位的选中行大一圈 —— 那正是用户 2026-10-16 报的「借位版选中框面积过大」。
 assert.equal(card.split("background: rowBackground").length - 1, 1, "the selected row paints exactly one background surface");

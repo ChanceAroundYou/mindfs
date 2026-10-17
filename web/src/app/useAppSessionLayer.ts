@@ -45,6 +45,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     listLoadErrorAtRef, loadedSessionRef, loadingOlderSessions, loadingSessionRef,
     mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef,
     multiProjectLoadSeqRef, multiProjectPendingByKey, multiProjectPendingRef, multiProjectSessionGroupsRef,
+  multiProjectAwaitingByKey, multiProjectAwaitingRef,
     multiProjectSessionsEnabled, notifyNodeLoadFailedRef, pendingBySessionRef, pendingDraftRef,
     pendingPlanMode, pendingRequestRef, pluginBypassRef, pluginManagerRef,
     pluginQuery, pluginQueryRef, refreshGitHistory, replaceURLState,
@@ -58,6 +59,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     setFile, setGitDiff, setGitStatus, setGitStatusByRoot,
     setHasMoreSessions, setInteractionMode, setIsLeftOpen, setIsRightOpen,
     setLoadingOlderSessions, setMainDirectoryError, setMainEntries, setMultiProjectPendingByKey,
+  setMultiProjectAwaitingByKey,
     setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setOnboardingMainContentViewRoot, setPendingPlanMode,
     setPluginQuery, setRelatedSelectedFileKey, setSelectedDir, setSelectedDirKey,
     setSelectedKanbanTaskId, setSelectedSession, setSelectedSessionLoading, setSessionListMode,
@@ -174,8 +176,10 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     loadMultiProjectSessionGroups,
     managedRootByKeyRef,
     multiProjectPendingRef,
+    multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
     setMultiProjectPendingByKey,
+    setMultiProjectAwaitingByKey,
     setMultiProjectSessionGroups,
   });
 

@@ -72,6 +72,10 @@ type ReplyingSessionState struct {
 	Status       string    `json:"status"`
 	Summary      string    `json:"summary"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+	// AwaitingAnswer 表示「该会话有一个 ask_user 提问尚未回答」（空心灯）。
+	// 与 Status="replying"（实心灯）互斥表达：一个会话可以 awaiting 但不 replying。
+	// 随 /api/replying-sessions 一并下发，避免为这一位单独开第二条状态通道。
+	AwaitingAnswer bool `json:"awaiting_answer,omitempty"`
 }
 
 type PendingSessionSnapshot struct {

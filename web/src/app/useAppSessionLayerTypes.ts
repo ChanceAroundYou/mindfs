@@ -55,6 +55,8 @@ export type UseAppSessionLayerParams = {
   multiProjectLoadSeqRef: React.RefObject<number>;
   multiProjectPendingByKey: Record<string, boolean>;
   multiProjectPendingRef: React.RefObject<Record<string, boolean>>;
+  multiProjectAwaitingByKey: Record<string, boolean>;
+  multiProjectAwaitingRef: React.RefObject<Record<string, boolean>>;
   multiProjectSessionGroupsRef: React.RefObject<MultiProjectSessionGroup[]>;
   multiProjectSessionsEnabled: true;
   notifyNodeLoadFailedRef: React.RefObject<(node: { id: string; name: string; }) => void>;
@@ -111,6 +113,7 @@ export type UseAppSessionLayerParams = {
   setMainDirectoryError: React.Dispatch<React.SetStateAction<string>>;
   setMainEntries: React.Dispatch<React.SetStateAction<FileEntry[]>>;
   setMultiProjectPendingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setMultiProjectAwaitingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: React.Dispatch<React.SetStateAction<MultiProjectSessionGroup[]>>;
   setMultiProjectSessionsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setOnboardingMainContentViewRoot: React.Dispatch<React.SetStateAction<string | null>>;

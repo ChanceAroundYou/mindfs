@@ -118,14 +118,18 @@ test("awaiting-presence: viewer 头部与底部指示器都要有 awaiting 形�
   assert.match(indicator, /session\.sentWaiting/, "sent-waiting copy must survive");
 });
 
-test("awaiting-presence: awaiting 不得塞进 pending 真相表", () => {
+test("awaiting-presence: sidecar 轮询把 awaiting 与 pending 分两张表，绝不混入 pending", () => {
   const poll = fs.readFileSync(
     path.resolve(import.meta.dirname, "..", "src/app/useReplyingSessionPoll.ts"),
     "utf8",
   );
+  // 必须有两张独立的 fresh 表。
+  assert.match(poll, /freshPending/, "sidecar 轮询必须单独收集 pending");
+  assert.match(poll, /freshAwaiting/, "sidecar 轮询必须单独收集 awaiting");
+  // awaiting 不得写进 pending 真相表：freshPending[...] = ...awaiting 之类。
   assert.doesNotMatch(
     poll,
-    /awaiting/i,
-    "等待回答不是 pending：进了这张表就是实心灯，与空心语义相反（来源是会话列表项）",
+    /freshPending\[[^\]]*\]\s*=\s*[^;]*awaiting/i,
+    "awaiting 不得混入 pending 真相表",
   );
 });

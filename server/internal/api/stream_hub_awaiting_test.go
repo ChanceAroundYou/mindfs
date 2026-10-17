@@ -26,7 +26,17 @@ func TestAwaitingAnswerSurvivesTurnEnd(t *testing.T) {
 		t.Fatal("回合结束后 awaiting 丢了 —— 空心灯只会在回合进行中闪现，等于没修")
 	}
 	if pendingActive(hub, "s1") {
-		t.Fatal("等回答 ≠ 在回复：它一旦进了 /api/replying-sessions 就会点亮实心灯")
+		t.Fatal("等回答 ≠ 在回复：它一旦进了 /api/replying-sessions 的 Active 集合就会点亮实心灯")
+	}
+	// 但 awaiting 仍应出现在 sidecar 列表里（带 awaiting_answer），供跨节点轮询刷新空心灯。
+	found := false
+	for _, st := range hub.ListReplyingSessions() {
+		if st.SessionKey == "s1" && st.AwaitingAnswer {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("awaiting 未进入 sidecar 列表：跨节点空心灯无法刷新")
 	}
 }
 

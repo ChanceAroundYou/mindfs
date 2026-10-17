@@ -19,13 +19,15 @@ import { scopeSessionKey } from "../shared/scope";
 const REMOTE_REPLY_POLL_MS = 5000;
 
 export interface UseReplyingSessionPollParams {
-  applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) => any;
+  applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>, awaitingByKey?: Record<string, boolean>) => any;
   currentRootNodeIdRef: MutableRefObject<string | null>;
   loadMultiProjectSessionGroups: () => any;
   managedRootByKeyRef: MutableRefObject<Record<string, ManagedRootPayload>>;
   multiProjectPendingRef: MutableRefObject<Record<string, boolean>>;
+  multiProjectAwaitingRef: MutableRefObject<Record<string, boolean>>;
   multiProjectSessionsEnabled: any;
   setMultiProjectPendingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
+  setMultiProjectAwaitingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: Dispatch<SetStateAction<MultiProjectSessionGroup[]>>;
 }
 
@@ -36,8 +38,10 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     loadMultiProjectSessionGroups,
     managedRootByKeyRef,
     multiProjectPendingRef,
+    multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
     setMultiProjectPendingByKey,
+    setMultiProjectAwaitingByKey,
     setMultiProjectSessionGroups,
   } = params;
 
@@ -82,7 +86,8 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
   const refreshMultiProjectReplyingSessions = useCallback(async () => {
     const nodeIds = multiProjectReplyNodeIdsRef.current();
     const okNodeIds = new Set<string>();
-    const fresh: Record<string, boolean> = {};
+    const freshPending: Record<string, boolean> = {};
+    const freshAwaiting: Record<string, boolean> = {};
     await Promise.all(
       nodeIds.map(async (nid) => {
         try {
@@ -94,35 +99,32 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
             const rootID = String(item?.rootId || item?.root_id || "");
             const sessionKey = String(item?.sessionKey || item?.session_key || "");
             if (rootID && sessionKey) {
-              // 必须用「该节点自己的 nid」，不能用 rootSessionKey()：后者走
-              // getNodeIdForRoot(rootId)，同名项目在多节点各有一份时会解析到当前
-              // 选中节点，把 Local 的条目错记到 PC 名下。
-              fresh[scopeSessionKey(nid, rootID, sessionKey)] = true;
+              const scoped = scopeSessionKey(nid, rootID, sessionKey);
+              // sidecar 状态拆成两张表：pending=实心灯，awaiting=空心灯，绝不混。
+              if (item?.status === "replying" || item?.active === true) {
+                freshPending[scoped] = true;
+              }
+              if (item?.awaiting_answer === true || item?.awaitingAnswer === true) {
+                freshAwaiting[scoped] = true;
+              }
             }
           }
           okNodeIds.add(nid);
         } catch (error) {
-          // 该节点没拉到：既不并入也不清除它的旧值，灯不会被误灭。
-          console.warn("[multi-project-sessions] replying refresh failed", nid, error);
+          console.warn("[multi-project-sessions] sidecar refresh failed", nid, error);
         }
       }),
     );
     if (okNodeIds.size === 0) {
       return;
     }
-    // **只重算本轮成功节点自己的键**，其余节点原样保留。
-    // 整体替换会让切节点时旧节点在跑的会话当场全灭（切节点 → nodes-changed →
-    // 本函数 → 新响应里没有旧节点 → 灯全没）。
-    const next = mergeReplyingStateByNode(multiProjectPendingRef.current, fresh, okNodeIds);
-    // 这里**刻意不做**「静默 N 秒就本地灭灯」的降级。真在跑的会话会长时间没有 stream
-    // 事件：mindfs 不转发 SDK 的 keep_alive 心跳，唯一的周期事件 ToolProgressMessage
-    // 只覆盖 tool 执行（思考、tool 间隙、起始间隙都没有事件）。按静默判「已结束」会
-    // 出现「明明在跑却灭灯」、亮灯时长随事件节奏漂移。灯的权威来源就是本次轮询本身
-    // —— 服务端 ClearSessionPending 在回合结束时删条目，5s 一轮足够兜住 WS 断连；
-    // 服务端真卡死由 broadcastSessionDone 的 2s 超时兜底。两条路都不经过静默判据。
-    multiProjectPendingRef.current = next;
-    setMultiProjectPendingByKey(next);
-    setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
+    const nextPending = mergeReplyingStateByNode(multiProjectPendingRef.current, freshPending, okNodeIds);
+    const nextAwaiting = mergeReplyingStateByNode(multiProjectAwaitingRef.current, freshAwaiting, okNodeIds);
+    multiProjectPendingRef.current = nextPending;
+    multiProjectAwaitingRef.current = nextAwaiting;
+    setMultiProjectPendingByKey(nextPending);
+    setMultiProjectAwaitingByKey(nextAwaiting);
+    setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, nextPending, nextAwaiting));
   }, [applyPendingToMultiProjectGroups]);
 
   useEffect(() => {

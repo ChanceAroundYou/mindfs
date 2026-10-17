@@ -16,6 +16,8 @@ export function useAppSessionListState() {
   const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
+  const [multiProjectAwaitingByKey, setMultiProjectAwaitingByKey] = useState<Record<string, boolean>>({});
+  const multiProjectAwaitingRef = useRef<Record<string, boolean>>({});
   const { applyPinSnapshot } = useAppSessionPins();
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(() => new Set());
   const [archivedGroups, setArchivedGroups] = useState<MultiProjectSessionGroup[]>([]);
@@ -31,6 +33,7 @@ export function useAppSessionListState() {
     multiProjectSessionGroups, setMultiProjectSessionGroups, multiProjectSessionGroupsRef,
     multiProjectSessionsLoading, setMultiProjectSessionsLoading, multiProjectLoadSeqRef,
     multiProjectPendingByKey, setMultiProjectPendingByKey, multiProjectPendingRef, applyPinSnapshot,
+    multiProjectAwaitingByKey, setMultiProjectAwaitingByKey, multiProjectAwaitingRef,
     syncingSessionKeys, setSyncingSessionKeys, archivedGroups, setArchivedGroups, archiveOpen,
     setArchiveOpen, archiveLoading, setArchiveLoading, archiveReloadToken, setArchiveReloadToken,
     hasMoreSessions, setHasMoreSessions, loadingOlderSessions, setLoadingOlderSessions,

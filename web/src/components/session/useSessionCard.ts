@@ -38,6 +38,7 @@ export function useSessionCard({
   const isSearchResult = !!session.search_match_type;
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const [draftName, setDraftName] = useState(storedName);
   const [saving, setSaving] = useState(false);
   const effectiveNodeColor = String(
@@ -52,9 +53,11 @@ export function useSessionCard({
   ).trim();
   const rowBackground = selected
     ? "var(--node-row-selected-bg)"
-    : parentHighlighted
+    : hovered
       ? "rgba(0,0,0,0.03)"
-      : "transparent";
+      : parentHighlighted
+        ? "rgba(0,0,0,0.03)"
+        : "transparent";
   const menuRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const composingRef = useRef(false);
@@ -151,6 +154,8 @@ export function useSessionCard({
     saving,
     effectiveNodeColor,
     rowBackground,
+    hovered,
+    setHovered,
     menuRef,
     inputRef,
     composingRef,

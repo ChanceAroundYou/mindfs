@@ -11,7 +11,7 @@ import (
 // 从 stream_hub_pending_identity_test.go 移来（S2e 换身份表示时那个文件整体作废）。
 func pendingActive(hub *StreamHub, sessionKey string) bool {
 	for _, s := range hub.ListReplyingSessions() {
-		if s.SessionKey == sessionKey {
+		if s.SessionKey == sessionKey && s.Status == "replying" {
 			return true
 		}
 	}

@@ -47,6 +47,8 @@ export type UseAppRefSyncParams = {
   multiProjectSessionGroups: MultiProjectSessionGroup[];
   multiProjectPendingRef: React.RefObject<Record<string, boolean>>;
   multiProjectPendingByKey: Record<string, boolean>;
+  multiProjectAwaitingRef: React.RefObject<Record<string, boolean>>;
+  multiProjectAwaitingByKey: Record<string, boolean>;
   currentSessionRef: React.RefObject<SessionItem | null>;
   currentSession: SessionItem | null;
   interactionModeRef: React.RefObject<"main" | "drawer">;
@@ -74,7 +76,7 @@ export type UseAppRefSyncParams = {
  * 跟镜像同类，而是因为**挪出去就会改变 effect 的执行次序**。
  */
 export function useAppRefSync(params: UseAppRefSyncParams) {
-  const { currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId, setAvailableAgents, agentsVersion, getNodeIdForRoot, expandedRef, expanded, selectedDirRef, selectedDir, entriesByPathRef, entriesByPath, fileRef, file, viewerSelectionRef, viewerSelection, pluginQueryRef, pluginQuery, lastPluginResetFileKeyRef, pluginBypassRef, setPluginBypass, pluginBypass, selectedSessionRef, selectedSession, activeBoundSessionKey, setActiveBoundSessionKey, interactionMode, setPendingPlanMode, sessionsRef, sessions, multiProjectSessionGroupsRef, multiProjectSessionGroups, multiProjectPendingRef, multiProjectPendingByKey, currentSessionRef, currentSession, interactionModeRef, treeSortMode, directorySortOverrides, scopedRootKey, boundSessionByRootRef, setCurrentSession, drawerSessionByRootRef, setIsDrawerOpen, drawerOpenByRootRef } = params;
+  const { currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId, setAvailableAgents, agentsVersion, getNodeIdForRoot, expandedRef, expanded, selectedDirRef, selectedDir, entriesByPathRef, entriesByPath, fileRef, file, viewerSelectionRef, viewerSelection, pluginQueryRef, pluginQuery, lastPluginResetFileKeyRef, pluginBypassRef, setPluginBypass, pluginBypass, selectedSessionRef, selectedSession, activeBoundSessionKey, setActiveBoundSessionKey, interactionMode, setPendingPlanMode, sessionsRef, sessions, multiProjectSessionGroupsRef, multiProjectSessionGroups, multiProjectPendingRef, multiProjectPendingByKey, multiProjectAwaitingRef, multiProjectAwaitingByKey, currentSessionRef, currentSession, interactionModeRef, treeSortMode, directorySortOverrides, scopedRootKey, boundSessionByRootRef, setCurrentSession, drawerSessionByRootRef, setIsDrawerOpen, drawerOpenByRootRef } = params;
 
   useEffect(() => {
     currentRootIdRef.current = currentRootId;
@@ -166,6 +168,10 @@ export function useAppRefSync(params: UseAppRefSyncParams) {
   useEffect(() => {
     multiProjectPendingRef.current = multiProjectPendingByKey;
   }, [multiProjectPendingByKey]);
+
+  useEffect(() => {
+    multiProjectAwaitingRef.current = multiProjectAwaitingByKey;
+  }, [multiProjectAwaitingByKey]);
 
   useEffect(() => {
     setPendingPlanMode(false);

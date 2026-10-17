@@ -178,7 +178,7 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 				}
 			}
 		}
-		payload = append(payload, map[string]any{
+		payloadItem := map[string]any{
 			"rootId":       item.RootID,
 			"rootTitle":    rootTitle,
 			"sessionKey":   item.SessionKey,
@@ -186,7 +186,11 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 			"status":       item.Status,
 			"summary":      item.Summary,
 			"updatedAt":    item.UpdatedAt,
-		})
+		}
+		if item.AwaitingAnswer {
+			payloadItem["awaiting_answer"] = true
+		}
+		payload = append(payload, payloadItem)
 	}
 	respondJSONConditional(w, r, map[string]any{"sessions": payload})
 }
