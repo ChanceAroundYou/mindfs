@@ -177,6 +177,30 @@ for (const file of [
   assert.ok(!hit, `${file} 又把已删的 relay/e2ee 当成现存能力：${hit?.[0]}`);
 }
 
+// README 与 config.json（G-H，2026-10-17）：用户第一眼看到的就是它们 —— README 的
+// 「访问模式」还列着 Relay 远程模式与端到端加密、启动参数表还写着 `-no-relayer`/`-e2ee`，
+// config.json 模板里还留着这两个没人读的键。这里只做**精确字符串**检测：
+// README 顶部的「官网」链接指向 relay.a9gent.com（上游项目站点，不是对本构建能力的声称），
+// 所以不能对整份 README 扫 `relay` 这个词。
+for (const [file, gone] of [
+  ["README.md", "Relay remote mode"],
+  ["README.md", "End-to-end encryption"],
+  ["README.md", "Remote Access to Local Services"],
+  ["README.md", "-no-relayer"],
+  ["README.md", "-e2ee"],
+  ["README.zh.md", "Relay 远程模式"],
+  ["README.zh.md", "端到端加密"],
+  ["README.zh.md", "远程访问本地服务"],
+  ["README.zh.md", "通过 relayer远程访问"],
+  ["README.zh.md", "-no-relayer"],
+  ["README.zh.md", "-e2ee"],
+  ["config.json", "no-relayer"],
+  ["config.json", "e2ee"],
+]) {
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+  assert.ok(!src.includes(gone), `${file} 又写上了已删能力的说明：${gone}`);
+}
+
 // relay 时代的「资源别名前缀」也一并清掉（G-H，2026-10-09）：服务端的
 // RelayAssetsAlias()、前端的 RELAY_ASSETS_PREFIX、SW 里注入的 RELAY_ALIAS，
 // 都只为「relay 会把相对 bundle 改写成 /<前缀>-assets/」这一种形态存在。

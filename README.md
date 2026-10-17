@@ -67,9 +67,7 @@ Access your personal AI agents and workstation data anywhere, anytime through Mi
 ### Access Modes
 
 - **Local mode**: Accessible in the browser on the local machine immediately after startup — no account or configuration needed.
-- **Relay remote mode**: Access your local instance from anywhere on the public internet without opening firewall ports, via an encrypted tunnel through [a9gent.com](https://a9gent.com). Click the bind button in the local UI to activate.
 - **Private channel**: Use a private network (e.g. Tailscale) and access directly via `ip:port`.
-- **End-to-end encryption**: Sessions and files can be protected with end-to-end encryption.
 
 ### Plugin System
 
@@ -84,10 +82,6 @@ Access your personal AI agents and workstation data anywhere, anytime through Mi
 - **Screen-width adaptation**: Command output adapts to the screen width for a friendlier result view.
 - **Selectable shell type**: Choose the shell used for command execution, so Windows users do not need to worry about shell type mismatches.
 - **Session persistence**: Each session gets a long-lived shell, making tmux-like command continuity easier.
-
-### Remote Access to Local Services
-- **One-Click Exposure**: In Relay mode, configure the address of your local service in MindFS to expose it to the public network with one click.
-- **Public Domain Name**: Access local services directly via a unique public domain name.
 
 ### Installation
 
@@ -285,8 +279,6 @@ mindfs -agent-config /path/to/agents.json
 | `-remove` | `false` | Remove `root` from the managed directory list. If the server is running, it is removed through the local API; otherwise it is removed from the local registry. |
 | `-config string` | empty | Read startup options from a JSON file. See [`config.json`](./config.json) for a template. Explicit command-line flags override file values. |
 | `-agent-config string` | empty | Load one extra `agents.json` file. |
-| `-no-relayer` | `false` | Disable relay integration. Local and private-network access still work. |
-| `-e2ee` | `false` | Enable end-to-end encryption for sensitive data. The pairing code can also be used as an authentication mechanism: unpaired frontends cannot access node content. LAN access requires `-tls` to work correctly. On first enablement, the CLI prints the pairing secret. |
 | `-web-push` | `true` | Enable PWA Web Push notifications. VAPID keys are generated automatically on first start. |
 | `-notify-script string` | empty | Executable script for notification events. MindFS passes the JSON payload on stdin. |
 | `-tls` | `false` | Enable HTTPS. If `-cert` and `-key` are not provided, MindFS generates and reuses a local self-signed certificate. |

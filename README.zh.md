@@ -67,9 +67,7 @@
 ### 访问模式
 
 - **本地模式**：服务启动后即可在局域网内通过浏览器访问，无需任何账号或配置。
-- **Relay 远程模式**：无需开放防火墙端口，通过relayer从公网任意设备访问本地实例，实现随时随地的 agent 访问。（本地模式页面中点击绑定按钮）
 - **私有通道**：通过私有通道（tailscale等），直接通过 ip:port 访问。
-- **端到端加密**：会话、文件支持端到端加密保护。
 
 ### 插件系统
 
@@ -83,10 +81,6 @@
 - **屏幕宽度适配**: 命令输出适配屏幕宽度，结果展示更加友好。
 - **shell类型可续**：命令执行shell可选，Windows不用烦恼shell类型。
 - **会话保持**：每个session一个长期 shell，更加方便的实现 tmux 效果。
-
-### 远程访问本地服务
-- **一键暴露**：Relay模式下，MindFS 中配置本地服务地址后，就可以将本地服务暴露给公网。
-- **公网域名**：通过唯一公网域名直达本地服务。
 
 ### 安装运行
 
@@ -208,12 +202,6 @@ mindfs -tls -cert /path/to/cert.pem -key /path/to/key.pem
 
 MindFS 会自动探测已安装 Agent 的可用性，通常需要大约一分钟。
 
-### 通过 relayer远程访问
-
-1. 本地模式打开 mindfs 页面，点击左下角绑定按钮。
-2. 登录 relayer，确认绑定。
-3. 打开节点。
-
 ### 自定义 ACP Agent
 
 MindFS 可以额外加载一个 `agents.json`，用于支持实现 ACP 协议的自定义 Agent CLI。适合测试新的 Agent，或把项目专用 Agent 定义放在内置默认配置之外。
@@ -285,8 +273,6 @@ mindfs -agent-config /path/to/agents.json
 | `-remove` | `false` | 从托管目录列表中移除 `root`。服务运行中时通过本地 API 移除；服务未运行时从本地注册表移除。 |
 | `-config string` | 空 | 从 JSON 文件读取启动参数。可参考 [`config.json`](./config.json) 模板；命令行显式传入的参数优先。 |
 | `-agent-config string` | 空 | 加载一个额外的 `agents.json` 文件。 |
-| `-no-relayer` | `false` | 禁用 Relay 集成。本地访问和私有网络访问仍可使用。 |
-| `-e2ee` | `false` | 启用敏感数据端到端加密。<br>启用时，CLI 会输出配对密钥。<br>配对码也可以作为一种认证手段，未配对前端无法访问节点内容。<br>局域网访问需要开启 `-tls` 才能正常使用。 |
 | `-web-push` | `true` | 启用 PWA Web Push 通知。VAPID key 会在首次启动时自动生成。 |
 | `-notify-script string` | 空 | 通知事件脚本。MindFS 会通过 stdin 传入事件 JSON。 |
 | `-tls` | `false` | 启用 HTTPS。如未指定 `-cert` 和 `-key`，MindFS 会生成并复用本地自签名证书。 |
