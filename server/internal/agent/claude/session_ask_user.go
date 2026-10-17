@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	types "mindfs/server/internal/agent/types"
 
@@ -46,11 +47,9 @@ func (s *session) AnswerQuestion(ctx context.Context, answer types.AskUserAnswer
 		return errors.New("answers required")
 	}
 
-	s.questionMu.Lock()
-	waiter, ok := s.questionWaits[callID]
-	s.questionMu.Unlock()
-	if !ok {
-		return errors.New("question is not pending: " + callID)
+	waiter, err := s.askUserWaiter(ctx, callID)
+	if err != nil {
+		return err
 	}
 
 	answers := make(claudeagent.Answers, len(answer.Answers))
@@ -70,6 +69,41 @@ func (s *session) AnswerQuestion(ctx context.Context, answer types.AskUserAnswer
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// askUserWaiterGrace 是「卡片已经能看见、应答通道却还没登记」这个窗口的容忍上限。
+// 变量而非常量只为让测试把窗口压到毫秒级。
+var askUserWaiterGrace = 2 * time.Second
+
+// askUserWaiter 取该提问的应答通道。
+//
+// 同一次 AskUserQuestion 由**两条独立的 SDK 路径**送达：卡片由 finalized
+// AssistantMessage 的 tool_use 块发出（先到），而这里要取的应答通道由 can_use_tool
+// 权限回调登记（后到，真实 CLI 实测晚约 74ms）。于是存在一个窗口：卡片已经渲染出来、
+// 用户（或任何快速客户端）此时提交的答案却会被「question is not pending」拒掉。
+//
+// 拒掉的后果不是"稍后重试"而是**永久卡死**：前端提交答案后本地就把卡片翻成「已回答」，
+// 而 CLI 仍在等这一次权限应答，该轮再也不会前进，用户也没有第二次机会。
+//
+// 所以这里等真值出现再判死：短轮询到上限仍未登记，才认为这个 callID 确实不是待答提问。
+func (s *session) askUserWaiter(ctx context.Context, callID string) (chan askUserAnswerResult, error) {
+	deadline := time.Now().Add(askUserWaiterGrace)
+	for {
+		s.questionMu.Lock()
+		waiter, ok := s.questionWaits[callID]
+		s.questionMu.Unlock()
+		if ok {
+			return waiter, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, errors.New("question is not pending: " + callID)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

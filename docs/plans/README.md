@@ -13,7 +13,7 @@ _（无。下一个多阶段目标开工前先在这里登记。）_
 
 | Plan | Status | Current interpretation |
 |---|---|---|
-| [Delegated presence and flicker](delegated-presence-and-flicker.md) | Completed 2026-10-17 | A 委托态空心灯 + 切换首帧去闪 `eafa86b3`(G-AY)、B 合成子代理可取消 `da320483`(G-IZ)、C 等回答空心灯 `a33f630b`(G-JA) 全部落地并登记。遗留：真实 CLI 的 AskUserQuestion 未进 MindFS 的 SDK 适配缺口（C 之外，刻意未越界）。 |
+| [Delegated presence and flicker](delegated-presence-and-flicker.md) | Completed 2026-10-17（含同日收尾补记） | A 委托态空心灯 + 切换首帧去闪 `eafa86b3`(G-AY)、B 合成子代理可取消 `da320483`(G-IZ)、C 等回答空心灯 `a33f630b`(G-JA) 全部落地并登记。收尾补记：当时记的「SDK 适配缺口」经适配层真机测试推翻（卡片本来就能到、能渲染、能 done），真缺陷是「卡片可见 → waiter 登记」约 74ms 窗口内答案被拒导致该轮永久卡死，已随 G-JA 修复。 |
 | [File size hard-line cleanup](file-size-hard-line-cleanup.md) | Completed 2026-10-16 | 4 个超硬线文件拆完（web/tests ×3 + codex importer），`file-size.md` 适用范围补上 `web/tests`，500 行门禁扩到 `.mjs` 并变异验证过。全门禁绿。 |
 | [Session header menu and repoint](session-header-menu-repoint.md) | Completed 2026-10-16 | ⋯ menu shipped + deployed (G-JB); gate fully green (go + tsc + 349 web tests + check-upstream). |
 | [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Completed 2026-10-14 | All frontend tests use Vitest; frontend/backend rules and gates apply without path-based waivers. Full gates and upstream coverage passed; no-restart ship installed matching artifacts locally and on WSL/fn. No node was restarted. |

@@ -37,6 +37,7 @@ groups:
       - .claude/rules/
       - docs/superpowers/
       - docs/main-view-switching-design.md
+      - docs/capacitor-shell-prd.md
       - docs/message-change-history.md
       - docs/message-mechanisms.md
       - docs/session-blocks-plan.md
@@ -1504,16 +1505,21 @@ groups:
       - server/internal/api/usecase/session_send.go:defer claudeSubagents.FinishAll()
 
   - id: G-JA
-    title: AskUserQuestion 等回答空心灯
+    title: AskUserQuestion 等回答空心灯 + 提问可见即可答
     kind: fix
-    symptom: "Claude 在 AskUserQuestion 提问后该 turn 正常结束，列表灯却立刻熄灭；用户回答后新 turn 又亮，视觉上像「任务完成又自己重启」，而非清晰地提示现在轮到用户回答。"
-    why: "pending 与 /api/replying-sessions 的语义只能是 Active 的实心「正在跑」，不能混入已 done 的等待回答态。StreamHub 单独保存 AwaitingAnswer；在 turn 结束时降级保留，只随 session list 下发 awaiting_answer，由前端四态 presence 渲染为空心灯。"
-    boundary: "ask_user 的等待回答生命周期与其视觉表达。不改变 turn/done 语义，不将 awaiting 写入 pending 真相表或 replying API；真实 Claude SDK 未上送 finalized tool_use 的既有适配缺口不在本组处理。"
+    symptom: "① Claude 在 AskUserQuestion 提问后该 turn 正常结束，列表灯却立刻熄灭；用户回答后新 turn 又亮，视觉上像「任务完成又自己重启」，而非清晰地提示现在轮到用户回答。② 提问卡刚渲染出来的那几十毫秒里提交的答案被服务端拒绝（question is not pending）：前端已把卡片翻成「已回答」，CLI 仍在等这次权限应答，该轮永久卡死且没有第二次机会。"
+    why: "① pending 与 /api/replying-sessions 的语义只能是 Active 的实心「正在跑」，不能混入已 done 的等待回答态。StreamHub 单独保存 AwaitingAnswer；在 turn 结束时降级保留，只随 session list 下发 awaiting_answer，由前端四态 presence 渲染为空心灯。② 同一次提问由两条独立路径送达：卡片来自 finalized AssistantMessage 的 tool_use 块（先到），可应答的 waiter 来自随后约 74ms 才到的 can_use_tool 权限回调（真机实测）。AnswerQuestion 必须等 waiter 出现（上限 2s）再判死，否则这个窗口里的答案会被拒 —— 拒掉即永久卡死。"
+    boundary: "ask_user 的等待回答生命周期（从提问可见到答案被受理）与其视觉表达。不改变 turn/done 语义，不将 awaiting 写入 pending 真相表或 replying API。"
     tests:
       - server/internal/api/stream_hub_awaiting_test.go
+      - server/internal/agent/claude/session_ask_user_test.go
+      - server/internal/agent/claude/zz_ask_user_live_test.go
       - web/tests/session-presence-awaiting.test.mjs
     files:
       - scripts/mindfs-iso.sh
+      - server/internal/agent/claude/session_ask_user.go
+      - server/internal/agent/claude/session_ask_user_test.go
+      - server/internal/agent/claude/zz_ask_user_live_test.go
       - server/internal/api/appcontext.go
       - server/internal/api/http_sessions.go
       - server/internal/api/stream_hub.go
@@ -1539,6 +1545,8 @@ groups:
       - server/internal/api/appcontext_notify.go:func askUserStreamEvent(
       - server/internal/api/http_sessions.go:item["awaiting_answer"] = true
       - server/internal/api/ws.go:MarkSessionAwaiting(rootID, key, "", false)
+      - server/internal/agent/claude/session_ask_user.go:func (s *session) askUserWaiter(
+      - server/internal/agent/claude/session_ask_user.go:var askUserWaiterGrace = 2 * time.Second
       - web/src/shared/sessionPresence.ts:export function getSessionPresence(
       - "web/src/components/session/SessionCard.tsx:session.presence === \"awaiting\""
       - "web/tests/session-presence-awaiting.test.mjs:test(\"awaiting-presence: 列表项上的 awaiting_answer 直接变成 awaiting 态\""

@@ -6,9 +6,17 @@
 > **C（AskUserQuestion 等回答空心灯，方向 b）** `a33f630b fix(G-JA)`。
 > 日期：2026-10-16 开工，2026-10-17 收口。验收口径：隔离实例复现 + 落盘为准（刷新/切换一致）
 > + 全门禁 + fork 三件套（登记 + 针对性测试 + `Scope: G-X`）。
-> **本轮唯一未修的边界**：真实 CLI 隔离探针确认发出了 AskUserQuestion，却因 Claude SDK 适配
-> 未将该 finalized tool_use 送入 MindFS（没有 tool_call/done）而卡在 agent 边界 ——
-> 这是 C 之外的既有适配缺口，刻意未越界修改；C 的状态机与 HTTP 列表响应已由后端回归覆盖。
+> **收尾补记（2026-10-17，同属 G-JA）**：当时记的「真实 CLI 的 AskUserQuestion 未进 MindFS 的
+> SDK 适配缺口」是**误判** —— 用适配层真机测试（`zz_ask_user_live_test.go`）复核：卡片其实由
+> finalized AssistantMessage 的 tool_use 块正常发出，前端也渲染得出（`meta.input` 兜底解析），
+> 该轮能正常 done。当时之所以看着「没有 tool_call / 卡在 agent 边界」，是因为那次隔离 E2E 没有
+> 客户端作答，而落库发生在轮末：只查库当然什么都看不到。
+> 真机测试同时抓到一个**真实且严重**的缺陷：卡片与「可应答的 waiter」由两条不同路径产生
+> —— 卡片先到，waiter 由随后约 74ms 才到的 can_use_tool 回调登记。这窗口里提交的答案会被
+> `AnswerQuestion` 拒绝（`question is not pending`），而前端提交后本地就把卡片翻成「已回答」，
+> CLI 仍在等这次权限应答 ⇒ **该轮永久卡死、用户没有第二次机会**。已修：`askUserWaiter`
+> 等 waiter 出现（上限 2s）再判死。门禁内回归 `session_ask_user_test.go`（变异验证过 RED），
+> 真机回归 `zz_ask_user_live_test.go`（`MIND_FS_ASK_USER_LIVE=1`，默认跳过）。
 > 本文以下内容是当时的分析与实现记录，不再是待办清单。
 
 
@@ -79,4 +87,9 @@
 - 状态由后端 StreamHub 保存为 `AwaitingAnswer`，ask_user 的 `tool_call` 置位，完成 `tool_call_update`、卡片回答、或下一条用户 turn 清位；`ClearSessionPending` 只将它从 Active 降级，故能跨提问 turn 的 `session.done` 存活。它刻意不进入 `/api/replying-sessions` 或 pending 真相表：那两处的语义只能是实心「正在跑」，否则回答会被错误排队。
 - `/api/sessions` 列表项在 `sessionListResponse` 下发 `awaiting_answer`，前端白名单转换后由 `sessionPresence` 统一盖 presence，避免另起一张异步状态表而在刷新/切换时闪回。
 - 针对性回归：`server/internal/api/stream_hub_awaiting_test.go` 钉住 turn 结束降级、三条清位路径、HTTP 列表和事件接线；`web/tests/session-presence-awaiting.test.mjs` 钉住四态优先级、字段透传、三处视觉接线、双语键，以及 awaiting 不得进入 pending 轮询。
-- 隔离实例已通过端口、配置目录、项目列表和进程句柄自证；真实 Claude turn 的转录确有 AskUserQuestion tool_use，却未产生 SDK 的 finalized `AssistantMessage`/MindFS `tool_call`/`session.done`，180 秒后仍停在 agent 边界，不能用它判定 C 行为。这是 C 之前的 Claude SDK raw-event 适配缺口，未在本轮越界修改。
+- 隔离实例已通过端口、配置目录、项目列表和进程句柄自证。当时记的「真实 Claude turn 的转录确有
+  AskUserQuestion tool_use，却未产生 finalized `AssistantMessage`/MindFS `tool_call`/`session.done`，
+  180 秒后仍停在 agent 边界」**已被 2026-10-17 的适配层真机测试推翻**（见文首补记）：转录里那条
+  tool_use 的 tool_result 是 `Tool permission request failed: AbortError: Stream closed` ——
+  即 CLI 一直在等权限应答，而当时没有客户端作答、测试随后关闭了流。卡片路径本身是通的；
+  真缺陷是「卡片可见到 waiter 登记」之间的窗口会拒答，已修。
