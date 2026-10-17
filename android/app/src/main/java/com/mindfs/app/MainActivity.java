@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Build;
@@ -70,6 +71,10 @@ public class MainActivity extends BridgeActivity {
         getBridge().getWebView().addJavascriptInterface(
             new AppInfoBridge(),
             "MindFSAppInfo"
+        );
+        getBridge().getWebView().addJavascriptInterface(
+            new ThemeBackgroundBridge(),
+            "MindFSThemeBackground"
         );
         clearPendingWebViewCacheIfNeeded();
         requestPostNotificationsIfNeeded();
@@ -453,6 +458,31 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void storeRelayNodes(String rawJSON) {
             LauncherNodeSyncPlugin.storeRelayNodesJSON(MainActivity.this, rawJSON);
+        }
+    }
+
+    /**
+     * 窗口底色的唯一写入口。键盘弹出期间 WebView 让出的区域露出的是窗口背景，
+     * 它默认跟随系统 DayNight（浅色 → 近白），而应用内主题可以与之相反，
+     * 于是暗色界面会闪一块白。Web 端在主题生效时把底色推过来，两边始终同色。
+     */
+    private class ThemeBackgroundBridge {
+        @JavascriptInterface
+        public void setBackgroundColor(String rawColor) {
+            final String value = rawColor == null ? "" : rawColor.trim();
+            if (!value.matches("#[0-9a-fA-F]{6}")) {
+                return;
+            }
+            runOnUiThread(() -> applyWindowBackground(value));
+        }
+    }
+
+    private void applyWindowBackground(String hexColor) {
+        int color = Color.parseColor(hexColor);
+        getWindow().setBackgroundDrawable(new ColorDrawable(color));
+        View webView = getBridge() == null ? null : getBridge().getWebView();
+        if (webView != null) {
+            webView.setBackgroundColor(color);
         }
     }
 

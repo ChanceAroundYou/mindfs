@@ -2,6 +2,15 @@
 @import "tailwindcss/utilities.css";
 @source "../node_modules/@json-render/shadcn/dist/index.js";
 
+/* 键盘弹出时窗口不再 resize（Android 侧 adjustNothing），内容靠 --mindfs-viewport-height
+   自行收缩；收缩让出的那一块必须与窗口底色同色，否则暗色主题下会闪一块白。
+   取值与 services/prefs/appearance.ts 的 themeColors 一一对应。 */
+html,
+body,
+#root {
+  background-color: var(--bg-gradient-start, #f3f4f6);
+}
+
 :root {
   color-scheme: light;
   --mindfs-safe-area-top: 0px;

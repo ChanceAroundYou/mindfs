@@ -30,6 +30,10 @@
             : "light";
         }
         var color = effective === "dark" ? "#0f172a" : effective === "meadow" ? "#f4efe6" : effective === "moss" ? "#dfe5d4" : "#f3f4f6";
+        // 首帧就把窗口底色定下来：键盘弹出时 WebView 让出的区域露出的就是它。
+        if (window.MindFSThemeBackground && window.MindFSThemeBackground.setBackgroundColor) {
+          window.MindFSThemeBackground.setBackgroundColor(color);
+        }
         var metas = document.querySelectorAll('meta[name="theme-color"]');
         for (var i = 0; i < metas.length; i += 1) {
           metas[i].setAttribute("content", color);

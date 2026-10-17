@@ -5,4 +5,5 @@
     <color name="colorAccent">#3b82f6</color>
     <color name="statusBarLight">#f3f4f6</color>
     <color name="statusBarDark">#0f172a</color>
+    <color name="mindfsWindowBackground">#0f172a</color>
 </resources>

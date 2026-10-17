@@ -48,6 +48,22 @@ export function syncThemeColor(mode: AppearanceMode = getAppearanceMode()): void
     meta.content = color;
     meta.removeAttribute("media");
   });
+  syncNativeWindowBackground(color);
+}
+
+/**
+ * 把窗口底色推给 Android 壳（MainActivity 的 MindFSThemeBackground 桥）。
+ * 键盘弹出期间 WebView 让出的区域露出的是窗口背景，颜色必须跟着应用主题走，
+ * 否则暗色主题下会闪一块白。浏览器里没有这个桥，静默跳过。
+ */
+export function syncNativeWindowBackground(color: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const bridge = (window as Window & {
+    MindFSThemeBackground?: { setBackgroundColor?: (value: string) => void };
+  }).MindFSThemeBackground;
+  bridge?.setBackgroundColor?.(color);
 }
 
 export function applyAppearanceMode(mode: AppearanceMode = getAppearanceMode()): void {

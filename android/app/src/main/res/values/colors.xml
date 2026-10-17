@@ -5,4 +5,7 @@
     <color name="colorAccent">#2563eb</color>
     <color name="statusBarLight">#f3f4f6</color>
     <color name="statusBarDark">#0f172a</color>
+    <!-- 窗口底色：键盘弹出期间 WebView 让出的区域露出的就是它，必须与页面同色，
+         否则暗色主题下会闪一块白（详见 upstream-customizations 的键盘组）。 -->
+    <color name="mindfsWindowBackground">#f3f4f6</color>
 </resources>
