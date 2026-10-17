@@ -185,6 +185,39 @@ export function readRootPixelVar(name: string): number {
 
 
 
+let viewportHeightAnimation: number | null = null;
+
+export function animateViewportHeight(target: number): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const current = readRootPixelVar("--mindfs-viewport-height") || target;
+  if (Math.abs(current - target) < 2) {
+    document.documentElement.style.setProperty("--mindfs-viewport-height", `${target}px`);
+    return;
+  }
+  if (viewportHeightAnimation !== null) {
+    cancelAnimationFrame(viewportHeightAnimation);
+    viewportHeightAnimation = null;
+  }
+  const start = current;
+  const startTime = performance.now();
+  const duration = 180;
+  const step = (now: number) => {
+    const progress = Math.min(1, (now - startTime) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const height = start + (target - start) * eased;
+    document.documentElement.style.setProperty("--mindfs-viewport-height", `${height}px`);
+    if (progress < 1) {
+      viewportHeightAnimation = requestAnimationFrame(step);
+    } else {
+      viewportHeightAnimation = null;
+      document.documentElement.style.setProperty("--mindfs-viewport-height", `${target}px`);
+    }
+  };
+  viewportHeightAnimation = requestAnimationFrame(step);
+}
+
 export function syncViewportHeight(): void {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return;
@@ -210,7 +243,7 @@ export function syncViewportHeight(): void {
   const viewportOffsetTop = isNativeShell || !visualViewport
     ? 0
     : Math.max(0, visualViewport.offsetTop || 0);
-  document.documentElement.style.setProperty("--mindfs-viewport-height", `${viewportHeight}px`);
+  animateViewportHeight(viewportHeight);
   document.documentElement.style.setProperty("--mindfs-viewport-offset-top", `${viewportOffsetTop}px`);
 }
 
