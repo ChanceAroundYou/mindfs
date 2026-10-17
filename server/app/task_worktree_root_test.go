@@ -105,9 +105,15 @@ func TestIsTaskWorktreeOfRegisteredProject(t *testing.T) {
 // 发现循环必须真的调用那条守卫。单测 isTaskWorktreeOfRegisteredProject 只钉住判断逻辑，
 // 删掉调用点它照样绿 —— 这里补一条源码断言把接线也钉住。
 func TestAutoAddExternalProjectRootsCallsWorktreeGuard(t *testing.T) {
-	src, err := os.ReadFile("server.go")
-	if err != nil {
-		t.Fatalf("read server.go: %v", err)
+	// autoAddExternalProjectRoots 已拆到 server_helpers.go；两处都扫。
+	var src []byte
+	for _, name := range []string{"server.go", "server_helpers.go"} {
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		src = append(src, b...)
+		src = append(src, '\n')
 	}
 	start := bytes.Index(src, []byte("func autoAddExternalProjectRoots("))
 	if start < 0 {
