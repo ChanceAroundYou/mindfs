@@ -6203,3 +6203,23 @@ groups:
     anchors:
       - 'server/internal/api/http_sessions_list.go:s.WorkDir'
       - 'server/internal/agent/pool.go:func (p *Pool) HasActiveUse'
+
+  - id: G-JC
+    title: 移动端键盘上浮白屏 — 窗口背景跟随主题 + adjustNothing
+    kind: fix
+    symptom: "暗色主题下移动端键盘上浮时，WebView 让出的区域先露出系统 DayNight 浅底（#FBF8F7）闪 ~4 帧，再被键盘盖住，形成白闪。"
+    why: "adjustResize 瞬间收缩 WebView，IME 窗口滑入有 ~750ms 延迟，差额由 Activity 窗口背景（系统 DayNight，非应用主题）填充，Web CSS 无法触达。改为 adjustNothing 让差额落在 WebView 内部，由 html/body 背景色兜底；同时新增 MindFSThemeBackground 桥把窗口/WebView 背景推成应用主题色，双层保险。"
+    files:
+      - android/app/src/main/AndroidManifest.xml
+      - android/app/src/main/res/values/styles.xml
+      - android/app/src/main/res/values/colors.xml
+      - android/app/src/main/res/values-night/colors.xml
+      - android/app/src/main/java/com/mindfs/app/MainActivity.java
+      - web/index.html
+      - web/src/index.css
+      - web/src/services/prefs/appearance.ts
+    tests:
+      - web/tests/keyboard-no-white-flash.test.mjs
+    anchors:
+      - 'android/app/src/main/AndroidManifest.xml:adjustNothing'
+      - 'web/src/services/prefs/appearance.ts:syncNativeWindowBackground'
