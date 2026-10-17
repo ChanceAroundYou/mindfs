@@ -112,9 +112,15 @@ func (s *session) handleCanUseTool(ctx context.Context, req claudeagent.ToolPerm
 		return claudeagent.PermissionAllow{}
 	}
 
+	// 参数读不出来 / 一个问题都没有：**不能放行**。放行等于让 CLI 自行执行这次提问，
+	// 而它拿不到任何答案 —— 模型看到的是「用户没有回答」这个凭空捏造的结果（且无日志）。
+	// 拒绝会把真实原因作为 tool_result 回给模型，它可以据此换个问法或直接继续。
 	var input claudeagent.AskUserQuestionInput
-	if err := json.Unmarshal(req.Arguments, &input); err != nil || len(input.Questions) == 0 {
-		return claudeagent.PermissionAllow{}
+	if err := json.Unmarshal(req.Arguments, &input); err != nil {
+		return claudeagent.PermissionDeny{Reason: "ask user question arguments are not readable: " + err.Error()}
+	}
+	if len(input.Questions) == 0 {
+		return claudeagent.PermissionDeny{Reason: "ask user question has no questions"}
 	}
 
 	callID := strings.TrimSpace(req.Context.ToolUseID)

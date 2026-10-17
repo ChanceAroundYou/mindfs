@@ -2,11 +2,14 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	types "mindfs/server/internal/agent/types"
+
+	claudeagent "github.com/roasbeef/claude-agent-sdk-go"
 )
 
 func newAskUserTestSession() *session {
@@ -111,5 +114,78 @@ func TestAnswerQuestionReturnsWhenContextDone(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("上下文取消后 AnswerQuestion 仍未返回")
+	}
+}
+
+// 提问参数读不出来或没有问题时要**拒绝**，不能放行。
+//
+// 放行意味着 CLI 自行执行这次提问、拿不到任何答案，模型收到的是「用户没有回答」这个
+// 凭空捏造的结果；拒绝则把真实原因作为 tool_result 回给模型，它可以换个问法或直接继续。
+func TestHandleCanUseToolDeniesUnreadableAskUserQuestion(t *testing.T) {
+	s := newAskUserTestSession()
+
+	for name, arguments := range map[string]string{
+		"arguments 不是 JSON": `{`,
+		"questions 为空":      `{"questions":[]}`,
+		"没有 questions 字段":  `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := s.handleCanUseTool(context.Background(), claudeagent.ToolPermissionRequest{
+				ToolName:  "AskUserQuestion",
+				Arguments: json.RawMessage(arguments),
+				Context:   claudeagent.PermissionContext{ToolUseID: "call_bad", SessionID: "test"},
+			})
+			deny, ok := result.(claudeagent.PermissionDeny)
+			if !ok {
+				t.Fatalf("result = %#v, want PermissionDeny（放行会让模型看到捏造的「用户没有回答」）", result)
+			}
+			if strings.TrimSpace(deny.Reason) == "" {
+				t.Fatal("PermissionDeny 必须带原因，否则模型不知道这次提问为什么没送达")
+			}
+		})
+	}
+}
+
+// 正常提问仍走放行路径，且必须把答案塞回 updatedInput（Deny 只针对读不出来的那种）。
+func TestHandleCanUseToolAllowsAskUserQuestionWithAnswers(t *testing.T) {
+	s := newAskUserTestSession()
+	arguments := json.RawMessage(`{"questions":[{"question":"Which color do you prefer?","header":"Color","options":[{"label":"crimson"}]}]}`)
+
+	done := make(chan claudeagent.PermissionResult, 1)
+	go func() {
+		done <- s.handleCanUseTool(context.Background(), claudeagent.ToolPermissionRequest{
+			ToolName:  "AskUserQuestion",
+			Arguments: arguments,
+			Context:   claudeagent.PermissionContext{ToolUseID: "call_ok", SessionID: "test"},
+		})
+	}()
+
+	// handleCanUseTool 自己登记应答通道（awaitAskUserQuestion），这里等它登记好再答。
+	var waiter chan askUserAnswerResult
+	for deadline := time.Now().Add(time.Second); waiter == nil; {
+		s.questionMu.Lock()
+		waiter = s.questionWaits["call_ok"]
+		s.questionMu.Unlock()
+		if waiter == nil {
+			if !time.Now().Before(deadline) {
+				t.Fatal("handleCanUseTool 没有登记应答通道")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	waiter <- askUserAnswerResult{answers: claudeagent.Answers{"Which color do you prefer?": "crimson"}}
+
+	select {
+	case result := <-done:
+		allow, ok := result.(claudeagent.PermissionAllow)
+		if !ok {
+			t.Fatalf("result = %#v, want PermissionAllow", result)
+		}
+		answers, _ := allow.UpdatedInput["answers"].(map[string]string)
+		if answers["Which color do you prefer?"] != "crimson" {
+			t.Fatalf("答案没塞回 updatedInput：%#v", allow.UpdatedInput)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handleCanUseTool 没有返回")
 	}
 }

@@ -1029,8 +1029,8 @@ groups:
   - id: G-H
     title: 旧功能裁剪（公网访问 / Relay 隧道 / e2ee / Token 加油站）
     kind: trim
-    symptom: "合上游后 Login 页又出现公网访问入口与 Relay 对话框，Token 加油站页签复活；端到端加密的解锁提示、e2ee_* 请求头与 proof 校验回归；server/internal/relay 与 e2ee 两个包重新出现在构建里，/api/relay/*、/api/e2ee/* 重新挂上路由；更新检查与下载又指向 relay.a9gent.com（自动更新会定时外连上游服务器）；i18n 里复活已删入口的死文案键。"
-    why: "这几件套本地已整体删除，不是「关掉开关」而是「不存在」：删包、删路由、删前端调用点与入口。2026-10-08 用户明确要求完整删除 relay 与 e2ee，所以没有「保留一部分」的中间态 —— 上游会给回来，每次合上游都要重新删一遍。2026-10-09 用户再拍板：删包只删了能力本体，还得断掉对上游服务器的外连与已删入口的死文案键，否则是「删了一半」——界面摆着一个点了没反应的入口名，而本 fork 仍在定时外连上游域名。"
+    symptom: "合上游后 Login 页又出现公网访问入口与 Relay 对话框，Token 加油站页签复活；端到端加密的解锁提示、e2ee_* 请求头与 proof 校验回归；server/internal/relay 与 e2ee 两个包重新出现在构建里，/api/relay/*、/api/e2ee/* 重新挂上路由；更新检查与下载又指向 relay.a9gent.com（自动更新会定时外连上游服务器）；i18n 里复活已删入口的死文案键；README 与 config.json 又声称支持 Relay 远程模式/端到端加密、又列出 -no-relayer/-e2ee 参数；AGENTS.md 与架构/规则文档又列出不存在的包。"
+    why: "这几件套本地已整体删除，不是「关掉开关」而是「不存在」：删包、删路由、删前端调用点与入口。2026-10-08 用户明确要求完整删除 relay 与 e2ee，所以没有「保留一部分」的中间态 —— 上游会给回来，每次合上游都要重新删一遍。2026-10-09 用户再拍板：删包只删了能力本体，还得断掉对上游服务器的外连与已删入口的死文案键，否则是「删了一半」——界面摆着一个点了没反应的入口名，而本 fork 仍在定时外连上游域名。2026-10-17 补第三批：**描述当前状态的文档与模板**同样是能力声称的一部分 —— 用户读 README 看到「Relay 远程模式」会以为功能还在、只是自己不会用。README 顶部指向 relay.a9gent.com 的「官网」链接刻意保留（上游项目站点，不是对本构建能力的声称），故文档检测用精确字符串而非扫 `relay` 这个词。"
     files:
       # 被**删除**的上游文件（status=D）。刻意用精确路径而不是目录前缀：
       # 前缀在文件复活时仍会被同目录其它文件命中，报不出来；写死路径才能让断言 2 当场红。
@@ -1088,6 +1088,14 @@ groups:
       - web/src/services/appUpdate.ts
       - web/src/i18n/locales/zh-CN.ts
       - web/src/i18n/locales/en-US.ts
+      # 第三阶段（2026-10-17）：**描述当前状态的文档与模板**。包、路由、入口都删了，
+      # 文档却还在把它们当现存能力 —— README 的「访问模式」列着 Relay 远程模式与端到端
+      # 加密、启动参数表写着 -no-relayer/-e2ee，config.json 模板留着两个没人读的键，
+      # AGENTS.md 与架构/规则文档列着不存在的包。用户第一眼看到的就是这些，
+      # 「删了一半」在这里最容易被当成「功能还在，只是我不会用」。
+      - README.md
+      - README.zh.md
+      - config.json
       # 资源别名前缀（2026-10-09，同日第二批）：relay 会把相对 bundle 改写成
       # `/<部署前缀>-assets/`，为此服务端留了 RelayAssetsAlias()、前端留了
       # RELAY_ASSETS_PREFIX、SW 里注入 RELAY_ALIAS 并在 fetch 时跳过它
@@ -1507,8 +1515,8 @@ groups:
   - id: G-JA
     title: AskUserQuestion 等回答空心灯 + 提问可见即可答
     kind: fix
-    symptom: "① Claude 在 AskUserQuestion 提问后该 turn 正常结束，列表灯却立刻熄灭；用户回答后新 turn 又亮，视觉上像「任务完成又自己重启」，而非清晰地提示现在轮到用户回答。② 提问卡刚渲染出来的那几十毫秒里提交的答案被服务端拒绝（question is not pending）：前端已把卡片翻成「已回答」，CLI 仍在等这次权限应答，该轮永久卡死且没有第二次机会。③ 答案投递失败（waiter 已超时消失、agent 进程没了、ctx 已结束）时，「已回答」标记已经写进 pending 条目而答案没送出去：卡片显示已回答、agent 仍在等这次权限应答，同样永久卡死 —— 前端提交后本地就把卡片翻成已回答，且不消费服务端的失败回执，用户没有第二次机会。"
-    why: "① pending 与 /api/replying-sessions 的语义只能是 Active 的实心「正在跑」，不能混入已 done 的等待回答态。StreamHub 单独保存 AwaitingAnswer；在 turn 结束时降级保留，只随 session list 下发 awaiting_answer，由前端四态 presence 渲染为空心灯。② 同一次提问由两条独立路径送达：卡片来自 finalized AssistantMessage 的 tool_use 块（先到），可应答的 waiter 来自随后约 74ms 才到的 can_use_tool 权限回调（真机实测）。AnswerQuestion 必须等 waiter 出现（上限 2s）再判死，否则这个窗口里的答案会被拒 —— 拒掉即永久卡死。③ 标记与投递的先后是刻意的，两边都不能挪：标记必须先写（投递成功会让 agent 立刻继续，pending 条目随后可能被收尾清掉，那时再写就写不进去了），但投递失败时这个标记就成了谎，必须撤回让卡片回到可回答状态。撤回按 answeredAt 时间戳确认「这中间没人动过」，不一致说明 agent 的 tool_result 已把它推进到终态，撤回去反而是倒退。"
+    symptom: "① Claude 在 AskUserQuestion 提问后该 turn 正常结束，列表灯却立刻熄灭；用户回答后新 turn 又亮，视觉上像「任务完成又自己重启」，而非清晰地提示现在轮到用户回答。② 提问卡刚渲染出来的那几十毫秒里提交的答案被服务端拒绝（question is not pending）：前端已把卡片翻成「已回答」，CLI 仍在等这次权限应答，该轮永久卡死且没有第二次机会。③ 答案投递失败（waiter 已超时消失、agent 进程没了、ctx 已结束）时，「已回答」标记已经写进 pending 条目而答案没送出去：卡片显示已回答、agent 仍在等这次权限应答，同样永久卡死 —— 前端提交后本地就把卡片翻成已回答，且不消费服务端的失败回执，用户没有第二次机会。④ 提问参数读不出来（arguments 不是 JSON）或一个问题都没有时，权限回调返回「放行」：CLI 自行执行这次提问、拿不到任何答案，模型收到的是「用户没有回答」这个凭空捏造的结果，且无日志。"
+    why: "① pending 与 /api/replying-sessions 的语义只能是 Active 的实心「正在跑」，不能混入已 done 的等待回答态。StreamHub 单独保存 AwaitingAnswer；在 turn 结束时降级保留，只随 session list 下发 awaiting_answer，由前端四态 presence 渲染为空心灯。② 同一次提问由两条独立路径送达：卡片来自 finalized AssistantMessage 的 tool_use 块（先到），可应答的 waiter 来自随后约 74ms 才到的 can_use_tool 权限回调（真机实测）。AnswerQuestion 必须等 waiter 出现（上限 2s）再判死，否则这个窗口里的答案会被拒 —— 拒掉即永久卡死。③ 标记与投递的先后是刻意的，两边都不能挪：标记必须先写（投递成功会让 agent 立刻继续，pending 条目随后可能被收尾清掉，那时再写就写不进去了），但投递失败时这个标记就成了谎，必须撤回让卡片回到可回答状态。撤回按 answeredAt 时间戳确认「这中间没人动过」，不一致说明 agent 的 tool_result 已把它推进到终态，撤回去反而是倒退。④ 该路径返回 PermissionDeny 而不是 PermissionAllow：拒绝会把真实原因作为 tool_result 回给模型，它可以据此换个问法或直接继续；放行则是替模型编了一个它没得到过的答案。"
     boundary: "ask_user 的等待回答生命周期（从提问可见到答案被受理）与其视觉表达。不改变 turn/done 语义，不将 awaiting 写入 pending 真相表或 replying API。"
     tests:
       - server/internal/api/stream_hub_awaiting_test.go
