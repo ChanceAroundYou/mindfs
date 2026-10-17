@@ -32,4 +32,16 @@ test("keyboard-no-white-flash", async () => {
   assert.match(appearance, /export function syncNativeWindowBackground/);
   assert.match(appearance, /MindFSThemeBackground/);
   assert.match(html, /MindFSThemeBackground\.setBackgroundColor/);
+
+  // PWA（Edge/Chrome 装到主屏）另有第三条缝：壳自己的窗口底色，取自 manifest 的
+  // background_color，安装时定死 —— 运行时改不了（meta theme-color 管不到它，
+  // 实测暗色主题下仍闪 #F8FAFC）。所以按主题换 manifest：暗色装暗色壳。
+  const lightManifest = JSON.parse(read("public/manifest.webmanifest"));
+  const darkManifest = JSON.parse(read("public/manifest-dark.webmanifest"));
+  assert.equal(darkManifest.background_color, "#0f172a");
+  assert.equal(lightManifest.start_url, darkManifest.start_url);
+  assert.equal(lightManifest.scope, darkManifest.scope);
+  assert.notEqual(lightManifest.background_color, darkManifest.background_color);
+  assert.match(html, /link\[rel="manifest"\]/);
+  assert.match(html, /manifest-dark\.webmanifest/);
 });

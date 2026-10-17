@@ -39,6 +39,22 @@
         if (window.MindFSThemeBackground && window.MindFSThemeBackground.setBackgroundColor) {
           window.MindFSThemeBackground.setBackgroundColor(color);
         }
+
+        // 装成 PWA（Edge/Chrome 添加到主屏）后，键盘上浮时露出的那条缝由 **壳的窗口底色**
+        // 填充，而它取自 manifest 的 background_color —— 安装时定死，运行时唯一的主题通道
+        // （meta theme-color）管不到它，实测暗色主题下仍闪 #F8FAFC。
+        // 所以按当前主题挑一份 manifest：暗色装暗色壳，其余装浅色壳。
+        var manifestLink = document.querySelector('link[rel="manifest"]');
+        if (manifestLink) {
+          var manifestHref = manifestLink.getAttribute("href") || "";
+          var manifestNext = manifestHref.replace(
+            /manifest(?:-dark)?\.webmanifest$/,
+            effective === "dark" ? "manifest-dark.webmanifest" : "manifest.webmanifest"
+          );
+          if (manifestNext !== manifestHref) {
+            manifestLink.setAttribute("href", manifestNext);
+          }
+        }
         var metas = document.querySelectorAll('meta[name="theme-color"]');
         for (var i = 0; i < metas.length; i += 1) {
           metas[i].setAttribute("content", color);
