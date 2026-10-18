@@ -29,14 +29,6 @@ function cssScaleFor(pageWidth: number, availableWidth: number): number {
   return Math.min(PDF_MAX_CSS_SCALE, availableWidth / pageWidth);
 }
 
-/**
- * 只渲染视口附近的页，其余留占位。
- *
- * 之前是 for 循环把每一页都画成 canvas（DocumentViewer.tsx 旧 49-69 行），
- * canvas 全部同时挂在 DOM 上、永不释放：dpr=2 时单页 ~19MB、dpr=3 时 ~43MB，
- * 112 页的文档要 400MB~4GB backing store，分配失败就 reject 进 catch，
- * 整个预览变成一句「无法预览」。现在改成立占位 + 进出视口才画/释放。
- */
 export function PdfPreview({ blob }: { blob: Blob }) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -65,8 +57,6 @@ export function PdfPreview({ blob }: { blob: Blob }) {
         if (cancelled) return;
         pdfDocument = doc;
 
-        // 先量尺寸不画：112 页实测 370ms，比逐页渲染便宜两个数量级。
-        // 量完才能算出每页该占多高，滚动条才不会随着 canvas 陆续出现而跳。
         const layouts: PdfPageLayout[] = [];
         for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
           const page = await doc.getPage(pageNumber);
@@ -95,15 +85,11 @@ export function PdfPreview({ blob }: { blob: Blob }) {
   return <div ref={containerRef} className="document-preview-pdf" />;
 }
 
-/**
- * 给每一页立一个占位块，只把视口附近的页画成 canvas。
- *
- * 返回一个清理函数。
- *
- * 为什么不全画：旧实现 for 循环把每一页都渲染成 canvas 且全部挂在 DOM 上、
- * 永不释放。dpr=2 时单页 backing store 约 19MB、dpr=3 时约 43MB，112 页的文档
- * 要 400MB~4GB，分配失败就 reject 进 catch，整个预览变成一句「无法预览」。
- */
+type MountedEntry = {
+  canvas: HTMLCanvasElement;
+  renderTask: { cancel: () => void } | null;
+};
+
 function mountPageSlots(
   target: HTMLDivElement,
   layouts: readonly PdfPageLayout[],
@@ -126,48 +112,78 @@ function mountPageSlots(
     return slot;
   });
 
-  const mounted = new Map<number, HTMLCanvasElement>();
+  const mounted = new Map<number, MountedEntry>();
+  const inFlight = new Map<number, Promise<void>>();
+  const failed = new Set<number>();
   let range = { start: -1, end: -1 };
 
   const drop = (index: number) => {
-    const canvas = mounted.get(index);
-    if (!canvas) return;
+    const entry = mounted.get(index);
+    if (!entry) return;
+    try {
+      entry.renderTask?.cancel();
+    } catch {
+      // cancel 可能抛，忽略
+    }
     mounted.delete(index);
     // 置 0 释放 backing store；slot 高度不变，滚动条不跳。
-    canvas.width = 0;
-    canvas.height = 0;
-    canvas.remove();
+    entry.canvas.width = 0;
+    entry.canvas.height = 0;
+    entry.canvas.remove();
   };
 
-  const paint = async (index: number) => {
-    if (isCancelled() || mounted.has(index) || index < 0 || index >= slots.length) return;
-    const canvas = window.document.createElement("canvas");
-    canvas.className = "document-preview-pdf-page";
-    canvas.setAttribute("aria-label", t("fileViewer.pdfPage", { page: index + 1 }));
-    let page: PDFPageProxy | null = null;
-    try {
-      page = await doc.getPage(index + 1);
+  const paint = async (index: number): Promise<void> => {
+    if (isCancelled() || index < 0 || index >= slots.length) return;
+    const existing = inFlight.get(index);
+    if (existing) return existing;
+
+    const promise = (async () => {
       if (isCancelled() || mounted.has(index)) return;
-      const baseViewport = page.getViewport({ scale: 1 });
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-      const renderViewport = page.getViewport({ scale: cssScaleFor(baseViewport.width, slotWidth()) * pixelRatio });
-      canvas.width = Math.ceil(renderViewport.width);
-      canvas.height = Math.ceil(renderViewport.height);
-      canvas.style.width = `${Math.ceil(renderViewport.width / pixelRatio)}px`;
-      canvas.style.height = `${Math.ceil(renderViewport.height / pixelRatio)}px`;
-      const context = canvas.getContext("2d", { alpha: false });
-      if (!context) throw new Error("canvas context unavailable");
-      mounted.set(index, canvas);
-      slots[index].replaceChildren(canvas);
-      await page.render({ canvasContext: context, viewport: renderViewport }).promise;
-    } catch (err) {
-      // 页被滚出可视区而释放掉时，render 跟着 reject 是预期内的，不算错误。
-      if (!isCancelled() && mounted.get(index) === canvas) {
-        drop(index);
-        onError(describeDocumentPreviewError(err));
+      const canvas = window.document.createElement("canvas");
+      canvas.className = "document-preview-pdf-page";
+      canvas.setAttribute("aria-label", t("fileViewer.pdfPage", { page: index + 1 }));
+      let page: PDFPageProxy | null = null;
+      let renderTask: { cancel: () => void } | null = null;
+      try {
+        page = await doc.getPage(index + 1);
+        if (isCancelled() || mounted.has(index)) return;
+        const baseViewport = page.getViewport({ scale: 1 });
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        const renderViewport = page.getViewport({ scale: cssScaleFor(baseViewport.width, slotWidth()) * pixelRatio });
+        canvas.width = Math.ceil(renderViewport.width);
+        canvas.height = Math.ceil(renderViewport.height);
+        canvas.style.width = `${Math.ceil(renderViewport.width / pixelRatio)}px`;
+        canvas.style.height = `${Math.ceil(renderViewport.height / pixelRatio)}px`;
+        const context = canvas.getContext("2d", { alpha: false });
+        if (!context) throw new Error("canvas context unavailable");
+        mounted.set(index, { canvas, renderTask: null });
+        slots[index].replaceChildren(canvas);
+        const task = page.render({ canvasContext: context, viewport: renderViewport });
+        renderTask = task;
+        const entry = mounted.get(index);
+        if (entry) entry.renderTask = task;
+        await task.promise;
+        failed.delete(index);
+      } catch (err) {
+        if (isCancelled()) return;
+        if (mounted.get(index)?.canvas === canvas) {
+          drop(index);
+        }
+        const message = describeDocumentPreviewError(err);
+        if (!/cancel/i.test(message)) {
+          failed.add(index);
+          onError(message);
+        }
+      } finally {
+        page?.cleanup();
       }
+    })();
+
+    inFlight.set(index, promise);
+    try {
+      await promise;
     } finally {
-      page?.cleanup();
+      inFlight.delete(index);
     }
   };
 
@@ -178,12 +194,16 @@ function mountPageSlots(
       scroller?.clientHeight || target.clientHeight || 800,
       PDF_PAGE_GAP_PX,
     );
-    if (next.start === range.start && next.end === range.end) return;
     range = next;
+
     for (let index = 0; index < slots.length; index += 1) {
       if (index < next.start || index > next.end) drop(index);
     }
-    for (let index = next.start; index <= next.end; index += 1) void paint(index);
+    for (let index = next.start; index <= next.end; index += 1) {
+      if (!mounted.has(index) || failed.has(index)) {
+        void paint(index);
+      }
+    }
   };
 
   sync();
