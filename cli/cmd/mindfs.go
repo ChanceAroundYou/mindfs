@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -321,6 +322,15 @@ func main() {
 		if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
 			reportOpenTargetError(os.Stderr, err)
 		}
+	}
+
+	// 后台实例没有终端可看，托盘是它唯一的入口。
+	if shouldShowTray(runtime.GOOS) {
+		go func() {
+			if err := runTray(*addr, *tlsFlag, cancel); err != nil {
+				log.Printf("[tray] %v", err)
+			}
+		}()
 	}
 
 	runErr := waitForForegroundAppExit(ctx, errCh)
