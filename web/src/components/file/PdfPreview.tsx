@@ -99,11 +99,16 @@ function mountPageSlots(
   const scroller = findScrollParent(target);
   const slotWidth = (): number => Math.max(320, Math.min(1100, target.clientWidth - 32));
 
+  const sizeSlot = (slot: HTMLDivElement, layout: PdfPageLayout): void => {
+    const available = slotWidth();
+    slot.style.width = `${Math.min(available, layout.width * PDF_MAX_CSS_SCALE)}px`;
+    slot.style.height = `${Math.round(layout.height * cssScaleFor(layout.width, available))}px`;
+  };
+
   const slots: HTMLDivElement[] = layouts.map((layout, index) => {
     const slot = window.document.createElement("div");
     slot.className = "document-preview-pdf-slot";
-    slot.style.width = `${Math.min(slotWidth(), layout.width * PDF_MAX_CSS_SCALE)}px`;
-    slot.style.height = `${Math.round(layout.height * cssScaleFor(layout.width, slotWidth()))}px`;
+    sizeSlot(slot, layout);
     slot.setAttribute("aria-label", t("fileViewer.pdfPage", { page: index + 1 }));
     target.appendChild(slot);
     return slot;
@@ -200,6 +205,23 @@ function mountPageSlots(
   );
   slots.forEach((slot) => observer.observe(slot));
 
+  // 尺寸变化要重渲染：页宽按 target.clientWidth 算，IntersectionObserver 只看可见性变化，
+  // 窗口/抽屉改宽时可见性没变，页会停在旧尺寸（滚出去再滚回来才重画）。
+  // lastWidth 守自激：改 slot 尺寸会改变 target 高度，本身又会再触发一次 ResizeObserver。
+  let lastWidth = slotWidth();
+  const sync = () => {
+    const width = slotWidth();
+    if (width === lastWidth) return;
+    lastWidth = width;
+    for (let index = 0; index < slots.length; index += 1) sizeSlot(slots[index]!, layouts[index]!);
+    for (const index of Array.from(mounted.keys())) {
+      drop(index); // paint 见 mounted 已存在会直接返回，必须先释放
+      void paint(index);
+    }
+  };
+  const resizeObserver = new ResizeObserver(sync);
+  resizeObserver.observe(target);
+
   // 首屏兜底（IO 首次回调可能异步）
   slots.forEach((_, index) => {
     const rect = slots[index].getBoundingClientRect();
@@ -213,6 +235,7 @@ function mountPageSlots(
 
   return () => {
     observer.disconnect();
+    resizeObserver.disconnect();
     for (const index of Array.from(mounted.keys())) drop(index);
     target.replaceChildren();
   };

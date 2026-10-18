@@ -17,8 +17,9 @@ test("document viewer delegates PDF virtualization and keeps shared preview erro
   // 页虚拟化由 IntersectionObserver 驱动（commit d5964631）：手算 scrollTop 认不出真正的滚动容器，
   // 中间页会白屏。钉这一条 = 钉「按可见性渲染」这个机制本身。
   assert.match(pdf, /new IntersectionObserver\(/);
-  // 注意：d5964631 同时删掉了原来的 ResizeObserver(sync)，所以「容器尺寸变化后重渲染」这条
-  // 现在没有任何守卫。窗口改宽高时页宽会停在旧值（滚出去再滚回来才重画）。要不要补由用户定。
+  // IO 只看可见性变化，看不到尺寸变化 —— 页宽按容器宽度算，窗口/抽屉改宽时要靠
+  // ResizeObserver 重渲染，否则已渲染的页停在旧尺寸。
+  assert.match(pdf, /new ResizeObserver\(sync\)/);
   assert.match(pdf, /Math\.min\(window\.devicePixelRatio \|\| 1, 2\)/);
   assert.match(pdf, /canvas\.width = 0/);
   assert.match(errors, /fileViewer\.previewFailedReason/);

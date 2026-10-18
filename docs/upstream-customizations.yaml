@@ -2971,6 +2971,21 @@ groups:
       - web/src/components/file/PdfPreview.tsx:PdfPreview
       - web/tests/document-preview-view-split.test.mjs:delegates PDF virtualization
 
+  - id: G-PDF
+    title: PDF 页渲染由可见性驱动 + 尺寸变化后重渲染
+    kind: arch
+    symptom: "长 PDF 的中间页白屏或闪烁（滚动容器识别失败时，手算 scrollTop 得到的区间和实际可见页不一致）；窗口或抽屉改宽后已渲染的页停在旧尺寸，要滚出去再滚回来才重画。"
+    why: "fork 把 scrollTop 手算换成 IntersectionObserver（覆盖任何滚动容器与窗口滚动），并保留 ResizeObserver 重渲染 —— IO 只报可见性变化，尺寸变化它看不见，页宽是按容器宽度算的，所以两条必须都在。上游的滚动窗口实现没有第二条，合上游时这条会被静冲掉。守卫按这两条钉，不再钉 visiblePageRange（PdfPreview 已不用它）。"
+    boundary: "只改 PdfPreview 的渲染触发方式；canvas 生命周期、内存上限与错误呈现不变。G-HQ 的 visiblePageRange 现在只被它自己的测试用，PdfPreview 不再调用 —— 是兼容性门面残留，不是活跃路径。"
+    tests:
+      - web/tests/document-preview-view-split.test.mjs
+    files:
+      - web/src/components/file/PdfPreview.tsx
+      - web/tests/document-preview-view-split.test.mjs
+    anchors:
+      - web/src/components/file/PdfPreview.tsx:new IntersectionObserver
+      - web/src/components/file/PdfPreview.tsx:new ResizeObserver(sync)
+
   - id: G-CV
     title: Session card overflow menu extraction
     kind: arch
