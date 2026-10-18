@@ -65,7 +65,23 @@ assert.match(
 assert.match(
   panel,
   /if \(clash\) \{\s*setError\(t\("nodeManager\.urlExists"\)\);/,
-  "改地址必须拦截与其它节点同 origin：读取时按 origin 去重会悄悄吃掉一个",
+  "改地址必须拦截与其它节点同「origin + 前缀」：读取时的去重键是这两个加起来，同 origin 不同前缀是两个合法节点（同一台机器挂两个前缀），不能拦",
+);
+
+// 冲突判断必须用路径感知的去重键（nodeRegistry.nodeBaseKey）：两处口径不同就会拦掉
+// 同一台机器上合法的两个前缀（实测 PC 上 WSL 走 /mindfs、Windows worker 走 /mindfs-win）。
+assert.match(
+  panel,
+  /const clash = getNodes\(\)\.some\(\(n\) => n\.id !== node\.id && nextKey !== "" && nodeBaseKey\(n\.url\) === nextKey\)/,
+  "改地址的冲突判断必须用路径感知的去重键",
+);
+
+// ——— 角色判定：只在真的拿到 role 时下判断 ———
+// 原来探不到也走 else 把标记抹掉，于是一次瞬时超时/离线就把「运行节点」打回「在线」。
+assert.match(
+  panel,
+  /const role = String\(info\?\.role \|\| ""\)\.trim\(\);\s*if \(!role\) return;/,
+  "role 探测失败必须保留上一次结论，不能把 worker 标记抹掉",
 );
 
 // ——— 面板：不得把节点列表镜像进 state ———

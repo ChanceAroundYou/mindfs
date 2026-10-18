@@ -8,6 +8,7 @@ import {
   addNode,
   getNodes,
   LOCAL_NODE_ID,
+  nodeBaseKey,
   removeNode,
   updateNode,
   type NodeConnection,
@@ -67,14 +68,6 @@ function normalizeInputUrl(raw: string): string {
   return url.toString().replace(/\/+$/, "");
 }
 
-function originOf(url: string): string {
-  try {
-    return new URL(url).origin.toLowerCase();
-  } catch {
-    return "";
-  }
-}
-
 type UseNodeManagerPanelOptions = {
   onClose: () => void;
   onRefreshAll?: () => Promise<void>;
@@ -111,8 +104,11 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
       list.map(async (n) => {
         const [status, info] = await Promise.all([probeNode(n.id), fetchNodeRole(n.id)]);
         setProbeStatus((prev) => ({ ...prev, [n.id]: status }));
-        // 探不到（离线/超时）就别下判断：宁可先给入口，撞了 403 再说。
-        if (info && String(info.role || "") === "worker") {
+        // 只有真的拿到 role 才下判断。原来探不到也会走 else 分支把标记抹掉 ——
+        // 于是任何一次瞬时失败（超时 / 非 JSON / 离线）都会把「运行节点」打回「在线」。
+        const role = String(info?.role || "").trim();
+        if (!role) return;
+        if (role === "worker") {
           setWorkerNodeIds((prev) => ({ ...prev, [n.id]: true }));
         } else {
           setWorkerNodeIds((prev) => {
@@ -200,9 +196,10 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
       }
       // 改了地址就必须先连得上：连不上不保存，只能取消回退原值
       if (nextUrl !== node.url) {
-        // 与别的节点同 origin 会被读取时的按 origin 去重悄悄吃掉一个，先拦住
-        const nextOrigin = originOf(nextUrl);
-        const clash = getNodes().some((n) => n.id !== node.id && nextOrigin !== "" && originOf(n.url) === nextOrigin);
+        // 与别的节点同「origin + 前缀」才拦：读取时的去重键就是这两个加起来，同 origin 不同前缀
+        // 是两个合法节点（同一台机器挂两个前缀），不能拦。
+        const nextKey = nodeBaseKey(nextUrl);
+        const clash = getNodes().some((n) => n.id !== node.id && nextKey !== "" && nodeBaseKey(n.url) === nextKey);
         if (clash) {
           setError(t("nodeManager.urlExists"));
           return;
