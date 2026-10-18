@@ -608,8 +608,8 @@ groups:
   - id: G-J
     title: 多节点聚合与按 nodeId 路由
     kind: arch
-    symptom: "切换节点后请求仍打旧节点（切了没反应）；跨节点同名项目串在一起；节点列表里同一台机器有两个不同 id；远端节点的小蓝灯永远不亮。"
-    why: "所有跨节点请求必须显式带 nodeId —— appPath(path) 不传 nodeId 会静默打当前激活节点；节点注册表 PALETTE 是主题色单源；合并旁路状态（如 multiProjectPendingByKey）只能增量重算成功节点的键，整体替换会在切节点/节点失败时误清。"
+    symptom: "切换节点后请求仍打旧节点（切了没反应）；跨节点同名项目串在一起；节点列表里同一台机器有两个不同 id；远端节点的小蓝灯永远不亮；同一台物理机挂两个部署前缀时（PC 上 WSL 走 /mindfs、Windows 走 /mindfs-win）后一个节点在界面里根本不出现，「添加节点」还报 node_url_exists。"
+    why: "所有跨节点请求必须显式带 nodeId —— appPath(path) 不传 nodeId 会静默打当前激活节点；节点注册表 PALETTE 是主题色单源；合并旁路状态（如 multiProjectPendingByKey）只能增量重算成功节点的键，整体替换会在切节点/节点失败时误清。去重键必须带路径段而不是只比 origin：一台机器可以挂多个前缀（fork 的 Windows worker 与 WSL worker 共用 pc.xiaokubao.space），只比 origin 会吞掉第二条。"
     files:
       - web/src/services/net/nodeRegistry.ts
       - web/src/hooks/useNodeRegistry.ts

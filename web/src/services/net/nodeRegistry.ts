@@ -46,16 +46,21 @@ function makeLocalNode(): NodeConnection {
   return { id: LOCAL_NODE_ID, name: "local", url: deviceLocalNodeURL(), color: PALETTE[0] };
 }
 
-function nodeOriginKey(url: string): string {
+// 去重键必须带上路径段：同一台物理机可以挂两个部署前缀（实测 PC 上 WSL 节点走 /mindfs、
+// Windows 节点走 /mindfs-win，两者共用 pc.xiaokubao.space）。只比 origin 会把后一个节点吞掉
+// —— 界面里看不到它，「添加节点」还会报 node_url_exists。
+// origin 那部分保留：它负责把共享列表里持久化的 local URL 与当前设备推导的那条并成一条。
+function nodeBaseKey(url: string): string {
   try {
     const u = new URL(url);
-    return `${u.protocol}//${u.host}`.toLowerCase();
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${u.protocol}//${u.host}${path}`.toLowerCase();
   } catch { return url.toLowerCase(); }
 }
 function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
   const seen = new Map<string, NodeConnection>();
   for (const n of nodes) {
-    const key = nodeOriginKey(n.url);
+    const key = nodeBaseKey(n.url);
     const prev = seen.get(key);
     if (!prev) { seen.set(key, n); continue; }
     if (prev.id === LOCAL_NODE_ID) continue;
@@ -278,7 +283,7 @@ export async function addNode(input: { name: string; url: string; color?: string
     url,
     color: String(input.color || "").trim() || nextColor(nodes),
   };
-  if (nodes.some((n) => nodeOriginKey(n.url) === nodeOriginKey(url))) throw new Error("node_url_exists");
+  if (nodes.some((n) => nodeBaseKey(n.url) === nodeBaseKey(url))) throw new Error("node_url_exists");
   const next = [...nodes, node];
   await setNodes(next);
   if (!getActiveNodeId()) setActiveNodeId(node.id);

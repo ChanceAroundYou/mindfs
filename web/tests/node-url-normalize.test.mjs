@@ -43,6 +43,13 @@ assert.match(registry, /await enqueueServerWrite\(merged\);\s*nodes = merged;\s*
 assert.doesNotMatch(registry, /if \(syncing\) return/, "overlapping node writes must not be dropped");
 assert.match(registry, /const write = writeQueue\.then\(\(\) => pushToServer\(snapshot\)\);/, "node writes must be serialized");
 
+// 去重键必须带路径段，不能只比 origin：同一台物理机可以挂两个前缀（实测 PC 上 WSL 节点
+// /mindfs 与 Windows 节点 /mindfs-win 共用 pc.xiaokubao.space），只比 origin 会把后一个节点吞掉，
+// 界面里根本看不到它，「添加节点」还会报 node_url_exists。
+assert.ok(registry.includes("function nodeBaseKey(url: string): string {"), "node dedup key must be path-aware, not origin-only");
+assert.ok(registry.includes('const path = u.pathname.replace(/\\/+$/, "");'), "dedup key must normalize the path segment");
+assert.ok(registry.includes('return `${u.protocol}//${u.host}${path}`.toLowerCase();'), "dedup key must include the deploy prefix path, not only the origin");
+
 // "local" 节点 URL 必须按当前设备推导：共享列表里持久化的 local URL 是某台设备写入的，
 // 对其它设备必然错误（实测手机写入 local→home URL，PC 端解析 nodeId="local" 全部串到 home）。
 assert.match(registry, /function deviceLocalNodeURL\(\): string \{\s*const base = localBaseURL\(\);\s*if \(!base \|\| !\/\^https\?:\\\/\\\/\/i\.test\(base\)\) return "";\s*return base;\s*\}/, "device-local URL must only accept fetchable http(s) origins");
