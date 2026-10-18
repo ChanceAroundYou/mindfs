@@ -50,7 +50,7 @@ function makeLocalNode(): NodeConnection {
 // Windows 节点走 /mindfs-win，两者共用 pc.xiaokubao.space）。只比 origin 会把后一个节点吞掉
 // —— 界面里看不到它，「添加节点」还会报 node_url_exists。
 // origin 那部分保留：它负责把共享列表里持久化的 local URL 与当前设备推导的那条并成一条。
-function nodeBaseKey(url: string): string {
+export function nodeBaseKey(url: string): string {
   try {
     const u = new URL(url);
     const path = u.pathname.replace(/\/+$/, "");
