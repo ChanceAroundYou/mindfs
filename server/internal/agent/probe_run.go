@@ -14,8 +14,6 @@ import (
 // Start 启动定期探测
 func (p *Prober) Start(ctx context.Context) {
 	// 首次全量探测放到后台，避免阻塞服务启动和请求处理。
-	// Windows 下深度探测会启动外部 Agent CLI；部分 SDK/CLI 无法由 MindFS
-	// 注入 CREATE_NO_WINDOW，后台启动时会出现空白控制台窗口。
 	if shouldRunBackgroundRuntimeProbe(runtime.GOOS) {
 		go p.safeProbeAll(ctx)
 	}
@@ -79,7 +77,12 @@ func (p *Prober) UpdateConfig(ctx context.Context, cfg *Config) {
 }
 
 func shouldRunBackgroundRuntimeProbe(goos string) bool {
-	return goos != "windows"
+	// 上游在这里按平台一刀切（Windows 不探测），理由是探测会启动外部 agent CLI 并弹控制台窗口。
+	// 窗口问题归进程标志管：agent CLI 一律走 acp 进程路径，那条路径带 CREATE_NO_WINDOW
+	// （见 acp/process_windows_flags_test.go），所以这一刀切下去之后 Windows 上只剩副作用 ——
+	// agent 永远停在 available=false / "probe pending"，状态灯红、agent 选不了。
+	_ = goos
+	return true
 }
 
 // ProbeAll 探测所有配置的 Agent

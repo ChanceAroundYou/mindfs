@@ -6311,16 +6311,20 @@ groups:
       - 'web/src/components/session/useMultiProjectSessionList.ts:const childTree = useSessionChildTree'
 
   - id: G-WIN
-    title: Windows 后台启动必须禁止分配新控制台
+    title: Windows 后台运行：禁止分配新控制台，且不按平台一刀切跳过探针
     kind: fix
-    symptom: "PC（Windows）上一直跑着一个黑色控制台窗口：登录或后台启动 mindfs 时弹出一个黑框，关掉它就把服务一起带走。"
-    why: "上游的 windowsBackgroundCreationFlags 只给 DETACHED_PROCESS，而 DETACHED_PROCESS 的含义是「不挂在启动它的那个终端上」——控制台子系统程序在没有控制台时 Windows 会**新建一个**，于是每次都弹黑框。上游已经定义了 CREATE_NO_WINDOW 却只用在浏览器启动路径（browser_command.go），没有用在后台启动，所以合上游时这一行会被静冲掉、黑框回来。两个标志必须同时给：脱离启动终端 + 不分配新控制台。"
-    boundary: "只改 Windows 后台启动的 creation flags；HideWindow、taskkill 停止路径与自启注册方式（HKCU Run 键走隐藏 powershell）不动。"
+    symptom: "PC（Windows）上一直跑着一个黑色控制台窗口：登录或后台启动 mindfs 时弹一个黑框，关掉它就把服务一起带走。同一个节点上 codex/claude 永远显示「probe pending」、状态灯红、agent 选不了 —— 数据面其实正常（项目与会话按 API 能读出来）。"
+    why: "上游的 windowsBackgroundCreationFlags 只给 DETACHED_PROCESS，而 DETACHED_PROCESS 的含义是「不挂在启动它的那个终端上」——控制台子系统程序没有控制台时 Windows 会**新建一个**，于是每次弹黑框；上游定义了 CREATE_NO_WINDOW 却只用在浏览器启动路径（browser_command.go），合上游时这一行会被静冲掉、黑框回来。上游另一处按平台一刀切（shouldRunBackgroundRuntimeProbe 排除 windows），理由是「探测会弹控制台窗口」——窗口问题归进程标志管：agent CLI 一律走 acp 进程路径，那条路径带 CREATE_NO_WINDOW（acp/process_windows_flags_test.go 钉着），所以一刀切剩下的只有副作用：Windows 上 agent 永远停在 available=false / probe pending，没有任何路径能让它变绿（ReportSuccess 只在真的跑过一次交互时才写，而 available=false 已经挡掉了那次交互）。两条是同一块改动面：先有标志，才谈得上把一刀切拿掉。"
+    boundary: "只改 Windows 进程创建标志与平台判定；HideWindow、taskkill 停止路径、自启注册方式与探针本身的行为不动。"
     files:
       - cli/cmd/windows_creation_flags.go
       - cli/cmd/windows_creation_flags_test.go
+      - server/internal/agent/probe_run.go
+      - server/internal/agent/probe_platform_test.go
     tests:
       - cli/cmd/windows_creation_flags_test.go
+      - server/internal/agent/probe_platform_test.go
     anchors:
       - 'cli/cmd/windows_creation_flags.go:func windowsBackgroundCreationFlags'
       - 'cli/cmd/windows_creation_flags.go:windowsCreateNoWindow'
+      - 'server/internal/agent/probe_run.go:func shouldRunBackgroundRuntimeProbe'
