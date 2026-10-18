@@ -6313,7 +6313,7 @@ groups:
   - id: G-WIN
     title: Windows 后台运行：禁止分配新控制台 + 不跳探针 + 托盘入口
     kind: fix
-    symptom: "PC（Windows）上一直跑着一个黑色控制台窗口：登录或后台启动 mindfs 时弹一个黑框，关掉它就把服务一起带走。同一个节点上 codex/claude 永远显示「probe pending」、状态灯红、agent 选不了 —— 数据面其实正常（项目与会话按 API 能读出来）。而且后台实例没有任何可点的地方：界面里不存在「启动某个节点」的动作，节点行连双击都没反应。"
+    symptom: "PC（Windows）上一直跑着一个黑色控制台窗口：登录或后台启动 mindfs 时弹一个黑框，关掉它就把服务一起带走。同一个节点上 codex/claude 永远显示「probe pending」、状态灯红、agent 选不了 —— 数据面其实正常（项目与会话按 API 能读出来）。而且后台实例没有任何可点的地方：界面里不存在「启动某个节点」的动作，节点行连双击都没反应。托盘消息循环把 MSG 句柄当结构体指针传给 DispatchMessageW 时，进程会当场 0xc0000005 退出（计划任务里表现为 LastTaskResult 2、节点离线）—— 结构布局与传参口径由 cli/cmd/tray_test.go 钉住。"
     why: "上游的 windowsBackgroundCreationFlags 只给 DETACHED_PROCESS，而 DETACHED_PROCESS 的含义是「不挂在启动它的那个终端上」——控制台子系统程序没有控制台时 Windows 会**新建一个**，于是每次弹黑框；上游定义了 CREATE_NO_WINDOW 却只用在浏览器启动路径（browser_command.go），合上游时这一行会被静冲掉、黑框回来。上游另一处按平台一刀切（shouldRunBackgroundRuntimeProbe 排除 windows），理由是「探测会弹控制台窗口」——窗口问题归进程标志管：agent CLI 一律走 acp 进程路径，那条路径带 CREATE_NO_WINDOW（acp/process_windows_flags_test.go 钉着），所以一刀切剩下的只有副作用：Windows 上 agent 永远停在 available=false / probe pending，没有任何路径能让它变绿（ReportSuccess 只在真的跑过一次交互时才写，而 available=false 已经挡掉了那次交互）。两条是同一块改动面：先有标志，才谈得上把一刀切拿掉。托盘是同一形态的第三件——后台实例没有终端、界面里也没有启动入口，所以它需要一个可点的图标（双击开页面、右键 打开/退出）。"
     boundary: "只改 Windows 进程创建标志、平台判定与后台实例的托盘入口；HideWindow、taskkill 停止路径、自启注册方式与探针本身的行为不动。托盘只在 Windows，其它平台留空实现，调用点只有一处判断。"
     files:
@@ -6323,6 +6323,7 @@ groups:
       - cli/cmd/tray_windows.go
       - cli/cmd/tray_other.go
       - cli/cmd/tray_test.go
+      - cli/cmd/tray_types.go
       - server/internal/agent/probe_run.go
       - server/internal/agent/probe_platform_test.go
     tests:
@@ -6333,5 +6334,6 @@ groups:
       - 'cli/cmd/windows_creation_flags.go:func windowsBackgroundCreationFlags'
       - 'cli/cmd/windows_creation_flags.go:windowsCreateNoWindow'
       - 'cli/cmd/tray.go:func shouldShowTray'
+      - 'cli/cmd/tray_types.go:trayMessage'
       - 'cli/cmd/tray_windows.go:func runTray'
       - 'server/internal/agent/probe_run.go:func shouldRunBackgroundRuntimeProbe'
