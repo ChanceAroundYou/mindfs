@@ -2,12 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { useI18n } from "../../i18n/index";
 import type { MessageKey, MessageParams } from "../../i18n/types";
-import { visiblePageRange } from "../../shared/documentPreview";
 import type { PdfPageLayout } from "../../shared/documentPreviewTypes";
 import { DocumentPreviewError } from "./DocumentPreviewError";
 import { describeDocumentPreviewError } from "../../shared/documentPreview";
 
-/** 往上找真正在滚动的祖先：谁的 overflow 是 auto/scroll 谁才是滚动容器。 */
 function findScrollParent(element: HTMLElement): HTMLElement | null {
   let current: HTMLElement | null = element.parentElement;
   while (current) {
@@ -23,7 +21,6 @@ function findScrollParent(element: HTMLElement): HTMLElement | null {
 const PDF_PAGE_GAP_PX = 18;
 const PDF_MAX_CSS_SCALE = 1.6;
 
-/** 页面按容器宽度缩放，但不超过 PDF_MAX_CSS_SCALE（放大只会更糊）。 */
 function cssScaleFor(pageWidth: number, availableWidth: number): number {
   if (!(pageWidth > 0)) return 1;
   return Math.min(PDF_MAX_CSS_SCALE, availableWidth / pageWidth);
@@ -115,7 +112,6 @@ function mountPageSlots(
   const mounted = new Map<number, MountedEntry>();
   const inFlight = new Map<number, Promise<void>>();
   const failed = new Set<number>();
-  let range = { start: -1, end: -1 };
 
   const drop = (index: number) => {
     const entry = mounted.get(index);
@@ -123,10 +119,9 @@ function mountPageSlots(
     try {
       entry.renderTask?.cancel();
     } catch {
-      // cancel 可能抛，忽略
+      // ignore
     }
     mounted.delete(index);
-    // 置 0 释放 backing store；slot 高度不变，滚动条不跳。
     entry.canvas.width = 0;
     entry.canvas.height = 0;
     entry.canvas.remove();
@@ -143,7 +138,6 @@ function mountPageSlots(
       canvas.className = "document-preview-pdf-page";
       canvas.setAttribute("aria-label", t("fileViewer.pdfPage", { page: index + 1 }));
       let page: PDFPageProxy | null = null;
-      let renderTask: { cancel: () => void } | null = null;
       try {
         page = await doc.getPage(index + 1);
         if (isCancelled() || mounted.has(index)) return;
@@ -159,7 +153,6 @@ function mountPageSlots(
         mounted.set(index, { canvas, renderTask: null });
         slots[index].replaceChildren(canvas);
         const task = page.render({ canvasContext: context, viewport: renderViewport });
-        renderTask = task;
         const entry = mounted.get(index);
         if (entry) entry.renderTask = task;
         await task.promise;
@@ -187,34 +180,39 @@ function mountPageSlots(
     }
   };
 
-  const sync = () => {
-    const next = visiblePageRange(
-      layouts,
-      scroller?.scrollTop ?? 0,
-      scroller?.clientHeight || target.clientHeight || 800,
-      PDF_PAGE_GAP_PX,
-    );
-    range = next;
-
-    for (let index = 0; index < slots.length; index += 1) {
-      if (index < next.start || index > next.end) drop(index);
-    }
-    for (let index = next.start; index <= next.end; index += 1) {
-      if (!mounted.has(index) || failed.has(index)) {
-        void paint(index);
+  // IntersectionObserver 比手算 scrollTop 可靠：覆盖任何滚动容器与窗口滚动。
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const index = slots.indexOf(entry.target as HTMLDivElement);
+        if (index < 0) continue;
+        if (entry.isIntersecting) {
+          if (!mounted.has(index) || failed.has(index)) {
+            failed.delete(index);
+            void paint(index);
+          }
+        } else {
+          drop(index);
+        }
       }
-    }
-  };
+    },
+    { root: scroller, rootMargin: "1200px", threshold: 0 },
+  );
+  slots.forEach((slot) => observer.observe(slot));
 
-  sync();
-  scroller?.addEventListener("scroll", sync, { passive: true });
-  const resizeObserver = new ResizeObserver(sync);
-  resizeObserver.observe(target);
-  if (scroller) resizeObserver.observe(scroller);
+  // 首屏兜底（IO 首次回调可能异步）
+  slots.forEach((_, index) => {
+    const rect = slots[index].getBoundingClientRect();
+    const rootRect = scroller
+      ? scroller.getBoundingClientRect()
+      : { top: 0, bottom: window.innerHeight };
+    if (rect.bottom >= rootRect.top - 1200 && rect.top <= rootRect.bottom + 1200) {
+      void paint(index);
+    }
+  });
 
   return () => {
-    resizeObserver.disconnect();
-    scroller?.removeEventListener("scroll", sync);
+    observer.disconnect();
     for (const index of Array.from(mounted.keys())) drop(index);
     target.replaceChildren();
   };
