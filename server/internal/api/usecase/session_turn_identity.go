@@ -129,15 +129,25 @@ func exchangeAlreadyRecorded(ctx context.Context, manager *session.Manager, targ
 		if ex.Role != role || ex.Timestamp.IsZero() {
 			continue
 		}
-		if strings.TrimSpace(recordedExchangeBody(ctx, manager, target.Key, ex)) == "" {
+		// 时间窗必须**第一个**判：它是这一圈里选择性最高的条件，而下面取正文要从块流
+		// 里读回来并反序列化整段块窗口。判据顺序换一下，结果一模一样（纯合取），
+		// 代价却从「每行历史各解析一次块窗口」降到「只解析时间上真的挨着的那一两行」。
+		//
+		// 放在最后是 O(N²)：导入 N 条、每条的正文又都不在库里（判重必然走到底），
+		// 就是 2N 次块窗口解析 —— 实测 2026-10-19 pc-win 一份 105MB 的 codex 转录，
+		// 每条耗时从 5.3s 一路涨到 21s，整份导入 20 分钟起步。取正文也只取一次：
+		// 原来同一个 ex 连读两遍。
+		if diff := ex.Timestamp.Sub(ts); diff <= -userExchangeRepeatTolerance || diff >= userExchangeRepeatTolerance {
 			continue
 		}
-		if !sameRecordedExchangeContent(role, recordedExchangeBody(ctx, manager, target.Key, ex), content) {
+		body := recordedExchangeBody(ctx, manager, target.Key, ex)
+		if strings.TrimSpace(body) == "" {
 			continue
 		}
-		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
-			return true
+		if !sameRecordedExchangeContent(role, body, content) {
+			continue
 		}
+		return true
 	}
 	return false
 }
