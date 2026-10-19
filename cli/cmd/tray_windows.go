@@ -16,53 +16,34 @@ import (
 //go:embed assets/tray.ico
 var trayIconData []byte
 
-const (
-	trayCallbackMessage  = 0x0400 // WM_USER
-	nimAdd               = 0x0000
-	nimDelete            = 0x0002
-	nifIcon              = 0x0002
-	nifTip               = 0x0008
-	nifMessage           = 0x0004
-	wmRButtonUp          = 0x0202
-	wmLButtonDoubleClick = 0x0203
-	wmCommand            = 0x0111
-	smCxSmIcon           = 49
-	iconResourceVersion  = 0x00030000
-	mfString             = 0x0000
-	tpmRightButton       = 0x0008
-)
-
 var (
-	trayUser32         = windows.NewLazySystemDLL("user32.dll")
-	trayKernel32       = windows.NewLazySystemDLL("kernel32.dll")
-	trayShell32        = windows.NewLazySystemDLL("shell32.dll")
-	trayRegisterProc   = trayUser32.NewProc("RegisterClassW")
-	trayCreateProc     = trayUser32.NewProc("CreateWindowExW")
-	trayCreateIconProc = trayUser32.NewProc("CreateIconFromResourceEx")
-	trayMetricProc     = trayUser32.NewProc("GetSystemMetrics")
-	trayGetMsgProc     = trayUser32.NewProc("GetMessageW")
-	trayTranslateProc  = trayUser32.NewProc("TranslateMessage")
-	trayDispatchProc   = trayUser32.NewProc("DispatchMessageW")
-	trayDefProc        = trayUser32.NewProc("DefWindowProcW")
-	trayNotifyProc     = trayShell32.NewProc("Shell_NotifyIconW")
-	trayMenuProc       = trayUser32.NewProc("CreatePopupMenu")
-	trayAppendProc     = trayUser32.NewProc("AppendMenuW")
-	trayTrackProc      = trayUser32.NewProc("TrackPopupMenu")
-	trayForegroundProc      = trayUser32.NewProc("SetForegroundWindow")
-	trayForegroundWindowProc = trayUser32.NewProc("GetForegroundWindow")
-	trayGetWindowThreadProc  = trayUser32.NewProc("GetWindowThreadProcessId")
-	trayGetCurrentThreadProc = trayKernel32.NewProc("GetCurrentThreadId")
-	trayAttachThreadProc     = trayUser32.NewProc("AttachThreadInput")
-	trayAllowFgProc          = trayUser32.NewProc("AllowSetForegroundWindow")
-	trayCursorProc     = trayUser32.NewProc("GetCursorPos")
-	trayQuitProc       = trayUser32.NewProc("PostQuitMessage")
-	trayPostMsgProc    = trayUser32.NewProc("PostMessageW")
+	trayUser32          = windows.NewLazySystemDLL("user32.dll")
+	trayShell32         = windows.NewLazySystemDLL("shell32.dll")
+	trayRegisterProc    = trayUser32.NewProc("RegisterClassW")
+	trayCreateProc      = trayUser32.NewProc("CreateWindowExW")
+	trayCreateIconProc  = trayUser32.NewProc("CreateIconFromResourceEx")
+	trayMetricProc      = trayUser32.NewProc("GetSystemMetrics")
+	trayGetMsgProc      = trayUser32.NewProc("GetMessageW")
+	trayTranslateProc   = trayUser32.NewProc("TranslateMessage")
+	trayDispatchProc    = trayUser32.NewProc("DispatchMessageW")
+	trayDefProc         = trayUser32.NewProc("DefWindowProcW")
+	trayRegisterMsgProc = trayUser32.NewProc("RegisterWindowMessageW")
+	trayNotifyProc      = trayShell32.NewProc("Shell_NotifyIconW")
+	trayMenuProc        = trayUser32.NewProc("CreatePopupMenu")
+	trayDestroyMenuProc = trayUser32.NewProc("DestroyMenu")
+	trayAppendProc      = trayUser32.NewProc("AppendMenuW")
+	trayTrackProc       = trayUser32.NewProc("TrackPopupMenu")
+	trayForegroundProc  = trayUser32.NewProc("SetForegroundWindow")
+	trayCursorProc      = trayUser32.NewProc("GetCursorPos")
+	trayQuitProc        = trayUser32.NewProc("PostQuitMessage")
+	trayPostMsgProc     = trayUser32.NewProc("PostMessageW")
 
 	trayState struct {
-		addr   string
-		useTLS bool
-		icon   trayNotifyIcon
-		onQuit func()
+		addr           string
+		useTLS         bool
+		icon           trayNotifyIcon
+		taskbarCreated uint32
+		onQuit         func()
 	}
 )
 
@@ -89,14 +70,21 @@ func loadTrayIcon() (uintptr, error) {
 	return icon, nil
 }
 
-// LazyProc.Call 的 error 是 GetLastError，只有 API 自己置错时才有意义。
-// 所以下面一律看返回值。
+// LazyProc.Call 的 error 是 GetLastError，只有 API 自己置错时才有意义。所以下面一律看返回值。
 func trayWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
+	if trayState.taskbarCreated != 0 && msg == uintptr(trayState.taskbarCreated) {
+		// explorer 重启会清空整个通知区，图标得自己补回来（所有托盘程序都要处理这条）。
+		if !addTrayIcon(hwnd) {
+			log.Printf("[tray] re-add after taskbar restart failed")
+		}
+		return 0
+	}
 	switch msg {
 	case trayCallbackMessage:
-		// 没设 NIF_VERSION，lparam 就是事件本身（经典回调）。
+		// 没调 NIM_SETVERSION，lparam 就是鼠标消息本身（经典回调语义）。
 		switch uint32(lparam) {
-		case wmRButtonUp:
+		case wmRButtonUp, wmContextMenu:
+			log.Printf("[tray] menu requested")
 			showTrayMenu(hwnd)
 		case wmLButtonDoubleClick:
 			openTrayPage()
@@ -104,9 +92,8 @@ func trayWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		return 0
 	case wmCommand:
 		switch uint32(wparam & 0xffff) {
-		case menuOpenID:
-			openTrayPage()
 		case menuQuitID:
+			log.Printf("[tray] quit from menu")
 			removeTrayIcon()
 			trayQuitProc.Call(0)
 		}
@@ -116,13 +103,15 @@ func trayWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	return result
 }
 
+// 三步都是 Windows 的硬要求（KB135788）：先 SetForegroundWindow，菜单才会在用户点别处时
+// 正常关掉；TrackPopupMenu 之后再补一条 WM_NULL，否则菜单会卡在屏幕上不消失。
 func showTrayMenu(hwnd uintptr) {
-	log.Printf("[tray] right-click showTrayMenu called")
 	menu, _, _ := trayMenuProc.Call()
 	if menu == 0 {
-		log.Printf("[tray] CreatePopupMenu returned 0")
 		return
 	}
+	defer trayDestroyMenuProc.Call(menu)
+
 	for _, item := range trayMenuItems() {
 		label := windows.StringToUTF16Ptr(item.Label)
 		trayAppendProc.Call(menu, mfString, uintptr(item.ID), uintptr(unsafe.Pointer(label)))
@@ -132,23 +121,9 @@ func showTrayMenu(hwnd uintptr) {
 	if ok, _, _ := trayCursorProc.Call(uintptr(unsafe.Pointer(&point))); ok == 0 {
 		point.X, point.Y = 0, 0
 	}
-	log.Printf("[tray] cursor pos=(%d,%d)", point.X, point.Y)
-
-	fgHwnd, _, _ := trayForegroundWindowProc.Call()
-	fgThread, _, _ := trayGetWindowThreadProc.Call(fgHwnd, 0)
-	curThread, _, _ := trayGetCurrentThreadProc.Call()
-	log.Printf("[tray] fgThread=%d curThread=%d", fgThread, curThread)
-	if fgThread != 0 && fgThread != curThread {
-		trayAttachThreadProc.Call(curThread, fgThread, 1)
-	}
 	trayForegroundProc.Call(hwnd)
-	if fgThread != 0 && fgThread != curThread {
-		trayAttachThreadProc.Call(curThread, fgThread, 0)
-	}
-
-	ret, _, lastErr := trayTrackProc.Call(menu, tpmRightButton, uintptr(point.X), uintptr(point.Y), 0, hwnd, 0)
-	log.Printf("[tray] TrackPopupMenu returned %d (err=%v)", ret, lastErr)
-	trayPostMsgProc.Call(hwnd, 0, 0, 0)
+	trayTrackProc.Call(menu, tpmRightButton, uintptr(point.X), uintptr(point.Y), 0, hwnd, 0)
+	trayPostMsgProc.Call(hwnd, wmNull, 0, 0)
 }
 
 func openTrayPage() {
@@ -159,6 +134,18 @@ func openTrayPage() {
 
 func removeTrayIcon() {
 	trayNotifyProc.Call(nimDelete, uintptr(unsafe.Pointer(&trayState.icon)))
+}
+
+// 注册图标。单独拎出来是因为 explorer 重启（TaskbarCreated）后要原样再来一次。
+func addTrayIcon(hwnd uintptr) bool {
+	trayState.icon.Hwnd = hwnd
+	trayState.icon.Size = uint32(unsafe.Sizeof(trayState.icon))
+	trayState.icon.ID = 1
+	trayState.icon.Flags = trayIconFlags()
+	trayState.icon.Callback = trayCallbackMessage
+	copyUTF16Into(&trayState.icon.Tip, trayTooltip(trayState.addr))
+	ok, _, _ := trayNotifyProc.Call(nimAdd, uintptr(unsafe.Pointer(&trayState.icon)))
+	return ok != 0
 }
 
 // 消息循环必须和建窗口的线程是同一个，所以这里锁线程。
@@ -180,6 +167,7 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 		return fmt.Errorf("RegisterClassW: %v", lastErr)
 	}
 
+	// 这个窗口只用来收托盘消息，永不显示，所以不需要任何样式。
 	hwnd, _, lastErr := trayCreateProc.Call(
 		0,
 		uintptr(unsafe.Pointer(className)),
@@ -195,17 +183,14 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 	if err != nil {
 		return err
 	}
+	trayState.icon.Icon = icon
 
-	trayState.icon = trayNotifyIcon{
-		Size:     uint32(unsafe.Sizeof(trayState.icon)),
-		Hwnd:     hwnd,
-		ID:       1,
-		Flags:    nifIcon | nifTip | nifMessage,
-		Callback: trayCallbackMessage,
-		Icon:     icon,
+	created := windows.StringToUTF16Ptr("TaskbarCreated")
+	if id, _, _ := trayRegisterMsgProc.Call(uintptr(unsafe.Pointer(created))); id != 0 {
+		trayState.taskbarCreated = uint32(id)
 	}
-	copyUTF16Into(&trayState.icon.Tip, trayTooltip(addr))
-	if ok, _, _ := trayNotifyProc.Call(nimAdd, uintptr(unsafe.Pointer(&trayState.icon))); ok == 0 {
+
+	if !addTrayIcon(hwnd) {
 		// 以前这里静默返回：图标没加上，用户只看到「托盘里什么都没有」而没有任何线索。
 		log.Printf("[tray] Shell_NotifyIconW add failed")
 		return nil
@@ -233,7 +218,7 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 	return nil
 }
 
-func copyUTF16Into(dst *[64]uint16, value string) {
+func copyUTF16Into(dst *[128]uint16, value string) {
 	utf16 := windows.StringToUTF16(value)
 	for i := 0; i < len(dst) && i < len(utf16); i++ {
 		dst[i] = utf16[i]
