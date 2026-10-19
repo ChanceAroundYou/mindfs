@@ -389,8 +389,8 @@ groups:
   - id: G-Q
     title: 会话别名 / 外部导入 / Fork 扁平
     kind: feature
-    symptom: "外部会话导入后标题是原始 slug 而不是最后一句话；同一个外部会话被重复导入；fork 出来的子会话缩在父会话下面找不到；会话别名换台机器就没了。另有：列表/看板卡片状态圆圈右下角的 agent 徽标，首轮跑完之前只显示占位「AI」。"
-    why: "别名落服务端 SQLite（不是 localStorage）保证跨端一致；外部名称按 agent+agent_session_id 落盘；fork 完全独立、仅 fork 扁平为顶级；转录重复区块必须按条目 uuid 去重。agent 徽标：列表行是 meta-only 的，agent 只能由 InferAgentFromSession 的 AgentCtxSeq 兜底推出，故建会话时就要写一行占位绑定（agent_session_id='' 表示「agent 已选定、尚无转录」，agent_ctx_seq 必须写 0）。多绑定会话取 ctx_seq 最大的那个，平局按名字定序 —— 不定序的话 map 遍历顺序会让徽标在两次刷新之间来回跳。"
+    symptom: "外部会话导入后标题是原始 slug 而不是最后一句话；同一个外部会话被重复导入；fork 出来的子会话缩在父会话下面找不到；会话别名换台机器就没了。另有：列表/看板卡片状态圆圈右下角的 agent 徽标，首轮跑完之前只显示占位「AI」。再另有：导入大转录（实测 codex 105MB）时转圈十几分钟才回、期间还会弹一条会自动消失的「导入失败」，而且导进来的会话**只有行没有正文**（150 条里 83 条有块、67 条是空壳）。"
+    why: "别名落服务端 SQLite（不是 localStorage）保证跨端一致；外部名称按 agent+agent_session_id 落盘；fork 完全独立、仅 fork 扁平为顶级；转录重复区块必须按条目 uuid 去重。agent 徽标：列表行是 meta-only 的，agent 只能由 InferAgentFromSession 的 AgentCtxSeq 兜底推出，故建会话时就要写一行占位绑定（agent_session_id='' 表示「agent 已选定、尚无转录」，agent_ctx_seq 必须写 0）。多绑定会话取 ctx_seq 最大的那个，平局按名字定序 —— 不定序的话 map 遍历顺序会让徽标在两次刷新之间来回跳。导入慢/空壳：`exchangeAlreadyRecorded` 的内容兜底循环把**时间窗判据写在了取正文之后**，而取正文要经 `recordedExchangeBody` → `Manager.GetBlocksWindow` 读盘并反序列化整段块窗口；codex 导入行的 NativeID 为空，走不到身份短路，于是每一行都对全部历史行解析两次块窗口 —— 导入 N 条就是 O(N²) 次反序列化（实测每条 5.3s 涨到 21s）。时间窗是这一圈里选择性最高的判据，提到最前即可（纯合取重排，语义不变；150 条从 20 分钟降到 3.7 秒）。空壳行是另一半：`AppendBlocks` 开头有 `ctx.Err()` 检查，客户端 10 秒 abort 会取消请求 context，此后块全写不进去，而 `persistTurnBlocks` 只 `log.Printf` 吞掉错误 —— 行照样落（`addExchangeForAgentAtWithIdentityFactory` 根本不接 ctx），正文全丢。"
     anchors:
       - 'web/src/components/session/ExternalSessionList.tsx:CUSTOM(G-Q)'
       - 'server/internal/agent/codex/importer_files.go:func cwdMatchesRoot('
@@ -406,6 +406,7 @@ groups:
       - server/internal/api/usecase/external_sessions.go
       - server/internal/api/usecase/external_sessions_test.go
       - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_turn_identity.go
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager.go
       - server/internal/session/manager_agent_bindings.go
@@ -419,6 +420,7 @@ groups:
       - server/internal/agent/claude/importer_test.go
       - server/internal/agent/codex/importer_test.go
       - server/internal/api/usecase/external_sessions_test.go
+      - server/internal/api/usecase/exchange_dedup_order_guard_test.go
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager_fork_test.go
       - web/tests/fork-session-name.test.mjs
@@ -608,8 +610,8 @@ groups:
   - id: G-J
     title: 多节点聚合与按 nodeId 路由
     kind: arch
-    symptom: "切换节点后请求仍打旧节点（切了没反应）；跨节点同名项目串在一起；节点列表里同一台机器有两个不同 id；远端节点的小蓝灯永远不亮；同一台物理机挂两个部署前缀时（PC 上 WSL 走 /mindfs、Windows 走 /mindfs-win）后一个节点在界面里根本不出现，「添加节点」还报 node_url_exists。"
-    why: "所有跨节点请求必须显式带 nodeId —— appPath(path) 不传 nodeId 会静默打当前激活节点；节点注册表 PALETTE 是主题色单源；合并旁路状态（如 multiProjectPendingByKey）只能增量重算成功节点的键，整体替换会在切节点/节点失败时误清。去重键必须带路径段而不是只比 origin：一台机器可以挂多个前缀（fork 的 Windows worker 与 WSL worker 共用 pc.xiaokubao.space），只比 origin 会吞掉第二条。"
+    symptom: "切换节点后请求仍打旧节点（切了没反应）；跨节点同名项目串在一起；节点列表里同一台机器有两个不同 id；远端节点的小蓝灯永远不亮；同一台物理机挂两个部署前缀时（PC 上 WSL 走 /mindfs、Windows 走 /mindfs-win）后一个节点在界面里根本不出现，「添加节点」还报 node_url_exists；导入远端节点的外部会话时转圈很久后弹一条会自动消失的「导入失败」，但会话其实已经进了列表。"
+    why: "所有跨节点请求必须显式带 nodeId —— appPath(path) 不传 nodeId 会静默打当前激活节点；节点注册表 PALETTE 是主题色单源；合并旁路状态（如 multiProjectPendingByKey）只能增量重算成功节点的键，整体替换会在切节点/节点失败时误清。去重键必须带路径段而不是只比 origin：一台机器可以挂多个前缀（fork 的 Windows worker 与 WSL worker 共用 pc.xiaokubao.space），只比 origin 会吞掉第二条。NODE_REQUEST_TIMEOUT_MS 是给扇出**读**用的节点存活预算（本机 /api/sessions?multi_root=1 实测 100–400ms），**不能套在导入上**：转录可达上百 MB（pc-win 实测 codex rollout 105MB/160MB），服务端整份解析再逐条写 SQLite，耗时随转录大小走。套上去的后果是客户端在服务端还在干活时先判失败 —— 用户看到报错就再点一次，列表里出现两个同名会话；abort 还有第二重后果：连接一断服务端的请求 context 即被取消，块流从此写不进去（行照写），会话进了列表却只有行没有正文（机制见 G-Q 的「空壳行」）。导入走 withRequestDeadline 的 init.signal 逃生口自带 30 分钟 deadline。"
     files:
       - web/src/services/net/nodeRegistry.ts
       - web/src/hooks/useNodeRegistry.ts
@@ -619,6 +621,7 @@ groups:
       - web/src/services/runtime.ts
       - web/src/app/useAppSessionCore.ts
       - web/src/services/base.ts
+      - web/src/services/session/sessionApi.ts
       - web/src/main.tsx
     tests:
       - web/tests/node-manager-panel.test.mjs
@@ -626,6 +629,7 @@ groups:
       - web/tests/node-url-normalize.test.mjs
       - web/tests/cross-node-replying-state.test.mjs
       - web/tests/session-list-node-failure.test.mjs
+      - web/tests/external-session-import-deadline.test.mjs
 
   - id: G-S
     title: 作用域隔离与列表折叠
@@ -2990,7 +2994,7 @@ groups:
     title: Session card overflow menu extraction
     kind: arch
     symptom: "SessionCard exceeded the frontend 500-line hardline while mixing session row presentation, rename editing and the pin/sync/archive/delete overflow actions."
-    why: "The contextual action menu must be independently reviewable while SessionCard and its hook stay the owners of selection, menu visibility and rename state."
+    why: "The contextual action menu must be independently reviewable while SessionCard and its hook stay the owners of selection, menu visibility and rename state. The menu also flips upward when the row sits too close to the bottom of the session list (2026-10-19): a hardcoded `top: calc(100% + 6px)` pushes the menu out of the visible area on the last rows. The available space is measured against the nearest **clipping ancestor** (the list's `flex:1; overflow:auto` container, found by walking up for `overflowY !== \"visible\"`), not `window.innerHeight` — the scroll container clips the absolutely-positioned menu first, so a viewport-based measurement overestimates the room below and skips the flip exactly where it is needed. Recomputed on scroll/resize."
     boundary: "Only the overflow trigger and action menu are extracted. All user actions remain callbacks to the existing card/list owners and action ordering and confirmation behavior are unchanged."
     tests:
       - web/tests/session-card-overflow-menu.test.mjs
