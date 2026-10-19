@@ -65,8 +65,10 @@ if [[ -n "$MESSAGE" ]]; then
     # 根级的**文档**要逐个点名（`docs/` 只覆盖 docs/ 目录，够不到仓库根）：
     # 漏了 AGENTS.md 时它会被静默留在工作区，版本号因此挂上 `-dirty`（2026-10-07 实测）。
     # release-notes.md 更要留神 —— 历史上整段条目被上游合并冲掉过。
+    # cli/ 是发布入口（make build 装的就是 ./cli/cmd，见 startup_config_test.go），
+    # 漏了它只改 CLI 的提交会变成空提交、改动静默留在工作区（2026-10-19 实测）。
     # 刻意不含 config.json：那份会被本机改 role/端口，提交等于把本地运行配置推上去。
-    git add -A -- web server Makefile task_template.json scripts .claude agents.json docs \
+    git add -A -- web server cli Makefile task_template.json scripts .claude agents.json docs \
       AGENTS.md README.md README.zh.md release-notes.md 2>/dev/null || git add -A
     git commit -m "$MESSAGE"
     ok "已提交 $(git rev-parse --short HEAD)"

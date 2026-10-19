@@ -3,6 +3,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"runtime"
@@ -11,6 +12,9 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+//go:embed assets/tray.ico
+var trayIconData []byte
 
 const (
 	trayCallbackMessage  = 0x0400 // WM_USER
@@ -22,7 +26,8 @@ const (
 	wmRButtonUp          = 0x0202
 	wmLButtonDoubleClick = 0x0203
 	wmCommand            = 0x0111
-	idiApplication       = 32512
+	smCxSmIcon           = 49
+	iconResourceVersion  = 0x00030000
 	mfString             = 0x0000
 	tpmRightButton       = 0x0008
 )
@@ -32,7 +37,8 @@ var (
 	trayShell32        = windows.NewLazySystemDLL("shell32.dll")
 	trayRegisterProc   = trayUser32.NewProc("RegisterClassW")
 	trayCreateProc     = trayUser32.NewProc("CreateWindowExW")
-	trayLoadIconProc   = trayUser32.NewProc("LoadIconW")
+	trayCreateIconProc = trayUser32.NewProc("CreateIconFromResourceEx")
+	trayMetricProc     = trayUser32.NewProc("GetSystemMetrics")
 	trayGetMsgProc     = trayUser32.NewProc("GetMessageW")
 	trayTranslateProc  = trayUser32.NewProc("TranslateMessage")
 	trayDispatchProc   = trayUser32.NewProc("DispatchMessageW")
@@ -52,6 +58,29 @@ var (
 		onQuit func()
 	}
 )
+
+// 托盘尺寸随 DPI 变（100% 是 16px，150% 是 24px），按系统度量挑最接近的那张，
+// 尺寸交给 Windows 自己缩放。加载失败返回错误而不是退回系统默认图标 ——
+// 否则「托盘里是哪个程序」这件事就悄悄退化了，用户只会看到一个不认识的白板图标。
+func loadTrayIcon() (uintptr, error) {
+	size, _, _ := trayMetricProc.Call(smCxSmIcon)
+	image, err := pickTrayIconImage(trayIconData, int(size))
+	if err != nil {
+		return 0, err
+	}
+	icon, _, lastErr := trayCreateIconProc.Call(
+		uintptr(unsafe.Pointer(&image[0])),
+		uintptr(len(image)),
+		1,                   // fIcon
+		iconResourceVersion, // dwVer
+		0, 0,                // cx/cy 给 0：用图片自己的尺寸，不再二次缩放
+		0,
+	)
+	if icon == 0 {
+		return 0, fmt.Errorf("CreateIconFromResourceEx: %v", lastErr)
+	}
+	return icon, nil
+}
 
 // LazyProc.Call 的 error 是 GetLastError，只有 API 自己置错时才有意义。
 // 所以下面一律看返回值。
@@ -139,9 +168,9 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 		return fmt.Errorf("CreateWindowExW: %v", lastErr)
 	}
 
-	icon, _, lastErr := trayLoadIconProc.Call(0, idiApplication)
-	if icon == 0 {
-		return fmt.Errorf("LoadIconW: %v", lastErr)
+	icon, err := loadTrayIcon()
+	if err != nil {
+		return err
 	}
 
 	trayState.icon = trayNotifyIcon{
@@ -154,6 +183,8 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 	}
 	copyUTF16Into(&trayState.icon.Tip, trayTooltip(addr))
 	if ok, _, _ := trayNotifyProc.Call(nimAdd, uintptr(unsafe.Pointer(&trayState.icon))); ok == 0 {
+		// 以前这里静默返回：图标没加上，用户只看到「托盘里什么都没有」而没有任何线索。
+		log.Printf("[tray] Shell_NotifyIconW add failed")
 		return nil
 	}
 	defer removeTrayIcon()

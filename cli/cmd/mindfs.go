@@ -30,6 +30,7 @@ const (
 )
 
 func main() {
+	attachParentConsole()
 	autoStartBoot := autoStartRequested(os.Args[1:])
 	if autoStartBoot {
 		if err := prepareAutoStartEnvironment(); err != nil {
@@ -133,6 +134,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
+	}
+	// 后台实例没有终端可看（Windows 上连黑框都没有了），日志落盘，和 systemd/launchd 一致。
+	if internalAutoStart {
+		redirectBackgroundLogs(logPath)
 	}
 
 	if *updateFlag {
