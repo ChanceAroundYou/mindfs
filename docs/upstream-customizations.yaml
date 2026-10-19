@@ -6419,3 +6419,18 @@ groups:
     anchors:
       - 'web/src/components/session/SessionHistoryMenu.tsx:export function SessionHistoryMenu'
       - 'web/src/layout/ViewHeader.tsx:const sidebarIcon = (side: "left" | "right") =>'
+
+  - id: G-JL
+    title: Codex 回合被取消时报成「流意外结束」，停止按钮停不下来
+    kind: fix
+    symptom: "用 codex 的时候按停止按钮停不下来：agent 继续跑，日志里 recovery 循环每隔 30 秒重发一次 'continue'。2026-10-19 在 pc-win 上实测，用户连按七次停止，每次都紧跟一条 `app server: interrupting turn ...`（取消**确实**到了 codex），但 mindfs 报的是 `codex response stream ended unexpectedly`，恢复循环把它当成可重试的失败，action=continue 又把 agent 拉起来。"
+    why: "codex-go-sdk 的转发协程在把事件送给调用方时写的是 `select { case events <- event: case <-ctx.Done(): return }` —— 回合被取消时它走 ctx.Done() 分支直接返回，事件通道被关闭，**没有 TurnCompleted，也没有错误事件**。「这一轮是被停掉的」这个原因只存在于 ctx 里，流里一个字都没有。mindfs 侧 `handleStreamedEvents` 因此返回 (completed=false, err=nil)，`SendMessage` 只能报「流意外结束」；而恢复循环判取消靠的是 `isCanceledTurnError`（errors.Is(context.Canceled) 或错误文本含 canceled），这条文本两样都不沾，于是被判成「可重试的失败」→ 重发 'continue' → 用户越按越停不下来。取消信号 mindfs 自己攥着：SDK 收到的 Context 就是 mindfs 传给 `RunStreamed` 的 turnCtx（`buildExecArgs` 原样带下去），所以事件流提前结束时补看 turnCtx.Err() 就能把原因找回来。判据必须落在**错误本身**上：取消报 context.Canceled，恢复循环与 `session_send.go` 的失败分支都靠它才不会再重试。真的意外结束（app-server 进程死了）仍然是「流意外结束」，不能被误报成取消 —— 否则进程崩溃会被说成「用户按了停止」。"
+    boundary: "只改 codex 适配器 SendMessage 在「事件流没等到 TurnCompleted」这一支上的错误归因；不动 SDK（依赖，不是本仓源码）、不动恢复循环的判据与重试策略、不动 claude/acp 适配器、不动取消动作本身（CancelCurrentTurn 早已正确送达）。"
+    files:
+      - server/internal/agent/codex/session.go
+      - server/internal/agent/codex/session_cancel_test.go
+    tests:
+      - server/internal/agent/codex/session_cancel_test.go
+    anchors:
+      - 'server/internal/agent/codex/session.go:if cause := turnCtx.Err(); cause != nil {'
+      - 'server/internal/agent/codex/session.go:return errors.New("codex response stream ended unexpectedly")'

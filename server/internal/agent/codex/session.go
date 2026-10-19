@@ -61,7 +61,16 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 		completed, err := s.handleStreamedEvents(streamed.Events)
 		if err == nil {
 			if !completed {
-				// 通道关闭但没见到 TurnCompletedEvent：进程中途死亡，不能当成功。
+				// 回合被取消时，SDK 往调用方转发事件的那个 select 会先走 ctx.Done()
+				// 分支，事件通道直接关闭 —— 「这一轮是被停掉的」这个原因在流里就丢了。
+				// 写成「流意外结束」会被恢复循环当成可重试的失败：停止按钮按下去，
+				// agent 又被拉起来继续跑（2026-10-19 23:24 在 pc-win 上实测：codex
+				// 连按七次停不下来，recovery 每次都 action=continue 重发）。
+				// 取消的原因从 turnCtx 补回来：SDK 收到的就是这个 ctx。
+				if cause := turnCtx.Err(); cause != nil {
+					return cause
+				}
+				// 真·意外结束（进程中途死亡），不能当成功。
 				return errors.New("codex response stream ended unexpectedly")
 			}
 			s.updateThreadIDFromThread()
