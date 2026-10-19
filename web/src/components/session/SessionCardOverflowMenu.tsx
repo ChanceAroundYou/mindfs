@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useI18n } from "../../i18n/index";
 import type { SessionItem } from "./sessionListTypes";
 import { ArchiveIcon, PinIcon } from "./sessionListShared";
@@ -22,6 +22,24 @@ export type SessionCardOverflowMenuProps = {
   onDelete?: (session: SessionItem) => void;
 };
 
+/**
+ * 弹层的可用上下空间要按**裁剪祖先**量，不是按视口。
+ *
+ * 卡片住在会话列表那个 `flex:1; overflow:auto` 的滚动容器里（SessionList.tsx），
+ * `overflow` 非 visible 的盒子按 padding box 裁剪 —— 弹层是 absolute 定位在卡片内的，
+ * 越过它就没了。拿 `window.innerHeight` 量会**高估下方空间**（列表下方还有搜索框/按钮时
+ * 尤其明显），于是该翻上去的时候判成「放得下」，弹层照样被切。
+ */
+function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    if (getComputedStyle(node).overflowY !== "visible") {
+      const rect = node.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    }
+  }
+  return { top: 0, bottom: window.innerHeight };
+}
+
 export function SessionCardOverflowMenu({
   session,
   menuRef,
@@ -40,6 +58,36 @@ export function SessionCardOverflowMenu({
   onDelete,
 }: SessionCardOverflowMenuProps) {
   const { t } = useI18n();
+  // 会话列表最后几行点「⋯」时下方放不下，弹层再往下就撑出视口 —— 那就朝上开。
+  // 判据与 ProviderModelSelect 同口径（下方不够 + 上方更宽裕），但这里保持 absolute
+  // 定位：弹层跟着行滚动，不需要 portal 那套 fixed 坐标重算。
+  const menuBoxRef = useRef<HTMLDivElement | null>(null);
+  const [openUp, setOpenUp] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setOpenUp(false);
+      return;
+    }
+    const place = () => {
+      const trigger = menuRef.current;
+      const box = menuBoxRef.current;
+      if (!trigger || !box) return;
+      const rect = trigger.getBoundingClientRect();
+      const bounds = clipBounds(trigger);
+      const below = bounds.bottom - rect.bottom - 6;
+      const above = rect.top - bounds.top - 6;
+      setOpenUp(below < box.offsetHeight && above > below);
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [menuOpen, menuRef]);
+
   return (
     <div ref={menuRef} style={{ position: "relative", flexShrink: 0, marginLeft: "2px" }}>
       <button
@@ -96,9 +144,10 @@ export function SessionCardOverflowMenu({
       </button>
       {menuOpen ? (
         <div
+          ref={menuBoxRef}
           style={{
             position: "absolute",
-            top: "calc(100% + 6px)",
+            ...(openUp ? { bottom: "calc(100% + 6px)" } : { top: "calc(100% + 6px)" }),
             right: 0,
             minWidth: "120px",
             padding: "6px",
