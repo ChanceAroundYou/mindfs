@@ -728,7 +728,7 @@ groups:
       # 前端：aux 变化不改 updated_at，按 updated_at 增量拉的列表带不回这条会话 ⇒ 就地打补丁；
       # 跨节点靠轮询的 awaiting_answer 覆盖徽标（出现=显式 false，缺席=不知情）。
       - 'web/src/app/realtimeWsSessionMeta.ts:return { ...item, aux_flags: auxFlags } as SessionItem;'
-      - 'web/src/app/appSession.ts:next.aux_flags = { ...flags, ask_user_waiting: awaiting };'
+      - 'web/src/app/appSession.ts:ask_user_waiting: awaiting,'
       - 'web/src/app/useReplyingSessionPoll.ts:freshAwaiting[scoped] ='
       # 只有选中行的底色向上拓展去包住状态徽标：就是内容盒那一张底，负外边距提顶、
       # 等量补进上内边距，名字不动、行高不变，横向也不比未借位的选中行宽。
