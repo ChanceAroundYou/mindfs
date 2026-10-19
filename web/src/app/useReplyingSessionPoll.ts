@@ -104,9 +104,11 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
               if (item?.status === "replying" || item?.active === true) {
                 freshPending[scoped] = true;
               }
-              if (item?.awaiting_answer === true || item?.awaitingAnswer === true) {
-                freshAwaiting[scoped] = true;
-              }
+              // 「等回答」要记**显式 false**：轮询里出现过的会话 = 我们知道它的真实
+              // 状态（不在等）；缺席的会话才是不知情。徽标（问号）靠这个区分来灭 ——
+              // 用「缺席=不在等」会误清那些没被轮询到的会话。
+              freshAwaiting[scoped] =
+                item?.awaiting_answer === true || item?.awaitingAnswer === true;
             }
           }
           okNodeIds.add(nid);

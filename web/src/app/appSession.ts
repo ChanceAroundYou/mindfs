@@ -168,14 +168,6 @@ export function mergeReplyingStateByNode(
   return Object.assign(next, fresh);
 }
 
-export function mergeAwaitingStateByNode(
-  previous: Record<string, boolean>,
-  fresh: Record<string, boolean>,
-  okNodeIds: Iterable<string>,
-): Record<string, boolean> {
-  return mergeReplyingStateByNode(previous, fresh, okNodeIds);
-}
-
 export function applyPendingToMultiProjectGroups(
   groups: MultiProjectSessionGroup[],
   pendingByKey: Record<string, boolean>,
@@ -190,7 +182,20 @@ export function applyPendingToMultiProjectGroups(
         pending: !!pendingByKey[key],
       };
       if (awaitingByKey) {
-        next.awaiting_answer = !!awaitingByKey[key];
+        // 键**存在**才作数：存在 = 轮询问过这条会话，知道它到底在不在等回答；
+        // 缺席 = 不知道（节点没问到 / 这条会话不在活跃列表里），不能拿来清徽标。
+        const known = Object.prototype.hasOwnProperty.call(awaitingByKey, key);
+        const awaiting = known ? awaitingByKey[key] === true : false;
+        next.awaiting_answer = awaiting;
+        if (known) {
+          // 问号徽标（名字上方）跟「等回答」这一份真相走：答完立刻灭。
+          // 同节点毫秒级（后端提交答案即清库 + 广播 session.meta.updated），
+          // 跨节点 ≤5s（本函数的轮询通道）。
+          next.aux_flags = {
+            ...normalizeSessionAuxFlags((session as any).aux_flags),
+            ask_user_waiting: awaiting,
+          };
+        }
       }
       return next as SessionItem;
     }) as SessionItem[],

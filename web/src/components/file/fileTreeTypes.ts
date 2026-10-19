@@ -24,13 +24,8 @@ export type AgentConfigSwitchRequest = {
   providerIDs?: string[];
 };
 
-export const PROJECT_TREE_TAB_STORAGE_KEY = "mindfs-project-tree-tab";
 export const PROJECT_TREE_ROOT_PADDING_LEFT = 0;
 export const PROJECT_TREE_INDENT = 16;
-
-export function isProjectTreeTab(value: unknown): value is ProjectTreeTab {
-  return value === "files" || value === "git" || value === "worktrees" || value === "related";
-}
 
 export type FileTreeProps = {
   entries: FileEntry[];
@@ -61,6 +56,12 @@ export type FileTreeProps = {
   projectTreeTabRequest?: { tab: ProjectTreeTab; nonce: number } | null;
   agentConfigSwitchRequest?: AgentConfigSwitchRequest | null;
   onAgentConfigSwitched?: (agent: string) => void;
+  /**
+   * 项目树当前页签。**受控**：唯一真相在 App 层（useAppFileWorkspaceState，默认
+   * "files"）。原先这里自己读 localStorage 初始化，而那个键**从来没人写** ——
+   * 于是侧边栏永远停在一个陈旧的 "git" 上（用户实测「打开文件树就跳到 git 页」）。
+   */
+  projectTreeTab?: ProjectTreeTab;
   onProjectTreeTabChange?: (tab: ProjectTreeTab) => void;
   creatingRootName?: string | null;
   creatingRootBusy?: boolean;

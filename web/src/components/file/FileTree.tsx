@@ -14,8 +14,6 @@ import { FileTreeRefreshButton } from "./FileTreeRefreshButton";
 import {
   PROJECT_TREE_INDENT,
   PROJECT_TREE_ROOT_PADDING_LEFT,
-  PROJECT_TREE_TAB_STORAGE_KEY,
-  isProjectTreeTab,
   type AgentConfigSwitchSelection,
   type FileTreeProps,
   type ProjectTreeTab,
@@ -92,6 +90,7 @@ function FileTreeInner({
   projectTreeTabRequest = null,
   agentConfigSwitchRequest = null,
   onAgentConfigSwitched,
+  projectTreeTab = "files",
   onProjectTreeTabChange,
   creatingRootName = null,
   creatingRootBusy = false,
@@ -133,18 +132,26 @@ function FileTreeInner({
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [nodeManagerOpen, setNodeManagerOpen] = React.useState(false);
   const [accountPanelOpen, setAccountPanelOpen] = React.useState(false);
-  const [projectTreeTab, setProjectTreeTab] = React.useState<ProjectTreeTab>(() => {
-    if (typeof window === "undefined") {
-      return "files";
+  // 页签是**受控**的：唯一真相在 App 层（useAppFileWorkspaceState，默认 "files"）。
+  // 原先这里自己读 localStorage 初始化，而那个键**从来没人写** —— 侧边栏于是永远
+  // 停在一个陈旧的 "git" 上（用户实测「打开文件树就跳到 git 页」）。
+  const handleTabChange = React.useCallback(
+    (tab: ProjectTreeTab) => {
+      onProjectTreeTabChange?.(tab);
+    },
+    [onProjectTreeTabChange],
+  );
+  // 外部请求切页签（打开会话的「相关文件」时请求 related）—— 以前这个请求根本
+  // 没人消费，现在有唯一真相了，直接落到 App 层。
+  React.useEffect(() => {
+    const tab = projectTreeTabRequest?.tab;
+    if (!tab || !projectTreeTabRequest?.nonce) {
+      return;
     }
-    try {
-      const saved = window.localStorage.getItem(PROJECT_TREE_TAB_STORAGE_KEY);
-      return isProjectTreeTab(saved) ? saved : "files";
-    } catch {
-      return "files";
-    }
-  });
-  const handleTabRefresh = React.useCallback(
+    handleTabChange(tab);
+    // 只认 nonce 的变化：同一个请求重复触发不应反复切。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectTreeTabRequest?.nonce]);  const handleTabRefresh = React.useCallback(
     () => onRefresh?.(projectTreeTab),
     [onRefresh, projectTreeTab],
   );
@@ -327,7 +334,7 @@ function FileTreeInner({
         innerStyle={{ justifyContent: "space-between", gap: 0 }}
       >
         <div style={{ display: "flex", alignItems: "center", minWidth: 0, flex: "1 1 auto", maxWidth: "calc(100% - 56px)", marginRight: "6px" }}>
-          <FileTreeProjectTabs projectTreeTab={projectTreeTab} setProjectTreeTab={setProjectTreeTab} t={t} accentColor={projectTabAccent} hexToRgbaApp={hexToRgbaApp} />
+          <FileTreeProjectTabs projectTreeTab={projectTreeTab} setProjectTreeTab={handleTabChange} t={t} accentColor={projectTabAccent} hexToRgbaApp={hexToRgbaApp} />
         </div>
         <FileTreeRefreshButton handleRefreshClick={handleRefreshClick} setTreePressed={setTreePressed}
           t={t} treePressed={treePressed} treeRefreshing={treeRefreshing} />

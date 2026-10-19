@@ -14,7 +14,7 @@ export function createSessionMetaHandlers(
 ): Record<string, (event: any, payload: any) => void> {
   const {
     refs: { boundSessionByRootRef, selectedSessionRef, sessionCacheRef, sessionsRef },
-    setters: { setDrawerSessionForRoot, setSelectedSession },
+    setters: { setDrawerSessionForRoot, setSelectedSession, setSessions },
     actions: {
       bumpCacheVersion,
       loadSessionsForRoot,
@@ -211,8 +211,20 @@ export function createSessionMetaHandlers(
               setDrawerSessionForRoot(rootID, latest);
             }
           }
-          const relatedWorktreePath =
-            typeof payload.session.related_worktree?.path === "string"
+          // 列表项就地更新 aux 标志：aux 变化**不改会话的 updated_at**，所以下面
+          // 按 updated_at 增量拉的列表请求根本带不回这条会话 —— 列表项会一直拿着
+          // 旧值，徽标要等下一次全量刷新才灭（症状「答完不灭，要会话结束才更新」）。
+          if (payload.session.aux_flags !== undefined) {
+            const auxFlags = normalizeSessionAuxFlags(payload.session.aux_flags);
+            setSessions((prev) =>
+              prev.map((item) => {
+                const itemKey = String(item.key || item.session_key || "");
+                if (itemKey !== sessionKey) return item;
+                return { ...item, aux_flags: auxFlags } as SessionItem;
+              }),
+            );
+          }
+          const relatedWorktreePath =            typeof payload.session.related_worktree?.path === "string"
               ? payload.session.related_worktree.path.trim()
               : "";
           if (relatedWorktreePath) {

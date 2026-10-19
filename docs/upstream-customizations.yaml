@@ -662,8 +662,8 @@ groups:
   - id: G-AD
     title: 会话列表 / 树 / 归档 / 搜索
     kind: feature
-    symptom: "会话列表切换项目后闪一下再出现；归档会话找不到入口；搜索跳不到命中片段；会话在等你回答时，名字上方的问号徽标不亮。"
-    why: "sessionListMerge/sessionTree/sessionGroupDisplay 把多节点多项目的会话合并、建树、分组显示收敛成纯函数，便于测试；归档面板挂在列表侧栏。上游没有这些，退回上游实现会让列表在切项目/切节点时塌掉。"
+    symptom: "会话列表切换项目后闪一下再出现；归档会话找不到入口；搜索跳不到命中片段；会话在等你回答时，名字上方的问号徽标不亮；答完问题徽标不立刻灭，要等这一轮会话结束才更新（跨节点还要等 5s 轮询）。"
+    why: "sessionListMerge/sessionTree/sessionGroupDisplay 把多节点多项目的会话合并、建树、分组显示收敛成纯函数，便于测试；归档面板挂在列表侧栏。上游没有这些，退回上游实现会让列表在切项目/切节点时塌掉。问号徽标要实时，必须两条通道都在：aux 写入后广播 session.meta.updated（同节点毫秒级），答题那一刻直接清会话行的 ask_user_waiting（原来只等 tool_call_update complete 才清，徽标会亮到这一轮结束）；跨节点再靠 5s 轮询的 awaiting_answer 覆盖（轮询里出现过的会话记显式 false，缺席=不知情，不能拿来清徽标）。"
     files:
       - web/src/components/session/ArchivedSessionsPanel.tsx
       - server/internal/api/appcontext_task_flags.go
@@ -687,6 +687,8 @@ groups:
       - web/src/services/session/sessionService.ts
       - web/src/app/appSession.ts
       - web/src/app/realtimeWsSessionMeta.ts
+      - web/src/app/useReplyingSessionPoll.ts
+      - docs/plans/live-ask-user-badge.md
       - web/src/components/session/sessionListTypes.ts
       - web/src/components/session/SessionCard.tsx
       - web/src/components/session/SessionCardTopBadges.tsx
@@ -718,6 +720,16 @@ groups:
       # ask_user_waiting 只有清位没有置位，名字上方的问号是死代码。
       - 'server/internal/api/appcontext_task_flags.go:s.updateSessionAuxFlagsFromTaskPatch(rootID, sessionKey, patch)'
       - 'web/src/components/session/SessionCardTopBadges.tsx:session.aux_flags?.ask_user_waiting'
+      # 徽标实时亮灭：aux 写入必须广播（列表项是取列表那一刻的快照，不推就一直拿旧值），
+      # 答题必须在提交那一刻清会话行（原来只等 tool_call_update complete，亮到回合结束）。
+      - 'server/internal/api/appcontext_task_flags.go:func (s *AppContext) clearSessionAskUserWaiting'
+      - 'server/internal/api/appcontext_task_flags.go:s.BroadcastSessionMetaUpdated(rootID, sess)'
+      - 'server/internal/api/ws.go:h.AppContext.clearSessionAskUserWaiting(rootID, key)'
+      # 前端：aux 变化不改 updated_at，按 updated_at 增量拉的列表带不回这条会话 ⇒ 就地打补丁；
+      # 跨节点靠轮询的 awaiting_answer 覆盖徽标（出现=显式 false，缺席=不知情）。
+      - 'web/src/app/realtimeWsSessionMeta.ts:return { ...item, aux_flags: auxFlags } as SessionItem;'
+      - 'web/src/app/appSession.ts:next.aux_flags = { ...flags, ask_user_waiting: awaiting };'
+      - 'web/src/app/useReplyingSessionPoll.ts:freshAwaiting[scoped] ='
       # 只有选中行的底色向上拓展去包住状态徽标：就是内容盒那一张底，负外边距提顶、
       # 等量补进上内边距，名字不动、行高不变，横向也不比未借位的选中行宽。
       - 'web/src/components/session/SessionCard.tsx:(selected || hovered) && !editing && hasSessionTopBadges'
@@ -744,6 +756,10 @@ groups:
       - web/tests/session-status-badges.test.mjs
       - server/internal/session/manager_session_aux_flags_test.go
       - server/internal/api/http_session_aux_flags_test.go
+      # 徽标亮灭的实时通道：aux 写入必须广播（否则列表项一直拿旧值，答完不灭），
+      # 答题必须在提交那一刻清会话行（否则亮到这一轮结束）。
+      - server/internal/api/session_aux_flags_broadcast_test.go
+      - web/tests/ask-user-badge-live.test.mjs
       # worktree_active 的行为守卫：真 linked worktree 必须亮，本项目/别的仓库的主 checkout、
       # 非仓库目录、已删目录、指向文件的路径一律不亮（2026-10-16 那 13 条误亮的形状）。
       - server/internal/api/helpers_test.go
@@ -6434,3 +6450,25 @@ groups:
     anchors:
       - 'server/internal/agent/codex/session.go:if cause := turnCtx.Err(); cause != nil {'
       - 'server/internal/agent/codex/session.go:return errors.New("codex response stream ended unexpectedly")'
+
+  - id: G-JM
+    title: 项目文件树的页签默认值与根行箭头（纯展开/收起）
+    kind: fix
+    symptom: "打开左侧文件树侧边栏总是跳到 git 页（要默认「文件」页）；跨节点点项目名前的下拉箭头收起项目树没反应，必须先点进那个项目、再点一下才收得起（点箭头应直接展开/收起，跨节点也一样；点项目名才是进入项目）。2026-10-20 用户实测。"
+    why: "① 页签：FileTree 自己从 localStorage 读初始页签，而那个键**从来没人写** —— 于是侧边栏永远停在一个陈旧的 'git' 上；真相本来就在 App 层（useAppFileWorkspaceState，默认 'files'），改成受控即可，删掉死键。② 根行箭头：open_dir 的根行没有独立分支，跨节点时点箭头会一路落到「打开这个根」那段（selectRootNode + 换根 + 恢复绑定会话）—— 表现为「收起永远不生效，倒像先进了项目」。箭头必须是**纯展开/收起**（不切当前项目、不换选中节点、不进主面板），展开时要按**该根所属的节点**去取顶层目录（treeKey(nodeId, root, '.')），不能打当前激活节点。"
+    boundary: "只改项目文件树的页签受控化与根行箭头的分支顺序；不动 FileTree 的行渲染、不动点项目名（onSelectRoot）那条「进入项目」的路、不动节点路由与选中节点语义。"
+    files:
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/fileTreeTypes.ts
+      - web/src/components/app/FileTreePanel.tsx
+      - web/src/app/AppRootView.tsx
+      - web/src/app/openDirectoryAction.ts
+      - web/tests/project-tree-tab-and-root-toggle.test.mjs
+      - docs/plans/live-ask-user-badge.md
+    tests:
+      - web/tests/project-tree-tab-and-root-toggle.test.mjs
+    anchors:
+      - 'web/src/app/openDirectoryAction.ts:if (isToggle && isActuallyRoot) {'
+      - 'web/src/app/openDirectoryAction.ts:const ensureRootEntriesLoaded = async (targetRoot: string, nodeId: string) => {'
+      - 'web/src/components/file/FileTree.tsx:projectTreeTab = "files"'
+      - 'web/src/app/useAppFileWorkspaceState.ts:useState<ProjectTreeTab>("files")'

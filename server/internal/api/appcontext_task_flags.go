@@ -157,6 +157,10 @@ func (s *AppContext) updateTaskAuxFlagsForSession(rootID, sessionKey string, pat
 
 // updateSessionAuxFlags 写会话行的内容徽标（G-AD），与上面的任务行写入并列。
 // 区别只有守卫：会话行不要求 sess.TaskID —— 普通聊天会话也落盘。
+//
+// 写完**必须广播**：会话列表项里的 aux_flags 是取列表那一刻的快照，不推的话
+// 前端一直拿着旧值，要等下一次列表重拉（往往是这一轮结束）才纠正 ——
+// 症状「答完徽标不灭，要会话结束才更新」（2026-10-20 用户实测）。
 func (s *AppContext) updateSessionAuxFlags(rootID, sessionKey string, patch session.SessionAuxFlagsPatch) {
 	if s == nil {
 		return
@@ -165,9 +169,25 @@ func (s *AppContext) updateSessionAuxFlags(rootID, sessionKey string, patch sess
 	if err != nil {
 		return
 	}
-	if err := manager.UpdateSessionAuxFlags(context.Background(), sessionKey, patch); err != nil {
+	ctx := context.Background()
+	if err := manager.UpdateSessionAuxFlags(ctx, sessionKey, patch); err != nil {
 		log.Printf("[session] session.aux_flags.update.error root=%s session=%s err=%v", rootID, sessionKey, err)
+		return
 	}
+	// 广播带的是**重读后的**会话行：aux_flags 必须是最新的（payload 里就是它）。
+	if sess, err := manager.GetMeta(ctx, sessionKey); err == nil && sess != nil {
+		s.BroadcastSessionMetaUpdated(rootID, sess)
+	}
+}
+
+// clearSessionAskUserWaiting 清会话行的「等你回答」徽标（问号），并广播出去。
+//
+// 答题路径（WS session.answer_question）必须在**提交答案这一刻**就清：
+// 原来只等 agent 把答案当 tool result 收下（tool_call_update complete）才清，
+// 于是徽标一直亮到那一轮结束 —— 症状「答完不灭，要会话结束才更新」（2026-10-20）。
+func (s *AppContext) clearSessionAskUserWaiting(rootID, sessionKey string) {
+	no := false
+	s.updateSessionAuxFlags(rootID, sessionKey, session.SessionAuxFlagsPatch{AskUserWaiting: &no})
 }
 
 // updateSessionAuxFlagsFromTaskPatch 把任务行 patch 同语义镜像到会话行。

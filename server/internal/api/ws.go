@@ -51,6 +51,12 @@ func (h *WSHandler) handleSessionAnswerQuestion(ctx context.Context, conn *webso
 	// aux 标记（且要求会话挂了任务），会话空心灯走的是另一条通道，必须在这里单独清，
 	// 否则答完仍是一条空心灯挂在列表上。
 	h.AppContext.GetSessionStreamHub().MarkSessionAwaiting(rootID, key, "", false)
+	// 会话行的问号徽标（sessions.aux_ask_user_waiting）也必须在**提交答案这一刻**清。
+	// 原来只等 tool_call_update complete 才清（updateTaskAuxFlagsFromEvent 那条），
+	// 而那一手要等 agent 真的把答案当 tool result 收下才有 —— 徽标因此一直亮到
+	// 那一轮结束（2026-10-20 用户实测「答完不灭，要会话结束才更新」）。
+	// 这里清完 updateSessionAuxFlags 会广播 session.meta.updated ⇒ 列表立刻灭。
+	h.AppContext.clearSessionAskUserWaiting(rootID, key)
 	// 曾经在这里回一条 `session.answer_question.accepted`（带 req.ID 的回执）。已删除（2026-10-06）：
 	// 前端零消费 —— 它提交答案后靠在本地把卡片翻成「已回答」，不需要回执；而 `sendWSMessage`
 	// 也不做请求/响应配对（只对 `session.message` 这类做重发）。发一条只有空操作响应的消息
