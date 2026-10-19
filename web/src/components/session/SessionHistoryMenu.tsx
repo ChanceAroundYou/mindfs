@@ -25,31 +25,14 @@ export function SessionHistoryMenu({
   themeColor,
 }: any) {
   const { t } = useI18n();
-  const themeMuted = `color-mix(in srgb, ${themeColor} 56%, #94a3b8)`;
-  const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
 
   return (
     <div
       ref={userSummaryRootRef}
-      onMouseEnter={() => {
-        refreshCurrentUserMessageIndex();
-        setUserSummaryHoverOpen(true);
-      }}
-      onMouseLeave={() => setUserSummaryHoverOpen(false)}
       style={{ position: "relative", flexShrink: 0 }}
     >
       {userSummaryOpen ? (
         <>
-          <div
-            aria-hidden="true"
-            style={{
-              position: "absolute",
-              right: 0,
-              top: "100%",
-              width: "min(320px, calc(100vw - 72px))",
-              height: "8px",
-            }}
-          />
           <div
             ref={userSummaryListRef}
             role="dialog"
@@ -57,7 +40,7 @@ export function SessionHistoryMenu({
             style={{
               position: "absolute",
               right: 0,
-              top: "calc(100% + 8px)",
+              top: "calc(100% + 6px)",
               width: "min(320px, calc(100vw - 72px))",
               maxHeight: "260px",
               overflowY: "auto",
@@ -143,9 +126,6 @@ export function SessionHistoryMenu({
           refreshCurrentUserMessageIndex();
           setUserSummaryPinnedOpen((open: boolean) => {
             const nextOpen = !open;
-            if (!nextOpen) {
-              setUserSummaryHoverOpen(false);
-            }
             return nextOpen;
           });
         }}
@@ -163,11 +143,9 @@ export function SessionHistoryMenu({
           width: "28px",
           height: "28px",
           borderRadius: "8px",
-          border: userSummaryOpen
-            ? `1px solid ${themeMuted}`
-            : `1px solid ${themeMutedBorder}`,
-          background: userSummaryOpen ? themeMuted : "var(--menu-bg)",
-          color: userSummaryOpen ? "#ffffff" : themeMuted,
+          border: "none",
+          background: userSummaryOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
+          color: "var(--text-secondary)",
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
@@ -191,33 +169,6 @@ export function SessionHistoryMenu({
           <circle cx="12" cy="12" r="9" />
           <path d="M12 7v5l3 2" />
         </svg>
-        <span
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            top: "-4px",
-            right: "-4px",
-            minWidth: "18px",
-            height: "18px",
-            padding: "0 5px",
-            borderRadius: "999px",
-            background: themeColor,
-            color: "#ffffff",
-            border: "2px solid var(--menu-bg)",
-            fontSize: "10px",
-            fontWeight: 800,
-            lineHeight: "14px",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxSizing: "border-box",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {userMessageSummaries.length > 99
-            ? "99+"
-            : userMessageSummaries.length}
-        </span>
       </button>
     </div>
   );

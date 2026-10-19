@@ -18,18 +18,16 @@ test("session-history-menu", async () => {
   assert.match(viewer, /interactionMode === "drawer" \? null : \(/);
   assert.ok(!floating.includes("userMessageSummaries"), "floating controls must no longer render the summary button");
 
-  // 钟表图标 + 计数徽标。
+  // 钟表图标（无角标、无主题色）。
   assert.match(history, /<circle cx="12" cy="12" r="9" \/>/);
   assert.match(history, /M12 7v5l3 2/);
-  assert.match(history, /userMessageSummaries\.length > 99/);
 
   // popup 向下展开，保留 已加载/共 计数行。
-  assert.match(history, /top: "calc\(100% \+ 8px\)"/);
+  assert.match(history, /top: "calc\(100% \+ 6px\)"/);
   assert.match(history, /已加载/);
   assert.match(history, /windowMeta\.total/);
 
-  // 接线：hover 打开、点击钉住、点击条目跳转。
-  assert.ok(history.includes("setUserSummaryHoverOpen(true)"));
+  // 接线：点击钉住、点击条目跳转。
   assert.ok(history.includes("setUserSummaryPinnedOpen((open: boolean)"));
   assert.ok(history.includes("scrollToUserMessageSummary(item.index)"));
   assert.ok(history.includes('data-user-summary-index={item.index}'));

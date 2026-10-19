@@ -34,6 +34,7 @@ const (
 
 var (
 	trayUser32         = windows.NewLazySystemDLL("user32.dll")
+	trayKernel32       = windows.NewLazySystemDLL("kernel32.dll")
 	trayShell32        = windows.NewLazySystemDLL("shell32.dll")
 	trayRegisterProc   = trayUser32.NewProc("RegisterClassW")
 	trayCreateProc     = trayUser32.NewProc("CreateWindowExW")
@@ -47,8 +48,12 @@ var (
 	trayMenuProc       = trayUser32.NewProc("CreatePopupMenu")
 	trayAppendProc     = trayUser32.NewProc("AppendMenuW")
 	trayTrackProc      = trayUser32.NewProc("TrackPopupMenu")
-	trayForegroundProc = trayUser32.NewProc("SetForegroundWindow")
-	trayAllowFgProc    = trayUser32.NewProc("AllowSetForegroundWindow")
+	trayForegroundProc      = trayUser32.NewProc("SetForegroundWindow")
+	trayForegroundWindowProc = trayUser32.NewProc("GetForegroundWindow")
+	trayGetWindowThreadProc  = trayUser32.NewProc("GetWindowThreadProcessId")
+	trayGetCurrentThreadProc = trayKernel32.NewProc("GetCurrentThreadId")
+	trayAttachThreadProc     = trayUser32.NewProc("AttachThreadInput")
+	trayAllowFgProc          = trayUser32.NewProc("AllowSetForegroundWindow")
 	trayCursorProc     = trayUser32.NewProc("GetCursorPos")
 	trayQuitProc       = trayUser32.NewProc("PostQuitMessage")
 	trayPostMsgProc    = trayUser32.NewProc("PostMessageW")
@@ -112,8 +117,10 @@ func trayWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 }
 
 func showTrayMenu(hwnd uintptr) {
+	log.Printf("[tray] right-click showTrayMenu called")
 	menu, _, _ := trayMenuProc.Call()
 	if menu == 0 {
+		log.Printf("[tray] CreatePopupMenu returned 0")
 		return
 	}
 	for _, item := range trayMenuItems() {
@@ -125,13 +132,22 @@ func showTrayMenu(hwnd uintptr) {
 	if ok, _, _ := trayCursorProc.Call(uintptr(unsafe.Pointer(&point))); ok == 0 {
 		point.X, point.Y = 0, 0
 	}
-	// 从任务计划/Run 键启动的进程不是前台进程，SetForegroundWindow 会被 Windows 静默拒绝，
-	// TrackPopupMenu 因而显示不出来 —— 先 AllowSetForegroundWindow(ASFW_ANY) 放行，再置顶。
-	const asfwAny = ^uintptr(0) // -1
-	trayAllowFgProc.Call(asfwAny)
+	log.Printf("[tray] cursor pos=(%d,%d)", point.X, point.Y)
+
+	fgHwnd, _, _ := trayForegroundWindowProc.Call()
+	fgThread, _, _ := trayGetWindowThreadProc.Call(fgHwnd, 0)
+	curThread, _, _ := trayGetCurrentThreadProc.Call()
+	log.Printf("[tray] fgThread=%d curThread=%d", fgThread, curThread)
+	if fgThread != 0 && fgThread != curThread {
+		trayAttachThreadProc.Call(curThread, fgThread, 1)
+	}
 	trayForegroundProc.Call(hwnd)
-	trayTrackProc.Call(menu, tpmRightButton, uintptr(point.X), uintptr(point.Y), 0, hwnd, 0)
-	// 不发 WM_NULL，菜单在点别处后不会收起、下次右键也显示不出来；这是托盘菜单的标准收尾。
+	if fgThread != 0 && fgThread != curThread {
+		trayAttachThreadProc.Call(curThread, fgThread, 0)
+	}
+
+	ret, _, lastErr := trayTrackProc.Call(menu, tpmRightButton, uintptr(point.X), uintptr(point.Y), 0, hwnd, 0)
+	log.Printf("[tray] TrackPopupMenu returned %d (err=%v)", ret, lastErr)
 	trayPostMsgProc.Call(hwnd, 0, 0, 0)
 }
 
@@ -194,6 +210,7 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 		log.Printf("[tray] Shell_NotifyIconW add failed")
 		return nil
 	}
+	log.Printf("[tray] icon added tip=%q", trayTooltip(addr))
 	defer removeTrayIcon()
 
 	for {
