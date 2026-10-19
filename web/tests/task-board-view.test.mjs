@@ -155,6 +155,25 @@ assert.match(
   /width: "22px",\s*height: "22px",\s*minWidth: "22px"/,
   "toggle buttons must be 22×22",
 );
+// 2026-10-19 G-AR：图标按物理侧栏区分（圆角矩形 + 竖分隔线），不再按文件/会话内容区分。
+assert.match(
+  viewHeader,
+  /const sidebarIcon = \(side: "left" \| "right"\) =>/,
+  "the sidebar toggle icon must be chosen by physical side",
+);
+assert.match(
+  viewHeader,
+  /<rect x="3" y="4" width="18" height="16" rx="2" \/>/,
+  "the sidebar toggle icon must be a rounded rect",
+);
+assert.ok(
+  !viewHeader.includes("leftIsSession") && !viewHeader.includes("rightIsSession"),
+  "leftIsSession/rightIsSession are dead once the icon follows physical side",
+);
+assert.ok(
+  !shell.includes("leftIsSession") && !shell.includes("rightIsSession"),
+  "AppShell must not hand dead is-session flags to the header context",
+);
 assert.match(
   shell,
   /toggle: toggleRail/,

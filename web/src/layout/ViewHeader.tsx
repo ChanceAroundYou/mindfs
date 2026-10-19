@@ -14,24 +14,31 @@ export type MobileSidebarToggleValue = {
   rightOpen: boolean;
   leftLabel: string;
   rightLabel: string;
-  leftIsSession: boolean;
-  rightIsSession: boolean;
   toggle: (side: "left" | "right") => void;
 };
 
 export const MobileSidebarToggleContext = createContext<MobileSidebarToggleValue | null>(null);
 
-const fileSidebarIcon = (
-  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path fill="currentColor" d="M3 3h6v4H3zm12 7h6v4h-6zm0 7h6v4h-6zm-2-4H7v5h6v2H5V9h2v2h6z" style={{ transform: "scale(1.28)", transformOrigin: "12px 12px" }} />
-  </svg>
-);
-
-const sessionSidebarIcon = (
-  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.8" strokeLinecap="round" aria-hidden="true">
-    <line x1="6" y1="4" x2="18" y2="4" />
-    <line x1="6" y1="12" x2="18" y2="12" />
-    <line x1="6" y1="20" x2="18" y2="20" />
+// 左右侧栏切换按钮的图标：圆角矩形 + 一根竖分隔线。
+// 线在左 = 左侧栏，线在右 = 右侧栏；按物理侧栏区分，不再按「文件/会话」内容区分。
+const sidebarIcon = (side: "left" | "right") => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    aria-hidden="true"
+  >
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <line
+      x1={side === "left" ? 9 : 15}
+      y1="4"
+      x2={side === "left" ? 9 : 15}
+      y2="20"
+    />
   </svg>
 );
 
@@ -97,7 +104,6 @@ export function ViewHeader({ children, padding = "0 16px", style, innerStyle, sh
     if (!ctx) return null;
     const open = side === "left" ? ctx.leftOpen : ctx.rightOpen;
     const label = side === "left" ? ctx.leftLabel : ctx.rightLabel;
-    const isSession = side === "left" ? ctx.leftIsSession : ctx.rightIsSession;
     return (
       <button
         type="button"
@@ -106,7 +112,7 @@ export function ViewHeader({ children, padding = "0 16px", style, innerStyle, sh
         title={open ? t("sidebar.collapse", { label }) : t("sidebar.expand", { label })}
         style={toggleButtonStyle}
       >
-        {isSession ? sessionSidebarIcon : fileSidebarIcon}
+        {sidebarIcon(side)}
       </button>
     );
   };

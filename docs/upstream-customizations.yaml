@@ -6374,3 +6374,26 @@ groups:
       - 'server/internal/agent/codex/session.go:func isCodexWriterConflict'
       - 'server/internal/agent/codex/session.go:codexWriterConflictAttempts'
       - 'server/internal/agent/codex/session.go:emitted'
+
+  - id: G-JK
+    title: 会话标题栏时钟按钮（用户消息摘要）+ header 侧栏按钮改为左右侧栏图标
+    kind: fix
+    symptom: "会话右下角的方形浮球（四横条 + 计数徽标）展开用户消息摘要时遮挡正文；移动端 header 两侧侧栏切换按钮的图标按「文件/会话」内容区分，与实际打开的侧栏不对应。"
+    why: "把用户消息摘要功能搬到会话 header，紧贴 ⋯ 菜单左侧，用钟表图标表示，hover/点击钉住与 popup 行为零变化（popup 改为向下展开）；抽屉模式下不再保留历史按钮。ViewHeader 的侧栏切换按钮图标改为「圆角矩形 + 竖分隔线」按物理左右侧栏区分，leftIsSession/rightIsSession 随之从 AppShell context 删除。新文件 SessionHistoryMenu.tsx 承载搬出的 popup。"
+    files:
+      - web/src/components/session/SessionHistoryMenu.tsx
+      - web/src/components/session/SessionViewerHeader.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerFloatingControls.tsx
+      - web/src/layout/ViewHeader.tsx
+      - web/src/layout/AppShell.tsx
+      - web/src/components/session/SessionViewerCards.tsx
+      - web/tests/task-board-view.test.mjs
+      - web/tests/session-window-sources.mjs
+    tests:
+      - web/tests/session-history-menu.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/session-window.test.mjs
+    anchors:
+      - 'web/src/components/session/SessionHistoryMenu.tsx:export function SessionHistoryMenu'
+      - 'web/src/layout/ViewHeader.tsx:const sidebarIcon = (side: "left" | "right") =>'

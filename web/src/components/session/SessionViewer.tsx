@@ -400,10 +400,12 @@ function SessionViewerInner({
     "Session";
   const hasVisibleTimeline = timeline.length > 0;
   const themeColor = String(rootColor || "").trim() || "var(--accent-color)";
-  // 四横主按钮：浅且暗的 muted 变体（同色相、混灰降明度）；徽标保持纯主题色
-  const themeMuted = `color-mix(in srgb, ${themeColor} 56%, #94a3b8)`;
-  const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
   const userMetaButtonStyle = buildUserMetaButtonStyle(themeColor);
+  const headerHistory = {
+    userMessageSummaries, userSummaryOpen, userSummaryRootRef, userSummaryListRef,
+    currentUserMessageIndex, refreshCurrentUserMessageIndex, scrollToUserMessageSummary,
+    setUserSummaryHoverOpen, setUserSummaryPinnedOpen, windowMeta, visibleExchanges, themeColor,
+  };
 
   return (
     <div
@@ -417,7 +419,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"} onRootClick={onRootClick} menu={headerMenu} />
+        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"} onRootClick={onRootClick} menu={headerMenu} history={headerHistory} />
       )}
 
       {/* 滚动容器 */}
@@ -464,16 +466,11 @@ function SessionViewerInner({
           </div>
         </div>
         {<SessionViewerFloatingControls
-          userMessageSummaries={userMessageSummaries} showJumpToLatest={showJumpToLatest} sessionKey={sessionKey}
+          showJumpToLatest={showJumpToLatest} sessionKey={sessionKey}
           composerOverlayInset={composerOverlayInset} cancelTargetSeqScroll={cancelTargetSeqScroll}
           targetSeq={targetSeq} targetSeqScrollKeyRef={targetSeqScrollKeyRef} targetSeqRequestKey={targetSeqRequestKey}
           shouldStickToBottomRef={shouldStickToBottomRef} setShowJumpToLatest={setShowJumpToLatest}
           stickSessionToBottom={stickSessionToBottom} t={t} themeColor={themeColor}
-          userSummaryRootRef={userSummaryRootRef} refreshCurrentUserMessageIndex={refreshCurrentUserMessageIndex}
-          setUserSummaryHoverOpen={setUserSummaryHoverOpen} userSummaryOpen={userSummaryOpen}
-          windowMeta={windowMeta} visibleExchanges={visibleExchanges} userSummaryListRef={userSummaryListRef}
-          currentUserMessageIndex={currentUserMessageIndex} scrollToUserMessageSummary={scrollToUserMessageSummary}
-          setUserSummaryPinnedOpen={setUserSummaryPinnedOpen} themeMuted={themeMuted} themeMutedBorder={themeMutedBorder}
         />}
       </div>
       <style>{sessionViewerAnimationStyles}</style>

@@ -126,12 +126,3 @@ export function TodoUpdateCard({ todoUpdate }: { todoUpdate: TodoUpdate }) {
     </div>
   );
 }
-
-export function UserMessageListIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M0 0h32v32H0z" fill="none" />
-      <path fill="currentColor" d="M4.082 4.083v3h22.835v-3zm0 16.223h22.835v-3H4.082zm0-6.612h22.835v-3H4.082zm0 13.223h22.835v-3H4.082z" />
-    </svg>
-  );
-}

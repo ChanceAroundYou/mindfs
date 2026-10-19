@@ -327,8 +327,6 @@ export function AppShell({
     rightOpen: physicalRightOpen,
     leftLabel: physicalLeftLabel,
     rightLabel: physicalRightLabel,
-    leftIsSession: sidebarsSwapped,
-    rightIsSession: !sidebarsSwapped,
     toggle: toggleRail,
   };
 
