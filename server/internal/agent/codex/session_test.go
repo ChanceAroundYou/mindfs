@@ -3,7 +3,10 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	agenttypes "mindfs/server/internal/agent/types"
 
@@ -322,5 +325,82 @@ func TestHandleStreamedEventsTurnFailedReturnsError(t *testing.T) {
 	}
 	if completed {
 		t.Fatalf("失败的回合不应报告完成")
+	}
+}
+
+// scriptedRunExec 按调用次序吐预设的 app-server 事件行。
+type scriptedRunExec struct {
+	mu    sync.Mutex
+	calls int
+	lines []string
+}
+
+func (e *scriptedRunExec) Run(codexsdk.CodexExecArgs) <-chan codexsdk.ExecResult {
+	e.mu.Lock()
+	n := e.calls
+	e.calls++
+	e.mu.Unlock()
+	ch := make(chan codexsdk.ExecResult, 2)
+	line := e.lines[len(e.lines)-1]
+	if n < len(e.lines) {
+		line = e.lines[n]
+	}
+	ch <- codexsdk.ExecResult{Line: line}
+	close(ch)
+	return ch
+}
+
+func (e *scriptedRunExec) callCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
+}
+
+const codexWriterConflictLine = `{"type":"error","message":"thread 01a13a41 already has an active writer"}`
+const codexTurnCompletedLine = `{"type":"turn.completed","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0}}`
+
+func newScriptedCodexSession(exec *scriptedRunExec) *session {
+	client := codexsdk.NewCodexWithExec(exec, codexsdk.CodexOptions{})
+	return &session{
+		client:     client,
+		thread:     client.ResumeThread("01a13a41", codexsdk.ThreadOptions{}),
+		threadID:   "01a13a41",
+		sessionKey: "test-session",
+	}
+}
+
+// 另一个 codex 客户端（典型是 Codex 桌面版）短暂占用 writer 时，重试应把这一轮救回来。
+func TestSendMessageRetriesCodexWriterConflict(t *testing.T) {
+	old := codexWriterConflictBackoff
+	codexWriterConflictBackoff = time.Millisecond
+	defer func() { codexWriterConflictBackoff = old }()
+
+	exec := &scriptedRunExec{lines: []string{codexWriterConflictLine, codexTurnCompletedLine}}
+	s := newScriptedCodexSession(exec)
+	if err := s.SendMessage(context.Background(), "hi"); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if got := exec.callCount(); got != 2 {
+		t.Fatalf("attempts = %d, want 2 (one conflict + one success)", got)
+	}
+}
+
+// 占用一直不释放时，至少要把原因讲清楚，而不是把 codex 的原始英文直接抛给用户。
+func TestSendMessageReportsPersistentCodexWriterConflict(t *testing.T) {
+	old := codexWriterConflictBackoff
+	codexWriterConflictBackoff = time.Millisecond
+	defer func() { codexWriterConflictBackoff = old }()
+
+	exec := &scriptedRunExec{lines: []string{codexWriterConflictLine}}
+	s := newScriptedCodexSession(exec)
+	err := s.SendMessage(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("SendMessage must fail while the writer is held")
+	}
+	if !strings.Contains(err.Error(), "另一个 Codex 客户端") {
+		t.Fatalf("error must explain the writer conflict, got %q", err)
+	}
+	if got := exec.callCount(); got != codexWriterConflictAttempts {
+		t.Fatalf("attempts = %d, want %d", got, codexWriterConflictAttempts)
 	}
 }

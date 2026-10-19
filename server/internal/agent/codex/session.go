@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mindfs/server/internal/agent/logs"
@@ -28,6 +30,10 @@ type session struct {
 	turn          types.TurnCanceler
 	contextWindow types.ContextWindow
 	planTextByID  map[string]string
+	// emitted 是本会话累计发出的事件数。writer 冲突重试只在**一个事件都没发出去**
+	// 时进行：那说明 thread/resume 就失败了，重发不会重复内容；一旦有 delta 落地，
+	// 重发就可能把同一条用户消息写两遍。
+	emitted atomic.Int64
 
 	agentDebugLog *logs.AgentLogger
 
@@ -42,22 +48,58 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 	turnCtx, turnID := s.turn.Begin(ctx)
 	defer s.turn.End(turnID)
 	log.Printf("[agent/codex] input session=%s content=%q", s.sessionKey, preview(content))
-	streamed, err := s.thread.RunStreamed(content, codexsdk.TurnOptions{Context: turnCtx})
-	if err != nil {
-		log.Printf("[agent/codex] send.error session=%s err=%v", s.sessionKey, err)
-		return err
-	}
 
-	completed, err := s.handleStreamedEvents(streamed.Events)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 1; attempt <= codexWriterConflictAttempts; attempt++ {
+		before := s.emitted.Load()
+		streamed, err := s.thread.RunStreamed(content, codexsdk.TurnOptions{Context: turnCtx})
+		if err != nil {
+			log.Printf("[agent/codex] send.error session=%s err=%v", s.sessionKey, err)
+			return err
+		}
+
+		completed, err := s.handleStreamedEvents(streamed.Events)
+		if err == nil {
+			if !completed {
+				// 通道关闭但没见到 TurnCompletedEvent：进程中途死亡，不能当成功。
+				return errors.New("codex response stream ended unexpectedly")
+			}
+			s.updateThreadIDFromThread()
+			return nil
+		}
+
+		lastErr = err
+		// writer 冲突只在「本回合一个事件都没发出去」时重试（见 emitted 字段）。
+		if !isCodexWriterConflict(err) || s.emitted.Load() != before {
+			return err
+		}
+		if attempt == codexWriterConflictAttempts {
+			break
+		}
+		log.Printf("[agent/codex] writer.conflict session=%s attempt=%d/%d action=retry", s.sessionKey, attempt, codexWriterConflictAttempts)
+		select {
+		case <-turnCtx.Done():
+			return turnCtx.Err()
+		case <-time.After(time.Duration(attempt) * codexWriterConflictBackoff):
+		}
 	}
-	if !completed {
-		// 通道关闭但没见到 TurnCompletedEvent：进程中途死亡，不能当成功。
-		return errors.New("codex response stream ended unexpectedly")
-	}
-	s.updateThreadIDFromThread()
-	return nil
+	return fmt.Errorf("%w（另一个 Codex 客户端正占用该会话，通常是 Codex 桌面版打开了同一个对话；在那边关闭该会话后重试）", lastErr)
+}
+
+// codex 的 thread writer 是**跨进程独占文件锁**（rollout/src/writer_lock.rs）。
+// 同一个 CODEX_HOME 下任何另一个 codex 进程（最典型的是 Codex 桌面版）把该 thread
+// 加载成 live recorder，就会按住锁直到它自己退出；此时 thread/resume 返回
+// "already has an active writer"。对方也可能只是在跑一个回合、很快就释放，
+// 所以先短暂重试；仍失败再把原因说清楚，而不是把 codex 的原始英文抛给用户。
+const codexWriterConflictAttempts = 4
+
+// var 而非 const：测试要把它压到毫秒级。
+var codexWriterConflictBackoff = time.Second
+
+func isCodexWriterConflict(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already has an active writer") ||
+		strings.Contains(msg, "already has a live local writer")
 }
 
 func (s *session) LoginChatGPTDeviceCode(ctx context.Context) error {
@@ -133,6 +175,7 @@ func (s *session) emitMessageDelta(msg *codexsdk.AgentMessageItem, textByID map[
 }
 
 func (s *session) emit(event types.Event) {
+	s.emitted.Add(1)
 	s.mu.RLock()
 	handler := s.onUpdate
 	s.mu.RUnlock()

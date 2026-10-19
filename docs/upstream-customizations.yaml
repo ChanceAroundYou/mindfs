@@ -6358,3 +6358,19 @@ groups:
       - 'server/internal/api/http.go:func corsPolicyAllows'
       - 'server/internal/api/http.go:func corsOriginAllowed'
       - 'server/internal/api/ws_upgrade.go:func (h *WSHandler) checkWSOrigin'
+
+  - id: G-JJ
+    title: Codex thread writer 冲突（跨客户端占用）短暂重试 + 可读报错
+    kind: fix
+    symptom: "在 mindfs 里给某个 codex 会话发消息，立刻弹 `codex thread error: app server error (-32600): thread <id> already has an active writer`，一个字都发不出去。实测同一台 pc-win 上，被 Codex 桌面版打开过的会话（如 理论讨论 / 01a14472）持续报这个错；桌面版没占用的会话（算法优化 / 01a13a41）能正常收发。"
+    why: "codex 的 thread writer 是**跨进程独占文件锁**（`$CODEX_HOME/thread-writer-locks/<thread-id>.lock`，codex-rs rollout/src/writer_lock.rs）。同一个 CODEX_HOME 下另一个 codex 进程（最典型的是 Codex 桌面版自己的 app-server）把某 thread 加载成 live recorder 后，会按住这把锁直到该进程退出 —— 实测 Codex 桌面版从 10-18 15:54 起一直持有 01a14472 的锁。mindfs 对同一 thread 发消息时要先 thread/resume，必然拿不到锁。上游没有重试也没有解释，用户只看到 codex 的原始英文。修复：冲突只在**本回合尚未发出任何事件**时重试（此时 resume 就失败了，重发不会重复写入），间隔 1s/2s/3s 共 4 次，覆盖「对方只是正在跑一个回合」；仍失败则明确告诉用户是另一个 Codex 客户端占用了该会话。一旦已有 delta 落地就不再重试，避免同一条用户消息写两遍。"
+    boundary: "只改 codex 适配器 SendMessage 的冲突重试与错误文案；不动 writer 锁本身、不动 thread/resume 协议、不动其它 agent（claude/acp）。锁被长期占用（另一个应用一直开着该会话）时仍然失败，只是报错可读 —— 不做自动 fork/换 thread，那会让会话静默分叉。"
+    files:
+      - server/internal/agent/codex/session.go
+      - server/internal/agent/codex/session_test.go
+    tests:
+      - server/internal/agent/codex/session_test.go
+    anchors:
+      - 'server/internal/agent/codex/session.go:func isCodexWriterConflict'
+      - 'server/internal/agent/codex/session.go:codexWriterConflictAttempts'
+      - 'server/internal/agent/codex/session.go:emitted'
