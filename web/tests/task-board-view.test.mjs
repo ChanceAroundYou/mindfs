@@ -152,8 +152,8 @@ assert.match(
 );
 assert.match(
   viewHeader,
-  /width: "22px",\s*height: "22px",\s*minWidth: "22px"/,
-  "toggle buttons must be 22×22",
+  /width: "28px",\s*height: "28px",\s*minWidth: "28px"/,
+  "toggle buttons must be 28×28",
 );
 // 2026-10-19 G-AR：图标按物理侧栏区分（圆角矩形 + 竖分隔线），不再按文件/会话内容区分。
 assert.match(

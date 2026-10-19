@@ -24,8 +24,8 @@ export const MobileSidebarToggleContext = createContext<MobileSidebarToggleValue
 const sidebarIcon = (side: "left" | "right") => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
-    width="14"
-    height="14"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
@@ -43,9 +43,9 @@ const sidebarIcon = (side: "left" | "right") => (
 );
 
 const toggleButtonStyle: React.CSSProperties = {
-  width: "22px",
-  height: "22px",
-  minWidth: "22px",
+  width: "28px",
+  height: "28px",
+  minWidth: "28px",
   borderRadius: "5px",
   border: "none",
   background: "transparent",
