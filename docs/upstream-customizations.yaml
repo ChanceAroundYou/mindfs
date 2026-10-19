@@ -6350,6 +6350,7 @@ groups:
       - 'cli/cmd/tray.go:func shouldShowTray'
       - 'cli/cmd/tray_types.go:trayMessage'
       - 'cli/cmd/tray_windows.go:func runTray'
+      - 'cli/cmd/tray_windows.go:func showTrayMenu'
       - 'cli/cmd/tray_windows.go:func loadTrayIcon'
       - 'cli/cmd/tray_icon.go:func pickTrayIconImage'
       - 'scripts/build-all.sh:-H=windowsgui'

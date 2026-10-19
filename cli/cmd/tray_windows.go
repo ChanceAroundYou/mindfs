@@ -48,8 +48,10 @@ var (
 	trayAppendProc     = trayUser32.NewProc("AppendMenuW")
 	trayTrackProc      = trayUser32.NewProc("TrackPopupMenu")
 	trayForegroundProc = trayUser32.NewProc("SetForegroundWindow")
+	trayAllowFgProc    = trayUser32.NewProc("AllowSetForegroundWindow")
 	trayCursorProc     = trayUser32.NewProc("GetCursorPos")
 	trayQuitProc       = trayUser32.NewProc("PostQuitMessage")
+	trayPostMsgProc    = trayUser32.NewProc("PostMessageW")
 
 	trayState struct {
 		addr   string
@@ -123,9 +125,14 @@ func showTrayMenu(hwnd uintptr) {
 	if ok, _, _ := trayCursorProc.Call(uintptr(unsafe.Pointer(&point))); ok == 0 {
 		point.X, point.Y = 0, 0
 	}
-	// 不置顶就点不动菜单项：这条消息是从托盘那边来的。
+	// 从任务计划/Run 键启动的进程不是前台进程，SetForegroundWindow 会被 Windows 静默拒绝，
+	// TrackPopupMenu 因而显示不出来 —— 先 AllowSetForegroundWindow(ASFW_ANY) 放行，再置顶。
+	const asfwAny = ^uintptr(0) // -1
+	trayAllowFgProc.Call(asfwAny)
 	trayForegroundProc.Call(hwnd)
 	trayTrackProc.Call(menu, tpmRightButton, uintptr(point.X), uintptr(point.Y), 0, hwnd, 0)
+	// 不发 WM_NULL，菜单在点别处后不会收起、下次右键也显示不出来；这是托盘菜单的标准收尾。
+	trayPostMsgProc.Call(hwnd, 0, 0, 0)
 }
 
 func openTrayPage() {
