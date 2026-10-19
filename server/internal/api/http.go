@@ -12,6 +12,7 @@ import (
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/nodeinfo"
+	"mindfs/server/internal/preferences"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -42,30 +43,40 @@ func (h *HTTPHandler) service() *usecase.Service {
 	return &usecase.Service{Registry: h.AppContext}
 }
 
+// corsPolicyAllows 是跨源判定的唯一实现：REST 中间件与 WebSocket 升级都走它。
+// 两边必须同口径 —— 分开写就会出现「REST 放行、WS 被拒」这种只坏一半的状态，
+// 而跨节点时页面在控制节点、WS 打到 worker，Origin 与 Host 必然不同。
+func corsPolicyAllows(mode, origin string, isListed func(string) bool) bool {
+	if mode == "" {
+		mode = "open"
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "open", "auto", "allow_all", "all", "*":
+		return origin != ""
+	case "allowlist", "whitelist":
+		return isListed(origin)
+	case "disabled", "off", "closed", "same_origin":
+		return false
+	default:
+		return origin != ""
+	}
+}
+
+func corsOriginAllowed(prefs *preferences.Store, origin string) bool {
+	mode := ""
+	if prefs != nil {
+		mode = prefs.CORSMode()
+	}
+	return corsPolicyAllows(mode, origin, func(o string) bool {
+		return prefs != nil && prefs.IsCORSOriginAllowed(o)
+	})
+}
+
 func (h *HTTPHandler) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
-		shouldEmit := false
 		emitOrigin := origin
-		prefs := h.AppContext.GetPreferences()
-		mode := ""
-		if prefs != nil {
-			mode = prefs.CORSMode()
-		}
-		if mode == "" {
-			mode = "open"
-		}
-		mode = strings.ToLower(strings.TrimSpace(mode))
-		switch mode {
-		case "open", "auto", "allow_all", "all", "*":
-			shouldEmit = origin != ""
-		case "allowlist", "whitelist":
-			shouldEmit = prefs != nil && prefs.IsCORSOriginAllowed(origin)
-		case "disabled", "off", "closed", "same_origin":
-			shouldEmit = false
-		default:
-			shouldEmit = origin != ""
-		}
+		shouldEmit := corsOriginAllowed(h.AppContext.GetPreferences(), origin)
 		if shouldEmit && emitOrigin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", emitOrigin)
 			w.Header().Set("Vary", "Origin")

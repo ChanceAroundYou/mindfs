@@ -26,6 +26,27 @@ const (
 
 var upgrader = websocket.Upgrader{}
 
+// checkWSOrigin 用跟 REST 层同一套 CORS 策略（见 corsPolicyAllows）。
+//
+// 上游 f1938188 把这里的 CheckOrigin 从「一律放行」改成 gorilla 默认的「同源」，
+// 单节点没事，多节点直接断：页面由控制节点提供，WS 直连 worker 节点，Origin 与
+// Host 必然不同，每一次跨节点连接都被拒成 403（body 只有 10 字节 "Forbidden"），
+// 表现为远端节点的会话打不开、正文空白、发不出消息。
+//
+// 为什么可以跟着 CORS 走：REST 层默认就是 open（任意 Origin 都回 ACAO，还带
+// credentials），WS 单独守同源挡不住任何东西 —— 恶意页面用 REST 就能做同样的事。
+// 真要收紧就在同一个偏好里收紧，两边一起收紧。
+func (h *WSHandler) checkWSOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true // 非浏览器客户端（脚本、curl）本来就不带 Origin
+	}
+	if h.AppContext == nil {
+		return true
+	}
+	return corsOriginAllowed(h.AppContext.GetPreferences(), origin)
+}
+
 // WSHandler manages JSON-RPC over WebSocket.
 type WSHandler struct {
 	AppContext      *AppContext
@@ -83,7 +104,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
-	conn, err := upgrader.Upgrade(w, r, nil)
+	wsUpgrader := upgrader
+	wsUpgrader.CheckOrigin = h.checkWSOrigin
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}

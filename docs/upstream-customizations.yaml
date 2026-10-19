@@ -6337,3 +6337,20 @@ groups:
       - 'cli/cmd/tray_types.go:trayMessage'
       - 'cli/cmd/tray_windows.go:func runTray'
       - 'server/internal/agent/probe_run.go:func shouldRunBackgroundRuntimeProbe'
+
+  - id: G-WSX
+    title: 跨节点 WebSocket 放行：Origin 判定跟 REST 层同一套 CORS 策略
+    kind: fix
+    symptom: "从主节点页面打开远端节点（如 pc-win）的会话时打不开：正文空白、没有用户消息、发不出消息，浏览器每秒重连一次。nginx 访问日志里那个节点的 /ws 全是 403（响应体只有 10 字节 \"Forbidden\"），而同源节点是 101。"
+    why: "上游 f1938188（e2ee security reinforce）把 upgrader 从 CheckOrigin 一律放行改成 gorilla 默认的同源判定。上游是单节点，同源天然成立；本 fork 是多节点，页面由控制节点提供、WS 直连各 worker（没有后端代理层），Origin 与 Host 必然不同，于是每一次跨节点连接都被拒。而且 nginx 侧救不了：worker 的 location 把 Host 改成 127.0.0.1:<port>（见 /etc/nginx/conf.d/mindfs-win.inc），Host 永远不等于页面 Origin。放行口径改成跟 REST 层共用同一套 CORS 策略（corsPolicyAllows，默认 open），理由是本 fork 的 REST 层默认就回 ACAO:*+credentials，WS 单独守同源挡不住任何东西；用户要收紧就在同一个偏好里收紧，两边一起收紧。"
+    boundary: "只改 WS 升级的 Origin 判定与 REST 中间件的判定复用；不动 E2EE/relay 的 proof 校验、不动 CORS 偏好的默认值与读写、不动单节点同源行为（同源仍放行）。"
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/ws_upgrade.go
+      - server/internal/api/ws_origin_test.go
+    tests:
+      - server/internal/api/ws_origin_test.go
+    anchors:
+      - 'server/internal/api/http.go:func corsPolicyAllows'
+      - 'server/internal/api/http.go:func corsOriginAllowed'
+      - 'server/internal/api/ws_upgrade.go:func (h *WSHandler) checkWSOrigin'
