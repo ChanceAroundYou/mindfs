@@ -18,6 +18,18 @@ import { protectedFetch, protectedJSON, withNodeRetry } from "../net/api";
 // 比留在类里更好测：调用方（SessionService 的方法）只是转发参数。
 // 注意 `getSession` 是其余几个函数的底座，必须留在同一模块。
 
+/**
+ * 导入外部会话是**长任务**：转录可达上百 MB（pc-win 实测 codex rollout 105MB / 160MB），
+ * 服务端要整份解析再逐条写 SQLite，耗时随转录大小走。不能套 net/api.ts 那个给扇出**读**
+ * 用的 10 秒节点存活 deadline —— 客户端会在服务端还在干活时先判失败，弹出会自动消失的
+ * `session.import_failed`；用户再点一次就多出一个同名会话。abort 还有第二重后果：连接一断，
+ * 服务端的请求 context 就被取消，块流从此写不进去（行照写），会话进了列表却只有行没有正文
+ * —— 机制见 G-Q 的「空壳行」。
+ * 自带 signal 即走 withRequestDeadline 的逃生口，30 分钟只给「节点真挂了」一个上界。
+ * 完整因果见 docs/upstream-customizations.yaml 的 G-J。
+ */
+const IMPORT_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+
 export async function fetchSessions(
   rootId: string,
   options?: FetchSessionsOptions & { nodeId?: string },
@@ -433,6 +445,8 @@ export async function importExternalSession(
       headers: {
         "Content-Type": "application/json",
       },
+      // 见 IMPORT_REQUEST_TIMEOUT_MS：导入是长任务，不能吃 10 秒的节点存活 deadline。
+      signal: AbortSignal.timeout(IMPORT_REQUEST_TIMEOUT_MS),
       body: JSON.stringify({
         root_id: rootId,
         agent,
@@ -470,6 +484,8 @@ export async function importExternalSessionsBatch(
       headers: {
         "Content-Type": "application/json",
       },
+      // 见 IMPORT_REQUEST_TIMEOUT_MS：串行导入 N 个会话，10 秒必然不够。
+      signal: AbortSignal.timeout(IMPORT_REQUEST_TIMEOUT_MS),
       body: JSON.stringify({
         root_id: rootId,
         agent,
