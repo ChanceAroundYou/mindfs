@@ -159,10 +159,6 @@ export function useAppFileWorkspaceState({
   );
   // 同上：返回值会被下游层与 JSX 组件按字面量 true 接收，不能拓宽成 boolean。
   const showHiddenFiles: true = true;
-  const [projectTreeTabRequest, setProjectTreeTabRequest] = useState<{
-    tab: ProjectTreeTab;
-    nonce: number;
-  } | null>(null);
   const [projectTreeTab, setProjectTreeTab] = useState<ProjectTreeTab>("files");
   const {
     worktreeItemsByRoot,
@@ -207,8 +203,8 @@ export function useAppFileWorkspaceState({
     status, setStatus, file, setFile, currentFileEditing, viewerSelection, setViewerSelection,
     attachedFileContext, setAttachedFileContext, pluginVersion, setPluginVersion, pluginLoading,
     setPluginLoading, pendingPluginTrust, setPendingPluginTrust, pluginBypass, setPluginBypass,
-    pluginQuery, setPluginQuery, pluginQueryRef, showHiddenFiles, projectTreeTabRequest,
-    setProjectTreeTabRequest, projectTreeTab, setProjectTreeTab, worktreeItemsByRoot,
+    pluginQuery, setPluginQuery, pluginQueryRef, showHiddenFiles,
+    projectTreeTab, setProjectTreeTab, worktreeItemsByRoot,
     worktreeLoadingByRoot, worktreeErrorByRoot, expandedWorktreeByRoot, worktreeStatusByPath,
     worktreeStatusLoadingByPath, loadProjectTreeWorktrees, loadProjectTreeWorktreeStatus,
     toggleProjectTreeWorktree, expandProjectTreeWorktree, refreshProjectTreeWorktrees,

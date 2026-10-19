@@ -80,7 +80,7 @@ export function AppRootView(props: AppRootViewProps) {
     interactionModeRef, isDrawerOpen, isLeftOpen, isMobile,
     isRightOpen, mainDirectoryError, mainView, mainViewRef,
     managedRootByIdRef, managedRootByKeyRef, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
-    pluginBypass, pluginContentRef, pluginLoading, projectTreeTab, projectTreeTabRequest,
+    pluginBypass, pluginContentRef, pluginLoading, projectTreeTab,
     refreshGitStatus, removeTaskInlineAttachment, rootEntries, saveTaskInlineEdit,
     scheduledAgentDialogOpen, scopedRootKey, selectedDir, selectedDirKey,
     selectedDirRef, selectedKanbanTaskId, selectedSession, sendShortcut,
@@ -180,7 +180,6 @@ sidebar={<
         projectAddMode={projectAddMode}
         projectAddOverlay={projectAddOverlay}
         projectTreeTab={projectTreeTab}
-        projectTreeTabRequest={projectTreeTabRequest}
         renderRootGitContent={renderRootGitContent}
         renderRootRelatedContent={renderRootRelatedContent}
         renderRootWorktreeContent={renderRootWorktreeContent}

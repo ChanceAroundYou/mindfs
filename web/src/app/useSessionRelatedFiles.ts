@@ -13,9 +13,8 @@ import { ManagedRootPayload } from "./appMisc";
 import { useSessionMetadata } from "./useSessionMetadata";
 import { useSessionPending } from "./useSessionPending";
 import { useRelatedFileDiff } from "./useRelatedFileDiff";
-import { scopeKey, scopeSessionKey } from "../shared/scope";
+import { scopeSessionKey } from "../shared/scope";
 import { sessionService, setCachedSessionRelatedFiles, type RelatedFile, type Session } from "../services/session";
-import type { ProjectTreeTab } from "../components/file/fileTreeTypes";
 
 export interface UseSessionRelatedFilesParams {
   activeBoundSessionKey: string | null;
@@ -35,8 +34,6 @@ export interface UseSessionRelatedFilesParams {
   selectedKanbanTaskId: string;
   selectedSession: SessionItem | null;
   selectedSessionRef: MutableRefObject<SessionItem | null>;
-  setExpanded: Dispatch<SetStateAction<string[]>>;
-  setProjectTreeTabRequest: Dispatch<SetStateAction<{ tab: ProjectTreeTab; nonce: number } | null>>;
   setTaskRelatedFilesById: Dispatch<SetStateAction<Record<string, RelatedFile[]>>>;
   updateSessionRelatedFilesForKey: ReturnType<typeof useSessionMetadata>["updateSessionRelatedFilesForKey"];
 }
@@ -60,25 +57,20 @@ export function useSessionRelatedFiles(params: UseSessionRelatedFilesParams) {
     selectedKanbanTaskId,
     selectedSession,
     selectedSessionRef,
-    setExpanded,
-    setProjectTreeTabRequest,
     setTaskRelatedFilesById,
     updateSessionRelatedFilesForKey,
   } = params;
 
   const handleSelectedSessionFileClick = useCallback(
     (target: string | RelatedFileClickTarget) => {
-      setProjectTreeTabRequest((prev) => ({
-        tab: "related",
-        nonce: (prev?.nonce || 0) + 1,
-      }));
+      // 只打开 diff，**不动左侧文件树**：不切页签、不展开项目。
+      // 以前这里会顺手把项目树切到「关联文件」页并展开根节点 —— 左侧栏于是自己
+      // 跳页（用户实测「又老是跳到关联文件」，2026-10-20）。左侧树只由用户
+      // 自己点。
       const root =
         (selectedSessionRef.current?.root_id as string | undefined) ||
         currentRootIdRef.current;
       if (!root) return;
-      setExpanded((prev) =>
-        Array.from(new Set([...prev, scopeKey(getNodeIdForRoot(root) ?? "", root)])),
-      );
       const file =
         typeof target === "string" ? { path: target } : target;
       void openRelatedFileDiff(root, file);

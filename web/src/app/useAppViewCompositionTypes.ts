@@ -171,7 +171,6 @@ export type UseAppViewCompositionParams = {
   setImportMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setInteractionMode: React.Dispatch<React.SetStateAction<"main" | "drawer">>;
   setPluginBypass: React.Dispatch<React.SetStateAction<boolean>>;
-  setProjectTreeTabRequest: React.Dispatch<React.SetStateAction<{ tab: ProjectTreeTab; nonce: number; } | null>>;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   setTaskCreateTemplateMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setTaskRelatedFilesById: React.Dispatch<React.SetStateAction<Record<string, RelatedFile[]>>>;

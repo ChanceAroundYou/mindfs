@@ -162,5 +162,54 @@ const rootViewSrc = fs.readFileSync(
 );
 assert.match(rootViewSrc, /projectTreeTab=\{projectTreeTab\}/, "AppRootView 必须把页签传下去");
 
+// ── 页签只能由用户自己点切：任何「自动联动」都不允许 ──────────────────
+//
+// 症状（2026-10-20 用户实测）：左侧栏老是跳到「关联文件」页。
+// 根因：点会话里的关联文件时，handleSelectedSessionFileClick 会顺手
+// setProjectTreeTabRequest({tab:"related"}) 把左侧项目树切过去（还展开根节点）。
+// 那个请求通道曾因为没人消费而「看起来无害」—— 页签改成受控后它就真的生效了，
+// 于是联动显形。用户要求：不要有任何联动，除非他自己点。
+const relatedFilesSrc = fs.readFileSync(
+  path.resolve(import.meta.dirname, "..", "src/app/useSessionRelatedFiles.ts"),
+  "utf8",
+);
+assert.doesNotMatch(
+  relatedFilesSrc,
+  /setProjectTreeTabRequest|tab: "related"/,
+  "点关联文件不得联动切页签（左侧栏自己跳页就是这么来的）",
+);
+assert.doesNotMatch(
+  relatedFilesSrc,
+  /setExpanded\(/,
+  "点关联文件不得联动展开项目树",
+);
+assert.doesNotMatch(
+  treeTypesSrc,
+  /projectTreeTabRequest/,
+  "页签请求通道必须整体删掉：留着就等于留了一条自动切页签的暗道",
+);
+for (const rel of [
+  "src/components/file/FileTree.tsx",
+  "src/components/app/FileTreePanel.tsx",
+  "src/app/AppRootView.tsx",
+  "src/app/useAppFileWorkspaceState.ts",
+  "src/app/useAppStateLayer.ts",
+  "src/app/useAppViewComposition.ts",
+  "src/app/useAppViewCompositionTypes.ts",
+]) {
+  const src = fs.readFileSync(path.resolve(import.meta.dirname, "..", rel), "utf8");
+  assert.doesNotMatch(
+    src,
+    /projectTreeTabRequest/,
+    `${rel} 不得再留页签请求通道（自动切页签的暗道）`,
+  );
+}
+// 唯一合法的切页签入口：用户点页签本身。
+const tabsSrc = fs.readFileSync(
+  path.resolve(import.meta.dirname, "..", "src/components/file/FileTreeProjectTabs.tsx"),
+  "utf8",
+);
+assert.match(tabsSrc, /onClick=\{\(\) => setProjectTreeTab\(value\)\}/, "页签只能由点击切换");
+
 console.log("project-tree-tab-and-root-toggle.test.mjs: OK");
 });

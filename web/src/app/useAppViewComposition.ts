@@ -83,7 +83,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     setCollapsedKanbanColumns, setCollapsedTaskCompletionGroups, setDrawerOpenForRoot, setEditDraftRequest,
     setExpanded, setExpandedTaskInputIds, setExternalFilterBound, setExternalImportAgent,
     setExternalSelectedKey, setGitHistoryExpandedByRoot, setGitStatusExpandedByRoot, setImportMenuOpen,
-    setInteractionMode, setPluginBypass, setProjectTreeTabRequest, setSelectedKanbanTaskId,
+    setInteractionMode, setPluginBypass, setSelectedKanbanTaskId,
     setTaskCreateTemplateMenuOpen, setTaskRelatedFilesById, setTaskSessionErrorDialog, setTaskTemplateActionMenuOpen,
     setTaskTemplateFilter, slashCommandResults, switchGitBranch, switchMainView,
     syncingSessionKeys, t, taskCreateTemplateMenuOpen, taskCreateTemplateMenuRef,
@@ -141,8 +141,6 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     selectedKanbanTaskId,
     selectedSession,
     selectedSessionRef,
-    setExpanded,
-    setProjectTreeTabRequest,
     setTaskRelatedFilesById,
     updateSessionRelatedFilesForKey,
   });

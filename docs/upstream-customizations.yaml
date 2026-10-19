@@ -6454,8 +6454,8 @@ groups:
   - id: G-JM
     title: 项目文件树的页签默认值与根行箭头（纯展开/收起）
     kind: fix
-    symptom: "打开左侧文件树侧边栏总是跳到 git 页（要默认「文件」页）；跨节点点项目名前的下拉箭头收起项目树没反应，必须先点进那个项目、再点一下才收得起（点箭头应直接展开/收起，跨节点也一样；点项目名才是进入项目）。2026-10-20 用户实测。"
-    why: "① 页签：FileTree 自己从 localStorage 读初始页签，而那个键**从来没人写** —— 于是侧边栏永远停在一个陈旧的 'git' 上；真相本来就在 App 层（useAppFileWorkspaceState，默认 'files'），改成受控即可，删掉死键。② 根行箭头：open_dir 的根行没有独立分支，跨节点时点箭头会一路落到「打开这个根」那段（selectRootNode + 换根 + 恢复绑定会话）—— 表现为「收起永远不生效，倒像先进了项目」。箭头必须是**纯展开/收起**（不切当前项目、不换选中节点、不进主面板），展开时要按**该根所属的节点**去取顶层目录（treeKey(nodeId, root, '.')），不能打当前激活节点。"
+    symptom: "打开左侧文件树侧边栏总是跳到 git 页（要默认「文件」页）；跨节点点项目名前的下拉箭头收起项目树没反应，必须先点进那个项目、再点一下才收得起（点箭头应直接展开/收起，跨节点也一样；点项目名才是进入项目）；点会话里的关联文件后左侧栏自己跳到「关联文件」页 —— 任何联动都不要，除非用户自己点。2026-10-20 用户实测。"
+    why: "① 页签：FileTree 自己从 localStorage 读初始页签，而那个键**从来没人写** —— 于是侧边栏永远停在一个陈旧的 'git' 上；真相本来就在 App 层（useAppFileWorkspaceState，默认 'files'），改成受控即可，删掉死键。② 根行箭头：open_dir 的根行没有独立分支，跨节点时点箭头会一路落到「打开这个根」那段（selectRootNode + 换根 + 恢复绑定会话）—— 表现为「收起永远不生效，倒像先进了项目」。箭头必须是**纯展开/收起**（不切当前项目、不换选中节点、不进主面板），展开时要按**该根所属的节点**去取顶层目录（treeKey(nodeId, root, '.')），不能打当前激活节点。③ 联动：切页签只该由用户自己点。点会话里的关联文件（handleSelectedSessionFileClick）曾会顺手 setProjectTreeTabRequest({tab:"related"}) 把左侧项目树切过去并展开根节点 —— 那条请求通道曾因为没人消费而「看起来无害」，页签改成受控后它就真的生效了，联动于是显形（症状「左侧栏老是跳到关联文件」）。现在整条请求通道（App 层状态、各层 prop、FileTree 的 effect）删掉：切页签只剩「用户点页签」这一条路。"
     boundary: "只改项目文件树的页签受控化与根行箭头的分支顺序；不动 FileTree 的行渲染、不动点项目名（onSelectRoot）那条「进入项目」的路、不动节点路由与选中节点语义。"
     files:
       - web/src/components/file/FileTree.tsx
@@ -6463,6 +6463,11 @@ groups:
       - web/src/components/app/FileTreePanel.tsx
       - web/src/app/AppRootView.tsx
       - web/src/app/openDirectoryAction.ts
+      - web/src/app/useSessionRelatedFiles.ts
+      - web/src/app/useAppViewComposition.ts
+      - web/src/app/useAppViewCompositionTypes.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useAppFileWorkspaceState.ts
       - web/tests/project-tree-tab-and-root-toggle.test.mjs
       - docs/plans/live-ask-user-badge.md
     tests:
@@ -6472,3 +6477,5 @@ groups:
       - 'web/src/app/openDirectoryAction.ts:const ensureRootEntriesLoaded = async (targetRoot: string, nodeId: string) => {'
       - 'web/src/components/file/FileTree.tsx:projectTreeTab = "files"'
       - 'web/src/app/useAppFileWorkspaceState.ts:useState<ProjectTreeTab>("files")'
+      # 唯一的切页签入口：用户点页签本身；没有「外部请求切页签」的通道。
+      - 'web/src/components/file/FileTreeProjectTabs.tsx:onClick={() => setProjectTreeTab(value)}'

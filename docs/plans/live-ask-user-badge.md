@@ -7,6 +7,7 @@
 - **A. 问号徽标实时亮灭**（原计划主体，跨节点）
 - **B. 左侧文件树侧边栏默认打开「文件」页**，不要跳 git 页
 - **C. 项目名前的下拉箭头 = 纯展开/收起**（跨节点也一样）；点项目名才是进入项目
+- **D. 页签不要有任何联动**：切页签只由用户自己点（点会话里的关联文件不许把左侧栏切到「关联文件」）
 
 ---
 
@@ -89,12 +90,26 @@
   节点**取顶层目录（缓存键 `treeKey(nodeId, root, ".")`，与文件树里根行的子节点键同源）。
 - 点项目名（`onSelectRoot`）那条「进入项目」的路不动。
 
+## D. 页签不许自动联动
+
+- 症状（2026-10-20 用户实测）：点会话里的关联文件后，左侧栏老是跳到「关联文件」页。
+  用户要求：**不要有任何联动，除非我主动点击**。
+- 根因：`handleSelectedSessionFileClick`（点关联文件）会顺手
+  `setProjectTreeTabRequest({tab:"related"})` 把左侧项目树切过去，还展开根节点。
+  那条请求通道曾因为**没人消费**而「看起来无害」—— 页签改成受控（B 步）之后它就
+  真的生效了，联动于是显形。
+- 改法：整条「外部请求切页签」通道删掉 —— App 层状态（`useAppFileWorkspaceState`）、
+  各层 prop（`useAppStateLayer` / `useAppViewComposition*` / `AppRootView` /
+  `FileTreePanel` / `FileTree`）、`FileTree` 里消费请求的 effect。点关联文件现在只做
+  一件事：打开 diff。切页签只剩「用户点页签」这一条路。
+
 ## 验收
 
 1. 提问 → 徽标在**列表**里亮（不必点进对话），A、B 两个节点都能看到。
 2. 回答 → 徽标立刻灭（同节点毫秒级，跨节点 ≤5s）。
 3. 打开左侧文件树侧边栏 → 停在「文件」页。
 4. 跨节点点项目名前的箭头 → 直接展开/收起；点项目名 → 进入项目。
+5. 点会话里的关联文件 → 左侧栏页签**不变**（不跳「关联文件」）。
 
 ## 门禁与收尾
 
@@ -102,7 +117,7 @@
   - `server/internal/api/session_aux_flags_broadcast_test.go`（aux 写入广播 / 答题清位）
   - `web/tests/ask-user-badge-live.test.mjs`（轮询合并覆盖徽标 + 列表项就地打补丁）
   - `web/tests/project-tree-tab-and-root-toggle.test.mjs`（页签默认值 + 根行箭头纯展开）
-- 登记：`docs/upstream-customizations.yaml` —— G-AD 补徽标实时亮灭；新组 G-JM 收 B/C。
+- 登记：`docs/upstream-customizations.yaml` —— G-AD 补徽标实时亮灭；新组 G-JM 收 B/C/D。
 - `make test` + tsc + web 测试 + `make check-upstream`（**提交后**再跑，它只比已提交文件）。
 - 提交信息带 `Scope: G-AD, G-JM`。
 - 分发：WSL/fn 走 `scripts/deploy-all.sh`；pc-win 走手工交叉编译路径；本机由用户重启。

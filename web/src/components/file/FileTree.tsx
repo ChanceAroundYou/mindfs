@@ -87,7 +87,6 @@ function FileTreeInner({
   renderRootExtraContent,
   renderRootWorktreeContent,
   renderRootRelatedContent,
-  projectTreeTabRequest = null,
   agentConfigSwitchRequest = null,
   onAgentConfigSwitched,
   projectTreeTab = "files",
@@ -141,17 +140,7 @@ function FileTreeInner({
     },
     [onProjectTreeTabChange],
   );
-  // 外部请求切页签（打开会话的「相关文件」时请求 related）—— 以前这个请求根本
-  // 没人消费，现在有唯一真相了，直接落到 App 层。
-  React.useEffect(() => {
-    const tab = projectTreeTabRequest?.tab;
-    if (!tab || !projectTreeTabRequest?.nonce) {
-      return;
-    }
-    handleTabChange(tab);
-    // 只认 nonce 的变化：同一个请求重复触发不应反复切。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectTreeTabRequest?.nonce]);  const handleTabRefresh = React.useCallback(
+  const handleTabRefresh = React.useCallback(
     () => onRefresh?.(projectTreeTab),
     [onRefresh, projectTreeTab],
   );

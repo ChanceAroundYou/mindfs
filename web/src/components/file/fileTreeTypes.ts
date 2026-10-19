@@ -53,7 +53,6 @@ export type FileTreeProps = {
   renderRootExtraContent?: (rootId: string) => ReactNode;
   renderRootWorktreeContent?: (rootId: string) => ReactNode;
   renderRootRelatedContent?: (rootId: string) => ReactNode;
-  projectTreeTabRequest?: { tab: ProjectTreeTab; nonce: number } | null;
   agentConfigSwitchRequest?: AgentConfigSwitchRequest | null;
   onAgentConfigSwitched?: (agent: string) => void;
   /**

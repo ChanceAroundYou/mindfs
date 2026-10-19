@@ -57,7 +57,6 @@ export interface FileTreePanelProps {
   projectAddMode: ProjectAddMode | null;
   projectAddOverlay: React.JSX.Element | null;
   projectTreeTab: ProjectTreeTab;
-  projectTreeTabRequest: { tab: ProjectTreeTab; nonce: number; } | null;
   renderRootGitContent: (root: string) => ReactNode;
   renderRootRelatedContent: (root: string) => ReactNode;
   renderRootWorktreeContent: (root: string) => ReactNode;
@@ -119,7 +118,6 @@ export function FileTreePanel(props: FileTreePanelProps) {
   const projectAddMode = props.projectAddMode;
   const projectAddOverlay = props.projectAddOverlay;
   const projectTreeTab = props.projectTreeTab;
-  const projectTreeTabRequest = props.projectTreeTabRequest;
   const renderRootGitContent = props.renderRootGitContent;
   const renderRootRelatedContent = props.renderRootRelatedContent;
   const renderRootWorktreeContent = props.renderRootWorktreeContent;
@@ -231,7 +229,6 @@ export function FileTreePanel(props: FileTreePanelProps) {
                 renderRootWorktreeContent={renderRootWorktreeContent}
                 renderRootRelatedContent={renderRootRelatedContent}
                 projectTreeTab={projectTreeTab}
-                projectTreeTabRequest={projectTreeTabRequest}
                 agentConfigSwitchRequest={agentConfigSwitchRequest}
                 onAgentConfigSwitched={(agentName) => {
                   if (agentName.trim().toLowerCase() === "codex") {
