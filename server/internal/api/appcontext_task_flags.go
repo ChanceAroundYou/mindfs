@@ -95,7 +95,12 @@ func (s *AppContext) updateTaskAuxFlagsFromEvent(rootID, sessionKey string, even
 		if !awaiting {
 			eventType = "aux_ask_user_answered"
 		}
-		s.updateTaskAuxFlagsForSession(rootID, sessionKey, kanban.TaskAuxFlagsPatch{AskUserWaiting: &value}, eventType)
+		patch := kanban.TaskAuxFlagsPatch{AskUserWaiting: &value}
+		s.updateTaskAuxFlagsForSession(rootID, sessionKey, patch, eventType)
+		// 会话行也必须镜像。任务行那条有 sess.TaskID 守卫（普通聊天会话根本写不进去），
+		// 而名字上方的问号徽标（SessionCardTopBadges）读的正是会话行的 aux_flags ——
+		// 少这一行，`ask_user_waiting` 只有清位没有置位，徽标永远不亮（2026-10-19 修）。
+		s.updateSessionAuxFlagsFromTaskPatch(rootID, sessionKey, patch)
 		return
 	}
 	patch := kanban.TaskAuxFlagsPatch{}

@@ -662,10 +662,11 @@ groups:
   - id: G-AD
     title: 会话列表 / 树 / 归档 / 搜索
     kind: feature
-    symptom: "会话列表切换项目后闪一下再出现；归档会话找不到入口；搜索跳不到命中片段。"
+    symptom: "会话列表切换项目后闪一下再出现；归档会话找不到入口；搜索跳不到命中片段；会话在等你回答时，名字上方的问号徽标不亮。"
     why: "sessionListMerge/sessionTree/sessionGroupDisplay 把多节点多项目的会话合并、建树、分组显示收敛成纯函数，便于测试；归档面板挂在列表侧栏。上游没有这些，退回上游实现会让列表在切项目/切节点时塌掉。"
     files:
       - web/src/components/session/ArchivedSessionsPanel.tsx
+      - server/internal/api/appcontext_task_flags.go
       - web/src/services/session/sessionListMerge.ts
       - web/src/services/session/sessionTree.ts
       - web/src/services/session/sessionGroupDisplay.ts
@@ -711,6 +712,12 @@ groups:
       # 名字上方仅放 worktree / 问号 / aux 状态；子代理折角是类型标识，固定留在名字前。
       - 'web/src/components/session/SessionCardTopBadges.tsx:if (isSubagent || !hasSessionTopBadges(session, isSubagent))'
       - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_LIFT_PX'
+      # 问号徽标的**数据源**：ask_user 事件必须镜像到会话行的 aux_flags。
+      # 2026-10-19 前这一支写完任务行就 return，镜像只挂在 plan/todo/task 那一支上，
+      # 而任务行那条有 sess.TaskID 守卫（普通聊天会话写不进去）—— 会话行的
+      # ask_user_waiting 只有清位没有置位，名字上方的问号是死代码。
+      - 'server/internal/api/appcontext_task_flags.go:s.updateSessionAuxFlagsFromTaskPatch(rootID, sessionKey, patch)'
+      - 'web/src/components/session/SessionCardTopBadges.tsx:session.aux_flags?.ask_user_waiting'
       # 只有选中行的底色向上拓展去包住状态徽标：就是内容盒那一张底，负外边距提顶、
       # 等量补进上内边距，名字不动、行高不变，横向也不比未借位的选中行宽。
       - 'web/src/components/session/SessionCard.tsx:(selected || hovered) && !editing && hasSessionTopBadges'
