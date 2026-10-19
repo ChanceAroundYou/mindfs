@@ -50,13 +50,23 @@ for PLATFORM in "${PLATFORMS[@]}"; do
     GOARM=7
   fi
 
+  # Windows 编成 GUI 子系统：控制台子系统程序被「本来就没有控制台」的启动方拉起时
+  # （任务计划、资源管理器双击、Run 键），Windows 会新建一个控制台窗口并一直显示 ——
+  # 用户看到的就是那个关不掉的黑框。这个窗口在进程内部藏不掉：Windows Terminal 是默认
+  # 终端时控制台被交接给它，GetConsoleWindow 拿到的是隐藏的假句柄。只有不分配控制台才
+  # 彻底没有黑框；CLI 输出由启动时的 AttachConsole 找回（cli/cmd/console_windows.go）。
+  PLATFORM_LDFLAGS="${LDFLAGS}"
+  if [[ "$GOOS" == "windows" ]]; then
+    PLATFORM_LDFLAGS="${LDFLAGS} -H=windowsgui"
+  fi
+
   CGO_ENABLED=0 \
     GOOS="$GOOS" \
     GOARCH="$GOARCH" \
     GOARM="$GOARM" \
     go build \
       -trimpath \
-      -ldflags "${LDFLAGS}" \
+      -ldflags "${PLATFORM_LDFLAGS}" \
       -o "${ROOT}/${TARGET}" \
       ./cli/cmd
 
