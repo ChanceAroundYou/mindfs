@@ -6496,3 +6496,36 @@ groups:
       - 'server/internal/api/http.go:var maxUploadFileRequestBytes int64 = 10 << 30'
       - 'server/internal/api/http_files.go:r.Body = http.MaxBytesReader(w, r.Body, maxUploadFileRequestBytes)'
       - 'server/internal/api/http_files.go:respondError(w, http.StatusRequestEntityTooLarge, errInvalidRequest("upload exceeds size limit"))'
+
+  - id: G-JO
+    title: 文件浏览器列表的逐条三点操作菜单（删除 / 重命名 / 移动）
+    kind: feature
+    symptom: "主区「文件」页里，删除/重命名/移动只能对**当前目录**做（在顶栏的「⋯」里），想动某个具体文件或子目录没有入口——只能进那个目录、对目录本身操作，或者干脆去终端。上游的文件列表行没有任何操作入口。"
+    why: "文件操作能力其实早就齐了：后端 POST /api/file/operation 对**任意相对项目根的路径**都支持 delete / rename / move（server/internal/api/usecase/text_edit.go:24），前端也早有 FileOperationItems（菜单条目）、useFileOperationActions（删除走应用内 confirmDialog、重命名走 promptDialog）、MoveFilePopover（目录浏览面板）、MoreMenuButton（系统内既有的三点按钮）。缺的只是**入口**，而且路径语义天然对齐：FileEntry.path 由后端 fs.ListEntries 生成，就是相对项目根的路径（server/internal/fs/fs.go:43），与接口的 path 一致 → 逐条复用零改造、零后端改动。本组把行渲染从 DefaultListView 抽出成 FileEntryRow，行尾接 FileEntryMenu（复用上述控件，不另造、不用原生菜单）。两个必须处理的技术点：① 列表容器是 overflow:auto、行上还有 translateZ(0)（会给 position:fixed 造包含块），弹层必须 portal 到 body + 视口坐标定位，否则必被裁掉；② 行点击 = 打开文件/进目录，三点按钮必须 stopPropagation。定位算法（放下方/放不下翻上方/夹进视口/右边缘对齐）从 Select 的 useSelect 里抽成共享的 shared/anchoredMenuPosition + hooks/useAnchoredMenuPosition，Select 改为调用它——去重，不是新行为。"
+    boundary: "只做主区文件浏览器列表（DefaultListView）的逐条操作入口与其定位基建；不动后端接口语义、不动左栏项目树（跨节点需 node 路由）、不动文件预览页（那里已有三点菜单）、不做下载/复制路径/新建文件夹；Select 侧只是把同一段定位算法换成共享实现，行为不变。"
+    files:
+      - web/src/components/file/FileEntryMenu.tsx
+      - web/src/components/file/FileEntryRow.tsx
+      - web/src/components/file/DefaultListView.tsx
+      - web/src/components/common/useSelect.ts
+      - web/src/components/common/Select.tsx
+      - web/src/hooks/useAnchoredMenuPosition.ts
+      - web/src/shared/anchoredMenuPosition.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - web/tests/source-map-modules-components.mjs
+      - web/tests/file-entry-row-menu.test.mjs
+      - web/tests/anchored-menu-position.test.mjs
+      - docs/plans/file-entry-row-menu.md
+      - docs/plans/README.md
+    tests:
+      - web/tests/file-entry-row-menu.test.mjs
+      - web/tests/anchored-menu-position.test.mjs
+    anchors:
+      - 'web/src/components/file/FileEntryMenu.tsx:<FileOperationItems'
+      - 'web/src/components/file/FileEntryMenu.tsx:<MoveFilePopover'
+      - 'web/src/components/file/FileEntryMenu.tsx:createPortal('
+      - 'web/src/components/file/FileEntryRow.tsx:<FileEntryMenu'
+      - 'web/src/components/file/DefaultListView.tsx:<FileEntryRow'
+      - 'web/src/hooks/useAnchoredMenuPosition.ts:export function useAnchoredMenuPosition'
+      - 'web/src/shared/anchoredMenuPosition.ts:export function computeAnchoredMenuPosition'
