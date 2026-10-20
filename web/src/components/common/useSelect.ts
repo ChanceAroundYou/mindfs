@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAnchoredMenuPosition } from "../../hooks/useAnchoredMenuPosition";
 
 export type SelectOption<T extends string = string> = {
   value: T;
@@ -41,8 +42,6 @@ export function useSelect<T extends string = string>({
 }: SelectProps<T>) {
   const accentHex = String(accentColor || "").trim() || "#3b82f6";
   const [isOpen, setIsOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const [positionTick, setPositionTick] = useState(0);
   const [highlight, setHighlight] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -52,19 +51,7 @@ export function useSelect<T extends string = string>({
   // 收起态跟展开的选项列表保持同一套字色，否则列表一关颜色就没了。
   const selectedColor = String(selected?.color || "").trim();
 
-  // 视口变化时重算（软键盘弹出 / 窗口缩放会改变可用高度）
-  useEffect(() => {
-    if (!isOpen) return;
-    const recompute = () => setPositionTick((tick) => tick + 1);
-    window.visualViewport?.addEventListener("resize", recompute);
-    window.addEventListener("resize", recompute);
-    window.addEventListener("scroll", recompute, true);
-    return () => {
-      window.visualViewport?.removeEventListener("resize", recompute);
-      window.removeEventListener("resize", recompute);
-      window.removeEventListener("scroll", recompute, true);
-    };
-  }, [isOpen]);
+  // 视口变化时重算（软键盘弹出 / 窗口缩放会改变可用高度）——见 useAnchoredMenuPosition。
 
   useEffect(() => {
     if (disabled) setIsOpen(false);
@@ -92,32 +79,14 @@ export function useSelect<T extends string = string>({
     setHighlight(options.findIndex((item) => item.value === value));
   }, [isOpen, options, value]);
 
-  useLayoutEffect(() => {
-    if (!isOpen || !dropdownRef.current || !menuRef.current) return;
-    const anchor = dropdownRef.current.getBoundingClientRect();
-    const menu = menuRef.current.getBoundingClientRect();
-    const viewport = window.visualViewport;
-    const viewportLeft = viewport?.offsetLeft ?? 0;
-    const viewportTop = viewport?.offsetTop ?? 0;
-    const viewportWidth = viewport?.width ?? window.innerWidth;
-    const viewportHeight = viewport?.height ?? window.innerHeight;
-
-    // 右边缘对齐触发按钮右边缘，再夹进视口
-    const left = Math.max(
-      viewportLeft + MENU_MARGIN,
-      Math.min(anchor.right - menu.width, viewportLeft + viewportWidth - menu.width - MENU_MARGIN),
-    );
-    // 默认放下方；下方放不下就翻到上方
-    const below = anchor.bottom + MENU_MARGIN;
-    const above = anchor.top - menu.height - MENU_MARGIN;
-    const fitsBelow = below + menu.height <= viewportTop + viewportHeight - MENU_MARGIN;
-    const top = fitsBelow ? below : Math.max(viewportTop + MENU_MARGIN, above);
-    setPos((current) => (
-      current && Math.abs(current.top - top) < 0.5 && Math.abs(current.left - left) < 0.5
-        ? current
-        : { top, left }
-    ));
-  }, [isOpen, positionTick, options.length, value]);
+  // 菜单位置（放下方 / 放不下翻上方 / 夹进视口）由共享 hook 统一算。
+  const { position: pos, reset } = useAnchoredMenuPosition({
+    open: isOpen,
+    anchorRef: dropdownRef,
+    menuRef,
+    margin: MENU_MARGIN,
+    deps: [options.length, value],
+  });
 
   const pick = useCallback((option: SelectOption<T>) => {
     if (option.disabled) return;
@@ -129,7 +98,7 @@ export function useSelect<T extends string = string>({
     isOpen,
     setIsOpen,
     pos,
-    setPos,
+    reset,
     highlight,
     setHighlight,
     dropdownRef,

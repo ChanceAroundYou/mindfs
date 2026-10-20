@@ -30,7 +30,7 @@ export function Select<T extends string = string>({
     isOpen,
     setIsOpen,
     pos,
-    setPos,
+    reset,
     highlight,
     setHighlight,
     dropdownRef,
@@ -174,7 +174,7 @@ export function Select<T extends string = string>({
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           if (disabled) return;
-          setPos(null);
+          reset();
           setIsOpen((open) => !open);
         }}
         onKeyDown={onKeyDown}
