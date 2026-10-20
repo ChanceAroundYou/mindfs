@@ -6479,3 +6479,20 @@ groups:
       - 'web/src/app/useAppFileWorkspaceState.ts:useState<ProjectTreeTab>("files")'
       # 唯一的切页签入口：用户点页签本身；没有「外部请求切页签」的通道。
       - 'web/src/components/file/FileTreeProjectTabs.tsx:onClick={() => setProjectTreeTab(value)}'
+
+  - id: G-JN
+    title: 上传体积上限（后端 1g + 超限回 413 而不是「invalid multipart form」）
+    kind: fix
+    symptom: "在文件面板给**远程节点**（pc / fn，即经 pc.xiaokubao.space、fn.xiaokubao.space 反代的那两个 worker）上传超过 1MB 的文件，浏览器直接 413 —— 请求压根到不了 mindfs。反过来，home 本机节点因为 nginx 里写着 client_max_body_size 1g，同样的文件能传；于是「同一个文件，换个节点就传不上去」。另外上传超过 64MB 时后端回的是 400 「invalid multipart form」，用户看着像格式错。2026-10-20 用户实测（1.29MB 的 jpg → 413）。"
+    why: "① nginx 侧：home vhost 在 home/mindfs-locations.inc 里显式写了 client_max_body_size 1g，而**兜底转发**的 vhost（servers/pc.conf、servers/fn.conf）走 common/proxy.conf，那里没有这一句 —— nginx 默认上限是 1m，于是超过 1MB 的请求在反代层就被 413 挡掉，日志里只有一句 'client intended to send too large body'，请求从未到达上游。不能把这句写进 common/proxy.conf：home/bookapi.conf 在同一个 location 里另有 10G 的 client_max_body_size，同 context 重复会让 nginx -t 直接报错。② 后端侧：/api/upload 的请求体上限是 64MB，比 nginx 的 1g 小一截；超限时 ParseMultipartForm 返回的 MaxBytesError 被当成「表单不合法」回 400，用户看不出是体积问题。现在上限对齐到 1g，超限单独回 413；解析时留在内存里的部分压到 32MB，更大的部分落临时文件，不至于把 1g 塞进 RAM。"
+    boundary: "只改上传请求体的体积上限与超限时的状态码/文案；不动上传的落盘路径、文件名处理、文件数量上限（20）、不动 JSON 配置接口那几处 64MB 的 LimitReader、不动前端上传代码。"
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_files.go
+      - server/internal/api/http_files_upload_limit_test.go
+    tests:
+      - server/internal/api/http_files_upload_limit_test.go
+    anchors:
+      - 'server/internal/api/http.go:var maxUploadFileRequestBytes int64 = 1 << 30'
+      - 'server/internal/api/http_files.go:r.Body = http.MaxBytesReader(w, r.Body, maxUploadFileRequestBytes)'
+      - 'server/internal/api/http_files.go:respondError(w, http.StatusRequestEntityTooLarge, errInvalidRequest("upload exceeds size limit"))'

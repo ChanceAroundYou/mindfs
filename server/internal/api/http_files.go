@@ -140,8 +140,14 @@ func (h *HTTPHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("root required"))
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadRequestBytes)
-	if err := r.ParseMultipartForm(maxUploadRequestBytes); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadFileRequestBytes)
+	if err := r.ParseMultipartForm(maxUploadMemoryBytes); err != nil {
+		// 超限是用户的错，给个说得清的 413；别再回一句 "invalid multipart form"。
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			respondError(w, http.StatusRequestEntityTooLarge, errInvalidRequest("upload exceeds size limit"))
+			return
+		}
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid multipart form"))
 		return
 	}

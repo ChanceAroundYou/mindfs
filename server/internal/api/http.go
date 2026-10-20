@@ -30,6 +30,7 @@ type HTTPHandler struct {
 
 const (
 	maxUploadRequestBytes = 64 << 20
+	maxUploadMemoryBytes  = 32 << 20
 	maxUploadFileCount    = 20
 	sessionListPageSize   = 50
 	multiRootSessionLimit = 6
@@ -38,6 +39,12 @@ const (
 	clientIDHeaderName    = "X-MindFS-Client-ID"
 	localCLIHeaderName    = "X-MindFS-Local-CLI-Token"
 )
+
+// maxUploadFileRequestBytes 是文件上传（/api/upload）整个请求体的上限。
+// 1g 是为了跟 nginx 的 client_max_body_size 1g 对齐 —— 上游放行 1g、后端只收
+// 64MB 时，超限请求会得到一句没头没脑的 "invalid multipart form"。
+// 做成 var 是为了测试里能临时改小（见 http_files_upload_limit_test.go）。
+var maxUploadFileRequestBytes int64 = 1 << 30
 
 func (h *HTTPHandler) service() *usecase.Service {
 	return &usecase.Service{Registry: h.AppContext}
