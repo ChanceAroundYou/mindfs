@@ -41,10 +41,10 @@ const (
 )
 
 // maxUploadFileRequestBytes 是文件上传（/api/upload）整个请求体的上限。
-// 1g 是为了跟 nginx 的 client_max_body_size 1g 对齐 —— 上游放行 1g、后端只收
-// 64MB 时，超限请求会得到一句没头没脑的 "invalid multipart form"。
+// 10g 是为了跟 nginx 的 client_max_body_size 10g 对齐 —— 上游放行多少，后端就
+// 收多少，否则超限请求会得到一句没头没脑的 "invalid multipart form"。
 // 做成 var 是为了测试里能临时改小（见 http_files_upload_limit_test.go）。
-var maxUploadFileRequestBytes int64 = 1 << 30
+var maxUploadFileRequestBytes int64 = 10 << 30
 
 func (h *HTTPHandler) service() *usecase.Service {
 	return &usecase.Service{Registry: h.AppContext}
