@@ -163,6 +163,8 @@ export const COMPONENT_MODULES = {
     "src/components/file/DirectorySortMenu.tsx",
     "src/components/file/Breadcrumbs.tsx",
     "src/components/file/listViewIcons.tsx",
+    "src/components/file/FileEntryRow.tsx",
+    "src/components/file/FileEntryMenu.tsx",
   ],
   "src/components/DefaultListViewMenu.tsx": [
     "src/components/file/DefaultListViewMenu.tsx",
@@ -223,6 +225,8 @@ export const COMPONENT_MODULES = {
   "src/components/common/Select.tsx": [
     "src/components/common/Select.tsx",
     "src/components/common/useSelect.ts",
+    "src/hooks/useAnchoredMenuPosition.ts",
+    "src/shared/anchoredMenuPosition.ts",
   ],
   "src/components/InlineTokenText.tsx": ["src/components/common/InlineTokenText.tsx"],
   "src/components/NoWorktreeIcon.tsx": ["src/components/common/NoWorktreeIcon.tsx"],

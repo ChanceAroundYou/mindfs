@@ -2,14 +2,9 @@ import React from "react";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { FileOperationItems, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";
 import { DefaultListViewMenu } from "./DefaultListViewMenu";
+import { FileEntryRow } from "./FileEntryRow";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { Breadcrumbs } from "./Breadcrumbs";
-import {
-  FileEntryIcon,
-  GitBranchMenuIcon,
-  formatCompactTime,
-  formatCompactSize,
-} from "./listViewIcons";
 import { useResponsive } from "../../hooks/useResponsive";
 import {
   DIRECTORY_SORT_OPTIONS,
@@ -390,64 +385,16 @@ export function DefaultListView({
               }}
             >
               {sortedEntries.map((entry) => (
-                <div
+                <FileEntryRow
                   key={entry.path}
-                  onClick={() => onItemClick?.(entry)}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid transparent",
-                    borderRadius: "8px",
-                    padding: "6px 10px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                    cursor: "pointer",
-                    transform: "translateZ(0)",
-                    willChange: "background-color",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(0, 0, 0, 0.03)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                  }}
-                >
-                  <FileEntryIcon entry={entry} />
-                  <div
-                    style={{
-                      minWidth: 0,
-                      flex: 1,
-                      fontWeight: 500,
-                      fontSize: "13px",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    {entry.name}
-                  </div>
-                  {showCompactMeta ? (
-                    <div
-                      style={{
-                        flexShrink: 0,
-                        minWidth: "76px",
-                        textAlign: "right",
-                        fontSize: "11px",
-                        color: "var(--text-secondary)",
-                        opacity: 0.88,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {sortMode === "mtime-desc" || sortMode === "mtime-asc"
-                        ? formatCompactTime(entry.mtime)
-                        : !entry.is_dir
-                          ? formatCompactSize(entry.size)
-                          : ""}
-                    </div>
-                  ) : null}
-                </div>
+                  entry={entry}
+                  sortMode={sortMode}
+                  showCompactMeta={showCompactMeta}
+                  onItemClick={onItemClick}
+                  root={root}
+                  rootPath={rootPath}
+                  onFileOperationComplete={onFileOperationComplete}
+                />
               ))}
             </div>
           </div>

@@ -126,6 +126,7 @@ export const zhCNProjects = {
   "fileOperation.delete": "删除",
   "fileOperation.download": "下载",
   "fileOperation.menu": "文件操作",
+  "fileOperation.menuFor": "文件操作：{name}",
   "fileOperation.rename": "重命名",
   "fileOperation.namePrompt": "请输入新名称",
   "fileOperation.move": "移动",

@@ -126,6 +126,7 @@ export const enUSProjects = {
   "fileOperation.delete": "Delete",
   "fileOperation.download": "Download",
   "fileOperation.menu": "File actions",
+  "fileOperation.menuFor": "File actions: {name}",
   "fileOperation.rename": "Rename",
   "fileOperation.namePrompt": "Enter a new name",
   "fileOperation.move": "Move",
