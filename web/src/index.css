@@ -1296,6 +1296,34 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
   background: #000;
 }
 
+/* 网页预览：沙箱 iframe 整高铺满，页面自己滚。 */
+.document-preview-html {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* 视频预览：整高居中，video 自己按比例缩。 */
+.document-preview-video {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.document-preview-video video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+}
+
 .document-preview-pdf {
   display: flex;
   flex-direction: column;

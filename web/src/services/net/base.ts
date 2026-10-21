@@ -96,6 +96,32 @@ function withAccountUser(url: string): string {
   return appendQuery(url, `user=${encodeURIComponent(name)}`);
 }
 
+/**
+ * 路径式端点用的账户段。
+ *
+ * 与 withAccountUser 同一条规则：同源用账户 id，跨机器用用户名
+ * （账户表每台机器独立，id 带不过去；用户名是跨机器唯一能对齐的东西）。
+ *
+ * 与查询串式的差别只有一处：这里拿不到 id 时退回用户名（服务端 id 和用户名都认），
+ * 而 withAccountUser 是干脆不带账户。路径式没有账户段就取不到文件，
+ * 退回用户名比掉回主账户准。
+ *
+ * 空串表示没有账户 —— 调用方要自己处理（多数是「预览不出来，请下载」）。
+ */
+export function accountSegmentFor(url: string): string {
+  const user = currentUser();
+  if (!user) {
+    return "";
+  }
+  if (isSameServerAsPage(url)) {
+    const id = String(user.id || "").trim();
+    if (id) {
+      return id;
+    }
+  }
+  return String(user.username || "").trim();
+}
+
 /** 不带账户参数的基础路径；appURL/wsURL 复用它，避免 user= 被塞到参数前面。 */
 function basePath(path: string, nodeId?: string): string {
   const pathname = ensureLeadingSlash(path);
@@ -106,6 +132,20 @@ function basePath(path: string, nodeId?: string): string {
   // under /mindfs even when no base URL (e.g. native shell fallback or relative)
   if (DEPLOY_PREFIX) return withDeployPrefix(pathname);
   return pathname;
+}
+
+/**
+ * 路径式端点的基础路径（**不带**账户查询串 —— 账户在路径段里）。
+ *
+ * 与 appPath 的区别只有这一个：appPath 会注入 user=，而路径式端点必须把账户
+ * 放进路径（浏览器解析相对 URL 时会丢查询串），再带一份 user= 就是两处真相。
+ */
+export function appBasePath(nodeId?: string): string {
+  const apiBaseURL = getApiBaseURL(nodeId);
+  if (apiBaseURL) {
+    return apiBaseURL.replace(/\/+$/, "");
+  }
+  return DEPLOY_PREFIX.replace(/\/+$/, "");
 }
 
 /**

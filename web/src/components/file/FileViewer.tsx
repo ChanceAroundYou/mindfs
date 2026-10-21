@@ -4,6 +4,8 @@ import { CodeViewer } from "./CodeViewer";
 import { ImageViewer } from "./ImageViewer";
 import { BinaryViewer } from "./BinaryViewer";
 import { DocumentViewer } from "./DocumentViewer";
+import { HtmlPreview } from "./HtmlPreview";
+import { VideoPreview } from "./VideoPreview";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { useI18n } from "../../i18n/index";
 import { ViewHeader } from "../../layout/ViewHeader";
@@ -82,6 +84,7 @@ function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { 
 }
 
 export function FileViewer(props: FileViewerProps) {
+  const { t } = useI18n();
   const {
     editKey,
     editSession,
@@ -97,6 +100,10 @@ export function FileViewer(props: FileViewerProps) {
     ext,
     documentPreviewKind,
     usesMarkdownViewer,
+    htmlPreview,
+    htmlSourceMode,
+    setHtmlSourceMode,
+    videoKind,
     downloadToast,
     showToast,
     handleDownload,
@@ -105,6 +112,9 @@ export function FileViewer(props: FileViewerProps) {
   } = useFileViewer(props);
 
   const { file, rootPath, rootDisplayName, rootColor, onSessionClick, onPathClick, onFileClick, onFileOperationComplete, onFileUpdated, onFileSaved, editStore, isVisible = true } = props;
+
+  // 整高铺满的预览：powerpoint 与网页预览（网页要能滚，交给 iframe 自己滚）。
+  const fullHeightPreview = documentPreviewKind === "powerpoint" || (htmlPreview && !htmlSourceMode);
 
   if (!file) {
     return (
@@ -213,15 +223,37 @@ export function FileViewer(props: FileViewerProps) {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "2px", minWidth: 0, flexShrink: 0 }}>
           <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginLeft: "6px", flexShrink: 0, opacity: 0.7 }}>{(file.size / 1024).toFixed(1)} KB</div>
+          {htmlPreview && !editSession && (
+            <button
+              type="button"
+              onClick={() => setHtmlSourceMode(!htmlSourceMode)}
+              style={{
+                background: "transparent",
+                border: "1px solid var(--border-color)",
+                borderRadius: "6px",
+                color: "var(--text-secondary)",
+                cursor: "pointer",
+                fontSize: "11px",
+                lineHeight: "18px",
+                padding: "0 8px",
+              }}
+            >
+              {htmlSourceMode ? t("fileViewer.viewPreview") : t("fileViewer.viewSource")}
+            </button>
+          )}
           <span className="file-editor-actions" ref={setEditorActions} />
           {!editSession && <FileViewerMenu key={editKey} root={file.root || ""} rootPath={rootPath} path={file.path} downloading={isDownloading} onDownload={() => { void handleDownload(); }} onEdit={canEdit ? () => { void editStore.open(file.root!, file.path); } : undefined} onComplete={onFileOperationComplete} />}
         </div>
       </ViewHeader>
 
-      {editSession ? <FileEditor key={editKey} actionsTarget={editorActions} store={editStore} editKey={editKey} session={editSession} isVisible={isVisible} onFileUpdated={onFileUpdated} onFileSaved={onFileSaved} onExitError={(error) => showToast(error, false)} /> : <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: documentPreviewKind === "powerpoint" ? "hidden" : "auto", position: "relative", WebkitOverflowScrolling: "touch" }}>
-        <div style={{ minWidth: "100%", height: documentPreviewKind === "powerpoint" ? "100%" : undefined, display: "block", background: "transparent" }}>
+      {editSession ? <FileEditor key={editKey} actionsTarget={editorActions} store={editStore} editKey={editKey} session={editSession} isVisible={isVisible} onFileUpdated={onFileUpdated} onFileSaved={onFileSaved} onExitError={(error) => showToast(error, false)} /> : <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: fullHeightPreview ? "hidden" : "auto", position: "relative", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ minWidth: "100%", height: fullHeightPreview ? "100%" : undefined, display: "block", background: "transparent" }}>
           {documentPreviewKind ? (
             <DocumentViewer key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={documentPreviewKind} />
+          ) : htmlPreview && !htmlSourceMode ? (
+            <HtmlPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} />
+          ) : videoKind ? (
+            <VideoPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={videoKind} />
           ) : file.mime?.startsWith("image/") || [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext.toLowerCase()) ? (
             <div style={{ padding: "24px 16px" }}><ImageViewer path={file.path} root={file.root} /></div>
           ) : file.encoding === "binary" ? (

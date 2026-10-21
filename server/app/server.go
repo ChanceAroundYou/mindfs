@@ -136,7 +136,8 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 
 	mux := http.NewServeMux()
 	inner := http.NewServeMux()
-	inner.Handle("/", httpRoutes)
+	// WithRawAccountPath 必须在 ScopedRouter 之前：账户段要在派发时就定下来。
+	inner.Handle("/", api.WithRawAccountPath(httpRoutes))
 	inner.Handle("/ws", wsRoutes)
 	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), inner))
 

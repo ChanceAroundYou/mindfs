@@ -32,6 +32,9 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Delete("/api/users/{id}", h.handleUserDelete)
 	r.Get("/api/tree", h.handleTree)
 	r.Get("/api/file", h.handleFile)
+	// 原始资源（路径式）：网页预览的相对资源要靠路径才能解析到同目录文件。
+	// 账户段由 WithRawAccountPath 中间件从路径里搬进 user=。
+	r.Get("/api/file/raw/{root}/*", h.handleRawAsset)
 	r.Put("/api/file", h.handleFileSave)
 	r.Post("/api/file", h.handleFileCreate)
 	r.Post("/api/file/operation", h.handleFileOperation)

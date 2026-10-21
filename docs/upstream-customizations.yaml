@@ -6529,3 +6529,45 @@ groups:
       - 'web/src/components/file/DefaultListView.tsx:<FileEntryRow'
       - 'web/src/hooks/useAnchoredMenuPosition.ts:export function useAnchoredMenuPosition'
       - 'web/src/shared/anchoredMenuPosition.ts:export function computeAnchoredMenuPosition'
+
+  - id: G-JP
+    title: HTML 网页与视频文件的浏览（路径式原始资源端点 + 沙箱预览）
+    kind: feature
+    symptom: "文件浏览器里点开 .html 只看到一段源码、点开 .mp4 落到「无法预览」——上游没有任何网页/视频预览。上游唯一的原始内容出口是 GET /api/file?raw=1，它靠查询串里的 user= 做账户分区，而网页里的相对 URL（style.css、img/x.png）在浏览器里解析时会丢掉查询串，直接复用会掉回主账户取资源。"
+    why: "要让 HTML 真正「像个网页」必须有相对资源可用，因此需要一条**路径式**的原始资源端点：/api/file/raw/{account}/{root}/{path...}，账户段编码在路径里（WithRawAccountPath 中间件在 ScopedRouter 之前把它搬进 user= 并从路径剥掉），网页的相对资源自然落到同账户的兄弟路径上。两个必踩的坑：① chi 优先按 RawPath（转义态）匹配，路由参数会停在转义态，文件名带空格/中文就对不上 —— 中间件清掉 RawPath 让 chi 用已解码的 Path 匹配；② r.URL.Path 在 net/http 解析时已解过一次，再 PathUnescape 会把用户名里的字面 %41 再解一次。视频能拖进度条靠 http.ServeContent 的 Range/206，前端 <video> 直连该端点而不是先取 blob（边下边播，大文件不占浏览器内存）。隔离是两层：iframe sandbox=\"allow-scripts\"（不给 allow-same-origin → opaque origin）+ 响应头 CSP: sandbox allow-scripts（保证直接在新标签页打开 URL 也一样隔离），页面里的 JS 仍能跑（用户选的是「允许脚本但隔离来源」）。既有 /api/file?raw=1 零改动，图片 / PDF / Office 预览链路不受影响，无数据迁移。"
+    boundary: "只新增路径式原始资源端点与网页 / 视频两种预览；不动 /api/file?raw=1 的语义、不动图片 / PDF / Office 预览、不做 HTML 源码高亮或 DOM 编辑、不做视频转码与字幕、不给 .avi/.mkv 等浏览器解不了的格式做解码（只给下载提示）。"
+    files:
+      - server/internal/api/raw_asset_path.go
+      - server/internal/api/http_raw_files.go
+      - server/internal/api/raw_asset_test.go
+      - server/internal/api/http_routes.go
+      - server/app/server.go
+      - web/src/services/mediaPreview.ts
+      - web/src/services/file/rawAsset.ts
+      - web/src/services/file/index.ts
+      - web/src/services/net/base.ts
+      - web/src/hooks/useRawAssetUrl.ts
+      - web/src/components/file/HtmlPreview.tsx
+      - web/src/components/file/VideoPreview.tsx
+      - web/src/components/file/FileViewer.tsx
+      - web/src/components/file/useFileViewer.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - web/src/index.css
+      - web/tests/media-preview.test.mjs
+      - docs/plans/html-video-preview.md
+      - docs/plans/README.md
+    tests:
+      - server/internal/api/raw_asset_test.go
+      - web/tests/media-preview.test.mjs
+    anchors:
+      - 'server/internal/api/raw_asset_path.go:const RawAssetPathPrefix = "/api/file/raw/"'
+      - 'server/internal/api/raw_asset_path.go:func WithRawAccountPath(next http.Handler) http.Handler'
+      - 'server/internal/api/http_raw_files.go:func (h *HTTPHandler) handleRawAsset(w http.ResponseWriter, r *http.Request)'
+      - 'server/internal/api/http_raw_files.go:http.ServeContent(w, r, rawOut.RelPath, rawOut.Info.ModTime(), rawOut.File)'
+      - 'server/internal/api/http_routes.go:r.Get("/api/file/raw/{root}/*", h.handleRawAsset)'
+      - 'server/app/server.go:api.WithRawAccountPath(httpRoutes)'
+      - 'web/src/components/file/HtmlPreview.tsx:sandbox="allow-scripts"'
+      - 'web/src/components/file/VideoPreview.tsx:<video'
+      - 'web/src/services/file/rawAsset.ts:export function buildRawAssetURL'
+      - 'web/src/services/net/base.ts:export function accountSegmentFor'

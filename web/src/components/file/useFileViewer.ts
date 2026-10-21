@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../../i18n/index";
 import { getDocumentPreviewKind } from "../../services/documentPreview";
+import { classifyVideo, isHtmlPreview } from "../../services/mediaPreview";
 import { supportsLineSelection } from "./CodeViewer";
 import { downloadFile } from "../../services/platform/download";
 import { isNativeShellRuntime } from "../../services/platform/runtime";
@@ -194,6 +195,13 @@ export function useFileViewer({
   const ext = file?.ext || (file?.path.includes(".") ? `.${file.path.split(".").pop()}` : "");
   const documentPreviewKind = getDocumentPreviewKind(ext, file?.mime);
   const usesMarkdownViewer = ext === ".md" || ext === ".markdown";
+  // HTML 默认渲染预览，顶栏可切回源码；视频走 <video>（后端支持 Range）。
+  const htmlPreview = isHtmlPreview(ext, file?.mime);
+  const videoKind = classifyVideo(ext, file?.mime);
+  const [htmlSourceMode, setHtmlSourceMode] = useState(false);
+  useEffect(() => {
+    setHtmlSourceMode(false);
+  }, [fileScrollKey]);
   const lineSelectionEnabled = !editSession && !!file
     && !usesMarkdownViewer
     && file.encoding !== "binary"
@@ -309,6 +317,10 @@ export function useFileViewer({
     ext,
     documentPreviewKind,
     usesMarkdownViewer,
+    htmlPreview,
+    htmlSourceMode,
+    setHtmlSourceMode,
+    videoKind,
     lineSelectionEnabled,
     downloadToast,
     showToast,
