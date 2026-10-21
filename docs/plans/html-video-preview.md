@@ -1,6 +1,6 @@
 # HTML 网页与视频文件的浏览
 
-**状态**：Implemented（2026-10-22），待提交与 ship。
+**状态**：Implemented（2026-10-22），已提交（`d6b48253`，`Scope: G-JP`）并快进合入 `main`；待 ship（构建安装 + 分发 WSL/fn）。
 
 ## 目标
 
