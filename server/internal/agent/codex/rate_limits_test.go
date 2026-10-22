@@ -69,6 +69,64 @@ func TestNormalizeRateLimitStatusFallsBackToLegacySecondary(t *testing.T) {
 	}
 }
 
+func TestNormalizeRateLimitStatusSelectsFiveHourWindowByDuration(t *testing.T) {
+	fiveHours := int64(300)
+	weekly := int64(10080)
+	resetsAt := int64(1787014822)
+	response := rawRateLimitResponse{
+		RateLimits: rawRateLimitSnapshot{
+			Primary:   &rawRateLimitWindow{UsedPercent: 42, WindowDurationMins: &fiveHours, ResetsAt: &resetsAt},
+			Secondary: &rawRateLimitWindow{UsedPercent: 12, WindowDurationMins: &weekly},
+		},
+	}
+
+	status := normalizeRateLimitStatus(response)
+	if status.FiveHour == nil || status.FiveHour.UsedPercent != 42 {
+		t.Fatalf("expected five hour window, got %#v", status.FiveHour)
+	}
+	if status.FiveHour.ResetsAt == nil || *status.FiveHour.ResetsAt != resetsAt {
+		t.Fatalf("expected five hour reset time, got %#v", status.FiveHour.ResetsAt)
+	}
+	if status.Weekly == nil || status.Weekly.UsedPercent != 12 {
+		t.Fatalf("expected weekly window, got %#v", status.Weekly)
+	}
+}
+
+func TestNormalizeRateLimitStatusOmitsFiveHourWindowWhenAbsent(t *testing.T) {
+	weekly := int64(10080)
+	response := rawRateLimitResponse{
+		RateLimits: rawRateLimitSnapshot{
+			Primary: &rawRateLimitWindow{UsedPercent: 12, WindowDurationMins: &weekly},
+		},
+	}
+
+	status := normalizeRateLimitStatus(response)
+	if status.FiveHour != nil {
+		t.Fatalf("expected no five hour window, got %#v", status.FiveHour)
+	}
+	if status.Weekly == nil || status.Weekly.UsedPercent != 12 {
+		t.Fatalf("expected weekly window, got %#v", status.Weekly)
+	}
+}
+
+func TestNormalizeRateLimitStatusDoesNotUseFiveHourWindowAsWeekly(t *testing.T) {
+	fiveHours := int64(300)
+	response := rawRateLimitResponse{
+		RateLimits: rawRateLimitSnapshot{
+			Primary:   &rawRateLimitWindow{UsedPercent: 40, WindowDurationMins: &fiveHours},
+			Secondary: &rawRateLimitWindow{UsedPercent: 45, WindowDurationMins: &fiveHours},
+		},
+	}
+
+	status := normalizeRateLimitStatus(response)
+	if status.Weekly != nil {
+		t.Fatalf("expected weekly window to stay unset, got %#v", status.Weekly)
+	}
+	if status.FiveHour == nil || status.FiveHour.UsedPercent != 40 {
+		t.Fatalf("expected primary five hour window, got %#v", status.FiveHour)
+	}
+}
+
 func TestNormalizeRateLimitStatusClampsNegativeResetCount(t *testing.T) {
 	response := rawRateLimitResponse{}
 	response.ResetCredits = &struct {

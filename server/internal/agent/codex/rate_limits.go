@@ -10,6 +10,10 @@ import (
 )
 
 const weeklyWindowMinutes = int64(7 * 24 * 60)
+const fiveHourWindowMinutes = int64(5 * 60)
+
+// windowDurationToleranceMins 容忍 app-server 报告的窗口时长与标称值的偏差。
+const windowDurationToleranceMins = int64(3)
 
 type RateLimitWindow struct {
 	UsedPercent        int32  `json:"used_percent"`
@@ -34,6 +38,7 @@ type RateLimitResetCredits struct {
 
 type RateLimitStatus struct {
 	UsesChatGPTPlan bool                   `json:"uses_chatgpt_plan"`
+	FiveHour        *RateLimitWindow       `json:"five_hour,omitempty"`
 	Weekly          *RateLimitWindow       `json:"weekly,omitempty"`
 	ResetCredits    *RateLimitResetCredits `json:"reset_credits,omitempty"`
 }
@@ -173,7 +178,10 @@ func normalizeRateLimitStatus(response rawRateLimitResponse) RateLimitStatus {
 	if codexSnapshot, ok := response.RateLimitsByLimitID["codex"]; ok {
 		snapshot = codexSnapshot
 	}
-	status := RateLimitStatus{Weekly: selectWeeklyWindow(snapshot)}
+	status := RateLimitStatus{
+		FiveHour: selectFiveHourWindow(snapshot),
+		Weekly:   selectWeeklyWindow(snapshot),
+	}
 	if response.ResetCredits != nil {
 		credits := make([]RateLimitResetCredit, 0, len(response.ResetCredits.Credits))
 		for _, credit := range response.ResetCredits.Credits {
@@ -195,20 +203,37 @@ func normalizeRateLimitStatus(response rawRateLimitResponse) RateLimitStatus {
 	return status
 }
 
+// selectFiveHourWindow 挑出 5 小时限额窗口（Codex 的短周期限额）。
+// 匹配不到就返回 nil：宁可少显示一个窗口，也不要把别的窗口当 5 小时限额展示。
+func selectFiveHourWindow(snapshot rawRateLimitSnapshot) *RateLimitWindow {
+	for _, window := range []*rawRateLimitWindow{snapshot.Primary, snapshot.Secondary} {
+		if isWindowDuration(window, fiveHourWindowMinutes) {
+			return cloneRateLimitWindow(window)
+		}
+	}
+	return nil
+}
+
 func selectWeeklyWindow(snapshot rawRateLimitSnapshot) *RateLimitWindow {
 	for _, window := range []*rawRateLimitWindow{snapshot.Primary, snapshot.Secondary} {
-		if window == nil || window.WindowDurationMins == nil {
-			continue
-		}
-		if duration := *window.WindowDurationMins; duration >= weeklyWindowMinutes-3 && duration <= weeklyWindowMinutes+3 {
+		if isWindowDuration(window, weeklyWindowMinutes) {
 			return cloneRateLimitWindow(window)
 		}
 	}
 	// Older app-server responses conventionally placed the weekly window in secondary.
-	if snapshot.Secondary != nil {
+	// 但 5 小时窗口不能冒充周限：secondary 是 5 小时窗时不再回退。
+	if snapshot.Secondary != nil && !isWindowDuration(snapshot.Secondary, fiveHourWindowMinutes) {
 		return cloneRateLimitWindow(snapshot.Secondary)
 	}
 	return nil
+}
+
+func isWindowDuration(window *rawRateLimitWindow, minutes int64) bool {
+	if window == nil || window.WindowDurationMins == nil {
+		return false
+	}
+	duration := *window.WindowDurationMins
+	return duration >= minutes-windowDurationToleranceMins && duration <= minutes+windowDurationToleranceMins
 }
 
 func cloneRateLimitWindow(window *rawRateLimitWindow) *RateLimitWindow {
