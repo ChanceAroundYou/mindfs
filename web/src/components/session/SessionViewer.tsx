@@ -1,7 +1,9 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStream, type TimelineItem } from "../../hooks/useSessionStream";
 import { useTargetSeqScroll } from "./useTargetSeqScroll";
 import { buildTimelineItemMeta } from "./buildTimelineItemMeta";
+import { useSessionTimelineVirtualizer } from "./useSessionTimelineVirtualizer";
+import { useSessionWindowApply } from "./useSessionWindowApply";
 import { useSessionViewerScrollPositionEffects, useSessionViewerScrollState, useSessionViewerStickinessEffect } from "./useSessionViewerScroll";
 import type { TodoUpdate } from "../../shared/sessionTypes";
 import { ViewHeader } from "../../layout/ViewHeader";
@@ -173,6 +175,14 @@ function SessionViewerInner({
   // 且每轮渲染都重算（流式输出 33 次/秒）。改成一次 O(n) 前向扫描，渲染里只查表。
   const timelineItemMeta = useMemo(() => buildTimelineItemMeta(timeline as any), [timeline]);
   const scrollToRelatedFilesDividerRef = useRef<(behavior?: ScrollBehavior) => void>(() => {});
+  // 时间线虚拟化（CUSTOM(G-JT)）：屏外条目不挂载；用户消息导航与 targetSeq 跳转
+  // 都改走同一份索引，避免「画出来的」与「跳过去的」两套口径。
+  const timelineNav = useSessionTimelineVirtualizer({
+    timeline,
+    timelineItemMeta,
+    scrollRef,
+    sessionKey,
+  });
   const {
     shouldStickToBottomRef, lastSessionKeyRef, targetSeqScrollKeyRef,
     targetSeqFrameRef, targetSeqTimerRefs, showJumpToLatest,
@@ -208,51 +218,13 @@ function SessionViewerInner({
     copyResetTimersRef.current = {};
   }, [sessionKey]);
 
-  // 方案 B：从窗口响应中提取 exchanges/aux/meta（后端 window_meta 透传 total/hasMore/minSeq/maxSeq）。
-  const applyWindow = useCallback(
-    (
-      res: { session: any; meta: SessionWindowMeta } | null,
-      opts?: { keepOlder?: boolean },
-    ) => {
-      if (!res) return false;
-      const winSession = res.session as any;
-      const winExchanges = Array.isArray(winSession?.exchanges)
-        ? (winSession.exchanges as ExchangeArray)
-        : [];
-      const winAux =
-        (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
-      const winBlocks =
-        (winSession?.blocks as Record<string, SessionBlock[]>) || {};
-      setVisibleExchanges((prev) => {
-        if (!opts?.keepOlder) return winExchanges;
-        // keepOlder：窗口只覆盖 [minSeq, maxSeq]，比 minSeq 更老的首帧种子 / loadMore
-        // 翻出来的历史必须保住 —— 整体替换会把它们扔掉，表现为「刚加载出来的历史闪一下
-        // 又没了」，顶部哨兵再次可见又触发 loadMore，形成 40↔20 的无限抖动。
-        return mergeVisibleExchanges(prev, winExchanges) as ExchangeArray;
-      });
-      setVisibleAux((prev) =>
-        opts?.keepOlder ? { ...prev, ...winAux } : winAux,
-      );
-      // 块与 aux 同一合并语义：keepOlder 时窗口只覆盖 [minSeq, maxSeq]，
-      // 整体替换会把种子/翻出来的历史那部分块扔掉（正文闪一下又没了）。
-      setVisibleBlocks((prev) =>
-        opts?.keepOlder ? { ...prev, ...winBlocks } : winBlocks,
-      );
-      // minSeq 必须报**实际可见的最小 seq**，不能直接用窗口那份：keepOlder 合并进来的
-      // 种子可能比窗口更老，用窗口的 minSeq 会让下一次 loadMore 去取已经有的行
-      // （渲染两遍），窗口越新、种子越全越容易触发。
-      setWindowMeta((prevMeta) => {
-        const winMinSeq = Number(res.meta?.minSeq || 0);
-        if (!opts?.keepOlder || !winMinSeq) return res.meta;
-        return {
-          ...res.meta,
-          minSeq: Math.min(winMinSeq, Number(prevMeta?.minSeq || 0) || winMinSeq),
-        };
-      });
-      return true;
-    },
-      [mergeVisibleExchanges],
-  );
+  const applyWindow = useSessionWindowApply({
+    mergeVisibleExchanges,
+    setVisibleExchanges,
+    setVisibleAux,
+    setVisibleBlocks,
+    setWindowMeta,
+  });
 
   useSessionWindowing({
     session, sessionKey, sessionNodeId, rootId, windowMeta, loadingMore, applyWindow,
@@ -339,6 +311,7 @@ function SessionViewerInner({
     activeScrollRef,
     shouldStickToBottomRef,
     cancelTargetSeqScroll,
+    navigation: timelineNav,
   });
 
   useSessionViewerStickinessEffect({
@@ -351,6 +324,7 @@ function SessionViewerInner({
     rootId, sessionKey, sessionNodeId, targetSeq, targetSeqRequestKey, timeline, windowMeta,
     activeScrollRef, targetSeqScrollKeyRef, shouldStickToBottomRef, targetSeqFrameRef, targetSeqTimerRefs,
     cancelTargetSeqScroll, setVisibleExchanges, setVisibleAux, setWindowMeta,
+    navigation: timelineNav,
   });
 
   const {
@@ -437,7 +411,7 @@ function SessionViewerInner({
             {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
             <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
             <SessionViewerLoadingState loadingMore={loadingMore} loading={loading} hasVisibleTimeline={hasVisibleTimeline} />
-            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} isStreaming={isStreaming} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} agents={agents} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} />
+            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} isStreaming={isStreaming} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} agents={agents} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} />
             {SessionViewerSlashCommandResult({
               slashCommandResult,
               hasVisibleTimeline,

@@ -26,6 +26,14 @@ export type TargetSeqScrollCtx = {
   setVisibleExchanges: Dispatch<SetStateAction<ExchangeArray>>;
   setVisibleAux: Dispatch<SetStateAction<Record<string, ExchangeAux[]>>>;
   setWindowMeta: Dispatch<SetStateAction<SessionWindowMeta>>;
+  /**
+   * 虚拟化导航（CUSTOM(G-JT)）。已启用虚拟化时屏外条目不在 DOM 里，
+   * `querySelector('[data-session-seq=...]')` 会永远找不到目标 —— 必须走索引定位。
+   */
+  navigation?: {
+    virtualized: boolean;
+    scrollToSeq: (seq: number) => boolean;
+  } | null;
 };
 
 /**
@@ -54,6 +62,7 @@ export function useTargetSeqScroll(ctx: TargetSeqScrollCtx) {
     setVisibleExchanges,
     setVisibleAux,
     setWindowMeta,
+    navigation,
   } = ctx;
 
   useEffect(() => {
@@ -71,6 +80,18 @@ export function useTargetSeqScroll(ctx: TargetSeqScrollCtx) {
     const container = activeScrollRef?.current;
     if (!container || !timeline.length) {
       return;
+    }
+    if (navigation?.virtualized) {
+      const inVirtualRange =
+        windowMeta.minSeq > 0 &&
+        targetSeq >= windowMeta.minSeq &&
+        targetSeq <= windowMeta.maxSeq;
+      if (inVirtualRange && navigation.scrollToSeq(targetSeq)) {
+        targetSeqScrollKeyRef.current = scrollKey;
+        shouldStickToBottomRef.current = false;
+        cancelTargetSeqScroll();
+        return;
+      }
     }
     const node = container.querySelector<HTMLElement>(
       `[data-session-seq="${targetSeq}"]`,

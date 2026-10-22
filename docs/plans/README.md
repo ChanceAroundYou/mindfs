@@ -17,6 +17,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Current interpretation |
 |---|---|---|
+| [Long session load perf](long-session-load-perf.md) | Implemented 2026-10-22，待提交与 ship | 大会话打开/上翻冻结已收口。真机 A/B：上翻最坏长任务 2,608 ms → 112 ms、DOM 78,351 → 856、上翻一页载荷 9.36 MB → 57 KB、首屏窗口请求 2 → 1 次。三批：窗口块数预算 + 窗口 reasoning 去重（G-JS）→ 时间线虚拟化（G-JT）→ 首屏请求合流（G-JU）。 |
 | [Delegated presence and flicker](delegated-presence-and-flicker.md) | Completed 2026-10-17（含同日收尾补记） | A 委托态空心灯 + 切换首帧去闪 `eafa86b3`(G-AY)、B 合成子代理可取消 `da320483`(G-IZ)、C 等回答空心灯 `a33f630b`(G-JA) 全部落地并登记。收尾补记：当时记的「SDK 适配缺口」经适配层真机测试推翻（卡片本来就能到、能渲染、能 done），真缺陷是「卡片可见 → waiter 登记」约 74ms 窗口内答案被拒导致该轮永久卡死，已随 G-JA 修复。 |
 | [File size hard-line cleanup](file-size-hard-line-cleanup.md) | Completed 2026-10-16 | 4 个超硬线文件拆完（web/tests ×3 + codex importer），`file-size.md` 适用范围补上 `web/tests`，500 行门禁扩到 `.mjs` 并变异验证过。全门禁绿。 |
 | [Session header menu and repoint](session-header-menu-repoint.md) | Completed 2026-10-16 | ⋯ menu shipped + deployed (G-JB); gate fully green (go + tsc + 349 web tests + check-upstream). |

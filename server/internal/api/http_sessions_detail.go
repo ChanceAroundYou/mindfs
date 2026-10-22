@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"mindfs/server/internal/api/usecase"
-	"mindfs/server/internal/session"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -57,55 +56,11 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 	}
-	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
-		RootID:    rootID,
-		Key:       key,
-		Seq:       afterSeq,
-		BeforeSeq: beforeSeq,
-		Limit:     limit,
-		Latest:    latest,
-	})
+	payload, err := h.sessionDetailPayload(r.Context(), uc, rootID, key, afterSeq, beforeSeq, latest, limit)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
-	contextWindow, _ := uc.GetSessionContextWindow(r.Context(), usecase.GetSessionContextWindowInput{
-		RootID: rootID,
-		Key:    key,
-	})
-	// 窗口请求只需窗口内 seq 的 aux：原先传 Seq=0 会让 manager 全量读整个 aux 文件
-	// （实测某会话 11.8MB/约 300ms 且持 m.mu），再在下面按 windowSeqs 过滤掉绝大部分。
-	var exchangeAux map[int][]session.ExchangeAux
-	if windowMeta != nil {
-		windowSeqs := make(map[int]bool, len(out.Exchanges))
-		for _, ex := range out.Exchanges {
-			if ex.Seq > 0 {
-				windowSeqs[ex.Seq] = true
-			}
-		}
-		exchangeAux, _ = uc.GetSessionExchangeAuxWindow(r.Context(), usecase.GetSessionExchangeAuxWindowInput{
-			RootID: rootID,
-			Key:    key,
-			Seqs:   windowSeqs,
-		})
-	} else {
-		exchangeAux, _ = uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
-			RootID: rootID,
-			Key:    key,
-			Seq:    afterSeq,
-		})
-	}
-	// 正文块：seq 集合与上面 aux 的窗口口径一致 —— 用**回包里的** exchange seq，
-	// 而不是请求参数推算的窗口边界，这样窗口/增量/全量三条路共用同一段逻辑，
-	// 也不会出现「块挂到了不在回包里的 seq 上」。
-	blocks, _ := uc.GetSessionBlocksWindow(r.Context(), usecase.GetSessionBlocksWindowInput{
-		RootID: rootID,
-		Key:    key,
-		Seqs:   windowSeqsForExchanges(out.Exchanges),
-		// 回填输入（S2d-1）：这两份数据响应里本来就要带着，回填不该为此再读一遍盘。
-		Exchanges: out.Exchanges,
-		Aux:       exchangeAux,
-	})
 	// 条件请求：这是全站**最重**的端点 —— 窗口化尾部拉取（`?latest=20`）
 	// 实测单次 1.14 MB，客户端按 ~1.7 秒一次轮询，两台机器各自量到 60 分钟里
 	// 4,746 次、合计约 1.1 GB/h（占全部请求的 70%）。会话没在跑时这些回包
@@ -114,7 +69,7 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 	// 只协商、不瘦身：载荷本身就是详情（exchanges / exchange_aux / window_meta
 	// 少一个键就是少一段对话），而且 `seq` 增量语义要求客户端**恰好**收到新行，
 	// 删空字段会破坏 `appendSessionDelta` 的判据。
-	respondJSONConditional(w, r, h.sessionResponse(out, contextWindow, exchangeAux, blocks, windowMeta))
+	respondJSONConditional(w, r, payload)
 }
 
 func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) {
@@ -175,57 +130,13 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		// 找到之后也不会从 0 重读。没 repoint 的会话仍旧走「找不到」这条安全路径。
 		log.Printf("[session/sync] external sync failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 	}
-	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
-		RootID:    rootID,
-		Key:       key,
-		Seq:       afterSeq,
-		BeforeSeq: beforeSeq,
-		Limit:     limit,
-		Latest:    latest,
-	})
+	payload, err := h.sessionDetailPayload(r.Context(), uc, rootID, key, afterSeq, beforeSeq, latest, limit)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
-	contextWindow, _ := uc.GetSessionContextWindow(r.Context(), usecase.GetSessionContextWindowInput{
-		RootID: rootID,
-		Key:    key,
-	})
-	// 窗口请求只需窗口内 seq 的 aux：原先无条件传 Seq=0，会让 manager 全量读整个 aux
-	// 文件（实测某会话 11.8MB/约 300ms 且持 m.mu），再按 windowSeqs 过滤掉绝大部分。
-	// 与 handleSessionGet 保持同一套选择逻辑。
-	var exchangeAux map[int][]session.ExchangeAux
-	if windowMeta != nil {
-		windowSeqs := make(map[int]bool, len(out.Exchanges))
-		for _, ex := range out.Exchanges {
-			if ex.Seq > 0 {
-				windowSeqs[ex.Seq] = true
-			}
-		}
-		exchangeAux, _ = uc.GetSessionExchangeAuxWindow(r.Context(), usecase.GetSessionExchangeAuxWindowInput{
-			RootID: rootID,
-			Key:    key,
-			Seqs:   windowSeqs,
-		})
-	} else {
-		exchangeAux, _ = uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
-			RootID: rootID,
-			Key:    key,
-			Seq:    afterSeq,
-		})
-	}
-	// 正文块与 aux 同一口径（用回包里的 exchange seq），与 handleSessionGet 共用
-	// windowSeqsForExchanges。
-	blocks, _ := uc.GetSessionBlocksWindow(r.Context(), usecase.GetSessionBlocksWindowInput{
-		RootID: rootID,
-		Key:    key,
-		Seqs:   windowSeqsForExchanges(out.Exchanges),
-		// 回填输入（S2d-1）：这两份数据响应里本来就要带着，回填不该为此再读一遍盘。
-		Exchanges: out.Exchanges,
-		Aux:       exchangeAux,
-	})
 	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, exchangeAux, blocks, windowMeta))
+	respondJSON(w, http.StatusOK, payload)
 }
 
 func (h *HTTPHandler) handleSessionToolCallGet(w http.ResponseWriter, r *http.Request) {

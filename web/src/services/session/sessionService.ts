@@ -128,6 +128,19 @@ export type {
  */
 export const SESSION_WINDOW_SIZE = 8;
 
+/**
+ * 「打开会话」这条路径允许复用已结算窗口结果的时间窗（CUSTOM(G-JU)）。
+ *
+ * 打开会话有两个**顺序**加载者：App 的 restoreActiveSession 先拉尾部窗口、await 完才
+ * 挂载 SessionViewer，后者 init effect 再拉一次同参数窗口。in-flight 去重只合并并发
+ * 调用，所以第二次必然重发（实测同一次打开里服务端出现两次 `?latest=8`，跨节点各传
+ * 815 KB）。这个常量让先到的那次结果在 2 秒内可被后到者复用。
+ *
+ * **只给打开会话用**。翻页/切回来/重锚定必须重新发 —— 「去重不能变成缓存」是
+ * `web/tests/session-window-dedup.test.mjs` 钉住的边界。
+ */
+export const OPEN_SESSION_WINDOW_REUSE_MS = 2000;
+
 class SessionService {
   readonly dispatcher = new SessionDispatcher(() => this.nodeId);
   private readonly connection: SessionConnectionManager;

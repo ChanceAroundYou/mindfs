@@ -30,6 +30,15 @@ func (h *HTTPHandler) sessionResponse(
 		return map[string]any{}
 	}
 	exchanges := append([]session.Exchange{}, s.Exchanges...)
+	// shell 必须从**原始** aux 推：`InferCommandShellFromAux` 只看 execute 工具的
+	// meta.shell，而下面窗口模式会把这些已被块覆盖的 toolcall 丢掉。
+	shell := h.commandShellForResponse(s, exchangeAux)
+	if windowMeta != nil {
+		// 窗口模式：reasoning 块的语义是干净的正文载体（D1），aux 里同 seq 逐字相同的
+		// thought 是它的旧副本 —— 实测一页 9.36 MB 里 2.84 MB 是这份重复。只丢这一项，
+		// 见 session.DropAuxThoughtsCoveredByBlocks 里为什么工具卡 aux 不动。
+		exchangeAux = session.DropAuxThoughtsCoveredByBlocks(exchangeAux, blocks)
+	}
 	auxPayload := make(map[string][]session.ExchangeAux, len(exchangeAux))
 	if windowMeta != nil {
 		// 窗口模式：仅保留窗口内 exchange 的 aux，避免 aux.line 错位
@@ -88,7 +97,7 @@ func (h *HTTPHandler) sessionResponse(
 		"effort":              session.InferEffortFromSession(s),
 		"fast_service":        session.InferFastServiceFromSession(s),
 		"plan_mode":           s.PlanMode,
-		"shell":               h.commandShellForResponse(s, exchangeAux),
+		"shell":               shell,
 		"name":                s.Name,
 		"exchanges":           exchanges,
 		"exchange_aux":        auxPayload,

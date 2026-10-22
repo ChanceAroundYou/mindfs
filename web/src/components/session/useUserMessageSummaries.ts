@@ -9,6 +9,7 @@ export function useUserMessageSummaries({
   activeScrollRef,
   shouldStickToBottomRef,
   cancelTargetSeqScroll,
+  navigation,
 }: {
   timeline: TimelineItem[];
   t: (key: any, fallback?: any) => string;
@@ -16,6 +17,16 @@ export function useUserMessageSummaries({
   activeScrollRef: React.RefObject<HTMLDivElement | null>;
   shouldStickToBottomRef: React.RefObject<boolean>;
   cancelTargetSeqScroll: () => void;
+  /**
+   * 虚拟化导航（CUSTOM(G-JT)）。给出且已启用时，序号定位不再依赖「全部 user 节点都在
+   * DOM 里」这个前提 —— 屏外条目根本不挂载，querySelectorAll 只能看到视口附近那几个，
+   * 当前序号会永远停在 1。
+   */
+  navigation?: {
+    virtualized: boolean;
+    currentUserIndex: () => number;
+    scrollToUserIndex: (index: number) => boolean;
+  } | null;
 }) {
   const [userSummaryHoverOpen, setUserSummaryHoverOpen] = useState(false);
   const [userSummaryPinnedOpen, setUserSummaryPinnedOpen] = useState(false);
@@ -40,6 +51,9 @@ export function useUserMessageSummaries({
   const userSummaryOpen = userSummaryHoverOpen || userSummaryPinnedOpen;
 
   const readCurrentUserMessageIndex = useCallback(() => {
+    if (navigation?.virtualized) {
+      return navigation.currentUserIndex();
+    }
     const container = activeScrollRef?.current;
     if (!container) {
       return 0;
@@ -83,7 +97,7 @@ export function useUserMessageSummaries({
       lastBeforeViewport ||
       Number(nodes[0]?.dataset.userMessageIndex || 0)
     );
-  }, [activeScrollRef]);
+  }, [activeScrollRef, navigation]);
 
   const refreshCurrentUserMessageIndex = useCallback(() => {
     setCurrentUserMessageIndex(readCurrentUserMessageIndex());
@@ -92,6 +106,15 @@ export function useUserMessageSummaries({
   const scrollToUserMessageSummary = (index: number) => {
     const container = activeScrollRef?.current;
     if (!container) {
+      return;
+    }
+    if (navigation?.virtualized) {
+      shouldStickToBottomRef.current = false;
+      cancelTargetSeqScroll();
+      if (!navigation.scrollToUserIndex(index)) return;
+      setUserSummaryPinnedOpen(false);
+      setUserSummaryHoverOpen(false);
+      setCurrentUserMessageIndex(index);
       return;
     }
     const node = container.querySelector<HTMLElement>(

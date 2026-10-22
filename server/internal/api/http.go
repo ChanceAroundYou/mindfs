@@ -26,6 +26,10 @@ type HTTPHandler struct {
 	// NodeRole 决定这台机器提不提供控制面。零值 "" 视为 RoleControl
 	// —— 默认必须等于改造前的行为，否则升级不改配置就坏。
 	NodeRole nodeinfo.Role
+	// WindowBlockBudget 覆盖窗口块数预算（0 = 用默认值）。
+	// **只为测试与不是「一键关闭」**：真正的关闭是回滚提交；这里给一个可覆写的
+	// 入口，是为了让契约测试能在小 fixture 上验证裁剪而不用造 400 块。
+	WindowBlockBudget int
 }
 
 const (

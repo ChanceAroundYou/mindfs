@@ -28,7 +28,7 @@ import type { UseSessionLifecycleParams } from "./useSessionLifecycleTypes";
 import { type GitDiffPayload } from "../services/git";
 import { reportError } from "../services/net/error";
 import { type FileEntry } from "../services/prefs/directorySort";
-import { type Session, SESSION_WINDOW_SIZE, clearWindowedView, composeLoadedExchanges, getCachedSession, getCachedSessionList, getSessionWindow, saveCachedSessionList, sessionService, setWindowedView, syncSession } from "../services/session";
+import { type Session, OPEN_SESSION_WINDOW_REUSE_MS, SESSION_WINDOW_SIZE, clearWindowedView, composeLoadedExchanges, getCachedSession, getCachedSessionList, getSessionWindow, saveCachedSessionList, sessionService, setWindowedView, syncSession } from "../services/session";
 import { mergeSessionItems } from "../services/session/sessionListMerge";
 
 export function useSessionLifecycle(params: UseSessionLifecycleParams) {
@@ -135,6 +135,9 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
           const win = await getSessionWindow(resolvedRoot, resolvedKey, {
             latest: SESSION_WINDOW_SIZE,
             nodeId: getNodeIdForRoot(resolvedRoot),
+            // CUSTOM(G-JU): 紧接着挂载的 SessionViewer init effect 会拉同参数窗口；
+            // 这里把结果留 2 秒可复用，让「打开会话」这条路只发一次请求。
+            reuseWithinMs: OPEN_SESSION_WINDOW_REUSE_MS,
           });
           if (win && (win as any).session) {
             const sess: any = {

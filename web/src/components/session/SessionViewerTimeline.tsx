@@ -44,6 +44,17 @@ export type SessionViewerTimelineProps = {
   t: (key: MessageKey) => string;
   themeColor: string;
   userMetaButtonStyle: React.CSSProperties;
+  /**
+   * 虚拟化回调（CUSTOM(G-JT)）。给出时只渲染视口内的条目，屏外条目由上下占位高
+   * 代替；不给则全量渲染（少条目路径与既有的源码级测试都走这条）。
+   */
+  virtual?: SessionViewerTimelineVirtual | null;
+};
+
+export type SessionViewerTimelineVirtual = {
+  items: Array<{ index: number; key: React.Key; start: number }>;
+  totalSize: number;
+  measureElement: (node: Element | null) => void;
 };
 
 export function SessionViewerTimeline({
@@ -51,7 +62,7 @@ export function SessionViewerTimeline({
   sessionAgent, activeAskUserCallId, onAskUserAnswer, agents, onFileClickRef,
   onEditUserMessage, onForkAgentMessage, savedPromptKeys, copiedMessageKeys,
   copyResetTimersRef, setSavedPromptKeys, setCopiedMessageKeys, t, themeColor,
-  userMetaButtonStyle,
+  userMetaButtonStyle, virtual = null,
 }: SessionViewerTimelineProps) {
   const reportError = useReportError();
   const { isPersistedSeq, savePrompt } = useSessionViewerTimelineActions();
@@ -93,5 +104,37 @@ export function SessionViewerTimeline({
     );
   };
 
-  return <>{timeline.map((item, idx) => renderTimelineItem(item, idx, timelineItemSpacing(idx > 0 ? timeline[idx - 1] : null, item)))}</>;
+  if (!virtual) {
+    return <>{timeline.map((item, idx) => renderTimelineItem(item, idx, timelineItemSpacing(idx > 0 ? timeline[idx - 1] : null, item)))}</>;
+  }
+
+  // 虚拟化路径：容器撑到总高度，只挂载视口内的条目，按 start 绝对定位。
+  // `overflowAnchor: none` 是必须的 —— 浏览器默认的滚动锚定会在条目高度被测量
+  // 修正时反向补偿 scrollTop，与本库自身的 scrollAdjustments 叠加后表现为抖动。
+  return (
+    <div style={{ position: "relative", width: "100%", height: virtual.totalSize, overflowAnchor: "none" }}>
+      {virtual.items.map((row) => {
+        const item = timeline[row.index];
+        if (!item) return null;
+        return (
+          <div
+            key={row.key}
+            data-timeline-index={row.index}
+            ref={virtual.measureElement}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${row.start}px)`,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {renderTimelineItem(item, row.index, timelineItemSpacing(row.index > 0 ? timeline[row.index - 1] : null, item))}
+          </div>
+        );
+      })}
+    </div>
+  );
 }

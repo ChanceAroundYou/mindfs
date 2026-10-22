@@ -298,6 +298,11 @@ export type SessionWindowOptions = {
   limit?: number;
   latest?: number;
   nodeId?: string;
+  /**
+   * 允许复用这个时间窗内**已结算**的同参结果（毫秒）。仅「打开会话」这类
+   * 明确接受快照的调用方该传（CUSTOM(G-JU)）；默认 0 = 每次重新发。
+   */
+  reuseWithinMs?: number;
 };
 
 export type SessionEventHandler = {

@@ -79,9 +79,12 @@ assert.ok(
 // 客户端 ~1.7 秒一次，两台机器各量到 60 分钟 4,746 次 ≈ 1.1 GB/h（占全部请求 70%）。
 // 必须走**只协商**的那条 —— 载荷里的 exchanges / exchange_aux / window_meta
 // 少一个键就是少一段对话。
+// 2026-10-22：回包组装抽成 sessionDetailPayload（GET 与 sync 共用一份，避免两处口径分叉），
+// 所以断言不再钉「参数是 h.sessionResponse(...)」这个字面形状 —— 换成「handleSessionGet 的
+// 函数体里，响应只能经 respondJSONConditional 发出」。意图不变，且更耐受重构。
 assert.match(
   httpDomain,
-  /func \(h \*HTTPHandler\) handleSessionGet[\s\S]{0,4000}?respondJSONConditional\(w, r, h\.sessionResponse\(/,
+  /func \(h \*HTTPHandler\) handleSessionGet[\s\S]{0,4000}?respondJSONConditional\(w, r, /,
   "单会话详情必须走 respondJSONConditional（1.14 MB × 1.7s 的轮询靠 304 压到零字节）",
 );
 assert.ok(

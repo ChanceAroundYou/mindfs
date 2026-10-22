@@ -16,6 +16,19 @@ import type { Session, SessionWindow, SessionWindowMeta, SessionWindowOptions } 
 // 在途表在 finally 里删，所以结算后再调用仍会重新发（去重不是缓存）。
 const windowInflight = new Map<string, Promise<SessionWindow | null>>();
 
+// CUSTOM(G-JU): in-flight 去重救不了**先后**发生的两个调用。
+//
+// 打开会话时有两个独立加载者：App 的 restoreActiveSession 先拉尾部窗口、await 完才
+// 把会话塞进缓存并挂载 SessionViewer；SessionViewer 的 init effect 再拉一次同参数的
+// 窗口。它们是顺序的，所以在途表里永远只剩后者 —— 实测同一次打开里
+// `?latest=8` 在服务端日志中出现两次（真机跨节点时两次都是 815 KB 实体传输）。
+//
+// 结算后短暂可复用 —— **必须由调用方显式请求**（`opts.reuseWithinMs`），默认关闭。
+// 这不是缓存：`getSessionWindow` 的默认契约仍是「每次重新发」，否则「切回来/翻页」
+// 会拿到旧快照，那正是 session-window-dedup 守卫测试钉住的边界。只有「打开会话」
+// 这条明确接受快照的路径才显式放行，用来合流先后发生的两次加载。
+const windowSettled = new Map<string, { at: number; value: SessionWindow | null }>();
+
 export async function fetchSessionWindow(
   rootId: string,
   sessionKey: string,
@@ -39,6 +52,13 @@ export async function fetchSessionWindow(
     if (existing) {
       return existing;
     }
+    const reuseWithinMs = Number(opts?.reuseWithinMs || 0);
+    if (reuseWithinMs > 0) {
+      const settled = windowSettled.get(inflightKey);
+      if (settled && Date.now() - settled.at < reuseWithinMs) {
+        return settled.value;
+      }
+    }
     const promise = (async (): Promise<SessionWindow | null> => {
       const raw = await protectedJSON<any>(
         appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
@@ -53,7 +73,12 @@ export async function fetchSessionWindow(
     })();
     windowInflight.set(inflightKey, promise);
     try {
-      return await promise;
+      const value = await promise;
+      // 只记成功结果：失败要能立刻重试，不能被这层「短期复用」当成答案。
+      if (value && reuseWithinMs > 0) {
+        windowSettled.set(inflightKey, { at: Date.now(), value });
+      }
+      return value;
     } finally {
       windowInflight.delete(inflightKey);
     }

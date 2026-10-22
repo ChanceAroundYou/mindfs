@@ -13,6 +13,7 @@ const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/s
 const sessionViewerProjectionPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionViewerExchangeProjection.ts");
 const sessionWindowingPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionWindowing.ts");
 const targetSeqScrollPath = path.resolve(import.meta.dirname, "../src/components/session/useTargetSeqScroll.ts");
+const sessionWindowApplyPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionWindowApply.ts");
 const viewerControlsPath = path.resolve(import.meta.dirname, "../src/components/session/SessionViewerFloatingControls.tsx");
 const sessionHistoryMenuPath = path.resolve(import.meta.dirname, "../src/components/session/SessionHistoryMenu.tsx");
 
@@ -22,7 +23,7 @@ const sessionSrc = [
     .map((name) => fs.readFileSync(path.join(sessionServiceDir, name), "utf8")),
   fs.readFileSync(sharedSessionTypesPath, "utf8"),
 ].join("\n");
-const viewerSrc = [sessionViewerPath, sessionViewerProjectionPath, sessionWindowingPath, targetSeqScrollPath, viewerControlsPath, sessionHistoryMenuPath].map((file) => fs.readFileSync(file, "utf8")).join("\n");
+const viewerSrc = [sessionViewerPath, sessionViewerProjectionPath, sessionWindowingPath, targetSeqScrollPath, sessionWindowApplyPath, viewerControlsPath, sessionHistoryMenuPath].map((file) => fs.readFileSync(file, "utf8")).join("\n");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 const sessionCode = stripComments(sessionSrc);

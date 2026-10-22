@@ -6624,3 +6624,69 @@ groups:
       - server/internal/api/ws_session_queue_drain_test.go
     anchors:
       - 'server/internal/api/ws_session_queue_drain_test.go:os.MkdirTemp("", "mindfs-queued-drain-*")'
+
+  - id: G-JS
+    title: 窗口载荷按块数收口 + 窗口 aux 的 reasoning 去重
+    kind: perf
+    symptom: "打开大会话（实测 pc 节点 / AIS核心算法 / 「重新训练」）时页面冻结：主线程单次长任务 1.4–1.9 s、DOM 从 941 涨到 16,824、上翻一页更差。根因是窗口 API 的 latest/limit 数的是**轮**，而该会话单轮最多 3,224 块 —— `latest=8` 回 1,282 块 / 2.49 MB，`before_seq=93&limit=8` 回 4,526 块 / 9.36 MB；同时 `blocks` 与 `exchange_aux` 各带一份逐字相同的 reasoning（一页 2.84 MB 重复）。"
+    why: "没有预算，窗口载荷的上界由 agent 行为决定，任何「这一轮干了一千件事」的会话都会把前端拖死；这是载荷守恒性质的缺陷，不是可调参数。窗口 aux 的 thought 与同 seq 的 reasoning 块是同一段文本的两份拷贝，块流已是正文唯一载体（D1），重复下发纯属浪费传输与前端建条目。两者合起来把上翻一页从 9.4 MB 压到 57 KB、单轮超大页从 10.1 MB 压到 4.5 MB（真机两实例对比实测）。"
+    boundary: "只在窗口读路径生效（window_meta != nil）：全量 sync / 重锚定 / 增量 seq 路径零变化，块与 aux 的落盘格式完全不动。裁剪只按**整轮**做，不在轮内切块（轮内切块要引入 pos 游标并波及 aux.line 对账、工具分组、fork、targetSeq 定位）。单轮自己超预算时仍完整下发并标 truncated —— 空窗口比慢更糟。工具卡 aux 刻意不去重：它承载窗口轻压缩契约、commandShell 推断与懒加载身份，`TestHandleSessionSyncWindowUsesWindowAux` 钉住了这条。"
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_sessions_detail.go
+      - server/internal/api/http_sessions_detail_response.go
+      - server/internal/api/http_sessions_window_budget.go
+      - server/internal/api/usecase/session_window_budget.go
+      - server/internal/session/manager.go
+      - server/internal/session/types_aux_block_dedup.go
+    tests:
+      - server/internal/api/http_window_budget_test.go
+      - server/internal/session/types_aux_block_dedup_test.go
+      - server/internal/api/http_window_sync_test.go
+    anchors:
+      - 'server/internal/session/manager.go:BlockCount int `json:"blockCount,omitempty"`'
+      - 'server/internal/api/http_sessions_window_budget.go:out, windowMeta = applyWindowBlockBudget(out, windowMeta, blocks, h.windowBlockBudget())'
+      - 'server/internal/api/http_sessions_detail_response.go:exchangeAux = session.DropAuxThoughtsCoveredByBlocks(exchangeAux, blocks)'
+      - 'server/internal/api/usecase/session_window_budget.go:const DefaultWindowBlockBudget = 400'
+
+  - id: G-JT
+    title: 会话时间线虚拟化
+    kind: perf
+    symptom: "打开长会话时页面冻结：真机实测一次打开要同帧挂载 642 张思考卡 + ~640 张工具卡（DOM 941 → 16,824，主线程一次 1.4–1.9 s 长任务）；上翻四页后 DOM 涨到 78,351、单次长任务 2.6 s。会话越「干得多」越卡，与内容无关。"
+    why: "窗口预算（G-JS）压的是**载荷**，压不掉**挂载数**：一页上千条目时，全量挂载必然是一次长任务。虚拟化是这条路径上唯一与会话内容无关的解法。实测同序列（打开 + 上翻 4 页）DOM 78,351 → 856、最坏长任务 2,608 ms → 112 ms。"
+    boundary: "① 条目数低于 120 时**不启用**，仍走原来的 timeline.map（少条目全量渲染更快，也没有测量抖动）；② 未答 ask 卡由 rangeExtractor 常驻，草稿不会被滚走；③ 用户消息序号与 targetSeq 跳转改走同一份索引，不再 querySelector —— 屏外条目根本不在 DOM 里，旧写法在虚拟化后会永远停在 1；④ key 用条目 id（seq:pos）而非索引，上翻前插时测量缓存不会错行。"
+    files:
+      - web/src/components/session/useSessionTimelineVirtualizer.ts
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/useSessionWindowApply.ts
+      - web/src/components/session/useUserMessageSummaries.ts
+      - web/src/components/session/useTargetSeqScroll.ts
+      - web/tests/session-window-sources.mjs
+    tests:
+      - web/tests/session-timeline-virtualization.test.mjs
+    anchors:
+      - 'web/src/components/session/useSessionTimelineVirtualizer.ts:export const TIMELINE_VIRTUALIZE_MIN_ITEMS = 120'
+      - 'web/src/components/session/useSessionTimelineVirtualizer.ts:      Array.from(new Set([...defaultRangeExtractor(range), ...seqToIndex.pendingAsk])).sort('
+      - 'web/src/components/session/SessionViewerTimeline.tsx:  if (!virtual) {'
+      - 'web/src/components/session/SessionViewer.tsx:  const timelineNav = useSessionTimelineVirtualizer({'
+      - 'web/src/components/session/useSessionWindowApply.ts:export function useSessionWindowApply({'
+
+  - id: G-JU
+    title: 首屏窗口请求合流（结算后短窗复用）
+    kind: perf
+    symptom: "打开会话时同一个窗口请求发两遍：`?latest=8` 在服务端日志里出现两次，跨节点时各传 815 KB（实测 815,536 × 2 字节）。"
+    why: "打开会话有两个**顺序**加载者：App 的 restoreActiveSession 先拉尾部窗口、await 完才挂载 SessionViewer，后者 init effect 再拉一次同参数窗口；in-flight 去重只合并并发调用，所以第二次必然重发。给「打开会话」这条路加一个显式的短期复用（`opts.reuseWithinMs`），让先到的结果可被后到者复用。"
+    boundary: "复用**必须由调用方显式请求**，默认行为仍是「每次重新发」—— 「去重不能变成缓存」是 `web/tests/session-window-dedup.test.mjs` 钉住的边界（翻页/切回来必须拿最新）。只记成功结果，失败立刻可重试；键含 nodeId 与全部窗口参数，同名项目跨节点、不同 beforeSeq 不会互相顶掉。"
+    files:
+      - web/src/services/session/sessionWindowFetch.ts
+      - web/src/services/session/sessionService.ts
+      - web/src/shared/sessionTypes.ts
+      - web/src/app/useSessionLifecycle.ts
+    tests:
+      - web/tests/session-window-fetch-reuse.test.mjs
+      - web/tests/session-window-dedup.test.mjs
+    anchors:
+      - 'web/src/services/session/sessionService.ts:export const OPEN_SESSION_WINDOW_REUSE_MS = 2000;'
+      - 'web/src/services/session/sessionWindowFetch.ts:    const reuseWithinMs = Number(opts?.reuseWithinMs || 0);'
+      - 'web/src/app/useSessionLifecycle.ts:            reuseWithinMs: OPEN_SESSION_WINDOW_REUSE_MS,'

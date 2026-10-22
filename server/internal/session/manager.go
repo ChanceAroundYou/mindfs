@@ -174,6 +174,10 @@ type SessionWindowMeta struct {
 	HasMore bool `json:"hasMore"`
 	MinSeq  int  `json:"minSeq"`
 	MaxSeq  int  `json:"maxSeq"`
+	// BlockCount 是本次窗口里的正文块数（裁剪后）。0 表示没有块流（旧会话）。
+	BlockCount int `json:"blockCount,omitempty"`
+	// Truncated 表示窗口被**块数预算**裁过：更老的轮次被推给下一次 before_seq。
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 func (m *Manager) GetWindow(_ context.Context, key string, beforeSeq, limit, latest int) (*Session, *SessionWindowMeta, error) {
