@@ -4,6 +4,7 @@ import {
   consumeCodexRateLimitReset,
   fetchCodexRateLimits,
   type CodexRateLimitStatus,
+  type CodexRateLimitWindow,
 } from "../../services/codexRateLimits";
 
 const FOCUS_REFRESH_MAX_AGE_MS = 30 * 60 * 1000;
@@ -15,8 +16,17 @@ export type CodexRateLimitIndicatorProps = {
   onStatusChange?: (status: CodexRateLimitStatus | null) => void;
 };
 
-function remainingPercent(status: CodexRateLimitStatus | null): number | null {
-  const used = status?.weekly?.used_percent;
+/** 一个限额窗口的展示视图：剩余百分比与重置时间合并成一条。 */
+export type CodexLimitView = {
+  id: "five_hour" | "weekly";
+  label: string;
+  remaining: number | null;
+  resetTime: string;
+  resetCountdown: string;
+};
+
+function remainingPercent(window?: CodexRateLimitWindow): number | null {
+  const used = window?.used_percent;
   if (typeof used !== "number" || !Number.isFinite(used)) return null;
   return Math.max(0, Math.min(100, Math.round(100 - used)));
 }
@@ -122,16 +132,30 @@ export function useCodexRateLimit({
   }, [confirmOpen, resetting]);
 
   useEffect(() => {
-    if (!status?.weekly?.resets_at) return;
+    if (!status?.weekly?.resets_at && !status?.five_hour?.resets_at) return;
     setNowMs(Date.now());
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
-  }, [status?.weekly?.resets_at]);
+  }, [status?.weekly?.resets_at, status?.five_hour?.resets_at]);
 
-  const remaining = remainingPercent(status);
+  const limits = useMemo<CodexLimitView[]>(() => {
+    const views: CodexLimitView[] = [];
+    const push = (id: CodexLimitView["id"], label: string, window?: CodexRateLimitWindow) => {
+      if (!window) return;
+      views.push({
+        id,
+        label,
+        remaining: remainingPercent(window),
+        resetTime: formatResetTime(window.resets_at),
+        resetCountdown: formatResetCountdown(window.resets_at, nowMs),
+      });
+    };
+    push("five_hour", t("codexLimit.fiveHour"), status?.five_hour);
+    push("weekly", t("codexLimit.weekly"), status?.weekly);
+    return views;
+  }, [status, nowMs, t]);
+
   const resetCount = Math.max(0, status?.reset_credits?.available_count ?? 0);
-  const resetTime = formatResetTime(status?.weekly?.resets_at);
-  const resetCountdown = formatResetCountdown(status?.weekly?.resets_at, nowMs);
   const canReset = resetCount > 0 && !loading;
   const firstCredit = useMemo(
     () => status?.reset_credits?.credits?.find((credit) => credit.status === "available") || status?.reset_credits?.credits?.[0],
@@ -172,10 +196,8 @@ export function useCodexRateLimit({
     resetting,
     resetOutcome,
     error,
-    remaining,
+    limits,
     resetCount,
-    resetTime,
-    resetCountdown,
     canReset,
     firstCredit,
     setConfirmOpen,

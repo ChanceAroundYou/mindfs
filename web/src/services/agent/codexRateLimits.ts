@@ -19,6 +19,7 @@ export type CodexRateLimitResetCredit = {
 
 export type CodexRateLimitStatus = {
   uses_chatgpt_plan: boolean;
+  five_hour?: CodexRateLimitWindow;
   weekly?: CodexRateLimitWindow;
   reset_credits?: {
     available_count: number;
