@@ -1,6 +1,7 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { rawReadFileSync } from "./source-map.mjs";
+import { translateWithLocale } from "../src/i18n/index.tsx";
 
 const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -51,6 +52,36 @@ test("5 小时限额显示准确时刻，周限显示剩余天数与小时", () 
 test("可用重置次数为 0 时不显示重置徽标", () => {
   assert.match(indicator, /loading \|\| resetCount > 0 \? \(/);
   assert.match(indicator, /\{t\("codexLimit\.reset"\)\}/);
+});
+
+test("限额文案不重复：模板里不再自带百分号与「重置」", () => {
+  // 百分比由调用方带（"30%"），模板再补一个就成了 "30%%"；
+  // 重置短语自带「重置」，模板再补一次就成了「…重置 重置」。
+  assert.ok(zh.includes('"codexLimit.limitValue": "{name} {percent}"'));
+  assert.ok(zh.includes('"codexLimit.limitValueWithReset": "{name} {percent} · {time}"'));
+  assert.ok(zh.includes('"codexLimit.limitTitle": "{name} 剩余 {percent}，{time}"'));
+  assert.ok(en.includes('"codexLimit.limitValue": "{name} {percent}"'));
+  assert.ok(en.includes('"codexLimit.limitValueWithReset": "{name} {percent} · {time}"'));
+  assert.ok(en.includes('"codexLimit.limitTitle": "{name}: {percent} left, {time}"'));
+  assert.match(indicator, /`\$\{limit\.remaining\}%`/);
+});
+
+test("拼出来的胶囊文案就是用户看到的那一串", () => {
+  const t = (key, params) => translateWithLocale("zh-CN", key, params);
+  const fiveHour = t("codexLimit.limitValueWithReset", {
+    name: t("codexLimit.fiveHour"),
+    percent: "79%",
+    time: t("codexLimit.resetAtTime", { time: "16:56" }),
+  });
+  assert.equal(fiveHour, "5小时 79% · 16:56 重置");
+  const weekly = t("codexLimit.limitValueWithReset", {
+    name: t("codexLimit.weekly"),
+    percent: "31%",
+    time: t("codexLimit.resetInRemaining", { days: 4, hours: 23 }),
+  });
+  assert.equal(weekly, "周限 31% · 剩 4d 23h 重置");
+  assert.doesNotMatch(weekly, /%%/);
+  assert.equal(weekly.match(/重置/g).length, 1, "「重置」只能出现一次");
 });
 
 test("限额文案在两种语言里成对存在", () => {

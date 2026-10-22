@@ -58,7 +58,7 @@
 |---|---|
 | `server/internal/agent/codex/rate_limits_test.go` | 5 小时窗按时长被挑出；没有就不出现；5 小时窗不会被当周限 |
 | `web/tests/composer-chips-layout.test.mjs` | 徽标带在 `ActionBar` 里排在排队列表之前且离开输入框；不再有 absolute/早退守卫；内存徽标左置并带 `nodeId`；限额徽标同属左组（`justify-content: flex-start`，无右组） |
-| `web/tests/codex-rate-limit-windows.test.mjs` | 后端有 `five_hour`；前端类型与 `limits` 视图含 5 小时窗；每个限额合并剩余与重置时间；可用重置次数为 0 时不渲染重置徽标；文案两种语言成对 |
+| `web/tests/codex-rate-limit-windows.test.mjs` | 后端有 `five_hour`；前端类型与 `limits` 视图含 5 小时窗；每个限额合并剩余与重置时间；可用重置次数为 0 时不渲染重置徽标；文案两种语言成对；拼出来的胶囊文案逐字等于「5小时 79% · 16:56 重置」「周限 31% · 剩 4d 23h 重置」 |
 
 ## 兼容策略
 
@@ -87,6 +87,9 @@
 - **「重置 0」**：可用次数为 0 时不渲染重置徽标（仍在加载时保留占位）。
 - **重置时间按窗口语义分开写**：5 小时窗写准确时刻「16:56 重置」，周限写剩余时长
   「剩 4d 23h 重置」（`nowMs` 每分钟走一次，避免首帧算一次就冻住）。
+- **文案不重复**：模板里不再自带 `%` 和「重置」（百分比与「重置」都由短语提供），
+  最终胶囊是「5小时 79% · 16:56 重置」「周限 31% · 剩 4d 23h 重置」；
+  Limit Reset 按钮用产品名「Limit Reset」，不和胶囊里的「重置」撞词。
 
 ## 遗留
 
