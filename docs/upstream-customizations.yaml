@@ -6610,3 +6610,16 @@ groups:
       - 'web/src/components/action/ComposerTopChips.tsx:<CodexRateLimitIndicator agent={agent}'
       - 'web/src/components/agent/CodexRateLimitIndicator.tsx:loading || resetCount > 0 ? ('
       - 'web/src/services/agent/agentMemory.ts:appPath("/api/agents/memory", nodeId)'
+
+  - id: G-JR
+    title: 排队消息测试的临时目录清理竞态
+    kind: fix
+    symptom: "跑 `go test ./...`（或整包跑 server/internal/api）时，TestQueuedMessageRunsAfterTurnEnds 收尾报 `TempDir RemoveAll cleanup: .../.mindfs/sessions: directory not empty` —— 整包跑必红、单跑该用例必绿，是清理时机竞态而不是断言失败。"
+    why: "第二轮排队消息是后台 goroutine（startNextQueuedSessionMessage 里 go runSessionMessage），队列一空本用例就结束，而它可能还在往 <root>/.mindfs/sessions 落盘；t.TempDir 的清理是「一次 RemoveAll 失败即测试失败」，于是收尾时机变成偶发失败点，会随机打断门禁与部署流程。根目录改用普通临时目录 + 清理重试，用例语义（队列必须被自动取走）不变。"
+    boundary: "只改这一条测试的临时目录与清理方式，不动 runSessionMessage / 排队队列 / StreamHub 的任何行为。"
+    files:
+      - server/internal/api/ws_session_queue_drain_test.go
+    tests:
+      - server/internal/api/ws_session_queue_drain_test.go
+    anchors:
+      - 'server/internal/api/ws_session_queue_drain_test.go:os.MkdirTemp("", "mindfs-queued-drain-*")'

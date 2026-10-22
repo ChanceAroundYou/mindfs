@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,7 +27,23 @@ import (
 // 没有 agent pool，SendMessage 立刻失败，但「失败也是一轮结束」，收尾路径一模一样。
 func TestQueuedMessageRunsAfterTurnEnds(t *testing.T) {
 	registry := fs.NewRegistry(filepath.Join(t.TempDir(), "registry.json"))
-	root, err := registry.Upsert(t.TempDir())
+	// 第二轮是后台 goroutine：队列一空本测试就结束，而它可能还在往
+	// <root>/.mindfs/sessions 落盘。t.TempDir 的清理是「一次 RemoveAll 失败即测试失败」，
+	// 于是收尾时机就成了偶发失败点（2026-10-22 实测：整包跑必红、单跑必绿）。
+	// 根目录改用普通临时目录 + 清理重试，语义不变，只是不再拿清理竞态当失败。
+	rootDir, err := os.MkdirTemp("", "mindfs-queued-drain-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 100; i++ {
+			if err := os.RemoveAll(rootDir); err == nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+	root, err := registry.Upsert(rootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
