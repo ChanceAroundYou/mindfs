@@ -84,7 +84,7 @@ export function ComposerTopChips({
         style={{
           display: contentHidden ? "none" : "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          justifyContent: "flex-start",
           gap: "8px",
           width: "100%",
           minWidth: 0,
@@ -108,8 +108,6 @@ export function ComposerTopChips({
               {createWorktree ? <><WorktreeBranchSelector branchMode={worktreeBranchMode} branch={worktreeBranch} branches={worktreeBranches.branches} disabled={sending} maxWidth={isMobile ? 150 : 240} menuAlign={isMobile ? "left" : "right"} menuPlacement="top" onChange={onWorktreeBranchChange} />{worktreeBranchesLoading ? <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("common.loading")}</span> : worktreeBranchError ? <span title={worktreeBranchError} style={{ fontSize: "11px", color: "#b45309", whiteSpace: "nowrap" }}>{t("common.loadingFailed")}</span> : null}</> : null}
             </>
           ) : null}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
           {mode !== "command" ? (
             <CodexRateLimitIndicator agent={agent} refreshToken={codexRateLimitsRefreshToken} nodeId={rootNodeId} />
           ) : null}

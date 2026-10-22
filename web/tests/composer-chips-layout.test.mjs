@@ -33,6 +33,16 @@ test("徽标带不再有 agent 早退守卫，内存徽标对所有 agent 显示
   assert.ok(memoryIndex < planIndex, "内存徽标必须左置（排在左组首位）");
 });
 
+test("限额徽标也在左组：徽标带整体靠左，不靠 justify-content 分到右端", () => {
+  const limitIndex = chips.indexOf("<CodexRateLimitIndicator");
+  const memoryIndex = chips.indexOf("<AgentMemoryIndicator");
+  assert.ok(limitIndex > memoryIndex, "限额徽标必须排在内存徽标之后、同属左组");
+  const leftGroups = chips.match(/display: "flex", alignItems: "center", gap: "6px", minWidth: 0/g) || [];
+  assert.equal(leftGroups.length, 1, "徽标带只允许一个左组，限额徽标不得另起右组");
+  assert.match(chips, /justifyContent: "flex-start"/);
+  assert.doesNotMatch(chips, /justifyContent: "space-between"/);
+});
+
 test("内存徽标跟随当前项目所在节点", () => {
   assert.match(chips, /<AgentMemoryIndicator[^>]*nodeId=\{rootNodeId\}/);
   assert.match(useAgentMemory, /nodeId\?: string/);

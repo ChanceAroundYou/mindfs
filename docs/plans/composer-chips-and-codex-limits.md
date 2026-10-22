@@ -44,9 +44,9 @@
 | 文件 | 作用 |
 |---|---|
 | `web/src/components/action/ActionBar.tsx` | 徽标带移出输入框内部，作为列内流内一行排在 `QueuedMessagesList` 之前；删掉外层守卫 |
-| `web/src/components/action/ComposerTopChips.tsx` | 浮层改流内一行（`minHeight:24px`，选择器弹层打开时隐藏内容但保留行高）；左组顺序 `[内存][Plan][worktree]`，右组 `[5h][周限][重置]`；内存徽标传 `nodeId` |
+| `web/src/components/action/ComposerTopChips.tsx` | 浮层改流内一行（`minHeight:24px`，选择器弹层打开时隐藏内容但保留行高）；单组靠左，顺序 `[内存][Plan][worktree][5h][周限][重置]`；内存徽标传 `nodeId` |
 | `web/src/components/agent/useCodexRateLimit.ts` | 新增 `limits` 视图（每个窗口的 label/remaining/resetTime）；`remainingPercent` 泛化到窗口 |
-| `web/src/components/agent/CodexRateLimitIndicator.tsx` | 每个限额一个胶囊，`{名称} {剩余}% · {重置时间} 重置`；Limit Reset 按钮只留可用次数 |
+| `web/src/components/agent/CodexRateLimitIndicator.tsx` | 每个限额一个胶囊，`{名称} {剩余}% · {重置时间} 重置`；Limit Reset 按钮只在可用次数 > 0（或仍在加载）时出现 |
 | `web/src/components/agent/useAgentMemory.ts` | 接受 `nodeId`，取数与释放都带节点；切节点重取 |
 | `web/src/services/agent/agentMemory.ts` | `fetchAgentMemory(nodeId?)` / `releaseAgentSessions(nodeId?)` |
 | `web/src/services/agent/codexRateLimits.ts` | 类型新增 `five_hour` |
@@ -57,8 +57,8 @@
 | 测试 | 钉住什么 |
 |---|---|
 | `server/internal/agent/codex/rate_limits_test.go` | 5 小时窗按时长被挑出；没有就不出现；5 小时窗不会被当周限 |
-| `web/tests/composer-chips-layout.test.mjs` | 徽标带在 `ActionBar` 里排在排队列表之前且离开输入框；不再有 absolute/早退守卫；内存徽标左置并带 `nodeId` |
-| `web/tests/codex-rate-limit-windows.test.mjs` | 后端有 `five_hour`；前端类型与 `limits` 视图含 5 小时窗；每个限额合并剩余与重置时间；文案两种语言成对 |
+| `web/tests/composer-chips-layout.test.mjs` | 徽标带在 `ActionBar` 里排在排队列表之前且离开输入框；不再有 absolute/早退守卫；内存徽标左置并带 `nodeId`；限额徽标同属左组（`justify-content: flex-start`，无右组） |
+| `web/tests/codex-rate-limit-windows.test.mjs` | 后端有 `five_hour`；前端类型与 `limits` 视图含 5 小时窗；每个限额合并剩余与重置时间；可用重置次数为 0 时不渲染重置徽标；文案两种语言成对 |
 
 ## 兼容策略
 
@@ -73,6 +73,18 @@
 - 可见变化：输入框上方多一条 24px 的行（Plan 芯片从「贴输入框上沿」变成「独立一行」）；
   所有 agent 每次挂载输入区会多一次 `/api/agents/memory` 请求（只读、失败显示 `—`）；
   Limit Reset 按钮不再显示倒计时（重置时间已在限额胶囊里，倒计时计时器随之删除）。
+
+## 复测与修正（2026-10-22 第二次）
+
+用户在真机看到「只有周限、限额没靠左、重置 0 仍显示」，逐条查证：
+
+- **5 小时限额缺失 = 后端进程未重启**，不是代码问题。直连 app-server 取原始响应，
+  `primary.windowDurationMins=300`（used 20%）、`secondary.windowDurationMins=10080`（used 69%），
+  两个窗口都在；旧二进制只输出 `weekly`。进程重启后 `/api/agents/codex/rate-limits`
+  同时返回 `five_hour` 与 `weekly`。
+- **限额没靠左**：徽标带内层用 `justify-content: space-between` 把限额甩到右端。
+  改成单一左组（`flex-start`），顺序 `[内存][Plan][worktree][5h][周限][重置]`。
+- **「重置 0」**：可用次数为 0 时不渲染重置徽标（仍在加载时保留占位）。
 
 ## 遗留
 

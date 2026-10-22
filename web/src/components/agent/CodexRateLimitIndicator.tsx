@@ -94,9 +94,11 @@ export function CodexRateLimitIndicator(props: CodexRateLimitIndicatorProps) {
             </div>
           );
         })}
-        <button type="button" disabled={!canReset} onClick={() => { setResetOutcome(""); setError(""); setConfirmOpen(true); }} title={canReset ? t("codexLimit.resetAvailable", { count: resetCount }) : error || t("codexLimit.resetUnavailable")} aria-label={canReset ? t("codexLimit.resetAvailable", { count: resetCount }) : t("codexLimit.resetUnavailable")} style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: canReset ? "1px solid rgba(180, 83, 9, 0.24)" : "1px solid var(--border-color)", background: canReset ? "linear-gradient(rgba(245, 158, 11, 0.10), rgba(245, 158, 11, 0.10)), var(--mobile-overlay-bg)" : "linear-gradient(rgba(100, 116, 139, 0.08), rgba(100, 116, 139, 0.08)), var(--mobile-overlay-bg)", color: canReset ? "#b45309" : "var(--text-secondary)", fontSize: "11px", fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap", cursor: canReset ? "pointer" : "default" }}>
-          {t("codexLimit.reset")} {loading && !status ? "·" : resetCount}
-        </button>
+        {loading || resetCount > 0 ? (
+          <button type="button" disabled={!canReset} onClick={() => { setResetOutcome(""); setError(""); setConfirmOpen(true); }} title={canReset ? t("codexLimit.resetAvailable", { count: resetCount }) : error || t("codexLimit.resetUnavailable")} aria-label={canReset ? t("codexLimit.resetAvailable", { count: resetCount }) : t("codexLimit.resetUnavailable")} style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: canReset ? "1px solid rgba(180, 83, 9, 0.24)" : "1px solid var(--border-color)", background: canReset ? "linear-gradient(rgba(245, 158, 11, 0.10), rgba(245, 158, 11, 0.10)), var(--mobile-overlay-bg)" : "linear-gradient(rgba(100, 116, 139, 0.08), rgba(100, 116, 139, 0.08)), var(--mobile-overlay-bg)", color: canReset ? "#b45309" : "var(--text-secondary)", fontSize: "11px", fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap", cursor: canReset ? "pointer" : "default" }}>
+            {t("codexLimit.reset")} {loading && !status ? "·" : resetCount}
+          </button>
+        ) : null}
       </div>
       {modal}
     </>

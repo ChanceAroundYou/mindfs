@@ -32,6 +32,11 @@ test("每个限额合并展示剩余与重置时间", () => {
   assert.doesNotMatch(indicator, /codexLimit\.weeklyTitle/);
 });
 
+test("可用重置次数为 0 时不显示重置徽标", () => {
+  assert.match(indicator, /loading \|\| resetCount > 0 \? \(/);
+  assert.match(indicator, /\{t\("codexLimit\.reset"\)\}/);
+});
+
 test("限额文案在两种语言里成对存在", () => {
   for (const [src, name, value] of [
     [zh, "codexLimit.fiveHour", "5小时"],
