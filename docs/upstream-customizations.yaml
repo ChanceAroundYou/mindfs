@@ -6632,6 +6632,8 @@ groups:
     why: "没有预算，窗口载荷的上界由 agent 行为决定，任何「这一轮干了一千件事」的会话都会把前端拖死；这是载荷守恒性质的缺陷，不是可调参数。窗口 aux 的 thought 与同 seq 的 reasoning 块是同一段文本的两份拷贝，块流已是正文唯一载体（D1），重复下发纯属浪费传输与前端建条目。两者合起来把上翻一页从 9.4 MB 压到 57 KB、单轮超大页从 10.1 MB 压到 4.5 MB（真机两实例对比实测）。"
     boundary: "只在窗口读路径生效（window_meta != nil）：全量 sync / 重锚定 / 增量 seq 路径零变化，块与 aux 的落盘格式完全不动。裁剪只按**整轮**做，不在轮内切块（轮内切块要引入 pos 游标并波及 aux.line 对账、工具分组、fork、targetSeq 定位）。单轮自己超预算时仍完整下发并标 truncated —— 空窗口比慢更糟。工具卡 aux 刻意不去重：它承载窗口轻压缩契约、commandShell 推断与懒加载身份，`TestHandleSessionSyncWindowUsesWindowAux` 钉住了这条。"
     files:
+      - docs/plans/long-session-load-perf.md
+      - docs/plans/README.md
       - server/internal/api/http.go
       - server/internal/api/http_sessions_detail.go
       - server/internal/api/http_sessions_detail_response.go
