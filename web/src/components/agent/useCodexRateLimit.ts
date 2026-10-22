@@ -21,7 +21,10 @@ export type CodexLimitView = {
   id: "five_hour" | "weekly";
   label: string;
   remaining: number | null;
-  resetTime: string;
+  /** 胶囊里的重置提示：5 小时窗是「HH:MM 重置」，周限是「剩 Md Nh 重置」。 */
+  resetText: string;
+  /** title 里的重置提示（不带「重置」二字，避免和 title 模板重复）。 */
+  resetDetail: string;
 };
 
 function remainingPercent(window?: CodexRateLimitWindow): number | null {
@@ -30,14 +33,17 @@ function remainingPercent(window?: CodexRateLimitWindow): number | null {
   return Math.max(0, Math.min(100, Math.round(100 - used)));
 }
 
-function formatResetTime(unixSeconds: number | undefined): string {
-  if (!unixSeconds) return "";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(unixSeconds * 1000));
+function formatClockTime(unixSeconds: number): string {
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(unixSeconds * 1000));
+}
+
+/** 距离重置还剩多少天多少小时。 */
+function formatRemaining(resetsAt: number, nowMs: number): { days: number; hours: number } {
+  const ms = Math.max(0, resetsAt * 1000 - nowMs);
+  return {
+    days: Math.floor(ms / 86_400_000),
+    hours: Math.floor((ms % 86_400_000) / 3_600_000),
+  };
 }
 
 export function useCodexRateLimit({
@@ -53,6 +59,8 @@ export function useCodexRateLimit({
   const [resetting, setResetting] = useState(false);
   const [resetOutcome, setResetOutcome] = useState("");
   const [error, setError] = useState("");
+  // 周限的「剩 Md Nh」要跟着时间走，每分钟刷新一次。
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const requestRef = useRef(0);
   const activeRequestsRef = useRef(0);
   const lastSuccessfulFetchAtRef = useRef(0);
@@ -118,21 +126,40 @@ export function useCodexRateLimit({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [confirmOpen, resetting]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const limits = useMemo<CodexLimitView[]>(() => {
     const views: CodexLimitView[] = [];
     const push = (id: CodexLimitView["id"], label: string, window?: CodexRateLimitWindow) => {
       if (!window) return;
+      let resetText = "";
+      let resetDetail = "";
+      if (window.resets_at) {
+        if (id === "five_hour") {
+          const clock = formatClockTime(window.resets_at);
+          resetText = t("codexLimit.resetAtTime", { time: clock });
+          resetDetail = clock;
+        } else {
+          const { days, hours } = formatRemaining(window.resets_at, nowMs);
+          resetText = t("codexLimit.resetInRemaining", { days, hours });
+          resetDetail = t("codexLimit.resetInRemainingShort", { days, hours });
+        }
+      }
       views.push({
         id,
         label,
         remaining: remainingPercent(window),
-        resetTime: formatResetTime(window.resets_at),
+        resetText,
+        resetDetail,
       });
     };
     push("five_hour", t("codexLimit.fiveHour"), status?.five_hour);
     push("weekly", t("codexLimit.weekly"), status?.weekly);
     return views;
-  }, [status, t]);
+  }, [status, t, nowMs]);
 
   const resetCount = Math.max(0, status?.reset_credits?.available_count ?? 0);
   const canReset = resetCount > 0 && !loading;

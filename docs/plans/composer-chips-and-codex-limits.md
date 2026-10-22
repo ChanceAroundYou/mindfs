@@ -45,12 +45,12 @@
 |---|---|
 | `web/src/components/action/ActionBar.tsx` | 徽标带移出输入框内部，作为列内流内一行排在 `QueuedMessagesList` 之前；删掉外层守卫 |
 | `web/src/components/action/ComposerTopChips.tsx` | 浮层改流内一行（`minHeight:24px`，选择器弹层打开时隐藏内容但保留行高）；单组靠左，顺序 `[内存][Plan][worktree][5h][周限][重置]`；内存徽标传 `nodeId` |
-| `web/src/components/agent/useCodexRateLimit.ts` | 新增 `limits` 视图（每个窗口的 label/remaining/resetTime）；`remainingPercent` 泛化到窗口 |
+| `web/src/components/agent/useCodexRateLimit.ts` | 新增 `limits` 视图（每个窗口的 label/remaining/resetText/resetDetail）；`remainingPercent` 泛化到窗口；`formatClockTime` + `formatRemaining` 按窗口给出两种重置文案 |
 | `web/src/components/agent/CodexRateLimitIndicator.tsx` | 每个限额一个胶囊，`{名称} {剩余}% · {重置时间} 重置`；Limit Reset 按钮只在可用次数 > 0（或仍在加载）时出现 |
 | `web/src/components/agent/useAgentMemory.ts` | 接受 `nodeId`，取数与释放都带节点；切节点重取 |
 | `web/src/services/agent/agentMemory.ts` | `fetchAgentMemory(nodeId?)` / `releaseAgentSessions(nodeId?)` |
 | `web/src/services/agent/codexRateLimits.ts` | 类型新增 `five_hour` |
-| `web/src/i18n/locales/{zh-CN,en-US}-agents.ts` | 新增 `codexLimit.fiveHour` / `limitValue` / `limitValueWithReset` / `limitTitle`；删除只服务旧周限胶囊的 `weeklyTitle*` |
+| `web/src/i18n/locales/{zh-CN,en-US}-agents.ts` | 新增 `codexLimit.fiveHour` / `limitValue` / `limitValueWithReset` / `limitTitle` / `resetAtTime` / `resetInRemaining` / `resetInRemainingShort`；删除只服务旧周限胶囊的 `weeklyTitle*` |
 
 ### 测试
 
@@ -85,6 +85,8 @@
 - **限额没靠左**：徽标带内层用 `justify-content: space-between` 把限额甩到右端。
   改成单一左组（`flex-start`），顺序 `[内存][Plan][worktree][5h][周限][重置]`。
 - **「重置 0」**：可用次数为 0 时不渲染重置徽标（仍在加载时保留占位）。
+- **重置时间按窗口语义分开写**：5 小时窗写准确时刻「16:56 重置」，周限写剩余时长
+  「剩 4d 23h 重置」（`nowMs` 每分钟走一次，避免首帧算一次就冻住）。
 
 ## 遗留
 

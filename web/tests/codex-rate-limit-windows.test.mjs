@@ -26,10 +26,26 @@ test("前端类型与限额视图都包含 5 小时窗口", () => {
 
 test("每个限额合并展示剩余与重置时间", () => {
   assert.match(hook, /remaining: remainingPercent\(window\)/);
-  assert.match(hook, /resetTime: formatResetTime\(window\.resets_at\)/);
-  assert.match(indicator, /t\("codexLimit\.limitValueWithReset", \{ name: limit\.label, percent, time: limit\.resetTime \}\)/);
+  assert.match(indicator, /t\("codexLimit\.limitValueWithReset", \{ name: limit\.label, percent, time: limit\.resetText \}\)/);
   assert.match(indicator, /limits\.map\(\(limit\)/);
   assert.doesNotMatch(indicator, /codexLimit\.weeklyTitle/);
+});
+
+test("5 小时限额显示准确时刻，周限显示剩余天数与小时", () => {
+  assert.match(hook, /if \(id === "five_hour"\)/);
+  assert.match(hook, /formatClockTime\(window\.resets_at\)/);
+  assert.match(hook, /formatRemaining\(window\.resets_at, nowMs\)/);
+  assert.match(hook, /t\("codexLimit\.resetAtTime", \{ time: clock \}\)/);
+  assert.match(hook, /t\("codexLimit\.resetInRemaining", \{ days, hours \}\)/);
+  // 剩余时间要跟着时钟走，不能是首帧算一次就冻住。
+  assert.match(hook, /setInterval\(\(\) => setNowMs\(Date\.now\(\)\), 60_000\)/);
+  for (const [src, name, value] of [
+    [zh, "codexLimit.resetAtTime", "{time} 重置"],
+    [zh, "codexLimit.resetInRemaining", "剩 {days}d {hours}h 重置"],
+    [zh, "codexLimit.resetInRemainingShort", "剩 {days}d {hours}h"],
+  ]) {
+    assert.ok(src.includes(`"${name}": "${value}"`), `zh-CN missing ${name}`);
+  }
 });
 
 test("可用重置次数为 0 时不显示重置徽标", () => {

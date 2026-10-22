@@ -82,11 +82,11 @@ export function CodexRateLimitIndicator(props: CodexRateLimitIndicatorProps) {
       <div style={{ display: "inline-flex", flex: "0 0 auto", alignItems: "center", gap: "5px", height: "24px", minWidth: 0 }}>
         {limits.map((limit) => {
           const percent = limit.remaining === null ? (loading ? "··" : "—") : `${limit.remaining}%`;
-          const label = limit.resetTime
-            ? t("codexLimit.limitValueWithReset", { name: limit.label, percent, time: limit.resetTime })
+          const label = limit.resetText
+            ? t("codexLimit.limitValueWithReset", { name: limit.label, percent, time: limit.resetText })
             : t("codexLimit.limitValue", { name: limit.label, percent });
-          const title = limit.resetTime
-            ? t("codexLimit.limitTitle", { name: limit.label, percent, time: limit.resetTime })
+          const title = limit.resetDetail
+            ? t("codexLimit.limitTitle", { name: limit.label, percent, time: limit.resetDetail })
             : label;
           return (
             <div key={limit.id} title={title} style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: "1px solid color-mix(in srgb, var(--accent-color) 22%, transparent)", background: "linear-gradient(color-mix(in srgb, var(--accent-color) 10%, transparent), color-mix(in srgb, var(--accent-color) 10%, transparent)), var(--mobile-overlay-bg)", color: "var(--accent-color)", fontSize: "11px", fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap" }}>
