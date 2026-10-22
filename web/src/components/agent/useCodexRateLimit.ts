@@ -22,7 +22,6 @@ export type CodexLimitView = {
   label: string;
   remaining: number | null;
   resetTime: string;
-  resetCountdown: string;
 };
 
 function remainingPercent(window?: CodexRateLimitWindow): number | null {
@@ -41,17 +40,6 @@ function formatResetTime(unixSeconds: number | undefined): string {
   }).format(new Date(unixSeconds * 1000));
 }
 
-function formatResetCountdown(unixSeconds: number | undefined, nowMs: number): string {
-  if (!unixSeconds) return "";
-  const remainingMinutes = Math.max(0, Math.ceil((unixSeconds * 1000 - nowMs) / 60_000));
-  const days = Math.floor(remainingMinutes / (24 * 60));
-  const hours = Math.floor((remainingMinutes % (24 * 60)) / 60);
-  const minutes = remainingMinutes % 60;
-  if (days > 0) return `${days}d·${hours}h`;
-  if (hours > 0) return `${hours}h·${minutes}m`;
-  return `${minutes}m`;
-}
-
 export function useCodexRateLimit({
   agent,
   refreshToken = 0,
@@ -65,7 +53,6 @@ export function useCodexRateLimit({
   const [resetting, setResetting] = useState(false);
   const [resetOutcome, setResetOutcome] = useState("");
   const [error, setError] = useState("");
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const requestRef = useRef(0);
   const activeRequestsRef = useRef(0);
   const lastSuccessfulFetchAtRef = useRef(0);
@@ -131,13 +118,6 @@ export function useCodexRateLimit({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [confirmOpen, resetting]);
 
-  useEffect(() => {
-    if (!status?.weekly?.resets_at && !status?.five_hour?.resets_at) return;
-    setNowMs(Date.now());
-    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
-  }, [status?.weekly?.resets_at, status?.five_hour?.resets_at]);
-
   const limits = useMemo<CodexLimitView[]>(() => {
     const views: CodexLimitView[] = [];
     const push = (id: CodexLimitView["id"], label: string, window?: CodexRateLimitWindow) => {
@@ -147,13 +127,12 @@ export function useCodexRateLimit({
         label,
         remaining: remainingPercent(window),
         resetTime: formatResetTime(window.resets_at),
-        resetCountdown: formatResetCountdown(window.resets_at, nowMs),
       });
     };
     push("five_hour", t("codexLimit.fiveHour"), status?.five_hour);
     push("weekly", t("codexLimit.weekly"), status?.weekly);
     return views;
-  }, [status, nowMs, t]);
+  }, [status, t]);
 
   const resetCount = Math.max(0, status?.reset_credits?.available_count ?? 0);
   const canReset = resetCount > 0 && !loading;

@@ -45,8 +45,8 @@
 |---|---|
 | `web/src/components/action/ActionBar.tsx` | 徽标带移出输入框内部，作为列内流内一行排在 `QueuedMessagesList` 之前；删掉外层守卫 |
 | `web/src/components/action/ComposerTopChips.tsx` | 浮层改流内一行（`minHeight:24px`，选择器弹层打开时隐藏内容但保留行高）；左组顺序 `[内存][Plan][worktree]`，右组 `[5h][周限][重置]`；内存徽标传 `nodeId` |
-| `web/src/components/agent/useCodexRateLimit.ts` | 新增 `limits` 视图（每个窗口的 label/remaining/resetTime/resetCountdown）；`remainingPercent` 泛化到窗口；倒计时 ticker 依赖任一窗口的 `resets_at` |
-| `web/src/components/agent/CodexRateLimitIndicator.tsx` | 每个限额一个胶囊，`{名称} {剩余}% · {重置时间} 重置`；Limit Reset 按钮只留可用次数（倒计时已并入胶囊） |
+| `web/src/components/agent/useCodexRateLimit.ts` | 新增 `limits` 视图（每个窗口的 label/remaining/resetTime）；`remainingPercent` 泛化到窗口 |
+| `web/src/components/agent/CodexRateLimitIndicator.tsx` | 每个限额一个胶囊，`{名称} {剩余}% · {重置时间} 重置`；Limit Reset 按钮只留可用次数 |
 | `web/src/components/agent/useAgentMemory.ts` | 接受 `nodeId`，取数与释放都带节点；切节点重取 |
 | `web/src/services/agent/agentMemory.ts` | `fetchAgentMemory(nodeId?)` / `releaseAgentSessions(nodeId?)` |
 | `web/src/services/agent/codexRateLimits.ts` | 类型新增 `five_hour` |
@@ -72,7 +72,7 @@
 - **无数据迁移**：不落盘、不改 schema。
 - 可见变化：输入框上方多一条 24px 的行（Plan 芯片从「贴输入框上沿」变成「独立一行」）；
   所有 agent 每次挂载输入区会多一次 `/api/agents/memory` 请求（只读、失败显示 `—`）；
-  Limit Reset 按钮不再显示倒计时。
+  Limit Reset 按钮不再显示倒计时（重置时间已在限额胶囊里，倒计时计时器随之删除）。
 
 ## 遗留
 
