@@ -403,7 +403,7 @@ function SessionViewerInner({
             width: "100%",
             minWidth: 0,
             display: "block",
-            padding: "24px 16px",
+            padding: `24px 16px ${composerOverlayInset + 20}px`,
             boxSizing: "border-box",
             overflowX: "hidden",
           }} data-mindfs-session-content-width="1">
