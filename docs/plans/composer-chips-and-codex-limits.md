@@ -50,7 +50,7 @@
 | `web/src/components/agent/useAgentMemory.ts` | 接受 `nodeId`，取数与释放都带节点；切节点重取 |
 | `web/src/services/agent/agentMemory.ts` | `fetchAgentMemory(nodeId?)` / `releaseAgentSessions(nodeId?)` |
 | `web/src/services/agent/codexRateLimits.ts` | 类型新增 `five_hour` |
-| `web/src/i18n/locales/{zh-CN,en-US}-agents.ts` | 新增 `codexLimit.fiveHour` / `limitValue` / `limitValueWithReset` / `limitTitle` / `resetAtTime` / `resetInRemaining` / `resetInRemainingShort`；删除只服务旧周限胶囊的 `weeklyTitle*` |
+| `web/src/i18n/locales/{zh-CN,en-US}-agents.ts` | 新增 `codexLimit.fiveHour` / `limitValue` / `limitValueWithReset` / `limitTitle` / `resetAtTime` / `resetInRemaining`；删除只服务旧周限胶囊的 `weeklyTitle*` 与已同形的 `resetInRemainingShort` |
 
 ### 测试
 
@@ -58,7 +58,7 @@
 |---|---|
 | `server/internal/agent/codex/rate_limits_test.go` | 5 小时窗按时长被挑出；没有就不出现；5 小时窗不会被当周限 |
 | `web/tests/composer-chips-layout.test.mjs` | 徽标带在 `ActionBar` 里排在排队列表之前且离开输入框；不再有 absolute/早退守卫；内存徽标左置并带 `nodeId`；限额徽标同属左组（`justify-content: flex-start`，无右组） |
-| `web/tests/codex-rate-limit-windows.test.mjs` | 后端有 `five_hour`；前端类型与 `limits` 视图含 5 小时窗；每个限额合并剩余与重置时间；可用重置次数为 0 时不渲染重置徽标；文案两种语言成对；拼出来的胶囊文案逐字等于「5小时 79% · 16:56 重置」「周限 31% · 剩 4d 23h 重置」 |
+| `web/tests/codex-rate-limit-windows.test.mjs` | 后端有 `five_hour`；前端类型与 `limits` 视图含 5 小时窗；每个限额合并剩余与重置时间；可用重置次数为 0 时不渲染重置徽标；文案两种语言成对；拼出来的胶囊文案逐字等于「5h 79% · 16:56」「周 31% · 4d 23h」，胶囊里不出现「重置」 |
 
 ## 兼容策略
 
@@ -88,8 +88,19 @@
 - **重置时间按窗口语义分开写**：5 小时窗写准确时刻「16:56 重置」，周限写剩余时长
   「剩 4d 23h 重置」（`nowMs` 每分钟走一次，避免首帧算一次就冻住）。
 - **文案不重复**：模板里不再自带 `%` 和「重置」（百分比与「重置」都由短语提供），
-  最终胶囊是「5小时 79% · 16:56 重置」「周限 31% · 剩 4d 23h 重置」；
   Limit Reset 按钮用产品名「Limit Reset」，不和胶囊里的「重置」撞词。
+
+## 复测与修正（2026-10-22 第三次）
+
+用户再次指样式：Codex 胶囊里的「重置」二字全部去掉，名称也压短。
+
+- 胶囊改成「5h 79% · 16:56」「周 31% · 4d 23h」：名称 `codexLimit.fiveHour`
+  由「5小时」改「5h」、`codexLimit.weekly` 由「周限」改「周」；重置短语
+  `resetAtTime` / `resetInRemaining` 不再自带「重置」「剩」前缀，只给数值。
+- 顺带删掉只为「title 里少一个字」而存在的 `resetInRemainingShort` —— 它与
+  `resetInRemaining` 现在完全同形，`CodexLimitView.resetDetail` 一并去掉，
+  title 直接复用 `resetText`。
+- 「重置」只留在真正讲动作的地方：title 提示与 Limit Reset 按钮。
 
 ## 遗留
 

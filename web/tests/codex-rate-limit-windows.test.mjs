@@ -36,14 +36,13 @@ test("5 小时限额显示准确时刻，周限显示剩余天数与小时", () 
   assert.match(hook, /if \(id === "five_hour"\)/);
   assert.match(hook, /formatClockTime\(window\.resets_at\)/);
   assert.match(hook, /formatRemaining\(window\.resets_at, nowMs\)/);
-  assert.match(hook, /t\("codexLimit\.resetAtTime", \{ time: clock \}\)/);
+  assert.match(hook, /t\("codexLimit\.resetAtTime", \{ time: formatClockTime\(window\.resets_at\) \}\)/);
   assert.match(hook, /t\("codexLimit\.resetInRemaining", \{ days, hours \}\)/);
   // 剩余时间要跟着时钟走，不能是首帧算一次就冻住。
   assert.match(hook, /setInterval\(\(\) => setNowMs\(Date\.now\(\)\), 60_000\)/);
   for (const [src, name, value] of [
-    [zh, "codexLimit.resetAtTime", "{time} 重置"],
-    [zh, "codexLimit.resetInRemaining", "剩 {days}d {hours}h 重置"],
-    [zh, "codexLimit.resetInRemainingShort", "剩 {days}d {hours}h"],
+    [zh, "codexLimit.resetAtTime", "{time}"],
+    [zh, "codexLimit.resetInRemaining", "{days}d {hours}h"],
   ]) {
     assert.ok(src.includes(`"${name}": "${value}"`), `zh-CN missing ${name}`);
   }
@@ -56,13 +55,13 @@ test("可用重置次数为 0 时不显示重置徽标", () => {
 
 test("限额文案不重复：模板里不再自带百分号与「重置」", () => {
   // 百分比由调用方带（"30%"），模板再补一个就成了 "30%%"；
-  // 重置短语自带「重置」，模板再补一次就成了「…重置 重置」。
+  // 胶囊里不再出现「重置」二字，重置短语只由短语本身提供。
   assert.ok(zh.includes('"codexLimit.limitValue": "{name} {percent}"'));
   assert.ok(zh.includes('"codexLimit.limitValueWithReset": "{name} {percent} · {time}"'));
-  assert.ok(zh.includes('"codexLimit.limitTitle": "{name} 剩余 {percent}，{time}"'));
+  assert.ok(zh.includes('"codexLimit.limitTitle": "{name} 剩余 {percent}，{time} 重置"'));
   assert.ok(en.includes('"codexLimit.limitValue": "{name} {percent}"'));
   assert.ok(en.includes('"codexLimit.limitValueWithReset": "{name} {percent} · {time}"'));
-  assert.ok(en.includes('"codexLimit.limitTitle": "{name}: {percent} left, {time}"'));
+  assert.ok(en.includes('"codexLimit.limitTitle": "{name}: {percent} left, resets {time}"'));
   assert.match(indicator, /`\$\{limit\.remaining\}%`/);
 });
 
@@ -73,20 +72,20 @@ test("拼出来的胶囊文案就是用户看到的那一串", () => {
     percent: "79%",
     time: t("codexLimit.resetAtTime", { time: "16:56" }),
   });
-  assert.equal(fiveHour, "5小时 79% · 16:56 重置");
+  assert.equal(fiveHour, "5h 79% · 16:56");
   const weekly = t("codexLimit.limitValueWithReset", {
     name: t("codexLimit.weekly"),
     percent: "31%",
     time: t("codexLimit.resetInRemaining", { days: 4, hours: 23 }),
   });
-  assert.equal(weekly, "周限 31% · 剩 4d 23h 重置");
+  assert.equal(weekly, "周 31% · 4d 23h");
   assert.doesNotMatch(weekly, /%%/);
-  assert.equal(weekly.match(/重置/g).length, 1, "「重置」只能出现一次");
+  assert.doesNotMatch(`${fiveHour}${weekly}`, /重置/, "胶囊里不出现「重置」二字");
 });
 
 test("限额文案在两种语言里成对存在", () => {
   for (const [src, name, value] of [
-    [zh, "codexLimit.fiveHour", "5小时"],
+    [zh, "codexLimit.fiveHour", "5h"],
     [en, "codexLimit.fiveHour", "5h"],
   ]) {
     assert.match(src, new RegExp(`"${name.replace(".", "\\.")}": "${value}"`));
@@ -97,4 +96,6 @@ test("限额文案在两种语言里成对存在", () => {
   }
   assert.doesNotMatch(zh, /"codexLimit\.weeklyTitle/);
   assert.doesNotMatch(en, /"codexLimit\.weeklyTitle/);
+  assert.doesNotMatch(zh, /"codexLimit\.resetInRemainingShort"/);
+  assert.doesNotMatch(en, /"codexLimit\.resetInRemainingShort"/);
 });

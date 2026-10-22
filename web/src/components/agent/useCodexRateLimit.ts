@@ -21,10 +21,8 @@ export type CodexLimitView = {
   id: "five_hour" | "weekly";
   label: string;
   remaining: number | null;
-  /** 胶囊里的重置提示：5 小时窗是「HH:MM 重置」，周限是「剩 Md Nh 重置」。 */
+  /** 胶囊里的重置提示：5 小时窗是「HH:MM」，周限是「Ad Bh」。胶囊里不写「重置」二字。 */
   resetText: string;
-  /** title 里的重置提示（不带「重置」二字，避免和 title 模板重复）。 */
-  resetDetail: string;
 };
 
 function remainingPercent(window?: CodexRateLimitWindow): number | null {
@@ -59,7 +57,7 @@ export function useCodexRateLimit({
   const [resetting, setResetting] = useState(false);
   const [resetOutcome, setResetOutcome] = useState("");
   const [error, setError] = useState("");
-  // 周限的「剩 Md Nh」要跟着时间走，每分钟刷新一次。
+  // 周限的「Ad Bh」要跟着时间走，每分钟刷新一次。
   const [nowMs, setNowMs] = useState(() => Date.now());
   const requestRef = useRef(0);
   const activeRequestsRef = useRef(0);
@@ -136,16 +134,12 @@ export function useCodexRateLimit({
     const push = (id: CodexLimitView["id"], label: string, window?: CodexRateLimitWindow) => {
       if (!window) return;
       let resetText = "";
-      let resetDetail = "";
       if (window.resets_at) {
         if (id === "five_hour") {
-          const clock = formatClockTime(window.resets_at);
-          resetText = t("codexLimit.resetAtTime", { time: clock });
-          resetDetail = clock;
+          resetText = t("codexLimit.resetAtTime", { time: formatClockTime(window.resets_at) });
         } else {
           const { days, hours } = formatRemaining(window.resets_at, nowMs);
           resetText = t("codexLimit.resetInRemaining", { days, hours });
-          resetDetail = t("codexLimit.resetInRemainingShort", { days, hours });
         }
       }
       views.push({
@@ -153,7 +147,6 @@ export function useCodexRateLimit({
         label,
         remaining: remainingPercent(window),
         resetText,
-        resetDetail,
       });
     };
     push("five_hour", t("codexLimit.fiveHour"), status?.five_hour);

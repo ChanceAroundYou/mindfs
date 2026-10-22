@@ -85,8 +85,8 @@ export function CodexRateLimitIndicator(props: CodexRateLimitIndicatorProps) {
           const label = limit.resetText
             ? t("codexLimit.limitValueWithReset", { name: limit.label, percent, time: limit.resetText })
             : t("codexLimit.limitValue", { name: limit.label, percent });
-          const title = limit.resetDetail
-            ? t("codexLimit.limitTitle", { name: limit.label, percent, time: limit.resetDetail })
+          const title = limit.resetText
+            ? t("codexLimit.limitTitle", { name: limit.label, percent, time: limit.resetText })
             : label;
           return (
             <div key={limit.id} title={title} style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: "1px solid color-mix(in srgb, var(--accent-color) 22%, transparent)", background: "linear-gradient(color-mix(in srgb, var(--accent-color) 10%, transparent), color-mix(in srgb, var(--accent-color) 10%, transparent)), var(--mobile-overlay-bg)", color: "var(--accent-color)", fontSize: "11px", fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap" }}>
