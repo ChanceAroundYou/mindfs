@@ -6571,3 +6571,39 @@ groups:
       - 'web/src/components/file/VideoPreview.tsx:<video'
       - 'web/src/services/file/rawAsset.ts:export function buildRawAssetURL'
       - 'web/src/services/net/base.ts:export function accountSegmentFor'
+  - id: G-JQ
+    title: 输入区徽标带流内化与 Codex 双限额展示
+    kind: feature
+    symptom: "输入区右上角的「内存」徽标压在「排队中」消息右侧的 ✎/🗑/⏎ 三个操作按钮上，排队消息一多就点不动；只有 Codex 能看到内存徽标，Claude Code 等 agent 输入区里一个都没有；Codex 只显示「周限」，看不到 5 小时限额，而且限额胶囊只写剩余百分比，重置时间得另外找。"
+    why: "徽标带原本是贴在输入框上沿外侧 4px 的 absolute 浮层（ComposerTopChips），而「排队中」列表是同一列里的流内元素 —— 两者共用输入框上方的同一条竖直带，浮层必然盖住最后一条排队行及其右侧按钮。要让徽标「被排队消息顶起来」，只能让徽标带参与列内流并排在排队列表之前，从根上消除重叠，而不是靠挪到左边缘或给排队区留间隙（那两种做法仍然会压住排队行的正文）。内存徽标此前被 ComposerTopChips 的早退守卫（plan 模式 / 无绑定会话且是 git 仓库 / agent=codex）与 ActionBar 里的同款外层守卫一起挡掉，Claude Code、ACP 一律不挂载 —— 拆掉守卫后内存徽标始终渲染。内存统计与「释放空闲会话」都是节点本地行为，而原来的 appPath 不带 nodeId 会静默打当前激活节点，因此显式传当前项目所在节点 id。Codex 的 5 小时限额在后端就被丢掉了：app-server 返回 primary/secondary 两个窗口，后端只按周限时长挑一个，于是 5 小时窗在归一化时被丢弃 —— 补 five_hour 字段并按窗口时长挑 5 小时窗，同时收紧周限回退，避免把 5 小时窗当周限显示。每个限额的「剩余 %」与「重置时间」合并进同一个胶囊。"
+    boundary: "只动输入区徽标带（ComposerTopChips / ActionBar 的位置与渲染条件）、内存徽标的节点归属、Codex 限额的窗口挑选与展示形态。不改消息区与会话区布局，不改内存统计与空闲会话释放的实现，不改 Limit Reset 动作语义，不动其它 agent 的运行时与配置。"
+    files:
+      - server/internal/agent/codex/rate_limits.go
+      - server/internal/agent/codex/rate_limits_test.go
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/action/ComposerTopChips.tsx
+      - web/src/components/agent/AgentMemoryIndicator.tsx
+      - web/src/components/agent/useAgentMemory.ts
+      - web/src/components/agent/useCodexRateLimit.ts
+      - web/src/components/agent/CodexRateLimitIndicator.tsx
+      - web/src/services/agent/agentMemory.ts
+      - web/src/services/agent/codexRateLimits.ts
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/tests/composer-chips-layout.test.mjs
+      - web/tests/codex-rate-limit-windows.test.mjs
+      - docs/plans/composer-chips-and-codex-limits.md
+      - docs/plans/README.md
+    tests:
+      - server/internal/agent/codex/rate_limits_test.go
+      - web/tests/composer-chips-layout.test.mjs
+      - web/tests/codex-rate-limit-windows.test.mjs
+    anchors:
+      - 'server/internal/agent/codex/rate_limits.go:func selectFiveHourWindow(snapshot rawRateLimitSnapshot) *RateLimitWindow'
+      - 'server/internal/agent/codex/rate_limits.go:FiveHour: selectFiveHourWindow(snapshot)'
+      - 'web/src/components/action/ComposerTopChips.tsx:data-onboarding="composer-top-chips"'
+      - 'web/src/components/action/ComposerTopChips.tsx:<AgentMemoryIndicator refreshToken={agentsVersion + codexRateLimitsRefreshToken} nodeId={rootNodeId} />'
+      - 'web/src/components/action/ActionBar.tsx:<ComposerTopChips'
+      - 'web/src/components/agent/useCodexRateLimit.ts:push("five_hour", t("codexLimit.fiveHour"), status?.five_hour)'
+      - 'web/src/components/agent/CodexRateLimitIndicator.tsx:limits.map((limit)'
+      - 'web/src/services/agent/agentMemory.ts:appPath("/api/agents/memory", nodeId)'
