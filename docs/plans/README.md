@@ -10,7 +10,7 @@ to resume their old TODOs or baselines.
 - [Live ask_user badge](live-ask-user-badge.md) — Implemented 2026-10-20，待提交与 ship；徽标亮灭实时（aux 写入广播 + 答题即清 + 轮询带真相），并入侧边栏默认「文件」页、根行箭头纯展开、页签不许自动联动三处修正。
 - [File browser row action menu](file-entry-row-menu.md) — Implemented 2026-10-20，待提交与 ship；主区文件列表逐条三点菜单（删除/重命名/移动），复用既有控件与 /api/file/operation，弹层 portal + 锚定定位。
 - [HTML and video preview](html-video-preview.md) — Implemented 2026-10-22，已合入 main，待 ship；路径式原始资源端点（账户段进路径，相对资源才不掉账户），HTML 沙箱 iframe 渲染 + 源码切换，视频直连后端 Range 播放。
-- [Composer chips and Codex limits](composer-chips-and-codex-limits.md) — Implemented 2026-10-22，待提交与 ship；徽标带改流内一行（被排队消息顶起来）、内存徽标左置并对所有 agent 显示且跟随项目节点、Codex 补 5 小时限额且剩余与重置时间合并。
+- [Composer chips and Codex limits](composer-chips-and-codex-limits.md) — Implemented 2026-10-22，已合入 main，待 ship；徽标带改流内一行（被排队消息顶起来）、内存徽标左置并对所有 agent 显示且跟随项目节点、Codex 补 5 小时限额且剩余与重置时间合并。
 
 
 ## Completed or superseded history
