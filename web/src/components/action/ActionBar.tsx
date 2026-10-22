@@ -154,6 +154,37 @@ export function ActionBar(props: ActionBarProps) {
   return (
     <div data-onboarding="action-bar" style={{ width: "100%", minWidth: 0, padding: isMobile ? "0 8px var(--mindfs-actionbar-bottom-padding, calc(env(safe-area-inset-bottom, 0px) + 2px))" : "0 16px 12px", display: "flex", justifyContent: "center", boxSizing: "border-box", background: "var(--content-bg)" }}>
       <div style={{ position: "relative", width: "100%", minWidth: 0, display: "flex", flexDirection: "column", gap: 0 }}>
+        <ComposerTopChips
+          planModeActive={planModeActive}
+          planSessionKey={planSessionKey}
+          planRootId={planRootId}
+          agentSelectorOpen={agentSelectorOpen}
+          modeSelectorOpen={modeSelectorOpen}
+          isMobile={isMobile}
+          currentSession={currentSession}
+          currentRootIsGitRepo={currentRootIsGitRepo}
+          mode={mode}
+          agent={agent}
+          accentHex={accentHex}
+          sending={sending}
+          createWorktree={createWorktree}
+          worktreeBranchMode={worktreeBranchMode}
+          worktreeBranch={worktreeBranch}
+          worktreeBranches={worktreeBranches}
+          worktreeBranchesLoading={worktreeBranchesLoading}
+          worktreeBranchError={worktreeBranchError}
+          agentsVersion={agentsVersion}
+          codexRateLimitsRefreshToken={codexRateLimitsRefreshToken}
+          currentRootId={currentRootId}
+          onTogglePlanMode={(enabled) => {
+            void onSetPlanMode?.(enabled, planSessionKey, planRootId);
+          }}
+          onToggleWorktree={() => setCreateWorktree((value) => !value)}
+          onWorktreeBranchChange={(branchMode, branch) => {
+            setWorktreeBranchMode(branchMode);
+            setWorktreeBranch(branch);
+          }}
+        />
         {queuedMessages.length > 0 ? (
           <QueuedMessagesList
             queuedMessages={queuedMessages}
@@ -196,39 +227,6 @@ export function ActionBar(props: ActionBarProps) {
                 overflow: "visible",
               }}
             >
-              {(planModeActive || (!currentSession && currentRootIsGitRepo && mode !== "command") || (mode !== "command" && agent === "codex")) ? (
-                <ComposerTopChips
-                  planModeActive={planModeActive}
-                  planSessionKey={planSessionKey}
-                  planRootId={planRootId}
-                  agentSelectorOpen={agentSelectorOpen}
-                  modeSelectorOpen={modeSelectorOpen}
-                  isMobile={isMobile}
-                  currentSession={currentSession}
-                  currentRootIsGitRepo={currentRootIsGitRepo}
-                  mode={mode}
-                  agent={agent}
-                  accentHex={accentHex}
-                  sending={sending}
-                  createWorktree={createWorktree}
-                  worktreeBranchMode={worktreeBranchMode}
-                  worktreeBranch={worktreeBranch}
-                  worktreeBranches={worktreeBranches}
-                  worktreeBranchesLoading={worktreeBranchesLoading}
-                  worktreeBranchError={worktreeBranchError}
-                  agentsVersion={agentsVersion}
-                  codexRateLimitsRefreshToken={codexRateLimitsRefreshToken}
-                  currentRootId={currentRootId}
-                  onTogglePlanMode={(enabled) => {
-                    void onSetPlanMode?.(enabled, planSessionKey, planRootId);
-                  }}
-                  onToggleWorktree={() => setCreateWorktree((value) => !value)}
-                  onWorktreeBranchChange={(branchMode, branch) => {
-                    setWorktreeBranchMode(branchMode);
-                    setWorktreeBranch(branch);
-                  }}
-                />
-              ) : null}
               <TokenEditor
                 ref={editorRef}
                 placeholder={inputPlaceholder}

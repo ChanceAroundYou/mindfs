@@ -19,9 +19,11 @@ function formatBytes(value: number): string {
 
 export type AgentMemoryIndicatorProps = {
   refreshToken?: number;
+  /** 内存统计与释放都是节点本地行为：必须显式带上项目所在节点，否则会静默打当前激活节点。 */
+  nodeId?: string;
 };
 
-export function useAgentMemory({ refreshToken = 0 }: AgentMemoryIndicatorProps) {
+export function useAgentMemory({ refreshToken = 0, nodeId }: AgentMemoryIndicatorProps) {
   const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<AgentMemorySnapshot | null>(null);
   const [open, setOpen] = useState(false);
@@ -37,7 +39,7 @@ export function useAgentMemory({ refreshToken = 0 }: AgentMemoryIndicatorProps) 
     setLoading(true);
     setError("");
     try {
-      const next = await fetchAgentMemory();
+      const next = await fetchAgentMemory(nodeId);
       if (request === requestRef.current) {
         setSnapshot(next);
       }
@@ -63,7 +65,7 @@ export function useAgentMemory({ refreshToken = 0 }: AgentMemoryIndicatorProps) 
       requestRef.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiReady, refreshToken]);
+  }, [apiReady, refreshToken, nodeId]);
 
   useEffect(() => {
     if (!open) return;
@@ -92,7 +94,7 @@ export function useAgentMemory({ refreshToken = 0 }: AgentMemoryIndicatorProps) 
     setError("");
     setReleaseResult(null);
     try {
-      const result = await releaseAgentSessions();
+      const result = await releaseAgentSessions(nodeId);
       requestRef.current += 1;
       setSnapshot(result);
       setReleaseResult({ released: result.released_sessions, failed: result.failed_sessions });
