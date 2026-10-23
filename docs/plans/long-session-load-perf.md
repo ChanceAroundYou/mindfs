@@ -1,6 +1,25 @@
 # 大会话加载卡顿：三层收口（窗口预算 / 载荷去重 / 时间线虚拟化）
 
-**状态**：Implemented（2026-10-22），三批全部落地并真机 A/B 验证；待提交与 ship。
+**状态**：Implemented（2026-10-22），三批全部落地并真机 A/B 验证；2026-10-23 补 G-JT 一处渲染缺陷修复（见下「补记」），待提交与 ship。
+
+## 补记 2026-10-23：虚拟化行测量失效（文字重叠）
+
+批 2 上线后用户报「不是卡了，是文本错乱、重叠」。真机截图 + 隔离实例探针定位到
+**虚拟化行从未被测量**：
+
+- `virtual-core` 用 `options.indexAttribute`（缺省 `data-index`）从被测元素读行号；
+  渲染里写成了 `data-timeline-index`，`indexFromElement` 返回 `-1`，
+  `isIndexInRange(-1)` 为假 → ref 测量与 ResizeObserver 回调**双双静默跳过**。
+- 后果：每行永远停在 `estimateSize`（40/72/160 px），真实内容比分配高度高，
+  相邻行按估算高度排布 → 文字互相压住。虚拟化不报错，只是「高度不准」。
+- 修复：`data-timeline-index` → `data-index`（`SessionViewerTimeline.tsx`）。
+  隔离实例 400 条合成行实测：29 个挂载行 `overlapCount = 0`、出现 2 种实测行高
+  （81 / 69.25 px），证明测量恢复生效。
+- 守卫：`session-timeline-virtualization.test.mjs` 新增一条用例钉住
+  `data-index={row.index}` + `ref={virtual.measureElement}`，并 `doesNotMatch`
+  任何 `data-timeline-index` 变体（换名字不会报错，只会静默不测量）。
+- 探针教训：早期探针看不到这个问题，因为 `SESSION_WINDOW_SIZE = 8`，刚打开的会话只有
+  ~16 个条目，**低于 120 阈值根本不启用虚拟化**；必须先反复上翻把窗口撑过阈值再测量。
 
 ## 结果（同会话、同操作序列、两个隔离实例 A/B）
 

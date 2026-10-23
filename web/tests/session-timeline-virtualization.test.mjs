@@ -66,3 +66,15 @@ test("virtualization: viewport container keeps a stable total height", () => {
   assert.match(timeline, /overflowAnchor: "none"/);
   assert.match(timeline, /measureElement/);
 });
+
+test("virtualization: measured element carries the attribute the virtualizer reads", () => {
+  // ⑤ 挂到 measureElement 上的节点必须带 `data-index`。
+  // virtual-core 用 options.indexAttribute（缺省 "data-index"）读行号，读不到就返回 -1，
+  // isIndexInRange(-1) 为假 → ref 与 ResizeObserver 两条测量路径全部跳过 → 行高永远停在
+  // estimateSize，真实内容比分配的高度高，视觉上就是文字互相重叠。曾经写成
+  // `data-timeline-index` 正是这个形态（2026-10-23 真机复现）。
+  assert.match(timeline, /ref=\{virtual\.measureElement\}/);
+  assert.match(timeline, /data-index=\{row\.index\}/);
+  // 换成别的属性名不会让虚拟化报错，只会静默不测量 —— 所以这里钉死「不许再出现变体」。
+  assert.doesNotMatch(timeline, /data-timeline-index/);
+});

@@ -12,6 +12,7 @@ export const readFileSync = (target, options) => {
 };
 
 export const {
+  appendFileSync,
   closeSync,
   existsSync,
   openSync,

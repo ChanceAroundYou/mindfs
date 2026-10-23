@@ -6656,7 +6656,7 @@ groups:
     kind: perf
     symptom: "打开长会话时页面冻结：真机实测一次打开要同帧挂载 642 张思考卡 + ~640 张工具卡（DOM 941 → 16,824，主线程一次 1.4–1.9 s 长任务）；上翻四页后 DOM 涨到 78,351、单次长任务 2.6 s。会话越「干得多」越卡，与内容无关。"
     why: "窗口预算（G-JS）压的是**载荷**，压不掉**挂载数**：一页上千条目时，全量挂载必然是一次长任务。虚拟化是这条路径上唯一与会话内容无关的解法。实测同序列（打开 + 上翻 4 页）DOM 78,351 → 856、最坏长任务 2,608 ms → 112 ms。"
-    boundary: "① 条目数低于 120 时**不启用**，仍走原来的 timeline.map（少条目全量渲染更快，也没有测量抖动）；② 未答 ask 卡由 rangeExtractor 常驻，草稿不会被滚走；③ 用户消息序号与 targetSeq 跳转改走同一份索引，不再 querySelector —— 屏外条目根本不在 DOM 里，旧写法在虚拟化后会永远停在 1；④ key 用条目 id（seq:pos）而非索引，上翻前插时测量缓存不会错行。"
+    boundary: "① 条目数低于 120 时**不启用**，仍走原来的 timeline.map（少条目全量渲染更快，也没有测量抖动）；② 未答 ask 卡由 rangeExtractor 常驻，草稿不会被滚走；③ 用户消息序号与 targetSeq 跳转改走同一份索引，不再 querySelector —— 屏外条目根本不在 DOM 里，旧写法在虚拟化后会永远停在 1；④ key 用条目 id（seq:pos）而非索引，上翻前插时测量缓存不会错行；⑤ 挂到 measureElement 的节点必须带 `data-index` —— virtual-core 用 indexAttribute（缺省 data-index）读行号，读不到返回 -1 后 ref 与 ResizeObserver 两条测量路径都静默跳过，行高永远停在 estimateSize，**视觉症状是文字互相重叠/错乱**（2026-10-23 真机踩过：写成了 data-timeline-index，改回后同序列 29 个挂载行 overlapCount=0、出现 2 种实测行高）。"
     files:
       - web/src/components/session/useSessionTimelineVirtualizer.ts
       - web/src/components/session/SessionViewerTimeline.tsx
@@ -6671,6 +6671,7 @@ groups:
       - 'web/src/components/session/useSessionTimelineVirtualizer.ts:export const TIMELINE_VIRTUALIZE_MIN_ITEMS = 120'
       - 'web/src/components/session/useSessionTimelineVirtualizer.ts:      Array.from(new Set([...defaultRangeExtractor(range), ...seqToIndex.pendingAsk])).sort('
       - 'web/src/components/session/SessionViewerTimeline.tsx:  if (!virtual) {'
+      - 'web/src/components/session/SessionViewerTimeline.tsx:            data-index={row.index}'
       - 'web/src/components/session/SessionViewer.tsx:  const timelineNav = useSessionTimelineVirtualizer({'
       - 'web/src/components/session/useSessionWindowApply.ts:export function useSessionWindowApply({'
 
