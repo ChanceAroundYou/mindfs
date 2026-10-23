@@ -47,13 +47,17 @@ test("A2: mobile/desktop queued list keeps the same clearance", () => {
   );
 });
 
-test("B1: session content reserves bottom space from composerOverlayInset", () => {
-  // 内容区 padding 必须带 composerOverlayInset 派生的底留白，且滚动容器带
-  // scrollPaddingBottom，否则滚到底时最后一条 user 的复制行被悬浮输入条盖住。
-  // 修前：padding: "24px 16px" 写死，零底留、零 scroll-padding。
-  assert.doesNotMatch(viewer, /padding:\s*"24px 16px"/);
-  assert.match(viewer, /composerOverlayInset/);
-  assert.match(viewer, /scrollPaddingBottom/);
+test("B1: session content bottom stays compact, clearance guard lives in scroll-padding", () => {
+  // 内容区与输入条是 AppShell 网格里的两行（`main` / `footer`），本来就不重叠 ——
+  // 实测 1500x1000 与 420x900 两个视口滚到底，最后一条与输入条上沿仍有 25px 净空。
+  // 所以这里钉的是**两半**：
+  //   ① 底留白保持用户要求的 24px（2026-10-23 明确「关联文件与对话框之间太长」，
+  //      原值是 composerOverlayInset 派生的 40px）；
+  //   ② 真正需要 composerOverlayInset 的是 scroll-padding —— 它管的是
+  //      「滚到底 / scrollIntoView」时输入条那一段不被当成可达区域，删了就回到
+  //      复制按钮被压在输入条下面的老问题。
+  assert.match(viewer, /padding: "24px 16px"/);
+  assert.match(viewer, /scrollPaddingBottom: `\$\{composerOverlayInset \+ 20\}px`/);
 });
 
 test("C1: timeline passes copy props to the assistant message", () => {

@@ -5920,17 +5920,20 @@ groups:
     title: 排队卡/会话尾遮挡与 assistant 复制透传
     kind: fix
     symptom: "排队消息卡的 ✎/删除/立即发送按钮下半被输入条盖住；滚到底时最后一条 user 消息的复制等按钮被悬浮输入条挡住半颗；assistant 消息点复制完全没反应。"
-    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；会话内容区底留白写死、未用 composerOverlayInset 派生且缺 scroll-padding-bottom；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈。"
-    boundary: "只改三处：排队列表底间隙 4px→8px；会话内容底留白与滚动 scroll-padding 由 composerOverlayInset 派生；Timeline 给 Assistant 补齐 copy props。不动 composer 高、不动按钮尺寸、不改 clipboard 链。"
+    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；滚动容器缺 scroll-padding-bottom，滚到底时最后一条 user 的复制行被输入条压住；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈。"
+    boundary: "只改三处：排队列表底间隙 4px→8px；滚动容器加由 composerOverlayInset 派生的 scroll-padding-bottom；Timeline 给 Assistant 补齐 copy props。不动 composer 高、不动按钮尺寸、不改 clipboard 链。**内容区 padding 刻意保持 24px 常量，不要改回 composerOverlayInset 派生**（用户 2026-10-23 明确要求「关联文件与对话框之间太长」）：内容区与输入条是 AppShell 网格的 main/footer 两行，本就不重叠，实测 1500x1000 / 420x900 滚到底最后一条与输入条上沿仍有 25px 净空；真正防遮挡的是 scroll-padding，两者不是一回事。相关文件分隔块间距同步收紧（marginTop 18→8、paddingTop 14→8、表头 marginBottom 6→4）。"
     tests:
       - web/tests/queued-overlay-and-copy.test.mjs
     files:
       - web/src/components/action/QueuedMessagesList.tsx
       - web/src/components/session/SessionViewer.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/SessionViewerRelatedFiles.tsx
     anchors:
       - "web/src/components/action/QueuedMessagesList.tsx:padding: \"0 0 8px\""
       - "web/src/components/session/SessionViewer.tsx:scrollPaddingBottom"
+      - "web/src/components/session/SessionViewer.tsx:padding: \"24px 16px\""
+      - "web/src/components/session/SessionViewerRelatedFiles.tsx:marginTop: \"8px\""
       - "web/src/components/session/SessionViewerTimeline.tsx:copyResetTimersRef"
       - "web/tests/queued-overlay-and-copy.test.mjs:C1: timeline passes copy props"
 
