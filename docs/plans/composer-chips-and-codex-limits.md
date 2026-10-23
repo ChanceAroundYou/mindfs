@@ -102,6 +102,17 @@
   title 直接复用 `resetText`。
 - 「重置」只留在真正讲动作的地方：title 提示与 Limit Reset 按钮。
 
+## 复测与修正（2026-10-23 第四次：胶囊字号）
+
+用户要求徽标胶囊（内存 xGB / 5h m% 等）字号比正常文字再小一档。
+
+- 新增 `COMPOSER_CHIP_FONT_SIZE = 9`（`web/src/components/action/composerStyles.ts`，
+  与 `INPUT_FONT_SIZE = 13` 同源注释），内存 / 限额 / Plan / worktree 六处胶囊统一引用，
+  不再各写 `fontSize: "11px"`。
+- 守卫：`composer-chips-layout.test.mjs` 新增「胶囊字号统一且比正文小一档」用例
+  （字号必须 < INPUT_FONT_SIZE；三处文件不许再写死胶囊字号）；G-JQ 的
+  boundary/files/anchors 同步登记。
+
 ## 遗留
 
 - 窄屏下两个限额胶囊较长，需要靠 `white-space: nowrap` + 容器压缩处理，暂未做专门适配。

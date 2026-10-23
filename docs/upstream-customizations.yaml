@@ -6579,12 +6579,13 @@ groups:
     kind: feature
     symptom: "输入区右上角的「内存」徽标压在「排队中」消息右侧的 ✎/🗑/⏎ 三个操作按钮上，排队消息一多就点不动；只有 Codex 能看到内存徽标，Claude Code 等 agent 输入区里一个都没有；Codex 只显示「周限」，看不到 5 小时限额，而且限额胶囊只写剩余百分比，重置时间得另外找；限额胶囊被 justify-content 分到输入区右端、没跟着内存徽标靠左；没有可用 Limit Reset 时仍然显示「重置 0」；重置时间写成本地日期（「10月27日 14:34」），看不出还剩多久；限额胶囊的文案还重复：百分比写成「30%%」，重置短语写成「剩 4d 23h 重置 重置」；胶囊里「重置」二字多余、名称冗长（「5小时」「周限」），应写成「5h 79% · 16:56」「周 31% · 4d 23h」。"
     why: "徽标带原本是贴在输入框上沿外侧 4px 的 absolute 浮层（ComposerTopChips），而「排队中」列表是同一列里的流内元素 —— 两者共用输入框上方的同一条竖直带，浮层必然盖住最后一条排队行及其右侧按钮。要让徽标「被排队消息顶起来」，只能让徽标带参与列内流并排在排队列表之前，从根上消除重叠，而不是靠挪到左边缘或给排队区留间隙（那两种做法仍然会压住排队行的正文）。内存徽标此前被 ComposerTopChips 的早退守卫（plan 模式 / 无绑定会话且是 git 仓库 / agent=codex）与 ActionBar 里的同款外层守卫一起挡掉，Claude Code、ACP 一律不挂载 —— 拆掉守卫后内存徽标始终渲染。内存统计与「释放空闲会话」都是节点本地行为，而原来的 appPath 不带 nodeId 会静默打当前激活节点，因此显式传当前项目所在节点 id。Codex 的 5 小时限额在后端就被丢掉了：app-server 返回 primary/secondary 两个窗口，后端只按周限时长挑一个，于是 5 小时窗在归一化时被丢弃 —— 补 five_hour 字段并按窗口时长挑 5 小时窗，同时收紧周限回退，避免把 5 小时窗当周限显示。每个限额的「剩余 %」与「重置时间」合并进同一个胶囊。徽标带内的胶囊统一靠左（内存在前、限额在后，不再用 space-between 把限额甩到右端），没有可用 Limit Reset 时不显示「重置 0」胶囊 —— 计数为 0 时那个胶囊只是噪声，还占输入区宽度。重置时间按窗口语义分开写：5 小时窗是短周期，写准确时刻「16:56 重置」；周限是长周期，写剩余时长「剩 4d 23h 重置」（每分钟跟着时钟走，否则首帧算一次就冻住）。文案模板里不能自带百分号或「重置」——百分比与「重置」都由调用方的短语提供，模板再补一次就成了「30%%」和「重置 重置」；Limit Reset 按钮改用产品名「Limit Reset」，避免与胶囊里的「重置」撞词。胶囊里的「重置」二字最终去掉（名称直接写成「5h」「周」，重置时间只给数值），否则每个胶囊都挂一个冗余词；「重置」只保留在 title 提示与 Limit Reset 按钮这类确实在讲动作的地方。"
-    boundary: "只动输入区徽标带（ComposerTopChips / ActionBar 的位置与渲染条件）、内存徽标的节点归属、Codex 限额的窗口挑选与展示形态。不改消息区与会话区布局，不改内存统计与空闲会话释放的实现，不改 Limit Reset 动作语义，不动其它 agent 的运行时与配置。"
+    boundary: "只动输入区徽标带（ComposerTopChips / ActionBar 的位置与渲染条件）、内存徽标的节点归属、Codex 限额的窗口挑选与展示形态，以及胶囊字号（统一从 `COMPOSER_CHIP_FONT_SIZE` 取，比正文输入小一档 —— 一排彩色胶囊不该比用户正在写的内容更抢眼）。不改消息区与会话区布局，不改内存统计与空闲会话释放的实现，不改 Limit Reset 动作语义，不动其它 agent 的运行时与配置。"
     files:
       - server/internal/agent/codex/rate_limits.go
       - server/internal/agent/codex/rate_limits_test.go
       - web/src/components/action/ActionBar.tsx
       - web/src/components/action/ComposerTopChips.tsx
+      - web/src/components/action/composerStyles.ts
       - web/src/components/agent/AgentMemoryIndicator.tsx
       - web/src/components/agent/useAgentMemory.ts
       - web/src/components/agent/useCodexRateLimit.ts
@@ -6612,6 +6613,7 @@ groups:
       - 'web/src/components/agent/CodexRateLimitIndicator.tsx:limits.map((limit)'
       - 'web/src/components/action/ComposerTopChips.tsx:<CodexRateLimitIndicator agent={agent}'
       - 'web/src/components/agent/CodexRateLimitIndicator.tsx:loading || resetCount > 0 ? ('
+      - 'web/src/components/action/composerStyles.ts:export const COMPOSER_CHIP_FONT_SIZE = 9;'
       - 'web/src/services/agent/agentMemory.ts:appPath("/api/agents/memory", nodeId)'
       - 'web/src/components/agent/useCodexRateLimit.ts:resetText = t("codexLimit.resetInRemaining", { days, hours })'
 

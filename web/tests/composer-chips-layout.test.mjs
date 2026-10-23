@@ -7,6 +7,7 @@ const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 const actionBar = read("../src/components/action/ActionBar.tsx");
 const chips = read("../src/components/action/ComposerTopChips.tsx");
 const memoryIndicator = read("../src/components/agent/AgentMemoryIndicator.tsx");
+const codexIndicator = read("../src/components/agent/CodexRateLimitIndicator.tsx");
 const useAgentMemory = read("../src/components/agent/useAgentMemory.ts");
 const agentMemoryService = read("../src/services/agent/agentMemory.ts");
 
@@ -51,4 +52,22 @@ test("内存徽标跟随当前项目所在节点", () => {
   assert.match(agentMemoryService, /appPath\("\/api\/agents\/memory", nodeId\)/);
   assert.match(agentMemoryService, /appPath\("\/api\/agents\/release-idle", nodeId\)/);
   assert.match(memoryIndicator, /useAgentMemory\(props\)/);
+});
+
+test("胶囊字号统一且比正文小一档", () => {
+  // 徽标带里内存 / 限额 / Plan / worktree 四类胶囊必须同字号，且严格小于正文
+  // 输入字号 —— 否则一排彩色胶囊比用户正在写的内容还抢眼。
+  const composerStyles = read("../src/components/action/composerStyles.ts");
+  const declared = composerStyles.match(/export const COMPOSER_CHIP_FONT_SIZE = (\d+);/);
+  assert.ok(declared, "COMPOSER_CHIP_FONT_SIZE 必须在 composerStyles 里单点声明");
+  const inputSize = Number(composerStyles.match(/export const INPUT_FONT_SIZE = (\d+);/)?.[1]);
+  assert.ok(
+    Number(declared[1]) < inputSize,
+    `胶囊字号 ${declared[1]}px 必须小于正文 ${inputSize}px`,
+  );
+  // 三处胶囊文件都不许再写死字号（写死一处就漂移一档）。
+  for (const [name, src] of [["ComposerTopChips", chips], ["AgentMemoryIndicator", memoryIndicator], ["CodexRateLimitIndicator", codexIndicator]]) {
+    assert.ok(src.includes("COMPOSER_CHIP_FONT_SIZE"), `${name} 必须引用共享字号`);
+    assert.doesNotMatch(src, /fontSize: "\d+px", fontWeight: 700, lineHeight: 1/, `${name} 不得再写死胶囊字号`);
+  }
 });

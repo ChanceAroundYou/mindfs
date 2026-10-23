@@ -2,6 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n/index";
 import { useAgentMemory, type AgentMemoryIndicatorProps } from "./useAgentMemory";
+import { COMPOSER_CHIP_FONT_SIZE } from "../action/composerStyles";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value < 0) return "—";
@@ -123,7 +124,7 @@ export function AgentMemoryIndicator(props: AgentMemoryIndicatorProps) {
           height: "20px",
           padding: "0 8px",
           borderRadius: "999px",
-          fontSize: "11px",
+          fontSize: COMPOSER_CHIP_FONT_SIZE,
           fontWeight: 700,
           lineHeight: 1,
           whiteSpace: "nowrap",

@@ -23,6 +23,13 @@ export const EDITOR_FONT_SIZE = 16;
 export const EDITOR_LINE_HEIGHT = 20;
 export const INPUT_FONT_SIZE = 13;
 
+/**
+ * 输入区徽标带（内存 / 限额 / Plan / worktree）的胶囊字号。
+ * 比正文输入（13px）小一档，避免一排彩色胶囊比用户正在写的内容还抢眼；
+ * 六处胶囊共用这一个值，改一档只动这里。
+ */
+export const COMPOSER_CHIP_FONT_SIZE = 9;
+
 /** 单行紧凑输入框（模板名、阶段名、任务名等）。与 PromptEditor 同源边框/底色/字号。 */
 export const composerInputStyle: React.CSSProperties = {
   boxSizing: "border-box",
