@@ -62,11 +62,28 @@ function loadHook(runtime, dispatcher) {
     exports: {}, module: { exports: {} }, window: runtime.window,
     require: (id) => {
       if (id === "react") return runtime.react;
-      if (id.includes("services/session")) return { sessionService: { dispatcher } };
+      if (id.includes("services/session")) return { sessionService: { dispatcher }, isPersistedSeq: (seq) => Number(seq || 0) > 0 };
       if (id.includes("i18n")) return { translateNow: (key) => `translated:${key}` };
       if (id.includes("sessionTimeline")) return {
         applySessionContextWindow: (timeline) => timeline,
-        buildBaseTimeline: (exchanges) => exchanges,
+        buildBaseTimeline: (exchanges, _aux, blocks) => {
+          if (globalThis.__onBuild) globalThis.__onBuild(exchanges, blocks);
+          const timeline = [];
+          for (const ex of exchanges) {
+            if (ex.role === "user") {
+              timeline.push({ id: `user:${ex.seq}`, type: "user_text", content: ex.content || "" });
+            } else if (ex.role === "agent" && ex.seq && blocks && blocks[String(ex.seq)]) {
+              timeline.push(...blocks[String(ex.seq)].map((block) => ({
+                id: `block:${ex.seq}:${block.pos}`,
+                type: block.type === "reasoning" ? "thought" : "assistant_text",
+                content: block.text || "",
+              })));
+            } else if (ex.role === "thought") {
+              timeline.push({ id: ex.thought_id || "transient-thought", type: "thought", content: ex.content });
+            }
+          }
+          return timeline;
+        },
         dedupeToolCards: (timeline) => timeline,
         settleRunningTools: (timeline) => timeline,
       };
@@ -109,4 +126,46 @@ test("useSessionStream keeps streaming until authoritative session.done", () => 
   runtime.flushTimers();
   runtime.cleanup();
   assert.equal(unsubscribed, 2, "dependency transition and unmount both unsubscribe");
+});
+
+test("thought stream updates do not rebuild persisted block timeline", () => {
+  const runtime = createHookRuntime();
+  let subscription;
+  let buildCount = 0;
+  globalThis.__onBuild = (exs, blocks) => { if (Object.keys(blocks || {}).length > 0) buildCount += 1; };
+  const dispatcher = {
+    isSessionStreaming: () => true,
+    subscribe: (_key, handlers) => { subscription = handlers; return () => {}; },
+  };
+  globalThis.__bc = 0;
+  const useSessionStream = loadHook(runtime, dispatcher, (exs, blocks) => {
+    if (Object.keys(blocks || {}).length > 0) globalThis.__bc += 1;
+  });
+  let exchanges = [
+    { role: "user", seq: 1, content: "prompt" },
+    { role: "agent", seq: 1, content: "", timestamp: "t1" },
+  ];
+  const blocks = { "1": [
+    { seq: 1, pos: 0, type: "reasoning", text: "stable reasoning" },
+    { seq: 1, pos: 1, type: "text", text: "answer" },
+  ] };
+  const aux = {};
+  const render = () => runtime.render(() => useSessionStream("s1", exchanges, aux, undefined, true, blocks));
+
+  const initial = render();
+  assert.deepEqual([...initial.timeline.map((item) => item.content)], ["prompt", "stable reasoning", "answer"]);
+  assert.equal(buildCount, 1);
+
+  // transient thought grows
+  exchanges = [...exchanges, { role: "thought", thought_id: "live-thought", content: "thinking" }];
+  subscription.onStream({ type: "thought_chunk", data: { content: "thinking", id: "live-thought" } });
+  runtime.flushTimers();
+  const afterThought = render();
+  assert.equal(buildCount, 1, "thought stream change must not rebuild persisted block timeline");
+  assert.deepEqual([...afterThought.timeline.map((item) => item.content)], ["prompt", "stable reasoning", "answer", "thinking"]);
+
+  // blocks change -> rebuild
+  const changedBlocks = { ...blocks, "1": [...blocks["1"], { seq: 1, pos: 2, type: "reasoning", text: "next stable" }] };
+  runtime.render(() => useSessionStream("s1", exchanges, {}, undefined, true, changedBlocks));
+  assert.equal(buildCount, 2, "new persisted block window must rebuild the blocks-backed base timeline");
 });

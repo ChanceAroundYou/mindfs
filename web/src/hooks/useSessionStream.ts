@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { sessionService } from "../services/session";
+import { sessionService, isPersistedSeq } from "../services/session";
 import { translateNow } from "../i18n";
 import type { SessionBlockMapLike } from "./sessionBlocks";
 import {
@@ -16,6 +16,16 @@ import {
 export { groupConsecutiveToolCalls } from "./sessionTimeline";
 export type { TimelineItem } from "./sessionTimeline";
 
+function splitExchanges(exchanges: ExchangeLike[]) {
+  const persisted: ExchangeLike[] = [];
+  const transient: ExchangeLike[] = [];
+  for (const exchange of exchanges) {
+    if (isPersistedSeq(exchange.seq)) persisted.push(exchange);
+    else transient.push(exchange);
+  }
+  return { persisted, transient };
+}
+
 export function useSessionStream(
   sessionKey: string | null,
   exchanges: ExchangeLike[] = [],
@@ -27,9 +37,6 @@ export function useSessionStream(
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
   const [streamStatusText, setStreamStatusText] = useState("");
-  // 流式 chunk（message_chunk/thought_chunk）高频到达时合并 streamVersion 更新，
-  // 避免每 chunk 一次 setState → SessionViewer 重渲染风暴（与 App.tsx 的
-  // bumpCacheVersionDebounced 同思路）。滚动跟随用 30ms 粒度视觉无差异。
   const chunkVersionTimerRef = useRef<number | null>(null);
   const bumpStreamVersion = () => {
     if (chunkVersionTimerRef.current !== null) return;
@@ -39,13 +46,35 @@ export function useSessionStream(
     }, 30);
   };
 
+  const split = splitExchanges(exchanges);
+  const persistedRef = useRef<ExchangeLike[]>([]);
+  const persistedExchanges =
+    persistedRef.current.length === split.persisted.length &&
+    persistedRef.current.every((item, i) => item === split.persisted[i])
+      ? persistedRef.current
+      : (persistedRef.current = split.persisted);
+  // 持久部分缓存：仅当持久 exchanges / aux / blocks / contextWindow 变化时重建。
+  const persistedCacheRef = useRef<{ key: unknown[]; value: any } | null>(null);
+  const persistedKey = [persistedExchanges, exchangeAux, blocks, sessionContextWindow];
+  const persistedChanged =
+    !persistedCacheRef.current ||
+    persistedCacheRef.current.key.length !== persistedKey.length ||
+    !persistedCacheRef.current.key.every((v, i) => v === persistedKey[i]);
+  if (persistedChanged) {
+    persistedCacheRef.current = {
+      key: persistedKey,
+      value: applySessionContextWindow(buildBaseTimeline(persistedExchanges, exchangeAux, blocks), sessionContextWindow),
+    };
+  }
+  const persistedBaseTimeline = persistedCacheRef.current!.value;
+
+  const transientTimeline = useMemo(
+    () => buildBaseTimeline(split.transient, {}, {}),
+    [split.transient],
+  );
   const baseTimeline = useMemo(
-    () =>
-      applySessionContextWindow(
-        buildBaseTimeline(exchanges, exchangeAux, blocks),
-        sessionContextWindow,
-      ),
-    [exchanges, exchangeAux, blocks, sessionContextWindow],
+    () => [...persistedBaseTimeline, ...transientTimeline],
+    [persistedBaseTimeline, transientTimeline],
   );
 
   useEffect(() => {
@@ -105,9 +134,6 @@ export function useSessionStream(
     };
   }, [sessionKey, sessionPending]);
 
-  // Viewport-only rerenders must not look like new session content to the
-  // viewer's tail-following effect. dedupeToolCards 在 settleRunningTools 之后：
-  // 先把 running 收成终态，再折叠重复 tool 卡片，顺序反了会漏掉仍在跑的那张。
   const settledTimeline = useMemo(
     () => dedupeToolCards(settleRunningTools(baseTimeline)),
     [baseTimeline],
@@ -115,11 +141,6 @@ export function useSessionStream(
 
   return {
     timeline: settledTimeline,
-    // 本地流式标记只是「本回合已经有内容流进来了」的**子状态**，不能独立于回合本身存在。
-    // 它只由 WS 事件清（done/message_done/error），没有轮询对账 —— 丢一条 `session.done`
-    // 就永久为真，于是列表蓝灯（pending 派生、有 5s 对账）已灭而流里「正在生成」不灭，
-    // 最后一条的时间戳也一直藏着。把闸门收在这里（唯一真相 `sessionPending`），
-    // 三个指示器就不可能互相矛盾（G-AY 纯派生的补完）。
     isStreaming: isStreaming && !!sessionPending,
     streamVersion,
     streamStatusText,
