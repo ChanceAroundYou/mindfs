@@ -245,7 +245,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 						OnCreated:   in.OnSubSessionCreated,
 						OnUpdate:    in.OnSubSessionUpdate,
 					})
-					if shouldPersistToolCallAux(toolCall) {
+					if shouldPersistToolCallAux(toolCall) && toolCallHasDisplayContent(toolCall) {
 						toolCallCopy := toolCall
 						auxBuffer = append(auxBuffer, session.ExchangeAux{
 							Line:     currentAssistantLine(responseText),

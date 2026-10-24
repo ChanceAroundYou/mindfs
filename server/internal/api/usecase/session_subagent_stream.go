@@ -203,7 +203,7 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		clientUpdate := compactAgentUpdate(update)
 		if update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate {
 			if toolCall, ok := update.Data.(agenttypes.ToolCall); ok {
-				if shouldPersistToolCallAux(toolCall) {
+				if shouldPersistToolCallAux(toolCall) && toolCallHasDisplayContent(toolCall) {
 					toolCallCopy := toolCall
 					auxBuffer = append(auxBuffer, session.ExchangeAux{
 						Line:     currentAssistantLine(responseText),

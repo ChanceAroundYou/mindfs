@@ -215,3 +215,19 @@ func appendResponseChunk(responseText, lastResponseUpdateType, chunk string) str
 	}
 	return responseText + chunk
 }
+
+func toolCallHasDisplayContent(toolCall agenttypes.ToolCall) bool {
+	if strings.TrimSpace(toolCall.Title) != "" {
+		return true
+	}
+	if len(toolCall.Content) > 0 {
+		return true
+	}
+	if len(toolCall.Locations) > 0 {
+		return true
+	}
+	if strings.TrimSpace(toolCall.RawType) != "" {
+		return true
+	}
+	return false
+}
