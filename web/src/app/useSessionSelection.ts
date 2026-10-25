@@ -4,6 +4,7 @@ import { buildDirectorySelectionKey } from "./appPath";
 import { toSessionItem, type SessionItem } from "./appSession";
 import type { UseSessionLifecycleParams } from "./useSessionLifecycleTypes";
 import { getCachedSession } from "../services/session";
+import { unreadCompletedRemove, unreadKey } from "../shared/unreadCompleted";
 import type { Session } from "../services/session";
 
 export type UseSessionSelectionParams = UseSessionLifecycleParams & {
@@ -84,6 +85,9 @@ export function useSessionSelection(params: UseSessionSelectionParams) {
         setCurrentRootId(targetRoot);
         selectRootNode(targetRoot, nextNode || undefined);
       }
+      // 看过了就熄灭「完成未读」：所有选中路径（列表点击、深链恢复、看板跳转）都汇聚到这里，
+      // 只在列表点击处清会让「从看板/通知点进来」的那条永远亮着。
+      unreadCompletedRemove(unreadKey(nextNode, targetRoot, key));
       setBoundSessionForRoot(targetRoot, key);
       setDrawerSessionForRoot(targetRoot, toSessionItem(targetRoot, session));
       setSelectedDir(targetRoot);

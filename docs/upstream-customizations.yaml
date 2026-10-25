@@ -6756,3 +6756,51 @@ groups:
     anchors:
       - 'server/internal/api/stream_hub_replay.go:func (h *StreamHub) replayQueueToClient(rootID, clientID, sessionKey string) {'
       - 'server/internal/api/stream_hub_build.go:	if queue == nil {'
+
+  - id: G-KA
+    title: 三类事件提示音（完成/需要介入/出错）与「完成未读」徽标
+    kind: feature
+    symptom: "任务跑完只有灯灭，没有声音；需要人介入和出错都没有任何提示；跑完的会话和很久以前跑完的会话在列表里长得一样，分不出哪条是刚完成还没看的。旧的完成音只有单音、且没有任何设置入口（旧版还有个 PWA 推送订阅项，和声音各说各话）。"
+    why: "用户 2026-10-25 要求「彻底重做提示机制」：三类事件（任务完成、需要人介入、出错）各要一条能在不看屏幕时也分得清的提示音，要有专门设置入口，并且跑完的会话除灭灯外还要留一个只看过才消失的未读徽标 —— 否则「刚跑完」和「上周跑完」在列表上无法区分。原实现的完成音是单音、触发点只有 session.done 一处，未读态只有按 sessionKey 存的 v1（只在单项目列表里读，多项目列表完全没接，跨节点同名会话还会互相点亮），等于没实现。"
+    boundary: "**前端本地，不进后端**：设置与未读态都在 localStorage（用户明确选择），不新增 API、不动 SQLite、不改 webpush/notifyscript 那套后端推送旁路。音色三段互不重叠：complete 上行三连、intervene 双击、error 下行闷音（音高 + 节奏两个维度，spec 钉在 web/tests/notification-sound-and-unread.test.mjs）。三个触发源分别是：`session.done`（完成）、`session.meta.updated` 里 `aux_flags.ask_user_waiting` 的 **false→true 跳变**（介入，重复广播不能连响）、`session.error` + `session.stream` 的 `error` 事件（出错，前者只覆盖「请求没发出去」，后者是 agent 侧失败，两者都要响）。未读键必须是 `nodeId::rootId::sessionKey`（跨节点同名项目/同名 key 是误标根源），v1 数据直接丢弃不迁移（反推不出节点与项目，迁移等于把误标带过来）。「正在看的那条不标未读」判据 = `document.visibilityState === 'visible'` 且选中 key 相同；清未读挂在 `useSessionSelection.handleSelectSession`（列表点击/深链恢复/看板跳转的唯一漏斗），且必须在 `setBoundSessionForRoot` 之前清。设置 UI 是侧栏 ⋯ 菜单里的「通知」面板，同时容纳提示音设置与既有 PWA 推送订阅（用户决策：合并成通知面板，不丢现有能力）。"
+    files:
+      - web/src/app/useNotificationSound.ts
+      - web/src/shared/unreadCompleted.ts
+      - web/src/app/realtimeWsHandlers.ts
+      - web/src/app/realtimeWsSessionMeta.ts
+      - web/src/app/realtimeWsSessionStream.ts
+      - web/src/app/useSessionSelection.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useAppDomainLayer.ts
+      - web/src/app/useAppDomainLayerTypes.ts
+      - web/src/app/useAppProjectManagement.ts
+      - web/src/app/useRealtimeEventsContext.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/useFileRefresh.ts
+      - web/src/app/useManagedRoots.ts
+      - web/src/app/useMultiProjectSessions.ts
+      - web/src/app/usePluginHandlers.ts
+      - web/src/app/useRelatedFileDiff.ts
+      - web/src/app/useSessionArchive.ts
+      - web/src/app/useSessionLifecycle.ts
+      - web/src/components/file/NotificationMenuItem.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+      - docs/plans/notification-sound-and-unread.md
+    tests:
+      - web/tests/notification-sound-and-unread.test.mjs
+    anchors:
+      - 'web/src/app/useNotificationSound.ts:const SCORES: Record<NotifyEvent, Note[]> = {'
+      - 'web/src/shared/unreadCompleted.ts:export function unreadKey(nodeId: string, rootId: string, sessionKey: string): string {'
+      - 'web/src/app/realtimeWsHandlers.ts:            if (!viewing) unreadCompletedAdd(unreadKey(nodeId, rootID, sessionKey));'
+      - 'web/src/app/realtimeWsSessionMeta.ts:            if (!wasWaiting && auxFlags?.ask_user_waiting) {'
+      - 'web/src/app/realtimeWsSessionStream.ts:        playNotificationSound("error");'
+      - 'web/src/app/useSessionSelection.ts:      unreadCompletedRemove(unreadKey(nextNode, targetRoot, key));'
+      - 'web/src/components/file/NotificationMenuItem.tsx:export function NotificationMenuItem() {'

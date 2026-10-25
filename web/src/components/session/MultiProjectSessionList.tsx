@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useI18n } from "../../i18n/index";
+import { unreadCompletedSubscribe, unreadKeyOfSession } from "../../shared/unreadCompleted";
 import { NodeBadgeHeader } from "../account/NodeBadgeHeader";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { PALETTE } from "../../shared/nodePalette";
@@ -46,6 +47,8 @@ export function MultiProjectSessionList({
   hideHeader = false,
 }: ProjectSessionListProps) {
   const { t } = useI18n();
+  const [unreadKeys, setUnreadKeys] = useState<Set<string>>(() => new Set());
+  useEffect(() => unreadCompletedSubscribe(setUnreadKeys), []);
   const effectiveEmptyText = emptyText || t("sessionList.empty");
   const {
     pinnedProjects,
@@ -235,6 +238,7 @@ export function MultiProjectSessionList({
                           onRename={onRename}
                           onDelete={onDelete}
                           onArchive={onArchive}
+                          unread={unreadKeys.has(unreadKeyOfSession({ ...session, root_id: sessionRoot, _nodeId: (group as any)?._nodeId }, sessionRoot))}
                         />
                       );
                     })}

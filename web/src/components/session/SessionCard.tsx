@@ -26,6 +26,7 @@ function SessionCard({
   parentHighlighted,
   highlightQuery,
   syncing = false,
+  unread = false,
   onSelect,
   onSync,
   onPin,
@@ -40,6 +41,7 @@ function SessionCard({
   parentHighlighted?: boolean;
   highlightQuery?: string;
   syncing?: boolean;
+  unread?: boolean;
   onSelect?: (session: SessionItem) => void;
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
@@ -359,6 +361,19 @@ function SessionCard({
                 background: "transparent",
                 // 空心圆整个是边框，压得太狠就看不清了；实心版那个 0.18 是给实心块用的。
                 animation: "mindfs-hollow-pulse 2.2s ease-in-out infinite",
+              }}
+            />
+          ) : unread ? (
+            <span
+              aria-label={t("sessionList.unreadCompleted")}
+              title={t("sessionList.unreadCompleted")}
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: effectiveNodeColor || "var(--accent-color)",
+                boxShadow: `0 0 0 2px ${hexToRgbaApp(effectiveNodeColor || "var(--accent-color)", 0.18)}`,
+                flexShrink: 0,
               }}
             />
           ) : session.pending ? (

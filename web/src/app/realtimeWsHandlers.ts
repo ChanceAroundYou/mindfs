@@ -6,6 +6,7 @@ import type { FilePayload } from "../services/file";
 import type { GitDiffPayload, GitStatusPayload } from "../services/git";
 import type { QueuedUserMessage, RelatedFile, RelatedWorktree, Session, TokenUsage } from "../services/session";
 import type { UpdateState } from "../services/update";
+import { unreadCompletedAdd, unreadKey } from "../shared/unreadCompleted";
 import type { ManagedRootPayload } from "./appMisc";
 import type { Exchange, MultiProjectSessionGroup, PendingSend, SessionItem, SessionQueueItem, SlashCommandResult, WSStatus } from "./appSession";
 import { dropTransientExchanges, isSamePendingEcho } from "../services/session";
@@ -95,10 +96,11 @@ export function createRealtimeWsHandlers(
     actions: {
       applyManagedRootRename,
       bumpCacheVersion,
+      getNodeIdForRoot,
       loadManagedRootPayloads,
       loadSessionsForRoot,
       markSessionStale,
-      playCompletionSound,
+      playNotificationSound,
       promotePendingSessionForRoot,
       refreshManagedRoots,
       refreshMultiProjectReplyingSessions,
@@ -313,6 +315,7 @@ export function createRealtimeWsHandlers(
           const rootID = pending.rootId;
           if (failedKey) {
             setMultiProjectSessionPending(rootID, failedKey, false);
+            playNotificationSound("error");
           }
           const latestDrawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
           if (targetKey && latestDrawer?.key === targetKey) {
@@ -344,7 +347,13 @@ export function createRealtimeWsHandlers(
                 currentRootIdRef.current ||
                 "";
           if (rootID && sessionKey) {
-            playCompletionSound();
+            playNotificationSound("complete");
+            // 未读只标「没在看的那条」：正开着的会话用户已经看到了，标了还得再点一次才灭。
+            const nodeId = wsPayloadNid || getNodeIdForRoot(rootID) || "";
+            const viewing =
+              document.visibilityState === "visible" &&
+              String(selectedSessionRef.current?.key || selectedSessionRef.current?.session_key || "") === sessionKey;
+            if (!viewing) unreadCompletedAdd(unreadKey(nodeId, rootID, sessionKey));
             setMultiProjectSessionPending(rootID, sessionKey, false);
             // 重锚定已并入这次收尾（handleSessionStreamDone 内部按 replay 目标判断），
             // 不再在这里单独猜一遍「此刻还在不在流」—— 那个时序代理在监听者里恒为

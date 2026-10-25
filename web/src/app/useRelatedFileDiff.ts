@@ -12,7 +12,7 @@ import { ManagedRootPayload, useResponsive } from "./appMisc";
 import { MainViewMode, URLState, joinDisplayPath, relativeDisplayPathFromRoot } from "./appPath";
 import { RelatedFileClickTarget, SessionItem, relatedFileSelectionKey } from "./appSession";
 import { useActionHandlers } from "./useActionHandlers";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useFileRefresh } from "./useFileRefresh";
 import { useGitActions } from "./useGitActions";

@@ -12,7 +12,7 @@ import { ManagedRootPayload, useResponsive } from "./appMisc";
 import { URLState } from "./appPath";
 import { MultiProjectSessionGroup, PendingSend, SessionItem, toSessionItem } from "./appSession";
 import { useActionHandlers } from "./useActionHandlers";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useGitData } from "./useGitData";

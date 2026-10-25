@@ -18,6 +18,7 @@ export function createSessionMetaHandlers(
     actions: {
       bumpCacheVersion,
       loadSessionsForRoot,
+      playNotificationSound,
       refreshTaskWorktree,
       refreshTasksForRelatedSession,
       scheduleMultiProjectSessionReload,
@@ -216,6 +217,15 @@ export function createSessionMetaHandlers(
           // 旧值，徽标要等下一次全量刷新才灭（症状「答完不灭，要会话结束才更新」）。
           if (payload.session.aux_flags !== undefined) {
             const auxFlags = normalizeSessionAuxFlags(payload.session.aux_flags);
+            // 「轮到你了」只在 false→true 的那一下响：同一个提问会随 meta 广播重复下发，
+            // 只在跳变时放音，否则答完再刷新会一直响。
+            // 注意读 `cached`（覆盖前的快照）：上面已经把新值写回 sessionCacheRef 了。
+            const wasWaiting = !!normalizeSessionAuxFlags(
+              (cached as any)?.aux_flags,
+            )?.ask_user_waiting;
+            if (!wasWaiting && auxFlags?.ask_user_waiting) {
+              playNotificationSound("intervene");
+            }
             setSessions((prev) =>
               prev.map((item) => {
                 const itemKey = String(item.key || item.session_key || "");

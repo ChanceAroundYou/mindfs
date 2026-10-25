@@ -56,7 +56,6 @@ import {
   getFileIcon,
   OnboardingGuideIcon,
   fileTreeMenuButtonStyle,
-  WebPushMenuItem,
 } from "./icons";
 
 
@@ -349,7 +348,6 @@ function FileTreeInner({
             openSessionNaming,
             openIdleSessionResourceRelease,
             isNativeApp,
-            WebPushMenuItem,
             locale,
             setLocale,
             appearanceMode,

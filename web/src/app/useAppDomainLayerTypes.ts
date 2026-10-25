@@ -97,7 +97,7 @@ export type UseAppDomainLayerParams = {
   pendingDraftRef: React.RefObject<PendingSend | null>;
   pendingPluginTrust: { rootId: string; bundle: PluginSourceBundle; } | null;
   pendingRequestRef: React.RefObject<Record<string, PendingSend>>;
-  playCompletionSound: () => void;
+  playNotificationSound: (event: "complete" | "intervene" | "error") => void;
   pluginBypass: boolean;
   pluginBypassRef: React.RefObject<boolean>;
   pluginContentRef: React.RefObject<HTMLDivElement | null>;

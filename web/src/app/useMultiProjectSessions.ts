@@ -11,7 +11,7 @@ import { MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE, use
 import { rootNodeKey } from "./appPath";
 import { Exchange, MultiProjectSessionGroup, SessionItem, isTopLevelSessionItem, toSessionItem } from "./appSession";
 import { useActionHandlers } from "./useActionHandlers";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useGitData } from "./useGitData";

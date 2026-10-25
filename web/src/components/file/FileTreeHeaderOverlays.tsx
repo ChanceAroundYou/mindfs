@@ -9,6 +9,7 @@ import {
   agentConfigSecondaryButtonStyle,
 } from "./AgentConfigPopover";
 import { FileTreeSettingsMenu } from "./FileTreeSettingsMenu";
+import { NotificationMenuItem } from "./NotificationMenuItem";
 import { FileTreeIdleReleasePopover } from "./FileTreeIdleReleasePopover";
 import { FileTreeSendShortcutPopover } from "./FileTreeSendShortcutPopover";
 import { FileTreeSessionNamingPopover } from "./FileTreeSessionNamingPopover";
@@ -17,7 +18,6 @@ import {
   ConfigArchiveIcon,
   ConfigSwitchIcon,
   fileTreeMenuButtonStyle,
-  WebPushMenuItem,
 } from "./icons";
 
 type FileTreeHeaderOverlaysProps = { ctx: Record<string, any> };
@@ -43,7 +43,6 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
     openSessionNaming,
     openIdleSessionResourceRelease,
     isNativeApp,
-    WebPushMenuItem,
     locale,
     setLocale,
     appearanceMode,
@@ -322,7 +321,7 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
                     {idleReleaseHours || "72"}h
                   </span>
                 </button>
-                {!isNativeApp ? <WebPushMenuItem /> : null}
+                {!isNativeApp ? <NotificationMenuItem /> : null}
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <FileTreeSettingsMenu
                   t={t} locale={locale} setLocale={setLocale}

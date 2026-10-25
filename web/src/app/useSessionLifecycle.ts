@@ -9,7 +9,7 @@ import { Exchange, MultiProjectSessionGroup, SessionItem, WSStatus, toSessionIte
 import { useActionHandlers } from "./useActionHandlers";
 import { useSessionSyncAction } from "./useSessionSyncAction";
 import { useSessionListLoading } from "./useSessionListLoading";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useGitData } from "./useGitData";

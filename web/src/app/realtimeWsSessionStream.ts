@@ -20,7 +20,7 @@ export function createRealtimeWsSessionStreamHandler(
       appendAgentChunkForSession, appendCompactNoticeForSession, appendPlanUpdateForSession,
       appendThoughtChunkForSession, appendTodoUpdateForSession, appendToolCallForSession,
       attachContextWindowToLatestAssistant, bumpCacheVersion, getNodeIdForRoot,
-      markSessionPending, resolveRootForSessionKey,
+      markSessionPending, playNotificationSound, resolveRootForSessionKey,
     },
     values: { rootSessionKey, t },
   } = ctx;
@@ -194,6 +194,9 @@ export function createRealtimeWsSessionStreamHandler(
         setCodexRateLimitsRefreshToken((value) => value + 1);
         break;
       case "error":
+        // agent 侧出错（含 resume 失败）：这条不是 WS 层 session.error，
+        // 后者只覆盖「请求没发出去」，两者都要响，用同一个错误音。
+        playNotificationSound("error");
         reportError(
           "session.resume_failed",
           event.data?.message || t("session.resumeFailed"),

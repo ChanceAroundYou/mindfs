@@ -21,7 +21,7 @@ import { useAppRootScopeState } from "./useAppRootScopeState";
 import { useAppTaskTemplateState } from "./useAppTaskTemplateState";
 import { useAppRootSelection } from "./useAppRootSelection";
 import { useAppFileWorkspaceState } from "./useAppFileWorkspaceState";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useTaskWorkspaceState } from "./useTaskWorkspaceState";
 import { useUiPreferences } from "./useUiPreferences";
 import { useTaskBoard } from "./useTaskBoard";
@@ -44,7 +44,7 @@ export type UseAppStateLayerParams = {
 export function useAppStateLayer(params: UseAppStateLayerParams) {
   const [fileEditStore] = useState(() => new FileEditStore({ load: fetchEditableFile, save: saveTextFile }));
   const { t } = useI18n();
-  const { playCompletionSound } = useCompletionSound();
+  const { play: playNotificationSound } = useNotificationSound();
   const {
     pluginManagerRef, managedRootIdsRef, expandedRef, selectedDirRef, fileRef, selectedSessionRef,
     lastMainSessionSnapshotRef, sessionSearchTargetCounterRef, currentSessionRef, interactionModeRef,
@@ -440,7 +440,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     multiProjectSessionGroupsRef, multiProjectSessionsEnabled, multiProjectSessionsLoading, nodeLoadFailuresRef,
     notifiedNodeFailuresRef, notifyNodeLoadFailedRef, onboardingOpen, openTaskCreateDialog,
     openTaskTemplateEditor, optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
-    pendingPlanMode, pendingPluginTrust, pendingRequestRef, playCompletionSound,
+    pendingPlanMode, pendingPluginTrust, pendingRequestRef, playNotificationSound,
     pluginBypass, pluginBypassRef, pluginContentRef, pluginLoading,
     pluginManagerRef, pluginQuery, pluginQueryRef, pluginVersion,
     pluginsLoadedByRootRef, pluginsLoadingByRootRef, pluginsTrustPendingByRootRef, projectTreeTab,

@@ -91,7 +91,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       loadSessionsForRoot,
       markSessionPending,
       markSessionStale,
-      playCompletionSound,
+      playNotificationSound,
       pruneTaskDetails,
       promotePendingSessionForRoot,
       refreshManagedRoots,

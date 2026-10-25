@@ -41,6 +41,7 @@ export const enUSSessions = {
   "sessionList.delegating": "Subagent running",
   "sessionList.awaitingAnswer": "Waiting for you",
   "sessionList.awaitingUser": "Waiting for your answer",
+  "sessionList.unreadCompleted": "Finished, not viewed",
   "sessionList.menu": "Session menu",
   "sessionList.searchCurrentProject": "Search current project sessions",
   "sessionList.noSearchMatch": "No matching sessions",
