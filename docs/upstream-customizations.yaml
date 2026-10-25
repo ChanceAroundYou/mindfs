@@ -6701,7 +6701,7 @@ groups:
 
   - id: G-JX
     title: 空壳 Bash 子会话止血与存量隐藏
-    kind: bugfix
+    kind: fix
     symptom: "侧栏出现大量名为「Bash」的独立子会话，点进去没有正文、没有命令、没有输出；它们还会把父会话的「进行中」状态拖住（父子会话灯常亮）。一次真实会话里能积累上百个。"
     why: "Claude SDK 的 ToolProgressMessage 是工具心跳，映射成 EventTypeToolUpdate 后仍带 parentToolUseId。claudeSubagentRouter.Handle 早前只按「parentToolUseId 非空」就放行新建，于是每一次 Bash 心跳都建出一个幽灵子会话。写入侧改为：ToolCall/ToolUpdate 事件不再新建子会话（真正的子代理正文仍走认领分支）；读取侧 dropEmptyBashSubSessions 深检存量——只在名字为 Bash、父会话非空时读转录/aux/块流，全无正文、用户行、思考、todo、plan、带命令或输出的工具调用才隐藏。"
     boundary: "隐藏是**列表响应层**的，不删文件、不改库；有真实内容的 Bash 子会话必须照常显示。深检只针对 Bash 命名的子会话，其它子会话零额外 IO。前端 timeline 另有一道无内容 bash 工具卡的过滤（双保险，老缓存也生效）。"
