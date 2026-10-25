@@ -12,6 +12,7 @@ to resume their old TODOs or baselines.
 - [HTML and video preview](html-video-preview.md) — Implemented 2026-10-22，已合入 main，待 ship；路径式原始资源端点（账户段进路径，相对资源才不掉账户），HTML 沙箱 iframe 渲染 + 源码切换，视频直连后端 Range 播放。
 - [Composer chips and Codex limits](composer-chips-and-codex-limits.md) — Implemented 2026-10-22，已合入 main，本机已安装；WSL/fn 待分发；徽标带改流内一行（被排队消息顶起来）、内存徽标左置并对所有 agent 显示且跟随项目节点、Codex 补 5 小时限额且剩余与重置时间合并；后续两轮修正：限额靠左、重置 0 隐藏、重置时间按窗口语义分开写（5h→HH:MM、周限→剩 Md Nh）、胶囊文案去重（30%%/重置 重置）、胶囊去掉「重置」二字并压短名称（5h/周）；2026-10-23 第四次：胶囊字号 11→9 统一（COMPOSER_CHIP_FONT_SIZE，比正文小一档）。
 - [Notification sound and unread](notification-sound-and-unread.md) — Implemented 2026-10-25，已安装到本机，待提交与 ship；三类事件提示音（完成上行三连 / 介入双击 / 出错下行闷音）+ 侧栏 ⋯「通知」面板（提示音设置并入原 PWA 推送入口）+ `nodeId::rootId::sessionKey` 未读徽标（两条会话列表都接、选中即灭）。二轮同日：跨节点完成靠 5s 轮询 pending 表 true→false 差分补音与徽标（不新增通道），灭灯后 `activity_at` 由 `inheritClientActivity` 继承，修「时间从刚刚退回 12m」。
+- [Session activity unified](session-activity-unified.md) — Plan 2026-10-25，待批准；把 `activity_at` 合并进 `updated_at`（流式期间节流落库），删除覆盖层与继承函数，刷新不再回落。
 
 
 ## Completed or superseded history

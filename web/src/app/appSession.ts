@@ -41,8 +41,6 @@ export type SessionItem = {
   purpose?: string;
   created_at?: string;
   updated_at?: string;
-  /** 客户端流式活动覆盖层：直到服务端 updated_at 追上才作废（G-BJ，不落盘） */
-  activity_at?: string;
   pinned_at?: string | null;
   archived_at?: string | null;
   closed_at?: string;
@@ -95,8 +93,6 @@ export type MultiProjectSessionGroup = {
   rootId: string;
   rootName: string;
   latestSessionTime: string;
-  /** 同 SessionItem.activity_at，但属分组级别（G-BJ） */
-  activity_at?: string;
   sessions: SessionItem[];
   totalCount: number;
   _nodeId?: string;
@@ -272,8 +268,6 @@ export function toSessionItem(
       typeof session?.created_at === "string" ? session.created_at : undefined,
     updated_at:
       typeof session?.updated_at === "string" ? session.updated_at : undefined,
-    activity_at:
-      typeof session?.activity_at === "string" ? session.activity_at : undefined,
     pinned_at:
       typeof session?.pinned_at === "string" && session.pinned_at
         ? session.pinned_at

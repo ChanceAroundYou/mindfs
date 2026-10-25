@@ -42,11 +42,8 @@ export function createRealtimeWsSessionStreamHandler(
       const activityAt = new Date(Math.floor(eventTime / 100) * 100).toISOString();
       const activityNode = wsNid || getNodeIdForRoot(activeRoot) || "";
       const advanceItem = (item: SessionItem): SessionItem => {
-        const currentTime = Math.max(
-          Date.parse(String(item.updated_at || "")) || 0,
-          Date.parse(String(item.activity_at || "")) || 0,
-        );
-        return Date.parse(activityAt) > currentTime ? { ...item, activity_at: activityAt } : item;
+        const currentTime = Date.parse(String(item.updated_at || "")) || 0;
+        return Date.parse(activityAt) > currentTime ? { ...item, updated_at: activityAt } : item;
       };
       setMultiProjectSessionGroups((prev) => {
         let changed = false;
@@ -56,10 +53,7 @@ export function createRealtimeWsSessionStreamHandler(
             group.rootId !== activeRoot ||
             (activityNode && groupNode && activityNode !== groupNode)
           ) return group;
-          const groupTime = Math.max(
-            Date.parse(String(group.latestSessionTime || "")) || 0,
-            Date.parse(String(group.activity_at || "")) || 0,
-          );
+          const groupTime = Date.parse(String(group.latestSessionTime || "")) || 0;
           const sessions = group.sessions.map((item) => {
             if ((item.key || item.session_key) !== streamKey) return item;
             const itemNode = String(item._nodeId || groupNode).trim();
@@ -68,10 +62,9 @@ export function createRealtimeWsSessionStreamHandler(
             if (advanced !== item) changed = true;
             return advanced;
           });
-          const activity_at = Date.parse(activityAt) > groupTime ? activityAt : group.activity_at;
-          if (activity_at !== group.activity_at || sessions.some((item, i) => item !== group.sessions[i])) {
+          if (Date.parse(activityAt) > groupTime || sessions.some((item, i) => item !== group.sessions[i])) {
             changed = true;
-            return { ...group, activity_at, sessions: mergeSessionItems(sessions, []) };
+            return { ...group, sessions: mergeSessionItems(sessions, []) };
           }
           return group;
         });

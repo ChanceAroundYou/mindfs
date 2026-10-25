@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { type DirectorySortMode, sortDirectoryEntries } from "../../services/prefs/directorySort";
 import { getNodes, PALETTE } from "../../services/net/nodeRegistry";
 import { resolveGroupColor } from "../../shared/sessionGroupDisplay";
-import { mergeSessionItems, orderProjectGroupsByNode, sessionActivityAt } from "../../services/session/sessionListMerge";
+import { mergeSessionItems, orderProjectGroupsByNode } from "../../services/session/sessionListMerge";
 import { scopeKey } from "../../shared/scope";
 import {
   optimisticProjectPin,

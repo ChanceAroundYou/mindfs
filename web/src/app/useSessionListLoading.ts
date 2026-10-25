@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { CHILD_SESSION_PAGE_SIZE } from "./appMisc";
 import { type Session, getCachedSessionList, saveCachedSessionList, sessionService } from "../services/session";
-import { inheritClientActivity, mergeSessionItems } from "../services/session/sessionListMerge";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { toSessionItem, type SessionItem } from "./appSession";
 import { reportError } from "../services/net/error";
 import type { UseSessionLifecycleParams } from "./useSessionLifecycleTypes";
@@ -171,7 +171,7 @@ export function useSessionListLoading(params: Params) {
             // 那条唯一规则决定（落后于 updated_at 就删），两处各写一遍迟早分叉。
             const merged = mergeSessionItems(
               [],
-              inheritClientActivity(prev, next),
+              next,
             ).map((item) => {
               const itemKey = String(item.key || item.session_key || "");
               const inherited = prevContext.get(itemKey);

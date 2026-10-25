@@ -8,7 +8,7 @@ import {
   inlineActionStyle,
 } from "./sessionCardHelpers";
 import type { SessionItem } from "./sessionListTypes";
-import { sessionActivityAt } from "../../shared/sessionActivityAt";
+
 import { useSessionCard } from "./useSessionCard";
 import { SessionCardIcon } from "./SessionCardIcon";
 import { SessionCardOverflowMenu } from "./SessionCardOverflowMenu";
@@ -393,7 +393,7 @@ function SessionCard({
               {formatTime(
                 isClosed && session.closed_at
                   ? session.closed_at
-                  : sessionActivityAt(session),
+                  : session.updated_at || "",
                 locale,
                 t("time.justNow"),
               )}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/kanban"
@@ -66,6 +67,10 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID
 	// session.done 来源。如果先清再广播，清卡住时广播永远发不出去。
 	hub.broadcastSessionDone(rootID, sessionKey, requestID)
 	hub.ClearSessionPending(sessionKey, turnID)
+	// 回合结束时把 updated_at 推进到当前时刻并落库，避免刷新后回落到上一条消息的时间。
+	if manager, err := s.GetSessionManager(rootID); err == nil && manager != nil {
+		_ = manager.TouchUpdatedAt(context.Background(), sessionKey, time.Now())
+	}
 }
 
 // updateSessionAwaitingFromEvent 把 ask_user 的生命周期镜像进 StreamHub（会话级的

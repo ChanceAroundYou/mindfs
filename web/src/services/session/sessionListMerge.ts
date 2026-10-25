@@ -1,12 +1,9 @@
-export { sessionActivityAt } from "../../shared/sessionActivityAt";
 
 export type PinAwareSessionItem = {
   key?: string;
   session_key?: string;
   root_id?: string;
   updated_at?: string;
-  /** Client-only stream activity until a refreshed server timestamp catches up. */
-  activity_at?: string;
   pinned_at?: string | null;
 };
 
@@ -32,26 +29,24 @@ function timeValue(value: string | null | undefined): number {
 }
 
 export function sessionActivityTime(
-  item: Pick<PinAwareSessionItem, "updated_at" | "activity_at">,
+  item: Pick<PinAwareSessionItem, "updated_at">,
 ): number {
-  return Math.max(timeValue(item.updated_at), timeValue(item.activity_at));
+  return timeValue(item.updated_at);
 }
 
 export function projectActivityTime(group: {
   latestSessionTime?: string;
-  activity_at?: string;
-  sessions: readonly Pick<PinAwareSessionItem, "updated_at" | "activity_at">[];
+  sessions: readonly Pick<PinAwareSessionItem, "updated_at">[];
 }): number {
   return group.sessions.reduce(
     (latest, item) => Math.max(latest, sessionActivityTime(item)),
-    Math.max(timeValue(group.latestSessionTime), timeValue(group.activity_at)),
+    timeValue(group.latestSessionTime),
   );
 }
 
 type ProjectGroupActivity = {
   latestSessionTime?: string;
-  activity_at?: string;
-  sessions: readonly Pick<PinAwareSessionItem, "updated_at" | "activity_at">[];
+  sessions: readonly Pick<PinAwareSessionItem, "updated_at">[];
 };
 
 /** Keep configured node order outside project pin and activity sorting. */
@@ -114,21 +109,6 @@ export function mergeSessionItems<T extends PinAwareSessionItem>(
     const scopedKey = `${String((item as any)?._nodeId || "").trim()}::${key}`;
     const previous = byKey.get(scopedKey);
     const merged = { ...(previous || ({} as T)), ...item };
-    // Keep a local streaming timestamp only while the persisted session row
-    // still lags it. This makes list reloads monotonic without storing every
-    // token/chunk in the database.
-    const latestActivity = Math.max(
-      timeValue(previous?.activity_at),
-      timeValue(item.activity_at),
-    );
-    if (latestActivity > timeValue(merged.updated_at)) {
-      merged.activity_at =
-        timeValue(item.activity_at) >= timeValue(previous?.activity_at)
-          ? item.activity_at
-          : previous?.activity_at;
-    } else {
-      delete merged.activity_at;
-    }
     byKey.set(scopedKey, merged);
   }
   return Array.from(byKey.values()).sort(compareSessionItems);
@@ -144,34 +124,6 @@ export function mergeSessionItems<T extends PinAwareSessionItem>(
  * 只做继承，**不做新旧判定**：是否该保留由 `mergeSessionItems` 那一条规则统一决定
  * （`activity_at` 一旦落后于 `updated_at` 就删），两处各写一遍迟早分叉。
  * 键按 `_nodeId::sessionKey` 作用域 —— 与归并同构，跨节点同名会话不会互相继承。
- */
-export function inheritClientActivity<T extends PinAwareSessionItem>(
-  previous: readonly T[],
-  incoming: T[],
-): T[] {
-  const byKey = new Map<string, string>();
-  for (const item of previous) {
-    if (!item.activity_at) continue;
-    byKey.set(`${String((item as any)?._nodeId || "").trim()}::${sessionKey(item)}`, item.activity_at);
-  }
-  if (byKey.size === 0) return incoming;
-  return incoming.map((item) => {
-    const inherited = byKey.get(`${String((item as any)?._nodeId || "").trim()}::${sessionKey(item)}`);
-    return inherited ? { ...item, activity_at: inherited } : item;
-  });
-}
-
-/**
- * 把某个项目的置顶快照盖到列表上，并重排。
- *
- * 双向：既**盖上**快照里的置顶，也**抹掉**快照里没有的置顶。
- *
- * 为什么需要「盖」：置顶的权威是**主节点**那张表，而 worker 上的
- * `/api/pins` 是 403（它是控制面），worker 自己的会话列表里因此永远没有
- * 置顶区。不从主节点把置顶盖过去，在 PC 的项目里置顶就等于没置顶。
- *
- * 为什么需要「抹」：会话库里那个退役的 pinned_at 列可能还有残留值，
- * 留着会让置顶看起来在、点了又不动。两边以快照为准。
  */
 export function applyPinnedSnapshotToSessions<T extends PinAwareSessionItem>(
   items: T[],

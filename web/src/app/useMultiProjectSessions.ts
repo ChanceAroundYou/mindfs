@@ -30,7 +30,7 @@ import { protectedAPIReady } from "../services/net/api";
 import { getActiveNode, getNodeById, getNodes } from "../services/net/nodeRegistry";
 import { type MultiRootSessionGroup, type Session, sessionService } from "../services/session";
 import { resolveGroupColor } from "../shared/sessionGroupDisplay";
-import { inheritClientActivity, mergeSessionItems } from "../services/session/sessionListMerge";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 
 export type UseMultiProjectSessionsParams = {
   applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) => any;
@@ -342,7 +342,6 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
         _nodeColor: (gMeta?._nodeColor as string | undefined),
         _nodeId: (gMeta?._nodeId as string | undefined) || gNid || undefined,
         latestSessionTime: group.latestSessionTime,
-        activity_at: group.activity_at,
         sessions: applyPinSnapshot(
           mergeSessionItems(
             [],
@@ -396,22 +395,7 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
             seen.add(k);
           }
         }
-        // 把上一帧的 activity_at 接回来，但**只继承、不并入**：用 inheritClientActivity
-        // 而不是 mergeSessionItems(before, …) —— 后者是并集语义，会把服务端本轮已经
-        // 不返回的会话（删掉了 / 归档了）从旧分组里复活。继承完仍由 mergeSessionItems
-        // 那条唯一规则决定去留（updated_at 追上就作废）。
-        const withActivity = merged.map((g) => {
-          const prevGroup = prevList.find((p) => scopeOf(p) === scopeOf(g));
-          if (!prevGroup) return g;
-          const sessions = mergeSessionItems([], inheritClientActivity(prevGroup.sessions || [], g.sessions));
-          const groupActivity =
-            prevGroup.activity_at &&
-            (Date.parse(prevGroup.activity_at) || 0) > (Date.parse(String(g.latestSessionTime || "")) || 0)
-              ? prevGroup.activity_at
-              : g.activity_at;
-          return { ...g, activity_at: groupActivity, sessions };
-        });
-        return applyPendingToMultiProjectGroups(withActivity, multiProjectPendingRef.current);
+        return applyPendingToMultiProjectGroups(merged, multiProjectPendingRef.current);
       });
     } finally {
       if (seq === multiProjectLoadSeqRef.current) {
