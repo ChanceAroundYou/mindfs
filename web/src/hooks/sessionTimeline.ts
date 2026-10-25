@@ -181,6 +181,14 @@ export function buildBaseTimeline(
     if (role === "tool") {
       if (!ex.toolCall) continue;
       const normalizedTool = normalizeToolCall(ex.toolCall);
+      const kind = String(normalizedTool.kind || "").toLowerCase();
+      const hasTitle = Boolean(normalizedTool.title || (normalizedTool.meta && typeof normalizedTool.meta.title === "string" && normalizedTool.meta.title));
+      const hasContent = Array.isArray(normalizedTool.content) && normalizedTool.content.length > 0;
+      const hasLocations = Array.isArray(normalizedTool.locations) && normalizedTool.locations.length > 0;
+      const hasCommand = typeof normalizedTool.meta?.command === "string" && String(normalizedTool.meta.command).trim() !== "" ||
+        typeof normalizedTool.meta?.input === "string" && String(normalizedTool.meta.input).trim() !== "";
+      const isEmptyBash = (kind === "bash" || kind === "execute") && !hasContent && !hasLocations && !hasCommand && (!hasTitle || /^bash$/i.test(String(normalizedTool.title || normalizedTool.meta?.title || "").trim()));
+      if (isEmptyBash) continue;
       out.push({
         id:
           normalizedTool.callId ||

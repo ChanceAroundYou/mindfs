@@ -138,6 +138,7 @@ func (s *Service) ListChildSessions(ctx context.Context, in ListChildSessionsInp
 	if err != nil {
 		return ListSessionsOutput{}, err
 	}
+	items = dropEmptyBashSubSessions(ctx, manager, items)
 	if err := fillCommandShells(ctx, manager, items); err != nil {
 		return ListSessionsOutput{}, err
 	}
@@ -175,6 +176,7 @@ func appendChildSessions(ctx context.Context, manager *session.Manager, parents 
 		if err != nil {
 			return nil, err
 		}
+		children = dropEmptyBashSubSessions(ctx, manager, children)
 		out = append(out, children...)
 	}
 	return out, nil
@@ -297,4 +299,103 @@ func sessionSearchMatchTypeRank(matchType string) int {
 type CreateSessionInput struct {
 	RootID string
 	Input  session.CreateInput
+}
+
+// dropEmptyBashSubSessions 丢弃「空壳 Bash 子会话」。
+//
+// 2026-10-25 之前的写入路径把 Bash 工具进度心跳（ToolProgressMessage）误当成
+// 新子代理，每次心跳都建一个名为 "Bash" 的子会话；它只有一条空正文行和一条
+// 无命令无输出的 toolcall aux，在侧栏里却和真子代理一样占一行。写入侧已在
+// claudeSubagentRouter.Handle 修掉，这里负责让**存量**幽灵也不再出现。
+//
+// 只对名字是 Bash 的子会话做深检（读转录 + aux），其余子会话零成本放行；
+// 有任何真实正文 / 用户输入 / 思考 / todo / plan / 带命令或输出的工具调用，
+// 都判定为「有内容」，照常显示。
+func dropEmptyBashSubSessions(ctx context.Context, manager *session.Manager, items []*session.Session) []*session.Session {
+	if len(items) == 0 {
+		return items
+	}
+	out := items[:0]
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if !isBashNamedSubSession(item) || !isEmptyBashSubSession(ctx, manager, item.Key) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func isBashNamedSubSession(item *session.Session) bool {
+	if strings.TrimSpace(item.ParentSessionKey) == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(item.Name), "bash")
+}
+
+func isEmptyBashSubSession(ctx context.Context, manager *session.Manager, key string) bool {
+	full, err := manager.Get(ctx, key, 0)
+	if err != nil || full == nil {
+		return false
+	}
+	for _, exchange := range full.Exchanges {
+		if strings.TrimSpace(exchange.LegacyContent) != "" {
+			return false
+		}
+		if exchange.Role == "user" {
+			return false
+		}
+	}
+	if blocks, err := manager.ReadBlocks(ctx, key); err == nil {
+		for _, block := range blocks {
+			if blockHasRenderableContent(block) {
+				return false
+			}
+		}
+	}
+	aux, err := manager.GetExchangeAux(ctx, key, 0)
+	if err != nil {
+		return false
+	}
+	for _, entries := range aux {
+		for _, entry := range entries {
+			if strings.TrimSpace(entry.Thought) != "" || entry.Todo != nil || entry.Plan != nil || entry.Compact != nil {
+				return false
+			}
+			toolCall := entry.ToolCall
+			if toolCall == nil {
+				continue
+			}
+			if len(toolCall.Content) > 0 || len(toolCall.Locations) > 0 {
+				return false
+			}
+			if !strings.EqualFold(strings.TrimSpace(toolCall.Title), "bash") {
+				return false
+			}
+			if strings.TrimSpace(stringMeta(toolCall.Meta, "command")) != "" ||
+				strings.TrimSpace(stringMeta(toolCall.Meta, "input")) != "" ||
+				strings.TrimSpace(stringMeta(toolCall.Meta, "output")) != "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// blockHasRenderableContent 只认「用户看得见的东西」：正文 / 思考 / 工具调用的
+// 命令与输出。空壳 Bash 子会话的块流里只有无内容的工具块，不算。
+func blockHasRenderableContent(block session.Block) bool {
+	if strings.TrimSpace(block.Text) != "" {
+		return true
+	}
+	if block.ToolCall == nil {
+		return block.Todo != nil || block.Plan != nil
+	}
+	if len(block.ToolCall.Content) > 0 || len(block.ToolCall.Locations) > 0 {
+		return true
+	}
+	return strings.TrimSpace(stringMeta(block.ToolCall.Meta, "command")) != "" ||
+		strings.TrimSpace(stringMeta(block.ToolCall.Meta, "input")) != "" ||
+		strings.TrimSpace(stringMeta(block.ToolCall.Meta, "output")) != ""
 }

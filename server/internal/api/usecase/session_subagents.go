@@ -30,8 +30,19 @@ func (r *claudeSubagentRouter) Handle(ctx context.Context, update agenttypes.Eve
 	if isClaudeParentTaskLifecycle(update) {
 		return false
 	}
-	if strings.TrimSpace(ref.ParentToolUseID) == "" && r.find(ref) == nil {
-		return false
+	if r.find(ref) == nil {
+		// 新建只认「真正的子代理身份」（Task 工具调用带 taskId/subagentType/
+		// taskDescription），或者带 parentToolUseId 的子代理正文（MessageChunk /
+		// ThoughtChunk / MessageDone 走认领分支）。Bash 等普通工具的心跳
+		// （ToolProgressMessage → ToolUpdate）也带 parentToolUseId，但它不是新的
+		// 子代理 —— 早前按 parentToolUseId 非空就放行，于是每次心跳都会建出一个
+		// 名为 "Bash"、正文全空的幽灵子会话（2026-10-25 实测一次会话上百个）。
+		if update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate {
+			return false
+		}
+		if strings.TrimSpace(ref.ParentToolUseID) == "" {
+			return false
+		}
 	}
 	child, err := r.ensure(ctx, ref, toolCallFromUpdate(update))
 	if err != nil {
