@@ -712,7 +712,7 @@ groups:
       # 定位归上方那排，本组件不再自己绝对定位（2026-10-16）。
       - 'web/src/components/session/SessionWorktreeTag.tsx:taskWorktreeTagStyle("enabled")'
       # 名字上方仅放 worktree / 问号 / aux 状态；子代理折角是类型标识，固定留在名字前。
-      - 'web/src/components/session/SessionCardTopBadges.tsx:if (isSubagent || !hasSessionTopBadges(session, isSubagent))'
+      - 'web/src/components/session/SessionCardTopBadges.tsx:if (isSubagent || !hasSessionTopBadges(session, isSubagent, unread))'
       - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_LIFT_PX'
       # 问号徽标的**数据源**：ask_user 事件必须镜像到会话行的 aux_flags。
       # 2026-10-19 前这一支写完任务行就 return，镜像只挂在 plan/todo/task 那一支上，
