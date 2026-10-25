@@ -30,7 +30,7 @@ import { protectedAPIReady } from "../services/net/api";
 import { getActiveNode, getNodeById, getNodes } from "../services/net/nodeRegistry";
 import { type MultiRootSessionGroup, type Session, sessionService } from "../services/session";
 import { resolveGroupColor } from "../shared/sessionGroupDisplay";
-import { mergeSessionItems } from "../services/session/sessionListMerge";
+import { inheritClientActivity, mergeSessionItems } from "../services/session/sessionListMerge";
 
 export type UseMultiProjectSessionsParams = {
   applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) => any;
@@ -362,6 +362,9 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
       setMultiProjectSessionGroups((prev) => {
         const prevList = Array.isArray(prev) ? prev : [];
         const scopeOf = (g: any) => `${String(g?._nodeId || "").trim()}::${String(g?.rootId || "")}`;
+        // 分组是按**空数组**重建的（服务端 payload 里没有 activity_at），
+        // 而 activity_at 是客户端在 stream 事件上推进的覆盖层 —— 不继承的话，
+        // 完成灭灯触发的那次重拉会把时间从「刚刚」打回最后一条对话消息的时间。
         const nextMap = new Map(nextGroups.map((g) => [scopeOf(g), g]));
         const ridSet = new Set(nextGroups.map((g) => String(g.rootId || "")).filter(Boolean));
         const queriedNids = new Set(nodeIds); // 本轮实际请求过的节点
@@ -393,7 +396,22 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
             seen.add(k);
           }
         }
-        return applyPendingToMultiProjectGroups(merged, multiProjectPendingRef.current);
+        // 把上一帧的 activity_at 接回来，但**只继承、不并入**：用 inheritClientActivity
+        // 而不是 mergeSessionItems(before, …) —— 后者是并集语义，会把服务端本轮已经
+        // 不返回的会话（删掉了 / 归档了）从旧分组里复活。继承完仍由 mergeSessionItems
+        // 那条唯一规则决定去留（updated_at 追上就作废）。
+        const withActivity = merged.map((g) => {
+          const prevGroup = prevList.find((p) => scopeOf(p) === scopeOf(g));
+          if (!prevGroup) return g;
+          const sessions = mergeSessionItems([], inheritClientActivity(prevGroup.sessions || [], g.sessions));
+          const groupActivity =
+            prevGroup.activity_at &&
+            (Date.parse(prevGroup.activity_at) || 0) > (Date.parse(String(g.latestSessionTime || "")) || 0)
+              ? prevGroup.activity_at
+              : g.activity_at;
+          return { ...g, activity_at: groupActivity, sessions };
+        });
+        return applyPendingToMultiProjectGroups(withActivity, multiProjectPendingRef.current);
       });
     } finally {
       if (seq === multiProjectLoadSeqRef.current) {

@@ -64,6 +64,8 @@ export type UseAppSessionLayerParams = {
   pendingDraftRef: React.RefObject<PendingSend | null>;
   pendingPlanMode: boolean;
   pendingRequestRef: React.RefObject<Record<string, PendingSend>>;
+  /** 远端会话跑完时放完成音（跨节点只有 5s 轮询这一个通道，见 useReplyingSessionPoll）。 */
+  playNotificationSound: (event: "complete" | "intervene" | "error") => void;
   pluginBypassRef: React.RefObject<boolean>;
   pluginManagerRef: React.RefObject<PluginManager>;
   pluginQuery: Record<string, string>;

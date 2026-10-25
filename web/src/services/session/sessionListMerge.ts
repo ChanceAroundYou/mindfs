@@ -135,6 +135,33 @@ export function mergeSessionItems<T extends PinAwareSessionItem>(
 }
 
 /**
+ * 全量重拉（`replace`）时把客户端流式时间戳从旧列表继承回来。
+ *
+ * 服务端 `updated_at` 是**最后一条对话消息**的落库时间：agent 连跑 12 分钟工具时它一直
+ * 停在那 12 分钟前。`activity_at` 是客户端在 stream 事件上推进的覆盖层（不落盘），
+ * 所以全量替换会把它整条丢掉 —— 表现为「完成灭灯后，时间从『刚刚』跳回『12m』」。
+ *
+ * 只做继承，**不做新旧判定**：是否该保留由 `mergeSessionItems` 那一条规则统一决定
+ * （`activity_at` 一旦落后于 `updated_at` 就删），两处各写一遍迟早分叉。
+ * 键按 `_nodeId::sessionKey` 作用域 —— 与归并同构，跨节点同名会话不会互相继承。
+ */
+export function inheritClientActivity<T extends PinAwareSessionItem>(
+  previous: readonly T[],
+  incoming: T[],
+): T[] {
+  const byKey = new Map<string, string>();
+  for (const item of previous) {
+    if (!item.activity_at) continue;
+    byKey.set(`${String((item as any)?._nodeId || "").trim()}::${sessionKey(item)}`, item.activity_at);
+  }
+  if (byKey.size === 0) return incoming;
+  return incoming.map((item) => {
+    const inherited = byKey.get(`${String((item as any)?._nodeId || "").trim()}::${sessionKey(item)}`);
+    return inherited ? { ...item, activity_at: inherited } : item;
+  });
+}
+
+/**
  * 把某个项目的置顶快照盖到列表上，并重排。
  *
  * 双向：既**盖上**快照里的置顶，也**抹掉**快照里没有的置顶。

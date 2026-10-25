@@ -13,7 +13,9 @@ import { mergeReplyingStateByNode, MultiProjectSessionGroup } from "./appSession
 import { protectedJSON as apiProtectedJSON, withNodeRetry } from "../services/net/api";
 import { appPath } from "../services/net/base";
 import { getActiveNodeId, getNodes } from "../services/net/nodeRegistry";
-import { scopeSessionKey } from "../shared/scope";
+import { parseSessionScopeKey, scopeSessionKey } from "../shared/scope";
+import { newlyCompletedPendingKeys } from "../shared/pendingCompletion";
+import { unreadCompletedAdd, unreadKey } from "../shared/unreadCompleted";
 
 /** 跨节点回复状态轮询周期（固定 5s + visible-only）。 */
 const REMOTE_REPLY_POLL_MS = 5000;
@@ -26,6 +28,10 @@ export interface UseReplyingSessionPollParams {
   multiProjectPendingRef: MutableRefObject<Record<string, boolean>>;
   multiProjectAwaitingRef: MutableRefObject<Record<string, boolean>>;
   multiProjectSessionsEnabled: any;
+  /** 远端会话刚跑完时放完成音（由调用方注入，保持本 hook 不依赖声音实现）。 */
+  playCompletionSound?: () => void;
+  /** 「正在看的会话」—— 与 WS 侧同一判据，正在看的完成后不标未读。 */
+  selectedSessionRef?: MutableRefObject<{ key?: string; session_key?: string } | null>;
   setMultiProjectPendingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
   setMultiProjectAwaitingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: Dispatch<SetStateAction<MultiProjectSessionGroup[]>>;
@@ -40,10 +46,22 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     multiProjectPendingRef,
     multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
+    playCompletionSound,
+    selectedSessionRef,
     setMultiProjectPendingByKey,
     setMultiProjectAwaitingByKey,
     setMultiProjectSessionGroups,
   } = params;
+
+  /**
+   * 声音回调走 ref：调用方多半写成内联箭头（`() => playNotificationSound("complete")`），
+   * 每次渲染都是新引用。直接进 useCallback 依赖会让 refresh 每渲染换一次身份，
+   * 下面那两个 effect 跟着重建 —— 每帧都触发一次轮询，等于把 5s 轮询变成死循环。
+   */
+  const playCompletionRef = useRef(playCompletionSound);
+  useEffect(() => {
+    playCompletionRef.current = playCompletionSound;
+  }, [playCompletionSound]);
 
   /**
    * 本轮要问的节点集合：与 loadMultiProjectSessionGroups 同源（getNodes() ∪
@@ -120,14 +138,38 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     if (okNodeIds.size === 0) {
       return;
     }
+    const previousPending = multiProjectPendingRef.current;
     const nextPending = mergeReplyingStateByNode(multiProjectPendingRef.current, freshPending, okNodeIds);
     const nextAwaiting = mergeReplyingStateByNode(multiProjectAwaitingRef.current, freshAwaiting, okNodeIds);
+    // 跨节点「刚完成」：远端节点的 session.done 浏览器收不到，完全靠这张 pending 表
+    // 的 true→false 差分补完成音与未读徽标。**不新增通道**——轮询本来就在跑，
+    // 这里只是读它前后两帧。
+    const completed = newlyCompletedPendingKeys(
+      previousPending,
+      nextPending,
+      okNodeIds,
+      String(currentRootNodeIdRef.current || "").trim(),
+    );
     multiProjectPendingRef.current = nextPending;
     multiProjectAwaitingRef.current = nextAwaiting;
     setMultiProjectPendingByKey(nextPending);
     setMultiProjectAwaitingByKey(nextAwaiting);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, nextPending, nextAwaiting));
-  }, [applyPendingToMultiProjectGroups]);
+    if (completed.length > 0) {
+      // 每轮最多响一次：切回标签页那一轮可能一次补出好几条「刚完成」，
+      // 逐条响会连成一片噪音。未读徽标仍逐条标 —— 那是静态信息，不吵人。
+      playCompletionRef.current?.();
+      const selectedKey = String(
+        selectedSessionRef?.current?.key || selectedSessionRef?.current?.session_key || "",
+      );
+      const visible = typeof document === "undefined" || document.visibilityState === "visible";
+      for (const key of completed) {
+        const { nodeId, rootId, sessionKey } = parseSessionScopeKey(key);
+        if (visible && selectedKey && selectedKey === sessionKey) continue;
+        unreadCompletedAdd(unreadKey(nodeId, rootId, sessionKey));
+      }
+    }
+  }, [applyPendingToMultiProjectGroups, currentRootNodeIdRef, selectedSessionRef]);
 
   useEffect(() => {
     if (!multiProjectSessionsEnabled) {

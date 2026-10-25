@@ -77,6 +77,27 @@ export function sessionKeyNodeId(sessionScopeKey: string | null | undefined): st
   return parts.length >= 3 ? parts[0] : "";
 }
 
+/**
+ * 会话复合键反解回三段。
+ *
+ * 段数规则见文件头：2 段必是空 nodeId 的历史格式，3 段起才是带节点的键。
+ * 会话 key 本身可能含 "::"，所以第三段之后要重新拼回去 —— 直接 parts[2] 会截断。
+ * 历史格式（无节点段）返回 nodeId 空串：调用方据此判断「这条归属不明」。
+ */
+export function parseSessionScopeKey(sessionScopeKey: string | null | undefined): {
+  nodeId: string;
+  rootId: string;
+  sessionKey: string;
+} {
+  const k = String(sessionScopeKey ?? "");
+  if (!k) return { nodeId: "", rootId: "", sessionKey: "" };
+  const parts = k.split(S);
+  if (parts.length < 3) {
+    return { nodeId: "", rootId: parts[0] || "", sessionKey: parts.slice(1).join(S) };
+  }
+  return { nodeId: parts[0], rootId: parts[1], sessionKey: parts.slice(2).join(S) };
+}
+
 /** 会话键别名 */
 export function sessionScope(
   nodeId: string | null | undefined,

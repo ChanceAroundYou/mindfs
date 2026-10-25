@@ -77,6 +77,38 @@ context 里的 `playCompletionSound()` 统一改成 `playNotificationSound(event
 12px 字号、次要信息 `var(--text-secondary)`、数值控件用同款胶囊），并接入菜单里
 「同时只展开一项」的既有约定（展开时收起外观/字号/语言/排序）。
 
+## 二轮：跨节点完成信号 + 灭灯后的时间回退（2026-10-25）
+
+用户报两条现象，都在同一条链上：
+
+| 现象 | 根因 |
+|---|---|
+| 跨节点的会话跑完，既没有提示音也没有未读徽标 | 完成音与未读徽标只挂在 `session.done` 这个 handler 里，而浏览器**只连激活节点的一条 WS**（`useAppBootstrapEffects.ts` 的 `sessionService.connect(currentRootId, getNodeIdForRoot(currentRootId))`）—— 远端节点的 `session.done` 根本不会推过来。 |
+| 执行完成灭灯后，时间不变成「刚刚」，而是退回上一句完整对话的时间（例如 12m） | `session.done` 后走 `loadSessionsForRoot(..., {replace:true})`，该分支从**空数组**起算（`mergeSessionItems([], next)`），把流式期间推进的 `activity_at` 整条丢了。服务端 `updated_at` 是**最后一条对话消息**的落库时间，agent 连跑 12 分钟工具时它一直停在 12 分钟前。 |
+
+**约束（用户明确）**：「不要额外引入新机制」。所以两处都复用已有链路，不新增通道、不动后端。
+
+跨节点完成信号 = 读 `useReplyingSessionPoll` 已在维护的 pending 真相表前后两帧，做 true→false 差分
+（`shared/pendingCompletion.ts` 的 `newlyCompletedPendingKeys`）。三条排除缺一不可：
+
+- **节点必须本轮真的问到**（`okNodeIds`）—— 失败节点保留旧值是合并逻辑的既定行为，不能当完成；
+- **激活节点不算** —— 那条节点的 `session.done` 已由 WS 响过、标过，再判一次会连响两遍；
+- **空 nodeId 的历史键不算** —— 反推不出节点，标未读会落到错误的键上。
+
+一轮最多响一次（切回标签页那一轮可能一次补出好几条，逐条会连成噪音），未读徽标仍逐条标。
+「正在看的那条不标未读」复用与 WS 侧同一判据。
+
+时间继承 = `sessionListMerge.ts` 新增 `inheritClientActivity(previous, incoming)`，在 `replace`
+分支与多项目分组重建两处把上一帧的 `activity_at` 搬过来。**只搬不判**：留不留仍由
+`mergeSessionItems` 那条唯一规则决定（落后于 `updated_at` 就删），两处各写一遍迟早分叉。
+键按 `_nodeId::sessionKey` 作用域，跨节点同名会话不互相继承。
+
+多项目分组那半**只能继承、不能并集**：写成 `mergeSessionItems(prevGroup.sessions, …)` 会把
+服务端本轮已不返回的会话（删掉/归档）从旧分组复活。测试里有一条 `doesNotMatch` 专门钉这个。
+
+代价（已知）：`activity_at` 是 client-only 字段不落库，**刷新页面后会回落到 `updated_at`**。
+这次修的是「灭灯后当场不刷新」，刷新回落是固有边界。
+
 ## 验证
 
 ```

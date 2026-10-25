@@ -12,6 +12,8 @@ export function useAppMultiProjectReload({
   multiProjectPendingRef,
   multiProjectAwaitingRef,
   multiProjectSessionsEnabled,
+  playCompletionSound,
+  selectedSessionRef,
   setMultiProjectPendingByKey,
   setMultiProjectAwaitingByKey,
   setMultiProjectSessionGroups,
@@ -24,6 +26,8 @@ export function useAppMultiProjectReload({
   multiProjectPendingRef: React.RefObject<Record<string, boolean>>;
   multiProjectAwaitingRef: React.RefObject<Record<string, boolean>>;
   multiProjectSessionsEnabled: true;
+  playCompletionSound?: () => void;
+  selectedSessionRef: UseAppSessionLayerParams["selectedSessionRef"];
   setMultiProjectPendingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setMultiProjectAwaitingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: React.Dispatch<React.SetStateAction<MultiProjectSessionGroup[]>>;
@@ -74,6 +78,8 @@ export function useAppMultiProjectReload({
     multiProjectPendingRef,
     multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
+    playCompletionSound,
+    selectedSessionRef,
     setMultiProjectPendingByKey,
     setMultiProjectAwaitingByKey,
     setMultiProjectSessionGroups,
