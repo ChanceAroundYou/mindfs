@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { useI18n } from "../../i18n/index";
+import { unreadCompletedSubscribe, unreadKeyOfSession } from "../../shared/unreadCompleted";
 import { SessionCardMemo } from "./SessionCard";
 import { TOP_BADGE_LIFT_PX } from "./SessionCardTopBadges";
 import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardHelpers";
@@ -52,6 +53,8 @@ export function SessionList({
   onOpenArchivePanel,
 }: SessionListProps) {
   const { t } = useI18n();
+  const [unreadKeys, setUnreadKeys] = useState<Set<string>>(() => new Set());
+  useEffect(() => unreadCompletedSubscribe(setUnreadKeys), []);
   const effectiveEmptyText = emptyText || t("sessionList.empty");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchBlurTimerRef = useRef<number | null>(null);
@@ -332,6 +335,7 @@ export function SessionList({
                   onRename={onRename}
                   onDelete={onDelete}
                   onArchive={onArchive}
+                  unread={unreadKeys.has(unreadKeyOfSession(session))}
                 />
               );
             })}

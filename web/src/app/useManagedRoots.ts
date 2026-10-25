@@ -8,7 +8,7 @@ import { URLState, comparableManagedRootPath, rootNodeKey } from "./appPath";
 import { MultiProjectSessionGroup, PendingSend, SessionItem, SessionQueueItem, SlashCommandResult } from "./appSession";
 import { LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, accountScopedKey, loadLastRootId, loadLastRootNodeId, persistFileScrollPositions, removeLocalStorageByPrefix } from "./appStorage";
 import { type ActionHandlers, useActionHandlers } from "./useActionHandlers";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useGitData } from "./useGitData";

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -286,6 +287,32 @@ func normalizeSessionMeta(s *Session) {
 	s.ParentToolCallID = strings.TrimSpace(s.ParentToolCallID)
 	s.Source = strings.TrimSpace(s.Source)
 	s.WorkDir = strings.TrimSpace(s.WorkDir)
+}
+
+// TouchUpdatedAt 强制把会话的 updated_at 推进到 t 并落库。
+//
+// 用于回合终结（EndSessionTurn）：即使本轮没有追加 assistant 交换行（例如纯工具调用轮），
+// 也要让 updated_at 反映完成时刻，避免刷新后回落到上一条消息的时间。
+func (m *Manager) TouchUpdatedAt(ctx context.Context, key string, t time.Time) error {
+	if strings.TrimSpace(key) == "" {
+		return errors.New("session key required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, err := m.getSessionUnsafe(key, 0)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		return errSessionNotFound
+	}
+	if t.IsZero() {
+		t = m.now().UTC()
+	} else {
+		t = t.UTC()
+	}
+	current.UpdatedAt = t
+	return m.upsertSessionMetaUnsafe(current)
 }
 
 var errSessionNotFound = errors.New("session not found")

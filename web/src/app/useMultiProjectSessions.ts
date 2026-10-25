@@ -11,7 +11,7 @@ import { MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE, use
 import { rootNodeKey } from "./appPath";
 import { Exchange, MultiProjectSessionGroup, SessionItem, isTopLevelSessionItem, toSessionItem } from "./appSession";
 import { useActionHandlers } from "./useActionHandlers";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useGitData } from "./useGitData";
@@ -342,7 +342,6 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
         _nodeColor: (gMeta?._nodeColor as string | undefined),
         _nodeId: (gMeta?._nodeId as string | undefined) || gNid || undefined,
         latestSessionTime: group.latestSessionTime,
-        activity_at: group.activity_at,
         sessions: applyPinSnapshot(
           mergeSessionItems(
             [],
@@ -362,6 +361,9 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
       setMultiProjectSessionGroups((prev) => {
         const prevList = Array.isArray(prev) ? prev : [];
         const scopeOf = (g: any) => `${String(g?._nodeId || "").trim()}::${String(g?.rootId || "")}`;
+        // 分组是按**空数组**重建的（服务端 payload 里没有 activity_at），
+        // 而 activity_at 是客户端在 stream 事件上推进的覆盖层 —— 不继承的话，
+        // 完成灭灯触发的那次重拉会把时间从「刚刚」打回最后一条对话消息的时间。
         const nextMap = new Map(nextGroups.map((g) => [scopeOf(g), g]));
         const ridSet = new Set(nextGroups.map((g) => String(g.rootId || "")).filter(Boolean));
         const queriedNids = new Set(nodeIds); // 本轮实际请求过的节点

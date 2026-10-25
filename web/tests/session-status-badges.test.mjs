@@ -169,7 +169,7 @@ assert.match(top, /left: 0/, "the row is left-aligned with the session name");
 // 一排全空就整块不渲染：空容器会在上方白占一段 gap。子代理直接 return null（它不渲染状态徽标）。
 assert.match(
   top,
-  /if \(isSubagent \|\| !hasSessionTopBadges\(session, isSubagent\)\)/,
+  /if \(isSubagent \|\| !hasSessionTopBadges\(session, isSubagent, unread\)\)/,
   "an empty top row renders nothing",
 );
 // 徽标条空着也整块不渲染（防它自己被单独复用时留一段空 gap）。
@@ -237,7 +237,7 @@ assert.match(taskRows, /taskAuxIconScaleStyle\(\)/, "the task card badge strip w
 // ── 7.5 选中底色向上拓展，包住名字上方那排徽标（用户 2026-10-16）──
 // 借位 = 内容盒这一张底自己长高：负外边距把盒顶提上去，等量补进上内边距让名字留在原位，
 // 外边距盒总高不变 —— 行高、行距、后面会话的位置全都不动，只是把上一行的留白借来当底色。
-assert.match(card, /hasSessionTopBadges\(session, isSubagent\)/, "the lift must use the same predicate as the top row");
+assert.match(card, /hasSessionTopBadges\(session, isSubagent, unread\)/, "the lift must use the same predicate as the top row");
 assert.match(card, /data-session-top-lift/, "the lift must be identifiable on the box it grows");
 assert.match(card, /(selected || hovered) && !editing && hasSessionTopBadges/, "only the selected row gets an upward lift");
 // 只能有**一个**绘制面。另起一块绝对定位的底会横向铺满整行（含时间列与 ⋯ 菜单），
@@ -276,4 +276,25 @@ const schema = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/i
 for (const col of ["aux_ask_user_waiting", "aux_has_plan", "aux_has_todos", "aux_has_task", "aux_session_error"]) {
   assert.ok(schema.includes(col), `sqlite schema must carry ${col}`);
 }
+});
+
+test("unread badge sits in the top badge row", () => {
+  // 用户 2026-10-25「已完成未读任务的会话上方小徽标做好了么」—— 位置就是**名字上方那排**
+  // （worktree 标签 / 问号 / plan·todo·task 那一排的最左），不是右侧时间列的圆点。
+  // 右侧那一格和「回复中/等你回答」的空心灯挤在一起，两个信号在同一位置迟早读混。
+  const top = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCardTopBadges.tsx"), "utf8");
+  const card = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCard.tsx"), "utf8");
+  assert.match(top, /unread = false/, "顶排徽标接收 unread");
+  assert.match(
+    top,
+    /export function hasSessionTopBadges\(session: SessionItem, isSubagent: boolean, unread = false\)/,
+    "顶排是否渲染的判据必须把 unread 算进去，否则只有未读的会话不显示这一排",
+  );
+  assert.match(top, /polyline points="20 6 9 17 4 12"/, "未读徽标是一个✓，不是又一个圆点");
+  assert.match(top, /background: "var\(--node-badge-bg\)"/, "底色与项目面包屑徽标同一变量（AGENTS.md §11）");
+  assert.match(top, /color: nodeColor \|\| "var\(--accent-color\)"/, "图标色跟随项目节点色");
+  assert.match(top, /taskAuxBadgeStyle\(false\)/, "复用任务卡徽标盒，尺寸与同排其它徽标一致");
+  assert.match(card, /unread=\{unread\}/, "SessionCard 必须把 unread 传给顶排");
+  // 右侧时间列不再画未读圆点：同一个信号摆两处，其中一处迟早会被改漏。
+  assert.equal(card.includes("0 0 0 2px"), false, "右侧时间列不再画未读圆点");
 });

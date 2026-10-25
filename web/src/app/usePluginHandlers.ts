@@ -12,7 +12,7 @@ import { URLState, normalizeCursor, readURLState } from "./appPath";
 import { SessionItem } from "./appSession";
 import { persistPluginQuery } from "./appStorage";
 import { useActionHandlers } from "./useActionHandlers";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useGitData } from "./useGitData";

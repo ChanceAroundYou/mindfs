@@ -152,6 +152,12 @@ export function useSessionListLoading(params: Params) {
         if (shouldReplace) {
           // 服务端列表接口不含 context_window，全量重拉会把它清掉（WS message_done 已同步进本地列表）。
           // 用 setSessions 回调继承旧列表的 context_window，避免徽标闪没。
+          //
+          // activity_at 同理，而且更刺眼：它是客户端流式活动时间戳，服务端 updated_at 是
+          // **最后一条对话消息**的时间 —— agent 连跑 12 分钟工具时那个时间戳一直停在 12 分钟前。
+          // session.done 后立刻 replace 重拉，若不继承，灯灭那一瞬间时间就从「刚刚」
+          // 跳回「12m」。继承后仍由 mergeSessionItems 的判定决定去留（updated_at 追上就删），
+          // 所以不会永久谎报活跃 —— 两处只留一条规则。
           setSessions((prev) => {
             const prevContext = new Map(
               prev
@@ -161,7 +167,12 @@ export function useSessionListLoading(params: Params) {
                   item.context_window,
                 ]),
             );
-            const merged = mergeSessionItems([], next).map((item) => {
+            // 继承只管「把上一帧的 activity_at 搬过来」；留不留由 mergeSessionItems
+            // 那条唯一规则决定（落后于 updated_at 就删），两处各写一遍迟早分叉。
+            const merged = mergeSessionItems(
+              [],
+              next,
+            ).map((item) => {
               const itemKey = String(item.key || item.session_key || "");
               const inherited = prevContext.get(itemKey);
               return inherited

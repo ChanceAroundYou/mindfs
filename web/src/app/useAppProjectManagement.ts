@@ -30,7 +30,7 @@ export function useAppProjectManagement(params: UseAppDomainLayerParams) {
     managedRootsRequestRef, markSessionStale, multiProjectPendingByKey, multiProjectPendingRef, multiProjectSessionGroups,
     multiProjectSessionsEnabled, nodeLoadFailuresRef, notifiedNodeFailuresRef, notifyNodeLoadFailedRef,
     openGitDiff, optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
-    pendingPluginTrust, pendingRequestRef, playCompletionSound, pluginBypass,
+    pendingPluginTrust, pendingRequestRef, playNotificationSound, pluginBypass,
     pluginBypassRef, pluginContentRef, pluginManagerRef, pluginQuery,
     pluginVersion, pluginsLoadedByRootRef, pluginsLoadingByRootRef, pluginsTrustPendingByRootRef,
     promotePendingSessionForRoot, pruneTaskDetails, queueFrozenBySessionRef, queueVersion,

@@ -41,6 +41,7 @@ export const zhCNSessions = {
   "sessionList.delegating": "子代理运行中",
   "sessionList.awaitingAnswer": "等待你回答",
   "sessionList.awaitingUser": "待用户回答",
+  "sessionList.unreadCompleted": "已完成，未查看",
   "sessionList.menu": "会话菜单",
   "sessionList.searchCurrentProject": "搜索当前项目会话",
   "sessionList.noSearchMatch": "未找到匹配会话",

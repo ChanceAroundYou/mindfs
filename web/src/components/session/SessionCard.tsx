@@ -8,7 +8,7 @@ import {
   inlineActionStyle,
 } from "./sessionCardHelpers";
 import type { SessionItem } from "./sessionListTypes";
-import { sessionActivityAt } from "../../shared/sessionActivityAt";
+
 import { useSessionCard } from "./useSessionCard";
 import { SessionCardIcon } from "./SessionCardIcon";
 import { SessionCardOverflowMenu } from "./SessionCardOverflowMenu";
@@ -26,6 +26,7 @@ function SessionCard({
   parentHighlighted,
   highlightQuery,
   syncing = false,
+  unread = false,
   onSelect,
   onSync,
   onPin,
@@ -40,6 +41,7 @@ function SessionCard({
   parentHighlighted?: boolean;
   highlightQuery?: string;
   syncing?: boolean;
+  unread?: boolean;
   onSelect?: (session: SessionItem) => void;
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
@@ -81,7 +83,7 @@ function SessionCard({
   // 选中底色要不要向上拓展去包住名字上方那排徽标（用户 2026-10-16）。
   // 徽标全隐藏时 0 —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
   // 也就不该拓出一块盖着空气的深色底。
-  const liftTop = (selected || hovered) && !editing && hasSessionTopBadges(session, isSubagent) ? TOP_BADGE_LIFT_PX : 0;
+  const liftTop = (selected || hovered) && !editing && hasSessionTopBadges(session, isSubagent, unread) ? TOP_BADGE_LIFT_PX : 0;
 
   return (
     <div
@@ -205,6 +207,7 @@ function SessionCard({
               session={session}
               isSubagent={isSubagent}
               nodeColor={effectiveNodeColor || undefined}
+              unread={unread}
             />
             <span
               style={{
@@ -390,7 +393,7 @@ function SessionCard({
               {formatTime(
                 isClosed && session.closed_at
                   ? session.closed_at
-                  : sessionActivityAt(session),
+                  : session.updated_at || "",
                 locale,
                 t("time.justNow"),
               )}

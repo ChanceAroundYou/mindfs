@@ -9,6 +9,7 @@ import {
   agentConfigSecondaryButtonStyle,
 } from "./AgentConfigPopover";
 import { FileTreeSettingsMenu } from "./FileTreeSettingsMenu";
+import { NotificationMenuItem } from "./NotificationMenuItem";
 import { FileTreeIdleReleasePopover } from "./FileTreeIdleReleasePopover";
 import { FileTreeSendShortcutPopover } from "./FileTreeSendShortcutPopover";
 import { FileTreeSessionNamingPopover } from "./FileTreeSessionNamingPopover";
@@ -17,7 +18,6 @@ import {
   ConfigArchiveIcon,
   ConfigSwitchIcon,
   fileTreeMenuButtonStyle,
-  WebPushMenuItem,
 } from "./icons";
 
 type FileTreeHeaderOverlaysProps = { ctx: Record<string, any> };
@@ -43,7 +43,6 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
     openSessionNaming,
     openIdleSessionResourceRelease,
     isNativeApp,
-    WebPushMenuItem,
     locale,
     setLocale,
     appearanceMode,
@@ -322,7 +321,13 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
                     {idleReleaseHours || "72"}h
                   </span>
                 </button>
-                {!isNativeApp ? <WebPushMenuItem /> : null}
+                <NotificationMenuItem showPush={!isNativeApp} onOpen={() => {
+                  // 与「外观/字号/语言/排序」同一约定：同时只展开一项。
+                  setIsAppearanceMenuOpen(false);
+                  setIsFontSizeMenuOpen(false);
+                  setIsLocaleMenuOpen(false);
+                  setIsSortMenuOpen(false);
+                }} />
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <FileTreeSettingsMenu
                   t={t} locale={locale} setLocale={setLocale}

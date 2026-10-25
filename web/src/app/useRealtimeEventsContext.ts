@@ -96,7 +96,7 @@ export type RealtimeEventsContext = {
     loadSessionsForRoot: (rootID: string, options?: { beforeTime?: string; afterTime?: string; replace?: boolean; force?: boolean; }) => Promise<void>;
     markSessionPending: (rootID: string, sessionKey: string) => void;
     markSessionStale: (rootID: string | null | undefined, sessionKey: string | null | undefined) => void;
-    playCompletionSound: () => void;
+    playNotificationSound: (event: "complete" | "intervene" | "error") => void;
     /** 摘掉一个任务在本机的全部痕迹（task.deleted）。作用域由 rootId 划定。 */
     pruneTaskDetails: (rootId: string, keepTaskIds: Iterable<string>) => void;
     /** 重拉工作台结构。转发 ref，为 null 表示工作台没打开，调用方无需自己判。 */

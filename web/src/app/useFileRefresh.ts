@@ -12,7 +12,7 @@ import { useCallback, useMemo, type MutableRefObject, type Dispatch, type SetSta
 import { buildMatchInputFromPath, inferReadModeFromPlugin, useResponsive } from "./appMisc";
 import { normalizeTreeResponse } from "./appUtils";
 import { useActionHandlers } from "./useActionHandlers";
-import { useCompletionSound } from "./useCompletionSound";
+import { useNotificationSound } from "./useNotificationSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useGitData } from "./useGitData";
