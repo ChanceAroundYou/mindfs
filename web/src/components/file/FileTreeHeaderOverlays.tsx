@@ -321,7 +321,13 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
                     {idleReleaseHours || "72"}h
                   </span>
                 </button>
-                {!isNativeApp ? <NotificationMenuItem /> : null}
+                <NotificationMenuItem showPush={!isNativeApp} onOpen={() => {
+                  // 与「外观/字号/语言/排序」同一约定：同时只展开一项。
+                  setIsAppearanceMenuOpen(false);
+                  setIsFontSizeMenuOpen(false);
+                  setIsLocaleMenuOpen(false);
+                  setIsSortMenuOpen(false);
+                }} />
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <FileTreeSettingsMenu
                   t={t} locale={locale} setLocale={setLocale}

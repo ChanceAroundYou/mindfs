@@ -83,7 +83,7 @@ function SessionCard({
   // 选中底色要不要向上拓展去包住名字上方那排徽标（用户 2026-10-16）。
   // 徽标全隐藏时 0 —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
   // 也就不该拓出一块盖着空气的深色底。
-  const liftTop = (selected || hovered) && !editing && hasSessionTopBadges(session, isSubagent) ? TOP_BADGE_LIFT_PX : 0;
+  const liftTop = (selected || hovered) && !editing && hasSessionTopBadges(session, isSubagent, unread) ? TOP_BADGE_LIFT_PX : 0;
 
   return (
     <div
@@ -207,6 +207,7 @@ function SessionCard({
               session={session}
               isSubagent={isSubagent}
               nodeColor={effectiveNodeColor || undefined}
+              unread={unread}
             />
             <span
               style={{
@@ -361,19 +362,6 @@ function SessionCard({
                 background: "transparent",
                 // 空心圆整个是边框，压得太狠就看不清了；实心版那个 0.18 是给实心块用的。
                 animation: "mindfs-hollow-pulse 2.2s ease-in-out infinite",
-              }}
-            />
-          ) : unread ? (
-            <span
-              aria-label={t("sessionList.unreadCompleted")}
-              title={t("sessionList.unreadCompleted")}
-              style={{
-                width: "8px",
-                height: "8px",
-                borderRadius: "50%",
-                background: effectiveNodeColor || "var(--accent-color)",
-                boxShadow: `0 0 0 2px ${hexToRgbaApp(effectiveNodeColor || "var(--accent-color)", 0.18)}`,
-                flexShrink: 0,
               }}
             />
           ) : session.pending ? (

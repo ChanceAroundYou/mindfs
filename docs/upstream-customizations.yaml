@@ -6787,6 +6787,7 @@ groups:
       - web/src/components/file/FileTree.tsx
       - web/src/components/file/FileTreeHeaderOverlays.tsx
       - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionCardTopBadges.tsx
       - web/src/components/session/SessionList.tsx
       - web/src/components/session/MultiProjectSessionList.tsx
       - web/src/i18n/locales/zh-CN-projects.ts
@@ -6796,6 +6797,7 @@ groups:
       - docs/plans/notification-sound-and-unread.md
     tests:
       - web/tests/notification-sound-and-unread.test.mjs
+      - web/tests/session-status-badges.test.mjs
     anchors:
       - 'web/src/app/useNotificationSound.ts:const SCORES: Record<NotifyEvent, Note[]> = {'
       - 'web/src/shared/unreadCompleted.ts:export function unreadKey(nodeId: string, rootId: string, sessionKey: string): string {'
@@ -6803,4 +6805,6 @@ groups:
       - 'web/src/app/realtimeWsSessionMeta.ts:            if (!wasWaiting && auxFlags?.ask_user_waiting) {'
       - 'web/src/app/realtimeWsSessionStream.ts:        playNotificationSound("error");'
       - 'web/src/app/useSessionSelection.ts:      unreadCompletedRemove(unreadKey(nextNode, targetRoot, key));'
-      - 'web/src/components/file/NotificationMenuItem.tsx:export function NotificationMenuItem() {'
+      - 'web/src/components/file/NotificationMenuItem.tsx:export function NotificationMenuItem({'
+      - 'web/src/components/session/SessionCardTopBadges.tsx:      {unread ? ('
+      - 'web/src/app/useNotificationSound.ts:    { freq: 698.46, at: 0, dur: 0.15, type: "triangle" },'

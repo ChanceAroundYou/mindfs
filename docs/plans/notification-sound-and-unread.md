@@ -25,7 +25,10 @@
 ## 设计要点
 
 **1. 三个事件，三种音型，两个维度区分**（音高 + 节奏）：
-complete 上行三连 `C6→E6→G6`、intervene 双短提示 `A5×2`、error 下行闷音 `A3→E3`。
+complete 上行三连 `C6→E6→G6`、intervene 双短提示 `A5×2`、error 下行纯四度 `F5→Bb4` 长拖尾。
+错误音最初写的是 `A3→E3` 的低闷音，用户实测「听不见，换一个」—— 220Hz 在笔记本小喇叭上
+几乎不发声，且和系统提示「咚」混在一起。改成中音区的三角波，既听得见，又靠**下行**与
+完成音的上行形成方向对比。
 每个音符独立 oscillator，8ms 起音 + 指数衰减防爆音。
 
 **2. 设置存前端 localStorage**（用户选择），`mindfs.notify.sound`：总开关 + 音量 + 逐事件开关。
@@ -58,9 +61,21 @@ complete 上行三连 `C6→E6→G6`、intervene 双短提示 `A5×2`、error �
 - `web/src/components/file/NotificationMenuItem.tsx`
 - `web/tests/notification-sound-and-unread.test.mjs`
 
-接线：`SessionCard` 加 `unread` prop（在 presence/pending 判定链里插一支独立分支），
-两条会话列表都订阅 `unreadCompletedSubscribe`；context 里的 `playCompletionSound()`
-统一改成 `playNotificationSound(event)`（4 个类型/实现文件跟着改）。
+接线：`SessionCard` 加 `unread` prop，两条会话列表都订阅 `unreadCompletedSubscribe`；
+context 里的 `playCompletionSound()` 统一改成 `playNotificationSound(event)`
+（4 个类型/实现文件跟着改）。
+
+徽标位置（2026-10-25 二轮，用户问「会话上方小徽标做好了么」）：不放在右侧时间列
+（那一格和「回复中/等你回答」的空心灯挤在一起，两个信号迟早读混），而是挂在
+**会话名上方那排**（`SessionCardTopBadges`）最左：14px 圆角方框 + ✓，底色
+`var(--node-badge-bg)`、图标色跟随节点色，与项目面包屑徽标同一套视觉（AGENTS.md §11）。
+`hasSessionTopBadges` 把 `unread` 算进判据，否则「只有未读、没有其它徽标」的会话
+这一排整块不渲染，徽标根本不会出现。
+
+设置面板版式（同日二轮）：用户报「前端样式还是不统一」。改为完全沿用
+`FileTreeFontSizeMenu` 的行式（外层 `padding: 2px 6px 6px`、每行 `minHeight 30px`、
+12px 字号、次要信息 `var(--text-secondary)`、数值控件用同款胶囊），并接入菜单里
+「同时只展开一项」的既有约定（展开时收起外观/字号/语言/排序）。
 
 ## 验证
 

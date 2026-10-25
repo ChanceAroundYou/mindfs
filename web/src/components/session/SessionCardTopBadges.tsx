@@ -24,13 +24,15 @@ export function SessionCardTopBadges({
   session,
   isSubagent,
   nodeColor,
+  unread = false,
 }: {
   session: SessionItem;
   isSubagent: boolean;
   nodeColor?: string;
+  unread?: boolean;
 }) {
   const { t } = useI18n();
-  if (isSubagent || !hasSessionTopBadges(session, isSubagent)) {
+  if (isSubagent || !hasSessionTopBadges(session, isSubagent, unread)) {
     return null;
   }
   return (
@@ -46,6 +48,37 @@ export function SessionCardTopBadges({
         pointerEvents: "none",
       }}
     >
+      {/* 「完成未读」排最左：它是这一行最新的信息，其余徽标描述的是持久状态。 */}
+      {unread ? (
+        <span
+          aria-label={t("sessionList.unreadCompleted")}
+          title={t("sessionList.unreadCompleted")}
+          style={{
+            ...taskAuxBadgeStyle(false),
+            // 与项目面包屑徽标同一个底色变量（AGENTS.md §11）：亮/暗两套主题各自定义，
+            // 这里的图标色是节点色，两者叠起来才读得出「这是本项目的新结果」。
+            background: "var(--node-badge-bg)",
+            color: nodeColor || "var(--accent-color)",
+            pointerEvents: "auto",
+          }}
+        >
+          <span style={taskAuxIconScaleStyle()}>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </span>
+        </span>
+      ) : null}
       <SessionWorktreeTag worktreeActive={session.worktree_active} />
       {session.aux_flags?.ask_user_waiting ? (
         <span
@@ -65,9 +98,12 @@ export function SessionCardTopBadges({
  * 「这行上方有没有徽标」—— SessionCard 决定选中底色要不要向上拓展的唯一判据。
  * 与上面的渲染分支必须同源：多算一处就会拓出一块盖着空气的深色底。
  */
-export function hasSessionTopBadges(session: SessionItem, isSubagent: boolean): boolean {
+export function hasSessionTopBadges(session: SessionItem, isSubagent: boolean, unread = false): boolean {
   if (isSubagent) {
     return false;
+  }
+  if (unread) {
+    return true;
   }
   if (isWorktreeActive(session.worktree_active)) {
     return true;

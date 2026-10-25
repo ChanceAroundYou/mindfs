@@ -17,6 +17,8 @@ export const zhCNProjects = {
   "fileTree.notificationBusy": "通知处理中",
   "fileTree.notificationInfo": "通知说明",
   "fileTree.notificationPanel": "通知",
+  "fileTree.soundStateOn": "开",
+  "fileTree.soundStateOff": "关",
   "fileTree.soundEnabled": "提示音",
   "fileTree.soundVolume": "音量",
   "fileTree.soundComplete": "任务完成",

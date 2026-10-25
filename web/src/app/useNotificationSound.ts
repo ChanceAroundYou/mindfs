@@ -39,7 +39,9 @@ export function saveNotificationSettings(next: SoundSettings) {
  * 三段音色的差别必须在「不看屏幕」时也分得清，所以用**音高 + 节奏**两个维度：
  * - complete：C6→E6→G6 上行三连，明亮、收束感（任务做完了）
  * - intervene：A5 两次短提示，间隔明显（叫你看一眼）
- * - error：下行 A3→E3，闷、拖尾（出事了）
+ * - error：F5→Bb4 下行纯四度 + 长拖尾，中音区、带棱角（出事了）
+ *   —— 曾经是 A3→E3 的低闷音，实测在笔记本小喇叭上几乎听不见，且和系统「咚」混在一起；
+ *   换成中音区的三角波既听得见，又靠**下行**与完成音的上行形成方向对比。
  * 每个音符都是独立 oscillator，带 8ms 起音与指数衰减，避免爆音。
  */
 type Note = { freq: number; at: number; dur: number; type: OscillatorType; gain?: number };
@@ -55,8 +57,8 @@ const SCORES: Record<NotifyEvent, Note[]> = {
     { freq: 880.0, at: 0.24, dur: 0.16, type: "triangle" },
   ],
   error: [
-    { freq: 220.0, at: 0, dur: 0.22, type: "sine", gain: 1.1 },
-    { freq: 164.8, at: 0.16, dur: 0.34, type: "sine", gain: 1.1 },
+    { freq: 698.46, at: 0, dur: 0.15, type: "triangle" },
+    { freq: 466.16, at: 0.17, dur: 0.42, type: "triangle", gain: 1.15 },
   ],
 };
 

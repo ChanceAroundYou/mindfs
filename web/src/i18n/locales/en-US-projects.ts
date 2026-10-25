@@ -17,6 +17,8 @@ export const enUSProjects = {
   "fileTree.notificationBusy": "Working on notifications",
   "fileTree.notificationInfo": "Notification info",
   "fileTree.notificationPanel": "Notifications",
+  "fileTree.soundStateOn": "On",
+  "fileTree.soundStateOff": "Off",
   "fileTree.soundEnabled": "Sound",
   "fileTree.soundVolume": "Volume",
   "fileTree.soundComplete": "Task finished",
