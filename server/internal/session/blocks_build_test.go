@@ -45,6 +45,18 @@ func TestBuildTurnBlocksEmptyTurnProducesNoBlocks(t *testing.T) {
 	if got := BuildTurnBlocks(5, 5, "turn-4", "  \n ", nil); len(got) != 0 {
 		t.Fatalf("blocks = %#v, want empty", got)
 	}
+	// 只有零宽字符也不算：U+200B 不是 unicode.IsSpace，光靠 TrimSpace 会把它
+	// 当成正文落块，前端据此渲染出一个带段落 margin 的「空」段落，把相邻工具卡的
+	// 间距从 6px 撑到 87.5px（2026-10-25 用户报「tool call 之间间距非常大」）。
+	for _, text := range []string{"\u200b", "\n\u200b", " \u200b\u200c\u200d\ufeff\n"} {
+		if got := BuildTurnBlocks(5, 5, "turn-zw", text, nil); len(got) != 0 {
+			t.Fatalf("blocks = %#v, want empty for zero-width text %q", got, text)
+		}
+	}
+	// 真正文里的零宽字符不能被连带抹掉。
+	if got := BuildTurnBlocks(5, 5, "turn-kw", "有\u200b内容", nil); len(got) != 1 {
+		t.Fatalf("blocks = %#v, want one text block", got)
+	}
 }
 
 // 交错顺序：渲染器按 (line, 到达序) 稳定排序后把 aux 插进正文段之间。

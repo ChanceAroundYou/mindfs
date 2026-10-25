@@ -96,6 +96,21 @@ export function blockItemID(seq: number | undefined, pos: number): string {
 }
 
 /**
+ * 这段文本里有没有**看得见的字符**。
+ *
+ * agent 在工具卡之间会吐 `"\n\u200b"` 这种增量：Go 的 `strings.TrimSpace` 用的是
+ * `unicode.IsSpace`，而 U+200B（零宽空格）不在其列，于是它被当成正文落成 text 块；
+ * 前端这里只判空串，就渲染成一个只有零宽字符的 markdown 段落 —— 段落自带 `p` 的
+ * 上下 margin，把相邻工具卡的间距从 6px 撑到 87.5px（实测，2026-10-25 用户报
+ * 「每一个 tool call 之间的间距隔得非常大」）。
+ */
+const ZERO_WIDTH_BLANK = /^[\s\u200b\u200c\u200d\ufeff]*$/;
+
+export function isBlankText(content: string): boolean {
+  return ZERO_WIDTH_BLANK.test(content);
+}
+
+/**
  * 该 seq 的正文块；没有就返回 undefined（历史会话 / 本方案落地前落盘的轮次）。
  * 判据是「**非空**」而不是「键存在」：后端对没有块流的会话下发空 map，
  * 空数组当作没有，才能走到旧格式回退。
@@ -119,6 +134,7 @@ export function blocksTextContent(blocks: SessionBlock[]): string {
     .sort((left, right) => Number(left.pos || 0) - Number(right.pos || 0))
     .filter((block) => block.type === "text")
     .map((block) => block.text || "")
+    .filter((text) => !isBlankText(text))
     .join("\n");
 }
 
@@ -144,13 +160,15 @@ export function buildAssistantTimelineFromBlocks(
       case "reasoning": {
         // 灰显 / 可折叠 —— 复用既有 thought 渲染，超大块由它自己折叠。
         const content = block.text || "";
-        if (!content) break;
+        if (isBlankText(content)) break;
         out.push({ id, type: "thought", content });
         break;
       }
       case "text": {
         const content = block.text || "";
-        if (!content) break;
+        // 零宽字符不算正文：见 isBlankText。只判空串会让 `"\n\u200b"` 变成一个
+        // 只有零宽字符的 markdown 段落，工具卡间距被段落 margin 撑开。
+        if (isBlankText(content)) break;
         out.push({
           id,
           type: "assistant_text",

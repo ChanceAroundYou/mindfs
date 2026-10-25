@@ -147,6 +147,11 @@ func buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionNam
 }
 
 func buildSessionQueueUpdatedResponse(rootID, sessionKey string, queue []QueuedUserMessage, frozen bool) WSResponse {
+	if queue == nil {
+		// 归一成空数组：JSON 里 nil 切片是 `null`，前端 Array.isArray 判据会当成
+		// 「这份载荷没有队列字段」而不是「队列是空的」—— 两者在收敛逻辑里含义不同。
+		queue = []QueuedUserMessage{}
+	}
 	return WSResponse{
 		Type: "session.queue.updated",
 		Payload: map[string]any{

@@ -5,6 +5,7 @@ import {
   blocksForSeq,
   blocksTextContent,
   buildAssistantTimelineFromBlocks,
+  isBlankText,
   normalizeToolCall,
   type BlockExchangeLike,
   type SessionBlockMapLike,
@@ -141,7 +142,7 @@ export function buildBaseTimeline(
         ? blocksTextContent(blockList)
         : ex.content || "";
     if (role === "user") {
-      if (!content) continue;
+      if (isBlankText(content)) continue;
       out.push({
         id: stableTimelineID("user", index, content, ex.timestamp, ex.agent),
         type: "user_text",
@@ -168,7 +169,7 @@ export function buildBaseTimeline(
       continue;
     }
     if (role === "thought") {
-      if (!content) continue;
+      if (isBlankText(content)) continue;
       out.push({
         id:
           ex.thought_id ||

@@ -186,12 +186,18 @@ func (h *StreamHub) replayStepToClient(rootID, clientID, sessionKey string, even
 	h.SendToClient(clientID, buildSessionStreamBatchResponse(rootID, sessionKey, batch, false))
 }
 
+// replayQueueToClient 在客户端挂上会话时投一份**权威队列状态**。
+//
+// 队列帧只有这一条下发路径（BroadcastSessionQueueUpdated 是即时的、发完即忘），
+// 所以这里不能按「队列非空才发」走：后台标签页错过「出队/清空」那一帧之后再挂上来，
+// 拿到的仍是本地旧状态，改写的界面永远留着那条已经执行完的排队消息（2026-10-25 用户报
+// 「排队样式没消失」）。空队列也必须发一帧，客户端据此把本地队列收敛成空。
 func (h *StreamHub) replayQueueToClient(rootID, clientID, sessionKey string) {
 	stateRoot, queue, frozen := h.queueSnapshot(sessionKey)
 	if rootID == "" {
 		rootID = stateRoot
 	}
-	if rootID == "" || len(queue) == 0 {
+	if rootID == "" {
 		return
 	}
 	h.SendToClient(clientID, buildSessionQueueUpdatedResponse(rootID, sessionKey, queue, frozen))

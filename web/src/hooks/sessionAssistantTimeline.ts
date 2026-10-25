@@ -1,5 +1,5 @@
 import type { ExchangeAux } from "../services/session";
-import { normalizeToolCall, type TimelineItem } from "./sessionBlocks";
+import { isBlankText, normalizeToolCall, type TimelineItem } from "./sessionBlocks";
 import type { ExchangeLike } from "./sessionTimeline";
 import { stableTimelineID } from "./stableTimelineID";
 
@@ -10,7 +10,9 @@ function assistantSegmentItem(
   segmentIndex: number,
   includeContextWindow: boolean,
 ): TimelineItem | null {
-  if (!content) {
+  // 零宽 / 全空白段不算正文：见 sessionBlocks 的 isBlankText（`"\n\u200b"` 这类
+  // 增量会在两段正文之间渲染成一个只有零宽字符、却带段落 margin 的空段落）。
+  if (isBlankText(content)) {
     return null;
   }
   return {

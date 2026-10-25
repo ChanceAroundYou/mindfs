@@ -6717,3 +6717,42 @@ groups:
       - 'server/internal/api/usecase/session_subagents.go:		if update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate {'
       - 'server/internal/api/usecase/session_list.go:func dropEmptyBashSubSessions(ctx context.Context, manager *session.Manager, items []*session.Session) []*session.Session {'
       - 'web/src/hooks/sessionTimeline.ts:      if (isEmptyBash) continue;'
+
+  - id: G-JY
+    title: 零宽字符正文块不再落块、不再渲染（工具卡间距被撑开）
+    kind: fix
+    symptom: "会话里每一个 tool call 之间的间距变得非常大（真机上相邻工具卡约 110 CSS px，正常 6px）。只有部分会话出现 —— agent 在两次工具调用之间吐过 `\"\\n\\u200b\"` 这类零宽增量的那些。"
+    why: "Go 的 strings.TrimSpace 走 unicode.IsSpace，而 U+200B（零宽空格）不在其列，于是 `\"\\n\\u200b\"` 被当成正文落成 text 块（实测 fn 节点一条会话里 65 个，集中在两个 seq）；前端只判空串，就把它渲染成一个只有零宽字符的 markdown 段落。段落自带 `p` 的上下 margin，把相邻工具卡的 6px 间距撑成两条 16px + 段落高度（Playwright 实测 87.5px），虚拟化的行高估算（estimateSize 160 vs 实测 ~56）也跟着错。判据必须认「有没有看得见的字符」，而不是「是不是空串」。"
+    boundary: "只改判空判据，不改块格式、不改 aux 对齐、不回溯改写已落盘的块（历史会话靠前端同一判据跳过）。真正文里的零宽字符必须原样保留（`有\\u200b内容` 仍是正文）；块流仍是正文唯一载体（D1），`blocksTextContent` 与旧渲染器路径用同一个 isBlankText，两条路径不会分叉。"
+    files:
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_build_test.go
+      - web/src/hooks/sessionBlocks.ts
+      - web/src/hooks/sessionTimeline.ts
+      - web/src/hooks/sessionAssistantTimeline.ts
+      - web/tests/session-blocks-render.test.mjs
+    tests:
+      - server/internal/session/blocks_build_test.go
+      - web/tests/session-blocks-render.test.mjs
+    anchors:
+      - 'server/internal/session/blocks_build.go:func blankBlockText(text string) bool {'
+      - 'web/src/hooks/sessionBlocks.ts:export function isBlankText(content: string): boolean {'
+      - 'web/src/hooks/sessionBlocks.ts:        if (isBlankText(content)) break;'
+
+  - id: G-JZ
+    title: 挂上会话时补发权威队列状态（排队样式在非前台不消失）
+    kind: fix
+    symptom: "一句排队的指令在**非前台**状态下轮到它了、甚至已经执行完，界面上的「排队中」样式一直不消失；切回该会话、WS 重连都不管用，只有刷新页面才恢复。"
+    why: "队列帧只有 BroadcastSessionQueueUpdated 这一条即时的、发完即忘的通道。后台标签页/被挂起的 PWA 错过「出队」那一帧之后，回头挂上会话（session.ready 在切会话、重连、重锚定时都会重发）时服务端 `len(queue) == 0 → return` 什么都不发，客户端手里那份旧队列再无任何东西能纠正。挂载是唯一能收敛的时机：它就是客户端的「整份快照」语义（见 ReplayPending 的 reset 帧）。"
+    boundary: "只扩 replayQueueToClient 的发送条件（空队列也发），不动广播路径、不动 pop/入队语义、不动 Active 闸门。队列字段归一成 []（nil 切片会序列化成 null，前端 Array.isArray 判据会当成「没有队列字段」而不是「队列是空的」）。前端的乐观出队保护（optimisticDequeuedIdsRef）必须继续生效 —— 服务端旧帧不能把刚点「立即发送」的条目塞回来。"
+    files:
+      - server/internal/api/stream_hub_replay.go
+      - server/internal/api/stream_hub_build.go
+      - server/internal/api/stream_hub_queue_replay_test.go
+      - web/tests/session-queue-background-clear.test.mjs
+    tests:
+      - server/internal/api/stream_hub_queue_replay_test.go
+      - web/tests/session-queue-background-clear.test.mjs
+    anchors:
+      - 'server/internal/api/stream_hub_replay.go:func (h *StreamHub) replayQueueToClient(rootID, clientID, sessionKey string) {'
+      - 'server/internal/api/stream_hub_build.go:	if queue == nil {'

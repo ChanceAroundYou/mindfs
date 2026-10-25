@@ -21,7 +21,11 @@ const {
   blocksForSeq,
   blocksTextContent,
   buildAssistantTimelineFromBlocks,
+  isBlankText,
 } = await import("../src/hooks/sessionBlocks.ts");
+const { timelineItemSpacing } = await import(
+  "../src/components/session/sessionViewerFormat.ts"
+);
 
 const ex = (over = {}) => ({ seq: 7, agent: "claude", timestamp: "2026-10-10T00:00:00Z", ...over });
 const block = (pos, type, over = {}) => ({ seq: 7, pos, type, ...over });
@@ -143,5 +147,44 @@ test("blocksTextContent 只拼 text 块、按 pos 排序", () => {
       block(0, "text", { text: "第一行" }),
     ]),
     "第一行\n第二行",
+  );
+});
+
+// 零宽正文块不得变成时间线条目（2026-10-25 用户报「每一个 tool call 之间间距隔得非常大」）。
+//
+// 形态：agent 在两个工具调用之间吐 `"\n\u200b"` 增量；Go 的 strings.TrimSpace 走
+// unicode.IsSpace，U+200B 不在其列，于是它被当成正文落成 text 块。前端只判空串就渲染
+// 成一个只有零宽字符的 markdown 段落 —— 段落自带上下的 `p` margin，相邻工具卡的间距
+// 从 6px 撑到 87.5px（真机截图里约 110 CSS px），虚拟化的行高估算也跟着错。
+test("零宽 text 块不产出条目，工具卡间距保持 6px", () => {
+  assert.equal(isBlankText("\u200b"), true);
+  assert.equal(isBlankText("\n\u200b"), true);
+  assert.equal(isBlankText(" \u200b\u200c\u200d\ufeff "), true);
+  assert.equal(isBlankText("有内容\u200b"), false, "真正文里的零宽字符不能连带抹掉");
+
+  const items = buildAssistantTimelineFromBlocks(ex(), [
+    block(0, "tool_call", { toolcall: { callId: "c1", kind: "execute", status: "complete" } }),
+    block(1, "text", { text: "\u200b" }),
+    block(2, "tool_call", { toolcall: { callId: "c2", kind: "execute", status: "complete" } }),
+    block(3, "text", { text: "\n\u200b" }),
+    block(4, "tool_call", { toolcall: { callId: "c3", kind: "execute", status: "complete" } }),
+  ]);
+  assert.deepEqual(
+    items.map((item) => item.type),
+    ["tool", "tool", "tool"],
+    "零宽 text 块不得产出 assistant_text（否则间距与行高都被它撑开）",
+  );
+  // 间距判据：工具卡接工具卡 → 6px。中间夹一个 assistant_text 会变成两条 16px。
+  for (let i = 1; i < items.length; i += 1) {
+    assert.equal(timelineItemSpacing(items[i - 1], items[i]), "6px");
+  }
+  // 正文取文本的路径同样不能把零宽块拼进去（否则 user 行/摘要会带上不可见字符）。
+  assert.equal(
+    blocksTextContent([
+      block(0, "text", { text: "第一行" }),
+      block(1, "text", { text: "\u200b" }),
+      block(2, "text", { text: "第三行" }),
+    ]),
+    "第一行\n第三行",
   );
 });
