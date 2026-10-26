@@ -195,6 +195,10 @@ export function useTaskBoard(params: UseTaskBoardParams) {
     // 淘汰名单：跟着 taskDetailsById 一起摘掉，不自己再推导一遍。
     setTaskFirstInputById((prev) => kept(Object.entries(prev)));
     setTaskSessionKeysById((prev) => kept(Object.entries(prev)));
+    setKanbanTasks((prev) => {
+      const next = prev.filter((task) => !inScope(task) || keep.has(String(task.id)));
+      return next.length === prev.length ? prev : next;
+    });
     setKanbanTaskCountItems((prev) => {
       const next = prev.filter((task) => !inScope(task) || keep.has(String(task.id)));
       return next.length === prev.length ? prev : next;
