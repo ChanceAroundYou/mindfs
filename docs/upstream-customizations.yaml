@@ -6849,3 +6849,60 @@ groups:
       - 'web/src/components/file/NotificationMenuItem.tsx:export function NotificationMenuItem({'
       - 'web/src/components/session/SessionCardTopBadges.tsx:      {unread ? ('
       - 'web/src/app/useNotificationSound.ts:    { freq: 698.46, at: 0, dur: 0.15, type: "triangle" },'
+
+  - id: G-KE
+    title: 新建任务面板与模板菜单可用性（ref 断线 / 分支名输入 / 长文本滚动）
+    kind: fix
+    symptom: "「全部」模板页签下点「新建任务」再点 debug 等任何模板，新建任务面板永远不弹出来；同一个缺陷也静默打断了 ⋯ 菜单里的新建/编辑/删除模板。新建面板里「新分支名称」是个裸 input，与任务名输入框完全不是一套。任务文本一长，面板滚不到底、点不到发送键。"
+    why: "① `useTaskTemplates` 造了 `taskTemplateActionMenuRef` / `taskCreateTemplateMenuRef` 并一路透传到工具栏，但两个叶子菜单组件不接受 ref —— `current` 恒为 `null`，点外关闭的 `mousedown` 监听把每次点击都判成「点在外面」，菜单在 `click` 到达之前就被卸载。React 19 允许 ref 当普通 prop 传，所以修复只是加一个 `ref?: React.Ref<HTMLDivElement>` 并挂到最外层定位容器。② 分支名输入原本是 `margin/padding` 撑出来的裸 input，还悬在正文容器外面；面板内既有的唯一输入来源是 `composerInputStyle`（任务名输入框用它）。③ `PromptEditor` 给 `TokenEditor` 传了 `fillHeight`，那条路径把 contentEditable 设成 `height:100% / maxHeight:none`（高度随内容无限长高），而 `composerContainerStyle` 只有 minHeight、发送键又是 `position:absolute; right:6; bottom:6` 挂在容器上 —— 于是跟着容器一起沉到滚动视口之外。删掉 `fillHeight` 就走回默认路径 `maxHeight:240px + overflowY:auto`，与对话输入框（ActionBar）同源。"
+    boundary: "只动三处接线与样式：菜单组件加 ref prop、工具栏透传；分支名输入换成 `composerInputStyle` + 26px 并搬进 worktree 控件行；`PromptEditor` 不传 `fillHeight`。点外关闭的既有逻辑、菜单分组与互斥、`TokenEditor` 的 fillHeight 能力本身（仍可能被别处需要）都不改。tRPC/REST 契约不动。"
+    files:
+      - web/src/components/task/TaskCreateTemplateMenu.tsx
+      - web/src/components/task/TaskTemplateActionMenu.tsx
+      - web/src/components/task/TaskBoardToolbar.tsx
+      - web/src/components/app/TaskInlineEditPanel.tsx
+      - web/src/components/editor/PromptEditor.tsx
+      - docs/plans/kanban-create-panel-and-shared-worktree.md
+    tests:
+      - web/tests/task-template-menu-outside-click.test.mjs
+      - web/tests/task-create-panel-editor-bounds.test.mjs
+    anchors:
+      - 'web/src/components/task/TaskCreateTemplateMenu.tsx:  ref?: React.Ref<HTMLDivElement>;'
+      - 'web/src/components/task/TaskCreateTemplateMenu.tsx:<div ref={ref} style={{ position: "relative", flexShrink: 0 }}>'
+      - 'web/src/components/task/TaskTemplateActionMenu.tsx:<div ref={ref} style={{ position: "relative", flexShrink: 0 }}>'
+      - 'web/src/components/task/TaskBoardToolbar.tsx:          ref={taskTemplateActionMenuRef}'
+      - 'web/src/components/task/TaskBoardToolbar.tsx:        ref={taskCreateTemplateMenuRef}'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:        aria-label={t("task.newBranchName")}'
+      - 'web/src/components/editor/PromptEditor.tsx:      {/* 刻意**不传** fillHeight'
+
+  - id: G-KF
+    title: 多个任务复用同一个 worktree（按「已有分支」认领 + 引用计数收尾）
+    kind: feature
+    symptom: "第二个任务想用同一个 worktree 时必然失败：git 报 `branch is already checked out`，后端只能把这个错原样抛给用户。就算绕过这步，两个任务共用一棵树时**先收尾的那个**也会把还在用的目录和分支一起合并/拆掉，另一个任务立刻失去 cwd。"
+    why: "用户 2026-10-26 要求允许多个任务复用同一个 worktree，并定了三条口径：入口**沿用现有「已有分支」选择器**（不新增选择器）、收尾**按引用计数**（非最后一个只解绑，最后一个才合并/拆除）、并发**允许**（沿用现有按任务守卫，不加跨任务锁）。实现分两块：① `ensureTaskWorktree` 在 `CreateTaskWorktree` 之前认领「已检出该分支、且不是主 checkout」的 linked worktree，写库走唯一出口 `SetWorktreeRefsAndTask`；`!item.Current` 是关键 —— 把主 checkout 认成任务 worktree 会让 agent 直接在主干上改。读不到列表就落回原建树路径，由 git 报它自己的错。② `FinishTaskWorktree` 在 `assertWorktreeMatches` / `MergeBranch` **之前**查 `WorktreeReferenceCount`，> 0 时只 `ClearWorktreeRefs` 并返回 `reference_released` / `remaining_references`。顺序不可换：再往后就是替兄弟任务合并、拆掉它正在用的目录。③ `PlanFinishWorktree` 对共享树短路成机械清场，否则后面两条判据（未提交改动 / 合并可行性）看的都是**兄弟任务**的状态，据此退给本任务的 agent 等于让它去提交别人的半成品。④ `FinishWorktreeAndRepoint` 在解绑时**不搬会话**：搬移是为了救 cwd 已消失的会话，这里目录还活着，硬搬会把还在用的那棵树的上下文拆散。"
+    boundary: "无数据库迁移（`worktree_path` 无 UNIQUE 约束，新增查询只读）。请求体不变；响应只加 `omitempty` 可选字段，TS 侧对应 `?`，旧前端不看也不会报错。单任务 worktree 零行为变化：引用数为 1 时两条路径都走原路，`ensureTaskWorktree` 只在 `branchMode == \"existing\"` 且真的找到非主 checkout 的占用者时才改变行为。不加跨任务锁、不删「已共享」任务的目录/分支、分支选择器不标注「已被某 worktree 使用」。"
+    files:
+      - server/internal/kanban/service_worktree.go
+      - server/internal/kanban/task_store_worktree_refs.go
+      - server/internal/kanban/worktree_finish.go
+      - server/internal/kanban/worktree_finish_status.go
+      - server/internal/api/http_tasks_finish_teardown.go
+      - web/src/app/realtimeWsTaskHandlers.ts
+      - web/src/services/task/worktree.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - docs/plans/kanban-create-panel-and-shared-worktree.md
+    tests:
+      - server/internal/kanban/service_worktree_shared_test.go
+      - server/internal/kanban/task_store_worktree_refs_test.go
+      - web/tests/worktree-shared-refs.test.mjs
+    anchors:
+      - 'server/internal/kanban/service_worktree.go:	if branchMode == "existing" && branch != "" {'
+      - 'server/internal/kanban/service_worktree.go:func (s *Service) worktreePathForBranch('
+      - 'server/internal/kanban/task_store_worktree_refs.go:func (s *TaskStore) WorktreeReferenceCount('
+      - 'server/internal/kanban/worktree_finish.go:	// ── 0. 共享 worktree：还有别人在用就只解绑 ──'
+      - 'server/internal/kanban/worktree_finish.go:	ReferenceReleased bool `json:"reference_released,omitempty"`'
+      - 'server/internal/kanban/worktree_finish_status.go:		return FinishPlan{Mechanical: true, Reason: "worktree 还有别的任务在用，这次只解绑"}, nil'
+      - 'server/internal/api/http_tasks_finish_teardown.go:		if result.ReferenceReleased {'
+      - 'web/src/app/realtimeWsTaskHandlers.ts:          if (result?.reference_released) {'
+      - 'web/src/services/task/worktree.ts:  reference_released?: boolean;'

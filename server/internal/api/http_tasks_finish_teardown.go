@@ -81,6 +81,13 @@ func (s *AppContext) FinishWorktreeAndRepoint(rootID, taskID string) FinishTeard
 			// 目录还在、会话就该留在那儿，硬搬过去会让用户在一个还在变化的工作树上继续聊。
 			return report
 		}
+		if result.ReferenceReleased {
+			// 共享 worktree 只解绑、没拆目录，会话不必搬：搬移的用途是救那些 cwd
+			// 已经消失的会话，而这里目录还活着、兄弟任务正在里面干活。硬搬只会把
+			// 还在用的那棵树的上下文拆散到主 slug 去。
+			report.SessionNote = "worktree 仍被其它任务使用，会话留在原处"
+			return report
+		}
 	}
 
 	// ── 搬会话 ──

@@ -113,6 +113,7 @@ export const enUSTasks = {
   "task.finishWorktreeOrphanRemoved": "Tool-state-only shell removed: {path}",
   "task.finishWorktreeUploadsMoved": "Attachments moved back from the worktree: {files}",
   "task.finishWorktreeAlreadyFinished": "This task was already finished — nothing left to clean up",
+  "task.finishWorktreeShared": "{count} other task(s) still use this worktree — this one only unbinds; the directory and branch stay for the last holder",
   "task.finishWorktreePlanUncommitted": "The worktree has uncommitted changes — handing them to the agent",
   "task.finishWorktreePlanConflict": "The merge would conflict — handing it to the agent",
   "task.finishWorktreePlanFiles": "Files: {files}",

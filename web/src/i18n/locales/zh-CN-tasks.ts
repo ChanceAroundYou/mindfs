@@ -113,6 +113,7 @@ export const zhCNTasks = {
   "task.finishWorktreeOrphanRemoved": "顺手清掉的空壳目录：{path}",
   "task.finishWorktreeUploadsMoved": "从 worktree 搬回主 checkout 的附件：{files}",
   "task.finishWorktreeAlreadyFinished": "该任务已经收过尾，本次没有可清场的活",
+  "task.finishWorktreeShared": "worktree 还有 {count} 个任务在用，本次只解绑，目录和分支留给最后一个",
   "task.finishWorktreePlanUncommitted": "worktree 里还有没提交的改动，交给 agent 先提交",
   "task.finishWorktreePlanConflict": "合并会冲突，交给 agent 处理",
   "task.finishWorktreePlanFiles": "涉及文件：{files}",

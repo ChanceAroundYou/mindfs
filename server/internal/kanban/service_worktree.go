@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mindfs/server/internal/gitview"
 )
 
 func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task Task) (Task, error) {
@@ -25,8 +27,28 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 	if s.Runner == nil {
 		return task, errors.New("task runner not configured")
 	}
-	name := renderWorktreeName("", task)
 	branchMode, branch := normalizeTaskWorktreeBranch(task.WorktreeBranchMode, task.WorktreeBranch)
+	// 共享 worktree（用户 2026-10-26 要求）：选了「已有分支」而这个分支已经被
+	// 某个 linked worktree 检出时，直接认领那个目录，不再新建。
+	//
+	// 不认领的话 git 必然报 "branch is already checked out"，而后端只能把这个错
+	// 原样抛给用户 —— 但那其实是个合法请求：「让这个任务去那棵树里干活」。
+	// 认领结果与新建走同一个写入出口（SetWorktreeRefsAndTask），下游（agent 的 cwd、
+	// 收尾、界面徽标）拿到的是同一种「任务钉在某个 worktree 上」的状态。
+	if branchMode == "existing" && branch != "" {
+		if path, ok := s.worktreePathForBranch(ctx, task.RootID, branch); ok {
+			task.WorktreeRootID = task.RootID
+			task.WorktreePath = path
+			task.WorktreeBuilt = true
+			task.AuxFlags.SessionError = ""
+			task.UpdatedAt = time.Now().UTC()
+			if err := store.SetWorktreeRefsAndTask(ctx, task); err != nil {
+				return task, err
+			}
+			return task, nil
+		}
+	}
+	name := renderWorktreeName("", task)
 	wt, err := s.Runner.CreateTaskWorktree(ctx, task.RootID, name, branchMode, branch)
 	if err != nil {
 		return task, err
@@ -117,6 +139,45 @@ func (s *Service) RebuildTaskWorktree(ctx context.Context, in MoveInput) (TaskDe
 		s.Runner.TaskUpdated(updated.RootID, detail)
 	}
 	return detail, err
+}
+
+// worktreePathForBranch 找出「已经检出这个分支的 linked worktree」目录。
+//
+// 共享 worktree 的认领判据就是它：用户在新建面板选「已有分支」，那个分支可能
+// 正被别的任务（或用户自己 wt-add 出来的）worktree 占着，直接复用那棵树即可。
+//
+// **主 checkout 一律不认**（`item.Current`）：把它当任务 worktree 会让 agent 直接在
+// 主干上改，与「隔离在 worktree 里干活」这件事正好相反。
+//
+// 读不到列表（不是仓库 / git 报错）返回 false，让调用方落回原本的建树路径 ——
+// 由 git 自己去报 "branch is already checked out"，这里不吞错、也不编一条
+// 自己猜的错。
+func (s *Service) worktreePathForBranch(ctx context.Context, rootID, branch string) (string, bool) {
+	// ListWorktrees 报的是去前缀的短名（refs/heads/ 已被剥掉），这里对齐一下，
+	// 否则用户从别处粘来的全名永远匹配不上。
+	branch = strings.TrimPrefix(strings.TrimSpace(branch), "refs/heads/")
+	if branch == "" {
+		return "", false
+	}
+	mainDir, err := s.taskWorktreeMainDir(ctx, rootID)
+	if err != nil {
+		return "", false
+	}
+	list, err := gitview.ListWorktrees(ctx, mainDir)
+	if err != nil {
+		return "", false
+	}
+	for _, item := range list.Items {
+		if item.Current || item.Branch != branch {
+			continue
+		}
+		path := strings.TrimSpace(item.Path)
+		if path == "" || !worktreeDirUsable(path) {
+			continue
+		}
+		return path, true
+	}
+	return "", false
 }
 
 func renderWorktreeName(tpl string, task Task) string {

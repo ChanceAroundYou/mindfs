@@ -65,6 +65,11 @@ export function createRealtimeWsTaskHandlers(ctx: RealtimeEventsContext) {
             : [];
           const lines: string[] = [];
           const result = payload.result;
+          // 共享 worktree：这次只解绑，没有合并、没有拆目录。必须先说这一句 ——
+          // 否则下面那些「目录已拆 / 分支已删」全不出现，界面看起来像什么都没发生。
+          if (result?.reference_released) {
+            lines.push(t("task.finishWorktreeShared", { count: String(result.remaining_references ?? 0) }));
+          }
           if (result?.commit) lines.push(String(result.commit));
           if (result?.worktree_removed) lines.push(t("task.finishWorktreeRemoved"));
           // 目录本体（含 git 不跟踪的 .mindfs/ .omc/ .claude/）也删掉了 —— 这是收尾

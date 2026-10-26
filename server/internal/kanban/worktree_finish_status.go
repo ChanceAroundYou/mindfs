@@ -177,7 +177,7 @@ type FinishPlan struct {
 // 让用户看见即可。在这里提前拦会把「主 checkout 有改动」误报成「要跑 agent」，
 // 而 agent 同样合不进去 —— 白等一轮，问题还在。
 func (s *Service) PlanFinishWorktree(ctx context.Context, rootID, taskID string) (FinishPlan, error) {
-	_, task, err := s.loadForMove(ctx, rootID, taskID)
+	store, task, err := s.loadForMove(ctx, rootID, taskID)
 	if err != nil {
 		return FinishPlan{}, err
 	}
@@ -187,6 +187,14 @@ func (s *Service) PlanFinishWorktree(ctx context.Context, rootID, taskID string)
 	worktreePath := strings.TrimSpace(task.WorktreePath)
 	if worktreePath == "" {
 		return FinishPlan{Mechanical: true, Reason: "该任务还没有 worktree"}, nil
+	}
+	// 共享 worktree 一律机械清场（= FinishTaskWorktree 的解绑分支）。
+	//
+	// 否则后面两条判据都会看**兄弟任务的**状态：树里的未提交改动是别人的半成品，
+	// 合并能不能成也取决于别人干到哪一步。据此退给本任务的 agent，等于让它去提交
+	// 别人的活。只有最后一个持有者才需要做真正的合并判定。
+	if refs, refErr := store.WorktreeReferenceCount(ctx, worktreePath, task.ID); refErr == nil && refs > 0 {
+		return FinishPlan{Mechanical: true, Reason: "worktree 还有别的任务在用，这次只解绑"}, nil
 	}
 	// 目录已经不在了：没有活可提交，直接清场（清场会清掉任务侧归属，幂等）。
 	if isWT, wtErr := gitview.IsWorktree(worktreePath); wtErr != nil {

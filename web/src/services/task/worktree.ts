@@ -42,6 +42,13 @@ export type FinishWorktreeResult = {
    * （见 removed_orphans），剩下的只列不删 —— 里面可能有别的任务正在用的东西。
    */
   orphans?: Array<{ path: string; non_empty: boolean; files?: string[] }>;
+  /**
+   * 这次收尾只是解绑：同一个 worktree 还有别的任务在用，所以没合并、没拆目录、
+   * 没删分支，真正的收尾留给最后一个持有者。
+   */
+  reference_released?: boolean;
+  /** 解绑后还剩几个任务钉在那棵树上（reference_released 时才非零）。 */
+  remaining_references?: number;
 };
 
 /**

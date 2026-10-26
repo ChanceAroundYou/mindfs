@@ -122,6 +122,11 @@ type FinishWorktreeResult struct {
 	// CleanedLeftovers 是收尾为拆目录而清掉的工具状态目录（.claude/ .omc/ .mindfs/）。
 	// 报出来是为了让「它删了什么」可见 —— 静默删目录是最不该有的那种自动化。
 	CleanedLeftovers []string `json:"cleaned_leftovers,omitempty"`
+	// ReferenceReleased 表示这次收尾只是**解绑**：同一个 worktree 还有别的任务在用，
+	// 没合并、没拆目录，真正的收尾留给最后一个持有者（用户 2026-10-26 定的口径）。
+	ReferenceReleased bool `json:"reference_released,omitempty"`
+	// RemainingReferences 是解绑后还剩几个任务钉在那棵树上（ReferenceReleased 时才非零）。
+	RemainingReferences int `json:"remaining_references,omitempty"`
 }
 
 // FinishTaskWorktree 收尾一个任务在 worktree 里的活：搬走附件 → 合回主 checkout →
@@ -182,6 +187,30 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 	}
 
 	result := FinishWorktreeResult{Task: task}
+
+	// ── 0. 共享 worktree：还有别人在用就只解绑 ──
+	// 必须在 assertWorktreeMatches / MergeBranch **之前**：那两步会替兄弟任务
+	// 合并并拆掉它正在用的目录。用户 2026-10-26 定的口径是引用计数 —— 非最后一个
+	// 只解绑，最后一个才合并/拆除。
+	//
+	// 查询失败不拦：读不到计数时落回原来的完整收尾（宁可做多，不可假装解绑成功
+	// 而让任务继续钉着一棵没人管的树）。
+	if refs, refErr := store.WorktreeReferenceCount(ctx, worktreePath, task.ID); refErr == nil && refs > 0 {
+		if err := store.ClearWorktreeRefs(ctx, task.ID); err != nil {
+			return result, err
+		}
+		fresh, err := store.GetTask(ctx, task.ID)
+		if err != nil {
+			return result, err
+		}
+		result.Task = fresh
+		result.ReferenceReleased = true
+		result.RemainingReferences = refs
+		if detail, err := store.GetDetail(ctx, task.ID); err == nil && s.Runner != nil {
+			s.Runner.TaskUpdated(task.RootID, detail)
+		}
+		return result, nil
+	}
 
 	// 拆 worktree 之前核对身份：任务记的是「建树时那个目录 + 那个分支」，而目录
 	// 可能被手工 checkout 到别的分支、或被别的流程挪作他用。不核对就拆，拆掉的
