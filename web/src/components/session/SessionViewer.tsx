@@ -289,7 +289,9 @@ function SessionViewerInner({
 
   useSessionViewerScrollPositionEffects({
     activeScrollRef, interactionMode, isPrependingRef, lastSessionKeyRef,
-    scrollEndRef, scrollToRelatedFilesDividerRef, sessionKey, timeline,
+    scrollEndRef, scrollToRelatedFilesDividerRef, sessionKey,
+    timelineLength: timeline.length,
+    timelineTailId: (timeline as any[])[(timeline as any[]).length - 1]?.id || "",
     isStreaming, streamVersion, slashCommandResult, shouldStickToBottomRef,
     viewportStickFrameRef, stickSessionToBottom,
   });

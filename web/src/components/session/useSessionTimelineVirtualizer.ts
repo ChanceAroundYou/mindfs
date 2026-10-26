@@ -17,7 +17,8 @@ import type { SessionViewerTimelineVirtual } from "./SessionViewerTimeline";
 // 且 SessionViewer 已在硬线（500 行）边缘，不该再长。
 
 /** 低于这个条目数不启用虚拟化：少条目全量渲染更快（省掉测量与占位高度）。 */
-export const TIMELINE_VIRTUALIZE_MIN_ITEMS = 120;
+export const TIMELINE_VIRTUALIZE_MIN_ITEMS = 48;
+export const TIMELINE_OVERSCAN = 8;
 
 /** 估算行高。折叠态的工具卡/思考卡都是一行标题（实测 ~40px），正文行更高。 */
 function estimateSize(item: TimelineItem | undefined): number {
@@ -98,17 +99,16 @@ export function useSessionTimelineVirtualizer({
     count: timeline.length,
     getScrollElement: () => scrollRefBox.current.current,
     enabled: virtualized,
-    // key 必须跨上翻前插稳定：条目 id 就是 (seq,pos)，天然稳定。稳定 key 让测量缓存
-    // 跟着条目走而不是跟着索引走 —— 否则前插时旧条目实测高度全部失效，整个视口按
-    // 估算值重排一次，表现为「翻页时跳一下」。
-    getItemKey: (i) => `${sessionKey || ""}:${timeline[i]?.id || i}`,
-    estimateSize: (i) => estimateSize(timeline[i]),
-    overscan: 8,
-    rangeExtractor: (range) =>
+    getItemKey: (i: number) => `${sessionKey || ""}:${timeline[i]?.id || i}`,
+    estimateSize: (i: number) => estimateSize(timeline[i]),
+    overscan: TIMELINE_OVERSCAN,
+    shouldAdjustScrollPositionOnItemSizeChange: (_item: any, _delta: any, instance: any) =>
+      instance.scrollDirection !== "backward",
+    rangeExtractor: (range: any) =>
       Array.from(new Set([...defaultRangeExtractor(range), ...seqToIndex.pendingAsk])).sort(
         (a, b) => a - b,
       ),
-  });
+  } as any);
 
   const currentUserIndex = useCallback(() => {
     if (!virtualized) return 0;

@@ -126,7 +126,19 @@ function persistedSeq(ex: ExchangeLike): number {
 
 export function buildBaseTimeline(
   exchanges: ExchangeLike[],
-  exchangeAux: ExchangeAuxMapLike,
+  exchangeAux: ExchangeAuxMapLike = {},
+  blocks: SessionBlockMapLike = {},
+): TimelineItem[] {
+  return groupConsecutiveToolCalls(buildTimelineItems(exchanges, exchangeAux, blocks));
+}
+
+/**
+ * 未分组的条目生成（CUSTOM(G-KC) 缓存用）。分组由 buildBaseTimeline 在整体上跑一次，
+ * 保证跨 exchange 的连续同类工具卡仍能合并。
+ */
+export function buildTimelineItems(
+  exchanges: ExchangeLike[],
+  exchangeAux: ExchangeAuxMapLike = {},
   blocks: SessionBlockMapLike = {},
 ): TimelineItem[] {
   const out: TimelineItem[] = [];
@@ -241,7 +253,7 @@ export function buildBaseTimeline(
       });
     }
   }
-  return groupConsecutiveToolCalls(out);
+  return out;
 }
 
 /**

@@ -64,6 +64,31 @@ function loadHook(runtime, dispatcher) {
       if (id === "react") return runtime.react;
       if (id.includes("services/session")) return { sessionService: { dispatcher }, isPersistedSeq: (seq) => Number(seq || 0) > 0 };
       if (id.includes("i18n")) return { translateNow: (key) => `translated:${key}` };
+      if (id.includes("sessionTimelineCache")) return {
+        createTimelineChunkCache: () => ({
+          itemsFor: (_ex, _aux, _blocks) => [],
+          retainUntouched: () => {},
+          resetTouched: () => {},
+        }),
+        buildTimelineIncremental: (exchanges, _aux, blocks) => {
+          if (globalThis.__onBuild) globalThis.__onBuild(exchanges, blocks);
+          const timeline = [];
+          for (const ex of exchanges) {
+            if (ex.role === "user") {
+              timeline.push({ id: `user:${ex.seq}`, type: "user_text", content: ex.content || "" });
+            } else if (ex.role === "agent" && ex.seq && blocks && blocks[String(ex.seq)]) {
+              timeline.push(...blocks[String(ex.seq)].map((block) => ({
+                id: `block:${ex.seq}:${block.pos}`,
+                type: block.type === "reasoning" ? "thought" : "assistant_text",
+                content: block.text || "",
+              })));
+            } else if (ex.role === "thought") {
+              timeline.push({ id: ex.thought_id || "transient-thought", type: "thought", content: ex.content });
+            }
+          }
+          return timeline;
+        },
+      };
       if (id.includes("sessionTimeline")) return {
         applySessionContextWindow: (timeline) => timeline,
         buildBaseTimeline: (exchanges, _aux, blocks) => {
