@@ -13,6 +13,7 @@ to resume their old TODOs or baselines.
 - [Composer chips and Codex limits](composer-chips-and-codex-limits.md) — Implemented 2026-10-22，已合入 main，本机已安装；WSL/fn 待分发；徽标带改流内一行（被排队消息顶起来）、内存徽标左置并对所有 agent 显示且跟随项目节点、Codex 补 5 小时限额且剩余与重置时间合并；后续两轮修正：限额靠左、重置 0 隐藏、重置时间按窗口语义分开写（5h→HH:MM、周限→剩 Md Nh）、胶囊文案去重（30%%/重置 重置）、胶囊去掉「重置」二字并压短名称（5h/周）；2026-10-23 第四次：胶囊字号 11→9 统一（COMPOSER_CHIP_FONT_SIZE，比正文小一档）。
 - [Notification sound and unread](notification-sound-and-unread.md) — Implemented 2026-10-25，已安装到本机，待提交与 ship；三类事件提示音（完成上行三连 / 介入双击 / 出错下行闷音）+ 侧栏 ⋯「通知」面板（提示音设置并入原 PWA 推送入口）+ `nodeId::rootId::sessionKey` 未读徽标（两条会话列表都接、选中即灭）。二轮同日：跨节点完成靠 5s 轮询 pending 表 true→false 差分补音与徽标（不新增通道），灭灯后 `activity_at` 由 `inheritClientActivity` 继承，修「时间从刚刚退回 12m」。
 - [Session activity unified](session-activity-unified.md) — Plan 2026-10-25，待批准；把 `activity_at` 合并进 `updated_at`（流式期间节流落库），删除覆盖层与继承函数，刷新不再回落。
+- [Kanban create panel and shared worktree](kanban-create-panel-and-shared-worktree.md) — Implemented 2026-10-26，待提交与 ship；模板菜单 ref 断线（全部页签点模板不弹窗）、分支名输入改用 composerInputStyle、PromptEditor 去掉 fillHeight 恢复 240px 内部滚动、worktree 按「已有分支」认领 + 引用计数收尾。
 
 
 ## Completed or superseded history

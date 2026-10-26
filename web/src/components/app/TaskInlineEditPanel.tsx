@@ -232,12 +232,26 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                           });
                         }}
                       />
+                      {/* 新分支名跟分支选择器同一行：以前它是个 margin 撑出来的裸
+                          input，悬在正文容器外面，与任务名输入框完全不是一套。 */}
+                      {taskInlineEdit.worktreeBranchMode === "new" ? (
+                        <input
+                          aria-label={t("task.newBranchName")}
+                          placeholder={t("task.newBranchName")}
+                          value={taskInlineEdit.worktreeBranch}
+                          disabled={taskInlineSaving || !taskWorktreeControlsEditable}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setTaskInlineEdit((prev) => (prev ? { ...prev, worktreeBranch: value } : prev));
+                          }}
+                          style={{ ...composerInputStyle, height: "26px", width: isMobile ? "120px" : "160px", flex: "0 1 auto" }}
+                        />
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
               )}
             >
-                {taskInlineEdit.createWorktree && taskInlineEdit.worktreeBranchMode === "new" && taskInlineEdit.canToggleWorktree && <input aria-label={t("task.newBranchName")} placeholder={t("task.newBranchName")} value={taskInlineEdit.worktreeBranch} onChange={e=>setTaskInlineEdit(prev=>prev?{...prev,worktreeBranch:e.target.value}:prev)} style={{margin:"8px 12px",padding:8}}/>}
                 <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
                   <TaskInlineCandidateMenu
                     visible={!!taskInlineActiveToken}

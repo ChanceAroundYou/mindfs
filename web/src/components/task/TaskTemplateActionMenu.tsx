@@ -10,6 +10,7 @@ export function TaskTemplateActionMenu({
   onCreateTemplate,
   onEditTemplate,
   onDeleteTemplate,
+  ref,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -17,11 +18,13 @@ export function TaskTemplateActionMenu({
   onCreateTemplate: () => void;
   onEditTemplate: () => void;
   onDeleteTemplate: () => void;
+  /** 点外关闭的判据（useTaskTemplates 的 mousedown 监听读它）。理由同 TaskCreateTemplateMenu。 */
+  ref?: React.Ref<HTMLDivElement>;
 }) {
   const { t } = useI18n();
 
   return (
-    <div style={{ position: "relative", flexShrink: 0 }}>
+    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
       <button
         type="button"
         data-onboarding="task-template-menu"

@@ -149,6 +149,11 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     <div style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }}>
       {header}
       <div style={composerContainerStyle(mode === "done" ? "rgba(148, 163, 184, 0.10)" : "var(--input-bg)")}>
+      {/* 刻意**不传** fillHeight：那条路径把 contentEditable 设成 height:100% /
+          maxHeight:none，高度随内容无限长高，而容器只有 minHeight、发送键又是
+          absolute + bottom:6 挂在容器上 —— 任务文本一长，发送键就跟着沉到滚动视口
+          之外，用户翻到底也点不到（2026-10-26 用户实测）。不传就走 TokenEditor 的
+          默认路径：maxHeight 240px + 编辑器内部滚动，与对话输入框同源。 */}
       <TokenEditor
         ref={editorRef}
         placeholder={placeholder || t("taskTemplate.promptTemplate")}
@@ -158,7 +163,6 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         rightInset={insets.rightInset}
         topInset={insets.topInset}
         bottomInset={insets.bottomInset}
-        fillHeight
         onEnter={handleEnter}
         onChange={(payload) => {
           onChange?.(payload.serializedText);

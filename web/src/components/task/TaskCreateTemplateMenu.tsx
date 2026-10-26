@@ -9,17 +9,25 @@ export function TaskCreateTemplateMenu({
   canCreate,
   taskTemplates,
   onCreateTask,
+  ref,
 }: {
   open: boolean;
   onTriggerClick: () => void;
   canCreate: boolean;
   taskTemplates: TaskTemplate[];
   onCreateTask: (template: TaskTemplate | null) => void;
+  /**
+   * 点外关闭的判据（useTaskTemplates 的 mousedown 监听读它）。
+   * 以前这个 ref 一路传到工具栏却没人接：current 恒为 null，监听把每次
+   * mousedown 都当成「点在外面」，菜单在 click 到达前就被卸载 ——
+   * 于是「全部」页签下点模板永远弹不出新建面板。
+   */
+  ref?: React.Ref<HTMLDivElement>;
 }) {
   const { t } = useI18n();
 
   return (
-    <div style={{ position: "relative", flexShrink: 0 }}>
+    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
       <button
         type="button"
         data-onboarding="task-create"

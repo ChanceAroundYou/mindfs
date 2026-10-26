@@ -31,8 +31,10 @@ export function TaskBoardToolbar({
   const { t } = useI18n();
   const refreshSpin = useRefreshSpin(onRefresh);
   const {
+    taskTemplateActionMenuRef,
     taskTemplateActionMenuOpen,
     setTaskTemplateActionMenuOpen,
+    taskCreateTemplateMenuRef,
     taskCreateTemplateMenuOpen,
     setTaskCreateTemplateMenuOpen,
     taskTemplates,
@@ -107,6 +109,7 @@ export function TaskBoardToolbar({
           })}
         </div>
         <TaskTemplateActionMenu
+          ref={taskTemplateActionMenuRef}
           open={taskTemplateActionMenuOpen}
           onToggle={() => setTaskTemplateActionMenuOpen((open) => !open)}
           selectedTaskTemplateForFilter={selectedTaskTemplateForFilter}
@@ -153,6 +156,7 @@ export function TaskBoardToolbar({
         </span>
       </button>
       <TaskCreateTemplateMenu
+        ref={taskCreateTemplateMenuRef}
         open={taskCreateTemplateMenuOpen}
         onTriggerClick={() => {
           if (isAllTaskTemplateFilter) {
