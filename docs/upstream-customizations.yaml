@@ -6673,7 +6673,7 @@ groups:
     tests:
       - web/tests/session-timeline-virtualization.test.mjs
     anchors:
-      - 'web/src/components/session/useSessionTimelineVirtualizer.ts:export const TIMELINE_VIRTUALIZE_MIN_ITEMS = 120'
+      - 'web/src/components/session/useSessionTimelineVirtualizer.ts:export const TIMELINE_VIRTUALIZE_MIN_ITEMS = 48'
       - 'web/src/components/session/useSessionTimelineVirtualizer.ts:      Array.from(new Set([...defaultRangeExtractor(range), ...seqToIndex.pendingAsk])).sort('
       - 'web/src/components/session/SessionViewerTimeline.tsx:  if (!virtual) {'
       - 'web/src/components/session/SessionViewerTimeline.tsx:            data-index={row.index}'
@@ -6756,6 +6756,59 @@ groups:
     anchors:
       - 'server/internal/api/stream_hub_replay.go:func (h *StreamHub) replayQueueToClient(rootID, clientID, sessionKey string) {'
       - 'server/internal/api/stream_hub_build.go:	if queue == nil {'
+
+  - id: G-KB
+    title: 会话跟随状态机收口（内容追加才吸底）
+    kind: fix
+    symptom: "某些会话在底部不能自然上滚：滚一点就被拉回，只能滚一点点；偶尔一次突破过去之后就完全正常。用户在空闲（agent 未输出）时也能观察到。"
+    why: "位置副作用的触发条件是 timeline 数组引用（每次渲染都换），stick 阈值 40px 且下滚 200px 内重新吸底：虚拟化会话里上滚改虚拟区间触发重渲染，40px 内永远被拉回。改成只在内容追加（length/tailId/streamVersion）时跑位置副作用；重锚阈值 2px，下滚不再吸底；wheel/touchmove/keydown 同步让位。"
+    boundary: "只改跟随触发条件与阈值：isPrepending 跳过、visualViewport/safe-area 吸底、scrollToRelatedFilesDivider 的分隔线语义都不动。showJumpToLatest 仍由 !stick 派生。"
+    files:
+      - web/src/components/session/useSessionViewerScroll.ts
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/hooks/useSessionStream.ts
+    tests:
+      - web/tests/session-timeline-incremental-id.test.mjs
+      - web/tests/session-viewer-scroll-split.test.mjs
+      - web/tests/use-session-stream.test.mjs
+    anchors:
+      - 'web/src/components/session/useSessionViewerScroll.ts:STICK_REARM_PX'
+      - 'web/src/components/session/SessionViewer.tsx:timelineTailId'
+      - 'web/src/hooks/useSessionStream.ts:transientRef'
+
+  - id: G-KC
+    title: 时间线派生按 seq 分片缓存（上翻不再全量重建）
+    kind: perf
+    symptom: "长会话上翻加载很卡：每翻一页（~8 条新 exchange）就把整份已加载历史重建一遍（块排序、文本拼接、id 哈希全重跑），翻 10 页后每次都是全量 O(n)。"
+    why: "buildTimelineItems 逐 exchange 取分片，同一 ex/aux/blocks 引用未变直接复用；groupConsecutiveToolCalls 仍在拼接结果上整体跑一遍（跨 exchange 的连续同类工具卡仍需合并）。id 下标必须传全数组位置（startIndex）：分片内下标恒为 0 会造出 N 个重复 id，撞键后虚拟行全挤到同一个 start（2026-10-26 压叠事故）。"
+    boundary: "buildBaseTimeline 签名与语义不变，内部改走缓存版；外部分组仍在整体上跑一次。缓存键：持久行按 seq，瞬时行按全数组位置 + 对象身份（WeakMap）。"
+    files:
+      - web/src/hooks/sessionTimeline.ts
+      - web/src/hooks/sessionTimelineCache.ts
+      - web/src/hooks/useSessionStream.ts
+    tests:
+      - web/tests/session-timeline-incremental-id.test.mjs
+      - web/tests/use-session-stream.test.mjs
+    anchors:
+      - 'web/src/hooks/sessionTimeline.ts:startIndex = 0'
+      - 'web/src/hooks/sessionTimelineCache.ts:export function buildTimelineIncremental('
+      - 'web/src/hooks/useSessionStream.ts:timelineCacheRef'
+
+  - id: G-KD
+    title: 虚拟化阈值 48 与反向滚动测量护栏
+    kind: perf
+    symptom: "中等会话（3–6 轮繁忙回合，约 48–120 条目）上翻卡顿：虚拟化阈值 120 让它们走全量渲染；上翻时虚拟行首次测量的 estimate→actual 修正不看方向，每挂载一行推一次 scrollTop，与手势叠加。"
+    why: "48 条约等于 2–3 屏以上，配合 G-KC 分片缓存后小列表测量开销可控。overscan 8 提为 TIMELINE_OVERSCAN 常量；shouldAdjustScrollPositionOnItemSizeChange 在反向滚动期间跳过修正，手势优先（库官方逃生口，不 fork）。"
+    boundary: "低于 48 仍全量渲染（契约保留）；未答 ask 卡仍由 rangeExtractor 常驻；data-index + measureElement 测量链不动。"
+    files:
+      - web/src/components/session/useSessionTimelineVirtualizer.ts
+    tests:
+      - web/tests/session-timeline-virtualization.test.mjs
+      - web/tests/session-timeline-incremental-id.test.mjs
+    anchors:
+      - 'web/src/components/session/useSessionTimelineVirtualizer.ts:export const TIMELINE_VIRTUALIZE_MIN_ITEMS = 48'
+      - 'web/src/components/session/useSessionTimelineVirtualizer.ts:export const TIMELINE_OVERSCAN'
+      - 'web/src/components/session/useSessionTimelineVirtualizer.ts:shouldAdjustScrollPositionOnItemSizeChange'
 
   - id: G-KA
     title: 三类事件提示音（完成/需要介入/出错）与「完成未读」徽标

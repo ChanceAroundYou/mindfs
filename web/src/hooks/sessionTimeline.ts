@@ -140,10 +140,17 @@ export function buildTimelineItems(
   exchanges: ExchangeLike[],
   exchangeAux: ExchangeAuxMapLike = {},
   blocks: SessionBlockMapLike = {},
+  // CUSTOM(G-KC): 分片缓存逐 exchange 调用本函数（单元素数组），id 里嵌的下标
+  // 必须是**全数组位置**而非分片内位置 —— 否则每片的 index 恒为 0，
+  // 全会话出现 N 个 `user:0…` / `assistant:0:0`，React key 与虚拟器 getItemKey
+  // 撞键，测量缓存把所有行定位到同一个 start，视觉上就是大面积压叠
+  // （2026-10-26 真机复现）。整批调用时缺省 0，行为与原来逐字一致。
+  startIndex = 0,
 ): TimelineItem[] {
   const out: TimelineItem[] = [];
   for (let index = 0; index < exchanges.length; index += 1) {
     const ex = exchanges[index];
+    const idIndex = startIndex + index;
     const role = normalizeRole(ex.role);
     const seq = persistedSeq(ex);
     const blockList = blocksForSeq(blocks, seq);
@@ -156,7 +163,7 @@ export function buildTimelineItems(
     if (role === "user") {
       if (isBlankText(content)) continue;
       out.push({
-        id: stableTimelineID("user", index, content, ex.timestamp, ex.agent),
+        id: stableTimelineID("user", idIndex, content, ex.timestamp, ex.agent),
         type: "user_text",
         content,
         timestamp: ex.timestamp,
@@ -177,7 +184,7 @@ export function buildTimelineItems(
         continue;
       }
       const auxList = seq ? exchangeAux[String(seq)] || [] : [];
-      out.push(...buildAssistantTimeline({ ...ex, seq }, index, auxList));
+      out.push(...buildAssistantTimeline({ ...ex, seq }, idIndex, auxList));
       continue;
     }
     if (role === "thought") {
@@ -185,7 +192,7 @@ export function buildTimelineItems(
       out.push({
         id:
           ex.thought_id ||
-          stableTimelineID("thought", index, content, ex.timestamp, ex.agent),
+          stableTimelineID("thought", idIndex, content, ex.timestamp, ex.agent),
         type: "thought",
         content,
       });
@@ -207,7 +214,7 @@ export function buildTimelineItems(
           normalizedTool.callId ||
           stableTimelineID(
             "tool",
-            index,
+            idIndex,
             JSON.stringify(normalizedTool),
             ex.timestamp,
             ex.agent,
@@ -222,7 +229,7 @@ export function buildTimelineItems(
       out.push({
         id: stableTimelineID(
           "todo",
-          index,
+          idIndex,
           JSON.stringify(ex.todoUpdate),
           ex.timestamp,
           ex.agent,
@@ -236,7 +243,7 @@ export function buildTimelineItems(
     if (role === "plan") {
       if (!ex.planUpdate) continue;
       out.push({
-        id: ex.planUpdate.id || stableTimelineID("plan", index, ex.planUpdate.content || "", ex.timestamp, ex.agent),
+        id: ex.planUpdate.id || stableTimelineID("plan", idIndex, ex.planUpdate.content || "", ex.timestamp, ex.agent),
         type: "plan",
         planUpdate: ex.planUpdate,
         timestamp: ex.timestamp,
@@ -246,7 +253,7 @@ export function buildTimelineItems(
     if (role === "compact") {
       if (!ex.compactNotice) continue;
       out.push({
-        id: ex.compactNotice.id || stableTimelineID("compact", index, JSON.stringify(ex.compactNotice), ex.timestamp, ex.agent),
+        id: ex.compactNotice.id || stableTimelineID("compact", idIndex, JSON.stringify(ex.compactNotice), ex.timestamp, ex.agent),
         type: "compact",
         compactNotice: ex.compactNotice,
         timestamp: ex.timestamp,

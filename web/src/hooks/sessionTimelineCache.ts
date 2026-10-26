@@ -3,6 +3,11 @@ import { groupConsecutiveToolCalls } from "./sessionTimeline";
 /**
  * 增量构建：逐 exchange 取缓存分片，拼接后整体跑一次 groupConsecutiveToolCalls。
  * cache 由调用方持有（useRef），跨渲染复用。
+ *
+ * id 里的下标必须是**全数组位置**（`buildTimelineItems` 的 startIndex 参数）——
+ * 每片传单元素数组时分片内下标恒为 0，会造出 N 个 `user:0…` / `assistant:0:0`，
+ * React key 与虚拟器 getItemKey 撞键，测量缓存把所有行定位到同一个 start，
+ * 视觉上就是大面积压叠（2026-10-26 真机复现，G-KC 引入）。
  */
 export function buildTimelineIncremental(
   exchanges: ExchangeLike[],
@@ -12,8 +17,9 @@ export function buildTimelineIncremental(
 ): TimelineItem[] {
   cache.resetTouched();
   const chunks: TimelineItem[] = [];
-  for (const ex of exchanges) {
-    chunks.push(...cache.itemsFor(ex, exchangeAux, blocks));
+  for (let i = 0; i < exchanges.length; i += 1) {
+    const ex = exchanges[i];
+    chunks.push(...cache.itemsFor(ex, exchangeAux, blocks, i));
   }
   cache.retainUntouched();
   return groupConsecutiveToolCalls(chunks);
@@ -36,15 +42,12 @@ export type TimelineChunkCache = {
     ex: ExchangeLike,
     aux: ExchangeAuxMapLike,
     blocks: SessionBlockMapLike,
+    /** 该 exchange 在**全数组**里的位置（id 下标与瞬时行缓存键用）。 */
+    index: number,
   ): TimelineItem[];
   retainUntouched(): void;
   resetTouched(): void;
 };
-
-function keyFor(ex: ExchangeLike, index: number): TimelineChunkKey {
-  const seq = Number(ex.seq || 0);
-  return seq > 0 ? `s${seq}` : `t${index}`;
-}
 
 function depsChanged(
   cached: { ex: ExchangeLike; aux: ExchangeAuxMapLike | undefined; blocks: SessionBlockMapLike | undefined },
@@ -59,26 +62,22 @@ export function createTimelineChunkCache(): TimelineChunkCache {
   const store = new Map<TimelineChunkKey, { ex: ExchangeLike; aux: ExchangeAuxMapLike | undefined; blocks: SessionBlockMapLike | undefined; items: TimelineItem[] }>();
   const touched = new Set<TimelineChunkKey>();
   return {
-    itemsFor(ex, aux, blocks) {
+    itemsFor(ex, aux, blocks, index) {
       const seq = Number(ex.seq || 0);
-      // 缓存键：持久行按 seq；瞬时行按对象引用（瞬时行没有稳定 seq）。
-      const k = seq > 0 ? `s${seq}` : `o${String((ex as any).__ref || "")}`; // fallback below
-      // 瞬时行键用对象身份：用 Map 以对象为 key 更安全，但 store 是按字符串键的；
-      // 这里为瞬时行生成一个基于对象的稳定字符串键（WeakMap 兜底）。
-      let key = k;
-      if (seq <= 0) {
-        key = `t:${transientId(ex)}`;
-      }
-      const auxSlice = seq > 0 ? (aux[String(seq)] ? aux : undefined) : undefined;
-      // For persisted rows, only the relevant seq's aux matters.
+      // 缓存键：持久行按 seq；瞬时行按全数组位置 + 对象身份。
+      // id 里嵌的是 exchange 在全数组里的下标，分片内下标恒为 0 —— 键和 id
+      // 都不能用分片内下标，否则 N 片撞成同一个 id（2026-10-26 压叠事故）。
+      const key: TimelineChunkKey = seq > 0 ? `s${seq}` : `t:${index}:${transientId(ex)}`;
       const relevantAux = seq > 0 ? (aux[String(seq)] ? { [String(seq)]: aux[String(seq)] } : {}) : {};
+      // For persisted rows, only the relevant seq's aux/blocks matter.
       const relevantBlocks = seq > 0 ? (blocks[String(seq)] ? { [String(seq)]: blocks[String(seq)] } : {}) : {};
       const cached = store.get(key);
       if (cached && !depsChanged(cached, ex, relevantAux, relevantBlocks)) {
         return cached.items;
       }
       // 单 exchange 分片：把 aux/blocks 裁成只含本 seq 的，避免缓存过量。
-      const items = buildTimelineItems([ex], seq > 0 ? relevantAux : {}, seq > 0 ? relevantBlocks : {});
+      // index 传全数组位置，id 下标与整批构建逐字一致。
+      const items = buildTimelineItems([ex], seq > 0 ? relevantAux : {}, seq > 0 ? relevantBlocks : {}, index);
       // buildBaseTimeline 对单个 exchange 仍可能产出多条（assistant 多段）；保留。
       touched.add(key);
       store.set(key, { ex, aux: relevantAux, blocks: relevantBlocks, items });

@@ -5,7 +5,6 @@ import { translateNow } from "../i18n";
 import { createTimelineChunkCache, buildTimelineIncremental } from "./sessionTimelineCache";
 import {
   applySessionContextWindow,
-  buildBaseTimeline,
   dedupeToolCards,
   settleRunningTools,
   type ContextWindowLike,

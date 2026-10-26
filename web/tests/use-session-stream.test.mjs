@@ -66,7 +66,7 @@ function loadHook(runtime, dispatcher) {
       if (id.includes("i18n")) return { translateNow: (key) => `translated:${key}` };
       if (id.includes("sessionTimelineCache")) return {
         createTimelineChunkCache: () => ({
-          itemsFor: (_ex, _aux, _blocks) => [],
+          itemsFor: (_ex, _aux, _blocks, _index) => [],
           retainUntouched: () => {},
           resetTouched: () => {},
         }),
