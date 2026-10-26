@@ -140,19 +140,24 @@ export function buildTimelineItems(
   exchanges: ExchangeLike[],
   exchangeAux: ExchangeAuxMapLike = {},
   blocks: SessionBlockMapLike = {},
-  // CUSTOM(G-KC): 分片缓存逐 exchange 调用本函数（单元素数组），id 里嵌的下标
-  // 必须是**全数组位置**而非分片内位置 —— 否则每片的 index 恒为 0，
-  // 全会话出现 N 个 `user:0…` / `assistant:0:0`，React key 与虚拟器 getItemKey
-  // 撞键，测量缓存把所有行定位到同一个 start，视觉上就是大面积压叠
-  // （2026-10-26 真机复现）。整批调用时缺省 0，行为与原来逐字一致。
+  // CUSTOM(G-KC): 瞬时行（seq=0）没有跨会话唯一的身份，只能用位置当 token。
+  // 分片缓存逐条调用时传的是**全数组位置**（单元素数组的局部下标恒为 0）。
+  // 持久行不受影响 —— 它们用 `s<seq>`。
   startIndex = 0,
 ): TimelineItem[] {
   const out: TimelineItem[] = [];
   for (let index = 0; index < exchanges.length; index += 1) {
     const ex = exchanges[index];
-    const idIndex = startIndex + index;
     const role = normalizeRole(ex.role);
     const seq = persistedSeq(ex);
+    // CUSTOM(G-KC): id 的身份 token 不能是数组下标。
+    // 两个理由，都是实测踩出来的（2026-10-26）：
+    // ① 上翻前插会让下标整体位移 → 全历史 id 换一遍 → 测量缓存全部失效；
+    // ② 分片缓存/持久·瞬时两半都从 0 开始建 → 同一 token 撞键 → React key 与
+    //    虚拟器 getItemKey 重复 → 所有行定位到同一个 start（文字大面积压叠）。
+    // 持久行用 seq（全会话唯一且不随前插改变）；瞬时行没有 seq，用位置，
+    // 但必须是全数组位置（startIndex 由分片调用方透传）。
+    const idToken = seq > 0 ? `s${seq}` : String(startIndex + index);
     const blockList = blocksForSeq(blocks, seq);
     // 正文优先取块流；没有块流才回退 `content`。块流是正文的唯一载体（D1），
     // 一旦某轮有块，`content` 就不再是它的真相来源（双写期两者等价，S2d 删掉 content）。
@@ -163,7 +168,7 @@ export function buildTimelineItems(
     if (role === "user") {
       if (isBlankText(content)) continue;
       out.push({
-        id: stableTimelineID("user", idIndex, content, ex.timestamp, ex.agent),
+        id: stableTimelineID("user", idToken, content, ex.timestamp, ex.agent),
         type: "user_text",
         content,
         timestamp: ex.timestamp,
@@ -184,7 +189,7 @@ export function buildTimelineItems(
         continue;
       }
       const auxList = seq ? exchangeAux[String(seq)] || [] : [];
-      out.push(...buildAssistantTimeline({ ...ex, seq }, idIndex, auxList));
+      out.push(...buildAssistantTimeline({ ...ex, seq }, idToken, auxList));
       continue;
     }
     if (role === "thought") {
@@ -192,7 +197,7 @@ export function buildTimelineItems(
       out.push({
         id:
           ex.thought_id ||
-          stableTimelineID("thought", idIndex, content, ex.timestamp, ex.agent),
+          stableTimelineID("thought", idToken, content, ex.timestamp, ex.agent),
         type: "thought",
         content,
       });
@@ -214,7 +219,7 @@ export function buildTimelineItems(
           normalizedTool.callId ||
           stableTimelineID(
             "tool",
-            idIndex,
+            idToken,
             JSON.stringify(normalizedTool),
             ex.timestamp,
             ex.agent,
@@ -229,7 +234,7 @@ export function buildTimelineItems(
       out.push({
         id: stableTimelineID(
           "todo",
-          idIndex,
+          idToken,
           JSON.stringify(ex.todoUpdate),
           ex.timestamp,
           ex.agent,
@@ -243,7 +248,7 @@ export function buildTimelineItems(
     if (role === "plan") {
       if (!ex.planUpdate) continue;
       out.push({
-        id: ex.planUpdate.id || stableTimelineID("plan", idIndex, ex.planUpdate.content || "", ex.timestamp, ex.agent),
+        id: ex.planUpdate.id || stableTimelineID("plan", idToken, ex.planUpdate.content || "", ex.timestamp, ex.agent),
         type: "plan",
         planUpdate: ex.planUpdate,
         timestamp: ex.timestamp,
@@ -253,7 +258,7 @@ export function buildTimelineItems(
     if (role === "compact") {
       if (!ex.compactNotice) continue;
       out.push({
-        id: ex.compactNotice.id || stableTimelineID("compact", idIndex, JSON.stringify(ex.compactNotice), ex.timestamp, ex.agent),
+        id: ex.compactNotice.id || stableTimelineID("compact", idToken, JSON.stringify(ex.compactNotice), ex.timestamp, ex.agent),
         type: "compact",
         compactNotice: ex.compactNotice,
         timestamp: ex.timestamp,

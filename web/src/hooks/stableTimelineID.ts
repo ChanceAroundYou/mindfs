@@ -9,7 +9,7 @@ function hashText(input: string): string {
 
 export function stableTimelineID(
   prefix: string,
-  index: number,
+  index: number | string,
   content: string,
   timestamp?: string,
   agent?: string,

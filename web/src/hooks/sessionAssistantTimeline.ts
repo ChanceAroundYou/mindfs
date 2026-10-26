@@ -4,7 +4,10 @@ import type { ExchangeLike } from "./sessionTimeline";
 import { stableTimelineID } from "./stableTimelineID";
 
 function assistantSegmentItem(
-  index: number,
+  // CUSTOM(G-KC): 身份 token 不能是数组下标 —— 上翻前插会让下标整体位移，
+  // 持久/瞬时两半又各自从 0 起建，撞键后虚拟行全挤到同一个 start。
+  // 调用方传持久行的 `s<seq>`（或瞬时行在半区内的位置）。
+  idToken: string,
   ex: ExchangeLike,
   content: string,
   segmentIndex: number,
@@ -18,7 +21,7 @@ function assistantSegmentItem(
   return {
     // Content and timestamps change during streaming. Identity belongs to the
     // exchange/segment, so React and virtual measurements survive each chunk.
-    id: `assistant:${index}:${segmentIndex}`,
+    id: `assistant:${idToken}:${segmentIndex}`,
     type: "assistant_text",
     content,
     timestamp: ex.timestamp,
@@ -35,12 +38,12 @@ function assistantSegmentItem(
 
 export function buildAssistantTimeline(
   ex: ExchangeLike,
-  index: number,
+  idToken: string,
   auxList: ExchangeAux[],
 ): TimelineItem[] {
   const content = ex.content || "";
   if (!auxList.length) {
-    const single = assistantSegmentItem(index, ex, content, 0, true);
+    const single = assistantSegmentItem(idToken, ex, content, 0, true);
     return single ? [single] : [];
   }
 
@@ -64,7 +67,7 @@ export function buildAssistantTimeline(
   for (const aux of normalizedAux) {
     if (aux.line > emittedLines) {
       const segment = assistantSegmentItem(
-        index,
+        idToken,
         ex,
         lines.slice(emittedLines, aux.line).join("\n"),
         segmentIndex,
@@ -82,7 +85,7 @@ export function buildAssistantTimeline(
           aux.thought_id ||
           stableTimelineID(
             "thought",
-            index * 1000 + segmentIndex,
+            `${idToken}:${segmentIndex}`,
             aux.thought,
             ex.timestamp,
             ex.agent,
@@ -97,7 +100,7 @@ export function buildAssistantTimeline(
           aux.plan.id ||
           stableTimelineID(
             "plan",
-            index * 1000 + segmentIndex,
+            `${idToken}:${segmentIndex}`,
             aux.plan.content || "",
             ex.timestamp,
             ex.agent,
@@ -111,7 +114,7 @@ export function buildAssistantTimeline(
       out.push({
         id: stableTimelineID(
           "todo",
-          index * 1000 + segmentIndex,
+          `${idToken}:${segmentIndex}`,
           JSON.stringify(aux.todo),
           ex.timestamp,
           ex.agent,
@@ -127,7 +130,7 @@ export function buildAssistantTimeline(
           aux.compact.id ||
           stableTimelineID(
             "compact",
-            index * 1000 + segmentIndex,
+            `${idToken}:${segmentIndex}`,
             JSON.stringify(aux.compact),
             ex.timestamp,
             ex.agent,
@@ -144,7 +147,7 @@ export function buildAssistantTimeline(
           normalizedTool.callId ||
           stableTimelineID(
             "tool",
-            index * 1000 + segmentIndex,
+            `${idToken}:${segmentIndex}`,
             JSON.stringify(normalizedTool),
             ex.timestamp,
             ex.agent,
@@ -158,7 +161,7 @@ export function buildAssistantTimeline(
 
   if (emittedLines < totalLines) {
     const segment = assistantSegmentItem(
-      index,
+      idToken,
       ex,
       lines.slice(emittedLines).join("\n"),
       segmentIndex,

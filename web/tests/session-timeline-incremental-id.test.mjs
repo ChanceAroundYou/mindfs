@@ -33,3 +33,36 @@ test("second build reuses cache without changing ids", () => {
   assert.equal(new Set(second).size, second.length, "前插后仍不许有重复 id");
   assert.ok(second.length > first.length, "前插后条目应变多");
 });
+
+test("persisted/transient split halves must not collide", () => {
+  // useSessionStream 把 exchanges 拆成持久 / 瞬时两半分别建线，再拼接。
+  // 两半各自从 0 起建时若用数组下标当身份，同位置的 assistant 行必然撞 id
+  // （2026-10-26 压叠事故的真实生产路径，不是假想边界）。
+  const persisted = [
+    { seq: 1, role: "user", content: "p1", timestamp: T0, agent: "claude" },
+    { seq: 2, role: "assistant", content: "p2", timestamp: T0, agent: "claude" },
+    { seq: 3, role: "user", content: "p3", timestamp: T0, agent: "claude" },
+  ];
+  const transient = [
+    { seq: 0, role: "user", content: "t1", timestamp: T0, agent: "claude" },
+    { seq: 0, role: "assistant", content: "t2", timestamp: T0, agent: "claude" },
+  ];
+  const cache = createTimelineChunkCache();
+  const ids = [
+    ...buildTimelineIncremental(persisted, {}, {}, cache),
+    ...buildTimelineIncremental(transient, {}, {}, cache),
+  ].map((item) => item.id);
+  assert.equal(new Set(ids).size, ids.length, `两半拼接后撞键：${ids}`);
+});
+
+test("persisted ids survive prepend (no index in identity)", () => {
+  // 上翻前插会让数组下标整体位移；id 若含下标，全历史 id 换一遍、测量缓存全失效。
+  const cache = createTimelineChunkCache();
+  const before = buildTimelineIncremental(exs, {}, {}, cache).map((i) => i.id);
+  const older = [
+    { seq: 100, role: "user", content: "much older", timestamp: T0, agent: "claude" },
+    ...exs,
+  ];
+  const after = buildTimelineIncremental(older, {}, {}, cache).map((i) => i.id);
+  assert.deepEqual(after.slice(1), before, "前插不许改动原有条目的 id");
+});
