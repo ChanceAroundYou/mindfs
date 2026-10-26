@@ -19,7 +19,7 @@ assert.match(viewer, /useSessionViewerScrollState\(activeScrollRef\)/);
 assert.match(viewer, /useSessionViewerScrollPositionEffects\(/);
 assert.match(viewer, /useSessionViewerStickinessEffect\(/);
 assert.match(viewer, /useTargetSeqScroll\([\s\S]*?targetSeqScrollKeyRef[\s\S]*?cancelTargetSeqScroll/);
-assert.match(scroll, /distanceFromBottom < 40/);
+assert.match(scroll, /STICK_REARM_PX/);
 assert.match(scroll, /movedUp/);
 assert.match(scroll, /refreshCurrentUserMessageIndex\(\)/);
 assert.match(meta, /for \(let i = 0; i < timeline\.length; i \+= 1\)/);

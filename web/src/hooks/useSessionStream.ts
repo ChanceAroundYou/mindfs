@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sessionService, isPersistedSeq } from "../services/session";
-import { translateNow } from "../i18n";
 import type { SessionBlockMapLike } from "./sessionBlocks";
+import { translateNow } from "../i18n";
+import { createTimelineChunkCache, buildTimelineIncremental } from "./sessionTimelineCache";
 import {
   applySessionContextWindow,
   buildBaseTimeline,
@@ -53,7 +54,15 @@ export function useSessionStream(
     persistedRef.current.every((item, i) => item === split.persisted[i])
       ? persistedRef.current
       : (persistedRef.current = split.persisted);
+  // 瞬时行做同样的身份稳定，避免无关重渲染让 timeline 换引用（R1）。
+  const transientRef = useRef<ExchangeLike[]>([]);
+  const transientExchanges =
+    transientRef.current.length === split.transient.length &&
+    transientRef.current.every((item, i) => item === split.transient[i])
+      ? transientRef.current
+      : (transientRef.current = split.transient);
   // 持久部分缓存：仅当持久 exchanges / aux / blocks / contextWindow 变化时重建。
+  const timelineCacheRef = useRef(createTimelineChunkCache());
   const persistedCacheRef = useRef<{ key: unknown[]; value: any } | null>(null);
   const persistedKey = [persistedExchanges, exchangeAux, blocks, sessionContextWindow];
   const persistedChanged =
@@ -63,14 +72,22 @@ export function useSessionStream(
   if (persistedChanged) {
     persistedCacheRef.current = {
       key: persistedKey,
-      value: applySessionContextWindow(buildBaseTimeline(persistedExchanges, exchangeAux, blocks), sessionContextWindow),
+      value: applySessionContextWindow(
+        buildTimelineIncremental(
+          persistedExchanges,
+          exchangeAux,
+          blocks,
+          timelineCacheRef.current,
+        ),
+        sessionContextWindow,
+      ),
     };
   }
   const persistedBaseTimeline = persistedCacheRef.current!.value;
 
   const transientTimeline = useMemo(
-    () => buildBaseTimeline(split.transient, {}, {}),
-    [split.transient],
+    () => buildTimelineIncremental(transientExchanges, {}, {}, timelineCacheRef.current),
+    [transientExchanges],
   );
   const baseTimeline = useMemo(
     () => [...persistedBaseTimeline, ...transientTimeline],

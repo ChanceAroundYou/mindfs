@@ -38,8 +38,8 @@ export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivEl
 
 export function useSessionViewerScrollPositionEffects({
   activeScrollRef, interactionMode, isPrependingRef, lastSessionKeyRef,
-  scrollEndRef, scrollToRelatedFilesDividerRef, sessionKey, timeline,
-  isStreaming, streamVersion, slashCommandResult, shouldStickToBottomRef,
+  scrollEndRef, scrollToRelatedFilesDividerRef, sessionKey, timelineLength,
+  timelineTailId, isStreaming, streamVersion, slashCommandResult, shouldStickToBottomRef,
   viewportStickFrameRef, stickSessionToBottom,
 }: {
   activeScrollRef: RefObject<HTMLDivElement | null>;
@@ -49,7 +49,8 @@ export function useSessionViewerScrollPositionEffects({
   scrollEndRef: RefObject<HTMLDivElement | null>;
   scrollToRelatedFilesDividerRef: RefObject<(behavior?: ScrollBehavior) => void>;
   sessionKey: string | null;
-  timeline: unknown[];
+  timelineLength: number;
+  timelineTailId: string;
   isStreaming: boolean;
   streamVersion: number;
   slashCommandResult: unknown;
@@ -85,7 +86,7 @@ export function useSessionViewerScrollPositionEffects({
     if (shouldStickToBottomRef.current) {
       scrollToRelatedFilesDividerRef.current("auto");
     }
-  }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult]);
+  }, [sessionKey, timelineLength, timelineTailId, isStreaming, streamVersion, slashCommandResult]);
 
   useEffect(() => {
     const container = activeScrollRef?.current;
@@ -156,29 +157,56 @@ export function useSessionViewerStickinessEffect({
           : 0;
         const rawDistanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
         const distanceFromBottom = Math.max(0, rawDistanceFromBottom - viewportGap);
-        const isNearBottom = distanceFromBottom < 40;
+        // 2px 以内才认为"在底部"：小幅上滚（<40px）不应被重新判定为跟随。
+        // movedDown 也不再重新吸底 —— 只有回到底部（<=2px）才恢复跟随。
+        const STICK_REARM_PX = 2;
+        const isNearBottom = distanceFromBottom <= STICK_REARM_PX;
         const movedUp = el.scrollTop < lastScrollTop;
-        const movedDown = el.scrollTop > lastScrollTop;
         if (isNearBottom) {
           shouldStickToBottomRef.current = true;
         } else if (movedUp) {
           shouldStickToBottomRef.current = false;
-        } else if (movedDown && distanceFromBottom < 200) {
-          shouldStickToBottomRef.current = true;
         }
         setShowJumpToLatest(!shouldStickToBottomRef.current);
         refreshCurrentUserMessageIndex();
         lastScrollTop = el.scrollTop;
       });
     };
-    updateStickiness();
-    el.addEventListener("scroll", updateStickiness, { passive: true });
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) {
+        shouldStickToBottomRef.current = false;
+        setShowJumpToLatest(true);
+      }
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      // touchmove 向上滚动：y 增大
+      const touch = event.touches?.[0];
+      if (!touch) return;
+      const prev = (el as any).__lastTouchY;
+      if (typeof prev === "number" && touch.clientY > prev) {
+        shouldStickToBottomRef.current = false;
+        setShowJumpToLatest(true);
+      }
+      (el as any).__lastTouchY = touch.clientY;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (["PageUp", "ArrowUp", "Home"].includes(event.key)) {
+        shouldStickToBottomRef.current = false;
+        setShowJumpToLatest(true);
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("keydown", onKeyDown);
     return () => {
       if (stickinessFrame !== null) {
         window.cancelAnimationFrame(stickinessFrame);
         stickinessFrame = null;
       }
       el.removeEventListener("scroll", updateStickiness);
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("keydown", onKeyDown);
     };
   }, [refreshCurrentUserMessageIndex, sessionKey]);
 }
