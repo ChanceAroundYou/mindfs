@@ -195,6 +195,14 @@ func (h *HTTPHandler) handleSessionDelete(w http.ResponseWriter, r *http.Request
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
+	// 会话没了，pending 灯必须灭：否则任务卡的 busy 判据还会把它当成「还在回复」，
+	// 导致已删会话绑定的任务无法取消/删除。
+	if h.AppContext != nil {
+		hub := h.AppContext.GetSessionStreamHub()
+		for _, dk := range deletedKeys {
+			hub.ClearSessionPending(dk, "")
+		}
+	}
 	// 会话没了，任务里指向它的链接必须一并清掉，否则任务点进去是空白。
 	// 要传整棵子树的 key：子会话也可能绑着别的任务。
 	h.detachTaskFromSession(r.Context(), rootID, deletedKeys)
@@ -232,6 +240,13 @@ func (h *HTTPHandler) handleSessionArchive(w http.ResponseWriter, r *http.Reques
 	// 被删的是子会话，任务里指向它们的链接一并清掉。
 	if len(out.DeletedKeys) > 0 {
 		h.detachTaskFromSession(r.Context(), rootID, out.DeletedKeys)
+	}
+	// 归档删掉的子会话，对应 pending 也得清，避免残留灯。
+	if h.AppContext != nil {
+		hub := h.AppContext.GetSessionStreamHub()
+		for _, dk := range out.DeletedKeys {
+			hub.ClearSessionPending(dk, "")
+		}
 	}
 	if h.AppContext != nil {
 		h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
