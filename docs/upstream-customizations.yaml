@@ -2314,6 +2314,7 @@ groups:
       - web/src/services/session/sessionListMerge.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/app/useMultiProjectSessions.ts
+      - docs/plans/session-activity-unified.md
       - web/src/components/session/useMultiProjectSessionList.ts
       - web/src/components/session/SessionCard.tsx
       - web/src/services/session/sessionListCache.ts
@@ -2321,7 +2322,6 @@ groups:
       - web/src/services/session/sessionCacheStore.ts
     anchors:
       - web/src/services/session/sessionListMerge.ts:orderProjectGroupsByNode
-      - web/src/services/session/sessionListMerge.ts:sessionActivityAt
       - web/src/services/session/sessionListMerge.ts:projectActivityTime
       - web/src/services/session/sessionListMerge.ts:ACTIVITY_REORDER_HYSTERESIS_MS
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
@@ -5080,30 +5080,6 @@ groups:
       - web/tests/session-group-display.test.ts:describe("session group display color resolution"
       - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
-  - id: G-HM
-    title: Shared session activity timestamp resolver
-    kind: arch
-    symptom: "SessionCard imports a pure list activity timestamp resolver from the session merge service."
-    why: "The display-only timestamp resolver belongs in shared, preserving the historical service facade."
-    boundary: "sessionActivityAt moves to shared/sessionActivityAt.ts and the merge service re-exports it; activity_at versus updated_at precedence and empty-value behavior are unchanged."
-    tests:
-      - web/tests/session-list-merge.test.mjs
-      - web/tests/pins-authority.test.mjs
-      - web/tests/reviewer-architecture-rules.test.mjs
-    files:
-      - web/tests/pins-authority.test.mjs
-      - web/src/shared/sessionActivityAt.ts
-      - web/src/services/session/sessionListMerge.ts
-      - web/src/components/session/SessionCard.tsx
-      - web/tests/session-list-merge.test.mjs
-      - docs/agent/rules/frontend/TODO.md
-      - docs/plans/README.md
-      - docs/plans/rule-completion-rollout.md
-    anchors:
-      - web/src/shared/sessionActivityAt.ts:export function sessionActivityAt
-      - web/tests/session-list-merge.test.mjs:const activitySourcePath =
-      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
-
   - id: G-HN
     title: Shared session tree utilities
     kind: arch
@@ -6859,16 +6835,13 @@ groups:
     tests:
       - web/tests/notification-sound-and-unread.test.mjs
       - web/tests/session-status-badges.test.mjs
-      - web/tests/cross-node-completion-and-activity.test.mjs
+      - web/tests/cross-node-replying-state.test.mjs
     anchors:
       - 'web/src/app/useNotificationSound.ts:const SCORES: Record<NotifyEvent, Note[]> = {'
       - 'web/src/shared/unreadCompleted.ts:export function unreadKey(nodeId: string, rootId: string, sessionKey: string): string {'
       - 'web/src/shared/pendingCompletion.ts:export function newlyCompletedPendingKeys('
       - 'web/src/shared/scope.ts:export function parseSessionScopeKey('
-      - 'web/src/services/session/sessionListMerge.ts:export function inheritClientActivity<T extends PinAwareSessionItem>('
       - 'web/src/app/useReplyingSessionPoll.ts:    const completed = newlyCompletedPendingKeys('
-      - 'web/src/app/useSessionListLoading.ts:              inheritClientActivity(prev, next),'
-      - 'web/src/app/useMultiProjectSessions.ts:          const sessions = mergeSessionItems([], inheritClientActivity(prevGroup.sessions || [], g.sessions));'
       - 'web/src/app/realtimeWsHandlers.ts:            if (!viewing) unreadCompletedAdd(unreadKey(nodeId, rootID, sessionKey));'
       - 'web/src/app/realtimeWsSessionMeta.ts:            if (!wasWaiting && auxFlags?.ask_user_waiting) {'
       - 'web/src/app/realtimeWsSessionStream.ts:        playNotificationSound("error");'
