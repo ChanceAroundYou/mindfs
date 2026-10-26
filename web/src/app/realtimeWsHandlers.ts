@@ -347,7 +347,14 @@ export function createRealtimeWsHandlers(
                 currentRootIdRef.current ||
                 "";
           if (rootID && sessionKey) {
-            playNotificationSound("complete");
+            // 子会话（fork）完成不响提示音，只主会话响。
+            const foundSession =
+              (sessionsRef.current || []).find((s: any) => String(s?.key || s?.session_key || "") === sessionKey) ||
+              (String(selectedSessionRef.current?.key || selectedSessionRef.current?.session_key || "") === sessionKey
+                ? selectedSessionRef.current
+                : null);
+            const isChildSession = !!String((foundSession as any)?.parent_session_key || "").trim();
+            if (!isChildSession) playNotificationSound("complete");
             // 未读只标「没在看的那条」：正开着的会话用户已经看到了，标了还得再点一次才灭。
             const nodeId = wsPayloadNid || getNodeIdForRoot(rootID) || "";
             const viewing =
