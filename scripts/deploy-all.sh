@@ -17,6 +17,7 @@ MESSAGE=""
 DO_RESTART=1
 WSL_HOST="${MINDFS_WSL_HOST:-wsl}"
 FN_HOST="${MINDFS_FN_HOST:-fn}"
+PC_HOST="${MINDFS_PC_HOST:-pc}"
 STAGE=".mindfs-deploy"   # worker 上的暂存目录（相对 $HOME），装完即删
 
 usage() {
@@ -164,8 +165,58 @@ REMOTE
   ok "$label 已安装 $remote_version"
 }
 
+# pc-win（Windows 宿主，192.168.1.6 上的 Windows 机器）是 worker 节点，监听 0.0.0.0:7332，
+# 由 Task Scheduler 的 "mindfs" 任务拉起。它没有源码库，也只接收本机构建的产物 ——
+# 但产物必须是 Windows 二进制（交叉编译 GOOS=windows），安装路径与 schtasks 重启方式
+# 都和 Linux worker 不同，因此单独一段，不复用 deploy_worker。
+deploy_pcwin() {
+  local host="$PC_HOST" label="pc-win"
+  local remote_out remote_version
+
+  step "交叉编译 Windows 二进制（$label）"
+  GOOS=windows GOARCH=amd64 go build \
+    -ldflags "-X main.version=$VERSION -X mindfs/internal/deploy.Prefix=/mindfs" \
+    -o /tmp/mindfs-pcwin.exe ./cli/cmd \
+    || die "Windows 交叉编译失败"
+  ok "Windows 二进制已构建"
+
+  step "推送产物到 $label"
+  scp -o BatchMode=yes -o ConnectTimeout=10 /tmp/mindfs-pcwin.exe "$host:mindfs.exe.new" \
+    || die "产物传输失败（$host）"
+
+  if [[ "$DO_RESTART" == "1" ]]; then
+    step "$label 安装并重启"
+  else
+    step "$label 安装（跳过重启）"
+  fi
+  # 用临时 .ps1 避免 PowerShell 引号地狱；$DO_RESTART 由 bash 在 heredoc 里展开。
+  cat > /tmp/mindfs-pcwin.ps1 <<PS1
+\$ErrorActionPreference = 'Stop'
+\$bin = Join-Path \$env:USERPROFILE 'AppData/Local/Programs/mindfs/bin/mindfs.exe'
+\$new = Join-Path \$env:USERPROFILE 'mindfs.exe.new'
+schtasks /end /tn 'mindfs' | Out-Null
+Start-Sleep -Seconds 2
+if (Test-Path \$bin) { Remove-Item -Force \$bin }
+Move-Item -Force \$new \$bin
+if ('$DO_RESTART' -eq '1') { schtasks /run /tn 'mindfs' | Out-Null; Start-Sleep -Seconds 3 }
+& \$bin --version
+PS1
+  scp -o BatchMode=yes -o ConnectTimeout=10 /tmp/mindfs-pcwin.ps1 "$host:mindfs.ps1" \
+    || die "脚本传输失败（$host）"
+  remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" 'powershell -File (Join-Path $env:USERPROFILE mindfs.ps1)' 2>&1)" \
+    || { ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" 'Remove-Item -Force (Join-Path $env:USERPROFILE mindfs.ps1)' 2>/dev/null || true; die "$label 安装失败：$remote_out"; }
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" 'Remove-Item -Force (Join-Path $env:USERPROFILE mindfs.ps1)' 2>/dev/null || true
+
+  remote_version="$(printf '%s\n' "$remote_out" | sed -nE 's/^mindfs version: (.*)$/\1/p' | tail -1)"
+  [[ -n "$remote_version" ]] || die "读不出 $label 的版本号：$remote_out"
+  [[ "$remote_version" == "$VERSION" ]] \
+    || die "版本不一致：$label=$remote_version 本机=$VERSION（产物没落到位）"
+  ok "$label 已安装 $remote_version"
+}
+
 deploy_worker "$WSL_HOST" "WSL"
 deploy_worker "$FN_HOST" "fn"
+deploy_pcwin
 
 # ── 6. 对账：本机服务的 bundle ──
 # WSL 是纯 worker 节点，按设计不提供前端（GET / 是 403，StaticDir 为空），没有 bundle
