@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { SessionViewer } from '../src/components/SessionViewer';
+import { SessionViewer } from '../src/components/session/SessionViewer';
 import { I18nProvider } from '../src/i18n';
 import { sessionService } from '../src/services/session';
 let requests = 0;
@@ -13,6 +13,50 @@ const exchanges = Array.from({length: 30}, (_, i) => [
   {seq:i*2+2,role:'agent',content:'Agent answer '+i,timestamp:'2026-09-28T00:00:01Z'},
 ]).flat();
 const exchange_aux = Object.fromEntries(Array.from({length:30},(_,i)=>[i*2+2,Array.from({length:100},(_,j)=>({seq:i*2+2,line:0,toolcall:{callId:`call-${i}-${j}`,kind:'read',status:'complete',title:`Tool ${i}-${j}`,meta:{}}}))]));
+
+// ── 窗口分页 fixture（2026-10-27 G-KB 回归）──────────────────────────────────
+// 「上翻跳变 / 到底按钮停在半路 / 按钮显隐不跟位置」三个报障都只在**窗口分页 + 虚拟化**
+// 同时成立的路径上出现。真跑那条路径需要后端（`loadMore` 走 protectedJSON，fixture 里被
+// bootstrap 门禁挡成 api_not_ready），所以直接替换 `sessionService.getSessionWindow`：
+// 没有 HTTP、没有 agent，但走的是**同一份** useSessionWindowing 代码。
+// 键只认 'paging-test'，其它会话返回 null（与改造前的失败路径等价），既有检查不受影响。
+const PAGING_TOTAL = 240;
+const PAGING_PAGE = 8;
+const pagingExchanges = Array.from({ length: PAGING_TOTAL }, (_, i) => ({
+  seq: i + 1,
+  role: i % 2 === 0 ? 'user' : 'agent',
+  content: (i % 2 === 0 ? `Question ${i + 1}` : `Answer ${i + 1}`) +
+    '\n\n' + Array.from({ length: 8 }, (_, k) => `body line ${i}-${k}`).join('\n\n'),
+  timestamp: '2026-09-28T00:00:00Z',
+}));
+let lastPrepend: { key: string; top: number } | null = null;
+const pagingWindow = (beforeSeq?: number, latest?: number) => {
+  const slice = beforeSeq && beforeSeq > 0
+    ? pagingExchanges.filter(e => e.seq < beforeSeq).slice(-PAGING_PAGE)
+    : pagingExchanges.slice(-(latest || PAGING_PAGE));
+  if (!slice.length) return null;
+  return {
+    session: { key: 'paging-test', exchanges: slice, exchange_aux: {}, blocks: {} },
+    meta: {
+      total: PAGING_TOTAL, hasMore: slice[0].seq > 1,
+      minSeq: slice[0].seq, maxSeq: slice[slice.length - 1].seq,
+    },
+  };
+};
+sessionService.getSessionWindow = async (_root, key, opts) => {
+  if (key !== 'paging-test') return null;
+  if (opts?.beforeSeq) {
+    // 前插请求发出的那一刻记下视口首行的真实位置 —— 回包后是否跳动由它判定。
+    const containerTop = [...document.querySelectorAll('div')]
+      .find(node => getComputedStyle(node).overflowY === 'auto')?.getBoundingClientRect().top ?? 0;
+    const rows = [...document.querySelectorAll('[data-session-seq]')];
+    const first = rows.find(row => row.getBoundingClientRect().top >= containerTop - 1);
+    lastPrepend = first
+      ? { key: String(first.getAttribute('data-session-seq') || ''), top: first.getBoundingClientRect().top }
+      : null;
+  }
+  return pagingWindow(opts?.beforeSeq, opts?.latest) as any;
+};
 function Check() {
   const [session,setSession]=useState<any>({key:'virtual-test',exchanges,exchange_aux});
   const [target,setTarget]=useState(0);
@@ -20,6 +64,7 @@ function Check() {
   Object.assign(window,{check:{requests:()=>requests,jump:(seq:number)=>setTarget(seq),toggle:()=>setShown(x=>!x),append:()=>setSession((s:any)=>({...s,exchanges:[...s.exchanges,{seq:s.exchanges.length+1,role:'agent',content:'APPENDED '+s.exchanges.length,timestamp:'2026-09-28T00:00:02Z'}]}))}});
   Object.assign((window as any).check, {
     replaceSession: (next: any) => { setTarget(0); setSession(next); },
+    paging: () => { setTarget(0); setSession({key:'paging-test', exchanges:[], exchange_aux:{}}); },
     question: () => setSession((s: any) => ({...s, pending: true, exchanges: [...s.exchanges, {
       role: 'tool', content: '', toolCall: {
         callId: 'question', kind: 'ask_user', status: 'running',
@@ -101,6 +146,76 @@ Object.assign(window, { runScrollIntentChecks: async () => {
     assert(gap() < 2, `${input}: returning to bottom did not resume following`);
   }
   return {passed: true, inputs: ['wheel', 'touch'], upwardSteps: 12};
+}});
+
+// 2026-10-27 回归：三个报障都只在「窗口分页 + 虚拟化」这条路径上出现。
+//   ① 上翻触发 loadMore 后视口整体跳一大截；
+//   ② 「回到底部」按钮停在半路（不是真实最底部）；
+//   ③ 按钮显隐不与页面实际位置挂钩（滚轮到底不消失、拖滚动条上滑不出现）。
+Object.assign(window, { runPagingChecks: async (opts: any = {}) => {
+  const settle = (ms = 350) => new Promise(resolve => setTimeout(resolve, ms));
+  const problems: string[] = [];
+  const check = (condition: boolean, message: string) => { if (!condition) problems.push(message); };
+  const scroller = () => [...document.querySelectorAll('div')].find(node => getComputedStyle(node).overflowY === 'auto')!;
+  const gap = () => { const el = scroller(); return el.scrollHeight - el.clientHeight - el.scrollTop; };
+  const rowCount = () => document.querySelectorAll('[data-session-seq]').length;
+  const jumpButton = () => [...document.querySelectorAll('button')]
+    .find(node => /jump|latest|底部|最新/i.test(node.getAttribute('aria-label') || ''));
+
+  (window as any).check.paging();
+  await settle(900);
+  check(rowCount() > 0, 'paging: first window did not render');
+  check(gap() < 2, 'paging: initial view should sit at the bottom');
+  check(!jumpButton(), 'paging: jump button must be hidden at the bottom');
+
+  // ① 连续上翻 6 页，每页都比对「同一行元素的真实矩形」。
+  // 只跑 ① 的模式（opts.only === 'prepend'）不上滚到底，专供基线取证。
+  const drifts: number[] = [];
+  let pages = 0;
+  const wanted = Number(opts.pages || 6);
+  for (let attempt = 0; attempt < 120 && pages < wanted; attempt++) {
+    const before = rowCount();
+    scroller().scrollTop = 0;
+    await settle(60);
+    if (rowCount() === before) continue;
+    await settle(400);
+    pages += 1;
+    if (lastPrepend) {
+      const row = document.querySelector(`[data-session-seq="${lastPrepend.key}"]`);
+      if (row) drifts.push(Math.round(Math.abs(row.getBoundingClientRect().top - lastPrepend.top)));
+    }
+  }
+  check(pages >= wanted, `paging: only ${pages} upward pages loaded, expected ${wanted}`);
+  const maxDrift = drifts.length ? Math.max(...drifts) : 0;
+  check(maxDrift <= 40, `paging: prepend jumped the viewport by ${maxDrift}px (max 40 = one line)`);
+  if (opts.only === 'prepend') {
+    return { passed: problems.length === 0, pages, drifts, maxDrift, problems };
+  }
+
+  // ② 点击「回到底部」必须精准落到真实最底部
+  await settle(300);
+  scroller().scrollTop = Math.max(0, scroller().scrollTop - 800);
+  await settle(500);
+  check(!!jumpButton(), 'paging: jump button should appear after scrolling up');
+  jumpButton()?.click();
+  await settle(900);
+  const clickGap = gap();
+  check(clickGap === 0, `paging: jump-to-bottom stopped ${clickGap}px short of the real bottom`);
+  check(!jumpButton(), 'paging: jump button should disappear once at the bottom');
+
+  // ③ 显隐只跟实际离底距离有关，任何输入方式都算（这里用「拖滚动条」= 直接写 scrollTop）
+  const el = scroller();
+  el.scrollTop = Math.max(0, el.scrollTop - 50);
+  await settle(500);
+  const upGap = gap();
+  check(upGap >= 40, `paging: fixture failed to scroll up (gap ${upGap})`);
+  check(!!jumpButton(), 'paging: dragging the scrollbar up must reveal the jump button');
+  const hiddenWhileUp = !jumpButton();
+  el.scrollTop = el.scrollHeight;
+  await settle(500);
+  check(!jumpButton(), 'paging: dragging back to the bottom must hide it without a click');
+
+  return { passed: problems.length === 0, pages, drifts, maxDrift, clickGap, upGap, hiddenWhileUp, problems };
 }});
 
 // Run via a browser console or agent-browser eval. No server/agent data is used.

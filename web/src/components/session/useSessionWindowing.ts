@@ -127,12 +127,31 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     };
   }, [sessionKey, rootId, applyWindow]);
 
-  // 向上翻页：锚定 scrollHeight-scrollTop，请求 beforeSeq=minSeq 的历史段，
-  // 函数式前置合并并 RAF 回补滚动位置，避免视口跳动。
+  // 向上翻页：锚定视口内第一条可见行，请求 beforeSeq=minSeq 的历史段，
+  // 函数式前置合并后在随后的若干帧里按**真实矩形**回补滚动位置。
   const loadMore = useCallback(() => {
     const container = activeScrollRef?.current;
     if (!container || loadingMore || !windowMeta.hasMore || !sessionKey) {
       return;
+    }
+    // G-KB 回归修复（2026-10-27）：以前只记 `scrollHeight - scrollTop` 并在一个 rAF 里
+    // 写一次。虚拟化路径下这个 scrollHeight 是 estimateSize 撑出来的占位高度，
+    // 前插后 overscan 那几行先挂载再实测，每行 estimate→actual 的差值都会让下面所有行
+    // 整体位移；而 G-KD 的护栏在后退方向**刻意不补偿**（手势优先），位移就直接落在视口上，
+    // 表现为「滚着滚着突然往上跳一大截」。
+    // 现在锚定**元素身份 + 真实矩形**，连续多帧收敛：库补没补、补了多少都被自动吸收，
+    // 不会双补偿。
+    const containerTop = container.getBoundingClientRect().top;
+    let anchorKey = "";
+    let anchorTop = 0;
+    const rows = container.querySelectorAll<HTMLElement>("[data-timeline-key]");
+    for (const row of rows) {
+      const top = row.getBoundingClientRect().top;
+      if (top >= containerTop - 1) {
+        anchorKey = row.dataset.timelineKey || "";
+        anchorTop = top;
+        break;
+      }
     }
     const anchor = container.scrollHeight - container.scrollTop;
     setLoadingMore(true);
@@ -144,6 +163,7 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
       })
       .then((res) => {
         if (!res) {
+          isPrependingRef.current = false;
           setLoadingMore(false);
           return;
         }
@@ -160,15 +180,55 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
         setVisibleBlocks((prev) => ({ ...prev, ...winBlocks }));
         setWindowMeta(res.meta);
         setLoadingMore(false);
-        window.requestAnimationFrame(() => {
+        let frames = 0;
+        let stableFrames = 0;
+        // 帧数上限按「稳定即收工」定：新挂载行的实测（ResizeObserver）与 loading 占位的
+        // 消失都可能在若干帧之后才落地，固定跑 N 帧会在测量到达前收工，留下十几像素的残差。
+        const MAX_FRAMES = 40;
+        const MIN_FRAMES = 4;
+        const SETTLE_PX = 1;
+        const settle = () => {
           const el = activeScrollRef?.current;
-          if (el) {
+          if (!el) {
+            isPrependingRef.current = false;
+            return;
+          }
+          if (anchorKey) {
+            const row = el.querySelector<HTMLElement>(
+              `[data-timeline-key="${CSS.escape(anchorKey)}"]`,
+            );
+            if (row) {
+              const delta = row.getBoundingClientRect().top - anchorTop;
+              if (Math.abs(delta) > SETTLE_PX) {
+                el.scrollTop += delta;
+                anchorTop = row.getBoundingClientRect().top;
+                stableFrames = 0;
+              } else {
+                stableFrames += 1;
+              }
+              frames += 1;
+              if ((frames < MIN_FRAMES || stableFrames < 3) && frames < MAX_FRAMES) {
+                window.requestAnimationFrame(settle);
+                return;
+              }
+            } else if (frames < 2) {
+              frames += 1;
+              window.requestAnimationFrame(settle);
+              return;
+            }
+          }
+          // 非虚拟化路径（没有锚点行）：退回按 scrollHeight 差值回补。
+          if (!anchorKey) {
             el.scrollTop = el.scrollHeight - anchor;
           }
           isPrependingRef.current = false;
-        });
+        };
+        window.requestAnimationFrame(settle);
       })
-      .catch(() => setLoadingMore(false));
+      .catch(() => {
+        isPrependingRef.current = false;
+        setLoadingMore(false);
+      });
   }, [loadingMore, windowMeta, sessionKey, rootId]);
 
   // 顶部哨兵：进入视口（rootMargin 200px）触发 loadMore，hasMore 耗尽后自动不观察。

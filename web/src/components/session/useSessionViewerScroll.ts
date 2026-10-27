@@ -9,6 +9,7 @@ export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivEl
   const targetSeqTimerRefs = useRef<number[]>([]);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const viewportStickFrameRef = useRef<number | null>(null);
+  const bottomConvergeFrameRef = useRef<number | null>(null);
 
   const cancelTargetSeqScroll = () => {
     if (targetSeqFrameRef.current !== null) {
@@ -19,14 +20,58 @@ export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivEl
     targetSeqTimerRefs.current = [];
   };
 
-  const stickSessionToBottom = (behavior: ScrollBehavior = "auto") => {
+  // 逐帧收敛到底（G-KB 回归修复）。
+  //
+  // 曾经是一次 `scrollTo({ behavior: "smooth" })`。虚拟化会话里每帧都可能有新行挂载
+  // 把 scrollHeight 撑大，而虚拟库在「向下」方向的测量修正会**即时**写 scrollTop ——
+  // 一次即时写入就取消浏览器进行中的 smooth 动画，于是按钮经常停在半路。
+  // 改成每帧写 maxTop，直到连续几帧没有任何位移：新撑出来的高度下一帧自动补上。
+  //
+  // 参数 behavior 仅为调用方签名兼容保留，实际一律即时写（精准到底优先于动画）。
+  const stickSessionToBottom = (_behavior: ScrollBehavior = "auto") => {
     const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
-    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-    container.scrollTo({ top: maxTop, behavior });
+    if (bottomConvergeFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomConvergeFrameRef.current);
+      bottomConvergeFrameRef.current = null;
+    }
+    let stableFrames = 0;
+    let frames = 0;
+    const MAX_FRAMES = 120;
+    // 最少跑 8 帧：新挂载行的实测（ResizeObserver）往往比写 scrollTop 晚一两帧落地，
+    // 只按「连续稳定」判定会在测量到达之前就收工，停在估算高度算出来的位置。
+    const MIN_FRAMES = 8;
+    const step = () => {
+      bottomConvergeFrameRef.current = null;
+      const el = activeScrollRef?.current;
+      if (!el) return;
+      // 收敛期间用户上滚 → 立刻让位，绝不和手势抢位置。
+      if (!shouldStickToBottomRef.current) return;
+      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      const gap = maxTop - el.scrollTop;
+      if (gap > 1) {
+        el.scrollTop = maxTop;
+        stableFrames = 0;
+      } else {
+        stableFrames += 1;
+      }
+      frames += 1;
+      if ((frames >= MIN_FRAMES && stableFrames >= 3) || frames >= MAX_FRAMES) return;
+      bottomConvergeFrameRef.current = window.requestAnimationFrame(step);
+    };
+    bottomConvergeFrameRef.current = window.requestAnimationFrame(step);
   };
+
+  useEffect(() => {
+    return () => {
+      if (bottomConvergeFrameRef.current !== null) {
+        window.cancelAnimationFrame(bottomConvergeFrameRef.current);
+        bottomConvergeFrameRef.current = null;
+      }
+    };
+  }, []);
 
   return {
     shouldStickToBottomRef, lastSessionKeyRef, targetSeqScrollKeyRef,
@@ -157,7 +202,7 @@ export function useSessionViewerStickinessEffect({
           : 0;
         const rawDistanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
         const distanceFromBottom = Math.max(0, rawDistanceFromBottom - viewportGap);
-        // 2px 以内才认为"在底部"：小幅上滚（<40px）不应被重新判定为跟随。
+        // 2px 以内才认为"在底部"：小幅上滚不应被重新判定为跟随。
         // movedDown 也不再重新吸底 —— 只有回到底部（<=2px）才恢复跟随。
         const STICK_REARM_PX = 2;
         const isNearBottom = distanceFromBottom <= STICK_REARM_PX;
@@ -167,15 +212,19 @@ export function useSessionViewerStickinessEffect({
         } else if (movedUp) {
           shouldStickToBottomRef.current = false;
         }
-        setShowJumpToLatest(!shouldStickToBottomRef.current);
+        // 按钮显隐只跟「现在离底多远」有关，与「是否跟随」解耦：
+        // 后者是「追加内容时要不要自动滚」的意图，前者是位置的直接读数。
+        // 曾经用 !shouldStickToBottomRef 派生，于是滚轮下到底、拖动滚动条上滑
+        // 这两种不产生显式手势状态变化的路径都不更新按钮（2026-10-27 报障）。
+        setShowJumpToLatest(distanceFromBottom > STICK_REARM_PX);
         refreshCurrentUserMessageIndex();
         lastScrollTop = el.scrollTop;
       });
     };
+    // 手势只负责「让位」（停跟随），不再碰按钮显隐 —— 单一真相源在 updateStickiness。
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
         shouldStickToBottomRef.current = false;
-        setShowJumpToLatest(true);
       }
     };
     const onTouchMove = (event: TouchEvent) => {
@@ -185,16 +234,19 @@ export function useSessionViewerStickinessEffect({
       const prev = (el as any).__lastTouchY;
       if (typeof prev === "number" && touch.clientY > prev) {
         shouldStickToBottomRef.current = false;
-        setShowJumpToLatest(true);
       }
       (el as any).__lastTouchY = touch.clientY;
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (["PageUp", "ArrowUp", "Home"].includes(event.key)) {
         shouldStickToBottomRef.current = false;
-        setShowJumpToLatest(true);
       }
     };
+    // scroll 监听是按钮显隐的唯一输入：丢了它，滚轮下到底不消失、拖滚动条上滑不出现
+    // （2026-10-27 实证：b24dbee3 里 removeEventListener 留着、addEventListener 被删了，
+    // 只剩三个「只会置真」的手势，按钮于是只能靠点击回写）。
+    updateStickiness();
+    el.addEventListener("scroll", updateStickiness, { passive: true });
     el.addEventListener("wheel", onWheel, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     el.addEventListener("keydown", onKeyDown);

@@ -120,6 +120,7 @@ export function SessionViewerTimeline({
           <div
             key={row.key}
             data-index={row.index}
+            data-timeline-key={String(row.key)}
             ref={virtual.measureElement}
             style={{
               position: "absolute",
