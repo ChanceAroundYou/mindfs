@@ -69,6 +69,9 @@ let pagingPrepends = 0;
 // 检查），需要观察加载态的检查可以用 check.setPagingDelay 临时拖慢回包。
 let pagingDelayMs = 0;
 let lastPrependAt: { top: number; client: number; height: number } | null = null;
+// 回包那一刻的视口首行 —— 产品的锚点就应该在这里采样（2026-10-28）。判定「回补有没有
+// 把用户自己滚的那段也补掉」只能用这个参照系：请求发出时的位置在飞行期间早就过期了。
+let lastResponseAt: { key: string; top: number; scrollTop: number } | null = null;
 const scrollerEl = () => [...document.querySelectorAll('div')]
   .find(node => getComputedStyle(node).overflowY === 'auto') as HTMLElement | undefined;
 sessionService.getSessionWindow = async (_root, key, opts) => {
@@ -99,6 +102,16 @@ sessionService.getSessionWindow = async (_root, key, opts) => {
   }
   const result = pagingWindow(opts?.beforeSeq, opts?.latest) as any;
   if (pagingDelayMs > 0) await new Promise(resolve => setTimeout(resolve, pagingDelayMs));
+  if (opts?.beforeSeq) {
+    // 回包**这一刻**的视口首行：产品若要锚定，参照系必须取自这里，不是请求发出时。
+    const boxTop = scrollerEl()?.getBoundingClientRect().top ?? 0;
+    const first = [...document.querySelectorAll('[data-timeline-key]')]
+      .find(row => row.getBoundingClientRect().top >= boxTop - 1);
+    const el = scrollerEl();
+    lastResponseAt = first
+      ? { key: String(first.getAttribute('data-timeline-key') || ''), top: first.getBoundingClientRect().top, scrollTop: el?.scrollTop ?? 0 }
+      : null;
+  }
   return result;
 };
 function Check() {
@@ -117,6 +130,7 @@ function Check() {
     //                    回包后按同一行比对，判锚定是否把视口拉回原处。
     setPagingDelay: (ms: number) => { pagingDelayMs = ms; },
     lastPrependAt: () => lastPrependAt,
+    lastResponseAt: () => lastResponseAt,
     question: () => setSession((s: any) => ({...s, pending: true, exchanges: [...s.exchanges, {
       role: 'tool', content: '', toolCall: {
         callId: 'question', kind: 'ask_user', status: 'running',
@@ -363,9 +377,52 @@ Object.assign(window, { runPagingChecks: async (opts: any = {}) => {
     'paging: scrollHeight must not shrink while a page is in flight',
   );
 
+  // ⑦ 回补只补「新插入内容的高度」，不能把用户在飞行期间自己滚的那段也补掉（2026-10-28）。
+  //
+  // 提前量是一整屏，请求本来就是**在用户还在滚的时候**发出去的。若锚点在发请求那一刻
+  // 采样，`settleStep` 量到的 delta 里就混进了他飞行期间滚掉的 S，写完视口整体回跳 S ——
+  // 这就是「加载完成后还是闪一下」。真机实测 15 行同帧整齐上移 480px（= 4 个滚轮格，
+  // 正好等于飞行期间的上滚量）。
+  //
+  // 判据落在**回包那一刻**的锚行上：它在收尾后的屏幕 y 必须还是回包时的 y。
+  // 拿请求发出时的 y 当基准正好是错的（那正是要修的 bug），所以桩里专门记了
+  // `lastResponseAt`。夹具原本等回包时手是停的，这条路径从来没被覆盖到。
+  await settle(600);
+  (window as any).check.setPagingDelay(800);
+  const ahead2 = scroller();
+  ahead2.scrollTop = Math.round(ahead2.clientHeight * 1.8);
+  await settle(200);
+  const beforeFlight = prepends();
+  for (let step = 0; step < 30 && prepends() === beforeFlight; step++) {
+    ahead2.scrollTop = Math.max(0, ahead2.scrollTop - 100);
+    await settle(150);
+  }
+  // 请求已在飞行：继续上滚，模拟「用户手没停」。
+  for (let step = 0; step < 4; step++) {
+    ahead2.scrollTop = Math.max(0, ahead2.scrollTop - 60);
+    await settle(60);
+  }
+  await settle(1800);
+  (window as any).check.setPagingDelay(0);
+  const responseAt = (window as any).check.lastResponseAt();
+  const anchoredRow = responseAt
+    ? document.querySelector(`[data-timeline-key="${CSS.escape(responseAt.key)}"]`)
+    : null;
+  const anchoredY = anchoredRow?.getBoundingClientRect().top ?? null;
+  const flightJump = responseAt && anchoredY !== null ? Math.round(anchoredY - responseAt.top) : null;
+  check(
+    prepends() === beforeFlight + 1,
+    `paging: in-flight scrolling fired ${prepends() - beforeFlight} prepends (expected 1)`,
+  );
+  check(!!responseAt, 'paging: fixture did not capture the viewport anchor at response time');
+  check(
+    flightJump !== null && Math.abs(flightJump) <= 40,
+    `paging: prepend cancelled the user's own scrolling — the anchor row at response time moved ${flightJump}px (max 40 = one line)`,
+  );
+
   return {
     passed: problems.length === 0, pages, drifts, maxDrift, idlePages, clickGap, upGap, hiddenWhileUp,
-    aheadFired, prependAt: (window as any).check.lastPrependAt(), problems,
+    aheadFired, prependAt: (window as any).check.lastPrependAt(), flightJump, problems,
   };
 }});
 

@@ -74,7 +74,14 @@ assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*composed
 assert.match(viewerSrc, /getSessionWindow/, "initial window fetch missing");
 assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "window fetch must use the shared SESSION_WINDOW_SIZE");
 assert.match(viewerSrc, /const loadMore = useCallback/, "loadMore callback missing");
-assert.match(viewerSrc, /scrollHeight - container\.scrollTop/, "scroll anchoring (scrollHeight - scrollTop) missing");
+// 兜底锚必须在**回包那一刻**读（2026-10-28）：发请求时的 scrollHeight - scrollTop 在
+// 飞行期间已经过期，拿它回补会把用户自己滚的那段一起补掉。判据从「整行精确匹配」
+// 改成「captureAnchor 里读它」，变量名跟着改成 el 是重采样带来的。
+assert.match(
+  viewerSrc,
+  /const captureAnchor = \(\) => \{[\s\S]{0,700}?el\.scrollHeight - el\.scrollTop/,
+  "scrollHeight 兜底锚必须在 captureAnchor 里读（回包时刻），不能再用发请求时的快照",
+);
 assert.match(viewerSrc, /beforeSeq: windowMeta\.minSeq/, "loadMore beforeSeq: windowMeta.minSeq missing");
 assert.match(viewerSrc, /IntersectionObserver/, "IntersectionObserver sentinel missing");
 // 提前量 200px → 半屏 → 一屏（2026-10-27）：固定 200px 要「看见内容不够」才开始加载，

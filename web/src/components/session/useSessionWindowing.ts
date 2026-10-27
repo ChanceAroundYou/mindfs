@@ -189,21 +189,43 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     // 前插后 overscan 那几行先挂载再实测，每行 estimate→actual 的差值都会让下面所有行
     // 整体位移；而 G-KD 的护栏在后退方向**刻意不补偿**（手势优先），位移就直接落在视口上，
     // 表现为「滚着滚着突然往上跳一大截」。
-    // 现在锚定**元素身份 + 真实矩形**，连续多帧收敛：库补没补、补了多少都被自动吸收，
+    // 现在锚定**元素身份 + 屏幕 y**，连续多帧收敛：库补没补、补了多少都被自动吸收，
     // 不会双补偿。
-    const containerTop = container.getBoundingClientRect().top;
+    //
+    // 锚点必须在**回包那一刻**采样，不能在发请求时采样（2026-10-28）。
+    //
+    // 请求飞行几百毫秒，这期间用户往往还在上滚 —— 提前量是一整屏，请求本来就是在他滚的
+    // 时候发出去的。若拿发请求时的锚点当参照系，`settleStep` 量到的位移里就混进了他自己
+    // 滚掉的那一段 S，于是把 S 一起补偿掉，写完视口整体跳 S：用户看到的「加载完成后还是
+    // 闪一下」。真机实测：15 行同帧整齐上移 480px（= 4 个滚轮格，正好是飞行期间的上滚量）。
+    // 换成回包那一刻的参照系后，需要补偿的就只剩「新插入内容的高度」。
     let anchorKey = "";
+    // 参照系用**屏幕 y**，不是内容坐标。这是踩过两次才定下来的：
+    //
+    //  - 内容坐标（`rect.top - 容器顶 + scrollTop`）看着更「干净」，但虚拟器自己在前进方向
+    //    会写一笔 scrollTop 补偿（`scrollWithAdjustments`，正是为了让行在屏幕上不动），
+    //    内容坐标把这一笔又抵消掉 ⇒ 差额仍是全额 ⇒ 我们再补一次。夹具实测：库已写
+    //    4480→4698，我们又写 +218，视口整体多滚 218px。屏幕 y 天然吸收库的补偿。
+    //  - 屏幕 y 唯一分不开的是**用户自己滚了**，而那有方向：用户上滚只会让行**往上**走
+    //    （delta 为负），前插/测量只会让行**往下**走（delta 为正）。见 settleStep。
+    //
+    // 不能用 offsetTop：虚拟行是绝对定位 + `transform: translateY(...)`，offsetTop 恒 0。
     let anchorTop = 0;
-    const rows = container.querySelectorAll<HTMLElement>("[data-timeline-key]");
-    for (const row of rows) {
-      const top = row.getBoundingClientRect().top;
-      if (top >= containerTop - 1) {
-        anchorKey = row.dataset.timelineKey || "";
-        anchorTop = top;
-        break;
+    let anchor = 0;
+    const captureAnchor = () => {
+      const el = activeScrollRef?.current;
+      if (!el) return;
+      const boxTop = el.getBoundingClientRect().top;
+      for (const row of el.querySelectorAll<HTMLElement>("[data-timeline-key]")) {
+        const top = row.getBoundingClientRect().top;
+        if (top >= boxTop - 1) {
+          anchorKey = row.dataset.timelineKey || "";
+          anchorTop = top;
+          break;
+        }
       }
-    }
-    const anchor = container.scrollHeight - container.scrollTop;
+      anchor = el.scrollHeight - el.scrollTop;
+    };
     setLoadingMore(true);
     isPrependingRef.current = true;
     getSessionWindow(rootId || "", sessionKey, {
@@ -231,6 +253,8 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
         // 用户看到的就是「闪一下 + 位置抖一下」（2026-10-27 真机）。
         // flushSync 让新行在本次任务内进入 DOM，紧接着的一次同步回补就发生在**浏览器绘制
         // 之前**，中间没有任何一帧呈现未补偿的状态。
+        // 锚点在这一刻才取 —— 见 loadMore 开头 `captureAnchor` 的注释。
+        captureAnchor();
         flushSync(() => {
           setVisibleExchanges((prev) => mergeSessionExchanges(winExchanges, prev) as ExchangeArray);
           setVisibleAux((prev) => ({ ...prev, ...winAux }));
@@ -245,14 +269,40 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
         const MAX_FRAMES = 40;
         const MIN_FRAMES = 4;
         const SETTLE_PX = 1;
-        // 单步回补：把视口拉回锚行原处。返回 false 表示容器已不在。
+        // 收工判据是「连续 3 帧不动」，但新挂载行的测量是**分批**到达的：两批之间可能隔着
+        // 好几个安静帧，循环就此收工，下一批实测把视口上方的高度又改了 —— 那时没人再补，
+        // 残差直接落在屏幕上（2026-10-28 实测：3 次里有 1 次在收工后 `scrollHeight` 又涨了
+        // 699px，`scrollTop` 没跟上，视口内的行整体下移 120px = 一个滚轮格）。
+        // 所以「内容高度还在变」也算不稳定，必须继续补到它不动为止。
+        let lastHeight = activeScrollRef?.current?.scrollHeight ?? 0;
+        // 上一帧收尾时的 scrollTop。用来认出「这一帧的位移是用户滚的」：库只会往**大**了写
+        // （`shouldAdjustScrollPositionOnItemSizeChange` 在后退方向被 G-KD 整个关掉），
+        // 所以 scrollTop 变小只可能来自手势。
+        let lastScrollTop = activeScrollRef?.current?.scrollTop ?? 0;
+        // 单步回补：把锚行放回它**在屏幕上的原处**。返回 false 表示容器已不在。
         const settleStep = () => {
           const el = activeScrollRef?.current;
           if (!el) return false;
+          if (el.scrollHeight !== lastHeight) {
+            lastHeight = el.scrollHeight;
+            stableFrames = 0;
+          }
           const row = anchorKey
             ? el.querySelector<HTMLElement>(`[data-timeline-key="${CSS.escape(anchorKey)}"]`)
             : null;
-          // 锚行在 → 按真实矩形回补；锚行没挂载 → 按 scrollHeight 差值回补。
+          // 用户自己在滚 → **让位**：只把参照系挪到它现在的位置，一个字节都不写。
+          // 屏幕 y 分不开「内容变了」和「用户滚了」，但方向分得开（见上）。不回补的话，
+          // 他滚多少就被原样滚多少 —— 这正是要的；回补则是把他滚掉的距离又补回去，
+          // 屏幕上整块上行一个滚轮格（2026-10-28 实测 3/5 次）。
+          if (el.scrollTop - lastScrollTop < -SETTLE_PX) {
+            if (row) anchorTop = row.getBoundingClientRect().top;
+            anchor = el.scrollHeight - el.scrollTop;
+            lastScrollTop = el.scrollTop;
+            stableFrames += 1;
+            frames += 1;
+            return true;
+          }
+          // 锚行在 → 按它的屏幕 y 回补；锚行没挂载 → 按内容总高度回补。
           //
           // 后者是必须的兜底，不是可选路径（2026-10-27 真机）：真实会话一页 8 条
           // exchange 能展开成 70+ 个时间线条目，前插后原来那行被推到索引 40 开外，
@@ -266,11 +316,15 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
             : el.scrollHeight - anchor - el.scrollTop;
           if (Math.abs(delta) > SETTLE_PX) {
             el.scrollTop += delta;
+            // 补完必须**推进参照系**：不推进的话下一帧会量到同一笔差额再补一遍
+            // （内容坐标那版实测 +4480 连写两次，视口多滚 218px）。
             if (row) anchorTop = row.getBoundingClientRect().top;
+            else anchor = el.scrollHeight - el.scrollTop;
             stableFrames = 0;
           } else {
             stableFrames += 1;
           }
+          lastScrollTop = el.scrollTop;
           frames += 1;
           return true;
         };

@@ -65,6 +65,79 @@ assert.match(timelineView, /data-timeline-key=\{String\(row\.key\)\}/, "虚拟�
 assert.match(windowing, /querySelectorAll<HTMLElement>\("\[data-timeline-key\]"\)/, "loadMore 必须找视口内锚点行");
 assert.match(windowing, /getBoundingClientRect\(\)\.top - anchorTop/, "前插必须按真实矩形回补");
 
+// ── 2026-10-28 回归：锚点的**时间基准**必须在回包那一刻 ────────────────
+// 事故：锚点在发请求之前采样（`containerTop` / `anchorTop` / `scrollHeight - scrollTop`）。
+// 提前量改成一整屏之后，请求总在用户还在上滚的时候发出去；飞行几百毫秒里他滚掉的 S 被
+// `settleStep` 的 `row.top - anchorTop` 一起算进 delta，回补写完视口整体跳 S ——
+// 这就是「加载完成后还是闪一下」。真机实测 15 行同帧整齐上移 480px（= 4 个滚轮格，
+// 正好等于飞行期间的上滚量），scrollTop 比 scrollHeight 多涨 120px。
+// 夹具 ⑦ 用「回包那一刻的锚行」做判据：旧写法 -240px 失败，新写法 0 通过。
+{
+  assert.match(
+    windowing,
+    /const captureAnchor = \(\) => \{/,
+    "锚点必须收进一个函数里，采样时机才可能被调整（也才可能被断言）",
+  );
+  const beforeRequest = windowing.slice(0, windowing.indexOf("getSessionWindow(rootId"));
+  assert.doesNotMatch(
+    beforeRequest,
+    /anchorTop = top/,
+    "锚点不能在发请求之前采样：飞行期间用户还在滚，那段距离会被算进回补",
+  );
+  const afterResponse = windowing.slice(windowing.indexOf("getSessionWindow(rootId"));
+  assert.match(
+    afterResponse,
+    /captureAnchor\(\);/,
+    "回包之后、提交之前必须重新采一次锚点（用飞行结束时的参照系）",
+  );
+  assert.ok(
+    afterResponse.indexOf("captureAnchor();") < afterResponse.indexOf("flushSync(() => {"),
+    "锚点必须在 flushSync 提交**之前**采：提交之后新行已经在 DOM 里，参照系又变了",
+  );
+}
+
+// ── 2026-10-28 回归：回补循环遇上用户上滚必须让位，且参照系不能用内容坐标 ──────
+// 事故（真机 3/5 次）：回补循环用屏幕 y，而屏幕 y 同时被「布局变了」和「用户滚了」改动，
+// 读数分不开 —— 用户滚 120px 被当成「还没补够」，一路补回去，屏幕上整块上行一个滚轮格。
+//
+// 试过的错解：换成内容坐标（`rect.top - 容器顶 + scrollTop`）。它对滚动不变，看着更干净，
+// 但会把**虚拟器自己写的 scrollTop 补偿**也抵消掉 —— 库在前进方向已经补过一笔，内容坐标
+// 读到的还是全额，我们再补一次。夹具实测库写 4480→4698，我们又 +218，六页每页漂 218px。
+// 屏幕 y 天然吸收库的补偿，只需要单独认出“这一帧是用户滚的”：
+// 库只会往**大**了写（后退方向被 G-KD 整个关掉），所以 scrollTop 变小只可能来自手势。
+{
+  const settleBlock = windowing.slice(windowing.indexOf("const settleStep = () =>"));
+  assert.doesNotMatch(
+    windowing,
+    /contentTopOf/,
+    "参照系不能用内容坐标：它把虚拟器自己的 scrollTop 补偿也抵消掉，回补会双计（夹具漂 218px）",
+  );
+  assert.match(
+    settleBlock,
+    /const delta = row\s*\n?\s*\? row\.getBoundingClientRect\(\)\.top - anchorTop/,
+    "锚行在时必须按**屏幕 y** 回补（内容坐标会双计）",
+  );
+  assert.match(
+    settleBlock,
+    /if \(el\.scrollTop - lastScrollTop < -SETTLE_PX\) \{/,
+    "用户上滚（scrollTop 变小）时必须认出这一帧，不能让回补把他的手势抵消掉",
+  );
+  assert.ok(
+    settleBlock.indexOf("el.scrollTop - lastScrollTop") < settleBlock.indexOf("el.scrollTop += delta"),
+    "让位判断必须排在写 scrollTop 之前",
+  );
+  const rebaseline = settleBlock.slice(
+    settleBlock.indexOf("el.scrollTop - lastScrollTop < -SETTLE_PX"),
+    settleBlock.indexOf("el.scrollTop += delta"),
+  );
+  assert.doesNotMatch(
+    rebaseline,
+    /el\.scrollTop\s*(\+=|-=|=)/,
+    "让位分支一个字节都不能写：写回去就等于把他滚掉的距离补回来",
+  );
+  assert.match(rebaseline, /anchorTop = row\.getBoundingClientRect\(\)\.top/, "让位时参照系必须跟着挪");
+}
+
 // ── 2026-10-27 回归：一次上滑只翻一页（失控连翻到底）─────────────────
 // 事故：锚行有 key 但前插后被推出 overscan 永不挂载时，旧代码「有 anchorKey 走矩形、
 // 无 anchorKey 走 scrollHeight」两条分支都不成立，一个字节都不写 → scrollTop 停在 0 →
