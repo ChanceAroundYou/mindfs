@@ -703,3 +703,33 @@ event_id + turn_id + event_seq + generation + version + timestamp + payload
 ### 7.8 main 后续记录（2026-10-12）
 
 当前 main 的 G-BI 延伸把 mindfs_id 放进 session.user_message 和 session.stream，供前端把 seq-less 实时缓存与持久窗口对账。overlay 对持久行按 seq 去重，对瞬时项只按角色类别 + mindfs_id 去重；相同正文不能让一项被丢弃。乐观 user 回声在服务端确认前仍可能没有 id，确认时保留一次 role+content 配对以补上权威 id。这个改动不代表 G-T 提案中的 event_id、generation、事件日志或统一 reducer 已实现。
+
+### 7.9 哪些 ResultMessage 是回合边界（G-KG，2026-10-27）
+
+§7.4 第 5 条立的是「`session.done` 只能由一个收尾编排路径决定」（G-BE）。这一条补的是它的**上游**：
+**什么才算「一轮结束」**。两条缺一不可 —— 边界判错，收尾路径本身就会被伪造的终点触发。
+
+判据（`server/internal/agent/claude/session_turn.go: isTurnBoundaryResult`）：
+
+> `ResultMessage.Origin` 缺省（`nil`）或 `Kind == human` ⇒ 回合边界；其余一律不是。
+
+原因是 SDK 的 `Stream.Messages()` 是**长驻迭代器** —— 只有一次性的 `Query()` 才在 result 上停，
+所以同一条流里会有多条 `ResultMessage`。CLI 在后台任务（`run_in_background`）完成时会把一条
+`origin.kind = "task-notification"` 的 result 插进同一流，实测**插在下一轮的开头**：
+`subtype: "success"`、`usage` 全 0、`stop_reason: null`，`resultErr` 对它返回 `nil`。
+把它当边界 ⇒ `SendMessage` 成功返回 ⇒ `EndSessionTurn` 广播 `session.done` 并清 pending，
+而 agent 还在跑。用户看到的就是「只在输出时亮灯、静默期灭灯报完成、停止全阶段失效」
+（停止失效是派生的：`activeTurns` 已清空 ⇒ `target_turn=0` ⇒ `staleCancelTarget` 恒丢弃）。
+
+口径是**白名单而非黑名单**：`MessageOriginKind` 有 6 个值（`human` / `channel` / `peer` /
+`task-notification` / `coordinator` / `auto-continuation`），黑名单只挡今天碰巧出现的那一个，
+下一种 kind 出现时症状原样复发。未知 kind 一律按非边界处理 —— 宁可让那一轮继续跑
+（仍在 `activeTurns` 里，停止按钮可用），也不要提前广播 done。
+
+非边界 result **整条跳过**：不补正文、不发 `MessageDone`、不推进 context window、不结束本轮、
+不动 `sawDelta`/`sawMessageText`。子任务输出本来就走 `TaskNotificationMessage → tool_call_update`
+卡片；润成正文会被 `persistTurnBlocks` 落成孤立句插进用户这一轮的回答里。
+
+排查提示：原始 `result` 日志在 1024 字节处截断，而 `origin` 序列化在 JSON 末尾 ——
+实测 987/1103 条 result 的 origin 在日志里根本看不到。所以非边界分支额外记一行
+`[agent/claude] result.ignored session=… origin=… subtype=… result_len=…`。

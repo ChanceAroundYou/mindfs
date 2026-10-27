@@ -14,6 +14,7 @@ to resume their old TODOs or baselines.
 - [Notification sound and unread](notification-sound-and-unread.md) — Implemented 2026-10-25，已安装到本机，待提交与 ship；三类事件提示音（完成上行三连 / 介入双击 / 出错下行闷音）+ 侧栏 ⋯「通知」面板（提示音设置并入原 PWA 推送入口）+ `nodeId::rootId::sessionKey` 未读徽标（两条会话列表都接、选中即灭）。二轮同日：跨节点完成靠 5s 轮询 pending 表 true→false 差分补音与徽标（不新增通道），灭灯后 `activity_at` 由 `inheritClientActivity` 继承，修「时间从刚刚退回 12m」。
 - [Session activity unified](session-activity-unified.md) — Plan 2026-10-25，待批准；把 `activity_at` 合并进 `updated_at`（流式期间节流落库），删除覆盖层与继承函数，刷新不再回落。
 - [Kanban create panel and shared worktree](kanban-create-panel-and-shared-worktree.md) — Implemented 2026-10-26，待提交与 ship；模板菜单 ref 断线（全部页签点模板不弹窗）、分支名输入改用 composerInputStyle、PromptEditor 去掉 fillHeight 恢复 240px 内部滚动、worktree 按「已有分支」认领 + 引用计数收尾。
+- [Result origin turn boundary](result-origin-turn-boundary.md) — Implemented 2026-10-27，待 ship；幽灵会话（只在输出时亮灯、静默期灭灯报完成、停止全阶段失效）根因是 adapter 把 CLI 插进流的 `origin.kind=task-notification` result 也当成回合边界；改为白名单（无 origin 或 human）判定 + 定向日志，取消闸门不动。
 
 
 ## Completed or superseded history

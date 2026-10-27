@@ -6917,6 +6917,8 @@ groups:
       - server/internal/agent/claude/session_message_loop.go
       - server/internal/agent/claude/session_turn.go
       - server/internal/agent/claude/session_result_origin_test.go
+      - docs/plans/result-origin-turn-boundary.md
+      - docs/message-mechanisms.md
     tests:
       - server/internal/agent/claude/session_result_origin_test.go
     anchors:
