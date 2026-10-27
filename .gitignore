@@ -25,8 +25,11 @@ build/
 *.log
 # .env* 里只有 web/.env 例外：Makefile 用 -include 读它拿 VITE_MIND_FS_BASE，
 # 没有它 make install 在新 worktree 里只能回退到兜底前缀去猜。内容无密钥。
+# 根目录的 .env 存 e2e/live/ 的线上凭证（见那个目录的 README），**必须**留在这里被挡住。
 .env*
 !web/.env
+__pycache__/
+*.pyc
 *.exe
 *.test
 vendor/

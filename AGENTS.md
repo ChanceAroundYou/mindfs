@@ -306,6 +306,11 @@ sudo systemctl restart mindfs   # 本机生效（用户执行）；worker 重启
 
 **WSL 与 fn 只收产物**：没有源码库，别在 worker 上 `make` / `git`。分发只有 `deploy-all.sh` 一条路径，细节见上方节点表。
 
+**用户报「线上还是不对」时，先确认线上跑的是哪份产物，再谈行为**：`e2e/live/`
+是对着线上站点跑复现/验收的脚本（凭证在仓库根的 `.env`，已被 `.gitignore` 挡住）。
+它和 `e2e/`（隔离实例）不可互相替代 —— 隔离实例验「代码能不能跑」，`e2e/live/` 验
+「装到线上的 bundle 是什么行为」。跑法见 `e2e/live/README.md`。
+
 - 提交用 Conventional Commits（中文描述）。
 - 改 ws.go handler 时：检查是否在 goroutine 内派发，避免阻塞读循环。
 - 改 agent session 时：Interrupt/Cancel 调用必须有超时，永远不要 `context.Background()` 裸用。

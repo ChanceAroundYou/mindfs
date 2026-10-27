@@ -1654,6 +1654,10 @@ groups:
       # useAppSessionLayer，这条原本与上游同版的测试因此变成 delta：它现在断言的是
       # 「useAppSessionLayer 必须 import restartAgent」，而不是「App.tsx 必须 import」。
       - web/tests/agent-lifecycle-restart.test.mjs
+      # e2e/live/（2026-10-27）：对着**线上**产物跑复现/验收的脚本与凭证约定。
+      # 上游没有任何 e2e 目录；它的价值在「线上装的到底是哪份 bundle」——
+      # 隔离实例全绿而线上是旧产物那次，只有它能一眼看出来。
+      - web/tests/live-env-ignored.test.mjs
       # session.ts 拆分（2026-10-10）：WS 连接管理搬进 sessionConnectionManager.ts。
       # realtimeWsHandlers.ts 拆分（2026-10-10）：session.user_message →
       # realtimeWsUserMessage.ts；session.accepted → realtimeWsSessionAccepted.ts；
