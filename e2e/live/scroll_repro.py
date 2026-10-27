@@ -55,15 +55,19 @@ def measure(page, env, root: str, key: str, settle_ms: int) -> dict:
     if not before.get("virtualized"):
         return {"skipped": "该会话没走虚拟化（条目数不到 48），连翻路径走不到"}
 
-    page.evaluate("window.__liveProbe.toTop()")
-    # 锚行在「滚到顶」之后取：那正是 loadMore 记录锚点那一刻看到的行。
-    anchor = page.evaluate("window.__liveProbe.anchor()")
+    # 计数必须在滚之前就开：哨兵在 scrollTop 落地的同一两帧内就会触发 loadMore，
+    # 等锚行再开计数会把这次请求漏掉（实测漏成 0，误报「口径可能过期」）。
     mark = len(prepends)
-    page.wait_for_timeout(settle_ms)
+    page.evaluate("window.__liveProbe.toTop()")
+    # 锚行取「回补还没落地时视口最上面那几行」。采样太晚（>150ms）会读到回补后的位置，
+    # 太早会读到虚拟器换窗口之前的旧行 —— 60ms 是实测两者之间。
+    page.wait_for_timeout(60)
+    anchor = page.evaluate("window.__liveProbe.anchors()")
+    page.wait_for_timeout(max(0, settle_ms - 60))
     fired = len(prepends) - mark
 
-    # 锚行在收敛中会短暂卸载（虚拟器先卸后挂），单点采样会读到 unmounted 而误判。
-    drift = "unmounted"
+    # 锚行在收敛中会短暂卸载（虚拟器先卸后挂），单点采样会读到 unmeasured 而误判。
+    drift = "unmeasured"
     for _ in range(10):
         drift = page.evaluate("saved => window.__liveProbe.anchorDrift(saved)", anchor)
         if isinstance(drift, int):

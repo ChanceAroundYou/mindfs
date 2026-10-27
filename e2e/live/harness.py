@@ -86,23 +86,30 @@ window.__liveProbe = {
       virtualized: document.querySelectorAll('[data-index]').length > 0,
     };
   },
-  // 视口内第一条可见行 —— 用它判「位置有没有回到原位」，比 scrollTop 数字有意义：
+  // 视口内最上面几行的键 —— 用它判「位置有没有回到原位」，比 scrollTop 数字有意义：
   // 前插会让 scrollHeight 整体变化，scrollTop 变大是正常的，行没动才是对的。
-  anchor() {
+  // 取三行而不是一行：回补过程中最上面那行可能正好被虚拟器卸载，只留一行会读不到。
+  anchors() {
     const el = this.scroller();
-    if (!el) return null;
+    if (!el) return [];
     const top = el.getBoundingClientRect().top;
+    const out = [];
     for (const row of el.querySelectorAll('[data-timeline-key]')) {
       const r = row.getBoundingClientRect();
-      if (r.top >= top - 1) return { key: row.dataset.timelineKey, top: Math.round(r.top) };
+      if (r.top >= top - 1) out.push({ key: row.dataset.timelineKey, top: Math.round(r.top) });
+      if (out.length === 3) break;
     }
-    return null;
+    return out;
   },
   anchorDrift(saved) {
-    if (!saved) return null;
-    const row = this.scroller()?.querySelector(`[data-timeline-key="${CSS.escape(saved.key)}"]`);
-    if (!row) return 'unmounted';
-    return Math.round(row.getBoundingClientRect().top) - saved.top;
+    const el = this.scroller();
+    if (!el || !saved || !saved.length) return 'unmeasured';
+    // 逐个试：第一个还挂载着的就是判据。
+    for (const item of saved) {
+      const row = el.querySelector(`[data-timeline-key="${CSS.escape(item.key)}"]`);
+      if (row) return Math.round(row.getBoundingClientRect().top) - item.top;
+    }
+    return 'unmeasured';
   },
   toTop() { const el = this.scroller(); if (el) el.scrollTop = 0; return this.metrics(); },
   toBottom() { const el = this.scroller(); if (el) el.scrollTop = el.scrollHeight; return this.metrics(); },
