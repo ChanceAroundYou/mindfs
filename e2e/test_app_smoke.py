@@ -1,7 +1,7 @@
 """App.tsx 运行时冒烟测试（Playwright + pytest）。
 
 跑法（**刻意不进常规门禁**）：
-    ~/.hermes/hermes-agent/.venv/bin/python -m pytest e2e/ -v
+    .venv/bin/python -m pytest e2e/ -v
 
 定位：给 App.tsx 这类巨文件的拆分当安全网 —— 只断言「用户真的能看见/点得到」，
 不断言实现细节，所以拆分挪代码不会误报，真拆坏了才会红。

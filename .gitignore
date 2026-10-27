@@ -30,6 +30,8 @@ build/
 !web/.env
 __pycache__/
 *.pyc
+# e2e 用的仓库自带 venv（依赖清单在 e2e/requirements.txt，venv 本身不入库）
+.venv/
 *.exe
 *.test
 vendor/

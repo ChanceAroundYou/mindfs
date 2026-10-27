@@ -12,6 +12,18 @@
 两者不可互相替代。2026-10-27 那次就是：本地隔离实例全绿，线上装的却还是旧 bundle ——
 只有对着线上跑才能一眼看出来。
 
+## 环境（本仓库自己的一份，别借别人的 venv）
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r e2e/requirements.txt
+.venv/bin/python -m playwright install chromium   # 首次才需要
+```
+
+全部命令用 `.venv/bin/python`。借 `~/.hermes/...` 那种外部 venv 的问题不是洁癖：
+它的 playwright 版本随时被别人升级，而 playwright 与 Chromium revision 是绑死的
+（1.61.0 ↔ chromium-1228），升一次就全体选择器/时序失灵，且症状是超时而非报错。
+
 ## 凭证
 
 仓库根的 `.env`（被 `.gitignore` 的 `.env*` 挡住，**不入库**）：
@@ -29,7 +41,7 @@ MINDFS_LIVE_PASS=<口令>
 
 ```bash
 # 一次上滑是否连翻多页（默认自动挑一条历史 ≥24 条、走了虚拟化的会话）
-~/.hermes/hermes-agent/.venv/bin/python e2e/live/scroll_repro.py
+.venv/bin/python e2e/live/scroll_repro.py
 
 # 换站点 / 换项目 / 指定会话 / 看着它跑
 ... scroll_repro.py --url http://127.0.0.1:7431/mindfs --root proj
@@ -41,8 +53,8 @@ MINDFS_LIVE_PASS=<口令>
 
 退出码：`0` 正常、`1` 复现到了问题、`2` 找不到够长的会话、`3` 该会话没走虚拟化。
 
-用 `~/.hermes/hermes-agent/.venv/bin/python`（Playwright 1.61 + 对应 Chromium 都在里面）。
-**不要用 `npx playwright`** —— 那是另一套缓存，浏览器版本对不上。
+用仓库根的 `.venv/bin/python`（依赖见 `e2e/requirements.txt`）。
+**不要用 `npx playwright` / 系统 python** —— 那是另外两套缓存，浏览器版本对不上。
 
 ## 判断口径（为什么不是「看它跳不跳」）
 

@@ -1,0 +1,11 @@
+# e2e/ 的 Python 依赖（隔离实例冒烟 + e2e/live 线上复现）。
+#
+# 装法（在仓库根执行，一次性）：
+#     uv venv --python 3.12 .venv
+#     uv pip install --python .venv/bin/python -r e2e/requirements.txt
+#     .venv/bin/python -m playwright install chromium    # 首次才需要，浏览器缓存在 ~/.cache/ms-playwright
+#
+# playwright 版本必须与所用 Chromium 的 revision 对应：1.61.0 ↔ chromium-1228。
+# 升版本前先在 e2e/live/ 跑一次（它比 pytest 那套更早暴露选择器/时序问题）。
+playwright==1.61.0
+pytest==9.1.1

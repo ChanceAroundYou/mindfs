@@ -3,7 +3,7 @@
 定位：给 App.tsx 这类巨文件的拆分提供「跑起来没坏」的安全网。
 **刻意不进常规门禁**（`npm test` / `check-upstream`），单独命令跑：
 
-    ~/.hermes/hermes-agent/.venv/bin/python -m pytest e2e/ -v
+    .venv/bin/python -m pytest e2e/ -v
 
 为什么用「后端直接服务 dist」而不是 vite dev server：
 - 本机 7331 被真实 mindfs 服务占着，而 vite.config.ts 的代理目标硬编码 7331；

@@ -5,7 +5,7 @@
 自己写 `scrollTop = 0`，等于替用户反复触发，所以它从来抓不到「一次上滑连翻到底」。
 这个脚本补的就是那一条：**只滚一次，然后完全不操作**，看后续自己又翻了几页。
 
-    ~/.hermes/hermes-agent/.venv/bin/python e2e/live/scroll_repro.py
+    .venv/bin/python e2e/live/scroll_repro.py
     ... --url http://127.0.0.1:7431/mindfs         # 换实例
     ... --session <key> --root <root>              # 指定会话
     ... --bundle <旧 index-*.js>                   # 用旧产物跑同一段（变异验证）

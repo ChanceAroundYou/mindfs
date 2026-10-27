@@ -13,17 +13,25 @@
 
 ```bash
 # 完整跑（先按 /mindfs 前缀构建 dist，再编译后端、起服务、跑 10 个用例）
-~/.hermes/hermes-agent/.venv/bin/python -m pytest e2e/ -v -p no:cacheprovider
+.venv/bin/python -m pytest e2e/ -v -p no:cacheprovider
 
 # 迭代时复用已有 dist（快很多；dist 必须是 VITE_MIND_FS_BASE=/mindfs 构建的）
-E2E_SKIP_BUILD=1 ~/.hermes/hermes-agent/.venv/bin/python -m pytest e2e/ -v -p no:cacheprovider
+E2E_SKIP_BUILD=1 .venv/bin/python -m pytest e2e/ -v -p no:cacheprovider
 
 # 看夹具里的 print 输出
 ... -s
 ```
 
-依赖：`~/.hermes/hermes-agent/.venv` 里的 Python + Playwright 1.61.0 + pytest 9.1.1，
-以及 `~/.cache/ms-playwright/` 里的 Chromium。**不要用 `npx playwright`**（那是另一个缓存版本）。
+依赖：仓库根的 `.venv`（`e2e/requirements.txt`：Playwright 1.61.0 + pytest 9.1.1）：
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r e2e/requirements.txt
+.venv/bin/python -m playwright install chromium   # 首次才需要
+```
+
+**不要借外部 venv，也不要用 `npx playwright`**：playwright 与 Chromium revision 绑死
+（1.61.0 ↔ chromium-1228），借来的那份被谁升一次就全体失效，且症状是超时而非报错。
 
 ## 隔离设计（不碰真实机器状态）
 

@@ -4,6 +4,14 @@
 验的是「这份代码能不能跑」；这里直接开线上站点，验的是「装到线上的那个 bundle
 到底什么行为」—— 两者不可互相替代，线上装的是旧产物时只有这边能看出来。
 
+依赖在仓库根的 `.venv`（见 `e2e/requirements.txt`），**不要借外部 venv**：
+playwright 与 Chromium revision 绑死（1.61.0 ↔ chromium-1228），借来的那份被谁升一次
+就全体失效，且症状是超时而不是报错。
+
+    uv venv --python 3.12 .venv
+    uv pip install --python .venv/bin/python -r e2e/requirements.txt
+    .venv/bin/python -m playwright install chromium
+
 凭证从仓库根的 `.env` 读（已被 `.gitignore` 的 `.env*` 挡住，不会入库）：
 
     MINDFS_LIVE_URL=https://home.xiaokubao.space/mindfs
@@ -145,7 +153,9 @@ def open_session(page, env: dict[str, str], root: str, key: str) -> None:
     url = f"{env['MINDFS_LIVE_URL']}/?root={root}&session={key}&view=chat"
     page.goto(url, wait_until="domcontentloaded", timeout=60_000)
     skip_tour(page)
-    page.wait_for_selector("[data-timeline-key]", timeout=60_000)
+    # 等「挂载」而不是「可见」：虚拟化下第一条数据行常常在视口外（或高度还没测出来），
+    # 等的目标只是「时间线渲染出来了」，可见与否跟这条判据无关。
+    page.wait_for_selector("[data-timeline-key]", state="attached", timeout=60_000)
     page.evaluate(PROBE_JS)
 
 
