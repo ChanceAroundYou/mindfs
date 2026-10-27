@@ -65,6 +65,12 @@ const pagingWindow = (beforeSeq?: number, latest?: number) => {
   };
 };
 let pagingPrepends = 0;
+// 前插请求发出瞬间的视口位置 —— 用来判触发点提前了多少。默认 0 延迟（不影响既有
+// 检查），需要观察加载态的检查可以用 check.setPagingDelay 临时拖慢回包。
+let pagingDelayMs = 0;
+let lastPrependAt: { top: number; client: number; height: number } | null = null;
+const scrollerEl = () => [...document.querySelectorAll('div')]
+  .find(node => getComputedStyle(node).overflowY === 'auto') as HTMLElement | undefined;
 sessionService.getSessionWindow = async (_root, key, opts) => {
   // 'virtual-test' 建模「后端一次给全量历史」：`useTargetSeqScroll` 的虚拟化快路径要求
   // `windowMeta.minSeq > 0 && target ∈ [minSeq, maxSeq]`，否则目标行没挂载就永远找不到。
@@ -88,8 +94,12 @@ sessionService.getSessionWindow = async (_root, key, opts) => {
     lastPrepend = first
       ? { key: String(first.getAttribute('data-timeline-key') || ''), top: first.getBoundingClientRect().top }
       : null;
+    const el = scrollerEl();
+    lastPrependAt = el ? { top: el.scrollTop, client: el.clientHeight, height: el.scrollHeight } : null;
   }
-  return pagingWindow(opts?.beforeSeq, opts?.latest) as any;
+  const result = pagingWindow(opts?.beforeSeq, opts?.latest) as any;
+  if (pagingDelayMs > 0) await new Promise(resolve => setTimeout(resolve, pagingDelayMs));
+  return result;
 };
 function Check() {
   const [session,setSession]=useState<any>({key:'virtual-test',exchanges,exchange_aux});
@@ -100,6 +110,13 @@ function Check() {
     replaceSession: (next: any) => { setTarget(0); setSession(next); },
     paging: () => { setTarget(0); setSession({key:'paging-test', exchanges:[], exchange_aux:{}}); },
     prepends: () => pagingPrepends,
+    // 观察窗口（2026-10-27 两条新行为的判据）：
+    //   lastPrependAt —— 请求发出瞬间的 scrollTop / clientHeight / scrollHeight，
+    //                    用来判「触发点是不是提前了半个屏」；
+    //   lastPrependAt —— 请求发出瞬间的 scrollTop / clientHeight / scrollHeight，
+    //                    用来判「触发点是不是提前了半个屏」。
+    setPagingDelay: (ms: number) => { pagingDelayMs = ms; },
+    lastPrependAt: () => lastPrependAt,
     question: () => setSession((s: any) => ({...s, pending: true, exchanges: [...s.exchanges, {
       role: 'tool', content: '', toolCall: {
         callId: 'question', kind: 'ask_user', status: 'running',
@@ -298,7 +315,57 @@ Object.assign(window, { runPagingChecks: async (opts: any = {}) => {
   await settle(500);
   check(!jumpButton(), 'paging: dragging back to the bottom must hide it without a click');
 
-  return { passed: problems.length === 0, pages, drifts, maxDrift, idlePages, clickGap, upGap, hiddenWhileUp, problems };
+  // ⑤ 触发点提前半屏（2026-10-27）：不必滚到顶就该开始加载。
+  // 判据落在**请求发出那一刻的视口位置**上：还在离顶 0.3 屏以上就该发出去；旧的
+  // 200px 提前量必然要滚到离顶 200px 以内才触发，压不过这条。
+  //
+  // 不能一次跳到目标位置 —— 跨过未渲染区间时虚拟器会按测量修正 scrollTop，写进去的
+  // 值当场被改掉（实测写 259、落回 501，正好被推出半屏带，于是「不触发」）。改成每次
+  // 上移 100px，每一步都落在已渲染区间里。
+  const aheadEl = scroller();
+  aheadEl.scrollTop = Math.round(aheadEl.clientHeight * 1.5);
+  await settle(400);
+  const beforeAhead = prepends();
+  for (let step = 0; step < 30 && prepends() === beforeAhead; step++) {
+    aheadEl.scrollTop = Math.max(0, aheadEl.scrollTop - 100);
+    await settle(200);
+  }
+  const aheadFired = prepends() - beforeAhead;
+  const aheadAt = (window as any).check.lastPrependAt();
+  check(aheadFired === 1, `paging: pull-in fired ${aheadFired} times while scrolling up (expected 1)`);
+  check(
+    !!aheadAt && aheadAt.top > aheadAt.client * 0.3,
+    `paging: pull-in fired too late (at ${aheadAt?.top}px with a ${aheadAt?.client}px viewport)`,
+  );
+
+  // ⑥ 上反转圈不占布局（2026-10-27）：转圈出现期间 scrollHeight 不该变、包裹层高度为 0。
+  //
+  // 直接量 DOM，不从回包里取样：回包前的转圈正是要判的那一瞬间，而桩里只有 `await`
+  // 之后才有机会读数 —— 那时 `loadingMore` 已经回到 false（实测 spinner 恒为 null）。
+  await settle(600);
+  const heightBeforeSpinner = scroller().scrollHeight;
+  (window as any).check.setPagingDelay(700);
+  scroller().scrollTop = 0;
+  await settle(250);
+  const spinnerEl = document.querySelector('[data-session-loading-more]') as HTMLElement | null;
+  const spinnerWrapper = spinnerEl?.parentElement as HTMLElement | null;
+  const spinnerHeight = scroller().scrollHeight;
+  (window as any).check.setPagingDelay(0);
+  await settle(1200);
+  check(!!spinnerEl, 'paging: spinner was not rendered while a page was in flight');
+  check(
+    (spinnerWrapper?.offsetHeight ?? -1) === 0,
+    `paging: spinner wrapper must be zero-height (got ${spinnerWrapper?.offsetHeight}px)`,
+  );
+  check(
+    spinnerHeight >= heightBeforeSpinner,
+    'paging: scrollHeight must not shrink while a page is in flight',
+  );
+
+  return {
+    passed: problems.length === 0, pages, drifts, maxDrift, idlePages, clickGap, upGap, hiddenWhileUp,
+    aheadFired, prependAt: (window as any).check.lastPrependAt(), problems,
+  };
 }});
 
 // Run via a browser console or agent-browser eval. No server/agent data is used.

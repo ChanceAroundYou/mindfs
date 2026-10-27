@@ -1,4 +1,5 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
 import {
   SESSION_WINDOW_SIZE,
@@ -12,6 +13,18 @@ import {
   type SessionWindowMeta,
 } from "../../services/session";
 import type { ExchangeArray, SessionItem } from "./sessionViewerTypes";
+
+/**
+ * 顶部预取的提前量：哨兵距视口顶不足「视口高度 × 这个比例」就请求上一页。
+ *
+ * 原先只提前 200px，用户得**先看见内容不够**才等到加载，观感上是「滚到顶停一下、然后
+ * 突然补一屏」。半屏是手机与桌面都够用的提前量：一页通常不止半屏，所以一次手势仍然
+ * 只翻一页（见 `armedRef`）。
+ */
+const LOAD_MORE_AHEAD_RATIO = 0.5;
+
+/** 前插后要再往上滚这么多才算「用户又动了」，才允许下一次自动加载。 */
+const PREPEND_REARM_PX = 24;
 
 export type SessionWindowingCtx = {
   session: SessionItem | null;
@@ -70,10 +83,25 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     stickSessionToBottom,
   } = ctx;
 
+  // 「允许自动加载」的闸门。每次前插完成后置假，用户再往上滚 PREPEND_REARM_PX 才置真。
+  // 没有它，触发点提前半屏之后，回补完成时哨兵往往仍在提前量之内，IO 重建即回调，
+  // 一次手势能连翻好几页（2026-10-27 已因同样形态连翻 29 页，见 loadMore 注释）。
+  const armedRef = useRef(true);
+  // 重新武装必须**重建 observer**：哨兵在回补后一直停在提前量之内，intersection 状态
+  // 没有变化，IO 不会再投递一次 —— 只把 ref 置真，下一页永远等不到触发（实测：置于 259px
+  // 处再滚也不加载）。epoch 变化让下方 effect 重跑，新 observer 立刻投递一次 intersecting。
+  const [armEpoch, setArmEpoch] = useState(0);
+  // 用 ref 记住上一次 scrollTop 与当前会话，避免给 effect 增加依赖（哨兵 effect 每换一次
+  // loadMore 身份就要重建 observer，多一个依赖就多一次重建）。
+  const armWatchRef = useRef<{ key: string | null; top: number }>({ key: null, top: 0 });
+
   // 初始化：会话切换时拉取尾部窗口，复位置底；拉取失败回退到 props 传入的全量/窗口。
   useEffect(() => {
     let cancelled = false;
     setLoadingMore(false);
+    // 切会话重置闸门：新会话的首屏还没铺满，哨兵本来就在视口里，这时必须允许加载。
+    armedRef.current = true;
+    armWatchRef.current = { key: sessionKey, top: 0 };
     if (!sessionKey) {
       setVisibleExchanges([]);
       setVisibleAux({});
@@ -134,12 +162,22 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
   }, [sessionKey, rootId, applyWindow]);
 
   // 向上翻页：锚定视口内第一条可见行，请求 beforeSeq=minSeq 的历史段，
-  // 函数式前置合并后在随后的若干帧里按**真实矩形**回补滚动位置。
+  // 函数式前置合并后在若干帧里按**真实矩形**回补滚动位置。
   const loadMore = useCallback(() => {
     const container = activeScrollRef?.current;
     // isPrependingRef：上一页还在回补位置时不接新请求。否则哨兵（scrollTop 尚未恢复时
     // 仍停在视口里）会把下一页连着点着，一次上滑把历史全部加载完（2026-10-27 真机）。
-    if (!container || loadingMore || isPrependingRef.current || !windowMeta.hasMore || !sessionKey) {
+    // armedRef：每次前插之后必须**再滚一次**才重新武装。触发点提前到半屏以后，哨兵在
+    // 回补完成后可能仍落在提前量之内（短页更是如此），IO 每次重建都会立刻回调 ——
+    // 只靠 isPrependingRef 挡不住「page 之间的间隙」，一次手势又会连翻好几页。
+    if (
+      !container ||
+      loadingMore ||
+      isPrependingRef.current ||
+      !armedRef.current ||
+      !windowMeta.hasMore ||
+      !sessionKey
+    ) {
       return;
     }
     // G-KB 回归修复（2026-10-27）：以前只记 `scrollHeight - scrollTop` 并在一个 rAF 里
@@ -183,11 +221,19 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
           (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
         const winBlocks =
           (winSession?.blocks as Record<string, SessionBlock[]>) || {};
-        setVisibleExchanges((prev) => mergeSessionExchanges(winExchanges, prev) as ExchangeArray);
-        setVisibleAux((prev) => ({ ...prev, ...winAux }));
-        setVisibleBlocks((prev) => ({ ...prev, ...winBlocks }));
-        setWindowMeta(res.meta);
-        setLoadingMore(false);
+        // 状态提交必须同步落地（flushSync），否则「提交」和「回补」会跨帧错位：
+        // 平时 React 会把这四个 setState 排到下一帧，而 rAF 回调完全可能插在提交**之前**
+        // 跑 —— 那一帧读到的还是旧 DOM，delta 为 0、回补落空；新行则在下一帧一次性推上来，
+        // 用户看到的就是「闪一下 + 位置抖一下」（2026-10-27 真机）。
+        // flushSync 让新行在本次任务内进入 DOM，紧接着的一次同步回补就发生在**浏览器绘制
+        // 之前**，中间没有任何一帧呈现未补偿的状态。
+        flushSync(() => {
+          setVisibleExchanges((prev) => mergeSessionExchanges(winExchanges, prev) as ExchangeArray);
+          setVisibleAux((prev) => ({ ...prev, ...winAux }));
+          setVisibleBlocks((prev) => ({ ...prev, ...winBlocks }));
+          setWindowMeta(res.meta);
+          setLoadingMore(false);
+        });
         let frames = 0;
         let stableFrames = 0;
         // 帧数上限按「稳定即收工」定：新挂载行的实测（ResizeObserver）与 loading 占位的
@@ -195,12 +241,10 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
         const MAX_FRAMES = 40;
         const MIN_FRAMES = 4;
         const SETTLE_PX = 1;
-        const settle = () => {
+        // 单步回补：把视口拉回锚行原处。返回 false 表示容器已不在。
+        const settleStep = () => {
           const el = activeScrollRef?.current;
-          if (!el) {
-            isPrependingRef.current = false;
-            return;
-          }
+          if (!el) return false;
           const row = anchorKey
             ? el.querySelector<HTMLElement>(`[data-timeline-key="${CSS.escape(anchorKey)}"]`)
             : null;
@@ -224,11 +268,26 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
             stableFrames += 1;
           }
           frames += 1;
+          return true;
+        };
+        // 第一次同步跑（绘制前），之后交回 rAF 继续吸收测量修正。
+        if (!settleStep()) {
+          isPrependingRef.current = false;
+          return;
+        }
+        const settle = () => {
+          if (!settleStep()) {
+            isPrependingRef.current = false;
+            return;
+          }
           if ((frames < MIN_FRAMES || stableFrames < 3) && frames < MAX_FRAMES) {
             window.requestAnimationFrame(settle);
             return;
           }
           isPrependingRef.current = false;
+          // 收工即上闸：回补后视口停在这里，用户得再往上滚 PREPEND_REARM_PX 才允许下一页。
+          armedRef.current = false;
+          armWatchRef.current = { key: sessionKey, top: activeScrollRef?.current?.scrollTop ?? 0 };
         };
         window.requestAnimationFrame(settle);
       })
@@ -238,7 +297,11 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
       });
   }, [loadingMore, windowMeta, sessionKey, rootId]);
 
-  // 顶部哨兵：进入视口（rootMargin 200px）触发 loadMore，hasMore 耗尽后自动不观察。
+  // 顶部哨兵：进入视口（提前量为半个视口）触发 loadMore，hasMore 耗尽后自动不观察。
+  //
+  // 提前量从 200px 提到半屏：原先要「看见内容不够」才开始加载，观感是滚到顶停一下再补一屏。
+  // 提前之后，哨兵在回补完成后通常仍落在提前量之内，所以必须配 `armedRef` —— 每次前插
+  // 完成后置假，只有用户再往上滚 PREPEND_REARM_PX 才重新武装，否则 IO 每次重建都会立刻回调。
   useEffect(() => {
     const sentinel = topSentinelRef.current;
     const root = scrollRef.current;
@@ -251,9 +314,30 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
           loadMore();
         }
       },
-      { root, rootMargin: "200px 0px 0px 0px", threshold: 0 },
+      { root, rootMargin: `${Math.round((root.clientHeight || 0) * LOAD_MORE_AHEAD_RATIO)}px 0px 0px 0px`, threshold: 0 },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [windowMeta.hasMore, loadMore]);
+  }, [windowMeta.hasMore, loadMore, armEpoch]);
+
+  // 重新武装：前插落地后记下视口位置，用户再往上滚 PREPEND_REARM_PX 才允许下一次自动加载。
+  // 单独一个 effect（依赖只有 sessionKey），避免给哨兵 effect 增加依赖 —— 它每换一次
+  // loadMore 身份就要重建 observer，多一个依赖就多一次重建。
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const onScroll = () => {
+      if (armedRef.current) return;
+      const anchor = armWatchRef.current;
+      if (anchor.key !== sessionKey) return;
+      if (root.scrollTop < anchor.top - PREPEND_REARM_PX) {
+        armedRef.current = true;
+        // 重建 observer：上一页回补时它已经在提前量之内 intersecting 过一次，
+        // 之后没有状态变化就不会再投递 —— 只置 ref 的话，下一页永远等不到触发。
+        setArmEpoch((n) => n + 1);
+      }
+    };
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => root.removeEventListener("scroll", onScroll);
+  }, [sessionKey]);
 }

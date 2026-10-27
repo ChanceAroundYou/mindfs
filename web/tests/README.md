@@ -21,7 +21,14 @@ up until six history pages load and asserts the anchor row's real rect drift
 stays within one line, then that clicking "jump to latest" lands exactly on
 `scrollHeight - clientHeight` (`gap === 0`), and that the button's visibility
 tracks the actual distance from bottom for programmatic scrollbar drags as well
-as gestures. Pass `{only:"prepend"}` to stop after the first phase.
+as gestures. It also pins the 2026-10-27 behaviour changes: the pull-in must fire
+while more than 0.3 of a viewport is still left above (`scrollTop > 0.3 ×
+clientHeight` at request time), and the up-scroll spinner must occupy no layout
+(its wrapper `offsetHeight === 0`, and `scrollHeight` must not shrink while a
+page is in flight). Pass `{only:"prepend"}` to stop after the first phase.
+Run each of these on a fresh page — `runVirtualizationChecks` leaves the fixture
+on a short folded-diff session where the remaining scroll range is under 45px,
+so `runScrollIntentChecks` right after it cannot complete its 12 upward steps.
 
 The fixture renders the real SessionViewer with 3,000 synthetic tool calls and
 stubs detail requests. It checks bounded mounting, initial tail positioning,

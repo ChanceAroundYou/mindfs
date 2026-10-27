@@ -1,6 +1,6 @@
 # 会话滚动三处回归：按钮显隐跟位置 / 到底逐帧收敛 / 前插按元素锚定
 
-状态：Implemented 2026-10-27（含第三轮「一次上滑连翻到底」修复），隔离实例 + 无头 Chromium 已验，待 ship。
+状态：Implemented 2026-10-27（含第三轮「一次上滑连翻到底」与第四轮「上翻转圈 + 画面稳定 + 半屏提前量」修复），隔离实例 + 无头 Chromium 已验，待 ship。
 
 ## 症状（用户 2026-10-27 报）
 
@@ -142,16 +142,58 @@ fixture 改成真实形状（每条 exchange 带 20 张工具卡，`kind` 交替
 缺陷并修掉（见上表），不是产品回归；顺带修了 fixture 的陈旧 import
 （`components/SessionViewer` → `components/session/SessionViewer`），否则页面根本挂不上。
 
+### 第四次验证（2026-10-27 用户第二轮反馈：加载闪、晃、触发太晚）
+
+用户原话：「滚着滚着加载然后闪一下，进度也还是存在晃动。我们能不能明确加入转圈动画，
+然后确保加载更旧的内容时画面完全稳定不动？并且把加载触发点提前一点，还差半个屏幕的时候就开始加载。」
+
+三条一起改（都在 `useSessionWindowing.ts` + `SessionViewerLoadingState.tsx`）：
+
+| 症状 | 根因 | 改法 |
+|---|---|---|
+| 加载时闪一下、位置晃一下 | 转圈是文档流里 `padding: 8px 0` + 14px 的块，出现时把正文整体下推约 30px、消失时推回来，叠在前插回补上 | `position: sticky; top: 6px; height: 0` 浮层 + `pointer-events: none`；盒模型高度为零，出现/消失都不移动任何行 |
+| 新一屏「啪」地推上来 | React 把这批 setState 排到下一帧，rAF 回调可能排在提交**之前** —— 那帧读到旧 DOM，`delta` 为 0、回补落空 | `flushSync` 同步提交，紧接着**同步**跑第一步 `settleStep()`（绘制之前），之后才交回 rAF 收敛 |
+| 要滚到顶才开始加载 | `rootMargin` 固定 200px | 改成 `clientHeight × LOAD_MORE_AHEAD_RATIO(0.5)`；配 `armedRef` 重新武装闸门（收工上闸，再上滚 `PREPEND_REARM_PX(24)` 才放行） |
+
+**闸门必须重建 observer**（本轮踩的坑）：触发点提前半屏后，回补完成时哨兵通常仍在
+提前量之内，intersection 状态没有变化 —— 只把 `armedRef` 置真，IntersectionObserver
+不会再投递一次，**上一页结束后就再也点不动**。实测：置于 `scrollTop = 259`（半屏带内）
+再滚也不加载。修法是把 `armEpoch` 加进哨兵 effect 的依赖，重新武装时 `setArmEpoch(n+1)`
+让 observer 重建、立刻投递一次 intersecting。
+
+`runPagingChecks` 补两条断言（⑤⑥），两条都先被夹具自身的问题挡了一轮：
+
+- **⑤ 提前量**：一度按「跳到 `0.3 × clientHeight` 等 900ms」写，恒为 0 次触发。查明是
+  **夹具**写了跨过未渲染区间的 `scrollTop`，虚拟器的测量补偿当场把它推回 501（半屏带之外）；
+  代码没问题。改成每步上移 100px（每步都落在已渲染区间），并直接断言「请求发出那一刻
+  `scrollTop > 0.3 × clientHeight`」。
+- **⑥ 转圈不占布局**：一度从桩函数里取样，`spinner` 恒为 `null` —— 桩里只有 `await`
+  之后才有机会读数，而那时 `loadingMore` 已经回到 false。改成在回包挂起期间**直接量 DOM**
+  （`[data-session-loading-more]` 的包裹层 `offsetHeight === 0`，且 `scrollHeight` 不缩）。
+
+修后结果（桌面 1280×900）：
+`{"passed":true,"pages":6,"drifts":[0,0,0,0,0,0],"maxDrift":0,"idlePages":1,"clickGap":0,"upGap":50,"hiddenWhileUp":false,"aheadFired":1}`
+（`prependAt` 显示请求发出时 `scrollTop ≈ 380 / clientHeight 864`，即还剩约 0.44 屏就开跑）。
+`runVirtualizationChecks` / `runStreamingTextChecks` / `runScrollIntentChecks` 亦全绿。
+
+> 注意 `runVirtualizationChecks` 之后紧接着跑 `runScrollIntentChecks` 会红
+> （`wheel: slow upward scrolling made no progress`）：前者结束时把夹具停在短会话 +
+> 折叠 diff 的形状上（`scrollHeight - clientHeight = 35`），上滚 12×5px 走不完 45px。
+> 不是产品回归 —— 单跑或紧接 `runPagingChecks` 都通过；README 也是「新开页面再跑」。
+
 ## 影响文件
 
 - `web/src/components/session/useSessionViewerScroll.ts` — 显隐判据 + 逐帧收敛
 - `web/src/components/session/useSessionWindowing.ts` — 元素矩形锚定 + 多帧收敛 + 窗口态按会话重建
+  + `flushSync` 提交 + 同步首步回补 + 半屏提前量 + `armedRef`/`armEpoch` 重新武装闸门
+- `web/src/components/session/SessionViewerLoadingState.tsx` — 上翻转圈改零高度 sticky 浮层
 - `web/src/components/session/SessionViewerTimeline.tsx` — 虚拟行加 `data-timeline-key` + 透传 `toolViewCache`
 - `web/src/components/session/SessionViewer.tsx` — 会话级 `toolViewCache`
 - `web/src/components/session/sessionViewer{Tool,Auxiliary}TimelineHelpers.tsx` — 接上缓存
 - `web/src/components/stream/ToolCallGroupCard.tsx` — 组卡展开态进缓存
-- `web/tests/session-viewer-scroll-split.test.mjs` — 12 条源码级回归断言（含窗口态重置顺序、
-  「一次上滑只翻一页」的 `isPrependingRef` 门禁与锚行缺失兜底）
+- `web/tests/session-viewer-scroll-split.test.mjs` — 13 条源码级回归断言（含窗口态重置顺序、
+  「一次上滑只翻一页」的 `isPrependingRef` 门禁与锚行缺失兜底、`flushSync` 提交时机、
+  零高度转圈、`armEpoch` 重建 observer）
 - `web/tests/tool-view-cache.test.mjs` — 新增：钉住 `toolViewCache` 整条接线
 - `web/tests/session-virtualization.tsx` — 分页 fixture + `runPagingChecks` + 两处 fixture 修正
 - `web/tests/deploy-web-assets.test.mjs` — 断言跟着 `62f88294` 的脚本拆分搬家
@@ -160,8 +202,8 @@ fixture 改成真实形状（每条 exchange 带 20 张工具卡，`kind` 交替
 
 ## 门禁
 
-`npx tsc --noEmit` 干净；`npm test` 415 通过、6 跳过、**0 失败**（194 个测试文件通过、5 跳过）；
-`make build-web` 成功；`make check-upstream` 全绿（1442 个 delta 文件 / 260 组）。
+`npx tsc --noEmit` 干净；`npm test` 416 通过、6 跳过、**0 失败**（195 个测试文件通过、5 跳过）；
+`make build-web` 成功；`make check-upstream` 全绿。
 
 ## 明确不做
 
