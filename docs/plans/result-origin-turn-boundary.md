@@ -1,6 +1,6 @@
 # 幽灵会话：只把「真回合」的 ResultMessage 当回合边界
 
-状态：Implemented 2026-10-27，待 ship。
+状态：Implemented 2026-10-27，隔离实例 E2E 已验，待 ship。
 
 ## 症状（用户 2026-10-27 报）
 
@@ -77,8 +77,17 @@ func isTurnBoundaryResult(msg claudeagent.ResultMessage) bool {
   通知先到不弹 waiter、真回合只弹第一个；非人类 origin 的错误 result 也不塞错误给本轮。
 - 变异验证：`isTurnBoundaryResult` 恒 `true` ⇒ 测试 1/3/4 红；恒 `false` ⇒ 测试 2/3 红。两条都实测过。
 - `make test` 全绿、`make check-upstream` 绿（G-KG 登记完整）。
+- **隔离实例 E2E（2026-10-27，`scripts/mindfs-iso.sh`，端口 7431）**，三轮真回合：
+  1. `run_in_background` 起后台任务 → 后台完成时日志出现
+     `[agent/claude] result.ignored session=… origin="task-notification" subtype="success" result_len=24`，
+     **后面没有紧跟 `session.done`**（修前这里同秒就是 done）。那条 result 的正文是「后台命令已完成。」，
+     正是修复前会润进用户这一轮回答的噪声。
+  2. 紧随其后的一轮前台 `sleep 25`：`/api/replying-sessions` 全程 20 次轮询都是 `replying`，
+     直到真 done 才缺席 —— 静默期灯保持亮（修前静默期必灭）。
+  3. 干净单轮前台 `sleep 90`，15s 时按停止：`session.cancel` 日志带 `target_turn=8`（非 0），
+     cancel → `session.done` 实测 **0.1s**（要求 < 3s）。
 - 线上回看口径（部署后）：`journalctl --user -u mindfs | grep -A2 'result.ignored'`
-  不应再出现紧随其后的 `session.done`，且静默期小蓝灯保持亮。
+  不应再出现紧随其后的 `session.done`。
 
 ## 与 G-BE 的关系
 
