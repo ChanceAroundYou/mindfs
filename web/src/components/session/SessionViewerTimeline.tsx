@@ -9,6 +9,7 @@ import { copyText } from "../../platform/clipboard";
 import { formatSessionDuration } from "../../shared/sessionDuration";
 import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
 import { renderToolTimelineItem } from "./sessionViewerToolTimelineHelpers";
+import type { ToolCallViewCache } from "../stream/useToolCallCard";
 import { renderAuxiliaryTimelineItem } from "./sessionViewerAuxiliaryTimelineHelpers";
 import { SessionViewerUserMessage } from "./SessionViewerUserMessage";
 import { SessionViewerAssistantMessage } from "./SessionViewerAssistantMessage";
@@ -49,6 +50,10 @@ export type SessionViewerTimelineProps = {
    * 代替；不给则全量渲染（少条目路径与既有的源码级测试都走这条）。
    */
   virtual?: SessionViewerTimelineVirtual | null;
+  /**
+   * 工具卡展开态与已拉详情（CUSTOM(G-AT)）。按会话存活，虚拟化卸载/重挂时恢复原状。
+   */
+  toolViewCache?: ToolCallViewCache;
 };
 
 export type SessionViewerTimelineVirtual = {
@@ -62,7 +67,7 @@ export function SessionViewerTimeline({
   sessionAgent, activeAskUserCallId, onAskUserAnswer, agents, onFileClickRef,
   onEditUserMessage, onForkAgentMessage, savedPromptKeys, copiedMessageKeys,
   copyResetTimersRef, setSavedPromptKeys, setCopiedMessageKeys, t, themeColor,
-  userMetaButtonStyle, virtual = null,
+  userMetaButtonStyle, virtual = null, toolViewCache,
 }: SessionViewerTimelineProps) {
   const reportError = useReportError();
   const { isPersistedSeq, savePrompt } = useSessionViewerTimelineActions();
@@ -75,10 +80,10 @@ export function SessionViewerTimeline({
       return <SessionViewerThoughtItem item={item} timelineItemKey={timelineItemKey} spacing={spacing} />;
     }
     if (item.type === "tool") {
-      return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer });
+      return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer, toolViewCache });
     }
     if (item.type === "tool_group" || item.type === "todo" || item.type === "plan" || item.type === "compact") {
-      return renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey });
+      return renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, toolViewCache });
     }
     const isUser = item.type === "user_text";
     const itemMeta = timelineItemMeta[idx];

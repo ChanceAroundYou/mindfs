@@ -3,8 +3,9 @@ import { ToolCallGroupCard } from "../stream/ToolCallGroupCard";
 import { TodoUpdateCard, PlanUpdateCard, CompactNoticeCard } from "./SessionViewerCards";
 import type { TimelineItem } from "../../hooks/useSessionStream";
 import { formatToolCallFallbackResult } from "./sessionViewerFormat";
+import type { ToolCallViewCache } from "../stream/useToolCallCard";
 
-export function renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey }: { item: Extract<TimelineItem, { type: "tool_group" | "todo" | "plan" | "compact" }>; timelineItemKey: string; spacing: string; rootId?: string | null; rootPath?: string | null; sessionKey: string | null }): React.ReactNode {
+export function renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, toolViewCache }: { item: Extract<TimelineItem, { type: "tool_group" | "todo" | "plan" | "compact" }>; timelineItemKey: string; spacing: string; rootId?: string | null; rootPath?: string | null; sessionKey: string | null; toolViewCache?: ToolCallViewCache }): React.ReactNode {
 // CUSTOM(G-AT): 上游没有 tool_group 这个时间线项类型（逐张渲染 ToolCallCard）。
 // 折叠由 useSessionStream 的 groupConsecutiveToolCalls 产生，展开后仍走 ToolCallCard。
 if (item.type === "tool_group") {
@@ -17,6 +18,8 @@ if (item.type === "tool_group") {
         rootId={rootId}
         sessionKey={sessionKey}
         getFallbackResult={formatToolCallFallbackResult}
+        viewCache={toolViewCache}
+        viewCacheKey={timelineItemKey}
       />
     </div>
   );

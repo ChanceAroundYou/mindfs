@@ -1361,7 +1361,7 @@ groups:
     title: 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组）
     kind: perf
     symptom: "打开会话卡顿、加载慢。实测：窗口响应 515 KB，其中 exchange_aux 449 KB（87.4%）；同一 sessionKey 在访问日志里恰好出现两次；20 分钟内 related-files 被拉 74 次、/api/pins 被拉 30 次；单会话 389 张工具卡同步渲染。"
-    why: "七条各自独立的坏法，合起来才是「打开会话慢」：① 窗口去重（sessionWindowFetch.ts 的 windowInflight 合并同键并发调用，键必须含 nodeId，同名项目跨节点是两个不同请求）；② edit 有 content 时丢掉冗余的 meta.input/output（渲染从不读）；③ 窗口轻压缩 CompactExchangeAuxLight（只用于窗口读路径，全量 sync/重锚定仍保留 content）；④ 窗口 20→8；⑤ related-files 去抖 500ms；⑥ 工具卡分组（连续同类、数量 >= 5 折成 tool_group，阈值 5：2–4 张直接显示更直观）；⑦ pins 去重。合上游时这七条要么全留要么全弃 —— 它们是同一条热路径（取窗 → 载荷 → 渲染）上的接力。"
+    why: "七条各自独立的坏法，合起来才是「打开会话慢」：① 窗口去重（sessionWindowFetch.ts 的 windowInflight 合并同键并发调用，键必须含 nodeId，同名项目跨节点是两个不同请求）；② edit 有 content 时丢掉冗余的 meta.input/output（渲染从不读）；③ 窗口轻压缩 CompactExchangeAuxLight（只用于窗口读路径，全量 sync/重锚定仍保留 content）；④ 窗口 20→8；⑤ related-files 去抖 500ms；⑥ 工具卡分组（连续同类、数量 >= 5 折成 tool_group，阈值 5：2–4 张直接显示更直观）；⑦ pins 去重。合上游时这七条要么全留要么全弃 —— 它们是同一条热路径（取窗 → 载荷 → 渲染）上的接力。⑧ **工具卡视图缓存（toolViewCache）必须从 SessionViewer 一路接到 ToolCallCard/ToolCallGroupCard**：分组把上百张卡折进组卡后，虚拟化会把整行卸载再挂回来，展开态与已拉详情若只存在组件 state 里，滚出视口再滚回来组卡自己合上、详情重新请求。「接线断了也不报错」是这条的固有风险 —— `976a5d0f` 合上游 v0.5.5 时 `SessionViewer.tsx` 被整体替换成上游版本，`useToolCallCard` 的 `viewCache` 参数从此没有调用方，编译、类型、全量测试全绿，只有真机上滚一次才看得出来。守卫只能钉接线本身（web/tests/tool-view-cache.test.mjs）。"
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
@@ -1374,12 +1374,16 @@ groups:
       - web/src/app/useRealtimeEvents.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/sessionViewerToolTimelineHelpers.tsx
+      - web/src/components/session/sessionViewerAuxiliaryTimelineHelpers.tsx
       - web/src/components/session/useSessionWindowing.ts
       - web/src/components/session/useTargetSeqScroll.ts
       - web/src/components/stream/ToolCallGroupCard.tsx
       - web/src/services/pins.ts
       - web/tests/session-window-dedup.test.mjs
       - web/tests/tool-card-grouping.test.mjs
+      - web/tests/tool-view-cache.test.mjs
       - web/tests/related-files-debounce.test.mjs
       - web/tests/pins-refresh-dedup.test.mjs
       - web/tests/session-window.test.mjs
@@ -1388,6 +1392,7 @@ groups:
       - server/internal/session/aux_window_tail_test.go
       - web/tests/session-window-dedup.test.mjs
       - web/tests/tool-card-grouping.test.mjs
+      - web/tests/tool-view-cache.test.mjs
       - web/tests/related-files-debounce.test.mjs
       - web/tests/pins-refresh-dedup.test.mjs
       - web/tests/session-window.test.mjs
@@ -1407,6 +1412,12 @@ groups:
       - 'web/src/services/session/sessionWindowFetch.ts:CUSTOM(G-AT)'
       - 'web/src/hooks/sessionTimeline.ts:CUSTOM(G-AT)'
       - 'web/src/components/session/SessionViewer.tsx:CUSTOM(G-AT)'
+      - 'web/src/components/session/SessionViewer.tsx:toolViewCache={toolViewCache}'
+      - 'web/src/components/session/SessionViewer.tsx:() => ({ expanded: new Map(), details: new Map() }),'
+      - 'web/src/components/session/SessionViewerTimeline.tsx:toolViewCache?: ToolCallViewCache;'
+      - 'web/src/components/session/sessionViewerToolTimelineHelpers.tsx:viewCache={toolViewCache}'
+      - 'web/src/components/session/sessionViewerAuxiliaryTimelineHelpers.tsx:viewCache={toolViewCache}'
+      - 'web/src/components/stream/ToolCallGroupCard.tsx:viewCache?.expanded.set(groupKey, value)'
   - id: G-AU
     title: 会话拉取风暴与渲染主线程阻塞
     kind: fix
@@ -6738,13 +6749,14 @@ groups:
     kind: fix
     symptom: "① 某些会话在底部不能自然上滚：滚一点就被拉回，只能滚一点点；偶尔一次突破过去之后就完全正常。用户在空闲（agent 未输出）时也能观察到。② 上翻触发分页加载时，视口会突然往上跳一大截（跳到刚加载那一页的顶部）。③ 会话底部的「回到底部」按钮僵死：滚轮手动滚到底它不消失（必须点一下），拖动滚动条上滑它不出现，点一下之后又经常停在半路而不是真正的底部。"
     why: "① 位置副作用的触发条件是 timeline 数组引用（每次渲染都换），stick 阈值 40px 且下滚 200px 内重新吸底：虚拟化会话里上滚改虚拟区间触发重渲染，40px 内永远被拉回。改成只在内容追加（length/tailId/streamVersion）时跑位置副作用；重锚阈值 2px，下滚不再吸底；wheel/touchmove/keydown 同步让位。② 前插只记 `scrollHeight - scrollTop` 并在单个 rAF 里写一次，而虚拟化下这个高度是 estimateSize 撑出来的占位值；新挂载行的 estimate→actual 差值会整体推移下面所有行，且 G-KD 的护栏在后退方向刻意不补偿，位移原样落在视口上。③ b24dbee3 加手势监听时把 `addEventListener(\"scroll\", updateStickiness)` 删掉却留下 removeEventListener，按钮显隐只剩三个「只会置真」的手势，位置变化不再有任何输入；同时 `setShowJumpToLatest(!shouldStickToBottomRef)` 把「追加时是否跟随」当成「现在离底多远」用，两件事混成一份真相；而点击用 `scrollTo({behavior:\"smooth\"})`，虚拟库在向下方向的即时 scrollTop 写入会取消进行中的平滑动画，于是停在半路。修法：scroll 监听必须存在且对称；显隐判据只取 `distanceFromBottom > STICK_REARM_PX`；手势只负责让位；到底改成逐帧收敛（每帧写 maxTop，连续稳定且跑够最少帧数才收工）；前插锚定改为「视口内第一条可见行的 data-timeline-key + 真实矩形」，多帧收敛，库补没补都会被自动吸收、不会双补偿。"
-    boundary: "只改滚动跟随与锚定：isPrepending 跳过、visualViewport/safe-area 吸底、scrollToRelatedFilesDivider 的分隔线语义都不动。`stickSessionToBottom` 的参数签名保留（调用方不看 behavior），但实现一律即时写 —— 虚拟化下平滑滚动必然被打断，精准到底优先。非虚拟化路径（找不到 data-timeline-key）仍退回 `scrollHeight - anchor` 的一次性回补。"
+    boundary: "只改滚动跟随与锚定：isPrepending 跳过、visualViewport/safe-area 吸底、scrollToRelatedFilesDivider 的分隔线语义都不动。`stickSessionToBottom` 的参数签名保留（调用方不看 behavior），但实现一律即时写 —— 虚拟化下平滑滚动必然被打断，精准到底优先。非虚拟化路径（找不到 data-timeline-key）仍退回 `scrollHeight - anchor` 的一次性回补。另有一条同组必修：**窗口态必须按会话重建** —— `useSessionWindowing` 的初始化 effect 里在发尾部窗口请求之前 `setWindowMeta({total:0,hasMore:false,minSeq:0,maxSeq:0})`。留着上一个会话的 meta 会让 `applyWindow(keepOlder)` 取 `min(旧 minSeq, 新 minSeq)`，从 seq 起于 1 的会话切到起于 233 的会话后 minSeq 被永久钉在 1，`loadMore` 恒发 `beforeSeq=1`、服务端回空、`res` 为 null 直接返回 —— 表现为**上翻一页也加载不出来**（2026-10-27 由分页 fixture 暴露）。"
     files:
       - web/src/components/session/useSessionViewerScroll.ts
       - web/src/components/session/useSessionWindowing.ts
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/src/components/session/SessionViewer.tsx
       - web/src/hooks/useSessionStream.ts
+      - web/tests/session-virtualization.tsx
       - docs/plans/session-scroll-follow-fixes.md
     tests:
       - web/tests/session-timeline-incremental-id.test.mjs
@@ -6756,6 +6768,8 @@ groups:
       - 'web/src/components/session/useSessionViewerScroll.ts:setShowJumpToLatest(distanceFromBottom > STICK_REARM_PX)'
       - 'web/src/components/session/useSessionWindowing.ts:data-timeline-key'
       - 'web/src/components/session/SessionViewerTimeline.tsx:data-timeline-key={String(row.key)}'
+      - 'web/src/components/session/useSessionWindowing.ts:setWindowMeta({ total: 0, hasMore: false, minSeq: 0, maxSeq: 0 });'
+      - 'web/src/components/session/useSessionWindowing.ts:    // 窗口态按会话重建。'
       - 'web/src/components/session/SessionViewer.tsx:timelineTailId'
       - 'web/src/hooks/useSessionStream.ts:transientRef'
 

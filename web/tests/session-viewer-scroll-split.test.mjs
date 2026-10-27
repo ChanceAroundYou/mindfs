@@ -64,5 +64,18 @@ assert.match(timelineView, /data-timeline-key=\{String\(row\.key\)\}/, "虚拟�
 assert.match(windowing, /querySelectorAll<HTMLElement>\("\[data-timeline-key\]"\)/, "loadMore 必须找视口内锚点行");
 assert.match(windowing, /getBoundingClientRect\(\)\.top - anchorTop/, "前插必须按真实矩形回补");
 
+// ── 2026-10-27 回归：窗口态必须按会话重建 ─────────────────────────────
+// 事故：windowMeta 跨会话残留，`applyWindow(keepOlder)` 取 `min(旧 minSeq, 新 minSeq)`，
+// 从 seq 起于 1 的会话切到起于 233 的会话后 minSeq 被钉在 1，`loadMore` 恒发
+// `beforeSeq=1` → 服务端回空 → `res` 为 null 直接返回 → **上翻一页也加载不出来**。
+// 顺序也有要求：必须在发出尾部窗口请求之前重置，否则 keepOlder 先吃到旧值。
+{
+  const resetAt = windowing.indexOf("setWindowMeta({ total: 0, hasMore: false, minSeq: 0, maxSeq: 0 });");
+  const initAt = windowing.indexOf('getSessionWindow(rootId || "", sessionKey, { latest: SESSION_WINDOW_SIZE');
+  assert.ok(resetAt > 0, "切换会话时必须重置 windowMeta");
+  assert.ok(initAt > 0, "初始化窗口拉取必须存在");
+  assert.ok(resetAt < initAt, "windowMeta 必须在拉取尾部窗口之前重置");
+}
+
 console.log("session-viewer-scroll-split.test.mjs: OK");
 });

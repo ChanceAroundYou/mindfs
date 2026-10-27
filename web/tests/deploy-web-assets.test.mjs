@@ -25,6 +25,12 @@ const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
 const deploy = read("scripts/deploy-all.sh");
 const installSh = read("scripts/install.sh");
 const makefile = read("Makefile");
+// 2026-10-27：worker 部署已从 deploy-all.sh 拆成独立脚本（62f88294），远端脚本段
+// 不在 deploy-all.sh 里了。断言跟着搬家 —— 只改「去哪儿找」，不改判据本身。
+const workerScripts = [
+  ["scripts/deploy-wsl.sh", "WSL", read("scripts/deploy-wsl.sh")],
+  ["scripts/deploy-fn.sh", "fn", read("scripts/deploy-fn.sh")],
+];
 
 assert.match(deploy, /cd web && npm test/, "deploy-all must call the unified Vitest test suite");
 
@@ -59,17 +65,28 @@ assert.deepStrictEqual(
 );
 
 // 3) worker 只收产物，不在那边编译。
-//    deploy-all.sh 里唯一允许的 make build 是本机那次（第 90 行附近，不经 ssh）；
-//    远端脚本段内不得出现 make / git pull / npm。
-const remoteBlock = deploy.slice(deploy.indexOf("<<REMOTE"), deploy.indexOf("\nREMOTE\n)"));
-assert.ok(remoteBlock.length > 0, "找不到 deploy-all.sh 的远端脚本段");
-for (const banned of [/\bmake\b/, /git\s+pull/, /\bnpm\b/]) {
-  assert.ok(!banned.test(remoteBlock), `远端脚本段不得编译/拉源码（worker 侧无源码库）：${banned}`);
+//    deploy-all.sh 里唯一允许的 make build 是本机那次（不经 ssh）；
+//    远端脚本段（现在在各 deploy-<node>.sh 的 `ssh … <<REMOTE` 里）内不得出现 make / git pull / npm。
+for (const [name, label, src] of workerScripts) {
+  const start = src.indexOf("<<REMOTE");
+  const remoteBlock = start < 0 ? "" : src.slice(start, src.indexOf("\nREMOTE\n)", start));
+  assert.ok(remoteBlock.length > 0, `找不到 ${name} 的远端脚本段`);
+  for (const banned of [/\bmake\b/, /git\s+pull/, /\bnpm\b/]) {
+    assert.ok(!banned.test(remoteBlock), `${label} 远端脚本段不得编译/拉源码（worker 侧无源码库）：${banned}`);
+  }
+  assert.ok(remoteBlock.includes("~/.local/bin/mindfs --version"), `${label} 远端脚本应回读版本号供对账`);
+  // 版本号对账：推的必须是刚构建的同一个二进制，两边版本逐字相同
+  assert.ok(
+    /\[\[ "\$remote_version" == "\$VERSION" \]\]/.test(src),
+    `${name} 应逐字对账版本号`,
+  );
+  // 远端只能装产物、不能带 web/dist（纯 worker 不服务前端，多推几 MB 是纯负担）
+  assert.doesNotMatch(src, /-C "\$ROOT\/web" dist/, `${name} 的 tar 不该带 web/dist`);
 }
-assert.ok(remoteBlock.includes("~/.local/bin/mindfs --version"), "远端脚本应回读版本号供对账");
-
-// 版本号对账：推的必须是刚构建的同一个二进制，两边版本逐字相同
-assert.ok(/\[\[ "\$remote_version" == "\$VERSION" \]\]/.test(deploy), "deploy-all.sh 应逐字对账各端版本号");
+assert.ok(
+  /deploy-wsl\.sh/.test(deploy) && /deploy-fn\.sh/.test(deploy),
+  "deploy-all.sh 应调用拆分后的 worker 部署脚本",
+);
 
 // 4) 提交白名单必须覆盖根级文档。`docs/` 只够得到 docs/ 目录，够不到仓库根 ——
 //    漏了 AGENTS.md 时改动静默留在工作区，版本号挂上 `-dirty`（2026-10-07 实测）。

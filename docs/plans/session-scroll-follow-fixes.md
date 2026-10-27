@@ -1,6 +1,6 @@
 # 会话滚动三处回归：按钮显隐跟位置 / 到底逐帧收敛 / 前插按元素锚定
 
-状态：Implemented 2026-10-27，隔离实例 + 无头 Chromium 已验，待提交与 ship。
+状态：Implemented 2026-10-27，隔离实例 + 无头 Chromium 已验，待 ship。
 
 ## 症状（用户 2026-10-27 报）
 
@@ -70,31 +70,59 @@ overscan 挂载后再实测，每行 estimate→actual 的差值都会整体推�
 
 同一轮回归：`runScrollIntentChecks` 桌面 1280×900 与移动 390×844 都通过。
 
-**既有失败与本次无关**（HEAD 上逐字复现）：
-`runVirtualizationChecks`（"Search target should be visible"）与
-`runStreamingTextChecks`（"Streaming content did not update"）在 HEAD 上同样失败；
-顺带修了 fixture 的陈旧 import（`components/SessionViewer` → `components/session/SessionViewer`），
-否则页面根本挂不上。
+### 第二次验证（2026-10-27 收尾轮）
+
+上一轮留下的 4 个红点（`runVirtualizationChecks`、`runStreamingTextChecks` 各一条，
+加上两处 fixture 自身缺陷）在收尾轮全部查清并修掉，**没有一个是产品缺陷被掩盖**：
+
+| 红点 | 真因 | 处置 |
+|---|---|---|
+| `Streaming content did not update` | fixture 用 `seq: 999` 建模流式行，而持久行按 seq 去重，同 seq 的新对象被丢弃 | 改成真实形状 `seq: 0`（瞬时行），改按正文定位 |
+| `Search target should be visible` | fixture 的 `getSessionWindow` 对 `virtual-test` 回 `null`，`windowMeta` 恒 `{0,0}`，`useTargetSeqScroll` 的虚拟化快路径不成立 | 补一份回全量历史的桩（`minSeq:1, maxSeq:len`） |
+| `Cannot read properties of undefined (reading 'click')` | `Tool 10-0` 在 G-AT 的折叠组卡里，收起时不渲染子卡 | 先展开组卡，再点目标卡 |
+| `runPagingChecks` 退回 `pages: 0` | **产品缺陷**：`windowMeta` 跨会话残留（见下） | 修在 `useSessionWindowing` 根因上 |
+
+`runPagingChecks` 那条是这轮唯一新发现的产品缺陷，已在隔离实例之外的纯前端 fixture
+上复现并修复：从 `minSeq` 起于 1 的会话切到起于 233 的会话，`min(1, 233) = 1` 让
+`loadMore` 恒发 `beforeSeq=1`，服务端回空 → `res` 为 null 直接返回 → **上翻一页也加载
+不出来**。修法是初始化 effect 里在发尾部窗口请求**之前**重置 `windowMeta`。
+
+同时恢复了一处被上游合并冲掉的定制：`toolViewCache`（CUSTOM(G-AT)）。`976a5d0f` 合
+v0.5.5 时把 `SessionViewer.tsx` 整体换成上游版本，`useToolCallCard` 的 `viewCache`
+参数从此没有任何调用方 —— 编译、类型、全量测试全绿，只有真机上把工具卡滚出视口再
+滚回来才会看到展开态丢失、详情重新请求。已恢复整条接线并补 `web/tests/tool-view-cache.test.mjs`
+钉住它（删掉任意一行接线，该测试立刻红）。
+
+修后四个检查在桌面 1280×900 与移动 390×844 两个视口全部通过；`runPagingChecks` 的
+锚行漂移仍是 `[0,0,16,16,16,16]`（`maxDrift 16` ≤ 一行），`clickGap 0`、`upGap 50`。
+
+**既有失败与本次无关**（HEAD 上逐字复现）：上一轮记录的
+`runVirtualizationChecks` 与 `runStreamingTextChecks` 两条已在收尾轮查明为 fixture
+缺陷并修掉（见上表），不是产品回归；顺带修了 fixture 的陈旧 import
+（`components/SessionViewer` → `components/session/SessionViewer`），否则页面根本挂不上。
 
 ## 影响文件
 
 - `web/src/components/session/useSessionViewerScroll.ts` — 显隐判据 + 逐帧收敛
-- `web/src/components/session/useSessionWindowing.ts` — 元素矩形锚定 + 多帧收敛
-- `web/src/components/session/SessionViewerTimeline.tsx` — 虚拟行加 `data-timeline-key`
-- `web/tests/session-viewer-scroll-split.test.mjs` — 7 条源码级回归断言
-- `web/tests/session-virtualization.tsx` — 分页 fixture + `runPagingChecks`
+- `web/src/components/session/useSessionWindowing.ts` — 元素矩形锚定 + 多帧收敛 + 窗口态按会话重建
+- `web/src/components/session/SessionViewerTimeline.tsx` — 虚拟行加 `data-timeline-key` + 透传 `toolViewCache`
+- `web/src/components/session/SessionViewer.tsx` — 会话级 `toolViewCache`
+- `web/src/components/session/sessionViewer{Tool,Auxiliary}TimelineHelpers.tsx` — 接上缓存
+- `web/src/components/stream/ToolCallGroupCard.tsx` — 组卡展开态进缓存
+- `web/tests/session-viewer-scroll-split.test.mjs` — 8 条源码级回归断言（含窗口态重置顺序）
+- `web/tests/tool-view-cache.test.mjs` — 新增：钉住 `toolViewCache` 整条接线
+- `web/tests/session-virtualization.tsx` — 分页 fixture + `runPagingChecks` + 两处 fixture 修正
+- `web/tests/deploy-web-assets.test.mjs` — 断言跟着 `62f88294` 的脚本拆分搬家
 - `web/tests/README.md` — 运行方式（含 `/mindfs` 前缀这个坑）
-- `docs/upstream-customizations.yaml` — G-KB 条目扩写（三条症状 / 修法 / 锚点）
+- `docs/upstream-customizations.yaml` — G-KB 补窗口态重置、G-AT 补 `toolViewCache` 接线
 
 ## 门禁
 
-`npx tsc --noEmit` 干净；`npm test` 413 通过、1 个既有失败
-（`deploy-web-assets.test.mjs` 仍在找 `deploy-all.sh` 里的 `<<REMOTE` 段，
-该段已被 `62f88294` 拆进 `scripts/deploy-*.sh`，与本次无关）；`make check-upstream` 全绿。
+`npx tsc --noEmit` 干净；`npm test` 415 通过、6 跳过、**0 失败**（194 个测试文件通过、5 跳过）；
+`make build-web` 成功；`make check-upstream` 全绿（1442 个 delta 文件 / 260 组）。
 
 ## 明确不做
 
 - 不动后端窗口协议与 `SESSION_WINDOW_SIZE`
 - 不动 G-KD 的 `shouldAdjustScrollPositionOnItemSizeChange` 护栏
 - 不淘汰已加载历史
-- 不修 `deploy-web-assets.test.mjs` 的陈旧断言（另开）

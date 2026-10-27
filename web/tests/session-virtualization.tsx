@@ -44,6 +44,15 @@ const pagingWindow = (beforeSeq?: number, latest?: number) => {
   };
 };
 sessionService.getSessionWindow = async (_root, key, opts) => {
+  // 'virtual-test' 建模「后端一次给全量历史」：`useTargetSeqScroll` 的虚拟化快路径要求
+  // `windowMeta.minSeq > 0 && target ∈ [minSeq, maxSeq]`，否则目标行没挂载就永远找不到。
+  // 缺了这份 meta 时 `jump(21)` 必然失败，与产品行为无关。
+  if (key === 'virtual-test') {
+    return {
+      session: { key, exchanges, exchange_aux },
+      meta: { total: exchanges.length, hasMore: false, minSeq: 1, maxSeq: exchanges.length },
+    } as any;
+  }
   if (key !== 'paging-test') return null;
   if (opts?.beforeSeq) {
     // 前插请求发出的那一刻记下视口首行的真实位置 —— 回包后是否跳动由它判定。
@@ -82,29 +91,47 @@ createRoot(document.getElementById('root')!).render(<Check/>);
 
 Object.assign(window, { runStreamingTextChecks: async () => {
   const settle = () => new Promise(resolve => setTimeout(resolve, 80));
+  // 虚拟化路径下新内容要等一次测量/重排才落到 DOM（实测移动视口上偶尔 >80ms），
+  // 固定 sleep 会让这条检查随机红 —— 改成「等到出现、最多 2s」，超时才算失败。
+  const waitFor = async (predicate: () => boolean) => {
+    for (let waited = 0; waited < 2000; waited += 50) {
+      if (predicate()) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return predicate();
+  };
   for (const long of [false, true]) {
     const prefix = long ? exchanges : exchanges.slice(0, 1);
     let content = 'Stable paragraph\n\n```js\nconst answer = 42;\n```\n\nStreaming';
     const update = (step: number) => (window as any).check.replaceSession({
       key: `streaming-${long}`, exchange_aux: long ? exchange_aux : {},
-      exchanges: [...prefix, {seq: 999, role: 'agent', content, timestamp: `2026-09-29T00:00:${String(step).padStart(2, '0')}Z`}],
+      // `seq: 0` 才是**真实流式行的形状**（瞬时行）。用正 seq 建模会走持久行路径：
+      // 窗口态只装得下已落盘的行（`isPersistedSeq` 过滤 + `computeTailOverlay` 按 seq
+      // 去重），同一 seq 的新对象被丢弃，内容永远停在首帧 —— 那是 fixture 的错，
+      // 不是产品的错（2026-10-27 核实）。
+      exchanges: [...prefix, {seq: 0, role: 'agent', content, timestamp: `2026-09-29T00:00:${String(step).padStart(2, '0')}Z`}],
     });
     update(0);
     await settle();
-    const row = document.querySelector('[data-session-seq="999"]')!;
-    const markdown = row?.querySelector('.markdown-viewer');
-    const paragraph = markdown?.querySelector('p');
-    const code = markdown?.querySelector('pre');
-    if (!row || !markdown || !paragraph || !code) throw new Error('Missing streaming fixture nodes');
+    // 瞬时行没有 `data-session-seq`（seq=0 不落属性），按正文定位。
+    const locate = () => {
+      const markdown = [...document.querySelectorAll('.markdown-viewer')]
+        .find(node => node.textContent?.includes('Stable paragraph'));
+      return { markdown, paragraph: markdown?.querySelector('p'), code: markdown?.querySelector('pre') };
+    };
+    const { markdown, paragraph, code } = locate();
+    if (!markdown || !paragraph || !code) throw new Error('Missing streaming fixture nodes');
     for (let step = 1; step <= 16; step++) {
       content += ` chunk ${step}`;
       update(step);
       await settle();
-      if (document.querySelector('[data-session-seq="999"]') !== row) throw new Error(`Streaming row remounted (virtual=${long})`);
-      if (row.querySelector('.markdown-viewer') !== markdown || markdown.querySelector('p') !== paragraph || markdown.querySelector('pre') !== code) {
-        throw new Error(`Unchanged Markdown nodes remounted (virtual=${long})`);
+      const now = locate();
+      if (now.markdown !== markdown || now.paragraph !== paragraph || now.code !== code) {
+        throw new Error(`Streaming Markdown nodes remounted (virtual=${long})`);
       }
-      if (!markdown.textContent?.includes(`chunk ${step}`)) throw new Error('Streaming content did not update');
+      if (!(await waitFor(() => !!markdown.textContent?.includes(`chunk ${step}`)))) {
+        throw new Error('Streaming content did not update');
+      }
     }
   }
   return {passed: true, modes: ['short', 'virtual'], updatesPerMode: 16};
@@ -234,6 +261,15 @@ Object.assign(window, { runVirtualizationChecks: async () => {
   await settle();
   const target = document.querySelector('[data-session-seq="21"]')!;
   assert(!!target && target.getBoundingClientRect().top > 0 && target.getBoundingClientRect().bottom < innerHeight, 'Search target should be visible');
+  // 分组（G-AT）：连续同类工具卡折成一张组卡，Tool 10-0 在 seq 22 上面的「100 reads」里。
+  // 组卡收起时不渲染子卡，所以要先展开它 —— 那是产品行为，不是 fixture 的缺陷。
+  const expandGroupBefore = async (seq: number) => {
+    const mounted = [...document.querySelectorAll('[data-index]')];
+    const at = mounted.findIndex(row => row.querySelector(`[data-session-seq="${seq}"]`));
+    mounted[at - 1]?.querySelector('button')?.click();
+    await settle();
+  };
+  await expandGroupBefore(22);
   const tool = [...document.querySelectorAll('button')].find(node => node.textContent?.trim() === 'Tool 10-0')!;
   tool.click();
   await settle();
@@ -243,6 +279,8 @@ Object.assign(window, { runVirtualizationChecks: async () => {
   assert(!document.body.innerText.includes('REMOTE DETAIL call-10-0'), 'Offscreen details should unmount');
   api().jump(21);
   await settle();
+  // 组卡展开态与已拉详情都按会话缓存在 toolViewCache 里（CUSTOM(G-AT)），
+  // 重挂回来必须原样恢复且不重新请求 —— `976a5d0f` 合上游时这段丢了，回归就靠这条。
   assert(requests === 1 && document.body.innerText.includes('REMOTE DETAIL call-10-0'), 'Expansion and cached details should survive remount');
   const readingTop = scroller().scrollTop;
   api().append();

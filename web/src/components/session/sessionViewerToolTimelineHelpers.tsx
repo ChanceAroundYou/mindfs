@@ -4,8 +4,9 @@ import { AskUserQuestionCard, getAskUserQuestions } from "./AskUserQuestionCard"
 import { formatToolCallFallbackResult } from "./sessionViewerFormat";
 import type { TimelineItem } from "../../hooks/useSessionStream";
 import type { SessionViewerProps } from "./sessionViewerTypes";
+import type { ToolCallViewCache } from "../stream/useToolCallCard";
 
-export function renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer }: { item: Extract<TimelineItem, { type: "tool" }>; timelineItemKey: string; spacing: string; rootId?: string | null; rootPath?: string | null; sessionKey: string | null; sessionAgent?: string; activeAskUserCallId: string; onAskUserAnswer?: SessionViewerProps["onAskUserAnswer"] }): React.ReactNode {
+export function renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer, toolViewCache }: { item: Extract<TimelineItem, { type: "tool" }>; timelineItemKey: string; spacing: string; rootId?: string | null; rootPath?: string | null; sessionKey: string | null; sessionAgent?: string; activeAskUserCallId: string; onAskUserAnswer?: SessionViewerProps["onAskUserAnswer"]; toolViewCache?: ToolCallViewCache }): React.ReactNode {
 if (item.type === "tool") {
   const tc = item.toolCall || {};
   const kind = `${tc.kind || ""}`.toLowerCase();
@@ -60,6 +61,8 @@ if (item.type === "tool") {
           rootId={rootId}
           sessionKey={sessionKey}
           defaultExpanded={isUserShell}
+          viewCache={toolViewCache}
+          viewCacheKey={timelineItemKey}
         />
       )}
     </div>

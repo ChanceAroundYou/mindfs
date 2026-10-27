@@ -107,6 +107,12 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     setVisibleExchanges(seedExs);
     setVisibleAux(seedAux);
     setVisibleBlocks(seedBlocks);
+    // 窗口态按会话重建。留着上一个会话的 meta 会让 `applyWindow(keepOlder)` 取
+    // `min(旧 minSeq, 新 minSeq)` —— 旧值更小时 `minSeq` 被永久钉小，`loadMore` 于是
+    // 反复请求「比本会话所有历史都老」的一段，服务端回空、`res` 为 null 直接返回，
+    // **上翻一页也加载不出来**（2026-10-27 由分页 fixture 暴露：从 seq 起于 1 的会话
+    // 切到起于 233 的会话，`beforeSeq=1` 恒空）。
+    setWindowMeta({ total: 0, hasMore: false, minSeq: 0, maxSeq: 0 });
     getSessionWindow(rootId || "", sessionKey, { latest: SESSION_WINDOW_SIZE, nodeId: sessionNodeId })
       .then((res) => {
         if (cancelled) return;

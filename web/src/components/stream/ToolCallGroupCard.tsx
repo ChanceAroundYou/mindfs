@@ -4,6 +4,7 @@ import { renderToolIcon } from "./toolCallIcons";
 import { useI18n } from "../../i18n";
 import type { MessageKey } from "../../i18n";
 import type { ToolCall } from "../../shared/sessionTypes";
+import type { ToolCallViewCache } from "./useToolCallCard";
 
 /**
  * 连续同类工具卡的折叠组卡（2026-10-07）。
@@ -23,6 +24,9 @@ type ToolCallGroupCardProps = {
   rootId?: string | null;
   sessionKey?: string | null;
   getFallbackResult?: (toolCall: Partial<ToolCall>) => string;
+  /** 展开态与详情缓存（CUSTOM(G-AT)）：虚拟化卸载/重挂后恢复原状，不重新请求。 */
+  viewCache?: ToolCallViewCache;
+  viewCacheKey?: string;
 };
 
 function kindLabelKey(kind: string): MessageKey | null {
@@ -59,9 +63,19 @@ export const ToolCallGroupCard = memo(function ToolCallGroupCard({
   rootId,
   sessionKey,
   getFallbackResult,
+  viewCache,
+  viewCacheKey,
 }: ToolCallGroupCardProps) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
+  // 组卡的展开态与里面每张 ToolCallCard 的展开态都是同一个缓存的两层键：
+  // 组卡本身用 `viewCacheKey`，子卡用各自的 `viewCacheKey:callId`。虚拟化把整行
+  // 卸载再挂回来时必须复原，否则用户展开的组会自己合上（2026-09-28 真机）。
+  const groupKey = viewCacheKey || `tool-group:${kind}`;
+  const [expanded, setExpandedState] = useState(() => viewCache?.expanded.get(groupKey) ?? false);
+  const setExpanded = (value: boolean) => {
+    viewCache?.expanded.set(groupKey, value);
+    setExpandedState(value);
+  };
   const normalizedKind = (kind || "").toLowerCase();
   const labelKey = kindLabelKey(normalizedKind);
   const kindLabel = labelKey ? t(labelKey) : normalizedKind || "tool";
@@ -78,7 +92,7 @@ export const ToolCallGroupCard = memo(function ToolCallGroupCard({
     >
       <button
         type="button"
-        onClick={() => setExpanded((prev) => !prev)}
+        onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
         title={expanded ? t("common.collapse") : t("common.expand")}
         style={{
@@ -170,6 +184,8 @@ export const ToolCallGroupCard = memo(function ToolCallGroupCard({
               rootPath={rootPath}
               rootId={rootId}
               sessionKey={sessionKey}
+              viewCache={viewCache}
+              viewCacheKey={`${groupKey}:${toolCall.callId || index}`}
             />
           ))}
         </div>

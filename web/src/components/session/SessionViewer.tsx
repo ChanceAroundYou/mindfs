@@ -52,6 +52,7 @@ import { SessionViewerTimeline } from "./SessionViewerTimeline";
 import { useUserMessageSummaries } from "./useUserMessageSummaries";
 import { useRelatedFiles } from "./useRelatedFiles";
 import { useSessionViewerExchangeProjection } from "./useSessionViewerExchangeProjection";
+import type { ToolCallViewCache } from "../stream/useToolCallCard";
 
 // CUSTOM(G-AT): tool_group 由时间线渲染器统一处理，保持 fork 的分组显示语义。
 
@@ -100,6 +101,13 @@ function SessionViewerInner({
   const onFileClickRef = useRef(onFileClick);
   const copyResetTimersRef = useRef<Record<string, number>>({});
   const sessionKey = session?.key || session?.session_key || null;
+  // CUSTOM(G-AT)：工具卡的展开态与已拉到的详情按会话存活，虚拟化卸载/重挂时才能恢复
+  // （否则滚出视口再滚回来，展开的卡片合上、详情重新请求）。`976a5d0f` 合上游 v0.5.5 时
+  // 这段随 `SessionViewer.tsx` 整体替换丢失，`useToolCallCard` 的 viewCache 参数成了死代码。
+  const toolViewCache = useMemo<ToolCallViewCache>(
+    () => ({ expanded: new Map(), details: new Map() }),
+    [rootId, sessionKey],
+  );
   // 会话归属节点：窗口拉取/图片等请求须路由到会话所在节点。同名根（如两台机器都有
   // root "mindfs"）仅凭裸 rootId 查裸键映射会串到另一节点（实测窗口 GET 404）。
   const sessionNodeId =
@@ -413,7 +421,7 @@ function SessionViewerInner({
             {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
             <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
             <SessionViewerLoadingState loadingMore={loadingMore} loading={loading} hasVisibleTimeline={hasVisibleTimeline} />
-            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} isStreaming={isStreaming} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} agents={agents} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} />
+            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} isStreaming={isStreaming} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} agents={agents} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} toolViewCache={toolViewCache} />
             {SessionViewerSlashCommandResult({
               slashCommandResult,
               hasVisibleTimeline,
