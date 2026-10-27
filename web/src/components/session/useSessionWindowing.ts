@@ -17,11 +17,15 @@ import type { ExchangeArray, SessionItem } from "./sessionViewerTypes";
 /**
  * 顶部预取的提前量：哨兵距视口顶不足「视口高度 × 这个比例」就请求上一页。
  *
- * 原先只提前 200px，用户得**先看见内容不够**才等到加载，观感上是「滚到顶停一下、然后
- * 突然补一屏」。半屏是手机与桌面都够用的提前量：一页通常不止半屏，所以一次手势仍然
- * 只翻一页（见 `armedRef`）。
+ * 原先只提前 200px，用户得**先看见内容不够**才等到加载，观感上是「滚到顶停一下、
+ * 然后突然补一屏」。现在提前整整一屏：滚到离顶还剩一屏时就该把下一页拿回来，
+ * 用户基本不会滚到「没有内容」的位置。
+ *
+ * 提前量必须按**真实视口高度**算，不能写死像素 —— 手机与桌面的可视高度差一倍以上，
+ * 写死值必然在其中一端要么太晚要么刚进页面就触发。这一屏也是 `armedRef` 的容量依据：
+ * 一页通常不止一屏，所以一次手势仍然只翻一页。
  */
-const LOAD_MORE_AHEAD_RATIO = 0.5;
+const LOAD_MORE_AHEAD_RATIO = 1;
 
 /** 前插后要再往上滚这么多才算「用户又动了」，才允许下一次自动加载。 */
 const PREPEND_REARM_PX = 24;
@@ -84,7 +88,7 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
   } = ctx;
 
   // 「允许自动加载」的闸门。每次前插完成后置假，用户再往上滚 PREPEND_REARM_PX 才置真。
-  // 没有它，触发点提前半屏之后，回补完成时哨兵往往仍在提前量之内，IO 重建即回调，
+  // 没有它，触发点提前一屏之后，回补完成时哨兵往往仍在提前量之内，IO 重建即回调，
   // 一次手势能连翻好几页（2026-10-27 已因同样形态连翻 29 页，见 loadMore 注释）。
   const armedRef = useRef(true);
   // 重新武装必须**重建 observer**：哨兵在回补后一直停在提前量之内，intersection 状态
@@ -167,7 +171,7 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     const container = activeScrollRef?.current;
     // isPrependingRef：上一页还在回补位置时不接新请求。否则哨兵（scrollTop 尚未恢复时
     // 仍停在视口里）会把下一页连着点着，一次上滑把历史全部加载完（2026-10-27 真机）。
-    // armedRef：每次前插之后必须**再滚一次**才重新武装。触发点提前到半屏以后，哨兵在
+    // armedRef：每次前插之后必须**再滚一次**才重新武装。触发点提前到一屏以后，哨兵在
     // 回补完成后可能仍落在提前量之内（短页更是如此），IO 每次重建都会立刻回调 ——
     // 只靠 isPrependingRef 挡不住「page 之间的间隙」，一次手势又会连翻好几页。
     if (
@@ -275,6 +279,17 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
           isPrependingRef.current = false;
           return;
         }
+        // 让虚拟器**在本次任务内**按新的 scrollTop 重算可见区间（2026-10-27 全屏闪烁）。
+        //
+        // 上面的 flushSync 提交时，时间线已经是「新页 + 旧页」，但虚拟器的 offset 还停在
+        // 前插前的 scrollTop —— 它只从 scroll 事件更新，而 scroll 事件要等浏览器渲染步骤才
+        // 派发。于是这次提交按旧 offset 去 map 新数组：原来视口那一段被推到很后面，落进
+        // 视口区间的是**刚插进来的最老一段**（实测 p-177-*，33 行全在视口上方，视口覆盖率
+        // 0%）。等 scroll 事件到了才换成 p-185-*，那一帧空白就此被画出去 —— 用户看到的
+        // 「加载完全屏闪一下」。
+        // 同步派发一次 scroll 让库自己走它设计好的入口（读 offset → 重算 range → flushSync
+        // 重渲染），第二次提交仍在绘制前完成，中间态一次都不呈现。
+        container.dispatchEvent(new Event("scroll"));
         const settle = () => {
           if (!settleStep()) {
             isPrependingRef.current = false;
@@ -297,9 +312,9 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
       });
   }, [loadingMore, windowMeta, sessionKey, rootId]);
 
-  // 顶部哨兵：进入视口（提前量为半个视口）触发 loadMore，hasMore 耗尽后自动不观察。
+  // 顶部哨兵：进入视口（提前量为一整个视口）触发 loadMore，hasMore 耗尽后自动不观察。
   //
-  // 提前量从 200px 提到半屏：原先要「看见内容不够」才开始加载，观感是滚到顶停一下再补一屏。
+  // 提前量从 200px → 半屏 → 一屏：原先要「看见内容不够」才开始加载，观感是滚到顶停一下再补一屏。
   // 提前之后，哨兵在回补完成后通常仍落在提前量之内，所以必须配 `armedRef` —— 每次前插
   // 完成后置假，只有用户再往上滚 PREPEND_REARM_PX 才重新武装，否则 IO 每次重建都会立刻回调。
   useEffect(() => {

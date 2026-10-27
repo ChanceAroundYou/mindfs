@@ -136,6 +136,23 @@ assert.match(
     afterCommit.indexOf("if (!settleStep())") < afterCommit.indexOf("window.requestAnimationFrame(settle)"),
     "同步回补必须排在 rAF 收敛之前",
   );
+  // ── 2026-10-27 回归：全屏闪烁（空视口被画出去）──────────────────────
+  // 事故：flushSync 提交时时间线已经是「新页 + 旧页」，但虚拟器的 offset 还停在前插前的
+  // scrollTop —— 它只由 scroll 事件驱动，而 scroll 事件要等浏览器渲染步骤才派发。于是这次
+  // 提交按旧 offset 去 map 新数组：视口区间落在**刚插进来的最老一段**（实测 p-177-* 33 行
+  // 全部在视口上方，覆盖率 0%），直到下一个 scroll 事件才换回原处。CPU 降速 12× 复现：
+  // 两次提交同在 frame 170、相隔 608 ms，中间那 0% 覆盖被单独画了一帧。
+  // 修法：同步回补写完 scrollTop 之后主动 dispatch 一次 scroll，让库在**同一任务内**重算
+  // 区间并 flushSync 重渲染，中间态一次都不呈现（复测：scroll 写在前、commit 在后、pct=100）。
+  assert.match(
+    afterCommit,
+    /container\.dispatchEvent\(new Event\("scroll"\)\)/,
+    "同步回补之后必须主动派发 scroll，否则虚拟器仍按旧 offset 渲染出一帧空视口",
+  );
+  assert.ok(
+    afterCommit.indexOf("if (!settleStep())") < afterCommit.indexOf('dispatchEvent(new Event("scroll"))'),
+    "合成 scroll 必须在第一次同步回补（写 scrollTop）之后，否则虚拟器读到的还是旧 offset",
+  );
 }
 
 // ── 2026-10-27 回归：上翻转圈不能占布局 ────────────────────────────────

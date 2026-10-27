@@ -1,6 +1,6 @@
 # 会话滚动三处回归：按钮显隐跟位置 / 到底逐帧收敛 / 前插按元素锚定
 
-状态：Implemented 2026-10-27（含第三轮「一次上滑连翻到底」与第四轮「上翻转圈 + 画面稳定 + 半屏提前量」修复），隔离实例 + 无头 Chromium 已验，待 ship。
+状态：Implemented 2026-10-27（含第三轮「一次上滑连翻到底」、第四轮「上翻转圈 + 画面稳定 + 半屏提前量」、第五轮「一屏提前量 + 加载后全屏闪烁」修复），隔离实例 + 无头 Chromium 已验，待 ship。
 
 ## 症状（用户 2026-10-27 报）
 
@@ -181,11 +181,51 @@ fixture 改成真实形状（每条 exchange 带 20 张工具卡，`kind` 交替
 > 折叠 diff 的形状上（`scrollHeight - clientHeight = 35`），上滚 12×5px 走不完 45px。
 > 不是产品回归 —— 单跑或紧接 `runPagingChecks` 都通过；README 也是「新开页面再跑」。
 
+### 第五次验证（2026-10-27 用户第三轮反馈：提前量扩到一屏 + 加载后仍全屏闪烁）
+
+用户原话：「提前加载已触发，但加载范围过小，扩大到提前一屏，请根据实际屏幕高度计算，
+且加载后仍存在全屏闪烁。」
+
+**① 提前量扩到一整屏**：`LOAD_MORE_AHEAD_RATIO` 0.5 → 1，仍是 `clientHeight × 比例`，
+手机与桌面同等提前量。夹具 ⑤ 的判据跟着收紧：起点改到 `1.8 × clientHeight`，断言
+「请求发出时 `scrollTop > 0.6 × clientHeight`」——半屏提前量每步 100px 只会落在
+0.33–0.5 屏，必然压不过这条。
+
+**② 全屏闪烁：追到根因是「虚拟器按旧 offset 渲染了新数组」**
+
+取证链路（每一步都用无头 Chromium 对着 `session-virtualization.html` 跑）：
+
+| 探针 | 结论 |
+|---|---|
+| `probe-batches.py` | 容器与滚动层**没变**，但前插瞬间容器里一度是 `p-177-*`（新页最老一段 33 行），下一批才回到 `p-185-*` |
+| `probe-uid.py` / `probe-uid-control.py` | 对照组（纯等待、下滚再滚回）全部 `survived == sameKey == 29`，前插这一批 `survived == 0` —— 只有前插会整体换节点 |
+| `probe-reactkey.py` | React 手里的 key 就是 `data-timeline-key`，没有错位，排除 key 不稳 |
+| `probe-commit-coverage.py` | 逐 commit 量「视口被已挂载行覆盖的百分比」：前插那一次 `top=5304 pct=0 first=p-177-8`，紧接着的第二次 commit `pct=100 first=p-185-9` |
+| `probe-order.py`（12× CPU 降速） | 两次 commit **同在 frame 170**、相隔 608 ms —— 中间那个 0% 覆盖有一整帧的时间被画出去 |
+
+根因：`flushSync` 提交时时间线已经是「新页 + 旧页」，但虚拟器的 `scrollOffset` **只由
+scroll 事件驱动**，而 scroll 事件要等浏览器渲染步骤才派发。于是第一次提交仍按前插前的
+`scrollTop`（824）去 map 新数组：原来的视口段被推到很后面，落进视口区间的是刚插进来的
+最老一段（全在视口上方，覆盖率 0%）。同步回补把 `scrollTop` 写成 5304 之后，还得等下一个
+scroll 事件才换回 `p-185-*`。夹具太快时这两次 commit 挤在同一帧，所以之前抓不到。
+
+修法：同步回补写完 `scrollTop` 之后立刻 `container.dispatchEvent(new Event("scroll"))`，
+让虚拟库走它自己设计好的入口（读 offset → 重算 range → `flushSync` 重渲染），第二次提交
+仍在绘制前完成，中间态一次都不呈现。
+
+复测（同一 12× 降速探针）：`scroll st=5086` 在前、`rows-commit pct=100 first=p-185-3` 在后，
+`p-177-*` 那一帧不再出现。旁路副作用另行核对：前插后「回到底部」按钮状态与 `stick` 均未被
+这次合成 scroll 改写（`bottomGap 37238`，没有被拉回底部）。
+
+`runPagingChecks` 与 `session-viewer-scroll-split.test.mjs` 各补一条钉住这两件事的断言
+（一屏提前量常量 + `Math.round(clientHeight × 比例)` 的 rootMargin；合成 scroll 必须排在
+第一次同步回补之后）。
+
 ## 影响文件
 
 - `web/src/components/session/useSessionViewerScroll.ts` — 显隐判据 + 逐帧收敛
 - `web/src/components/session/useSessionWindowing.ts` — 元素矩形锚定 + 多帧收敛 + 窗口态按会话重建
-  + `flushSync` 提交 + 同步首步回补 + 半屏提前量 + `armedRef`/`armEpoch` 重新武装闸门
+  + `flushSync` 提交 + 同步首步回补 + 合成 scroll 驱动重算区间 + 一屏提前量 + `armedRef`/`armEpoch` 重新武装闸门
 - `web/src/components/session/SessionViewerLoadingState.tsx` — 上翻转圈改零高度 sticky 浮层
 - `web/src/components/session/SessionViewerTimeline.tsx` — 虚拟行加 `data-timeline-key` + 透传 `toolViewCache`
 - `web/src/components/session/SessionViewer.tsx` — 会话级 `toolViewCache`

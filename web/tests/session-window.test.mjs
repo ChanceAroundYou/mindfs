@@ -77,14 +77,15 @@ assert.match(viewerSrc, /const loadMore = useCallback/, "loadMore callback missi
 assert.match(viewerSrc, /scrollHeight - container\.scrollTop/, "scroll anchoring (scrollHeight - scrollTop) missing");
 assert.match(viewerSrc, /beforeSeq: windowMeta\.minSeq/, "loadMore beforeSeq: windowMeta.minSeq missing");
 assert.match(viewerSrc, /IntersectionObserver/, "IntersectionObserver sentinel missing");
-// 提前量 200px → 半屏（2026-10-27）：固定 200px 要「看见内容不够」才开始加载，
-// 观感是滚到顶停一下再补一屏。改成按视口高度算比例，手机与桌面都提前半个屏幕。
+// 提前量 200px → 半屏 → 一屏（2026-10-27）：固定 200px 要「看见内容不够」才开始加载，
+// 观感是滚到顶停一下再补一屏；半屏仍然偏晚（用户报「加载范围过小」），最终提前整整一屏。
+// 比例必须按**真实视口高度**算，手机与桌面都同等提前量。
 assert.match(
   viewerSrc,
   /rootMargin: `\$\{Math\.round\(\(root\.clientHeight \|\| 0\) \* LOAD_MORE_AHEAD_RATIO\)\}px 0px 0px 0px`/,
-  "IntersectionObserver rootMargin 必须按视口高度算提前量（半屏）",
+  "IntersectionObserver rootMargin 必须按视口高度算提前量（一屏）",
 );
-assert.match(viewerSrc, /const LOAD_MORE_AHEAD_RATIO = 0\.5/, "提前量常量缺失");
+assert.match(viewerSrc, /const LOAD_MORE_AHEAD_RATIO = 1;/, "提前量常量缺失（提前量必须是一整屏）");
 assert.match(viewerSrc, /windowMeta\.hasMore/, "hasMore guard missing");
 assert.match(
   viewerSrc,

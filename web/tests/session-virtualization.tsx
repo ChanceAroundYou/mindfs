@@ -110,11 +110,11 @@ function Check() {
     replaceSession: (next: any) => { setTarget(0); setSession(next); },
     paging: () => { setTarget(0); setSession({key:'paging-test', exchanges:[], exchange_aux:{}}); },
     prepends: () => pagingPrepends,
-    // 观察窗口（2026-10-27 两条新行为的判据）：
+    // 观察窗口（2026-10-27 三条新行为的判据）：
     //   lastPrependAt —— 请求发出瞬间的 scrollTop / clientHeight / scrollHeight，
-    //                    用来判「触发点是不是提前了半个屏」；
-    //   lastPrependAt —— 请求发出瞬间的 scrollTop / clientHeight / scrollHeight，
-    //                    用来判「触发点是不是提前了半个屏」。
+    //                    用来判「触发点是不是提前了整整一屏」；
+    //   lastPrepend   —— 请求发出瞬间视口首行的 data-timeline-key 与真实 top，
+    //                    回包后按同一行比对，判锚定是否把视口拉回原处。
     setPagingDelay: (ms: number) => { pagingDelayMs = ms; },
     lastPrependAt: () => lastPrependAt,
     question: () => setSession((s: any) => ({...s, pending: true, exchanges: [...s.exchanges, {
@@ -315,15 +315,16 @@ Object.assign(window, { runPagingChecks: async (opts: any = {}) => {
   await settle(500);
   check(!jumpButton(), 'paging: dragging back to the bottom must hide it without a click');
 
-  // ⑤ 触发点提前半屏（2026-10-27）：不必滚到顶就该开始加载。
-  // 判据落在**请求发出那一刻的视口位置**上：还在离顶 0.3 屏以上就该发出去；旧的
-  // 200px 提前量必然要滚到离顶 200px 以内才触发，压不过这条。
+  // ⑤ 触发点提前整整一屏（2026-10-27）：不必滚到顶、也不必等到只剩半屏就该开始加载。
+  // 判据落在**请求发出那一刻的视口位置**上：还在离顶 0.6 屏以上就该发出去。半屏提前量
+  // 必然要滚到 0.5 屏以内才触发（每步 100px，落在 0.33–0.5 屏），压不过这条；旧的
+  // 200px 提前量更不可能。
   //
   // 不能一次跳到目标位置 —— 跨过未渲染区间时虚拟器会按测量修正 scrollTop，写进去的
-  // 值当场被改掉（实测写 259、落回 501，正好被推出半屏带，于是「不触发」）。改成每次
+  // 值当场被改掉（实测写 259、落回 501，正好被推出提前量带，于是「不触发」）。改成每次
   // 上移 100px，每一步都落在已渲染区间里。
   const aheadEl = scroller();
-  aheadEl.scrollTop = Math.round(aheadEl.clientHeight * 1.5);
+  aheadEl.scrollTop = Math.round(aheadEl.clientHeight * 1.8);
   await settle(400);
   const beforeAhead = prepends();
   for (let step = 0; step < 30 && prepends() === beforeAhead; step++) {
@@ -334,8 +335,8 @@ Object.assign(window, { runPagingChecks: async (opts: any = {}) => {
   const aheadAt = (window as any).check.lastPrependAt();
   check(aheadFired === 1, `paging: pull-in fired ${aheadFired} times while scrolling up (expected 1)`);
   check(
-    !!aheadAt && aheadAt.top > aheadAt.client * 0.3,
-    `paging: pull-in fired too late (at ${aheadAt?.top}px with a ${aheadAt?.client}px viewport)`,
+    !!aheadAt && aheadAt.top > aheadAt.client * 0.6,
+    `paging: pull-in fired too late (at ${aheadAt?.top}px with a ${aheadAt?.client}px viewport; a full screen of headroom is required)`,
   );
 
   // ⑥ 上反转圈不占布局（2026-10-27）：转圈出现期间 scrollHeight 不该变、包裹层高度为 0。
