@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 
 	types "mindfs/server/internal/agent/types"
@@ -82,28 +83,59 @@ func (s *session) consumeMessages() {
 			// telemetry for clients that render token counters, but MindFS does
 			// not currently expose it in the session timeline.
 		case claudeagent.ResultMessage:
-			// End-of-turn boundary. Claude may place the final text here when no
-			// incremental tokens were streamed, so emit it as a last fallback.
-			s.flushAllDeltas()
-			if !s.sawMessageText && strings.TrimSpace(m.Result) != "" {
-				s.emitMessageChunk(m.Result)
-			}
-			s.updateContextWindow(m)
-			s.logRawMessage(raw)
-			contextWindow, _ := s.ContextWindow(context.Background())
-			tokenUsage := claudeTokenUsage(m)
-			s.emit(types.Event{
-				Type:      types.EventTypeMessageDone,
-				SessionID: s.SessionID(),
-				Data:      types.MessageDone{ContextWindow: contextWindow, TokenUsage: tokenUsage},
-			})
-			s.completeTurn(resultErr(m))
-			s.sawDelta = false
-			s.sawMessageText = false
+			s.handleResultMessage(m, raw)
 		default:
 			s.logRawMessage(raw)
 		}
 	}
 
 	s.failPendingTurns(errors.New("response stream ended unexpectedly"))
+}
+
+// handleResultMessage 处理一条 ResultMessage。
+//
+// SDK 的 Stream.Messages() 是**长驻迭代器**（只有一次性的 Query() 才在 result 上停），
+// 所以同一条流里会出现不止一条 result：真回合结束时的那条，以及 CLI 插进来的
+// 非人类来源 result（后台任务完成时 origin.kind=task-notification，实测会插在
+// **下一轮的开头**）。只有人类发起的那一轮结束才是用户看到的回合边界；把后者也当
+// 边界，就会在 agent 还在跑的时候广播 session.done 并清掉 pending —— 灯只在有
+// chunk 时亮（静默期必灭），且回合已出列 ⇒ 停止按钮取到 target_turn=0 被
+// staleCancelTarget 恒丢弃（2026-10-27 幽灵会话实测）。
+//
+// 判定口径是**白名单**（见 isTurnBoundaryResult）：SDK 的 MessageOriginKind 有 6 个值，
+// 黑名单只挡今天碰巧出现的那一个，下一种 kind 一出现就原样复发。
+func (s *session) handleResultMessage(msg claudeagent.ResultMessage, raw []byte) {
+	s.logRawMessage(raw)
+	if !isTurnBoundaryResult(msg) {
+		// 非边界：不补正文、不发 MessageDone、不推进 context window、不结束本轮。
+		// 子任务输出本来就走 TaskNotificationMessage → tool_call_update 卡片；
+		// 当正文润出去会被 persistTurnBlocks 落成孤立句并插进用户这一轮的回答里。
+		// 也不动 sawDelta/sawMessageText —— 否则真回合结束时会被误判成「已出过正文」。
+		origin := ""
+		if msg.Origin != nil {
+			origin = string(msg.Origin.Kind)
+		}
+		// 定向日志：logRawMessage 在 1024 字节处截断，而 origin 序列化在 JSON 末尾，
+		// 实测 987/1103 条 result 的 origin 在日志里根本看不到。
+		log.Printf("[agent/claude] result.ignored session=%s origin=%q subtype=%q result_len=%d",
+			s.sessionKey, origin, msg.Subtype, len(msg.Result))
+		return
+	}
+	// 回合边界。Claude may place the final text here when no incremental tokens
+	// were streamed, so emit it as a last fallback.
+	s.flushAllDeltas()
+	if !s.sawMessageText && strings.TrimSpace(msg.Result) != "" {
+		s.emitMessageChunk(msg.Result)
+	}
+	s.updateContextWindow(msg)
+	contextWindow, _ := s.ContextWindow(context.Background())
+	tokenUsage := claudeTokenUsage(msg)
+	s.emit(types.Event{
+		Type:      types.EventTypeMessageDone,
+		SessionID: s.SessionID(),
+		Data:      types.MessageDone{ContextWindow: contextWindow, TokenUsage: tokenUsage},
+	})
+	s.completeTurn(resultErr(msg))
+	s.sawDelta = false
+	s.sawMessageText = false
 }

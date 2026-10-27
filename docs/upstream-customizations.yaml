@@ -6906,3 +6906,23 @@ groups:
       - 'server/internal/api/http_tasks_finish_teardown.go:		if result.ReferenceReleased {'
       - 'web/src/app/realtimeWsTaskHandlers.ts:          if (result?.reference_released) {'
       - 'web/src/services/task/worktree.ts:  reference_released?: boolean;'
+
+  - id: G-KG
+    title: 只有人类发起的那一轮的 ResultMessage 才是回合边界
+    kind: fix
+    symptom: "会话只在流式输出正文时亮灯：一进工具调用或等上游大模型，输出一停就灭灯报完成，结果回来又接着亮；同一时刻无论按多少次停止都打断不了这一轮。列表里它一会儿在跑一会儿已完成，输出里偶尔还混进「完成。」这类不属于本轮的文本。只有用过 run_in_background 的会话会这样，绝大多数会话从没复现过。"
+    why: "必须保留的判据：SDK 的 Stream.Messages() 是**长驻迭代器**（只有一次性的 Query() 才在 result 上停），同一条流里会出现多条 ResultMessage；只有 Origin 缺省（nil）或 Origin.Kind == human 的那条才是「人类发起的那一轮结束」。CLI 在后台任务完成时会把一条 origin.kind=task-notification 的 result 插进同一流（实测插在**下一轮开头**），旧实现无条件把它当回合边界 —— resultErr 对 subtype=success 返回 nil，于是 SendMessage 成功返回、EndSessionTurn 广播 session.done 并清掉 pending，而 agent 其实还在跑。灯只在有 chunk 时亮、停止按钮因 activeTurns 已清空而全阶段失效，都是这条假 done 的派生现象。若上游按「每条 result 都是边界」重新实现，上述症状会原样复发，所以过滤必须在 adapter 里；判定用**白名单**（human 或无 origin）而非黑名单，因为 MessageOriginKind 有 6 个值（human / channel / peer / task-notification / coordinator / auto-continuation），黑名单只挡今天碰巧出现的那一个。"
+    boundary: "只改 claude adapter 的消息归一化：`case ResultMessage` 收成一次 `handleResultMessage`，内部先用 `isTurnBoundaryResult` 分流。非边界 result **整条跳过** —— 不补正文（子任务输出本来就走 TaskNotificationMessage → tool_call_update 卡片，润成正文会被 persistTurnBlocks 落成孤立句插进用户这一轮的回答）、不发 MessageDone、不推进 context window、不结束本轮、不动 sawDelta/sawMessageText；只多记一行 `result.ignored` 定向日志（原始日志在 1024 字节处截断，origin 序列化在 JSON 末尾，实测 987/1103 条 result 的 origin 在日志里根本看不到）。不改 WS 帧、REST 响应、MessageDone/Event 结构，前端零改动；不改取消闸门 `staleCancelTarget`，也**不给 `TargetTurnID == 0` 开逃生口** —— 那是本缺陷的结果而不是原因，开口会把 2026-10-02「停止掐掉刚起来的新轮」的回归放回来。"
+    files:
+      - server/internal/agent/claude/session_message_loop.go
+      - server/internal/agent/claude/session_turn.go
+      - server/internal/agent/claude/session_result_origin_test.go
+    tests:
+      - server/internal/agent/claude/session_result_origin_test.go
+    anchors:
+      - 'server/internal/agent/claude/session_message_loop.go:			s.handleResultMessage(m, raw)'
+      - 'server/internal/agent/claude/session_message_loop.go:func (s *session) handleResultMessage(msg claudeagent.ResultMessage, raw []byte) {'
+      - 'server/internal/agent/claude/session_message_loop.go:	if !isTurnBoundaryResult(msg) {'
+      - 'server/internal/agent/claude/session_message_loop.go:		log.Printf("[agent/claude] result.ignored session=%s origin=%q subtype=%q result_len=%d",'
+      - 'server/internal/agent/claude/session_turn.go:func isTurnBoundaryResult(msg claudeagent.ResultMessage) bool {'
+      - 'server/internal/agent/claude/session_result_origin_test.go:func TestResultOriginNonBoundaryIsIgnored(t *testing.T) {'

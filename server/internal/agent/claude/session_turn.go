@@ -121,6 +121,24 @@ func resultErr(msg claudeagent.ResultMessage) error {
 	return errors.New("claude turn failed")
 }
 
+// isTurnBoundaryResult 判定一条 ResultMessage 是否代表「人类发起的那一轮结束」。
+//
+// SDK 只在**非人类来源**的 result 上填 Origin；缺省（nil）即人类轮 —— 本机实测
+// 1084 条真回合 result 全部不带 origin 字段，19 条非边界 result 全部带
+// origin.kind="task-notification"。白名单而非黑名单：MessageOriginKind 有 6 个值
+// （human / channel / peer / task-notification / coordinator / auto-continuation），
+// 黑名单只挡今天碰巧出现的那一个，下一种 kind 出现时症状原样复发。
+//
+// 未知 kind 一律按「非边界」处理：宁可让那一轮继续跑（它仍在 activeTurns 里，
+// 停止按钮可用），也不要提前广播 done —— 提前 done 会让 agent 在跑的同时灯灭、
+// 停止失效、并把后续输出落到已经关闭的回合上。
+func isTurnBoundaryResult(msg claudeagent.ResultMessage) bool {
+	if msg.Origin == nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(string(msg.Origin.Kind)), string(claudeagent.MessageOriginKindHuman))
+}
+
 func isTurnCanceledError(err error) bool {
 	if err == nil {
 		return false
