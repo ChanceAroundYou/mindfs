@@ -1,6 +1,6 @@
 # 会话滚动三处回归：按钮显隐跟位置 / 到底逐帧收敛 / 前插按元素锚定
 
-状态：Implemented 2026-10-27，隔离实例 + 无头 Chromium 已验，待 ship。
+状态：Implemented 2026-10-27（含第三轮「一次上滑连翻到底」修复），隔离实例 + 无头 Chromium 已验，待 ship。
 
 ## 症状（用户 2026-10-27 报）
 
@@ -96,6 +96,47 @@ v0.5.5 时把 `SessionViewer.tsx` 整体换成上游版本，`useToolCallCard` �
 修后四个检查在桌面 1280×900 与移动 390×844 两个视口全部通过；`runPagingChecks` 的
 锚行漂移仍是 `[0,0,16,16,16,16]`（`maxDrift 16` ≤ 一行），`clickGap 0`、`upGap 50`。
 
+### 第三次验证（2026-10-27 真机反馈：一次上滑连翻到底 → 1 页）
+
+真机复测发现新症状：**上滑碰到加载位置后不再停下，而是不停往上连翻，一口气把整段
+历史全加载出来并最终停在最顶部**。`runPagingChecks` 当时抓不到它 —— 它每一轮自己写
+`scrollTop = 0` 替用户反复触发，等于把「一次手势翻了多页」这件事盖住了。
+
+取证（`IntersectionObserver` 打桩 + 计数 `getSessionWindow` 的 `beforeSeq` 请求）：
+
+| 量 | 修前 | 修后 |
+|---|---|---|
+| 一次上滑触发的 `beforeSeq` 请求数 | **29**（233→225→…→9，冲完 240 条） | **1** |
+| 回补期间的 `scrollTop` | 恒 **0**（一个字节没写） | 2782（回到原位） |
+| 终态 | 停在最顶部 | 与操作前同一行同一位置 |
+
+根因是两条缺陷叠在一起，**都只在「条目数 > 视口 + overscan」时成立**：
+
+1. **锚行有 key 但已卸载时，两条补偿路径都不成立。** 旧 `settle()` 是
+   `if (anchorKey) {…只走矩形…} else if (frames < 2) {…重试两帧放弃…}`，而
+   `scrollHeight` 兜底被 `if (!anchorKey)` 挡在外面。真实会话一页 8 条 exchange
+   展开成 70+ 个时间线条目，前插后原锚行被推到索引 40 开外、远超
+   `overscan = 8`，**永远不会再挂载** → `delta` 算不出来 → 一个字节都不写。
+2. **`scrollTop` 停在 0 → 顶部哨兵持续 intersecting**，而 IO effect 的依赖里含
+   `loadMore`，每次 observer 重建都会立刻回调一次 → 上一页还没回补完就点着下一页。
+
+轻量夹具（每页 16 条）前后都还挂着锚行，所以第 1 条路径从来没被测到 —— 这次把
+fixture 改成真实形状（每条 exchange 带 20 张工具卡，`kind` 交替 read/execute 避开
+`groupConsecutiveToolCalls` 折叠），首屏 21 个挂载行即进入虚拟化路径。
+
+修法两条：
+
+- `settle()` 里锚行在不在都算同一个 `delta`（缺失时退回 `scrollHeight - anchor - scrollTop`）；
+- `loadMore` 入口加 `isPrependingRef` 门禁：上一页还在回补位置时拒收新请求。
+
+`runPagingChecks` 同时补了三条断言：夹具必须真的走虚拟化（挂载行数 0..80）、
+回补后 `scrollTop > 0`、`prepends() === pages`，外加检查 ④「滚到顶后完全不再操作，
+只应加载 1 页」。变异验证：把两处修复分别撤回，断言立刻红
+（`viewport stuck at the very top` / `28 prepend requests for 6 gestures`）。
+
+修后 `runPagingChecks` 在桌面 1280×900 与移动 390×844 均通过：
+`{"passed":true,"pages":6,"drifts":[0,0,0,0,0,0],"maxDrift":0,"idlePages":1,"clickGap":0,"upGap":50,"hiddenWhileUp":false}`。
+
 **既有失败与本次无关**（HEAD 上逐字复现）：上一轮记录的
 `runVirtualizationChecks` 与 `runStreamingTextChecks` 两条已在收尾轮查明为 fixture
 缺陷并修掉（见上表），不是产品回归；顺带修了 fixture 的陈旧 import
@@ -109,7 +150,8 @@ v0.5.5 时把 `SessionViewer.tsx` 整体换成上游版本，`useToolCallCard` �
 - `web/src/components/session/SessionViewer.tsx` — 会话级 `toolViewCache`
 - `web/src/components/session/sessionViewer{Tool,Auxiliary}TimelineHelpers.tsx` — 接上缓存
 - `web/src/components/stream/ToolCallGroupCard.tsx` — 组卡展开态进缓存
-- `web/tests/session-viewer-scroll-split.test.mjs` — 8 条源码级回归断言（含窗口态重置顺序）
+- `web/tests/session-viewer-scroll-split.test.mjs` — 12 条源码级回归断言（含窗口态重置顺序、
+  「一次上滑只翻一页」的 `isPrependingRef` 门禁与锚行缺失兜底）
 - `web/tests/tool-view-cache.test.mjs` — 新增：钉住 `toolViewCache` 整条接线
 - `web/tests/session-virtualization.tsx` — 分页 fixture + `runPagingChecks` + 两处 fixture 修正
 - `web/tests/deploy-web-assets.test.mjs` — 断言跟着 `62f88294` 的脚本拆分搬家

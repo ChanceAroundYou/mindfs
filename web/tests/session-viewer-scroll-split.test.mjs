@@ -64,6 +64,36 @@ assert.match(timelineView, /data-timeline-key=\{String\(row\.key\)\}/, "虚拟�
 assert.match(windowing, /querySelectorAll<HTMLElement>\("\[data-timeline-key\]"\)/, "loadMore 必须找视口内锚点行");
 assert.match(windowing, /getBoundingClientRect\(\)\.top - anchorTop/, "前插必须按真实矩形回补");
 
+// ── 2026-10-27 回归：一次上滑只翻一页（失控连翻到底）─────────────────
+// 事故：锚行有 key 但前插后被推出 overscan 永不挂载时，旧代码「有 anchorKey 走矩形、
+// 无 anchorKey 走 scrollHeight」两条分支都不成立，一个字节都不写 → scrollTop 停在 0 →
+// 顶部哨兵持续 intersecting → 每重建一次 observer 就点着下一页（实测一次手势连发 29 次
+// 请求、冲完 240 条并停在顶部）。
+assert.match(
+  windowing,
+  /isPrependingRef\.current \|\| !windowMeta\.hasMore/,
+  "loadMore 必须在上一页回补期间拒收新请求，否则哨兵会连着点下一页",
+);
+{
+  // 锚行未挂载时必须退回 scrollHeight 差值，不能「有 key 就只走矩形」。
+  const settleBlock = windowing.slice(windowing.indexOf("const settle = () =>"));
+  assert.match(
+    settleBlock,
+    /const delta = row\s*\n?\s*\? /,
+    "锚行在不在都要算得出 delta：缺失时必须退回 scrollHeight 差值",
+  );
+  assert.doesNotMatch(
+    settleBlock,
+    /else if \(frames < 2\)/,
+    "锚行缺失不能只重试两帧就放弃（那时它还没挂载回来）",
+  );
+  assert.doesNotMatch(
+    settleBlock,
+    /if \(!anchorKey\) \{\s*\n\s*el\.scrollTop = el\.scrollHeight - anchor/,
+    "scrollHeight 回补不能只在没有 anchorKey 时才走",
+  );
+}
+
 // ── 2026-10-27 回归：窗口态必须按会话重建 ─────────────────────────────
 // 事故：windowMeta 跨会话残留，`applyWindow(keepOlder)` 取 `min(旧 minSeq, 新 minSeq)`，
 // 从 seq 起于 1 的会话切到起于 233 的会话后 minSeq 被钉在 1，`loadMore` 恒发

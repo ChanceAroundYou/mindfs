@@ -15,7 +15,7 @@ to resume their old TODOs or baselines.
 - [Session activity unified](session-activity-unified.md) — Plan 2026-10-25，待批准；把 `activity_at` 合并进 `updated_at`（流式期间节流落库），删除覆盖层与继承函数，刷新不再回落。
 - [Kanban create panel and shared worktree](kanban-create-panel-and-shared-worktree.md) — Implemented 2026-10-26，待提交与 ship；模板菜单 ref 断线（全部页签点模板不弹窗）、分支名输入改用 composerInputStyle、PromptEditor 去掉 fillHeight 恢复 240px 内部滚动、worktree 按「已有分支」认领 + 引用计数收尾。
 - [Result origin turn boundary](result-origin-turn-boundary.md) — Implemented 2026-10-27，待 ship；幽灵会话（只在输出时亮灯、静默期灭灯报完成、停止全阶段失效）根因是 adapter 把 CLI 插进流的 `origin.kind=task-notification` result 也当成回合边界；改为白名单（无 origin 或 human）判定 + 定向日志，取消闸门不动。
-- [Session scroll follow fixes](session-scroll-follow-fixes.md) — Implemented 2026-10-27，隔离实例 + 无头 Chromium 已验，待 ship；按钮显隐恢复 scroll 监听并改由实际离底距离决定、到底改逐帧收敛、前插按 `data-timeline-key` 元素矩形多帧锚定（HEAD 跳 12230px → 16px，点击到底 800px 残差 → 0）。收尾轮另修两处：`windowMeta` 跨会话残留导致上翻一页也加载不出来（`min(旧 minSeq, 新 minSeq)` 把 minSeq 钉死），以及 `976a5d0f` 合上游时被整体替换掉的 `toolViewCache` 接线（工具卡滚出视口再滚回来展开态丢失、详情重请求）。
+- [Session scroll follow fixes](session-scroll-follow-fixes.md) — Implemented 2026-10-27，隔离实例 + 无头 Chromium 已验，待 ship；按钮显隐恢复 scroll 监听并改由实际离底距离决定、到底改逐帧收敛、前插按 `data-timeline-key` 元素矩形多帧锚定（HEAD 跳 12230px → 16px，点击到底 800px 残差 → 0）。同一轮收尾另修两处：`windowMeta` 跨会话残留导致上翻一页也加载不出来（`min(旧 minSeq, 新 minSeq)` 把 minSeq 钉死），以及 `976a5d0f` 合上游时被整体替换掉的 `toolViewCache` 接线（工具卡滚出视口再滚回来展开态丢失、详情重请求）。三轮现场：2026-10-27 真机报「一次上滑连翻到底」，取证到一次手势触发 29 次 `beforeSeq` 请求、`scrollTop` 恒 0，根因是锚行被推出 overscan 永不挂载时两条补偿路径都不成立 + 哨兵持续 intersecting 连点下一页；修后 29 → 1 次、位置回到原位，fixture 改成真实形状并补「一次手势只翻一页」断言。
 
 
 ## Completed or superseded history

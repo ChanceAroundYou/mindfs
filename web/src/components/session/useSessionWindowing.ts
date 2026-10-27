@@ -137,7 +137,9 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
   // 函数式前置合并后在随后的若干帧里按**真实矩形**回补滚动位置。
   const loadMore = useCallback(() => {
     const container = activeScrollRef?.current;
-    if (!container || loadingMore || !windowMeta.hasMore || !sessionKey) {
+    // isPrependingRef：上一页还在回补位置时不接新请求。否则哨兵（scrollTop 尚未恢复时
+    // 仍停在视口里）会把下一页连着点着，一次上滑把历史全部加载完（2026-10-27 真机）。
+    if (!container || loadingMore || isPrependingRef.current || !windowMeta.hasMore || !sessionKey) {
       return;
     }
     // G-KB 回归修复（2026-10-27）：以前只记 `scrollHeight - scrollTop` 并在一个 rAF 里
@@ -199,33 +201,32 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
             isPrependingRef.current = false;
             return;
           }
-          if (anchorKey) {
-            const row = el.querySelector<HTMLElement>(
-              `[data-timeline-key="${CSS.escape(anchorKey)}"]`,
-            );
-            if (row) {
-              const delta = row.getBoundingClientRect().top - anchorTop;
-              if (Math.abs(delta) > SETTLE_PX) {
-                el.scrollTop += delta;
-                anchorTop = row.getBoundingClientRect().top;
-                stableFrames = 0;
-              } else {
-                stableFrames += 1;
-              }
-              frames += 1;
-              if ((frames < MIN_FRAMES || stableFrames < 3) && frames < MAX_FRAMES) {
-                window.requestAnimationFrame(settle);
-                return;
-              }
-            } else if (frames < 2) {
-              frames += 1;
-              window.requestAnimationFrame(settle);
-              return;
-            }
+          const row = anchorKey
+            ? el.querySelector<HTMLElement>(`[data-timeline-key="${CSS.escape(anchorKey)}"]`)
+            : null;
+          // 锚行在 → 按真实矩形回补；锚行没挂载 → 按 scrollHeight 差值回补。
+          //
+          // 后者是必须的兜底，不是可选路径（2026-10-27 真机）：真实会话一页 8 条
+          // exchange 能展开成 70+ 个时间线条目，前插后原来那行被推到索引 40 开外，
+          // 远超视口 + overscan，于是**永远不会再挂载**。此时若不兜底，两条补偿都不走、
+          // 一个字节都不写，scrollTop 停在 0 → 顶部哨兵持续 intersecting → 每建一次
+          // observer 就点着下一轮 loadMore，一次上滑把整段历史连翻到底（实测 29 次请求
+          // 冲完 240 条、停在顶部）。小 fixture 每页只有 16 条、前后都还在挂载，所以
+          // 这条路径从来没被测到。
+          const delta = row
+            ? row.getBoundingClientRect().top - anchorTop
+            : el.scrollHeight - anchor - el.scrollTop;
+          if (Math.abs(delta) > SETTLE_PX) {
+            el.scrollTop += delta;
+            if (row) anchorTop = row.getBoundingClientRect().top;
+            stableFrames = 0;
+          } else {
+            stableFrames += 1;
           }
-          // 非虚拟化路径（没有锚点行）：退回按 scrollHeight 差值回补。
-          if (!anchorKey) {
-            el.scrollTop = el.scrollHeight - anchor;
+          frames += 1;
+          if ((frames < MIN_FRAMES || stableFrames < 3) && frames < MAX_FRAMES) {
+            window.requestAnimationFrame(settle);
+            return;
           }
           isPrependingRef.current = false;
         };
