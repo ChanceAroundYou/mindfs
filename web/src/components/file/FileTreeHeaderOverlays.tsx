@@ -510,7 +510,7 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
             <p style={{ margin: "0 0 8px", fontSize: "11px", color: "var(--text-secondary)" }}>版本：{typeof window !== "undefined" && (window as any).MindFSAppInfo?.getInfo?.() ? (JSON.parse((window as any).MindFSAppInfo.getInfo()).version || "web") : "web (0.5.5-1101-g5e723830)"}</p>
             <p style={{ margin: "0 0 12px", fontSize: "11px" }}><a href="https://github.com/ChanceAroundYou/mindfs" target="_blank" rel="noreferrer" style={{ color: "var(--accent-color)" }}>github.com/ChanceAroundYou/mindfs</a></p>
             {isNativeApp ? (
-              <button type="button" onClick={() => setAboutOpen(false)} style={{ border: "1px solid var(--border-color)", background: "var(--accent-color)", color: "#fff", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", marginRight: "8px" }}>
+              <button type="button" onClick={() => { const u = "https://github.com/ChanceAroundYou/mindfs/releases/latest"; try { (window as any).MindFSNative?.openExternalURL?.(u); } catch {} window.open(u, "_blank"); }} style={{ border: "1px solid var(--border-color)", background: "var(--accent-color)", color: "#fff", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", marginRight: "8px" }}>
                 检查更新
               </button>
             ) : null}
