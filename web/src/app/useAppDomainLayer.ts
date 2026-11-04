@@ -4,6 +4,7 @@ import type { QueuedUserMessage, RelatedFile, RelatedWorktree, SyncSessionResult
 import { bootstrapService } from "../services/net/bootstrap";
 import type { BootstrapState } from "../services/net/bootstrap";
 import { reportError } from "../services/net/error";
+import { takePendingReplySession } from "../services/net/replyPoller";
 import { setRootNodeMap } from "../services/net/rootNode";
 import { resolveLockedSessionKey } from "../services/session/sessionLock";
 import { useAppPluginRenderEffects } from "./useAppPluginRenderEffects";
