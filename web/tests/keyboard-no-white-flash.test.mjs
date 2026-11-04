@@ -20,12 +20,12 @@ test("keyboard-no-white-flash", async () => {
 
   // 壳自己缩了 WebView 时，露出的那条缝是窗口底色 —— 必须跟着应用主题，
   // 否则暗色主题下闪白。颜色 + 桥两端都要在。
-  const styles = read("../android/app/src/main/res/values/styles.xml");
+  const styles = read("../web/android/app/src/main/res/values/styles.xml");
   assert.match(styles, /name="android:windowBackground">@color\/mindfsWindowBackground/);
-  assert.match(read("../android/app/src/main/res/values/colors.xml"), /name="mindfsWindowBackground"/);
-  assert.match(read("../android/app/src/main/res/values-night/colors.xml"), /name="mindfsWindowBackground"/);
+  assert.match(read("../web/android/app/src/main/res/values/colors.xml"), /name="mindfsWindowBackground"/);
+  assert.match(read("../web/android/app/src/main/res/values-night/colors.xml"), /name="mindfsWindowBackground"/);
 
-  const main = read("../android/app/src/main/java/com/mindfs/app/MainActivity.java");
+  const main = read("../web/android/app/src/main/java/com/mindfs/app/MainActivity.java");
   assert.match(main, /MindFSThemeBackground/);
 
   const appearance = read("src/services/prefs/appearance.ts");
