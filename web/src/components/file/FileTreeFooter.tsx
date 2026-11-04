@@ -1,7 +1,6 @@
-import React, { useState } from "react";
+import React from "react";
 
 export function FileTreeFooter(props: any) {
-  const [aboutOpen, setAboutOpen] = useState(false);
   const { hasFooterContent, updateNotesRef, updateActionLabel, updateActionSummary, updateActionDisabled, updateActionBusy, updateActionHelp, isUpdateNotesOpen, setIsUpdateNotesOpen, onUpdateAction, footerTopContent, isNativeApp, onGoHome, shouldShowInstallButton, handleInstall, installLabel, shouldShowInstallHelp, installHelp, t } = props;
   return (
       <div
@@ -169,68 +168,6 @@ style={{
 {shouldShowInstallHelp ? (
   <div style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.5, textAlign: "center" }}>
     {installHelp}
-  </div>
-) : null}
-<button
-  type="button"
-  onClick={() => setAboutOpen(true)}
-  style={{
-    width: "100%",
-    border: "1px solid var(--border-color)",
-    background: "transparent",
-    color: "var(--text-secondary)",
-    borderRadius: "10px",
-    padding: "8px 12px",
-    fontSize: "11px",
-    cursor: "pointer",
-  }}
->
-  关于 MindFS
-</button>
-{aboutOpen ? (
-  <div
-    onClick={() => setAboutOpen(false)}
-    style={{
-      position: "fixed",
-      inset: 0,
-      background: "rgba(0,0,0,0.45)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 1000,
-    }}
-  >
-    <div
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        background: "var(--panel-bg)",
-        color: "var(--text-primary)",
-        borderRadius: "12px",
-        padding: "16px",
-        width: "min(360px, 90vw)",
-        boxShadow: "0 24px 48px rgba(0,0,0,0.3)",
-      }}
-    >
-      <h3 style={{ margin: "0 0 8px", fontSize: "14px" }}>关于 MindFS</h3>
-      <p style={{ margin: "0 0 12px", fontSize: "12px", color: "var(--text-secondary)", lineHeight: 1.5 }}>
-        MindFS — AI Agent Remote Access Gateway · Result Visualization
-      </p>
-      <button
-        type="button"
-        onClick={() => setAboutOpen(false)}
-        style={{
-          border: "1px solid var(--border-color)",
-          background: "var(--accent-color)",
-          color: "#fff",
-          borderRadius: "8px",
-          padding: "6px 12px",
-          cursor: "pointer",
-          fontSize: "12px",
-        }}
-      >
-        关闭
-      </button>
-    </div>
   </div>
 ) : null}
       </div>
