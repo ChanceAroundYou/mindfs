@@ -15,7 +15,7 @@ test("keyboard-no-white-flash", async () => {
   assert.doesNotMatch(html, /interactive-widget=resizes-content/);
 
   // Android 壳仍按 adjustResize 走：syncViewportHeight 的 resizedBy 分支就是为它写的。
-  const manifest = read("../android/app/src/main/AndroidManifest.xml");
+  const manifest = read("../web/android/app/src/main/AndroidManifest.xml");
   assert.match(manifest, /android:windowSoftInputMode="adjustResize"/);
 
   // 壳自己缩了 WebView 时，露出的那条缝是窗口底色 —— 必须跟着应用主题，
