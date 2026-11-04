@@ -102,7 +102,7 @@ export function AppRootView(props: AppRootViewProps) {
   } = props;
   // useAppSessionLayer 返回值中本组件用到的部分
   const {
-    handleCancelCurrentTurn, handleCreateBlankFile, handleForkAgentMessage, handleNewSession,
+    handleCancelCurrentTurn, handleCreateBlankFile, handleCreateFolder, handleForkAgentMessage, handleNewSession,
     handleOnboardingStepChange, handleRestartAgent, handleRunAgentLifecycleCommand, handleSelectSession,
     handleSendMessage, handleSetPlanMode, handleStartUpdate, handleTreeUpload,
     refreshTreeDir,
@@ -235,6 +235,7 @@ main={<
                 gitDiff={gitDiff}
                 gitDiffSideBySide={gitDiffSideBySide}
                 handleCreateBlankFile={handleCreateBlankFile}
+                handleCreateFolder={handleCreateFolder}
                 handleDirectoryPathClick={handleDirectoryPathClick}
                 handleDisablePendingPlugins={handleDisablePendingPlugins}
                 handleFileViewerFileClick={handleFileViewerFileClick}

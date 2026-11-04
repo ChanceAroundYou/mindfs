@@ -6,6 +6,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [File view new folder](file-view-new-folder.md) — Implemented 2026-11-04，待提交与 ship；文件视图 ⋯ 菜单新增「新建文件夹」，后端 CreateEntry 支持目录，请求走 appURL(nodeId)。
+
 - [Session child tree consolidation](session-child-tree-consolidation.md) — Implemented 2026-10-18，待提交与 ship；单/多项目子会话树已收束到共享 hook，保持选中链路、3 条上限、分页与收起。
 - [Live ask_user badge](live-ask-user-badge.md) — Implemented 2026-10-20，待提交与 ship；徽标亮灭实时（aux 写入广播 + 答题即清 + 轮询带真相），并入侧边栏默认「文件」页、根行箭头纯展开、页签不许自动联动三处修正。
 - [File browser row action menu](file-entry-row-menu.md) — Implemented 2026-10-20，待提交与 ship；主区文件列表逐条三点菜单（删除/重命名/移动），复用既有控件与 /api/file/operation，弹层 portal + 锚定定位。

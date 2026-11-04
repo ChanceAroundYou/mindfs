@@ -6976,3 +6976,37 @@ groups:
       - 'server/internal/agent/claude/session_message_loop.go:		log.Printf("[agent/claude] result.ignored session=%s origin=%q subtype=%q result_len=%d",'
       - 'server/internal/agent/claude/session_turn.go:func isTurnBoundaryResult(msg claudeagent.ResultMessage) bool {'
       - 'server/internal/agent/claude/session_result_origin_test.go:func TestResultOriginNonBoundaryIsIgnored(t *testing.T) {'
+
+  - id: G-KH
+    title: 文件视图新建文件夹（后端创建条目支持目录 + 视图 ⋯ 菜单入口）
+    kind: feature
+    symptom: "主区「文件」页的 ⋯ 菜单只有「创建空白文件」与「上传到当前目录」，没有「新建文件夹」，分组/整理目录只能去终端 mkdir。"
+    why: "后端 CreateBlankFile 只建文件；扩展为 CreateEntry(rootID, dir, name, asDir)：asDir=true 走 os.Mkdir(0o755)，冲突仍由 os.ErrExist → handler 409 → 前端 directory.fileExists 文案；POST /api/file body 加 kind:\"dir\"（缺省保持创建空白文件行为，零破坏）。新建路径加 .mindfs 护栏（AGENTS.md #12：绝不在项目目录里造出 .mindfs）。前端 handleCreateFolder 沿 handleCreateBlankFile 那条链路，但请求改用 appURL(..., getNodeIdForRoot(rootID)) 而非 appPath（后者不带 nodeId 会静默打到当前激活节点，pc/fn 上把目录建到错的机器）；顺手把 handleCreateBlankFile 同样切到 appURL 形式。入口只放在 DefaultListViewMenu 的 ⋯ 菜单（与创建空白文件同处），不进目录行三点菜单（那是 G-JO 的边界，语义是『作用于这一条』）。"
+    boundary: "只做后端创建端点的 dir 语义与视图级 ⋯ 菜单条目；OperateFile 的 rename/move/delete 语义不变，仅加 .mindfs 元目录的删除/重命名到 .mindfs 护栏（AGENTS.md #12）；不自动进入/展开新目录；目录名仍单级（name 含 / 仍判非法，不做 MkdirAll）；不改 WS 协议、role 表、账户分区。"
+    files:
+      - server/internal/api/http_text_edit.go
+      - server/internal/api/usecase/text_edit.go
+      - server/internal/api/usecase/create_entry_test.go
+      - web/src/app/useSessionListActions.ts
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/AppRootView.tsx
+      - web/src/components/app/sessionPaneTypes.ts
+      - web/src/components/app/SessionMainContent.tsx
+      - web/src/components/file/DefaultListView.tsx
+      - web/src/components/file/DefaultListViewMenu.tsx
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - web/tests/file-view-create-folder.test.mjs
+      - docs/plans/file-view-new-folder.md
+      - docs/plans/README.md
+    tests:
+      - server/internal/api/usecase/create_entry_test.go
+      - web/tests/file-view-create-folder.test.mjs
+    anchors:
+      - 'server/internal/api/http_text_edit.go:var input struct {'
+      - 'server/internal/api/http_text_edit.go:Kind string `json:"kind"`'
+      - 'server/internal/api/usecase/text_edit.go:func (s *Service) CreateEntry(rootID, dir, name string, asDir bool) (string, error)'
+      - 'server/internal/api/usecase/text_edit.go:os.Mkdir(target, 0o755)'
+      - 'web/src/app/useSessionListActions.ts:handleCreateFolder'
+      - 'web/src/app/useSessionListActions.ts:kind: "dir"'
+      - 'web/src/components/file/DefaultListViewMenu.tsx:t("directory.createFolder")'

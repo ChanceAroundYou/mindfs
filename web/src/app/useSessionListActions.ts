@@ -16,7 +16,7 @@ import { useI18n } from "../i18n";
 import { MultiProjectSessionGroup, SessionItem } from "./appSession";
 import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useFileRefresh } from "./useFileRefresh";
-import { appPath } from "../services/net/base";
+import { appPath, appURL } from "../services/net/base";
 import { alertDialog, promptDialog } from "../services/dialog";
 import { ProtectedAPIError, protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { reportError } from "../services/net/error";
@@ -78,7 +78,7 @@ export function useSessionListActions(params: UseSessionListActionsParams) {
       return;
     }
     try {
-      await apiProtectedJSON(appPath(`/api/file?${new URLSearchParams({ root: rootID })}`), {
+      await apiProtectedJSON(appURL("/api/file", new URLSearchParams({ root: rootID }), getNodeIdForRoot(rootID)), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dir: targetDir, name }),
@@ -90,7 +90,32 @@ export function useSessionListActions(params: UseSessionListActionsParams) {
         ? t("directory.fileExists")
         : String((err as Error)?.message || t("directory.createFileFailed")));
     }
-  }, [refreshTreeDir, t]);
+  }, [getNodeIdForRoot, refreshTreeDir, t]);
+
+  const handleCreateFolder = useCallback(async () => {
+    const rootID = currentRootIdRef.current;
+    if (!rootID) return;
+    const targetDir = (selectedDirRef.current === rootID ? "." : selectedDirRef.current) || ".";
+    const input = await promptDialog({ message: t("directory.folderNamePrompt") });
+    if (input === null) return;
+    const name = input.trim();
+    if (!name || name === "." || name === ".." || /[/\\\x00]/.test(name)) {
+      alertDialog(t("directory.invalidFileName"));
+      return;
+    }
+    try {
+      await apiProtectedJSON(appURL("/api/file", new URLSearchParams({ root: rootID }), getNodeIdForRoot(rootID)), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dir: targetDir, name, kind: "dir" }),
+      });
+      const currentDir = (selectedDirRef.current === rootID ? "." : selectedDirRef.current) || ".";
+      await refreshTreeDir(rootID, targetDir, rootID === currentRootIdRef.current && currentDir === targetDir);
+    } catch (err) {
+      reportError("file.write_failed", err instanceof ProtectedAPIError && err.status === 409
+        ? t("directory.fileExists")
+        : String((err as Error)?.message || t("directory.createFolderFailed")));
+    }
+  }, [getNodeIdForRoot, refreshTreeDir, t]);
 
   const handleTreeUpload = useCallback(
     async (files: File[]) => {
@@ -240,6 +265,7 @@ export function useSessionListActions(params: UseSessionListActionsParams) {
 
   return {
     handleCreateBlankFile,
+    handleCreateFolder,
     handleTreeUpload,
     handleSelectSessionAndClose,
     handlePinSession,

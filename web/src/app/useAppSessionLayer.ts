@@ -240,6 +240,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
 
   const {
     handleCreateBlankFile,
+    handleCreateFolder,
     handleTreeUpload,
     handleSelectSessionAndClose,
     handlePinSession,
@@ -456,7 +457,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     enterImportMode, executeSessionSearch, exitImportMode, externalFilterBound,
     externalImportAgent, externalSelectedKey, externalSessions, externalSessionsError,
     formatDirectoryLoadError, getSessionSnapshot, handleArchiveSession, handleCancelCurrentTurn,
-    handleConfirmExternalImport, handleCreateBlankFile, handleDeleteSession, handleForkAgentMessage,
+    handleConfirmExternalImport, handleCreateBlankFile, handleCreateFolder, handleDeleteSession, handleForkAgentMessage,
     handleGitCommit, handleGitDiscardItem, handleGitPull, handleGitPush,
     handleGitStageItem, handleGitUnstageItem, handleImportedSessionConfirmed, handleLoadOlderExternalSessions,
     handleLoadOlderSessions, handleNewSession, handleOnboardingStepChange, handlePinSession,

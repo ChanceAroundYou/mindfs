@@ -39,6 +39,7 @@ export interface SessionPaneProps {
   gitDiff: GitDiffPayload | null;
   gitDiffSideBySide: boolean;
   handleCreateBlankFile: () => Promise<void>;
+  handleCreateFolder: () => Promise<void>;
   handleDirectoryPathClick: (path: string) => void;
   handleDisablePendingPlugins: () => void;
   handleFileViewerFileClick: (path: string) => void;

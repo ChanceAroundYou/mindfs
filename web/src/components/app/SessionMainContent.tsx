@@ -71,6 +71,7 @@ export function SessionMainContent(props: Omit<SessionPaneProps, "sessionView" |
   const gitDiff = props.gitDiff;
   const gitDiffSideBySide = props.gitDiffSideBySide;
   const handleCreateBlankFile = props.handleCreateBlankFile;
+  const handleCreateFolder = props.handleCreateFolder;
   const handleDirectoryPathClick = props.handleDirectoryPathClick;
   const handleDisablePendingPlugins = props.handleDisablePendingPlugins;
   const handleFileViewerFileClick = props.handleFileViewerFileClick;
@@ -403,6 +404,7 @@ export function SessionMainContent(props: Omit<SessionPaneProps, "sessionView" |
           }}
           onUploadFiles={handleTreeUpload}
           onCreateBlankFile={handleCreateBlankFile}
+          onCreateFolder={handleCreateFolder}
           onRenameRoot={handleRenameCurrentRoot}
           onRemoveRoot={handleRemoveCurrentRoot}
           isGitRepo={managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true}

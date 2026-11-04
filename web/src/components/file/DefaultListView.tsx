@@ -45,6 +45,7 @@ type DefaultListViewProps = {
   onPathClick?: (path: string) => void;
   onSortModeChange?: (mode: DirectorySortControlValue) => void;
   onCreateBlankFile?: () => void | Promise<void>;
+  onCreateFolder?: () => void | Promise<void>;
   onUploadFiles?: (files: File[]) => void | Promise<void>;
   onCancelUpload?: () => void;
   uploadProgress?: UploadProgress | null;
@@ -83,6 +84,7 @@ export function DefaultListView({
   onSortModeChange,
   onUploadFiles,
   onCreateBlankFile,
+  onCreateFolder,
   onCancelUpload,
   uploadProgress = null,
   onRenameRoot,
@@ -324,6 +326,7 @@ export function DefaultListView({
               setEditingRoot={setEditingRoot}
               onRemoveRoot={onRemoveRoot}
               onCreateBlankFile={onCreateBlankFile}
+              onCreateFolder={onCreateFolder}
               onUploadFiles={onUploadFiles}
               inputRef={inputRef}
               menuOverlay={menuOverlay}

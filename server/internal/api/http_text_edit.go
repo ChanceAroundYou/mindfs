@@ -71,6 +71,7 @@ func (h *HTTPHandler) handleFileCreate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Dir  string `json:"dir"`
 		Name string `json:"name"`
+		Kind string `json:"kind"` // "" = blank file (default, backward compat), "dir" = directory
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	decoder := json.NewDecoder(r.Body)
@@ -82,7 +83,11 @@ func (h *HTTPHandler) handleFileCreate(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, errors.New("invalid request body"))
 		return
 	}
-	path, err := h.service().CreateBlankFile(r.URL.Query().Get("root"), input.Dir, input.Name)
+	if input.Kind != "" && input.Kind != "dir" {
+		respondError(w, http.StatusBadRequest, errors.New("invalid kind"))
+		return
+	}
+	path, err := h.service().CreateEntry(r.URL.Query().Get("root"), input.Dir, input.Name, input.Kind == "dir")
 	if err != nil {
 		respondFileEditError(w, err)
 		return

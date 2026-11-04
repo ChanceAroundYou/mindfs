@@ -45,6 +45,10 @@ func (s *Service) OperateFile(in FileOperationInput) error {
 	if rel == "." || rel == "" {
 		return errors.New("cannot modify project root")
 	}
+	// Guard the project meta directory itself (AGENTS.md #12).
+	if rel == ".mindfs" && in.Action == "delete" {
+		return errors.New("cannot modify .mindfs")
+	}
 	// Resolve the parent only: operating on a symlink must affect the link itself.
 	base, err := root.ResolvePath(".")
 	if err != nil {
@@ -75,7 +79,7 @@ func (s *Service) OperateFile(in FileOperationInput) error {
 	var destination string
 	switch in.Action {
 	case "rename":
-		if strings.TrimSpace(in.Name) == "" || in.Name == "." || in.Name == ".." || strings.ContainsAny(in.Name, "/\\\x00") {
+		if strings.TrimSpace(in.Name) == "" || in.Name == "." || in.Name == ".." || in.Name == ".mindfs" || strings.ContainsAny(in.Name, "/\\\x00") {
 			return errors.New("invalid name")
 		}
 		destination = filepath.Join(parent, in.Name)
@@ -144,8 +148,9 @@ func (s *Service) WriteEditableFile(rootID, path, content, revision string) (fs.
 	return root.WriteEditableFile(path, content, revision)
 }
 
-// CreateBlankFile creates exactly the requested name without replacing existing entries.
-func (s *Service) CreateBlankFile(rootID, dir, name string) (string, error) {
+// CreateEntry creates exactly the requested name without replacing existing entries.
+// asDir=true creates a directory; otherwise a blank file.
+func (s *Service) CreateEntry(rootID, dir, name string, asDir bool) (string, error) {
 	if strings.TrimSpace(name) == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00") {
 		return "", errors.New("invalid file name")
 	}
@@ -167,12 +172,25 @@ func (s *Service) CreateBlankFile(rootID, dir, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	handle, err := os.OpenFile(filepath.Join(absDir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		return "", err
+	rel := filepath.ToSlash(filepath.Join(dir, name))
+	// Never create a ".mindfs" entry (or anything under it) in a project root:
+	// meta must live in the account home dir, not in the source tree (see AGENTS.md #12).
+	if rel == ".mindfs" || strings.HasPrefix(rel, ".mindfs/") {
+		return "", errors.New("cannot create .mindfs entry")
 	}
-	if err := handle.Close(); err != nil {
-		return "", err
+	target := filepath.Join(absDir, name)
+	if asDir {
+		if err := os.Mkdir(target, 0o755); err != nil {
+			return "", err // os.ErrExist on conflict → handler maps to 409
+		}
+	} else {
+		handle, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err != nil {
+			return "", err
+		}
+		if err := handle.Close(); err != nil {
+			return "", err
+		}
 	}
-	return filepath.ToSlash(filepath.Join(dir, name)), nil
+	return rel, nil
 }
