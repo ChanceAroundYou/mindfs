@@ -234,17 +234,46 @@ func (h *WSHandler) reserveClientRequest(requestID string) (time.Time, bool) {
 	h.requestMu.Lock()
 	defer h.requestMu.Unlock()
 	if h.requests == nil {
-		h.requests = make(map[string]time.Time)
+		h.requests = make(map[string]clientRequestRecord)
 	}
 	cutoff := time.Now().Add(-24 * time.Hour)
-	for id, seenAt := range h.requests {
-		if seenAt.Before(cutoff) {
+	for id, record := range h.requests {
+		if record.seenAt.Before(cutoff) {
 			delete(h.requests, id)
 		}
 	}
-	if seenAt, exists := h.requests[requestID]; exists {
-		return seenAt, false
+	if record, exists := h.requests[requestID]; exists {
+		return record.seenAt, false
 	}
-	h.requests[requestID] = now
+	h.requests[requestID] = clientRequestRecord{seenAt: now}
 	return now, true
+}
+
+// recordClientRequestSession 把首次受理的请求与它解析出的会话键绑定。
+// 重复请求只会拿到这一格里记的键（见 clientRequestRecord），所以这必须在
+// 派发回合**之前**完成 —— 否则同一秒内的重放会读到空键。
+func (h *WSHandler) recordClientRequestSession(requestID, sessionKey string) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return
+	}
+	h.requestMu.Lock()
+	defer h.requestMu.Unlock()
+	record, exists := h.requests[requestID]
+	if !exists {
+		return
+	}
+	record.sessionKey = sessionKey
+	h.requests[requestID] = record
+}
+
+// replaySessionKey 返回重复请求首次解析出的会话键（没有记录时为空）。
+func (h *WSHandler) replaySessionKey(requestID string) string {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ""
+	}
+	h.requestMu.Lock()
+	defer h.requestMu.Unlock()
+	return h.requests[requestID].sessionKey
 }

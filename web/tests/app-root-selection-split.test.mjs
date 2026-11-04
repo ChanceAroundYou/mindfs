@@ -20,6 +20,7 @@ test("project root selection keeps cross-node cleanup in its state hook", () => 
   assert.match(selection, /getGitState: \(\) => Pick<GitState/);
   assert.match(selection, /sessionListAbortRef\.current\?\.abort\(\)[\s\S]*?kanbanAbortRef\.current\?\.abort\(\)/);
   assert.match(selection, /selectedSessionByRootRef\.current\[scopedRid\] = ""[\s\S]*?clearFileMemoryCacheForView\(\)[\s\S]*?clearGitHistoryCache\(rid, prevNid\)/);
-  assert.match(selection, /managedRootByKeyRef\.current\[rootNodeKey\(nid, rid\)\]/);
+  // 必须按 resolvedNid 查（同 root 未传 nodeId 时沿用上一个节点，见 G-KI / root-node-scope-stability）
+  assert.match(selection, /managedRootByKeyRef\.current\[rootNodeKey\(resolvedNid, rid\)\]/);
   assert.match(read("tests/task-template-node-routing.test.mjs"), /selectRootNode must set the active node/);
 });

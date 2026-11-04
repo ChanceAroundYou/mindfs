@@ -119,6 +119,7 @@ export const zhCNSessions = {
   "session.connectionNotReady": "连接未就绪，请稍后重试",
   "session.commandSendFailedNotReady": "命令发送失败：连接未就绪，请稍后重试",
   "session.messageSendFailedNotReady": "消息发送失败：连接未就绪，请稍后重试",
+  "session.draftKeyMissing": "上一条消息还没拿到会话 ID（连接中断过），请先在左侧打开该会话再发送",
   "session.planModeSelectFirst": "请先选择一个会话再切换 Plan 模式",
   "session.planModeSwitchFailedNotReady": "Plan 模式切换失败：连接未就绪，请稍后重试",
   "session.generating": "正在生成...",

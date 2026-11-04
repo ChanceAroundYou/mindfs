@@ -56,7 +56,17 @@ type WSHandler struct {
 	updateOnce      sync.Once
 	githubOnce      sync.Once
 	requestMu       sync.Mutex
-	requests        map[string]time.Time
+	requests        map[string]clientRequestRecord
+}
+
+// clientRequestRecord 是一条已受理的客户端请求：首次受理时间 + 它最终落在哪个会话。
+//
+// sessionKey 服务于**幂等重放**：客户端在新会话的 accepted 回包丢失后可以拿原
+// request_id 重发一次，服务端只把首次解析出的会话键回给它、不重复跑一个回合。
+// 没有这一格，重连后的草稿永远拿不到真键，客户端只能新开会话（上下文凭空丢失）。
+type clientRequestRecord struct {
+	seenAt     time.Time
+	sessionKey string
 }
 
 type StreamEvent struct {

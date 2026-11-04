@@ -9,7 +9,8 @@ import type { UpdateState } from "../services/update";
 import { unreadCompletedAdd, unreadKey } from "../shared/unreadCompleted";
 import type { ManagedRootPayload } from "./appMisc";
 import type { Exchange, MultiProjectSessionGroup, PendingSend, SessionItem, SessionQueueItem, SlashCommandResult, WSStatus } from "./appSession";
-import { dropTransientExchanges, isSamePendingEcho } from "../services/session";
+import { dropTransientExchanges, isSamePendingEcho, sessionService } from "../services/session";
+import { reportError } from "../services/net/error";
 import { setRootNodeMap } from "../services/net/rootNode";
 import { applyNodesFromServer, syncNodesFromServer } from "../services/net/nodeRegistry";
 import { mapManagedRootsToEntries, normalizeUpdateState } from "./appMisc";
@@ -22,6 +23,7 @@ import { handleSessionUserMessage } from "./realtimeWsUserMessage";
 import { handleSessionAccepted } from "./realtimeWsSessionAccepted";
 import { handleRootChanged } from "./realtimeWsRootChanged";
 import { createRealtimeWsTaskHandlers } from "./realtimeWsTaskHandlers";
+import { recoverOrphanedDrafts } from "./pendingDraftRecovery";
 
 /**
  * `useRealtimeEvents` 内部、wsHandlers 闭包要用的 9 个局部函数。
@@ -120,6 +122,40 @@ export function createRealtimeWsHandlers(
     },
   } = ctx;
 
+  // 断线自愈：新会话的 accepted 回包丢了，绑定就永远停在 `pending-*`，之后每条消息
+  // 都会再开一个新会话（2026-11 fn 上实测的用户症状）。重连时用原 request_id 重放，
+  // 服务端只回首次解析出的会话键、不重复跑回合。见 pendingDraftRecovery.ts。
+  const recoverOrphanedDraftsOnConnect = () => {
+    void recoverOrphanedDrafts({
+      pendingRequestRef,
+      boundSessionByRootRef,
+      scopedRootKey,
+      send: (draft) =>
+        sessionService.sendMessage(
+          draft.rootId,
+          undefined,
+          draft.message,
+          draft.mode,
+          draft.agent,
+          draft.model,
+          draft.agentMode,
+          draft.effort,
+          draft.fastService,
+          draft.context,
+          draft.shell,
+          draft.requestId,
+        ),
+    }).then(({ gaveUp }) => {
+      if (!gaveUp.length) return;
+      reportError("network.disconnected", t("session.draftKeyMissing"), {
+        details: {
+          rootIds: gaveUp.map((draft) => draft.rootId),
+          requestIds: gaveUp.map((draft) => draft.requestId || ""),
+        },
+      });
+    });
+  };
+
   return {
       "ws.connecting": (event: any, payload: any) => {
           setStatus("connecting");
@@ -139,6 +175,7 @@ export function createRealtimeWsHandlers(
             scheduleMultiProjectSessionReload();
           }
           replayTargetsForAllRoots();
+          recoverOrphanedDraftsOnConnect();
       },
       "ws.reconnecting": (event: any, payload: any) => {
           setStatus("reconnecting");
@@ -158,6 +195,7 @@ export function createRealtimeWsHandlers(
             scheduleMultiProjectSessionReload();
           }
           replayTargetsForAllRoots();
+          recoverOrphanedDraftsOnConnect();
       },
       "ws.closed": (event: any, payload: any) => {
           setStatus(currentRootIdRef.current ? "reconnecting" : "disconnected");

@@ -6,6 +6,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [fn codex session continuity](fn-codex-session-continuity.md) — Implemented 2026-11-04，待 ship；发送目标以「主面板显示的会话」兜底并回写绑定、`pending-*` 不再静默丢弃而显式阻断、同 root 未传 nodeId 时保留节点归属（作用域键不漂移）、服务端按 requestID 回放首次解析出的 session_key 让重连后的草稿重放成为幂等探针。测试：`send-target-display-fallback` / `root-node-scope-stability` / `pending-draft-recovery` / `ws_request_reservation_test.go`。
+
 - [File view new folder](file-view-new-folder.md) — Implemented 2026-11-04，待提交与 ship；文件视图 ⋯ 菜单新增「新建文件夹」，后端 CreateEntry 支持目录，请求走 appURL(nodeId)。
 
 - [Session child tree consolidation](session-child-tree-consolidation.md) — Implemented 2026-10-18，待提交与 ship；单/多项目子会话树已收束到共享 hook，保持选中链路、3 条上限、分页与收起。

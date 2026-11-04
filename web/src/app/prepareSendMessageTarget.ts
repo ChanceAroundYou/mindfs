@@ -2,6 +2,7 @@ import type { Session } from "../services/session";
 import { isPlanCommand } from "../shared/planCommand";
 import { normalizeMode, type SessionMode } from "./appSession";
 import { resolveLockedSessionKey } from "../services/session/sessionLock";
+import { resolveInputSession } from "../services/session/inputSession";
 import type { SendMessageParams } from "./useSendMessageTypes";
 
 type Params = Pick<SendMessageParams,
@@ -9,8 +10,31 @@ type Params = Pick<SendMessageParams,
   | "sessionCacheRef" | "currentSessionRef" | "pendingPlanMode"
   | "resolvePendingForSession" | "scopedRootKey" | "rootSessionKey"
   | "updateSessionAgentForKey" | "setBoundSessionForRoot"
-  | "setDrawerSessionForRoot"
+  | "setDrawerSessionForRoot" | "interactionModeRef"
 >;
+
+/**
+ * 输入框这一轮「没有可发送目标」的显式原因。
+ *
+ * 存在意义是**不许静默**：`pending-*` 草稿还没拿到真键时，旧实现直接 `return null`
+ * （消息消失、界面无反应）或干脆新建一条会话（连续两条消息 = 两个会话）。
+ */
+export type SendTargetBlocked = { blocked: "draft_key_missing"; rootId: string };
+
+type Target = {
+  activeRoot: string;
+  sendSessionKey: string | null | undefined;
+  session: Session | null;
+  effectiveMode: SessionMode;
+  effectiveAgent: string;
+  effectiveModel: string;
+  effectiveAgentMode: string;
+  effectiveEffort: string;
+  effectiveFastService: "" | "on" | "off";
+  effectiveShell: string;
+  transientSlashCommand: string;
+  isQueueSend: boolean;
+};
 
 type Input = {
   message: string;
@@ -24,36 +48,57 @@ type Input = {
   newSessionName: string;
 };
 
-export function prepareSendMessageTarget(params: Params, input: Input) {
+export function prepareSendMessageTarget(
+  params: Params,
+  input: Input,
+): Target | SendTargetBlocked | null {
   const {
     currentRootIdRef, selectedSessionRef, boundSessionByRootRef,
     sessionCacheRef, currentSessionRef, pendingPlanMode,
     resolvePendingForSession, scopedRootKey, rootSessionKey,
     updateSessionAgentForKey, setBoundSessionForRoot, setDrawerSessionForRoot,
+    interactionModeRef,
   } = params;
   const { message, mode, agent, model, agentMode, effort, fastService, shell, newSessionName } = input;
   const activeRoot = currentRootIdRef.current;
   if (!activeRoot) return null;
   const selected = selectedSessionRef.current;
   const selectedKey = selected?.key || selected?.session_key;
-  const currentBoundSessionKey =
-    boundSessionByRootRef.current[scopedRootKey(activeRoot)] || null;
-  const resolvedBoundKey = resolveLockedSessionKey(currentBoundSessionKey);
+  const rawBoundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot)] || null;
+  const resolvedBoundKey = resolveLockedSessionKey(rawBoundKey);
+  // `pending-*` 是「新会话已发、还没拿到服务端真键」的草稿。它既不是可续接的会话，
+  // 也不能当成「没有会话」—— 后者会让紧接着的第二条消息再开一个会话。
+  if (!resolvedBoundKey && rawBoundKey?.startsWith("pending-")) {
+    return { blocked: "draft_key_missing", rootId: activeRoot };
+  }
   let sendSessionKey: string | null | undefined = resolvedBoundKey;
-  // The server must assign a real key before this draft can receive more input.
-  if (sendSessionKey?.startsWith("pending-")) return null;
-  let session: Session | null = null;
-  if (sendSessionKey) {
-    session =
-      sessionCacheRef.current[rootSessionKey(activeRoot, sendSessionKey)];
-    if (!session) {
-      const current = currentSessionRef.current;
-      if (current?.key === sendSessionKey) {
-        session = current as Session;
+  const resolveSessionForKey = (key: string): Session | null => {
+    const cached = sessionCacheRef.current[rootSessionKey(activeRoot, key)];
+    if (cached) return cached;
+    const current = currentSessionRef.current;
+    if (current?.key === key) return current as Session;
+    if (selectedKey === key) return { ...(selected as any), key } as Session;
+    return null;
+  };
+  let session: Session | null = sendSessionKey ? resolveSessionForKey(sendSessionKey) : null;
+  // 兜底：绑定缺失或指向一条解析不到的会话时，续接**主面板正在显示**的那条。
+  // 只见于绑定表丢失/作用域键漂移（内存表随节点键变化、刷新后未重建），
+  // 而用户看到的转录还在屏幕上 —— 此时开新会话就是「上下文凭空丢失」。
+  // 抽屉持有输入时不做这个回落：那里的空抽屉语义是「开新会话」。
+  if (!session && interactionModeRef.current !== "drawer") {
+    const displayed = resolveInputSession(activeRoot, false, selected, null);
+    const displayedKey = resolveLockedSessionKey(displayed?.key || displayed?.session_key);
+    if (displayedKey && displayedKey !== sendSessionKey) {
+      const displayedSession = resolveSessionForKey(displayedKey);
+      if (displayedSession) {
+        console.warn("[session/send] bound_missing fallback_displayed", {
+          rootId: activeRoot,
+          bound: rawBoundKey,
+          displayedKey,
+        });
+        sendSessionKey = displayedKey;
+        session = displayedSession;
       }
-    }
-    if (!session && selectedKey === sendSessionKey) {
-      session = { ...(selected as any), key: sendSessionKey } as Session;
     }
   }
   let effectiveMode = mode,
@@ -141,6 +186,16 @@ export function prepareSendMessageTarget(params: Params, input: Input) {
       sendSessionKey = `transient-${Date.now()}`;
       session = null;
     } else {
+      if (sendSessionKey) {
+        // 绑定是真键、却连显示中的那条都解析不出会话对象（缓存被清而绑定残留）。
+        // 保持既有行为（新建），但必须留痕：这条路径一旦静默，用户看到的就是
+        // 「明明在看这个会话，发出去却开了新的」。
+        console.warn("[session/send] bound_unresolvable fallback_new", {
+          rootId: activeRoot,
+          bound: sendSessionKey,
+          displayable: selectedKey || null,
+        });
+      }
       sendSessionKey = undefined;
       const tempKey = `pending-${Date.now()}`;
       session = {

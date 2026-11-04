@@ -62,7 +62,14 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 		reservedAt, reserved := h.reserveClientRequest(requestID)
 		userTimestamp = reservedAt
 		if !reserved {
-			h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp, "")
+			// 幂等重放：同一 request_id 的第二次请求只把首次解析出的会话键回给客户端，
+			// 不重复派发回合。客户端据此把「pending-* 草稿」提升成真键（断线前那次
+			// accepted 丢了，重连后靠这条自愈），否则它只能再开一个新会话。
+			replayKey := h.replaySessionKey(requestID)
+			if replayKey == "" {
+				replayKey = key
+			}
+			h.sendWSAcceptedAt(conn, clientID, requestID, rootID, replayKey, userTimestamp, "")
 			return
 		}
 	}
@@ -170,6 +177,7 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 		modelDisplayName = uc.ResolveModelDisplayName(agentName, model, runtimeRootPath)
 	}
 	if requestID != "" {
+		h.recordClientRequestSession(requestID, key)
 		h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp, modelDisplayName)
 	}
 	if h.AppContext != nil {

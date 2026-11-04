@@ -119,6 +119,7 @@ export const enUSSessions = {
   "session.connectionNotReady": "Connection is not ready. Try again later.",
   "session.commandSendFailedNotReady": "Command send failed: connection is not ready. Try again later.",
   "session.messageSendFailedNotReady": "Message send failed: connection is not ready. Try again later.",
+  "session.draftKeyMissing": "The previous message has not received a session id yet (the connection dropped). Open that session in the sidebar first, then send again.",
   "session.planModeSelectFirst": "Select a session before switching Plan mode",
   "session.planModeSwitchFailedNotReady": "Plan mode switch failed: connection is not ready. Try again later.",
   "session.generating": "Generating...",

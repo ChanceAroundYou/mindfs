@@ -393,6 +393,9 @@ export type PendingSend = {
   requestId?: string;
   sessionKey?: string;
   tempKey?: string;
+  // 断线自愈（pendingDraftRecovery）重放时要用同一次发送的上下文，否则重放出去的那条
+  // 会丢掉选区/插件视图，与首次发送不是同一条消息。
+  context?: Record<string, unknown>;
 };
 
 export type SessionQueueItem = QueuedUserMessage;

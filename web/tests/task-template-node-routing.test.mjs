@@ -153,9 +153,11 @@ for (const tpl of templates) {
 //     之前只有节点切换器会改 active node，于是「选中本机项目 + 上次点过 pc」的
 //     组合下，所有不带 nodeId 的请求都发去了 pc。项目本身知道自己在哪个节点
 //     （currentRootNodeId / _nodeId），选中它时应该把 active 一起切过去。
+// 节点归属走 resolvedNid：同 root 未传 nodeId 时沿用上一个节点（清零会让
+// node::root 作用域键漂移，G-KI），新节点仍以入参为准。
 assert.match(
   app,
-  /currentRootNodeIdRef\.current = nid \|\| null;[\s\S]{0,400}?if \(nid\) \{\s*\n\s*const known = getNodeById\(nid\);\s*\n\s*if \(known && getActiveNodeId\(\) !== nid\) \{\s*\n\s*setActiveNodeId\(nid\);/,
+  /const resolvedNid = nid \|\| \(isSameRootSwitch \? prevNid : ""\);[\s\S]{0,900}?if \(resolvedNid\) \{\s*\n\s*const known = getNodeById\(resolvedNid\);\s*\n\s*if \(known && getActiveNodeId\(\) !== resolvedNid\) \{\s*\n\s*setActiveNodeId\(resolvedNid\);/,
   "selectRootNode must set the active node to the selected project's node",
 );
 // 项目选择回调从状态/ref 聚合层移入 useAppRootSelection；active-node 读写仍由该逻辑模块负责。

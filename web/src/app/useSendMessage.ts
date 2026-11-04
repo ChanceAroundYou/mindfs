@@ -6,8 +6,7 @@
 import { useCallback } from "react";
 import type { Session } from "../services/session";
 import type { SendMessageParams } from "./useSendMessageTypes";
-import { prepareSendMessageTarget } from "./prepareSendMessageTarget";
-import { useSendMessageSlashCommand } from "./useSendMessageSlashCommand";
+import { prepareSendMessageTarget } from "./prepareSendMessageTarget";import { useSendMessageSlashCommand } from "./useSendMessageSlashCommand";
 import type { Exchange, SessionItem, SessionMode } from "../app/appSession";
 import { useI18n } from "../i18n";
 import { buildClientContext } from "../services/prefs/context";
@@ -108,6 +107,15 @@ export function useSendMessage(params: SendMessageParams): {
         newSessionName: t("session.new"),
       });
       if (!target) return;
+      if ("blocked" in target) {
+        // 草稿还没拿到服务端会话 ID：既不能续接也不能当成「没有会话」（那样会再开一条）。
+        // 明确告诉用户去哪儿把这条会话找回来，而不是让消息静静消失。
+        console.warn("[session/send] blocked", target);
+        reportError("network.disconnected", t("session.draftKeyMissing"), {
+          details: { rootId: target.rootId },
+        });
+        return;
+      }
       const {
         activeRoot, sendSessionKey, effectiveMode, effectiveAgent,
         effectiveModel, effectiveAgentMode, effectiveEffort, effectiveFastService,
@@ -334,6 +342,10 @@ export function useSendMessage(params: SendMessageParams): {
         pluginCatalog:
           effectiveMode === "plugin" ? await getViewModeSystemPrompt() : undefined,
       });
+      // 断线自愈要按原样重放这条请求（同 requestId、同上下文），见 pendingDraftRecovery。
+      if (pendingRequestRef.current[requestId]) {
+        pendingRequestRef.current[requestId].context = context;
+      }
       let outgoingMessage = message;
       const applyPendingPlanPrefix = pendingPlanMode && !sendSessionKey;
       const currentFile = fileRef.current;

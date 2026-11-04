@@ -88,18 +88,22 @@ export function useAppRootSelection({
       kanbanLoadSeqRef.current += 1;
       sessionListLoadSeqRef.current += 1;
     }
-    currentRootNodeIdRef.current = nid || null;
-    setCurrentRootNodeId(nid || null);
+    // 同一个项目不给 nodeId 只表示「沿用」，不是「归属未知」。原来无条件置空会让
+    // 所有 node::root 作用域键当场漂移（绑定/选中/抽屉/缓存一起变孤儿），而主面板
+    // 的转录还留在屏幕上 —— 用户看到的就是「明明在续聊，发出去却开了新会话」。
+    const resolvedNid = nid || (isSameRootSwitch ? prevNid : "");
+    currentRootNodeIdRef.current = resolvedNid || null;
+    setCurrentRootNodeId(resolvedNid || null);
     // 无条件更新模块级 root→node 映射，保证路由/作用域解析在任何时机都正确
-    setRootNodeId(rid, nid || undefined);
+    setRootNodeId(rid, resolvedNid || undefined);
     // active node 跟着选中的项目走：选中哪个项目，请求就该发到那台机器。
     // 之前 active node 只由节点切换器改，于是「本机项目 + 上次点过 pc」的组合下，
     // 所有不带 nodeId 的请求（模板、会话…）都发去了 pc，页面看着在本机、数据却是
     // 另一台机器的。项目本身知道自己在哪个节点，选中它时把 active 一起切过去。
-    if (nid) {
-      const known = getNodeById(nid);
-      if (known && getActiveNodeId() !== nid) {
-        setActiveNodeId(nid);
+    if (resolvedNid) {
+      const known = getNodeById(resolvedNid);
+      if (known && getActiveNodeId() !== resolvedNid) {
+        setActiveNodeId(resolvedNid);
         window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
       }
     }
@@ -136,7 +140,7 @@ export function useAppRootSelection({
       }
     }
     // 让按裸 rootId 的 payload 读取命中当前选中节点的数据
-    const entry = managedRootByKeyRef.current[rootNodeKey(nid, rid)];
+    const entry = managedRootByKeyRef.current[rootNodeKey(resolvedNid, rid)];
     if (entry && managedRootByIdRef.current[rid] !== entry) {
       managedRootByIdRef.current = {
         ...managedRootByIdRef.current,

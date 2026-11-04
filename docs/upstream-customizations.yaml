@@ -7010,3 +7010,39 @@ groups:
       - 'web/src/app/useSessionListActions.ts:handleCreateFolder'
       - 'web/src/app/useSessionListActions.ts:kind: "dir"'
       - 'web/src/components/file/DefaultListViewMenu.tsx:t("directory.createFolder")'
+
+  - id: G-KI
+    title: 续聊不再开新会话（发送端以显示会话兜底 + 作用域键稳定 + 草稿幂等自愈）
+    kind: fix
+    symptom: "在 fn 节点用 codex 续聊，之后每条消息都打开一条全新会话，上下文凭空丢失：转录还显示在主面板上，发出去却落进新会话（新会话 agent_ctx_seq=2、每条绑一个新 thread）。"
+    why: "「输入框发给谁」有两个真相源：用户看到的 selectedSession 与内存表 boundSessionByRootRef。发送路径只信后者（prepareSendMessageTarget 查不到就直接造 pending-<ts> = 新会话，无回落无日志），而 resolveLockedSessionKey 把 pending-* 一律当成『没有绑定』。两条丢失路径：① session.accepted 在 WS 断开时丢失（fn 是远端节点、PWA 切后台必断），草稿永远停在 pending-*，之后每条消息都新开；② selectRootNode(root) 不传 nodeId 时无条件清空 currentRootNodeIdRef，node::root 作用域键当场漂移，绑定/选中/抽屉/cache 一起变孤儿，而标出的转录还在屏幕上。修法：发送端在绑定缺失/解析不到时续接主面板显示的会话并回写绑定（抽屉持有输入时不劫持，保住『空抽屉=新会话』语义），pending-* 改为显式 blocked 提示而不是静默丢弃；同 root 未传 nodeId 时沿用 prevNid（跨节点切换路径不变）；服务端把 24h requestID 去重表升级为 requestID→{seenAt, sessionKey}，重复请求只回键不重跑回合，客户端在 WS 建连时用原 requestId 重放孤儿草稿（≤3 次），使『重发』成为幂等探针 —— 原消息送达过就只拿真键，没送达就真的发出。"
+    boundary: "不改 WS 消息协议字段（session.accepted 只是重复请求时 session_key 有值，老客户端本来就会据此提升，无破坏）；不新增持久化字段、无数据迁移、无新依赖；不改变新建会话语义（「新建会话」按钮清 selectedSession 仍开新会话，空抽屉语义由 resolveInputSession 保住）；抽屉模式不做显示兜底；跨节点同名项目切换的清状态逻辑不变；不触碰 codex 后端的 thread/start|resume 行为。"
+    files:
+      - web/src/app/prepareSendMessageTarget.ts
+      - web/src/app/useSendMessage.ts
+      - web/src/app/appSession.ts
+      - web/src/app/pendingDraftRecovery.ts
+      - web/src/app/realtimeWsHandlers.ts
+      - web/src/app/useAppRootSelection.ts
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+      - web/tests/app-root-selection-split.test.mjs
+      - web/tests/task-template-node-routing.test.mjs
+      - server/internal/api/ws_broadcast.go
+      - server/internal/api/ws_upgrade.go
+      - server/internal/api/ws_session_message.go
+      - docs/plans/fn-codex-session-continuity.md
+      - docs/plans/README.md
+    tests:
+      - web/tests/send-target-display-fallback.test.mjs
+      - web/tests/root-node-scope-stability.test.mjs
+      - web/tests/pending-draft-recovery.test.mjs
+      - server/internal/api/ws_request_reservation_test.go
+    anchors:
+      - 'web/src/app/prepareSendMessageTarget.ts:blocked: "draft_key_missing"'
+      - 'web/src/app/prepareSendMessageTarget.ts:bound_missing fallback_displayed'
+      - 'web/src/app/useAppRootSelection.ts:const resolvedNid = nid || (isSameRootSwitch ? prevNid : "")'
+      - 'web/src/app/pendingDraftRecovery.ts:export async function recoverOrphanedDrafts('
+      - 'web/src/app/realtimeWsHandlers.ts:recoverOrphanedDraftsOnConnect'
+      - 'server/internal/api/ws_upgrade.go:type clientRequestRecord struct'
+      - 'server/internal/api/ws_session_message.go:h.replaySessionKey(requestID)'
