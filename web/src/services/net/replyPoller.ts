@@ -9,6 +9,7 @@ type ReplyPollerPlugin = {
     token?: string;
   }): Promise<void>;
   dismiss(options: { rootId: string; sessionKey: string }): Promise<void>;
+  testAlert(): Promise<void>;
 };
 
 type NativeReplyPollerBridge = {
@@ -139,4 +140,13 @@ export function takePendingReplySession(): { rootId: string; sessionKey: string 
     // ignore
   }
   return null;
+}
+
+
+export async function testNativeReplyAlert(): Promise<void> {
+  try {
+    await ReplyPoller.testAlert();
+  } catch {
+    // ignore
+  }
 }

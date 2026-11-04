@@ -93,7 +93,7 @@ public class ReplyPollerService extends Service {
     private static final int FOREGROUND_ID = 750001;
     private static final int NOTIFICATION_BASE_ID = 760000;
     private static final long ACTIVE_POLL_INTERVAL_SECONDS = 5;
-    private static final long IDLE_POLL_INTERVAL_SECONDS = 15;
+    private static final long IDLE_POLL_INTERVAL_SECONDS = 5;
     private static final long[] ALERT_VIBRATION_PATTERN = new long[] {0, 160, 110, 160};
 
     private final Map<String, ReplyState> states = new HashMap<>();
@@ -544,6 +544,19 @@ public class ReplyPollerService extends Service {
             }
         }
         return null;
+    }
+
+    public static void postTestAlert(Context context) {
+        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(context, ALERT_CHANNEL_ID)
+            : new Notification.Builder(context);
+        b.setSmallIcon(R.drawable.ic_stat_mindfs_notification)
+         .setContentTitle("MindFS 测试提醒")
+         .setContentText("通知链路正常。")
+         .setAutoCancel(true)
+         .setCategory(Notification.CATEGORY_STATUS);
+        nm.notify(799999, b.build());
     }
 
     private void postAlert(String kind, ReplyState state) {

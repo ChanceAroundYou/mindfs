@@ -6274,10 +6274,9 @@ groups:
     why: "三处叠加：① 浏览器里布局视口跟着键盘缩，画布随之变小，键盘尚未覆盖的那段空隙由宿主窗口底色填充 —— 显式写 interactive-widget=resizes-visual 锁死；② Android 壳按 adjustResize 缩 WebView 时露出的缝是 Activity 窗口底色（AppCompat DayNight 默认浅色），MindFSThemeBackground 桥把窗口/WebView 背景推成应用主题色，初值来自 values/values-night 的 mindfsWindowBackground；③ 装成 PWA 后那条缝是**壳自己的窗口底色**，取自 manifest 的 background_color，安装/更新时烧死 —— meta theme-color 管不到它（14:07 录像：meta 已是 #0f172a，缝仍是 #F8FAFC），视口开关也拦不住（14:53 录像：闪的那一帧页面像素与前一帧完全相同、在 y=970 处被裁断，壳是原生缩的 WebView；VirtualKeyboard overlaysContent 试过，缝一模一样，已退回），页面也画不出去。唯一通道是 manifest：静态那份按主用主题烧成暗色 #0f172a，亮色系主题由 index.html 首帧脚本改指 manifest-light.webmanifest，壳在下次 WebAPK 更新或重装时跟上 —— 切主题不会立刻变，这是壳的限制。"
     boundary: "只影响 Android 壳、web 的 viewport 声明、PWA manifest 选择与移动端键盘抬升算法；不动会话/存储/多账户，控制面边界不变。"
     files:
-      - android/app/src/main/res/values/styles.xml
-      - android/app/src/main/res/values/colors.xml
-      - android/app/src/main/res/values-night/colors.xml
-      - android/app/src/main/java/com/mindfs/app/MainActivity.java
+      # Capacitor 壳整棵树（85121f7d 起从 android/ 移到 web/android/）：
+      # Java、资源、gradle wrapper 都是本 fork 的定制，目录前缀一次登记。
+      - web/android/
       - web/index.html
       - web/public/manifest.webmanifest
       - web/public/manifest-light.webmanifest
@@ -6984,6 +6983,10 @@ groups:
     why: "后端 CreateBlankFile 只建文件；扩展为 CreateEntry(rootID, dir, name, asDir)：asDir=true 走 os.Mkdir(0o755)，冲突仍由 os.ErrExist → handler 409 → 前端 directory.fileExists 文案；POST /api/file body 加 kind:\"dir\"（缺省保持创建空白文件行为，零破坏）。新建路径加 .mindfs 护栏（AGENTS.md #12：绝不在项目目录里造出 .mindfs）。前端 handleCreateFolder 沿 handleCreateBlankFile 那条链路，但请求改用 appURL(..., getNodeIdForRoot(rootID)) 而非 appPath（后者不带 nodeId 会静默打到当前激活节点，pc/fn 上把目录建到错的机器）；顺手把 handleCreateBlankFile 同样切到 appURL 形式。入口只放在 DefaultListViewMenu 的 ⋯ 菜单（与创建空白文件同处），不进目录行三点菜单（那是 G-JO 的边界，语义是『作用于这一条』）。"
     boundary: "只做后端创建端点的 dir 语义与视图级 ⋯ 菜单条目；OperateFile 的 rename/move/delete 语义不变，仅加 .mindfs 元目录的删除/重命名到 .mindfs 护栏（AGENTS.md #12）；不自动进入/展开新目录；目录名仍单级（name 含 / 仍判非法，不做 MkdirAll）；不改 WS 协议、role 表、账户分区。"
     files:
+      - server/app/update.go
+      - web/src/components/file/FileTreeAboutDialog.tsx
+      - web/src/components/file/FileTreeAgentConfigMenuButtons.tsx
+      - web/src/hooks/useTestNativeReplyAlert.ts
       - server/internal/api/http_text_edit.go
       - server/internal/api/usecase/text_edit.go
       - server/internal/api/usecase/create_entry_test.go

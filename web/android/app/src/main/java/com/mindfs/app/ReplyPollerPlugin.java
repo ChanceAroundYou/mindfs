@@ -89,6 +89,12 @@ public class ReplyPollerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void testAlert(PluginCall call) {
+        ReplyPollerService.postTestAlert(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
     public void dismiss(PluginCall call) {
         String rootId = call.getString("rootId", "");
         String sessionKey = call.getString("sessionKey", "");
