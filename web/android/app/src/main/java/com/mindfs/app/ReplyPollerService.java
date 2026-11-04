@@ -80,14 +80,15 @@ public class ReplyPollerService extends Service {
     private static final String PREF_E2EE_NODE_ID = "e2ee_node_id";
     private static final String PREF_E2EE_CLIENT_ID = "e2ee_client_id";
     private static final String PREF_E2EE_TRANSPORT_KEY = "e2ee_transport_key";
-    private static final String PREF_COMPLETED_KEYS = "completed_keys";
+    private static final String PREF_AWAITING_NOTIFIED = "awaiting_notified";
     private static final String E2EE_HEADER = "X-MindFS-E2EE";
     private static final String CLIENT_ID_HEADER = "X-MindFS-Client-ID";
     private static final String PROOF_HEADER = "X-MindFS-Proof";
     private static final String TS_HEADER = "X-MindFS-TS";
-    private static final String PROGRESS_CHANNEL_ID = "mindfs_reply_progress_v1";
-    private static final String VISIBLE_PROGRESS_CHANNEL_ID = "mindfs_reply_progress_visible_v1";
-    private static final String ALERT_CHANNEL_ID = "mindfs_reply_alert_v3";
+    private static final String SERVICE_CHANNEL_ID = "mindfs_reply_service_v1";
+    private static final String VISIBLE_PROGRESS_CHANNEL_ID = SERVICE_CHANNEL_ID;
+    private static final String PROGRESS_CHANNEL_ID = SERVICE_CHANNEL_ID;
+    private static final String ALERT_CHANNEL_ID = "mindfs_reply_alert_v4";
     private static final String REPLY_GROUP_KEY = "com.mindfs.app.REPLY_NOTIFICATIONS";
     private static final int FOREGROUND_ID = 750001;
     private static final int NOTIFICATION_BASE_ID = 760000;
@@ -132,10 +133,6 @@ public class ReplyPollerService extends Service {
         }
         if (ACTION_PAUSE.equals(action)) {
             pausePolling();
-            return START_NOT_STICKY;
-        }
-        if (ACTION_CLEAR_COMPLETED.equals(action)) {
-            clearCompleted();
             return START_NOT_STICKY;
         }
         if (ACTION_STOP.equals(action)) {
@@ -228,7 +225,7 @@ public class ReplyPollerService extends Service {
         }
         Log.i(TAG, "resume polling apiBaseUrl=" + apiBaseUrl);
         running = true;
-        startForegroundCompat(FOREGROUND_ID, buildReplyPlaceholderNotification());
+        startForegroundCompat(FOREGROUND_ID, buildIdleNotification());
         scheduleNextPoll(0);
     }
 
@@ -246,14 +243,17 @@ public class ReplyPollerService extends Service {
         for (ReplyState state : states.values()) {
             notificationManager.cancel(state.notificationId);
         }
-        for (String sessionKey : getCompletedKeys()) {
-            notificationManager.cancel(notificationIdFor(sessionKey));
+        Set<String> notified = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getStringSet(PREF_AWAITING_NOTIFIED, new HashSet<>());
+        for (String k : notified) {
+            String[] parts = k.split("\u001f", 2);
+            String rid = parts.length > 0 ? parts[0] : "";
+            String sk = parts.length > 1 ? parts[1] : "";
+            notificationManager.cancel(notificationIdFor(rid, sk));
         }
         notificationManager.cancel(FOREGROUND_ID);
         notificationSignatures.clear();
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_COMPLETED_KEYS).apply();
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_AWAITING_NOTIFIED).apply();
         states.clear();
-        notificationMode = NotificationMode.NONE;
         stopForegroundCompat();
         stopSelf();
     }
@@ -349,13 +349,17 @@ public class ReplyPollerService extends Service {
             if (sessionKey.isEmpty()) {
                 continue;
             }
-            ReplyState state = new ReplyState(sessionKey);
-            state.rootId = safe(item.optString("rootId", ""));
+            String rootId = safe(item.optString("rootId", ""));
+            ReplyState state = new ReplyState(sessionKey, rootId);
+            state.rootId = rootId;
             state.rootTitle = safe(item.optString("rootTitle", ""));
             state.sessionTitle = safe(item.optString("sessionTitle", ""));
             state.summary = safe(item.optString("summary", ""));
             state.updatedAt = safe(item.optString("updatedAt", ""));
-            state.status = ReplyStatus.REPLYING;
+            String st = safe(item.optString("status", ""));
+            state.replying = "replying".equalsIgnoreCase(st) || item.optBoolean("active", false);
+            state.awaiting = item.optBoolean("awaiting_answer", false) || item.optBoolean("awaitingAnswer", false);
+            state.status = state.replying ? ReplyStatus.REPLYING : ReplyStatus.COMPLETED;
             Log.i(TAG, "fetched session=" + sessionKey + " summaryLength=" + state.summary.length());
             next.put(sessionKey, state);
         }
@@ -452,48 +456,163 @@ public class ReplyPollerService extends Service {
     }
 
     private long applyReplyingSessions(Map<String, ReplyState> next) {
+        if (!running) {
+            return IDLE_POLL_INTERVAL_SECONDS;
+        }
         Log.i(TAG, "poll success sessions=" + next.size());
-        Set<String> currentKeys = new HashSet<>(next.keySet());
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        Set<String> awaitingNotified = new HashSet<>(prefs.getStringSet(PREF_AWAITING_NOTIFIED, new HashSet<>()));
+
+        // 1. 合并 incoming
+        Set<String> currentKeys = new HashSet<>();
         for (ReplyState incoming : next.values()) {
+            currentKeys.add(incoming.sessionKey);
             ReplyState state = states.get(incoming.sessionKey);
             if (state == null) {
                 state = incoming;
                 states.put(state.sessionKey, state);
             } else {
-                boolean wasCompleted = state.status == ReplyStatus.COMPLETED;
                 state.rootId = incoming.rootId;
                 state.rootTitle = incoming.rootTitle;
                 state.sessionTitle = incoming.sessionTitle;
-                if (wasCompleted || !incoming.summary.isEmpty()) {
+                if (!incoming.summary.isEmpty()) {
                     state.summary = incoming.summary;
                 }
                 state.updatedAt = incoming.updatedAt;
-                state.status = ReplyStatus.REPLYING;
+                state.replying = incoming.replying;
+                state.awaiting = incoming.awaiting;
+                state.status = incoming.replying ? ReplyStatus.REPLYING : ReplyStatus.COMPLETED;
             }
-            removeCompletedKey(state.sessionKey);
         }
 
-        for (ReplyState state : states.values()) {
+        // 2. DONE 检测：上一轮 replying、本轮消失
+        for (ReplyState state : new ArrayList<>(states.values())) {
             if (state.status == ReplyStatus.REPLYING && !currentKeys.contains(state.sessionKey)) {
                 state.status = ReplyStatus.COMPLETED;
-                addCompletedKey(state.sessionKey);
+                state.replying = false;
+                postAlert("done", state);
                 vibrateReplyCompletion();
             }
         }
 
-        List<ReplyState> visibleStates = visibleStates();
-        if (currentKeys.isEmpty()) {
-            if (!visibleStates.isEmpty()) {
-                showReplyNotifications(visibleStates);
-                stopForegroundDetachCompat();
-            } else {
-                stopForegroundCompat();
+        // 3. awaiting 生命周期（用 planner）
+        List<ReplyAlertPlanner.Snapshot> snaps = new ArrayList<>();
+        for (ReplyState st : states.values()) {
+            if (currentKeys.contains(st.sessionKey)) {
+                ReplyAlertPlanner.Snapshot sn = new ReplyAlertPlanner.Snapshot();
+                sn.rootId = st.rootId; sn.sessionKey = st.sessionKey;
+                sn.rootTitle = st.rootTitle; sn.sessionTitle = st.sessionTitle;
+                sn.summary = st.summary; sn.updatedAt = st.updatedAt;
+                sn.replying = st.replying; sn.awaiting = st.awaiting;
+                snaps.add(sn);
             }
-            return IDLE_POLL_INTERVAL_SECONDS;
-        } else {
-            showReplyNotifications(visibleStates);
-            return ACTIVE_POLL_INTERVAL_SECONDS;
         }
+        ReplyAlertPlanner plan = new ReplyAlertPlanner();
+        ReplyAlertPlanner.Plan p = plan.apply(snaps, awaitingNotified);
+        for (ReplyAlertPlanner.Alert a : p.post) {
+            ReplyState st = findState(a.rootId, a.sessionKey);
+            if (st != null) postAlert(a.kind, st);
+        }
+        for (String k : p.cancel) {
+            String[] parts = k.split("\u001f", 2);
+            String rid = parts.length > 0 ? parts[0] : "";
+            String sk = parts.length > 1 ? parts[1] : "";
+            notificationManager.cancel(notificationIdFor(rid, sk));
+            // 兼容旧 id
+            notificationManager.cancel(NOTIFICATION_BASE_ID + Math.abs(sk.hashCode() % 100000));
+        }
+        prefs.edit().putStringSet(PREF_AWAITING_NOTIFIED, p.awaitingNotified).apply();
+
+        // 4. 前台服务通知（极简/聚合）
+        List<ReplyState> live = new ArrayList<>();
+        for (ReplyState st : states.values()) {
+            if (st.replying || st.awaiting) live.add(st);
+        }
+        updateForegroundNotification(live);
+
+        if (currentKeys.isEmpty() && live.isEmpty()) {
+            stopForegroundCompat();
+            return IDLE_POLL_INTERVAL_SECONDS;
+        }
+        return currentKeys.isEmpty() ? IDLE_POLL_INTERVAL_SECONDS : ACTIVE_POLL_INTERVAL_SECONDS;
+    }
+
+    private ReplyState findState(String rootId, String sessionKey) {
+        for (ReplyState st : states.values()) {
+            if (st.sessionKey.equals(sessionKey) && (rootId == null || rootId.equals(st.rootId))) {
+                return st;
+            }
+        }
+        return null;
+    }
+
+    private void postAlert(String kind, ReplyState state) {
+        String title = buildReplyTitlePrefix(state) + " · " + ("awaiting".equals(kind) ? "需要你回答" : "完成");
+        String text = state.summary;
+        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (launchIntent == null) launchIntent = new Intent(this, MainActivity.class);
+        launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        launchIntent.putExtra("rootId", state.rootId);
+        launchIntent.putExtra("sessionKey", state.sessionKey);
+        int id = state.notificationId;
+        PendingIntent pi = PendingIntent.getActivity(this, id, launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, ALERT_CHANNEL_ID)
+                : new Notification.Builder(this);
+        b.setSmallIcon(R.drawable.ic_stat_mindfs_notification)
+         .setContentTitle(title)
+         .setContentText(text)
+         .setContentIntent(pi)
+         .setAutoCancel(true)
+         .setOngoing(false)
+         .setShowWhen(true)
+         .setVisibility(Notification.VISIBILITY_PUBLIC)
+         .setCategory(Notification.CATEGORY_STATUS)
+         .setStyle(new Notification.BigTextStyle().bigText(text));
+        if (!TextUtils.isEmpty(text)) b.setTicker(text);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            b.setSound(replyAlertSoundUri());
+        }
+        notificationManager.notify(id, b.build());
+    }
+
+    private void updateForegroundNotification(List<ReplyState> live) {
+        if (live == null || live.isEmpty()) {
+            // 极简静默
+            try { startForegroundCompat(FOREGROUND_ID, buildIdleNotification()); }
+            catch (RuntimeException ex) { notificationManager.notify(FOREGROUND_ID, buildIdleNotification()); }
+            return;
+        }
+        String text;
+        if (live.size() == 1) {
+            ReplyState st = live.get(0);
+            text = buildReplyTitlePrefix(st) + " · 回复中";
+        } else {
+            text = live.size() + " 个会话回复中";
+        }
+        Notification n = buildIdleNotification(text);
+        try { startForegroundCompat(FOREGROUND_ID, n); }
+        catch (RuntimeException ex) { notificationManager.notify(FOREGROUND_ID, n); }
+    }
+
+    private Notification buildIdleNotification() { return buildIdleNotification("MindFS"); }
+    private Notification buildIdleNotification(String text) {
+        Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, SERVICE_CHANNEL_ID)
+                : new Notification.Builder(this);
+        b.setSmallIcon(R.drawable.ic_stat_mindfs_notification)
+         .setContentTitle(text == null || text.isEmpty() ? "MindFS" : text)
+         .setContentText("")
+         .setOngoing(true)
+         .setOnlyAlertOnce(true)
+         .setShowWhen(false)
+         .setVisibility(Notification.VISIBILITY_SECRET)
+         .setCategory(Notification.CATEGORY_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        }
+        return b.build();
     }
 
     private void showReplyNotifications(List<ReplyState> states) {
@@ -814,75 +933,30 @@ public class ReplyPollerService extends Service {
         return title + " · " + status;
     }
 
-    private void clearCompleted() {
-        Iterator<Map.Entry<String, ReplyState>> iterator = states.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<String, ReplyState> entry = iterator.next();
-            ReplyState state = entry.getValue();
-            if (state.status == ReplyStatus.COMPLETED) {
-                notificationManager.cancel(state.notificationId);
-                iterator.remove();
-            }
-        }
-        Set<String> completedKeys = getCompletedKeys();
-        for (String sessionKey : completedKeys) {
-            notificationManager.cancel(notificationIdFor(sessionKey));
-        }
-        notificationManager.cancel(FOREGROUND_ID);
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_COMPLETED_KEYS).apply();
-    }
-
-    private Set<String> getCompletedKeys() {
-        return new HashSet<>(getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getStringSet(PREF_COMPLETED_KEYS, new HashSet<>()));
-    }
-
-    private void addCompletedKey(String sessionKey) {
-        Set<String> keys = getCompletedKeys();
-        keys.add(sessionKey);
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putStringSet(PREF_COMPLETED_KEYS, keys).apply();
-    }
-
-    private void removeCompletedKey(String sessionKey) {
-        Set<String> keys = getCompletedKeys();
-        if (!keys.remove(sessionKey)) {
-            return;
-        }
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putStringSet(PREF_COMPLETED_KEYS, keys).apply();
-    }
-
     private void createChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || notificationManager == null) {
             return;
         }
-        NotificationChannel progress = new NotificationChannel(
-            PROGRESS_CHANNEL_ID,
-            "MindFS reply progress",
-            NotificationManager.IMPORTANCE_LOW
+        NotificationChannel service = new NotificationChannel(
+            SERVICE_CHANNEL_ID,
+            "MindFS 后台同步",
+            NotificationManager.IMPORTANCE_MIN
         );
-        progress.setDescription("MindFS background reply progress");
-        progress.setSound(null, null);
-        progress.enableVibration(false);
-        progress.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        notificationManager.createNotificationChannel(progress);
-
-        NotificationChannel visibleProgress = new NotificationChannel(
-            VISIBLE_PROGRESS_CHANNEL_ID,
-            "MindFS reply progress",
-            NotificationManager.IMPORTANCE_DEFAULT
-        );
-        visibleProgress.setDescription("MindFS background reply progress");
-        visibleProgress.setSound(null, null);
-        visibleProgress.enableVibration(false);
-        visibleProgress.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        notificationManager.createNotificationChannel(visibleProgress);
+        service.setDescription("MindFS 后台回复检查");
+        service.setSound(null, null);
+        service.enableVibration(false);
+        service.setShowBadge(false);
+        service.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+        notificationManager.createNotificationChannel(service);
 
         NotificationChannel alert = new NotificationChannel(
             ALERT_CHANNEL_ID,
-            "MindFS reply alerts",
-            NotificationManager.IMPORTANCE_DEFAULT
+            "MindFS 任务提醒",
+            NotificationManager.IMPORTANCE_HIGH
         );
-        alert.setDescription("MindFS reply completion alerts");
-        alert.enableVibration(false);
+        alert.setDescription("MindFS 任务完成 / 需要回答提醒");
+        alert.enableVibration(true);
+        alert.setVibrationPattern(ALERT_VIBRATION_PATTERN);
         alert.setSound(
             replyAlertSoundUri(),
             new AudioAttributes.Builder()
@@ -962,8 +1036,9 @@ public class ReplyPollerService extends Service {
         return value == null ? "" : value.trim();
     }
 
-    private static int notificationIdFor(String sessionKey) {
-        return NOTIFICATION_BASE_ID + Math.abs(sessionKey.hashCode() % 100000);
+    static int notificationIdFor(String rootId, String sessionKey) {
+        String key = (rootId == null ? "" : rootId) + "\u001f" + (sessionKey == null ? "" : sessionKey);
+        return NOTIFICATION_BASE_ID + Math.abs(key.hashCode() % 100000);
     }
 
     private enum ReplyStatus {
@@ -985,11 +1060,14 @@ public class ReplyPollerService extends Service {
         String sessionTitle = "";
         String summary = "";
         String updatedAt = "";
+        boolean replying = true;
+        boolean awaiting = false;
         ReplyStatus status = ReplyStatus.REPLYING;
 
-        ReplyState(String sessionKey) {
+        ReplyState(String sessionKey, String rootId) {
             this.sessionKey = sessionKey;
-            this.notificationId = notificationIdFor(sessionKey);
+            this.rootId = rootId == null ? "" : rootId;
+            this.notificationId = notificationIdFor(this.rootId, sessionKey);
         }
     }
 }

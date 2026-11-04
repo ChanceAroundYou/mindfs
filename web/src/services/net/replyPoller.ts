@@ -8,15 +8,19 @@ type ReplyPollerPlugin = {
     apiBaseUrl: string;
     token?: string;
   }): Promise<void>;
+  dismiss(options: { rootId: string; sessionKey: string }): Promise<void>;
 };
 
 type NativeReplyPollerBridge = {
   configure?: (payload: string) => void;
+  dismiss?: (rootId: string, sessionKey: string) => void;
+  takePendingSession?: () => string;
 };
 
 type NativeReplyPollerSyncWindow = Window & {
   MindFSReplyPoller?: NativeReplyPollerBridge;
   __mindfsLatestReplyPollerConfig?: ReplyPollerConfigPayload;
+  __mindfsPendingReplySession?: { rootId: string; sessionKey: string };
 };
 
 const ReplyPoller = registerPlugin<ReplyPollerPlugin>("ReplyPoller");
@@ -91,4 +95,48 @@ function isLocalShellURL(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+
+export async function dismissNativeReplyNotification(rootId: string, sessionKey: string): Promise<void> {
+  const native = getNativeBridge();
+  const bridge = (window as NativeReplyPollerSyncWindow).MindFSReplyPoller;
+  try {
+    if (typeof native?.dismissReplyNotification === "function") {
+      await native.dismissReplyNotification({ rootId, sessionKey });
+      return;
+    }
+    if (typeof bridge?.dismiss === "function") {
+      bridge.dismiss(rootId, sessionKey);
+      return;
+    }
+    await ReplyPoller.dismiss({ rootId, sessionKey });
+  } catch {
+    // ignore
+  }
+}
+
+export function takePendingReplySession(): { rootId: string; sessionKey: string } | null {
+  const bridge = (window as NativeReplyPollerSyncWindow).MindFSReplyPoller;
+  try {
+    let raw = "";
+    if (typeof bridge?.takePendingSession === "function") {
+      raw = bridge.takePendingSession() || "";
+    }
+    if (!raw) {
+      const pending = (window as NativeReplyPollerSyncWindow).__mindfsPendingReplySession;
+      if (pending && pending.rootId && pending.sessionKey) {
+        (window as NativeReplyPollerSyncWindow).__mindfsPendingReplySession = undefined;
+        return { rootId: pending.rootId, sessionKey: pending.sessionKey };
+      }
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.rootId && parsed.sessionKey) {
+      return { rootId: String(parsed.rootId), sessionKey: String(parsed.sessionKey) };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }

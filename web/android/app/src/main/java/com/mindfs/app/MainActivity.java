@@ -230,13 +230,19 @@ public class MainActivity extends BridgeActivity {
         }
         intent.removeExtra("rootId");
         intent.removeExtra("sessionKey");
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("rootId", rootId.trim());
+            o.put("sessionKey", sessionKey.trim());
+            pendingOpenSessionJSON = o.toString();
+        } catch (Exception ignored) {}
         View webView = getBridge() == null ? null : getBridge().getWebView();
         if (!(webView instanceof WebView)) {
             return;
         }
         String script = String.format(
             java.util.Locale.US,
-            "(function(){var detail={rootId:%s,sessionKey:%s};window.__mindfsPendingReplySession=detail;window.dispatchEvent(new CustomEvent('mindfs:open-reply-session',{detail:detail}));})();",
+            "(function(){var detail={rootId:%s,sessionKey:%s};window.dispatchEvent(new CustomEvent('mindfs:open-reply-session',{detail:detail}));})();",
             JSONObject.quote(rootId.trim()),
             JSONObject.quote(sessionKey.trim())
         );
@@ -510,6 +516,12 @@ public class MainActivity extends BridgeActivity {
     }
 
     private class ReplyPollerBridge {
+        @android.webkit.JavascriptInterface
+        public String takePendingSession() {
+            String v = pendingOpenSessionJSON;
+            pendingOpenSessionJSON = "";
+            return v == null ? "" : v;
+        }
         @JavascriptInterface
         public void configure(String rawJSON) {
             try {

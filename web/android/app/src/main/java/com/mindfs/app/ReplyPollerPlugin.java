@@ -89,10 +89,15 @@ public class ReplyPollerPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void clearCompleted(PluginCall call) {
-        Intent intent = new Intent(getContext(), ReplyPollerService.class);
-        intent.setAction(ReplyPollerService.ACTION_CLEAR_COMPLETED);
-        getContext().startService(intent);
+    public void dismiss(PluginCall call) {
+        String rootId = call.getString("rootId", "");
+        String sessionKey = call.getString("sessionKey", "");
+        android.app.NotificationManager nm =
+            (android.app.NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        int id = ReplyPollerService.notificationIdFor(rootId, sessionKey);
+        nm.cancel(id);
+        // 兼容旧版仅按 sessionKey 的通知 id
+        nm.cancel(760000 + Math.abs(sessionKey.hashCode() % 100000));
         call.resolve();
     }
 

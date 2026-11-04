@@ -237,8 +237,8 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     }
 
     window.addEventListener("mindfs:open-reply-session", handleOpenReplySession);
-    openReplySession((window as any).__mindfsPendingReplySession);
-    delete (window as any).__mindfsPendingReplySession;
+    const pending = takePendingReplySession();
+    if (pending) openReplySession(pending);
     return () => {
       window.removeEventListener("mindfs:open-reply-session", handleOpenReplySession);
     };
