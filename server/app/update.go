@@ -30,7 +30,7 @@ func UpdateNow(ctx context.Context, opts UpdateOptions) (UpdateResult, error) {
 	if err != nil {
 		return UpdateResult{}, err
 	}
-	svc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
+	svc := update.NewService("ChanceAroundYou/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
 	lastMessage := ""
 	if opts.Progress != nil {
 		svc.AddListener(func(st update.Status) {
