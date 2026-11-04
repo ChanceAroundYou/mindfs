@@ -23,8 +23,9 @@ def mindfsVersionCodeFromName(String versionName) {
     def major = matcher.group(1).toInteger()
     def minor = matcher.group(2).toInteger()
     def patch = matcher.group(3).toInteger()
-    def commits = matcher.group(4) ? matcher.group(4).toInteger() : 0
-    return Math.max(1, major * 1000000 + minor * 10000 + patch * 100 + commits + 1)
+    def build = matcher.group(4) ? matcher.group(4).toInteger() : 0
+    // 10x scale keeps tag releases monotonic against legacy dev builds (old formula topped ~50k).
+    return Math.max(1, major * 10000000 + minor * 100000 + patch * 1000 + build + 1)
 }
 
 def mindfsVersionName = (
@@ -37,6 +38,21 @@ def mindfsVersionCode = (
     System.getenv('ANDROID_VERSION_CODE') ?:
     mindfsVersionCodeFromName(mindfsVersionName)
 ).toString().toInteger()
+
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+def signingStoreFile = keystoreProperties.getProperty("storeFile") ?: System.getenv("ANDROID_KEYSTORE_FILE")
+def signingStorePassword = keystoreProperties.getProperty("storePassword") ?: System.getenv("ANDROID_KEYSTORE_PASSWORD")
+def signingKeyAlias = keystoreProperties.getProperty("keyAlias") ?: System.getenv("ANDROID_KEY_ALIAS")
+def signingKeyPassword = keystoreProperties.getProperty("keyPassword") ?: System.getenv("ANDROID_KEY_PASSWORD")
+
+def isReleaseTask = gradle.startParameter.taskNames.any { it.toLowerCase().contains("release") }
+if (isReleaseTask && !(signingStoreFile && signingStorePassword && signingKeyAlias && signingKeyPassword)) {
+    throw new GradleException("Missing Android signing config. Set android/keystore.properties or ANDROID_KEYSTORE_* env vars (see docs/android-build.md).")
+}
 
 android {
     namespace = "com.mindfs.app"
@@ -56,11 +72,16 @@ android {
     }
     signingConfigs {
         release {
-            storeFile file('mindfs-release.jks')
-            storePassword 'mindfs123'
-            keyAlias 'mindfs'
-            keyPassword 'mindfs123'
+            if (signingStoreFile) {
+                storeFile file(signingStoreFile)
+                storePassword signingStorePassword
+                keyAlias signingKeyAlias
+                keyPassword signingKeyPassword
+            }
         }
+    }
+    buildFeatures {
+        buildConfig true
     }
     buildTypes {
         release {

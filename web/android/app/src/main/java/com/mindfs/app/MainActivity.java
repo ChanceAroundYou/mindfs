@@ -47,7 +47,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ReplyPollerPlugin.class);
         super.onCreate(savedInstanceState);
         getBridge().setWebViewClient(new MindFSWebViewClient(getBridge()));
-        WebView.setWebContentsDebuggingEnabled(true);
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         CookieManager.getInstance().setAcceptCookie(true);
         getBridge().getWebView().getSettings().setMixedContentMode(
             WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE

@@ -3,7 +3,7 @@
 GO ?= go
 NPM ?= npm
 WEB_DIR ?= web
-ANDROID_DIR ?= android
+ANDROID_DIR ?= web/android
 HARMONY_DIR ?= harmony
 ADDR ?= :7331
 ROOT ?= .
@@ -107,6 +107,8 @@ RELEASE_NOTES_FILE ?= release-notes.md
 RELEASE_NOTES_LATEST_FILE ?= $(DIST_DIR)/release-notes-$(TAG).md
 ANDROID_RELEASE_APK ?= $(ANDROID_DIR)/app/build/outputs/apk/release/app-release.apk
 ANDROID_DIST_APK ?= $(DIST_DIR)/mindfs_$(VERSION)_android.apk
+ANDROID_VERSION_URL ?= https://github.com/ChanceAroundYou/mindfs/releases/latest/download/android-version.json
+ANDROID_RELEASE_REPO ?= ChanceAroundYou/mindfs
 HARMONY_BUILD_MODE ?= release
 HARMONY_SDK_HOME ?= $(HOME)/Library/OpenHarmony/Sdk
 DEVECO_HOME ?= /Applications/DevEco-Studio.app/Contents
@@ -117,6 +119,7 @@ HARMONY_HAP ?= $(HARMONY_DIR)/entry/build/default/outputs/default/entry-default-
 HARMONY_DIST_HAP ?= $(DIST_DIR)/mindfs_$(VERSION)_harmony_$(HARMONY_BUILD_MODE).hap
 RELEASE_ANDROID ?= 0
 RELEASE_UPLOAD_JOBS ?= 4
+ANDROID_JAVA_HOME ?= $(JAVA_HOME)
 ANDROID_JAVA_HOME ?= $(shell if command -v /usr/libexec/java_home >/dev/null 2>&1; then /usr/libexec/java_home -v 21 2>/dev/null; fi)
 ANDROID_GRADLE_ENV :=
 ifneq ($(strip $(ANDROID_JAVA_HOME)),)
@@ -125,6 +128,7 @@ endif
 RELEASE_ARTIFACTS := $(DIST_DIR)/mindfs_$(TAG)_*.tar.gz $(DIST_DIR)/mindfs_$(TAG)_*.zip $(DIST_DIR)/mindfs_$(TAG)_manifest.json
 ifeq ($(RELEASE_ANDROID),1)
 RELEASE_ARTIFACTS += $(DIST_DIR)/mindfs_$(TAG)_android.apk
+RELEASE_ARTIFACTS += $(DIST_DIR)/android-version.json
 endif
 
 # Targets: OS/ARCH pairs
@@ -141,10 +145,30 @@ build-all: build-web
 	@MIND_FS_BASE="$(MIND_FS_BASE)" bash scripts/build-all.sh "$(VERSION)" "$(DIST_DIR)"
 
 build-android:
-	cd $(WEB_DIR) && $(NPM) run build:android
+	cd $(WEB_DIR) && VITE_MIND_FS_BASE=/ VITE_ANDROID_VERSION_URL="$(ANDROID_VERSION_URL)" $(NPM) run build:android
+	cd $(WEB_DIR) && node_modules/.bin/cap sync android
 	cd $(ANDROID_DIR) && $(ANDROID_GRADLE_ENV) ./gradlew assembleRelease -PmindfsVersion="$(VERSION)"
 	mkdir -p "$(DIST_DIR)"
 	cp "$(ANDROID_RELEASE_APK)" "$(ANDROID_DIST_APK)"
+
+android-doctor:
+	bash scripts/android-doctor.sh
+
+android-verify:
+	@test -n "$(ANDROID_SDK_ROOT)$(ANDROID_HOME)" || (echo "Error: ANDROID_SDK_ROOT/ANDROID_HOME is required" >&2; exit 1)
+	@SDK="$${ANDROID_SDK_ROOT:-$$ANDROID_HOME}"; \
+		"$$SDK/build-tools/36.0.0/apksigner" verify --print-certs "$(ANDROID_DIST_APK)"; \
+		sha256sum "$(ANDROID_DIST_APK)"
+
+android-install: build-android
+	@test -n "$(ANDROID_SDK_ROOT)$(ANDROID_HOME)" || (echo "Error: ANDROID_SDK_ROOT/ANDROID_HOME is required" >&2; exit 1)
+	@SDK="$${ANDROID_SDK_ROOT:-$$ANDROID_HOME}"; \
+		"$$SDK/platform-tools/adb" install -r "$(ANDROID_DIST_APK)"
+
+android-version-json:
+	$(GO) run ./scripts/android-version-manifest.go \
+		-version "$(VERSION)" -dist "$(DIST_DIR)" -repo "$(ANDROID_RELEASE_REPO)" \
+		-notes "$(RELEASE_NOTES_LATEST_FILE)" -apk "$(notdir $(ANDROID_DIST_APK))"
 
 build-harmony:
 	cd $(WEB_DIR) && $(NPM) run build:harmony
@@ -209,6 +233,7 @@ release:
 	MINDFS_RELEASE_PUBLIC_KEY="$(MINDFS_RELEASE_PUBLIC_KEY)" $(MAKE) build-all VERSION="$(TAG)"
 	@if [ "$(RELEASE_ANDROID)" = "1" ]; then \
 		$(MAKE) build-android VERSION="$(TAG)"; \
+		$(MAKE) android-version-json VERSION="$(TAG)" DIST_DIR="$(DIST_DIR)" RELEASE_NOTES_LATEST_FILE="$(RELEASE_NOTES_LATEST_FILE)"; \
 	else \
 		echo "Skipping Android release. Use RELEASE_ANDROID=1 to include the APK."; \
 	fi

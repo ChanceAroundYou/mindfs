@@ -64,12 +64,11 @@ export async function fetchAppUpdateState(): Promise<AppUpdateState> {
     return normalizeAppUpdateState(null);
   }
   const appInfo = await getAppInfo();
-  const response = await fetch(endpoint, { cache: "no-cache" });
-  if (!response.ok) {
-    throw new Error(`${platform}_version_check_failed_${response.status}`);
+  const { status, payload } = await fetchVersionPayload(endpoint, platform);
+  if (status < 200 || status >= 300) {
+    throw new Error(`${platform}_version_check_failed_${status}`);
   }
 
-  const payload = (await response.json()) as AppVersionResponse;
   const download = pickNativeDownload(payload, platform);
   const latestVersion = normalizeVersionLabel(payload.version || "");
   const currentVersion = normalizeVersionLabel(appInfo.version || "");
@@ -89,6 +88,35 @@ export async function fetchAppUpdateState(): Promise<AppUpdateState> {
     download_url: download.url || "",
     filename: download.filename || filenameFromURL(download.url || "") || defaultPackageFilename(platform),
   });
+}
+
+async function fetchVersionPayload(
+  endpoint: string,
+  platform: NativePlatform,
+): Promise<{ status: number; payload: AppVersionResponse }> {
+  if (isAndroidRuntime()) {
+    try {
+      const { CapacitorHttp } = await import("@capacitor/core");
+      const response = await CapacitorHttp.get({
+        url: endpoint,
+        responseType: "json",
+        headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+      });
+      const payload =
+        typeof response.data === "string" ? JSON.parse(response.data) : (response.data || {});
+      return { status: response.status, payload };
+    } catch {
+      // fall through to fetch (will likely fail on CORS, but keeps behavior observable)
+    }
+  }
+  const response = await fetch(endpoint, { cache: "no-cache" });
+  let payload: AppVersionResponse = {};
+  try {
+    payload = (await response.json()) as AppVersionResponse;
+  } catch {
+    payload = {};
+  }
+  return { status: response.status, payload };
 }
 
 // 版本检查地址只由构建期环境变量提供，缺省为空 = 不做检查。

@@ -8,6 +8,17 @@ Access your personal AI agents and workstation data anywhere, anytime through Mi
 
 ---
 
+## Android app
+
+MindFS ships an Android shell (Capacitor) that wraps the web UI and auto-updates from GitHub releases.
+
+- Latest APK: https://github.com/ChanceAroundYou/mindfs/releases/latest
+- Auto-update manifest: https://github.com/ChanceAroundYou/mindfs/releases/latest/download/android-version.json
+
+The in-app updater checks the manifest above on launch (configurable via `VITE_ANDROID_VERSION_URL`).
+
+---
+
 ## Screenshots
 
 <p align="center">

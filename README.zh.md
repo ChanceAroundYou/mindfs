@@ -8,6 +8,15 @@
 
 ---
 
+## Android 应用
+
+MindFS 提供 Android 壳（Capacitor），封装网页版并从 GitHub Releases 自动更新。
+
+- 最新 APK：https://github.com/ChanceAroundYou/mindfs/releases/latest
+- 自动更新清单：https://github.com/ChanceAroundYou/mindfs/releases/latest/download/android-version.json
+
+应用启动时会检查上述清单（可通过 `VITE_ANDROID_VERSION_URL` 配置）。
+
 ## 界面预览
 
 <p align="center">
