@@ -135,29 +135,6 @@ style={{
 {footerTopContent ? (
   <div style={{ width: "100%" }}>{footerTopContent}</div>
 ) : null}
-{isNativeApp && onGoHome ? (
-  <button
-    type="button"
-    onClick={() => onGoHome()}
-    style={{
-      width: "100%",
-      border: "1px solid var(--border-color)",
-      background: "var(--text-primary)",
-      color: "var(--sidebar-bg)",
-      borderRadius: "10px",
-      padding: "10px 12px",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "8px",
-      cursor: "pointer",
-      fontSize: "12px",
-      fontWeight: 600,
-    }}
-  >
-    <span>{t("fileTree.goHome")}</span>
-  </button>
-) : null}
 {shouldShowInstallButton ? (
   <button
     type="button"
