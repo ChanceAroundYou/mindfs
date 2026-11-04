@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import { AgentSelector } from "../agent/AgentSelector";
 import { AccountPanel } from "../account/AccountPanel";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
@@ -266,7 +267,7 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
                 </button>
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button type="button" onClick={() => { setIsMenuOpen(false); setAboutOpen(true); }} style={fileTreeMenuButtonStyle}>
-                  <span>{t("fileTree.about") || "关于 MindFS"}</span>
+                  <span>关于 MindFS</span>
                 </button>
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button
@@ -501,12 +502,13 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
             />
           </div>
         ) : null}
-{aboutOpen ? (
+{aboutOpen ? createPortal(
         <div onClick={() => setAboutOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--panel-bg)", color: "var(--text-primary)", borderRadius: "12px", padding: "16px", width: "min(360px, 90vw)" }}>
             <h3 style={{ margin: "0 0 8px", fontSize: "14px" }}>关于 MindFS</h3>
             <p style={{ margin: "0 0 12px", fontSize: "12px", color: "var(--text-secondary)" }}>MindFS — AI Agent Remote Access Gateway</p>
-            <p style={{ margin: "0 0 12px", fontSize: "11px", color: "var(--text-secondary)" }}>版本：{typeof window !== "undefined" && (window as any).MindFSAppInfo?.getInfo?.() ? JSON.parse((window as any).MindFSAppInfo.getInfo()).version : "web"}</p>
+            <p style={{ margin: "0 0 8px", fontSize: "11px", color: "var(--text-secondary)" }}>版本：{typeof window !== "undefined" && (window as any).MindFSAppInfo?.getInfo?.() ? (JSON.parse((window as any).MindFSAppInfo.getInfo()).version || "web") : "web (0.5.5)"}</p>
+            <p style={{ margin: "0 0 12px", fontSize: "11px" }}><a href="https://github.com/ChanceAroundYou/mindfs" target="_blank" rel="noreferrer" style={{ color: "var(--accent-color)" }}>github.com/ChanceAroundYou/mindfs</a></p>
             {isNativeApp ? (
               <button type="button" onClick={() => setAboutOpen(false)} style={{ border: "1px solid var(--border-color)", background: "var(--accent-color)", color: "#fff", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", marginRight: "8px" }}>
                 检查更新
@@ -517,6 +519,6 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
             </button>
           </div>
         </div>
-      ) : null}
+      , document.body) : null}
   </>;
 }
