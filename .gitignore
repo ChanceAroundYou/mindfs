@@ -26,6 +26,9 @@ web/dist/
 .vite/
 *.jks
 android/keystore.properties
+web/android/keystore.properties
+web/capacitor.config.json
+web/capacitor.config.ts
 android/local.properties
 *.log
 # .env* 里只有 web/.env 例外：Makefile 用 -include 读它拿 VITE_MIND_FS_BASE，
