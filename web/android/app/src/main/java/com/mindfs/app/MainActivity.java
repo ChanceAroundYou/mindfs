@@ -35,6 +35,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
+    private volatile String pendingOpenSessionJSON = "";
     private static final String TAG = "MindFS";
     private static final int POST_NOTIFICATIONS_REQUEST_CODE = 19031;
     private boolean notificationPermissionRequested = false;
