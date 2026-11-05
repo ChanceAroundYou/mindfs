@@ -377,12 +377,8 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     }
     mainViewRef.current = mode;
     setMainView(mode);
-    // 主区不在会话上时，那条会话完成也不该被当成「正在看」而抑制提醒。
-    if (mode === "chat") {
-      restoreNativeReplyViewing();
-    } else {
-      clearNativeReplyViewing();
-    }
+    // 主区不在会话上时，那条会话完成不该被当成「正在看」而抑制提醒。
+    (mode === "chat" ? restoreNativeReplyViewing : clearNativeReplyViewing)();
   }, []);
 
   /* 覆盖层接进返回栈：按返回/侧滑时先关最上面那一层，而不是退视图或退出应用。
