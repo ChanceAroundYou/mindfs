@@ -9,7 +9,7 @@ type ReplyPollerPlugin = {
     token?: string;
   }): Promise<void>;
   dismiss(options: { rootId: string; sessionKey: string }): Promise<void>;
-  testAlert(): Promise<{ error?: string }>;
+  testAlert(): Promise<{ error?: string; diag?: string }>;
   debugStatus(): Promise<{ debug?: string }>;
 };
 
@@ -152,9 +152,11 @@ export function takePendingReplySession(): { rootId: string; sessionKey: string 
 // 「没有提醒」的三种成因（服务没跑 / 地址打错 / 接口报错）只有轮询记录能区分开。
 export async function testNativeReplyAlert(): Promise<string> {
   let head = "测试提醒已发送";
+  let diag = "";
   try {
     const result = await ReplyPoller.testAlert();
     if (result?.error) head = result.error;
+    diag = result?.diag || "";
   } catch (ex) {
     head = ex instanceof Error ? ex.message : "测试提醒调用失败";
   }
@@ -165,7 +167,7 @@ export async function testNativeReplyAlert(): Promise<string> {
   } catch {
     // 老版本 App 没有 debugStatus，只显示投递结果。
   }
-  return poll ? `${head}\n${poll}` : head;
+  return [head, diag, poll].filter(Boolean).join("\n");
 }
 
 function describePollDebug(raw: string): string {

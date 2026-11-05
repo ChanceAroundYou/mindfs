@@ -55,6 +55,12 @@ test("reply test alert creates its channel and reports blockers", async () => {
   assert.match(hook, /测试提醒已发送/);
   assert.match(service, /PREF_DEBUG/, "poll results are recorded for diagnostics");
   assert.match(service, /setContentIntent/, "test alert gets a content intent so autoCancel can fire");
+  // 通知栏里「已发送但看不见」只能靠系统实况区分：总开关/渠道/是否在栏里/勿扰。
+  assert.match(service, /describeNotificationState/);
+  assert.match(plugin, /result\.put\("diag"/);
+  // 常驻（回复中）通知不点名，完成提醒才保留名称。
+  assert.match(service, /有会话正在回复/, "ongoing notification hides session/root names");
+  assert.match(service, /mindfs_reply_alert_v5/, "channel bumped so a muted v4 channel doesn't stick");
 });
 
 test("poller base URL keeps the mount prefix", async () => {

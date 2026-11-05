@@ -92,6 +92,7 @@ public class ReplyPollerPlugin extends Plugin {
     public void testAlert(PluginCall call) {
         JSObject result = new JSObject();
         result.put("error", ReplyPollerService.postTestAlert(getContext()));
+        result.put("diag", ReplyPollerService.describeNotificationState(getContext()));
         call.resolve(result);
     }
 

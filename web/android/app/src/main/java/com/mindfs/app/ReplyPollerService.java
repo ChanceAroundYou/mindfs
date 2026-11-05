@@ -92,7 +92,9 @@ public class ReplyPollerService extends Service {
     private static final String SERVICE_CHANNEL_ID = "mindfs_reply_service_v1";
     private static final String VISIBLE_PROGRESS_CHANNEL_ID = SERVICE_CHANNEL_ID;
     private static final String PROGRESS_CHANNEL_ID = SERVICE_CHANNEL_ID;
-    private static final String ALERT_CHANNEL_ID = "mindfs_reply_alert_v4";
+    // v5：渠道一旦建出来，重要级别与开关就由系统记住、App 改不动了。
+    // v4 在很多机器上被静音过，新建 v5 才能拿到干净的 HIGH 渠道。
+    private static final String ALERT_CHANNEL_ID = "mindfs_reply_alert_v5";
     private static final String REPLY_GROUP_KEY = "com.mindfs.app.REPLY_NOTIFICATIONS";
     private static final int FOREGROUND_ID = 750001;
     private static final int NOTIFICATION_BASE_ID = 760000;
@@ -583,6 +585,48 @@ public class ReplyPollerService extends Service {
         return null;
     }
 
+    // 通知到底是被系统挡了还是投出去了：总开关、渠道等级、通知栏里有没有这一条、勿扰模式。
+    // 用户那边「已发送但什么都没有」全靠这几项区分。
+    static String describeNotificationState(Context context) {
+        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) {
+            return "通知服务不可用";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("通知总开关=").append(nm.areNotificationsEnabled() ? "开" : "关");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = nm.getNotificationChannel(ALERT_CHANNEL_ID);
+            if (channel == null) {
+                sb.append(" · 渠道=缺失");
+            } else {
+                sb.append(" · 渠道=").append(channel.getImportance() == NotificationManager.IMPORTANCE_NONE
+                    ? "关闭" : "等级" + channel.getImportance());
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Notification[] active = nm.getActiveNotifications();
+            boolean mine = false;
+            for (Notification notification : active) {
+                if (notification != null && notification.getId() == 799999) {
+                    mine = true;
+                }
+            }
+            sb.append(" · 通知栏=").append(active.length).append(" 条").append(mine ? "（含测试提醒）" : "（不含测试提醒）");
+        }
+        sb.append(" · 勿扰=").append(interruptionLabel(nm.getCurrentInterruptionFilter()));
+        return sb.toString();
+    }
+
+    private static String interruptionLabel(int filter) {
+        switch (filter) {
+            case NotificationManager.INTERRUPTION_FILTER_ALL: return "关";
+            case NotificationManager.INTERRUPTION_FILTER_PRIORITY: return "仅优先";
+            case NotificationManager.INTERRUPTION_FILTER_NONE: return "全静音";
+            case NotificationManager.INTERRUPTION_FILTER_ALARMS: return "仅闹钟";
+            default: return "未知";
+        }
+    }
+
     // 返回空串 = 已投递；非空 = 需要展示给用户的原因（权限、渠道被关、投递异常）。
     public static String postTestAlert(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -667,13 +711,8 @@ public class ReplyPollerService extends Service {
             catch (RuntimeException ex) { notificationManager.notify(FOREGROUND_ID, buildIdleNotification()); }
             return;
         }
-        String text;
-        if (live.size() == 1) {
-            ReplyState st = live.get(0);
-            text = buildReplyTitlePrefix(st) + " · 回复中";
-        } else {
-            text = live.size() + " 个会话回复中";
-        }
+        // 常驻通知只报状态，不带项目/会话名：它整天挂在通知栏，名字属于隐私噪音。
+        String text = live.size() == 1 ? "有会话正在回复" : live.size() + " 个会话回复中";
         Notification n = buildIdleNotification(text);
         try { startForegroundCompat(FOREGROUND_ID, n); }
         catch (RuntimeException ex) { notificationManager.notify(FOREGROUND_ID, n); }
@@ -840,7 +879,10 @@ public class ReplyPollerService extends Service {
         boolean hasReplying = hasReplyingState(states);
         String status = hasReplying ? "回复中" : "回复完成";
         String title = "MindFS";
-        String text = buildAggregateLine(target);
+        // 回复中的汇总常驻通知不点名；回复完成的那次保留明细。
+        String text = hasReplying
+            ? (states.size() == 1 ? "有会话正在回复" : states.size() + " 个会话回复中")
+            : buildAggregateLine(target);
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             ? new Notification.Builder(this, hasReplying ? VISIBLE_PROGRESS_CHANNEL_ID : ALERT_CHANNEL_ID)
             : new Notification.Builder(this);
@@ -861,12 +903,16 @@ public class ReplyPollerService extends Service {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && !hasReplying) {
             builder.setSound(replyAlertSoundUri(this));
         }
-        Notification.InboxStyle style = new Notification.InboxStyle();
-        for (ReplyState state : states) {
-            style.addLine(buildAggregateLine(state));
+        if (hasReplying) {
+            builder.setStyle(new Notification.BigTextStyle().bigText(text));
+        } else {
+            Notification.InboxStyle style = new Notification.InboxStyle();
+            for (ReplyState state : states) {
+                style.addLine(buildAggregateLine(state));
+            }
+            style.setSummaryText(status);
+            builder.setStyle(style);
         }
-        style.setSummaryText(status);
-        builder.setStyle(style);
         if (!TextUtils.isEmpty(text)) {
             builder.setTicker(text);
         }
@@ -928,8 +974,10 @@ public class ReplyPollerService extends Service {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        String title = buildReplyTitle(state, replying ? "回复中" : "完成");
-        String text = state.summary;
+        // 回复中 = 常驻（会被抬成前台服务通知）：只写状态，不写项目/会话名。
+        // 完成那次是一次性提醒，保留名称便于辨认。
+        String title = replying ? "MindFS" : buildReplyTitle(state, "完成");
+        String text = replying ? "有会话正在回复" : state.summary;
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             ? new Notification.Builder(this, replying ? VISIBLE_PROGRESS_CHANNEL_ID : ALERT_CHANNEL_ID)
             : new Notification.Builder(this);
