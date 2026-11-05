@@ -7067,6 +7067,7 @@ groups:
     anchors:
       - 'web/src/services/update/githubAppUpdate.ts:major * 10000000 + minor * 100000 + patch * 1000 + build + 1'
       - 'web/src/services/update/githubAppUpdate.ts:downloadAndInstallApk'
-      - 'web/src/services/net/replyPoller.ts:return result?.error || ""'
+      - 'web/src/services/net/replyPoller.ts:export async function testNativeReplyAlert(): Promise<string>'
+      - 'web/android/app/src/main/java/com/mindfs/app/MainActivity.java:if (!ReplyPollerService.hasConfiguredBase(this))'
       - 'web/src/hooks/useApkUpdateCheck.ts:installApkUpdate('
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:static void ensureChannels(Context context)'
