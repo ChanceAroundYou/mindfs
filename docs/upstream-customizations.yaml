@@ -7059,6 +7059,9 @@ groups:
     files:
       - web/src/services/update/githubAppUpdate.ts
       - web/src/hooks/useApkUpdateCheck.ts
+      - web/src/hooks/useApkAutoUpdate.ts
+      - web/src/components/app/ApkUpdatePrompt.tsx
+      - web/src/app/AppRootView.tsx
       - web/src/services/net/replyPoller.ts
       - web/src/hooks/useTestNativeReplyAlert.ts
       - web/src/components/file/FileTreeAboutDialog.tsx

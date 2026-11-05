@@ -86,3 +86,17 @@ test("about dialog checks GitHub instead of opening the release page", async () 
   assert.match(hook, /已是最新版本/);
   assert.match(hook, /installApkUpdate\(/);
 });
+
+test("auto update checks on launch and on returning to foreground", async () => {
+  const hook = read("src/hooks/useApkAutoUpdate.ts");
+  const prompt = read("src/components/app/ApkUpdatePrompt.tsx");
+  const root = read("src/app/AppRootView.tsx");
+
+  assert.match(hook, /isAndroidRuntime\(\)/, "only the native Android shell auto-checks");
+  assert.match(hook, /addEventListener\("visibilitychange"/, "re-check when coming back to foreground");
+  assert.match(hook, /AUTO_CHECK_INTERVAL_MS/, "throttled so resume doesn't hammer the GitHub API");
+  assert.match(hook, /kind === "available"/, "only prompts when there really is a newer APK");
+  assert.match(prompt, /发现新版本/);
+  assert.match(prompt, /installApkUpdate|apply\(\)/, "installs from the prompt");
+  assert.match(root, /<ApkUpdatePrompt \/>/, "prompt is mounted at the app root");
+});
