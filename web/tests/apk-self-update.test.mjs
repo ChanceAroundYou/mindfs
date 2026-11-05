@@ -53,6 +53,7 @@ test("reply test alert creates its channel and reports blockers", async () => {
   assert.match(service, /IMPORTANCE_NONE/, "closed channel is reported, not silently dropped");
   assert.match(plugin, /result\.put\("error", ReplyPollerService\.postTestAlert/);
   assert.match(hook, /测试提醒已发送/);
+  assert.match(service, /postDelayed/, "second alert fires after the user leaves the app");
   assert.match(service, /PREF_DEBUG/, "poll results are recorded for diagnostics");
   assert.match(service, /setContentIntent/, "test alert gets a content intent so autoCancel can fire");
   // 通知栏里「已发送但看不见」只能靠系统实况区分：总开关/渠道/是否在栏里/勿扰。

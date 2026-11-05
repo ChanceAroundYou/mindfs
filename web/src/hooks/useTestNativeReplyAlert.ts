@@ -7,7 +7,7 @@ export function useTestNativeReplyAlert(): { message: string; run: () => Promise
   const [message, setMessage] = useState("");
   const run = useCallback(async () => {
     const error = await testNativeReplyAlert();
-    setMessage(error || "测试提醒已发送");
+    setMessage(error || "测试提醒已发送（10 秒后还会再发一条，届时请切到后台看是否会弹出横幅）");
   }, []);
   return { message, run };
 }

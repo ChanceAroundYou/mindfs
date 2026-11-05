@@ -648,6 +648,26 @@ public class ReplyPollerService extends Service {
                 return "「MindFS 任务提醒」渠道被关闭，请在系统设置里重新打开";
             }
         }
+        String error = showTestNotification(context, 799999, "MindFS 测试提醒", "通知链路正常。");
+        if (!error.isEmpty()) {
+            return error;
+        }
+        // 前台发通知时，很多 ROM（MIUI 等）会吞掉横幅，通知只在通知栏里躺着 ——
+        // 那不代表后台也收不到。10 秒后再发一条，用户这时已切到后台，
+        // 正好用来验证真正的提醒场景。
+        final Context appContext = context.getApplicationContext();
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            ensureChannels(appContext);
+            showTestNotification(appContext, 799998, "MindFS 后台提醒测试", "这条是在你切到后台之后发出的。");
+        }, 10000);
+        return "";
+    }
+
+    private static String showTestNotification(Context context, int id, String title, String text) {
+        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) {
+            return "系统通知服务不可用";
+        }
         // autoCancel 只在通知带 contentIntent 时才生效：没有 PendingIntent 的点击
         // 不会触发任何事务，系统也就没有机会把它撤掉（点完一直挂在通知栏）。
         Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
@@ -657,16 +677,16 @@ public class ReplyPollerService extends Service {
         if (launch != null) {
             launch.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
             b.setContentIntent(PendingIntent.getActivity(
-                context, 799999, launch,
+                context, id, launch,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
         }
         b.setSmallIcon(R.drawable.ic_stat_mindfs_notification)
-         .setContentTitle("MindFS 测试提醒")
-         .setContentText("通知链路正常。")
+         .setContentTitle(title)
+         .setContentText(text)
          .setAutoCancel(true)
          .setCategory(Notification.CATEGORY_STATUS);
         try {
-            nm.notify(799999, b.build());
+            nm.notify(id, b.build());
         } catch (Exception ex) {
             return "通知投递失败：" + ex.getMessage();
         }
