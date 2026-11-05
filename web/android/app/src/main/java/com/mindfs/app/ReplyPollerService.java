@@ -88,6 +88,8 @@ public class ReplyPollerService extends Service {
     private static final String PREF_AWAITING_NOTIFIED = "awaiting_notified";
     private static final String PREF_DEBUG = "debug_status";
     private static final String PREF_NODES = "nodes";
+    private static final String PREF_STARTED_AT = "started_at";
+    private static final String PREF_LAST_ALERT = "last_alert";
     private static final String PREF_VIEWING = "viewing";
     private static final String E2EE_HEADER = "X-MindFS-E2EE";
     private static final String CLIENT_ID_HEADER = "X-MindFS-Client-ID";
@@ -250,6 +252,9 @@ public class ReplyPollerService extends Service {
             return;
         }
         Log.i(TAG, "resume polling apiBaseUrl=" + apiBaseUrl);
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(PREF_STARTED_AT, new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(new Date()))
+            .apply();
         running = true;
         startForegroundCompat(FOREGROUND_ID, buildIdleNotification());
         scheduleNextPoll(0);
@@ -661,6 +666,16 @@ public class ReplyPollerService extends Service {
         return stored != null && !stored.trim().isEmpty();
     }
 
+    // 「有没有发出去」「是不是被正在看抑制了」必须能事后核对，否则只能靠猜。
+    private void recordAlert(String kind, ReplyState state, boolean suppressed) {
+        String line = (suppressed ? "已抑制（正在看）" : "已发送")
+            + " " + kind + " · " + state.sessionTitle
+            + " · " + new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(new Date());
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(PREF_LAST_ALERT, line)
+            .apply();
+    }
+
     static String readPollDebug(Context context) {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_DEBUG, "");
     }
@@ -694,6 +709,11 @@ public class ReplyPollerService extends Service {
             sb.append(" · 通知栏=").append(active.length).append(" 条").append(mine ? "（含测试提醒）" : "（不含测试提醒）");
         }
         sb.append(" · 勿扰=").append(interruptionLabel(nm.getCurrentInterruptionFilter()));
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String startedAt = prefs.getString(PREF_STARTED_AT, "");
+        String lastAlert = prefs.getString(PREF_LAST_ALERT, "");
+        sb.append(" · 轮询始于=").append(startedAt.isEmpty() ? "未启动" : startedAt);
+        sb.append(" · 最近提醒=").append(lastAlert.isEmpty() ? "无" : lastAlert);
         return sb.toString();
     }
 
@@ -774,6 +794,7 @@ public class ReplyPollerService extends Service {
     }
 
     private void postAlert(String kind, ReplyState state) {
+        recordAlert(kind, state, viewingKey.equals(state.key) && !viewingKey.isEmpty());
         // 正在看这条会话就不打扰（JS 只在 App 可见时上报 viewing）。
         if (!viewingKey.isEmpty() && viewingKey.equals(state.key)) {
             return;

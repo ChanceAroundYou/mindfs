@@ -48,6 +48,18 @@ export function setNativeReplyViewing(nodeId: string, rootId: string, sessionKey
   scheduleNativeReplyPollerSync();
 }
 
+/** 主区切走（文件/看板/工作台）时调用：不再是「正在看这条会话」，但记住它以便切回来恢复。 */
+export function clearNativeReplyViewing(): void {
+  viewingKey = "";
+  scheduleNativeReplyPollerSync();
+}
+
+/** 主区切回对话时调用。 */
+export function restoreNativeReplyViewing(): void {
+  viewingKey = isPageHidden() ? "" : lastViewingKey;
+  scheduleNativeReplyPollerSync();
+}
+
 function isPageHidden(): boolean {
   return typeof document !== "undefined" && document.visibilityState === "hidden";
 }
@@ -234,10 +246,14 @@ function describePollDebug(raw: string): string {
   }
   try {
     const data = JSON.parse(raw) as {
-      ok?: boolean; sessions?: number; apiBaseUrl?: string; error?: string; at?: string;
+      ok?: boolean; sessions?: number; nodes?: number; apiBaseUrl?: string; error?: string; at?: string;
     };
     const state = data.ok ? `成功，${data.sessions ?? 0} 个会话` : `失败：${data.error || "未知错误"}`;
-    return `轮询：${state} · ${data.apiBaseUrl || ""} · ${data.at || ""}`;
+    const nodes = data.nodes ?? 0;
+    const scope = data.apiBaseUrl
+      ? `${nodes || 1} 个节点 · ${data.apiBaseUrl}`
+      : `${nodes} 个节点`;
+    return `轮询：${state} · ${scope} · ${data.at || ""}`;
   } catch {
     return raw;
   }
