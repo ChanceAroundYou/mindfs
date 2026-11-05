@@ -104,8 +104,9 @@ public class ReplyPollerService extends Service {
     private static final String REPLY_GROUP_KEY = "com.mindfs.app.REPLY_NOTIFICATIONS";
     private static final int FOREGROUND_ID = 750001;
     private static final int NOTIFICATION_BASE_ID = 760000;
-    private static final long ACTIVE_POLL_INTERVAL_SECONDS = 5;
-    private static final long IDLE_POLL_INTERVAL_SECONDS = 5;
+    // 3 个节点 × 每 10s 一次，够跟手又不至于耗电；调小只影响提醒延迟。
+    private static final long ACTIVE_POLL_INTERVAL_SECONDS = 10;
+    private static final long IDLE_POLL_INTERVAL_SECONDS = 10;
     private static final long[] ALERT_VIBRATION_PATTERN = new long[] {0, 160, 110, 160};
 
     private final Map<String, ReplyState> states = new HashMap<>();
