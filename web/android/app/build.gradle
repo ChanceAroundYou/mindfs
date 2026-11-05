@@ -16,7 +16,10 @@ def mindfsGitVersion() {
 }
 
 def mindfsVersionCodeFromName(String versionName) {
-    def matcher = (versionName ?: '') =~ /^v?(\d+)\.(\d+)\.(\d+)(?:-(\d+)-g[0-9a-f]+.*)?$/
+    // 必须接受三种形态：v0.5.5 / v0.5.5-1108（发布 tag）/ v0.5.5-1108-2-gabc1234（tag 之后的构建）。
+    // 早先只认带 -g<sha> 的，于是 `make build-android VERSION=v0.5.5-1108` 落回 versionCode=1 ——
+    // 应用内的自更新会永远认为「已是最新」。
+    def matcher = (versionName ?: '') =~ /^v?(\d+)\.(\d+)\.(\d+)(?:-(\d+)(?:-\d+)?(?:-g[0-9a-f]+.*)?)?$/
     if (!matcher.matches()) {
         return 1
     }
