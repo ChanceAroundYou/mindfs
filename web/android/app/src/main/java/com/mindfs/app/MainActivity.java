@@ -277,15 +277,22 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void resumeReplyPollerFromCurrentPage() {
-        String apiBaseUrl = currentHTTPOrigin();
-        if (apiBaseUrl.isEmpty()) {
-            Log.w(TAG, "skip reply poller resume: unable to derive API base URL");
-            return;
+        // 只有「从没配过」时才用原生推出来的 origin 兜底。前端通过 MindFSReplyPoller.configure
+        // 上报的是带挂载前缀的完整地址（appURL("/") = Vite BASE_URL，例如 …/mindfs），
+        // 而这里只能从 WebView 的 URL 拿 origin —— 过去每次切后台都用它覆盖，
+        // 把 /mindfs 前缀抹掉，轮询打到 https://host/api/replying-sessions → 404，
+        // 于是完成提醒永远不出现。
+        if (!ReplyPollerService.hasConfiguredBase(this)) {
+            String apiBaseUrl = currentHTTPOrigin();
+            if (apiBaseUrl.isEmpty()) {
+                Log.w(TAG, "skip reply poller resume: unable to derive API base URL");
+                return;
+            }
+            Intent configure = new Intent(this, ReplyPollerService.class);
+            configure.setAction(ReplyPollerService.ACTION_CONFIGURE);
+            configure.putExtra(ReplyPollerService.EXTRA_API_BASE_URL, apiBaseUrl);
+            startService(configure);
         }
-        Intent configure = new Intent(this, ReplyPollerService.class);
-        configure.setAction(ReplyPollerService.ACTION_CONFIGURE);
-        configure.putExtra(ReplyPollerService.EXTRA_API_BASE_URL, apiBaseUrl);
-        startService(configure);
 
         Intent resume = new Intent(this, ReplyPollerService.class);
         resume.setAction(ReplyPollerService.ACTION_RESUME);

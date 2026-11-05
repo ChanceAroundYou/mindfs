@@ -84,6 +84,7 @@ public class ReplyPollerService extends Service {
     private static final String PREF_E2EE_CLIENT_ID = "e2ee_client_id";
     private static final String PREF_E2EE_TRANSPORT_KEY = "e2ee_transport_key";
     private static final String PREF_AWAITING_NOTIFIED = "awaiting_notified";
+    private static final String PREF_DEBUG = "debug_status";
     private static final String E2EE_HEADER = "X-MindFS-E2EE";
     private static final String CLIENT_ID_HEADER = "X-MindFS-Client-ID";
     private static final String PROOF_HEADER = "X-MindFS-Proof";
@@ -274,13 +275,46 @@ public class ReplyPollerService extends Service {
         }
         long nextDelaySeconds = IDLE_POLL_INTERVAL_SECONDS;
         try {
-            nextDelaySeconds = applyReplyingSessions(fetchReplyingSessions());
+            Map<String, ReplyState> next = fetchReplyingSessions();
+            recordPollDebug(true, next.size(), "");
+            nextDelaySeconds = applyReplyingSessions(next);
         } catch (Exception ex) {
             Log.w(TAG, "poll failed", ex);
+            recordPollDebug(false, 0, ex.getClass().getSimpleName() + ": " + ex.getMessage());
             nextDelaySeconds = IDLE_POLL_INTERVAL_SECONDS;
         } finally {
             scheduleNextPoll(nextDelaySeconds);
         }
+    }
+
+    // 轮询是后台黑盒：把「最近一次成功/失败、拿到几个会话、打的哪个地址」落到 prefs，
+    // 供关于弹窗里的诊断行读出来。没有它，用户只看到「没有提醒」，没法判断是
+    // 服务没跑、地址打错、账号不对还是接口 401。
+    private void recordPollDebug(boolean ok, int sessionCount, String error) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("at", new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(new Date()));
+            o.put("ok", ok);
+            o.put("running", running);
+            o.put("sessions", sessionCount);
+            o.put("apiBaseUrl", apiBaseUrl);
+            o.put("error", error == null ? "" : error);
+        } catch (Exception ignored) {
+            // JSONObject.put 只在键为 null 时抛，这里不可能发生；真出错就保留上一条记录。
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_DEBUG, o.toString()).apply();
+    }
+
+    // 前端上报的地址才是准的（Vite 的 BASE_URL 带 /mindfs 这类挂载前缀）；
+    // 原生侧从 WebView 的 URL 只能推出 origin。已经配过就别再覆盖。
+    static boolean hasConfiguredBase(Context context) {
+        String stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(PREF_API_BASE_URL, "");
+        return stored != null && !stored.trim().isEmpty();
+    }
+
+    static String readPollDebug(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_DEBUG, "");
     }
 
     private void scheduleNextPoll(long delaySeconds) {
@@ -570,9 +604,18 @@ public class ReplyPollerService extends Service {
                 return "「MindFS 任务提醒」渠道被关闭，请在系统设置里重新打开";
             }
         }
+        // autoCancel 只在通知带 contentIntent 时才生效：没有 PendingIntent 的点击
+        // 不会触发任何事务，系统也就没有机会把它撤掉（点完一直挂在通知栏）。
+        Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             ? new Notification.Builder(context, ALERT_CHANNEL_ID)
             : new Notification.Builder(context);
+        if (launch != null) {
+            launch.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            b.setContentIntent(PendingIntent.getActivity(
+                context, 799999, launch,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        }
         b.setSmallIcon(R.drawable.ic_stat_mindfs_notification)
          .setContentTitle("MindFS 测试提醒")
          .setContentText("通知链路正常。")

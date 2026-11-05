@@ -96,6 +96,13 @@ public class ReplyPollerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void debugStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("debug", ReplyPollerService.readPollDebug(getContext()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
     public void dismiss(PluginCall call) {
         String rootId = call.getString("rootId", "");
         String sessionKey = call.getString("sessionKey", "");

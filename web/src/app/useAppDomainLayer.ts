@@ -4,7 +4,7 @@ import type { QueuedUserMessage, RelatedFile, RelatedWorktree, SyncSessionResult
 import { bootstrapService } from "../services/net/bootstrap";
 import type { BootstrapState } from "../services/net/bootstrap";
 import { reportError } from "../services/net/error";
-import { takePendingReplySession } from "../services/net/replyPoller";
+import { syncNativeReplyPoller, takePendingReplySession } from "../services/net/replyPoller";
 import { setRootNodeMap } from "../services/net/rootNode";
 import { resolveLockedSessionKey } from "../services/session/sessionLock";
 import { useAppPluginRenderEffects } from "./useAppPluginRenderEffects";
@@ -237,6 +237,9 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
       openReplySession((event as CustomEvent).detail);
     }
 
+    // 原生轮询器只拿得到 origin，挂载前缀（/mindfs）只能由这里上报。
+    // 少了这一步，后台轮询会打到 https://host/api/… → 404，完成提醒永不出现。
+    void syncNativeReplyPoller();
     window.addEventListener("mindfs:open-reply-session", handleOpenReplySession);
     const pending = takePendingReplySession();
     if (pending) openReplySession(pending);

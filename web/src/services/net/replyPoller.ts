@@ -10,6 +10,7 @@ type ReplyPollerPlugin = {
   }): Promise<void>;
   dismiss(options: { rootId: string; sessionKey: string }): Promise<void>;
   testAlert(): Promise<{ error?: string }>;
+  debugStatus(): Promise<{ debug?: string }>;
 };
 
 type NativeReplyPollerBridge = {
@@ -143,12 +144,37 @@ export function takePendingReplySession(): { rootId: string; sessionKey: string 
 }
 
 
-// 返回空串 = 已投递；非空 = 系统侧拦截原因（权限、渠道被关、投递异常），必须显示给用户。
+// 返回给用户看的整段结论：投递结果（空 = 已发出）+ 最近一次后台轮询的实况。
+// 「没有提醒」的三种成因（服务没跑 / 地址打错 / 接口报错）只有轮询记录能区分开。
 export async function testNativeReplyAlert(): Promise<string> {
+  let head = "测试提醒已发送";
   try {
     const result = await ReplyPoller.testAlert();
-    return result?.error || "";
+    if (result?.error) head = result.error;
   } catch (ex) {
-    return ex instanceof Error ? ex.message : "测试提醒调用失败";
+    head = ex instanceof Error ? ex.message : "测试提醒调用失败";
+  }
+  let poll = "";
+  try {
+    const result = await ReplyPoller.debugStatus();
+    poll = describePollDebug(result?.debug || "");
+  } catch {
+    // 老版本 App 没有 debugStatus，只显示投递结果。
+  }
+  return poll ? `${head}\n${poll}` : head;
+}
+
+function describePollDebug(raw: string): string {
+  if (!raw) {
+    return "轮询：还没有记录 —— 后台服务没启动过（把 App 切到后台才会开始轮询）";
+  }
+  try {
+    const data = JSON.parse(raw) as {
+      ok?: boolean; sessions?: number; apiBaseUrl?: string; error?: string; at?: string;
+    };
+    const state = data.ok ? `成功，${data.sessions ?? 0} 个会话` : `失败：${data.error || "未知错误"}`;
+    return `轮询：${state} · ${data.apiBaseUrl || ""} · ${data.at || ""}`;
+  } catch {
+    return raw;
   }
 }

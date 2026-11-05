@@ -50,6 +50,20 @@ test("reply test alert creates its channel and reports blockers", async () => {
   assert.match(service, /IMPORTANCE_NONE/, "closed channel is reported, not silently dropped");
   assert.match(plugin, /result\.put\("error", ReplyPollerService\.postTestAlert/);
   assert.match(hook, /测试提醒已发送/);
+  assert.match(service, /PREF_DEBUG/, "poll results are recorded for diagnostics");
+  assert.match(service, /setContentIntent/, "test alert gets a content intent so autoCancel can fire");
+});
+
+test("poller base URL keeps the mount prefix", async () => {
+  const service = read("../web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java");
+  const activity = read("../web/android/app/src/main/java/com/mindfs/app/MainActivity.java");
+  const domain = read("src/app/useAppDomainLayer.ts");
+
+  // 原生只能从 WebView URL 推出 origin，/mindfs 这类挂载前缀只有前端知道。
+  // 切后台时若用 origin 覆盖前端上报的地址，轮询就打到 /api/… → 404，完成提醒永不出现。
+  assert.match(service, /static boolean hasConfiguredBase\(Context context\)/);
+  assert.match(activity, /if \(!ReplyPollerService\.hasConfiguredBase\(this\)\)/);
+  assert.match(domain, /void syncNativeReplyPoller\(\)/);
 });
 
 test("about dialog checks GitHub instead of opening the release page", async () => {

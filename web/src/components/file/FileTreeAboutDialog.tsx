@@ -33,7 +33,7 @@ export function FileTreeAboutDialog({ open, isNativeApp, onClose }: FileTreeAbou
           </button>
         ) : null}
         {apkUpdate.message || replyAlert.message ? (
-          <p style={{ margin: "10px 0 0", fontSize: "11px", lineHeight: 1.5, color: "var(--text-secondary)" }}>{apkUpdate.message || replyAlert.message}</p>
+          <p style={{ margin: "10px 0 0", fontSize: "11px", lineHeight: 1.5, color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{apkUpdate.message || replyAlert.message}</p>
         ) : null}
         <button type="button" onClick={onClose} style={{ border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-primary)", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px" }}>
           关闭
