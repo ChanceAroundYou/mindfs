@@ -32,7 +32,9 @@ export function buildSessionJumpTarget(params: {
   matched?: SessionJumpSession | null;
   cached?: SessionJumpSession | null;
   currentRoot?: string | null;
-}): (SessionJumpSession & { key: string; session_key: string; root_id: string }) | null {
+  /** 跨节点深链：目标会话所在节点。缺省表示沿用当前节点。 */
+  nodeId?: string | null;
+}): (SessionJumpSession & { key: string; session_key: string; root_id: string; _nodeId?: string }) | null {
   const sessionKey = String(params.sessionKey || "").trim();
   if (!sessionKey) {
     return null;
@@ -49,11 +51,14 @@ export function buildSessionJumpTarget(params: {
   }
   // 缓存优先（它带 exchanges 等重字段），matched 只用来补缓存没有的元数据（name/model）。
   const base = { ...(matched || {}), ...(cached || {}) } as SessionJumpSession;
+  const nodeId = String(params.nodeId || "").trim();
   return {
     ...base,
     key: sessionKey,
     session_key: sessionKey,
     root_id: root,
+    // _nodeId 是 handleSelectSession 唯一认的归属字段（多节点同名项目）
+    ...(nodeId ? { _nodeId: nodeId } : {}),
     ...(params.taskId ? { task_id: params.taskId } : {}),
   };
 }

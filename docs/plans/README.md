@@ -6,6 +6,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [Reply alerts cross-node](reply-alerts-cross-node.md) — Implemented 2026-11-05（v0.5.5-1111），待真机验收；完成/提问按会话各一条通知、点击直达会话、前台也提醒（只是不提醒正在看的那条）、覆盖节点表里每台机器；URL 由前端 appPath(..., nid) 生成，原生只负责 GET 与状态机。
+
 - [fn codex session continuity](fn-codex-session-continuity.md) — Implemented 2026-11-04，待 ship；发送目标以「主面板显示的会话」兜底并回写绑定、`pending-*` 不再静默丢弃而显式阻断、同 root 未传 nodeId 时保留节点归属（作用域键不漂移）、服务端按 requestID 回放首次解析出的 session_key 让重连后的草稿重放成为幂等探针。测试：`send-target-display-fallback` / `root-node-scope-stability` / `pending-draft-recovery` / `ws_request_reservation_test.go`。
 
 - [File view new folder](file-view-new-folder.md) — Implemented 2026-11-04，待提交与 ship；文件视图 ⋯ 菜单新增「新建文件夹」，后端 CreateEntry 支持目录，请求走 appURL(nodeId)。

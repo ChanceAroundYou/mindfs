@@ -97,8 +97,9 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         requestPostNotificationsIfNeeded();
-        pauseReplyPoller();
-        clearCompletedReplyNotifications();
+        // 前台也继续轮询：完成/提问提醒不区分前后台，只按「是不是正在看的会话」抑制。
+        // 这里只把服务拉到前台并刷新一次可见会话（JS 会紧随其后上报 viewing key）。
+        ensureReplyPollerRunning();
         applySystemBarStyle();
         installEdgeToEdgeInsetsOverride();
         fixWebViewMargin();
@@ -107,8 +108,22 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onPause() {
         CookieManager.getInstance().flush();
-        resumeReplyPollerFromCurrentPage();
         super.onPause();
+    }
+
+    @Override
+    public void onStop() {
+        // 不可见就不算「正在看」：清掉 viewing，这样切后台期间那条会话完成也会提醒。
+        clearReplyViewing();
+        resumeReplyPollerFromCurrentPage();
+        super.onStop();
+    }
+
+    private void clearReplyViewing() {
+        Intent intent = new Intent(this, ReplyPollerService.class);
+        intent.setAction(ReplyPollerService.ACTION_CONFIGURE);
+        intent.putExtra(ReplyPollerService.EXTRA_VIEWING, "");
+        startService(intent);
     }
 
     @Override
@@ -224,15 +239,19 @@ public class MainActivity extends BridgeActivity {
         if (intent == null) {
             return;
         }
+        String nodeId = intent.getStringExtra("nodeId");
         String rootId = intent.getStringExtra("rootId");
         String sessionKey = intent.getStringExtra("sessionKey");
         if (rootId == null || rootId.trim().isEmpty() || sessionKey == null || sessionKey.trim().isEmpty()) {
             return;
         }
+        String safeNodeId = nodeId == null ? "" : nodeId.trim();
+        intent.removeExtra("nodeId");
         intent.removeExtra("rootId");
         intent.removeExtra("sessionKey");
         try {
             org.json.JSONObject o = new org.json.JSONObject();
+            o.put("nodeId", safeNodeId);
             o.put("rootId", rootId.trim());
             o.put("sessionKey", sessionKey.trim());
             pendingOpenSessionJSON = o.toString();
@@ -243,7 +262,8 @@ public class MainActivity extends BridgeActivity {
         }
         String script = String.format(
             java.util.Locale.US,
-            "(function(){var detail={rootId:%s,sessionKey:%s};window.dispatchEvent(new CustomEvent('mindfs:open-reply-session',{detail:detail}));})();",
+            "(function(){var detail={nodeId:%s,rootId:%s,sessionKey:%s};window.dispatchEvent(new CustomEvent('mindfs:open-reply-session',{detail:detail}));})();",
+            JSONObject.quote(safeNodeId),
             JSONObject.quote(rootId.trim()),
             JSONObject.quote(sessionKey.trim())
         );
@@ -268,6 +288,16 @@ public class MainActivity extends BridgeActivity {
         Intent intent = new Intent(this, ReplyPollerService.class);
         intent.setAction(ReplyPollerService.ACTION_CLEAR_COMPLETED);
         startService(intent);
+    }
+
+    private void ensureReplyPollerRunning() {
+        Intent resume = new Intent(this, ReplyPollerService.class);
+        resume.setAction(ReplyPollerService.ACTION_RESUME);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(this, resume);
+        } else {
+            startService(resume);
+        }
     }
 
     private void pauseReplyPoller() {
@@ -535,12 +565,22 @@ public class MainActivity extends BridgeActivity {
             try {
                 JSONObject payload = new JSONObject(rawJSON == null ? "{}" : rawJSON);
                 String apiBaseUrl = safeURLBase(payload.optString("apiBaseUrl", ""));
-                if (apiBaseUrl.isEmpty()) {
+                org.json.JSONArray nodes = payload.optJSONArray("nodes");
+                boolean hasViewing = payload.has("viewing");
+                if (apiBaseUrl.isEmpty() && nodes == null && !hasViewing) {
                     return;
                 }
                 Intent intent = new Intent(MainActivity.this, ReplyPollerService.class);
                 intent.setAction(ReplyPollerService.ACTION_CONFIGURE);
-                intent.putExtra(ReplyPollerService.EXTRA_API_BASE_URL, apiBaseUrl);
+                if (!apiBaseUrl.isEmpty()) {
+                    intent.putExtra(ReplyPollerService.EXTRA_API_BASE_URL, apiBaseUrl);
+                }
+                if (nodes != null) {
+                    intent.putExtra(ReplyPollerService.EXTRA_NODES, nodes.toString());
+                }
+                if (hasViewing) {
+                    intent.putExtra(ReplyPollerService.EXTRA_VIEWING, payload.optString("viewing", ""));
+                }
                 if (payload.has("token")) {
                     intent.putExtra(ReplyPollerService.EXTRA_TOKEN, payload.optString("token", ""));
                 }

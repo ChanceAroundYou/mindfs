@@ -107,3 +107,28 @@ test("auto update checks on launch and on returning to foreground", async () => 
   assert.match(prompt, /installApkUpdate|apply\(\)/, "installs from the prompt");
   assert.match(root, /<ApkUpdatePrompt \/>/, "prompt is mounted at the app root");
 });
+
+test("reply alerts are per-session and cross-node", async () => {
+  const service = read("../web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java");
+  const activity = read("../web/android/app/src/main/java/com/mindfs/app/MainActivity.java");
+  const poller = read("src/services/net/replyPoller.ts");
+
+  // 节点表由前端推送整条 URL（含挂载前缀与 user=），原生只 GET。
+  assert.match(poller, /absoluteNodeURL\("\/api\/replying-sessions", id\)/);
+  assert.match(poller, /nodes,/);
+  assert.match(service, /private List<NodeTarget> nodeTargets\(\)/);
+  // 复合键：三台机器上同名 root/session 不能互相覆盖。
+  assert.match(service, /static String compositeKey\(String nodeId, String rootId, String sessionKey\)/);
+  assert.match(service, /notificationIdFor\(String nodeId, String rootId, String sessionKey\)/);
+  // 只对响应成功的节点判定「消失 = 完成」，离线节点不能当成任务结束。
+  assert.match(service, /okNodes\.contains\(state\.nodeId\)/);
+  // 正在看的会话不打扰；切到后台即清空。
+  assert.match(service, /viewingKey\.equals\(state\.key\)/);
+  assert.match(activity, /clearReplyViewing\(\)/);
+  // 前台继续轮询（onResume 不再 pause）。
+  assert.match(activity, /ensureReplyPollerRunning\(\)/);
+  assert.doesNotMatch(activity, /onResume[\s\S]{0,200}pauseReplyPoller\(\)/, "resume must not pause polling");
+  // 通知点击带 nodeId，跨节点可直达。
+  assert.match(activity, /o\.put\("nodeId", safeNodeId\)/);
+  assert.match(poller, /setNativeReplyViewing/);
+});

@@ -1,21 +1,24 @@
 import { registerPlugin } from "@capacitor/core";
-import { appURL } from "./base";
+import { appPath, appURL } from "./base";
+import { getNodes } from "./nodeRegistry";
 import { getNativeBridge } from "../platform/nativeBridge";
 import { isHarmonyRuntime, isNativeShellRuntime } from "../platform/runtime";
 
 type ReplyPollerPlugin = {
   configure(options: {
-    apiBaseUrl: string;
+    apiBaseUrl?: string;
     token?: string;
+    nodes?: Array<{ id: string; url: string }>;
+    viewing?: string;
   }): Promise<void>;
-  dismiss(options: { rootId: string; sessionKey: string }): Promise<void>;
+  dismiss(options: { nodeId: string; rootId: string; sessionKey: string }): Promise<void>;
   testAlert(): Promise<{ error?: string; diag?: string }>;
   debugStatus(): Promise<{ debug?: string }>;
 };
 
 type NativeReplyPollerBridge = {
   configure?: (payload: string) => void;
-  dismiss?: (rootId: string, sessionKey: string) => void;
+  dismiss?: (nodeId: string, rootId: string, sessionKey: string) => void;
   takePendingSession?: () => string;
 };
 
@@ -31,6 +34,48 @@ type ReplyPollerConfigPayload = {
   apiBaseUrl: string;
 };
 
+let viewingKey = "";
+let lastViewingKey = "";
+let syncTimer: number | null = null;
+let listenersBound = false;
+
+/** 用户当前正在看的会话（nodeId␟rootId␟sessionKey）；原生靠它抑制「你正在看的这条」。 */
+export function setNativeReplyViewing(nodeId: string, rootId: string, sessionKey: string): void {
+  lastViewingKey = nodeId || rootId || sessionKey
+    ? `${nodeId}\u001f${rootId}\u001f${sessionKey}`
+    : "";
+  viewingKey = isPageHidden() ? "" : lastViewingKey;
+  scheduleNativeReplyPollerSync();
+}
+
+function isPageHidden(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
+function scheduleNativeReplyPollerSync(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (syncTimer !== null) {
+    window.clearTimeout(syncTimer);
+  }
+  syncTimer = window.setTimeout(() => {
+    syncTimer = null;
+    void syncNativeReplyPoller();
+  }, 300);
+}
+
+function absoluteNodeURL(path: string, nodeId: string): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    return new URL(appPath(path, nodeId), window.location.href).toString();
+  } catch {
+    return "";
+  }
+}
+
 export async function syncNativeReplyPoller(): Promise<void> {
   const native = getNativeBridge();
   const bridge = (window as NativeReplyPollerSyncWindow).MindFSReplyPoller;
@@ -38,14 +83,24 @@ export async function syncNativeReplyPoller(): Promise<void> {
   if (!isNativeShellRuntime() && !hasHarmonyBridge) {
     return;
   }
+  bindNativeReplyPollerListeners();
   const apiBaseUrl = nativeReplyPollerBaseURL();
-  if (!/^https?:\/\//i.test(apiBaseUrl) || isLocalShellURL(apiBaseUrl)) {
+  // 每个节点的完整 URL 由这里算（节点路由、user= 账户参数、挂载前缀都在 appPath 里）。
+  // 原生只负责 GET，不许自己拼 —— 它只拿得到 origin，拼出来就是 404。
+  const nodes = getNodes()
+    .map((node) => String((node as { id?: string })?.id || "").trim())
+    .filter(Boolean)
+    .map((id) => ({ id, url: absoluteNodeURL("/api/replying-sessions", id) }))
+    .filter((node) => /^https?:\/\//i.test(node.url));
+  if (!nodes.length && !/^https?:\/\//i.test(apiBaseUrl)) {
     return;
   }
   const payload = {
-    apiBaseUrl,
+    apiBaseUrl: nodes.length ? "" : apiBaseUrl,
+    nodes,
+    viewing: viewingKey,
   };
-  rememberLatestReplyPollerConfig(payload);
+  rememberLatestReplyPollerConfig({ apiBaseUrl: apiBaseUrl || nodes[0]?.url || "" });
   if (typeof native?.configureReplyPoller === "function") {
     await native.configureReplyPoller(JSON.stringify(payload));
     return;
@@ -57,6 +112,18 @@ export async function syncNativeReplyPoller(): Promise<void> {
   await ReplyPoller.configure(payload);
 }
 
+function bindNativeReplyPollerListeners(): void {
+  if (listenersBound || typeof window === "undefined") {
+    return;
+  }
+  listenersBound = true;
+  document.addEventListener("visibilitychange", () => {
+    viewingKey = isPageHidden() ? "" : lastViewingKey;
+    scheduleNativeReplyPollerSync();
+  });
+  window.addEventListener("mindfs:nodes-changed", () => scheduleNativeReplyPollerSync());
+}
+
 function rememberLatestReplyPollerConfig(payload: ReplyPollerConfigPayload): void {
   if (typeof window === "undefined") {
     return;
@@ -64,6 +131,7 @@ function rememberLatestReplyPollerConfig(payload: ReplyPollerConfigPayload): voi
   (window as NativeReplyPollerSyncWindow).__mindfsLatestReplyPollerConfig = payload;
 }
 
+// 单节点兜底地址（节点表为空时用）：只到 origin + 挂载前缀，不带查询串。
 function nativeReplyPollerBaseURL(): string {
   const direct = appURL("/");
   if (typeof window === "undefined") {
@@ -72,9 +140,6 @@ function nativeReplyPollerBaseURL(): string {
   try {
     const resolved = new URL(direct, window.location.href);
     if (/^https?:$/i.test(resolved.protocol)) {
-      // 只留 origin + 路径前缀。appURL 会带上 ?user=<id>，而原生那边是
-      // `apiBaseUrl + "/api/replying-sessions"` 直接拼字符串 —— 查询串留着
-      // 会把后面整段吞进 user 参数里，轮询必 404。
       return `${resolved.protocol}//${resolved.host}${resolved.pathname.replace(/\/+$/, "")}`;
     }
   } catch {
@@ -91,38 +156,27 @@ function stripQueryAndSlash(url: string): string {
   return url.split(/[?#]/)[0].replace(/\/+$/, "");
 }
 
-function isLocalShellURL(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (isHarmonyRuntime()) {
-      return url.hostname === "mindfs.local";
-    }
-    return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
-  } catch {
-    return false;
-  }
-}
 
 
-export async function dismissNativeReplyNotification(rootId: string, sessionKey: string): Promise<void> {
+export async function dismissNativeReplyNotification(nodeId: string, rootId: string, sessionKey: string): Promise<void> {
   const native = getNativeBridge();
   const bridge = (window as NativeReplyPollerSyncWindow).MindFSReplyPoller;
   try {
     if (typeof native?.dismissReplyNotification === "function") {
-      await native.dismissReplyNotification({ rootId, sessionKey });
+      await native.dismissReplyNotification({ nodeId, rootId, sessionKey });
       return;
     }
     if (typeof bridge?.dismiss === "function") {
-      bridge.dismiss(rootId, sessionKey);
+      bridge.dismiss(nodeId, rootId, sessionKey);
       return;
     }
-    await ReplyPoller.dismiss({ rootId, sessionKey });
+    await ReplyPoller.dismiss({ nodeId, rootId, sessionKey });
   } catch {
     // ignore
   }
 }
 
-export function takePendingReplySession(): { rootId: string; sessionKey: string } | null {
+export function takePendingReplySession(): { nodeId?: string; rootId: string; sessionKey: string } | null {
   const bridge = (window as NativeReplyPollerSyncWindow).MindFSReplyPoller;
   try {
     let raw = "";
@@ -133,13 +187,17 @@ export function takePendingReplySession(): { rootId: string; sessionKey: string 
       const pending = (window as NativeReplyPollerSyncWindow).__mindfsPendingReplySession;
       if (pending && pending.rootId && pending.sessionKey) {
         (window as NativeReplyPollerSyncWindow).__mindfsPendingReplySession = undefined;
-        return { rootId: pending.rootId, sessionKey: pending.sessionKey };
+        return { nodeId: "", rootId: pending.rootId, sessionKey: pending.sessionKey };
       }
       return null;
     }
     const parsed = JSON.parse(raw);
     if (parsed && parsed.rootId && parsed.sessionKey) {
-      return { rootId: String(parsed.rootId), sessionKey: String(parsed.sessionKey) };
+      return {
+        nodeId: parsed.nodeId ? String(parsed.nodeId) : "",
+        rootId: String(parsed.rootId),
+        sessionKey: String(parsed.sessionKey),
+      };
     }
   } catch {
     // ignore

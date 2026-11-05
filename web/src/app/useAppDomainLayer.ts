@@ -225,12 +225,14 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
 
 	  useEffect(() => {
     function openReplySession(detail: any) {
+      const nodeId = typeof detail?.nodeId === "string" ? detail.nodeId.trim() : "";
       const rootId = typeof detail?.rootId === "string" ? detail.rootId.trim() : "";
       const sessionKey = typeof detail?.sessionKey === "string" ? detail.sessionKey.trim() : "";
       if (!rootId || !sessionKey) {
         return;
       }
-      handleSessionChipClick(sessionKey, rootId);
+      // nodeId 让跨节点通知点进来时先切到那台机器，再选中会话。
+      handleSessionChipClick(sessionKey, rootId, nodeId);
     }
 
     function handleOpenReplySession(event: Event) {

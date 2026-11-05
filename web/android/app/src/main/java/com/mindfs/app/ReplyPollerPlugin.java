@@ -105,11 +105,12 @@ public class ReplyPollerPlugin extends Plugin {
 
     @PluginMethod
     public void dismiss(PluginCall call) {
+        String nodeId = call.getString("nodeId", "");
         String rootId = call.getString("rootId", "");
         String sessionKey = call.getString("sessionKey", "");
         android.app.NotificationManager nm =
             (android.app.NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
-        int id = ReplyPollerService.notificationIdFor(rootId, sessionKey);
+        int id = ReplyPollerService.notificationIdFor(nodeId, rootId, sessionKey);
         nm.cancel(id);
         // 兼容旧版仅按 sessionKey 的通知 id
         nm.cancel(760000 + Math.abs(sessionKey.hashCode() % 100000));

@@ -37,7 +37,7 @@ export function useAppTaskDrawer(params: UseAppTaskDrawerParams) {
   const { currentRootIdRef, file, getNodeIdForRoot, handleSelectSession, rootSessionKey, sessionCacheRef, sessions, setSelectedKanbanTaskId, setTaskRelatedFilesById, taskDetailsByIdRef, taskSessionKeysById, taskSessionKeysByIdRef, updateSessionRelatedFilesForKey } = params;
 
   const handleSessionChipClick = useCallback(
-    (sessionKey: string, rootOverride?: string | null) => {
+    (sessionKey: string, rootOverride?: string | null, nodeId?: string | null) => {
       if (!sessionKey) return;
       const matched = sessions.find((item) => {
         const key = item.key || item.session_key;
@@ -49,6 +49,7 @@ export function useAppTaskDrawer(params: UseAppTaskDrawerParams) {
         rootOverride: rootOverride ?? file?.root,
         matched,
         currentRoot: currentRootIdRef.current,
+        nodeId,
       });
       if (!target) return;
       handleSelectSession(target);

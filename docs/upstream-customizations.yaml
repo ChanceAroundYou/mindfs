@@ -7062,6 +7062,11 @@ groups:
       - web/src/hooks/useApkAutoUpdate.ts
       - web/src/components/app/ApkUpdatePrompt.tsx
       - web/src/app/AppRootView.tsx
+      - web/src/app/useSessionSelection.ts
+      - web/src/app/useAppTaskDrawer.ts
+      - web/src/app/sessionJump.ts
+      - docs/plans/reply-alerts-cross-node.md
+      - docs/plans/README.md
       - web/src/services/net/replyPoller.ts
       - web/src/hooks/useTestNativeReplyAlert.ts
       - web/src/components/file/FileTreeAboutDialog.tsx
@@ -7072,5 +7077,9 @@ groups:
       - 'web/src/services/update/githubAppUpdate.ts:downloadAndInstallApk'
       - 'web/src/services/net/replyPoller.ts:export async function testNativeReplyAlert(): Promise<string>'
       - 'web/android/app/src/main/java/com/mindfs/app/MainActivity.java:if (!ReplyPollerService.hasConfiguredBase(this))'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:private List<NodeTarget> nodeTargets()'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:static String compositeKey(String nodeId, String rootId, String sessionKey)'
+      - 'web/android/app/src/main/java/com/mindfs/app/MainActivity.java:private void clearReplyViewing()'
+      - 'web/src/services/net/replyPoller.ts:export function setNativeReplyViewing'
       - 'web/src/hooks/useApkUpdateCheck.ts:installApkUpdate('
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:static void ensureChannels(Context context)'

@@ -4,7 +4,7 @@ import { buildDirectorySelectionKey } from "./appPath";
 import { toSessionItem, type SessionItem } from "./appSession";
 import type { UseSessionLifecycleParams } from "./useSessionLifecycleTypes";
 import { getCachedSession } from "../services/session";
-import { dismissNativeReplyNotification } from "../services/net/replyPoller";
+import { dismissNativeReplyNotification, setNativeReplyViewing } from "../services/net/replyPoller";
 import { unreadCompletedRemove, unreadKey } from "../shared/unreadCompleted";
 import type { Session } from "../services/session";
 
@@ -89,7 +89,9 @@ export function useSessionSelection(params: UseSessionSelectionParams) {
       // 看过了就熄灭「完成未读」：所有选中路径（列表点击、深链恢复、看板跳转）都汇聚到这里，
       // 只在列表点击处清会让「从看板/通知点进来」的那条永远亮着。
       unreadCompletedRemove(unreadKey(nextNode, targetRoot, key));
-      void dismissNativeReplyNotification(targetRoot, key);
+      void dismissNativeReplyNotification(nextNode, targetRoot, key);
+      // 原生靠这个键抑制「你正在看的这条」的提醒；切到后台时它会被清空。
+      setNativeReplyViewing(nextNode, targetRoot, key);
       setBoundSessionForRoot(targetRoot, key);
       setDrawerSessionForRoot(targetRoot, toSessionItem(targetRoot, session));
       setSelectedDir(targetRoot);

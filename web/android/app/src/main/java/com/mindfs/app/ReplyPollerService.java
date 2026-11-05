@@ -74,6 +74,8 @@ public class ReplyPollerService extends Service {
     static final String EXTRA_E2EE_NODE_ID = "e2eeNodeId";
     static final String EXTRA_E2EE_CLIENT_ID = "e2eeClientId";
     static final String EXTRA_E2EE_TRANSPORT_KEY = "e2eeTransportKey";
+    static final String EXTRA_NODES = "nodes";
+    static final String EXTRA_VIEWING = "viewing";
 
     private static final String TAG = "MindFSReplyPoller";
     private static final String PREFS_NAME = "mindfs_reply_poller";
@@ -85,6 +87,8 @@ public class ReplyPollerService extends Service {
     private static final String PREF_E2EE_TRANSPORT_KEY = "e2ee_transport_key";
     private static final String PREF_AWAITING_NOTIFIED = "awaiting_notified";
     private static final String PREF_DEBUG = "debug_status";
+    private static final String PREF_NODES = "nodes";
+    private static final String PREF_VIEWING = "viewing";
     private static final String E2EE_HEADER = "X-MindFS-E2EE";
     private static final String CLIENT_ID_HEADER = "X-MindFS-Client-ID";
     private static final String PROOF_HEADER = "X-MindFS-Proof";
@@ -115,6 +119,12 @@ public class ReplyPollerService extends Service {
     private String e2eeClientId = "";
     private String e2eeTransportKey = "";
     private NotificationMode notificationMode = NotificationMode.NONE;
+    // 节点表：[{id,url}]，url 是前端算好的整条 /api/replying-sessions 地址
+    // （含节点路由、user= 账户参数、挂载前缀）——原生自己拼必然漏前缀。
+    private String nodesJSON = "";
+    // 用户当前正在看的会话（nodeId␟rootId␟sessionKey）；为空表示在后台/没在看。
+    // 只抑制这一条，其余会话在前台也照常提醒。
+    private String viewingKey = "";
     private static SSLSocketFactory localTrustAllSocketFactory;
 
     @Override
@@ -189,6 +199,14 @@ public class ReplyPollerService extends Service {
             e2eeClientId = safe(intent.getStringExtra(EXTRA_E2EE_CLIENT_ID));
             editor.putString(PREF_E2EE_CLIENT_ID, e2eeClientId);
         }
+        if (intent.hasExtra(EXTRA_NODES)) {
+            nodesJSON = safe(intent.getStringExtra(EXTRA_NODES));
+            editor.putString(PREF_NODES, nodesJSON);
+        }
+        if (intent.hasExtra(EXTRA_VIEWING)) {
+            viewingKey = safe(intent.getStringExtra(EXTRA_VIEWING));
+            editor.putString(PREF_VIEWING, viewingKey);
+        }
         if (intent.hasExtra(EXTRA_E2EE_TRANSPORT_KEY)) {
             e2eeTransportKey = safe(intent.getStringExtra(EXTRA_E2EE_TRANSPORT_KEY));
             editor.putString(PREF_E2EE_TRANSPORT_KEY, e2eeTransportKey);
@@ -205,6 +223,8 @@ public class ReplyPollerService extends Service {
         e2eeNodeId = safe(prefs.getString(PREF_E2EE_NODE_ID, ""));
         e2eeClientId = safe(prefs.getString(PREF_E2EE_CLIENT_ID, ""));
         e2eeTransportKey = safe(prefs.getString(PREF_E2EE_TRANSPORT_KEY, ""));
+        nodesJSON = safe(prefs.getString(PREF_NODES, ""));
+        viewingKey = safe(prefs.getString(PREF_VIEWING, ""));
     }
 
     private boolean isLocalShellOrigin(String value) {
@@ -251,10 +271,11 @@ public class ReplyPollerService extends Service {
         }
         Set<String> notified = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getStringSet(PREF_AWAITING_NOTIFIED, new HashSet<>());
         for (String k : notified) {
-            String[] parts = k.split("\u001f", 2);
-            String rid = parts.length > 0 ? parts[0] : "";
-            String sk = parts.length > 1 ? parts[1] : "";
-            notificationManager.cancel(notificationIdFor(rid, sk));
+            String[] parts = k.split("\u001f", 3);
+            if (parts.length < 3) {
+                continue;
+            }
+            notificationManager.cancel(notificationIdFor(parts[0], parts[1], parts[2]));
         }
         notificationManager.cancel(FOREGROUND_ID);
         notificationSignatures.clear();
@@ -276,47 +297,79 @@ public class ReplyPollerService extends Service {
             return;
         }
         long nextDelaySeconds = IDLE_POLL_INTERVAL_SECONDS;
+        Map<String, ReplyState> next = new HashMap<>();
+        Set<String> okNodes = new HashSet<>();
+        String lastError = "";
+        int failures = 0;
         try {
-            Map<String, ReplyState> next = fetchReplyingSessions();
-            recordPollDebug(true, next.size(), "");
-            nextDelaySeconds = applyReplyingSessions(next);
+            List<NodeTarget> targets = nodeTargets();
+            if (targets.isEmpty()) {
+                recordPollDebug(false, 0, "没有配置任何节点");
+            } else {
+                for (NodeTarget target : targets) {
+                    try {
+                        next.putAll(fetchReplyingSessions(target, okNodes));
+                    } catch (Exception ex) {
+                        failures++;
+                        lastError = ex.getClass().getSimpleName() + ": " + ex.getMessage();
+                        Log.w(TAG, "poll failed node=" + target.id, ex);
+                    }
+                }
+            }
         } catch (Exception ex) {
+            failures++;
+            lastError = ex.getClass().getSimpleName() + ": " + ex.getMessage();
             Log.w(TAG, "poll failed", ex);
-            recordPollDebug(false, 0, ex.getClass().getSimpleName() + ": " + ex.getMessage());
-            nextDelaySeconds = IDLE_POLL_INTERVAL_SECONDS;
+        }
+        try {
+            if (okNodes.isEmpty()) {
+                recordPollDebug(false, next.size(), lastError);
+            } else {
+                recordPollDebug(true, next.size(), failures > 0 ? "部分节点失败：" + lastError : "");
+                nextDelaySeconds = applyReplyingSessions(next, okNodes);
+            }
         } finally {
             scheduleNextPoll(nextDelaySeconds);
         }
     }
 
-    // 轮询是后台黑盒：把「最近一次成功/失败、拿到几个会话、打的哪个地址」落到 prefs，
-    // 供关于弹窗里的诊断行读出来。没有它，用户只看到「没有提醒」，没法判断是
-    // 服务没跑、地址打错、账号不对还是接口 401。
-    private void recordPollDebug(boolean ok, int sessionCount, String error) {
-        JSONObject o = new JSONObject();
-        try {
-            o.put("at", new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(new Date()));
-            o.put("ok", ok);
-            o.put("running", running);
-            o.put("sessions", sessionCount);
-            o.put("apiBaseUrl", apiBaseUrl);
-            o.put("error", error == null ? "" : error);
-        } catch (Exception ignored) {
-            // JSONObject.put 只在键为 null 时抛，这里不可能发生；真出错就保留上一条记录。
+    private static final class NodeTarget {
+        final String id;
+        final String url;
+        NodeTarget(String id, String url) {
+            this.id = id == null ? "" : id;
+            this.url = url == null ? "" : url;
         }
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_DEBUG, o.toString()).apply();
     }
 
-    // 前端上报的地址才是准的（Vite 的 BASE_URL 带 /mindfs 这类挂载前缀）；
-    // 原生侧从 WebView 的 URL 只能推出 origin。已经配过就别再覆盖。
-    static boolean hasConfiguredBase(Context context) {
-        String stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(PREF_API_BASE_URL, "");
-        return stored != null && !stored.trim().isEmpty();
+    // 节点表由前端推送（每项是算好的完整 URL）。没推过时退回单节点 apiBaseUrl，
+    // 兼容升级前的配置。
+    private List<NodeTarget> nodeTargets() {
+        List<NodeTarget> out = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(nodesJSON);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject node = arr.optJSONObject(i);
+                if (node == null) {
+                    continue;
+                }
+                String url = safe(node.optString("url", ""));
+                if (url.isEmpty()) {
+                    continue;
+                }
+                out.add(new NodeTarget(safe(node.optString("id", "")), url));
+            }
+        } catch (Exception ignored) {
+            // nodesJSON 为空或格式不对：走下面的单节点兜底。
+        }
+        if (out.isEmpty() && !apiBaseUrl.isEmpty()) {
+            out.add(new NodeTarget("", apiBaseUrl + "/api/replying-sessions"));
+        }
+        return out;
     }
 
-    static String readPollDebug(Context context) {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_DEBUG, "");
+    static String compositeKey(String nodeId, String rootId, String sessionKey) {
+        return safe(nodeId) + "\u001f" + safe(rootId) + "\u001f" + safe(sessionKey);
     }
 
     private void scheduleNextPoll(long delaySeconds) {
@@ -329,8 +382,8 @@ public class ReplyPollerService extends Service {
         pollingTask = executor.schedule(this::pollOnceSafely, delaySeconds, TimeUnit.SECONDS);
     }
 
-    private Map<String, ReplyState> fetchReplyingSessions() throws Exception {
-        URL url = new URL(apiBaseUrl + "/api/replying-sessions");
+    private Map<String, ReplyState> fetchReplyingSessions(NodeTarget target, Set<String> okNodes) throws Exception {
+        URL url = new URL(target.url);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         if (conn instanceof HttpsURLConnection && MainActivity.isLocalNetworkHost(url.getHost())) {
             HttpsURLConnection https = (HttpsURLConnection) conn;
@@ -389,7 +442,7 @@ public class ReplyPollerService extends Service {
                 continue;
             }
             String rootId = safe(item.optString("rootId", ""));
-            ReplyState state = new ReplyState(sessionKey, rootId);
+            ReplyState state = new ReplyState(compositeKey(target.id, rootId, sessionKey), target.id, rootId, sessionKey);
             state.rootId = rootId;
             state.rootTitle = safe(item.optString("rootTitle", ""));
             state.sessionTitle = safe(item.optString("sessionTitle", ""));
@@ -399,9 +452,9 @@ public class ReplyPollerService extends Service {
             state.replying = "replying".equalsIgnoreCase(st) || item.optBoolean("active", false);
             state.awaiting = item.optBoolean("awaiting_answer", false) || item.optBoolean("awaitingAnswer", false);
             state.status = state.replying ? ReplyStatus.REPLYING : ReplyStatus.COMPLETED;
-            Log.i(TAG, "fetched session=" + sessionKey + " summaryLength=" + state.summary.length());
-            next.put(sessionKey, state);
+            next.put(state.key, state);
         }
+        okNodes.add(target.id);
         return next;
     }
 
@@ -494,24 +547,21 @@ public class ReplyPollerService extends Service {
         return localTrustAllSocketFactory;
     }
 
-    private long applyReplyingSessions(Map<String, ReplyState> next) {
+    private long applyReplyingSessions(Map<String, ReplyState> next, Set<String> okNodes) {
         if (!running) {
             return IDLE_POLL_INTERVAL_SECONDS;
         }
-        Log.i(TAG, "poll success sessions=" + next.size());
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         Set<String> awaitingNotified = new HashSet<>(prefs.getStringSet(PREF_AWAITING_NOTIFIED, new HashSet<>()));
 
-        // 1. 合并 incoming
+        // 1. 合并 incoming（键 = nodeId␟rootId␟sessionKey，跨节点同名会话不会互相覆盖）
         Set<String> currentKeys = new HashSet<>();
         for (ReplyState incoming : next.values()) {
-            currentKeys.add(incoming.sessionKey);
-            ReplyState state = states.get(incoming.sessionKey);
+            currentKeys.add(incoming.key);
+            ReplyState state = states.get(incoming.key);
             if (state == null) {
-                state = incoming;
-                states.put(state.sessionKey, state);
+                states.put(incoming.key, incoming);
             } else {
-                state.rootId = incoming.rootId;
                 state.rootTitle = incoming.rootTitle;
                 state.sessionTitle = incoming.sessionTitle;
                 if (!incoming.summary.isEmpty()) {
@@ -524,9 +574,12 @@ public class ReplyPollerService extends Service {
             }
         }
 
-        // 2. DONE 检测：上一轮 replying、本轮消失
+        // 2. DONE 检测：上一轮 replying、本轮消失。
+        //    只对**本轮成功返回**的节点判定——节点离线时缺席不代表任务结束。
         for (ReplyState state : new ArrayList<>(states.values())) {
-            if (state.status == ReplyStatus.REPLYING && !currentKeys.contains(state.sessionKey)) {
+            if (state.status == ReplyStatus.REPLYING
+                && !currentKeys.contains(state.key)
+                && okNodes.contains(state.nodeId)) {
                 state.status = ReplyStatus.COMPLETED;
                 state.replying = false;
                 postAlert("done", state);
@@ -534,55 +587,82 @@ public class ReplyPollerService extends Service {
             }
         }
 
-        // 3. awaiting 生命周期（用 planner）
+        // 3. awaiting 生命周期（planner 的键用 nodeId␟rootId，复合后与 state.key 一致）
         List<ReplyAlertPlanner.Snapshot> snaps = new ArrayList<>();
         for (ReplyState st : states.values()) {
-            if (currentKeys.contains(st.sessionKey)) {
-                ReplyAlertPlanner.Snapshot sn = new ReplyAlertPlanner.Snapshot();
-                sn.rootId = st.rootId; sn.sessionKey = st.sessionKey;
-                sn.rootTitle = st.rootTitle; sn.sessionTitle = st.sessionTitle;
-                sn.summary = st.summary; sn.updatedAt = st.updatedAt;
-                sn.replying = st.replying; sn.awaiting = st.awaiting;
-                snaps.add(sn);
+            if (!currentKeys.contains(st.key)) {
+                continue;
             }
+            ReplyAlertPlanner.Snapshot sn = new ReplyAlertPlanner.Snapshot();
+            sn.rootId = safe(st.nodeId) + "\u001f" + st.rootId;
+            sn.sessionKey = st.sessionKey;
+            sn.rootTitle = st.rootTitle; sn.sessionTitle = st.sessionTitle;
+            sn.summary = st.summary; sn.updatedAt = st.updatedAt;
+            sn.replying = st.replying; sn.awaiting = st.awaiting;
+            snaps.add(sn);
         }
         ReplyAlertPlanner plan = new ReplyAlertPlanner();
         ReplyAlertPlanner.Plan p = plan.apply(snaps, awaitingNotified);
         for (ReplyAlertPlanner.Alert a : p.post) {
-            ReplyState st = findState(a.rootId, a.sessionKey);
-            if (st != null) postAlert(a.kind, st);
+            ReplyState st = states.get(safe(a.rootId) + "\u001f" + a.sessionKey);
+            if (st != null) {
+                postAlert(a.kind, st);
+                vibrateReplyCompletion();
+            }
         }
         for (String k : p.cancel) {
-            String[] parts = k.split("\u001f", 2);
-            String rid = parts.length > 0 ? parts[0] : "";
-            String sk = parts.length > 1 ? parts[1] : "";
-            notificationManager.cancel(notificationIdFor(rid, sk));
-            // 兼容旧 id
-            notificationManager.cancel(NOTIFICATION_BASE_ID + Math.abs(sk.hashCode() % 100000));
+            String[] parts = k.split("\u001f", 3);
+            if (parts.length < 3) {
+                continue;
+            }
+            notificationManager.cancel(notificationIdFor(parts[0], parts[1], parts[2]));
         }
         prefs.edit().putStringSet(PREF_AWAITING_NOTIFIED, p.awaitingNotified).apply();
 
-        // 4. 前台服务通知（极简/聚合）
+        // 4. 常驻前台服务通知：只说「有几个在跑」，不点名。
         List<ReplyState> live = new ArrayList<>();
         for (ReplyState st : states.values()) {
-            if (st.replying || st.awaiting) live.add(st);
+            if (st.replying || st.awaiting) {
+                live.add(st);
+            }
         }
         updateForegroundNotification(live);
 
-        if (currentKeys.isEmpty() && live.isEmpty()) {
-            stopForegroundCompat();
-            return IDLE_POLL_INTERVAL_SECONDS;
-        }
+        // 没有会话也不退出前台：否则服务会被系统回收，下一次「开始回复」就漏掉了。
+        // 常驻通知挂在 IMPORTANCE_MIN 的渠道上，不吵人。
         return currentKeys.isEmpty() ? IDLE_POLL_INTERVAL_SECONDS : ACTIVE_POLL_INTERVAL_SECONDS;
     }
 
-    private ReplyState findState(String rootId, String sessionKey) {
-        for (ReplyState st : states.values()) {
-            if (st.sessionKey.equals(sessionKey) && (rootId == null || rootId.equals(st.rootId))) {
-                return st;
-            }
+
+    // 轮询是后台黑盒：把「最近一次成功/失败、拿到几个会话、打的哪个地址」落到 prefs，
+    // 供关于弹窗里的诊断行读出来。没有它，用户只看到「没有提醒」，没法判断是
+    // 服务没跑、地址打错、账号不对还是接口 401。
+    private void recordPollDebug(boolean ok, int sessionCount, String error) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("at", new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(new Date()));
+            o.put("ok", ok);
+            o.put("running", running);
+            o.put("sessions", sessionCount);
+            o.put("apiBaseUrl", apiBaseUrl);
+            o.put("nodes", nodeTargets().size());
+            o.put("error", error == null ? "" : error);
+        } catch (Exception ignored) {
+            // JSONObject.put 只在键为 null 时抛，这里不可能发生；真出错就保留上一条记录。
         }
-        return null;
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_DEBUG, o.toString()).apply();
+    }
+
+    // 前端上报的地址才是准的（Vite 的 BASE_URL 带 /mindfs 这类挂载前缀）；
+    // 原生侧从 WebView 的 URL 只能推出 origin。已经配过就别再覆盖。
+    static boolean hasConfiguredBase(Context context) {
+        String stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(PREF_API_BASE_URL, "");
+        return stored != null && !stored.trim().isEmpty();
+    }
+
+    static String readPollDebug(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_DEBUG, "");
     }
 
     // 通知到底是被系统挡了还是投出去了：总开关、渠道等级、通知栏里有没有这一条、勿扰模式。
@@ -694,11 +774,16 @@ public class ReplyPollerService extends Service {
     }
 
     private void postAlert(String kind, ReplyState state) {
+        // 正在看这条会话就不打扰（JS 只在 App 可见时上报 viewing）。
+        if (!viewingKey.isEmpty() && viewingKey.equals(state.key)) {
+            return;
+        }
         String title = buildReplyTitlePrefix(state) + " · " + ("awaiting".equals(kind) ? "需要你回答" : "完成");
         String text = state.summary;
         Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (launchIntent == null) launchIntent = new Intent(this, MainActivity.class);
         launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        launchIntent.putExtra("nodeId", state.nodeId);
         launchIntent.putExtra("rootId", state.rootId);
         launchIntent.putExtra("sessionKey", state.sessionKey);
         int id = state.notificationId;
@@ -1199,9 +1284,9 @@ public class ReplyPollerService extends Service {
         return value == null ? "" : value.trim();
     }
 
-    static int notificationIdFor(String rootId, String sessionKey) {
-        String key = (rootId == null ? "" : rootId) + "\u001f" + (sessionKey == null ? "" : sessionKey);
-        return NOTIFICATION_BASE_ID + Math.abs(key.hashCode() % 100000);
+    // 每会话一条通知：id 必须把节点也算进去，否则两台机器上同名 root/session 会互相覆盖。
+    static int notificationIdFor(String nodeId, String rootId, String sessionKey) {
+        return NOTIFICATION_BASE_ID + Math.abs(compositeKey(nodeId, rootId, sessionKey).hashCode() % 100000);
     }
 
     private enum ReplyStatus {
@@ -1216,6 +1301,8 @@ public class ReplyPollerService extends Service {
     }
 
     private static final class ReplyState {
+        final String key;        // nodeId␟rootId␟sessionKey，跨节点的唯一身份
+        final String nodeId;
         final String sessionKey;
         final int notificationId;
         String rootId = "";
@@ -1227,10 +1314,12 @@ public class ReplyPollerService extends Service {
         boolean awaiting = false;
         ReplyStatus status = ReplyStatus.REPLYING;
 
-        ReplyState(String sessionKey, String rootId) {
-            this.sessionKey = sessionKey;
+        ReplyState(String key, String nodeId, String rootId, String sessionKey) {
+            this.key = key;
+            this.nodeId = nodeId == null ? "" : nodeId;
             this.rootId = rootId == null ? "" : rootId;
-            this.notificationId = notificationIdFor(this.rootId, sessionKey);
+            this.sessionKey = sessionKey == null ? "" : sessionKey;
+            this.notificationId = notificationIdFor(this.nodeId, this.rootId, this.sessionKey);
         }
     }
 }
