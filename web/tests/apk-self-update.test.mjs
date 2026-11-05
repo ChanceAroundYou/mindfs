@@ -67,6 +67,12 @@ test("poller base URL keeps the mount prefix", async () => {
   assert.match(service, /static boolean hasConfiguredBase\(Context context\)/);
   assert.match(activity, /if \(!ReplyPollerService\.hasConfiguredBase\(this\)\)/);
   assert.match(domain, /void syncNativeReplyPoller\(\)/);
+  // appURL("/") 会带 ?user=<id>；原生是字符串直接拼，查询串必须在这里剥掉。
+  assert.match(
+    read("src/services/net/replyPoller.ts"),
+    /resolved\.pathname\.replace\(\/\\\/\+\$\/, ""\)/,
+    "base URL keeps only origin + path prefix",
+  );
 });
 
 test("about dialog checks GitHub instead of opening the release page", async () => {

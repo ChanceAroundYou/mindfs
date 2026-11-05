@@ -66,16 +66,16 @@ function rememberLatestReplyPollerConfig(payload: ReplyPollerConfigPayload): voi
 
 function nativeReplyPollerBaseURL(): string {
   const direct = appURL("/");
-  if (/^https?:\/\//i.test(direct)) {
-    return direct.replace(/\/+$/, "");
-  }
   if (typeof window === "undefined") {
-    return "";
+    return /^https?:\/\//i.test(direct) ? stripQueryAndSlash(direct) : "";
   }
   try {
     const resolved = new URL(direct, window.location.href);
     if (/^https?:$/i.test(resolved.protocol)) {
-      return resolved.href.replace(/\/+$/, "");
+      // 只留 origin + 路径前缀。appURL 会带上 ?user=<id>，而原生那边是
+      // `apiBaseUrl + "/api/replying-sessions"` 直接拼字符串 —— 查询串留着
+      // 会把后面整段吞进 user 参数里，轮询必 404。
+      return `${resolved.protocol}//${resolved.host}${resolved.pathname.replace(/\/+$/, "")}`;
     }
   } catch {
     // Fall through to origin-only fallback.
@@ -85,6 +85,10 @@ function nativeReplyPollerBaseURL(): string {
     return origin.replace(/\/+$/, "");
   }
   return "";
+}
+
+function stripQueryAndSlash(url: string): string {
+  return url.split(/[?#]/)[0].replace(/\/+$/, "");
 }
 
 function isLocalShellURL(value: string): boolean {
