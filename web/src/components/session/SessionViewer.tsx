@@ -408,7 +408,7 @@ function SessionViewerInner({
 
       {/* 滚动容器 */}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
-        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: "auto", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch", scrollPaddingBottom: `${composerOverlayInset + 20}px` }}>
+        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: "auto", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch", overscrollBehaviorY: "contain", scrollPaddingBottom: `${composerOverlayInset + 20}px` }}>
           <div style={{
             width: "100%",
             minWidth: 0,

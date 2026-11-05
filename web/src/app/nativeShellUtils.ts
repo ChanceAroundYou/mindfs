@@ -1,4 +1,4 @@
-import { isHarmonyRuntime, isNativeShellRuntime } from "../services/platform/runtime";
+import { isAndroidRuntime, isHarmonyRuntime, isNativeShellRuntime } from "../services/platform/runtime";
 
 
 
@@ -281,35 +281,120 @@ export function canScrollTouchTarget(target: EventTarget | null, deltaY: number)
 
 
 
-export function installIOSKeyboardPanLock(): () => void {
-  if (!isIOSWebKit()) {
+export function shouldInstallKeyboardPanLock(env: { iosWebKit: boolean; androidRuntime: boolean }): boolean {
+  return env.iosWebKit || env.androidRuntime;
+}
+
+export type KeyboardPanDecision = {
+  hasEditableFocus: boolean;
+  touchCount: number;
+  targetScrollable: boolean;
+  targetIsEditable: boolean;
+};
+
+export function shouldBlockKeyboardPan(decision: KeyboardPanDecision): boolean {
+  if (!decision.hasEditableFocus) {
+    return false;
+  }
+  if (decision.touchCount !== 1) {
+    return false;
+  }
+  if (decision.targetScrollable) {
+    return false;
+  }
+  if (decision.targetIsEditable) {
+    return false;
+  }
+  return true;
+}
+
+export function installKeyboardPanLock(): () => void {
+  if (!shouldInstallKeyboardPanLock({ iosWebKit: isIOSWebKit(), androidRuntime: isAndroidRuntime() })) {
     return () => {};
   }
 
   let lastTouchY = 0;
-  const onTouchStart = (event: TouchEvent) => {
-    lastTouchY = event.touches[0]?.clientY || 0;
-  };
-  const onTouchMove = (event: TouchEvent) => {
-    const activeElement = document.activeElement;
-    if (!isTextEditableTarget(activeElement) || event.touches.length !== 1) {
+  let hasLastTouchY = false;
+  let attached = false;
+  let touchStartHandler: ((event: TouchEvent) => void) | null = null;
+  let touchMoveHandler: ((event: TouchEvent) => void) | null = null;
+
+  const detach = () => {
+    if (!attached) {
       return;
     }
-
-    const nextTouchY = event.touches[0]?.clientY || lastTouchY;
-    const deltaY = nextTouchY - lastTouchY;
-    lastTouchY = nextTouchY;
-    if (canScrollTouchTarget(event.target, deltaY)) {
-      return;
+    if (touchStartHandler) {
+      document.removeEventListener("touchstart", touchStartHandler);
     }
-    event.preventDefault();
-    window.scrollTo(0, 0);
+    if (touchMoveHandler) {
+      document.removeEventListener("touchmove", touchMoveHandler);
+    }
+    touchStartHandler = null;
+    touchMoveHandler = null;
+    attached = false;
   };
 
-  document.addEventListener("touchstart", onTouchStart, { passive: true });
-  document.addEventListener("touchmove", onTouchMove, { passive: false });
+  const attach = () => {
+    if (attached) {
+      return;
+    }
+    touchStartHandler = (event: TouchEvent) => {
+      lastTouchY = event.touches[0]?.clientY || 0;
+      hasLastTouchY = true;
+    };
+    touchMoveHandler = (event: TouchEvent) => {
+      const activeElement = document.activeElement;
+      if (!isTextEditableTarget(activeElement) || event.touches.length !== 1) {
+        return;
+      }
+      const nextTouchY = event.touches[0]?.clientY || lastTouchY;
+      const deltaY = hasLastTouchY ? nextTouchY - lastTouchY : 0;
+      if (!hasLastTouchY) {
+        lastTouchY = nextTouchY;
+        hasLastTouchY = true;
+        return;
+      }
+      lastTouchY = nextTouchY;
+      const targetIsEditable = event.target instanceof HTMLElement && isTextEditableTarget(event.target);
+      const block = shouldBlockKeyboardPan({
+        hasEditableFocus: isTextEditableTarget(activeElement),
+        touchCount: event.touches.length,
+        targetScrollable: canScrollTouchTarget(event.target, deltaY),
+        targetIsEditable,
+      });
+      if (!block) {
+        return;
+      }
+      event.preventDefault();
+      window.scrollTo(0, 0);
+    };
+    document.addEventListener("touchstart", touchStartHandler, { passive: true });
+    document.addEventListener("touchmove", touchMoveHandler, { passive: false });
+    attached = true;
+  };
+
+  const syncAttachState = () => {
+    if (isTextEditableTarget(document.activeElement)) {
+      attach();
+    } else {
+      detach();
+    }
+  };
+
+  const onFocusIn = () => {
+    syncAttachState();
+  };
+  const onFocusOut = () => {
+    // 延迟一帧再卸载，避免 focusout 与 blur 时序导致卸载过早。
+    window.setTimeout(syncAttachState, 0);
+  };
+  document.addEventListener("focusin", onFocusIn);
+  document.addEventListener("focusout", onFocusOut);
+  syncAttachState();
+
   return () => {
-    document.removeEventListener("touchstart", onTouchStart);
-    document.removeEventListener("touchmove", onTouchMove);
+    detach();
+    document.removeEventListener("focusin", onFocusIn);
+    document.removeEventListener("focusout", onFocusOut);
   };
 }

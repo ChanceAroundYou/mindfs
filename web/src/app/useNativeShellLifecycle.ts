@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { isNativeShellRuntime } from "../services/platform/runtime";
-import { isNativeLauncherOrigin, nativeLauncherURL, normalizeSystemBarColor, parseColorToHex, isDarkColor, resolveTopVisibleColor, isTextEditableTarget, isIOSWebKit, readRootPixelVar, syncViewportHeight, syncViewportHeightAfterKeyboardChange, canScrollTouchTarget, installIOSKeyboardPanLock } from "./nativeShellUtils";
+import { isNativeLauncherOrigin, nativeLauncherURL, normalizeSystemBarColor, parseColorToHex, isDarkColor, resolveTopVisibleColor, isTextEditableTarget, isIOSWebKit, readRootPixelVar, syncViewportHeight, syncViewportHeightAfterKeyboardChange, canScrollTouchTarget, installKeyboardPanLock } from "./nativeShellUtils";
 
 export function useNativeShellLifecycle() {
   const [ready] = useState(() => !isNativeLauncherOrigin());
@@ -24,7 +24,7 @@ export function useNativeShellLifecycle() {
     window.addEventListener("mindfs:safe-area-updated", syncViewportHeight as EventListener);
     window.visualViewport?.addEventListener("resize", syncViewportHeight);
     window.visualViewport?.addEventListener("scroll", syncViewportHeight);
-    const uninstallIOSKeyboardPanLock = installIOSKeyboardPanLock();
+    const uninstallKeyboardPanLock = installKeyboardPanLock();
     // 浏览器/PWA 里让键盘覆盖内容而不是挤小视口：装成 PWA 时挤小的那段会露出壳的
     // 窗口底色（安装时从 manifest 烧进去的），暗色闪白、浅色闪黑，怎么选都错。
 
@@ -37,7 +37,7 @@ export function useNativeShellLifecycle() {
         window.removeEventListener("mindfs:safe-area-updated", syncViewportHeight as EventListener);
         window.visualViewport?.removeEventListener("resize", syncViewportHeight);
         window.visualViewport?.removeEventListener("scroll", syncViewportHeight);
-        uninstallIOSKeyboardPanLock();
+        uninstallKeyboardPanLock();
       };
     }
 
@@ -217,7 +217,7 @@ export function useNativeShellLifecycle() {
       cleanupThemeSync?.();
       document.removeEventListener("focusin", onFocusIn);
       window.visualViewport?.removeEventListener("resize", onViewportResize);
-      uninstallIOSKeyboardPanLock();
+      uninstallKeyboardPanLock();
       removeListener?.();
     };
   }, []);
