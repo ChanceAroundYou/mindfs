@@ -3,16 +3,19 @@ package com.mindfs.app;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.Manifest;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
 import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
+import androidx.core.content.ContextCompat;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
@@ -546,8 +549,27 @@ public class ReplyPollerService extends Service {
         return null;
     }
 
-    public static void postTestAlert(Context context) {
+    // 返回空串 = 已投递；非空 = 需要展示给用户的原因（权限、渠道被关、投递异常）。
+    public static String postTestAlert(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "通知权限未授予：请在系统设置里允许 MindFS 发送通知";
+        }
+        ensureChannels(context);
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) {
+            return "系统通知服务不可用";
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = nm.getNotificationChannel(ALERT_CHANNEL_ID);
+            if (channel == null) {
+                return "提醒渠道创建失败，请重启应用后重试";
+            }
+            if (channel.getImportance() == NotificationManager.IMPORTANCE_NONE) {
+                return "「MindFS 任务提醒」渠道被关闭，请在系统设置里重新打开";
+            }
+        }
         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             ? new Notification.Builder(context, ALERT_CHANNEL_ID)
             : new Notification.Builder(context);
@@ -556,7 +578,12 @@ public class ReplyPollerService extends Service {
          .setContentText("通知链路正常。")
          .setAutoCancel(true)
          .setCategory(Notification.CATEGORY_STATUS);
-        nm.notify(799999, b.build());
+        try {
+            nm.notify(799999, b.build());
+        } catch (Exception ex) {
+            return "通知投递失败：" + ex.getMessage();
+        }
+        return "";
     }
 
     private void postAlert(String kind, ReplyState state) {
@@ -585,7 +612,7 @@ public class ReplyPollerService extends Service {
          .setStyle(new Notification.BigTextStyle().bigText(text));
         if (!TextUtils.isEmpty(text)) b.setTicker(text);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            b.setSound(replyAlertSoundUri());
+            b.setSound(replyAlertSoundUri(this));
         }
         notificationManager.notify(id, b.build());
     }
@@ -789,7 +816,7 @@ public class ReplyPollerService extends Service {
             .setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
             .setStyle(new Notification.InboxStyle().setSummaryText(status));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && !hasReplying) {
-            builder.setSound(replyAlertSoundUri());
+            builder.setSound(replyAlertSoundUri(this));
         }
         Notification.InboxStyle style = new Notification.InboxStyle();
         for (ReplyState state : states) {
@@ -875,7 +902,7 @@ public class ReplyPollerService extends Service {
             .setCategory(replying ? Notification.CATEGORY_SERVICE : Notification.CATEGORY_STATUS)
             .setStyle(new Notification.BigTextStyle().bigText(text));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && !replying) {
-            builder.setSound(replyAlertSoundUri());
+            builder.setSound(replyAlertSoundUri(this));
         }
         if (!TextUtils.isEmpty(text)) {
             builder.setTicker(text);
@@ -920,7 +947,7 @@ public class ReplyPollerService extends Service {
             .setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
             .setStyle(new Notification.BigTextStyle().bigText(text));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && !replying) {
-            builder.setSound(replyAlertSoundUri());
+            builder.setSound(replyAlertSoundUri(this));
         }
         if (!TextUtils.isEmpty(text)) {
             builder.setTicker(text);
@@ -947,7 +974,19 @@ public class ReplyPollerService extends Service {
     }
 
     private void createChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || notificationManager == null) {
+        ensureChannels(this);
+    }
+
+    // 渠道必须在能发通知的每个入口都建好：只在 Service.onCreate 建的话，
+    // 服务没跑过时（新装/刚更新、还没切过后台）测试提醒与提醒本身都会投进不存在的渠道，
+    // 系统直接静默丢弃，表现为「权限开了但什么都收不到」。
+    static void ensureChannels(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        NotificationManager notificationManager =
+            (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (notificationManager == null) {
             return;
         }
         NotificationChannel service = new NotificationChannel(
@@ -971,7 +1010,7 @@ public class ReplyPollerService extends Service {
         alert.enableVibration(true);
         alert.setVibrationPattern(ALERT_VIBRATION_PATTERN);
         alert.setSound(
-            replyAlertSoundUri(),
+            replyAlertSoundUri(context),
             new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -981,8 +1020,8 @@ public class ReplyPollerService extends Service {
         notificationManager.createNotificationChannel(alert);
     }
 
-    private Uri replyAlertSoundUri() {
-        return Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.mindfs_reply_alert);
+    private static Uri replyAlertSoundUri(Context context) {
+        return Uri.parse("android.resource://" + context.getPackageName() + "/" + R.raw.mindfs_reply_alert);
     }
 
     private void startForegroundCompat(int notificationId, Notification notification) {

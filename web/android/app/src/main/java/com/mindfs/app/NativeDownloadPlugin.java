@@ -3,6 +3,7 @@ package com.mindfs.app;
 import android.app.DownloadManager;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -16,12 +17,85 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import androidx.core.content.FileProvider;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 @CapacitorPlugin(name = "NativeDownload")
 public class NativeDownloadPlugin extends Plugin {
+    // 应用自身更新：下载 GitHub Release 里的 APK 并直接拉起系统安装器。
+    // 用同步返回的 bridge 形态（与 NativeDownloadBridge.download 一致）：
+    // 返回空串 = 已开始下载安装，非空 = 给用户看的错误/提示文案。
+    public static String downloadAndInstallApk(Context context, String url, String filename) {
+        if (TextUtils.isEmpty(url)) {
+            return "缺少下载地址";
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            && !context.getPackageManager().canRequestPackageInstalls()) {
+            try {
+                Intent settings = new Intent(
+                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + context.getPackageName())
+                );
+                settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(settings);
+            } catch (Exception ignored) {
+                // 打不开设置页时仍把提示给用户，让他手动去系统设置授权。
+            }
+            return "请先允许本应用安装未知应用，授权后再次点击检查更新";
+        }
+        String safeFilename = sanitizeFilename(filename);
+        if (TextUtils.isEmpty(safeFilename) || !safeFilename.toLowerCase().endsWith(".apk")) {
+            safeFilename = "mindfs-update.apk";
+        }
+        final String targetName = safeFilename;
+        final Context appContext = context.getApplicationContext();
+        new Thread(() -> {
+            try {
+                File dir = new File(appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "updates");
+                if (!dir.exists() && !dir.mkdirs()) {
+                    throw new IllegalStateException("cannot create update dir");
+                }
+                File out = new File(dir, targetName);
+                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(60000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("Accept", "application/octet-stream");
+                try (InputStream in = conn.getInputStream(); FileOutputStream fos = new FileOutputStream(out)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        fos.write(buf, 0, n);
+                    }
+                } finally {
+                    conn.disconnect();
+                }
+                installApkFile(appContext, out);
+            } catch (Exception ex) {
+                showToast(appContext, "更新包下载失败：" + ex.getMessage());
+            }
+        }).start();
+        return "";
+    }
+
+    private static void showToast(Context context, String message) {
+        android.os.Handler handler = new android.os.Handler(context.getMainLooper());
+        handler.post(() -> android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show());
+    }
+
+    private static void installApkFile(Context context, File file) {
+        Uri uri = FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", file);
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(uri, "application/vnd.android.package-archive");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(intent);
+    }
+
     @PluginMethod
     public void download(PluginCall call) {
         String url = call.getString("url");

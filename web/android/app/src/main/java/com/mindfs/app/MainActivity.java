@@ -596,6 +596,11 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        public String downloadAndInstallApk(String url, String filename) {
+            return NativeDownloadPlugin.downloadAndInstallApk(MainActivity.this, url, filename);
+        }
+
+        @JavascriptInterface
         public String saveBase64(String dataBase64, String filename, String mimeType) {
             try {
                 String safeFilename = NativeDownloadPlugin.sanitizeFilename(filename);

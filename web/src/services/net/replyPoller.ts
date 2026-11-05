@@ -9,7 +9,7 @@ type ReplyPollerPlugin = {
     token?: string;
   }): Promise<void>;
   dismiss(options: { rootId: string; sessionKey: string }): Promise<void>;
-  testAlert(): Promise<void>;
+  testAlert(): Promise<{ error?: string }>;
 };
 
 type NativeReplyPollerBridge = {
@@ -143,10 +143,12 @@ export function takePendingReplySession(): { rootId: string; sessionKey: string 
 }
 
 
-export async function testNativeReplyAlert(): Promise<void> {
+// 返回空串 = 已投递；非空 = 系统侧拦截原因（权限、渠道被关、投递异常），必须显示给用户。
+export async function testNativeReplyAlert(): Promise<string> {
   try {
-    await ReplyPoller.testAlert();
-  } catch {
-    // ignore
+    const result = await ReplyPoller.testAlert();
+    return result?.error || "";
+  } catch (ex) {
+    return ex instanceof Error ? ex.message : "测试提醒调用失败";
   }
 }
