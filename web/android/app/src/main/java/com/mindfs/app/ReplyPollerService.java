@@ -604,10 +604,10 @@ public class ReplyPollerService extends Service {
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Notification[] active = nm.getActiveNotifications();
+            android.service.notification.StatusBarNotification[] active = nm.getActiveNotifications();
             boolean mine = false;
-            for (Notification notification : active) {
-                if (notification != null && notification.getId() == 799999) {
+            for (android.service.notification.StatusBarNotification statusBar : active) {
+                if (statusBar != null && statusBar.getId() == 799999) {
                     mine = true;
                 }
             }
