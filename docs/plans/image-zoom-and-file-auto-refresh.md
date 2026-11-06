@@ -1,6 +1,6 @@
 # 图片缩放与文件自动刷新
 
-状态：Implemented 2026-11-06，已提交（`79fb813b`）；已发布 **v0.5.5-1115**（含 APK 与 `android-version.json`），本机已安装该版本（**待用户重启生效**）；WSL/fn 未分发（未走 ship）。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
+状态：Implemented 2026-11-06，已提交 `79fb813b`；已发布 **v0.5.5-1115**（含 APK 与 `android-version.json`）并 ship 完成：本机 / WSL / fn 三端逐字一致 `v0.5.5-1115-1-gf12a9ed7`，两个 worker 已重启，本机二进制已装但**待用户 `sudo systemctl restart mindfs` 才生效**（前端 bundle 已在线）。pc-win 产物已装、版本一致，但进程未起（见验证记录）。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
 
 ## 背景
 
@@ -115,6 +115,19 @@ WS 的 `file.changed` 只覆盖「本节点 + 文件视图可见」这一种情�
   APK 经 `apksigner verify` 通过（CN=MindFS），清单签名经 `make verify-release` 通过；
   线上 `releases/latest/download/android-version.json` 实测返回 `v0.5.5-1115` + `.apk` 直链 ——
   正是新的检查更新代码读的那条固定 URL（不是 api.github.com）。
+- ship（`bash scripts/deploy-all.sh`）：门禁 `go test` / `tsc` / Vitest（465 通过、6 跳过）全绿；
+  本机 / WSL / fn 版本号**逐字一致** `v0.5.5-1115-1-gf12a9ed7`（WSL 07:49:59、fn 07:50:06 已重启）；
+  本机 bundle 对账 `assets/index-DuTgpA_o.js` == 刚装的那版。
+- **第一次 ship 被门禁拦下**：`server/internal/kanban` 的 `TestRebuildTaskWorktreeIsNoopWhenDirectoryExists`
+  报 TempDir 清理失败（`.../.mindfs/tasks: directory not empty`），同期日志满是
+  `attempt to write a readonly database (1032)` / `disk I/O error (5898)`。单独重跑同一条命令
+  （`cd server && go test ./...` → exit 0）与整包 kanban 都通过 —— 是并发负载下 `/var/tmp` 里临时
+  SQLite 的偶发 I/O，与本轮改动无关；**没有改任何测试**，第二次 ship 全绿。
+- **pc-win 只装上了、没跑起来**：`mindfs.exe --version` 已是 `v0.5.5-1115-1-gf12a9ed7`，但
+  `Get-Process mindfs` 为空、PC 上 `netstat` 无 `:7332` 监听；计划任务 `mindfs` 的登录状态是
+  「只使用交互方式」，`schtasks /run` 从 ssh 触发不生效 → 要上线需在 PC 的登录会话里启动。
+  注意 `deploy-pcwin.sh` 的「pc-win 已重启」不校验进程真起来了（输出被丢弃、失败也 `|| true`），
+  不能当成上线证据。
 - 触摸手势（双指缩放、拖动）仍未上真机点过 —— 无头浏览器只验到按钮/键盘路径，待真机验收。
 
 ## 与原方案的差异
