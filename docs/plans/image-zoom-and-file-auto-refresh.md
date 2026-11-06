@@ -1,6 +1,6 @@
 # 图片缩放与文件自动刷新
 
-状态：Implemented 2026-11-06，已提交（`79fb813b`），待 ship。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
+状态：Implemented 2026-11-06，已提交（`79fb813b`）；已发布 **v0.5.5-1115**（含 APK 与 `android-version.json`），本机已安装该版本（**待用户重启生效**）；WSL/fn 未分发（未走 ship）。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
 
 ## 背景
 
@@ -110,7 +110,12 @@ WS 的 `file.changed` 只覆盖「本节点 + 文件视图可见」这一种情�
 - `make check-upstream` — 提交后全绿（1548 个 delta 文件被 265 组完整覆盖）。提交前它必红 8 条：
   G-KK/G-KL 登记的新文件（`zoomTransform` / `usePinchZoom` / `ImageZoomOverlay` / `useFileAutoRefresh` /
   e2e / 方案文档）尚未进 `merge-base..HEAD` 的 delta —— 它只看**已提交**的文件，属预期，提交即转绿。
-- 触摸手势（双指缩放、拖动）仍未上真机点过 —— 无头浏览器只验到按钮/键盘路径，待 ship 后验收。
+- 发布 v0.5.5-1115：`make release TAG=v0.5.5-1115 RELEASE_ANDROID=1`（**必须带 `GH_REPO=ChanceAroundYou/mindfs`** ——
+  仓库同时挂了 upstream `a9gent/mindfs`，不带时 gh 会挑错仓库、卡在 `gh release create`，失败点在创建之前，重跑安全）。
+  APK 经 `apksigner verify` 通过（CN=MindFS），清单签名经 `make verify-release` 通过；
+  线上 `releases/latest/download/android-version.json` 实测返回 `v0.5.5-1115` + `.apk` 直链 ——
+  正是新的检查更新代码读的那条固定 URL（不是 api.github.com）。
+- 触摸手势（双指缩放、拖动）仍未上真机点过 —— 无头浏览器只验到按钮/键盘路径，待真机验收。
 
 ## 与原方案的差异
 
