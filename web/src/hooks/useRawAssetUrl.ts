@@ -7,9 +7,9 @@ import { buildRawAssetURL } from "../services/file";
  * 组件层不许直接 import services（web/tests/reviewer-architecture-rules.test.mjs），
  * 所以这一步由 hook 兜住：组件只管要一个 URL。
  */
-export function useRawAssetUrl(rootId?: string, path?: string, nodeId?: string): string {
+export function useRawAssetUrl(rootId?: string, path?: string, nodeId?: string, version?: string): string {
   return useMemo(
-    () => (rootId && path ? buildRawAssetURL({ rootId, path, nodeId }) : ""),
-    [rootId, path, nodeId],
+    () => (rootId && path ? buildRawAssetURL({ rootId, path, nodeId, version }) : ""),
+    [rootId, path, nodeId, version],
   );
 }

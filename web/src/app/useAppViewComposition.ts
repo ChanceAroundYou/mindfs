@@ -17,6 +17,7 @@ import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useRootContentView } from "./useRootContentView";
 import { useProjectTreeActions } from "./useProjectTreeActions";
 import { usePluginThemeVars } from "./usePluginThemeVars";
+import { useFileAutoRefresh } from "./useFileAutoRefresh";
 import { useSessionRelatedFiles } from "./useSessionRelatedFiles";
 import type { KanbanTask, TaskDetail, TaskTemplate } from "../services/tasks";
 import type { ActionHandlers } from "./useActionHandlers";
@@ -269,6 +270,14 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     updateSessionRelatedFilesForKey,
     refreshManagedRoots,
   });
+  // 当前文件自动刷新：可见时轮询 + 手动刷新，落在文件视图顶栏。
+  const { onReloadFile, reloadingFile } = useFileAutoRefresh({
+    fileRef,
+    mainViewRef,
+    selectedSessionRef,
+    refreshCurrentFileContent,
+    refreshTreeDir,
+  });
   const { renderRootWorktreeContent, renderRootRelatedContent, renderRootGitContent
   } = useAppRootContentRenderers({
     currentRootId, scopedRootKey, managedRootByIdRef, relatedWorktree,
@@ -448,6 +457,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     activePendingPluginTrust, currentFileScrollKey, currentRootSlashCommandResult, drawerSessionSnapshot,
     handleAskUserAnswer, handleDrawerSessionFileClick, handleEditUserMessage, handleMainViewSwitcherChange,
     handleNodeManagerRefresh, handleProjectTreeRefresh, handleRemoveSessionRelatedFile, kanbanTaskPanel,
+    onReloadFile, reloadingFile,
     renderRootGitContent, renderRootRelatedContent, renderRootWorktreeContent, rootSessionIndicators,
     sessionSidebar, sessionView, sessionViewerComposerOverlayInset, showUpdateButton,
     slashCommandResultForSession, switchToPluginView, switchToRawFileView, updateBusy,

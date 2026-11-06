@@ -12,7 +12,8 @@ test("document viewer delegates PDF virtualization and keeps shared preview erro
   const hook = read("../src/components/file/useDocumentPreviewBlob.ts");
   assert.match(viewer, /import \{ PdfPreview \} from "\.\/PdfPreview"/);
   assert.doesNotMatch(viewer, /services\/file/);
-  assert.match(viewer, /useDocumentPreviewBlob\(root, path\)/);
+  // 第二参 root 之后跟着文件版本（mtime）：同名文件重写后要重取，不能复用旧 blob。
+  assert.match(viewer, /useDocumentPreviewBlob\(root, path, version\)/);
   assert.match(viewer, /describeDocumentPreviewError as describeError/);
   // 页虚拟化由 IntersectionObserver 驱动（commit d5964631）：手算 scrollTop 认不出真正的滚动容器，
   // 中间页会白屏。钉这一条 = 钉「按可见性渲染」这个机制本身。

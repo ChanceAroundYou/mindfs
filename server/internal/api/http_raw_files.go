@@ -65,6 +65,9 @@ func (h *HTTPHandler) handleRawAsset(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(rawOut.RelPath)))
 	}
 
+	// 每次都向服务端确认（Last-Modified 在，304 很便宜）；不能让它按启发式缓存
+	// 一直用旧字节 —— 文件被改写后同名资源必须立刻能取到新版本。
+	w.Header().Set("Cache-Control", "no-cache")
 	// ServeContent 处理 Range（206）与 If-Modified-Since；视频的进度条靠它。
 	http.ServeContent(w, r, rawOut.RelPath, rawOut.Info.ModTime(), rawOut.File)
 }

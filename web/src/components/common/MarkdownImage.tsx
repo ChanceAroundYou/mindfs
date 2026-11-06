@@ -1,6 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
 import { isDirectImageSrc, resolveMarkdownHref } from "../common/markdownUtils";
 import { useProtectedBlobUrl } from "../../hooks/useProtectedBlobUrl";
+import { ImageZoomOverlay } from "../common/ImageZoomOverlay";
+import { useI18n } from "../../i18n/index";
 
 export function MarkdownImage({
   src = "",
@@ -17,6 +19,8 @@ export function MarkdownImage({
   currentPath?: string;
   root?: string;
 }) {
+  const { t } = useI18n();
+  const [zoomed, setZoomed] = useState(false);
   const trimmedSrc = src.trim();
   const directSrc = isDirectImageSrc(trimmedSrc);
   const resolvedPath = trimmedSrc && root && !directSrc
@@ -47,5 +51,25 @@ export function MarkdownImage({
     );
   }
 
-  return <img src={resolvedSrc} alt={alt} title={title} width={width} />;
+  return (
+    <>
+      <img
+        src={resolvedSrc}
+        alt={alt}
+        title={title || t("imageViewer.expand")}
+        width={width}
+        style={{ cursor: "zoom-in" }}
+        onClick={(event) => {
+          // 图片可能被包在链接里（[![img](a)](b)）：点图是「我要看大图」，
+          // 不该顺带跳走，所以把这次点击从链接上摘下来。
+          event.preventDefault();
+          event.stopPropagation();
+          setZoomed(true);
+        }}
+      />
+      {zoomed && (
+        <ImageZoomOverlay src={resolvedSrc} alt={alt || title || ""} onClose={() => setZoomed(false)} />
+      )}
+    </>
+  );
 }

@@ -20,7 +20,10 @@ test("versionCode formula matches the gradle build", async () => {
 
   assert.match(gradle, /major \* 10000000 \+ minor \* 100000 \+ patch \* 1000 \+ build \+ 1/);
   assert.match(ts, /major \* 10000000 \+ minor \* 100000 \+ patch \* 1000 \+ build \+ 1/);
-  assert.match(ts, /api\.github\.com\/repos\/ChanceAroundYou\/mindfs\/releases/);
+  // 主路径读发布清单（releases/latest/download 固定 URL），不再依赖未认证 REST API；
+  // 未认证限流按出口 IP 计 60/h，机场出口常为 0 → 403「检查更新失败」。
+  assert.match(ts, /releases\/latest\/download\/android-version\.json/);
+  assert.match(ts, /releaseFromManifest/);
   // 发布 tag 是 v0.5.5-1108（不带 -g<sha>）：正则必须认它，否则 versionCode 落回 1，
   // 自更新永远判「已是最新」。
   assert.match(gradle, /\(\?:-\(\\d\+\)\(\?:-\\d\+\)\?\(\?:-g\[0-9a-f\]\+\.\*\)\?\)\?/);

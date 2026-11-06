@@ -128,6 +128,7 @@ export function AppRootView(props: AppRootViewProps) {
     activePendingPluginTrust, currentFileScrollKey, currentRootSlashCommandResult, drawerSessionSnapshot,
     handleAskUserAnswer, handleDrawerSessionFileClick, handleEditUserMessage, handleMainViewSwitcherChange,
     handleNodeManagerRefresh, handleProjectTreeRefresh, handleRemoveSessionRelatedFile, kanbanTaskPanel,
+    onReloadFile, reloadingFile,
     renderRootGitContent, renderRootRelatedContent, renderRootWorktreeContent, rootSessionIndicators,
     sessionSidebar, sessionView, sessionViewerComposerOverlayInset, showUpdateButton,
     slashCommandResultForSession, switchToPluginView, switchToRawFileView, updateBusy,
@@ -256,6 +257,8 @@ main={<
                 mainView={mainView}
                 managedRootByIdRef={managedRootByIdRef}
                 matchedPlugin={matchedPlugin}
+                onReloadFile={onReloadFile}
+                reloadingFile={reloadingFile}
                 persistFileScrollPositions={persistFileScrollPositions}
                 pluginBypass={pluginBypass}
                 pluginContentRef={pluginContentRef}

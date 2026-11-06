@@ -5,6 +5,8 @@ import { useI18n } from "../../i18n/index";
 type HtmlPreviewProps = {
   path: string;
   root?: string;
+  /** 文件版本（mtime）：带上它，重新生成的同名页面才会真的重新加载。 */
+  version?: string;
 };
 
 /**
@@ -14,9 +16,9 @@ type HtmlPreviewProps = {
  * 页面里的 JS 能跑、能交互，但读不到 mindfs 的 localStorage，也碰不到父页面。
  * 后端对 text/html 响应另加 CSP sandbox（直接在新标签页打开 URL 也一样隔离）。
  */
-function HtmlPreviewInner({ path, root }: HtmlPreviewProps) {
+function HtmlPreviewInner({ path, root, version }: HtmlPreviewProps) {
   const { t } = useI18n();
-  const url = useRawAssetUrl(root, path);
+  const url = useRawAssetUrl(root, path, undefined, version);
   if (!url) {
     return <div className="document-preview-message">{t("fileViewer.previewFailed")}</div>;
   }
@@ -34,5 +36,5 @@ function HtmlPreviewInner({ path, root }: HtmlPreviewProps) {
 }
 
 export const HtmlPreview = memo(HtmlPreviewInner, (prev, next) => (
-  prev.path === next.path && prev.root === next.root
+  prev.path === next.path && prev.root === next.root && prev.version === next.version
 ));

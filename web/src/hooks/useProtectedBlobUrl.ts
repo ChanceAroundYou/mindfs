@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { fetchProofProtectedBlob } from "../services/file";
 
-export function useProtectedBlobUrl(request?: { rootId: string; path: string; nodeId?: string }): string {
+export function useProtectedBlobUrl(request?: {
+  rootId: string;
+  path: string;
+  nodeId?: string;
+  /** 资源版本（一般传文件的 mtime）：变化即重新拉取，不靠 LRU 碰运气。 */
+  version?: string;
+}): string {
   const [url, setURL] = useState("");
 
   useEffect(() => {
@@ -26,7 +32,7 @@ export function useProtectedBlobUrl(request?: { rootId: string; path: string; no
       cancelled = true;
       if (objectURL) URL.revokeObjectURL(objectURL);
     };
-  }, [request?.path, request?.rootId, request?.nodeId]);
+  }, [request?.path, request?.rootId, request?.nodeId, request?.version]);
 
   return url;
 }

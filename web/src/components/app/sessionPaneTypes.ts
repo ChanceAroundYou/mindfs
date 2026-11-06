@@ -71,6 +71,9 @@ export interface SessionPaneProps {
   projectAddOverlay: React.JSX.Element | null;
   refreshGitStatus: (rootID: string) => Promise<GitStatusPayload | null>;
   refreshTreeDir: (rootID: string, dirPath: string, syncMain: boolean) => Promise<void>;
+  /** 手动刷新当前文件（文件视图顶栏按钮）；false = 没刷成功。 */
+  onReloadFile: () => Promise<boolean>;
+  reloadingFile: boolean;
   selectedDir: string | null;
   selectedDirRef: RefObject<string | null>;
   selectedSession: SessionItem | null;

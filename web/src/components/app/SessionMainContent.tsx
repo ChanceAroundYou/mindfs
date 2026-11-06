@@ -103,6 +103,8 @@ export function SessionMainContent(props: Omit<SessionPaneProps, "sessionView" |
   const projectAddOverlay = props.projectAddOverlay;
   const refreshGitStatus = props.refreshGitStatus;
   const refreshTreeDir = props.refreshTreeDir;
+  const onReloadFile = props.onReloadFile;
+  const reloadingFile = props.reloadingFile;
   const selectedDir = props.selectedDir;
   const selectedDirRef = props.selectedDirRef;
   const selectedSession = props.selectedSession;
@@ -353,6 +355,8 @@ export function SessionMainContent(props: Omit<SessionPaneProps, "sessionView" |
               }
               onPathClick={handleFileViewerPathClick}
               onFileClick={handleFileViewerFileClick}
+              onReloadFile={onReloadFile}
+              reloadingFile={reloadingFile}
             />
           </div>
         );

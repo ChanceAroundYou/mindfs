@@ -6,6 +6,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [Image zoom and file auto refresh](image-zoom-and-file-auto-refresh.md) — Implemented 2026-11-06，待 ship；文件视图内联缩放 + 会话图片全屏灯箱（数学抽到 `shared/zoomTransform`，图表预览经 `diagramZoom` 门面零改动）；预览资源按文件 mtime 版本化贯穿 blob/URL/hook/memo/HTTP 五层缓存，外加可见时 5s 轮询与顶栏手动刷新，变化时顺带刷新所在目录。测试：`zoom-transform` / `image-zoom-ui` / `file-blob-versioning` / `file-auto-refresh` / `raw_file_cache_test.go`。Scope: G-KK、G-KL。
+
 - [Android keyboard pan lock](android-keyboard-pan-lock.md) — Implemented 2026-11-05，待 ship；键盘弹起时安卓壳可视视口可拖出空白的 pan 锁（Web 层手势拦截，仅安卓壳生效）；测试 `keyboard-pan-lock.test.mjs`。Scope: G-JC。
 
 - [Reply alerts cross-node](reply-alerts-cross-node.md) — Implemented 2026-11-05（v0.5.5-1112），真机验收通过（3 节点轮询，done 通知已收到）；完成/提问按会话各一条通知、点击直达会话、前台也提醒（只是不提醒正在看的那条）、覆盖节点表里每台机器；URL 由前端 appPath(..., nid) 生成，原生只负责 GET 与状态机。

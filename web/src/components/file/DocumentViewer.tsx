@@ -10,6 +10,8 @@ type DocumentViewerProps = {
   path: string;
   root?: string;
   kind: DocumentPreviewKind;
+  /** 文件版本（mtime）：文档重新生成后重取，不吃旧 blob。 */
+  version?: string;
 };
 
 function WordPreview({ blob }: { blob: Blob }) {
@@ -280,9 +282,9 @@ function PowerPointPreview({ blob }: { blob: Blob }) {
   return <div ref={containerRef} className="document-preview-powerpoint" />;
 }
 
-function DocumentViewerInner({ path, root, kind }: DocumentViewerProps) {
+function DocumentViewerInner({ path, root, kind, version }: DocumentViewerProps) {
   const { t } = useI18n();
-  const state = useDocumentPreviewBlob(root, path);
+  const state = useDocumentPreviewBlob(root, path, version);
 
   if (state.status === "loading") return <div className="document-preview-message">{t("fileViewer.previewLoading")}</div>;
   if (state.status === "error") return <ErrorMessage detail={state.detail} />;
@@ -293,5 +295,6 @@ function DocumentViewerInner({ path, root, kind }: DocumentViewerProps) {
 }
 
 export const DocumentViewer = memo(DocumentViewerInner, (previous, next) => (
-  previous.path === next.path && previous.root === next.root && previous.kind === next.kind
+  previous.path === next.path && previous.root === next.root
+  && previous.kind === next.kind && previous.version === next.version
 ));

@@ -128,7 +128,7 @@ export type UseAppViewCompositionParams = {
   pluginRender: { plugin: ViewPlugin; output: PluginOutput; error: string; } | { plugin: ViewPlugin; output: null; error: string; } | null;
   pluginThemeVars: React.CSSProperties | null;
   projectTreeTab: ProjectTreeTab;
-  refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<void>;
+  refreshCurrentFileContent: (rootID: string, changedPath: string, options?: { force?: boolean; }) => Promise<boolean>;
   refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<GitHistoryPayload | null>;
   refreshGitStatus: (rootID: string) => Promise<GitStatusPayload | null>;
   refreshManagedRoots: () => Promise<void>;

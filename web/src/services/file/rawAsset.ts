@@ -17,6 +17,8 @@ export function buildRawAssetURL(params: {
   rootId: string;
   path: string;
   nodeId?: string;
+  /** 资源版本（文件 mtime）。带上它，同名文件被改写后 URL 就变了，不吃浏览器的启发式缓存。 */
+  version?: string;
 }): string {
   const rootId = String(params.rootId || "").trim();
   const filePath = String(params.path || "").trim();
@@ -36,5 +38,6 @@ export function buildRawAssetURL(params: {
   if (!account) {
     return "";
   }
-  return `${base}/api/file/raw/${encodeURIComponent(account)}/${encodeURIComponent(rootId)}/${relative}`;
+  const url = `${base}/api/file/raw/${encodeURIComponent(account)}/${encodeURIComponent(rootId)}/${relative}`;
+  return params.version ? `${url}?v=${encodeURIComponent(params.version)}` : url;
 }

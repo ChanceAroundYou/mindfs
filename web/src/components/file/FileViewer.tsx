@@ -13,6 +13,7 @@ import { ViewHeader } from "../../layout/ViewHeader";
 import type { FilePayload } from "../../shared/fileTypes";
 import { FileEditor } from "./FileEditor";
 import { FileOperationItems, FileMenuIcon, fileMenuItemStyle, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";
+import { RefreshIcon } from "./icons";
 import { useFileViewer, type FileViewerProps } from "./useFileViewer";
 
 function FileViewerMenu({ root, rootPath, path, downloading, onDownload, onEdit, onComplete }: {
@@ -111,10 +112,23 @@ export function FileViewer(props: FileViewerProps) {
     visibleRelatedSessions,
   } = useFileViewer(props);
 
-  const { file, rootPath, rootDisplayName, rootColor, onSessionClick, onPathClick, onFileClick, onFileOperationComplete, onFileUpdated, onFileSaved, editStore, isVisible = true } = props;
+  const { file, rootPath, rootDisplayName, rootColor, onSessionClick, onPathClick, onFileClick, onFileOperationComplete, onFileUpdated, onFileSaved, editStore, isVisible = true, onReloadFile, reloadingFile = false } = props;
+
+  // 资源版本：同名文件被改写后 mtime 变，预览（图片/文档/视频/网页）据此换缓存键与 URL。
+  const fileVersion = file?.mtime || file?.revision || "";
+  const handleReloadFile = async () => {
+    try {
+      const ok = await onReloadFile?.();
+      if (ok === false) showToast(t("fileViewer.reloadFailed"), false);
+    } catch {
+      showToast(t("fileViewer.reloadFailed"), false);
+    }
+  };
 
   // 整高铺满的预览：powerpoint 与网页预览（网页要能滚，交给 iframe 自己滚）。
-  const fullHeightPreview = documentPreviewKind === "powerpoint" || (htmlPreview && !htmlSourceMode);
+  // 图片也走满高：缩放/拖动在图片内部完成，外层不该再滚（否则拖动会连带滚动）。
+  const isImagePreview = !!file && (file.mime?.startsWith("image/") || [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext.toLowerCase()));
+  const fullHeightPreview = documentPreviewKind === "powerpoint" || (htmlPreview && !htmlSourceMode) || isImagePreview;
 
   if (!file) {
     return (
@@ -222,6 +236,32 @@ export function FileViewer(props: FileViewerProps) {
           )}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "2px", minWidth: 0, flexShrink: 0 }}>
+          {onReloadFile && !editSession && (
+            <button
+              type="button"
+              onClick={() => { void handleReloadFile(); }}
+              disabled={reloadingFile}
+              aria-label={t("fileViewer.reload")}
+              title={reloadingFile ? t("fileViewer.reloading") : t("fileViewer.reload")}
+              style={{
+                width: "24px",
+                height: "24px",
+                padding: 0,
+                border: "none",
+                borderRadius: "6px",
+                background: "transparent",
+                color: "var(--text-secondary)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: reloadingFile ? "default" : "pointer",
+                opacity: reloadingFile ? 0.7 : 1,
+                flexShrink: 0,
+              }}
+            >
+              <RefreshIcon spinning={reloadingFile} />
+            </button>
+          )}
           <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginLeft: "6px", flexShrink: 0, opacity: 0.7 }}>{(file.size / 1024).toFixed(1)} KB</div>
           {htmlPreview && !editSession && (
             <button
@@ -249,13 +289,13 @@ export function FileViewer(props: FileViewerProps) {
       {editSession ? <FileEditor key={editKey} actionsTarget={editorActions} store={editStore} editKey={editKey} session={editSession} isVisible={isVisible} onFileUpdated={onFileUpdated} onFileSaved={onFileSaved} onExitError={(error) => showToast(error, false)} /> : <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: fullHeightPreview ? "hidden" : "auto", position: "relative", WebkitOverflowScrolling: "touch" }}>
         <div style={{ minWidth: "100%", height: fullHeightPreview ? "100%" : undefined, display: "block", background: "transparent" }}>
           {documentPreviewKind ? (
-            <DocumentViewer key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={documentPreviewKind} />
+            <DocumentViewer key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={documentPreviewKind} version={fileVersion} />
           ) : htmlPreview && !htmlSourceMode ? (
-            <HtmlPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} />
+            <HtmlPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} version={fileVersion} />
           ) : videoKind ? (
-            <VideoPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={videoKind} />
-          ) : file.mime?.startsWith("image/") || [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext.toLowerCase()) ? (
-            <div style={{ padding: "24px 16px" }}><ImageViewer path={file.path} root={file.root} /></div>
+            <VideoPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={videoKind} version={fileVersion} />
+          ) : isImagePreview ? (
+            <div style={{ display: "flex", height: "100%", minHeight: 0 }}><ImageViewer path={file.path} root={file.root} version={fileVersion} /></div>
           ) : file.encoding === "binary" ? (
             <div style={{ padding: "24px 16px" }}><BinaryViewer /></div>
           ) : usesMarkdownViewer ? (

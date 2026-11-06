@@ -6,7 +6,8 @@ import { rawFileFailures, RAW_FILE_FAILURE_TTL_MS, rawFileBlobCache, RAW_FILE_BL
 
 // 成功 blob 缓存：多图 Markdown 中同一路径的图片在组件重挂载/重复渲染时复用，避免重复请求。
 // 缓存的是 Promise（并发去重：同 key 同时发起只打一次网络），LRU 上限逐出；页面刷新即清空。
-// ponytail: 无 TTL，文件内容更新后同路径在缓存逐出前仍返回旧图；如需要可加时间戳失效。
+// key 里的 `version`（调用方传文件的 mtime）让「同名文件被改写后仍拿旧图」变成缓存 miss ——
+// 没有它就只能等 LRU 逐出或显式 invalidate，而文件视图重开时既不逐出也不一定 invalidate。
 
 
 export function fetchProofProtectedBlob(params: {
@@ -14,9 +15,11 @@ export function fetchProofProtectedBlob(params: {
   path: string;
   timeoutMs?: number;
   nodeId?: string;
+  /** 资源版本（文件 mtime）。变了就是另一份缓存条目，同时透传给服务端做 HTTP 缓存分键。 */
+  version?: string;
 }): Promise<Blob> {
   params = { ...params, nodeId: params.nodeId || getRootNodeId(params.rootId) };
-  const cacheKey = `${params.rootId}:${params.path}:${params.nodeId || ""}`;
+  const cacheKey = `${params.rootId}:${params.path}:${params.nodeId || ""}:${params.version || ""}`;
   const cached = rawFileBlobCache.get(cacheKey);
   if (cached) return cached;
   const promise = doFetchProofProtectedBlob(params, cacheKey);
@@ -36,7 +39,7 @@ export function fetchProofProtectedBlob(params: {
 }
 
 async function doFetchProofProtectedBlob(
-  params: { rootId: string; path: string; timeoutMs?: number; nodeId?: string },
+  params: { rootId: string; path: string; timeoutMs?: number; nodeId?: string; version?: string },
   cacheKey: string,
 ): Promise<Blob> {
   const request = createFetchOptions(params.timeoutMs);
@@ -51,6 +54,7 @@ async function doFetchProofProtectedBlob(
     const baseURL = buildFileURL(params.rootId, params.path, "full", 0, undefined, params.nodeId);
     const rawURL = withRawFlag(
       baseURL,
+      params.version,
     );
     const response = await fetchResponse(rawURL, request.init);
     if (!response.ok) {
@@ -68,9 +72,12 @@ async function doFetchProofProtectedBlob(
   }
 }
 
-function withRawFlag(url: string): string {
+function withRawFlag(url: string, version?: string): string {
   const target = new URL(url, window.location.origin);
   target.searchParams.set("raw", "1");
+  if (version) {
+    target.searchParams.set("v", version);
+  }
   if (target.origin === window.location.origin) {
     return `${target.pathname}${target.search}`;
   }

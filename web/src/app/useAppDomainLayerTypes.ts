@@ -112,7 +112,7 @@ export type UseAppDomainLayerParams = {
   queueFrozenBySessionRef: React.RefObject<Record<string, boolean>>;
   queueVersion: number;
   queuedMessagesBySessionRef: React.RefObject<Record<string, QueuedUserMessage[]>>;
-  refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<void>;
+  refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<boolean>;
   refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<GitHistoryPayload | null>;
   refreshGitStatus: (rootID: string) => Promise<GitStatusPayload | null>;
   refreshMultiProjectReplyingSessions: () => Promise<void>;

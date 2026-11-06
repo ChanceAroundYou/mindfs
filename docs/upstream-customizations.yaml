@@ -5732,8 +5732,8 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - "web/src/components/file/DocumentViewer.tsx:useDocumentPreviewBlob(root, path)"
-      - "web/src/components/file/useDocumentPreviewBlob.ts:fetchProofProtectedBlob({ rootId: root, path })"
+      - "web/src/components/file/DocumentViewer.tsx:useDocumentPreviewBlob(root, path, version)"
+      - "web/src/components/file/useDocumentPreviewBlob.ts:fetchProofProtectedBlob({ rootId: root, path, version })"
 
   - id: G-IT
     title: Project and Git views use shared contracts and node logic hook
@@ -6284,6 +6284,7 @@ groups:
       - web/src/app/useNativeShellLifecycle.ts
       - web/src/components/session/SessionViewer.tsx
       - web/src/services/prefs/appearance.ts
+      - docs/plans/android-keyboard-pan-lock.md
     tests:
       - web/tests/keyboard-no-white-flash.test.mjs
       - web/tests/keyboard-viewport-height.test.mjs
@@ -7058,8 +7059,8 @@ groups:
   - id: G-KJ
     title: APK 自更新（关于页真比对 GitHub Release + 下载安装）与测试提醒可诊断
     kind: feature
-    symptom: "关于弹窗里的「检查更新」过去只是打开 Release 网页，不会告诉用户有没有新版本；改成真正的版本比对后，要么提示「已是最新版本」，要么自动下载 APK 并拉起系统安装器。另：点「测试提醒」没有任何反应（通知权限已开）——因为提醒渠道只在 ReplyPollerService.onCreate 创建，服务没跑过时通知投进不存在的渠道被系统静默丢弃，且投递失败也无人知晓。"
-    why: "① 比对必须用 android:versionCode 的口径：build.gradle 的 mindfsVersionCodeFromName 公式为 major*10000000+minor*100000+patch*1000+build+1，前端的点分版本解析会忽略 -1106 这类构建号，永远判不出新版本，所以 githubAppUpdate.ts 复刻同一条公式并从 MindFSAppInfo.build 取当前值；② 安装链路要齐四件：REQUEST_INSTALL_PACKAGES 权限（否则 canRequestPackageInstalls=false，安装器直接拒绝）、FileProvider 的 external-files-path（APK 落在 getExternalFilesDir(DOWNLOADS)/updates，原 file_paths 只有 external-path，取 URI 会抛 IllegalArgumentException）、application/vnd.android.package-archive 的 ACTION_VIEW、以及受理后重新引导授权；③ 测试提醒必须自成闭环：ensureChannels 抽成 static 并在 postTestAlert 里先调用，再把权限/渠道被关/投递异常作为字符串回传 JS 显示在弹窗里，把「静默无反应」变成可诊断。"
+    symptom: "关于弹窗里的「检查更新」过去只是打开 Release 网页，不会告诉用户有没有新版本；改成真正的版本比对后，要么提示「已是最新版本」，要么自动下载 APK 并拉起系统安装器。另：点「测试提醒」没有任何反应（通知权限已开）——因为提醒渠道只在 ReplyPollerService.onCreate 创建，服务没跑过时通知投进不存在的渠道被系统静默丢弃，且投递失败也无人知晓。另：「检查更新」时好时坏 —— 旧实现 fetch 未认证的 api.github.com，限流按出口 IP 计 60 次/小时，手机走机场出口时配额常年为 0，用户看到「GitHub 返回 403」。"
+    why: "① 比对必须用 android:versionCode 的口径：build.gradle 的 mindfsVersionCodeFromName 公式为 major*10000000+minor*100000+patch*1000+build+1，前端的点分版本解析会忽略 -1106 这类构建号，永远判不出新版本，所以 githubAppUpdate.ts 复刻同一条公式并从 MindFSAppInfo.build 取当前值；② 安装链路要齐四件：REQUEST_INSTALL_PACKAGES 权限（否则 canRequestPackageInstalls=false，安装器直接拒绝）、FileProvider 的 external-files-path（APK 落在 getExternalFilesDir(DOWNLOADS)/updates，原 file_paths 只有 external-path，取 URI 会抛 IllegalArgumentException）、application/vnd.android.package-archive 的 ACTION_VIEW、以及受理后重新引导授权；③ 测试提醒必须自成闭环：ensureChannels 抽成 static 并在 postTestAlert 里先调用，再把权限/渠道被关/投递异常作为字符串回传 JS 显示在弹窗里，把「静默无反应」变成可诊断；④ 检查更新的主路径读发布清单（releases/latest/download/android-version.json，由 make android-version-json 随 APK 一起上传，URL 固定、不需先知道 tag）而不是未认证 REST API：REST 未认证限流按出口 IP 计 60 次/小时，手机走机场出口时同一落地 IP 挂着他人流量、配额常年 0，而 GitHub 节点是 16 成员轮换的 fallback 组 → 时而选中被用光的 IP 就 403；清单走 github.com → 302 → release-assets，属普通发布资源下载（与 APK 本体同一路径），不吃 REST 配额。REST API 只作兜底，且清单响应没有 CORS 头，原生壳必须走 CapacitorHttp。"
     boundary: "只动 Android 壳的更新下载安装与通知渠道创建路径、关于弹窗的检查更新/测试提醒交互、以及 replyPoller.ts 的 testAlert 返回契约；不改服务端更新服务（server/app/update.go 仍走 control plane），不改轮询频率与提醒判定逻辑（ReplyAlertPlanner 不动），不引入新的依赖。"
     files:
       - web/src/services/update/githubAppUpdate.ts
@@ -7077,9 +7078,12 @@ groups:
       - web/src/components/file/FileTreeAboutDialog.tsx
     tests:
       - web/tests/apk-self-update.test.mjs
+      - web/tests/apk-update-manifest.test.ts
     anchors:
       - 'web/src/services/update/githubAppUpdate.ts:major * 10000000 + minor * 100000 + patch * 1000 + build + 1'
       - 'web/src/services/update/githubAppUpdate.ts:downloadAndInstallApk'
+      - 'web/src/services/update/githubAppUpdate.ts:releases/latest/download/android-version.json'
+      - 'web/src/services/update/githubAppUpdate.ts:export function releaseFromManifest('
       - 'web/src/services/net/replyPoller.ts:export async function testNativeReplyAlert(): Promise<string>'
       - 'web/android/app/src/main/java/com/mindfs/app/MainActivity.java:if (!ReplyPollerService.hasConfiguredBase(this))'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:private List<NodeTarget> nodeTargets()'
@@ -7088,3 +7092,87 @@ groups:
       - 'web/src/services/net/replyPoller.ts:export function setNativeReplyViewing'
       - 'web/src/hooks/useApkUpdateCheck.ts:installApkUpdate('
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:static void ensureChannels(Context context)'
+
+  - id: G-KK
+    title: 图片缩放（文件视图内联缩放 + 会话图片全屏灯箱）
+    kind: feature
+    symptom: "agent 生成的图片（截图、架构图、图表）在会话和文件预览里按容器宽度渲染、没有放大手段，手机上小字根本看不清；关系图（mermaid）能缩放，普通图片不能。"
+    why: "上游没有图片缩放：文件视图的 ImageViewer 只有一张 maxWidth/maxHeight 的 <img>，会话 Markdown 的图片是裸 <img>。要补齐就得有一份缩放数学 + 一套手势 + 两个消费面，缺任何一块都会退回「看不清」。数学必须与图表预览共用同一份夹取范围与锚点换算（否则一边能放到 16 倍、另一边悄悄只到 4 倍）；但图表预览按 SVG viewBox 做 fit、且被真机验过，所以只抽数学、不改它 —— diagramZoom 门面就是那条兼容边界。"
+    boundary: "不重构 DiagramPreview（只把它的数学搬到 shared/zoomTransform，旧名字 zoomDiagramAt/diagramGesture 与旧测试原样保留）；不做附件图片（AttachmentImage）上的缩放；不引入手势库（Pointer Events + 原生 wheel 监听）；灯箱复用 <dialog showModal> + portal，与图表预览同一套可访问性套路。"
+    files:
+      - web/src/shared/zoomTransform.ts
+      - web/src/shared/diagramZoom.ts
+      - web/src/hooks/usePinchZoom.ts
+      - web/src/components/common/ImageZoomOverlay.tsx
+      - web/src/components/common/MarkdownImage.tsx
+      - web/src/components/file/ImageViewer.tsx
+      - web/src/components/file/FileViewer.tsx
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - e2e/test_image_zoom_and_file_refresh.py
+      - docs/plans/image-zoom-and-file-auto-refresh.md
+      - docs/plans/README.md
+    tests:
+      - web/tests/zoom-transform.test.mjs
+      - web/tests/image-zoom-ui.test.mjs
+      - web/tests/diagram-zoom.test.mjs
+      - e2e/test_image_zoom_and_file_refresh.py
+    anchors:
+      - 'web/src/shared/zoomTransform.ts:export function zoomAt(transform: ZoomTransform, factor: number'
+      - 'web/src/shared/zoomTransform.ts:export const ZOOM_MAX_SCALE = 16'
+      - 'web/src/shared/diagramZoom.ts:export { gestureMetrics as diagramGesture, zoomAt as zoomDiagramAt } from "./zoomTransform";'
+      - 'web/src/hooks/usePinchZoom.ts:const DOUBLE_TAP_SCALE = 2;'
+      - 'web/src/hooks/usePinchZoom.ts:if (!event.ctrlKey && !event.metaKey) return;'
+      - 'web/src/components/common/ImageZoomOverlay.tsx:const IMAGE_ZOOM_STYLES'
+      - 'web/src/components/file/ImageViewer.tsx:touchAction: zoomed ? "none" : "pan-y"'
+      - 'web/src/components/common/MarkdownImage.tsx:event.stopPropagation();'
+
+  - id: G-KL
+    title: 预览资源版本化缓存 + 当前文件自动刷新（轮询 + 手动刷新）
+    kind: fix
+    symptom: "编辑或重新生成同名文件后，再打开文件预览还是旧内容：图片是旧图、PDF/Office/视频/网页预览也都停在上一版。只有整页刷新才恢复。"
+    why: "四层缓存各有一份『旧版』：① rawFileBlobCache 无 TTL，同路径永远命中旧 Blob；② useProtectedBlobUrl 与各预览 memo 的依赖只有 path/root，文件变了也不重取；③ 选中会话时 FileViewer 不渲染，切回来不重发请求；④ 两个原始字节端点都没有 Cache-Control，浏览器按启发式缓存长期复用。WS file.changed 只覆盖「本节点 + 文件视图可见」：跨节点事件到不了浏览器，切回文件视图也没人重放。修法是把文件 mtime 当作资源版本贯穿五处（blob key → URL ?v= → hook 依赖 → memo 比较器 → 服务端缓存头），再补两条兜底通道（可见时 5s 轮询、顶栏手动刷新），并在内容真的变了时顺带刷新所在目录。"
+    boundary: "不新增接口字段、不做数据迁移、不引入依赖：版本直接取 /api/file 已返回的 mtime（revision 兜底）。version 参数全部是可选末尾参数，旧调用点不传即旧行为；refreshCurrentFileContent 的 {force} 可选、返回值 void→boolean 兼容。轮询只在文件视图且无选中会话时发请求；内容没变不 setFile（防预览/选区/滚动抖动）。服务端只加响应头（路径式 no-cache 保留 Last-Modified，查询式 no-store）。"
+    files:
+      - web/src/services/file/blob.ts
+      - web/src/services/file/rawAsset.ts
+      - web/src/hooks/useProtectedBlobUrl.ts
+      - web/src/hooks/useRawAssetUrl.ts
+      - web/src/components/file/FileViewer.tsx
+      - web/src/components/file/useFileViewer.ts
+      - web/src/components/file/DocumentViewer.tsx
+      - web/src/components/file/useDocumentPreviewBlob.ts
+      - web/src/components/file/VideoPreview.tsx
+      - web/src/components/file/HtmlPreview.tsx
+      - web/src/components/file/icons.tsx
+      - web/src/components/file/FileTreeRefreshButton.tsx
+      - web/src/app/useFileRefresh.ts
+      - web/src/app/useFileAutoRefresh.ts
+      - web/src/app/useAppViewComposition.ts
+      - web/src/app/useAppViewCompositionTypes.ts
+      - web/src/app/useAppDomainLayerTypes.ts
+      - web/src/app/useRealtimeEventsContext.ts
+      - web/src/app/AppRootView.tsx
+      - web/src/components/app/sessionPaneTypes.ts
+      - web/src/components/app/SessionMainContent.tsx
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - server/internal/api/http_files.go
+      - server/internal/api/http_raw_files.go
+      - e2e/test_image_zoom_and_file_refresh.py
+      - docs/plans/image-zoom-and-file-auto-refresh.md
+      - docs/plans/README.md
+    tests:
+      - web/tests/file-blob-versioning.test.mjs
+      - web/tests/file-auto-refresh.test.mjs
+      - server/internal/api/raw_file_cache_test.go
+      - e2e/test_image_zoom_and_file_refresh.py
+    anchors:
+      - 'web/src/services/file/blob.ts:const cacheKey = `${params.rootId}:${params.path}:${params.nodeId || ""}:${params.version || ""}`'
+      - 'web/src/services/file/rawAsset.ts:return params.version ? `${url}?v=${encodeURIComponent(params.version)}` : url;'
+      - 'web/src/app/useFileAutoRefresh.ts:const FILE_POLL_INTERVAL_MS = 5000;'
+      - 'web/src/app/useFileAutoRefresh.ts:if (mainViewRef.current !== "files" || selectedSessionRef.current) return false;'
+      - 'web/src/app/useFileRefresh.ts:if (force) invalidateFileCache(rootID, changedPath);'
+      - 'web/src/components/file/FileViewer.tsx:t("fileViewer.reload")'
+      - 'server/internal/api/http_raw_files.go:w.Header().Set("Cache-Control", "no-cache")'
+      - 'server/internal/api/http_files.go:w.Header().Set("Cache-Control", "no-store")'

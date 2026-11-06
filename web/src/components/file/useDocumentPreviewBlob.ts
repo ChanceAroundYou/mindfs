@@ -7,7 +7,7 @@ type PreviewBlobState =
   | { status: "ready"; blob: Blob }
   | { status: "error"; detail?: string };
 
-export function useDocumentPreviewBlob(root: string | undefined, path: string): PreviewBlobState {
+export function useDocumentPreviewBlob(root: string | undefined, path: string, version?: string): PreviewBlobState {
   const [state, setState] = useState<PreviewBlobState>({ status: "loading" });
 
   useEffect(() => {
@@ -17,7 +17,7 @@ export function useDocumentPreviewBlob(root: string | undefined, path: string): 
       setState({ status: "error", detail: "no project" });
       return undefined;
     }
-    void fetchProofProtectedBlob({ rootId: root, path })
+    void fetchProofProtectedBlob({ rootId: root, path, version })
       .then((blob) => {
         if (!cancelled) setState({ status: "ready", blob });
       })
@@ -27,7 +27,7 @@ export function useDocumentPreviewBlob(root: string | undefined, path: string): 
     return () => {
       cancelled = true;
     };
-  }, [path, root]);
+  }, [path, root, version]);
 
   return state;
 }

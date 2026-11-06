@@ -31,7 +31,7 @@ import { useSessionStreamCache } from "./useSessionStreamCache";
 import { useTaskTemplates } from "./useTaskTemplates";
 import { useI18n } from "../i18n";
 import { PluginManager } from "../plugins/manager";
-import { type FilePayload, fetchFile } from "../services/file";
+import { type FilePayload, fetchFile, invalidateFileCache } from "../services/file";
 import { protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { appURL } from "../services/net/base";
 import { reportError } from "../services/net/error";
@@ -127,12 +127,13 @@ export function useFileRefresh(params: UseFileRefreshParams) {
     [formatDirectoryLoadError, getNodeIdForRoot, treeCacheKey],
   );
   const refreshCurrentFileContent = useCallback(
-    async (rootID: string, changedPath: string) => {
-      if (fileEditStore.has(rootID, changedPath)) return;
+    async (rootID: string, changedPath: string, options?: { force?: boolean }): Promise<boolean> => {
+      const force = options?.force === true;
+      if (fileEditStore.has(rootID, changedPath)) return false;
       const currentFile = fileRef.current;
-      if (!currentFile) return;
+      if (!currentFile) return false;
       const currentRoot = currentFile.root || currentRootIdRef.current || "";
-      if (currentRoot !== rootID || currentFile.path !== changedPath) return;
+      if (currentRoot !== rootID || currentFile.path !== changedPath) return false;
 
       let readMode: "incremental" | "full" = "incremental";
       if (!pluginBypassRef.current) {
@@ -147,6 +148,9 @@ export function useFileRefresh(params: UseFileRefreshParams) {
         }
       }
 
+      // 手动刷新：连内存/IndexedDB 缓存与 old mtime 304 校验一起跳过，直接把磁盘上的当前内容拿回来。
+      if (force) invalidateFileCache(rootID, changedPath);
+
       try {
         const next = await fetchFile({
           rootId: rootID,
@@ -154,6 +158,7 @@ export function useFileRefresh(params: UseFileRefreshParams) {
           nodeId: getNodeIdForRoot(String(rootID)),
           readMode,
           cursor: fileCursorRef.current || 0,
+          fresh: force || undefined,
         });
         const latestFile = fileRef.current;
         const latestRoot = latestFile?.root || currentRootIdRef.current || "";
@@ -164,19 +169,28 @@ export function useFileRefresh(params: UseFileRefreshParams) {
           latestFile.path !== changedPath ||
           fileEditStore.has(rootID, changedPath)
         ) {
-          return;
+          return false;
         }
+        // 轮询是周期性空转的：内容没变就不要 setFile —— 否则每轮都换一个新对象，
+        // 预览重渲染、选区与滚动位置跟着抖。
+        const changed = force
+          || next.mtime !== latestFile.mtime
+          || next.size !== latestFile.size
+          || next.content !== latestFile.content;
+        if (!changed) return false;
         setFile({
           ...next,
           targetLine: latestFile.targetLine,
           targetColumn: latestFile.targetColumn,
         });
+        return true;
       } catch (err) {
         console.error("[file.refresh.changed] failed", {
           rootID,
           changedPath,
           err,
         });
+        return false;
       }
     },
     [],

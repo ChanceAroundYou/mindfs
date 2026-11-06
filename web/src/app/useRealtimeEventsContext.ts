@@ -102,7 +102,7 @@ export type RealtimeEventsContext = {
     /** 重拉工作台结构。转发 ref，为 null 表示工作台没打开，调用方无需自己判。 */
     refreshWorkspaceBoard: () => void;
     promotePendingSessionForRoot: (rootID: string, tempKey: string | undefined, sessionKey: string, fallback?: Session | null) => void;
-    refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<void>;
+    refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<boolean>;
     refreshGitStatus: (rootID: string) => Promise<GitStatusPayload | null>;
     refreshManagedRoots: () => Promise<void>;
     refreshMultiProjectReplyingSessions: () => Promise<void>;

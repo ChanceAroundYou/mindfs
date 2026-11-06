@@ -81,6 +81,9 @@ func (h *HTTPHandler) handleFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rawOut.File.Close()
+		// 原始字节不进浏览器 HTTP 缓存：前端自己按 mtime 版本号分键缓存 blob，
+		// 浏览器再叠一层「同名文件还留着旧字节」的启发式缓存只会让刷新失效。
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Length", strconv.FormatInt(rawOut.Info.Size(), 10))
 		ext := filepath.Ext(rawOut.RelPath)
 		if mimeType := mime.TypeByExtension(ext); mimeType != "" {

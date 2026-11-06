@@ -37,6 +37,9 @@ export type FileViewerProps = {
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
   isVisible?: boolean;
+  /** 手动刷新当前文件：自动刷新（WS/轮询）都没赶上时的兜底入口。返回 false 表示没刷成功。 */
+  onReloadFile?: () => void | Promise<unknown>;
+  reloadingFile?: boolean;
 };
 
 function isSelectionInside(root: Node, range: Range): boolean {
