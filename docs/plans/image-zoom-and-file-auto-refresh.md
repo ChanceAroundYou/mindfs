@@ -1,6 +1,6 @@
 # 图片缩放与文件自动刷新
 
-状态：Implemented 2026-11-06，待 ship。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
+状态：Implemented 2026-11-06，已提交（`79fb813b`），待 ship。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
 
 ## 背景
 
@@ -107,10 +107,9 @@ WS 的 `file.changed` 只覆盖「本节点 + 文件视图可见」这一种情�
     自己换成 128px。
 - 收尾复核（yaml / 方案文档定稿后重跑）：`npm run typecheck`、vitest 全量 206 文件 / 465 通过、
   `make build-web`、`make test`、新增 e2e 3 passed、`TestRawFileResponsesDisableHeuristicCaching` 全绿。
-- `make check-upstream` — 提交前必红，且只红 8 条：G-KK/G-KL 登记的新文件（`zoomTransform` /
-  `usePinchZoom` / `ImageZoomOverlay` / `useFileAutoRefresh` / e2e / 方案文档）尚未提交，
-  不在 `merge-base..HEAD` 的 delta 里。它只看**已提交**的文件，提交后自动转绿；
-  其余 delta 文件（locale、FileViewer 等）早已随前序提交进 delta，不再报。
+- `make check-upstream` — 提交后全绿（1548 个 delta 文件被 265 组完整覆盖）。提交前它必红 8 条：
+  G-KK/G-KL 登记的新文件（`zoomTransform` / `usePinchZoom` / `ImageZoomOverlay` / `useFileAutoRefresh` /
+  e2e / 方案文档）尚未进 `merge-base..HEAD` 的 delta —— 它只看**已提交**的文件，属预期，提交即转绿。
 - 触摸手势（双指缩放、拖动）仍未上真机点过 —— 无头浏览器只验到按钮/键盘路径，待 ship 后验收。
 
 ## 与原方案的差异

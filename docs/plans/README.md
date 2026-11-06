@@ -6,7 +6,7 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-- [Image zoom and file auto refresh](image-zoom-and-file-auto-refresh.md) — Implemented 2026-11-06，待 ship；文件视图内联缩放 + 会话图片全屏灯箱（数学抽到 `shared/zoomTransform`，图表预览经 `diagramZoom` 门面零改动）；预览资源按文件 mtime 版本化贯穿 blob/URL/hook/memo/HTTP 五层缓存，外加可见时 5s 轮询与顶栏手动刷新，变化时顺带刷新所在目录。测试：`zoom-transform` / `image-zoom-ui` / `file-blob-versioning` / `file-auto-refresh` / `raw_file_cache_test.go`。Scope: G-KK、G-KL。
+- [Image zoom and file auto refresh](image-zoom-and-file-auto-refresh.md) — Implemented 2026-11-06，已提交 `79fb813b`（同批收编在飞的 G-KJ APK 自更新：检查更新改读发布清单），待 ship；文件视图内联缩放 + 会话图片全屏灯箱（数学抽到 `shared/zoomTransform`，图表预览经 `diagramZoom` 门面零改动）；预览资源按文件 mtime 版本化贯穿 blob/URL/hook/memo/HTTP 五层缓存，外加可见时 5s 轮询与顶栏手动刷新，变化时顺带刷新所在目录。测试：`zoom-transform` / `image-zoom-ui` / `file-blob-versioning` / `file-auto-refresh` / `raw_file_cache_test.go`。Scope: G-KK、G-KL。
 
 - [Android keyboard pan lock](android-keyboard-pan-lock.md) — Implemented 2026-11-05，待 ship；键盘弹起时安卓壳可视视口可拖出空白的 pan 锁（Web 层手势拦截，仅安卓壳生效）；测试 `keyboard-pan-lock.test.mjs`。Scope: G-JC。
 
