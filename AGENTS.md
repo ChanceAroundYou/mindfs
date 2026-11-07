@@ -33,7 +33,7 @@ WSL 与 fn 是 **user** 单元）；pc-win 是同一台 PC 上的第四个实例
 | **本机** | Proxmox VM，Ubuntu 26.04，`home.xiaokubao.space`(192.168.1.6) | `ubuntu` / `xiaokubao` | `home` | **system**：`/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**只由用户执行** |
 | **wsl** | 用户 PC 上的 WSL，Ubuntu 24.04，`pc.xiaokubao.space` | `PC-HOME` / `nnb` | `pc` | **user**：`~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
 | **fn** | fnOS，`fn.xiaokubao.space` | `xiaokubao-fn` / `xiaokubao` | `fn` | **user**：`~/.config/systemd/user/mindfs.service`（另有 fnOS drop-in） | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
-| **pc-win** | 同一台物理 PC 上的 **Windows** 实例（与 wsl 共用内网 IP，`ssh pc` → Windows 宿主） | `PC-HOME` / `小哭包`（家目录 `C:\Users\10178`） | 走 `/mindfs-win` 前缀添加；本机 `nodes.json` 里**没有**它的条目（实测 2026-11-07 只有 local/pc/fn 三条） | **无 systemd**：计划任务 `\mindfs` + HKCU Run 键 | `0.0.0.0:7332`（7331 被 wsl 占着） | `ssh pc` 起的进程会被 sshd 杀掉、`schtasks /run` 也不生效（任务只允许交互会话）；要在 PC 登录会话里启动，详见 memory `windows-worker-on-pc` |
+| **pc-win** | 同一台物理 PC 上的 **Windows** 实例（与 wsl 共用内网 IP，`ssh pc` → Windows 宿主） | `PC-HOME` / `小哭包`（家目录 `C:\Users\10178`） | 走 `/mindfs-win` 前缀添加；本机 `nodes.json` 里**没有**它的条目（实测 2026-11-07 只有 local/pc/fn 三条） | **无 systemd**：计划任务 `\mindfs`（登录类型 **S4U**、Boot+Logon 双触发，2026-11-07 改）+ HKCU Run 键 | `0.0.0.0:7332`（7331 被 wsl 占着） | `ssh pc "schtasks /run /tn mindfs"`（S4U 后从 ssh 也生效，进程落 **Session 0**）；`ssh pc` 直接起的进程仍会被 sshd 杀掉。详见 memory `windows-worker-on-pc` |
 
 - **本机不叫 PC**。说「PC」时指的是 WSL 所在的那台 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → 里面的 WSL）。本机一律叫「本机」或 `ubuntu`，WSL 一律叫 `wsl` 或 `pc`，fn 一律叫 `fn`。
 - 判据（2026-09-21 复核）：本机 `curl 127.0.0.1:7331/mindfs/api/nodes` 与 `https://home.xiaokubao.space/mindfs/api/nodes` 返回完全相同（自己 `local`→home，对端 `pc`）；`https://pc.xiaokubao.space/...` 自己 `local`→pc，对端 `home`。
@@ -44,7 +44,7 @@ WSL 与 fn 是 **user** 单元）；pc-win 是同一台 PC 上的第四个实例
   唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json`，通过 ssh 安装到 WSL 与 fn；以及交叉编译 Windows 二进制安装到同机 pc-win（`scripts/deploy-pcwin.sh`，`deploy-all.sh` 第 5 步一并调用）。
   **不推 `web/dist`**：WSL 与 fn 都是纯 worker 节点（`config.json` 的 `role=worker`），按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
   WSL 上的 `/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传）；worker 上能查的是运行数据，不是源码。
-  **注意**：`deploy-pcwin.sh` 末尾的「pc-win 已重启」**不是上线证据**——`schtasks /run` 与 `Get-Process` 的输出都被丢弃、失败也 `|| true`；任务登录状态是「只使用交互方式」，从 ssh 触发不起进程。核对是否真在运行：`ssh pc "netstat -ano | findstr :7332"`。
+  **注意**：pc-win 的「装上了」与「在跑」是两件事。计划任务 `\mindfs` 自 2026-11-07 起登录类型是 **S4U**（原 `InteractiveToken`，从 ssh 触发 `schtasks /run` 起不了进程），并补了 `BootTrigger`——所以它跑在 Session 0、不需要有人登录。`deploy-pcwin.sh` 会轮询取回进程 PID 与 health，取不到就明写「未确认在跑」而不是「已重启」。自己核对：`ssh pc "netstat -ano | findstr :7332"`。
 
 ## 模块地图
 

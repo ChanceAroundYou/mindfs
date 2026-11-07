@@ -24,7 +24,7 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 4. **WSL 与 fn 都没有源码库，永远别在 worker 上编译**。WSL 的 `~/projects/mindfs` 只剩 `.mindfs/` 数据目录；两个 worker 都只接收本机构建好的产物。去 worker 上 `make build` / `git pull` = 走错路了。
 5. **不在 main 上不部署**。脚本会直接拒绝 —— 先走 `/worktree-finish` 合回 main。
 6. **对账要真的看**：版本号是**逐字比对**（推过去的就是本机那个二进制文件，必须完全相同，脚本不一致即停）。bundle **哈希不同是正常的**（每次构建注入随机戳 `buildStamp()`，见 `vite.config.ts:30`），**字节数相同才说明内容一致**。
-7. **「pc-win 已重启」不是上线证据**。`scripts/deploy-pcwin.sh` 末尾那一步丢弃了 `schtasks /run` 与 `Get-Process` 的输出、失败也 `|| true`；计划任务 `\mindfs` 的登录状态是「只使用交互方式」，从 ssh 触发**起不了**进程。二进制装上了、版本一致，都不等于在跑。要核对得自己查监听：`ssh pc "netstat -ano | findstr :7332"`（无输出即没在运行，需在 PC 的登录会话里启动）。
+7. **pc-win 要认 PID，不认「已重启」这句话**。计划任务 `\mindfs` 的登录类型自 2026-11-07 起是 **S4U**（原 `InteractiveToken` —— 那种从 ssh 触发 `schtasks /run` 根本起不了进程，而脚本照样打「已重启」），并补了 `BootTrigger`，所以进程落在 Session 0、不需要有人登录。`scripts/deploy-pcwin.sh` 现在会轮询取回进程 PID 与 health，取不到就打印「未确认在跑」。看到那条警告别当成成功；自己核对：`ssh pc "netstat -ano | findstr :7332"`。
 
 ## 脚本做了什么
 
@@ -49,7 +49,7 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 | **本机** | Proxmox VM，Ubuntu 26.04 | **system** | `127.0.0.1:7331` | 有（`~/projects/mindfs`） | 编译安装，**不重启**（留给用户） |
 | **wsl** | PC 上的 WSL，Ubuntu 24.04 | **user** | `127.0.0.1:7331` | **无** | 收产物 + 安装 + 直接重启 |
 | **fn** | fnOS，`fn.xiaokubao.space` | **user** | `0.0.0.0:7331` | **无** | 收产物 + 安装 + 直接重启 |
-| **pc-win** | 同一台 PC 上的 Windows 实例（`ssh pc`） | **无 systemd**（计划任务 `\mindfs`） | `0.0.0.0:7332` | **无** | 交叉编译产物 + 换二进制；**「已重启」不成立**（见铁律 7），要自己核对监听 |
+| **pc-win** | 同一台 PC 上的 Windows 实例（`ssh pc`） | **无 systemd**（计划任务 `\mindfs`，登录类型 S4U → Session 0） | `0.0.0.0:7332` | **无** | 交叉编译产物 + 换二进制 + `schtasks /run`；脚本会轮询 **PID + health** 并回报，取不到写「未确认在跑」（见铁律 7） |
 
 ssh 别名是 `wsl`（→ `pc.xiaokubao.space`，user `nnb`）和 `fn`（→ `fn.xiaokubao.space`，user `xiaokubao`），Windows 那台是 `pc`。分别用 `MINDFS_WSL_HOST`、`MINDFS_FN_HOST`、`MINDFS_PC_HOST` 覆盖。
 
@@ -58,7 +58,7 @@ ssh 别名是 `wsl`（→ `pc.xiaokubao.space`，user `nnb`）和 `fn`（→ `fn
 别只说「部署完成」。要给出**可核对的事实**：
 
 - 本机与各 worker 的版本号（**必须逐字相同**；脚本已经把不一致当失败处理）
-- **pc-win 要单独说清**：装上了、版本一致，**不等于在跑**。附上 `ssh pc "netstat -ano | findstr :7332"` 的实际结果；没有输出就明确讲「已装未运行」，别写成「已重启」
+- **pc-win 要单独说清**：引用脚本回报的 **PID 与 health**（那是唯一有效证据）。脚本打「未确认在跑」时照原样转述，别美化成「已重启」；要自己确认就 `ssh pc "netstat -ano | findstr :7332"`
 - 门禁三项的实际结果（web 报告 Vitest 测试通过与跳过数）
 - 本机那条待用户执行的 `sudo systemctl restart mindfs`
 

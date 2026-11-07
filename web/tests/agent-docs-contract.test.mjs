@@ -76,9 +76,17 @@ test("deploy coverage in docs matches the three worker scripts the runner invoke
     assert.match(text, /pc-win/, `${name} 没提 pc-win（收尾范围写漏）`);
   }
 
-  // pc-win 的「已重启」不可当证据：脚本与文档必须同时留这条判据。
+  // pc-win 的启动必须被核对：脚本要取回进程 PID，取不到要明说「未确认在跑」。
+  // （2026-11-07 之前它把 schtasks /run 与 Get-Process 的输出一起丢掉、还打「已重启」。）
   const pcwin = readFileSync(path.join(root, "scripts/deploy-pcwin.sh"), "utf8");
-  assert.match(pcwin, /schtasks \/run[^\n]*\|\| true/, "deploy-pcwin.sh 的重启步骤仍丢弃结果");
+  assert.match(pcwin, /\$\(ssh[^\n]*Get-Process mindfs/, "deploy-pcwin.sh 没有取回进程 PID");
+  assert.match(pcwin, /未确认在跑/, "deploy-pcwin.sh 启动失败时没有如实说明");
+  // 只禁「丢掉 stdout」：`2>/dev/null` 是 ssh 的 stderr，合法；` >/dev/null` 才是把查询结果扔了。
+  assert.doesNotMatch(
+    pcwin,
+    /Get-Process mindfs[^\n]*[^2\d]>\s*\/dev\/null/,
+    "deploy-pcwin.sh 又把进程查询结果丢掉了",
+  );
   for (const name of ["AGENTS.md", ".claude/skills/ship/SKILL.md"]) {
     assert.match(docs[name], /findstr :7332/, `${name} 没写独立核对 pc-win 的判据`);
   }

@@ -41,10 +41,24 @@ remote_version="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershe
 [[ "$remote_version" == "$VERSION" ]] || die "版本不一致：pc-win=$remote_version 本机=$VERSION"
 ok "pc-win 已安装 $remote_version"
 
-step "pc-win 重启"
+step "pc-win 启动并核对"
+# 计划任务 \mindfs 的登录类型是 S4U（2026-11-07 改的，原先是 InteractiveToken），
+# 所以它跑在 Session 0、不管用户是否登录都会起，`schtasks /run` 从 ssh 触发也真的生效。
+# 但「发出了运行请求」不等于「进程在跑」——这里轮询取回 PID 与 health，取不到就明说。
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" 'schtasks /run /tn mindfs' >/dev/null 2>&1 || true
-sleep 3
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" 'powershell -Command "Get-Process mindfs -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"' >/dev/null 2>&1 || true
-ok "pc-win 已重启"
+pid=""
+for _ in 1 2 3; do
+  sleep 4
+  pid="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershell -NoProfile -Command \"Get-Process mindfs -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id\"" 2>/dev/null | tr -d '\r\n ' || true)"
+  [[ -n "$pid" ]] && break
+done
+if [[ -n "$pid" ]]; then
+  health="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershell -NoProfile -Command \"try { (Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7332/mindfs/health -TimeoutSec 8).StatusCode } catch { 'unreachable' }\"" 2>/dev/null | tr -d '\r\n' || true)"
+  ok "pc-win 已启动：PID ${pid}，health ${health:-取不到}（Session 0，由计划任务启动）"
+else
+  # 不 die：产物已经装对、版本已核对过，这里失败只代表进程没起来（PC 睡眠/任务被禁用等），
+  # 但绝不能把这一步说成「已重启」。
+  printf '    \033[33m! pc-win 查不到 mindfs 进程：产物已装但**未确认在跑**。手动核对：ssh %s "netstat -ano | findstr :7332"\033[0m\n' "$PC_HOST"
+fi
 
 echo "pc-win 部署完成 $VERSION"
