@@ -1,6 +1,6 @@
 import { registerPlugin } from "@capacitor/core";
 import { getNativeBridge, parseNativeJSON } from "./nativeBridge";
-import { isHarmonyRuntime, isNativeShellRuntime } from "./runtime";
+import { isNativeShellRuntime } from "./runtime";
 import type { LauncherNode } from "../prefs/storage";
 
 type LauncherNodeSyncPlugin = {
@@ -34,9 +34,6 @@ export async function getNativeLauncherNodes(): Promise<LauncherNode[]> {
     if (typeof native?.getLauncherNodes === "function") {
       return normalizeNodesResult<LauncherNode>(await native.getLauncherNodes());
     }
-    if (isHarmonyRuntime()) {
-      return [];
-    }
     const result = await LauncherNodeSync.getLauncherNodes();
     return Array.isArray(result?.nodes) ? result.nodes : [];
   } catch (error) {
@@ -53,9 +50,6 @@ export async function setNativeLauncherNodes(nodes: LauncherNode[]): Promise<voi
     const native = getNativeBridge();
     if (typeof native?.setLauncherNodes === "function") {
       await native.setLauncherNodes(JSON.stringify({ nodes }));
-      return;
-    }
-    if (isHarmonyRuntime()) {
       return;
     }
     await LauncherNodeSync.setLauncherNodes({ nodes });

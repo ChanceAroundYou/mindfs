@@ -18,7 +18,7 @@ export type NativeReplyPollerConfig = {
 };
 
 export type NativeBridge = {
-  platform?: "android" | "harmony" | string;
+  platform?: "android" | "ios" | string;
   download?: (input: { url: string; filename: string } | string) => Promise<NativeDownloadResult> | NativeDownloadResult | string | void;
   saveBase64?: (input: { dataBase64: string; filename: string; mimeType?: string } | string) => Promise<NativeDownloadResult> | NativeDownloadResult | string | void;
   openExternalURL?: (url: string) => Promise<string | void> | string | void;
@@ -27,24 +27,26 @@ export type NativeBridge = {
   dismissReplyNotification?: (input: { nodeId: string; rootId: string; sessionKey: string } | string) => Promise<void> | void;
   markClearWebViewCacheOnNextLaunch?: () => Promise<{ scheduled?: boolean } | void> | { scheduled?: boolean } | void;
   clearPendingWebViewCacheClear?: () => Promise<{ scheduled?: boolean } | void> | { scheduled?: boolean } | void;
-  consumeRelayNodes?: () => Promise<{ nodes?: unknown[]; count?: number } | unknown[] | string> | { nodes?: unknown[]; count?: number } | unknown[] | string;
   getLauncherNodes?: () => Promise<{ nodes?: LauncherNode[]; count?: number } | LauncherNode[] | string> | { nodes?: LauncherNode[]; count?: number } | LauncherNode[] | string;
   setLauncherNodes?: (input: { nodes: LauncherNode[] } | string) => Promise<{ stored?: boolean; count?: number } | void> | { stored?: boolean; count?: number } | void;
   writeClipboardText?: (text: string) => Promise<boolean | void> | boolean | void;
 };
 
-type LegacyBridgeWindow = Window & {
+// 原生壳的桥对象形状（window.MindFSNative）。
+// 曾经还有两个成员/字段属于上游带来的东西，已随 relay 与鸿蒙壳一起删掉：
+//   · consumeRelayNodes —— relay 节点同步的取件口，relay 整体删除后没有任何调用方
+//   · MindFSHarmony      —— 鸿蒙 ArkTS 壳注入的第二个桥对象
+type NativeBridgeWindow = Window & {
   MindFSNative?: NativeBridge;
-  MindFSHarmony?: NativeBridge;
 };
 
 export function getNativeBridge(): NativeBridge | null {
   if (typeof window === "undefined") {
     return null;
   }
-  const win = window as LegacyBridgeWindow;
-  const bridges = [win.MindFSNative, win.MindFSHarmony].filter(Boolean) as NativeBridge[];
-  return bridges.find(hasCallableNativeMethod) || bridges[0] || null;
+  const win = window as NativeBridgeWindow;
+  const bridge = win.MindFSNative;
+  return bridge && hasCallableNativeMethod(bridge) ? bridge : null;
 }
 
 function hasCallableNativeMethod(bridge: NativeBridge): boolean {

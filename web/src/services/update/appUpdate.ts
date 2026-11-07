@@ -1,5 +1,6 @@
 import { getNativeBridge, parseNativeJSON } from "../platform/nativeBridge";
-import { getNativePlatform, isAndroidRuntime, isHarmonyRuntime, isNativeShellRuntime, type NativePlatform } from "../platform/runtime";
+import { isNewerVersion, normalizeVersionLabel } from "./appVersion";
+import { getNativePlatform, isAndroidRuntime, isNativeShellRuntime, type NativePlatform } from "../platform/runtime";
 
 export type AppUpdateState = {
   platform: NativePlatform;
@@ -48,8 +49,11 @@ export function normalizeAppUpdateState(
   };
 }
 
+// 只有安卓壳能自己装更新包：APK = 下载 + 拉起系统安装器。
+// iOS 没有这条通道 —— 装 ipa 必须重新签名（Xcode / Sideloadly），App 内部做不到，
+// 所以 iOS 壳不显示「有新版本可装」，更新靠重新安装。
 export function isUpdatableNativeRuntime(): boolean {
-  return isAndroidRuntime() || isHarmonyRuntime();
+  return isAndroidRuntime();
 }
 
 export async function fetchAppUpdateState(): Promise<AppUpdateState> {
@@ -58,7 +62,7 @@ export async function fetchAppUpdateState(): Promise<AppUpdateState> {
   }
 
   const platform = getNativePlatform();
-  const endpoint = buildVersionEndpoint(platform);
+  const endpoint = buildVersionEndpoint();
   if (!endpoint) {
     // 未配置版本检查地址：按「没有更新信息」处理，不拿空 URL 去 fetch。
     return normalizeAppUpdateState(null);
@@ -86,7 +90,7 @@ export async function fetchAppUpdateState(): Promise<AppUpdateState> {
     status: hasUpdate ? "available" : "idle",
     notes: payload.notes || "",
     download_url: download.url || "",
-    filename: download.filename || filenameFromURL(download.url || "") || defaultPackageFilename(platform),
+    filename: download.filename || filenameFromURL(download.url || "") || defaultPackageFilename(),
   });
 }
 
@@ -121,10 +125,7 @@ async function fetchVersionPayload(
 
 // 版本检查地址只由构建期环境变量提供，缺省为空 = 不做检查。
 // 刻意不再内置上游 relay 域名（本 fork 已整体删除 relay，见 G-H）。
-function buildVersionEndpoint(platform: NativePlatform): string {
-  if (platform === "harmony") {
-    return String(import.meta.env.VITE_HARMONY_VERSION_URL || "").trim();
-  }
+function buildVersionEndpoint(): string {
   return String(import.meta.env.VITE_ANDROID_VERSION_URL || "").trim();
 }
 
@@ -151,12 +152,10 @@ function pickNativeDownload(payload: AppVersionResponse, platform: NativePlatfor
   const downloads = Array.isArray(payload.downloads) ? payload.downloads : [];
   const platformDownloads = downloads.filter((item) => {
     const os = String(item.os || "").toLowerCase();
-    return !os || os === platform || (platform === "harmony" && os === "openharmony");
+    return !os || os === platform;
   });
   const candidates = platformDownloads.length ? platformDownloads : downloads;
-  const packagePattern = platform === "harmony"
-    ? /\.(hap|app)(?:$|\?)/i
-    : /\.apk(?:$|\?)/i;
+  const packagePattern = /\.apk(?:$|\?)/i;
   return (
     candidates.find((item) => packagePattern.test(item.url || item.filename || "")) ||
     candidates[0] ||
@@ -164,40 +163,12 @@ function pickNativeDownload(payload: AppVersionResponse, platform: NativePlatfor
   );
 }
 
-function defaultPackageFilename(platform: NativePlatform): string {
-  return platform === "harmony" ? "mindfs-harmony.hap" : "mindfs-android.apk";
+function defaultPackageFilename(): string {
+  return "mindfs-android.apk";
 }
 
-export function appPackageLabel(platform = getNativePlatform()): string {
-  return platform === "harmony" ? "HarmonyOS" : "Android";
-}
-
-export function normalizeVersionLabel(value: string): string {
-  return String(value || "").trim().replace(/^v/i, "");
-}
-
-function isNewerVersion(latest: string, current: string): boolean {
-  const latestParts = parseVersionParts(latest);
-  const currentParts = parseVersionParts(current);
-  if (!latestParts || !currentParts) {
-    return latest !== current;
-  }
-  const length = Math.max(latestParts.length, currentParts.length);
-  for (let i = 0; i < length; i += 1) {
-    const left = latestParts[i] || 0;
-    const right = currentParts[i] || 0;
-    if (left > right) return true;
-    if (left < right) return false;
-  }
-  return false;
-}
-
-function parseVersionParts(value: string): number[] | null {
-  const match = normalizeVersionLabel(value).match(/^(\d+(?:\.\d+){0,3})/);
-  if (!match) {
-    return null;
-  }
-  return match[1].split(".").map((part) => Number.parseInt(part, 10));
+export function appPackageLabel(): string {
+  return "Android";
 }
 
 function filenameFromURL(value: string): string {

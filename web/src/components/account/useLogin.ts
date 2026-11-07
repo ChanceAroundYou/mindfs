@@ -123,7 +123,7 @@ export function useLogin({ onOpenNode }: { onOpenNode: (nodeURL: string) => void
 
   async function handleDownloadAppUpdate(): Promise<void> {
     const next = normalizeAppUpdateState(appUpdateState);
-    const packageLabel = appPackageLabel(next.platform);
+    const packageLabel = appPackageLabel();
     if (!next.download_url || appUpdateBusy) {
       return;
     }

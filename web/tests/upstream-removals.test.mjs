@@ -164,8 +164,9 @@ for (const locale of ["zh-CN", "en-US"]) {
 // 文档残留（G-H，2026-10-17）：包、路由、前端入口都删了，但**描述当前状态**的文档里
 // 还留着它们的位置 —— 架构文档列一个不存在的包、规则文档把已删服务当共享实例举例，
 // 排查者会据此以为能力仍在。与上面的 i18n 死键是同一类「删了一半」。
-// **只扫描述当前状态的文档**：README.md 与 upstream/main 逐字节相同（改它等于新增一份
-// 定制），docs/plans/ 与 docs/*-prd.md 是历史记录，它们提到 relay 是正确的。
+// **只扫描述当前状态的文档**：docs/plans/ 与 docs/*-prd.md 是历史记录，它们提到 relay 是正确的。
+// （README 曾经「与 upstream/main 逐字节相同」—— 2026-11-07 起改成本 fork 自己的说明，
+//  上游门面由下面的条目检测钉住不许回来。）
 for (const file of [
   "AGENTS.md",
   "docs/multi-node-control-plane.md",
@@ -201,6 +202,38 @@ for (const [file, gone] of [
   assert.ok(!src.includes(gone), `${file} 又写上了已删能力的说明：${gone}`);
 }
 
+// README 的上游门面（2026-11-07 用户拍板：把上游 agent9 的痕迹抹掉）：官网、Discord、Twitter、
+// 微信群二维码、竞品对比报告、友情链接，以及「登录 a9gent.com 完成绑定」那段。
+// 它们描述的是上游项目的社群与远程服务，不是本构建能做的事 —— 留着等于替上游拉人。
+for (const [file, gone] of [
+  ["README.md", "relay.a9gent.com"],
+  ["README.md", "a9gent.com"],
+  ["README.md", "Official Site"],
+  ["README.md", "Discord"],
+  ["README.md", "wechat-group"],
+  ["README.md", "Competitive Analysis"],
+  ["README.md", "Friend Links"],
+  ["README.md", "Enable Remote Access"],
+  ["README.zh.md", "relay.a9gent.com"],
+  ["README.zh.md", "官网"],
+  ["README.zh.md", "Discord"],
+  ["README.zh.md", "微信群"],
+  ["README.zh.md", "竞品对比"],
+  ["README.zh.md", "友情链接"],
+]) {
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+  assert.ok(!src.includes(gone), `${file} 又把上游社群/远程服务当本项目的入口：${gone}`);
+}
+
+// 上游社群资产与竞品对比文档（已删）不许复活。
+for (const rel of [
+  "docs/remote-vibe-project-comparison.md",
+  "docs/remote-vibe-project-comparison.pdf",
+  "docs/images/mindfs-wechat-group.webp",
+]) {
+  assert.ok(!fs.existsSync(path.join(root, rel)), `已删的上游营销文件复活了：${rel}`);
+}
+
 // relay 时代的「资源别名前缀」也一并清掉（G-H，2026-10-09）：服务端的
 // RelayAssetsAlias()、前端的 RELAY_ASSETS_PREFIX、SW 里注入的 RELAY_ALIAS，
 // 都只为「relay 会把相对 bundle 改写成 /<前缀>-assets/」这一种形态存在。
@@ -219,15 +252,52 @@ for (const [file, gone] of [
   ["web/index.html", "MINDFS_MAIN_ASSET_RE"],
   ["web/index.html", "isRelayNodePage"],
   ["web/vite.config.ts", "MINDFS_MAIN_ASSET_RE"],
-  // Harmony 原生壳（G-H 第三批，2026-10-09）：6 处「当前页面是不是上游 relay 页面」的
-  // 判定，以及它们驱动的 relay 节点同步（注入脚本 + MindFSLauncherNodeSync 桥）、
-  // 列表安全区补丁、启动器里藏「mindfs relayer」按钮 —— 一并删掉。这里只能做
-  // **文本级**复活检测：本仓库没有 ArkTS 构建环境，改它无法编译验证。
-  ["harmony/entry/src/main/ets/pages/Index.ets", "relay.a9gent.com"],
-  ["harmony/entry/src/main/ets/pages/Index.ets", "MindFSLauncherNodeSync"],
 ]) {
   const src = fs.readFileSync(path.join(root, file), "utf8");
   assert.ok(!src.includes(gone), `${file} 又出现了 relay 资源别名接线：${gone}`);
+}
+
+// 鸿蒙（HarmonyOS ArkTS）原生壳：整个 harmony/ 目录连同构建接线与前端平台身份一起删掉
+// （2026-11-07 用户拍板「只留自己做的壳」）。它是上游建的壳，上游那份还在 upstream/main，
+// 合上游时会被整份带回来 —— 而且带回来后在文件级 diff 里只是"没差异了"。
+// 目录级检测比内容级更可靠：harmony/ 下出现任何文件就红，不用管它里面写了什么
+// （原来那两条文本检测钉的 relay 判定与 MindFSLauncherNodeSync 桥，一并被目录级覆盖）。
+assert.ok(!fs.existsSync(path.join(root, "harmony")), "上游的鸿蒙壳复活了：harmony/");
+
+const makefile = fs.readFileSync(path.join(root, "Makefile"), "utf8");
+// 只钉**接线**（目标定义与变量赋值），不钉注释里提到它的说明文字 —— 注释是留给合上游的人看的。
+const harmonyWiring = /^\s*(?:build-harmony\s*:|(?:HARMONY|DEVECO)_[A-Z_]+\s*\?=)/m;
+assert.ok(
+  !harmonyWiring.test(makefile),
+  "Makefile 又接回了鸿蒙壳构建（build-harmony 目标或 HARMONY_*/DEVECO_* 变量）",
+);
+
+const webPackage = JSON.parse(fs.readFileSync(path.join(root, "web/package.json"), "utf8"));
+assert.ok(!("build:harmony" in (webPackage.scripts || {})), "web/package.json 又加回了 build:harmony");
+
+// 平台身份只承认自己有的壳：android / ios / native（web 是浏览器）。
+const runtimeSrc = fs.readFileSync(path.join(root, "web/src/services/platform/runtime.ts"), "utf8");
+assert.ok(!/type NativePlatform =[^;]*harmony[^;]*;/.test(runtimeSrc), "NativePlatform 又承认 harmony 平台");
+const bridgeSrc = fs.readFileSync(path.join(root, "web/src/services/platform/nativeBridge.ts"), "utf8");
+assert.ok(
+  !/(?:MindFSHarmony\s*\?:|\bwin\.MindFSHarmony|window\.MindFSHarmony)/.test(bridgeSrc),
+  "nativeBridge 又去探测鸿蒙壳的桥对象 MindFSHarmony",
+);
+for (const p of walk(path.join(root, "web/src"))) {
+  const src = fs.readFileSync(p, "utf8");
+  assert.ok(!/isHarmonyRuntime|VITE_NATIVE_PLATFORM=harmony/.test(src), `${path.relative(root, p)} 又接回 harmony 分支`);
+}
+
+// relay 留在原生壳里的最后一块：MindFSLauncherNodeSync 的 JS 接口与 storeRelayNodes/consumeRelayNodes。
+// 它的唯一调用方是鸿蒙壳的注入脚本，鸿蒙删了它就没有人调；安卓壳的节点同步走 Capacitor 插件
+// （LauncherNodeSync.getLauncherNodes / setLauncherNodes），跟 relay 无关。
+for (const [file, gone] of [
+  ["web/android/app/src/main/java/com/mindfs/app/MainActivity.java", "MindFSLauncherNodeSync"],
+  ["web/android/app/src/main/java/com/mindfs/app/MainActivity.java", "storeRelayNodes"],
+  ["web/android/app/src/main/java/com/mindfs/app/LauncherNodeSyncPlugin.java", "relay"],
+]) {
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+  assert.ok(!src.includes(gone), `${file} 又把 relay 节点同步接回了安卓壳：${gone}`);
 }
 
 console.log(`✓ 上游裁剪面完整：${REMOVED.length} 个被删文件未复活、无悬空引用、替代实现在位`);

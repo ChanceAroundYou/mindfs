@@ -2,7 +2,7 @@ import { registerPlugin } from "@capacitor/core";
 import { appPath, appURL } from "./base";
 import { getNodes } from "./nodeRegistry";
 import { getNativeBridge } from "../platform/nativeBridge";
-import { isHarmonyRuntime, isNativeShellRuntime } from "../platform/runtime";
+import { isNativeShellRuntime } from "../platform/runtime";
 
 type ReplyPollerPlugin = {
   configure(options: {
@@ -91,8 +91,9 @@ function absoluteNodeURL(path: string, nodeId: string): string {
 export async function syncNativeReplyPoller(): Promise<void> {
   const native = getNativeBridge();
   const bridge = (window as NativeReplyPollerSyncWindow).MindFSReplyPoller;
-  const hasHarmonyBridge = typeof native?.configureReplyPoller === "function" || typeof bridge?.configure === "function";
-  if (!isNativeShellRuntime() && !hasHarmonyBridge) {
+  // 原生桥在不在，看的是桥本身，不看平台名：壳可能回报 "native"（认不出具体平台）但桥是齐的。
+  const hasNativeBridge = typeof native?.configureReplyPoller === "function" || typeof bridge?.configure === "function";
+  if (!isNativeShellRuntime() && !hasNativeBridge) {
     return;
   }
   bindNativeReplyPollerListeners();

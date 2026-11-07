@@ -1,4 +1,4 @@
-import { isAndroidRuntime, isHarmonyRuntime, isNativeShellRuntime } from "../services/platform/runtime";
+import { isAndroidRuntime, isNativeShellRuntime } from "../services/platform/runtime";
 
 
 
@@ -9,9 +9,6 @@ export function isNativeLauncherOrigin(): boolean {
     return false;
   }
   const hostname = window.location.hostname.toLowerCase();
-  if (isHarmonyRuntime()) {
-    return hostname === "mindfs.local";
-  }
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "mindfs.local";
 }
 
@@ -22,9 +19,6 @@ export function isNativeLauncherOrigin(): boolean {
 export function nativeLauncherURL(): string {
   if (typeof window === "undefined") {
     return "http://localhost";
-  }
-  if (isHarmonyRuntime()) {
-    return "https://mindfs.local/index.html";
   }
   const hostname = window.location.hostname.toLowerCase();
   if (hostname === "mindfs.local") {

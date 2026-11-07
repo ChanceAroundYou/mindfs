@@ -54,10 +54,6 @@ public class MainActivity extends BridgeActivity {
             WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         );
         getBridge().getWebView().addJavascriptInterface(
-            new LauncherNodeSyncBridge(),
-            "MindFSLauncherNodeSync"
-        );
-        getBridge().getWebView().addJavascriptInterface(
             new NativeDownloadBridge(),
             "MindFSNativeDownload"
         );
@@ -496,13 +492,6 @@ public class MainActivity extends BridgeActivity {
             new String[] { Manifest.permission.POST_NOTIFICATIONS },
             POST_NOTIFICATIONS_REQUEST_CODE
         );
-    }
-
-    private class LauncherNodeSyncBridge {
-        @JavascriptInterface
-        public void storeRelayNodes(String rawJSON) {
-            LauncherNodeSyncPlugin.storeRelayNodesJSON(MainActivity.this, rawJSON);
-        }
     }
 
     /**

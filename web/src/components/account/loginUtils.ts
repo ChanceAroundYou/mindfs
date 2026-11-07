@@ -86,7 +86,7 @@ export function appUpdateSummary(
   }
   if (state.latest_version) {
     return t("login.updateAvailable", {
-      packageLabel: appPackageLabel(state.platform),
+      packageLabel: appPackageLabel(),
       version: state.latest_version,
     });
   }

@@ -3,7 +3,9 @@ import { getActiveNode, getNodeById } from "../net/nodeRegistry";
 import { deriveLocalNodeBase, normalizeExplicitNodeBase } from "../net/nodeBase";
 import { DEPLOY_PREFIX } from "../net/prefix";
 
-export type NativePlatform = "web" | "android" | "harmony" | "native";
+// 原生壳的平台。"native" 是「确定在壳里、但认不出具体平台」的兜底。
+// 曾经还有 "harmony"：鸿蒙 ArkTS 壳（上游带来的），已整体删除（AGENTS.md 的 fork 定制清单）。
+export type NativePlatform = "web" | "android" | "ios" | "native";
 
 type NativeRuntimeWindow = Window & {
   __MIND_FS_NATIVE_PLATFORM__?: string;
@@ -14,7 +16,6 @@ type NativeRuntimeWindow = Window & {
   MindFSNative?: {
     platform?: string;
   };
-  MindFSHarmony?: unknown;
 };
 
 export function isBrowserRuntime(): boolean {
@@ -40,25 +41,24 @@ export function getNativePlatform(): NativePlatform {
     return "web";
   }
   const envPlatform = String(import.meta.env.VITE_NATIVE_PLATFORM || "").toLowerCase();
-  if (envPlatform === "harmony" || envPlatform === "android") {
+  if (envPlatform === "android" || envPlatform === "ios") {
     return envPlatform;
   }
 
   const win = window as NativeRuntimeWindow;
   const injectedPlatform = String(win.__MIND_FS_NATIVE_PLATFORM__ || "").toLowerCase();
-  if (injectedPlatform === "harmony" || injectedPlatform === "android") {
+  if (injectedPlatform === "android" || injectedPlatform === "ios") {
     return injectedPlatform;
   }
   const bridgePlatform = String(win.MindFSNative?.platform || "").toLowerCase();
-  if (bridgePlatform === "harmony" || bridgePlatform === "android") {
+  if (bridgePlatform === "android" || bridgePlatform === "ios") {
     return bridgePlatform;
-  }
-  if (win.MindFSHarmony) {
-    return "harmony";
   }
   if (isCapacitorRuntime()) {
     const capacitorPlatform = String(win.Capacitor?.getPlatform?.() || "").toLowerCase();
-    return capacitorPlatform === "android" ? "android" : "native";
+    if (capacitorPlatform === "android") return "android";
+    // Capacitor 在 iOS 上回报 "ios"。认不出来时仍按「在壳里」处理（原生桥接走同一套判定）。
+    return capacitorPlatform === "ios" ? "ios" : "native";
   }
   return "web";
 }
@@ -71,8 +71,8 @@ export function isAndroidRuntime(): boolean {
   return getNativePlatform() === "android";
 }
 
-export function isHarmonyRuntime(): boolean {
-  return getNativePlatform() === "harmony";
+export function isIOSRuntime(): boolean {
+  return getNativePlatform() === "ios";
 }
 
 function readMeta(name: string): string {
