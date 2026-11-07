@@ -23,5 +23,5 @@
 
 ## 收尾
 
-走 `ship` skill（`bash scripts/deploy-all.sh`）：门禁 → 提交推送 → 本机装 → 分发 WSL/fn → 对账。
+走 `ship` skill（`bash scripts/deploy-all.sh`）：门禁 → 提交推送 → 本机装 → 分发 WSL/fn/pc-win → 对账。
 不要手搓 make/ssh 序列。

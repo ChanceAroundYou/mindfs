@@ -1,6 +1,6 @@
 ---
 name: ship
-description: 代码变更后的收尾闭环：门禁测试 → 提交推送 → 本机编译 → 推送产物到 WSL 与 fn 安装重启 → 三端对账。触发词：收尾/部署/发布/上线/deploy/推上去/更新过去/更新 worker/三端部署
+description: 代码变更后的收尾闭环：门禁测试 → 提交推送 → 本机编译 → 推送产物到 WSL / fn / pc-win 安装重启 → 版本与 bundle 对账。触发词：收尾/部署/发布/上线/deploy/推上去/更新过去/更新 worker/三端部署
 ---
 
 # Ship — 代码变更收尾闭环
@@ -24,6 +24,7 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 4. **WSL 与 fn 都没有源码库，永远别在 worker 上编译**。WSL 的 `~/projects/mindfs` 只剩 `.mindfs/` 数据目录；两个 worker 都只接收本机构建好的产物。去 worker 上 `make build` / `git pull` = 走错路了。
 5. **不在 main 上不部署**。脚本会直接拒绝 —— 先走 `/worktree-finish` 合回 main。
 6. **对账要真的看**：版本号是**逐字比对**（推过去的就是本机那个二进制文件，必须完全相同，脚本不一致即停）。bundle **哈希不同是正常的**（每次构建注入随机戳 `buildStamp()`，见 `vite.config.ts:30`），**字节数相同才说明内容一致**。
+7. **「pc-win 已重启」不是上线证据**。`scripts/deploy-pcwin.sh` 末尾那一步丢弃了 `schtasks /run` 与 `Get-Process` 的输出、失败也 `|| true`；计划任务 `\mindfs` 的登录状态是「只使用交互方式」，从 ssh 触发**起不了**进程。二进制装上了、版本一致，都不等于在跑。要核对得自己查监听：`ssh pc "netstat -ano | findstr :7332"`（无输出即没在运行，需在 PC 的登录会话里启动）。
 
 ## 脚本做了什么
 
@@ -34,7 +35,7 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 | 2 | `go test ./...` / `tsc --noEmit` / `npm test`（Vitest） | ✓ 日志留 `/tmp/mindfs-*.log` |
 | 3 | `git push origin main` | ✓ |
 | 4 | 本机 `make build && make install` | ✓ |
-| 5 | `tar` 打包产物 → `ssh wsl`、`ssh fn` 解包 → `install` → （默认）重启 → 回报版本号 | ✓ 版本号不一致直接停 |
+| 5 | `tar` 打包产物 → `ssh wsl`、`ssh fn` 解包 → `install` → （默认）重启 → 回报版本号；交叉编译 Windows 二进制 → `scripts/deploy-pcwin.sh` 装到 pc-win（`schtasks /end` → 换二进制 → `schtasks /run`） | ✓ 版本号不一致直接停（pc-win 失败也 `die`） |
 | 6 | 核对本机 `/` 引用的 bundle 就是刚装进去的那版 | 只警告不中断 |
 
 **第 5 步推的是什么**：`mindfs` 二进制 + `agents.json` + `task_template.json` —— `make install` 会装的四样里**去掉 `web/dist`**。打一条 tar 流走 ssh，分别落在 worker 的 `~/.mindfs-deploy/` 暂存目录，装完即删。
@@ -48,19 +49,22 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 | **本机** | Proxmox VM，Ubuntu 26.04 | **system** | `127.0.0.1:7331` | 有（`~/projects/mindfs`） | 编译安装，**不重启**（留给用户） |
 | **wsl** | PC 上的 WSL，Ubuntu 24.04 | **user** | `127.0.0.1:7331` | **无** | 收产物 + 安装 + 直接重启 |
 | **fn** | fnOS，`fn.xiaokubao.space` | **user** | `0.0.0.0:7331` | **无** | 收产物 + 安装 + 直接重启 |
+| **pc-win** | 同一台 PC 上的 Windows 实例（`ssh pc`） | **无 systemd**（计划任务 `\mindfs`） | `0.0.0.0:7332` | **无** | 交叉编译产物 + 换二进制；**「已重启」不成立**（见铁律 7），要自己核对监听 |
 
-ssh 别名是 `wsl`（→ `pc.xiaokubao.space`，user `nnb`）和 `fn`（→ `fn.xiaokubao.space`，user `xiaokubao`）。分别用 `MINDFS_WSL_HOST` 与 `MINDFS_FN_HOST` 覆盖。
+ssh 别名是 `wsl`（→ `pc.xiaokubao.space`，user `nnb`）和 `fn`（→ `fn.xiaokubao.space`，user `xiaokubao`），Windows 那台是 `pc`。分别用 `MINDFS_WSL_HOST`、`MINDFS_FN_HOST`、`MINDFS_PC_HOST` 覆盖。
 
 ## 走完要报什么
 
 别只说「部署完成」。要给出**可核对的事实**：
 
-- 本机与两个 worker 的版本号（**必须逐字相同**；脚本已经把不一致当失败处理）
+- 本机与各 worker 的版本号（**必须逐字相同**；脚本已经把不一致当失败处理）
+- **pc-win 要单独说清**：装上了、版本一致，**不等于在跑**。附上 `ssh pc "netstat -ano | findstr :7332"` 的实际结果；没有输出就明确讲「已装未运行」，别写成「已重启」
 - 门禁三项的实际结果（web 报告 Vitest 测试通过与跳过数）
 - 本机那条待用户执行的 `sudo systemctl restart mindfs`
 
 ## 常见后续
 
+- **要发版本 / 出安卓 APK**：那是 `/apk-release` 的活（tag → 发布说明 → `make release` → 验签名与线上清单），不在本脚本里做。顺序是**先 ship 后发版**。
 - **纯前端改动**：`make build-web && make install` 即可，dist 由静态服务直接生效，**本机刷新页面就行**。脚本走全套是安全的，只是多花几分钟。
 - **worktree 里的改动**：`/worktree-finish` 合回 main → 再跑本脚本。
 - **只想重新部署当前 main**：直接跑，不带 `-m`。

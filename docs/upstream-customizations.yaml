@@ -977,8 +977,8 @@ groups:
   - id: G-AL
     title: 构建 / 部署 / 收尾流程脚本
     kind: deploy
-    symptom: "部署脚本按上游的目录布局删掉整目录的 web 哈希资源，导致过期标签页白屏；两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致；改了根级文档（AGENTS.md 等）跑完 ship 却没被提交 —— add 白名单够不到仓库根，改动静默留在工作区，版本号挂上 -dirty。"
-    why: "scripts/deploy-all.sh 一条命令完成门禁→提交→本机编译安装→推产物到 WSL 与 fn→worker 重启→三端对账。提交路径是白名单（防 .mindfs/ 运行期数据被卷进提交），所以根级文档要逐个点名；config.json 刻意不在（会被本机改 role/端口，提交等于推本地运行配置）。"
+    symptom: "部署脚本按上游的目录布局删掉整目录的 web 哈希资源，导致过期标签页白屏；两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致；改了根级文档（AGENTS.md 等）跑完 ship 却没被提交 —— add 白名单够不到仓库根，改动静默留在工作区，版本号挂上 -dirty。另一类症状是**报告与事实不符**：脚本按 WSL/fn 两支写文档，实际覆盖 WSL/fn/pc-win 三支，读者以为 pc-win 不在收尾范围内；而 pc-win 那一步自称「已重启」其实不校验进程真起（输出被丢弃、失败也 `|| true`），照着它汇报就会把「装了但没跑」说成上线。"
+    why: "scripts/deploy-all.sh 一条命令完成门禁→提交→本机编译安装→推产物到 WSL 与 fn（重启）→交叉编译装 pc-win→版本与 bundle 对账。提交路径是白名单（防 .mindfs/ 运行期数据被卷进提交），所以根级文档要逐个点名；config.json 刻意不在（会被本机改 role/端口，提交等于推本地运行配置）。Windows 那台没有 systemd，schtasks 从 ssh 触发不起进程，所以「装上了 + 版本一致」与「在跑」必须由人独立核对（`ssh pc` 上看 `netstat -ano | findstr :7332`）。"
     files:
       - Makefile
       - scripts/
@@ -988,7 +988,11 @@ groups:
       # 部署脚本本身的约定（shell 里，没有编译器看着）：
       # 不得 rm -rf web 目录、TTL 三处一致、WSL 端只收产物不编译。
       - web/tests/deploy-web-assets.test.mjs
+      # 收尾范围与「自称成功 ≠ 上线」这条判据：三支 worker 脚本都要被 deploy-all.sh 调用，
+      # AGENTS.md / ship / commit 规则都要提 pc-win，且文档要留独立核对 pc-win 的那条命令。
+      - web/tests/agent-docs-contract.test.mjs
     anchors:
+      - scripts/deploy-all.sh:deploy-pcwin.sh
       - Makefile:WEB_ASSET_TTL_DAYS
       # 前端哈希资源由 `make install` 拷进 ~/.local/share/mindfs/web/ 并按 TTL 清理过期文件；
       # 自 2026-10-07 WSL 是纯 worker（GET / 403），不再推 web/dist，所以这里钉 Makefile 而非

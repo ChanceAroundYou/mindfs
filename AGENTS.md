@@ -1,8 +1,8 @@
 # MindFS — AI Agent Remote Access Gateway · Result Visualization
 
 Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
-本机、WSL 与 fn 三个节点都由 systemd 管理：本机是 **system** 单元、监听 `127.0.0.1:7331`；
-WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监听 `0.0.0.0:7331`。详见下方节点表。
+三台物理设备上跑四个 mindfs 实例（本机 / wsl / fn / pc-win），三个由 systemd 管理、pc-win 靠 Windows 计划任务；
+监听地址、单元归属与重启权限一律见下方[节点表](#节点表别叫错)，别凭印象写。
 
 ## Agent 指令入口与规范
 
@@ -23,13 +23,17 @@ WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监
 - 若规则冲突：平台/工具指令与用户明确要求优先；在其范围内，安全、权限、节点/部署边界以本文件为准，语言/模块代码约束以 `docs/agent/rules/` 为准，任务范围和验收以 Active 计划为准。具体任务提示可收紧范围，不能默默放宽仓库约定。
 - 做长任务时先确认相关规则和 Active 计划已加载；没有 Active 计划时，先建立任务清单并更新计划索引，再开始多阶段实现。
 
-## 三个节点（别叫错）
+## 节点表（别叫错）
+
+**三台物理设备、四个 mindfs 实例**：本机、wsl、fn 三个由 systemd 管理（本机是 **system** 单元、
+WSL 与 fn 是 **user** 单元）；pc-win 是同一台 PC 上的第四个实例，Windows 没有 systemd，靠计划任务常驻。详见下表。
 
 | 代号 | 实际是 | 主机名 / 用户 | 节点显示名 | mindfs 单元 | 监听 | 重启 |
 |---|---|---|---|---|---|---|
 | **本机** | Proxmox VM，Ubuntu 26.04，`home.xiaokubao.space`(192.168.1.6) | `ubuntu` / `xiaokubao` | `home` | **system**：`/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**只由用户执行** |
 | **wsl** | 用户 PC 上的 WSL，Ubuntu 24.04，`pc.xiaokubao.space` | `PC-HOME` / `nnb` | `pc` | **user**：`~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
 | **fn** | fnOS，`fn.xiaokubao.space` | `xiaokubao-fn` / `xiaokubao` | `fn` | **user**：`~/.config/systemd/user/mindfs.service`（另有 fnOS drop-in） | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
+| **pc-win** | 同一台物理 PC 上的 **Windows** 实例（与 wsl 共用内网 IP，`ssh pc` → Windows 宿主） | `PC-HOME` / `小哭包`（家目录 `C:\Users\10178`） | 走 `/mindfs-win` 前缀添加；本机 `nodes.json` 里**没有**它的条目（实测 2026-11-07 只有 local/pc/fn 三条） | **无 systemd**：计划任务 `\mindfs` + HKCU Run 键 | `0.0.0.0:7332`（7331 被 wsl 占着） | `ssh pc` 起的进程会被 sshd 杀掉、`schtasks /run` 也不生效（任务只允许交互会话）；要在 PC 登录会话里启动，详见 memory `windows-worker-on-pc` |
 
 - **本机不叫 PC**。说「PC」时指的是 WSL 所在的那台 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → 里面的 WSL）。本机一律叫「本机」或 `ubuntu`，WSL 一律叫 `wsl` 或 `pc`，fn 一律叫 `fn`。
 - 判据（2026-09-21 复核）：本机 `curl 127.0.0.1:7331/mindfs/api/nodes` 与 `https://home.xiaokubao.space/mindfs/api/nodes` 返回完全相同（自己 `local`→home，对端 `pc`）；`https://pc.xiaokubao.space/...` 自己 `local`→pc，对端 `home`。
@@ -37,9 +41,10 @@ WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监
 - `/home/nnb/...` **不是**旧路径，是 WSL 端的家目录；本机是 `/home/xiaokubao`。
 - 三台设备的账户表、节点 UUID 各自独立；判「本地节点」只认各自 `/api/nodes` 里报 `local` 的那个。
 - **WSL 与 fn 都没有源码库，永远别在 worker 上编译**：它们只接收本机构建好的产物，不能 `git pull` 或 `make build`。
-  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json`，通过 ssh 安装到 WSL 与 fn。
+  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json`，通过 ssh 安装到 WSL 与 fn；以及交叉编译 Windows 二进制安装到同机 pc-win（`scripts/deploy-pcwin.sh`，`deploy-all.sh` 第 5 步一并调用）。
   **不推 `web/dist`**：WSL 与 fn 都是纯 worker 节点（`config.json` 的 `role=worker`），按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
   WSL 上的 `/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传）；worker 上能查的是运行数据，不是源码。
+  **注意**：`deploy-pcwin.sh` 末尾的「pc-win 已重启」**不是上线证据**——`schtasks /run` 与 `Get-Process` 的输出都被丢弃、失败也 `|| true`；任务登录状态是「只使用交互方式」，从 ssh 触发不起进程。核对是否真在运行：`ssh pc "netstat -ano | findstr :7332"`。
 
 ## 模块地图
 
@@ -118,7 +123,7 @@ make dev-web          # 仅 Vite
 
 **构建/重启分工（必守）**：`make build-web / make build / make install / make test` 等编译与安装验证由 Agent 自行执行并验证通过；本机 `sudo systemctl restart mindfs` 仅由用户显式执行（会杀掉所有托管的 claude 子进程），Agent 不得代为重启。WSL 与 fn 的 user 单元可由 Agent 直接重启。`plan-only` / `只出方案` 时必须先落盘方案并经用户显式批准后才动手，禁止未审先做。
 
-**代码变更收尾（必守）**：走 `ship` skill —— `bash scripts/deploy-all.sh` 一条命令完成门禁测试 → 提交推送 → 本机编译安装 → 推送产物到 WSL 与 fn 安装重启 → 三端对账。细节见 `.claude/skills/ship/SKILL.md`，不要手搓 make/ssh 序列。
+**代码变更收尾（必守）**：走 `ship` skill —— `bash scripts/deploy-all.sh` 一条命令完成门禁测试 → 提交推送 → 本机编译安装 → 推送产物到 WSL 与 fn 安装重启、交叉编译装到 pc-win → 版本与 bundle 对账。细节见 `.claude/skills/ship/SKILL.md`，不要手搓 make/ssh 序列。**报告部署成功前必须独立核对进程真的在跑**（脚本自称成功不等于上线证据，见节点表 pc-win 行）。
 
 ## 关键架构事实（易踩坑）
 
@@ -300,11 +305,15 @@ make dev-web          # 仅 Vite
 ```bash
 make test                   # Go 测试
 make build && make install  # 本机完整构建 + 安装
-bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL/fn → 对账
-sudo systemctl restart mindfs   # 本机生效（用户执行）；worker 重启由 deploy-all.sh 直接执行
+bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL/fn/pc-win → 对账
+sudo systemctl restart mindfs   # 本机生效（用户执行）；worker 重启由 deploy-all.sh 直接执行（pc-win 不算，见节点表）
 ```
 
-**WSL 与 fn 只收产物**：没有源码库，别在 worker 上 `make` / `git`。分发只有 `deploy-all.sh` 一条路径，细节见上方节点表。
+**WSL 与 fn 只收产物**：没有源码库，别在 worker 上 `make` / `git`。分发只有 `deploy-all.sh` 一条路径（含 pc-win 那一支），细节见上方节点表。
+
+**发版（GitHub release + 安卓 APK）是另一条路**，不走 `deploy-all.sh`：走 `apk-release` skill
+（`.claude/skills/apk-release/SKILL.md`）—— 发布说明版本必须逐字等于 TAG、`GH_REPO` 必须显式指定、
+私钥只用 `MINDFS_RELEASE_PRIVATE_KEY_FILE` 传、本机 `ANDROID_HOME` 未导出要显式指 `~/Android/Sdk`。
 
 **用户报「线上还是不对」时，先确认线上跑的是哪份产物，再谈行为**：`e2e/live/`
 是对着线上站点跑复现/验收的脚本（凭证在仓库根的 `.env`，已被 `.gitignore` 挡住）。
