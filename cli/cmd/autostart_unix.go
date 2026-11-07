@@ -10,13 +10,29 @@ import (
 	"strings"
 )
 
+// launchAgentLabel is the macOS LaunchAgent identity this build installs.
+// 上游用的是 `com.a9gent.mindfs`；换身份后卸载仍要清那个旧标签（legacyLaunchAgentLabels）——
+// 否则装过上游版本的 macOS 上会留下一个指向已删服务的开机项。
+const (
+	launchAgentLabel      = "space.xiaokubao.mindfs"
+	legacyLaunchAgentName = "com.a9gent.mindfs"
+)
+
+func launchAgentPath(home string) string {
+	return filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist")
+}
+
+func legacyLaunchAgentPath(home string) string {
+	return filepath.Join(home, "Library", "LaunchAgents", legacyLaunchAgentName+".plist")
+}
+
 func installPlatformAutoStart(exe string, args []string, logPath string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	if runtime.GOOS == "darwin" {
-		path := filepath.Join(home, "Library", "LaunchAgents", "com.a9gent.mindfs.plist")
+		path := launchAgentPath(home)
 		content := launchAgentContent(exe, args, logPath)
 		if err := writeAutoStartFile(path, content, 0o644); err != nil {
 			return "", err
@@ -74,9 +90,10 @@ func removePlatformAutoStart() error {
 		return err
 	}
 	if runtime.GOOS == "darwin" {
-		path := filepath.Join(home, "Library", "LaunchAgents", "com.a9gent.mindfs.plist")
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
+		for _, path := range []string{launchAgentPath(home), legacyLaunchAgentPath(home)} {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 		}
 		return nil
 	}
@@ -110,7 +127,7 @@ func launchAgentContent(exe string, args []string, logPath string) string {
 	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
 		"<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n" +
 		"<plist version=\"1.0\">\n<dict>\n" +
-		"  <key>Label</key><string>com.a9gent.mindfs</string>\n" +
+		"  <key>Label</key><string>" + launchAgentLabel + "</string>\n" +
 		"  <key>ProgramArguments</key>\n  <array>\n" + arguments.String() + "  </array>\n" +
 		"  <key>RunAtLoad</key><true/>\n" +
 		"  <key>StandardOutPath</key><string>" + xmlEscape(logPath) + "</string>\n" +

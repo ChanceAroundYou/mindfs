@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"mindfs/internal/deploy"
 )
 
 type download struct {
@@ -29,7 +31,7 @@ type manifest struct {
 func main() {
 	version := flag.String("version", "", "release tag, e.g. v0.5.6")
 	dist := flag.String("dist", "dist", "dist directory")
-	repo := flag.String("repo", "ChanceAroundYou/mindfs", "GitHub repo owner/name")
+	repo := flag.String("repo", deploy.ReleaseRepo, "GitHub repo owner/name")
 	notesFile := flag.String("notes", "", "path to release notes text")
 	apkName := flag.String("apk", "", "APK filename (default mindfs_<version>_android.apk)")
 	flag.Parse()

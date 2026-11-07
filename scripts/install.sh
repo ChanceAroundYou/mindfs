@@ -4,9 +4,9 @@
 # Usage:  bash install.sh [--version VERSION] [--prefix PREFIX] [--uninstall] [--purge]
 set -euo pipefail
 
-REPO="a9gent/mindfs"
+# 仓库身份必须与 internal/deploy.ReleaseRepo 一致（web/tests/agent9-traces.test.mjs 钉这条）。
+REPO="ChanceAroundYou/mindfs"
 RELEASE_NOTES_URL="https://raw.githubusercontent.com/${REPO}/main/release-notes.md"
-RELAY_DOWNLOAD_BASE="https://relay.a9gent.com/mindfs-downloads"
 VERSION=""
 PREFIX="${HOME}/.local"
 UNINSTALL=0
@@ -71,7 +71,8 @@ remove_autostart() {
   local config_home="${XDG_CONFIG_HOME:-${HOME}/.config}"
   case "$(uname -s)" in
     Darwin)
-      rm -f "${HOME}/Library/LaunchAgents/com.a9gent.mindfs.plist"
+      rm -f "${HOME}/Library/LaunchAgents/space.xiaokubao.mindfs.plist" \
+        "${HOME}/Library/LaunchAgents/com.a9gent.mindfs.plist"   # 旧标签：上游装过的 macOS 上的残留
       ;;
     *)
       rm -f \
@@ -174,7 +175,6 @@ echo "  Prefix: ${PREFIX}"
 # ── Download ────────────────────────────────────────────────────────────────
 FILENAME="mindfs_${VERSION}_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${FILENAME}"
-FALLBACK_URL="${RELAY_DOWNLOAD_BASE}/${FILENAME}"
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -189,11 +189,7 @@ download_file() {
 }
 
 echo "  Downloading ${URL}"
-if ! download_file "$URL" "${TMPDIR}/${FILENAME}"; then
-  echo "  GitHub download failed; trying ${FALLBACK_URL}"
-  rm -f "${TMPDIR}/${FILENAME}"
-  download_file "$FALLBACK_URL" "${TMPDIR}/${FILENAME}"
-fi
+download_file "$URL" "${TMPDIR}/${FILENAME}"
 
 # ── Extract ─────────────────────────────────────────────────────────────────
 tar -xzf "${TMPDIR}/${FILENAME}" -C "$TMPDIR"

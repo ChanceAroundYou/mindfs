@@ -1,10 +1,9 @@
-.PHONY: help dev dev-backend dev-web build-web build build-android build-harmony install uninstall build-all start start-server test test-web check-upstream dist-clean publish-release-notes verify-release release tag
+.PHONY: help dev dev-backend dev-web build-web build build-android install uninstall build-all start start-server test test-web check-upstream dist-clean publish-release-notes verify-release release tag
 
 GO ?= go
 NPM ?= npm
 WEB_DIR ?= web
 ANDROID_DIR ?= web/android
-HARMONY_DIR ?= harmony
 ADDR ?= :7331
 ROOT ?= .
 PREFIX ?= $(HOME)/.local
@@ -21,7 +20,6 @@ help:
 		"  make build-web    # build web assets into web/dist" \
 		"  make build        # build web assets and CLI binary" \
 		"  make build-android # build Android release APK into dist/" \
-		"  make build-harmony # build Harmony HAP into dist/" \
 		"  make install      # install binary and built static assets into $(PREFIX)" \
 		"  make uninstall    # remove installed binary and static assets from $(PREFIX)" \
 		"  make build-all    # cross-compile for all platforms into dist/" \
@@ -107,16 +105,11 @@ RELEASE_NOTES_FILE ?= release-notes.md
 RELEASE_NOTES_LATEST_FILE ?= $(DIST_DIR)/release-notes-$(TAG).md
 ANDROID_RELEASE_APK ?= $(ANDROID_DIR)/app/build/outputs/apk/release/app-release.apk
 ANDROID_DIST_APK ?= $(DIST_DIR)/mindfs_$(VERSION)_android.apk
-ANDROID_VERSION_URL ?= https://github.com/ChanceAroundYou/mindfs/releases/latest/download/android-version.json
-ANDROID_RELEASE_REPO ?= ChanceAroundYou/mindfs
-HARMONY_BUILD_MODE ?= release
-HARMONY_SDK_HOME ?= $(HOME)/Library/OpenHarmony/Sdk
-DEVECO_HOME ?= /Applications/DevEco-Studio.app/Contents
-DEVECO_JAVA_HOME ?= $(DEVECO_HOME)/jbr/Contents/Home
-DEVECO_NODE ?= $(DEVECO_HOME)/tools/node/bin/node
-HARMONY_HVIGORW ?= $(DEVECO_HOME)/tools/hvigor/bin/hvigorw.js
-HARMONY_HAP ?= $(HARMONY_DIR)/entry/build/default/outputs/default/entry-default-signed.hap
-HARMONY_DIST_HAP ?= $(DIST_DIR)/mindfs_$(VERSION)_harmony_$(HARMONY_BUILD_MODE).hap
+# 发布仓库身份必须与 internal/deploy.ReleaseRepo 一致（web/tests/agent9-traces.test.mjs 钉这条）。
+RELEASE_REPO ?= ChanceAroundYou/mindfs
+ANDROID_VERSION_URL ?= https://github.com/$(RELEASE_REPO)/releases/latest/download/android-version.json
+# 曾经这里有整套 HARMONY_* / DEVECO_* 变量与 build-harmony 目标：鸿蒙 ArkTS 壳是上游带来的，
+# 已连目录一起删掉（docs/upstream-customizations.yaml）。合上游时不要把它带回来。
 RELEASE_ANDROID ?= 0
 RELEASE_UPLOAD_JOBS ?= 4
 ANDROID_JAVA_HOME ?= $(JAVA_HOME)
@@ -167,20 +160,8 @@ android-install: build-android
 
 android-version-json:
 	$(GO) run ./scripts/android-version-manifest.go \
-		-version "$(VERSION)" -dist "$(DIST_DIR)" -repo "$(ANDROID_RELEASE_REPO)" \
+		-version "$(VERSION)" -dist "$(DIST_DIR)" -repo "$(RELEASE_REPO)" \
 		-notes "$(RELEASE_NOTES_LATEST_FILE)" -apk "$(notdir $(ANDROID_DIST_APK))"
-
-build-harmony:
-	cd $(WEB_DIR) && $(NPM) run build:harmony
-	cd $(HARMONY_DIR) && \
-		JAVA_HOME="$(DEVECO_JAVA_HOME)" \
-		PATH="$(DEVECO_JAVA_HOME)/bin:$$PATH" \
-		OHOS_BASE_SDK_HOME="$(HARMONY_SDK_HOME)" \
-		"$(DEVECO_NODE)" "$(HARMONY_HVIGORW)" \
-			--mode module -p module=entry@default -p product=default -p buildMode="$(HARMONY_BUILD_MODE)" \
-			assembleHap --analyze=normal --parallel --incremental --no-daemon
-	mkdir -p "$(DIST_DIR)"
-	cp "$(HARMONY_HAP)" "$(HARMONY_DIST_HAP)"
 
 dist-clean:
 	rm -rf $(DIST_DIR)
@@ -212,7 +193,7 @@ publish-release-notes:
 verify-release:
 	@test -n "$(TAG)" || (echo "Usage: make verify-release TAG=v1.2.3" >&2; exit 1)
 	@test -n "$(MINDFS_RELEASE_PUBLIC_KEY)" || (echo "Error: MINDFS_RELEASE_PUBLIC_KEY is required to verify release manifests." >&2; exit 1)
-	@$(GO) run scripts/sign-release-manifest.go -verify -version "$(TAG)" -dist "$(DIST_DIR)" -repo "a9gent/mindfs" -public-key "$(MINDFS_RELEASE_PUBLIC_KEY)"
+	@$(GO) run scripts/sign-release-manifest.go -verify -version "$(TAG)" -dist "$(DIST_DIR)" -repo "$(RELEASE_REPO)" -public-key "$(MINDFS_RELEASE_PUBLIC_KEY)"
 
 # Usage: make release TAG=v1.2.3 [RELEASE_ANDROID=1]
 # Builds desktop/server platforms and creates a GitHub release.
@@ -237,7 +218,7 @@ release:
 	else \
 		echo "Skipping Android release. Use RELEASE_ANDROID=1 to include the APK."; \
 	fi
-	@$(GO) run scripts/sign-release-manifest.go -version "$(TAG)" -dist "$(DIST_DIR)" -repo "a9gent/mindfs"
+	@$(GO) run scripts/sign-release-manifest.go -version "$(TAG)" -dist "$(DIST_DIR)" -repo "$(RELEASE_REPO)"
 	$(MAKE) verify-release TAG="$(TAG)" MINDFS_RELEASE_PUBLIC_KEY="$(MINDFS_RELEASE_PUBLIC_KEY)"
 	@echo "Creating draft GitHub release $(TAG)"
 	gh release create $(TAG) \

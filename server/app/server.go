@@ -50,7 +50,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		return err
 	}
 	executable, _ := os.Executable()
-	updateSvc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
+	updateSvc := update.NewService(deploy.ReleaseRepo, opts.Version, executable, opts.Args, 10*time.Minute)
 	updateSvc.Start(ctx)
 
 	// 主页面登录/账户：只用于按账户分区，不参与 API 鉴权。

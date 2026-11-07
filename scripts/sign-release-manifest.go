@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"mindfs/internal/deploy"
 )
 
 type manifest struct {
@@ -38,7 +40,7 @@ type artifact struct {
 func main() {
 	version := flag.String("version", "", "release tag, for example v1.2.3")
 	distDir := flag.String("dist", "dist", "directory containing release artifacts")
-	repo := flag.String("repo", "a9gent/mindfs", "repository name recorded in the manifest")
+	repo := flag.String("repo", deploy.ReleaseRepo, "repository name recorded in the manifest")
 	verify := flag.Bool("verify", false, "verify an existing signed manifest instead of generating one")
 	publicKeyValue := flag.String("public-key", "", "base64 Ed25519 public key")
 	privateKeyValue := flag.String("private-key", "", "base64 Ed25519 private key seed or private key")
