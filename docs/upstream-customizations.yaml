@@ -7180,3 +7180,65 @@ groups:
       - 'web/src/components/file/FileViewer.tsx:t("fileViewer.reload")'
       - 'server/internal/api/http_raw_files.go:w.Header().Set("Cache-Control", "no-cache")'
       - 'server/internal/api/http_files.go:w.Header().Set("Cache-Control", "no-store")'
+
+  # ── 去上游化：身份、品牌与被删的鸿蒙壳 ─────────────────────────────
+  - id: G-KM
+    title: 去上游化：发布与更新通道 repoint、上游品牌与鸿蒙壳删除
+    kind: fix
+    symptom: "四个节点的「检查更新」显示可更新到 v0.5.9 —— 那是上游 a9gent/mindfs 的 release，带 relay 远程模式与端到端加密（我们 2026-10-08 已整体删掉），界面上的「更新」一次点击就能把上游二进制装进生产；挡住自动安装的只有「release 校验公钥未配置」这一条意外状态，不是设计。安卓壳的更新提示同时永远说「已是最新」：装着 v0.5.5-1115 的机器看不到 v0.5.5-1116 存在（版本比较把 tag 尾号截掉了）。README 还替上游拉人：官网 relay.a9gent.com、Discord、微信群二维码、竞品对比报告、友情链接、「登录 a9gent.com 完成绑定」那一整节。仓库里另外躺着一套没人构建的鸿蒙 ArkTS 壳（23 个文件）和它的 make build-harmony / npm run build:harmony 接线。"
+    why: "2026-11-07 用户拍板：抹掉本项目里所有 agent9 痕迹，只留自己做的东西，同时保留 upstream remote 与本清单（以后还要合上游修复）。三件事各自都有「删一半」的坏形态，所以必须成套：① 通道身份 —— 仓库名原本散在 server/app 两处 NewService、Makefile、两个签名脚本、install.sh|ps1、前端壳共 7 处，只改一处等于线上照旧；因此身份收敛成 internal/deploy.ReleaseRepo 一个常量，其余全部派生，并由测试钉「两处 NewService 都走常量」。② 版本语义 —— Go 比较器、gradle 的 versionCode、前端更新提示三处各有一份实现且都把构建号当噪音；旧 gradle 公式给 build 只留 10^3，四位构建号溢出进 patch 槽（0.5.5-1115 算出 506116、0.5.6 只有 506001，安装器会把 0.5.6 判成更旧、拒绝安装）。三处现在共用同一条分段宽度公式，越界直接不算数（TS 返 0、gradle fail）。③ 鸿蒙壳 —— 上游的壳，前端为它保留了 harmony 平台身份、第二个桥对象 MindFSHarmony、.hap 包名与 HarmonyOS 标签；删目录不删接线就是「壳没了、代码还当它在」。顺带清掉只服务鸿蒙注入脚本的安卓 relay 桥（MindFSLauncherNodeSync / storeRelayNodes / KEY_PENDING_RELAY_NODES）与 agents.json 里没人读的 tokenStationURL。"
+    boundary: "不删 upstream remote、不改本清单与 check-upstream（用户明确保留血缘）；不改自动更新的触发方式（只有用户点「更新」或 CLI InstallLatest 才装，10 分钟检查器只置状态）；不给 REST/WS 补鉴权（多账户是配置档不是安全边界）；cli/cmd/autostart_unix.go 与 scripts/install.sh 保留 com.a9gent.mindfs 旧标签的**清理**路径（存量 macOS 安装的残留，清掉它才是本意）；design/json-render-quick-start.md 刻意保留 —— @json-render/core|react|shadcn 是 web/src/renderer/registry.tsx 的活依赖，删文档不会删依赖；iOS 壳不在本组（自有壳、独立互斥边界）。"
+    files:
+      - internal/deploy/
+      - server/app/server.go
+      - server/app/update.go
+      - server/internal/update/version.go
+      - server/internal/update/service_test.go
+      - server/internal/agent/config.go
+      - server/internal/agent/config_types.go
+      - server/internal/agent/config_load_test.go
+      - cli/cmd/autostart_unix.go
+      - cli/cmd/service_control.go
+      - scripts/install.sh
+      - scripts/install.ps1
+      - scripts/sign-release-manifest.go
+      - scripts/android-version-manifest.go
+      - Makefile
+      - agents.json
+      - .gitignore
+      - README.md
+      - README.zh.md
+      - .claude/skills/apk-release/SKILL.md
+      - docs/plans/de-brand-and-ios-shell.md
+      - docs/plans/README.md
+      - web/src/services/update/appVersion.ts
+      - web/src/services/update/appUpdate.ts
+      - web/src/services/update/githubAppUpdate.ts
+      - web/src/services/platform/runtime.ts
+      - web/src/services/platform/nativeBridge.ts
+      - web/src/services/platform/launcherNodeSync.ts
+      - web/src/services/net/replyPoller.ts
+      - web/src/app/nativeShellUtils.ts
+      - web/src/components/account/loginUtils.ts
+      - web/src/components/account/useLogin.ts
+      - web/android/app/build.gradle
+      - web/android/app/src/main/java/com/mindfs/app/MainActivity.java
+      - web/android/app/src/main/java/com/mindfs/app/LauncherNodeSyncPlugin.java
+      - web/package.json
+    tests:
+      - web/tests/agent9-traces.test.mjs
+      - web/tests/upstream-removals.test.mjs
+      - web/tests/apk-update-manifest.test.ts
+      - web/tests/apk-self-update.test.mjs
+      - server/internal/update/service_test.go
+      - internal/deploy/release_test.go
+    anchors:
+      - 'internal/deploy/release.go:const ReleaseRepo = "ChanceAroundYou/mindfs"'
+      - 'server/app/server.go:update.NewService(deploy.ReleaseRepo,'
+      - 'server/app/update.go:update.NewService(deploy.ReleaseRepo,'
+      - 'Makefile:RELEASE_REPO ?= ChanceAroundYou/mindfs'
+      - 'server/internal/update/version.go:var describeDecoration = regexp.MustCompile(`-[0-9]+-g[0-9a-fA-F]+$`)'
+      - 'web/src/services/update/appVersion.ts:export function nativeBuildCodeFromTag(tag: string): number'
+      - 'web/android/app/build.gradle:major * 100000000 + minor * 1000000 + patch * 10000 + build + 1'
+      - 'web/src/services/platform/runtime.ts:export type NativePlatform = "web" | "android" | "ios" | "native";'
+      - 'web/src/services/update/appUpdate.ts:return isAndroidRuntime();'
