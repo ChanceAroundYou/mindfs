@@ -22,10 +22,19 @@
 // 拦掉 —— 原生壳里必须走 CapacitorHttp（与 appUpdate.ts 同一做法）。
 // REST API 兜底保留，但仅用其公开字段；它失败不影响主路径。
 
+import { nativeBuildCodeFromTag, normalizeVersionLabel } from "./appVersion";
+
+// 仓库身份只有一处权威定义：internal/deploy/release.go 的 ReleaseRepo。
+// 这里的缺省必须与它逐字相同（web/tests/agent9-traces.test.mjs 钉这条一致性）。
+const RELEASE_REPO = "ChanceAroundYou/mindfs";
+
+// 构建期给了 VITE_ANDROID_VERSION_URL 就以它为准 —— 那正是 `make build-android` 注入的那条，
+// 也让「登录页的更新提示」（appUpdate.ts 读同一个变量）与这里的自动更新检查指向同一处。
+// 缺省仍是本 fork 自己的发布清单。
 const MANIFEST_URL =
-  "https://github.com/ChanceAroundYou/mindfs/releases/latest/download/android-version.json";
-const RELEASES_API_URL =
-  "https://api.github.com/repos/ChanceAroundYou/mindfs/releases?per_page=20";
+  String(import.meta.env.VITE_ANDROID_VERSION_URL || "").trim() ||
+  `https://github.com/${RELEASE_REPO}/releases/latest/download/android-version.json`;
+const RELEASES_API_URL = `https://api.github.com/repos/${RELEASE_REPO}/releases?per_page=20`;
 
 type ManifestDownload = { os?: string; arch?: string; filename?: string; url?: string; size?: number };
 type ReleaseManifest = { version?: string; notes?: string; downloads?: ManifestDownload[] };
@@ -59,25 +68,28 @@ type WindowWithApkBridge = Window & {
   };
 };
 
-// 与 web/android/app/build.gradle 的 mindfsVersionCodeFromName 同一条公式，
-// 改一边必须改另一边：APK 的 android:versionCode 就是按它算的。
-export function apkVersionCodeFromTag(tag: string): number {
-  const match = String(tag || "").trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-(\d+))?/);
-  if (!match) return 0;
-  const [major, minor, patch] = [match[1], match[2], match[3]].map((part) => Number.parseInt(part, 10));
-  const build = match[4] ? Number.parseInt(match[4], 10) : 0;
-  return Math.max(1, major * 10000000 + minor * 100000 + patch * 1000 + build + 1);
-}
+// 版本公式见 services/update/appVersion.ts（与 gradle 的 mindfsVersionCodeFromName 同一条）。
+const apkVersionCodeFromTag = nativeBuildCodeFromTag;
 
-export function currentApkVersionCode(): number {
-  if (typeof window === "undefined") return 0;
+function currentAppInfo(): { version?: string; build?: string } {
+  if (typeof window === "undefined") return {};
   try {
     const raw = (window as WindowWithApkBridge).MindFSAppInfo?.getInfo?.();
-    const build = raw ? Number.parseInt(String(JSON.parse(raw).build || ""), 10) : 0;
-    return Number.isFinite(build) ? build : 0;
+    const info = raw ? JSON.parse(raw) : {};
+    return { version: String(info.version || ""), build: String(info.build || "") };
   } catch {
-    return 0;
+    return {};
   }
+}
+
+function currentApkVersionCode(): number {
+  const build = Number.parseInt(currentAppInfo().build || "", 10);
+  return Number.isFinite(build) ? build : 0;
+}
+
+// android:versionName 就是发布 tag 本身（gradle 的 mindfsVersionName）。
+function currentApkVersionName(): string {
+  return currentAppInfo().version || "";
 }
 
 function releaseFromJSON(item: GitHubRelease): ApkRelease | null {
@@ -100,7 +112,8 @@ export function releaseFromManifest(manifest: ReleaseManifest): ApkRelease | nul
   const versionCode = apkVersionCodeFromTag(tag);
   if (!tag || !versionCode) return null;
   const downloads = Array.isArray(manifest?.downloads) ? manifest.downloads : [];
-  // 安卓包：os 缺省或为 android，且 url/文件名是 .apk。别把 harmony 的 .hap 认成 APK。
+  // 安卓包：os 缺省或为 android，且 url/文件名是 .apk。别的平台的产物（.ipa/.tar.gz/…）
+  // 一律不认成 APK —— iOS 壳没有这条自更新通道，见 update/appUpdate.ts 的 isUpdatableNativeRuntime。
   const apk =
     downloads.find((item) => {
       const os = String(item?.os || "").toLowerCase();
@@ -179,6 +192,13 @@ export async function checkApkUpdate(): Promise<ApkUpdateCheck> {
 
   if (!latest) {
     return { kind: "unknown", reason: "无法获取发布信息，请检查网络" };
+  }
+  // tag 逐字相同 → 已是最新。这条不只是省一次下载：换 versionCode 公式（修 build 号溢出
+  // patch 槽）之后，装着旧公式号码的 App 与按新公式算出的同号号码必然不相等，
+  // 只比号码会在升级后第一次提示「发现新版本」然后装同一个包。
+  const installedName = normalizeVersionLabel(currentApkVersionName());
+  if (installedName && installedName === normalizeVersionLabel(latest.tag)) {
+    return { kind: "latest", tag: latest.tag };
   }
   if (latest.versionCode <= current) {
     return { kind: "latest", tag: latest.tag };

@@ -27,8 +27,16 @@ def mindfsVersionCodeFromName(String versionName) {
     def minor = matcher.group(2).toInteger()
     def patch = matcher.group(3).toInteger()
     def build = matcher.group(4) ? matcher.group(4).toInteger() : 0
-    // 10x scale keeps tag releases monotonic against legacy dev builds (old formula topped ~50k).
-    return Math.max(1, major * 10000000 + minor * 100000 + patch * 1000 + build + 1)
+    // 分段宽度：build 10^4、patch 10^6、minor 10^8 ⇒ 可表示范围 major<21、minor<100、
+    // patch<100、build<10000，最大约 2.1e9，正好落在 versionCode 的 Int32 里。
+    // 改一边必须改另一边 —— 前端 web/src/services/update/appVersion.ts 的 nativeBuildCodeFromTag 是同一条公式。
+    // 旧公式给 build 只留 10^3，而发布 tag 的构建号已经四位（v0.5.5-1115）：
+    // 0.5.5-1115 算出 506116、0.5.6 只有 506001，安装器会把 0.5.6 当成【更旧的包】拒绝安装。
+    // 新号码整体大于旧号码（0.5.5 = 5050001 对旧公式封顶约 510k），装着旧包的机器能直接升上来。
+    if (major >= 21 || minor >= 100 || patch >= 100 || build >= 10000) {
+        throw new GradleException("mindfsVersion '${versionName}' 超出 versionCode 可表示范围（major<21, minor<100, patch<100, build<10000）")
+    }
+    return Math.max(1, major * 100000000 + minor * 1000000 + patch * 10000 + build + 1)
 }
 
 def mindfsVersionName = (

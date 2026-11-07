@@ -1,6 +1,7 @@
 package update
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -79,36 +80,36 @@ func isNewerVersion(latest, current string) bool {
 	return false
 }
 
+// describeDecoration 是 git describe 追加在标签后面的装饰：<commits>-g<hash>。
+// 必须整块剥掉：v0.5.5-1115-1-gabc1234 的标签身份是 v0.5.5-1115，
+// 逐段解析会把装饰里的提交数读成一个版本段。
+var describeDecoration = regexp.MustCompile(`-[0-9]+-g[0-9a-fA-F]+$`)
+
+// parseVersionParts 把版本身份切成整数段。
+//
+// 关键点：本 fork 的发布标签带构建号（v0.5.5-1115，见 Makefile 的 TAG），所以 '-' 与 '.'
+// 一样是分段符。旧实现把版本截断到第一个非数字/点，于是 v0.5.5-1115 与 v0.5.5-1116 都变成
+// [0,5,5] —— 同一 semver 核心下的构建号更新对更新器完全不可见，装了 1115 的节点永远显示
+// 「已是最新」，更新按钮点了也只回「no update available」。
+//
+// 遇到非数字段（rc1、裸哈希、dev）就停止：那部分不是可比较的版本段，
+// 但已经解析出来的前导段仍然有效（保持旧行为，不把整个版本判为无效）。
 func parseVersionParts(v string) ([]int, bool) {
 	v = normalizeVersion(v)
+	v = strings.TrimSuffix(v, "-dirty")
+	v = describeDecoration.ReplaceAllString(v, "")
 	if v == "" {
 		return nil, false
 	}
-	end := 0
-	for end < len(v) {
-		ch := v[end]
-		if (ch >= '0' && ch <= '9') || ch == '.' {
-			end++
-			continue
-		}
-		break
-	}
-	if end == 0 {
-		return nil, false
-	}
-	core := strings.Trim(v[:end], ".")
-	if core == "" {
-		return nil, false
-	}
-	segments := strings.Split(core, ".")
+	segments := strings.FieldsFunc(v, func(r rune) bool { return r == '.' || r == '-' })
 	parts := make([]int, 0, len(segments))
 	for _, segment := range segments {
 		if segment == "" {
-			return nil, false
+			continue
 		}
 		value, err := strconv.Atoi(segment)
 		if err != nil {
-			return nil, false
+			break
 		}
 		parts = append(parts, value)
 	}

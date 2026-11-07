@@ -16,14 +16,18 @@ const read = (relative) =>
 
 test("versionCode formula matches the gradle build", async () => {
   const gradle = read("../web/android/app/build.gradle");
-  const ts = read("src/services/update/githubAppUpdate.ts");
+  const ts = read("src/services/update/appVersion.ts");
+  const caller = read("src/services/update/githubAppUpdate.ts");
 
-  assert.match(gradle, /major \* 10000000 \+ minor \* 100000 \+ patch \* 1000 \+ build \+ 1/);
-  assert.match(ts, /major \* 10000000 \+ minor \* 100000 \+ patch \* 1000 \+ build \+ 1/);
+  assert.match(gradle, /major \* 100000000 \+ minor \* 1000000 \+ patch \* 10000 \+ build \+ 1/);
+  assert.match(ts, /major \* 100000000 \+ minor \* 1000000 \+ patch \* 10000 \+ build \+ 1/);
+  // 公式只有一份正文：调用方必须 import 它，不能自己再写一遍。
+  assert.match(caller, /import \{ nativeBuildCodeFromTag[\s\S]{0,60}from ".\/appVersion"/);
+  assert.doesNotMatch(caller, /minor \* 1000000 \+/, "githubAppUpdate.ts 又复制了一份公式");
   // 主路径读发布清单（releases/latest/download 固定 URL），不再依赖未认证 REST API；
   // 未认证限流按出口 IP 计 60/h，机场出口常为 0 → 403「检查更新失败」。
-  assert.match(ts, /releases\/latest\/download\/android-version\.json/);
-  assert.match(ts, /releaseFromManifest/);
+  assert.match(caller, /releases\/latest\/download\/android-version\.json/);
+  assert.match(caller, /releaseFromManifest/);
   // 发布 tag 是 v0.5.5-1108（不带 -g<sha>）：正则必须认它，否则 versionCode 落回 1，
   // 自更新永远判「已是最新」。
   assert.match(gradle, /\(\?:-\(\\d\+\)\(\?:-\\d\+\)\?\(\?:-g\[0-9a-f\]\+\.\*\)\?\)\?/);

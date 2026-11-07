@@ -20,6 +20,11 @@ import (
 	"time"
 )
 
+// testReleaseRepo 是测试用的仓库身份。不写真实仓库名是有意的：这些用例测的是
+// 「URL 由注入的 repo 拼出来」，而真实身份由 `internal/deploy.ReleaseRepo` 一处定义、
+// 由 `server/app` 注入（web/tests/agent9-traces.test.mjs 钉那条一致性）。
+const testReleaseRepo = "example/mindfs"
+
 func TestParseReleaseNotesVersion(t *testing.T) {
 	t.Parallel()
 
@@ -86,6 +91,39 @@ func TestIsNewerVersion(t *testing.T) {
 	}
 }
 
+// 本 fork 的发布标签形如 v0.5.5-1115（build 序号在横线后），而安装在跑的进程报的常常是
+// git describe 形态 v0.5.5-1115-1-gabc1234。parseVersionParts 在第一个非数字/点处截断，
+// 所以两者等价 —— 否则每次 ship 之后所有节点都会显示「可更新到自己」。
+//
+// 反向那一条是这个包最容易被忽略的风险面：只要有谁的 repo 指向别人、而别人的 tag 号更大，
+// 自动更新就会把带 relay 远程模式的上游构建装进四台机器。
+// 挡住它的只有「release 校验公钥未配置」这一条运行时状态，所以比对语义必须钉在测试里。
+func TestVersionCompareForThisForksTagScheme(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		latest  string
+		current string
+		want    bool
+	}{
+		{name: "own tag equals git describe build", latest: "v0.5.5-1115", current: "v0.5.5-1115-1-gabc1234", want: false},
+		{name: "own tag equals installed release", latest: "v0.5.5-1115", current: "v0.5.5-1115", want: false},
+		{name: "our next build is newer", latest: "v0.5.5-1116", current: "v0.5.5-1115-1-gabc1234", want: true},
+		{name: "foreign higher semver would be adopted", latest: "v0.5.9", current: "v0.5.5-1115", want: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isNewerVersion(tt.latest, tt.current); got != tt.want {
+				t.Fatalf("isNewerVersion(%q, %q) = %t, want %t", tt.latest, tt.current, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFetchAndVerifyManifest(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -93,10 +131,10 @@ func TestFetchAndVerifyManifest(t *testing.T) {
 	}
 	restoreReleasePublicKey(t, base64.StdEncoding.EncodeToString(publicKey))
 
-	payload := []byte(`{"version":"v1.2.3","repo":"a9gent/mindfs","artifacts":[{"name":"mindfs_v1.2.3_linux_amd64.tar.gz","sha256":"` + strings.Repeat("a", 64) + `","size":123}]}` + "\n")
+	payload := []byte(`{"version":"v1.2.3","repo":"` + testReleaseRepo + `","artifacts":[{"name":"mindfs_v1.2.3_linux_amd64.tar.gz","sha256":"` + strings.Repeat("a", 64) + `","size":123}]}` + "\n")
 	body := signedManifestBody(t, payload, ed25519.Sign(privateKey, payload))
-	manifestURL := "https://github.com/a9gent/mindfs/releases/download/v1.2.3/mindfs_v1.2.3_manifest.json"
-	service := NewService("a9gent/mindfs", "v1.2.2", "/tmp/bin/mindfs", nil, time.Hour)
+	manifestURL := "https://github.com/" + testReleaseRepo + "/releases/download/v1.2.3/mindfs_v1.2.3_manifest.json"
+	service := NewService(testReleaseRepo, "v1.2.2", "/tmp/bin/mindfs", nil, time.Hour)
 	service.client = &http.Client{Transport: staticTransport{
 		manifestURL: body,
 	}}
@@ -119,8 +157,8 @@ func TestFetchAndVerifyManifestRejectsBadSignature(t *testing.T) {
 
 	payload := []byte(`{"version":"v1.2.3","artifacts":[]}` + "\n")
 	body := signedManifestBody(t, payload, make([]byte, ed25519.SignatureSize))
-	manifestURL := "https://github.com/a9gent/mindfs/releases/download/v1.2.3/mindfs_v1.2.3_manifest.json"
-	service := NewService("a9gent/mindfs", "v1.2.2", "/tmp/bin/mindfs", nil, time.Hour)
+	manifestURL := "https://github.com/" + testReleaseRepo + "/releases/download/v1.2.3/mindfs_v1.2.3_manifest.json"
+	service := NewService(testReleaseRepo, "v1.2.2", "/tmp/bin/mindfs", nil, time.Hour)
 	service.client = &http.Client{Transport: staticTransport{
 		manifestURL: body,
 	}}
@@ -146,8 +184,9 @@ func TestVerifyFileSHA256(t *testing.T) {
 	}
 }
 
-// 本地 fork 已删掉 relay 镜像回退（G-H）：下载失败必须当场返回，不能再回落到
-// relay.a9gent.com。旧实现会再发一次请求，并把失败包装成
+// 本地 fork 已删掉 relay 镜像回退（G-H）：下载失败必须当场返回，不能再回落到上游的
+// relay 服务器（那个域名只留在定制清单与 web/tests/upstream-removals.test.mjs 里当证据）。
+// 旧实现会再发一次请求，并把失败包装成
 // 「download failed from GitHub (...) and relay fallback (...)」——两条断言分别钉住
 // 「只请求主地址一次」与「错误里不该出现 relay」。
 func TestDownloadReleaseAssetDoesNotFallBackToRelay(t *testing.T) {
@@ -155,7 +194,7 @@ func TestDownloadReleaseAssetDoesNotFallBackToRelay(t *testing.T) {
 
 	const primaryURL = "https://github.test/mindfs/releases/download/v1/mindfs_v0.3.4_windows_amd64.zip"
 	var requested []string
-	service := NewService("a9gent/mindfs", "v1.2.2", filepath.Join(t.TempDir(), "mindfs"), nil, time.Hour)
+	service := NewService(testReleaseRepo, "v1.2.2", filepath.Join(t.TempDir(), "mindfs"), nil, time.Hour)
 	service.client = &http.Client{Transport: recordingTransport{seen: &requested}}
 
 	dst := filepath.Join(t.TempDir(), "mindfs_v0.3.4_windows_amd64.zip")
@@ -191,7 +230,7 @@ func (t recordingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 }
 
 func TestInstallLayoutInstalled(t *testing.T) {
-	service := NewService("a9gent/mindfs", "v1.2.2", filepath.Join("opt", "mindfs", "bin", "mindfs"), nil, time.Hour)
+	service := NewService(testReleaseRepo, "v1.2.2", filepath.Join("opt", "mindfs", "bin", "mindfs"), nil, time.Hour)
 	layout, err := service.installLayout()
 	if err != nil {
 		t.Fatalf("installLayout() error = %v", err)
@@ -218,7 +257,7 @@ func TestInstallLayoutInstalled(t *testing.T) {
 }
 
 func TestInstallLayoutPortable(t *testing.T) {
-	service := NewService("a9gent/mindfs", "v1.2.2", filepath.Join("tmp", "mindfs_v1.2.2_linux_amd64", "mindfs"), nil, time.Hour)
+	service := NewService(testReleaseRepo, "v1.2.2", filepath.Join("tmp", "mindfs_v1.2.2_linux_amd64", "mindfs"), nil, time.Hour)
 	layout, err := service.installLayout()
 	if err != nil {
 		t.Fatalf("installLayout() error = %v", err)
