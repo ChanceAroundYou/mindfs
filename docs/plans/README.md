@@ -6,7 +6,7 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-- [Image zoom and file auto refresh](image-zoom-and-file-auto-refresh.md) — Implemented 2026-11-06，已提交 `79fb813b`（同批收编在飞的 G-KJ APK 自更新：检查更新改读发布清单），已发布 v0.5.5-1115 并 ship 到本机 / WSL / fn（本机待用户重启生效；pc-win 已装未运行）；文件视图内联缩放 + 会话图片全屏灯箱（数学抽到 `shared/zoomTransform`，图表预览经 `diagramZoom` 门面零改动）；预览资源按文件 mtime 版本化贯穿 blob/URL/hook/memo/HTTP 五层缓存，外加可见时 5s 轮询与顶栏手动刷新，变化时顺带刷新所在目录。测试：`zoom-transform` / `image-zoom-ui` / `file-blob-versioning` / `file-auto-refresh` / `raw_file_cache_test.go`。Scope: G-KK、G-KL。**仍 Active 的原因**：本机待 `sudo systemctl restart mindfs`、pc-win 未运行、触摸手势（双指缩放/拖动）未上真机点过。
+- [Image zoom and file auto refresh](image-zoom-and-file-auto-refresh.md) — Implemented 2026-11-06，已提交 `79fb813b`（同批收编在飞的 G-KJ APK 自更新：检查更新改读发布清单），已发布 v0.5.5-1115 并 ship 到本机 / WSL / fn / pc-win（本机待用户重启生效；pc-win 产物已装、2026-11-07 起进程已在跑）；文件视图内联缩放 + 会话图片全屏灯箱（数学抽到 `shared/zoomTransform`，图表预览经 `diagramZoom` 门面零改动）；预览资源按文件 mtime 版本化贯穿 blob/URL/hook/memo/HTTP 五层缓存，外加可见时 5s 轮询与顶栏手动刷新，变化时顺带刷新所在目录。测试：`zoom-transform` / `image-zoom-ui` / `file-blob-versioning` / `file-auto-refresh` / `raw_file_cache_test.go`。Scope: G-KK、G-KL。**仍 Active 的原因**：本机待 `sudo systemctl restart mindfs`、触摸手势（双指缩放/拖动）未上真机点过。
 
 - [Session activity unified](session-activity-unified.md) — Plan 2026-10-25，**待批准**（未实现，所以它进不了任何发布）；把 `activity_at` 合并进 `updated_at`（流式期间节流落库），删除覆盖层与继承函数，刷新不再回落。
 

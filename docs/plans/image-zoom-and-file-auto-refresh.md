@@ -1,6 +1,6 @@
 # 图片缩放与文件自动刷新
 
-状态：Implemented 2026-11-06，已提交 `79fb813b`；已发布 **v0.5.5-1115**（含 APK 与 `android-version.json`）并 ship 完成：本机 / WSL / fn 三端逐字一致 `v0.5.5-1115-1-gf12a9ed7`，两个 worker 已重启，本机二进制已装但**待用户 `sudo systemctl restart mindfs` 才生效**（前端 bundle 已在线）。pc-win 产物已装、版本一致，但进程未起（见验证记录）。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
+状态：Implemented 2026-11-06，已提交 `79fb813b`；已发布 **v0.5.5-1115**（含 APK 与 `android-version.json`）并 ship 完成：本机 / WSL / fn 三端逐字一致 `v0.5.5-1115-1-gf12a9ed7`，两个 worker 已重启，本机二进制已装但**待用户 `sudo systemctl restart mindfs` 才生效**（前端 bundle 已在线）。pc-win 产物已装、版本一致，进程 2026-11-07 起已在跑（计划任务改 S4U，见验证记录）。Scope: G-KK（图片缩放）、G-KL（版本化缓存 + 自动刷新）。
 
 ## 背景
 
@@ -123,11 +123,19 @@ WS 的 `file.changed` 只覆盖「本节点 + 文件视图可见」这一种情�
   `attempt to write a readonly database (1032)` / `disk I/O error (5898)`。单独重跑同一条命令
   （`cd server && go test ./...` → exit 0）与整包 kanban 都通过 —— 是并发负载下 `/var/tmp` 里临时
   SQLite 的偶发 I/O，与本轮改动无关；**没有改任何测试**，第二次 ship 全绿。
-- **pc-win 只装上了、没跑起来**：`mindfs.exe --version` 已是 `v0.5.5-1115-1-gf12a9ed7`，但
+- **pc-win 第一次只装上了、没跑起来**：`mindfs.exe --version` 已是 `v0.5.5-1115-1-gf12a9ed7`，但
   `Get-Process mindfs` 为空、PC 上 `netstat` 无 `:7332` 监听；计划任务 `mindfs` 的登录状态是
-  「只使用交互方式」，`schtasks /run` 从 ssh 触发不生效 → 要上线需在 PC 的登录会话里启动。
-  注意 `deploy-pcwin.sh` 的「pc-win 已重启」不校验进程真起来了（输出被丢弃、失败也 `|| true`），
-  不能当成上线证据。
+  「只使用交互方式」，`schtasks /run` 从 ssh 触发不生效。
+  而 `deploy-pcwin.sh` 照打「pc-win 已重启」—— 它把 `schtasks /run` 与 `Get-Process` 的输出一起丢掉、
+  失败也 `|| true`，**不能当成上线证据**。
+- **2026-11-07 收口（已上线）**：计划任务 `\mindfs` 的登录类型改成 **S4U**（不管用户是否登录都要运行、
+  不存密码）并补 `BootTrigger`、`StartWhenAvailable`、`RestartOnFailure` 1min×3；改前定义备份在
+  `C:\Users\10178\AppData\Local\mindfs-task-backup-20261107-085633.xml`。实测**没有任何用户登录**
+  （`console` 无用户名、无 `explorer.exe`）而 `mindfs.exe` 跑在 **Session 0**、
+  `/mindfs/health` 返回 `{"ok":true,"role":"worker"}`、`/api/agents` 里 codex `available:true`
+  且 `last_probe` 就是启动那一刻（S4U 的受限 token 没打断 agent 探测）。
+  `deploy-pcwin.sh` 同时改成启动后轮询 **进程 PID + health**、取不到就明写「未确认在跑」。
+  判据：`ssh pc "netstat -ano | findstr :7332"`。
 - 触摸手势（双指缩放、拖动）仍未上真机点过 —— 无头浏览器只验到按钮/键盘路径，待真机验收。
 
 ## 与原方案的差异

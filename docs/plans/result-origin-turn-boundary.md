@@ -1,6 +1,6 @@
 # 幽灵会话：只把「真回合」的 ResultMessage 当回合边界
 > **Shipped 2026-11-07（v0.5.5-1115）** —— 实现提交已落在该 tag 内，产物已装本机 / WSL / fn 并版本逐字一致
-> （本机待用户 `sudo systemctl restart mindfs`、pc-win 已装未运行）。本计划已移入 `docs/plans/README.md` 的历史表，
+> （本机待用户 `sudo systemctl restart mindfs`；pc-win 已装并在跑，见 `windows-worker-on-pc` 记录）。本计划已移入 `docs/plans/README.md` 的历史表，
 > 下方「待提交与 ship / 待 ship」是当时的记录，不是当前待办。
 
 状态：Implemented 2026-10-27，隔离实例 E2E 已验，待 ship。
