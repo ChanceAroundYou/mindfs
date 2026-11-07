@@ -1,6 +1,6 @@
 # MindFS
 
-[English](./README.md) | [简体中文](./README.zh.md) | [Official Site](https://relay.a9gent.com/) | [Discord](https://discord.gg/YPJMqeWSn) | [Twitter](https://x.com/yandc18) | [【wechat group】](#wechat-group) | [Competitive Analysis](./docs/remote-vibe-project-comparison.md) | [Competitive Analysis PPT](./docs/remote-vibe-project-comparison.pdf)
+[English](./README.md) | [简体中文](./README.zh.md) | [Releases](https://github.com/ChanceAroundYou/mindfs/releases)
 
 > **AI Agent Remote Access Gateway · Result Visualization**
 
@@ -141,20 +141,20 @@ Once an agent is installed, start MindFS and interact with it through the browse
 
 **macOS / Linux**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.sh | bash
 ```
 
 Custom install path:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.sh | bash -s -- --prefix your/path
+curl -fsSL https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.sh | bash -s -- --prefix your/path
 ```
 
 **Windows (PowerShell)**
 ```powershell
-irm https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.ps1 | iex
 ```
 
-The install script auto-detects your OS and architecture, reads the latest version from the first line of [`release-notes.md`](https://raw.githubusercontent.com/a9gent/mindfs/main/release-notes.md), then downloads the matching binary from [GitHub Releases](https://github.com/a9gent/mindfs/releases). `release-notes.md` keeps release history with the newest entry at the top; `make release TAG=v1.2.3` commits and pushes it when changed, then uses only the top entry as the GitHub release notes.
+The install script auto-detects your OS and architecture, reads the latest version from the first line of [`release-notes.md`](https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/release-notes.md), then downloads the matching binary from [GitHub Releases](https://github.com/ChanceAroundYou/mindfs/releases). `release-notes.md` keeps release history with the newest entry at the top; `make release TAG=v1.2.3` commits and pushes it when changed, then uses only the top entry as the GitHub release notes.
 
 ### Uninstall
 
@@ -163,14 +163,14 @@ The uninstall command removes the installed binary, bundled web assets, bundled 
 **macOS / Linux**
 ```bash
 installer="${TMPDIR:-/tmp}/mindfs-install.sh"
-curl -fsSL https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.sh -o "$installer"
+curl -fsSL https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.sh -o "$installer"
 bash "$installer" --uninstall
 ```
 
 **Windows (PowerShell)**
 ```powershell
 $Installer = Join-Path $env:TEMP "mindfs-install.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.ps1" -OutFile $Installer
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.ps1" -OutFile $Installer
 & $Installer -Uninstall
 ```
 
@@ -178,7 +178,7 @@ To also remove user-level MindFS config and logs, add `--purge` on macOS/Linux o
 
 **Build from source** (requires Go 1.22+, Node.js 20+)
 ```bash
-git clone https://github.com/a9gent/mindfs.git
+git clone https://github.com/ChanceAroundYou/mindfs.git
 cd mindfs
 make build      # output: ./mindfs
 ```
@@ -211,13 +211,6 @@ mindfs -tls -cert /path/to/cert.pem -key /path/to/key.pem
 ```
 
 MindFS automatically detects the availability of installed agents. This usually takes about one minute.
-
-### Enable Remote Access (Optional)
-
-1. Open MindFS in local mode and click the bind button in the bottom-left corner.
-2. Log in to [a9gent.com](https://a9gent.com) and confirm the binding.
-3. Open your node — it is now accessible from any device.
-
 
 ### Custom ACP Agents
 
@@ -302,17 +295,7 @@ mindfs -agent-config /path/to/agents.json
 
 Pull requests are welcome. For larger changes, please open an issue first to discuss the approach.
 
-## wechat-group
-
-<p align="center">
-  <img src="docs/images/mindfs-wechat-group.webp" alt="MindFS 微信群" width="360" />
-</p>
-
----
-
 ## License
 
 [AGPL v3](LICENSE)
 
-## Friend Links
-<a href="https://linux.do">Linux.do</a>

@@ -240,7 +240,6 @@ func TestLoadConfigWithExtraMergesSingleExtraConfigAfterDefaultConfig(t *testing
 	userConfigPath := filepath.Join(tempDir, "user-agents.json")
 	extraConfigPath := filepath.Join(tempDir, "extra-agents.json")
 	if err := os.WriteFile(userConfigPath, []byte(`{
-  "tokenStationURL": "https://token.user.example.com",
   "agents": [
     {"name":"user-agent","command":"user-agent","brief":"from user"},
     {"name":"shared-agent","command":"user-shared","brief":"from user"}
@@ -275,8 +274,5 @@ func TestLoadConfigWithExtraMergesSingleExtraConfigAfterDefaultConfig(t *testing
 	}
 	if shared.Command != "extra-shared" || shared.Brief != "from extra" {
 		t.Fatalf("extra config should override same-name user config, got %+v", shared)
-	}
-	if cfg.TokenStationURL != "https://token.extra.example.com" {
-		t.Fatalf("token station url = %q", cfg.TokenStationURL)
 	}
 }

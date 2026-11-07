@@ -53,11 +53,14 @@ curl -sL https://github.com/ChanceAroundYou/mindfs/releases/latest/download/andr
 1. **`GH_REPO` 不显式指定会推到上游仓库**。本仓库同时挂了 `origin`（`ChanceAroundYou/mindfs`）与
    `upstream`（`a9gent/mindfs`），gh 挑仓库时可能选中 upstream，卡在 `gh release create`。
    **失败点在创建之前，重跑安全**（`dist-clean` 会重来，不会有半截发布）。
-   注意签名那一步的 `-repo` 是**硬编码 `a9gent/mindfs`**（manifest 里记的仓库身份），与 `gh` 推到哪
-   是两件事 —— 看到 `a9gent/mindfs` 不代表推错了地方。
+   签名那一步的 `-repo` 只有一个来源：`internal/deploy/release.go` 的 `ReleaseRepo`
+   （Makefile 用 `RELEASE_REPO` 传给 `sign-release-manifest.go` / `android-version-manifest.go`）。
+   出现 `ChanceAroundYou/mindfs` 才对；出现别的仓库名说明发布身份又被第二处字面量写回去了。
 2. **版本号递增看 `versionCode`，不是看 tag 尾号**：
-   `versionCode = major*10000000 + minor*100000 + patch*1000 + build + 1`（gradle 里算，tag 尾号即 build）。
+   `versionCode = major*100000000 + minor*1000000 + patch*10000 + build + 1`（gradle 里算，tag 尾号即 build）。
    Android 只认 `versionCode` 更大才肯更新，所以 tag 命名 `vX.Y.Z-NNNN` 的尾号必须**单调递增**。
+   分段宽度给了 build 四位（<10000）、minor/patch 各两位、major<21；越界 gradle 直接 fail，
+   不会带着算错的号出厂 —— 旧公式给 build 只留三位，四位 build 号会把 0.5.6 算得比 0.5.5-1115 更旧。
 
 ## 走完要报什么
 

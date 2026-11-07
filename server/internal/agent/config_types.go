@@ -9,9 +9,10 @@ const configPathEnvKey = "MINDFS_AGENTS_CONFIG"
 
 // Config holds all agent configurations.
 type Config struct {
-	Agents          []Definition `json:"agents"`
-	Shells          []Shell      `json:"shells,omitempty"`
-	TokenStationURL string       `json:"tokenStationURL,omitempty"`
+	Agents []Definition `json:"agents"`
+	Shells []Shell      `json:"shells,omitempty"`
+	// 没有 TokenStationURL：那是上游 relay「Token 加油站」的配置键，relay 已整体删除（G-H）。
+	// 旧 agents.json 里残留的 `tokenStationURL` 会被 json 解码直接忽略，不需要迁移。
 }
 
 type Shell struct {

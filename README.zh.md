@@ -1,6 +1,6 @@
 # MindFS
 
-[English](./README.md) | [简体中文](./README.zh.md) | [官网](https://relay.a9gent.com/) | [Discord](https://discord.gg/YPJMqeWSn) | [Twitter](https://x.com/yandc18) | [【微信群】](#微信群) | [竞品对比报告](./docs/remote-vibe-project-comparison.md) | [竞品对比ppt](./docs/remote-vibe-project-comparison.pdf)
+[English](./README.md) | [简体中文](./README.zh.md) | [Releases](https://github.com/ChanceAroundYou/mindfs/releases)
 
 > **AI Agent 远程访问网关 · 结果可视化**
 
@@ -134,26 +134,24 @@ MindFS 已整理常见流行 Agent，在本地 UI 中可以直接安装和更新
 
 安装好 Agent 后，即可启动 MindFS 并通过浏览器与之交互。
 
-
-
 ### 安装
 
 **macOS / Linux**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.sh | bash
 ```
 
 自定义安装路径：
 ```bash
-curl -fsSL https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.sh | bash -s -- --prefix your/path
+curl -fsSL https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.sh | bash -s -- --prefix your/path
 ```
 
 **Windows（PowerShell）**
 ```powershell
-irm https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.ps1 | iex
 ```
 
-安装脚本会自动检测系统和架构，先从 [`release-notes.md`](https://raw.githubusercontent.com/a9gent/mindfs/main/release-notes.md) 第一行读取最新版本号，再从 [GitHub Releases](https://github.com/a9gent/mindfs/releases) 下载对应的二进制包并完成安装。`release-notes.md` 会保留历史记录且最新版本在顶部；`make release TAG=v1.2.3` 会在它有变更时提交并推送，然后只用顶部当前版本内容作为 GitHub release notes。
+安装脚本会自动检测系统和架构，先从 [`release-notes.md`](https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/release-notes.md) 第一行读取最新版本号，再从 [GitHub Releases](https://github.com/ChanceAroundYou/mindfs/releases) 下载对应的二进制包并完成安装。`release-notes.md` 会保留历史记录且最新版本在顶部；`make release TAG=v1.2.3` 会在它有变更时提交并推送，然后只用顶部当前版本内容作为 GitHub release notes。
 
 ### 卸载
 
@@ -162,14 +160,14 @@ irm https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.ps1 | i
 **macOS / Linux**
 ```bash
 installer="${TMPDIR:-/tmp}/mindfs-install.sh"
-curl -fsSL https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.sh -o "$installer"
+curl -fsSL https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.sh -o "$installer"
 bash "$installer" --uninstall
 ```
 
 **Windows（PowerShell）**
 ```powershell
 $Installer = Join-Path $env:TEMP "mindfs-install.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a9gent/mindfs/main/scripts/install.ps1" -OutFile $Installer
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ChanceAroundYou/mindfs/main/scripts/install.ps1" -OutFile $Installer
 & $Installer -Uninstall
 ```
 
@@ -177,7 +175,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a9gent/mindfs/main/scr
 
 **从源码编译**（需要 Go 1.22+、Node.js 20+）
 ```bash
-git clone https://github.com/a9gent/mindfs.git
+git clone https://github.com/ChanceAroundYou/mindfs.git
 cd mindfs
 make build      # 产物为 ./mindfs
 ```
@@ -294,17 +292,7 @@ mindfs -agent-config /path/to/agents.json
 
 欢迎提交 Pull Request。对于较大的改动，请先开 Issue 讨论方案。
 
-## 微信群
-
-<p align="center">
-  <img src="docs/images/mindfs-wechat-group.webp" alt="MindFS 微信群" width="360" />
-</p>
-
----
-
 ## 许可证
 
 [AGPL v3](LICENSE)
 
-## 友情链接
-<a href="https://linux.do">Linux.do</a>
