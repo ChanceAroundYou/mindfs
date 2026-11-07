@@ -1,4 +1,7 @@
 # ask_user 徽标实时亮灭 + 项目文件树两处交互修正
+> **Shipped 2026-11-07（v0.5.5-1115）** —— 实现提交已落在该 tag 内，产物已装本机 / WSL / fn 并版本逐字一致
+> （本机待用户 `sudo systemctl restart mindfs`、pc-win 已装未运行）。本计划已移入 `docs/plans/README.md` 的历史表，
+> 下方「待提交与 ship / 待 ship」是当时的记录，不是当前待办。
 
 状态：Implemented 2026-10-20（实现见下方「实际实现」；待提交与 ship）。
 
