@@ -1,6 +1,6 @@
 import { registerPlugin } from "@capacitor/core";
 import { getNativeBridge, parseNativeJSON } from "./nativeBridge";
-import { isNativeShellRuntime } from "./runtime";
+import { isNativeShellRuntime, supportsCustomNativePlugins } from "./runtime";
 import type { LauncherNode } from "../prefs/storage";
 
 type LauncherNodeSyncPlugin = {
@@ -33,6 +33,11 @@ export async function getNativeLauncherNodes(): Promise<LauncherNode[]> {
     const native = getNativeBridge();
     if (typeof native?.getLauncherNodes === "function") {
       return normalizeNodesResult<LauncherNode>(await native.getLauncherNodes());
+    }
+    if (!supportsCustomNativePlugins()) {
+      // iOS 壳没有原生节点表（iOS 侧不写自定义 Swift 插件）：节点存在登录页那份 Web 存储里，
+      // WKWebView 的 localStorage 是持久的，不需要第二份真相。见 docs/ios-shell.md。
+      return [];
     }
     const result = await LauncherNodeSync.getLauncherNodes();
     return Array.isArray(result?.nodes) ? result.nodes : [];

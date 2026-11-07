@@ -129,18 +129,21 @@ function buildVersionEndpoint(): string {
   return String(import.meta.env.VITE_ANDROID_VERSION_URL || "").trim();
 }
 
-async function getAppInfo(): Promise<{ version?: string; build?: string }> {
+export async function getAppInfo(): Promise<{ version?: string; build?: string }> {
   const native = getNativeBridge();
   if (typeof native?.getAppInfo === "function") {
     return parseNativeJSON(await native.getAppInfo(), {});
   }
-  if (isAndroidRuntime()) {
+  if (isNativeShellRuntime()) {
     const nativeBridge = (window as WindowWithAppInfoBridge).MindFSAppInfo;
     if (nativeBridge && typeof nativeBridge.getInfo === "function") {
       return parseNativeJSON(nativeBridge.getInfo(), {});
     }
+    // 官方 @capacitor/app：版本取自 CFBundleShortVersionString / CURRENT_PROJECT_VERSION（iOS）
+    // 与 versionName / versionCode（安卓），两个壳都认。它回报的字段叫 appVersion，不是 version。
     const { App } = await import("@capacitor/app");
-    return App.getInfo();
+    const info = await App.getInfo();
+    return { version: info.version, build: String(info.build ?? "") };
   }
   return {};
 }

@@ -79,6 +79,7 @@ export const enUSProjects = {
   "fileEditor.discard": "Discard changes",
   "fileEditor.saveExit": "Save and exit",
   "fileViewer.downloadSavedNative": "Saved to the system Downloads folder",
+  "fileViewer.downloadSavedIOSFiles": "Saved to the MindFS folder in the Files app",
   "fileViewer.downloadStarted": "Download started. Check your browser downloads.",
   "fileViewer.downloadFailed": "Download failed",
   "fileViewer.downloadFile": "Download file",

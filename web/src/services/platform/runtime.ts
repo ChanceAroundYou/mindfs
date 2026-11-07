@@ -75,6 +75,15 @@ export function isIOSRuntime(): boolean {
   return getNativePlatform() === "ios";
 }
 
+// 安卓壳里那套**自定义** Capacitor 插件（NativeDownload / ReplyPoller / LauncherNodeSync /
+// NativeCacheControl）只在 web/android 的 Java 侧实现，iOS 壳刻意没有对应 Swift 插件
+// —— 判据与代价写在 docs/ios-shell.md（免费自签装机 + 无后台轮询）。调它们只会得到「插件未注册」的报错，
+// 所以这些调用点在 iOS 上先短路，改用官方插件（Filesystem / Browser / Clipboard / App）。
+// 注意：这不影响 window.MindFSNative 统一桥（getNativeBridge）—— 将来真加了 Swift 桥也不该被这里挡掉。
+export function supportsCustomNativePlugins(): boolean {
+  return !isIOSRuntime();
+}
+
 function readMeta(name: string): string {
   if (typeof document === "undefined") {
     return "";

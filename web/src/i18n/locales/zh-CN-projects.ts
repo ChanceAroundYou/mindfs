@@ -79,6 +79,7 @@ export const zhCNProjects = {
   "fileEditor.discard": "放弃修改",
   "fileEditor.saveExit": "保存并退出",
   "fileViewer.downloadSavedNative": "已保存到系统下载目录",
+  "fileViewer.downloadSavedIOSFiles": "已保存到「文件」App 的 MindFS 目录",
   "fileViewer.downloadStarted": "下载已开始，请查看浏览器下载栏",
   "fileViewer.downloadFailed": "下载失败",
   "fileViewer.downloadFile": "下载文件",

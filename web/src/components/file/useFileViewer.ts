@@ -287,12 +287,17 @@ export function useFileViewer({
     }
     try {
       setIsDownloading(true);
-      await downloadFile({
+      const result = await downloadFile({
         rootId: file.root,
         path: file.path,
         name: file.name,
       });
-      showToast(isNativeShellRuntime() ? t("fileViewer.downloadSavedNative") : t("fileViewer.downloadStarted"), true);
+      // 落盘位置由各条下载路径回报（安卓 = 系统下载目录，iOS = 「文件」App 里的 MindFS 目录），
+      // 只有浏览器下载没有落点可报。
+      const labelKey =
+        result.savedLabelKey ||
+        (isNativeShellRuntime() ? "fileViewer.downloadSavedNative" : "fileViewer.downloadStarted");
+      showToast(t(labelKey), true);
     } catch (error) {
       const message = error instanceof Error ? error.message : t("fileViewer.downloadFailed");
       showToast(message, false);

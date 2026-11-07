@@ -2,7 +2,7 @@ import { registerPlugin } from "@capacitor/core";
 import { appPath, appURL } from "./base";
 import { getNodes } from "./nodeRegistry";
 import { getNativeBridge } from "../platform/nativeBridge";
-import { isNativeShellRuntime } from "../platform/runtime";
+import { isNativeShellRuntime, supportsCustomNativePlugins } from "../platform/runtime";
 
 type ReplyPollerPlugin = {
   configure(options: {
@@ -96,6 +96,11 @@ export async function syncNativeReplyPoller(): Promise<void> {
   if (!isNativeShellRuntime() && !hasNativeBridge) {
     return;
   }
+  // iOS 壳刻意没有后台轮询服务（无 Swift 插件、无 APNs，理由见 docs/ios-shell.md）：
+  // 回复提醒走前端既有链路 —— 提示音 + 未读徽标 + useReplyingSessionPoll 的 5s/visible-only 轮询。
+  if (!hasNativeBridge && !supportsCustomNativePlugins()) {
+    return;
+  }
   bindNativeReplyPollerListeners();
   const apiBaseUrl = nativeReplyPollerBaseURL();
   // 每个节点的完整 URL 由这里算（节点路由、user= 账户参数、挂载前缀都在 appPath 里）。
@@ -181,6 +186,10 @@ export async function dismissNativeReplyNotification(nodeId: string, rootId: str
     }
     if (typeof bridge?.dismiss === "function") {
       bridge.dismiss(nodeId, rootId, sessionKey);
+      return;
+    }
+    if (!supportsCustomNativePlugins()) {
+      // iOS 壳没有原生通知可撤销（见 docs/ios-shell.md），静默返回，不去敲不存在的插件。
       return;
     }
     await ReplyPoller.dismiss({ nodeId, rootId, sessionKey });

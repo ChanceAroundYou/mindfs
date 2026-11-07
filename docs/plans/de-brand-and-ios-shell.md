@@ -1,6 +1,6 @@
 # 去上游化：抹掉 agent9 痕迹 + iPad 套壳
 
-状态：Plan 2026-11-07，**P1–P3 已实现（同日）**、P4–P5 待执行。范围由用户 2026-11-07 明确拍定（四问四答），本文是可执行清单与验收判据。
+状态：Plan 2026-11-07，**P1–P4 已实现（同日）**、P5（登记/门禁/收尾）进行中。范围由用户 2026-11-07 明确拍定（四问四答），本文是可执行清单与验收判据。
 
 > 实现进度（2026-11-07）：P1 / P2 / P3 已落盘，登记在 `docs/upstream-customizations.yaml` 的 **G-KM**，
 > 守卫是 `web/tests/agent9-traces.test.mjs`（身份单源 + 无 agent9 痕迹 + 版本公式单源）与
@@ -82,7 +82,26 @@ message:         Auto update is unavailable because the release verification pub
 `make test` 全绿；Vitest 全量绿；`make build-android`（含改过的两个 Java 文件）BUILD SUCCESSFUL。
 两条新守卫各做过变异验证（改回 `build-harmony`/`HARMONY_DIR`、重建 `harmony/`、加回 `MindFSHarmony?:` 都当场红，还原后 sha256 逐字一致）。
 
-### P4 iPad 套壳（Capacitor iOS）
+### P4 iPad 套壳（Capacitor iOS）✅ 已实现（2026-11-07）
+
+实现进度：`npx cap add ios` 已生成 `web/ios/App`（工程入仓，与 `web/android` 对称）；
+`build:shell` → `dist-shell/`（安卓/iOS 共用，`webDir` 只支持一个值）；
+`runtime.ts` 认 `ios` 平台；
+新增 `supportsCustomNativePlugins()`（`= !isIOSRuntime()`），**iOS 没有自定义 Swift 插件**——
+Capacitor 8 官方插件自动注册，注册自有插件要替换整个自动注册路径；四处安卓自定义插件调用点
+（`NativeDownload` / `ReplyPoller` / `LauncherNodeSync` / `NativeCacheControl`）在 iOS 上短路，
+改走官方插件：下载 → `@capacitor/filesystem` 写 `Documents/MindFS/`、
+外链 → `@capacitor/browser` `Browser.open()`、
+版本信息 → `@capacitor/app` `App.getInfo()`。
+「检查更新」保持安卓独占；关于弹窗的假版本号已换成真实 `getAppInfo()`；
+「测试提醒」在 iOS 上不显示。
+`docs/ios-shell.md` 写了装机三条路（借 Mac Xcode 直装 / Windows Sideloadly / Safari 主屏）
+与明确不做清单；`scripts/build-ipa.sh` 已落地（Xcode 归档→导出，版本号从 `git describe` 读）。
+守卫 `web/tests/ios-shell.test.mjs` 钉五项接线并对三处做过变异验证。
+登记 `docs/upstream-customizations.yaml` 的 **G-KN**。
+Mac 才能验的部分（xcodebuild 出包、真机首屏）仍未做，见下方风险 4。
+
+（原计划原文：）
 
 壳的形态与安卓一致：Capacitor 的 WebView 直接加载我们的线上站点（`capacitor.config.json` 的 `server.url`），原生能力靠注入 JS 桥，不靠前端打包本地 bundle。
 

@@ -1,6 +1,6 @@
 import { registerPlugin } from "@capacitor/core";
 import { getNativeBridge } from "./nativeBridge";
-import { isNativeShellRuntime } from "./runtime";
+import { isNativeShellRuntime, supportsCustomNativePlugins } from "./runtime";
 
 type NativeCacheControlPlugin = {
   markClearWebViewCacheOnNextLaunch: () => Promise<{ scheduled: boolean }>;
@@ -12,7 +12,9 @@ const NativeCacheControl = registerPlugin<NativeCacheControlPlugin>(
 );
 
 export async function scheduleWebViewCacheClearOnNextLaunch(): Promise<void> {
-  if (!isNativeShellRuntime()) {
+  if (!isNativeShellRuntime() || !supportsCustomNativePlugins()) {
+    // 这条链只为「壳自己装更新包」服务（装完下次启动清缓存）。iOS 没有自更新通道，
+    // 也没有 NativeCacheControl 插件 —— 见 docs/ios-shell.md。
     return;
   }
   try {
@@ -28,7 +30,7 @@ export async function scheduleWebViewCacheClearOnNextLaunch(): Promise<void> {
 }
 
 export async function cancelScheduledWebViewCacheClear(): Promise<void> {
-  if (!isNativeShellRuntime()) {
+  if (!isNativeShellRuntime() || !supportsCustomNativePlugins()) {
     return;
   }
   try {

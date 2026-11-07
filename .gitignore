@@ -20,7 +20,8 @@ Thumbs.db
 node_modules/
 # worktree 里 web/node_modules 是指向主 checkout 的符号链接，目录模式不匹配符号链接
 web/node_modules
-dist-android/
+# 原生壳（Android / iOS 共用同一份 shell bundle，见 web/capacitor.config.json 的 webDir）
+dist-shell/
 dist/
 web/dist/
 .vite/

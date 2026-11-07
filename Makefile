@@ -1,9 +1,10 @@
-.PHONY: help dev dev-backend dev-web build-web build build-android install uninstall build-all start start-server test test-web check-upstream dist-clean publish-release-notes verify-release release tag
+.PHONY: help dev dev-backend dev-web build-web build build-android build-ios install uninstall build-all start start-server test test-web check-upstream dist-clean publish-release-notes verify-release release tag
 
 GO ?= go
 NPM ?= npm
 WEB_DIR ?= web
 ANDROID_DIR ?= web/android
+IOS_DIR ?= web/ios
 ADDR ?= :7331
 ROOT ?= .
 PREFIX ?= $(HOME)/.local
@@ -20,6 +21,7 @@ help:
 		"  make build-web    # build web assets into web/dist" \
 		"  make build        # build web assets and CLI binary" \
 		"  make build-android # build Android release APK into dist/" \
+		"  make build-ios    # sync the shared shell bundle into the iOS Xcode project (packaging needs a Mac)" \
 		"  make install      # install binary and built static assets into $(PREFIX)" \
 		"  make uninstall    # remove installed binary and static assets from $(PREFIX)" \
 		"  make build-all    # cross-compile for all platforms into dist/" \
@@ -138,11 +140,19 @@ build-all: build-web
 	@MIND_FS_BASE="$(MIND_FS_BASE)" bash scripts/build-all.sh "$(VERSION)" "$(DIST_DIR)"
 
 build-android:
-	cd $(WEB_DIR) && VITE_MIND_FS_BASE=/ VITE_ANDROID_VERSION_URL="$(ANDROID_VERSION_URL)" $(NPM) run build:android
+	cd $(WEB_DIR) && VITE_MIND_FS_BASE=/ VITE_ANDROID_VERSION_URL="$(ANDROID_VERSION_URL)" $(NPM) run build:shell
 	cd $(WEB_DIR) && node_modules/.bin/cap sync android
 	cd $(ANDROID_DIR) && $(ANDROID_GRADLE_ENV) ./gradlew assembleRelease -PmindfsVersion="$(VERSION)"
 	mkdir -p "$(DIST_DIR)"
 	cp "$(ANDROID_RELEASE_APK)" "$(ANDROID_DIST_APK)"
+
+# iOS 壳（iPad/iPhone）：只有 Mac 能出包，所以这条不在 make release 里，也不推给任何节点。
+# 与安卓共用同一份 shell bundle（build:shell → dist-shell → capacitor.config.json 的 webDir）。
+# 装机与签名三条路见 docs/ios-shell.md；在 Mac 上执行 bash scripts/build-ipa.sh 走完整链。
+build-ios:
+	cd $(WEB_DIR) && VITE_MIND_FS_BASE=/ $(NPM) run build:shell
+	cd $(WEB_DIR) && node_modules/.bin/cap sync ios
+	@echo "iOS 资源已同步到 $(IOS_DIR)/App/App/public —— 出包需在 Mac 上跑 scripts/build-ipa.sh（见 docs/ios-shell.md）"
 
 android-doctor:
 	bash scripts/android-doctor.sh
