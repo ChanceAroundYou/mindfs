@@ -51,8 +51,9 @@ func TestRawAssetServesFileByPath(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", response.Code, response.Body.String())
 	}
-	if got := response.Body.String(); got != page {
-		t.Fatalf("body = %q, want %q", got, page)
+	// 预览字节会被加工（注入错误探针），不再是文件原样；内容本身必须仍在。
+	if got := response.Body.String(); !strings.Contains(got, `<link rel=stylesheet href=style.css>`) {
+		t.Fatalf("body = %q, want it to contain the original markup", got)
 	}
 	if got := response.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
 		t.Fatalf("content-type = %q, want text/html", got)

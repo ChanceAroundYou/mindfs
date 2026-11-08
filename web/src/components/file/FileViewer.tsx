@@ -291,7 +291,7 @@ export function FileViewer(props: FileViewerProps) {
           {documentPreviewKind ? (
             <DocumentViewer key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={documentPreviewKind} version={fileVersion} />
           ) : htmlPreview && !htmlSourceMode ? (
-            <HtmlPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} version={fileVersion} />
+            <HtmlPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} version={fileVersion} content={file.content} />
           ) : videoKind ? (
             <VideoPreview key={`${file.root || ""}:${file.path}`} path={file.path} root={file.root} kind={videoKind} version={fileVersion} />
           ) : isImagePreview ? (

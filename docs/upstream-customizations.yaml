@@ -6537,22 +6537,26 @@ groups:
       - 'web/src/shared/anchoredMenuPosition.ts:export function computeAnchoredMenuPosition'
 
   - id: G-JP
-    title: HTML 网页与视频文件的浏览（路径式原始资源端点 + 沙箱预览）
+    title: HTML 网页与视频文件的浏览（路径式原始资源端点 + 同源预览）
     kind: feature
-    symptom: "文件浏览器里点开 .html 只看到一段源码、点开 .mp4 落到「无法预览」——上游没有任何网页/视频预览。上游唯一的原始内容出口是 GET /api/file?raw=1，它靠查询串里的 user= 做账户分区，而网页里的相对 URL（style.css、img/x.png）在浏览器里解析时会丢掉查询串，直接复用会掉回主账户取资源。"
-    why: "要让 HTML 真正「像个网页」必须有相对资源可用，因此需要一条**路径式**的原始资源端点：/api/file/raw/{account}/{root}/{path...}，账户段编码在路径里（WithRawAccountPath 中间件在 ScopedRouter 之前把它搬进 user= 并从路径剥掉），网页的相对资源自然落到同账户的兄弟路径上。两个必踩的坑：① chi 优先按 RawPath（转义态）匹配，路由参数会停在转义态，文件名带空格/中文就对不上 —— 中间件清掉 RawPath 让 chi 用已解码的 Path 匹配；② r.URL.Path 在 net/http 解析时已解过一次，再 PathUnescape 会把用户名里的字面 %41 再解一次。视频能拖进度条靠 http.ServeContent 的 Range/206，前端 <video> 直连该端点而不是先取 blob（边下边播，大文件不占浏览器内存）。隔离是两层：iframe sandbox=\"allow-scripts\"（不给 allow-same-origin → opaque origin）+ 响应头 CSP: sandbox allow-scripts（保证直接在新标签页打开 URL 也一样隔离），页面里的 JS 仍能跑（用户选的是「允许脚本但隔离来源」）。既有 /api/file?raw=1 零改动，图片 / PDF / Office 预览链路不受影响，无数据迁移。"
-    boundary: "只新增路径式原始资源端点与网页 / 视频两种预览；不动 /api/file?raw=1 的语义、不动图片 / PDF / Office 预览、不做 HTML 源码高亮或 DOM 编辑、不做视频转码与字幕、不给 .avi/.mkv 等浏览器解不了的格式做解码（只给下载提示）。"
+    symptom: "文件浏览器里点开 .html 只看到一段源码、点开 .mp4 落到「无法预览」——上游没有任何网页/视频预览。上游唯一的原始内容出口是 GET /api/file?raw=1，它靠查询串里的 user= 做账户分区，而网页里的相对 URL（style.css、img/x.png）在浏览器里解析时会丢掉查询串，直接复用会掉回主账户取资源。2026-11-09 升级前另有一类高频症状：预览几乎都是白屏 —— 页面里的 localStorage / sessionStorage 直接抛 SecurityError、serviceWorker 被禁用；引用 /assets/x.js 这种站点根绝对路径的页面 404；打开 web/index.html 这类构建前入口只有白屏、没有任何解释。"
+    why: "要让 HTML 真正「像个网页」必须有相对资源可用，因此需要一条**路径式**的原始资源端点：/api/file/raw/{account}/{root}/{path...}，账户段编码在路径里（WithRawAccountPath 中间件在 ScopedRouter 之前把它搬进 user= 并从路径剥掉），网页的相对资源自然落到同账户的兄弟路径上。两个必踩的坑：① chi 优先按 RawPath（转义态）匹配，路由参数会停在转义态，文件名带空格/中文就对不上 —— 中间件清掉 RawPath 让 chi 用已解码的 Path 匹配；② r.URL.Path 在 net/http 解析时已解过一次，再 PathUnescape 会把用户名里的字面 %41 再解一次。视频能拖进度条靠 http.ServeContent 的 Range/206，前端 <video> 直连该端点而不是先取 blob（边下边播，大文件不占浏览器内存）。**2026-11-09 起预览放开同源**（用户拍板）：iframe sandbox 与响应头 CSP 都带 allow-scripts allow-same-origin，页面像普通标签页一样跑（localStorage / IndexedDB / serviceWorker 可用）；代价是与 mindfs 同源、能碰 parent.document，按「信任本地项目内容」处理 —— 实测隔离模式下页面本来就能 fetch 到 /mindfs/api/*，增量风险主要是 UI 篡改而非数据读取。配套三层兜底：① 开发入口提示 —— 页面引用 .ts/.tsx/.jsx/.vue/.svelte 或 /@vite/ 注入时，顶栏说明「构建前入口，先 build 再预览产物」，而不是让用户对着白屏猜（web/index.html 引用的 ./src/main.tsx 浏览器本来就执行不了，改沙箱策略救不了）；② 根绝对路径兜底 —— src/href/poster 的 /x 改写成相对文档的 ../…/x，让站点根落回项目根（跳过 <base> 文档、// 协议相对、部署前缀 / api / ws、download=1、>8MB）；③ 白屏可诊断 —— 同源下直接在 contentWindow 挂 error（捕获阶段收脚本异常与子资源失败）与 unhandledrejection，外加「加载完成但无可见内容」判定。另修 mime 噪音：系统表把 .ts 认成 text/vnd.trolltech.linguist、.tsx 认成 application/x-tiled-tsx、.cjs/.jsx 认成空值，统一成 .mjs/.cjs → text/javascript、.ts/.tsx/.jsx → text/plain。既有 /api/file?raw=1 零改动，图片 / PDF / Office 预览链路不受影响，无数据迁移。"
+    boundary: "只新增路径式原始资源端点与网页 / 视频两种预览；不动 /api/file?raw=1 的语义、不动图片 / PDF / Office 预览、不做 HTML 源码高亮或 DOM 编辑、不做视频转码与字幕、不给 .avi/.mkv 等浏览器解不了的格式做解码（只给下载提示）。根绝对路径兜底只动 src/href/poster 三个属性，不解释内联 <style>/style 里的 url(/…)（代价是该类页面仍需相对路径）。"
     files:
       - server/internal/api/raw_asset_path.go
       - server/internal/api/http_raw_files.go
+      - server/internal/api/raw_asset_html.go
       - server/internal/api/raw_asset_test.go
+      - server/internal/api/raw_asset_html_test.go
       - server/internal/api/http_routes.go
       - server/app/server.go
       - web/src/services/mediaPreview.ts
+      - web/src/services/htmlPreview.ts
       - web/src/services/file/rawAsset.ts
       - web/src/services/file/index.ts
       - web/src/services/net/base.ts
       - web/src/hooks/useRawAssetUrl.ts
+      - web/src/hooks/useHtmlPreviewFrame.ts
       - web/src/components/file/HtmlPreview.tsx
       - web/src/components/file/VideoPreview.tsx
       - web/src/components/file/FileViewer.tsx
@@ -6561,19 +6565,26 @@ groups:
       - web/src/i18n/locales/en-US-projects.ts
       - web/src/index.css
       - web/tests/media-preview.test.mjs
+      - web/tests/html-preview-runtime.test.mjs
       - docs/plans/html-video-preview.md
+      - docs/plans/html-preview-runtime-upgrade.md
       - docs/plans/README.md
     tests:
       - server/internal/api/raw_asset_test.go
+      - server/internal/api/raw_asset_html_test.go
       - web/tests/media-preview.test.mjs
+      - web/tests/html-preview-runtime.test.mjs
     anchors:
       - 'server/internal/api/raw_asset_path.go:const RawAssetPathPrefix = "/api/file/raw/"'
       - 'server/internal/api/raw_asset_path.go:func WithRawAccountPath(next http.Handler) http.Handler'
       - 'server/internal/api/http_raw_files.go:func (h *HTTPHandler) handleRawAsset(w http.ResponseWriter, r *http.Request)'
-      - 'server/internal/api/http_raw_files.go:http.ServeContent(w, r, rawOut.RelPath, rawOut.Info.ModTime(), rawOut.File)'
+      - 'server/internal/api/http_raw_files.go:sandbox allow-scripts allow-same-origin'
+      - 'server/internal/api/raw_asset_html.go:func rewriteRootAbsoluteHTML'
       - 'server/internal/api/http_routes.go:r.Get("/api/file/raw/{root}/*", h.handleRawAsset)'
       - 'server/app/server.go:api.WithRawAccountPath(httpRoutes)'
-      - 'web/src/components/file/HtmlPreview.tsx:sandbox="allow-scripts"'
+      - 'web/src/components/file/HtmlPreview.tsx:sandbox="allow-scripts allow-same-origin"'
+      - 'web/src/hooks/useHtmlPreviewFrame.ts:export function useHtmlPreviewFrame'
+      - 'web/src/services/htmlPreview.ts:export function findUnrunnableScripts'
       - 'web/src/components/file/VideoPreview.tsx:<video'
       - 'web/src/services/file/rawAsset.ts:export function buildRawAssetURL'
       - 'web/src/services/net/base.ts:export function accountSegmentFor'

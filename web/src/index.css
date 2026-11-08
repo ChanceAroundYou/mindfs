@@ -1304,6 +1304,33 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
   padding: 0;
   overflow: hidden;
   background: #fff;
+  /* 顶部提示条（开发入口 / 脚本报错 / 空白）占一行，iframe 占满剩余高度。 */
+  display: flex;
+  flex-direction: column;
+}
+
+.document-preview-html-notice {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--border-color);
+  word-break: break-word;
+}
+
+.document-preview-html-notice.is-warning {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+}
+
+.document-preview-html-notice.is-error {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+.document-preview-html-notice.is-muted {
+  background: rgba(100, 116, 139, 0.1);
+  color: var(--text-secondary);
 }
 
 /* 视频预览：整高居中，video 自己按比例缩。 */
