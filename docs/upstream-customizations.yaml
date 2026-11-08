@@ -28,8 +28,9 @@ groups:
   - id: G-A
     title: 文档与工程约定
     kind: docs
-    symptom: "合上游后这些文件被覆盖或被删，后续再合上游时「哪条该留」就失去判据（release-notes.md 的整段条目就这样静默丢失过）。"
-    why: "上游完全没有这些文件（AGENTS.md、本定制清单、多账户/多节点 PRD、设计稿）。AGENTS.md 的「fork 定制与上游合并」一节是本清单的规则来源，它一丢，整套定制保护机制就失去依据。"
+    symptom: "合上游后发布说明的整段条目可能静默丢失，用户看到错误版本的更新说明；根目录意外生成的 cmd 可执行文件若失去忽略规则，会被误加入源码提交。"
+    why: "上游没有 AGENTS.md、本定制清单及多账户/多节点设计文档；AGENTS.md 一丢就失去整套保留判据。发布说明首行须与 TAG 一致；根 cmd 是本地生成物，不属于源码，必须精确忽略 /cmd 而不影响其他目录的 cmd。"
+    # 针对性测试：naming-convention 守护工程文件约定；release-notes-contract 钉住版本头与精确忽略规则。
     files:
       - .gitignore
       - AGENTS.md
@@ -57,8 +58,10 @@ groups:
       - docs/workspace-design.md
       - release-notes.md
       - web/tests/naming-convention.test.mjs
+      - web/tests/release-notes-contract.test.mjs
     tests:
       - web/tests/naming-convention.test.mjs
+      - web/tests/release-notes-contract.test.mjs
 
   # ── 后端：HTTP / 安全 / 存储 ──────────────────────────────────────
   - id: G-B
