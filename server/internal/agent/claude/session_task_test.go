@@ -251,15 +251,55 @@ func TestClaudeTaskUpdateResultPreservesTaskStatus(t *testing.T) {
 	}
 }
 
+func TestClaudeTaskProgressKeepsOriginalDescription(t *testing.T) {
+	const (
+		description = "Audit capacity bound assumptions"
+		activity    = "Reading runs/3D_TBS容量下界_2026-11-07/README.md"
+	)
+	var got types.Event
+	s := &session{sessionID: "claude-session", onUpdate: func(event types.Event) {
+		got = event
+	}}
+	s.trackTaskInfo("task-1", claudeTaskInfo{
+		ToolUseID:       "tool-1",
+		TaskType:        "local_agent",
+		Description:     description,
+		SubagentType:    "general-purpose",
+		TaskDescription: description,
+	})
+
+	s.handleTaskProgressMessage(claudeagent.TaskProgressMessage{
+		TaskID:       "task-1",
+		ToolUseID:    "tool-1",
+		Description:  activity,
+		SubagentType: "general-purpose",
+	})
+
+	toolCall, ok := got.Data.(types.ToolCall)
+	if !ok {
+		t.Fatalf("event data = %T, want ToolCall", got.Data)
+	}
+	if toolCall.Title != description {
+		t.Fatalf("progress title = %q, want original task description %q", toolCall.Title, description)
+	}
+	if got := stringMeta(toolCall.Meta, "taskDescription"); got != description {
+		t.Fatalf("meta.taskDescription = %q, want %q", got, description)
+	}
+	if got := stringMeta(toolCall.Meta, "progress"); got != activity {
+		t.Fatalf("meta.progress = %q, want activity %q", got, activity)
+	}
+}
+
 // 复现 2026-09-12 症状 1：子代理报告被当成卡片标题。
 // SDK 的 TaskNotificationMessage 没有 Description 字段，只有 Summary（报告正文）。
 // 旧代码把 msg.Summary 当 description 传给 claudeTaskToolCall，后者
 // `title := strings.TrimSpace(description)` 于是把报告全文提升成标题，UI 上表现为
 // 「一段没有思考的裸文本工具卡」，并与同 line 锚点的 ask_user 卡相邻渲染，
 // 看起来像提问被重复了一遍。真正的任务描述在 trackTaskInfo 里。
-func TestClaudeTaskNotificationKeepsReportOutOfTitle(t *testing.T) {
+func TestClaudeTaskNotificationKeepsOriginalDescriptionAfterProgress(t *testing.T) {
 	const (
-		description = "Explore sync + reload ordering"
+		description = "Audit capacity bound assumptions"
+		activity    = "Reading runs/3D_TBS容量下界_2026-11-07/README.md"
 		report      = "Now I have all the data needed to produce the final report. " +
 			"Here is the complete analysis across the four areas requested."
 	)
@@ -268,9 +308,16 @@ func TestClaudeTaskNotificationKeepsReportOutOfTitle(t *testing.T) {
 		events = append(events, event)
 	}}
 	s.trackTaskInfo("task-1", claudeTaskInfo{
+		ToolUseID:       "tool-1",
+		TaskType:        "local_agent",
+		Description:     description,
+		SubagentType:    "Explore",
+		TaskDescription: description,
+	})
+	s.handleTaskProgressMessage(claudeagent.TaskProgressMessage{
+		TaskID:       "task-1",
 		ToolUseID:    "tool-1",
-		TaskType:     "local_agent",
-		Description:  description,
+		Description:  activity,
 		SubagentType: "Explore",
 	})
 
@@ -282,21 +329,18 @@ func TestClaudeTaskNotificationKeepsReportOutOfTitle(t *testing.T) {
 		Summary:   report,
 	})
 
-	if len(events) != 1 {
-		t.Fatalf("events = %#v, want one terminal update", events)
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want progress and terminal updates", events)
 	}
-	toolCall, ok := events[0].Data.(types.ToolCall)
+	toolCall, ok := events[1].Data.(types.ToolCall)
 	if !ok {
-		t.Fatalf("event data = %T, want ToolCall", events[0].Data)
-	}
-	if toolCall.Title == report || strings.Contains(toolCall.Title, "I have all the data needed") {
-		t.Fatalf("title = %q, want task description, not the subagent report", toolCall.Title)
+		t.Fatalf("terminal event data = %T, want ToolCall", events[1].Data)
 	}
 	if toolCall.Title != description {
-		t.Fatalf("title = %q, want %q", toolCall.Title, description)
+		t.Fatalf("title = %q, want %q (progress activity must not replace task description)", toolCall.Title, description)
 	}
 	if got := stringMeta(toolCall.Meta, "taskDescription"); got == report || got != description {
-		t.Fatalf("meta.taskDescription = %q, want %q (report must not leak into it)", got, description)
+		t.Fatalf("meta.taskDescription = %q, want %q (progress activity/report must not replace it)", got, description)
 	}
 	// 报告本身不能丢：它应当作为正文 content 渲染。
 	var body string

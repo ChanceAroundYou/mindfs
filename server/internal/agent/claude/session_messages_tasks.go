@@ -129,26 +129,26 @@ func (s *session) handleTaskStartedMessage(msg claudeagent.TaskStartedMessage) {
 }
 
 func (s *session) handleTaskProgressMessage(msg claudeagent.TaskProgressMessage) {
+	info := s.taskInfo(msg.TaskID)
+	description := firstNonEmpty(info.TaskDescription, info.Description, msg.Description)
 	if isIgnoredClaudeTaskType(s.taskType(msg.TaskID)) {
 		return
 	}
 	s.trackTaskInfo(msg.TaskID, claudeTaskInfo{
-		ToolUseID:       msg.ToolUseID,
-		Description:     msg.Description,
-		SubagentType:    msg.SubagentType,
-		TaskDescription: msg.Description,
+		ToolUseID:    msg.ToolUseID,
+		SubagentType: msg.SubagentType,
 	})
 	callID := firstNonEmpty(msg.ToolUseID, msg.TaskID)
 	toolCall := claudeTaskToolCall(
 		callID,
 		"running",
-		msg.Description,
+		description,
 		msg.Summary,
 		subagentMeta{
 			ParentToolUseID: msg.ToolUseID,
 			TaskID:          msg.TaskID,
 			SubagentType:    msg.SubagentType,
-			TaskDescription: msg.Description,
+			TaskDescription: firstNonEmpty(info.TaskDescription, info.Description),
 		},
 		map[string]any{
 			"subtype":      msg.Subtype,
@@ -168,6 +168,10 @@ func (s *session) handleTaskUpdatedMessage(msg claudeagent.TaskUpdatedMessage) {
 		return
 	}
 	description := firstNonEmpty(msg.Patch.Description, info.TaskDescription, info.Description)
+	s.trackTaskInfo(msg.TaskID, claudeTaskInfo{
+		Description:     msg.Patch.Description,
+		TaskDescription: msg.Patch.Description,
+	})
 	toolCall := claudeTaskToolCall(
 		firstNonEmpty(info.ToolUseID, msg.TaskID),
 		claudeTaskRunStatus(string(msg.Patch.Status)),
