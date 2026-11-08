@@ -1,3 +1,9 @@
+# MindFS v0.5.5-1118
+
+## 优化和修复
+- 切换 Codex 供应商后历史会话可以直接续聊：打开旧对话时自动把线程接到当前供应商，不再报「This chat uses model provider ... which is no longer configured」，对话内容完整保留。
+- 修复恢复 Codex 官方配置后可能残留一个不存在的供应商选择、导致新建会话也报同样错误的问题。
+
 # MindFS v0.5.5-1117
 
 ## 优化和修复
