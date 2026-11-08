@@ -206,6 +206,13 @@ func preserveCodexModelProviderKey(existing, stableProvider string) string {
 		return existing
 	}
 	if currentProvider == "" {
+		// Add the provider selector before the first table, but only when the
+		// restored config actually defines that provider. Writing a selector
+		// without its table leaves a dangling model_provider and makes every
+		// Codex thread (old and new) fail with "provider is no longer configured".
+		if !hasCodexModelProviderTable(existing, stableProvider) {
+			return existing
+		}
 		// Add the provider selector before the first table.
 		return addCodexModelProviderKey(existing, stableProvider)
 	}
@@ -253,6 +260,21 @@ func preserveCodexModelProviderKey(existing, stableProvider string) string {
 		out = append(out, line)
 	}
 	return strings.TrimSpace(strings.Join(out, "\n")) + "\n"
+}
+
+// hasCodexModelProviderTable reports whether the config defines
+// [model_providers.<providerName>].
+func hasCodexModelProviderTable(existing, providerName string) bool {
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return false
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(existing, "\r\n", "\n"), "\n") {
+		if tableProvider, ok := codexModelProviderTableKey(line); ok && tableProvider == providerName {
+			return true
+		}
+	}
+	return false
 }
 
 func addCodexModelProviderKey(existing, providerName string) string {

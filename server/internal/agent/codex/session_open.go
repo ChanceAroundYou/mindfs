@@ -39,7 +39,7 @@ func NewRuntime() *Runtime {
 	return &Runtime{clients: make(map[string]*codexsdk.Codex)}
 }
 
-func (r *Runtime) OpenSession(_ context.Context, opts OpenOptions) (types.Session, error) {
+func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Session, error) {
 	if opts.SessionKey == "" {
 		return nil, errors.New("session key required")
 	}
@@ -76,7 +76,12 @@ func (r *Runtime) OpenSession(_ context.Context, opts OpenOptions) (types.Sessio
 		opts.ResumeSessionID = threadID
 		thread = client.ResumeThread(threadID, threadOptions)
 	} else if strings.TrimSpace(opts.ResumeSessionID) != "" {
-		thread = client.ResumeThread(strings.TrimSpace(opts.ResumeSessionID), threadOptions)
+		resumeID := strings.TrimSpace(opts.ResumeSessionID)
+		if forkedID, ok := rethreadCodexResumeOnProviderMismatch(ctx, client, resumeID, threadOptions, opts.RootPath); ok {
+			resumeID = forkedID
+			opts.ResumeSessionID = forkedID
+		}
+		thread = client.ResumeThread(resumeID, threadOptions)
 	} else {
 		thread = client.StartThread(threadOptions)
 	}

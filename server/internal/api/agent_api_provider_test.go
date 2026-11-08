@@ -205,3 +205,16 @@ model = "gpt-5"
 		t.Fatalf("config without a provider table should remain unchanged: %q", got)
 	}
 }
+
+// 恢复官方配置（无任何 model_providers 表）时，不能把当前供应商 key 硬塞回去：
+// 悬空的 model_provider 会让所有 codex 线程（包括新建的）报
+// "provider is no longer configured"。
+func TestPreserveCodexModelProviderKeySkipsDanglingSelector(t *testing.T) {
+	existing := `model = "gpt-6-luna"
+approval_policy = "never"
+`
+	got := preserveCodexModelProviderKey(existing, "llmux")
+	if got != existing {
+		t.Fatalf("dangling model_provider must not be added: %q", got)
+	}
+}

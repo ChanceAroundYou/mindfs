@@ -213,6 +213,21 @@ func (s *Service) ensureAgentSession(
 		last := binding.AgentCtxSeq
 		ctxSeqOverride = &last
 	}
+	// 供应商切换后 codex 会把线程 fork 到当前供应商，线程 id 随之变化。
+	// 立刻写回绑定，避免用户「只打开不发送」时下次再 fork 出一份重复历史。
+	if manager != nil && sess != nil && openInput.AgentSessionID != "" {
+		if nextID := strings.TrimSpace(sess.SessionID()); nextID != "" && nextID != openInput.AgentSessionID {
+			seq := openInput.AgentCtxSeq
+			if ctxSeqOverride != nil {
+				seq = *ctxSeqOverride
+			}
+			if err := manager.UpdateAgentState(ctx, current, agentName, seq, nextID); err != nil {
+				log.Printf("[session/model] rebind.error session=%s agent=%s from=%s to=%s err=%v", current.Key, agentName, openInput.AgentSessionID, nextID, err)
+			} else {
+				log.Printf("[session/model] rebind.done session=%s agent=%s from=%s to=%s", current.Key, agentName, openInput.AgentSessionID, nextID)
+			}
+		}
+	}
 	log.Printf("[session/model] open.done session=%s agent=%s model=%q mode=%q effort=%q fast_service=%q pool_session=%s", current.Key, agentName, nextModel, nextMode, nextEffort, nextFastService, poolSessionKey)
 	return sess, ctxSeqOverride, nil
 }

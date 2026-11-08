@@ -7297,3 +7297,27 @@ groups:
       - 'Makefile:build-ios:'
       - 'web/package.json:"build:shell": "rimraf dist-shell && VITE_APP_SHELL=1 vite build --outDir dist-shell --emptyOutDir"'
       - 'web/capacitor.config.json:"webDir": "dist-shell"'
+
+  # ── Codex：切换供应商/配置后历史会话可续聊 ─────────────────────────
+  - id: G-KO
+    title: Codex 供应商不一致时 fork 续聊 + 配置恢复不留悬空 model_provider
+    kind: fix
+    symptom: "切换 API 供应商或在 MindFS 里恢复/切换配置后，打开任何旧 Codex 会话都报 app server error (-32600)：This chat uses model provider \"llmux\", which is no longer configured（或 ..., but your current provider is openai. Switch to ... to continue.），整段对话无法继续；恢复官方配置后连新建会话也可能报同一句。"
+    why: "codex app-server 把创建时的 model_provider 记进线程元数据（~/.codex/state_5.sqlite 的 threads.model_provider），thread/resume 要求它等于当前生效的 model_provider。2026-11-09 用隔离 CODEX_HOME 在真机 app-server 实测：resume 的 modelProvider 覆盖参数对两种报错都无效，唯一可行路径是 thread/fork 到当前供应商（fork 复制完整历史，实测成功）。所以 OpenSession 在 resume 前用一次本地 thread/resume 探测，命中供应商不一致时 fork 成新线程并返回新 id；上层 ensureAgentSession 立刻把新 id 写回绑定（UpdateAgentState 只更新 agent_session_id/agent_ctx_seq，保留 external_source_* 游标），避免「只打开不发送」时反复 fork 出重复历史。配套修的第二个坑：恢复官方配置时 preserveCodexModelProviderKey 会把当前 key 硬塞进没有任何 model_providers 表的配置，留下悬空 model_provider，新建会话同样报错；现在只有恢复内容真的定义了该 provider 表才保留选择器。"
+    boundary: "只管 codex 线程的供应商不一致续聊与配置恢复时的 provider 选择器一致性。不改 Claude/ACP；不改供应商切换写配置的格式（仍复用同一个 provider key）；不直接改写 Codex 的 state_*.sqlite 与 rollout 文件。"
+    files:
+      - server/internal/agent/codex/session_open.go
+      - server/internal/agent/codex/session_resume_provider.go
+      - server/internal/agent/codex/session_resume_provider_test.go
+      - server/internal/api/agent_api_provider_codex.go
+      - server/internal/api/agent_api_provider_test.go
+      - server/internal/api/usecase/session_agent_open.go
+    tests:
+      - server/internal/agent/codex/session_resume_provider_test.go
+      - server/internal/api/agent_api_provider_test.go
+    anchors:
+      - 'server/internal/agent/codex/session_open.go:rethreadCodexResumeOnProviderMismatch(ctx, client, resumeID, threadOptions, opts.RootPath)'
+      - 'server/internal/agent/codex/session_resume_provider.go:func isCodexProviderMismatch(err error) bool'
+      - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(probeCtx, client, threadOptions, threadID, nil)'
+      - 'server/internal/api/agent_api_provider_codex.go:func hasCodexModelProviderTable(existing, providerName string) bool'
+      - 'server/internal/api/usecase/session_agent_open.go:rebind.done'
