@@ -1,6 +1,6 @@
 # 去上游化：抹掉 agent9 痕迹 + iPad 套壳
 
-状态：Plan 2026-11-07，**P1–P4 已实现（同日）、P5 已收尾**（部署 `21a6feef`：WSL/fn/pc-win 已装 v0.5.5-1115-14 并独立核对在跑；本机 bundle 已装、待用户重启二进制版本号对齐；P1 的 `GET /api/app/update` 真机复验仍等用户重启后重跑）。范围由用户 2026-11-07 明确拍定（四问四答），本文是可执行清单与验收判据。
+状态：Plan 2026-11-07，**P1–P5 已收尾（2026-11-08）**。部署 `21a6feef`：WSL/fn/pc-win 已装 v0.5.5-1115-14 并独立核对在跑；本机 2026-11-08 12:01 重启后真机 `GET /api/app/update` 实测 `current_version=v0.5.5-1115-14-g21a6feef`、`latest_version=0.5.5-1115`、`release_url=https://github.com/ChanceAroundYou/mindfs/...`、`has_update=false` —— P1 落地。范围由用户 2026-11-07 明确拍定（四问四答），本文是可执行清单与验收判据。
 
 > 实现进度（2026-11-07）：P1 / P2 / P3 已落盘，登记在 `docs/upstream-customizations.yaml` 的 **G-KM**，
 > 守卫是 `web/tests/agent9-traces.test.mjs`（身份单源 + 无 agent9 痕迹 + 版本公式单源）与
