@@ -12,6 +12,7 @@ import { statusText, latestStageRun } from "./taskDetailUtils";
 import { pencilStyle, sessionIconButtonStyle, runIconButtonStyle, tagStyle } from "./taskDetailStyles";
 import { TaskDetailConfirmDialog } from "./TaskDetailConfirmDialog";
 import { CommentThread } from "./CommentThread";
+import { RunViewEntry } from "./RunViewEntry";
 import type { KanbanTask, StageTemplate, TaskDetail } from "../../shared/taskTypes";
 import type { AgentStatus } from "../../shared/agentTypes";
 import { taskStatusColor, isTerminalKanbanTask } from "../../app/appTask";
@@ -348,6 +349,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           </button>
           <input ref={stageAttachRef} type="file" multiple style={{ display: "none" }} onChange={(event) => void handleStageAttach(event)} />
           <CommentThread rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
+          <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
         </div>
     </PanelShell>
       <TaskDetailConfirmDialog

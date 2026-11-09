@@ -70,3 +70,36 @@ export async function postTaskComment(
     },
   );
 }
+
+export type TaskExecutionEngine = {
+  task_id: string;
+  engine: "legacy" | "workflow" | string;
+  workflow_run_id?: string;
+};
+
+export async function fetchTaskEngine(rootId: string, taskId: string, nodeId?: string): Promise<TaskExecutionEngine> {
+  const params = new URLSearchParams({ root_id: rootId });
+  const payload = await protectedJSON<{ engine?: TaskExecutionEngine }>(
+    appURL(`/api/tasks/${encodeURIComponent(taskId)}/engine`, params, nodeId),
+  );
+  return payload?.engine ?? { task_id: taskId, engine: "legacy" };
+}
+
+export type WorkflowRunPayload = {
+  id: string;
+  task_id: string;
+  revision: number;
+  graph?: { nodes?: Array<{ id: string; name?: string; kind?: string }>; edges?: unknown[] };
+  node_states?: Record<string, string>;
+  node_outputs?: Record<string, Record<string, unknown>>;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export async function fetchWorkflowRun(runId: string, nodeId?: string): Promise<WorkflowRunPayload> {
+  const payload = await protectedJSON<{ run?: WorkflowRunPayload }>(
+    appURL(`/api/workflows/runs/${encodeURIComponent(runId)}`, undefined, nodeId),
+  );
+  if (!payload?.run) throw new Error("workflow run not found");
+  return payload.run;
+}

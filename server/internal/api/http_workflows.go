@@ -221,3 +221,37 @@ func (h *HTTPHandler) handleTaskMigrateToWorkflow(w http.ResponseWriter, r *http
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"run": run, "engine": engine})
 }
+
+// handleWorkflowRunGet 返回 Run 快照供运行视图只读展示。
+func (h *HTTPHandler) handleWorkflowRunGet(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	runID := chi.URLParam(r, "runId")
+	run, err := s.GetRun(r.Context(), runID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"run": run})
+}
+
+// handleTaskEngineGet 返回任务的执行引擎绑定：前端据此决定是否展示运行视图入口。
+func (h *HTTPHandler) handleTaskEngineGet(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	rootID := strings.TrimSpace(r.URL.Query().Get("root_id"))
+	if rootID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id required"))
+		return
+	}
+	engine, err := svc.TaskEngineFor(r.Context(), rootID, chi.URLParam(r, "id"))
+	if err != nil {
+		respondError(w, http.StatusNotFound, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"engine": engine})
+}

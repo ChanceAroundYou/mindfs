@@ -181,3 +181,15 @@ func (s *Service) taskRunsOnWorkflow(ctx context.Context, store *TaskStore, task
 	}
 	return e.Engine == EngineWorkflow
 }
+
+// TaskEngineFor 读任务当前的执行引擎绑定（供 UI 判断是否展示运行视图）。
+func (s *Service) TaskEngineFor(ctx context.Context, rootID, taskID string) (TaskEngine, error) {
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return TaskEngine{}, err
+	}
+	if _, _, err := s.loadForMove(ctx, rootID, taskID); err != nil {
+		return TaskEngine{}, err
+	}
+	return taskEngineOf(ctx, store.db, taskID)
+}

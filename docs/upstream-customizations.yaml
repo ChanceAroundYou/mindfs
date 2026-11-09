@@ -7511,3 +7511,27 @@ groups:
       - 'server/internal/kanban/service_engine.go:if cur.Engine == EngineWorkflow {'
       - 'server/internal/kanban/service_execution.go:if s.taskRunsOnWorkflow(ctx, store, task.ID) {'
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleTaskMigrateToWorkflow('
+
+  # ── 运行视图入口（WP-07 收尾）：留言板之下的下钻 ───────────────────────────
+  - id: G-KY
+    title: 运行视图入口 RunViewEntry：挂在留言板之后，仅 workflow 引擎任务可见
+    kind: feature
+    symptom: "迁移到工作流的任务，在留言板下方出现「查看运行视图」；展开后是只读节点时间线，可返回留言板；legacy 任务完全看不到这个入口。"
+    why: "约定三件：①入口渲染在 CommentThread 之后（同一层级的折叠下钻，不是平级 tab，测试钉住 DOM 顺序）；②是否出现由后端 /api/tasks/{id}/engine 的引擎绑定决定，legacy 不渲染；③所有取数显式传 nodeId（跨节点铁律：不传会静默打激活节点）。后端补 GET /api/workflows/runs/{runId} 与 GET /api/tasks/{id}/engine 两个只读出口。"
+    boundary: "只做只读运行视图入口与两个 GET 出口；不做画布编辑、不做 NodeRun 列表接口（当前无 NodeRun 持久化出口）。"
+    files:
+      - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/services/task/comments.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/run-timeline-drill-in.test.ts
+      - server/internal/kanban/service_engine.go
+      - server/internal/api/http_workflows.go
+      - server/internal/api/http_routes.go
+    tests:
+      - web/tests/run-timeline-drill-in.test.ts
+    anchors:
+      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
+      - 'web/src/components/task/RunViewEntry.tsx:engine?.engine === "workflow"'
+      - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleWorkflowRunGet('

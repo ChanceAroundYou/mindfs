@@ -125,3 +125,22 @@ test("run-timeline-drill-in", async () => {
     assert.ok(en.includes(`"${key}"`), `en-US must define ${key}`);
   }
 });
+
+// RunViewEntry 是运行视图的唯一入口：必须挂在留言板之后（TaskDetailPanel 里紧跟
+// CommentThread），只有 workflow 引擎的任务才出现，且展开/收起不离开留言板。
+test("运行视图入口挂在留言板之后，只对 workflow 任务出现", () => {
+  const panel = read("../src/components/task/TaskDetailPanel.tsx");
+  const entry = read("../src/components/task/RunViewEntry.tsx");
+  const commentIdx = panel.indexOf("<CommentThread");
+  const runIdx = panel.indexOf("<RunViewEntry");
+  assert.ok(commentIdx > -1 && runIdx > commentIdx, "RunViewEntry 必须在 CommentThread 之后（下钻而非平级）");
+  // 只有迁移到 workflow 引擎的任务才有运行视图；legacy 不渲染入口。
+  assert.match(entry, /engine\?\.engine === "workflow"/);
+  assert.match(entry, /workflow_run_id/);
+  assert.match(entry, /if \(!runId\) return null;/);
+  // 收起即回到留言板（同层折叠，不跳页）。
+  assert.ok(entry.includes("onBackToComments={() => setOpen(false)}"));
+  // 取数必须显式传 nodeId（跨节点铁律：不传会静默打激活节点）。
+  assert.ok(entry.includes("fetchTaskEngine(rootId, taskId, nodeId)"));
+  assert.ok(entry.includes("fetchWorkflowRun(runId, nodeId)"));
+});
