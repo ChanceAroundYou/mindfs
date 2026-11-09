@@ -57,6 +57,7 @@ var controlPlanePrefixes = []string{
 	"/api/prompts",
 	"/api/task-templates",
 	"/api/task-stage-templates",
+	"/api/workflows",
 	"/api/web-push",
 	"/api/nodes",
 	"/api/node-info",

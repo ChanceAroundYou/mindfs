@@ -32,6 +32,17 @@ type WorkflowStore struct {
 	now func() time.Time
 }
 
+// NewWorkflowStore returns a control-plane WorkflowStore. dir is the
+// control-plane directory on the main node (TemplateStore dir equivalent).
+func NewWorkflowStore(dir string) *WorkflowStore {
+	return &WorkflowStore{dir: dir, now: time.Now}
+}
+
+// NewWorkflowStoreAt is an alias for tests / explicit dir injection.
+func NewWorkflowStoreAt(dir string) *WorkflowStore {
+	return &WorkflowStore{dir: dir, now: time.Now}
+}
+
 func (s *WorkflowStore) pathLocked() string {
 	if s.dir == "" {
 		s.dir = filepath.Join(os.TempDir(), "mindfs-workflows")

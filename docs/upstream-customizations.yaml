@@ -7358,8 +7358,16 @@ groups:
       - server/internal/kanban/workflow_engine.go
       - server/internal/kanban/workflow_validate.go
       - server/internal/kanban/workflow_test.go
+      - server/internal/kanban/service.go
+      - server/internal/nodeinfo/role.go
+      - server/internal/nodeinfo/role_test.go
+      - server/internal/api/http_workflows.go
+      - server/internal/api/http_workflows_test.go
+      - server/internal/api/http_routes.go
     tests:
       - server/internal/kanban/workflow_test.go
+      - server/internal/api/http_workflows_test.go
     anchors:
       - 'server/internal/kanban/workflow_engine.go:func EngineReadyNodes'
       - 'server/internal/kanban/workflow_store.go:func (s *WorkflowStore) PublishDraft'
+      - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleWorkflowDraftPublish'
