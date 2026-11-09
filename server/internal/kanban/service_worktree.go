@@ -45,6 +45,9 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 			if err := store.SetWorktreeRefsAndTask(ctx, task); err != nil {
 				return task, err
 			}
+			// WP-04 多 worktree：主 worktree 双写 registry（node_run_id 空）。
+			// best-effort：失败不回滚 legacy（见 registerPrimaryWorktree）。
+			s.registerPrimaryWorktree(ctx, store, task)
 			return task, nil
 		}
 	}
@@ -76,6 +79,8 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 	if err := store.SetWorktreeRefsAndTask(ctx, task); err != nil {
 		return task, err
 	}
+	// WP-04 多 worktree：主 worktree 双写 registry（node_run_id 空）。best-effort。
+	s.registerPrimaryWorktree(ctx, store, task)
 	return task, nil
 }
 

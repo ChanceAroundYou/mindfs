@@ -7351,7 +7351,7 @@ groups:
     kind: feature
     symptom: "同一 Task 开多 worktree 并行写时，同一 worktree 内两个写节点不再互相覆盖；不同 worktree 真能并行；只读节点不抢锁不排队。"
     why: "本 tranche 仅 gate：per-key 容量 1 token channel，无后台 goroutine，ctx 取消不漏锁（旧 sync.Mutex + 后台 goroutine 版取消会泄漏：goroutine 抢到锁后无人解锁）。gate key = (task_id, worktree_id)（spec「多 worktree 与自动合并」vs 既有 per-Task 默认串行）。gate 是进程内互斥，跨进程互斥不归它（task-store 行锁与 worktree 引用计数）。durable 跨进程语义留 WP-05。registry/merge 本 tranche 未做（后续 tranche）。另：G-KP 的 YAML 登记本 worktree 缺失，随新提交补登记。"
-    boundary: "仅进程内互斥 (task_id,worktree_id)；不提供 durable/跨进程互斥；不含 worktree_registry、service_worktree service_worktree_merge/自动合并、service_worktree.go 注册表化、引用计数扩展（均后续 tranche）。"
+    boundary: "仅进程内互斥 (task_id,worktree_id)；不提供 durable/跨进程互斥。worktree_registry/自动合并/注册表化/引用计数扩展由后续 tranche G-KR 落地。"
     files:
       - server/internal/kanban/writer_gate.go
       - server/internal/kanban/writer_gate_test.go
@@ -7363,3 +7363,32 @@ groups:
       - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) TryAcquire(taskID, worktreeID string) (bool, func())'
       - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) IsHeld(taskID, worktreeID string) bool'
       - 'server/internal/kanban/writer_gate.go:type WriterGate struct'
+
+  # ── 看板多 worktree 注册表 + 自动合并（WP-04 A4 剩余）──────────────────
+  - id: G-KR
+    title: 看板 Task→多 worktree 注册表（task_worktrees）+ 按 NodeRun 归属创建/关闭 + 自动合并到集成分支
+    kind: feature
+    symptom: "同一 Task 的多个 Agent 节点各占独立 worktree/分支、归属可查；节点完成自动合并到集成分支并关树；撞上合并冲突时两条分支都保留、任务进入 needs-user 待人工处理，不自动解、不 stash、不覆盖用户改动。"
+    why: "spec「多 worktree 与自动合并」：worktree 生命周期/归属/回收从单 worktree（tasks.worktree_path 一列）扩展为注册表。设计：①task_worktrees(task_id,worktree_id,branch,path,root_id,node_run_id,state,merged_commit,conflict_files_json,conflict_output) 主键(task_id,worktree_id)，worktree_id 默认=branch，node_run_id 归属 WP-05 NodeRun（现阶段 string 占位，WP-05 只写列不改表）；②迁移由 task_store_migrate.go 的 migrate() 显式调用 migrateWorktreeRegistry（与 A1 的 migrateComments 同一接线），不在运行时懒建表；③ensureTaskWorktree 双写 registry（主 worktree node_run_id 空），存量单 worktree 任务 registry 为空时行为零回归；④合并只调 gitview 安全 API（exec 参数数组无 shell），冲突→state=needs_user+task_activities 落 merge_conflict+卡片 session_error，不 abort/stash；⑤关闭/拆目录复用 ClassifyWorktreeRemoveBlockers（用户改动拒绝拆）、branch -d 安全删、从不用 --force/-D。"
+    boundary: "只做注册表+创建/关闭+自动合并；不做 WP-05 WorkflowRun/NodeRun 引擎（node_run_id 仅字符串归属列）、不做跨节点迁移、不改 legacy FinishTaskWorktree 单 worktree 路径语义；git 调用不新增 shell 拼接，一律走 gitview。"
+    files:
+      - server/internal/kanban/worktree_registry.go
+      - server/internal/kanban/worktree_registry_test.go
+      - server/internal/kanban/service_worktree.go
+      - server/internal/kanban/service_worktree_noderun.go
+      - server/internal/kanban/service_worktree_merge.go
+      - server/internal/kanban/service_worktree_multi_test.go
+      - server/internal/kanban/service_worktree_merge_test.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/task_store_worktree_refs.go
+      - server/internal/kanban/types.go
+      - docs/upstream-customizations.yaml
+    tests:
+      - server/internal/kanban/worktree_registry_test.go
+      - server/internal/kanban/service_worktree_multi_test.go
+      - server/internal/kanban/service_worktree_merge_test.go
+    anchors:
+      - 'server/internal/kanban/worktree_registry.go:func (s *TaskStore) migrateWorktreeRegistry() error'
+      - 'server/internal/kanban/service_worktree_merge.go:func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInput) (AutoMergeWorktreeResult, error)'
+      - 'server/internal/kanban/service_worktree_noderun.go:func (s *Service) EnsureNodeWorktree(ctx context.Context, in EnsureNodeWorktreeInput) (WorktreeEntry, error)'
+      - 'server/internal/kanban/service_worktree_noderun.go:func (s *Service) CloseNodeWorktree(ctx context.Context, in CloseNodeWorktreeInput) (WorktreeEntry, error)'
