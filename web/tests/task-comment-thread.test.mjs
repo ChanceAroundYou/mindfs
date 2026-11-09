@@ -53,7 +53,19 @@ test("task-comment-thread", () => {
   }).outputText;
   // comments.ts 的 import 转译后会 require ../net/base 与 ../net/api，
   // 本用例只验证纯函数 newCommentId，注入桩即可（require 未定义会 ReferenceError）。
-  const requireStub = () => ({ appURL: () => "", protectedJSON: async () => ({}) });
+  // 类型与 newCommentId 已抽到 shared/taskComments（components 不得 import services，
+  // 两边共用同一份定义）；桩按模块路径分派，保证 re-export 拿到真实实现。
+  const sharedPath = path.resolve(import.meta.dirname, "../src/shared/taskComments.ts");
+  const sharedSource = fs.readFileSync(sharedPath, "utf8");
+  const sharedCompiled = ts.transpileModule(sharedSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const sharedSandbox = { exports: {}, module: { exports: {} }, require: () => ({}), crypto: globalThis.crypto };
+  vm.runInNewContext(sharedCompiled, sharedSandbox, { filename: sharedPath });
+  const requireStub = (id) =>
+    id && id.includes("shared/taskComments")
+      ? sharedSandbox.exports
+      : { appURL: () => "", protectedJSON: async () => ({}) };
   const sandbox = { exports: {}, module: { exports: {} }, require: requireStub, URLSearchParams, crypto: globalThis.crypto };
   vm.runInNewContext(compiled, sandbox, { filename: apiSourcePath });
   const { newCommentId } = sandbox.exports;

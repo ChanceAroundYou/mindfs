@@ -23,7 +23,7 @@ import {
   type WorkflowGraph,
   type WorkflowNodeDef,
   type WorkflowNodeKind,
-} from "../../services/task/workflowDraft";
+} from "../../shared/workflowModel";
 
 // 工作流草稿画布（WP-07）：**桌面端**的 Draft 图编辑器。
 //

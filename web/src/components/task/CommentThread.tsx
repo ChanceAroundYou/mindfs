@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useI18n } from "../../i18n/index";
-import type { TaskActivity, WorkflowChoice } from "../../services/task/comments";
+import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
 import { panelButtonStyle } from "../shell/PanelShell";
 import { useCommentThread } from "./useCommentThread";
 
@@ -98,16 +98,35 @@ export function CommentThread({
         ) : null}
       </div>
       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
-        <select
-          aria-label={t("task.comments.workflowChoice")}
-          value={choice}
-          onChange={(e) => setChoice(e.target.value as WorkflowChoice)}
-          style={{ height: "28px", fontSize: "11px" }}
-        >
-          <option value="empty">{t("task.comments.choiceEmpty")}</option>
-          <option value="specified">{t("task.comments.choiceSpecified")}</option>
-          <option value="disabled">{t("task.comments.choiceDisabled")}</option>
-        </select>
+        {/* 三态选择用按钮组而不是原生 <select>：仓库禁止原生 select（iOS/安卓壳里
+            弹层样式不可控，见 web/tests/task-panel-options.test.mjs）。 */}
+        <div role="radiogroup" aria-label={t("task.comments.workflowChoice")} style={{ display: "flex", gap: "4px" }}>
+          {(["empty", "specified", "disabled"] as WorkflowChoice[]).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={choice === value}
+              onClick={() => setChoice(value)}
+              style={{
+                height: "28px",
+                fontSize: "11px",
+                padding: "0 8px",
+                borderRadius: "6px",
+                border: `1px solid ${choice === value ? "var(--accent-color)" : "var(--border-color)"}`,
+                background: "transparent",
+                color: choice === value ? "var(--accent-color)" : "var(--text-secondary)",
+                cursor: "pointer",
+              }}
+            >
+              {value === "empty"
+                ? t("task.comments.choiceEmpty")
+                : value === "specified"
+                  ? t("task.comments.choiceSpecified")
+                  : t("task.comments.choiceDisabled")}
+            </button>
+          ))}
+        </div>
         {choice === "specified" ? (
           <input
             aria-label={t("task.comments.workflowVersion")}

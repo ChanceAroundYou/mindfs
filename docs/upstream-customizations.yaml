@@ -7460,6 +7460,7 @@ groups:
       - web/src/services/task/index.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      - web/src/shared/taskComments.ts
       - web/tests/task-comment-thread.test.mjs
     tests:
       - web/tests/task-comment-thread.test.mjs
@@ -7521,6 +7522,7 @@ groups:
     boundary: "只做只读运行视图入口与两个 GET 出口；不做画布编辑、不做 NodeRun 列表接口（当前无 NodeRun 持久化出口）。"
     files:
       - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/services/task/comments.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
@@ -7533,7 +7535,7 @@ groups:
       - web/tests/run-timeline-drill-in.test.ts
     anchors:
       - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
-      - 'web/src/components/task/RunViewEntry.tsx:engine?.engine === "workflow"'
+      - 'web/src/components/task/useRunViewEntry.ts:engine?.engine === "workflow"'
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleWorkflowRunGet('
 
   # ── 工作流草稿画布（WP-07 画布 tranche）：桌面端可视化编辑 ──────────────────
@@ -7545,6 +7547,7 @@ groups:
     boundary: "只做草稿画布与同构校验；尚未挂进应用路由/看板入口，发布确认页与 NodeRun 列表仍缺。"
     files:
       - web/src/components/task/WorkflowCanvas.tsx
+      - web/src/shared/workflowModel.ts
       - web/src/services/task/workflowDraft.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
@@ -7556,4 +7559,4 @@ groups:
     anchors:
       - 'web/src/components/task/WorkflowCanvas.tsx:export function WorkflowCanvas('
       - 'web/src/components/task/WorkflowCanvas.tsx:MOBILE_BREAKPOINT = 720'
-      - 'web/src/services/task/workflowDraft.ts:export function validateWorkflowGraph('
+      - 'web/src/shared/workflowModel.ts:export function validateWorkflowGraph('

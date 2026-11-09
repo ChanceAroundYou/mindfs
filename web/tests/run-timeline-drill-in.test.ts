@@ -131,16 +131,18 @@ test("run-timeline-drill-in", async () => {
 test("运行视图入口挂在留言板之后，只对 workflow 任务出现", () => {
   const panel = read("../src/components/task/TaskDetailPanel.tsx");
   const entry = read("../src/components/task/RunViewEntry.tsx");
+  const hook = read("../src/components/task/useRunViewEntry.ts");
   const commentIdx = panel.indexOf("<CommentThread");
   const runIdx = panel.indexOf("<RunViewEntry");
   assert.ok(commentIdx > -1 && runIdx > commentIdx, "RunViewEntry 必须在 CommentThread 之后（下钻而非平级）");
   // 只有迁移到 workflow 引擎的任务才有运行视图；legacy 不渲染入口。
-  assert.match(entry, /engine\?\.engine === "workflow"/);
-  assert.match(entry, /workflow_run_id/);
+  // 引擎门槛在取数 hook（.ts）里：视图层不 import services。
+  assert.match(hook, /engine\?\.engine === "workflow"/);
+  assert.match(hook, /workflow_run_id/);
   assert.match(entry, /if \(!runId\) return null;/);
   // 收起即回到留言板（同层折叠，不跳页）。
-  assert.ok(entry.includes("onBackToComments={() => setOpen(false)}"));
+  assert.ok(entry.includes("onBackToComments={collapse}"), "收起必须回到留言板（同一层级折叠）");
   // 取数必须显式传 nodeId（跨节点铁律：不传会静默打激活节点）。
-  assert.ok(entry.includes("fetchTaskEngine(rootId, taskId, nodeId)"));
-  assert.ok(entry.includes("fetchWorkflowRun(runId, nodeId)"));
+  assert.ok(hook.includes("fetchTaskEngine(rootId, taskId, nodeId)"));
+  assert.ok(hook.includes("fetchWorkflowRun(runId, nodeId)"));
 });

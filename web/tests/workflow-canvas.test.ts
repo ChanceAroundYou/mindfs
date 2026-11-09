@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "vitest";
-import { LOOP_DEFAULT, LOOP_MAX, LOOP_MIN, newNode, validateWorkflowGraph } from "../src/services/task/workflowDraft.ts";
+import { LOOP_DEFAULT, LOOP_MAX, LOOP_MIN, newNode, validateWorkflowGraph } from "../src/shared/workflowModel.ts";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
 

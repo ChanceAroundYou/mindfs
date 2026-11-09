@@ -1,39 +1,18 @@
 import { appURL } from "../net/base";
 import { protectedJSON } from "../net/api";
+import type {
+  ContinueRequest,
+  PostCommentResult,
+  TaskActivity,
+  TaskExecutionEngine,
+  WorkflowChoice,
+  WorkflowRunPayload,
+} from "../../shared/taskComments";
+import { newCommentId } from "../../shared/taskComments";
 
-export type WorkflowChoice = "specified" | "disabled" | "empty";
+export type { ContinueRequest, PostCommentResult, TaskActivity, TaskExecutionEngine, WorkflowChoice, WorkflowRunPayload };
+export { newCommentId };
 
-export type TaskActivity = {
-  id: string;
-  task_id: string;
-  type: string;
-  author: string;
-  role: "user" | "agent" | string;
-  body: string;
-  workflow_choice: WorkflowChoice | string;
-  workflow_version_id?: string;
-  created_at: string;
-};
-
-export type ContinueRequest = {
-  request_id: string;
-  task_id: string;
-  comment_id: string;
-  status: "queued" | "blocked" | "consumed" | string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PostCommentResult = {
-  activity: TaskActivity;
-  continue_request: ContinueRequest;
-};
-
-export function newCommentId(): string {
-  const c = globalThis.crypto as Crypto | undefined;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 export async function fetchTaskComments(rootId: string, taskId: string, nodeId?: string): Promise<TaskActivity[]> {
   const params = new URLSearchParams({ root_id: rootId });
@@ -71,12 +50,6 @@ export async function postTaskComment(
   );
 }
 
-export type TaskExecutionEngine = {
-  task_id: string;
-  engine: "legacy" | "workflow" | string;
-  workflow_run_id?: string;
-};
-
 export async function fetchTaskEngine(rootId: string, taskId: string, nodeId?: string): Promise<TaskExecutionEngine> {
   const params = new URLSearchParams({ root_id: rootId });
   const payload = await protectedJSON<{ engine?: TaskExecutionEngine }>(
@@ -84,17 +57,6 @@ export async function fetchTaskEngine(rootId: string, taskId: string, nodeId?: s
   );
   return payload?.engine ?? { task_id: taskId, engine: "legacy" };
 }
-
-export type WorkflowRunPayload = {
-  id: string;
-  task_id: string;
-  revision: number;
-  graph?: { nodes?: Array<{ id: string; name?: string; kind?: string }>; edges?: unknown[] };
-  node_states?: Record<string, string>;
-  node_outputs?: Record<string, Record<string, unknown>>;
-  created_at?: string;
-  updated_at?: string;
-};
 
 export async function fetchWorkflowRun(runId: string, nodeId?: string): Promise<WorkflowRunPayload> {
   const payload = await protectedJSON<{ run?: WorkflowRunPayload }>(
