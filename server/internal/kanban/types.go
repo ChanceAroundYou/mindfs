@@ -279,6 +279,62 @@ type StageResult struct {
 	Reason  string
 }
 
+// TaskActivity / ContinueRequest —— WP-01 留言板后端（spec 2026-11-09）。
+//
+// TaskActivity 是留言板时间线的一条 typed 记录；ContinueRequest 是每条留言
+// 触发的幂等执行请求。两者同事务写入（TaskStore.PostComment），legacy
+// Stages/StageRun 语义不受影响。
+const (
+	ActivityTypeUserComment = "user_comment"
+	ActivityTypeAgentReply  = "agent_reply"
+	ActivityTypeSystemEvent = "system_event"
+	ActivityTypeAttention   = "attention"
+)
+
+const (
+	CommentWorkflowChoiceSpecified = "specified"
+	CommentWorkflowChoiceDisabled  = "disabled"
+	CommentWorkflowChoiceEmpty     = "empty"
+)
+
+const (
+	ContinueRequestQueued   = "queued"
+	ContinueRequestBlocked  = "blocked"
+	ContinueRequestConsumed = "consumed"
+)
+
+type TaskActivity struct {
+	ID                string    `json:"id"`
+	TaskID            string    `json:"task_id"`
+	Type              string    `json:"type"`
+	Author            string    `json:"author"`
+	Role              string    `json:"role"`
+	Body              string    `json:"body"`
+	WorkflowChoice    string    `json:"workflow_choice"`
+	WorkflowVersionID string    `json:"workflow_version_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ContinueRequest struct {
+	RequestID string    `json:"request_id"`
+	TaskID    string    `json:"task_id"`
+	CommentID string    `json:"comment_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PostCommentInput struct {
+	TaskID            string
+	CommentID         string
+	Author            string
+	Role              string
+	Body              string
+	Type              string
+	WorkflowChoice    string
+	WorkflowVersionID string
+}
+
 type Runner interface {
 	CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (WorktreeInfo, error)
 	EnsureAgentSession(ctx context.Context, exec AgentStageExecution) (string, error)

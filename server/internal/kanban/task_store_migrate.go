@@ -173,7 +173,7 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if err := s.backfillTaskNumbers(); err != nil {
 		return err
 	}
-	return err
+	return s.migrateComments()
 }
 
 func (s *TaskStore) backfillTaskNumbers() error {

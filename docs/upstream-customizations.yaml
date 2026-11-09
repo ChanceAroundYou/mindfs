@@ -7344,7 +7344,6 @@ groups:
     anchors:
       - 'server/internal/kanban/task_store_comments.go:func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput)'
       - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskCommentsPost'
-
   # ── Workflow 领域模型（WP-05）：Version/Draft/Run/NodeRun + DAG/Loop 引擎 ──
   - id: G-KQ
     title: Workflow 领域模型：不可变 Version、Draft CAS、Run 快照与 DAG/Loop 引擎（WP-05）
