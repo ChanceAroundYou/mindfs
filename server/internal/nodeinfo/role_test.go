@@ -125,6 +125,7 @@ func TestControlPlanePrefixesSnapshot(t *testing.T) {
 		"/api/prompts",
 		"/api/task-templates",
 		"/api/task-stage-templates",
+		"/api/workflows",
 		"/api/web-push",
 		"/api/nodes",
 		"/api/node-info",

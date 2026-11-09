@@ -71,6 +71,9 @@ type Service struct {
 	Templates *TemplateStore
 	Roots     RootProvider
 	Runner    Runner
+	// Workflows is the control-plane WorkflowStore (WP-05). Nil in legacy tests;
+	// HTTP handlers reject with 503 when unavailable.
+	Workflows *WorkflowStore
 
 	mu       sync.Mutex
 	stores   map[string]*TaskStore
