@@ -138,3 +138,39 @@ type DefaultsReader interface {
 type ThreadEventSubscriber interface {
 	SubscribeThreadEvents(ctx context.Context) error
 }
+
+// SteerReceipt reports the outcome of a steer attempt. Only
+// SteerReceiptConfirmed means the adapter protocol actually acknowledged
+// delivery into the active turn. SteerReceiptSent has no such acknowledgement
+// and must never be reported as read/confirmed. SteerReceiptUnknown means
+// the outcome cannot be determined (for example a timeout after the message
+// may have started) and must not be replayed automatically.
+type SteerReceipt string
+
+const (
+	SteerReceiptConfirmed SteerReceipt = "confirmed"
+	SteerReceiptSent      SteerReceipt = "sent"
+	SteerReceiptRejected  SteerReceipt = "rejected"
+	SteerReceiptUnknown   SteerReceipt = "unknown"
+)
+
+// SteerCapability is an explicit adapter capability. First-generation
+// adapters do not implement it and therefore support no steer: callers must
+// fall back to FIFO queuing. Ordinary SendMessage is not a steer and must
+// never be presented as one.
+type SteerCapability interface {
+	SupportsSteer() bool
+	// Steer attempts to inject msg into the active turn of sessionKey. The
+	// message argument is a plain string per the Phase 1 constraint.
+	Steer(ctx context.Context, sessionKey, msg string) (SteerReceipt, error)
+}
+
+// DefaultSteerSupport reports the Phase 1 default for existing adapters:
+// no steer support, FIFO only.
+func DefaultSteerSupport() bool { return false }
+
+// SteerOf returns the SteerCapability implemented by s, if any.
+func SteerOf(s Session) (SteerCapability, bool) {
+	c, ok := s.(SteerCapability)
+	return c, ok
+}

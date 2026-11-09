@@ -196,6 +196,53 @@ func (p *Pool) BeginSessionUse(sessionKey string) func() {
 	}
 }
 
+// SupportsSteer reports whether the session for sessionKey has an active
+// adapter that declares real steer capability. Absent sessions, closing
+// sessions, and all existing adapters default to false (FIFO only).
+func (p *Pool) SupportsSteer(sessionKey string) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	entry := p.sessions[sessionKey]
+	p.mu.Unlock()
+	if entry == nil || entry.closing || entry.session == nil {
+		return false
+	}
+	cap, ok := agenttypes.SteerOf(entry.session)
+	return ok && cap.SupportsSteer()
+}
+
+// SteerCapabilityFor returns the SteerCapability of the given session, if
+// the adapter implements one. Callers must check SupportsSteer first:
+// a returned capability that reports SupportsSteer()==false must not be used.
+func (p *Pool) SteerCapabilityFor(sessionKey string) (agenttypes.SteerCapability, bool) {
+	if p == nil {
+		return nil, false
+	}
+	p.mu.Lock()
+	entry := p.sessions[sessionKey]
+	p.mu.Unlock()
+	if entry == nil || entry.closing || entry.session == nil {
+		return nil, false
+	}
+	return agenttypes.SteerOf(entry.session)
+}
+
+// Steer injects msg into the active turn of sessionKey when the adapter
+// declares steer support. It returns SteerReceiptRejected when the adapter
+// does not support steer (callers should queue FIFO instead). A successful
+// return of SteerReceiptConfirmed is the only outcome callers may report as
+// confirmed; SteerReceiptUnknown must not be replayed. Ordinary SendMessage
+// queuing semantics are unchanged.
+func (p *Pool) Steer(ctx context.Context, sessionKey, msg string) (agenttypes.SteerReceipt, error) {
+	cap, ok := p.SteerCapabilityFor(sessionKey)
+	if !ok || !cap.SupportsSteer() {
+		return agenttypes.SteerReceiptRejected, nil
+	}
+	return cap.Steer(ctx, sessionKey, msg)
+}
+
 // HasActiveUse 报告这个会话当前有没有回合在跑。session_send / 命令 shell / 子代理流
 // 都用 BeginSessionUse 把自己圈起来，所以 activeUses > 0 就是「正在回复」。
 //
