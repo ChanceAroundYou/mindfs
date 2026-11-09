@@ -173,7 +173,12 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if err := s.backfillTaskNumbers(); err != nil {
 		return err
 	}
-	return s.migrateComments()
+	if err := s.migrateComments(); err != nil {
+		return err
+	}
+	// WP-04 多 worktree 注册表：建表接线显式在此（与 migrateComments 同一口径），
+	// 不在任何运行时路径上懒建表。实现见 worktree_registry.go。
+	return s.migrateWorktreeRegistry()
 }
 
 func (s *TaskStore) backfillTaskNumbers() error {

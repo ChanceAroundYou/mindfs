@@ -1,9 +1,7 @@
 package kanban
 
 import (
-	"errors"
 	"fmt"
-	"sync"
 	"time"
 )
 
@@ -144,40 +142,6 @@ type NodeRun struct {
 	StartedAt     time.Time      `json:"started_at,omitempty"`
 	FinishedAt    time.Time      `json:"finished_at,omitempty"`
 	PrevAttemptID string         `json:"prev_attempt_id,omitempty"`
-}
-
-// ── WriterGate (A4 WP-04 owns the real implementation; this is the contract) ──
-// Default serial gate serializes per-task. A4 will replace with per-worktree
-// granularity: key = (task_id, worktree_id), same worktree serial, different
-// worktrees parallel. Engine must call Acquire before starting a write node.
-type WriterGate interface {
-	Acquire(taskID, worktreeID string) error
-	Release(taskID, worktreeID string)
-}
-
-type serialWriterGate struct {
-	mu   sync.Mutex
-	held map[string]bool
-}
-
-func NewSerialWriterGate() WriterGate {
-	return &serialWriterGate{held: map[string]bool{}}
-}
-
-func (g *serialWriterGate) Acquire(taskID, worktreeID string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.held[taskID] {
-		return errors.New("writer gate: task already holds write lock")
-	}
-	g.held[taskID] = true
-	return nil
-}
-
-func (g *serialWriterGate) Release(taskID, worktreeID string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.held, taskID)
 }
 
 // ── Template suggestion (WP-06: suggest, never auto-publish) ────────────────

@@ -343,3 +343,39 @@ type Runner interface {
 	RunAgentStage(ctx context.Context, exec AgentStageExecution) (StageResult, error)
 	TaskUpdated(rootID string, detail TaskDetail)
 }
+
+// ── WP-04 多 worktree 注册表 ─────────────────────────────────────────────
+//
+// Task→多 worktree：每个 entry 归属一个 NodeRun（WP-05 的 NodeRun 目前不存在，
+// node_run_id 留空即 legacy/stage 归属），生命周期由 state 表达。tasks 表上的
+// 单 worktree 列（WorktreePath/WorktreeRootID/WorktreeBuilt）保持为「主 worktree」
+// （ensureTaskWorktree 第一次建/认领的那棵），registry 是超集：所有 worktree 都在
+// task_worktrees 里，主 worktree 在两处都有记录。兼容要求：存量单 worktree 任务
+// 在 registry 为空时行为与今日完全一致（FinishTaskWorktree 等只看 tasks 列）。
+const (
+	WorktreeStateActive    = "active"
+	WorktreeStateMerged    = "merged"
+	WorktreeStateClosed    = "closed"
+	WorktreeStateNeedsUser = "needs_user"
+)
+
+// ActivityTypeMergeConflict 是多 worktree 自动合并撞上冲突时落的 activity 类型
+// （WP-01 的 task_activities 表）。合并冲突 = needs-user：两个分支都保留，不自动
+// 解、不 stash、不覆盖用户改动。
+const ActivityTypeMergeConflict = "merge_conflict"
+
+// WorktreeEntry 是一行 task_worktrees：一个 task 拥有的一棵 worktree。
+type WorktreeEntry struct {
+	TaskID         string    `json:"task_id"`
+	WorktreeID     string    `json:"worktree_id"`
+	Branch         string    `json:"branch"`
+	Path           string    `json:"path"`
+	RootID         string    `json:"root_id"`
+	NodeRunID      string    `json:"node_run_id,omitempty"`
+	State          string    `json:"state"`
+	MergedCommit   string    `json:"merged_commit,omitempty"`
+	ConflictFiles  []string  `json:"conflict_files,omitempty"`
+	ConflictOutput string    `json:"conflict_output,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}

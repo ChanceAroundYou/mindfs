@@ -225,25 +225,6 @@ func TestProjectStatusFromRun(t *testing.T) {
 	}
 }
 
-func TestWriterGateInterfaceDefined(t *testing.T) {
-	// A4 not yet integrated: interface must exist, default impl serializes per task.
-	var _ WriterGate = NewSerialWriterGate()
-	g := NewSerialWriterGate()
-	if g.Acquire("task1", "wt1") != nil {
-		t.Fatal("acquire failed")
-	}
-	if err := g.Acquire("task1", "wt1"); err == nil {
-		t.Fatal("same gate should block second acquire")
-	}
-	g.Release("task1", "wt1")
-	// After release, a different worktree may acquire (per-task serial default
-	// only blocks while held; A4 will make this per-worktree).
-	if err := g.Acquire("task1", "wt2"); err != nil {
-		t.Fatalf("acquire after release should succeed: %v", err)
-	}
-	g.Release("task1", "wt2")
-}
-
 func TestSuggestTemplateFromSuccess(t *testing.T) {
 	run := &WorkflowRun{ID: "r9", TaskID: "t9", Graph: wfDef(wfNode("a", NodeKindAgent)), NodeStates: map[string]string{"a": NodeRunSuccess}}
 	sug := SuggestTemplateFromRun(run, "user")
