@@ -7485,3 +7485,29 @@ groups:
     anchors:
       - 'web/src/components/task/RunTimeline.tsx:export function RunTimeline'
       - 'web/src/components/task/RunTimeline.tsx:data-drill-in="comment-run"'
+
+  # ── 存量任务显式迁移到 WorkflowRun（WP-05/06 收尾）：引擎互斥 ──────────────
+  - id: G-KX
+    title: 存量任务显式迁移到 WorkflowRun 引擎 + 控制面工作流库接线
+    kind: feature
+    symptom: "存量看板任务可以被用户显式迁移成工作流运行：迁移后该任务不再由旧阶段流水推进，旧流水停在上一次状态；重复迁移被拒绝；终态任务拒绝迁移。工作流接口不再返回 503。"
+    why: "约定五件：①`task_execution_engines` 独立表记录绑定，没有行即 legacy（存量零回填、不批量转换）；②迁移按任务的 Stages 生成线性图快照（user 段→human_gate、agent 段→agent），或使用显式指定的不可变 WorkflowVersion 图；③先落 Run 再切引擎，任一步失败任务仍是 legacy，不出现「引擎切了但没有 Run」；④`executeTask` 开头查绑定，已迁移直接返回 ErrTaskAlreadyWorkflow 且不写任何状态（一个 Task 最多一个活动引擎）；⑤WorkflowStore 按控制面配置目录打开并注入每个账户的 Kanban 实例，否则 /api/workflows 恒 503。"
+    boundary: "只做显式迁移与引擎互斥；不做存量批量转换、不双写两份运行模型、不自动把旧任务挂到新图。"
+    files:
+      - server/internal/kanban/service_engine.go
+      - server/internal/kanban/service_engine_test.go
+      - server/internal/kanban/service_execution.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/workflow_store.go
+      - server/internal/api/http_workflows.go
+      - server/internal/api/http_routes.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+    tests:
+      - server/internal/kanban/service_engine_test.go
+    anchors:
+      - 'server/internal/kanban/service_engine.go:func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, versionID, author string)'
+      - 'server/internal/kanban/service_engine.go:if cur.Engine == EngineWorkflow {'
+      - 'server/internal/kanban/service_execution.go:if s.taskRunsOnWorkflow(ctx, store, task.ID) {'
+      - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleTaskMigrateToWorkflow('

@@ -186,3 +186,38 @@ func (h *HTTPHandler) handleWorkflowRunEdit(w http.ResponseWriter, r *http.Reque
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// handleTaskMigrateToWorkflow 把一个存量任务显式迁移到 WorkflowRun 引擎。
+//
+// 迁移是单向、显式的用户动作（spec「新旧执行模型互斥」）：成功后该任务的 legacy
+// Stages 引擎不再推进；不带 version 时按任务现有 Stages 生成线性图快照。
+func (h *HTTPHandler) handleTaskMigrateToWorkflow(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	taskID := chi.URLParam(r, "id")
+	var req struct {
+		RootID  string `json:"root_id"`
+		Version string `json:"version"`
+		Author  string `json:"author"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	if strings.TrimSpace(req.RootID) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id required"))
+		return
+	}
+	run, engine, err := svc.MigrateTaskToWorkflowRun(r.Context(), req.RootID, taskID, req.Version, req.Author)
+	if err != nil {
+		if errors.Is(err, kanban.ErrTaskAlreadyWorkflow) {
+			respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "engine": engine})
+			return
+		}
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"run": run, "engine": engine})
+}

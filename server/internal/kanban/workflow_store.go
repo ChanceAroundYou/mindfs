@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	configpkg "mindfs/server/internal/config"
 )
 
 // ── Store (control-plane file store; versions immutable, drafts CAS) ───────
@@ -36,6 +38,16 @@ type WorkflowStore struct {
 // control-plane directory on the main node (TemplateStore dir equivalent).
 func NewWorkflowStore(dir string) *WorkflowStore {
 	return &WorkflowStore{dir: dir, now: time.Now}
+}
+
+// NewWorkflowStoreDefault 按配置目录打开控制面 workflow 库，与 TemplateStore 同目录
+// （工作流模板与任务模板同属共享控制面，只有主节点一份）。
+func NewWorkflowStoreDefault() (*WorkflowStore, error) {
+	dir, err := configpkg.MindFSConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	return &WorkflowStore{dir: dir, now: time.Now}, nil
 }
 
 // NewWorkflowStoreAt is an alias for tests / explicit dir injection.

@@ -117,6 +117,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/workflows/versions/{version}", h.handleWorkflowVersionGet)
 	r.Post("/api/workflows/runs", h.handleWorkflowRunCreate)
 	r.Put("/api/workflows/runs/{runId}", h.handleWorkflowRunEdit)
+	r.Post("/api/tasks/{id}/migrate-workflow", h.handleTaskMigrateToWorkflow)
 	r.Get("/api/tasks", h.handleKanbanTasksList)
 	r.Get("/api/tasks/overview", h.handleKanbanTasksOverview)
 	r.Post("/api/tasks", h.handleKanbanTaskCreate)

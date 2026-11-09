@@ -178,7 +178,12 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	}
 	// WP-04 多 worktree 注册表：建表接线显式在此（与 migrateComments 同一口径），
 	// 不在任何运行时路径上懒建表。实现见 worktree_registry.go。
-	return s.migrateWorktreeRegistry()
+	if err := s.migrateWorktreeRegistry(); err != nil {
+		return err
+	}
+	// 任务执行引擎绑定（legacy / workflow）。存量任务没有行 = legacy，零回填。
+	// 实现见 service_engine.go。
+	return s.migrateTaskEngines()
 }
 
 func (s *TaskStore) backfillTaskNumbers() error {

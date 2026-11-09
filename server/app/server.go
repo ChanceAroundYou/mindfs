@@ -82,6 +82,10 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if err != nil {
 		return err
 	}
+	sharedWorkflows, err := kanban.NewWorkflowStoreDefault()
+	if err != nil {
+		return err
+	}
 	sharedPool := agent.NewPool(agentConfig)
 	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
 	sharedProber.Start(ctx)
@@ -102,6 +106,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		nodes:       sharedNodes,
 		webPush:     sharedWebPush,
 		templates:   sharedTemplates,
+		workflows:   sharedWorkflows,
 		pool:        sharedPool,
 		prober:      sharedProber,
 	})

@@ -45,6 +45,7 @@ type sharedServices struct {
 	nodes     *nodes.Store
 	webPush   *webpush.Service
 	templates *kanban.TemplateStore
+	workflows *kanban.WorkflowStore
 	pool      *agent.Pool
 	prober    *agent.Prober
 }

@@ -13,6 +13,12 @@ func (s *Service) executeTask(ctx context.Context, rootID, taskID string) error 
 	if err != nil {
 		return err
 	}
+	// 已迁移到 WorkflowRun 的任务由工作流引擎推进，legacy 引擎必须让位：
+	// 一个 Task 同时最多一个活动执行引擎（spec「新旧执行模型互斥」）。这里直接返回，
+	// 不写任何状态 —— 迁移后的状态由 Run 投影，legacy 不得覆盖。
+	if s.taskRunsOnWorkflow(ctx, store, task.ID) {
+		return ErrTaskAlreadyWorkflow
+	}
 	for {
 		if task.Status == StatusPaused || isTerminalStatus(task.Status) {
 			return nil
