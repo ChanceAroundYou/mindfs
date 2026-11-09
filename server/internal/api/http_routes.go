@@ -130,6 +130,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/tasks/{id}/rebuild-worktree", h.handleKanbanTaskRebuildWorktree)
 	r.Post("/api/tasks/{id}/finish-worktree", h.handleKanbanTaskFinishWorktree)
 	r.Post("/api/tasks/{id}/begin-finish", h.handleKanbanTaskBeginFinish)
+	r.Post("/api/tasks/{id}/comments", h.handleKanbanTaskCommentsPost)
+	r.Get("/api/tasks/{id}/comments", h.handleKanbanTaskCommentsGet)
 	r.Get("/api/dirs", h.handleDirs)
 	r.Post("/api/dirs", h.handleAddDir)
 	r.Post("/api/dirs/{id}/rename", h.handleRenameDir)
