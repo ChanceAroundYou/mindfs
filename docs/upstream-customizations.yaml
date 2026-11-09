@@ -7370,3 +7370,21 @@ groups:
       - 'server/internal/kanban/workflow_engine.go:func EngineReadyNodes'
       - 'server/internal/kanban/workflow_store.go:func (s *WorkflowStore) PublishDraft'
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleWorkflowDraftPublish'
+
+  # ── 留言板下钻只读运行视图（WP-07）：RunTimeline standalone 组件 ───────
+  - id: G-KR
+    title: 留言板下钻只读运行视图 RunTimeline（WP-07 tranche）
+    kind: feature
+    symptom: "用户在留言板点开一条留言后，能看到该留言触发的 workflow run 的节点时间线：每个节点的 run 状态、输入/输出/错误，以及点节点可跳到对应 agent 会话。"
+    why: "WP-07 的独立可交付 tranche：只做留言板下钻的只读运行视图（时间线），不做 React Flow 画布。组件 standalone，不接 TaskDetailPanel wiring（A2 未提交变更冲突），不新增平级 tab：组件以 data-drill-in=\"comment-run\" 声明层级，并提供返回留言板的入口。数据形状对齐 A5 workflow_types.go 的 WorkflowRun/NodeRun，后端 NodeRun HTTP 出口未立项前 run/nodeRuns 由父层传入。session 跳转走 onOpenSession 回调，复用 TaskDetailPanel 语义。"
+    boundary: "只新增 web/src/components/task/RunTimeline.tsx + 测试 + i18n；不做画布、不接 TaskDetailPanel、不碰 CommentThread；不做 NodeRun 取数（父层负责）。"
+    files:
+      - web/src/components/task/RunTimeline.tsx
+      - web/tests/run-timeline-drill-in.test.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - web/tests/run-timeline-drill-in.test.ts
+    anchors:
+      - 'web/src/components/task/RunTimeline.tsx:export function RunTimeline'
+      - 'web/src/components/task/RunTimeline.tsx:data-drill-in="comment-run"'
