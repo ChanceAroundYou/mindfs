@@ -7344,3 +7344,22 @@ groups:
     anchors:
       - 'server/internal/kanban/task_store_comments.go:func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput)'
       - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskCommentsPost'
+
+  # ── 看板多 worktree WriterGate（WP-04 A4 子 slice，仅 gate）─────────────
+  - id: G-KQ
+    title: 看板多 worktree writer gate：(task_id, worktree_id) 粒度进程内写互斥
+    kind: feature
+    symptom: "同一 Task 开多 worktree 并行写时，同一 worktree 内两个写节点不再互相覆盖；不同 worktree 真能并行；只读节点不抢锁不排队。"
+    why: "本 tranche 仅 gate：per-key 容量 1 token channel，无后台 goroutine，ctx 取消不漏锁（旧 sync.Mutex + 后台 goroutine 版取消会泄漏：goroutine 抢到锁后无人解锁）。gate key = (task_id, worktree_id)（spec「多 worktree 与自动合并」vs 既有 per-Task 默认串行）。gate 是进程内互斥，跨进程互斥不归它（task-store 行锁与 worktree 引用计数）。durable 跨进程语义留 WP-05。registry/merge 本 tranche 未做（后续 tranche）。另：G-KP 的 YAML 登记本 worktree 缺失，随新提交补登记。"
+    boundary: "仅进程内互斥 (task_id,worktree_id)；不提供 durable/跨进程互斥；不含 worktree_registry、service_worktree service_worktree_merge/自动合并、service_worktree.go 注册表化、引用计数扩展（均后续 tranche）。"
+    files:
+      - server/internal/kanban/writer_gate.go
+      - server/internal/kanban/writer_gate_test.go
+      - docs/upstream-customizations.yaml
+    tests:
+      - server/internal/kanban/writer_gate_test.go
+    anchors:
+      - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) Acquire(ctx context.Context, taskID, worktreeID string) (func(), error)'
+      - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) TryAcquire(taskID, worktreeID string) (bool, func())'
+      - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) IsHeld(taskID, worktreeID string) bool'
+      - 'server/internal/kanban/writer_gate.go:type WriterGate struct'
