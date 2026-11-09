@@ -7344,3 +7344,27 @@ groups:
     anchors:
       - 'server/internal/kanban/task_store_comments.go:func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput)'
       - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskCommentsPost'
+
+  # ── 看板留言板前端（WP-02）：user↔agent 时间线 + 工作流三态 + agent 段下钻 ──
+  - id: G-KR
+    title: 看板留言板前端：user↔agent 交替时间线、工作流三态选择、agent 段下钻、显式 nodeId
+    kind: feature
+    symptom: "用户在任务详情里能看到 user↔agent 交替的留言时间线，发留言可选工作流三态（不指定/指定并填版本/禁用），agent 回复可展开看详情并打开会话；跨节点留言走显式 nodeId 不误落到当前激活节点。"
+    why: "WP-02 前端留言板：CommentThread 三段式（user-message 右对齐 / agent-segment 左对齐带下钻），留言框工作流三态必填可见（empty 不带 version、specified 必带 workflow_version_id、disabled 禁用），appURL 显式传 nodeId（跨节点铁律：appPath 不传 nodeId 静默打激活节点），comment_id 客户端生成重试复用，TaskDetailPanel 仅接线（rootId/taskId/nodeId + onOpenSession）。i18n 双语键不漂移，禁硬编码文案（AgentDrilldown 走 t()）。"
+    boundary: "只管留言板前端展示与发送；不碰 Stages/StageRun 引擎；Steer/恢复留 WP-03，画布/运行视图留 WP-07，不做 AgentRunSection 独立文件（下钻内嵌在 CommentThread）。"
+    files:
+      - web/src/components/task/CommentThread.tsx
+      - web/src/components/task/useCommentThread.ts
+      - web/src/services/task/comments.ts
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/services/task/index.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/task-comment-thread.test.mjs
+    tests:
+      - web/tests/task-comment-thread.test.mjs
+    anchors:
+      - 'web/src/services/task/comments.ts:export async function postTaskComment('
+      - 'web/src/components/task/CommentThread.tsx:export function CommentThread('
+      - 'web/src/components/task/useCommentThread.ts:export function useCommentThread('
+      - 'web/src/components/task/TaskDetailPanel.tsx:<CommentThread rootId={task.root_id} taskId={task.id} nodeId={nodeId}'
