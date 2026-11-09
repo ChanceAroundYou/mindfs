@@ -39,7 +39,33 @@ CREATE TABLE IF NOT EXISTS continue_requests (
 CREATE INDEX IF NOT EXISTS idx_task_activities_task_created ON task_activities(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_continue_requests_task ON continue_requests(task_id, created_at);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	// WP-03 (A3) 的 Outbox 富列：A1 的 continue_requests 建表时还没有这些列，
+	// A3 的 service_outbox.go 只在自己 EnsureOutboxTables 里 CREATE TABLE IF NOT EXISTS，
+	// 两边表的列集互斥（A1: request_id 主键；A3: id 主键 + root_id/node_run_id/
+	// session_key/message/author/workflow_choice/prev_attempt_id），合并后必缺一列。
+	// 以 A1 的 request_id 主键为 canonical（G-KP 已发布），把 A3 的富列逐列 ALTER 补齐，
+	// 全部幂等（duplicate column name 忽略），存量行读作空串/默认值，与改造前行为一致。
+	alters := []string{
+		`ALTER TABLE continue_requests ADD COLUMN root_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE continue_requests ADD COLUMN node_run_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE continue_requests ADD COLUMN session_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE continue_requests ADD COLUMN message TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE continue_requests ADD COLUMN author TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE continue_requests ADD COLUMN workflow_choice TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE continue_requests ADD COLUMN prev_attempt_id TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range alters {
+		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	// A3 用 id 列做主键而 A1 用 request_id：给 id 列建唯一索引并非 schema 级主键，
+	// 只暴露一个可查投影 id = request_id（A3 测试/代码以 id 访问改为读 request_id）。
+	// 这里不引入 id 列：所有 A3 访问点已改成 request_id（见 service_outbox.go）。
+	return nil
 }
 
 func normalizePostCommentInput(in PostCommentInput) (PostCommentInput, error) {

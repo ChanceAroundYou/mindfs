@@ -2,6 +2,8 @@ package kanban
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -199,5 +201,36 @@ func TestOutbox_RecordCommentIdempotent(t *testing.T) {
 	}
 	if _, err := o.RecordComment(ctx, ContinueRequestRecord{ID: "crX", TaskID: "t1", CommentID: "c1", NodeRunID: "nr1", SessionKey: "sess1", Message: "tampered", Author: "user"}); err != ErrOutboxCommentConflict {
 		t.Fatalf("expected conflict, got %v", err)
+	}
+}
+
+// EnsureOutboxTables 与 WP-01 migrateComments 必须用同一份 continue_requests canonical DDL。
+//
+// 两处都是 CREATE TABLE IF NOT EXISTS：谁先执行谁定表结构。如果 outbox 这侧还写
+// id 主键，一旦它在 migrate 之前跑（或将来被单独调用），表就没有 request_id 列，
+// A1 留言、A3 队列与启动恢复全部按 request_id 查询 → 一律报 no such column。
+func TestEnsureOutboxTablesMatchesCanonicalContinueRequestsSchema(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "raw.db"))
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer db.Close()
+	if err := EnsureOutboxTables(ctx, db); err != nil {
+		t.Fatalf("EnsureOutboxTables: %v", err)
+	}
+	// 只按 canonical 列写一行：有 request_id 才可能成功。
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO continue_requests(request_id, task_id, comment_id, status, created_at, updated_at)
+		 VALUES ('cr-raw','t1','c1','recorded','x','x')`); err != nil {
+		t.Fatalf("insert by request_id: %v", err)
+	}
+	var got string
+	if err := db.QueryRowContext(ctx,
+		`SELECT request_id FROM continue_requests WHERE request_id='cr-raw'`).Scan(&got); err != nil {
+		t.Fatalf("select by request_id: %v", err)
+	}
+	if got != "cr-raw" {
+		t.Fatalf("request_id=%q, want cr-raw", got)
 	}
 }

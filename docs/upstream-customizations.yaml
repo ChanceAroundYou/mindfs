@@ -7371,3 +7371,31 @@ groups:
       - 'server/internal/kanban/workflow_engine.go:func EngineReadyNodes'
       - 'server/internal/kanban/workflow_store.go:func (s *WorkflowStore) PublishDraft'
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleWorkflowDraftPublish'
+
+  # ── 运行可靠性与启动恢复（WP-03）：steer 能力 / outbox / unknown 不重试 ──
+  - id: G-KT
+    title: Steer 能力声明 + ContinueRequest outbox 持久化 + 启动恢复 unknown 不重试（WP-03）
+    kind: feature
+    symptom: "服务重启后，未能确认已消费的留言不再被自动重发；任务进入「需要你处理」，保留原留言、原 NodeRun 与 transcript 证据，用户检查后可显式创建新 attempt。支持 steer 的 adapter 只有拿到协议回执才显示「已注入」，普通 SendMessage 一律排队。"
+    why: "约定四件：①Session 接口新增 SteerCapability（SupportsSteer/Steer+回执 confirmed|sent|rejected|unknown），默认所有 adapter 不支持=走 FIFO，普通 SendMessage 不冒充 steer；②ContinueRequest/NodeRun/outbox item 先同事务落库再消费，发送超时无法判定时标 unknown 且绝不自动重放；③启动时同步执行 RecoverOnStartupForRoot（不起 goroutine），可确定才报 ResumeSession，不可确定一律 unknown + 任务 waiting_user；④A1 与 A3 的 continue_requests 列集互斥，以 A1 的 request_id 为主键逐步 ALTER 补齐 A3 富列（duplicate column 忽略），不改陈旧数据。"
+    boundary: "只做能力声明、队列/恢复判定与启动装配；真实 adapter 的 steer 协议实现仍归各 adapter，跨节点 resume 不做。"
+    files:
+      - server/internal/agent/types/session_type.go
+      - server/internal/agent/pool.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/task_store_comments.go
+      - server/internal/kanban/service_outbox.go
+      - server/internal/kanban/service_recover.go
+      - server/internal/kanban/service_recover_startup.go
+      - server/app/workspace_build.go
+      - server/internal/api/http_tasks_finish_teardown.go
+    tests:
+      - server/internal/kanban/service_outbox_test.go
+      - server/internal/kanban/service_recover_test.go
+      - server/internal/kanban/service_recover_startup_test.go
+    anchors:
+      - 'server/internal/agent/types/session_type.go:type SteerCapability interface'
+      - 'server/internal/kanban/service_outbox.go:func (o *OutboxService) RecordComment'
+      - 'server/internal/kanban/service_recover_startup.go:func (s *Service) RecoverOnStartupForRoot'
+      - 'server/app/workspace_build.go:services.Kanban.RecoverOnStartupForRoot(m.ctx, root.ID, probe)'

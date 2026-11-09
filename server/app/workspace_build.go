@@ -107,6 +107,19 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetRunner(services)
 	services.WireFinishStageTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
+	for _, root := range services.ListRoots() {
+		// WP-03 启动恢复：必须在 KickPending（异步起 RunTask）之前同步执行，
+		// 否则 pending 的 ContinueRequest 会被执行体先消费掉。探针按 root 传入（每个 root
+		// 有自己的 session manager）；不可确定时 RecoverOnStartup 标 unknown 并把任务置
+		// waiting_user，随后 KickPending 会跳过它 —— 不自动重发。
+		probe := services.SessionStateProbeForRoot(root.ID)
+		if plan, err := services.Kanban.RecoverOnStartupForRoot(m.ctx, root.ID, probe); err != nil {
+			// DB 坏/ctx 取消不阻塞启动：request 行仍在，下次启动再恢复。
+			log.Printf("[kanban/recover] root=%s recover error=%v", root.ID, err)
+		} else if plan.NeedsUser {
+			log.Printf("[kanban/recover] root=%s needs-user unknown=%v", root.ID, plan.UnknownIDs)
+		}
+	}
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err

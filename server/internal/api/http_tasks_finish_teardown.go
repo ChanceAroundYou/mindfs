@@ -163,6 +163,47 @@ func (s *AppContext) BroadcastTaskFinishTeardown(rootID string, report FinishTea
 	})
 }
 
+// SessionStateProbeForRoot 构造 WP-03 启动恢复的探针。
+//
+// 探针语义（kanban.SessionStateProbe）：found=原 session 行存在（GetMeta 成功）；
+// resumable=可确定无重复续跑。MindFS 启动期 agent 进程池是空的——会话存在只证明
+// 「行在」，无法证明「上轮 turn 已确定结束」，所以这里故意恒返回 resumable=false：
+// 启动恢复一律 unknown/needs-user，绝不自动重发（spec「单节点 unknown 不自动重试」）。
+// 可确定续跑的门由 RecoverOnStartup 保留（探针为真时才 ResumeSession），
+// 生产装配的保守选择就是「启动期不推断」。也因此 GetMeta 报错/未建过 manager 时
+// 全部按 found=false 处理，同样 unknown。
+//
+// 返回按 root 绑定的探针而不是挂到 Service 上：Service 是每账户一个、跨 root 复用，
+// 挂上去会被下一个 root 覆盖，A root 的恢复就会拿 B root 的会话表做判定。
+func (s *AppContext) SessionStateProbeForRoot(rootID string) kanban.SessionStateProbe {
+	if s == nil {
+		return nil
+	}
+	return sessionStateProbeFunc{app: s, rootID: rootID}
+}
+
+// sessionStateProbeFunc 按 root 取 session manager 查原 session 是否存在。
+type sessionStateProbeFunc struct {
+	app    *AppContext
+	rootID string
+}
+
+func (p sessionStateProbeFunc) Probe(sessionKey string) (found bool, resumable bool) {
+	if p.app == nil || strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(p.rootID) == "" {
+		return false, false
+	}
+	mgr, err := p.app.GetSessionManager(p.rootID)
+	if err != nil || mgr == nil {
+		return false, false
+	}
+	sess, err := mgr.GetMeta(context.Background(), sessionKey)
+	if err != nil || sess == nil {
+		return false, false
+	}
+	// 行在但启动期无法判定上轮是否已交付：不承诺可续接。
+	return true, false
+}
+
 // WireSessionRunningProbe 把「会话是否在回复」的探针挂到看板服务上。
 //
 // 收尾要拆掉 agent 的 cwd，判据必须是「agent 此刻是否真的在动」—— 而任务状态骗人：

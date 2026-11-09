@@ -36,18 +36,18 @@ func RecoverOnStartup(ctx context.Context, store *TaskStore, probe SessionStateP
 		return RecoveryPlan{}, err
 	}
 	rows, err := store.db.QueryContext(ctx,
-		`SELECT id, task_id, node_run_id, session_key, status FROM continue_requests WHERE status IN ('delivery_pending','steer_sent','steer_pending','steer_confirmed','recorded','queued') ORDER BY created_at ASC`)
+		`SELECT request_id, task_id, node_run_id, session_key, status FROM continue_requests WHERE status IN ('delivery_pending','steer_sent','steer_pending','steer_confirmed','recorded','queued') ORDER BY created_at ASC`)
 	if err != nil {
 		return RecoveryPlan{}, err
 	}
 	defer rows.Close()
 	type pending struct {
-		id, taskID, nodeRunID, sessionKey, status string
+		RequestID, taskID, nodeRunID, sessionKey, status string
 	}
 	var pendings []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.taskID, &p.nodeRunID, &p.sessionKey, &p.status); err != nil {
+		if err := rows.Scan(&p.RequestID, &p.taskID, &p.nodeRunID, &p.sessionKey, &p.status); err != nil {
 			return RecoveryPlan{}, err
 		}
 		pendings = append(pendings, p)
@@ -58,16 +58,16 @@ func RecoverOnStartup(ctx context.Context, store *TaskStore, probe SessionStateP
 	plan := RecoveryPlan{}
 	for _, p := range pendings {
 		if strings.TrimSpace(p.sessionKey) == "" {
-			plan.UnknownIDs = append(plan.UnknownIDs, p.id)
+			plan.UnknownIDs = append(plan.UnknownIDs, p.RequestID)
 			plan.NeedsUser = true
-			_ = markUnknown(ctx, store, p.id)
+			_ = markUnknown(ctx, store, p.RequestID)
 			continue
 		}
 		if probe == nil {
 			// 没有探针时无法证明可续接 → unknown，不得自动续跑。
-			plan.UnknownIDs = append(plan.UnknownIDs, p.id)
+			plan.UnknownIDs = append(plan.UnknownIDs, p.RequestID)
 			plan.NeedsUser = true
-			_ = markUnknown(ctx, store, p.id)
+			_ = markUnknown(ctx, store, p.RequestID)
 			continue
 		}
 		found, resumable := probe.Probe(p.sessionKey)
@@ -78,15 +78,15 @@ func RecoverOnStartup(ctx context.Context, store *TaskStore, probe SessionStateP
 			}
 			continue
 		}
-		plan.UnknownIDs = append(plan.UnknownIDs, p.id)
+		plan.UnknownIDs = append(plan.UnknownIDs, p.RequestID)
 		plan.NeedsUser = true
-		_ = markUnknown(ctx, store, p.id)
+		_ = markUnknown(ctx, store, p.RequestID)
 	}
 	return plan, nil
 }
 
 func markUnknown(ctx context.Context, store *TaskStore, requestID string) error {
-	_, err := store.db.ExecContext(ctx, `UPDATE continue_requests SET status=?, updated_at=? WHERE id=?`, OutboxUnknown, nowUTC().Format("2006-01-02T15:04:05.999999999Z"), requestID)
+	_, err := store.db.ExecContext(ctx, `UPDATE continue_requests SET status=?, updated_at=? WHERE request_id=?`, OutboxUnknown, nowUTC().Format("2006-01-02T15:04:05.999999999Z"), requestID)
 	if err != nil {
 		return err
 	}

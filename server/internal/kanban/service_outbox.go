@@ -157,10 +157,15 @@ type OutboxService struct {
 }
 
 // EnsureOutboxTables 建/兼容三张表。幂等。
+//
+// continue_requests 的 canonical DDL 属于 WP-01 的 migrateComments（request_id 主键）。
+// 这里必须写同一份定义：两处都 CREATE TABLE IF NOT EXISTS，谁先执行谁定表结构 ——
+// 如果这里还写 id 主键，一旦它先跑，后续所有按 request_id 的查询（A1 留言、A3 队列、
+// 启动恢复）都会因列不存在而失败。写成同一份就没有先后依赖。
 func EnsureOutboxTables(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS continue_requests (
-	id TEXT PRIMARY KEY,
+	request_id TEXT PRIMARY KEY,
 	task_id TEXT NOT NULL,
 	comment_id TEXT NOT NULL,
 	root_id TEXT NOT NULL DEFAULT '',
@@ -225,7 +230,7 @@ func (o *OutboxService) RecordComment(ctx context.Context, rec ContinueRequestRe
 		return existing, nil
 	}
 	_, err := o.Store.db.ExecContext(ctx, `
-INSERT INTO continue_requests(id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at)
+INSERT INTO continue_requests(request_id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rec.ID, rec.TaskID, rec.CommentID, rec.RootID, rec.NodeRunID, rec.SessionKey,
 		rec.Message, rec.Author, rec.WorkflowChoice, rec.Status, rec.PrevAttemptID,
@@ -267,7 +272,7 @@ func (o *OutboxService) findByComment(ctx context.Context, taskID, commentID str
 	var r ContinueRequestRecord
 	var createdAt, updatedAt string
 	err := o.Store.db.QueryRowContext(ctx,
-		`SELECT id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at FROM continue_requests WHERE task_id=? AND comment_id=?`,
+		`SELECT request_id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at FROM continue_requests WHERE task_id=? AND comment_id=?`,
 		taskID, commentID).Scan(&r.ID, &r.TaskID, &r.CommentID, &r.RootID, &r.NodeRunID, &r.SessionKey, &r.Message, &r.Author, &r.WorkflowChoice, &r.Status, &r.PrevAttemptID, &createdAt, &updatedAt)
 	if err != nil {
 		return ContinueRequestRecord{}, false
@@ -282,7 +287,7 @@ func (o *OutboxService) GetRequest(ctx context.Context, id string) (ContinueRequ
 	var r ContinueRequestRecord
 	var createdAt, updatedAt string
 	err := o.Store.db.QueryRowContext(ctx,
-		`SELECT id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at FROM continue_requests WHERE id=?`, id).Scan(
+		`SELECT request_id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at FROM continue_requests WHERE request_id=?`, id).Scan(
 		&r.ID, &r.TaskID, &r.CommentID, &r.RootID, &r.NodeRunID, &r.SessionKey, &r.Message, &r.Author, &r.WorkflowChoice, &r.Status, &r.PrevAttemptID, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ContinueRequestRecord{}, ErrOutboxNotFound
@@ -301,7 +306,7 @@ func (o *OutboxService) SetStatus(ctx context.Context, requestID, status string)
 		return fmt.Errorf("invalid status %q", status)
 	}
 	now := nowUTC().Format(time.RFC3339Nano)
-	if _, err := o.Store.db.ExecContext(ctx, `UPDATE continue_requests SET status=?, updated_at=? WHERE id=?`, status, now, requestID); err != nil {
+	if _, err := o.Store.db.ExecContext(ctx, `UPDATE continue_requests SET status=?, updated_at=? WHERE request_id=?`, status, now, requestID); err != nil {
 		return err
 	}
 	_, err := o.Store.db.ExecContext(ctx, `UPDATE outbox_items SET status=?, updated_at=? WHERE request_id=?`, status, now, requestID)
@@ -311,7 +316,7 @@ func (o *OutboxService) SetStatus(ctx context.Context, requestID, status string)
 // ListForTask 按创建时间 FIFO 列出某任务的全部 ContinueRequest。
 func (o *OutboxService) ListForTask(ctx context.Context, taskID string) ([]ContinueRequestRecord, error) {
 	rows, err := o.Store.db.QueryContext(ctx,
-		`SELECT id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at FROM continue_requests WHERE task_id=? ORDER BY created_at ASC, id ASC`, taskID)
+		`SELECT request_id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at FROM continue_requests WHERE task_id=? ORDER BY created_at ASC, request_id ASC`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +339,7 @@ func (o *OutboxService) ListForTask(ctx context.Context, taskID string) ([]Conti
 // queued），按任务 + 创建时间 FIFO 排序。
 func (o *OutboxService) ListPending(ctx context.Context, taskID string) ([]OutboxItem, error) {
 	rows, err := o.Store.db.QueryContext(ctx,
-		`SELECT id, task_id, request_id, node_run_id, session_key, message, status, created_at, updated_at FROM outbox_items WHERE task_id=? AND status IN ('recorded','delivery_pending','steer_sent','queued','steer_pending') ORDER BY created_at ASC, id ASC`, taskID)
+		`SELECT id, task_id, request_id, node_run_id, session_key, message, status, created_at, updated_at FROM outbox_items WHERE task_id=? AND status IN ('recorded','delivery_pending','steer_sent','queued','steer_pending') ORDER BY created_at ASC, request_id ASC`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -512,7 +517,7 @@ VALUES (?,?,?,?,?,?,?,?)`,
 	// 同时在 ConcurrencyContractTests 中幂等返回原记录。
 	newRec.CommentID = orig.CommentID + "@" + attempt.ID
 	_, err := o.Store.db.ExecContext(ctx, `
-INSERT INTO continue_requests(id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at)
+INSERT INTO continue_requests(request_id, task_id, comment_id, root_id, node_run_id, session_key, message, author, workflow_choice, status, prev_attempt_id, created_at, updated_at)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		newRec.ID, newRec.TaskID, newRec.CommentID, newRec.RootID, newRec.NodeRunID, newRec.SessionKey,
 		"", newRec.Author, newRec.WorkflowChoice, newRec.Status, newRec.PrevAttemptID,
