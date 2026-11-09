@@ -7321,3 +7321,45 @@ groups:
       - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(probeCtx, client, threadOptions, threadID, nil)'
       - 'server/internal/api/agent_api_provider_codex.go:func hasCodexModelProviderTable(existing, providerName string) bool'
       - 'server/internal/api/usecase/session_agent_open.go:rebind.done'
+
+  # ── 看板留言板后端（WP-01）：TaskActivity + ContinueRequest ──────────────
+  - id: G-KP
+    title: 看板任务留言板后端：TaskActivity/ContinueRequest 持久化与幂等 POST/GET
+    kind: feature
+    symptom: "用户在任务详情留言板发留言后，留言按时间线出现（user/agent 交替），重复发送不重复执行，任务终态后新留言标记 blocked 而不丢弃。"
+    why: "约定三件：①同一 (task_id, comment_id) 同事务写入 task_activities + continue_requests，重复提交同 author/body 返回原记录，异体返回 conflict；②留言带 workflow_choice（specified/disabled/empty，specified 必须带 workflow_version_id）落库到 activity；③任务为终态（success/fail/cancelled）时 ContinueRequest 直接 blocked。存量库靠 CREATE TABLE IF NOT EXISTS 迁移，零数据改动；不改 StageRun/legacy 语义。"
+    boundary: "只新增留言持久化与 HTTP 接口，不碰 Stages/StageRun 引擎、不新增鉴权；steer/恢复留 WP-03，不做跨节点接管。"
+    files:
+      - server/internal/kanban/types.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/task_store_comments.go
+      - server/internal/kanban/service_comments.go
+      - server/internal/kanban/service_comment_store_test.go
+      - server/internal/api/http_task_comments.go
+      - server/internal/api/http_task_comments_test.go
+      - server/internal/api/http_routes.go
+    tests:
+      - server/internal/kanban/service_comment_store_test.go
+      - server/internal/api/http_task_comments_test.go
+    anchors:
+      - 'server/internal/kanban/task_store_comments.go:func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput)'
+      - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskCommentsPost'
+
+  # ── Workflow 领域模型（WP-05）：Version/Draft/Run/NodeRun + DAG/Loop 引擎 ──
+  - id: G-KQ
+    title: Workflow 领域模型：不可变 Version、Draft CAS、Run 快照与 DAG/Loop 引擎（WP-05）
+    kind: feature
+    symptom: "看板任务可从不可变 WorkflowVersion 快照启动 DAG 运行；条件分支合流只等实际选中路径，未选路径记 skipped 不阻塞 join；Loop 超限（默认 5，上限 20）暂停为 needs-user 而非静默成功。"
+    why: "WP-05 独立垂直片：WorkflowDefinition 五类节点（Agent/Condition/HumanGate/Loop/Notify）+ 边；表达式只读持久化 JSON 字段（<path> op <literal>），禁用 eval/脚本/网络；Version 只新增不改写，Draft base_revision CAS，发布必须确认具体 revision（旧确认不能发布新稿）；Run revision CAS，已触发节点冻结；Run 内联快照，worker 不回查控制面；legacy Stages/StageRun 默认不动，ProjectStatusFromRun 只在显式迁移后投影。WriterGate 仅定义接口（默认 per-task 串行），A4 per-worktree 实现未接通。"
+    boundary: "A5 workflow_* 文件 + 本清单条目；未做：HTTP 控制面 API（http_workflows.go）、A4 writer gate 真实接线、画布/运行视图前端、legacy 显式迁移入口。"
+    files:
+      - server/internal/kanban/workflow_types.go
+      - server/internal/kanban/workflow_store.go
+      - server/internal/kanban/workflow_engine.go
+      - server/internal/kanban/workflow_validate.go
+      - server/internal/kanban/workflow_test.go
+    tests:
+      - server/internal/kanban/workflow_test.go
+    anchors:
+      - 'server/internal/kanban/workflow_engine.go:func EngineReadyNodes'
+      - 'server/internal/kanban/workflow_store.go:func (s *WorkflowStore) PublishDraft'
