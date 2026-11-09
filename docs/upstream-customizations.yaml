@@ -7535,3 +7535,25 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
       - 'web/src/components/task/RunViewEntry.tsx:engine?.engine === "workflow"'
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleWorkflowRunGet('
+
+  # ── 工作流草稿画布（WP-07 画布 tranche）：桌面端可视化编辑 ──────────────────
+  - id: G-KZ
+    title: 工作流草稿画布 WorkflowCanvas（@xyflow/react）+ 前端同构校验
+    kind: feature
+    symptom: "桌面端可以把工作流草稿显示成可拖拽的节点图：增删五类节点、连线、改参数（agent/model/writes_workspace、Loop 上限、条件分支），改坏时当场列出校验错误；有未保存改动时显示红点，关闭/刷新页面会提示；移动端只显示只读清单。"
+    why: "约定四件：①画布只负责图形与参数，schema 校验放在 services/task/workflowDraft（与后端 workflow_validate.go 同构），落库由 Draft API 负责，组件本身不 fetch；②五类节点 Agent/Condition/HumanGate/Loop/Notify，Loop 上限 1..20 默认 5 且禁止嵌套；③脏标记只在结构性编辑（增删节点/边、改参数）出现，拖动位置不算，并在 beforeunload 上挂离开提醒；④窄视口（<720px）渲染只读清单，不做画布。新增运行时依赖 @xyflow/react（MIT 核心）。"
+    boundary: "只做草稿画布与同构校验；尚未挂进应用路由/看板入口，发布确认页与 NodeRun 列表仍缺。"
+    files:
+      - web/src/components/task/WorkflowCanvas.tsx
+      - web/src/services/task/workflowDraft.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/workflow-canvas.test.ts
+      - web/package.json
+      - web/package-lock.json
+    tests:
+      - web/tests/workflow-canvas.test.ts
+    anchors:
+      - 'web/src/components/task/WorkflowCanvas.tsx:export function WorkflowCanvas('
+      - 'web/src/components/task/WorkflowCanvas.tsx:MOBILE_BREAKPOINT = 720'
+      - 'web/src/services/task/workflowDraft.ts:export function validateWorkflowGraph('
