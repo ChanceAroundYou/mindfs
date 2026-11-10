@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 func TestInitializeActiveProfileOnlySetsMissingSelection(t *testing.T) {
@@ -75,6 +77,16 @@ trust_level = "trusted"
 	}
 	if strings.Contains(string(rendered), "experimental_bearer_token") {
 		t.Fatalf("rendered config contains an inline credential: %s", rendered)
+	}
+	var renderedRoot map[string]any
+	if err := toml.Unmarshal(rendered, &renderedRoot); err != nil {
+		t.Fatalf("rendered config is invalid TOML: %v\n%s", err, rendered)
+	}
+	if renderedRoot["model"] != "deepseek-v4" || renderedRoot["model_provider"] != "llmux" {
+		t.Fatalf("active llmux keys were nested into a table: %#v\n%s", renderedRoot, rendered)
+	}
+	if features, ok := renderedRoot["features"].(map[string]any); !ok || len(features) != 1 || features["goals"] != true {
+		t.Fatalf("features table was polluted by root keys: %#v", renderedRoot["features"])
 	}
 	if err := ApplySharedCodexProfileAt(paths, "default"); err != nil {
 		t.Fatalf("switch back to default: %v", err)

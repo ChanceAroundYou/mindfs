@@ -86,6 +86,9 @@ describe("agent config for custom-named Codex SDK agents", () => {
     assert.equal(typeof profileUtils?.isCodexProfileAgent, "function");
     assert.equal(profileUtils?.isCodexProfileAgent?.("codex-custom", { protocol: "codex-sdk" }), true);
     assert.equal(profileUtils?.isCodexProfileAgent?.("codex", { protocol: "acp" }), false);
+    // 旧版 worker 的状态可能没有 protocol，按名字兜底识别 Codex。
+    assert.equal(profileUtils?.isCodexProfileAgent?.("codex", { protocol: "" }), true);
+    assert.equal(profileUtils?.isCodexProfileAgent?.("codex-custom", { protocol: "" }), false);
     assert.deepEqual(
       profileUtils?.switchableAgentConfigBackups?.("codex-custom", { protocol: "codex-sdk" }, [
         { id: "local", source: "local" },

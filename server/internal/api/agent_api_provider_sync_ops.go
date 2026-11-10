@@ -344,9 +344,6 @@ func switchAgentAPIProvider(req agentAPIProviderSwitchRequest, app *AppContext) 
 	if !ok {
 		return agentAPIProvider{}, fmt.Errorf("agent not configured: %s", agentName)
 	}
-	if definition.Protocol == agent.ProtocolCodexSDK {
-		return agentAPIProvider{}, errors.New("Codex API providers are metadata only; switch a shared Codex profile instead")
-	}
 	providerID := strings.TrimSpace(req.ProviderID)
 	if providerID == "" {
 		return agentAPIProvider{}, errors.New("provider id required")
@@ -364,6 +361,22 @@ func switchAgentAPIProvider(req agentAPIProviderSwitchRequest, app *AppContext) 
 	}
 	if provider.ID == "" {
 		return agentAPIProvider{}, errors.New("provider not found")
+	}
+	if definition.Protocol == agent.ProtocolCodexSDK {
+		// Codex runtime 只能来自 shared profile。当供应商条目与某个 shared
+		// profile 描述同一端点时，切换供应商等价于切换该 profile；否则保持
+		// metadata-only，避免供应商元数据越权改写 Codex config.toml。
+		profileName, matched, err := codexsync.SharedProfileForProvider(provider.Name, provider.BaseURL)
+		if err != nil {
+			return agentAPIProvider{}, err
+		}
+		if !matched {
+			return agentAPIProvider{}, errors.New("Codex API providers are metadata only; switch a shared Codex profile instead")
+		}
+		if _, err := switchSharedCodexConfig("shared:codex-"+profileName, agentName, app); err != nil {
+			return agentAPIProvider{}, err
+		}
+		return provider, nil
 	}
 	selectedProtocol, ok := selectAPIProviderProtocolForAgent(provider, agentName)
 	if !ok {

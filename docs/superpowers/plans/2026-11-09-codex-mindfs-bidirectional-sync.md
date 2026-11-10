@@ -240,6 +240,27 @@
 
 ## Deployment Review
 
+### Task 6 follow-up · 2026-11-11 — profile merge and provider switch
+
+- Bug 1（切到 llmux 无法对话）：`mergeSharedProfiles` 把 llmux overlay 直接拼在 shared default 末尾，
+  而 default 末尾是 `[features]` 表头 —— `model` / `model_provider` / `model_reasoning_effort`
+  被 TOML 规则吞进该表，Codex app-server 报
+  `invalid configuration: invalid type: string "gpt-6-luna", expected a boolean`，`session.send` 直接失败。
+  之前的 `ValidateRenderedConfig` 只查 bearer token、`--check-runtime` 只比字节，所以状态一直显示 `synced`。
+  修复：合并时按第一个表头切分，把所有根级赋值放在表体之前；渲染后新增 `validateMergedRootKeys`
+  护栏（表值按子键包含比较，允许设备本地 `model_providers.local` 等兄弟键并存），键被吞掉就渲染失败而不是写坏配置。
+- Bug 2（API 供应商切换报 metadata only）：Codex 的运行时只允许来自 shared profile，provider 条目是纯元数据
+  （设计约束保留）。但当 provider 就是 llmux 时，这个动作本应等价于切到 `shared:codex-llmux`；
+  现在 `switchAgentAPIProvider` 先查 provider，Codex 分支用 `SharedProfileForProvider`
+  按「名字为 llmux 且 `base_url` 精确匹配（尾斜杠归一）」委托给该 shared profile，其余仍返回原错误。
+  `applyAgentAPIProvider` 保持拒绝，reapply/sync 路径不会借 provider 元数据改写 Codex 运行时。
+- 前端 `isCodexProfileAgent` 在 agent 状态缺失 `protocol`（旧版 worker）时按名字兜底识别 `codex`，
+  避免露出只适用于其它 agent 的 API 供应商入口。
+- 测试：`internal/codexsync/render_test.go`（合并后根键不落表、验证器拒绝嵌套键）、
+  `active_profile_test.go`（渲染结果解码断言根级 `model_provider=llmux`、`features` 仅 `goals`）、
+  `server/internal/api/agent_api_provider_codex_switch_test.go`（匹配 provider 委托成功并写入根级配置；
+  base URL 不匹配时报原错误且不写运行时）、`web/tests/agent-config-custom-codex.test.ts`（空 protocol 兜底）。
+
 ### Task 6 follow-up · 2026-11-11
 
 - Commits `9c42274f` and `e33a4422` shipped as `v0.5.5-1118-6-ge33a4422`. `deploy-all.sh` passed Go, TypeScript, and Vitest gates (487 tests passed), then installed the local binary and deployed WSL/fn/pc-win. Independent checks confirmed WSL PID `1372641`, fn PID `2872970`, and pc-win PID `132036`; worker versions match and health returns 200. The installed local CLI reports the same version; its system service remains on the pre-restart process.

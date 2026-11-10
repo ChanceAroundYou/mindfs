@@ -16,6 +16,46 @@ import (
 
 const maxSharedConfigBytes = 1 << 20
 
+// SharedProfileForProviderAt reports whether an API-provider entry describes the
+// same endpoint as a shared Codex profile, so switching that provider is
+// equivalent to switching the shared profile. Only llmux carries a provider
+// table in the shared configuration.
+func SharedProfileForProviderAt(paths Paths, name, baseURL string) (string, bool, error) {
+	if !strings.EqualFold(strings.TrimSpace(name), "llmux") {
+		return "", false, nil
+	}
+	payload, err := ReadSharedCodexProfileAt(paths, "llmux")
+	if err != nil {
+		return "", false, err
+	}
+	if payload == nil {
+		return "", false, nil
+	}
+	root, err := decodeTOML(payload)
+	if err != nil {
+		return "", false, err
+	}
+	providers := tomlTable(root["model_providers"])
+	llmux := tomlTable(providers["llmux"])
+	profileBaseURL, _ := llmux["base_url"].(string)
+	if normalizeProviderBaseURL(profileBaseURL) == "" || normalizeProviderBaseURL(profileBaseURL) != normalizeProviderBaseURL(baseURL) {
+		return "", false, nil
+	}
+	return "llmux", true, nil
+}
+
+func SharedProfileForProvider(name, baseURL string) (string, bool, error) {
+	paths, err := ResolvePaths()
+	if err != nil {
+		return "", false, err
+	}
+	return SharedProfileForProviderAt(paths, name, baseURL)
+}
+
+func normalizeProviderBaseURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
 func ProjectProfile(name string, snapshot []byte) ([]byte, error) {
 	root, err := decodeTOML(snapshot)
 	if err != nil {

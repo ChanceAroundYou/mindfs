@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 )
 
@@ -71,6 +72,7 @@ func buildRuntimeConfig(paths Paths, persistActive, requireSharedDefault bool) (
 		return nil, 0, fmt.Errorf("read local Codex config: %w", err)
 	}
 	prefix := strings.TrimRight(string(shared), "\n")
+	var mergedOverlay []byte
 	if active == "llmux" {
 		profile, err := readOptional(paths.SharedLLMux)
 		if err != nil {
@@ -82,6 +84,7 @@ func buildRuntimeConfig(paths Paths, persistActive, requireSharedDefault bool) (
 		if err := ValidateSharedProfile("llmux", profile); err != nil {
 			return nil, 0, err
 		}
+		mergedOverlay = profile
 		prefix = mergeSharedProfiles(shared, profile)
 	}
 	overlay, err := extractLocalConfigOverlay(shared, local, active)
@@ -94,6 +97,11 @@ func buildRuntimeConfig(paths Paths, persistActive, requireSharedDefault bool) (
 	if err := ValidateRenderedConfig(payload); err != nil {
 		return nil, 0, err
 	}
+	if mergedOverlay != nil {
+		if err := validateMergedRootKeys(payload, mergedOverlay); err != nil {
+			return nil, 0, err
+		}
+	}
 	mode := os.FileMode(0o600)
 	if info, err := os.Stat(paths.RuntimeConfig); err == nil {
 		mode = info.Mode().Perm()
@@ -101,13 +109,86 @@ func buildRuntimeConfig(paths Paths, persistActive, requireSharedDefault bool) (
 	return payload, mode, nil
 }
 
+// mergeSharedProfiles 把 llmux overlay 合并进 shared default。
+//
+// 关键约束：TOML 里表头之后的所有赋值都属于该表，所以 overlay 的根级键
+// （model / model_provider / model_reasoning_effort）必须放在第一个表头之前，
+// 不能直接拼在 default 末尾 —— 否则会被吞进最后一个表（[features]），
+// Codex 解析时报 `invalid type: string "gpt-6-luna", expected a boolean`。
 func mergeSharedProfiles(base, overlay []byte) string {
 	root, _ := decodeTOML(overlay)
 	dropKeys := make(map[string]bool, len(root))
 	for key := range root {
 		dropKeys[key] = true
 	}
-	return strings.TrimRight(stripTOMLKeys(string(base), dropKeys), "\n") + "\n" + strings.TrimRight(string(overlay), "\n")
+	baseRoot, baseTables := splitTOMLRoot(stripTOMLKeys(string(base), dropKeys))
+	overlayRoot, overlayTables := splitTOMLRoot(string(overlay))
+	var output strings.Builder
+	appendPart := func(part string) {
+		part = strings.TrimRight(part, "\n")
+		if strings.TrimSpace(part) == "" {
+			return
+		}
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		output.WriteString(part)
+	}
+	appendPart(baseRoot)
+	appendPart(overlayRoot)
+	appendPart(baseTables)
+	appendPart(overlayTables)
+	output.WriteString("\n")
+	return output.String()
+}
+
+// splitTOMLRoot 按第一个表头切分 TOML 文本：前半是根级赋值，后半是表内容。
+func splitTOMLRoot(raw string) (string, string) {
+	lines := strings.SplitAfter(raw, "\n")
+	for index, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			return strings.Join(lines[:index], ""), strings.Join(lines[index:], "")
+		}
+	}
+	return raw, ""
+}
+
+// validateMergedRootKeys 确认 overlay 的每个根级键在最终配置里仍位于根级且值一致。
+// 这是 mergeSharedProfiles 的回归护栏：键被表吞掉时渲染直接失败，而不是写出坏配置。
+func validateMergedRootKeys(payload, overlay []byte) error {
+	renderedRoot, err := decodeTOML(payload)
+	if err != nil {
+		return err
+	}
+	overlayRoot, err := decodeTOML(overlay)
+	if err != nil {
+		return err
+	}
+	for key, want := range overlayRoot {
+		if !mergedRootValuePresent(renderedRoot[key], want) {
+			return fmt.Errorf("rendered Codex config lost shared root key %q", key)
+		}
+	}
+	return nil
+}
+
+// mergedRootValuePresent 比较 shared profile 的根级值是否仍落在根级。
+// 表值只要求 shared 定义的子键存在（设备本地 provider 等兄弟键允许并存）。
+func mergedRootValuePresent(got, want any) bool {
+	wantTable := tomlTable(want)
+	if wantTable == nil {
+		return reflect.DeepEqual(got, want)
+	}
+	gotTable := tomlTable(got)
+	if gotTable == nil {
+		return false
+	}
+	for key, value := range wantTable {
+		if !mergedRootValuePresent(gotTable[key], value) {
+			return false
+		}
+	}
+	return true
 }
 
 func stripTOMLKeys(raw string, drop map[string]bool) string {
