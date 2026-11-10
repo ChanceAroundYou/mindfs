@@ -7,7 +7,7 @@
  * TaskResumeIcon, TaskRebuildWorktreeIcon, TaskFinishWorktreeIcon,
  * TaskSessionErrorIcon, TaskCancelIcon, DeleteIcon, TaskPlanAuxIcon,
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
- * ChevronDownSmallIcon.
+ * ChevronDownSmallIcon, WorkflowIcon.
  * Task styles: taskTemplateMenuItemStyle, taskCardSurfaceStyle,
  * taskCardIconButtonStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
  * WorktreeTagState, taskWorktreeTagStyle, taskReplyPulseStyle.
@@ -371,6 +371,29 @@ export function ChevronDownSmallIcon() {
       aria-hidden="true"
     >
       <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+export function WorkflowIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2" y="3" width="7" height="5" rx="1" />
+      <rect x="15" y="3" width="7" height="5" rx="1" />
+      <rect x="8" y="16" width="7" height="5" rx="1" />
+      <path d="M5.5 8v3h13V8" />
+      <path d="M12 11v5" />
     </svg>
   );
 }

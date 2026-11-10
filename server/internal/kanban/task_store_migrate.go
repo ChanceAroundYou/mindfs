@@ -183,7 +183,10 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	}
 	// 任务执行引擎绑定（legacy / workflow）。存量任务没有行 = legacy，零回填。
 	// 实现见 service_engine.go。
-	return s.migrateTaskEngines()
+	if err := s.migrateTaskEngines(); err != nil {
+		return err
+	}
+	return s.migrateWorkflowRuns()
 }
 
 func (s *TaskStore) backfillTaskNumbers() error {

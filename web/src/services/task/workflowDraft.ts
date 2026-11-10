@@ -1,22 +1,22 @@
-import { appURL } from "../net/base";
+import { controlPath } from "../net/controlPlane";
 import { protectedJSON } from "../net/api";
 import type { WorkflowGraph, WorkflowVersion } from "../../shared/workflowModel";
 import type { WorkflowDraft } from "../../shared/workflowModel";
 
 export type { WorkflowDraft, WorkflowVersion };
 
-export async function listWorkflowDrafts(nodeIdParam?: string): Promise<WorkflowDraft[]> {
-  const payload = await protectedJSON<{ drafts?: WorkflowDraft[] }>(appURL("/api/workflows", undefined, nodeIdParam));
-  return Array.isArray(payload?.drafts) ? payload.drafts : [];
-}
-
 type DraftEnvelope = { draft?: WorkflowDraft };
+
+// Workflow Drafts/Versions are control-plane data: route to page server regardless of selected node.
+export async function listWorkflowDrafts(): Promise<WorkflowDraft[]> {
+  const payload = await protectedJSON<{ items?: WorkflowDraft[] }>(controlPath("/api/workflows"));
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
 
 export async function createWorkflowDraft(
   input: { workflowId: string; rootId?: string; author?: string; graph: WorkflowGraph },
-  nodeIdParam?: string,
 ): Promise<WorkflowDraft> {
-  const payload = await protectedJSON<DraftEnvelope>(appURL("/api/workflows", undefined, nodeIdParam), {
+  const payload = await protectedJSON<DraftEnvelope>(controlPath("/api/workflows"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ workflow_id: input.workflowId, root_id: input.rootId || "", author: input.author || "user", graph: input.graph }),
@@ -28,9 +28,8 @@ export async function createWorkflowDraft(
 export async function updateWorkflowDraft(
   workflowId: string,
   input: { baseRevision: string; author?: string; graph: WorkflowGraph },
-  nodeIdParam?: string,
 ): Promise<WorkflowDraft> {
-  const payload = await protectedJSON<DraftEnvelope>(appURL(`/api/workflows/${encodeURIComponent(workflowId)}`, undefined, nodeIdParam), {
+  const payload = await protectedJSON<DraftEnvelope>(controlPath(`/api/workflows/${encodeURIComponent(workflowId)}`), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ base_revision: input.baseRevision, author: input.author || "user", graph: input.graph }),
@@ -42,9 +41,8 @@ export async function updateWorkflowDraft(
 export async function publishWorkflowDraft(
   workflowId: string,
   input: { revision: string; publishedBy?: string },
-  nodeIdParam?: string,
 ): Promise<WorkflowVersion> {
-  const payload = await protectedJSON<{ version?: WorkflowVersion }>(appURL(`/api/workflows/${encodeURIComponent(workflowId)}/publish`, undefined, nodeIdParam), {
+  const payload = await protectedJSON<{ version?: WorkflowVersion }>(controlPath(`/api/workflows/${encodeURIComponent(workflowId)}/publish`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirmed_revision: input.revision, published_by: input.publishedBy || "user" }),

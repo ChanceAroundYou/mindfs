@@ -132,42 +132,58 @@ func (h *HTTPHandler) handleWorkflowVersionGet(w http.ResponseWriter, r *http.Re
 	respondJSON(w, http.StatusOK, map[string]any{"version": v})
 }
 
-func (h *HTTPHandler) handleWorkflowRunCreate(w http.ResponseWriter, r *http.Request) {
-	s, ok := h.workflowStore(w)
+// taskWorkflowStore resolves the root's own task SQLite store. Workflow runtime state is
+// data-plane state and must never use the shared control-plane WorkflowStore.
+func (h *HTTPHandler) taskWorkflowStore(w http.ResponseWriter, r *http.Request) (*kanban.Service, *kanban.TaskStore, string, bool) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return nil, nil, "", false
+	}
+	rootID := strings.TrimSpace(r.URL.Query().Get("root_id"))
+	if rootID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id required"))
+		return nil, nil, "", false
+	}
+	if _, err := svc.Status(r.Context(), rootID, chi.URLParam(r, "id")); err != nil {
+		respondError(w, http.StatusNotFound, err)
+		return nil, nil, "", false
+	}
+	store, err := svc.TaskStoreForRoot(rootID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err)
+		return nil, nil, "", false
+	}
+	return svc, store, rootID, true
+}
+
+func (h *HTTPHandler) handleTaskWorkflowRunGet(w http.ResponseWriter, r *http.Request) {
+	_, store, _, ok := h.taskWorkflowStore(w, r)
 	if !ok {
 		return
 	}
-	var req struct {
-		TaskID  string `json:"task_id"`
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
-		return
-	}
-	if req.TaskID == "" || req.Version == "" {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("task_id and version required"))
-		return
-	}
-	ver, err := s.GetVersion(r.Context(), req.Version)
+	taskID := chi.URLParam(r, "id")
+	engine, err := store.TaskEngine(r.Context(), taskID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
-	run, err := s.CreateRun(r.Context(), req.TaskID, ver.Version, ver.Graph)
+	if engine.Engine != kanban.EngineWorkflow || engine.WorkflowRunID == "" {
+		respondError(w, http.StatusNotFound, kanban.ErrWorkflowRunNotFound)
+		return
+	}
+	run, err := store.WorkflowRunByID(r.Context(), engine.WorkflowRunID)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err)
+		respondError(w, http.StatusNotFound, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"run": run})
 }
 
-func (h *HTTPHandler) handleWorkflowRunEdit(w http.ResponseWriter, r *http.Request) {
-	s, ok := h.workflowStore(w)
+func (h *HTTPHandler) handleTaskWorkflowRunEdit(w http.ResponseWriter, r *http.Request) {
+	_, store, _, ok := h.taskWorkflowStore(w, r)
 	if !ok {
 		return
 	}
-	runID := chi.URLParam(r, "runId")
 	var req struct {
 		Revision int                       `json:"revision"`
 		Graph    kanban.WorkflowDefinition `json:"graph"`
@@ -176,15 +192,39 @@ func (h *HTTPHandler) handleWorkflowRunEdit(w http.ResponseWriter, r *http.Reque
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
 	}
-	if err := s.EditRunGraph(r.Context(), runID, req.Revision, req.Graph); err != nil {
-		if errors.Is(err, kanban.ErrRunConflict) || errors.Is(err, kanban.ErrFrozenNodeEdit) {
-			respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
-			return
-		}
+	engine, err := store.TaskEngine(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || engine.Engine != kanban.EngineWorkflow {
+		respondError(w, http.StatusNotFound, kanban.ErrWorkflowRunNotFound)
+		return
+	}
+	err = store.EditWorkflowRunGraph(r.Context(), engine.WorkflowRunID, req.Revision, req.Graph)
+	if errors.Is(err, kanban.ErrRunConflict) || errors.Is(err, kanban.ErrFrozenNodeEdit) {
+		respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *HTTPHandler) handleTaskWorkflowNodeRunsGet(w http.ResponseWriter, r *http.Request) {
+	_, store, _, ok := h.taskWorkflowStore(w, r)
+	if !ok {
+		return
+	}
+	engine, err := store.TaskEngine(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || engine.Engine != kanban.EngineWorkflow {
+		respondError(w, http.StatusNotFound, kanban.ErrWorkflowRunNotFound)
+		return
+	}
+	nodes, err := store.ListWorkflowNodeRuns(r.Context(), engine.WorkflowRunID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"node_runs": nodes})
 }
 
 // handleTaskMigrateToWorkflow 把一个存量任务显式迁移到 WorkflowRun 引擎。
@@ -220,21 +260,6 @@ func (h *HTTPHandler) handleTaskMigrateToWorkflow(w http.ResponseWriter, r *http
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"run": run, "engine": engine})
-}
-
-// handleWorkflowRunGet 返回 Run 快照供运行视图只读展示。
-func (h *HTTPHandler) handleWorkflowRunGet(w http.ResponseWriter, r *http.Request) {
-	s, ok := h.workflowStore(w)
-	if !ok {
-		return
-	}
-	runID := chi.URLParam(r, "runId")
-	run, err := s.GetRun(r.Context(), runID)
-	if err != nil {
-		respondError(w, http.StatusNotFound, err)
-		return
-	}
-	respondJSON(w, http.StatusOK, map[string]any{"run": run})
 }
 
 // handleTaskEngineGet 返回任务的执行引擎绑定：前端据此决定是否展示运行视图入口。

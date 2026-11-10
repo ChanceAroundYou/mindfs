@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { TaskBoardView } from "../components/task/TaskBoardView";
+import { WorkflowDraftEditor } from "../components/task/WorkflowDraftEditor";
 import type { SessionItem } from "./appSession";
 import type { KanbanTask, TaskTemplate } from "../services/tasks";
 import type { WorkspaceBoard, WorkspaceBoardFilter } from "./useWorkspaceBoard";
@@ -67,7 +69,13 @@ export type UseAppKanbanTaskPanelParams = {
 export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
   const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks, taskTemplateActionMenuRef, taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen, taskCreateTemplateMenuRef, taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen, taskTemplates, taskTemplateFilter, setTaskTemplateFilter, openTaskTemplateEditor, handleDeleteTaskTemplate } = params;
 
-  const kanbanTaskPanel = (
+  // 工作流草稿编辑器是独立页（listWorkflowDrafts 走控制面），盖掉看板本身；
+  // 看板状态都住在 app 层 hook 里，来回切换不会丢数据。
+  const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
+
+  const kanbanTaskPanel = workflowEditorOpen ? (
+    <WorkflowDraftEditor onClose={() => setWorkflowEditorOpen(false)} />
+  ) : (
     <TaskBoardView
       workspaceOpen={workspaceOpen}
       currentRootId={currentRootId}
@@ -103,6 +111,7 @@ export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
       handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
       setTaskSessionErrorDialog={setTaskSessionErrorDialog}
       loadKanbanTasks={loadKanbanTasks}
+      onOpenWorkflowEditor={() => setWorkflowEditorOpen(true)}
       templateControls={{
         taskTemplateActionMenuRef,
         taskTemplateActionMenuOpen,
@@ -117,7 +126,6 @@ export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
         handleDeleteTaskTemplate,
       }}
     />
-
   );
 
   return {

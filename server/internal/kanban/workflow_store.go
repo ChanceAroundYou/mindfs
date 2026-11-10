@@ -73,14 +73,13 @@ type workflowFile struct {
 	Drafts   map[string]*WorkflowDraft   `json:"drafts"`
 	Versions map[string]*WorkflowVersion `json:"versions"`
 	NextSeq  map[string]int              `json:"next_seq"`
-	Runs     map[string]*WorkflowRun     `json:"runs"`
 }
 
 func (s *WorkflowStore) loadLocked() (*workflowFile, error) {
 	b, err := os.ReadFile(s.pathLocked())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &workflowFile{Drafts: map[string]*WorkflowDraft{}, Versions: map[string]*WorkflowVersion{}, NextSeq: map[string]int{}, Runs: map[string]*WorkflowRun{}}, nil
+			return &workflowFile{Drafts: map[string]*WorkflowDraft{}, Versions: map[string]*WorkflowVersion{}, NextSeq: map[string]int{}}, nil
 		}
 		return nil, err
 	}
@@ -96,9 +95,6 @@ func (s *WorkflowStore) loadLocked() (*workflowFile, error) {
 	}
 	if f.NextSeq == nil {
 		f.NextSeq = map[string]int{}
-	}
-	if f.Runs == nil {
-		f.Runs = map[string]*WorkflowRun{}
 	}
 	return &f, nil
 }
@@ -230,112 +226,10 @@ func (s *WorkflowStore) GetVersion(ctx context.Context, version string) (Workflo
 	return *v, nil
 }
 
-// CreateRun snapshots the graph inline (data-plane copy; no control lookup later).
-func (s *WorkflowStore) CreateRun(ctx context.Context, taskID, version string, graph WorkflowDefinition) (*WorkflowRun, error) {
-	if err := ValidateWorkflowDefinition(graph); err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	f, err := s.loadLocked()
-	if err != nil {
-		return nil, err
-	}
-	now := s.nowT()
-	run := &WorkflowRun{ID: newRunID(), TaskID: taskID, Version: version, Revision: 1, Graph: cloneGraph(graph),
-		NodeStates: map[string]string{}, NodeOutputs: map[string]map[string]any{}, SelectedRoutes: map[string]string{},
-		LoopState: map[string]*LoopState{}, LoopExitExpr: map[string]string{}, CreatedAt: now, UpdatedAt: now}
-	f.Runs[run.ID] = run
-	if err := s.saveLocked(f); err != nil {
-		return nil, err
-	}
-	return run, nil
-}
-
-// SaveRun persists state changes with CAS on the stored revision: the
-// caller must pass the revision it last read; a concurrent EditRunGraph
-// that bumped the revision makes this a conflict (ErrRunConflict) instead
-// of a last-writer-wins overwrite. On success it bumps Revision so the
-// next writer CASes against the new value and keeps UpdatedAt fresh.
-func (s *WorkflowStore) SaveRun(ctx context.Context, run *WorkflowRun) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	f, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	stored, ok := f.Runs[run.ID]
-	if !ok {
-		return errors.New("run not found")
-	}
-	if stored.Revision != run.Revision {
-		return ErrRunConflict
-	}
-	run.Revision++
-	run.UpdatedAt = s.nowT()
-	f.Runs[run.ID] = run
-	return s.saveLocked(f)
-}
-
-// GetRun returns a copy of the stored run for CAS readers.
-func (s *WorkflowStore) GetRun(ctx context.Context, runID string) (*WorkflowRun, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	f, err := s.loadLocked()
-	if err != nil {
-		return nil, err
-	}
-	run, ok := f.Runs[runID]
-	if !ok {
-		return nil, errors.New("run not found")
-	}
-	cp := *run
-	cp.NodeStates = make(map[string]string, len(run.NodeStates))
-	for k, v := range run.NodeStates {
-		cp.NodeStates[k] = v
-	}
-	return &cp, nil
-}
-
-// EditRunGraph edits only untriggered nodes; triggered nodes/edges frozen.
+// EditRunGraph on the control-plane store is intentionally unsupported. Runtime graph
+// snapshots are data-plane records and must be edited through the task's TaskStore.
 func (s *WorkflowStore) EditRunGraph(ctx context.Context, runID string, baseRevision int, graph WorkflowDefinition) error {
-	if err := ValidateWorkflowDefinition(graph); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	f, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	run, ok := f.Runs[runID]
-	if !ok {
-		return errors.New("run not found")
-	}
-	if run.Revision != baseRevision {
-		return ErrRunConflict
-	}
-	frozen := run.FrozenNodeIDs()
-	// any triggered node must still exist unchanged in the new graph
-	for id := range frozen {
-		old, ok := run.Graph.node(id)
-		if !ok {
-			continue
-		}
-		nw, ok := graph.node(id)
-		if !ok {
-			return fmt.Errorf("%w: %s", ErrFrozenNodeEdit, id)
-		}
-		ob, _ := json.Marshal(old)
-		nb, _ := json.Marshal(nw)
-		if string(ob) != string(nb) {
-			return fmt.Errorf("%w: %s", ErrFrozenNodeEdit, id)
-		}
-	}
-	run.Graph = cloneGraph(graph)
-	run.Revision++
-	run.UpdatedAt = s.nowT()
-	return s.saveLocked(f)
+	return errors.New("workflow runs are task-node data-plane records; use TaskStore.EditWorkflowRunGraph")
 }
 
 // ListDrafts returns all drafts sorted by workflow id.

@@ -2,7 +2,9 @@ package kanban
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 )
 
@@ -29,6 +31,18 @@ func newMigratableService(t *testing.T) (*Service, string, Task) {
 func TestMigrateTaskToWorkflowRun_DerivesGraphFromStages(t *testing.T) {
 	ctx := context.Background()
 	svc, rootID, task := newMigratableService(t)
+	// Ensure the shared control-plane file exists with a published definition before migration.
+	// The runtime Run must still be persisted only in the task database.
+	if _, err := svc.Workflows.CreateDraft(ctx, "control-wf", "", "tester", wfDef(wfNode("control", NodeKindNotify))); err != nil {
+		t.Fatal(err)
+	}
+	controlDraft, err := svc.Workflows.UpdateDraft(ctx, "control-wf", "r1", "tester", wfDef(wfNode("control", NodeKindNotify)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Workflows.PublishDraft(ctx, "control-wf", controlDraft.Revision, "tester"); err != nil {
+		t.Fatal(err)
+	}
 
 	run, engine, err := svc.MigrateTaskToWorkflowRun(ctx, rootID, task.ID, "", "tester")
 	if err != nil {
@@ -55,6 +69,26 @@ func TestMigrateTaskToWorkflowRun_DerivesGraphFromStages(t *testing.T) {
 	}
 	if run.Graph.RootID != task.RootID {
 		t.Fatalf("graph root=%q, want %q", run.Graph.RootID, task.RootID)
+	}
+	// The shared control-plane workflow file must contain no runtime Runs collection.
+	controlBytes, err := os.ReadFile(svc.Workflows.pathLocked())
+	if err != nil {
+		t.Fatalf("read control workflow store: %v", err)
+	}
+	var controlJSON map[string]json.RawMessage
+	if err := json.Unmarshal(controlBytes, &controlJSON); err != nil {
+		t.Fatalf("decode control workflow store: %v", err)
+	}
+	if _, exists := controlJSON["runs"]; exists {
+		t.Fatal("task runtime Runs collection must not be stored in the control-plane file")
+	}
+	store, err := svc.taskStore(rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.WorkflowRunForTask(ctx, task.ID)
+	if err != nil || persisted.ID != run.ID {
+		t.Fatalf("task-node run=%+v err=%v, want persisted run %q", persisted, err, run.ID)
 	}
 }
 
@@ -158,24 +192,24 @@ func TestMigrateTaskToWorkflowRun_UsesRequestedVersion(t *testing.T) {
 	}
 }
 
-// 控制面库没接：拒绝迁移并保持 legacy（不产生「引擎切了但没有 Run」的状态）。
-func TestMigrateTaskToWorkflowRun_NoStoreKeepsLegacy(t *testing.T) {
+// Without a control-plane version store, an unversioned migration still derives its graph from legacy Stages.
+func TestMigrateTaskToWorkflowRun_StagesMigrationNeedsNoControlStore(t *testing.T) {
 	ctx := context.Background()
 	svc, rootID, task := newMigratableService(t)
 	svc.Workflows = nil
-	if _, _, err := svc.MigrateTaskToWorkflowRun(ctx, rootID, task.ID, "", "tester"); err == nil {
-		t.Fatal("migration must fail without a workflow store")
+	run, engine, err := svc.MigrateTaskToWorkflowRun(ctx, rootID, task.ID, "", "tester")
+	if err != nil {
+		t.Fatalf("unversioned migration should derive from Stages without control store: %v", err)
+	}
+	if engine.Engine != EngineWorkflow || engine.WorkflowRunID != run.ID || len(run.Graph.Nodes) != len(task.Stages) {
+		t.Fatalf("run/engine mismatch: run=%+v engine=%+v", run, engine)
 	}
 	store, err := svc.taskStore(rootID)
 	if err != nil {
-		t.Fatalf("taskStore: %v", err)
+		t.Fatal(err)
 	}
-	engine, err := taskEngineOf(ctx, store.db, task.ID)
-	if err != nil {
-		t.Fatalf("taskEngineOf: %v", err)
-	}
-	if engine.Engine != EngineLegacy {
-		t.Fatalf("engine=%s, want legacy", engine.Engine)
+	if _, err := store.WorkflowRunForTask(ctx, task.ID); err != nil {
+		t.Fatalf("run must be persisted on task node: %v", err)
 	}
 }
 

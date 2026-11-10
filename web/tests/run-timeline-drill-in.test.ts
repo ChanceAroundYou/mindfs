@@ -144,5 +144,5 @@ test("运行视图入口挂在留言板之后，只对 workflow 任务出现", (
   assert.ok(entry.includes("onBackToComments={collapse}"), "收起必须回到留言板（同一层级折叠）");
   // 取数必须显式传 nodeId（跨节点铁律：不传会静默打激活节点）。
   assert.ok(hook.includes("fetchTaskEngine(rootId, taskId, nodeId)"));
-  assert.ok(hook.includes("fetchWorkflowRun(runId, nodeId)"));
+  assert.ok(hook.includes("fetchWorkflowRun(rootId, taskId, nodeId)"));
 });

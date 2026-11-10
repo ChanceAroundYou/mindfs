@@ -20,6 +20,8 @@ const prompts = read("src/services/prompts.ts");
 const webPush = read("src/services/webPush.ts");
 const tasks = read("src/services/tasks.ts");
 const registry = read("src/services/nodeRegistry.ts");
+const workflowDraft = read("src/services/task/workflowDraft.ts");
+
 
 // controlPath 本身：不接受 nodeId。控制面不属于任何节点，
 // 调用方如果想传 nodeId，那说明它要的多半是数据面请求。
@@ -45,6 +47,14 @@ for (const [name, src] of [["preferences.ts", preferences], ["prompts.ts", promp
 // 节点表是控制面：本地那条也要打页面服务器，否则换节点会把节点表写到对面去。
 assert.match(registry, /return controlPath\("\/api\/nodes"\);/, "the node table is control plane");
 assert.match(registry, /remote: !!item\.remote/, "normalizeRecord must carry the remote flag through");
+
+// 工作流模板/Draft 是共享控制面，编辑器不能跟随当前节点写入 worker。
+assert.match(workflowDraft, /listWorkflowDrafts\([\s\S]{0,250}?controlPath\(/,
+  "workflow drafts are shared control-plane data");
+assert.match(workflowDraft, /updateWorkflowDraft\([\s\S]{0,350}?controlPath\(/,
+  "draft edits must be sent to the page server");
+assert.match(workflowDraft, /publishWorkflowDraft\([\s\S]{0,350}?controlPath\(/,
+  "publishing immutable workflow versions is control-plane only");
 
 // tasks.ts 是混的：模板函数是控制面，任务本体是数据面。这是最容易改错的一个文件。
 for (const fn of ["fetchTaskTemplates", "saveTaskTemplate", "deleteTaskTemplate", "fetchStageTemplates", "saveStageTemplate", "deleteStageTemplate"]) {

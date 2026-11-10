@@ -49,6 +49,25 @@ export type WorkflowRunPayload = {
   updated_at?: string;
 };
 
+export type NodeRunPayload = {
+  id: string;
+  run_id: string;
+  node_id: string;
+  loop_path?: string;
+  iteration?: number;
+  attempt: number;
+  agent?: string;
+  harness?: string;
+  model?: string;
+  session_key?: string;
+  status: string;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  started_at?: string;
+  finished_at?: string;
+  prev_attempt_id?: string;
+};
+
 export function newCommentId(): string {
   const c = globalThis.crypto as Crypto | undefined;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();

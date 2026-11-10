@@ -62,6 +62,11 @@ func taskEngineOf(ctx context.Context, db *sql.DB, taskID string) (TaskEngine, e
 	return e, nil
 }
 
+// TaskEngineForStore exposes the engine binding for a caller that already routed to the task node.
+func (s *TaskStore) TaskEngine(ctx context.Context, taskID string) (TaskEngine, error) {
+	return taskEngineOf(ctx, s.db, taskID)
+}
+
 // setTaskEngine 写绑定（幂等：同 task 覆盖）。只能由迁移在「WorkflowRun 已落库之后」调用，
 // 否则会出现引擎切过去却没有 Run 可跑的空窗。
 func setTaskEngine(ctx context.Context, db *sql.DB, taskID, engine, runID string) error {
@@ -100,22 +105,22 @@ func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, 
 	if cur.Engine == EngineWorkflow {
 		return nil, cur, ErrTaskAlreadyWorkflow
 	}
-	if s.Workflows == nil {
-		return nil, TaskEngine{}, errors.New("workflow store unavailable: 控制面未初始化，不能迁移")
+
+	if strings.TrimSpace(versionID) != "" && s.Workflows == nil {
+		return nil, TaskEngine{}, errors.New("workflow control-plane store unavailable: version lookup required")
+	}
+	graph, resolvedVersion, err := s.migrationGraph(ctx, store, task, versionID)
+	if err != nil {
+		return nil, TaskEngine{}, err
+	}
+	run := &WorkflowRun{ID: newRunID(), TaskID: task.ID, Version: resolvedVersion, Revision: 1, Graph: cloneGraph(graph),
+		NodeStates: map[string]string{}, NodeOutputs: map[string]map[string]any{}, SelectedRoutes: map[string]string{},
+		LoopState: map[string]*LoopState{}, LoopExitExpr: map[string]string{}}
+	// Store snapshot and task-engine binding atomically in this task node's SQLite database.
+	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		return nil, TaskEngine{}, err
 	}
 
-	graph, err := s.migrationGraph(ctx, store, task, versionID)
-	if err != nil {
-		return nil, TaskEngine{}, err
-	}
-	run, err := s.Workflows.CreateRun(ctx, task.ID, versionID, graph)
-	if err != nil {
-		return nil, TaskEngine{}, err
-	}
-	// Run 已持久化，此刻才切引擎；写失败则任务仍是 legacy（多出的 Run 无人引用，无害）。
-	if err := setTaskEngine(ctx, store.db, task.ID, EngineWorkflow, run.ID); err != nil {
-		return nil, TaskEngine{}, err
-	}
 	engine, err := taskEngineOf(ctx, store.db, taskID)
 	if err != nil {
 		return nil, TaskEngine{}, err
@@ -135,16 +140,19 @@ func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, 
 // 给了 versionID 就用该不可变版本的图（真正「按工作流迁移」）；没给就按 legacy 的
 // Stages 逐段映射成一条线性链 —— 段是 Agent 就 Agent 节点，是 user 就 HumanGate 节点，
 // 这样迁移后的图与任务原本的顺序语义一致，而不是凭空造一个空图。
-func (s *Service) migrationGraph(ctx context.Context, store *TaskStore, task Task, versionID string) (WorkflowDefinition, error) {
+func (s *Service) migrationGraph(ctx context.Context, store *TaskStore, task Task, versionID string) (WorkflowDefinition, string, error) {
 	if strings.TrimSpace(versionID) != "" {
+		if s.Workflows == nil {
+			return WorkflowDefinition{}, "", errors.New("workflow control-plane store unavailable")
+		}
 		ver, err := s.Workflows.GetVersion(ctx, versionID)
 		if err != nil {
-			return WorkflowDefinition{}, fmt.Errorf("workflow version %q: %w", versionID, err)
+			return WorkflowDefinition{}, "", fmt.Errorf("workflow version %q: %w", versionID, err)
 		}
-		return ver.Graph, nil
+		return ver.Graph, ver.Version, nil
 	}
 	if len(task.Stages) == 0 {
-		return WorkflowDefinition{}, errors.New("task has no stages to derive a workflow graph from")
+		return WorkflowDefinition{}, "", errors.New("task has no stages to derive a workflow graph from")
 	}
 	nodes := make([]WorkflowNode, 0, len(task.Stages))
 	edges := make([]WorkflowEdge, 0, len(task.Stages)-1)
@@ -170,7 +178,7 @@ func (s *Service) migrationGraph(ctx context.Context, store *TaskStore, task Tas
 		}
 		prev = id
 	}
-	return WorkflowDefinition{Nodes: nodes, Edges: edges, RootID: task.RootID}, nil
+	return WorkflowDefinition{Nodes: nodes, Edges: edges, RootID: task.RootID}, "", nil
 }
 
 // taskRunsOnWorkflow 报任务是否已经切到 WorkflowRun 引擎（legacy 推进前必须查）。
@@ -192,4 +200,10 @@ func (s *Service) TaskEngineFor(ctx context.Context, rootID, taskID string) (Tas
 		return TaskEngine{}, err
 	}
 	return taskEngineOf(ctx, store.db, taskID)
+}
+
+// TaskStoreForRoot returns the task-node store after normal root routing. Callers must supply
+// rootID from the task's explicit data-plane scope; this is not a control-plane store.
+func (s *Service) TaskStoreForRoot(rootID string) (*TaskStore, error) {
+	return s.taskStore(rootID)
 }

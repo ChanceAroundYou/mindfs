@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/useRefreshSpin";
 import { TASK_TEMPLATE_ALL_FILTER } from "../../shared/taskTemplateConstants";
 import { hexToRgba } from "../../shared/hexToRgba";
-import { SyncIcon } from "./taskIcons";
+import { SyncIcon, WorkflowIcon } from "./taskIcons";
 import type { TaskTemplate } from "../../shared/taskTypes";
 import type { TaskTemplateControls } from "./taskBoardTypes";
 import { TaskTemplateActionMenu } from "./TaskTemplateActionMenu";
@@ -16,6 +16,7 @@ type TaskBoardToolbarProps = {
   templateControls: TaskTemplateControls;
   getDisplayNodeColor: (rootId: string) => string | null;
   onRefresh: () => void | Promise<void>;
+  onOpenWorkflowEditor: () => void;
   openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string) => void;
 };
 
@@ -26,6 +27,7 @@ export function TaskBoardToolbar({
   templateControls,
   getDisplayNodeColor,
   onRefresh,
+  onOpenWorkflowEditor,
   openTaskCreateDialog,
 }: TaskBoardToolbarProps) {
   const { t } = useI18n();
@@ -129,6 +131,20 @@ export function TaskBoardToolbar({
           }}
         />
       </div>
+      <button
+        type="button"
+        data-onboarding="task-workflow-editor"
+        title={t("task.workflowEditor.open")}
+        aria-label={t("task.workflowEditor.open")}
+        onClick={onOpenWorkflowEditor}
+        style={{
+          width: "28px", height: "28px", borderRadius: "8px", border: "none", background: "transparent",
+          color: "var(--text-color)", display: "inline-flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", flexShrink: 0, padding: 0,
+        }}
+      >
+        <WorkflowIcon />
+      </button>
       <button
         type="button"
         data-onboarding="task-refresh"

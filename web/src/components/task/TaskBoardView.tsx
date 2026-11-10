@@ -63,6 +63,7 @@ export function TaskBoardView({
   setTaskSessionErrorDialog,
   loadKanbanTasks,
   templateControls,
+  onOpenWorkflowEditor,
 }: {
   workspaceOpen: boolean;
   currentRootId: string | null;
@@ -99,6 +100,7 @@ export function TaskBoardView({
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
   templateControls: TaskTemplateControls;
+  onOpenWorkflowEditor: () => void;
 }) {
   const { t } = useI18n();
   const { isMobile } = useResponsive();
@@ -156,6 +158,7 @@ export function TaskBoardView({
         templateControls={templateControls}
         getDisplayNodeColor={getDisplayNodeColor}
         onRefresh={() => loadKanbanTasks(currentRootId)}
+        onOpenWorkflowEditor={onOpenWorkflowEditor}
         openTaskCreateDialog={openTaskCreateDialog}
       />
     {kanbanTasksLoading ? (

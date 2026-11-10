@@ -22,11 +22,24 @@ export type RunViewEntryProps = {
 
 export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewEntryProps) {
   const { t } = useI18n();
-  const { runId, open, run, error, toggle, collapse } = useRunViewEntry(rootId, taskId, nodeId);
+  const { runId, open, run, nodeRuns, error, toggle, collapse } = useRunViewEntry(rootId, taskId, nodeId);
 
   if (!runId) return null;
 
-  const nodeRuns: NodeRunSnapshot[] = [];
+  const mappedNodeRuns: NodeRunSnapshot[] = nodeRuns.map((n) => ({
+    id: n.id,
+    run_id: n.run_id,
+    node_id: n.node_id,
+    session_key: n.session_key,
+    status: n.status,
+    input: n.input,
+    output: n.output,
+    error: undefined,
+    started_at: n.started_at,
+    finished_at: n.finished_at,
+    agent: n.agent,
+    model: n.model,
+  }));
   const nodeNames: Record<string, string> = {};
   for (const node of run?.graph?.nodes ?? []) {
     if (node?.id) nodeNames[node.id] = node.name || node.id;
@@ -57,7 +70,7 @@ export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewE
           {run ? (
             <RunTimeline
               run={run}
-              nodeRuns={nodeRuns}
+              nodeRuns={mappedNodeRuns}
               nodeNames={nodeNames}
               onOpenSession={onOpenSession}
               onBackToComments={collapse}

@@ -7517,46 +7517,66 @@ groups:
   - id: G-KY
     title: 运行视图入口 RunViewEntry：挂在留言板之后，仅 workflow 引擎任务可见
     kind: feature
-    symptom: "迁移到工作流的任务，在留言板下方出现「查看运行视图」；展开后是只读节点时间线，可返回留言板；legacy 任务完全看不到这个入口。"
-    why: "约定三件：①入口渲染在 CommentThread 之后（同一层级的折叠下钻，不是平级 tab，测试钉住 DOM 顺序）；②是否出现由后端 /api/tasks/{id}/engine 的引擎绑定决定，legacy 不渲染；③所有取数显式传 nodeId（跨节点铁律：不传会静默打激活节点）。后端补 GET /api/workflows/runs/{runId} 与 GET /api/tasks/{id}/engine 两个只读出口。"
-    boundary: "只做只读运行视图入口与两个 GET 出口；不做画布编辑、不做 NodeRun 列表接口（当前无 NodeRun 持久化出口）。"
+    symptom: "迁移到工作流的任务，在留言板下方出现「查看运行视图」；展开后是只读节点时间线（含每个节点 run 的 agent/model/状态/输入输出），可返回留言板、点节点跳会话；legacy 任务完全看不到这个入口。"
+    why: "约定四件：①入口渲染在 CommentThread 之后（同一层级的折叠下钻，不是平级 tab，测试钉住 DOM 顺序）；②是否出现由后端 /api/tasks/{id}/engine 的引擎绑定决定，legacy 不渲染；③所有取数显式传 nodeId（跨节点铁律：不传会静默打激活节点）；④run 快照与 NodeRun 落**任务节点**的 SQLite（数据面），控制面 WorkflowStore 只留 Draft/Version，绝不把运行态写回主节点。出口：GET /api/tasks/{id}/workflow-run、GET /api/tasks/{id}/workflow-run/nodes、GET /api/tasks/{id}/engine。"
+    boundary: "只做只读运行视图入口与 run/node-run 读取出口；不做画布编辑，也不做节点执行器（当前没有生产写入方写 workflow_node_runs，等执行器立项）。"
     files:
       - web/src/components/task/RunViewEntry.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/services/task/comments.ts
+      - web/src/shared/taskComments.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
       - web/tests/run-timeline-drill-in.test.ts
+      - web/tests/control-plane-routing.test.mjs
       - server/internal/kanban/service_engine.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/task_store_workflow_runs_test.go
+      - server/internal/kanban/workflow_store.go
       - server/internal/api/http_workflows.go
+      - server/internal/api/http_workflows_test.go
       - server/internal/api/http_routes.go
     tests:
       - web/tests/run-timeline-drill-in.test.ts
+      - server/internal/kanban/task_store_workflow_runs_test.go
     anchors:
       - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
       - 'web/src/components/task/useRunViewEntry.ts:engine?.engine === "workflow"'
-      - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleWorkflowRunGet('
+      - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns('
+      - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleTaskWorkflowRunGet('
+      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) ListWorkflowNodeRuns('
 
   # ── 工作流草稿画布（WP-07 画布 tranche）：桌面端可视化编辑 ──────────────────
   - id: G-KZ
-    title: 工作流草稿画布 WorkflowCanvas（@xyflow/react）+ 前端同构校验
+    title: 工作流草稿画布 WorkflowCanvas（@xyflow/react）+ 前端同构校验 + 看板入口
     kind: feature
-    symptom: "桌面端可以把工作流草稿显示成可拖拽的节点图：增删五类节点、连线、改参数（agent/model/writes_workspace、Loop 上限、条件分支），改坏时当场列出校验错误；有未保存改动时显示红点，关闭/刷新页面会提示；移动端只显示只读清单。"
-    why: "约定四件：①画布只负责图形与参数，schema 校验放在 services/task/workflowDraft（与后端 workflow_validate.go 同构），落库由 Draft API 负责，组件本身不 fetch；②五类节点 Agent/Condition/HumanGate/Loop/Notify，Loop 上限 1..20 默认 5 且禁止嵌套；③脏标记只在结构性编辑（增删节点/边、改参数）出现，拖动位置不算，并在 beforeunload 上挂离开提醒；④窄视口（<720px）渲染只读清单，不做画布。新增运行时依赖 @xyflow/react（MIT 核心）。"
-    boundary: "只做草稿画布与同构校验；尚未挂进应用路由/看板入口，发布确认页与 NodeRun 列表仍缺。"
+    symptom: "桌面端从看板工具栏的流程图标进入工作流草稿页：左侧草稿列表，右侧可拖拽节点图，增删五类节点、连线、改参数（agent/model/writes_workspace、Loop 上限、条件分支），改坏时当场列出校验错误；新建/保存/发布都走控制面，有未保存改动时显示红点，切换草稿、关闭页面都会提示；移动端只显示只读清单。"
+    why: "约定五件：①画布只负责图形与参数，schema 校验放在 services/task/workflowDraft（与后端 workflow_validate.go 同构），落库由 Draft API 负责，组件本身不 fetch；②五类节点 Agent/Condition/HumanGate/Loop/Notify，Loop 上限 1..20 默认 5 且禁止嵌套；③脏标记只在结构性编辑（增删节点/边、改参数）出现，拖动位置不算，并在 beforeunload 上挂离开提醒；④窄视口（<720px）渲染只读清单，不做画布；⑤入口是看板工具栏独立页（WorkflowDraftEditor），取数在 useWorkflowDraftEditor.ts（视图 .tsx 不许 import services），Draft/Version 一律 controlPath。新增运行时依赖 @xyflow/react（MIT 核心）。"
+    boundary: "只做草稿画布、编辑器页与看板入口；Agent 侧草稿生成/试运行 API、发布后版本浏览仍缺。"
     files:
       - web/src/components/task/WorkflowCanvas.tsx
+      - web/src/components/task/WorkflowDraftEditor.tsx
+      - web/src/components/task/useWorkflowDraftEditor.ts
+      - web/src/components/task/TaskBoardToolbar.tsx
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/app/useAppKanbanTaskPanel.tsx
       - web/src/shared/workflowModel.ts
       - web/src/services/task/workflowDraft.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
       - web/tests/workflow-canvas.test.ts
+      - web/tests/workflow-editor-board-entry.test.mjs
       - web/package.json
       - web/package-lock.json
     tests:
       - web/tests/workflow-canvas.test.ts
+      - web/tests/workflow-editor-board-entry.test.mjs
     anchors:
       - 'web/src/components/task/WorkflowCanvas.tsx:export function WorkflowCanvas('
       - 'web/src/components/task/WorkflowCanvas.tsx:MOBILE_BREAKPOINT = 720'
       - 'web/src/shared/workflowModel.ts:export function validateWorkflowGraph('
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:export function WorkflowDraftEditor('
+      - 'web/src/components/task/TaskBoardToolbar.tsx:onOpenWorkflowEditor'
+      - 'web/src/app/useAppKanbanTaskPanel.tsx:<WorkflowDraftEditor onClose='

@@ -1,0 +1,304 @@
+package kanban
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+var ErrWorkflowRunNotFound = errors.New("workflow run not found on this task node")
+
+// migrateWorkflowRuns creates runtime snapshots and NodeRun attempts in the task-node SQLite DB.
+func (s *TaskStore) migrateWorkflowRuns() error {
+	_, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS workflow_runs (
+ id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE, version TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1, graph_json TEXT NOT NULL,
+ node_states_json TEXT NOT NULL DEFAULT '{}', node_outputs_json TEXT NOT NULL DEFAULT '{}',
+ selected_routes_json TEXT NOT NULL DEFAULT '{}', loop_state_json TEXT NOT NULL DEFAULT '{}',
+ loop_exit_expr_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_task ON workflow_runs(task_id);
+CREATE TABLE IF NOT EXISTS workflow_node_runs (
+ id TEXT PRIMARY KEY, run_id TEXT NOT NULL, node_id TEXT NOT NULL, loop_path TEXT NOT NULL DEFAULT '',
+ iteration INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 1,
+ agent TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
+ session_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, input_json TEXT NOT NULL DEFAULT '{}',
+ output_json TEXT NOT NULL DEFAULT '{}', started_at TEXT NOT NULL DEFAULT '', finished_at TEXT NOT NULL DEFAULT '',
+ prev_attempt_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(run_id,node_id,loop_path,iteration,attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(run_id,created_at);
+`)
+	return err
+}
+
+func marshalWorkflowJSON(v any) (string, error) { b, err := json.Marshal(v); return string(b), err }
+func unmarshalWorkflowJSON[T any](s string) (T, error) {
+	var v T
+	if strings.TrimSpace(s) == "" {
+		return v, nil
+	}
+	return v, json.Unmarshal([]byte(s), &v)
+}
+
+func (s *TaskStore) CreateWorkflowRunAndSetEngine(ctx context.Context, run *WorkflowRun) error {
+	if run == nil || strings.TrimSpace(run.ID) == "" || strings.TrimSpace(run.TaskID) == "" {
+		return errors.New("workflow run id and task id required")
+	}
+	if err := ValidateWorkflowDefinition(run.Graph); err != nil {
+		return err
+	}
+	if run.NodeStates == nil {
+		run.NodeStates = map[string]string{}
+	}
+	if run.NodeOutputs == nil {
+		run.NodeOutputs = map[string]map[string]any{}
+	}
+	if run.SelectedRoutes == nil {
+		run.SelectedRoutes = map[string]string{}
+	}
+	if run.LoopState == nil {
+		run.LoopState = map[string]*LoopState{}
+	}
+	if run.LoopExitExpr == nil {
+		run.LoopExitExpr = map[string]string{}
+	}
+	graph, err := marshalWorkflowJSON(run.Graph)
+	if err != nil {
+		return err
+	}
+	states, err := marshalWorkflowJSON(run.NodeStates)
+	if err != nil {
+		return err
+	}
+	outputs, err := marshalWorkflowJSON(run.NodeOutputs)
+	if err != nil {
+		return err
+	}
+	routes, err := marshalWorkflowJSON(run.SelectedRoutes)
+	if err != nil {
+		return err
+	}
+	loops, err := marshalWorkflowJSON(run.LoopState)
+	if err != nil {
+		return err
+	}
+	exits, err := marshalWorkflowJSON(run.LoopExitExpr)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var engine string
+	err = tx.QueryRowContext(ctx, `SELECT engine FROM task_execution_engines WHERE task_id=?`, run.TaskID).Scan(&engine)
+	if err == nil && engine == EngineWorkflow {
+		return ErrTaskAlreadyWorkflow
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_runs(id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID, run.Version, run.Revision, graph, states, outputs, routes, loops, exits, now, now)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO task_execution_engines(task_id,engine,workflow_run_id,updated_at) VALUES(?,?,?,?)`, run.TaskID, EngineWorkflow, run.ID, now)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+const workflowRunColumns = `id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at`
+
+func scanWorkflowRun(row interface{ Scan(...any) error }) (*WorkflowRun, error) {
+	var r WorkflowRun
+	var graph, states, outputs, routes, loops, exits, created, updated string
+	if err := row.Scan(&r.ID, &r.TaskID, &r.Version, &r.Revision, &graph, &states, &outputs, &routes, &loops, &exits, &created, &updated); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrWorkflowRunNotFound
+		}
+		return nil, err
+	}
+	var err error
+	if r.Graph, err = unmarshalWorkflowJSON[WorkflowDefinition](graph); err != nil {
+		return nil, fmt.Errorf("decode workflow graph: %w", err)
+	}
+	if r.NodeStates, err = unmarshalWorkflowJSON[map[string]string](states); err != nil {
+		return nil, err
+	}
+	if r.NodeOutputs, err = unmarshalWorkflowJSON[map[string]map[string]any](outputs); err != nil {
+		return nil, err
+	}
+	if r.SelectedRoutes, err = unmarshalWorkflowJSON[map[string]string](routes); err != nil {
+		return nil, err
+	}
+	if r.LoopState, err = unmarshalWorkflowJSON[map[string]*LoopState](loops); err != nil {
+		return nil, err
+	}
+	if r.LoopExitExpr, err = unmarshalWorkflowJSON[map[string]string](exits); err != nil {
+		return nil, err
+	}
+	r.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	r.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	return &r, nil
+}
+func (s *TaskStore) WorkflowRunForTask(ctx context.Context, taskID string) (*WorkflowRun, error) {
+	return scanWorkflowRun(s.db.QueryRowContext(ctx, `SELECT `+workflowRunColumns+` FROM workflow_runs WHERE task_id=?`, taskID))
+}
+func (s *TaskStore) WorkflowRunByID(ctx context.Context, runID string) (*WorkflowRun, error) {
+	return scanWorkflowRun(s.db.QueryRowContext(ctx, `SELECT `+workflowRunColumns+` FROM workflow_runs WHERE id=?`, runID))
+}
+func (s *TaskStore) SaveWorkflowRun(ctx context.Context, run *WorkflowRun) error {
+	if run == nil {
+		return errors.New("workflow run required")
+	}
+	if run.NodeStates == nil {
+		run.NodeStates = map[string]string{}
+	}
+	if run.NodeOutputs == nil {
+		run.NodeOutputs = map[string]map[string]any{}
+	}
+	if run.SelectedRoutes == nil {
+		run.SelectedRoutes = map[string]string{}
+	}
+	if run.LoopState == nil {
+		run.LoopState = map[string]*LoopState{}
+	}
+	if run.LoopExitExpr == nil {
+		run.LoopExitExpr = map[string]string{}
+	}
+	graph, err := marshalWorkflowJSON(run.Graph)
+	if err != nil {
+		return err
+	}
+	states, err := marshalWorkflowJSON(run.NodeStates)
+	if err != nil {
+		return err
+	}
+	outputs, err := marshalWorkflowJSON(run.NodeOutputs)
+	if err != nil {
+		return err
+	}
+	routes, err := marshalWorkflowJSON(run.SelectedRoutes)
+	if err != nil {
+		return err
+	}
+	loops, err := marshalWorkflowJSON(run.LoopState)
+	if err != nil {
+		return err
+	}
+	exits, err := marshalWorkflowJSON(run.LoopExitExpr)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var rev int
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM workflow_runs WHERE id=?`, run.ID).Scan(&rev); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrWorkflowRunNotFound
+		}
+		return err
+	}
+	if rev != run.Revision {
+		return ErrRunConflict
+	}
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `UPDATE workflow_runs SET revision=revision+1,graph_json=?,node_states_json=?,node_outputs_json=?,selected_routes_json=?,loop_state_json=?,loop_exit_expr_json=?,updated_at=? WHERE id=? AND revision=?`, graph, states, outputs, routes, loops, exits, now.Format(time.RFC3339Nano), run.ID, run.Revision); err != nil {
+		return err
+	}
+	run.Revision++
+	run.UpdatedAt = now
+	return tx.Commit()
+}
+func (s *TaskStore) EditWorkflowRunGraph(ctx context.Context, runID string, baseRevision int, graph WorkflowDefinition) error {
+	if err := ValidateWorkflowDefinition(graph); err != nil {
+		return err
+	}
+	run, err := s.WorkflowRunByID(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if run.Revision != baseRevision {
+		return ErrRunConflict
+	}
+	frozen := run.FrozenNodeIDs()
+	for id := range frozen {
+		old, ok := run.Graph.node(id)
+		if !ok {
+			continue
+		}
+		nw, ok := graph.node(id)
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrFrozenNodeEdit, id)
+		}
+		ob, _ := json.Marshal(old)
+		nb, _ := json.Marshal(nw)
+		if string(ob) != string(nb) {
+			return fmt.Errorf("%w: %s", ErrFrozenNodeEdit, id)
+		}
+	}
+	run.Graph = cloneGraph(graph)
+	return s.SaveWorkflowRun(ctx, run)
+}
+func (s *TaskStore) UpsertWorkflowNodeRun(ctx context.Context, n NodeRun) error {
+	input, err := marshalWorkflowJSON(n.Input)
+	if err != nil {
+		return err
+	}
+	output, err := marshalWorkflowJSON(n.Output)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	started, finished := "", ""
+	if !n.StartedAt.IsZero() {
+		started = n.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !n.FinishedAt.IsZero() {
+		finished = n.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO workflow_node_runs(id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,output_json=excluded.output_json,finished_at=excluded.finished_at,updated_at=excluded.updated_at`, n.ID, n.RunID, n.NodeID, n.LoopPath, n.Iteration, n.Attempt, n.Agent, n.Harness, n.Model, n.SessionKey, n.Status, input, output, started, finished, n.PrevAttemptID, now, now)
+	return err
+}
+func (s *TaskStore) ListWorkflowNodeRuns(ctx context.Context, runID string) ([]NodeRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id FROM workflow_node_runs WHERE run_id=? ORDER BY created_at,node_id,loop_path,iteration,attempt`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NodeRun{}
+	for rows.Next() {
+		var n NodeRun
+		var input, output, started, finished string
+		if err := rows.Scan(&n.ID, &n.RunID, &n.NodeID, &n.LoopPath, &n.Iteration, &n.Attempt, &n.Agent, &n.Harness, &n.Model, &n.SessionKey, &n.Status, &input, &output, &started, &finished, &n.PrevAttemptID); err != nil {
+			return nil, err
+		}
+		if n.Input, err = unmarshalWorkflowJSON[map[string]any](input); err != nil {
+			return nil, err
+		}
+		if n.Output, err = unmarshalWorkflowJSON[map[string]any](output); err != nil {
+			return nil, err
+		}
+		if started != "" {
+			n.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
+		}
+		if finished != "" {
+			n.FinishedAt, _ = time.Parse(time.RFC3339Nano, finished)
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}

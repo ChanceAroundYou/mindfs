@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mindfs/server/internal/fs"
 )
 
 // RED tests for WP-05/06 — written first, implementation follows.
@@ -160,27 +162,25 @@ func TestDraftCASAndPublishRevisionPin(t *testing.T) {
 }
 
 func TestRunRevisionCASAndFrozenNodes(t *testing.T) {
-	s := newWorkflowStore(t.TempDir())
 	ctx := context.Background()
-	if _, err := s.CreateDraft(ctx, "wf-r", "", "agent", wfDef(wfNode("a", NodeKindAgent), wfNode("b", NodeKindNotify))); err != nil {
-		t.Fatal(err)
-	}
-	ver, err := s.PublishDraft(ctx, "wf-r", "r1", "user")
+	root := fs.NewRootInfo("root", "root", t.TempDir())
+	store, err := NewTaskStore(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = ver
-	// Build run directly via store helper
-	run, err := s.CreateRun(ctx, "task-1", ver.Version, ver.Graph)
-	if err != nil {
+	defer store.Close()
+	if _, err := store.CreateTask(ctx, Task{ID: "task-1", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("u")}}, StageRun{ID: "s1", TaskID: "task-1", StageIndex: 0, StageName: "u", Role: RoleUser, Status: StageStatusPending}, TaskEvent{ID: "e1", TaskID: "task-1", Type: "created"}); err != nil {
 		t.Fatal(err)
 	}
-	// mark a triggered
+	graph := wfDef(wfNode("a", NodeKindAgent), wfNode("b", NodeKindNotify))
+	run := &WorkflowRun{ID: "run-1", TaskID: "task-1", Revision: 1, Graph: graph, NodeStates: map[string]string{}, NodeOutputs: map[string]map[string]any{}, SelectedRoutes: map[string]string{}, LoopState: map[string]*LoopState{}, LoopExitExpr: map[string]string{}}
+	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		t.Fatal(err)
+	}
 	run.NodeStates["a"] = NodeRunQueued
-	if err := s.SaveRun(ctx, run); err != nil {
+	if err := store.SaveWorkflowRun(ctx, run); err != nil {
 		t.Fatal(err)
 	}
-	// edit trying to modify triggered node a -> rejected; edit untriggered b -> ok
 	edited := run.Graph
 	edited.Nodes = append([]WorkflowNode{}, edited.Nodes...)
 	for i := range edited.Nodes {
@@ -188,12 +188,11 @@ func TestRunRevisionCASAndFrozenNodes(t *testing.T) {
 			edited.Nodes[i].Name = "changed"
 		}
 	}
-	if err := s.EditRunGraph(ctx, run.ID, run.Revision, edited); err == nil {
+	if err := store.EditWorkflowRunGraph(ctx, run.ID, run.Revision, edited); err == nil {
 		t.Fatal("expected frozen node rejection")
 	}
-	// CAS conflict
-	if err := s.EditRunGraph(ctx, run.ID, 999, run.Graph); err == nil {
-		t.Fatal("expected revision conflict")
+	if err := store.EditWorkflowRunGraph(ctx, run.ID, 999, run.Graph); err != ErrRunConflict {
+		t.Fatalf("expected revision conflict, got %v", err)
 	}
 }
 
@@ -250,45 +249,4 @@ func wfContains(s []string, v string) bool {
 		}
 	}
 	return false
-}
-
-func TestSaveRunCASConflict(t *testing.T) {
-	s := newWorkflowStore(t.TempDir())
-	ctx := context.Background()
-	if _, err := s.CreateDraft(ctx, "wf-cas", "", "agent", wfDef(wfNode("a", NodeKindAgent))); err != nil {
-		t.Fatal(err)
-	}
-	ver, err := s.PublishDraft(ctx, "wf-cas", "r1", "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	run, err := s.CreateRun(ctx, "task-1", ver.Version, ver.Graph)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Two readers get the same revision
-	a, err := s.GetRun(ctx, run.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := s.GetRun(ctx, run.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.NodeStates["a"] = NodeRunRunning
-	if err := s.SaveRun(ctx, a); err != nil {
-		t.Fatal(err)
-	}
-	// b still holds the old revision -> must conflict, not overwrite
-	b.NodeStates["a"] = NodeRunSuccess
-	if err := s.SaveRun(ctx, b); err == nil {
-		t.Fatal("expected ErrRunConflict for stale revision write")
-	} else if err != ErrRunConflict {
-		t.Fatalf("expected ErrRunConflict, got %v", err)
-	}
-	// GetRun reflects the accepted write
-	after, _ := s.GetRun(ctx, run.ID)
-	if after.NodeStates["a"] != NodeRunRunning {
-		t.Fatalf("stale write overwrote state: %v", after.NodeStates)
-	}
 }

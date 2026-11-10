@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchTaskEngine, fetchWorkflowRun } from "../../services/task/comments";
-import type { WorkflowRunPayload } from "../../shared/taskComments";
+import { fetchTaskEngine, fetchWorkflowNodeRuns, fetchWorkflowRun } from "../../services/task/comments";
+import type { NodeRunPayload, WorkflowRunPayload } from "../../shared/taskComments";
 
 // 运行视图入口的取数逻辑（.ts，允许 import services —— 视图 .tsx 不允许）。
 //
@@ -10,6 +10,7 @@ export type RunViewState = {
   runId: string;
   open: boolean;
   run: WorkflowRunPayload | null;
+  nodeRuns: NodeRunPayload[];
   error: string;
   toggle: () => void;
   collapse: () => void;
@@ -19,6 +20,7 @@ export function useRunViewEntry(rootId: string, taskId: string, nodeId?: string)
   const [runId, setRunId] = useState("");
   const [open, setOpen] = useState(false);
   const [run, setRun] = useState<WorkflowRunPayload | null>(null);
+  const [nodeRuns, setNodeRuns] = useState<NodeRunPayload[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -26,6 +28,7 @@ export function useRunViewEntry(rootId: string, taskId: string, nodeId?: string)
     setRunId("");
     setOpen(false);
     setRun(null);
+    setNodeRuns([]);
     setError("");
     fetchTaskEngine(rootId, taskId, nodeId)
       .then((engine) => {
@@ -49,13 +52,17 @@ export function useRunViewEntry(rootId: string, taskId: string, nodeId?: string)
     }
     setOpen(true);
     if (run || !runId) return;
-    void fetchWorkflowRun(runId, nodeId)
-      .then((payload) => {
-        setRun(payload);
+    void Promise.all([
+      fetchWorkflowRun(rootId, taskId, nodeId),
+      fetchWorkflowNodeRuns(rootId, taskId, nodeId),
+    ])
+      .then(([runPayload, nodePayload]) => {
+        setRun(runPayload);
+        setNodeRuns(nodePayload);
         setError("");
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [open, run, runId, nodeId]);
+  }, [open, run, runId, rootId, taskId, nodeId]);
 
-  return { runId, open, run, error, toggle, collapse };
+  return { runId, open, run, nodeRuns, error, toggle, collapse };
 }
