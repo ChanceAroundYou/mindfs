@@ -1,10 +1,12 @@
 import React from "react";
 import { ProviderModelSelect } from "../agent/ProviderModelSelect";
 import { useI18n } from "../../i18n/index";
-import type { AgentAPIProvider, AgentConfigBackup, AgentStatus } from "../../shared/agentTypes";
+import type { AgentAPIProvider, AgentConfigBackup, AgentConfigSyncResult, AgentStatus } from "../../shared/agentTypes";
 import { TrashIcon } from "./icons";
 import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
 import { AgentConfigAgentStep } from "./AgentConfigAgentStep";
+import { AgentConfigProfileList } from "./AgentConfigProfileList";
+import { AgentConfigSyncStatus } from "./AgentConfigSyncStatus";
 import { AgentLifecyclePopover } from "./AgentLifecyclePopover";
 import {
   agentConfigActionRowStyle, agentConfigFieldStyle, agentConfigHintStyle,
@@ -42,6 +44,8 @@ export function AgentConfigPopover({
   restartingAgent,
   error,
   notice,
+  syncStatus,
+  syncBusy,
   providerSyncBusy,
   providerTestBusyID,
   providerTestResults,
@@ -64,6 +68,7 @@ export function AgentConfigPopover({
   onDeleteAPIProvider,
   onSave,
   onSwitch,
+  onRetrySync,
   onRestartAgent,
   onConfirm,
   onCancel,
@@ -89,6 +94,8 @@ export function AgentConfigPopover({
   restartingAgent: string;
   error: string;
   notice: string;
+  syncStatus: AgentConfigSyncResult | null;
+  syncBusy: boolean;
   providerSyncBusy: boolean;
   providerTestBusyID: string;
   providerTestResults: Record<string, string>;
@@ -111,6 +118,7 @@ export function AgentConfigPopover({
   onDeleteAPIProvider: (id: string) => void;
   onSave: () => void;
   onSwitch: () => void;
+  onRetrySync: () => void;
   onRestartAgent?: (agentName: string) => void | Promise<void>;
   onConfirm: () => void;
   onCancel: () => void;
@@ -320,43 +328,13 @@ export function AgentConfigPopover({
             ) : backups.length === 0 && (supportsAPIProvider ? apiProviders.length === 0 : true) ? (
               <div style={agentConfigHintStyle}>{t("agentConfig.noSwitchableConfig")}</div>
             ) : effectiveSwitchTab === "backup" ? (
-              backups.length === 0 ? (
-                <div style={agentConfigHintStyle}>{t("agentConfig.noBackups")}</div>
-              ) : backups.map((item) => {
-                const selected = item.id === selectedBackupID;
-                return (
-                  <div
-                    key={item.id}
-                    onClick={() => onSelectedBackupChange(item.id)}
-                    style={{
-                      border: "1px solid var(--border-color)",
-                      background: selected ? "var(--selection-bg)" : "transparent",
-                      color: selected ? "var(--accent-color)" : "var(--text-primary)",
-                      borderRadius: "8px",
-                      padding: "8px 10px",
-                      textAlign: "left",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <div style={{ minWidth: 0, flex: 1, fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
-                      <button
-                        type="button"
-                        aria-label={t("agentConfig.deleteConfig", { name: item.name })}
-                        title={t("common.delete")}
-                        disabled={busy}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onDeleteBackup(item.id);
-                        }}
-                        style={agentConfigIconButtonStyle(busy)}
-                      >
-                        <TrashIcon />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+              <AgentConfigProfileList
+                backups={backups}
+                selectedID={selectedBackupID}
+                busy={busy}
+                onSelect={onSelectedBackupChange}
+                onDelete={onDeleteBackup}
+              />
             ) : (
 	              apiProviders.length === 0 ? (
 	                <div style={agentConfigHintStyle}>{t("agentConfig.noAPIProviders")}</div>
@@ -395,6 +373,9 @@ export function AgentConfigPopover({
                         <TrashIcon size={18} />
                       </button>
                     </div>
+                    {item.localCredentialAvailable === false ? (
+                      <div style={{ marginTop: "3px", fontSize: "10px", color: "var(--text-secondary)" }}>{t("agentConfig.providerMissingKey")}</div>
+                    ) : null}
                     {models.length > 0 ? (
                       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", minWidth: 0 }}>
                         <ProviderModelSelect
@@ -407,12 +388,12 @@ export function AgentConfigPopover({
                           type="button"
                           aria-label={t("agentConfig.testModel", { name: item.name })}
                           title={t("agentConfig.testModel", { name: item.name })}
-                          disabled={busy || testBusy}
+                          disabled={busy || testBusy || item.localCredentialAvailable === false}
                           onClick={(event) => {
                             event.stopPropagation();
                             onTestProviderModel(item.id, providerTestModels[item.id] || models[0] || "");
                           }}
-                          style={{ ...agentConfigSecondaryButtonStyle(busy || testBusy), flex: "0 0 auto", height: "22px", minHeight: 0, boxSizing: "border-box", padding: "0 8px", lineHeight: "18px", fontSize: "11px", whiteSpace: "nowrap" }}
+                          style={{ ...agentConfigSecondaryButtonStyle(busy || testBusy || item.localCredentialAvailable === false), flex: "0 0 auto", height: "22px", minHeight: 0, boxSizing: "border-box", padding: "0 8px", lineHeight: "18px", fontSize: "11px", whiteSpace: "nowrap" }}
                         >
                           {testBusy ? "…" : t("agentConfig.testModelShort")}
                         </button>
@@ -428,6 +409,9 @@ export function AgentConfigPopover({
               })
             )}
           </div>
+          {selectedAgent.toLowerCase() === "codex" ? (
+            <AgentConfigSyncStatus status={syncStatus} busy={syncBusy} onRetry={onRetrySync} />
+          ) : null}
           <div style={agentConfigActionRowStyle}>
             <button type="button" disabled={busy} onClick={onCancel} style={agentConfigSecondaryButtonStyle(busy)}>
               {t("common.cancel")}

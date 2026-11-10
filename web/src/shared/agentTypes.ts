@@ -63,10 +63,22 @@ export type AgentConfigBackup = {
   id: string;
   agent: string;
   name: string;
+  source?: "local" | "shared";
   createdAt: string;
   updatedAt: string;
   sources?: AgentConfigSource[];
   envKeys?: string[];
+  sync_state?: AgentConfigSyncResult["state"];
+  sync_message?: string;
+  localCredentialAvailable?: boolean;
+};
+
+export type AgentConfigSyncResult = {
+  state: "idle" | "syncing" | "synced" | "pending" | "conflict" | "invalid" | "unavailable";
+  commit_ids?: string[];
+  last_attempt_at?: string;
+  last_success_at?: string;
+  message?: string;
 };
 
 export type AgentAPIProvider = {
@@ -78,6 +90,9 @@ export type AgentAPIProvider = {
   models?: string[];
   createdAt: string;
   updatedAt: string;
+  localCredentialAvailable?: boolean;
+  sync_state?: AgentConfigSyncResult["state"];
+  sync_message?: string;
 };
 
 export type ShellStatus = {

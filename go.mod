@@ -10,7 +10,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-chi/chi/v5 v5.0.10
 	github.com/gorilla/websocket v1.5.1
-	github.com/hashicorp/yamux v0.1.2
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/roasbeef/claude-agent-sdk-go v0.0.0-20260423113330-380f586b1dc2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v4 v4.26.7

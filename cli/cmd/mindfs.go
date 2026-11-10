@@ -30,6 +30,12 @@ const (
 )
 
 func main() {
+	if handled, err := runAgentConfigSyncCommand(os.Args[1:]); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	attachParentConsole()
 	autoStartBoot := autoStartRequested(os.Args[1:])
 	if autoStartBoot {

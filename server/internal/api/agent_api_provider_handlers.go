@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"mindfs/internal/codexsync"
 )
 
 func (h *HTTPHandler) handleAgentAPIProvidersList(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +42,9 @@ func (h *HTTPHandler) handleAgentAPIProviderCreate(w http.ResponseWriter, r *htt
 		respondError(w, status, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, publicAgentAPIProvider(provider))
+	public := publicAgentAPIProvider(provider)
+	attachProviderSyncStatus(&public)
+	respondJSON(w, http.StatusOK, public)
 }
 
 func (h *HTTPHandler) handleAgentAPIProvidersSync(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +62,7 @@ func (h *HTTPHandler) handleAgentAPIProvidersSync(w http.ResponseWriter, r *http
 	for _, provider := range providers {
 		out = append(out, publicAgentAPIProvider(provider))
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"providers": out})
+	respondJSON(w, http.StatusOK, map[string]any{"providers": out, "sync": codexsync.CurrentStatus()})
 }
 
 func (h *HTTPHandler) handleAgentAPIProvidersSyncAll(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +75,7 @@ func (h *HTTPHandler) handleAgentAPIProvidersSyncAll(w http.ResponseWriter, r *h
 	for _, provider := range providers {
 		out = append(out, publicAgentAPIProvider(provider))
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"providers": out, "results": results})
+	respondJSON(w, http.StatusOK, map[string]any{"providers": out, "results": results, "sync": codexsync.CurrentStatus()})
 }
 
 func (h *HTTPHandler) handleAgentAPIProviderTest(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +107,16 @@ func (h *HTTPHandler) handleAgentAPIProviderDelete(w http.ResponseWriter, r *htt
 	for _, provider := range providers {
 		out = append(out, publicAgentAPIProvider(provider))
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id, "providers": out})
+	respondJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id, "providers": out, "sync": codexsync.CurrentStatus()})
+}
+
+func attachProviderSyncStatus(provider *agentAPIProviderPublic) {
+	if provider == nil {
+		return
+	}
+	status := codexsync.CurrentStatus()
+	provider.SyncState = status.State
+	provider.SyncMessage = status.Message
 }
 
 func (h *HTTPHandler) handleAgentAPIProviderSwitch(w http.ResponseWriter, r *http.Request) {

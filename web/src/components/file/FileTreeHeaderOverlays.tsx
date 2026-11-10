@@ -91,6 +91,9 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
     agentConfigRestartingAgent,
     agentConfigError,
     agentConfigNotice,
+    agentConfigSyncStatus,
+    agentConfigSyncBusy,
+    retryAgentConfigSync,
     providerSyncBusy,
     providerTestBusyID,
     providerTestResults,
@@ -389,6 +392,11 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
               restartingAgent={agentConfigRestartingAgent}
               error={agentConfigError}
               notice={agentConfigNotice}
+              syncStatus={agentConfigSyncStatus}
+              syncBusy={agentConfigSyncBusy}
+              onRetrySync={() => {
+                void retryAgentConfigSync();
+              }}
               providerSyncBusy={providerSyncBusy}
               providerTestBusyID={providerTestBusyID}
               providerTestResults={providerTestResults}

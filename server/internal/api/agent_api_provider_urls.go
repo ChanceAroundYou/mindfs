@@ -75,6 +75,9 @@ func normalizeAPIProviderBaseURL(input string) (string, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", errors.New("baseUrl scheme must be http or https")
 	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("baseUrl must not contain credentials, query parameters, or fragments")
+	}
 	return baseURL, nil
 }
 

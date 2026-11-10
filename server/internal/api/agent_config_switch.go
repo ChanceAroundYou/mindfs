@@ -63,6 +63,10 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 	if id == "" {
 		return agentConfigManifestEntry{}, false, apperrInvalid("请提供备份 ID")
 	}
+	if strings.HasPrefix(id, "shared:codex-") {
+		entry, err := switchSharedCodexConfig(id, app)
+		return entry, false, err
+	}
 	manifest, err := readAgentConfigManifest()
 	if err != nil {
 		return agentConfigManifestEntry{}, false, err

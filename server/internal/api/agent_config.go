@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"mindfs/internal/codexsync"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/apperr"
 	configpkg "mindfs/server/internal/config"
@@ -27,13 +28,17 @@ type agentConfigSource struct {
 }
 
 type agentConfigManifestEntry struct {
-	ID        string              `json:"id"`
-	Agent     string              `json:"agent"`
-	Name      string              `json:"name"`
-	CreatedAt string              `json:"createdAt"`
-	UpdatedAt string              `json:"updatedAt"`
-	Sources   []agentConfigSource `json:"sources,omitempty"`
-	EnvKeys   []string            `json:"envKeys,omitempty"`
+	ID          string              `json:"id"`
+	Agent       string              `json:"agent"`
+	Name        string              `json:"name"`
+	Source      string              `json:"source,omitempty"`
+	CreatedAt   string              `json:"createdAt"`
+	UpdatedAt   string              `json:"updatedAt"`
+	Sources     []agentConfigSource `json:"sources,omitempty"`
+	EnvKeys     []string            `json:"envKeys,omitempty"`
+	SyncState   string              `json:"sync_state,omitempty"`
+	SyncMessage string              `json:"sync_message,omitempty"`
+	LocalCredentialAvailable *bool   `json:"localCredentialAvailable,omitempty"`
 }
 
 type agentConfigBackupRequest struct {
@@ -99,6 +104,11 @@ func readAgentConfigManifest() ([]agentConfigManifestEntry, error) {
 	if err := json.Unmarshal(payload, &manifest); err != nil {
 		return nil, err
 	}
+	for index := range manifest {
+		if strings.TrimSpace(manifest[index].Source) == "" {
+			manifest[index].Source = "local"
+		}
+	}
 	return manifest, nil
 }
 
@@ -110,12 +120,55 @@ func writeAgentConfigManifest(manifest []agentConfigManifestEntry) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return apperr.Wrap("mkdir", filepath.Dir(path), err)
 	}
-	payload, err := json.MarshalIndent(manifest, "", "  ")
+	persisted := append([]agentConfigManifestEntry(nil), manifest...)
+	for index := range persisted {
+		if persisted[index].Source == "" {
+			persisted[index].Source = "local"
+		}
+		persisted[index].SyncState = ""
+		persisted[index].SyncMessage = ""
+		persisted[index].LocalCredentialAvailable = nil
+	}
+	payload, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		return err
 	}
 	payload = append(payload, '\n')
 	return apperr.Wrap("write", path, os.WriteFile(path, payload, 0o644))
+}
+
+func exportCodexBackupSnapshot(entry agentConfigManifestEntry) error {
+	if entry.Source != "local" || (entry.Name != "default" && entry.Name != "llmux") {
+		return nil
+	}
+	cfg, err := agent.LoadConfig("")
+	if err != nil {
+		return err
+	}
+	definition, ok := cfg.GetAgent(entry.Agent)
+	if !ok || definition.Protocol != agent.ProtocolCodexSDK {
+		return nil
+	}
+	paths, err := codexsync.ResolvePaths()
+	if err != nil {
+		return err
+	}
+	for _, source := range entry.Sources {
+		sourcePath, err := expandUserPath(source.SourcePath)
+		if err != nil {
+			return err
+		}
+		if filepath.Clean(sourcePath) != filepath.Clean(paths.RuntimeConfig) {
+			continue
+		}
+		snapshotPath := filepath.Join(paths.SnapshotsRoot, filepath.FromSlash(source.BackupPath))
+		payload, err := os.ReadFile(snapshotPath)
+		if err != nil {
+			return err
+		}
+		return codexsync.ExportSharedProfileAt(paths, entry.Name, payload)
+	}
+	return nil
 }
 
 func copyFile(src, dst string) error {

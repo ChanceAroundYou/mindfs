@@ -158,6 +158,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/agent-config/backups", h.handleAgentConfigBackupCreate)
 	r.Delete("/api/agent-config/backups", h.handleAgentConfigBackupDelete)
 	r.Post("/api/agent-config/switch", h.handleAgentConfigSwitch)
+	r.Get("/api/agent-config/sync", h.handleAgentConfigSyncStatus)
+	r.Post("/api/agent-config/sync", h.handleAgentConfigSyncRequest)
 	r.Get("/api/agent-api-providers", h.handleAgentAPIProvidersList)
 	r.Post("/api/agent-api-providers", h.handleAgentAPIProviderCreate)
 	r.Post("/api/agent-api-providers/sync", h.handleAgentAPIProvidersSync)

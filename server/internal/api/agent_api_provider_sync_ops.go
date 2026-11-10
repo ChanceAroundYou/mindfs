@@ -8,11 +8,25 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/codexsync"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/preferences"
 )
 
 func createAgentAPIProvider(ctx context.Context, req agentAPIProviderCreateRequest) (agentAPIProvider, error) {
+	var provider agentAPIProvider
+	if err := withAgentAPIProviderStorageLock(func(paths codexsync.Paths) error {
+		var err error
+		provider, err = createAgentAPIProviderLocked(ctx, req, paths)
+		return err
+	}); err != nil {
+		return agentAPIProvider{}, err
+	}
+	codexsync.Request(context.Background())
+	return provider, nil
+}
+
+func createAgentAPIProviderLocked(ctx context.Context, req agentAPIProviderCreateRequest, paths codexsync.Paths) (agentAPIProvider, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		return agentAPIProvider{}, errors.New("provider name required")
@@ -58,13 +72,26 @@ func createAgentAPIProvider(ctx context.Context, req agentAPIProviderCreateReque
 		UpdatedAt:     now,
 	}
 	providers = append(providers, provider)
-	if err := writeAgentAPIProviders(providers); err != nil {
+	if err := writeAgentAPIProvidersLocked(paths, providers); err != nil {
 		return agentAPIProvider{}, err
 	}
 	return provider, nil
 }
 
 func syncAgentAPIProviders(ctx context.Context, requests []agentAPIProviderCreateRequest) ([]agentAPIProvider, error) {
+	var changed []agentAPIProvider
+	if err := withAgentAPIProviderStorageLock(func(paths codexsync.Paths) error {
+		var err error
+		changed, err = syncAgentAPIProvidersLocked(ctx, requests, paths)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	codexsync.Request(context.Background())
+	return changed, nil
+}
+
+func syncAgentAPIProvidersLocked(ctx context.Context, requests []agentAPIProviderCreateRequest, paths codexsync.Paths) ([]agentAPIProvider, error) {
 	if len(requests) == 0 {
 		return nil, errors.New("providers required")
 	}
@@ -141,7 +168,7 @@ func syncAgentAPIProviders(ctx context.Context, requests []agentAPIProviderCreat
 	if len(changed) == 0 {
 		return nil, errors.New("no valid providers")
 	}
-	if err := writeAgentAPIProviders(providers); err != nil {
+	if err := writeAgentAPIProvidersLocked(paths, providers); err != nil {
 		return nil, err
 	}
 	return changed, nil
@@ -159,6 +186,20 @@ func providerIDExists(providers []agentAPIProvider, id string) bool {
 // syncAllAgentAPIProviders 一键同步：使用已保存的 API Key 逐个重新拉取模型目录。
 // 单个供应商同步失败时保留旧模型列表并记录错误，不影响其他供应商。
 func syncAllAgentAPIProviders(ctx context.Context, prefs *preferences.Store) ([]agentAPIProvider, []agentAPIProviderSyncAllResult, error) {
+	var providers []agentAPIProvider
+	var results []agentAPIProviderSyncAllResult
+	if err := withAgentAPIProviderStorageLock(func(paths codexsync.Paths) error {
+		var err error
+		providers, results, err = syncAllAgentAPIProvidersLocked(ctx, prefs, paths)
+		return err
+	}); err != nil {
+		return nil, nil, err
+	}
+	codexsync.Request(context.Background())
+	return providers, results, nil
+}
+
+func syncAllAgentAPIProvidersLocked(ctx context.Context, prefs *preferences.Store, paths codexsync.Paths) ([]agentAPIProvider, []agentAPIProviderSyncAllResult, error) {
 	providers, err := readAgentAPIProviders()
 	if err != nil {
 		return nil, nil, err
@@ -171,6 +212,16 @@ func syncAllAgentAPIProviders(ctx context.Context, prefs *preferences.Store) ([]
 	now := time.Now().Format(time.RFC3339)
 	for index := range providers {
 		provider := providers[index]
+		if strings.TrimSpace(provider.APIKey) == "" {
+			results = append(results, agentAPIProviderSyncAllResult{
+				ID:         provider.ID,
+				Name:       provider.Name,
+				Success:    false,
+				Error:      "local API key is missing",
+				ModelCount: len(provider.Models),
+			})
+			continue
+		}
 		probe, err := probeAgentAPIProvider(ctx, provider.BaseURL, provider.APIKey)
 		if err != nil {
 			results = append(results, agentAPIProviderSyncAllResult{
@@ -197,7 +248,7 @@ func syncAllAgentAPIProviders(ctx context.Context, prefs *preferences.Store) ([]
 		})
 	}
 	if changed {
-		if err := writeAgentAPIProviders(providers); err != nil {
+		if err := writeAgentAPIProvidersLocked(paths, providers); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -240,6 +291,19 @@ func reapplySyncedProvider(prefs *preferences.Store, provider agentAPIProvider) 
 }
 
 func deleteAgentAPIProvider(id string) ([]agentAPIProvider, error) {
+	var next []agentAPIProvider
+	if err := withAgentAPIProviderStorageLock(func(paths codexsync.Paths) error {
+		var err error
+		next, err = deleteAgentAPIProviderLocked(id, paths)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	codexsync.Request(context.Background())
+	return next, nil
+}
+
+func deleteAgentAPIProviderLocked(id string, paths codexsync.Paths) ([]agentAPIProvider, error) {
 	providers, err := readAgentAPIProviders()
 	if err != nil {
 		return nil, err
@@ -256,7 +320,7 @@ func deleteAgentAPIProvider(id string) ([]agentAPIProvider, error) {
 	if !found {
 		return nil, errors.New("provider not found")
 	}
-	if err := writeAgentAPIProviders(next); err != nil {
+	if err := writeAgentAPIProvidersLocked(paths, next); err != nil {
 		return nil, err
 	}
 	return next, nil

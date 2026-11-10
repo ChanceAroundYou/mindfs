@@ -1,8 +1,16 @@
 import { appPath } from "../net/base";
 import { protectedJSON } from "../net/api";
 
-import type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource } from "../../shared/agentTypes";
-export type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource } from "../../shared/agentTypes";
+import type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource, AgentConfigSyncResult } from "../../shared/agentTypes";
+export type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource, AgentConfigSyncResult } from "../../shared/agentTypes";
+
+export async function fetchAgentConfigSyncStatus(): Promise<AgentConfigSyncResult> {
+  return protectedJSON<AgentConfigSyncResult>(appPath("/api/agent-config/sync"));
+}
+
+export async function requestAgentConfigSync(): Promise<AgentConfigSyncResult> {
+  return protectedJSON<AgentConfigSyncResult>(appPath("/api/agent-config/sync"), { method: "POST" });
+}
 
 export type AgentConfigDefaults = {
   agent: string;

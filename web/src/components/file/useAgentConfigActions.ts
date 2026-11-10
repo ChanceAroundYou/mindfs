@@ -1,11 +1,11 @@
 import React from "react";
 import {
   createAgentAPIProvider, createAgentConfigBackup, deleteAgentAPIProvider, deleteAgentConfigBackup,
-  switchAgentAPIProvider, switchAgentConfig, syncAllAgentAPIProviders, testAgentAPIProviderModel,
+  requestAgentConfigSync, switchAgentAPIProvider, switchAgentConfig, syncAllAgentAPIProviders, testAgentAPIProviderModel,
 } from "../../services/agentConfig";
 
 export function useAgentConfigActions(ctx: any) {
-  const { agentAPIProviderAPIKey, agentAPIProviderBaseURL, agentAPIProviderName, agentAPIProviders, agentConfigAgent, agentConfigBackups, agentConfigEnvBody, agentConfigFileSourcesBody, agentConfigFlowVersion, agentConfigName, agentConfigSwitchSelection, closeAgentConfigFlow, formatProviderTestResult, isAgentConfigBackupConflict, onAgentConfigSwitched, providerTestBusyID, selectedAgentAPIProviderID, selectedAgentConfigID, setAgentAPIProviders, setAgentConfigBackups, setAgentConfigBusy, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigNotice, setAgentConfigStep, setAgentConfigSwitchSelection, setProviderSyncBusy, setProviderTestBusyID, setProviderTestModels, setProviderTestResults, setSelectedAgentAPIProviderID, setSelectedAgentConfigID, t } = ctx;
+  const { agentAPIProviderAPIKey, agentAPIProviderBaseURL, agentAPIProviderName, agentAPIProviders, agentConfigAgent, agentConfigBackups, agentConfigEnvBody, agentConfigFileSourcesBody, agentConfigFlowVersion, agentConfigName, agentConfigSwitchSelection, closeAgentConfigFlow, formatProviderTestResult, isAgentConfigBackupConflict, onAgentConfigSwitched, providerTestBusyID, selectedAgentAPIProviderID, selectedAgentConfigID, setAgentAPIProviders, setAgentConfigBackups, setAgentConfigBusy, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigNotice, setAgentConfigStep, setAgentConfigSwitchSelection, setAgentConfigSyncBusy, setAgentConfigSyncStatus, setProviderSyncBusy, setProviderTestBusyID, setProviderTestModels, setProviderTestResults, setSelectedAgentAPIProviderID, setSelectedAgentConfigID, t } = ctx;
 const saveAgentConfigBackup = React.useCallback(async (overwrite = false) => {
   if (!agentConfigName.trim()) {
     setAgentConfigError(t("agentConfig.backupNameRequired"));
@@ -16,13 +16,16 @@ const saveAgentConfigBackup = React.useCallback(async (overwrite = false) => {
   setAgentConfigBusy(true);
   setAgentConfigError("");
   try {
-    await createAgentConfigBackup({
+    const saved = await createAgentConfigBackup({
       agent: agentConfigAgent,
       name: agentConfigName.trim(),
       fileSources,
       envLines,
       overwrite,
     });
+    if (saved.sync_state) {
+      setAgentConfigSyncStatus({ state: saved.sync_state, message: saved.sync_message });
+    }
     closeAgentConfigFlow();
   } catch (error) {
     if (isAgentConfigBackupConflict(error) && !overwrite) {
@@ -34,7 +37,7 @@ const saveAgentConfigBackup = React.useCallback(async (overwrite = false) => {
   } finally {
     setAgentConfigBusy(false);
   }
-}, [agentConfigAgent, agentConfigEnvBody, agentConfigFileSourcesBody, agentConfigName, closeAgentConfigFlow, t]);
+}, [agentConfigAgent, agentConfigEnvBody, agentConfigFileSourcesBody, agentConfigName, closeAgentConfigFlow, setAgentConfigSyncStatus, t]);
 
 const saveAgentAPIProvider = React.useCallback(async () => {
   if (!agentAPIProviderName.trim()) {
@@ -52,18 +55,32 @@ const saveAgentAPIProvider = React.useCallback(async () => {
   setAgentConfigBusy(true);
   setAgentConfigError("");
   try {
-    await createAgentAPIProvider({
+    const saved = await createAgentAPIProvider({
       name: agentAPIProviderName.trim(),
       baseUrl: agentAPIProviderBaseURL.trim(),
       apiKey: agentAPIProviderAPIKey.trim(),
     });
+    if (saved.sync_state) {
+      setAgentConfigSyncStatus({ state: saved.sync_state, message: saved.sync_message });
+    }
     closeAgentConfigFlow();
   } catch (error) {
     setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.saveProviderFailed"));
   } finally {
     setAgentConfigBusy(false);
   }
-}, [agentAPIProviderAPIKey, agentAPIProviderBaseURL, agentAPIProviderName, closeAgentConfigFlow, t]);
+}, [agentAPIProviderAPIKey, agentAPIProviderBaseURL, agentAPIProviderName, closeAgentConfigFlow, setAgentConfigSyncStatus, t]);
+
+const retryAgentConfigSync = React.useCallback(async () => {
+  setAgentConfigSyncBusy(true);
+  try {
+    setAgentConfigSyncStatus(await requestAgentConfigSync());
+  } catch {
+    setAgentConfigSyncStatus({ state: "pending", message: t("agentConfig.syncRequestFailed") });
+  } finally {
+    setAgentConfigSyncBusy(false);
+  }
+}, [setAgentConfigSyncBusy, setAgentConfigSyncStatus, t]);
 
 const runAgentConfigSwitch = React.useCallback(async (confirmOverwrite = false) => {
   if (!agentConfigSwitchSelection) {
@@ -242,5 +259,5 @@ const changeProviderTestModel = React.useCallback((providerID: string, model: st
 
   return { saveAgentConfigBackup, saveAgentAPIProvider, runAgentConfigSwitch, deleteSelectedAgentConfigBackup,
     deleteSelectedAgentAPIProvider, syncAllAgentAPIProviderModels, testAgentAPIProviderModelNow,
-    selectAgentConfigBackup, selectAgentAPIProvider, changeProviderTestModel };
+    selectAgentConfigBackup, selectAgentAPIProvider, changeProviderTestModel, retryAgentConfigSync };
 }

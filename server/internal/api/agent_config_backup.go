@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/codexsync"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/apperr"
 )
@@ -23,7 +25,12 @@ func (h *HTTPHandler) handleAgentConfigBackupsList(w http.ResponseWriter, r *htt
 		return
 	}
 	if agentName == "" {
-		respondJSON(w, http.StatusOK, manifest)
+		shared, err := sharedCodexConfigBackups()
+		if err != nil {
+			respondError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, append(manifest, shared...))
 		return
 	}
 	filtered := make([]agentConfigManifestEntry, 0, len(manifest))
@@ -31,6 +38,14 @@ func (h *HTTPHandler) handleAgentConfigBackupsList(w http.ResponseWriter, r *htt
 		if item.Agent == agentName {
 			filtered = append(filtered, item)
 		}
+	}
+	if strings.EqualFold(agentName, "codex") {
+		shared, err := sharedCodexConfigBackups()
+		if err != nil {
+			respondError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		filtered = append(filtered, shared...)
 	}
 	respondJSON(w, http.StatusOK, filtered)
 }
@@ -107,6 +122,7 @@ func createAgentConfigBackup(req agentConfigBackupRequest) (agentConfigManifestE
 		ID:        id,
 		Agent:     agentName,
 		Name:      backupName,
+		Source:    "local",
 		CreatedAt: createdAt,
 		UpdatedAt: now,
 	}
@@ -159,6 +175,16 @@ func createAgentConfigBackup(req agentConfigBackupRequest) (agentConfigManifestE
 	}
 	if err := writeAgentConfigManifest(manifest); err != nil {
 		return agentConfigManifestEntry{}, err
+	}
+	if backupName == "default" || backupName == "llmux" {
+		if err := exportCodexBackupSnapshot(entry); err != nil {
+			entry.SyncState = "pending"
+			entry.SyncMessage = "local recovery backup was saved; shared profile export needs attention"
+		} else if entry.Agent == "codex" {
+			status := codexsync.Request(context.Background())
+			entry.SyncState = status.State
+			entry.SyncMessage = status.Message
+		}
 	}
 	return entry, nil
 }

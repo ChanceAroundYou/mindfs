@@ -42,7 +42,7 @@ import { FileTreeProjectTabs } from "./FileTreeProjectTabs";
 import { scopeKey, treeKey } from "../../shared/scope";
 import { SymlinkBadge } from "./SymlinkBadge";
 import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
-import type { AgentAPIProvider, AgentConfigBackup, AgentStatus } from "../../shared/agentTypes";
+import type { AgentAPIProvider, AgentConfigBackup, AgentConfigSyncResult, AgentStatus } from "../../shared/agentTypes";
 import type { NewProjectMetaLocation } from "../../shared/preferencesTypes";
 import { formatSendShortcut, shortcutFromKeyboardEvent, type SendShortcut } from "../../shared/sendShortcut";
 
@@ -195,6 +195,8 @@ function FileTreeInner({
   const [agentConfigRestartingAgent, setAgentConfigRestartingAgent] = React.useState("");
   const [agentConfigError, setAgentConfigError] = React.useState("");
   const [agentConfigNotice, setAgentConfigNotice] = React.useState("");
+  const [agentConfigSyncStatus, setAgentConfigSyncStatus] = React.useState<AgentConfigSyncResult | null>(null);
+  const [agentConfigSyncBusy, setAgentConfigSyncBusy] = React.useState(false);
   const agentConfigFlowVersion = React.useRef(0);
   const [providerSyncBusy, setProviderSyncBusy] = React.useState(false);
   const [providerTestBusyID, setProviderTestBusyID] = React.useState("");
@@ -247,7 +249,7 @@ function FileTreeInner({
     newProjectMetaLocation, setNewProjectMetaLocation, newProjectMetaLocationBusy, setNewProjectMetaLocationBusy,
   });
 
-  useAgentConfigSwitchRequest({ agentConfigSwitchRequest, rootId, t, setAgentLifecycleOpen, agentConfigFlowVersion, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents });
+  useAgentConfigSwitchRequest({ agentConfigSwitchRequest, rootId, t, setAgentLifecycleOpen, agentConfigFlowVersion, setAgentConfigNotice, setAgentConfigSyncStatus, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents });
 
 
 
@@ -279,18 +281,19 @@ function FileTreeInner({
     agentConfigAgent, setAgentConfigAgent, setAgentConfigBusy, agentConfigAgents, agentConfigFlow,
     setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName,
     setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigAddTab, setAgentConfigStep,
-    setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, agentConfigPreferredProviderIDs,
+    setAgentConfigBackups, setAgentAPIProviders, setAgentConfigSyncStatus, setSelectedAgentConfigID, agentConfigPreferredProviderIDs,
     setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigSwitchTab,
   });
 
   const { saveAgentConfigBackup, saveAgentAPIProvider, runAgentConfigSwitch, deleteSelectedAgentConfigBackup,
-    deleteSelectedAgentAPIProvider, syncAllAgentAPIProviderModels, testAgentAPIProviderModelNow,
+    deleteSelectedAgentAPIProvider, syncAllAgentAPIProviderModels, testAgentAPIProviderModelNow, retryAgentConfigSync,
     selectAgentConfigBackup, selectAgentAPIProvider, changeProviderTestModel } = useAgentConfigActions({
       agentAPIProviderAPIKey, agentAPIProviderBaseURL, agentAPIProviderName, agentAPIProviders,
       agentConfigAgent, agentConfigBackups, agentConfigEnvBody, agentConfigFileSourcesBody, agentConfigFlowVersion,
       agentConfigName, agentConfigSwitchSelection, closeAgentConfigFlow, formatProviderTestResult,
       isAgentConfigBackupConflict, onAgentConfigSwitched, providerTestBusyID, selectedAgentAPIProviderID,
       selectedAgentConfigID, setAgentAPIProviders, setAgentConfigBackups, setAgentConfigBusy,
+      setAgentConfigSyncBusy, setAgentConfigSyncStatus,
       setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigNotice, setAgentConfigStep,
       setAgentConfigSwitchSelection, setProviderSyncBusy, setProviderTestBusyID, setProviderTestModels,
       setProviderTestResults, setSelectedAgentAPIProviderID, setSelectedAgentConfigID, t,
@@ -397,6 +400,9 @@ function FileTreeInner({
             agentConfigRestartingAgent,
             agentConfigError,
             agentConfigNotice,
+            agentConfigSyncStatus,
+            agentConfigSyncBusy,
+            retryAgentConfigSync,
             providerSyncBusy,
             providerTestBusyID,
             providerTestResults,
