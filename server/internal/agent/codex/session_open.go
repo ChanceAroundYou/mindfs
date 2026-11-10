@@ -69,7 +69,13 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 
 	var thread *codexsdk.Thread
 	if strings.TrimSpace(opts.ForkSessionID) != "" {
-		threadID, err := forkCodexThread(context.Background(), client, threadOptions, strings.TrimSpace(opts.ForkSessionID), opts.CodexUserOrdinal)
+		// fork 的参数里不带 modelProvider 会继承源线程的旧供应商，新会话就会继续
+		// 走切换前的 provider；这里显式钉到当前配置。
+		forkOptions := threadOptions
+		if provider := resolveCodexModelProvider(ctx, client, opts.RootPath); provider != "" {
+			forkOptions.ModelProvider = provider
+		}
+		threadID, err := forkCodexThread(context.Background(), client, forkOptions, strings.TrimSpace(opts.ForkSessionID), opts.CodexUserOrdinal)
 		if err != nil {
 			return nil, err
 		}
