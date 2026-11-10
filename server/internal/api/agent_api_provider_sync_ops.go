@@ -262,6 +262,10 @@ func reapplySyncedProvider(prefs *preferences.Store, provider agentAPIProvider) 
 	if prefs == nil {
 		return nil
 	}
+	agentConfig, err := agent.LoadConfig("")
+	if err != nil {
+		return nil
+	}
 	selections := prefs.AgentLastConfigSelections()
 	if len(selections) == 0 {
 		return nil
@@ -274,7 +278,8 @@ func reapplySyncedProvider(prefs *preferences.Store, provider agentAPIProvider) 
 	results := make([]agentAPIProviderSyncAgentResult, 0)
 	for _, name := range names {
 		selection := selections[name]
-		if selection.Type != "api_provider" || selection.ID != provider.ID {
+		definition, configured := agentConfig.GetAgent(name)
+		if normalizedAPIProviderAgent(name) == "codex" || (configured && definition.Protocol == agent.ProtocolCodexSDK) || selection.Type != "api_provider" || selection.ID != provider.ID {
 			continue
 		}
 		err := applyAgentAPIProvider(name, provider, nil)
@@ -335,8 +340,12 @@ func switchAgentAPIProvider(req agentAPIProviderSwitchRequest, app *AppContext) 
 	if err != nil {
 		return agentAPIProvider{}, err
 	}
-	if _, ok := cfg.GetAgent(agentName); !ok {
+	definition, ok := cfg.GetAgent(agentName)
+	if !ok {
 		return agentAPIProvider{}, fmt.Errorf("agent not configured: %s", agentName)
+	}
+	if definition.Protocol == agent.ProtocolCodexSDK {
+		return agentAPIProvider{}, errors.New("Codex API providers are metadata only; switch a shared Codex profile instead")
 	}
 	providerID := strings.TrimSpace(req.ProviderID)
 	if providerID == "" {

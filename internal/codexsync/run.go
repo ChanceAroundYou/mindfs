@@ -23,6 +23,21 @@ func RunAt(ctx context.Context, mode Mode, paths Paths) (Result, error) {
 		result, err := check(paths)
 		result.LastAttemptAt = now
 		return result, err
+	case ModeCheckRuntime:
+		if err := CheckRuntimeAt(paths); err != nil {
+			return Result{State: "pending", LastAttemptAt: now, Message: "local Codex runtime config differs from the active shared profile"}, err
+		}
+		return Result{State: "synced", LastAttemptAt: now, Message: "local Codex runtime config matches the active shared profile"}, nil
+	case ModeRender:
+		release, err := acquireLock(paths.StateDir)
+		if err != nil {
+			return Result{State: "pending", LastAttemptAt: now, Message: "another Codex configuration sync is already running"}, err
+		}
+		defer release()
+		if err := renderRuntimeRequired(paths); err != nil {
+			return Result{State: "invalid", LastAttemptAt: now, Message: "local Codex config could not be rendered; the previous runtime file was preserved"}, err
+		}
+		return Result{State: "synced", LastAttemptAt: now, Message: "local Codex runtime config rendered from its active profile"}, nil
 	case ModeApply, ModeSync:
 		release, err := acquireLock(paths.StateDir)
 		if err != nil {
@@ -86,7 +101,7 @@ func RunAt(ctx context.Context, mode Mode, paths Paths) (Result, error) {
 		result.LastSuccessAt = time.Now().UTC().Format(time.RFC3339)
 		return result, nil
 	default:
-		return Result{State: "invalid", LastAttemptAt: now, Message: "mode must be check, apply, or sync"}, errors.New("unknown Codex sync mode")
+		return Result{State: "invalid", LastAttemptAt: now, Message: "mode must be check, apply, sync, render, or check-runtime"}, errors.New("unknown Codex sync mode")
 	}
 }
 

@@ -29,11 +29,13 @@ func runAgentConfigSyncCommandWith(
 	check := flags.Bool("check", false, "inspect local sync state without changing files")
 	apply := flags.Bool("apply", false, "migrate local snapshots into shared sources and render local config")
 	sync := flags.Bool("sync", false, "fetch, integrate, push, and render shared configuration")
+	render := flags.Bool("render", false, "render the active local Codex profile without Git transport")
+	checkRuntime := flags.Bool("check-runtime", false, "check active Codex runtime rendering without changing files")
 	if err := flags.Parse(args[1:]); err != nil {
-		return true, errors.New("usage: mindfs agents-config-sync --check|--apply|--sync")
+		return true, errors.New("usage: mindfs agents-config-sync --check|--apply|--sync|--render|--check-runtime")
 	}
-	if flags.NArg() != 0 || boolCount(*check, *apply, *sync) != 1 {
-		return true, errors.New("usage: mindfs agents-config-sync --check|--apply|--sync")
+	if flags.NArg() != 0 || boolCount(*check, *apply, *sync, *render, *checkRuntime) != 1 {
+		return true, errors.New("usage: mindfs agents-config-sync --check|--apply|--sync|--render|--check-runtime")
 	}
 	mode := codexsync.ModeSync
 	switch {
@@ -41,6 +43,10 @@ func runAgentConfigSyncCommandWith(
 		mode = codexsync.ModeCheck
 	case *apply:
 		mode = codexsync.ModeApply
+	case *render:
+		mode = codexsync.ModeRender
+	case *checkRuntime:
+		mode = codexsync.ModeCheckRuntime
 	}
 	result, err := run(context.Background(), mode)
 	encoded, marshalErr := json.Marshal(result)

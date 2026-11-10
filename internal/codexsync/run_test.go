@@ -270,6 +270,64 @@ trust_level = "trusted"
 	}
 }
 
+func TestRenderRuntimeCheckIsReadOnly(t *testing.T) {
+	paths := testPaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.SharedDefault), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SharedDefault, []byte("model = \"expected\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.RuntimeConfig, []byte("model = \"actual\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(paths.RuntimeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckRuntimeAt(paths); err == nil {
+		t.Fatal("CheckRuntimeAt accepted a drifted runtime config")
+	}
+	after, err := os.Stat(paths.RuntimeConfig)
+	if err != nil || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("check-runtime changed runtime mtime: %v", err)
+	}
+}
+
+func TestRenderModeRequiresSharedDefaultProfile(t *testing.T) {
+	paths := testPaths(t)
+	const previous = "model = \"local-runtime\"\n"
+	if err := os.WriteFile(paths.RuntimeConfig, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := RunAt(context.Background(), ModeRender, paths)
+	if err == nil || result.State != "invalid" {
+		t.Fatalf("RunAt(Render) = %+v, %v; want invalid state and missing-profile error", result, err)
+	}
+	got, readErr := os.ReadFile(paths.RuntimeConfig)
+	if readErr != nil || string(got) != previous {
+		t.Fatalf("render changed runtime without shared default: %q, %v", got, readErr)
+	}
+	if _, err := os.Stat(activeProfilePath(paths)); !os.IsNotExist(err) {
+		t.Fatalf("render created active-profile marker without shared default: %v", err)
+	}
+}
+
+func TestRenderRuntimeAtRequiresSharedDefaultProfile(t *testing.T) {
+	paths := testPaths(t)
+	const previous = "model = \"local-runtime\"\n"
+	if err := os.WriteFile(paths.RuntimeConfig, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RenderRuntimeAt(paths); err == nil {
+		t.Fatal("RenderRuntimeAt succeeded without a shared default profile")
+	}
+	got, readErr := os.ReadFile(paths.RuntimeConfig)
+	if readErr != nil || string(got) != previous {
+		t.Fatalf("RenderRuntimeAt changed runtime without shared default: %q, %v", got, readErr)
+	}
+}
+
 func TestSyncImportsWindowsStyleLocalLLMuxEdit(t *testing.T) {
 	remote, local := newSyncRepository(t)
 	paths := testPaths(t)

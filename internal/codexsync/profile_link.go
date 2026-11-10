@@ -34,7 +34,11 @@ func ApplySharedCodexProfileAt(paths Paths, name string) error {
 }
 
 func applySharedCodexProfileAtLocked(paths Paths, name string) error {
-	switch strings.ToLower(strings.TrimSpace(name)) {
+	name, err := normalizeProfileName(name)
+	if err != nil {
+		return errors.New("unknown shared Codex profile")
+	}
+	switch name {
 	case "default":
 		payload, err := ReadSharedCodexProfileAt(paths, "default")
 		if err != nil {
@@ -43,7 +47,6 @@ func applySharedCodexProfileAtLocked(paths Paths, name string) error {
 		if payload == nil {
 			return errors.New("shared default Codex profile is missing")
 		}
-		return renderRuntime(paths)
 	case "llmux":
 		payload, err := ReadSharedCodexProfileAt(paths, "llmux")
 		if err != nil {
@@ -52,10 +55,30 @@ func applySharedCodexProfileAtLocked(paths Paths, name string) error {
 		if payload == nil {
 			return errors.New("shared llmux Codex profile is missing")
 		}
-		return ensureLLMuxProfile(paths)
-	default:
-		return errors.New("unknown shared Codex profile")
+		if err := ensureLLMuxProfile(paths); err != nil {
+			return err
+		}
 	}
+	previous, hadPrevious, err := readActiveProfile(paths)
+	if err != nil {
+		return err
+	}
+	if err := setActiveProfile(paths, name); err != nil {
+		return err
+	}
+	if err := renderRuntime(paths); err != nil {
+		if hadPrevious {
+			if restoreErr := setActiveProfile(paths, previous); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("restore previous active profile: %w", restoreErr))
+			}
+		} else {
+			if restoreErr := os.Remove(activeProfilePath(paths)); restoreErr != nil && !errors.Is(restoreErr, os.ErrNotExist) {
+				return errors.Join(err, fmt.Errorf("remove failed active profile marker: %w", restoreErr))
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func ReadSharedCodexProfileAt(paths Paths, name string) ([]byte, error) {

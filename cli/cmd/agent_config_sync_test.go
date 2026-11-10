@@ -18,6 +18,8 @@ func TestAgentConfigSyncCommandDispatchesSingleMode(t *testing.T) {
 		{"--check", codexsync.ModeCheck},
 		{"--apply", codexsync.ModeApply},
 		{"--sync", codexsync.ModeSync},
+		{"--render", codexsync.ModeRender},
+		{"--check-runtime", codexsync.ModeCheckRuntime},
 	} {
 		t.Run(test.flag, func(t *testing.T) {
 			var output bytes.Buffer
@@ -46,6 +48,7 @@ func TestAgentConfigSyncCommandRejectsAmbiguousMode(t *testing.T) {
 		{"agents-config-sync"},
 		{"agents-config-sync", "--check", "--sync"},
 		{"agents-config-sync", "--apply", "extra"},
+		{"agents-config-sync", "--render", "--sync"},
 	} {
 		handled, err := runAgentConfigSyncCommandWith(args, &bytes.Buffer{}, func(context.Context, codexsync.Mode) (codexsync.Result, error) {
 			t.Fatal("runner called for invalid command")

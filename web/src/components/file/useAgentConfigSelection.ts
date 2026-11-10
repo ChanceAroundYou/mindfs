@@ -57,6 +57,7 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
   try {
     const selectedAgent = agentConfigAgents.find((item: any) => item.name === agentName);
     const supportsAPIProvider = Boolean(selectedAgent?.supports_api_provider_switch);
+    const isCodex = agentName.toLowerCase() === "codex";
     if (agentConfigFlow === "backup") {
       const defaults = await fetchAgentConfigDefaults(agentName);
       setAgentConfigName("");
@@ -73,15 +74,26 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
         supportsAPIProvider ? fetchAgentAPIProviders(agentName) : Promise.resolve([]),
         agentName.toLowerCase() === "codex" ? fetchAgentConfigSyncStatus() : Promise.resolve(null),
       ]);
-      setAgentConfigBackups(backups);
+      const switchableBackups = isCodex ? backups.filter((item: any) => item.source === "shared") : backups;
+      setAgentConfigBackups(switchableBackups);
       setAgentAPIProviders(providers);
       setAgentConfigSyncStatus(syncStatus);
-      setSelectedAgentConfigID("");
+      const lastSelection = selectedAgent?.last_config_selection;
+      const lastSharedBackup = isCodex && lastSelection?.type === "backup"
+        ? switchableBackups.find((item: any) => item.id === lastSelection.id)
+        : null;
+      const defaultSharedBackup = isCodex
+        ? switchableBackups.find((item: any) => item.id === "shared:codex-default") || switchableBackups[0]
+        : null;
+      const initialBackupID = lastSharedBackup?.id || defaultSharedBackup?.id || "";
+      setSelectedAgentConfigID(initialBackupID);
       const preferredProvider = providers.find((provider) => agentConfigPreferredProviderIDs.includes(provider.id));
       setSelectedAgentAPIProviderID(preferredProvider?.id || "");
-      setAgentConfigSwitchSelection(preferredProvider ? { type: "api_provider", id: preferredProvider.id } : null);
-      setAgentConfigSwitchTab(supportsAPIProvider && selectedAgent?.last_config_selection?.type === "api_provider" ? "api_provider" : "backup");
-      if (supportsAPIProvider && agentConfigPreferredProviderIDs.length > 0) {
+      setAgentConfigSwitchSelection(initialBackupID
+        ? { type: "backup", id: initialBackupID }
+        : preferredProvider ? { type: "api_provider", id: preferredProvider.id } : null);
+      setAgentConfigSwitchTab(!isCodex && supportsAPIProvider && lastSelection?.type === "api_provider" ? "api_provider" : "backup");
+      if (!isCodex && supportsAPIProvider && agentConfigPreferredProviderIDs.length > 0) {
         setAgentConfigSwitchTab("api_provider");
       }
       setAgentConfigStep("details");

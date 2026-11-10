@@ -84,6 +84,18 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 	if len(entry.Sources) == 0 && len(entry.EnvKeys) == 0 {
 		return agentConfigManifestEntry{}, false, apperrInvalid("备份没有配置内容")
 	}
+	cfg, err := agent.LoadConfig("")
+	if err != nil {
+		return agentConfigManifestEntry{}, false, err
+	}
+	def, ok := cfg.GetAgent(entry.Agent)
+	if !ok {
+		return agentConfigManifestEntry{}, false, fmt.Errorf("agent not configured: %s", entry.Agent)
+	}
+	isCodex := def.Protocol == agent.ProtocolCodexSDK
+	if isCodex {
+		return agentConfigManifestEntry{}, false, apperrInvalid("Codex 本机恢复快照不能作为切换目标")
+	}
 	exists := false
 	for _, source := range entry.Sources {
 		sourcePath, err := expandUserPath(source.SourcePath)
@@ -104,33 +116,6 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 	if err != nil {
 		return agentConfigManifestEntry{}, false, err
 	}
-	// Preserve the selected Codex provider key while restoring config.toml.
-	var codexStableProvider string
-	var codexConfigPath string
-	cfg, err := agent.LoadConfig("")
-	if err != nil {
-		return agentConfigManifestEntry{}, false, err
-	}
-	def, ok := cfg.GetAgent(entry.Agent)
-	if !ok {
-		return agentConfigManifestEntry{}, false, fmt.Errorf("agent not configured: %s", entry.Agent)
-	}
-	isCodex := def.Protocol == agent.ProtocolCodexSDK
-	if isCodex {
-		if home, homeErr := os.UserHomeDir(); homeErr == nil {
-			codexConfigPath = filepath.Clean(filepath.Join(home, ".codex", "config.toml"))
-		}
-		for _, source := range entry.Sources {
-			sourcePath, pathErr := expandUserPath(source.SourcePath)
-			if pathErr != nil || codexConfigPath == "" || filepath.Clean(sourcePath) != codexConfigPath {
-				continue
-			}
-			if payload, readErr := os.ReadFile(sourcePath); readErr == nil {
-				codexStableProvider = codexModelProviderFromConfig(string(payload))
-			}
-			break
-		}
-	}
 	for _, source := range entry.Sources {
 		sourcePath, err := expandUserPath(source.SourcePath)
 		if err != nil {
@@ -139,16 +124,6 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 		backupPath := filepath.Join(configRoot, filepath.FromSlash(source.BackupPath))
 		if err := copyFile(backupPath, sourcePath); err != nil {
 			return agentConfigManifestEntry{}, false, err
-		}
-		if codexStableProvider != "" && isCodex && codexConfigPath != "" && filepath.Clean(sourcePath) == codexConfigPath {
-			payload, readErr := os.ReadFile(sourcePath)
-			if readErr != nil {
-				return agentConfigManifestEntry{}, false, apperr.Wrap("read", sourcePath, readErr)
-			}
-			normalized := preserveCodexModelProviderKey(string(payload), codexStableProvider)
-			if err := os.WriteFile(sourcePath, []byte(normalized), 0o600); err != nil {
-				return agentConfigManifestEntry{}, false, apperr.Wrap("write", sourcePath, err)
-			}
 		}
 	}
 	var env map[string]string

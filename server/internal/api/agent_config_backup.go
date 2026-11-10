@@ -45,7 +45,8 @@ func (h *HTTPHandler) handleAgentConfigBackupsList(w http.ResponseWriter, r *htt
 			respondError(w, http.StatusServiceUnavailable, err)
 			return
 		}
-		filtered = append(filtered, shared...)
+		respondJSON(w, http.StatusOK, shared)
+		return
 	}
 	respondJSON(w, http.StatusOK, filtered)
 }
@@ -193,6 +194,9 @@ func deleteAgentConfigBackup(id string) ([]agentConfigManifestEntry, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, apperrInvalid("请提供备份 ID")
+	}
+	if strings.HasPrefix(id, "shared:codex-") {
+		return nil, apperrInvalid("共享 Codex 配置不能删除")
 	}
 	manifest, err := readAgentConfigManifest()
 	if err != nil {

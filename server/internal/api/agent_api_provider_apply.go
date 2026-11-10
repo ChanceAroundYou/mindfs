@@ -1,14 +1,11 @@
 package api
 
-import (
-)
+import "errors"
 
 func applyAgentAPIProvider(agentName string, provider agentAPIProvider, app *AppContext) error {
 	switch normalizedAPIProviderAgent(agentName) {
 	case "codex":
-		if err := applyCodexAPIProvider(provider); err != nil {
-			return err
-		}
+		return errors.New("Codex API providers are metadata only; switch a shared Codex profile instead")
 	case "claude":
 		env, err := replaceAgentConfiguredEnv(agentName, map[string]string{
 			"ANTHROPIC_BASE_URL":   provider.BaseURL,

@@ -10,9 +10,11 @@ import (
 type Mode string
 
 const (
-	ModeCheck Mode = "check"
-	ModeApply Mode = "apply"
-	ModeSync  Mode = "sync"
+	ModeCheck        Mode = "check"
+	ModeApply        Mode = "apply"
+	ModeSync         Mode = "sync"
+	ModeRender       Mode = "render"
+	ModeCheckRuntime Mode = "check-runtime"
 )
 
 type Paths struct {

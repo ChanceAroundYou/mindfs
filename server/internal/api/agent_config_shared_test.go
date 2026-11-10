@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"mindfs/internal/codexsync"
+	"mindfs/server/internal/agent"
 	"mindfs/server/internal/testutil"
 )
 
@@ -55,7 +56,7 @@ func TestSharedCodexProfilesAreListedSeparatelyFromLocalManifest(t *testing.T) {
 	for _, entry := range entries {
 		byID[entry.ID] = entry
 	}
-	if byID[local.ID].Source != "local" || byID["shared:codex-default"].Source != "shared" || byID["shared:codex-llmux"].Source != "shared" {
+	if _, exists := byID[local.ID]; exists || byID["shared:codex-default"].Source != "shared" || byID["shared:codex-llmux"].Source != "shared" {
 		t.Fatalf("unexpected backup sources: %+v", byID)
 	}
 	if byID["shared:codex-llmux"].LocalCredentialAvailable == nil || *byID["shared:codex-llmux"].LocalCredentialAvailable {
@@ -67,6 +68,35 @@ func TestSharedCodexProfilesAreListedSeparatelyFromLocalManifest(t *testing.T) {
 	}
 	if string(before) != string(after) || strings.Contains(string(after), "shared:codex-") {
 		t.Fatalf("listing wrote synthesized profiles into local manifest: %s", after)
+	}
+}
+
+func TestCodexLocalRecoverySnapshotCannotBeSwitchedOrDeletedAsShared(t *testing.T) {
+	home := t.TempDir()
+	testutil.IsolateUserDirs(t, home)
+	configPath := filepath.Join(home, "agents.json")
+	t.Setenv("MINDFS_AGENTS_CONFIG", configPath)
+	writeJSON(t, configPath, agent.Config{Agents: []agent.Definition{{Name: "codex", Command: "codex", Protocol: agent.ProtocolCodexSDK}}})
+	configRoot, err := agentConfigRootDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := filepath.Join(configRoot, "codex-llmux", "002-config.toml")
+	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshotPath, []byte("local recovery snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry := agentConfigManifestEntry{ID: "codex-llmux", Agent: "codex", Name: "llmux", Sources: []agentConfigSource{{SourcePath: "~/.codex/config.toml", BackupPath: "codex-llmux/002-config.toml"}}}
+	if err := writeAgentConfigManifest([]agentConfigManifestEntry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := switchAgentConfig(agentConfigSwitchRequest{ID: entry.ID, ConfirmOverwrite: true}, nil); err == nil {
+		t.Fatal("Codex local recovery snapshot was accepted as a switch target")
+	}
+	if _, err := deleteAgentConfigBackup("shared:codex-llmux"); err == nil || !strings.Contains(err.Error(), "共享") {
+		t.Fatalf("deleting a shared profile did not return an explicit error: %v", err)
 	}
 }
 

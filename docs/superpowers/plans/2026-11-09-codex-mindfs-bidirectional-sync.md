@@ -4,7 +4,7 @@
 
 **Goal:** Make Codex `default` and `llmux` settings plus MindFS provider metadata bidirectionally sync through the private `~/.agents` Git checkout while retaining full backups and credentials locally.
 
-**Architecture:** `~/.agents/codex` holds only portable, allowlisted configuration and provider metadata. A `mindfs agents-config-sync` command and the MindFS service use one shared Go package for migration, validation, Git transport, and rendering. This puts the sync engine in the binary already distributed to MindFS instances, with Git as its only external runtime dependency. MindFS keeps complete snapshots locally, separates API keys from shared provider metadata, and retries pending synchronization while the service runs. Codex reads the shared llmux profile through a relative symlink where supported; Windows uses a tracked local copy and imports local edits only when the shared source has not changed, otherwise it reports a conflict.
+**Architecture:** `~/.agents/codex` holds only portable, allowlisted configuration and provider metadata. A `mindfs agents-config-sync` command and the MindFS service use one shared Go package for migration, validation, Git transport, and rendering. Each device stores its active shared profile locally; runtime `config.toml` is rendered from shared `default` plus the selected `llmux` overlay when active. MindFS keeps complete snapshots locally, separates API keys from shared provider metadata, and retries pending synchronization while the service runs. Codex reads the shared llmux profile through a relative symlink where supported; Windows uses a tracked local copy and imports local edits only when the shared source has not changed, otherwise it reports a conflict.
 
 **Tech Stack:** Go, Git CLI, `github.com/pelletier/go-toml/v2` v2.4.3 or later, React/TypeScript.
 
@@ -193,6 +193,35 @@
 - [x] Register all backend/frontend files and targeted tests as `G-KP`, including symptom, preservation reason, test anchors, and `Scope: G-KP` commit requirement.
 - [x] Run focused and full backend/frontend checks. The required `ship` workflow remains pending final review and target-device inventory.
 
+### Task 6: Preserve the active Codex profile and simplify switching
+
+**Files:**
+- Create: `internal/codexsync/active_profile.go` and `internal/codexsync/active_profile_test.go`
+- Modify: `internal/codexsync/types.go`, `internal/codexsync/render.go`, `internal/codexsync/run.go`, `internal/codexsync/profile_link.go`, and their focused tests
+- Modify: `server/app/server.go` and startup tests
+- Modify: `server/internal/api/agent_api_provider_apply.go`, `server/internal/api/agent_api_provider_sync_ops.go`, `server/internal/api/agent_api_provider_caps.go`, `server/internal/api/agent_api_provider_sync_test.go`
+- Modify: `server/internal/api/agent_config_backup.go`, `server/internal/api/agent_config_switch.go`, `server/internal/api/agent_config_shared_test.go`
+- Modify: `web/src/components/file/useAgentConfigSelection.ts`, `web/src/components/file/useAgentConfigActions.ts`, `web/src/components/file/AgentConfigPopover.tsx`, `web/src/components/file/AgentConfigProfileList.tsx`, and `web/tests/file-tree-agent-config-flow.test.mjs`
+- Modify: `docs/upstream-customizations.yaml`
+- Modify shared CLI adapter: `~/.agents/claude/scripts/sync-codex.sh` and `~/.agents/claude/tests/test_sync_codex.sh`
+
+**Interfaces:**
+- `codexsync.InitializeActiveProfile(name string) (string, error)` writes the local marker only when one does not already exist; `ActiveProfile() (string, error)` reads the persisted `default` or `llmux` value.
+- `codexsync.RenderRuntime()` and `codexsync.CheckRuntime()` use the same profile-aware renderer. `mindfs agents-config-sync --render` applies it without Git transport; `--check-runtime` compares the expected rendering without writing.
+- Existing `api_provider` selection `api-llmux` migrates to `backup/shared:codex-llmux`; other Codex API-provider selections fall back to `shared:codex-default`. Provider create/list/test/delete and metadata sync remain available.
+- Codex's switch UI lists only shared profiles. Local Codex snapshots remain stored for recovery and cannot be applied through the switch endpoint. Shared IDs cannot be deleted; failed delete requests refresh the list.
+
+- [ ] Add failing tests for active-profile rendering, persistence across `ModeSync`, first-start migration from `api-llmux`, and rollback of the active marker when rendering fails.
+- [ ] Add failing API tests proving Codex provider switching/reapply cannot write `config.toml`, local Codex snapshots cannot be selected, and deleting a shared ID returns an explicit error.
+- [ ] Add failing UI tests proving Codex shows only the shared profiles, initializes selection from the last shared selection, and refetches after a failed delete.
+- [ ] Make the old `sync-codex.sh` `--apply` and `--check` delegate to MindFS's same renderer; test both `default` and `llmux` using isolated paths.
+- [ ] Implement active-profile state and profile-aware runtime merging. Preserve local `tui`, `projects`, and `hooks`, and keep llmux credentials out of shared files.
+- [ ] Migrate a legacy `api-llmux` last selection once at service startup, before the periodic sync runner starts; persist the resulting shared-profile selection.
+- [ ] Keep API-provider metadata operations available while rejecting Codex provider runtime switches and skipping Codex during provider-refresh reapply.
+- [ ] Limit Codex switching to shared profiles, retain local snapshots without exposing them as switch targets, and make deletion errors explicit with a UI refresh after failure.
+- [ ] Register the new MindFS files and targeted tests as `G-KQ`; run focused tests, `make test`, `npm run typecheck`, `npm test`, `go run ./scripts/check-upstream`, and the shared shell test after installing the new CLI.
+- [ ] Run `bash scripts/deploy-all.sh` from `main`; verify worker process health and report the required 本機 restart command without executing it.
+
 ## Acceptance Checklist
 
 - [x] A shared-source edit on one checkout reaches another after its next successful sync; a stale push race retries without force push.
@@ -204,7 +233,11 @@
 - [x] On Windows without symlink permission, local profile edits are imported when safe and concurrent local/shared edits stop with both files recoverable.
 - [x] Failed network sync leaves local edits recoverable and a later five-minute retry can push/pull them.
 - [x] Initial migration creates timestamped rollback copies; `--check` is read-only.
+- [ ] Selecting `shared:codex-llmux` remains active after startup sync, periodic sync, and explicit `--sync`; selecting `shared:codex-default` behaves the same.
+- [ ] Legacy Codex `api-llmux` selection migrates once to shared llmux; provider metadata management never rewrites Codex runtime configuration.
+- [ ] Codex switching exposes only the two shared profiles, restores the active selection, rejects local snapshots as switch targets, and reports shared-profile deletion clearly.
+- [ ] The manual `sync-codex.sh` check/apply path uses the same profile-aware renderer as MindFS.
 
 ## Deployment Review
 
-Before the `ship` step activates automatic retries, inventory which instances have a `.agents` checkout and Git identity (本机, WSL, fn, and pc-win). Inventory and code review are complete: 本机, WSL, and fn each have a checkout tracking `origin/main` and a Git identity; pc-win has neither. The proposed initial target set is 本机/WSL/fn, with pc-win excluded until it has a checkout and identity. Await user confirmation of that target set. Then run `mindfs agents-config-sync --apply` on 本机 to seed its existing local snapshots, followed by `--sync` to publish the initial shared files; selected peers can fetch them on startup. The MindFS binary carries the Go sync engine; runtime synchronization uses Git and the configured checkout. Do not run a worker build or restart the local systemd service from this plan.
+Deployment is complete for 本机/WSL/fn/pc-win. `deploy-all.sh` shipped `v0.5.5-1118-4-gc6799567` to all workers. The reviewed WSL `skills/goal-prompt/SKILL.md` edit was integrated and pushed as shared commit `f84c8a95b30791e3a9e7f3a563ac96e937437001`; 本机, WSL, and fn all ran `mindfs agents-config-sync --sync` and report `synced`. PC-Win already had a populated non-Git `%USERPROFILE%\.agents` data/skill root, so its checkout lives at `%USERPROFILE%\.agents\codex-config-sync`; user-level `AGENTS_ROOT` points there, and a junction exposes the updated `goal-prompt` skill without replacing existing skills. Windows `--apply` and `--sync` succeeded; after restarting task `\mindfs`, `GET /mindfs/api/agent-config/sync` reported `synced` and `GET /mindfs/health` returned 200 (PID 22480). Its local `config.toml` moved from reasoning effort `max` to shared `medium`; a rollback copy was retained under `%APPDATA%\mindfs\agents-config-sync\rollback`. Shared provider metadata contains no API key. PC-Win has no local `LLMUX_API_KEY`, so the provider is synchronized but unavailable until a key is configured locally. The local system service was not restarted; the user must run `sudo systemctl restart mindfs` to activate its API and periodic runner.

@@ -17,6 +17,7 @@ test("FileTree delegates agent-catalog requests to its transition logic", () => 
 test("Codex config backups distinguish shared profiles from local recovery snapshots", () => {
   const popover = read("../src/components/file/AgentConfigPopover.tsx");
   const profiles = read("../src/components/file/AgentConfigProfileList.tsx");
+  const selection = read("../src/components/file/useAgentConfigSelection.ts");
   const types = read("../src/shared/agentTypes.ts");
 
   assert.match(popover, /<AgentConfigProfileList[\s\S]*backups=\{backups\}/);
@@ -27,6 +28,16 @@ test("Codex config backups distinguish shared profiles from local recovery snaps
   assert.match(profiles, /item\.localCredentialAvailable === false/);
   assert.match(profiles, /agentConfig\.llmuxMissingKey/);
   assert.match(types, /source\?: "local" \| "shared"/);
+  assert.match(selection, /source === "shared"/);
+  assert.match(selection, /last_config_selection/);
+  assert.match(selection, /shared:codex-default/);
+  assert.match(popover, /isCodex[\s\S]*effectiveSwitchTab === "api_provider"/);
+});
+
+test("failed local backup deletion reloads the server-owned backup list", () => {
+  const actions = read("../src/components/file/useAgentConfigActions.ts");
+  assert.match(actions, /catch \(error\)[\s\S]*fetchAgentConfigBackups\(agentConfigAgent\)/);
+  assert.match(actions, /setAgentConfigBackups\(await fetchAgentConfigBackups\(agentConfigAgent\)\)/);
 });
 
 test("Codex config UI exposes safe sync status and missing local provider credentials", () => {

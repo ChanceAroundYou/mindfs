@@ -14,42 +14,20 @@ const (
 )
 
 func renderRuntime(paths Paths) error {
-	shared, err := readOptional(paths.SharedDefault)
-	if err != nil {
-		return err
-	}
-	if shared == nil {
-		return nil
-	}
-	if err := ValidateSharedProfile("default", shared); err != nil {
-		return err
-	}
-	if info, err := os.Lstat(paths.RuntimeConfig); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("runtime Codex config is a symlink; refusing to replace an unowned target")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	local, err := readOptional(paths.RuntimeConfig)
-	if err != nil {
-		return fmt.Errorf("read local Codex config: %w", err)
-	}
-	overlay, err := extractLocalConfigOverlay(shared, local)
-	if err != nil {
-		return err
-	}
-	// Match claude/scripts/sync-codex.sh byte shape so its read-only drift check
-	// continues to recognize the generated config on every device.
-	prefix := strings.TrimRight(string(shared), "\n") + "\n"
-	payload := []byte(prefix + localConfigBegin + "\n" + overlay + localConfigEnd + "\n")
-	if err := ValidateRenderedConfig(payload); err != nil {
+	return renderRuntimeWithPolicy(paths, false)
+}
+
+func renderRuntimeRequired(paths Paths) error {
+	return renderRuntimeWithPolicy(paths, true)
+}
+
+func renderRuntimeWithPolicy(paths Paths, requireSharedDefault bool) error {
+	payload, mode, err := buildRuntimeConfig(paths, true, requireSharedDefault)
+	if err != nil || payload == nil {
 		return err
 	}
 	if filesEqual(paths.RuntimeConfig, payload) {
 		return nil
-	}
-	mode := os.FileMode(0o600)
-	if info, err := os.Stat(paths.RuntimeConfig); err == nil {
-		mode = info.Mode().Perm()
 	}
 	if err := saveRollbackCopy(paths.StateDir, paths.RuntimeConfig); err != nil {
 		return err
@@ -60,7 +38,146 @@ func renderRuntime(paths Paths) error {
 	return nil
 }
 
-func extractLocalConfigOverlay(shared, current []byte) (string, error) {
+func buildRuntimeConfig(paths Paths, persistActive, requireSharedDefault bool) ([]byte, os.FileMode, error) {
+	shared, err := readOptional(paths.SharedDefault)
+	if err != nil {
+		return nil, 0, err
+	}
+	if shared == nil && requireSharedDefault {
+		return nil, 0, errors.New("shared default Codex profile is missing")
+	}
+	if shared != nil {
+		if err := ValidateSharedProfile("default", shared); err != nil {
+			return nil, 0, err
+		}
+	}
+	active, err := activeProfileForRender(paths, persistActive)
+	if err != nil {
+		return nil, 0, err
+	}
+	if shared == nil {
+		if active == "llmux" {
+			return nil, 0, errors.New("shared default Codex profile is missing")
+		}
+		return nil, 0, nil
+	}
+	if info, err := os.Lstat(paths.RuntimeConfig); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, 0, errors.New("runtime Codex config is a symlink; refusing to replace an unowned target")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, 0, err
+	}
+	local, err := readOptional(paths.RuntimeConfig)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read local Codex config: %w", err)
+	}
+	prefix := strings.TrimRight(string(shared), "\n")
+	if active == "llmux" {
+		profile, err := readOptional(paths.SharedLLMux)
+		if err != nil {
+			return nil, 0, err
+		}
+		if profile == nil {
+			return nil, 0, errors.New("shared llmux Codex profile is missing")
+		}
+		if err := ValidateSharedProfile("llmux", profile); err != nil {
+			return nil, 0, err
+		}
+		prefix = mergeSharedProfiles(shared, profile)
+	}
+	overlay, err := extractLocalConfigOverlay(shared, local, active)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Match claude/scripts/sync-codex.sh byte shape so its read-only drift check
+	// continues to recognize the generated config on every device.
+	payload := []byte(prefix + "\n" + localConfigBegin + "\n" + overlay + localConfigEnd + "\n")
+	if err := ValidateRenderedConfig(payload); err != nil {
+		return nil, 0, err
+	}
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(paths.RuntimeConfig); err == nil {
+		mode = info.Mode().Perm()
+	}
+	return payload, mode, nil
+}
+
+func mergeSharedProfiles(base, overlay []byte) string {
+	root, _ := decodeTOML(overlay)
+	dropKeys := make(map[string]bool, len(root))
+	for key := range root {
+		dropKeys[key] = true
+	}
+	return strings.TrimRight(stripTOMLKeys(string(base), dropKeys), "\n") + "\n" + strings.TrimRight(string(overlay), "\n")
+}
+
+func stripTOMLKeys(raw string, drop map[string]bool) string {
+	var output strings.Builder
+	section := ""
+	dropSection := false
+	for _, line := range strings.SplitAfter(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			section = tomlSectionName(trimmed)
+			dropSection = false
+			for key := range drop {
+				if section == key || strings.HasPrefix(section, key+".") {
+					dropSection = true
+					break
+				}
+			}
+			if !dropSection {
+				output.WriteString(line)
+			}
+			continue
+		}
+		if dropSection {
+			continue
+		}
+		if section == "" {
+			if drop[tomlAssignmentKey(trimmed)] {
+				continue
+			}
+		}
+		output.WriteString(line)
+	}
+	return output.String()
+}
+
+func RenderRuntime() error {
+	paths, err := ResolvePaths()
+	if err != nil {
+		return err
+	}
+	return RenderRuntimeAt(paths)
+}
+
+func RenderRuntimeAt(paths Paths) error {
+	return WithSyncLock(paths, func() error { return renderRuntimeRequired(paths) })
+}
+
+func CheckRuntime() error {
+	paths, err := ResolvePaths()
+	if err != nil {
+		return err
+	}
+	return CheckRuntimeAt(paths)
+}
+
+func CheckRuntimeAt(paths Paths) error {
+	payload, _, err := buildRuntimeConfig(paths, false, true)
+	if err != nil {
+		return err
+	}
+	if payload == nil {
+		return errors.New("shared default Codex profile is missing")
+	}
+	if !filesEqual(paths.RuntimeConfig, payload) {
+		return errors.New("local Codex runtime config differs from the active shared profile")
+	}
+	return nil
+}
+
+func extractLocalConfigOverlay(shared, current []byte, active string) (string, error) {
 	sharedRoot, err := decodeTOML(shared)
 	if err != nil {
 		return "", err
@@ -92,11 +209,18 @@ func extractLocalConfigOverlay(shared, current []byte) (string, error) {
 	} else {
 		raw = string(current)
 	}
-	filtered := filterLocalConfigText(raw, sharedRoot, currentRoot)
+	removeLLMux := active == "llmux" || (currentRoot != nil && currentRoot["model_provider"] == "llmux")
+	removeLLMuxParent := active == "llmux"
+	if !removeLLMuxParent && removeLLMux {
+		providers := tomlTable(currentRoot["model_providers"])
+		_, hasLLMux := providers["llmux"]
+		removeLLMuxParent = len(providers) == 0 || (len(providers) == 1 && hasLLMux)
+	}
+	filtered := filterLocalConfigText(raw, sharedRoot, currentRoot, removeLLMux, removeLLMuxParent)
 	return strings.TrimLeft(filtered, "\n"), nil
 }
 
-func filterLocalConfigText(raw string, sharedRoot, currentRoot map[string]any) string {
+func filterLocalConfigText(raw string, sharedRoot, currentRoot map[string]any, removeLLMux, removeLLMuxParent bool) string {
 	sharedRootKeys := map[string]bool{}
 	sharedTables := map[string]bool{}
 	for key, value := range sharedRoot {
@@ -105,7 +229,6 @@ func filterLocalConfigText(raw string, sharedRoot, currentRoot map[string]any) s
 			sharedTables[key] = true
 		}
 	}
-	removeLLMux := currentRoot != nil && currentRoot["model_provider"] == "llmux"
 	var output strings.Builder
 	section := ""
 	dropSection := false
@@ -113,7 +236,7 @@ func filterLocalConfigText(raw string, sharedRoot, currentRoot map[string]any) s
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") {
 			section = tomlSectionName(trimmed)
-			dropSection = sharedTables[section] || (removeLLMux && section == "model_providers.llmux")
+			dropSection = sharedTables[section] || (removeLLMux && section == "model_providers.llmux") || (removeLLMuxParent && section == "model_providers")
 			if !dropSection {
 				output.WriteString(line)
 			}

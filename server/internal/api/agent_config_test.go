@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"mindfs/server/internal/agent"
@@ -20,9 +19,9 @@ func TestSwitchAgentConfigClearsExistingEnvWhenBackupHasNoEnv(t *testing.T) {
 	initial := agent.Config{
 		Agents: []agent.Definition{
 			{
-				Name:     "codex",
-				Command:  "codex",
-				Protocol: agent.ProtocolCodexSDK,
+				Name:     "pi",
+				Command:  "pi",
+				Protocol: agent.ProtocolACP,
 				Env: map[string]string{
 					"OPENAI_API_KEY":  "old-key",
 					"OPENAI_BASE_URL": "https://old.example.com",
@@ -36,7 +35,7 @@ func TestSwitchAgentConfigClearsExistingEnvWhenBackupHasNoEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agentConfigRootDir: %v", err)
 	}
-	backupPath := filepath.Join(configRoot, "codex-file", "config.toml")
+	backupPath := filepath.Join(configRoot, "pi-file", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(backupPath), 0o755); err != nil {
 		t.Fatalf("mkdir backup: %v", err)
 	}
@@ -44,11 +43,11 @@ func TestSwitchAgentConfigClearsExistingEnvWhenBackupHasNoEnv(t *testing.T) {
 		t.Fatalf("write backup: %v", err)
 	}
 	entry := agentConfigManifestEntry{
-		ID:    "codex-file",
-		Agent: "codex",
+		ID:    "pi-file",
+		Agent: "pi",
 		Name:  "file",
 		Sources: []agentConfigSource{
-			{SourcePath: "~/target-config.toml", BackupPath: "codex-file/config.toml"},
+			{SourcePath: "~/target-config.toml", BackupPath: "pi-file/config.toml"},
 		},
 	}
 	if err := writeAgentConfigManifest([]agentConfigManifestEntry{entry}); err != nil {
@@ -70,16 +69,16 @@ func TestSwitchAgentConfigClearsExistingEnvWhenBackupHasNoEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	def, ok := cfg.GetAgent("codex")
+	def, ok := cfg.GetAgent("pi")
 	if !ok {
-		t.Fatalf("codex not configured")
+		t.Fatalf("pi not configured")
 	}
 	if len(def.Env) != 0 {
 		t.Fatalf("env should be cleared after file-only switch, got %#v", def.Env)
 	}
 }
 
-func TestSwitchAgentConfigPreservesProviderForCustomNamedCodexAgent(t *testing.T) {
+func TestSwitchCodexLocalSnapshotRejectedForCustomNamedAgent(t *testing.T) {
 	home := t.TempDir()
 	testutil.IsolateUserDirs(t, home)
 	configPath := filepath.Join(home, "agents.json")
@@ -111,20 +110,20 @@ func TestSwitchAgentConfigPreservesProviderForCustomNamedCodexAgent(t *testing.T
 	if err := writeAgentConfigManifest([]agentConfigManifestEntry{entry}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if _, needsConfirm, err := switchAgentConfig(agentConfigSwitchRequest{ID: entry.ID, ConfirmOverwrite: true}, nil); err != nil || needsConfirm {
-		t.Fatalf("switchAgentConfig: needsConfirm=%t err=%v", needsConfirm, err)
+	if _, _, err := switchAgentConfig(agentConfigSwitchRequest{ID: entry.ID, ConfirmOverwrite: true}, nil); err == nil {
+		t.Fatal("Codex local snapshot was accepted for a custom-named Codex agent")
 	}
 	payload, err := os.ReadFile(targetPath)
 	if err != nil {
-		t.Fatalf("read switched config: %v", err)
+		t.Fatalf("read current config: %v", err)
 	}
 	got := string(payload)
-	if !strings.Contains(got, `model_provider = "custom"`) || !strings.Contains(got, "[model_providers.custom]") || strings.Contains(got, "[model_providers.target]") {
-		t.Fatalf("switched config changed channel identity: %s", got)
+	if got != "model_provider = \"custom\"\n[model_providers.custom]\nname = \"current\"\n" {
+		t.Fatalf("rejected snapshot changed current config: %s", got)
 	}
 }
 
-func TestSwitchAgentConfigDoesNotRewriteOtherConfigTomlFiles(t *testing.T) {
+func TestSwitchCodexLocalSnapshotDoesNotRewriteAnyConfigTomlFiles(t *testing.T) {
 	home := t.TempDir()
 	testutil.IsolateUserDirs(t, home)
 	configPath := filepath.Join(home, "agents.json")
@@ -167,15 +166,22 @@ func TestSwitchAgentConfigDoesNotRewriteOtherConfigTomlFiles(t *testing.T) {
 	if err := writeAgentConfigManifest([]agentConfigManifestEntry{entry}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if _, needsConfirm, err := switchAgentConfig(agentConfigSwitchRequest{ID: entry.ID, ConfirmOverwrite: true}, nil); err != nil || needsConfirm {
-		t.Fatalf("switchAgentConfig: needsConfirm=%t err=%v", needsConfirm, err)
+	if _, _, err := switchAgentConfig(agentConfigSwitchRequest{ID: entry.ID, ConfirmOverwrite: true}, nil); err == nil {
+		t.Fatal("Codex local snapshot was accepted as a switch target")
 	}
-	payload, err := os.ReadFile(otherPath)
+	payload, err := os.ReadFile(codexPath)
+	if err != nil {
+		t.Fatalf("read Codex config: %v", err)
+	}
+	if got := string(payload); got != "model_provider = \"custom\"\n[model_providers.custom]\nname = \"current\"\n" {
+		t.Fatalf("rejected snapshot changed Codex config: %s", got)
+	}
+	payload, err = os.ReadFile(otherPath)
 	if err != nil {
 		t.Fatalf("read other config: %v", err)
 	}
-	if got := string(payload); got != "model_provider = \"project\"\n[model_providers.project]\nname = \"backup-project\"\n" {
-		t.Fatalf("other config was unexpectedly normalized: %s", got)
+	if got := string(payload); got != "model_provider = \"project\"\n[model_providers.project]\nname = \"current-project\"\n" {
+		t.Fatalf("rejected snapshot changed another config: %s", got)
 	}
 }
 

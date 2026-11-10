@@ -130,10 +130,11 @@ export function AgentConfigPopover({
   const confirmButtonLabel = flow === "backup" ? t("agentConfig.continueBackup") : t("agentConfig.continueSwitch");
   const selectedAgentStatus = agents.find((item) => item.name === selectedAgent);
   const supportsAPIProvider = Boolean(selectedAgentStatus?.supports_api_provider_switch);
+  const isCodex = selectedAgent.toLowerCase() === "codex";
   const addTabs: AgentConfigAddTab[] = supportsAPIProvider ? ["backup", "api"] : ["backup"];
-  const switchTabs: AgentConfigSwitchTab[] = supportsAPIProvider ? ["backup", "api_provider"] : ["backup"];
+  const switchTabs: AgentConfigSwitchTab[] = supportsAPIProvider && !isCodex ? ["backup", "api_provider"] : ["backup"];
   const effectiveAddTab: AgentConfigAddTab = supportsAPIProvider ? addTab : "backup";
-  const effectiveSwitchTab: AgentConfigSwitchTab = supportsAPIProvider ? switchTab : "backup";
+  const effectiveSwitchTab: AgentConfigSwitchTab = isCodex ? "backup" : supportsAPIProvider ? switchTab : "backup";
   return (
     <div
       style={{

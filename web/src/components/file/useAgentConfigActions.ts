@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  createAgentAPIProvider, createAgentConfigBackup, deleteAgentAPIProvider, deleteAgentConfigBackup,
+  createAgentAPIProvider, createAgentConfigBackup, deleteAgentAPIProvider, deleteAgentConfigBackup, fetchAgentConfigBackups,
   requestAgentConfigSync, switchAgentAPIProvider, switchAgentConfig, syncAllAgentAPIProviders, testAgentAPIProviderModel,
 } from "../../services/agentConfig";
 
@@ -128,6 +128,11 @@ const deleteSelectedAgentConfigBackup = React.useCallback(async (id: string) => 
       setAgentConfigSwitchSelection(null);
     }
   } catch (error) {
+    try {
+      setAgentConfigBackups(await fetchAgentConfigBackups(agentConfigAgent));
+    } catch {
+      // Keep the original delete error visible if refreshing also fails.
+    }
     setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.deleteConfigFailed"));
   } finally {
     setAgentConfigBusy(false);
