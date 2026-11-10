@@ -6,6 +6,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [Codex and MindFS configuration sync](../superpowers/plans/2026-11-09-codex-mindfs-bidirectional-sync.md) — Bidirectional sharing of sanitized Codex `default`/`llmux` settings and provider metadata through `.agents`, with device-local credentials and recovery snapshots. Design and implementation plan approved 2026-11-09; Native execution on `main` implemented and tested. Final review and device inventory are complete; deployment and initial migration await user confirmation of the initial target set.
+
 - [HTML preview runtime upgrade](html-preview-runtime-upgrade.md) — Plan 2026-11-09。把 `.html` 预览从「隔离沙箱、大量白屏」升级成真正当网页跑：iframe 与响应头放开 `allow-same-origin`（用户决策），另补三层兜底——开发入口（引用 `./src/main.tsx` 这类源文件）明确提示、根绝对路径（`/assets/…`）改写到项目根、白屏时把 iframe 内的脚本错误/资源失败/空白判定回传到顶栏提示条。后端 `http_raw_files.go` + 新增 `raw_asset_html.go`，前端新增 `services/htmlPreview.ts` + `hooks/useHtmlPreviewFrame.ts`。Scope: G-JP。**仍 Active 的原因**：待 ship 与本机重启后真机验收。
 
 - [Image zoom and file auto refresh](image-zoom-and-file-auto-refresh.md) — Implemented 2026-11-06，已提交 `79fb813b`（同批收编在飞的 G-KJ APK 自更新：检查更新改读发布清单），已发布 v0.5.5-1115 并 ship 到本机 / WSL / fn / pc-win（本机待用户重启生效；pc-win 产物已装、2026-11-07 起进程已在跑）；文件视图内联缩放 + 会话图片全屏灯箱（数学抽到 `shared/zoomTransform`，图表预览经 `diagramZoom` 门面零改动）；预览资源按文件 mtime 版本化贯穿 blob/URL/hook/memo/HTTP 五层缓存，外加可见时 5s 轮询与顶栏手动刷新，变化时顺带刷新所在目录。测试：`zoom-transform` / `image-zoom-ui` / `file-blob-versioning` / `file-auto-refresh` / `raw_file_cache_test.go`。Scope: G-KK、G-KL。**仍 Active 的原因**：本机待 `sudo systemctl restart mindfs`、触摸手势（双指缩放/拖动）未上真机点过。

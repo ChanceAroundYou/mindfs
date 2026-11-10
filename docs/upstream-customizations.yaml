@@ -7321,3 +7321,52 @@ groups:
       - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(probeCtx, client, threadOptions, threadID, nil)'
       - 'server/internal/api/agent_api_provider_codex.go:func hasCodexModelProviderTable(existing, providerName string) bool'
       - 'server/internal/api/usecase/session_agent_open.go:rebind.done'
+
+  # ── Codex 与 MindFS 配置跨设备双向同步 ───────────────────────────
+  - id: G-KP
+    title: Codex 默认/llmux 配置与 MindFS provider 元数据安全双向同步
+    kind: feature
+    symptom: "Codex default/llmux 配置和 MindFS provider 元数据分别困在各设备；直接同步完整备份会把 auth token、API Key、项目路径与 hook trust hash 推进 Git。"
+    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。"
+    boundary: "不共享 auth.json、API Key、OAuth token、项目路径、Codex 信任状态、会话或缓存；不做 last-writer-wins，不把 .agents 外的路径纳入 Git 暂存。首次快照迁移只由 --apply 显式触发。"
+    files:
+      - docs/upstream-customizations.yaml
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-09-codex-mindfs-bidirectional-sync.md
+      - cli/cmd/mindfs.go
+      - cli/cmd/agent_config_sync.go
+      - cli/cmd/agent_config_sync_test.go
+      - go.mod
+      - go.sum
+      - internal/codexsync/
+      - server/app/server.go
+      - server/internal/api/agent_api_provider*.go
+      - server/internal/api/agent_config*.go
+      - web/src/shared/agentTypes.ts
+      - web/src/services/agent/agentConfig.ts
+      - web/src/components/file/AgentConfigPopover.tsx
+      - web/src/components/file/AgentConfigProfileList.tsx
+      - web/src/components/file/AgentConfigSyncStatus.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/src/components/file/useAgentConfigActions.ts
+      - web/src/components/file/useAgentConfigSelection.ts
+      - web/src/components/file/useAgentConfigSwitchRequest.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/tests/file-tree-agent-config-flow.test.mjs
+    tests:
+      - internal/codexsync/
+      - cli/cmd/agent_config_sync_test.go
+      - server/internal/api/agent_api_provider_storage_test.go
+      - server/internal/api/agent_config_export_test.go
+      - server/internal/api/agent_config_shared_test.go
+      - server/internal/api/agent_config_sync_handlers_test.go
+      - web/tests/file-tree-agent-config-flow.test.mjs
+    anchors:
+      - 'internal/codexsync/run.go:func RunAt(ctx context.Context, mode Mode, paths Paths) (Result, error)'
+      - 'internal/codexsync/git.go:func syncRepository(ctx context.Context, repoRoot string) (Result, error)'
+      - 'internal/codexsync/profile_link.go:func prepareLocalProfileEdit(paths Paths) error'
+      - 'server/internal/api/agent_api_provider_storage.go:func writeAgentAPIProviders(providers []agentAPIProvider) error'
+      - 'server/internal/api/agent_config_shared.go:func switchSharedCodexConfig(id string, app *AppContext) (agentConfigManifestEntry, error)'
+      - 'web/src/components/file/AgentConfigProfileList.tsx:export function AgentConfigProfileList('
