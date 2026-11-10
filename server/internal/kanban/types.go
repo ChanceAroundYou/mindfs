@@ -304,27 +304,41 @@ const (
 	ContinueRequestQueued   = "queued"
 	ContinueRequestBlocked  = "blocked"
 	ContinueRequestConsumed = "consumed"
+	// ContinueRequestPendingPhase：留言到达时该任务已绑定 WorkflowRun，但当前
+	// 没有任何活动的 Agent NodeRun。D3 规定这种留言开启新的执行阶段；新阶段的
+	// 触发不在 comment binding 这一包里实现，所以先显式停在 pending_phase，
+	// 绝不自动改投到之后启动的节点。
+	ContinueRequestPendingPhase = "pending_phase"
+	// ContinueRequestDeliveryFailed：续聊发送明确失败。保留原留言，不自动重放。
+	ContinueRequestDeliveryFailed = "delivery_failed"
 )
 
 type TaskActivity struct {
-	ID                string    `json:"id"`
-	TaskID            string    `json:"task_id"`
-	Type              string    `json:"type"`
-	Author            string    `json:"author"`
-	Role              string    `json:"role"`
-	Body              string    `json:"body"`
-	WorkflowChoice    string    `json:"workflow_choice"`
-	WorkflowVersionID string    `json:"workflow_version_id,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string `json:"id"`
+	TaskID            string `json:"task_id"`
+	Type              string `json:"type"`
+	Author            string `json:"author"`
+	Role              string `json:"role"`
+	Body              string `json:"body"`
+	WorkflowChoice    string `json:"workflow_choice"`
+	WorkflowVersionID string `json:"workflow_version_id,omitempty"`
+	// RunID/NodeRunID 关联 workflow 运行证据；legacy 留言与 WP-03 行保持空串。
+	RunID     string    `json:"run_id,omitempty"`
+	NodeRunID string    `json:"node_run_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ContinueRequest struct {
-	RequestID string    `json:"request_id"`
-	TaskID    string    `json:"task_id"`
-	CommentID string    `json:"comment_id"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	RequestID string `json:"request_id"`
+	TaskID    string `json:"task_id"`
+	CommentID string `json:"comment_id"`
+	Status    string `json:"status"`
+	// NodeRunID/SessionKey 是留言提交时绑定的活动 Agent NodeRun（D3）。
+	// 多分支活动期间为空，收束为唯一活动节点后再补写；绑定后不可变。
+	NodeRunID  string    `json:"node_run_id,omitempty"`
+	SessionKey string    `json:"session_key,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type PostCommentInput struct {
@@ -336,6 +350,10 @@ type PostCommentInput struct {
 	Type              string
 	WorkflowChoice    string
 	WorkflowVersionID string
+	// ExpectedNodeRunID 是用户显式选择的目标活动 Agent NodeRun（D3 的
+	// 「多个活动时提示用户选择」分支）。留空则按当前活动节点数自动判定；
+	// 非空时必须恰好指向当前 run 的活动 Agent NodeRun，否则拒绝而不降级。
+	ExpectedNodeRunID string
 }
 
 type Runner interface {

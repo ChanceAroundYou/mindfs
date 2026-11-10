@@ -90,10 +90,25 @@ assert.doesNotMatch(
   "the whole action row must no longer be hidden for terminal tasks",
 );
 // Cancel 本身不看 worktree / session：服务端末端任务也能取消，并清掉会话错误。
+// 切片到下一个函数为止，而不是断言整个函数体只有这一条 return —— workflow run
+// 分支在前面多一层引擎分派，不该让「legacy 取消不看 worktree」这条约束失效。
+const cancelAt = serviceGo.indexOf("func (s *Service) Cancel(");
+// 切到函数自身的结束行，而不是下一个 `func`：两者之间还夹着下一个函数的
+// 文档注释（Complete 的注释本来就提到 worktree/session），算进来会污染断言。
+const cancelClose = serviceGo.indexOf("\n}\n", cancelAt);
+const cancelEnd = cancelClose > cancelAt ? cancelClose + 3 : serviceGo.indexOf("\nfunc ", cancelAt + 1);
+const cancelBody = serviceGo.slice(cancelAt, cancelEnd);
 assert.match(
-  serviceGo,
-  /func \(s \*Service\) Cancel\(ctx context\.Context, in MoveInput\) \(TaskDetail, error\) \{\s*\n\s*return s\.setTaskStatus\(ctx, in\.RootID, in\.TaskID, StatusCancelled, "cancelled", in\.Reason, true\)/,
+  cancelBody,
+  /return s\.setTaskStatus\(ctx, in\.RootID, in\.TaskID, StatusCancelled, "cancelled", in\.Reason, true\)/,
   "Cancel must not be gated on worktree or session state",
+);
+// 分支再多也不能把「会话/worktree 在不在」变成取消的前置条件：workflow 引擎
+// 分支同样只做取消，不读取 worktree 路径或会话状态来决定能不能取消。
+assert.doesNotMatch(
+  cancelBody,
+  /worktree|session/i,
+  "neither Cancel branch may consult the worktree or session before cancelling",
 );
 assert.match(
   serviceGo,

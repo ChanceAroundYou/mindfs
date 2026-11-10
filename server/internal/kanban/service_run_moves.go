@@ -29,6 +29,14 @@ func (s *Service) Next(ctx context.Context, in MoveInput) (TaskDetail, error) {
 	if isTerminalStatus(task.Status) {
 		return store.GetDetail(ctx, task.ID)
 	}
+	if _, wf, werr := s.workflowRunForTask(ctx, store, task.ID); werr != nil {
+		return TaskDetail{}, werr
+	} else if wf {
+		if err := s.WakeWorkflowRun(ctx, in.RootID, task.ID, "next"); err != nil {
+			return TaskDetail{}, err
+		}
+		return store.GetDetail(ctx, task.ID)
+	}
 	// 末段等待用户＝收尾，直接完成而不是报 stage out of range。
 	if task.Status == StatusWaitingUser && task.CurrentStageIndex >= len(task.Stages)-1 {
 		if latest, latestErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); latestErr == nil {
@@ -68,6 +76,21 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	task, err := store.GetTask(ctx, strings.TrimSpace(in.TaskID))
 	if err != nil {
 		return TaskDetail{}, err
+	}
+	if isTerminalStatus(task.Status) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	if _, wf, werr := s.workflowRunForTask(ctx, store, task.ID); werr != nil {
+		return TaskDetail{}, werr
+	} else if wf {
+		if task.Status == StatusPaused {
+			if err := s.ResumeWorkflowRun(ctx, in.RootID, task.ID, in.Reason); err != nil {
+				return TaskDetail{}, err
+			}
+		} else if err := s.WakeWorkflowRun(ctx, in.RootID, task.ID, "run_now"); err != nil {
+			return TaskDetail{}, err
+		}
+		return store.GetDetail(ctx, task.ID)
 	}
 	switch task.Status {
 	case StatusWaitingUser:
@@ -135,10 +158,40 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 }
 
 func (s *Service) Pause(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if isTerminalStatus(task.Status) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	if _, wf, werr := s.workflowRunForTask(ctx, store, task.ID); werr != nil {
+		return TaskDetail{}, werr
+	} else if wf {
+		if err := s.PauseWorkflowRun(ctx, in.RootID, task.ID, in.Reason); err != nil {
+			return TaskDetail{}, err
+		}
+		return store.GetDetail(ctx, task.ID)
+	}
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusPaused, "paused", in.Reason, false)
 }
 
 func (s *Service) Resume(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if isTerminalStatus(task.Status) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	if _, wf, werr := s.workflowRunForTask(ctx, store, task.ID); werr != nil {
+		return TaskDetail{}, werr
+	} else if wf {
+		if err := s.ResumeWorkflowRun(ctx, in.RootID, task.ID, in.Reason); err != nil {
+			return TaskDetail{}, err
+		}
+		return store.GetDetail(ctx, task.ID)
+	}
 	// 先问能不能起，再改状态。反过来（先置 running 再 RunTask）会在收尾撞车时
 	// 留下一个永远 running、却没有执行体的任务 —— 没有 agent 会再碰它。
 	release, admErr := s.beginRunAdmission(in.RootID, in.TaskID)
@@ -167,10 +220,37 @@ func (s *Service) Resume(ctx context.Context, in MoveInput) (TaskDetail, error) 
 var errTaskAlreadyAdmitted = errors.New("该任务正在启动中")
 
 func (s *Service) Fail(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if isTerminalStatus(task.Status) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	if _, wf, werr := s.workflowRunForTask(ctx, store, task.ID); werr != nil {
+		return TaskDetail{}, werr
+	} else if wf {
+		return s.finishWorkflowRunByOperator(ctx, in.RootID, task.ID, StatusFail, "stage_failed", WorkflowEventRunFailed, in.Reason)
+	}
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusFail, "stage_failed", in.Reason, true)
 }
 
 func (s *Service) Cancel(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if isTerminalStatus(task.Status) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	if _, wf, werr := s.workflowRunForTask(ctx, store, task.ID); werr != nil {
+		return TaskDetail{}, werr
+	} else if wf {
+		if err := s.CancelWorkflowRun(ctx, in.RootID, task.ID, in.Reason); err != nil {
+			return TaskDetail{}, err
+		}
+		return store.GetDetail(ctx, task.ID)
+	}
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusCancelled, "cancelled", in.Reason, true)
 }
 
@@ -184,6 +264,13 @@ func (s *Service) Complete(ctx context.Context, in MoveInput) (TaskDetail, error
 	}
 	if isTerminalStatus(task.Status) {
 		return store.GetDetail(ctx, task.ID)
+	}
+	if _, wf, werr := s.workflowRunForTask(ctx, store, task.ID); werr != nil {
+		return TaskDetail{}, werr
+	} else if wf {
+		// D7: Complete is a human assertion, not a node result. It freezes open
+		// work like cancel but persists success and records run_completed.
+		return s.finishWorkflowRunByOperator(ctx, in.RootID, task.ID, StatusSuccess, "completed", WorkflowEventRunCompleted, in.Reason)
 	}
 	if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
 		if latest.Status != StageStatusSuccess {

@@ -7386,6 +7386,7 @@ groups:
       - server/internal/kanban/service.go
       - server/internal/kanban/task_store_comments.go
       - server/internal/kanban/service_outbox.go
+      - server/internal/kanban/service_outbox_types.go
       - server/internal/kanban/service_recover.go
       - server/internal/kanban/service_recover_startup.go
       - server/app/workspace_build.go
@@ -7652,3 +7653,142 @@ groups:
       - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) RunWorkflowNode('
       - 'server/internal/kanban/workflow_node_executor_test.go:func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner('
       - 'server/internal/api/appcontext_workflow_test.go:func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope('
+  # ── Kanban Workflow Runtime 持久层：claim / NodeRun 身份 / D14 Run 历史 ─────
+  - id: G-LC
+    title: Kanban Workflow Runtime 的原子 NodeRun claim、canonical 身份与历史 Run
+    kind: feature
+    symptom: "看板任务迁移到工作流后只有一条 Run：完成/失败后不能重跑或换工作流；同一节点被并发触发时可能启动第二个 agent turn；重启后 NodeRun 的 session 绑定丢失，旧留言绑定的 NodeRun 解析不到。"
+    why: "三件必须保留：① NodeRun 唯一键 `(run_id,node_id,loop_path,iteration,attempt)` 的 claim 必须单语句原子（INSERT ... ON CONFLICT DO NOTHING + RowsAffected），输家回读原行，Runner 绝不在事务内调用；② canonical NodeRun 身份是 `workflow_node_runs`，WP-03 的 `node_runs` 影子行只读兜底，`ResolveNodeRun`/`GetNodeRun` 先查 canonical，旧留言与恢复数据不得因新表而读不到；③ D14 用户决策为「保留终态历史、每任务至多一个非终态 Run」，`workflow_runs` 必须去掉 `UNIQUE(task_id)` 并重建迁移，创建新 Run 只有当前绑定 Run 已终态才允许。"
+    boundary: "只覆盖 Workflow Runtime 的持久层（claim、NodeRun 身份解析、Run 历史迁移）。Agent 节点执行器见 G-LD；driver 触发/取消、Condition/Loop/HumanGate 调度、HumanGate 留言绑定在本组后续实现完成前不声明；`TaskStore.PostComment` 与 `OutboxService.RecordComment` 两个 writer 的合并留给留言绑定任务，本组不静默改语义。"
+    files:
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/task_store_workflow_node_runs.go
+      - server/internal/kanban/node_run_identity.go
+      - server/internal/kanban/service_recover.go
+    tests:
+      - server/internal/kanban/task_store_workflow_runs_test.go
+      - server/internal/kanban/task_store_workflow_runs_history_test.go
+      - server/internal/kanban/node_run_identity_test.go
+    anchors:
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) ClaimWorkflowNodeRun('
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING'
+      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
+      - 'server/internal/kanban/node_run_identity.go:func ResolveNodeRun('
+      - 'server/internal/kanban/task_store_workflow_runs_history_test.go:func TestWorkflowRunHistoryAllowsNewRunOnlyAfterTerminal('
+
+  # ── Kanban Workflow Runtime 的 Agent 节点执行端口与 app adapter ────────────
+  - id: G-LD
+    title: Workflow Agent 节点走独立 Runner 端口与严格 JSON envelope
+    kind: feature
+    symptom: "工作流 Agent 节点若复用 legacy 阶段执行，会把节点结果写成 StageRun、用阶段标记判完成，并让节点默认继承任务主会话；用户会看到工作流节点污染旧流水、节点之间共享上下文，且 agent 正常回复正文被当作成功而继续推进。"
+    why: "三件必须保留：① 工作流 Agent 节点只经 `WorkflowNodeRunner`（`EnsureWorkflowNodeSession` + `RunWorkflowNode`）执行，绝不合成 legacy StageRun（测试断言 legacy `RunAgentStage` 调用次数为 0）；② D2 会话策略：空值/`per_node` 每节点新 session、`task_main` 才复用任务主会话、`same_stage` 复用同 node+loop_path 最近绑定、`always_new` 每次新建；③ D5 结果必须是严格 JSON envelope（`outcome=done|blocked|silent`，blocked/silent 必带 reason），非 JSON/未知字段/尾随数据/缺字段一律 `Outcome=unknown`（nil transport error），由上层投影 waiting_user，绝不按正文猜成功。"
+    boundary: "只覆盖单个 Agent 节点的执行端口、session 选择、prompt 输出契约与结果解析。NodeRun 状态落库/Activity/outbox 关联（Task 3）、driver 推进（Task 4+）、HumanGate 留言绑定（Task 5）不在本组；`task_main` 在任务尚无主会话时新建的会话不回写 `MainSessionKey`（由后续绑定任务决定），本组不静默绑定。"
+    files:
+      - server/internal/kanban/workflow_node_executor.go
+      - server/internal/kanban/task_store_workflow_node_runs.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/types.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/appcontext_workflow.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+    tests:
+      - server/internal/kanban/workflow_node_executor_test.go
+      - server/internal/api/appcontext_workflow_test.go
+    anchors:
+      - 'server/internal/kanban/workflow_node_executor.go:type WorkflowNodeRunner interface {'
+      - 'server/internal/kanban/workflow_node_executor.go:func ParseWorkflowNodeEnvelope('
+      - 'server/internal/kanban/workflow_node_executor.go:func BuildWorkflowNodeOutputContract('
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) LatestWorkflowNodeSessionKey('
+      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) EnsureWorkflowNodeSession('
+      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) RunWorkflowNode('
+      - 'server/internal/kanban/workflow_node_executor_test.go:func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner('
+      - 'server/internal/api/appcontext_workflow_test.go:func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope('
+
+  # ── Kanban Workflow Runtime 执行器、DAG driver 与留言/HumanGate 绑定 ─────────
+  - id: G-LE
+    title: Workflow Runtime 节点执行生命周期、DAG driver 与留言/HumanGate 绑定
+    kind: feature
+    symptom: "工作流任务迁移后不真正运行：节点没有 queued→running→终态，Condition 不选路、Notify 不发通知；任务运行中用户留言无处可去（不追加到当前 Agent 回合、也不排队）；HumanGate 卡住后没有任何批准入口，或普通留言把 gate 当成批准。"
+    why: "四件必须保留：① 节点执行严格按 claim→running→绑定 session→外部回合→终态推进，外部回合只在 claim/start 事务提交后发起，重复 key 回读既有行且不二次派发；D13 账本事件与投影同事务写，D5 非 JSON/缺失结果转 waiting_user，绝不按正文猜成功；② DAG driver 每轮重读权威 run，Condition 按 D6 全图 `node_id.output.*` 求值（缺字段 waiting_user，不静默走 fail），未选中分支物化 skipped，Notify 不碰 session；HumanGate 只物化 waiting_user 并停住；③ D3 留言在提交事务内绑定提交时唯一的活动 Agent NodeRun（多活动排队到收束、零活动 pending_phase、绑定不可改投）；绑定节点成功结束后 FIFO 投递到同一 session，失败/终态/绑定失效 blocked，绝不转发后续节点；④ D4 HumanGate 只用专用 approve/reject，普通留言永不批准，重复同一决定幂等、相反决定 409。"
+    boundary: "只覆盖单节点执行生命周期、Condition/skip/Notify/Loop 的 DAG 推进、HumanGate 审批与留言绑定/投递、driver 触发/取消/暂停/恢复/启动对账/显式 retry，以及运行视图的 API/UI 纵向验收。steer 生产 adapter 仍未接：outbox 只在真实回执后确认，unknown 永不重放；`pending_phase` 留言开启新执行阶段已由 driver trigger 覆盖。合并/推送/部署不在本组，运行中的生产服务未被触碰。"
+    files:
+      - server/internal/kanban/workflow_executor.go
+      - server/internal/kanban/workflow_driver.go
+      - server/internal/kanban/workflow_driver_loop.go
+      - server/internal/kanban/workflow_recovery.go
+      - server/internal/kanban/workflow_runtime.go
+      - server/internal/kanban/workflow_comments.go
+      - server/internal/kanban/workflow_human_gate.go
+      - server/internal/kanban/task_store_workflow_events.go
+      - server/internal/kanban/task_store_workflow_transitions.go
+      - server/internal/kanban/task_store_workflow_runtime.go
+      - server/internal/kanban/task_store_workflow_comments.go
+      - server/internal/kanban/task_store_workflow_human_gate.go
+      - server/internal/kanban/task_store_comments.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/service_comments.go
+      - server/internal/kanban/service_run_moves.go
+      - server/internal/kanban/service_recover.go
+      - server/internal/kanban/service_recover_startup.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/types.go
+      - server/internal/api/http_task_comments.go
+      - server/internal/api/http_workflows.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/appcontext_workflow.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+      - web/src/components/task/RunTimeline.tsx
+      - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/useRunViewEntry.ts
+    tests:
+      - server/internal/kanban/workflow_executor_test.go
+      - server/internal/kanban/workflow_driver_test.go
+      - server/internal/kanban/workflow_runtime_test.go
+      - server/internal/kanban/workflow_loop_test.go
+      - server/internal/kanban/workflow_comments_test.go
+      - server/internal/kanban/workflow_recovery_test.go
+      - server/internal/kanban/workflow_lifecycle_guards_test.go
+      - server/internal/kanban/workflow_review_fixes_test.go
+      - server/internal/kanban/workflow_lock_review_test.go
+      - server/internal/kanban/service_outbox_test.go
+      - server/internal/api/http_task_human_gate_test.go
+      - server/internal/api/http_task_comments_test.go
+      - server/internal/api/http_workflows_test.go
+      - web/tests/run-timeline-drill-in.test.ts
+      - web/tests/task-card-status.test.mjs
+      - web/tests/worktree-finish.test.mjs
+    anchors:
+      - 'server/internal/kanban/workflow_executor.go:func (s *Service) RunWorkflowNodeAttempt('
+      - 'server/internal/kanban/workflow_executor.go:// The external turn is over'
+      - 'server/internal/kanban/workflow_executor.go:func workflowDriverStopped('
+      - 'server/internal/kanban/workflow_executor.go:plan, hasMerge, prepErr := s.prepareWorkflowNodeMerge('
+      - 'server/internal/kanban/workflow_recovery.go:plan, hasMerge, prepErr := s.prepareWorkflowNodeMerge('
+      - 'server/internal/kanban/workflow_comments.go:// 空留言本身无法投递'
+      - 'server/internal/kanban/workflow_executor.go:s.reconcileWorkflowCommentsAfterNodeRun(ctx, store, run, nodeRun, status)'
+      - 'server/internal/kanban/workflow_driver.go:func (s *Service) AdvanceWorkflowRun('
+      - 'server/internal/kanban/workflow_driver.go:case NodeKindHumanGate:'
+      - 'server/internal/kanban/workflow_runtime.go:func (s *Service) WakeWorkflowRun('
+      - 'server/internal/kanban/workflow_runtime.go:func (s *Service) CancelWorkflowRun('
+      - 'server/internal/kanban/workflow_runtime.go:func (s *Service) finishWorkflowRunByOperator('
+      - 'server/internal/kanban/workflow_runtime.go:func (s *Service) CreateWorkflowNodeAttempt('
+      - 'server/internal/kanban/task_store_workflow_runtime.go:func (s *TaskStore) RequeueWorkflowNodeRun('
+      - 'server/internal/kanban/task_store_workflow_events.go:WorkflowEventRunCompleted = "run_completed"'
+      - 'server/internal/kanban/task_store_workflow_comments.go:func decideCommentBinding('
+      - 'server/internal/kanban/task_store_workflow_comments.go:func (s *TaskStore) bindCommentInTx('
+      - 'server/internal/kanban/workflow_comments.go:func (s *Service) reconcileWorkflowCommentsAfterNodeRun('
+      - 'server/internal/kanban/workflow_comments.go:func (s *Service) workflowCommentDeliveryWorkspace('
+      - 'server/internal/kanban/workflow_executor.go:func (s *Service) finalizeWorkflowNodeWithWorktree('
+      - 'server/internal/kanban/workflow_recovery.go:node, ok := workflowNodeByID(run.Graph, nr.NodeID)'
+      - 'server/internal/kanban/workflow_driver_loop.go:func (s *Service) advanceWorkflowLoop('
+      - 'server/internal/kanban/workflow_human_gate.go:func (s *Service) ResolveWorkflowHumanGate('
+      - 'server/internal/kanban/task_store_workflow_human_gate.go:func (s *TaskStore) DecideWorkflowHumanGate('
+      - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskHumanGate('
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/human-gate", h.handleKanbanTaskHumanGate)'
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/workflow-run/nodes/{nodeRunID}/retry", h.handleTaskWorkflowNodeRunRetry)'
+      - 'web/src/components/task/RunTimeline.tsx:data-drill-in="comment-run"'
+      - 'web/tests/run-timeline-drill-in.test.ts:unknown must never be rendered as success'
+      - 'server/internal/kanban/workflow_recovery_test.go:func TestWorkflowRuntimeCompleteAndFailFreezeOpenWork('
+
+  # ── Workflow workspace intent + 跨账户物理 worktree gate + owner 唯一 ────────

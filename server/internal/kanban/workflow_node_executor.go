@@ -131,34 +131,46 @@ func BuildWorkflowNodeOutputContract(nodeID string) string {
 	)
 }
 
-// StartWorkflowNode runs one Agent node through the workflow runner port. It
-// does not persist status transitions yet (Task 3 owns the NodeRun lifecycle);
-// the caller must already hold a successful claim for nodeRun.
-func (s *Service) StartWorkflowNode(ctx context.Context, store *TaskStore, run *WorkflowRun, node WorkflowNode, nodeRun NodeRun) (WorkflowNodeResult, error) {
+// PrepareWorkflowNode validates the node, resolves its session and returns the
+// execution context. The workflow attempt executor calls this before the
+// external turn so the NodeRun's session binding can be committed first.
+func (s *Service) PrepareWorkflowNode(ctx context.Context, store *TaskStore, run *WorkflowRun, node WorkflowNode, nodeRun NodeRun) (WorkflowNodeExecution, error) {
+	return s.prepareWorkflowNodeAt(ctx, store, run, node, nodeRun, "")
+}
+
+// prepareWorkflowNodeAt is PrepareWorkflowNode with an explicit physical root.
+// RunWorkflowNodeAttempt passes the workspace resolved by
+// PrepareWorkflowNodeWorktree (independent tree or shared Task tree); one-shot
+// callers leave runtimeRoot empty and keep the historical Task.WorktreePath.
+func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, run *WorkflowRun, node WorkflowNode, nodeRun NodeRun, runtimeRoot string) (WorkflowNodeExecution, error) {
 	if s == nil || store == nil || run == nil {
-		return WorkflowNodeResult{}, errors.New("workflow service, store and run required")
+		return WorkflowNodeExecution{}, errors.New("workflow service, store and run required")
 	}
 	if node.Kind != NodeKindAgent {
-		return WorkflowNodeResult{}, fmt.Errorf("node %q is %s, not agent", node.ID, node.Kind)
+		return WorkflowNodeExecution{}, fmt.Errorf("node %q is %s, not agent", node.ID, node.Kind)
 	}
 	runner := s.workflowNodeRunner()
 	if runner == nil {
-		return WorkflowNodeResult{}, errors.New("workflow node runner not configured")
+		return WorkflowNodeExecution{}, errors.New("workflow node runner not configured")
 	}
 	if nodeRun.RunID != run.ID || nodeRun.NodeID != node.ID {
-		return WorkflowNodeResult{}, fmt.Errorf("node run %s does not belong to run/node %s/%s", nodeRun.ID, run.ID, node.ID)
+		return WorkflowNodeExecution{}, fmt.Errorf("node run %s does not belong to run/node %s/%s", nodeRun.ID, run.ID, node.ID)
 	}
 	prompt, err := WorkflowNodePrompt(node)
 	if err != nil {
-		return WorkflowNodeResult{}, err
+		return WorkflowNodeExecution{}, err
 	}
 	task, err := store.GetTask(ctx, run.TaskID)
 	if err != nil {
-		return WorkflowNodeResult{}, err
+		return WorkflowNodeExecution{}, err
+	}
+	rootPath := strings.TrimSpace(runtimeRoot)
+	if rootPath == "" {
+		rootPath = strings.TrimSpace(task.WorktreePath)
 	}
 	exec := WorkflowNodeExecution{
 		RootID:          task.RootID,
-		RuntimeRootPath: strings.TrimSpace(task.WorktreePath),
+		RuntimeRootPath: rootPath,
 		Task:            task,
 		Run:             run,
 		Node:            node,
@@ -171,15 +183,25 @@ func (s *Service) StartWorkflowNode(ctx context.Context, store *TaskStore, run *
 	if exec.SessionPolicy == SessionReuseSameStage && strings.TrimSpace(nodeRun.SessionKey) == "" {
 		key, err := store.LatestWorkflowNodeSessionKey(ctx, run.ID, node.ID, nodeRun.LoopPath)
 		if err != nil {
-			return WorkflowNodeResult{}, err
+			return WorkflowNodeExecution{}, err
 		}
 		exec.ReuseSessionKey = key
 	}
 	sessionKey, err := runner.EnsureWorkflowNodeSession(ctx, exec)
 	if err != nil {
-		return WorkflowNodeResult{}, err
+		return WorkflowNodeExecution{}, err
 	}
 	exec.NodeRun.SessionKey = strings.TrimSpace(sessionKey)
+	return exec, nil
+}
+
+// RunPreparedWorkflowNode runs one prepared turn. It does not persist state;
+// the attempt executor owns the lifecycle around it.
+func (s *Service) RunPreparedWorkflowNode(ctx context.Context, exec WorkflowNodeExecution) (WorkflowNodeResult, error) {
+	runner := s.workflowNodeRunner()
+	if runner == nil {
+		return WorkflowNodeResult{}, errors.New("workflow node runner not configured")
+	}
 	result, err := runner.RunWorkflowNode(ctx, exec)
 	if err != nil {
 		return WorkflowNodeResult{}, err
@@ -190,6 +212,17 @@ func (s *Service) StartWorkflowNode(ctx context.Context, store *TaskStore, run *
 		result.SessionKey = exec.NodeRun.SessionKey
 	}
 	return result, nil
+}
+
+// StartWorkflowNode is prepare+run for callers that only need a one-shot turn.
+// Lifecycle-owning callers (RunWorkflowNodeAttempt) use the halves so session
+// binding is persisted before the external turn starts.
+func (s *Service) StartWorkflowNode(ctx context.Context, store *TaskStore, run *WorkflowRun, node WorkflowNode, nodeRun NodeRun) (WorkflowNodeResult, error) {
+	exec, err := s.PrepareWorkflowNode(ctx, store, run, node, nodeRun)
+	if err != nil {
+		return WorkflowNodeResult{}, err
+	}
+	return s.RunPreparedWorkflowNode(ctx, exec)
 }
 
 func (s *Service) workflowNodeRunner() WorkflowNodeRunner {

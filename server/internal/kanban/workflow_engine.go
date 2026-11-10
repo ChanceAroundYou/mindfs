@@ -1,8 +1,169 @@
 package kanban
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 )
+
+// workflowLoopConfig is the persisted contract of one Loop node. Parsing is
+// strict: a missing bound, exit expression or inner graph is an error, never a
+// silent default (the spec makes all three mandatory).
+type workflowLoopConfig struct {
+	MaxIterations  int
+	ExitExpression string
+	Inner          WorkflowDefinition
+}
+
+func workflowLoopGraph(n WorkflowNode) (WorkflowDefinition, error) {
+	raw, ok := n.Params["graph"]
+	if !ok || raw == nil {
+		return WorkflowDefinition{}, fmt.Errorf("loop node %q: inner graph required", n.ID)
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return WorkflowDefinition{}, err
+	}
+	var inner WorkflowDefinition
+	if err := json.Unmarshal(b, &inner); err != nil {
+		return WorkflowDefinition{}, fmt.Errorf("loop node %q: invalid inner graph: %w", n.ID, err)
+	}
+	if len(inner.Nodes) == 0 {
+		return WorkflowDefinition{}, fmt.Errorf("loop node %q: inner graph must have at least one node", n.ID)
+	}
+	return inner, nil
+}
+
+func parseWorkflowLoopConfig(n WorkflowNode) (workflowLoopConfig, error) {
+	max, ok := toInt(n.Params["max_iterations"])
+	if !ok {
+		return workflowLoopConfig{}, fmt.Errorf("loop node %q: max_iterations required (1..20)", n.ID)
+	}
+	if max < LoopMinMax || max > LoopMaxMax {
+		return workflowLoopConfig{}, fmt.Errorf("loop node %q: max_iterations must be %d..%d", n.ID, LoopMinMax, LoopMaxMax)
+	}
+	exit, _ := n.Params["exit_expression"].(string)
+	exit = strings.TrimSpace(exit)
+	if exit == "" {
+		return workflowLoopConfig{}, fmt.Errorf("loop node %q: exit_expression required", n.ID)
+	}
+	inner, err := workflowLoopGraph(n)
+	if err != nil {
+		return workflowLoopConfig{}, err
+	}
+	return workflowLoopConfig{MaxIterations: max, ExitExpression: exit, Inner: inner}, nil
+}
+
+// workflowLoopIterationRun projects one iteration's persisted NodeRuns into the
+// engine's sub-run view. The run's own NodeStates/NodeOutputs never carry inner
+// nodes: they are per-iteration facts, and older iterations must stay in the
+// NodeRun history rather than be overwritten by the next pass.
+func workflowLoopIterationRun(inner WorkflowDefinition, runs []NodeRun, loopID string, iteration int) *WorkflowRun {
+	sub := &WorkflowRun{
+		ID:             loopID,
+		Graph:          inner,
+		NodeStates:     map[string]string{},
+		NodeOutputs:    map[string]map[string]any{},
+		SelectedRoutes: map[string]string{},
+	}
+	best := map[string]NodeRun{}
+	for _, nr := range runs {
+		if nr.LoopPath != loopID || nr.Iteration != iteration {
+			continue
+		}
+		if cur, seen := best[nr.NodeID]; !seen || nr.Attempt >= cur.Attempt {
+			best[nr.NodeID] = nr
+		}
+	}
+	for id, nr := range best {
+		state := nr.Status
+		if state == NodeRunQueued {
+			// A requeued inner row is ready to execute again; the persisted row
+			// (not a fresh attempt) is what the executor claims.
+			state = NodeRunPending
+		}
+		sub.NodeStates[id] = state
+		if nr.Output != nil {
+			sub.NodeOutputs[id] = nr.Output
+		}
+		// Inner condition routes are per-iteration facts; they live on the
+		// condition's NodeRun output so recovery needs no extra run field.
+		if route, ok := nr.Output["route"].(string); ok && strings.TrimSpace(route) != "" {
+			sub.SelectedRoutes[id] = route
+		}
+	}
+	return sub
+}
+
+// workflowLoopIterationTerminal reports whether every inner node reached a
+// terminal state in this iteration. Running nodes are not terminal.
+func workflowLoopIterationTerminal(inner WorkflowDefinition, sub *WorkflowRun) bool {
+	for _, n := range inner.Nodes {
+		switch sub.NodeStates[n.ID] {
+		case NodeRunSuccess, NodeRunSkipped, NodeRunFail, NodeRunWaitingUser, NodeRunUnknown, NodeRunCancelled:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// workflowExpressionRoot merges the run-level outputs with the current loop
+// iteration's inner outputs. D6: expressions always read `node_id.output.*`;
+// inner ids are validated to be unique across the whole workflow, so the two
+// sets cannot shadow each other.
+func workflowExpressionRoot(outer map[string]map[string]any, inner map[string]map[string]any) map[string]any {
+	root := make(map[string]any, len(outer)+len(inner))
+	for id, output := range outer {
+		root[id] = map[string]any{"output": output}
+	}
+	for id, output := range inner {
+		root[id] = map[string]any{"output": output}
+	}
+	return root
+}
+
+// workflowNodeByID resolves a node through loop inner graphs. Inner ids are
+// validated unique across the whole definition, so the first match is the only
+// match; callers that only need node kind/params (comment routing, activity)
+// must use this rather than the top-level-only Graph.node.
+func workflowNodeByID(d WorkflowDefinition, id string) (WorkflowNode, bool) {
+	for _, n := range d.Nodes {
+		if n.ID == id {
+			return n, true
+		}
+		if n.Kind != NodeKindLoop {
+			continue
+		}
+		inner, err := workflowLoopGraph(n)
+		if err != nil {
+			continue
+		}
+		if found, ok := workflowNodeByID(inner, id); ok {
+			return found, true
+		}
+	}
+	return WorkflowNode{}, false
+}
+
+// workflowAgentNodeIDs returns every agent node id, including agents nested in
+// loop inner graphs. Used to classify active NodeRuns for comment binding.
+func workflowAgentNodeIDs(d WorkflowDefinition) map[string]bool {
+	ids := map[string]bool{}
+	for _, n := range d.Nodes {
+		switch n.Kind {
+		case NodeKindAgent:
+			ids[n.ID] = true
+		case NodeKindLoop:
+			if inner, err := workflowLoopGraph(n); err == nil {
+				for id := range workflowAgentNodeIDs(inner) {
+					ids[id] = true
+				}
+			}
+		}
+	}
+	return ids
+}
 
 // EngineReadyNodes returns nodes ready to run and nodes to mark skipped.
 // A node is ready when all its predecessors are success OR skipped via an
@@ -86,7 +247,10 @@ func EngineReadyNodes(run *WorkflowRun) (ready []string, skipped []string, err e
 	}
 	for _, n := range run.Graph.Nodes {
 		st := run.NodeStates[n.ID]
-		if st == NodeRunSuccess || st == NodeRunRunning || st == NodeRunQueued || st == NodeRunWaitingUser || st == NodeRunFail || st == NodeRunSkipped {
+		// cancelled/unknown are terminal decisions (D8: never auto-replay an
+		// ambiguous side effect); treating them as ready would re-enter the same
+		// persisted row and spin the driver to its step limit.
+		if st == NodeRunSuccess || st == NodeRunRunning || st == NodeRunQueued || st == NodeRunWaitingUser || st == NodeRunFail || st == NodeRunSkipped || st == NodeRunCancelled || st == NodeRunUnknown {
 			continue
 		}
 		if skippedSet[n.ID] {

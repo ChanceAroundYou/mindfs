@@ -86,6 +86,9 @@ func TestOutbox_SteerConfirmedOnlyRealReceipt(t *testing.T) {
 	if got.Status != OutboxSteerConfirmed {
 		t.Fatalf("expected steer_confirmed, got %s", got.Status)
 	}
+	if got.NodeRunID != "nr1" || got.SessionKey != "sess1" {
+		t.Fatalf("steer confirmed lost binding: %#v", got)
+	}
 	// sent 绝不升级为 confirmed。
 	_, o2 := newOutbox(t)
 	rec2, _ := o2.RecordComment(ctx, ContinueRequestRecord{ID: "cr2", TaskID: "t1", CommentID: "c2", NodeRunID: "nr1", SessionKey: "sess1", Message: "hi", Author: "user"})
@@ -116,6 +119,9 @@ func TestOutbox_TimeoutUnknownNoReplay(t *testing.T) {
 	if got.Status != OutboxUnknown {
 		t.Fatalf("expected unknown, got %s", got.Status)
 	}
+	if got.NodeRunID != "nr1" || got.SessionKey != "sess1" {
+		t.Fatalf("unknown delivery lost binding: %#v", got)
+	}
 	// 第二次 Consume 不应重发（pending 不含 unknown）。
 	if err := o.Consume(ctx, "t1", DefaultSteerPolicy{Port: o.port}, fakeProbe{active: true}, nil); err != nil {
 		t.Fatal(err)
@@ -139,8 +145,10 @@ func TestOutbox_FIFOSameSessionPreservesOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sent []string
+	var sessions []string
 	err := o.DrainAfterNodeRun(ctx, "t1", func(ctx context.Context, sessionKey, msg string) error {
 		sent = append(sent, msg)
+		sessions = append(sessions, sessionKey)
 		return nil
 	})
 	if err != nil {
@@ -148,6 +156,12 @@ func TestOutbox_FIFOSameSessionPreservesOrder(t *testing.T) {
 	}
 	if len(sent) != 3 || sent[0] != "msg-c1" || sent[1] != "msg-c2" || sent[2] != "msg-c3" {
 		t.Fatalf("FIFO order broken: %v", sent)
+	}
+	// 绑定到同一 NodeRun 的留言必须全部投递到提交时冻结的那个 session。
+	for i, got := range sessions {
+		if got != "sess1" {
+			t.Fatalf("delivery[%d] session = %q, want sess1 (sessions=%v)", i, got, sessions)
+		}
 	}
 	// 全部 consumed。
 	for _, id := range []string{"cr-c1", "cr-c2", "cr-c3"} {
@@ -198,6 +212,17 @@ func TestOutbox_RecordCommentIdempotent(t *testing.T) {
 	r2, _ := o.RecordComment(ctx, in)
 	if r1.ID != r2.ID {
 		t.Fatalf("idempotent ids differ: %s vs %s", r1.ID, r2.ID)
+	}
+	// 首次提交就把 node_run_id/session_key 落库；重试只读回同一份绑定。
+	stored, err := o.GetRequest(ctx, r1.ID)
+	if err != nil {
+		t.Fatalf("GetRequest: %v", err)
+	}
+	if stored.NodeRunID != "nr1" || stored.SessionKey != "sess1" {
+		t.Fatalf("persisted binding = %#v, want nr1/sess1", stored)
+	}
+	if r2.NodeRunID != "nr1" || r2.SessionKey != "sess1" {
+		t.Fatalf("idempotent retry binding = %#v, want nr1/sess1", r2)
 	}
 	if _, err := o.RecordComment(ctx, ContinueRequestRecord{ID: "crX", TaskID: "t1", CommentID: "c1", NodeRunID: "nr1", SessionKey: "sess1", Message: "tampered", Author: "user"}); err != ErrOutboxCommentConflict {
 		t.Fatalf("expected conflict, got %v", err)

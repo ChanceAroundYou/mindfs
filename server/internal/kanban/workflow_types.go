@@ -100,18 +100,21 @@ type LoopState struct {
 }
 
 type WorkflowRun struct {
-	ID             string                    `json:"id"`
-	TaskID         string                    `json:"task_id"`
-	Version        string                    `json:"version,omitempty"` // base WorkflowVersion id (may be empty for ad-hoc runs)
-	Revision       int                       `json:"revision"`          // run edit revision, CAS
-	Graph          WorkflowDefinition        `json:"graph"`             // inlined immutable snapshot + future edits
-	NodeStates     map[string]string         `json:"node_states,omitempty"`
-	NodeOutputs    map[string]map[string]any `json:"node_outputs,omitempty"`
-	SelectedRoutes map[string]string         `json:"selected_routes,omitempty"`
-	LoopState      map[string]*LoopState     `json:"loop_state,omitempty"`
-	LoopExitExpr   map[string]string         `json:"loop_exit_expr,omitempty"`
-	CreatedAt      time.Time                 `json:"created_at"`
-	UpdatedAt      time.Time                 `json:"updated_at"`
+	ID       string             `json:"id"`
+	TaskID   string             `json:"task_id"`
+	Version  string             `json:"version,omitempty"` // base WorkflowVersion id (may be empty for ad-hoc runs)
+	Revision int                `json:"revision"`          // run edit revision, CAS
+	Graph    WorkflowDefinition `json:"graph"`             // inlined immutable snapshot + future edits
+	// IntegrationBranch 是创建 Run 时从项目当前 checkout 解析出的合并目标（D11）。
+	// 运行时的 merge 只许读这个快照，不允许再隐式回落到 "main"。
+	IntegrationBranch string                    `json:"integration_branch,omitempty"`
+	NodeStates        map[string]string         `json:"node_states,omitempty"`
+	NodeOutputs       map[string]map[string]any `json:"node_outputs,omitempty"`
+	SelectedRoutes    map[string]string         `json:"selected_routes,omitempty"`
+	LoopState         map[string]*LoopState     `json:"loop_state,omitempty"`
+	LoopExitExpr      map[string]string         `json:"loop_exit_expr,omitempty"`
+	CreatedAt         time.Time                 `json:"created_at"`
+	UpdatedAt         time.Time                 `json:"updated_at"`
 }
 
 // FrozenNodeIDs returns nodes that already triggered (have a NodeRun).
@@ -126,22 +129,27 @@ func (r *WorkflowRun) FrozenNodeIDs() map[string]bool {
 }
 
 type NodeRun struct {
-	ID            string         `json:"id"`
-	RunID         string         `json:"run_id"`
-	NodeID        string         `json:"node_id"`
-	LoopPath      string         `json:"loop_path,omitempty"` // e.g. "l/2" iteration path, empty = top-level
-	Iteration     int            `json:"iteration,omitempty"`
-	Attempt       int            `json:"attempt"`
-	Agent         string         `json:"agent,omitempty"`
-	Harness       string         `json:"harness,omitempty"`
-	Model         string         `json:"model,omitempty"`
-	SessionKey    string         `json:"session_key,omitempty"`
-	Status        string         `json:"status"`
-	Input         map[string]any `json:"input,omitempty"`
-	Output        map[string]any `json:"output,omitempty"`
-	StartedAt     time.Time      `json:"started_at,omitempty"`
-	FinishedAt    time.Time      `json:"finished_at,omitempty"`
-	PrevAttemptID string         `json:"prev_attempt_id,omitempty"`
+	ID         string `json:"id"`
+	RunID      string `json:"run_id"`
+	NodeID     string `json:"node_id"`
+	LoopPath   string `json:"loop_path,omitempty"` // e.g. "l/2" iteration path, empty = top-level
+	Iteration  int    `json:"iteration,omitempty"`
+	Attempt    int    `json:"attempt"`
+	Agent      string `json:"agent,omitempty"`
+	Harness    string `json:"harness,omitempty"`
+	Model      string `json:"model,omitempty"`
+	SessionKey string `json:"session_key,omitempty"`
+	// WorktreeID/Path/Branch 是该 NodeRun 的 workspace 归属（D16）。三者都空 =
+	// 节点使用 Task 的共享主工作树/项目根，没有独立 worktree。
+	WorktreeID     string         `json:"worktree_id,omitempty"`
+	WorktreePath   string         `json:"worktree_path,omitempty"`
+	WorktreeBranch string         `json:"worktree_branch,omitempty"`
+	Status         string         `json:"status"`
+	Input          map[string]any `json:"input,omitempty"`
+	Output         map[string]any `json:"output,omitempty"`
+	StartedAt      time.Time      `json:"started_at,omitempty"`
+	FinishedAt     time.Time      `json:"finished_at,omitempty"`
+	PrevAttemptID  string         `json:"prev_attempt_id,omitempty"`
 }
 
 // ── Template suggestion (WP-06: suggest, never auto-publish) ────────────────

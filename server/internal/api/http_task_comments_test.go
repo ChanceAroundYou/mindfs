@@ -21,6 +21,7 @@ func commentsHandler(t *testing.T) (http.Handler, *kanban.Service, fs.RootInfo, 
 	t.Helper()
 	root := fs.NewRootInfo("root", "root", t.TempDir())
 	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProviderT{root: root})
+	svc.SetWriterGate(kanban.NewWriterGate())
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
 		RootID: root.ID,
 		Stages: []kanban.StageTemplate{{Name: "u", Role: "user"}},
@@ -43,8 +44,12 @@ func TestTaskCommentsPostAndGet(t *testing.T) {
 		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		Activity struct{ ID string `json:"id"` } `json:"activity"`
-		Continue struct{ Status string `json:"status"` } `json:"continue_request"`
+		Activity struct {
+			ID string `json:"id"`
+		} `json:"activity"`
+		Continue struct {
+			Status string `json:"status"`
+		} `json:"continue_request"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Activity.ID != "c-1" || out.Continue.Status != "queued" {
 		t.Fatalf("bad response %s err=%v", rec.Body.String(), err)

@@ -43,6 +43,7 @@ func newBeginFinishHandlerWithRunner(t *testing.T, edit string, runnerFor func(m
 
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProvider{root: root})
+	svc.SetWriterGate(kanban.NewWriterGate())
 	svc.SetRunner(runnerFor(mainDir))
 
 	if _, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{

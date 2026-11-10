@@ -113,8 +113,14 @@ func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, 
 	if err != nil {
 		return nil, TaskEngine{}, err
 	}
+	integrationBranch, err := s.snapshotRunIntegrationBranch(ctx, task, graph)
+	if err != nil {
+		// D11：没有可用 target 就不建 Run；运行期不允许隐式回落 "main"。
+		return nil, TaskEngine{}, err
+	}
 	run := &WorkflowRun{ID: newRunID(), TaskID: task.ID, Version: resolvedVersion, Revision: 1, Graph: cloneGraph(graph),
-		NodeStates: map[string]string{}, NodeOutputs: map[string]map[string]any{}, SelectedRoutes: map[string]string{},
+		IntegrationBranch: integrationBranch,
+		NodeStates:        map[string]string{}, NodeOutputs: map[string]map[string]any{}, SelectedRoutes: map[string]string{},
 		LoopState: map[string]*LoopState{}, LoopExitExpr: map[string]string{}}
 	// Store snapshot and task-engine binding atomically in this task node's SQLite database.
 	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
@@ -132,6 +138,10 @@ func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, 
 		Payload:   fmt.Sprintf(`{"run_id":%q,"version":%q,"author":%q}`, run.ID, versionID, strings.TrimSpace(author)),
 		CreatedAt: time.Now().UTC(),
 	})
+	// Migration is an approved trigger (D1): persist first, then wake the
+	// per-task driver. A wake failure leaves the run persisted and actionable by
+	// the next RunNow/resume instead of rolling back the migration.
+	_ = s.WakeWorkflowRun(ctx, rootID, task.ID, "migration")
 	return run, engine, nil
 }
 

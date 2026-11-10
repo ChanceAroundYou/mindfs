@@ -105,6 +105,14 @@ test("run-timeline-drill-in", async () => {
   const emptyHtml = renderTimeline({ run: { id: "run-3" }, nodeRuns: [] });
   assert.match(emptyHtml, /尚无节点执行记录|No node runs/, "empty node runs must show an explicit empty state");
 
+  // Unknown 是「无法判定」，运行视图不得把它画成成功。
+  const unknownHtml = renderTimeline({
+    run: { id: "run-4" },
+    nodeRuns: [{ id: "nr-unknown", node_id: "n4", status: "unknown", output: { outcome: "unknown" } }],
+  });
+  assert.match(unknownHtml, /data-status="unknown"/, "unknown node run must keep its own status");
+  assert.doesNotMatch(unknownHtml, /data-status="success"/, "unknown must never be rendered as success");
+
   // 没有 run 时不崩。
   const noRunHtml = renderTimeline({ run: null, nodeRuns: [] });
   assert.match(noRunHtml, /暂无运行|No run yet/, "missing run must show an explicit state");

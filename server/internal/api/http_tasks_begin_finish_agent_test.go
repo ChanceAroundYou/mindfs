@@ -191,6 +191,7 @@ func newBeginFinishHandlerWithoutAgent(t *testing.T, edit string) (http.Handler,
 
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProvider{root: root})
+	svc.SetWriterGate(kanban.NewWriterGate())
 	svc.SetRunner(fixedRunner{t: t, mainDir: mainDir})
 
 	if _, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{

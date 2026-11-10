@@ -55,6 +55,9 @@ type fakeRunner struct {
 	worktreeBranch       string
 	worktreeName         string
 	worktreeCreateCalled bool
+	// worktreeCreateCount 是 CreateTaskWorktree 的真实调用次数：幂等/重试用例
+	// 不能只看 bool，否则「第二次又建了一棵」会被当成和第一次一样。
+	worktreeCreateCount int
 	// worktreeInfo 非零时 CreateTaskWorktree 原样返回它（不真建目录），
 	// 用来模拟「建树返回成功但产出不可用」—— 判据不能只信 err == nil。
 	worktreeInfo WorktreeInfo
@@ -94,6 +97,7 @@ func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branc
 	r.worktreeBranch = branch
 	r.worktreeName = name
 	r.worktreeCreateCalled = true
+	r.worktreeCreateCount++
 	r.mu.Unlock()
 	if r.worktreeErr != nil {
 		return WorktreeInfo{}, r.worktreeErr
@@ -161,6 +165,9 @@ func newTestService(t *testing.T, runner *fakeRunner) (*Service, fs.RootInfo) {
 	t.Helper()
 	root := fs.NewRootInfo("root", "root", t.TempDir())
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	// 写节点在缺 gate 时按设计 fail closed；测试组合不注入就会把「没有共享 gate」
+	// 当成被测行为，掩盖真正的执行逻辑。
+	svc.SetWriterGate(NewWriterGate())
 	if runner != nil {
 		svc.SetRunner(runner)
 		t.Cleanup(func() {

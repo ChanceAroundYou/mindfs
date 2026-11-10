@@ -39,6 +39,16 @@ func (s *Service) RecoverOnStartupForRoot(ctx context.Context, rootID string, pr
 	if err != nil {
 		return plan, err
 	}
+	// D8/D9：WorkflowRun 的 NodeRun 与 legacy continue_requests 是两套持久行。
+	// 两者都按同一份探针证据对账，但各自只改自己的状态；合并结果只为了把
+	// 「哪些行已安全重排 / 哪些需要用户」统一报给调用方。
+	wfPlan, wfErr := s.recoverWorkflowRunsOnStartup(ctx, rootID, store, probe)
+	if wfErr != nil {
+		return plan, wfErr
+	}
+	plan.ResumeNodeRunIDs = append(plan.ResumeNodeRunIDs, wfPlan.ResumeNodeRunIDs...)
+	plan.UnknownIDs = append(plan.UnknownIDs, wfPlan.UnknownIDs...)
+	plan.NeedsUser = plan.NeedsUser || wfPlan.NeedsUser
 	if plan.NeedsUser {
 		for _, id := range plan.UnknownIDs {
 			// 可确定性地拿到 task_id 就置 waiting_user；拿不到就只保留 unknown 标记，

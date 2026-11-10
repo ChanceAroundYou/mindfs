@@ -157,24 +157,27 @@ func toFloat(v any) (float64, bool) {
 }
 
 func validateLoopNode(n WorkflowNode) error {
-	raw, ok := n.Params["max_iterations"]
-	if !ok {
-		return fmt.Errorf("loop node %q: max_iterations required (1..20, default 5)", n.ID)
+	// The spec makes all three mandatory: a bound, an exit expression, and an
+	// inner DAG. A loop missing any of them has no defined stop condition, so it
+	// is rejected at definition time instead of being guessed at run time.
+	cfg, err := parseWorkflowLoopConfig(n)
+	if err != nil {
+		return err
 	}
-	m, ok := toInt(raw)
-	if !ok || m < LoopMinMax || m > LoopMaxMax {
-		return fmt.Errorf("loop node %q: max_iterations must be %d..%d", n.ID, LoopMinMax, LoopMaxMax)
-	}
-	if g, ok := n.Params["graph"]; ok {
-		b, _ := json.Marshal(g)
-		var inner WorkflowDefinition
-		if err := json.Unmarshal(b, &inner); err == nil {
-			for _, in := range inner.Nodes {
-				if in.Kind == NodeKindLoop {
-					return fmt.Errorf("loop node %q: nested loops not allowed", n.ID)
-				}
-			}
+	for _, in := range cfg.Inner.Nodes {
+		if in.Kind == NodeKindLoop {
+			return fmt.Errorf("loop node %q: nested loops not allowed", n.ID)
 		}
+		if in.Kind == NodeKindHumanGate {
+			// v1 limitation, deliberately fail-closed: the gate approval API
+			// addresses top-level NodeRuns, so an inner gate could never be
+			// approved and would strand the iteration. Reject rather than ship a
+			// loop that pauses forever.
+			return fmt.Errorf("loop node %q: human_gate inside a loop is not supported yet", n.ID)
+		}
+	}
+	if err := ValidateWorkflowDefinition(cfg.Inner); err != nil {
+		return fmt.Errorf("loop node %q: invalid inner graph: %w", n.ID, err)
 	}
 	return nil
 }
@@ -225,6 +228,28 @@ func ValidateWorkflowDefinition(d WorkflowDefinition) error {
 			if routes, ok := n.Params["routes"].([]any); !ok || len(routes) == 0 {
 				return fmt.Errorf("condition node %q: routes required", n.ID)
 			}
+		}
+	}
+	// Inner loop ids live in the same expression scope as top-level ids
+	// (`node_id.output.*`, D6), so they must be unique across the whole
+	// definition. Nested loops are already rejected, so one level is complete.
+	seen := make(map[string]bool, len(ids))
+	for id := range ids {
+		seen[id] = true
+	}
+	for _, n := range d.Nodes {
+		if n.Kind != NodeKindLoop {
+			continue
+		}
+		cfg, err := parseWorkflowLoopConfig(n)
+		if err != nil {
+			return err
+		}
+		for _, in := range cfg.Inner.Nodes {
+			if seen[in.ID] {
+				return fmt.Errorf("loop node %q: inner node id %q duplicates another node id", n.ID, in.ID)
+			}
+			seen[in.ID] = true
 		}
 	}
 	adj := map[string][]string{}

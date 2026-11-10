@@ -186,7 +186,12 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if err := s.migrateTaskEngines(); err != nil {
 		return err
 	}
-	return s.migrateWorkflowRuns()
+	if err := s.migrateWorkflowRuns(); err != nil {
+		return err
+	}
+	// D13 append-only run ledger。必须在 workflow_runs 之后建（run 行先存在），
+	// 与投影同库；旧库升级只建新表，不改存量行。
+	return s.migrateWorkflowRunEvents()
 }
 
 func (s *TaskStore) backfillTaskNumbers() error {

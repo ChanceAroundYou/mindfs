@@ -227,6 +227,38 @@ func (h *HTTPHandler) handleTaskWorkflowNodeRunsGet(w http.ResponseWriter, r *ht
 	respondJSON(w, http.StatusOK, map[string]any{"node_runs": nodes})
 }
 
+// handleTaskWorkflowNodeRunRetry is the explicit D9 recovery action: it creates
+// a new attempt linked to the failed/unknown NodeRun. It never rewrites the
+// original row, its output, or the comment that was bound to it.
+func (h *HTTPHandler) handleTaskWorkflowNodeRunRetry(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	if strings.TrimSpace(req.RootID) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id required"))
+		return
+	}
+	nodeRun, err := svc.CreateWorkflowNodeAttempt(r.Context(), req.RootID, chi.URLParam(r, "id"), chi.URLParam(r, "nodeRunID"), req.Reason)
+	if err != nil {
+		switch {
+		case errors.Is(err, kanban.ErrWorkflowNodeRunNotFound):
+			respondError(w, http.StatusNotFound, err)
+		case errors.Is(err, kanban.ErrWorkflowNodeRunNotActionable):
+			respondError(w, http.StatusConflict, err)
+		default:
+			respondError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"node_run": nodeRun})
+}
+
 // handleTaskMigrateToWorkflow 把一个存量任务显式迁移到 WorkflowRun 引擎。
 //
 // 迁移是单向、显式的用户动作（spec「新旧执行模型互斥」）：成功后该任务的 legacy

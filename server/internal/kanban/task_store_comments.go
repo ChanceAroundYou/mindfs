@@ -56,6 +56,10 @@ CREATE INDEX IF NOT EXISTS idx_continue_requests_task ON continue_requests(task_
 		`ALTER TABLE continue_requests ADD COLUMN author TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE continue_requests ADD COLUMN workflow_choice TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE continue_requests ADD COLUMN prev_attempt_id TEXT NOT NULL DEFAULT ''`,
+		// D13/Task 3 Activity 关联：agent_reply/attention 要能指回产生它的 Run/NodeRun。
+		// 旧行与 legacy 留言留空串，读取端保持兼容。
+		`ALTER TABLE task_activities ADD COLUMN run_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE task_activities ADD COLUMN node_run_id TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alters {
 		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
@@ -65,7 +69,10 @@ CREATE INDEX IF NOT EXISTS idx_continue_requests_task ON continue_requests(task_
 	// A3 用 id 列做主键而 A1 用 request_id：给 id 列建唯一索引并非 schema 级主键，
 	// 只暴露一个可查投影 id = request_id（A3 测试/代码以 id 访问改为读 request_id）。
 	// 这里不引入 id 列：所有 A3 访问点已改成 request_id（见 service_outbox.go）。
-	return nil
+	//
+	// outbox_items/node_runs 是留言投递的持久投影；PostComment 在绑定事务里
+	// 直接写它，所以旧库也必须在迁移阶段建好，不能等到运行时才懒建。
+	return EnsureOutboxTables(context.Background(), s.db)
 }
 
 func normalizePostCommentInput(in PostCommentInput) (PostCommentInput, error) {
@@ -77,6 +84,7 @@ func normalizePostCommentInput(in PostCommentInput) (PostCommentInput, error) {
 	in.Type = strings.TrimSpace(in.Type)
 	in.WorkflowChoice = strings.TrimSpace(in.WorkflowChoice)
 	in.WorkflowVersionID = strings.TrimSpace(in.WorkflowVersionID)
+	in.ExpectedNodeRunID = strings.TrimSpace(in.ExpectedNodeRunID)
 	if in.TaskID == "" {
 		return in, errors.New("task id required")
 	}
@@ -138,14 +146,17 @@ func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput) (TaskA
 			return TaskActivity{}, ContinueRequest{}, err
 		}
 		var req ContinueRequest
-		var reqCreated, reqUpdated string
-		err = tx.QueryRowContext(ctx, `SELECT request_id, task_id, comment_id, status, created_at, updated_at FROM continue_requests WHERE task_id = ? AND comment_id = ?`, in.TaskID, in.CommentID).Scan(&req.RequestID, &req.TaskID, &req.CommentID, &req.Status, &reqCreated, &reqUpdated)
-		req.CreatedAt, _ = time.Parse(time.RFC3339Nano, reqCreated)
-		req.UpdatedAt, _ = time.Parse(time.RFC3339Nano, reqUpdated)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				// 旧行：补写请求
-				if err := insertContinueReq(ctx, tx, in.TaskID, in.CommentID, status, nowStr); err != nil {
+		req, scanErr := scanContinueRequest(tx.QueryRowContext(ctx,
+			`SELECT request_id, task_id, comment_id, status, node_run_id, session_key, created_at, updated_at FROM continue_requests WHERE task_id = ? AND comment_id = ?`,
+			in.TaskID, in.CommentID))
+		if scanErr != nil {
+			if errors.Is(scanErr, sql.ErrNoRows) {
+				// 旧行：补写请求。历史留言不重新判定绑定：绑定必须停在首次
+				// 提交那一刻，重试不得把它改投到后来启动的节点。
+				if err := insertContinueReq(ctx, tx, in.TaskID, in.CommentID, status, in.Body, in.Author, nowStr); err != nil {
+					return TaskActivity{}, ContinueRequest{}, err
+				}
+				if err := upsertCommentOutbox(ctx, tx, in.TaskID, in.CommentID, status, "", "", nowStr); err != nil {
 					return TaskActivity{}, ContinueRequest{}, err
 				}
 				req = ContinueRequest{RequestID: in.CommentID, TaskID: in.TaskID, CommentID: in.CommentID, Status: status, CreatedAt: now, UpdatedAt: now}
@@ -154,11 +165,13 @@ func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput) (TaskA
 				}
 				return act, req, nil
 			}
-			return TaskActivity{}, ContinueRequest{}, err
+			return TaskActivity{}, ContinueRequest{}, scanErr
 		}
-		// 解析时间字段（扫描为字符串已由 scan 处理，这里补齐）
-		req.CreatedAt = parseTime(req.CreatedAt)
-		req.UpdatedAt = parseTime(req.UpdatedAt)
+		// Binding is frozen at first submission. A retry naming a different
+		// target is an explicit conflict, never a silent rebind.
+		if e := strings.TrimSpace(in.ExpectedNodeRunID); e != "" && req.NodeRunID != "" && e != req.NodeRunID {
+			return TaskActivity{}, ContinueRequest{}, ErrCommentBindingConflict
+		}
 		if err := tx.Commit(); err != nil {
 			return TaskActivity{}, ContinueRequest{}, err
 		}
@@ -171,19 +184,47 @@ func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput) (TaskA
 		in.CommentID, in.TaskID, in.Type, in.Author, in.Role, in.Body, in.WorkflowChoice, in.WorkflowVersionID, nowStr); err != nil {
 		return TaskActivity{}, ContinueRequest{}, err
 	}
-	if err := insertContinueReq(ctx, tx, in.TaskID, in.CommentID, status, nowStr); err != nil {
+	if err := insertContinueReq(ctx, tx, in.TaskID, in.CommentID, status, in.Body, in.Author, nowStr); err != nil {
 		return TaskActivity{}, ContinueRequest{}, err
 	}
-	act := TaskActivity{ID: in.CommentID, TaskID: in.TaskID, Type: in.Type, Author: in.Author, Role: in.Role, Body: in.Body, WorkflowChoice: in.WorkflowChoice, WorkflowVersionID: in.WorkflowVersionID, CreatedAt: now}
-	req := ContinueRequest{RequestID: in.CommentID, TaskID: in.TaskID, CommentID: in.CommentID, Status: status, CreatedAt: now, UpdatedAt: now}
+	if err := upsertCommentOutbox(ctx, tx, in.TaskID, in.CommentID, status, "", "", nowStr); err != nil {
+		return TaskActivity{}, ContinueRequest{}, err
+	}
+	var req ContinueRequest
+	if !isTerminal(task.Status) {
+		b, err := s.bindCommentInTx(ctx, tx, in.TaskID, in.CommentID, in.ExpectedNodeRunID)
+		if err != nil {
+			return TaskActivity{}, ContinueRequest{}, err
+		}
+		req = ContinueRequest{RequestID: in.CommentID, TaskID: in.TaskID, CommentID: in.CommentID,
+			Status: b.Status, NodeRunID: b.NodeRunID, SessionKey: b.SessionKey, CreatedAt: now, UpdatedAt: now}
+	} else {
+		req = ContinueRequest{RequestID: in.CommentID, TaskID: in.TaskID, CommentID: in.CommentID, Status: status, CreatedAt: now, UpdatedAt: now}
+	}
+	act, err := scanActivity(tx, in.TaskID, in.CommentID)
+	if err != nil {
+		return TaskActivity{}, ContinueRequest{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return TaskActivity{}, ContinueRequest{}, err
 	}
 	return act, req, nil
 }
 
-func insertContinueReq(ctx context.Context, tx *sql.Tx, taskID, commentID, status, nowStr string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO continue_requests (request_id, task_id, comment_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, commentID, taskID, commentID, status, nowStr, nowStr)
+func insertContinueReq(ctx context.Context, tx *sql.Tx, taskID, commentID, status, message, author, nowStr string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO continue_requests (request_id, task_id, comment_id, status, message, author, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, commentID, taskID, commentID, status, message, author, nowStr, nowStr)
+	return err
+}
+
+// upsertCommentOutbox keeps the durable delivery projection in step with the
+// canonical ContinueRequest. The outbox row is a copy, never a second truth:
+// status and binding always come from continue_requests.
+func upsertCommentOutbox(ctx context.Context, tx *sql.Tx, taskID, commentID, status, nodeRunID, sessionKey, nowStr string) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO outbox_items(id,task_id,request_id,node_run_id,session_key,message,status,created_at,updated_at)
+		 VALUES(?,?,?,?,?,COALESCE((SELECT message FROM continue_requests WHERE task_id=? AND comment_id=?),''),?,?,?)
+		 ON CONFLICT(id) DO UPDATE SET node_run_id=excluded.node_run_id,session_key=excluded.session_key,message=excluded.message,status=excluded.status,updated_at=excluded.updated_at`,
+		"ob-"+commentID, taskID, commentID, nodeRunID, sessionKey, taskID, commentID, status, nowStr, nowStr)
 	return err
 }
 
@@ -194,7 +235,7 @@ func scanActivity(q interface {
 }, taskID, id string) (TaskActivity, error) {
 	var a TaskActivity
 	var created string
-	err := q.QueryRowContext(context.Background(), `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, created_at FROM task_activities WHERE task_id = ? AND id = ?`, taskID, id).Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &created)
+	err := q.QueryRowContext(context.Background(), `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at FROM task_activities WHERE task_id = ? AND id = ?`, taskID, id).Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &a.RunID, &a.NodeRunID, &created)
 	if err != nil {
 		return TaskActivity{}, err
 	}
@@ -202,8 +243,29 @@ func scanActivity(q interface {
 	return a, nil
 }
 
+// AppendTaskActivity writes one system/agent activity correlated to a workflow
+// run/node. It is idempotent on (task_id,id): the first row wins, so a retried
+// callback cannot duplicate the reply.
+func (s *TaskStore) AppendTaskActivity(ctx context.Context, a TaskActivity) (TaskActivity, error) {
+	a.TaskID = strings.TrimSpace(a.TaskID)
+	a.ID = strings.TrimSpace(a.ID)
+	a.Type = strings.TrimSpace(a.Type)
+	if a.TaskID == "" || a.ID == "" || a.Type == "" {
+		return TaskActivity{}, errors.New("activity task id, id and type required")
+	}
+	now := s.now().UTC()
+	if a.CreatedAt.IsZero() {
+		a.CreatedAt = now
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO task_activities (id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
+		a.ID, a.TaskID, a.Type, a.Author, a.Role, a.Body, a.WorkflowChoice, a.WorkflowVersionID, a.RunID, a.NodeRunID, a.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+		return TaskActivity{}, err
+	}
+	return scanActivity(s.db, a.TaskID, a.ID)
+}
+
 func (s *TaskStore) ListActivities(ctx context.Context, taskID string) ([]TaskActivity, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, created_at FROM task_activities WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at FROM task_activities WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +274,7 @@ func (s *TaskStore) ListActivities(ctx context.Context, taskID string) ([]TaskAc
 	for rows.Next() {
 		var a TaskActivity
 		var created string
-		if err := rows.Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &created); err != nil {
+		if err := rows.Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &a.RunID, &a.NodeRunID, &created); err != nil {
 			return nil, err
 		}
 		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -222,20 +284,17 @@ func (s *TaskStore) ListActivities(ctx context.Context, taskID string) ([]TaskAc
 }
 
 func (s *TaskStore) ListContinueRequests(ctx context.Context, taskID string) ([]ContinueRequest, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT request_id, task_id, comment_id, status, created_at, updated_at FROM continue_requests WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
+	rows, err := s.db.QueryContext(ctx, `SELECT request_id, task_id, comment_id, status, node_run_id, session_key, created_at, updated_at FROM continue_requests WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	items := []ContinueRequest{}
 	for rows.Next() {
-		var r ContinueRequest
-		var created, updated string
-		if err := rows.Scan(&r.RequestID, &r.TaskID, &r.CommentID, &r.Status, &created, &updated); err != nil {
+		r, err := scanContinueRequest(rows)
+		if err != nil {
 			return nil, err
 		}
-		r.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		r.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		items = append(items, r)
 	}
 	return items, rows.Err()

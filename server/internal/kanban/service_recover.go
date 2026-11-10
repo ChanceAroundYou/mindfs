@@ -13,6 +13,10 @@ type RecoveryPlan struct {
 	ResumeSession string
 	// UnknownIDs 是无法判定执行状态、需要用户处理的请求 id 列表。
 	UnknownIDs []string
+	// ResumeNodeRunIDs 是启动对账后已安全重新排队、等待 driver 继续执行的
+	// Workflow NodeRun id（D8/D9）。这些行有证据表明外部副作用尚未发生
+	// （未发送 / 未绑定会话），或会话探针确认可续接。
+	ResumeNodeRunIDs []string
 	// NeedsUser 为 true 时任务进 needs-user，不得自动重发 prompt、
 	// 不得自动建 attempt。
 	NeedsUser bool
