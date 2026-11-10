@@ -254,6 +254,11 @@
   不落共享文件。
 - 测试：`TestLocalLLMuxCredentialValueReturnsLiteralValue`、`TestCodexChildEnv*`（注入且保留进程环境、
   `def.Env` 优先、无凭据返回 nil、动态/空值不注入）。
+- 部署与真机验证：`60bf780e` → `v0.5.5-1118-10-g60bf780e`，四端版本一致。WSL 重启后用真实 WS
+  发了一轮 Codex（`core` 项目、临时会话，验完已删除）：模型返回 `READY`，exchange 记录
+  outputTokens 51；同一时刻 `codex app-server` 进程环境里有 `LLMUX_API_KEY`，而 mindfs 服务进程与
+  本机 systemd 环境里都没有——凭据只进子进程。WSL 的 `/api/agents/codex/rate-limits` 同时从 502 恢复为 200。
+  本机 system 服务仍需用户执行 `sudo systemctl restart mindfs` 才会切到该版本。
 
 ### Task 6 follow-up · 2026-11-11 — profile merge and provider switch
 
