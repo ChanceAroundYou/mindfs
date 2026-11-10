@@ -7375,15 +7375,21 @@ groups:
   - id: G-KQ
     title: Codex 活动 profile 持久化与配置写入权收敛
     kind: fix
-    symptom: "每次 MindFS 同步都会把活动 llmux 配置重置成 default；切到 llmux 后 Codex 报 invalid type: string \"gpt-6-luna\", expected a boolean 而无法对话（llmux overlay 的根级键被拼进 [features] 表）；API provider 切换、provider 刷新和本机备份列表又能改写或恢复 Codex config.toml，导致选择错乱与本机恢复快照重复；Codex 的 API provider 切换入口还是个死胡同。"
-    why: "活动 profile 是设备本地状态，必须由单一 profile-aware renderer 合成共享 default、llmux overlay 和本地 trust/tui/hooks；overlay 的根级赋值必须位于第一个表头之前，否则 TOML 会把它归入最后一个表。API provider 目录只管理可同步的元数据与各设备凭据，不拥有 Codex runtime 写权限；当供应商条目与 shared profile 描述同一端点时，切换供应商委托给该 profile，其余情况明确拒绝。完整本机快照留作恢复数据，不应进入 profile 切换列表。"
+    symptom: "每次 MindFS 同步都会把活动 llmux 配置重置成 default；切到 llmux 后 Codex 报 invalid type: string \"gpt-6-luna\", expected a boolean 而无法对话（llmux overlay 的根级键被拼进 [features] 表），配置修好后同一路径又报 Missing environment variable: LLMUX_API_KEY（设备本地凭据只被检测、从未注入 Codex 子进程）；API provider 切换、provider 刷新和本机备份列表又能改写或恢复 Codex config.toml，导致选择错乱与本机恢复快照重复；Codex 的 API provider 切换入口还是个死胡同。"
+    why: "活动 profile 是设备本地状态，必须由单一 profile-aware renderer 合成共享 default、llmux overlay 和本地 trust/tui/hooks；overlay 的根级赋值必须位于第一个表头之前，否则 TOML 会把它归入最后一个表。设备本地 LLMUX_API_KEY 只从 $XDG_CONFIG_HOME/codex/llmux.env 按字面量读取并注入 Codex 子进程环境（codex-go-sdk 在 Env 非 nil 时会整体替换环境，所以必须从 os.Environ 起步并保留 def.Env 覆盖），绝不写日志、API 响应或共享文件。API provider 目录只管理可同步的元数据与各设备凭据，不拥有 Codex runtime 写权限；当供应商条目与 shared profile 描述同一端点时，切换供应商委托给该 profile，其余情况明确拒绝。完整本机快照留作恢复数据，不应进入 profile 切换列表。"
     boundary: "只统一 Codex runtime 的活动 profile 与切换入口；不改变 provider 元数据增删/探测，不共享本机 active marker、API key、auth 或完整快照，也不改变其他 agent 的 API provider 切换。"
     files:
       - internal/codexsync/active_profile.go
       - internal/codexsync/active_profile_test.go
+      - internal/codexsync/credentials.go
+      - internal/codexsync/credentials_test.go
       - internal/codexsync/profiles.go
       - internal/codexsync/render.go
       - internal/codexsync/render_test.go
+      - server/internal/agent/pool_codex_env.go
+      - server/internal/agent/pool_codex_env_test.go
+      - server/internal/agent/pool_config.go
+      - server/internal/agent/pool_open.go
       - internal/codexsync/profile_link.go
       - internal/codexsync/run.go
       - internal/codexsync/types.go
@@ -7421,8 +7427,8 @@ groups:
       - web/tests/agent-config-custom-codex.test.ts
       - web/tests/file-tree-agent-config-flow.test.mjs
       - server/internal/api/agent_config_test.go
-      - web/tests/agent-config-custom-codex.test.ts
-      - web/tests/file-tree-agent-config-flow.test.mjs
+      - internal/codexsync/credentials_test.go
+      - server/internal/agent/pool_codex_env_test.go
     anchors:
       - 'internal/codexsync/active_profile.go:func InitializeActiveProfileAt(paths Paths, name string) (string, error)'
       - 'internal/codexsync/render.go:func RenderRuntimeAt(paths Paths) error'

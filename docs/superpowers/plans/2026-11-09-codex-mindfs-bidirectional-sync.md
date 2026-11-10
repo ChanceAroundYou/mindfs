@@ -240,6 +240,21 @@
 
 ## Deployment Review
 
+### Task 6 follow-up · 2026-11-11 — device-local credential injection
+
+- Bug 3（配置结构修好后 Codex 报 `Missing environment variable: LLMUX_API_KEY`）：设备本地
+  `~/.config/codex/llmux.env` 一直只被 `LocalLLMuxCredentialAvailable` 用于 UI 检测，从未把值交给
+  Codex 子进程；本机 systemd 单元也没有 `EnvironmentFile`，服务进程环境里没有该变量。shared profile 的
+  `env_key = "LLMUX_API_KEY"` 只认 app-server 进程环境，所以重启修好嵌套键后立刻暴露这一层。
+- 修复：`LocalLLMuxCredentialValue` 按既有字面量解析规则从环境或 `$XDG_CONFIG_HOME/codex/llmux.env`
+  取实际值；`server/internal/agent/pool_codex_env.go` 的 `codexChildEnv` 只在 Codex app-server 启动时注入。
+  codex-go-sdk 在 `Env` 非 nil 时会**整体替换**子进程环境，所以注入时从 `os.Environ()` 起步再叠加
+  `def.Env`（显式配置优先）与凭据；无凭据时返回 nil，保持 SDK 原有的继承行为。会话打开与
+  `ReadRateLimits`/`ConsumeRateLimitReset` 两条启动路径都走该 helper。凭据不写日志、不进 API 响应、
+  不落共享文件。
+- 测试：`TestLocalLLMuxCredentialValueReturnsLiteralValue`、`TestCodexChildEnv*`（注入且保留进程环境、
+  `def.Env` 优先、无凭据返回 nil、动态/空值不注入）。
+
 ### Task 6 follow-up · 2026-11-11 — profile merge and provider switch
 
 - Bug 1（切到 llmux 无法对话）：`mergeSharedProfiles` 把 llmux overlay 直接拼在 shared default 末尾，

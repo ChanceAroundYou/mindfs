@@ -13,28 +13,36 @@ const maxLLMuxEnvFileBytes = 64 << 10
 // LocalLLMuxCredentialAvailable checks the env used by codex-llmux without sourcing
 // or logging the file, which would execute shell code and expose the key.
 func LocalLLMuxCredentialAvailable() bool {
-	environmentAvailable := strings.TrimSpace(os.Getenv("LLMUX_API_KEY")) != ""
+	_, ok := LocalLLMuxCredentialValue()
+	return ok
+}
+
+// LocalLLMuxCredentialValue returns the literal LLMUX_API_KEY this device can use.
+// Callers must pass it straight to the Codex child process environment: never log
+// it, return it from an API, or write it into shared configuration.
+func LocalLLMuxCredentialValue() (string, bool) {
+	environmentAvailable := strings.TrimSpace(os.Getenv("LLMUX_API_KEY"))
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return environmentAvailable
+		return environmentAvailable, environmentAvailable != ""
 	}
 	path := filepath.Join(configDir, "codex", "llmux.env")
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return environmentAvailable
+		return environmentAvailable, environmentAvailable != ""
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Size() > maxLLMuxEnvFileBytes {
-		return false
+		return "", false
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return false
+		return "", false
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024), maxLLMuxEnvFileBytes)
 	assigned := false
-	available := environmentAvailable
+	current := environmentAvailable
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -49,15 +57,19 @@ func LocalLLMuxCredentialAvailable() bool {
 		}
 		assigned = true
 		literal, valid := parseLiteralShellValue(value)
-		available = valid && strings.TrimSpace(literal) != ""
+		if !valid || strings.TrimSpace(literal) == "" {
+			current = ""
+			continue
+		}
+		current = literal
 	}
 	if scanner.Err() != nil {
-		return false
+		return "", false
 	}
 	if assigned {
-		return available
+		return current, current != ""
 	}
-	return environmentAvailable
+	return environmentAvailable, environmentAvailable != ""
 }
 
 func parseLiteralShellValue(raw string) (string, bool) {

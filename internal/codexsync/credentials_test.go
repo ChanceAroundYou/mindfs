@@ -35,6 +35,35 @@ func TestLocalLLMuxCredentialAvailableChecksEnvironmentAndLocalEnvFile(t *testin
 	}
 }
 
+func TestLocalLLMuxCredentialValueReturnsLiteralValue(t *testing.T) {
+	configRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+	t.Setenv("LLMUX_API_KEY", "")
+	envFile := filepath.Join(configRoot, "codex", "llmux.env")
+	if err := os.MkdirAll(filepath.Dir(envFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envFile, []byte("OTHER_KEY=value\nexport LLMUX_API_KEY='local-secret' # active\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := LocalLLMuxCredentialValue(); !ok || value != "local-secret" {
+		t.Fatalf("LocalLLMuxCredentialValue() = %q, %t; want local-secret", value, ok)
+	}
+	if err := os.WriteFile(envFile, []byte(`LLMUX_API_KEY="$OTHER_KEY"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := LocalLLMuxCredentialValue(); ok || value != "" {
+		t.Fatalf("dynamic value was returned: %q, %t", value, ok)
+	}
+	if err := os.Remove(envFile); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLMUX_API_KEY", "environment-secret")
+	if value, ok := LocalLLMuxCredentialValue(); !ok || value != "environment-secret" {
+		t.Fatalf("environment credential = %q, %t", value, ok)
+	}
+}
+
 func TestLocalLLMuxCredentialAvailableDoesNotFollowEnvFileSymlink(t *testing.T) {
 	configRoot := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
