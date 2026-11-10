@@ -151,6 +151,8 @@
 
 ### 仍未完成（按影响排序）
 
+> 2026-11-10 分层后续方案见 [Runtime 总路线图](2026-11-10-kanban-workflow-runtime-roadmap.md)：先辨别并复现 WP-00 主/子会话 lane 问题，再按依赖实施 Executor、worktree lifecycle、Agent-first 子计划。均为计划，不是实现授权。Workflow 中新留言按用户决策绑定提交时活动 Agent NodeRun；steer 有真实回执才按回执记录，否则在该 NodeRun 结束后投递同一 session。其余产品决策集中在路线图 D1–D17，避免本文件重复维护。
+
 1. **工作流运行时执行器不存在（最大缺口）**：`workflow_engine.go` 只有纯状态机
    （`EngineReadyNodes` / `EngineEvaluateLoop` / `ProjectStatusFromRun`），没有生产调用方。
    迁移到 WorkflowRun 的任务因此**无人推进**：legacy 引擎被互斥挡住，也没有人按图启动
