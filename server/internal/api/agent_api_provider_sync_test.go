@@ -19,6 +19,7 @@ func writeAPIProvidersFile(t *testing.T, providers []agentAPIProvider) string {
 	t.Helper()
 	root := t.TempDir()
 	testutil.IsolateUserDirs(t, root)
+	t.Setenv("AGENTS_ROOT", filepath.Join(root, ".agents"))
 	path, err := agentAPIProvidersPath()
 	if err != nil {
 		t.Fatalf("agentAPIProvidersPath: %v", err)
@@ -40,6 +41,8 @@ func writeAPIProvidersFile(t *testing.T, providers []agentAPIProvider) string {
 func TestProviderFixturesDoNotOverwriteExistingConfig(t *testing.T) {
 	// Simulate a real user's configuration without touching the actual user.
 	testutil.IsolateUserDirs(t, t.TempDir())
+	isolatedRoot := t.TempDir()
+	t.Setenv("AGENTS_ROOT", filepath.Join(isolatedRoot, ".agents"))
 	path, err := agentAPIProvidersPath()
 	if err != nil {
 		t.Fatal(err)

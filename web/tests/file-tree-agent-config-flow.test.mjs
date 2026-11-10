@@ -13,3 +13,40 @@ test("FileTree delegates agent-catalog requests to its transition logic", () => 
   assert.doesNotMatch(logic, /const \{[^}]*fetchAgentCatalog[^}]*\} = ctx/);
   assert.doesNotMatch(logic, /const \{[^}]*fetchAgents[^}]*\} = ctx/);
 });
+
+test("Codex config backups distinguish shared profiles from local recovery snapshots", () => {
+  const popover = read("../src/components/file/AgentConfigPopover.tsx");
+  const profiles = read("../src/components/file/AgentConfigProfileList.tsx");
+  const types = read("../src/shared/agentTypes.ts");
+
+  assert.match(popover, /<AgentConfigProfileList[\s\S]*backups=\{backups\}/);
+  assert.match(profiles, /item\.source === "shared"/);
+  assert.match(profiles, /!isShared[\s\S]*onDelete\(item\.id\)/);
+  assert.match(profiles, /agentConfig\.sharedProfiles/);
+  assert.match(profiles, /agentConfig\.localSnapshots/);
+  assert.match(profiles, /item\.localCredentialAvailable === false/);
+  assert.match(profiles, /agentConfig\.llmuxMissingKey/);
+  assert.match(types, /source\?: "local" \| "shared"/);
+});
+
+test("Codex config UI exposes safe sync status and missing local provider credentials", () => {
+  const service = read("../src/services/agent/agentConfig.ts");
+  const popover = read("../src/components/file/AgentConfigPopover.tsx");
+  const status = read("../src/components/file/AgentConfigSyncStatus.tsx");
+  const selection = read("../src/components/file/useAgentConfigSelection.ts");
+  const en = read("../src/i18n/locales/en-US-agents.ts");
+  const zh = read("../src/i18n/locales/zh-CN-agents.ts");
+
+  assert.match(service, /fetchAgentConfigSyncStatus/);
+  assert.match(service, /requestAgentConfigSync/);
+  assert.match(popover, /item\.localCredentialAvailable === false/);
+  assert.match(popover, /AgentConfigSyncStatus/);
+  assert.match(status, /agentConfig\.retrySync/);
+  assert.match(selection, /agentConfigSyncStatus\?\.state !== "syncing"/);
+  assert.match(selection, /setTimeout\(poll, 1000\)/);
+  const stateKeys = ["idle", "syncing", "synced", "pending", "conflict", "invalid", "unavailable"];
+  for (const state of stateKeys) {
+    assert.match(en, new RegExp(`agentConfig\\.syncState\\.${state}`));
+    assert.match(zh, new RegExp(`agentConfig\\.syncState\\.${state}`));
+  }
+});
