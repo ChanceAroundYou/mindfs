@@ -71,6 +71,9 @@ type Service struct {
 	Templates *TemplateStore
 	Roots     RootProvider
 	Runner    Runner
+	// WorkflowNodeRunnerPort 是 Workflow Agent 节点的执行端口（Task 2）。与
+	// legacy Runner 并存：工作流节点只走这里，绝不合成 StageRun 双写。
+	WorkflowNodeRunnerPort WorkflowNodeRunner
 	// Workflows is the control-plane WorkflowStore (WP-05). Nil in legacy tests;
 	// HTTP handlers reject with 503 when unavailable.
 	Workflows *WorkflowStore
@@ -134,6 +137,16 @@ func (s *Service) SetRunner(runner Runner) {
 	}
 	s.mu.Lock()
 	s.Runner = runner
+	s.mu.Unlock()
+}
+
+// SetWorkflowNodeRunner 挂上 Workflow Agent 节点执行端口。装配期调一次。
+func (s *Service) SetWorkflowNodeRunner(runner WorkflowNodeRunner) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.WorkflowNodeRunnerPort = runner
 	s.mu.Unlock()
 }
 

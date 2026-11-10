@@ -7546,7 +7546,7 @@ groups:
       - 'web/src/components/task/useRunViewEntry.ts:engine?.engine === "workflow"'
       - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns('
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleTaskWorkflowRunGet('
-      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) ListWorkflowNodeRuns('
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) ListWorkflowNodeRuns('
 
   # ── 工作流草稿画布（WP-07 画布 tranche）：桌面端可视化编辑 ──────────────────
   - id: G-KZ
@@ -7607,9 +7607,10 @@ groups:
     kind: feature
     symptom: "看板任务迁移到工作流后只有一条 Run：完成/失败后不能重跑或换工作流；同一节点被并发触发时可能启动第二个 agent turn；重启后 NodeRun 的 session 绑定丢失，旧留言绑定的 NodeRun 解析不到。"
     why: "三件必须保留：① NodeRun 唯一键 `(run_id,node_id,loop_path,iteration,attempt)` 的 claim 必须单语句原子（INSERT ... ON CONFLICT DO NOTHING + RowsAffected），输家回读原行，Runner 绝不在事务内调用；② canonical NodeRun 身份是 `workflow_node_runs`，WP-03 的 `node_runs` 影子行只读兜底，`ResolveNodeRun`/`GetNodeRun` 先查 canonical，旧留言与恢复数据不得因新表而读不到；③ D14 用户决策为「保留终态历史、每任务至多一个非终态 Run」，`workflow_runs` 必须去掉 `UNIQUE(task_id)` 并重建迁移，创建新 Run 只有当前绑定 Run 已终态才允许。"
-    boundary: "只覆盖 Workflow Runtime 的持久层（claim、NodeRun 身份解析、Run 历史迁移）。driver 触发/取消、Agent 节点执行器、Condition/Loop/HumanGate 调度、HumanGate 留言绑定在此组后续实现完成前不声明；`TaskStore.PostComment` 与 `OutboxService.RecordComment` 两个 writer 的合并留给留言绑定任务，本组不静默改语义。"
+    boundary: "只覆盖 Workflow Runtime 的持久层（claim、NodeRun 身份解析、Run 历史迁移）。Agent 节点执行器见 G-LD；driver 触发/取消、Condition/Loop/HumanGate 调度、HumanGate 留言绑定在本组后续实现完成前不声明；`TaskStore.PostComment` 与 `OutboxService.RecordComment` 两个 writer 的合并留给留言绑定任务，本组不静默改语义。"
     files:
       - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/task_store_workflow_node_runs.go
       - server/internal/kanban/node_run_identity.go
       - server/internal/kanban/service_recover.go
     tests:
@@ -7617,8 +7618,37 @@ groups:
       - server/internal/kanban/task_store_workflow_runs_history_test.go
       - server/internal/kanban/node_run_identity_test.go
     anchors:
-      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) ClaimWorkflowNodeRun('
-      - 'server/internal/kanban/task_store_workflow_runs.go:ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING'
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) ClaimWorkflowNodeRun('
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING'
       - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
       - 'server/internal/kanban/node_run_identity.go:func ResolveNodeRun('
       - 'server/internal/kanban/task_store_workflow_runs_history_test.go:func TestWorkflowRunHistoryAllowsNewRunOnlyAfterTerminal('
+
+  # ── Kanban Workflow Runtime 的 Agent 节点执行端口与 app adapter ────────────
+  - id: G-LD
+    title: Workflow Agent 节点走独立 Runner 端口与严格 JSON envelope
+    kind: feature
+    symptom: "工作流 Agent 节点若复用 legacy 阶段执行，会把节点结果写成 StageRun、用阶段标记判完成，并让节点默认继承任务主会话；用户会看到工作流节点污染旧流水、节点之间共享上下文，且 agent 正常回复正文被当作成功而继续推进。"
+    why: "三件必须保留：① 工作流 Agent 节点只经 `WorkflowNodeRunner`（`EnsureWorkflowNodeSession` + `RunWorkflowNode`）执行，绝不合成 legacy StageRun（测试断言 legacy `RunAgentStage` 调用次数为 0）；② D2 会话策略：空值/`per_node` 每节点新 session、`task_main` 才复用任务主会话、`same_stage` 复用同 node+loop_path 最近绑定、`always_new` 每次新建；③ D5 结果必须是严格 JSON envelope（`outcome=done|blocked|silent`，blocked/silent 必带 reason），非 JSON/未知字段/尾随数据/缺字段一律 `Outcome=unknown`（nil transport error），由上层投影 waiting_user，绝不按正文猜成功。"
+    boundary: "只覆盖单个 Agent 节点的执行端口、session 选择、prompt 输出契约与结果解析。NodeRun 状态落库/Activity/outbox 关联（Task 3）、driver 推进（Task 4+）、HumanGate 留言绑定（Task 5）不在本组；`task_main` 在任务尚无主会话时新建的会话不回写 `MainSessionKey`（由后续绑定任务决定），本组不静默绑定。"
+    files:
+      - server/internal/kanban/workflow_node_executor.go
+      - server/internal/kanban/task_store_workflow_node_runs.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/types.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/appcontext_workflow.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+    tests:
+      - server/internal/kanban/workflow_node_executor_test.go
+      - server/internal/api/appcontext_workflow_test.go
+    anchors:
+      - 'server/internal/kanban/workflow_node_executor.go:type WorkflowNodeRunner interface {'
+      - 'server/internal/kanban/workflow_node_executor.go:func ParseWorkflowNodeEnvelope('
+      - 'server/internal/kanban/workflow_node_executor.go:func BuildWorkflowNodeOutputContract('
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) LatestWorkflowNodeSessionKey('
+      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) EnsureWorkflowNodeSession('
+      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) RunWorkflowNode('
+      - 'server/internal/kanban/workflow_node_executor_test.go:func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner('
+      - 'server/internal/api/appcontext_workflow_test.go:func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope('

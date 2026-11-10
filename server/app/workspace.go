@@ -264,6 +264,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Scheduled = scheduled.NewService(services, services)
 	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
+	services.Kanban.SetWorkflowNodeRunner(services)
 	services.WireFinishStageTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)

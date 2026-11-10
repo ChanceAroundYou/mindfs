@@ -16,7 +16,6 @@ import (
 	"mindfs/server/internal/scheduled"
 )
 
-
 func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	primary := userID == m.PrimaryUserID()
 
@@ -108,6 +107,8 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 不接的话 /api/workflows 一律 503，迁移入口也就无从谈起。
 	services.Kanban.Workflows = m.shared.workflows
 	services.Kanban.SetRunner(services)
+	// Workflow Agent 节点走独立端口（D2/D5），不得经 legacy StageRun 双写。
+	services.Kanban.SetWorkflowNodeRunner(services)
 	services.WireFinishStageTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	for _, root := range services.ListRoots() {

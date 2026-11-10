@@ -43,6 +43,9 @@ const (
 	SessionReuseTaskMain  = "task_main"
 	SessionReuseSameStage = "same_stage"
 	SessionReuseAlwaysNew = "always_new"
+	// SessionReusePerNode 是 workflow Agent 节点的默认（D2）：每个节点实例
+	// 自己的 session，只有显式 task_main 才复用任务主会话。
+	SessionReusePerNode = "per_node"
 )
 
 // StageTemplate 是一段可执行的流水阶段定义；既用于模板（预设），也直接存储在任务身上。

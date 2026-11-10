@@ -37,7 +37,10 @@
 
 特别先解决：D1 driver/启动触发；D2 session 复用策略；D3 多活动 NodeRun 时 comment target；D4 HumanGate approve/reject；D5 agent structured output；D6 expression root；D7 legacy board verb 映射；D8 恢复证据；D9 queued/empty session 状态；D13 event ledger；D14 run/task cardinality。
 
-**已确认决策（2026-11-10）**：D14 = 保留历史 Run，每任务至多一个非终态 Run。`workflow_runs` 已重建去掉 `UNIQUE(task_id)`；`WorkflowRunForTask` 返回 engine 绑定的当前 Run（无绑定时取最新），`ListWorkflowRunsForTask` 暴露历史；创建第二条 Run 仅当绑定中的 Run 已终态，否则仍返回 `ErrTaskAlreadyWorkflow`。
+**已确认决策（2026-11-10）**：
+- D14 = 保留历史 Run，每任务至多一个非终态 Run。`workflow_runs` 已重建去掉 `UNIQUE(task_id)`；`WorkflowRunForTask` 返回 engine 绑定的当前 Run（无绑定时取最新），`ListWorkflowRunsForTask` 暴露历史；创建第二条 Run 仅当绑定中的 Run 已终态，否则仍返回 `ErrTaskAlreadyWorkflow`。
+- D2 = 每节点默认新 session；`session_reuse_policy=task_main` 才复用任务主会话；`same_stage` 在同一 `node + loop_path` 的 attempt/iteration 间复用；`always_new` 每次 attempt 新建。
+- D5 = Agent 结果必须是严格 JSON envelope（`outcome=done|blocked|silent`、`output`、`reason`）；缺失/非 JSON/非法 outcome/要求字段缺失时 NodeRun 转 waiting_user，Condition/Loop 不猜值。
 
 ## 文件与职责地图
 
@@ -87,12 +90,21 @@
 
 **Interfaces:** Consumes Task 1 persisted claim. Produces exact `WorkflowNodeExecution`, `WorkflowNodeResult`, and `WorkflowNodeRunner` types described above; signature frozen by failing tests before implementation.
 
-- [ ] Step 1: Add fake-runner test `TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner`; assert workflow node path receives NodeRun identity, node params and prompt, and legacy StageRun store remains unchanged.
-- [ ] Step 2: Run focused test; Expected: FAIL because no workflow runner port exists.
-- [ ] Step 3: Add `WorkflowNodeRunner` interface and inject it into `kanban.Service`; preserve existing `Runner` interface for legacy tasks.
-- [ ] Step 4: Add app adapter test for Ensure session + run call: assert selected agent/harness/model and node scope, captured session key, output and outcome; no live CLI.
-- [ ] Step 5: Implement app adapter by reusing agent pool/session APIs; session reuse obeys resolved D2, no synthetic StageRun creation.
-- [ ] Step 6: Run `go test ./server/internal/kanban ./server/app ./server/internal/api/usecase`; Expected: PASS.
+- [x] Step 1: Add fake-runner test `TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner`; assert workflow node path receives NodeRun identity, node params and prompt, and legacy StageRun store remains unchanged.
+- [x] Step 2: Run focused test; Expected: FAIL because no workflow runner port exists.
+- [x] Step 3: Add `WorkflowNodeRunner` interface and inject it into `kanban.Service`; preserve existing `Runner` interface for legacy tasks.
+- [x] Step 4: Add app adapter test for Ensure session + run call: assert selected agent/harness/model and node scope, captured session key, output and outcome; no live CLI.
+- [x] Step 5: Implement app adapter by reusing agent pool/session APIs; session reuse obeys resolved D2, no synthetic StageRun creation.
+- [x] Step 6: Run `go test ./server/internal/kanban ./server/app ./server/internal/api/usecase`; Expected: PASS.
+
+**Task 2 执行结果（2026-11-10）**：
+- `WorkflowNodeRunner` 端口冻结为 `EnsureWorkflowNodeSession` + `RunWorkflowNode`，`Service.StartWorkflowNode` 只走该端口；fake 端口测试断言 legacy `Runner.RunAgentStage` 调用次数为 0，NodeRun 的 `id/run_id/node_id/loop_path/iteration/attempt` 原样到达，`session_reuse_policy` 空值落 `per_node`（D2）。
+- D5 解析器 `ParseWorkflowNodeEnvelope` 用 `DisallowUnknownFields` + 二次 `Decode` 要求 `io.EOF`：纯文本、代码块外的多余 JSON、未知字段、非法 outcome、blocked/silent 缺 reason 全部报错；adapter 把这些统一转成 `Outcome=unknown`（nil transport error），交给 Task 3 投影 waiting_user。
+- adapter（`appcontext_workflow.go`）按 D2 解析复用：`task_main` 复用任务主会话、`same_stage` 用同 run/node/loop_path 最近一次绑定（`LatestWorkflowNodeSessionKey`），`per_node` 只在自己 NodeRun 已有绑定时续聊，`always_new` 永不复用；建会话/广播复用现有 usecase，不写 StageRun。
+- 默认 `per_node` 让同一节点的第二次 attempt 新建会话；`session_reuse_policy=same_stage` 才跨 attempt/iteration 续聊。
+- 单测接缝 `workflowTurnOverride` 只在测试中设置，生产为 nil；覆盖 agent/model/mode/effort/fast_service/plan_mode 透传、prompt 附加 JSON envelope 契约、结果解析和 session key/起止时间回填。
+- `server/app/workspace.go` 与 `workspace_build.go` 均调用 `SetWorkflowNodeRunner(services)`；`go test ./server/internal/kanban ./server/internal/api ./server/app` 全绿。
+- 未做：Activity/outbox 关联、NodeRun 状态落库、driver 推进（Task 3+）。
 
 ### Task 3：Agent node attempt lifecycle, output, Activity and after-commit
 
