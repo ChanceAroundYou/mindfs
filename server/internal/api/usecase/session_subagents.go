@@ -37,10 +37,14 @@ func (r *claudeSubagentRouter) Handle(ctx context.Context, update agenttypes.Eve
 		// （ToolProgressMessage → ToolUpdate）也带 parentToolUseId，但它不是新的
 		// 子代理 —— 早前按 parentToolUseId 非空就放行，于是每次心跳都会建出一个
 		// 名为 "Bash"、正文全空的幽灵子会话（2026-10-25 实测一次会话上百个）。
-		if update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate {
+		isToolEvent := update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate
+		if isToolEvent && strings.TrimSpace(ref.SubagentType) == "" {
 			return false
 		}
-		if strings.TrimSpace(ref.ParentToolUseID) == "" {
+		// 子代理的第一条事件可能只是它自己的工具卡（还没吐过正文增量）。
+		// SDK 只在子代理消息上填 subagentType，有它就足以证明归属 —— 直接建子会话
+		// 并路由，不能让这张卡退回父回合（用户报的「子会话往主会话塞消息」形态）。
+		if !isToolEvent && strings.TrimSpace(ref.ParentToolUseID) == "" {
 			return false
 		}
 	}

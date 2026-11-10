@@ -7580,3 +7580,22 @@ groups:
       - 'web/src/components/task/WorkflowDraftEditor.tsx:export function WorkflowDraftEditor('
       - 'web/src/components/task/TaskBoardToolbar.tsx:onOpenWorkflowEditor'
       - 'web/src/app/useAppKanbanTaskPanel.tsx:<WorkflowDraftEditor onClose='
+
+  # ── Claude 子代理事件归属（WP-00）：子代理工具卡不得回落父回合 ──────────────
+  - id: G-LB
+    title: Claude 子代理内部工具卡归属 child，不回落父会话
+    kind: fix
+    symptom: "主会话时间线里冒出子代理（Claude Task 子代理）的内部工具卡 —— 例如子会话自己在跑 `Read main.go`，卡片却出现在主会话回合里；用户描述的「子会话一直往主会话塞消息」在 fake stream 下可稳定复现为同一形态。子代理先出工具卡、后出正文时必现。"
+    why: "SDK 只在子代理消息上填 `subagentType`，这是可判定的 child 归属。旧 router 在 child 尚未由正文物化时，对任何 ToolCall/ToolUpdate 一律 `return false`，于是带 `subagentType` 的 child-owned 工具卡落进父回合 accumulator。修复只放行这一种：`isToolEvent && subagentType != \"\"` 时立即 `ensure` child 并消费事件；无 `subagentType` 的普通工具心跳仍归父会话（否则会重演 2026-10-25「每次 Bash 心跳建出一个幽灵子会话」）。父会话合法的 Task 生命周期卡/完成摘要卡保持 parent-owned，不受影响。"
+    boundary: "只改在线 Claude router 对 child-owned ToolCall/ToolUpdate 的物化与消费判定。不碰父 Task 生命周期/summary 卡的展示契约，不碰 Codex collab 后台订阅，不碰 result-origin 回合边界；无归属字段的正文仍按父正文处理（不发明 child 身份）；导入/重开的 `isSidechain` 缺口仍未修复、不在本组范围；已关闭 child 的迟到事件继续吞掉、不落盘。"
+    files:
+      - server/internal/api/usecase/session_subagents.go
+    tests:
+      - server/internal/api/usecase/session_subagent_stream_test.go
+      - server/internal/agent/claude/session_subagent_attribution_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_subagents.go:isToolEvent := update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate'
+      - 'server/internal/api/usecase/session_subagents.go:if isToolEvent && strings.TrimSpace(ref.SubagentType) == "" {'
+      - 'server/internal/api/usecase/session_subagents.go:if !isToolEvent && strings.TrimSpace(ref.ParentToolUseID) == "" {'
+      - 'server/internal/api/usecase/session_subagent_stream_test.go:func TestClaudeSubagentRouterNeverLeaksChildOwnedEventsIntoParent('
+      - 'server/internal/agent/claude/session_subagent_attribution_test.go:func TestClaudeMetadataFreeDeltaInventsNoAttribution('
