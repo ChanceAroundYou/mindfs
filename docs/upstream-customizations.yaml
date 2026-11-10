@@ -7368,7 +7368,7 @@ groups:
       - 'internal/codexsync/git.go:func syncRepository(ctx context.Context, repoRoot string) (Result, error)'
       - 'internal/codexsync/profile_link.go:func prepareLocalProfileEdit(paths Paths) error'
       - 'server/internal/api/agent_api_provider_storage.go:func writeAgentAPIProviders(providers []agentAPIProvider) error'
-      - 'server/internal/api/agent_config_shared.go:func switchSharedCodexConfig(id string, app *AppContext) (agentConfigManifestEntry, error)'
+      - 'server/internal/api/agent_config_shared.go:func switchSharedCodexConfig(id, requestedAgent string, app *AppContext) (agentConfigManifestEntry, error)'
       - 'web/src/components/file/AgentConfigProfileList.tsx:export function AgentConfigProfileList('
 
   # ── Codex active profile selection and provider-switch ownership ───────
@@ -7395,12 +7395,15 @@ groups:
       - server/internal/api/agent_api_provider_test.go
       - server/internal/api/agent_api_provider_sync_test.go
       - server/internal/api/agent_config_backup.go
+      - server/internal/api/agent_config_shared.go
       - server/internal/api/agent_config_switch.go
       - server/internal/api/agent_config_shared_test.go
       - server/internal/api/agent_config_test.go
       - web/src/components/file/AgentConfigPopover.tsx
+      - web/src/components/file/agentConfigProfiles.ts
       - web/src/components/file/useAgentConfigActions.ts
       - web/src/components/file/useAgentConfigSelection.ts
+      - web/tests/agent-config-custom-codex.test.ts
       - web/tests/file-tree-agent-config-flow.test.mjs
     tests:
       - internal/codexsync/active_profile_test.go
@@ -7411,10 +7414,12 @@ groups:
       - server/internal/api/agent_api_provider_sync_test.go
       - server/internal/api/agent_config_shared_test.go
       - server/internal/api/agent_config_test.go
+      - web/tests/agent-config-custom-codex.test.ts
       - web/tests/file-tree-agent-config-flow.test.mjs
     anchors:
       - 'internal/codexsync/active_profile.go:func InitializeActiveProfileAt(paths Paths, name string) (string, error)'
       - 'internal/codexsync/render.go:func RenderRuntimeAt(paths Paths) error'
       - 'server/app/codex_profile_selection.go:func initializeCodexProfileSelection(prefs *preferences.Store) error'
       - 'server/internal/api/agent_config_switch.go:func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConfigManifestEntry, bool, error)'
+      - 'server/internal/api/agent_config_shared.go:func configuredCodexSDKAgent(name string) (string, bool, error)'
       - 'web/src/components/file/useAgentConfigSelection.ts:const chooseAgentForConfig = React.useCallback('

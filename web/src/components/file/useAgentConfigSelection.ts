@@ -2,6 +2,7 @@ import React from "react";
 import { fetchAgentConfigBackups, fetchAgentConfigDefaults, fetchAgentAPIProviders, fetchAgentConfigSyncStatus } from "../../services/agentConfig";
 import { getRootNodeId } from "../../services/net/rootNode";
 import { fetchAgents } from "../../services/agents";
+import { isCodexProfileAgent, switchableAgentConfigBackups } from "./agentConfigProfiles";
 
 export function useAgentConfigSelection(ctx: any) {
   const { agentConfigRestartingAgent, onRestartAgent, t, setAgentConfigRestartingAgent, setAgentConfigError, agentConfigAgent, setAgentConfigAgent, setAgentConfigBusy, agentConfigAgents, agentConfigFlow, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigAddTab, setAgentConfigStep, setAgentConfigBackups, setAgentAPIProviders, setAgentConfigSyncStatus, setSelectedAgentConfigID, agentConfigPreferredProviderIDs, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigSwitchTab } = ctx;
@@ -57,7 +58,7 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
   try {
     const selectedAgent = agentConfigAgents.find((item: any) => item.name === agentName);
     const supportsAPIProvider = Boolean(selectedAgent?.supports_api_provider_switch);
-    const isCodex = agentName.toLowerCase() === "codex";
+    const isCodex = isCodexProfileAgent(agentName, selectedAgent);
     if (agentConfigFlow === "backup") {
       const defaults = await fetchAgentConfigDefaults(agentName);
       setAgentConfigName("");
@@ -71,10 +72,10 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
     } else {
       const [backups, providers, syncStatus] = await Promise.all([
         fetchAgentConfigBackups(agentName),
-        supportsAPIProvider ? fetchAgentAPIProviders(agentName) : Promise.resolve([]),
-        agentName.toLowerCase() === "codex" ? fetchAgentConfigSyncStatus() : Promise.resolve(null),
+        supportsAPIProvider && !isCodex ? fetchAgentAPIProviders(agentName) : Promise.resolve([]),
+        isCodex ? fetchAgentConfigSyncStatus() : Promise.resolve(null),
       ]);
-      const switchableBackups = isCodex ? backups.filter((item: any) => item.source === "shared") : backups;
+      const switchableBackups = switchableAgentConfigBackups(agentName, selectedAgent, backups);
       setAgentConfigBackups(switchableBackups);
       setAgentAPIProviders(providers);
       setAgentConfigSyncStatus(syncStatus);

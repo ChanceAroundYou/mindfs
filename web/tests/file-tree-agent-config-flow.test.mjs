@@ -20,7 +20,8 @@ test("Codex config backups distinguish shared profiles from local recovery snaps
   const selection = read("../src/components/file/useAgentConfigSelection.ts");
   const types = read("../src/shared/agentTypes.ts");
 
-  assert.match(popover, /<AgentConfigProfileList[\s\S]*backups=\{backups\}/);
+  assert.match(popover, /switchableAgentConfigBackups/);
+  assert.match(popover, /<AgentConfigProfileList[\s\S]*backups=\{switchableBackups\}/);
   assert.match(profiles, /item\.source === "shared"/);
   assert.match(profiles, /!isShared[\s\S]*onDelete\(item\.id\)/);
   assert.match(profiles, /agentConfig\.sharedProfiles/);
@@ -28,10 +29,11 @@ test("Codex config backups distinguish shared profiles from local recovery snaps
   assert.match(profiles, /item\.localCredentialAvailable === false/);
   assert.match(profiles, /agentConfig\.llmuxMissingKey/);
   assert.match(types, /source\?: "local" \| "shared"/);
-  assert.match(selection, /source === "shared"/);
+  assert.match(selection, /switchableAgentConfigBackups/);
+  assert.match(selection, /isCodexProfileAgent/);
   assert.match(selection, /last_config_selection/);
   assert.match(selection, /shared:codex-default/);
-  assert.match(popover, /isCodex[\s\S]*effectiveSwitchTab === "api_provider"/);
+  assert.match(popover, /isCodexProfileAgent[\s\S]*effectiveSwitchTab === "api_provider"/);
 });
 
 test("failed local backup deletion reloads the server-owned backup list", () => {

@@ -39,11 +39,23 @@ func (h *HTTPHandler) handleAgentConfigBackupsList(w http.ResponseWriter, r *htt
 			filtered = append(filtered, item)
 		}
 	}
-	if strings.EqualFold(agentName, "codex") {
+	profileAgent := ""
+	configuredName, isCodexSDK, err := configuredCodexSDKAgent(agentName)
+	if err != nil {
+		respondError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if isCodexSDK {
+		profileAgent = configuredName
+	}
+	if profileAgent != "" {
 		shared, err := sharedCodexConfigBackups()
 		if err != nil {
 			respondError(w, http.StatusServiceUnavailable, err)
 			return
+		}
+		for index := range shared {
+			shared[index].Agent = profileAgent
 		}
 		respondJSON(w, http.StatusOK, shared)
 		return

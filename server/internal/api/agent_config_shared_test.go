@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -70,6 +71,132 @@ func TestSharedCodexProfilesAreListedSeparatelyFromLocalManifest(t *testing.T) {
 		t.Fatalf("listing wrote synthesized profiles into local manifest: %s", after)
 	}
 }
+
+func TestCustomNamedCodexSDKListsOnlySharedProfiles(t *testing.T) {
+	home := t.TempDir()
+	testutil.IsolateUserDirs(t, home)
+	t.Setenv("AGENTS_ROOT", filepath.Join(home, ".agents"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	configPath := filepath.Join(home, "agents.json")
+	t.Setenv("MINDFS_AGENTS_CONFIG", configPath)
+	writeJSON(t, configPath, agent.Config{Agents: []agent.Definition{{Name: "codex-custom", Command: "codex", Protocol: agent.ProtocolCodexSDK}}})
+	paths, err := codexsync.ResolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.SharedLLMux), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SharedDefault, []byte("model = \"gpt-5-codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SharedLLMux, []byte(testCodexSharedLLMuxProfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	local := agentConfigManifestEntry{ID: "codex-custom-recovery", Agent: "codex-custom", Name: "private-recovery", Source: "local"}
+	if err := writeAgentConfigManifest([]agentConfigManifestEntry{local}); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", "/api/agent-config/backups?agent=codex-custom", nil)
+	(&HTTPHandler{}).handleAgentConfigBackupsList(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var entries []agentConfigManifestEntry
+	if err := json.Unmarshal(recorder.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].Source != "shared" || entries[1].Source != "shared" {
+		t.Fatalf("custom Codex SDK received non-shared switch targets: %+v", entries)
+	}
+	if entries[0].Agent != "codex-custom" || entries[1].Agent != "codex-custom" {
+		t.Fatalf("shared profiles were not scoped to the requested agent: %+v", entries)
+	}
+}
+
+func TestNonCodexProtocolNamedCodexDoesNotListSharedProfiles(t *testing.T) {
+	home := t.TempDir()
+	testutil.IsolateUserDirs(t, home)
+	t.Setenv("AGENTS_ROOT", filepath.Join(home, ".agents"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	configPath := filepath.Join(home, "agents.json")
+	t.Setenv("MINDFS_AGENTS_CONFIG", configPath)
+	writeJSON(t, configPath, agent.Config{Agents: []agent.Definition{{Name: "codex", Command: "custom-agent", Protocol: agent.ProtocolACP}}})
+	paths, err := codexsync.ResolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.SharedDefault), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SharedDefault, []byte("model = \"gpt-5-codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", "/api/agent-config/backups?agent=codex", nil)
+	(&HTTPHandler{}).handleAgentConfigBackupsList(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var entries []agentConfigManifestEntry
+	if err := json.Unmarshal(recorder.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("non-Codex agent named codex received shared profiles: %+v", entries)
+	}
+}
+
+func TestSharedCodexSwitchUsesRequestedCustomAgent(t *testing.T) {
+	home := t.TempDir()
+	testutil.IsolateUserDirs(t, home)
+	agentsRoot := filepath.Join(home, ".agents")
+	codexHome := filepath.Join(home, ".codex")
+	t.Setenv("AGENTS_ROOT", agentsRoot)
+	t.Setenv("CODEX_HOME", codexHome)
+	configPath := filepath.Join(home, "agents.json")
+	t.Setenv("MINDFS_AGENTS_CONFIG", configPath)
+	writeJSON(t, configPath, agent.Config{Agents: []agent.Definition{{Name: "codex-custom", Command: "codex", Protocol: agent.ProtocolCodexSDK}}})
+	paths, err := codexsync.ResolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.SharedDefault), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SharedDefault, []byte("model = \"gpt-5-codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/agent-config/switch", strings.NewReader(`{"id":"shared:codex-default","agent":"codex-custom"}`))
+	(&HTTPHandler{}).handleAgentConfigSwitch(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Backup agentConfigManifestEntry `json:"backup"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Backup.Agent != "codex-custom" {
+		t.Fatalf("shared profile switch reported agent %q; want codex-custom", response.Backup.Agent)
+	}
+}
+
+const testCodexSharedLLMuxProfile = `model = "deepseek-v4"
+model_provider = "llmux"
+
+[model_providers.llmux]
+name = "LLMUX"
+base_url = "https://llmux.example/v1"
+wire_api = "responses"
+env_key = "LLMUX_API_KEY"
+`
 
 func TestCodexLocalRecoverySnapshotCannotBeSwitchedOrDeletedAsShared(t *testing.T) {
 	home := t.TempDir()

@@ -56,6 +56,7 @@ export async function deleteAgentConfigBackup(id: string): Promise<{ deleted: bo
 }
 
 export async function switchAgentConfig(input: {
+  agent?: string;
   id: string;
   confirmOverwrite?: boolean;
 }): Promise<{
@@ -67,6 +68,7 @@ export async function switchAgentConfig(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      agent: input.agent,
       id: input.id,
       confirm_overwrite: !!input.confirmOverwrite,
     }),

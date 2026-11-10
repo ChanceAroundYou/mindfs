@@ -8,6 +8,7 @@ import { AgentConfigAgentStep } from "./AgentConfigAgentStep";
 import { AgentConfigProfileList } from "./AgentConfigProfileList";
 import { AgentConfigSyncStatus } from "./AgentConfigSyncStatus";
 import { AgentLifecyclePopover } from "./AgentLifecyclePopover";
+import { isCodexProfileAgent, switchableAgentConfigBackups } from "./agentConfigProfiles";
 import {
   agentConfigActionRowStyle, agentConfigFieldStyle, agentConfigHintStyle,
   agentConfigIconButtonStyle, agentConfigInputStyle, agentConfigLabelStyle,
@@ -130,7 +131,9 @@ export function AgentConfigPopover({
   const confirmButtonLabel = flow === "backup" ? t("agentConfig.continueBackup") : t("agentConfig.continueSwitch");
   const selectedAgentStatus = agents.find((item) => item.name === selectedAgent);
   const supportsAPIProvider = Boolean(selectedAgentStatus?.supports_api_provider_switch);
-  const isCodex = selectedAgent.toLowerCase() === "codex";
+  const isCodex = isCodexProfileAgent(selectedAgent, selectedAgentStatus);
+  const switchableBackups = switchableAgentConfigBackups(selectedAgent, selectedAgentStatus, backups);
+  const selectedBackupIsSwitchable = switchableBackups.some((item) => item.id === selectedBackupID);
   const addTabs: AgentConfigAddTab[] = supportsAPIProvider ? ["backup", "api"] : ["backup"];
   const switchTabs: AgentConfigSwitchTab[] = supportsAPIProvider && !isCodex ? ["backup", "api_provider"] : ["backup"];
   const effectiveAddTab: AgentConfigAddTab = supportsAPIProvider ? addTab : "backup";
@@ -326,11 +329,11 @@ export function AgentConfigPopover({
           <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "260px", overflow: "auto" }}>
             {busy ? (
               <div style={agentConfigHintStyle}>{t("agentConfig.loading")}</div>
-            ) : backups.length === 0 && (supportsAPIProvider ? apiProviders.length === 0 : true) ? (
+            ) : switchableBackups.length === 0 && (supportsAPIProvider ? apiProviders.length === 0 : true) ? (
               <div style={agentConfigHintStyle}>{t("agentConfig.noSwitchableConfig")}</div>
             ) : effectiveSwitchTab === "backup" ? (
               <AgentConfigProfileList
-                backups={backups}
+                backups={switchableBackups}
                 selectedID={selectedBackupID}
                 busy={busy}
                 onSelect={onSelectedBackupChange}
@@ -410,7 +413,7 @@ export function AgentConfigPopover({
               })
             )}
           </div>
-          {selectedAgent.toLowerCase() === "codex" ? (
+          {isCodex ? (
             <AgentConfigSyncStatus status={syncStatus} busy={syncBusy} onRetry={onRetrySync} />
           ) : null}
           <div style={agentConfigActionRowStyle}>
@@ -419,9 +422,9 @@ export function AgentConfigPopover({
             </button>
             <button
               type="button"
-              disabled={busy || (effectiveSwitchTab === "backup" ? !selectedBackupID : !selectedAPIProviderID)}
+              disabled={busy || (effectiveSwitchTab === "backup" ? !selectedBackupIsSwitchable : !selectedAPIProviderID)}
               onClick={onSwitch}
-              style={agentConfigPrimaryButtonStyle(busy || (effectiveSwitchTab === "backup" ? !selectedBackupID : !selectedAPIProviderID))}
+              style={agentConfigPrimaryButtonStyle(busy || (effectiveSwitchTab === "backup" ? !selectedBackupIsSwitchable : !selectedAPIProviderID))}
             >
               {t("agentConfig.switch")}
             </button>

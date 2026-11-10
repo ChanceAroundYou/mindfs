@@ -28,17 +28,17 @@ type agentConfigSource struct {
 }
 
 type agentConfigManifestEntry struct {
-	ID          string              `json:"id"`
-	Agent       string              `json:"agent"`
-	Name        string              `json:"name"`
-	Source      string              `json:"source,omitempty"`
-	CreatedAt   string              `json:"createdAt"`
-	UpdatedAt   string              `json:"updatedAt"`
-	Sources     []agentConfigSource `json:"sources,omitempty"`
-	EnvKeys     []string            `json:"envKeys,omitempty"`
-	SyncState   string              `json:"sync_state,omitempty"`
-	SyncMessage string              `json:"sync_message,omitempty"`
-	LocalCredentialAvailable *bool   `json:"localCredentialAvailable,omitempty"`
+	ID                       string              `json:"id"`
+	Agent                    string              `json:"agent"`
+	Name                     string              `json:"name"`
+	Source                   string              `json:"source,omitempty"`
+	CreatedAt                string              `json:"createdAt"`
+	UpdatedAt                string              `json:"updatedAt"`
+	Sources                  []agentConfigSource `json:"sources,omitempty"`
+	EnvKeys                  []string            `json:"envKeys,omitempty"`
+	SyncState                string              `json:"sync_state,omitempty"`
+	SyncMessage              string              `json:"sync_message,omitempty"`
+	LocalCredentialAvailable *bool               `json:"localCredentialAvailable,omitempty"`
 }
 
 type agentConfigBackupRequest struct {
@@ -50,6 +50,7 @@ type agentConfigBackupRequest struct {
 }
 
 type agentConfigSwitchRequest struct {
+	Agent            string `json:"agent,omitempty"`
 	ID               string `json:"id"`
 	ConfirmOverwrite bool   `json:"confirm_overwrite"`
 }

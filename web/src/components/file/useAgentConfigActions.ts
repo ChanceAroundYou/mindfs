@@ -96,7 +96,7 @@ const runAgentConfigSwitch = React.useCallback(async (confirmOverwrite = false) 
       closeAgentConfigFlow();
       return;
     }
-    const result = await switchAgentConfig({ id: agentConfigSwitchSelection.id, confirmOverwrite });
+    const result = await switchAgentConfig({ agent: agentConfigAgent, id: agentConfigSwitchSelection.id, confirmOverwrite });
     if (result.needs_confirm) {
       setAgentConfigConfirmMessage(result.message || t("agentConfig.targetExists"));
       setAgentConfigStep("confirm");
