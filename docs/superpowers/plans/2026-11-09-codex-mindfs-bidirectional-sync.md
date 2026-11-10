@@ -260,6 +260,12 @@
   `active_profile_test.go`（渲染结果解码断言根级 `model_provider=llmux`、`features` 仅 `goals`）、
   `server/internal/api/agent_api_provider_codex_switch_test.go`（匹配 provider 委托成功并写入根级配置；
   base URL 不匹配时报原错误且不写运行时）、`web/tests/agent-config-custom-codex.test.ts`（空 protocol 兜底）。
+- 部署：`f5f0a33a` → `v0.5.5-1118-8-gf5f0a33a`，`deploy-all.sh` 门禁全绿（Vitest 487 通过），已装本机并部署
+  WSL（PID 1426473）、fn（PID 2962846）、pc-win（PID 132052，health 200），四端版本逐字一致。
+  隔离 HOME 用真实 shared 配置跑 `--render`，解码结果为根级 `model=gpt-6-luna` / `model_provider=llmux`，
+  `features` 仅 `goals`；WSL 重启后其运行时配置同样已是根级 `model_provider=llmux`。
+  本机 system 服务仍是旧进程（旧代码会周期性把运行配置写回坏的嵌套形态），需用户执行
+  `sudo systemctl restart mindfs` 后才生效；重启前不要以本机配置判断修复是否生效。
 
 ### Task 6 follow-up · 2026-11-11
 
