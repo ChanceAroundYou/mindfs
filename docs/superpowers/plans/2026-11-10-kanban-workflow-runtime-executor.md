@@ -37,6 +37,8 @@
 
 特别先解决：D1 driver/启动触发；D2 session 复用策略；D3 多活动 NodeRun 时 comment target；D4 HumanGate approve/reject；D5 agent structured output；D6 expression root；D7 legacy board verb 映射；D8 恢复证据；D9 queued/empty session 状态；D13 event ledger；D14 run/task cardinality。
 
+**已确认决策（2026-11-10）**：D14 = 保留历史 Run，每任务至多一个非终态 Run。`workflow_runs` 已重建去掉 `UNIQUE(task_id)`；`WorkflowRunForTask` 返回 engine 绑定的当前 Run（无绑定时取最新），`ListWorkflowRunsForTask` 暴露历史；创建第二条 Run 仅当绑定中的 Run 已终态，否则仍返回 `ErrTaskAlreadyWorkflow`。
+
 ## 文件与职责地图
 
 - `server/internal/kanban/task_store_workflow_runs.go`：NodeRun 原子 claim、按键读取、状态迁移与 run CAS；仅在既有方法不足时拆出 `task_store_workflow_claim.go`。
@@ -64,13 +66,20 @@
 
 **Interfaces:** Consumes existing TaskStore transactions and WP-01/WP-03 tables. Produces atomic `ClaimWorkflowNodeRun(ctx, runID, nodeID, loopPath string, iteration, attempt int, node NodeRun) (NodeRun, claimed bool, err error)` or equivalent CAS signature (must be finalized before tests).
 
-- [ ] **Step 1: Write `TestClaimWorkflowNodeRunIsSingleWinner`** with two concurrent claims for the same unique key; assert exactly one `claimed=true`, one persisted row, no external callback.
-- [ ] **Step 2: Run `go test ./server/internal/kanban -run '^TestClaimWorkflowNodeRunIsSingleWinner$' -count=1`**; Expected: FAIL before claim API.
-- [ ] **Step 3: Reconcile existing competing request/NodeRun APIs first** — explicitly review `TaskStore.PostComment`, `OutboxService.RecordComment`, `EnsureOutboxTables`, `continue_requests` DDL migration/guard test, `NodeRunRecord` vs `NodeRun`, `GetNodeRun`, and `CreateNewAttempt`; choose one canonical workflow NodeRun identity and a lossless mapping for WP-03 legacy outbox rows. Add tests that old comments/recovery data remain readable.
-- [ ] **Step 4: Resolve D14 before schema work** — if multiple historical runs per task are supported, rebuild SQLite `workflow_runs` because `task_id UNIQUE` cannot be dropped in place; update `WorkflowRunForTask`, engine binding lookup (`TaskEngineFor`/`taskRunsOnWorkflow` in `service_engine.go`) and add upgrade/rollback fixture. If D14 chooses one run per task, test that later workflow choices are explicitly rejected.
-- [ ] **Step 5: Implement claim in one task DB transaction** with unique-key conflict interpreted as already claimed; do not call Runner inside transaction.
-- [ ] **Step 6: Add test** that claimed row survives store reopen and repeated claim returns existing identity without a second start.
-- [ ] **Step 7: Run targeted kanban tests**; Expected: PASS.
+- [x] **Step 1: Write `TestClaimWorkflowNodeRunIsSingleWinner`** with two concurrent claims for the same unique key; assert exactly one `claimed=true`, one persisted row, no external callback.
+- [x] **Step 2: Run `go test ./server/internal/kanban -run '^TestClaimWorkflowNodeRunIsSingleWinner$' -count=1`**; Expected: FAIL before claim API.
+- [x] **Step 3: Reconcile existing competing request/NodeRun APIs first** — explicitly review `TaskStore.PostComment`, `OutboxService.RecordComment`, `EnsureOutboxTables`, `continue_requests` DDL migration/guard test, `NodeRunRecord` vs `NodeRun`, `GetNodeRun`, and `CreateNewAttempt`; choose one canonical workflow NodeRun identity and a lossless mapping for WP-03 legacy outbox rows. Add tests that old comments/recovery data remain readable.
+- [x] **Step 4: Resolve D14 before schema work** — if multiple historical runs per task are supported, rebuild SQLite `workflow_runs` because `task_id UNIQUE` cannot be dropped in place; update `WorkflowRunForTask`, engine binding lookup (`TaskEngineFor`/`taskRunsOnWorkflow` in `service_engine.go`) and add upgrade/rollback fixture. If D14 chooses one run per task, test that later workflow choices are explicitly rejected.
+- [x] **Step 5: Implement claim in one task DB transaction** with unique-key conflict interpreted as already claimed; do not call Runner inside transaction.
+- [x] **Step 6: Add test** that claimed row survives store reopen and repeated claim returns existing identity without a second start.
+- [x] **Step 7: Run targeted kanban tests**; Expected: PASS.
+
+**Task 1 执行结果（2026-11-10）**：
+- `ClaimWorkflowNodeRun` 用单条 `INSERT ... ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING` + `RowsAffected` 判定唯一赢家；输家回读原行。claim 只在 DB 内完成，不调用任何 Runner。`SetMaxOpenConns(1)` 让并发 claim 串行化，4 goroutine 测试恰好一个 winner。
+- `UpsertWorkflowNodeRun` 的 conflict update 补齐 `agent/harness/model/session_key/input_json/started_at/prev_attempt_id`，否则 running 行的 session 绑定落不下去，重开后无法恢复。
+- 身份解析 canonical = `workflow_node_runs`（新文件 `node_run_identity.go` 的 `ResolveNodeRun`），WP-03 `node_runs` 影子行兜底且保持只读可读；`GetNodeRun` 改为 canonical 优先。测试覆盖：canonical 优先、legacy 行/旧留言仍可读、同 id 冲突时 canonical 胜出。
+- D14 迁移测试用旧 DDL 种子库验证：重建后 `UNIQUE(task_id)` 消失、历史行原样保留、同任务可再建 Run、重开幂等。
+- 遗留（Task 5 处理，未擅自改）：`TaskStore.PostComment` 与 `OutboxService.RecordComment` 仍是两个 writer；HTTP 路径只走前者，且前者写的 `continue_requests` 行没有 outbox item。绑定活动 NodeRun 时需统一写入/补齐语义，不能在此处静默合并。
 
 ### Task 2：增加独立 WorkflowNodeRunner 端口和 app adapter
 

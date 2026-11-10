@@ -7600,3 +7600,25 @@ groups:
       - 'server/internal/api/usecase/session_subagents.go:if !isToolEvent && strings.TrimSpace(ref.ParentToolUseID) == "" {'
       - 'server/internal/api/usecase/session_subagent_stream_test.go:func TestClaudeSubagentRouterNeverLeaksChildOwnedEventsIntoParent('
       - 'server/internal/agent/claude/session_subagent_attribution_test.go:func TestClaudeMetadataFreeDeltaInventsNoAttribution('
+
+  # ── Kanban Workflow Runtime 持久层：claim / NodeRun 身份 / D14 Run 历史 ─────
+  - id: G-LC
+    title: Kanban Workflow Runtime 的原子 NodeRun claim、canonical 身份与历史 Run
+    kind: feature
+    symptom: "看板任务迁移到工作流后只有一条 Run：完成/失败后不能重跑或换工作流；同一节点被并发触发时可能启动第二个 agent turn；重启后 NodeRun 的 session 绑定丢失，旧留言绑定的 NodeRun 解析不到。"
+    why: "三件必须保留：① NodeRun 唯一键 `(run_id,node_id,loop_path,iteration,attempt)` 的 claim 必须单语句原子（INSERT ... ON CONFLICT DO NOTHING + RowsAffected），输家回读原行，Runner 绝不在事务内调用；② canonical NodeRun 身份是 `workflow_node_runs`，WP-03 的 `node_runs` 影子行只读兜底，`ResolveNodeRun`/`GetNodeRun` 先查 canonical，旧留言与恢复数据不得因新表而读不到；③ D14 用户决策为「保留终态历史、每任务至多一个非终态 Run」，`workflow_runs` 必须去掉 `UNIQUE(task_id)` 并重建迁移，创建新 Run 只有当前绑定 Run 已终态才允许。"
+    boundary: "只覆盖 Workflow Runtime 的持久层（claim、NodeRun 身份解析、Run 历史迁移）。driver 触发/取消、Agent 节点执行器、Condition/Loop/HumanGate 调度、HumanGate 留言绑定在此组后续实现完成前不声明；`TaskStore.PostComment` 与 `OutboxService.RecordComment` 两个 writer 的合并留给留言绑定任务，本组不静默改语义。"
+    files:
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/node_run_identity.go
+      - server/internal/kanban/service_recover.go
+    tests:
+      - server/internal/kanban/task_store_workflow_runs_test.go
+      - server/internal/kanban/task_store_workflow_runs_history_test.go
+      - server/internal/kanban/node_run_identity_test.go
+    anchors:
+      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) ClaimWorkflowNodeRun('
+      - 'server/internal/kanban/task_store_workflow_runs.go:ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING'
+      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
+      - 'server/internal/kanban/node_run_identity.go:func ResolveNodeRun('
+      - 'server/internal/kanban/task_store_workflow_runs_history_test.go:func TestWorkflowRunHistoryAllowsNewRunOnlyAfterTerminal('

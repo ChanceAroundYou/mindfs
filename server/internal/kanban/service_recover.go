@@ -4,7 +4,6 @@ package kanban
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 )
 
@@ -95,19 +94,8 @@ func markUnknown(ctx context.Context, store *TaskStore, requestID string) error 
 }
 
 // GetNodeRun 取 NodeRun 记录（供恢复/新 attempt 链路检查）。
+// 身份解析 canonical 优先（workflow_node_runs），WP-03 的 node_runs 影子行兜底。
 func GetNodeRun(ctx context.Context, store *TaskStore, nodeRunID string) (NodeRunRecord, error) {
-	var r NodeRunRecord
-	var createdAt, updatedAt string
-	err := store.db.QueryRowContext(ctx,
-		`SELECT id, task_id, root_id, session_key, status, attempt, created_at, updated_at FROM node_runs WHERE id=?`, nodeRunID).Scan(
-		&r.ID, &r.TaskID, &r.RootID, &r.SessionKey, &r.Status, &r.Attempt, &createdAt, &updatedAt)
-	if err == sql.ErrNoRows {
-		return NodeRunRecord{}, ErrOutboxNotFound
-	}
-	if err != nil {
-		return NodeRunRecord{}, err
-	}
-	r.CreatedAt = parseOutboxTime(createdAt)
-	r.UpdatedAt = parseOutboxTime(updatedAt)
-	return r, nil
+	rec, _, err := ResolveNodeRun(ctx, store, nodeRunID)
+	return rec, err
 }

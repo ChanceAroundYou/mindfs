@@ -3,6 +3,8 @@ package kanban
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"mindfs/server/internal/fs"
@@ -141,12 +143,156 @@ func TestWorkflowRunSaveUsesRevisionCASInTaskDatabase(t *testing.T) {
 	}
 }
 
-
 func TestTaskStoreRunLookupByIDAndTaskOwnership(t *testing.T) {
- ctx:=context.Background(); root:=fs.NewRootInfo("lookup-root","lookup-root",t.TempDir()); store,err:=NewTaskStore(root); if err!=nil{t.Fatal(err)}; defer store.Close()
- if _,err:=store.CreateTask(ctx,Task{ID:"lookup-task",RootID:root.ID,Status:StatusPending,Stages:[]StageTemplate{userStage("u")}},StageRun{ID:"lookup-stage",TaskID:"lookup-task",StageIndex:0,StageName:"u",Role:RoleUser,Status:StageStatusPending},TaskEvent{ID:"lookup-event",TaskID:"lookup-task",Type:"created"});err!=nil{t.Fatal(err)}
- run:=&WorkflowRun{ID:"lookup-run",TaskID:"lookup-task",Revision:1,Graph:WorkflowDefinition{Nodes:[]WorkflowNode{{ID:"n",Kind:NodeKindAgent}}}}
- if err:=store.CreateWorkflowRunAndSetEngine(ctx,run);err!=nil{t.Fatal(err)}
- got,err:=store.WorkflowRunByID(ctx,"lookup-run");if err!=nil{t.Fatal(err)};if got.TaskID!="lookup-task"{t.Fatalf("task=%s",got.TaskID)}
- if _,err:=store.WorkflowRunForTask(ctx,"other-task");!errors.Is(err,ErrWorkflowRunNotFound){t.Fatalf("other task lookup err=%v",err)}
+	ctx := context.Background()
+	root := fs.NewRootInfo("lookup-root", "lookup-root", t.TempDir())
+	store, err := NewTaskStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.CreateTask(ctx, Task{ID: "lookup-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("u")}}, StageRun{ID: "lookup-stage", TaskID: "lookup-task", StageIndex: 0, StageName: "u", Role: RoleUser, Status: StageStatusPending}, TaskEvent{ID: "lookup-event", TaskID: "lookup-task", Type: "created"}); err != nil {
+		t.Fatal(err)
+	}
+	run := &WorkflowRun{ID: "lookup-run", TaskID: "lookup-task", Revision: 1, Graph: WorkflowDefinition{Nodes: []WorkflowNode{{ID: "n", Kind: NodeKindAgent}}}}
+	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.WorkflowRunByID(ctx, "lookup-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TaskID != "lookup-task" {
+		t.Fatalf("task=%s", got.TaskID)
+	}
+	if _, err := store.WorkflowRunForTask(ctx, "other-task"); !errors.Is(err, ErrWorkflowRunNotFound) {
+		t.Fatalf("other task lookup err=%v", err)
+	}
+}
+
+// Task 1（Executor）：NodeRun 的唯一键 (run_id,node_id,loop_path,iteration,attempt)
+// 必须由一次原子 claim 决出唯一 winner；并发/重复调用返回同一条持久身份，
+// 不能出现两行或第二个执行起点。
+func TestClaimWorkflowNodeRunIsSingleWinner(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("claim-root", "claim-root", t.TempDir())
+	store, err := NewTaskStore(root)
+	if err != nil {
+		t.Fatalf("NewTaskStore: %v", err)
+	}
+	defer store.Close()
+	if _, err := store.CreateTask(ctx, Task{ID: "claim-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
+		StageRun{ID: "claim-stage", TaskID: "claim-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+		TaskEvent{ID: "claim-event", TaskID: "claim-task", Type: "created"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	run := &WorkflowRun{ID: "claim-run", TaskID: "claim-task", Revision: 1,
+		Graph: WorkflowDefinition{Nodes: []WorkflowNode{{ID: "n", Kind: NodeKindAgent}}}}
+	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		t.Fatalf("CreateWorkflowRun: %v", err)
+	}
+
+	type claimResult struct {
+		node    NodeRun
+		claimed bool
+		err     error
+	}
+	const contenders = 4
+	results := make(chan claimResult, contenders)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			candidate := NodeRun{
+				ID:      fmt.Sprintf("nr-claim-%d", i+1),
+				RunID:   run.ID,
+				NodeID:  "n",
+				Attempt: 1,
+				Status:  NodeRunQueued,
+			}
+			node, claimed, err := store.ClaimWorkflowNodeRun(ctx, candidate)
+			results <- claimResult{node: node, claimed: claimed, err: err}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	claimedCount := 0
+	winnerID := ""
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("claim: %v", result.err)
+		}
+		if result.claimed {
+			claimedCount++
+			winnerID = result.node.ID
+		}
+		if result.node.ID == "" {
+			t.Fatal("claim loser did not receive the persisted identity")
+		}
+		if winnerID != "" && result.node.ID != winnerID {
+			t.Fatalf("claim returned divergent identities: %q vs %q", result.node.ID, winnerID)
+		}
+	}
+	if claimedCount != 1 {
+		t.Fatalf("claimed = %d, want exactly one winner", claimedCount)
+	}
+	rows, err := store.ListWorkflowNodeRuns(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListWorkflowNodeRuns: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != winnerID || rows[0].Status != NodeRunQueued {
+		t.Fatalf("persisted rows = %#v, want one queued row with id %s", rows, winnerID)
+	}
+}
+
+// claim 后的身份必须在 store 重开后仍可读；再次 claim 同一唯一键返回原行，
+// 不创建第二个 attempt，也不把状态重置为 queued。
+func TestClaimWorkflowNodeRunSurvivesReopenAndReusesIdentity(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("claim-reopen-root", "claim-reopen-root", t.TempDir())
+	store, err := NewTaskStore(root)
+	if err != nil {
+		t.Fatalf("NewTaskStore: %v", err)
+	}
+	if _, err := store.CreateTask(ctx, Task{ID: "claim-reopen-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
+		StageRun{ID: "claim-reopen-stage", TaskID: "claim-reopen-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+		TaskEvent{ID: "claim-reopen-event", TaskID: "claim-reopen-task", Type: "created"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	run := &WorkflowRun{ID: "claim-reopen-run", TaskID: "claim-reopen-task", Revision: 1,
+		Graph: WorkflowDefinition{Nodes: []WorkflowNode{{ID: "n", Kind: NodeKindAgent}}}}
+	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		t.Fatalf("CreateWorkflowRun: %v", err)
+	}
+	first, claimed, err := store.ClaimWorkflowNodeRun(ctx, NodeRun{ID: "nr-first", RunID: run.ID, NodeID: "n", Attempt: 1, Status: NodeRunQueued})
+	if err != nil || !claimed {
+		t.Fatalf("first claim claimed=%v err=%v", claimed, err)
+	}
+	if err := store.UpsertWorkflowNodeRun(ctx, NodeRun{ID: first.ID, RunID: run.ID, NodeID: "n", Attempt: 1, Status: NodeRunRunning, SessionKey: "session-1"}); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := NewTaskStore(root)
+	if err != nil {
+		t.Fatalf("reopen TaskStore: %v", err)
+	}
+	defer reopened.Close()
+	again, claimed, err := reopened.ClaimWorkflowNodeRun(ctx, NodeRun{ID: "nr-second", RunID: run.ID, NodeID: "n", Attempt: 1, Status: NodeRunQueued})
+	if err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if claimed {
+		t.Fatal("second claim on the same unique key must not be a winner")
+	}
+	if again.ID != first.ID || again.Status != NodeRunRunning || again.SessionKey != "session-1" {
+		t.Fatalf("second claim = %#v, want existing running row %q", again, first.ID)
+	}
 }
