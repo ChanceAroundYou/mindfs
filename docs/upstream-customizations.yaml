@@ -6717,7 +6717,7 @@ groups:
     title: 空壳 Bash 子会话止血与存量隐藏
     kind: fix
     symptom: "侧栏出现大量名为「Bash」的独立子会话，点进去没有正文、没有命令、没有输出；它们还会把父会话的「进行中」状态拖住（父子会话灯常亮）。一次真实会话里能积累上百个。"
-    why: "Claude SDK 的 ToolProgressMessage 是工具心跳，映射成 EventTypeToolUpdate 后仍带 parentToolUseId。claudeSubagentRouter.Handle 早前只按「parentToolUseId 非空」就放行新建，于是每一次 Bash 心跳都建出一个幽灵子会话。写入侧改为：ToolCall/ToolUpdate 事件不再新建子会话（真正的子代理正文仍走认领分支）；读取侧 dropEmptyBashSubSessions 深检存量——只在名字为 Bash、父会话非空时读转录/aux/块流，全无正文、用户行、思考、todo、plan、带命令或输出的工具调用才隐藏。"
+    why: "Claude SDK 的 ToolProgressMessage 是工具心跳，映射成 EventTypeToolUpdate 后仍带 parentToolUseId。claudeSubagentRouter.Handle 早前只按「parentToolUseId 非空」就放行新建，于是每一次 Bash 心跳都建出一个幽灵子会话。写入侧改为：普通 ToolCall/ToolUpdate 事件不再新建子会话（真正的子代理正文仍走认领分支）。2026-11-10 WP-00 收窄了这条规则（见 G-LB）：带 `subagentType` 的 child-owned 工具卡必须立即物化 child，否则会回落父回合；无 `subagentType` 的心跳仍不建子会话 —— 两组合起来才是「不建幽灵、也不漏 child」。读取侧 dropEmptyBashSubSessions 深检存量——只在名字为 Bash、父会话非空时读转录/aux/块流，全无正文、用户行、思考、todo、plan、带命令或输出的工具调用才隐藏。"
     boundary: "隐藏是**列表响应层**的，不删文件、不改库；有真实内容的 Bash 子会话必须照常显示。深检只针对 Bash 命名的子会话，其它子会话零额外 IO。前端 timeline 另有一道无内容 bash 工具卡的过滤（双保险，老缓存也生效）。"
     files:
       - server/internal/api/usecase/session_subagents.go
@@ -6728,7 +6728,7 @@ groups:
     tests:
       - server/internal/api/usecase/session_list_empty_bash_test.go
     anchors:
-      - 'server/internal/api/usecase/session_subagents.go:		if update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate {'
+      - 'server/internal/api/usecase/session_subagents.go:if isToolEvent && strings.TrimSpace(ref.SubagentType) == "" {'
       - 'server/internal/api/usecase/session_list.go:func dropEmptyBashSubSessions(ctx context.Context, manager *session.Manager, items []*session.Session) []*session.Session {'
       - 'web/src/hooks/sessionTimeline.ts:      if (isEmptyBash) continue;'
 
@@ -7263,7 +7263,7 @@ groups:
     title: iOS 壳（iPad 套壳，官方插件、无自定义 Swift 桥）
     kind: feature
     symptom: "iPad 打开 MindFS 只能靠 Safari 加主屏，没有真正的 App 图标、版本信息与原生下载；关于弹窗在壳里写死一个假版本号 web (0.5.5-1101-g5e723830)，「检查更新」与「测试提醒」按钮在 iOS 上也照常出现，点击落到不存在的自定义插件或安卓自更新通道。"
-    why: "用户自用 iPad，要免费且方便：Capacitor iOS 工程与安卓同一工具链（npx cap add ios 生成 web/ios/App 入仓）。iOS 壳不写自定义 Swift 插件——Capacitor 8 的官方插件自动注册，注册新插件要替换整个自动注册路径；免费自签（个人 Apple ID、7 天）场景下不划算，官方插件（Filesystem/Browser/Clipboard/App/StatusBar/Share）已覆盖 v1 需要的全部能力。安卓 Java 侧的自定义插件（NativeDownload/ReplyPoller/LauncherNodeSync/NativeCacheControl）在 iOS 上会得到「插件未注册」，所以这四个调用点由 supportsCustomNativePlugins() 短路（iOS 下载走 Documents/MindFS/、外链走 Browser.open、版本信息走 App.getInfo()）。「检查更新」保持安卓独占（iOS 内部装不了 ipa），「测试提醒」不出现（没有后台轮询服务可测）。build:shell → dist-shell 是安卓/iOS 共用 shell bundle（Capacitor webDir 只默认一个，per-platform 覆写无效）。build-ios 不进 make release —— .ipa 要签名、7 天过期，与安卓 APK 的自更新模型不对齐，塞进 release 资产只是给人留坑；守卫 web/tests/ios-shell.test.mjs 钉死这一点。"
+    why: "用户自用 iPad，要免费且方便：Capacitor iOS 工程与安卓同一工具链（npx cap add ios 生成 web/ios/App 入仓）。iOS 壳不写自定义 Swift 插件——Capacitor 8 的官方插件自动注册，注册新插件要替换整个自动注册路径；免费自签（个人 Apple ID、7 天）场景下不划算，官方插件（Filesystem/Browser/Clipboard/App/StatusBar/Share）已覆盖 v1 需要的全部能力。安卓 Java 侧的自定义插件（NativeDownload/ReplyPoller/LauncherNodeSync/NativeCacheControl）在 iOS 上会得到「插件未注册」，所以这四个调用点由 supportsCustomNativePlugins() 短路（iOS 下载走 Documents/MindFS/、外链走 Browser.open、版本信息走 App.getInfo()）。「检查更新」保持安卓独占（iOS 内部装不了 ipa），「测试提醒」不出现（没有后台轮询服务可测）。build:shell → dist-shell 是安卓/iOS 共用 shell bundle（Capacitor webDir 只默认一个，per-platform 覆写无效）。build-ios 不进 make release —— .ipa 要签名、7 天过期，与安卓 APK 的自更新模型不对齐，塞进 release 资产只是给人留坑；守卫 web/tests/ios-shell.test.mjs 钉死这一点。**2026-11-10 锚点维护**：`web/capacitor.config.json` 与 `web/ios/App/App/capacitor.config.json` 都是 Capacitor CLI 生成物、已入 .gitignore，不能作为 anchor 或「工程已入仓」的判据；改用 tracked 的 `build:shell` 输出目录、`.gitignore` 的 `dist-shell/` 与入仓的 SPM `Package.swift` 插件清单，生成物只在存在时核对内容。"
     boundary: "明确不做 iOS 后台回复轮询与 APNs（免费个人签名、无推送密钥，理由写进 docs/ios-shell.md）；不做 WKScriptMessageHandler 自定义桥（官方插件够用，win.MindFSNative 统一桥不被 supportsCustomNativePlugins 挡）；原生工程 web/ios/App 入仓（与 web/android 对称），但 App/App/public（shell bundle 副本）不入仓。"
     files:
       - Makefile
@@ -7296,7 +7296,8 @@ groups:
       - 'web/src/services/update/appUpdate.ts:export function isUpdatableNativeRuntime(): boolean'
       - 'Makefile:build-ios:'
       - 'web/package.json:"build:shell": "rimraf dist-shell && VITE_APP_SHELL=1 vite build --outDir dist-shell --emptyOutDir"'
-      - 'web/capacitor.config.json:"webDir": "dist-shell"'
+      - '.gitignore:dist-shell/'
+      - 'web/ios/App/CapApp-SPM/Package.swift:.package(name: "CapacitorBrowser", path: "../../../node_modules/@capacitor/browser"),'
 
   # ── Codex：切换供应商/配置后历史会话可续聊 ─────────────────────────
   - id: G-KO

@@ -80,9 +80,14 @@ test("shell bundle is shared and iOS never enters make release", () => {
   assert.match(pkg, /"build:shell": "rimraf dist-shell && VITE_APP_SHELL=1 vite build --outDir dist-shell --emptyOutDir"/);
   assert.doesNotMatch(pkg, /"build:android":/, "dist-android 旧入口不应回来");
 
-  const cap = read("web/capacitor.config.json");
-  assert.match(cap, /"webDir":\s*"dist-shell"/);
-  assert.match(cap, /https:\/\/home\.xiaokubao\.space\/mindfs\//);
+  // web/capacitor.config.json 是 Capacitor CLI 的生成物（已入 .gitignore），
+  // 新 worktree 里可能不存在。webDir 的 tracked 不变量由上面的 build:shell
+  // 输出目录和下面的 dist-shell/ 忽略规则钉住；生成物在时才核对内容。
+  if (exists("web/capacitor.config.json")) {
+    const cap = read("web/capacitor.config.json");
+    assert.match(cap, /"webDir":\s*"dist-shell"/);
+    assert.match(cap, /https:\/\/home\.xiaokubao\.space\/mindfs\//);
+  }
 
   const makefile = read("Makefile");
   assert.match(makefile, /^build-ios:/m);
@@ -108,7 +113,6 @@ test("iOS Xcode project is checked in and synced plugin list", () => {
     "web/ios/App/App/AppDelegate.swift",
     "web/ios/App/App/Info.plist",
     "web/ios/App/CapApp-SPM/Package.swift",
-    "web/ios/App/App/capacitor.config.json",
   ];
   for (const file of keyFiles) {
     assert.ok(exists(file), `${file} 缺失（Xcode 工程未入仓）`);
@@ -121,9 +125,17 @@ test("iOS Xcode project is checked in and synced plugin list", () => {
   assert.match(plist, /\$\(CURRENT_PROJECT_VERSION\)/);
   assert.match(plist, /UIViewControllerBasedStatusBarAppearance/);
 
-  const capConfig = read("web/ios/App/App/capacitor.config.json");
-  for (const plugin of ["AppPlugin", "CAPBrowserPlugin", "ClipboardPlugin", "FilesystemPlugin", "StatusBarPlugin"]) {
-    assert.match(capConfig, new RegExp(`"${plugin}"`), `cap sync 后缺官方插件 ${plugin}`);
+  // 官方插件清单由入仓的 SPM 依赖钉住（cap sync 的生成物 web/ios/App/App/
+  // capacitor.config.json 不入仓，只在存在时核对 pluginClassList）。
+  const swiftPkg = read("web/ios/App/CapApp-SPM/Package.swift");
+  for (const plugin of ["CapacitorApp", "CapacitorBrowser", "CapacitorClipboard", "CapacitorFilesystem", "CapacitorStatusBar"]) {
+    assert.match(swiftPkg, new RegExp(`\\.package\\(name: "${plugin}"`), `SPM 依赖缺官方插件 ${plugin}`);
+  }
+  if (exists("web/ios/App/App/capacitor.config.json")) {
+    const capConfig = read("web/ios/App/App/capacitor.config.json");
+    for (const plugin of ["AppPlugin", "CAPBrowserPlugin", "ClipboardPlugin", "FilesystemPlugin", "StatusBarPlugin"]) {
+      assert.match(capConfig, new RegExp(`"${plugin}"`), `cap sync 后缺官方插件 ${plugin}`);
+    }
   }
 
   // app 图标不得是 Capacitor 出厂的纯白图：1024 设计图必须是非空白图。
