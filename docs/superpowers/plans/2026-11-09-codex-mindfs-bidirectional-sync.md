@@ -294,6 +294,31 @@
 - The local `~/.config/codex/llmux.env` was copied over SSH to each device-local config path. WSL/fn files are mode `0600`; pc-win inherits an ACL limited to the current user, Administrators, and SYSTEM. The local API and all three worker APIs report `localCredentialAvailable: true` for shared llmux. No credential was added to `.agents`.
 - All four installed CLIs report `--check-runtime` state `synced`. The 本机 system service still needs the user-run command `sudo systemctl restart mindfs`; it was not restarted by the agent.
 
+### Task 6 follow-up · 2026-11-11 — 既有线程的供应商纠正
+
+- Bug 4（pc 节点「冰晶智能」Codex 会话报 `Error running remote compact task: workspace routing
+  discovery failed`）：线程 `01a1bf60` 由 VS Code 创建，rollout 的 `session_meta.model_provider`
+  是 `openai`。MindFS 恢复前的探针 `thread/resume` 只带 `threadId`/`cwd`，app-server 按 rollout
+  里的旧供应商首次加载线程；SDK 随后带 `modelProvider: llmux` 的 resume 因为线程已加载而成为
+  空操作。会话每轮继续走 ChatGPT 后端；线程 269,722 tokens 超过 258,400 窗口，每轮先压缩，
+  远端压缩打 `chatgpt.com/backend-api/codex` 需要 workspace routing discovery，而 WSL 的
+  ChatGPT 凭据刷新返回 403（Country, region, or territory not supported），于是报错。
+- 隔离验证（复制 rollout + 独立 `CODEX_HOME` + 真机 app-server）：不带 provider 的首次 resume
+  得 `openai`，随后带 llmux 的 resume 仍报 `openai`；首次 resume 就带 llmux 时生效供应商为
+  `llmux`，新写入的 `thread_settings_applied` 为 `model_provider_id: llmux`。另用本地 mock
+  provider 跑满一轮：llmux（无论有没有 `capabilities.remote_compaction`）走的是 provider 自己的
+  `/v1/responses` 摘要压缩，不碰远端压缩，所以共享 profile 不需要改。
+- 修复：`rethreadCodexResumeOnProviderMismatch` 先用 `config/read` 取当前供应商（缺省回落
+  `openai`，与 SDK 一致），随探针 `thread/resume` 一起发送；返回的生效供应商与配置不一致时
+  fork，fork 参数显式带供应商（此前为空，fork 出来仍是同一供应商的新线程）。config/read 失败
+  则跳过探测，不把线程钉死在旧供应商。显式 `ForkSessionID` 路径同样钉到当前配置。
+- 测试：`TestCodexResumeProbeParamsAlwaysCarryProvider`、`TestCodexResumeNeedsFork`、
+  `TestCodexModelProviderFromConfig`、`TestRethreadCodexResumeWithoutClientIsNoop`；
+  `make check-upstream` 仍覆盖全部 delta 文件（1633 个）。
+- 部署：`3e144a55` → `v0.5.5-1118-12-g3e144a55`。WSL/fn 重启后 `/mindfs/health` 200，二进制
+  含新日志串；pc-win PID 163128、health 200。本机 system 服务仍待用户执行
+  `sudo systemctl restart mindfs`；本次故障会话在 pc(WSL) 节点，下次发送时探针会把它切到 llmux。
+
 ### Initial deployment · 2026-11-10
 
 `deploy-all.sh` shipped `v0.5.5-1118-4-gc6799567` to all workers. The reviewed WSL `skills/goal-prompt/SKILL.md` edit was integrated and pushed as shared commit `f84c8a95b30791e3a9e7f3a563ac96e937437001`; 本机, WSL, and fn all ran `mindfs agents-config-sync --sync` and report `synced`. PC-Win already had a populated non-Git `%USERPROFILE%\.agents` data/skill root, so its checkout lives at `%USERPROFILE%\.agents\codex-config-sync`; user-level `AGENTS_ROOT` points there, and a junction exposes the updated `goal-prompt` skill without replacing existing skills. Windows `--apply` and `--sync` succeeded; after restarting task `\mindfs`, `GET /mindfs/api/agent-config/sync` reported `synced` and `GET /mindfs/health` returned 200 (PID 22480). Its local `config.toml` moved from reasoning effort `max` to shared `medium`; a rollback copy was retained under `%APPDATA%\mindfs\agents-config-sync\rollback`. Shared provider metadata contains no API key. At that time PC-Win had no local `LLMUX_API_KEY`; the credential was added during the Task 6 follow-up. The local system service was not restarted; the user must run `sudo systemctl restart mindfs` to activate its API and periodic runner.
