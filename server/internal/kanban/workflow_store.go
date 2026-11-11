@@ -70,16 +70,17 @@ func (s *WorkflowStore) nowT() time.Time {
 }
 
 type workflowFile struct {
-	Drafts   map[string]*WorkflowDraft   `json:"drafts"`
-	Versions map[string]*WorkflowVersion `json:"versions"`
-	NextSeq  map[string]int              `json:"next_seq"`
+	Drafts    map[string]*WorkflowDraft           `json:"drafts"`
+	Versions  map[string]*WorkflowVersion         `json:"versions"`
+	Proposals map[string]*WorkflowPublishProposal `json:"publish_proposals,omitempty"`
+	NextSeq   map[string]int                      `json:"next_seq"`
 }
 
 func (s *WorkflowStore) loadLocked() (*workflowFile, error) {
 	b, err := os.ReadFile(s.pathLocked())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &workflowFile{Drafts: map[string]*WorkflowDraft{}, Versions: map[string]*WorkflowVersion{}, NextSeq: map[string]int{}}, nil
+			return &workflowFile{Drafts: map[string]*WorkflowDraft{}, Versions: map[string]*WorkflowVersion{}, Proposals: map[string]*WorkflowPublishProposal{}, NextSeq: map[string]int{}}, nil
 		}
 		return nil, err
 	}
@@ -92,6 +93,9 @@ func (s *WorkflowStore) loadLocked() (*workflowFile, error) {
 	}
 	if f.Versions == nil {
 		f.Versions = map[string]*WorkflowVersion{}
+	}
+	if f.Proposals == nil {
+		f.Proposals = map[string]*WorkflowPublishProposal{}
 	}
 	if f.NextSeq == nil {
 		f.NextSeq = map[string]int{}
@@ -186,6 +190,20 @@ func (s *WorkflowStore) PublishDraft(ctx context.Context, workflowID, confirmedR
 	if err != nil {
 		return WorkflowVersion{}, err
 	}
+	v, err := s.publishDraftLocked(f, workflowID, confirmedRevision, publishedBy)
+	if err != nil {
+		return WorkflowVersion{}, err
+	}
+	if err := s.saveLocked(f); err != nil {
+		return WorkflowVersion{}, err
+	}
+	return v, nil
+}
+
+// publishDraftLocked creates the immutable version in f without saving. Callers
+// hold s.mu and must persist f; proposal confirmation uses this so the version
+// and the proposal status change commit in one write.
+func (s *WorkflowStore) publishDraftLocked(f *workflowFile, workflowID, confirmedRevision, publishedBy string) (WorkflowVersion, error) {
 	d, ok := f.Drafts[workflowID]
 	if !ok {
 		return WorkflowVersion{}, ErrDraftNotFound
@@ -195,13 +213,19 @@ func (s *WorkflowStore) PublishDraft(ctx context.Context, workflowID, confirmedR
 	}
 	seq := f.NextSeq[workflowID]
 	verID := fmt.Sprintf("%s:v%d", workflowID, seq)
+	// Versions are immutable. Re-publishing the same revision is idempotent;
+	// a version id collision with different content fails closed instead of
+	// silently replacing the published record.
+	if existing, ok := f.Versions[verID]; ok {
+		if existing.Revision != confirmedRevision {
+			return WorkflowVersion{}, fmt.Errorf("workflow version %s already exists for revision %s, refusing to overwrite with %s", verID, existing.Revision, confirmedRevision)
+		}
+		return *existing, nil
+	}
 	// deep copy graph so later draft edits cannot mutate the published version
 	graphCopy := cloneGraph(d.Graph)
 	v := &WorkflowVersion{Version: verID, WorkflowID: workflowID, Revision: d.Revision, Graph: graphCopy, Author: d.Author, PublishedBy: publishedBy, PublishedAt: s.nowT()}
 	f.Versions[verID] = v
-	if err := s.saveLocked(f); err != nil {
-		return WorkflowVersion{}, err
-	}
 	return *v, nil
 }
 

@@ -30,4 +30,24 @@ test("workflow-editor-board-entry", () => {
   assert.doesNotMatch(editor, /window\.(confirm|alert|prompt)\s*\(/, "no system dialogs in the editor view");
   assert.match(editorState, /baseRevision/, "Draft save carries base_revision CAS");
   assert.match(editorState, /revision/, "publish carries confirmed_revision");
+
+  assert.match(workflowService, /validateWorkflowDraftPatch\([\s\S]{0,350}?controlPath\(/, "patch validation must use control-plane routing");
+  assert.match(workflowService, /applyWorkflowDraftPatch\([\s\S]{0,350}?controlPath\(/, "patch apply must use control-plane routing");
+  assert.match(workflowService, /workflowPatchIssues/, "patch failures expose structured issues");
+  assert.match(workflowService, /listWorkflowPublishProposals\([\s\S]{0,350}?controlPath\(/, "proposal discovery must use control-plane routing");
+  assert.match(workflowService, /confirmWorkflowPublishProposal\([\s\S]{0,350}?controlPath\(/, "proposal confirmation must use control-plane routing");
+  assert.match(editorState, /applyWorkflowDraftPatch\(/, "editor can import an Agent patch");
+  assert.match(editorState, /validateWorkflowDraftPatch\(/, "editor can validate before applying");
+  assert.match(editorState, /patchIssues/, "editor keeps operation-scoped issues");
+  assert.match(editorState, /!parsed\.base_revision/, "pasted patch must carry the exact base revision (fail closed)");
+  assert.match(editorState, /dirty\) return/, "patch actions refuse to run over unsaved canvas edits");
+  assert.match(editorState, /listWorkflowPublishProposals\(/, "editor discovers pending proposals");
+  assert.match(editorState, /confirmWorkflowPublishProposal\(/, "editor confirms a proposal only through the explicit action");
+  assert.match(editorState, /proposal\.status !== "pending"/, "only pending proposals can be confirmed");
+  assert.match(editorState, /proposalConfirmMessage/, "proposal confirmation names the exact revision");
+  assert.match(editor, /workflow-proposals-panel/, "editor renders the proposal discovery panel");
+  assert.match(editor, /workflow-proposal-confirm/, "editor renders a per-proposal confirm action");
+  assert.match(editor, /workflow-patch-text/, "editor renders the Agent patch input");
+  assert.match(editor, /workflow-patch-issues/, "editor renders structured issues");
+  assert.match(editor, /workflow-patch-diff/, "editor renders the deterministic diff");
 });

@@ -7785,3 +7785,57 @@ groups:
     anchors:
       - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) AcquireWorkspace(ctx context.Context, path, branch string) (func(), error)'
       - 'server/internal/kanban/worktree_registry_claim.go:func (s *TaskStore) ClaimWorktreeEntry('
+
+  - id: G-LG
+    title: Agent-first Workflow 管理——只读快照、typed patch、dry-run 与人工确认发布提案
+    kind: feature
+    symptom: "Agent 想改工作流只能让人照着聊天内容在画布上重画：没有可供 Agent 读取的稳定快照，没有可被校验的结构化补丁，改完也没法在落地前解释分支/通知/循环会发生什么。更危险的是『Agent 直接帮人发布』：草稿被悄悄提升为版本，用户没有确认过具体 revision；或者把任意 JSON 路径写进图里，绕过节点/边校验。"
+    why: "必须保留：① 只读快照 `GET /api/workflows/{id}/snapshot` 返回 draft + limits，不授予写权限；② 补丁只接受五种 typed 操作（add_node/update_future_node/remove_future_node/add_edge/remove_future_edge），每个操作有稳定 ID，错误按 operation+field 返回，校验/应用都不改 base、失败不落盘；③ 发布提案只记录 workflow+精确 revision+提议者，确认是独立人工动作，草稿前进后旧提案标 stale 且绝不发布新 revision；确认与版本写入在同一把锁/同一份文件里完成（idempotent 重复确认返回已记录版本）；同一 (workflow, revision) 只保留一个提案，重复提案返回同一记录，已发布版本记录不可被再次 publish 覆盖；提案按 workflow 可列出，供人工发现后确认；④ dry-run 复用生产 `EngineReadyNodes`/`evaluateWorkflowConditionRoot` 的语义，不碰 Runner/session/notify/DB，只解释 Condition 选路、跳过分支、join、Loop 预算、HumanGate 停点与『会通知』；对真实 Run 做 dry-run 时以已持久化 NodeStates/SelectedRoutes/NodeOutputs/LoopState 为起点，调用方只能补未来节点的模拟输出，不得重演已完成节点；⑤ 运行中的 Run 补丁只允许未触发的未来子图，已触发节点（含 Loop 内部节点）与关联边按冻结规则拒绝；前端导入必须人工粘贴+校验+应用，且补丁自带 `base_revision`（缺失即拒绝），画布有未保存修改时拒绝操作；⑥ HTTP body 上限按整份请求体校验（含尾随填充），超过即 413，不以流式解码器的首值边界为准。"
+    boundary: "不新增任何鉴权，`author`/`proposer` 只是元数据；HTTP façade 仍按仓库既有『REST/WS 无鉴权、user= 不是凭证』政策，publish 永远要求人工确认精确 revision。不做任意 JSON-path 写入、不做 Agent 自动发布、不做 Agent 直接运行节点。dry-run 是静态模拟，不承诺与真实 Agent 输出一致；运行补丁的 CAS 只在 TaskStore 内。范围只覆盖 G-LG 新增文件与下列接线点，执行器/留言/多 worktree 语义仍归 G-LE/G-KV/G-LF。"
+    files:
+      - server/internal/kanban/workflow_agent_ops.go
+      - server/internal/kanban/workflow_agent_draft.go
+      - server/internal/kanban/workflow_agent_dryrun.go
+      - server/internal/kanban/task_store_workflow_patch.go
+      - server/internal/kanban/workflow_store.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/api/http_workflow_agent.go
+      - server/internal/api/http_routes.go
+      - web/src/services/task/workflowDraft.ts
+      - web/src/components/task/useWorkflowDraftEditor.ts
+      - web/src/components/task/WorkflowDraftEditor.tsx
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - server/internal/kanban/workflow_agent_ops_test.go
+      - server/internal/kanban/workflow_agent_review_test.go
+      - server/internal/api/http_workflow_agent_test.go
+      - web/tests/workflow-editor-board-entry.test.mjs
+    anchors:
+      - 'server/internal/kanban/workflow_agent_ops.go:func ValidateWorkflowPatch(base WorkflowDefinition, patch WorkflowPatch) (WorkflowDiff, []WorkflowPatchIssue, error)'
+      - 'server/internal/kanban/workflow_agent_ops.go:func ApplyWorkflowPatchToGraph(base WorkflowDefinition, patch WorkflowPatch, frozen map[string]bool) (WorkflowDefinition, WorkflowDiff, []WorkflowPatchIssue)'
+      - 'server/internal/kanban/workflow_agent_ops.go:WorkflowPatchMaxOperations = 200'
+      - 'server/internal/kanban/workflow_agent_draft.go:func (s *WorkflowStore) ApplyWorkflowDraftPatch(ctx context.Context, workflowID string, patch WorkflowPatch) (WorkflowDraft, WorkflowDiff, error)'
+      - 'server/internal/kanban/workflow_agent_draft.go:func (s *WorkflowStore) ConfirmWorkflowPublishProposal('
+      - 'server/internal/kanban/workflow_agent_draft.go:func (s *WorkflowStore) ListPublishProposals('
+      - 'server/internal/kanban/workflow_agent_draft.go:One proposal per (workflow, revision)'
+      - 'server/internal/kanban/workflow_store.go:func (s *WorkflowStore) publishDraftLocked('
+      - 'server/internal/kanban/workflow_store.go:Versions are immutable'
+      - 'server/internal/kanban/task_store_workflow_patch.go:func (s *TaskStore) ApplyWorkflowRunPatch('
+      - 'server/internal/kanban/task_store_workflow_patch.go:func (s *TaskStore) workflowRunFrozenNodes('
+      - 'server/internal/kanban/workflow_agent_dryrun.go:func RunWorkflowDryRun(in WorkflowDryRunInput) (WorkflowDryRunResult, error)'
+      - 'server/internal/kanban/workflow_agent_dryrun.go:NodeStates     map[string]string'
+      - 'server/internal/api/http_workflow_agent.go:func (h *HTTPHandler) handleWorkflowDraftSnapshot('
+      - 'server/internal/api/http_workflow_agent.go:func (h *HTTPHandler) handleTaskWorkflowRunPatchApply('
+      - 'server/internal/api/http_workflow_agent.go:func (h *HTTPHandler) handleWorkflowPublishProposalConfirm('
+      - 'server/internal/api/http_workflow_agent.go:func (h *HTTPHandler) handleWorkflowPublishProposalList('
+      - 'server/internal/api/http_workflow_agent.go:func decodeWorkflowAgentJSON('
+      - 'server/internal/api/http_routes.go:r.Post("/api/workflows/dry-run", h.handleWorkflowDryRun)'
+      - 'server/internal/api/http_routes.go:r.Get("/api/tasks/{id}/workflow-run/suggestion", h.handleTaskWorkflowRunSuggestion)'
+      - 'web/src/services/task/workflowDraft.ts:export async function applyWorkflowDraftPatch('
+      - 'web/src/services/task/workflowDraft.ts:export async function listWorkflowPublishProposals('
+      - 'web/src/components/task/useWorkflowDraftEditor.ts:const applyPatch = useCallback('
+      - 'web/src/components/task/useWorkflowDraftEditor.ts:const confirmProposal = useCallback('
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:workflow-proposals-panel'
+      - 'web/tests/workflow-editor-board-entry.test.mjs:patch apply must use control-plane routing'
+      - 'web/tests/workflow-editor-board-entry.test.mjs:proposal discovery must use control-plane routing'

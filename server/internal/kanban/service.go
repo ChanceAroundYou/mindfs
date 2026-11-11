@@ -68,6 +68,16 @@ type RootProvider interface {
 	ListRoots() []fs.RootInfo
 }
 
+// workflowFinishLock 是一把带引用计数的 NodeRun 收尾锁。
+//
+// 锁表不能只增不删（mindfs 是长期进程，每个 NodeRun 留一个 mutex 会无限增长），
+// 但也不能在仍有人持有/等待时直接删除条目：后来者会拿到另一把新 mutex，与旧锁
+// 的持有者并发进入同一临界区。refs 同时覆盖持有者与等待者，归零才摘除。
+type workflowFinishLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 type Service struct {
 	Templates *TemplateStore
 	Roots     RootProvider
@@ -102,6 +112,18 @@ type Service struct {
 	// 为什么不能只是「查一下」：查和改之间不是原子的，中间插进来一个收尾就会留下
 	// 「状态是 running、却没有执行体」的任务 —— 没有 agent 会再碰它，看起来像卡死。
 	taskAdmit map[string]*admitToken
+	// workflowDrives is the per-task single-flight driver registry. Keyed by
+	// rootID+"\x00"+taskID; one goroutine per task, duplicate triggers set
+	// pending so the same driver re-reads state once more instead of starting a
+	// second concurrent turn.
+	workflowDrives        map[string]*workflowDrive
+	workflowCancellers    map[string]WorkflowNodeCanceller
+	workflowCancelTimeout time.Duration
+	// workflowFinishLocks 串行化「同一 NodeRun 的终态收尾」与「操作员取消」。
+	// 合并/关闭工作树是不可回滚的 git 副作用：如果取消在 merge 之后、CAS 之前
+	// 赢下状态，就会得到「树已合并删除、行记 cancelled」的矛盾。锁只在进程内
+	// 有效，跨进程语义本来就未宣称 durable。
+	workflowFinishLocks map[string]*workflowFinishLock
 	// finishStageFinished 是「收尾段跑完之后」的回调，由 api 层在装配时挂上。
 	// 见 worktree_finish_stage.go 的 notifyFinishStageOutcome —— 它必须挂在
 	// executeTask 之外，因为清场要抢 taskFinish 锁而那条锁见到 taskRun 就拒绝。
@@ -136,7 +158,40 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(templates *TemplateStore, roots RootProvider) *Service {
-	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}, taskFinish: map[string]*finishToken{}, taskAdmit: map[string]*admitToken{}}
+	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}, taskFinish: map[string]*finishToken{}, taskAdmit: map[string]*admitToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second}
+}
+
+// lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径
+// 必须共用它，才能在「agent 已返回、正在 merge」的窗口里不互相踩状态。
+func (s *Service) lockWorkflowNodeFinish(nodeRunID string) func() {
+	if s == nil {
+		return func() {}
+	}
+	nodeRunID = strings.TrimSpace(nodeRunID)
+	if nodeRunID == "" {
+		return func() {}
+	}
+	s.mu.Lock()
+	if s.workflowFinishLocks == nil {
+		s.workflowFinishLocks = map[string]*workflowFinishLock{}
+	}
+	lock := s.workflowFinishLocks[nodeRunID]
+	if lock == nil {
+		lock = &workflowFinishLock{}
+		s.workflowFinishLocks[nodeRunID] = lock
+	}
+	lock.refs++
+	s.mu.Unlock()
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 && s.workflowFinishLocks[nodeRunID] == lock {
+			delete(s.workflowFinishLocks, nodeRunID)
+		}
+		s.mu.Unlock()
+	}
 }
 
 func (s *Service) SetRunner(runner Runner) {
@@ -145,6 +200,17 @@ func (s *Service) SetRunner(runner Runner) {
 	}
 	s.mu.Lock()
 	s.Runner = runner
+	s.mu.Unlock()
+}
+
+// SetWriterGate 注入 app 级共享的物理工作树写互斥。装配期调一次；所有账户的
+// Kanban Service 必须拿到同一个实例，否则跨账户命中同一物理树时互斥失效。
+func (s *Service) SetWriterGate(gate *WriterGate) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.WriterGate = gate
 	s.mu.Unlock()
 }
 

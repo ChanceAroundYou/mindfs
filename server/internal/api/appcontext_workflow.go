@@ -163,6 +163,48 @@ func (s *AppContext) RunWorkflowNode(ctx context.Context, exec kanban.WorkflowNo
 	return parsed, nil
 }
 
+// SendWorkflowComment delivers a queued user comment as a normal continuation
+// turn. Unlike RunWorkflowNode it deliberately does not append the JSON-output
+// contract and does not parse the assistant text: the user is talking to the
+// session, not asking the node for a machine-readable result.
+func (s *AppContext) SendWorkflowComment(ctx context.Context, exec kanban.WorkflowNodeExecution, message string) error {
+	if strings.TrimSpace(exec.RootID) == "" {
+		return errors.New("root_id required")
+	}
+	if strings.TrimSpace(exec.NodeRun.SessionKey) == "" {
+		return errors.New("session_key required")
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return errors.New("comment message required")
+	}
+	req := workflowTurnRequest{
+		RootID:          exec.RootID,
+		RuntimeRootPath: exec.RuntimeRootPath,
+		SessionKey:      strings.TrimSpace(exec.NodeRun.SessionKey),
+		SessionName:     s.sessionTitle(exec.RootID, exec.NodeRun.SessionKey),
+		Prompt:          message,
+	}
+	_, err := s.runWorkflowTurn(ctx, req)
+	return err
+}
+
+// CancelWorkflowNode is the bounded-cancel seam used by CancelWorkflowRun. A
+// NodeRun that never bound a session has not sent anything, so there is no turn
+// to cancel; every other case asks the session layer to cancel the active turn.
+// The workflow driver owns the timeout; this adapter must not block forever.
+func (s *AppContext) CancelWorkflowNode(ctx context.Context, rootID string, nodeRun kanban.NodeRun) error {
+	key := strings.TrimSpace(nodeRun.SessionKey)
+	if key == "" {
+		return nil
+	}
+	uc := &usecase.Service{Registry: s}
+	return uc.CancelSessionTurn(ctx, usecase.CancelSessionTurnInput{
+		RootID: strings.TrimSpace(rootID),
+		Key:    key,
+	})
+}
+
 func (s *AppContext) runWorkflowTurn(ctx context.Context, req workflowTurnRequest) (string, error) {
 	if s.workflowTurnOverride != nil {
 		return s.workflowTurnOverride(ctx, req)

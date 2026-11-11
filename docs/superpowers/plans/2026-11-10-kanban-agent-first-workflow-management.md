@@ -32,9 +32,9 @@
 
 ## Decision gate
 
-**Decision gate:** 用户已决定：共享 WorkflowVersion 发布必须人类确认准确 revision。仍待确认 D12 仅包括工具入口和可信 Agent identity/授权机制；需遵守项目 no-REST-auth 规则，不可将 `user=` / `author` 当凭证。若无可信身份通道，首版 Agent 只输出 typed patch proposal，由人类 UI 导入、校验、保存。
+**D12 已确认（2026-11-11）：只读快照 + typed patch。** 用户选择复用既有本机 HTTP façade，不新增鉴权：Agent 读 `GET /api/workflows/{id}/snapshot`（draft + limits），输出 typed patch；人类在 UI 粘贴、校验、应用，保存仍走既有 Draft CAS；发布只创建 pending proposal，仍须人类确认**精确 revision**。`author` / `proposer` 只是元数据，项目 no-REST-auth 规则不变，不能从 `user=` / `author` 推断授权。
 
-CLI 实际位于根 module，不能直接 import `server/internal/kanban`。若批准 CLI façade，必须经本机/所属节点受控 HTTP route；payload limits、run/root ownership validation、CAS/frozen node enforcement 必须在 server 端做，不能只在 CLI 校验。
+CLI 实际位于根 module，不能直接 import `server/internal/kanban`。本实现未新增 CLI 命令：Agent 直接调用本机/所属节点 HTTP route；payload limits、run/task ownership validation、CAS/frozen node enforcement 全在 server 端做，前端与 CLI 侧限制只算 defense in depth。
 
 ## Files / ownership
 
@@ -48,10 +48,10 @@ CLI 实际位于根 module，不能直接 import `server/internal/kanban`。若�
 
 - `WorkflowPatch`：带 `BaseRevision` 和 typed operation list（AddNode/UpdateFutureNode/RemoveFutureNode/AddEdge/RemoveFutureEdge），每个 operation 有 stable operation ID；禁止任意 JSON path set。
 - `ApplyWorkflowDraftPatch(ctx, workflowID string, patch WorkflowPatch) (WorkflowDraft, WorkflowDiff, error)`：一次 CAS 更新；校验失败不写入；CAS stale 返回 current revision。
-- `ApplyWorkflowRunPatch(ctx, rootID, taskID, runID string, baseRevision int, patch WorkflowPatch) (WorkflowRun, WorkflowDiff, error)`：仅修改未触发部分；冻结检查覆盖 node 和 edge。
-- `ValidateWorkflowPatch(ctx context.Context, base WorkflowDefinition, patch WorkflowPatch) (WorkflowDiff, []ValidationIssue, error)`：纯校验，不落库、不执行 agent。
-- `ProposeWorkflowPublish(ctx, workflowID, revision string, proposer string) (PublishProposal, error)`：创建提案记录；真正 publish 仍走现有 `PublishDraft(confirmed_revision)`，由授权 human action 调用。
-- 上述名字为计划契约；若既有代码中已有同义接口，实施时优先复用并在 RED test 阶段锁定最终名称。
+- `ApplyWorkflowRunPatch(ctx, taskID, runID string, baseRevision int, patch WorkflowPatch) (WorkflowRun, WorkflowDiff, error)`：仅修改未触发部分；冻结检查覆盖 node 和 edge。实施时去掉了 `rootID`：调用方已由 `taskWorkflowStore` 解析到该 root 的 store，再传 root 只会多一处可漂移的真相。
+- `ValidateWorkflowPatch(base WorkflowDefinition, patch WorkflowPatch) (WorkflowDiff, []WorkflowPatchIssue, error)`：纯校验，不落库、不执行 agent、不需要 ctx。issue 类型最终叫 `WorkflowPatchIssue`，`WorkflowPatchError` 携带 `[]WorkflowPatchIssue`。
+- `ProposeWorkflowPublish(ctx, workflowID, revision string, proposer string) (PublishProposal, error)`：创建提案记录；真正 publish 仍走现有 `PublishDraft(confirmed_revision)`，由授权 human action 调用。提案状态持久化在 `workflowFile.Proposals`（pending/published/stale）。
+- 上述名字为计划契约；最终签名以本段与代码为准。
 
 ## Tasks
 
@@ -59,65 +59,89 @@ CLI 实际位于根 module，不能直接 import `server/internal/kanban`。若�
 
 **Files:** Create `server/internal/kanban/workflow_agent_ops.go` and `workflow_agent_ops_test.go`; tests must inspect existing `ValidateWorkflowDefinition`/`EvalSafeExpression` grammar before adding expression operations; if D6 changes path roots, include `workflow_validate.go`, `web/src/shared/workflowModel.ts`, and their mirrored tests.
 
-- [ ] Step 1: 写 `TestValidateWorkflowPatchRejectsUnknownKindAndDanglingEdge`，断言 issue 包含 operation ID 与 field，不修改 base graph。
-- [ ] Step 2: 写 `TestWorkflowPatchDiffIsStableAndOrdered`，同输入多次 diff 字节等价，排序按 operation order/node ID。
-- [ ] Step 3: `go test ./server/internal/kanban -run 'WorkflowPatch|ValidateWorkflowPatch'`; Expected RED。
-- [ ] Step 4: 实现 typed operations、边界限制（payload/node count 按批准值）、确定性 diff 和 validation；无 eval/shell。
-- [ ] Step 5: 再跑 targeted tests；Expected PASS。
+- [x] Step 1: 写 `TestValidateWorkflowPatchRejectsUnknownKindAndDanglingEdge`，断言 issue 包含 operation ID 与 field，不修改 base graph。
+- [x] Step 2: 写 `TestWorkflowPatchDiffIsStableAndOrdered`，同输入多次 diff 字节等价，排序按 operation order/node ID。
+- [x] Step 3: `go test ./server/internal/kanban -run 'WorkflowPatch|ValidateWorkflowPatch'`; Expected RED。
+- [x] Step 4: 实现 typed operations、边界限制（payload/node count 按批准值）、确定性 diff 和 validation；无 eval/shell。限额最终取 200 operations / 500 nodes / 64 KiB per node，HTTP body 1 MiB。
+- [x] Step 5: 再跑 targeted tests；Expected PASS。
 
 ### Task 2：Draft CAS patch + publish proposal
 
 **Files:** Extend `workflow_agent_ops_test.go` (created in Task 1), modify `workflow_store.go`; expose through the D12-approved local HTTP façade used by the selected Agent tool/CLI bridge. The bridge calls the local API (root `cli/cmd` cannot import `server/internal/kanban` directly).
 
-- [ ] **Step 1: Reuse `TestDraftCASAndPublishRevisionPin`** in `workflow_test.go`; extend the assertion to require proposal creation not to create a WorkflowVersion.
-- [ ] **Step 2: Add `TestStalePublishProposalCannotConfirmNewRevision`**: a proposal for old Draft revision cannot publish the current revision; conflict is explicit and no fallback occurs.
-- [ ] **Step 3: Verify RED for proposal-specific behavior**; retain existing Draft CAS test as GREEN regression coverage.
-- [ ] **Step 4: Implement proposal creation without publishing**; actual human confirmation uses `PublishDraft(ctx, workflowID, confirmedRevision, publishedBy)` with the string Draft revision.
-- [ ] **Step 5: targeted kanban/API tests**; Expected PASS.
+- [x] **Step 1: Reuse `TestDraftCASAndPublishRevisionPin`** in `workflow_test.go`; extend the assertion to require proposal creation not to create a WorkflowVersion。
+- [x] **Step 2: Add `TestStalePublishProposalCannotConfirmNewRevision`**: a proposal for old Draft revision cannot publish the current revision; conflict is explicit and no fallback occurs。
+- [x] **Step 3: Verify RED for proposal-specific behavior**; retain existing Draft CAS test as GREEN regression coverage。
+- [x] **Step 4: Implement proposal creation without publishing**; actual human confirmation uses `PublishDraft(ctx, workflowID, confirmedRevision, publishedBy)` with the string Draft revision。实现偏差：确认走 `ConfirmWorkflowPublishProposal`，内部复用同一把 `mu` 下的 `publishDraftLocked`，版本写入与提案状态一次落盘；确认过的提案重复确认返回已记录版本（幂等），草稿已前进的提案标 `stale` 并拒绝。
+- [x] **Step 5: targeted kanban/API tests**; Expected PASS。
 
 ### Task 3：WorkflowRun future-graph patch
 
 **Files:** Modify `task_store_workflow_runs.go` / graph edit validation; tests `workflow_agent_ops_test.go`, `task_store_workflow_runs_test.go`; extend existing `TestRunRevisionCASAndFrozenNodes` in `workflow_test.go`.
 
-- [ ] **Step 1: Add failing edge-freeze tests**: edit/delete an edge incident to triggered NodeRun must conflict; stale base revision must conflict. Reuse `TestRunRevisionCASAndFrozenNodes` for node freeze/CAS.
-- [ ] **Step 2: Implement graph+edges complete freeze validation and patch CAS**, retaining snapshots of triggered node definitions.
-- [ ] **Step 3: Run existing and new tests**; Expected: existing node/CAS tests green, new edge tests pass.
+- [x] **Step 1: Add failing edge-freeze tests**: edit/delete an edge incident to triggered NodeRun must conflict; stale base revision must conflict。Reuse `TestRunRevisionCASAndFrozenNodes` for node freeze/CAS。
+- [x] **Step 2: Implement graph+edges complete freeze validation and patch CAS**, retaining snapshots of triggered node definitions。冻结集合抽成 `workflowRunFrozenNodes`，同时覆盖 NodeRun 行与 Loop 内部节点的 `LoopPath`；`EditWorkflowRunGraph` 与 typed patch 共用它。
+- [x] **Step 3: Run existing and new tests**; Expected: existing node/CAS tests green, new edge tests pass。
 
 ### Task 4：Dry-run 仅静态模拟
 
 **Files:** `workflow_agent_ops.go`, tests。
 
-- [ ] Step 1: 写 `TestWorkflowDryRunNeverInvokesRunnerOrWritesTaskState`，fake runner 调用计数为 0，DB run/node/task 行与调用前一致。
-- [ ] Step 2: 覆盖 Condition route、skipped join、Loop budget、HumanGate stop 和 Notify “would notify” 描述。
-- [ ] Step 3: targeted tests RED。
-- [ ] Step 4: 实现 dry-run evaluator 只执行纯表达式与既有图算法，返回可解释模拟 trace；不得真实发 Notify 或启动 Session。
-- [ ] Step 5: targeted tests PASS。
+- [x] Step 1: 写 `TestWorkflowDryRunNeverInvokesRunnerOrWritesTaskState`，fake runner 调用计数为 0，DB run/node/task 行与调用前一致。实现偏差：dry-run 是纯函数，构造上就不持有 Runner/Service/Store，因此测试改为断言输入图/输出 map 未被修改 + API 测试断言 Run 的 revision/NodeStates 不变；没有 fake runner 可计数。
+- [x] Step 2: 覆盖 Condition route、skipped join、Loop budget、HumanGate stop 和 Notify “would notify” 描述。
+- [x] Step 3: targeted tests RED。
+- [x] Step 4: 实现 dry-run evaluator 只执行纯表达式与既有图算法，返回可解释模拟 trace；不得真实发 Notify 或启动 Session。复用 `EngineReadyNodes` 与 `evaluateWorkflowConditionRoot`，条件路由沿用生产契约 true→`pass` / false→`fail`。
+- [x] Step 5: targeted tests PASS。
 
 ### Task 5：Agent surface + scope/authorization tests
 
-**Files:** 根据 D12 选定入口修改 CLI/http/tool adapter；`http_workflows_test.go` / CLI tests；注册 G-LD。
+**Files:** 根据 D12 选定入口修改 CLI/http/tool adapter；`http_workflows_test.go` / CLI tests；注册 G-LG。
 
-- [ ] **Step 1: Write scope tests** for missing root/task, mismatch between `root_id` and the Task's actual data-plane store, and a Run ID belonging to another Task in that same store. Do not write cross-account caller-authorization tests: repo policy explicitly says REST/WS do not authenticate `user=`.
-- [ ] **Step 2: Add payload-size, node-count and invalid-operation RED tests** at the server HTTP/service boundary; CLI-side limits are defense in depth only.
-- [ ] Step 3: 只实现 typed façade，所有路径转入前述服务接口；HTTP 不信任请求体 `author` 来授予 human publish 权限。
-- [ ] Step 4: 添加前端可呈现的结构化 diff / validation issue 类型（如 Agent surface 需要），不得在 UI 中展示未确认的 proposal 为已发布版本。
-- [ ] Step 5: `go test ./server/internal/kanban ./server/internal/api ./cli/cmd` + targeted Vitest；Expected PASS。
+- [x] **Step 1: Write scope tests** for missing root/task, mismatch between `root_id` and the Task's actual data-plane store, and a Run ID belonging to another Task in that same store。Do not write cross-account caller-authorization tests: repo policy explicitly says REST/WS do not authenticate `user=`。落地：缺 `root_id` → 400、任务无 workflow run → 404 在 `TestTaskWorkflowRunAgentPatchScope`；跨 Task run ID 在 domain `TestWorkflowRunPatchRejectsFrozenEdgeAndStaleRevision` 断言 `ErrWorkflowRunNotFound`。
+- [x] **Step 2: Add payload-size, node-count and invalid-operation RED tests** at the server HTTP/service boundary; CLI-side limits are defense in depth only。
+- [x] Step 3: 只实现 typed façade，所有路径转入前述服务接口；HTTP 不信任请求体 `author` 来授予 human publish 权限。新路由：`GET /api/workflows/{id}/snapshot`、`POST /api/workflows/{id}/patch/validate|apply`、`POST /api/workflows/{id}/publish-proposals`、`POST /api/workflows/publish-proposals/{id}/confirm`、`POST /api/workflows/dry-run`、`POST /api/tasks/{id}/workflow-run/patch/validate|apply`、`POST /api/tasks/{id}/workflow-run/dry-run`、`GET /api/tasks/{id}/workflow-run/suggestion`。Draft/提案/dry-run 属控制面（`/api/workflows` 在 worker 上 403）；task run 路由按既有分类留在数据面，必须带 `root_id` 且经 `taskWorkflowStore` 校验任务归属。
+- [x] Step 4: 添加前端可呈现的结构化 diff / validation issue 类型（如 Agent surface 需要），不得在 UI 中展示未确认的 proposal 为已发布版本。落地在 Draft editor 的 patch 面板：粘贴 JSON → validate/apply，展示 `workflow-patch-issues` 与 `workflow-patch-diff`；画布 dirty 时拒绝导入；粘贴内容必须自带 `base_revision`，缺失即拒绝（fail closed），不由前端补当前 revision。
+- [x] Step 5: `go test ./server/internal/kanban ./server/internal/api ./cli/cmd` + targeted Vitest；Expected PASS。
 
 ### Task 6：建议沉淀与发布边界
 
 **Files:** Extend existing success-suggestion behavior in `server/internal/kanban/workflow_test.go` (`TestSuggestTemplateFromSuccess`) and add proposal persistence/API tests only if new state is required.
 
-- [ ] **Step 1: Reuse `TestSuggestTemplateFromSuccess`**; extend it to assert a successful task creates a reviewable proposal but not a WorkflowVersion.
-- [ ] **Step 2: Test human confirmation** against exact string Draft revision via existing `TestDraftCASAndPublishRevisionPin` and publish handler tests; add only missing stale-proposal coupling.
-- [ ] **Step 3: Persist proposal source task/run and status** if it is a new product entity; keep suggestion non-publishing.
-- [ ] **Step 4: Kanban/API tests PASS.**
+- [x] **Step 1: Reuse `TestSuggestTemplateFromSuccess`**; extend it to assert a successful task creates a reviewable proposal but not a WorkflowVersion。落地为 `GET /api/tasks/{id}/workflow-run/suggestion`，返回 `Published:false` 的 `SuggestTemplateFromRun`；未新增自动持久化实体。
+- [x] **Step 2: Test human confirmation** against exact string Draft revision via existing `TestDraftCASAndPublishRevisionPin` and publish handler tests; add only missing stale-proposal coupling。
+- [x] **Step 3: Persist proposal source task/run and status** if it is a new product entity; keep suggestion non-publishing。判断：发布提案不是模板建议，而是 Draft revision 的审阅实体，因此持久化 `WorkflowPublishProposal`（workflow id / revision / proposer / status / version）；模板建议仍不落库。
+- [x] **Step 4: Kanban/API tests PASS。**
 
 ### Task 7：全量审查与门禁
 
-- [ ] Step 1: 覆盖并发 CAS、frozen edge、跨账户/跨节点边界的 targeted tests。
-- [ ] Step 2: `go test ./server/... ./cli/...`、相关 Vitest、`make build-web`。
-- [ ] Step 3: 添加 G-LD customization 和 anchors/tests，提交 `Scope: G-LD`，提交后 `make check-upstream`。
-- [ ] Step 4: 记录真实基线失败；不在本计划中合并/部署/重启。
+- [x] Step 1: 覆盖并发 CAS、frozen edge、跨账户/跨节点边界的 targeted tests。
+- [x] Step 2: `go test ./server/... ./cli/...`、相关 Vitest、`make build-web`。
+- [ ] Step 3: 添加 G-LG customization 和 anchors/tests（已完成），提交 `Scope: G-LG`，提交后 `make check-upstream`。**未执行**：提交未获授权；`make check-upstream` 只比较已提交文件，现在跑会因新文件不在 delta 内而红。
+- [x] Step 4: 记录真实基线失败；不在本计划中合并/部署/重启。
+
+## Execution record（2026-11-11）
+
+- **新增文件**：`workflow_agent_ops.go`（纯 typed patch/validate/diff）、`workflow_agent_draft.go`（Draft patch + proposal）、`workflow_agent_dryrun.go`（纯静态模拟）、`task_store_workflow_patch.go`（Run 未来子图 CAS）、`http_workflow_agent.go`（本机 HTTP façade）。
+- **修改文件**：`workflow_store.go`（`publishDraftLocked` 拆出，供提案确认原子复用）、`task_store_workflow_runs.go`（复用 `workflowRunFrozenNodes`）、`http_routes.go`（10 条路由）。
+- **测试**：`workflow_agent_ops_test.go`、`http_workflow_agent_test.go`、`web/tests/workflow-editor-board-entry.test.mjs`（patch 面板/controlPath/结构化 issue）。
+- **验证（2026-11-11 复跑）**：
+  - `go test ./server/... ./cli/... -count=1` 全绿（kanban 74.2s、api 20.5s）。
+  - `go test -race ./server/internal/kanban -count=1` 绿（133.7s）。
+  - `npm test`：214 个测试文件通过 / 5 跳过，488 tests 通过 / 6 跳过。
+  - `npx tsc -b --noEmit` 绿；`make build-web` 绿（46.6s）。
+  - targeted `workflow-editor-board-entry.test.mjs` 绿。
+  - 变异验证：移除 stale-proposal 守卫 → `TestStalePublishProposalCannotConfirmNewRevision` 红（status 仍 pending）；移除 frozen-edge 守卫 → `TestWorkflowRunPatchRejectsFrozenEdgeAndStaleRevision` 红（未拒绝冻结边）；恢复后两测试绿。
+  - `make build` 绿（含 web dist + `go build ./cli/cmd`）。
+  - `make check-upstream` **未跑绿**：工具只比较已提交文件，G-LG 新文件尚未提交，按预期会报不在 delta；需授权提交后重跑。
+- **独立评审修复（2026-11-11，第二轮）**：
+  - **MEDIUM 1（重复提案/版本覆盖）**：`ProposeWorkflowPublish` 对同一 `(workflow, revision)` 返回已有 pending（否则已有 published）提案，不再重复建；`publishDraftLocked` 对同一 revision 的既有版本幂等返回，不同 revision 的覆盖直接报错。新增 `TestDuplicatePublishProposalAndRepublishStayImmutable`，并扩展 API 用例断言重复提案同 ID、重复确认不改 `PublishedBy`。变异验证：关闭去重 → 重复 ID 失败；关闭版本守卫 → 确认方覆盖原发布者。
+  - **MEDIUM 2（dry-run 忽略运行态）**：`WorkflowDryRunInput` 增加 `NodeStates/SelectedRoutes`；API 从持久化 Run 合并 `NodeStates/SelectedRoutes/Outputs/LoopState`，请求只补未运行节点的输出；只有空/pending 节点会被输出标成 success，已失败/已完成节点不被改写。dry-run 的节点级 issue 改用 `NodeID`，不再占用 `OperationID`。新增 `TestWorkflowDryRunHonorsPersistedRunState`、`TestWorkflowDryRunReportsNodeScopedIssues` 与 API 层「已完成节点不重放、合并输出后 done」断言。变异验证：去掉 NodeStates 播种 → 已完成无输出节点被重放；去掉 API 合并 → 节点 a 被重放。
+  - **MEDIUM 3（提案不可发现）**：新增 `GET /api/workflows/{id}/publish-proposals`；前端 Draft editor 增加提案面板、刷新与逐条确认（dirty/非 pending 时禁确认，确认文案钉住精确 workflow+revision），全部走 `controlPath`。扩展 `workflow-editor-board-entry.test.mjs` 钉住 controlPath 与 pending-only 守卫。
+  - **LOW**：请求体改为整包读取后限长（含尾随空白）→ 413；快照/建议/dry-run/列表的存储错误区分 404 与 500；`newPublishProposalID` 处理 `rand.Read` 错误。LOW 4/10 复核为不成立：run patch 已把 `ErrWorkflowRunNotFound` 映射 404，当前文件不存在重复 if/else。
+  - 新增测试放入 `workflow_agent_review_test.go`，避免测试文件超过 500 行硬线。
+  - 复跑：`go test ./server/internal/kanban`、`./server/internal/api`、targeted Vitest、`tsc -b --noEmit` 均绿；全量 Go 一次运行出现既有 `TestTaskHumanGateRouteRequiresDedicatedDecision` 间歇失败（单跑、`-count=20`、`-race -count=5` 均通过，与本轮改动无调用关系），记录为环境性抖动并继续观察。
+- **Scope**：G-LG，已登记 `docs/upstream-customizations.yaml`（含 anchors，逐个核对存在）。
+- **未执行**：commit / merge / push / deploy / ship / 重启任何 mindfs 服务。
 
 ## Out of scope
 

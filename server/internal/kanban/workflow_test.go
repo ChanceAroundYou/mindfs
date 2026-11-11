@@ -33,6 +33,7 @@ func TestWorkflowValidateRejectsNestedLoop(t *testing.T) {
 	inner := wfDef(WorkflowNode{ID: "inner-l", Name: "inner", Kind: NodeKindLoop, Params: map[string]any{"max_iterations": 3}})
 	loop := wfNode("l", NodeKindLoop)
 	loop.Params["max_iterations"] = 5
+	loop.Params["exit_expression"] = "inner.output.done == true"
 	loop.Params["graph"] = inner
 	d := wfDef(loop)
 	if err := ValidateWorkflowDefinition(d); err == nil {
@@ -47,9 +48,30 @@ func TestLoopMaxIterationsBounds(t *testing.T) {
 			t.Fatalf("expected rejection for max_iterations=%d", n)
 		}
 	}
-	d := wfDef(WorkflowNode{ID: "l", Name: "l", Kind: NodeKindLoop, Params: map[string]any{"max_iterations": 5}})
+	inner := wfDef(WorkflowNode{ID: "step", Name: "step", Kind: NodeKindNotify, Params: map[string]any{"message": "一轮"}})
+	d := wfDef(WorkflowNode{ID: "l", Name: "l", Kind: NodeKindLoop, Params: map[string]any{
+		"max_iterations": 5, "exit_expression": "step.output.message == \"一轮\"", "graph": inner,
+	}})
 	if err := ValidateWorkflowDefinition(d); err != nil {
 		t.Fatalf("valid loop rejected: %v", err)
+	}
+	// Exit expression and inner graph are mandatory, not defaulted.
+	for _, missing := range []string{"exit_expression", "graph"} {
+		node := WorkflowNode{ID: "l", Kind: NodeKindLoop, Params: map[string]any{
+			"max_iterations": 5, "exit_expression": "x.output.done == true", "graph": inner,
+		}}
+		delete(node.Params, missing)
+		if err := ValidateWorkflowDefinition(wfDef(node)); err == nil {
+			t.Fatalf("expected rejection when %s is missing", missing)
+		}
+	}
+	// Inner ids share the D6 expression root, so duplicates are ambiguous.
+	dupInner := wfDef(WorkflowNode{ID: "l", Name: "same", Kind: NodeKindNotify, Params: map[string]any{"message": "一轮"}})
+	dup := wfDef(WorkflowNode{ID: "l", Kind: NodeKindLoop, Params: map[string]any{
+		"max_iterations": 5, "exit_expression": "l.output.done == true", "graph": dupInner,
+	}})
+	if err := ValidateWorkflowDefinition(dup); err == nil {
+		t.Fatal("expected rejection for inner id duplicating the loop id")
 	}
 }
 
