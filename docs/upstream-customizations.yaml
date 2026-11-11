@@ -950,6 +950,10 @@ groups:
       - server/internal/update/manifest.go
       - server/internal/update/download.go
       - server/internal/update/install.go
+      # 安装器重启入口按平台分文件；Phase 3 删除 task_template.json 后两边签名
+      # 同步收敛为 (bin, agents, web)，改动必须跟着 G-LJ 的打包链一起保留。
+      - server/internal/update/service_unix.go
+      - server/internal/update/service_windows.go
       - server/internal/update/archive.go
       - server/internal/update/version.go
       - server/internal/update/webassets.go
