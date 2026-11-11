@@ -237,3 +237,18 @@ type harnessAdapter struct {
     `--check-runtime` 全部 synced，本机渲染前后配置内容（解析后 JSON）逐字节一致。
     pc-win 实测：`service_tier`/`notify` 回到根级、`[features]` 仅 `goals`、10 张本地表保留；
     活动 profile=default 下 `GET /api/agent-api-providers?agent=codex` 只返回「官方订阅」。
+
+- 2026-11-11（用户报「同步机制 切换机制需要进一步优化」）：
+  - 缺口：worker 节点没有周期性 sync runner（`codexsync.StartRunner` 只在 TLS 主节点启用），
+    渲染器升级或共享 profile 变化后，设备上的旧 runtime 配置会一直留着——pc-win 的坏文件
+    就是这样存活的（mtime 早于多次部署），只有手动跑 `agents-config-sync --render` 才会修。
+  - 修复：`server/app/codex_profile_selection.go` 在确定活动 profile 后调用一次
+    `codexsync.RenderRuntimeAt(paths)`。渲染幂等（内容一致不落盘），失败只记
+    `[codexsync] runtime.render.error` 日志、不阻断启动；因此每次进程启动都会自动把设备
+    带回当前渲染器 + 共享 profile 的正确形态。
+  - 测试：`server/app/codex_profile_startup_test.go` 新增
+    `TestInitializeCodexProfileRendersRuntimeAtStartup`——用 pc-win 形态的旧配置
+    （共享 default 以 `[features]` 结尾、本地 `service_tier` 落在 sentinel 段内但被旧拼接
+    方式吞进表里）启动，断言渲染后 `service_tier` 回到根级、`[features]` 只剩 `goals`、
+    本地 `[tui]` 表保留。`go test ./...` 全绿。
+  - 本改动随下一次 `deploy-all.sh` 分发；分发后四端进程启动即自愈，不再依赖手动渲染。
