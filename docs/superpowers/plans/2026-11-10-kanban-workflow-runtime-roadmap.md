@@ -77,13 +77,13 @@ WP-00 的 RED 不得要求删除现有测试锁定的合法 parent Task/summary 
 | D7 | migrated task 旧 pause/resume/next/rerun/cancel/complete/fail 映射？ | pause 停止新 claim、等在途节点；cancel 有界中断活动 NodeRun；resume 唤醒同 Run；阶段专属动作逐项映射/禁用。 | board verbs |
 | D8 | Restart auto-resume 的证据门槛？ | 有绑定、session 不在回复、terminal/done 可证、无未决副作用；否则 unknown/needs-user。 | recovery |
 | D9 | queued/empty session request 何时可重排？FIFO continuation 的 NodeRun/attempt 身份？terminal run 是否可被评论重活？ | 仅有证据证明从未发送的 queued 可安全重排；其余 unknown。FIFO turn 独立 ID 且关联原 request；terminal 默认不复活，需显式 resume/new attempt。 | outbox/lifecycle |
-| D10 | spec 已定写节点默认 per-Task durable gate；独立 worktree opt-in 与共享 physical tree gate owner/key？ | 默认 Task primary tree + per-Task gate；共享物理树必须 durable 互斥。无法提供则 fail closed，不声称满足 spec。 | worktree |
-| D11 | merge target 与 branch owner conflict？ | Run 创建时解析实际项目/Task target 并快照；已由活动 NodeRun 占用的 branch 拒绝，不覆盖 owner。 | merge/registry |
+| D10 | spec 已定写节点默认 per-Task durable gate；独立 worktree opt-in 与共享 physical tree gate owner/key？ | **已确认（2026-11-10）**：默认共享 Task primary tree；只有节点显式 `worktree=independent` 才独立建树；写节点默认 `writes_workspace=true`，只读节点才可并发。 | worktree |
+| D11 | merge target 与 branch owner conflict？ | **已确认（2026-11-10）**：Run 创建时解析实际项目/Task target 并快照；merge 只用 snapshot，禁止运行时隐式落 `main`；已由活动 NodeRun 占用的 branch 拒绝，不覆盖 owner。 | merge/registry |
 | D12 | Agent tool surface 与可信 Agent identity 如何在 no-REST-auth 下实现？ | 获批 typed local tool/CLI→HTTP；若无可信 identity，Agent 只输出 patch，由人类 UI 导入；人类 publish revision 已是 spec 决定。 | agent authority |
 | D13 | Append-only `(run_id,seq)` ledger 是否本期做？ | 最小 typed ledger；mutable Run 为 projection，测试 replay/recovery。 | persistence |
 | D14 | Task 是否支持多个历史 WorkflowRun？当前 `task_id UNIQUE`。 | 至多一个 active，保留 terminal history/current binding；需 SQLite rebuild。 | schema/API |
-| D15 | Gate 当前无生产 caller、Service per-account、gate 进程内；如何满足 durable per-Task writer gate？ | app 层共享 gate + durable claim/reconciliation；不能满足则禁止共享 worktree 并发写。 | cross-account safety |
-| D16 | NodeRun→WorktreeEntry owner 如何持久化？当前 node schema无 worktree id/path，同 branch 可能覆盖 owner。 | NodeRun 或一对一关联表保存 owner；活动树唯一 NodeRun，冲突拒绝。 | recovery/merge |
+| D15 | Gate 当前无生产 caller、Service per-account、gate 进程内；如何满足 durable per-Task writer gate？ | **已确认（2026-11-10）**：app 层注入一个进程内共享 gate（跨账户 Service 共用）；durable owner 由 TaskStore 的 worktree owner 约束承担；跨进程不宣称 durable，必须显式检测/fail closed。 | cross-account safety |
+| D16 | NodeRun→WorktreeEntry owner 如何持久化？当前 node schema无 worktree id/path，同 branch 可能覆盖 owner。 | **已确认（2026-11-10）**：`workflow_node_runs` 直接增加 worktree id/path/branch 列；活动树至多一个 NodeRun owner，同 branch 冲突拒绝且不覆盖既有 owner。 | recovery/merge |
 | D17 | task node 缺少 Run snapshot Agent/harness/model？ | fail/needs-user，不回退其他配置。 | deterministic execution |
 
 ## 分层文件树与依赖
@@ -113,9 +113,9 @@ docs/superpowers/plans/
 ## Scope group 预分配
 
 - WP-00：**G-LB（已登记）** —— 在线 Claude router 的 child-owned 工具卡归属是独立边界，`docs/upstream-customizations.yaml` 已写入症状/原因/边界/测试/anchors。其余候选在对应实施包完成后登记。
-- Runtime：G-LC。
-- Worktree：G-LE。G-KU 只覆盖 task/worktree 进程内 gate；G-KV 含 NodeRun lifecycle/merge 的既有意图，但不含新增 durable cross-account physical gate。实现前按实际 diff 重核。
-- Agent-first：G-LD。
+- Runtime：已按实际落地拆成三组 —— **G-LC**（持久层：claim、canonical 身份、历史 Run）、**G-LD**（Agent 节点 Runner 端口与 JSON envelope）、**G-LE**（执行器/driver/留言/HumanGate）。原先「Runtime 单组 G-LC、Worktree G-LE、Agent-first G-LD」的预分配与已登记组号冲突，已作废。
+- Worktree：按实际 diff 拆成两组 —— **G-LF** 只覆盖新增的进程内跨账户物理 worktree gate + durable owner；**G-KV 扩展**承接 NodeRun 生命周期/合并适配与 run 快照 integration branch（title/why 本已覆盖「按 NodeRun 归属创建/关闭 + 自动合并」）。G-KU 的 task/worktree 进程内语义未改；跨进程 durable 锁仍不承诺。
+- Agent-first：**G-LG（已登记，2026-11-11）**。D12 选「只读快照 + typed patch」：Agent 读 snapshot、输出六种 typed 操作，人类在 UI 校验/应用并走既有 CAS；发布只建 proposal，人工确认精确 revision 才写版本。实现与门禁见子计划 Execution record。
 - G-KN stale-anchor repair：作为独立、获批的登记维护项处理；`web/capacitor.config.json` ignored/generated 且无 tracked anchor target，应改为 tracked invariant 并为 Capacitor tests 选 deterministic fixture/skip policy，不得把持续红作为永久 baseline。
 - `docs/superpowers/plans/*.md` 由 G-A prefix 覆盖；`docs/plans/README.md` 后续需按 repo registration rules 处理。WP-00 的 G-LB 已登记；其余组在各自实现提交时登记。
 
