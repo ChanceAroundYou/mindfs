@@ -60,11 +60,11 @@ for (const [needle, label] of [
 ]) {
   assert.match(httpDomain, needle, `${label} 必须走 respondJSONConditional`);
 }
-// http_tasks.go 的两个列表端点：模板库与看板任务。
+// http_tasks.go 的看板任务列表：模板库端点已随 Phase 3（G-LJ）删除，只剩这一处。
 assert.equal(
   (httpTasks.match(/respondJSONConditional\(w, r, map\[string\]any\{"items": items\}\)/g) || []).length,
-  2,
-  "task-templates 与看板任务列表都必须走 respondJSONConditional（stages/events 不能瘦）",
+  1,
+  "看板任务列表必须走 respondJSONConditional（stages/events 不能瘦）",
 );
 assert.ok(
   !/respondJSONList\(w, r, out\.Status\)/.test(httpDomain),
