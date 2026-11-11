@@ -2824,7 +2824,7 @@ groups:
     anchors:
       - web/src/shared/taskTemplateConstants.ts:TASK_TEMPLATE_ALL_FILTER
       - web/src/components/task/TaskBoardToolbar.tsx:TaskBoardToolbar
-      - web/tests/task-board-view-layering.test.mjs:TaskBoard toolbar owns template-menu rendering
+      - web/tests/task-board-view-layering.test.mjs:TaskBoard toolbar owns create, workflow-entry and refresh controls
 
   - id: G-CN
     title: Frontend Vitest runner and reusable primitive coverage
@@ -6926,7 +6926,7 @@ groups:
     kind: fix
     symptom: "「全部」模板页签下点「新建任务」再点 debug 等任何模板，新建任务面板永远不弹出来；同一个缺陷也静默打断了 ⋯ 菜单里的新建/编辑/删除模板。新建面板里「新分支名称」是个裸 input，与任务名输入框完全不是一套。任务文本一长，面板滚不到底、点不到发送键。"
     why: "① `useTaskTemplates` 造了 `taskTemplateActionMenuRef` / `taskCreateTemplateMenuRef` 并一路透传到工具栏，但两个叶子菜单组件不接受 ref —— `current` 恒为 `null`，点外关闭的 `mousedown` 监听把每次点击都判成「点在外面」，菜单在 `click` 到达之前就被卸载。React 19 允许 ref 当普通 prop 传，所以修复只是加一个 `ref?: React.Ref<HTMLDivElement>` 并挂到最外层定位容器。② 分支名输入原本是 `margin/padding` 撑出来的裸 input，还悬在正文容器外面；面板内既有的唯一输入来源是 `composerInputStyle`（任务名输入框用它）。③ `PromptEditor` 给 `TokenEditor` 传了 `fillHeight`，那条路径把 contentEditable 设成 `height:100% / maxHeight:none`（高度随内容无限长高），而 `composerContainerStyle` 只有 minHeight、发送键又是 `position:absolute; right:6; bottom:6` 挂在容器上 —— 于是跟着容器一起沉到滚动视口之外。删掉 `fillHeight` 就走回默认路径 `maxHeight:240px + overflowY:auto`，与对话输入框（ActionBar）同源。"
-    boundary: "只动三处接线与样式：菜单组件加 ref prop、工具栏透传；分支名输入换成 `composerInputStyle` + 26px 并搬进 worktree 控件行；`PromptEditor` 不传 `fillHeight`。点外关闭的既有逻辑、菜单分组与互斥、`TokenEditor` 的 fillHeight 能力本身（仍可能被别处需要）都不改。tRPC/REST 契约不动。"
+    boundary: "只动三处接线与样式：菜单组件加 ref prop、工具栏透传；分支名输入换成 `composerInputStyle` + 26px 并搬进 worktree 控件行；`PromptEditor` 不传 `fillHeight`。点外关闭的既有逻辑、菜单分组与互斥、`TokenEditor` 的 fillHeight 能力本身（仍可能被别处需要）都不改。tRPC/REST 契约不动。Phase 1（G-LJ）起工具栏不再挂载这两个模板菜单，工具栏一侧的 ref 透传随之移除；组件级 ref 契约仍必须保留，Phase 3 删组件时才可一并删除。"
     files:
       - web/src/components/task/TaskCreateTemplateMenu.tsx
       - web/src/components/task/TaskTemplateActionMenu.tsx
@@ -6941,8 +6941,6 @@ groups:
       - 'web/src/components/task/TaskCreateTemplateMenu.tsx:  ref?: React.Ref<HTMLDivElement>;'
       - 'web/src/components/task/TaskCreateTemplateMenu.tsx:<div ref={ref} style={{ position: "relative", flexShrink: 0 }}>'
       - 'web/src/components/task/TaskTemplateActionMenu.tsx:<div ref={ref} style={{ position: "relative", flexShrink: 0 }}>'
-      - 'web/src/components/task/TaskBoardToolbar.tsx:          ref={taskTemplateActionMenuRef}'
-      - 'web/src/components/task/TaskBoardToolbar.tsx:        ref={taskCreateTemplateMenuRef}'
       - 'web/src/components/app/TaskInlineEditPanel.tsx:        aria-label={t("task.newBranchName")}'
       - 'web/src/components/editor/PromptEditor.tsx:      {/* 刻意**不传** fillHeight'
 
