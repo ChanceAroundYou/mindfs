@@ -38,3 +38,29 @@ test("workflow authoring generation is read-only until the user applies", () => 
   assert.doesNotMatch(hook, /applyWorkflowDraftPatch\(|publishWorkflowDraft\(|confirmWorkflowPublishProposal\(/,
     "generation hook cannot apply or publish");
 });
+test("create authoring has its own gateway and a separate atomic apply", () => {
+  const service = read("src/services/task/workflowDraft.ts");
+  const hook = read("src/components/task/useWorkflowAuthoring.ts");
+  const review = read("src/components/task/useWorkflowAuthoringReview.ts");
+
+  assert.match(service, /export async function generateWorkflowCreateProposal\(/, "create generation service is exported");
+  assert.match(service, /export async function reviewWorkflowCreatePatch\(/, "create subset review service is exported");
+  assert.match(service, /export async function applyWorkflowCreateProposal\(/, "create apply service is exported");
+
+  const generate = service.match(/export async function generateWorkflowCreateProposal[\s\S]*?\n}/)?.[0] || "";
+  assert.match(generate, /controlPath\("\/api\/workflows\/authoring\/proposals"\)/, "create generation stays on the control plane");
+  assert.match(generate, /workflow_id/, "create generation names the draft to create");
+  assert.match(generate, /"r0"|r0/, "create generation pins the synthetic base revision");
+  assert.doesNotMatch(generate, /patch\/apply|publish|confirmWorkflowPublishProposal/, "generation never persists");
+
+  const validate = service.match(/export async function reviewWorkflowCreatePatch[\s\S]*?\n}/)?.[0] || "";
+  assert.match(validate, /\/api\/workflows\/authoring\/validate/, "create review revalidates the selected subset");
+  assert.doesNotMatch(validate, /patch\/apply|publish/, "create review never persists");
+
+  const apply = service.match(/export async function applyWorkflowCreateProposal[\s\S]*?\n}/)?.[0] || "";
+  assert.match(apply, /\/api\/workflows\/authoring\/apply/, "create apply uses the atomic create endpoint");
+
+  assert.match(hook, /generateWorkflowCreateProposal\(/, "create scope calls the create gateway");
+  assert.match(review, /reviewWorkflowCreatePatch\(/, "create review revalidates before apply");
+  assert.match(review, /applyWorkflowCreateProposal\(/, "create apply is the only write");
+});

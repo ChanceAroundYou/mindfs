@@ -121,3 +121,19 @@ func missingAuthoringField(op WorkflowPatchOperation) string {
 	}
 	return ""
 }
+
+// NewWorkflowAuthoringBaseGraph is the deterministic empty Draft that a
+// create-scope proposal is reviewed against. Apply rebuilds this exact graph,
+// so the reviewed operations and the persisted Draft share one base and
+// creation stays a single CAS write (revision r1).
+func NewWorkflowAuthoringBaseGraph() WorkflowDefinition {
+	return WorkflowDefinition{
+		Nodes: []WorkflowNode{{
+			ID:     "start",
+			Name:   "Start",
+			Kind:   NodeKindAgent,
+			Params: map[string]any{"writes_workspace": true},
+		}},
+		Edges: []WorkflowEdge{},
+	}
+}

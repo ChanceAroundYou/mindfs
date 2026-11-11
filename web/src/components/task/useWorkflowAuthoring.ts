@@ -1,6 +1,7 @@
 import { useCallback, useReducer, useRef } from "react";
 import { fetchSessionNamingPreference } from "../../services/prefs/preferences";
 import {
+  generateWorkflowCreateProposal,
   generateWorkflowDraftProposal,
   generateWorkflowRunProposal,
   workflowPatchIssues,
@@ -89,9 +90,11 @@ export function useWorkflowAuthoring(): WorkflowAuthoring {
         agent,
         model,
       };
-      const response = input.scope === "draft"
-        ? await generateWorkflowDraftProposal(input.resourceID, authorization)
-        : await generateWorkflowRunProposal(input.rootID!, input.taskID!, authorization, input.nodeId);
+      const response = input.scope === "create"
+        ? await generateWorkflowCreateProposal(input.resourceID, authorization)
+        : input.scope === "draft"
+          ? await generateWorkflowDraftProposal(input.resourceID, authorization)
+          : await generateWorkflowRunProposal(input.rootID!, input.taskID!, authorization, input.nodeId);
       if (!response.proposal) {
         dispatch({ type: "reject", token, issues: response.issues ?? [] });
         return {};
@@ -109,8 +112,11 @@ export function useWorkflowAuthoring(): WorkflowAuthoring {
     } catch (error) {
       // A 409 means the snapshot moved under us. Adopt the revision the server
       // reported (then the editor reloads it) instead of leaving the stale base
-      // in place for the next attempt to resend.
-      const { target: adopted, conflictRevision } = adoptConflictRevision(target, error);
+      // in place for the next attempt to resend. A create has no live snapshot
+      // to adopt: its only conflict is a duplicate id, which must be reworked.
+      const { target: adopted, conflictRevision } = input.scope === "create"
+        ? { target, conflictRevision: "" }
+        : adoptConflictRevision(target, error);
       if (conflictRevision) {
         dispatch({ type: "observe-revision", target: adopted });
       }

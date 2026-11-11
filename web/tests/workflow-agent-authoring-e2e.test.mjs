@@ -189,6 +189,19 @@ test("a generation CAS conflict adopts the server revision and requests a reload
   );
 });
 
+test("create scope is explicit and persists only through the create apply", () => {
+  const editor = read("src/components/task/WorkflowDraftEditor.tsx");
+  assert.match(editor, /data-testid="workflow-agent-create"/, "create has its own entry point");
+  assert.match(editor, /scope: createMode \? "create" : "draft"/, "create generation never reuses the draft gateway");
+  assert.match(editor, /revision: createMode \? "r0" : e\.revision/, "create reviews against the synthetic base");
+  assert.match(editor, /setCreateMode\(false\)[\s\S]{0,80}adoptDraft/, "apply adopts r1 and leaves create mode");
+  assert.match(editor, /createMode \? null : e\.selected/, "create mode does not edit an existing draft canvas");
+
+  const review = read("src/components/task/useWorkflowAuthoringReview.ts");
+  assert.match(review, /target\.scope === "create"[\s\S]{0,160}applyWorkflowCreateProposal/, "create apply is separate from CAS draft apply");
+  assert.doesNotMatch(review, /create[\s\S]{0,80}publishWorkflowDraft/, "create never publishes");
+});
+
 test("Loop save/reopen keeps the inner DAG, and Run edits report backend conflicts", () => {
   const model = read("src/shared/workflowModel.ts");
   assert.match(model, /params\.graph|graph: \{ nodes/, "the inner graph is serialized under params.graph");

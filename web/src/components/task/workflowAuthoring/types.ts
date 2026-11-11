@@ -8,7 +8,7 @@ import type {
 // this bound only keeps an oversized Agent response out of the review state.
 export const WORKFLOW_AUTHORING_MAX_OPERATIONS = 200;
 
-export type WorkflowAuthoringScope = "draft" | "run";
+export type WorkflowAuthoringScope = "create" | "draft" | "run";
 
 export type WorkflowAuthoringTarget = {
   scope: WorkflowAuthoringScope;

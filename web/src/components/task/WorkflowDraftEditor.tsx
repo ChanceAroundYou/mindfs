@@ -21,13 +21,16 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
   const authoring = useWorkflowAuthoring();
   const review = useWorkflowAuthoringReview(authoring, {});
   const [instruction, setInstruction] = useState("");
+  const [createMode, setCreateMode] = useState(false);
+  const createIdRef = useRef("");
   const { observeRevision, reset } = authoring;
   const previousDraftRef = useRef("");
 
   useEffect(() => {
+    if (createMode) return;
     if (!e.selectedId || !e.revision) return;
     observeRevision({ scope: "draft", resourceID: e.selectedId, revision: e.revision });
-  }, [e.selectedId, e.revision, observeRevision]);
+  }, [createMode, e.selectedId, e.revision, observeRevision]);
 
   // A proposal is bound to the draft it was generated for. Leaving that draft
   // must discard it rather than leave a ready patch pointed at the old target.
@@ -39,15 +42,30 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
   }, [e.selectedId, reset]);
 
   const generate = () => {
-    if (!e.selected) return;
+    const targetID = createMode ? createIdRef.current : e.selected?.workflow_id;
+    if (!targetID) return;
     void authoring.generate({
-      scope: "draft",
-      resourceID: e.selected.workflow_id,
-      revision: e.revision,
+      scope: createMode ? "create" : "draft",
+      resourceID: targetID,
+      revision: createMode ? "r0" : e.revision,
       instruction,
     }).then((result) => {
-      if (result.conflictRevision) void e.reloadSelected();
+      if (result.conflictRevision && !createMode) void e.reloadSelected();
     });
+  };
+
+  // Creating through the Agent reviews against the deterministic r0 graph and
+  // persists nothing until the accepted subset is applied as r1. The id is
+  // fixed for the whole create session so generation and apply name one draft.
+  const startCreate = () => {
+    reset();
+    setCreateMode(true);
+    createIdRef.current = `workflow-${Date.now().toString(36)}`;
+  };
+
+  const cancelCreate = () => {
+    setCreateMode(false);
+    reset();
   };
 
   const save = () => void e.save();
@@ -59,17 +77,25 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
   return (
     <div data-testid="workflow-draft-editor" style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", gap: 10, padding: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <strong>{t("task.workflowEditor.title")}</strong>
+        <strong>{createMode ? t("task.workflowAuthoring.createTitle") : t("task.workflowEditor.title")}</strong>
         {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)" }} /> : null}
         <span style={{ flex: 1 }} />
-        <button type="button" disabled={e.saving || isMobile} onClick={() => void e.create()}>{t("task.workflowEditor.create")}</button>
-        <button type="button" disabled={e.saving || !e.dirty || isMobile} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
-        <button type="button" disabled={e.saving || e.dirty || !e.selected || isMobile} onClick={publish}>{t("task.workflowEditor.publish")}</button>
+        {createMode ? (
+          <button type="button" onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
+        ) : (
+          <>
+            <button type="button" data-testid="workflow-agent-create" disabled={e.saving || e.dirty || isMobile} onClick={startCreate}>{t("task.workflowAuthoring.startCreate")}</button>
+            <button type="button" disabled={e.saving || isMobile} onClick={() => void e.create()}>{t("task.workflowEditor.create")}</button>
+            <button type="button" disabled={e.saving || !e.dirty || isMobile} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
+            <button type="button" disabled={e.saving || e.dirty || !e.selected || isMobile} onClick={publish}>{t("task.workflowEditor.publish")}</button>
+          </>
+        )}
         <button type="button" onClick={close}>{t("task.workflowEditor.close")}</button>
       </div>
       {e.error ? <div role="alert" style={{ color: "var(--danger-color,#ef4444)", fontSize: 12 }}>{e.error}</div> : null}
-      {!e.loading && e.selected ? (
+      {!e.loading && (e.selected || createMode) ? (
         <section data-testid="workflow-authoring-panel" style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+          {createMode ? <div data-testid="workflow-authoring-create-hint">{t("task.workflowAuthoring.createHint")}</div> : null}
           <textarea
             data-testid="workflow-authoring-instruction"
             aria-label={t("task.workflowAuthoring.title")}
@@ -96,12 +122,15 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
             review={review}
             disabled={e.dirty}
             onApplied={(result) => {
-              if (result.draft) e.adoptDraft(result.draft);
+              if (result.draft) {
+                setCreateMode(false);
+                e.adoptDraft(result.draft);
+              }
             }}
           />
         </section>
       ) : null}
-      {!e.loading && e.selected ? (
+      {!e.loading && e.selected && !createMode ? (
         <details data-testid="workflow-patch-panel" style={{ fontSize: 12 }}>
           <summary>{t("task.workflowEditor.patchImport")}</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
@@ -138,7 +167,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
           </div>
         </details>
       ) : null}
-      {!e.loading && e.selected ? (
+      {!e.loading && e.selected && !createMode ? (
         <details data-testid="workflow-proposals-panel" style={{ fontSize: 12 }}>
           <summary>{t("task.workflowEditor.proposalsTitle")}</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
@@ -173,11 +202,11 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
       {e.loading ? <div>{t("task.workflowEditor.loading")}</div> : (
         <div style={{ display: "flex", minHeight: 0, flex: 1, gap: 12 }}>
           <nav aria-label={t("task.workflowEditor.drafts")} style={{ width: 190, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-            {e.drafts.map((d) => <button type="button" key={d.workflow_id} aria-current={d.workflow_id === e.selectedId} onClick={() => void e.choose(d)}>{d.workflow_id} · {d.revision}</button>)}
+            {e.drafts.map((d) => <button type="button" key={d.workflow_id} aria-current={d.workflow_id === e.selectedId} onClick={() => { setCreateMode(false); void e.choose(d); }}>{d.workflow_id} · {d.revision}</button>)}
             {e.drafts.length === 0 ? <span>{t("task.workflowEditor.empty")}</span> : null}
           </nav>
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
-            {e.selected ? (
+            {createMode ? null : e.selected ? (
               <WorkflowCanvas draftId={e.selected.workflow_id} graph={e.graph} dirty={e.dirty} readOnly={isMobile} onChange={e.setGraph} />
             ) : <div>{t("task.workflowEditor.selectOrCreate")}</div>}
           </div>

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -181,5 +182,115 @@ func TestWorkflowAuthoringRejectsOversizedRequest(t *testing.T) {
 		`{"base_revision":"r1","instruction":"`+strings.Repeat("x", workflowAgentBodyLimit)+`","agent":"claude"}`)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized status=%d want 413", rec.Code)
+	}
+}
+
+const createAuthoringOutput = `{
+	"summary": "Create a two-step flow",
+	"rationale": "Start then notify",
+	"base_revision": "r0",
+	"operations": [
+		{"id": "op-node", "op": "add_node", "node": {"id": "b", "kind": "notify", "params": {"message": "done"}}},
+		{"id": "op-edge", "op": "add_edge", "edge": {"from": "start", "to": "b"}}
+	]
+}`
+
+func TestWorkflowCreateAuthoringProposalDoesNotCreateDraft(t *testing.T) {
+	h, svc, _ := authoringHandler(t, func(workflowAuthoringRequest) (string, error) {
+		return createAuthoringOutput, nil
+	})
+
+	rec := doReq(t, h, http.MethodPost, "/api/workflows/authoring/proposals",
+		`{"workflow_id":"new-wf","instruction":"create a flow","agent":"claude"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create proposal status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody(t, rec)
+	proposal := body["proposal"].(map[string]any)
+	if proposal["base_revision"] != "r0" || len(proposal["operations"].([]any)) != 2 {
+		t.Fatalf("proposal = %+v", proposal)
+	}
+	if body["dry_run"] == nil || len(body["diff"].(map[string]any)["operations"].([]any)) != 2 {
+		t.Fatalf("candidate review missing: %s", rec.Body.String())
+	}
+	if _, err := svc.Workflows.GetDraft(context.Background(), "new-wf"); !errors.Is(err, kanban.ErrDraftNotFound) {
+		t.Fatalf("proposal created a draft: err=%v", err)
+	}
+}
+
+func TestWorkflowCreateAuthoringValidateDoesNotCreateDraft(t *testing.T) {
+	h, svc, _ := authoringHandler(t, func(workflowAuthoringRequest) (string, error) { return "", nil })
+	rec := doReq(t, h, http.MethodPost, "/api/workflows/authoring/validate", `{
+		"workflow_id":"new-wf",
+		"base_revision":"r0",
+		"operations":[
+			{"id":"op-node","op":"add_node","node":{"id":"b","kind":"notify","params":{"message":"done"}}},
+			{"id":"op-edge","op":"add_edge","edge":{"from":"start","to":"b"}}
+		]
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("validate status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody(t, rec)
+	if body["dry_run"] == nil || len(body["diff"].(map[string]any)["operations"].([]any)) != 2 {
+		t.Fatalf("validate body = %s", rec.Body.String())
+	}
+	if _, err := svc.Workflows.GetDraft(context.Background(), "new-wf"); !errors.Is(err, kanban.ErrDraftNotFound) {
+		t.Fatalf("validate created a draft: err=%v", err)
+	}
+}
+
+func TestWorkflowCreateAuthoringApplyCreatesDraftAtomically(t *testing.T) {
+	h, svc, _ := authoringHandler(t, func(workflowAuthoringRequest) (string, error) { return "", nil })
+	body := `{
+		"workflow_id":"new-wf",
+		"base_revision":"r0",
+		"author":"user",
+		"operations":[
+			{"id":"op-node","op":"add_node","node":{"id":"b","kind":"notify","params":{"message":"done"}}},
+			{"id":"op-edge","op":"add_edge","edge":{"from":"start","to":"b"}}
+		]
+	}`
+	rec := doReq(t, h, http.MethodPost, "/api/workflows/authoring/apply", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	payload := decodeBody(t, rec)
+	draft := payload["draft"].(map[string]any)
+	if draft["revision"] != "r1" || draft["workflow_id"] != "new-wf" {
+		t.Fatalf("draft = %+v", draft)
+	}
+	graph := draft["graph"].(map[string]any)
+	nodes := graph["nodes"].([]any)
+	edges := graph["edges"].([]any)
+	if len(nodes) != 2 || len(edges) != 1 {
+		t.Fatalf("graph = %+v", graph)
+	}
+	stored, err := svc.Workflows.GetDraft(context.Background(), "new-wf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Revision != "r1" || len(stored.Graph.Nodes) != 2 {
+		t.Fatalf("stored = %+v", stored)
+	}
+
+	rec = doReq(t, h, http.MethodPost, "/api/workflows/authoring/apply", body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate apply status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkflowCreateAuthoringApplyRejectsInvalidSubset(t *testing.T) {
+	h, svc, _ := authoringHandler(t, func(workflowAuthoringRequest) (string, error) { return "", nil })
+	rec := doReq(t, h, http.MethodPost, "/api/workflows/authoring/apply", `{
+		"workflow_id":"new-wf",
+		"base_revision":"r0",
+		"operations":[{"id":"op-edge","op":"add_edge","edge":{"from":"start","to":"missing"}}]
+	}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid subset status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := svc.Workflows.GetDraft(context.Background(), "new-wf"); !errors.Is(err, kanban.ErrDraftNotFound) {
+		t.Fatalf("invalid subset created a draft: err=%v", err)
 	}
 }

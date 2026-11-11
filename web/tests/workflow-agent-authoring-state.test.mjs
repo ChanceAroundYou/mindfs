@@ -192,3 +192,18 @@ test("a CAS conflict keeps the proposal and never retries or rebases", () => {
   assert.equal(state.proposal.baseRevision, "1", "conflict must not rebase the proposal");
   assert.equal(state.target.revision, "2");
 });
+const create = () => ({ scope: "create", resourceID: "new-wf", revision: "r0" });
+
+test("create scope binds the synthetic r0 base and stays reviewable", () => {
+  const state = generate(begin(create()), answer("r0"));
+  assert.equal(state.phase, "review");
+  assert.equal(state.proposal.status, "preview");
+  assert.equal(state.proposal.baseRevision, "r0");
+  assert.deepEqual(state.target, create());
+});
+
+test("a create response for another base is stale instead of overwriting the target", () => {
+  const state = generate(begin(create()), answer("r1"));
+  assert.equal(state.target.revision, "r0");
+  assert.equal(state.proposal.status, "stale");
+});

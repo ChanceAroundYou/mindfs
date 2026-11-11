@@ -1,5 +1,6 @@
 import { useI18n } from "../../../i18n/index";
 import type { WorkflowGraph } from "../../../shared/workflowModel";
+import { nodeChangeSides } from "./proposalDiff";
 import type { WorkflowAuthoringProposal } from "./proposalState";
 import type { WorkflowSelectionResult } from "./proposalSelection";
 
@@ -45,6 +46,10 @@ export function WorkflowProposalDiff({ proposal, selection, subset, onToggle, di
       {proposal.operations.map((op) => {
         const diff = proposed.get(op.id);
         const node = nodeForOperation(op, diff);
+        const before = diff?.before ?? (op.op === "remove_future_node" ? op.node : undefined);
+        const after = diff?.after ?? (op.op === "remove_future_node" ? undefined : op.node);
+        const sides = nodeChangeSides(before, after);
+        const isUpdate = !!before && !!after;
         const edge = diff?.edge ?? op.edge;
         const dropReason = dropped.get(op.id);
         return (
@@ -70,8 +75,17 @@ export function WorkflowProposalDiff({ proposal, selection, subset, onToggle, di
                   {op.node?.id || op.node_id ? <span> · {op.node?.id || op.node_id}</span> : null}
                 </span>
                 {edge ? <span data-field="edge">{edge.from} → {edge.to}{edge.route ? ` (${edge.route})` : ""}</span> : null}
-                {node?.params ? <span data-field="params">{t("task.workflowAuthoring.params")}: {describe(node.params)}</span> : null}
-                {node?.position ? <span data-field="position">{t("task.workflowAuthoring.position")}: {describe(node.position)}</span> : null}
+                {isUpdate ? (
+                  <>
+                    <span data-field="before">{t("task.workflowAuthoring.before")}: {sides.before}</span>
+                    <span data-field="after">{t("task.workflowAuthoring.after")}: {sides.after}</span>
+                  </>
+                ) : (
+                  <>
+                    {node?.params ? <span data-field="params">{t("task.workflowAuthoring.params")}: {describe(node.params)}</span> : null}
+                    {node?.position ? <span data-field="position">{t("task.workflowAuthoring.position")}: {describe(node.position)}</span> : null}
+                  </>
+                )}
                 {dropReason ? (
                   <span data-testid="workflow-proposal-dropped" style={{ color: "var(--danger-color,#ef4444)" }}>
                     {t(`task.workflowAuthoring.dropped.${dropReason}`)}

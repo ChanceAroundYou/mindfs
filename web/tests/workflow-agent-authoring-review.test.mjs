@@ -7,6 +7,7 @@ import {
   defaultWorkflowSelection,
   resolveWorkflowSelection,
 } from "../src/components/task/workflowAuthoring/proposalSelection.ts";
+import { nodeChangeSides } from "../src/components/task/workflowAuthoring/proposalDiff.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
@@ -98,6 +99,8 @@ test("the review UI starts with nothing checked and shows every change class", (
   assert.match(diff, /data-testid="workflow-proposal-op"/, "each operation is individually addressable");
   assert.match(diff, /params/, "parameter changes are shown");
   assert.match(diff, /position/, "layout changes are shown");
+  assert.match(diff, /data-field="before"/, "updates show the value before the change");
+  assert.match(diff, /data-field="after"/, "updates show the value after the change");
   assert.match(diff, /edge/i, "edge changes are shown");
   assert.doesNotMatch(diff, /applyWorkflowDraftPatch\(|validateWorkflowDraftPatch\(/, "the diff view is presentation only");
 });
@@ -145,4 +148,15 @@ test("the draft editor wires generation and review without a second graph truth"
   assert.match(editor, /WorkflowProposalReview/, "the editor renders the review panel");
   assert.match(editor, /observeRevision\(/, "editor revision changes mark the proposal stale");
   assert.match(editor, /onApplied/, "apply returns the authoritative draft to the editor");
+});
+test("update operations show both the before and after node state", () => {
+  const sides = nodeChangeSides(
+    { id: "a", kind: "agent", params: { model: "old-model" } },
+    { id: "a", kind: "agent", params: { model: "new-model" } },
+  );
+  assert.match(sides.before, /old-model/);
+  assert.match(sides.after, /new-model/);
+  const added = nodeChangeSides(undefined, { id: "b", kind: "notify", params: { message: "done" } });
+  assert.equal(added.before, "");
+  assert.match(added.after, /done/);
 });

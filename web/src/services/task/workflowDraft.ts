@@ -232,6 +232,66 @@ export type WorkflowPatchReview = {
   dry_run?: WorkflowDryRunPayload;
 };
 
+export type WorkflowCreateApplyResult = {
+  draft: WorkflowDraft;
+  diff?: WorkflowDiff;
+};
+
+// Creating a Draft through the Agent is its own scope. The proposal is
+// reviewed against the server's deterministic empty graph (r0); apply replays
+// exactly the accepted subset as revision r1 in one atomic store write.
+export async function generateWorkflowCreateProposal(
+  workflowId: string,
+  input: WorkflowAuthoringGenerateInput,
+): Promise<WorkflowAuthoringResponse> {
+  return protectedJSON<WorkflowAuthoringResponse>(
+    controlPath("/api/workflows/authoring/proposals"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workflow_id: workflowId,
+        base_revision: "r0",
+        instruction: input.instruction,
+        agent: input.agent,
+        model: input.model || "",
+      }),
+    },
+  );
+}
+
+export async function reviewWorkflowCreatePatch(
+  workflowId: string,
+  patch: WorkflowPatch,
+): Promise<WorkflowPatchReview> {
+  const payload = await protectedJSON<WorkflowPatchReview>(
+    controlPath("/api/workflows/authoring/validate"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workflow_id: workflowId, ...patch }),
+    },
+  );
+  if (!payload?.diff) throw new Error("create patch review: empty response");
+  return payload;
+}
+
+export async function applyWorkflowCreateProposal(
+  workflowId: string,
+  patch: WorkflowPatch,
+): Promise<WorkflowCreateApplyResult> {
+  const payload = await protectedJSON<{ draft?: WorkflowDraft; diff?: WorkflowDiff }>(
+    controlPath("/api/workflows/authoring/apply"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workflow_id: workflowId, ...patch }),
+    },
+  );
+  if (!payload?.draft) throw new Error("create patch apply: empty response");
+  return { draft: payload.draft, diff: payload.diff };
+}
+
 export type WorkflowRunPatchResult = {
   run: { revision: number };
   diff: WorkflowDiff;

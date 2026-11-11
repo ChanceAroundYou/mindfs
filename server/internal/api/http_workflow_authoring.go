@@ -27,11 +27,23 @@ type workflowAuthoringRequest struct {
 }
 
 type workflowAuthoringBody struct {
+	WorkflowID   string `json:"workflow_id"`
+	RootID       string `json:"root_id"`
 	BaseRevision string `json:"base_revision"`
 	Instruction  string `json:"instruction"`
 	Agent        string `json:"agent"`
 	Model        string `json:"model"`
 }
+
+type workflowCreatePatchBody struct {
+	WorkflowID   string                          `json:"workflow_id"`
+	RootID       string                          `json:"root_id"`
+	Author       string                          `json:"author"`
+	BaseRevision string                          `json:"base_revision"`
+	Operations   []kanban.WorkflowPatchOperation `json:"operations"`
+}
+
+const workflowAuthoringCreateRevision = "r0"
 
 type workflowAuthoringResult struct {
 	Proposal *kanban.WorkflowAuthoringProposal `json:"proposal,omitempty"`
@@ -143,11 +155,127 @@ func (h *HTTPHandler) handleTaskWorkflowRunAuthoringProposal(w http.ResponseWrit
 	respondJSON(w, http.StatusOK, result)
 }
 
+// handleWorkflowCreateAuthoringProposal is the create-scope gateway: it reviews
+// a proposal against the deterministic empty Draft and creates nothing. Apply is
+// a separate call, so a proposal can never persist a workflow on its own.
+func (h *HTTPHandler) handleWorkflowCreateAuthoringProposal(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	body, ok := decodeWorkflowAuthoringBody(w, r)
+	if !ok {
+		return
+	}
+	if body.WorkflowID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("workflow_id required"))
+		return
+	}
+	if d, err := s.GetDraft(r.Context(), body.WorkflowID); err == nil {
+		respondJSON(w, http.StatusConflict, map[string]any{
+			"error":            "draft already exists",
+			"current_revision": d.Revision,
+		})
+		return
+	} else if !errors.Is(err, kanban.ErrDraftNotFound) {
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	base := kanban.NewWorkflowAuthoringBaseGraph()
+	prompt := buildWorkflowAuthoringPrompt("create", workflowAuthoringCreateRevision, base, body.Instruction, "")
+	raw, err := h.runWorkflowAuthoring(r.Context(), body, prompt)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, errInvalidRequest("agent generation failed: "+err.Error()))
+		return
+	}
+	proposal, issues := kanban.ParseWorkflowAuthoringProposal(raw, workflowAuthoringCreateRevision)
+	if proposal == nil {
+		respondJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "agent proposal invalid", "issues": issues})
+		return
+	}
+	patch := kanban.WorkflowPatch{BaseRevision: workflowAuthoringCreateRevision, Author: "agent", Operations: proposal.Operations}
+	result := reviewAuthoringCandidate(base, patch, nil, nil)
+	result.Proposal = proposal
+	respondJSON(w, http.StatusOK, result)
+}
+
+// handleWorkflowCreateAuthoringValidate re-checks the subset a human selected
+// against the same base graph. It returns diff/dry-run/issues and writes nothing.
+func (h *HTTPHandler) handleWorkflowCreateAuthoringValidate(w http.ResponseWriter, r *http.Request) {
+	body, ok := decodeWorkflowCreatePatch(w, r)
+	if !ok {
+		return
+	}
+	patch := kanban.WorkflowPatch{BaseRevision: workflowAuthoringCreateRevision, Author: body.Author, Operations: body.Operations}
+	respondJSON(w, http.StatusOK, reviewAuthoringCandidate(kanban.NewWorkflowAuthoringBaseGraph(), patch, nil, nil))
+}
+
+// handleWorkflowCreateAuthoringApply validates the accepted subset and creates
+// the Draft at r1 in one store write. A duplicate id is a conflict, and an
+// invalid subset leaves no draft behind.
+func (h *HTTPHandler) handleWorkflowCreateAuthoringApply(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	body, ok := decodeWorkflowCreatePatch(w, r)
+	if !ok {
+		return
+	}
+	patch := kanban.WorkflowPatch{BaseRevision: workflowAuthoringCreateRevision, Author: body.Author, Operations: body.Operations}
+	graph, diff, issues := kanban.ApplyWorkflowPatchToGraph(kanban.NewWorkflowAuthoringBaseGraph(), patch, nil)
+	if len(issues) > 0 {
+		respondWorkflowPatchFailure(w, &kanban.WorkflowPatchError{Issues: issues})
+		return
+	}
+	draft, err := s.CreateDraft(r.Context(), body.WorkflowID, body.RootID, body.Author, graph)
+	if err != nil {
+		if existing, getErr := s.GetDraft(r.Context(), body.WorkflowID); getErr == nil {
+			respondJSON(w, http.StatusConflict, map[string]any{
+				"error":            err.Error(),
+				"current_revision": existing.Revision,
+			})
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"draft": draft, "diff": diff})
+}
+
+func decodeWorkflowCreatePatch(w http.ResponseWriter, r *http.Request) (workflowCreatePatchBody, bool) {
+	var body workflowCreatePatchBody
+	if !decodeWorkflowAgentJSON(w, r, &body, false) {
+		return body, false
+	}
+	body.WorkflowID = strings.TrimSpace(body.WorkflowID)
+	if body.WorkflowID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("workflow_id required"))
+		return body, false
+	}
+	body.RootID = strings.TrimSpace(body.RootID)
+	body.Author = strings.TrimSpace(body.Author)
+	if body.Author == "" {
+		body.Author = "user"
+	}
+	body.BaseRevision = strings.TrimSpace(body.BaseRevision)
+	if body.BaseRevision != "" && body.BaseRevision != workflowAuthoringCreateRevision {
+		respondJSON(w, http.StatusConflict, map[string]any{
+			"error":            kanban.ErrDraftConflict.Error(),
+			"current_revision": workflowAuthoringCreateRevision,
+		})
+		return body, false
+	}
+	return body, true
+}
+
 func decodeWorkflowAuthoringBody(w http.ResponseWriter, r *http.Request) (workflowAuthoringBody, bool) {
 	var body workflowAuthoringBody
 	if !decodeWorkflowAgentJSON(w, r, &body, false) {
 		return body, false
 	}
+	body.WorkflowID = strings.TrimSpace(body.WorkflowID)
+	body.RootID = strings.TrimSpace(body.RootID)
 	body.Instruction = strings.TrimSpace(body.Instruction)
 	body.Agent = strings.TrimSpace(body.Agent)
 	body.Model = strings.TrimSpace(body.Model)

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  applyWorkflowCreateProposal,
   applyWorkflowDraftPatch,
   applyWorkflowRunPatch,
+  reviewWorkflowCreatePatch,
   reviewWorkflowDraftPatch,
   reviewWorkflowRunPatch,
   workflowPatchConflictRevision,
@@ -13,7 +15,7 @@ import type { WorkflowAuthoring, WorkflowAuthoringGenerateInput } from "./useWor
 import { resolveWorkflowSelection, workflowReviewIssues, type WorkflowSelectionResult } from "./workflowAuthoring/proposalSelection";
 
 export type WorkflowAuthoringApplyResult = {
-  scope: "draft" | "run";
+  scope: "create" | "draft" | "run";
   revision: string;
   draft?: WorkflowDraft;
 };
@@ -88,14 +90,16 @@ export function useWorkflowAuthoringReview(
     setBusy(true);
     authoringRef.current.transitions.start();
     try {
-      const review = target.scope === "draft"
-        ? await reviewWorkflowDraftPatch(target.resourceID, patch)
-        : await reviewWorkflowRunPatch(
-          contextRef.current.rootID || "",
-          contextRef.current.taskID || "",
-          patch,
-          contextRef.current.nodeId,
-        );
+      const review = target.scope === "create"
+        ? await reviewWorkflowCreatePatch(target.resourceID, patch)
+        : target.scope === "draft"
+          ? await reviewWorkflowDraftPatch(target.resourceID, patch)
+          : await reviewWorkflowRunPatch(
+            contextRef.current.rootID || "",
+            contextRef.current.taskID || "",
+            patch,
+            contextRef.current.nodeId,
+          );
       // The server reports dry-run failure as issues (200 + waiting_user), not
       // as a status. Blocking here is what stops an invalid subset from ever
       // reaching the CAS apply below.
@@ -103,6 +107,11 @@ export function useWorkflowAuthoringReview(
       if (dryRunIssues.length > 0) {
         authoringRef.current.transitions.validation(review.diff, review.dry_run, dryRunIssues);
         return null;
+      }
+      if (target.scope === "create") {
+        const result = await applyWorkflowCreateProposal(target.resourceID, patch);
+        authoringRef.current.transitions.applied(result.draft.revision);
+        return { scope: "create", revision: result.draft.revision, draft: result.draft };
       }
       if (target.scope === "draft") {
         const result = await applyWorkflowDraftPatch(target.resourceID, patch);
@@ -119,7 +128,7 @@ export function useWorkflowAuthoringReview(
       return { scope: target.scope, revision: String(result.run.revision) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const currentRevision = workflowPatchConflictRevision(error);
+      const currentRevision = target.scope === "create" ? "" : workflowPatchConflictRevision(error);
       if (currentRevision) {
         authoringRef.current.transitions.conflict(currentRevision, message);
         return null;
