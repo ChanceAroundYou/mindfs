@@ -142,3 +142,13 @@ type harnessAdapter struct {
     `make build-web` 通过。另用临时测试把真实 `~/.agents/claude` + 本机运行时文件渲染到临时目录，
     与 `render.sh` 结果语义一致且真实文件零写入（测试文件已删除）。
   - 上游登记：G-KP 扩展为多 harness（新增文件、测试与锚点）；提交信息标 `Scope: G-KP`。
+- 2026-11-11：`bash scripts/deploy-all.sh` 完成。门禁（Go / tsc / Vitest 492 项）通过；
+  `aea2d182` 已推送主线；三端产物版本 `v0.5.5-1118-14-gaea2d182` 逐字一致：
+  - WSL：`systemctl --user is-active` = active，`mindfs --version` = 该版本。
+  - fn：同上，active 且版本一致。
+  - pc-win：计划任务拉起，PID 179868，`curl http://127.0.0.1:7332/mindfs/health` →
+    `{"ok":true,"role":"worker"}`。
+  - 本机：二进制已安装为该版本，静态 bundle 与安装目录一致（脚本对账通过）；
+    **system 单元仍待用户执行 `sudo systemctl restart mindfs`** 后进程才换成新二进制。
+- 仍 Active 的唯一原因：本机 system 服务待用户重启（Agent 不得代劳），
+  以及页面上的入口层级需在重启/刷新后做一次真机点验。
