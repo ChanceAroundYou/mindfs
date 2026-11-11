@@ -41,28 +41,39 @@ func (s *TaskStore) ApplyWorkflowRunPatch(ctx context.Context, taskID, runID str
 // ValidateWorkflowRunPatch is the read-only twin of ApplyWorkflowRunPatch. It
 // performs the same revision and frozen-history checks but persists nothing.
 func (s *TaskStore) ValidateWorkflowRunPatch(ctx context.Context, taskID, runID string, baseRevision int, patch WorkflowPatch) (WorkflowDiff, []WorkflowPatchIssue, error) {
-	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(runID) == "" {
-		return WorkflowDiff{}, nil, errors.New("task id and workflow run id required")
-	}
-	run, err := s.WorkflowRunByID(ctx, runID)
+	_, diff, issues, err := s.PreviewWorkflowRunPatch(ctx, taskID, runID, baseRevision, patch)
 	if err != nil {
-		return WorkflowDiff{}, nil, err
+		return diff, issues, err
 	}
-	if run.TaskID != taskID {
-		return WorkflowDiff{}, nil, ErrWorkflowRunNotFound
-	}
-	if run.Revision != baseRevision {
-		return WorkflowDiff{}, nil, ErrRunConflict
-	}
-	frozen, err := s.workflowRunFrozenNodes(ctx, run)
-	if err != nil {
-		return WorkflowDiff{}, nil, err
-	}
-	_, diff, issues := ApplyWorkflowPatchToGraph(run.Graph, patch, frozen)
 	if len(issues) > 0 {
 		return diff, issues, &WorkflowPatchError{Issues: issues}
 	}
 	return diff, nil, nil
+}
+
+// PreviewWorkflowRunPatch returns the candidate future graph in addition to the
+// diff so an authoring gateway can statically dry-run it. It applies the same
+// CAS and frozen-history checks as the write path and persists nothing.
+func (s *TaskStore) PreviewWorkflowRunPatch(ctx context.Context, taskID, runID string, baseRevision int, patch WorkflowPatch) (WorkflowDefinition, WorkflowDiff, []WorkflowPatchIssue, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(runID) == "" {
+		return WorkflowDefinition{}, WorkflowDiff{}, nil, errors.New("task id and workflow run id required")
+	}
+	run, err := s.WorkflowRunByID(ctx, runID)
+	if err != nil {
+		return WorkflowDefinition{}, WorkflowDiff{}, nil, err
+	}
+	if run.TaskID != taskID {
+		return WorkflowDefinition{}, WorkflowDiff{}, nil, ErrWorkflowRunNotFound
+	}
+	if run.Revision != baseRevision {
+		return WorkflowDefinition{}, WorkflowDiff{}, nil, ErrRunConflict
+	}
+	frozen, err := s.workflowRunFrozenNodes(ctx, run)
+	if err != nil {
+		return WorkflowDefinition{}, WorkflowDiff{}, nil, err
+	}
+	graph, diff, issues := ApplyWorkflowPatchToGraph(run.Graph, patch, frozen)
+	return graph, diff, issues, nil
 }
 
 // workflowRunFrozenNodes is the single definition of triggered history used by

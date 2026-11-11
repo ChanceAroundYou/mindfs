@@ -7578,8 +7578,8 @@ groups:
     title: 工作流草稿画布 WorkflowCanvas（@xyflow/react）+ 前端同构校验 + 看板入口
     kind: feature
     symptom: "桌面端从看板工具栏的流程图标进入工作流草稿页：左侧草稿列表，右侧可拖拽节点图，增删五类节点、连线、改参数（agent/model/writes_workspace、Loop 上限、条件分支），改坏时当场列出校验错误；新建/保存/发布都走控制面，有未保存改动时显示红点，切换草稿、关闭页面都会提示；移动端只显示只读清单。"
-    why: "约定五件：①画布只负责图形与参数，schema 校验放在 services/task/workflowDraft（与后端 workflow_validate.go 同构），落库由 Draft API 负责，组件本身不 fetch；②五类节点 Agent/Condition/HumanGate/Loop/Notify，Loop 上限 1..20 默认 5 且禁止嵌套；③脏标记只在结构性编辑（增删节点/边、改参数）出现，拖动位置不算，并在 beforeunload 上挂离开提醒；④窄视口（<720px）渲染只读清单，不做画布；⑤入口是看板工具栏独立页（WorkflowDraftEditor），取数在 useWorkflowDraftEditor.ts（视图 .tsx 不许 import services），Draft/Version 一律 controlPath。新增运行时依赖 @xyflow/react（MIT 核心）。"
-    boundary: "只做草稿画布、编辑器页与看板入口；Agent 侧草稿生成/试运行 API、发布后版本浏览仍缺。"
+    why: "约定六件：①画布只负责图形与参数，schema 校验放在 services/task/workflowDraft（与后端 workflow_validate.go 同构），落库由 Draft API 负责，组件本身不 fetch；②五类节点 Agent/Condition/HumanGate/Loop/Notify，Loop 上限 1..20 默认 5 且禁止嵌套；③脏标记只在结构性编辑（增删节点/边、改参数）出现，拖动位置不算，并在 beforeunload 上挂离开提醒；④窄视口（<720px）渲染只读清单，不做画布；⑤入口是看板工具栏独立页（WorkflowDraftEditor），取数在 useWorkflowDraftEditor.ts（视图 .tsx 不许 import services），Draft/Version 一律 controlPath。新增运行时依赖 @xyflow/react（MIT 核心）。⑥Loop 节点可进入内部子图独立编辑：内部 DAG 存在 `params.graph`，上限 1..20、退出表达式必填、禁止嵌套 Loop 与内部 human_gate、内部/顶层 id 冲突拒绝；子画布与顶层共用 `flowGraph.ts` 序列化，返回/保存后仍是同一份 WorkflowDefinition，不存在第二份图真相。"
+    boundary: "只做草稿画布、编辑器页、Loop 子图与看板入口；Agent 侧草稿生成/试运行 API 归 G-LG，发布后版本浏览仍缺。"
     files:
       - web/src/components/task/WorkflowCanvas.tsx
       - web/src/components/task/WorkflowDraftEditor.tsx
@@ -7589,6 +7589,8 @@ groups:
       - web/src/components/task/taskIcons.tsx
       - web/src/app/useAppKanbanTaskPanel.tsx
       - web/src/shared/workflowModel.ts
+      - web/src/components/task/workflowAuthoring/flowGraph.ts
+      - web/src/components/task/workflowAuthoring/WorkflowLoopCanvas.tsx
       - web/src/services/task/workflowDraft.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
@@ -7599,10 +7601,15 @@ groups:
     tests:
       - web/tests/workflow-canvas.test.ts
       - web/tests/workflow-editor-board-entry.test.mjs
+      - web/tests/workflow-loop-canvas.test.mjs
     anchors:
       - 'web/src/components/task/WorkflowCanvas.tsx:export function WorkflowCanvas('
       - 'web/src/components/task/WorkflowCanvas.tsx:MOBILE_BREAKPOINT = 720'
+      - 'web/src/components/task/WorkflowCanvas.tsx:data-testid="workflow-loop-enter"'
       - 'web/src/shared/workflowModel.ts:export function validateWorkflowGraph('
+      - 'web/src/shared/workflowModel.ts:export function withLoopInnerGraph('
+      - 'web/src/components/task/workflowAuthoring/flowGraph.ts:export function graphFrom('
+      - 'web/src/components/task/workflowAuthoring/WorkflowLoopCanvas.tsx:data-testid="workflow-loop-canvas"'
       - 'web/src/components/task/WorkflowDraftEditor.tsx:export function WorkflowDraftEditor('
       - 'web/src/components/task/TaskBoardToolbar.tsx:onOpenWorkflowEditor'
       - 'web/src/app/useAppKanbanTaskPanel.tsx:<WorkflowDraftEditor onClose='
@@ -7787,30 +7794,49 @@ groups:
       - 'server/internal/kanban/worktree_registry_claim.go:func (s *TaskStore) ClaimWorktreeEntry('
 
   - id: G-LG
-    title: Agent-first Workflow 管理——只读快照、typed patch、dry-run 与人工确认发布提案
+    title: Agent-first Workflow 管理——自然语言生成提案、只读快照、typed patch、dry-run 与人工确认发布提案
     kind: feature
-    symptom: "Agent 想改工作流只能让人照着聊天内容在画布上重画：没有可供 Agent 读取的稳定快照，没有可被校验的结构化补丁，改完也没法在落地前解释分支/通知/循环会发生什么。更危险的是『Agent 直接帮人发布』：草稿被悄悄提升为版本，用户没有确认过具体 revision；或者把任意 JSON 路径写进图里，绕过节点/边校验。"
-    why: "必须保留：① 只读快照 `GET /api/workflows/{id}/snapshot` 返回 draft + limits，不授予写权限；② 补丁只接受五种 typed 操作（add_node/update_future_node/remove_future_node/add_edge/remove_future_edge），每个操作有稳定 ID，错误按 operation+field 返回，校验/应用都不改 base、失败不落盘；③ 发布提案只记录 workflow+精确 revision+提议者，确认是独立人工动作，草稿前进后旧提案标 stale 且绝不发布新 revision；确认与版本写入在同一把锁/同一份文件里完成（idempotent 重复确认返回已记录版本）；同一 (workflow, revision) 只保留一个提案，重复提案返回同一记录，已发布版本记录不可被再次 publish 覆盖；提案按 workflow 可列出，供人工发现后确认；④ dry-run 复用生产 `EngineReadyNodes`/`evaluateWorkflowConditionRoot` 的语义，不碰 Runner/session/notify/DB，只解释 Condition 选路、跳过分支、join、Loop 预算、HumanGate 停点与『会通知』；对真实 Run 做 dry-run 时以已持久化 NodeStates/SelectedRoutes/NodeOutputs/LoopState 为起点，调用方只能补未来节点的模拟输出，不得重演已完成节点；⑤ 运行中的 Run 补丁只允许未触发的未来子图，已触发节点（含 Loop 内部节点）与关联边按冻结规则拒绝；前端导入必须人工粘贴+校验+应用，且补丁自带 `base_revision`（缺失即拒绝），画布有未保存修改时拒绝操作；⑥ HTTP body 上限按整份请求体校验（含尾随填充），超过即 413，不以流式解码器的首值边界为准。"
-    boundary: "不新增任何鉴权，`author`/`proposer` 只是元数据；HTTP façade 仍按仓库既有『REST/WS 无鉴权、user= 不是凭证』政策，publish 永远要求人工确认精确 revision。不做任意 JSON-path 写入、不做 Agent 自动发布、不做 Agent 直接运行节点。dry-run 是静态模拟，不承诺与真实 Agent 输出一致；运行补丁的 CAS 只在 TaskStore 内。范围只覆盖 G-LG 新增文件与下列接线点，执行器/留言/多 worktree 语义仍归 G-LE/G-KV/G-LF。"
+    symptom: "Agent 想改工作流只能让人照着聊天内容在画布上重画：没有可供 Agent 读取的稳定快照，没有可被校验的结构化补丁，改完也没法在落地前解释分支/通知/循环会发生什么。用户自己也只剩两条路：手工拼 JSON 粘贴，或在新画布上从头点一遍。更危险的是『Agent 直接帮人发布』：草稿被悄悄提升为版本，用户没有确认过具体 revision；或者把任意 JSON 路径写进图里，绕过节点/边校验。"
+    why: "必须保留：① 只读快照 `GET /api/workflows/{id}/snapshot` 返回 draft + limits，不授予写权限；② 补丁只接受五种 typed 操作（add_node/update_future_node/remove_future_node/add_edge/remove_future_edge），每个操作有稳定 ID，错误按 operation+field 返回，校验/应用都不改 base、失败不落盘；③ 发布提案只记录 workflow+精确 revision+提议者，确认是独立人工动作，草稿前进后旧提案标 stale 且绝不发布新 revision；确认与版本写入在同一把锁/同一份文件里完成（idempotent 重复确认返回已记录版本）；同一 (workflow, revision) 只保留一个提案，重复提案返回同一记录，已发布版本记录不可被再次 publish 覆盖；提案按 workflow 可列出，供人工发现后确认；④ dry-run 复用生产 `EngineReadyNodes`/`evaluateWorkflowConditionRoot` 的语义，不碰 Runner/session/notify/DB，只解释 Condition 选路、跳过分支、join、Loop 预算、HumanGate 停点与『会通知』；对真实 Run 做 dry-run 时以已持久化 NodeStates/SelectedRoutes/NodeOutputs/LoopState 为起点，调用方只能补未来节点的模拟输出，不得重演已完成节点；⑤ 运行中的 Run 补丁只允许未触发的未来子图，已触发节点（含 Loop 内部节点）与关联边按冻结规则拒绝；前端导入必须人工粘贴+校验+应用，且补丁自带 `base_revision`（缺失即拒绝），画布有未保存修改时拒绝操作；⑥ HTTP body 上限按整份请求体校验（含尾随填充），超过即 413，不以流式解码器的首值边界为准；⑦自然语言目标只经生成网关变成提案：`POST /api/workflows/{id}/authoring/proposals`（Draft）与 `POST /api/tasks/{id}/workflow-run/authoring/proposals`（Run）先校验 `base_revision`，不一致直接 409 并回 `current_revision`，一致才调用 Agent；Agent 输出必须过严格 typed 白名单（只允许六种操作、缺字段/未知 op/超限即 422），fenced JSON 容错但任何 issue 都失败关闭；响应只含 proposal+diff+issues+dry_run，从不 apply/publish。前端生成、状态机与逐项审阅分属 `useWorkflowAuthoring`（不 import apply）、`proposalState`/`proposalSelection`（纯 reducer 与依赖闭包）与 `useWorkflowAuthoringReview`（子集 server 复核 + 单次 CAS apply），生成路径永远不能落盘。"
+    boundary: "不新增任何鉴权，`author`/`proposer` 只是元数据；HTTP façade 仍按仓库既有『REST/WS 无鉴权、user= 不是凭证』政策，publish 永远要求人工确认精确 revision。不做任意 JSON-path 写入、不做 Agent 自动发布、不做 Agent 直接运行节点。dry-run 是静态模拟，不承诺与真实 Agent 输出一致；运行补丁的 CAS 只在 TaskStore 内。前端只做 Draft 编辑器内的生成与逐项审阅；Run 级 authoring UI（入口、冻结原因可视化、运行中补丁交互）不在本组，后端 Run 网关保留。范围只覆盖 G-LG 新增文件与下列接线点，执行器/留言/多 worktree 语义仍归 G-LE/G-KV/G-LF。"
     files:
       - server/internal/kanban/workflow_agent_ops.go
       - server/internal/kanban/workflow_agent_draft.go
       - server/internal/kanban/workflow_agent_dryrun.go
+      - server/internal/kanban/workflow_authoring.go
       - server/internal/kanban/task_store_workflow_patch.go
       - server/internal/kanban/workflow_store.go
       - server/internal/kanban/task_store_workflow_runs.go
       - server/internal/api/http_workflow_agent.go
+      - server/internal/api/http_workflow_authoring.go
+      - server/internal/api/usecase/session_authoring.go
       - server/internal/api/http_routes.go
       - web/src/services/task/workflowDraft.ts
       - web/src/components/task/useWorkflowDraftEditor.ts
       - web/src/components/task/WorkflowDraftEditor.tsx
+      - web/src/components/task/useWorkflowAuthoring.ts
+      - web/src/components/task/useWorkflowAuthoringReview.ts
+      - web/src/components/task/workflowAuthoring/proposalState.ts
+      - web/src/components/task/workflowAuthoring/proposalSelection.ts
+      - web/src/components/task/workflowAuthoring/types.ts
+      - web/src/components/task/workflowAuthoring/WorkflowProposalSummary.tsx
+      - web/src/components/task/workflowAuthoring/WorkflowProposalDiff.tsx
+      - web/src/components/task/workflowAuthoring/WorkflowProposalReview.tsx
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
     tests:
       - server/internal/kanban/workflow_agent_ops_test.go
       - server/internal/kanban/workflow_agent_review_test.go
+      - server/internal/kanban/workflow_authoring_test.go
       - server/internal/api/http_workflow_agent_test.go
+      - server/internal/api/http_workflow_authoring_test.go
+      - server/internal/api/http_workflow_authoring_e2e_test.go
+      - server/internal/api/http_workflow_patch_dryrun_test.go
       - web/tests/workflow-editor-board-entry.test.mjs
+      - web/tests/workflow-agent-authoring-state.test.mjs
+      - web/tests/workflow-agent-authoring-service.test.mjs
+      - web/tests/workflow-agent-authoring-review.test.mjs
+      - web/tests/workflow-agent-authoring-e2e.test.mjs
     anchors:
       - 'server/internal/kanban/workflow_agent_ops.go:func ValidateWorkflowPatch(base WorkflowDefinition, patch WorkflowPatch) (WorkflowDiff, []WorkflowPatchIssue, error)'
       - 'server/internal/kanban/workflow_agent_ops.go:func ApplyWorkflowPatchToGraph(base WorkflowDefinition, patch WorkflowPatch, frozen map[string]bool) (WorkflowDefinition, WorkflowDiff, []WorkflowPatchIssue)'
@@ -7830,6 +7856,20 @@ groups:
       - 'server/internal/api/http_workflow_agent.go:func (h *HTTPHandler) handleWorkflowPublishProposalConfirm('
       - 'server/internal/api/http_workflow_agent.go:func (h *HTTPHandler) handleWorkflowPublishProposalList('
       - 'server/internal/api/http_workflow_agent.go:func decodeWorkflowAgentJSON('
+      - 'server/internal/kanban/workflow_authoring.go:var workflowAuthoringOps = map[string]bool'
+      - 'server/internal/kanban/workflow_authoring.go:func ParseWorkflowAuthoringProposal(raw, expectedBase string) (*WorkflowAuthoringProposal, []WorkflowPatchIssue)'
+      - 'server/internal/api/http_workflow_authoring.go:const workflowAuthoringTimeout = 2 * time.Minute'
+      - 'server/internal/api/http_workflow_authoring.go:func (h *HTTPHandler) handleWorkflowDraftAuthoringProposal('
+      - 'server/internal/api/http_workflow_authoring.go:func (h *HTTPHandler) handleTaskWorkflowRunAuthoringProposal('
+      - 'server/internal/api/http_workflow_authoring.go:func reviewAuthoringCandidate('
+      - 'server/internal/api/usecase/session_authoring.go:func RunWorkflowAuthoringPrompt('
+      - 'server/internal/api/http_routes.go:r.Post("/api/workflows/{id}/authoring/proposals", h.handleWorkflowDraftAuthoringProposal)'
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/workflow-run/authoring/proposals", h.handleTaskWorkflowRunAuthoringProposal)'
+      - 'web/src/components/task/useWorkflowAuthoring.ts:export function useWorkflowAuthoring('
+      - 'web/src/components/task/workflowAuthoring/proposalState.ts:export function adoptConflictRevision('
+      - 'web/src/components/task/workflowAuthoring/proposalSelection.ts:export function canApplyWorkflowProposal('
+      - 'web/src/components/task/workflowAuthoring/WorkflowProposalReview.tsx:data-testid="workflow-proposal-review"'
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:data-testid="workflow-authoring-generate"'
       - 'server/internal/api/http_routes.go:r.Post("/api/workflows/dry-run", h.handleWorkflowDryRun)'
       - 'server/internal/api/http_routes.go:r.Get("/api/tasks/{id}/workflow-run/suggestion", h.handleTaskWorkflowRunSuggestion)'
       - 'web/src/services/task/workflowDraft.ts:export async function applyWorkflowDraftPatch('

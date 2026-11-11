@@ -65,6 +65,16 @@ func TestWorkflowDraftAgentSnapshotPatchAndProposal(t *testing.T) {
 		t.Fatalf("diff = %+v", body["diff"])
 	}
 
+	// Re-applying the same base is a CAS conflict. The payload must name the
+	// authoritative revision so the client can adopt it instead of guessing.
+	rec = doReq(t, h, http.MethodPost, "/api/workflows/agent-wf/patch/apply", valid)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale draft apply status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decodeBody(t, rec)["current_revision"]; got != "r2" {
+		t.Fatalf("stale draft apply current_revision = %v, want r2 (%s)", got, rec.Body.String())
+	}
+
 	rec = doReq(t, h, http.MethodPost, "/api/workflows/agent-wf/publish-proposals", `{"revision":"r2","proposer":"agent"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("propose status=%d body=%s", rec.Code, rec.Body.String())
@@ -78,8 +88,12 @@ func TestWorkflowDraftAgentSnapshotPatchAndProposal(t *testing.T) {
 	if len(items) != 1 || items[0].(map[string]any)["id"] != proposalID || items[0].(map[string]any)["status"] != kanban.PublishProposalPending {
 		t.Fatalf("proposal list = %+v", items)
 	}
-	if _, err := svc.Workflows.GetVersion(context.Background(), "agent-wf:v1"); err == nil {
-		t.Fatal("proposal published a version without confirmation")
+	// The proposal is pinned at r2; after the earlier apply next-seq is 2, so a
+	// premature write would land at :v2. Proposing must write neither.
+	for _, vid := range []string{"agent-wf:v1", "agent-wf:v2"} {
+		if _, err := svc.Workflows.GetVersion(context.Background(), vid); err == nil {
+			t.Fatalf("proposal published %s without confirmation", vid)
+		}
 	}
 	// Move the draft; the old proposal must not publish the new revision.
 	if rec := doReq(t, h, http.MethodPut, "/api/workflows/agent-wf", `{"base_revision":"r2","author":"user","graph":`+wfGraphJSON+`}`); rec.Code != http.StatusOK {
@@ -158,6 +172,16 @@ func TestTaskWorkflowAgentPatchAndDryRun(t *testing.T) {
 	rec = doReq(t, h, http.MethodPost, base+"/patch/validate?root_id="+rootID, future)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("stale validate status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decodeBody(t, rec)["current_revision"]; got != float64(2) {
+		t.Fatalf("stale validate current_revision = %v, want 2 (%s)", got, rec.Body.String())
+	}
+	rec = doReq(t, h, http.MethodPost, base+"/patch/apply?root_id="+rootID, future)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale apply status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decodeBody(t, rec)["current_revision"]; got != float64(2) {
+		t.Fatalf("stale apply current_revision = %v, want 2 (%s)", got, rec.Body.String())
 	}
 
 	rec = doReq(t, h, http.MethodPost, base+"/dry-run?root_id="+rootID, `{}`)

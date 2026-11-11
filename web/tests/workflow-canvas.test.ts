@@ -15,7 +15,16 @@ test("画布校验与服务端语义一致：五类节点、Loop 上限、condit
   assert.ok(bad.some((e) => e.includes("max_iterations")), `expected loop bound error, got ${bad.join("|")}`);
   const ok = validateWorkflowGraph({
     nodes: [
-      { id: "l1", kind: "loop", params: { max_iterations: LOOP_DEFAULT } },
+      // 后端要求 Loop 同时具备 exit_expression 与内部图，fixture 必须按真实契约写。
+      {
+        id: "l1",
+        kind: "loop",
+        params: {
+          max_iterations: LOOP_DEFAULT,
+          exit_expression: "inner.output.ok",
+          graph: { nodes: [{ id: "inner", kind: "agent", params: {} }], edges: [] },
+        },
+      },
       { id: "a1", kind: "agent", params: { writes_workspace: true } },
     ],
     edges: [{ from: "l1", to: "a1" }],

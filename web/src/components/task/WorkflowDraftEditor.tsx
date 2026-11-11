@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/index";
 import { useResponsive } from "../../hooks/useResponsive";
 import { WorkflowCanvas } from "./WorkflowCanvas";
+import { useWorkflowAuthoring } from "./useWorkflowAuthoring";
+import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
 import { useWorkflowDraftEditor } from "./useWorkflowDraftEditor";
+import { WorkflowProposalReview } from "./workflowAuthoring/WorkflowProposalReview";
 
 export type WorkflowDraftEditorProps = {
   onClose: () => void;
@@ -15,6 +18,37 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
   const { t } = useI18n();
   const { isMobile } = useResponsive();
   const e = useWorkflowDraftEditor(onDirtyChange);
+  const authoring = useWorkflowAuthoring();
+  const review = useWorkflowAuthoringReview(authoring, {});
+  const [instruction, setInstruction] = useState("");
+  const { observeRevision, reset } = authoring;
+  const previousDraftRef = useRef("");
+
+  useEffect(() => {
+    if (!e.selectedId || !e.revision) return;
+    observeRevision({ scope: "draft", resourceID: e.selectedId, revision: e.revision });
+  }, [e.selectedId, e.revision, observeRevision]);
+
+  // A proposal is bound to the draft it was generated for. Leaving that draft
+  // must discard it rather than leave a ready patch pointed at the old target.
+  useEffect(() => {
+    if (previousDraftRef.current && previousDraftRef.current !== e.selectedId) {
+      reset();
+    }
+    previousDraftRef.current = e.selectedId;
+  }, [e.selectedId, reset]);
+
+  const generate = () => {
+    if (!e.selected) return;
+    void authoring.generate({
+      scope: "draft",
+      resourceID: e.selected.workflow_id,
+      revision: e.revision,
+      instruction,
+    }).then((result) => {
+      if (result.conflictRevision) void e.reloadSelected();
+    });
+  };
 
   const save = () => void e.save();
   const publish = () => void e.publish();
@@ -34,6 +68,39 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
         <button type="button" onClick={close}>{t("task.workflowEditor.close")}</button>
       </div>
       {e.error ? <div role="alert" style={{ color: "var(--danger-color,#ef4444)", fontSize: 12 }}>{e.error}</div> : null}
+      {!e.loading && e.selected ? (
+        <section data-testid="workflow-authoring-panel" style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+          <textarea
+            data-testid="workflow-authoring-instruction"
+            aria-label={t("task.workflowAuthoring.title")}
+            value={instruction}
+            placeholder={t("task.workflowAuthoring.instructionPlaceholder")}
+            disabled={e.dirty || authoring.state.phase === "generating"}
+            onChange={(event) => setInstruction(event.target.value)}
+            style={{ minHeight: 56 }}
+          />
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              data-testid="workflow-authoring-generate"
+              disabled={e.dirty || !instruction.trim() || authoring.state.phase === "generating" || isMobile}
+              onClick={generate}
+            >
+              {authoring.state.phase === "generating" ? t("task.workflowAuthoring.generating") : t("task.workflowAuthoring.generate")}
+            </button>
+            {e.dirty ? <span>{t("task.workflowEditor.patchSaveFirst")}</span> : null}
+            {isMobile ? <span>{t("task.workflowAuthoring.mobileHint")}</span> : null}
+          </div>
+          <WorkflowProposalReview
+            authoring={authoring}
+            review={review}
+            disabled={e.dirty}
+            onApplied={(result) => {
+              if (result.draft) e.adoptDraft(result.draft);
+            }}
+          />
+        </section>
+      ) : null}
       {!e.loading && e.selected ? (
         <details data-testid="workflow-patch-panel" style={{ fontSize: 12 }}>
           <summary>{t("task.workflowEditor.patchImport")}</summary>

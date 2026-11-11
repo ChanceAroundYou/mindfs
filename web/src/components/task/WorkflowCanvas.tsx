@@ -24,6 +24,8 @@ import {
   type WorkflowNodeDef,
   type WorkflowNodeKind,
 } from "../../shared/workflowModel";
+import { flowEdges, flowNodes, graphFrom } from "./workflowAuthoring/flowGraph";
+import { WorkflowLoopCanvas } from "./workflowAuthoring/WorkflowLoopCanvas";
 
 // 工作流草稿画布（WP-07）：**桌面端**的 Draft 图编辑器。
 //
@@ -54,45 +56,6 @@ function isNarrow(): boolean {
   return window.innerWidth < MOBILE_BREAKPOINT;
 }
 
-function toNodes(graph: WorkflowGraph, labels: Record<string, string>): Node[] {
-  return (graph.nodes || []).map((n, i) => ({
-    id: n.id,
-    position: n.position ?? { x: 80 + (i % 4) * 230, y: 80 + Math.floor(i / 4) * 150 },
-    data: { label: `${labels[n.kind] || n.kind}: ${n.name || n.id}` },
-  }));
-}
-
-function toEdges(graph: WorkflowGraph): Edge[] {
-  return (graph.edges || []).map((e) => ({
-    id: `${e.from}->${e.to}${e.route ? `:${e.route}` : ""}`,
-    source: e.from,
-    target: e.to,
-    label: e.route || undefined,
-  }));
-}
-
-function graphFrom(nodes: Node[], edges: Edge[], prev: WorkflowGraph): WorkflowGraph {
-  const defs: WorkflowNodeDef[] = nodes.map((n) => {
-    const old = (prev.nodes || []).find((d) => d.id === n.id);
-    return {
-      id: n.id,
-      name: old?.name ?? "",
-      kind: (old?.kind ?? "agent") as WorkflowNodeKind,
-      params: old?.params ?? {},
-      position: { x: n.position.x, y: n.position.y },
-    };
-  });
-  return {
-    ...prev,
-    nodes: defs,
-    edges: edges.map((e) => ({
-      from: e.source,
-      to: e.target,
-      ...(typeof e.label === "string" && e.label ? { route: e.label } : {}),
-    })),
-  };
-}
-
 export function WorkflowCanvas(props: WorkflowCanvasProps) {
   return (
     <ReactFlowProvider>
@@ -106,6 +69,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
   const [narrow] = useState(isNarrow);
   const [touched, setTouched] = useState(false);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [openLoopId, setOpenLoopId] = useState<string>("");
 
   const labels = useMemo(() => {
     const out: Record<string, string> = {};
@@ -113,8 +77,8 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
     return out;
   }, [t]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(toNodes(graph, labels));
-  const [edges, setEdges, onEdgesChange] = useEdgesState(toEdges(graph));
+  const [nodes, setNodes, onNodesChange] = useNodesState(flowNodes(graph, labels));
+  const [edges, setEdges, onEdgesChange] = useEdgesState(flowEdges(graph));
 
   // 只有外部 graph 的结构（节点/边 id 集合与参数）变了才重建 flow 状态，
   // 否则每次 onChange 回灌都会把用户正在拖的位置重置。
@@ -123,8 +87,8 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
     [graph],
   );
   useEffect(() => {
-    setNodes(toNodes(graph, labels));
-    setEdges(toEdges(graph));
+    setNodes(flowNodes(graph, labels));
+    setEdges(flowEdges(graph));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [structureKey]);
 
@@ -186,6 +150,18 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
 
   const errors = useMemo(() => validateWorkflowGraph(graph), [graph]);
   const selected = (graph.nodes || []).find((n) => n.id === selectedId) || null;
+  // 子画布只对仍然存在的 Loop 生效；节点被删除或改类型后自动回到顶层图。
+  const openLoop = openLoopId
+    ? (graph.nodes || []).find((n) => n.id === openLoopId && n.kind === "loop") || null
+    : null;
+
+  const replaceNode = useCallback(
+    (next: WorkflowNodeDef) => {
+      setTouched(true);
+      onChange({ ...graph, nodes: (graph.nodes || []).map((n) => (n.id === next.id ? next : n)) });
+    },
+    [graph, onChange],
+  );
 
   const patchSelected = useCallback(
     (patch: Partial<WorkflowNodeDef>) => {
@@ -230,6 +206,14 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
           />
         ) : null}
         <span style={{ flex: 1 }} />
+      </div>
+
+      {openLoop ? (
+        <WorkflowLoopCanvas loop={openLoop} onChange={replaceNode} onBack={() => setOpenLoopId("")} />
+      ) : (
+        <>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <span style={{ flex: 1 }} />
         {NODE_KINDS.map((k) => (
           <button
             key={k}
@@ -258,6 +242,9 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={(_, n) => setSelectedId(n.id)}
+          onNodeDoubleClick={(_, n) => {
+            if ((graph.nodes || []).some((d) => d.id === n.id && d.kind === "loop")) setOpenLoopId(n.id);
+          }}
           onNodesDelete={(deleted) => emit(nodes.filter((n) => !deleted.some((d) => d.id === n.id)), edges)}
           fitView
         >
@@ -265,14 +252,6 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
           <Controls />
         </ReactFlow>
       </div>
-
-      {errors.length > 0 ? (
-        <ul data-testid="workflow-canvas-errors" style={{ margin: 0, paddingLeft: "16px", fontSize: "12px", color: "var(--danger-color, #ef4444)" }}>
-          {errors.map((e) => (
-            <li key={e}>{e}</li>
-          ))}
-        </ul>
-      ) : null}
 
       {selected ? (
         <div data-testid="workflow-canvas-inspector" style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" }}>
@@ -311,17 +290,38 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
             </>
           ) : null}
           {selected.kind === "loop" ? (
-            <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-              {t("task.workflowCanvas.maxIterations")}
-              <input
-                type="number"
-                min={LOOP_MIN}
-                max={LOOP_MAX}
-                value={Number(selected.params?.max_iterations ?? LOOP_DEFAULT)}
-                onChange={(e) => patchSelected({ params: { ...selected.params, max_iterations: Number(e.target.value) } })}
-                style={{ width: "72px", border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
-              />
-            </label>
+            <>
+              <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                {t("task.workflowCanvas.maxIterations")}
+                <input
+                  type="number"
+                  min={LOOP_MIN}
+                  max={LOOP_MAX}
+                  value={Number(selected.params?.max_iterations ?? LOOP_DEFAULT)}
+                  onChange={(e) => patchSelected({ params: { ...selected.params, max_iterations: Number(e.target.value) } })}
+                  style={{ width: "72px", border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                />
+              </label>
+              <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                {t("task.workflowCanvas.exitExpression")}
+                <input
+                  data-testid="workflow-loop-exit"
+                  value={String(selected.params?.exit_expression ?? "")}
+                  placeholder={t("task.workflowCanvas.exitPlaceholder")}
+                  onChange={(e) => patchSelected({ params: { ...selected.params, exit_expression: e.target.value } })}
+                  style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                />
+              </label>
+              <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.exitHint")}</div>
+              <button
+                type="button"
+                data-testid="workflow-loop-enter"
+                onClick={() => setOpenLoopId(selected.id)}
+                style={{ alignSelf: "flex-start", border: "1px solid var(--border-color)", background: "transparent", borderRadius: "6px", padding: "2px 8px", cursor: "pointer" }}
+              >
+                {t("task.workflowCanvas.editInnerGraph")}
+              </button>
+            </>
           ) : null}
           {selected.kind === "condition" ? (
             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
@@ -338,6 +338,16 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
             </div>
           ) : null}
         </div>
+      ) : null}
+        </>
+      )}
+
+      {errors.length > 0 ? (
+        <ul data-testid="workflow-canvas-errors" style={{ margin: 0, paddingLeft: "16px", fontSize: "12px", color: "var(--danger-color, #ef4444)" }}>
+          {errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

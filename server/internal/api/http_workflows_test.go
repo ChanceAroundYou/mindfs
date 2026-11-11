@@ -101,6 +101,68 @@ func TestWorkflowDraftCreateUpdatePublish(t *testing.T) {
 	}
 }
 
+func TestWorkflowDraftLoopInnerGraphRoundTrip(t *testing.T) {
+	const loopGraph = `{"nodes":[{"id":"loop","name":"retry","kind":"loop","params":{"max_iterations":3,"exit_expression":"check.output.pass","graph":{"nodes":[{"id":"work","kind":"agent","params":{"agent":"claude"},"position":{"x":10,"y":20}},{"id":"check","kind":"condition","params":{"expression":"work.output.ok","routes":["pass","fail"]},"position":{"x":240,"y":20}}],"edges":[{"from":"work","to":"check"}]}},"position":{"x":60,"y":70}}]}`
+	h, _, _ := workflowsHandler(t)
+	assertLoop := func(stage, body string) string {
+		t.Helper()
+		var out struct {
+			Draft struct {
+				Revision string `json:"revision"`
+				Graph    struct {
+					Nodes []struct {
+						ID     string         `json:"id"`
+						Params map[string]any `json:"params"`
+					} `json:"nodes"`
+				} `json:"graph"`
+			} `json:"draft"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatalf("%s: bad snapshot %s: %v", stage, body, err)
+		}
+		if len(out.Draft.Graph.Nodes) != 1 || out.Draft.Graph.Nodes[0].ID != "loop" {
+			t.Fatalf("%s: loop node lost: %s", stage, body)
+		}
+		params := out.Draft.Graph.Nodes[0].Params
+		if params["max_iterations"] != float64(3) || params["exit_expression"] != "check.output.pass" {
+			t.Fatalf("%s: loop config lost: %v", stage, params)
+		}
+		inner, ok := params["graph"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: inner graph lost: %v", stage, params)
+		}
+		nodes, _ := inner["nodes"].([]any)
+		edges, _ := inner["edges"].([]any)
+		if len(nodes) != 2 || len(edges) != 1 {
+			t.Fatalf("%s: inner graph shape changed: %v", stage, inner)
+		}
+		first, _ := nodes[0].(map[string]any)
+		pos, _ := first["position"].(map[string]any)
+		if pos["x"] != float64(10) || pos["y"] != float64(20) {
+			t.Fatalf("%s: inner positions lost: %v", stage, first)
+		}
+		return out.Draft.Revision
+	}
+	rec := doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf-loop","author":"user","graph":`+loopGraph+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, http.MethodGet, "/api/workflows/wf-loop/snapshot", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("snapshot status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rev := assertLoop("reopen", rec.Body.String())
+	rec = doReq(t, h, http.MethodPut, "/api/workflows/wf-loop", `{"base_revision":"`+rev+`","author":"user","graph":`+loopGraph+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, http.MethodGet, "/api/workflows/wf-loop/snapshot", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reopen status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	assertLoop("after update", rec.Body.String())
+}
+
 func TestWorkflowRunGetRejectsMismatchedRoot(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: "hello"})

@@ -46,9 +46,11 @@ export type WorkflowDraftEditorState = {
   refreshProposals: () => Promise<void>;
   confirmProposal: (proposal: WorkflowPublishProposal) => Promise<void>;
   choose: (draft: WorkflowDraft) => Promise<void>;
+  reloadSelected: () => Promise<void>;
   create: () => Promise<void>;
   save: () => Promise<void>;
   publish: () => Promise<void>;
+  adoptDraft: (draft: WorkflowDraft) => void;
   confirmLeave: () => Promise<boolean>;
 };
 
@@ -132,6 +134,24 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
     setDirty(false);
     setError("");
   }, [dirty, t]);
+
+  // A generation 409 means the server moved past the revision this canvas was
+  // read at. Re-read the draft list and adopt the selected draft's fresh graph
+  // instead of keeping a canvas the server no longer agrees with.
+  const reloadSelected = useCallback(async () => {
+    const workflowId = selectedIdRef.current;
+    if (!workflowId) return;
+    try {
+      const items = await listWorkflowDrafts();
+      setDrafts(items);
+      const fresh = items.find((d) => d.workflow_id === workflowId);
+      if (fresh) {
+        setGraphState(fresh.graph);
+        setRevision(fresh.revision);
+        setDirty(false);
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, []);
 
   const create = useCallback(async () => {
     const id = `workflow-${Date.now().toString(36)}`;
@@ -246,10 +266,24 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
     } finally { setProposalBusy(false); }
   }, [selected, dirty, t, refreshProposals]);
 
+  // The authoring apply returned an authoritative draft from the server; adopt
+  // exactly that revision so the canvas never merges a second graph locally.
+  const adoptDraft = useCallback((draft: WorkflowDraft) => {
+    setDrafts((old) => (
+      old.some((item) => item.workflow_id === draft.workflow_id)
+        ? old.map((item) => (item.workflow_id === draft.workflow_id ? draft : item))
+        : [...old, draft]
+    ));
+    setSelectedId(draft.workflow_id);
+    setGraphState(draft.graph);
+    setRevision(draft.revision);
+    setDirty(false);
+  }, []);
+
   const confirmLeave = useCallback(async () => {
     if (!dirty) return true;
     return confirmDialog({ message: t("task.workflowEditor.leaveConfirm"), danger: true });
   }, [dirty, t]);
 
-  return { drafts, selected, selectedId, graph, revision, dirty, loading, saving, error, patchText, patchIssues, patchDiff, patchBusy, proposals, proposalBusy, setGraph, setPatchText, validatePatch, applyPatch, refreshProposals, confirmProposal, choose, create, save, publish, confirmLeave };
+  return { drafts, selected, selectedId, graph, revision, dirty, loading, saving, error, patchText, patchIssues, patchDiff, patchBusy, proposals, proposalBusy, setGraph, setPatchText, validatePatch, applyPatch, refreshProposals, confirmProposal, choose, reloadSelected, create, save, publish, adoptDraft, confirmLeave };
 }

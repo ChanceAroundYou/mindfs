@@ -61,6 +61,9 @@ type AppContext struct {
 	// workflowTurnOverride 是 Workflow NodeRun 执行的单测接缝：不启动真实 CLI，
 	// 只验证 adapter 选中的 agent/model/session 与结果解析。生产装配恒为 nil。
 	workflowTurnOverride func(ctx context.Context, req workflowTurnRequest) (string, error)
+	// workflowAuthoringOverride 是 Agent 提案生成的单测接缝。它只影响生成文本，
+	// 校验、diff、dry-run 仍走生产路径；生产装配恒为 nil。
+	workflowAuthoringOverride func(ctx context.Context, req workflowAuthoringRequest) (string, error)
 }
 
 func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentStageExecution) (string, error) {

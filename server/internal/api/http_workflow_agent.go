@@ -100,6 +100,16 @@ func respondWorkflowPatchFailure(w http.ResponseWriter, err error) {
 	}
 }
 
+// A CAS conflict always names the revision the server is actually at. Without
+// it a client can only retry blindly or discard the user's proposal; every
+// conflict path must carry this field.
+func respondWorkflowRunConflict(w http.ResponseWriter, revision int) {
+	respondJSON(w, http.StatusConflict, map[string]any{
+		"error":            kanban.ErrRunConflict.Error(),
+		"current_revision": revision,
+	})
+}
+
 func (h *HTTPHandler) handleWorkflowDraftPatchValidate(w http.ResponseWriter, r *http.Request) {
 	s, ok := h.workflowStore(w)
 	if !ok {
@@ -127,7 +137,15 @@ func (h *HTTPHandler) handleWorkflowDraftPatchValidate(w http.ResponseWriter, r 
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"diff": diff})
+	payload := map[string]any{"diff": diff}
+	// The reviewer may accept only part of a proposal. Re-checking that subset
+	// needs the same static dry-run the authoring gateway returns, computed from
+	// the server's candidate graph rather than a client-side copy.
+	if candidate, _, candidateIssues := kanban.ApplyWorkflowPatchToGraph(d.Graph, patch, nil); len(candidateIssues) == 0 {
+		dry, _ := kanban.RunWorkflowDryRun(kanban.WorkflowDryRunInput{Graph: candidate})
+		payload["dry_run"] = dry
+	}
+	respondJSON(w, http.StatusOK, payload)
 }
 
 func (h *HTTPHandler) handleWorkflowDraftPatchApply(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +160,11 @@ func (h *HTTPHandler) handleWorkflowDraftPatchApply(w http.ResponseWriter, r *ht
 	d, diff, err := s.ApplyWorkflowDraftPatch(r.Context(), chi.URLParam(r, "id"), patch)
 	if err != nil {
 		if errors.Is(err, kanban.ErrDraftConflict) {
-			respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "current": d})
+			respondJSON(w, http.StatusConflict, map[string]any{
+				"error":            err.Error(),
+				"current":          d,
+				"current_revision": d.Revision,
+			})
 			return
 		}
 		respondWorkflowPatchFailure(w, err)
@@ -266,12 +288,38 @@ func (h *HTTPHandler) handleTaskWorkflowRunPatchValidate(w http.ResponseWriter, 
 		respondError(w, http.StatusBadRequest, errInvalidRequest("base_revision must be the run revision integer"))
 		return
 	}
-	diff, _, err := store.ValidateWorkflowRunPatch(r.Context(), chi.URLParam(r, "id"), runID, rev, patch)
+	graph, diff, issues, err := store.PreviewWorkflowRunPatch(r.Context(), chi.URLParam(r, "id"), runID, rev, patch)
+	if err != nil {
+		// Preview returns no run, so read the authoritative revision explicitly
+		// instead of emitting a bare conflict the client cannot act on.
+		if errors.Is(err, kanban.ErrRunConflict) {
+			if run, readErr := store.WorkflowRunByID(r.Context(), runID); readErr == nil {
+				respondWorkflowRunConflict(w, run.Revision)
+				return
+			}
+		}
+		respondWorkflowPatchFailure(w, err)
+		return
+	}
+	if len(issues) > 0 {
+		respondWorkflowPatchFailure(w, &kanban.WorkflowPatchError{Issues: issues})
+		return
+	}
+	run, err := store.WorkflowRunByID(r.Context(), runID)
 	if err != nil {
 		respondWorkflowPatchFailure(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"diff": diff})
+	// Subset review gets the same static dry-run as a full proposal, seeded with
+	// this run's persisted outputs so completed nodes are not replayed.
+	dry, _ := kanban.RunWorkflowDryRun(kanban.WorkflowDryRunInput{
+		Graph:          graph,
+		Outputs:        run.NodeOutputs,
+		LoopState:      run.LoopState,
+		NodeStates:     run.NodeStates,
+		SelectedRoutes: run.SelectedRoutes,
+	})
+	respondJSON(w, http.StatusOK, map[string]any{"diff": diff, "dry_run": dry})
 }
 
 func (h *HTTPHandler) handleTaskWorkflowRunPatchApply(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +338,12 @@ func (h *HTTPHandler) handleTaskWorkflowRunPatchApply(w http.ResponseWriter, r *
 	}
 	run, diff, err := store.ApplyWorkflowRunPatch(r.Context(), chi.URLParam(r, "id"), runID, rev, patch)
 	if err != nil {
+		// Apply returns the current run on a revision conflict; report its
+		// revision so the client can adopt the snapshot it actually missed.
+		if errors.Is(err, kanban.ErrRunConflict) && run != nil {
+			respondWorkflowRunConflict(w, run.Revision)
+			return
+		}
 		respondWorkflowPatchFailure(w, err)
 		return
 	}

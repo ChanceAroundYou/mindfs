@@ -42,13 +42,17 @@ func TestWorkflowValidateRejectsNestedLoop(t *testing.T) {
 }
 
 func TestLoopMaxIterationsBounds(t *testing.T) {
+	// The bound cases carry a complete valid loop, so the only possible reason
+	// for rejection is max_iterations itself.
+	inner := wfDef(WorkflowNode{ID: "step", Name: "step", Kind: NodeKindNotify, Params: map[string]any{"message": "一轮"}})
 	for _, n := range []int{0, 21, -1} {
-		d := wfDef(WorkflowNode{ID: "l", Name: "l", Kind: NodeKindLoop, Params: map[string]any{"max_iterations": n}})
+		d := wfDef(WorkflowNode{ID: "l", Name: "l", Kind: NodeKindLoop, Params: map[string]any{
+			"max_iterations": n, "exit_expression": "step.output.message == \"一轮\"", "graph": inner,
+		}})
 		if err := ValidateWorkflowDefinition(d); err == nil {
 			t.Fatalf("expected rejection for max_iterations=%d", n)
 		}
 	}
-	inner := wfDef(WorkflowNode{ID: "step", Name: "step", Kind: NodeKindNotify, Params: map[string]any{"message": "一轮"}})
 	d := wfDef(WorkflowNode{ID: "l", Name: "l", Kind: NodeKindLoop, Params: map[string]any{
 		"max_iterations": 5, "exit_expression": "step.output.message == \"一轮\"", "graph": inner,
 	}})
