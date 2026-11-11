@@ -203,3 +203,13 @@ type harnessAdapter struct {
     通过；`go test ./...`、`npx tsc --noEmit`、全量 vitest（212 文件 / 496 测试，6 skipped）全绿。
     登记 G-KQ（含新文件、测试与锚点）。
   - 边界：自定义模型目录仍为 harness 级偏好，不随 profile 过滤——它不属于某个 shared profile。
+  - 部署：`bash scripts/deploy-all.sh` 首次在门禁阶段遇 `TS1128 tokenEditorUtils.ts(130,1)` 假失败——
+    另一个会话正在同一工作区改该文件（工作区多会话共享），重跑即通过。成功版本
+    `v0.5.5-1118-22-g210dbed6`，逐项核对：WSL `active`、PID 194923、`/proc/PID/exe` 未被删除；
+    fn `active`、PID 4000510；pc-win PID 33152（`Get-Process` 路径为
+    `C:\Users\10178\AppData\Local\Programs\mindfs\bin\mindfs.exe`）、7332 LISTENING、
+    health `{"ok":true,"role":"worker"}`。线上 WSL（活动 profile = llmux）的
+    `GET /api/agent-api-providers?agent=codex` 已返回官方订阅 + llmux 两条，证明 scoping 真正生效。
+    本机二进制已安装同版本、bundle 对账一致，但进程仍是旧二进制
+    （`/proc/1388399/exe` 带 `(deleted)`），旧进程的同一接口仍只返回 llmux ——
+    这正是用户看到的现象，需 `sudo systemctl restart mindfs` 后消失。
