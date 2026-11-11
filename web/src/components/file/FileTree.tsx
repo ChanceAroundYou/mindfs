@@ -269,7 +269,7 @@ function FileTreeInner({
     setAgentLifecycleBusy, setAgentLifecycleAgents, setAgentLifecycleRunningAgent,
   });
 
-  useAgentConfigOutsideClick({ agentConfigFlow, agentConfigStep, agentLifecycleOpen, agentConfigPopoverRef, agentLifecyclePopoverRef, closeAgentConfigFlow, closeAgentLifecycleFlow });
+  useAgentConfigOutsideClick({ agentConfigFlow, agentLifecycleOpen, agentConfigPopoverRef, agentLifecyclePopoverRef, closeAgentConfigFlow, closeAgentLifecycleFlow });
 
 
   const { runAgentLifecycleCommand } = useAgentLifecycleActions({
@@ -277,7 +277,7 @@ function FileTreeInner({
     onRunAgentLifecycleCommand, closeAgentLifecycleFlow,
   });
 
-  const { restartAgentFromConfigList, chooseAgentForConfig, loadAgentConfigBackupDefaults } = useAgentConfigSelection({
+  const { restartAgentFromConfigList, chooseAgentForConfig, loadAgentConfigBackupDefaults, agentCustomModelsState } = useAgentConfigSelection({
     agentConfigRestartingAgent, onRestartAgent, t, setAgentConfigRestartingAgent, setAgentConfigError,
     agentConfigAgent, setAgentConfigAgent, setAgentConfigBusy, agentConfigAgents, agentConfigFlow,
     setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName,
@@ -412,6 +412,7 @@ function FileTreeInner({
             testAgentAPIProviderModelNow,
             changeProviderTestModel,
             providerTestModels,
+            agentCustomModelsState,
             chooseAgentForConfig,
             loadAgentConfigBackupDefaults,
             setAgentConfigDetailTab,

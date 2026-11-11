@@ -22,7 +22,7 @@ assert.match(
 
 assert.match(
   zhCN,
-  /"fileTree\.agentProviders": "API 供应商 \/ 模型"/,
+  /"fileTree\.agentProviders": "供应商和模型"/,
   "Chinese provider menu should be a separate entry",
 );
 
@@ -46,7 +46,7 @@ assert.match(
 
 assert.match(
   enUS,
-  /"fileTree\.agentProviders": "API providers \/ models"/,
+  /"fileTree\.agentProviders": "Providers & models"/,
   "English provider menu should be a separate entry",
 );
 

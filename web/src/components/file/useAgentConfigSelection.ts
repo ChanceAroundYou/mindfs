@@ -1,11 +1,13 @@
 import React from "react";
-import { fetchAgentConfigBackups, fetchAgentConfigDefaults, fetchAgentAPIProviders, fetchAgentConfigSyncStatus } from "../../services/agentConfig";
+import { fetchAgentConfigBackups, fetchAgentConfigDefaults, fetchAgentAPIProviders, fetchAgentConfigSyncStatus, fetchAgentCustomModels, saveAgentCustomModels } from "../../services/agentConfig";
 import { getRootNodeId } from "../../services/net/rootNode";
 import { fetchAgents } from "../../services/agents";
 import { isCodexProfileAgent, switchableAgentConfigBackups } from "./agentConfigProfiles";
 
 export function useAgentConfigSelection(ctx: any) {
   const { agentConfigRestartingAgent, onRestartAgent, t, setAgentConfigRestartingAgent, setAgentConfigError, agentConfigAgent, setAgentConfigAgent, setAgentConfigBusy, agentConfigAgents, agentConfigFlow, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigDetailTab, setAgentConfigStep, setAgentConfigBackups, setAgentAPIProviders, setAgentConfigSyncStatus, setSelectedAgentConfigID, agentConfigPreferredProviderIDs, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection } = ctx;
+const [agentCustomModels, setAgentCustomModels] = React.useState<string[]>([]);
+const [agentCustomModelsBusy, setAgentCustomModelsBusy] = React.useState(false);
 const restartAgentFromConfigList = React.useCallback(async (agentName: string) => {
   if (!agentName || !onRestartAgent || agentConfigRestartingAgent) {
     return;
@@ -59,13 +61,18 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
     const selectedAgent = agentConfigAgents.find((item: any) => item.name === agentName);
     const isCodex = isCodexProfileAgent(agentName, selectedAgent);
     if (agentConfigFlow === "provider") {
-      const providers = await fetchAgentAPIProviders(agentName);
+      const [providers, customModels] = await Promise.all([
+        fetchAgentAPIProviders(agentName),
+        fetchAgentCustomModels(agentName),
+      ]);
       setAgentAPIProviders(providers);
+      setAgentCustomModels(customModels);
       const preferredProvider = providers.find((provider) => agentConfigPreferredProviderIDs.includes(provider.id));
       setSelectedAgentAPIProviderID(preferredProvider?.id || "");
       setAgentConfigSwitchSelection(preferredProvider ? { type: "api_provider", id: preferredProvider.id } : null);
       setAgentConfigStep("details");
     } else {
+      setAgentCustomModels([]);
       const [backups, syncStatus] = await Promise.all([
         fetchAgentConfigBackups(agentName),
         fetchAgentConfigSyncStatus(),
@@ -108,5 +115,47 @@ const loadAgentConfigBackupDefaults = React.useCallback(async (agentName: string
   }
 }, [t]);
 
-  return { restartAgentFromConfigList, chooseAgentForConfig, loadAgentConfigBackupDefaults };
+  const addAgentCustomModel = React.useCallback(async (model: string) => {
+    const trimmed = String(model || "").trim();
+    if (!agentConfigAgent || !trimmed || agentCustomModels.includes(trimmed)) {
+      return;
+    }
+    setAgentCustomModelsBusy(true);
+    setAgentConfigError("");
+    try {
+      setAgentCustomModels(await saveAgentCustomModels(agentConfigAgent, [...agentCustomModels, trimmed]));
+    } catch (error) {
+      setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.customModelSaveFailed"));
+    } finally {
+      setAgentCustomModelsBusy(false);
+    }
+  }, [agentConfigAgent, agentCustomModels, t]);
+
+  const removeAgentCustomModel = React.useCallback(async (model: string) => {
+    const trimmed = String(model || "").trim();
+    if (!agentConfigAgent || !trimmed) {
+      return;
+    }
+    setAgentCustomModelsBusy(true);
+    setAgentConfigError("");
+    try {
+      setAgentCustomModels(await saveAgentCustomModels(agentConfigAgent, agentCustomModels.filter((item: string) => item !== trimmed)));
+    } catch (error) {
+      setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.customModelSaveFailed"));
+    } finally {
+      setAgentCustomModelsBusy(false);
+    }
+  }, [agentConfigAgent, agentCustomModels, t]);
+
+  return {
+    restartAgentFromConfigList,
+    chooseAgentForConfig,
+    loadAgentConfigBackupDefaults,
+    agentCustomModelsState: {
+      models: agentCustomModels,
+      busy: agentCustomModelsBusy,
+      add: addAgentCustomModel,
+      remove: removeAgentCustomModel,
+    },
+  };
 }

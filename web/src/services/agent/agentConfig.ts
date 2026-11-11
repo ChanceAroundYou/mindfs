@@ -186,3 +186,23 @@ export async function switchAgentAPIProvider(input: {
     }),
   });
 }
+
+export type AgentCustomModels = {
+  agent: string;
+  models: string[];
+};
+
+export async function fetchAgentCustomModels(agent: string): Promise<string[]> {
+  const params = new URLSearchParams({ agent });
+  const result = await protectedJSON<AgentCustomModels>(appPath(`/api/agents/custom-models?${params.toString()}`));
+  return result.models || [];
+}
+
+export async function saveAgentCustomModels(agent: string, models: string[]): Promise<string[]> {
+  const result = await protectedJSON<AgentCustomModels>(appPath("/api/agents/custom-models"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent, models }),
+  });
+  return result.models || [];
+}

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"mindfs/server/internal/agent"
+	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/config"
 )
 
@@ -105,6 +106,9 @@ type AgentDefaults struct {
 	Effort              string               `json:"effort,omitempty"`
 	FastService         string               `json:"fast_service,omitempty"`
 	LastConfigSelection *LastConfigSelection `json:"last_config_selection,omitempty"`
+	// CustomModels 是用户在界面上为某个 agent 追加的模型 ID（例如给 codex 加 "of"）。
+	// 它们会并入 /api/agents 返回的 models 目录，因此能在会话的模型选择里直接选中。
+	CustomModels []string `json:"custom_models,omitempty"`
 }
 
 type LastConfigSelection struct {
@@ -185,7 +189,8 @@ func (s *Store) UpdateAgentDefaultsIfChanged(agentName, model, effort, fastServi
 	if fastService != "" {
 		next.FastService = fastService
 	}
-	if s.data.Agents[agentName] == next {
+	current := s.data.Agents[agentName]
+	if current.Model == next.Model && current.Effort == next.Effort && current.FastService == next.FastService {
 		return false, nil
 	}
 	s.data.Agents[agentName] = next
@@ -219,6 +224,84 @@ func (s *Store) UpdateAgentLastConfigSelection(agentName string, selection LastC
 	next.LastConfigSelection = &selection
 	s.data.Agents[agentName] = next
 	return s.saveLocked()
+}
+
+// AgentCustomModels 返回某个 agent 的自定义模型列表快照。
+func (s *Store) AgentCustomModels(agentName string) []string {
+	agentName = strings.TrimSpace(agentName)
+	if s == nil || agentName == "" {
+		return []string{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.data.Agents[agentName].CustomModels...)
+}
+
+// UpdateAgentCustomModels 覆盖某个 agent 的自定义模型列表；空列表等价于清空。
+func (s *Store) UpdateAgentCustomModels(agentName string, models []string) error {
+	agentName = strings.TrimSpace(agentName)
+	if s == nil || agentName == "" {
+		return errors.New("agent required")
+	}
+	next := normalizeCustomModels(models)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.Agents == nil {
+		s.data.Agents = map[string]AgentDefaults{}
+	}
+	defaults := s.data.Agents[agentName]
+	if equalStrings(defaults.CustomModels, next) {
+		return nil
+	}
+	defaults.CustomModels = next
+	s.data.Agents[agentName] = defaults
+	return s.saveLocked()
+}
+
+func normalizeCustomModels(input []string) []string {
+	seen := make(map[string]bool, len(input))
+	out := make([]string, 0, len(input))
+	for _, item := range input {
+		model := strings.TrimSpace(item)
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		out = append(out, model)
+	}
+	return out
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func mergeCustomModels(models []agenttypes.ModelInfo, custom []string) []agenttypes.ModelInfo {
+	custom = normalizeCustomModels(custom)
+	if len(custom) == 0 {
+		return models
+	}
+	seen := make(map[string]bool, len(models)+len(custom))
+	for _, item := range models {
+		seen[strings.TrimSpace(item.ID)] = true
+	}
+	out := append([]agenttypes.ModelInfo(nil), models...)
+	for _, id := range custom {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, agenttypes.ModelInfo{ID: id, Name: id})
+	}
+	return out
 }
 
 // AgentLastConfigSelections returns a snapshot of every agent's last manual
@@ -281,6 +364,11 @@ func (s *Store) ApplyAgentDefaults(statuses []agent.Status) []agent.Status {
 	out := append([]agent.Status(nil), statuses...)
 	for i := range out {
 		defaults := s.data.Agents[strings.TrimSpace(out[i].Name)]
+		// 先并入自定义模型，再校验默认模型：否则用户刚添加的模型会因为
+		// 不在厂商目录里被 SanitizeDefaultModelID 当场回退掉。
+		if len(defaults.CustomModels) > 0 {
+			out[i].Models = mergeCustomModels(out[i].Models, defaults.CustomModels)
+		}
 		if defaults.Model != "" {
 			out[i].DefaultModelID = defaults.Model
 			// 过期默认模型回归：provider 切换（cc-switch）后旧模型（of/os 等）

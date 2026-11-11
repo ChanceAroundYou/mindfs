@@ -150,6 +150,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 
 	// Agent status API
 	r.Get("/api/agents", h.handleAgentsList)
+	r.Get("/api/agents/custom-models", h.handleAgentCustomModelsGet)
+	r.Put("/api/agents/custom-models", h.handleAgentCustomModelsPut)
 	r.Post("/api/agents/restart", h.handleAgentRestart)
 	r.Get("/api/agents/codex/rate-limits", h.handleCodexRateLimitsGet)
 	r.Post("/api/agents/codex/rate-limit-reset", h.handleCodexRateLimitReset)

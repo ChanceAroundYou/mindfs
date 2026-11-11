@@ -75,3 +75,44 @@ test("harness names normalize custom agent names before matching shared config",
     ["local", "shared"],
   );
 });
+test("the provider entry is named providers and models", () => {
+  const zh = read("../src/i18n/locales/zh-CN-projects.ts");
+  assert.match(zh, /"fileTree\.agentProviders":\s*"供应商和模型"/);
+  assert.doesNotMatch(zh, /"fileTree\.agentProviders":\s*"API 供应商/);
+});
+
+test("agent config popovers close on outside clicks at every step", () => {
+  const hook = read("../src/components/file/useAgentConfigOutsideClick.ts");
+  const tree = read("../src/components/file/FileTree.tsx");
+
+  assert.match(hook, /if \(!agentConfigFlow\)/);
+  assert.doesNotMatch(hook, /agentConfigStep !== "agent"/);
+  assert.match(hook, /document\.addEventListener\("mousedown", handlePointerDown\)/);
+  assert.doesNotMatch(tree, /useAgentConfigOutsideClick\(\{[^}]*agentConfigStep/);
+});
+
+test("custom models can be added and removed per harness", () => {
+  const popover = read("../src/components/file/AgentConfigPopover.tsx");
+  const models = read("../src/components/file/AgentConfigCustomModels.tsx");
+  const overlay = read("../src/components/file/FileTreeAgentConfigOverlay.tsx");
+  const selection = read("../src/components/file/useAgentConfigSelection.ts");
+  const service = read("../src/services/agent/agentConfig.ts");
+  const handler = read("../../server/internal/api/agent_custom_models.go");
+  const routes = read("../../server/internal/api/http_routes.go");
+  const store = read("../../server/internal/preferences/store.go");
+
+  assert.match(popover, /<AgentConfigCustomModels/);
+  assert.match(models, /agentConfig\.customModels/);
+  assert.match(models, /models\.map/);
+  assert.match(models, /onAdd\(input\.trim\(\)\)/);
+  assert.match(models, /onRemove\(model\)/);
+  assert.match(overlay, /agentCustomModelsState\.models/);
+  assert.match(selection, /fetchAgentCustomModels\(agentName\)/);
+  assert.match(selection, /saveAgentCustomModels\(agentConfigAgent/);
+  assert.match(service, /\/api\/agents\/custom-models/);
+  assert.match(handler, /handleAgentCustomModelsPut/);
+  assert.match(handler, /BroadcastAgentStatusChanged/);
+  assert.match(routes, /r\.Put\("\/api\/agents\/custom-models"/);
+  assert.match(store, /CustomModels\s+\[\]string/);
+  assert.match(store, /mergeCustomModels\(out\[i\]\.Models, defaults\.CustomModels\)/);
+});

@@ -151,4 +151,20 @@ type harnessAdapter struct {
   - 本机：二进制已安装为该版本，静态 bundle 与安装目录一致（脚本对账通过）；
     **system 单元仍待用户执行 `sudo systemctl restart mindfs`** 后进程才换成新二进制。
 - 仍 Active 的唯一原因：本机 system 服务待用户重启（Agent 不得代劳），
-  以及页面上的入口层级需在重启/刷新后做一次真机点验。
+  以及页面上的入口层级需在重启/刷新后做一次真机点验。- 2026-11-11（收尾）：按用户反馈补三项。
+  - 入口改名：菜单第二项由「API 供应商 / 模型」改为「供应商和模型」（英文 Providers & models），
+    `agentConfig.chooseProviderAgent` 同步改为「选择要管理供应商和模型的 Agent」。
+  - 点外关闭：`useAgentConfigOutsideClick` 原先只在 step=agent 时挂监听，进入详情/确认后
+    点空白处不关；现在只要 `agentConfigFlow` 存在就挂监听，生命周期浮层同理。
+  - 模型设置：新增每-harness 自定义模型目录。`AgentDefaults.CustomModels` 落
+    `preferences.json`，由 `GET/PUT /api/agents/custom-models` 读写；`ApplyAgentDefaults`
+    先并入自定义模型再校验默认模型（否则刚添加的 ID 会被 `SanitizeDefaultModelID` 当场回退），
+    PUT 成功后 `BroadcastAgentStatusChanged` 让已连接的会话模型选择器立刻刷新。
+    供应商页签顶部新增「模型」一栏，可添加/移除模型 ID（例如给 Codex 加 `of`）；
+    添加后该 ID 进入 `/api/agents` 的 models 目录，能在会话模型选择里选中并持久为默认。
+  - 拆分：为守住 500 行硬线，`AgentConfigPopover` 拆出
+    `AgentConfigCustomModels.tsx` / `AgentConfigProviderActions.tsx`，
+    `FileTreeHeaderOverlays` 拆出 `FileTreeAgentConfigOverlay.tsx`；
+    自定义模型状态移入 `useAgentConfigSelection`，以 `agentCustomModelsState` 单个键下发。
+  - 验证：`go test ./...` 通过；`npx tsc --noEmit` 通过；全量 vitest 212 文件 / 495 测试通过
+    （6 skipped）；`make build-web` 通过。G-KP 登记补齐新文件、测试与锚点。

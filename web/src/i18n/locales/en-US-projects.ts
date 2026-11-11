@@ -4,7 +4,7 @@ export const enUSProjects = {
   "fileTree.addAgentConfig": "Add Agent config",
   "fileTree.switchAgentConfig": "Switch and restart Agent config",
   "fileTree.agentConfig": "Agent config",
-  "fileTree.agentProviders": "API providers / models",
+  "fileTree.agentProviders": "Providers & models",
   "fileTree.agentInstallUpdate": "Install and update Agent",
   "fileTree.sessionNamingAgent": "Session rename settings",
   "fileTree.idleSessionResourceRelease": "Idle session release",

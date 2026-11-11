@@ -8,6 +8,8 @@ import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
 import { AgentConfigAgentStep } from "./AgentConfigAgentStep";
 import { AgentConfigProfileList } from "./AgentConfigProfileList";
 import { AgentConfigSyncStatus } from "./AgentConfigSyncStatus";
+import { AgentConfigCustomModels } from "./AgentConfigCustomModels";
+import { AgentConfigProviderActions } from "./AgentConfigProviderActions";
 import { AgentLifecyclePopover } from "./AgentLifecyclePopover";
 import { agentConfigHarnessName, isCodexProfileAgent, switchableAgentConfigBackups } from "./agentConfigProfiles";
 import {
@@ -74,6 +76,10 @@ export function AgentConfigPopover({
   onTestProviderModel,
   onProviderTestModelChange,
   providerTestModels,
+  customModels,
+  customModelsBusy,
+  onAddCustomModel,
+  onRemoveCustomModel,
   onChooseAgent,
   onDetailTabChange,
   onShowProviderFormChange,
@@ -125,6 +131,10 @@ export function AgentConfigPopover({
   onTestProviderModel: (providerID: string, model: string) => void;
   onProviderTestModelChange: (providerID: string, model: string) => void;
   providerTestModels: Record<string, string>;
+  customModels: string[];
+  customModelsBusy: boolean;
+  onAddCustomModel: (model: string) => void;
+  onRemoveCustomModel: (model: string) => void;
   onChooseAgent: (name: string) => void;
   onDetailTabChange: (tab: AgentConfigDetailTab) => void;
   onShowProviderFormChange: (show: boolean) => void;
@@ -274,45 +284,20 @@ export function AgentConfigPopover({
 
   const renderProviderDetails = () => (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <button
-          type="button"
-          disabled={busy || providerSyncBusy || apiProviders.length === 0}
-          onClick={onSyncAllProviders}
-          style={{
-            border: "1px solid var(--border-color)",
-            background: "transparent",
-            color: providerSyncBusy || apiProviders.length === 0 ? "var(--text-secondary)" : "var(--accent-color)",
-            borderRadius: "8px",
-            padding: "5px 10px",
-            fontSize: "11px",
-            fontWeight: 600,
-            cursor: providerSyncBusy || apiProviders.length === 0 ? "default" : "pointer",
-          }}
-        >
-          {providerSyncBusy ? t("agentConfig.syncingProviders") : t("agentConfig.syncAllProviders")}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onShowProviderFormChange(!showProviderForm)}
-          style={{
-            border: "1px solid var(--border-color)",
-            background: showProviderForm ? "var(--selection-bg)" : "transparent",
-            color: showProviderForm ? "var(--accent-color)" : "var(--text-primary)",
-            borderRadius: "8px",
-            padding: "5px 10px",
-            fontSize: "11px",
-            fontWeight: 600,
-            cursor: busy ? "default" : "pointer",
-          }}
-        >
-          {t("agentConfig.addProvider")}
-        </button>
-        <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: 0, flex: 1 }}>
-          {t("agentConfig.syncAllProvidersHint")}
-        </span>
-      </div>
+      <AgentConfigCustomModels
+        models={customModels}
+        busy={customModelsBusy}
+        onAdd={onAddCustomModel}
+        onRemove={onRemoveCustomModel}
+      />
+      <AgentConfigProviderActions
+        busy={busy}
+        syncBusy={providerSyncBusy}
+        hasProviders={apiProviders.length > 0}
+        showForm={showProviderForm}
+        onSyncAll={onSyncAllProviders}
+        onToggleForm={onShowProviderFormChange}
+      />
       {showProviderForm ? (
         <>
           <div style={agentConfigFieldStyle}>
