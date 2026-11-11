@@ -1,8 +1,16 @@
 import { appPath } from "../net/base";
 import { protectedJSON } from "../net/api";
 
-import type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource } from "../../shared/agentTypes";
-export type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource } from "../../shared/agentTypes";
+import type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource, AgentConfigSyncResult } from "../../shared/agentTypes";
+export type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource, AgentConfigSyncResult } from "../../shared/agentTypes";
+
+export async function fetchAgentConfigSyncStatus(): Promise<AgentConfigSyncResult> {
+  return protectedJSON<AgentConfigSyncResult>(appPath("/api/agent-config/sync"));
+}
+
+export async function requestAgentConfigSync(): Promise<AgentConfigSyncResult> {
+  return protectedJSON<AgentConfigSyncResult>(appPath("/api/agent-config/sync"), { method: "POST" });
+}
 
 export type AgentConfigDefaults = {
   agent: string;
@@ -48,6 +56,7 @@ export async function deleteAgentConfigBackup(id: string): Promise<{ deleted: bo
 }
 
 export async function switchAgentConfig(input: {
+  agent?: string;
   id: string;
   confirmOverwrite?: boolean;
 }): Promise<{
@@ -59,6 +68,7 @@ export async function switchAgentConfig(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      agent: input.agent,
       id: input.id,
       confirm_overwrite: !!input.confirmOverwrite,
     }),
@@ -175,4 +185,24 @@ export async function switchAgentAPIProvider(input: {
       provider_id: input.providerID,
     }),
   });
+}
+
+export type AgentCustomModels = {
+  agent: string;
+  models: string[];
+};
+
+export async function fetchAgentCustomModels(agent: string): Promise<string[]> {
+  const params = new URLSearchParams({ agent });
+  const result = await protectedJSON<AgentCustomModels>(appPath(`/api/agents/custom-models?${params.toString()}`));
+  return result.models || [];
+}
+
+export async function saveAgentCustomModels(agent: string, models: string[]): Promise<string[]> {
+  const result = await protectedJSON<AgentCustomModels>(appPath("/api/agents/custom-models"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent, models }),
+  });
+  return result.models || [];
 }

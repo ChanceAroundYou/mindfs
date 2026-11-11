@@ -5,10 +5,9 @@ import type { AgentAPIProvider, AgentConfigBackup } from "../../services/agentCo
 import type { I18nContextValue } from "../../i18n/index";
 import { getRootNodeId } from "../../services/net/rootNode";
 import type {
-  AgentConfigAddTab,
+  AgentConfigDetailTab,
   AgentConfigFlow,
   AgentConfigStep,
-  AgentConfigSwitchTab,
 } from "./AgentConfigPopover";
 import type { AgentConfigSwitchSelection } from "./fileTreeTypes";
 
@@ -22,8 +21,8 @@ export type AgentConfigFlowTransitionsCtx = {
   setAgentConfigFlow: Dispatch<SetStateAction<AgentConfigFlow | null>>;
   setAgentConfigStep: Dispatch<SetStateAction<AgentConfigStep>>;
   setAgentConfigAgent: Dispatch<SetStateAction<string>>;
-  setAgentConfigAddTab: Dispatch<SetStateAction<AgentConfigAddTab>>;
-  setAgentConfigSwitchTab: Dispatch<SetStateAction<AgentConfigSwitchTab>>;
+  setAgentConfigDetailTab: Dispatch<SetStateAction<AgentConfigDetailTab>>;
+  setAgentConfigShowProviderForm: Dispatch<SetStateAction<boolean>>;
   setAgentConfigName: Dispatch<SetStateAction<string>>;
   setAgentConfigFileSourcesBody: Dispatch<SetStateAction<string>>;
   setAgentConfigEnvBody: Dispatch<SetStateAction<string>>;
@@ -37,6 +36,7 @@ export type AgentConfigFlowTransitionsCtx = {
   setAgentConfigSwitchSelection: Dispatch<SetStateAction<AgentConfigSwitchSelection | null>>;
   setAgentConfigPreferredProviderIDs: Dispatch<SetStateAction<string[]>>;
   setAgentConfigConfirmMessage: Dispatch<SetStateAction<string>>;
+  setAgentConfigConfirmAction: Dispatch<SetStateAction<"backup" | "switch">>;
   setAgentConfigError: Dispatch<SetStateAction<string>>;
   setAgentConfigRestartingAgent: Dispatch<SetStateAction<string>>;
   setIsMenuOpen: Dispatch<SetStateAction<boolean>>;
@@ -56,7 +56,7 @@ export type AgentConfigFlowTransitionsCtx = {
  * 先重置表单再拉列表），拆散了才看得见顺序。依赖数组逐字保留。
  */
 export function useAgentConfigFlowTransitions(ctx: AgentConfigFlowTransitionsCtx) {
-  const { rootId, agentConfigFlowVersion, t, setIdleReleaseOpen, setAgentLifecycleOpen, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents, setAgentLifecycleError, setAgentLifecycleBusy, setAgentLifecycleAgents, setAgentLifecycleRunningAgent } = ctx;
+  const { rootId, agentConfigFlowVersion, t, setIdleReleaseOpen, setAgentLifecycleOpen, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigDetailTab, setAgentConfigShowProviderForm, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigConfirmAction, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents, setAgentLifecycleError, setAgentLifecycleBusy, setAgentLifecycleAgents, setAgentLifecycleRunningAgent } = ctx;
 
   const openAgentConfigFlow = useCallback((flow: AgentConfigFlow) => {
     setIdleReleaseOpen(false);
@@ -66,8 +66,8 @@ export function useAgentConfigFlowTransitions(ctx: AgentConfigFlowTransitionsCtx
     setAgentConfigFlow(flow);
     setAgentConfigStep("agent");
     setAgentConfigAgent("");
-    setAgentConfigAddTab("backup");
-    setAgentConfigSwitchTab("backup");
+    setAgentConfigDetailTab("switch");
+    setAgentConfigShowProviderForm(false);
     setAgentConfigName("");
     setAgentConfigFileSourcesBody("");
     setAgentConfigEnvBody("");
@@ -81,6 +81,7 @@ export function useAgentConfigFlowTransitions(ctx: AgentConfigFlowTransitionsCtx
     setAgentConfigSwitchSelection(null);
     setAgentConfigPreferredProviderIDs([]);
     setAgentConfigConfirmMessage("");
+    setAgentConfigConfirmAction("switch");
     setAgentConfigError("");
     setAgentConfigRestartingAgent("");
     setIsMenuOpen(false);
@@ -102,8 +103,10 @@ export function useAgentConfigFlowTransitions(ctx: AgentConfigFlowTransitionsCtx
     setAgentConfigStep("agent");
     setAgentConfigError("");
     setAgentConfigConfirmMessage("");
+    setAgentConfigConfirmAction("switch");
     setAgentConfigSwitchSelection(null);
-    setAgentConfigSwitchTab("backup");
+    setAgentConfigDetailTab("switch");
+    setAgentConfigShowProviderForm(false);
     setAgentConfigRestartingAgent("");
   }, []);
 

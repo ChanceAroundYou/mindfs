@@ -7303,8 +7303,8 @@ groups:
   - id: G-KO
     title: Codex 供应商不一致时 fork 续聊 + 配置恢复不留悬空 model_provider
     kind: fix
-    symptom: "切换 API 供应商或在 MindFS 里恢复/切换配置后，打开任何旧 Codex 会话都报 app server error (-32600)：This chat uses model provider \"llmux\", which is no longer configured（或 ..., but your current provider is openai. Switch to ... to continue.），整段对话无法继续；恢复官方配置后连新建会话也可能报同一句。"
-    why: "codex app-server 把创建时的 model_provider 记进线程元数据（~/.codex/state_5.sqlite 的 threads.model_provider），thread/resume 要求它等于当前生效的 model_provider。2026-11-09 用隔离 CODEX_HOME 在真机 app-server 实测：resume 的 modelProvider 覆盖参数对两种报错都无效，唯一可行路径是 thread/fork 到当前供应商（fork 复制完整历史，实测成功）。所以 OpenSession 在 resume 前用一次本地 thread/resume 探测，命中供应商不一致时 fork 成新线程并返回新 id；上层 ensureAgentSession 立刻把新 id 写回绑定（UpdateAgentState 只更新 agent_session_id/agent_ctx_seq，保留 external_source_* 游标），避免「只打开不发送」时反复 fork 出重复历史。配套修的第二个坑：恢复官方配置时 preserveCodexModelProviderKey 会把当前 key 硬塞进没有任何 model_providers 表的配置，留下悬空 model_provider，新建会话同样报错；现在只有恢复内容真的定义了该 provider 表才保留选择器。"
+    symptom: "切换 API 供应商或在 MindFS 里恢复/切换配置后，打开任何旧 Codex 会话都报 app server error (-32600)：This chat uses model provider \"llmux\", which is no longer configured（或 ..., but your current provider is openai. Switch to ... to continue.），整段对话无法继续；恢复官方配置后连新建会话也可能报同一句；已切到 llmux 的会话若线程由 VS Code 创建（rollout 记着 openai），只打开不报错但之后每轮仍走 ChatGPT，上下文超窗口时报 Error running remote compact task: workspace routing discovery failed。"
+    why: "codex app-server 把创建时的 model_provider 记进线程元数据（~/.codex/state_5.sqlite 的 threads.model_provider），thread/resume 要求它等于当前生效的 model_provider。2026-11-09 用隔离 CODEX_HOME 在真机 app-server 实测：线程已被按旧供应商加载后，resume 的 modelProvider 覆盖参数对两种报错都无效，唯一可行路径是 thread/fork 到当前供应商（fork 复制完整历史，实测成功）。2026-11-11 补充并修正：覆盖参数在「首次加载」时是生效的，先前探针自己先发了一次不带 modelProvider 的 thread/resume，把线程按 rollout 里的旧供应商加载了，之后的 SDK resume 才变成空操作——所以探针必须带当前供应商（config/read 取，缺省回落 openai），并按返回值里的生效供应商判断是否需要 fork；fork 参数也要带供应商，否则 fork 出的仍是同一供应商的新线程。所以 OpenSession 在 resume 前用一次本地 thread/resume 探测，命中供应商不一致时 fork 成新线程并返回新 id；上层 ensureAgentSession 立刻把新 id 写回绑定（UpdateAgentState 只更新 agent_session_id/agent_ctx_seq，保留 external_source_* 游标），避免「只打开不发送」时反复 fork 出重复历史。配套修的第二个坑：恢复官方配置时 preserveCodexModelProviderKey 会把当前 key 硬塞进没有任何 model_providers 表的配置，留下悬空 model_provider，新建会话同样报错；现在只有恢复内容真的定义了该 provider 表才保留选择器。"
     boundary: "只管 codex 线程的供应商不一致续聊与配置恢复时的 provider 选择器一致性。不改 Claude/ACP；不改供应商切换写配置的格式（仍复用同一个 provider key）；不直接改写 Codex 的 state_*.sqlite 与 rollout 文件。"
     files:
       - server/internal/agent/codex/session_open.go
@@ -7319,16 +7319,17 @@ groups:
     anchors:
       - 'server/internal/agent/codex/session_open.go:rethreadCodexResumeOnProviderMismatch(ctx, client, resumeID, threadOptions, opts.RootPath)'
       - 'server/internal/agent/codex/session_resume_provider.go:func isCodexProviderMismatch(err error) bool'
-      - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(probeCtx, client, threadOptions, threadID, nil)'
+      - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(probeCtx, client, forkOptions, threadID, nil)'
+      - 'server/internal/agent/codex/session_resume_provider.go:func codexResumeProbeParams(threadID, cwd, provider string) map[string]any'
       - 'server/internal/api/agent_api_provider_codex.go:func hasCodexModelProviderTable(existing, providerName string) bool'
       - 'server/internal/api/usecase/session_agent_open.go:rebind.done'
 
   # ── 看板留言板后端（WP-01）：TaskActivity + ContinueRequest ──────────────
-  - id: G-KP
+  - id: G-LH
     title: 看板任务留言板后端：TaskActivity/ContinueRequest 持久化与幂等 POST/GET
     kind: feature
     symptom: "用户在任务详情留言板发留言后，留言按时间线出现（user/agent 交替），重复发送不重复执行，任务终态后新留言标记 blocked 而不丢弃。"
-    why: "约定三件：①同一 (task_id, comment_id) 同事务写入 task_activities + continue_requests，重复提交同 author/body 返回原记录，异体返回 conflict；②留言带 workflow_choice（specified/disabled/empty，specified 必须带 workflow_version_id）落库到 activity；③任务为终态（success/fail/cancelled）时 ContinueRequest 直接 blocked。存量库靠 CREATE TABLE IF NOT EXISTS 迁移，零数据改动；不改 StageRun/legacy 语义。"
+    why: "约定三件：①同一 (task_id, comment_id) 同事务写入 task_activities + continue_requests，重复提交同 author/body 返回原记录，异体返回 conflict；②留言带 workflow_choice（specified/disabled/empty，specified 必须带 workflow_version_id）落库到 activity；③任务为终态（success/fail/cancelled）时 ContinueRequest 直接 blocked。存量库靠 CREATE TABLE IF NOT EXISTS 迁移，零数据改动；不改 StageRun/legacy 语义。2026-11-11 合 main 时为避免与已发布的配置同步组重号，本组由 G-KP 改为 G-LH。"
     boundary: "只新增留言持久化与 HTTP 接口，不碰 Stages/StageRun 引擎、不新增鉴权；steer/恢复留 WP-03，不做跨节点接管。"
     files:
       - server/internal/kanban/types.go
@@ -7346,11 +7347,11 @@ groups:
       - 'server/internal/kanban/task_store_comments.go:func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput)'
       - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskCommentsPost'
   # ── Workflow 领域模型（WP-05）：Version/Draft/Run/NodeRun + DAG/Loop 引擎 ──
-  - id: G-KQ
+  - id: G-LI
     title: Workflow 领域模型：不可变 Version、Draft CAS、Run 快照与 DAG/Loop 引擎（WP-05）
     kind: feature
     symptom: "看板任务可从不可变 WorkflowVersion 快照启动 DAG 运行；条件分支合流只等实际选中路径，未选路径记 skipped 不阻塞 join；Loop 超限（默认 5，上限 20）暂停为 needs-user 而非静默成功。"
-    why: "WP-05 独立垂直片：WorkflowDefinition 五类节点（Agent/Condition/HumanGate/Loop/Notify）+ 边；表达式只读持久化 JSON 字段（<path> op <literal>），禁用 eval/脚本/网络；Version 只新增不改写，Draft base_revision CAS，发布必须确认具体 revision（旧确认不能发布新稿）；Run revision CAS，已触发节点冻结；Run 内联快照，worker 不回查控制面；legacy Stages/StageRun 默认不动，ProjectStatusFromRun 只在显式迁移后投影。WriterGate 仅定义接口（默认 per-task 串行），A4 per-worktree 实现未接通。"
+    why: "WP-05 独立垂直片：WorkflowDefinition 五类节点（Agent/Condition/HumanGate/Loop/Notify）+ 边；表达式只读持久化 JSON 字段（<path> op <literal>），禁用 eval/脚本/网络；Version 只新增不改写，Draft base_revision CAS，发布必须确认具体 revision（旧确认不能发布新稿）；Run revision CAS，已触发节点冻结；Run 内联快照，worker 不回查控制面；legacy Stages/StageRun 默认不动，ProjectStatusFromRun 只在显式迁移后投影。WriterGate 仅定义接口（默认 per-task 串行），A4 per-worktree 实现未接通。2026-11-11 合 main 时为避免与已发布的 Codex profile 组重号，本组由 G-KQ 改为 G-LI。"
     boundary: "A5 workflow_* 文件 + 本清单条目；未做：HTTP 控制面 API（http_workflows.go）、A4 writer gate 真实接线、画布/运行视图前端、legacy 显式迁移入口。"
     files:
       - server/internal/kanban/workflow_types.go
@@ -7887,3 +7888,161 @@ groups:
       - 'web/src/components/task/WorkflowDraftEditor.tsx:workflow-proposals-panel'
       - 'web/tests/workflow-editor-board-entry.test.mjs:patch apply must use control-plane routing'
       - 'web/tests/workflow-editor-board-entry.test.mjs:proposal discovery must use control-plane routing'
+  # ── Codex 与 MindFS 配置跨设备双向同步 ───────────────────────────
+  - id: G-KP
+    title: Codex/Claude 共享配置、MindFS provider 元数据与自定义模型目录安全双向同步
+    kind: feature
+    symptom: "Codex default/llmux 配置、Claude settings/MCP 和 MindFS provider 元数据分别困在各设备；直接同步完整备份会把 auth token、API Key、项目路径与 hook trust hash 推进 Git。设置页此前把「添加配置」「切换重启」拆成两条平行流程，同步入口只对 Codex 出现，其他 harness 既看不到原因也无法同步。"
+    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。同步引擎按 harness 注册表扩展：Codex 校验/渲染保持原路径，Claude 在 Go 里重写 render.sh 的语义（settings.deepMerge、permissions.deny 并集、MCP null 停用、${HOME} 展开、~/.claude.json 只合并 mcpServers、语义等价不落盘、非法现有文件拒绝覆盖），使 pc-win 无 jq 也能得到同一结果。设置页收成两个入口：Agent 配置（先选 harness，再切换/备份/同步）与 API 供应商/模型。自定义模型目录只存在于 preferences 并合入 /api/agents 的模型列表，发送时的 validateAgentModel 必须读同一份合并后的目录——只读 prober 状态会让界面能选中的模型在发送时被服务端拒绝（Codex 报「不支持其他别名，只有内部 gpt 系列」）。"
+    boundary: "不共享 auth.json、API Key、OAuth token、项目路径、Codex 信任状态、Claude settings.local.json、~/.claude.json 除 mcpServers 外的键、会话或缓存；不做 last-writer-wins，不把 .agents 外的路径纳入 Git 暂存。首次快照迁移只由 --apply 显式触发。"
+    files:
+      - docs/upstream-customizations.yaml
+      - docs/plans/README.md
+      - docs/plans/agent-settings-unified.md
+      - docs/superpowers/plans/2026-11-09-codex-mindfs-bidirectional-sync.md
+      - cli/cmd/mindfs.go
+      - cli/cmd/agent_config_sync.go
+      - cli/cmd/agent_config_sync_test.go
+      - go.mod
+      - go.sum
+      - internal/codexsync/
+      - server/app/server.go
+      - server/internal/api/agent_api_provider*.go
+      - server/internal/api/agent_config*.go
+      - server/internal/api/agent_custom_models.go
+      - server/internal/api/agent_custom_models_test.go
+      - server/internal/api/usecase/session_model_validation.go
+      - server/internal/api/usecase/session_model_validation_test.go
+      - server/internal/api/http_routes.go
+      - server/internal/preferences/store.go
+      - server/internal/preferences/store_test.go
+      - web/src/shared/agentTypes.ts
+      - web/src/services/agent/agentConfig.ts
+      - web/src/components/file/AgentConfigAgentStep.tsx
+      - web/src/components/file/AgentConfigCustomModels.tsx
+      - web/src/components/file/AgentConfigPopover.tsx
+      - web/src/components/file/AgentConfigProfileList.tsx
+      - web/src/components/file/AgentConfigProviderActions.tsx
+      - web/src/components/file/AgentConfigSyncStatus.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeAgentConfigOverlay.tsx
+      - web/src/components/file/FileTreeAgentConfigMenuButtons.tsx
+      - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/src/components/file/agentConfigProfiles.ts
+      - web/src/components/file/useAgentConfigActions.ts
+      - web/src/components/file/useAgentConfigFlowTransitions.ts
+      - web/src/components/file/useAgentConfigOutsideClick.ts
+      - web/src/components/file/useAgentConfigSelection.ts
+      - web/src/components/file/useAgentConfigSwitchRequest.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/tests/file-tree-agent-config-flow.test.mjs
+      - web/tests/file-tree-header-overlays.test.mjs
+      - web/tests/agent-lifecycle-restart.test.mjs
+    tests:
+      - internal/codexsync/
+      - cli/cmd/agent_config_sync_test.go
+      - server/internal/api/agent_api_provider_storage_test.go
+      - server/internal/api/agent_config_export_test.go
+      - server/internal/api/agent_config_shared_test.go
+      - server/internal/api/agent_config_sync_handlers_test.go
+      - server/internal/api/agent_custom_models_test.go
+      - server/internal/api/usecase/session_model_validation_test.go
+      - server/internal/preferences/store_test.go
+      - web/tests/agent-settings-unified-menu.test.mjs
+      - web/tests/file-tree-agent-config-flow.test.mjs
+      - web/tests/file-tree-header-overlays.test.mjs
+      - web/tests/agent-config-agent-step.test.mjs
+      - web/tests/agent-config-custom-codex.test.ts
+      - web/tests/agent-lifecycle-restart.test.mjs
+    anchors:
+      - 'internal/codexsync/run.go:func RunAt(ctx context.Context, mode Mode, paths Paths) (Result, error)'
+      - 'internal/codexsync/harnesses.go:func HarnessStatusesAt(paths Paths) []HarnessInfo'
+      - 'internal/codexsync/harness_claude.go:func renderClaudeRuntime(paths Paths) error'
+      - 'internal/codexsync/git.go:func syncRepository(ctx context.Context, repoRoot string) (Result, error)'
+      - 'internal/codexsync/profile_link.go:func prepareLocalProfileEdit(paths Paths) error'
+      - 'server/internal/api/agent_api_provider_storage.go:func writeAgentAPIProviders(providers []agentAPIProvider) error'
+      - 'server/internal/api/agent_config_shared.go:func switchSharedCodexConfig(id, requestedAgent string, app *AppContext) (agentConfigManifestEntry, error)'
+      - 'server/internal/api/agent_custom_models.go:func (h *HTTPHandler) handleAgentCustomModelsPut('
+      - 'server/internal/api/usecase/session_model_validation.go:func (s *Service) validateAgentModel('
+      - 'server/internal/preferences/store.go:func (s *Store) UpdateAgentCustomModels('
+      - 'web/src/components/file/AgentConfigProfileList.tsx:export function AgentConfigProfileList('
+
+  # ── Codex active profile selection and provider-switch ownership ───────
+  - id: G-KQ
+    title: Codex 活动 profile 持久化与配置写入权收敛
+    kind: fix
+    symptom: "每次 MindFS 同步都会把活动 llmux 配置重置成 default；切到 llmux 后 Codex 报 invalid type: string \"gpt-6-luna\", expected a boolean 而无法对话（llmux overlay 的根级键被拼进 [features] 表），配置修好后同一路径又报 Missing environment variable: LLMUX_API_KEY（设备本地凭据只被检测、从未注入 Codex 子进程）；API provider 切换、provider 刷新和本机备份列表又能改写或恢复 Codex config.toml，导致选择错乱与本机恢复快照重复；Codex 的 API provider 切换入口还是个死胡同。"
+    why: "活动 profile 是设备本地状态，必须由单一 profile-aware renderer 合成共享 default、llmux overlay 和本地 trust/tui/hooks；overlay 的根级赋值必须位于第一个表头之前，否则 TOML 会把它归入最后一个表。共享 profile 与本地 overlay 都必须遵守这条：本地 overlay 直接拼在共享配置末尾时，若共享配置以表结尾（[features]），overlay 的根级键会被吞进那张表，Windows 上 Codex 启动即报 `config.toml:7:16: invalid type: string \"default\", expected a boolean`（service_tier 落进 [features]）—— 渲染器因此把共享拆成根级/表两段，overlay 整段留在 sentinel 内、置于共享表之前（统一布局，不随 overlay 内容切换形态），并用结构校验拒绝任何『本地根级键没落在根级』的输出。设备本地 LLMUX_API_KEY 只从 $XDG_CONFIG_HOME/codex/llmux.env 按字面量读取并注入 Codex 子进程环境（codex-go-sdk 在 Env 非 nil 时会整体替换环境，所以必须从 os.Environ 起步并保留 def.Env 覆盖），绝不写日志、API 响应或共享文件。API provider 目录只管理可同步的元数据与各设备凭据，不拥有 Codex runtime 写权限；当供应商条目与 shared profile 描述同一端点时，切换供应商委托给该 profile，其余情况明确拒绝。完整本机快照留作恢复数据，不应进入 profile 切换列表。供应商列表必须跟着活动 profile 走：default 下只应看到「官方订阅」与不归属任何 profile 的自定义条目，llmux 下才出现 llmux；否则切回 default 后界面仍显示 llmux，用户会以为它还在生效。官方订阅是合成条目（codexOfficialProviderID），选中即切回 default profile。历史 provider 元数据可能只有名字没有 base_url（真实 llmux 条目就是 null），profile 认领必须能按 profile 名兜底，否则这条永远匹配不上、既切不过去也切不回来。worker 上没有周期性 sync runner（StartRunner 只在 TLS 主节点启用），旧渲染器留下的坏文件会一直留在设备上——因此每次启动都按活动 profile 重渲染一次（幂等，内容一致不落盘，失败只记日志不阻断启动），渲染器升级后设备能自愈，不必等下一次手动同步。"
+    boundary: "只统一 Codex runtime 的活动 profile 与切换入口；不改变 provider 元数据增删/探测，不共享本机 active marker、API key、auth 或完整快照，也不改变其他 agent 的 API provider 切换。不按 profile 过滤自定义模型目录：模型名单是 harness 级偏好，不属于某个 shared profile。"
+    files:
+      - internal/codexsync/active_profile.go
+      - internal/codexsync/active_profile_test.go
+      - internal/codexsync/credentials.go
+      - internal/codexsync/credentials_test.go
+      - internal/codexsync/profiles.go
+      - internal/codexsync/profiles_test.go
+      - internal/codexsync/render.go
+      - internal/codexsync/render_test.go
+      - server/internal/agent/pool_codex_env.go
+      - server/internal/agent/pool_codex_env_test.go
+      - server/internal/agent/pool_config.go
+      - server/internal/agent/pool_open.go
+      - internal/codexsync/profile_link.go
+      - internal/codexsync/run.go
+      - internal/codexsync/types.go
+      - cli/cmd/agent_config_sync.go
+      - cli/cmd/agent_config_sync_test.go
+      - server/app/codex_profile_selection.go
+      - server/app/codex_profile_startup_test.go
+      - server/app/server.go
+      - server/internal/api/agent_api_provider_apply.go
+      - server/internal/api/agent_api_provider_handlers.go
+      - server/internal/api/agent_api_provider_scope.go
+      - server/internal/api/agent_api_provider_scope_test.go
+      - server/internal/api/agent_api_provider_sync_ops.go
+      - server/internal/api/agent_api_provider_test.go
+      - server/internal/api/agent_api_provider_codex_switch_test.go
+      - server/internal/api/agent_api_provider_sync_test.go
+      - server/internal/api/agent_config_backup.go
+      - server/internal/api/agent_config_shared.go
+      - server/internal/api/agent_config_switch.go
+      - server/internal/api/agent_config_shared_test.go
+      - server/internal/api/agent_config_test.go
+      - web/src/components/file/AgentConfigPopover.tsx
+      - web/src/components/file/agentConfigProfiles.ts
+      - web/src/components/file/useAgentConfigActions.ts
+      - web/src/components/file/useAgentConfigSelection.ts
+      - web/tests/agent-config-custom-codex.test.ts
+      - web/tests/file-tree-agent-config-flow.test.mjs
+    tests:
+      - internal/codexsync/active_profile_test.go
+      - internal/codexsync/render_test.go
+      - internal/codexsync/run_test.go
+      - cli/cmd/agent_config_sync_test.go
+      - server/app/codex_profile_startup_test.go
+      - server/internal/api/agent_api_provider_test.go
+      - server/internal/api/agent_api_provider_codex_switch_test.go
+      - server/internal/api/agent_api_provider_scope_test.go
+      - server/internal/api/agent_api_provider_sync_test.go
+      - internal/codexsync/profiles_test.go
+      - server/internal/api/agent_config_shared_test.go
+      - web/tests/agent-config-custom-codex.test.ts
+      - web/tests/agent-settings-unified-menu.test.mjs
+      - web/tests/file-tree-agent-config-flow.test.mjs
+      - server/internal/api/agent_config_test.go
+      - internal/codexsync/credentials_test.go
+      - server/internal/agent/pool_codex_env_test.go
+    anchors:
+      - 'internal/codexsync/active_profile.go:func InitializeActiveProfileAt(paths Paths, name string) (string, error)'
+      - 'internal/codexsync/profiles.go:func SharedProfileForProviderAt(paths Paths, name, baseURL string) (string, bool, error)'
+      - 'internal/codexsync/render.go:func RenderRuntimeAt(paths Paths) error'
+      - 'internal/codexsync/render.go:func composeRuntimeConfig(sharedRoot, overlayRoot, overlayTables, sharedTables string) string'
+      - 'internal/codexsync/render.go:func validateLocalOverlayRootKeys(payload, overlay []byte) error'
+      - 'server/app/codex_profile_selection.go:func initializeCodexProfileSelection(prefs *preferences.Store) error'
+      - 'server/internal/api/agent_api_provider_scope.go:func scopeCodexAPIProvidersAt(paths codexsync.Paths, providers []agentAPIProvider, activeProfile string) ([]agentAPIProvider, error)'
+      - 'server/internal/api/agent_config_switch.go:func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConfigManifestEntry, bool, error)'
+      - 'server/internal/api/agent_config_shared.go:func configuredCodexSDKAgent(name string) (string, bool, error)'
+      - 'web/src/components/file/useAgentConfigSelection.ts:const chooseAgentForConfig = React.useCallback('

@@ -1,0 +1,286 @@
+# Agent 设置页统一：配置 / 供应商两入口 + 多 harness 共享同步
+
+Plan 2026-11-11。状态：**Active**（实现中）。
+
+## 目标
+
+1. 把 Agent 设置里「添加配置」「切换重启」两条平行流程收成**一个「Agent 配置」入口**：
+   先列 harness（显示当前激活配置、可就地重启），点进某个 harness 后再做 **切换 / 备份 / 同步**。
+2. 把 **API 供应商与模型** 拆到**独立入口**，层级相同：先选 harness，再管该 harness 的供应商与模型。
+3. 让「设置同步」沿用同一套 UI 与后端，覆盖 Codex 以外的 harness。用户已明确选择
+   **「给其他 harness 也补同步后端」**，不是把按钮藏起来。
+
+## 当前状态（为什么要改）
+
+- 菜单里是 `添加 Agent 配置` / `Agent 配置切换重启` 两个按钮，各自是一个 flow；每个 flow 内部又有
+  `backup` / `api`（或 `api_provider`）页签，两个 flow 的页签含义还不同（添加流程的 api 页签是
+  “新建供应商”，切换流程的是“选择供应商”），同一批状态被两条路径交叉读写。
+- `AgentConfigSyncStatus` 只在 `flow === "switch"` 且 `isCodexProfileAgent` 时渲染；后端
+  `GET/POST /api/agent-config/sync` 直接调用 `codexsync`，共享仓库的允许路径也只有
+  `codex/config.toml`、`codex/profiles/llmux.config.toml`、`codex/providers.json` 三个文件。
+- 共享仓库 `~/.agents` 里已有 `claude/`（`settings.shared.json`、`mcp.shared.json`、`CLAUDE.md`、
+  `rules/`、`hooks/`、`skills/`，以及 `scripts/render.sh`），但 MindFS 从不校验、同步或渲染它。
+
+## 设计
+
+### 1. 前端层级
+
+菜单（`FileTreeAgentConfigMenuButtons`）只保留三个：
+
+| 按钮 | flow | 第一层 | 点进 harness 后 |
+|---|---|---|---|
+| **Agent 配置** | `config` | 全部已安装 agent；每行显示 `last_config_selection.name` 与「重启」 | 页签 **切换 / 备份 / 同步** |
+| **API 供应商 / 模型** | `provider` | 仅 `supports_api_provider_switch` 的 agent | 供应商列表（选择 / 测试 / 删除 / 新增）+「切换」 |
+| **Agent 安装和更新** | lifecycle | 不变 | 不变 |
+
+- `AgentConfigFlow` 从 `"backup" | "switch"` 改为 `"config" | "provider"`；
+  `AgentConfigAddTab` / `AgentConfigSwitchTab` 两个状态合并为
+  `AgentConfigDetailTab = "switch" | "backup" | "sync"`。
+- 配置流程的「同步」页签**对所有 agent 都显示**：后端返回该 harness 的可用性
+  （`available` + `message`）。不可用时明写原因（例如「该 harness 还没有共享配置适配器」），
+  不伪造同步按钮。
+- Codex 的 `switch` 页签仍只列 `source === "shared"` 的共享 profile；其他 agent 列全部本机备份。
+- `agentConfigSwitchRequest` 深链（带 `providerIDs`）改为直接打开 `provider` 流程。
+- 新增状态 `agentConfigShowProviderForm`，承载「新增供应商」表单；保存后仍关闭浮层。
+
+### 2. 后端：harness 注册表（复用同一套同步引擎）
+
+保留包名 `internal/codexsync`（改名会扩散到 API 层与 CLI），在包内增加 harness 适配器：
+
+```go
+type HarnessInfo struct {
+    Name      string `json:"name"`
+    Available bool   `json:"available"`
+    SharedDir string `json:"shared_dir,omitempty"`
+    Message   string `json:"message,omitempty"`
+}
+
+type harnessAdapter struct {
+    name      string // "codex" / "claude"
+    sharedDir string // repo 相对路径
+    validate  func(repoRoot string) error
+    render    func(paths Paths) error
+}
+```
+
+- `Result` 增加 `Harnesses []HarnessInfo`（附加字段，旧前端忽略即可）。
+- `HarnessStatuses()` 解析 paths 并探测每个适配器的共享目录/关键文件是否存在，供
+  `GET /api/agent-config/sync` 与 `POST` 响应附带。
+- `RunAt`：
+  - `ModeCheck` / `ModeApply` / `ModeSync` 的共享校验改为**遍历全部适配器**；
+  - 仓库同步完成后渲染**全部可用 harness**；
+  - `invalid` 的消息带上失败的 harness 名，说明「运行时文件未改」。
+- `IsAllowedRepoPath` 从三个文件扩展为共享仓库的目录白名单：
+  `codex/`、`claude/`、`dsh/`、`skills/`、`scripts/` + 根级 `README.md`、`.gitignore`、`.skill-lock.json`。
+  仍然拒绝绝对路径、`..`、反斜杠与任何白名单外的路径。
+- 新增 `harness_claude.go`：
+  - `validateClaudeShared`：解析 `settings.shared.json` / `mcp.shared.json`；拒绝「键名像凭据且值不是
+    `${...}` / 空值」的条目，并拒绝形如 `sk-…` / `ghp_…` 的字面量 token。凭据只允许留在设备本地的
+    `settings.local.json`（与 `render.sh` 的 adopt 语义一致）。
+  - `renderClaudeRuntime`：移植 `~/.agents/claude/scripts/render.sh` 的语义：
+    - `settings.json = deepMerge(settings.shared.json, settings.local.json)`，数组整体替换，
+      `permissions.deny` 取各层并集（去重排序，单调收紧）；
+    - `.mcp.json = deepMerge(mcp.shared.json, {mcpServers: local.mcpServers})`，值为 `null` 的
+      服务器视为「本机停用」并删除，展开 `${HOME}`；
+    - 若 `~/.claude.json` 存在，只合并其 `mcpServers` 键（保留其余设备本地键），并删除本机停用的名字；
+    - 写入前做**语义比较**（解析后深比较），内容等价就不落盘；写入用原子替换并 `chmod 0600`；
+      现有文件不是合法 JSON 时**拒绝覆盖**并报错。
+- 其他 harness（`dsh` 等）暂不提供适配器：`HarnessInfo` 返回 `available=false` 与原因。
+  新增一个 harness = 一个适配器文件 + 渲染/校验测试，不改同步引擎。
+
+### 3. 安全边界
+
+- 不共享：Codex 的 `auth.json`、API Key、OAuth token、项目路径、信任状态；Claude 的
+  `settings.local.json`、`~/.claude.json` 除 `mcpServers` 外的任何键、`.credentials.json`。
+- `.agents` 之外的路径永不进入 git 暂存；渲染只写本机运行时文件。
+- `render.sh` 仍是 dotfiles 的权威渲染器；Go 实现必须与其语义一致，并用测试钉住
+  （merge / deny 并集 / null 停用 / `${HOME}` / 语义等价不重写）。
+
+## 验收
+
+- 菜单只剩三个按钮；「Agent 配置」第一层每个 harness 都能看到激活配置并重启；
+  点进后有切换 / 备份 / 同步三个页签。
+- 「API 供应商 / 模型」第一层只列支持供应商切换的 harness，点进后可选择、测试、删除、新增供应商并切换。
+- `GET /api/agent-config/sync` 返回 `harnesses`；Codex 与 Claude 为 `available=true`，
+  其他 agent 为 `false` 且有原因；同步页签按可用性渲染。
+- `go test ./internal/codexsync/... ./server/internal/api/...`、`make build-web`、全量 web 测试通过。
+- `make check-upstream` 在提交后为绿：G-KP 扩展到多 harness（新文件、锚点、测试）。
+
+## 测试清单
+
+- Go：`internal/codexsync/harnesses_test.go`、`harness_claude_test.go`（merge / deny / ${HOME} /
+  null 停用 / 幂等 / 非法现有文件拒绝覆盖 / 凭据拒绝）、`run_test.go` 扩充 allowlist 与多 harness 渲染。
+- API：`agent_config_sync_handlers_test.go` 增 `harnesses` 字段断言。
+- Web：`agent-settings-unified-menu.test.mjs`（菜单、层级、页签、provider 过滤、harness 可用性）、
+  更新 `file-tree-agent-config-flow.test.mjs`、`agent-config-custom-codex.test.ts`、
+  `agent-config-agent-step.test.mjs`。
+
+## 风险与回滚
+
+- **Claude 运行时文件被错误渲染**：渲染前校验、语义比较、原子写、非法文件拒绝覆盖；
+  如出现异常，`settings.local.json` 与 `~/.claude.json` 原文件不受影响（只在语义变化时改写）。
+- **pc-win 无 jq**：因此用 Go 渲染而不是调用 `render.sh`；Windows 上 chmod 为 best-effort。
+- 回滚：前端与后端同一提交；同步引擎新增字段向后兼容，旧 worker 只是没有 `harnesses`，
+  前端退化为「仅 Codex 可同步」。
+
+## 执行记录
+
+- 2026-11-11：计划落盘，开始实现。
+- 2026-11-11：实现完成，门禁全绿。
+  - 后端：`internal/codexsync/harnesses.go`（适配器注册表、`HarnessStatusesAt`、
+    `validateAllSharedSources`、`renderSharedHarnessRuntimes`、`normalizeRepoPath`）、
+    `harness_claude.go`（`validateClaudeShared` / `renderClaudeRuntime`，移植 `render.sh` 语义）、
+    `profiles.go` 允许路径扩为目录白名单、`run.go` 在多 harness 上校验并在同步后渲染、
+    `server/internal/api/agent_config_sync_handlers.go` 在响应里附 `harnesses`。
+  - 前端：`AgentConfigFlow = "config" | "provider"`、`AgentConfigDetailTab = "switch" | "backup" | "sync"`；
+    菜单三按钮（Agent 配置 / API 供应商 / 安装更新）；配置详情为切换/备份/同步三页签，
+    同步页签按 harness 可用性渲染并显示不可用原因；供应商流程先选 harness 再管供应商与模型，
+    「新增供应商」改为行内表单（`agentConfigShowProviderForm`），保存后留在列表。
+    `agentConfigConfirmAction` 区分备份覆盖与切换确认，避免确认按钮执行错动作。
+  - 验证：`go test ./internal/codexsync/... ./server/internal/api/...` 通过；
+    `npx tsc --noEmit` 通过；全量 vitest 212 文件 / 492 测试通过（6 skipped）；
+    `make build-web` 通过。另用临时测试把真实 `~/.agents/claude` + 本机运行时文件渲染到临时目录，
+    与 `render.sh` 结果语义一致且真实文件零写入（测试文件已删除）。
+  - 上游登记：G-KP 扩展为多 harness（新增文件、测试与锚点）；提交信息标 `Scope: G-KP`。
+- 2026-11-11：`bash scripts/deploy-all.sh` 完成。门禁（Go / tsc / Vitest 492 项）通过；
+  `aea2d182` 已推送主线；三端产物版本 `v0.5.5-1118-14-gaea2d182` 逐字一致：
+  - WSL：`systemctl --user is-active` = active，`mindfs --version` = 该版本。
+  - fn：同上，active 且版本一致。
+  - pc-win：计划任务拉起，PID 179868，`curl http://127.0.0.1:7332/mindfs/health` →
+    `{"ok":true,"role":"worker"}`。
+  - 本机：二进制已安装为该版本，静态 bundle 与安装目录一致（脚本对账通过）；
+    **system 单元仍待用户执行 `sudo systemctl restart mindfs`** 后进程才换成新二进制。
+- 仍 Active 的唯一原因：本机 system 服务待用户重启（Agent 不得代劳），
+  以及页面上的入口层级需在重启/刷新后做一次真机点验。- 2026-11-11（收尾）：按用户反馈补三项。
+  - 入口改名：菜单第二项由「API 供应商 / 模型」改为「供应商和模型」（英文 Providers & models），
+    `agentConfig.chooseProviderAgent` 同步改为「选择要管理供应商和模型的 Agent」。
+  - 点外关闭：`useAgentConfigOutsideClick` 原先只在 step=agent 时挂监听，进入详情/确认后
+    点空白处不关；现在只要 `agentConfigFlow` 存在就挂监听，生命周期浮层同理。
+  - 模型设置：新增每-harness 自定义模型目录。`AgentDefaults.CustomModels` 落
+    `preferences.json`，由 `GET/PUT /api/agents/custom-models` 读写；`ApplyAgentDefaults`
+    先并入自定义模型再校验默认模型（否则刚添加的 ID 会被 `SanitizeDefaultModelID` 当场回退），
+    PUT 成功后 `BroadcastAgentStatusChanged` 让已连接的会话模型选择器立刻刷新。
+    供应商页签顶部新增「模型」一栏，可添加/移除模型 ID（例如给 Codex 加 `of`）；
+    添加后该 ID 进入 `/api/agents` 的 models 目录，能在会话模型选择里选中并持久为默认。
+  - 拆分：为守住 500 行硬线，`AgentConfigPopover` 拆出
+    `AgentConfigCustomModels.tsx` / `AgentConfigProviderActions.tsx`，
+    `FileTreeHeaderOverlays` 拆出 `FileTreeAgentConfigOverlay.tsx`；
+    自定义模型状态移入 `useAgentConfigSelection`，以 `agentCustomModelsState` 单个键下发。
+  - 验证：`go test ./...` 通过；`npx tsc --noEmit` 通过；全量 vitest 212 文件 / 495 测试通过
+    （6 skipped）；`make build-web` 通过。G-KP 登记补齐新文件、测试与锚点。
+- 2026-11-11：收尾改动 ship `v0.5.5-1118-16-gadc6a4d9`。门禁（Go / tsc / Vitest 495 项）通过，
+  推送后本机安装该版本；WSL 与 fn 独立核对为 `active`、版本一致（PID 1771565 / 3835596）；
+  pc-win 监听 7332、health `{"ok":true,"role":"worker"}`（PID 164396）。
+  **本机 system 单元仍是旧进程**：`GET /api/agents/custom-models` 当前返回 404，
+  需用户执行 `sudo systemctl restart mindfs` 后新接口才生效（静态 bundle 已更新，脚本对账一致）。
+- 2026-11-11（用户重启后报「codex 提示不支持其他别名，只有内部 gpt 系列」）：
+  - 证据：`journalctl -u mindfs` 显示拒绝来自 MindFS 自己：
+    `validate.error ... model "sonnet4.6" is not supported by agent "codex" (supported models: gpt-6.1-sol, ...)`。
+    `codex exec -m of` 只警告缺少 metadata、不硬拒；llmux 也支持聚合别名 `of`，因此不是 Codex 目录限制。
+  - 根因：`server/internal/api/usecase/session_model_validation.go` 的 `validateAgentModel`
+    直接读 `prober.GetStatus(agentName)`，而自定义模型只存在 preferences 并由 `ApplyAgentDefaults`
+    合入 `/api/agents`——两条路径看的不是同一份目录，界面能选中的模型在发送时被服务端拒绝。
+  - 修复：校验前用 `withCustomModels` 把 `prefs.AgentCustomModels(agentName)` 并入 prober 状态；
+    纯函数 `validateModelAgainstModels` 保留 Claude 别名规范化与 `[1m]` 基名比较。
+    测试 `session_model_validation_test.go` 覆盖内置/自定义/去重/错误列表/Claude 别名五条路径。
+  - 验证：`go test ./server/internal/api/usecase/...` 通过。G-KP 登记补该文件与锚点。
+
+- 2026-11-11（用户报「切不回官方订阅；供应商应跟着配置文件走」）：
+  - 证据：`~/.config/mindfs/agents-config-sync/active-profile` = `llmux`；用真实共享/运行时配置
+    的临时副本跑 `switchSharedCodexConfig("shared:codex-default")`，结果 `active=default`、
+    `model_provider` 与 `[model_providers.llmux]` 均已消失 —— **后端切回 default 本身是好的**。
+    问题在「供应商和模型」面板：它读全局 `~/.agents/codex/providers.json`，不区分活动 profile，
+    所以切回 default 后仍只显示 llmux，而且没有「官方订阅」条目可点。
+  - 第二个坑：真实 llmux 元数据里 `base_url` 是 `null`。`SharedProfileForProviderAt` 只按端点比较，
+    这种只有名字的条目永远匹配不上 profile，既不会被过滤，也无法通过点它切过去。
+  - 修复：新增 `server/internal/api/agent_api_provider_scope.go`：列表始终以合成条目
+    `officialCodexProviderID`（官方订阅）打头，默认 profile 下过滤掉归属 llmux 的条目；
+    切换该合成条目即 `switchSharedCodexConfig("shared:codex-default")`。
+    `SharedProfileForProviderAt` 在 base URL 为空时按 profile 名认领，让 `base_url: null` 的
+    llmux 条目重新可用。前端 `AgentAPIProvider.kind === "official"` 时用本地化名称、隐藏删除。
+  - 验证：`TestSharedProfileForProviderMatchesByProfileNameWithoutBaseURL`、
+    `TestScopeCodexAPIProvidersFollowsActiveProfile`、`TestCodexOfficialProviderSwitchesBackToDefaultProfile`
+    通过；`go test ./...`、`npx tsc --noEmit`、全量 vitest（212 文件 / 496 测试，6 skipped）全绿。
+    登记 G-KQ（含新文件、测试与锚点）。
+  - 边界：自定义模型目录仍为 harness 级偏好，不随 profile 过滤——它不属于某个 shared profile。
+  - 部署：`bash scripts/deploy-all.sh` 首次在门禁阶段遇 `TS1128 tokenEditorUtils.ts(130,1)` 假失败——
+    另一个会话正在同一工作区改该文件（工作区多会话共享），重跑即通过。成功版本
+    `v0.5.5-1118-22-g210dbed6`，逐项核对：WSL `active`、PID 194923、`/proc/PID/exe` 未被删除；
+    fn `active`、PID 4000510；pc-win PID 33152（`Get-Process` 路径为
+    `C:\Users\10178\AppData\Local\Programs\mindfs\bin\mindfs.exe`）、7332 LISTENING、
+    health `{"ok":true,"role":"worker"}`。线上 WSL（活动 profile = llmux）的
+    `GET /api/agent-api-providers?agent=codex` 已返回官方订阅 + llmux 两条，证明 scoping 真正生效。
+    本机二进制已安装同版本、bundle 对账一致，但进程仍是旧二进制
+    （`/proc/1388399/exe` 带 `(deleted)`），旧进程的同一接口仍只返回 llmux ——
+    这正是用户看到的现象，需 `sudo systemctl restart mindfs` 后消失。
+
+- 2026-11-11（用户报 pc-win 打不开 Codex）：
+  - 现场：Codex 弹窗 `C:\Users\10178\.codex\config.toml:7:16: invalid type: string "default", expected a boolean`。
+    文件第 4 行是 `[features]`、第 5 行 `goals = true`、第 6 行是本地 sentinel，第 7 行
+    `service_tier = "default"` —— 本地 overlay 的根级键被 `[features]` 表吸收。
+  - 根因：`buildRuntimeConfig` 把 `共享配置 + sentinel + 本地 overlay` 直接顺序拼接。
+    共享 default 现在以 `[features]` 表结尾，而 pc-win 的本地 Codex 配置含根级键
+    （Windows Codex 写 `service_tier` / `notify`），拼在表后面就成了表的子键。
+    同一类 bug 此前只在 llmux 共享 overlay 上修过（`mergeSharedProfiles`），本地 overlay 没修。
+    文件 mtime 是 2026-11-10 18:00，早于今天的部署，所以不是新二进制引入的，是存量 latent bug。
+  - 修复：共享拆根级/表两段，overlay 整段留在 sentinel 内并置于共享表之前（统一布局，
+    不随 overlay 内容切换形态）；新增 `validateLocalOverlayRootKeys`，任何本地根级键
+    没落在根级就拒绝写出。用 pc-win 真实 config.toml 做临时验证：`service_tier`/`notify`
+    回到根级、`[features]` 只剩 `goals`、10 张本地表全部保留、二次渲染逐字节一致。
+  - 测试：`render_test.go` 新增三个用例（真实形态渲染 + 嵌套键拒绝 + 表 only overlay），
+    `go test ./...` 全绿。部署后对四台各跑一次 `agents-config-sync --render` 统一布局，
+    `--check-runtime` 四端均为 synced。
+    登记 G-KQ（why + 锚点）。
+  - 部署与收尾：`v0.5.5-1118-25-g8d420723`（首次门禁因并行会话导致的
+    `TestQueuedMessageRunsAfterTurnEnds` 假失败重跑即过）。WSL / fn active 且版本一致，
+    pc-win PID 51148、health 200；四端各跑一次 `agents-config-sync --render` 后
+    `--check-runtime` 全部 synced，本机渲染前后配置内容（解析后 JSON）逐字节一致。
+    pc-win 实测：`service_tier`/`notify` 回到根级、`[features]` 仅 `goals`、10 张本地表保留；
+    活动 profile=default 下 `GET /api/agent-api-providers?agent=codex` 只返回「官方订阅」。
+
+- 2026-11-11（用户报「同步机制 切换机制需要进一步优化」）：
+  - 缺口：worker 节点没有周期性 sync runner（`codexsync.StartRunner` 只在 TLS 主节点启用），
+    渲染器升级或共享 profile 变化后，设备上的旧 runtime 配置会一直留着——pc-win 的坏文件
+    就是这样存活的（mtime 早于多次部署），只有手动跑 `agents-config-sync --render` 才会修。
+  - 修复：`server/app/codex_profile_selection.go` 在确定活动 profile 后调用一次
+    `codexsync.RenderRuntimeAt(paths)`。渲染幂等（内容一致不落盘），失败只记
+    `[codexsync] runtime.render.error` 日志、不阻断启动；因此每次进程启动都会自动把设备
+    带回当前渲染器 + 共享 profile 的正确形态。
+  - 测试：`server/app/codex_profile_startup_test.go` 新增
+    `TestInitializeCodexProfileRendersRuntimeAtStartup`——用 pc-win 形态的旧配置
+    （共享 default 以 `[features]` 结尾、本地 `service_tier` 落在 sentinel 段内但被旧拼接
+    方式吞进表里）启动，断言渲染后 `service_tier` 回到根级、`[features]` 只剩 `goals`、
+    本地 `[tui]` 表保留。`go test ./...` 全绿。
+  - 本改动随下一次 `deploy-all.sh` 分发；分发后四端进程启动即自愈，不再依赖手动渲染。
+  - 部署：`v0.5.5-1118-27-g42b15338`（deploy-all 门禁全绿）。独立核对：
+    WSL `active`、PID 329214、`--check-runtime` synced；fn `active`、PID 4068187、synced；
+    pc-win PID 36224、health `{"ok":true,"role":"worker"}`、synced。
+    启动自愈做了真机验证：用隔离的 `XDG_CONFIG_HOME`/`CODEX_HOME`/`AGENTS_ROOT` 起一份
+    pc-win 形态的配置（旧布局、`service_tier` 被吞进 `[features]`），新二进制启动后
+    文件变为根级 `service_tier`、`features` 只剩 `goals`、本地 `[tui]` 保留，日志无
+    `runtime.render.error` —— 证明「启动即重渲染」在真实二进制上生效。
+    本机二进制已装同版本；运行进程（PID 1388399）仍是旧二进制，其周期性 sync 用旧渲染器
+    写回的旧布局已被新二进制 `--render` 覆盖（内容语义一致，仅布局差异）；
+    需 `sudo systemctl restart mindfs` 后由启动自愈接管。
+- 2026-11-11（pc-win 便捷入口）：把 `mindfs` 注册进 pc-win 用户 PATH，并加一个本地切换脚本。
+  - `scripts/pcwin/register-user-path.ps1`：幂等把 `%LOCALAPPDATA%\Programs\mindfs\bin` 追加进用户 PATH
+    （`deploy-pcwin.sh` 每次部署都会跑；判定用 `-File` 执行，Windows PowerShell 5.1 的 `-Command -`
+    读 stdin 会静默不执行）。
+  - `scripts/pcwin/codex-switch.ps1` + `.cmd`：`codex-switch [status|default|llmux]`。切换走运行中服务的
+    `POST /api/agent-config/switch`，复用服务端校验/回滚/托管进程重启；状态只读活动 profile、运行时
+    `model_provider` 与 `GET /api/agent-config/sync`，**不依赖 `mindfs ...` 的 stdout** —— Windows 二进制
+    是 `-H windowsgui` 子系统，控制台里既不等待也不稳定捕获输出。
+  - `scripts/deploy-pcwin.sh` 部署时把两个脚本推进 bin 目录并注册 PATH。
+  - 真机验证：`mindfs --version` 在新 ssh 会话可见（`& exe --version` 形式）；`codex-switch status` 正常；
+    `default -> llmux -> default` 往返切换成功，最终 pc-win `config.toml` 为新布局（根级
+    `service_tier`/`notify`、local 表全保留、无 `model_provider`）。
+  - 守卫：`web/tests/pcwin-helper.test.mjs`（纯 ASCII、走本地 API、不把 GUI stdout 当判据、PATH 注册幂等）。
+- 2026-11-11（用户重启后验收）：
+  - 本机 system 单元已重启：PID 2397796、`/proc/.../exe` 指向已安装二进制（不再带 `(deleted)`）、
+    `/health` = `{"ok":true,"role":"control"}`、`--check-runtime` synced；本机活动 profile 为
+    default 时 `GET /api/agent-api-providers?agent=codex` 只返回「官方订阅」（kind=official）——
+    profile 联动的线上行为确认。
+  - WSL 报 `workspace routing discovery unauthorized (401)` 的根因不是切换：文件层已切回 default，
+    失败来自该机 ChatGPT 登录态的 refresh token 过期（`already used`），绕开 MindFS 跑 `codex exec`
+    同样复现。用户重新登录后 17:35 一轮真实会话 `input → output.done` 正常，近 15 分钟零 401。
+  - 仍挂在 Active 的唯一事项：页面入口层级 / 自定义模型 / profile 联动的真机点验。

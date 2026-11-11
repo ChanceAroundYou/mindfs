@@ -122,6 +122,11 @@ export function $insertSerializedTextAtSelection(text: string): boolean {
   return inserted;
 }
 
+export function agentSendText(serialized: string, agent: string): string {
+  if (agent !== "claude") return serialized;
+  return serialized.replace(/\[use skill:\s*([^\]]+)\]/g, (_, name: string) => `/${name.trim()}`);
+}
+
 export function serializedTextEndsWithToken(text: string): boolean {
   return /\[(?:read file|file|use skill):\s*[^\]]+\]\s*$/.test(text);
 }

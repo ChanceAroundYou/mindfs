@@ -57,7 +57,7 @@ func (p *Pool) codexRuntimeOptions(agentName string) (codex.OpenOptions, error) 
 		AgentName: agentName,
 		Command:   def.Command,
 		Args:      append([]string(nil), def.Args...),
-		Env:       cloneEnv(def.Env),
+		Env:       codexChildEnv(def),
 	}, nil
 }
 

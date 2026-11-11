@@ -129,3 +129,47 @@ func TestApplyAgentDefaultsStaleModelFallback(t *testing.T) {
 		t.Fatalf("valid default = %q, want d4p", out[0].DefaultModelID)
 	}
 }
+
+func TestAgentCustomModelsPersistAndMergeIntoCatalog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), preferencesFileName)
+	store := &Store{
+		path: path,
+		data: UserPreferences{Agents: map[string]AgentDefaults{}},
+	}
+	if err := store.UpdateAgentCustomModels(" codex ", []string{" of ", "", "of", "gpt-6-luna"}); err != nil {
+		t.Fatalf("UpdateAgentCustomModels: %v", err)
+	}
+	if got := store.AgentCustomModels("codex"); len(got) != 2 || got[0] != "of" || got[1] != "gpt-6-luna" {
+		t.Fatalf("custom models = %#v", got)
+	}
+
+	reloaded := &Store{path: path, data: UserPreferences{Agents: map[string]AgentDefaults{}}}
+	if err := reloaded.load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := reloaded.AgentCustomModels("codex"); len(got) != 2 || got[0] != "of" {
+		t.Fatalf("reloaded custom models = %#v", got)
+	}
+
+	statuses := []agent.Status{{
+		Name:           "codex",
+		DefaultModelID: "of",
+		Models:         []agenttypes.ModelInfo{{ID: "gpt-6-luna", Name: "Luna"}},
+	}}
+	out := reloaded.ApplyAgentDefaults(statuses)
+	// gpt-6-luna 既在厂商目录也在自定义列表里，只保留一份；新增的是 of。
+	if len(out[0].Models) != 2 || out[0].Models[1].ID != "of" {
+		t.Fatalf("models = %#v, want built-in + custom of", out[0].Models)
+	}
+	// 自定义模型必须能在默认模型校验里活下来，否则刚添加就被回退。
+	if out[0].DefaultModelID != "of" {
+		t.Fatalf("default model = %q, want of", out[0].DefaultModelID)
+	}
+
+	if err := reloaded.UpdateAgentCustomModels("codex", nil); err != nil {
+		t.Fatalf("clear custom models: %v", err)
+	}
+	if got := reloaded.AgentCustomModels("codex"); len(got) != 0 {
+		t.Fatalf("custom models after clear = %#v", got)
+	}
+}

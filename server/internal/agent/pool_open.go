@@ -46,7 +46,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			RootPath:              in.RootPath,
 			Command:               def.Command,
 			Args:                  append([]string{}, def.Args...),
-			Env:                   cloneEnv(def.Env),
+			Env:                   codexChildEnv(def),
 			DeveloperInstructions: in.DeveloperInstructions,
 			ResumeSessionID:       in.AgentSessionID,
 			ForkSessionID:         in.ForkPoint.AgentSessionID,

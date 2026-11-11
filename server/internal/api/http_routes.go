@@ -180,6 +180,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 
 	// Agent status API
 	r.Get("/api/agents", h.handleAgentsList)
+	r.Get("/api/agents/custom-models", h.handleAgentCustomModelsGet)
+	r.Put("/api/agents/custom-models", h.handleAgentCustomModelsPut)
 	r.Post("/api/agents/restart", h.handleAgentRestart)
 	r.Get("/api/agents/codex/rate-limits", h.handleCodexRateLimitsGet)
 	r.Post("/api/agents/codex/rate-limit-reset", h.handleCodexRateLimitReset)
@@ -188,6 +190,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/agent-config/backups", h.handleAgentConfigBackupCreate)
 	r.Delete("/api/agent-config/backups", h.handleAgentConfigBackupDelete)
 	r.Post("/api/agent-config/switch", h.handleAgentConfigSwitch)
+	r.Get("/api/agent-config/sync", h.handleAgentConfigSyncStatus)
+	r.Post("/api/agent-config/sync", h.handleAgentConfigSyncRequest)
 	r.Get("/api/agent-api-providers", h.handleAgentAPIProvidersList)
 	r.Post("/api/agent-api-providers", h.handleAgentAPIProviderCreate)
 	r.Post("/api/agent-api-providers/sync", h.handleAgentAPIProvidersSync)

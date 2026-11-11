@@ -95,7 +95,7 @@ func (s *Service) SearchCandidates(ctx context.Context, in SearchCandidatesInput
 		if err != nil {
 			return SearchCandidatesOutput{}, err
 		}
-		return SearchCandidatesOutput{Items: mergeCandidateItemsPreferSlash(slashItems, skillItems, in.Query)}, nil
+		return SearchCandidatesOutput{Items: mergeCandidateItemsPreferSkill(skillItems, slashItems, in.Query)}, nil
 	}
 	items, err := registry.Search(ctx, in.Type, root, in.Agent, in.Query)
 	if err != nil {
@@ -104,7 +104,7 @@ func (s *Service) SearchCandidates(ctx context.Context, in SearchCandidatesInput
 	return SearchCandidatesOutput{Items: items}, nil
 }
 
-func mergeCandidateItemsPreferSlash(primary []CandidateItem, secondary []CandidateItem, query string) []CandidateItem {
+func mergeCandidateItemsPreferSkill(primary []CandidateItem, secondary []CandidateItem, query string) []CandidateItem {
 	items := make([]CandidateItem, 0, len(primary)+len(secondary))
 	seen := make(map[string]struct{}, len(primary)+len(secondary))
 	appendUnique := func(list []CandidateItem) {

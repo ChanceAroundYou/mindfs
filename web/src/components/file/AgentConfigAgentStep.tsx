@@ -6,7 +6,6 @@ import { agentConfigHintStyle, agentConfigSecondaryButtonStyle } from "./agentCo
 
 export type AgentConfigAgentStepProps = {
   title: string;
-  flow: "backup" | "switch";
   agents: AgentStatus[];
   busy: boolean;
   selectedAgent: string;
@@ -15,9 +14,9 @@ export type AgentConfigAgentStepProps = {
   onChooseAgent: (name: string) => void;
 };
 
+// 第一层只列 harness：每行显示当前激活配置，并可就地重启（两个入口共用）。
 export function AgentConfigAgentStep({
   title,
-  flow,
   agents,
   busy,
   selectedAgent,
@@ -43,7 +42,7 @@ export function AgentConfigAgentStep({
           renderEnd={(agent) => {
             const name = String(agent.last_config_selection?.name || "").trim();
             const restarting = agent.name === restartingAgent;
-            if (flow !== "switch" || !onRestartAgent) {
+            if (!onRestartAgent) {
               if (!name) return null;
               return (
                 <span

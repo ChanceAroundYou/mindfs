@@ -45,6 +45,9 @@ func testAgentAPIProviderModel(ctx context.Context, req agentAPIProviderTestRequ
 	if target == nil {
 		return agentAPIProviderTestResult{}, errors.New("provider not found")
 	}
+	if strings.TrimSpace(target.APIKey) == "" {
+		return agentAPIProviderTestResult{Model: strings.TrimSpace(req.Model), Error: "local API key is missing"}, nil
+	}
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = firstModelOrDefault(target.Models, "")

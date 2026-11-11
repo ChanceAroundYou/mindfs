@@ -1,6 +1,7 @@
 package api
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,6 +64,26 @@ func TestApplyClaudeAPIProviderReplacesConfiguredEnv(t *testing.T) {
 	}
 	if !stringMapsEqual(def.Env, want) {
 		t.Fatalf("claude env = %#v, want %#v", def.Env, want)
+	}
+}
+
+func TestCodexAPIProviderCannotWriteRuntimeConfig(t *testing.T) {
+	home := t.TempDir()
+	testutil.IsolateUserDirs(t, home)
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const before = "model = \"shared-default\"\nmodel_provider = \"llmux\"\n"
+	if err := os.WriteFile(configPath, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyAgentAPIProvider("codex", agentAPIProvider{ID: "api-llmux", Name: "llmux", BaseURL: "https://provider.example/v1", APIKey: "secret"}, nil); err == nil {
+		t.Fatal("Codex provider switch unexpectedly wrote its runtime config")
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || string(after) != before {
+		t.Fatalf("Codex provider operation changed runtime config: %s, %v", after, err)
 	}
 }
 

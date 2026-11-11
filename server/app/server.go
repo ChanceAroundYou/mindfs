@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"mindfs/internal/codexsync"
 	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
@@ -171,8 +172,13 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		server.Shutdown(context.Background())
 	}()
 
+	if err := initializeCodexProfileSelection(sharedPrefs); err != nil {
+		log.Printf("[codexsync] active_profile.init.error err=%v", err)
+	}
 	if opts.UseTLS {
+		codexsync.StartRunner(ctx, 5*time.Minute)
 		return server.ServeTLS(listener, opts.CertFile, opts.KeyFile)
 	}
+	codexsync.StartRunner(ctx, 5*time.Minute)
 	return server.Serve(listener)
 }

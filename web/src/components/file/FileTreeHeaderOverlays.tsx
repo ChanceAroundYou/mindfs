@@ -3,12 +3,12 @@ import { AgentSelector } from "../agent/AgentSelector";
 import { AccountPanel } from "../account/AccountPanel";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
 import {
-  AgentConfigPopover,
   AgentLifecyclePopover,
   agentConfigActionRowStyle,
   agentConfigPrimaryButtonStyle,
   agentConfigSecondaryButtonStyle,
 } from "./AgentConfigPopover";
+import { FileTreeAgentConfigOverlay } from "./FileTreeAgentConfigOverlay";
 import { FileTreeAboutDialog } from "./FileTreeAboutDialog";
 import { FileTreeAgentConfigMenuButtons } from "./FileTreeAgentConfigMenuButtons";
 import { FileTreeSettingsMenu } from "./FileTreeSettingsMenu";
@@ -69,53 +69,6 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
     nodeManagerOpen,
     onNodeManagerRefresh,
     accountPanelOpen,
-    agentConfigFlow,
-    agentConfigPopoverRef,
-    agentConfigStep,
-    agentConfigAgents,
-    agentConfigAgent,
-    agentConfigAddTab,
-    agentConfigSwitchTab,
-    agentConfigName,
-    agentConfigFileSourcesBody,
-    agentConfigEnvBody,
-    agentAPIProviderName,
-    agentAPIProviderBaseURL,
-    agentAPIProviderAPIKey,
-    agentConfigBackups,
-    agentAPIProviders,
-    selectedAgentConfigID,
-    selectedAgentAPIProviderID,
-    agentConfigConfirmMessage,
-    agentConfigBusy,
-    agentConfigRestartingAgent,
-    agentConfigError,
-    agentConfigNotice,
-    providerSyncBusy,
-    providerTestBusyID,
-    providerTestResults,
-    syncAllAgentAPIProviderModels,
-    testAgentAPIProviderModelNow,
-    changeProviderTestModel,
-    providerTestModels,
-    chooseAgentForConfig,
-    setAgentConfigAddTab,
-    setAgentConfigSwitchTab,
-    setAgentConfigName,
-    setAgentConfigFileSourcesBody,
-    setAgentConfigEnvBody,
-    setAgentAPIProviderName,
-    setAgentAPIProviderBaseURL,
-    setAgentAPIProviderAPIKey,
-    selectAgentConfigBackup,
-    selectAgentAPIProvider,
-    deleteSelectedAgentConfigBackup,
-    deleteSelectedAgentAPIProvider,
-    saveAgentAPIProvider,
-    saveAgentConfigBackup,
-    runAgentConfigSwitch,
-    restartAgentFromConfigList,
-    closeAgentConfigFlow,
     idleReleaseOpen,
     idleReleaseHours,
     setIdleReleaseHours,
@@ -356,91 +309,7 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
         {accountPanelOpen ? (
           <AccountPanel onClose={() => setAccountPanelOpen(false)} anchorRef={accountButtonRef} />
         ) : null}
-        {agentConfigFlow ? (
-          <div
-            ref={agentConfigPopoverRef}
-            style={{
-              position: "absolute",
-              top: "calc(100% + 6px)",
-              left: "8px",
-              right: "3px",
-              zIndex: 35,
-            }}
-          >
-            <AgentConfigPopover
-              flow={agentConfigFlow}
-              step={agentConfigStep}
-              agents={agentConfigAgents}
-              selectedAgent={agentConfigAgent}
-              addTab={agentConfigAddTab}
-              switchTab={agentConfigSwitchTab}
-              backupName={agentConfigName}
-              fileSourcesBody={agentConfigFileSourcesBody}
-              envBody={agentConfigEnvBody}
-              apiProviderName={agentAPIProviderName}
-              apiProviderBaseURL={agentAPIProviderBaseURL}
-              apiProviderAPIKey={agentAPIProviderAPIKey}
-              backups={agentConfigBackups}
-              apiProviders={agentAPIProviders}
-              selectedBackupID={selectedAgentConfigID}
-              selectedAPIProviderID={selectedAgentAPIProviderID}
-              confirmMessage={agentConfigConfirmMessage}
-              busy={agentConfigBusy}
-              restartingAgent={agentConfigRestartingAgent}
-              error={agentConfigError}
-              notice={agentConfigNotice}
-              providerSyncBusy={providerSyncBusy}
-              providerTestBusyID={providerTestBusyID}
-              providerTestResults={providerTestResults}
-              onSyncAllProviders={() => {
-                void syncAllAgentAPIProviderModels();
-              }}
-              onTestProviderModel={(providerID, model) => {
-                void testAgentAPIProviderModelNow(providerID, model);
-              }}
-              onProviderTestModelChange={changeProviderTestModel}
-              providerTestModels={providerTestModels}
-              onChooseAgent={(name) => {
-                void chooseAgentForConfig(name);
-              }}
-              onAddTabChange={setAgentConfigAddTab}
-              onSwitchTabChange={setAgentConfigSwitchTab}
-              onBackupNameChange={setAgentConfigName}
-              onFileSourcesChange={setAgentConfigFileSourcesBody}
-              onEnvBodyChange={setAgentConfigEnvBody}
-              onAPIProviderNameChange={setAgentAPIProviderName}
-              onAPIProviderBaseURLChange={setAgentAPIProviderBaseURL}
-              onAPIProviderAPIKeyChange={setAgentAPIProviderAPIKey}
-              onSelectedBackupChange={selectAgentConfigBackup}
-              onSelectedAPIProviderChange={selectAgentAPIProvider}
-              onDeleteBackup={(id) => {
-                void deleteSelectedAgentConfigBackup(id);
-              }}
-              onDeleteAPIProvider={(id) => {
-                void deleteSelectedAgentAPIProvider(id);
-              }}
-              onSave={() => {
-                if (agentConfigAddTab === "api") {
-                  void saveAgentAPIProvider();
-                  return;
-                }
-                void saveAgentConfigBackup();
-              }}
-              onSwitch={() => {
-                void runAgentConfigSwitch(false);
-              }}
-              onRestartAgent={agentConfigFlow === "switch" ? restartAgentFromConfigList : undefined}
-              onConfirm={() => {
-                if (agentConfigFlow === "backup") {
-                  void saveAgentConfigBackup(true);
-                  return;
-                }
-                void runAgentConfigSwitch(true);
-              }}
-              onCancel={closeAgentConfigFlow}
-            />
-          </div>
-        ) : null}
+        <FileTreeAgentConfigOverlay ctx={ctx} />
 <FileTreeIdleReleasePopover open={idleReleaseOpen} hours={idleReleaseHours} busy={idleReleaseBusy} error={idleReleaseError} setHours={setIdleReleaseHours} close={() => setIdleReleaseOpen(false)} save={saveIdleSessionResourceRelease} t={t} rowStyle={agentConfigActionRowStyle} secondaryStyle={agentConfigSecondaryButtonStyle} primaryStyle={agentConfigPrimaryButtonStyle} />        {<FileTreeSendShortcutPopover
           sendShortcutOpen={sendShortcutOpen} sendShortcutPopoverRef={sendShortcutPopoverRef} sendShortcutDraft={sendShortcutDraft}
           sendShortcutError={sendShortcutError} setSendShortcutOpen={setSendShortcutOpen} setSendShortcutDraft={setSendShortcutDraft}

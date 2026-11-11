@@ -1,14 +1,8 @@
 package api
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
-
-	"mindfs/server/internal/apperr"
-	configpkg "mindfs/server/internal/config"
 )
 
 const (
@@ -20,6 +14,7 @@ const (
 type agentAPIProvider struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
+	Kind           string   `json:"kind,omitempty"`
 	BaseURL        string   `json:"baseUrl"`
 	APIKey         string   `json:"apiKey,omitempty"`
 	Protocols      []string `json:"protocols,omitempty"`
@@ -31,14 +26,18 @@ type agentAPIProvider struct {
 }
 
 type agentAPIProviderPublic struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	BaseURL       string   `json:"baseUrl"`
-	Protocols     []string `json:"protocols,omitempty"`
-	ModelFamilies []string `json:"modelFamilies"`
-	Models        []string `json:"models,omitempty"`
-	CreatedAt     string   `json:"createdAt"`
-	UpdatedAt     string   `json:"updatedAt"`
+	ID                       string   `json:"id"`
+	Name                     string   `json:"name"`
+	Kind                     string   `json:"kind,omitempty"`
+	BaseURL                  string   `json:"baseUrl"`
+	Protocols                []string `json:"protocols,omitempty"`
+	ModelFamilies            []string `json:"modelFamilies"`
+	Models                   []string `json:"models,omitempty"`
+	CreatedAt                string   `json:"createdAt"`
+	UpdatedAt                string   `json:"updatedAt"`
+	LocalCredentialAvailable bool     `json:"localCredentialAvailable"`
+	SyncState                string   `json:"sync_state,omitempty"`
+	SyncMessage              string   `json:"sync_message,omitempty"`
 }
 
 type agentAPIProviderCreateRequest struct {
@@ -71,75 +70,18 @@ type agentAPIProviderSyncAllResult struct {
 	Applied    []agentAPIProviderSyncAgentResult `json:"applied,omitempty"`
 }
 
-func readAgentAPIProviders() ([]agentAPIProvider, error) {
-	path, err := agentAPIProvidersPath()
-	if err != nil {
-		return nil, err
-	}
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []agentAPIProvider{}, nil
-		}
-		return nil, apperr.Wrap("read", path, err)
-	}
-	if len(strings.TrimSpace(string(payload))) == 0 {
-		return []agentAPIProvider{}, nil
-	}
-	var providers []agentAPIProvider
-	if err := json.Unmarshal(payload, &providers); err != nil {
-		return nil, err
-	}
-	for i := range providers {
-		providers[i].Protocols = agentAPIProviderProtocols(providers[i])
-	}
-	return providers, nil
-}
-
-func writeAgentAPIProviders(providers []agentAPIProvider) error {
-	path, err := agentAPIProvidersPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return apperr.Wrap("mkdir", filepath.Dir(path), err)
-	}
-	payload, err := json.MarshalIndent(providers, "", "  ")
-	if err != nil {
-		return err
-	}
-	payload = append(payload, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
-		return apperr.Wrap("write", tmp, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(path)
-		if retryErr := os.Rename(tmp, path); retryErr != nil {
-			return apperr.Wrap("rename", path, err)
-		}
-	}
-	return nil
-}
-
-func agentAPIProvidersPath() (string, error) {
-	configDir, err := configpkg.MindFSConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(configDir, "api-providers.json"), nil
-}
-
 func publicAgentAPIProvider(provider agentAPIProvider) agentAPIProviderPublic {
 	return agentAPIProviderPublic{
-		ID:            provider.ID,
-		Name:          provider.Name,
-		BaseURL:       provider.BaseURL,
-		Protocols:     agentAPIProviderProtocols(provider),
-		ModelFamilies: append([]string(nil), provider.ModelFamilies...),
-		Models:        append([]string(nil), provider.Models...),
-		CreatedAt:     provider.CreatedAt,
-		UpdatedAt:     provider.UpdatedAt,
+		ID:                       provider.ID,
+		Name:                     provider.Name,
+		Kind:                     provider.Kind,
+		BaseURL:                  provider.BaseURL,
+		Protocols:                agentAPIProviderProtocols(provider),
+		ModelFamilies:            append([]string(nil), provider.ModelFamilies...),
+		Models:                   append([]string(nil), provider.Models...),
+		CreatedAt:                provider.CreatedAt,
+		UpdatedAt:                provider.UpdatedAt,
+		LocalCredentialAvailable: strings.TrimSpace(provider.APIKey) != "",
 	}
 }
 

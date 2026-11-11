@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"mindfs/server/internal/agent"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/testutil"
 )
@@ -19,6 +20,7 @@ func writeAPIProvidersFile(t *testing.T, providers []agentAPIProvider) string {
 	t.Helper()
 	root := t.TempDir()
 	testutil.IsolateUserDirs(t, root)
+	t.Setenv("AGENTS_ROOT", filepath.Join(root, ".agents"))
 	path, err := agentAPIProvidersPath()
 	if err != nil {
 		t.Fatalf("agentAPIProvidersPath: %v", err)
@@ -40,6 +42,8 @@ func writeAPIProvidersFile(t *testing.T, providers []agentAPIProvider) string {
 func TestProviderFixturesDoNotOverwriteExistingConfig(t *testing.T) {
 	// Simulate a real user's configuration without touching the actual user.
 	testutil.IsolateUserDirs(t, t.TempDir())
+	isolatedRoot := t.TempDir()
+	t.Setenv("AGENTS_ROOT", filepath.Join(isolatedRoot, ".agents"))
 	path, err := agentAPIProvidersPath()
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +204,12 @@ func TestSyncAllAgentAPIProvidersReappliesToAgents(t *testing.T) {
 	tmpHome := writeAPIProvidersFile(t, []agentAPIProvider{
 		{ID: "api-pi", Name: "9779", BaseURL: upstream.URL + "/v1", APIKey: "secret", Protocols: []string{apiProviderProtocolOpenAICompatible}, Models: []string{"stale"}},
 	})
+	configPath := filepath.Join(tmpHome, "agents.json")
+	t.Setenv("MINDFS_AGENTS_CONFIG", configPath)
+	writeJSON(t, configPath, agent.Config{Agents: []agent.Definition{
+		{Name: "codex-custom", Command: "codex", Protocol: agent.ProtocolCodexSDK},
+		{Name: "pi", Command: "pi", Protocol: agent.ProtocolACP},
+	}})
 
 	// 预置偏好：pi 上次手动应用了供应商 api-pi，codex 关联的是其它供应商。
 	store, err := preferences.NewStore()
@@ -209,8 +219,11 @@ func TestSyncAllAgentAPIProvidersReappliesToAgents(t *testing.T) {
 	if err := store.UpdateAgentLastConfigSelection("pi", preferences.LastConfigSelection{Type: "api_provider", ID: "api-pi", Name: "9779"}); err != nil {
 		t.Fatalf("UpdateAgentLastConfigSelection(pi): %v", err)
 	}
-	if err := store.UpdateAgentLastConfigSelection("codex", preferences.LastConfigSelection{Type: "api_provider", ID: "api-other", Name: "other"}); err != nil {
+	if err := store.UpdateAgentLastConfigSelection("codex", preferences.LastConfigSelection{Type: "api_provider", ID: "api-pi", Name: "9779"}); err != nil {
 		t.Fatalf("UpdateAgentLastConfigSelection(codex): %v", err)
+	}
+	if err := store.UpdateAgentLastConfigSelection("codex-custom", preferences.LastConfigSelection{Type: "api_provider", ID: "api-pi", Name: "9779"}); err != nil {
+		t.Fatalf("UpdateAgentLastConfigSelection(codex-custom): %v", err)
 	}
 
 	providers, results, err := syncAllAgentAPIProviders(context.Background(), store)

@@ -6,11 +6,12 @@ import {
   fileTreeMenuButtonStyle,
 } from "./icons";
 
-// 从 FileTreeHeaderOverlays 拆出（硬线 500 行）：菜单里的 agent 配置三连。
-// 纯展示，回调由调用方给，按钮顺序与文案不变。
+// 从 FileTreeHeaderOverlays 拆出（硬线 500 行）：菜单里的 agent 配置入口。
+// 只保留三个按钮：配置（含切换 / 备份 / 同步）、供应商与模型、安装和更新。
+// 前两个共用同一层级——先选 harness，再进入各自的详情。
 type FileTreeAgentConfigMenuButtonsProps = {
   t: (key: string) => string;
-  openAgentConfigFlow: (kind: "backup" | "switch") => void;
+  openAgentConfigFlow: (kind: "config" | "provider") => void;
   openAgentLifecycleFlow: () => void;
 };
 
@@ -23,19 +24,19 @@ export function FileTreeAgentConfigMenuButtons({
     <>
       <button
         type="button"
-        onClick={() => openAgentConfigFlow("backup")}
+        onClick={() => openAgentConfigFlow("config")}
         style={fileTreeMenuButtonStyle}
       >
         <ConfigArchiveIcon />
-        <span>{t("fileTree.addAgentConfig")}</span>
+        <span>{t("fileTree.agentConfig")}</span>
       </button>
       <button
         type="button"
-        onClick={() => openAgentConfigFlow("switch")}
+        onClick={() => openAgentConfigFlow("provider")}
         style={fileTreeMenuButtonStyle}
       >
         <ConfigSwitchIcon />
-        <span>{t("fileTree.switchAgentConfig")}</span>
+        <span>{t("fileTree.agentProviders")}</span>
       </button>
       <button
         type="button"
