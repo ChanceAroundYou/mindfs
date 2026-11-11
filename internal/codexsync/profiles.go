@@ -38,7 +38,14 @@ func SharedProfileForProviderAt(paths Paths, name, baseURL string) (string, bool
 	providers := tomlTable(root["model_providers"])
 	llmux := tomlTable(providers["llmux"])
 	profileBaseURL, _ := llmux["base_url"].(string)
-	if normalizeProviderBaseURL(profileBaseURL) == "" || normalizeProviderBaseURL(profileBaseURL) != normalizeProviderBaseURL(baseURL) {
+	normalizedBaseURL := normalizeProviderBaseURL(baseURL)
+	if normalizedBaseURL == "" {
+		// 有的供应商元数据只带名字（历史条目或从未填 base URL）。名字就是
+		// profile 的唯一标识，按名字认领，否则这类条目永远只能报 metadata-only，
+		// 用户既切不过去也切不回来。
+		return "llmux", true, nil
+	}
+	if normalizeProviderBaseURL(profileBaseURL) == "" || normalizeProviderBaseURL(profileBaseURL) != normalizedBaseURL {
 		return "", false, nil
 	}
 	return "llmux", true, nil

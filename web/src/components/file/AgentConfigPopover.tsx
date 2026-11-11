@@ -346,6 +346,8 @@ export function AgentConfigPopover({
           const testBusy = providerTestBusyID === item.id;
           const testResult = providerTestResults[item.id] || "";
           const models = item.models || [];
+          const official = item.kind === "official";
+          const displayName = official ? t("agentConfig.officialProvider") : item.name;
           return (
             <div
               key={item.id}
@@ -361,24 +363,26 @@ export function AgentConfigPopover({
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <div title={item.name} style={{ minWidth: 0, flex: 1, fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
-                <button
-                  type="button"
-                  aria-label={t("agentConfig.deleteAPIProvider", { name: item.name })}
-                  title={t("common.delete")}
-                  disabled={busy}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDeleteAPIProvider(item.id);
-                  }}
-                  style={agentConfigIconButtonStyle(busy)}
-                >
-                  <TrashIcon size={18} />
-                </button>
+                <div title={displayName} style={{ minWidth: 0, flex: 1, fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displayName}</div>
+                {official ? null : (
+                  <button
+                    type="button"
+                    aria-label={t("agentConfig.deleteAPIProvider", { name: item.name })}
+                    title={t("common.delete")}
+                    disabled={busy}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDeleteAPIProvider(item.id);
+                    }}
+                    style={agentConfigIconButtonStyle(busy)}
+                  >
+                    <TrashIcon size={18} />
+                  </button>
+                )}
               </div>
-              {item.localCredentialAvailable === false ? (
+              {official || item.localCredentialAvailable !== false ? null : (
                 <div style={{ marginTop: "3px", fontSize: "10px", color: "var(--text-secondary)" }}>{t("agentConfig.providerMissingKey")}</div>
-              ) : null}
+              )}
               {models.length > 0 ? (
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", minWidth: 0 }}>
                   <ProviderModelSelect

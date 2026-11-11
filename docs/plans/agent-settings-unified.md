@@ -184,3 +184,22 @@ type harnessAdapter struct {
     纯函数 `validateModelAgainstModels` 保留 Claude 别名规范化与 `[1m]` 基名比较。
     测试 `session_model_validation_test.go` 覆盖内置/自定义/去重/错误列表/Claude 别名五条路径。
   - 验证：`go test ./server/internal/api/usecase/...` 通过。G-KP 登记补该文件与锚点。
+
+- 2026-11-11（用户报「切不回官方订阅；供应商应跟着配置文件走」）：
+  - 证据：`~/.config/mindfs/agents-config-sync/active-profile` = `llmux`；用真实共享/运行时配置
+    的临时副本跑 `switchSharedCodexConfig("shared:codex-default")`，结果 `active=default`、
+    `model_provider` 与 `[model_providers.llmux]` 均已消失 —— **后端切回 default 本身是好的**。
+    问题在「供应商和模型」面板：它读全局 `~/.agents/codex/providers.json`，不区分活动 profile，
+    所以切回 default 后仍只显示 llmux，而且没有「官方订阅」条目可点。
+  - 第二个坑：真实 llmux 元数据里 `base_url` 是 `null`。`SharedProfileForProviderAt` 只按端点比较，
+    这种只有名字的条目永远匹配不上 profile，既不会被过滤，也无法通过点它切过去。
+  - 修复：新增 `server/internal/api/agent_api_provider_scope.go`：列表始终以合成条目
+    `officialCodexProviderID`（官方订阅）打头，默认 profile 下过滤掉归属 llmux 的条目；
+    切换该合成条目即 `switchSharedCodexConfig("shared:codex-default")`。
+    `SharedProfileForProviderAt` 在 base URL 为空时按 profile 名认领，让 `base_url: null` 的
+    llmux 条目重新可用。前端 `AgentAPIProvider.kind === "official"` 时用本地化名称、隐藏删除。
+  - 验证：`TestSharedProfileForProviderMatchesByProfileNameWithoutBaseURL`、
+    `TestScopeCodexAPIProvidersFollowsActiveProfile`、`TestCodexOfficialProviderSwitchesBackToDefaultProfile`
+    通过；`go test ./...`、`npx tsc --noEmit`、全量 vitest（212 文件 / 496 测试，6 skipped）全绿。
+    登记 G-KQ（含新文件、测试与锚点）。
+  - 边界：自定义模型目录仍为 harness 级偏好，不随 profile 过滤——它不属于某个 shared profile。

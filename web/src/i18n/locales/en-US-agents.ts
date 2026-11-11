@@ -43,6 +43,7 @@ export const enUSAgents = {
   "agentConfig.localSnapshot": "Stored on this device",
   "agentConfig.deleteConfig": "Delete config {name}",
   "agentConfig.noAPIProviders": "No compatible API providers",
+  "agentConfig.officialProvider": "Official subscription (default config)",
   "agentConfig.providerMissingKey": "This device has no local API key for this provider",
   "agentConfig.llmuxMissingKey": "LLMUX_API_KEY is not configured on this device",
   "agentConfig.deleteAPIProvider": "Delete API provider {name}",

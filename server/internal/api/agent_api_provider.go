@@ -14,6 +14,7 @@ const (
 type agentAPIProvider struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
+	Kind           string   `json:"kind,omitempty"`
 	BaseURL        string   `json:"baseUrl"`
 	APIKey         string   `json:"apiKey,omitempty"`
 	Protocols      []string `json:"protocols,omitempty"`
@@ -27,6 +28,7 @@ type agentAPIProvider struct {
 type agentAPIProviderPublic struct {
 	ID                       string   `json:"id"`
 	Name                     string   `json:"name"`
+	Kind                     string   `json:"kind,omitempty"`
 	BaseURL                  string   `json:"baseUrl"`
 	Protocols                []string `json:"protocols,omitempty"`
 	ModelFamilies            []string `json:"modelFamilies"`
@@ -72,6 +74,7 @@ func publicAgentAPIProvider(provider agentAPIProvider) agentAPIProviderPublic {
 	return agentAPIProviderPublic{
 		ID:                       provider.ID,
 		Name:                     provider.Name,
+		Kind:                     provider.Kind,
 		BaseURL:                  provider.BaseURL,
 		Protocols:                agentAPIProviderProtocols(provider),
 		ModelFamilies:            append([]string(nil), provider.ModelFamilies...),

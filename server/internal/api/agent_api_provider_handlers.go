@@ -17,6 +17,15 @@ func (h *HTTPHandler) handleAgentAPIProvidersList(w http.ResponseWriter, r *http
 		respondError(w, http.StatusServiceUnavailable, err)
 		return
 	}
+	if _, isCodex, codexErr := configuredCodexSDKAgent(agentName); codexErr == nil && isCodex {
+		if paths, pathErr := codexsync.ResolvePaths(); pathErr == nil {
+			if active, activeErr := codexsync.ActiveProfileAt(paths); activeErr == nil {
+				if scoped, scopeErr := scopeCodexAPIProvidersAt(paths, providers, active); scopeErr == nil {
+					providers = scoped
+				}
+			}
+		}
+	}
 	out := make([]agentAPIProviderPublic, 0, len(providers))
 	for _, provider := range providers {
 		if agentName != "" && !apiProviderCompatibleWithAgent(provider, agentName) {

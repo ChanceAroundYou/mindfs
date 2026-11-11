@@ -43,6 +43,7 @@ export const zhCNAgents = {
   "agentConfig.localSnapshot": "仅保存在本机",
   "agentConfig.deleteConfig": "删除配置 {name}",
   "agentConfig.noAPIProviders": "暂无适配的 API 供应商",
+  "agentConfig.officialProvider": "官方订阅（default 配置）",
   "agentConfig.providerMissingKey": "本机尚未配置该供应商的 API Key",
   "agentConfig.llmuxMissingKey": "本机尚未配置 LLMUX_API_KEY",
   "agentConfig.deleteAPIProvider": "删除 API 供应商 {name}",

@@ -91,6 +91,25 @@ test("agent config popovers close on outside clicks at every step", () => {
   assert.doesNotMatch(tree, /useAgentConfigOutsideClick\(\{[^}]*agentConfigStep/);
 });
 
+test("codex provider list follows the active shared profile", () => {
+  const popover = read("../src/components/file/AgentConfigPopover.tsx");
+  const scope = read("../../server/internal/api/agent_api_provider_scope.go");
+  const handlers = read("../../server/internal/api/agent_api_provider_handlers.go");
+  const switchOps = read("../../server/internal/api/agent_api_provider_sync_ops.go");
+  const en = read("../src/i18n/locales/en-US-agents.ts");
+  const zh = read("../src/i18n/locales/zh-CN-agents.ts");
+
+  assert.match(scope, /SharedProfileForProviderAt/);
+  assert.match(scope, /matched && profile != active/);
+  assert.match(scope, /officialCodexAPIProvider/);
+  assert.match(handlers, /scopeCodexAPIProvidersAt\(paths, providers, active\)/);
+  assert.match(switchOps, /providerID == codexOfficialProviderID[\s\S]*shared:codex-default/);
+  assert.match(popover, /item\.kind === "official"/);
+  for (const locale of [en, zh]) {
+    assert.match(locale, /agentConfig\.officialProvider/);
+  }
+});
+
 test("custom models can be added and removed per harness", () => {
   const popover = read("../src/components/file/AgentConfigPopover.tsx");
   const models = read("../src/components/file/AgentConfigCustomModels.tsx");

@@ -92,6 +92,7 @@ export type AgentConfigSyncResult = {
 export type AgentAPIProvider = {
   id: string;
   name: string;
+  kind?: "official";
   baseUrl: string;
   protocols: string[];
   modelFamilies: string[];

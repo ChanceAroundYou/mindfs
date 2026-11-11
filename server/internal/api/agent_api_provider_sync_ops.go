@@ -348,6 +348,12 @@ func switchAgentAPIProvider(req agentAPIProviderSwitchRequest, app *AppContext) 
 	if providerID == "" {
 		return agentAPIProvider{}, errors.New("provider id required")
 	}
+	if definition.Protocol == agent.ProtocolCodexSDK && providerID == codexOfficialProviderID {
+		if _, err := switchSharedCodexConfig("shared:codex-default", agentName, app); err != nil {
+			return agentAPIProvider{}, err
+		}
+		return officialCodexAPIProvider(), nil
+	}
 	providers, err := readAgentAPIProviders()
 	if err != nil {
 		return agentAPIProvider{}, err

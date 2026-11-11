@@ -89,6 +89,41 @@ func TestCodexProviderSwitchDelegatesToMatchingSharedProfile(t *testing.T) {
 	}
 }
 
+func TestCodexOfficialProviderSwitchesBackToDefaultProfile(t *testing.T) {
+	paths, _ := codexSwitchPaths(t, "https://llmux.example/v1")
+
+	if _, err := switchAgentAPIProvider(agentAPIProviderSwitchRequest{
+		Agent:      "codex",
+		ProviderID: "api-llmux",
+	}, nil); err != nil {
+		t.Fatalf("switch to llmux: %v", err)
+	}
+	provider, err := switchAgentAPIProvider(agentAPIProviderSwitchRequest{
+		Agent:      "codex",
+		ProviderID: codexOfficialProviderID,
+	}, nil)
+	if err != nil {
+		t.Fatalf("switch to official subscription: %v", err)
+	}
+	if provider.Kind != agentAPIProviderKindOfficial {
+		t.Fatalf("official provider kind = %q, provider=%+v", provider.Kind, provider)
+	}
+	active, err := codexsync.ActiveProfileAt(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active != "default" {
+		t.Fatalf("active profile = %q, want default", active)
+	}
+	rendered, err := os.ReadFile(paths.RuntimeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rendered), "model_provider = \"llmux\"") || strings.Contains(string(rendered), "[model_providers.llmux]") {
+		t.Fatalf("default profile retained llmux provider tables: %s", rendered)
+	}
+}
+
 func TestCodexProviderSwitchRejectsMismatchedSharedProfile(t *testing.T) {
 	paths, _ := codexSwitchPaths(t, "https://other.example/v1")
 
