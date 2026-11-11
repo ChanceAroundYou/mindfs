@@ -275,3 +275,12 @@ type harnessAdapter struct {
     `default -> llmux -> default` 往返切换成功，最终 pc-win `config.toml` 为新布局（根级
     `service_tier`/`notify`、local 表全保留、无 `model_provider`）。
   - 守卫：`web/tests/pcwin-helper.test.mjs`（纯 ASCII、走本地 API、不把 GUI stdout 当判据、PATH 注册幂等）。
+- 2026-11-11（用户重启后验收）：
+  - 本机 system 单元已重启：PID 2397796、`/proc/.../exe` 指向已安装二进制（不再带 `(deleted)`）、
+    `/health` = `{"ok":true,"role":"control"}`、`--check-runtime` synced；本机活动 profile 为
+    default 时 `GET /api/agent-api-providers?agent=codex` 只返回「官方订阅」（kind=official）——
+    profile 联动的线上行为确认。
+  - WSL 报 `workspace routing discovery unauthorized (401)` 的根因不是切换：文件层已切回 default，
+    失败来自该机 ChatGPT 登录态的 refresh token 过期（`already used`），绕开 MindFS 跑 `codex exec`
+    同样复现。用户重新登录后 17:35 一轮真实会话 `input → output.done` 正常，近 15 分钟零 401。
+  - 仍挂在 Active 的唯一事项：页面入口层级 / 自定义模型 / profile 联动的真机点验。
