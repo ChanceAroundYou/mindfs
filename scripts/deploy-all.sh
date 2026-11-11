@@ -69,7 +69,7 @@ if [[ -n "$MESSAGE" ]]; then
     # cli/ 是发布入口（make build 装的就是 ./cli/cmd，见 startup_config_test.go），
     # 漏了它只改 CLI 的提交会变成空提交、改动静默留在工作区（2026-10-19 实测）。
     # 刻意不含 config.json：那份会被本机改 role/端口，提交等于把本地运行配置推上去。
-    git add -A -- web server cli Makefile task_template.json scripts .claude agents.json docs \
+    git add -A -- web server cli Makefile scripts .claude agents.json docs \
       AGENTS.md README.md README.zh.md release-notes.md 2>/dev/null || git add -A
     git commit -m "$MESSAGE"
     ok "已提交 $(git rev-parse --short HEAD)"

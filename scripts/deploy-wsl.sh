@@ -21,7 +21,7 @@ go build -ldflags "-X main.version=$VERSION -X mindfs/internal/deploy.Prefix=/mi
 ok "已构建 $VERSION"
 
 step "推送产物到 WSL"
-tar -C "$ROOT" -cf - mindfs agents.json task_template.json \
+tar -C "$ROOT" -cf - mindfs agents.json \
   | ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" \
       "set -euo pipefail; rm -rf ~/$STAGE; mkdir -p ~/$STAGE; tar -xf - -C ~/$STAGE" \
   || die "产物传输失败（$WSL_HOST）"
@@ -31,7 +31,6 @@ remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" bash -s 2>&1
 set -euo pipefail
 install -m 0755 ~/$STAGE/mindfs             ~/.local/bin/mindfs
 install -m 0644 ~/$STAGE/agents.json        ~/.local/share/mindfs/agents.json
-install -m 0644 ~/$STAGE/task_template.json ~/.local/share/mindfs/task_template.json
 rm -rf ~/$STAGE
 systemctl --user restart mindfs
 sleep 3

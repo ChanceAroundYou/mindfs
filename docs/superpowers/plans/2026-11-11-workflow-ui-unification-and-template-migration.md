@@ -253,12 +253,12 @@ Phase 1 代码到此为止；部署（`ship`）与 Phase 2 都需要用户显式
 ### Task 11: 删除模板配置文件的打包链
 
 **Files:**
-- Delete: `task_template.json`
-- Modify: `Makefile`、`scripts/{install,deploy-wsl,deploy-fn,build-all}.sh`、`scripts/install.ps1`、`server/internal/update/install.go`、`server/internal/update/service_windows.go`、`AGENTS.md`（构建与部署说明里不再提 `task_template.json`）
+- Delete: `task_template.json`、`cli/cmd/orchestration_help.md`（它文档化的模板/编排 CLI 已不存在）
+- Modify: `Makefile`、`scripts/{install,deploy-wsl,deploy-fn,build-all}.sh`、`scripts/install.ps1`、`scripts/deploy-all.sh`、`scripts/migrate-control-plane-to-primary.sh`、`server/internal/update/install.go`、`server/internal/update/service_windows.go`、`web/tests/upstream-removals.test.mjs`、`AGENTS.md`（构建与部署说明里不再提 `task_template.json`）
 
-- [ ] **Step 1: 写/改测试** — `service_test.go` 里对 `task_template.json` 的断言改为「不再安装」。
-- [ ] **Step 2: 删除并跑 `go test ./...`**。
-- [ ] **Step 3: 提交**（`Scope: G-LJ`）。
+- [x] **Step 1: 写/改测试** — `service_test.go` 里对 `task_template.json` 的断言改为「不再安装」：`TestInstallPackageNoLongerInstallsTaskTemplate` 先红（`stat err = <nil>`），删掉安装路径后转绿；两个布局测试同步改为 `destinationPaths` 三元组（bin/agents/web）。`web/tests/upstream-removals.test.mjs` 的「替代实现必须在位」改为钉内置默认流水，并登记已删的 `cli/cmd/orchestration_help.md`。
+- [x] **Step 2: 删除并跑 `go test ./...`** — 删除 `task_template.json`；`Makefile`、`scripts/{install,deploy-wsl,deploy-fn,build-all}.sh`、`scripts/install.ps1`、`scripts/deploy-all.sh` 的 git-add 白名单、`scripts/migrate-control-plane-to-primary.sh` 的模板迁移段全部移除；`AGENTS.md` 的分发说明与看板架构事实同步到「模板库已删、任务只认随包 stages」。`go build ./...`、`go vet ./...`、`go test ./...` 全绿。
+- [x] **Step 3: 提交**（`Scope: G-LJ`）。
 
 ### Task 12: Phase 3 Gate
 

@@ -2,8 +2,8 @@
 # 把运行节点（WSL）独有的控制面数据并进主节点（本机）。
 #
 # 背景见 docs/multi-node-control-plane.md：控制面只有一份真相，在主节点上。
-# 模板库/提示词库今天每台机器各一份且已经漂移（模板 3 vs 5、阶段模板只有
-# PC 有），本脚本把 PC 独有的条目按 id 并集进本机。
+# 提示词库今天每台机器各一份且已经漂移，本脚本把 PC 独有的条目按值并集进本机。
+# 任务模板库已随 Phase 3 删除（G-LJ），本脚本不再迁移任何模板文件。
 #
 # 幂等：按 id 判重，第二次跑检测到已存在即跳过，diff 为空。
 # 只做加法，冲突一律**本机胜**（本机是权威，且用户可能已经改过）。
@@ -78,16 +78,6 @@ backup_and_write() {
   echo "    已写入 $dest"
 }
 
-# merge_by_id <远端json数组> <本机json数组>
-# 并集，id 相同取**本机**那条（用户可能已经改过，本机是权威）。
-merge_by_id() {
-  jq -n --argjson remote "$1" --argjson local "$2" '
-    ($local | map(.id)) as $localIDs
-    | (($remote | map(select(.id as $id | ($localIDs | index($id)) == null))) + $local)
-    | sort_by(.name)
-  '
-}
-
 # merge_strings <远端字符串数组> <本机字符串数组>
 # prompts.json 不是对象数组而是一串纯文本（实测：["push吧", "..."]），
 # 没有 id 可判重，只能按值去重。
@@ -103,33 +93,17 @@ report_counts() {
     "$(printf '%s' "$3" | jq 'length' 2>/dev/null || echo '?')"
 }
 
-# ── 1. task_template.json ──
-echo "1/4 任务模板 task_template.json"
-REMOTE_T="$(fetch_remote task_template.json)"
-LOCAL_T="$(fetch_local task_template.json)"
-MERGED_T="$(merge_by_id "$REMOTE_T" "$LOCAL_T")"
-report_counts "task_template" "$LOCAL_T" "$MERGED_T"
-backup_and_write task_template.json "$MERGED_T"
-
-# ── 2. stage_template.json ──
-echo "2/4 阶段模板 stage_template.json"
-REMOTE_S="$(fetch_remote stage_template.json)"
-LOCAL_S="$(fetch_local stage_template.json)"
-MERGED_S="$(merge_by_id "$REMOTE_S" "$LOCAL_S")"
-report_counts "stage_template" "$LOCAL_S" "$MERGED_S"
-backup_and_write stage_template.json "$MERGED_S"
-
-# ── 3. prompts.json ──
-echo "3/4 提示词库 prompts.json"
+# ── 1. prompts.json ──
+echo "1/2 提示词库 prompts.json"
 REMOTE_P="$(fetch_remote prompts.json)"
 LOCAL_P="$(fetch_local prompts.json)"
 MERGED_P="$(merge_strings "$REMOTE_P" "$LOCAL_P")"
 report_counts "prompts" "$LOCAL_P" "$MERGED_P"
 backup_and_write prompts.json "$MERGED_P"
 
-# ── 4. 不迁移的东西 ──
+# ── 2. 不迁移的东西 ──
 cat <<'NOTES'
-4/4 刻意不迁移：
+2/2 刻意不迁移：
   nodes.json            以本机为准；PC 条目加 "remote": true 留在本机表里
   web-push 订阅         VAPID 私钥在 PC，密文绑定该密钥，搬过来解不开
                         → 需要你在本机页面重新点一次订阅

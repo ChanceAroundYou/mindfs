@@ -113,7 +113,7 @@ func (s *Service) installPackage(pkgDir string) error {
 	if _, err := os.Stat(srcBin); err != nil {
 		return fmt.Errorf("updated binary missing: %w", err)
 	}
-	dstBin, dstAgents, dstTaskTemplate, dstWeb := layout.destinationPaths(binName)
+	dstBin, dstAgents, dstWeb := layout.destinationPaths(binName)
 	if err := os.MkdirAll(filepath.Dir(dstBin), 0o755); err != nil {
 		return err
 	}
@@ -129,15 +129,6 @@ func (s *Service) installPackage(pkgDir string) error {
 			return err
 		}
 		if err := replaceFile(srcAgents, dstAgents, 0o644); err != nil {
-			return err
-		}
-	}
-	srcTaskTemplate := filepath.Join(pkgDir, "task_template.json")
-	if info, err := os.Stat(srcTaskTemplate); err == nil && !info.IsDir() {
-		if err := os.MkdirAll(filepath.Dir(dstTaskTemplate), 0o755); err != nil {
-			return err
-		}
-		if err := replaceFile(srcTaskTemplate, dstTaskTemplate, 0o644); err != nil {
 			return err
 		}
 	}
@@ -157,9 +148,9 @@ func (s *Service) restartInstalledBinary(pkgDir string) error {
 	if runtime.GOOS == "windows" {
 		binName = "mindfs.exe"
 	}
-	dstBin, dstAgents, dstTaskTemplate, dstWeb := layout.destinationPaths(binName)
+	dstBin, dstAgents, dstWeb := layout.destinationPaths(binName)
 	log.Printf("[update] restart.begin exe=%s args=%q", exe, s.args)
-	if err := startReplacementProcess(os.Getpid(), exe, s.args, os.Stdout, os.Stderr, pkgDir, dstBin, dstAgents, dstTaskTemplate, dstWeb); err != nil {
+	if err := startReplacementProcess(os.Getpid(), exe, s.args, os.Stdout, os.Stderr, pkgDir, dstBin, dstAgents, dstWeb); err != nil {
 		return err
 	}
 	go func() {
@@ -195,16 +186,14 @@ func (s *Service) unsupportedMessage() string {
 	return "Auto update is unavailable for the current install path."
 }
 
-func (l installLayout) destinationPaths(binName string) (string, string, string, string) {
+func (l installLayout) destinationPaths(binName string) (string, string, string) {
 	if l.Mode == "installed" {
 		return filepath.Join(l.Prefix, "bin", binName),
 			filepath.Join(l.Prefix, "share", "mindfs", "agents.json"),
-			filepath.Join(l.Prefix, "share", "mindfs", "task_template.json"),
 			filepath.Join(l.Prefix, "share", "mindfs", "web")
 	}
 	return filepath.Join(l.ExeDir, binName),
 		filepath.Join(l.ExeDir, "agents.json"),
-		filepath.Join(l.ExeDir, "task_template.json"),
 		filepath.Join(l.ExeDir, "web")
 }
 

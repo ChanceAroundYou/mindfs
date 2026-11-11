@@ -41,7 +41,7 @@ WSL 与 fn 是 **user** 单元）；pc-win 是同一台 PC 上的第四个实例
 - `/home/nnb/...` **不是**旧路径，是 WSL 端的家目录；本机是 `/home/xiaokubao`。
 - 三台设备的账户表、节点 UUID 各自独立；判「本地节点」只认各自 `/api/nodes` 里报 `local` 的那个。
 - **WSL 与 fn 都没有源码库，永远别在 worker 上编译**：它们只接收本机构建好的产物，不能 `git pull` 或 `make build`。
-  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json`，通过 ssh 安装到 WSL 与 fn；以及交叉编译 Windows 二进制安装到同机 pc-win（`scripts/deploy-pcwin.sh`，`deploy-all.sh` 第 5 步一并调用）。
+  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json`，通过 ssh 安装到 WSL 与 fn；以及交叉编译 Windows 二进制安装到同机 pc-win（`scripts/deploy-pcwin.sh`，`deploy-all.sh` 第 5 步一并调用）。
   **不推 `web/dist`**：WSL 与 fn 都是纯 worker 节点（`config.json` 的 `role=worker`），按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
   WSL 上的 `/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传）；worker 上能查的是运行数据，不是源码。
   **注意**：pc-win 的「装上了」与「在跑」是两件事。计划任务 `\mindfs` 自 2026-11-07 起登录类型是 **S4U**（原 `InteractiveToken`，从 ssh 触发 `schtasks /run` 起不了进程），并补了 `BootTrigger`——所以它跑在 Session 0、不需要有人登录。`deploy-pcwin.sh` 会轮询取回进程 PID 与 health，取不到就明写「未确认在跑」而不是「已重启」。自己核对：`ssh pc "netstat -ano | findstr :7332"`。
@@ -183,8 +183,10 @@ make dev-web          # 仅 Vite
       回归测试 `web/tests/cross-node-replying-state.test.mjs`。
 
 13. **看板模型（2026-09 重做）**：卡=任务，列=全局状态（待开始/进行中/等待你/已完成/失败·取消，前端 `kanbanStageColumns`）；
-    - **任务自带流水**：`Task.Stages []StageTemplate` 是创建时从预设拷贝的**快照**，之后与预设无关（改/删预设不影响在途任务）。
-      预设（`task_templates`）退化为「新建时可套用的模板」。旧任务（无快照）在 `loadForMove` 里惰性从模板回填。
+    - **任务自带流水**：`Task.Stages []StageTemplate` 是执行的**唯一**来源。新建任务由前端随包带上内置默认流水
+      （`defaultTaskFlowStages()`：user 输入 → agent `{previous_input}`，落库即拍平快照），后端不查任何模板库。
+      模板库已于 Phase 3 删除（2026-11）；历史任务仍按 `task_stages_json` + `stage_runs` 渲染，`task_template_id`/`task_template_name`
+      两列冻结为只读来源标签，停写、不回填、不参与执行。
     - **无并发调度**：`queued` 与调度槽位已删除（迁移时 queued→pending），新建任务恒为 `waiting_user`；同一 agent 阶段的重复执行由 `taskRun/taskPend` 去重守卫拦。
     - 任意状态可追加 comment 作为下一段 prompt（`POST /api/tasks/{id}/add-stage`，运行中排队尾；waiting_user 时追加即批准当前段并开跑）。
     - **跨项目工作台**：无项目时任务视图渲染 `web/src/components/workspace/WorkspaceBoard.tsx`
@@ -244,12 +246,10 @@ make dev-web          # 仅 Vite
       判断法：「这东西在另一台机器上有意义吗？」有 → 数据面；没有，只有一份该是权威的 → 控制面。
       `agent-config` 刻意留在数据面（改的是本机运行时，worker 需要）。
     - **单节点下改绑零行为变化**：`pageServerPath` 与 `appPath` 同源，只有多节点才有差异 —— 而那正是要修的 bug。
-    - **两个连带后果**（漏了会在线上才发现）：
-      ① **建任务必须内联流水** —— 模板库只在主节点，而任务可以建在运行节点上，
-      后端 `CreateTask` 在 `stages` 为空时回查**本机**模板库必然失败（`task template not found`）。
-      前端 `createTask` 每次带 `stages`（`appTask.ts` 的 `taskStagesForCreate`）并快照 `task_template_name`。
+    - **建任务必须内联流水** —— 任务可以建在任意运行节点上，后端 `CreateTask` 只认请求里随包带上的 `stages`，
+      没有 stages 直接报错（模板库已删除，任何回查路径都不存在）。前端 `createTask` 每次都带 `defaultTaskFlowStages()`，
       注意 `applyStageOverride` 无覆盖时返回 `undefined`（最常见的路径），`taskStagesForCreate` 专门兜它。
-      ② **模板按项目过滤，不按节点路由** —— `TaskTemplate.RootID` 空=全局，`?root=<id>` 返回「全局+本项目」并集。
+      模板按项目过滤（`TaskTemplate.RootID`）是模板时代的事实，Phase 3 后已随模板库一起移除，不要再恢复。
     - **探测角色打 `/health` 不是 `/api/node-info`**：后者自己在控制面表里，worker 上必然 403，
       会让每个运行节点都被误判成「离线」。`/health` 是公开端点且刻意不在表内。
     - 迁移：`scripts/migrate-control-plane-to-primary.sh`（默认预览，`--apply` 才写，幂等）。

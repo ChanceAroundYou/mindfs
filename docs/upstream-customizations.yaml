@@ -526,6 +526,9 @@ groups:
       - cli/cmd/task_help.go
       - cli/cmd/task_operations.go
       - cli/cmd/task_operations_test.go
+      # Phase 3（G-LJ）删：文档化的 -task-templates / -task-create 等 CLI 早已不存在，
+      # 留着会让 agent 照不存在的命令操作并继续宣传模板选择。
+      - cli/cmd/orchestration_help.md
       - server/internal/api/http_task_groups.go
       - server/internal/api/http_task_orchestration.go
       - server/internal/api/http_task_orchestration_test.go

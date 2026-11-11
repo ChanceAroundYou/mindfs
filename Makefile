@@ -69,7 +69,6 @@ install: build
 	install -d "$(PREFIX)/share/mindfs"
 	install -m 0755 mindfs "$(PREFIX)/bin/mindfs"
 	install -m 0644 agents.json "$(PREFIX)/share/mindfs/agents.json"
-	install -m 0644 task_template.json "$(PREFIX)/share/mindfs/task_template.json"
 	install -d "$(PREFIX)/share/mindfs/web"
 	cp -R "$(WEB_DIR)/dist/." "$(PREFIX)/share/mindfs/web/"
 	find "$(PREFIX)/share/mindfs/web/assets" -type f -mtime +$(WEB_ASSET_TTL_DAYS) -delete

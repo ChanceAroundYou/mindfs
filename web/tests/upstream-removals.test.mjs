@@ -26,6 +26,9 @@ const REMOVED_ORCHESTRATION = [
   "cli/cmd/task_help.go",
   "cli/cmd/task_operations.go",
   "cli/cmd/task_operations_test.go",
+  // Phase 3（G-LJ）一并删掉：它文档化的 -task-templates / -task-create 等 CLI 在上游编排体系
+  // 删除后已不存在，留着只会让 agent 照着不存在的命令操作，并继续宣传模板选择。
+  "cli/cmd/orchestration_help.md",
   "server/internal/api/http_task_groups.go",
   "server/internal/api/http_task_orchestration.go",
   "server/internal/api/http_task_orchestration_test.go",
@@ -109,11 +112,10 @@ const kanbanTypes = fs.readFileSync(path.join(root, "server/internal/kanban/type
 assert.ok(/Stages\s+\[\]StageTemplate/.test(kanbanTypes), "Task.Stages 快照字段丢失");
 assert.ok(/type StageTemplate struct/.test(kanbanTypes), "StageTemplate 类型丢失");
 
-const templateStore = [
-  fs.readFileSync(path.join(root, "server/internal/kanban/template_store.go"), "utf8"),
-  fs.readFileSync(path.join(root, "server/internal/kanban/template_store_stage.go"), "utf8"),
-].join("\n");
-assert.ok(templateStore.includes("ListStageTemplates"), "阶段模板库（新建任务时的可套用模板）丢失");
+// 模板库已随 Phase 3（G-LJ）删除，替代它的是前端内置默认流水：新建任务随包带上
+// user → agent 两段，后端只认请求里的 stages。这条钉住「删掉模板选择后替代品还在」。
+const defaultFlow = fs.readFileSync(path.join(root, "web/src/app/defaultTaskFlow.ts"), "utf8");
+assert.ok(defaultFlow.includes("defaultTaskFlowStages"), "内置默认流水（替代模板选择）丢失");
 
 const worktreeFinish = fs.readFileSync(path.join(root, "server/internal/kanban/worktree_finish.go"), "utf8");
 assert.ok(worktreeFinish.includes("FinishTaskWorktree"), "worktree 收尾（替代上游 recovery/session_cleanup）丢失");

@@ -19,7 +19,6 @@ type TaskStore struct {
 }
 
 type ListTasksOptions struct {
-	TemplateID string
 	Status     string
 	TaskNumber int
 	Stage      int
@@ -60,10 +59,6 @@ func (s *TaskStore) CreateTask(ctx context.Context, task Task, firstRun StageRun
 func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Task, error) {
 	where := []string{"1=1"}
 	args := []any{}
-	if strings.TrimSpace(opts.TemplateID) != "" {
-		where = append(where, "task_template_id = ?")
-		args = append(args, strings.TrimSpace(opts.TemplateID))
-	}
 	if strings.TrimSpace(opts.Status) != "" {
 		where = append(where, "status = ?")
 		args = append(args, strings.TrimSpace(opts.Status))

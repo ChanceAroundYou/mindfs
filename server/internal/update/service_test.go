@@ -241,15 +241,12 @@ func TestInstallLayoutInstalled(t *testing.T) {
 	if got, want := filepath.Clean(layout.Prefix), filepath.Join("opt", "mindfs"); got != want {
 		t.Fatalf("layout prefix = %q, want %q", got, want)
 	}
-	bin, agents, taskTemplate, web := layout.destinationPaths("mindfs")
+	bin, agents, web := layout.destinationPaths("mindfs")
 	if got, want := bin, filepath.Join("opt", "mindfs", "bin", "mindfs"); got != want {
 		t.Fatalf("bin path = %q, want %q", got, want)
 	}
 	if got, want := agents, filepath.Join("opt", "mindfs", "share", "mindfs", "agents.json"); got != want {
 		t.Fatalf("agents path = %q, want %q", got, want)
-	}
-	if got, want := taskTemplate, filepath.Join("opt", "mindfs", "share", "mindfs", "task_template.json"); got != want {
-		t.Fatalf("task template path = %q, want %q", got, want)
 	}
 	if got, want := web, filepath.Join("opt", "mindfs", "share", "mindfs", "web"); got != want {
 		t.Fatalf("web path = %q, want %q", got, want)
@@ -268,18 +265,40 @@ func TestInstallLayoutPortable(t *testing.T) {
 	if got, want := filepath.Clean(layout.ExeDir), filepath.Join("tmp", "mindfs_v1.2.2_linux_amd64"); got != want {
 		t.Fatalf("layout exe dir = %q, want %q", got, want)
 	}
-	bin, agents, taskTemplate, web := layout.destinationPaths("mindfs")
+	bin, agents, web := layout.destinationPaths("mindfs")
 	if got, want := bin, filepath.Join("tmp", "mindfs_v1.2.2_linux_amd64", "mindfs"); got != want {
 		t.Fatalf("bin path = %q, want %q", got, want)
 	}
 	if got, want := agents, filepath.Join("tmp", "mindfs_v1.2.2_linux_amd64", "agents.json"); got != want {
 		t.Fatalf("agents path = %q, want %q", got, want)
 	}
-	if got, want := taskTemplate, filepath.Join("tmp", "mindfs_v1.2.2_linux_amd64", "task_template.json"); got != want {
-		t.Fatalf("task template path = %q, want %q", got, want)
-	}
 	if got, want := web, filepath.Join("tmp", "mindfs_v1.2.2_linux_amd64", "web"); got != want {
 		t.Fatalf("web path = %q, want %q", got, want)
+	}
+}
+
+// 模板库已下线（Phase 3，Scope: G-LJ）：包里的 task_template.json 不再安装。
+// 上游包里可能还带着它，装上去只会让「模板还在」的错觉继续存在。
+func TestInstallPackageNoLongerInstallsTaskTemplate(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "mindfs") // 便携布局：安装目标就在 exe 同目录
+	pkgDir := filepath.Join(dir, "mindfs_v9.9.9_linux_amd64")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "mindfs"), []byte("new-binary"), 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "task_template.json"), []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	service := NewService(testReleaseRepo, "v1.2.2", exe, nil, time.Hour)
+	if err := service.installPackage(pkgDir); err != nil {
+		t.Fatalf("installPackage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "task_template.json")); !os.IsNotExist(err) {
+		t.Fatalf("task_template.json must no longer be installed, stat err = %v", err)
 	}
 }
 

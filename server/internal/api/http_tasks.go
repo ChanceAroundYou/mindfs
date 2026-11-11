@@ -22,10 +22,9 @@ func (h *HTTPHandler) handleKanbanTasksList(w http.ResponseWriter, r *http.Reque
 	}
 	rootID := r.URL.Query().Get("root")
 	opts := kanban.ListTasksOptions{
-		TemplateID: r.URL.Query().Get("template_id"),
-		Status:     r.URL.Query().Get("status"),
-		After:      r.URL.Query().Get("after"),
-		Before:     r.URL.Query().Get("before"),
+		Status: r.URL.Query().Get("status"),
+		After:  r.URL.Query().Get("after"),
+		Before: r.URL.Query().Get("before"),
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		limit, err := strconv.Atoi(raw)
