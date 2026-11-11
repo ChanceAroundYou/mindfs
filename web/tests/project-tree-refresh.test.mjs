@@ -13,7 +13,6 @@ const fileTreeTypes = readFileSync(new URL("../src/components/file/fileTreeTypes
 const fileTreeRefreshButton = readFileSync(new URL("../src/components/file/FileTreeRefreshButton.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
 const taskBoardToolbar = readFileSync(new URL("../src/components/task/TaskBoardToolbar.tsx", import.meta.url), "utf8");
-const taskCreateTemplateMenu = readFileSync(new URL("../src/components/task/TaskCreateTemplateMenu.tsx", import.meta.url), "utf8");
 
 assert.match(
   fileTreeTypes,
@@ -90,8 +89,8 @@ assert.match(
   "task refresh should use a compact hit area and centered feedback background",
 );
 assert.match(
-  taskCreateTemplateMenu,
-  /data-onboarding="task-create"[\s\S]*?width: "28px"[\s\S]*?background: open \? "rgba\(0, 0, 0, 0\.06\)" : "transparent"[\s\S]*?justifyContent: "center"/,
+  taskBoardToolbar,
+  /data-onboarding="task-create"[\s\S]*?width: "28px"[\s\S]*?justifyContent: "center"/,
   "task create should retain its normal button size",
 );
 assert.match(

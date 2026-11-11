@@ -4,28 +4,6 @@ import { hexToRgba } from "../../shared/hexToRgba";
 
 
 
-export function taskTemplateMenuItemStyle(disabled = false): React.CSSProperties {
-  return {
-    width: "100%",
-    minHeight: "30px",
-    border: "none",
-    borderRadius: "8px",
-    background: "transparent",
-    color: "var(--text-primary)",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 8px",
-    textAlign: "left",
-    fontSize: "12px",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.45 : 1,
-    boxSizing: "border-box",
-  };
-}
-
-
-
 /**
  * 任务卡卡面（边框 + 底 + 投影 + 圆角）。
  *

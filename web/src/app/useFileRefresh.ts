@@ -28,7 +28,6 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useSessionSearch } from "./useSessionSearch";
 import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useSessionStreamCache } from "./useSessionStreamCache";
-import { useTaskTemplates } from "./useTaskTemplates";
 import { useI18n } from "../i18n";
 import { PluginManager } from "../plugins/manager";
 import { type FilePayload, fetchFile, invalidateFileCache } from "../services/file";

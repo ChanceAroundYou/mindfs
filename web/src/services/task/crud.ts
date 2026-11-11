@@ -4,7 +4,6 @@ import { getRootNodeId } from "../net/rootNode";
 import { protectedJSON } from "../net/api";
 
 export async function fetchTaskDetails(rootId: string, filters?: {
-  templateId?: string;
   status?: string;
   stage?: number;
   after?: string;
@@ -14,7 +13,6 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   taskNumber?: number;
 }, nodeId?: string): Promise<TaskDetail[]> {
   const params = new URLSearchParams({ root: rootId });
-  if (filters?.templateId) params.set("template_id", filters.templateId);
   if (filters?.status) params.set("status", filters.status);
   if (typeof filters?.stage === "number") params.set("stage", String(filters.stage));
   if (filters?.after) params.set("after", filters.after);
@@ -28,13 +26,13 @@ export async function fetchTaskDetails(rootId: string, filters?: {
 
 export async function createTask(
   rootId: string,
-  taskTemplateId: string,
   input: string,
+  stages: StageTemplate[],
   createWorktree = false,
   worktreeBranchMode: "new" | "existing" = "new",
   worktreeBranch = "",
   nodeId?: string,
-  options?: { name?: string; stages?: StageTemplate[]; templateName?: string },
+  options?: { name?: string },
 ): Promise<TaskDetail> {
   nodeId = nodeId || getRootNodeId(rootId);
   return protectedJSON<TaskDetail>(appURL("/api/tasks", undefined, nodeId), {
@@ -42,21 +40,13 @@ export async function createTask(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       root_id: rootId,
-      task_template_id: taskTemplateId,
-      // 模板名一并带上：任务库在**项目所在的节点**，而模板库只在主节点（见 controlPlane.ts），
-      // 那台机器的 GetTaskTemplate 查不到，只能退回空名（templateNameForTask 失败即空串）。
-      // 带上名字，看板上的模板来源标签才不会在 worker 上变成空白。
-      task_template_name: options?.templateName || undefined,
       input,
       create_worktree: createWorktree,
       worktree_branch_mode: worktreeBranchMode,
       worktree_branch: worktreeBranch,
       ...(options?.name ? { name: options.name } : {}),
-      // stages 必须在**每次**建任务时随包带上，不能只靠 task_template_id：
-      // 任务可能建在 worker 节点上，那台机器没有模板库，服务端会回
-      // "task template not found" 而整个建任务失败（service.go:237）。
-      // 模板流水线本来就是创建时拷贝的快照（AGENTS.md 事实 13），带过来不改变语义。
-      ...(options?.stages?.length ? { stages: options.stages } : {}),
+      // 流水是任务的初始快照（AGENTS.md 事实 13），后端不再维护可回查的流水库。
+      stages,
     }),
   });
 }

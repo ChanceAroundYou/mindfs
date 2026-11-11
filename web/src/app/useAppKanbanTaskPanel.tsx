@@ -2,7 +2,7 @@ import { useState } from "react";
 import { TaskBoardView } from "../components/task/TaskBoardView";
 import { WorkflowDraftEditor } from "../components/task/WorkflowDraftEditor";
 import type { SessionItem } from "./appSession";
-import type { KanbanTask, TaskTemplate } from "../services/tasks";
+import type { KanbanTask } from "../services/tasks";
 import type { WorkspaceBoard, WorkspaceBoardFilter } from "./useWorkspaceBoard";
 
 /**
@@ -39,21 +39,10 @@ export type UseAppKanbanTaskPanelParams = {
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree") => Promise<void>;
-  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string) => void;
+  openTaskCreateDialog: (targetRootId?: string, targetNodeId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<{ title: string; message: string; details: string[]; } | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
-  taskTemplateActionMenuRef: React.RefObject<HTMLDivElement | null>;
-  taskTemplateActionMenuOpen: boolean;
-  setTaskTemplateActionMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  taskCreateTemplateMenuRef: React.RefObject<HTMLDivElement | null>;
-  taskCreateTemplateMenuOpen: boolean;
-  setTaskCreateTemplateMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  taskTemplates: TaskTemplate[];
-  taskTemplateFilter: string;
-  setTaskTemplateFilter: React.Dispatch<React.SetStateAction<string>>;
-  openTaskTemplateEditor: (template: TaskTemplate | null) => void;
-  handleDeleteTaskTemplate: (template: TaskTemplate) => Promise<void>;
 };
 
 /**

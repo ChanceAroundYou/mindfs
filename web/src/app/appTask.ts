@@ -5,7 +5,7 @@
 
 // 类型依赖使用 import type，避免在运行时引入 i18n 与 task service 模块。
 import type { MessageKey, MessageParams } from "../i18n";
-import type { KanbanTask, StageRun, StageTemplate, TaskDetail, TaskTemplate } from "../services/tasks";
+import type { KanbanTask, StageRun, StageTemplate, TaskDetail } from "../services/tasks";
 import { scopeKey } from "../shared/scope";
 
 /** 新建 agent 段时的默认 agent/模型：claude + sonnet，别再默认 codex。 */
@@ -36,13 +36,13 @@ export function findTaskProjectRoot(
   return node ? byKey[taskProjectScopeKey(id, node)] : byId[id];
 }
 
-export function firstUserInputTemplate(template: TaskTemplate | null): string {
-  const first = template?.stages?.[0]?.snapshot;
+export function firstUserInputTemplate(stages: StageTemplate[] | null): string {
+  const first = stages?.[0];
   return first?.role === "user" ? first.prompt_template || "" : "";
 }
 
-export function firstAgentStage(template: TaskTemplate | null): StageTemplate | null {
-  return template?.stages?.map((stage) => stage.snapshot).find((stage) => stage.role === "agent") || null;
+export function firstAgentStage(stages: StageTemplate[] | null): StageTemplate | null {
+  return stages?.find((stage) => stage.role === "agent") || null;
 }
 
 /**
@@ -301,8 +301,6 @@ export type TaskInlineAttachment = {
 };
 
 export type TaskInlineEditState = {
-  templateId: string;
-  templateName: string;
   text: string;
   /**
    * 面板的目标项目。从工作台发起时是那个面板里选的项目，不一定是当前项目；
@@ -320,14 +318,14 @@ export type TaskInlineEditState = {
   createWorktreePerRoot?: Record<string, { createWorktree: boolean; worktreeBranchMode: "new" | "existing"; worktreeBranch: string }>;
   /** 新建时的任务名 */
   name?: string;
-  /** 覆盖下一个 agent 阶段的 agent（空 = 用模板里的） */
+  /** 覆盖下一个 agent 阶段的 agent（空 = 用内置默认流水的） */
   agentOverride?: string;
-  /** 覆盖下一个 agent 阶段的模型（空 = 用模板里的） */
+  /** 覆盖下一个 agent 阶段的模型（空 = 用内置默认流水的） */
   modelOverride?: string;
-  /** 覆盖下一个 agent 阶段的 effort（空 = 用模板里的） */
+  /** 覆盖下一个 agent 阶段的 effort（空 = 用内置默认流水的） */
   effortOverride?: string;
   /**
-   * 覆盖首段的「立即执行」（缺省 = 用模板里的）。
+   * 覆盖首段的「立即执行」（缺省 = 不覆盖）。
    * 开 → 创建后直接推进到下一个 agent 段跑起来；关 → 停在「未开始」。
    */
   startImmediately?: boolean;
@@ -340,66 +338,31 @@ export type TaskInlineEditState = {
 };
 
 /**
- * 把 agent/model/effort 覆盖写到模板的**第一个** agent 段上，
- * 把 startImmediately 覆盖写到首段（任务输入）的「立即执行」上。
+ * 建任务时要随包带的那份流水：在内置默认流水上应用面板里的 agent/model/effort
+ * 与「立即执行」覆盖。
  *
- * wire 上 stages 是拍平的 StageTemplate[]（不是模板里的 { snapshot } 包装），
- * 所以这里返回拍平后的段。模板里没有 agent 段、什么都没覆盖时返回 undefined，
- * 让后端照模板走。
- *
- * startImmediately 是**每次都照实发**的（面板开出来时就填了模板的值，不传才是
- * 「别管」）：只在 true 时写会让「面板上把模板勾上的那颗取消掉」退化成「照模板走」，
- * 任务照样自己跑起来 —— 面板上看得见的选择必须压得住后端。
+ * 流水总是随包带上：建任务时这份流水就是任务的初始快照（AGENTS.md 事实 13），
+ * 后端不再维护任何可回查的流水库。
  */
-export function applyStageOverride(
-  template: TaskTemplate | null,
+export function taskStagesForCreate(
+  stages: StageTemplate[],
   override: { agent?: string; model?: string; effort?: string; startImmediately?: boolean },
-): StageTemplate[] | undefined {
-  if (!template) return undefined;
-  if (!override.agent && !override.model && !override.effort && override.startImmediately === undefined) return undefined;
+): StageTemplate[] {
   let touched = false;
-  const stages = (template.stages || []).map((stage) => {
-    const snapshot = stage.snapshot;
-    if (snapshot?.role !== "agent") return snapshot;
-    if (touched) return snapshot;
+  const next = stages.map((stage) => {
+    // 只覆盖第一个 agent 段；user 段原样拷贝，避免调用方改到共享数组。
+    if (stage.role !== "agent" || touched) return { ...stage };
     touched = true;
     return {
-      ...snapshot,
+      ...stage,
       ...(override.agent ? { agent: override.agent } : {}),
       ...(override.model ? { model: override.model } : {}),
       ...(override.effort ? { effort: override.effort } : {}),
     };
   });
-  if (override.startImmediately !== undefined && stages[0]) {
+  if (override.startImmediately !== undefined && next[0]) {
     // 首段必是 user 段（后端 CreateTask 也这么校验），「立即执行」挂在这儿。
-    // 模板里没有 agent 段时下面会返回 undefined，反正也没有下一段可推进。
-    stages[0] = { ...stages[0], start_immediately: override.startImmediately };
+    next[0] = { ...next[0], start_immediately: override.startImmediately };
   }
-  return touched ? stages : undefined;
-}
-
-/**
- * 建任务时要随包带的那份流水：**总是**产出，不看有没有覆盖。
- *
- * 为什么不能直接用 applyStageOverride：它没覆盖时返回 undefined，
- * 调用方于是省略 stages，后端转而去**任务所在节点**回查模板（service.go 的
- * CreateTask）。模板库只在主节点，项目在 worker 上时那次回查必然失败，
- * 建任务整个报 "task template not found"。而「没覆盖」恰恰是最常见的路径。
- *
- * 带上流水也不改变语义：模板流水线本来就是创建时拷贝的快照
- * （AGENTS.md 事实 13），前端在选模板那一刻取到的快照与后端回查取到的
- * 只差「用户在两步之间改了模板」，这种竞态本来就没有正确答案。
- */
-export function taskStagesForCreate(
-  template: TaskTemplate | null,
-  override: { agent?: string; model?: string; effort?: string; startImmediately?: boolean },
-): StageTemplate[] | undefined {
-  const overridden = applyStageOverride(template, override);
-  if (overridden) return overridden;
-  if (!template) return undefined;
-  const stages = (template.stages || []).map((stage) => stage.snapshot);
-  if (override.startImmediately !== undefined && stages[0]) {
-    stages[0] = { ...stages[0], start_immediately: override.startImmediately };
-  }
-  return stages.length ? stages : undefined;
+  return next;
 }

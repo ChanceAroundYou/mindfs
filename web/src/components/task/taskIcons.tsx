@@ -8,7 +8,7 @@
  * TaskSessionErrorIcon, TaskCancelIcon, DeleteIcon, TaskPlanAuxIcon,
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
  * ChevronDownSmallIcon, WorkflowIcon.
- * Task styles: taskTemplateMenuItemStyle, taskCardSurfaceStyle,
+ * Task styles: taskCardSurfaceStyle,
  * taskCardIconButtonStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
  * WorktreeTagState, taskWorktreeTagStyle, taskReplyPulseStyle.
  *

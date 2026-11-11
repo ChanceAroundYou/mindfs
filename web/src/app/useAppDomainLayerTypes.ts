@@ -71,7 +71,6 @@ export type UseAppDomainLayerParams = {
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
   loadMultiProjectSessionGroups: () => Promise<void>;
   loadSessionsForRoot: (rootID: string, options?: { beforeTime?: string; afterTime?: string; replace?: boolean; force?: boolean; }) => Promise<void>;
-  loadTaskTemplates: () => Promise<void>;
   loadedSessionRef: React.RefObject<Record<string, boolean>>;
   loadingSessionRef: React.RefObject<Partial<Record<string, Promise<SyncSessionResult>>>>;
   mainDirectoryErrorRef: React.RefObject<string>;

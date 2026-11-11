@@ -32,9 +32,7 @@ export const GIT_STATUS_EXPANDED_STORAGE_KEY = "mindfs-git-status-expanded";
 
 export const GIT_HISTORY_EXPANDED_STORAGE_KEY = "mindfs-git-history-expanded";
 
-export const TASK_TEMPLATE_SELECTION_STORAGE_KEY = "mindfs-task-template-selection";
 
-export { TASK_TEMPLATE_ALL_FILTER } from "../shared/taskTemplateConstants";
 
 export { CANDIDATE_FETCH_DEBOUNCE_MS } from "../shared/actionBarUtils";
 

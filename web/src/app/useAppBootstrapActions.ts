@@ -108,7 +108,7 @@ export function useAppBootstrapActions(params: UseAppBootstrapActionsParams) {
   const handleOnboardingStepChange = useCallback((stepId: string) => {
     const showingSidebar = stepId === "sidebar-menu" || stepId === "project-tabs";
     const showingSessions = stepId === "session-actions";
-    const showingTasks = stepId === "project-home" || stepId === "main-menu" || stepId === "task-templates" || stepId === "task-template-menu" || stepId === "tasks";
+    const showingTasks = stepId === "project-home" || stepId === "main-menu" || stepId === "tasks";
 
     if (showingTasks && currentRootId) {
       selectedSessionRef.current = null;

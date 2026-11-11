@@ -39,7 +39,7 @@ export function WorkspaceTaskRow({
 }) {
   const { t } = useI18n();
   const task: KanbanTask = item.task;
-  const name = task.name || item.root_name || task.task_template_name || t("task.unnamedTemplate");
+  const name = task.name || item.root_name || task.task_template_name || t("task.unnamed");
   const sessionKeys = sessionKeysById[task.id]?.length
     ? sessionKeysById[task.id]
     : task.main_session_key
@@ -59,7 +59,7 @@ export function WorkspaceTaskRow({
     >
       <TaskCardRows
         task={task}
-        templateNameFallback={name}
+        taskNameFallback={name}
         sessionKeys={sessionKeys}
         sessionByKey={sessionByKey}
         getNodeColor={getNodeColor}

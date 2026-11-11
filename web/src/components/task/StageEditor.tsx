@@ -36,7 +36,7 @@ export type StageEditorProps = {
    */
   isFirstStage?: boolean;
 
-  /** editor 上方的字段标签（任务模板编辑有「?」说明，任务详情/新建任务没有） */
+  /** editor 上方的字段标签（新建任务面板带「?」说明，任务详情没有） */
   label?: React.ReactNode;
 
   /** user 段也显示 agent 选择器（新建任务面板：选下一段用哪个 agent/模型） */
@@ -118,7 +118,7 @@ export function StageEditor({
           disabled={!onToggleRole}
           onClick={onToggleRole}
           aria-pressed={!isAgent}
-          title={isAgent ? t("taskTemplate.userStageOff") : t("taskTemplate.userStageOn")}
+          title={isAgent ? t("task.stage.userStageOff") : t("task.stage.userStageOn")}
           style={roleToggleStyle(!isAgent, !onToggleRole)}
         >
           user

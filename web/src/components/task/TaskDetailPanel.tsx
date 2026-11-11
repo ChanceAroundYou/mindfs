@@ -349,7 +349,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                     if ("plan_mode" in patch) setEditPlanMode(patch.plan_mode === true);
                     if ("session_reuse_policy" in patch) setEditSessionReuse((patch.session_reuse_policy as SessionReusePolicy) || "task_main");
                   }}
-                  stageNamePlaceholder={editing ? t("taskTemplate.stageNamePlaceholder") : undefined}
+                  stageNamePlaceholder={editing ? t("task.stage.namePlaceholder") : undefined}
                   isFirstStage={index === 0}
                   onStageNameChange={(name) => setEditName(name)}
                   onToggleRole={editing ? () => {
@@ -371,7 +371,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
                   sending={saving}
                   sendDisabled={!editPrompt.trim()}
-                  placeholder={t("taskTemplate.promptTemplate")}
+                  placeholder={t("task.stage.prompt")}
                   accentColor={accentColor}
                   displayValue={editing ? editPrompt : shown}
                 />

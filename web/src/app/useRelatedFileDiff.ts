@@ -29,7 +29,6 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useSessionSearch } from "./useSessionSearch";
 import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useSessionStreamCache } from "./useSessionStreamCache";
-import { useTaskTemplates } from "./useTaskTemplates";
 import { useI18n } from "../i18n";
 import { type FilePayload } from "../services/file";
 import { type GitDiffPayload, fetchGitRelatedFileDiff } from "../services/git";

@@ -31,7 +31,7 @@ test("project scope keys round trip root and node IDs", () => {
 
 test("workspace task creation carries the selected node through the shared dialog", () => {
   expect(useTaskComposer).toMatch(
-    /const openTaskCreateDialog = useCallback\(\(template: TaskTemplate \| null, targetRootId\?: string, targetNodeId\?: string\)/,
+    /const openTaskCreateDialog = useCallback\(\(targetRootId\?: string, targetNodeId\?: string\)/,
   );
   expect(appTask).toMatch(/targetNodeId\?: string/);
   expect(useTaskComposer).toMatch(/findTaskProjectRoot\(rootId, nodeId,/);

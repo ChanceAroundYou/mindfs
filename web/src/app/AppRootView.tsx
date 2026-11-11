@@ -27,7 +27,6 @@ import { ToastContainer } from "../components/shell/ToastContainer";
 import { DialogHost } from "../components/shell/DialogHost";
 import { BottomSheet } from "../components/shell/BottomSheet";
 import { ScheduledAgentTaskDialog } from "../components/task/ScheduledAgentTaskDialog";
-import { TaskTemplateDialog, FieldLabelWithInfo } from "../components/task/TaskTemplateDialog";
 import { PanelShell } from "../components/shell/PanelShell";
 import { composerInputStyle } from "../components/action/composerStyles";
 import {
@@ -38,7 +37,7 @@ import {
 import { getDirectorySortKey, normalizeComparableRootPath, normalizeTreeResponse, unscopedRootId } from "../app/appUtils";
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "../app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "../app/appStorage";
-import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "../app/appTask";
+import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, currentTaskInputFromDetail, firstTaskInputFromDetail, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "../app/appTask";
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../components/task/taskIcons";
 import { TaskSessionErrorDialog } from "../components/app/TaskSessionErrorDialog";
 import { TaskDetailPanelGate } from "../components/app/TaskDetailPanelGate";
@@ -77,7 +76,7 @@ export function AppRootView(props: AppRootViewProps) {
     editDraftRequest, entriesByPath, expanded, file,
     fileEditStore, fileRef, fileScrollPositionsRef, fontSizePreferences,
     getDisplayNodeColor, getNodeIdForRoot, getRootDisplayName, gitDiff,
-    gitDiffSideBySide, handleMoveKanbanTask, handleTaskInlineAttachmentChange, handleTaskTemplateSaved,
+    gitDiffSideBySide, handleMoveKanbanTask, handleTaskInlineAttachmentChange,
     interactionModeRef, isDrawerOpen, isLeftOpen, isMobile,
     isRightOpen, mainDirectoryError, mainView, mainViewRef,
     managedRootByIdRef, managedRootByKeyRef, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
@@ -92,13 +91,13 @@ export function AppRootView(props: AppRootViewProps) {
     setPluginBypass, setProjectTreeTab, setScheduledAgentDialogOpen, setSelectedKanbanTaskId,
     setSendShortcut, setSidebarsSwapped, setTaskInlineActiveToken, setTaskInlineCandidateIndex,
     setTaskInlineCandidates, setTaskInlineEdit, setTaskInlineHelpKey, setTaskSessionErrorDialog,
-    setTaskTemplateDialogOpen, setTreeSortMode, showHiddenFiles, showSessionPane,
+    setTreeSortMode, showHiddenFiles, showSessionPane,
     sidebarsSwapped, slashCopyResetTimersRef, status, switchMainView,
     switchTaskInlineEditProject, t, taskCreateProjectOptions, taskDetailsById,
     taskInlineActiveToken, taskInlineAttachmentInputRef, taskInlineCandidateIndex, taskInlineCandidateItemRefs,
     taskInlineCandidates, taskInlineEdit, taskInlineEditorRef, taskInlineHelpKey,
     taskInlineSaving, taskInlineUploadAbortRef, taskInlineUploadProgress, taskSessionErrorDialog,
-    taskTemplateDialogOpen, taskTemplateDialogTemplate, taskTemplates, taskWorktreeBranches,
+    taskWorktreeBranches,
     treeSortMode, workspaceOpen,
   } = props;
   // useAppSessionLayer 返回值中本组件用到的部分
@@ -383,8 +382,6 @@ drawer={<
       closeTaskEditDialog={closeTaskEditDialog}
       composerInputStyle={composerInputStyle}
       currentRootId={currentRootId}
-      firstAgentStage={firstAgentStage}
-      firstUserInputTemplate={firstUserInputTemplate}
       getNodeIdForRoot={getNodeIdForRoot}
       handleTaskInlineAttachmentChange={handleTaskInlineAttachmentChange}
       isMobile={isMobile}
@@ -411,7 +408,6 @@ drawer={<
       taskInlineSaving={taskInlineSaving}
       taskInlineUploadAbortRef={taskInlineUploadAbortRef}
       taskInlineUploadProgress={taskInlineUploadProgress}
-      taskTemplates={taskTemplates}
       taskWorktreeBranches={taskWorktreeBranches}
       />
 <TaskSessionErrorDialog
@@ -425,14 +421,6 @@ drawer={<
         rootId={currentRootId}
         agents={availableAgents}
         onClose={() => setScheduledAgentDialogOpen(false)}
-      />
-      <TaskTemplateDialog
-        open={taskTemplateDialogOpen}
-        agents={availableAgents}
-        template={taskTemplateDialogTemplate}
-        onClose={() => setTaskTemplateDialogOpen(false)}
-        onSaved={handleTaskTemplateSaved}
-        currentRootId={currentRootId}
       />
 <TaskDetailPanelGate
       applyTaskDetails={applyTaskDetails}

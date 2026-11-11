@@ -566,7 +566,6 @@ groups:
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-stage-panel.test.mjs
       - web/tests/task-detail-order.test.mjs
-      - web/tests/task-template-node-routing.test.mjs
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-cache-eviction.test.mjs
       - web/tests/task-card-wrap.test.mjs
@@ -1972,7 +1971,7 @@ groups:
       - web/src/components/app/TaskInlineEditPanel.tsx
     anchors:
       - web/src/app/appTask.ts:findTaskProjectRoot
-      - "web/src/app/useTaskComposer.ts:openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string)"
+      - "web/src/app/useTaskComposer.ts:openTaskCreateDialog = useCallback((targetRootId?: string, targetNodeId?: string)"
       - web/src/components/app/TaskInlineEditPanel.tsx:findTaskProjectRoot(taskInlineTargetRootId, taskInlineTargetNodeId
       - web/src/app/appStorage.ts:scopeKey(scopeNodeId, rootId)
       - web/src/app/useProjectTreeWorktrees.ts:targetNodeId
@@ -2774,8 +2773,8 @@ groups:
     title: TaskBoardView shared contracts and toolbar presenter
     kind: arch
     symptom: "TaskBoardView was 645 lines and imported task/workspace/session types from service and app implementation files, coupling a pure view to controller and persistence modules."
-    why: "Presentation contracts belong in shared and task-domain type modules, with appStorage/service and the legacy app icon paths kept as compatibility facades, the template toolbar extracted, and task UI assets placed in components/task."
-    boundary: "Task/status data, the template filter sentinel, responsive breakpoints, event order, refresh timing and rendered markup semantics are unchanged. Task visuals live in components/task/taskIcons.tsx, the app path is a compatibility facade, and non-task consumers use the shared color helper directly."
+    why: "Presentation contracts belong in shared and task-domain type modules, with appStorage/service and the legacy app icon paths kept as compatibility facades, the toolbar extracted, and task UI assets placed in components/task."
+    boundary: "Task/status data, responsive breakpoints, event order, refresh timing and rendered markup semantics are unchanged. Task visuals live in components/task/taskIcons.tsx, the app path is a compatibility facade, and non-task consumers use the shared color helper directly."
     tests:
       - web/tests/task-board-view-layering.test.mjs
       - web/tests/task-board-view.test.mjs
@@ -2787,7 +2786,6 @@ groups:
       - web/tests/worktree-finish.test.mjs
       - web/tests/shared-hex-to-rgba.test.mjs
     files:
-      - web/src/shared/taskTemplateConstants.ts
       - web/src/shared/taskTypes.ts
       - web/src/shared/sessionPresentationTypes.ts
       - web/src/shared/workspaceBoardTypes.ts
@@ -2802,9 +2800,7 @@ groups:
       - web/src/components/app/TaskSessionErrorDialog.tsx
       - web/src/components/session/useSessionCard.ts
       - web/src/components/task/TaskCardRows.tsx
-      - web/src/components/task/TaskCreateTemplateMenu.tsx
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/TaskTemplateActionMenu.tsx
       - web/src/components/workspace/WorkspaceQuickLaunch.tsx
       - web/src/components/workspace/WorkspaceBoard.tsx
       - web/src/components/workspace/WorkspaceProjectRow.tsx
@@ -2822,7 +2818,6 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - web/src/shared/taskTemplateConstants.ts:TASK_TEMPLATE_ALL_FILTER
       - web/src/components/task/TaskBoardToolbar.tsx:TaskBoardToolbar
       - web/tests/task-board-view-layering.test.mjs:TaskBoard toolbar owns create, workflow-entry and refresh controls
 
@@ -3276,14 +3271,12 @@ groups:
     boundary: "useAppRootSelection creates the callback at the original hook sequence location; late-declared timer and Git setters use lazy getters so their initialization and access timing stay valid. No routing, cache-clearing condition or App.tsx composition changes."
     tests:
       - web/tests/app-root-selection-split.test.mjs
-      - web/tests/task-template-node-routing.test.mjs
       - web/tests/source-map.test.mjs
       - web/tests/naming-convention.test.mjs
     files:
       - web/src/app/useAppStateLayer.ts
       - web/src/app/useAppRootSelection.ts
       - web/tests/app-root-selection-split.test.mjs
-      - web/tests/task-template-node-routing.test.mjs
       - web/tests/source-map.mjs
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
@@ -3336,9 +3329,9 @@ groups:
   - id: G-DJ
     title: App state layer session and root setup grouped by domain
     kind: arch
-    symptom: "useAppStateLayer still holds session-list/archive state, selected-session and drawer state, responsive shell state, root-scope indexing and task-template/candidate setup, leaving it over the 500-line hard line."
+    symptom: "useAppStateLayer still holds session-list/archive state, selected-session and drawer state, responsive shell state and root-scope indexing, leaving it over the 500-line hard line."
     why: "Each cohesive state domain needs a dedicated hook, leaving useAppStateLayer as the cross-domain assembly point."
-    boundary: "The five extracted hooks run at their original call positions; session literals, pin initialization, responsive state initialization, root scope callbacks, template loading and candidate effects keep their order and behavior. App.tsx unchanged."
+    boundary: "The five extracted hooks run at their original call positions; session literals, pin initialization, responsive state initialization, root scope callbacks and the inline-editor candidate hook keep their order and behavior. App.tsx unchanged. 任务模板状态 hook 已随模板功能下线（Phase 3）删除。"
     tests:
       - web/tests/app-state-domains-split.test.mjs
       - web/tests/source-map.test.mjs
@@ -3349,7 +3342,6 @@ groups:
       - web/src/app/useAppSessionSelectionState.ts
       - web/src/app/useAppResponsiveState.ts
       - web/src/app/useAppRootScopeState.ts
-      - web/src/app/useAppTaskTemplateState.ts
       - web/tests/app-state-domains-split.test.mjs
       - web/tests/source-map.mjs
       - docs/agent/rules/frontend/TODO.md
@@ -3357,7 +3349,7 @@ groups:
       - docs/plans/rule-completion-rollout.md
     anchors:
       - web/src/app/useAppRootScopeState.ts:useAppRootScopeState
-      - web/tests/app-state-domains-split.test.mjs:delegates session, responsive, root-scope, and task-template domains
+      - web/tests/app-state-domains-split.test.mjs:delegates session, responsive, and root-scope domains
 
   - id: G-DK
     title: Session lifecycle separated by action ownership
@@ -5417,29 +5409,6 @@ groups:
       - web/src/components/app/OnboardingGate.tsx:import { OnboardingTour }
       - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
-  - id: G-ID
-    title: Task template save moves to hook
-    kind: arch
-    symptom: "TaskTemplateDialog mixes draft editing with template persistence, validation and global error reporting."
-    why: "Template persistence and the save lifecycle belong in a logic hook, preserving the form component."
-    boundary: "Save and error handling move to useTaskTemplateSave; first user-stage validation, project scope, normalized stages, error messaging, success callback and close order are unchanged."
-    tests:
-      - web/tests/task-template-save-hook.test.mjs
-      - web/tests/task-template-node-routing.test.mjs
-      - web/tests/reviewer-architecture-rules.test.mjs
-    files:
-      - web/src/hooks/useTaskTemplateSave.ts
-      - web/src/components/task/TaskTemplateDialog.tsx
-      - web/tests/task-template-save-hook.test.mjs
-      - web/tests/task-template-node-routing.test.mjs
-      - docs/agent/rules/frontend/TODO.md
-      - docs/plans/README.md
-      - docs/plans/rule-completion-rollout.md
-    anchors:
-      - web/src/hooks/useTaskTemplateSave.ts:saveTaskTemplate({
-      - web/src/components/task/TaskTemplateDialog.tsx:useTaskTemplateSave({
-      - web/tests/task-template-save-hook.test.mjs:task template save hook contract ok
-
   - id: G-IE
     title: Auth gate behavior moves to colocated hook
     kind: arch
@@ -6922,25 +6891,19 @@ groups:
       - 'web/src/app/useNotificationSound.ts:    { freq: 698.46, at: 0, dur: 0.15, type: "triangle" },'
 
   - id: G-KE
-    title: 新建任务面板与模板菜单可用性（ref 断线 / 分支名输入 / 长文本滚动）
+    title: 新建任务面板可用性（分支名输入 / 长文本滚动）
     kind: fix
-    symptom: "「全部」模板页签下点「新建任务」再点 debug 等任何模板，新建任务面板永远不弹出来；同一个缺陷也静默打断了 ⋯ 菜单里的新建/编辑/删除模板。新建面板里「新分支名称」是个裸 input，与任务名输入框完全不是一套。任务文本一长，面板滚不到底、点不到发送键。"
-    why: "① `useTaskTemplates` 造了 `taskTemplateActionMenuRef` / `taskCreateTemplateMenuRef` 并一路透传到工具栏，但两个叶子菜单组件不接受 ref —— `current` 恒为 `null`，点外关闭的 `mousedown` 监听把每次点击都判成「点在外面」，菜单在 `click` 到达之前就被卸载。React 19 允许 ref 当普通 prop 传，所以修复只是加一个 `ref?: React.Ref<HTMLDivElement>` 并挂到最外层定位容器。② 分支名输入原本是 `margin/padding` 撑出来的裸 input，还悬在正文容器外面；面板内既有的唯一输入来源是 `composerInputStyle`（任务名输入框用它）。③ `PromptEditor` 给 `TokenEditor` 传了 `fillHeight`，那条路径把 contentEditable 设成 `height:100% / maxHeight:none`（高度随内容无限长高），而 `composerContainerStyle` 只有 minHeight、发送键又是 `position:absolute; right:6; bottom:6` 挂在容器上 —— 于是跟着容器一起沉到滚动视口之外。删掉 `fillHeight` 就走回默认路径 `maxHeight:240px + overflowY:auto`，与对话输入框（ActionBar）同源。"
-    boundary: "只动三处接线与样式：菜单组件加 ref prop、工具栏透传；分支名输入换成 `composerInputStyle` + 26px 并搬进 worktree 控件行；`PromptEditor` 不传 `fillHeight`。点外关闭的既有逻辑、菜单分组与互斥、`TokenEditor` 的 fillHeight 能力本身（仍可能被别处需要）都不改。tRPC/REST 契约不动。Phase 1（G-LJ）起工具栏不再挂载这两个模板菜单，工具栏一侧的 ref 透传随之移除；组件级 ref 契约仍必须保留，Phase 3 删组件时才可一并删除。"
+    symptom: "新建面板里「新分支名称」是个裸 input，与任务名输入框完全不是一套。任务文本一长，面板滚不到底、点不到发送键。"
+    why: "① 分支名输入原本是 `margin/padding` 撑出来的裸 input，还悬在正文容器外面；面板内既有的唯一输入来源是 `composerInputStyle`（任务名输入框用它）。② `PromptEditor` 给 `TokenEditor` 传了 `fillHeight`，那条路径把 contentEditable 设成 `height:100% / maxHeight:none`（高度随内容无限长高），而 `composerContainerStyle` 只有 minHeight、发送键又是 `position:absolute; right:6; bottom:6` 挂在容器上 —— 于是跟着容器一起沉到滚动视口之外。删掉 `fillHeight` 就走回默认路径 `maxHeight:240px + overflowY:auto`，与对话输入框（ActionBar）同源。"
+    boundary: "只动两处样式：分支名输入换成 `composerInputStyle` + 26px 并搬进 worktree 控件行；`PromptEditor` 不传 `fillHeight`。`TokenEditor` 的 fillHeight 能力本身（仍可能被别处需要）不改，tRPC/REST 契约不动。两个模板菜单组件及其 ref 契约已随模板功能下线（Phase 3）删除。"
     files:
-      - web/src/components/task/TaskCreateTemplateMenu.tsx
-      - web/src/components/task/TaskTemplateActionMenu.tsx
       - web/src/components/task/TaskBoardToolbar.tsx
       - web/src/components/app/TaskInlineEditPanel.tsx
       - web/src/components/editor/PromptEditor.tsx
       - docs/plans/kanban-create-panel-and-shared-worktree.md
     tests:
-      - web/tests/task-template-menu-outside-click.test.mjs
       - web/tests/task-create-panel-editor-bounds.test.mjs
     anchors:
-      - 'web/src/components/task/TaskCreateTemplateMenu.tsx:  ref?: React.Ref<HTMLDivElement>;'
-      - 'web/src/components/task/TaskCreateTemplateMenu.tsx:<div ref={ref} style={{ position: "relative", flexShrink: 0 }}>'
-      - 'web/src/components/task/TaskTemplateActionMenu.tsx:<div ref={ref} style={{ position: "relative", flexShrink: 0 }}>'
       - 'web/src/components/app/TaskInlineEditPanel.tsx:        aria-label={t("task.newBranchName")}'
       - 'web/src/components/editor/PromptEditor.tsx:      {/* 刻意**不传** fillHeight'
 
@@ -7615,26 +7578,29 @@ groups:
 
   # ── 任务模板功能下线（Phase 1）：看板/工作台/新建面板不再依赖模板库 ──────────
   - id: G-LJ
-    title: 任务模板下线（前端隐藏 + 历史流水按工作流语法呈现）
+    title: 任务模板下线（彻底删除模板功能 + 历史流水按工作流语法呈现）
     kind: feature
-    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有模板页签、模板菜单与按模板筛选；工作台「快速发起」点项目直接打开新建面板；新建任务不再要求先建模板，默认就是「用户输入 → agent（{previous_input}）」两段流水；模板时代创建的任务照常显示模板名与流水卡片，流水卡与工作流运行视图同一条视觉语法（状态点/状态色/agent·model/起止时间），模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
-    why: "必须保留：① 没有选中模板时由 `defaultTaskFlowTemplate()` 提供内置 user→agent 流水（agent 段 `prompt_template = \"{previous_input}\"`），创建面板与保存路径都回退到它，没有模板库的 worker 节点也能建任务；② 内置 id `__builtin_default_flow__` 只在前端存在，落库时规范化为空串（不写 task_template_id、不携带模板名），不在后端造第二份内置模板；③ 工作台快速发起只交付 project（rootId/nodeId），模板选择完全由面板内置；④ 任务列表不再按模板筛选（否则「全部」以外的任务会凭空消失），且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ 历史任务不迁移执行引擎 —— `MigrateTaskToWorkflowRun` 拒绝终态任务，而模板时代的任务几乎全终态，所以用 `legacyTaskFlow()` 做只读展示投影：不取数、不写库、不改 `task_stages_json`/`stage_runs`，任务仍由 legacy stages 引擎推进；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与历史流水共用，approved/rejected 是审批结果不归一成 success。"
-    boundary: "Phase 1 只改前端可见性与任务创建的默认流水；Phase 2 只改历史流水的展示（只读投影 + 工作流样式），模板库/API/DB 列与 `task_stages_json`/`stage_runs` 的执行语义不变；Phase 3 才删前端模板组件/服务、后端模板库/API 与 `task_template.json` 打包链，`task_stages_json`/`stage_runs` 保留为任务自己的执行证据，`tasks.task_template_id`/`task_template_name` 两列冻结（停读写、保留列）。不做后端鉴权、不改任务执行引擎。"
+    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有任何模板页签、模板菜单、按模板筛选或模板编辑入口；工作台「快速发起」点项目直接打开新建面板；新建任务默认就是「用户输入 → agent（{previous_input}）」两段流水，建完落库只带 `task_stages_json` 快照，不带任何模板 id/名；模板时代创建的历史任务照常显示名称与流水卡片，流水卡与工作流运行视图同一条视觉语法（状态点/状态色/agent·model/起止时间），模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
+    why: "必须保留：① 新建任务的流水唯一来源是 `defaultTaskFlowStages()`（user 段 + agent 段 `prompt_template = \"{previous_input}\"`），前端每次创建都把拍平的 `StageTemplate[]` 随包带上，后端不得再回查模板库 —— 没有模板库的 worker 节点也必须能建任务；② 不再写 `task_template_id`/`task_template_name`，后端也不得提供模板回退；③ 工作台快速发起只交付 project（rootId/nodeId），不再有模板选择；④ 任务列表不按模板筛选，且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ 历史任务不迁移执行引擎 —— `MigrateTaskToWorkflowRun` 拒绝终态任务，而模板时代的任务几乎全终态，所以用 `legacyTaskFlow()` 做只读展示投影：不取数、不写库、不改 `task_stages_json`/`stage_runs`，任务仍由 legacy stages 引擎推进；`task_template_id`/`task_template_name` 两列冻结为历史显示字段（停写、保留列）；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与历史流水共用，approved/rejected 是审批结果不归一成 success。"
+    boundary: "Phase 1 隐藏模板 UI；Phase 2 历史流水只读投影 + 工作流样式；Phase 3 删除前端模板组件/服务/状态 hook、后端模板库/API 与 `task_template.json` 打包链。`task_stages_json`/`stage_runs` 保留为任务自己的执行证据；`tasks.task_template_id`/`task_template_name` 两列冻结（停读写、保留列）。不做后端鉴权、不改任务执行引擎。"
     files:
       - web/src/app/defaultTaskFlow.ts
       - web/src/app/useTaskComposer.ts
+      - web/src/app/appTask.ts
       - web/src/app/useTaskBoard.ts
       - web/src/app/useTaskInlineCandidates.ts
-      - web/src/app/useAppTaskTemplateState.ts
+      - web/src/app/useTaskInlineEditorState.ts
       - web/src/app/useAppStateLayer.ts
       - web/src/app/useAppViewComposition.ts
       - web/src/app/useAppKanbanTaskPanel.tsx
+      - web/src/components/common/LabelWithInfo.tsx
       - web/src/components/task/TaskBoardToolbar.tsx
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/app/TaskInlineEditPanel.tsx
       - web/src/components/workspace/WorkspaceBoard.tsx
       - web/src/components/workspace/WorkspaceQuickLaunch.tsx
       - web/src/shared/legacyTaskFlow.ts
+      - web/src/shared/taskTypes.ts
       - web/src/components/task/runTimelineModel.ts
       - web/src/components/task/RunNodeRunRow.tsx
       - web/src/components/task/TaskDetailPanel.tsx
@@ -7644,7 +7610,6 @@ groups:
       - web/tests/task-board-view-layering.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
-      - web/tests/task-template-menu-outside-click.test.mjs
       - web/tests/workspace-board.test.mjs
       - web/tests/legacy-task-flow.test.ts
       - web/tests/legacy-flow-render.test.mjs
@@ -7658,10 +7623,13 @@ groups:
       - web/tests/task-card-status.test.mjs
       - web/tests/task-stage-panel.test.mjs
     anchors:
-      - 'web/src/app/defaultTaskFlow.ts:export function defaultTaskFlowTemplate('
-      - 'web/src/app/useTaskComposer.ts:const picked = template ?? defaultTaskFlowTemplate()'
-      - 'web/src/app/useTaskComposer.ts:edit.templateId === DEFAULT_TASK_FLOW_ID ? "" : edit.templateId'
-      - 'web/src/components/task/TaskBoardToolbar.tsx:openTaskCreateDialog(null, currentRootId)'
+      - 'web/src/app/defaultTaskFlow.ts:export function defaultTaskFlowStages(): StageTemplate[] {'
+      - 'web/src/app/useTaskComposer.ts:const stages = defaultTaskFlowStages();'
+      - 'web/src/app/useTaskComposer.ts:taskStagesForCreate('
+      - 'web/src/app/appTask.ts:export function taskStagesForCreate('
+      - 'web/src/app/useTaskInlineEditorState.ts:export function useTaskInlineEditorState('
+      - 'web/src/components/common/LabelWithInfo.tsx:export function LabelWithInfo('
+      - 'web/src/components/task/TaskBoardToolbar.tsx:onClick={() => openTaskCreateDialog(currentRootId)}'
       - 'web/src/components/workspace/WorkspaceQuickLaunch.tsx:onPick(group.rootId, group.nodeId)'
       - 'web/src/shared/legacyTaskFlow.ts:export function legacyTaskFlow(input: LegacyTaskFlowInput): LegacyTaskFlow'
       - 'web/src/shared/legacyTaskFlow.ts:kind: stage.role === "user" ? "human_gate" : "agent"'

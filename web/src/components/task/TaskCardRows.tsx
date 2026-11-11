@@ -47,8 +47,8 @@ const taskMetaPairStyle: React.CSSProperties = {
 
 export type TaskCardRowsProps = {
   task: KanbanTask;
-  /** 编号/名字/阶段名回退用；工作台跨项目时没有「当前模板」概念，传空串即可 */
-  templateNameFallback?: string;
+  /** 编号/名字/阶段名回退用；工作台跨项目时没有「当前任务」概念，传空串即可 */
+  taskNameFallback?: string;
   /** 正文是否渲染在两行之间。默认不渲染 —— 工作台只扫读，正文去项目看板看。 */
   children?: React.ReactNode;
   sessionKeys: string[];
@@ -79,7 +79,7 @@ export type TaskCardRowsProps = {
  */
 export function TaskCardRows({
   task,
-  templateNameFallback = "",
+  taskNameFallback = "",
   children,
   sessionKeys,
   sessionByKey,
@@ -186,8 +186,8 @@ export function TaskCardRows({
   // 现在给完成键；终态任务只要 worktree 还在就继续给收尾键，两条路都通。
   const canComplete = !terminal && !stageRunning && !showAdvance;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
-  const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
-  const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
+  const taskName = task.name || task.task_template_name || taskNameFallback || t("task.unnamed");
+  const title = task.task_template_name || taskNameFallback || t("task.defaultTitle");
   return (
     <>
       {sessionPending ? (

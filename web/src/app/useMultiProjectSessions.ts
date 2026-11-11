@@ -23,7 +23,6 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useSessionSearch } from "./useSessionSearch";
 import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useSessionStreamCache } from "./useSessionStreamCache";
-import { useTaskTemplates } from "./useTaskTemplates";
 import { type ProjectSessionGroup } from "../components/session/SessionList";
 import { useI18n } from "../i18n";
 import { protectedAPIReady } from "../services/net/api";

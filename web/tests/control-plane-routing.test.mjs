@@ -56,11 +56,7 @@ assert.match(workflowDraft, /updateWorkflowDraft\([\s\S]{0,350}?controlPath\(/,
 assert.match(workflowDraft, /publishWorkflowDraft\([\s\S]{0,350}?controlPath\(/,
   "publishing immutable workflow versions is control-plane only");
 
-// tasks.ts 是混的：模板函数是控制面，任务本体是数据面。这是最容易改错的一个文件。
-for (const fn of ["fetchTaskTemplates", "saveTaskTemplate", "deleteTaskTemplate", "fetchStageTemplates", "saveStageTemplate", "deleteStageTemplate"]) {
-  assert.match(tasks, new RegExp(`export async function ${fn}\\([\\s\\S]{0,400}?controlPath\\(`),
-    `${fn} is control plane and must use controlPath`);
-}
+// tasks.ts 全是数据面：模板库下线（Phase 3）后没有控制面函数留在这里。
 for (const fn of ["fetchTasksOverview", "fetchTasks", "createTask", "updateTaskInput"]) {
   assert.doesNotMatch(tasks, new RegExp(`export async function ${fn}\\([\\s\\S]{0,400}?controlPath\\(`),
     `${fn} is data plane and must keep following the node`);

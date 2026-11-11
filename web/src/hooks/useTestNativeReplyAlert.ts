@@ -3,7 +3,7 @@ import { testNativeReplyAlert } from "../services/net/replyPoller";
 import { supportsCustomNativePlugins } from "../services/platform/runtime";
 
 // 组件层不许直接 import services（守卫测试 reviewer-architecture-rules），
-// 由 hook 这一层代持；仓库里 useReportError / useTaskTemplateSave 同例。
+// 由 hook 这一层代持；仓库里 useReportError 同例。
 // supported = false（iOS 壳）时按钮不许出现：那边没有后台轮询服务可测。
 export function useTestNativeReplyAlert(): { message: string; run: () => Promise<void>; supported: boolean } {
   const [message, setMessage] = useState("");

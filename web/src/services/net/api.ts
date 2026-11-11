@@ -212,7 +212,7 @@ export async function protectedFetch(input: RequestInfo | URL, init: RequestInit
 // 只有真发过 ETag 的端点才会写进来；其余端点没有 ETag，自然永远不进表。
 //
 // 上限 64：带 ETag 的端点从 3 个扩到 10 个（/api/sessions、?multi_root、tasks/overview、
-// agents、task-templates、git/status、tree、tasks、replying-sessions、**单会话详情**），
+// agents、git/status、tree、tasks、replying-sessions、**单会话详情**），
 // 其中几个的 URL 带会变的查询参数（tree 的 dir=、tasks 的过滤器、会话详情的
 // latest= / seq=），URL 空间比原先大一个量级，
 // 16 条会把 /api/sessions(111KB) 这类高频条目挤出去，反而白白丢掉命中。

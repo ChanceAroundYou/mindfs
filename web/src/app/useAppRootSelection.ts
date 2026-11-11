@@ -98,7 +98,7 @@ export function useAppRootSelection({
     setRootNodeId(rid, resolvedNid || undefined);
     // active node 跟着选中的项目走：选中哪个项目，请求就该发到那台机器。
     // 之前 active node 只由节点切换器改，于是「本机项目 + 上次点过 pc」的组合下，
-    // 所有不带 nodeId 的请求（模板、会话…）都发去了 pc，页面看着在本机、数据却是
+    // 所有不带 nodeId 的请求（会话…）都发去了 pc，页面看着在本机、数据却是
     // 另一台机器的。项目本身知道自己在哪个节点，选中它时把 active 一起切过去。
     if (resolvedNid) {
       const known = getNodeById(resolvedNid);

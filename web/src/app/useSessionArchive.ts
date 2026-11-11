@@ -25,7 +25,6 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useSessionSearch } from "./useSessionSearch";
 import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useSessionStreamCache } from "./useSessionStreamCache";
-import { useTaskTemplates } from "./useTaskTemplates";
 import { useI18n } from "../i18n";
 import { confirmDialog } from "../services/dialog";
 import { type FilePayload } from "../services/file";

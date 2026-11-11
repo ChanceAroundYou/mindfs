@@ -19,11 +19,11 @@ import { useAppSessionListState } from "./useAppSessionListState";
 import { useAppSessionSelectionState } from "./useAppSessionSelectionState";
 import { useAppResponsiveState } from "./useAppResponsiveState";
 import { useAppRootScopeState } from "./useAppRootScopeState";
-import { useAppTaskTemplateState } from "./useAppTaskTemplateState";
 import { useAppRootSelection } from "./useAppRootSelection";
 import { useAppFileWorkspaceState } from "./useAppFileWorkspaceState";
 import { useNotificationSound } from "./useNotificationSound";
 import { useTaskWorkspaceState } from "./useTaskWorkspaceState";
+import { useTaskInlineEditorState } from "./useTaskInlineEditorState";
 import { useUiPreferences } from "./useUiPreferences";
 import { useTaskBoard } from "./useTaskBoard";
 import { useTaskComposer } from "./useTaskComposer";
@@ -95,15 +95,13 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     currentRootNodeIdRef, managedRootByIdRef, managedRootByKeyRef, getNodeIdForRoot, scopedRootKey,
   } = useAppRootScopeState();
 
-  const {
-    taskTemplateActionMenuRef, taskCreateTemplateMenuRef, taskTemplates, taskTemplateDialogOpen,
-    setTaskTemplateDialogOpen, taskTemplateDialogTemplate, taskTemplateFilter, setTaskTemplateFilter,
-    taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen, taskCreateTemplateMenuOpen,
-    setTaskCreateTemplateMenuOpen, loadTaskTemplates, openTaskTemplateEditor,
-    handleTaskTemplateSaved, handleDeleteTaskTemplate,
-  } = useAppTaskTemplateState({
-    currentRootId, scopedRootKey, getNodeIdForRoot, taskInlineEdit, taskInlineEditorRef,
-    taskInlineActiveToken, setTaskInlineCandidateIndex, setTaskInlineCandidates,
+  useTaskInlineEditorState({
+    currentRootId,
+    getNodeIdForRoot,
+    taskInlineEdit,
+    taskInlineActiveToken,
+    setTaskInlineCandidateIndex,
+    setTaskInlineCandidates,
   });
 
   const [mainView, setMainView] = useState<MainViewMode>(() => "workspace");
@@ -162,7 +160,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     managedRootByIdRef,
     managedRootByKeyRef,
     taskInlineEdit,
-    taskTemplates,
     taskInlineCandidates,
     taskInlineCandidateIndex,
     taskInlineUploadAbortRef,
@@ -385,7 +382,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
      放在一起才看得出「返回」的优先级：弹窗 > 面板 > 悬浮框 > 退视图。
      关闭动作都复用各层既有的关闭路径，所以 PanelShell 的「放弃改动？」确认照旧生效。 */
   useBackLayer(scheduledAgentDialogOpen, () => setScheduledAgentDialogOpen(false));
-  useBackLayer(taskTemplateDialogOpen, () => setTaskTemplateDialogOpen(false));
   useBackLayer(!!taskInlineEdit, () => {
     // 保存中不给关：和面板上那个 × 按钮同一条规则。
     if (!taskInlineSaving) closeTaskEditDialog();
@@ -428,20 +424,20 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     getRootDisplayName, gitDiff, gitDiffSideBySide, gitHistory,
     gitHistoryByRoot, gitHistoryExpandedByRoot, gitHistoryLoading, gitHistoryLoadingByRoot,
     gitHistoryLoadingMore, gitStatus, gitStatusByRoot, gitStatusExpandedByRoot,
-    gitStatusLoading, gitStatusLoadingByRoot, handleDeleteTaskTemplate, handleMoveKanbanTask,
-    handleSelectSessionRef, handleTaskInlineAttachmentChange, handleTaskTemplateSaved, hasMoreSessions,
+    gitStatusLoading, gitStatusLoadingByRoot, handleMoveKanbanTask,
+    handleSelectSessionRef, handleTaskInlineAttachmentChange, hasMoreSessions,
     interactionMode, interactionModeRef, invalidTreeCacheKeysRef, isDrawerOpen,
     isLeftOpen, isMobile, isRightOpen, kanbanTasks,
     kanbanTasksLoading, lastMainSessionSnapshotRef, lastNonChatViewRef, lastPluginChapterRef,
     lastViewerSelectionRef, listLoadErrorAtRef, loadKanbanTasks, loadMoreGitHistory,
-    loadTaskTemplates, loadedSessionRef, loadingOlderSessions, loadingSessionRef,
+    loadedSessionRef, loadingOlderSessions, loadingSessionRef,
     mainDirectoryError, mainDirectoryErrorRef, mainEntries, mainEntriesRef,
     mainView, mainViewRef, managedRootByIdRef, managedRootByKeyRef,
     managedRootIds, managedRootIdsRef, managedRootsRequestRef, mobileEnterKeySends,
     multiProjectLoadSeqRef, multiProjectPendingByKey, multiProjectPendingRef, multiProjectAwaitingByKey, multiProjectAwaitingRef, multiProjectSessionGroups,
     multiProjectSessionGroupsRef, multiProjectSessionsEnabled, multiProjectSessionsLoading, nodeLoadFailuresRef,
     notifiedNodeFailuresRef, notifyNodeLoadFailedRef, onboardingOpen, openTaskCreateDialog,
-    openTaskTemplateEditor, optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
+    optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
     pendingPlanMode, pendingPluginTrust, pendingRequestRef, playNotificationSound,
     pluginBypass, pluginBypassRef, pluginContentRef, pluginLoading,
     pluginManagerRef, pluginQuery, pluginQueryRef, pluginVersion,
@@ -474,20 +470,19 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setScheduledAgentDialogOpen, setSelectedDir, setSelectedDirKey, setSelectedKanbanTaskId,
     setSelectedSession, setSelectedSessionLoading, setSendShortcut, setSessionListMode,
     setSessions, setSidebarsSwapped, setSlashCommandResults, setStatus,
-    setSyncingSessionKeys, setTaskCreateTemplateMenuOpen, setTaskInlineActiveToken, setTaskInlineCandidateIndex,
+    setSyncingSessionKeys, setTaskInlineActiveToken, setTaskInlineCandidateIndex,
     setTaskInlineCandidates, setTaskInlineEdit, setTaskInlineHelpKey, setTaskRelatedFilesById,
-    setTaskSessionErrorDialog, setTaskTemplateActionMenuOpen, setTaskTemplateDialogOpen, setTaskTemplateFilter,
+    setTaskSessionErrorDialog,
     setTreeSortMode, setUpdateState, setUpdateSubmitting, setViewerSelection,
     showHiddenFiles, showSessionPane, sidebarsSwapped, slashCommandResults,
     slashCopyResetTimersRef, staleSessionKeysRef, status, suppressedAutoBindSessionByRootRef,
     switchMainView, switchTaskInlineEditProject, syncingSessionKeys, t,
-    taskCreateProjectOptions, taskCreateTemplateMenuOpen, taskCreateTemplateMenuRef, taskDetailsById,
+    taskCreateProjectOptions, taskDetailsById,
     taskDetailsByIdRef, taskFirstInputById, taskInlineActiveToken, taskInlineAttachmentInputRef,
     taskInlineCandidateIndex, taskInlineCandidateItemRefs, taskInlineCandidates, taskInlineEdit,
     taskInlineEditorRef, taskInlineHelpKey, taskInlineSaving, taskInlineUploadAbortRef,
     taskInlineUploadProgress, taskRelatedFilesById, taskSessionErrorDialog, taskSessionKeysById,
-    taskSessionKeysByIdRef, taskTemplateActionMenuOpen, taskTemplateActionMenuRef, taskTemplateDialogOpen,
-    taskTemplateDialogTemplate, taskTemplateFilter, taskTemplates, taskWorktreeBranches,
+    taskSessionKeysByIdRef, taskWorktreeBranches,
     toggleProjectTreeWorktree, treeFetchSeqRef, treeSortMode, updateState,
     updateSubmitting, viewerSelection, viewerSelectionRef, workspaceBoardRefreshRef,
     workspaceOpen, workspaceOpenRef, worktreeErrorByRoot, worktreeItemsByRoot,

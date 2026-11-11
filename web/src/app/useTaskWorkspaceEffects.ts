@@ -5,7 +5,6 @@ type TaskWorkspaceEffectsProps = {
   currentRootId?: string | null;
   currentRootIdRef: { current: string | null };
   setAgentsVersion: (update: (value: number) => number) => void;
-  loadTaskTemplates: () => unknown;
   loadKanbanTasks: (rootId: string | null) => unknown;
   loadMultiProjectSessionGroups: () => unknown;
   multiProjectSessionsEnabled: boolean;
@@ -21,7 +20,6 @@ export function useTaskWorkspaceEffects({
   bootstrapPhase,
   currentRootIdRef,
   setAgentsVersion,
-  loadTaskTemplates,
   loadKanbanTasks,
   loadMultiProjectSessionGroups,
   multiProjectSessionsEnabled,
@@ -29,7 +27,6 @@ export function useTaskWorkspaceEffects({
   useEffect(() => {
     if (bootstrapPhase !== "ready") return;
     setAgentsVersion((value) => value + 1);
-    void loadTaskTemplates();
     void loadKanbanTasks(currentRootIdRef.current);
     if (multiProjectSessionsEnabled) {
       void loadMultiProjectSessionGroups();
@@ -38,8 +35,7 @@ export function useTaskWorkspaceEffects({
     bootstrapPhase,
     loadKanbanTasks,
     loadMultiProjectSessionGroups,
-    loadTaskTemplates,
-    multiProjectSessionsEnabled,
+      multiProjectSessionsEnabled,
     setAgentsVersion,
   ]);
 }

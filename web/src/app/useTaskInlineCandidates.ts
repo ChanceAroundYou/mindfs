@@ -8,32 +8,29 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import { fetchCandidates, type CandidateItem } from "../services/candidates";
-import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./appStorage";
-import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./appTask";
+import { DEFAULT_TASK_AGENT } from "./appTask";
+import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./appStorage";
+
 import type { Dispatch, SetStateAction } from "react";
 import {
   beginTaskFinishWorktree,
   createTask,
   deleteTask,
-  deleteTaskTemplate,
   // FinishWorktreeConflict 是 class 不是 type：下面要用 instanceof 分流
   // （冲突要列文件清单，其它失败只报一句）。
   FinishWorktreeConflict,
   fetchTaskDetails,
-  fetchTaskTemplates,
   getCachedTaskDetails,
   getCachedTaskMeta,
   moveTask,
   pruneCachedTaskDetails,
   rebuildTaskWorktree,
-  saveTaskTemplate,
   upsertCachedTaskDetails,
   type KanbanTask,
   type StageRun,
   type TaskDetail,
   type TaskOverviewItem,
   type StageTemplate,
-  type TaskTemplate,
 } from "../services/tasks";
 import { TaskInlineEditState } from "./appTask";
 
@@ -72,7 +69,7 @@ useEffect(() => {
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      // 模板选择已下线（Phase 1）：slash 候选按面板里覆盖的 agent，没覆盖就用默认 agent。
+      // slash 候选按面板里覆盖的 agent，没覆盖就用默认 agent。
       const agent = taskInlineEdit?.agentOverride || DEFAULT_TASK_AGENT;
       fetchCandidates({
         rootId: tokenRootId,

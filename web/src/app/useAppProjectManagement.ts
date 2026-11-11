@@ -24,7 +24,7 @@ export function useAppProjectManagement(params: UseAppDomainLayerParams) {
     interactionMode, interactionModeRef, invalidTreeCacheKeysRef, isDrawerOpen,
     isSessionStale, kanbanTasks, lastMainSessionSnapshotRef, lastNonChatViewRef,
     lastPluginChapterRef, lastViewerSelectionRef, loadKanbanTasks, loadMultiProjectSessionGroups,
-    loadSessionsForRoot, loadTaskTemplates, loadedSessionRef, loadingSessionRef,
+    loadSessionsForRoot, loadedSessionRef, loadingSessionRef,
     mainDirectoryErrorRef, mainEntries, mainEntriesRef, mainView,
     mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef,
     managedRootsRequestRef, markSessionStale, multiProjectPendingByKey, multiProjectPendingRef, multiProjectSessionGroups,

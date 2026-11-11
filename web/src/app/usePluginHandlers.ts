@@ -27,7 +27,6 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useSessionSearch } from "./useSessionSearch";
 import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useSessionStreamCache } from "./useSessionStreamCache";
-import { useTaskTemplates } from "./useTaskTemplates";
 import { useI18n } from "../i18n";
 import { type PluginSourceBundle, PluginManager, loadPluginsFromSources, scanPluginSources, snapshotFromPluginSources } from "../plugins/manager";
 import { isPluginSnapshotTrusted, readTrustedPluginSet } from "../plugins/trust";

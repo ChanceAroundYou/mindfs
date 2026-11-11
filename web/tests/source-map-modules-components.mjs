@@ -114,7 +114,6 @@ export const COMPONENT_MODULES = {
   ],
   // main 新增后按领域归入 common/（TaskCardText 已被 main 当死代码删除）
   "src/components/FloatingScroll.tsx": ["src/components/common/FloatingScroll.tsx"],
-  "src/components/TaskTemplateDialog.tsx": ["src/components/task/TaskTemplateDialog.tsx"],
   "src/components/StageEditor.tsx": ["src/components/task/StageEditor.tsx"],
   "src/components/StageOptionsBar.tsx": ["src/components/task/StageOptionsBar.tsx"],
   "src/components/ScheduledAgentTaskDialog.tsx": [

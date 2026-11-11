@@ -234,9 +234,9 @@ Phase 1 代码到此为止；部署（`ship`）与 Phase 2 都需要用户显式
 - Delete: `web/src/services/task/templates.ts`
 - Modify: `web/src/shared/taskTypes.ts`（`TaskTemplate`/`StageTemplate` 只保留后者；`TaskTemplateControls`）、`web/src/i18n/locales/{zh-CN,en-US}-tasks.ts`（模板菜单文案）
 
-- [ ] **Step 1: 删除文件并修引用** — `npm test` + `tsc` 驱动，逐个清掉 import。
-- [ ] **Step 2: 删除模板相关测试** — 只删「模板 UI 存在」的旧测试；`template-ui-hidden.test.mjs` 保留为删除后的守卫（改成断言文件不存在）。
-- [ ] **Step 3: 门禁并提交**（`Scope: G-LJ`）。
+- [x] **Step 1: 删除文件并修引用** — 删除 8 个模板模块（对话框/两个菜单/两个 hook/模板服务/模板常量/`TaskTemplate` 类型），新建任务面板改读 `defaultTaskFlowStages()`，`taskStagesForCreate(stages, override)` 不再依赖模板；`@文件 / /命令` 候选从模板 hook 拆到 `useTaskInlineEditorState.ts`，编辑器聚焦移入 `TaskInlineEditPanel`。
+- [x] **Step 2: 删除模板相关测试** — 删 3 个「模板 UI 存在」的旧测试；`template-ui-hidden.test.mjs` 改为删除后的守卫（模块不存在 + 无 `taskTemplate.` 键 + 创建只发 stages）。其余旧测试逐条改钉新契约（步骤栏、控制面、状态层、看板卡片）。
+- [x] **Step 3: 门禁并提交**（`Scope: G-LJ`）—— `npm test` 583 通过 / 6 跳过、`tsc -b --noEmit` clean；`make check-upstream` 在提交后复核。
 
 ### Task 10: 删除后端模板库与 API
 

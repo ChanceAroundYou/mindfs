@@ -156,7 +156,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
           默认路径：maxHeight 240px + 编辑器内部滚动，与对话输入框同源。 */}
       <TokenEditor
         ref={editorRef}
-        placeholder={placeholder || t("taskTemplate.promptTemplate")}
+        placeholder={placeholder || t("task.stage.prompt")}
         disabled={sending}
         readOnly={!editable}
         isDark={false}

@@ -30,7 +30,7 @@ export type StageOptionsBarProps = StageOptions & {
 /**
  * 阶段选项条：user/agent 角色 + 自动进入下一段 + 计划模式 + 会话复用。
  *
- * 任务模板编辑和任务详情里的阶段编辑共用这一套（以前前者把这些塞在三点
+ * 任务详情 / 新建任务里的阶段编辑共用这一套（以前把这些塞在三点
  * 菜单里，后者干脆没有）。选项直接摊在编辑区上方，不藏菜单。
  *
  * user 段的选项按语义裁掉：引擎对 user 段一律推进（不读 AutoAdvance），
@@ -67,14 +67,14 @@ export function StageOptionsBar({
       {startImmediately !== undefined ? (
         <OptionToggle
           checked={startImmediately}
-          label={t("taskTemplate.startImmediately")}
+          label={t("task.stage.startImmediately")}
           disabled={disabled}
           onClick={() => onStartImmediatelyChange?.(!startImmediately)}
         />
       ) : isAgent ? (
         <OptionToggle
           checked={autoAdvance}
-          label={t("taskTemplate.autoAdvance")}
+          label={t("task.stage.autoAdvance")}
           disabled={disabled}
           onClick={() => onAutoAdvanceChange(!autoAdvance)}
         />
@@ -83,7 +83,7 @@ export function StageOptionsBar({
         <>
           <OptionToggle
             checked={planMode}
-            label={t("taskTemplate.planMode")}
+            label={t("task.stage.planMode")}
             disabled={disabled || !!planModeDisabled}
             onClick={() => onPlanModeChange(!planMode)}
           />
@@ -94,12 +94,12 @@ export function StageOptionsBar({
             <Select
               value={sessionReusePolicy}
               disabled={disabled}
-              ariaLabel={t("taskTemplate.sessionReuse")}
+              ariaLabel={t("task.stage.sessionReuse")}
               onChange={onSessionReusePolicyChange}
               options={[
-                { value: "task_main", label: t("taskTemplate.sessionReuseTaskMain") },
-                { value: "same_stage", label: t("taskTemplate.sessionReuseSameStage") },
-                { value: "always_new", label: t("taskTemplate.sessionReuseAlwaysNew") },
+                { value: "task_main", label: t("task.stage.sessionReuseTaskMain") },
+                { value: "same_stage", label: t("task.stage.sessionReuseSameStage") },
+                { value: "always_new", label: t("task.stage.sessionReuseAlwaysNew") },
               ]}
               size="panel"
             />

@@ -7,14 +7,13 @@ type TaskBoardToolbarProps = {
   currentRootId: string;
   onRefresh: () => void | Promise<void>;
   onOpenWorkflowEditor: () => void;
-  openTaskCreateDialog: (template: null, targetRootId?: string) => void;
+  openTaskCreateDialog: (targetRootId?: string) => void;
 };
 
 /**
  * 看板工具栏：新建任务、工作流草稿入口、刷新。
  *
- * 任务模板的筛选页签、模板动作菜单与「按模板新建」菜单已下线（Phase 1：
- * 模板 UI 不可见，代码与数据保留）。新建任务一律走内置默认流水。
+ * 任务模板已彻底下线（Phase 3）：不筛选、不选模板，新建任务一律走内置默认流水。
  */
 export function TaskBoardToolbar({
   currentRootId,
@@ -34,7 +33,7 @@ export function TaskBoardToolbar({
         title={t("task.create")}
         aria-label={t("task.create")}
         disabled={!canCreate}
-        onClick={() => openTaskCreateDialog(null, currentRootId)}
+        onClick={() => openTaskCreateDialog(currentRootId)}
         style={{
           width: "28px",
           height: "28px",

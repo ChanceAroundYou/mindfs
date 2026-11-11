@@ -2,46 +2,33 @@ import { useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { fetchCandidates, type CandidateItem } from "../services/candidates";
 import { CANDIDATE_FETCH_DEBOUNCE_MS } from "./appStorage";
-import { firstAgentStage } from "./appTask";
 import { useTaskInlineCandidates } from "./useTaskInlineCandidates";
-import { useTaskTemplates } from "./useTaskTemplates";
 import type { TaskInlineEditState } from "./appTask";
-import type { TokenEditorHandle } from "../components/editor/TokenEditor";
 
-type Ref<T> = { current: T };
-
-type UseAppTaskTemplateStateParams = {
+type UseTaskInlineEditorStateParams = {
   currentRootId: string | null;
-  scopedRootKey: (rootId: string) => string;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   taskInlineEdit: TaskInlineEditState | null;
-  taskInlineEditorRef: Ref<TokenEditorHandle | null>;
   taskInlineActiveToken: { type: "file" | "slash" | "prompt" | "command"; query: string } | null;
   setTaskInlineCandidateIndex: Dispatch<SetStateAction<number>>;
   setTaskInlineCandidates: Dispatch<SetStateAction<CandidateItem[]>>;
 };
 
-export function useAppTaskTemplateState({
+/**
+ * 新建任务面板的 @文件 / /命令 候选。
+ *
+ * 原先和任务模板状态挤在同一个 hook 里；模板下线（Phase 3）后模板部分删除，
+ * 候选逻辑单独留在这里。编辑器的文本灌入与聚焦在 TaskInlineEditPanel 内，
+ * 因为它需要知道面板何时打开。
+ */
+export function useTaskInlineEditorState({
   currentRootId,
-  scopedRootKey,
   getNodeIdForRoot,
   taskInlineEdit,
-  taskInlineEditorRef,
   taskInlineActiveToken,
   setTaskInlineCandidateIndex,
   setTaskInlineCandidates,
-}: UseAppTaskTemplateStateParams) {
-  const taskTemplateState = useTaskTemplates({ currentRootId, scopedRootKey });
-
-  useEffect(() => {
-    if (!taskInlineEdit) return;
-    window.setTimeout(() => {
-      taskInlineEditorRef.current?.setText(taskInlineEdit.text || "");
-      // TokenEditor 的 setText 不再抢焦点，开面板时由这里主动聚焦。
-      taskInlineEditorRef.current?.focus();
-    }, 0);
-  }, [taskInlineEdit?.templateId]);
-
+}: UseTaskInlineEditorStateParams) {
   useTaskInlineCandidates({
     AbortController,
     CANDIDATE_FETCH_DEBOUNCE_MS,
@@ -54,6 +41,4 @@ export function useAppTaskTemplateState({
     taskInlineEdit,
     useEffect,
   });
-
-  return taskTemplateState;
 }

@@ -86,7 +86,6 @@ export const SERVICE_MODULES = {
     "src/services/task/types.ts",
     "src/shared/taskTypes.ts",
     "src/services/task/cache.ts",
-    "src/services/task/templates.ts",
     "src/services/task/crud.ts",
     "src/services/task/worktree.ts",
     "src/services/task/index.ts",

@@ -40,7 +40,6 @@ export const APP_MODULES = {
     "src/app/useAppSessionSelectionState.ts",
     "src/app/useAppResponsiveState.ts",
     "src/app/useAppRootScopeState.ts",
-    "src/app/useAppTaskTemplateState.ts",
   ],
   "src/app/useProjectLifecycle.tsx": [
     "src/app/useProjectLifecycle.tsx",
@@ -182,7 +181,6 @@ export const APP_MODULES = {
     "src/app/useAppSessionSelectionState.ts",
     "src/app/useAppResponsiveState.ts",
     "src/app/useAppRootScopeState.ts",
-    "src/app/useAppTaskTemplateState.ts",
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 2 层：会话域。
     "src/app/useAppSessionLayer.ts",
     "src/app/useAppSessionLayerTypes.ts",

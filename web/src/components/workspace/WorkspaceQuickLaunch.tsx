@@ -11,7 +11,7 @@ import type { WorkspaceProjectGroup } from "../../app/useWorkspaceBoard";
  * 新建任务面板，只多一个「项目」下拉（见 TaskInlineEditState.allowProjectSwitch）：
  * worktree、agent、附件、立即执行全都直接可改，一层到位。
  *
- * 模板选择已随模板入口一起下线（Phase 1）：面板固定使用内置默认流水。
+ * 模板选择已随模板入口一起下线：面板固定使用内置默认流水。
  *
  * 按钮本身不选项目 —— 落在第一个项目上，进去之后在下拉里改。这样「点一下 →
  * 就在某个项目里起草」和看板上的新建按钮是同一套心智。

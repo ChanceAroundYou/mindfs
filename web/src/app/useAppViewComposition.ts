@@ -60,7 +60,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     gitHistoryExpandedByRoot, gitHistoryLoading, gitHistoryLoadingByRoot, gitHistoryLoadingMore,
     gitStatus, gitStatusByRoot, gitStatusExpandedByRoot, gitStatusLoading,
     gitStatusLoadingByRoot, handleArchiveSession, handleConfirmExternalImport, handleDeleteSession,
-    handleDeleteTaskTemplate, handleForkAgentMessage, handleGitCommit, handleGitDiscardItem,
+    handleForkAgentMessage, handleGitCommit, handleGitDiscardItem,
     handleGitPull, handleGitPush, handleGitStageItem, handleGitUnstageItem,
     handleLoadOlderExternalSessions, handleLoadOlderSessions, handleMoveKanbanTask, handlePinSession,
     handleRenameSession, handleSearchQueryChange, handleSelectKanbanTask, handleSelectSessionAndClose,
@@ -72,7 +72,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIds,
     multiProjectPendingByKey, multiProjectSessionGroups, multiProjectSessionsEnabled, multiProjectSessionsLoading,
     openGitCommitDiff, openGitDiff, openRelatedFileDiff, openSessionSearch,
-    openTaskCreateDialog, openTaskTemplateEditor, pendingPluginTrust, pluginBypass,
+    openTaskCreateDialog, pendingPluginTrust, pluginBypass,
     pluginBypassRef, pluginRender, pluginThemeVars, projectTreeTab,
     refreshCurrentFileContent, refreshGitHistory, refreshGitStatus, refreshManagedRoots,
     refreshProjectTreeWorktrees, refreshTaskRelatedFiles, refreshTreeDir, relatedSelectedFileKey,
@@ -85,12 +85,9 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     setExpanded, setExpandedTaskInputIds, setExternalFilterBound, setExternalImportAgent,
     setExternalSelectedKey, setGitHistoryExpandedByRoot, setGitStatusExpandedByRoot, setImportMenuOpen,
     setInteractionMode, setPluginBypass, setSelectedKanbanTaskId,
-    setTaskCreateTemplateMenuOpen, setTaskRelatedFilesById, setTaskSessionErrorDialog, setTaskTemplateActionMenuOpen,
-    setTaskTemplateFilter, slashCommandResults, switchGitBranch, switchMainView,
-    syncingSessionKeys, t, taskCreateTemplateMenuOpen, taskCreateTemplateMenuRef,
-    taskDetailsById, taskFirstInputById, taskRelatedFilesById, taskSessionKeysById,
-    taskSessionKeysByIdRef, taskTemplateActionMenuOpen, taskTemplateActionMenuRef, taskTemplateFilter,
-    taskTemplates, toggleAllExternalImportSelection, toggleExternalImportSelection, toggleProjectTreeWorktree,
+    setTaskRelatedFilesById, setTaskSessionErrorDialog, slashCommandResults, switchGitBranch, switchMainView,
+    syncingSessionKeys, t, taskDetailsById, taskFirstInputById, taskRelatedFilesById, taskSessionKeysById,
+    taskSessionKeysByIdRef, toggleAllExternalImportSelection, toggleExternalImportSelection, toggleProjectTreeWorktree,
     toggleSessionSearch, treeSortMode, updateSessionRelatedFilesForKey, updateState,
     updateSubmitting, workspaceBoardRefreshRef, workspaceOpen, worktreeErrorByRoot,
     worktreeItemsByRoot, worktreeLoadingByRoot, worktreeStatusByPath, worktreeStatusLoadingByPath } = params;
@@ -151,7 +148,6 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     actionHandlersRef,
     getNodeIdForRoot,
     switchMainView,
-    setTaskTemplateFilter,
   });
 
   const handleEditUserMessage = useCallback((content: string) => {
@@ -319,9 +315,9 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
 
   // 工作台的快速发起不自己建任务：挑完项目就打开看板那套新建任务面板，
   // worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
-  // 模板选择已下线（Phase 1），面板固定使用内置默认流水。
+  // 面板固定使用内置默认流水（任务模板已下线）。
   const handleWorkspaceCreateTask = useCallback((rootId: string, nodeId: string) => {
-    openTaskCreateDialog(null, rootId, nodeId);
+    openTaskCreateDialog(rootId, nodeId);
   }, [openTaskCreateDialog]);
   // 工作台里点任务卡：留在工作台，就地弹任务详情面板。
   // 不走 openWorkspaceProject —— 那会切项目、切看板、改 URL，等于把人甩出工作台。
@@ -348,10 +344,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns,
     taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor,
     handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen,
-    setTaskSessionErrorDialog, loadKanbanTasks, taskTemplateActionMenuRef, taskTemplateActionMenuOpen,
-    setTaskTemplateActionMenuOpen, taskCreateTemplateMenuRef, taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen,
-    taskTemplates, taskTemplateFilter, setTaskTemplateFilter, openTaskTemplateEditor,
-    handleDeleteTaskTemplate,
+    setTaskSessionErrorDialog, loadKanbanTasks,
   });
 
 

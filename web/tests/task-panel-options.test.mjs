@@ -10,7 +10,7 @@ test("task-panel-options", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
-const dialog = read("src/components/task/TaskTemplateDialog.tsx");
+const labelInfo = read("src/components/common/LabelWithInfo.tsx");
 const panel = read("src/components/task/TaskDetailPanel.tsx");
 const panelHook = read("src/components/task/useTaskDetailPanel.ts");
 const select = read("src/components/Select.tsx");
@@ -26,23 +26,26 @@ const css = read("src/index.css");
 const createPanel = inlinePanel.slice(inlinePanel.indexOf("const createTaskInputStage: StageTemplate"));
 const createEditor = inlinePanel.slice(inlinePanel.indexOf("<StageEditor", inlinePanel.indexOf("createTaskInputStage")));
 
-// 5c) 面板上的字段说明、任务名输入框、user 开关：跟模板编辑面板一模一样。
+// 5c) 面板上的字段说明、任务名输入框、user 开关。
 assert.match(
   createEditor,
-  /label=\{\(\s*<FieldLabelWithInfo/,
-  "the create-task editor must reuse the template dialog's field label + info",
+  /label=\{\(\s*<LabelWithInfo/,
+  "the create-task editor must use the shared field label + info control",
 );
-// TaskTemplateDialog 由 AppRootView 渲染（App.tsx 只剩四层聚合调用）；AppRootView 在 src/app/，
-// 所以它眼里的路径是 ../components/task/。
 assert.match(
-  appRootView,
-  /import \{ TaskTemplateDialog, FieldLabelWithInfo \} from "\.\.\/components\/task\/TaskTemplateDialog"/,
-  "the shared field label must be exported from the template dialog",
+  labelInfo,
+  /export function LabelWithInfo\(/,
+  "the field label + info control lives in its own common component",
+);
+assert.match(
+  inlinePanel,
+  /import \{ LabelWithInfo \} from "\.\.\/common\/LabelWithInfo"/,
+  "the create-task panel must import the shared LabelWithInfo",
 );
 assert.doesNotMatch(
   createEditor,
   /onToggleRole=/,
-  "the create-task panel keeps the user toggle greyed but visible, exactly like the template's first stage",
+  "the create-task panel keeps the user toggle greyed but visible",
 );
 // 任务名必须和 user 开关同排。两者都在 StageEditor 内部才可能同排：任务名
 // 曾经由 App.tsx 在 StageEditor 外面自己开一个 div，user 芯片被挤到下一排。
@@ -79,13 +82,12 @@ assert.match(select, /position: "fixed"/, "the portaled menu must be positioned 
 assert.match(select, /--menu-bg/, "the menu surface must follow the app menu background");
 assert.match(select, /borderRadius: "12px"/, "the menu must match AgentSelector/ModeSelector's surface");
 assert.doesNotMatch(stageOptions, /<select/, "the session-reuse dropdown must use Select, not a native select");
-assert.match(inlinePanel, /<Select/, "the create-task template dropdown must use Select");
+assert.match(inlinePanel, /<Select/, "the create-task panel dropdowns must use Select");
 
 // 7) 阶段选项四项常驻，不再藏三点菜单
-for (const key of ["taskTemplate.autoAdvance", "taskTemplate.planMode", "taskTemplate.sessionReuse"]) {
+for (const key of ["task.stage.autoAdvance", "task.stage.planMode", "task.stage.sessionReuse"]) {
   assert.ok(stageOptions.includes(`t("${key}")`), `the shared options bar must expose ${key}`);
 }
-assert.doesNotMatch(dialog, /StageOptionsMenu/, "the 3-dot menu must be gone from the template dialog");
 assert.doesNotMatch(panel, /StageOptionsMenu/, "the 3-dot menu must be gone from the task detail");
 
 // 保存时四个选项都要落库（UpdateStage 是全量替换，漏一个就丢一个）
@@ -130,7 +132,6 @@ assert.doesNotMatch(panelShell, /onKeyDown|"Escape"|keydown/, "Esc must no longe
 // 只查「有没有 CloseGlyph」太窄 —— 换个画法或直接写个 onClick 就溜过去了。
 for (const [name, src] of [
   ["PanelShell", panelShell],
-  ["TaskTemplateDialog", dialog],
   ["TaskDetailPanel", panel],
   ["App create dialog", appRootView],
 ]) {
@@ -141,7 +142,7 @@ for (const [name, src] of [
   );
   assert.doesNotMatch(
     src,
-    /aria-label=\{t\("common\.close"\)\}|taskTemplate\.close/,
+    /aria-label=\{t\("common\.close"\)\}/,
     `${name} must not render an explicit close affordance`,
   );
 }
@@ -153,13 +154,7 @@ assert.doesNotMatch(
 // headerRight 回到收节点：不再有任何「受控关闭」要发下去
 assert.match(panelShell, /headerRight\?: React\.ReactNode;/, "headerRight is a plain node again");
 assert.match(panelShell, /\{headerRight\}/, "PanelShell must render headerRight directly");
-// 三张面板都要真的接上 dirty 判定，否则守卫对它是空转
-assert.match(dialog, /hasUnsavedChanges=\{\(\) => dirty\}/, "the template dialog must report an edited template");
-assert.match(
-  dialog,
-  /const dirty = JSON\.stringify\(draft\) !== baselineRef\.current;/,
-  "dirty must compare against the snapshot taken when the dialog opened, not a baseline recomputed each render",
-);
+// 两张面板都要真的接上 dirty 判定，否则守卫对它是空转
 assert.match(
   panel,
   /hasUnsavedChanges=\{\(\) => editingName && nameDraft\.trim\(\) !== \(task\.name \|\| ""\)\.trim\(\)\}/,
@@ -181,7 +176,7 @@ assert.doesNotMatch(
 assert.doesNotMatch(
   panel,
   /headerLeft=\{editingName \?[\s\S]{0,400}?taskStatusColor\(task\.status\)/,
-  "the status/template/#number badges are not the cell being edited — keep them out of the editing ternary",
+  "the status/#number badges are not the cell being edited — keep them out of the editing ternary",
 );
 assert.match(
   panel,
@@ -206,11 +201,6 @@ assert.match(
   panelShell,
   /\.\.\.\(minHeight \? \{ minHeight \} : \{\}\)/,
   "PanelShell must treat minHeight as opt-in so omitting it really collapses the card",
-);
-assert.doesNotMatch(
-  dialog,
-  /minHeight=\{520\}/,
-  "the template dialog's fixed 520px floor had the same dead-space problem",
 );
 assert.match(
   panelShell,

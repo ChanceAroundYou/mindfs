@@ -1,6 +1,5 @@
 import { useCallback } from "react";
 import { sessionService } from "../services/session";
-import { TASK_TEMPLATE_ALL_FILTER } from "./appStorage";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { MainViewMode } from "./appPath";
 
@@ -11,7 +10,6 @@ export type UseAppWorkspaceActionsParams = {
   actionHandlersRef: React.RefObject<ActionHandlers>;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   switchMainView: (mode: MainViewMode) => void;
-  setTaskTemplateFilter: React.Dispatch<React.SetStateAction<string>>;
 };
 
 /**
@@ -20,10 +18,10 @@ export type UseAppWorkspaceActionsParams = {
  *
  * openWorkspaceProject 里点项目 = 切到该项目并落到「项目看板」：先走
  * open_dir 把项目树/文件视图切过去（preservePluginQuery 保住插件查询），
- * 再把主视图切到 board、清掉模板筛选。
+ * 再把主视图切到 board。
  */
 export function useAppWorkspaceActions(params: UseAppWorkspaceActionsParams) {
-  const { actionHandlersRef, getNodeIdForRoot, switchMainView, setTaskTemplateFilter } = params;
+  const { actionHandlersRef, getNodeIdForRoot, switchMainView } = params;
 
   const handleAskUserAnswer = useCallback(
     async (input: {
@@ -55,8 +53,7 @@ export function useAppWorkspaceActions(params: UseAppWorkspaceActionsParams) {
       preservePluginQuery: true,
     });
     switchMainView("board");
-    setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-  }, [setTaskTemplateFilter, switchMainView]);
+  }, [switchMainView]);
 
   return {
     handleAskUserAnswer,

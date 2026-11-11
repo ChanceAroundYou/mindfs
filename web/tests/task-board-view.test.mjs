@@ -35,13 +35,13 @@ assert.match(
 // 内置默认流水（user→agent），后端 stages[0].role === "user" 的要求由它保证。
 assert.match(
   app,
-  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, nodeId: string\) => \{\s*\n\s*openTaskCreateDialog\(null, rootId, nodeId\);/,
+  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, nodeId: string\) => \{\s*\n\s*openTaskCreateDialog\(rootId, nodeId\);/,
   "workspace quick launch must hand off to the shared create-task dialog, not build a second one",
 );
 // 面板得知道自己往哪个项目建：targetRootId 缺省才是当前项目（看板入口走这条）
 assert.match(
   app,
-  /const openTaskCreateDialog = useCallback\(\(template: TaskTemplate \| null, targetRootId\?: string, targetNodeId\?: string\)/,
+  /const openTaskCreateDialog = useCallback\(\(targetRootId\?: string, targetNodeId\?: string\)/,
   "openTaskCreateDialog must accept the target project and node",
 );
 assert.match(
@@ -279,22 +279,16 @@ assert.doesNotMatch(
   "已结束列的 groups 不能滤掉空分组，否则「已完成」会整组消失",
 );
 
-// 2) 全部看板与子看板的卡片必须是同一套 DOM
-//    以前用 isAllTaskTemplateFilter 把卡片劈成两套：全部看板有标题条，子看板没有，
-//    #编号 与输入顶格同行、worktree badge 又在输入行右侧重复渲染一份。
-//    已统一为「以全部看板为准」，卡片区不该再按筛选态分叉。
+// 2) 全部看板与子看板共用同一张卡片
+//    卡片正文统一由 TaskCardRows 渲染，不再按「全部/子」筛选态分叉出两套 DOM。
 const cardStart = board.indexOf("<article");
 const cardEnd = board.indexOf("</article>", cardStart);
 const cardJsx = board.slice(cardStart, cardEnd);
-assert.doesNotMatch(
-  cardJsx,
-  /isAllTaskTemplateFilter/,
-  "看板卡片不应再按「全部/子」筛选态分叉渲染（已统一为全部看板样式）",
-);
-assert.doesNotMatch(
-  cardJsx,
-  /!isAllTaskTemplateFilter && taskNumberLabel/,
-  "编号只由标题条渲染一次，不该在输入行里再来一份",
+assert.match(cardJsx, /<TaskCardRows/, "看板卡片必须走共享的 TaskCardRows");
+assert.equal(
+  (board.match(/<TaskCardRows/g) || []).length,
+  1,
+  "看板里只应有一处卡片正文渲染，不能按筛选态各渲染一套",
 );
 
 // 3) worktree badge 曾经渲染两份（标题条一份、输入行右侧一份），只留标题条那份。

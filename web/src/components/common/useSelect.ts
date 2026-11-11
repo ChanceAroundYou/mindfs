@@ -16,7 +16,7 @@ export type SelectProps<T extends string = string> = {
   options: SelectOption<T>[];
   onChange: (value: T) => void;
   disabled?: boolean;
-  /** 收起态显示的文字；不传则取选中项 label。用于「跟随模板」这类占位语义。 */
+  /** 收起态显示的文字；不传则取选中项 label。用于「跟随默认」这类占位语义。 */
   displayLabel?: string;
   /** value 为空字符串时收起态显示的字（次要色） */
   placeholder?: string;

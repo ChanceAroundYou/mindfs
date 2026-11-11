@@ -38,24 +38,6 @@ export type StageTemplate = {
   updated_at?: string;
 };
 
-export type TaskTemplateStage = {
-  id?: string;
-  stage_template_id?: string;
-  position: number;
-  snapshot: StageTemplate;
-};
-
-export type TaskTemplate = {
-  id?: string;
-  name: string;
-  description?: string;
-  /** 限定到某个项目；不传/空 = 全局模板，任何项目都能套用。 */
-  root_id?: string;
-  stages: TaskTemplateStage[];
-  created_at?: string;
-  updated_at?: string;
-};
-
 export type KanbanTask = {
   id: string;
   task_number?: number;

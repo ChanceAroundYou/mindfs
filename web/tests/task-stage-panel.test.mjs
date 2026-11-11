@@ -13,6 +13,7 @@ const composerIcons = fs.readFileSync(path.join(root, "src/components/action/com
 const composerHeight = fs.readFileSync(path.join(root, "src/components/action/useComposerEditorHeight.ts"), "utf8");
 const tasks = fs.readFileSync(path.join(root, "src/services/task/crud.ts"), "utf8");
 const app = fs.readFileSync(path.join(root, "src/app/useAppStateLayer.ts"), "utf8");
+const inlinePanel = fs.readFileSync(path.join(root, "src/components/app/TaskInlineEditPanel.tsx"), "utf8");
 const appView = fs.readFileSync(path.join(root, "src/components/app/TaskDetailPanelGate.tsx"), "utf8");
 const appTask = fs.readFileSync(path.join(root, "src/app/appTask.ts"), "utf8");
 const zh = fs.readFileSync(path.join(root, "src/i18n/locales/zh-CN.ts"), "utf8");
@@ -126,7 +127,7 @@ assert.match(
   "setText must only re-focus when the editor already holds focus",
 );
 assert.match(
-  app,
+  inlinePanel,
   /taskInlineEditorRef\.current\?\.setText\([\s\S]{0,120}?taskInlineEditorRef\.current\?\.focus\(\)/,
   "the create dialog must focus its editor explicitly now that setText no longer steals focus",
 );
@@ -179,8 +180,7 @@ assert.match(zh, /"task\.initialInput": "任务输入"/, "zh-CN must label the f
 assert.doesNotMatch(zh, /"task\.initialInput": "任务初始输入"/, "zh-CN must drop the 任务初始输入 wording");
 assert.match(en, /"task\.initialInput": "Task input"/, "en-US must label the first stage Task input");
 
-// 新增阶段：复制上一段的 agent/model，模板面板和任务详情都走同一个函数。
-const templateDialog = fs.readFileSync(path.join(root, "src/components/task/TaskTemplateDialog.tsx"), "utf8");
+// 新增阶段：复制上一段的 agent/model，走同一个函数。
 assert.match(
   appTask,
   /export const DEFAULT_TASK_AGENT = "claude"/,
@@ -197,11 +197,6 @@ assert.match(
   "inheritAgentStage copies the closest previous agent stage",
 );
 assert.match(
-  templateDialog,
-  /snapshot: \{ \.\.\.blankAgentStage\(prev\.stages\[prev\.stages\.length - 1\]\?\.snapshot\)/,
-  "template addStage must inherit the last stage's agent/model",
-);
-assert.match(
   panelHook,
   /const stage = inheritAgentStage\(stages, stages\.length\);/,
   "task detail addStage must inherit the last stage's agent/model",
@@ -212,8 +207,8 @@ assert.match(
   /setEditingStage\(\(next\.task\.stages\?\.length \|\| 1\) - 1\);/,
   "a freshly added stage must open in edit mode",
 );
-// 两张面板都不许再留 codex 兜底。
-for (const [src, name] of [[panel, "TaskDetailPanel"], [templateDialog, "TaskTemplateDialog"], [app, "App"]]) {
+// 各面板都不许再留 codex 兜底。
+for (const [src, name] of [[panel, "TaskDetailPanel"], [app, "App"]]) {
   assert.doesNotMatch(
     src,
     /editAgent[^\n]*"codex"|agent: "codex"|\|\| "codex"/,

@@ -30,7 +30,7 @@ export const INPUT_FONT_SIZE = 13;
  */
 export const COMPOSER_CHIP_FONT_SIZE = 9;
 
-/** 单行紧凑输入框（模板名、阶段名、任务名等）。与 PromptEditor 同源边框/底色/字号。 */
+/** 单行紧凑输入框（阶段名、任务名等）。与 PromptEditor 同源边框/底色/字号。 */
 export const composerInputStyle: React.CSSProperties = {
   boxSizing: "border-box",
   borderRadius: "6px",

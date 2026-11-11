@@ -119,7 +119,6 @@ assert.match(
 // 三个 PanelShell/对话框 + 悬浮框。少接一个，那个面板的返回键就还是退出。
 for (const [name, pattern] of [
   ["scheduled agent dialog", /useBackLayer\(scheduledAgentDialogOpen,/],
-  ["task template dialog", /useBackLayer\(taskTemplateDialogOpen,/],
   ["new-task panel", /useBackLayer\(!!taskInlineEdit,/],
   ["files-view drawer", /useBackLayer\(isDrawerOpen && mainView === "files",/],
 ]) {

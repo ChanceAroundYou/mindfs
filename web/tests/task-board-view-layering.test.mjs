@@ -36,8 +36,7 @@ test("TaskBoard toolbar owns create, workflow-entry and refresh controls", () =>
   assert.doesNotMatch(toolbar, /TaskCreateTemplateMenu/);
 });
 
-test("appStorage preserves the public task-template filter facade", () => {
-  assert.match(storage, /export \{ TASK_TEMPLATE_ALL_FILTER \} from ["']\.\.\/shared\/taskTemplateConstants["']/);
+test("appStorage preserves the shared workspace filter facade", () => {
   assert.match(storage, /export \{ WORKSPACE_FILTERS \} from ["']\.\.\/shared\/workspaceBoardTypes["']/);
   assert.match(storage, /export type \{ WorkspaceBoardFilter \} from ["']\.\.\/shared\/workspaceBoardTypes["']/);
   assert.match(taskTypeFacade, /export \* from ["']\.\.\/\.\.\/shared\/taskTypes["']/);

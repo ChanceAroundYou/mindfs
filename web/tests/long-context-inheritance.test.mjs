@@ -152,11 +152,11 @@ for (const [rel, label] of callSites) {
   );
 }
 
-// 详情面板 / 模板弹窗不再自带 AgentSelector，必须经 StageEditor 这一个口子走，
+// 详情面板 / 新建任务面板不再自带 AgentSelector，必须经 StageEditor 这一个口子走，
 // 否则统一之后 resolver 很容易只改到其中一条路径。
 for (const [rel, label] of [
   ["components/TaskDetailPanel.tsx", "任务详情面板"],
-  ["components/TaskTemplateDialog.tsx", "任务模板弹窗"],
+  ["components/app/TaskInlineEditPanel.tsx", "新建任务面板"],
 ]) {
   const text = fs.readFileSync(path.join(root, "src", rel), "utf8");
   assert.match(text, /<StageEditor\b/, `${label}(${rel}) 必须渲染 StageEditor`);

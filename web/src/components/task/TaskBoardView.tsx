@@ -91,7 +91,7 @@ export function TaskBoardView({
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
-  openTaskCreateDialog: (template: null, targetRootId?: string) => void;
+  openTaskCreateDialog: (targetRootId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
@@ -303,7 +303,7 @@ export function TaskBoardView({
                       >
                       <TaskCardRows
                         task={task}
-                        templateNameFallback=""
+                        taskNameFallback=""
                         sessionKeys={taskSessionKeys}
                         sessionByKey={sessionByKey}
                         getNodeColor={getDisplayNodeColor}
