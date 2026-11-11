@@ -11,6 +11,20 @@ export function isCodexProfileAgent(agentName: string, agent?: AgentProfileStatu
 	return agentName.trim().toLowerCase() === "codex";
 }
 
+// 共享配置同步按 harness 家族登记（codex / claude）；agent 名称可以是自定义的
+// （codex-custom、claude-sdk 之类），所以先从 protocol / 名字归一，再回退原名。
+export function agentConfigHarnessName(agentName: string, agent?: AgentProfileStatus): string {
+	const name = agentName.trim();
+	const protocol = String(agent?.protocol || "").trim().toLowerCase();
+	if (isCodexProfileAgent(name, agent)) {
+		return "codex";
+	}
+	if (protocol.includes("claude") || name.toLowerCase().includes("claude")) {
+		return "claude";
+	}
+	return name;
+}
+
 export function switchableAgentConfigBackups(
   agentName: string,
   agent: AgentProfileStatus,

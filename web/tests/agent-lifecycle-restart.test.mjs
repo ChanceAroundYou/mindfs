@@ -16,8 +16,14 @@ assert.match(
 
 assert.match(
   zhCN,
-  /"fileTree\.switchAgentConfig": "Agent 配置切换重启"/,
-  "Chinese config switch menu label should mention restart",
+  /"fileTree\.agentConfig": "Agent 配置"/,
+  "Chinese config menu should stay one entry",
+);
+
+assert.match(
+  zhCN,
+  /"fileTree\.agentProviders": "API 供应商 \/ 模型"/,
+  "Chinese provider menu should be a separate entry",
 );
 
 assert.match(
@@ -34,8 +40,14 @@ assert.match(
 
 assert.match(
   enUS,
-  /"fileTree\.switchAgentConfig": "Switch and restart Agent config"/,
-  "English config switch menu label should mention restart",
+  /"fileTree\.agentConfig": "Agent config"/,
+  "English config menu should stay one entry",
+);
+
+assert.match(
+  enUS,
+  /"fileTree\.agentProviders": "API providers \/ models"/,
+  "English provider menu should be a separate entry",
 );
 
 assert.match(

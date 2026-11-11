@@ -3,6 +3,8 @@ export const zhCNProjects = {
   "fileTree.addProject": "添加项目",
   "fileTree.addAgentConfig": "添加 Agent 配置",
   "fileTree.switchAgentConfig": "Agent 配置切换重启",
+  "fileTree.agentConfig": "Agent 配置",
+  "fileTree.agentProviders": "API 供应商 / 模型",
   "fileTree.agentInstallUpdate": "Agent 安装和更新",
   "fileTree.sessionNamingAgent": "会话重命名配置",
   "fileTree.idleSessionResourceRelease": "空闲会话释放",

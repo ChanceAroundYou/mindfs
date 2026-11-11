@@ -5,7 +5,7 @@ import { fetchAgents } from "../../services/agents";
 import { isCodexProfileAgent, switchableAgentConfigBackups } from "./agentConfigProfiles";
 
 export function useAgentConfigSelection(ctx: any) {
-  const { agentConfigRestartingAgent, onRestartAgent, t, setAgentConfigRestartingAgent, setAgentConfigError, agentConfigAgent, setAgentConfigAgent, setAgentConfigBusy, agentConfigAgents, agentConfigFlow, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigAddTab, setAgentConfigStep, setAgentConfigBackups, setAgentAPIProviders, setAgentConfigSyncStatus, setSelectedAgentConfigID, agentConfigPreferredProviderIDs, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigSwitchTab } = ctx;
+  const { agentConfigRestartingAgent, onRestartAgent, t, setAgentConfigRestartingAgent, setAgentConfigError, agentConfigAgent, setAgentConfigAgent, setAgentConfigBusy, agentConfigAgents, agentConfigFlow, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigDetailTab, setAgentConfigStep, setAgentConfigBackups, setAgentAPIProviders, setAgentConfigSyncStatus, setSelectedAgentConfigID, agentConfigPreferredProviderIDs, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection } = ctx;
 const restartAgentFromConfigList = React.useCallback(async (agentName: string) => {
   if (!agentName || !onRestartAgent || agentConfigRestartingAgent) {
     return;
@@ -57,27 +57,21 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
   setAgentConfigBusy(true);
   try {
     const selectedAgent = agentConfigAgents.find((item: any) => item.name === agentName);
-    const supportsAPIProvider = Boolean(selectedAgent?.supports_api_provider_switch);
     const isCodex = isCodexProfileAgent(agentName, selectedAgent);
-    if (agentConfigFlow === "backup") {
-      const defaults = await fetchAgentConfigDefaults(agentName);
-      setAgentConfigName("");
-      setAgentConfigFileSourcesBody((defaults.file_sources || []).join("\n"));
-      setAgentConfigEnvBody((defaults.env_keys || []).map((key) => `${key}=`).join("\n"));
-      setAgentAPIProviderName("");
-      setAgentAPIProviderBaseURL("");
-      setAgentAPIProviderAPIKey("");
-      setAgentConfigAddTab("backup");
+    if (agentConfigFlow === "provider") {
+      const providers = await fetchAgentAPIProviders(agentName);
+      setAgentAPIProviders(providers);
+      const preferredProvider = providers.find((provider) => agentConfigPreferredProviderIDs.includes(provider.id));
+      setSelectedAgentAPIProviderID(preferredProvider?.id || "");
+      setAgentConfigSwitchSelection(preferredProvider ? { type: "api_provider", id: preferredProvider.id } : null);
       setAgentConfigStep("details");
     } else {
-      const [backups, providers, syncStatus] = await Promise.all([
+      const [backups, syncStatus] = await Promise.all([
         fetchAgentConfigBackups(agentName),
-        supportsAPIProvider && !isCodex ? fetchAgentAPIProviders(agentName) : Promise.resolve([]),
-        isCodex ? fetchAgentConfigSyncStatus() : Promise.resolve(null),
+        fetchAgentConfigSyncStatus(),
       ]);
       const switchableBackups = switchableAgentConfigBackups(agentName, selectedAgent, backups);
       setAgentConfigBackups(switchableBackups);
-      setAgentAPIProviders(providers);
       setAgentConfigSyncStatus(syncStatus);
       const lastSelection = selectedAgent?.last_config_selection;
       const lastSharedBackup = isCodex && lastSelection?.type === "backup"
@@ -88,15 +82,9 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
         : null;
       const initialBackupID = lastSharedBackup?.id || defaultSharedBackup?.id || "";
       setSelectedAgentConfigID(initialBackupID);
-      const preferredProvider = providers.find((provider) => agentConfigPreferredProviderIDs.includes(provider.id));
-      setSelectedAgentAPIProviderID(preferredProvider?.id || "");
-      setAgentConfigSwitchSelection(initialBackupID
-        ? { type: "backup", id: initialBackupID }
-        : preferredProvider ? { type: "api_provider", id: preferredProvider.id } : null);
-      setAgentConfigSwitchTab(!isCodex && supportsAPIProvider && lastSelection?.type === "api_provider" ? "api_provider" : "backup");
-      if (!isCodex && supportsAPIProvider && agentConfigPreferredProviderIDs.length > 0) {
-        setAgentConfigSwitchTab("api_provider");
-      }
+      setSelectedAgentAPIProviderID("");
+      setAgentConfigSwitchSelection(initialBackupID ? { type: "backup", id: initialBackupID } : null);
+      setAgentConfigDetailTab("switch");
       setAgentConfigStep("details");
     }
   } catch (error) {
@@ -106,5 +94,19 @@ const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
   }
 }, [agentConfigAgents, agentConfigFlow, agentConfigPreferredProviderIDs, t]);
 
-  return { restartAgentFromConfigList, chooseAgentForConfig };
+  // 「备份」页签第一次打开时按 agent 默认值预填来源与环境变量；已有输入不覆盖。
+const loadAgentConfigBackupDefaults = React.useCallback(async (agentName: string) => {
+  if (!agentName) {
+    return;
+  }
+  try {
+    const defaults = await fetchAgentConfigDefaults(agentName);
+    setAgentConfigFileSourcesBody((previous: string) => previous || (defaults.file_sources || []).join("\n"));
+    setAgentConfigEnvBody((previous: string) => previous || (defaults.env_keys || []).map((key: string) => `${key}=`).join("\n"));
+  } catch (error) {
+    setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadConfigFailed"));
+  }
+}, [t]);
+
+  return { restartAgentFromConfigList, chooseAgentForConfig, loadAgentConfigBackupDefaults };
 }

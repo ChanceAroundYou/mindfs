@@ -73,12 +73,20 @@ export type AgentConfigBackup = {
   localCredentialAvailable?: boolean;
 };
 
+export type AgentConfigHarnessInfo = {
+  name: string;
+  available: boolean;
+  shared_dir?: string;
+  message?: string;
+};
+
 export type AgentConfigSyncResult = {
   state: "idle" | "syncing" | "synced" | "pending" | "conflict" | "invalid" | "unavailable";
   commit_ids?: string[];
   last_attempt_at?: string;
   last_success_at?: string;
   message?: string;
+  harnesses?: AgentConfigHarnessInfo[];
 };
 
 export type AgentAPIProvider = {

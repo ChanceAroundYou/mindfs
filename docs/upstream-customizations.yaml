@@ -7325,14 +7325,15 @@ groups:
 
   # ── Codex 与 MindFS 配置跨设备双向同步 ───────────────────────────
   - id: G-KP
-    title: Codex 默认/llmux 配置与 MindFS provider 元数据安全双向同步
+    title: Codex/Claude 共享配置与 MindFS provider 元数据安全双向同步
     kind: feature
-    symptom: "Codex default/llmux 配置和 MindFS provider 元数据分别困在各设备；直接同步完整备份会把 auth token、API Key、项目路径与 hook trust hash 推进 Git。"
-    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。"
-    boundary: "不共享 auth.json、API Key、OAuth token、项目路径、Codex 信任状态、会话或缓存；不做 last-writer-wins，不把 .agents 外的路径纳入 Git 暂存。首次快照迁移只由 --apply 显式触发。"
+    symptom: "Codex default/llmux 配置、Claude settings/MCP 和 MindFS provider 元数据分别困在各设备；直接同步完整备份会把 auth token、API Key、项目路径与 hook trust hash 推进 Git。设置页此前把「添加配置」「切换重启」拆成两条平行流程，同步入口只对 Codex 出现，其他 harness 既看不到原因也无法同步。"
+    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。同步引擎按 harness 注册表扩展：Codex 校验/渲染保持原路径，Claude 在 Go 里重写 render.sh 的语义（settings.deepMerge、permissions.deny 并集、MCP null 停用、${HOME} 展开、~/.claude.json 只合并 mcpServers、语义等价不落盘、非法现有文件拒绝覆盖），使 pc-win 无 jq 也能得到同一结果。设置页收成两个入口：Agent 配置（先选 harness，再切换/备份/同步）与 API 供应商/模型。"
+    boundary: "不共享 auth.json、API Key、OAuth token、项目路径、Codex 信任状态、Claude settings.local.json、~/.claude.json 除 mcpServers 外的键、会话或缓存；不做 last-writer-wins，不把 .agents 外的路径纳入 Git 暂存。首次快照迁移只由 --apply 显式触发。"
     files:
       - docs/upstream-customizations.yaml
       - docs/plans/README.md
+      - docs/plans/agent-settings-unified.md
       - docs/superpowers/plans/2026-11-09-codex-mindfs-bidirectional-sync.md
       - cli/cmd/mindfs.go
       - cli/cmd/agent_config_sync.go
@@ -7345,16 +7346,22 @@ groups:
       - server/internal/api/agent_config*.go
       - web/src/shared/agentTypes.ts
       - web/src/services/agent/agentConfig.ts
+      - web/src/components/file/AgentConfigAgentStep.tsx
       - web/src/components/file/AgentConfigPopover.tsx
       - web/src/components/file/AgentConfigProfileList.tsx
       - web/src/components/file/AgentConfigSyncStatus.tsx
       - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeAgentConfigMenuButtons.tsx
       - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/src/components/file/agentConfigProfiles.ts
       - web/src/components/file/useAgentConfigActions.ts
+      - web/src/components/file/useAgentConfigFlowTransitions.ts
       - web/src/components/file/useAgentConfigSelection.ts
       - web/src/components/file/useAgentConfigSwitchRequest.ts
       - web/src/i18n/locales/en-US-agents.ts
+      - web/src/i18n/locales/en-US-projects.ts
       - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
       - web/tests/file-tree-agent-config-flow.test.mjs
     tests:
       - internal/codexsync/
@@ -7363,9 +7370,15 @@ groups:
       - server/internal/api/agent_config_export_test.go
       - server/internal/api/agent_config_shared_test.go
       - server/internal/api/agent_config_sync_handlers_test.go
+      - web/tests/agent-settings-unified-menu.test.mjs
       - web/tests/file-tree-agent-config-flow.test.mjs
+      - web/tests/agent-config-agent-step.test.mjs
+      - web/tests/agent-config-custom-codex.test.ts
+      - web/tests/agent-lifecycle-restart.test.mjs
     anchors:
       - 'internal/codexsync/run.go:func RunAt(ctx context.Context, mode Mode, paths Paths) (Result, error)'
+      - 'internal/codexsync/harnesses.go:func HarnessStatusesAt(paths Paths) []HarnessInfo'
+      - 'internal/codexsync/harness_claude.go:func renderClaudeRuntime(paths Paths) error'
       - 'internal/codexsync/git.go:func syncRepository(ctx context.Context, repoRoot string) (Result, error)'
       - 'internal/codexsync/profile_link.go:func prepareLocalProfileEdit(paths Paths) error'
       - 'server/internal/api/agent_api_provider_storage.go:func writeAgentAPIProviders(providers []agentAPIProvider) error'

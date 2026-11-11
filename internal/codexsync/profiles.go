@@ -293,20 +293,41 @@ func ValidateProviderMetadata(payload []byte) error {
 	return nil
 }
 
+// allowedRepoPaths / allowedRepoPrefixes 是共享仓库里允许 MindFS 提交/应用的
+// 路径。仓库本身就是「跨设备共享配置」专用，任何未登记的路径都视为无关改动并
+// 阻止同步。Codex 只允许三个受管文件（其余快照、缓存不得进 Git）；新增 harness
+// 时在前缀表里登记它的共享目录（并补 harness adapter）。
+var allowedRepoPaths = map[string]bool{
+	"codex/config.toml":                true,
+	"codex/profiles/llmux.config.toml": true,
+	"codex/providers.json":             true,
+}
+
+var allowedRepoPrefixes = []string{
+	"claude/",
+	"dsh/",
+	"skills/",
+	"scripts/",
+}
+
 func IsAllowedRepoPath(repoPath string) bool {
-	if repoPath == "" || strings.Contains(repoPath, `\`) || strings.HasPrefix(repoPath, "/") {
+	repoPath, ok := normalizeRepoPath(repoPath)
+	if !ok {
 		return false
 	}
-	clean := strings.TrimPrefix(repoPath, "./")
-	if clean != repoPath || strings.Contains(repoPath, "..") {
-		return false
-	}
-	switch repoPath {
-	case "codex/config.toml", "codex/profiles/llmux.config.toml", "codex/providers.json":
+	if allowedRepoPaths[repoPath] {
 		return true
-	default:
+	}
+	base := filepath.Base(repoPath)
+	if strings.HasSuffix(base, ".tmp") || strings.HasSuffix(base, ".replace-backup") {
 		return false
 	}
+	for _, prefix := range allowedRepoPrefixes {
+		if strings.HasPrefix(repoPath, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeTOML(payload []byte) (map[string]any, error) {

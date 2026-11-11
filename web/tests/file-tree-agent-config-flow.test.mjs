@@ -33,7 +33,8 @@ test("Codex config backups distinguish shared profiles from local recovery snaps
   assert.match(selection, /isCodexProfileAgent/);
   assert.match(selection, /last_config_selection/);
   assert.match(selection, /shared:codex-default/);
-  assert.match(popover, /isCodexProfileAgent[\s\S]*effectiveSwitchTab === "api_provider"/);
+  assert.match(popover, /switchableBackups/);
+  assert.match(popover, /detailTab === "switch"/);
 });
 
 test("failed local backup deletion reloads the server-owned backup list", () => {
@@ -54,6 +55,10 @@ test("Codex config UI exposes safe sync status and missing local provider creden
   assert.match(service, /requestAgentConfigSync/);
   assert.match(popover, /item\.localCredentialAvailable === false/);
   assert.match(popover, /AgentConfigSyncStatus/);
+  assert.match(popover, /detailTab === "switch"[\s\S]*detailTab === "backup"/);
+  assert.match(popover, /harnesses/);
+  assert.match(popover, /agentConfigHarnessName/);
+  assert.match(popover, /syncUnsupported/);
   assert.match(status, /agentConfig\.retrySync/);
   assert.match(selection, /agentConfigSyncStatus\?\.state !== "syncing"/);
   assert.match(selection, /setTimeout\(poll, 1000\)/);

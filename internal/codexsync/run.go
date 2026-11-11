@@ -75,7 +75,7 @@ func RunAt(ctx context.Context, mode Mode, paths Paths) (Result, error) {
 		if err := prepareLocalProfileEdit(paths); err != nil {
 			return Result{State: "conflict", LastAttemptAt: now, Message: "local and shared llmux profiles changed; both copies were preserved"}, err
 		}
-		if err := validateSharedSources(paths); err != nil {
+		if err := validateAllSharedSources(paths); err != nil {
 			return Result{State: "invalid", LastAttemptAt: now, Message: "shared configuration failed validation; runtime files were not changed"}, err
 		}
 		result, syncErr := syncRepository(ctx, paths.AgentsRoot)
@@ -83,11 +83,14 @@ func RunAt(ctx context.Context, mode Mode, paths Paths) (Result, error) {
 		if syncErr != nil {
 			return result, syncErr
 		}
-		if err := validateSharedSources(paths); err != nil {
+		if err := validateAllSharedSources(paths); err != nil {
 			return Result{State: "invalid", CommitIDs: result.CommitIDs, LastAttemptAt: now, Message: "received shared configuration failed validation; runtime files were not changed"}, err
 		}
 		if err := renderRuntime(paths); err != nil {
 			return Result{State: "invalid", CommitIDs: result.CommitIDs, LastAttemptAt: now, Message: "shared data synchronized, but local Codex config could not be rendered; previous runtime files were preserved"}, err
+		}
+		if err := renderSharedHarnessRuntimes(paths); err != nil {
+			return Result{State: "invalid", CommitIDs: result.CommitIDs, LastAttemptAt: now, Message: "shared data synchronized, but a local harness runtime config could not be rendered"}, err
 		}
 		if err := ensureLLMuxProfile(paths); err != nil {
 			state := "pending"
@@ -111,6 +114,8 @@ func validatePaths(paths Paths) error {
 		paths.SharedLLMux, paths.SharedProviders, paths.RuntimeConfig, paths.RuntimeLLMux,
 		paths.SnapshotsRoot, paths.DefaultSnapshot, paths.LLMuxSnapshot,
 		paths.LegacyProviders, paths.LocalSecrets, paths.StateDir,
+		paths.ClaudeHome, paths.SharedClaudeSettings, paths.SharedClaudeMCP,
+		paths.ClaudeLocalSettings, paths.ClaudeRuntimeSettings, paths.ClaudeRuntimeMCP, paths.ClaudeJSON,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return errors.New("incomplete Codex sync paths")
@@ -123,7 +128,7 @@ func check(paths Paths) (Result, error) {
 	if err := ensureRepository(paths.AgentsRoot); err != nil {
 		return Result{State: "unavailable", Message: ".agents Git checkout is unavailable"}, err
 	}
-	if err := validateSharedSources(paths); err != nil {
+	if err := validateAllSharedSources(paths); err != nil {
 		return Result{State: "invalid", Message: "shared configuration failed validation"}, err
 	}
 	dirty, err := worktreePaths(context.Background(), paths.AgentsRoot)

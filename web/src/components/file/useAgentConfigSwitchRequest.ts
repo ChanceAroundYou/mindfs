@@ -3,7 +3,7 @@ import { fetchAgents } from "../../services/agents";
 import { getRootNodeId } from "../../services/net/rootNode";
 
 export function useAgentConfigSwitchRequest(ctx: any) {
-  const { agentConfigSwitchRequest, rootId, t, setAgentLifecycleOpen, agentConfigFlowVersion, setAgentConfigNotice, setAgentConfigSyncStatus, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents } = ctx;
+  const { agentConfigSwitchRequest, rootId, t, setAgentLifecycleOpen, agentConfigFlowVersion, setAgentConfigNotice, setAgentConfigSyncStatus, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigDetailTab, setAgentConfigShowProviderForm, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents } = ctx;
 React.useEffect(() => {
   if (!agentConfigSwitchRequest) {
     return;
@@ -15,11 +15,11 @@ React.useEffect(() => {
   agentConfigFlowVersion.current += 1;
   setAgentConfigNotice("");
   setAgentConfigSyncStatus(null);
-  setAgentConfigFlow("switch");
+  setAgentConfigFlow("provider");
   setAgentConfigStep("agent");
   setAgentConfigAgent("");
-  setAgentConfigAddTab("backup");
-  setAgentConfigSwitchTab("api_provider");
+  setAgentConfigDetailTab("switch");
+  setAgentConfigShowProviderForm(false);
   setAgentConfigName("");
   setAgentConfigFileSourcesBody("");
   setAgentConfigEnvBody("");

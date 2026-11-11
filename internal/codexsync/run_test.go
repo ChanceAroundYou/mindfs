@@ -455,6 +455,15 @@ func testPaths(t *testing.T) Paths {
 		LegacyProviders: filepath.Join(root, "config", "mindfs", "api-providers.json"),
 		LocalSecrets:    filepath.Join(root, "config", "mindfs", "api-provider-secrets.json"),
 		StateDir:        filepath.Join(root, "config", "mindfs", "agents-config-sync"),
+
+		ClaudeHome:            filepath.Join(root, "claudehome"),
+		SharedClaude:          filepath.Join(root, "agents", "claude"),
+		SharedClaudeSettings:  filepath.Join(root, "agents", "claude", "settings.shared.json"),
+		SharedClaudeMCP:       filepath.Join(root, "agents", "claude", "mcp.shared.json"),
+		ClaudeLocalSettings:   filepath.Join(root, "claudehome", "settings.local.json"),
+		ClaudeRuntimeSettings: filepath.Join(root, "claudehome", "settings.json"),
+		ClaudeRuntimeMCP:      filepath.Join(root, "claudehome", ".mcp.json"),
+		ClaudeJSON:            filepath.Join(root, ".claude.json"),
 	}
 	if err := os.MkdirAll(paths.CodexHome, 0o700); err != nil {
 		t.Fatal(err)

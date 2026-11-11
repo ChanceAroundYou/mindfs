@@ -74,8 +74,8 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
     agentConfigStep,
     agentConfigAgents,
     agentConfigAgent,
-    agentConfigAddTab,
-    agentConfigSwitchTab,
+    agentConfigDetailTab,
+    agentConfigShowProviderForm,
     agentConfigName,
     agentConfigFileSourcesBody,
     agentConfigEnvBody,
@@ -87,6 +87,7 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
     selectedAgentConfigID,
     selectedAgentAPIProviderID,
     agentConfigConfirmMessage,
+    agentConfigConfirmAction,
     agentConfigBusy,
     agentConfigRestartingAgent,
     agentConfigError,
@@ -102,8 +103,9 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
     changeProviderTestModel,
     providerTestModels,
     chooseAgentForConfig,
-    setAgentConfigAddTab,
-    setAgentConfigSwitchTab,
+    loadAgentConfigBackupDefaults,
+    setAgentConfigDetailTab,
+    setAgentConfigShowProviderForm,
     setAgentConfigName,
     setAgentConfigFileSourcesBody,
     setAgentConfigEnvBody,
@@ -375,8 +377,8 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
               step={agentConfigStep}
               agents={agentConfigAgents}
               selectedAgent={agentConfigAgent}
-              addTab={agentConfigAddTab}
-              switchTab={agentConfigSwitchTab}
+              detailTab={agentConfigDetailTab}
+              showProviderForm={agentConfigShowProviderForm}
               backupName={agentConfigName}
               fileSourcesBody={agentConfigFileSourcesBody}
               envBody={agentConfigEnvBody}
@@ -411,8 +413,13 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
               onChooseAgent={(name) => {
                 void chooseAgentForConfig(name);
               }}
-              onAddTabChange={setAgentConfigAddTab}
-              onSwitchTabChange={setAgentConfigSwitchTab}
+              onDetailTabChange={(tab) => {
+                setAgentConfigDetailTab(tab);
+                if (tab === "backup") {
+                  void loadAgentConfigBackupDefaults(agentConfigAgent);
+                }
+              }}
+              onShowProviderFormChange={setAgentConfigShowProviderForm}
               onBackupNameChange={setAgentConfigName}
               onFileSourcesChange={setAgentConfigFileSourcesBody}
               onEnvBodyChange={setAgentConfigEnvBody}
@@ -427,19 +434,18 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
               onDeleteAPIProvider={(id) => {
                 void deleteSelectedAgentAPIProvider(id);
               }}
-              onSave={() => {
-                if (agentConfigAddTab === "api") {
-                  void saveAgentAPIProvider();
-                  return;
-                }
+              onSaveBackup={() => {
                 void saveAgentConfigBackup();
+              }}
+              onSaveProvider={() => {
+                void saveAgentAPIProvider();
               }}
               onSwitch={() => {
                 void runAgentConfigSwitch(false);
               }}
-              onRestartAgent={agentConfigFlow === "switch" ? restartAgentFromConfigList : undefined}
+              onRestartAgent={restartAgentFromConfigList}
               onConfirm={() => {
-                if (agentConfigFlow === "backup") {
+                if (agentConfigConfirmAction === "backup") {
                   void saveAgentConfigBackup(true);
                   return;
                 }
