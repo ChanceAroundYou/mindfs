@@ -6045,7 +6045,6 @@ groups:
       - server/internal/kanban/task_store_write.go
       - server/internal/kanban/worktree_finish_status.go
       - server/internal/kanban/service_create_test.go
-      - server/internal/kanban/template_store_test.go
       - server/internal/kanban/service_stage_edit_test.go
       - server/internal/kanban/service_session_link_test.go
       - server/internal/kanban/service_run_moves_test.go
@@ -6128,7 +6127,6 @@ groups:
       - server/internal/api/agent_config_backup.go
       - server/internal/api/agent_config_switch.go
       - server/internal/api/agent_config_env.go
-      - server/internal/api/http_task_templates.go
       - server/internal/api/http_task_stages.go
       - server/internal/api/http_task_overview.go
       - server/internal/api/http_task_begin_finish.go
