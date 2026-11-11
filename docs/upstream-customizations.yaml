@@ -557,7 +557,6 @@ groups:
       - web/src/components/TaskTemplateDialog.tsx
       - web/src/components/task/ScheduledAgentTaskDialog.tsx
       - web/src/app/appTask.ts
-      - web/src/app/useTaskTemplates.ts
       - web/src/services/tasks.ts
     tests:
       - server/internal/kanban/service_test.go
@@ -4744,12 +4743,11 @@ groups:
     kind: arch
     symptom: "Task detail and template panels import the agent request service only for AgentStatus display typing."
     why: "Shared display contracts must stay separate from the task and agent runtime service imports."
-    boundary: "TaskDetailPanel and TaskTemplateDialog import AgentStatus from shared/agentTypes.ts; task service runtime operations are unchanged and two reviewed agent-service edges are removed."
+    boundary: "TaskDetailPanel imports AgentStatus from shared/agentTypes.ts; task service runtime operations are unchanged and two reviewed agent-service edges are removed."
     tests:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/TaskTemplateDialog.tsx
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -4781,13 +4779,11 @@ groups:
     kind: arch
     symptom: "Read-only task views import the task service facade only for KanbanTask and TaskTemplate types."
     why: "Task presentation contracts belong in shared/taskTypes, leaving services for runtime data access."
-    boundary: "RootRelatedContentView, TaskCreateTemplateMenu and TaskTemplateActionMenu import types from shared/taskTypes.ts; runtime task behavior is unchanged and three service edges are removed."
+    boundary: "RootRelatedContentView imports types from shared/taskTypes.ts; runtime task behavior is unchanged and three service edges are removed."
     tests:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/root/RootRelatedContentView.tsx
-      - web/src/components/task/TaskCreateTemplateMenu.tsx
-      - web/src/components/task/TaskTemplateActionMenu.tsx
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7015,7 +7011,6 @@ groups:
       - web/src/i18n/locales/zh-CN-sessions.ts
       - web/src/i18n/locales/en-US-sessions.ts
       - web/tests/app-root-selection-split.test.mjs
-      - web/tests/task-template-node-routing.test.mjs
       - server/internal/api/ws_broadcast.go
       - server/internal/api/ws_upgrade.go
       - server/internal/api/ws_session_message.go
