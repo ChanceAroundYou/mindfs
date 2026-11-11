@@ -57,8 +57,8 @@ func respondJSONList(w http.ResponseWriter, r *http.Request, v any) {
 // 给「载荷本身就是详情、少一个键就改语义」的端点用：git status 的 `dirty_count: 0`、
 // agents 的空数组、tasks 的 stages/events 都是承重信息，套 respondJSONList 会被删掉。
 // 这些端点内容变化不频繁、调用却很密（/api/agents 59KB × 98 次/h、
-// /api/task-templates 24.8KB × 161 次/h、/api/tree 7.7KB × 161 次/h、
-// /api/replying-sessions 2.9KB × 508 次/h），协商后内容没变时是**零字节**，
+// /api/tree 7.7KB × 161 次/h、/api/replying-sessions 2.9KB × 508 次/h），
+// 协商后内容没变时是**零字节**，
 // 手机端收益最大。请求次数不变，服务端算 ETag 的成本是一次 sha1。
 func respondJSONConditional(w http.ResponseWriter, r *http.Request, v any) {
 	body, err := json.Marshal(v)

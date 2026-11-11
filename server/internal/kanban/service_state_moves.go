@@ -221,18 +221,8 @@ func (s *Service) loadForMove(ctx context.Context, rootID, taskID string) (*Task
 	if err != nil {
 		return nil, Task{}, err
 	}
-	// 兼容：老任务没存任务流水 → 惰性从预设拷贝一次并落盘；此后与模板解耦。
-	if len(task.Stages) == 0 && strings.TrimSpace(task.TaskTemplateID) != "" {
-		if tmpl, err := s.Templates.GetTaskTemplate(task.TaskTemplateID); err == nil {
-			stages := []StageTemplate{}
-			for _, ts := range tmpl.Stages {
-				stages = append(stages, normalizeStageTemplate(ts.Snapshot))
-			}
-			task.Stages = stages
-			task.UpdatedAt = time.Now().UTC()
-			_ = store.UpdateTask(ctx, task)
-		}
-	}
+	// 历史任务（模板时代建的）流水早就落进 tasks.task_stages_json（创建时快照、
+	// 或旧版在第一次推进时回填过）；模板库下线后不再有任何回查路径。
 	return store, task, nil
 }
 

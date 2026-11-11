@@ -29,7 +29,7 @@ func TestFinishTaskWorktreeStopsOnConflictAndKeepsEverything(t *testing.T) {
 	gitForTest(t, mainDir, "commit", "-qm", "main edit")
 
 	root := fs.NewRootInfo("root", "root", mainDir)
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc := NewService(testRoots{root: root})
 	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{

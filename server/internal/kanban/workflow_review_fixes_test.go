@@ -455,7 +455,7 @@ func TestSnapshotRunIntegrationBranchPrefersTaskWorktreeBranch(t *testing.T) {
 	mainDir := newGitRoot(t)
 	gitForTest(t, mainDir, "checkout", "-qb", "release/2026-11")
 	root := fs.NewRootInfo("wf-branch-root", "wf-branch-root", mainDir)
-	svc := NewService(nil, testRoots{root: root})
+	svc := NewService(testRoots{root: root})
 	graph := WorkflowDefinition{Nodes: []WorkflowNode{{
 		ID: "build", Kind: NodeKindAgent, Params: map[string]any{"prompt": "x", "worktree": "independent"},
 	}}}

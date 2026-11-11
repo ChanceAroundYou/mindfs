@@ -41,7 +41,7 @@ func TestWorkflowNodeWorkspaceIntent(t *testing.T) {
 
 func TestWorkflowReadOnlyNodeDoesNotAcquireWriterGate(t *testing.T) {
 	gate := NewWriterGate()
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{})
+	svc := NewService(testRoots{})
 	svc.SetWriterGate(gate)
 
 	release, err := svc.AcquireNodeWriter(context.Background(), "/trees/shared", "task/1")
@@ -68,8 +68,8 @@ func TestWorkflowReadOnlyNodeDoesNotAcquireWriterGate(t *testing.T) {
 func TestWorkflowSharedTreeWritersSerialAcrossServices(t *testing.T) {
 	gate := NewWriterGate()
 	// 两个 Service 模拟两个账户：它们不共享 TaskStore，但必须共享同一个 app 级 gate。
-	svcA := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{})
-	svcB := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{})
+	svcA := NewService(testRoots{})
+	svcB := NewService(testRoots{})
 	svcA.SetWriterGate(gate)
 	svcB.SetWriterGate(gate)
 
@@ -104,7 +104,7 @@ func TestWorkflowSharedTreeWritersSerialAcrossServices(t *testing.T) {
 
 func TestWorkflowIndependentTreesRunConcurrently(t *testing.T) {
 	gate := NewWriterGate()
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{})
+	svc := NewService(testRoots{})
 	svc.SetWriterGate(gate)
 
 	releaseA, err := svc.AcquireNodeWriter(context.Background(), "/trees/independent-a", "task-a/1")
@@ -123,7 +123,7 @@ func TestWorkflowIndependentTreesRunConcurrently(t *testing.T) {
 }
 
 func TestWorkflowNodeWriterFailsClosedWithoutSharedGate(t *testing.T) {
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{})
+	svc := NewService(testRoots{})
 	if _, err := svc.AcquireNodeWriter(context.Background(), "/trees/shared", "feature/x"); !errors.Is(err, ErrWorkflowWriterGateUnavailable) {
 		t.Fatalf("missing gate err = %v, want ErrWorkflowWriterGateUnavailable", err)
 	}

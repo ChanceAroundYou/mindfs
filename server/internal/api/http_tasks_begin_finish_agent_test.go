@@ -190,7 +190,7 @@ func newBeginFinishHandlerWithoutAgent(t *testing.T, edit string) (http.Handler,
 	gitForAPITest(t, mainDir, "commit", "-qm", "initial")
 
 	root := fs.NewRootInfo("root", "root", mainDir)
-	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProvider{root: root})
+	svc := kanban.NewService(singleRootProvider{root: root})
 	svc.SetWriterGate(kanban.NewWriterGate())
 	svc.SetRunner(fixedRunner{t: t, mainDir: mainDir})
 

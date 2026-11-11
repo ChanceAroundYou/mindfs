@@ -62,7 +62,7 @@ func newWorkflowAttemptFixture(t *testing.T, taskID, runID string) (*TaskStore, 
 	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
 		t.Fatalf("CreateWorkflowRunAndSetEngine: %v", err)
 	}
-	svc := NewService(nil, testRoots{root: root})
+	svc := NewService(testRoots{root: root})
 	// Agent 节点默认写工作区（D10）。没有 app 级共享 gate 时按设计 fail closed，
 	// 所以这个 fixture 必须注入一把，否则测到的是「没配 gate」而不是执行逻辑。
 	svc.SetWriterGate(NewWriterGate())

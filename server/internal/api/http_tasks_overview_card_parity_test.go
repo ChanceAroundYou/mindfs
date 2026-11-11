@@ -51,8 +51,8 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 
 	taskReads := map[string]bool{}
 	stageReads := map[string]bool{}
-	// stage.snapshot 是 TaskTemplateStage（新建任务时的模板段），不是任务自己的段，
-	// 投影里没有也不该有。
+	// stage.snapshot 是历史模板段（TaskTemplateStage）的字段，模板库已下线，
+	// 任务自己的段没有它，投影里也不该有。
 	const stageSnapshot = "snapshot"
 	// 前缀必须是行首或非标识符字符：`worktree_finish_stage.go` 里的 `stage.go`
 	// 是文件名不是字段读取，不挡掉的话这条测试会去断言一个叫 "go" 的键。

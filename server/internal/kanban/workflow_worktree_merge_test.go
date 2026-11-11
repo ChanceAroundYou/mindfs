@@ -40,7 +40,7 @@ func newGitWorkflowFixture(t *testing.T, mainDir, taskID, runID, integration str
 	t.Helper()
 	ctx := context.Background()
 	root := fs.NewRootInfo("wf-git-root", "wf-git-root", mainDir)
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc := NewService(testRoots{root: root})
 	svc.SetWriterGate(NewWriterGate())
 	runner := &gitWorkflowRunner{fakeRunner: &fakeRunner{}, rootPath: mainDir}
 	svc.SetRunner(runner)

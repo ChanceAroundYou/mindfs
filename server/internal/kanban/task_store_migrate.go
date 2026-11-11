@@ -166,7 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if _, err := s.db.Exec(`UPDATE tasks SET worktree_built = 1 WHERE create_worktree = 1 AND TRIM(worktree_path) != ''`); err != nil {
 		return err
 	}
-	// 旧数据：颓废状态归入新模型（queued→pending）；旧任务若只有模板无快照，在读取时惰性补齐。
+	// 旧数据：颓废状态归入新模型（queued→pending）。
 	if _, err := s.db.Exec(`UPDATE tasks SET status = 'pending' WHERE status = 'queued'`); err != nil {
 		return err
 	}

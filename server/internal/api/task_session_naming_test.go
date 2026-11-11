@@ -111,7 +111,7 @@ func TestBindTaskSessionNamesKeepsNumberSuffix(t *testing.T) {
 		t.Fatalf("Upsert returned error: %v", err)
 	}
 	app := &AppContext{Dirs: registry}
-	app.Kanban = kanban.NewService(kanban.NewTemplateStoreAt(parent), app)
+	app.Kanban = kanban.NewService(app)
 	ctx := context.Background()
 
 	// 建会话：拿到带后缀的名字。

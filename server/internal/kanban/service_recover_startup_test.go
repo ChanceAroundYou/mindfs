@@ -222,7 +222,7 @@ func TestRecoverOnStartupForRoot_ProbeIsPerRoot(t *testing.T) {
 	ctx := context.Background()
 	rootA := fs.NewRootInfo("rootA", "rootA", t.TempDir())
 	rootB := fs.NewRootInfo("rootB", "rootB", t.TempDir())
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), multiRootProvider{rootA.ID: rootA, rootB.ID: rootB})
+	svc := NewService(multiRootProvider{rootA.ID: rootA, rootB.ID: rootB})
 
 	mk := func(root fs.RootInfo, name string) (string, *OutboxService) {
 		detail, err := svc.CreateTask(ctx, CreateTaskInput{

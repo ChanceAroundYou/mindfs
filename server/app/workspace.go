@@ -44,7 +44,6 @@ type sharedServices struct {
 	prefs     *preferences.Store
 	nodes     *nodes.Store
 	webPush   *webpush.Service
-	templates *kanban.TemplateStore
 	workflows *kanban.WorkflowStore
 	pool      *agent.Pool
 	prober    *agent.Prober
@@ -63,7 +62,7 @@ type workspaceEntry struct {
 // workspaceManager 按账户惰性构建并缓存 AppContext。
 //
 // **共享范围**（用户 2026-09-17 定）：只有「加载的项目」和「项目里的会话」按账户分，
-// 其余（偏好/节点/订阅/提示词/agent 配置/agent 进程池/看板模板）全部共享同一份实例。
+// 其余（偏好/节点/订阅/提示词/工作流库/agent 配置/agent 进程池）全部共享同一份实例。
 //
 //   - 项目列表：主账户 <cfg>/registry.json；其余 <cfg>/users/<id>/registry.json
 //   - 项目工作状态（meta：会话库/任务库/上传/文件批注）：
@@ -266,7 +265,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 		}
 	}
 	services.Scheduled = scheduled.NewService(services, services)
-	services.Kanban = kanban.NewService(m.shared.templates, services)
+	services.Kanban = kanban.NewService(services)
 	services.Kanban.SetRunner(services)
 	services.Kanban.SetWorkflowNodeRunner(services)
 	services.Kanban.SetWorkflowCommentSender(services)

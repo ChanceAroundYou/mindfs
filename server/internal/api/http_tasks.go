@@ -70,8 +70,6 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 	}
 	var req struct {
 		RootID             string                  `json:"root_id"`
-		TaskTemplateID     string                  `json:"task_template_id"`
-		TaskTemplateName   string                  `json:"task_template_name"`
 		Input              string                  `json:"input"`
 		Name               string                  `json:"name"`
 		Stages             *[]kanban.StageTemplate `json:"stages"`
@@ -85,8 +83,6 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 	}
 	create := kanban.CreateTaskInput{
 		RootID:             req.RootID,
-		TaskTemplateID:     req.TaskTemplateID,
-		TaskTemplateName:   req.TaskTemplateName,
 		Input:              req.Input,
 		Name:               req.Name,
 		CreateWorktree:     req.CreateWorktree,

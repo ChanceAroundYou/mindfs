@@ -36,7 +36,7 @@ func isLocalCLIPath(r *http.Request) bool {
 			return true
 		}
 	}
-	if r.Method == http.MethodGet && (r.URL.Path == "/api/agents" || r.URL.Path == "/api/task-templates" || r.URL.Path == "/api/tasks") {
+	if r.Method == http.MethodGet && (r.URL.Path == "/api/agents" || r.URL.Path == "/api/tasks") {
 		return true
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/api/tasks" {

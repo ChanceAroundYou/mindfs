@@ -17,7 +17,7 @@ import (
 func workflowsHandler(t *testing.T) (http.Handler, *kanban.Service, string) {
 	t.Helper()
 	root := fs.NewRootInfo("root", "root", t.TempDir())
-	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProviderT{root: root})
+	svc := kanban.NewService(singleRootProviderT{root: root})
 	svc.SetWriterGate(kanban.NewWriterGate())
 	// 生产 app 层总会注入共享 gate；写节点缺 gate 时按设计 fail closed。
 	// 测试组合不注入就会把「没有 gate」当成被测执行行为。

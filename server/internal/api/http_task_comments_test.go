@@ -20,7 +20,7 @@ func (p singleRootProviderT) ListRoots() []fs.RootInfo               { return []
 func commentsHandler(t *testing.T) (http.Handler, *kanban.Service, fs.RootInfo, string) {
 	t.Helper()
 	root := fs.NewRootInfo("root", "root", t.TempDir())
-	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProviderT{root: root})
+	svc := kanban.NewService(singleRootProviderT{root: root})
 	svc.SetWriterGate(kanban.NewWriterGate())
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
 		RootID: root.ID,

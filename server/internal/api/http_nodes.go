@@ -17,9 +17,9 @@ import (
 // 控制面状态只在主节点有一份真相。允许 worker 也提供，两份配置就会各写各的
 // —— 节点表分裂就是这么来的：同一台物理机器在两边的 nodes.json 里拿到不同 id。
 //
-// 本机 CLI 例外，不是可选项而是正确性要求：isLocalCLIPath 的白名单里有
-// /api/task-templates（控制面），本地 CLI 拿 token 直连时必须还能用，
-// 否则「从命令行读模板」会在 worker 上失效。
+// 本机 CLI 例外保留给白名单里的 CLI 路径（见 isLocalCLIPath）。模板库下线后
+// 白名单里已没有控制面端点，这段豁免目前是空的保险；新增控制面 CLI 端点时
+// 记得同步白名单，否则 worker 上的 CLI 直连会被守卫拦掉。
 func (h *HTTPHandler) rejectControlPlaneOnWorker(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.NodeRole == nodeinfo.RoleWorker &&

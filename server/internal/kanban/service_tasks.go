@@ -8,57 +8,6 @@ import (
 	"time"
 )
 
-func (s *Service) ListStageTemplates(ctx context.Context) ([]StageTemplate, error) {
-	if s == nil || s.Templates == nil {
-		return nil, errors.New("template store not configured")
-	}
-	return s.Templates.ListStageTemplates()
-}
-
-func (s *Service) SaveStageTemplate(ctx context.Context, in StageTemplate) (StageTemplate, error) {
-	if s == nil || s.Templates == nil {
-		return StageTemplate{}, errors.New("template store not configured")
-	}
-	return s.Templates.SaveStageTemplate(in)
-}
-
-func (s *Service) DeleteStageTemplate(ctx context.Context, id string) error {
-	if s == nil || s.Templates == nil {
-		return errors.New("template store not configured")
-	}
-	return s.Templates.DeleteStageTemplate(id)
-}
-
-func (s *Service) ListTaskTemplates(ctx context.Context) ([]TaskTemplate, error) {
-	if s == nil || s.Templates == nil {
-		return nil, errors.New("template store not configured")
-	}
-	return s.Templates.ListTaskTemplates()
-}
-
-// ListTaskTemplatesForRoot 返回「全局 + 指定项目」的模板（见 TemplateStore 同名方法）。
-func (s *Service) ListTaskTemplatesForRoot(ctx context.Context, rootID string) ([]TaskTemplate, error) {
-	if s == nil || s.Templates == nil {
-		return nil, errors.New("template store not configured")
-	}
-	return s.Templates.ListTaskTemplatesForRoot(rootID)
-}
-
-// 模板至此只是「预设」：可随时编辑/删除，任务创建时已拷贝快照，与在途任务完全解耦。
-func (s *Service) SaveTaskTemplate(ctx context.Context, in TaskTemplate) (TaskTemplate, error) {
-	if s == nil || s.Templates == nil {
-		return TaskTemplate{}, errors.New("template store not configured")
-	}
-	return s.Templates.SaveTaskTemplate(in)
-}
-
-func (s *Service) DeleteTaskTemplate(ctx context.Context, id string) error {
-	if s == nil || s.Templates == nil {
-		return errors.New("template store not configured")
-	}
-	return s.Templates.DeleteTaskTemplate(id)
-}
-
 // normalizeTaskStages 展平并规范化任务流水。
 func normalizeTaskStages(in []StageTemplate) []StageTemplate {
 	out := make([]StageTemplate, 0, len(in))
@@ -79,18 +28,8 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 	}
 	stages := normalizeTaskStages(in.Stages)
 	name := strings.TrimSpace(in.Name)
-	if len(stages) == 0 && strings.TrimSpace(in.TaskTemplateID) != "" {
-		tmpl, err := s.Templates.GetTaskTemplate(in.TaskTemplateID)
-		if err != nil {
-			return TaskDetail{}, err
-		}
-		for _, ts := range tmpl.Stages {
-			stages = append(stages, normalizeStageTemplate(ts.Snapshot))
-		}
-		if name == "" {
-			name = tmpl.Name
-		}
-	}
+	// 流水必须由调用方随包带上（前端内置默认流水）。模板库已下线，
+	// 这里不再有任何回查回退：没有 stages 就是调用方错了，直接报错。
 	if len(stages) == 0 || stages[0].Role != RoleUser {
 		return TaskDetail{}, errors.New("task first stage must be user")
 	}
@@ -102,8 +41,6 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		ID:                 taskID,
 		RootID:             rootID,
 		Name:               name,
-		TaskTemplateID:     strings.TrimSpace(in.TaskTemplateID),
-		TaskTemplateName:   templateNameForTask(s, in.TaskTemplateID, in.TaskTemplateName),
 		Stages:             stages,
 		CreateWorktree:     in.CreateWorktree,
 		WorktreeBranchMode: branchMode,
@@ -149,18 +86,6 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		}
 	}
 	return store.GetDetail(ctx, taskID)
-}
-
-// templateNameForTask 解析任务来源预设的名字。
-//
-// 预设库只有主节点一份（见 docs/multi-node-control-plane.md），而任务建在**项目所在的节点**。
-// 在 worker 上本机查不到预设 → 回落：调用方带来的名字快照（前端从主节点读到模板后传下来）。
-// 都没有就返回空串，模板来源标签留空，不影响建任务。
-func templateNameForTask(s *Service, templateID, provided string) string {
-	if tmpl, err := s.Templates.GetTaskTemplate(templateID); err == nil {
-		return tmpl.Name
-	}
-	return strings.TrimSpace(provided)
 }
 
 func (s *Service) ListTasks(ctx context.Context, rootID string, opts ListTasksOptions) ([]Task, error) {

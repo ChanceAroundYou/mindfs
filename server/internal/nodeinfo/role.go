@@ -2,13 +2,13 @@
 //
 // 一个 mindfs 实例同时有两类职责：
 //
-//   - 控制面（control）：账户表、偏好、提示词、看板模板、节点表、WebPush 订阅、
+//   - 控制面（control）：账户表、偏好、提示词、工作流库、节点表、WebPush 订阅、
 //     应用更新。**全局只应有一份真相**，由主节点持有。
 //   - 数据面（worker 也要有）：项目列表、会话库、任务库、文件读写、git、agent
 //     进程池、定时任务。这些天然按机器分，每台机器各一份是对的。
 //
 // 两类混在一起、每台机器都完整跑一遍，是控制面副本漂移的根源（同一个物理节点在
-// 两边拿到不同 id、模板两边各有一半）。本包只做一件事：声明「这台机器是什么角色」，
+// 两边拿到不同 id、工作流库两边各有一半）。本包只做一件事：声明「这台机器是什么角色」，
 // 以及「哪些路径属于控制面」，供路由层拒绝越权请求。
 package nodeinfo
 
@@ -55,8 +55,6 @@ var controlPlanePrefixes = []string{
 	// 正是这次要消灭的形状（见 internal/pins 的包注释）。
 	"/api/pins",
 	"/api/prompts",
-	"/api/task-templates",
-	"/api/task-stage-templates",
 	"/api/workflows",
 	"/api/web-push",
 	"/api/nodes",

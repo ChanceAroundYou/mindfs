@@ -79,9 +79,8 @@ type workflowFinishLock struct {
 }
 
 type Service struct {
-	Templates *TemplateStore
-	Roots     RootProvider
-	Runner    Runner
+	Roots  RootProvider
+	Runner Runner
 	// WorkflowNodeRunnerPort 是 Workflow Agent 节点的执行端口（Task 2）。与
 	// legacy Runner 并存：工作流节点只走这里，绝不合成 StageRun 双写。
 	WorkflowNodeRunnerPort WorkflowNodeRunner
@@ -157,8 +156,8 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 // 导出供 api 层区分「已有收尾段 → 重跑那段继续收尾」和「其它拒绝」。
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
-func NewService(templates *TemplateStore, roots RootProvider) *Service {
-	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}, taskFinish: map[string]*finishToken{}, taskAdmit: map[string]*admitToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second}
+func NewService(roots RootProvider) *Service {
+	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}, taskFinish: map[string]*finishToken{}, taskAdmit: map[string]*admitToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second}
 }
 
 // lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径
@@ -273,11 +272,9 @@ func (s *Service) sessionProbeConfigured() bool {
 
 type CreateTaskInput struct {
 	RootID             string
-	TaskTemplateID     string          // 可选：预设来源，仅记录来自哪个预设；内容在创建时拷进任务
-	TaskTemplateName   string          // 可选：预设名快照。库在主节点而任务建在本节点时，本地查不到预设名（见 templateNameForTask），由调用方带上
 	Input              string          // 第一段的用户输入
 	Name               string          // 可选：任务名；缺省时前端用输入首行回退
-	Stages             []StageTemplate // 可选：直接给定流水；否则从预设拷贝
+	Stages             []StageTemplate // 必填：调用方随包带上的流水（模板库已下线，无回退）
 	CreateWorktree     bool
 	WorktreeBranchMode string
 	WorktreeBranch     string

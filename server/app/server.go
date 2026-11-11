@@ -79,10 +79,6 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		log.Printf("[nodes] init.error err=%v", err)
 	}
 	sharedWebPush := webpush.NewService(webPushConfig, webpush.NewStoreAt(configDir))
-	sharedTemplates, err := kanban.NewTemplateStore()
-	if err != nil {
-		return err
-	}
 	sharedWorkflows, err := kanban.NewWorkflowStoreDefault()
 	if err != nil {
 		return err
@@ -106,7 +102,6 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		prefs:       sharedPrefs,
 		nodes:       sharedNodes,
 		webPush:     sharedWebPush,
-		templates:   sharedTemplates,
 		workflows:   sharedWorkflows,
 		pool:        sharedPool,
 		prober:      sharedProber,

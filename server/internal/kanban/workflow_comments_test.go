@@ -51,7 +51,7 @@ func newWorkflowCommentFixture(t *testing.T, taskID, runID string, graph Workflo
 	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
 		t.Fatalf("CreateWorkflowRunAndSetEngine: %v", err)
 	}
-	svc := NewService(nil, testRoots{root: root})
+	svc := NewService(testRoots{root: root})
 	svc.SetWriterGate(NewWriterGate())
 	svc.stores = map[string]*TaskStore{root.ID: store}
 	return store, svc, run, root

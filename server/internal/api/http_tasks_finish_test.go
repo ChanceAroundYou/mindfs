@@ -106,7 +106,7 @@ func newFinishTaskHandlerFull(t *testing.T, edit string) (http.Handler, *kanban.
 	gitForAPITest(t, mainDir, "commit", "-qm", "initial")
 
 	root := fs.NewRootInfo("root", "root", mainDir)
-	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProvider{root: root})
+	svc := kanban.NewService(singleRootProvider{root: root})
 	svc.SetWriterGate(kanban.NewWriterGate())
 	// 树建在 mainDir/.worktree/<name> 下，名字由 service 的 renderWorktreeName 决定，
 	// 所以 runner 按同一个拼法算路径（task-{number}）。

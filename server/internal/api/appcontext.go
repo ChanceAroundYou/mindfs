@@ -33,7 +33,7 @@ type AppContext struct {
 	Update *update.Service
 	GitHub *githubimport.Service
 	Auth   *auth.Store
-	// AccountDir 是本账户私有的配置目录（registry/preferences/nodes/prompts/看板模板）。
+	// AccountDir 是本账户私有的配置目录（registry/preferences/nodes/prompts/工作流草稿）。
 	// 主账户为空串时，各 store 会落回进程默认目录。
 	AccountDir string
 	WebPush    *webpush.Service
@@ -93,7 +93,7 @@ func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentSt
 	}
 	// 任务名优先：任务名在建会话之前就定了，而「任务改名 → 同步会话名」只在
 	// 会话已经存在时才跑得到（bindTaskSessionNames），首段建会话这步是唯一的兜底，
-	// 不兜底会话就一直挂着模板名。任务没名字才退回模板名 / #编号 / prompt。
+	// 不兜底会话就一直挂着空名。任务没名字才退回历史模板名 / #编号 / prompt。
 	// #编号由 kanban.TaskSessionName 统一拼，和改名那条路径共用一处派生。
 	name := strings.TrimSpace(exec.Task.Name)
 	if name == "" {

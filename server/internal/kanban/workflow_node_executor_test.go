@@ -63,7 +63,7 @@ func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner(t *testing.T) {
 
 	wf := &fakeWorkflowNodeRunner{result: WorkflowNodeResult{Outcome: WorkflowNodeDone, Output: map[string]any{"summary": "ok"}}}
 	legacy := &countingLegacyRunner{}
-	svc := NewService(nil, nil)
+	svc := NewService(nil)
 	svc.SetRunner(legacy)
 	svc.SetWorkflowNodeRunner(wf)
 
@@ -114,7 +114,7 @@ func TestWorkflowNodeSessionPolicyDefaultsToPerNode(t *testing.T) {
 }
 
 func TestWorkflowAgentNodeRequiresPrompt(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil)
 	svc.SetWorkflowNodeRunner(&fakeWorkflowNodeRunner{})
 	_, err := svc.StartWorkflowNode(context.Background(), &TaskStore{}, &WorkflowRun{ID: "r", TaskID: "t"}, WorkflowNode{ID: "n", Kind: NodeKindAgent}, NodeRun{ID: "nr", RunID: "r", NodeID: "n"})
 	if err == nil || !strings.Contains(err.Error(), "params.prompt") {

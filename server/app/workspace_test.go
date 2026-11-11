@@ -9,7 +9,6 @@ import (
 
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/auth"
-	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/preferences"
@@ -58,19 +57,14 @@ func TestWorkspaceSharingContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nodes: %v", err)
 	}
-	templates, err := kanban.NewTemplateStore()
-	if err != nil {
-		t.Fatalf("kanban templates: %v", err)
-	}
 	pool := agent.NewPool(agent.Config{})
 
 	mgr := newWorkspaceManager(context.Background(), sharedServices{
-		auth:      authStore,
-		prefs:     prefs,
-		nodes:     nodeStore,
-		webPush:   webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
-		templates: templates,
-		pool:      pool,
+		auth:    authStore,
+		prefs:   prefs,
+		nodes:   nodeStore,
+		webPush: webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
+		pool:    pool,
 	})
 	mgr.SetBaseDir(filepath.Join(filepath.Dir(usersPath), "users"))
 
@@ -258,17 +252,12 @@ func pinSeedFixtureAt(t *testing.T, cfgDir, usersPath string) (*workspaceManager
 	if err != nil {
 		t.Fatalf("nodes: %v", err)
 	}
-	templates, err := kanban.NewTemplateStore()
-	if err != nil {
-		t.Fatalf("kanban templates: %v", err)
-	}
 	mgr := newWorkspaceManager(context.Background(), sharedServices{
-		auth:      authStore,
-		prefs:     prefs,
-		nodes:     nodeStore,
-		webPush:   webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
-		templates: templates,
-		pool:      agent.NewPool(agent.Config{}),
+		auth:    authStore,
+		prefs:   prefs,
+		nodes:   nodeStore,
+		webPush: webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
+		pool:    agent.NewPool(agent.Config{}),
 	})
 	mgr.SetBaseDir(filepath.Join(filepath.Dir(usersPath), "users"))
 	return mgr, primaryID, bobID, prefs
@@ -354,19 +343,14 @@ func TestWorkspaceWorkerDerivesAccountID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nodes: %v", err)
 	}
-	templates, err := kanban.NewTemplateStore()
-	if err != nil {
-		t.Fatalf("kanban templates: %v", err)
-	}
 	pool := agent.NewPool(agent.Config{})
 
 	mgr := newWorkspaceManager(context.Background(), sharedServices{
-		auth:      authStore,
-		prefs:     prefs,
-		nodes:     nodeStore,
-		webPush:   webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
-		templates: templates,
-		pool:      pool,
+		auth:    authStore,
+		prefs:   prefs,
+		nodes:   nodeStore,
+		webPush: webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
+		pool:    pool,
 	})
 	mgr.SetBaseDir(filepath.Join(filepath.Dir(usersPath), "users"))
 	mgr.SetRole(nodeinfo.RoleWorker)

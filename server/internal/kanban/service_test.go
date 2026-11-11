@@ -164,7 +164,7 @@ func (r *fakeRunner) TaskUpdated(rootID string, detail TaskDetail) {
 func newTestService(t *testing.T, runner *fakeRunner) (*Service, fs.RootInfo) {
 	t.Helper()
 	root := fs.NewRootInfo("root", "root", t.TempDir())
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc := NewService(testRoots{root: root})
 	// 写节点在缺 gate 时按设计 fail closed；测试组合不注入就会把「没有共享 gate」
 	// 当成被测行为，掩盖真正的执行逻辑。
 	svc.SetWriterGate(NewWriterGate())

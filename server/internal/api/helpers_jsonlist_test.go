@@ -129,7 +129,7 @@ func TestRespondJSONListETagAnd304(t *testing.T) {
 
 // respondJSONConditional 的守卫：**只协商、不瘦身**。
 //
-// 这些端点（git status / agents / tree / 看板 tasks / replying-sessions / task-templates）
+// 这些端点（git status / agents / tree / 看板 tasks / replying-sessions）
 // 的载荷本身就是详情：`dirty_count: 0`、空数组、`stages`/`events` 流水都是承重信息。
 // 一旦有人「顺手统一」成 respondJSONList，丢的是真数据，而且前端防御式读取不会报错 ——
 // 所以这里正面钉住「空值必须原样留着」。

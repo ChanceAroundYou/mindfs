@@ -67,7 +67,7 @@ type StageTemplate struct {
 	SessionReusePolicy   string `json:"session_reuse_policy,omitempty"`
 	PromptTemplate       string `json:"prompt_template,omitempty"`
 	AgentCanControlStage bool   `json:"agent_can_control_stage,omitempty"`
-	// Kind 标这一段是「哪一种由服务端生成的段」，空 = 用户/模板定义的普通段。
+	// Kind 标这一段是「哪一种由服务端生成的段」，空 = 用户定义的普通段。
 	//
 	// 为什么存在独立字段而不是在 Name/PromptTemplate 里塞标记：这两处用户都能在看板上改
 	// （UpdateStage 是整段替换，任务编辑器直接改 name/prompt），标记会被改掉，之后就再也
@@ -82,34 +82,14 @@ type StageTemplate struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-type TaskTemplateStage struct {
-	ID              string        `json:"id"`
-	StageTemplateID string        `json:"stage_template_id,omitempty"`
-	Position        int           `json:"position"`
-	Snapshot        StageTemplate `json:"snapshot"`
-}
-
-// TaskTemplate 仅作为「预设」存在：新建任务时可选套用，之后与任务完全解耦，可随时修改/删除。
-type TaskTemplate struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	// RootID 把模板限定到某个项目；空 = 全局模板，任何项目都能套用。
-	//
-	// 模板库只有主节点一份（见 docs/multi-node-control-plane.md）：跨项目复用的写全局，
-	// 某个项目专用的写该项目的 root id。列表按 root 过滤（全局 + 当前项目）。
-	RootID    string              `json:"root_id,omitempty"`
-	Stages    []TaskTemplateStage `json:"stages"`
-	CreatedAt time.Time           `json:"created_at"`
-	UpdatedAt time.Time           `json:"updated_at"`
-}
-
-// Task 自带流水（Stages）：执行永远读任务自己的阶段，不再回查模板。
+// Task 自带流水（Stages）：执行永远读任务自己的阶段。
 type Task struct {
-	ID                 string          `json:"id"`
-	TaskNumber         int             `json:"task_number"`
-	RootID             string          `json:"root_id"`
-	Name               string          `json:"name,omitempty"`
+	ID         string `json:"id"`
+	TaskNumber int    `json:"task_number"`
+	RootID     string `json:"root_id"`
+	Name       string `json:"name,omitempty"`
+	// TaskTemplateID / TaskTemplateName 是**冻结列**：模板功能已下线（Phase 3），
+	// 不再写入，也不再回查任何模板库；只为历史任务保留来源标签的只读展示。
 	TaskTemplateID     string          `json:"task_template_id,omitempty"`
 	TaskTemplateName   string          `json:"task_template_name,omitempty"`
 	Stages             []StageTemplate `json:"stages"`
@@ -399,4 +379,28 @@ type WorktreeEntry struct {
 	ConflictOutput string    `json:"conflict_output,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// normalizeStageTemplate 把一段流水规范化到落库形态。
+//
+// 原先是 TemplateStore 的实现细节；模板库下线（Phase 3）后它只服务任务流水，
+// 语义不变：缺省角色是 user，缺省会话复用策略是任务主会话。
+func normalizeStageTemplate(in StageTemplate) StageTemplate {
+	in.ID = strings.TrimSpace(in.ID)
+	in.Name = strings.TrimSpace(in.Name)
+	in.Role = strings.TrimSpace(in.Role)
+	if in.Role == "" {
+		in.Role = RoleUser
+	}
+	in.Agent = strings.TrimSpace(in.Agent)
+	in.Model = strings.TrimSpace(in.Model)
+	in.Mode = strings.TrimSpace(in.Mode)
+	in.Effort = strings.TrimSpace(in.Effort)
+	in.FastService = strings.TrimSpace(in.FastService)
+	in.SessionReusePolicy = strings.TrimSpace(in.SessionReusePolicy)
+	if in.SessionReusePolicy == "" {
+		in.SessionReusePolicy = SessionReuseTaskMain
+	}
+	in.PromptTemplate = strings.TrimSpace(in.PromptTemplate)
+	return in
 }

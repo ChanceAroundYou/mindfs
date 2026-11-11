@@ -14,7 +14,7 @@ import (
 func authoringHandler(t *testing.T, respond func(workflowAuthoringRequest) (string, error)) (http.Handler, *kanban.Service, string) {
 	t.Helper()
 	root := fs.NewRootInfo("root", "root", t.TempDir())
-	svc := kanban.NewService(kanban.NewTemplateStoreAt(t.TempDir()), singleRootProviderT{root: root})
+	svc := kanban.NewService(singleRootProviderT{root: root})
 	svc.SetWriterGate(kanban.NewWriterGate())
 	svc.Workflows = kanban.NewWorkflowStoreAt(t.TempDir())
 	app := &AppContext{Kanban: svc}

@@ -35,13 +35,13 @@ type WorkflowStore struct {
 }
 
 // NewWorkflowStore returns a control-plane WorkflowStore. dir is the
-// control-plane directory on the main node (TemplateStore dir equivalent).
+// control-plane directory on the main node.
 func NewWorkflowStore(dir string) *WorkflowStore {
 	return &WorkflowStore{dir: dir, now: time.Now}
 }
 
-// NewWorkflowStoreDefault 按配置目录打开控制面 workflow 库，与 TemplateStore 同目录
-// （工作流模板与任务模板同属共享控制面，只有主节点一份）。
+// NewWorkflowStoreDefault 按配置目录打开控制面 workflow 库
+// （工作流属于共享控制面，只有主节点一份）。
 func NewWorkflowStoreDefault() (*WorkflowStore, error) {
 	dir, err := configpkg.MindFSConfigDir()
 	if err != nil {

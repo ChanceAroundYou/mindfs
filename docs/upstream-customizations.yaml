@@ -515,7 +515,7 @@ groups:
     title: 看板模型重做（拒绝上游 task_groups 编排体系）
     kind: trim
     symptom: "上游的 task_groups 分组 + 并发调度器合回来后：同一任务被并发跑两次、卡上出现「准入位」状态、任务可编辑弹窗回来、跨项目工作台按上游 taskGroups 语义分组。"
-    why: "本地早已重做为「卡=任务、列=全局状态、无并发调度」：任务自带流水快照（Task.Stages 是创建时从预设拷贝的快照，之后与预设无关）、queued 与调度槽位已删、新建任务恒为 waiting_user。上游的 kanban.Start 调度器 / TaskGroupPanel / patchTask / fetchTaskGroups / groupOperation / openTaskEditDialog 全部丢弃。SchedulerAdmitted 字段与 scheduler_admitted 列一律不再读写（2026-10-06 退役；schema 行保留在原地不做破坏性迁移，恒为默认值）。"
+    why: "本地早已重做为「卡=任务、列=全局状态、无并发调度」：任务自带流水（Task.Stages 由调用方随包带上——Phase 3 后就是前端内置默认流水，模板预设已彻底删除）、queued 与调度槽位已删、新建任务恒为 waiting_user。上游的 kanban.Start 调度器 / TaskGroupPanel / patchTask / fetchTaskGroups / groupOperation / openTaskEditDialog 全部丢弃。SchedulerAdmitted 字段与 scheduler_admitted 列一律不再读写（2026-10-06 退役；schema 行保留在原地不做破坏性迁移，恒为默认值）。"
     files:
       - server/internal/kanban/
       - server/internal/api/http_tasks.go
@@ -578,7 +578,8 @@ groups:
       - 'web/src/components/task/useScheduledAgentTaskDialog.ts:confirmDialog'
       # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
       - server/internal/kanban/types.go:Stages             []StageTemplate
-      - server/internal/kanban/template_store_stage.go:ListStageTemplates
+      # 模板库已删（Phase 3，见 G-LJ）：建任务只认随包带上的 stages，没有任何回退。
+      - 'server/internal/kanban/service_tasks.go:stages := normalizeTaskStages(in.Stages)'
       - server/internal/kanban/worktree_finish.go:FinishTaskWorktree
       # 存量 queued 必须被折进 pending：前端已按「不可能出现」删掉了该分支
       - server/internal/kanban/task_store_migrate.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
@@ -4499,7 +4500,7 @@ groups:
     kind: arch
     symptom: "Stage/task template CRUD, task creation and snapshots, task list/detail and cross-project overview are mixed with state transitions and execution services."
     why: "Task initialization and query behavior belong together so template and overview changes can be reviewed independently from task execution and lifecycle transitions."
-    boundary: "ListStageTemplates through GetTask move unchanged to service_tasks.go (228 lines); template snapshots, task numbering, overview skip-on-project-error and ordering semantics are unchanged. Parent is 1,422 lines, below the 1,500 hardline."
+    boundary: "Task creation and query entry points (CreateTask through GetTask/Overview) live in service_tasks.go; task numbering, overview skip-on-project-error and ordering semantics are unchanged. Template-store methods were later removed by G-LJ (Phase 3), so the group is anchored on CreateTask/ListTasks instead."
     tests:
       - server/internal/kanban/service_test.go
       - web/tests/task-panel-unification.test.mjs
@@ -4512,7 +4513,7 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/kanban/service_tasks.go:func (s *Service) ListStageTemplates
+      - server/internal/kanban/service_tasks.go:func (s *Service) ListTasks
       - server/internal/kanban/service_tasks.go:func (s *Service) CreateTask
       - server/internal/kanban/service_tasks.go:func (s *Service) Overview
       - server/internal/kanban/service_tasks.go:func (s *Service) GetTask
@@ -6919,6 +6920,20 @@ groups:
       - web/src/services/task/worktree.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/ids.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodeinfo/role.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
       - docs/plans/kanban-create-panel-and-shared-worktree.md
     tests:
       - server/internal/kanban/service_worktree_shared_test.go
@@ -7443,6 +7458,20 @@ groups:
       - web/src/services/task/index.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/ids.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodeinfo/role.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
       - web/src/shared/taskComments.ts
       - web/tests/task-comment-thread.test.mjs
     tests:
@@ -7464,6 +7493,20 @@ groups:
       - web/tests/run-timeline-drill-in.test.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/ids.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodeinfo/role.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
     tests:
       - web/tests/run-timeline-drill-in.test.ts
     anchors:
@@ -7511,6 +7554,20 @@ groups:
       - web/src/shared/taskComments.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/ids.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodeinfo/role.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
       - web/tests/run-timeline-drill-in.test.ts
       - web/tests/control-plane-routing.test.mjs
       - server/internal/kanban/service_engine.go
@@ -7551,6 +7608,20 @@ groups:
       - web/src/services/task/workflowDraft.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/ids.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodeinfo/role.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
       - web/tests/workflow-canvas.test.ts
       - web/tests/workflow-editor-board-entry.test.mjs
       - web/package.json
@@ -7577,7 +7648,7 @@ groups:
     kind: feature
     symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有任何模板页签、模板菜单、按模板筛选或模板编辑入口；工作台「快速发起」点项目直接打开新建面板；新建任务默认就是「用户输入 → agent（{previous_input}）」两段流水，建完落库只带 `task_stages_json` 快照，不带任何模板 id/名；模板时代创建的历史任务照常显示名称与流水卡片，流水卡与工作流运行视图同一条视觉语法（状态点/状态色/agent·model/起止时间），模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
     why: "必须保留：① 新建任务的流水唯一来源是 `defaultTaskFlowStages()`（user 段 + agent 段 `prompt_template = \"{previous_input}\"`），前端每次创建都把拍平的 `StageTemplate[]` 随包带上，后端不得再回查模板库 —— 没有模板库的 worker 节点也必须能建任务；② 不再写 `task_template_id`/`task_template_name`，后端也不得提供模板回退；③ 工作台快速发起只交付 project（rootId/nodeId），不再有模板选择；④ 任务列表不按模板筛选，且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ 历史任务不迁移执行引擎 —— `MigrateTaskToWorkflowRun` 拒绝终态任务，而模板时代的任务几乎全终态，所以用 `legacyTaskFlow()` 做只读展示投影：不取数、不写库、不改 `task_stages_json`/`stage_runs`，任务仍由 legacy stages 引擎推进；`task_template_id`/`task_template_name` 两列冻结为历史显示字段（停写、保留列）；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与历史流水共用，approved/rejected 是审批结果不归一成 success。"
-    boundary: "Phase 1 隐藏模板 UI；Phase 2 历史流水只读投影 + 工作流样式；Phase 3 删除前端模板组件/服务/状态 hook、后端模板库/API 与 `task_template.json` 打包链。`task_stages_json`/`stage_runs` 保留为任务自己的执行证据；`tasks.task_template_id`/`task_template_name` 两列冻结（停读写、保留列）。不做后端鉴权、不改任务执行引擎。"
+    boundary: "Phase 1 隐藏模板 UI；Phase 2 历史流水只读投影 + 工作流样式；Phase 3 删除前端模板组件/服务/状态 hook、后端模板库/API（7 条路由、`TemplateStore`、`CreateTask` 回退与 `loadForMove` 回填、控制面前缀）与 `task_template.json` 打包链。`task_stages_json`/`stage_runs` 保留为任务自己的执行证据；`tasks.task_template_id`/`task_template_name` 两列冻结（停写、只读展示）。不做后端鉴权、不改任务执行引擎。"
     files:
       - web/src/app/defaultTaskFlow.ts
       - web/src/app/useTaskComposer.ts
@@ -7601,6 +7672,20 @@ groups:
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/ids.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodeinfo/role.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
       - web/tests/template-ui-hidden.test.mjs
       - web/tests/task-board-view-layering.test.mjs
       - web/tests/task-board-view.test.mjs
@@ -7617,6 +7702,9 @@ groups:
       - web/tests/legacy-flow-render.test.mjs
       - web/tests/task-card-status.test.mjs
       - web/tests/task-stage-panel.test.mjs
+      # Phase 3 后端守卫：没有 stages 必须报错（无模板回退）；模板路由必须 404。
+      - server/internal/kanban/service_create_test.go
+      - server/internal/api/http_task_templates_gone_test.go
     anchors:
       - 'web/src/app/defaultTaskFlow.ts:export function defaultTaskFlowStages(): StageTemplate[] {'
       - 'web/src/app/useTaskComposer.ts:const stages = defaultTaskFlowStages();'
@@ -7632,6 +7720,8 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:const flow = legacyTaskFlow({'
       - 'web/src/components/task/TaskDetailPanel.tsx:data-node-kind={node.kind}'
       - 'web/src/components/task/RunNodeRunRow.tsx:import { nodeRunStatusColor } from "./runTimelineModel";'
+      - 'server/internal/kanban/service_tasks.go:if len(stages) == 0 || stages[0].Role != RoleUser {'
+      - 'server/internal/api/http_task_templates_gone_test.go:func TestTaskTemplateRoutesAreGone('
 
   # ── Claude 子代理事件归属（WP-00）：子代理工具卡不得回落父回合 ──────────────
   - id: G-LB
@@ -7850,6 +7940,20 @@ groups:
       - web/src/components/task/workflowAuthoring/WorkflowProposalReview.tsx
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/ids.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodeinfo/role.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
     tests:
       - server/internal/kanban/workflow_agent_ops_test.go
       - server/internal/kanban/workflow_agent_review_test.go

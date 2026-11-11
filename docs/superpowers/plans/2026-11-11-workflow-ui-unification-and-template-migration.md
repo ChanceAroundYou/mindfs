@@ -245,10 +245,10 @@ Phase 1 代码到此为止；部署（`ship`）与 Phase 2 都需要用户显式
 - Modify: `server/internal/kanban/service.go`（`Service.Templates`）、`service_tasks.go`（List/Save/Delete + `CreateTask` 的模板回填分支 + `templateNameForTask`）、`service_state_moves.go`（无 Stages 时回查模板）
 - Modify: `server/internal/api/http_routes.go`（4 条 `/api/task-templates` 路由）
 
-- [ ] **Step 1: 先写测试** — `CreateTask` 在 `stages` 为空且 `TaskTemplateID` 非空时**报错**（不再回查模板库）；模板路由返回 404。
-- [ ] **Step 2: 确认失败**
-- [ ] **Step 3: 删除并修正调用方** — `go build ./...` + `go test ./...`。
-- [ ] **Step 4: 提交**（`Scope: G-LJ`）。
+- [x] **Step 1: 先写测试** — `TestCreateTaskRequiresInlineStages`（`stages` 为空必须报错，即便本地还留着一份老模板库）；`TestTaskTemplateRoutesAreGone`（7 条模板路由 GET/POST/PUT/DELETE 全部 404）。
+- [x] **Step 2: 确认失败** — 两条都按预期红：CreateTask 静默回查模板建出任务；路由返回 503（handler 存在、Kanban 为 nil）。
+- [x] **Step 3: 删除并修正调用方** — 删除 `template_store.go`/`template_store_stage.go`/`template_store_test.go`/`http_task_templates.go`；`newID` 搬到 `ids.go`、`normalizeStageTemplate` 搬进 `types.go`；7 条路由、`TemplateStore` 字段、`NewService` 模板参数、`CreateTaskInput.TaskTemplateID/TaskTemplateName`、`templateNameForTask`、`loadForMove` 回填、控制面前缀、local-CLI 白名单项一并删除。`Task` 上两列冻结为只读。`go build ./...` + `go test ./...` 全绿（kanban 包首轮撞已知 sqlite 抖动，重跑绿）。
+- [x] **Step 4: 提交**（`Scope: G-LJ`）—— 与 Step 3 同一次提交。
 
 ### Task 11: 删除模板配置文件的打包链
 

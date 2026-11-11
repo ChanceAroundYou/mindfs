@@ -31,7 +31,6 @@ func TestWorkerRejectsControlPlaneAndKeepsDataPlane(t *testing.T) {
 		{"/api/preferences/cors", true, "preferences"},
 		{"/api/prompts", true, "prompt library"},
 		{"/api/nodes", true, "node table"},
-		{"/api/task-templates", true, "task templates"},
 		{"/api/node-info", true, "role self-description is control plane too"},
 		{"/api/web-push/status", true, "web push subscriptions"},
 		{"/api/pins", true, "置顶权威在主节点，worker 存一份就等于又分了一次片"},
@@ -43,7 +42,7 @@ func TestWorkerRejectsControlPlaneAndKeepsDataPlane(t *testing.T) {
 		{"/api/tree", false, "file tree"},
 		{"/api/file", false, "file read"},
 		{"/api/tasks", false, "kanban tasks"},
-		{"/api/task-templates-not-a-prefix", false, "segment boundary"},
+		{"/api/prompts-extra", false, "segment boundary"},
 		{"/api/agents", false, "agent runtime config stays on workers"},
 		{"/api/agent-config", false, "agent config is this machine's own runtime"},
 	}
@@ -70,37 +69,6 @@ func TestControlRoleIsTheDefault(t *testing.T) {
 		if rec.Code == http.StatusForbidden {
 			t.Fatalf("role %q must behave like control, but /api/nodes was blocked", role)
 		}
-	}
-}
-
-// 本机 CLI 直连必须豁免：isLocalCLIPath 的白名单里有 /api/task-templates
-// （控制面）。CLI 拿 token 从 loopback 调它时若被守卫拦掉，
-// 「命令行读模板」在 worker 上就废了。
-func TestLocalCLIExemptFromWorkerGuard(t *testing.T) {
-	const token = "cli-token-for-test"
-	h := &HTTPHandler{NodeRole: nodeinfo.RoleWorker, LocalCLIToken: token}
-	guard := h.rejectControlPlaneOnWorker(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// 带对 token 但不是 loopback → 仍应被拒。
-	req := httptest.NewRequest(http.MethodGet, "/api/task-templates", nil)
-	req.Header.Set(localCLIHeaderName, token)
-	req.RemoteAddr = "203.0.113.7:5555"
-	rec := httptest.NewRecorder()
-	guard.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("non-loopback CLI request = %d, want 403", rec.Code)
-	}
-
-	// loopback + 对的 token → 豁免。
-	req = httptest.NewRequest(http.MethodGet, "/api/task-templates", nil)
-	req.Header.Set(localCLIHeaderName, token)
-	req.RemoteAddr = "127.0.0.1:5555"
-	rec = httptest.NewRecorder()
-	guard.ServeHTTP(rec, req)
-	if rec.Code == http.StatusForbidden {
-		t.Fatalf("loopback CLI request must be exempt from the worker guard, got 403: %s", rec.Body.String())
 	}
 }
 

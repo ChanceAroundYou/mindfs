@@ -32,7 +32,7 @@ func multiMergeFixture(t *testing.T, editA, editB string) (svc *Service, root fs
 		writeCommit(t, wtB, "b.txt", editB, "work b")
 	}
 	root = fs.NewRootInfo("root", "root", mainDir)
-	svc = NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc = NewService(testRoots{root: root})
 	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
@@ -139,7 +139,7 @@ func TestAutoMergeWorktreeConflictKeepsBranches(t *testing.T) {
 	gitForTest(t, mainDir, "commit", "-qm", "main edit")
 
 	root := fs.NewRootInfo("root", "root", mainDir)
-	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc := NewService(testRoots{root: root})
 	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "conflict"})
