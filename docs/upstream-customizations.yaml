@@ -7765,3 +7765,23 @@ groups:
       - 'server/internal/kanban/workflow_recovery_test.go:func TestWorkflowRuntimeCompleteAndFailFreezeOpenWork('
 
   # ── Workflow workspace intent + 跨账户物理 worktree gate + owner 唯一 ────────
+  - id: G-LF
+    title: Workflow Agent 节点 workspace intent、app 级共享物理工作树 writer gate 与活动树唯一 owner
+    kind: feature
+    symptom: "工作流节点写工作区没有物理树级跨账户 writer gate，活动 NodeRun 还可能覆盖彼此的 worktree owner；用户会看到并发写、错误认领或遗留数据丢失。"
+    why: "节点写意图默认 true，只有显式 false 才只读；app 注入共享 gate，按规范化物理路径与分支互斥；活动 NodeRun 对 worktree/branch 唯一认领，冲突不覆盖既有 owner。跨进程不承诺互斥，缺 gate/身份时 fail closed。"
+    boundary: "只覆盖进程内共享物理树 gate 与 worktree durable owner claim；NodeRun 生命周期/merge 归 G-KV，跨进程锁不承诺。"
+    files:
+      - server/internal/kanban/writer_gate.go
+      - server/internal/kanban/service_workspace_gate.go
+      - server/internal/kanban/worktree_registry_claim.go
+      - server/internal/kanban/service.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+    tests:
+      - server/internal/kanban/workflow_workspace_gate_test.go
+      - server/app/workspace_writer_gate_test.go
+    anchors:
+      - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) AcquireWorkspace(ctx context.Context, path, branch string) (func(), error)'
+      - 'server/internal/kanban/worktree_registry_claim.go:func (s *TaskStore) ClaimWorktreeEntry('
