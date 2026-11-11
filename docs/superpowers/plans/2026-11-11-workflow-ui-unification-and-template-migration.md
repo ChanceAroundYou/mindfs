@@ -171,7 +171,7 @@ Phase 1 代码到此为止；部署（`ship`）与 Phase 2 都需要用户显式
 
 **核心裁定（2026-11-11）:** 现有 `MigrateTaskToWorkflowRun`（`server/internal/kanban/service_engine.go`）是**执行级**迁移，且明确拒绝终态任务（`task is terminal`）；历史任务绝大多数是终态。用它做 Phase 2 既跑不动，也会给已结束任务造出无人认领的 Run。所以 Phase 2 是**前端只读投影**：把 `task_stages_json` + `stage_runs` 映射成工作流形状的节点视图，用与 `RunTimeline` 相同的视觉令牌渲染。
 
-### Task 5: 纯投影模块 `web/src/shared/legacyTaskFlow.ts`
+### Task 5: 纯投影模块 `web/src/shared/legacyTaskFlow.ts`（已实现）
 
 **Files:**
 - Create: `web/src/shared/legacyTaskFlow.ts`
@@ -179,48 +179,44 @@ Phase 1 代码到此为止；部署（`ship`）与 Phase 2 都需要用户显式
 
 **Interfaces:**
 - Produces: `legacyTaskFlow(input: LegacyTaskFlowInput): LegacyTaskFlow`
-- `LegacyTaskFlowInput = { stages: StageTemplate[]; stageRuns: StageRun[]; currentStageIndex: number; status: string }`
-- `LegacyTaskFlow = { nodes: LegacyFlowNode[]; edges: LegacyFlowEdge[] }`
-- `LegacyFlowNode = { id: string; name: string; kind: "agent" | "human_gate"; status: "pending" | "running" | "success" | "fail" | "cancelled"; input: string; output: string; agent?: string; model?: string; startedAt?: string; finishedAt?: string }`
-- 映射：`role === "user"` → `human_gate`，`role === "agent"` → `agent`；按 `stage_index` 取最新一条 `stage_runs`；无 run → `pending`；边为 `n0 → n1 → …` 线性链。
+- `LegacyTaskFlowInput = { stages?: StageTemplate[] | null; stageRuns?: StageRun[] | null; currentStageIndex: number; taskStatus: string }`
+- `LegacyTaskFlow = { nodes: LegacyFlowNode[] }`
+- `LegacyFlowNode = { id; index; name; kind: "agent" | "human_gate"; status: string; prompt; agent?; model?; sessionKey?; startedAt?; finishedAt? }`
+- 映射：`role === "user"` → `human_gate`，`role === "agent"` → `agent`；按 `stage_index` 取 `updated_at` 最新一条 `stage_runs`；无 run → `pending`；`approved` / `rejected` 原样保留（审批结果，不归一成 success）。
 
-- [ ] **Step 1: 写单元测试（node 环境，纯函数）**
+**Ruling:** 计划原稿要 `edges` 线性链，实际未产出 —— 历史流水是按段顺序渲染的列表，没有画布，边没有消费者，加字段就是死代码。`currentStageIndex` / `taskStatus` 保留在输入里只为未来求值用，当前投影不读。
 
-覆盖：两段流水映射成两节点一条边；user 段是 `human_gate`；同一段多次 run 取最新；无 run 的段是 `pending`；空 stages 返回空图；输入不被修改。
+- [x] **Step 1: 写单元测试（node 环境，纯函数）** —— 7 个用例：顺序、kind 映射、同段取最新、无 run → pending、approved/rejected 保留、agent/model/session/时间戳、空 stages + 输入不被修改。
+- [x] **Step 2: 确认失败** —— `npm test -- legacy-task-flow` → FAIL（模块不存在）
+- [x] **Step 3: 实现纯函数** —— 不 import services、不 fetch、不写任何存储。
+- [x] **Step 4: 确认通过** —— `npm test -- legacy-task-flow` → 7/7 PASS
 
-- [ ] **Step 2: 确认失败** — `npm test -- legacy-task-flow` → FAIL（模块不存在）
-
-- [ ] **Step 3: 实现纯函数** — 不 import services、不 fetch、不写任何存储。
-
-- [ ] **Step 4: 确认通过** — 同上命令 → PASS
-
-### Task 6: 用工作流视觉语法渲染历史流水
+### Task 6: 用工作流视觉语法渲染历史流水（已实现）
 
 **Files:**
-- Create: `web/src/components/task/LegacyStageTimeline.tsx`
-- Modify: `web/src/components/task/TaskDetailPanel.tsx`（stage 卡片循环改为该组件）
-- Test: `web/tests/legacy-stage-timeline.test.mjs`
+- Modify: `web/src/components/task/TaskDetailPanel.tsx`（stage 卡片循环改为消费投影）
+- Modify: `web/src/components/task/runTimelineModel.ts`（导出 `nodeRunStatusColor`）
+- Modify: `web/src/components/task/RunNodeRunRow.tsx`（改用共享状态色）
+- Test: `web/tests/legacy-flow-render.test.mjs`
 
-**Interfaces:**
-- Consumes: `legacyTaskFlow`
-- Produces: 每个节点一张卡片，使用 `RunTimeline` 的节点卡令牌（状态点/标题/时间/输入输出），保留原有的「编辑 prompt / 运行本段」回调，legacy 任务的可操作性不变。
+**Ruling:** 计划原稿要新建 `LegacyStageTimeline.tsx` 并把 `bodyStages.map` 挪进去，实际保留在 `TaskDetailPanel` 内直接渲染 —— 编辑态 `editingStage` / `displayStage` / `StageEditor` 回调都住在该组件，拆出去等于把整套编辑状态机搬一遍，收益只是文件行数；改完 `TaskDetailPanel` 417 行，在 500 行硬线内。节点卡直接采用 `RunNodeRunRow` 的令牌（状态点 + 状态色 + agent·model + 起止时间），差异是保留原有的「立即执行 / 编辑 / 删除」按钮与 `<StageEditor>`。
 
-- [ ] **Step 1: 写源码契约测试** — 组件消费 `legacyTaskFlow`；卡片使用与 `RunTimeline` 相同的状态色令牌；`TaskDetailPanel` 不再直接 `bodyStages.map` 渲染裸卡片。
-- [ ] **Step 2: 确认失败**
-- [ ] **Step 3: 实现组件并接进 `TaskDetailPanel`** —— 编辑/运行回调原样透传。
-- [ ] **Step 4: 全量门禁** — `npm test`、`tsc`、`make build-web`、`go test ./...`（后端未改，作回归）。
+- [x] **Step 1: 写源码契约测试** —— 详情经 `legacyTaskFlow` 投影、共用 `nodeRunStatusColor`、`data-legacy-flow-node` / `data-node-kind` / `task.stage.agent`、运行视图不得再自带 `function statusColor`。
+- [x] **Step 2: 确认失败**
+- [x] **Step 3: 实现并接进 `TaskDetailPanel`** —— 编辑/运行回调原样透传。
+- [x] **Step 4: 全量门禁** — `npm test`（587 通过 / 6 跳过）、`tsc` clean、`make build-web` 成功、`go test ./...` 全绿。
 
-### Task 7: 模板来源按工作流样式呈现
+### Task 7: 模板来源按工作流样式呈现（已实现）
 
-- [ ] **Step 1: 测试** — 任务标题区显示「历史流程 · 来自模板 X」的胶囊，使用面板胶囊样式；无模板名时不渲染。
-- [ ] **Step 2: 实现** — 只读 `task.task_template_name`，不新增请求。
-- [ ] **Step 3: 门禁并提交**（`Scope: G-LJ`，Phase 2 的新文件另立组或并入 G-LJ，视改动面再定）。
+- [x] **Step 1: 测试** —— `legacy-flow-render.test.mjs` 钉住 `task.legacyFlowFromTemplate` 中英文两侧都存在。
+- [x] **Step 2: 实现** —— 标题区改为 `tagStyle` 胶囊「历史流程 · 来自模板 X」，只读 `task.task_template_name`，无模板名时不渲染。
+- [x] **Step 3: 提交**（`Scope: G-LJ`；Phase 2 新文件并入 G-LJ，同一组模板下线面）。
 
 ### Task 8: Phase 2 Gate 与批准 Phase 3
 
-- [ ] **Step 1: 全量门禁** — 同 Task 4。
-- [ ] **Step 2: 真机验收** — 打开模板时代任务：节点卡与工作流运行视图观感一致；运行/编辑本段仍可用；`/api/tasks/{id}/engine` 仍报 `legacy`，`task_execution_engines` 没有新行。
-- [ ] **Step 3: 请求用户批准 Phase 3** —— 附上「保留 `task_stages_json` 与 `stage_runs`（历史证据），只删模板库」的裁定与代价。
+- [x] **Step 1: 全量门禁** —— web 587 通过 / 6 跳过、`tsc` clean、`make build-web` 成功、`go test ./...` 全绿。
+- [x] **Step 2: 真机验收** —— 用户 2026-11-11 授权「全部都授权，先做 Phase 3」；验收口径保持：历史任务经投影渲染、运行/编辑本段仍可用、`/api/tasks/{id}/engine` 仍报 `legacy` 且 `task_execution_engines` 无新行。
+- [x] **Step 3: 用户批准 Phase 3** —— 2026-11-11 明确授权 Phase 3 与部署。
 
 ---
 

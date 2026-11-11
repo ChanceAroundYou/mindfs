@@ -264,7 +264,7 @@ assert.match(panel, /onClick=\{\(\) => void runStage\(\)\}/, "the run button mus
 // 位置：右组里、删除键左边，跟阶段名同一行。
 assert.match(
   panel,
-  /\{canRunStage \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,2500}?\{run\?\.session_key \? \([\s\S]{0,2500}?\{!executed && !isCurrent \? \([\s\S]{0,600}?<TrashIcon \/>/,
+  /\{canRunStage \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,2500}?\{node\.sessionKey \? \([\s\S]{0,2500}?\{!executed && !isCurrent \? \([\s\S]{0,600}?<TrashIcon \/>/,
   "run / jump-to-session / delete must sit in one right-aligned group, run leftmost of the three",
 );
 assert.match(

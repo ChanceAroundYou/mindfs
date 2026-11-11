@@ -83,6 +83,7 @@ export const zhCNTasks = {
   "task.group.cancelled": "取消",
   "task.stage.agent": "Agent 执行",
   "task.stage.user": "用户输入",
+  "task.legacyFlowFromTemplate": "历史流程 · 来自模板 {name}",
   "task.templates": "任务模板",
   "task.all": "全部",
   "task.worktreeTitle": "已开启worktree",

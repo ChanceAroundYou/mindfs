@@ -8,7 +8,9 @@ import type { SessionReusePolicy } from "./StageOptionsBar";
 import { PencilIcon, TrashIcon } from "../action/composerIcons";
 import { composerInputStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n/index";
-import { statusText, latestStageRun } from "./taskDetailUtils";
+import { statusText } from "./taskDetailUtils";
+import { nodeRunStatusColor } from "./runTimelineModel";
+import { legacyTaskFlow } from "../../shared/legacyTaskFlow";
 import { pencilStyle, sessionIconButtonStyle, runIconButtonStyle, tagStyle } from "./taskDetailStyles";
 import { TaskDetailConfirmDialog } from "./TaskDetailConfirmDialog";
 import { CommentThread } from "./CommentThread";
@@ -95,6 +97,15 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     deleteTaskCard,
   } = panel;
 
+  // Phase 2：历史任务的流水按工作流语法呈现。只读投影，不改执行引擎；
+  // 每个节点的编辑/运行入口原样保留（任务仍由 legacy stages 引擎推进）。
+  const flow = legacyTaskFlow({
+    stages: bodyStages,
+    stageRuns: detail?.stage_runs ?? [],
+    currentStageIndex: task.current_stage_index,
+    taskStatus: task.status,
+  });
+
   return (
     <>
     <PanelShell
@@ -123,9 +134,11 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           <span style={{ fontSize: "12px", fontWeight: 800, color: taskStatusColor(task.status), flexShrink: 0, whiteSpace: "nowrap" }}>
             {statusText(task.status, t)}
           </span>
-          <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
-            {task.task_template_name || ""}
-          </span>
+          {task.task_template_name ? (
+            <span style={{ ...tagStyle, flexShrink: 0, whiteSpace: "nowrap" }}>
+              {t("task.legacyFlowFromTemplate", { name: task.task_template_name })}
+            </span>
+          ) : null}
           {numberLabel ? (
             <span style={{ fontSize: "12px", fontWeight: 800, color: "#0ea5e9", flexShrink: 0, whiteSpace: "nowrap" }}>{numberLabel}</span>
           ) : null}
@@ -198,10 +211,10 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           ) : null}
 
           {bodyStages.map((stage, i) => {
+            const node = flow.nodes[i];
             const index = i + 1;
-            const run = latestStageRun(detail!, index);
             const isCurrent = index === task.current_stage_index;
-            const executed = !!run && String(run.status) !== "pending";
+            const executed = node.status !== "pending";
             const editing = editingStage === index;
             const isAgent = stage.role === "agent";
             const canRunStage = index === runnableStageIndex
@@ -211,7 +224,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
               && !isTerminalKanbanTask(task)
               && !finishActive
               && !(task.current_stage_status === "running" && task.status === "running");
-            const shown = executed ? (run?.rendered_prompt || stage.prompt_template || "") : (stage.prompt_template || "");
+            const shown = executed ? node.prompt : (stage.prompt_template || "");
             const displayStage: StageTemplate = editing
               ? {
                   ...stage,
@@ -228,21 +241,46 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   session_reuse_policy: editSessionReuse,
                 }
               : stage;
+            const nodeStarted = node.startedAt ? new Date(node.startedAt).toLocaleString() : "";
+            const nodeFinished = node.finishedAt ? new Date(node.finishedAt).toLocaleString() : "";
             return (
-              <div key={stage.id || index} style={{ border: isCurrent ? "1px solid var(--accent-color)" : "1px solid var(--border-color)", borderRadius: "8px", background: "var(--panel-bg)", padding: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div
+                key={node.id}
+                data-legacy-flow-node
+                data-node-index={index}
+                data-node-kind={node.kind}
+                data-status={node.status}
+                style={{ border: isCurrent ? "1px solid var(--accent-color)" : "1px solid var(--border-color)", borderRadius: "8px", background: "var(--panel-bg)", padding: "10px", display: "flex", flexDirection: "column", gap: "8px" }}
+              >
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span
+                    aria-hidden="true"
+                    style={{ width: "8px", height: "8px", borderRadius: "999px", flexShrink: 0, background: nodeRunStatusColor(node.status) }}
+                  />
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
                     {!editing ? (
                       <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
                         {stage.name || t("task.stageLabel", { index })}
                       </span>
                     ) : null}
-                    {!isAgent && !editing ? (
-                      <span style={tagStyle}>{t("task.stage.user")}</span>
+                    {!editing ? (
+                      <span style={tagStyle}>{isAgent ? t("task.stage.agent") : t("task.stage.user")}</span>
                     ) : null}
-                    <span style={{ fontSize: "11px", fontWeight: 700, color: taskStatusColor(run?.status || "") }}>
-                      {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor(node.status) }}>
+                      {executed ? statusText(node.status, t) : t("task.stage.notExecuted")}
                     </span>
+                    {isAgent && node.agent ? (
+                      <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                        {node.agent}{node.model ? ` · ${node.model}` : ""}
+                      </span>
+                    ) : null}
+                    {nodeStarted || nodeFinished ? (
+                      <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                        {nodeStarted ? t("task.runTimeline.started", { time: nodeStarted }) : ""}
+                        {nodeStarted && nodeFinished ? " · " : ""}
+                        {nodeFinished ? t("task.runTimeline.finished", { time: nodeFinished }) : ""}
+                      </span>
+                    ) : null}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "2px", flexShrink: 0 }}>
                     {canRunStage ? (
@@ -258,12 +296,12 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                         <RunNowIcon />
                       </button>
                     ) : null}
-                    {run?.session_key ? (
+                    {node.sessionKey ? (
                       <button
                         type="button"
                         title={t("task.openSession", { index: 1 })}
                         aria-label={t("task.openSession", { index: 1 })}
-                        onClick={() => onOpenSession(run.session_key as string)}
+                        onClick={() => onOpenSession(node.sessionKey as string)}
                         style={{ ...sessionIconButtonStyle, marginLeft: 0 }}
                       >
                         <span style={{ position: "relative", width: "18px", height: "18px", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>

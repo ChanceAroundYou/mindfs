@@ -6,6 +6,30 @@
 
 export type RunGraphLike = { nodes?: Array<{ id?: string; kind?: string }> } | null | undefined;
 
+// 节点状态 → 颜色令牌。运行视图与历史流水（legacy stages 投影）共用这一份，
+// 否则同一个「成功/失败」在两条时间线上会是两种绿/红。
+// approved / rejected 是 legacy 段的状态（用户审批结果），不归一成 success。
+export function nodeRunStatusColor(status: string): string {
+  switch (status) {
+    case "success":
+    case "approved":
+    case "running":
+      return "var(--accent-color)";
+    case "fail":
+    case "cancelled":
+    case "rejected":
+      return "var(--danger-color, #ef4444)";
+    case "waiting_user":
+      return "var(--warning-color, #f59e0b)";
+    case "skipped":
+    case "unknown":
+    case "pending":
+    case "queued":
+    default:
+      return "var(--text-secondary)";
+  }
+}
+
 export function runNodeKinds(graph: RunGraphLike): Record<string, string> {
   const kinds: Record<string, string> = {};
   for (const node of graph?.nodes ?? []) {

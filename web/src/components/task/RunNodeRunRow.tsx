@@ -2,32 +2,13 @@ import React from "react";
 import { useI18n } from "../../i18n/index";
 import { sessionIconButtonStyle } from "./taskDetailStyles";
 import type { NodeRunSnapshot } from "./runTimelineTypes";
+import { nodeRunStatusColor } from "./runTimelineModel";
 
 // 运行时间线里的单个 NodeRun 行。
 //
 // 纯展示：输入/输出/错误只读渲染，session 跳转与 HumanGate 决定都通过回调交给
 // 父层。HumanGate 的两个按钮只在父层判定 isGate（节点类型 human_gate 且状态
 // waiting_user）时出现；deciding 时双禁用，避免一次点击发出两个决定。
-
-function statusColor(status: string): string {
-  switch (status) {
-    case "success":
-      return "var(--accent-color)";
-    case "fail":
-    case "cancelled":
-      return "var(--danger-color, #ef4444)";
-    case "running":
-      return "var(--accent-color)";
-    case "waiting_user":
-      return "var(--warning-color, #f59e0b)";
-    case "skipped":
-    case "unknown":
-    case "pending":
-    case "queued":
-    default:
-      return "var(--text-secondary)";
-  }
-}
 
 function formatPayload(value: Record<string, unknown> | string | undefined): string | null {
   if (value === undefined || value === null) return null;
@@ -85,12 +66,12 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
             width: "8px",
             height: "8px",
             borderRadius: "999px",
-            background: statusColor(nodeRun.status),
+            background: nodeRunStatusColor(nodeRun.status),
             flexShrink: 0,
           }}
         />
         <span style={{ fontWeight: 800, fontSize: "12px", color: "var(--text-color)" }}>{displayName}</span>
-        <span style={{ fontSize: "11px", fontWeight: 700, color: statusColor(nodeRun.status) }}>{nodeRun.status}</span>
+        <span style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor(nodeRun.status) }}>{nodeRun.status}</span>
         {nodeRun.agent ? (
           <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{nodeRun.agent}{nodeRun.model ? ` · ${nodeRun.model}` : ""}</span>
         ) : null}
@@ -120,7 +101,7 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
           data-testid={`human-gate-actions-${nodeRun.id}`}
           style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}
         >
-          <span style={{ fontSize: "11px", fontWeight: 700, color: statusColor("waiting_user") }}>
+          <span style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor("waiting_user") }}>
             {deciding ? t("task.runTimeline.deciding") : null}
           </span>
           <button
@@ -180,8 +161,8 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
 
       {errorText ? (
         <div role="alert">
-          <div style={{ fontSize: "11px", fontWeight: 700, color: statusColor("fail") }}>{t("task.runTimeline.error")}</div>
-          <pre style={{ margin: "2px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "11px", color: statusColor("fail") }}>{errorText}</pre>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor("fail") }}>{t("task.runTimeline.error")}</div>
+          <pre style={{ margin: "2px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "11px", color: nodeRunStatusColor("fail") }}>{errorText}</pre>
         </div>
       ) : null}
     </div>

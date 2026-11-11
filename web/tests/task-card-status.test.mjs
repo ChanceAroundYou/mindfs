@@ -188,7 +188,8 @@ assert.doesNotMatch(
   "the status helper must not hardcode hex — light/dark themes each supply their own value",
 );
 assert.match(panel, /taskStatusColor\(task\.status\)/, "the detail panel reads the shared status color");
-assert.match(panel, /taskStatusColor\(run\?\.status \|\| ""\)/, "so does the per-stage run badge");
+assert.match(panel, /nodeRunStatusColor\(node\.status\)/, "per-stage run badges reuse the workflow node status colors");
+assert.match(panel, /from "\.\/runTimelineModel"/, "the workflow node status colors come from the shared model, not a private copy");
 assert.doesNotMatch(
   panel,
   /const statusColors: Record<string, string>/,

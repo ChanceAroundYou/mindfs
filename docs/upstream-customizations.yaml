@@ -7615,11 +7615,11 @@ groups:
 
   # ── 任务模板功能下线（Phase 1）：看板/工作台/新建面板不再依赖模板库 ──────────
   - id: G-LJ
-    title: 任务模板功能前端下线与内置默认流水
+    title: 任务模板下线（前端隐藏 + 历史流水按工作流语法呈现）
     kind: feature
-    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有模板页签、模板菜单与按模板筛选；工作台「快速发起」点项目直接打开新建面板；新建任务不再要求先建模板，默认就是「用户输入 → agent（{previous_input}）」两段流水；模板时代创建的任务照常显示模板名与流水卡片。"
-    why: "必须保留：① 没有选中模板时由 `defaultTaskFlowTemplate()` 提供内置 user→agent 流水（agent 段 `prompt_template = \"{previous_input}\"`），创建面板与保存路径都回退到它，没有模板库的 worker 节点也能建任务；② 内置 id `__builtin_default_flow__` 只在前端存在，落库时规范化为空串（不写 task_template_id、不携带模板名），不在后端造第二份内置模板；③ 工作台快速发起只交付 project（rootId/nodeId），模板选择完全由面板内置；④ 任务列表不再按模板筛选（否则「全部」以外的任务会凭空消失），且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ 模板组件、模板服务、后端模板库与任务快照列在 Phase 1 一律保留，只从 UI 摘除；历史任务继续按 `task_stages_json` + `stage_runs` 渲染。"
-    boundary: "只改前端可见性与任务创建的默认流水；模板库/API/DB 列与历史快照的展示不变（Phase 2/3 处理）。不做后端鉴权、不改任务执行引擎（任务仍由 legacy stages 引擎推进）。"
+    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有模板页签、模板菜单与按模板筛选；工作台「快速发起」点项目直接打开新建面板；新建任务不再要求先建模板，默认就是「用户输入 → agent（{previous_input}）」两段流水；模板时代创建的任务照常显示模板名与流水卡片，流水卡与工作流运行视图同一条视觉语法（状态点/状态色/agent·model/起止时间），模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
+    why: "必须保留：① 没有选中模板时由 `defaultTaskFlowTemplate()` 提供内置 user→agent 流水（agent 段 `prompt_template = \"{previous_input}\"`），创建面板与保存路径都回退到它，没有模板库的 worker 节点也能建任务；② 内置 id `__builtin_default_flow__` 只在前端存在，落库时规范化为空串（不写 task_template_id、不携带模板名），不在后端造第二份内置模板；③ 工作台快速发起只交付 project（rootId/nodeId），模板选择完全由面板内置；④ 任务列表不再按模板筛选（否则「全部」以外的任务会凭空消失），且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ 历史任务不迁移执行引擎 —— `MigrateTaskToWorkflowRun` 拒绝终态任务，而模板时代的任务几乎全终态，所以用 `legacyTaskFlow()` 做只读展示投影：不取数、不写库、不改 `task_stages_json`/`stage_runs`，任务仍由 legacy stages 引擎推进；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与历史流水共用，approved/rejected 是审批结果不归一成 success。"
+    boundary: "Phase 1 只改前端可见性与任务创建的默认流水；Phase 2 只改历史流水的展示（只读投影 + 工作流样式），模板库/API/DB 列与 `task_stages_json`/`stage_runs` 的执行语义不变；Phase 3 才删前端模板组件/服务、后端模板库/API 与 `task_template.json` 打包链，`task_stages_json`/`stage_runs` 保留为任务自己的执行证据，`tasks.task_template_id`/`task_template_name` 两列冻结（停读写、保留列）。不做后端鉴权、不改任务执行引擎。"
     files:
       - web/src/app/defaultTaskFlow.ts
       - web/src/app/useTaskComposer.ts
@@ -7634,21 +7634,41 @@ groups:
       - web/src/components/app/TaskInlineEditPanel.tsx
       - web/src/components/workspace/WorkspaceBoard.tsx
       - web/src/components/workspace/WorkspaceQuickLaunch.tsx
+      - web/src/shared/legacyTaskFlow.ts
+      - web/src/components/task/runTimelineModel.ts
+      - web/src/components/task/RunNodeRunRow.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
       - web/tests/template-ui-hidden.test.mjs
       - web/tests/task-board-view-layering.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-template-menu-outside-click.test.mjs
       - web/tests/workspace-board.test.mjs
+      - web/tests/legacy-task-flow.test.ts
+      - web/tests/legacy-flow-render.test.mjs
+      - web/tests/task-card-status.test.mjs
+      - web/tests/task-stage-panel.test.mjs
       - docs/superpowers/plans/2026-11-11-workflow-ui-unification-and-template-migration.md
     tests:
       - web/tests/template-ui-hidden.test.mjs
+      - web/tests/legacy-task-flow.test.ts
+      - web/tests/legacy-flow-render.test.mjs
+      - web/tests/task-card-status.test.mjs
+      - web/tests/task-stage-panel.test.mjs
     anchors:
       - 'web/src/app/defaultTaskFlow.ts:export function defaultTaskFlowTemplate('
       - 'web/src/app/useTaskComposer.ts:const picked = template ?? defaultTaskFlowTemplate()'
       - 'web/src/app/useTaskComposer.ts:edit.templateId === DEFAULT_TASK_FLOW_ID ? "" : edit.templateId'
       - 'web/src/components/task/TaskBoardToolbar.tsx:openTaskCreateDialog(null, currentRootId)'
       - 'web/src/components/workspace/WorkspaceQuickLaunch.tsx:onPick(group.rootId, group.nodeId)'
+      - 'web/src/shared/legacyTaskFlow.ts:export function legacyTaskFlow(input: LegacyTaskFlowInput): LegacyTaskFlow'
+      - 'web/src/shared/legacyTaskFlow.ts:kind: stage.role === "user" ? "human_gate" : "agent"'
+      - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
+      - 'web/src/components/task/TaskDetailPanel.tsx:const flow = legacyTaskFlow({'
+      - 'web/src/components/task/TaskDetailPanel.tsx:data-node-kind={node.kind}'
+      - 'web/src/components/task/RunNodeRunRow.tsx:import { nodeRunStatusColor } from "./runTimelineModel";'
 
   # ── Claude 子代理事件归属（WP-00）：子代理工具卡不得回落父回合 ──────────────
   - id: G-LB

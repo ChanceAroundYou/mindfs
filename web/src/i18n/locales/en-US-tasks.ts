@@ -83,6 +83,7 @@ export const enUSTasks = {
   "task.group.cancelled": "Cancelled",
   "task.stage.agent": "Agent run",
   "task.stage.user": "User input",
+  "task.legacyFlowFromTemplate": "Legacy flow · from template {name}",
   "task.templates": "Task templates",
   "task.all": "All",
   "task.worktreeTitle": "Worktree enabled",
