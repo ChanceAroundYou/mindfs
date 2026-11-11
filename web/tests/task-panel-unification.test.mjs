@@ -148,10 +148,17 @@ assert.match(
   /ref=\{taskInlineAttachmentInputRef\}\s*type="file"/,
   "the hidden file input the + button clicks must exist in the create-task panel",
 );
+// 模板选择已下线（Phase 1）：没选模板时面板回退到内置默认流水，仍需一次查找供
+// agent 默认值读取；这里钉住回退没有被删掉。
 assert.match(
   inlinePanel,
-  /const taskInlineTemplate = taskTemplates\.find\(\(tpl\) => tpl\.id === taskInlineEdit\.templateId\) \|\| null;/,
-  "the create-task panel must look the picked template up once (agent + start-immediately both read it)",
+  /const taskInlineTemplate = taskTemplates\.find\(\(tpl\) => tpl\.id === taskInlineEdit\.templateId\)/,
+  "the create-task panel must resolve its stage source once (agent + start-immediately both read it)",
+);
+assert.match(
+  inlinePanel,
+  /defaultTaskFlowTemplate\(\)/,
+  "without a stored template the panel must fall back to the built-in flow",
 );
 assert.match(
   inlinePanel,
@@ -160,13 +167,8 @@ assert.match(
 );
 assert.match(
   taskComposer,
-  /startImmediately: template\?\.stages\?\.\[0\]\?\.snapshot\?\.start_immediately === true/,
-  "opening the create-task panel must seed start-immediately from the template's first stage",
-);
-assert.match(
-  inlinePanel,
-  /text: firstUserInputTemplate\(picked\), startImmediately: picked\.stages\?\.\[0\]\?\.snapshot\?\.start_immediately === true/,
-  "switching templates must re-seed start-immediately, or the previous template's value sticks",
+  /startImmediately: picked\.stages\?\.\[0\]\?\.snapshot\?\.start_immediately === true/,
+  "opening the create-task panel must seed start-immediately from the resolved flow's first stage",
 );
 assert.match(
   createEditor,

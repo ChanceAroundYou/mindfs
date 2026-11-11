@@ -47,14 +47,11 @@ export function useAppTaskTemplateState({
     CANDIDATE_FETCH_DEBOUNCE_MS,
     currentRootId,
     fetchCandidates,
-    firstAgentStage,
     getNodeIdForRoot,
     setTaskInlineCandidateIndex,
     setTaskInlineCandidates,
     taskInlineActiveToken,
     taskInlineEdit,
-    taskTemplateFilter: taskTemplateState.taskTemplateFilter,
-    taskTemplates: taskTemplateState.taskTemplates,
     useEffect,
   });
 

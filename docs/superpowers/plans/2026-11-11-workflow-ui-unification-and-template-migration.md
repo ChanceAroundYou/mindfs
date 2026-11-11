@@ -21,9 +21,9 @@
 ## Review Focus
 
 1. **Phase 1 ships with templates still readable**: A task created from a template before Phase 1 must still display its name and stages in TaskDetailPanel after Phase 1 deploys — test by creating a template task pre-Phase-1, deploying Phase 1, then opening that task.
-2. **Phase 2 conversion is idempotent**: Running the migration script twice on the same task must produce identical output — test by converting a task, recording its `workflow_version_id`, re-running conversion, and asserting the version ID is unchanged.
+2. **Phase 2 is a read-only projection**: historical tasks are terminal and `MigrateTaskToWorkflowRun` rejects them by design; Phase 2 must render `task_stages_json` + `stage_runs` in workflow style without writing any engine binding, run, or schema. A test asserts the projection is pure (no fetch, no persistence) and that opening a historical task creates no `task_execution_engines` row.
 3. **Workflow UI uses panelButtonStyle consistently**: After Phase 1, every button in WorkflowDraftEditor/WorkflowCanvas/WorkflowProposalReview must use `panelButtonStyle("primary"|"secondary"|"danger")`, not inline `style={{…}}` — scan with `grep -rn 'WorkflowDraftEditor\|WorkflowCanvas\|WorkflowProposalReview' web/src | grep 'style={{' | grep button`.
-4. **Template filter removed from board toolbar**: After Phase 1, TaskBoardToolbar must not render template dropdown or "All" tab — test by opening Board and asserting `data-testid="task-template-filter"` is absent.
+4. **Template UI absent without breaking creation**: After Phase 1 the toolbar/board/create dialog/workspace launcher render no template controls, and creating a task from any of those entry points still produces a user→agent flow — pinned by `web/tests/template-ui-hidden.test.mjs` (source contract; this repo has no DOM renderer).
 5. **Phase 3 leaves no template traces**: After Phase 3, `git grep -i template` in `web/src/components/task` and `server/internal/kanban` (excluding comments/test names) returns zero Go/TS code references — only i18n keys for historical display may remain.
 
 ---
@@ -99,531 +99,190 @@ border/padding。新增 panelInputStyle / panelSurfaceStyle。
 Scope: G-LG"
 ```
 
-### Task 3: Hide Template UI from Frontend
+### Task 3: Hide Template UI from Frontend（已实现）
 
 **Files:**
-- Modify: `web/src/components/task/TaskBoardToolbar.tsx:40-120` (remove template filter dropdown)
-- Modify: `web/src/app/useAppKanbanStageColumns.ts` (remove template filtering logic)
-- Modify: `web/src/components/task/TaskCreateDialog.tsx` or equivalent (remove template selector)
-- Test: `web/tests/template-ui-hidden.test.mjs`
+- Create: `web/src/app/defaultTaskFlow.ts`
+- Modify: `web/src/components/task/TaskBoardToolbar.tsx`（只剩新建 / 工作流 / 刷新）
+- Modify: `web/src/components/task/TaskBoardView.tsx`、`web/src/components/workspace/WorkspaceBoard.tsx`、`web/src/components/workspace/WorkspaceQuickLaunch.tsx`
+- Modify: `web/src/components/app/TaskInlineEditPanel.tsx`（删除模板下拉）
+- Modify: `web/src/app/useTaskComposer.ts`、`useTaskBoard.ts`、`useTaskInlineCandidates.ts`、`useAppTaskTemplateState.ts`、`useAppStateLayer.ts`、`useAppViewComposition.ts`、`useAppKanbanTaskPanel.tsx`
+- Test: `web/tests/template-ui-hidden.test.mjs`（新增），并更新 4 个钉住旧模板 UI 的回归测试
 
 **Interfaces:**
-- Consumes: None (pure UI removal)
-- Produces: Template UI components no longer rendered; template data still readable via services
+- Produces: `DEFAULT_TASK_FLOW_ID = "__builtin_default_flow__"` 与 `defaultTaskFlowTemplate(): TaskTemplate`（user → agent，agent 的 `prompt_template = "{previous_input}"`）
+- Produces: `openTaskCreateDialog(template: TaskTemplate | null, targetRootId?, targetNodeId?)` —— `null` 表示用内置默认流水
+- Produces: 工作台入口 `handleWorkspaceCreateTask(rootId, nodeId)`
 
-- [ ] **Step 1: Write test asserting template UI is absent**
+- [ ] **Step 1: 写源码契约测试**
 
-```typescript
-// web/tests/template-ui-hidden.test.mjs
-test('template filter not rendered in board toolbar', () => {
-  const { container } = render(<TaskBoardToolbar {...defaultProps} />);
-  const templateFilter = container.querySelector('[data-testid="task-template-filter"]');
-  assert(templateFilter === null, 'Template filter should not be rendered');
-});
+`web/tests/template-ui-hidden.test.mjs`（7 条）：内置流水形状；工具栏无 `TaskCreateTemplateMenu`/`TaskTemplateActionMenu`/`role="tablist"` 且创建键调用 `openTaskCreateDialog(null,`；看板无 `createTemplateFirst`/`isAllTaskTemplateFilter`；`useTaskBoard.ts` 无 `taskTemplateFilter`；创建面板无 `task.selectTemplate` 且回退 `defaultTaskFlowTemplate`；快速发起无 `TaskTemplate`/`templates`；保存路径解析内置流水。
 
-test('template selector not in create dialog', () => {
-  const { container } = render(<TaskCreateDialog open={true} />);
-  const templateSelect = container.querySelector('[data-testid="template-selector"]');
-  assert(templateSelect === null, 'Template selector should not be rendered');
-});
-```
+- [ ] **Step 2: 运行测试确认失败**
 
-- [ ] **Step 2: Run test to verify it fails**
+Run: `cd web && npm test -- template-ui-hidden`
+Expected: FAIL（文件不存在 + 旧 UI 仍在）
 
-Run: `npm test template-ui-hidden.test.mjs`
-Expected: FAIL — UI elements still rendered
+- [ ] **Step 3: 加 `defaultTaskFlow.ts`**
 
-- [ ] **Step 3: Comment out template filter in TaskBoardToolbar.tsx**
+`defaultTaskFlowTemplate()` 返回 `{ id: DEFAULT_TASK_FLOW_ID, name: "", description: "", stages: [user 段, agent 段] }`；agent 段用 `DEFAULT_TASK_AGENT` / `DEFAULT_TASK_MODEL`。
 
-Lines 40-120: Wrap entire template dropdown section in `{false && (…)}` to hide without deleting. Add comment: `// Phase 1: Template UI hidden; remove in Phase 3`.
+- [ ] **Step 4: 摘除模板 UI 与筛选**
 
-- [ ] **Step 4: Comment out template selector in TaskCreateDialog**
+工具栏只留三个动作；看板去掉模板筛选与 `createTemplateFirst` 门槛，恒 `setKanbanTasks(allTasks)`；创建面板删除模板 `<Select>`；快速发起只交付 `rootId/nodeId`；`openTaskCreateDialog` 不再因 `templateId` 为空而提前返回；保存路径用内置 id 时向 `createTask` 传 `""`、不带模板名。
 
-Find template dropdown/selector in create dialog; wrap in `{false && (…)}` with same comment.
+- [ ] **Step 5: 更新被破坏的回归测试（保留原缺陷知识）**
 
-- [ ] **Step 5: Remove template filtering from useAppKanbanStageColumns**
+`task-board-view-layering`：模板接线 → 「工具栏不再挂载模板菜单」；`task-board-view`：`setKanbanTasks(filtered)` → `setKanbanTasks(allTasks)`（保留「不得丢终态任务」）；`task-panel-unification`：模板查找断言改为 `find(...)` + 内置流水兜底；`task-template-menu-outside-click`：组件 ref 接线保留，工具栏一侧改成「不挂载」；`workspace-board`：`templates` prop 与 `onPick(..., template)` 改为两参。
 
-Find `taskTemplateFilter` usage; replace filtering logic with `const tasks = allTasks;` (no filter). Comment: `// Phase 1: Template filtering removed; delete in Phase 3`.
+- [ ] **Step 6: 全量门禁**
 
-- [ ] **Step 6: Run test to verify it passes**
+Run: `cd web && npm test && npx tsc -b --noEmit`；`make build-web`
+Expected: 576 passed / 6 skipped；typecheck clean；build 成功
 
-Run: `npm test template-ui-hidden.test.mjs`
-Expected: PASS
+- [ ] **Step 7: 登记 fork 定制并提交**
 
-- [ ] **Step 7: Run full web test suite**
+在 `docs/upstream-customizations.yaml` 新增 **G-LJ**（可见症状 + 必须保留的五条约定 + anchors），提交信息带 `Scope: G-LJ`。
 
-Run: `npm test`
-Expected: All tests pass (some template-related tests may now skip/pass vacuously)
+### Task 4: Phase 1 Gate
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 1: 全量门禁**
 
-```bash
-git add web/src/components/task/TaskBoardToolbar.tsx web/src/app/useAppKanbanStageColumns.ts web/src/components/task/TaskCreateDialog.tsx web/tests/template-ui-hidden.test.mjs
-git commit -m "feat(phase1): hide template UI from board and create dialog
+Run: `go test ./...`、`cd web && npm test && npx tsc -b --noEmit`、`make build`
+Expected: 全绿
 
-Template filter, dropdown, and selector are now hidden (commented).
-Backend services and data remain intact. Historical tasks still display
-template names via read-only path.
+- [ ] **Step 2: 历史任务显示验收（只读）**
 
-Phase 1 of 3: UI hidden, data preserved.
+用线上/本机数据打开一个模板时代创建的任务：详情面板必须仍显示模板名与流水卡片（`TaskDetailPanel` 未改）。记录任务 id 与截图/输出。Phase 1 不部署，因此验收对象是「当前代码 + 现有数据」，不是线上 bundle。
 
-Scope: G-L*"
-```
+- [ ] **Step 3: 记录 gate 结果并更新计划索引**
 
-### Task 4: Phase 1 Gate and Ship
+把结果写回本计划与 `docs/plans/README.md`（Actives 之外的新计划条目）。
 
-- [ ] **Step 1: Run full gate**
+- [ ] **Step 4: 请求用户批准 Phase 2 与部署**
 
-Run: `go test ./...`, `npm test`, `tsc -b --noEmit`, `make build-web`, `make build`
-Expected: All pass
-
-- [ ] **Step 2: Test historical template task display**
-
-Create a task from a template before deploying Phase 1. Deploy Phase 1. Open that task in TaskDetailPanel. Assert: template name and stages are still displayed.
-
-- [ ] **Step 3: Commit gate results**
-
-```bash
-git commit --allow-empty -m "docs(phase1): gate passed, ready for user approval
-
-Go: ./... pass
-Web: 568 tests pass
-Typecheck: clean
-Build: success
-
-Awaiting user approval before Phase 2."
-```
-
-- [ ] **Step 4: Request user approval for Phase 2**
-
-Message user: "Phase 1 complete: Workflow UI unified, template UI hidden. Historical tasks still display template data. Ready to proceed to Phase 2 (convert historical snapshots)?"
+Phase 1 代码到此为止；部署（`ship`）与 Phase 2 都需要用户显式授权。消息给出：改动面、门禁结果、Phase 2 方案（只读投影，不动引擎）。
 
 ---
 
-## Phase 2: Convert Historical Template Snapshots to Workflow Format
+## Phase 2: 历史快照按工作流样式渲染（只读）
 
-**Goal:** Migrate all existing tasks with `task_template_id` to workflow format by creating workflow versions from their template snapshots, then updating task records to reference workflows instead of templates.
+**Goal:** 模板时代创建的任务，其流水在任务详情里按工作流的视觉语法呈现；不改执行引擎、不写库、不迁移终态任务。
 
-### Task 5: Design Workflow Version Schema for Migrated Templates
+**核心裁定（2026-11-11）:** 现有 `MigrateTaskToWorkflowRun`（`server/internal/kanban/service_engine.go`）是**执行级**迁移，且明确拒绝终态任务（`task is terminal`）；历史任务绝大多数是终态。用它做 Phase 2 既跑不动，也会给已结束任务造出无人认领的 Run。所以 Phase 2 是**前端只读投影**：把 `task_stages_json` + `stage_runs` 映射成工作流形状的节点视图，用与 `RunTimeline` 相同的视觉令牌渲染。
 
-**Files:**
-- Create: `server/internal/kanban/template_to_workflow.go`
-- Test: `server/internal/kanban/template_to_workflow_test.go`
-
-**Interfaces:**
-- Consumes: `TaskTemplate` from `types.go`, `WorkflowVersion` from workflow types
-- Produces: `ConvertTemplateToWorkflow(tmpl TaskTemplate) (WorkflowVersion, error)`
-
-- [ ] **Step 1: Write test for template-to-workflow conversion**
-
-```go
-// server/internal/kanban/template_to_workflow_test.go
-func TestConvertTemplateToWorkflow(t *testing.T) {
-	tmpl := TaskTemplate{
-		ID: "tmpl-1", Name: "Bug Fix", RootID: "proj-a",
-		Stages: []StageTemplate{{Name: "Triage", Role: "user"}, {Name: "Fix", Role: "agent"}},
-	}
-	wf, err := ConvertTemplateToWorkflow(tmpl)
-	assert.NoError(t, err)
-	assert.Equal(t, "template-tmpl-1", wf.WorkflowID)
-	assert.Equal(t, "proj-a", wf.RootID)
-	assert.Len(t, wf.Graph.Nodes, 2) // One node per stage
-	assert.Equal(t, "human_input", wf.Graph.Nodes[0].Kind) // user stage
-	assert.Equal(t, "agent", wf.Graph.Nodes[1].Kind) // agent stage
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `go test ./server/internal/kanban -run TestConvertTemplateToWorkflow`
-Expected: FAIL — function not defined
-
-- [ ] **Step 3: Implement ConvertTemplateToWorkflow in template_to_workflow.go**
-
-```go
-// Signature: func ConvertTemplateToWorkflow(tmpl TaskTemplate) (WorkflowVersion, error)
-// 1. Generate WorkflowID: "template-" + tmpl.ID
-// 2. Create one WorkflowNode per stage: kind="human_input" for user, "agent" for agent
-// 3. Chain nodes with edges: stage[i] -> stage[i+1]
-// 4. Return WorkflowVersion with Version="v1", Author="system-migration"
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `go test ./server/internal/kanban -run TestConvertTemplateToWorkflow`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add server/internal/kanban/template_to_workflow.go server/internal/kanban/template_to_workflow_test.go
-git commit -m "feat(phase2): add template-to-workflow conversion
-
-ConvertTemplateToWorkflow creates a WorkflowVersion from a TaskTemplate,
-preserving stage order and roles as workflow nodes.
-
-Scope: G-L*"
-```
-
-### Task 6: Batch Migration Script
+### Task 5: 纯投影模块 `web/src/shared/legacyTaskFlow.ts`
 
 **Files:**
-- Create: `scripts/migrate-templates-to-workflows.go`
-- Test: `scripts/migrate-templates-to-workflows_test.go`
+- Create: `web/src/shared/legacyTaskFlow.ts`
+- Test: `web/tests/legacy-task-flow.test.ts`
 
 **Interfaces:**
-- Consumes: `ConvertTemplateToWorkflow` from Task 5, `TaskStore.db`, `WorkflowStore` (if exists, else create inline)
-- Produces: CLI tool that reads all tasks with `task_template_id != ''`, converts their templates to workflows, updates task records with `workflow_version_id`
+- Produces: `legacyTaskFlow(input: LegacyTaskFlowInput): LegacyTaskFlow`
+- `LegacyTaskFlowInput = { stages: StageTemplate[]; stageRuns: StageRun[]; currentStageIndex: number; status: string }`
+- `LegacyTaskFlow = { nodes: LegacyFlowNode[]; edges: LegacyFlowEdge[] }`
+- `LegacyFlowNode = { id: string; name: string; kind: "agent" | "human_gate"; status: "pending" | "running" | "success" | "fail" | "cancelled"; input: string; output: string; agent?: string; model?: string; startedAt?: string; finishedAt?: string }`
+- 映射：`role === "user"` → `human_gate`，`role === "agent"` → `agent`；按 `stage_index` 取最新一条 `stage_runs`；无 run → `pending`；边为 `n0 → n1 → …` 线性链。
 
-- [ ] **Step 1: Write integration test for migration script**
+- [ ] **Step 1: 写单元测试（node 环境，纯函数）**
 
-```go
-// scripts/migrate-templates-to-workflows_test.go
-func TestMigrateTemplatesIntegration(t *testing.T) {
-	// Setup: in-memory DB with 2 tasks using template "tmpl-1"
-	// Run: migration script
-	// Assert: both tasks now have workflow_version_id="template-tmpl-1:v1", task_template_id=""
-}
-```
+覆盖：两段流水映射成两节点一条边；user 段是 `human_gate`；同一段多次 run 取最新；无 run 的段是 `pending`；空 stages 返回空图；输入不被修改。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: 确认失败** — `npm test -- legacy-task-flow` → FAIL（模块不存在）
 
-Run: `go test ./scripts -run TestMigrateTemplatesIntegration`
-Expected: FAIL — script not implemented
+- [ ] **Step 3: 实现纯函数** — 不 import services、不 fetch、不写任何存储。
 
-- [ ] **Step 3: Implement migrate-templates-to-workflows.go**
+- [ ] **Step 4: 确认通过** — 同上命令 → PASS
 
-```go
-// Pseudocode:
-// 1. Load all TaskTemplates via TemplateStore.ListTaskTemplates()
-// 2. For each template: call ConvertTemplateToWorkflow, save to workflow_versions table
-// 3. Load all Tasks with task_template_id != ''
-// 4. For each task: set workflow_version_id = "template-<task_template_id>:v1", clear task_template_id, UPDATE tasks
-// 5. Print summary: X tasks migrated, Y templates converted
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `go test ./scripts -run TestMigrateTemplatesIntegration`
-Expected: PASS
-
-- [ ] **Step 5: Add dry-run flag**
-
-Add `-dry-run` flag that prints changes without writing to DB.
-
-- [ ] **Step 6: Run script on staging data**
-
-If staging environment exists: copy production DB, run `./migrate-templates-to-workflows -dry-run`, review output, then run without `-dry-run` and verify tasks.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add scripts/migrate-templates-to-workflows.go scripts/migrate-templates-to-workflows_test.go
-git commit -m "feat(phase2): add batch template-to-workflow migration script
-
-Converts all tasks using templates to reference workflow versions.
-Includes dry-run mode for validation.
-
-Scope: G-L*"
-```
-
-### Task 7: Update Task Display Logic to Prefer Workflow
+### Task 6: 用工作流视觉语法渲染历史流水
 
 **Files:**
-- Modify: `web/src/services/task/crud.ts` (templateNameForTask fallback)
-- Modify: `web/src/components/task/TaskDetailPanel.tsx` (display workflow version if present)
-- Test: `web/tests/task-workflow-display.test.mjs`
+- Create: `web/src/components/task/LegacyStageTimeline.tsx`
+- Modify: `web/src/components/task/TaskDetailPanel.tsx`（stage 卡片循环改为该组件）
+- Test: `web/tests/legacy-stage-timeline.test.mjs`
 
 **Interfaces:**
-- Consumes: Task with `workflow_version_id` from Task 6 migration
-- Produces: TaskDetailPanel displays workflow version instead of template name when both exist
+- Consumes: `legacyTaskFlow`
+- Produces: 每个节点一张卡片，使用 `RunTimeline` 的节点卡令牌（状态点/标题/时间/输入输出），保留原有的「编辑 prompt / 运行本段」回调，legacy 任务的可操作性不变。
 
-- [ ] **Step 1: Write test for workflow display preference**
+- [ ] **Step 1: 写源码契约测试** — 组件消费 `legacyTaskFlow`；卡片使用与 `RunTimeline` 相同的状态色令牌；`TaskDetailPanel` 不再直接 `bodyStages.map` 渲染裸卡片。
+- [ ] **Step 2: 确认失败**
+- [ ] **Step 3: 实现组件并接进 `TaskDetailPanel`** —— 编辑/运行回调原样透传。
+- [ ] **Step 4: 全量门禁** — `npm test`、`tsc`、`make build-web`、`go test ./...`（后端未改，作回归）。
 
-```typescript
-test('task displays workflow version when present', () => {
-  const task = { workflow_version_id: 'template-tmpl-1:v1', task_template_name: 'Bug Fix' };
-  const { container } = render(<TaskDetailPanel detail={{ task }} />);
-  const label = container.querySelector('[data-testid="task-workflow-label"]');
-  assert(label.textContent.includes('template-tmpl-1:v1'));
-  assert(!label.textContent.includes('Bug Fix')); // Template name should not appear
-});
-```
+### Task 7: 模板来源按工作流样式呈现
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 1: 测试** — 任务标题区显示「历史流程 · 来自模板 X」的胶囊，使用面板胶囊样式；无模板名时不渲染。
+- [ ] **Step 2: 实现** — 只读 `task.task_template_name`，不新增请求。
+- [ ] **Step 3: 门禁并提交**（`Scope: G-LJ`，Phase 2 的新文件另立组或并入 G-LJ，视改动面再定）。
 
-Run: `npm test task-workflow-display.test.mjs`
-Expected: FAIL — panel shows template name
+### Task 8: Phase 2 Gate 与批准 Phase 3
 
-- [ ] **Step 3: Update TaskDetailPanel to prefer workflow_version_id**
-
-Find where `task.task_template_name` is displayed. Replace with: `task.workflow_version_id || task.task_template_name`. Add `data-testid="task-workflow-label"`.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `npm test task-workflow-display.test.mjs`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add web/src/services/task/crud.ts web/src/components/task/TaskDetailPanel.tsx web/tests/task-workflow-display.test.mjs
-git commit -m "feat(phase2): prefer workflow version in task display
-
-Tasks now display workflow_version_id when present, falling back to
-task_template_name for unmigrated tasks.
-
-Scope: G-L*"
-```
-
-### Task 8: Phase 2 Gate and Ship
-
-- [ ] **Step 1: Run full gate**
-
-Run: `go test ./...`, `npm test`, `make build`
-Expected: All pass
-
-- [ ] **Step 2: Test migration idempotency**
-
-On staging: run migration script twice on same task. Assert workflow_version_id unchanged.
-
-- [ ] **Step 3: Backup production DB before migration**
-
-Run: `cp ~/.local/share/mindfs/task-kanban.db ~/.local/share/mindfs/task-kanban.db.pre-phase2`
-
-- [ ] **Step 4: Run migration on production**
-
-Run: `./migrate-templates-to-workflows` (or equivalent command)
-
-- [ ] **Step 5: Verify migrated tasks in UI**
-
-Open several tasks that previously used templates. Assert they display workflow version, not template name.
-
-- [ ] **Step 6: Commit gate results**
-
-```bash
-git commit --allow-empty -m "docs(phase2): migration complete, ready for Phase 3
-
-Migration script converted X tasks to workflows.
-All migrated tasks now display workflow_version_id.
-Template UI remains hidden; backend code still intact.
-
-Awaiting user approval before Phase 3 (code deletion)."
-```
-
-- [ ] **Step 7: Request user approval for Phase 3**
-
-Message user: "Phase 2 complete: All tasks migrated to workflows. Template data no longer referenced by active tasks. Ready to proceed to Phase 3 (delete all template code)?"
+- [ ] **Step 1: 全量门禁** — 同 Task 4。
+- [ ] **Step 2: 真机验收** — 打开模板时代任务：节点卡与工作流运行视图观感一致；运行/编辑本段仍可用；`/api/tasks/{id}/engine` 仍报 `legacy`，`task_execution_engines` 没有新行。
+- [ ] **Step 3: 请求用户批准 Phase 3** —— 附上「保留 `task_stages_json` 与 `stage_runs`（历史证据），只删模板库」的裁定与代价。
 
 ---
 
-## Phase 3: Delete All Template Code and Schema
+## Phase 3: 删除模板功能（保留历史快照）
 
-**Goal:** Remove all template-related code, API endpoints, database columns, and files after confirming Phase 2 migration success.
+**Goal:** 模板库、模板 API、模板 UI、模板配置文件全部消失；任务的流水快照与执行引擎保持原样。
 
-### Task 9: Delete Frontend Template Components
+**裁定:** `task_stages_json` / `stage_runs` / `task_execution_engines` **不删** —— 它们不是模板功能，而是每个任务自己的执行证据（Phase 2 的渲染还依赖它们）。`tasks.task_template_id` / `task_template_name` 两列**冻结**（停止读写、保留列），不在四台机器的 SQLite 上做删列重建：收益为零，风险是历史数据与跨节点迁移。若用户坚持删列，单独一轮再做。
 
-**Files:**
-- Delete: `web/src/components/task/TaskTemplateDialog.tsx`
-- Delete: `web/src/components/task/TaskTemplateActionMenu.tsx`
-- Delete: `web/src/components/task/TaskCreateTemplateMenu.tsx`
-- Modify: `web/src/components/task/taskBoardTypes.ts` (remove TaskTemplateControls)
-- Test: Ensure `npm test` and `tsc` pass after deletion
-
-**Interfaces:**
-- Consumes: Phase 2 completion (all tasks migrated)
-- Produces: Template components and types removed from codebase
-
-- [ ] **Step 1: Delete template component files**
-
-Run: `git rm web/src/components/task/TaskTemplate*.tsx web/src/components/task/TaskCreateTemplateMenu.tsx`
-
-- [ ] **Step 2: Remove TaskTemplateControls from taskBoardTypes.ts**
-
-Delete lines 18-30 (TaskTemplateControls type).
-
-- [ ] **Step 3: Remove template imports from TaskBoardToolbar**
-
-Delete imports of TaskTemplateActionMenu, TaskCreateTemplateMenu, TaskTemplate type.
-
-- [ ] **Step 4: Remove commented template UI code**
-
-Find all `{false && (…)}` blocks added in Task 3; delete them entirely.
-
-- [ ] **Step 5: Run typecheck**
-
-Run: `tsc -b --noEmit`
-Expected: Clean (no errors)
-
-- [ ] **Step 6: Run web tests**
-
-Run: `npm test`
-Expected: All pass (template-specific tests may be deleted or skip)
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add -A
-git commit -m "feat(phase3): delete frontend template components
-
-TaskTemplateDialog, TaskTemplateActionMenu, TaskCreateTemplateMenu removed.
-TaskBoardToolbar no longer references templates.
-
-Scope: G-L*"
-```
-
-### Task 10: Delete Backend Template Logic
+### Task 9: 删除前端模板组件与服务
 
 **Files:**
-- Delete: `server/internal/kanban/template_store.go`
-- Delete: `server/internal/kanban/types.go` (TaskTemplate, StageTemplate types)
-- Modify: `server/internal/kanban/service.go` (remove Templates field)
-- Delete: `server/internal/api/http_task_templates.go` (template API endpoints)
-- Test: `go test ./...` passes
+- Delete: `web/src/components/task/TaskTemplateDialog.tsx`、`TaskCreateTemplateMenu.tsx`、`TaskTemplateActionMenu.tsx`
+- Delete: `web/src/app/useTaskTemplates.ts`、`web/src/app/useAppTaskTemplateState.ts`
+- Delete: `web/src/services/task/templates.ts`
+- Modify: `web/src/shared/taskTypes.ts`（`TaskTemplate`/`StageTemplate` 只保留后者；`TaskTemplateControls`）、`web/src/i18n/locales/{zh-CN,en-US}-tasks.ts`（模板菜单文案）
 
-**Interfaces:**
-- Consumes: Phase 3 Task 9 (frontend cleaned)
-- Produces: Backend template logic removed
+- [ ] **Step 1: 删除文件并修引用** — `npm test` + `tsc` 驱动，逐个清掉 import。
+- [ ] **Step 2: 删除模板相关测试** — 只删「模板 UI 存在」的旧测试；`template-ui-hidden.test.mjs` 保留为删除后的守卫（改成断言文件不存在）。
+- [ ] **Step 3: 门禁并提交**（`Scope: G-LJ`）。
 
-- [ ] **Step 1: Delete template_store.go**
-
-Run: `git rm server/internal/kanban/template_store.go`
-
-- [ ] **Step 2: Remove TaskTemplate/StageTemplate from types.go**
-
-Delete type definitions (lines vary; search for `type TaskTemplate struct`).
-
-- [ ] **Step 3: Remove Templates field from Service**
-
-In `service.go`, delete `Templates *TemplateStore` field and its initialization.
-
-- [ ] **Step 4: Delete template API endpoints**
-
-Run: `git rm server/internal/api/http_task_templates.go`
-
-- [ ] **Step 5: Remove template routes from router**
-
-In `http_routes.go`, delete `r.Get("/api/task-templates", ...)` and `r.Post("/api/task-templates", ...)`.
-
-- [ ] **Step 6: Run Go tests**
-
-Run: `go test ./...`
-Expected: All pass
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add -A
-git commit -m "feat(phase3): delete backend template logic
-
-template_store.go, TaskTemplate types, and API endpoints removed.
-Service no longer references Templates.
-
-Scope: G-L*"
-```
-
-### Task 11: Remove Template DB Columns
+### Task 10: 删除后端模板库与 API
 
 **Files:**
-- Modify: `server/internal/kanban/task_store_migrate.go` (add migration to drop task_template_id, task_template_name, template_snapshot_json columns)
-- Test: Migration runs without error, tasks table schema updated
+- Delete: `server/internal/kanban/template_store.go`、`server/internal/api/http_task_templates.go`
+- Modify: `server/internal/kanban/service.go`（`Service.Templates`）、`service_tasks.go`（List/Save/Delete + `CreateTask` 的模板回填分支 + `templateNameForTask`）、`service_state_moves.go`（无 Stages 时回查模板）
+- Modify: `server/internal/api/http_routes.go`（4 条 `/api/task-templates` 路由）
 
-**Interfaces:**
-- Consumes: Phase 3 Task 10 (backend code cleaned)
-- Produces: tasks table no longer has template columns
+- [ ] **Step 1: 先写测试** — `CreateTask` 在 `stages` 为空且 `TaskTemplateID` 非空时**报错**（不再回查模板库）；模板路由返回 404。
+- [ ] **Step 2: 确认失败**
+- [ ] **Step 3: 删除并修正调用方** — `go build ./...` + `go test ./...`。
+- [ ] **Step 4: 提交**（`Scope: G-LJ`）。
 
-- [ ] **Step 1: Write migration to drop template columns**
+### Task 11: 删除模板配置文件的打包链
 
-In `task_store_migrate.go`, add new migration:
+**Files:**
+- Delete: `task_template.json`
+- Modify: `Makefile`、`scripts/{install,deploy-wsl,deploy-fn,build-all}.sh`、`scripts/install.ps1`、`server/internal/update/install.go`、`server/internal/update/service_windows.go`、`AGENTS.md`（构建与部署说明里不再提 `task_template.json`）
 
-```go
-func (s *TaskStore) migrateDropTemplateColumns() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE tasks_new AS SELECT id, task_number, root_id, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json FROM tasks;
-		DROP TABLE tasks;
-		ALTER TABLE tasks_new RENAME TO tasks;
-	`)
-	return err
-}
-```
+- [ ] **Step 1: 写/改测试** — `service_test.go` 里对 `task_template.json` 的断言改为「不再安装」。
+- [ ] **Step 2: 删除并跑 `go test ./...`**。
+- [ ] **Step 3: 提交**（`Scope: G-LJ`）。
 
-- [ ] **Step 2: Call migration in Migrate()**
+### Task 12: Phase 3 Gate
 
-Add `if err := s.migrateDropTemplateColumns(); err != nil { return err }` after existing migrations.
-
-- [ ] **Step 3: Test migration on staging DB**
-
-Copy production DB, run migration, assert tasks table has no task_template_id column.
-
-- [ ] **Step 4: Remove template columns from taskSelectColumns**
-
-In `task_store_migrate.go`, update `taskSelectColumns` constant to exclude task_template_id, task_template_name, template_snapshot_json.
-
-- [ ] **Step 5: Run Go tests**
-
-Run: `go test ./server/internal/kanban`
-Expected: All pass
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add server/internal/kanban/task_store_migrate.go
-git commit -m "feat(phase3): drop template columns from tasks table
-
-Migration removes task_template_id, task_template_name, template_snapshot_json.
-Schema now reflects workflow-only model.
-
-Scope: G-L*"
-```
-
-### Task 12: Phase 3 Gate and Ship
-
-- [ ] **Step 1: Run full gate**
-
-Run: `go test ./...`, `npm test`, `make build`
-Expected: All pass
-
-- [ ] **Step 2: Verify template code is gone**
-
-Run: `git grep -i 'TaskTemplate\|task_template' web/src/components/task server/internal/kanban | grep -v 'test\|i18n'`
-Expected: Zero results (only i18n keys may remain for historical display)
-
-- [ ] **Step 3: Deploy Phase 3**
-
-Run deployment script; restart services.
-
-- [ ] **Step 4: Smoke test UI**
-
-Open Board, create task, verify no template UI appears. Open existing tasks, verify they display workflow versions.
-
-- [ ] **Step 5: Commit completion**
-
-```bash
-git commit --allow-empty -m "docs(phase3): template migration complete
-
-All template code, API endpoints, and schema removed.
-Tasks now exclusively use workflows.
-
-Phase 1: UI hidden
-Phase 2: Data migrated
-Phase 3: Code deleted
-
-Scope: G-L*"
-```
+- [ ] **Step 1: 全量门禁** — `go test ./...`、`npm test`、`tsc`、`make build`、`make build-web`、`make check-upstream`（提交后）。
+- [ ] **Step 2: 痕迹守卫** — `git grep -i 'tasktemplate\|task-template\|task_template'` 只允许命中：冻结的两个 DB 列名、历史注释、i18n 历史文案。
+- [ ] **Step 3: 部署与真机验收** — 经用户批准后 `bash scripts/deploy-all.sh`；建任务、打开历史任务、打开工作流页各验一次。
 
 ---
 
 ## Self-Review
 
-**1. Spec coverage:** User requested (a) unify workflow UI styles → Task 1-2; (b) hide template UI → Task 3; (c) convert historical snapshots → Task 5-7; (d) delete all template code → Task 9-11. All covered.
+**1. Spec coverage:** (a) 统一工作流 UI → Task 1；(b) 前端隐藏模板 → Task 3；(c) 历史快照按工作流样式 → Task 5-7（只读投影，不是引擎迁移）；(d) 删除模板代码 → Task 9-11（保留任务流水与两列冻结历史）。
 
 **2. Step scan:** Each step is one action: write test, run test, modify file, commit. No "TBD" or ambiguous steps.
 
-**3. Type consistency:** `TaskTemplate` used in Task 5-6, then removed in Task 10. `WorkflowVersion` consistent across Task 5-7. `panelButtonStyle` signature consistent Task 1-2.
+**3. Type consistency:** `StageTemplate`/`StageRun` 在 Task 5 的 `LegacyTaskFlowInput` 与 Phase 3 的保留边界一致；`TaskTemplate` 在 Phase 3 删除，不再出现在 Phase 2 的渲染契约里；`panelButtonStyle` 签名在 Task 1 固定。
 
-**4. Review Focus:** All five items have tests: Task 4 Step 2 (Phase 1 template display), Task 8 Step 2 (Phase 2 idempotency), Task 1 (button styles), Task 3 (template filter absent), Task 12 Step 2 (no template traces).
+**4. Review Focus:** Task 4 Step 2（历史任务仍显示）、Task 5/8（只读投影不写库）、Task 1（按钮令牌）、Task 3 Step 1（模板 UI 不存在）、Task 12 Step 2（无模板痕迹）。
 
-**5. Proportion:** Plan is ~300 lines for a multi-phase migration touching 20+ files and 3 database columns. Proportional to scope.
+**5. Proportion:** 计划覆盖三阶段与四个门禁点，反复引用已有模块（`MigrateTaskToWorkflowRun`、`RunTimeline`、`PanelShell`）而不重抄实现。
 
 ---
 

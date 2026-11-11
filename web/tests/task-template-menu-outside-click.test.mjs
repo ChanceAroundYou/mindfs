@@ -13,6 +13,10 @@ import { test } from "vitest";
 //
 // 这几条断言钉住的是**接线**：ref 必须真的挂到菜单的根 div 上，
 // 否则事件顺序（mousedown 先于 click）会重新把这个 bug 带回来。
+//
+// Phase 1（模板 UI 下线）之后工具栏不再挂载这两个菜单，但组件与 hook 仍在仓库里，
+// 所以接线契约继续钉在组件自身；工具栏一侧改成钉「不再挂载」——
+// 这样 Phase 3 删组件时不会顺手把这个已修过的坑一起丢掉。
 
 test("task-template-menu-outside-click", async () => {
 const root = path.resolve(import.meta.dirname, "..");
@@ -43,9 +47,9 @@ for (const [name, source, refName] of [
     /<div ref=\{ref\} style=\{\{ position: "relative", flexShrink: 0 \}\}>/,
     `${name} must attach the ref to its outermost relative container`,
   );
-  assert.ok(
-    toolbar.includes(`ref={${refName}}`),
-    `TaskBoardToolbar must pass ref={${refName}} down to ${name}`,
-  );
 }
+
+// Phase 1：模板菜单不再出现在工具栏上（组件本身保留，等 Phase 3 删除）。
+assert.doesNotMatch(toolbar, /TaskCreateTemplateMenu/, "toolbar must not mount the template create menu");
+assert.doesNotMatch(toolbar, /TaskTemplateActionMenu/, "toolbar must not mount the template action menu");
 });

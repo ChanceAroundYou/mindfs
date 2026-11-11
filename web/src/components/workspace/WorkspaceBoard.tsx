@@ -8,7 +8,6 @@ import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRow
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
 import { WorkspaceQuickLaunch } from "./WorkspaceQuickLaunch";
-import type { TaskTemplate } from "../../shared/taskTypes";
 import {
   workspaceEmptyTextStyle,
   workspaceFilterButtonStyle,
@@ -46,15 +45,14 @@ export type WorkspaceBoardProps = {
   taskSessionKeysById: Record<string, string[]>;
   sessionByKey: Record<string, SessionPresentationSummary>;
   /** 新建任务：直接打开新建任务面板（面板自带「项目」下拉），不自己挑完再转一手 */
-  templates: TaskTemplate[];
-  onCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
+  onCreateTask: (rootId: string, nodeId: string) => void;
   onRefresh: () => void;
 };
 
 export function WorkspaceBoard({
   board, filter, onFilterChange, collapsedKeys, onToggleProject, getNodeColor,
   onOpenProject, onOpenTask, onMoveTask, onOpenSession, onShowSessionError,
-  taskSessionKeysById, sessionByKey, templates, onCreateTask, onRefresh,
+  taskSessionKeysById, sessionByKey, onCreateTask, onRefresh,
 }: WorkspaceBoardProps) {
   const { t } = useI18n();
   const { isMobile } = useResponsive();
@@ -82,7 +80,7 @@ export function WorkspaceBoard({
             于是它整体贴右、内部自然紧贴 —— 筛选组则老老实实留在左边。
             新建放刷新左边：刷新是重复动作，新建是创建动作，后者读起来在前。 */}
         <div style={workspaceToolbarActionsStyle}>
-          <WorkspaceQuickLaunch projects={board.projects} templates={templates} onPick={onCreateTask} />
+          <WorkspaceQuickLaunch projects={board.projects} onPick={onCreateTask} />
           <button
             type="button"
             title={t("common.refresh")}

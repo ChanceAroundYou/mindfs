@@ -42,14 +42,11 @@ export interface useTaskInlineCandidatesParams {
   CANDIDATE_FETCH_DEBOUNCE_MS: typeof CANDIDATE_FETCH_DEBOUNCE_MS;
   currentRootId: string | null;
   fetchCandidates: typeof fetchCandidates;
-  firstAgentStage: typeof firstAgentStage;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   setTaskInlineCandidateIndex: Dispatch<SetStateAction<number>>;
   setTaskInlineCandidates: Dispatch<SetStateAction<CandidateItem[]>>;
   taskInlineActiveToken: { type: "file" | "slash" | "prompt" | "command"; query: string; } | null;
   taskInlineEdit: TaskInlineEditState | null;
-  taskTemplateFilter: string;
-  taskTemplates: TaskTemplate[];
   useEffect: typeof useEffect;
 }
 
@@ -58,14 +55,11 @@ export function useTaskInlineCandidates(params: useTaskInlineCandidatesParams) {
   const CANDIDATE_FETCH_DEBOUNCE_MS = params.CANDIDATE_FETCH_DEBOUNCE_MS;
   const currentRootId = params.currentRootId;
   const fetchCandidates = params.fetchCandidates;
-  const firstAgentStage = params.firstAgentStage;
   const getNodeIdForRoot = params.getNodeIdForRoot;
   const setTaskInlineCandidateIndex = params.setTaskInlineCandidateIndex;
   const setTaskInlineCandidates = params.setTaskInlineCandidates;
   const taskInlineActiveToken = params.taskInlineActiveToken;
   const taskInlineEdit = params.taskInlineEdit;
-  const taskTemplateFilter = params.taskTemplateFilter;
-  const taskTemplates = params.taskTemplates;
   const useEffect = params.useEffect;
 
 useEffect(() => {
@@ -78,8 +72,8 @@ useEffect(() => {
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      const selectedTemplate = taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
-      const agent = firstAgentStage(selectedTemplate)?.agent || "";
+      // 模板选择已下线（Phase 1）：slash 候选按面板里覆盖的 agent，没覆盖就用默认 agent。
+      const agent = taskInlineEdit?.agentOverride || DEFAULT_TASK_AGENT;
       fetchCandidates({
         rootId: tokenRootId,
         type: taskInlineActiveToken.type === "file"
@@ -109,5 +103,5 @@ useEffect(() => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates])
+  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineEdit?.agentOverride, taskInlineActiveToken])
 }

@@ -113,7 +113,8 @@ assert.match(
 
 // 4) 信息架构：按项目分组 + 底部快速发起。
 assert.match(board, /board\.projects\.map\(\(group\) => \(\s*<WorkspaceProjectRow/, "projects render as groups, not as a flat task list");
-assert.match(board, /<WorkspaceQuickLaunch projects=\{board\.projects\} templates=\{templates\} onPick=\{onCreateTask\} \/>/, "quick launch is a trigger that hands off to the shared dialog");
+// Phase 1：模板已下线，快速发起只交付项目（+ 节点），不再挑模板。
+assert.match(board, /<WorkspaceQuickLaunch projects=\{board\.projects\} onPick=\{onCreateTask\} \/>/, "quick launch is a trigger that hands off to the shared dialog");
 // 快速发起在工具栏里，且排在刷新键**之前**（紧贴其左边）
 const quickAt = board.indexOf("<WorkspaceQuickLaunch");
 const refreshAt = board.indexOf("title={t(\"common.refresh\")}");
@@ -156,7 +157,7 @@ assert.match(taskRow, /onMove=\{\(_cardTask, action\) => onMove\(item, action\)\
 //    面板侧的「项目」下拉由 allowProjectSwitch 控制，只在工作台入口出现。
 assert.doesNotMatch(quick, /PromptEditor/, "quick launch must not mount an editor of its own");
 assert.doesNotMatch(quick, /useState|useRef|setOpen|<Select|<div/, "the launch must be a plain trigger — no local panel state, no pickers, no second dialog");
-assert.match(quick, /onClick=\{\(\) => onPick\(group\.rootId, group\.nodeId, template\)\}/, "one click hands the project + template straight to the shared create dialog");
+assert.match(quick, /onClick=\{\(\) => onPick\(group\.rootId, group\.nodeId\)\}/, "one click hands the project straight to the shared create dialog");
 assert.match(quick, /data-onboarding="task-create"/, "the onboarding anchor must survive the rewrite");
 assert.match(app, /allowProjectSwitch: Boolean\(targetRootId\)/, "only the workspace entry gets the project dropdown; the board entry has none");
 assert.match(app, /taskInlineEdit\.allowProjectSwitch && taskCreateProjectOptions\.length > 1/, "the dropdown only renders when there is a choice to make");

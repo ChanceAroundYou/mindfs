@@ -126,7 +126,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     managedRootByIdRef,
     taskDetailsById,
     taskDetailsByIdRef,
-    taskTemplateFilter,
     kanbanTasks,
     selectedKanbanTaskId,
     kanbanLoadSeqRef,

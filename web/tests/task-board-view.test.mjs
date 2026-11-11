@@ -30,12 +30,12 @@ assert.match(
   "project board should win when a project is open; workspace is the no-project fallback",
 );
 
-// 工作台快速发起不再自己 createTask —— 它挑完项目 + 模板就打开看板那套新建任务面板，
-// 模板/worktree/agent/附件只有一份实现。存活的唯一「无模板建任务」入口因此消失，
-// 后端 stages[0].role === "user" 的要求改由 openTaskCreateDialog 选的模板保证。
+// 工作台快速发起不再自己 createTask —— 它挑完项目就打开看板那套新建任务面板，
+// worktree/agent/附件只有一份实现。模板入口下线后（Phase 1），面板固定使用
+// 内置默认流水（user→agent），后端 stages[0].role === "user" 的要求由它保证。
 assert.match(
   app,
-  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, nodeId: string, template: TaskTemplate\) => \{\s*\n\s*openTaskCreateDialog\(template, rootId, nodeId\);/,
+  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, nodeId: string\) => \{\s*\n\s*openTaskCreateDialog\(null, rootId, nodeId\);/,
   "workspace quick launch must hand off to the shared create-task dialog, not build a second one",
 );
 // 面板得知道自己往哪个项目建：targetRootId 缺省才是当前项目（看板入口走这条）
@@ -248,13 +248,13 @@ for (const [key, label] of [
   );
 }
 
-// 模板子看板不得丢弃终态任务：#11(cancelled)/#13(success) 曾因此在「新功能」下整张消失，
+// 看板不得丢弃终态任务：#11(cancelled)/#13(success) 曾因此在子看板下整张消失，
 // 连「已结束」列都进不去。「已结束」列唯一的任务来源就是 success/fail/cancelled，
-// 筛选阶段再滤一道终态，列就必然是空的。
+// 筛选阶段再滤一道终态，列就必然是空的。模板筛选已下线（Phase 1）：直接落全量。
 assert.match(
   app,
-  /setKanbanTasks\(filtered\);/,
-  "template filtering should narrow by template id only, not drop terminal tasks",
+  /setKanbanTasks\(allTasks\);/,
+  "the board must receive every task — no template filter, no extra terminal filter",
 );
 assert.doesNotMatch(
   app,

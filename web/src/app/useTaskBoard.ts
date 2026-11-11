@@ -35,7 +35,6 @@ import { protectedAPIReady } from "../services/net/api";
 import { reportError } from "../services/net/error";
 import { confirmDialog, promptDialog } from "../services/dialog";
 import { firstTaskInputFromDetail, taskSessionKeysFromDetail } from "./appTask";
-import { TASK_TEMPLATE_ALL_FILTER } from "./appStorage";
 import { type ManagedRootPayload } from "./appMisc";
 import { useRefreshSpin } from "../hooks";
 
@@ -47,7 +46,6 @@ export interface UseTaskBoardParams {
   managedRootByIdRef: MutableRefObject<Record<string, ManagedRootPayload>>;
   taskDetailsById: Record<string, TaskDetail>;
   taskDetailsByIdRef: MutableRefObject<Record<string, TaskDetail>>;
-  taskTemplateFilter: string;
   kanbanTasks: KanbanTask[];
   selectedKanbanTaskId: string;
   kanbanLoadSeqRef: MutableRefObject<number>;
@@ -76,7 +74,6 @@ export function useTaskBoard(params: UseTaskBoardParams) {
     managedRootByIdRef,
     taskDetailsById,
     taskDetailsByIdRef,
-    taskTemplateFilter,
     kanbanTasks,
     selectedKanbanTaskId,
     kanbanLoadSeqRef,
@@ -289,17 +286,12 @@ export function useTaskBoard(params: UseTaskBoardParams) {
 	        return true;
 	      })
 	      .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
-	    const selectedTemplateId = taskTemplateFilter || "";
-	    const allTemplatesSelected = selectedTemplateId === TASK_TEMPLATE_ALL_FILTER;
-	    const filtered = selectedTemplateId && !allTemplatesSelected
-	      ? allTasks.filter((task) => task.task_template_id === selectedTemplateId)
-	      : allTasks;
 	    setKanbanTaskCountItems(allTasks);
-	    // 模板筛选只按 task_template_id 收窄，不要在这里再滤终态：
-	    // 四块看板里「已结束」那一列唯一的任务来源就是 success/fail/cancelled，
-	    // 前面多滤一道，终态卡在子看板里就凭空消失（连已完成列都进不去）。
-	    setKanbanTasks(filtered);
-	  }, [currentRootId, taskDetailsById, taskTemplateFilter]);
+	    // 模板筛选已下线（Phase 1）：看板恒展示全部任务。
+	    // 也不要在这里再滤终态：「已结束」那一列唯一的任务来源就是
+	    // success/fail/cancelled，多滤一道，终态卡就凭空消失。
+	    setKanbanTasks(allTasks);
+	  }, [currentRootId, taskDetailsById]);
 
 	  useEffect(() => {
 	    if (!selectedKanbanTaskId) return;

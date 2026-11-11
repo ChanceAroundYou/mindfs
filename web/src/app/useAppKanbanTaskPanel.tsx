@@ -22,7 +22,7 @@ export type UseAppKanbanTaskPanelParams = {
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
   openWorkspaceTaskDetail: (item: { root_id: string; nodeId: string; task: KanbanTask; }) => Promise<void>;
-  handleWorkspaceCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
+  handleWorkspaceCreateTask: (rootId: string, nodeId: string) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
   kanbanStageColumns: { index: number; name: string; role: "user" | "agent"; tasks: KanbanTask[]; groups?: Array<{ key: string; name: string; tone: "success" | "danger" | "muted"; tasks: KanbanTask[]; }>; }[];
@@ -67,7 +67,7 @@ export type UseAppKanbanTaskPanelParams = {
  * 名字叫 sessionByKey 只是 TaskBoardView 的 prop 名，别被它带回错误的那张表。
  */
 export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
-  const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks, taskTemplateActionMenuRef, taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen, taskCreateTemplateMenuRef, taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen, taskTemplates, taskTemplateFilter, setTaskTemplateFilter, openTaskTemplateEditor, handleDeleteTaskTemplate } = params;
+  const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks } = params;
 
   // 工作流草稿编辑器是独立页（listWorkflowDrafts 走控制面），盖掉看板本身；
   // 看板状态都住在 app 层 hook 里，来回切换不会丢数据。
@@ -112,19 +112,6 @@ export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
       setTaskSessionErrorDialog={setTaskSessionErrorDialog}
       loadKanbanTasks={loadKanbanTasks}
       onOpenWorkflowEditor={() => setWorkflowEditorOpen(true)}
-      templateControls={{
-        taskTemplateActionMenuRef,
-        taskTemplateActionMenuOpen,
-        setTaskTemplateActionMenuOpen,
-        taskCreateTemplateMenuRef,
-        taskCreateTemplateMenuOpen,
-        setTaskCreateTemplateMenuOpen,
-        taskTemplates,
-        taskTemplateFilter,
-        setTaskTemplateFilter,
-        openTaskTemplateEditor,
-        handleDeleteTaskTemplate,
-      }}
     />
   );
 

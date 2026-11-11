@@ -16,6 +16,7 @@ import { createTask } from "../services/tasks";
 import { uploadFiles, formatFileToken, fileTokenPath, isUploadAbortError } from "../services/upload";
 import { reportError } from "../services/net/error";
 import { firstUserInputTemplate, taskStagesForCreate, findTaskProjectRoot, parseTaskProjectScopeKey, taskProjectScopeKey, type TaskInlineEditState } from "./appTask";
+import { DEFAULT_TASK_FLOW_ID, defaultTaskFlowTemplate } from "./defaultTaskFlow";
 import { loadTaskCreateWorktreePreference, saveTaskCreateWorktreePreference } from "./appStorage";
 import type { CandidateItem } from "../services/candidates";
 import type { TaskTemplate } from "../services/tasks";
@@ -140,11 +141,13 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
 	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string) => {
 
-	    const templateId = template?.id || "";
+	    // 模板入口已下线（Phase 1）：没有选中模板时用内置默认流水开面板，
+	    // 不再要求「先建一个模板」。
+	    const picked = template ?? defaultTaskFlowTemplate();
 
-	    if (!templateId) return;
+	    const templateId = picked.id || DEFAULT_TASK_FLOW_ID;
 
-	    const initialText = firstUserInputTemplate(template);
+	    const initialText = firstUserInputTemplate(picked);
 
 	    const rootId = targetRootId || currentRootIdRef.current || "";
 
@@ -164,7 +167,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
 	      templateId,
 
-	      templateName: template?.name || t("task.defaultTitle"),
+	      templateName: picked.name || t("task.defaultTitle"),
 
 	      text: initialText,
 
@@ -192,7 +195,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
 	      name: "",
 	      // 首段的「立即执行」：面板开出来就照模板的面板值。
-	      startImmediately: template?.stages?.[0]?.snapshot?.start_immediately === true,
+	      startImmediately: picked.stages?.[0]?.snapshot?.start_immediately === true,
 	      previousInputs: [],
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	      worktreeBranchMode: worktreePref.worktreeBranchMode,
@@ -404,7 +407,10 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
       // 任务可能建在没有模板库的 worker 节点上，那次回查必然失败（service.go CreateTask）。
 
-      const selectedTemplate = taskTemplates.find((tpl) => tpl.id === edit.templateId) || null;
+      // 模板入口已下线（Phase 1）：没选模板就用内置默认流水；内置 id 不落库，
+      // 所以作为 task_template_id 传空串。流水本身总是随包带上（见 taskStagesForCreate）。
+      const selectedTemplate = taskTemplates.find((tpl) => tpl.id === edit.templateId)
+        || (edit.templateId === DEFAULT_TASK_FLOW_ID ? defaultTaskFlowTemplate() : null);
 
       const createStages = taskStagesForCreate(
 
@@ -418,7 +424,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
         rootId,
 
-        edit.templateId,
+        edit.templateId === DEFAULT_TASK_FLOW_ID ? "" : edit.templateId,
 
         payload,
 
@@ -438,7 +444,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
           // 模板名一并带上：worker 节点查不到模板库，看板上的「模板来源」标签靠它。
 
-          ...(selectedTemplate?.name ? { templateName: selectedTemplate.name } : {}),
+          ...(selectedTemplate?.name && edit.templateId !== DEFAULT_TASK_FLOW_ID ? { templateName: selectedTemplate.name } : {}),
 
         },
 

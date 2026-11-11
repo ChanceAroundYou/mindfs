@@ -1,11 +1,10 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import { useResponsive } from "../../hooks/useResponsive";
-import { TASK_TEMPLATE_ALL_FILTER } from "../../shared/taskTemplateConstants";
-import type { KanbanTask, TaskTemplate } from "../../shared/taskTypes";
+import type { KanbanTask } from "../../shared/taskTypes";
 import type { WorkspaceBoard as WorkspaceBoardData, WorkspaceBoardFilter } from "../../shared/workspaceBoardTypes";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
-import type { KanbanStageColumn, MoveKanbanAction, TaskSessionErrorDialog, TaskTemplateControls } from "./taskBoardTypes";
+import type { KanbanStageColumn, MoveKanbanAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 export type { KanbanStageColumn, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { InlineTokenText } from "../common/InlineTokenText";
 import { FloatingScroll } from "../common/FloatingScroll";
@@ -17,7 +16,6 @@ import {
   TaskGroupChevronIcon,
   taskCardIconButtonStyle,
   taskCardSurfaceStyle,
-  taskTemplateMenuItemStyle,
 } from "./taskIcons";
 
 /**
@@ -25,7 +23,6 @@ import {
  *
  * 纯视图——数据与回调全由 App 传入。折叠/选中这类"看起来是本地的"状态其实 App 也要用
  * （详情面板、WS 回包），所以照样由 App 持有，组件内不新增状态。
- * 任务模板状态以 templateControls 整组传递；其 view contract 与 app hook 解耦，定义在 taskBoardTypes。
  */
 export function TaskBoardView({
   workspaceOpen,
@@ -62,7 +59,6 @@ export function TaskBoardView({
   handleTaskSessionDrawerOpen,
   setTaskSessionErrorDialog,
   loadKanbanTasks,
-  templateControls,
   onOpenWorkflowEditor,
 }: {
   workspaceOpen: boolean;
@@ -78,7 +74,7 @@ export function TaskBoardView({
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
   openWorkspaceTaskDetail: (item: { root_id: string; nodeId: string; task: KanbanTask }) => Promise<void>;
-  handleWorkspaceCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
+  handleWorkspaceCreateTask: (rootId: string, nodeId: string) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
   kanbanStageColumns: KanbanStageColumn[];
@@ -95,18 +91,14 @@ export function TaskBoardView({
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
-  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string) => void;
+  openTaskCreateDialog: (template: null, targetRootId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
-  templateControls: TaskTemplateControls;
   onOpenWorkflowEditor: () => void;
 }) {
   const { t } = useI18n();
   const { isMobile } = useResponsive();
-  const { taskTemplates, taskTemplateFilter } = templateControls;
-  const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
-  const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
 
   const workspacePanel = (
     <WorkspaceBoard
@@ -125,7 +117,6 @@ export function TaskBoardView({
       onShowSessionError={setTaskSessionErrorDialog}
       taskSessionKeysById={taskSessionKeysById}
       sessionByKey={sessionByKey}
-      templates={templateControls.taskTemplates}
       onCreateTask={handleWorkspaceCreateTask}
       onRefresh={onRefreshWorkspaceBoard}
     />
@@ -153,18 +144,12 @@ export function TaskBoardView({
     >
       <TaskBoardToolbar
         currentRootId={currentRootId}
-        isAllTaskTemplateFilter={isAllTaskTemplateFilter}
-        selectedTaskTemplateForFilter={selectedTaskTemplateForFilter}
-        templateControls={templateControls}
-        getDisplayNodeColor={getDisplayNodeColor}
         onRefresh={() => loadKanbanTasks(currentRootId)}
         onOpenWorkflowEditor={onOpenWorkflowEditor}
         openTaskCreateDialog={openTaskCreateDialog}
       />
     {kanbanTasksLoading ? (
       <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.loading")}</div>
-    ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
-      <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
     ) : (
         <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0, flex: 1, minWidth: 0 }}>
           <div
@@ -318,7 +303,7 @@ export function TaskBoardView({
                       >
                       <TaskCardRows
                         task={task}
-                        templateNameFallback={selectedTaskTemplateForFilter?.name || ""}
+                        templateNameFallback=""
                         sessionKeys={taskSessionKeys}
                         sessionByKey={sessionByKey}
                         getNodeColor={getDisplayNodeColor}

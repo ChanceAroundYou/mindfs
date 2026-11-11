@@ -1,136 +1,58 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/useRefreshSpin";
-import { TASK_TEMPLATE_ALL_FILTER } from "../../shared/taskTemplateConstants";
-import { hexToRgba } from "../../shared/hexToRgba";
-import { SyncIcon, WorkflowIcon } from "./taskIcons";
-import type { TaskTemplate } from "../../shared/taskTypes";
-import type { TaskTemplateControls } from "./taskBoardTypes";
-import { TaskTemplateActionMenu } from "./TaskTemplateActionMenu";
-import { TaskCreateTemplateMenu } from "./TaskCreateTemplateMenu";
+import { PlusSmallIcon, SyncIcon, WorkflowIcon } from "./taskIcons";
 
 type TaskBoardToolbarProps = {
   currentRootId: string;
-  isAllTaskTemplateFilter: boolean;
-  selectedTaskTemplateForFilter: TaskTemplate | null;
-  templateControls: TaskTemplateControls;
-  getDisplayNodeColor: (rootId: string) => string | null;
   onRefresh: () => void | Promise<void>;
   onOpenWorkflowEditor: () => void;
-  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string) => void;
+  openTaskCreateDialog: (template: null, targetRootId?: string) => void;
 };
 
+/**
+ * 看板工具栏：新建任务、工作流草稿入口、刷新。
+ *
+ * 任务模板的筛选页签、模板动作菜单与「按模板新建」菜单已下线（Phase 1：
+ * 模板 UI 不可见，代码与数据保留）。新建任务一律走内置默认流水。
+ */
 export function TaskBoardToolbar({
   currentRootId,
-  isAllTaskTemplateFilter,
-  selectedTaskTemplateForFilter,
-  templateControls,
-  getDisplayNodeColor,
   onRefresh,
   onOpenWorkflowEditor,
   openTaskCreateDialog,
 }: TaskBoardToolbarProps) {
   const { t } = useI18n();
   const refreshSpin = useRefreshSpin(onRefresh);
-  const {
-    taskTemplateActionMenuRef,
-    taskTemplateActionMenuOpen,
-    setTaskTemplateActionMenuOpen,
-    taskCreateTemplateMenuRef,
-    taskCreateTemplateMenuOpen,
-    setTaskCreateTemplateMenuOpen,
-    taskTemplates,
-    setTaskTemplateFilter,
-    openTaskTemplateEditor,
-    handleDeleteTaskTemplate,
-  } = templateControls;
+  const canCreate = Boolean(currentRootId);
 
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 0, padding: "0 0 8px", flexShrink: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0, flex: 1 }}>
-        <div
-          role="tablist"
-          data-onboarding="task-templates"
-          aria-label={t("task.templates")}
-          style={{
-            display: "flex", alignItems: "center", gap: "2px", overflowX: "auto", padding: "3px",
-            borderRadius: "10px", border: "1px solid rgba(100, 116, 139, 0.36)",
-            background: "rgba(148, 163, 184, 0.10)", minWidth: 0, scrollbarWidth: "none",
-          }}
-        >
-          {(() => {
-            const active = isAllTaskTemplateFilter;
-            const color = getDisplayNodeColor(currentRootId) || "var(--accent-color)";
-            return (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-                  setTaskTemplateActionMenuOpen(false);
-                }}
-                style={{
-                  border: "none", borderRadius: "6px", background: active ? color : "transparent",
-                  color: active ? "#fff" : "var(--text-secondary)", padding: "3px 7px", fontSize: "11px",
-                  fontWeight: 700, lineHeight: "14px", cursor: "pointer", whiteSpace: "nowrap",
-                  boxShadow: active ? `0 1px 3px ${hexToRgba(color, 0.28)}` : "none",
-                }}
-              >
-                {t("task.all")}
-              </button>
-            );
-          })()}
-          {taskTemplates.length > 0 ? <span aria-hidden="true" style={{ width: "1px", height: "16px", background: "rgba(100, 116, 139, 0.32)", margin: "0 1px", flexShrink: 0 }} /> : null}
-          {taskTemplates.map((template, index) => {
-            const templateId = template.id || "";
-            const active = selectedTaskTemplateForFilter?.id === templateId;
-            const color = getDisplayNodeColor(currentRootId) || "var(--accent-color)";
-            return (
-              <React.Fragment key={templateId || template.name}>
-                {index > 0 ? <span aria-hidden="true" style={{ width: "1px", height: "16px", background: "rgba(100, 116, 139, 0.32)", margin: "0 1px", flexShrink: 0 }} /> : null}
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setTaskTemplateFilter(templateId);
-                    setTaskTemplateActionMenuOpen(false);
-                  }}
-                  style={{
-                    border: "none", borderRadius: "6px", background: active ? color : "transparent",
-                    color: active ? "#fff" : "var(--text-secondary)", padding: "3px 7px", fontSize: "11px",
-                    fontWeight: 700, lineHeight: "14px", cursor: "pointer", whiteSpace: "nowrap",
-                    boxShadow: active ? `0 1px 3px ${hexToRgba(color, 0.28)}` : "none",
-                  }}
-                >
-                  <span>{template.name || t("task.unnamedTemplate")}</span>
-                </button>
-              </React.Fragment>
-            );
-          })}
-        </div>
-        <TaskTemplateActionMenu
-          ref={taskTemplateActionMenuRef}
-          open={taskTemplateActionMenuOpen}
-          onToggle={() => setTaskTemplateActionMenuOpen((open) => !open)}
-          selectedTaskTemplateForFilter={selectedTaskTemplateForFilter}
-          onCreateTemplate={() => {
-            setTaskTemplateActionMenuOpen(false);
-            openTaskTemplateEditor(null);
-          }}
-          onEditTemplate={() => {
-            if (!selectedTaskTemplateForFilter) return;
-            setTaskTemplateActionMenuOpen(false);
-            openTaskTemplateEditor(selectedTaskTemplateForFilter);
-          }}
-          onDeleteTemplate={() => {
-            if (!selectedTaskTemplateForFilter) return;
-            setTaskTemplateActionMenuOpen(false);
-            void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
-          }}
-        />
-      </div>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px", padding: "0 0 8px", flexShrink: 0 }}>
+      <button
+        type="button"
+        data-onboarding="task-create"
+        title={t("task.create")}
+        aria-label={t("task.create")}
+        disabled={!canCreate}
+        onClick={() => openTaskCreateDialog(null, currentRootId)}
+        style={{
+          width: "28px",
+          height: "28px",
+          borderRadius: "8px",
+          border: "none",
+          background: "transparent",
+          color: canCreate ? "var(--text-color)" : "var(--muted-text)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: canCreate ? "pointer" : "not-allowed",
+          flexShrink: 0,
+          padding: 0,
+          opacity: canCreate ? 1 : 0.55,
+        }}
+      >
+        <PlusSmallIcon />
+      </button>
       <button
         type="button"
         data-onboarding="task-workflow-editor"
@@ -171,24 +93,6 @@ export function TaskBoardToolbar({
           <SyncIcon style={refreshSpin.refreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined} />
         </span>
       </button>
-      <TaskCreateTemplateMenu
-        ref={taskCreateTemplateMenuRef}
-        open={taskCreateTemplateMenuOpen}
-        onTriggerClick={() => {
-          if (isAllTaskTemplateFilter) {
-            setTaskTemplateActionMenuOpen(false);
-            setTaskCreateTemplateMenuOpen((open) => !open);
-            return;
-          }
-          openTaskCreateDialog(selectedTaskTemplateForFilter);
-        }}
-        canCreate={isAllTaskTemplateFilter || !!selectedTaskTemplateForFilter}
-        taskTemplates={taskTemplates}
-        onCreateTask={(template) => {
-          setTaskCreateTemplateMenuOpen(false);
-          openTaskCreateDialog(template);
-        }}
-      />
     </div>
   );
 }

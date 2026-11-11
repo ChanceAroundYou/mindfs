@@ -19,7 +19,7 @@ import { useProjectTreeActions } from "./useProjectTreeActions";
 import { usePluginThemeVars } from "./usePluginThemeVars";
 import { useFileAutoRefresh } from "./useFileAutoRefresh";
 import { useSessionRelatedFiles } from "./useSessionRelatedFiles";
-import type { KanbanTask, TaskDetail, TaskTemplate } from "../services/tasks";
+import type { KanbanTask, TaskDetail } from "../services/tasks";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { AgentStatus } from "../services/agents";
 import type { DirectorySortMode, FileEntry } from "../services/prefs/directorySort";
@@ -317,10 +317,11 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     fileCursorRef,
   });
 
-  // 工作台的快速发起不自己建任务：挑完项目 + 模板就打开看板那套新建任务面板，
-  // 模板、worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
-  const handleWorkspaceCreateTask = useCallback((rootId: string, nodeId: string, template: TaskTemplate) => {
-    openTaskCreateDialog(template, rootId, nodeId);
+  // 工作台的快速发起不自己建任务：挑完项目就打开看板那套新建任务面板，
+  // worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
+  // 模板选择已下线（Phase 1），面板固定使用内置默认流水。
+  const handleWorkspaceCreateTask = useCallback((rootId: string, nodeId: string) => {
+    openTaskCreateDialog(null, rootId, nodeId);
   }, [openTaskCreateDialog]);
   // 工作台里点任务卡：留在工作台，就地弹任务详情面板。
   // 不走 openWorkspaceProject —— 那会切项目、切看板、改 URL，等于把人甩出工作台。

@@ -27,6 +27,7 @@ import type { UploadProgress } from "../../shared/uploadTypes";
 import type { KanbanTask, StageTemplate, TaskTemplate } from "../../shared/taskTypes";
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "../../app/appMisc";
 import { TaskInlineEditState } from "../../app/appTask";
+import { DEFAULT_TASK_FLOW_ID, defaultTaskFlowTemplate } from "../../app/defaultTaskFlow";
 import { TaskInlineCandidateMenu } from "./TaskInlineCandidateMenu";
 
 export interface TaskInlineEditPanelProps {
@@ -124,7 +125,9 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
     	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
     	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
     	          // 的 agent/model，用户没动过就不写覆盖，让后端照模板走。
-    	          const taskInlineTemplate = taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null;
+    	          // 模板入口已下线（Phase 1）：面板固定用内置默认流水的 agent/model 作默认值。
+    	          const taskInlineTemplate = taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId)
+    	            || (taskInlineEdit.templateId === DEFAULT_TASK_FLOW_ID ? defaultTaskFlowTemplate() : null);
     	          const taskInlineTemplateAgent = firstAgentStage(taskInlineTemplate);
     	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
     	          // 喂给 StageEditor 的那一段：user 段（角色不可切、没有段名），
@@ -159,23 +162,6 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                         ariaLabel={t("task.workspaceSelectProject")}
                         onChange={(value) => switchTaskInlineEditProject(value)}
                         options={taskCreateProjectOptions}
-                        size="panel"
-                      />
-                    </div>
-                  ) : null}
-                  {taskTemplates.length > 0 ? (
-                    <div style={{ minWidth: "120px", maxWidth: "160px" }}>
-                      <Select
-                        value={taskInlineEdit.templateId}
-                        ariaLabel={t("task.selectTemplate")}
-                        onChange={(value) => {
-                          const picked = taskTemplates.find((tpl) => tpl.id === value);
-                          if (!picked) return;
-                          setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked), startImmediately: picked.stages?.[0]?.snapshot?.start_immediately === true } : prev);
-                          setTaskInlineActiveToken(null);
-                          setTaskInlineCandidates([]);
-                        }}
-                        options={taskTemplates.map((tpl) => ({ value: tpl.id || "", label: tpl.name }))}
                         size="panel"
                       />
                     </div>
