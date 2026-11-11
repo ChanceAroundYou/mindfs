@@ -231,3 +231,9 @@ type harnessAdapter struct {
     `go test ./...` 全绿。部署后对四台各跑一次 `agents-config-sync --render` 统一布局，
     `--check-runtime` 四端均为 synced。
     登记 G-KQ（why + 锚点）。
+  - 部署与收尾：`v0.5.5-1118-25-g8d420723`（首次门禁因并行会话导致的
+    `TestQueuedMessageRunsAfterTurnEnds` 假失败重跑即过）。WSL / fn active 且版本一致，
+    pc-win PID 51148、health 200；四端各跑一次 `agents-config-sync --render` 后
+    `--check-runtime` 全部 synced，本机渲染前后配置内容（解析后 JSON）逐字节一致。
+    pc-win 实测：`service_tier`/`notify` 回到根级、`[features]` 仅 `goals`、10 张本地表保留；
+    活动 profile=default 下 `GET /api/agent-api-providers?agent=codex` 只返回「官方订阅」。
