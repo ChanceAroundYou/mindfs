@@ -262,3 +262,16 @@ type harnessAdapter struct {
     本机二进制已装同版本；运行进程（PID 1388399）仍是旧二进制，其周期性 sync 用旧渲染器
     写回的旧布局已被新二进制 `--render` 覆盖（内容语义一致，仅布局差异）；
     需 `sudo systemctl restart mindfs` 后由启动自愈接管。
+- 2026-11-11（pc-win 便捷入口）：把 `mindfs` 注册进 pc-win 用户 PATH，并加一个本地切换脚本。
+  - `scripts/pcwin/register-user-path.ps1`：幂等把 `%LOCALAPPDATA%\Programs\mindfs\bin` 追加进用户 PATH
+    （`deploy-pcwin.sh` 每次部署都会跑；判定用 `-File` 执行，Windows PowerShell 5.1 的 `-Command -`
+    读 stdin 会静默不执行）。
+  - `scripts/pcwin/codex-switch.ps1` + `.cmd`：`codex-switch [status|default|llmux]`。切换走运行中服务的
+    `POST /api/agent-config/switch`，复用服务端校验/回滚/托管进程重启；状态只读活动 profile、运行时
+    `model_provider` 与 `GET /api/agent-config/sync`，**不依赖 `mindfs ...` 的 stdout** —— Windows 二进制
+    是 `-H windowsgui` 子系统，控制台里既不等待也不稳定捕获输出。
+  - `scripts/deploy-pcwin.sh` 部署时把两个脚本推进 bin 目录并注册 PATH。
+  - 真机验证：`mindfs --version` 在新 ssh 会话可见（`& exe --version` 形式）；`codex-switch status` 正常；
+    `default -> llmux -> default` 往返切换成功，最终 pc-win `config.toml` 为新布局（根级
+    `service_tier`/`notify`、local 表全保留、无 `model_provider`）。
+  - 守卫：`web/tests/pcwin-helper.test.mjs`（纯 ASCII、走本地 API、不把 GUI stdout 当判据、PATH 注册幂等）。

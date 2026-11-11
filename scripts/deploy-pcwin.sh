@@ -41,6 +41,27 @@ remote_version="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershe
 [[ "$remote_version" == "$VERSION" ]] || die "版本不一致：pc-win=$remote_version 本机=$VERSION"
 ok "pc-win 已安装 $remote_version"
 
+step "pc-win 辅助脚本与 PATH"
+# 两个辅助脚本装到 mindfs 的 bin 目录（同一目录已进用户 PATH）：
+#   codex-switch  —— 本地切换 Codex 共享 profile（走运行中服务的本地 API）
+#   register-user-path.ps1 —— 幂等把 bin 目录写进用户 PATH
+scp -o BatchMode=yes -o ConnectTimeout=10 \
+  "$ROOT/scripts/pcwin/codex-switch.ps1" "$ROOT/scripts/pcwin/codex-switch.cmd" \
+  "$PC_HOST:C:/Users/10178/AppData/Local/Programs/mindfs/bin/" \
+  || die "辅助脚本传输失败（$PC_HOST）"
+# 脚本不能带中文：Windows PowerShell 按 ANSI 代码页读 .ps1，非 ASCII 会吃掉换行。
+# 用 -File 而不是 `-Command -`：后者在 Windows PowerShell 5.1 上对 stdin 静默不执行。
+scp -o BatchMode=yes -o ConnectTimeout=10 \
+  "$ROOT/scripts/pcwin/register-user-path.ps1" "$PC_HOST:C:/Users/10178/register-user-path.ps1" \
+  || die "PATH 注册脚本传输失败（$PC_HOST）"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" \
+  'powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\10178\register-user-path.ps1' \
+  || die "注册用户 PATH 失败"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" \
+  'powershell -NoProfile -Command "Remove-Item -Force C:\Users\10178\register-user-path.ps1 -ErrorAction SilentlyContinue"' \
+  >/dev/null 2>&1 || true
+ok "codex-switch 已安装，mindfs bin 目录在用户 PATH 中"
+
 step "pc-win 启动并核对"
 # 计划任务 \mindfs 的登录类型是 S4U（2026-11-07 改的，原先是 InteractiveToken），
 # 所以它跑在 Session 0、不管用户是否登录都会起，`schtasks /run` 从 ssh 触发也真的生效。
