@@ -7328,7 +7328,7 @@ groups:
     title: Codex/Claude 共享配置、MindFS provider 元数据与自定义模型目录安全双向同步
     kind: feature
     symptom: "Codex default/llmux 配置、Claude settings/MCP 和 MindFS provider 元数据分别困在各设备；直接同步完整备份会把 auth token、API Key、项目路径与 hook trust hash 推进 Git。设置页此前把「添加配置」「切换重启」拆成两条平行流程，同步入口只对 Codex 出现，其他 harness 既看不到原因也无法同步。"
-    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。同步引擎按 harness 注册表扩展：Codex 校验/渲染保持原路径，Claude 在 Go 里重写 render.sh 的语义（settings.deepMerge、permissions.deny 并集、MCP null 停用、${HOME} 展开、~/.claude.json 只合并 mcpServers、语义等价不落盘、非法现有文件拒绝覆盖），使 pc-win 无 jq 也能得到同一结果。设置页收成两个入口：Agent 配置（先选 harness，再切换/备份/同步）与 API 供应商/模型。"
+    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。同步引擎按 harness 注册表扩展：Codex 校验/渲染保持原路径，Claude 在 Go 里重写 render.sh 的语义（settings.deepMerge、permissions.deny 并集、MCP null 停用、${HOME} 展开、~/.claude.json 只合并 mcpServers、语义等价不落盘、非法现有文件拒绝覆盖），使 pc-win 无 jq 也能得到同一结果。设置页收成两个入口：Agent 配置（先选 harness，再切换/备份/同步）与 API 供应商/模型。自定义模型目录只存在于 preferences 并合入 /api/agents 的模型列表，发送时的 validateAgentModel 必须读同一份合并后的目录——只读 prober 状态会让界面能选中的模型在发送时被服务端拒绝（Codex 报「不支持其他别名，只有内部 gpt 系列」）。"
     boundary: "不共享 auth.json、API Key、OAuth token、项目路径、Codex 信任状态、Claude settings.local.json、~/.claude.json 除 mcpServers 外的键、会话或缓存；不做 last-writer-wins，不把 .agents 外的路径纳入 Git 暂存。首次快照迁移只由 --apply 显式触发。"
     files:
       - docs/upstream-customizations.yaml
@@ -7346,6 +7346,8 @@ groups:
       - server/internal/api/agent_config*.go
       - server/internal/api/agent_custom_models.go
       - server/internal/api/agent_custom_models_test.go
+      - server/internal/api/usecase/session_model_validation.go
+      - server/internal/api/usecase/session_model_validation_test.go
       - server/internal/api/http_routes.go
       - server/internal/preferences/store.go
       - server/internal/preferences/store_test.go
@@ -7382,6 +7384,7 @@ groups:
       - server/internal/api/agent_config_shared_test.go
       - server/internal/api/agent_config_sync_handlers_test.go
       - server/internal/api/agent_custom_models_test.go
+      - server/internal/api/usecase/session_model_validation_test.go
       - server/internal/preferences/store_test.go
       - web/tests/agent-settings-unified-menu.test.mjs
       - web/tests/file-tree-agent-config-flow.test.mjs
@@ -7398,6 +7401,7 @@ groups:
       - 'server/internal/api/agent_api_provider_storage.go:func writeAgentAPIProviders(providers []agentAPIProvider) error'
       - 'server/internal/api/agent_config_shared.go:func switchSharedCodexConfig(id, requestedAgent string, app *AppContext) (agentConfigManifestEntry, error)'
       - 'server/internal/api/agent_custom_models.go:func (h *HTTPHandler) handleAgentCustomModelsPut('
+      - 'server/internal/api/usecase/session_model_validation.go:func (s *Service) validateAgentModel('
       - 'server/internal/preferences/store.go:func (s *Store) UpdateAgentCustomModels('
       - 'web/src/components/file/AgentConfigProfileList.tsx:export function AgentConfigProfileList('
 

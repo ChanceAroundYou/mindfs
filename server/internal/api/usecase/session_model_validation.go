@@ -3,6 +3,8 @@ package usecase
 import (
 	"fmt"
 	"strings"
+
+	agenttypes "mindfs/server/internal/agent/types"
 )
 
 func isClaudeAliasModelForValidate(model string) bool {
@@ -93,10 +95,6 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 	if agentName == "" || model == "" || s.Registry == nil {
 		return nil
 	}
-	isClaude := strings.EqualFold(agentName, "claude")
-	if isClaude {
-		model = canonicalClaudeModelForValidate(model)
-	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
 		return nil
@@ -105,7 +103,44 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 	if !ok || len(status.Models) == 0 {
 		return nil
 	}
-	for _, item := range status.Models {
+	// 自定义模型只存在于 preferences 并合入 /api/agents 的目录，prober 状态里没有它们。
+	// 校验必须看到同一份目录，否则界面能选中的模型会在发送时被这里拒绝。
+	models := status.Models
+	if prefs := s.Registry.GetPreferences(); prefs != nil {
+		models = withCustomModels(models, prefs.AgentCustomModels(agentName))
+	}
+	return validateModelAgainstModels(agentName, model, models)
+}
+
+func withCustomModels(models []agenttypes.ModelInfo, custom []string) []agenttypes.ModelInfo {
+	if len(custom) == 0 {
+		return models
+	}
+	seen := make(map[string]struct{}, len(models)+len(custom))
+	for _, item := range models {
+		seen[strings.TrimSpace(item.ID)] = struct{}{}
+	}
+	out := append([]agenttypes.ModelInfo(nil), models...)
+	for _, id := range custom {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, agenttypes.ModelInfo{ID: id, Name: id})
+	}
+	return out
+}
+
+func validateModelAgainstModels(agentName, model string, models []agenttypes.ModelInfo) error {
+	isClaude := strings.EqualFold(agentName, "claude")
+	if isClaude {
+		model = canonicalClaudeModelForValidate(model)
+	}
+	for _, item := range models {
 		candidate := strings.TrimSpace(item.ID)
 		if isClaude {
 			candidate = canonicalClaudeModelForValidate(candidate)
@@ -120,8 +155,8 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 			return nil
 		}
 	}
-	supported := make([]string, 0, len(status.Models))
-	for i, item := range status.Models {
+	supported := make([]string, 0, len(models))
+	for i, item := range models {
 		if i >= 12 {
 			break
 		}

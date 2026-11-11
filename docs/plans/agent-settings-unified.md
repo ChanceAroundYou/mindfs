@@ -173,3 +173,14 @@ type harnessAdapter struct {
   pc-win 监听 7332、health `{"ok":true,"role":"worker"}`（PID 164396）。
   **本机 system 单元仍是旧进程**：`GET /api/agents/custom-models` 当前返回 404，
   需用户执行 `sudo systemctl restart mindfs` 后新接口才生效（静态 bundle 已更新，脚本对账一致）。
+- 2026-11-11（用户重启后报「codex 提示不支持其他别名，只有内部 gpt 系列」）：
+  - 证据：`journalctl -u mindfs` 显示拒绝来自 MindFS 自己：
+    `validate.error ... model "sonnet4.6" is not supported by agent "codex" (supported models: gpt-6.1-sol, ...)`。
+    `codex exec -m of` 只警告缺少 metadata、不硬拒；llmux 也支持聚合别名 `of`，因此不是 Codex 目录限制。
+  - 根因：`server/internal/api/usecase/session_model_validation.go` 的 `validateAgentModel`
+    直接读 `prober.GetStatus(agentName)`，而自定义模型只存在 preferences 并由 `ApplyAgentDefaults`
+    合入 `/api/agents`——两条路径看的不是同一份目录，界面能选中的模型在发送时被服务端拒绝。
+  - 修复：校验前用 `withCustomModels` 把 `prefs.AgentCustomModels(agentName)` 并入 prober 状态；
+    纯函数 `validateModelAgainstModels` 保留 Claude 别名规范化与 `[1m]` 基名比较。
+    测试 `session_model_validation_test.go` 覆盖内置/自定义/去重/错误列表/Claude 别名五条路径。
+  - 验证：`go test ./server/internal/api/usecase/...` 通过。G-KP 登记补该文件与锚点。
