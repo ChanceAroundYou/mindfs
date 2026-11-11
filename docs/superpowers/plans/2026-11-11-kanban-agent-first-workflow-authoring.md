@@ -139,7 +139,7 @@
 
 ### Task 3：可解释图 diff、逐项审阅与原子 CAS 应用
 
-**Status:** complete（2026-11-11，已提交 `af5bd84a`；证据见 SDD ledger）。
+**Status:** complete（2026-11-11，已提交 `a5966dbe`；证据见 SDD ledger）。
 
 **Files:** Create `workflowAuthoring/WorkflowProposalReview.tsx`, `workflowAuthoring/WorkflowProposalDiff.tsx`, `workflowAuthoring/WorkflowProposalSummary.tsx`; modify `WorkflowDraftEditor.tsx`, `useWorkflowAuthoring.ts`; tests `workflow-agent-authoring-review.test.mjs`.
 
@@ -156,7 +156,7 @@
 
 ### Task 4：Loop 子图画布与安全编辑
 
-**Status:** complete（2026-11-11，已提交 `af5bd84a`；证据见 SDD ledger）。
+**Status:** complete（2026-11-11，已提交 `a5966dbe`；证据见 SDD ledger）。
 
 **Files:** Modify `workflowModel.ts`; create `workflowAuthoring/WorkflowLoopCanvas.tsx` and focused inspector/toolbar components; modify `WorkflowCanvas.tsx`; tests `workflow-loop-canvas.test.mjs` and model tests.
 
@@ -177,7 +177,7 @@
 
 **Interfaces:** Consumes Tasks 1–4. Produces a browser-level proof of authoring from natural-language goal to reviewed graph mutation without unauthorized persistence.
 
-**Status:** complete（2026-11-11，已提交 `af5bd84a`；`e2e/test_workflow_authoring.py` 5/5 通过，证据见 SDD ledger）。浏览器验收用假 Agent 只替换「生成提案」一跳，其余（subset validate/dry-run、CAS apply、发布确认）全部走真后端。Run 级 authoring UI 不在本计划范围，见 Task 6。
+**Status:** complete（2026-11-11，已提交 `a5966dbe`；`e2e/test_workflow_authoring.py` 5/5 通过，证据见 SDD ledger）。浏览器验收用假 Agent 只替换「生成提案」一跳，其余（subset validate/dry-run、CAS apply、发布确认）全部走真后端。Run 级 authoring UI 不在本计划范围，见 Task 6。
 
 - [ ] Step 1: 隔离实例 fake Agent 流程：读取现有 Draft → 提出 node/edge patch 与解释 → validate/dry-run → 用户拒绝一项、接受一项 → CAS 保存 → reload 看到同 revision graph。
 - [ ] Step 2: 覆盖 stale proposal、malformed response、dry-run 阻断、partial patch dangling edge、并发编辑冲突；每种路径均断言持久状态未被未确认修改。
@@ -221,4 +221,4 @@
 - **参考核查摘要**：Langflow assistant preview/apply；Flowise prompt-to-graph 与 iteration container；Dify graph proposal/diff/stale apply 与 Loop containment；xyflow subflow primitive。Kandev 是 step pipeline editor，不是一般 DAG canvas。许可分别为 MIT、Apache-2.0（Flowise enterprise 子目录另有边界）、modified Apache 2.0、MIT、AGPL-3.0；只作为研究记录，实施前重核固定 commit 与文件。
 - **Review gap**：当前 reference audit 来自只读仓库树/source 核查；Task 0 仍需在计划实施前复核固定设计 commit 的准确源码和 LICENSE，不可将相邻 revision 的发现当成 pinned-revision 证据。
 - **独立完成门槛**：Task 0–5 都有可单独审查交付；Task 6 是后续计划导航，不是本计划未完成计数项。
-- **收尾（2026-11-11）**：Task 5 完成，浏览器验收 `e2e/test_workflow_authoring.py` 5/5（假 Agent 只替换生成一跳，其余 subset validate/dry-run、CAS apply、发布确认全部走真后端；Playwright 路由必须用正则匹配含 `?user=` 的完整 URL）。门禁：`npm --prefix web test` 537 通过 / 6 跳过、typecheck clean、`go test ./...` 全绿、`make build-web` 与 `make build` 成功。变异验证：冻结前缀、提议即发布、Loop 上限 20→200 三处均先让对应测试 RED 再还原；过程中补强了三处原本抓不到回归的断言（`agent-wf:v2`、完整 Loop 边界用例、dry-run `issues`）。定制登记：G-KZ 增加可编辑 Loop 子图，G-LG 增加自然语言生成网关与前端状态机。Run 级 authoring UI 明确排除（Task 6）。**已执行**：授权提交 `af5bd84a`（41 files），提交后 `make check-upstream` 转绿（1714 个 delta 文件被 284 组完整覆盖）。**未执行**：merge / push / deploy / ship / 重启任何 mindfs 服务。
+- **收尾（2026-11-11）**：Task 5 完成，浏览器验收 `e2e/test_workflow_authoring.py` 5/5（假 Agent 只替换生成一跳，其余 subset validate/dry-run、CAS apply、发布确认全部走真后端；Playwright 路由必须用正则匹配含 `?user=` 的完整 URL）。门禁：`npm --prefix web test` 537 通过 / 6 跳过、typecheck clean、`go test ./...` 全绿、`make build-web` 与 `make build` 成功。变异验证：冻结前缀、提议即发布、Loop 上限 20→200 三处均先让对应测试 RED 再还原；过程中补强了三处原本抓不到回归的断言（`agent-wf:v2`、完整 Loop 边界用例、dry-run `issues`）。定制登记：G-KZ 增加可编辑 Loop 子图，G-LG 增加自然语言生成网关与前端状态机。Run 级 authoring UI 明确排除（Task 6）。**已执行**：授权提交 `a5966dbe`（41 files），提交后 `make check-upstream` 转绿（1714 个 delta 文件被 284 组完整覆盖）。**未执行**：merge / push / deploy / ship / 重启任何 mindfs 服务。
