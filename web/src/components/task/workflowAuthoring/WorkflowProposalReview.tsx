@@ -1,4 +1,5 @@
 import { useI18n } from "../../../i18n/index";
+import { panelButtonStyle } from "../../shell/PanelShell";
 import type { WorkflowAuthoring } from "../useWorkflowAuthoring";
 import type { WorkflowAuthoringApplyResult, WorkflowAuthoringReview } from "../useWorkflowAuthoringReview";
 import { WorkflowProposalDiff } from "./WorkflowProposalDiff";
@@ -53,13 +54,13 @@ export function WorkflowProposalReview({ authoring, review, disabled, onApplied 
         disabled={review.busy || proposal.status === "applying"}
       />
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        <button type="button" onClick={review.selectAll} disabled={review.busy}>
+        <button type="button" style={panelButtonStyle("secondary")} onClick={review.selectAll} disabled={review.busy}>
           {t("task.workflowAuthoring.selectAll")}
         </button>
-        <button type="button" onClick={review.clear} disabled={review.busy || review.selection.length === 0}>
+        <button type="button" style={panelButtonStyle("secondary")} onClick={review.clear} disabled={review.busy || review.selection.length === 0}>
           {t("task.workflowAuthoring.clearSelection")}
         </button>
-        <button type="button" data-testid="workflow-proposal-apply" disabled={!canApply} onClick={apply}>
+        <button type="button" style={panelButtonStyle("primary")} data-testid="workflow-proposal-apply" disabled={!canApply} onClick={apply}>
           {review.busy || proposal.status === "applying"
             ? t("task.workflowAuthoring.applying")
             : t("task.workflowAuthoring.apply")}

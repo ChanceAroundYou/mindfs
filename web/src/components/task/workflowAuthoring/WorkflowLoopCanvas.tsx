@@ -11,6 +11,7 @@ import {
   type Node,
 } from "@xyflow/react";
 import { useI18n } from "../../../i18n/index";
+import { panelButtonStyle, panelInputStyle, panelSurfaceStyle } from "../../shell/PanelShell";
 import {
   newNode,
   withLoopInnerGraph,
@@ -118,7 +119,7 @@ export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanva
         <button
           type="button"
           onClick={onBack}
-          style={{ border: "1px solid var(--border-color)", background: "transparent", borderRadius: "6px", padding: "2px 8px", cursor: "pointer" }}
+          style={panelButtonStyle("secondary")}
         >
           ← {t("task.workflowCanvas.loopBack")}
         </button>
@@ -132,7 +133,7 @@ export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanva
               key={k}
               type="button"
               onClick={() => addNode(k)}
-              style={{ border: "1px solid var(--border-color)", background: "transparent", borderRadius: "6px", padding: "2px 8px", fontSize: "12px", cursor: "pointer" }}
+              style={panelButtonStyle("secondary")}
             >
               + {labels[k]}
             </button>
@@ -142,14 +143,14 @@ export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanva
           type="button"
           disabled={!selectedId}
           onClick={removeSelected}
-          style={{ border: "1px solid var(--border-color)", background: "transparent", borderRadius: "6px", padding: "2px 8px", fontSize: "12px", cursor: selectedId ? "pointer" : "not-allowed" }}
+          style={{ ...panelButtonStyle("danger"), opacity: selectedId ? 1 : 0.45, cursor: selectedId ? "pointer" : "not-allowed" }}
         >
           {t("task.workflowCanvas.removeNode")}
         </button>
         <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.loopInnerHint")}</span>
       </div>
 
-      <div style={{ height: "300px", border: "1px solid var(--border-color)", borderRadius: "8px", overflow: "hidden" }}>
+      <div style={{ ...panelSurfaceStyle(), padding: 0, height: "300px", overflow: "hidden" }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -166,13 +167,13 @@ export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanva
       </div>
 
       {selected ? (
-        <div data-testid="workflow-loop-inspector" style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" }}>
+        <div data-testid="workflow-loop-inspector" style={{ ...panelSurfaceStyle(), display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" }}>
           <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
             <span>{t("task.workflowCanvas.name")}</span>
             <input
               value={selected.name || ""}
               onChange={(e) => patchSelected({ name: e.target.value })}
-              style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+              style={{ ...panelInputStyle(), flex: 1 }}
             />
           </div>
           {selected.kind === "agent" ? (
@@ -181,13 +182,13 @@ export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanva
               <input
                 value={String(selected.params?.agent ?? "")}
                 onChange={(e) => patchSelected({ params: { ...selected.params, agent: e.target.value } })}
-                style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                style={{ ...panelInputStyle(), flex: 1 }}
               />
               <span>{t("task.workflowCanvas.model")}</span>
               <input
                 value={String(selected.params?.model ?? "")}
                 onChange={(e) => patchSelected({ params: { ...selected.params, model: e.target.value } })}
-                style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                style={{ ...panelInputStyle(), flex: 1 }}
               />
             </div>
           ) : null}
@@ -201,7 +202,7 @@ export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanva
                     params: { ...selected.params, routes: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) },
                   })
                 }
-                style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                style={{ ...panelInputStyle(), flex: 1 }}
               />
             </div>
           ) : null}

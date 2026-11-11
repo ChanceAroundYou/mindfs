@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/index";
 import { useResponsive } from "../../hooks/useResponsive";
+import { panelButtonStyle, panelInputStyle, panelSurfaceStyle } from "../shell/PanelShell";
 import { WorkflowCanvas } from "./WorkflowCanvas";
 import { useWorkflowAuthoring } from "./useWorkflowAuthoring";
 import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
@@ -81,20 +82,20 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
         {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)" }} /> : null}
         <span style={{ flex: 1 }} />
         {createMode ? (
-          <button type="button" onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
+          <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
         ) : (
           <>
-            <button type="button" data-testid="workflow-agent-create" disabled={e.saving || e.dirty || isMobile} onClick={startCreate}>{t("task.workflowAuthoring.startCreate")}</button>
-            <button type="button" disabled={e.saving || isMobile} onClick={() => void e.create()}>{t("task.workflowEditor.create")}</button>
-            <button type="button" disabled={e.saving || !e.dirty || isMobile} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
-            <button type="button" disabled={e.saving || e.dirty || !e.selected || isMobile} onClick={publish}>{t("task.workflowEditor.publish")}</button>
+            <button type="button" style={panelButtonStyle("primary")} data-testid="workflow-agent-create" disabled={e.saving || e.dirty || isMobile} onClick={startCreate}>{t("task.workflowAuthoring.startCreate")}</button>
+            <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving || isMobile} onClick={() => void e.create()}>{t("task.workflowEditor.create")}</button>
+            <button type="button" style={panelButtonStyle("primary")} disabled={e.saving || !e.dirty || isMobile} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
+            <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving || e.dirty || !e.selected || isMobile} onClick={publish}>{t("task.workflowEditor.publish")}</button>
           </>
         )}
-        <button type="button" onClick={close}>{t("task.workflowEditor.close")}</button>
+        <button type="button" style={panelButtonStyle("secondary")} onClick={close}>{t("task.workflowEditor.close")}</button>
       </div>
       {e.error ? <div role="alert" style={{ color: "var(--danger-color,#ef4444)", fontSize: 12 }}>{e.error}</div> : null}
       {!e.loading && (e.selected || createMode) ? (
-        <section data-testid="workflow-authoring-panel" style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+        <section data-testid="workflow-authoring-panel" style={{ ...panelSurfaceStyle(), display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
           {createMode ? <div data-testid="workflow-authoring-create-hint">{t("task.workflowAuthoring.createHint")}</div> : null}
           <textarea
             data-testid="workflow-authoring-instruction"
@@ -103,11 +104,12 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
             placeholder={t("task.workflowAuthoring.instructionPlaceholder")}
             disabled={e.dirty || authoring.state.phase === "generating"}
             onChange={(event) => setInstruction(event.target.value)}
-            style={{ minHeight: 56 }}
+            style={{ ...panelInputStyle(), minHeight: 56 }}
           />
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <button
               type="button"
+              style={panelButtonStyle("primary")}
               data-testid="workflow-authoring-generate"
               disabled={e.dirty || !instruction.trim() || authoring.state.phase === "generating" || isMobile}
               onClick={generate}
@@ -131,7 +133,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
         </section>
       ) : null}
       {!e.loading && e.selected && !createMode ? (
-        <details data-testid="workflow-patch-panel" style={{ fontSize: 12 }}>
+        <details data-testid="workflow-patch-panel" style={{ ...panelSurfaceStyle(), fontSize: 12 }}>
           <summary>{t("task.workflowEditor.patchImport")}</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
             <textarea
@@ -141,11 +143,11 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
               placeholder={t("task.workflowEditor.patchPlaceholder")}
               disabled={e.dirty || e.patchBusy || isMobile}
               onChange={(event) => e.setPatchText(event.target.value)}
-              style={{ minHeight: 120, fontFamily: "monospace", fontSize: 11 }}
+              style={{ ...panelInputStyle(), minHeight: 120, fontFamily: "monospace", fontSize: 11 }}
             />
             <div style={{ display: "flex", gap: 6 }}>
-              <button type="button" disabled={e.dirty || e.patchBusy || !e.patchText.trim()} onClick={() => void e.validatePatch()}>{t("task.workflowEditor.patchValidate")}</button>
-              <button type="button" disabled={e.dirty || e.patchBusy || !e.patchText.trim()} onClick={() => void e.applyPatch()}>{t("task.workflowEditor.patchApply")}</button>
+              <button type="button" style={panelButtonStyle("secondary")} disabled={e.dirty || e.patchBusy || !e.patchText.trim()} onClick={() => void e.validatePatch()}>{t("task.workflowEditor.patchValidate")}</button>
+              <button type="button" style={panelButtonStyle("primary")} disabled={e.dirty || e.patchBusy || !e.patchText.trim()} onClick={() => void e.applyPatch()}>{t("task.workflowEditor.patchApply")}</button>
             </div>
             {e.dirty ? <div>{t("task.workflowEditor.patchSaveFirst")}</div> : null}
             {e.patchIssues.length > 0 ? (
@@ -168,11 +170,11 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
         </details>
       ) : null}
       {!e.loading && e.selected && !createMode ? (
-        <details data-testid="workflow-proposals-panel" style={{ fontSize: 12 }}>
+        <details data-testid="workflow-proposals-panel" style={{ ...panelSurfaceStyle(), fontSize: 12 }}>
           <summary>{t("task.workflowEditor.proposalsTitle")}</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
             <div>
-              <button type="button" data-testid="workflow-proposals-refresh" disabled={e.proposalBusy} onClick={() => void e.refreshProposals()}>
+              <button type="button" style={panelButtonStyle("secondary")} data-testid="workflow-proposals-refresh" disabled={e.proposalBusy} onClick={() => void e.refreshProposals()}>
                 {t("task.workflowEditor.proposalRefresh")}
               </button>
             </div>
@@ -184,6 +186,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
                     {proposal.status === "pending" ? (
                       <button
                         type="button"
+                        style={panelButtonStyle("primary")}
                         data-testid="workflow-proposal-confirm"
                         data-proposal-id={proposal.id}
                         disabled={e.dirty || e.proposalBusy || isMobile}
@@ -201,8 +204,8 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
       ) : null}
       {e.loading ? <div>{t("task.workflowEditor.loading")}</div> : (
         <div style={{ display: "flex", minHeight: 0, flex: 1, gap: 12 }}>
-          <nav aria-label={t("task.workflowEditor.drafts")} style={{ width: 190, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-            {e.drafts.map((d) => <button type="button" key={d.workflow_id} aria-current={d.workflow_id === e.selectedId} onClick={() => { setCreateMode(false); void e.choose(d); }}>{d.workflow_id} · {d.revision}</button>)}
+          <nav aria-label={t("task.workflowEditor.drafts")} style={{ ...panelSurfaceStyle(), width: 190, padding: 8, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+            {e.drafts.map((d) => <button type="button" style={{ ...panelButtonStyle(d.workflow_id === e.selectedId ? "primary" : "secondary"), textAlign: "left" }} key={d.workflow_id} aria-current={d.workflow_id === e.selectedId} onClick={() => { setCreateMode(false); void e.choose(d); }}>{d.workflow_id} · {d.revision}</button>)}
             {e.drafts.length === 0 ? <span>{t("task.workflowEditor.empty")}</span> : null}
           </nav>
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>

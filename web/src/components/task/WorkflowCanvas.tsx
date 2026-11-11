@@ -13,6 +13,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useI18n } from "../../i18n/index";
+import { panelButtonStyle, panelInputStyle, panelSurfaceStyle } from "../shell/PanelShell";
 import {
   LOOP_DEFAULT,
   LOOP_MAX,
@@ -181,7 +182,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
       <div data-testid="workflow-canvas-readonly" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.mobileHint")}</div>
         {(graph.nodes || []).map((n) => (
-          <div key={n.id} style={{ border: "1px solid var(--border-color)", borderRadius: "6px", padding: "6px 8px", fontSize: "12px" }}>
+          <div key={n.id} style={{ ...panelSurfaceStyle(), padding: "6px 8px", fontSize: "12px" }}>
             <strong>{labels[n.kind] || n.kind}</strong> {n.name || n.id}
           </div>
         ))}
@@ -219,7 +220,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
             key={k}
             type="button"
             onClick={() => addNode(k)}
-            style={{ border: "1px solid var(--border-color)", background: "transparent", borderRadius: "6px", padding: "2px 8px", fontSize: "12px", cursor: "pointer" }}
+            style={panelButtonStyle("secondary")}
           >
             + {labels[k]}
           </button>
@@ -228,13 +229,13 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
           type="button"
           disabled={!selectedId}
           onClick={removeSelected}
-          style={{ border: "1px solid var(--border-color)", background: "transparent", borderRadius: "6px", padding: "2px 8px", fontSize: "12px", cursor: selectedId ? "pointer" : "not-allowed" }}
+          style={{ ...panelButtonStyle("danger"), opacity: selectedId ? 1 : 0.45, cursor: selectedId ? "pointer" : "not-allowed" }}
         >
           {t("task.workflowCanvas.removeNode")}
         </button>
       </div>
 
-      <div style={{ height: "360px", border: "1px solid var(--border-color)", borderRadius: "8px", overflow: "hidden" }}>
+      <div style={{ ...panelSurfaceStyle(), padding: 0, height: "360px", overflow: "hidden" }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -254,13 +255,13 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
       </div>
 
       {selected ? (
-        <div data-testid="workflow-canvas-inspector" style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" }}>
+        <div data-testid="workflow-canvas-inspector" style={{ ...panelSurfaceStyle(), display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" }}>
           <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
             <span>{t("task.workflowCanvas.name")}</span>
             <input
               value={selected.name || ""}
               onChange={(e) => patchSelected({ name: e.target.value })}
-              style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+              style={{ ...panelInputStyle(), flex: 1 }}
             />
           </div>
           {selected.kind === "agent" ? (
@@ -270,13 +271,13 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
                 <input
                   value={String(selected.params?.agent ?? "")}
                   onChange={(e) => patchSelected({ params: { ...selected.params, agent: e.target.value } })}
-                  style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                  style={{ ...panelInputStyle(), flex: 1 }}
                 />
                 <span>{t("task.workflowCanvas.model")}</span>
                 <input
                   value={String(selected.params?.model ?? "")}
                   onChange={(e) => patchSelected({ params: { ...selected.params, model: e.target.value } })}
-                  style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                  style={{ ...panelInputStyle(), flex: 1 }}
                 />
               </div>
               <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
@@ -299,7 +300,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
                   max={LOOP_MAX}
                   value={Number(selected.params?.max_iterations ?? LOOP_DEFAULT)}
                   onChange={(e) => patchSelected({ params: { ...selected.params, max_iterations: Number(e.target.value) } })}
-                  style={{ width: "72px", border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                  style={{ ...panelInputStyle(), width: "72px" }}
                 />
               </label>
               <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
@@ -309,7 +310,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
                   value={String(selected.params?.exit_expression ?? "")}
                   placeholder={t("task.workflowCanvas.exitPlaceholder")}
                   onChange={(e) => patchSelected({ params: { ...selected.params, exit_expression: e.target.value } })}
-                  style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                  style={{ ...panelInputStyle(), flex: 1 }}
                 />
               </label>
               <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.exitHint")}</div>
@@ -317,7 +318,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
                 type="button"
                 data-testid="workflow-loop-enter"
                 onClick={() => setOpenLoopId(selected.id)}
-                style={{ alignSelf: "flex-start", border: "1px solid var(--border-color)", background: "transparent", borderRadius: "6px", padding: "2px 8px", cursor: "pointer" }}
+                style={{ ...panelButtonStyle("secondary"), alignSelf: "flex-start" }}
               >
                 {t("task.workflowCanvas.editInnerGraph")}
               </button>
@@ -333,7 +334,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly }: Work
                     params: { ...selected.params, routes: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) },
                   })
                 }
-                style={{ flex: 1, border: "1px solid var(--border-color)", borderRadius: "6px", padding: "2px 6px", background: "transparent", color: "inherit" }}
+                style={{ ...panelInputStyle(), flex: 1 }}
               />
             </div>
           ) : null}

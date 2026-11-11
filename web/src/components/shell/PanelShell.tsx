@@ -42,6 +42,35 @@ export function panelButtonStyle(kind: "primary" | "secondary" | "danger"): Reac
   };
 }
 
+/**
+ * 面板里的输入控件（input / textarea）。
+ *
+ * 工作流编辑器的输入框原先是手写的 border/padding，跟任务面板的输入框差一档
+ * 字号与圆角，摆在同一屏里像两套 UI。
+ */
+export function panelInputStyle(): React.CSSProperties {
+  return {
+    minHeight: "30px",
+    borderRadius: "6px",
+    border: "1px solid var(--border-color)",
+    background: "var(--button-bg)",
+    color: "var(--text-color)",
+    padding: "4px 8px",
+    fontSize: "12px",
+    fontFamily: "inherit",
+  };
+}
+
+/** 面板里的卡片容器（分组区块、画布视口、只读清单条目）。 */
+export function panelSurfaceStyle(): React.CSSProperties {
+  return {
+    borderRadius: "8px",
+    border: "1px solid var(--border-color)",
+    background: "var(--menu-bg)",
+    padding: "10px 12px",
+  };
+}
+
 /** 卡片里的圆形图标按钮（删除等） */
 export function panelIconButtonStyle(danger = false, disabled = false): React.CSSProperties {
   return {
