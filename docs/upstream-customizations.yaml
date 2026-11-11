@@ -7691,7 +7691,7 @@ groups:
     title: Workflow Runtime 节点执行生命周期、DAG driver 与留言/HumanGate 绑定
     kind: feature
     symptom: "工作流任务迁移后不真正运行：节点没有 queued→running→终态，Condition 不选路、Notify 不发通知；任务运行中用户留言无处可去（不追加到当前 Agent 回合、也不排队）；HumanGate 卡住后没有任何批准入口，或普通留言把 gate 当成批准。"
-    why: "四件必须保留：① 节点执行严格按 claim→running→绑定 session→外部回合→终态推进，外部回合只在 claim/start 事务提交后发起，重复 key 回读既有行且不二次派发；D13 账本事件与投影同事务写，D5 非 JSON/缺失结果转 waiting_user，绝不按正文猜成功；② DAG driver 每轮重读权威 run，Condition 按 D6 全图 `node_id.output.*` 求值（缺字段 waiting_user，不静默走 fail），未选中分支物化 skipped，Notify 不碰 session；HumanGate 只物化 waiting_user 并停住；③ D3 留言在提交事务内绑定提交时唯一的活动 Agent NodeRun（多活动排队到收束、零活动 pending_phase、绑定不可改投）；绑定节点成功结束后 FIFO 投递到同一 session，失败/终态/绑定失效 blocked，绝不转发后续节点；④ D4 HumanGate 只用专用 approve/reject，普通留言永不批准，重复同一决定幂等、相反决定 409。"
+    why: "四件必须保留：① 节点执行严格按 claim→running→绑定 session→外部回合→终态推进，外部回合只在 claim/start 事务提交后发起，重复 key 回读既有行且不二次派发；D13 账本事件与投影同事务写，D5 非 JSON/缺失结果转 waiting_user，绝不按正文猜成功；② DAG driver 每轮重读权威 run，Condition 按 D6 全图 `node_id.output.*` 求值（缺字段 waiting_user，不静默走 fail），未选中分支物化 skipped，Notify 不碰 session；HumanGate 只物化 waiting_user 并停住；③ D3 留言在提交事务内绑定提交时唯一的活动 Agent NodeRun（多活动排队到收束、零活动 pending_phase、绑定不可改投）；绑定节点成功结束后 FIFO 投递到同一 session，失败/终态/绑定失效 blocked，绝不转发后续节点；④ D4 HumanGate 只用专用 approve/reject，普通留言永不批准，重复同一决定幂等、相反决定 409；前端运行视图的批准/驳回同样只调用该端点（`services/task/humanGate.ts`），按钮只在节点类型为 `human_gate` 且状态 `waiting_user` 时出现，一次只允许一个决定在途。"
     boundary: "只覆盖单节点执行生命周期、Condition/skip/Notify/Loop 的 DAG 推进、HumanGate 审批与留言绑定/投递、driver 触发/取消/暂停/恢复/启动对账/显式 retry，以及运行视图的 API/UI 纵向验收。steer 生产 adapter 仍未接：outbox 只在真实回执后确认，unknown 永不重放；`pending_phase` 留言开启新执行阶段已由 driver trigger 覆盖。合并/推送/部署不在本组，运行中的生产服务未被触碰。"
     files:
       - server/internal/kanban/workflow_executor.go
@@ -7721,8 +7721,12 @@ groups:
       - server/app/workspace.go
       - server/app/workspace_build.go
       - web/src/components/task/RunTimeline.tsx
+      - web/src/components/task/RunNodeRunRow.tsx
+      - web/src/components/task/runTimelineTypes.ts
       - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/runTimelineModel.ts
       - web/src/components/task/useRunViewEntry.ts
+      - web/src/services/task/humanGate.ts
     tests:
       - server/internal/kanban/workflow_executor_test.go
       - server/internal/kanban/workflow_driver_test.go
@@ -7738,6 +7742,7 @@ groups:
       - server/internal/api/http_task_comments_test.go
       - server/internal/api/http_workflows_test.go
       - web/tests/run-timeline-drill-in.test.ts
+      - web/tests/run-timeline-human-gate.test.mjs
       - web/tests/task-card-status.test.mjs
       - web/tests/worktree-finish.test.mjs
     anchors:
@@ -7769,6 +7774,7 @@ groups:
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/human-gate", h.handleKanbanTaskHumanGate)'
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/workflow-run/nodes/{nodeRunID}/retry", h.handleTaskWorkflowNodeRunRetry)'
       - 'web/src/components/task/RunTimeline.tsx:data-drill-in="comment-run"'
+      - 'web/src/components/task/RunNodeRunRow.tsx:human-gate-approve-'
       - 'web/tests/run-timeline-drill-in.test.ts:unknown must never be rendered as success'
       - 'server/internal/kanban/workflow_recovery_test.go:func TestWorkflowRuntimeCompleteAndFailFreezeOpenWork('
 

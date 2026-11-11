@@ -1,6 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import { RunTimeline, type NodeRunSnapshot } from "./RunTimeline";
+import { runNodeKinds } from "./runTimelineModel";
 import { useRunViewEntry } from "./useRunViewEntry";
 
 // 运行视图入口：挂在留言板**之下**的一条可展开行。
@@ -22,7 +23,8 @@ export type RunViewEntryProps = {
 
 export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewEntryProps) {
   const { t } = useI18n();
-  const { runId, open, run, nodeRuns, error, toggle, collapse } = useRunViewEntry(rootId, taskId, nodeId);
+  const { runId, open, run, nodeRuns, error, gateError, decidingNodeRunId, toggle, collapse, decideGate } =
+    useRunViewEntry(rootId, taskId, nodeId);
 
   if (!runId) return null;
 
@@ -44,6 +46,7 @@ export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewE
   for (const node of run?.graph?.nodes ?? []) {
     if (node?.id) nodeNames[node.id] = node.name || node.id;
   }
+  const nodeKinds = runNodeKinds(run?.graph);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px" }} data-testid="run-view-entry">
@@ -67,13 +70,21 @@ export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewE
       {open ? (
         <>
           {error ? <div style={{ fontSize: "12px", color: "var(--danger-color, #ef4444)" }}>{error}</div> : null}
+          {gateError ? (
+            <div data-testid="human-gate-error" role="alert" style={{ fontSize: "12px", color: "var(--danger-color, #ef4444)" }}>
+              {t("task.runTimeline.gateFailed")}: {gateError}
+            </div>
+          ) : null}
           {run ? (
             <RunTimeline
               run={run}
               nodeRuns={mappedNodeRuns}
               nodeNames={nodeNames}
+              nodeKinds={nodeKinds}
               onOpenSession={onOpenSession}
               onBackToComments={collapse}
+              decidingNodeRunId={decidingNodeRunId}
+              onDecideGate={(nodeRun, decision) => void decideGate(nodeRun, decision)}
             />
           ) : !error ? (
             <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.runTimeline.loading")}</div>

@@ -250,7 +250,8 @@
 - D7 动词：新增 `TestWorkflowTaskCompleteAndFailFreezeRun`，Complete/Fail 后 REST 返回 success/fail，且同一 run 中仍在等待的 HumanGate approve 返回 409（不会复活）。kanban 侧 `TestWorkflowRuntimeCompleteAndFailFreezeOpenWork` 断言有界 session 中断、NodeRun 保持 cancelled 证据、下游节点不创建、留言 blocked、`run_completed`/`run_failed` 账本事件存在。
 - 前端：`run-timeline-drill-in.test.ts` 增补 unknown 用例 —— `data-status="unknown"` 必须保留，且整份输出不得出现 `data-status="success"`；既有用例继续钉住 run id/version、节点名、输入/输出/错误、仅有 `session_key` 才出现按 NodeRun id 键控的会话跳转、空态与 i18n 键。
 - 门禁：`go test ./server/... ./cli/...` 全绿（kanban 60.7s、api 19.6s、app 1.0s）；`npm test` 214 文件 / 488 用例通过、6 跳过；`npm run typecheck` 无输出；`make build-web` 成功（仅有既存 chunk >500kB 警告）。为适配新增引擎分派，两处按源码切片断言的 web 测试改为切到下一个函数边界（`worktree-finish` 的 Resume 准入顺序、`task-card-status` 的 Cancel 不看 worktree）—— 断言意图不变，避免新增分支一出现就误红。
-- 未做：HumanGate 前端审批按钮仍未接线（API 已有，本轮只做只读运行视图）；`go test -race` 放在 Task 9 统一跑。
+- HumanGate 前端审批（2026-11-11 补齐）：运行视图只对「graph 节点类型 `human_gate` 且状态 `waiting_user`」显示批准/驳回，且只调用专用 `POST /api/tasks/{id}/human-gate`（`services/task/humanGate.ts`）；审批由 `useRunViewEntry` 发出，一次只允许一个决定在途，成功后重拉 run/node runs，失败只展示不重试。`run-timeline-human-gate.test.mjs` 钉住节点类型门槛、只读用法不出按钮、busy 双禁用、专用端点与 i18n 键；`RunTimeline` 仍不 import services、不 fetch，原只读/下钻契约测试继续通过。
+- 未做：`go test -race` 放在 Task 9 统一跑。
 
 ### Task 9：Whole Runtime review and upstream gate
 
