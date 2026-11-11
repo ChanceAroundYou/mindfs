@@ -317,3 +317,12 @@
 - 复跑（2026-11-11）：`go test ./server/internal/kanban -count=1` 全绿（61.062s）；`go test -race ./server/internal/kanban -count=1` 通过（133.272s）；`go test ./... -count=1` 全绿。`workflow_review_fixes_test.go` 拆分后 474 行、新增 `workflow_lock_review_test.go` 160 行，全仓手写 Go 文件仍 ≤500。
 - **独立复核（2026-11-11）未发现 CONFIRMED 问题**：复核者用 overlay 变异独立复现了旧 nil release 的 panic 与旧泄漏条目，确认 helper 三条出口均非 nil、取消分支不写终态、引用计数锁的各交错无并发漏洞、锁序统一为 gate→finish；补充 `-race -count=2` 目标集 23.412s、整包 65.450s、`go vet`/`go build ./...` 干净。两条信息性观察（取消打断 merge 时 driver 不记日志、进程死在 merge 窗口看板保持进行中直到重启续做）均为 D8/D9 既定语义，不是本轮缺陷。
 - 未执行：commit / merge / push / deploy / ship / 重启任何 mindfs 服务（均需单独授权）。
+
+**真实 Agent 端到端验收（2026-11-11）**
+- 环境：`scripts/mindfs-iso.sh` 起的隔离实例（`XDG_CONFIG_HOME=/tmp/mindfs-iso/config`，端口 7431；生产 7331），真实 HOME 与真实 Claude agent（`claude`，`haiku`，effort `low`），项目根 `/tmp/mindfs-iso/proj`（root id `proj`），账户 `u_06b357b1edcb31c6`。运行前后核对：生产指纹不变、生产服务在线、隔离进程对生产配置目录零文件句柄；验收后已停止隔离实例。
+- 工作流 `e2e-human-gate-1794403241-v2:v1`：`agent1 → human_gate → agent2`，两段 Agent 节点各自真实起 Claude 回合。
+- 首次尝试（v1，提示词要求纯 JSON、无工具调用）落 `unknown`：`workflow node output has trailing data after JSON envelope`。根因是**环境交互**：本机全局 Stop hook（`stop-gate`）对零工具回合注入反馈，Claude 因此再回一条消息，累积文本里出现两个 envelope；D5 严格解析按设计拒绝尾部数据，未改产品解析逻辑。v1 的任务 `task_f7e17bc9fb13f00c` / `run-b182ac34452f0e95` 保留为证据。
+- 第二次（v2，提示词要求先做一次无害 `Read` 再输出 envelope）全链路通过：`agent1 success`（约 17s，输出 `{"step":"first","notes_exists":true,...}`）→ gate `waiting_user`（写入 `human_waiting` attention）→ 普通留言 `c-e2e-1` 提交后**未批准** gate → 专用 `POST /api/tasks/{id}/human-gate` approve 200 → gate `success`、下游 `agent2 success`（输出 `{"step":"second","content":"hello",...}`）→ run `node_states` 三项全 `success`，任务 `success`。重复 approve 200 幂等；相反决定 reject 返回 409 `workflow human gate already decided`。活动账本按序为 agent_reply → attention(human_waiting) → 用户留言 → `human:approve` system_event → agent2 reply。
+- 留言路径的已知边界（不是本轮新缺陷）：在 gate 等待、零活动 Agent NodeRun 时提交的普通留言按 D3 落 `pending_phase`，本轮任务随后走完并 `success` 后该留言仍为 `pending_phase`。Task 5 已记录「`pending_phase` 留言触发新执行阶段」尚未实现，本次验收**不覆盖**该路径。
+- 提交后 `make check-upstream` 转绿：baseline `9ab95722`（upstream/main），1783 个 delta 文件被 286 组完整覆盖；此前「预期红」确为未提交状态所致，实现未被上游覆盖。
+- 本次只提交文档记录（`55b27021`）；未执行 merge / push / deploy / ship / 重启任何 mindfs 服务。
