@@ -168,3 +168,8 @@ type harnessAdapter struct {
     自定义模型状态移入 `useAgentConfigSelection`，以 `agentCustomModelsState` 单个键下发。
   - 验证：`go test ./...` 通过；`npx tsc --noEmit` 通过；全量 vitest 212 文件 / 495 测试通过
     （6 skipped）；`make build-web` 通过。G-KP 登记补齐新文件、测试与锚点。
+- 2026-11-11：收尾改动 ship `v0.5.5-1118-16-gadc6a4d9`。门禁（Go / tsc / Vitest 495 项）通过，
+  推送后本机安装该版本；WSL 与 fn 独立核对为 `active`、版本一致（PID 1771565 / 3835596）；
+  pc-win 监听 7332、health `{"ok":true,"role":"worker"}`（PID 164396）。
+  **本机 system 单元仍是旧进程**：`GET /api/agents/custom-models` 当前返回 404，
+  需用户执行 `sudo systemctl restart mindfs` 后新接口才生效（静态 bundle 已更新，脚本对账一致）。
