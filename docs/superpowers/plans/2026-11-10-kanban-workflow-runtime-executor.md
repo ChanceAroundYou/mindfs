@@ -333,3 +333,10 @@
 - 通过链路：`stage-gate-1794405932:v1`，task `task_73ab1d18e39e0f64` / run `run-56b80a5c2ccd0275`。agent1 `success`（输出 `{"step":"first","exists":true,...}`）→ gate `waiting_user` → 普通留言提交后 gate 仍 `waiting_user` → 专用 approve 200 且 gate `success` → 重复 approve 200 → 相反 reject 409 `workflow human gate already decided` → agent2 `success`（输出 `{"step":"second","file_exists":true,...}`）→ `node_states` 三项全 `success`、任务 `success`。
 - 第一次 sonnet 复跑已走完全链路，但验收脚本把任务列表响应当成 `{"tasks":[...]}`（实际 `{"items":[{"task":...}]}`）而在最后一步自行报错；修正脚本后整链重跑通过，无产品改动。
 - staging 实例已停止；本轮未执行 push / deploy / ship / 重启任何 mindfs 服务。
+
+**HumanGate 浏览器点验（2026-11-11，staging 7431）**
+- 真实 Chromium（Playwright）走 UI：登录 → Board → 点任务卡 → 详情面板；断言运行视图入口位于留言板（`comment-thread`）之下，展开后 `run-timeline` 带 `data-drill-in="comment-run"`，层级符合「留言板下钻」契约。
+- 批准：任务 `task_fd8cd6bee520a3e5`（`UI 批准点验 1794406445`）gate `waiting_user` 时同时出现批准/驳回按钮；点批准后该行 `data-status` 变 `success`、两个按钮消失，随后 agent2 `success`、任务 `success`。
+- 驳回：任务 `task_a368d51668ba21c1`（`UI 驳回点验 1794406445`）点驳回后 gate `data-status` 变 `cancelled`、按钮消失，任务终态 `cancelled`。
+- 截图（临时证据，未入库）：`/tmp/stage-ui-approve.png`、`/tmp/stage-ui-reject.png`。
+- 生产 7331 前后 health 均为 `{"ok":true,"role":"control"}`；staging 停止后子进程 0，生产侧 3 个 claude 子进程不变。
