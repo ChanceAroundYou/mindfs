@@ -326,3 +326,10 @@
 - 留言路径的已知边界（不是本轮新缺陷）：在 gate 等待、零活动 Agent NodeRun 时提交的普通留言按 D3 落 `pending_phase`，本轮任务随后走完并 `success` 后该留言仍为 `pending_phase`。Task 5 已记录「`pending_phase` 留言触发新执行阶段」尚未实现，本次验收**不覆盖**该路径。
 - 提交后 `make check-upstream` 转绿：baseline `9ab95722`（upstream/main），1783 个 delta 文件被 286 组完整覆盖；此前「预期红」确为未提交状态所致，实现未被上游覆盖。
 - 本次只提交文档记录（`55b27021`）；未执行 merge / push / deploy / ship / 重启任何 mindfs 服务。
+
+**隔离 staging 复测（2026-11-11，部署前）**
+- 环境：同一 `scripts/mindfs-iso.sh`，独立根 `/tmp/mindfs-stage`、端口 7431、真实 HOME；使用主分支当前构建。撤销基线产物已备份到 `/home/xiaokubao/mindfs-deploy-backups/2026-11-11-pre-workflow/`（本机 / WSL / fn / pc-win）。生产 7331 全程在线，前后 health 均为 `{"ok":true,"role":"control"}`；staging 停止后其子进程数为 0，生产侧 3 个 claude 子进程与 1 个 dsh 不变。
+- 首次以 `haiku` 失败：本机 `ANTHROPIC_DEFAULT_HAIKU_MODEL=ok`，该别名模型收到提示词后回复与任务无关的通用内容，agent1 落 `unknown`（`workflow node output is not a JSON envelope: invalid character 'U'`）。转录（`~/.claude/projects/-tmp-mindfs-stage-proj/909f101b-*.jsonl`）证明提示词已正常投递、模型身份为 `ok`。这是**本机模型别名配置**问题，不是产品缺陷；改用 `sonnet` 后通过。
+- 通过链路：`stage-gate-1794405932:v1`，task `task_73ab1d18e39e0f64` / run `run-56b80a5c2ccd0275`。agent1 `success`（输出 `{"step":"first","exists":true,...}`）→ gate `waiting_user` → 普通留言提交后 gate 仍 `waiting_user` → 专用 approve 200 且 gate `success` → 重复 approve 200 → 相反 reject 409 `workflow human gate already decided` → agent2 `success`（输出 `{"step":"second","file_exists":true,...}`）→ `node_states` 三项全 `success`、任务 `success`。
+- 第一次 sonnet 复跑已走完全链路，但验收脚本把任务列表响应当成 `{"tasks":[...]}`（实际 `{"items":[{"task":...}]}`）而在最后一步自行报错；修正脚本后整链重跑通过，无产品改动。
+- staging 实例已停止；本轮未执行 push / deploy / ship / 重启任何 mindfs 服务。
