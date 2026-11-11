@@ -252,3 +252,13 @@ type harnessAdapter struct {
     方式吞进表里）启动，断言渲染后 `service_tier` 回到根级、`[features]` 只剩 `goals`、
     本地 `[tui]` 表保留。`go test ./...` 全绿。
   - 本改动随下一次 `deploy-all.sh` 分发；分发后四端进程启动即自愈，不再依赖手动渲染。
+  - 部署：`v0.5.5-1118-27-g42b15338`（deploy-all 门禁全绿）。独立核对：
+    WSL `active`、PID 329214、`--check-runtime` synced；fn `active`、PID 4068187、synced；
+    pc-win PID 36224、health `{"ok":true,"role":"worker"}`、synced。
+    启动自愈做了真机验证：用隔离的 `XDG_CONFIG_HOME`/`CODEX_HOME`/`AGENTS_ROOT` 起一份
+    pc-win 形态的配置（旧布局、`service_tier` 被吞进 `[features]`），新二进制启动后
+    文件变为根级 `service_tier`、`features` 只剩 `goals`、本地 `[tui]` 保留，日志无
+    `runtime.render.error` —— 证明「启动即重渲染」在真实二进制上生效。
+    本机二进制已装同版本；运行进程（PID 1388399）仍是旧二进制，其周期性 sync 用旧渲染器
+    写回的旧布局已被新二进制 `--render` 覆盖（内容语义一致，仅布局差异）；
+    需 `sudo systemctl restart mindfs` 后由启动自愈接管。
