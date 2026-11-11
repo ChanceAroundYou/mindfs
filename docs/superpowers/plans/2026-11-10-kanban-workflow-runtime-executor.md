@@ -340,3 +340,8 @@
 - 驳回：任务 `task_a368d51668ba21c1`（`UI 驳回点验 1794406445`）点驳回后 gate `data-status` 变 `cancelled`、按钮消失，任务终态 `cancelled`。
 - 截图（临时证据，未入库）：`/tmp/stage-ui-approve.png`、`/tmp/stage-ui-reject.png`。
 - 生产 7331 前后 health 均为 `{"ok":true,"role":"control"}`；staging 停止后子进程 0，生产侧 3 个 claude 子进程不变。
+
+**部署（2026-11-11）**
+- 用户批准后执行 `bash scripts/deploy-all.sh`，退出码 0：门禁（Go / tsc / Vitest 568）全绿 → push `origin/main` `8d769c12..173139ac` → 本机 build/install → WSL / fn / pc-win 分发重启 → bundle 对账一致。
+- 独立核对（不只信脚本输出）：本机二进制与 WSL、fn、pc-win 均为 `v0.5.5-1118-73-g173139ac`；本机 health `control`、WSL/fn/pc-win health 均 `worker`；pc-win 进程 PID 22740 监听 7332。`origin/main` 与本地 HEAD 同为 `173139ac`。
+- 本机 system 单元仍跑重启前二进制（`sudo systemctl restart mindfs` 由用户执行）；前端 bundle 已随安装更新，刷新页面即生效。
