@@ -9,6 +9,7 @@ import { matchesSendShortcut } from "../../services/prefs/sendShortcut";
 import type { PendingAttachment, SessionMode, TokenEditorHandle } from "../../shared/actionBarTypes";
 import { getAgentDefaults, has1MSuffix } from "./modelUtils";
 import { replaceActiveTokenText } from "./inputTransforms";
+import { agentSendText } from "../editor/tokenEditorUtils";
 import { parsePlanCommand, stripPlanCommandPrefix } from "../../shared/planCommand";
 import type { ActionBarProps } from "./actionTypes";
 
@@ -172,7 +173,7 @@ export function useActionBarHandlers(params: UseActionBarHandlersParams) {
     // 还是旧值。发送入口同步从编辑器读最新文本，不依赖滞后 state。
     const latestText = editorRef.current?.getSerializedText() ?? serializedInput;
     if (latestText !== serializedInput) setSerializedInput(latestText);
-    const messageText = latestText.trim();
+    const messageText = agentSendText(latestText, agent).trim();
     if ((!messageText && pendingAttachments.length === 0) || !isConnected || sending || (mode !== "command" && !agent)) return;
     const planCommand = pendingAttachments.length === 0 ? parsePlanCommand(messageText) : null;
     if (planCommand !== null) {

@@ -122,18 +122,18 @@ func TestCodexSlashCandidatesIncludeTransientCommands(t *testing.T) {
 	}
 }
 
-func TestMergeCandidateItemsPreferSlash(t *testing.T) {
-	items := mergeCandidateItemsPreferSlash([]CandidateItem{
-		{Type: CandidateTypeSlashCommand, Name: "review", Description: "Slash review"},
-	}, []CandidateItem{
+func TestMergeCandidateItemsPreferSkill(t *testing.T) {
+	items := mergeCandidateItemsPreferSkill([]CandidateItem{
 		{Type: CandidateTypeSkill, Name: "review", Description: "Skill review"},
 		{Type: CandidateTypeSkill, Name: "refactor", Description: "Skill refactor"},
+	}, []CandidateItem{
+		{Type: CandidateTypeSlashCommand, Name: "review", Description: "Slash review"},
 	}, "")
 	if len(items) != 2 {
 		t.Fatalf("expected 2 unique candidates, got %d: %#v", len(items), items)
 	}
-	if items[0].Type != CandidateTypeSlashCommand || items[0].Name != "review" {
-		t.Fatalf("expected slash command to win dedupe, got %#v", items[0])
+	if items[0].Type != CandidateTypeSkill || items[0].Name != "review" {
+		t.Fatalf("expected skill to win dedupe, got %#v", items[0])
 	}
 	if items[1].Name != "refactor" {
 		t.Fatalf("expected refactor to remain, got %#v", items[1])
