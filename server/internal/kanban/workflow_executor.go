@@ -231,31 +231,49 @@ func (s *Service) finalizeWorkflowNodeWithWorktree(ctx context.Context, store *T
 			// 等待 gate 期间操作员停止了 driver（或进程在停机）。不能按执行
 			// 失败落终态：取消可能已经赢了 CAS，而取消没赢时 agent-done 证据
 			// 还在，重启恢复会续 merge，不会重跑 Agent。
-			if current, rerr := store.WorkflowNodeRunByID(context.WithoutCancel(ctx), nodeRun.ID); rerr == nil {
-				return current, prepErr
+			current, rerr := store.WorkflowNodeRunByID(context.WithoutCancel(ctx), nodeRun.ID)
+			if rerr == nil {
+				return current, ctx.Err()
 			}
-			return nodeRun, prepErr
+			return nodeRun, fmt.Errorf("%w; reload node run: %v", prepErr, rerr)
 		}
 		output["worktree_error"] = prepErr.Error()
 		if workflowNeedsUserMergeError(prepErr) {
 			return s.finishWorkflowNodeAttempt(ctx, store, run, node, nodeRun, NodeRunWaitingUser,
 				WorkflowEventNodeBlocked, output, prepErr.Error())
 		}
+		if workflowDriverStopped(ctx.Err()) {
+			current, readErr := store.WorkflowNodeRunByID(context.WithoutCancel(ctx), nodeRun.ID)
+			if readErr != nil {
+				return nodeRun, fmt.Errorf("reload node run after cancelled preparation: %w (prep: %v)", readErr, prepErr)
+			}
+			return current, ctx.Err()
+		}
+		if workflowDriverStopped(prepErr) {
+			current, readErr := store.WorkflowNodeRunByID(context.WithoutCancel(ctx), nodeRun.ID)
+			if readErr != nil {
+				return nodeRun, fmt.Errorf("reload node run after stopped preparation: %w (prep: %v)", readErr, prepErr)
+			}
+			return current, prepErr
+		}
 		return s.failWorkflowNodeAttempt(ctx, store, run, node, nodeRun, prepErr, output)
 	}
 
 	unlock = s.lockWorkflowNodeFinish(nodeRun.ID)
-	fresh, err = store.WorkflowNodeRunByID(ctx, nodeRun.ID)
+	// Gate acquisition and driver cancellation can become ready together. A
+	// cancelled context must not turn the post-gate read into a stale running
+	// response; the operator's terminal row is already persisted by this point.
+	fresh, err = store.WorkflowNodeRunByID(context.WithoutCancel(ctx), nodeRun.ID)
 	if err != nil {
 		unlock()
 		releaseGate()
-		return nodeRun, err
+		return nodeRun, fmt.Errorf("reload node run after gate acquisition: %w", err)
 	}
-	if fresh.Status != NodeRunRunning {
+	if fresh.Status != NodeRunRunning || ctx.Err() != nil {
 		// Gate 等待期间取消赢了：释放 gate，绝不补 merge。
 		unlock()
 		releaseGate()
-		return fresh, nil
+		return fresh, ctx.Err()
 	}
 	nodeRun = fresh
 
@@ -270,6 +288,16 @@ func (s *Service) finalizeWorkflowNodeWithWorktree(ctx context.Context, store *T
 	if mergeErr != nil {
 		unlock()
 		releaseGate()
+		if workflowDriverStopped(mergeErr) {
+			// Merge may observe cancellation after the operator has already won the
+			// NodeRun terminal transition. Return the persisted row; never report a
+			// stale running snapshot or reinterpret cancellation as merge failure.
+			current, readErr := store.WorkflowNodeRunByID(context.WithoutCancel(ctx), nodeRun.ID)
+			if readErr != nil {
+				return nodeRun, fmt.Errorf("reload node run after cancelled merge: %w (merge: %v)", readErr, mergeErr)
+			}
+			return current, mergeErr
+		}
 		reason := mergeErr.Error()
 		output["worktree_error"] = reason
 		if workflowNeedsUserMergeError(mergeErr) {

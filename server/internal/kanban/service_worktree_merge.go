@@ -31,7 +31,8 @@ type AutoMergeWorktreeInput struct {
 	TaskID     string
 	NodeRunID  string
 	WorktreeID string
-	// IntegrationBranch 是集成分支；空 → "main"（与 gitview.MergeBranch 一致）。
+	// IntegrationBranch 是 Run 创建时快照的集成分支（D11）。空 = 缺失，直接失败；
+	// 不允许运行时隐含回落 "main"。
 	IntegrationBranch string
 	// CloseAfterMerge 成功后是否拆目录 + 删分支（默认 true 的语义由调用方显式置）。
 	CloseAfterMerge bool
@@ -66,12 +67,40 @@ func (e *MergeConflictError) Error() string {
 
 func (e *MergeConflictError) Unwrap() error { return gitview.ErrMergeConflict }
 
-// AutoMergeWorktree 把一棵 registry worktree 的分支合并到集成分支。
-// 成功自动关（CloseAfterMerge 时）；冲突转 needs-user（见文件头策略）。
-func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInput) (AutoMergeWorktreeResult, error) {
+// autoMergePlan 是一次已解析的合并请求：幂等判断、目标分支与主 checkout 都已
+// 确定，只差（可选的）主 checkout writer gate 和真正的 git 合并。
+//
+// 拆出来是为了让调用方在**收尾锁之外**等待主 checkout gate。等待可能很久
+// （另一个写者正在跑 agent 回合），如果此时还握着 NodeRun 收尾锁，操作员取消
+// 就会被一个无关的写者无限期阻塞。
+type autoMergePlan struct {
+	store           *TaskStore
+	task            Task
+	entry           WorktreeEntry
+	branch          string
+	mainDir         string
+	target          string
+	done            *AutoMergeWorktreeResult
+	closeAfterMerge bool
+	deleteBranch    bool
+}
+
+// needsGate 报告执行该计划前是否必须持有主 checkout 的物理写 gate。
+func (p autoMergePlan) needsGate() bool {
+	if p.done != nil {
+		// 已 closed 无事可做；已 merged 但要求关闭时，拆目录/删分支同样改写
+		// 主 checkout，必须与其它写者互斥。
+		return p.entry.State == WorktreeStateMerged && p.closeAfterMerge
+	}
+	return true
+}
+
+// prepareAutoMerge 只做读与校验，不拿 gate、不动 git。解析顺序与原
+// AutoMergeWorktree 一致：幂等的 merged/closed 先行返回，空目标分支直接拒绝。
+func (s *Service) prepareAutoMerge(ctx context.Context, in AutoMergeWorktreeInput) (autoMergePlan, error) {
 	store, task, err := s.loadForMove(ctx, strings.TrimSpace(in.RootID), strings.TrimSpace(in.TaskID))
 	if err != nil {
-		return AutoMergeWorktreeResult{}, err
+		return autoMergePlan{}, err
 	}
 	var entry WorktreeEntry
 	if wid := strings.TrimSpace(in.WorktreeID); wid != "" {
@@ -79,37 +108,78 @@ func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInp
 	} else if nrid := strings.TrimSpace(in.NodeRunID); nrid != "" {
 		entry, err = store.FindWorktreeEntryByNodeRun(ctx, task.ID, nrid)
 	} else {
-		return AutoMergeWorktreeResult{}, errors.New("node_run_id or worktree_id required")
+		return autoMergePlan{}, errors.New("node_run_id or worktree_id required")
 	}
 	if err != nil {
-		return AutoMergeWorktreeResult{}, err
+		return autoMergePlan{}, err
+	}
+	plan := autoMergePlan{
+		store: store, task: task, entry: entry,
+		closeAfterMerge: in.CloseAfterMerge, deleteBranch: in.DeleteBranch,
 	}
 	// 幂等：已 merged/closed（合并已成、随后关闭）直接返回成功，不重复合并。
+	// 但 merged 且调用方要求关闭时仍要重试关闭：上次可能「合并成功、拆目录失败」，
+	// 重试只补关闭，绝不再合一次。
 	if entry.State == WorktreeStateMerged || entry.State == WorktreeStateClosed {
-		return AutoMergeWorktreeResult{Entry: entry}, nil
+		result := AutoMergeWorktreeResult{Entry: entry, Commit: entry.MergedCommit}
+		plan.done = &result
+		if entry.State == WorktreeStateMerged && in.CloseAfterMerge {
+			mainDir, err := s.taskWorktreeMainDir(ctx, task.RootID)
+			if err != nil {
+				return autoMergePlan{}, err
+			}
+			plan.mainDir = mainDir
+		}
+		return plan, nil
 	}
 	branch := strings.TrimSpace(entry.Branch)
 	if branch == "" {
 		branch = worktreeDirName(entry.Path)
 	}
 	if branch == "" {
-		return AutoMergeWorktreeResult{}, errors.New("worktree has no branch")
+		return autoMergePlan{}, errors.New("worktree has no branch")
 	}
 	mainDir, err := s.taskWorktreeMainDir(ctx, task.RootID)
 	if err != nil {
-		return AutoMergeWorktreeResult{}, err
+		return autoMergePlan{}, err
 	}
 	if err := s.assertWorktreeMatches(ctx, mainDir, entry.Path, branch); err != nil {
-		return AutoMergeWorktreeResult{}, err
+		return autoMergePlan{}, err
 	}
 	target := strings.TrimSpace(in.IntegrationBranch)
 	if target == "" {
-		target = "main"
+		// D11：merge target 只能来自 Run 创建时的快照。运行期隐含回落 "main"
+		// 会把工作合进用户没选的集成分支。
+		return autoMergePlan{}, ErrWorkflowIntegrationBranchMissing
+	}
+	plan.branch, plan.mainDir, plan.target = branch, mainDir, target
+	return plan, nil
+}
+
+// executeAutoMerge 执行已解析的计划。调用方必须已按 needsGate 取得主
+// checkout writer gate；本函数自己不再拿锁，避免与「gate 先于收尾锁」的
+// 调用顺序互相等待。
+func (s *Service) executeAutoMerge(ctx context.Context, plan autoMergePlan) (AutoMergeWorktreeResult, error) {
+	store, task, entry := plan.store, plan.task, plan.entry
+	if plan.done != nil {
+		result := *plan.done
+		if entry.State == WorktreeStateMerged && plan.closeAfterMerge {
+			if _, err := s.CloseNodeWorktree(ctx, CloseNodeWorktreeInput{
+				RootID: task.RootID, TaskID: task.ID, WorktreeID: entry.WorktreeID,
+				RemoveDir: true, DeleteBranch: plan.deleteBranch,
+			}); err != nil {
+				return result, fmt.Errorf("合并已成功，但关闭 worktree 失败：%w", err)
+			}
+			if fresh, err := store.GetWorktreeEntry(ctx, task.ID, entry.WorktreeID); err == nil {
+				result.Entry = fresh
+			}
+		}
+		return result, nil
 	}
 	merged, err := gitview.MergeBranch(ctx, gitview.MergeOptions{
-		Source:       branch,
-		Target:       target,
-		MainDir:      mainDir,
+		Source:       plan.branch,
+		Target:       plan.target,
+		MainDir:      plan.mainDir,
 		WorktreePath: entry.Path,
 	})
 	if err != nil {
@@ -121,10 +191,10 @@ func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInp
 		return AutoMergeWorktreeResult{}, err
 	}
 	result := AutoMergeWorktreeResult{Entry: updated, Merged: merged.Merged, Commit: merged.Commit}
-	if in.CloseAfterMerge {
+	if plan.closeAfterMerge {
 		if _, err := s.CloseNodeWorktree(ctx, CloseNodeWorktreeInput{
 			RootID: task.RootID, TaskID: task.ID, WorktreeID: entry.WorktreeID,
-			RemoveDir: true, DeleteBranch: in.DeleteBranch,
+			RemoveDir: true, DeleteBranch: plan.deleteBranch,
 		}); err != nil {
 			// 合并已成、关闭失败：如实返回（state 已是 merged，不会误报未合并）。
 			result.Entry = updated
@@ -135,6 +205,23 @@ func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInp
 		}
 	}
 	return result, nil
+}
+
+// AutoMergeWorktree 把一棵 registry worktree 的分支合并到集成分支。
+// 成功自动关（CloseAfterMerge 时）；冲突转 needs-user（见文件头策略）。
+func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInput) (AutoMergeWorktreeResult, error) {
+	plan, err := s.prepareAutoMerge(ctx, in)
+	if err != nil {
+		return AutoMergeWorktreeResult{}, err
+	}
+	if plan.needsGate() {
+		releaseGate, err := s.AcquireNodeWriter(ctx, plan.mainDir, plan.target)
+		if err != nil {
+			return AutoMergeWorktreeResult{}, err
+		}
+		defer releaseGate()
+	}
+	return s.executeAutoMerge(ctx, plan)
 }
 
 // handleAutoMergeError 把 MergeBranch 的失败翻译成 registry 状态：

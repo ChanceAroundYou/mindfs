@@ -33,6 +33,7 @@ func multiMergeFixture(t *testing.T, editA, editB string) (svc *Service, root fs
 	}
 	root = fs.NewRootInfo("root", "root", mainDir)
 	svc = NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
 		RootID: root.ID,
@@ -139,6 +140,7 @@ func TestAutoMergeWorktreeConflictKeepsBranches(t *testing.T) {
 
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "conflict"})
 	if err != nil {
@@ -152,7 +154,7 @@ func TestAutoMergeWorktreeConflictKeepsBranches(t *testing.T) {
 	}
 
 	_, err = svc.AutoMergeWorktree(ctx, AutoMergeWorktreeInput{
-		RootID: root.ID, TaskID: detail.Task.ID, NodeRunID: "nr-a", CloseAfterMerge: true, DeleteBranch: true,
+		RootID: root.ID, TaskID: detail.Task.ID, NodeRunID: "nr-a", IntegrationBranch: "main", CloseAfterMerge: true, DeleteBranch: true,
 	})
 	if err == nil {
 		t.Fatal("conflicting merge must not succeed")
@@ -214,7 +216,7 @@ func TestAutoMergeWorktreeConflictKeepsBranches(t *testing.T) {
 	}
 	gitForTest(t, mainDir, "add", "note.txt")
 	gitForTest(t, mainDir, "commit", "-qm", "merge agent/a (resolve)")
-	res, err := svc.AutoMergeWorktree(ctx, AutoMergeWorktreeInput{RootID: root.ID, TaskID: detail.Task.ID, NodeRunID: "nr-a", CloseAfterMerge: true, DeleteBranch: true})
+	res, err := svc.AutoMergeWorktree(ctx, AutoMergeWorktreeInput{RootID: root.ID, TaskID: detail.Task.ID, NodeRunID: "nr-a", IntegrationBranch: "main", CloseAfterMerge: true, DeleteBranch: true})
 	if err != nil {
 		t.Fatalf("re-merge after resolve: %v", err)
 	}
@@ -232,7 +234,7 @@ func TestAutoMergeRefusesDirtyMainCheckout(t *testing.T) {
 	}
 	gitForTest(t, mainDir, "add", "dirty.txt")
 	// 故意不提交：tracked 脏 → MergeBranch 拒绝
-	_, err := svc.AutoMergeWorktree(ctx, AutoMergeWorktreeInput{RootID: root.ID, TaskID: taskID, NodeRunID: "nr-a"})
+	_, err := svc.AutoMergeWorktree(ctx, AutoMergeWorktreeInput{RootID: root.ID, TaskID: taskID, NodeRunID: "nr-a", IntegrationBranch: "main"})
 	if err == nil {
 		t.Fatal("dirty main checkout must refuse merge")
 	}

@@ -30,6 +30,7 @@ func TestFinishTaskWorktreeStopsOnConflictAndKeepsEverything(t *testing.T) {
 
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:             root.ID,

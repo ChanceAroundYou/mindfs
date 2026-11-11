@@ -28,6 +28,7 @@ func sharedFixture(t *testing.T, edit string) (svc *Service, root fs.RootInfo, m
 
 	root = fs.NewRootInfo("root", "root", mainDir)
 	svc = NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	store, err := svc.taskStore(root.ID)
 	if err != nil {
@@ -63,6 +64,7 @@ func TestSharedWorktreeIsReusedByBranch(t *testing.T) {
 
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 	runner := &fakeRunner{}
 	svc.SetRunner(runner)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
@@ -118,6 +120,7 @@ func TestSharedWorktreeNeverClaimsTheMainCheckout(t *testing.T) {
 	mainDir := newGitRoot(t)
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 
 	if path, ok := svc.worktreePathForBranch(ctx, root.ID, "main"); ok {
 		t.Fatalf("main checkout must not be claimed as a task worktree, got %q", path)

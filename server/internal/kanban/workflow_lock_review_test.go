@@ -134,6 +134,10 @@ func TestWorkflowFinalizeCancelDuringMergeGateWaitDoesNotPanic(t *testing.T) {
 	if cerr := f.svc.cancelOpenWorkflowNodeRuns(base, f.root.ID, f.store, f.run.ID, "operator"); cerr != nil {
 		t.Fatalf("cancelOpenWorkflowNodeRuns: %v", cerr)
 	}
+	persisted, perr := f.store.WorkflowNodeRunByID(base, nr.ID)
+	if perr != nil || persisted.Status != NodeRunCancelled {
+		t.Fatalf("cancel persistence: node=%#v err=%v, want cancelled", persisted, perr)
+	}
 	cancel()
 	releaseMain()
 
@@ -143,7 +147,8 @@ func TestWorkflowFinalizeCancelDuringMergeGateWaitDoesNotPanic(t *testing.T) {
 			t.Fatalf("finalize panicked while the gate wait was cancelled: %v", got.panicValue)
 		}
 		if got.got.Status != NodeRunCancelled {
-			t.Fatalf("finalize status = %q, want cancelled", got.got.Status)
+			current, readErr := f.store.WorkflowNodeRunByID(base, nr.ID)
+			t.Fatalf("finalize status = %q err=%v; persisted status=%q readErr=%v, want cancelled", got.got.Status, got.err, current.Status, readErr)
 		}
 		if got.err != nil && !errors.Is(got.err, context.Canceled) {
 			t.Fatalf("finalize err = %v, want nil or context.Canceled", got.err)

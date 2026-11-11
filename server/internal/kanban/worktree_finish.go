@@ -220,6 +220,13 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 	}
 
 	// ── 1. 合并 ──
+	// 收尾会和 workflow 节点的自动合并同时改写主 checkout；两者必须共用
+	// 物理工作树 gate，否则 checkout/merge 会交错到对方的 HEAD 上。
+	releaseGate, err := s.AcquireNodeWriter(ctx, mainDir, target)
+	if err != nil {
+		return result, err
+	}
+	defer releaseGate()
 	merged, err := gitview.MergeBranch(ctx, gitview.MergeOptions{
 		Source:       branch,
 		Target:       target,

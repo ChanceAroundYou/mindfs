@@ -65,6 +65,7 @@ func finishFixture(t *testing.T, edit string) (*Service, fs.RootInfo, string, st
 
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 	runner := &fakeRunner{}
 	svc.SetRunner(runner)
 	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{

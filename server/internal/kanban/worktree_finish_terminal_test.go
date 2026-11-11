@@ -35,6 +35,7 @@ func TestBeginFinishWorktreeRefusesWhenThereIsNoAgentStageToInheritFrom(t *testi
 
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
 		RootID:             root.ID,

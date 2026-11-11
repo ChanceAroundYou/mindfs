@@ -2,6 +2,8 @@ package kanban
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,6 +62,21 @@ func (s *Service) registerPrimaryWorktree(ctx context.Context, store *TaskStore,
 	})
 }
 
+// ErrWorktreeNeedsUser marks a worktree that cannot be reopened automatically
+// (merge conflict awaiting a human). Callers map it to waiting_user, not a
+// generic execution failure.
+var ErrWorktreeNeedsUser = errors.New("worktree needs user intervention")
+
+// registerNodeWorktree 写 registry：node-owned（NodeRunID 非空）必须走
+// ClaimWorktreeEntry，它会拒绝覆盖另一个活动 owner；legacy/stage 归属仍是
+// Upsert（主 worktree 的既有语义不变）。
+func (s *Service) registerNodeWorktree(ctx context.Context, store *TaskStore, entry WorktreeEntry) (WorktreeEntry, error) {
+	if strings.TrimSpace(entry.NodeRunID) == "" {
+		return store.UpsertWorktreeEntry(ctx, entry)
+	}
+	return store.ClaimWorktreeEntry(ctx, entry)
+}
+
 // EnsureNodeWorktree 按 NodeRun 归属创建（或认领/复用）一棵独立 worktree，
 // 并注册进 task_worktrees（state=active）。幂等：同一 (task, NodeRun) 已有
 // active 行且目录可用时直接返回现有行，不新建。
@@ -83,7 +100,7 @@ func (s *Service) EnsureNodeWorktree(ctx context.Context, in EnsureNodeWorktreeI
 				return e, nil
 			}
 			if e.State == WorktreeStateNeedsUser {
-				return WorktreeEntry{}, fmt.Errorf("worktree %s 处于 needs_user（合并冲突待人工处理），先解决再重开", e.WorktreeID)
+				return WorktreeEntry{}, fmt.Errorf("%w: worktree %s 处于 needs_user（合并冲突待人工处理），先解决再重开", ErrWorktreeNeedsUser, e.WorktreeID)
 			}
 		}
 	}
@@ -102,7 +119,7 @@ func (s *Service) EnsureNodeWorktree(ctx context.Context, in EnsureNodeWorktreeI
 	// 认领：existing 分支已被别的 linked worktree 检出时复用那棵树（与主路径同语义）。
 	if branchMode == "existing" && branch != "" {
 		if path, ok := s.worktreePathForBranch(ctx, task.RootID, branch); ok {
-			return store.UpsertWorktreeEntry(ctx, WorktreeEntry{
+			return s.registerNodeWorktree(ctx, store, WorktreeEntry{
 				TaskID: task.ID, WorktreeID: strings.TrimSpace(in.WorktreeID), Branch: branch,
 				Path: path, RootID: task.RootID, NodeRunID: nodeRunID, State: WorktreeStateActive,
 			})
@@ -127,7 +144,7 @@ func (s *Service) EnsureNodeWorktree(ctx context.Context, in EnsureNodeWorktreeI
 	if branchMode == "new" {
 		branch = name
 	}
-	return store.UpsertWorktreeEntry(ctx, WorktreeEntry{
+	return s.registerNodeWorktree(ctx, store, WorktreeEntry{
 		TaskID: task.ID, WorktreeID: strings.TrimSpace(in.WorktreeID), Branch: branch,
 		Path: wt.Path, RootID: wt.RootID, NodeRunID: nodeRunID, State: WorktreeStateActive,
 	})
@@ -234,10 +251,14 @@ func store_worktreePathRefs(ctx context.Context, s *Service, task Task, entry Wo
 	return store.WorktreePathReferenceCount(ctx, entry.Path, task.ID, entry.WorktreeID)
 }
 
+// shortID 取完整 id 的稳定短哈希。绝不能截前 8 个字符：NodeRun id 形如
+// run-<hex>:<node>:<loop>:<iteration>:<attempt>，同一次 Run 的所有节点前 8 位
+// 完全相同，截断会让不同节点/不同 loop 轮次撞进同一棵 worktree 和分支。
 func shortID(id string) string {
 	id = strings.TrimSpace(id)
-	if len(id) > 8 {
-		return id[:8]
+	if id == "" {
+		return ""
 	}
-	return id
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])[:8]
 }

@@ -141,7 +141,8 @@ assert.match(
   "a finish must be refused while a run admission is in flight",
 );
 const resumeAt = serviceSrc.indexOf("func (s *Service) Resume(");
-const resumeBody = serviceSrc.slice(resumeAt, resumeAt + 800);
+const resumeEnd = serviceSrc.indexOf("\nfunc ", resumeAt + 1);
+const resumeBody = serviceSrc.slice(resumeAt, resumeEnd > resumeAt ? resumeEnd : resumeAt + 2500);
 assert.match(
   resumeBody,
   /beginRunAdmission\(in\.RootID, in\.TaskID\)[\s\S]{0,120}?defer release\(\)[\s\S]{0,200}?setTaskStatus\(ctx, in\.RootID, in\.TaskID, StatusRunning/,
