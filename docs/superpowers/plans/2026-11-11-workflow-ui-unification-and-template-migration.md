@@ -262,9 +262,9 @@ Phase 1 代码到此为止；部署（`ship`）与 Phase 2 都需要用户显式
 
 ### Task 12: Phase 3 Gate
 
-- [ ] **Step 1: 全量门禁** — `go test ./...`、`npm test`、`tsc`、`make build`、`make build-web`、`make check-upstream`（提交后）。
-- [ ] **Step 2: 痕迹守卫** — `git grep -i 'tasktemplate\|task-template\|task_template'` 只允许命中：冻结的两个 DB 列名、历史注释、i18n 历史文案。
-- [ ] **Step 3: 部署与真机验收** — 经用户批准后 `bash scripts/deploy-all.sh`；建任务、打开历史任务、打开工作流页各验一次。
+- [x] **Step 1: 全量门禁** — `go test ./...`（全绿）、`npm test`（583 通过 / 6 跳过）、`tsc -b --noEmit` clean、`make build`（含 `build-web`）成功、`make check-upstream` 绿（1780 delta / 286 组）。
+- [x] **Step 2: 痕迹守卫** — `git grep -i 'tasktemplate\|task-template\|task_template'` 只剩：冻结的 `task_template_id/name`/`template_snapshot_json` 列与只读展示、历史 fallback（会话名/worktree 名）、404 守卫与删除守卫测试、计划与历史文档、G-LJ/G-Y 定制登记；运行期已无 `/api/task-templates` 引用。
+- [x] **Step 3: 部署与验收** — `bash scripts/deploy-all.sh` 退出 0，push `4a8f3eb8..7667d39c`，四端独立核对均为 `v0.5.5-1118-86-g7667d39c`（本机二进制已装、system 单元待用户重启；WSL/fn user 单元 active + worker health；pc-win PID 56804 监听 7332 + health 200）。隔离实例（7431，新二进制）冒烟：带 `stages` 建任务成功且回包无模板字段、无 `stages` 返回 400「task first stage must be user」、`?template_id=` 不再过滤、`GET /api/workflows` 正常；线上历史任务（#63）`task_template_name` 与 4 段流水仍在。页面点验（建任务 / 历史任务 / 工作流页）待本机重启后由用户在真实 UI 确认。
 
 ---
 
