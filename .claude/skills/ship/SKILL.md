@@ -38,7 +38,7 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 | 5 | `tar` 打包产物 → `ssh wsl`、`ssh fn` 解包 → `install` → （默认）重启 → 回报版本号；交叉编译 Windows 二进制 → `scripts/deploy-pcwin.sh` 装到 pc-win（`schtasks /end` → 换二进制 → `schtasks /run`） | ✓ 版本号不一致直接停（pc-win 失败也 `die`） |
 | 6 | 核对本机 `/` 引用的 bundle 就是刚装进去的那版 | 只警告不中断 |
 
-**第 5 步推的是什么**：`mindfs` 二进制 + `agents.json` + `task_template.json` —— `make install` 会装的四样里**去掉 `web/dist`**。打一条 tar 流走 ssh，分别落在 worker 的 `~/.mindfs-deploy/` 暂存目录，装完即删。
+**第 5 步推的是什么**：`mindfs` 二进制 + `agents.json` —— `make install` 装的东西里**去掉 `web/dist`**（模板库已随 Phase 3 删除，不再有 `task_template.json`）。打一条 tar 流走 ssh，分别落在 worker 的 `~/.mindfs-deploy/` 暂存目录，装完即删。
 
 > **不推 `web/dist`**：WSL 与 fn 都是纯 worker 节点，按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
 

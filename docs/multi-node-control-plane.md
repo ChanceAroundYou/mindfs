@@ -60,7 +60,6 @@ export function controlPath(path: string, params?: URLSearchParams): string
 | 端点 | 归属 |
 |---|---|
 | `/api/users*`、`/api/auth/*`、`/api/preferences/*`、`/api/prompts*` | 控制面 |
-| `/api/task-templates*`、`/api/task-stage-templates*` | 控制面 |
 | `/api/web-push*`、`/api/nodes`、`/api/node-info` | 控制面 |
 | `/api/app/update*` | 控制面 |
 | `/api/dirs`、`/api/sessions*`、`/api/tasks*`、`/api/tree`、`/api/file`、`/api/git/*` | 数据面 |
@@ -81,23 +80,19 @@ export function controlPath(path: string, params?: URLSearchParams): string
 
 ## 两个容易漏的连带后果
 
-**1. 建任务必须内联流水。** 模板库只在主节点，但任务可以建在运行节点上，而后端 `CreateTask`
-在 `stages` 为空时会回查**任务所在节点**的模板库，那里必然查不到 →
-`task template not found`，整个建任务失败。所以前端 `createTask` 每次都要带上流水
-（`app/appTask.ts` 的 `taskStagesForCreate`），并顺带快照模板名 —— 看板上的模板来源标签
-在运行节点上才不会是空白。
+**建任务必须内联流水。** 任务可以建在任意节点上，后端只认请求里随包带上的 `stages`；
+没有 stages 直接报错（模板库已随 Phase 3 删除，不存在任何回查路径）。所以前端 `createTask`
+每次都带上内置默认流水（`app/appTask.ts` 的 `taskStagesForCreate` 读
+`defaultTaskFlowStages()`）。
 
 注意 `applyStageOverride` 在**没有覆盖时返回 `undefined`**，而那是最常见的路径；
 `taskStagesForCreate` 就是为了兜住这个分支，`applyStageOverride` 本身语义不动。
 
-**2. 模板按项目过滤，不按节点路由。** 模板带 `TaskTemplate.RootID`：空 = 全局，
-任何项目都能套用；非空 = 该项目专用。列表按 `?root=<id>` 返回「全局 + 本项目」的并集 ——
-别的项目的专用模板不该出现在这个项目的下拉框里。
-
 ## 迁移
 
 `scripts/migrate-control-plane-to-primary.sh`（默认预览，`--apply` 才写）把运行节点独有的
-控制面数据按 id 并集并进主机，冲突本机胜。幂等、写前备份 `.bak-<ts>`、不删远端文件。
+提示词库按值并集并进主机。幂等、写前备份 `.bak-<ts>`、不删远端文件。任务模板库已随
+Phase 3 删除，脚本不再迁移模板文件。
 
 **WebPush 订阅不能迁移**：VAPID 私钥在各自机器上，订阅密文绑定该密钥。需要在主节点页面
 重新点一次订阅。
