@@ -48,6 +48,10 @@ type sharedServices struct {
 	workflows *kanban.WorkflowStore
 	pool      *agent.Pool
 	prober    *agent.Prober
+	// writerGate 是 D15 的 app 级共享物理工作树写互斥。每账户的 Kanban Service
+	// 各有一个实例，但必须拿到**同一个** gate，否则两个账户同时命中同一物理
+	// worktree 时互斥失效。只覆盖本进程；跨进程不宣称 durable。
+	writerGate *kanban.WriterGate
 }
 
 type workspaceEntry struct {
@@ -265,6 +269,8 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
 	services.Kanban.SetWorkflowNodeRunner(services)
+	services.Kanban.SetWorkflowCommentSender(services)
+	services.Kanban.SetWriterGate(m.shared.writerGate)
 	services.WireFinishStageTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)

@@ -109,6 +109,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		workflows:   sharedWorkflows,
 		pool:        sharedPool,
 		prober:      sharedProber,
+		writerGate:  kanban.NewWriterGate(),
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 

@@ -7424,16 +7424,20 @@ groups:
     title: 看板 Task→多 worktree 注册表（task_worktrees）+ 按 NodeRun 归属创建/关闭 + 自动合并到集成分支
     kind: feature
     symptom: "同一 Task 的多个 Agent 节点各占独立 worktree/分支、归属可查；节点完成自动合并到集成分支并关树；撞上合并冲突时两条分支都保留、任务进入 needs-user 待人工处理，不自动解、不 stash、不覆盖用户改动。"
-    why: "spec「多 worktree 与自动合并」：worktree 生命周期/归属/回收从单 worktree（tasks.worktree_path 一列）扩展为注册表。设计：①task_worktrees(task_id,worktree_id,branch,path,root_id,node_run_id,state,merged_commit,conflict_files_json,conflict_output) 主键(task_id,worktree_id)，worktree_id 默认=branch，node_run_id 归属 WP-05 NodeRun（现阶段 string 占位，WP-05 只写列不改表）；②迁移由 task_store_migrate.go 的 migrate() 显式调用 migrateWorktreeRegistry（与 A1 的 migrateComments 同一接线），不在运行时懒建表；③ensureTaskWorktree 双写 registry（主 worktree node_run_id 空），存量单 worktree 任务 registry 为空时行为零回归；④合并只调 gitview 安全 API（exec 参数数组无 shell），冲突→state=needs_user+task_activities 落 merge_conflict+卡片 session_error，不 abort/stash；⑤关闭/拆目录复用 ClassifyWorktreeRemoveBlockers（用户改动拒绝拆）、branch -d 安全删、从不用 --force/-D。"
-    boundary: "只做注册表+创建/关闭+自动合并；不做 WP-05 WorkflowRun/NodeRun 引擎（node_run_id 仅字符串归属列）、不做跨节点迁移、不改 legacy FinishTaskWorktree 单 worktree 路径语义；git 调用不新增 shell 拼接，一律走 gitview。"
+    why: "spec「多 worktree 与自动合并」：worktree 生命周期/归属/回收从单 worktree（tasks.worktree_path 一列）扩展为注册表。设计：①task_worktrees(task_id,worktree_id,branch,path,root_id,node_run_id,state,merged_commit,conflict_files_json,conflict_output) 主键(task_id,worktree_id)，worktree_id 默认=branch，node_run_id 归属真实 Workflow NodeRun（owner 冲突规则见 G-LF）；②迁移由 task_store_migrate.go 的 migrate() 显式调用 migrateWorktreeRegistry（与 A1 的 migrateComments 同一接线），不在运行时懒建表；③ensureTaskWorktree 双写 registry（主 worktree node_run_id 空），存量单 worktree 任务 registry 为空时行为零回归；④合并只调 gitview 安全 API（exec 参数数组无 shell），冲突→state=needs_user+task_activities 落 merge_conflict+卡片 session_error，不 abort/stash；⑤关闭/拆目录复用 ClassifyWorktreeRemoveBlockers（用户改动拒绝拆）、branch -d 安全删、从不用 --force/-D；⑥（后续 tranche）Workflow NodeRun 生命周期适配：独立树在外部回合前 Ensure+绑定到 NodeRun 列，成功后按 Run 创建时快照的集成分支合并并关闭，合并成功但关闭失败只重试关闭、绝不二次合并；运行期缺快照直接失败，禁止回落 \"main\"；agent 已返回的持久证据（node_agent_done）让重启可以幂等续 merge 而不重跑 Agent。"
+    boundary: "只做注册表+创建/关闭+自动合并及其 NodeRun 生命周期适配（Prepare/Merge、run 快照 integration branch、重启续 merge）；WP-05 执行器/DAG 驱动本身仍归 G-KQ/G-LE。不做跨节点迁移、不改 legacy FinishTaskWorktree 单 worktree 路径语义；git 调用不新增 shell 拼接，一律走 gitview；跨进程 durable 锁仍不承诺（见 G-LF）。"
     files:
       - server/internal/kanban/worktree_registry.go
       - server/internal/kanban/worktree_registry_test.go
       - server/internal/kanban/service_worktree.go
       - server/internal/kanban/service_worktree_noderun.go
       - server/internal/kanban/service_worktree_merge.go
+      - server/internal/kanban/service_workflow_workspace.go
+      - server/internal/kanban/service_workflow_integration_branch.go
+      - server/internal/kanban/workflow_worktree_lifecycle_test.go
       - server/internal/kanban/service_worktree_multi_test.go
       - server/internal/kanban/service_worktree_merge_test.go
+      - server/internal/kanban/workflow_worktree_merge_test.go
       - server/internal/kanban/task_store_migrate.go
       - server/internal/kanban/task_store_worktree_refs.go
       - server/internal/kanban/types.go
@@ -7442,11 +7446,31 @@ groups:
       - server/internal/kanban/worktree_registry_test.go
       - server/internal/kanban/service_worktree_multi_test.go
       - server/internal/kanban/service_worktree_merge_test.go
+      - server/internal/kanban/workflow_worktree_lifecycle_test.go
+      - server/internal/kanban/workflow_worktree_merge_test.go
+      - server/internal/kanban/workflow_recovery_test.go
+      - server/internal/kanban/workflow_lifecycle_guards_test.go
+      - server/internal/kanban/workflow_review_fixes_test.go
+      - server/internal/kanban/workflow_lock_review_test.go
     anchors:
       - 'server/internal/kanban/worktree_registry.go:func (s *TaskStore) migrateWorktreeRegistry() error'
       - 'server/internal/kanban/service_worktree_merge.go:func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInput) (AutoMergeWorktreeResult, error)'
+      - 'server/internal/kanban/service_worktree_merge.go:func (s *Service) prepareAutoMerge('
+      - 'server/internal/kanban/service_worktree_merge.go:func (s *Service) executeAutoMerge('
+      - 'server/internal/kanban/service_worktree_merge.go:if entry.State == WorktreeStateMerged || entry.State == WorktreeStateClosed {'
       - 'server/internal/kanban/service_worktree_noderun.go:func (s *Service) EnsureNodeWorktree(ctx context.Context, in EnsureNodeWorktreeInput) (WorktreeEntry, error)'
       - 'server/internal/kanban/service_worktree_noderun.go:func (s *Service) CloseNodeWorktree(ctx context.Context, in CloseNodeWorktreeInput) (WorktreeEntry, error)'
+      - 'server/internal/kanban/service_workflow_workspace.go:func (s *Service) PrepareWorkflowNodeWorktree('
+      - 'server/internal/kanban/service_workflow_workspace.go:func (s *Service) MergeWorkflowNodeWorktree('
+      - 'server/internal/kanban/service_workflow_workspace.go:func (s *Service) acquireWorkflowMergeGate('
+      - 'server/internal/kanban/service_workflow_workspace.go:var ErrWorkflowIntegrationBranchMissing'
+      - 'server/internal/kanban/service_workflow_integration_branch.go:func (s *Service) snapshotRunIntegrationBranch('
+      - 'server/internal/kanban/workflow_worktree_merge_test.go:func TestWorkflowNodeRestartAfterAgentDoneResumesMergeOnce('
+      - 'server/internal/kanban/service_worktree_noderun.go:func shortID(id string) string'
+      - 'server/internal/kanban/service_worktree_merge.go:releaseGate, err := s.AcquireNodeWriter(ctx, plan.mainDir, plan.target)'
+      - 'server/internal/kanban/worktree_finish.go:releaseGate, err := s.AcquireNodeWriter(ctx, mainDir, target)'
+      - 'server/internal/kanban/service_workflow_integration_branch.go:worktreeDirUsable(task.WorktreePath)'
+      - 'server/internal/kanban/service_workflow_workspace.go:worktree 目录已不存在'
   # ── 看板留言板前端（WP-02）：user↔agent 时间线 + 工作流三态 + agent 段下钻 ──
   - id: G-KS
     title: 看板留言板前端：user↔agent 交替时间线、工作流三态选择、agent 段下钻、显式 nodeId
@@ -7602,57 +7626,6 @@ groups:
       - 'server/internal/api/usecase/session_subagent_stream_test.go:func TestClaudeSubagentRouterNeverLeaksChildOwnedEventsIntoParent('
       - 'server/internal/agent/claude/session_subagent_attribution_test.go:func TestClaudeMetadataFreeDeltaInventsNoAttribution('
 
-  # ── Kanban Workflow Runtime 持久层：claim / NodeRun 身份 / D14 Run 历史 ─────
-  - id: G-LC
-    title: Kanban Workflow Runtime 的原子 NodeRun claim、canonical 身份与历史 Run
-    kind: feature
-    symptom: "看板任务迁移到工作流后只有一条 Run：完成/失败后不能重跑或换工作流；同一节点被并发触发时可能启动第二个 agent turn；重启后 NodeRun 的 session 绑定丢失，旧留言绑定的 NodeRun 解析不到。"
-    why: "三件必须保留：① NodeRun 唯一键 `(run_id,node_id,loop_path,iteration,attempt)` 的 claim 必须单语句原子（INSERT ... ON CONFLICT DO NOTHING + RowsAffected），输家回读原行，Runner 绝不在事务内调用；② canonical NodeRun 身份是 `workflow_node_runs`，WP-03 的 `node_runs` 影子行只读兜底，`ResolveNodeRun`/`GetNodeRun` 先查 canonical，旧留言与恢复数据不得因新表而读不到；③ D14 用户决策为「保留终态历史、每任务至多一个非终态 Run」，`workflow_runs` 必须去掉 `UNIQUE(task_id)` 并重建迁移，创建新 Run 只有当前绑定 Run 已终态才允许。"
-    boundary: "只覆盖 Workflow Runtime 的持久层（claim、NodeRun 身份解析、Run 历史迁移）。Agent 节点执行器见 G-LD；driver 触发/取消、Condition/Loop/HumanGate 调度、HumanGate 留言绑定在本组后续实现完成前不声明；`TaskStore.PostComment` 与 `OutboxService.RecordComment` 两个 writer 的合并留给留言绑定任务，本组不静默改语义。"
-    files:
-      - server/internal/kanban/task_store_workflow_runs.go
-      - server/internal/kanban/task_store_workflow_node_runs.go
-      - server/internal/kanban/node_run_identity.go
-      - server/internal/kanban/service_recover.go
-    tests:
-      - server/internal/kanban/task_store_workflow_runs_test.go
-      - server/internal/kanban/task_store_workflow_runs_history_test.go
-      - server/internal/kanban/node_run_identity_test.go
-    anchors:
-      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) ClaimWorkflowNodeRun('
-      - 'server/internal/kanban/task_store_workflow_node_runs.go:ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING'
-      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
-      - 'server/internal/kanban/node_run_identity.go:func ResolveNodeRun('
-      - 'server/internal/kanban/task_store_workflow_runs_history_test.go:func TestWorkflowRunHistoryAllowsNewRunOnlyAfterTerminal('
-
-  # ── Kanban Workflow Runtime 的 Agent 节点执行端口与 app adapter ────────────
-  - id: G-LD
-    title: Workflow Agent 节点走独立 Runner 端口与严格 JSON envelope
-    kind: feature
-    symptom: "工作流 Agent 节点若复用 legacy 阶段执行，会把节点结果写成 StageRun、用阶段标记判完成，并让节点默认继承任务主会话；用户会看到工作流节点污染旧流水、节点之间共享上下文，且 agent 正常回复正文被当作成功而继续推进。"
-    why: "三件必须保留：① 工作流 Agent 节点只经 `WorkflowNodeRunner`（`EnsureWorkflowNodeSession` + `RunWorkflowNode`）执行，绝不合成 legacy StageRun（测试断言 legacy `RunAgentStage` 调用次数为 0）；② D2 会话策略：空值/`per_node` 每节点新 session、`task_main` 才复用任务主会话、`same_stage` 复用同 node+loop_path 最近绑定、`always_new` 每次新建；③ D5 结果必须是严格 JSON envelope（`outcome=done|blocked|silent`，blocked/silent 必带 reason），非 JSON/未知字段/尾随数据/缺字段一律 `Outcome=unknown`（nil transport error），由上层投影 waiting_user，绝不按正文猜成功。"
-    boundary: "只覆盖单个 Agent 节点的执行端口、session 选择、prompt 输出契约与结果解析。NodeRun 状态落库/Activity/outbox 关联（Task 3）、driver 推进（Task 4+）、HumanGate 留言绑定（Task 5）不在本组；`task_main` 在任务尚无主会话时新建的会话不回写 `MainSessionKey`（由后续绑定任务决定），本组不静默绑定。"
-    files:
-      - server/internal/kanban/workflow_node_executor.go
-      - server/internal/kanban/task_store_workflow_node_runs.go
-      - server/internal/kanban/service.go
-      - server/internal/kanban/types.go
-      - server/internal/api/appcontext.go
-      - server/internal/api/appcontext_workflow.go
-      - server/app/workspace.go
-      - server/app/workspace_build.go
-    tests:
-      - server/internal/kanban/workflow_node_executor_test.go
-      - server/internal/api/appcontext_workflow_test.go
-    anchors:
-      - 'server/internal/kanban/workflow_node_executor.go:type WorkflowNodeRunner interface {'
-      - 'server/internal/kanban/workflow_node_executor.go:func ParseWorkflowNodeEnvelope('
-      - 'server/internal/kanban/workflow_node_executor.go:func BuildWorkflowNodeOutputContract('
-      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) LatestWorkflowNodeSessionKey('
-      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) EnsureWorkflowNodeSession('
-      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) RunWorkflowNode('
-      - 'server/internal/kanban/workflow_node_executor_test.go:func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner('
-      - 'server/internal/api/appcontext_workflow_test.go:func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope('
   # ── Kanban Workflow Runtime 持久层：claim / NodeRun 身份 / D14 Run 历史 ─────
   - id: G-LC
     title: Kanban Workflow Runtime 的原子 NodeRun claim、canonical 身份与历史 Run

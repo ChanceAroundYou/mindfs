@@ -2,7 +2,20 @@ package kanban
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
+	"strings"
 	"sync"
+)
+
+var (
+	// ErrWorkflowWriterGateUnavailable：Service 没有注入 app 级共享 gate。
+	// 写入节点必须 fail closed —— 没有共享 gate 就无从保证同一物理树的互斥，
+	// 宁可拒绝执行，也不能退回「每个账户各拿一把锁」的伪互斥。
+	ErrWorkflowWriterGateUnavailable = errors.New("workflow writer gate is not configured")
+	// ErrWorkflowWorkspaceIdentityMissing：写节点既没有物理路径也没有分支身份，
+	// 无法判断该和谁互斥，同样 fail closed。
+	ErrWorkflowWorkspaceIdentityMissing = errors.New("workflow node workspace identity is missing")
 )
 
 // WP-04：writer gate，粒度 = (task_id, worktree_id)（spec「多 worktree 与自动合并」）。
@@ -18,6 +31,10 @@ import (
 type WriterGate struct {
 	mu   sync.Mutex
 	sems map[writerGateKey]chan struct{}
+	// workspaceSems 是 D15 的 app 级共享 gate：键 = 规范化物理路径 + 分支，
+	// 不按 Task/账户分片。Kanban Service 每账户一个，所以只有把同一个 gate
+	// 实例注入所有 Service，跨账户命中同一物理树时才会串行。
+	workspaceSems map[workspaceGateKey]chan struct{}
 }
 
 type writerGateKey struct {
@@ -25,9 +42,17 @@ type writerGateKey struct {
 	worktreeID string
 }
 
+// workspaceGateKey 是物理工作树身份。path 是目录的规范路径；branch 用于
+// 路径缺失时的兜底身份，也避免两棵登记信息不一致但实际同路径的树拿到两把锁。
+type workspaceGateKey struct {
+	path   string
+	branch string
+}
+
 func NewWriterGate() *WriterGate {
 	return &WriterGate{
-		sems: map[writerGateKey]chan struct{}{},
+		sems:          map[writerGateKey]chan struct{}{},
+		workspaceSems: map[workspaceGateKey]chan struct{}{},
 	}
 }
 
@@ -82,4 +107,71 @@ func (g *WriterGate) IsHeld(taskID, worktreeID string) bool {
 // ReadOnly 返回一个 no-op 释放函数：只读不占 gate。用它标注「我只读」比静默不拿锁清晰。
 func (g *WriterGate) ReadOnly(taskID, worktreeID string) func() {
 	return func() {}
+}
+
+// normalizeWorkspaceKey 统一物理树身份。
+//
+// 路径非空时只按路径做键：同一个 checkout 同一时刻只有一个分支，分支名不同
+// （例如任务记录的旧分支 vs 主 checkout 当前分支）不能让同一物理目录拿到两把锁。
+// 路径缺失时才退回分支；两者都为空由调用方 fail closed。路径同时做 Abs +
+// EvalSymlinks，避免 `/repo` 与 `repo`、软链接别名拿到不同键。
+func normalizeWorkspaceKey(path, branch string) workspaceGateKey {
+	path = strings.TrimSpace(path)
+	branch = strings.TrimSpace(branch)
+	if path == "" {
+		return workspaceGateKey{branch: branch}
+	}
+	path = filepath.Clean(path)
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return workspaceGateKey{path: path}
+}
+
+func (g *WriterGate) workspaceSemFor(key workspaceGateKey) chan struct{} {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.workspaceSems == nil {
+		g.workspaceSems = map[workspaceGateKey]chan struct{}{}
+	}
+	ch, ok := g.workspaceSems[key]
+	if !ok {
+		ch = make(chan struct{}, 1)
+		g.workspaceSems[key] = ch
+	}
+	return ch
+}
+
+// AcquireWorkspace 在物理工作树身份上阻塞等待写入权。key 不含 task/账户：
+// 同一个目录无论被哪个 Task 或哪个账户的 Service 命中，都只有一支写者。
+func (g *WriterGate) AcquireWorkspace(ctx context.Context, path, branch string) (func(), error) {
+	ch := g.workspaceSemFor(normalizeWorkspaceKey(path, branch))
+	select {
+	case ch <- struct{}{}:
+		releaseOnce := sync.Once{}
+		return func() { releaseOnce.Do(func() { <-ch }) }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TryAcquireWorkspace 不阻塞：已持有返回 false；成功返回 release（重复释放安全）。
+func (g *WriterGate) TryAcquireWorkspace(path, branch string) (bool, func()) {
+	ch := g.workspaceSemFor(normalizeWorkspaceKey(path, branch))
+	select {
+	case ch <- struct{}{}:
+		releaseOnce := sync.Once{}
+		return true, func() { releaseOnce.Do(func() { <-ch }) }
+	default:
+		return false, nil
+	}
+}
+
+// IsWorkspaceHeld 报告该物理工作树当前是否被写者持有。
+func (g *WriterGate) IsWorkspaceHeld(path, branch string) bool {
+	ch := g.workspaceSemFor(normalizeWorkspaceKey(path, branch))
+	return len(ch) > 0
 }

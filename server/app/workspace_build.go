@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"log"
 	"os"
@@ -15,6 +16,17 @@ import (
 	"mindfs/server/internal/pins"
 	"mindfs/server/internal/scheduled"
 )
+
+// workflowNodeCanceller binds the root whose session manager must receive the
+// cancel. NodeRun itself carries no root id, while CancelSessionTurn needs one.
+type workflowNodeCanceller struct {
+	rootID string
+	svc    *api.AppContext
+}
+
+func (c workflowNodeCanceller) CancelWorkflowNode(ctx context.Context, nodeRun kanban.NodeRun) error {
+	return c.svc.CancelWorkflowNode(ctx, c.rootID, nodeRun)
+}
 
 func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	primary := userID == m.PrimaryUserID()
@@ -109,9 +121,13 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetRunner(services)
 	// Workflow Agent 节点走独立端口（D2/D5），不得经 legacy StageRun 双写。
 	services.Kanban.SetWorkflowNodeRunner(services)
+	services.Kanban.SetWorkflowCommentSender(services)
+	// 所有账户共用同一把物理工作树 writer gate（D15）；每账户一把等于没锁。
+	services.Kanban.SetWriterGate(m.shared.writerGate)
 	services.WireFinishStageTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	for _, root := range services.ListRoots() {
+		services.Kanban.SetWorkflowNodeCancellerForRoot(root.ID, workflowNodeCanceller{rootID: root.ID, svc: services})
 		// WP-03 启动恢复：必须在 KickPending（异步起 RunTask）之前同步执行，
 		// 否则 pending 的 ContinueRequest 会被执行体先消费掉。探针按 root 传入（每个 root
 		// 有自己的 session manager）；不可确定时 RecoverOnStartup 标 unknown 并把任务置
