@@ -139,3 +139,42 @@ func TestValidateLocalOverlayRootKeysRejectsNestedKeys(t *testing.T) {
 		t.Fatal("validator accepted a local root key nested inside [features]")
 	}
 }
+
+// overlay 只有表（linux 设备的典型形态）时同样走统一布局，内容不丢。
+func TestBuildRuntimeConfigHandlesTableOnlyOverlay(t *testing.T) {
+	paths := testPaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.SharedDefault), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SharedDefault, []byte(mergeTestDefault), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current := `model = "gpt-6-luna"
+model_reasoning_effort = "medium"
+
+[features]
+goals = true
+# >>> sync-codex local (not shared) >>>
+[tui]
+screen_reader_detection_done = true
+# <<< sync-codex local (not shared) <<<
+`
+	if err := os.WriteFile(paths.RuntimeConfig, []byte(current), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload, _, err := buildRuntimeConfig(paths, false, true)
+	if err != nil {
+		t.Fatalf("buildRuntimeConfig: %v", err)
+	}
+	features, sentinel := strings.Index(string(payload), "[features]"), strings.Index(string(payload), localConfigBegin)
+	if features < 0 || sentinel < 0 || features < sentinel {
+		t.Fatalf("shared tables should follow the local sentinel block:\n%s", payload)
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(payload, &root); err != nil {
+		t.Fatalf("rendered config is invalid TOML: %v\n%s", err, payload)
+	}
+	if _, ok := root["tui"].(map[string]any); !ok {
+		t.Fatalf("local table [tui] missing: %#v", root)
+	}
+}

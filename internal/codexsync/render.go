@@ -96,7 +96,8 @@ func buildRuntimeConfig(paths Paths, persistActive, requireSharedDefault bool) (
 	// （Windows Codex 会写 service_tier / notify）会被吞进那张表，Codex 报
 	// `invalid type: string "default", expected a boolean`。因此把 shared 拆成
 	// 根级/表两段：overlay（含根级键与表）整段留在 sentinel 内并置于 shared
-	// 的表之前，shared 的表移到 sentinel 之后。
+	// 的表之前，shared 的表移到 sentinel 之后。布局只取决于两段内容，不随
+	// overlay 是否含根级键切换，避免同一个文件在两种形态间来回改写。
 	sharedRoot, sharedTables := splitTOMLRoot(strings.TrimRight(prefix, "\n"))
 	overlayRoot, overlayTables := splitTOMLRoot(strings.TrimRight(overlay, "\n"))
 	payload := []byte(composeRuntimeConfig(sharedRoot, overlayRoot, overlayTables, sharedTables))
