@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"mindfs/server/internal/fs"
 )
@@ -74,9 +75,16 @@ type Service struct {
 	// WorkflowNodeRunnerPort 是 Workflow Agent 节点的执行端口（Task 2）。与
 	// legacy Runner 并存：工作流节点只走这里，绝不合成 StageRun 双写。
 	WorkflowNodeRunnerPort WorkflowNodeRunner
+	// WorkflowCommentSenderPort sends queued comments to the bound session.
+	WorkflowCommentSenderPort WorkflowCommentSender
+	// WorkflowNodeCancellerPort cancels in-flight Agent turns with a bounded wait.
+	WorkflowNodeCancellerPort WorkflowNodeCanceller
 	// Workflows is the control-plane WorkflowStore (WP-05). Nil in legacy tests;
 	// HTTP handlers reject with 503 when unavailable.
 	Workflows *WorkflowStore
+	// WriterGate 是 app 级共享的物理工作树写互斥（D15）。每账户的 Service 各有一个
+	// 实例，但必须由 app 层注入**同一个** *WriterGate；为 nil 时写节点 fail closed。
+	WriterGate *WriterGate
 
 	mu       sync.Mutex
 	stores   map[string]*TaskStore
@@ -147,6 +155,17 @@ func (s *Service) SetWorkflowNodeRunner(runner WorkflowNodeRunner) {
 	}
 	s.mu.Lock()
 	s.WorkflowNodeRunnerPort = runner
+	s.mu.Unlock()
+}
+
+// SetWorkflowCommentSender 挂上排队留言的续聊发送端口。装配期调一次；nil 时
+// 到期的留言进入 blocked（needs-user），绝不假装已投递。
+func (s *Service) SetWorkflowCommentSender(sender WorkflowCommentSender) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.WorkflowCommentSenderPort = sender
 	s.mu.Unlock()
 }
 
