@@ -213,3 +213,19 @@ type harnessAdapter struct {
     本机二进制已安装同版本、bundle 对账一致，但进程仍是旧二进制
     （`/proc/1388399/exe` 带 `(deleted)`），旧进程的同一接口仍只返回 llmux ——
     这正是用户看到的现象，需 `sudo systemctl restart mindfs` 后消失。
+
+- 2026-11-11（用户报 pc-win 打不开 Codex）：
+  - 现场：Codex 弹窗 `C:\Users\10178\.codex\config.toml:7:16: invalid type: string "default", expected a boolean`。
+    文件第 4 行是 `[features]`、第 5 行 `goals = true`、第 6 行是本地 sentinel，第 7 行
+    `service_tier = "default"` —— 本地 overlay 的根级键被 `[features]` 表吸收。
+  - 根因：`buildRuntimeConfig` 把 `共享配置 + sentinel + 本地 overlay` 直接顺序拼接。
+    共享 default 现在以 `[features]` 表结尾，而 pc-win 的本地 Codex 配置含根级键
+    （Windows Codex 写 `service_tier` / `notify`），拼在表后面就成了表的子键。
+    同一类 bug 此前只在 llmux 共享 overlay 上修过（`mergeSharedProfiles`），本地 overlay 没修。
+    文件 mtime 是 2026-11-10 18:00，早于今天的部署，所以不是新二进制引入的，是存量 latent bug。
+  - 修复：共享拆根级/表两段；overlay 整段留在 sentinel 内并置于共享表之前；
+    新增 `validateLocalOverlayRootKeys`，任何本地根级键没落在根级就拒绝写出。
+    用 pc-win 真实 config.toml 做临时验证：`service_tier`/`notify` 回到根级、`[features]` 只剩
+    `goals`、10 张本地表全部保留、二次渲染逐字节一致。
+  - 测试：`render_test.go` 新增两个用例（真实形态渲染 + 嵌套键拒绝），`go test ./...` 全绿。
+    登记 G-KQ（why + 锚点）。

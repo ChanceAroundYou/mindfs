@@ -1,6 +1,8 @@
 package codexsync
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -56,5 +58,84 @@ func TestValidateMergedRootKeysRejectsNestedKeys(t *testing.T) {
 	nested := strings.Replace(mergeTestDefault, "goals = true", "goals = true\nmodel_provider = \"llmux\"", 1)
 	if err := validateMergedRootKeys([]byte(nested), []byte(mergeTestLLMux)); err == nil {
 		t.Fatal("validator accepted a shared root key nested inside [features]")
+	}
+}
+
+// pc-win 的真实形态：共享 default 以 [features] 表结尾，本地 Codex 配置里
+// 还有根级键（service_tier / notify）。旧的拼接方式会把根级键塞进 [features]，
+// Codex 启动时报 `invalid type: string "default", expected a boolean`。
+const runtimeLocalOverlayWithRootKeys = `model = "gpt-6-luna"
+model_reasoning_effort = "medium"
+
+[features]
+goals = true
+# >>> sync-codex local (not shared) >>>
+service_tier = "default"
+
+notify = [ "C:\\node\\codex-computer-use.exe", "turn-ended" ]
+
+[tui]
+screen_reader_detection_done = true
+
+[plugins."browser@openai-bundled"]
+enabled = true
+# <<< sync-codex local (not shared) <<<
+`
+
+func TestBuildRuntimeConfigKeepsLocalRootKeysBeforeSharedTables(t *testing.T) {
+	paths := testPaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.SharedDefault), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SharedDefault, []byte(mergeTestDefault), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.RuntimeConfig, []byte(runtimeLocalOverlayWithRootKeys), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, _, err := buildRuntimeConfig(paths, false, true)
+	if err != nil {
+		t.Fatalf("buildRuntimeConfig: %v", err)
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(payload, &root); err != nil {
+		t.Fatalf("rendered config is invalid TOML: %v\n%s", err, payload)
+	}
+	if root["service_tier"] != "default" {
+		t.Fatalf("local root key service_tier was absorbed by a table: %#v\n%s", root, payload)
+	}
+	if _, ok := root["notify"].([]any); !ok {
+		t.Fatalf("local root key notify was absorbed by a table: %#v\n%s", root, payload)
+	}
+	features, ok := root["features"].(map[string]any)
+	if !ok || len(features) != 1 || features["goals"] != true {
+		t.Fatalf("features table was polluted by local root keys: %#v\n%s", features, payload)
+	}
+	if _, ok := root["tui"].(map[string]any); !ok {
+		t.Fatalf("local table [tui] missing: %#v", root)
+	}
+	if begin, table := strings.Index(string(payload), localConfigBegin), strings.Index(string(payload), "[features]"); begin < 0 || table < 0 || table < begin {
+		t.Fatalf("shared tables must follow the local sentinel block:\n%s", payload)
+	}
+
+	// 渲染结果再次作为输入时必须稳定（避免每次启动都改文件）。
+	if err := os.WriteFile(paths.RuntimeConfig, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := buildRuntimeConfig(paths, false, true)
+	if err != nil {
+		t.Fatalf("second buildRuntimeConfig: %v", err)
+	}
+	if string(again) != string(payload) {
+		t.Fatalf("render is not idempotent:\nfirst:\n%s\nsecond:\n%s", payload, again)
+	}
+}
+
+func TestValidateLocalOverlayRootKeysRejectsNestedKeys(t *testing.T) {
+	nested := strings.Replace(runtimeLocalOverlayWithRootKeys, "goals = true", "goals = true\nservice_tier = \"default\"", 1)
+	overlay := `service_tier = "default"` + "\n"
+	if err := validateLocalOverlayRootKeys([]byte(nested), []byte(overlay)); err == nil {
+		t.Fatal("validator accepted a local root key nested inside [features]")
 	}
 }

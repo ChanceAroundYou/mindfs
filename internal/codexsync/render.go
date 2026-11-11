@@ -91,10 +91,19 @@ func buildRuntimeConfig(paths Paths, persistActive, requireSharedDefault bool) (
 	if err != nil {
 		return nil, 0, err
 	}
-	// Match claude/scripts/sync-codex.sh byte shape so its read-only drift check
-	// continues to recognize the generated config on every device.
-	payload := []byte(prefix + "\n" + localConfigBegin + "\n" + overlay + localConfigEnd + "\n")
+	// 共享配置的根级赋值必须在任何表头之前，本地 overlay 同理。直接拼在
+	// shared 末尾时，若 shared 以表结尾（例如 [features]），overlay 的根级键
+	// （Windows Codex 会写 service_tier / notify）会被吞进那张表，Codex 报
+	// `invalid type: string "default", expected a boolean`。因此把 shared 拆成
+	// 根级/表两段：overlay（含根级键与表）整段留在 sentinel 内并置于 shared
+	// 的表之前，shared 的表移到 sentinel 之后。
+	sharedRoot, sharedTables := splitTOMLRoot(strings.TrimRight(prefix, "\n"))
+	overlayRoot, overlayTables := splitTOMLRoot(strings.TrimRight(overlay, "\n"))
+	payload := []byte(composeRuntimeConfig(sharedRoot, overlayRoot, overlayTables, sharedTables))
 	if err := ValidateRenderedConfig(payload); err != nil {
+		return nil, 0, err
+	}
+	if err := validateLocalOverlayRootKeys(payload, []byte(overlay)); err != nil {
 		return nil, 0, err
 	}
 	if mergedOverlay != nil {
@@ -151,6 +160,56 @@ func splitTOMLRoot(raw string) (string, string) {
 		}
 	}
 	return raw, ""
+}
+
+// composeRuntimeConfig 按 TOML 作用域拼接运行时配置：
+//
+//	<shared 根级>
+//	# >>> sync-codex local (not shared) >>>
+//	<overlay 根级>
+//	<overlay 表>
+//	# <<< sync-codex local (not shared) <<<
+//	<shared 表>
+//
+// overlay 整段必须在 sentinel 内，否则下次渲染会被当成共享内容丢弃；overlay
+// 的根级键必须出现在任何表头之前，否则会被共享表（[features]）吸收。
+func composeRuntimeConfig(sharedRoot, overlayRoot, overlayTables, sharedTables string) string {
+	var out strings.Builder
+	writePart := func(part string) {
+		part = strings.TrimRight(part, "\n")
+		if part == "" {
+			return
+		}
+		out.WriteString(part)
+		out.WriteString("\n")
+	}
+	writePart(sharedRoot)
+	out.WriteString(localConfigBegin + "\n")
+	writePart(overlayRoot)
+	writePart(overlayTables)
+	out.WriteString(localConfigEnd + "\n")
+	writePart(sharedTables)
+	return out.String()
+}
+
+// validateLocalOverlayRootKeys 确认本地 overlay 的每个根级键在渲染结果里仍位于
+// 根级。共享配置以表结尾时，直接拼接会把 overlay 根级键塞进最后一张表；这里
+// 让渲染直接失败，而不是写出 Codex 拒绝加载的配置。
+func validateLocalOverlayRootKeys(payload, overlay []byte) error {
+	renderedRoot, err := decodeTOML(payload)
+	if err != nil {
+		return err
+	}
+	overlayRoot, err := decodeTOML(overlay)
+	if err != nil {
+		return err
+	}
+	for key, want := range overlayRoot {
+		if !mergedRootValuePresent(renderedRoot[key], want) {
+			return fmt.Errorf("rendered Codex config lost local root key %q", key)
+		}
+	}
+	return nil
 }
 
 // validateMergedRootKeys 确认 overlay 的每个根级键在最终配置里仍位于根级且值一致。
