@@ -6,16 +6,28 @@
 
 export type WorkflowChoice = "specified" | "disabled" | "empty";
 
+// 对话式 Agent 回复的生命周期状态（kanban.ActivityStatus*）。
+// 用户留言与系统事件不带状态，所以字段可选。
+export type ActivityStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
 export type TaskActivity = {
   id: string;
   task_id: string;
+  root_id?: string;
   type: string;
   author: string;
-  role: "user" | "agent" | string;
+  role: "user" | "agent" | "system" | string;
   body: string;
   workflow_choice: WorkflowChoice | string;
   workflow_version_id?: string;
+  // RunID 是对话模型里的 workflow_run_id：后端只落 run_id 一列，不设同义第二字段。
+  run_id?: string;
+  node_run_id?: string;
+  status?: ActivityStatus | string;
+  summary?: string;
+  session_key?: string;
   created_at: string;
+  updated_at?: string;
 };
 
 export type ContinueRequest = {
