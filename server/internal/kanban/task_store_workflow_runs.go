@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
  node_states_json TEXT NOT NULL DEFAULT '{}', node_outputs_json TEXT NOT NULL DEFAULT '{}',
  selected_routes_json TEXT NOT NULL DEFAULT '{}', loop_state_json TEXT NOT NULL DEFAULT '{}',
  loop_exit_expr_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
- integration_branch TEXT NOT NULL DEFAULT ''
+ integration_branch TEXT NOT NULL DEFAULT '',
+ triggered_by TEXT NOT NULL DEFAULT '', activity_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_task ON workflow_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_task_created ON workflow_runs(task_id,created_at DESC);
@@ -49,6 +50,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(run_
 	// 逐列判断，重复启动幂等。列名是常量，不接受外部输入。
 	for _, col := range []struct{ table, name, ddl string }{
 		{"workflow_runs", "integration_branch", "TEXT NOT NULL DEFAULT ''"},
+		{"workflow_runs", "triggered_by", "TEXT NOT NULL DEFAULT ''"},
+		{"workflow_runs", "activity_id", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_id", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_path", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_branch", "TEXT NOT NULL DEFAULT ''"},
@@ -120,7 +123,8 @@ func (s *TaskStore) migrateWorkflowRunsDropTaskUnique() error {
  revision INTEGER NOT NULL DEFAULT 1, graph_json TEXT NOT NULL,
  node_states_json TEXT NOT NULL DEFAULT '{}', node_outputs_json TEXT NOT NULL DEFAULT '{}',
  selected_routes_json TEXT NOT NULL DEFAULT '{}', loop_state_json TEXT NOT NULL DEFAULT '{}',
- loop_exit_expr_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+ loop_exit_expr_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ integration_branch TEXT NOT NULL DEFAULT '', triggered_by TEXT NOT NULL DEFAULT '', activity_id TEXT NOT NULL DEFAULT ''
 )`,
 		`INSERT INTO workflow_runs(id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at)
  SELECT id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at FROM workflow_runs_task_unique_legacy`,
@@ -213,7 +217,7 @@ func (s *TaskStore) CreateWorkflowRunAndSetEngine(ctx context.Context, run *Work
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_runs(id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID, run.Version, run.Revision, graph, states, outputs, routes, loops, exits, now, now, strings.TrimSpace(run.IntegrationBranch))
+	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_runs(id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch,triggered_by,activity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID, run.Version, run.Revision, graph, states, outputs, routes, loops, exits, now, now, strings.TrimSpace(run.IntegrationBranch), strings.TrimSpace(run.TriggeredBy), strings.TrimSpace(run.ActivityID))
 	if err != nil {
 		return err
 	}
@@ -224,12 +228,12 @@ func (s *TaskStore) CreateWorkflowRunAndSetEngine(ctx context.Context, run *Work
 	return tx.Commit()
 }
 
-const workflowRunColumns = `id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch`
+const workflowRunColumns = `id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch,triggered_by,activity_id`
 
 func scanWorkflowRun(row interface{ Scan(...any) error }) (*WorkflowRun, error) {
 	var r WorkflowRun
 	var graph, states, outputs, routes, loops, exits, created, updated string
-	if err := row.Scan(&r.ID, &r.TaskID, &r.Version, &r.Revision, &graph, &states, &outputs, &routes, &loops, &exits, &created, &updated, &r.IntegrationBranch); err != nil {
+	if err := row.Scan(&r.ID, &r.TaskID, &r.Version, &r.Revision, &graph, &states, &outputs, &routes, &loops, &exits, &created, &updated, &r.IntegrationBranch, &r.TriggeredBy, &r.ActivityID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWorkflowRunNotFound
 		}

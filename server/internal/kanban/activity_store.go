@@ -160,6 +160,41 @@ func (s *ActivityStore) List(ctx context.Context, taskID string) ([]*TaskActivit
 	return items, rows.Err()
 }
 
+// ActivityByRunID returns the agent reply activity linked to a workflow run.
+// A run is produced by exactly one agent reply, so the newest match is the only
+// meaningful answer; the run_id index keeps this a point lookup.
+func (s *ActivityStore) ActivityByRunID(ctx context.Context, runID string) (*TaskActivity, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities WHERE run_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+		strings.TrimSpace(runID))
+	activity, err := scanActivityRecord(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrActivityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return activity, nil
+}
+
+// SetWorkflowLink records the run/version an agent reply is executing. The
+// activity row is inserted before the run exists, so the link is written after
+// the run is persisted instead of leaving a hidden run with no activity.
+func (s *ActivityStore) SetWorkflowLink(ctx context.Context, id, runID, versionID string) error {
+	id = strings.TrimSpace(id)
+	runID = strings.TrimSpace(runID)
+	if id == "" || runID == "" {
+		return errors.New("activity id and run id required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET run_id = ?, workflow_version_id = ?, updated_at = ? WHERE id = ?`,
+		runID, strings.TrimSpace(versionID), time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	return ensureActivityUpdated(res, id)
+}
+
 // UpdateStatus 更新 Agent 回复的状态与总结，并推进 updated_at。
 // summary 为 nil 时保留原总结。
 func (s *ActivityStore) UpdateStatus(ctx context.Context, id string, status string, summary *string) error {

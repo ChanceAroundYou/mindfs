@@ -18,6 +18,14 @@ const (
 	NodeKindNotify    = "notify"
 )
 
+// WorkflowRun origin (triggered_by). Conversation tasks record who asked for a
+// run so failures and history can be attributed without joining activities.
+const (
+	WorkflowTriggeredByUser      = "user"
+	WorkflowTriggeredByAgentAuto = "agent_auto"
+	WorkflowTriggeredByScheduled = "scheduled"
+)
+
 const (
 	NodeRunPending     = "pending"
 	NodeRunQueued      = "queued"
@@ -107,14 +115,19 @@ type WorkflowRun struct {
 	Graph    WorkflowDefinition `json:"graph"`             // inlined immutable snapshot + future edits
 	// IntegrationBranch 是创建 Run 时从项目当前 checkout 解析出的合并目标（D11）。
 	// 运行时的 merge 只许读这个快照，不允许再隐式回落到 "main"。
-	IntegrationBranch string                    `json:"integration_branch,omitempty"`
-	NodeStates        map[string]string         `json:"node_states,omitempty"`
-	NodeOutputs       map[string]map[string]any `json:"node_outputs,omitempty"`
-	SelectedRoutes    map[string]string         `json:"selected_routes,omitempty"`
-	LoopState         map[string]*LoopState     `json:"loop_state,omitempty"`
-	LoopExitExpr      map[string]string         `json:"loop_exit_expr,omitempty"`
-	CreatedAt         time.Time                 `json:"created_at"`
-	UpdatedAt         time.Time                 `json:"updated_at"`
+	IntegrationBranch string `json:"integration_branch,omitempty"`
+	// TriggeredBy / ActivityID 记录 Run 的来源（对话式任务 Phase 2）。TriggeredBy
+	// 取值 user / agent_auto / scheduled；ActivityID 指向触发它的用户留言活动。
+	// 两者在创建时写入、之后不再改，属于审计信息而不是运行状态。
+	TriggeredBy    string                    `json:"triggered_by,omitempty"`
+	ActivityID     string                    `json:"activity_id,omitempty"`
+	NodeStates     map[string]string         `json:"node_states,omitempty"`
+	NodeOutputs    map[string]map[string]any `json:"node_outputs,omitempty"`
+	SelectedRoutes map[string]string         `json:"selected_routes,omitempty"`
+	LoopState      map[string]*LoopState     `json:"loop_state,omitempty"`
+	LoopExitExpr   map[string]string         `json:"loop_exit_expr,omitempty"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	UpdatedAt      time.Time                 `json:"updated_at"`
 }
 
 // FrozenNodeIDs returns nodes that already triggered (have a NodeRun).
