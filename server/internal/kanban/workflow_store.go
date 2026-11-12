@@ -26,7 +26,21 @@ var (
 	ErrFrozenNodeEdit  = errors.New("cannot edit triggered (frozen) node")
 	ErrVersionNotFound = errors.New("workflow version not found")
 	ErrDraftNotFound   = errors.New("workflow draft not found")
+	// ErrWorkflowMetaNotFound 表示 id 既没有元数据记录、也不是已存在的 workflow。
+	ErrWorkflowMetaNotFound = errors.New("workflow meta not found")
 )
+
+// WorkflowMeta 是 workflow 的可读元数据，供自动选择（Task 2 的推荐器）使用。
+// 它随控制面 workflows.json 一起持久化，与草稿/版本的正文分离：改元数据不推进
+// 草稿 revision、也不产生新版本。
+type WorkflowMeta struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	UseCases          []string `json:"use_cases"`
+	Tags              []string `json:"tags"`
+	AutoSelectEnabled bool     `json:"auto_select_enabled"`
+}
 
 type WorkflowStore struct {
 	dir string // control-plane dir (main node); tests use temp dir
@@ -73,6 +87,7 @@ type workflowFile struct {
 	Drafts    map[string]*WorkflowDraft           `json:"drafts"`
 	Versions  map[string]*WorkflowVersion         `json:"versions"`
 	Proposals map[string]*WorkflowPublishProposal `json:"publish_proposals,omitempty"`
+	Meta      map[string]*WorkflowMeta            `json:"meta,omitempty"`
 	NextSeq   map[string]int                      `json:"next_seq"`
 }
 
@@ -80,7 +95,7 @@ func (s *WorkflowStore) loadLocked() (*workflowFile, error) {
 	b, err := os.ReadFile(s.pathLocked())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &workflowFile{Drafts: map[string]*WorkflowDraft{}, Versions: map[string]*WorkflowVersion{}, Proposals: map[string]*WorkflowPublishProposal{}, NextSeq: map[string]int{}}, nil
+			return &workflowFile{Drafts: map[string]*WorkflowDraft{}, Versions: map[string]*WorkflowVersion{}, Proposals: map[string]*WorkflowPublishProposal{}, Meta: map[string]*WorkflowMeta{}, NextSeq: map[string]int{}}, nil
 		}
 		return nil, err
 	}
@@ -96,6 +111,9 @@ func (s *WorkflowStore) loadLocked() (*workflowFile, error) {
 	}
 	if f.Proposals == nil {
 		f.Proposals = map[string]*WorkflowPublishProposal{}
+	}
+	if f.Meta == nil {
+		f.Meta = map[string]*WorkflowMeta{}
 	}
 	if f.NextSeq == nil {
 		f.NextSeq = map[string]int{}
@@ -286,4 +304,125 @@ func (s *WorkflowStore) ListVersions(ctx context.Context) ([]WorkflowVersion, er
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
 	return out, nil
+}
+
+// ── Workflow metadata (Phase 1, Task 1) ───────────────────────────────────
+//
+// 元数据与草稿/版本正文解耦：GetMeta/UpdateMeta 不推进 draft revision、
+// 不产生版本，因此自动选择所需的信息可以独立演进。存量 workflows.json
+// 没有 meta 段时按默认值读取（可用、名字取 id），与旧的「所有 workflow 都可选」
+// 行为一致，零回填。
+
+func defaultWorkflowMeta(id string) *WorkflowMeta {
+	return &WorkflowMeta{
+		ID:                id,
+		Name:              id,
+		UseCases:          []string{},
+		Tags:              []string{},
+		AutoSelectEnabled: true,
+	}
+}
+
+func copyWorkflowMeta(m *WorkflowMeta) *WorkflowMeta {
+	cp := *m
+	cp.UseCases = append([]string{}, m.UseCases...)
+	cp.Tags = append([]string{}, m.Tags...)
+	return &cp
+}
+
+// workflowKnownLocked reports whether id names a draft or a published workflow.
+// 调用方须持有 s.mu。
+func workflowKnownLocked(f *workflowFile, id string) bool {
+	if _, ok := f.Drafts[id]; ok {
+		return true
+	}
+	for _, v := range f.Versions {
+		if v.WorkflowID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// GetMeta returns metadata for one workflow. Without a stored record, a known
+// workflow falls back to defaults; an unknown id fails closed.
+func (s *WorkflowStore) GetMeta(ctx context.Context, id string) (*WorkflowMeta, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("workflow id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.loadLocked()
+	if err != nil {
+		return nil, err
+	}
+	if meta, ok := f.Meta[id]; ok && meta != nil {
+		return copyWorkflowMeta(meta), nil
+	}
+	if !workflowKnownLocked(f, id) {
+		return nil, ErrWorkflowMetaNotFound
+	}
+	return defaultWorkflowMeta(id), nil
+}
+
+// ListAvailable returns auto-select eligible workflows sorted by id. It only
+// enumerates workflows that actually exist (draft or published version); a
+// metadata row for a non-existent id is not "available".
+func (s *WorkflowStore) ListAvailable(ctx context.Context) ([]*WorkflowMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.loadLocked()
+	if err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	for id := range f.Drafts {
+		ids[id] = true
+	}
+	for _, v := range f.Versions {
+		ids[v.WorkflowID] = true
+	}
+	out := make([]*WorkflowMeta, 0, len(ids))
+	for id := range ids {
+		meta := defaultWorkflowMeta(id)
+		if stored, ok := f.Meta[id]; ok && stored != nil {
+			meta = copyWorkflowMeta(stored)
+			meta.ID = id
+		}
+		if !meta.AutoSelectEnabled {
+			continue
+		}
+		out = append(out, meta)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// UpdateMeta upserts metadata for a workflow. The id argument is authoritative;
+// nil collections are normalized to empty arrays for a stable JSON shape.
+func (s *WorkflowStore) UpdateMeta(ctx context.Context, id string, meta *WorkflowMeta) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("workflow id required")
+	}
+	if meta == nil {
+		return errors.New("workflow meta required")
+	}
+	stored := *meta
+	stored.ID = id
+	if stored.UseCases == nil {
+		stored.UseCases = []string{}
+	}
+	if stored.Tags == nil {
+		stored.Tags = []string{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	f.Meta[id] = &stored
+	return s.saveLocked(f)
 }
