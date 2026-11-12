@@ -205,7 +205,7 @@ groups:
     title: 多账户分区（多配置档）
     kind: feature
     symptom: "换个 URL 里的 user= 就读到另一个账户的项目与会话；实时流串账户（StreamHub 未按账户隔离）；数据落错目录，甚至往别人的项目里写入 .mindfs。"
-    why: "API 层不做鉴权是用户决策，但「按账户分区」必须成立：每账户一份 AppContext 由 ScopedRouter 按 user= 派发（211 处 h.AppContext 一处都不用改）；StreamHub 必须每账户独立；MetaDir() 分账户、SharedMetaDir() 不分；主账户数据根仍是 <cfg>/，行为零变化。空工作区的写操作不仅要回人话错误，还必须不留下副作用 —— registry 的 Upsert/Remove/UpdateDisplayName 落盘失败必须回滚，否则失败的「加项目」会在列表里留下幽灵条目（2026-10-09 实测）。"
+    why: "API 层不做鉴权是用户决策，但「按账户分区」必须成立：每账户一份 AppContext 由 ScopedRouter 按 user= 派发（211 处 h.AppContext 一处都不用改）；StreamHub 必须每账户独立；MetaDir() 分账户、SharedMetaDir() 不分；主账户数据根仍是 <cfg>/，行为零变化。空工作区的写操作不仅要回人话错误，还必须不留下副作用 —— registry 的 Upsert/Remove/UpdateDisplayName 落盘失败必须回滚，否则失败的「加项目」会在列表里留下幽灵条目（2026-10-09 实测）。**交给 agent 的会话日志路径必须与存储解析器同源**：meta 文件读写统一走 resolveMetaPath（落 SharedMetaDir），而「This session was migrated from elsewhere」切换提示原先用 MetaDir() 手拼绝对路径 —— 非主账户 + meta_location=project 时两者不是同一个目录（2026-11-12 fn 实测：提示指向 <cfg>/users/<id>/meta/CMAI/sessions/，文件实际在项目的 .mindfs/sessions/），提示又要求「读不到就报错停下」，于是每次压缩/重开线程后 agent 都停摆。绝对路径必须经 MetaFileAbsolutePath 推出；日志缺失时不注入该提示。**提示读的文件还得真有正文**：主日志自 S2d-2（G-BH）起 content 恒空，正文只在 <key>.blocks.jsonl 里，提示原先却让人读主日志 —— 路径修对也恢复不出上下文（2026-11-12 fn 实测：43 条交换行全空 content，596 个正文块另存）。所以提示优先指向块流，读取量按「未见过的块行数」换算并有上限；块流不存在（S2d-2 之前的历史会话）才回落主日志。"
     files:
       - server/app/workspace.go
       - server/app/workspace_test.go
@@ -246,10 +246,14 @@ groups:
       - server/internal/agent/pool_idle.go
       - server/internal/agent/pool_open.go
       - server/internal/agent/pool_config.go
+      - server/internal/fs/meta_dir.go
+      - server/internal/session/manager_paths.go
     tests:
       - server/app/workspace_test.go
       - server/internal/api/workspace_test.go
       - server/internal/fs/registry_rollback_test.go
+      - server/internal/session/manager_paths_test.go
+      - server/internal/api/usecase/session_prompt_test.go
       - web/tests/multi-account-partition.test.mjs
       # web/tests/cross-machine-account.behavior.mjs 不列在此：它是对着 home/pc 两台
       # 真实服务跑的手工探针（要求两边都连得上），不是 make test-web 的用例 ——
@@ -258,6 +262,10 @@ groups:
       - server/app/workspace.go:ScopedRouter
       - server/internal/fs/registry.go:snapshotLocked
       - server/internal/fs/meta_location.go:MetaLocationForNewRoot
+      - server/internal/fs/meta_dir.go:MetaFileAbsolutePath
+      - server/internal/api/usecase/session.go:switchReadHintTarget
+      - server/internal/session/blocks_store.go:BlocksLogAbsolutePath
+      - server/internal/session/blocks_store.go:CountBlocksAfterSeq
       - 'server/internal/fs/meta_location.go:CUSTOM(G-U)'
 
   # ── 后端：会话生命周期 ──────────────────────────────────────────

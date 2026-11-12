@@ -27,16 +27,18 @@ func (m *Manager) ExchangeLogPath(key string) string {
 	return filepath.ToSlash(filepath.Join(".mindfs", path))
 }
 
+// ExchangeLogAbsolutePath 必须与 appendExchange / loadExchanges 用同一个解析器：
+// 提示路径是给 agent 去读的，拼错目录就等于让它读一个不存在的文件。
 func (m *Manager) ExchangeLogAbsolutePath(key string) string {
 	path, err := m.exchangePath(key)
 	if err != nil {
 		return ""
 	}
-	metaDir := m.root.MetaDir()
-	if metaDir == "" {
+	abs, err := m.root.MetaFileAbsolutePath(path)
+	if err != nil {
 		return ""
 	}
-	return filepath.Join(metaDir, filepath.FromSlash(path))
+	return abs
 }
 
 func (m *Manager) exchangePath(key string) (string, error) {

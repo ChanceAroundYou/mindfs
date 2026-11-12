@@ -91,6 +91,60 @@ func (m *Manager) readBlocksAll(key string) ([]Block, error) {
 	return parseBlocks(payload), nil
 }
 
+// BlocksLogAbsolutePath 返回块流的绝对路径（解析器与 AppendBlocks 一致）。
+//
+// 迁移提示要把「正文在哪」告诉 agent：主日志自 S2d-2 起 content 恒空，
+// 只有块流行里才有可读的正文。
+func (m *Manager) BlocksLogAbsolutePath(key string) string {
+	path, err := m.blocksPath(key)
+	if err != nil {
+		return ""
+	}
+	abs, err := m.root.MetaFileAbsolutePath(path)
+	if err != nil {
+		return ""
+	}
+	return abs
+}
+
+// CountBlocksAfterSeq 数块流里 seq 严格大于 afterSeq 的行数。
+//
+// 提示文案按「行」给出读取量，而它原本数的是交换行；块流一行一块，
+// 两类行数差一个数量级，必须换算，否则「读最后 2 行」只能读到两个块。
+// 块流不存在（S2d-2 之前的历史会话）时返回 0，由调用方回落主日志。
+func (m *Manager) CountBlocksAfterSeq(key string, afterSeq int) (int, error) {
+	// 不加 m.mu：块流 append-only，读到半行写坏的尾行会被下面的解析跳过；
+	// 而这里在发送路径上、文件可达数 MB，占着锁只会挡住其他会话的读写。
+	path, err := m.blocksPath(key)
+	if err != nil {
+		return 0, err
+	}
+	payload, err := m.root.ReadMetaFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	// 块行可达 700KB，不能用默认 64KB token 的 bufio.Scanner；整份读入再按行切。
+	count := 0
+	for _, line := range strings.Split(string(payload), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var head struct {
+			Seq int `json:"seq"`
+		}
+		if err := json.Unmarshal([]byte(line), &head); err != nil {
+			continue // 坏行跳过，与 parseBlocks 一致
+		}
+		if head.Seq > afterSeq {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func exchangePathForKey(key string) (string, error) {
 	return filepath.ToSlash(fmt.Sprintf(exchangeFileTpl, key)), nil
 }

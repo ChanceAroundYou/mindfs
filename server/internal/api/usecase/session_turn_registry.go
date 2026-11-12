@@ -10,7 +10,10 @@ import (
 )
 
 const (
-	switchContextTailLines   = 20
+	switchContextTailLines = 20
+	// 块流一行一块，一轮的主体回复能散成十几个块；给一个约等于 20 条交换行
+	// 的块行上限，避免首次导入（agent 一条都没看过）时要求它读整份文件。
+	switchContextTailBlocks  = 200
 	sessionNameTimeout       = 30 * time.Second
 	sessionNameMinMessageLen = 12
 	sessionRecoveryAttempts  = 3

@@ -401,6 +401,95 @@ func TestPrependSwitchHintOnAgentSwitchUsesAbsolutePath(t *testing.T) {
 	}
 }
 
+// 真切换时提示要指向块流，而不是 content 恒空的主日志。
+//
+// S2d-2 起主日志的 content 一律为空，正文只在 <key>.blocks.jsonl 里。提示若仍
+// 指向主日志，agent 读完拿到一串空 content，等于没恢复上下文（甚至误判历史丢失）。
+// 读取量必须换算成块行数：1 条交换行 ≈ 多个块，主日志口径的「2 行」在块流里不够。
+func TestPrependSwitchHintPointsAtBlocksWhenAvailable(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+
+	blocks := []session.Block{
+		{Seq: 1, Pos: 0, Type: session.BlockTypeText, Text: "seen"},
+		{Seq: 2, Pos: 0, Type: session.BlockTypeText, Text: "unseen-a"},
+		{Seq: 2, Pos: 1, Type: session.BlockTypeText, Text: "unseen-b"},
+		{Seq: 3, Pos: 0, Type: session.BlockTypeText, Text: "unseen-c"},
+	}
+	if err := manager.AppendBlocks(context.Background(), created.Key, blocks); err != nil {
+		t.Fatalf("AppendBlocks: %v", err)
+	}
+
+	sess := created
+	sess.Exchanges = []session.Exchange{
+		{Seq: 1, Role: "user"},
+		{Seq: 2, Role: "agent"},
+		{Seq: 3, Role: "user"},
+	}
+	service := &Service{}
+	claudeSeen := 1 // claude 看过 seq 1 为止
+	linesBefore := 3
+	got := service.BuildPrompt(BuildPromptInput{
+		Session:             sess,
+		Manager:             manager,
+		Agent:               "codex",
+		Message:             "hi",
+		AgentCtxSeq:         &claudeSeen,
+		LinesBeforeThisTurn: &linesBefore,
+	})
+
+	wantPath := filepath.ToSlash(filepath.Join(rootDir, ".mindfs", "sessions", created.Key+".blocks.jsonl"))
+	wantRead := "read the last 3 lines from " + wantPath
+	if !strings.Contains(got, wantRead) {
+		t.Fatalf("switch hint does not ask for the unseen block lines %q: %q", wantRead, got)
+	}
+}
+
+// 日志文件不可读时不要注入迁移提示。
+//
+// 提示文案最后一句是「Only if reading fails, output a brief error and stop」——
+// 路径解析错位（2026-11-12 fn 实测）时，这一句直接让 agent 每轮停摆。少一份上下文
+// 可以接受，整轮无法继续不行。
+func TestPrependSwitchHintSkippedWhenLogMissing(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	if err := os.Remove(manager.ExchangeLogAbsolutePath(created.Key)); err != nil {
+		t.Fatalf("remove exchange log: %v", err)
+	}
+
+	service := &Service{}
+	codexSeen := 1
+	linesBefore := 4
+	got := service.BuildPrompt(BuildPromptInput{
+		Session:             created,
+		Manager:             manager,
+		Agent:               "codex",
+		Message:             "hi",
+		AgentCtxSeq:         &codexSeen,
+		LinesBeforeThisTurn: &linesBefore,
+	})
+	if strings.Contains(got, "This session was migrated from elsewhere.") {
+		t.Fatalf("missing exchange log still got the migration hint: %q", got)
+	}
+	if !strings.Contains(got, "hi") {
+		t.Fatalf("user message lost: %q", got)
+	}
+}
+
 // ---- 以下为上游 v0.5.5 独有、与任务组无关的回归测试（合并时保留） ----
 
 func TestAssistantAuxLineBeforeFollowingText(t *testing.T) {

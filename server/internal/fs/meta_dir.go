@@ -123,6 +123,17 @@ func (r RootInfo) ResolvePath(path string) (string, error) {
 	return r.resolveRelativePath(clean)
 }
 
+// MetaFileAbsolutePath 返回 ReadMetaFile / WriteMetaFile / StatMetaFile 对同一逻辑路径
+// 解析出的绝对路径。
+//
+// 要把 meta 文件路径交给外部读者（例如让 agent 去读会话日志）时**必须**用它，不能自己
+// 用 MetaDir() 拼：meta 文件的读写统一走 resolveMetaPath（落 SharedMetaDir），两者对
+// 非主账户不是同一个目录。手拼出来的路径会让外部读者找不到文件（实测 2026-11-12：
+// fn 上的切换提示指向账户目录，会话文件却在项目 .mindfs，agent 读完失败即停摆）。
+func (r RootInfo) MetaFileAbsolutePath(path string) (string, error) {
+	return r.resolveMetaPath(path)
+}
+
 func (r RootInfo) ListMetaEntries(path string) ([]os.DirEntry, error) {
 	resolved, err := r.resolveMetaPath(path)
 	if err != nil {

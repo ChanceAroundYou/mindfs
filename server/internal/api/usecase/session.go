@@ -284,6 +284,47 @@ func switchReadHintPath(manager *session.Manager, sessionKey string) string {
 	return filepath.ToSlash(absLogPath)
 }
 
+// switchReadHintTarget 决定提示让 agent 去读哪个文件、读多少行。
+//
+// 主日志自 S2d-2（G-BH）起 content 恒空，正文只在块流行里 —— 把「读最后 N 行」
+// 指向主日志，agent 拿到的是一串没有内容的行，恢复不出任何上下文（2026-11-12 fn
+// 实测：43 行交换行全是空 content，正文 596 个块另存）。所以块流可用时优先块流，
+// 行数换算成「未见过的块行数」；块流不存在（S2d-2 之前的历史会话）才回落主日志。
+//
+// seen 是 agent 已看到的交换行数，exchangeLines 是主日志口径的读取量。
+func switchReadHintTarget(manager *session.Manager, sessionKey string, exchanges []session.Exchange, seen, exchangeLines int) (string, int) {
+	if manager == nil {
+		return "", 0
+	}
+	if blocksPath := manager.BlocksLogAbsolutePath(sessionKey); strings.TrimSpace(blocksPath) != "" {
+		if unseen, err := manager.CountBlocksAfterSeq(sessionKey, lastSeenExchangeSeq(exchanges, seen)); err == nil && unseen > 0 {
+			if unseen > switchContextTailBlocks {
+				unseen = switchContextTailBlocks
+			}
+			return filepath.ToSlash(blocksPath), unseen
+		}
+	}
+	return switchReadHintPath(manager, sessionKey), exchangeLines
+}
+
+// lastSeenExchangeSeq 取 agent 最后看过的那条交换行的 seq。
+//
+// 老数据可能没有 seq（零值），此时按「seq == 行序」的等价关系用 seen 兜底；
+// 换算只是给读取量一个量级，偏差一两行不影响 agent 恢复上下文。
+func lastSeenExchangeSeq(exchanges []session.Exchange, seen int) int {
+	if seen <= 0 || len(exchanges) == 0 {
+		return 0
+	}
+	idx := seen - 1
+	if idx >= len(exchanges) {
+		idx = len(exchanges) - 1
+	}
+	if seq := exchanges[idx].Seq; seq > 0 {
+		return seq
+	}
+	return seen
+}
+
 func buildSwitchReadHint(exchangeLogPath string, lines int) string {
 	return "This session was migrated from elsewhere. Your context may lag behind this session;\n" +
 		"Before replying, read the last " + strconv.Itoa(lines) + " lines from " + exchangeLogPath + " to recover context.\n" +

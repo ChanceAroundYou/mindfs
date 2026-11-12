@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -54,7 +55,16 @@ func prependSwitchHint(in BuildPromptInput, prompt string) string {
 	if linesToRead <= 0 {
 		return prompt
 	}
-	logPath := switchReadHintPath(in.Manager, in.Session.Key)
+	logPath, linesToRead := switchReadHintTarget(in.Manager, in.Session.Key, in.Session.Exchanges, last, linesToRead)
+	if strings.TrimSpace(logPath) == "" {
+		return prompt
+	}
+	// 提示文案要求 agent「读不到就报错停下」。路径或文件一旦不可读，注入这份提示
+	// 就等于让本轮直接停摆（实测 2026-11-12 fn：路径解析错位导致每轮都停）。
+	// 读不到时宁可退回普通提示：少一份迁移上下文，也好过整轮无法继续。
+	if _, err := os.Stat(filepath.FromSlash(logPath)); err != nil {
+		return prompt
+	}
 	readHint := buildSwitchReadHint(logPath, linesToRead)
 	return readHint + prompt
 }
