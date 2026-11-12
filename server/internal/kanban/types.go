@@ -272,6 +272,19 @@ const (
 	ActivityTypeAgentReply  = "agent_reply"
 	ActivityTypeSystemEvent = "system_event"
 	ActivityTypeAttention   = "attention"
+	// ActivityTypeUserMessage 是对话式模型（Phase 2）的用户留言类型。
+	// 存量 user_comment 行仍原样保留，读取端必须同时接受两者。
+	ActivityTypeUserMessage = "user_message"
+)
+
+// 对话式 Activity 的执行状态（spec 2026-11-12 §3.1.1）。
+// 用户留言与系统事件没有状态，字段留空。
+const (
+	ActivityStatusPending   = "pending"
+	ActivityStatusRunning   = "running"
+	ActivityStatusCompleted = "completed"
+	ActivityStatusFailed    = "failed"
+	ActivityStatusCancelled = "cancelled"
 )
 
 const (
@@ -296,6 +309,7 @@ const (
 type TaskActivity struct {
 	ID                string `json:"id"`
 	TaskID            string `json:"task_id"`
+	RootID            string `json:"root_id,omitempty"`
 	Type              string `json:"type"`
 	Author            string `json:"author"`
 	Role              string `json:"role"`
@@ -303,9 +317,15 @@ type TaskActivity struct {
 	WorkflowChoice    string `json:"workflow_choice"`
 	WorkflowVersionID string `json:"workflow_version_id,omitempty"`
 	// RunID/NodeRunID 关联 workflow 运行证据；legacy 留言与 WP-03 行保持空串。
-	RunID     string    `json:"run_id,omitempty"`
-	NodeRunID string    `json:"node_run_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	// 对话式模型里 RunID 就是计划所称的 workflow_run_id：同一关系不设第二列。
+	RunID     string `json:"run_id,omitempty"`
+	NodeRunID string `json:"node_run_id,omitempty"`
+	// 对话式模型（Phase 2）字段。用户留言/系统事件不写 Status/Summary。
+	Status     string    `json:"status,omitempty"`
+	Summary    string    `json:"summary,omitempty"`
+	SessionKey string    `json:"session_key,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at,omitempty"`
 }
 
 type ContinueRequest struct {

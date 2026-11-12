@@ -176,6 +176,12 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if err := s.migrateComments(); err != nil {
 		return err
 	}
+	// 对话式任务模型（Phase 2）：在既有 task_activities 表上补齐
+	// root_id/status/summary/session_key/updated_at 与查询索引。
+	// 实现见 activity_store.go 的 migrateTaskActivities。
+	if err := migrateTaskActivities(s.db); err != nil {
+		return err
+	}
 	// WP-04 多 worktree 注册表：建表接线显式在此（与 migrateComments 同一口径），
 	// 不在任何运行时路径上懒建表。实现见 worktree_registry.go。
 	if err := s.migrateWorktreeRegistry(); err != nil {
