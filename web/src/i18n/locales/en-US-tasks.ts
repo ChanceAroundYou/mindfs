@@ -291,4 +291,7 @@ export const enUSTasks = {
   "task.activity.status.completed": "Completed",
   "task.activity.status.failed": "Failed",
   "task.activity.status.cancelled": "Cancelled",
+  "task.legacy.viewStages": "View execution details (legacy stage view)",
+  "task.legacy.stagesSubtitle": "This task uses the legacy stage mode",
+  "task.legacy.noRecord": "Task finished (no detailed record)",
 } as const;

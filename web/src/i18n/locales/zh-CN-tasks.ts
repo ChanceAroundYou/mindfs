@@ -290,4 +290,7 @@ export const zhCNTasks = {
   "task.activity.status.completed": "已完成",
   "task.activity.status.failed": "失败",
   "task.activity.status.cancelled": "已取消",
+  "task.legacy.viewStages": "查看执行详情（历史阶段视图）",
+  "task.legacy.stagesSubtitle": "此任务使用旧的阶段模式",
+  "task.legacy.noRecord": "任务已结束（无详细记录）",
 } as const;
