@@ -20,7 +20,23 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	if err != nil {
 		return nil, err
 	}
-	return NewActivityService(store, s.Workflows, NewWorkflowRecommender(s.Workflows, nil)), nil
+	svc := NewActivityService(store, s.Workflows, NewWorkflowRecommender(s.Workflows, nil))
+	s.mu.Lock()
+	broadcaster := s.activityBroadcaster
+	s.mu.Unlock()
+	svc.SetBroadcaster(broadcaster)
+	return svc, nil
+}
+
+// SetActivityBroadcaster 装配对话式活动流的广播端口（Task 7）。装配期调用一次；
+// nil 表示不广播（单测/老装配行为不变）。
+func (s *Service) SetActivityBroadcaster(b ActivityBroadcaster) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.activityBroadcaster = b
+	s.mu.Unlock()
 }
 
 // CreateUserActivity is the HTTP-facing entry point: it resolves the root's

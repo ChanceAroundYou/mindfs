@@ -12,6 +12,90 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Task 7 (Phase 2): conversation activity stream over WebSocket.
+//
+// The plan attaches a StreamHub directly to ActivityService. Here the hub lives
+// in the per-account AppContext and kanban can only see the
+// kanban.ActivityBroadcaster port (Task 5), so this file provides the adapter
+// and the wire contract. Frontend filters on task_id; root_id is additive and
+// mirrors the other task.* events.
+const (
+	EventTaskActivityCreated = "task.activity.created"
+	EventTaskActivityUpdated = "task.activity.updated"
+)
+
+type TaskActivityCreatedPayload struct {
+	RootID   string               `json:"root_id,omitempty"`
+	TaskID   string               `json:"task_id"`
+	Activity *kanban.TaskActivity `json:"activity"`
+}
+
+type TaskActivityUpdatedPayload struct {
+	RootID     string         `json:"root_id,omitempty"`
+	TaskID     string         `json:"task_id"`
+	ActivityID string         `json:"activity_id"`
+	Changes    map[string]any `json:"changes"`
+}
+
+func (p TaskActivityCreatedPayload) asMap() map[string]any {
+	return map[string]any{
+		"root_id":  p.RootID,
+		"task_id":  p.TaskID,
+		"activity": p.Activity,
+	}
+}
+
+func (p TaskActivityUpdatedPayload) asMap() map[string]any {
+	return map[string]any{
+		"root_id":     p.RootID,
+		"task_id":     p.TaskID,
+		"activity_id": p.ActivityID,
+		"changes":     p.Changes,
+	}
+}
+
+// taskActivityBroadcaster adapts kanban.ActivityBroadcaster onto the account's
+// WebSocket hub. The hub is resolved lazily, so wiring at assembly time does
+// not force the hub (and its connections) to exist yet.
+type taskActivityBroadcaster struct {
+	app *AppContext
+}
+
+// NewTaskActivityBroadcaster returns the production broadcaster for one
+// account. It is stateless and safe to share.
+func NewTaskActivityBroadcaster(app *AppContext) kanban.ActivityBroadcaster {
+	return taskActivityBroadcaster{app: app}
+}
+
+func (b taskActivityBroadcaster) ActivityCreated(activity *kanban.TaskActivity) {
+	if b.app == nil || activity == nil {
+		return
+	}
+	b.app.GetSessionStreamHub().BroadcastAll(WSResponse{
+		Type: EventTaskActivityCreated,
+		Payload: TaskActivityCreatedPayload{
+			RootID:   activity.RootID,
+			TaskID:   activity.TaskID,
+			Activity: activity,
+		}.asMap(),
+	})
+}
+
+func (b taskActivityBroadcaster) ActivityUpdated(activity *kanban.TaskActivity, changes map[string]any) {
+	if b.app == nil || activity == nil {
+		return
+	}
+	b.app.GetSessionStreamHub().BroadcastAll(WSResponse{
+		Type: EventTaskActivityUpdated,
+		Payload: TaskActivityUpdatedPayload{
+			RootID:     activity.RootID,
+			TaskID:     activity.TaskID,
+			ActivityID: activity.ID,
+			Changes:    changes,
+		}.asMap(),
+	})
+}
+
 func (h *WSHandler) handleSessionAnswerQuestion(ctx context.Context, conn *websocket.Conn, clientID string, req WSRequest) {
 	rootID := getString(req.Payload, "root_id")
 	key := getString(req.Payload, "session_key")

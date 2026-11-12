@@ -118,6 +118,8 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 工作流库属共享控制面数据（主节点一份），每账户的 Kanban 实例共用同一份；
 	// 不接的话 /api/workflows 一律 503，迁移入口也就无从谈起。
 	services.Kanban.Workflows = m.shared.workflows
+	// 对话式活动流事件走本账户的 WS hub（Task 7）：hub 每账户独立，跨账户不能泄漏。
+	services.Kanban.SetActivityBroadcaster(api.NewTaskActivityBroadcaster(services))
 	services.Kanban.SetRunner(services)
 	// Workflow Agent 节点走独立端口（D2/D5），不得经 legacy StageRun 双写。
 	services.Kanban.SetWorkflowNodeRunner(services)

@@ -266,6 +266,8 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	}
 	services.Scheduled = scheduled.NewService(services, services)
 	services.Kanban = kanban.NewService(services)
+	// 空工作区同样要能广播对话式活动事件（Task 7）；hub 每账户独立。
+	services.Kanban.SetActivityBroadcaster(api.NewTaskActivityBroadcaster(services))
 	services.Kanban.SetRunner(services)
 	services.Kanban.SetWorkflowNodeRunner(services)
 	services.Kanban.SetWorkflowCommentSender(services)

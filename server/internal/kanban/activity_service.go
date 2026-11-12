@@ -41,6 +41,13 @@ type ActivityWorkflowExecutor interface {
 	ExecuteActivityWorkflow(ctx context.Context, task Task, run *WorkflowRun) (summary string, err error)
 }
 
+// ActivityWorkflowProgressExecutor 是 ActivityWorkflowExecutor 的可选扩展：
+// 能观察节点切换的执行器在节点开始前调用 onNodeStarted，活动流就能显示
+// 「步骤 i/n: 名称」。没有实现它时进度只由 running/completed 两条状态更新表达。
+type ActivityWorkflowProgressExecutor interface {
+	ExecuteActivityWorkflowWithProgress(ctx context.Context, task Task, run *WorkflowRun, onNodeStarted func(nodeID string)) (summary string, err error)
+}
+
 // ActivityBranchResolver 在创建 Run 前解析合并目标分支（D11：运行期绝不隐式
 // 回落 main）。生产装配指向 Service.snapshotRunIntegrationBranch；nil 时留空，
 // 只对不需要独立 worktree 的图安全。
@@ -256,12 +263,77 @@ func (s *ActivityService) executeWorkflowRun(ctx context.Context, task Task, run
 	_ = s.activities.UpdateBody(ctx, activityID, runningBody)
 	s.broadcastUpdatedByID(ctx, activityID, map[string]any{"status": ActivityStatusRunning, "body": runningBody})
 
-	summary, err := s.executor.ExecuteActivityWorkflow(ctx, task, run)
+	var summary string
+	var err error
+	if progress, ok := s.executor.(ActivityWorkflowProgressExecutor); ok {
+		summary, err = progress.ExecuteActivityWorkflowWithProgress(ctx, task, run, func(nodeID string) {
+			s.onWorkflowNodeStarted(ctx, run.ID, nodeID)
+		})
+	} else {
+		summary, err = s.executor.ExecuteActivityWorkflow(ctx, task, run)
+	}
 	if err != nil {
 		_ = s.OnWorkflowRunFailed(ctx, run.ID, err.Error())
 		return
 	}
 	_ = s.OnWorkflowRunCompleted(ctx, run.ID, summary)
+}
+
+// onWorkflowNodeStarted writes "步骤 i/n: 名称" onto the agent reply and
+// broadcasts it as task.activity.updated. Progress is advisory: any lookup or
+// write failure is silent and must never abort the run.
+func (s *ActivityService) onWorkflowNodeStarted(ctx context.Context, runID, nodeID string) {
+	if s == nil || s.tasks == nil || s.activities == nil {
+		return
+	}
+	run, err := s.tasks.WorkflowRunByID(ctx, runID)
+	if err != nil || run == nil {
+		return
+	}
+	activity, err := s.activities.ActivityByRunID(ctx, runID)
+	if err != nil || activity == nil {
+		return
+	}
+	index, total, name, ok := workflowProgressNode(run, nodeID)
+	if !ok {
+		return
+	}
+	progress := fmt.Sprintf("步骤 %d/%d: %s", index, total, name)
+	if err := s.activities.UpdateBody(ctx, activity.ID, progress); err != nil {
+		return
+	}
+	activity.Body = progress
+	s.broadcastUpdated(activity, map[string]any{"body": progress})
+}
+
+// workflowProgressNode resolves a node's 1-based position and display name.
+// Loop internals are flattened right after their container so nested progress
+// still has a meaningful numerator.
+func workflowProgressNode(run *WorkflowRun, nodeID string) (index, total int, name string, ok bool) {
+	if run == nil {
+		return 0, 0, "", false
+	}
+	nodes := make([]WorkflowNode, 0, len(run.Graph.Nodes))
+	for _, n := range run.Graph.Nodes {
+		nodes = append(nodes, n)
+		if n.Kind != NodeKindLoop {
+			continue
+		}
+		if inner, err := workflowLoopGraph(n); err == nil {
+			nodes = append(nodes, inner.Nodes...)
+		}
+	}
+	for i, n := range nodes {
+		if n.ID != nodeID {
+			continue
+		}
+		name = strings.TrimSpace(n.Name)
+		if name == "" {
+			name = n.ID
+		}
+		return i + 1, len(nodes), name, true
+	}
+	return 0, 0, "", false
 }
 
 // resolveWorkflowVersion picks the immutable version a run snapshots.
