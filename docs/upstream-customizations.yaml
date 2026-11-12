@@ -7609,6 +7609,8 @@ groups:
     boundary: "只做草稿画布、编辑器页、Loop 子图与看板入口；Agent 侧草稿生成/试运行 API 归 G-LG，发布后版本浏览仍缺。"
     files:
       - web/src/components/task/WorkflowCanvas.tsx
+      # 节点属性浮动窗口：从 WorkflowCanvas 拆出守 500 行硬线（2026-11-12），行为不变
+      - web/src/components/task/WorkflowNodeInspector.tsx
       - web/src/components/task/WorkflowDraftEditor.tsx
       - web/src/components/task/useWorkflowDraftEditor.ts
       - web/src/components/task/TaskBoardToolbar.tsx
@@ -7646,7 +7648,7 @@ groups:
     anchors:
       - 'web/src/components/task/WorkflowCanvas.tsx:export function WorkflowCanvas('
       - 'web/src/components/task/WorkflowCanvas.tsx:MOBILE_BREAKPOINT = 720'
-      - 'web/src/components/task/WorkflowCanvas.tsx:data-testid="workflow-loop-enter"'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:data-testid="workflow-loop-enter"'
       - 'web/src/shared/workflowModel.ts:export function validateWorkflowGraph('
       - 'web/src/shared/workflowModel.ts:export function withLoopInnerGraph('
       - 'web/src/components/task/workflowAuthoring/flowGraph.ts:export function graphFrom('

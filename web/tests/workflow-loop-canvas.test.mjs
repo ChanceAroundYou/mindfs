@@ -115,10 +115,13 @@ test("the Loop sub-canvas is a nested editor with a breadcrumb and no second gra
 
 test("the top canvas enters the Loop inspector and edits exit expression and bound", () => {
   const canvas = read("src/components/task/WorkflowCanvas.tsx");
+  // 节点属性浮动窗口已拆到 WorkflowNodeInspector（守 500 行硬线），Loop 的
+  // 进入按钮与退出条件输入都在那边。
+  const inspector = read("src/components/task/WorkflowNodeInspector.tsx");
   assert.match(canvas, /WorkflowLoopCanvas/, "the top canvas hosts the sub-canvas");
-  assert.match(canvas, /data-testid="workflow-loop-enter"/, "a Loop can be opened explicitly");
+  assert.match(inspector, /data-testid="workflow-loop-enter"/, "a Loop can be opened explicitly");
   assert.match(canvas, /onNodeDoubleClick/, "double click also enters the Loop");
-  assert.match(canvas, /data-testid="workflow-loop-exit"/, "exit expression is editable");
-  assert.match(canvas, /exit_expression/, "exit expression is written to Loop params");
-  assert.match(canvas, /max_iterations/, "iteration bound stays editable");
+  assert.match(inspector, /data-testid="workflow-loop-exit"/, "exit expression is editable");
+  assert.match(inspector, /exit_expression/, "exit expression is written to Loop params");
+  assert.match(inspector, /max_iterations/, "iteration bound stays editable");
 });

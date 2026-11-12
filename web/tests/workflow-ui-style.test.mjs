@@ -9,13 +9,15 @@ import { test } from "vitest";
 const buttonFiles = [
   "src/components/task/WorkflowDraftEditor.tsx",
   "src/components/task/WorkflowCanvas.tsx",
+  "src/components/task/WorkflowNodeInspector.tsx",
   "src/components/task/workflowAuthoring/WorkflowProposalReview.tsx",
   "src/components/task/workflowAuthoring/WorkflowLoopCanvas.tsx",
 ];
 
+// 画布本身已无输入控件（节点属性窗口拆到 WorkflowNodeInspector），不再列在这里。
 const inputFiles = [
   "src/components/task/WorkflowDraftEditor.tsx",
-  "src/components/task/WorkflowCanvas.tsx",
+  "src/components/task/WorkflowNodeInspector.tsx",
   "src/components/task/workflowAuthoring/WorkflowLoopCanvas.tsx",
 ];
 
