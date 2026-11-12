@@ -608,6 +608,12 @@ function WorkflowSelector({ choice, versionId, recommendation, onChange }) {
 
 ### 5.3 历史任务视图
 
+> **2026-11-12 实施变更**：用户明确要求完整替换，不做兼容层。本节原始的
+> `hasLegacyStages` 分岔与 `LegacyTaskView` 已在实施中删除；历史阶段任务改由
+> 服务启动时的 `ConvertStagesToConversation` 一次性转成 `task_activities` +
+> 内联 `WorkflowRun`，详情面板始终渲染 `ConversationView`。迁移规则见
+> `docs/migration/stages-to-conversation.md`。下文保留为设计历史。
+
 **适配策略**：检测 `task.task_stages_json` 是否存在
 
 ```typescript
@@ -943,6 +949,9 @@ func (s *ActivityService) onNodeStarted(runID, nodeID string) {
 ---
 
 ### Phase 4: 历史任务适配 (2 天)
+
+> **2026-11-12 实施变更**：本阶段最终采用一次性数据迁移，不保留 `LegacyTaskView`。
+> 以下任务清单保留为设计历史；实际实现见 `docs/migration/stages-to-conversation.md`。
 
 **目标**：兼容现有的阶段式任务
 

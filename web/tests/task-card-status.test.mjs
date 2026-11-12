@@ -24,33 +24,34 @@ const viteConfig = read("vite.config.ts");
 // 实现没少、只是搬了家。
 const serviceGo = readGoPackage("server/internal/kanban");
 
-// 8) 已执行过的阶段只可看：不可改、不可保存。三道门控各挡一路入口。
-assert.match(
-  panelHook,
-  /const existingRun = latestStageRun\(detail, index\);\s*\n\s*if \(existingRun && String\(existingRun\.status\) !== "pending"\) return;/,
-  "startEditStage must refuse an executed stage: no path may put it into edit mode",
-);
-assert.match(
+// 8) 阶段编辑已随阶段模型删除：详情面板既不渲染阶段列表，也没有阶段级的
+//    保存/删除入口。历史任务在迁移时转成 activities，不再有只读兼容视图。
+assert.doesNotMatch(
   panel,
-  /onEdit=\{editing \|\| executed \? undefined : \(\) => requestEditStage\(index\)\}/,
-  "an executed stage must not offer the pencil",
+  /<StageEditor/,
+  "the detail panel no longer renders an editable stage list",
 );
-assert.match(
+assert.doesNotMatch(
   panel,
-  /onSend=\{editing && !executed \? \(text: string\) => void saveStage\(index, text\) : undefined\}/,
-  "an executed stage must not offer save",
+  /onEdit=\{/,
+  "stage editing (and its pencil) is no longer part of the detail panel",
 );
-assert.match(
+assert.doesNotMatch(
+  panel,
+  /onSend=\{/,
+  "stage save is no longer part of the detail panel",
+);
+assert.doesNotMatch(
   panelHook,
-  /const run = latestStageRun\(detail, index\);\s*\n\s*if \(run && String\(run\.status\) !== "pending"\) return;/,
-  "saveStage must bail on an executed stage even if some future caller reaches it",
+  /startEditStage|saveStage/,
+  "the detail hook must not keep stage editing helpers after the stage model was removed",
 );
 // 只读态仍然显示该段真实的选项值（不是隐藏、也不是全灰）
 assert.match(stageEditor, /readOnly=\{mode !== "editable"\}/, "read mode shows option values, disabled");
-assert.match(
+assert.doesNotMatch(
   panel,
   /\{!executed && !isCurrent \? \(/,
-  "an executed stage must not offer delete either",
+  "the detail panel no longer renders per-stage delete controls",
 );
 
 // 9) 任务状态不能和会话 / worktree 绑死：会话没了、worktree 被删导致卡住的
@@ -188,8 +189,8 @@ assert.doesNotMatch(
   "the status helper must not hardcode hex — light/dark themes each supply their own value",
 );
 assert.match(panel, /taskStatusColor\(task\.status\)/, "the detail panel reads the shared status color");
-assert.match(panel, /nodeRunStatusColor\(node\.status\)/, "per-stage run badges reuse the workflow node status colors");
-assert.match(panel, /from "\.\/runTimelineModel"/, "the workflow node status colors come from the shared model, not a private copy");
+// 阶段级状态色已随内联阶段循环一起移出详情面板；运行视图那一份仍由
+// RunNodeRunRow / runTimelineModel 单源守卫（见 legacy-flow-render.test.mjs）。
 assert.doesNotMatch(
   panel,
   /const statusColors: Record<string, string>/,

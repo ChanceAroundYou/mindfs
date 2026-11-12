@@ -86,14 +86,15 @@ assert.match(
   "StageEditor must show each stage's own effort when not editing",
 );
 
-// 未执行阶段可删除；已执行的不给删除入口。
+// 未执行阶段的删除控件已随内联阶段循环一起移出详情面板，阶段编辑能力在
+// 2026-11-12 的阶段→对话迁移中整体删除；服务端端点仍保留，供卡片/CLI 路径使用。
 // Styles and SVG components live in separate modules: styles stay in composerStyles.ts,
 // icons are imported from composerIcons.tsx.
-assert.match(panel, /import \{[^}]*TrashIcon[^}]*\} from "\.\.\/action\/composerIcons"/, "delete icon must come from the shared composerIcons set");
+assert.doesNotMatch(panel, /TrashIcon/, "the detail panel no longer renders stage delete controls");
 assert.match(composerIcons, /export function TrashIcon/);
-assert.match(panel, /\{!executed && !isCurrent \? \(/, "TaskDetailPanel must offer delete only on unexecuted, non-current stages");
-assert.match(panelHook, /removeTaskStage\(task\.root_id, task\.id, index, nodeId\)/, "TaskDetailPanel must call removeTaskStage");
-assert.match(panel, /requestRemoveStage\(index\)/, "delete button must go through the confirm flow");
+assert.doesNotMatch(panel, /\{!executed && !isCurrent \? \(/, "the detail panel no longer renders per-stage controls");
+assert.doesNotMatch(panelHook, /removeTaskStage|startEditStage|saveStage/, "the detail hook no longer owns stage editing");
+assert.doesNotMatch(panel, /requestRemoveStage\(index\)/, "the detail panel no longer hosts the stage confirm flow");
 assert.match(tasks, /\/api\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/remove-stage/, "tasks.ts must POST to the remove-stage endpoint");
 
 // 回车 = 发送（复用 PromptEditor 的输入框都得有，否则只能点按钮）。
@@ -196,16 +197,11 @@ assert.match(
   /export function inheritAgentStage\(stages: StageTemplate\[\], fromIndex: number\)/,
   "inheritAgentStage copies the closest previous agent stage",
 );
-assert.match(
+// 详情面板的阶段追加/编辑已随阶段模型删除，新建任务面板自己维护流水。
+assert.doesNotMatch(
   panelHook,
-  /const stage = inheritAgentStage\(stages, stages\.length\);/,
-  "task detail addStage must inherit the last stage's agent/model",
-);
-// 新增完直接落在编辑态，省得再点一次铅笔。
-assert.match(
-  panelHook,
-  /setEditingStage\(\(next\.task\.stages\?\.length \|\| 1\) - 1\);/,
-  "a freshly added stage must open in edit mode",
+  /appendStage|setEditingStage/,
+  "the detail hook must not keep stage append/edit state",
 );
 // 各面板都不许再留 codex 兜底。
 for (const [src, name] of [[panel, "TaskDetailPanel"], [app, "App"]]) {
@@ -216,12 +212,9 @@ for (const [src, name] of [[panel, "TaskDetailPanel"], [app, "App"]]) {
   );
 }
 
-// 详情面板的「立即执行」：长在**下一个未执行的 agent 段**那一行，跟删除键并排贴右，
-// 跟看板卡片上那个按钮同一个图标、同一个绿。
+// 「立即执行」的判据仍然只有 appTask.nextRunnableStageIndex 一份（看板卡片用）。
 // 钉死「只给一个、且是 current 之后第一个」是必须的 —— 服务端 run-now 是任务级的，
 // 只读 task.current_stage_index，请求里的 stage_index 根本不参与（service.go:770）。
-// 长在指针所在的段上就是假动作（按钮在没跑过的卡上、动作却是「跳过这张卡」），
-// 每段都发一个更是假的。
 assert.match(
   appTask,
   /export function nextRunnableStageIndex\(detail: TaskDetail, currentStageIndex: number\): number \{/,
@@ -232,40 +225,16 @@ assert.match(
   /for \(let index = currentStageIndex \+ 1; index < stages\.length; index\+\+\) \{[\s\S]{0,400}?stages\[index\]\?\.role !== "agent"[\s\S]{0,300}?return index;/,
   "the run target must be the first unexecuted agent stage AFTER the current one",
 );
-assert.match(
-  panel,
-  /const canRunStage = index === runnableStageIndex/,
-  "the run button must be gated on that single next-stage index",
-);
-assert.match(
-  panel,
-  /!isTerminalKanbanTask\(task\)/,
-  "a finished task must not offer the run button",
-);
-assert.match(
-  panel,
-  /title=\{t\("task\.runNow"\)\}/,
-  "the run button must reuse the existing 立即执行 label",
-);
-// 跟看板卡片对齐：同一个 RunNowIcon、同一个 accent 绿（runIconButtonStyle）。
-assert.match(panel, /<RunNowIcon \/>/, "the run button must use the shared RunNowIcon");
+// 详情面板只渲染 ConversationView，不再内联阶段行与执行键；
+// 立即执行只剩看板卡片这一处，判据仍走上面那个纯函数。
+assert.doesNotMatch(panel, /const canRunStage = /, "the detail panel no longer owns the stage run button");
+assert.doesNotMatch(panel, /<RunNowIcon \/>/, "RunNowIcon belongs to the board card, not the detail panel");
+assert.doesNotMatch(panel, /void runStage\(\)/, "the detail panel no longer hosts a stage run action");
 const taskDetailStyles = fs.readFileSync(path.join(root, "src/components/task/taskDetailStyles.ts"), "utf8");
 assert.match(
   taskDetailStyles,
   /color: "var\(--accent-color\)",/,
   "the run button must use the same accent green as the kanban card",
-);
-assert.match(panel, /onClick=\{\(\) => void runStage\(\)\}/, "the run button must go through runStage");
-// 位置：右组里、删除键左边，跟阶段名同一行。
-assert.match(
-  panel,
-  /\{canRunStage \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,2500}?\{node\.sessionKey \? \([\s\S]{0,2500}?\{!executed && !isCurrent \? \([\s\S]{0,600}?<TrashIcon \/>/,
-  "run / jump-to-session / delete must sit in one right-aligned group, run leftmost of the three",
-);
-assert.match(
-  panel,
-  /flex: "1 1 auto", minWidth: 0 \}\}>\s*\{!editing \? \(/,
-  "the left group must take the free space so the button group is pushed to the row end",
 );
 // worktree 目录已删**不**顶替运行键（用户定的）：运行键无条件给，点了服务端会记下
 // 「worktree 目录已不存在」。
@@ -313,15 +282,12 @@ assert.match(
   /export function canAdvanceFromCurrentStage\(detail: TaskDetail, currentStageIndex: number\): boolean \{/,
   "the advance gate must be a named helper mirroring the server rule",
 );
-assert.match(
-  panel,
-  /const canRunStage = index === runnableStageIndex\s*&&\s*advanceable/,
-  "the run button must also require the current stage to be advanceable",
-);
-assert.match(
+// 详情面板不再内联执行键（见上），advanceable 的接线由看板卡片侧复用同一判据。
+// 阶段运行入口也已随阶段模型移除 —— 详情面板只做对话，不再向 Gate 传 run-now。
+assert.doesNotMatch(
   appView,
-  /onRunTask=\{\(task\) => handleMoveKanbanTask\(task, "run-now"\)\}/,
-  "the detail panel must reuse App's handleMoveKanbanTask, not call moveTask itself",
+  /onRunTask=\{/,
+  "the detail panel must not host a stage run action anymore",
 );
 
 // ---- 上面是「源码长什么样」，下面是「算出来对不对」：直接跑真函数 ----
@@ -456,17 +422,12 @@ test("card advance gate falls back to pending when the server sent no stage stat
   assert.equal(canAdvanceCard(mkCard(["user", "agent"], 9, "waiting_user", "success")), false);
 });
 
-// 详情面板的「完成」判据 = 推进键给不出来时的出口，与看板卡片 canComplete 同口径。
-// 旧口径「没有下一段才给」漏掉了一类任务（2026-10-06 用户实测）：指针停在收尾段、
-// 卡在待审核、worktree 又已被拆 —— 收尾键给不出来、执行键也给不出来，
-// 任务在界面上彻底没有出路。现在只要推进键（canRunStageNow）给不出来就兜住。
-//
-// **收尾中不再豁免**（2026-10-07，与卡片同一改动）：收尾段卡在待审核时推进键恒假，
-// 旧判据把完成键也一起收走了，于是那个局面只剩一个最容易失败的收尾键。
+// 详情面板的「完成」判据 = 非终态即可完成，执行中暂不给（避免与运行中的回合抢状态）。
+// 阶段运行键已随阶段模型删除，原先的 canRunStageNow 兜底条件不再存在。
 assert.match(
   panelHook,
-  /const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;/,
-  "the detail panel's 完成 must兜住 canRunStageNow 给不出来的一切局面",
+  /const canCompleteTask = !terminal && !taskRunningNow;/,
+  "the detail panel's 完成 must be available to every non-terminal, non-running task",
 );
 assert.match(
   panel,

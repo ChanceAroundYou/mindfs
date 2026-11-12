@@ -1,7 +1,9 @@
 package kanban
 
 import (
+	"context"
 	"database/sql"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +18,7 @@ const taskDBMetaPath = "tasks/task-kanban.db"
 
 // scheduler_admitted 已退役（本模型无调度器），不再读也不再写；
 // 列保留在表里不做破坏性迁移，恒为默认值。
-const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"
+const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type"
 
 func NewTaskStore(root fs.RootInfo) (*TaskStore, error) {
 	path, err := taskDBPath(root)
@@ -55,6 +57,32 @@ func (s *TaskStore) Close() error {
 }
 
 func (s *TaskStore) migrate() error {
+	if err := s.migrateSchema(); err != nil {
+		return err
+	}
+	// 历史阶段任务 → conversation + 内联 WorkflowRun。必须在所有相关表建好之后跑。
+	// 转换失败只记录、不阻断启动：事务已回滚，任务仍可按旧模型读，下一次启动会再试。
+	// 成功时由转换器自己把结果追加到库同目录的 migration log。
+	if stats, convErr := ConvertStagesToConversation(context.Background(), s.db, StageConversionOptions{}); convErr != nil {
+		log.Printf("[kanban/migrate] stages->conversation skipped: %v", convErr)
+	} else if stats.TasksConverted > 0 {
+		log.Printf("[kanban/migrate] stages->conversation converted=%d activities=%d runs=%d node_runs=%d",
+			stats.TasksConverted, stats.ActivitiesCreated, stats.RunsCreated, stats.NodeRunsCreated)
+	}
+	return nil
+}
+
+// MigrateTaskSchema 只跑 schema 迁移，不执行历史数据转换。独立转换脚本用它
+// 保证目标库具备 activities/engines/run 表，再把转换结果单独汇报给调用者。
+func MigrateTaskSchema(db *sql.DB) error {
+	if db == nil {
+		return sql.ErrConnDone
+	}
+	store := &TaskStore{db: db, now: time.Now}
+	return store.migrateSchema()
+}
+
+func (s *TaskStore) migrateSchema() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS tasks (
 	id TEXT PRIMARY KEY,
@@ -145,6 +173,12 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 		return err
 	}
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_stages_json TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// task_type：存量行默认 stage（下一步的一次性转换会把它改成 conversation），
+	// 新建任务由 insertTask 显式写 conversation。默认值必须是 stage，否则存量行
+	// 会被标成已转换、永远不进迁移。
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT '` + TaskTypeStage + `'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return err
 	}
 	// worktree_built：这个任务**曾经建过** worktree（2026-10-01 加）。

@@ -154,8 +154,9 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 	rows, err := store.db.QueryContext(ctx,
 		`SELECT e.task_id, e.workflow_run_id, t.status FROM task_execution_engines e
 		 JOIN tasks t ON t.id=e.task_id
-		 WHERE e.engine=? AND e.workflow_run_id<>'' ORDER BY e.task_id`,
-		EngineWorkflow)
+		 JOIN workflow_runs r ON r.id=e.workflow_run_id
+		 WHERE e.engine=? AND e.workflow_run_id<>'' AND r.triggered_by<>? ORDER BY e.task_id`,
+		EngineWorkflow, WorkflowTriggeredByLegacyImport)
 	if err != nil {
 		return plan, err
 	}

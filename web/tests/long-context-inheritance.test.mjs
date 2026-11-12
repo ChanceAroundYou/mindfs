@@ -152,20 +152,22 @@ for (const [rel, label] of callSites) {
   );
 }
 
-// 详情面板 / 新建任务面板不再自带 AgentSelector，必须经 StageEditor 这一个口子走，
-// 否则统一之后 resolver 很容易只改到其中一条路径。
-for (const [rel, label] of [
-  ["components/TaskDetailPanel.tsx", "任务详情面板"],
-  ["components/app/TaskInlineEditPanel.tsx", "新建任务面板"],
-]) {
-  const text = fs.readFileSync(path.join(root, "src", rel), "utf8");
-  assert.match(text, /<StageEditor\b/, `${label}(${rel}) 必须渲染 StageEditor`);
-  assert.doesNotMatch(
-    text,
-    /<AgentSelector\b/,
-    `${label}(${rel}) 不应再直接挂 AgentSelector（改 agent 的语义只在 StageEditor 里一份）`,
-  );
-}
+// 阶段级的 agent 编辑只剩新建任务面板一处（详情面板已按流水快照分流到
+// LegacyTaskView / ConversationView，不再内联阶段编辑器）。
+// 两个面板都不得直接挂 AgentSelector —— 改 agent 的语义只在 StageEditor 里一份。
+const detailPanelSrc = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
+assert.doesNotMatch(
+  detailPanelSrc,
+  /<AgentSelector\b/,
+  "任务详情面板(components/TaskDetailPanel.tsx) 不应直接挂 AgentSelector",
+);
+const inlinePanelSrc = fs.readFileSync(path.join(root, "src/components/app/TaskInlineEditPanel.tsx"), "utf8");
+assert.match(inlinePanelSrc, /<StageEditor\b/, "新建任务面板(components/app/TaskInlineEditPanel.tsx) 必须渲染 StageEditor");
+assert.doesNotMatch(
+  inlinePanelSrc,
+  /<AgentSelector\b/,
+  "新建任务面板(components/app/TaskInlineEditPanel.tsx) 不应再直接挂 AgentSelector（改 agent 的语义只在 StageEditor 里一份）",
+);
 
 // 唯一一处「只设 agent+model、不带 1M/effort」的调用点是给会话起名的，
 // 那里本来就没有 1M 开关和 effort 概念 —— 钉住这个已知例外，别让人误以为是漏网之鱼。

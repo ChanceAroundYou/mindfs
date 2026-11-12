@@ -3,20 +3,19 @@ import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { test } from "vitest";
 
-// Phase 2：模板时代任务的流水按工作流语法呈现。
-// 本仓库的 vitest 是 node 环境（没有 DOM renderer），所以接线用源码契约钉住；
-// 纯派生规则由 legacy-task-flow.test.ts 单测覆盖。
+// 阶段模型已整体替换为对话 + WorkflowRun：历史任务在迁移时转成 activities，
+// 前端不再保留只读的「历史阶段视图」。这里钉住「没有兼容层」这件事。
+// 本仓库的 vitest 是 node 环境（没有 DOM renderer），所以用源码契约断言。
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
-test("任务详情用只读投影 + 工作流状态色渲染历史流水", () => {
+test("历史任务与普通任务走同一个对话视图，不再有阶段分流", () => {
   const panel = read("src/components/task/TaskDetailPanel.tsx");
-  assert.match(panel, /legacyTaskFlow/, "详情必须经 legacyTaskFlow 投影，而不是直接读裸 stage");
-  assert.match(panel, /nodeRunStatusColor/, "节点状态点必须与运行视图共用同一套状态色");
-  assert.match(panel, /data-legacy-flow-node/, "每个历史节点要带可断言的节点标记");
-  assert.match(panel, /data-node-kind=\{node\.kind\}/, "节点类型（agent / human_gate）要参与渲染");
-  assert.match(panel, /task\.stage\.agent/, "agent 节点要显示与工作流视图一致的节点类型标签");
+  assert.match(panel, /<ConversationView/, "详情面板必须渲染对话视图");
+  assert.doesNotMatch(panel, /LegacyTaskView/, "LegacyTaskView 已删除，不能留兼容分支");
+  assert.doesNotMatch(panel, /hasLegacyStages/, "详情面板不得再按阶段快照分流");
+  assert.doesNotMatch(panel, /latestStageRun/, "详情面板不再读取 stage_runs");
 });
 
 test("运行视图与历史流水的状态色只有一个来源", () => {
@@ -27,7 +26,7 @@ test("运行视图与历史流水的状态色只有一个来源", () => {
   assert.doesNotMatch(row, /function statusColor/, "运行视图不得再自己定义一份状态色");
 });
 
-test("模板来源按胶囊呈现，不再是一段裸文本", () => {
+test("模板来源按胶囊呈现，不再是裸文本", () => {
   const panel = read("src/components/task/TaskDetailPanel.tsx");
   assert.match(panel, /task\.legacyFlowFromTemplate/, "模板来源要走 i18n 胶囊文案");
   for (const locale of ["src/i18n/locales/zh-CN-tasks.ts", "src/i18n/locales/en-US-tasks.ts"]) {
@@ -36,8 +35,8 @@ test("模板来源按胶囊呈现，不再是一段裸文本", () => {
   }
 });
 
-test("历史流水仍可编辑/运行，投影只替换外观", () => {
+test("详情面板不再内联阶段编辑器或阶段执行键", () => {
   const panel = read("src/components/task/TaskDetailPanel.tsx");
-  assert.match(panel, /<StageEditor/, "阶段编辑器必须保留 —— 历史任务仍由 legacy 引擎推进");
-  assert.match(panel, /onClick=\{\(\) => void runStage\(\)\}/, "「立即执行」入口必须保留");
+  assert.doesNotMatch(panel, /<StageEditor/, "详情面板不再内联阶段编辑器");
+  assert.doesNotMatch(panel, /runStage\(\)/, "详情面板不再有阶段执行入口");
 });

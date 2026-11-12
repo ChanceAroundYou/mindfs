@@ -12,7 +12,6 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
 const labelInfo = read("src/components/common/LabelWithInfo.tsx");
 const panel = read("src/components/task/TaskDetailPanel.tsx");
-const panelHook = read("src/components/task/useTaskDetailPanel.ts");
 const select = read("src/components/Select.tsx");
 const stageEditor = read("src/components/StageEditor.tsx");
 const stageOptions = read("src/components/StageOptionsBar.tsx");
@@ -90,9 +89,9 @@ for (const key of ["task.stage.autoAdvance", "task.stage.planMode", "task.stage.
 }
 assert.doesNotMatch(panel, /StageOptionsMenu/, "the 3-dot menu must be gone from the task detail");
 
-// 保存时四个选项都要落库（UpdateStage 是全量替换，漏一个就丢一个）
-for (const field of ["auto_advance: editAutoAdvance", "plan_mode:", "session_reuse_policy: editSessionReuse", "role: editRole"]) {
-  assert.ok(panelHook.includes(field), `saveStage must persist ${field}`);
+// 阶段选项的写入点只剩 StageEditor（详情面板的阶段编辑器已随阶段模型删除）。
+for (const pattern of ["auto_advance: next", "plan_mode: next", "session_reuse_policy: policy", "role={stage.role}"]) {
+  assert.ok(stageEditor.includes(pattern), `StageEditor must persist ${pattern}`);
 }
 
 

@@ -46,6 +46,14 @@ const (
 	// SessionReusePerNode 是 workflow Agent 节点的默认（D2）：每个节点实例
 	// 自己的 session，只有显式 task_main 才复用任务主会话。
 	SessionReusePerNode = "per_node"
+
+	// TaskTypeStage / TaskTypeConversation 是任务模型的显式标记。
+	//
+	// 存量行在 ALTER 时落到 stage；迁移把带流水的历史任务转成 conversation 后
+	// 不会再次命中。新建任务一律写 conversation —— 这不是给 legacy 引擎用的开关，
+	// 而是「这条任务已经归对话模型所有」的事实，迁移与卡片都用它决定读法。
+	TaskTypeStage        = "stage"
+	TaskTypeConversation = "conversation"
 )
 
 // StageTemplate 是一段可执行的流水阶段定义；既用于模板（预设），也直接存储在任务身上。
@@ -88,6 +96,10 @@ type Task struct {
 	TaskNumber int    `json:"task_number"`
 	RootID     string `json:"root_id"`
 	Name       string `json:"name,omitempty"`
+	// TaskType 标记任务属于阶段模型还是对话模型。存量阶段任务由一次性迁移
+	// （convertStagesToConversation）转成 conversation；此后的读写都只认
+	// conversation。值本身不再参与 legacy 引擎推进 —— 引擎绑定表的优先级更高。
+	TaskType string `json:"task_type,omitempty"`
 	// TaskTemplateID / TaskTemplateName 是**冻结列**：模板功能已下线（Phase 3），
 	// 不再写入，也不再回查任何模板库；只为历史任务保留来源标签的只读展示。
 	TaskTemplateID     string          `json:"task_template_id,omitempty"`

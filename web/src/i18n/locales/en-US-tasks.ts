@@ -104,7 +104,6 @@ export const enUSTasks = {
   "task.defaultTitle": "Task",
   "task.sessionTitle": "Task session",
   "task.namePlaceholder": "Task name",
-  "task.noStages": "No stages on this task",
   "task.renameTask": "Rename task",
   "task.appendStage": "+ Add stage",
   "task.stage.notExecuted": "Not executed",
@@ -291,7 +290,4 @@ export const enUSTasks = {
   "task.activity.status.completed": "Completed",
   "task.activity.status.failed": "Failed",
   "task.activity.status.cancelled": "Cancelled",
-  "task.legacy.viewStages": "View execution details (legacy stage view)",
-  "task.legacy.stagesSubtitle": "This task uses the legacy stage mode",
-  "task.legacy.noRecord": "Task finished (no detailed record)",
 } as const;

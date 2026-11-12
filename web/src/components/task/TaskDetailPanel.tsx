@@ -1,111 +1,46 @@
 import React from "react";
-import { AgentIcon } from "../agent/AgentIcon";
-import { ModeIcon } from "../agent/ModeIcon";
-import { PromptEditor } from "../editor/PromptEditor";
-import { StageEditor } from "./StageEditor";
-import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "../shell/PanelShell";
-import type { SessionReusePolicy } from "./StageOptionsBar";
-import { PencilIcon, TrashIcon } from "../action/composerIcons";
+import { PanelShell, panelButtonStyle } from "../shell/PanelShell";
+import { PencilIcon } from "../action/composerIcons";
 import { composerInputStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n/index";
 import { statusText } from "./taskDetailUtils";
-import { nodeRunStatusColor } from "./runTimelineModel";
-import { legacyTaskFlow } from "../../shared/legacyTaskFlow";
-import { pencilStyle, sessionIconButtonStyle, runIconButtonStyle, tagStyle } from "./taskDetailStyles";
-import { TaskDetailConfirmDialog } from "./TaskDetailConfirmDialog";
+import { pencilStyle, tagStyle } from "./taskDetailStyles";
 import { CommentThread } from "./CommentThread";
 import { RunViewEntry } from "./RunViewEntry";
 import { ConversationView } from "./ConversationView";
-import type { KanbanTask, StageTemplate, TaskDetail } from "../../shared/taskTypes";
-import type { AgentStatus } from "../../shared/agentTypes";
-import { taskStatusColor, isTerminalKanbanTask } from "../../app/appTask";
-import { DEFAULT_TASK_AGENT } from "../../app/appTask";
-import { DeleteIcon, RunNowIcon, TaskCompleteIcon, TaskFinishWorktreeIcon } from "./taskIcons";
+import type { TaskDetail } from "../../shared/taskTypes";
+import { taskStatusColor } from "../../app/appTask";
+import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon } from "./taskIcons";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
-  agents: AgentStatus[];
   onClose: () => void;
   onOpenSession: (sessionKey: string) => void;
   onMoved?: (detail: TaskDetail) => void;
-  onRunTask?: (task: KanbanTask) => void | Promise<void>;
   nodeId?: string;
-  accentColor?: string;
 };
 
-export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, onRunTask, nodeId, accentColor }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeId }: TaskDetailPanelProps) {
   const { t } = useI18n();
-  const panel = useTaskDetailPanel({ detail, agents, nodeId, onClose, onMoved, onRunTask, t: t as (key: any, fallback?: any) => string });
-  if (!panel) return null;
+  const panel = useTaskDetailPanel({ detail, nodeId, onClose, onMoved, t: t as (key: any, fallback?: any) => string });
+  if (!panel || !detail) return null;
   const {
     task,
-    stages,
-    initialInput,
-    bodyStages,
     editingName,
     setEditingName,
     nameDraft,
     setNameDraft,
-    editingStage,
-    setEditingStage,
-    editName,
-    setEditName,
-    editPrompt,
-    setEditPrompt,
-    editAgent,
-    setEditAgent,
-    editModel,
-    setEditModel,
-    editEffort,
-    setEditEffort,
-    editMode,
-    setEditMode,
-    editAutoAdvance,
-    setEditAutoAdvance,
-    editStartImmediately,
-    setEditStartImmediately,
-    editPlanMode,
-    setEditPlanMode,
-    editSessionReuse,
-    setEditSessionReuse,
-    editRole,
-    setEditRole,
     saving,
-    pendingConfirm,
-    setPendingConfirm,
-    stageAttachRef,
-    finishActive,
     canFinishWorktree,
     terminal,
     canCompleteTask,
-    canRunStageNow,
-    runnableStageIndex,
-    advanceable,
     numberLabel,
     saveName,
-    startEditStage,
-    cancelEditStage,
-    requestEditStage,
-    requestRemoveStage,
-    removeStage,
-    saveStage,
-    handleStageAttach,
-    appendStage,
-    runStage,
     finishWorktree,
     completeTask,
     deleteTaskCard,
   } = panel;
-
-  // Phase 2：历史任务的流水按工作流语法呈现。只读投影，不改执行引擎；
-  // 每个节点的编辑/运行入口原样保留（任务仍由 legacy stages 引擎推进）。
-  const flow = legacyTaskFlow({
-    stages: bodyStages,
-    stageRuns: detail?.stage_runs ?? [],
-    currentStageIndex: task.current_stage_index,
-    taskStatus: task.status,
-  });
 
   return (
     <>
@@ -195,224 +130,17 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       )}
     >
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
-          {/* 收尾进行中不再挂转圈横幅（2026-10-07 用户要求）：卡片上那个绿色 worktree
-              标签会变成「收尾中」，那才是唯一的进度信号。收尾段成功/受阻之后清场由服务端
-              自己接着跑，结论走 WS 的 task.finish_teardown 回到 App 那个弹窗 / toast。 */}
-          {initialInput ? (
-            <div style={{ border: "1px dashed var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px", background: "var(--panel-bg)" }}>
-              <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{t("task.initialInput")}</span>
-              <PromptEditor
-                value={initialInput}
-                mode="readonly"
-                role="user"
-                resetKey={task.id}
-                placeholder={t("task.namePlaceholder")}
-              />
-            </div>
-          ) : null}
-
-          {bodyStages.map((stage, i) => {
-            const node = flow.nodes[i];
-            const index = i + 1;
-            const isCurrent = index === task.current_stage_index;
-            const executed = node.status !== "pending";
-            const editing = editingStage === index;
-            const isAgent = stage.role === "agent";
-            const canRunStage = index === runnableStageIndex
-              && advanceable
-              && !editing
-              && !!onRunTask
-              && !isTerminalKanbanTask(task)
-              && !finishActive
-              && !(task.current_stage_status === "running" && task.status === "running");
-            const shown = executed ? node.prompt : (stage.prompt_template || "");
-            const displayStage: StageTemplate = editing
-              ? {
-                  ...stage,
-                  name: editName,
-                  role: editRole,
-                  prompt_template: editPrompt,
-                  agent: editRole === "agent" ? editAgent : undefined,
-                  model: editRole === "agent" ? editModel : undefined,
-                  effort: editRole === "agent" ? editEffort : undefined,
-                  mode: editRole === "agent" ? editMode : undefined,
-                  auto_advance: editAutoAdvance,
-                  start_immediately: editStartImmediately,
-                  plan_mode: editRole === "agent" ? editPlanMode : false,
-                  session_reuse_policy: editSessionReuse,
-                }
-              : stage;
-            const nodeStarted = node.startedAt ? new Date(node.startedAt).toLocaleString() : "";
-            const nodeFinished = node.finishedAt ? new Date(node.finishedAt).toLocaleString() : "";
-            return (
-              <div
-                key={node.id}
-                data-legacy-flow-node
-                data-node-index={index}
-                data-node-kind={node.kind}
-                data-status={node.status}
-                style={{ border: isCurrent ? "1px solid var(--accent-color)" : "1px solid var(--border-color)", borderRadius: "8px", background: "var(--panel-bg)", padding: "10px", display: "flex", flexDirection: "column", gap: "8px" }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                  <span
-                    aria-hidden="true"
-                    style={{ width: "8px", height: "8px", borderRadius: "999px", flexShrink: 0, background: nodeRunStatusColor(node.status) }}
-                  />
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
-                    {!editing ? (
-                      <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
-                        {stage.name || t("task.stageLabel", { index })}
-                      </span>
-                    ) : null}
-                    {!editing ? (
-                      <span style={tagStyle}>{isAgent ? t("task.stage.agent") : t("task.stage.user")}</span>
-                    ) : null}
-                    <span style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor(node.status) }}>
-                      {executed ? statusText(node.status, t) : t("task.stage.notExecuted")}
-                    </span>
-                    {isAgent && node.agent ? (
-                      <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-                        {node.agent}{node.model ? ` · ${node.model}` : ""}
-                      </span>
-                    ) : null}
-                    {nodeStarted || nodeFinished ? (
-                      <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-                        {nodeStarted ? t("task.runTimeline.started", { time: nodeStarted }) : ""}
-                        {nodeStarted && nodeFinished ? " · " : ""}
-                        {nodeFinished ? t("task.runTimeline.finished", { time: nodeFinished }) : ""}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "2px", flexShrink: 0 }}>
-                    {canRunStage ? (
-                      <button
-                        type="button"
-                        title={t("task.runNow")}
-                        aria-label={t("task.runNow")}
-                        disabled={saving}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => void runStage()}
-                        style={{ ...runIconButtonStyle, opacity: saving ? 0.4 : 1 }}
-                      >
-                        <RunNowIcon />
-                      </button>
-                    ) : null}
-                    {node.sessionKey ? (
-                      <button
-                        type="button"
-                        title={t("task.openSession", { index: 1 })}
-                        aria-label={t("task.openSession", { index: 1 })}
-                        onClick={() => onOpenSession(node.sessionKey as string)}
-                        style={{ ...sessionIconButtonStyle, marginLeft: 0 }}
-                      >
-                        <span style={{ position: "relative", width: "18px", height: "18px", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                          <ModeIcon type="task" size={16} />
-                          <span style={{ position: "absolute", right: "-2px", bottom: "-2px", width: "10px", height: "10px", borderRadius: "999px", background: "var(--content-bg, #fff)", border: "1px solid rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                            <AgentIcon agentName={stage.agent || ""} style={{ width: "10px", height: "10px", display: "block" }} />
-                          </span>
-                        </span>
-                      </button>
-                    ) : null}
-                    {editing ? (
-                      <button type="button" onClick={cancelEditStage} style={{ ...panelButtonStyle("secondary"), height: "26px", fontSize: "11px" }}>
-                        {t("common.cancel")}
-                      </button>
-                    ) : null}
-                    {!executed && !isCurrent ? (
-                      <button
-                        type="button"
-                        title={t("task.removeStage")}
-                        aria-label={t("task.removeStage")}
-                        disabled={saving}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => requestRemoveStage(index)}
-                        style={{ ...panelIconButtonStyle(true, saving), marginLeft: "auto" }}
-                      >
-                        <TrashIcon />
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                <StageEditor
-                  stage={displayStage}
-                  agents={agents}
-                  onChange={(patch: Partial<StageTemplate>) => {
-                    if ("name" in patch) setEditName(patch.name || "");
-                    if ("role" in patch) setEditRole(patch.role as "user" | "agent");
-                    if ("prompt_template" in patch) setEditPrompt(patch.prompt_template || "");
-                    if ("agent" in patch) setEditAgent(patch.agent || DEFAULT_TASK_AGENT);
-                    if ("model" in patch) setEditModel(patch.model || "");
-                    if ("effort" in patch) setEditEffort(patch.effort || "");
-                    if ("mode" in patch) setEditMode(patch.mode || "");
-                    if ("auto_advance" in patch) setEditAutoAdvance(patch.auto_advance === true);
-                    if ("start_immediately" in patch) setEditStartImmediately(patch.start_immediately === true);
-                    if ("plan_mode" in patch) setEditPlanMode(patch.plan_mode === true);
-                    if ("session_reuse_policy" in patch) setEditSessionReuse((patch.session_reuse_policy as SessionReusePolicy) || "task_main");
-                  }}
-                  stageNamePlaceholder={editing ? t("task.stage.namePlaceholder") : undefined}
-                  isFirstStage={index === 0}
-                  onStageNameChange={(name) => setEditName(name)}
-                  onToggleRole={editing ? () => {
-                    if (editRole === "agent") {
-                      setEditRole("user");
-                      setEditAgent(DEFAULT_TASK_AGENT);
-                      setEditModel("");
-                      setEditEffort("");
-                      setEditMode("");
-                      setEditPlanMode(false);
-                    } else {
-                      setEditRole("agent");
-                    }
-                  } : undefined}
-                  resetKey={`${task.id}-${index}`}
-                  mode={editing ? "editable" : (executed ? "done" : "readonly")}
-                  onEdit={editing || executed ? undefined : () => requestEditStage(index)}
-                  onSend={editing && !executed ? (text: string) => void saveStage(index, text) : undefined}
-                  onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
-                  sending={saving}
-                  sendDisabled={!editPrompt.trim()}
-                  placeholder={t("task.stage.prompt")}
-                  accentColor={accentColor}
-                  displayValue={editing ? editPrompt : shown}
-                />
-              </div>
-            );
-          })}
-          {bodyStages.length === 0 ? (
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.noStages")}</div>
-          ) : null}
-
-          <button type="button" disabled={saving} onClick={() => void appendStage()} style={{ ...panelButtonStyle("secondary"), alignSelf: "flex-start" }}>
-            {t("task.appendStage")}
-          </button>
-          <input ref={stageAttachRef} type="file" multiple style={{ display: "none" }} onChange={(event) => void handleStageAttach(event)} />
-          <CommentThread rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
-          <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
-          <ConversationView
-            taskId={task.id}
-            rootId={task.root_id}
-            nodeId={nodeId}
-            disabled={terminal}
-            onOpenSession={onOpenSession}
-          />
-        </div>
+        <CommentThread rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
+        <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
+        <ConversationView
+          taskId={task.id}
+          rootId={task.root_id}
+          nodeId={nodeId}
+          disabled={terminal}
+          onOpenSession={onOpenSession}
+        />
+      </div>
     </PanelShell>
-      <TaskDetailConfirmDialog
-        pendingConfirm={pendingConfirm}
-        saving={saving}
-        onCancel={() => setPendingConfirm(null)}
-        onConfirm={() => {
-          const pending = pendingConfirm;
-          setPendingConfirm(null);
-          if (!pending) return;
-          if (pending.type === "discard") startEditStage(pending.index);
-          else {
-            setEditingStage(-1);
-            void removeStage(pending.index);
-          }
-        }}
-      />
     </>
   );
 }

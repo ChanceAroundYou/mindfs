@@ -4,7 +4,7 @@
 
 **Goal:** 将任务从"阶段式"重构为"对话式"，用户发留言 → Agent 自动选择 Workflow 执行 → 回复结果
 
-**Architecture:** 新增 `task_activities` 表存储对话流，增强 `workflows` 表支持元数据和自动选择，前端组件从阶段列表重构为对话式界面，保留历史任务兼容性
+**Architecture:** 新增 `task_activities` 表存储对话流，增强 `workflows` 表支持元数据和自动选择，前端组件从阶段列表重构为对话式界面；历史阶段任务由服务启动时的一次性迁移转成 `task_activities` + 内联 `WorkflowRun`，不再保留 LegacyTaskView 兼容分支
 
 **Tech Stack:** Go (后端), TypeScript/React (前端), SQLite (数据库), WebSocket (实时通信)
 
@@ -19,7 +19,7 @@
 - 前端组件文件不超过 500 行（硬线）
 - 后端 Go 文件不超过 500 行（硬线）
 - 所有新增表必须有索引优化查询
-- 历史任务（task_stages_json 不为空）必须正常显示
+- 历史阶段任务必须迁移成对话 + WorkflowRun 后正常显示，不再保留只读兼容视图
 
 ## Review Focus
 
@@ -27,7 +27,7 @@
 2. **并发 Activity 创建** - 同一任务同时提交两条留言，必须串行处理不丢失；测试在 Task 4
 3. **WorkflowRun 失败后的 Activity 状态** - Run 失败必须更新 Activity 为 failed + 错误信息；测试在 Task 5
 4. **WebSocket 断线重连** - 客户端断线期间的状态更新，重连后必须补发；测试在 Task 8
-5. **历史任务无 activities 时的显示** - 必须从 stage_runs 提取总结，不能空白；测试在 Task 11
+5. **历史任务无 activities 时的显示** - 必须由启动迁移生成 activities 与 WorkflowRun，不能空白，也不能退回 LegacyTaskView；测试在 Task 11 与 `task_store_convert_stages_test.go`
 
 ---
 
@@ -2365,6 +2365,12 @@ Scope: Phase 3 - Task 10"
 
 ## Phase 4: 历史任务适配
 
+> **2026-11-12 实施改道**：用户明确要求「完整替换，不做兼容层」。本节原始的
+> `LegacyTaskView` / `Collapsible` / `legacySummary` 方案**已作废并在实施中删除**；
+> 实际做法是服务启动时由 `ConvertStagesToConversation` 把历史阶段任务一次性
+> 转成 `task_activities` + 内联 `WorkflowRun`，前端始终渲染 `ConversationView`。
+> 规则、备份与回滚见 `docs/migration/stages-to-conversation.md`。下文保留为设计历史。
+
 **目标**: 兼容现有的阶段式任务
 
 ### Task 11: 历史任务视图和总结生成
@@ -2663,6 +2669,22 @@ git commit -m "feat(ui): legacy task view with stage collapsing
 
 Scope: Phase 4 - Task 11"
 ```
+
+### Phase 4 实际实施记录（2026-11-12）
+
+- 删除 `LegacyTaskView.tsx`、`Collapsible.tsx`、`legacySummary.ts`、`legacyTaskFlow.ts`
+  及对应测试与 i18n 键；`TaskDetailPanel` 不再按 `task_stages_json` 分岔。
+- 新增 `server/internal/kanban/task_store_convert_stages.go`：把 `stage_runs[0]`
+  转成 `user_message`，其余阶段转成内联 `WorkflowRun` 的节点；整行备份到
+  `tasks_backup_legacy_stages` / `stage_runs_backup_legacy`，原 `stage_runs` 保留。
+- 启动接线在 `TaskStore.migrate()`；`legacy_import` Run 跳过启动对账，并可被
+  用户的新 Run 替换。手动脚本 `server/scripts/convert_stages_to_conversation.go`
+  支持 `--dry-run`（`VACUUM INTO` 快照）与显式 `--db`。
+- 隔离实例验证：mindfs 副本 64 任务 → 128 活动 / 64 Run / 132 NodeRun；
+  llmux 副本 15 → 30 / 15 / 30；第二次运行 `converted=0`。历史 waiting_user
+  与已完成任务在真实浏览器里都渲染 `conversation-view`，新建任务同样。
+- 门禁：`go test ./...`、web 618 通过 / 6 跳过、`tsc -b --noEmit`、`make build`
+  全绿；`make check-upstream` 在提交前只剩 4 个未跟踪新文件的预期 phantom。
 
 ---
 

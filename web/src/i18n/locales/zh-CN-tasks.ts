@@ -103,7 +103,6 @@ export const zhCNTasks = {
   "task.defaultTitle": "任务",
   "task.sessionTitle": "任务会话",
   "task.namePlaceholder": "任务名",
-  "task.noStages": "该任务暂无流水阶段",
   "task.renameTask": "修改任务名",
   "task.appendStage": "+ 新增阶段",
   "task.stage.notExecuted": "未执行",
@@ -290,7 +289,4 @@ export const zhCNTasks = {
   "task.activity.status.completed": "已完成",
   "task.activity.status.failed": "失败",
   "task.activity.status.cancelled": "已取消",
-  "task.legacy.viewStages": "查看执行详情（历史阶段视图）",
-  "task.legacy.stagesSubtitle": "此任务使用旧的阶段模式",
-  "task.legacy.noRecord": "任务已结束（无详细记录）",
 } as const;

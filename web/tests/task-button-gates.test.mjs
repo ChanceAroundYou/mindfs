@@ -242,16 +242,19 @@ test("pause and resume still key on the stage actually running", () => {
 
 // 详情面板有 stage_runs，判得更准：那一段跑过就该按「最后一段」处理，
 // 而不是「指针后面还有段」。两处口径不同是有意的（面板看得见执行记录）。
+// 详情面板已按流水快照分流到 LegacyTaskView / ConversationView，阶段级的
+// 「立即执行 / 收尾」按钮只剩看板卡片这一处；面板不能再自己抄一份 gate
+// （抄一份就会和卡片给出相反答案，2026-10-03 实测过）。
 const panel = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
-assert.match(
+assert.doesNotMatch(
   panel,
-  /const canRunStage = index === runnableStageIndex[\s\S]{0,300}?!finishActive/,
-  "the panel's run button must also be withheld while a finish stage is active",
+  /const canRunStage = /,
+  "the detail panel no longer owns the stage run button; the board card is the single gate",
 );
-assert.match(
+assert.doesNotMatch(
   panel,
-  /!isTerminalKanbanTask\(task\)\s*&&\s*!finishActive/,
-  "the panel's finish button must be withheld for terminal tasks and a running finish alike",
+  /finishActive/,
+  "the detail panel no longer duplicates the finish-active gate",
 );
 
 console.log("task-button-gates.test.mjs: OK");

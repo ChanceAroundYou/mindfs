@@ -63,7 +63,7 @@ server/internal/agent/        Agent 运行时抽象
   ├─ claude/                  Claude Code 后端（claude-sdk CLI）
   ├─ codex/                   Codex 后端
   └─ acp/                     ACP 后端（含 elicitation 权限应答）
-server/internal/kanban/       看板任务（任务自带流水快照 + 预设解耦，无并发调度）
+server/internal/kanban/       看板任务（对话 activities + WorkflowRun；历史阶段任务启动时一次性迁移）
 server/internal/config/       配置管理
 server/internal/fs/           文件浏览/读写
 server/internal/gitview/      Git 视图
@@ -183,12 +183,19 @@ make dev-web          # 仅 Vite
       回归测试 `web/tests/cross-node-replying-state.test.mjs`。
 
 13. **看板模型（2026-09 重做）**：卡=任务，列=全局状态（待开始/进行中/等待你/已完成/失败·取消，前端 `kanbanStageColumns`）；
-    - **任务自带流水**：`Task.Stages []StageTemplate` 是执行的**唯一**来源。新建任务由前端随包带上内置默认流水
-      （`defaultTaskFlowStages()`：user 输入 → agent `{previous_input}`，落库即拍平快照），后端不查任何模板库。
+    - **任务统一走对话模型**（2026-11-12 整体替换）：新建任务落库即 `task_type=conversation`；
+      历史阶段任务在服务启动时由 `ConvertStagesToConversation` 一次性转成
+      `task_activities` + 内联 `WorkflowRun`，`task_stages_json` 清空。转换前整行备份到
+      `tasks_backup_legacy_stages` / `stage_runs_backup_legacy`，原始 `stage_runs` 保留为只读证据；
+      迁移是单向的，回滚只能从备份恢复。`legacy_import` Run 不参与启动对账，并可被用户的新 Run 替换。
+      前端不再有 `LegacyTaskView` 兼容分支，历史与新建任务统一渲染 `ConversationView`。
+      新建面板仍会随包带 `StageTemplate[]`（`defaultTaskFlowStages()`：user 输入 → agent
+      `{previous_input}`），但它只是初始载荷，不驱动执行；详情面板只读 activities/WorkflowRun。
+      完整规则见 `docs/migration/stages-to-conversation.md`。
       **模板已迁移为 workflow**（2026-11-12）：三个原模板（新功能、debug、空白）已转换为已发布的 workflow
       （`workflow-new-feature`、`workflow-debug`、`workflow-blank`），存储在控制面 `~/.config/mindfs/workflows.json`。
       前端可通过 `GET /api/workflows/published` 获取已发布 workflow 列表并在创建任务时选用。
-      模板库已于 Phase 3 删除（2026-11）；历史任务仍按 `task_stages_json` + `stage_runs` 渲染，`task_template_id`/`task_template_name`
+      模板库已于 Phase 3 删除（2026-11）；`task_template_id`/`task_template_name`
       两列冻结为只读来源标签，停写、不回填、不参与执行。
     - **无并发调度**：`queued` 与调度槽位已删除（迁移时 queued→pending），新建任务恒为 `waiting_user`；同一 agent 阶段的重复执行由 `taskRun/taskPend` 去重守卫拦。
     - 任意状态可追加 comment 作为下一段 prompt（`POST /api/tasks/{id}/add-stage`，运行中排队尾；waiting_user 时追加即批准当前段并开跑）。

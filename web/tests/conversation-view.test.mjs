@@ -387,3 +387,11 @@ test("TaskDetailPanel does not import from services directly", () => {
   const panel = read("components/task/TaskDetailPanel.tsx");
   assert.doesNotMatch(panel, /from ["'][^"']*services\/activities/, "components must not import activities service directly");
 });
+
+test("TaskDetailPanel always renders ConversationView; the legacy branch is gone", () => {
+  const panel = read("components/task/TaskDetailPanel.tsx");
+  assert.match(panel, /<ConversationView/, "every task, including converted history, renders the conversation view");
+  assert.doesNotMatch(panel, /LegacyTaskView/, "no compatibility branch may survive the stage->conversation conversion");
+  assert.doesNotMatch(panel, /hasLegacyStages/, "the detail panel must not branch on stage snapshots");
+  assert.doesNotMatch(panel, /task_stages_json/, "the stage snapshot marker is no longer a frontend concept");
+});

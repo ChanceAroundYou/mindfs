@@ -1317,7 +1317,7 @@ groups:
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - web/src/components/task/TaskCardFinishButton.tsx:function TaskCardFinishButton
       - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !stageRunning && !showAdvance;
-      - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;
+      - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
       - web/src/services/net/error.ts:"task.action_failed"
@@ -7325,10 +7325,13 @@ groups:
       - server/internal/kanban/service_comment_store_test.go
       - server/internal/api/http_task_comments.go
       - server/internal/api/http_task_comments_test.go
+      - server/internal/api/http_activities.go
+      - server/internal/api/http_activities_test.go
       - server/internal/api/http_routes.go
     tests:
       - server/internal/kanban/service_comment_store_test.go
       - server/internal/api/http_task_comments_test.go
+      - server/internal/api/http_activities_test.go
     anchors:
       - 'server/internal/kanban/task_store_comments.go:func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput)'
       - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskCommentsPost'
@@ -7350,10 +7353,12 @@ groups:
       - server/internal/nodeinfo/role_test.go
       - server/internal/api/http_workflows.go
       - server/internal/api/http_workflows_test.go
+      - server/internal/api/http_workflows_recommend_test.go
       - server/internal/api/http_routes.go
     tests:
       - server/internal/kanban/workflow_test.go
       - server/internal/api/http_workflows_test.go
+      - server/internal/api/http_workflows_recommend_test.go
     anchors:
       - 'server/internal/kanban/workflow_engine.go:func EngineReadyNodes'
       - 'server/internal/kanban/workflow_store.go:func (s *WorkflowStore) PublishDraft'
@@ -7468,6 +7473,7 @@ groups:
     files:
       - web/src/components/task/CommentThread.tsx
       - web/src/components/task/useCommentThread.ts
+      - web/src/hooks/useTaskActivities.ts
       - web/src/services/task/comments.ts
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/services/task/index.ts
@@ -7663,9 +7669,9 @@ groups:
   - id: G-LJ
     title: 任务模板下线（彻底删除模板功能 + 历史流水按工作流语法呈现）
     kind: feature
-    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有任何模板页签、模板菜单、按模板筛选或模板编辑入口；工作台「快速发起」点项目直接打开新建面板；新建任务默认就是「用户输入 → agent（{previous_input}）」两段流水，建完落库只带 `task_stages_json` 快照，不带任何模板 id/名；模板时代创建的历史任务照常显示名称与流水卡片，流水卡与工作流运行视图同一条视觉语法（状态点/状态色/agent·model/起止时间），模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
-    why: "必须保留：① 新建任务的流水唯一来源是 `defaultTaskFlowStages()`（user 段 + agent 段 `prompt_template = \"{previous_input}\"`），前端每次创建都把拍平的 `StageTemplate[]` 随包带上，后端不得再回查模板库 —— 没有模板库的 worker 节点也必须能建任务；② 不再写 `task_template_id`/`task_template_name`，后端也不得提供模板回退；③ 工作台快速发起只交付 project（rootId/nodeId），不再有模板选择；④ 任务列表不按模板筛选，且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ 历史任务不迁移执行引擎 —— `MigrateTaskToWorkflowRun` 拒绝终态任务，而模板时代的任务几乎全终态，所以用 `legacyTaskFlow()` 做只读展示投影：不取数、不写库、不改 `task_stages_json`/`stage_runs`，任务仍由 legacy stages 引擎推进；`task_template_id`/`task_template_name` 两列冻结为历史显示字段（停写、保留列）；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与历史流水共用，approved/rejected 是审批结果不归一成 success。"
-    boundary: "Phase 1 隐藏模板 UI；Phase 2 历史流水只读投影 + 工作流样式；Phase 3 删除前端模板组件/服务/状态 hook、后端模板库/API（7 条路由、`TemplateStore`、`CreateTask` 回退与 `loadForMove` 回填、控制面前缀）与 `task_template.json` 打包链。`task_stages_json`/`stage_runs` 保留为任务自己的执行证据；`tasks.task_template_id`/`task_template_name` 两列冻结（停写、只读展示）。不做后端鉴权、不改任务执行引擎。"
+    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有任何模板页签、模板菜单、按模板筛选或模板编辑入口；工作台「快速发起」点项目直接打开新建面板；新建任务默认就是「用户输入 → agent（{previous_input}）」两段流水，建完落库只带 `task_stages_json` 快照，不带任何模板 id/名；模板时代创建的历史任务照常显示名称，模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
+    why: "必须保留：① 新建任务的流水唯一来源是 `defaultTaskFlowStages()`（user 段 + agent 段 `prompt_template = \"{previous_input}\"`），前端每次创建都把拍平的 `StageTemplate[]` 随包带上，后端不得再回查模板库 —— 没有模板库的 worker 节点也必须能建任务；② 不再写 `task_template_id`/`task_template_name`，后端也不得提供模板回退；③ 工作台快速发起只交付 project（rootId/nodeId），不再有模板选择；④ 任务列表不按模板筛选，且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ `task_template_id`/`task_template_name` 两列冻结为历史来源标签（停写、保留列）；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与工作流节点卡共用，approved/rejected 是审批结果不归一成 success。历史阶段任务的展示/转换由 G-LK 接管，本组不再承诺 `legacyTaskFlow()` 只读投影。"
+    boundary: "Phase 1 隐藏模板 UI；Phase 3 删除前端模板组件/服务/状态 hook、后端模板库/API（7 条路由、`TemplateStore`、`CreateTask` 回退与 `loadForMove` 回填、控制面前缀）与 `task_template.json` 打包链。`task_stages_json`/`stage_runs` 保留为任务自己的执行证据；`tasks.task_template_id`/`task_template_name` 两列冻结（停写、只读展示）。历史任务的转换与 LegacyTaskView 删除归 G-LK。不做后端鉴权、不改任务执行引擎。"
     files:
       - web/src/app/defaultTaskFlow.ts
       - web/src/app/useTaskComposer.ts
@@ -7682,7 +7688,6 @@ groups:
       - web/src/components/app/TaskInlineEditPanel.tsx
       - web/src/components/workspace/WorkspaceBoard.tsx
       - web/src/components/workspace/WorkspaceQuickLaunch.tsx
-      - web/src/shared/legacyTaskFlow.ts
       - web/src/shared/taskTypes.ts
       - web/src/components/task/runTimelineModel.ts
       - web/src/components/task/RunNodeRunRow.tsx
@@ -7708,14 +7713,12 @@ groups:
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/workspace-board.test.mjs
-      - web/tests/legacy-task-flow.test.ts
       - web/tests/legacy-flow-render.test.mjs
       - web/tests/task-card-status.test.mjs
       - web/tests/task-stage-panel.test.mjs
       - docs/superpowers/plans/2026-11-11-workflow-ui-unification-and-template-migration.md
     tests:
       - web/tests/template-ui-hidden.test.mjs
-      - web/tests/legacy-task-flow.test.ts
       - web/tests/legacy-flow-render.test.mjs
       - web/tests/task-card-status.test.mjs
       - web/tests/task-stage-panel.test.mjs
@@ -7731,11 +7734,7 @@ groups:
       - 'web/src/components/common/LabelWithInfo.tsx:export function LabelWithInfo('
       - 'web/src/components/task/TaskBoardToolbar.tsx:onClick={() => openTaskCreateDialog(currentRootId)}'
       - 'web/src/components/workspace/WorkspaceQuickLaunch.tsx:onPick(group.rootId, group.nodeId)'
-      - 'web/src/shared/legacyTaskFlow.ts:export function legacyTaskFlow(input: LegacyTaskFlowInput): LegacyTaskFlow'
-      - 'web/src/shared/legacyTaskFlow.ts:kind: stage.role === "user" ? "human_gate" : "agent"'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
-      - 'web/src/components/task/TaskDetailPanel.tsx:const flow = legacyTaskFlow({'
-      - 'web/src/components/task/TaskDetailPanel.tsx:data-node-kind={node.kind}'
       - 'web/src/components/task/RunNodeRunRow.tsx:import { nodeRunStatusColor } from "./runTimelineModel";'
       - 'server/internal/kanban/service_tasks.go:if len(stages) == 0 || stages[0].Role != RoleUser {'
       - 'server/internal/api/http_task_templates_gone_test.go:func TestTaskTemplateRoutesAreGone('
@@ -8193,3 +8192,59 @@ groups:
       - 'server/internal/api/agent_config_switch.go:func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConfigManifestEntry, bool, error)'
       - 'server/internal/api/agent_config_shared.go:func configuredCodexSDKAgent(name string) (string, bool, error)'
       - 'web/src/components/file/useAgentConfigSelection.ts:const chooseAgentForConfig = React.useCallback('
+
+  # ── 历史阶段任务整体替换为对话 + WorkflowRun（2026-11-12）──────────────
+  - id: G-LK
+    title: 删除 LegacyTaskView，历史阶段任务一次性转换成语对话 + 内联 WorkflowRun
+    kind: feature
+    symptom: "任务详情不再有「历史阶段视图 / 查看阶段」入口，历史任务与新建任务渲染同一条 ConversationView；历史阶段任务的输入变成一条 user_message、后续阶段变成回复卡片下钻的 WorkflowRun 节点；重启不会把历史节点重新跑一遍，用户也可以在历史 waiting_user 任务上直接发新留言。"
+    why: "这是用户明确要求的**整体替换**，不是兼容层：① 阶段模型下线后仍保留 LegacyTaskView 会形成第二条读法，历史任务的输入/阶段永远绕开 conversation API，发送留言与工作流推荐对它们失效；② 转换必须由服务启动时的同一段代码执行（`TaskStore.migrate()` → `ConvertStagesToConversation`），而不是前端临时投影 —— 只有落库成 `task_activities` + `workflow_runs` + `workflow_node_runs` + `task_execution_engines` 后，留言、运行视图、重启恢复才共用一套真相；③ 转换是一次性的：`task_type` 从 stage 改成 conversation，`task_stages_json` 清空，第二次启动 converted=0；④ 旧数据必须先整行备份到 `tasks_backup_legacy_stages` / `stage_runs_backup_legacy`，原始 `stage_runs` 不删，只作为审计证据，回滚只能从备份恢复；⑤ `legacy_import` Run 只是审计快照，不是活运行 —— 启动对账必须跳过它（否则历史节点被重放并真的再跑 Agent），创建新 Run 时也必须允许替换它（否则一条 waiting_user 历史任务会被 D14 永久挡住）；⑥ 图快照内联在 `workflow_runs.graph_json`，控制面没有对应版本也能完整渲染，`version` 只做来源标注且映射不上时留空，不谎报来源；⑦ 前端始终渲染 ConversationView，不再用 `hasLegacyStages` 分岔。"
+    boundary: "只处理「阶段任务 → 对话任务」这一条单向迁移与 LegacyTaskView 删除；不改变新建任务的 `defaultTaskFlowStages()` 随包 stages 契约（G-LJ），不改变 workflow 引擎/D14 的通用语义，只给 legacy_import 开两个明确例外（恢复跳过、可被新 Run 替换）。不做反向拆分；回滚依赖备份表或整库备份。"
+    files:
+      - server/internal/kanban/task_store_convert_stages.go
+      - server/internal/kanban/task_store_convert_stages_test.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/task_store_scan.go
+      - server/internal/kanban/task_store_write.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/workflow_recovery.go
+      - server/internal/kanban/workflow_types.go
+      - server/scripts/convert_stages_to_conversation.go
+      - docs/migration/stages-to-conversation.md
+      - docs/features/conversation-driven-tasks.md
+      - web/src/app/AppRootView.tsx
+      - web/src/components/app/TaskDetailPanelGate.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/useTaskDetailPanel.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/conversation-view.test.mjs
+      - web/tests/legacy-flow-render.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/task-card-status.test.mjs
+      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-panel-options.test.mjs
+      - web/tests/composer-send-flush.test.mjs
+      - web/tests/long-context-inheritance.test.mjs
+    tests:
+      - server/internal/kanban/task_store_convert_stages_test.go
+      - web/tests/conversation-view.test.mjs
+      - web/tests/legacy-flow-render.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/task-card-status.test.mjs
+      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/long-context-inheritance.test.mjs
+    anchors:
+      - 'server/internal/kanban/task_store_convert_stages.go:func ConvertStagesToConversation(ctx context.Context, db *sql.DB, opts StageConversionOptions) (StageConversionStats, error)'
+      - 'server/internal/kanban/task_store_convert_stages.go:func legacyWorkflowVersionFor(templateName string) string'
+      - 'server/internal/kanban/task_store_convert_stages.go:TriggeredBy:       WorkflowTriggeredByLegacyImport'
+      - 'server/internal/kanban/task_store_migrate.go:func MigrateTaskSchema(db *sql.DB) error'
+      - 'server/internal/kanban/task_store_migrate.go:ConvertStagesToConversation(context.Background(), s.db, StageConversionOptions{})'
+      - 'server/internal/kanban/task_store_workflow_runs.go:bound.TriggeredBy != WorkflowTriggeredByLegacyImport'
+      - 'server/internal/kanban/workflow_recovery.go:WorkflowTriggeredByLegacyImport)'
+      - 'server/internal/kanban/workflow_types.go:WorkflowTriggeredByLegacyImport = "legacy_import"'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<ConversationView'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;'

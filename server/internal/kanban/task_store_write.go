@@ -47,8 +47,14 @@ func (s *TaskStore) UpdateTaskAndStageRun(ctx context.Context, task Task, run St
 func insertTask(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
 	stages, _ := json.Marshal(task.Stages)
-	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt), boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages))
+	// 新建任务归对话模型所有：即使调用方还带着 stages（当前新建面板仍会带一份
+	// 初始流水），也不允许下一次启动的存量迁移把它当成历史任务再转一遍。
+	taskType := strings.TrimSpace(task.TaskType)
+	if taskType == "" {
+		taskType = TaskTypeConversation
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt), boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), taskType)
 	return err
 }
 

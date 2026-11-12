@@ -27,8 +27,11 @@ const taskComposer = read("src/app/useTaskComposer.ts");
 // 实现没少、只是搬了家。
 const serviceGo = readGoPackage("server/internal/kanban");
 
-// 1) 两处都渲染共享组件
-assert.match(panel, /import \{ StageEditor \} from "\.\/StageEditor"/, "task detail must use StageEditor");
+// 1) 面板各自渲染自己的内容：历史任务与新建任务都走对话式视图；
+//    阶段编辑只留在新建任务面板（详情面板不再内联阶段循环或兼容视图）。
+assert.doesNotMatch(panel, /import \{ StageEditor \} from "\.\/StageEditor"/, "the detail panel no longer edits stages inline");
+assert.doesNotMatch(panel, /LegacyTaskView/, "the legacy read-only view was deleted with the stage model");
+assert.match(panel, /<ConversationView/, "every task renders through ConversationView");
 // 新建任务面板由 AppRootView 渲染（App.tsx 只剩四层聚合调用）。
 assert.match(inlinePanel, /import \{ StageEditor \} from "\.\.\/task\/StageEditor"/, "create-task panel must use StageEditor");
 assert.match(panel, /import \{ PanelShell,/, "task detail must use PanelShell");
@@ -80,7 +83,7 @@ assert.doesNotMatch(
   /readOnly=\{!onToggleRole\}/,
   "a locked role must not disable the other three options",
 );
-assert.match(panel, /onToggleRole=\{editing \?/, "the detail panel offers a role toggle while editing");
+assert.doesNotMatch(panel, /onToggleRole=\{editing \?/, "the detail panel no longer edits stages inline");
 // 会话复用：不再有「会话复用」前缀文字，收起态直接显示当前策略
 assert.doesNotMatch(stageOptions, /\{t\("task\.stage\.sessionReuse"\)\}<\/span>/, "the session-reuse label must be gone; the dropdown shows the policy name");
 assert.match(stageOptions, /task\.stage\.sessionReuseTaskMain/, "the dropdown must offer the reuse policies as its own labels");
@@ -186,7 +189,7 @@ assert.match(
   /isFirstStage = false/,
   "StageEditor must take isFirstStage as a prop",
 );
-assert.match(panel, /isFirstStage=\{index === 0\}/, "the detail panel's first stage gets the chip");
+assert.doesNotMatch(panel, /isFirstStage=\{index === 0\}/, "the detail panel no longer renders stage editors");
 assert.match(
   stageOptions,
   /: isAgent \? \([\s\S]*?task\.stage\.autoAdvance[\s\S]*?\) : null/,

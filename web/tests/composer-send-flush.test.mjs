@@ -8,7 +8,6 @@ import { readFileSync } from "./source-map-fs.mjs";
 const handlers = readFileSync(new URL("../src/components/action/useActionBarHandlers.ts", import.meta.url), "utf8");
 const promptEditor = readFileSync(new URL("../src/components/editor/PromptEditor.tsx", import.meta.url), "utf8");
 const stageEditor = readFileSync(new URL("../src/components/task/StageEditor.tsx", import.meta.url), "utf8");
-const detailHook = readFileSync(new URL("../src/components/task/useTaskDetailPanel.ts", import.meta.url), "utf8");
 const composer = readFileSync(new URL("../src/app/useTaskComposer.ts", import.meta.url), "utf8");
 const handleType = readFileSync(new URL("../src/shared/actionBarTypes.ts", import.meta.url), "utf8");
 
@@ -48,12 +47,7 @@ test("PromptEditor funnels button click and Enter through one flush-and-send", (
   );
 });
 
-test("stage/inline saves use the flushed text instead of closure state", () => {
-  assert.match(
-    detailHook,
-    /saveStage = async \(index: number, prompt: string\)/,
-    "saveStage must take the flushed prompt as a required argument",
-  );
+test("inline saves use the flushed text instead of closure state", () => {
   assert.match(
     composer,
     /saveTaskInlineEdit = useCallback\(async \(prompt\?: string\)|saveTaskInlineEdit = useCallback\(async \(prompt: string\)/,

@@ -21,9 +21,13 @@ const (
 // WorkflowRun origin (triggered_by). Conversation tasks record who asked for a
 // run so failures and history can be attributed without joining activities.
 const (
-	WorkflowTriggeredByUser      = "user"
-	WorkflowTriggeredByAgentAuto = "agent_auto"
-	WorkflowTriggeredByScheduled = "scheduled"
+	WorkflowTriggeredByUser         = "user"
+	WorkflowTriggeredByAgentAuto    = "agent_auto"
+	WorkflowTriggeredByScheduled    = "scheduled"
+	// WorkflowTriggeredByLegacyImport 标记一次性迁移生成的历史 Run。
+	// 启动对账必须跳过它：这些 NodeRun 是审计证据，重放会真的再跑一遍 Agent。
+	// 它也不占「每任务至多一个非终态 Run」的名额，用户留言可以替换它。
+	WorkflowTriggeredByLegacyImport = "legacy_import"
 )
 
 const (

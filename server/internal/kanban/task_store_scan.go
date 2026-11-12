@@ -31,7 +31,7 @@ func scanTask(row scanner) (Task, error) {
 	var labels, stagesJSON string
 	var templateSnapshot string
 	var created, updated string
-	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &worktreeBuilt, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON); err != nil {
+	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &worktreeBuilt, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON, &task.TaskType); err != nil {
 		return Task{}, err
 	}
 	task.CreateWorktree = createWorktree != 0

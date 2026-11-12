@@ -76,7 +76,7 @@ export function AppRootView(props: AppRootViewProps) {
     editDraftRequest, entriesByPath, expanded, file,
     fileEditStore, fileRef, fileScrollPositionsRef, fontSizePreferences,
     getDisplayNodeColor, getNodeIdForRoot, getRootDisplayName, gitDiff,
-    gitDiffSideBySide, handleMoveKanbanTask, handleTaskInlineAttachmentChange,
+    gitDiffSideBySide, handleTaskInlineAttachmentChange,
     interactionModeRef, isDrawerOpen, isLeftOpen, isMobile,
     isRightOpen, mainDirectoryError, mainView, mainViewRef,
     managedRootByIdRef, managedRootByKeyRef, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
@@ -424,12 +424,9 @@ drawer={<
       />
 <TaskDetailPanelGate
       applyTaskDetails={applyTaskDetails}
-      availableAgents={availableAgents}
       currentRootId={currentRootId}
       currentRootIdRef={currentRootIdRef}
-      getDisplayNodeColor={getDisplayNodeColor}
       getNodeIdForRoot={getNodeIdForRoot}
-      handleMoveKanbanTask={handleMoveKanbanTask}
       handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
       selectedKanbanTask={selectedKanbanTask}
       setSelectedKanbanTaskId={setSelectedKanbanTaskId}

@@ -206,11 +206,13 @@ func (s *TaskStore) CreateWorkflowRunAndSetEngine(ctx context.Context, run *Work
 	if err == nil && engine == EngineWorkflow {
 		// D14：历史 Run 可以并存，但绑定中的 Run 必须已终态，否则同一任务会
 		// 同时推进两条活运行。绑定悬空（run 行不存在）时 fail closed。
+		// 例外：一次性迁移生成的 legacy_import Run 只是审计快照，不是活运行；
+		// 否则一条 waiting_user 的历史任务会永久挡住用户的新留言。
 		bound, berr := scanWorkflowRun(tx.QueryRowContext(ctx, `SELECT `+workflowRunColumns+` FROM workflow_runs WHERE id=?`, boundRunID))
 		if berr != nil {
 			return fmt.Errorf("task %s has workflow engine bound to unreadable run %q: %w", run.TaskID, boundRunID, berr)
 		}
-		if !isTerminalStatus(ProjectStatusFromRun(bound)) {
+		if !isTerminalStatus(ProjectStatusFromRun(bound)) && bound.TriggeredBy != WorkflowTriggeredByLegacyImport {
 			return ErrTaskAlreadyWorkflow
 		}
 	}
