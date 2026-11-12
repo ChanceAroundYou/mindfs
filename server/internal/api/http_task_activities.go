@@ -3,7 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math/rand"
 	"net/http"
+	"time"
 
 	"mindfs/server/internal/kanban"
 
@@ -81,10 +84,14 @@ func (h *HTTPHandler) handlePostTaskActivity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// 生成唯一 comment ID
+	commentID := fmt.Sprintf("comment_%d_%d", time.Now().UnixNano(), rand.Int63())
+
 	// 创建用户留言
 	input := kanban.PostCommentServiceInput{
 		RootID:            req.RootID,
 		TaskID:            taskID,
+		CommentID:         commentID,
 		Author:            "", // TODO: 从 session/auth 获取
 		Role:              "user",
 		Body:              req.Body,
