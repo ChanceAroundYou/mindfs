@@ -195,7 +195,7 @@ export const zhCNTasks = {
   "task.workflowCanvas.kind.loop": "循环",
   "task.workflowCanvas.kind.notify": "通知",
   "task.workflowEditor.open": "工作流",
-  "task.workflowEditor.title": "工作流草稿",
+  "task.workflowEditor.title": "工作流",
   "task.workflowEditor.drafts": "草稿列表",
   "task.workflowEditor.empty": "还没有草稿",
   "task.workflowEditor.selectOrCreate": "选择或新建一个草稿",

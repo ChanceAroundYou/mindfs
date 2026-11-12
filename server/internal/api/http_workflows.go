@@ -38,6 +38,19 @@ func (h *HTTPHandler) handleWorkflowsList(w http.ResponseWriter, r *http.Request
 	respondJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (h *HTTPHandler) handleWorkflowVersionsList(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	items, err := s.ListVersions(r.Context())
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (h *HTTPHandler) handleWorkflowDraftCreate(w http.ResponseWriter, r *http.Request) {
 	s, ok := h.workflowStore(w)
 	if !ok {

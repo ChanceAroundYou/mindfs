@@ -196,7 +196,7 @@ export const enUSTasks = {
   "task.workflowCanvas.kind.loop": "Loop",
   "task.workflowCanvas.kind.notify": "Notify",
   "task.workflowEditor.open": "Workflows",
-  "task.workflowEditor.title": "Workflow drafts",
+  "task.workflowEditor.title": "Workflows",
   "task.workflowEditor.drafts": "Drafts",
   "task.workflowEditor.empty": "No drafts yet",
   "task.workflowEditor.selectOrCreate": "Select or create a draft",

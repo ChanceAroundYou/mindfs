@@ -271,3 +271,19 @@ func (s *WorkflowStore) ListDrafts(ctx context.Context) ([]WorkflowDraft, error)
 	sort.Slice(out, func(i, j int) bool { return out[i].WorkflowID < out[j].WorkflowID })
 	return out, nil
 }
+
+// ListVersions returns all published workflow versions sorted by version id.
+func (s *WorkflowStore) ListVersions(ctx context.Context) ([]WorkflowVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.loadLocked()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WorkflowVersion, 0, len(f.Versions))
+	for _, v := range f.Versions {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
+	return out, nil
+}

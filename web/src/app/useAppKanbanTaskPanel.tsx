@@ -4,6 +4,7 @@ import { WorkflowDraftEditor } from "../components/task/WorkflowDraftEditor";
 import type { SessionItem } from "./appSession";
 import type { KanbanTask } from "../services/tasks";
 import type { WorkspaceBoard, WorkspaceBoardFilter } from "./useWorkspaceBoard";
+import type { AgentStatus } from "../shared/agentTypes";
 
 /**
  * 看板面板那一个 <TaskBoardView>。
@@ -43,6 +44,7 @@ export type UseAppKanbanTaskPanelParams = {
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<{ title: string; message: string; details: string[]; } | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
+  agents: AgentStatus[];
 };
 
 /**
@@ -56,14 +58,14 @@ export type UseAppKanbanTaskPanelParams = {
  * 名字叫 sessionByKey 只是 TaskBoardView 的 prop 名，别被它带回错误的那张表。
  */
 export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
-  const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks } = params;
+  const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks, agents } = params;
 
   // 工作流草稿编辑器是独立页（listWorkflowDrafts 走控制面），盖掉看板本身；
   // 看板状态都住在 app 层 hook 里，来回切换不会丢数据。
   const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
 
   const kanbanTaskPanel = workflowEditorOpen ? (
-    <WorkflowDraftEditor onClose={() => setWorkflowEditorOpen(false)} />
+    <WorkflowDraftEditor onClose={() => setWorkflowEditorOpen(false)} agents={agents} />
   ) : (
     <TaskBoardView
       workspaceOpen={workspaceOpen}

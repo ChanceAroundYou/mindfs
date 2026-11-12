@@ -344,7 +344,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns,
     taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor,
     handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen,
-    setTaskSessionErrorDialog, loadKanbanTasks,
+    setTaskSessionErrorDialog, loadKanbanTasks, agents: availableAgents,
   });
 
 

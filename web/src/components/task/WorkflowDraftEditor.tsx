@@ -7,15 +7,17 @@ import { useWorkflowAuthoring } from "./useWorkflowAuthoring";
 import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
 import { useWorkflowDraftEditor } from "./useWorkflowDraftEditor";
 import { WorkflowProposalReview } from "./workflowAuthoring/WorkflowProposalReview";
+import type { AgentStatus } from "../../shared/agentTypes";
 
 export type WorkflowDraftEditorProps = {
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
+  agents?: AgentStatus[];
 };
 
 // 独立于任务详情的 Draft 编辑页；从看板工具栏进入。
 // 取数与写操作都在 useWorkflowDraftEditor（.ts，允许 import services）；本视图只管渲染。
-export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEditorProps) {
+export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: WorkflowDraftEditorProps) {
   const { t } = useI18n();
   const { isMobile } = useResponsive();
   const e = useWorkflowDraftEditor(onDirtyChange);
@@ -23,6 +25,9 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
   const review = useWorkflowAuthoringReview(authoring, {});
   const [instruction, setInstruction] = useState("");
   const [createMode, setCreateMode] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [searchText, setSearchText] = useState("");
   const createIdRef = useRef("");
   const { observeRevision, reset } = authoring;
   const previousDraftRef = useRef("");
@@ -75,8 +80,83 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
     void e.confirmLeave().then((ok) => { if (ok) onClose(); });
   };
 
+  const startEditName = (draft: typeof e.drafts[number]) => {
+    setNewName(draft.workflow_id.replace(/^workflow-/, ""));
+    setEditingName(true);
+  };
+
+  const cancelEditName = () => {
+    setEditingName(false);
+    setNewName("");
+  };
+
+  const saveNewName = () => {
+    if (!newName.trim() || !e.selected) {
+      cancelEditName();
+      return;
+    }
+    const finalId = newName.startsWith("workflow-") ? newName : `workflow-${newName}`;
+    // 这里需要后端支持重命名API，暂时只更新显示
+    // TODO: 调用重命名API
+    console.log("重命名工作流:", e.selected.workflow_id, "->", finalId);
+    cancelEditName();
+  };
+
+  const filteredDrafts = useMemo(() => {
+    if (!searchText.trim()) return e.drafts;
+    const search = searchText.toLowerCase();
+    return e.drafts.filter(d =>
+      d.workflow_id.toLowerCase().includes(search) ||
+      d.workflow_id.replace(/^workflow-/, "").toLowerCase().includes(search)
+    );
+  }, [e.drafts, searchText]);
+
   return (
     <div data-testid="workflow-draft-editor" style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", gap: 10, padding: 12 }}>
+      {/* 重命名对话框 */}
+      {editingName ? (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0, 0, 0, 0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000,
+        }}>
+          <div style={{
+            ...panelSurfaceStyle(),
+            padding: 16,
+            minWidth: 300,
+            maxWidth: 500,
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>重命名工作流</div>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="输入新名称"
+              style={{ ...panelInputStyle(), width: "100%" }}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveNewName();
+                if (e.key === "Escape") cancelEditName();
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" style={panelButtonStyle("secondary")} onClick={cancelEditName}>取消</button>
+              <button type="button" style={panelButtonStyle("primary")} onClick={saveNewName}>确定</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <strong>{createMode ? t("task.workflowAuthoring.createTitle") : t("task.workflowEditor.title")}</strong>
         {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)" }} /> : null}
@@ -205,12 +285,40 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange }: WorkflowDraftEdi
       {e.loading ? <div>{t("task.workflowEditor.loading")}</div> : (
         <div style={{ display: "flex", minHeight: 0, flex: 1, gap: 12 }}>
           <nav aria-label={t("task.workflowEditor.drafts")} style={{ ...panelSurfaceStyle(), width: 190, padding: 8, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-            {e.drafts.map((d) => <button type="button" style={{ ...panelButtonStyle(d.workflow_id === e.selectedId ? "primary" : "secondary"), textAlign: "left" }} key={d.workflow_id} aria-current={d.workflow_id === e.selectedId} onClick={() => { setCreateMode(false); void e.choose(d); }}>{d.workflow_id} · {d.revision}</button>)}
+            {e.drafts.map((d) => {
+              const displayName = d.workflow_id.replace(/^workflow-/, "");
+              const isSelected = d.workflow_id === e.selectedId;
+              return (
+                <div key={d.workflow_id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    style={{ ...panelButtonStyle(isSelected ? "primary" : "secondary"), textAlign: "left", flex: 1, minWidth: 0 }}
+                    aria-current={isSelected}
+                    onClick={() => { setCreateMode(false); void e.choose(d); }}
+                    title={`${displayName} (${d.revision})`}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                      {displayName}
+                    </span>
+                  </button>
+                  {isSelected && !createMode ? (
+                    <button
+                      type="button"
+                      onClick={() => startEditName(d)}
+                      style={{ ...panelButtonStyle("secondary"), padding: "4px 6px", minWidth: "unset", fontSize: "11px" }}
+                      title="重命名"
+                    >
+                      ✎
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
             {e.drafts.length === 0 ? <span>{t("task.workflowEditor.empty")}</span> : null}
           </nav>
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
             {createMode ? null : e.selected ? (
-              <WorkflowCanvas draftId={e.selected.workflow_id} graph={e.graph} dirty={e.dirty} readOnly={isMobile} onChange={e.setGraph} />
+              <WorkflowCanvas draftId={e.selected.workflow_id} graph={e.graph} dirty={e.dirty} readOnly={isMobile} onChange={e.setGraph} agents={agents} />
             ) : <div>{t("task.workflowEditor.selectOrCreate")}</div>}
           </div>
         </div>
