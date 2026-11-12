@@ -7953,6 +7953,8 @@ groups:
       - web/src/components/task/workflowAuthoring/WorkflowProposalReview.tsx
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
+      # Playwright e2e 脚手架（用例本身在 web/tests/，按前缀条目免登记）
+      - web/playwright.config.ts
       # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
       - server/internal/kanban/service_tasks.go
       - server/internal/kanban/service.go
