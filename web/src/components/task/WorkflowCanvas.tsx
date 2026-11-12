@@ -156,11 +156,33 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
     setInspectorPosition(null);
   }, []);
 
+  const emit = useCallback(
+    (nextNodes: Node[], nextEdges: Edge[]) => {
+      setTouched(true);
+      onChange(graphFrom(nextNodes, nextEdges, graph));
+    },
+    [graph, onChange],
+  );
+
+  // 删除节点。必须声明在下面的「点击外部关闭 + 键盘快捷键」之前：那个 effect 的
+  // 依赖数组与 Delete 分支都引用它，放到后面会用到未初始化的 const。
+  const removeSelected = useCallback(() => {
+    if (!selectedId) return;
+    const nextNodes = nodes.filter((n) => n.id !== selectedId);
+    const nextEdges = edges.filter((e) => e.source !== selectedId && e.target !== selectedId);
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    setSelectedId("");
+    emit(nextNodes, nextEdges);
+  }, [selectedId, nodes, edges, emit, setNodes, setEdges]);
+
   // 点击画布外部关闭浮动窗口 + 键盘快捷键
   useEffect(() => {
     if (!inspectorPosition) return;
     const handleClickOutside = (event: MouseEvent) => {
-      if (inspectorRef.current && !inspectorRef.current.contains(event.target as Node)) {
+      // 这里的 Node 是 @xyflow/react 的节点类型，不能拿 DOM 的 Node 断言；
+      // 先用 instanceof Element 收窄 EventTarget。
+      if (inspectorRef.current && event.target instanceof Element && !inspectorRef.current.contains(event.target)) {
         closeInspector();
       }
     };
@@ -178,14 +200,6 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [inspectorPosition, closeInspector, selectedId, removeSelected]);
-
-  const emit = useCallback(
-    (nextNodes: Node[], nextEdges: Edge[]) => {
-      setTouched(true);
-      onChange(graphFrom(nextNodes, nextEdges, graph));
-    },
-    [graph, onChange],
-  );
 
   const onConnect = useCallback(
     (c: Connection) => {
@@ -213,16 +227,6 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
     },
     [nodes, edges, labels, emit, onChange, graph, setNodes],
   );
-
-  const removeSelected = useCallback(() => {
-    if (!selectedId) return;
-    const nextNodes = nodes.filter((n) => n.id !== selectedId);
-    const nextEdges = edges.filter((e) => e.source !== selectedId && e.target !== selectedId);
-    setNodes(nextNodes);
-    setEdges(nextEdges);
-    setSelectedId("");
-    emit(nextNodes, nextEdges);
-  }, [selectedId, nodes, edges, emit, setNodes, setEdges]);
 
   const errors = useMemo(() => validateWorkflowGraph(graph), [graph]);
   const selected = (graph.nodes || []).find((n) => n.id === selectedId) || null;
