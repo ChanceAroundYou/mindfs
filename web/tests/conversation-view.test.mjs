@@ -372,3 +372,18 @@ test("the activity i18n keys exist for both locales", () => {
     assert.equal(typeof zhCN[key], "string", `missing zh-CN key: ${key}`);
   }
 });
+
+// ── TaskDetailPanel 集成守卫 ─────────────────────────────────────────────
+test("TaskDetailPanel integrates ConversationView with the right props", () => {
+  const panel = read("components/task/TaskDetailPanel.tsx");
+  assert.match(panel, /ConversationView/, "TaskDetailPanel must import and render ConversationView");
+  assert.match(panel, /taskId=\{task\.id\}/, "must pass task.id as taskId");
+  assert.match(panel, /rootId=\{task\.root_id\}/, "must pass task.root_id as rootId");
+  assert.match(panel, /disabled=\{terminal\}/, "must disable input for terminal tasks");
+  assert.match(panel, /onOpenSession=\{onOpenSession\}/, "must wire onOpenSession through");
+});
+
+test("TaskDetailPanel does not import from services directly", () => {
+  const panel = read("components/task/TaskDetailPanel.tsx");
+  assert.doesNotMatch(panel, /from ["'][^"']*services\/activities/, "components must not import activities service directly");
+});
