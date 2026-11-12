@@ -318,3 +318,4 @@ func TrimTaskSessionNameSuffix(name string, taskNumber int) string {
 	}
 	return strings.TrimSpace(trimmed[:idx])
 }
+
