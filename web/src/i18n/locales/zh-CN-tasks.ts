@@ -266,4 +266,11 @@ export const zhCNTasks = {
   "task.workflowAuthoring.applying": "应用中…",
   "task.workflowAuthoring.noSelection": "先勾选要应用的改动。",
   "task.workflowAuthoring.dirtyBlocked": "先保存或放弃画布改动，再应用提案。",
+  "task.workflowChoice": "工作流选择",
+  "task.workflowChoice.empty": "自动选择",
+  "task.workflowChoice.specified": "指定工作流",
+  "task.workflowChoice.disabled": "禁用工作流",
+  "task.workflowRecommended": "推荐: {name}",
+  "task.selectWorkflow": "选择工作流",
+  "task.noAvailableWorkflows": "暂无可用工作流",
 } as const;

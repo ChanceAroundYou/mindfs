@@ -45,6 +45,30 @@ export type WorkflowVersion = {
   published_at?: string;
 };
 
+/**
+ * Workflow 的可读元数据（控制面 `workflows.json` 的 `meta` 段）。
+ *
+ * 读取端是对话式任务创建时的自动选择；`recommended` / `match_score` 是
+ * `/api/workflows/available?user_input=` 的**瞬时**回包字段，不落库。
+ */
+export type WorkflowMeta = {
+  id: string;
+  name: string;
+  description: string;
+  use_cases: string[];
+  tags: string[];
+  auto_select_enabled?: boolean;
+  recommended?: boolean;
+  match_score?: number;
+};
+
+/** `/api/workflows/recommend` 的回包：推荐一个已发布 workflow 并给出理由。 */
+export type WorkflowRecommendation = {
+  workflow_id: string;
+  reason: string;
+  match_score: number;
+};
+
 /** Loop 的内部图；`params.graph` 是与后端 workflow_engine.go 约定的唯一持久化键。 */
 export function loopInnerGraph(node: WorkflowNodeDef | null | undefined): WorkflowGraph | undefined {
   const raw = node?.params?.graph;

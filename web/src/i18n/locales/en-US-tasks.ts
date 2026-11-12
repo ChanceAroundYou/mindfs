@@ -267,4 +267,11 @@ export const enUSTasks = {
   "task.workflowAuthoring.applying": "Applying…",
   "task.workflowAuthoring.noSelection": "Select the changes you want to apply.",
   "task.workflowAuthoring.dirtyBlocked": "Save or discard the canvas changes before applying the proposal.",
+  "task.workflowChoice": "Workflow choice",
+  "task.workflowChoice.empty": "Auto select",
+  "task.workflowChoice.specified": "Specify workflow",
+  "task.workflowChoice.disabled": "Disable workflow",
+  "task.workflowRecommended": "Recommended: {name}",
+  "task.selectWorkflow": "Select workflow",
+  "task.noAvailableWorkflows": "No workflows available",
 } as const;
