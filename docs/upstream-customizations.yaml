@@ -37,6 +37,8 @@ groups:
       - docs/upstream-customizations.yaml
       - .claude/rules/
       - docs/superpowers/
+      - docs/features/
+      - CHANGELOG.md
       - docs/main-view-switching-design.md
       - docs/capacitor-shell-prd.md
       - docs/message-change-history.md
