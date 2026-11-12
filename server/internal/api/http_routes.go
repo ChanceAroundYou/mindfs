@@ -105,6 +105,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/scheduled-agent-tasks/{id}/run", h.handleScheduledAgentTaskRun)
 	r.Get("/api/workflows", h.handleWorkflowsList)
 	r.Get("/api/workflows/published", h.handleWorkflowVersionsList)
+	r.Get("/api/workflows/available", h.handleWorkflowsAvailable)
+	r.Post("/api/workflows/recommend", h.handleWorkflowRecommend)
 	r.Post("/api/workflows", h.handleWorkflowDraftCreate)
 	r.Post("/api/workflows/authoring/proposals", h.handleWorkflowCreateAuthoringProposal)
 	r.Post("/api/workflows/authoring/validate", h.handleWorkflowCreateAuthoringValidate)

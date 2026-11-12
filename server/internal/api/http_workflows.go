@@ -51,6 +51,92 @@ func (h *HTTPHandler) handleWorkflowVersionsList(w http.ResponseWriter, r *http.
 	respondJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// workflowRecommender resolves the recommender for one request. A nil
+// h.WorkflowLLM makes the recommender fall back to the first available
+// workflow, which is today's production behavior.
+func (h *HTTPHandler) workflowRecommender(s *kanban.WorkflowStore) *kanban.WorkflowRecommender {
+	return kanban.NewWorkflowRecommender(s, h.WorkflowLLM)
+}
+
+// workflowAvailableItem is the response shape for /api/workflows/available. The
+// recommendation hints are transient response fields; they never reach the
+// persisted WorkflowMeta.
+type workflowAvailableItem struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	UseCases          []string `json:"use_cases"`
+	Tags              []string `json:"tags"`
+	AutoSelectEnabled bool     `json:"auto_select_enabled"`
+	Recommended       bool     `json:"recommended,omitempty"`
+	MatchScore        float64  `json:"match_score,omitempty"`
+}
+
+func (h *HTTPHandler) handleWorkflowsAvailable(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	workflows, err := s.ListAvailable(r.Context())
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	var rec *kanban.WorkflowRecommendation
+	if userInput := strings.TrimSpace(r.URL.Query().Get("user_input")); userInput != "" {
+		// 推荐失败不阻断列表：端点仍返回可用 workflow，只是没有标记。
+		rec, _ = h.workflowRecommender(s).RecommendWorkflow(r.Context(), userInput)
+	}
+	items := make([]workflowAvailableItem, 0, len(workflows))
+	for _, wf := range workflows {
+		item := workflowAvailableItem{
+			ID:                wf.ID,
+			Name:              wf.Name,
+			Description:       wf.Description,
+			UseCases:          wf.UseCases,
+			Tags:              wf.Tags,
+			AutoSelectEnabled: wf.AutoSelectEnabled,
+		}
+		if rec != nil && rec.WorkflowID == wf.ID {
+			item.Recommended = true
+			item.MatchScore = rec.MatchScore
+		}
+		items = append(items, item)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"workflows": items})
+}
+
+func (h *HTTPHandler) handleWorkflowRecommend(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		UserInput   string `json:"user_input"`
+		TaskContext *struct {
+			TaskID string `json:"task_id"`
+		} `json:"task_context"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	if strings.TrimSpace(req.UserInput) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("user_input required"))
+		return
+	}
+	rec, err := h.workflowRecommender(s).RecommendWorkflow(r.Context(), req.UserInput)
+	if err != nil {
+		if errors.Is(err, kanban.ErrNoAvailableWorkflows) {
+			respondError(w, http.StatusNotFound, err)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"recommended": rec})
+}
+
 func (h *HTTPHandler) handleWorkflowDraftCreate(w http.ResponseWriter, r *http.Request) {
 	s, ok := h.workflowStore(w)
 	if !ok {

@@ -11,6 +11,7 @@ import (
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/githubimport"
+	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/preferences"
 
@@ -30,6 +31,9 @@ type HTTPHandler struct {
 	// **只为测试与不是「一键关闭」**：真正的关闭是回滚提交；这里给一个可覆写的
 	// 入口，是为了让契约测试能在小 fixture 上验证裁剪而不用造 400 块。
 	WindowBlockBudget int
+	// WorkflowLLM 是 workflow 推荐使用的语言模型客户端。nil 表示没有模型可用，
+	// 推荐器退化为「第一个可自动选择的 workflow」；测试与后续接入点通过它注入。
+	WorkflowLLM kanban.LLMClient
 }
 
 const (
