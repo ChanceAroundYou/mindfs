@@ -25,7 +25,7 @@ func commentsHandler(t *testing.T) (http.Handler, *kanban.Service, fs.RootInfo, 
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
 		RootID: root.ID,
 		Stages: []kanban.StageTemplate{{Name: "u", Role: "user"}},
-		Input:  "hi",
+		Input:  "", // empty to avoid triggering background activity goroutine
 	})
 	if err != nil {
 		t.Fatal(err)

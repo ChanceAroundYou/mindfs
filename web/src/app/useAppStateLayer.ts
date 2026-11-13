@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import { FileEditStore } from "../services/fileEditing";
 import { bootstrapService } from "../services/net/bootstrap";
 import { fetchEditableFile, saveTextFile } from "../services/file";
@@ -177,7 +177,12 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setTaskWorktreeBranches,
     setTaskWorktreeBranchesLoading,
     setTaskWorktreeBranchError,
-    setSelectedTaskId: setSelectedKanbanTaskId,
+    setSelectedTaskId: (value: SetStateAction<string | null>) => {
+      setSelectedKanbanTaskId((prev) => {
+        const next = typeof value === 'function' ? value(prev) : value;
+        return next ?? "";
+      });
+    },
     getNodeIdForRoot,
     t,
     applyTaskDetails,

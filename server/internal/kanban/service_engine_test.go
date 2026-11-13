@@ -19,7 +19,7 @@ func newMigratableService(t *testing.T) (*Service, string, Task) {
 		RootID: root.ID,
 		Name:   "migrate me",
 		Stages: []StageTemplate{userStage("Describe"), agentStage("Fix", "fix {previous_input}")},
-		Input:  "broken",
+		Input:  "", // empty to avoid triggering background activity goroutine
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)

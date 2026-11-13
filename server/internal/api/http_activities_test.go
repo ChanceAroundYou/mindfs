@@ -40,7 +40,7 @@ func activitiesHandler(t *testing.T) (http.Handler, *kanban.Service, string, str
 	detail, err := svc.CreateTask(ctx, kanban.CreateTaskInput{
 		RootID: root.ID,
 		Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}},
-		Input:  "hi",
+		Input:  "", // empty to avoid triggering background activity goroutine
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)

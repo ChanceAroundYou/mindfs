@@ -165,7 +165,7 @@ func TestWorkflowDraftLoopInnerGraphRoundTrip(t *testing.T) {
 
 func TestWorkflowRunGetRejectsMismatchedRoot(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: "hello"})
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestWorkflowRunCreateAndEditCAS(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
 	doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf2","author":"agent","graph":`+wfGraphJSON+`}`)
 	doReq(t, h, http.MethodPost, "/api/workflows/wf2/publish", `{"confirmed_revision":"r1","published_by":"user"}`)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: "hi"})
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: ""}) // empty to avoid triggering background activity goroutine
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestWorkflowNodeRunRetryEndpointCreatesLinkedAttempt(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
 	doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf2","author":"agent","graph":`+wfGraphJSON+`}`)
 	doReq(t, h, http.MethodPost, "/api/workflows/wf2/publish", `{"confirmed_revision":"r1","published_by":"user"}`)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: "hi"})
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: ""}) // empty to avoid triggering background activity goroutine
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestWorkflowTaskCompleteAndFailFreezeRun(t *testing.T) {
 			detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
 				RootID: rootID,
 				Stages: []kanban.StageTemplate{{Name: "approval", Role: kanban.RoleUser, PromptTemplate: "approve?"}},
-				Input:  "hi",
+				Input:  "", // empty to avoid triggering background activity goroutine
 			})
 			if err != nil {
 				t.Fatalf("CreateTask: %v", err)
@@ -372,7 +372,7 @@ func TestWorkflowTaskPauseResumeCancelMapToRunLifecycle(t *testing.T) {
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
 		RootID: rootID,
 		Stages: []kanban.StageTemplate{{Name: "approval", Role: kanban.RoleUser, PromptTemplate: "approve?"}},
-		Input:  "hi",
+		Input:  "", // empty to avoid triggering background activity goroutine
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
