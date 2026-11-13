@@ -1,5 +1,4 @@
-import type React from "react";
-import { useState } from "react";
+import React, { useState } from "react";
 import { useI18n } from "../../i18n/index";
 import type { WorkflowRecommendation } from "../../shared/workflowModel";
 import { WorkflowPickerDialog } from "./WorkflowPickerDialog";
@@ -15,12 +14,14 @@ export type WorkflowSelectorProps = {
 };
 
 /**
- * 对话式任务创建时的 workflow 三态选择：
- * - empty：交给自动选择（可显示推荐芯片）
- * - specified：手动指定一个已发布 workflow（弹窗里选）
- * - disabled：不跑 workflow，直接对话
+ * 对话式任务的工作流选择器：
+ * - 默认模式：简洁提示 + "高级选项"链接
+ * - 展开模式：三种执行方式竖排显示
  *
- * `versionId` 由组合层持有：本组件只负责提出选择，不保存。
+ * 设计理念：
+ * 1. 90%的用户只需要"发送"，AI自动处理
+ * 2. 高级用户可以展开指定工作流或禁用
+ * 3. 移动端友好，竖排布局不越界
  */
 export function WorkflowSelector({
   choice,
@@ -30,50 +31,109 @@ export function WorkflowSelector({
 }: WorkflowSelectorProps) {
   const { t } = useI18n();
   const [showPicker, setShowPicker] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(choice !== "empty");
+
+  // 如果已经选了非默认项，自动展开高级选项
+  React.useEffect(() => {
+    if (choice !== "empty") {
+      setShowAdvanced(true);
+    }
+  }, [choice]);
 
   return (
-    <div className="workflow-selector" data-testid="workflow-selector">
-      <div role="radiogroup" aria-label={t("task.workflowChoice")} style={groupStyle}>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={choice === "empty"}
-          onClick={() => onChange("empty", "")}
-          data-choice="empty"
-          style={choice === "empty" ? { ...optionStyle, ...optionSelectedStyle } : optionStyle}
-        >
-          {t("task.workflowChoice.empty")}
-          {recommendation && (
-            <span className="recommendation-chip" style={chipStyle}>
-              {t("task.workflowRecommended", { name: recommendation.workflow_id })}
+    <div className="workflow-selector" data-testid="workflow-selector" style={containerStyle}>
+      {/* 默认状态：简洁提示 */}
+      {!showAdvanced && (
+        <div style={defaultHintStyle}>
+          <span style={hintTextStyle}>
+            {recommendation
+              ? t("task.workflowAutoWithRecommendation", { name: recommendation.workflow_id })
+              : t("task.workflowAutoMode")}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(true)}
+            style={advancedToggleStyle}
+            data-testid="workflow-show-advanced"
+          >
+            {t("task.workflowAdvancedOptions")} ▼
+          </button>
+        </div>
+      )}
+
+      {/* 高级选项：展开后显示三态 */}
+      {showAdvanced && (
+        <div style={advancedPanelStyle} data-testid="workflow-advanced-panel">
+          <div style={advancedHeaderStyle}>
+            <span style={headerLabelStyle}>
+              {t("task.workflowMode")}
             </span>
-          )}
-        </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAdvanced(false);
+                onChange("empty", "");
+              }}
+              style={collapseButtonStyle}
+              data-testid="workflow-use-default"
+            >
+              {t("task.workflowUseDefault")} ▲
+            </button>
+          </div>
 
-        <button
-          type="button"
-          role="radio"
-          aria-checked={choice === "specified"}
-          onClick={() => setShowPicker(true)}
-          data-choice="specified"
-          data-version-id={versionId || undefined}
-          style={choice === "specified" ? { ...optionStyle, ...optionSelectedStyle } : optionStyle}
-        >
-          {t("task.workflowChoice.specified")}
-          {versionId && <span style={versionStyle}>{versionId}</span>}
-        </button>
+          <div role="radiogroup" aria-label={t("task.workflowChoice")} style={groupStyle}>
+            {/* 选项1：智能选择 */}
+            <label style={radioLabelStyle(choice === "empty")} data-testid="workflow-choice-auto">
+              <input
+                type="radio"
+                checked={choice === "empty"}
+                onChange={() => onChange("empty", "")}
+                data-choice="empty"
+                style={radioInputStyle}
+              />
+              <div style={radioContentStyle}>
+                <span style={radioTitleStyle}>{t("task.workflowChoice.auto")}</span>
+                {recommendation && choice === "empty" && (
+                  <span style={recommendChipStyle}>
+                    {recommendation.workflow_id}
+                  </span>
+                )}
+              </div>
+            </label>
 
-        <button
-          type="button"
-          role="radio"
-          aria-checked={choice === "disabled"}
-          onClick={() => onChange("disabled", "")}
-          data-choice="disabled"
-          style={choice === "disabled" ? { ...optionStyle, ...optionSelectedStyle } : optionStyle}
-        >
-          {t("task.workflowChoice.disabled")}
-        </button>
-      </div>
+            {/* 选项2：指定工作流 */}
+            <label style={radioLabelStyle(choice === "specified")} data-testid="workflow-choice-manual">
+              <input
+                type="radio"
+                checked={choice === "specified"}
+                onChange={() => setShowPicker(true)}
+                data-choice="specified"
+                style={radioInputStyle}
+              />
+              <div style={radioContentStyle}>
+                <span style={radioTitleStyle}>{t("task.workflowChoice.manual")}</span>
+                {versionId && choice === "specified" && (
+                  <span style={versionChipStyle}>{versionId}</span>
+                )}
+              </div>
+            </label>
+
+            {/* 选项3：纯对话模式 */}
+            <label style={radioLabelStyle(choice === "disabled")} data-testid="workflow-choice-none">
+              <input
+                type="radio"
+                checked={choice === "disabled"}
+                onChange={() => onChange("disabled", "")}
+                data-choice="disabled"
+                style={radioInputStyle}
+              />
+              <div style={radioContentStyle}>
+                <span style={radioTitleStyle}>{t("task.workflowChoice.none")}</span>
+              </div>
+            </label>
+          </div>
+        </div>
+      )}
 
       {showPicker && (
         <WorkflowPickerDialog
@@ -89,39 +149,127 @@ export function WorkflowSelector({
   );
 }
 
-// userInput 预留给「先输入再推荐」的调用方：推荐结果由上层通过 recommendation 传入，
-// 选择器自身不发请求，避免一个纯展示组件被绑到控制面请求上。
+// Styles
 
-const groupStyle: React.CSSProperties = {
+const containerStyle: React.CSSProperties = {
   display: "flex",
-  flexWrap: "wrap",
+  flexDirection: "column",
   gap: 8,
-  alignItems: "center",
 };
 
-const optionStyle: React.CSSProperties = {
-  display: "inline-flex",
+const defaultHintStyle: React.CSSProperties = {
+  display: "flex",
   alignItems: "center",
-  gap: 6,
-  padding: "5px 10px",
-  borderRadius: 999,
-  border: "1px solid var(--border, rgba(148, 163, 184, 0.45))",
-  background: "transparent",
-  color: "inherit",
+  gap: 8,
+  flexWrap: "wrap",
+  padding: "6px 0",
+};
+
+const hintTextStyle: React.CSSProperties = {
   fontSize: 12,
+  color: "var(--text-secondary)",
+  flex: "1 1 auto",
+};
+
+const advancedToggleStyle: React.CSSProperties = {
+  fontSize: 11,
+  padding: "3px 8px",
+  borderRadius: 4,
+  border: "1px solid var(--border-color)",
+  background: "transparent",
+  color: "var(--accent-color)",
+  cursor: "pointer",
+  flexShrink: 0,
+};
+
+const advancedPanelStyle: React.CSSProperties = {
+  border: "1px solid var(--border-color)",
+  borderRadius: 8,
+  padding: 12,
+  background: "var(--panel-bg)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+};
+
+const advancedHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: 4,
+};
+
+const headerLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: "var(--text-color)",
+};
+
+const collapseButtonStyle: React.CSSProperties = {
+  fontSize: 11,
+  padding: "2px 6px",
+  borderRadius: 4,
+  border: "none",
+  background: "transparent",
+  color: "var(--accent-color)",
   cursor: "pointer",
 };
 
-const optionSelectedStyle: React.CSSProperties = {
-  borderColor: "var(--accent, #3b82f6)",
-  boxShadow: "0 0 0 1px var(--accent, #3b82f6) inset",
+const groupStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
 };
 
-const chipStyle: React.CSSProperties = {
+const radioLabelStyle = (checked: boolean): React.CSSProperties => ({
+  display: "flex",
+  alignItems: "flex-start",
+  gap: 10,
+  padding: "10px 12px",
+  borderRadius: 6,
+  border: `1.5px solid ${checked ? "var(--accent-color)" : "var(--border-color)"}`,
+  background: checked ? "var(--accent-bg, rgba(59, 130, 246, 0.08))" : "transparent",
+  cursor: "pointer",
+  transition: "all 0.15s ease",
+  fontSize: 13,
+});
+
+const radioInputStyle: React.CSSProperties = {
+  margin: "2px 0 0 0",
+  cursor: "pointer",
+  flexShrink: 0,
+};
+
+const radioContentStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  flex: 1,
+  minWidth: 0,
+};
+
+const radioTitleStyle: React.CSSProperties = {
+  fontWeight: 500,
+  color: "var(--text-color)",
+};
+
+const recommendChipStyle: React.CSSProperties = {
   fontSize: 11,
-  padding: "1px 6px",
-  borderRadius: 999,
-  background: "var(--tag-bg, rgba(148, 163, 184, 0.2))",
+  padding: "2px 6px",
+  borderRadius: 4,
+  background: "var(--accent-color)",
+  color: "#fff",
+  alignSelf: "flex-start",
+  marginTop: 2,
 };
 
-const versionStyle: React.CSSProperties = { fontSize: 11, opacity: 0.7 };
+const versionChipStyle: React.CSSProperties = {
+  fontSize: 11,
+  padding: "2px 6px",
+  borderRadius: 4,
+  background: "var(--tag-bg, rgba(148, 163, 184, 0.2))",
+  color: "var(--text-secondary)",
+  alignSelf: "flex-start",
+  marginTop: 2,
+  fontFamily: "monospace",
+};

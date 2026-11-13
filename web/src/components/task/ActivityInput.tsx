@@ -52,22 +52,14 @@ export function ActivityInput({
       data-testid="activity-input"
       style={{
         border: "1px solid var(--border-color)",
-        borderRadius: 8,
-        padding: 10,
-        background: "var(--panel-bg)",
+        borderRadius: 10,
+        padding: 12,
+        background: "var(--content-bg)",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 10,
       }}
     >
-      <WorkflowSelector
-        choice={choice}
-        versionId={versionId}
-        userInput={body}
-        recommendation={recommendation}
-        onChange={onWorkflowChange}
-      />
-
       <textarea
         value={body}
         onChange={(event) => onBodyChange(event.target.value)}
@@ -81,38 +73,52 @@ export function ActivityInput({
         disabled={disabled || sending}
         rows={3}
         style={{
-          minHeight: 60,
-          fontSize: 12,
-          padding: 8,
+          minHeight: 70,
+          fontSize: 13,
+          padding: 10,
           border: "1px solid var(--border-color)",
-          borderRadius: 4,
+          borderRadius: 6,
           resize: "vertical",
-          background: "var(--content-bg)",
+          background: "var(--panel-bg)",
           color: "inherit",
+          lineHeight: 1.5,
         }}
       />
 
+      <WorkflowSelector
+        choice={choice}
+        versionId={versionId}
+        userInput={body}
+        recommendation={recommendation}
+        onChange={onWorkflowChange}
+      />
+
       {error && (
-        <div data-testid="input-error" style={{ fontSize: 11, color: "#dc2626" }}>
+        <div data-testid="input-error" style={{ fontSize: 12, color: "#dc2626", padding: "4px 0" }}>
           {error}
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+          {canSend ? "⌘+Enter 发送" : ""}
+        </span>
         <button
           type="button"
           data-testid="activity-send"
           onClick={onSend}
           disabled={!canSend}
           style={{
-            padding: "6px 12px",
-            fontSize: 12,
-            borderRadius: 4,
+            padding: "8px 16px",
+            fontSize: 13,
+            fontWeight: 500,
+            borderRadius: 6,
             border: "none",
-            background: "var(--accent-color)",
+            background: canSend ? "var(--accent-color)" : "var(--border-color)",
             color: "#fff",
             cursor: canSend ? "pointer" : "not-allowed",
-            opacity: canSend ? 1 : 0.5,
+            opacity: canSend ? 1 : 0.6,
+            transition: "all 0.15s ease",
           }}
         >
           {sending ? t("task.activity.sending") : t("task.activity.send")}

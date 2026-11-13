@@ -111,30 +111,45 @@ const render = (children) => renderToString(React.createElement(I18nProvider, nu
 const renderSelector = (props) => render(React.createElement(WorkflowSelector, props));
 
 test("WorkflowSelector renders the three workflow choices in order", () => {
-  const html = renderSelector({ choice: "empty", versionId: "", onChange: () => {} });
-  assert.match(html, /data-testid="workflow-selector"/);
-  assert.equal((html.match(/role="radio"/g) || []).length, 3);
-  assert.deepEqual([...html.matchAll(/data-choice="([^"]+)"/g)].map((m) => m[1]), [
+  // 新UI：默认状态下三个选项是隐藏的，只有非empty时才自动展开
+  const htmlCollapsed = renderSelector({ choice: "empty", versionId: "", onChange: () => {} });
+  assert.match(htmlCollapsed, /data-testid="workflow-selector"/);
+  // 默认状态：显示简洁提示，不显示三个radio
+  assert.match(htmlCollapsed, /data-testid="workflow-show-advanced"/);
+  assert.equal((htmlCollapsed.match(/role="radio"/g) || []).length, 0);
+
+  // 非empty时会自动展开，显示三个选项
+  const htmlExpanded = renderSelector({ choice: "specified", versionId: "wf-v1", onChange: () => {} });
+  assert.match(htmlExpanded, /data-testid="workflow-advanced-panel"/);
+  assert.equal((htmlExpanded.match(/type="radio"/g) || []).length, 3);
+  assert.deepEqual([...htmlExpanded.matchAll(/data-choice="([^"]+)"/g)].map((m) => m[1]), [
     "empty",
     "specified",
     "disabled",
   ]);
-  assert.match(html, /aria-checked="true"[^>]*data-choice="empty"/);
 });
 
 test("WorkflowSelector marks the active choice", () => {
-  for (const choice of ["empty", "specified", "disabled"]) {
-    const html = renderSelector({ choice, versionId: "", onChange: () => {} });
-    assert.equal((html.match(/aria-checked="true"/g) || []).length, 1, `${choice} must be the only checked radio`);
-    assert.match(html, new RegExp(`aria-checked="true"[^>]*data-choice="${choice}"`));
+  // 新UI：只有非empty时才展开显示radio按钮
+  // empty状态下不显示radio，所以只测试specified和disabled
+  for (const choice of ["specified", "disabled"]) {
+    const html = renderSelector({ choice, versionId: choice === "specified" ? "wf-v1" : "", onChange: () => {} });
+    assert.equal((html.match(/checked/g) || []).length, 1, `${choice} must be the only checked radio`);
+    // HTML中checked可能在data-choice之前或之后，所以用更灵活的匹配
+    assert.match(html, new RegExp(`data-choice="${choice}"[^>]*checked|checked[^>]*data-choice="${choice}"`));
   }
+
+  // empty状态下不显示radio，而是显示默认提示
+  const htmlEmpty = renderSelector({ choice: "empty", versionId: "", onChange: () => {} });
+  assert.equal((htmlEmpty.match(/type="radio"/g) || []).length, 0);
+  assert.match(htmlEmpty, /data-testid="workflow-show-advanced"/);
 });
 
 test("WorkflowSelector shows the recommendation chip", () => {
   const rec = { workflow_id: "wf-debug", reason: "matches", match_score: 0.9 };
   const html = renderSelector({ choice: "empty", versionId: "", recommendation: rec, onChange: () => {} });
-  // 断言参数化后的结果，不依赖宿主机语言（Node 的 navigator.language 通常是 en-US）。
-  assert.match(html, /(?:推荐: wf-debug|Recommended: wf-debug)/);
+  // 新UI：推荐信息显示在默认提示中，格式为 "✨ AI recommends: {name}" 或 "✨ AI 推荐使用：{name}"
+  assert.match(html, /(?:AI recommends: wf-debug|AI 推荐使用：wf-debug)/);
 });
 
 // Node 环境下没有 DOM，点击由浏览器验证；这里钉住每个按钮都接到了 onChange，
