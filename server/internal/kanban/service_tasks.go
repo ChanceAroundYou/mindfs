@@ -74,18 +74,23 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		return TaskDetail{}, err
 	}
 
-	// 新建任务时，如果有输入内容就创建初始 user_message activity
+	// 新建任务时，如果有输入内容就在后台创建初始 user_message activity
+	// （必须在 CreateTask 事务外，否则 ExecuteActivityWorkflow → WakeWorkflowRun 会遇到 readonly database）
 	input := strings.TrimSpace(in.Input)
 	if input != "" {
-		activitySvc, actErr := s.ActivityServiceForRoot(rootID)
-		if actErr != nil {
-			log.Printf("[kanban] task.create.activity_init.error root=%s task=%s err=%v", rootID, taskID, actErr)
-		} else {
-			// 使用 empty workflow choice 创建初始对话：推荐一个已发布 workflow
-			if _, _, actErr := activitySvc.CreateUserActivity(ctx, taskID, input, "empty", nil); actErr != nil {
-				log.Printf("[kanban] task.create.activity_init.create_failed root=%s task=%s err=%v", rootID, taskID, actErr)
+		go func() {
+			// 后台 goroutine 用独立 context（不继承事务上下文）
+			bgCtx := context.Background()
+			activitySvc, actErr := s.ActivityServiceForRoot(rootID)
+			if actErr != nil {
+				log.Printf("[kanban] task.create.activity_init.error root=%s task=%s err=%v", rootID, taskID, actErr)
+			} else {
+				// 使用 empty workflow choice 创建初始对话：推荐一个已发布 workflow
+				if _, _, actErr := activitySvc.CreateUserActivity(bgCtx, taskID, input, "empty", nil); actErr != nil {
+					log.Printf("[kanban] task.create.activity_init.create_failed root=%s task=%s err=%v", rootID, taskID, actErr)
+				}
 			}
-		}
+		}()
 	}
 
 	// 首段勾了「立即执行」就直接推进到下一个 agent 段跑起来，没勾就安静停在
