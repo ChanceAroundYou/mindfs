@@ -177,6 +177,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setTaskWorktreeBranches,
     setTaskWorktreeBranchesLoading,
     setTaskWorktreeBranchError,
+    setSelectedTaskId: setSelectedKanbanTaskId,
     getNodeIdForRoot,
     t,
     applyTaskDetails,

@@ -73,6 +73,21 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 	if _, err := store.CreateTask(ctx, task, run, event); err != nil {
 		return TaskDetail{}, err
 	}
+
+	// 新建任务时，如果有输入内容就创建初始 user_message activity
+	input := strings.TrimSpace(in.Input)
+	if input != "" {
+		activitySvc, actErr := s.ActivityServiceForRoot(rootID)
+		if actErr != nil {
+			log.Printf("[kanban] task.create.activity_init.error root=%s task=%s err=%v", rootID, taskID, actErr)
+		} else {
+			// 使用 empty workflow choice 创建初始对话：推荐一个已发布 workflow
+			if _, _, actErr := activitySvc.CreateUserActivity(ctx, taskID, input, "empty", nil); actErr != nil {
+				log.Printf("[kanban] task.create.activity_init.create_failed root=%s task=%s err=%v", rootID, taskID, actErr)
+			}
+		}
+	}
+
 	// 首段勾了「立即执行」就直接推进到下一个 agent 段跑起来，没勾就安静停在
 	//「未开始」（等用户点「立即执行」）。RunNow 会把当前 user 段一并批准掉，
 	// 并替我们兜住 worktree 建不起来的情况。
@@ -80,7 +95,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 	// 输入为空时不推进：目标段多半引用 {previous_input}，RunNow 会因
 	//「current stage input required」失败。服务端不能假设只有前端一个调用方，
 	// 那种情况应当停在「未开始」而不是让创建请求报错。
-	if first.StartImmediately && len(stages) > 1 && strings.TrimSpace(in.Input) != "" {
+	if first.StartImmediately && len(stages) > 1 && input != "" {
 		if _, runErr := s.RunNow(ctx, MoveInput{RootID: rootID, TaskID: taskID, Reason: "start_immediately"}); runErr != nil {
 			log.Printf("[kanban] task.start_immediately.error root=%s task=%s err=%v", rootID, taskID, runErr)
 		}

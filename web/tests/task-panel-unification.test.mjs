@@ -203,7 +203,7 @@ assert.doesNotMatch(
 // 服务端开跑只看首段的 start_immediately，绝不看 user 段的 auto_advance。
 assert.match(
   serviceGo,
-  /if first\.StartImmediately && len\(stages\) > 1 && strings\.TrimSpace\(in\.Input\) != "" \{/,
+  /if first\.StartImmediately && len\(stages\) > 1 && input != "" \{/,
   "CreateTask must auto-start off the first stage's start_immediately",
 );
 assert.doesNotMatch(

@@ -44,6 +44,7 @@ export interface UseTaskComposerParams {
   setTaskWorktreeBranches: Dispatch<SetStateAction<GitBranchesPayload>>;
   setTaskWorktreeBranchesLoading: Dispatch<SetStateAction<boolean>>;
   setTaskWorktreeBranchError: Dispatch<SetStateAction<string>>;
+  setSelectedTaskId?: Dispatch<SetStateAction<string | null>>;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   t: ReturnType<typeof useI18n>["t"];
   applyTaskDetails: (rootId: string, details: import("../services/tasks").TaskDetail[], persist?: boolean) => void;
@@ -434,6 +435,9 @@ export function useTaskComposer(params: UseTaskComposerParams) {
       }
 
       closeTaskEditDialog();
+
+      // Auto-open the task detail panel after creation
+      params.setSelectedTaskId?.(detail.task.id);
 
     } catch (err) {
 

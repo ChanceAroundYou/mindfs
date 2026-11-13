@@ -25,6 +25,12 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	broadcaster := s.activityBroadcaster
 	s.mu.Unlock()
 	svc.SetBroadcaster(broadcaster)
+	// 装配 WorkflowRun 执行端口：通过 Service.WakeWorkflowRun 触发实际执行
+	svc.SetWorkflowExecutor(s)
+	// 装配合并分支解析器
+	svc.SetBranchResolver(func(ctx context.Context, task Task, graph WorkflowDefinition) (string, error) {
+		return s.snapshotRunIntegrationBranch(ctx, task, graph)
+	})
 	return svc, nil
 }
 
@@ -84,4 +90,22 @@ func (s *Service) GetTaskActivity(ctx context.Context, rootID, taskID, activityI
 		return nil, ErrActivityNotFound
 	}
 	return activity, nil
+}
+
+// ExecuteActivityWorkflow implements ActivityWorkflowExecutor by triggering
+// the workflow runtime driver (WakeWorkflowRun).
+func (s *Service) ExecuteActivityWorkflow(ctx context.Context, task Task, run *WorkflowRun) (summary string, err error) {
+	if err := s.WakeWorkflowRun(ctx, task.RootID, task.ID, "activity_created"); err != nil {
+		return "", err
+	}
+	// The driver runs asynchronously; the summary will be filled in when the run completes
+	return "正在执行工作流...", nil
+}
+
+// ExecuteActivityWorkflowWithProgress implements ActivityWorkflowProgressExecutor
+// by triggering the workflow runtime driver with progress callbacks.
+func (s *Service) ExecuteActivityWorkflowWithProgress(ctx context.Context, task Task, run *WorkflowRun, onNodeStarted func(nodeID string)) (summary string, err error) {
+	// For now, just delegate to the basic version
+	// TODO: Wire up actual progress reporting from the workflow driver
+	return s.ExecuteActivityWorkflow(ctx, task, run)
 }
