@@ -88,7 +88,6 @@ export function ActivityInput({
       <WorkflowSelector
         choice={choice}
         versionId={versionId}
-        userInput={body}
         recommendation={recommendation}
         onChange={onWorkflowChange}
       />

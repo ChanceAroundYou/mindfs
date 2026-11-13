@@ -132,7 +132,7 @@ export function ConversationView({
   return (
     <div
       data-testid="conversation-view"
-      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+      style={{ display: "flex", flexDirection: "column", gap: 16 }}
     >
       <ConversationMessages
         activities={activities}
@@ -145,7 +145,16 @@ export function ConversationView({
       />
 
       {disabled ? (
-        <div data-testid="conversation-disabled" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+        <div
+          data-testid="conversation-disabled"
+          style={{
+            fontSize: 12,
+            color: "var(--text-secondary)",
+            textAlign: "center",
+            padding: "12px 0",
+            borderTop: "1px solid var(--border-color)",
+          }}
+        >
           {t("task.activity.disabled")}
         </div>
       ) : (

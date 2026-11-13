@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -115,6 +116,96 @@ func WorkflowNodePrompt(node WorkflowNode) (string, error) {
 	return p, nil
 }
 
+// WorkflowPromptPlaceholders are the substitutions an agent node may use in
+// params.prompt. They deliberately reuse the legacy stage template names: the
+// built-in workflows ship `{"prompt":"{previous_input}"}`, and one placeholder
+// must never mean two things depending on which execution path ran it.
+var WorkflowPromptPlaceholders = []string{"previous_input", "task_initial_input", "task_number"}
+
+// resolveWorkflowNodePrompt substitutes the placeholders in one agent node's
+// prompt. Without this the built-in workflows sent the literal string
+// `{previous_input}` to the agent — the user's message never reached the turn.
+//
+// A placeholder that cannot be resolved is a hard error: sending the raw
+// `{previous_input}` text is worse than failing, because the agent answers
+// something plausible about a task it never saw.
+func (s *Service) resolveWorkflowNodePrompt(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task, node WorkflowNode, prompt string) (string, error) {
+	values := WorkflowPromptValues(ctx, store, run, task)
+	// 替换发生在 BuildAgentPrompt 里，空值会把占位符「悄悄抹掉」，留下一条
+	// 没有需求的空 prompt。所以先按空值判定失败，再替换。
+	for _, key := range WorkflowPromptPlaceholders {
+		if strings.Contains(prompt, "{"+key+"}") && strings.TrimSpace(values[key]) == "" {
+			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：该任务没有可用的用户输入", node.ID, key)
+		}
+	}
+	resolved := BuildAgentPrompt(prompt, values, TaskControlPromptContext{})
+	for _, key := range WorkflowPromptPlaceholders {
+		if strings.Contains(resolved, "{"+key+"}") {
+			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：该任务没有可用的用户输入", node.ID, key)
+		}
+	}
+	return resolved, nil
+}
+
+// WorkflowPromptValues builds the placeholder values for a workflow run.
+//
+// previous_input is the user activity that triggered the run (run.ActivityID).
+// Runs started without a user message (agent_auto / scheduled) fall back to the
+// task's most recent user input, which is what "the input this node works on"
+// means for them. task_initial_input is the task's first user input — same
+// split as the legacy promptValues.
+func WorkflowPromptValues(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task) map[string]string {
+	values := map[string]string{
+		"previous_input":     "",
+		"task_initial_input": "",
+		"task_number":        strconv.Itoa(task.TaskNumber),
+	}
+	if store == nil {
+		return values
+	}
+	activities, err := NewActivityStore(store.db).List(ctx, task.ID)
+	if err != nil {
+		// 取不到活动流时保持空值：调用方会把未解析的占位符变成显式错误，
+		// 而不是静默把字面量发给 agent。
+		return values
+	}
+	triggerID := strings.TrimSpace(run.ActivityID)
+	triggerBody := ""
+	lastBody := ""
+	for _, activity := range activities {
+		if activity == nil || !isUserInputActivity(activity) {
+			continue
+		}
+		body := strings.TrimSpace(activity.Body)
+		if body == "" {
+			continue
+		}
+		if values["task_initial_input"] == "" {
+			values["task_initial_input"] = body
+		}
+		lastBody = body
+		if triggerID != "" && activity.ID == triggerID {
+			triggerBody = body
+		}
+	}
+	// 触发它的那条留言优先；run 不是留言触发（agent_auto / scheduled）时用
+	// 最近一条用户输入。
+	values["previous_input"] = lastBody
+	if triggerBody != "" {
+		values["previous_input"] = triggerBody
+	}
+	return values
+}
+
+// isUserInputActivity: 只有用户自己写下的话才算「输入」。系统事件与 agent 回复
+// 混进来会让 {previous_input} 变成上一条提示音或 agent 自己的答案。
+func isUserInputActivity(activity *TaskActivity) bool {
+	if activity.Role == RoleUser {
+		return true
+	}
+	return activity.Type == ActivityTypeUserMessage || activity.Type == ActivityTypeUserComment
+}
+
 // BuildWorkflowNodeOutputContract is the text appended to every workflow agent
 // prompt. The parser and this instruction must stay in one place: if the
 // contract says one thing and ParseWorkflowNodeEnvelope accepts another, nodes
@@ -156,11 +247,17 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 	if nodeRun.RunID != run.ID || nodeRun.NodeID != node.ID {
 		return WorkflowNodeExecution{}, fmt.Errorf("node run %s does not belong to run/node %s/%s", nodeRun.ID, run.ID, node.ID)
 	}
-	prompt, err := WorkflowNodePrompt(node)
+	// 空 prompt 是配置错误，必须在碰 store 之前判掉：调用方（含测试）可能只
+	// 想验证这条校验，传进来的 store 未必可用。
+	rawPrompt, err := WorkflowNodePrompt(node)
 	if err != nil {
 		return WorkflowNodeExecution{}, err
 	}
 	task, err := store.GetTask(ctx, run.TaskID)
+	if err != nil {
+		return WorkflowNodeExecution{}, err
+	}
+	prompt, err := s.resolveWorkflowNodePrompt(ctx, store, run, task, node, rawPrompt)
 	if err != nil {
 		return WorkflowNodeExecution{}, err
 	}

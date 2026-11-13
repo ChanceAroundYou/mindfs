@@ -5,9 +5,8 @@ import { composerInputStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n/index";
 import { statusText } from "./taskDetailUtils";
 import { pencilStyle, tagStyle } from "./taskDetailStyles";
-import { CommentThread } from "./CommentThread";
-import { RunViewEntry } from "./RunViewEntry";
 import { ConversationView } from "./ConversationView";
+import { RunViewEntry } from "./RunViewEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor } from "../../app/appTask";
 import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon } from "./taskIcons";
@@ -130,8 +129,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
       )}
     >
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
-        <CommentThread rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
-        <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
+        {/* 详情面板只有一条对话流（ConversationView）。旧的 CommentThread 读的是同一份
+            /api/tasks/{id}/activities，再挂一份列表 + 输入框就是「同一段对话出现两套」。 */}
         <ConversationView
           taskId={task.id}
           rootId={task.root_id}
@@ -139,6 +138,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
           disabled={terminal}
           onOpenSession={onOpenSession}
         />
+        {/* 运行视图是对话流的下钻（默认收起），也是 human_gate 批准/驳回的唯一入口。 */}
+        <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
       </div>
     </PanelShell>
     </>

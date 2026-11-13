@@ -1,14 +1,12 @@
 import React, { useState } from "react";
 import { useI18n } from "../../i18n/index";
+import type { WorkflowChoice } from "../../shared/taskComments";
 import type { WorkflowRecommendation } from "../../shared/workflowModel";
 import { WorkflowPickerDialog } from "./WorkflowPickerDialog";
-
-export type WorkflowChoice = "empty" | "specified" | "disabled";
 
 export type WorkflowSelectorProps = {
   choice: WorkflowChoice;
   versionId: string;
-  userInput?: string;
   recommendation?: WorkflowRecommendation | null;
   onChange: (choice: WorkflowChoice, versionId: string) => void;
 };

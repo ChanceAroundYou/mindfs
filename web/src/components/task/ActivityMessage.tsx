@@ -1,10 +1,11 @@
-import type React from "react";
+import React from "react";
 import { useI18n } from "../../i18n/index";
 import type { TaskActivity } from "../../shared/taskComments";
 import {
   activityDisplayText,
   normalizeActivityStatus,
 } from "../../shared/activityModel";
+import { formatRelativeTime, formatFullTime } from "../../shared/timeUtils";
 
 export type ActivityMessageProps = {
   activity: TaskActivity;
@@ -29,131 +30,260 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: "var(--text-secondary)",
 };
 
-function formatTime(value: string | undefined): string {
-  if (!value) return "";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+const STATUS_ICONS: Record<string, string> = {
+  pending: "⏳",
+  running: "⚡",
+  completed: "✓",
+  failed: "✗",
+  cancelled: "○",
+};
+
+/**
+ * created_at 在历史活动里可能缺失或非法；非法时返回 null，整块时间不渲染。
+ * 直接 new Date(x).toISOString() 会在 Invalid Date 上抛 RangeError 打崩整个面板。
+ */
+function parseActivityTime(value: string | undefined): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
 }
 
 /**
- * 单条对话消息。
+ * 对话消息气泡：用户消息右对齐蓝色，Agent回复左对齐灰色
  *
- * 状态显示是这一层的核心（Review Focus：Activity 状态必须如实反映执行结果）：
- * pending/running 展示实时正文（后端把「步骤 i/n」写进 body），completed 展示总结，
- * failed 用红色错误文案，cancelled 保持中性 —— 任何状态都不能被伪装成成功。
+ * 设计理念：
+ * 1. 明确的视觉区分 - 左右对齐 + 颜色差异
+ * 2. 友好的时间显示 - 相对时间 + hover显示完整时间
+ * 3. 内联状态显示 - 不破坏消息流
+ * 4. 移动端友好 - 响应式宽度
  */
-export function ActivityMessage({ activity, onOpenSession, onViewRun }: ActivityMessageProps) {
-  const { t } = useI18n();
-  const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";
+export function ActivityMessage({
+  activity,
+  onOpenSession,
+  onViewRun,
+}: ActivityMessageProps) {
+  const { t, locale } = useI18n();
 
-  if (role === "system") {
+  // 分类只认 role。type 只区分「用户留言」与「Agent 回复」两个特例，
+  // attention / merge_conflict 这类系统活动同样带 role=system，
+  // 按 type 白名单判断会把它们渲染成 Agent 气泡。
+  const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";
+  const isUser = role === "user";
+  const isSystem = role === "system";
+
+  const displayText = activityDisplayText(activity);
+  const status = activity.status ? normalizeActivityStatus(activity.status) : null;
+  const hasWorkflowRun = !!activity.run_id;
+  const canOpenSession = !!activity.session_key && !!onOpenSession;
+  const canViewRun = hasWorkflowRun && !!onViewRun;
+  const created = parseActivityTime(activity.created_at);
+
+  // 系统消息：居中显示，样式特殊
+  if (isSystem) {
     return (
       <div
-        data-testid="activity-message"
-        data-role="system"
-        style={{ alignSelf: "center", maxWidth: "90%", fontSize: 11, color: "var(--text-secondary)" }}
+        data-testid="activity-system"
+        data-activity-id={activity.id}
+        style={systemMessageStyle}
       >
-        {activityDisplayText(activity)}
+        <div style={systemTextStyle}>{displayText}</div>
+        {created !== null && (
+          <time
+            dateTime={activity.created_at}
+            title={formatFullTime(created, locale)}
+            style={systemTimeStyle}
+          >
+            {formatRelativeTime(created, locale)}
+          </time>
+        )}
       </div>
     );
   }
 
-  const isUser = role === "user";
-  const status = normalizeActivityStatus(activity.status);
-  const statusColor = STATUS_COLORS[status] || STATUS_COLORS.pending;
-  const text = activityDisplayText(activity);
-  const author = isUser ? (activity.author || t("task.activity.user")) : t("task.activity.agent");
-  const time = formatTime(activity.updated_at || activity.created_at);
-  const canViewRun = !isUser && !!activity.run_id;
-  const canOpenSession = !isUser && !!activity.session_key;
-
   return (
     <div
-      data-testid="activity-message"
-      data-role={role}
-      {...(isUser ? {} : { "data-status": status })}
-      style={{
-        alignSelf: isUser ? "flex-end" : "flex-start",
-        maxWidth: "85%",
-        border: "1px solid var(--border-color)",
-        borderRadius: 8,
-        padding: 10,
-        background: "var(--content-bg)",
-      }}
+      data-testid={isUser ? "activity-user" : "activity-agent"}
+      data-activity-id={activity.id}
+      style={containerStyle(isUser)}
     >
-      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            color: isUser ? "var(--text-color)" : "var(--accent-color)",
-          }}
-        >
-          {author}
-        </span>
-        {!isUser && (
-          <span
-            data-testid="activity-status"
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: statusColor,
-              border: `1px solid ${statusColor}`,
-              borderRadius: 4,
-              padding: "0 4px",
-            }}
-          >
-            {t(STATUS_LABEL_KEYS[status])}
+      <div style={bubbleStyle(isUser)}>
+        {/* 角色标签 + 时间 */}
+        <div style={headerStyle}>
+          <span style={roleStyle(isUser)}>
+            {isUser ? "👤" : "🤖"} {isUser ? t("task.activity.user") : t("task.activity.agent")}
           </span>
-        )}
-        {time && <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>{time}</span>}
-      </div>
-
-      <div
-        style={{
-          fontSize: 12,
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-          color: !isUser && status === "failed" ? "#dc2626" : "var(--text-color)",
-        }}
-      >
-        {text}
-      </div>
-
-      {(canViewRun || canOpenSession) && (
-        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-          {canViewRun && (
-            <button
-              type="button"
-              data-testid="activity-view-run"
-              onClick={() => onViewRun?.(activity.run_id as string)}
-              style={actionStyle}
+          {created !== null && (
+            <time
+              dateTime={activity.created_at}
+              title={formatFullTime(created, locale)}
+              style={timeStyle}
             >
-              {t("task.activity.viewRun")} →
-            </button>
-          )}
-          {canOpenSession && (
-            <button
-              type="button"
-              data-testid="activity-open-session"
-              onClick={() => onOpenSession?.(activity.session_key as string)}
-              style={actionStyle}
-            >
-              {t("task.activity.openSession")}
-            </button>
+              {formatRelativeTime(created, locale)}
+            </time>
           )}
         </div>
-      )}
+
+        {/* 消息正文 */}
+        <div style={bodyStyle}>{displayText}</div>
+
+        {/* 工作流执行状态（内联显示） */}
+        {!isUser && status && (
+          <div style={statusBarStyle}>
+            <span style={{ ...statusBadgeStyle, color: STATUS_COLORS[status] }}>
+              {STATUS_ICONS[status]} {t(STATUS_LABEL_KEYS[status])}
+            </span>
+            {activity.workflow_version_id && (
+              <span style={versionBadgeStyle}>
+                {activity.workflow_version_id}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 操作按钮 */}
+        {(canViewRun || canOpenSession) && (
+          <div style={actionsStyle}>
+            {canViewRun && (
+              <button
+                type="button"
+                data-testid="activity-view-run"
+                onClick={() => onViewRun?.(activity.run_id as string)}
+                style={actionButtonStyle}
+              >
+                {t("task.activity.viewRun")}
+              </button>
+            )}
+            {canOpenSession && (
+              <button
+                type="button"
+                data-testid="activity-open-session"
+                onClick={() => onOpenSession?.(activity.session_key as string)}
+                style={actionButtonStyle}
+              >
+                {t("task.activity.openSession")}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-const actionStyle: React.CSSProperties = {
+// ========== Styles ==========
+
+const containerStyle = (isUser: boolean): React.CSSProperties => ({
+  display: "flex",
+  justifyContent: isUser ? "flex-end" : "flex-start",
+  marginBottom: 12,
+  width: "100%",
+});
+
+const bubbleStyle = (isUser: boolean): React.CSSProperties => ({
+  maxWidth: "min(80%, 600px)",
+  minWidth: "200px",
+  padding: 12,
+  borderRadius: 10,
+  background: isUser
+    ? "var(--accent-bg, rgba(59, 130, 246, 0.1))"
+    : "var(--panel-bg)",
+  border: isUser
+    ? "1px solid var(--accent-color, #3b82f6)"
+    : "1px solid var(--border-color)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+});
+
+const headerStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 8,
+};
+
+const roleStyle = (isUser: boolean): React.CSSProperties => ({
+  fontSize: 12,
+  fontWeight: 600,
+  color: isUser ? "var(--accent-color, #3b82f6)" : "var(--text-color)",
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+});
+
+const timeStyle: React.CSSProperties = {
   fontSize: 11,
-  padding: "4px 8px",
+  color: "var(--text-secondary)",
+  flexShrink: 0,
+};
+
+const bodyStyle: React.CSSProperties = {
+  fontSize: 13,
+  lineHeight: 1.5,
+  color: "var(--text-color)",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+};
+
+const statusBarStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  flexWrap: "wrap",
+};
+
+const statusBadgeStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 500,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+};
+
+const versionBadgeStyle: React.CSSProperties = {
+  fontSize: 10,
+  padding: "2px 6px",
   borderRadius: 4,
+  background: "var(--tag-bg, rgba(148, 163, 184, 0.2))",
+  color: "var(--text-secondary)",
+  fontFamily: "monospace",
+};
+
+const actionsStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+};
+
+const actionButtonStyle: React.CSSProperties = {
+  fontSize: 11,
+  padding: "4px 10px",
+  borderRadius: 5,
   border: "1px solid var(--border-color)",
   background: "transparent",
-  color: "inherit",
+  color: "var(--accent-color)",
   cursor: "pointer",
+  transition: "all 0.15s ease",
+  fontWeight: 500,
+};
+
+const systemMessageStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 4,
+  padding: "8px 0",
+  marginBottom: 12,
+};
+
+const systemTextStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "var(--text-secondary)",
+  textAlign: "center",
+};
+
+const systemTimeStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-secondary)",
+  opacity: 0.7,
 };

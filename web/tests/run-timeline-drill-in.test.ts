@@ -134,15 +134,23 @@ test("run-timeline-drill-in", async () => {
   }
 });
 
-// RunViewEntry 是运行视图的唯一入口：必须挂在留言板之后（TaskDetailPanel 里紧跟
-// CommentThread），只有 workflow 引擎的任务才出现，且展开/收起不离开留言板。
-test("运行视图入口挂在留言板之后，只对 workflow 任务出现", () => {
+// 运行视图入口是 human_gate 批准/驳回的唯一挂载点，必须出现在任务详情面板里。
+// 面板同时只能有一条对话流：CommentThread 与 ConversationView 读的是同一份活动，
+// 两个都挂就是「同一段对话出现两套」。
+test("任务详情面板只挂一条对话流，且保留运行视图入口", () => {
   const panel = read("../src/components/task/TaskDetailPanel.tsx");
   const entry = read("../src/components/task/RunViewEntry.tsx");
   const hook = read("../src/components/task/useRunViewEntry.ts");
-  const commentIdx = panel.indexOf("<CommentThread");
-  const runIdx = panel.indexOf("<RunViewEntry");
-  assert.ok(commentIdx > -1 && runIdx > commentIdx, "RunViewEntry 必须在 CommentThread 之后（下钻而非平级）");
+
+  assert.match(panel, /<ConversationView/, "TaskDetailPanel must mount the single conversation stream");
+  assert.doesNotMatch(panel, /<CommentThread/, "CommentThread duplicates ConversationView and must not be mounted");
+  assert.doesNotMatch(panel, /from "\.\/CommentThread"/, "no CommentThread import either");
+  assert.match(panel, /<RunViewEntry/, "RunViewEntry is the only mount point of the human gate UI");
+  assert.ok(
+    panel.indexOf("<ConversationView") < panel.indexOf("<RunViewEntry"),
+    "运行视图是对话流的下钻，必须排在它之后",
+  );
+
   // 只有迁移到 workflow 引擎的任务才有运行视图；legacy 不渲染入口。
   // 引擎门槛在取数 hook（.ts）里：视图层不 import services。
   assert.match(hook, /engine\?\.engine === "workflow"/);

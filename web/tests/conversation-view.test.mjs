@@ -190,43 +190,50 @@ test("ActivityMessage renders a user message on the user side", () => {
       activity: { ...baseActivity, type: "user_message", role: "user", author: "用户", body: "帮我修登录" },
     }),
   );
-  assert.match(html, /data-testid="activity-message"/);
-  assert.match(html, /data-role="user"/);
+  assert.match(html, /data-testid="activity-user"/);
+  assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /帮我修登录/);
-  assert.doesNotMatch(html, /data-status=/);
+  assert.match(html, /👤/); // user icon
+  assert.match(html, /User|用户/);
 });
 
 test("ActivityMessage shows the running status and live progress body", () => {
   const html = render(
     React.createElement(ActivityMessage, {
-      activity: { ...baseActivity, status: "running", body: "步骤 2/4: 写测试" },
+      activity: { ...baseActivity, status: "running", body: "步骤 2/4: 写测试", run_id: "run-1" },
     }),
   );
-  assert.match(html, /data-role="agent"/);
-  assert.match(html, /data-status="running"/);
+  assert.match(html, /data-testid="activity-agent"/);
+  assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /步骤 2\/4: 写测试/);
+  assert.match(html, /🤖/); // agent icon
+  assert.match(html, /⚡/); // running icon
   assert.match(html, /执行中|Running/);
 });
 
 test("ActivityMessage renders the summary for completed replies", () => {
   const html = render(
     React.createElement(ActivityMessage, {
-      activity: { ...baseActivity, status: "completed", body: "步骤 4/4: 收尾", summary: "已修复登录并补了测试" },
+      activity: { ...baseActivity, status: "completed", body: "步骤 4/4: 收尾", summary: "已修复登录并补了测试", run_id: "run-1" },
     }),
   );
-  assert.match(html, /data-status="completed"/);
+  assert.match(html, /data-testid="activity-agent"/);
+  assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /已修复登录并补了测试/);
+  assert.match(html, /✓/); // completed icon
   assert.match(html, /已完成|Completed/);
 });
 
 test("ActivityMessage renders failed replies as errors", () => {
   const html = render(
     React.createElement(ActivityMessage, {
-      activity: { ...baseActivity, status: "failed", summary: "工作流校验失败" },
+      activity: { ...baseActivity, status: "failed", summary: "工作流校验失败", run_id: "run-1" },
     }),
   );
-  assert.match(html, /data-status="failed"/);
+  assert.match(html, /data-testid="activity-agent"/);
+  assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /工作流校验失败/);
+  assert.match(html, /✗/); // failed icon
   assert.match(html, /失败|Failed/);
   assert.match(html, /#dc2626/);
 });
@@ -234,11 +241,13 @@ test("ActivityMessage renders failed replies as errors", () => {
 test("ActivityMessage keeps cancelled replies visible without pretending success", () => {
   const html = render(
     React.createElement(ActivityMessage, {
-      activity: { ...baseActivity, status: "cancelled", summary: "用户取消" },
+      activity: { ...baseActivity, status: "cancelled", summary: "用户取消", run_id: "run-1" },
     }),
   );
-  assert.match(html, /data-status="cancelled"/);
+  assert.match(html, /data-testid="activity-agent"/);
+  assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /用户取消/);
+  assert.match(html, /○/); // cancelled icon
   assert.match(html, /已取消|Cancelled/);
 });
 
@@ -250,6 +259,8 @@ test("ActivityMessage offers detail and session actions when the reply carries t
       onOpenSession: () => {},
     }),
   );
+  assert.match(html, /data-testid="activity-view-run"/);
+  assert.match(html, /data-testid="activity-open-session"/);
   assert.match(html, /查看执行详情|View run details/);
   assert.match(html, /打开会话|Open session/);
 });
@@ -260,7 +271,8 @@ test("ActivityMessage renders system events as a neutral line", () => {
       activity: { ...baseActivity, type: "system_event", role: "system", body: "工作流已切换" },
     }),
   );
-  assert.match(html, /data-role="system"/);
+  assert.match(html, /data-testid="activity-system"/);
+  assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /工作流已切换/);
 });
 
@@ -313,7 +325,8 @@ test("ConversationMessages renders user and agent messages in order", () => {
   );
   assert.match(html, /data-testid="conversation-messages"/);
   assert.ok(html.indexOf("做完了吗？") < html.indexOf("已经完成"));
-  assert.match(html, /data-status="completed"/);
+  assert.match(html, /data-testid="activity-user"/);
+  assert.match(html, /data-testid="activity-agent"/);
 });
 
 test("ConversationMessages shows empty, loading and error states", () => {

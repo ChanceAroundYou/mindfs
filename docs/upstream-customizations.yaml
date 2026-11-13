@@ -7471,8 +7471,6 @@ groups:
     why: "WP-02 前端留言板：CommentThread 三段式（user-message 右对齐 / agent-segment 左对齐带下钻），留言框工作流三态必填可见（empty 不带 version、specified 必带 workflow_version_id、disabled 禁用），appURL 显式传 nodeId（跨节点铁律：appPath 不传 nodeId 静默打激活节点），comment_id 客户端生成重试复用，TaskDetailPanel 仅接线（rootId/taskId/nodeId + onOpenSession）。i18n 双语键不漂移，禁硬编码文案（AgentDrilldown 走 t()）。"
     boundary: "只管留言板前端展示与发送；不碰 Stages/StageRun 引擎；Steer/恢复留 WP-03，画布/运行视图留 WP-07，不做 AgentRunSection 独立文件（下钻内嵌在 CommentThread）。"
     files:
-      - web/src/components/task/CommentThread.tsx
-      - web/src/components/task/useCommentThread.ts
       - web/src/hooks/useTaskActivities.ts
       - web/src/services/task/comments.ts
       - web/src/components/task/TaskDetailPanel.tsx
@@ -7494,14 +7492,54 @@ groups:
       - server/app/workspace.go
       - server/app/workspace_build.go
       - web/src/shared/taskComments.ts
-      - web/tests/task-comment-thread.test.mjs
     tests:
-      - web/tests/task-comment-thread.test.mjs
+      - server/internal/api/http_task_comments_test.go
+      - web/tests/conversation-view.test.mjs
     anchors:
       - 'web/src/services/task/comments.ts:export async function postTaskComment('
-      - 'web/src/components/task/CommentThread.tsx:export function CommentThread('
-      - 'web/src/components/task/useCommentThread.ts:export function useCommentThread('
-      - 'web/src/components/task/TaskDetailPanel.tsx:<CommentThread rootId={task.root_id} taskId={task.id} nodeId={nodeId}'
+      # CommentThread/useCommentThread 已删除：它和 ConversationView 读同一份活动，
+      # 同时挂载就是「同一段对话出现两套」。约定见 G-LL。
+      - 'web/src/components/task/TaskDetailPanel.tsx:<ConversationView'
+  # ── 任务详情面板只保留一条对话流（去重） ────────────────────────────
+  - id: G-LL
+    title: 任务详情面板只有一条对话流：删除重复的 CommentThread
+    kind: feature
+    symptom: "打开任务详情只看到一段对话（用户右对齐气泡 / Agent 左对齐气泡，带相对时间与状态图标），底部只有一个输入框；此前 CommentThread 与 ConversationView 读的是同一份活动，面板里会出现两套一模一样的消息列表和两个输入框。运行视图入口仍在对话流下方，human_gate 的批准/驳回按钮照旧可达。"
+    why: "必须保留：① TaskDetailPanel 只挂 ConversationView，不得再挂 CommentThread（两者都渲染 /api/tasks/{id}/activities 的同一份活动）；② 运行视图入口 RunViewEntry 必须留在面板里 —— 它是 RunTimeline 与 human_gate 批准/驳回的唯一挂载点，删掉等于人工闸门无法通过；③ 消息分类只认 role（attention / merge_conflict 这类系统活动也带 role=system），按 type 白名单会把它们画成 Agent 回复；④ created_at 缺失或非法时整块时间不渲染，直接 new Date(x).toISOString() 会抛 RangeError 打崩面板。"
+    boundary: "只改任务详情面板的展示层（去重 + 气泡样式 + 时间显示）。不动活动数据源、不动发送链路（ConversationView 走 POST /api/tasks/{id}/activities，会触发 workflow）。"
+    files:
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/ActivityInput.tsx
+      - web/src/components/task/WorkflowSelector.tsx
+      - web/src/shared/timeUtils.ts
+      - web/src/shared/taskComments.ts
+    tests:
+      - web/tests/run-timeline-drill-in.test.ts
+      - web/tests/conversation-view.test.mjs
+    anchors:
+      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
+      - 'web/src/components/task/ActivityMessage.tsx:const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";'
+      - 'web/src/components/task/ActivityMessage.tsx:function parseActivityTime(value: string | undefined): number | null'
+      - 'web/src/shared/timeUtils.ts:export function formatRelativeTime(timestamp: number, locale: string = "zh-CN"): string'
+      - 'web/tests/run-timeline-drill-in.test.ts:任务详情面板只挂一条对话流，且保留运行视图入口'
+  # ── workflow agent 节点的 prompt 占位符替换 ─────────────────────────
+  - id: G-LM
+    title: workflow agent 节点 prompt 替换 {previous_input}（与 legacy 同名同义）
+    kind: fix
+    symptom: "用内置 workflow（新功能/debug/空白）建的任务，Agent 节点能看到用户真正写下的需求；此前节点 prompt 里的 {previous_input} 被原样发给模型，用户留言从没到过 agent，agent 对着字面量自行发挥。没有可用用户输入时节点直接报错并点名占位符，而不是发出一条没有需求的 prompt。"
+    why: "必须保留：① 替换只发生在 prepareWorkflowNodeAt 一处，值来自 run.ActivityID 指向的用户活动（不是留言触发的 run 取最近一条用户输入）；② 占位符名字与 legacy BuildAgentPrompt 的 values 完全一致（previous_input / task_initial_input / task_number），同一个占位符不能有两条执行路径两种解释；③ 未解析的占位符必须在调用前判失败 —— BuildAgentPrompt 会把空值静默替换掉，等于让 agent 收到一条空需求。"
+    boundary: "只管 agent 节点 prompt 的占位符取值与替换。不改 JSON 输出契约（D5）、不改会话复用策略（D2）、不做跨节点上下文传递（下游节点仍只用自己的 prompt）。"
+    files:
+      - server/internal/kanban/workflow_node_executor.go
+    tests:
+      - server/internal/kanban/workflow_node_prompt_test.go
+    anchors:
+      - 'server/internal/kanban/workflow_node_executor.go:func (s *Service) resolveWorkflowNodePrompt('
+      - 'server/internal/kanban/workflow_node_executor.go:func WorkflowPromptValues('
+      - 'server/internal/kanban/workflow_node_executor.go:var WorkflowPromptPlaceholders = []string{"previous_input", "task_initial_input", "task_number"}'
+      - 'server/internal/kanban/workflow_node_prompt_test.go:func TestWorkflowNodeAttemptSendsResolvedPromptToRunner('
   # ── 留言板下钻只读运行视图（WP-07）：RunTimeline standalone 组件 ───────
   - id: G-KW
     title: 留言板下钻只读运行视图 RunTimeline（WP-07 tranche）
