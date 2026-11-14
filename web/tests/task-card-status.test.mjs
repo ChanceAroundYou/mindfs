@@ -15,7 +15,6 @@ const appTask = read("src/app/appTask.ts");
 const tasksService = read("src/services/tasks.ts");
 const panel = read("src/components/task/TaskDetailPanel.tsx");
 const panelHook = read("src/components/task/useTaskDetailPanel.ts");
-const stageEditor = read("src/components/StageEditor.tsx");
 const css = read("src/index.css");
 const boardView = read("src/components/TaskBoardView.tsx");
 const viteConfig = read("vite.config.ts");
@@ -46,8 +45,6 @@ assert.doesNotMatch(
   /startEditStage|saveStage/,
   "the detail hook must not keep stage editing helpers after the stage model was removed",
 );
-// 只读态仍然显示该段真实的选项值（不是隐藏、也不是全灰）
-assert.match(stageEditor, /readOnly=\{mode !== "editable"\}/, "read mode shows option values, disabled");
 assert.doesNotMatch(
   panel,
   /\{!executed && !isCurrent \? \(/,
@@ -69,8 +66,8 @@ assert.doesNotMatch(
 const cardRows = read("src/components/TaskCardRows.tsx");
 assert.match(
   cardRows,
-  /\{!terminal \? \(\s*<>[\s\S]*?showAdvance[\s\S]*?canComplete[\s\S]*?onMove\(task, "cancel"\)[\s\S]*?<\/>\s*\) : \(\s*<>[\s\S]*?canFinishWorktree[\s\S]*?<button[\s\S]{0,400}?onMove\(task, "delete-task"\)[\s\S]*?<\/>\s*\)/,
-  "terminal tasks must still get a cleanup key — 收尾 + 删除 — while run/complete/advance/cancel stay withheld",
+  /\{!terminal \? \(\s*<>[\s\S]*?canFinishWorktree[\s\S]*?onMove\(task, "pause"\)[\s\S]*?onMove\(task, "complete"\)[\s\S]*?onMove\(task, "cancel"\)[\s\S]*?<\/>\s*\) : \(\s*<>[\s\S]*?canFinishWorktree[\s\S]*?onMove\(task, "delete-task"\)[\s\S]*?<\/>\s*\)/,
+  "the non-terminal branch gets 暂停/完成/取消 while terminal keeps 收尾 + 删除",
 );
 // 删除键收尾于终态分支的 `)}` —— 它不在 !terminal 那一侧（那一侧以取消键收尾）。
 // 2026-10-07 起那一侧多了一个 Fragment 包裹（收尾 + 删除），所以锚点从 `)}`

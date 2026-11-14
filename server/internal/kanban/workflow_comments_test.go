@@ -42,8 +42,7 @@ func newWorkflowCommentFixture(t *testing.T, taskID, runID string, graph Workflo
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: taskID + "-stage", TaskID: taskID, StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: taskID + "-event", TaskID: taskID, Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

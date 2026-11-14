@@ -67,12 +67,6 @@ func (r fixedRunner) CreateTaskWorktree(_ context.Context, rootID, name, branchM
 	return kanban.WorktreeInfo{RootID: rootID, Path: path}, nil
 }
 
-func (fixedRunner) EnsureAgentSession(context.Context, kanban.AgentStageExecution) (string, error) {
-	return "", nil
-}
-func (fixedRunner) RunAgentStage(context.Context, kanban.AgentStageExecution) (kanban.StageResult, error) {
-	return kanban.StageResult{}, nil
-}
 func (fixedRunner) TaskUpdated(string, kanban.TaskDetail) {}
 
 func gitForAPITest(t *testing.T, dir string, args ...string) {
@@ -114,12 +108,7 @@ func newFinishTaskHandlerFull(t *testing.T, edit string) (http.Handler, *kanban.
 
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
 		RootID: root.ID,
-		// 首段必须是 user 段（createTask 的硬约束），第二段才是 agent 段。
-		Stages: []kanban.StageTemplate{
-			{Name: "Describe", Role: "user"},
-			{Name: "Fix", Role: "agent"},
-		},
-		Input:              "fix it",
+		// 首段必须是 user 段（createTask 的硬约束），第二段才是 agent 段。		Input:              "fix it",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "new",
 	})

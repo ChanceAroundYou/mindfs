@@ -71,12 +71,14 @@ func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, 
 		if err := store.UpdateTaskStatus(ctx, run.TaskID, StatusCancelled, true); err != nil {
 			return updated, err
 		}
+		s.settleWorkflowReply(ctx, store, run)
 		if err := store.BlockWorkflowCommentQueue(ctx, run.TaskID); err != nil {
 			return updated, err
 		}
 		s.broadcastTask(ctx, store, run.TaskID)
 		return updated, nil
 	}
+	s.resumeWorkflowReply(ctx, store, run.TaskID)
 	if err := s.WakeWorkflowRun(ctx, rootID, run.TaskID, "human_gate_approved"); err != nil {
 		return updated, err
 	}

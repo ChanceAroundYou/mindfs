@@ -33,11 +33,12 @@ var (
 )
 
 var activityStatuses = map[string]bool{
-	ActivityStatusPending:   true,
-	ActivityStatusRunning:   true,
-	ActivityStatusCompleted: true,
-	ActivityStatusFailed:    true,
-	ActivityStatusCancelled: true,
+	ActivityStatusPending:     true,
+	ActivityStatusRunning:     true,
+	ActivityStatusCompleted:   true,
+	ActivityStatusFailed:      true,
+	ActivityStatusCancelled:   true,
+	ActivityStatusWaitingUser: true,
 }
 
 type ActivityStore struct {

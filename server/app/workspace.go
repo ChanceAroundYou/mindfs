@@ -270,9 +270,11 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban.SetActivityBroadcaster(api.NewTaskActivityBroadcaster(services))
 	services.Kanban.SetRunner(services)
 	services.Kanban.SetWorkflowNodeRunner(services)
+	// 纯对话模式（workflow_choice=disabled）由 Router 直连会话执行。
+	services.Kanban.SetDirectExecutor(services)
 	services.Kanban.SetWorkflowCommentSender(services)
 	services.Kanban.SetWriterGate(m.shared.writerGate)
-	services.WireFinishStageTeardown(services.Kanban)
+	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {

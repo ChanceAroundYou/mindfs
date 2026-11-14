@@ -5,7 +5,7 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { I18nProvider } from "../src/i18n/index.tsx";
 import { RunTimeline } from "../src/components/task/RunTimeline.tsx";
-import { runNodeKinds, isWaitingHumanGate } from "../src/components/task/runTimelineModel.ts";
+import { runNodeKinds, isWaitingHumanGate, nodeRunStatusLabel } from "../src/components/task/runTimelineModel.ts";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 
@@ -33,6 +33,18 @@ test("isWaitingHumanGate is true only for a waiting human_gate node run", () => 
   assert.equal(isWaitingHumanGate({ node_id: "a", status: "waiting_user" }, kinds), false);
   assert.equal(isWaitingHumanGate({ node_id: "unknown", status: "waiting_user" }, kinds), false);
   assert.equal(isWaitingHumanGate({ node_id: "g", status: "waiting_user" }, null), false);
+});
+
+test("node-only statuses get their own labels, shared ones fall back to the task vocabulary", () => {
+  const t = (key) => `[${key}]`;
+  // queued / skipped / unknown 只出现在 NodeRun 上；不翻的话节点行会冒出英文原始值。
+  assert.equal(nodeRunStatusLabel("queued", t), "[task.runTimeline.status.queued]");
+  assert.equal(nodeRunStatusLabel("skipped", t), "[task.runTimeline.status.skipped]");
+  assert.equal(nodeRunStatusLabel("unknown", t), "[task.runTimeline.status.unknown]");
+  assert.equal(nodeRunStatusLabel("success", t), "[task.status.success]");
+  assert.equal(nodeRunStatusLabel("waiting_user", t), "[task.status.waitingUser]");
+  // 未知词仍原样透出，不伪造文案。
+  assert.equal(nodeRunStatusLabel("bogus", t), "bogus");
 });
 
 // 审批动作走专用端点：普通留言端点永远不能批准（D4）。
@@ -118,6 +130,9 @@ test("human-gate labels are defined in both locales", () => {
     "task.runTimeline.reject",
     "task.runTimeline.deciding",
     "task.runTimeline.gateFailed",
+    "task.runTimeline.status.queued",
+    "task.runTimeline.status.skipped",
+    "task.runTimeline.status.unknown",
   ]) {
     assert.ok(zh.includes(`"${key}"`), `zh-CN must define ${key}`);
     assert.ok(en.includes(`"${key}"`), `en-US must define ${key}`);

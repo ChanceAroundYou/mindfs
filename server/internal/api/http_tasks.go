@@ -42,23 +42,13 @@ func (h *HTTPHandler) handleKanbanTasksList(w http.ResponseWriter, r *http.Reque
 		}
 		opts.TaskNumber = taskNumber
 	}
-	if raw := strings.TrimSpace(r.URL.Query().Get("stage")); raw != "" {
-		stage, err := strconv.Atoi(raw)
-		if err != nil {
-			respondError(w, http.StatusBadRequest, errInvalidRequest("invalid stage"))
-			return
-		}
-		opts.Stage = stage
-		opts.HasStage = true
-	}
 	items, err := svc.ListTaskDetails(r.Context(), rootID, opts)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	// 看板列表：任务自带 stage_runs / events 流水，载荷随任务数线性增长（实测单任务带
-	// 三段流水就 53KB），**不能**套 respondJSONList 瘦身 —— 详情面板直接读这里的
-	// task.stages，少一个键就是少一段流水。只做协商。
+	// 看板列表：任务自带 events 审计记录，载荷随任务数线性增长，**不能**套
+	// respondJSONList 瘦身。只做协商。
 	respondJSONConditional(w, r, map[string]any{"items": items})
 }
 
@@ -68,13 +58,12 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req struct {
-		RootID             string                  `json:"root_id"`
-		Input              string                  `json:"input"`
-		Name               string                  `json:"name"`
-		Stages             *[]kanban.StageTemplate `json:"stages"`
-		CreateWorktree     bool                    `json:"create_worktree"`
-		WorktreeBranchMode string                  `json:"worktree_branch_mode"`
-		WorktreeBranch     string                  `json:"worktree_branch"`
+		RootID             string `json:"root_id"`
+		Input              string `json:"input"`
+		Name               string `json:"name"`
+		CreateWorktree     bool   `json:"create_worktree"`
+		WorktreeBranchMode string `json:"worktree_branch_mode"`
+		WorktreeBranch     string `json:"worktree_branch"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
@@ -88,9 +77,6 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		WorktreeBranchMode: req.WorktreeBranchMode,
 		WorktreeBranch:     req.WorktreeBranch,
 	}
-	if req.Stages != nil {
-		create.Stages = *req.Stages
-	}
 	detail, err := svc.CreateTask(r.Context(), create)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
@@ -98,42 +84,6 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 	}
 	h.broadcastTaskUpdated(req.RootID, detail)
 	respondJSON(w, http.StatusOK, detail)
-}
-
-func (h *HTTPHandler) handleKanbanTaskInputUpdate(w http.ResponseWriter, r *http.Request) {
-	svc, ok := h.kanbanService(w)
-	if !ok {
-		return
-	}
-	var req struct {
-		RootID             string `json:"root_id"`
-		Input              string `json:"input"`
-		CreateWorktree     *bool  `json:"create_worktree"`
-		WorktreeBranchMode string `json:"worktree_branch_mode"`
-		WorktreeBranch     string `json:"worktree_branch"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
-		return
-	}
-	detail, err := svc.UpdateCurrentInput(r.Context(), kanban.UpdateTaskInput{
-		RootID:             req.RootID,
-		TaskID:             chi.URLParam(r, "id"),
-		Input:              req.Input,
-		CreateWorktree:     req.CreateWorktree,
-		WorktreeBranchMode: req.WorktreeBranchMode,
-		WorktreeBranch:     req.WorktreeBranch,
-	})
-	if err != nil {
-		respondError(w, http.StatusBadRequest, err)
-		return
-	}
-	h.broadcastTaskUpdated(req.RootID, detail)
-	respondJSON(w, http.StatusOK, detail)
-}
-
-func (h *HTTPHandler) handleKanbanTaskNext(w http.ResponseWriter, r *http.Request) {
-	h.handleKanbanTaskMove(w, r, "next")
 }
 
 func (h *HTTPHandler) handleKanbanTaskRunNow(w http.ResponseWriter, r *http.Request) {
@@ -310,19 +260,16 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		RootID     string `json:"root_id"`
-		Reason     string `json:"reason"`
-		StageIndex int    `json:"stage_index"`
+		RootID string `json:"root_id"`
+		Reason string `json:"reason"`
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
-	in := kanban.MoveInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Reason: req.Reason, StageIndex: req.StageIndex}
+	in := kanban.MoveInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Reason: req.Reason}
 	var (
 		detail kanban.TaskDetail
 		err    error
 	)
 	switch action {
-	case "next":
-		detail, err = svc.Next(r.Context(), in)
 	case "run-now":
 		detail, err = svc.RunNow(r.Context(), in)
 	case "pause":

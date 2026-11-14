@@ -70,7 +70,6 @@ func finishFixture(t *testing.T, edit string) (*Service, fs.RootInfo, string, st
 	svc.SetRunner(runner)
 	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
 		RootID:             root.ID,
-		Stages:             []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
 		Input:              "something to fix",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "existing",
@@ -189,31 +188,6 @@ func TestFinishTaskWorktreeMergesThenRemovesAndDeletesBranch(t *testing.T) {
 	}
 }
 
-func TestFinishTaskWorktreeBlocksANewRunFromStartingMidFinish(t *testing.T) {
-	// 收尾期间起 agent，agent 的 cwd 就是那个即将被拆掉的目录。
-	// 串行的一次性检查挡不住这个 —— 收尾要跑好几秒，中间任何 Next/RunNow 都能插进来。
-	svc, root, _, _ := finishFixture(t, "from worktree\n")
-	taskID := mustTaskID(t, svc, root.ID)
-
-	release, err := svc.acquireTaskFinish(root.ID, taskID)
-	if err != nil {
-		t.Fatalf("acquireTaskFinish: %v", err)
-	}
-	defer release()
-	// 必须报错而不是静默丢弃：调用方（Next/RunNow/Resume）靠这个告诉用户
-	// 「正在收尾」，静默返回的话就是「点了没反应」。
-	if runErr := svc.RunTask(root.ID, taskID); !errors.Is(runErr, errTaskFinishing) {
-		t.Fatalf("RunTask during finish = %v, want errTaskFinishing so the caller can tell the user", runErr)
-	}
-	runner, _ := svc.Runner.(*fakeRunner)
-	runner.mu.Lock()
-	started := runner.worktreeCreateCalled || len(runner.execs) > 0
-	runner.mu.Unlock()
-	if started {
-		t.Fatal("no agent work may start while a finish holds the lock")
-	}
-}
-
 func TestFinishTaskWorktreeRefusesASecondConcurrentFinish(t *testing.T) {
 	// 两个收尾不能并着跑：它们对着同一个 worktree 一起 merge / remove，
 	// 而且先完成的那个 release 会把还在跑的另一个的锁一起放开 ——
@@ -230,88 +204,19 @@ func TestFinishTaskWorktreeRefusesASecondConcurrentFinish(t *testing.T) {
 	if _, err := svc.acquireTaskFinish(root.ID, taskID); err == nil {
 		t.Fatal("a second concurrent finish must be refused")
 	}
-	if runErr := svc.RunTask(root.ID, taskID); !errors.Is(runErr, errTaskFinishing) {
-		t.Fatalf("RunTask during finish = %v, want errTaskFinishing", runErr)
+	// 重复发起收尾必须明确报「正在收尾」，而不是静默再跑一遍。
+	svc.SetDirectExecutor(&fakeFinishExecutor{reply: "done\n" + finishTurnDoneMarker})
+	if _, err := svc.BeginFinishWorktree(context.Background(), BeginFinishInput{
+		RootID: root.ID, TaskID: taskID,
+	}); !errors.Is(err, errTaskFinishing) {
+		t.Fatalf("BeginFinishWorktree during finish = %v, want errTaskFinishing", err)
 	}
 
 	// 关键的一条：先完成的那个 release 不能放开锁。
 	release()
-	if runErr := svc.RunTask(root.ID, taskID); errors.Is(runErr, errTaskFinishing) {
-		t.Fatal("after every finish released, a new run must be allowed again")
-	}
-}
-
-func TestFinishDuringAResumeLeavesNoTaskStuckRunning(t *testing.T) {
-	// 收尾撞上 Resume：Resume 先把状态置 running、再起执行体。如果顺序是那样，
-	// 起执行体被拒之后任务就永远 running、没有 agent 会再碰它 —— 看起来像卡死。
-	// 所以准入检查必须在改状态**之前**。
-	ctx := context.Background()
-	svc, root, _, _ := finishFixture(t, "from worktree\n")
-	taskID := mustTaskID(t, svc, root.ID)
-
-	release, err := svc.acquireTaskFinish(root.ID, taskID)
+	again, err := svc.acquireTaskFinish(root.ID, taskID)
 	if err != nil {
-		t.Fatalf("acquireTaskFinish: %v", err)
-	}
-	defer release()
-
-	if _, err := svc.Resume(ctx, MoveInput{RootID: root.ID, TaskID: taskID}); err != nil {
-		t.Fatalf("Resume during a finish must not error outright, got %v", err)
-	}
-	detail, err := svc.GetTask(ctx, root.ID, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	if detail.Task.Status == StatusRunning {
-		t.Fatal("Resume must not leave the task marked running with no agent to advance it")
-	}
-}
-
-func TestFinishCannotSlipInBetweenAdmissionAndTheStatusChange(t *testing.T) {
-	// 真正的竞态形状：准入通过之后、状态改成 running 之前，一个收尾抢进来。
-	// 纯「查一下」挡不住 —— 查和改之间不是原子的。留着的后果是「状态 running、
-	// 没有执行体」，没有 agent 会再碰它，看起来像卡死。
-	svc, root, _, _ := finishFixture(t, "from worktree\n")
-	taskID := mustTaskID(t, svc, root.ID)
-
-	// 动词拿到准入（= 查过、还没改状态）。
-	release, err := svc.beginRunAdmission(root.ID, taskID)
-	if err != nil {
-		t.Fatalf("beginRunAdmission: %v", err)
-	}
-	defer release()
-
-	// 收尾在这个窗口里来 —— 必须被拒，而不是插进来拆掉 agent 即将用的目录。
-	if _, err := svc.acquireTaskFinish(root.ID, taskID); err == nil {
-		t.Fatal("a finish must not acquire while a run admission is in flight")
-	}
-	release()
-	// 准入走完之后，收尾就该能拿到了。
-	finishRelease, err := svc.acquireTaskFinish(root.ID, taskID)
-	if err != nil {
-		t.Fatalf("the finish must be admitted once the run window closed: %v", err)
-	}
-	finishRelease()
-}
-
-func TestRunAdmissionRefusesTwoAtOnceForTheSameTask(t *testing.T) {
-	// 两个动词同时要起同一个任务：不能让两处一起改状态。
-	svc, root, _, _ := finishFixture(t, "from worktree\n")
-	taskID := mustTaskID(t, svc, root.ID)
-
-	release, err := svc.beginRunAdmission(root.ID, taskID)
-	if err != nil {
-		t.Fatalf("first admission: %v", err)
-	}
-	defer release()
-	if _, err := svc.beginRunAdmission(root.ID, taskID); err == nil {
-		t.Fatal("a second run admission for the same task must be refused")
-	}
-	release()
-	// 释放之后还能再拿 —— 锁没有泄漏。
-	again, err := svc.beginRunAdmission(root.ID, taskID)
-	if err != nil {
-		t.Fatalf("the admission must be re-acquirable after release: %v", err)
+		t.Fatalf("after every finish released, the lock must be re-acquirable: %v", err)
 	}
 	again()
 }
@@ -398,7 +303,6 @@ func TestFinishTaskWorktreeRefusesTaskWithoutWorktree(t *testing.T) {
 	svc, root := newTestService(t, &fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
 		Input:  "no worktree here",
 	})
 	if err != nil {
@@ -482,4 +386,40 @@ func markAuxFlags(t *testing.T, ctx context.Context, store *TaskStore, taskID st
 	if err := store.UpdateTaskAuxFlags(ctx, taskID, TaskAuxFlagsPatch{HasPlan: &yes, HasTodos: &yes}); err != nil {
 		t.Fatalf("mark aux flags: %v", err)
 	}
+}
+
+// finishTaskID 返回 fixture 里唯一那张任务的 id。
+// 收尾夹具每个只建一张卡，按列表取第一张即可。
+func finishTaskID(t *testing.T, svc *Service, rootID string) string {
+	t.Helper()
+	details, err := svc.ListTaskDetails(context.Background(), rootID, ListTasksOptions{})
+	if err != nil {
+		t.Fatalf("ListTaskDetails: %v", err)
+	}
+	if len(details) == 0 {
+		t.Fatal("fixture has no task")
+	}
+	return details[0].Task.ID
+}
+
+func mustGetTask(t *testing.T, svc *Service, rootID, taskID string) Task {
+	t.Helper()
+	detail, err := svc.GetTask(context.Background(), rootID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	return detail.Task
+}
+
+// parkAtWaitingUser 把任务停在「等用户回话」——收尾的合法前提之一。
+func parkAtWaitingUser(t *testing.T, svc *Service, rootID, taskID string) Task {
+	t.Helper()
+	store, err := svc.taskStore(rootID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	if err := store.UpdateTaskStatus(context.Background(), taskID, StatusWaitingUser, false); err != nil {
+		t.Fatalf("park waiting_user: %v", err)
+	}
+	return mustGetTask(t, svc, rootID, taskID)
 }

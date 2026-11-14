@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -185,39 +186,70 @@ func TestTaskWorktreeBranchMergedWithoutAWorktree(t *testing.T) {
 	}
 }
 
-// TaskFinishStageIndex 决定「重跑那段继续收尾」还是「追加一段新收尾段」。
-func TestTaskFinishStageIndex(t *testing.T) {
+// 收尾不再追加阶段：BeginFinishWorktree 起一轮普通对话，用一个完成标记判定成功。
+// 同一时刻只允许一次收尾，重复请求必须被挡回。
+type fakeFinishExecutor struct {
+	mu     sync.Mutex
+	prompt string
+	reply  string
+	err    error
+}
+
+func (f *fakeFinishExecutor) RunDirectActivity(_ context.Context, _ Task, body string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.prompt = body
+	return f.reply, f.err
+}
+
+func TestBeginFinishWorktreeRunsOneFinishTurn(t *testing.T) {
 	ctx := context.Background()
 	svc, root, _, _ := finishFixture(t, "")
 	taskID := mustTaskID(t, svc, root.ID)
 	parkAtWaitingUser(t, svc, root.ID, taskID)
+	exec := &fakeFinishExecutor{reply: "done\n" + finishTurnDoneMarker}
+	svc.SetDirectExecutor(exec)
 
-	if _, ok, err := svc.TaskFinishStageIndex(ctx, root.ID, taskID); err != nil || ok {
-		t.Fatalf("no finish stage yet: ok=%v err=%v", ok, err)
-	}
 	if _, err := svc.BeginFinishWorktree(ctx, BeginFinishInput{RootID: root.ID, TaskID: taskID}); err != nil {
 		t.Fatalf("BeginFinishWorktree: %v", err)
 	}
-	index, ok, err := svc.TaskFinishStageIndex(ctx, root.ID, taskID)
-	if err != nil {
-		t.Fatalf("TaskFinishStageIndex: %v", err)
+	waitForCondition(t, func() bool {
+		return !svc.Finishing(root.ID, taskID)
+	})
+	exec.mu.Lock()
+	prompt := exec.prompt
+	exec.mu.Unlock()
+	if !strings.Contains(prompt, "收尾") && !strings.Contains(prompt, "worktree") {
+		t.Fatalf("finish prompt looks wrong: %q", prompt)
 	}
-	if !ok {
-		t.Fatal("the finish stage was appended: must report ok")
+	got := mustGetTask(t, svc, root.ID, taskID)
+	if got.Status != StatusWaitingUser {
+		t.Fatalf("task status=%q, want waiting_user after the finish turn", got.Status)
 	}
-	store, err := svc.taskStore(root.ID)
-	if err != nil {
-		t.Fatalf("taskStore: %v", err)
+	if strings.TrimSpace(got.AuxFlags.SessionError) != "" {
+		t.Fatalf("a successful finish turn must not leave session_error, got %q", got.AuxFlags.SessionError)
 	}
-	task, err := store.GetTask(ctx, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
+}
+
+// 回复里没有完成标记（典型：agent 撞上冲突、主动停下）不能算成功 ——
+// 那会把一次「需要人处理」的收尾记成做完了。
+func TestFinishTurnWithoutMarkerIsNotSuccess(t *testing.T) {
+	ctx := context.Background()
+	svc, root, _, _ := finishFixture(t, "")
+	taskID := mustTaskID(t, svc, root.ID)
+	parkAtWaitingUser(t, svc, root.ID, taskID)
+	svc.SetDirectExecutor(&fakeFinishExecutor{reply: "合并撞上冲突，需要你处理"})
+
+	if _, err := svc.BeginFinishWorktree(ctx, BeginFinishInput{RootID: root.ID, TaskID: taskID}); err != nil {
+		t.Fatalf("BeginFinishWorktree: %v", err)
 	}
-	if index != len(task.Stages)-1 {
-		t.Fatalf("index = %d, want %d (the appended tail)", index, len(task.Stages)-1)
+	waitForCondition(t, func() bool { return !svc.Finishing(root.ID, taskID) })
+	got := mustGetTask(t, svc, root.ID, taskID)
+	if strings.TrimSpace(got.AuxFlags.SessionError) == "" {
+		t.Fatal("a finish turn without the done marker must leave an error on the task")
 	}
-	if !IsFinishStage(task.Stages[index]) {
-		t.Fatalf("stage %d is not the finish stage", index)
+	if got.Status != StatusWaitingUser {
+		t.Fatalf("task status=%q, want waiting_user", got.Status)
 	}
 }
 
@@ -407,27 +439,25 @@ func TestPlanFinishWorktreeDoesNotTouchTheRepo(t *testing.T) {
 
 // ── TaskBusy ───────────────────────────────────────────────────────
 
-// 段在跑时 TaskBusy 必须为真 —— 那是「收尾一直转、点不动」的根源：以前只看会话
-// 探针，段在跑时会漏过去、让请求撞进收尾准入变成 409。
-func TestTaskBusyWhenTheCurrentStageIsRunning(t *testing.T) {
+// 任务还在跑时 TaskBusy 必须为真 —— 那是「收尾一直转、点不动」的根源：
+// 探针没装配时按任务状态判；装配了就以会话为准。
+func TestTaskBusyWhileTheTaskIsRunning(t *testing.T) {
 	ctx := context.Background()
 	svc, root, _, _ := finishFixture(t, "")
 	taskID := mustTaskID(t, svc, root.ID)
-	task := parkAtWaitingUser(t, svc, root.ID, taskID)
 	store, err := svc.taskStore(root.ID)
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	// 直接把最新一段的 run 置成 running（不真的起 agent，单测里不起）。
-	run, err := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex)
-	if err != nil {
-		t.Fatalf("LatestStageRun: %v", err)
-	}
-	if err := store.UpdateStageRunStatus(ctx, run.ID, StageStatusRunning); err != nil {
-		t.Fatalf("UpdateStageRunStatus: %v", err)
+	if err := store.UpdateTaskStatus(ctx, taskID, StatusRunning, false); err != nil {
+		t.Fatalf("mark running: %v", err)
 	}
 	if !svc.TaskBusy(ctx, root.ID, taskID) {
-		t.Fatal("TaskBusy = false while the current stage run is running")
+		t.Fatal("TaskBusy = false while the task is running")
+	}
+	svc.SetSessionRunningProbe(func(string) bool { return false })
+	if svc.TaskBusy(ctx, root.ID, taskID) {
+		t.Fatal("an idle session must clear TaskBusy even if the status is stale")
 	}
 }
 

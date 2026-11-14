@@ -64,7 +64,7 @@ export function useTaskDetailPanel({
     && !!task?.worktree_path
     && task?.worktree_missing !== true;
   const terminal = isTerminalKanbanTask(task);
-  const taskRunningNow = task.current_stage_status === "running" && task.status === "running";
+  const taskRunningNow = task.status === "running";
   const canCompleteTask = !terminal && !taskRunningNow;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
@@ -109,9 +109,7 @@ export function useTaskDetailPanel({
         : "";
       const message = res.action === "session_running"
         ? t("task.finishWorktreeSessionRunning")
-        : res.action === "nudged"
-          ? (planLine ? `${t("task.finishWorktreeNudged")} — ${planLine}` : t("task.finishWorktreeNudged"))
-          : (planLine ? `${t("task.finishWorktreeStarted")} — ${planLine}` : t("task.finishWorktreeStarted"));
+        : (planLine ? `${t("task.finishWorktreeStarted")} — ${planLine}` : t("task.finishWorktreeStarted"));
       reportError("file.write_failed", message, { severity: "info", recoverable: false });
     } catch (error) {
       reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));

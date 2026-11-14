@@ -42,8 +42,8 @@ func addHeavyTurn(t *testing.T, manager *session.Manager, s *session.Session, n 
 	blocks := make([]session.Block, 0, n)
 	for i := 0; i < n; i++ {
 		blocks = append(blocks, session.Block{
-			Seq: seq,
-			Pos: i,
+			Seq:  seq,
+			Pos:  i,
 			Type: session.BlockTypeReasoning,
 			Text: fmt.Sprintf("thought %d", i),
 		})
@@ -175,4 +175,3 @@ func TestApplyWindowBlockBudgetLeavesSmallSessionsUntouched(t *testing.T) {
 		t.Fatalf("小会话不该被裁剪，实际 %+v blockCount=%d", gotMeta, gotMeta.BlockCount)
 	}
 }
-

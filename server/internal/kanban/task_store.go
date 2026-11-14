@@ -21,14 +21,12 @@ type TaskStore struct {
 type ListTasksOptions struct {
 	Status     string
 	TaskNumber int
-	Stage      int
-	HasStage   bool
 	After      string
 	Before     string
 	Limit      int
 }
 
-func (s *TaskStore) CreateTask(ctx context.Context, task Task, firstRun StageRun, event TaskEvent) (Task, error) {
+func (s *TaskStore) CreateTask(ctx context.Context, task Task, event TaskEvent) (Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Task{}, err
@@ -42,9 +40,6 @@ func (s *TaskStore) CreateTask(ctx context.Context, task Task, firstRun StageRun
 		task.TaskNumber = maxNumber + 1
 	}
 	if err := insertTask(ctx, tx, task); err != nil {
-		return Task{}, err
-	}
-	if err := insertStageRun(ctx, tx, firstRun); err != nil {
 		return Task{}, err
 	}
 	if err := insertTaskEvent(ctx, tx, event); err != nil {
@@ -66,10 +61,6 @@ func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Tas
 	if opts.TaskNumber > 0 {
 		where = append(where, "task_number = ?")
 		args = append(args, opts.TaskNumber)
-	}
-	if opts.HasStage {
-		where = append(where, "current_stage_index = ?")
-		args = append(args, opts.Stage)
 	}
 	if strings.TrimSpace(opts.After) != "" {
 		where = append(where, "updated_at > ?")
@@ -100,10 +91,6 @@ func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Tas
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows.Close()
-	for i := range items {
-		s.decorateCurrentStage(ctx, &items[i])
-	}
 	return items, nil
 }
 
@@ -114,27 +101,18 @@ func (s *TaskStore) ListTaskDetails(ctx context.Context, opts ListTasksOptions) 
 	}
 	items := make([]TaskDetail, 0, len(tasks))
 	for _, task := range tasks {
-		runs, err := s.ListStageRuns(ctx, task.ID)
-		if err != nil {
-			return nil, err
-		}
 		events, err := s.ListEvents(ctx, task.ID)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, TaskDetail{Task: task, StageRuns: runs, Events: events})
+		items = append(items, TaskDetail{Task: task, Events: events})
 	}
 	return items, nil
 }
 
 func (s *TaskStore) GetTask(ctx context.Context, id string) (Task, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+taskSelectColumns+` FROM tasks WHERE id = ?`, strings.TrimSpace(id))
-	task, err := scanTask(row)
-	if err != nil {
-		return Task{}, err
-	}
-	s.decorateCurrentStage(ctx, &task)
-	return task, nil
+	return scanTask(row)
 }
 
 // TaskIDForMainSession 反查绑定了该会话的任务（main_session_key 匹配）；无则返回空串。
@@ -153,32 +131,11 @@ func (s *TaskStore) GetDetail(ctx context.Context, id string) (TaskDetail, error
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	runs, err := s.ListStageRuns(ctx, id)
-	if err != nil {
-		return TaskDetail{}, err
-	}
 	events, err := s.ListEvents(ctx, id)
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	return TaskDetail{Task: task, StageRuns: runs, Events: events}, nil
-}
-
-func (s *TaskStore) ListStageRuns(ctx context.Context, taskID string) ([]StageRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at FROM stage_runs WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []StageRun{}
-	for rows.Next() {
-		run, err := scanStageRun(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, run)
-	}
-	return items, rows.Err()
+	return TaskDetail{Task: task, Events: events}, nil
 }
 
 func (s *TaskStore) ListEvents(ctx context.Context, taskID string) ([]TaskEvent, error) {
@@ -196,11 +153,6 @@ func (s *TaskStore) ListEvents(ctx context.Context, taskID string) ([]TaskEvent,
 		items = append(items, event)
 	}
 	return items, rows.Err()
-}
-
-func (s *TaskStore) LatestStageRun(ctx context.Context, taskID string, stageIndex int) (StageRun, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at FROM stage_runs WHERE task_id = ? AND stage_index = ? ORDER BY created_at DESC LIMIT 1`, strings.TrimSpace(taskID), stageIndex)
-	return scanStageRun(row)
 }
 
 func (s *TaskStore) UpdateTaskStatus(ctx context.Context, taskID, status string, completed bool) error {
@@ -250,7 +202,7 @@ func (s *TaskStore) UpdateTaskAuxFlags(ctx context.Context, taskID string, patch
 	return err
 }
 
-// ClearSessionRefs 清掉任务指向某个会话的所有引用（main_session_key + 阶段运行的 session_key）。
+// ClearSessionRefs 清掉任务指向某个会话的主会话引用。
 //
 // 会话被删除后必须调它：否则任务仍指向一个不存在的 key，任务面板点进去是空白。
 // 归档不走这里 —— 归档的会话还能打开，链接必须留着。
@@ -267,10 +219,6 @@ func (s *TaskStore) ClearSessionRefs(ctx context.Context, taskID, sessionKey str
 	defer tx.Rollback()
 	// 只清「确实指向这个会话」的那一条：任务的主会话可能已被改成别的 key。
 	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET main_session_key = '', updated_at = ? WHERE id = ? AND main_session_key = ?`,
-		s.now().UTC().Format(time.RFC3339Nano), taskID, key); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE stage_runs SET session_key = '', updated_at = ? WHERE task_id = ? AND session_key = ?`,
 		s.now().UTC().Format(time.RFC3339Nano), taskID, key); err != nil {
 		return err
 	}
@@ -292,13 +240,13 @@ func (s *TaskStore) ClearWorktreeRefs(ctx context.Context, taskID string) error 
 }
 
 // DeleteTask 彻底删掉一张任务卡：tasks 行 + 它名下的 stage_runs 和 task_events。
+// stage_runs 是迁移前的只读证据，任务卡删掉时一并清掉，避免留下没有主人的行。
 //
 // 只删卡片本身 —— worktree 目录、分支、会话都不是这张卡的一部分，用户要的是
 // 「别再堆在板上」，不是「把活删掉」。
 //
-// 三张表必须在一个事务里一起消失：留孤儿 stage_runs / events 会让它们被
-// ListStageRuns 之类的查询按 task_id 捞出来，而 tasks 行已经没了 —— 界面上
-// 是一堆没有主人的执行记录。
+// 三张表必须在一个事务里一起消失：留下孤儿 stage_runs / events 只会让
+// 「按 task_id 捞出来的证据」指向一个已经不存在的任务。
 //
 // 先 GetTask 是为了沿用「任务不存在」那套错误语义（sql.ErrNoRows），
 // 不让一个不存在的 id 静默返回成功。
@@ -338,60 +286,7 @@ func (s *TaskStore) UpdateTask(ctx context.Context, task Task) error {
 	return tx.Commit()
 }
 
-func (s *TaskStore) MoveTask(ctx context.Context, task Task, run StageRun, event TaskEvent) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := updateTaskCore(ctx, tx, task); err != nil {
-		return err
-	}
-	if strings.TrimSpace(run.ID) != "" {
-		if err := insertStageRun(ctx, tx, run); err != nil {
-			return err
-		}
-	}
-	if err := insertTaskEvent(ctx, tx, event); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *TaskStore) UpdateStageRunStatus(ctx context.Context, runID, status string) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	finished := ""
-	if status == StageStatusApproved || status == StageStatusRejected || status == StageStatusSuccess || status == StageStatusFail || status == StageStatusCancelled {
-		finished = now
-	}
-	_, err := s.db.ExecContext(ctx, `UPDATE stage_runs SET status = ?, finished_at = CASE WHEN ? != '' THEN ? ELSE finished_at END, updated_at = ? WHERE id = ?`, strings.TrimSpace(status), finished, finished, now, strings.TrimSpace(runID))
-	return err
-}
-
-func (s *TaskStore) UpdateStageRunExecution(ctx context.Context, run StageRun) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	set := []string{"status = ?", "session_key = ?", "input = ?", "rendered_prompt = ?", "updated_at = ?"}
-	args := []any{strings.TrimSpace(run.Status), strings.TrimSpace(run.SessionKey), run.Input, run.RenderedPrompt, now}
-	if strings.TrimSpace(run.StartedAt) != "" {
-		set = append(set, "started_at = ?")
-		args = append(args, strings.TrimSpace(run.StartedAt))
-	}
-	if strings.TrimSpace(run.FinishedAt) != "" {
-		set = append(set, "finished_at = ?")
-		args = append(args, strings.TrimSpace(run.FinishedAt))
-	}
-	args = append(args, strings.TrimSpace(run.ID))
-	_, err := s.db.ExecContext(ctx, `UPDATE stage_runs SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...)
-	return err
-}
-
-func (s *TaskStore) UpdateStageRunInput(ctx context.Context, runID, input string) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `UPDATE stage_runs SET input = ?, updated_at = ? WHERE id = ?`, input, now, strings.TrimSpace(runID))
-	return err
-}
-
 func (s *TaskStore) AddEvent(ctx context.Context, event TaskEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`, event.ID, event.TaskID, event.StageRunID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at) VALUES (?, ?, '', ?, ?, ?)`, event.ID, event.TaskID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }

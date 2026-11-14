@@ -4,6 +4,22 @@
 不再以兼容视图存在，而是在服务启动时一次性转换。本文记录转换规则、备份位置、
 验证方式与回滚步骤。
 
+## 转换完成后的模型（2026-11，D3）
+
+阶段概念已经从**运行模型、API 与前端里彻底删除**。"彻底"的含义：
+
+| 层 | 现状 |
+|---|---|
+| 任务类型 | `Task` 没有 `Stages` 字段；新建任务只收一条用户留言（`CreateTaskInput.Input`）。 |
+| 执行 | 每一轮由 Router（`kanban.ActivityService`）决定：命中 workflow 就跑 `WorkflowRun`；`workflow_choice=disabled` 或没有可用 workflow 时走直连执行器 `AppContext.RunDirectActivity`，在任务主会话里跑一轮普通对话并回写一条 Agent 回复。 |
+| 收尾 | 也不再是"阶段"：`Service.runFinishTurn` 用固定提示词跑一轮普通对话，`Finishing` 是内存标记，不落任何阶段数据。 |
+| HTTP | `/api/tasks/{id}/comments` 与所有 `/stages*` 端点已删除；留言统一走 `POST /api/tasks/{id}/activities`。 |
+| 前端 | 没有 `StageTemplate`、阶段编辑器/选项条、默认流水、推进/立即执行按钮；任务详情只有一条 `ConversationView`，卡片只有完成/暂停/继续/取消/收尾/删除。 |
+| 数据 | `task_stages_json`、`task_type`、`current_stage_index`、`stage_runs` 仅作为**冻结的审计证据**与一次性转换输入保留；生产路径不再读写（新任务写入固定值 `task_type='conversation'`）。 |
+
+`task_type='stage'` 的行只可能来自转换前的旧库；启动时的 `ConvertStagesToConversation`
+会把它们全部转完（见下文），第二次启动 `converted=0`。
+
 ## 触发方式
 
 | 场景 | 行为 |
@@ -63,6 +79,9 @@
 - `updated_at` **不变**：迁移是后台数据整形，不能把所有历史任务的时间改成迁移时刻；
 - `task_template_id/name` 作为冻结来源标签保留（Phase 3 的既定行为）。
 
+清理完成后这几列对运行路径没有任何意义：它们只是旧库仍然存在时的兼容外壳，
+不会被回填成新模型的一部分。
+
 ## 备份与保留
 
 转换前会创建并写入两张备份表：
@@ -116,3 +135,6 @@ convert at <UTC 时间>: seen=64 converted=64 skipped=0 already=0 activities=128
 | `server/internal/kanban/task_store_migrate.go` | 启动时接线与 schema 迁移。 |
 | `server/scripts/convert_stages_to_conversation.go` | 手动预演/转换脚本。 |
 | `server/internal/kanban/task_store_convert_stages_test.go` | 成功转换、跳过新任务、legacy Run 不阻断新留言/恢复。 |
+| `server/internal/kanban/activity_service.go` | Router：每轮留言决定走 workflow 还是直连回复。 |
+| `server/internal/api/appcontext_activity.go` | 直连执行器 `RunDirectActivity`：复用任务主会话跑一轮普通对话。 |
+| `server/internal/kanban/worktree_finish_turn.go` | 收尾回合（固定提示词）与收尾幂等锁。 |

@@ -18,7 +18,7 @@ func TestWorktreeRegistryCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestWorktreeRegistryReferenceCount(t *testing.T) {
 	svc, root := newTestService(t, nil)
 	store, _ := svc.taskStore(root.ID)
 	mk := func(name string) Task {
-		d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: name})
+		d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: name})
 		if err != nil {
 			t.Fatalf("CreateTask: %v", err)
 		}
@@ -193,7 +193,7 @@ func TestMergeConflictActivityInsert(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)
 	store, _ := svc.taskStore(root.ID)
-	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

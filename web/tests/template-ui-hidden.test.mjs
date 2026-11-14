@@ -3,12 +3,9 @@ import fs from "./source-map-fs.mjs";
 import nodeFs from "node:fs";
 import path from "node:path";
 import { test } from "vitest";
-import { defaultTaskFlowStages } from "../src/app/defaultTaskFlow";
 
-// Phase 3 of the template→workflow migration: task templates are gone. The
-// built-in user→agent flow is now a plain StageTemplate[] — no id, no store,
-// no template picker. These checks are the absence guard: if a template module
-// or a `taskTemplate.` i18n key comes back, the suite fails.
+// 模板与阶段两代模型都已下线：任务 = 一条对话流，由后端 router 决定怎么执行。
+// 这些检查是 absence guard：模板模块、阶段编辑器或 `taskTemplate.` i18n 键回来就红。
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
@@ -23,15 +20,6 @@ function sourceFiles(dir) {
   return out;
 }
 
-test("built-in default flow is a plain user stage followed by an agent stage", () => {
-  const stages = defaultTaskFlowStages();
-  assert.equal(stages.length, 2);
-  assert.equal(stages[0].role, "user");
-  assert.equal(stages[1].role, "agent");
-  assert.equal(stages[1].prompt_template, "{previous_input}");
-  assert.equal("snapshot" in stages[0], false, "stages are flattened, not template snapshots");
-});
-
 test("template modules and services are deleted", () => {
   const gone = [
     "src/app/useTaskTemplates.ts",
@@ -45,6 +33,18 @@ test("template modules and services are deleted", () => {
   ];
   for (const rel of gone) {
     assert.equal(nodeFs.existsSync(path.join(root, rel)), false, `${rel} must be deleted`);
+  }
+});
+
+test("stage modules are deleted too", () => {
+  const gone = [
+    "src/app/defaultTaskFlow.ts",
+    "src/components/task/StageEditor.tsx",
+    "src/components/task/StageOptionsBar.tsx",
+    "src/components/common/LabelWithInfo.tsx",
+  ];
+  for (const rel of gone) {
+    assert.equal(nodeFs.existsSync(path.join(root, rel)), false, `${rel} must be deleted with the stage model`);
   }
 });
 
@@ -63,10 +63,10 @@ test("no source file mentions task templates", () => {
   assert.deepEqual(offenders, [], "template feature code must not exist outside the frozen columns");
 });
 
-test("creating a task no longer sends or tracks a template id", () => {
+test("creating a task sends a message and nothing stage-shaped", () => {
   const composer = read("src/app/useTaskComposer.ts");
   assert.doesNotMatch(composer, /templateId|templateName|taskTemplates/);
-  assert.match(composer, /defaultTaskFlowStages\(\)/);
+  assert.doesNotMatch(composer, /defaultTaskFlowStages|taskStagesForCreate|stages:/, "create-task must not build stage payloads");
   const crud = read("src/services/task/crud.ts");
   assert.doesNotMatch(crud, /task_template_id|task_template_name/);
   assert.match(crud, /createTask\(\n  rootId: string,/);

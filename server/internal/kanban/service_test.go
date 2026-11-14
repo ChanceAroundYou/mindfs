@@ -46,10 +46,6 @@ func mkdirExclusive(path string) error {
 
 type fakeRunner struct {
 	mu                   sync.Mutex
-	execs                []AgentStageExecution
-	prompts              []string
-	runErr               error
-	result               StageResult
 	worktreeErr          error
 	worktreeBranchMode   string
 	worktreeBranch       string
@@ -66,11 +62,7 @@ type fakeRunner struct {
 	// t.TempDir() 每用例一个反而让「同名不同目录」这种真实情况测不到。序号见 dirSeq。
 	createdDirs []string
 	dirSeq      int
-	// gate 非 nil 时 RunAgentStage 记完 exec 后阻塞到 gate 关闭，用来把执行体钉在阶段内部，
-	// 稳定复现并发执行（见 TestRunTaskExecutesStageOnceWhenKickedTwice）。
-	gate chan struct{}
-	// taskUpdates 记 TaskUpdated 的每次调用：广播是「状态变了界面才知道」的唯一通道，
-	// 而它以前只由部分路径发出（见 TestStatusChangeAlwaysBroadcasts）。与 execs 共用 mu。
+	// taskUpdates 记 TaskUpdated 的每次调用：广播是「状态变了界面才知道」的唯一通道。
 	taskUpdates []string
 }
 
@@ -87,9 +79,6 @@ func (r *fakeRunner) updateCount() int {
 	defer r.mu.Unlock()
 	return len(r.taskUpdates)
 }
-
-// result 零值 = StageOutcomeDone：不显式设置的老用例照旧判完成，
-// 只有验证「没回报就不许算完成」的新用例才需要构造它。
 
 func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (WorktreeInfo, error) {
 	r.mu.Lock()
@@ -133,29 +122,6 @@ func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branc
 	return WorktreeInfo{RootID: "wt-root", Path: path}, nil
 }
 
-func (r *fakeRunner) EnsureAgentSession(ctx context.Context, exec AgentStageExecution) (string, error) {
-	return "session-" + exec.Run.ID, nil
-}
-
-func (r *fakeRunner) RunAgentStage(ctx context.Context, exec AgentStageExecution) (StageResult, error) {
-	r.mu.Lock()
-	r.execs = append(r.execs, exec)
-	r.prompts = append(r.prompts, exec.Prompt)
-	result := r.result
-	r.mu.Unlock()
-	if r.gate != nil {
-		select {
-		case <-r.gate:
-		case <-ctx.Done():
-			return StageResult{}, ctx.Err()
-		}
-	}
-	if r.runErr != nil {
-		return StageResult{}, r.runErr
-	}
-	return result, nil
-}
-
 func (r *fakeRunner) TaskUpdated(rootID string, detail TaskDetail) {
 	r.recordTaskUpdate(detail.Task.ID)
 }
@@ -180,22 +146,6 @@ func newTestService(t *testing.T, runner *fakeRunner) (*Service, fs.RootInfo) {
 		})
 	}
 	return svc, root
-}
-
-// agentStage 构造一个常见的 agent 段定义。
-func agentStage(name, prompt string) StageTemplate {
-	return StageTemplate{
-		Name:               name,
-		Role:               RoleAgent,
-		Agent:              "codex",
-		Model:              "gpt-5",
-		PromptTemplate:     prompt,
-		SessionReusePolicy: SessionReuseTaskMain,
-	}
-}
-
-func userStage(name string) StageTemplate {
-	return StageTemplate{Name: name, Role: RoleUser}
 }
 
 // waitForCondition 轮询直到 cond 为真或超时；超时视为失败（静默返回会把真超时

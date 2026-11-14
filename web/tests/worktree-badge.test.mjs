@@ -3,7 +3,7 @@ import { test } from "vitest";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
 
-// worktree 徽标的四种状态 + 收尾流程的整条反馈链。
+// worktree 徽标的三种状态 + 收尾流程的整条反馈链。
 //
 // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」：create_worktree
 // 是创建时的配置，永久 true，收尾之后一点没变 —— 光看它会让收完尾的任务照样显示
@@ -36,32 +36,16 @@ assert.ok(stateBlock, "the card must contain a worktreeTagState derivation");
 // 剥完必须真的少了一行 —— 否则将来有人改了声明写法，这里就成了静默失效的 replace。
 const stateBlockJS = stateBlock[0].replace(/const worktreeTagState: WorktreeTagState =/, "const worktreeTagState =");
 assert.notEqual(stateBlockJS, stateBlock[0], "the WorktreeTagState type annotation should have been stripped");
-// finishActive 由组件从 appTask.ts 引入（那边另有测试），这里作为依赖喂进去 ——
-// 不在测试里重抄一份，重抄了就等于绕过了真正被用的那个判据。
+// 徽标不再依赖「收尾段是否在跑」—— 收尾是后台回合，不是阶段。
 const badgeState = new Function(
   "task",
   [
-    "const isFinishStageActive = (t) => {",
-    "  const i = t.current_stage_index;",
-    "  if (i < 0 || i >= (t.stages?.length || 0)) return false;",
-    "  const stage = t.stages?.[i];",
-    "  return stage?.kind === 'worktree_finish'",
-    "    && t.status !== 'success' && t.status !== 'fail' && t.status !== 'cancelled';",
-    "};",
     "const isTerminalKanbanTask = (t) => t.status === 'success' || t.status === 'fail' || t.status === 'cancelled';",
-    "const finishActive = isFinishStageActive(task);",
     "const terminal = isTerminalKanbanTask(task);",
     stateBlockJS,
     "return worktreeTagState;",
   ].join("\n"),
 );
-
-// 一个指针停在收尾段上的任务。
-const atFinishStage = (extra = {}) => ({
-  current_stage_index: 1,
-  stages: [{ role: "agent" }, { role: "agent", kind: "worktree_finish" }],
-  ...extra,
-});
 
 test("a finished worktree stops claiming to be enabled", () => {
   // 真机收尾后的形状：create_worktree 还是 true，path 被清空，且**确实建过树**。
@@ -157,34 +141,21 @@ test("a task that never asked for a worktree is still 'none'", () => {
   assert.equal(badgeState({ create_worktree: false, worktree_path: "/x/.worktree/t1" }), "none");
 });
 
-// 「收尾中」必须单列一档。期间目录还在，徽标若和平时一模一样，用户会以为
-// 「还没开始」于是再点一次收尾（服务端会拒，但用户看到的是「按钮坏了」）。
-test("a running finish stage reads as its own state", () => {
+// 「建过但目录还在收尾中」不单列一档：收尾是后台回合，任务状态会显示 running，
+// 徽标只回答「此刻有没有树」——目录还在就是 enabled，拆掉才是 finished。
+test("a worktree being torn down still reads by the directory, not by the flow", () => {
   assert.equal(
-    badgeState({ ...atFinishStage(), create_worktree: true, worktree_path: "/x/.worktree/t1" }),
-    "finishing",
-  );
-});
-
-test("once the finish stage is over the badge goes back to talking about the directory", () => {
-  // 收尾段跑完 → 清场把 path 清空 → 该读「已收尾」，不能永远停在「收尾中」。
-  assert.equal(
-    badgeState({ ...atFinishStage(), create_worktree: true, worktree_path: "", worktree_built: true }),
-    "finished",
-  );
-  // 终态同理：指针还停在那段上，但活已经结束了，不该再显示「收尾中」。
-  assert.equal(
-    badgeState({ ...atFinishStage({ status: "success" }), create_worktree: true, worktree_path: "/x/.worktree/t1" }),
+    badgeState({ create_worktree: true, worktree_path: "/x/.worktree/t1", status: "running" }),
     "enabled",
   );
 });
 
 // 上面的函数是从组件源码跑出来的，跑对了不代表组件真的用了它 —— 把这点也钉上。
-// 判据顺序有讲究：目录不在先判（金标准，与状态无关），然后 enabled / finishing 两档。
+// 判据顺序：目录不在先判（金标准，与状态无关），然后 enabled / none 两档。
 assert.match(
   card,
-  /const worktreeTagState: WorktreeTagState = worktreeGone\s*\n\s*\? "finished"\s*\n\s*: hasWorktreePath\s*\n\s*\? \(finishActive \? "finishing" : "enabled"\)\s*\n\s*: "none"/,
-  "the card must derive a four-state badge, not a two-state one",
+  /const worktreeTagState: WorktreeTagState = worktreeGone\s*\n\s*\? "finished"\s*\n\s*: hasWorktreePath\s*\n\s*\? "enabled"\s*\n\s*: "none"/,
+  "the card must derive a three-state badge from the directory itself",
 );
 assert.match(card, /style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/, "the tag must be styled by that state");
 assert.doesNotMatch(
@@ -206,33 +177,23 @@ assert.match(
   "a deleted worktree must read as finished — the directory being gone is the gold standard",
 );
 assert.doesNotMatch(card, /worktreeTagState === "missing"/, "the red missing state must be gone");
-// 四档都要有各自的颜色，不能并档。
-assert.match(icons, /export type WorktreeTagState = "enabled" \| "finishing" \| "finished" \| "none"/);
+// 三档都要有各自的颜色，不能并档。
+assert.match(icons, /export type WorktreeTagState = "enabled" \| "finished" \| "none"/);
 for (const tone of ["#475569", "#15803d", "#b45309"]) {
   assert.ok(icons.includes(tone), `missing tone ${tone}: finished/disabled must not share a colour`);
 }
-// 收尾中的区分信号是**文字**，不是动效（2026-10-07 用户要求去掉脉冲）。
-// enabled 与 finishing 的标签文字不同（「worktree」vs「收尾中」），那才是唯一的区分；
-// 加回脉冲动画就等于又把「看着在动」当成了信号，而用户明确不要这个动效。
+// 收尾进行中徽标不换文字、不加动效（2026-10-07 用户要求去掉脉冲）：它只回答
+// 「此刻有没有树」。加回脉冲动画就等于又把「看着在动」当成了信号。
 assert.doesNotMatch(
   icons.slice(icons.indexOf("export function taskWorktreeTagStyle")),
   /animation: finishing/,
-  "the finishing badge must not pulse — the label text is the signal now",
+  "the worktree badge must not pulse",
 );
-assert.match(
-  card,
-  /worktreeTagState === "finishing"[\s\S]{0,40}?t\("task\.worktreeFinishingLabel"\)/,
-  "the finishing tag must say 收尾中 — that text is what tells it apart from an idle worktree",
-);
+assert.doesNotMatch(card, /task\.worktreeFinishing(?:Label|Title)/, "the finishing badge text must be gone");
 
 // 收尾进行中，按钮**照样可点**（2026-10-05）：那正是「agent 那半已经做完、只差机械
 // 清场」的时刻，再点一次后端会直接清场。换成转圈等于把唯一的出路藏起来，任务就此
 // 永远转下去 —— 用户实测的「收尾一直转、点不动、也结束不了」就是这个形状。
-assert.doesNotMatch(
-  card,
-  /worktreeTagState === "finishing" \? \(\s*<span[\s\S]{0,400}?<TaskQueuedSpinnerIcon \/>/,
-  "the finish button must stay clickable while the flow runs",
-);
 assert.doesNotMatch(card, /TaskQueuedSpinnerIcon/, "the card must not keep a spinner import for a state that no longer renders one");
 // 判据只剩 worktree 三态（2026-10-07）：「有 agent 段」那条去掉了 —— 它会让
 // 「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它。
@@ -289,12 +250,9 @@ for (const key of [
   "task.finishWorktreeBranchDeleted",
   "task.worktreeFinishedTitle",
   "task.worktreeFinishedLabel",
-  "task.worktreeFinishingTitle",
-  "task.worktreeFinishingLabel",
   "task.finishWorktreeConfirm",
   "task.finishWorktreeStarted",
   "task.finishWorktreeSessionRunning",
-  "task.finishWorktreeNudged",
 ]) {
   assert.match(zh, new RegExp(`"${key.replace(/\./g, "\\.")}":`), `zh-CN must define ${key}`);
   assert.match(en, new RegExp(`"${key.replace(/\./g, "\\.")}":`), `en-US must define ${key}`);

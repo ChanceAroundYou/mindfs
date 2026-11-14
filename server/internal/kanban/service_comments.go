@@ -40,14 +40,3 @@ func (s *Service) PostComment(ctx context.Context, in PostCommentServiceInput) (
 	}
 	return act, req, nil
 }
-
-func (s *Service) ListTaskComments(ctx context.Context, rootID, taskID string) ([]TaskActivity, error) {
-	store, err := s.taskStore(rootID)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := store.GetTask(ctx, taskID); err != nil {
-		return nil, err
-	}
-	return store.ListActivities(ctx, taskID)
-}

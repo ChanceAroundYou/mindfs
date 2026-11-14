@@ -5,6 +5,7 @@ import type { SessionItem } from "./appSession";
 import type { KanbanTask } from "../services/tasks";
 import type { WorkspaceBoard, WorkspaceBoardFilter } from "./useWorkspaceBoard";
 import type { AgentStatus } from "../shared/agentTypes";
+import type { KanbanColumn, MoveKanbanAction } from "../components/task/taskBoardTypes";
 
 /**
  * 看板面板那一个 <TaskBoardView>。
@@ -26,7 +27,7 @@ export type UseAppKanbanTaskPanelParams = {
   handleWorkspaceCreateTask: (rootId: string, nodeId: string) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
-  kanbanStageColumns: { index: number; name: string; role: "user" | "agent"; tasks: KanbanTask[]; groups?: Array<{ key: string; name: string; tone: "success" | "danger" | "muted"; tasks: KanbanTask[]; }>; }[];
+  kanbanColumns: KanbanColumn[];
   selectedKanbanTaskId: string;
   expandedTaskInputIds: Set<string>;
   setExpandedTaskInputIds: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -39,7 +40,7 @@ export type UseAppKanbanTaskPanelParams = {
   boardSessionByKey: Record<string, SessionItem>;
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
-  handleMoveKanbanTask: (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree") => Promise<void>;
+  handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
   openTaskCreateDialog: (targetRootId?: string, targetNodeId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<{ title: string; message: string; details: string[]; } | null>>;
@@ -58,7 +59,7 @@ export type UseAppKanbanTaskPanelParams = {
  * 名字叫 sessionByKey 只是 TaskBoardView 的 prop 名，别被它带回错误的那张表。
  */
 export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
-  const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks, agents } = params;
+  const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks, agents } = params;
 
   // 工作流草稿编辑器是独立页（listWorkflowDrafts 走控制面），盖掉看板本身；
   // 看板状态都住在 app 层 hook 里，来回切换不会丢数据。
@@ -84,7 +85,7 @@ export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
       handleWorkspaceCreateTask={handleWorkspaceCreateTask}
       setSelectedKanbanTaskId={setSelectedKanbanTaskId}
       kanbanTasksLoading={kanbanTasksLoading}
-      kanbanStageColumns={kanbanStageColumns}
+      kanbanColumns={kanbanColumns}
       selectedKanbanTaskId={selectedKanbanTaskId}
       expandedTaskInputIds={expandedTaskInputIds}
       setExpandedTaskInputIds={setExpandedTaskInputIds}

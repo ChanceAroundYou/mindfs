@@ -32,8 +32,6 @@ const [taskInlineActiveToken, setTaskInlineActiveToken] = useState<{ type: "file
 const [taskInlineCandidates, setTaskInlineCandidates] = useState<CandidateItem[]>([]);
 const [taskInlineCandidateIndex, setTaskInlineCandidateIndex] = useState(0);
 const [taskInlineSaving, setTaskInlineSaving] = useState(false);
-// 新建任务面板里「用户输入模板」字段说明的展开态（与模板编辑面板同一套组件）。
-const [taskInlineHelpKey, setTaskInlineHelpKey] = useState("");
 const [taskInlineUploadProgress, setTaskInlineUploadProgress] = useState<UploadProgress | null>(null);
   const [directoryUploadProgress, setDirectoryUploadProgress] = useState<UploadProgress | null>(null);
   const [taskWorktreeBranches, setTaskWorktreeBranches] = useState<GitBranchesPayload>({ branches: [] });
@@ -104,8 +102,6 @@ const knownTaskWorktreePathsRef = useRef<Set<string>>(new Set());
     setTaskInlineCandidateIndex,
     taskInlineSaving,
     setTaskInlineSaving,
-    taskInlineHelpKey,
-    setTaskInlineHelpKey,
     taskInlineUploadProgress,
     setTaskInlineUploadProgress,
     directoryUploadProgress,

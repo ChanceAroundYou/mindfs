@@ -382,8 +382,8 @@ groups:
       - server/internal/gitview/worktree_finish.go
       - server/internal/gitview/worktree_finish_test.go
       - server/internal/kanban/worktree_finish.go
-      - server/internal/kanban/worktree_finish_stage.go
-      - server/internal/kanban/worktree_finish_stage_test.go
+      - server/internal/kanban/worktree_finish_turn.go
+      - server/internal/kanban/worktree_finish_guard_test.go
       - server/internal/kanban/worktree_finish_test.go
       - server/internal/api/http_tasks_finish_teardown.go
       - server/internal/api/http_tasks_finish_test.go
@@ -525,7 +525,7 @@ groups:
     title: 看板模型重做（拒绝上游 task_groups 编排体系）
     kind: trim
     symptom: "上游的 task_groups 分组 + 并发调度器合回来后：同一任务被并发跑两次、卡上出现「准入位」状态、任务可编辑弹窗回来、跨项目工作台按上游 taskGroups 语义分组。"
-    why: "本地早已重做为「卡=任务、列=全局状态、无并发调度」：任务自带流水（Task.Stages 由调用方随包带上——Phase 3 后就是前端内置默认流水，模板预设已彻底删除）、queued 与调度槽位已删、新建任务恒为 waiting_user。上游的 kanban.Start 调度器 / TaskGroupPanel / patchTask / fetchTaskGroups / groupOperation / openTaskEditDialog 全部丢弃。SchedulerAdmitted 字段与 scheduler_admitted 列一律不再读写（2026-10-06 退役；schema 行保留在原地不做破坏性迁移，恒为默认值）。"
+    why: "本地早已重做为「卡=任务、列=全局状态、无并发调度」：任务没有阶段流水（阶段概念已于 2026-11 彻底删除，建任务只收一条用户留言，见 G-LN）、queued 与调度槽位已删、新建任务恒为 waiting_user。上游的 kanban.Start 调度器 / TaskGroupPanel / patchTask / fetchTaskGroups / groupOperation / openTaskEditDialog 全部丢弃。SchedulerAdmitted 字段与 scheduler_admitted 列一律不再读写（2026-10-06 退役；schema 行保留在原地不做破坏性迁移，恒为默认值）。"
     files:
       - server/internal/kanban/
       - server/internal/api/http_tasks.go
@@ -564,8 +564,6 @@ groups:
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/StageEditor.tsx
-      - web/src/components/task/StageOptionsBar.tsx
       - web/src/components/TaskGroupPanel.tsx
       - web/src/components/TaskTemplateDialog.tsx
       - web/src/components/task/ScheduledAgentTaskDialog.tsx
@@ -576,7 +574,7 @@ groups:
       - server/internal/api/task_session_naming_test.go
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       - web/tests/task-detail-order.test.mjs
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-cache-eviction.test.mjs
@@ -590,9 +588,9 @@ groups:
     anchors:
       - 'web/src/components/task/useScheduledAgentTaskDialog.ts:confirmDialog'
       # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
-      - server/internal/kanban/types.go:Stages             []StageTemplate
+      - server/internal/kanban/types.go:type TaskActivity struct
       # 模板库已删（Phase 3，见 G-LJ）：建任务只认随包带上的 stages，没有任何回退。
-      - 'server/internal/kanban/service_tasks.go:stages := normalizeTaskStages(in.Stages)'
+      - 'server/internal/kanban/service_tasks.go:input := strings.TrimSpace(in.Input)'
       - server/internal/kanban/worktree_finish.go:FinishTaskWorktree
       # 存量 queued 必须被折进 pending：前端已按「不可能出现」删掉了该分支
       - server/internal/kanban/task_store_migrate.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
@@ -1185,7 +1183,7 @@ groups:
     files:
       - server/internal/kanban/service.go
       - server/internal/kanban/worktree_finish.go
-      - server/internal/kanban/worktree_finish_stage.go
+      - server/internal/kanban/worktree_finish_turn.go
       - server/internal/gitview/worktree_finish.go
       - server/internal/api/http_tasks.go
       - server/internal/api/http_tasks_finish_teardown.go
@@ -1201,7 +1199,7 @@ groups:
     tests:
       - server/internal/kanban/worktree_finish_dispatch_test.go
       - server/internal/kanban/worktree_finish_test.go
-      - server/internal/kanban/worktree_finish_stage_test.go
+      - server/internal/kanban/worktree_finish_guard_test.go
       - server/internal/gitview/worktree_finish_test.go
       - server/internal/api/http_tasks_begin_finish_test.go
       - web/tests/worktree-badge.test.mjs
@@ -1212,7 +1210,7 @@ groups:
       - server/internal/kanban/worktree_finish.go:func (s *Service) FinishTaskWorktree
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskBusy
-      - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskHasAgentStage
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskSessionRunning
       - server/internal/gitview/worktree_merge_feasibility.go:func CanMergeCleanly
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - server/internal/gitview/worktree_cleanup.go:func MigrateWorktreeUploads
@@ -1222,9 +1220,7 @@ groups:
       - server/internal/gitview/worktree_merge.go:func MergeBranch
       - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
       - server/internal/api/http_task_begin_finish.go:func agentFallbackPlan
-      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) respondFinishTeardownFailure
-      - server/internal/kanban/service_stage_edit.go:ByRequest bool
-      - server/internal/kanban/service_stage_edit_ops.go:canLeave := canAdvanceFromStage
+      - server/internal/api/http_task_begin_finish.go:func agentFallbackPlan
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
       - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
@@ -1253,7 +1249,7 @@ groups:
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
     anchors:
       - server/internal/kanban/service_run_moves.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
@@ -1299,14 +1295,14 @@ groups:
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       - web/tests/worktree-badge.test.mjs
       - web/tests/worktree-finish.test.mjs
     anchors:
       - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
       - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) teardownFinishWorktree
       - server/internal/api/http_task_overview.go:func projectOverviewTask
-      - server/internal/api/http_task_overview.go:type overviewStageProjection
+      - server/internal/api/http_task_overview.go:type overviewTaskProjection
       - server/internal/api/http_task_overview.go:type overviewAuxFlags
       - server/internal/api/http_task_overview.go:func projectOverviewAuxFlags
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskFinishWorktree
@@ -1316,7 +1312,7 @@ groups:
       - server/internal/api/http_tasks_finish_teardown.go:UserChanges []string
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - web/src/components/task/TaskCardFinishButton.tsx:function TaskCardFinishButton
-      - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !stageRunning && !showAdvance;
+      - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;
       - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
@@ -1546,7 +1542,7 @@ groups:
     boundary: "子代理的生命周期归属与取消。不碰父 turn（取消子代理不打断父的 CLI），也不改 session.cancel 的 stale 门（ActiveTurnID 在读循环同步取证那条契约不变）。合成子代理没有可中断的进程（输出来自父进程的 CLI 流），能掐的只有订阅本身。回合身份的发放点收敛到 attach()、终结汇聚到 close()，但不改 EndSessionTurn 的身份比对语义（PendingTurnIDMatches / ClearSessionPending 不变），也不改「上游为什么会给普通 Bash 调用带上 ParentToolUseID」这一 agent 侧协议问题。"
     tests:
       - server/internal/api/usecase/session_subagent_cancel_test.go
-      - server/internal/api/kanban_turn_identity_guard_test.go
+      - server/internal/api/workflow_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
     files:
       - server/internal/api/usecase/session.go
@@ -1567,7 +1563,7 @@ groups:
       - server/internal/api/usecase/session_subagents.go:func (r *claudeSubagentRouter) ensure(ctx context.Context, ref claudeSubagentRef, source *agenttypes.ToolCall) (*claudeSyntheticSubagent, error)
       - "server/internal/api/ws_session_message.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
       - "server/internal/api/ws_session_message.go:OnSubAgentTurnFinished: func(sessionKey, id string)"
-      - "server/internal/api/appcontext.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
+      - "server/internal/api/appcontext_workflow.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
       - "server/internal/scheduled/tasks_runner.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
       - server/internal/api/usecase/session_subagent_stream.go:persistCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceLive)
       - server/internal/api/usecase/session_subagents.go:return true
@@ -1741,7 +1737,7 @@ groups:
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/stream_hub_types.go:PendingSessionSnapshot
-      - server/internal/api/appcontext.go:EndSessionTurn
+      - server/internal/api/appcontext_task_flags.go:EndSessionTurn
       - web/src/app/useReplyingSessionPoll.ts:const refreshMultiProjectReplyingSessions = useCallback(async () => {
 
   - id: G-BE
@@ -1752,7 +1748,7 @@ groups:
     boundary: "服务端 pending 条目的身份与生命周期：谁有权清理、迟到/重复 done 的处置、子会话 pending 的终态收边，以及「上一轮结束后取队列」相对终结器的先后。不做静态判死/超时（已于 G-AY 证伪），不改 QueueFrozen 的语义（取消后队列继续停在原地等用户）。"
     tests:
       - server/internal/api/stream_hub_turn_identity_test.go
-      - server/internal/api/kanban_turn_identity_guard_test.go
+      - server/internal/api/workflow_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
       - server/internal/agent/codex/session_test.go
       - server/internal/api/ws_session_queue_drain_test.go
@@ -1768,8 +1764,8 @@ groups:
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
       - server/internal/api/stream_hub_pending.go:SetPendingReply
-      - server/internal/api/appcontext.go:EndSessionTurn
-      - server/internal/api/appcontext.go:RunAgentStage
+      - server/internal/api/appcontext_task_flags.go:EndSessionTurn
+      - server/internal/api/appcontext_activity.go:return s.runWorkflowTurn(ctx, req)
       - server/internal/api/ws_session_message.go:runSessionMessage
       - "server/internal/api/ws_session_message.go:h.startNextQueuedSessionMessage(rootID, key)\n\t}()"
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
@@ -2157,7 +2153,7 @@ groups:
     why: "将样式保留在 composerStyles.ts，把 JSX 图标移到 composerIcons.tsx；按实际消费者切换图标导入，style-only 调用路径保持不变。"
     boundary: "只分离样式与图标模块并加强命名测试，不更改图标 SVG、样式值、CSS 或交互。"
     tests:
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       - web/tests/naming-convention.test.mjs
     files:
       - docs/agent/rules/frontend/TODO.md
@@ -2170,7 +2166,7 @@ groups:
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/components/editor/PromptEditor.tsx
       - web/tests/source-map.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       - web/tests/naming-convention.test.mjs
     anchors:
       - web/src/components/action/composerStyles.ts:composerContainerStyle
@@ -2205,7 +2201,7 @@ groups:
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
       - server/internal/api/stream_hub_turn_identity_test.go
-      - server/internal/api/kanban_turn_identity_guard_test.go
+      - server/internal/api/workflow_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
     files:
       - server/internal/session/blocks_type.go
@@ -2252,7 +2248,7 @@ groups:
       - server/internal/api/appcontext.go
       - server/internal/api/ws.go
       - server/internal/api/stream_hub_turn_identity_test.go
-      - server/internal/api/kanban_turn_identity_guard_test.go
+      - server/internal/api/workflow_turn_identity_guard_test.go
       - server/internal/scheduled/tasks.go
       - server/internal/scheduled/pending_identity_test.go
       - web/src/hooks/sessionBlocks.ts
@@ -2286,8 +2282,8 @@ groups:
       - server/internal/api/stream_hub_pending.go:nextPendingTurnIDLocked
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
       - server/internal/api/stream_hub.go:ClearSessionPending
-      - server/internal/api/appcontext.go:EndSessionTurn
-      - server/internal/api/appcontext.go:RunAgentStage
+      - server/internal/api/appcontext_task_flags.go:EndSessionTurn
+      - server/internal/api/appcontext_activity.go:return s.runWorkflowTurn(ctx, req)
       - server/internal/api/ws_session_message.go:runSessionMessage
       - server/internal/agent/acp/process_lifecycle.go:SendMessage
       - server/internal/agent/types/turn.go:WithPromptTurnID
@@ -4489,29 +4485,6 @@ groups:
       - server/internal/api/agent_api_provider_env.go:func writeAgentEnvConfig
 
 
-  - id: G-GI
-    title: Kanban task stage execution split
-    kind: arch
-    symptom: "Task stage scheduling, agent execution, prompt value generation and success/failure finalization share one service file with CRUD, state transitions and storage orchestration."
-    why: "Stage execution and run finalization belong together so workflow changes can be audited independently from task mutation and storage behavior."
-    boundary: "executeTask through recordTaskError move unchanged to service_execution.go (360 lines); execution order, status/events, failure persistence and the worktree/repoint lifecycle are unchanged. Parent is 1,640 lines."
-    tests:
-      - server/internal/kanban/service_test.go
-      - server/internal/kanban/worktree_finish_stage_test.go
-    files:
-      - server/internal/kanban/service.go
-      - server/internal/kanban/service_execution.go
-      - docs/agent/rules/backend/TODO.md
-      - docs/agent/rules/backend/file-size.md
-      - docs/plans/README.md
-      - docs/plans/rule-completion-rollout.md
-    anchors:
-      - server/internal/kanban/service_execution.go:func (s *Service) executeTask
-      - server/internal/kanban/service_execution_run.go:func (s *Service) runAgentStage
-      - server/internal/kanban/service_execution_run.go:func (s *Service) finishTask
-      - server/internal/kanban/service_execution_run.go:func (s *Service) recordTaskError
-
-
   - id: G-GJ
     title: Kanban task template and query service split
     kind: arch
@@ -4739,16 +4712,15 @@ groups:
   - id: G-GU
     title: Agent status types for editor and task views
     kind: arch
-    symptom: "Agent selector, prompt editor and task stage editor use the request service module only for AgentStatus."
+    symptom: "Agent selector, agent selector utils and prompt editor use the request service module only for AgentStatus."
     why: "AgentStatus belongs in the shared contract layer, with service imports reserved for runtime operations."
-    boundary: "AgentSelectorParts, PromptEditor and StageEditor import AgentStatus from shared/agentTypes.ts; runtime behavior is unchanged and the component-service manifest shrinks by three edges."
+    boundary: "AgentSelectorParts, agentSelectorUtils and PromptEditor import AgentStatus from shared/agentTypes.ts; StageEditor 已随阶段概念删除（见 G-LN），运行时行为不变。"
     tests:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/agent/AgentSelectorParts.tsx
       - web/src/components/agent/agentSelectorUtils.ts
       - web/src/components/editor/PromptEditor.tsx
-      - web/src/components/task/StageEditor.tsx
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -4833,18 +4805,17 @@ groups:
     kind: arch
     symptom: "Task editors and the workspace board import the task service facade for shared task types only."
     why: "The presentation type contract belongs in shared/taskTypes while runtime task operations stay in service/app."
-    boundary: "PromptEditor, StageEditor and WorkspaceBoard import shared/taskTypes; their runtime and UI behavior do not change and the component-service allowlist loses three edges and three files."
+    boundary: "PromptEditor 与 WorkspaceBoard 只从 shared/taskTypes 拿展示类型契约；运行期任务操作留在 service/app。StageEditor 已随阶段概念删除（G-LN）。"
     tests:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/editor/PromptEditor.tsx
-      - web/src/components/task/StageEditor.tsx
       - web/src/components/workspace/WorkspaceBoard.tsx
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - web/src/shared/taskTypes.ts:export type StageTemplate
+      - 'web/src/shared/taskTypes.ts:export type KanbanTask = {'
       - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HA
@@ -5923,7 +5894,7 @@ groups:
     kind: arch
     symptom: "后端规则是软 2000 / 硬 4000，前端是软 300 / 硬 500，同一目的两套数值差 6 倍；结果是 server/internal/api/usecase/session.go 1496 行、api/appcontext.go 1465 行这类「一个文件四五个不相干职责」的形态能长期存在。改造前存量 43 个源码 + 18 个测试文件超硬线。"
     why: "两条规则服务同一个目的（「一个文件一个职责，改哪读哪」），数值差 6 倍没有技术理由。软线的语义是判据（超过就判断职责边界并记录拆分安排），不是一次性清理项——与前端同区间 77 个文件的口径一致。合上游时 rules/plans 文档本身也会被整份覆盖，规则数值会被静默退回 2000/4000，而下游没人会注意到。"
-    boundary: "改后端规则数值（docs/agent/rules/backend/file-size.md）+ 存量的分批清理登记（docs/agent/rules/backend/TODO.md）+ 执行计划（docs/plans/backend-file-size-300-500.md）。全部为同包内移动或同包内新增文件：无签名变化、无 type 位置变化（跨文件同包可见）、无 import 路径变化、零数据迁移。agent/codex/importer_tool_calls.go 与 kanban/worktree_finish_stage.go 在 B1–B10 里论证过边界、当时未拆；其中 importer_tool_calls.go 已由当日晚的硬线清零轮拆开（见 G-GK），worktree_finish_stage.go 后来随 kanban 包拆分降到 299 行，两个例外都不再存在。"
+    boundary: "改后端规则数值（docs/agent/rules/backend/file-size.md）+ 存量的分批清理登记（docs/agent/rules/backend/TODO.md）+ 执行计划（docs/plans/backend-file-size-300-500.md）。全部为同包内移动或同包内新增文件：无签名变化、无 type 位置变化（跨文件同包可见）、无 import 路径变化、零数据迁移。agent/codex/importer_tool_calls.go 与 kanban/worktree_finish_stage.go 在 B1–B10 里论证过边界、当时未拆；其中 importer_tool_calls.go 已由当日晚的硬线清零轮拆开（见 G-GK），worktree_finish_stage.go 先随 kanban 包拆分降到 299 行，后随阶段概念删除（见 G-LN），两个例外都不再存在。"
     tests:
       - server/internal/auth/auth_test.go
       - server/internal/auth/resolve_live_test.go
@@ -6053,7 +6024,6 @@ groups:
       - server/internal/api/usecase/external_sessions_import_test.go
       - server/internal/api/usecase/external_sessions_ownership_test.go
       # B6
-      - server/internal/kanban/service_stage_edit.go
       - server/internal/kanban/service_worktree.go
       - server/internal/kanban/service_run_moves.go
       - server/internal/kanban/service_state_moves.go
@@ -6062,10 +6032,7 @@ groups:
       - server/internal/kanban/task_store_write.go
       - server/internal/kanban/worktree_finish_status.go
       - server/internal/kanban/service_create_test.go
-      - server/internal/kanban/service_stage_edit_test.go
       - server/internal/kanban/service_session_link_test.go
-      - server/internal/kanban/service_run_moves_test.go
-      - server/internal/kanban/service_agent_stage_test.go
       - server/internal/kanban/service_lifecycle_test.go
       - server/internal/kanban/service_worktree_test.go
       - server/internal/kanban/service_worktree_state_test.go
@@ -6144,12 +6111,10 @@ groups:
       - server/internal/api/agent_config_backup.go
       - server/internal/api/agent_config_switch.go
       - server/internal/api/agent_config_env.go
-      - server/internal/api/http_task_stages.go
       - server/internal/api/http_task_overview.go
       - server/internal/api/http_task_begin_finish.go
       - server/internal/api/http_tasks_begin_finish_helpers_test.go
       - server/internal/api/http_tasks_begin_finish_teardown_test.go
-      - server/internal/api/http_tasks_begin_finish_agent_test.go
 
       - server/internal/api/http_sessions_detail.go
       - server/internal/api/http_sessions_actions.go
@@ -7314,27 +7279,24 @@ groups:
   - id: G-LH
     title: 看板任务留言板后端：TaskActivity/ContinueRequest 持久化与幂等 POST/GET
     kind: feature
-    symptom: "用户在任务详情留言板发留言后，留言按时间线出现（user/agent 交替），重复发送不重复执行，任务终态后新留言标记 blocked 而不丢弃。"
-    why: "约定三件：①同一 (task_id, comment_id) 同事务写入 task_activities + continue_requests，重复提交同 author/body 返回原记录，异体返回 conflict；②留言带 workflow_choice（specified/disabled/empty，specified 必须带 workflow_version_id）落库到 activity；③任务为终态（success/fail/cancelled）时 ContinueRequest 直接 blocked。存量库靠 CREATE TABLE IF NOT EXISTS 迁移，零数据改动；不改 StageRun/legacy 语义。2026-11-11 合 main 时为避免与已发布的配置同步组重号，本组由 G-KP 改为 G-LH。"
-    boundary: "只新增留言持久化与 HTTP 接口，不碰 Stages/StageRun 引擎、不新增鉴权；steer/恢复留 WP-03，不做跨节点接管。"
+    symptom: "用户在任务详情里发留言后，留言按时间线出现（user/agent 交替），重复发送不重复执行，任务终态后新留言标记 blocked 而不丢弃。"
+    why: "约定三件：①同一 (task_id, comment_id) 同事务写入 task_activities + continue_requests，重复提交同 author/body 返回原记录，异体返回 conflict；②留言带 workflow_choice（specified/disabled/empty，specified 必须带 workflow_version_id）落库到 activity；③任务为终态（success/fail/cancelled）时 ContinueRequest 直接 blocked。存量库靠 CREATE TABLE IF NOT EXISTS 迁移，零数据改动；不改 StageRun/legacy 语义。2026-11-11 合 main 时为避免与已发布的配置同步组重号，本组由 G-KP 改为 G-LH。2026-11 起 `/api/tasks/{id}/comments` 这一层 HTTP 适配被删除（D4），唯一入口是 `/api/tasks/{id}/activities`：Router 在同一事务里落用户留言并决定这一轮走 workflow 还是直连回复（G-LN）。"
+    boundary: "留言持久化与 `/activities` HTTP 接口；不新增鉴权，steer/恢复留 WP-03，不做跨节点接管。"
     files:
       - server/internal/kanban/types.go
       - server/internal/kanban/task_store_migrate.go
       - server/internal/kanban/task_store_comments.go
       - server/internal/kanban/service_comments.go
       - server/internal/kanban/service_comment_store_test.go
-      - server/internal/api/http_task_comments.go
-      - server/internal/api/http_task_comments_test.go
       - server/internal/api/http_activities.go
       - server/internal/api/http_activities_test.go
       - server/internal/api/http_routes.go
     tests:
       - server/internal/kanban/service_comment_store_test.go
-      - server/internal/api/http_task_comments_test.go
       - server/internal/api/http_activities_test.go
     anchors:
       - 'server/internal/kanban/task_store_comments.go:func (s *TaskStore) PostComment(ctx context.Context, in PostCommentInput)'
-      - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskCommentsPost'
+      - 'server/internal/api/http_activities.go:func (h *HTTPHandler) handleTaskActivitiesCreate'
   # ── Workflow 领域模型（WP-05）：Version/Draft/Run/NodeRun + DAG/Loop 引擎 ──
   - id: G-LI
     title: Workflow 领域模型：不可变 Version、Draft CAS、Run 快照与 DAG/Loop 引擎（WP-05）
@@ -7465,19 +7427,19 @@ groups:
       - 'server/internal/kanban/service_workflow_workspace.go:worktree 目录已不存在'
   # ── 看板留言板前端（WP-02）：user↔agent 时间线 + 工作流三态 + agent 段下钻 ──
   - id: G-KS
-    title: 看板留言板前端：user↔agent 交替时间线、工作流三态选择、agent 段下钻、显式 nodeId
+    title: 看板会话前端：user↔agent 交替时间线、工作流三态选择、运行视图下钻、显式 nodeId
     kind: feature
-    symptom: "用户在任务详情里能看到 user↔agent 交替的留言时间线，发留言可选工作流三态（不指定/指定并填版本/禁用），agent 回复可展开看详情并打开会话；跨节点留言走显式 nodeId 不误落到当前激活节点。"
-    why: "WP-02 前端留言板：CommentThread 三段式（user-message 右对齐 / agent-segment 左对齐带下钻），留言框工作流三态必填可见（empty 不带 version、specified 必带 workflow_version_id、disabled 禁用），appURL 显式传 nodeId（跨节点铁律：appPath 不传 nodeId 静默打激活节点），comment_id 客户端生成重试复用，TaskDetailPanel 仅接线（rootId/taskId/nodeId + onOpenSession）。i18n 双语键不漂移，禁硬编码文案（AgentDrilldown 走 t()）。"
-    boundary: "只管留言板前端展示与发送；不碰 Stages/StageRun 引擎；Steer/恢复留 WP-03，画布/运行视图留 WP-07，不做 AgentRunSection 独立文件（下钻内嵌在 CommentThread）。"
+    symptom: "用户在任务详情里能看到 user↔agent 交替的对话流，发留言可选工作流三态（不指定/指定并填版本/禁用），运行视图可展开看节点详情并打开会话；跨节点留言走显式 nodeId 不误落到当前激活节点。"
+    why: "前端会话流：ConversationView 是唯一的消息列表（CommentThread 已删除，它与 ConversationView 读同一份活动，同时挂载就是同一段对话出现两套，见 G-LL），留言框工作流三态必填可见（empty 不带 version、specified 必带 workflow_version_id、disabled 禁用），appURL 显式传 nodeId（跨节点铁律：appPath 不传 nodeId 静默打激活节点），comment_id 客户端生成重试复用，TaskDetailPanel 仅接线（rootId/taskId/nodeId + onOpenSession）。i18n 双语键不漂移，禁硬编码文案。"
+    boundary: "只管会话前端展示与发送；不碰执行引擎；steer/恢复留 WP-03，画布/运行视图留 WP-07。"
     files:
       - web/src/hooks/useTaskActivities.ts
-      - web/src/services/task/comments.ts
+      - web/src/services/activities.ts
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/services/task/index.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
-      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      # Phase 3 后端：模板库/API 删除 + 建任务只收用户留言
       - server/internal/kanban/service_tasks.go
       - server/internal/kanban/service.go
       - server/internal/kanban/service_state_moves.go
@@ -7493,10 +7455,10 @@ groups:
       - server/app/workspace_build.go
       - web/src/shared/taskComments.ts
     tests:
-      - server/internal/api/http_task_comments_test.go
+      - server/internal/api/http_activities_test.go
       - web/tests/conversation-view.test.mjs
     anchors:
-      - 'web/src/services/task/comments.ts:export async function postTaskComment('
+      - 'web/src/services/activities.ts:export async function createActivity('
       # CommentThread/useCommentThread 已删除：它和 ConversationView 读同一份活动，
       # 同时挂载就是「同一段对话出现两套」。约定见 G-LL。
       - 'web/src/components/task/TaskDetailPanel.tsx:<ConversationView'
@@ -7513,7 +7475,7 @@ groups:
       - web/src/components/task/ConversationView.tsx
       - web/src/components/task/ActivityInput.tsx
       - web/src/components/task/WorkflowSelector.tsx
-      - web/src/shared/timeUtils.ts
+      - web/src/shared/datetime.ts
       - web/src/shared/taskComments.ts
     tests:
       - web/tests/run-timeline-drill-in.test.ts
@@ -7522,7 +7484,7 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
       - 'web/src/components/task/ActivityMessage.tsx:const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";'
       - 'web/src/components/task/ActivityMessage.tsx:function parseActivityTime(value: string | undefined): number | null'
-      - 'web/src/shared/timeUtils.ts:export function formatRelativeTime(timestamp: number, locale: string = "zh-CN"): string'
+      - 'web/src/shared/datetime.ts:export function formatRelativeTime(timestamp: number, locale: string = "zh-CN"): string'
       - 'web/tests/run-timeline-drill-in.test.ts:任务详情面板只挂一条对话流，且保留运行视图入口'
   # ── workflow agent 节点的 prompt 占位符替换 ─────────────────────────
   - id: G-LM
@@ -7576,13 +7538,12 @@ groups:
   - id: G-KX
     title: 存量任务显式迁移到 WorkflowRun 引擎 + 控制面工作流库接线
     kind: feature
-    symptom: "存量看板任务可以被用户显式迁移成工作流运行：迁移后该任务不再由旧阶段流水推进，旧流水停在上一次状态；重复迁移被拒绝；终态任务拒绝迁移。工作流接口不再返回 503。"
-    why: "约定五件：①`task_execution_engines` 独立表记录绑定，没有行即 legacy（存量零回填、不批量转换）；②迁移按任务的 Stages 生成线性图快照（user 段→human_gate、agent 段→agent），或使用显式指定的不可变 WorkflowVersion 图；③先落 Run 再切引擎，任一步失败任务仍是 legacy，不出现「引擎切了但没有 Run」；④`executeTask` 开头查绑定，已迁移直接返回 ErrTaskAlreadyWorkflow 且不写任何状态（一个 Task 最多一个活动引擎）；⑤WorkflowStore 按控制面配置目录打开并注入每个账户的 Kanban 实例，否则 /api/workflows 恒 503。"
+    symptom: "存量看板任务可以被用户显式迁移成工作流运行：迁移后该任务不再由对话/直连引擎推进；重复迁移被拒绝；终态任务拒绝迁移。工作流接口不再返回 503。"
+    why: "约定五件：①`task_execution_engines` 独立表记录绑定，没有行即 legacy（存量零回填、不批量转换）；②任务已无阶段（见 G-LN），迁移只接受显式指定的不可变 WorkflowVersion 图，version 必填；③先落 Run 再切引擎，任一步失败任务仍是 legacy，不出现「引擎切了但没有 Run」；④`executeTask` 开头查绑定，已迁移直接返回 ErrTaskAlreadyWorkflow 且不写任何状态（一个 Task 最多一个活动引擎）；⑤WorkflowStore 按控制面配置目录打开并注入每个账户的 Kanban 实例，否则 /api/workflows 恒 503。"
     boundary: "只做显式迁移与引擎互斥；不做存量批量转换、不双写两份运行模型、不自动把旧任务挂到新图。"
     files:
       - server/internal/kanban/service_engine.go
       - server/internal/kanban/service_engine_test.go
-      - server/internal/kanban/service_execution.go
       - server/internal/kanban/task_store_migrate.go
       - server/internal/kanban/workflow_store.go
       - server/internal/api/http_workflows.go
@@ -7595,25 +7556,25 @@ groups:
     anchors:
       - 'server/internal/kanban/service_engine.go:func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, versionID, author string)'
       - 'server/internal/kanban/service_engine.go:if cur.Engine == EngineWorkflow {'
-      - 'server/internal/kanban/service_execution.go:if s.taskRunsOnWorkflow(ctx, store, task.ID) {'
+      - 'server/internal/kanban/service_engine.go:func (s *Service) taskRunsOnWorkflow(ctx context.Context, store *TaskStore, taskID string) bool'
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleTaskMigrateToWorkflow('
 
   # ── 运行视图入口（WP-07 收尾）：留言板之下的下钻 ───────────────────────────
   - id: G-KY
-    title: 运行视图入口 RunViewEntry：挂在留言板之后，仅 workflow 引擎任务可见
+    title: 运行视图入口 RunViewEntry：挂在对话流之后，仅 workflow 引擎任务可见
     kind: feature
-    symptom: "迁移到工作流的任务，在留言板下方出现「查看运行视图」；展开后是只读节点时间线（含每个节点 run 的 agent/model/状态/输入输出），可返回留言板、点节点跳会话；legacy 任务完全看不到这个入口。"
-    why: "约定四件：①入口渲染在 CommentThread 之后（同一层级的折叠下钻，不是平级 tab，测试钉住 DOM 顺序）；②是否出现由后端 /api/tasks/{id}/engine 的引擎绑定决定，legacy 不渲染；③所有取数显式传 nodeId（跨节点铁律：不传会静默打激活节点）；④run 快照与 NodeRun 落**任务节点**的 SQLite（数据面），控制面 WorkflowStore 只留 Draft/Version，绝不把运行态写回主节点。出口：GET /api/tasks/{id}/workflow-run、GET /api/tasks/{id}/workflow-run/nodes、GET /api/tasks/{id}/engine。"
-    boundary: "只做只读运行视图入口与 run/node-run 读取出口；不做画布编辑，也不做节点执行器（当前没有生产写入方写 workflow_node_runs，等执行器立项）。"
+    symptom: "迁移到工作流的任务，在对话流下方出现「查看运行视图」；展开后是只读节点时间线（含每个节点 run 的 agent/model/状态/输入输出），可返回对话流、点节点跳会话；legacy 任务完全看不到这个入口。"
+    why: "约定四件：①入口渲染在对话流之后（同一层级的折叠下钻，不是平级 tab，测试钉住 DOM 顺序）；②是否出现由后端 /api/tasks/{id}/engine 的引擎绑定决定，legacy 不渲染；③所有取数显式传 nodeId（跨节点铁律：不传会静默打激活节点）；④run 快照与 NodeRun 落**任务节点**的 SQLite（数据面），控制面 WorkflowStore 只留 Draft/Version，绝不把运行态写回主节点。出口：GET /api/tasks/{id}/workflow-run、GET /api/tasks/{id}/workflow-run/nodes、GET /api/tasks/{id}/engine。"
+    boundary: "只做只读运行视图入口与 run/node-run 读取出口；不做画布编辑；节点执行器由工作流 runtime 另行负责（G-KV 等）。"
     files:
       - web/src/components/task/RunViewEntry.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/services/task/comments.ts
+      - web/src/services/task/runView.ts
       - web/src/shared/taskComments.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
-      # Phase 3 后端：模板库/API 删除 + 建任务只认随包 stages
+      # Phase 3 后端：模板库/API 删除 + 建任务只收一条留言
       - server/internal/kanban/service_tasks.go
       - server/internal/kanban/service.go
       - server/internal/kanban/service_state_moves.go
@@ -7705,13 +7666,12 @@ groups:
 
   # ── 任务模板功能下线（Phase 1）：看板/工作台/新建面板不再依赖模板库 ──────────
   - id: G-LJ
-    title: 任务模板下线（彻底删除模板功能 + 历史流水按工作流语法呈现）
+    title: 任务模板下线（彻底删除模板功能）
     kind: feature
-    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有任何模板页签、模板菜单、按模板筛选或模板编辑入口；工作台「快速发起」点项目直接打开新建面板；新建任务默认就是「用户输入 → agent（{previous_input}）」两段流水，建完落库只带 `task_stages_json` 快照，不带任何模板 id/名；模板时代创建的历史任务照常显示名称，模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
-    why: "必须保留：① 新建任务的流水唯一来源是 `defaultTaskFlowStages()`（user 段 + agent 段 `prompt_template = \"{previous_input}\"`），前端每次创建都把拍平的 `StageTemplate[]` 随包带上，后端不得再回查模板库 —— 没有模板库的 worker 节点也必须能建任务；② 不再写 `task_template_id`/`task_template_name`，后端也不得提供模板回退；③ 工作台快速发起只交付 project（rootId/nodeId），不再有模板选择；④ 任务列表不按模板筛选，且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ `task_template_id`/`task_template_name` 两列冻结为历史来源标签（停写、保留列）；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与工作流节点卡共用，approved/rejected 是审批结果不归一成 success。历史阶段任务的展示/转换由 G-LK 接管，本组不再承诺 `legacyTaskFlow()` 只读投影。"
-    boundary: "Phase 1 隐藏模板 UI；Phase 3 删除前端模板组件/服务/状态 hook、后端模板库/API（7 条路由、`TemplateStore`、`CreateTask` 回退与 `loadForMove` 回填、控制面前缀）与 `task_template.json` 打包链。`task_stages_json`/`stage_runs` 保留为任务自己的执行证据；`tasks.task_template_id`/`task_template_name` 两列冻结（停写、只读展示）。历史任务的转换与 LegacyTaskView 删除归 G-LK。不做后端鉴权、不改任务执行引擎。"
+    symptom: "看板工具栏只剩「新建任务 / 工作流 / 刷新」，没有任何模板页签、模板菜单、按模板筛选或模板编辑入口；工作台「快速发起」点项目直接打开新建面板；建完落库不带任何模板 id/名；模板时代创建的历史任务照常显示名称，模板来源显示为「历史流程 · 来自模板 <name>」胶囊。"
+    why: "必须保留：① 模板库不存在 —— 前端没有模板选择，后端没有模板回查/回退，没有模板库的 worker 节点也必须能建任务；② 不再写 `task_template_id`/`task_template_name`，后端也不得提供模板回退；③ 工作台快速发起只交付 project（rootId/nodeId），不再有模板选择；④ 任务列表不按模板筛选，且不得再补一道终态过滤（「已结束」列唯一来源就是终态任务）；⑤ `task_template_id`/`task_template_name` 两列冻结为历史来源标签（停写、保留列）；⑥ 节点状态色只有一份 `nodeRunStatusColor()`，运行视图与工作流节点卡共用，approved/rejected 是审批结果不归一成 success。建任务载荷已不再带阶段流水（阶段概念彻底删除），那条约定归 G-LN；历史阶段任务的转换归 G-LK。"
+    boundary: "删除前端模板组件/服务/状态 hook、后端模板库/API（7 条路由、`TemplateStore`、`CreateTask` 回退与 `loadForMove` 回填、控制面前缀）与 `task_template.json` 打包链。`tasks.task_template_id`/`task_template_name` 两列冻结（停写、只读展示）。建任务只收一条用户留言由 G-LN 负责。不做后端鉴权、不改任务执行引擎。"
     files:
-      - web/src/app/defaultTaskFlow.ts
       - web/src/app/useTaskComposer.ts
       - web/src/app/appTask.ts
       - web/src/app/useTaskBoard.ts
@@ -7720,7 +7680,6 @@ groups:
       - web/src/app/useAppStateLayer.ts
       - web/src/app/useAppViewComposition.ts
       - web/src/app/useAppKanbanTaskPanel.tsx
-      - web/src/components/common/LabelWithInfo.tsx
       - web/src/components/task/TaskBoardToolbar.tsx
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/app/TaskInlineEditPanel.tsx
@@ -7753,28 +7712,22 @@ groups:
       - web/tests/workspace-board.test.mjs
       - web/tests/legacy-flow-render.test.mjs
       - web/tests/task-card-status.test.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       - docs/superpowers/plans/2026-11-11-workflow-ui-unification-and-template-migration.md
     tests:
       - web/tests/template-ui-hidden.test.mjs
       - web/tests/legacy-flow-render.test.mjs
       - web/tests/task-card-status.test.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       # Phase 3 后端守卫：没有 stages 必须报错（无模板回退）；模板路由必须 404。
       - server/internal/kanban/service_create_test.go
       - server/internal/api/http_task_templates_gone_test.go
     anchors:
-      - 'web/src/app/defaultTaskFlow.ts:export function defaultTaskFlowStages(): StageTemplate[] {'
-      - 'web/src/app/useTaskComposer.ts:const stages = defaultTaskFlowStages();'
-      - 'web/src/app/useTaskComposer.ts:taskStagesForCreate('
-      - 'web/src/app/appTask.ts:export function taskStagesForCreate('
       - 'web/src/app/useTaskInlineEditorState.ts:export function useTaskInlineEditorState('
-      - 'web/src/components/common/LabelWithInfo.tsx:export function LabelWithInfo('
       - 'web/src/components/task/TaskBoardToolbar.tsx:onClick={() => openTaskCreateDialog(currentRootId)}'
       - 'web/src/components/workspace/WorkspaceQuickLaunch.tsx:onPick(group.rootId, group.nodeId)'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
-      - 'web/src/components/task/RunNodeRunRow.tsx:import { nodeRunStatusColor } from "./runTimelineModel";'
-      - 'server/internal/kanban/service_tasks.go:if len(stages) == 0 || stages[0].Role != RoleUser {'
+      - 'web/src/components/task/RunNodeRunRow.tsx:import { nodeRunStatusColor, nodeRunStatusLabel } from "./runTimelineModel";'
       - 'server/internal/api/http_task_templates_gone_test.go:func TestTaskTemplateRoutesAreGone('
 
   # ── Claude 子代理事件归属（WP-00）：子代理工具卡不得回落父回合 ──────────────
@@ -7845,7 +7798,7 @@ groups:
       - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) LatestWorkflowNodeSessionKey('
       - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) EnsureWorkflowNodeSession('
       - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) RunWorkflowNode('
-      - 'server/internal/kanban/workflow_node_executor_test.go:func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner('
+      - 'server/internal/kanban/workflow_node_executor_test.go:func TestWorkflowAgentNodeUsesWorkflowRunner('
       - 'server/internal/api/appcontext_workflow_test.go:func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope('
 
   # ── Kanban Workflow Runtime 执行器、DAG driver 与留言/HumanGate 绑定 ─────────
@@ -7876,7 +7829,7 @@ groups:
       - server/internal/kanban/service_recover_startup.go
       - server/internal/kanban/service.go
       - server/internal/kanban/types.go
-      - server/internal/api/http_task_comments.go
+      - server/internal/api/http_task_human_gate.go
       - server/internal/api/http_workflows.go
       - server/internal/api/http_routes.go
       - server/internal/api/appcontext_workflow.go
@@ -7901,7 +7854,6 @@ groups:
       - server/internal/kanban/workflow_lock_review_test.go
       - server/internal/kanban/service_outbox_test.go
       - server/internal/api/http_task_human_gate_test.go
-      - server/internal/api/http_task_comments_test.go
       - server/internal/api/http_workflows_test.go
       - web/tests/run-timeline-drill-in.test.ts
       - web/tests/run-timeline-human-gate.test.mjs
@@ -7932,7 +7884,7 @@ groups:
       - 'server/internal/kanban/workflow_driver_loop.go:func (s *Service) advanceWorkflowLoop('
       - 'server/internal/kanban/workflow_human_gate.go:func (s *Service) ResolveWorkflowHumanGate('
       - 'server/internal/kanban/task_store_workflow_human_gate.go:func (s *TaskStore) DecideWorkflowHumanGate('
-      - 'server/internal/api/http_task_comments.go:func (h *HTTPHandler) handleKanbanTaskHumanGate('
+      - 'server/internal/api/http_task_human_gate.go:func (h *HTTPHandler) handleKanbanTaskHumanGate('
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/human-gate", h.handleKanbanTaskHumanGate)'
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/workflow-run/nodes/{nodeRunID}/retry", h.handleTaskWorkflowNodeRunRetry)'
       - 'web/src/components/task/RunTimeline.tsx:data-drill-in="comment-run"'
@@ -8261,7 +8213,7 @@ groups:
       - web/tests/legacy-flow-render.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-card-status.test.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-panel-options.test.mjs
       - web/tests/composer-send-flush.test.mjs
@@ -8272,7 +8224,7 @@ groups:
       - web/tests/legacy-flow-render.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-card-status.test.mjs
-      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-create-panel.test.mjs
       - web/tests/task-button-gates.test.mjs
       - web/tests/long-context-inheritance.test.mjs
     anchors:
@@ -8286,3 +8238,60 @@ groups:
       - 'server/internal/kanban/workflow_types.go:WorkflowTriggeredByLegacyImport = "legacy_import"'
       - 'web/src/components/task/TaskDetailPanel.tsx:<ConversationView'
       - 'web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;'
+
+  # ── 任务 Router（super agent 总控）+ 直连执行器；阶段概念彻底移除 ──────────
+  - id: G-LN
+    title: 任务 Router（super agent 总控）+ 直连执行器；阶段概念从 API/UI/类型里彻底删除
+    kind: feature
+    symptom: "用户在任务里发一条留言，服务端按这条留言自己决定这一轮怎么回：能匹配到 workflow 就跑 workflow（回复卡片可下钻运行视图），否则直接在任务主会话里跑一轮普通对话并回写一条 Agent 回复。界面上不再有任何阶段概念：没有阶段编辑器/阶段选项条、没有默认两段流水、没有「推进 / 立即执行」按钮、没有按阶段推进的任务状态；卡片只有完成 / 暂停 / 继续 / 取消 / 收尾 / 删除，详情只有一条对话流。"
+    why: "这是用户明确要求的方向：MindFS 做的是 super agent 的**总控 Router**，不是机械的阶段流水。必须保留：① 每轮的决定权在 `ActivityService`（Router），前端不再随包带阶段流水、不再指定 agent/model/effort 或 start_immediately；② `CreateUserActivity` 是唯一入口（`POST /api/tasks/{id}/activities`），它先落用户留言，再按 `workflow_choice` 与推荐结果选择 `startWorkflowRun` 或 `startDirectAgent`（`workflow_choice=disabled` 或没有可用 workflow 时走直连）；③ 直连执行器 `AppContext.RunDirectActivity` 复用任务主会话（`main_session_key`，失效才新建 chat 会话并回写），回复正文写回同一条 Agent 活动；④ 直连回合与 workflow 回合共用 `runWorkflowTurn` 的回合生命周期（pending 身份、EndSessionTurn、取消/超时），不允许另一套裸 `context.Background()` 发送路径；⑤ 收尾也走同一执行器：`runFinishTurn` 用固定收尾提示词跑一轮普通对话，用内存 `Finishing` 标记而不是阶段数据表达「正在收尾」；⑥ 阶段相关列/表（`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs`）只作为冻结的审计证据与一次性转换输入保留，生产路径不再读写它们；⑦ `/comments` 这一层 HTTP 适配删除，留言统一走 `/activities`。"
+    boundary: "只管「一轮留言怎么被 Router 分派与执行」以及阶段概念的删除。不改 workflow 引擎/DAG/Loop/HumanGate 的语义（G-LE/G-LI），不改历史任务的一次性转换规则（G-LK），不改模板删除（G-LJ）。不做自动 merge/push/deploy。"
+    files:
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_service_test.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service_comments.go
+      - server/internal/kanban/worktree_finish_turn.go
+      - server/internal/kanban/service_tasks.go
+      - server/internal/api/appcontext_activity.go
+      - server/internal/api/http_activities.go
+      - server/internal/api/http_activities_test.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_kanban_test_helpers_test.go
+      - server/internal/api/http_task_human_gate.go
+      - web/src/app/useTaskComposer.ts
+      - web/src/app/useAppKanbanColumns.ts
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/ActivityInput.tsx
+      - web/src/components/task/useTaskDetailPanel.ts
+      - web/src/components/task/taskStyles.ts
+      - web/src/services/activities.ts
+      - web/src/shared/taskTypes.ts
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-card-status.test.mjs
+      - web/tests/upstream-removals.test.mjs
+      - web/tests/worktree-finish.test.mjs
+    tests:
+      - server/internal/kanban/activity_service_test.go
+      - server/internal/api/appcontext_workflow_test.go
+      - server/internal/api/http_activities_test.go
+      - server/internal/api/http_tasks_begin_finish_test.go
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/upstream-removals.test.mjs
+      - web/tests/worktree-finish.test.mjs
+    anchors:
+      - 'server/internal/kanban/activity_service.go:type ActivityDirectExecutor interface {'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) startDirectAgent('
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) executeDirectActivity('
+      - 'server/internal/api/appcontext_activity.go:func (s *AppContext) RunDirectActivity('
+      - 'server/internal/api/appcontext_activity.go:return s.runWorkflowTurn(ctx, req)'
+      - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) runFinishTurn('
+      - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) acquireTaskFinish(rootID, taskID string) (func(), error)'
+      - 'web/src/app/useAppKanbanColumns.ts:const kanbanColumns: KanbanColumn[] = ['
+      - 'web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;'
+      - 'web/tests/upstream-removals.test.mjs:阶段模型不得复活'

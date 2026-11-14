@@ -26,9 +26,9 @@ func readRepoFile(t *testing.T, name string) string {
 	return string(raw)
 }
 
-// 收尾段要继承 agent，但一个 agent 段都没有的任务不许硬造一个：后端没有「默认
-// agent」，runAgentStage 碰到空 agent 直接 failTask，那会表现成一次莫名其妙的失败。
-func TestBeginFinishWorktreeRefusesWhenThereIsNoAgentStageToInheritFrom(t *testing.T) {
+// 收尾回合要落到会话上：没有直连执行端口就显式失败，
+// 而不是留一个永远不动的「收尾中」。
+func TestBeginFinishWorktreeRefusesWithoutDirectExecutor(t *testing.T) {
 	mainDir := newGitRoot(t)
 	worktreePath := filepath.Join(mainDir, ".worktree", "task-1")
 	gitForTest(t, mainDir, "worktree", "add", "-q", "-b", "task-1", worktreePath)
@@ -39,7 +39,6 @@ func TestBeginFinishWorktreeRefusesWhenThereIsNoAgentStageToInheritFrom(t *testi
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
 		RootID:             root.ID,
-		Stages:             []StageTemplate{userStage("Describe")},
 		Input:              "just a description",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "existing",
@@ -57,8 +56,8 @@ func TestBeginFinishWorktreeRefusesWhenThereIsNoAgentStageToInheritFrom(t *testi
 
 	if _, err := svc.BeginFinishWorktree(context.Background(), BeginFinishInput{
 		RootID: root.ID, TaskID: detail.Task.ID,
-	}); err == nil || !strings.Contains(err.Error(), "还没有 agent 阶段") {
-		t.Fatalf("a task with no agent stage must be refused, got %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "收尾执行端口未配置") {
+		t.Fatalf("a finish turn with no executor must be refused, got %v", err)
 	}
 }
 
@@ -84,6 +83,7 @@ func TestBeginFinishWorktreeRevivesTerminalTasks(t *testing.T) {
 				t.Fatalf("park terminal: %v", err)
 			}
 
+			svc.SetDirectExecutor(&fakeFinishExecutor{reply: "收尾完成\n" + finishTurnDoneMarker})
 			if _, err := svc.BeginFinishWorktree(context.Background(), BeginFinishInput{
 				RootID: root.ID, TaskID: task.ID,
 			}); err != nil {
@@ -96,12 +96,6 @@ func TestBeginFinishWorktreeRevivesTerminalTasks(t *testing.T) {
 			}
 			if after.CompletedAt != "" {
 				t.Fatalf("completed_at must be cleared on revive, got %q", after.CompletedAt)
-			}
-			// 收尾段必须真的挂上并成为当前段 —— 只改 status 不追加段的话，
-			// AddStage 会把它排到流水尾不动，用户点了等于没点。
-			last := after.Stages[len(after.Stages)-1]
-			if !IsFinishStage(last) {
-				t.Fatalf("a finish stage must be appended, got kind=%q", last.Kind)
 			}
 			if after.Status == StatusSuccess || after.Status == StatusCancelled || after.Status == StatusFail {
 				t.Fatalf("task must leave the terminal state, still %q", after.Status)
@@ -144,19 +138,15 @@ func TestBeginFinishWorktreeLeavesTerminalTaskUntouchedWhenRefused(t *testing.T)
 		prepare func(task *Task)
 	}{
 		{
-			name:    "already in a finish flow",
-			wantErr: "已在收尾流程中",
-			prepare: func(task *Task) {
-				task.Stages = append(task.Stages, StageTemplate{
-					Name: finishStageName, Role: RoleAgent, Kind: StageKindWorktreeFinish,
-				})
-			},
+			name:    "no direct executor",
+			wantErr: "收尾执行端口未配置",
+			prepare: func(*Task) {},
 		},
 		{
-			name:    "no agent stage to inherit from",
-			wantErr: "还没有 agent 阶段",
+			name:    "worktree directory is gone",
+			wantErr: "worktree 已不存在",
 			prepare: func(task *Task) {
-				task.Stages = []StageTemplate{{Name: "只有 user 段", Role: RoleUser}}
+				_ = os.RemoveAll(task.WorktreePath)
 			},
 		},
 	}
@@ -194,8 +184,8 @@ func TestBeginFinishWorktreeLeavesTerminalTaskUntouchedWhenRefused(t *testing.T)
 				t.Fatalf("a refused terminal task must not be revived: status=%q completed_at=%q",
 					after.Status, after.CompletedAt)
 			}
-			if len(after.Stages) != len(before.Stages) {
-				t.Fatalf("a refused call must not append stages: %d → %d", len(before.Stages), len(after.Stages))
+			if after.WorktreePath != before.WorktreePath {
+				t.Fatalf("a refused call must not touch worktree refs: %q → %q", before.WorktreePath, after.WorktreePath)
 			}
 		})
 	}

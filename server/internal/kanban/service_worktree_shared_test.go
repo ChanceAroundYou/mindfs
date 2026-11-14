@@ -37,7 +37,6 @@ func sharedFixture(t *testing.T, edit string) (svc *Service, root fs.RootInfo, m
 	mk := func(input string) Task {
 		detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
 			RootID:             root.ID,
-			Stages:             []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix:\n{previous_input}")},
 			Input:              input,
 			CreateWorktree:     true,
 			WorktreeBranchMode: "existing",
@@ -69,7 +68,6 @@ func TestSharedWorktreeIsReusedByBranch(t *testing.T) {
 	svc.SetRunner(runner)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:             root.ID,
-		Stages:             []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix:\n{previous_input}")},
 		Input:              "join the existing tree",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "existing",

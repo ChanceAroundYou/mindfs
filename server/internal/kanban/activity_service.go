@@ -35,17 +35,20 @@ type ActivityBroadcaster interface {
 	ActivityUpdated(activity *TaskActivity, changes map[string]any)
 }
 
-// ActivityWorkflowExecutor 执行一个已持久化的 WorkflowRun 并返回给用户看的总结。
-// 生产实现由运行层（workflow driver）提供；测试注入 fake。
+// ActivityWorkflowExecutor 是 Router 交给工作流运行层的端口：只负责把 Run
+// 唤醒/推进，终态由运行层在真正结算的那一步回写（settle）。
+//
+// 这里刻意不返回 summary：唤醒是异步的，唤醒后立刻返回一个总结会把
+// 「已经开始」误报成「已经完成」——2026-11-14 实测过：占位回复在 0ms 就变成
+// completed，而节点还在跑，之后也没人再回写。
 type ActivityWorkflowExecutor interface {
-	ExecuteActivityWorkflow(ctx context.Context, task Task, run *WorkflowRun) (summary string, err error)
+	ExecuteActivityWorkflow(ctx context.Context, task Task, run *WorkflowRun) error
 }
 
-// ActivityWorkflowProgressExecutor 是 ActivityWorkflowExecutor 的可选扩展：
-// 能观察节点切换的执行器在节点开始前调用 onNodeStarted，活动流就能显示
-// 「步骤 i/n: 名称」。没有实现它时进度只由 running/completed 两条状态更新表达。
-type ActivityWorkflowProgressExecutor interface {
-	ExecuteActivityWorkflowWithProgress(ctx context.Context, task Task, run *WorkflowRun, onNodeStarted func(nodeID string)) (summary string, err error)
+// ActivityDirectExecutor 是 Router 的直连执行端口（workflow_choice=disabled）：
+// 把用户这句话作为普通回合发给任务的会话，返回 Agent 的回复正文。
+type ActivityDirectExecutor interface {
+	RunDirectActivity(ctx context.Context, task Task, body string) (string, error)
 }
 
 // ActivityBranchResolver 在创建 Run 前解析合并目标分支（D11：运行期绝不隐式
@@ -54,13 +57,14 @@ type ActivityWorkflowProgressExecutor interface {
 type ActivityBranchResolver func(ctx context.Context, task Task, graph WorkflowDefinition) (string, error)
 
 type ActivityService struct {
-	tasks       *TaskStore
-	activities  *ActivityStore
-	workflows   *WorkflowStore
-	recommender *WorkflowRecommender
-	broadcaster ActivityBroadcaster
-	executor    ActivityWorkflowExecutor
-	branch      ActivityBranchResolver
+	tasks          *TaskStore
+	activities     *ActivityStore
+	workflows      *WorkflowStore
+	recommender    *WorkflowRecommender
+	broadcaster    ActivityBroadcaster
+	executor       ActivityWorkflowExecutor
+	directExecutor ActivityDirectExecutor
+	branch         ActivityBranchResolver
 }
 
 // NewActivityService builds the service for one task node. workflows/recommender
@@ -84,6 +88,13 @@ func (s *ActivityService) SetBroadcaster(b ActivityBroadcaster) {
 func (s *ActivityService) SetWorkflowExecutor(e ActivityWorkflowExecutor) {
 	if s != nil {
 		s.executor = e
+	}
+}
+
+// SetDirectExecutor 装配直连执行端口（workflow_choice=disabled）。
+func (s *ActivityService) SetDirectExecutor(e ActivityDirectExecutor) {
+	if s != nil {
+		s.directExecutor = e
 	}
 }
 
@@ -139,23 +150,23 @@ func (s *ActivityService) CreateUserActivity(
 
 	var agentAct *TaskActivity
 	if choice == CommentWorkflowChoiceDisabled {
-		agentAct, err = s.startDirectAgent(ctx, task)
+		agentAct, err = s.startDirectAgent(ctx, task, body)
 	} else {
 		agentAct, err = s.startWorkflowRun(ctx, task, body, choice, workflowVersionID, userAct.ID)
 	}
 	return userAct, agentAct, err
 }
 
-// startDirectAgent 只创建 pending 的 Agent 回复：直连执行由运行层负责，并通过
-// OnWorkflowRunCompleted/Failed 回报（与 workflow 路径共用同一终态契约）。
-func (s *ActivityService) startDirectAgent(ctx context.Context, task Task) (*TaskActivity, error) {
+// startDirectAgent 是「纯对话模式」的一轮：插入 pending 占位后，把用户这句
+// 话作为普通回合交给直连执行端口。没有端口就显式失败，绝不留下永久 pending。
+func (s *ActivityService) startDirectAgent(ctx context.Context, task Task, body string) (*TaskActivity, error) {
 	agentAct := &TaskActivity{
 		ID:             newID("act"),
 		TaskID:         task.ID,
 		RootID:         task.RootID,
 		Type:           ActivityTypeAgentReply,
 		Role:           RoleAgent,
-		Body:           "正在准备回复...",
+		Body:           "",
 		Status:         ActivityStatusPending,
 		WorkflowChoice: CommentWorkflowChoiceDisabled,
 	}
@@ -163,7 +174,29 @@ func (s *ActivityService) startDirectAgent(ctx context.Context, task Task) (*Tas
 		return nil, err
 	}
 	s.broadcastCreated(agentAct)
+	if s.directExecutor == nil {
+		s.failActivity(ctx, agentAct, errors.New("direct executor not configured"))
+		return agentAct, nil
+	}
+	go s.executeDirectActivity(context.WithoutCancel(ctx), agentAct, task, body)
 	return agentAct, nil
+}
+
+// executeDirectActivity 跑一轮普通对话并回写占位回复。
+// 正文只写 Agent 的真实输出：运行中/无输出/失败这些「壳」由前端按 locale 渲染。
+func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *TaskActivity, task Task, body string) {
+	_ = s.activities.UpdateStatus(ctx, agentAct.ID, ActivityStatusRunning, nil)
+	s.broadcastUpdatedByID(ctx, agentAct.ID, map[string]any{"status": ActivityStatusRunning})
+
+	text, err := s.directExecutor.RunDirectActivity(ctx, task, body)
+	if err != nil {
+		failure := strings.TrimSpace(err.Error())
+		_ = s.activities.UpdateBody(ctx, agentAct.ID, failure)
+		_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusFailed, failure)
+		return
+	}
+	_ = s.activities.UpdateBody(ctx, agentAct.ID, strings.TrimSpace(text))
+	_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCompleted, "")
 }
 
 // startWorkflowRun 创建 pending 的 Agent 回复并落一个 WorkflowRun。
@@ -185,7 +218,7 @@ func (s *ActivityService) startWorkflowRun(
 		RootID:         task.RootID,
 		Type:           ActivityTypeAgentReply,
 		Role:           RoleAgent,
-		Body:           "正在准备执行工作流...",
+		Body:           "",
 		Status:         ActivityStatusPending,
 		WorkflowChoice: choice,
 	}
@@ -252,58 +285,19 @@ func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, ver
 	return nil
 }
 
-// executeWorkflowRun is the async path for an injected executor: running →
-// completed/failed, always reporting through the same OnWorkflowRun*方法。
+// executeWorkflowRun 只负责把占位回复推进到 running 并唤醒运行层。
+// 终态不在这里写：唤醒是异步的，运行层会在真正结算时回写
+// （Service.settleWorkflowReply），审批后继续跑也走同一条回写路径。
 func (s *ActivityService) executeWorkflowRun(ctx context.Context, task Task, run *WorkflowRun, activityID string) {
 	if s == nil || s.executor == nil {
 		return
 	}
-	runningBody := "正在执行工作流..."
 	_ = s.activities.UpdateStatus(ctx, activityID, ActivityStatusRunning, nil)
-	_ = s.activities.UpdateBody(ctx, activityID, runningBody)
-	s.broadcastUpdatedByID(ctx, activityID, map[string]any{"status": ActivityStatusRunning, "body": runningBody})
+	s.broadcastUpdatedByID(ctx, activityID, map[string]any{"status": ActivityStatusRunning})
 
-	var summary string
-	var err error
-	if progress, ok := s.executor.(ActivityWorkflowProgressExecutor); ok {
-		summary, err = progress.ExecuteActivityWorkflowWithProgress(ctx, task, run, func(nodeID string) {
-			s.onWorkflowNodeStarted(ctx, run.ID, nodeID)
-		})
-	} else {
-		summary, err = s.executor.ExecuteActivityWorkflow(ctx, task, run)
-	}
-	if err != nil {
+	if err := s.executor.ExecuteActivityWorkflow(ctx, task, run); err != nil {
 		_ = s.OnWorkflowRunFailed(ctx, run.ID, err.Error())
-		return
 	}
-	_ = s.OnWorkflowRunCompleted(ctx, run.ID, summary)
-}
-
-// onWorkflowNodeStarted writes "步骤 i/n: 名称" onto the agent reply and
-// broadcasts it as task.activity.updated. Progress is advisory: any lookup or
-// write failure is silent and must never abort the run.
-func (s *ActivityService) onWorkflowNodeStarted(ctx context.Context, runID, nodeID string) {
-	if s == nil || s.tasks == nil || s.activities == nil {
-		return
-	}
-	run, err := s.tasks.WorkflowRunByID(ctx, runID)
-	if err != nil || run == nil {
-		return
-	}
-	activity, err := s.activities.ActivityByRunID(ctx, runID)
-	if err != nil || activity == nil {
-		return
-	}
-	index, total, name, ok := workflowProgressNode(run, nodeID)
-	if !ok {
-		return
-	}
-	progress := fmt.Sprintf("步骤 %d/%d: %s", index, total, name)
-	if err := s.activities.UpdateBody(ctx, activity.ID, progress); err != nil {
-		return
-	}
-	activity.Body = progress
-	s.broadcastUpdated(activity, map[string]any{"body": progress})
 }
 
 // workflowProgressNode resolves a node's 1-based position and display name.
@@ -345,7 +339,16 @@ func (s *ActivityService) resolveWorkflowVersion(ctx context.Context, userInput,
 		if versionID == nil || strings.TrimSpace(*versionID) == "" {
 			return WorkflowVersion{}, errors.New("workflow_version_id required when workflow_choice=specified")
 		}
-		return s.workflows.GetVersion(ctx, strings.TrimSpace(*versionID))
+		id := strings.TrimSpace(*versionID)
+		// 选择器列的是 workflow（id+name），只传 workflow id 时解析到最新发布版本；
+		// 传已发布的版本 id 则原样使用。
+		if version, err := s.workflows.GetVersion(ctx, id); err == nil {
+			return version, nil
+		}
+		if latest, ok := s.latestVersion(ctx, id); ok {
+			return s.workflows.GetVersion(ctx, latest)
+		}
+		return WorkflowVersion{}, ErrVersionNotFound
 	}
 	// empty = let the recommender choose. A recommendation failure must not block
 	// the message: fall back to the first available workflow with a live version.
@@ -420,7 +423,7 @@ func (s *ActivityService) OnWorkflowRunFailed(ctx context.Context, runID, errMsg
 	if errMsg == "" {
 		errMsg = "unknown error"
 	}
-	return s.finishByRunID(ctx, runID, ActivityStatusFailed, "执行失败: "+errMsg)
+	return s.finishByRunID(ctx, runID, ActivityStatusFailed, errMsg)
 }
 
 // OnWorkflowRunCompleted moves the agent reply linked to runID to completed.
@@ -445,10 +448,26 @@ func (s *ActivityService) finishByRunID(ctx context.Context, runID, status, summ
 	return nil
 }
 
+// finishActivityByID 是直连路径的终态回写（直连没有 RunID）。
+func (s *ActivityService) finishActivityByID(ctx context.Context, id, status, summary string) error {
+	if s == nil || s.activities == nil {
+		return errors.New("activity service not configured")
+	}
+	if err := s.activities.UpdateStatus(ctx, id, status, &summary); err != nil {
+		return err
+	}
+	activity, err := s.activities.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.broadcastUpdated(activity, map[string]any{"status": status, "summary": summary})
+	return nil
+}
+
 // failActivity writes a failure back onto the agent reply. Failures here are
 // deliberate state, so the message survives even when the run cannot start.
 func (s *ActivityService) failActivity(ctx context.Context, activity *TaskActivity, cause error) {
-	summary := "执行失败: " + cause.Error()
+	summary := strings.TrimSpace(cause.Error())
 	_ = s.activities.UpdateStatus(ctx, activity.ID, ActivityStatusFailed, &summary)
 	activity.Status = ActivityStatusFailed
 	activity.Summary = summary

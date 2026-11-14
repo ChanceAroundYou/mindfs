@@ -178,7 +178,7 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	// task_type：存量行默认 stage（下一步的一次性转换会把它改成 conversation），
 	// 新建任务由 insertTask 显式写 conversation。默认值必须是 stage，否则存量行
 	// 会被标成已转换、永远不进迁移。
-	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT '` + TaskTypeStage + `'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'stage'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return err
 	}
 	// worktree_built：这个任务**曾经建过** worktree（2026-10-01 加）。

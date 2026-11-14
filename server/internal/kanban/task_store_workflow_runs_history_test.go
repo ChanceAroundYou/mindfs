@@ -21,8 +21,7 @@ func TestWorkflowRunHistoryAllowsNewRunOnlyAfterTerminal(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "run-history-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "run-history-stage", TaskID: "run-history-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "run-history-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "run-history-event", TaskID: "run-history-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

@@ -45,10 +45,7 @@ export function WorkspaceTaskRow({
     : task.main_session_key
       ? [task.main_session_key]
       : [];
-  // 看板按列决定要不要显示阶段名（只有「执行中」列给）；工作台没有列，就按状态给。
-  const stageName = task.status === "running"
-    ? task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "")
-    : "";
+  // 看板按列决定要不要显示状态；工作台没有列，所以恒按状态显示。
   return (
     <article
       role="button"
@@ -66,7 +63,6 @@ export function WorkspaceTaskRow({
         onOpenSession={onOpenSession}
         onMove={(_cardTask, action) => onMove(item, action)}
         onShowSessionError={onShowSessionError}
-        stageName={stageName}
         showStatus
         // 工作台恒显示状态文字（看板只有「已结束」列才显示），所以失败任务的
         // 红色错误图标会被画两次 —— 一次在状态文字里，一次在 aux 徽章里。

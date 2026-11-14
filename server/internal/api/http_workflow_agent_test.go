@@ -137,7 +137,7 @@ func TestWorkflowDraftAgentSnapshotPatchAndProposal(t *testing.T) {
 
 func TestTaskWorkflowAgentPatchAndDryRun(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: "hi"})
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Input: "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestWorkflowAgentPatchPayloadAndOperationLimits(t *testing.T) {
 
 func TestTaskWorkflowRunAgentPatchScope(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: "hi"})
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Input: "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}

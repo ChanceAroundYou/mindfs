@@ -2,8 +2,6 @@ package kanban
 
 import (
 	"errors"
-	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,57 +9,6 @@ import (
 
 	"mindfs/server/internal/fs"
 )
-
-// 阶段完成契约：agent 必须显式回报，本段才算完成。
-//
-// 以前判据是「没抛错」，于是 agent 撞墙/卡住/只写一半都被记成 success，
-// executeTask 紧接着推进并跑下一段，阶段错乱。现在没回报就停在 waiting_user。
-//
-// 标记带方括号带 MINDFS 前缀，agent 正文里几乎不会自然撞上，误判率远低于裸数字。
-// 段号冗余写进标记：上一段的残留标记不会被当成本段完成。
-const (
-	stageDoneTag    = "MINDFS-STAGE-DONE"
-	stageBlockedTag = "MINDFS-STAGE-BLOCKED"
-)
-
-// stageDoneRe / stageBlockedRe 只在本段编号吻合时才算数（见 matchStageOutcome）。
-var (
-	stageDoneRe    = regexp.MustCompile(`\[` + stageDoneTag + `:(\d+)\]`)
-	stageBlockedRe = regexp.MustCompile(`\[` + stageBlockedTag + `:(\d+)\s*([^\]]*)\]`)
-)
-
-// BuildStageExitContract 拼给 agent 的完成契约。导出是因为真正把它送到 agent
-// 眼前的是 api 层（DeveloperInstructions 通道 / 可见 user message 兜底），
-// 而匹配方在 api 层也要用 —— 文案与判据必须同源。
-func BuildStageExitContract(stageIndex int) string {
-	return fmt.Sprintf(
-		"\n\n<mindfs-stage-exit stage=%q>\n"+
-			"完成本段全部工作后，在回复的最后单独一行输出 [%s:%d]（该行不要加别的内容）。\n"+
-			"若未完成或中途受阻，改为输出 [%s:%d 原因]。\n"+
-			"未输出以上任一标记时，本段会被判为未完成，任务将停下等你处理。\n"+
-			"</mindfs-stage-exit>",
-		strconv.Itoa(stageIndex),
-		stageDoneTag, stageIndex,
-		stageBlockedTag, stageIndex,
-	)
-}
-
-// MatchStageOutcome 从 agent 本轮输出里判定结论。段号必须吻合本段：
-// 上一段的残留标记不算数。优先 Done（agent 先说做完了又补了原因时按做完算）。
-func MatchStageOutcome(text string, stageIndex int) StageResult {
-	return matchStageOutcome(text, stageIndex)
-}
-
-func matchStageOutcome(text string, stageIndex int) StageResult {
-	want := strconv.Itoa(stageIndex)
-	if m := stageDoneRe.FindStringSubmatch(text); m != nil && m[1] == want {
-		return StageResult{Outcome: StageOutcomeDone}
-	}
-	if m := stageBlockedRe.FindStringSubmatch(text); m != nil && m[1] == want {
-		return StageResult{Outcome: StageOutcomeBlocked, Reason: strings.TrimSpace(m[2])}
-	}
-	return StageResult{Outcome: StageOutcomeSilent}
-}
 
 type RootProvider interface {
 	GetRoot(rootID string) (fs.RootInfo, error)
@@ -95,22 +42,11 @@ type Service struct {
 	// 实例，但必须由 app 层注入**同一个** *WriterGate；为 nil 时写节点 fail closed。
 	WriterGate *WriterGate
 
-	mu       sync.Mutex
-	stores   map[string]*TaskStore
-	taskRun  map[string]bool
-	taskPend map[string]bool
-	// taskFinish 标记「正在收尾 worktree」的任务。收尾会拆掉 agent 正在用的
-	// 目录，所以必须和执行互斥：RunTask 拿不到锁就退化成挂起（跟 taskRun 的
-	// 处理一样），否则会出现「查完说没在跑，紧接着有人把 agent 起来，收尾把
-	// 它的 cwd 删了」。见 acquireTaskFinish。
+	mu     sync.Mutex
+	stores map[string]*TaskStore
+	// taskFinish 标记「正在收尾 worktree」的任务：同一任务同一时刻只允许一个收尾，
+	// 否则两条收尾会对着同一棵 worktree 一起 merge / remove。
 	taskFinish map[string]*finishToken
-	// taskAdmit 标记「正在为这个任务启动执行体」的短暂窗口：动词已经拿到准入、
-	// 正在改状态、还没走到 RunTask。这段窗口里 acquireTaskFinish 必须拒绝 ——
-	// 否则收尾会抢进来把 agent 的 cwd 拆掉，而动词那边已经把状态改成 running 了。
-	//
-	// 为什么不能只是「查一下」：查和改之间不是原子的，中间插进来一个收尾就会留下
-	// 「状态是 running、却没有执行体」的任务 —— 没有 agent 会再碰它，看起来像卡死。
-	taskAdmit map[string]*admitToken
 	// workflowDrives is the per-task single-flight driver registry. Keyed by
 	// rootID+"\x00"+taskID; one goroutine per task, duplicate triggers set
 	// pending so the same driver re-reads state once more instead of starting a
@@ -123,10 +59,9 @@ type Service struct {
 	// 赢下状态，就会得到「树已合并删除、行记 cancelled」的矛盾。锁只在进程内
 	// 有效，跨进程语义本来就未宣称 durable。
 	workflowFinishLocks map[string]*workflowFinishLock
-	// finishStageFinished 是「收尾段跑完之后」的回调，由 api 层在装配时挂上。
-	// 见 worktree_finish_stage.go 的 notifyFinishStageOutcome —— 它必须挂在
-	// executeTask 之外，因为清场要抢 taskFinish 锁而那条锁见到 taskRun 就拒绝。
-	finishStageFinished FinishStageFinishedFunc
+	// finishTurnDone 是「收尾回合跑完之后」的回调，由 api 层在装配时挂上。
+	// 见 worktree_finish.go 的 notifyFinishTurnOutcome。
+	finishTurnDone func(rootID, taskID string, succeeded bool)
 	// sessionRunningProbe 报某个会话此刻是不是在回复中，由 api 层在装配时挂上
 	// （StreamHub.IsSessionReplying）。
 	//
@@ -141,15 +76,14 @@ type Service struct {
 	// 装配时注入（per-account StreamHub 适配器）；nil 时静默，单测与老装配不变。
 	// ActivityServiceForRoot 每次新建的 ActivityService 都会带上它。
 	activityBroadcaster ActivityBroadcaster
+	// directExecutor 是「纯对话模式」的直连执行端口，由 api 层注入。
+	// ActivityServiceForRoot 每次新建的 ActivityService 都会带上它。
+	directExecutor ActivityDirectExecutor
 }
 
 // finishToken 是一次收尾的锁凭证。见 acquireTaskFinish。
 type finishToken struct{}
 
-// admitToken 是一次启动执行体的准入凭证。见 beginRunAdmission。
-type admitToken struct{}
-
-var errStopTaskExecution = errors.New("stop task execution")
 var errTaskFinishing = errors.New("该任务正在收尾 worktree，稍后再执行")
 
 // ErrTaskSessionRunning 表示任务关联的会话此刻正在回复 —— 收尾必须等它停下。
@@ -161,7 +95,7 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(roots RootProvider) *Service {
-	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}, taskFinish: map[string]*finishToken{}, taskAdmit: map[string]*admitToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second}
+	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second}
 }
 
 // lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径
@@ -276,19 +210,17 @@ func (s *Service) sessionProbeConfigured() bool {
 
 type CreateTaskInput struct {
 	RootID             string
-	Input              string          // 第一段的用户输入
-	Name               string          // 可选：任务名；缺省时前端用输入首行回退
-	Stages             []StageTemplate // 必填：调用方随包带上的流水（模板库已下线，无回退）
+	Input              string // 首轮用户输入（同时落成第一条 user_message）
+	Name               string // 可选：任务名；缺省时前端用输入首行回退
 	CreateWorktree     bool
 	WorktreeBranchMode string
 	WorktreeBranch     string
 }
 
 type MoveInput struct {
-	RootID     string
-	TaskID     string
-	Reason     string
-	StageIndex int
+	RootID string
+	TaskID string
+	Reason string
 }
 
 func TaskSessionName(base string, taskNumber int) string {

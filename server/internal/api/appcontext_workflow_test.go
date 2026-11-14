@@ -156,3 +156,62 @@ func TestWorkflowNodeAdapterInvalidEnvelopeBecomesUnknown(t *testing.T) {
 		t.Fatalf("result = %#v, want unknown with JSON reason", result)
 	}
 }
+
+// 纯对话模式（workflow_choice=disabled）：Router 建一次任务主会话，之后每一轮
+// 都发到同一个会话；用户留言原样作为这一轮的 prompt。
+func TestRunDirectActivityCreatesAndReusesTaskMainSession(t *testing.T) {
+	ctx := context.Background()
+	app, rootID := newWorkflowAdapterTestApp(t)
+	root, err := app.GetRoot(rootID)
+	if err != nil {
+		t.Fatalf("GetRoot: %v", err)
+	}
+	store, err := kanban.NewTaskStore(root)
+	if err != nil {
+		t.Fatalf("NewTaskStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.CreateTask(ctx,
+		kanban.Task{ID: "task-direct", RootID: rootID, TaskNumber: 1, Name: "对话任务", Status: kanban.StatusPending},
+		kanban.TaskEvent{ID: "ev-direct", TaskID: "task-direct", Type: "created"},
+	); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	app.Kanban = kanban.NewService(app)
+
+	var captured []workflowTurnRequest
+	app.workflowTurnOverride = func(_ context.Context, req workflowTurnRequest) (string, error) {
+		captured = append(captured, req)
+		return "已经处理好了", nil
+	}
+
+	task, err := store.GetTask(ctx, "task-direct")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	reply, err := app.RunDirectActivity(ctx, task, "  帮我改一下  ")
+	if err != nil {
+		t.Fatalf("RunDirectActivity: %v", err)
+	}
+	if reply != "已经处理好了" {
+		t.Fatalf("reply = %q", reply)
+	}
+	if len(captured) != 1 || captured[0].Prompt != "帮我改一下" || captured[0].SessionKey == "" {
+		t.Fatalf("turn request = %#v, want trimmed user body on a bound session", captured)
+	}
+	after, err := store.GetTask(ctx, "task-direct")
+	if err != nil {
+		t.Fatalf("GetTask after: %v", err)
+	}
+	if after.MainSessionKey != captured[0].SessionKey {
+		t.Fatalf("main_session_key = %q, want %q", after.MainSessionKey, captured[0].SessionKey)
+	}
+
+	task.MainSessionKey = after.MainSessionKey
+	if _, err := app.RunDirectActivity(ctx, task, "再改一处"); err != nil {
+		t.Fatalf("second RunDirectActivity: %v", err)
+	}
+	if len(captured) != 2 || captured[1].SessionKey != captured[0].SessionKey {
+		t.Fatalf("second turn reused session = %#v, want %q", captured, captured[0].SessionKey)
+	}
+}

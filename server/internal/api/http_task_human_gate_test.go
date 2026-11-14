@@ -11,11 +11,11 @@ import (
 	"mindfs/server/internal/kanban"
 )
 
-// D4 at the transport boundary: the normal comment endpoint can never decide a
-// HumanGate; only /human-gate does, once, and the route maps conflicts to 409.
-func TestTaskHumanGateRouteRequiresDedicatedDecision(t *testing.T) {
+// D4 at the transport boundary: only /human-gate decides, once, and the route
+// maps conflicts to 409. Normal messages cannot approve (service-level test).
+func TestTaskHumanGateRouteDecidesOnce(t *testing.T) {
 	ctx := context.Background()
-	handler, svc, root, taskID := commentsHandler(t)
+	handler, svc, root, taskID := kanbanHTTPFixture(t)
 	store, err := kanban.NewTaskStore(root)
 	if err != nil {
 		t.Fatalf("NewTaskStore: %v", err)
@@ -36,15 +36,6 @@ func TestTaskHumanGateRouteRequiresDedicatedDecision(t *testing.T) {
 	}
 	if err := svc.AdvanceWorkflowRun(ctx, store, taskID); err != nil {
 		t.Fatalf("AdvanceWorkflowRun: %v", err)
-	}
-
-	comment := `{"root_id":"` + root.ID + `","comment_id":"c-1","author":"alice","body":"同意","workflow_choice":"empty"}`
-	if code, body := postJSON(t, handler, "/api/tasks/"+taskID+"/comments", comment); code != http.StatusOK {
-		t.Fatalf("comment status=%d body=%s", code, body)
-	}
-	gate, err := store.WorkflowNodeRunByKey(ctx, run.ID, "gate", "", 0, 1)
-	if err != nil || gate.Status != kanban.NodeRunWaitingUser {
-		t.Fatalf("normal comment decided the gate: %#v err=%v", gate, err)
 	}
 
 	approve := `{"root_id":"` + root.ID + `","node_id":"gate","decision":"approve","comment_id":"c-1"}`

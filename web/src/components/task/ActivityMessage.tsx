@@ -5,12 +5,11 @@ import {
   activityDisplayText,
   normalizeActivityStatus,
 } from "../../shared/activityModel";
-import { formatRelativeTime, formatFullTime } from "../../shared/timeUtils";
+import { formatRelativeTime, formatFullTime } from "../../shared/datetime";
 
 export type ActivityMessageProps = {
   activity: TaskActivity;
   onOpenSession?: (sessionKey: string) => void;
-  onViewRun?: (runId: string) => void;
 };
 
 // i18n key 必须是字面量，模板字符串会丢失 MessageKey 的类型约束。
@@ -20,14 +19,16 @@ const STATUS_LABEL_KEYS = {
   completed: "task.activity.status.completed",
   failed: "task.activity.status.failed",
   cancelled: "task.activity.status.cancelled",
+  waiting_user: "task.activity.status.waiting_user",
 } as const;
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "var(--text-secondary)",
   running: "var(--accent-color)",
-  completed: "var(--status-ok, #16a34a)",
-  failed: "#dc2626",
+  completed: "var(--status-ok)",
+  failed: "var(--status-bad)",
   cancelled: "var(--text-secondary)",
+  waiting_user: "var(--status-warn)",
 };
 
 const STATUS_ICONS: Record<string, string> = {
@@ -36,6 +37,7 @@ const STATUS_ICONS: Record<string, string> = {
   completed: "✓",
   failed: "✗",
   cancelled: "○",
+  waiting_user: "⏸",
 };
 
 /**
@@ -60,7 +62,6 @@ function parseActivityTime(value: string | undefined): number | null {
 export function ActivityMessage({
   activity,
   onOpenSession,
-  onViewRun,
 }: ActivityMessageProps) {
   const { t, locale } = useI18n();
 
@@ -73,9 +74,16 @@ export function ActivityMessage({
 
   const displayText = activityDisplayText(activity);
   const status = activity.status ? normalizeActivityStatus(activity.status) : null;
-  const hasWorkflowRun = !!activity.run_id;
+  // 后端不写中文占位：进行中的提示由前端本地化，终态空正文交给状态徽标，
+  // 否则英文界面会混进「正在思考...」这种硬编码中文。
+  const bodyText =
+    displayText ||
+    (!isUser && status === "pending"
+      ? t("task.activity.replyPending")
+      : !isUser && status === "running"
+        ? t("task.activity.replyRunning")
+        : "");
   const canOpenSession = !!activity.session_key && !!onOpenSession;
-  const canViewRun = hasWorkflowRun && !!onViewRun;
   const created = parseActivityTime(activity.created_at);
 
   // 系统消息：居中显示，样式特殊
@@ -124,7 +132,7 @@ export function ActivityMessage({
         </div>
 
         {/* 消息正文 */}
-        <div style={bodyStyle}>{displayText}</div>
+        {bodyText && <div style={bodyStyle}>{bodyText}</div>}
 
         {/* 工作流执行状态（内联显示） */}
         {!isUser && status && (
@@ -140,29 +148,17 @@ export function ActivityMessage({
           </div>
         )}
 
-        {/* 操作按钮 */}
-        {(canViewRun || canOpenSession) && (
+        {/* 操作按钮：运行详情就在本面板下方（RunViewEntry），不另设入口 */}
+        {canOpenSession && (
           <div style={actionsStyle}>
-            {canViewRun && (
-              <button
-                type="button"
-                data-testid="activity-view-run"
-                onClick={() => onViewRun?.(activity.run_id as string)}
-                style={actionButtonStyle}
-              >
-                {t("task.activity.viewRun")}
-              </button>
-            )}
-            {canOpenSession && (
-              <button
-                type="button"
-                data-testid="activity-open-session"
-                onClick={() => onOpenSession?.(activity.session_key as string)}
-                style={actionButtonStyle}
-              >
-                {t("task.activity.openSession")}
-              </button>
-            )}
+            <button
+              type="button"
+              data-testid="activity-open-session"
+              onClick={() => onOpenSession?.(activity.session_key as string)}
+              style={actionButtonStyle}
+            >
+              {t("task.activity.openSession")}
+            </button>
           </div>
         )}
       </div>

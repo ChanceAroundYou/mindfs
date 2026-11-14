@@ -80,36 +80,21 @@ func TestClearTaskWorktreeDetachesTask(t *testing.T) {
 	svc, root := newTestService(t, runner)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
-		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
 		Input:          "broken save button",
 		CreateWorktree: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
-		t.Fatalf("Next: %v", err)
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
 	}
-	// 等**执行体收工**（Status==waiting_user），不能只等路径落库。
-	//
-	// 路径是 moveRelative 在 Next 里**同步**写的，所以「等到路径非空」几乎立刻成立；
-	// 但 Next 之后还有一个**异步**的 executeTask 在跑。它开头的 loadForMove 若读在
-	// 清归属**之后**，快照里路径已空，于是又走一次建树分支把路径**写回**去 —— 断言
-	// 随即看到「清完路径又回来」。高并行负载（go test ./... 各包并行）拉宽这个窗口，
-	// 就是那个 flaky；单独跑 / -race 跑不出来。
-	//
-	// 等 waiting_user 表示 agent 段已跑完、executeTask 已返回，不会再写归属。这也是
-	// 本包「等 Next 的异步执行落地」的既有范式（见 parkOnWaitingAgentStage）。
-	var before TaskDetail
-	waitForCondition(t, func() bool {
-		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err != nil {
-			return false
-		}
-		before = got
-		return strings.TrimSpace(got.Task.WorktreePath) != "" && got.Task.Status == StatusWaitingUser
-	})
-	if strings.TrimSpace(before.Task.WorktreePath) == "" {
+	before, err := svc.ensureTaskWorktree(ctx, store, detail.Task)
+	if err != nil {
+		t.Fatalf("ensureTaskWorktree: %v", err)
+	}
+	if strings.TrimSpace(before.WorktreePath) == "" {
 		t.Fatalf("worktree path should be set before clearing")
 	}
 
@@ -143,17 +128,19 @@ func TestBuildingAnUnusableWorktreeIsNotRecordedAsBuilt(t *testing.T) {
 
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
-		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix:\n{previous_input}")},
 		Input:          "something to fix",
 		CreateWorktree: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	// Next 必须当场拒绝：建树没产出可用目录，推到 agent 段就会在主 checkout 里跑。
-	_, err = svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
-	if err == nil {
-		t.Fatal("advancing into an agent stage must fail when the worktree creation produced nothing usable")
+	// 建树必须当场拒绝：没产出可用目录，agent 就会在主 checkout 里跑。
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	if _, err := svc.ensureTaskWorktree(ctx, store, detail.Task); err == nil {
+		t.Fatal("worktree creation with no usable path must fail")
 	}
 
 	after := mustGetTask(t, svc, root.ID, detail.Task.ID)
@@ -162,15 +149,6 @@ func TestBuildingAnUnusableWorktreeIsNotRecordedAsBuilt(t *testing.T) {
 	}
 	if after.WorktreeBuilt {
 		t.Fatal("a worktree that was never actually created must not be recorded as built — that flag drives the \"finished\" badge")
-	}
-	// 更要紧的：agent 绝不能因此在主 checkout 里跑起来。
-	runner.mu.Lock()
-	execs := append([]AgentStageExecution(nil), runner.execs...)
-	runner.mu.Unlock()
-	for _, exec := range execs {
-		if strings.TrimSpace(exec.RuntimeRootPath) == "" && after.CreateWorktree {
-			t.Fatalf("the agent ran with no worktree cwd (task=%s): it would edit the main checkout", exec.Task.ID)
-		}
 	}
 }
 
@@ -186,14 +164,17 @@ func TestBuildingAWorktreeThatIsAFileIsNotRecordedAsBuilt(t *testing.T) {
 
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
-		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix:\n{previous_input}")},
 		Input:          "something to fix",
 		CreateWorktree: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	if _, err := svc.ensureTaskWorktree(ctx, store, detail.Task); err == nil {
 		t.Fatal("a path that is not a directory must not be accepted as a worktree")
 	}
 	if !runner.worktreeCreateCalled {

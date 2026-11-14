@@ -66,13 +66,12 @@ assert.doesNotMatch(
   "has_agent_stage must be gone from the card — it is redundant once the projection carries stages",
 );
 
-// ── 4. 完成键必须兜住「推进键给不出来」的一切局面 ────────────────────────────
-// 只剩两条例外：正在跑、终态。收尾中不再豁免 —— 收尾段卡在待审核时推进键恒假，
-// 旧判据把完成键也一起收走了，于是那张卡只剩一个最容易失败的收尾键。
+// ── 4. 完成键只被「正在跑」和终态挡住 ──────────────────────────────────────
+// 会话模型下没有「推进」可言：任务不在跑、也不是终态，就允许收口。
 assert.match(
   cardRows,
-  /const canComplete = !terminal && !stageRunning && !showAdvance;/,
-  "完成 must be the inverse of showAdvance, with only running/terminal withheld",
+  /const canComplete = !terminal && !taskRunning;/,
+  "完成 must be withheld only while running or after the task reached a terminal state",
 );
 
 // ── 5. 终态任务只要 worktree 还在就必须有收尾键 ──────────────────────────────

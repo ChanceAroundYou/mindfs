@@ -5,12 +5,16 @@
 
 // 类型依赖使用 import type，避免在运行时引入 i18n 与 task service 模块。
 import type { MessageKey, MessageParams } from "../i18n";
-import type { KanbanTask, StageRun, StageTemplate, TaskDetail } from "../services/tasks";
+import type { KanbanTask, TaskDetail } from "../services/tasks";
 import { scopeKey } from "../shared/scope";
 
-/** 新建 agent 段时的默认 agent/模型：claude + sonnet，别再默认 codex。 */
+/**
+ * 任务内联编辑器取 @文件 / /命令 候选时用的 agent。
+ *
+ * 建任务本身不再携带 agent/model —— 任务的第一轮由 router 决定走哪条执行路径，
+ * 这里只影响候选列表从哪个 agent 拿（不同 harness 的候选集不同）。
+ */
 export const DEFAULT_TASK_AGENT = "claude";
-export const DEFAULT_TASK_MODEL = "sonnet";
 
 export function taskProjectScopeKey(rootId: string, nodeId?: string | null): string {
   return scopeKey(nodeId || "", rootId);
@@ -36,77 +40,8 @@ export function findTaskProjectRoot(
   return node ? byKey[taskProjectScopeKey(id, node)] : byId[id];
 }
 
-export function firstUserInputTemplate(stages: StageTemplate[] | null): string {
-  const first = stages?.[0];
-  return first?.role === "user" ? first.prompt_template || "" : "";
-}
-
-export function firstAgentStage(stages: StageTemplate[] | null): StageTemplate | null {
-  return stages?.find((stage) => stage.role === "agent") || null;
-}
-
-/**
- * 新增阶段时继承的那一段：紧挨着新段的上一段 agent 段。
- * 没有 agent 段就退回默认（claude + sonnet）。
- */
-export function inheritAgentStage(stages: StageTemplate[], fromIndex: number): StageTemplate {
-  const previous = stages
-    .slice(0, fromIndex)
-    .reverse()
-    .find((stage) => stage.role === "agent");
-  return {
-    name: "",
-    role: "agent",
-    agent: previous?.agent || DEFAULT_TASK_AGENT,
-    model: previous?.model || DEFAULT_TASK_MODEL,
-    mode: previous?.mode || "",
-    effort: previous?.effort || "",
-    fast_service: previous?.fast_service || "",
-    plan_mode: previous?.plan_mode === true,
-    session_reuse_policy: previous?.session_reuse_policy || "task_main",
-    prompt_template: "",
-    auto_advance: false,
-  };
-}
-
 export function isTerminalKanbanTask(task: KanbanTask): boolean {
   return task.status === "success" || task.status === "fail" || task.status === "cancelled";
-}
-
-/**
- * 指针后面**还有没有段** —— 看板卡片上唯一能拿到的推进信息。
- *
- * 卡片只有 `stages` 和 `current_stage_index`，拿不到每段的执行记录（那是详情面板的
- * `stage_runs`）。所以这里的判据是「指针后面还有段」，不是「后面那段还没跑过」——
- * 后者在卡片上无从判断。详情面板用 nextRunnableStageIndex，那边有 stage_runs，判得更准。
- *
- * 存在的意义是两个按钮的给法：
- *   - 还有下一段 → 不给「完成」（收了尾就看不到下一段了，等于替用户提前结束）
- *   - 没有下一段 → 不给「执行」（推进不动，按钮点了什么都不发生）
- *
- * 与服务端同口径：Next 遇到「最后一段 + waiting_user」是直接完成整个任务的
- * （service.go 的 Next），所以那种局面下该给的是「完成」。
- */
-export function hasLaterStage(task: KanbanTask): boolean {
-  const stages = task.stages?.length || 0;
-  return task.current_stage_index < stages - 1;
-}
-
-/** 这一段是不是服务端生成的收尾段（StageTemplate.Kind）。 */
-export function isFinishStage(stage: StageTemplate | undefined): boolean {
-  return stage?.kind === "worktree_finish";
-}
-
-/**
- * 任务是不是正处在收尾流程里 —— 指针停在收尾段上，且那一段还没跑完。
- *
- * 收尾中不给「执行 / 完成 / 再次收尾」：清场已经要把 worktree 拆了，这时候再推进
- * 阶段或再点一次收尾，都是对着一个即将消失的目录干活。
- */
-export function isFinishStageActive(task: KanbanTask): boolean {
-  const index = task.current_stage_index;
-  if (index < 0 || index >= (task.stages?.length || 0)) return false;
-  return isFinishStage(task.stages?.[index]) && task.status !== "success" && task.status !== "fail" && task.status !== "cancelled";
 }
 
 export function parseTaskSessionErrorMessage(error?: string): string {
@@ -171,120 +106,31 @@ export function taskStatusColor(status: string): string {
   return colors[status] || "var(--text-secondary)";
 }
 
+/**
+ * 任务的第一条用户留言（卡片正文、内联编辑器回填都用它）。
+ *
+ * 阶段模型删除后，这条信息只落在建任务时写入的 `task_created` 事件里
+ * （payload 是 `{"input": "..."}`）。事件按创建顺序返回，取第一条即可。
+ */
 export function firstTaskInputFromDetail(detail: TaskDetail): string {
-  return detail.stage_runs.find((run) => run.stage_index === 0)?.input || "";
-}
-
-export function latestTaskStageRun(detail: TaskDetail, stageIndex: number): StageRun | null {
-  const runs = detail.stage_runs
-    .filter((run) => run.stage_index === stageIndex)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.created_at || a.updated_at || "");
-      const bTime = Date.parse(b.created_at || b.updated_at || "");
-      return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-    });
-  return runs[0] || null;
-}
-
-export function currentTaskInputFromDetail(detail: TaskDetail): string {
-  return latestTaskStageRun(detail, detail.task.current_stage_index)?.input || "";
+  const events = detail.events || [];
+  const created = events.find((event) => event.type === "task_created");
+  if (!created?.payload_json) return "";
+  try {
+    const payload = JSON.parse(created.payload_json) as { input?: unknown };
+    return typeof payload.input === "string" ? payload.input : "";
+  } catch {
+    return "";
+  }
 }
 
 /**
- * 「下一个能点立即执行的 agent 段」= 指针**之后**第一个 agent 段，且没跑过。没有就 -1。
- *
- * 从 current+1 起而不是从 current 起：run-now 的语义是**推进**（服务端
- * `Service.RunNow` → `Next` → `moveRelative(+1)`），把按钮长在指针所在的段上，
- * 点下去跑的却是下一段 —— 按钮在「没跑过的那张卡」上，动作却是「跳过这张卡」。
- *
- * 只给一个、也只长在这一张卡上：run-now 是任务级的，服务端只读
- * `task.current_stage_index`，请求里的 stage_index 根本不参与（service.go:770）。
- * 每段都发一个就成了假动作。
+ * 卡片上要显示的会话入口。对话式任务只有一条主线会话（workflow 节点会话不进
+ * 卡片操作行），所以这里就是 main_session_key。
  */
-export function nextRunnableStageIndex(detail: TaskDetail, currentStageIndex: number): number {
-  const stages = detail.task.stages || [];
-  for (let index = currentStageIndex + 1; index < stages.length; index++) {
-    if (stages[index]?.role !== "agent") continue;
-    const run = latestTaskStageRun(detail, index);
-    if (run && String(run.status) !== "pending") continue;
-    return index;
-  }
-  return -1;
-}
-
-/**
- * 当前段能不能靠「立即执行」推进过去 —— `canLeaveStageOnRequest`（task_store.go）的前端镜像。
- *
- * 为什么要镜像而不是直接发按钮：那一段 fail/cancelled/rejected 时 moveRelative 直接报错，
- * 而 `RunNow` 的 waiting_user 分支把这个错吞掉、只回详情（service.go:829）——
- * 结果就是按钮点了**什么都不发生**。宁可不给。
- * 服务端改这条规则时这里要跟着改，两边用同一份 statuses 清单。
- */
-export function canAdvanceFromCurrentStage(detail: TaskDetail, currentStageIndex: number): boolean {
-  const stage = (detail.task.stages || [])[currentStageIndex];
-  if (!stage) return false;
-  const status = String(latestTaskStageRun(detail, currentStageIndex)?.status || "pending");
-  if (stage.role === "agent") {
-    // waiting_user 放行，与服务端 canLeaveStageOnRequest 一致：那是「agent 没输出
-    // [STAGE-DONE:N]」而不是「活没干完」，该由用户来判要不要推进过去。
-    // 2026-10-03 实测（mindfs 任务 26）：这一段不给按钮，看板却给了个点了没反应的
-    // 按钮，任务彻底卡死。引擎的自动推进不经过这条路径（走 moveTo），防线仍在。
-    return status === "pending" || status === "running" || status === "success" || status === "approved" || status === "waiting_user";
-  }
-  return ["pending", "running", "waiting_user", "approved", "success", "rejected"].includes(status);
-}
-
-/**
- * 卡片版的推进门控 —— `canAdvanceFromCurrentStage` 在只有 `KanbanTask`（没有
- * `stage_runs`）时的镜像，判据是服务端已经算好挂在任务上的 `current_stage_status`。
- *
- * 为什么卡片也需要这道门：详情面板用 canAdvanceFromCurrentStage，卡片原来只用
- * hasLaterStage，压根不看当前段能不能走 —— 两边于是给出相反的答案。2026-10-03 实测
- * （mindfs 任务 26）：详情面板不给按钮、卡片给一个「立即执行」，点下去服务端
- * moveRelative 报错、RunNow 又把错吞掉只回未变的详情 —— 按钮看着能点，什么也没发生。
- *
- * 卡片拿不到 stage_runs，但 current_stage_status 是同一个 run 的状态（服务端
- * decorateCurrentStage 填的，列表和详情两条路径都填），所以这道门与详情面板同口径。
- */
-export function canAdvanceCard(task: KanbanTask): boolean {
-  const stage = (task.stages || [])[task.current_stage_index];
-  if (!stage) return false;
-  const status = String(task.current_stage_status || "pending");
-  if (stage.role === "agent") {
-    return status === "pending" || status === "running" || status === "success" || status === "approved" || status === "waiting_user";
-  }
-  return ["pending", "running", "waiting_user", "approved", "success", "rejected"].includes(status);
-}
-
-export function previousTaskInputsFromDetail(detail: TaskDetail, t: (key: MessageKey, params?: MessageParams) => string): Array<{ id: string; label: string; input: string }> {
-  const items: Array<{ id: string; label: string; input: string }> = [];
-  for (let index = 0; index < detail.task.current_stage_index; index += 1) {
-    const run = latestTaskStageRun(detail, index);
-    const input = run?.input || "";
-    if (!run || !input.trim()) continue;
-    items.push({
-      id: run.id,
-      label: run.stage_name || t("task.stageLabel", { index: index + 1 }),
-      input,
-    });
-  }
-  return items;
-}
-
 export function taskSessionKeysFromDetail(detail: TaskDetail): string[] {
-  const seen = new Set<string>();
-  const keys: string[] = [];
-  for (const run of detail.stage_runs) {
-    const key = String(run.session_key || "").trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    keys.push(key);
-  }
   const mainKey = String(detail.task.main_session_key || "").trim();
-  if (mainKey && !seen.has(mainKey)) {
-    keys.push(mainKey);
-  }
-  return keys;
+  return mainKey ? [mainKey] : [];
 }
 
 export function normalizeFastService(
@@ -318,51 +164,9 @@ export type TaskInlineEditState = {
   createWorktreePerRoot?: Record<string, { createWorktree: boolean; worktreeBranchMode: "new" | "existing"; worktreeBranch: string }>;
   /** 新建时的任务名 */
   name?: string;
-  /** 覆盖下一个 agent 阶段的 agent（空 = 用内置默认流水的） */
-  agentOverride?: string;
-  /** 覆盖下一个 agent 阶段的模型（空 = 用内置默认流水的） */
-  modelOverride?: string;
-  /** 覆盖下一个 agent 阶段的 effort（空 = 用内置默认流水的） */
-  effortOverride?: string;
-  /**
-   * 覆盖首段的「立即执行」（缺省 = 不覆盖）。
-   * 开 → 创建后直接推进到下一个 agent 段跑起来；关 → 停在「未开始」。
-   */
-  startImmediately?: boolean;
-  previousInputs: Array<{ id: string; label: string; input: string }>;
   createWorktree: boolean;
   worktreeBranchMode: "new" | "existing";
   worktreeBranch: string;
   canToggleWorktree: boolean;
   attachments: TaskInlineAttachment[];
 };
-
-/**
- * 建任务时要随包带的那份流水：在内置默认流水上应用面板里的 agent/model/effort
- * 与「立即执行」覆盖。
- *
- * 流水总是随包带上：建任务时这份流水就是任务的初始快照（AGENTS.md 事实 13），
- * 后端不再维护任何可回查的流水库。
- */
-export function taskStagesForCreate(
-  stages: StageTemplate[],
-  override: { agent?: string; model?: string; effort?: string; startImmediately?: boolean },
-): StageTemplate[] {
-  let touched = false;
-  const next = stages.map((stage) => {
-    // 只覆盖第一个 agent 段；user 段原样拷贝，避免调用方改到共享数组。
-    if (stage.role !== "agent" || touched) return { ...stage };
-    touched = true;
-    return {
-      ...stage,
-      ...(override.agent ? { agent: override.agent } : {}),
-      ...(override.model ? { model: override.model } : {}),
-      ...(override.effort ? { effort: override.effort } : {}),
-    };
-  });
-  if (override.startImmediately !== undefined && next[0]) {
-    // 首段必是 user 段（后端 CreateTask 也这么校验），「立即执行」挂在这儿。
-    next[0] = { ...next[0], start_immediately: override.startImmediately };
-  }
-  return next;
-}

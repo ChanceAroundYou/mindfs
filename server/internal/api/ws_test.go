@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -21,24 +20,12 @@ import (
 // real adapter and read the events over a real WebSocket so that
 // adapt → BroadcastAll → SendToClient → WriteJSON is all covered.
 
+// fakeActivityWorkflowExecutor only wakes the run: the router reply must stay
+// running until the runtime settles it (see Service.settleWorkflowReply).
 type fakeActivityWorkflowExecutor struct{}
 
-func (fakeActivityWorkflowExecutor) ExecuteActivityWorkflow(context.Context, kanban.Task, *kanban.WorkflowRun) (string, error) {
-	return "completed", nil
-}
-
-// ExecuteActivityWorkflowWithProgress opts into the optional progress port so
-// the conversation stream shows per-node progress.
-func (fakeActivityWorkflowExecutor) ExecuteActivityWorkflowWithProgress(
-	_ context.Context,
-	_ kanban.Task,
-	run *kanban.WorkflowRun,
-	onNodeStarted func(nodeID string),
-) (string, error) {
-	for _, node := range run.Graph.Nodes {
-		onNodeStarted(node.ID)
-	}
-	return "completed", nil
+func (fakeActivityWorkflowExecutor) ExecuteActivityWorkflow(context.Context, kanban.Task, *kanban.WorkflowRun) error {
+	return nil
 }
 
 // newActivityWSFixture builds the real per-root kanban wiring (same shape as
@@ -63,9 +50,7 @@ func newActivityWSFixture(t *testing.T) (*AppContext, *kanban.Service, string, s
 	}
 
 	detail, err := svc.CreateTask(ctx, kanban.CreateTaskInput{
-		RootID: root.ID,
-		Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}},
-		Input:  "", // empty to avoid triggering background activity goroutine
+		RootID: root.ID, Input: "", // empty to avoid triggering background activity goroutine
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -170,11 +155,13 @@ func TestWebSocket_ActivityUpdatedEvent(t *testing.T) {
 	}
 }
 
-func TestWebSocket_ActivityProgressUpdates(t *testing.T) {
-	app, svc, _, taskID := newActivityWSFixture(t)
+// Router 拥有对话流：唤醒 Run 只是「开始」，占位回复必须停在 running，
+// 由运行层在真实结算时（settleWorkflowReply）才写成终态。
+func TestWebSocket_ActivityStaysRunningAfterWake(t *testing.T) {
+	app, svc, rootID, taskID := newActivityWSFixture(t)
 	conn := dialHub(t, app.GetSessionStreamHub())
 
-	activitySvc, err := svc.ActivityServiceForRoot("root")
+	activitySvc, err := svc.ActivityServiceForRoot(rootID)
 	if err != nil {
 		t.Fatalf("ActivityServiceForRoot: %v", err)
 	}
@@ -187,14 +174,19 @@ func TestWebSocket_ActivityProgressUpdates(t *testing.T) {
 		t.Fatal("precondition: agent activity must own a run")
 	}
 
-	payload := readActivityBroadcast(t, conn, "task.activity.updated", func(p map[string]any) bool {
+	readActivityBroadcast(t, conn, "task.activity.updated", func(p map[string]any) bool {
 		changes, _ := p["changes"].(map[string]any)
-		body, _ := changes["body"].(string)
-		return p["activity_id"] == agentAct.ID && strings.HasPrefix(body, "步骤 ")
+		return p["activity_id"] == agentAct.ID && changes["status"] == kanban.ActivityStatusRunning
 	})
-	changes, _ := payload["changes"].(map[string]any)
-	if got := changes["body"]; got != "步骤 1/2: 分析" {
-		t.Fatalf("progress body = %v, want 步骤 1/2: 分析", got)
+	time.Sleep(50 * time.Millisecond)
+	stored, err := svc.ListTaskActivities(context.Background(), rootID, taskID)
+	if err != nil {
+		t.Fatalf("ListTaskActivities: %v", err)
+	}
+	for _, act := range stored {
+		if act.ID == agentAct.ID && act.Status != kanban.ActivityStatusRunning {
+			t.Fatalf("agent reply status = %q, want running until the run settles", act.Status)
+		}
 	}
 }
 

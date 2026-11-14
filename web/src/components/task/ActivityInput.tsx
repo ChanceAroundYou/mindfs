@@ -1,9 +1,21 @@
 import type React from "react";
 import { useI18n } from "../../i18n/index";
 import type { WorkflowChoice } from "../../shared/taskComments";
-import type { WorkflowRecommendation } from "../../shared/workflowModel";
 import { canSendActivity } from "../../shared/activityModel";
+import { formatSendShortcut, matchesSendShortcut, type SendShortcut } from "../../shared/sendShortcut";
 import { WorkflowSelector } from "./WorkflowSelector";
+
+// 与 ActionBar 共用同一套快捷键描述与匹配（shared/sendShortcut），
+// 默认按平台给 ⌘+Enter / Ctrl+Enter，不再在视图里硬编码键位。
+const APPLE_PLATFORM = typeof navigator !== "undefined"
+  && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+const DEFAULT_SEND_SHORTCUT: SendShortcut = {
+  key: "Enter",
+  alt: false,
+  ctrl: !APPLE_PLATFORM,
+  meta: APPLE_PLATFORM,
+  shift: false,
+};
 
 export type ActivityInputProps = {
   body: string;
@@ -11,10 +23,8 @@ export type ActivityInputProps = {
   choice: WorkflowChoice;
   versionId: string;
   onWorkflowChange: (choice: WorkflowChoice, versionId: string) => void;
-  recommendation?: WorkflowRecommendation | null;
   sending?: boolean;
   error?: string | null;
-  disabled?: boolean;
   placeholder?: string;
   onSend: () => void;
 };
@@ -31,10 +41,8 @@ export function ActivityInput({
   choice,
   versionId,
   onWorkflowChange,
-  recommendation,
   sending = false,
   error,
-  disabled = false,
   placeholder,
   onSend,
 }: ActivityInputProps) {
@@ -44,7 +52,6 @@ export function ActivityInput({
     workflowChoice: choice,
     workflowVersionId: versionId,
     sending,
-    disabled,
   });
 
   return (
@@ -64,13 +71,13 @@ export function ActivityInput({
         value={body}
         onChange={(event) => onBodyChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSend) {
+          if (matchesSendShortcut(event.nativeEvent, DEFAULT_SEND_SHORTCUT) && canSend) {
             event.preventDefault();
             onSend();
           }
         }}
         placeholder={placeholder ?? t("task.activity.inputPlaceholder")}
-        disabled={disabled || sending}
+        disabled={sending}
         rows={3}
         style={{
           minHeight: 70,
@@ -88,7 +95,6 @@ export function ActivityInput({
       <WorkflowSelector
         choice={choice}
         versionId={versionId}
-        recommendation={recommendation}
         onChange={onWorkflowChange}
       />
 
@@ -100,7 +106,7 @@ export function ActivityInput({
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-          {canSend ? "⌘+Enter 发送" : ""}
+          {canSend ? t("task.activity.sendHint", { shortcut: formatSendShortcut(DEFAULT_SEND_SHORTCUT) }) : ""}
         </span>
         <button
           type="button"

@@ -8,7 +8,7 @@ export type { NodeRunSnapshot, WorkflowRunNodeState, WorkflowRunSnapshot } from 
 
 // WP-07 留言板下钻只读运行视图。
 //
-// 定位：留言板（TaskActivity / ContinueRequest）的一条留言在执行 workflow 时，
+// 定位：留言板（TaskActivity）的一条留言在执行 workflow 时，
 // 会产生一个 WorkflowRun 与其下的 NodeRun 序列。本组件是那条留言的**下钻子视图**——
 // 只在留言板里点开某条留言后才出现，展示该留言触发的那次运行的节点时间线。
 // 它不是留言板的平级 tab，也不是任务详情的平级 tab，不得直接挂到 TaskDetailPanel

@@ -31,7 +31,6 @@ func TestRecoverOnStartupForRoot_DeterminableOnlyReportsSession(t *testing.T) {
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Name:   "recover ok",
-		Stages: []StageTemplate{userStage("Describe")},
 		Input:  "hello",
 	})
 	if err != nil {
@@ -90,7 +89,6 @@ func TestRecoverOnStartupForRoot_UnknownMarksNeedsUserWithoutReplay(t *testing.T
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Name:   "recover unknown",
-		Stages: []StageTemplate{userStage("Describe")},
 		Input:  "hello",
 	})
 	if err != nil {
@@ -152,7 +150,6 @@ func TestRecoverOnStartupForRoot_CanceledContextLeavesStateUntouched(t *testing.
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Name:   "recover canceled",
-		Stages: []StageTemplate{userStage("Describe")},
 		Input:  "hello",
 	})
 	if err != nil {
@@ -227,7 +224,7 @@ func TestRecoverOnStartupForRoot_ProbeIsPerRoot(t *testing.T) {
 	mk := func(root fs.RootInfo, name string) (string, *OutboxService) {
 		detail, err := svc.CreateTask(ctx, CreateTaskInput{
 			RootID: root.ID, Name: name,
-			Stages: []StageTemplate{userStage("Describe")}, Input: "hello",
+			Input: "hello",
 		})
 		if err != nil {
 			t.Fatalf("CreateTask(%s): %v", name, err)

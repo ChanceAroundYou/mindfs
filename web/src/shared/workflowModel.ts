@@ -62,13 +62,6 @@ export type WorkflowMeta = {
   match_score?: number;
 };
 
-/** `/api/workflows/recommend` 的回包：推荐一个已发布 workflow 并给出理由。 */
-export type WorkflowRecommendation = {
-  workflow_id: string;
-  reason: string;
-  match_score: number;
-};
-
 /** Loop 的内部图；`params.graph` 是与后端 workflow_engine.go 约定的唯一持久化键。 */
 export function loopInnerGraph(node: WorkflowNodeDef | null | undefined): WorkflowGraph | undefined {
   const raw = node?.params?.graph;

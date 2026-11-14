@@ -7,7 +7,6 @@ import { readFileSync } from "./source-map-fs.mjs";
 
 const handlers = readFileSync(new URL("../src/components/action/useActionBarHandlers.ts", import.meta.url), "utf8");
 const promptEditor = readFileSync(new URL("../src/components/editor/PromptEditor.tsx", import.meta.url), "utf8");
-const stageEditor = readFileSync(new URL("../src/components/task/StageEditor.tsx", import.meta.url), "utf8");
 const composer = readFileSync(new URL("../src/app/useTaskComposer.ts", import.meta.url), "utf8");
 const handleType = readFileSync(new URL("../src/shared/actionBarTypes.ts", import.meta.url), "utf8");
 
@@ -39,11 +38,6 @@ test("PromptEditor funnels button click and Enter through one flush-and-send", (
     promptEditor,
     /onSend\?\.\(\)/,
     "no send entry may call onSend without the flushed text",
-  );
-  assert.match(
-    stageEditor,
-    /onSend\?: \(text: string\) => void/,
-    "StageEditor must forward the flushed text type",
   );
 });
 

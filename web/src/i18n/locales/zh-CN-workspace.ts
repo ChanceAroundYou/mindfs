@@ -326,7 +326,7 @@ export const zhCNWorkspace = {
   "onboarding.mainMenu.title": "主视图更多操作",
   "onboarding.mainMenu.body": "点击主视图右上角竖点菜单，可以切换任务看板与文件浏览、调整排序、管理 Worktree、定时任务、项目名称以及上传和移除项目。",
   "onboarding.tasks.title": "创建和推进任务",
-  "onboarding.tasks.body": "点击加号新建任务。任务进入看板后，可以打开会话、编辑输入、推进下一阶段、立即执行、完成或取消任务。",
+  "onboarding.tasks.body": "点击加号新建任务。任务进入看板后，可以打开会话、继续留言、完成或取消任务。",
   "onboarding.sessionActions.title": "会话操作",
   "onboarding.sessionActions.body": "这里可以搜索历史会话、导入已有 Agent 会话。每个会话的菜单还支持置顶、同步、重命名和删除。",
   "onboarding.shortcuts.title": "三个高效快捷入口",

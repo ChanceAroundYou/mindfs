@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchTaskEngine, fetchWorkflowNodeRuns, fetchWorkflowRun } from "../../services/task/comments";
+import { fetchTaskEngine, fetchWorkflowNodeRuns, fetchWorkflowRun } from "../../services/task/runView";
 import { postTaskHumanGate, type HumanGateDecision } from "../../services/task/humanGate";
 import type { NodeRunPayload, WorkflowRunPayload } from "../../shared/taskComments";
 import type { NodeRunSnapshot } from "./RunTimeline";

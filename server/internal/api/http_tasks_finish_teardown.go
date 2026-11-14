@@ -225,38 +225,38 @@ func (s *AppContext) WireSessionRunningProbe(svc *kanban.Service) {
 	})
 }
 
-// WireFinishStageTeardown 把收尾段完成回调挂到看板服务上。
+// WireFinishTeardown 把收尾回合成功后的清场回调挂到看板服务上。
 //
 // 回调**不能**直接跑清场：merge / worktree remove / pool.Close 要好几秒，
-// 而它是被 kanban 的执行体 goroutine 调用的（notifyFinishStageOutcome 里已经 go 出去一层，
-// 这里再加一层是为了把 panic 和耗时彻底挡在 kanban 之外）。
-func (s *AppContext) WireFinishStageTeardown(svc *kanban.Service) {
+// 而它是被 kanban 的回合 goroutine 调用的（已经 go 出去一层，这里再加一层是为了
+// 把 panic 和耗时彻底挡在 kanban 之外）。
+func (s *AppContext) WireFinishTeardown(svc *kanban.Service) {
 	if svc == nil {
 		return
 	}
-	svc.SetFinishStageFinished(func(rootID string, outcome kanban.FinishStageOutcome) {
-		if !outcome.Succeeded {
+	svc.SetFinishTurnDone(func(rootID, taskID string, succeeded bool) {
+		if !succeeded {
 			// 受阻 / 静默：什么都不做，让任务停在待审核等人处理。
 			return
 		}
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[kanban/finish] teardown panic root=%s task=%s: %v", rootID, outcome.Task.ID, r)
+				log.Printf("[kanban/finish] teardown panic root=%s task=%s: %v", rootID, taskID, r)
 			}
 		}()
-		report := s.FinishWorktreeAndRepoint(rootID, outcome.Task.ID)
+		report := s.FinishWorktreeAndRepoint(rootID, taskID)
 		// 清场把 worktree_path 清空了，前端光靠 task.updated 不知道「刚才那次收尾
 		// 到底成没成」—— 它只看到徽标换了个样子。直接把结论播过去，界面才给得出
 		// 一次「已完成 / 出错了」的反馈。
 		s.BroadcastTaskFinishTeardown(rootID, report)
 		switch {
 		case report.Error != "":
-			log.Printf("[kanban/finish] teardown failed root=%s task=%s err=%s", rootID, outcome.Task.ID, report.Error)
+			log.Printf("[kanban/finish] teardown failed root=%s task=%s err=%s", rootID, taskID, report.Error)
 		case report.SessionWarning != "":
 			log.Printf("[kanban/finish] teardown done but session not moved root=%s task=%s: %s",
-				rootID, outcome.Task.ID, report.SessionWarning)
+				rootID, taskID, report.SessionWarning)
 		default:
-			log.Printf("[kanban/finish] teardown done root=%s task=%s", rootID, outcome.Task.ID)
+			log.Printf("[kanban/finish] teardown done root=%s task=%s", rootID, taskID)
 		}
 	})
 }

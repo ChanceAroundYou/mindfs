@@ -2,7 +2,8 @@ import React from "react";
 import { useI18n } from "../../i18n/index";
 import { sessionIconButtonStyle } from "./taskDetailStyles";
 import type { NodeRunSnapshot } from "./runTimelineTypes";
-import { nodeRunStatusColor } from "./runTimelineModel";
+import { nodeRunStatusColor, nodeRunStatusLabel } from "./runTimelineModel";
+import { formatFullTime } from "../../shared/datetime";
 
 // 运行时间线里的单个 NodeRun 行。
 //
@@ -20,10 +21,10 @@ function formatPayload(value: Record<string, unknown> | string | undefined): str
   }
 }
 
-function formatTime(value?: string): string | null {
+function formatTime(value: string | undefined, locale: string): string | null {
   if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? value : formatFullTime(ms, locale);
 }
 
 export type RunNodeRunRowProps = {
@@ -36,12 +37,12 @@ export type RunNodeRunRowProps = {
 };
 
 export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSession, onDecideGate }: RunNodeRunRowProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const inputText = formatPayload(nodeRun.input);
   const outputText = formatPayload(nodeRun.output);
   const errorText = nodeRun.error?.trim() || null;
-  const started = formatTime(nodeRun.started_at);
-  const finished = formatTime(nodeRun.finished_at);
+  const started = formatTime(nodeRun.started_at, locale);
+  const finished = formatTime(nodeRun.finished_at, locale);
 
   return (
     <div
@@ -71,7 +72,7 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
           }}
         />
         <span style={{ fontWeight: 800, fontSize: "12px", color: "var(--text-color)" }}>{displayName}</span>
-        <span style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor(nodeRun.status) }}>{nodeRun.status}</span>
+        <span style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor(nodeRun.status) }}>{nodeRunStatusLabel(nodeRun.status, t)}</span>
         {nodeRun.agent ? (
           <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{nodeRun.agent}{nodeRun.model ? ` · ${nodeRun.model}` : ""}</span>
         ) : null}

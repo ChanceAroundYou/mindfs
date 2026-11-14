@@ -21,53 +21,25 @@ func (s *TaskStore) setWorktreeRefsKeepBuilt(ctx context.Context, taskID, rootID
 	return err
 }
 
-func (s *TaskStore) UpdateTaskAndStageRun(ctx context.Context, task Task, run StageRun, event TaskEvent) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := updateTaskCore(ctx, tx, task); err != nil {
-		return err
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err = tx.ExecContext(ctx, `UPDATE stage_runs SET status = ?, session_key = ?, input = ?, rendered_prompt = ?, started_at = ?, finished_at = ?, updated_at = ? WHERE id = ?`,
-		run.Status, run.SessionKey, run.Input, run.RenderedPrompt, run.StartedAt, run.FinishedAt, now, run.ID)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(event.ID) != "" {
-		if err := insertTaskEvent(ctx, tx, event); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
 func insertTask(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
-	stages, _ := json.Marshal(task.Stages)
-	// 新建任务归对话模型所有：即使调用方还带着 stages（当前新建面板仍会带一份
-	// 初始流水），也不允许下一次启动的存量迁移把它当成历史任务再转一遍。
-	taskType := strings.TrimSpace(task.TaskType)
-	if taskType == "" {
-		taskType = TaskTypeConversation
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt), boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), taskType)
+	// current_stage_index / task_stages_json / task_type 是冻结列：新任务恒为
+	// 「对话模型」，不再写阶段载荷。task_type 留 'conversation'，启动时的一次性
+	// 迁移据此跳过这些行。
+	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'conversation')`,
+		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.Status, task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt), boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name)
 	return err
 }
 
 func updateTaskCore(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
-	stages, _ := json.Marshal(task.Stages)
 	// 刻意**不含** worktree_root_id / worktree_path：这两个列只有一个写入点
 	// （Service.ensureTaskWorktree，见 setWorktreeRefs）。留在整行 UPDATE 里，
-	// 任何拿着旧快照的后台写入（executeTask 是异步的，跑完一整段才写回）都会把
-	// 已清空的归属又写回去 —— 症状是「清完 worktree，路径又回来了」，且只在后台
-	// 流程还没结束时出现。归属是「谁建的树」这种一次性事实，不该跟着每次状态更新漂。
-	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, main_session_key = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ?, task_stages_json = ? WHERE id = ?`,
-		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, task.MainSessionKey, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), task.ID)
+	// 任何拿着旧快照的后台写入都会把已清空的归属又写回去 —— 症状是「清完 worktree，
+	// 路径又回来了」，且只在后台流程还没结束时出现。归属是「谁建的树」这种一次性
+	// 事实，不该跟着每次状态更新漂。阶段三列同理，已经冻结、不再读写。
+	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, status = ?, main_session_key = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ? WHERE id = ?`,
+		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.Status, task.MainSessionKey, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, task.ID)
 	return err
 }
 
@@ -107,13 +79,7 @@ func (s *TaskStore) SetWorktreeRefsAndTask(ctx context.Context, task Task) error
 	return tx.Commit()
 }
 
-func insertStageRun(ctx context.Context, tx *sql.Tx, run StageRun) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO stage_runs (id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.TaskID, run.StageIndex, run.StageName, run.Role, run.Status, run.SessionKey, run.Input, run.RenderedPrompt, run.StartedAt, run.FinishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	return err
-}
-
 func insertTaskEvent(ctx context.Context, tx *sql.Tx, event TaskEvent) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`, event.ID, event.TaskID, event.StageRunID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano))
+	_, err := tx.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at) VALUES (?, ?, '', ?, ?, ?)`, event.ID, event.TaskID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }

@@ -4,8 +4,8 @@ import { useResponsive } from "../../hooks/useResponsive";
 import type { KanbanTask } from "../../shared/taskTypes";
 import type { WorkspaceBoard as WorkspaceBoardData, WorkspaceBoardFilter } from "../../shared/workspaceBoardTypes";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
-import type { KanbanStageColumn, MoveKanbanAction, TaskSessionErrorDialog } from "./taskBoardTypes";
-export type { KanbanStageColumn, TaskSessionErrorDialog } from "./taskBoardTypes";
+import type { KanbanColumn, MoveKanbanAction, TaskSessionErrorDialog } from "./taskBoardTypes";
+export type { KanbanColumn, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { InlineTokenText } from "../common/InlineTokenText";
 import { FloatingScroll } from "../common/FloatingScroll";
 import { TaskCardRows } from "./TaskCardRows";
@@ -41,7 +41,7 @@ export function TaskBoardView({
   handleWorkspaceCreateTask,
   setSelectedKanbanTaskId,
   kanbanTasksLoading,
-  kanbanStageColumns,
+  kanbanColumns,
   selectedKanbanTaskId,
   expandedTaskInputIds,
   setExpandedTaskInputIds,
@@ -77,7 +77,7 @@ export function TaskBoardView({
   handleWorkspaceCreateTask: (rootId: string, nodeId: string) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
-  kanbanStageColumns: KanbanStageColumn[];
+  kanbanColumns: KanbanColumn[];
   selectedKanbanTaskId: string;
   expandedTaskInputIds: Set<string>;
   setExpandedTaskInputIds: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -171,13 +171,13 @@ export function TaskBoardView({
               // 各扣掉半个 gap，总高恰好等于可用高度，永远不外溢。
               gridAutoRows: isMobile ? "calc(50% - 3px)" : "100%",
               gap: "6px",
-              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
+              minWidth: isMobile ? undefined : `${Math.max(kanbanColumns.length, 1) * 220}px`,
               // 列要撑满行高（alignItems 默认的 stretch）。以前写的是 "start"，
               // 那是配合 36dvh 定高用的；行高交给网格后必须放开，
               // 否则列退回内容高度，底部空带原封不动地回来。
             }}
           >
-            {kanbanStageColumns.map((column) => {
+            {kanbanColumns.map((column) => {
               const columnCollapsed = collapsedKanbanColumns.has(String(column.index));
               const taskSections = "groups" in column && Array.isArray(column.groups) && column.groups.length > 0
                 ? column.groups
@@ -286,12 +286,8 @@ export function TaskBoardView({
                   const inputExpanded = expandedTaskInputIds.has(task.id);
                   // 正文超过 3 行（或 120 字）才需要展开开关 —— 它只对正文生效
                   const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
-                    const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
-                    // 列语义对两种筛选态一视同仁：阶段名只在"执行中"列、状态在「已结束」
-                    // 与「待审核」列出现。以前子看板走另一套（恒显示阶段），于是同一张卡在两边
-                    // 信息量不同；「待审核」列补状态文字（2026-10-07 用户要求）后与工作台卡
-                    // 同一渲染路径 —— 都是 TaskCardRows 的 showStatus，位置在名字后、worktree 前。
-                    const showStageName = column.name === t("task.column.running") && Boolean(taskStageName);
+                    // 「已结束」与「待审核」列显示状态文字 —— 同一张卡在列之间信息量一致，
+                    // 都走 TaskCardRows 的 showStatus（位置在名字后、worktree 前）。
                     const showTaskStatus = column.name === t("task.column.ended")
                       || column.name === t("task.column.waitingUser");
                     const taskSelected = selectedKanbanTaskId === task.id;
@@ -312,7 +308,6 @@ export function TaskBoardView({
                         }}
                         onMove={(cardTask, action) => { void handleMoveKanbanTask(cardTask, action); }}
                         onShowSessionError={(payload) => { setTaskSessionErrorDialog(payload); }}
-                        stageName={showStageName ? taskStageName : ""}
                         showStatus={showTaskStatus}
                         hideSessionError={showTaskStatus && task.status === "fail"}
                       >

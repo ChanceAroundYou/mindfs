@@ -51,8 +51,7 @@ func newWorkflowAttemptFixture(t *testing.T, taskID, runID string) (*TaskStore, 
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: taskID + "-stage", TaskID: taskID, StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: taskID + "-event", TaskID: taskID, Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -105,18 +104,14 @@ func TestWorkflowNodeAttemptFailingRunnerProjectsFail(t *testing.T) {
 	if task.Status != StatusFail {
 		t.Fatalf("task status = %q, want fail", task.Status)
 	}
+	// 对话流归 Router：节点终态不新开活动行；失败原因留在 NodeRun 输出里，
+	// 由 Router 在结算这一轮回复时带上。
 	acts, err := store.ListActivities(ctx, run.TaskID)
 	if err != nil {
 		t.Fatalf("ListActivities: %v", err)
 	}
-	if len(acts) != 1 || acts[0].Type != ActivityTypeAttention {
-		t.Fatalf("activities = %#v, want one attention entry", acts)
-	}
-	if acts[0].RunID != run.ID || acts[0].NodeRunID != final.ID {
-		t.Fatalf("activity correlation = run %q node %q, want %q/%q", acts[0].RunID, acts[0].NodeRunID, run.ID, final.ID)
-	}
-	if !strings.Contains(acts[0].Body, "agent transport down") {
-		t.Fatalf("activity body = %q, want failure reason", acts[0].Body)
+	if len(acts) != 0 {
+		t.Fatalf("activities = %#v, want none (node terminal must not write conversation rows)", acts)
 	}
 	events, err := store.ListWorkflowRunEvents(ctx, run.ID)
 	if err != nil {
@@ -166,12 +161,13 @@ func TestWorkflowNodeAttemptBlockedAndSilentProjectWaitingUser(t *testing.T) {
 			if task.Status != StatusWaitingUser {
 				t.Fatalf("task status = %q, want waiting_user", task.Status)
 			}
+			// 节点终态不写对话行：原因保留在 NodeRun 输出里，Router 结算时带上。
 			acts, err := store.ListActivities(ctx, run.TaskID)
 			if err != nil {
 				t.Fatalf("ListActivities: %v", err)
 			}
-			if len(acts) != 1 || acts[0].Type != ActivityTypeAttention || !strings.Contains(acts[0].Body, tc.reason) {
-				t.Fatalf("activities = %#v, want attention carrying %q", acts, tc.reason)
+			if len(acts) != 0 {
+				t.Fatalf("activities = %#v, want none (node terminal must not write conversation rows)", acts)
 			}
 			events, err := store.ListWorkflowRunEvents(ctx, run.ID)
 			if err != nil {

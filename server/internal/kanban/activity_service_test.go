@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"mindfs/server/internal/fs"
 )
@@ -71,7 +72,6 @@ func setupActivityService(t *testing.T) *activityServiceFixture {
 	t.Cleanup(func() { _ = tasks.Close() })
 	if _, err := tasks.CreateTask(ctx,
 		Task{ID: "task-1", RootID: root.ID, Status: StatusPending},
-		StageRun{ID: "stage-1", TaskID: "task-1", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
 		TaskEvent{ID: "event-1", TaskID: "task-1", Type: "created"},
 	); err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -169,6 +169,25 @@ func TestActivityService_CreateUserActivity_SpecifiedWorkflow(t *testing.T) {
 	}
 }
 
+// 选择器给的是 workflow id + name；只传 workflow id 时必须解析到最新发布版本，
+// 而不是当成版本 id 查不到就失败。
+func TestActivityService_CreateUserActivity_SpecifiedByWorkflowID(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+
+	workflowID := "workflow-feature"
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "加一个登录接口", CommentWorkflowChoiceSpecified, &workflowID)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	if agentAct.WorkflowVersionID != "workflow-feature:v1" {
+		t.Fatalf("workflow version = %q, want latest published version", agentAct.WorkflowVersionID)
+	}
+	if agentAct.Status != ActivityStatusPending {
+		t.Fatalf("agent status = %q, want pending with a persisted run", agentAct.Status)
+	}
+}
+
 func TestActivityService_CreateUserActivity_Disabled(t *testing.T) {
 	ctx := context.Background()
 	f := setupActivityService(t)
@@ -183,11 +202,16 @@ func TestActivityService_CreateUserActivity_Disabled(t *testing.T) {
 	if agentAct.RunID != "" {
 		t.Fatalf("disabled choice created a run %q, want none", agentAct.RunID)
 	}
-	if agentAct.Status != ActivityStatusPending {
-		t.Fatalf("disabled agent status = %q, want pending", agentAct.Status)
-	}
 	if agentAct.WorkflowChoice != CommentWorkflowChoiceDisabled {
 		t.Fatalf("workflow choice = %q, want disabled", agentAct.WorkflowChoice)
+	}
+	// 没装配直连执行端口时必须显式失败，不能留下永久 pending 的占位回复。
+	stored, err := f.service.activities.Get(ctx, agentAct.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if stored.Status != ActivityStatusFailed || !strings.Contains(stored.Summary, "direct executor") {
+		t.Fatalf("stored activity = %#v, want failed with direct executor error", stored)
 	}
 	runs, err := f.tasks.ListWorkflowRunsForTask(ctx, "task-1")
 	if err != nil {
@@ -195,6 +219,152 @@ func TestActivityService_CreateUserActivity_Disabled(t *testing.T) {
 	}
 	if len(runs) != 0 {
 		t.Fatalf("disabled choice persisted %d runs, want 0", len(runs))
+	}
+}
+
+type fakeDirectExecutor struct {
+	reply string
+	err   error
+	got   string
+	done  chan struct{}
+}
+
+func (f *fakeDirectExecutor) RunDirectActivity(_ context.Context, _ Task, body string) (string, error) {
+	f.got = body
+	defer close(f.done)
+	return f.reply, f.err
+}
+
+func TestActivityService_CreateUserActivity_Disabled_WithExecutor(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	direct := &fakeDirectExecutor{reply: "好的，已处理", done: make(chan struct{})}
+	f.service.SetDirectExecutor(direct)
+
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "手动执行", CommentWorkflowChoiceDisabled, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	select {
+	case <-direct.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("direct executor was never invoked")
+	}
+	if direct.got != "手动执行" {
+		t.Fatalf("executor body = %q, want the user message", direct.got)
+	}
+	var stored *TaskActivity
+	for i := 0; i < 50; i++ {
+		stored, err = f.service.activities.Get(ctx, agentAct.ID)
+		if err == nil && stored.Status == ActivityStatusCompleted {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if stored == nil || stored.Status != ActivityStatusCompleted || stored.Body != "好的，已处理" {
+		t.Fatalf("stored activity = %#v, want completed with the reply as body", stored)
+	}
+}
+
+// Router 拥有对话流：节点进度只改这一轮回复的正文，绝不新增活动行。
+func TestService_WorkflowReplyProgressStaysOnRouterReply(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+
+	userAct, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "跑一下", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	run, err := f.tasks.WorkflowRunByID(ctx, agentAct.RunID)
+	if err != nil {
+		t.Fatalf("WorkflowRunByID: %v", err)
+	}
+	run.Graph = WorkflowDefinition{Nodes: []WorkflowNode{
+		{ID: "step-1", Name: "分析", Kind: NodeKindNotify},
+		{ID: "step-2", Name: "收尾", Kind: NodeKindNotify},
+	}}
+	if err := f.service.activities.UpdateStatus(ctx, agentAct.ID, ActivityStatusRunning, nil); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	svc := NewService(testRoots{root: f.root})
+	svc.SetActivityBroadcaster(f.broadcast)
+	svc.updateWorkflowReplyProgress(ctx, f.service.tasks, run, "step-1")
+
+	stored, err := f.service.activities.Get(ctx, agentAct.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if stored.Body != "步骤 1/2: 分析" {
+		t.Fatalf("body = %q, want 步骤 1/2: 分析", stored.Body)
+	}
+	list, err := f.service.activities.List(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("activities = %d, want 2 (user + one router reply); node progress must not append rows", len(list))
+	}
+	if list[0].ID != userAct.ID || list[1].ID != agentAct.ID {
+		t.Fatalf("unexpected activity order: %#v", list)
+	}
+}
+
+// 任务进入真实终态时，Router 把结果结算到这一轮的回复上（completed/failed/
+// waiting_user）。运行中不结算。
+func TestService_ProjectWorkflowTaskStatusSettlesRouterReply(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name       string
+		nodeState  string
+		nodeStatus string
+		output     map[string]any
+		wantStatus string
+		wantInSum  string
+	}{
+		{"success", NodeRunSuccess, NodeRunSuccess, map[string]any{"summary": "改完了"}, ActivityStatusCompleted, "改完了"},
+		{"fail", NodeRunFail, NodeRunFail, map[string]any{"error": "测试没过"}, ActivityStatusFailed, "测试没过"},
+		{"waiting_user", NodeRunWaitingUser, NodeRunWaitingUser, map[string]any{"reason": "缺权限"}, ActivityStatusWaitingUser, "缺权限"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupActivityService(t)
+			_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "跑一下", CommentWorkflowChoiceEmpty, nil)
+			if err != nil {
+				t.Fatalf("CreateUserActivity: %v", err)
+			}
+			run, err := f.tasks.WorkflowRunByID(ctx, agentAct.RunID)
+			if err != nil {
+				t.Fatalf("WorkflowRunByID: %v", err)
+			}
+			if err := f.service.activities.UpdateStatus(ctx, agentAct.ID, ActivityStatusRunning, nil); err != nil {
+				t.Fatalf("UpdateStatus: %v", err)
+			}
+			run.NodeStates["agent-1"] = tc.nodeState
+			run.NodeOutputs["agent-1"] = tc.output
+			if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
+				ID: run.ID + ":agent-1::1:1", RunID: run.ID, NodeID: "agent-1",
+				Attempt: 1, Status: tc.nodeStatus, Output: tc.output, FinishedAt: time.Now().UTC(),
+			}); err != nil {
+				t.Fatalf("UpsertWorkflowNodeRun: %v", err)
+			}
+
+			svc := NewService(testRoots{root: f.root})
+			svc.SetActivityBroadcaster(f.broadcast)
+			if err := svc.projectWorkflowTaskStatus(ctx, f.service.tasks, run); err != nil {
+				t.Fatalf("projectWorkflowTaskStatus: %v", err)
+			}
+			stored, err := f.service.activities.Get(ctx, agentAct.ID)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if stored.Status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q", stored.Status, tc.wantStatus)
+			}
+			if !strings.Contains(stored.Summary, tc.wantInSum) {
+				t.Fatalf("summary = %q, want it to contain %q", stored.Summary, tc.wantInSum)
+			}
+		})
 	}
 }
 

@@ -242,7 +242,7 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 				ConflictFiles: conflict.ConflictFiles,
 				Output:        conflict.Output,
 			}
-			_ = s.recordTaskError(ctx, store, task, "", asConflict.Error())
+			_ = s.recordTaskError(ctx, store, task, asConflict.Error())
 			return result, asConflict
 		}
 		var dirty *gitview.MainCheckoutDirtyError

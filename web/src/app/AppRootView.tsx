@@ -37,7 +37,7 @@ import {
 import { getDirectorySortKey, normalizeComparableRootPath, normalizeTreeResponse, unscopedRootId } from "../app/appUtils";
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "../app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "../app/appStorage";
-import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, currentTaskInputFromDetail, firstTaskInputFromDetail, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "../app/appTask";
+import { firstTaskInputFromDetail, isTerminalKanbanTask, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskSessionKeysFromDetail, taskStatusLabel } from "../app/appTask";
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../components/task/taskIcons";
 import { TaskSessionErrorDialog } from "../components/app/TaskSessionErrorDialog";
 import { TaskDetailPanelGate } from "../components/app/TaskDetailPanelGate";
@@ -90,12 +90,12 @@ export function AppRootView(props: AppRootViewProps) {
     setIsRightOpen, setMobileEnterKeySends, setOnboardingMainContentViewRoot, setOnboardingOpen,
     setPluginBypass, setProjectTreeTab, setScheduledAgentDialogOpen, setSelectedKanbanTaskId,
     setSendShortcut, setSidebarsSwapped, setTaskInlineActiveToken, setTaskInlineCandidateIndex,
-    setTaskInlineCandidates, setTaskInlineEdit, setTaskInlineHelpKey, setTaskSessionErrorDialog,
+    setTaskInlineCandidates, setTaskInlineEdit, setTaskSessionErrorDialog,
     setTreeSortMode, showHiddenFiles, showSessionPane,
     sidebarsSwapped, slashCopyResetTimersRef, status, switchMainView,
     switchTaskInlineEditProject, t, taskCreateProjectOptions, taskDetailsById,
     taskInlineActiveToken, taskInlineAttachmentInputRef, taskInlineCandidateIndex, taskInlineCandidateItemRefs,
-    taskInlineCandidates, taskInlineEdit, taskInlineEditorRef, taskInlineHelpKey,
+    taskInlineCandidates, taskInlineEdit, taskInlineEditorRef,
     taskInlineSaving, taskInlineUploadAbortRef, taskInlineUploadProgress, taskSessionErrorDialog,
     taskWorktreeBranches,
     treeSortMode, workspaceOpen,
@@ -374,11 +374,8 @@ drawer={<
       setOnboardingOpen={setOnboardingOpen}
       />
 <TaskInlineEditPanel
-      DEFAULT_TASK_AGENT={DEFAULT_TASK_AGENT}
-      DEFAULT_TASK_MODEL={DEFAULT_TASK_MODEL}
       PanelShell={PanelShell}
       applyTaskInlineCandidate={applyTaskInlineCandidate}
-      availableAgents={availableAgents}
       closeTaskEditDialog={closeTaskEditDialog}
       composerInputStyle={composerInputStyle}
       currentRootId={currentRootId}
@@ -393,7 +390,6 @@ drawer={<
       setTaskInlineCandidateIndex={setTaskInlineCandidateIndex}
       setTaskInlineCandidates={setTaskInlineCandidates}
       setTaskInlineEdit={setTaskInlineEdit}
-      setTaskInlineHelpKey={setTaskInlineHelpKey}
       switchTaskInlineEditProject={switchTaskInlineEditProject}
       t={t}
       taskCreateProjectOptions={taskCreateProjectOptions}
@@ -404,7 +400,6 @@ drawer={<
       taskInlineCandidates={taskInlineCandidates}
       taskInlineEdit={taskInlineEdit}
       taskInlineEditorRef={taskInlineEditorRef}
-      taskInlineHelpKey={taskInlineHelpKey}
       taskInlineSaving={taskInlineSaving}
       taskInlineUploadAbortRef={taskInlineUploadAbortRef}
       taskInlineUploadProgress={taskInlineUploadProgress}

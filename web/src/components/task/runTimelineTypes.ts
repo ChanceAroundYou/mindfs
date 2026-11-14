@@ -1,31 +1,21 @@
-// 运行视图的展示类型（对齐后端 workflow_types.go 的 WorkflowRun/NodeRun）。
+// 运行视图的展示类型。
 //
-// 单独成文件，避免 RunTimeline 与节点行组件互相 import 类型形成环。
-// 数据由父层（useRunViewEntry）取好传入；这里没有任何副作用。
+// 数据形状只有一份真相：shared/taskComments.ts 里的 WorkflowRunPayload /
+// NodeRunPayload（对齐后端 workflow_types.go）。这里只给展示层起别名，
+// 不在组件目录里再抄一份字段表 —— 两处各写一遍必然漂移。
 
-export type WorkflowRunNodeState = "pending" | "queued" | "running" | "success" | "fail" | "waiting_user" | "skipped" | "unknown" | "cancelled";
+import type { NodeRunPayload, WorkflowRunPayload } from "../../shared/taskComments";
 
-export type WorkflowRunSnapshot = {
-  id: string;
-  task_id?: string;
-  version?: string;
-  revision?: number;
-  node_states?: Record<string, string>;
-  created_at?: string;
-  updated_at?: string;
-};
+export type WorkflowRunNodeState =
+  | "pending"
+  | "queued"
+  | "running"
+  | "success"
+  | "fail"
+  | "waiting_user"
+  | "skipped"
+  | "unknown"
+  | "cancelled";
 
-export type NodeRunSnapshot = {
-  id: string;
-  run_id?: string;
-  node_id: string;
-  session_key?: string;
-  status: string;
-  input?: Record<string, unknown> | string;
-  output?: Record<string, unknown> | string;
-  error?: string;
-  started_at?: string;
-  finished_at?: string;
-  agent?: string;
-  model?: string;
-};
+export type WorkflowRunSnapshot = WorkflowRunPayload;
+export type NodeRunSnapshot = NodeRunPayload;

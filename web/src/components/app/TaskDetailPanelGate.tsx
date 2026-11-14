@@ -28,7 +28,11 @@ export function TaskDetailPanelGate(props: TaskDetailPanelGateProps) {
     <>
     {selectedKanbanTask ? (
             <TaskDetailPanel
-              detail={taskDetailsById[selectedKanbanTask.id] || { task: selectedKanbanTask, stage_runs: [], events: [] }}
+              // 面板里有任务级本地状态（留言草稿、工作流选择、改名草稿、运行视图展开态）。
+              // 按任务身份重挂载，避免同一实例被复用到另一张任务卡时把上一条任务的
+              // 消息与草稿一起搬过去 —— 那样一按发送就发到了错的任务里。
+              key={`${selectedKanbanTask.root_id || ""}::${selectedKanbanTask.id}`}
+              detail={taskDetailsById[selectedKanbanTask.id] || { task: selectedKanbanTask, events: [] }}
               // 详情面板可能从工作台的就地入口打开（任务属于别的项目/节点），
               // 路由必须按任务自己的项目走，写死当前项目会把编辑打到错节点。
               nodeId={getNodeIdForRoot(selectedKanbanTask.root_id || currentRootId || "")}

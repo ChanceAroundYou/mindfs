@@ -23,7 +23,7 @@ func seedTask(t *testing.T, s *TaskStore, id, status string) {
 	now := s.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	task := Task{ID: id, RootID: "test", Status: status, CreatedAt: s.now(), UpdatedAt: s.now()}
 	_ = now
-	if _, err := s.CreateTask(context.Background(), task, StageRun{}, TaskEvent{}); err != nil {
+	if _, err := s.CreateTask(context.Background(), task, TaskEvent{}); err != nil {
 		t.Fatal(err)
 	}
 }

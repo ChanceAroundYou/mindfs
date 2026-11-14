@@ -272,6 +272,9 @@ func (s *Service) projectWorkflowTaskStatus(ctx context.Context, store *TaskStor
 	if err := store.UpdateTaskStatus(ctx, run.TaskID, status, isTerminalStatus(status)); err != nil {
 		return err
 	}
+	// 任务投影是这一轮唯一可信的终态来源：把结果结算回 Router 的回复。
+	// 运行中（status=running）settle 是 no-op。
+	s.settleWorkflowReply(ctx, store, run)
 	if detail, err := store.GetDetail(ctx, run.TaskID); err == nil && s != nil && s.Runner != nil {
 		s.Runner.TaskUpdated(detail.Task.RootID, detail)
 	}

@@ -75,7 +75,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   } = useAppSessionListState();
   const [availableAgents, setAvailableAgents] = useState<AgentStatus[]>([]);
   const [scheduledAgentDialogOpen, setScheduledAgentDialogOpen] = useState(false);
-  const { kanbanTasks, setKanbanTasks, kanbanTaskCountItems, setKanbanTaskCountItems, taskDetailsById, setTaskDetailsById, taskFirstInputById, setTaskFirstInputById, taskSessionKeysById, setTaskSessionKeysById, taskRelatedFilesById, setTaskRelatedFilesById, taskDetailsByIdRef, workspaceBoardRefreshRef, taskSessionKeysByIdRef, selectedKanbanTaskId, setSelectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, overflowingTaskInputs, setOverflowingTaskInputs, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskInlineEdit, setTaskInlineEdit, taskSessionErrorDialog, setTaskSessionErrorDialog, taskInlineActiveToken, setTaskInlineActiveToken, taskInlineCandidates, setTaskInlineCandidates, taskInlineCandidateIndex, setTaskInlineCandidateIndex, taskInlineSaving, setTaskInlineSaving, taskInlineHelpKey, setTaskInlineHelpKey, taskInlineUploadProgress, setTaskInlineUploadProgress, directoryUploadProgress, setDirectoryUploadProgress, taskWorktreeBranches, setTaskWorktreeBranches, taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading, taskWorktreeBranchError, setTaskWorktreeBranchError, kanbanTasksLoading, setKanbanTasksLoading, kanbanLoadSeqRef, kanbanAbortRef, refreshTaskWorktreeRef, taskWorktreeBranchRequestRef, sessionListLoadSeqRef, sessionListAbortRef, listLoadErrorAtRef, taskInlineEditorRef, taskInlineCandidateItemRefs, taskInlineAttachmentInputRef, taskInlineUploadAbortRef, directoryUploadAbortRef, knownTaskWorktreePathsRef } = useTaskWorkspaceState();
+  const { kanbanTasks, setKanbanTasks, kanbanTaskCountItems, setKanbanTaskCountItems, taskDetailsById, setTaskDetailsById, taskFirstInputById, setTaskFirstInputById, taskSessionKeysById, setTaskSessionKeysById, taskRelatedFilesById, setTaskRelatedFilesById, taskDetailsByIdRef, workspaceBoardRefreshRef, taskSessionKeysByIdRef, selectedKanbanTaskId, setSelectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, overflowingTaskInputs, setOverflowingTaskInputs, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskInlineEdit, setTaskInlineEdit, taskSessionErrorDialog, setTaskSessionErrorDialog, taskInlineActiveToken, setTaskInlineActiveToken, taskInlineCandidates, setTaskInlineCandidates, taskInlineCandidateIndex, setTaskInlineCandidateIndex, taskInlineSaving, setTaskInlineSaving, taskInlineUploadProgress, setTaskInlineUploadProgress, directoryUploadProgress, setDirectoryUploadProgress, taskWorktreeBranches, setTaskWorktreeBranches, taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading, taskWorktreeBranchError, setTaskWorktreeBranchError, kanbanTasksLoading, setKanbanTasksLoading, kanbanLoadSeqRef, kanbanAbortRef, refreshTaskWorktreeRef, taskWorktreeBranchRequestRef, sessionListLoadSeqRef, sessionListAbortRef, listLoadErrorAtRef, taskInlineEditorRef, taskInlineCandidateItemRefs, taskInlineAttachmentInputRef, taskInlineUploadAbortRef, directoryUploadAbortRef, knownTaskWorktreePathsRef } = useTaskWorkspaceState();
   const {
     selectedSession, setSelectedSession, selectedSessionLoading, setSelectedSessionLoading,
     drawerLoadingSessionByRoot, setDrawerLoadingSessionByRoot, activeBoundSessionKey,
@@ -171,7 +171,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setTaskInlineActiveToken,
     setTaskInlineCandidates,
     setTaskInlineCandidateIndex,
-    setTaskInlineHelpKey,
     setTaskInlineSaving,
     setTaskInlineUploadProgress,
     setTaskWorktreeBranches,
@@ -477,7 +476,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setSelectedSession, setSelectedSessionLoading, setSendShortcut, setSessionListMode,
     setSessions, setSidebarsSwapped, setSlashCommandResults, setStatus,
     setSyncingSessionKeys, setTaskInlineActiveToken, setTaskInlineCandidateIndex,
-    setTaskInlineCandidates, setTaskInlineEdit, setTaskInlineHelpKey, setTaskRelatedFilesById,
+    setTaskInlineCandidates, setTaskInlineEdit, setTaskRelatedFilesById,
     setTaskSessionErrorDialog,
     setTreeSortMode, setUpdateState, setUpdateSubmitting, setViewerSelection,
     showHiddenFiles, showSessionPane, sidebarsSwapped, slashCommandResults,
@@ -486,7 +485,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     taskCreateProjectOptions, taskDetailsById,
     taskDetailsByIdRef, taskFirstInputById, taskInlineActiveToken, taskInlineAttachmentInputRef,
     taskInlineCandidateIndex, taskInlineCandidateItemRefs, taskInlineCandidates, taskInlineEdit,
-    taskInlineEditorRef, taskInlineHelpKey, taskInlineSaving, taskInlineUploadAbortRef,
+    taskInlineEditorRef, taskInlineSaving, taskInlineUploadAbortRef,
     taskInlineUploadProgress, taskRelatedFilesById, taskSessionErrorDialog, taskSessionKeysById,
     taskSessionKeysByIdRef, taskWorktreeBranches,
     toggleProjectTreeWorktree, treeFetchSeqRef, treeSortMode, updateState,

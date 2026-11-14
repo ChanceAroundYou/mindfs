@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { RunTimeline, type NodeRunSnapshot } from "./RunTimeline";
+import { RunTimeline } from "./RunTimeline";
 import { runNodeKinds } from "./runTimelineModel";
 import { useRunViewEntry } from "./useRunViewEntry";
 
@@ -28,20 +28,6 @@ export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewE
 
   if (!runId) return null;
 
-  const mappedNodeRuns: NodeRunSnapshot[] = nodeRuns.map((n) => ({
-    id: n.id,
-    run_id: n.run_id,
-    node_id: n.node_id,
-    session_key: n.session_key,
-    status: n.status,
-    input: n.input,
-    output: n.output,
-    error: undefined,
-    started_at: n.started_at,
-    finished_at: n.finished_at,
-    agent: n.agent,
-    model: n.model,
-  }));
   const nodeNames: Record<string, string> = {};
   for (const node of run?.graph?.nodes ?? []) {
     if (node?.id) nodeNames[node.id] = node.name || node.id;
@@ -78,7 +64,7 @@ export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewE
           {run ? (
             <RunTimeline
               run={run}
-              nodeRuns={mappedNodeRuns}
+              nodeRuns={nodeRuns}
               nodeNames={nodeNames}
               nodeKinds={nodeKinds}
               onOpenSession={onOpenSession}

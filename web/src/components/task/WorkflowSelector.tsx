@@ -1,13 +1,11 @@
 import React, { useState } from "react";
 import { useI18n } from "../../i18n/index";
 import type { WorkflowChoice } from "../../shared/taskComments";
-import type { WorkflowRecommendation } from "../../shared/workflowModel";
 import { WorkflowPickerDialog } from "./WorkflowPickerDialog";
 
 export type WorkflowSelectorProps = {
   choice: WorkflowChoice;
   versionId: string;
-  recommendation?: WorkflowRecommendation | null;
   onChange: (choice: WorkflowChoice, versionId: string) => void;
 };
 
@@ -24,19 +22,16 @@ export type WorkflowSelectorProps = {
 export function WorkflowSelector({
   choice,
   versionId,
-  recommendation,
   onChange,
 }: WorkflowSelectorProps) {
   const { t } = useI18n();
   const [showPicker, setShowPicker] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(choice !== "empty");
-
-  // 如果已经选了非默认项，自动展开高级选项
-  React.useEffect(() => {
-    if (choice !== "empty") {
-      setShowAdvanced(true);
-    }
-  }, [choice]);
+  // 选择器提交的是 workflow id，但回显要给用户看名字：把选中的 {id,name} 留在这里，
+  // 名字只在 id 仍然对得上时生效，外部改写 versionId 后回退显示 id。
+  const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
+  // 展开态只有一个真相源：用户手动点开过，或已经选了非默认项。
+  const [manuallyOpened, setManuallyOpened] = useState(false);
+  const showAdvanced = manuallyOpened || choice !== "empty";
 
   return (
     <div className="workflow-selector" data-testid="workflow-selector" style={containerStyle}>
@@ -44,13 +39,11 @@ export function WorkflowSelector({
       {!showAdvanced && (
         <div style={defaultHintStyle}>
           <span style={hintTextStyle}>
-            {recommendation
-              ? t("task.workflowAutoWithRecommendation", { name: recommendation.workflow_id })
-              : t("task.workflowAutoMode")}
+            {t("task.workflowAutoMode")}
           </span>
           <button
             type="button"
-            onClick={() => setShowAdvanced(true)}
+            onClick={() => setManuallyOpened(true)}
             style={advancedToggleStyle}
             data-testid="workflow-show-advanced"
           >
@@ -69,7 +62,7 @@ export function WorkflowSelector({
             <button
               type="button"
               onClick={() => {
-                setShowAdvanced(false);
+                setManuallyOpened(false);
                 onChange("empty", "");
               }}
               style={collapseButtonStyle}
@@ -91,11 +84,6 @@ export function WorkflowSelector({
               />
               <div style={radioContentStyle}>
                 <span style={radioTitleStyle}>{t("task.workflowChoice.auto")}</span>
-                {recommendation && choice === "empty" && (
-                  <span style={recommendChipStyle}>
-                    {recommendation.workflow_id}
-                  </span>
-                )}
               </div>
             </label>
 
@@ -111,7 +99,9 @@ export function WorkflowSelector({
               <div style={radioContentStyle}>
                 <span style={radioTitleStyle}>{t("task.workflowChoice.manual")}</span>
                 {versionId && choice === "specified" && (
-                  <span style={versionChipStyle}>{versionId}</span>
+                  <span style={versionChipStyle}>
+                    {picked && picked.id === versionId ? picked.name : versionId}
+                  </span>
                 )}
               </div>
             </label>
@@ -136,7 +126,8 @@ export function WorkflowSelector({
       {showPicker && (
         <WorkflowPickerDialog
           selected={versionId}
-          onSelect={(id) => {
+          onSelect={(id, name) => {
+            setPicked({ id, name });
             onChange("specified", id);
             setShowPicker(false);
           }}
@@ -249,16 +240,6 @@ const radioContentStyle: React.CSSProperties = {
 const radioTitleStyle: React.CSSProperties = {
   fontWeight: 500,
   color: "var(--text-color)",
-};
-
-const recommendChipStyle: React.CSSProperties = {
-  fontSize: 11,
-  padding: "2px 6px",
-  borderRadius: 4,
-  background: "var(--accent-color)",
-  color: "#fff",
-  alignSelf: "flex-start",
-  marginTop: 2,
 };
 
 const versionChipStyle: React.CSSProperties = {

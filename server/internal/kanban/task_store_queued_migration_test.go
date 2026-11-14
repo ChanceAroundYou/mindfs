@@ -35,7 +35,7 @@ func TestMigrateFoldsQueuedIntoPending(t *testing.T) {
 		Status:    "queued", // 历史值，不在当前词表里
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, StageRun{}, TaskEvent{})
+	}, TaskEvent{})
 	if err != nil {
 		t.Fatal(err)
 	}

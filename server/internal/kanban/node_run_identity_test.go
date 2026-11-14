@@ -15,8 +15,7 @@ func TestResolveNodeRunPrefersCanonicalWorkflowIdentity(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "resolve-wf-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "resolve-wf-stage", TaskID: "resolve-wf-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "resolve-wf-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "resolve-wf-event", TaskID: "resolve-wf-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -61,8 +60,7 @@ func TestResolveNodeRunKeepsLegacyOutboxRowsReadable(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "resolve-legacy-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "resolve-legacy-stage", TaskID: "resolve-legacy-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "resolve-legacy-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "resolve-legacy-event", TaskID: "resolve-legacy-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -107,8 +105,7 @@ func TestResolveNodeRunPrefersWorkflowWhenLegacyIDCollides(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "resolve-collide-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "resolve-collide-stage", TaskID: "resolve-collide-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "resolve-collide-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "resolve-collide-event", TaskID: "resolve-collide-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

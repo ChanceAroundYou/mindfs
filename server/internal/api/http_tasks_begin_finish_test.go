@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -13,30 +12,23 @@ import (
 	"mindfs/server/internal/kanban"
 )
 
-// 收尾按钮的分流（2026-10-05 重做，2026-10-07 加「机械优先」）。
+// 收尾按钮的分流（对话模型）：
 //
-// 收尾是「agent + 机械清场」两个阶段的整合，分流把两者编成一条幂等的流水：
+//	① 执行体在动         → session_running（正常等待，不是错）
+//	② 机械清场能直接做完 → teardown（**机械优先**：不等 agent）
+//	③ 其余               → 起一轮收尾回合（finish_turn_started）
 //
-//	① 执行体在动            → session_running（正常等待，不是错）
-//	② 机械清场能直接做完    → teardown（**机械优先**：不等 agent）
-//	③ 已有收尾段            → nudged（不追加第二段）
-//	④ 有 agent 段可继承     → stage_added（agent 先 commit + merge）
-//	④.5 没有 agent 段        → teardown（没有 agent 可继承）
-//
-// 以前这个路由无条件调 BeginFinishWorktree，于是「agent 已经把活合完了、只差机械
-// 清场」的任务会撞上「该任务已在收尾流程中」被 409 顶回来 —— 界面上表现为收尾一直
-// 转、点不动、也结束不了。现在按真实状态分流，且每条分支都幂等。
+// 任务没有阶段，所以「重跑收尾段 / 追加收尾段」这两条路不存在；③ 就是普通对话的一轮，
+// 收尾状态由 Service.Finishing 的内存标记表达。
 
 // ② 分支已合进主干 → 当场机械清场。
 //
-// 这是「agent 那半已经做完了」的判据：活已经在主干里，再让 agent 跑一遍收尾段只会
+// 这是「agent 那半已经做完了」的判据：活已经在主干里，再让 agent 跑一遍收尾回合只会
 // 追加一次没意义的提交。清场是同步的，回来时目录已经拆了。
 func TestBeginFinishRouteTearsDownWhenTheBranchIsAlreadyMerged(t *testing.T) {
 	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
 	ctx := context.Background()
-	// 真合一次 —— 判据必须跟着真 git 走。
 	gitForAPITest(t, root.RootPath, "merge", "-q", "--no-ff", "task-1")
-	// 清场前抓到路径，清场后目录就没了。
 	worktreePath := mustWorktreePath(t, svc, root.ID, taskID)
 
 	rec := postBeginFinish(t, handler, root.ID, taskID)
@@ -46,7 +38,6 @@ func TestBeginFinishRouteTearsDownWhenTheBranchIsAlreadyMerged(t *testing.T) {
 	if action := beginFinishAction(t, rec); action != "teardown" {
 		t.Fatalf("action = %q, want teardown", action)
 	}
-	// 清场必须真的落地：目录拆了、归属清了。
 	if _, statErr := os.Stat(worktreePath); !os.IsNotExist(statErr) {
 		t.Fatalf("the worktree must be gone, stat err = %v", statErr)
 	}
@@ -59,44 +50,8 @@ func TestBeginFinishRouteTearsDownWhenTheBranchIsAlreadyMerged(t *testing.T) {
 	}
 }
 
-// ③ 已有收尾段但还没跑成 → 重跑那段（nudge），不追加第二段。
-func TestBeginFinishRouteNudgesAnExistingFinishStage(t *testing.T) {
-	// edit 让 worktree 分支有独立提交 —— 没有它分支是 main 的祖先，会被当成「已合入」
-	// 直接清场，走不到 nudge 分支。
-	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
-	ctx := context.Background()
-	if _, err := svc.BeginFinishWorktree(ctx, kanban.BeginFinishInput{RootID: root.ID, TaskID: taskID}); err != nil {
-		t.Fatalf("BeginFinishWorktree: %v", err)
-	}
-	// 等收尾段跑停：还在跑时点击会命中 ①（正确但要等），测不到 ③。
-	waitForNotBusy(t, svc, root.ID, taskID)
-	// 留一份没提交的活，否则 ② 的机械优先会直接把场清了，走不到 ③。
-	leaveUncommittedWorktreeChange(t, svc, root.ID, taskID)
-	before, err := svc.GetTask(ctx, root.ID, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	stagesBefore := len(before.Task.Stages)
-
-	rec := postBeginFinish(t, handler, root.ID, taskID)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	if action := beginFinishAction(t, rec); action != "nudged" {
-		t.Fatalf("action = %q, want nudged", action)
-	}
-	after, err := svc.GetTask(ctx, root.ID, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	if len(after.Task.Stages) != stagesBefore {
-		t.Fatalf("stages = %d, want %d — a second finish stage must not be stacked", len(after.Task.Stages), stagesBefore)
-	}
-}
-
-// ④ 头一次收尾 → 追加收尾段。
-func TestBeginFinishRouteAppendsAFinishStageTheFirstTime(t *testing.T) {
-	// edit 让 worktree 分支有独立提交 —— 没有它分支是 main 的祖先，会被当成「已合入」。
+// ③ 头一次收尾且机械做不了 → 起一轮收尾回合。
+func TestBeginFinishRouteStartsAFinishTurn(t *testing.T) {
 	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
 	ctx := context.Background()
 	leaveUncommittedWorktreeChange(t, svc, root.ID, taskID)
@@ -105,83 +60,75 @@ func TestBeginFinishRouteAppendsAFinishStageTheFirstTime(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if action := beginFinishAction(t, rec); action != "stage_added" {
-		t.Fatalf("action = %q, want stage_added", action)
+	if action := beginFinishAction(t, rec); action != "finish_turn_started" {
+		t.Fatalf("action = %q, want finish_turn_started", action)
 	}
+	// 收尾回合是异步起的：等它落定，任务回到 waiting_user（本轮没有完成标记）。
+	waitForNotFinishing(t, svc, root.ID, taskID)
 	detail, err := svc.GetTask(ctx, root.ID, taskID)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	last := detail.Task.Stages[len(detail.Task.Stages)-1]
-	if !kanban.IsFinishStage(last) {
-		t.Fatalf("last stage kind = %q, want the finish stage", last.Kind)
+	if detail.Task.Status != kanban.StatusWaitingUser {
+		t.Fatalf("status = %q, want waiting_user after the finish turn", detail.Task.Status)
+	}
+	// 机械清场没跑成 / 没跑，worktree 必须还在 —— 那是 agent 接着干的地方。
+	if _, statErr := os.Stat(mustWorktreePath(t, svc, root.ID, taskID)); statErr != nil {
+		t.Fatalf("the worktree must survive: %v", statErr)
 	}
 }
 
-// 幂等是这次重做的核心要求：连点三次，结果必须和点一次一样。
-func TestBeginFinishRouteIsIdempotent(t *testing.T) {
+// 正在收尾时再点一次：409，不并发起第二轮。
+func TestBeginFinishRouteRefusesASecondClickWhileFinishing(t *testing.T) {
 	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
-	ctx := context.Background()
-	// 没提交的活 → 走 agent 路径（机械优先会退让），这是幂等最要紧的那条路：
-	// 反复点不能堆出一串收尾段。
 	leaveUncommittedWorktreeChange(t, svc, root.ID, taskID)
 
-	// 第一次点击：追加收尾段。
-	rec := postBeginFinish(t, handler, root.ID, taskID)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("click 1: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	if action := beginFinishAction(t, rec); action != "stage_added" {
-		t.Fatalf("click 1: action = %q, want stage_added", action)
-	}
-	// 等收尾段跑停：还在跑时下一次点击会命中 ①（正确但要等），测不到 ③。
-	waitForNotBusy(t, svc, root.ID, taskID)
-	detail, err := svc.GetTask(ctx, root.ID, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	stagesAfterFirst := len(detail.Task.Stages)
+	gate := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	svc.SetDirectExecutor(&apiFinishTurn{reply: "处理中", entered: entered, gate: gate})
 
-	// 第二、三次点击：重跑同一段，不追加新段。
-	for i := 2; i <= 3; i++ {
-		rec := postBeginFinish(t, handler, root.ID, taskID)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("click %d: status = %d, want 200; body=%s", i, rec.Code, rec.Body.String())
-		}
-		if action := beginFinishAction(t, rec); action != "nudged" {
-			t.Fatalf("click %d: action = %q, want nudged", i, action)
-		}
-		waitForNotBusy(t, svc, root.ID, taskID)
+	first := postBeginFinish(t, handler, root.ID, taskID)
+	if first.Code != http.StatusOK {
+		t.Fatalf("click 1: status = %d, want 200; body=%s", first.Code, first.Body.String())
 	}
-	detail, err = svc.GetTask(ctx, root.ID, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
+	if action := beginFinishAction(t, first); action != "finish_turn_started" {
+		t.Fatalf("click 1: action = %q, want finish_turn_started", action)
 	}
-	if len(detail.Task.Stages) != stagesAfterFirst {
-		t.Fatalf("stages = %d, want %d — repeated clicks must not stack finish stages", len(detail.Task.Stages), stagesAfterFirst)
-	}
-}
-
-// ① 段在跑时点击 → 200 session_running（正常等待，不是错）。
-//
-// 以前只看会话探针，段在跑时会漏过去、让请求撞进收尾准入变成 409 —— 界面上表现为
-// 「收尾一直转、点不动」。
-func TestBeginFinishRouteWaitsWhileAnAgentStageIsRunning(t *testing.T) {
-	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
-	// 让下一次 agent 段调用卡住不返回，制造「段正在跑」。
-	release := make(chan struct{})
-	defer close(release)
-	svc.SetRunner(&blockingRunner{fixedRunner: fixedRunner{t: t, mainDir: root.RootPath}, entered: make(chan struct{}, 1), release: release})
-	// 重跑 **agent 段**（下标 1）—— 重跑 user 段只会回到 waiting_user，不会起 agent。
-	if _, err := svc.RerunStage(context.Background(), kanban.MoveInput{RootID: root.ID, TaskID: taskID, StageIndex: 1}); err != nil {
-		t.Fatalf("RerunStage: %v", err)
-	}
-	// 等段真的跑起来。
 	select {
-	case <-svc.Runner.(*blockingRunner).entered:
+	case <-entered:
 	case <-time.After(2 * time.Second):
-		t.Fatal("the stage never started")
+		t.Fatal("the finish turn never started")
 	}
+
+	second := postBeginFinish(t, handler, root.ID, taskID)
+	if second.Code != http.StatusConflict {
+		t.Fatalf("click 2: status = %d, want 409; body=%s", second.Code, second.Body.String())
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &payload); err != nil || !strings.Contains(payload.Error, "正在收尾") {
+		t.Fatalf("click 2 error = %q (decode err %v), want 正在收尾", payload.Error, err)
+	}
+
+	close(gate)
+	waitForNotFinishing(t, svc, root.ID, taskID)
+
+	// 回合结束后再点：又能起一轮（锁没有泄漏）。
+	third := postBeginFinish(t, handler, root.ID, taskID)
+	if third.Code != http.StatusOK {
+		t.Fatalf("click 3: status = %d, want 200; body=%s", third.Code, third.Body.String())
+	}
+	if action := beginFinishAction(t, third); action != "finish_turn_started" {
+		t.Fatalf("click 3: action = %q, want finish_turn_started", action)
+	}
+	waitForNotFinishing(t, svc, root.ID, taskID)
+}
+
+// ① 执行体在跑时点击 → 200 session_running（正常等待，不是错）。
+func TestBeginFinishRouteWaitsWhileTheTaskIsRunning(t *testing.T) {
+	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
+	parkRunning(t, svc, root.ID, taskID)
 
 	rec := postBeginFinish(t, handler, root.ID, taskID)
 	if rec.Code != http.StatusOK {
@@ -193,18 +140,9 @@ func TestBeginFinishRouteWaitsWhileAnAgentStageIsRunning(t *testing.T) {
 }
 
 // ② worktree 干净 + 合并无冲突 → **不等 agent**，当场机械清场。
-//
-// 这是「机械优先」的核心：以前只要有 agent 段就一定先跑一遍收尾段，于是
-// 「agent 早把活合完了、只差机械清场」的任务要白等一轮、还多一个空提交。
 func TestBeginFinishRouteGoesMechanicalWhenTheWorktreeIsClean(t *testing.T) {
 	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
 	worktreePath := mustWorktreePath(t, svc, root.ID, taskID)
-	// 分支有独立提交（edit 过），所以不会命中「已合入」那条 —— 走的正是机械合并。
-	stagesBefore, err := svc.GetTask(context.Background(), root.ID, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	countBefore := len(stagesBefore.Task.Stages)
 
 	rec := postBeginFinish(t, handler, root.ID, taskID)
 	if rec.Code != http.StatusOK {
@@ -213,7 +151,6 @@ func TestBeginFinishRouteGoesMechanicalWhenTheWorktreeIsClean(t *testing.T) {
 	if action := beginFinishAction(t, rec); action != "teardown" {
 		t.Fatalf("action = %q, want teardown (a clean worktree must skip the agent)", action)
 	}
-	// 真的合了，且目录真的没了。
 	merged := runTestGitOutput(t, root.RootPath, "log", "--oneline", "-1")
 	if strings.TrimSpace(merged) == "" {
 		t.Fatal("the main checkout has no merge commit")
@@ -221,24 +158,11 @@ func TestBeginFinishRouteGoesMechanicalWhenTheWorktreeIsClean(t *testing.T) {
 	if _, statErr := os.Stat(worktreePath); !os.IsNotExist(statErr) {
 		t.Fatalf("the worktree must be gone, stat err = %v", statErr)
 	}
-	// 没有追加收尾段 —— 机械路径不该给流水加段。
-	after, err := svc.GetTask(context.Background(), root.ID, taskID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	if len(after.Task.Stages) != countBefore {
-		t.Fatalf("stages = %d, want %d — the mechanical path must not append a finish stage",
-			len(after.Task.Stages), countBefore)
-	}
 }
 
-// 幂等是这次重做的核心要求：机械路径连点两次，第二次必须仍然 200，且**不再合一次**。
-//
-// 关键断言是「主干上只有一条 Merge branch 'task-1'」：第二次点击时任务已经被
-// ClearWorktreeRefs 清了 worktree_path，如果下层对空路径不幂等、或者编排层又合了一遍，
-// 主干上就会多出一条重复的合并提交。
+// 机械路径连点两次：第二次仍 200、不再合一次、如实说明「无事可做」。
 func TestBeginFinishRouteMechanicalPathIsIdempotent(t *testing.T) {
-	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
+	handler, _, root, taskID := newBeginFinishHandler(t, "from worktree\n")
 
 	first := postBeginFinish(t, handler, root.ID, taskID)
 	if first.Code != http.StatusOK {
@@ -255,7 +179,6 @@ func TestBeginFinishRouteMechanicalPathIsIdempotent(t *testing.T) {
 	if action := beginFinishAction(t, second); action != "teardown" {
 		t.Fatalf("click 2: action = %q, want teardown", action)
 	}
-	// 第二次必须**什么都没做**，且如实说一句。
 	var payload struct {
 		Report struct {
 			Note string `json:"note"`
@@ -267,32 +190,27 @@ func TestBeginFinishRouteMechanicalPathIsIdempotent(t *testing.T) {
 	if strings.TrimSpace(payload.Report.Note) == "" {
 		t.Fatal("the second click must report a note saying there was nothing left to do")
 	}
-
-	// 主干上只能有一条合并提交。
 	log := runTestGitOutput(t, root.RootPath, "log", "--oneline")
 	if n := strings.Count(log, "Merge branch 'task-1'"); n != 1 {
 		t.Fatalf("main has %d merges of task-1, want exactly 1:\n%s", n, log)
 	}
-	_ = svc
 }
 
-// ② 合并会冲突 → 退给 agent，且把冲突文件报给前端。
+// ② 合并会冲突 → 交给 agent，且把冲突文件报给前端。
 func TestBeginFinishRouteDefersToAgentWhenTheMergeWouldConflict(t *testing.T) {
-	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
-	// 主 checkout 改同一行 → 机械合并会冲突。
+	handler, _, root, taskID := newBeginFinishHandler(t, "from worktree\n")
 	if err := os.WriteFile(root.RootPath+"/note.txt", []byte("from main\n"), 0o644); err != nil {
 		t.Fatalf("edit main: %v", err)
 	}
 	gitForAPITest(t, root.RootPath, "add", "note.txt")
 	gitForAPITest(t, root.RootPath, "commit", "-qm", "main edit")
-	_ = svc
 
 	rec := postBeginFinish(t, handler, root.ID, taskID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if action := beginFinishAction(t, rec); action != "stage_added" {
-		t.Fatalf("action = %q, want stage_added (a conflict must go through the agent)", action)
+	if action := beginFinishAction(t, rec); action != "finish_turn_started" {
+		t.Fatalf("action = %q, want finish_turn_started (a conflict must go through the agent)", action)
 	}
 	var payload struct {
 		Plan struct {
@@ -311,7 +229,7 @@ func TestBeginFinishRouteDefersToAgentWhenTheMergeWouldConflict(t *testing.T) {
 	}
 }
 
-// ② worktree 里有没提交的活 → 退给 agent（机械清场不能替用户决定提交什么）。
+// ② worktree 里有没提交的活 → 交给 agent（机械清场不能替用户决定提交什么）。
 func TestBeginFinishRouteDefersToAgentWhenTheWorktreeHasUncommittedWork(t *testing.T) {
 	handler, svc, root, taskID := newBeginFinishHandler(t, "from worktree\n")
 	leaveUncommittedWorktreeChange(t, svc, root.ID, taskID)
@@ -320,8 +238,8 @@ func TestBeginFinishRouteDefersToAgentWhenTheWorktreeHasUncommittedWork(t *testi
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if action := beginFinishAction(t, rec); action != "stage_added" {
-		t.Fatalf("action = %q, want stage_added", action)
+	if action := beginFinishAction(t, rec); action != "finish_turn_started" {
+		t.Fatalf("action = %q, want finish_turn_started", action)
 	}
 	var payload struct {
 		Plan struct {
@@ -338,12 +256,4 @@ func TestBeginFinishRouteDefersToAgentWhenTheWorktreeHasUncommittedWork(t *testi
 	if len(payload.Plan.Files) != 1 || payload.Plan.Files[0] != "wip.txt" {
 		t.Fatalf("plan.files = %v, want [wip.txt]", payload.Plan.Files)
 	}
-}
-
-func (r silentRunner) RunAgentStage(context.Context, kanban.AgentStageExecution) (kanban.StageResult, error) {
-	return kanban.StageResult{Outcome: kanban.StageOutcomeSilent}, nil
-}
-
-func (r failingRunner) RunAgentStage(context.Context, kanban.AgentStageExecution) (kanban.StageResult, error) {
-	return kanban.StageResult{}, errors.New("boom")
 }

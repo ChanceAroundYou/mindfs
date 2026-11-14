@@ -327,8 +327,7 @@ func TestWorkflowRunGraphEditFreezesTriggeredNodesAndIncidentEdges(t *testing.T)
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	if _, err := store.CreateTask(ctx, Task{ID: "wf-edit-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("u")}},
-		StageRun{ID: "wf-edit-stage", TaskID: "wf-edit-task", StageIndex: 0, StageName: "u", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "wf-edit-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "wf-edit-event", TaskID: "wf-edit-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

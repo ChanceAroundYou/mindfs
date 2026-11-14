@@ -136,7 +136,7 @@ func TestClaimWorktreeEntryRejectsAnotherNodeRunOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestClaimWorktreeEntryRejectsSameBranchOtherNodeRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestClaimWorktreeEntryIsIdempotentForSameNodeRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

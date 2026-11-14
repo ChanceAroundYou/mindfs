@@ -85,28 +85,7 @@ test("listAvailableWorkflows forwards a trimmed user_input as a query param", as
   assert.deepEqual(await service.listAvailableWorkflows("   "), []);
 });
 
-test("recommendWorkflow posts user_input and returns the recommendation", async () => {
-  const { service, calls } = loadWorkflowService({
-    recommended: { workflow_id: "wf-debug", reason: "matches", match_score: 0.9 },
-  });
-  const rec = await service.recommendWorkflow("  登录报错了  ");
-  assert.equal(calls[0].path, "/api/workflows/recommend");
-  const request = calls[1];
-  assert.equal(request.url, "/page/api/workflows/recommend");
-  assert.equal(String(request.init.method).toUpperCase(), "POST");
-  assert.equal(request.init.headers["Content-Type"], "application/json");
-  assert.deepEqual(JSON.parse(request.init.body), { user_input: "登录报错了" });
-  // vm 里造出来的对象原型来自另一个 realm，deepEqual 的原型检查会判「结构相同但不相等」。
-  assert.equal(JSON.stringify(rec), JSON.stringify({ workflow_id: "wf-debug", reason: "matches", match_score: 0.9 }));
-});
-
-test("recommendWorkflow rejects an empty input and a malformed response", async () => {
-  const { service } = loadWorkflowService({});
-  await assert.rejects(() => service.recommendWorkflow("   "), /user_input required/);
-  await assert.rejects(() => service.recommendWorkflow("hello"), /recommendation/i);
-});
-
-// ── WorkflowSelector：三态按钮组 + 推荐芯片 ────────────────────────────────
+// ── WorkflowSelector：三态按钮组 ──────────────────────────────────────────
 const render = (children) => renderToString(React.createElement(I18nProvider, null, children));
 const renderSelector = (props) => render(React.createElement(WorkflowSelector, props));
 
@@ -145,13 +124,6 @@ test("WorkflowSelector marks the active choice", () => {
   assert.match(htmlEmpty, /data-testid="workflow-show-advanced"/);
 });
 
-test("WorkflowSelector shows the recommendation chip", () => {
-  const rec = { workflow_id: "wf-debug", reason: "matches", match_score: 0.9 };
-  const html = renderSelector({ choice: "empty", versionId: "", recommendation: rec, onChange: () => {} });
-  // 新UI：推荐信息显示在默认提示中，格式为 "✨ AI recommends: {name}" 或 "✨ AI 推荐使用：{name}"
-  assert.match(html, /(?:AI recommends: wf-debug|AI 推荐使用：wf-debug)/);
-});
-
 // Node 环境下没有 DOM，点击由浏览器验证；这里钉住每个按钮都接到了 onChange，
 // 且「指定工作流」走的是弹窗而不是直接提交空 id。
 test("WorkflowSelector wires each radio to its action", () => {
@@ -161,6 +133,16 @@ test("WorkflowSelector wires each radio to its action", () => {
   assert.match(source, /onChange\(["']specified["'],\s*[a-zA-Z_$][\w$]*\)/);
   assert.match(source, /setShowPicker\(true\)/);
   assert.match(source, /<WorkflowPickerDialog/);
+});
+
+// 选择器回显的是 workflow 名字，不是内部版本 id（wf-feature:v1 这种不该给用户看）。
+// 名字只在 id 仍对得上时生效：外部改写 versionId 后回退显示 id，绝不错标。
+test("WorkflowSelector shows the picked workflow name with an id fallback", () => {
+  const source = read("components/task/WorkflowSelector.tsx");
+  assert.match(source, /setPicked\(\{\s*id,\s*name\s*\}\)/);
+  assert.match(source, /picked\.id === versionId \? picked\.name : versionId/);
+  const dialog = read("components/task/WorkflowPickerDialog.tsx");
+  assert.match(dialog, /onSelect\(workflow\.id, workflow\.name \|\| workflow\.id\)/);
 });
 
 test("WorkflowSelector keeps the view free of direct service imports", () => {

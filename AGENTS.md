@@ -182,22 +182,27 @@ make dev-web          # 仅 Vite
       远端节点的 `session.done` 收不到（没订阅那些会话），靠 `app/useReplyingSessionPoll.ts` 的 5s/visible-only 轮询兜。
       回归测试 `web/tests/cross-node-replying-state.test.mjs`。
 
-13. **看板模型（2026-09 重做）**：卡=任务，列=全局状态（待开始/进行中/等待你/已完成/失败·取消，前端 `kanbanStageColumns`）；
-    - **任务统一走对话模型**（2026-11-12 整体替换）：新建任务落库即 `task_type=conversation`；
+13. **看板模型（2026-09 重做）**：卡=任务，列=全局状态（待开始/进行中/等待你/已完成/失败·取消，前端 `useAppKanbanColumns.ts` 的 `kanbanColumns`）；
+    - **任务统一走对话模型**（2026-11-12 整体替换；2026-11 阶段概念彻底删除）：
+      新建任务落库即 `task_type=conversation`，请求只带一条用户留言（`CreateTaskInput.Input`），
+      不再有阶段流水、agent/model/effort 覆盖或 start_immediately。
+      每一轮由 Router（`kanban.ActivityService`）决定：命中 workflow 就跑 `WorkflowRun`，
+      `workflow_choice=disabled` 或没有可用 workflow 时走直连执行器
+      `AppContext.RunDirectActivity`（复用任务主会话跑一轮普通对话并回写 Agent 回复）。
       历史阶段任务在服务启动时由 `ConvertStagesToConversation` 一次性转成
       `task_activities` + 内联 `WorkflowRun`，`task_stages_json` 清空。转换前整行备份到
       `tasks_backup_legacy_stages` / `stage_runs_backup_legacy`，原始 `stage_runs` 保留为只读证据；
       迁移是单向的，回滚只能从备份恢复。`legacy_import` Run 不参与启动对账，并可被用户的新 Run 替换。
       前端不再有 `LegacyTaskView` 兼容分支，历史与新建任务统一渲染 `ConversationView`。
-      新建面板仍会随包带 `StageTemplate[]`（`defaultTaskFlowStages()`：user 输入 → agent
-      `{previous_input}`），但它只是初始载荷，不驱动执行；详情面板只读 activities/WorkflowRun。
+      `task_stages_json`/`task_type`/`current_stage_index`/`stage_runs` 只是冻结的审计证据，
+      运行路径不读写；`/comments` 与 `/stages*` HTTP 层已删除，留言统一走 `/activities`。
       完整规则见 `docs/migration/stages-to-conversation.md`。
       **模板已迁移为 workflow**（2026-11-12）：三个原模板（新功能、debug、空白）已转换为已发布的 workflow
       （`workflow-new-feature`、`workflow-debug`、`workflow-blank`），存储在控制面 `~/.config/mindfs/workflows.json`。
       前端可通过 `GET /api/workflows/published` 获取已发布 workflow 列表并在创建任务时选用。
       模板库已于 Phase 3 删除（2026-11）；`task_template_id`/`task_template_name`
       两列冻结为只读来源标签，停写、不回填、不参与执行。
-    - **无并发调度**：`queued` 与调度槽位已删除（迁移时 queued→pending），新建任务恒为 `waiting_user`；同一 agent 阶段的重复执行由 `taskRun/taskPend` 去重守卫拦。
+    - **无并发调度**：`queued` 与调度槽位已删除（迁移时 queued→pending），新建任务恒为 `waiting_user`；重复触发由 workflow 的 NodeRun claim / `WakeWorkflowRun` single-flight 合并，不再有阶段级去重守卫。
     - 任意状态可追加 comment 作为下一段 prompt（`POST /api/tasks/{id}/add-stage`，运行中排队尾；waiting_user 时追加即批准当前段并开跑）。
     - **跨项目工作台**：无项目时任务视图渲染 `web/src/components/workspace/WorkspaceBoard.tsx`
       （`useWorkspaceBoard` + `WorkspaceProjectRow/WorkspaceTaskRow`，卡片两行与看板共用 `TaskCardRows`），
@@ -256,10 +261,10 @@ make dev-web          # 仅 Vite
       判断法：「这东西在另一台机器上有意义吗？」有 → 数据面；没有，只有一份该是权威的 → 控制面。
       `agent-config` 刻意留在数据面（改的是本机运行时，worker 需要）。
     - **单节点下改绑零行为变化**：`pageServerPath` 与 `appPath` 同源，只有多节点才有差异 —— 而那正是要修的 bug。
-    - **建任务必须内联流水** —— 任务可以建在任意运行节点上，后端 `CreateTask` 只认请求里随包带上的 `stages`，
-      没有 stages 直接报错（模板库已删除，任何回查路径都不存在）。前端 `createTask` 每次都带 `defaultTaskFlowStages()`，
-      注意 `applyStageOverride` 无覆盖时返回 `undefined`（最常见的路径），`taskStagesForCreate` 专门兜它。
-      模板按项目过滤（`TaskTemplate.RootID`）是模板时代的事实，Phase 3 后已随模板库一起移除，不要再恢复。
+    - **建任务只收一条留言** —— 任务可以建在任意运行节点上，后端 `CreateTask` 只认请求里的
+      `input`，不再接收、也不再回查任何阶段流水或模板（模板库与 `defaultTaskFlowStages()`
+      都已删除）。创建后的每一轮由 Router 决定走 workflow 还是直连回复；没有 stages 不是错误，
+      空留言才是。
     - **探测角色打 `/health` 不是 `/api/node-info`**：后者自己在控制面表里，worker 上必然 403，
       会让每个运行节点都被误判成「离线」。`/health` 是公开端点且刻意不在表内。
     - 迁移：`scripts/migrate-control-plane-to-primary.sh`（默认预览，`--apply` 才写，幂等）。

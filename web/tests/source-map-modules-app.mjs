@@ -159,7 +159,7 @@ export const APP_MODULES = {
     "src/app/useAppMainViewActions.ts",
     // 2026-10-08 第 11 步
     "src/app/useAppSlashCommandResult.ts",
-    "src/app/useAppKanbanStageColumns.ts",
+    "src/app/useAppKanbanColumns.ts",
     // 2026-10-08 第 12 步
     "src/app/useAppSessionView.tsx",
     "src/app/useAppRootContentRenderers.tsx",

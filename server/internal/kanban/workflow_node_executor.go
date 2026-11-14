@@ -131,14 +131,14 @@ var WorkflowPromptPlaceholders = []string{"previous_input", "task_initial_input"
 // something plausible about a task it never saw.
 func (s *Service) resolveWorkflowNodePrompt(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task, node WorkflowNode, prompt string) (string, error) {
 	values := WorkflowPromptValues(ctx, store, run, task)
-	// 替换发生在 BuildAgentPrompt 里，空值会把占位符「悄悄抹掉」，留下一条
-	// 没有需求的空 prompt。所以先按空值判定失败，再替换。
+	// 替换是纯字符串替换，空值会把占位符「悄悄抹掉」，留下一条没有需求的空
+	// prompt。所以先按空值判定失败，再替换。
 	for _, key := range WorkflowPromptPlaceholders {
 		if strings.Contains(prompt, "{"+key+"}") && strings.TrimSpace(values[key]) == "" {
 			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：该任务没有可用的用户输入", node.ID, key)
 		}
 	}
-	resolved := BuildAgentPrompt(prompt, values, TaskControlPromptContext{})
+	resolved := RenderPrompt(prompt, values)
 	for _, key := range WorkflowPromptPlaceholders {
 		if strings.Contains(resolved, "{"+key+"}") {
 			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：该任务没有可用的用户输入", node.ID, key)

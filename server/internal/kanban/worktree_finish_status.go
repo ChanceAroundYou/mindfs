@@ -16,20 +16,13 @@ import (
 // 那只是等人，不代表 agent 在动；而 task.Status 与「agent 此刻是否真的在动」之间还
 // 隔着建会话、过 exchange 表那段窗口。只有「这个会话正在回复」是直接读数。
 //
-// 探针没装配时（单测、老装配）回落到 task.Status / 段状态那套旧判据：runAgentStage
-// 起 agent 和把 status 置 running 之间有时间差，而 stage run 的 running 落得更早，
-// 两个都判、取「任一在跑就拦」。
-//
-// 拿不到段状态时（读失败、指针越界）不当作「在跑」：那是数据问题，不该把用户
-// 锁死在收不了尾的盒子里 —— 真正的保护在 git 层，拦不住的话 merge 撞上冲突会
-// 自己停下来。
+// 探针没装配时（单测、老装配）回落到 task.Status：running 就拦住。
 func (s *Service) assertNotRunning(ctx context.Context, store *TaskStore, task Task) error {
 	return s.taskBusyErr(ctx, store, task)
 }
 
-// taskBusyErr 是「这个任务现在有没有执行体在动」的判据，**与 ctx/store 解耦**地写成
-// 一个纯函数式的内部方法，好让 api 层的收尾分流（TaskBusy）复用同一套判据 ——
-// 两处各写一份的话，迟早有一处漏掉「段在跑」这个窗口。
+// taskBusyErr 是「这个任务现在有没有执行体在动」的判据。api 层的收尾分流
+// （TaskBusy）复用同一套判据 —— 两处各写一份的话，迟早有一处漏掉某个窗口。
 func (s *Service) taskBusyErr(ctx context.Context, store *TaskStore, task Task) error {
 	if s.sessionRunning(task.MainSessionKey) {
 		return ErrTaskSessionRunning
@@ -41,17 +34,6 @@ func (s *Service) taskBusyErr(ctx context.Context, store *TaskStore, task Task) 
 	}
 	if task.Status == StatusRunning {
 		return errors.New("任务正在执行中，先停止再收尾")
-	}
-	index := task.CurrentStageIndex
-	if index < 0 || index >= len(task.Stages) {
-		return nil
-	}
-	run, err := store.LatestStageRun(ctx, task.ID, index)
-	if err != nil {
-		return nil
-	}
-	if run.Status == StageStatusRunning {
-		return errors.New("当前阶段正在执行中，先停止再收尾")
 	}
 	return nil
 }
@@ -124,23 +106,6 @@ func (s *Service) TaskWorktreeBranchMerged(ctx context.Context, rootID, taskID, 
 		target = "main"
 	}
 	return gitview.BranchMergedInto(ctx, mainDir, branch, target)
-}
-
-// TaskHasAgentStage 报任务流水里有没有 agent 段。
-//
-// 给 api 层的收尾分流用：收尾段要继承上一段的 agent/模型，没有 agent 段时追加收尾段
-// 必然失败（BeginFinishWorktree 会 409）。与其给一个必然失败的按钮，不如直接机械清场。
-func (s *Service) TaskHasAgentStage(ctx context.Context, rootID, taskID string) (bool, error) {
-	_, task, err := s.loadForMove(ctx, rootID, taskID)
-	if err != nil {
-		return false, err
-	}
-	for _, stage := range task.Stages {
-		if stage.Role == RoleAgent {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // FinishPlan 是「这次收尾该走哪条路」的服务端只读判定。
@@ -258,25 +223,6 @@ func (s *Service) PlanFinishWorktree(ctx context.Context, rootID, taskID string)
 		return FinishPlan{Mechanical: false, Reason: reason, Files: feasibility.Files}, nil
 	}
 	return FinishPlan{Mechanical: true, Reason: "worktree 干净且合并无冲突"}, nil
-}
-
-// TaskFinishStageIndex 报任务流水里收尾段的下标；没有则 ok=false。
-// api 层据此决定「重跑那段继续收尾」还是「追加一段新收尾段」。
-func (s *Service) TaskFinishStageIndex(ctx context.Context, rootID, taskID string) (int, bool, error) {
-	store, err := s.taskStore(rootID)
-	if err != nil {
-		return 0, false, err
-	}
-	task, err := store.GetTask(ctx, strings.TrimSpace(taskID))
-	if err != nil {
-		return 0, false, err
-	}
-	for i, stage := range task.Stages {
-		if IsFinishStage(stage) {
-			return i, true, nil
-		}
-	}
-	return 0, false, nil
 }
 
 // taskWorktreeMainDir 报任务 worktree 所在项目的主 checkout 路径。

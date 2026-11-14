@@ -2,13 +2,13 @@
 //
 // 为什么单独放 shared：仓库规则禁止 components 直接 import services
 // （web/tests/reviewer-architecture-rules.test.mjs 钉住）。类型与纯函数放这里，
-// 带副作用的取数留在 services/task/comments.ts。
+// 带副作用的取数留在 services/task/runView.ts。
 
 export type WorkflowChoice = "specified" | "disabled" | "empty";
 
 // 对话式 Agent 回复的生命周期状态（kanban.ActivityStatus*）。
 // 用户留言与系统事件不带状态，所以字段可选。
-export type ActivityStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type ActivityStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "waiting_user";
 
 export type TaskActivity = {
   id: string;
@@ -30,20 +30,6 @@ export type TaskActivity = {
   updated_at?: string;
 };
 
-export type ContinueRequest = {
-  request_id: string;
-  task_id: string;
-  comment_id: string;
-  status: "queued" | "blocked" | "consumed" | string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PostCommentResult = {
-  activity: TaskActivity;
-  continue_request: ContinueRequest;
-};
-
 export type TaskExecutionEngine = {
   task_id: string;
   engine: "legacy" | "workflow" | string;
@@ -53,6 +39,7 @@ export type TaskExecutionEngine = {
 export type WorkflowRunPayload = {
   id: string;
   task_id: string;
+  version?: string;
   revision: number;
   graph?: { nodes?: Array<{ id: string; name?: string; kind?: string }>; edges?: unknown[] };
   node_states?: Record<string, string>;
@@ -61,6 +48,8 @@ export type WorkflowRunPayload = {
   updated_at?: string;
 };
 
+// 后端 workflow_types.go 的 NodeRun 原样映射。展示层直接复用这一份类型
+// （runTimelineTypes 只做别名），避免两处字段各写一遍后漂移。
 export type NodeRunPayload = {
   id: string;
   run_id: string;
@@ -73,15 +62,11 @@ export type NodeRunPayload = {
   model?: string;
   session_key?: string;
   status: string;
-  input?: Record<string, unknown>;
-  output?: Record<string, unknown>;
+  input?: Record<string, unknown> | string;
+  output?: Record<string, unknown> | string;
+  error?: string;
   started_at?: string;
   finished_at?: string;
   prev_attempt_id?: string;
 };
 
-export function newCommentId(): string {
-  const c = globalThis.crypto as Crypto | undefined;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}

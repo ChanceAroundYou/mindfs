@@ -16,8 +16,14 @@ import (
 // 入口（legacy 推进前的一次查询）。独立表零侵入，存量任务没有行 = 天然 legacy，
 // 不需要任何回填。
 const (
-	EngineLegacy   = "legacy"   // 既有 Stages/StageRun 引擎（默认）
-	EngineWorkflow = "workflow" // 迁移后的 WorkflowRun 引擎
+	// EngineConversation 是默认执行引擎：留言交给 Router，由它决定跑 workflow 还是
+	// 直接在主会话里回一轮（见 ActivityService.RunDirectActivity）。
+	//
+	// 落库值仍是 "legacy"：存量库与前端 `TaskExecutionEngine.engine` 都按这个字符串
+	// 读，改名要动数据迁移，不划算。别被字面量误导 —— 它现在的含义是「对话/Router」，
+	// 不是已经被删除的阶段引擎。
+	EngineConversation = "legacy"
+	EngineWorkflow     = "workflow" // 迁移后的 WorkflowRun 引擎
 )
 
 // ErrTaskAlreadyWorkflow 表示任务已经迁移到 WorkflowRun，legacy 引擎不再推进它。
@@ -53,7 +59,7 @@ func taskEngineOf(ctx context.Context, db *sql.DB, taskID string) (TaskEngine, e
 		`SELECT task_id, engine, workflow_run_id, updated_at FROM task_execution_engines WHERE task_id=?`, taskID).
 		Scan(&e.TaskID, &e.Engine, &e.WorkflowRunID, &ts)
 	if errors.Is(err, sql.ErrNoRows) {
-		return TaskEngine{TaskID: taskID, Engine: EngineLegacy}, nil
+		return TaskEngine{TaskID: taskID, Engine: EngineConversation}, nil
 	}
 	if err != nil {
 		return TaskEngine{}, err
@@ -81,10 +87,11 @@ func setTaskEngine(ctx context.Context, db *sql.DB, taskID, engine, runID string
 //
 // 语义（spec「新旧执行模型互斥」）：
 //   - 只有显式调用才迁移，绝不批量转换存量任务；
-//   - 迁移生成一份独立、内联的图快照（legacy 的 Stages 逐段映射成线性 Agent/HumanGate
-//     节点），之后该任务不再由 legacy 引擎推进，也不双写两份运行模型；
+//   - 迁移生成一份独立、内联的图快照，来源是**显式指定的已发布版本**；任务身上没有
+//     阶段（2026-11 已彻底删除），所以 version 必填，不存在「按 Stages 逐段映射」的
+//     兼容分支。之后该任务不再由对话/直连引擎推进，也不双写两份运行模型；
 //   - 图快照先落库、引擎标记后落库：中途失败只是多一份没人引用的 Run，任务仍是
-//     legacy，不会出现「引擎切了但没有可跑的 Run」；
+//     原引擎，不会出现「引擎切了但没有可跑的 Run」；
 //   - 已迁移的任务再次调用返回 ErrTaskAlreadyWorkflow（幂等拒绝，不改任何状态）；
 //   - 终态任务拒绝迁移（没有可推进的活，迁移只会制造无人认领的 Run）。
 func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, versionID, author string) (*WorkflowRun, TaskEngine, error) {
@@ -106,13 +113,13 @@ func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, 
 		return nil, cur, ErrTaskAlreadyWorkflow
 	}
 
-	if strings.TrimSpace(versionID) != "" && s.Workflows == nil {
-		return nil, TaskEngine{}, errors.New("workflow control-plane store unavailable: version lookup required")
-	}
-	graph, resolvedVersion, err := s.migrationGraph(ctx, store, task, versionID)
+	graph, resolvedVersion, err := s.migrationGraph(ctx, versionID)
 	if err != nil {
 		return nil, TaskEngine{}, err
 	}
+	// 版本图可能是在别的 root（或空 root）下编辑的；Run 跑在这张任务的库里，
+	// 图必须跟着任务走，否则节点解析出的工作区与 Run 存放位置不一致。
+	graph.RootID = task.RootID
 	integrationBranch, err := s.snapshotRunIntegrationBranch(ctx, task, graph)
 	if err != nil {
 		// D11：没有可用 target 就不建 Run；运行期不允许隐式回落 "main"。
@@ -145,50 +152,23 @@ func (s *Service) MigrateTaskToWorkflowRun(ctx context.Context, rootID, taskID, 
 	return run, engine, nil
 }
 
-// migrationGraph 生成迁移用的内联图快照。
+// migrationGraph 取迁移用的不可变版本图。
 //
-// 给了 versionID 就用该不可变版本的图（真正「按工作流迁移」）；没给就按 legacy 的
-// Stages 逐段映射成一条线性链 —— 段是 Agent 就 Agent 节点，是 user 就 HumanGate 节点，
-// 这样迁移后的图与任务原本的顺序语义一致，而不是凭空造一个空图。
-func (s *Service) migrationGraph(ctx context.Context, store *TaskStore, task Task, versionID string) (WorkflowDefinition, string, error) {
-	if strings.TrimSpace(versionID) != "" {
-		if s.Workflows == nil {
-			return WorkflowDefinition{}, "", errors.New("workflow control-plane store unavailable")
-		}
-		ver, err := s.Workflows.GetVersion(ctx, versionID)
-		if err != nil {
-			return WorkflowDefinition{}, "", fmt.Errorf("workflow version %q: %w", versionID, err)
-		}
-		return ver.Graph, ver.Version, nil
+// 任务身上没有阶段了（2026-11 决策），所以这里唯一合法的来源是显式 version：
+// 以前「不带 version 就按 Stages 逐段映射」的兼容分支随阶段概念一起删除。
+func (s *Service) migrationGraph(ctx context.Context, versionID string) (WorkflowDefinition, string, error) {
+	versionID = strings.TrimSpace(versionID)
+	if versionID == "" {
+		return WorkflowDefinition{}, "", errors.New("version required: 任务已无阶段，迁移必须指定 workflow version")
 	}
-	if len(task.Stages) == 0 {
-		return WorkflowDefinition{}, "", errors.New("task has no stages to derive a workflow graph from")
+	if s.Workflows == nil {
+		return WorkflowDefinition{}, "", errors.New("workflow control-plane store unavailable")
 	}
-	nodes := make([]WorkflowNode, 0, len(task.Stages))
-	edges := make([]WorkflowEdge, 0, len(task.Stages)-1)
-	prev := ""
-	for i, st := range task.Stages {
-		id := fmt.Sprintf("stage-%d", i)
-		node := WorkflowNode{ID: id, Name: st.Name}
-		if st.Role == RoleUser {
-			node.Kind = NodeKindHumanGate
-			node.Params = map[string]any{"prompt": strings.TrimSpace(st.PromptTemplate)}
-		} else {
-			node.Kind = NodeKindAgent
-			node.Params = map[string]any{
-				"agent":            st.Agent,
-				"model":            st.Model,
-				"prompt":           st.PromptTemplate,
-				"writes_workspace": true,
-			}
-		}
-		nodes = append(nodes, node)
-		if prev != "" {
-			edges = append(edges, WorkflowEdge{From: prev, To: id})
-		}
-		prev = id
+	ver, err := s.Workflows.GetVersion(ctx, versionID)
+	if err != nil {
+		return WorkflowDefinition{}, "", fmt.Errorf("workflow version %q: %w", versionID, err)
 	}
-	return WorkflowDefinition{Nodes: nodes, Edges: edges, RootID: task.RootID}, "", nil
+	return ver.Graph, ver.Version, nil
 }
 
 // taskRunsOnWorkflow 报任务是否已经切到 WorkflowRun 引擎（legacy 推进前必须查）。

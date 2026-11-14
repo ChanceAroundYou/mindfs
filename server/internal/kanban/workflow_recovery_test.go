@@ -29,7 +29,7 @@ func TestWorkflowRuntimeCompleteAndFailFreezeOpenWork(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("a", "b"), "run-"+tc.name)
+			svc, root, store, task, run := newRuntimeHarness(t, agentGraph("a", "b"), "run-"+tc.name)
 			runner := newRuntimeRunner(0)
 			runner.release = make(chan struct{})
 			svc.SetWorkflowNodeRunner(runner)
@@ -110,7 +110,7 @@ func TestWorkflowRuntimeCompleteAndFailFreezeOpenWork(t *testing.T) {
 func TestWorkflowRuntimeStartupReconciliationMatrix(t *testing.T) {
 	t.Run("queued_not_sent_resumes", func(t *testing.T) {
 		ctx := context.Background()
-		svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-start-queued")
+		svc, root, store, task, run := newRuntimeHarness(t, agentGraph("build"), "run-start-queued")
 		runner := newRuntimeRunner(-1)
 		svc.SetWorkflowNodeRunner(runner)
 		nr := workflowAttemptNodeRun(run, run.Graph.Nodes[0])
@@ -133,7 +133,7 @@ func TestWorkflowRuntimeStartupReconciliationMatrix(t *testing.T) {
 
 	t.Run("bound_session_with_evidence_resumes_same_session", func(t *testing.T) {
 		ctx := context.Background()
-		svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-start-resume")
+		svc, root, store, task, run := newRuntimeHarness(t, agentGraph("build"), "run-start-resume")
 		runner := newRuntimeRunner(-1)
 		svc.SetWorkflowNodeRunner(runner)
 		nr := workflowAttemptNodeRun(run, run.Graph.Nodes[0])
@@ -164,7 +164,7 @@ func TestWorkflowRuntimeStartupReconciliationMatrix(t *testing.T) {
 
 	t.Run("ambiguous_side_effect_needs_user_without_replay", func(t *testing.T) {
 		ctx := context.Background()
-		svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-start-unknown")
+		svc, root, store, task, run := newRuntimeHarness(t, agentGraph("build"), "run-start-unknown")
 		runner := newRuntimeRunner(-1)
 		svc.SetWorkflowNodeRunner(runner)
 		nr := workflowAttemptNodeRun(run, run.Graph.Nodes[0])
@@ -208,7 +208,7 @@ func TestWorkflowRuntimeStartupReconciliationMatrix(t *testing.T) {
 
 	t.Run("paused_task_is_reconciled_but_not_woken_or_overwritten", func(t *testing.T) {
 		ctx := context.Background()
-		svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-start-paused")
+		svc, root, store, task, run := newRuntimeHarness(t, agentGraph("build"), "run-start-paused")
 		runner := newRuntimeRunner(-1)
 		svc.SetWorkflowNodeRunner(runner)
 		nr := workflowAttemptNodeRun(run, run.Graph.Nodes[0])
@@ -249,7 +249,7 @@ func TestWorkflowRuntimeStartupReconciliationMatrix(t *testing.T) {
 // leaves the original evidence and comment identity untouched.
 func TestWorkflowRuntimeExplicitRetryLinksNewAttemptWithoutMutatingEvidence(t *testing.T) {
 	ctx := context.Background()
-	svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-retry")
+	svc, root, store, task, run := newRuntimeHarness(t, agentGraph("build"), "run-retry")
 	runner := newRuntimeRunner(-1)
 	runner.errs = []error{errors.New("first attempt failed")}
 	svc.SetWorkflowNodeRunner(runner)

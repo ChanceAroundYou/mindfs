@@ -27,23 +27,7 @@ func (f *fakeWorkflowNodeRunner) RunWorkflowNode(_ context.Context, exec Workflo
 	return f.result, nil
 }
 
-type countingLegacyRunner struct {
-	runStageCalls int
-}
-
-func (r *countingLegacyRunner) CreateTaskWorktree(context.Context, string, string, string, string) (WorktreeInfo, error) {
-	return WorktreeInfo{}, nil
-}
-func (r *countingLegacyRunner) EnsureAgentSession(context.Context, AgentStageExecution) (string, error) {
-	return "", nil
-}
-func (r *countingLegacyRunner) RunAgentStage(context.Context, AgentStageExecution) (StageResult, error) {
-	r.runStageCalls++
-	return StageResult{Outcome: StageOutcomeDone}, nil
-}
-func (r *countingLegacyRunner) TaskUpdated(string, TaskDetail) {}
-
-func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner(t *testing.T) {
+func TestWorkflowAgentNodeUsesWorkflowRunner(t *testing.T) {
 	ctx := context.Background()
 	root := fs.NewRootInfo("wf-runner-root", "wf-runner-root", t.TempDir())
 	store, err := NewTaskStore(root)
@@ -51,8 +35,7 @@ func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "wf-runner-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "wf-runner-stage", TaskID: "wf-runner-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "wf-runner-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "wf-runner-event", TaskID: "wf-runner-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -62,17 +45,13 @@ func TestWorkflowAgentNodeUsesWorkflowRunnerNotLegacyStageRunner(t *testing.T) {
 	nodeRun := NodeRun{ID: "nr-build", RunID: run.ID, NodeID: "build", LoopPath: "l/2", Iteration: 1, Attempt: 2, Status: NodeRunQueued}
 
 	wf := &fakeWorkflowNodeRunner{result: WorkflowNodeResult{Outcome: WorkflowNodeDone, Output: map[string]any{"summary": "ok"}}}
-	legacy := &countingLegacyRunner{}
 	svc := NewService(nil)
-	svc.SetRunner(legacy)
+	svc.SetRunner(&fakeRunner{})
 	svc.SetWorkflowNodeRunner(wf)
 
 	result, err := svc.StartWorkflowNode(ctx, store, run, node, nodeRun)
 	if err != nil {
 		t.Fatalf("StartWorkflowNode: %v", err)
-	}
-	if legacy.runStageCalls != 0 {
-		t.Fatalf("legacy RunAgentStage called %d times; workflow must not dual-write stages", legacy.runStageCalls)
 	}
 	if wf.ensureCalls != 1 || wf.runCalls != 1 {
 		t.Fatalf("workflow runner calls ensure=%d run=%d, want 1/1", wf.ensureCalls, wf.runCalls)

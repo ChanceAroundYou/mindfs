@@ -3,7 +3,6 @@
 // 后端契约（server/internal/api/http_activities.go）：
 //   GET  /api/tasks/{id}/activities?root_id=...
 //   POST /api/tasks/{id}/activities   { root_id, body, workflow_choice, workflow_version_id? }
-//   GET  /api/tasks/{id}/activities/{activityId}?root_id=...
 //
 // root_id 是必需参数：活动库按项目（root）分片，缺了后端直接 400。这里提前拦住，
 // 让调用方拿到明确错误，而不是把空 root 发出去再解析 400。
@@ -65,21 +64,5 @@ export async function createActivity(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
-  );
-}
-
-export async function getActivity(
-  taskId: string,
-  activityId: string,
-  rootId: string,
-  nodeId?: string,
-): Promise<TaskActivity> {
-  const params = new URLSearchParams({ root_id: requiredRoot(rootId) });
-  return protectedJSON<TaskActivity>(
-    appURL(
-      `/api/tasks/${encodeURIComponent(taskId)}/activities/${encodeURIComponent(activityId)}`,
-      params,
-      nodeId,
-    ),
   );
 }

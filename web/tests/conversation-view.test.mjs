@@ -113,15 +113,6 @@ test("createActivity surfaces the backend error text", async () => {
   );
 });
 
-test("getActivity includes both ids and the root scope", async () => {
-  const { service, calls } = loadActivityService({ response: { id: "a1" } });
-  const activity = await service.getActivity("task-1", "a1", "root-1");
-  assert.equal(calls[0].kind, "path");
-  assert.equal(calls[0].path, "/api/tasks/task-1/activities/a1");
-  assert.equal(new URLSearchParams(calls[0].query).get("root_id"), "root-1");
-  assert.equal(activity.id, "a1");
-});
-
 // ── 活动流合并：WS 增量 + 重连补偿 ─────────────────────────────────────────
 const baseActivity = {
   id: "a1",
@@ -166,7 +157,6 @@ test("canSendActivity enforces empty body, specified workflow and in-flight guar
   assert.equal(canSendActivity({ body: "hi", workflowChoice: "specified", workflowVersionId: "v1" }), true);
   assert.equal(canSendActivity({ body: "hi", workflowChoice: "disabled" }), true);
   assert.equal(canSendActivity({ body: "hi", workflowChoice: "empty", sending: true }), false);
-  assert.equal(canSendActivity({ body: "hi", workflowChoice: "empty", disabled: true }), false);
 });
 
 test("activityDisplayText prefers the summary for terminal states", () => {
@@ -174,11 +164,13 @@ test("activityDisplayText prefers the summary for terminal states", () => {
   assert.equal(activityDisplayText({ ...baseActivity, status: "completed", summary: "总结", body: "步骤" }), "总结");
   assert.equal(activityDisplayText({ ...baseActivity, status: "failed", summary: "", body: "错误" }), "错误");
   assert.equal(activityDisplayText({ ...baseActivity, status: "pending", summary: "备用", body: "" }), "备用");
+  assert.equal(activityDisplayText({ ...baseActivity, status: "waiting_user", summary: "等待你处理：缺权限", body: "步骤 1/2" }), "等待你处理：缺权限");
 });
 
 test("normalizeActivityStatus defaults unknown/empty to pending", () => {
   assert.equal(normalizeActivityStatus("completed"), "completed");
   assert.equal(normalizeActivityStatus("failed"), "failed");
+  assert.equal(normalizeActivityStatus("waiting_user"), "waiting_user");
   assert.equal(normalizeActivityStatus(""), "pending");
   assert.equal(normalizeActivityStatus("bogus"), "pending");
 });
@@ -235,7 +227,7 @@ test("ActivityMessage renders failed replies as errors", () => {
   assert.match(html, /工作流校验失败/);
   assert.match(html, /✗/); // failed icon
   assert.match(html, /失败|Failed/);
-  assert.match(html, /#dc2626/);
+  assert.match(html, /var\(--status-bad\)/);
 });
 
 test("ActivityMessage keeps cancelled replies visible without pretending success", () => {
@@ -251,18 +243,17 @@ test("ActivityMessage keeps cancelled replies visible without pretending success
   assert.match(html, /已取消|Cancelled/);
 });
 
-test("ActivityMessage offers detail and session actions when the reply carries them", () => {
+test("ActivityMessage offers the session action when the reply carries one", () => {
   const html = render(
     React.createElement(ActivityMessage, {
       activity: { ...baseActivity, status: "completed", summary: "ok", run_id: "run-1", session_key: "s-1" },
-      onViewRun: () => {},
       onOpenSession: () => {},
     }),
   );
-  assert.match(html, /data-testid="activity-view-run"/);
   assert.match(html, /data-testid="activity-open-session"/);
-  assert.match(html, /查看执行详情|View run details/);
   assert.match(html, /打开会话|Open session/);
+  // 运行详情就在面板下方（RunViewEntry），消息里不再另设入口。
+  assert.doesNotMatch(html, /data-testid="activity-view-run"/);
 });
 
 test("ActivityMessage renders system events as a neutral line", () => {
@@ -274,6 +265,34 @@ test("ActivityMessage renders system events as a neutral line", () => {
   assert.match(html, /data-testid="activity-system"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /工作流已切换/);
+});
+
+test("ActivityMessage localizes the placeholder when the backend sends no body", () => {
+  // 后端只写内容不写壳：pending/running 的正文提示必须由前端按 locale 渲染，
+  // 英文界面不能出现「正在思考...」这种硬编码中文。
+  const pending = render(
+    React.createElement(ActivityMessage, {
+      activity: { ...baseActivity, status: "pending", body: "" },
+    }),
+  );
+  assert.match(pending, /等待回复|Waiting for a reply/);
+
+  const running = render(
+    React.createElement(ActivityMessage, {
+      activity: { ...baseActivity, status: "running", body: "" },
+    }),
+  );
+  assert.match(running, /正在回复|Replying/);
+});
+
+test("ActivityMessage leaves terminal replies to the status badge", () => {
+  const html = render(
+    React.createElement(ActivityMessage, {
+      activity: { ...baseActivity, status: "completed", body: "", summary: "" },
+    }),
+  );
+  assert.match(html, /已完成|Completed/);
+  assert.doesNotMatch(html, /正在回复|等待回复|Replying|Waiting for a reply/);
 });
 
 // ── 组件：输入框（Review Focus #1 的前端半边） ─────────────────────────────
@@ -372,14 +391,17 @@ test("the activity i18n keys exist for both locales", () => {
     "task.activity.empty",
     "task.activity.inputPlaceholder",
     "task.activity.send",
+    "task.activity.sendHint",
     "task.activity.sending",
-    "task.activity.viewRun",
     "task.activity.openSession",
     "task.activity.status.pending",
     "task.activity.status.running",
     "task.activity.status.completed",
     "task.activity.status.failed",
     "task.activity.status.cancelled",
+    "task.activity.status.waiting_user",
+    "task.activity.replyPending",
+    "task.activity.replyRunning",
     "task.activity.loadFailed",
   ]) {
     assert.equal(typeof zhCN[key], "string", `missing zh-CN key: ${key}`);
@@ -407,4 +429,15 @@ test("TaskDetailPanel always renders ConversationView; the legacy branch is gone
   assert.doesNotMatch(panel, /LegacyTaskView/, "no compatibility branch may survive the stage->conversation conversion");
   assert.doesNotMatch(panel, /hasLegacyStages/, "the detail panel must not branch on stage snapshots");
   assert.doesNotMatch(panel, /task_stages_json/, "the stage snapshot marker is no longer a frontend concept");
+});
+
+test("the panel is keyed by task identity so drafts cannot leak into another task", () => {
+  const gate = read("components/app/TaskDetailPanelGate.tsx");
+  // 草稿/工作流选择/运行视图展开态都是任务级本地状态；没有 key 时切任务会复用实例，
+  // 在 A 里写了一半的留言会被发到 B。键里必须带 root_id：任务 id 只在各自项目内唯一。
+  assert.match(
+    gate,
+    /key=\{`\$\{selectedKanbanTask\.root_id \|\| ""\}::\$\{selectedKanbanTask\.id\}`\}/,
+    "TaskDetailPanel must remount per (root_id, task id)",
+  );
 });

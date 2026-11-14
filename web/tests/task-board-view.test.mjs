@@ -19,6 +19,7 @@ const sessionViewerHeader = readFileSync(new URL("../src/components/session/Sess
 const gitDiff = readFileSync(new URL("../src/components/git/GitDiffViewer.tsx", import.meta.url), "utf8");
 const fileViewer = readFileSync(new URL("../src/components/file/FileViewer.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
+const kanbanColumns = readFileSync(new URL("../src/app/useAppKanbanColumns.ts", import.meta.url), "utf8");
 const listView = readFileSync(new URL("../src/components/file/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
@@ -58,17 +59,17 @@ assert.doesNotMatch(
 // 项目看板四块布局（未开始/执行中/待审核/已结束）—— 末列是「已结束」，失败并入取消。
 // 这段曾被别的改动悄悄拆回 done+failed 两列，加断言钉住。
 assert.match(
-  app,
-  /const kanbanStageColumns:[\s\S]*?t\("task\.column\.pending"\)[\s\S]*?t\("task\.column\.running"\)[\s\S]*?t\("task\.column\.waitingUser"\)[\s\S]*?t\("task\.column\.ended"\)/,
+  kanbanColumns,
+  /const kanbanColumns: KanbanColumn\[\] = \[[\s\S]*?t\("task\.column\.pending"\)[\s\S]*?t\("task\.column\.running"\)[\s\S]*?t\("task\.column\.waitingUser"\)[\s\S]*?t\("task\.column\.ended"\)/,
   "the board should have exactly four blocks, ending with 已结束",
 );
 assert.doesNotMatch(
-  app,
+  kanbanColumns,
   /name: t\("task\.column\.failed"\)/,
   "失败/取消 must be merged into the 已结束 block, not its own column",
 );
 assert.match(
-  app,
+  kanbanColumns,
   /t\("task\.column\.ended"\)[\s\S]*?key: "success"[\s\S]*?key: "cancelled"[\s\S]*?task\.status === "fail" \|\| task\.status === "cancelled"/,
   "已结束 must group 完成 and 取消, with 失败 folded into 取消",
 );
@@ -323,22 +324,12 @@ assert.doesNotMatch(
   /TaskRebuildWorktreeIcon/,
   "已收尾的卡片不该再出现重建 worktree 的黄色循环键",
 );
-// 判据必须是一条能整条求值的表达式 —— canComplete 要拿 showAdvance 当反面判据，
-// 所以不能写成 JSX 里的 `showAdvance && !worktreeMissing`。
+// 完成 = 「不在跑、也不是终态」。会话模型下没有「推进」键，「完成」不再需要
+// 与推进门反相兜底。
 assert.match(
   cardRows,
-  /const showAdvance = [^;]*&& canAdvanceCard\(task\);/,
-  "showAdvance 必须是一条能整条求值的表达式",
-);
-// 完成 = 推进键给不出来时的出口（2026-10-06 用户实测：待审核的任务一个键都没有）。
-// 判据是 showAdvance 的反面，只剩两条例外：正在跑、终态。
-// **收尾中不再豁免**（2026-10-07 用户要求）：收尾段卡在待审核时 showAdvance 恒假
-// （收尾段是流水最后一段），旧判据把完成键也一起收走了，于是那张卡只剩一个收尾键
-// —— 而收尾键恰恰是最容易失败的一个（主 checkout 不干净就点不动）。
-assert.match(
-  cardRows,
-  /const canComplete = !terminal && !stageRunning && !showAdvance;/,
-  "「完成」必须兜住 showAdvance 给不出来的一切局面，否则任务在界面上没有出路",
+  /const canComplete = !terminal && !taskRunning;/,
+  "「完成」只被「正在跑」和终态挡住",
 );
 assert.match(
   cardRows,

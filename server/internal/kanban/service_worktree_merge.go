@@ -242,7 +242,7 @@ func (s *Service) handleAutoMergeError(ctx context.Context, store *TaskStore, ta
 			// activity 表不存在（库未迁 comments）时不致命：registry needs_user 仍在。
 			_ = err
 		}
-		_ = s.recordTaskError(ctx, store, task, "", "worktree "+entry.WorktreeID+" 合并冲突，需人工处理")
+		_ = s.recordTaskError(ctx, store, task, "worktree "+entry.WorktreeID+" 合并冲突，需人工处理")
 		return AutoMergeWorktreeResult{Entry: updated, NeedsUser: true, ConflictFiles: conflictFiles},
 			&MergeConflictError{WorktreeID: entry.WorktreeID, ConflictFiles: conflictFiles, Output: conflict.Output}
 	}

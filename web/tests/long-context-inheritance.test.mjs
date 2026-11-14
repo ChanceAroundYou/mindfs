@@ -129,7 +129,6 @@ assert.equal(with1MSuffix("gpt-5", codexKept), "gpt-5", "非 claude 不应发出
 // 任务详情面板与任务模板弹窗后来统一到 StageEditor，onAgentChange 随之只剩
 // StageEditor 这一处 —— 所以这两个文件只需要经过它，不必自己再调一次 resolver。
 const callSites = [
-  ["components/StageEditor.tsx", "共享阶段编辑器（详情面板 / 任务模板弹窗共用）"],
   ["components/ScheduledAgentTaskDialog.tsx", "定时任务弹窗（form.model 会原样 POST）"],
 ];
 for (const [rel, label] of callSites) {
@@ -152,9 +151,8 @@ for (const [rel, label] of callSites) {
   );
 }
 
-// 阶段级的 agent 编辑只剩新建任务面板一处（详情面板已按流水快照分流到
-// LegacyTaskView / ConversationView，不再内联阶段编辑器）。
-// 两个面板都不得直接挂 AgentSelector —— 改 agent 的语义只在 StageEditor 里一份。
+// 阶段模型已整体删除，任务面板不再编辑 agent/model；聊天输入框（ActionBar）
+// 是唯一带 AgentSelector 的书写入口。
 const detailPanelSrc = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
 assert.doesNotMatch(
   detailPanelSrc,
@@ -162,7 +160,7 @@ assert.doesNotMatch(
   "任务详情面板(components/TaskDetailPanel.tsx) 不应直接挂 AgentSelector",
 );
 const inlinePanelSrc = fs.readFileSync(path.join(root, "src/components/app/TaskInlineEditPanel.tsx"), "utf8");
-assert.match(inlinePanelSrc, /<StageEditor\b/, "新建任务面板(components/app/TaskInlineEditPanel.tsx) 必须渲染 StageEditor");
+assert.doesNotMatch(inlinePanelSrc, /<StageEditor\b/, "阶段编辑器已删除，新建任务面板不得再渲染它");
 assert.doesNotMatch(
   inlinePanelSrc,
   /<AgentSelector\b/,

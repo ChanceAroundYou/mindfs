@@ -195,7 +195,7 @@ func TestRunRevisionCASAndFrozenNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "task-1", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("u")}}, StageRun{ID: "s1", TaskID: "task-1", StageIndex: 0, StageName: "u", Role: RoleUser, Status: StageStatusPending}, TaskEvent{ID: "e1", TaskID: "task-1", Type: "created"}); err != nil {
+	if _, err := store.CreateTask(ctx, Task{ID: "task-1", RootID: root.ID, Status: StatusPending}, TaskEvent{ID: "e1", TaskID: "task-1", Type: "created"}); err != nil {
 		t.Fatal(err)
 	}
 	graph := wfDef(wfNode("a", NodeKindAgent), wfNode("b", NodeKindNotify))

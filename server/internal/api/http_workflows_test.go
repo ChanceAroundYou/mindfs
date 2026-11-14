@@ -28,6 +28,23 @@ func workflowsHandler(t *testing.T) (http.Handler, *kanban.Service, string) {
 
 const wfGraphJSON = `{"nodes":[{"id":"a","name":"a","kind":"agent","params":{"prompt":"do it"}}]}`
 
+// 阶段移除后，migrate-workflow 不再能从「任务里剩下的阶段」推导图谱，必须显式给版本。
+// 这两个生命周期用例只需要一个「迁移后停在等人」的局面，所以发布一张单 human_gate 的图。
+const wfGateGraphJSON = `{"nodes":[{"id":"gate","name":"gate","kind":"human_gate","params":{"prompt":"ok?"}}]}`
+
+func publishGateWorkflow(t *testing.T, h http.Handler) string {
+	t.Helper()
+	rec := doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf-gate","author":"test","graph":`+wfGateGraphJSON+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create gate workflow status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, http.MethodPost, "/api/workflows/wf-gate/publish", `{"confirmed_revision":"r1","published_by":"test"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("publish gate workflow status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	return "wf-gate:v1"
+}
+
 // fakeWorkflowRunner lets an API test drive a migrated run through the real
 // per-task driver without starting an agent CLI.
 type fakeWorkflowRunner struct {
@@ -165,7 +182,7 @@ func TestWorkflowDraftLoopInnerGraphRoundTrip(t *testing.T) {
 
 func TestWorkflowRunGetRejectsMismatchedRoot(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: ""})
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Input: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +198,7 @@ func TestWorkflowRunCreateAndEditCAS(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
 	doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf2","author":"agent","graph":`+wfGraphJSON+`}`)
 	doReq(t, h, http.MethodPost, "/api/workflows/wf2/publish", `{"confirmed_revision":"r1","published_by":"user"}`)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: ""}) // empty to avoid triggering background activity goroutine
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Input: ""}) // empty to avoid triggering background activity goroutine
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -251,7 +268,7 @@ func TestWorkflowNodeRunRetryEndpointCreatesLinkedAttempt(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
 	doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf2","author":"agent","graph":`+wfGraphJSON+`}`)
 	doReq(t, h, http.MethodPost, "/api/workflows/wf2/publish", `{"confirmed_revision":"r1","published_by":"user"}`)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: ""}) // empty to avoid triggering background activity goroutine
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Input: ""}) // empty to avoid triggering background activity goroutine
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -320,15 +337,14 @@ func TestWorkflowTaskCompleteAndFailFreezeRun(t *testing.T) {
 	}{{"complete", kanban.StatusSuccess}, {"fail", kanban.StatusFail}} {
 		t.Run(action.verb, func(t *testing.T) {
 			h, svc, rootID := workflowsHandler(t)
+			version := publishGateWorkflow(t, h)
 			detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
-				RootID: rootID,
-				Stages: []kanban.StageTemplate{{Name: "approval", Role: kanban.RoleUser, PromptTemplate: "approve?"}},
-				Input:  "", // empty to avoid triggering background activity goroutine
+				RootID: rootID, Input: "", // empty to avoid triggering background activity goroutine
 			})
 			if err != nil {
 				t.Fatalf("CreateTask: %v", err)
 			}
-			rec := doReq(t, h, http.MethodPost, "/api/tasks/"+detail.Task.ID+"/migrate-workflow", `{"root_id":"`+rootID+`"}`)
+			rec := doReq(t, h, http.MethodPost, "/api/tasks/"+detail.Task.ID+"/migrate-workflow", `{"root_id":"`+rootID+`","version":"`+version+`"}`)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("migrate status=%d body=%s", rec.Code, rec.Body.String())
 			}
@@ -369,15 +385,14 @@ func TestWorkflowTaskCompleteAndFailFreezeRun(t *testing.T) {
 
 func TestWorkflowTaskPauseResumeCancelMapToRunLifecycle(t *testing.T) {
 	h, svc, rootID := workflowsHandler(t)
+	version := publishGateWorkflow(t, h)
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
-		RootID: rootID,
-		Stages: []kanban.StageTemplate{{Name: "approval", Role: kanban.RoleUser, PromptTemplate: "approve?"}},
-		Input:  "", // empty to avoid triggering background activity goroutine
+		RootID: rootID, Input: "", // empty to avoid triggering background activity goroutine
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	rec := doReq(t, h, http.MethodPost, "/api/tasks/"+detail.Task.ID+"/migrate-workflow", `{"root_id":"`+rootID+`"}`)
+	rec := doReq(t, h, http.MethodPost, "/api/tasks/"+detail.Task.ID+"/migrate-workflow", `{"root_id":"`+rootID+`","version":"`+version+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("migrate status=%d body=%s", rec.Code, rec.Body.String())
 	}

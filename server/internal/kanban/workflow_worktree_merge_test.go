@@ -48,8 +48,7 @@ func newGitWorkflowFixture(t *testing.T, mainDir, taskID, runID, integration str
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: taskID + "-stage", TaskID: taskID, StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: taskID + "-event", TaskID: taskID, Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

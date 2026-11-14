@@ -326,7 +326,7 @@ export const enUSWorkspace = {
   "onboarding.mainMenu.title": "More main-view actions",
   "onboarding.mainMenu.body": "Open the vertical-dot menu to switch between the task board and file browser, change sorting, manage worktrees and scheduled tasks, rename the project, upload files, or remove the project.",
   "onboarding.tasks.title": "Create and advance tasks",
-  "onboarding.tasks.body": "Use the plus button to create a task. On the board you can open its session, edit input, advance stages, run now, complete, or cancel it.",
+  "onboarding.tasks.body": "Use the plus button to create a task. On the board you can open its session, keep commenting, complete, or cancel it.",
   "onboarding.sessionActions.title": "Session actions",
   "onboarding.sessionActions.body": "Search session history or import existing Agent sessions here. Each session menu also supports pinning, syncing, renaming, and deletion.",
   "onboarding.shortcuts.title": "Three fast shortcuts",

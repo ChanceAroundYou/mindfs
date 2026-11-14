@@ -36,6 +36,7 @@ import { reportError } from "../services/net/error";
 import { confirmDialog, promptDialog } from "../services/dialog";
 import { firstTaskInputFromDetail, taskSessionKeysFromDetail } from "./appTask";
 import { type ManagedRootPayload } from "./appMisc";
+import type { MoveKanbanAction } from "../components/task/taskBoardTypes";
 import { useRefreshSpin } from "../hooks";
 
 export interface UseTaskBoardParams {
@@ -305,7 +306,7 @@ export function useTaskBoard(params: UseTaskBoardParams) {
 
 	  // 跨项目工作台状态与逻辑见 kanbanTaskPanel 定义前（workspaceOpen 等）
 
-  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree") => {
+  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: MoveKanbanAction) => {
     const rootId = task.root_id || currentRootIdRef.current;
     if (!rootId) return;
     let reason = "";
@@ -360,12 +361,10 @@ export function useTaskBoard(params: UseTaskBoardParams) {
             // worktree 徽标从「有树」变成「已收尾」，applyTaskDetails 管不到这个。
             refreshWorkspaceBoard();
             break;
-          case "nudged":
-            reportError("file.write_failed", t("task.finishWorktreeNudged"), { severity: "info", recoverable: false });
-            break;
           default:
-            // stage_added：只追加了收尾段并起 agent。清场由服务端在那一段成功之后
-            // 自己做，结论走 WS task.finish_teardown —— 这会儿还什么都没成，不说成功。
+            // finish_turn_started：收尾回合已经起在任务主会话里。清场由服务端在回合
+            // 成功之后自己做，结论走 WS task.finish_teardown —— 这会儿还什么都没成，
+            // 不说成功。
             reportError("file.write_failed", t("task.finishWorktreeStarted"), { severity: "info", recoverable: false });
             break;
         }

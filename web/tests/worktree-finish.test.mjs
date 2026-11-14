@@ -109,56 +109,41 @@ assert.match(
   /defer release\(\)/,
   "the finish lock must be held across the whole teardown, not just the first check",
 );
+// 同一任务同一时刻只允许一个收尾流程：拿不到锁就用哨兵错误拒绝，不静默排队。
 assert.match(
   serviceSrc,
-  /if _, finishing := s\.taskFinish\[key\]; finishing \{\s*s\.mu\.Unlock\(\)\s*return errTaskFinishing/,
-  "starting an agent during a finish must be refused loudly, not dropped silently",
-);
-// 锁的「所有权」必须可辨认：两个并发收尾共一个 bool 时，先完成的那个 release 会把
-// 还在跑的另一个一起解锁，之后 RunTask 就能对着一个正在被拆的目录起来。
-assert.match(
-  serviceSrc,
-  /if _, busy := s\.taskFinish\[key\]; busy \{\s*return nil, errors\.New\("该任务正在收尾中/,
-  "a second concurrent finish must be refused, not run alongside the first",
+  /func \(s \*Service\) acquireTaskFinish\(rootID, taskID string\) \(func\(\), error\)/,
+  "the finish lock must be a named, testable acquisition",
 );
 assert.match(
   serviceSrc,
-  /if held, ok := s\.taskFinish\[key\]; ok && held == token \{\s*delete\(s\.taskFinish, key\)/,
-  "release must only drop its own lock, never the one a concurrent finish still holds",
+  /if _, busy := s\.taskFinish\[key\]; busy \{\s*s\.mu\.Unlock\(\)\s*return nil, errTaskFinishing/,
+  "a second concurrent finish must be refused loudly with the sentinel, not run alongside the first",
 );
-
-// 准入必须是**互斥的一段**，不能只是「查一下」：查通过之后、状态改成 running 之前，
-// 一个收尾抢进来插队的后果是「状态 running、没有执行体」——没有 agent 会再碰它。
-// 所以准入和状态变更绑在同一把锁里，收尾要么进不来，要么等这段走完。
+assert.match(serviceSrc, /errTaskFinishing = errors\.New\(/, "the refusal must be a sentinel error the HTTP layer can map");
+// 锁在回合开始前拿到、回合结束才释放 —— 中间隔着 git merge / worktree remove，
+// 期间任何新的执行体都能看到 Finishing() 为真。
 assert.match(
   serviceSrc,
-  /func \(s \*Service\) beginRunAdmission\(rootID, taskID string\) \(func\(\), error\)/,
-  "run admission must be a held lock, not a non-atomic pre-check",
+  /release, err := s\.acquireTaskFinish\(in\.RootID, in\.TaskID\)[\s\S]{0,1200}?go s\.runFinishTurn\(context\.WithoutCancel\(ctx\), in\.RootID, task, release\)/,
+  "BeginFinishWorktree must hand the lock to the background finish turn",
 );
 assert.match(
   serviceSrc,
-  /if _, admitted := s\.taskAdmit\[key\]; admitted \{\s*return nil, errors\.New\("该任务正在启动中/,
-  "a finish must be refused while a run admission is in flight",
+  /func \(s \*Service\) runFinishTurn\([\s\S]{0,200}?defer release\(\)/,
+  "the finish turn must release the lock on every exit path",
 );
-const resumeAt = serviceSrc.indexOf("func (s *Service) Resume(");
-const resumeEnd = serviceSrc.indexOf("\nfunc ", resumeAt + 1);
-const resumeBody = serviceSrc.slice(resumeAt, resumeEnd > resumeAt ? resumeEnd : resumeAt + 2500);
 assert.match(
-  resumeBody,
-  /beginRunAdmission\(in\.RootID, in\.TaskID\)[\s\S]{0,120}?defer release\(\)[\s\S]{0,200}?setTaskStatus\(ctx, in\.RootID, in\.TaskID, StatusRunning/,
-  "Resume must hold admission across both the status change and RunTask",
+  serviceSrc,
+  /func \(s \*Service\) Finishing\(rootID, taskID string\) bool/,
+  "Finishing must expose the in-flight state for the HTTP layer and the UI",
 );
-// 五个动词都要走同一把准入锁，别只改一个。
-for (const verb of ["Resume", "Next", "RerunStage", "RunNow"]) {
-  const at = serviceSrc.indexOf(`func (s *Service) ${verb}(`);
-  assert.ok(at > 0, `${verb} must exist`);
-  const body = serviceSrc.slice(at, at + 2500);
-  assert.match(
-    body,
-    /beginRunAdmission\(/,
-    `${verb} must take a run admission before mutating task state`,
-  );
-}
+// 清场本身也要在动 git 之前再抢一次锁（HTTP 同步路径与后台回合走同一个入口）。
+assert.match(
+  serviceSrc,
+  /release, err := s\.acquireTaskFinish\(in\.RootID, in\.TaskID\)[\s\S]{0,200}?defer release\(\)/,
+  "FinishTaskWorktree must hold the lock across the whole teardown",
+);
 
 // ── 服务端：两条口径由用户拍板，不能被后续改动悄悄改掉 ──
 assert.match(
@@ -309,7 +294,7 @@ assert.doesNotMatch(
 // 转下去 —— 用户实测的「收尾一直转、点不动、也结束不了」就是这个形状。
 assert.match(
   panelHook,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true;/,
+  /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true;/,
   "the finish button requires a live worktree; terminal and finishing tasks are NOT withheld",
 );
 assert.doesNotMatch(
@@ -346,11 +331,7 @@ assert.match(
   /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
   "the card button must match the panel exactly: same gates, same terminal and finishing exemptions",
 );
-assert.doesNotMatch(
-  card,
-  /worktreeTagState === "finishing" \? \(\s*<span[\s\S]{0,400}?<TaskQueuedSpinnerIcon \/>/,
-  "the card must not swap the finish button for a spinner either",
-);
+assert.doesNotMatch(card, /TaskQueuedSpinnerIcon/, "the card must not swap the finish button for a spinner either");
 assert.match(card, /onMove\(task, "finish-worktree"\)/, "the card button must dispatch finish-worktree");
 assert.match(app, /action === "finish-worktree"/, "App must handle the finish-worktree card action");
 

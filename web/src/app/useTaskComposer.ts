@@ -15,8 +15,7 @@ import { fetchGitBranches, type GitBranchesPayload } from "../services/git";
 import { createTask } from "../services/tasks";
 import { uploadFiles, formatFileToken, fileTokenPath, isUploadAbortError } from "../services/upload";
 import { reportError } from "../services/net/error";
-import { firstUserInputTemplate, taskStagesForCreate, findTaskProjectRoot, parseTaskProjectScopeKey, taskProjectScopeKey, type TaskInlineEditState } from "./appTask";
-import { defaultTaskFlowStages } from "./defaultTaskFlow";
+import { findTaskProjectRoot, parseTaskProjectScopeKey, taskProjectScopeKey, type TaskInlineEditState } from "./appTask";
 import { loadTaskCreateWorktreePreference, saveTaskCreateWorktreePreference } from "./appStorage";
 import type { CandidateItem } from "../services/candidates";
 
@@ -38,7 +37,6 @@ export interface UseTaskComposerParams {
   setTaskInlineActiveToken: Dispatch<SetStateAction<{ type: "file" | "slash" | "prompt" | "command"; query: string } | null>>;
   setTaskInlineCandidates: Dispatch<SetStateAction<CandidateItem[]>>;
   setTaskInlineCandidateIndex: Dispatch<SetStateAction<number>>;
-  setTaskInlineHelpKey: Dispatch<SetStateAction<string>>;
   setTaskInlineSaving: Dispatch<SetStateAction<boolean>>;
   setTaskInlineUploadProgress: Dispatch<SetStateAction<import("../services/upload").UploadProgress | null>>;
   setTaskWorktreeBranches: Dispatch<SetStateAction<GitBranchesPayload>>;
@@ -69,7 +67,6 @@ export function useTaskComposer(params: UseTaskComposerParams) {
     setTaskInlineActiveToken,
     setTaskInlineCandidates,
     setTaskInlineCandidateIndex,
-    setTaskInlineHelpKey,
     setTaskInlineSaving,
     setTaskInlineUploadProgress,
     setTaskWorktreeBranches,
@@ -139,11 +136,6 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
 	  const openTaskCreateDialog = useCallback((targetRootId?: string, targetNodeId?: string) => {
 
-	    // 模板已下线（Phase 3）：新建任务固定使用内置默认流水。
-	    const stages = defaultTaskFlowStages();
-
-	    const initialText = firstUserInputTemplate(stages);
-
 	    const rootId = targetRootId || currentRootIdRef.current || "";
 
 	    if (!rootId) return;
@@ -160,7 +152,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
 	    setTaskInlineEdit({
 
-	      text: initialText,
+	      text: "",
 
 	      targetRootId: targetRootId || undefined,
 
@@ -185,9 +177,6 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 	      },
 
 	      name: "",
-	      // 首段的「立即执行」：面板开出来就照内置流水的值。
-	      startImmediately: stages[0]?.start_immediately === true,
-	      previousInputs: [],
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	      worktreeBranchMode: worktreePref.worktreeBranchMode,
 	      worktreeBranch: worktreePref.worktreeBranch,
@@ -278,7 +267,6 @@ export function useTaskComposer(params: UseTaskComposerParams) {
     setTaskInlineActiveToken(null);
     setTaskInlineCandidates([]);
     setTaskInlineCandidateIndex(0);
-    setTaskInlineHelpKey("");
     setTaskInlineSaving(false);
     setTaskInlineUploadProgress(null);
     taskInlineUploadAbortRef.current?.abort();
@@ -392,23 +380,13 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
 
-      // 流水总是随包带上：后端不再维护流水库，也没法替创建请求补齐。
-      // taskStagesForCreate 在内置默认流水上应用面板里的 agent/model/effort 与「立即执行」覆盖。
-      const createStages = taskStagesForCreate(
-
-        defaultTaskFlowStages(),
-
-        { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride, startImmediately: edit.startImmediately },
-
-      );
-
+      // 建任务只带一条留言 + worktree 配置：这一轮走直连回话还是某个 workflow，
+      // 由后端 router 决定（AGENTS.md 事实 13）。
       const detail = await createTask(
 
         rootId,
 
         payload,
-
-        createStages,
 
         createWorktree,
 

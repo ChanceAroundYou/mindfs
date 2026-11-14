@@ -3,7 +3,7 @@ import { fetchTaskDetails } from "../services/tasks";
 import { useAppKanbanTaskPanel } from "./useAppKanbanTaskPanel";
 import { useAppRootContentRenderers } from "./useAppRootContentRenderers";
 import { useAppSessionView } from "./useAppSessionView";
-import { useAppKanbanStageColumns } from "./useAppKanbanStageColumns";
+import { useAppKanbanColumns } from "./useAppKanbanColumns";
 import { useAppSlashCommandResult } from "./useAppSlashCommandResult";
 import { useAppMainViewActions } from "./useAppMainViewActions";
 import { useAppWorkspaceActions } from "./useAppWorkspaceActions";
@@ -291,8 +291,8 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     handleGitDiscardItem, switchGitBranch, treeSortMode,
   });
   // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
-  const { kanbanStageColumns
-  } = useAppKanbanStageColumns({
+  const { kanbanColumns
+  } = useAppKanbanColumns({
     kanbanTasks, t,
   });
   const {
@@ -321,7 +321,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
   }, [openTaskCreateDialog]);
   // 工作台里点任务卡：留在工作台，就地弹任务详情面板。
   // 不走 openWorkspaceProject —— 那会切项目、切看板、改 URL，等于把人甩出工作台。
-  // overview 只带任务不带 stage_runs/events（详情面板要后者），所以按项目内任务号
+  // overview 只带任务不带 events（详情面板要后者），所以按项目内任务号
   // 取那一条完整详情，灌进 taskDetailsById 后由 selectedKanbanTask 接手。
   const openWorkspaceTaskDetail = useCallback(async (item: { root_id: string; nodeId: string; task: KanbanTask }) => {
     const rootId = item.root_id;
@@ -340,7 +340,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject,
     setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject,
     openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading,
-    kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds,
+    kanbanColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds,
     collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns,
     taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor,
     handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen,

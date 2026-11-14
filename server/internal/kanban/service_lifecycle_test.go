@@ -5,105 +5,15 @@ import (
 	"testing"
 )
 
-func TestUpdateCurrentInputKeepsPreviousStageInput(t *testing.T) {
-	ctx := context.Background()
-	svc, root := newTestService(t, nil)
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{
-		RootID: root.ID,
-		Stages: []StageTemplate{
-			userStage("Describe"),
-			agentStage("Fix", "Fix this:\n{previous_input}"),
-		},
-		Input: "first input",
-	})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	detail, err = svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
-	if err != nil {
-		t.Fatalf("Next: %v", err)
-	}
-	for _, run := range detail.StageRuns {
-		if run.StageIndex == 1 && run.Input != "" {
-			t.Fatalf("new current stage input=%q, want empty", run.Input)
-		}
-	}
-	updated, err := svc.UpdateCurrentInput(ctx, UpdateTaskInput{RootID: root.ID, TaskID: detail.Task.ID, Input: "current input"})
-	if err != nil {
-		t.Fatalf("UpdateCurrentInput: %v", err)
-	}
-	firstRun := StageRun{}
-	currentRun := StageRun{}
-	for _, run := range updated.StageRuns {
-		if run.StageIndex == 0 {
-			firstRun = run
-		}
-		if run.StageIndex == 1 {
-			currentRun = run
-		}
-	}
-	if firstRun.Input != "first input" {
-		t.Fatalf("first stage input=%q, want first input", firstRun.Input)
-	}
-	if currentRun.Input != "current input" {
-		t.Fatalf("current stage input=%q, want current input", currentRun.Input)
-	}
-}
-
-func TestCompleteFinalWaitingTask(t *testing.T) {
-	ctx := context.Background()
-	svc, root := newTestService(t, &fakeRunner{})
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{
-		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe")},
-		Input:  "done",
-	})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if detail.Task.Status != StatusPending {
-		t.Fatalf("task status=%s, want pending（新建任务未开始）", detail.Task.Status)
-	}
-	// Complete 只接受等待用户态；未开始态先「开始」，由执行体把单段 user 任务推到等待用户。
-	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
-		t.Fatalf("RunNow: %v", err)
-	}
-	waitForCondition(t, func() bool {
-		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
-		return err == nil && got.Task.Status == StatusWaitingUser
-	})
-	completed, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "approved"})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if completed.Task.Status != StatusSuccess {
-		t.Fatalf("task status=%s, want success", completed.Task.Status)
-	}
-	if completed.Task.CompletedAt == "" {
-		t.Fatalf("completed_at empty")
-	}
-}
-
 // 任务状态不跟会话/worktree 绑死：会话被删、worktree 丢失后任务会一直卡在 running，
 // 此时必须还能被人工完成，否则这些任务永远动不了。
-func TestCompleteStuckRunningTaskAfterSessionLost(t *testing.T) {
+func TestCompleteStuckRunningTask(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{
-		RootID: root.ID,
-		Stages: []StageTemplate{
-			userStage("Describe"),
-			agentStage("Fix", "Fix this:\n{previous_input}"),
-		},
-		Input: "broken save button",
-	})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "broken save button"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
-		t.Fatalf("Next: %v", err)
-	}
-	// 任务已经进入 agent 段（running）后，会话/worktree 丢失：执行体不再回来。
 	store, err := svc.taskStore(root.ID)
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
@@ -158,7 +68,7 @@ func TestTerminalTaskCannotBeResurrected(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, root := newTestService(t, nil)
-			d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+			d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 			if err != nil {
 				t.Fatalf("CreateTask: %v", err)
 			}
@@ -189,8 +99,7 @@ func TestTerminalTaskCannotBeResurrected(t *testing.T) {
 func TestPauseResumeRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)
-	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID,
-		Stages: []StageTemplate{userStage("A"), agentStage("B", "do {previous_input}")}, Input: "x"})
+	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -211,14 +120,13 @@ func TestPauseResumeRoundTrip(t *testing.T) {
 }
 
 // 状态变更必须发 task.updated，否则别的客户端看不到：
-// setTaskStatus（Pause/Resume/Cancel/Fail）与 moveTo（换段）以前都只写库、
-// 由 HTTP handler 事后补一次，于是 KickPending 等非 HTTP 入口推不出去。
+// setTaskStatus（Pause/Resume/Cancel/Fail）以前只写库、由 HTTP handler 事后补一次，
+// 于是 KickPending 等非 HTTP 入口推不出去。
 func TestStatusChangeAlwaysBroadcasts(t *testing.T) {
 	ctx := context.Background()
 	runner := &fakeRunner{}
 	svc, root := newTestService(t, runner)
-	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID,
-		Stages: []StageTemplate{userStage("A"), agentStage("B", "do {previous_input}")}, Input: "x"})
+	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -245,33 +153,14 @@ func TestStatusChangeAlwaysBroadcasts(t *testing.T) {
 	}
 }
 
-// moveTo 换段指针后必须播：卡片上的「当前在第几段」就挂在这条上。
-func TestAdvanceBroadcastsNewStage(t *testing.T) {
-	ctx := context.Background()
-	runner := &fakeRunner{}
-	svc, root := newTestService(t, runner)
-	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID,
-		Stages: []StageTemplate{userStage("A"), agentStage("B", "do {previous_input}")}, Input: "x"})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	before := runner.updateCount()
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
-		t.Fatalf("Next: %v", err)
-	}
-	if got := runner.updateCount(); got <= before {
-		t.Fatalf("broadcasts after Next = %d, want > %d (moveTo must broadcast)", got, before)
-	}
-}
-
 func TestTaskNumbersIncrement(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)
-	first, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "one"})
+	first, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "one"})
 	if err != nil {
 		t.Fatalf("CreateTask first: %v", err)
 	}
-	second, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "two"})
+	second, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "two"})
 	if err != nil {
 		t.Fatalf("CreateTask second: %v", err)
 	}
@@ -285,36 +174,4 @@ func TestTaskNumbersIncrement(t *testing.T) {
 	if len(numbered) != 1 || numbered[0].Task.ID != second.Task.ID {
 		t.Fatalf("task number lookup = %#v, want second task", numbered)
 	}
-}
-
-// running / paused 下的「立即执行」不再静默回 200：调用方拿得到明确错误，
-// 而不是 apply 完一个没变的详情、看着像按钮坏了。
-func TestRunNowRejectsRunningTaskWithExplicitError(t *testing.T) {
-	ctx := context.Background()
-	runner := &fakeRunner{}
-	runner.gate = make(chan struct{})
-	svc, root := newTestService(t, runner)
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{
-		RootID: root.ID,
-		Stages: []StageTemplate{
-			userStage("Describe"),
-			agentStage("Fix", "Fix:\n{previous_input}"),
-			agentStage("Review", "Review."),
-		},
-		Input: "change",
-	})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
-		t.Fatalf("Next to agent: %v", err)
-	}
-	waitForCondition(t, func() bool {
-		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
-		return err == nil && d.Task.Status == StatusRunning
-	})
-	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
-		t.Fatal("RunNow on a running task must return an explicit error, not a silent 200")
-	}
-	close(runner.gate)
 }

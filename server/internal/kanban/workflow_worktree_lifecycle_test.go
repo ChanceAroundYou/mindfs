@@ -26,7 +26,6 @@ func TestWorkflowNodeRunPersistsWorktreeAssociationAcrossReopen(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	if _, err := store.CreateTask(ctx, Task{ID: "task-persist", RootID: root.ID, Status: StatusPending},
-		StageRun{ID: "stage-persist", TaskID: "task-persist", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
 		TaskEvent{ID: "evt-persist", TaskID: "task-persist", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -222,8 +221,7 @@ func newWorkflowWorktreeFixture(t *testing.T, taskID, runID string, independent 
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: taskID + "-stage", TaskID: taskID, StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: taskID, RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: taskID + "-event", TaskID: taskID, Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

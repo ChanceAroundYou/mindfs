@@ -27,10 +27,8 @@ import {
   rebuildTaskWorktree,
   upsertCachedTaskDetails,
   type KanbanTask,
-  type StageRun,
   type TaskDetail,
   type TaskOverviewItem,
-  type StageTemplate,
 } from "../services/tasks";
 import { TaskInlineEditState } from "./appTask";
 
@@ -69,8 +67,8 @@ useEffect(() => {
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      // slash 候选按面板里覆盖的 agent，没覆盖就用默认 agent。
-      const agent = taskInlineEdit?.agentOverride || DEFAULT_TASK_AGENT;
+      // 建任务不再选 agent（路由由后端 router 决定），slash 候选固定取默认 agent。
+      const agent = DEFAULT_TASK_AGENT;
       fetchCandidates({
         rootId: tokenRootId,
         type: taskInlineActiveToken.type === "file"
@@ -100,5 +98,5 @@ useEffect(() => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineEdit?.agentOverride, taskInlineActiveToken])
+  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineActiveToken])
 }

@@ -143,11 +143,10 @@ assert.match(hook, /if \(filter === "blocked"\) return isBlockedTask\(task\);/, 
 assert.match(hook, /tasks: bucket\.filter\(\(item\) => matchesFilter\(item\.task, filter\)\)/, "the row list must be exactly what the filter matched");
 assert.doesNotMatch(projectRow, /\[\.\.\.group\.active, \.\.\.group\.ended\]/, "ended tasks must not be appended under any filter");
 
-// 7) 就地操作仍在：完成/立刻跑/暂停/继续，都走 App 传来的统一回调。
+// 7) 就地操作仍在：完成/暂停/继续/取消，都走 App 传来的统一回调。
 //    卡片两行已抽进共享的 TaskCardRows（看板同一份），所以这三件事由它保证，
 //    工作台只负责把 onMove 透下去。
 assert.match(cardRows, /onMove\(task, "complete"\)/, "complete stays inline");
-assert.match(cardRows, /onMove\(task, "run-now"\)/, "run-now stays inline");
 assert.match(cardRows, /onMove\(task, "pause"\)/, "pause stays inline");
 assert.match(cardRows, /onMove\(task, "resume"\)/, "resume stays inline");
 assert.match(taskRow, /onMove=\{\(_cardTask, action\) => onMove\(item, action\)\}/, "the move is reported against the workbench item, not the bare task");

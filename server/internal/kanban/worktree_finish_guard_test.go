@@ -34,7 +34,6 @@ func TestFinishTaskWorktreeStopsOnConflictAndKeepsEverything(t *testing.T) {
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:             root.ID,
-		Stages:             []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
 		Input:              "something to fix",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "existing",

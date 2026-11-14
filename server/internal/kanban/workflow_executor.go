@@ -389,18 +389,9 @@ func (s *Service) finalizeWorkflowNodeTerminal(ctx context.Context, store *TaskS
 		record(s.saveWorkflowNodeProjection(ctx, store, run, node.ID, status, output))
 	}
 
-	activityType, author, role, body := workflowNodeActivity(status, reason, output)
-	_, activityErr := store.AppendTaskActivity(ctx, TaskActivity{
-		ID:        "wf:" + nodeRun.ID + ":" + eventType,
-		TaskID:    run.TaskID,
-		Type:      activityType,
-		Author:    author,
-		Role:      role,
-		Body:      body,
-		RunID:     run.ID,
-		NodeRunID: nodeRun.ID,
-	})
-	record(activityErr)
+	// 对话流归 Router（ActivityService）所有：节点终态只在它自己那一轮回复上
+	// 写进度，绝不新开一条活动行。一轮运行只对应一条 Agent 回复。
+	s.updateWorkflowReplyProgress(ctx, store, run, node.ID)
 	// D3：节点报告完成后，先把绑定到它的排队留言按 FIFO 续聊到同一 session，
 	// 再让 driver 评估出边。失败/阻塞的节点不转发留言，直接进入 blocked。
 	//
@@ -452,39 +443,4 @@ func (s *Service) saveWorkflowNodeProjection(ctx context.Context, store *TaskSto
 		*run = *fresh
 	}
 	return fmt.Errorf("%w: node %s projection lost %d revision races", ErrRunConflict, nodeID, attempts)
-}
-
-func workflowNodeActivity(status, reason string, output map[string]any) (activityType, author, role, body string) {
-	reason = strings.TrimSpace(reason)
-	switch status {
-	case NodeRunSuccess:
-		summary, _ := output["summary"].(string)
-		summary = strings.TrimSpace(summary)
-		if summary == "" {
-			if len(output) > 0 {
-				if raw, err := marshalWorkflowJSON(output); err == nil {
-					summary = raw
-				}
-			}
-		}
-		if summary == "" {
-			summary = "节点已完成"
-		}
-		return ActivityTypeAgentReply, RoleAgent, RoleAgent, summary
-	case NodeRunWaitingUser:
-		if reason == "" {
-			reason = "节点未回报完成"
-		}
-		return ActivityTypeAttention, "system", "system", "等待你处理：" + reason
-	case NodeRunUnknown:
-		if reason == "" {
-			reason = "执行状态无法确定"
-		}
-		return ActivityTypeAttention, "system", "system", "执行状态未知：" + reason
-	default:
-		if reason == "" {
-			reason = "节点执行失败"
-		}
-		return ActivityTypeAttention, "system", "system", "执行失败：" + reason
-	}
 }

@@ -75,30 +75,30 @@ func readBroadcast(t *testing.T, conn *websocket.Conn, wantType string) WSRespon
 // 而 session.meta.updated 那个 handler 只写 sessionCacheRef 里**已存在**的条目。
 // 少这一条的症状就是「用户不在这个项目页时，看板建的会话在库里、在 API 返回里、
 // 就是不在对话列表里」（实测：llmux 任务 #5）。
-func TestEnsureAgentSessionBroadcastsSessionCreated(t *testing.T) {
+func TestEnsureDirectSessionBroadcastsSessionCreated(t *testing.T) {
 	registry := fs.NewRegistry(filepath.Join(t.TempDir(), "registry.json"))
 	root, err := registry.Upsert(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	app := &AppContext{Dirs: registry}
-	conn := dialHub(t, app.GetSessionStreamHub())
-
-	key, err := app.EnsureAgentSession(context.Background(), kanban.AgentStageExecution{
+	svc := kanban.NewService(app)
+	app.Kanban = svc
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
 		RootID: root.ID,
-		Task: kanban.Task{
-			ID:         "task_1",
-			Name:       "看板任务",
-			TaskNumber: 5,
-		},
-		Stage:  kanban.StageTemplate{Agent: "claude", Model: "test-model"},
-		Prompt: "hello",
+		Name:   "看板任务",
 	})
 	if err != nil {
-		t.Fatalf("EnsureAgentSession: %v", err)
+		t.Fatalf("CreateTask: %v", err)
+	}
+	conn := dialHub(t, app.GetSessionStreamHub())
+
+	key, err := app.ensureDirectSession(context.Background(), detail.Task)
+	if err != nil {
+		t.Fatalf("ensureDirectSession: %v", err)
 	}
 	if strings.TrimSpace(key) == "" {
-		t.Fatal("EnsureAgentSession returned an empty session key")
+		t.Fatal("ensureDirectSession returned an empty session key")
 	}
 
 	// 两条都要到：meta.updated 是既有契约（已缓存条目更新），created 是新增的那条。
@@ -120,19 +120,13 @@ func TestEnsureAgentSessionBroadcastsSessionCreated(t *testing.T) {
 		t.Fatalf("session.key = %q, want %q", got, key)
 	}
 	// 列表行形状必须齐全 —— 前端 toSessionItem 靠这些字段建条目
-	for _, field := range []string{"type", "name", "task_id", "agent", "created_at", "updated_at"} {
+	for _, field := range []string{"type", "name", "task_id", "created_at", "updated_at"} {
 		if _, ok := item[field]; !ok {
 			t.Fatalf("session.created payload is missing %q: %#v", field, item)
 		}
 	}
-	if got, _ := item["task_id"].(string); got != "task_1" {
-		t.Fatalf("task_id = %q, want task_1 (kanban-created sessions must carry their task)", got)
-	}
-	// 首轮还没跑，这条广播就得带上 agent —— 看板任务卡片/会话列表的状态圆圈右下角
-	// 徽标直接读它，为空时前端 AgentIcon 落回占位「AI」。列表行是 meta-only 的，
-	// agent 只能从 AgentCtxSeq 单键推出，而它靠建会话时写的绑定回填。
-	if got, _ := item["agent"].(string); got != "claude" {
-		t.Fatalf("agent = %q, want claude（首轮未结束时徽标必须已正确，而不是 AI 占位）", got)
+	if got, _ := item["task_id"].(string); got != detail.Task.ID {
+		t.Fatalf("task_id = %q, want %q (kanban-created sessions must carry their task)", got, detail.Task.ID)
 	}
 }
 

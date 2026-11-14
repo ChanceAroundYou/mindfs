@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useI18n } from "../../i18n/index";
 import { useTaskActivities } from "../../hooks/useTaskActivities";
 import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
-import type { WorkflowRecommendation } from "../../shared/workflowModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
 
@@ -12,7 +11,6 @@ export type ConversationMessagesProps = {
   error?: string | null;
   onReload?: () => void;
   onOpenSession?: (sessionKey: string) => void;
-  onViewRun?: (runId: string) => void;
 };
 
 /**
@@ -25,7 +23,6 @@ export function ConversationMessages({
   error,
   onReload,
   onOpenSession,
-  onViewRun,
 }: ConversationMessagesProps) {
   const { t } = useI18n();
 
@@ -75,7 +72,6 @@ export function ConversationMessages({
           key={activity.id}
           activity={activity}
           onOpenSession={onOpenSession}
-          onViewRun={onViewRun}
         />
       ))}
     </div>
@@ -88,9 +84,7 @@ export type ConversationViewProps = {
   nodeId?: string;
   /** 终态任务不能再发留言；输入框会换成一句说明。 */
   disabled?: boolean;
-  recommendation?: WorkflowRecommendation | null;
   onOpenSession?: (sessionKey: string) => void;
-  onViewRun?: (runId: string) => void;
 };
 
 /**
@@ -104,9 +98,7 @@ export function ConversationView({
   rootId,
   nodeId,
   disabled = false,
-  recommendation,
   onOpenSession,
-  onViewRun,
 }: ConversationViewProps) {
   const { t } = useI18n();
   const { activities, loading, error, reload, send, sending, sendError } = useTaskActivities(
@@ -141,7 +133,6 @@ export function ConversationView({
         error={activities.length === 0 ? error : null}
         onReload={() => void reload()}
         onOpenSession={onOpenSession}
-        onViewRun={onViewRun}
       />
 
       {disabled ? (
@@ -167,10 +158,8 @@ export function ConversationView({
             setChoice(nextChoice);
             setVersionId(nextVersionId);
           }}
-          recommendation={recommendation}
           sending={sending}
           error={sendError}
-          disabled={disabled}
           onSend={() => void handleSend()}
         />
       )}

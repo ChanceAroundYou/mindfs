@@ -50,14 +50,8 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 	}
 
 	taskReads := map[string]bool{}
-	stageReads := map[string]bool{}
-	// stage.snapshot 是历史模板段（TaskTemplateStage）的字段，模板库已下线，
-	// 任务自己的段没有它，投影里也不该有。
-	const stageSnapshot = "snapshot"
-	// 前缀必须是行首或非标识符字符：`worktree_finish_stage.go` 里的 `stage.go`
-	// 是文件名不是字段读取，不挡掉的话这条测试会去断言一个叫 "go" 的键。
+	// 前缀必须是行首或非标识符字符：文件名里的 `task.go` 不是字段读取。
 	taskFieldRe := regexp.MustCompile(`(?:^|[^A-Za-z0-9_])task\.([A-Za-z_][A-Za-z0-9_]*)`)
-	stageFieldRe := regexp.MustCompile(`(?:^|[^A-Za-z0-9_])stage\.([A-Za-z_][A-Za-z0-9_]*)`)
 	for _, src := range []string{string(cardSrc), string(appTaskSrc)} {
 		for _, m := range taskFieldRe.FindAllStringSubmatch(src, -1) {
 			if i18nKeys[m[1]] {
@@ -65,39 +59,25 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 			}
 			taskReads[m[1]] = true
 		}
-		for _, m := range stageFieldRe.FindAllStringSubmatch(src, -1) {
-			if m[1] == stageSnapshot {
-				continue
-			}
-			stageReads[m[1]] = true
-		}
 	}
-	if len(taskReads) == 0 || len(stageReads) == 0 {
+	if len(taskReads) == 0 {
 		t.Fatal("一条字段读取都没抽到 —— 正则或文件路径变了，先修这条测试再动投影")
 	}
 
 	// ② 造一个「什么都有」的任务，投影后逐字段断言。
 	task := kanban.Task{
-		ID:                "task_parity",
-		TaskNumber:        7,
-		RootID:            "mindfs",
-		Name:              "卡片字段守卫",
-		TaskTemplateID:    "tpl_1",
-		TaskTemplateName:  "默认模板",
-		CurrentStageIndex: 1,
-		CurrentStageName:  "执行",
-		Status:            "waiting_user",
-		MainSessionKey:    "1791109592-9f9b6b12c4f1",
-		CreatedAt:         time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:         time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC),
-		Stages: []kanban.StageTemplate{
-			{Name: "任务输入", Role: "user"},
-			{Name: "执行", Role: "agent", Kind: kanban.StageKindWorktreeFinish},
-		},
-		CreateWorktree:     true,
-		WorktreeBuilt:      true,
-		WorktreePath:       "/tmp/worktree/task_parity",
-		CurrentStageStatus: "waiting_user",
+		ID:               "task_parity",
+		TaskNumber:       7,
+		RootID:           "mindfs",
+		Name:             "卡片字段守卫",
+		TaskTemplateID:   "tpl_1",
+		TaskTemplateName: "默认模板",
+		Status:           "waiting_user",
+		MainSessionKey:   "1791109592-9f9b6b12c4f1",
+		CreatedAt:        time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:        time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC), CreateWorktree: true,
+		WorktreeBuilt: true,
+		WorktreePath:  "/tmp/worktree/task_parity",
 		AuxFlags: kanban.TaskAuxFlags{
 			AskUserWaiting: true,
 			HasPlan:        true,
@@ -125,24 +105,6 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 		t.Fatalf("投影缺了共享卡片读取的字段 %v —— 卡片会静默降级（徽标空、按钮不给），而别的测试全绿。投影：%s", missing, raw)
 	}
 
-	// ④ 卡片读的每个 stage.<field> 都必须是投影里每一段的一个键。
-	stages, ok := got["stages"].([]any)
-	if !ok || len(stages) == 0 {
-		t.Fatalf("投影没带 stages，卡片读不了流水：%s", raw)
-	}
-	for i, rawStage := range stages {
-		stage, ok := rawStage.(map[string]any)
-		if !ok {
-			t.Fatalf("stages[%d] 不是对象：%v", i, rawStage)
-		}
-		for field := range stageReads {
-			key := jsonKeyForCardField(field)
-			if _, ok := stage[key]; !ok {
-				t.Fatalf("stages[%d] 缺 %q（卡片读 stage.%s）：%v", i, key, field, stage)
-			}
-		}
-	}
-
 	// ⑤ 反向：投影里 task 层的键，卡片一个都不许多读 —— 多一个就是体积。
 	//    允许的键 = 卡片读的 + 投影刻意保留的几个（见 overviewTaskProjection 注释）。
 	allowed := map[string]bool{}
@@ -152,7 +114,7 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 	// 这几个不是卡片读的，但投影必须带：工作台分组/排序/派发要用。
 	for _, key := range []string{
 		"id", "task_number", "root_id", "task_template_id", "task_template_name",
-		"current_stage_index", "current_stage_name", "status", "main_session_key",
+		"status", "main_session_key",
 		"created_at", "updated_at", "completed_at",
 		"create_worktree", "worktree_path", "worktree_built", "worktree_missing",
 	} {

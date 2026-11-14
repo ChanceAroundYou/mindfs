@@ -17,7 +17,6 @@ func TestWorktreeReferenceCount(t *testing.T) {
 	mk := func(name string) Task {
 		detail, err := svc.CreateTask(ctx, CreateTaskInput{
 			RootID: root.ID,
-			Stages: []StageTemplate{userStage("Describe")},
 			Input:  name,
 		})
 		if err != nil {

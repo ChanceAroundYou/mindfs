@@ -3,6 +3,7 @@ import type { GitFileStat, MultiProjectSessionGroup, SessionItem, SlashCommandRe
 import type { ManagedRootPayload } from "./appMisc";
 import type { MainViewMode, URLState } from "./appPath";
 import type { KanbanTask, TaskDetail } from "../services/tasks";
+import type { MoveKanbanAction } from "../components/task/taskBoardTypes";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { AgentStatus } from "../services/agents";
 import type { DirectorySortMode, FileEntry } from "../services/prefs/directorySort";
@@ -81,7 +82,7 @@ export type UseAppViewCompositionParams = {
   handleGitUnstageItem: (rootID: string, item: GitStatusItem) => Promise<void>;
   handleLoadOlderExternalSessions: () => Promise<void>;
   handleLoadOlderSessions: () => Promise<void>;
-  handleMoveKanbanTask: (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree") => Promise<void>;
+  handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
   handlePinSession: (session: SessionItem, pinned: boolean) => Promise<boolean>;
   handleRenameSession: (session: SessionItem, nextName: string) => Promise<boolean>;
   handleSearchQueryChange: (value: string) => void;

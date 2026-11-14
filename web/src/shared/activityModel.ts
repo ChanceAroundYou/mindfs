@@ -10,6 +10,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "completed",
   "failed",
   "cancelled",
+  "waiting_user",
 ]);
 
 /** 后端缺省/异常的状态一律按 pending 展示，避免出现空徽标。 */
@@ -64,16 +65,15 @@ export type CanSendActivityInput = {
   workflowChoice: WorkflowChoice;
   workflowVersionId?: string;
   sending?: boolean;
-  disabled?: boolean;
 };
 
 /**
  * 发送守卫（Review Focus #1 的前端半边）。
  *
- * 空留言、指定的 workflow 却没选版本、或在途/禁用时都不能发；后端仍有 400 兜底。
+ * 空留言、指定的 workflow 却没选版本、或在途时都不能发；后端仍有 400 兜底。
  */
 export function canSendActivity(input: CanSendActivityInput): boolean {
-  if (input.disabled || input.sending) return false;
+  if (input.sending) return false;
   if (!input.body.trim()) return false;
   if (input.workflowChoice === "specified" && !String(input.workflowVersionId || "").trim()) {
     return false;
@@ -83,14 +83,19 @@ export function canSendActivity(input: CanSendActivityInput): boolean {
 
 /**
  * 卡片正文的选择规则：
- * - 终态（completed/failed/cancelled）优先展示 summary，没有时回落 body；
+ * - 结束/停等状态优先展示 summary（等待你处理时 summary 带原因）；
  * - pending/running 展示 body（运行中后端会把「步骤 i/n」写进 body）。
  */
 export function activityDisplayText(activity: TaskActivity): string {
   const status = normalizeActivityStatus(activity.status);
   const body = (activity.body || "").trim();
   const summary = (activity.summary || "").trim();
-  if (status === "completed" || status === "failed" || status === "cancelled") {
+  if (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "waiting_user"
+  ) {
     return summary || body;
   }
   return body || summary;

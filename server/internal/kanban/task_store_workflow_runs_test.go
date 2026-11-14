@@ -19,8 +19,7 @@ func TestTaskStoreWorkflowRunPersistsOnTaskNodeAndListsNodeRuns(t *testing.T) {
 	}
 	defer store.Close()
 
-	task, err := store.CreateTask(ctx, Task{ID: "task-a", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "legacy-a", TaskID: "task-a", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	task, err := store.CreateTask(ctx, Task{ID: "task-a", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "event-a", TaskID: "task-a", Type: "created"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -83,8 +82,7 @@ func TestWorkflowRunAndNodeRunAreIsolatedByTaskNodeDatabase(t *testing.T) {
 		{storeA, rootA, "task-a", "run-a"},
 		{storeB, rootB, "task-b", "run-b"},
 	} {
-		if _, err := tc.store.CreateTask(ctx, Task{ID: tc.task, RootID: tc.root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-			StageRun{ID: "stage-" + tc.task, TaskID: tc.task, StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+		if _, err := tc.store.CreateTask(ctx, Task{ID: tc.task, RootID: tc.root.ID, Status: StatusPending},
 			TaskEvent{ID: "event-" + tc.task, TaskID: tc.task, Type: "created"}); err != nil {
 			t.Fatalf("CreateTask %s: %v", tc.task, err)
 		}
@@ -116,8 +114,7 @@ func TestWorkflowRunSaveUsesRevisionCASInTaskDatabase(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "cas-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "cas-stage", TaskID: "cas-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "cas-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "cas-event", TaskID: "cas-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -151,7 +148,7 @@ func TestTaskStoreRunLookupByIDAndTaskOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "lookup-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("u")}}, StageRun{ID: "lookup-stage", TaskID: "lookup-task", StageIndex: 0, StageName: "u", Role: RoleUser, Status: StageStatusPending}, TaskEvent{ID: "lookup-event", TaskID: "lookup-task", Type: "created"}); err != nil {
+	if _, err := store.CreateTask(ctx, Task{ID: "lookup-task", RootID: root.ID, Status: StatusPending}, TaskEvent{ID: "lookup-event", TaskID: "lookup-task", Type: "created"}); err != nil {
 		t.Fatal(err)
 	}
 	run := &WorkflowRun{ID: "lookup-run", TaskID: "lookup-task", Revision: 1, Graph: WorkflowDefinition{Nodes: []WorkflowNode{{ID: "n", Kind: NodeKindAgent}}}}
@@ -181,8 +178,7 @@ func TestClaimWorkflowNodeRunIsSingleWinner(t *testing.T) {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.CreateTask(ctx, Task{ID: "claim-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "claim-stage", TaskID: "claim-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "claim-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "claim-event", TaskID: "claim-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -259,8 +255,7 @@ func TestClaimWorkflowNodeRunSurvivesReopenAndReusesIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTaskStore: %v", err)
 	}
-	if _, err := store.CreateTask(ctx, Task{ID: "claim-reopen-task", RootID: root.ID, Status: StatusPending, Stages: []StageTemplate{userStage("input")}},
-		StageRun{ID: "claim-reopen-stage", TaskID: "claim-reopen-task", StageIndex: 0, StageName: "input", Role: RoleUser, Status: StageStatusPending},
+	if _, err := store.CreateTask(ctx, Task{ID: "claim-reopen-task", RootID: root.ID, Status: StatusPending},
 		TaskEvent{ID: "claim-reopen-event", TaskID: "claim-reopen-task", Type: "created"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

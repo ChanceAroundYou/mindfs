@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { canAdvanceCard, isFinishStageActive, isTerminalKanbanTask, hasLaterStage, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../../app/appTask";
+import { isTerminalKanbanTask, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../../app/appTask";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
@@ -12,7 +12,6 @@ export type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { TaskCardFinishButton } from "./TaskCardFinishButton";
 import {
   DeleteIcon,
-  RunNowIcon,
   TaskCancelIcon,
   TaskCompleteIcon,
   TaskPauseIcon,
@@ -58,8 +57,6 @@ export type TaskCardRowsProps = {
   onOpenSession: (sessionKey: string, rootId: string, taskId: string) => void;
   onMove: (task: KanbanTask, action: TaskCardAction) => void;
   onShowSessionError: (payload: TaskSessionErrorDialog) => void;
-  /** 阶段名只在「执行中」出现（看板按列给，工作台按状态给），传空串不显示 */
-  stageName?: string;
   /** 状态文字是否带色显示在工作台上 */
   showStatus?: boolean;
   /** fail 状态已由状态文字表达时，别再在操作行重复一个错误入口 */
@@ -67,7 +64,7 @@ export type TaskCardRowsProps = {
 };
 
 /**
- * 任务卡的两行：标题行（编号 / 名字 / 阶段 / 状态 / worktree）+ 操作行。
+ * 任务卡的两行：标题行（编号 / 名字 / 状态 / worktree）+ 操作行。
  *
  * 项目看板和跨项目工作台**共用这一份**。以前两边各写各的，结果工作台那张卡
  * 只有一个名字和三个按钮，既看不见会话也看不见状态，配色也和看板不一致。
@@ -87,7 +84,6 @@ export function TaskCardRows({
   onOpenSession,
   onMove,
   onShowSessionError,
-  stageName = "",
   showStatus = false,
   hideSessionError = false,
 }: TaskCardRowsProps) {
@@ -104,24 +100,10 @@ export function TaskCardRows({
     auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
   ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
   const terminal = isTerminalKanbanTask(task);
-  // 暂停只在阶段真在跑时给；等待/未开始没有「暂停」可言。恢复同理。
-  const stageRunning = task.current_stage_status === "running" && task.status === "running";
-  // 收尾流程进行中：指针停在收尾段上、那一段还没跑完。这时候不给推进类按钮 ——
-  // 清场就要拆 worktree 了，再推进阶段或再点一次收尾，都是对着一个即将消失的目录干活。
-  const finishActive = isFinishStageActive(task);
-  // 指针后面还有没有段。见 appTask 的 hasLaterStage：卡片拿不到 stage_runs，
-  // 「还有段」是这里唯一能判的推进信息。
-  const moreStages = hasLaterStage(task);
-  // 立即执行是**推进**（服务端 RunNow → Next → moveRelative(+1)）。没有下一段可推进时
-  // 它什么都不会发生，所以那种局面下不给这个键。
-  // 当前段能不能走也要看（canAdvanceCard，与详情面板同一套判据）：fail/cancelled/
-  // rejected 时 moveRelative 报错、RunNow 把错吞掉，给了就是个点了没反应的按钮。
-  // **worktree 目录已删不顶替这个键**（与详情面板一致，用户 2026-10-03 定）：
-  // 点了服务端会把「worktree 目录已不存在」记到任务上，比藏起按钮诚实。
-  const showAdvance = !terminal && !stageRunning && moreStages && !finishActive && canAdvanceCard(task);
-  const canPause = stageRunning;
+  // 暂停只在一轮真的在跑时给；等待/未开始没有「暂停」可言。恢复同理。
+  const taskRunning = task.status === "running";
+  const canPause = taskRunning;
   const canResume = task.status === "paused";
-  // 「完成」的判据在下面 —— 它要看 canFinishWorktree，那一组变量在 statusText 之后才算出来。
   const statusText = taskStatusLabel(task.status || "", t);
   // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」。create_worktree
   // 是创建时的配置，永久为 true；收尾之后它一点没变，于是徽标照样显示绿色 worktree，
@@ -145,46 +127,25 @@ export function TaskCardRows({
   // 反过来也不能只看 create_worktree：它永久为 true，收尾之后一点没变，
   // 光看它会让收完尾的任务照样显示「有 worktree」。
   const worktreeGone = worktreeBuilt && (!hasWorktreePath || worktreeMissing);
-  // 三档分开：从来没建（amber 禁止符）、收尾中（绿，文字「收尾中」）、收尾拆掉了（灰「已收尾」）。
-  // 收尾中单列一档而不是并进 enabled：期间目录还在、徽标看着和平时一模一样，
-  // 用户会以为「还没开始」于是再点一次。
+  // 三档：从来没建（amber 禁止符）、建着（绿）、收尾拆掉了（灰「已收尾」）。
   const worktreeTagState: WorktreeTagState = worktreeGone
     ? "finished"
     : hasWorktreePath
-      ? (finishActive ? "finishing" : "enabled")
+      ? "enabled"
       : "none";
   const worktreeTagTitle = worktreeTagState === "finished"
     ? t("task.worktreeFinishedTitle")
-    : worktreeTagState === "finishing"
-      ? t("task.worktreeFinishingTitle")
-      : worktreeTagState === "enabled"
-        ? t("task.worktreeTitle")
-        : t("task.noWorktreeTitle");
+    : worktreeTagState === "enabled"
+      ? t("task.worktreeTitle")
+      : t("task.noWorktreeTitle");
   // 收尾要有可拆的 worktree：目录不在了给的是「重建」，没有 worktree 可拆。
   // **终态也给**（与 TaskDetailPanel 同步）：任务跑完但 worktree 还留着没收，
-  // 那正是收尾唯一有意义的场景；服务端会把它复活成 waiting_user 再推进。
-  // 「有 agent 段」这条必须与服务端对齐（worktree_finish_stage.go 的
-  // lastAgentStage 检查），否则会给一个必然 409 的按钮。
-  //
-  // **刻意不排除 finishActive**（2026-10-05）：收尾中按钮照样可点，且必须幂等 ——
-  // agent 那半跑完了却卡住时，用户能再点一次让服务端直接做机械清场（后端按
-  // 「分支是否已合进主干」分流，见 handleKanbanTaskBeginFinish）。按钮换成转圈
-  // 等于把唯一的出路藏起来，任务就此永远转下去。
-  // 判据只剩「worktree 还在」：create_worktree 开着、path 在、目录没被删。
-  // 2026-10-07 去掉了「有 agent 段」这一条 —— 它会让「有 worktree 但没有 agent
-  // 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它（没有 agent 去 commit，
-  // 只能服务端直接机械清场）。服务端已同步：无 agent 段时直接清场。
+  // 那正是收尾唯一有意义的场景；服务端会把它复活成 running 再起收尾回合。
+  // 收尾进行中照样可点，且必须幂等 —— 收尾回合卡住时，用户能再点一次走机械清场
+  // （后端按「分支是否已合进主干」分流，见 handleKanbanTaskBeginFinish）。
   const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;
-  // 完成 = 推进键给不出来时的出口。判据就是 showAdvance 的反面 ——
-  // **待审核的任务不能一个键都没有**（2026-10-06 用户实测：收尾段卡在待审核、
-  // worktree 又已被拆，重建/执行/完成三个键全不给，任务在界面上没有任何出路）。
-  //
-  // 只剩两条例外：正在跑（活还在动，本来就不需要推进）、终态（没有后续可推进）。
-  // **收尾中不再豁免**（2026-10-07 用户要求）：收尾段卡在待审核时 showAdvance
-  // 恒假（收尾段是流水最后一段），旧判据把完成键也一起收走了，于是那张卡只剩
-  // 一个收尾键 —— 而收尾键恰恰是最容易失败的一个（主 checkout 不干净就点不动）。
-  // 现在给完成键；终态任务只要 worktree 还在就继续给收尾键，两条路都通。
-  const canComplete = !terminal && !stageRunning && !showAdvance;
+  // 完成只要求「不在跑」：活还在动时先暂停；终态没有后续可完成。
+  const canComplete = !terminal && !taskRunning;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || taskNameFallback || t("task.unnamed");
   const title = task.task_template_name || taskNameFallback || t("task.defaultTitle");
@@ -238,14 +199,6 @@ export function TaskCardRows({
         >
           {taskName}
         </span>
-        {stageName ? (
-          <span style={taskMetaPairStyle}>
-            <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {stageName}
-            </span>
-          </span>
-        ) : null}
         {showStatus ? (
           <>
             <span style={taskMetaPairStyle}>
@@ -274,11 +227,7 @@ export function TaskCardRows({
           style={taskWorktreeTagStyle(worktreeTagState)}
         >
           {worktreeTagState === "enabled" ? null : <NoWorktreeIcon />}
-          {worktreeTagState === "finished"
-            ? t("task.worktreeFinishedLabel")
-            : worktreeTagState === "finishing"
-              ? t("task.worktreeFinishingLabel")
-              : "worktree"}
+          {worktreeTagState === "finished" ? t("task.worktreeFinishedLabel") : "worktree"}
         </span>
       </div>
       {children}
@@ -365,29 +314,13 @@ export function TaskCardRows({
             </div>
           ) : null}
         </div>
-        {/* 未结束的任务：推进 / 暂停 / 恢复 / 完成，末尾一个「取消」。
+        {/* 未结束的任务：暂停 / 恢复 / 完成，末尾一个「取消」。
             终态任务只剩一个「删除」—— 活已经停了，卡片留着只为看历史，
             看完了得能真的清掉（否则看板只增不减）。 */}
         {/* 换行后靠 marginLeft:auto 仍贴右（space-between 在单行时本来也等效） */}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, marginLeft: "auto" }}>
           {!terminal ? (
             <>
-              {/* 执行键的判据在 showAdvance 里，与详情面板同一套（worktree 目录已删
-                  不顶替它）。推进键给不出来时由「完成」兜底 —— 见 canComplete。 */}
-              {showAdvance ? (
-                <button
-                  type="button"
-                  title={t("task.runNow")}
-                  aria-label={t("task.runNow")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "run-now");
-                  }}
-                  style={taskCardIconButtonStyle("accent")}
-                >
-                  <RunNowIcon />
-                </button>
-              ) : null}
               {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
               {canPause ? (
                 <button

@@ -10,7 +10,7 @@ import (
 func TestRenameTask(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Name: "旧名", Input: "x"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Name: "旧名", Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -45,7 +45,6 @@ func TestTaskNameFromSession(t *testing.T) {
 	svc, root := newTestService(t, nil)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe")},
 		Name:   "初名",
 	})
 	if err != nil {
@@ -85,7 +84,6 @@ func TestTaskNameFromSessionStripsNumberSuffix(t *testing.T) {
 	svc, root := newTestService(t, nil)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe")},
 		Name:   "初名",
 	})
 	if err != nil {
@@ -125,7 +123,6 @@ func TestDetachFromSessionClearsTaskLink(t *testing.T) {
 	svc, root := newTestService(t, nil)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe")},
 		Name:   "任务",
 	})
 	if err != nil {
@@ -143,16 +140,6 @@ func TestDetachFromSessionClearsTaskLink(t *testing.T) {
 	if err := store.UpdateTask(ctx, task); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
-	// 让阶段运行也指向这个会话：任务面板的会话列表同时收 stage_run.session_key
-	runs, err := store.ListStageRuns(ctx, task.ID)
-	if err != nil || len(runs) == 0 {
-		t.Fatalf("ListStageRuns: %v runs=%d", err, len(runs))
-	}
-	runs[0].SessionKey = "sess-dead"
-	if err := store.UpdateStageRunExecution(ctx, runs[0]); err != nil {
-		t.Fatalf("UpdateStageRunExecution: %v", err)
-	}
-
 	got, changed := svc.DetachFromSession(ctx, root.ID, []string{"sess-dead"})
 	if !changed {
 		t.Fatal("expected task updated")
@@ -174,13 +161,6 @@ func TestDetachFromSessionClearsTaskLink(t *testing.T) {
 	if strings.TrimSpace(notice.Message) == "" {
 		t.Fatalf("session_error.message empty: %q", got.Task.AuxFlags.SessionError)
 	}
-	runs, err = store.ListStageRuns(ctx, task.ID)
-	if err != nil {
-		t.Fatalf("ListStageRuns: %v", err)
-	}
-	if runs[0].SessionKey != "" {
-		t.Fatalf("stage run session_key should be cleared, got %q", runs[0].SessionKey)
-	}
 }
 
 func TestDetachFromSessionIgnoresUnboundAndForeignSessions(t *testing.T) {
@@ -188,7 +168,6 @@ func TestDetachFromSessionIgnoresUnboundAndForeignSessions(t *testing.T) {
 	svc, root := newTestService(t, nil)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe")},
 		Name:   "任务",
 	})
 	if err != nil {
@@ -224,7 +203,6 @@ func TestClearSessionRefsKeepsRepointedTask(t *testing.T) {
 	svc, root := newTestService(t, nil)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe")},
 		Name:   "任务",
 	})
 	if err != nil {

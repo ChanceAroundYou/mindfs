@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,22 +16,39 @@ import (
 	"mindfs/server/internal/kanban"
 )
 
-// newBeginFinishHandler 与 newFinishTaskHandler 同一套真 git 仓库，但把 service
-// 也交出来 —— 分流判据要改任务状态（绑会话、追加收尾段），拿不到 service 就只能
-// 从路由外面猜。
-func newBeginFinishHandler(t *testing.T, edit string) (http.Handler, *kanban.Service, fs.RootInfo, string) {
-	t.Helper()
-	return newBeginFinishHandlerWithRunner(t, edit, func(mainDir string) kanban.Runner {
-		return fixedRunner{t: t, mainDir: mainDir}
-	})
+// apiFinishTurn 是收尾回合的假直连执行端口。
+//
+// gate 非 nil 时卡住，用来制造「正在收尾」的窗口；entered 用来等回合真的跑起来
+// （收尾是异步起的，点完直接断言会撞在回合还没开始的那一刻）。
+type apiFinishTurn struct {
+	mu      sync.Mutex
+	reply   string
+	entered chan struct{}
+	gate    <-chan struct{}
 }
 
-// newBeginFinishHandlerWithRunner 与 newBeginFinishHandler 同一套真 git 仓库，只是换一个
-// runner —— 用来造出「agent 段停在 waiting_user」这种由 runner 结局决定的局面。
-//
-// 必须在这里换而不是建完再换：推进到 agent 段（Next）发生在建仓库的过程中，runner 得在
-// 那之前就位。
-func newBeginFinishHandlerWithRunner(t *testing.T, edit string, runnerFor func(mainDir string) kanban.Runner) (http.Handler, *kanban.Service, fs.RootInfo, string) {
+func (f *apiFinishTurn) RunDirectActivity(ctx context.Context, task kanban.Task, body string) (string, error) {
+	if f.entered != nil {
+		select {
+		case f.entered <- struct{}{}:
+		default:
+		}
+	}
+	if f.gate != nil {
+		select {
+		case <-f.gate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reply, nil
+}
+
+// newBeginFinishHandler 建一套真 git 仓库 + 真 kanban service：主 checkout、
+// 一个已建好的 linked worktree、一张 waiting_user 的对话任务。
+func newBeginFinishHandler(t *testing.T, edit string) (http.Handler, *kanban.Service, fs.RootInfo, string) {
 	t.Helper()
 	mainDir := t.TempDir()
 	gitForAPITest(t, mainDir, "init", "-q")
@@ -44,14 +62,10 @@ func newBeginFinishHandlerWithRunner(t *testing.T, edit string, runnerFor func(m
 	root := fs.NewRootInfo("root", "root", mainDir)
 	svc := kanban.NewService(singleRootProvider{root: root})
 	svc.SetWriterGate(kanban.NewWriterGate())
-	svc.SetRunner(runnerFor(mainDir))
-
+	svc.SetRunner(fixedRunner{t: t, mainDir: mainDir})
+	svc.SetDirectExecutor(&apiFinishTurn{reply: "收尾完成\n"})
 	if _, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
-		RootID: root.ID,
-		Stages: []kanban.StageTemplate{
-			{Name: "Describe", Role: "user"},
-			{Name: "Fix", Role: "agent", Agent: "claude"},
-		},
+		RootID:             root.ID,
 		Input:              "fix it",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "new",
@@ -64,12 +78,6 @@ func newBeginFinishHandlerWithRunner(t *testing.T, edit string, runnerFor func(m
 	}); err != nil {
 		t.Fatalf("RebuildTaskWorktree: %v", err)
 	}
-	// 推进到 agent 段并等它跑完（fixedRunner 返回空结果 → waiting_user）。
-	// BeginFinishWorktree 要求 waiting_user，pending 态会被拒。
-	if _, err := svc.Next(context.Background(), kanban.MoveInput{RootID: root.ID, TaskID: taskID}); err != nil {
-		t.Fatalf("Next: %v", err)
-	}
-	waitForStatus(t, svc, root.ID, taskID, kanban.StatusWaitingUser)
 	if edit != "" {
 		wt := mustWorktreePath(t, svc, root.ID, taskID)
 		if err := os.WriteFile(wt+"/note.txt", []byte(edit), 0o644); err != nil {
@@ -78,49 +86,49 @@ func newBeginFinishHandlerWithRunner(t *testing.T, edit string, runnerFor func(m
 		gitForAPITest(t, wt, "add", "note.txt")
 		gitForAPITest(t, wt, "commit", "-qm", "work")
 	}
+	parkWaitingUser(t, svc, root.ID, taskID)
 	return (&HTTPHandler{AppContext: &AppContext{Kanban: svc}}).Routes(), svc, root, taskID
 }
 
-// waitForStatus 轮询直到任务到达指定状态。RunTask 是异步的，Next 返回时任务还在
-// running —— 不等它跑完，后面所有断言都会撞上一个还在动的任务。
-func waitForStatus(t *testing.T, svc *kanban.Service, rootID, taskID, status string) {
+// parkWaitingUser 把任务停在 waiting_user：对话式任务没有「当前段」可推进，
+// 状态就是上一轮跑完的投影；收尾只要求此刻没有执行体在动。
+func parkWaitingUser(t *testing.T, svc *kanban.Service, rootID, taskID string) {
 	t.Helper()
-	for i := 0; i < 200; i++ {
-		detail, err := svc.GetTask(context.Background(), rootID, taskID)
-		if err != nil {
-			t.Fatalf("GetTask: %v", err)
-		}
-		if detail.Task.Status == status {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	store, err := svc.TaskStoreForRoot(rootID)
+	if err != nil {
+		t.Fatalf("TaskStoreForRoot: %v", err)
 	}
-	t.Fatalf("task did not reach status %s (still %s)", status, func() string {
-		detail, _ := svc.GetTask(context.Background(), rootID, taskID)
-		return detail.Task.Status
-	}())
+	if err := store.UpdateTaskStatus(context.Background(), taskID, kanban.StatusWaitingUser, false); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
 }
 
-// waitForNotBusy 等任务不再有执行体在动。
-//
-// 必须等：RunTask / RerunStage 都是异步的，段还 running 时再点收尾会命中 ①
-// 拿到 session_running —— 那是**正确**行为（收尾要等 agent 停），但会让「分流到
-// 哪一条」的断言测不到。
-func waitForNotBusy(t *testing.T, svc *kanban.Service, rootID, taskID string) {
+// parkRunning 把任务标成 running，模拟「执行体正在动」。
+func parkRunning(t *testing.T, svc *kanban.Service, rootID, taskID string) {
+	t.Helper()
+	store, err := svc.TaskStoreForRoot(rootID)
+	if err != nil {
+		t.Fatalf("TaskStoreForRoot: %v", err)
+	}
+	if err := store.UpdateTaskStatus(context.Background(), taskID, kanban.StatusRunning, false); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+}
+
+// waitForNotFinishing 等收尾回合结束（Finishing 是内存标记，回合一结束就落）。
+func waitForNotFinishing(t *testing.T, svc *kanban.Service, rootID, taskID string) {
 	t.Helper()
 	for i := 0; i < 400; i++ {
-		if !svc.TaskBusy(context.Background(), rootID, taskID) {
+		if !svc.Finishing(rootID, taskID) {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("task stayed busy — the stage never settled")
+	t.Fatal("the finish turn never settled")
 }
 
-// leaveUncommittedWorktreeChange 在 worktree 里留一个没提交的文件。
-//
-// 这是「必须让 agent 先干点什么」的标准起点：worktree 有没提交的活时，机械清场
-// 不能替用户决定哪些是成品、该怎么提交，只能交给 agent。
+// leaveUncommittedWorktreeChange 在 worktree 里留一个没提交的文件：
+// loadPlan 会把收尾判成「机械做不了」，交给 agent 那一轮。
 func leaveUncommittedWorktreeChange(t *testing.T, svc *kanban.Service, rootID, taskID string) {
 	t.Helper()
 	wt := mustWorktreePath(t, svc, rootID, taskID)
@@ -129,8 +137,7 @@ func leaveUncommittedWorktreeChange(t *testing.T, svc *kanban.Service, rootID, t
 	}
 }
 
-// runTestGitOutput 跑一条 git 命令并返回 stdout —— 断言「主干上到底合了什么」时
-// 需要看输出，而 gitForAPITest 只关心成败。
+// runTestGitOutput 跑一条 git 命令并返回 stdout。
 func runTestGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)

@@ -168,7 +168,7 @@ export async function finishTaskWorktree(
 }
 
 /**
- * 收尾按钮的四种结局。服务端按**真实状态**分流，前端只负责把结论说清楚：
+ * 收尾按钮的三种结局。服务端按**真实状态**分流，前端只负责把结论说清楚：
  *
  * - `session_running`：任务关联的会话正在回复 —— 收尾要拆掉 agent 的 cwd，得等它停。
  *   这是正常等待，不是失败（HTTP 200）。
@@ -176,23 +176,22 @@ export async function finishTaskWorktree(
  *   主干 / worktree 干净且合并无冲突），于是当场把机械清场（合并 → 拆 worktree →
  *   删目录 → 删分支 → 搬会话）做掉，不等 agent。**这一步是同步的**，回来就已成定局；
  *   失败时服务端回 409 并带上 conflict_files / report，走 APIError。
- * - `nudged`：机械清场做不了、而流水上已有收尾段 —— 重跑那一段催 agent 继续，
- *   不追加第二段。
- * - `stage_added`：机械清场做不了、也没有收尾段 —— 追加收尾段并起 agent，让 agent
- *   先把活提交并合回主干。段成功之后服务端钩子接着做机械清场。
+ * - `finish_turn_started`：机械清场做不了 —— 服务端在任务主会话里起一个**异步收尾回合**，
+ *   让 agent 先把活提交并合回主干。回合成功（回复里带完成标记）之后服务端钩子接着做
+ *   机械清场；失败则任务保持原状，用户可以再点一次。
  *
  * `plan` 字段说明这次判定为什么走这条路（mechanical + reason + files）。
  */
-export type BeginFinishAction = "stage_added" | "nudged" | "session_running" | "teardown";
+export type BeginFinishAction = "finish_turn_started" | "session_running" | "teardown";
 
 export type BeginFinishResponse = {
   action: BeginFinishAction;
   /**
    * 服务端的只读判定：这次为什么走机械清场、或者为什么要交给 agent。
-   * stage_added / nudged / teardown 三条路都会带上。
+   * finish_turn_started / teardown 两条路都会带上。
    */
   plan?: FinishPlan;
-  /** stage_added / nudged 时是「刚改完」的任务快照。 */
+  /** finish_turn_started 时是「刚改完」的任务快照（状态已转 running）。 */
   detail?: TaskDetail;
   task?: KanbanTask;
   /** teardown 时的清场结论（成功路径）。 */
@@ -207,7 +206,7 @@ export type BeginFinishResponse = {
 
 /**
  * 发起收尾。服务端按真实状态分流（见 BeginFinishAction），**幂等** —— 连点几次不会
- * 多出提交、也不会多出收尾段。
+ * 多出提交、也不会重复起收尾回合。
  *
  * 与 finishTaskWorktree 的分工：那个是**直接清场**（跳过 agent 阶段，用于 agent 已经
  * 把活提交好的情况），这个先问「该不该让 agent 再动一次」再决定做什么。
@@ -215,7 +214,7 @@ export type BeginFinishResponse = {
  * 非 2xx（清场失败、冲突、worktree 已失效）由 APIError 带出。
  *
  * **409 在这里就还原成类型化错误**（与 finishTaskWorktree 同一套）：teardown 是
- * ③.5 分支（流水里没有 agent 段时直接机械清场）同步做的，它的 409 同样带
+ * 同步做的，它的 409 同样带
  * conflict_files / dirty_files / user_changes。不还原的话调用方只能拿到一句
  * APIError，文件清单整个丢掉 —— 而「清单进弹窗、句子保持短」正是这一轮的要求。
  */

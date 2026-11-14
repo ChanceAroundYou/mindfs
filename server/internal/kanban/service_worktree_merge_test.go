@@ -37,7 +37,6 @@ func multiMergeFixture(t *testing.T, editA, editB string) (svc *Service, root fs
 	svc.SetRunner(&fakeRunner{})
 	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
 		RootID: root.ID,
-		Stages: []StageTemplate{userStage("Describe")},
 		Input:  "multi merge",
 	})
 	if err != nil {
@@ -142,7 +141,7 @@ func TestAutoMergeWorktreeConflictKeepsBranches(t *testing.T) {
 	svc := NewService(testRoots{root: root})
 	svc.SetWriterGate(NewWriterGate())
 	svc.SetRunner(&fakeRunner{})
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "conflict"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "conflict"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

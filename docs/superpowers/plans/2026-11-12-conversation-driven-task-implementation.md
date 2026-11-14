@@ -2954,3 +2954,39 @@ Scope: Phase 5 - Task 12"
 ---
 
 **计划已完成，等待执行方式选择。**
+
+---
+
+## 实施记录（2026-11-14）
+
+四个待决策项已按用户裁定落地：
+
+| 决策 | 结果 |
+|---|---|
+| D1 | 补**直连执行器**：`AppContext.RunDirectActivity` 复用任务主会话跑一轮普通对话，回复写回同一 Agent 活动；`workflow_choice=disabled` 或没有可用 workflow 时由 Router 直接走这条。 |
+| D2-A | 一条用户留言对应一条 Router 回复；节点行不进对话流，只在运行视图下钻里展示。 |
+| D3-B | **彻底不存在阶段概念**：任务类型/API/前端/创建载荷里的阶段全部删除；`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs` 只保留为冻结审计证据与一次性转换输入。 |
+| D4-A | 只删 `/comments` HTTP 适配层；留言统一走 `POST /api/tasks/{id}/activities`。 |
+
+落地要点：
+
+- `kanban.ActivityService` 是 Router：`CreateUserActivity` 先落用户留言，再按
+  `workflow_choice` + 推荐结果选择 `startWorkflowRun` 或 `startDirectAgent`。
+- 直连回合与 workflow 回合共用 `runWorkflowTurn` 的生命周期（pending 身份、
+  `EndSessionTurn`、取消/超时），没有第二套裸发送路径。
+- 收尾去掉"收尾阶段"：`Service.runFinishTurn` 跑一轮固定提示词的普通对话，
+  幂等锁是 `acquireTaskFinish`，进行中状态是内存 `Finishing`。
+- 卡片动作：非终态 = 收尾 / 暂停 / 继续 / 完成 / 取消；终态 = 收尾 / 删除；
+  `canComplete = !terminal && !taskRunning`。
+- 前端删除 `StageEditor`、`StageOptionsBar`、`LabelWithInfo`、`defaultTaskFlow`，
+  看板列定义收敛到 `useAppKanbanColumns.ts`（四列，无阶段列）。
+
+门禁（本机，未提交）：
+
+- `go test ./...` 全绿（kanban / api 强制重跑通过）。
+- `npx vitest run`：224 个测试文件通过 / 5 跳过；604 条通过 / 6 跳过。
+- `npx tsc -b --noEmit`、`go build ./...`、`make build`、`make build-web` 通过。
+- `make check-upstream`：登记的旧路径全部更新；剩余红色仅为「新文件未提交、
+  尚未进入 baseline..HEAD delta」的预期形态（提交后复跑归绿）。
+
+尚未执行（需单独授权）：commit / push / deploy / ship / 重启任何 mindfs 服务。

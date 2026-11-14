@@ -3,12 +3,11 @@ import { PanelShell, panelButtonStyle } from "../shell/PanelShell";
 import { PencilIcon } from "../action/composerIcons";
 import { composerInputStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n/index";
-import { statusText } from "./taskDetailUtils";
 import { pencilStyle, tagStyle } from "./taskDetailStyles";
 import { ConversationView } from "./ConversationView";
 import { RunViewEntry } from "./RunViewEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
-import { taskStatusColor } from "../../app/appTask";
+import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
 import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon } from "./taskIcons";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
 
@@ -67,7 +66,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
       headerLeft={(
         <>
           <span style={{ fontSize: "12px", fontWeight: 800, color: taskStatusColor(task.status), flexShrink: 0, whiteSpace: "nowrap" }}>
-            {statusText(task.status, t)}
+            {taskStatusLabel(task.status, t)}
           </span>
           {task.task_template_name ? (
             <span style={{ ...tagStyle, flexShrink: 0, whiteSpace: "nowrap" }}>

@@ -145,9 +145,9 @@ export function WorkflowNodeInspector({
           {/* Prompt 输入 */}
           <div style={{ display: "flex", gap: "6px", alignItems: "flex-start", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "6px", width: "100%" }}>
-              <span style={{ fontWeight: 600 }}>{t("task.stage.prompt")}</span>
+              <span style={{ fontWeight: 600 }}>{t("task.prompt")}</span>
               <span style={{ fontSize: "10px", color: "var(--text-secondary)", flex: 1 }}>
-                {t("task.stage.promptInfo")}
+                {t("task.promptInfo")}
               </span>
             </div>
             <textarea

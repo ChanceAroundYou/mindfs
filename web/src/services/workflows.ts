@@ -1,16 +1,15 @@
-// Workflow 元数据与推荐入口（对话式任务创建时的自动选择）。
+// Workflow 元数据入口（对话式任务创建时的自动选择）。
 //
 // `/api/workflows` 在控制面前缀表里（nodeinfo.ControlPlanePrefixes），worker 上
 // 一律 403 —— 所以这里必须走 controlPath 打页面服务器，**不能**用 appURL：
 // 那会跟着当前选中节点走，在 PC/fn 上打开任务面板时直接拿不到列表。
 import { controlPath } from "./net/controlPlane";
 import { protectedJSON } from "./net/api";
-import type { WorkflowMeta, WorkflowRecommendation } from "../shared/workflowModel";
+import type { WorkflowMeta } from "../shared/workflowModel";
 
-export type { WorkflowMeta, WorkflowRecommendation } from "../shared/workflowModel";
+export type { WorkflowMeta } from "../shared/workflowModel";
 
 const AVAILABLE_PATH = "/api/workflows/available";
-const RECOMMEND_PATH = "/api/workflows/recommend";
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -48,28 +47,4 @@ export async function listAvailableWorkflows(userInput?: string): Promise<Workfl
   const payload = await protectedJSON<{ workflows?: unknown }>(controlPath(AVAILABLE_PATH, params));
   if (!Array.isArray(payload?.workflows)) return [];
   return payload.workflows.map(normalizeWorkflowMeta).filter((item) => item.id !== "");
-}
-
-/** 让后端为一段用户输入推荐一个 workflow。空输入没有推荐语义，直接拒绝。 */
-export async function recommendWorkflow(userInput: string): Promise<WorkflowRecommendation> {
-  const trimmed = userInput.trim();
-  if (!trimmed) throw new Error("user_input required");
-  const payload = await protectedJSON<{ recommended?: Partial<WorkflowRecommendation> }>(
-    controlPath(RECOMMEND_PATH),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_input: trimmed }),
-    },
-  );
-  const rec = payload?.recommended;
-  if (!rec || typeof rec.workflow_id !== "string" || !rec.workflow_id.trim()) {
-    throw new Error("workflow recommendation missing workflow_id");
-  }
-  return {
-    workflow_id: rec.workflow_id,
-    reason: typeof rec.reason === "string" ? rec.reason : "",
-    match_score:
-      typeof rec.match_score === "number" && Number.isFinite(rec.match_score) ? rec.match_score : 0,
-  };
 }

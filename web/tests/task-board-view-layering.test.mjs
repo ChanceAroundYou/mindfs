@@ -18,7 +18,7 @@ test("TaskBoardView avoids runtime app/storage dependencies", () => {
   assert.match(view, /import type \{ KanbanTask \} from ["']\.\.\/\.\.\/shared\/taskTypes["']/);
   assert.match(view, /import type \{ WorkspaceBoard as WorkspaceBoardData, WorkspaceBoardFilter \} from ["']\.\.\/\.\.\/shared\/workspaceBoardTypes["']/);
   assert.match(view, /import type \{ SessionPresentationSummary \} from ["']\.\.\/\.\.\/shared\/sessionPresentationTypes["']/);
-  assert.match(view, /import type \{ KanbanStageColumn, MoveKanbanAction, TaskSessionErrorDialog \} from "\.\/taskBoardTypes"/);
+  assert.match(view, /import type \{ KanbanColumn, MoveKanbanAction, TaskSessionErrorDialog \} from "\.\/taskBoardTypes"/);
   // 模板 UI 已下线（Phase 1）：看板视图不再接模板状态，创建入口直接交给工具栏。
   assert.doesNotMatch(view, /templateControls/);
   assert.match(view, /<TaskBoardToolbar[\s\S]*?openTaskCreateDialog=\{openTaskCreateDialog\}/);

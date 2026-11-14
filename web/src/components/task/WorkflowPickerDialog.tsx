@@ -6,7 +6,8 @@ import { useWorkflowPicker } from "./useWorkflowPicker";
 export type WorkflowPickerListProps = {
   workflows: WorkflowMeta[];
   selected: string;
-  onSelect: (id: string) => void;
+  /** 传 (id, 显示名)：id 用于提交，name 用于选择器上的可见标签。 */
+  onSelect: (id: string, name: string) => void;
 };
 
 /** 纯展示的选项列表；加载/错误分支留在弹窗里。 */
@@ -19,7 +20,7 @@ export function WorkflowPickerList({ workflows, selected, onSelect }: WorkflowPi
           <li key={workflow.id} style={itemStyle}>
             <button
               type="button"
-              onClick={() => onSelect(workflow.id)}
+              onClick={() => onSelect(workflow.id, workflow.name || workflow.id)}
               data-selected={active ? "true" : undefined}
               style={active ? { ...optionStyle, ...optionSelectedStyle } : optionStyle}
             >
@@ -44,7 +45,7 @@ export function WorkflowPickerList({ workflows, selected, onSelect }: WorkflowPi
 
 export type WorkflowPickerDialogProps = {
   selected: string;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, name: string) => void;
   onClose: () => void;
 };
 

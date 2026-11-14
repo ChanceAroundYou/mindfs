@@ -12,15 +12,6 @@ const (
 	RoleUser  = "user"
 	RoleAgent = "agent"
 
-	// StageKindWorktreeFinish 标记「收尾段」：由 BeginFinishWorktree 追加的一段
-	// agent 工作，让 agent 自己 commit 并 merge 回主干；这段成功后由服务端接着清场
-	// （合并 → 拆 worktree → 删分支 → 会话 repoint 回主 checkout）。
-	//
-	// 为什么分段跑而不是一键收尾：agent 的活没 commit 时，服务端直接 merge 等于白干；
-	// 有未提交改动时 `git worktree remove` 又会拒绝。commit 这件事只有 agent 知道
-	// 哪些是成品、哪些是半成品 —— 与 wt-finish.sh 把 commit 交给 agent 是同一个分工。
-	StageKindWorktreeFinish = "worktree_finish"
-
 	// 任务状态对齐全局状态列：待开始 / 进行中 / 等待你 / 已完成 / 失败·取消。
 	// 旧数据中的 queued/paused 在迁移时分别归入 pending/running。
 	StatusPending     = "pending"
@@ -31,88 +22,34 @@ const (
 	StatusFail        = "fail"
 	StatusCancelled   = "cancelled"
 
-	StageStatusPending     = "pending"
-	StageStatusRunning     = "running"
-	StageStatusWaitingUser = "waiting_user"
-	StageStatusSuccess     = "success"
-	StageStatusFail        = "fail"
-	StageStatusCancelled   = "cancelled"
-	StageStatusApproved    = "approved"
-	StageStatusRejected    = "rejected"
-
+	// 会话复用策略（workflow Agent 节点）。任务本身不再有阶段，
+	// 这些取值只由节点定义消费。
 	SessionReuseTaskMain  = "task_main"
 	SessionReuseSameStage = "same_stage"
 	SessionReuseAlwaysNew = "always_new"
 	// SessionReusePerNode 是 workflow Agent 节点的默认（D2）：每个节点实例
 	// 自己的 session，只有显式 task_main 才复用任务主会话。
 	SessionReusePerNode = "per_node"
-
-	// TaskTypeStage / TaskTypeConversation 是任务模型的显式标记。
-	//
-	// 存量行在 ALTER 时落到 stage；迁移把带流水的历史任务转成 conversation 后
-	// 不会再次命中。新建任务一律写 conversation —— 这不是给 legacy 引擎用的开关，
-	// 而是「这条任务已经归对话模型所有」的事实，迁移与卡片都用它决定读法。
-	TaskTypeStage        = "stage"
-	TaskTypeConversation = "conversation"
 )
 
-// StageTemplate 是一段可执行的流水阶段定义；既用于模板（预设），也直接存储在任务身上。
-type StageTemplate struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Role        string `json:"role"`
-	AutoAdvance bool   `json:"auto_advance"`
-	// StartImmediately 只对首段（任务输入）有意义：建完任务立刻开跑，
-	// 不用等用户点「立即执行」。user 段的 AutoAdvance 是引擎不读的死字段
-	// （user 段被批准后一律推进），别拿它表达「要不要开跑」。
-	StartImmediately     bool   `json:"start_immediately,omitempty"`
-	Agent                string `json:"agent,omitempty"`
-	Model                string `json:"model,omitempty"`
-	Mode                 string `json:"mode,omitempty"`
-	Effort               string `json:"effort,omitempty"`
-	FastService          string `json:"fast_service,omitempty"`
-	PlanMode             bool   `json:"plan_mode,omitempty"`
-	SessionReusePolicy   string `json:"session_reuse_policy,omitempty"`
-	PromptTemplate       string `json:"prompt_template,omitempty"`
-	AgentCanControlStage bool   `json:"agent_can_control_stage,omitempty"`
-	// Kind 标这一段是「哪一种由服务端生成的段」，空 = 用户定义的普通段。
-	//
-	// 为什么存在独立字段而不是在 Name/PromptTemplate 里塞标记：这两处用户都能在看板上改
-	// （UpdateStage 是整段替换，任务编辑器直接改 name/prompt），标记会被改掉，之后就再也
-	// 认不出这段是收尾段。段定义存在 tasks.task_stages_json 里（task_store.go 的
-	// json.Marshal），加这个字段零迁移、零 SQL 改动。
-	//
-	// 现在只有一个取值 StageKindWorktreeFinish —— 收尾段。它同时意味着「成功后要跟着
-	// 清场」，所以没有再拆第二个布尔字段：等真有第二种内置段、且两者语义开始分叉时再拆。
-	Kind string `json:"kind,omitempty"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// Task 自带流水（Stages）：执行永远读任务自己的阶段。
+// Task 是看板上的一张卡。任务没有阶段：一次用户留言 = 一轮对话，
+// 由 Router（ActivityService）决定这一轮跑工作流还是跑普通会话。
 type Task struct {
 	ID         string `json:"id"`
 	TaskNumber int    `json:"task_number"`
 	RootID     string `json:"root_id"`
 	Name       string `json:"name,omitempty"`
-	// TaskType 标记任务属于阶段模型还是对话模型。存量阶段任务由一次性迁移
-	// （convertStagesToConversation）转成 conversation；此后的读写都只认
-	// conversation。值本身不再参与 legacy 引擎推进 —— 引擎绑定表的优先级更高。
-	TaskType string `json:"task_type,omitempty"`
 	// TaskTemplateID / TaskTemplateName 是**冻结列**：模板功能已下线（Phase 3），
 	// 不再写入，也不再回查任何模板库；只为历史任务保留来源标签的只读展示。
-	TaskTemplateID     string          `json:"task_template_id,omitempty"`
-	TaskTemplateName   string          `json:"task_template_name,omitempty"`
-	Stages             []StageTemplate `json:"stages"`
-	CreateWorktree     bool            `json:"create_worktree"`
-	WorktreeBranchMode string          `json:"worktree_branch_mode,omitempty"`
-	WorktreeBranch     string          `json:"worktree_branch,omitempty"`
-	CurrentStageIndex  int             `json:"current_stage_index"`
-	Status             string          `json:"status"`
-	MainSessionKey     string          `json:"main_session_key,omitempty"`
-	WorktreeRootID     string          `json:"worktree_root_id,omitempty"`
-	WorktreePath       string          `json:"worktree_path,omitempty"`
+	TaskTemplateID     string `json:"task_template_id,omitempty"`
+	TaskTemplateName   string `json:"task_template_name,omitempty"`
+	CreateWorktree     bool   `json:"create_worktree"`
+	WorktreeBranchMode string `json:"worktree_branch_mode,omitempty"`
+	WorktreeBranch     string `json:"worktree_branch,omitempty"`
+	Status             string `json:"status"`
+	MainSessionKey     string `json:"main_session_key,omitempty"`
+	WorktreeRootID     string `json:"worktree_root_id,omitempty"`
+	WorktreePath       string `json:"worktree_path,omitempty"`
 	// WorktreeBuilt 报告这个任务**曾经建出过一个 worktree**。
 	//
 	// 为什么要有它：WorktreePath 为空有两种相反的含义 ——
@@ -123,14 +60,12 @@ type Task struct {
 	//
 	// 清归属时**不**清这一列（见 TaskStore.ClearWorktreeRefs）：拆掉目录不等于
 	// 没建过。存量数据默认 false —— 判据宁保守，也不要把没证据的任务说成收过尾。
-	WorktreeBuilt      bool         `json:"worktree_built"`
-	Labels             []string     `json:"labels"`
-	CreatedAt          time.Time    `json:"created_at"`
-	UpdatedAt          time.Time    `json:"updated_at"`
-	CompletedAt        string       `json:"completed_at,omitempty"`
-	CurrentStageName   string       `json:"current_stage_name,omitempty"`
-	CurrentStageStatus string       `json:"current_stage_status,omitempty"`
-	AuxFlags           TaskAuxFlags `json:"aux_flags"`
+	WorktreeBuilt bool         `json:"worktree_built"`
+	Labels        []string     `json:"labels"`
+	CreatedAt     time.Time    `json:"created_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
+	CompletedAt   string       `json:"completed_at,omitempty"`
+	AuxFlags      TaskAuxFlags `json:"aux_flags"`
 	// WorktreeMissing 是**派生**字段，不落库：序列化时按 WorktreePath 此刻是否还是
 	// 目录算出来。worktree 目录会事后被删（DELETE /api/git/worktrees、
 	// wt-finish.sh cleanup、手工 rm），而 WorktreePath 全仓只有 ensureTaskWorktree
@@ -206,35 +141,17 @@ type TaskAuxFlagsPatch struct {
 	SessionError   *string
 }
 
-type StageRun struct {
-	ID             string    `json:"id"`
-	TaskID         string    `json:"task_id"`
-	StageIndex     int       `json:"stage_index"`
-	StageName      string    `json:"stage_name"`
-	Role           string    `json:"role"`
-	Status         string    `json:"status"`
-	SessionKey     string    `json:"session_key,omitempty"`
-	Input          string    `json:"input,omitempty"`
-	RenderedPrompt string    `json:"rendered_prompt,omitempty"`
-	StartedAt      string    `json:"started_at,omitempty"`
-	FinishedAt     string    `json:"finished_at,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
 type TaskEvent struct {
-	ID         string    `json:"id"`
-	TaskID     string    `json:"task_id"`
-	StageRunID string    `json:"stage_run_id,omitempty"`
-	Type       string    `json:"type"`
-	Payload    string    `json:"payload_json,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	TaskID    string    `json:"task_id"`
+	Type      string    `json:"type"`
+	Payload   string    `json:"payload_json,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type TaskDetail struct {
-	Task      Task        `json:"task"`
-	StageRuns []StageRun  `json:"stage_runs"`
-	Events    []TaskEvent `json:"events"`
+	Task   Task        `json:"task"`
+	Events []TaskEvent `json:"events"`
 }
 
 type WorktreeInfo struct {
@@ -242,43 +159,10 @@ type WorktreeInfo struct {
 	Path   string
 }
 
-type AgentStageExecution struct {
-	RootID          string
-	RuntimeRootPath string
-	Task            Task
-	Stage           StageTemplate
-	Run             StageRun
-	Prompt          string
-}
-
-// StageOutcome 是 agent 阶段跑完之后的结论。
-//
-// 以前这里只有 error，而 error 只表示「消息投递失败」，不表示「活干完了」——
-// 于是 runAgentStage 把「没抛错」直接写成 success，executeTask 接着推进下一段，
-// 前一段没完成也在错误前提上开跑，阶段就此错乱。
-// 现在必须由 agent 显式回报，回报不了就是 Silent，停下等人。
-type StageOutcome int
-
-const (
-	// StageOutcomeDone：agent 输出了本段的完成标记。
-	StageOutcomeDone StageOutcome = iota
-	// StageOutcomeBlocked：agent 明确说受阻或未完成，Reason 是它给的原因。
-	StageOutcomeBlocked
-	// StageOutcomeSilent：跑完了但没有回报完成。判为未完成。
-	StageOutcomeSilent
-)
-
-// StageResult 随 StageOutcome 一起带回 Reason（agent 给的受阻原因，或空）。
-type StageResult struct {
-	Outcome StageOutcome
-	Reason  string
-}
-
 // TaskActivity / ContinueRequest —— WP-01 留言板后端（spec 2026-11-09）。
 //
-// TaskActivity 是留言板时间线的一条 typed 记录；ContinueRequest 是每条留言
-// 触发的幂等执行请求。两者同事务写入（TaskStore.PostComment），legacy
-// Stages/StageRun 语义不受影响。
+// TaskActivity 是任务对话时间线的一条 typed 记录；ContinueRequest 是每条留言
+// 触发的幂等执行请求。
 const (
 	ActivityTypeUserComment = "user_comment"
 	ActivityTypeAgentReply  = "agent_reply"
@@ -297,6 +181,10 @@ const (
 	ActivityStatusCompleted = "completed"
 	ActivityStatusFailed    = "failed"
 	ActivityStatusCancelled = "cancelled"
+	// ActivityStatusWaitingUser 表示这一轮回复停在需要用户处理的地方
+	// （HumanGate、条件/输出无法判定）。它是「这一轮还没结束」，与 failed 不同：
+	// 用户批准/补充后同一个 Run 会继续，最终仍会落到 completed/failed。
+	ActivityStatusWaitingUser = "waiting_user"
 )
 
 const (
@@ -370,17 +258,13 @@ type PostCommentInput struct {
 
 type Runner interface {
 	CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (WorktreeInfo, error)
-	EnsureAgentSession(ctx context.Context, exec AgentStageExecution) (string, error)
-	// RunAgentStage 返回 error 表示传输层失败（沿用 failTask 路径）；
-	// 返回 nil error 时 StageResult 才有意义，决定这一段算不算完成。
-	RunAgentStage(ctx context.Context, exec AgentStageExecution) (StageResult, error)
 	TaskUpdated(rootID string, detail TaskDetail)
 }
 
 // ── WP-04 多 worktree 注册表 ─────────────────────────────────────────────
 //
-// Task→多 worktree：每个 entry 归属一个 NodeRun（WP-05 的 NodeRun 目前不存在，
-// node_run_id 留空即 legacy/stage 归属），生命周期由 state 表达。tasks 表上的
+// Task→多 worktree：每个 entry 归属一个 NodeRun（node_run_id 为空表示任务主
+// worktree），生命周期由 state 表达。tasks 表上的
 // 单 worktree 列（WorktreePath/WorktreeRootID/WorktreeBuilt）保持为「主 worktree」
 // （ensureTaskWorktree 第一次建/认领的那棵），registry 是超集：所有 worktree 都在
 // task_worktrees 里，主 worktree 在两处都有记录。兼容要求：存量单 worktree 任务
@@ -411,28 +295,4 @@ type WorktreeEntry struct {
 	ConflictOutput string    `json:"conflict_output,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-// normalizeStageTemplate 把一段流水规范化到落库形态。
-//
-// 原先是 TemplateStore 的实现细节；模板库下线（Phase 3）后它只服务任务流水，
-// 语义不变：缺省角色是 user，缺省会话复用策略是任务主会话。
-func normalizeStageTemplate(in StageTemplate) StageTemplate {
-	in.ID = strings.TrimSpace(in.ID)
-	in.Name = strings.TrimSpace(in.Name)
-	in.Role = strings.TrimSpace(in.Role)
-	if in.Role == "" {
-		in.Role = RoleUser
-	}
-	in.Agent = strings.TrimSpace(in.Agent)
-	in.Model = strings.TrimSpace(in.Model)
-	in.Mode = strings.TrimSpace(in.Mode)
-	in.Effort = strings.TrimSpace(in.Effort)
-	in.FastService = strings.TrimSpace(in.FastService)
-	in.SessionReusePolicy = strings.TrimSpace(in.SessionReusePolicy)
-	if in.SessionReusePolicy == "" {
-		in.SessionReusePolicy = SessionReuseTaskMain
-	}
-	in.PromptTemplate = strings.TrimSpace(in.PromptTemplate)
-	return in
 }

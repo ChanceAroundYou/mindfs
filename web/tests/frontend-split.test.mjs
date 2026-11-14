@@ -22,8 +22,8 @@ import * as session from "../src/services/session.ts";
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 test("barrel shim 完整重导出原模块公开面", async () => {
   for (const key of [
-    "fetchTasksOverview", "createTask", "updateTaskStage", "deleteTask",
-    "fetchTaskDetails", "addTaskStage", "moveTask",
+    "fetchTasksOverview", "createTask", "deleteTask",
+    "fetchTaskDetails", "moveTask", "rebuildTaskWorktree",
   ]) {
     assert.equal(typeof tasks[key], "function", `tasks.ts 应重导出 ${key}`);
   }

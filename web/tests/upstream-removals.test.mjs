@@ -105,17 +105,17 @@ for (const p of [...walk(path.join(root, "web/src")), ...walk(path.join(root, "s
   assert.ok(!hit, `${path.relative(root, p)} 仍引用已删模块 ${hit?.[1]}`);
 }
 
-// 3) 替代实现必须在位。
-// 删掉旧编排体系的同时不能把新模型一起丢：任务自带流水快照（Task.Stages/StageTemplate）
-// 与 worktree 收尾是替代 orchestration.go / plan.go 的那套东西。
+// 3) 替代实现必须在位，被替换的模型必须真的不在了。
+// 上游编排体系先被「任务自带流水」替代，2026-11 又整体换成「一条对话流 + router」——
+// 所以这里反过来钉两件事：阶段类型不得复活，会话模型必须还在。
 const kanbanTypes = fs.readFileSync(path.join(root, "server/internal/kanban/types.go"), "utf8");
-assert.ok(/Stages\s+\[\]StageTemplate/.test(kanbanTypes), "Task.Stages 快照字段丢失");
-assert.ok(/type StageTemplate struct/.test(kanbanTypes), "StageTemplate 类型丢失");
+assert.ok(!/type StageTemplate struct|Stages\s+\[\]StageTemplate|current_stage_index/.test(kanbanTypes), "阶段模型不得复活");
+assert.ok(/type TaskActivity struct/.test(kanbanTypes), "会话式任务的 activity 模型丢失");
 
-// 模板库已随 Phase 3（G-LJ）删除，替代它的是前端内置默认流水：新建任务随包带上
-// user → agent 两段，后端只认请求里的 stages。这条钉住「删掉模板选择后替代品还在」。
-const defaultFlow = fs.readFileSync(path.join(root, "web/src/app/defaultTaskFlow.ts"), "utf8");
-assert.ok(defaultFlow.includes("defaultTaskFlowStages"), "内置默认流水（替代模板选择）丢失");
+// 新建任务只接收一条消息；阶段流水载荷不得回到请求里。
+const createTaskInput = fs.readFileSync(path.join(root, "server/internal/kanban/service.go"), "utf8");
+assert.ok(/type CreateTaskInput struct \{[\s\S]*?\n\s*Input\s+string/.test(createTaskInput), "CreateTaskInput 必须接收用户留言");
+assert.ok(!/type CreateTaskInput struct \{[\s\S]*?Stages\s/.test(createTaskInput), "CreateTaskInput 不得再接收阶段流水");
 
 const worktreeFinish = fs.readFileSync(path.join(root, "server/internal/kanban/worktree_finish.go"), "utf8");
 assert.ok(worktreeFinish.includes("FinishTaskWorktree"), "worktree 收尾（替代上游 recovery/session_cleanup）丢失");

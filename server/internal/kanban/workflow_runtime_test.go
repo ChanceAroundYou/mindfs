@@ -120,14 +120,14 @@ func agentGraph(ids ...string) WorkflowDefinition {
 	return WorkflowDefinition{Nodes: nodes, Edges: edges}
 }
 
-// newRuntimeHarness creates a task (first stage must be user) plus an explicit
-// workflow run bound to the workflow engine. Tests that need legacy stages pass
-// them through; graph is what the driver actually executes.
-func newRuntimeHarness(t *testing.T, stages []StageTemplate, graph WorkflowDefinition, runID string) (*Service, fs.RootInfo, *TaskStore, Task, *WorkflowRun) {
+// newRuntimeHarness creates a conversation task plus an explicit workflow run
+// bound to the workflow engine. graph is what the driver actually executes.
+// graph 为空时不建 Run（迁移夹具自己走生产入口）。
+func newRuntimeHarness(t *testing.T, graph WorkflowDefinition, runID string) (*Service, fs.RootInfo, *TaskStore, Task, *WorkflowRun) {
 	t.Helper()
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Name: "runtime", Stages: stages, Input: "hello"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Name: "runtime", Input: "hello"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -169,7 +169,7 @@ func waitRuntimeStarted(t *testing.T, runner *runtimeRunner) {
 // started the phase is not retroactively bound to the node that starts later.
 func TestWorkflowRuntimeCommentTriggerStartsOneCoalescedDriver(t *testing.T) {
 	ctx := context.Background()
-	svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-comment-trigger")
+	svc, root, store, task, run := newRuntimeHarness(t, agentGraph("build"), "run-comment-trigger")
 	runner := newRuntimeRunner(0)
 	runner.release = make(chan struct{})
 	svc.SetWorkflowNodeRunner(runner)
@@ -213,17 +213,26 @@ func TestWorkflowRuntimeCommentTriggerStartsOneCoalescedDriver(t *testing.T) {
 func TestWorkflowRuntimeApprovedTriggersWakeDriver(t *testing.T) {
 	t.Run("migration", func(t *testing.T) {
 		ctx := context.Background()
-		svc, root, store, task, _ := newRuntimeHarness(t,
-			[]StageTemplate{userStage("输入"), agentStage("Build", "实现")}, WorkflowDefinition{}, "run-migrate-trigger")
+		svc, root, store, task, _ := newRuntimeHarness(t, WorkflowDefinition{}, "run-migrate-trigger")
 		runner := newRuntimeRunner(-1)
 		svc.SetWorkflowNodeRunner(runner)
 
-		run, _, err := svc.MigrateTaskToWorkflowRun(ctx, root.ID, task.ID, "", "user")
+		// 任务已无阶段：迁移必须显式指定已发布的 workflow version。
+		svc.Workflows = NewWorkflowStoreAt(t.TempDir())
+		draft, err := svc.Workflows.CreateDraft(ctx, "wf-gate", "", "tester", wfDef(wfNode("gate", NodeKindHumanGate)))
+		if err != nil {
+			t.Fatalf("CreateDraft: %v", err)
+		}
+		ver, err := svc.Workflows.PublishDraft(ctx, "wf-gate", draft.Revision, "tester")
+		if err != nil {
+			t.Fatalf("PublishDraft: %v", err)
+		}
+		run, _, err := svc.MigrateTaskToWorkflowRun(ctx, root.ID, task.ID, ver.Version, "user")
 		if err != nil {
 			t.Fatalf("MigrateTaskToWorkflowRun: %v", err)
 		}
 		waitRuntimeIdle(t, svc, root.ID, task.ID)
-		gate, err := store.WorkflowNodeRunByKey(ctx, run.ID, "stage-0", "", 0, 1)
+		gate, err := store.WorkflowNodeRunByKey(ctx, run.ID, "gate", "", 0, 1)
 		if err != nil {
 			t.Fatalf("human gate node run: %v", err)
 		}
@@ -237,7 +246,7 @@ func TestWorkflowRuntimeApprovedTriggersWakeDriver(t *testing.T) {
 
 	t.Run("run_now", func(t *testing.T) {
 		ctx := context.Background()
-		svc, root, _, task, _ := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-runnow-trigger")
+		svc, root, _, task, _ := newRuntimeHarness(t, agentGraph("build"), "run-runnow-trigger")
 		runner := newRuntimeRunner(-1)
 		svc.SetWorkflowNodeRunner(runner)
 
@@ -252,7 +261,7 @@ func TestWorkflowRuntimeApprovedTriggersWakeDriver(t *testing.T) {
 
 	t.Run("resume", func(t *testing.T) {
 		ctx := context.Background()
-		svc, root, store, task, _ := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("build"), "run-resume-trigger")
+		svc, root, store, task, _ := newRuntimeHarness(t, agentGraph("build"), "run-resume-trigger")
 		runner := newRuntimeRunner(-1)
 		svc.SetWorkflowNodeRunner(runner)
 		if err := store.UpdateTaskStatus(ctx, task.ID, StatusPaused, false); err != nil {
@@ -273,7 +282,7 @@ func TestWorkflowRuntimeApprovedTriggersWakeDriver(t *testing.T) {
 // wakes the same run and the next node runs.
 func TestWorkflowRuntimePauseLetsInFlightFinishThenResumeContinues(t *testing.T) {
 	ctx := context.Background()
-	svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("a", "b"), "run-pause")
+	svc, root, store, task, run := newRuntimeHarness(t, agentGraph("a", "b"), "run-pause")
 	runner := newRuntimeRunner(0)
 	runner.release = make(chan struct{})
 	svc.SetWorkflowNodeRunner(runner)
@@ -326,7 +335,7 @@ func TestWorkflowRuntimePauseLetsInFlightFinishThenResumeContinues(t *testing.T)
 // worktree directory alone (lifecycle cleanup is a separate decision).
 func TestWorkflowRuntimeCancelIsBoundedAndPreservesWorktree(t *testing.T) {
 	ctx := context.Background()
-	svc, root, store, task, run := newRuntimeHarness(t, []StageTemplate{userStage("输入")}, agentGraph("a", "b"), "run-cancel")
+	svc, root, store, task, run := newRuntimeHarness(t, agentGraph("a", "b"), "run-cancel")
 	runner := newRuntimeRunner(0)
 	runner.release = make(chan struct{})
 	svc.SetWorkflowNodeRunner(runner)

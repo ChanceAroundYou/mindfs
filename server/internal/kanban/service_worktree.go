@@ -136,7 +136,7 @@ func (s *Service) RebuildTaskWorktree(ctx context.Context, in MoveInput) (TaskDe
 	if err != nil {
 		// 失败原因记到任务上：卡片本来就会渲染 session_error，用户不必去翻日志
 		// （典型是 branch already exists，需要他决定怎么处理那个分支）。
-		_ = s.recordTaskError(ctx, store, task, "", err.Error())
+		_ = s.recordTaskError(ctx, store, task, err.Error())
 		return store.GetDetail(ctx, task.ID)
 	}
 	detail, err := store.GetDetail(ctx, updated.ID)

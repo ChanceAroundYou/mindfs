@@ -1,41 +1,26 @@
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
 import { PanelShell } from "../shell/PanelShell";
 import { composerInputStyle } from "../action/composerStyles";
-import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, findTaskProjectRoot, firstAgentStage, taskProjectScopeKey } from "../../app/appTask";
-import { InlineTokenText } from "../common/InlineTokenText";
+import { findTaskProjectRoot, taskProjectScopeKey } from "../../app/appTask";
 import { CompactUploadProgress } from "../file/CompactUploadProgress";
-import { LabelWithInfo } from "../common/LabelWithInfo";
 import { WorktreeBranchSelector } from "../task/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
-import { StageEditor } from "../task/StageEditor";
+import { PromptEditor } from "../editor/PromptEditor";
 import { Select } from "../common/Select";
 import { useI18n } from "../../i18n";
 import type { Dispatch, SetStateAction, RefObject, ChangeEvent } from "react";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import TokenEditor, { type TokenEditorHandle } from "../editor/TokenEditor";
-import type { AgentStatus } from "../../shared/agentTypes";
+import React, { useEffect } from "react";
+import type { TokenEditorHandle } from "../editor/TokenEditor";
 import type { CandidateItem } from "../../shared/candidateTypes";
 import type { GitBranchesPayload } from "../../shared/gitTypes";
 import type { UploadProgress } from "../../shared/uploadTypes";
-import type { KanbanTask, StageTemplate } from "../../shared/taskTypes";
-import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "../../app/appMisc";
+import { ManagedRootPayload } from "../../app/appMisc";
 import { TaskInlineEditState } from "../../app/appTask";
-import { defaultTaskFlowStages } from "../../app/defaultTaskFlow";
 import { TaskInlineCandidateMenu } from "./TaskInlineCandidateMenu";
 
 export interface TaskInlineEditPanelProps {
-  DEFAULT_TASK_AGENT: any;
-  DEFAULT_TASK_MODEL: any;
   PanelShell: any;
   applyTaskInlineCandidate: (candidate: CandidateItem) => void;
-  availableAgents: AgentStatus[];
   closeTaskEditDialog: () => void;
   composerInputStyle: any;
   currentRootId: string | null;
@@ -50,7 +35,6 @@ export interface TaskInlineEditPanelProps {
   setTaskInlineCandidateIndex: Dispatch<SetStateAction<number>>;
   setTaskInlineCandidates: Dispatch<SetStateAction<CandidateItem[]>>;
   setTaskInlineEdit: Dispatch<SetStateAction<TaskInlineEditState | null>>;
-  setTaskInlineHelpKey: Dispatch<SetStateAction<string>>;
   switchTaskInlineEditProject: (nextRootId: string) => void;
   t: ReturnType<typeof useI18n>["t"];
   taskCreateProjectOptions: { value: string; label: string; color: string | undefined; }[];
@@ -61,19 +45,21 @@ export interface TaskInlineEditPanelProps {
   taskInlineCandidates: CandidateItem[];
   taskInlineEdit: TaskInlineEditState | null;
   taskInlineEditorRef: RefObject<TokenEditorHandle | null>;
-  taskInlineHelpKey: string;
   taskInlineSaving: boolean;
   taskInlineUploadAbortRef: RefObject<AbortController | null>;
   taskInlineUploadProgress: UploadProgress | null;
   taskWorktreeBranches: GitBranchesPayload;
 }
 
+/**
+ * 新建任务面板 = 一条留言 + 可选的 worktree 配置。
+ *
+ * 不再有阶段编辑：任务的第一轮由后端 router 决定走直连回话还是某个 workflow，
+ * 面板上没有 agent/model/effort 可选，也没有「立即执行」这种阶段推进开关。
+ */
 export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
-  const DEFAULT_TASK_AGENT = props.DEFAULT_TASK_AGENT;
-  const DEFAULT_TASK_MODEL = props.DEFAULT_TASK_MODEL;
   const PanelShell = props.PanelShell;
   const applyTaskInlineCandidate = props.applyTaskInlineCandidate;
-  const availableAgents = props.availableAgents;
   const closeTaskEditDialog = props.closeTaskEditDialog;
   const composerInputStyle = props.composerInputStyle;
   const currentRootId = props.currentRootId;
@@ -88,7 +74,6 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
   const setTaskInlineCandidateIndex = props.setTaskInlineCandidateIndex;
   const setTaskInlineCandidates = props.setTaskInlineCandidates;
   const setTaskInlineEdit = props.setTaskInlineEdit;
-  const setTaskInlineHelpKey = props.setTaskInlineHelpKey;
   const switchTaskInlineEditProject = props.switchTaskInlineEditProject;
   const t = props.t;
   const taskCreateProjectOptions = props.taskCreateProjectOptions;
@@ -99,7 +84,6 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
   const taskInlineCandidates = props.taskInlineCandidates;
   const taskInlineEdit = props.taskInlineEdit;
   const taskInlineEditorRef = props.taskInlineEditorRef;
-  const taskInlineHelpKey = props.taskInlineHelpKey;
   const taskInlineSaving = props.taskInlineSaving;
   const taskInlineUploadAbortRef = props.taskInlineUploadAbortRef;
   const taskInlineUploadProgress = props.taskInlineUploadProgress;
@@ -132,22 +116,6 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
     	          const taskInlineCanCreateWorktree = taskInlineRoot?.is_git_repo === true;
     	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
     	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
-    	          // 编辑区里的 agent 选择器：默认值来自内置默认流水的 agent 段；
-    	          // 用户没动过就不写覆盖，保存时照默认流水走。
-    	          const taskInlineTemplateAgent = firstAgentStage(defaultTaskFlowStages());
-    	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
-    	          // 喂给 StageEditor 的那一段：user 段（角色不可切、没有段名），
-    	          // 但带上「下一个 agent 阶段」的 agent/model/effort，选择器才有默认值。
-    	          const createTaskInputStage: StageTemplate = {
-    	            name: "",
-    	            role: "user",
-    	            prompt_template: taskInlineEdit.text,
-    	            // 默认流水缺 agent/model 时退回 claude + sonnet。
-    	            agent: taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || DEFAULT_TASK_AGENT,
-    	            model: taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || DEFAULT_TASK_MODEL,
-    	            effort: taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "",
-    	            start_immediately: taskInlineEdit.startImmediately === true,
-    	          };
     	          return (
             <PanelShell
               width={640}
@@ -251,95 +219,18 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                     onSelect={applyTaskInlineCandidate}
                     onSelectedIndexChange={setTaskInlineCandidateIndex}
                   />
-                  {taskInlineEdit.previousInputs.length > 0 ? (
-                    <div
-                      style={{
-                        marginBottom: "10px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "8px",
-                        maxHeight: isMobile ? "18dvh" : "180px",
-                        overflowY: "auto",
-                      }}
-                    >
-                      {taskInlineEdit.previousInputs.map((item) => (
-                        <div
-                          key={item.id}
-                          style={{
-                            border: "1px solid var(--border-color)",
-                            borderRadius: "8px",
-                            background: "rgba(100, 116, 139, 0.08)",
-                            padding: "8px 9px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              marginBottom: "5px",
-                              fontSize: "11px",
-                              fontWeight: 800,
-                              color: "var(--text-secondary)",
-                            }}
-                          >
-                            {item.label}
-                          </div>
-                          <div
-                            style={{
-                              whiteSpace: "pre-wrap",
-                              wordBreak: "break-word",
-                              fontSize: "12px",
-                              lineHeight: 1.45,
-                              color: "var(--text-color)",
-                            }}
-                          >
-                            <InlineTokenText content={item.input} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <StageEditor
-                    editorRef={taskInlineEditorRef}
-                    stage={createTaskInputStage}
-                    agents={availableAgents}
-                    isFirstStage
-                    /* 任务名和 user 开关同排：以前这个输入框在 StageEditor 外面
-                       自己占一行，user 芯片被挤到下一排去了。样式照抄模板编辑
-                       面板的段名输入框。 */
-                    leading={(
-                      <input
-                        value={taskInlineEdit.name}
-                        onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
-                        placeholder={t("task.namePlaceholder")}
-                        style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
-                      />
-                    )}
-                    onChange={(patch) => setTaskInlineEdit((prev) => prev ? {
-                      ...prev,
-                      text: patch.prompt_template ?? prev.text,
-                      ...(patch.agent ? { agentOverride: patch.agent } : {}),
-                      ...(patch.model !== undefined ? { modelOverride: patch.model } : {}),
-                      ...(patch.effort !== undefined ? { effortOverride: patch.effort } : {}),
-                      // 首段的「立即执行」：面板上可临时改，勾上创建后直接开跑。
-                      ...(patch.start_immediately !== undefined ? { startImmediately: patch.start_immediately } : {}),
-                    } : prev)}
-                    /* 字段说明跟模板编辑面板共用一套：新建任务这里填的就是模板里
-                       那个「用户输入模板」的预填内容。 */
-                    label={(
-                      <LabelWithInfo
-                        label={t("task.initialInput")}
-                        info={t("task.stage.promptInfo")}
-                        helpKey="task-input"
-                        openHelpKey={taskInlineHelpKey}
-                        setOpenHelpKey={setTaskInlineHelpKey}
-                      />
-                    )}
-                    /* 这个编辑区本身是 user 段，但新建时要在这里挑「下一个 agent 阶段」
-                       用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
-                       默认值取模板里第一个 agent 段的 agent/model（createTaskInputStage）。 */
-                    showAgentSelector={taskInlineHasAgentStage}
-                    /* 附件「+」：面板底部的隐藏 file input 一直在（App.tsx:9782），
-                       chips 也在渲染，只是没告诉编辑器有这个按钮可点。
-                       任务详情面板（TaskDetailPanel.tsx:445）早就这么传了。 */
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
+                    <input
+                      value={taskInlineEdit.name}
+                      onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
+                      placeholder={t("task.namePlaceholder")}
+                      style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
+                    />
+                  </div>
+                  <PromptEditor
+                    ref={taskInlineEditorRef}
+                    value={taskInlineEdit.text}
+                    onChange={(next) => setTaskInlineEdit((prev) => prev ? { ...prev, text: next } : prev)}
                     onAttach={() => taskInlineAttachmentInputRef.current?.click()}
                     onSend={(text: string) => void saveTaskInlineEdit(text)}
                     sending={taskInlineSaving}

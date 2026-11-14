@@ -16,7 +16,6 @@ func TestEnsureNodeWorktreeCreatesPerNodeRun(t *testing.T) {
 	svc, root := newTestService(t, runner)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
-		Stages:         []StageTemplate{userStage("Describe")},
 		Input:          "multi",
 		CreateWorktree: true,
 	})
@@ -77,7 +76,7 @@ func TestEnsureNodeWorktreeCreatesPerNodeRun(t *testing.T) {
 func TestCloseNodeWorktreeByAttribution(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, &fakeRunner{})
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -114,7 +113,7 @@ func TestCloseNodeWorktreeByAttribution(t *testing.T) {
 func TestCloseNodeWorktreeRefusesWhenNeedsUser(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, &fakeRunner{})
-	detail, _ := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+	detail, _ := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "x"})
 	store, _ := svc.taskStore(root.ID)
 	_ = store
 	e, err := svc.EnsureNodeWorktree(ctx, EnsureNodeWorktreeInput{RootID: root.ID, TaskID: detail.Task.ID, NodeRunID: "nr-1"})
@@ -144,7 +143,6 @@ func TestEnsureTaskWorktreeAlsoRegisters(t *testing.T) {
 	svc, root := newTestService(t, &fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
-		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix:\n{previous_input}")},
 		Input:          "x",
 		CreateWorktree: true,
 	})

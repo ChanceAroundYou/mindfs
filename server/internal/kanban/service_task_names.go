@@ -9,39 +9,6 @@ import (
 	"time"
 )
 
-// AddStageInput 追加一段 prompt（下一段要执行的内容）。
-// 任务处于等待用户时，追加即自动推进；其他状态排入流水尾。
-type AddStageInput struct {
-	RootID string
-	TaskID string
-	Stage  StageTemplate
-	// ByRequest 表示这次追加是**人/系统显式发起的动作**（收尾段），不是用户随手补的
-	// 一句评论。两条路的区别只在「能不能离开当前段」：
-	//   - 置位 → canLeaveStageOnRequest：agent 段停在 waiting_user（agent 自己没回报
-	//     完成）也能被这次显式动作推过去，与「下一段」按钮（moveRelative）同一条规则；
-	//   - 不置位 → canAdvanceFromStage：评论不能替代完成本段，agent 段没走完就拒绝。
-	//
-	// 收尾必须置位：用户点「收尾」是一个明确动作（「这活我收了，去 commit + merge」），
-	// 而任务停在「等待你」时当前段正是 agent 段的 waiting_user —— 走评论那条规则必然
-	// 被拒，用户拿到的是一个他无从下手的报错（2026-10-08 实测 task-9）。
-	ByRequest bool
-}
-
-// UpdateStageInput 修改任务流水里某一段的定义。
-type UpdateStageInput struct {
-	RootID string
-	TaskID string
-	Index  int
-	Stage  *StageTemplate // 全量替换该段定义
-}
-
-// RemoveStageInput 删除任务流水里尚未执行的一段。
-type RemoveStageInput struct {
-	RootID string
-	TaskID string
-	Index  int
-}
-
 // RenameTask 设置任务名。
 func (s *Service) RenameTask(ctx context.Context, rootID, taskID, name string) (TaskDetail, error) {
 	store, err := s.taskStore(rootID)

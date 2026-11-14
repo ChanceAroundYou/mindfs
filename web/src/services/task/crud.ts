@@ -1,11 +1,10 @@
-import type { StageTemplate, TaskDetail, TaskOverviewItem } from "./types";
+import type { TaskDetail, TaskOverviewItem } from "./types";
 import { appURL } from "../net/base";
 import { getRootNodeId } from "../net/rootNode";
 import { protectedJSON } from "../net/api";
 
 export async function fetchTaskDetails(rootId: string, filters?: {
   status?: string;
-  stage?: number;
   after?: string;
   before?: string;
   limit?: number;
@@ -14,7 +13,6 @@ export async function fetchTaskDetails(rootId: string, filters?: {
 }, nodeId?: string): Promise<TaskDetail[]> {
   const params = new URLSearchParams({ root: rootId });
   if (filters?.status) params.set("status", filters.status);
-  if (typeof filters?.stage === "number") params.set("stage", String(filters.stage));
   if (filters?.after) params.set("after", filters.after);
   if (filters?.before) params.set("before", filters.before);
   if (typeof filters?.limit === "number" && filters.limit > 0) params.set("limit", String(filters.limit));
@@ -24,10 +22,15 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
+/**
+ * 建任务 = 一条用户留言 + 可选的 worktree 配置。
+ *
+ * 不再随包带流水/阶段：后端把这条留言交给 router，由它决定这一轮是直接回话、
+ * 还是挑一个已发布的 workflow 来跑（AGENTS.md 事实 13）。
+ */
 export async function createTask(
   rootId: string,
   input: string,
-  stages: StageTemplate[],
   createWorktree = false,
   worktreeBranchMode: "new" | "existing" = "new",
   worktreeBranch = "",
@@ -45,36 +48,11 @@ export async function createTask(
       worktree_branch_mode: worktreeBranchMode,
       worktree_branch: worktreeBranch,
       ...(options?.name ? { name: options.name } : {}),
-      // 流水是任务的初始快照（AGENTS.md 事实 13），后端不再维护可回查的流水库。
-      stages,
     }),
   });
 }
 
-export async function updateTaskInput(
-  rootId: string,
-  taskId: string,
-  input: string,
-  createWorktree?: boolean,
-  worktreeBranchMode?: "new" | "existing",
-  worktreeBranch?: string,
-  nodeId?: string,
-): Promise<TaskDetail> {
-  nodeId = nodeId || getRootNodeId(rootId);
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/input`, undefined, nodeId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      root_id: rootId,
-      input,
-      ...(typeof createWorktree === "boolean" ? { create_worktree: createWorktree } : {}),
-      ...(worktreeBranchMode ? { worktree_branch_mode: worktreeBranchMode } : {}),
-      ...(typeof worktreeBranch === "string" ? { worktree_branch: worktreeBranch } : {}),
-    }),
-  });
-}
-
-export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = "", nodeId?: string): Promise<TaskDetail> {
+export async function moveTask(rootId: string, taskId: string, action: "pause" | "resume" | "complete" | "cancel" | "fail", reason = "", nodeId?: string): Promise<TaskDetail> {
   return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -123,32 +101,5 @@ export async function renameTask(rootId: string, taskId: string, name: string, n
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId, name }),
-  });
-}
-
-export async function addTaskStage(rootId: string, taskId: string, stage: StageTemplate, nodeId?: string): Promise<TaskDetail> {
-  nodeId = nodeId || getRootNodeId(rootId);
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/add-stage`, undefined, nodeId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ root_id: rootId, stage }),
-  });
-}
-
-export async function updateTaskStage(rootId: string, taskId: string, index: number, stage: StageTemplate, nodeId?: string): Promise<TaskDetail> {
-  nodeId = nodeId || getRootNodeId(rootId);
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/update-stage`, undefined, nodeId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ root_id: rootId, index, stage }),
-  });
-}
-
-export async function removeTaskStage(rootId: string, taskId: string, index: number, nodeId?: string): Promise<TaskDetail> {
-  nodeId = nodeId || getRootNodeId(rootId);
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/remove-stage`, undefined, nodeId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ root_id: rootId, index }),
   });
 }

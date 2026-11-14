@@ -123,10 +123,12 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetRunner(services)
 	// Workflow Agent 节点走独立端口（D2/D5），不得经 legacy StageRun 双写。
 	services.Kanban.SetWorkflowNodeRunner(services)
+	// 纯对话模式（workflow_choice=disabled）由 Router 直连会话执行。
+	services.Kanban.SetDirectExecutor(services)
 	services.Kanban.SetWorkflowCommentSender(services)
 	// 所有账户共用同一把物理工作树 writer gate（D15）；每账户一把等于没锁。
 	services.Kanban.SetWriterGate(m.shared.writerGate)
-	services.WireFinishStageTeardown(services.Kanban)
+	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	for _, root := range services.ListRoots() {
 		services.Kanban.SetWorkflowNodeCancellerForRoot(root.ID, workflowNodeCanceller{rootID: root.ID, svc: services})
@@ -147,10 +149,6 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		return nil, err
 	}
 	services.GitHub = githubImportSvc
-	for _, root := range services.ListRoots() {
-		// 启动时把处于等待用户以外的旧待跑任务补进来跑一次（无调度器语义，仅确保不卡住）。
-		services.Kanban.KickPending(root.ID)
-	}
 
 	log.Printf("[workspace] 已就绪 user=%s primary=%v projects=%s meta=%s",
 		userID, primary, filepath.Dir(registryPath), metaRoot)

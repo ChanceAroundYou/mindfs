@@ -134,7 +134,7 @@ func TestWorkflowAuthoringRejectsUnsafaeAgentOutputWithoutWriting(t *testing.T) 
 func TestWorkflowAuthoringRunScopeKeepsFrozenGraphAndRevision(t *testing.T) {
 	output := `{"summary":"Add future node","base_revision":"1","operations":[{"id":"op","op":"add_node","node":{"id":"future","kind":"notify","params":{"message":"later"}}}]}`
 	h, svc, rootID := authoringHandler(t, func(workflowAuthoringRequest) (string, error) { return output, nil })
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Stages: []kanban.StageTemplate{{Name: "input", Role: kanban.RoleUser}}, Input: "hi"})
+	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Input: "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}

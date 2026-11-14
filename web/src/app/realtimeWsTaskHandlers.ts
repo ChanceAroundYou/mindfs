@@ -33,7 +33,6 @@ export function createRealtimeWsTaskHandlers(ctx: RealtimeEventsContext) {
               const current = taskDetailsByIdRef.current[nextTask.id];
               applyTaskDetails(payload.root_id, [{
                 task: nextTask,
-                stage_runs: current?.stage_runs || [],
                 events: current?.events || [],
               }]);
             }

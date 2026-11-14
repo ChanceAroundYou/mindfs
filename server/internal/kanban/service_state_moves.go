@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -26,17 +24,12 @@ func (s *Service) UpdateTaskAuxFlags(ctx context.Context, rootID, taskID string,
 		return TaskDetail{}, err
 	}
 	if strings.TrimSpace(eventType) != "" {
-		stageRunID := ""
-		if run, err := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); err == nil {
-			stageRunID = run.ID
-		}
 		_ = store.AddEvent(ctx, TaskEvent{
-			ID:         newID("event"),
-			TaskID:     task.ID,
-			StageRunID: stageRunID,
-			Type:       strings.TrimSpace(eventType),
-			Payload:    eventPayload(map[string]any{"aux_flags": patchPayload(patch)}),
-			CreatedAt:  time.Now().UTC(),
+			ID:        newID("event"),
+			TaskID:    task.ID,
+			Type:      strings.TrimSpace(eventType),
+			Payload:   eventPayload(map[string]any{"aux_flags": patchPayload(patch)}),
+			CreatedAt: time.Now().UTC(),
 		})
 	}
 	detail, err := store.GetDetail(ctx, task.ID)
@@ -64,104 +57,6 @@ func patchPayload(patch TaskAuxFlagsPatch) map[string]any {
 		out["session_error"] = strings.TrimSpace(*patch.SessionError)
 	}
 	return out
-}
-
-func (s *Service) moveRelative(ctx context.Context, in MoveInput, delta int, eventType, previousRunStatus string) (TaskDetail, error) {
-	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
-	if err != nil {
-		return TaskDetail{}, err
-	}
-	target := task.CurrentStageIndex + delta
-	if target < 0 || target >= len(task.Stages) {
-		return TaskDetail{}, errors.New("target stage out of range")
-	}
-	if task.CurrentStageIndex < 0 || task.CurrentStageIndex >= len(task.Stages) {
-		return TaskDetail{}, errors.New("current stage out of range")
-	}
-	latest, latestErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex)
-	if latestErr != nil {
-		return TaskDetail{}, latestErr
-	}
-	if delta > 0 && latest.Status == StageStatusRunning {
-		return TaskDetail{}, errors.New("current stage is running")
-	}
-	if delta > 0 && !canLeaveStageOnRequest(task.Stages[task.CurrentStageIndex].Role, latest.Status) {
-		// 走 canLeaveStageOnRequest 而不是 canAdvanceFromStage：到这里的一定是人点的
-		// （引擎自动推进走 moveTo），而 agent 段的 waiting_user（没输出 [STAGE-DONE:N]）
-		// 正该由人来判「就这样，推进」。canAdvanceFromStage 是留给引擎的那条更严的线。
-		return TaskDetail{}, fmt.Errorf(
-			"current stage is %s: 这一段没走完，重跑本段或改任务后再试",
-			latest.Status,
-		)
-	}
-	if delta > 0 && stageRequiresCurrentInput(task.Stages[target], task.CurrentStageIndex) && strings.TrimSpace(latest.Input) == "" {
-		return TaskDetail{}, errors.New("current stage input required")
-	}
-	if delta > 0 && task.CreateWorktree && !worktreeDirUsable(task.WorktreePath) {
-		updated, err := s.ensureTaskWorktree(ctx, store, task)
-		if err != nil {
-			if recordErr := s.recordTaskError(ctx, store, task, latest.ID, err.Error()); recordErr != nil {
-				return TaskDetail{}, recordErr
-			}
-			return TaskDetail{}, err
-		}
-		task = updated
-	}
-	if previousRunStatus != "" {
-		_ = store.UpdateStageRunStatus(ctx, latest.ID, previousRunStatus)
-	}
-	return s.moveTo(ctx, store, task, target, eventType, previousRunStatus, in.Reason)
-}
-
-func stageRequiresCurrentInput(stage StageTemplate, currentStageIndex int) bool {
-	prompt := stage.PromptTemplate
-	return strings.Contains(prompt, "{previous_input}") ||
-		(currentStageIndex == 0 && strings.Contains(prompt, "{task_initial_input}"))
-}
-
-func (s *Service) moveTo(ctx context.Context, store *TaskStore, task Task, target int, eventType, previousRunStatus, reason string) (TaskDetail, error) {
-	now := time.Now().UTC()
-	stage := task.Stages[target]
-	status := StatusWaitingUser
-	if stage.Role == RoleAgent {
-		status = StatusRunning
-	}
-	task.CurrentStageIndex = target
-	task.Status = status
-	task.AuxFlags.SessionError = ""
-	task.UpdatedAt = now
-	run := StageRun{
-		ID:         newID("run"),
-		TaskID:     task.ID,
-		StageIndex: target,
-		StageName:  stage.Name,
-		Role:       stage.Role,
-		Status:     StageStatusPending,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-	if stage.Role == RoleUser {
-		run.Status = StageStatusWaitingUser
-	}
-	event := TaskEvent{
-		ID:         newID("event"),
-		TaskID:     task.ID,
-		StageRunID: run.ID,
-		Type:       eventType,
-		Payload:    eventPayload(map[string]any{"reason": strings.TrimSpace(reason), "stage_index": target}),
-		CreatedAt:  now,
-	}
-	if err := store.MoveTask(ctx, task, run, event); err != nil {
-		return TaskDetail{}, err
-	}
-	detail, err := store.GetDetail(ctx, task.ID)
-	// 换段指针一定要播：卡片上的「当前在第几段 / 什么状态」就挂在这上面。
-	// 以前只靠 HTTP handler 事后补，于是 KickPending、handleKanbanTaskBeginFinish
-	// 这类非 HTTP 入口推不出去 —— 界面上就停在旧状态。
-	if err == nil && s.Runner != nil {
-		s.Runner.TaskUpdated(task.RootID, detail)
-	}
-	return detail, err
 }
 
 // setTaskStatus 改任务状态（Pause/Resume/Cancel/Fail 共用）。
@@ -195,21 +90,32 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 	return detail, err
 }
 
-// ensureServiceTask 读取任务并回填旧任务快照（详见 loadForMove）；当前任务字段仅服务端推动（如追加段落）。
-func (s *Service) ensureServiceTask(ctx context.Context, rootID string, store *TaskStore, taskID string) (Task, error) {
-	store, task, err := s.loadForMove(ctx, rootID, strings.TrimSpace(taskID))
+// recordTaskError 把一条错误写到任务的 aux_flags.session_error 上并广播。
+func (s *Service) recordTaskError(ctx context.Context, store *TaskStore, task Task, message string) error {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return nil
+	}
+	current, err := store.GetTask(ctx, task.ID)
 	if err != nil {
-		return Task{}, err
+		return err
 	}
-	return task, nil
-}
-
-func defaultStageName(task Task, index int) string {
-	if index < 0 {
-		index = 0
+	current.AuxFlags.SessionError = message
+	current.UpdatedAt = time.Now().UTC()
+	if err := store.UpdateTask(ctx, current); err != nil {
+		return err
 	}
-	name := strings.TrimSpace(fmt.Sprintf("阶段 %d", index+1))
-	return name
+	_ = store.AddEvent(ctx, TaskEvent{
+		ID:        newID("event"),
+		TaskID:    current.ID,
+		Type:      "task_error",
+		Payload:   eventPayload(map[string]any{"message": message}),
+		CreatedAt: time.Now().UTC(),
+	})
+	if detail, err := store.GetDetail(ctx, current.ID); err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(current.RootID, detail)
+	}
+	return nil
 }
 
 func (s *Service) loadForMove(ctx context.Context, rootID, taskID string) (*TaskStore, Task, error) {
@@ -221,8 +127,6 @@ func (s *Service) loadForMove(ctx context.Context, rootID, taskID string) (*Task
 	if err != nil {
 		return nil, Task{}, err
 	}
-	// 历史任务（模板时代建的）流水早就落进 tasks.task_stages_json（创建时快照、
-	// 或旧版在第一次推进时回填过）；模板库下线后不再有任何回查路径。
 	return store, task, nil
 }
 
@@ -262,24 +166,13 @@ func eventPayload(value map[string]any) string {
 	return string(payload)
 }
 
-type TaskControlPromptContext struct {
-	RootID            string
-	TaskNumber        int
-	CurrentStageIndex string
-	CurrentStageName  string
-	Enabled           bool
-}
-
-func BuildAgentPrompt(template string, values map[string]string, control TaskControlPromptContext) string {
+// RenderPrompt 替换提示词里的 {key} 占位符。空值刻意保留原样还是抹成空串？
+// 这里按「有值才替换」处理：调用方只传真正有值的键，缺键说明这一段没有那个
+// 上下文，留在原文里更容易被发现（与 workflow 节点解析的历史行为一致）。
+func RenderPrompt(template string, values map[string]string) string {
 	out := template
 	for key, value := range values {
 		out = strings.ReplaceAll(out, "{"+key+"}", value)
-	}
-	if control.Enabled {
-		taskNumber := strconv.Itoa(control.TaskNumber)
-		out += fmt.Sprintf("\n\nTask control context:\n- root_id: %s\n- task_number: %s\n- current_stage_index: %s\n- current_stage_name: %s\n\nBefore changing the task stage, inspect the current task state.\n\nmindfs %s -task %s\nmindfs %s -task %s -next\nmindfs %s -task %s -prev",
-			control.RootID, taskNumber, control.CurrentStageIndex, control.CurrentStageName,
-			control.RootID, taskNumber, control.RootID, taskNumber, control.RootID, taskNumber)
 	}
 	return out
 }

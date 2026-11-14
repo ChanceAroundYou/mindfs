@@ -160,6 +160,9 @@ func (s *Service) PauseWorkflowRun(ctx context.Context, rootID, taskID, reason s
 	if _, err := s.setTaskStatus(ctx, rootID, task.ID, StatusPaused, "paused", reason, false); err != nil {
 		return err
 	}
+	if run, found, rerr := s.workflowRunForTask(ctx, store, task.ID); rerr == nil && found {
+		s.settleWorkflowReply(ctx, store, run)
+	}
 	s.mu.Lock()
 	if d := s.workflowDrives[workflowDriveKey(rootID, task.ID)]; d != nil {
 		d.pending = false
@@ -182,6 +185,7 @@ func (s *Service) ResumeWorkflowRun(ctx context.Context, rootID, taskID, reason 
 	if _, err := s.setTaskStatus(ctx, rootID, task.ID, StatusRunning, "resumed", reason, false); err != nil {
 		return err
 	}
+	s.resumeWorkflowReply(ctx, store, task.ID)
 	s.appendRunStateEvent(ctx, store, task.ID, WorkflowEventRunResumed, reason)
 	return s.WakeWorkflowRun(ctx, rootID, task.ID, "resume")
 }
@@ -231,6 +235,7 @@ func (s *Service) CancelWorkflowRun(ctx context.Context, rootID, taskID, reason 
 	if err := store.UpdateTaskStatus(ctx, task.ID, StatusCancelled, true); err != nil {
 		return err
 	}
+	s.settleWorkflowReply(ctx, store, run)
 	_ = store.AddEvent(ctx, TaskEvent{
 		ID: newID("event"), TaskID: task.ID, Type: "cancelled",
 		Payload: eventPayload(map[string]any{"reason": strings.TrimSpace(reason)}), CreatedAt: time.Now().UTC(),

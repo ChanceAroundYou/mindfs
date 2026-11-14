@@ -2,7 +2,6 @@ package kanban
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +35,7 @@ func TestTaskStoreDeleteTaskRemovesCardAndItsRows(t *testing.T) {
 		Status:    StatusWaitingUser,
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, StageRun{}, TaskEvent{})
+	}, TaskEvent{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,13 +45,17 @@ func TestTaskStoreDeleteTaskRemovesCardAndItsRows(t *testing.T) {
 		Status:    StatusWaitingUser,
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, StageRun{ID: "run-doomed-0", TaskID: "doomed", StageIndex: 0, Status: StageStatusSuccess}, TaskEvent{ID: "evt-doomed-1", TaskID: "doomed", Type: "created"})
+	}, TaskEvent{ID: "evt-doomed-1", TaskID: "doomed", Type: "created"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 前置条件：从属行真的落进去了，否则下面的「一起走」是空断言。
-	if _, err := store.LatestStageRun(ctx, doomed.ID, 0); err != nil {
-		t.Fatalf("前置条件不成立：stage_runs 没播进去：%v", err)
+	// 前置条件：历史阶段行真的落进去了，否则下面的「一起走」是空断言。
+	// 生产路径已不再写 stage_runs，这里直接按冻结列的形状播一条存量行。
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO stage_runs (id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at)
+		 VALUES ('sr-doomed', ?, 0, 'input', 'user', 'success', '', '', '', '', '', ?, ?)`,
+		doomed.ID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("前置条件不成立：播 stage_runs 失败：%v", err)
 	}
 
 	if err := store.DeleteTask(ctx, doomed.ID); err != nil {
@@ -102,7 +105,6 @@ func TestServiceDeleteTaskRemovesOnlyTheCard(t *testing.T) {
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Input:  "删我",
-		Stages: []StageTemplate{userStage("起"), agentStage("干活", "干")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +136,6 @@ func TestServiceDeleteTaskRemovesOnlyTheCard(t *testing.T) {
 	if _, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Input:  "下一张",
-		Stages: []StageTemplate{userStage("起"), agentStage("干活", "干")},
 	}); err != nil {
 		t.Fatalf("删完之后建不出新任务：%v", err)
 	}
@@ -147,7 +148,6 @@ func TestServiceDeleteTaskRefusesWhileRunning(t *testing.T) {
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Input:  "别删我",
-		Stages: []StageTemplate{userStage("起"), agentStage("干活", "干")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -170,27 +170,22 @@ func TestServiceDeleteTaskRefusesWhileRunning(t *testing.T) {
 		t.Fatal("running 的任务必须拒绝删除 —— 删了卡片就没人能停它了")
 	}
 
-	// ② 已排进执行队列、还没落 running 的那个窗口：taskRun 标记说了算。
+	// ② 状态已经落回 waiting_user，但会话还在回复：探针说了算。
+	// 只看 task.Status 会漏掉「agent 刚起、状态还没落库」那个窗口。
 	task.Status = StatusWaitingUser
+	task.MainSessionKey = "sess-live"
 	if err := store.UpdateTask(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	key := strings.TrimSpace(root.ID) + "\x00" + strings.TrimSpace(detail.Task.ID)
-	svc.mu.Lock()
-	svc.taskRun[key] = true
-	svc.mu.Unlock()
+	replying := true
+	svc.SetSessionRunningProbe(func(key string) bool { return key == "sess-live" && replying })
 	err = svc.DeleteTask(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
 	if err == nil {
-		t.Fatal("已排进执行队列的任务必须拒绝删除")
+		t.Fatal("会话还在回复的任务必须拒绝删除")
 	}
-	if !strings.Contains(err.Error(), "执行") {
-		t.Fatalf("拒绝的理由该说清是「正在执行」：%v", err)
-	}
-	// 摘掉标记之后必须能删 —— 否则这个拒绝就成了永久锁。
-	svc.mu.Lock()
-	delete(svc.taskRun, key)
-	svc.mu.Unlock()
+	// 会话收工之后必须能删 —— 否则这个拒绝就成了永久锁。
+	replying = false
 	if err := svc.DeleteTask(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
-		t.Fatalf("执行标记摘掉之后应当能删：%v", err)
+		t.Fatalf("会话收工之后应当能删：%v", err)
 	}
 }
