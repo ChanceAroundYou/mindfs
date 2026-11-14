@@ -1,6 +1,6 @@
 # Task Router（任务工头）— 详细设计 v2
 
-Status: **P0 已实现** · 2026-11-14 · shadow 隔离验收通过，门禁绿；**未提交、未部署、未重启**
+Status: **P0 已实现并提交 main** · 2026-11-14 · shadow 隔离验收通过，门禁绿；提交 `5d50a24a`、注册修复 `ba15ff32`；**未 push、未部署、未重启**
 
 > 本文是 2026-11-14「批准 P0」后的细化方案。P0 指 **shadow 模式**：Router 真实运行、真实记账，
 > 但**不改变任何用户可见行为**。P1（Router 真正决定路由）与 P2（运行期协调）仍需逐阶段单独批准。
@@ -18,7 +18,7 @@ Status: **P0 已实现** · 2026-11-14 · shadow 隔离验收通过，门禁绿�
 | P1 route | 未批准实现；本文给出设计与准入门槛 |
 | P2 coordinate | 未批准实现；本文只定边界与触发矩阵 |
 | 生产行为 | **不变**。P0 默认 `router.mode=off`；只有隔离实例显式开 `shadow` |
-| 代码改动 | P0 代码已落盘；定向/全量门禁已跑；**未 commit** |
+| 代码改动 | P0 代码已提交 main（`5d50a24a`）；定向/全量门禁已跑 |
 | 外向动作 | 不 commit / push / deploy / ship / 重启任何 mindfs 服务；需要单独授权 |
 
 ### 0.1 一页纸
@@ -1858,8 +1858,8 @@ SELECT * FROM router_task_state;
 - [x] 调度记录 API：列表/详情/status 可用；同账户隔离；transcript 裁剪。
 - [x] 隔离实例跑 20+ 条任务（实跑 26 条），导出 shadow 报告；无用户可见变化。
 - [x] `go test ./...`、`go test -race ./server/internal/kanban`、`npm test`、`tsc`、`make build` 全绿。
-- [ ] `make check-upstream` 在提交后绿；G-LP 已登记（已登记；未提交前工具只比较已提交文件，预期红）。
-- [x] 未 commit/push/deploy/重启（除非另行授权）。
+- [x] `make check-upstream` 提交后绿（1822 delta / 292 组）；G-LP 已登记。
+- [x] 未 push/deploy/重启（提交已获单独授权）。
 
 > P1 准入补充：本次 shadow 的 Router turn p95 = 41.7s，远高于 §21.2 的 p95 ≤3s 门槛。
 > 在压到门槛内之前，不得把任何 root 设为 `route`。
