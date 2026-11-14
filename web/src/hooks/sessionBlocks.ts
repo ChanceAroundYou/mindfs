@@ -111,6 +111,16 @@ export function isBlankText(content: string): boolean {
 }
 
 /**
+ * 内容里有没有至少一个「有意义的字符」——字母、数字或 CJK。
+ * reasoning 块若全是标点/符号（如 "..."、"。。。"）不值得渲染成占位块。
+ */
+const MEANINGFUL_CHAR = /[\p{L}\p{N}]/u;
+
+export function hasMeaningfulChar(content: string): boolean {
+  return MEANINGFUL_CHAR.test(content);
+}
+
+/**
  * 该 seq 的正文块；没有就返回 undefined（历史会话 / 本方案落地前落盘的轮次）。
  * 判据是「**非空**」而不是「键存在」：后端对没有块流的会话下发空 map，
  * 空数组当作没有，才能走到旧格式回退。
@@ -161,6 +171,9 @@ export function buildAssistantTimelineFromBlocks(
         // 灰显 / 可折叠 —— 复用既有 thought 渲染，超大块由它自己折叠。
         const content = block.text || "";
         if (isBlankText(content)) break;
+        // 纯标点/符号的 reasoning（如 "..."、"。。"）不值得渲染成「思考过程 (N 字符)」
+        // 占位块，直接跳过。真实思考至少含一个字母、数字或 CJK 字符。
+        if (!hasMeaningfulChar(content)) break;
         out.push({ id, type: "thought", content });
         break;
       }

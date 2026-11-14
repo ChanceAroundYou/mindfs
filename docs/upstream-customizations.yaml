@@ -8295,3 +8295,125 @@ groups:
       - 'web/src/app/useAppKanbanColumns.ts:const kanbanColumns: KanbanColumn[] = ['
       - 'web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;'
       - 'web/tests/upstream-removals.test.mjs:阶段模型不得复活'
+
+  # ── Task Router P0（shadow）：隐藏 CC 调度会话 + 决策账本 ───────────────────
+  - id: G-LP
+    title: Task Router P0（shadow）——每个任务一个隐藏的 Claude Code 调度会话与决策账本
+    kind: feature
+    symptom: "生产默认 `router.mode=off`，用户可见行为与改造前逐字节一致：发一条留言仍然只走原来的 `CreateUserActivity` 三路分派，不创建 Router 会话、不写任何 Router 表。隔离实例显式开 `router.mode=shadow` 后，服务端会在 legacy 分派**之前**冻结一份 Situation Brief，真实跑一轮隐藏的 Claude Code 会话（MCP 工具 `router_say`/`router_run_workflow`/`router_message_agent`/`router_ask_user`/`router_silent`/`router_deliver_to_active_run`/`router_inspect_run`），把动作、耗时、token、legacy 对比写进 `router_decisions`，但**不 apply 任何动作**：活动流、WorkflowRun、任务状态都不变。`/api/tasks/{id}/router-decisions`、`/router-session`、`/router-session/transcript`、`/api/router/status` 可查调度记录；Router 会话不出现在会话列表/搜索/计数/最近时间/WS 事件里。"
+    why: "用户明确要求把任务从「机械三路开关」升级成 super-agent 总控 Router，并批准先做 P0 shadow。必须保留：① Router 是独立的 `session.TypeRouter` 会话，由 Claude Code 承载，经 `handleCanUseTool` 做 deny-by-default 工具闸门（只放行 `mcp__mindfs_router__*`），Bash/Read/AskUserQuestion 被拒；② Router 的 ConfigDir 隔离在 `<account>/router/claude`，不污染用户 `~/.claude`，也不被用户 Stop hook 影响；空闲关闭只关运行时、保留 manager 会话行，下轮可 resume，转录仍可读；③ 每任务一个 lane：同任务串行、跨任务并行，lane 缓存在长生命周期 `kanban.Service` 上，不能挂在每次请求新建的 `ActivityService`；④ shadow 快照必须早于 legacy 分发，否则 brief 里会混进本轮新造的 Run；⑤ `(task_id,turn_id)` 唯一约束保证重复触发不重复记账；⑥ token/延迟/agreement 必须持久化，供 `server/scripts/router_shadow_report` 导出；⑦ 未知 mode 归一为 off，生产默认绝不能变成 shadow/route。"
+    boundary: "P0 只管「Router 能想、能记账」：不 apply `say`/`run_workflow`/`message_agent`/`ask_user`/`silent`/`deliver`，不写占位活动，不改 WorkflowRun，不做 `router_task_state` 守卫，不写前端调度记录面板，不做 P2 触发。P1 才接入路由与执行；`route`/`coordinate` 当前显式不处理，避免「以为已接管实际没接管」。不改 workflow 引擎/DAG/Loop/HumanGate 语义（G-LE/G-LI），不改历史任务转换（G-LK）。`server/internal/agent/pool.go`、`pool_open.go` 与 `server/internal/agent/proxy/`、`AGENTS.md` 同时带着并行的 compact-strip proxy 改动，**本组只认领其中的 Router 工具装配与 tool-policy 透传**，proxy 主体与 AGENTS 重写不属于 G-LP。"
+    files:
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_prompt.go
+      - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/router_service.go
+      - server/internal/kanban/router_store.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/service_router.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/types.go
+      - server/internal/api/router_runtime.go
+      - server/internal/api/http_router.go
+      - server/internal/api/appcontext_broadcast.go
+      - server/internal/api/http_activities.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/ws.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_agent_open.go
+      - server/internal/api/usecase/session_command_shell.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/agent/types/session_type.go
+      - server/internal/agent/types/session_tools.go
+      - server/internal/agent/types/session_tools_test.go
+      - server/internal/agent/claude/session.go
+      - server/internal/agent/claude/session_open.go
+      - server/internal/agent/claude/session_ask_user.go
+      - server/internal/agent/pool_open.go
+      - server/internal/session/types.go
+      - server/internal/session/manager_session_list.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+      - server/cmd/mindfs-server/main.go
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/scripts/router_shadow_report/main.go
+      - docs/plans/2026-11-14-task-router-super-agent.md
+    tests:
+      - server/internal/kanban/router_shadow_test.go
+    anchors:
+      - server/internal/kanban/router_service.go:Enqueue
+      - server/internal/api/router_runtime.go:RunRouterTurn
+
+  - id: G-LQ
+    title: Compact-strip proxy（PostCompact hook + HTTP 剥离层）
+    kind: perf
+    symptom: "压缩后 Claude Code 重新注入 skills/file restore 累计可达数万 token（实测单次 skills 20+KB、文件 50KB），造成压缩后首次请求延迟与 token 浪费；用户报「压缩反复与 200k 假上限」（memory `claude-context-window-thrash`）。上游 Claude Code 无关，只影响 mindfs 内嵌启动的 Claude Code 会话。"
+    why: "用户要求「在 agent harness 内处理，而非网关」。mindfs 在 `pool_open.go` 对 Claude SDK 会话注入本地 HTTP 代理层（`ANTHROPIC_BASE_URL=http://127.0.0.1:{port}/p/{token}`），PostCompact hook（`~/.agents/claude/hooks/post-compact-strip.sh`）触发 `/compact-signal` 设置 stripNext 标志，代理在下一个请求剥离超预算的 skills 与文件块（`proxy.stripCompactPayload`）后透传给真实 Anthropic 端点，之后恢复透明转发。直连 Claude Code 启动（无 `MINDFS_*` 环境变量）时 hook 是 no-op、proxy 未注入，行为零变化。剥离预算：skills 20KB / 文件块 2 个（可配置）。Hook 与 settings 在 `~/.agents/claude/` 下，不纳入项目仓库。"
+    boundary: "只管 `server/internal/agent/proxy/` 与注入逻辑（`pool.go`/`pool_open.go`），不改 Claude SDK 本身、不改模型选择、不改其他 harness（codex/acp）、不改 Router 工具闸门（G-LP）。AGENTS.md 瘦身（359→86 行）属于同批改动但不登记在本组（那是文档约定，属 G-A 边界）。`pool_open.go` 的 Router 工具装配（`session_tools.go` import）归 G-LP，proxy 主体归本组。"
+    files:
+      - server/internal/agent/proxy/
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_open.go
+    tests:
+      - server/internal/agent/proxy/proxy_test.go
+    anchors:
+      - server/internal/agent/proxy/proxy.go:stripCompactPayload
+      - server/internal/agent/proxy/strip.go:trimSkillsBlock
+      - server/internal/agent/pool_open.go:compactProxyEnv
+
+  - id: G-LR
+    title: 前端 reasoning 块过滤纯标点占位符
+    kind: fix
+    symptom: "使用 opus 时前端显示「思考过程 (3 字符)」占位块，内容只有 `...` 或 `。。。` 这类纯标点，没有实质思考内容。用户报「这个占位符有点莫名奇妙」。"
+    why: "Claude opus 有时会输出只含标点符号的 reasoning 块（`...` / `。。。` / `……`），这些块没有语义价值但仍被渲染成「思考过程 (N 字符)」胶囊占据视觉空间。`sessionBlocks.ts` 的 `hasMeaningfulChar()` 用 `\\p{L}\\p{N}` Unicode 正则检查是否含字母/数字，纯标点块被跳过；真实思考内容（如中文「先想」、英文 reasoning）保持渲染。零宽字符判定（`isBlankText`）继续工作，两层过滤互不干扰。"
+    boundary: "只管前端 reasoning 块渲染过滤（`sessionBlocks.ts` 的 `hasMeaningfulChar` + reasoning case 检查），不改后端块流生成（`server/internal/session/`）、不改 `ThinkingBlock` 组件本身、不改 token usage 显示逻辑（那是 `TurnTokenUsage` + `SessionViewerAssistantMessage`，与 reasoning 过滤无关）。"
+    files:
+      - web/src/hooks/sessionBlocks.ts
+    tests:
+      - web/tests/session-blocks-render.test.mjs
+    anchors:
+      - web/src/hooks/sessionBlocks.ts:hasMeaningfulChar
+      - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
+      - 'server/internal/api/router_runtime.go:func (s *AppContext) ensureRouterSession('
+      - 'server/internal/api/http_router.go:func (h *HTTPHandler) handleTaskRouterDecisions('
+      - 'server/internal/api/usecase/session_send.go:ToolPolicy'
+      - 'server/internal/agent/types/session_tools.go:func (p *ToolPolicy) Allows(name string) bool'
+      - 'server/internal/agent/claude/session_open.go:func claudeRouterMcpOptions(tools []types.ToolSpec) []claudeagent.Option'
+      - 'server/internal/agent/claude/session_ask_user.go:func (s *session) handleCanUseTool('
+      - 'server/internal/agent/pool_open.go:router tools require claude protocol'
+      - 'server/internal/session/types.go:TypeRouter = "router"'
+      - 'server/internal/session/manager_session_list.go:TypeRouter'
+      - 'server/app/server.go:RouterMode'
+      - 'cli/cmd/startup.go:router'
+      - 'server/scripts/router_shadow_report/main.go:// Command router_shadow_report'
+
+  # ── 压缩后首请求瘦身代理（compact-strip proxy）─────────────────────────────
+  - id: G-LQ
+    title: 压缩后首请求瘦身代理（按会话 token 剥离超量 skills 与 file-restore 块）
+    kind: feature
+    symptom: "Claude Code 自动压缩上下文后发出的第一个请求会把 `invoked_skills` 全文（可达 ~100KB）和最多 5 个 file-restore 块重新注入 system prompt，导致压缩刚腾出的上下文立刻被吃掉、长会话继续反复压缩。现在 mindfs 托管的所有 Claude 会话都经一个本机回环代理：`ANTHROPIC_BASE_URL=http://127.0.0.1:{port}/p/{token}`，PostCompact hook 只对该 token 的下一请求做一次剥离——`invoked_skills` 总量压到 20KB、file-restore 块保留 2 个，其余请求原样透传。"
+    why: "这是 fork 的上下文成本控制，必须保留：① 代理只监听 `127.0.0.1` 随机端口，每个会话一个 token，未知 token 直接 404，不引入外部入口；② 只在收到 `/compact-signal` 后剥离**一次**，之后清标记，不影响正常请求；③ 剥离是保守的——JSON 解析/结构不符合预期时返回原 body，宁可多花 token 也不破坏请求；④ 真实上游地址由 `RegisterSession` 按会话记录，不透传客户端自带的任意 URL，避免开放代理；⑤ 代理启动失败只记日志、不阻断会话创建（non-fatal）。"
+    boundary: "只处理 Anthropic Messages API 请求体里的 `system` 块；不改用户消息、工具结果、模型参数或流式响应。Proxy 不缓存、不落盘请求内容，token 仅进程内。与 G-LP 的 Router 工具装配共用 `pool_open.go` 的会话开启路径，但 Router 的工具策略与本代理互不依赖。"
+    files:
+      - server/internal/agent/proxy/proxy.go
+      - server/internal/agent/proxy/strip.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_open.go
+    tests:
+      - server/internal/agent/proxy/proxy_test.go
+    anchors:
+      - 'server/internal/agent/proxy/proxy.go:func NewServer() (*Server, error)'
+      - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleCompactSignal('
+      - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleProxied('
+      - 'server/internal/agent/proxy/strip.go:func stripCompactPayload('
+      - 'server/internal/agent/proxy/strip.go:const skillMarker = "### Skill:"'
+      - 'server/internal/agent/pool.go:compactProxy       *proxy.Server'
+      - 'server/internal/agent/pool_open.go:func (p *Pool) compactProxyEnv('
