@@ -23,7 +23,7 @@ import (
 //   - status/summary 在 Go 层用空串表示「无」，不建 CHECK 约束：存量活动类型
 //     （user_comment/attention/merge_conflict 等）超出计划的枚举，硬约束会
 //     直接拒绝现网写入。
-const activitySelectColumns = "id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, created_at, updated_at"
+const activitySelectColumns = "id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at"
 
 var (
 	// ErrActivityNotFound 表示按 id 找不到活动。
@@ -68,6 +68,11 @@ CREATE TABLE IF NOT EXISTS task_activities (
 	session_key TEXT NOT NULL DEFAULT '',
 	run_id TEXT NOT NULL DEFAULT '',
 	node_run_id TEXT NOT NULL DEFAULT '',
+	reply_to_id TEXT NOT NULL DEFAULT '',
+	router_decision_id TEXT NOT NULL DEFAULT '',
+	purpose TEXT NOT NULL DEFAULT '',
+	ordinal INTEGER NOT NULL DEFAULT 0,
+	hidden INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (task_id, id)
@@ -83,6 +88,11 @@ CREATE TABLE IF NOT EXISTS task_activities (
 		`ALTER TABLE task_activities ADD COLUMN session_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN run_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN node_run_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE task_activities ADD COLUMN reply_to_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE task_activities ADD COLUMN router_decision_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE task_activities ADD COLUMN purpose TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE task_activities ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE task_activities ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE task_activities ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alters {
@@ -90,10 +100,20 @@ CREATE TABLE IF NOT EXISTS task_activities (
 			return err
 		}
 	}
+	// 只为改造前的 agent_reply 行补 purpose：run_id 非空是 workflow 结果，
+	// 否则是直连回复。新代码会显式写 purpose，purpose='' 的守卫保证只跑一次。
+	// 存量 user_comment/attention 等行保持空串，不改写历史语义。
+	if _, err := db.Exec(`
+UPDATE task_activities
+SET purpose = CASE WHEN run_id <> '' THEN 'result' ELSE 'reply' END
+WHERE type = 'agent_reply' AND purpose = ''`); err != nil {
+		return err
+	}
 	_, err := db.Exec(`
 CREATE INDEX IF NOT EXISTS idx_task_activities_task_created ON task_activities(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_activities_workflow_run ON task_activities(run_id);
 CREATE INDEX IF NOT EXISTS idx_task_activities_id ON task_activities(id);
+CREATE INDEX IF NOT EXISTS idx_task_activities_decision ON task_activities(router_decision_id);
 `)
 	return err
 }
@@ -117,11 +137,12 @@ func (s *ActivityStore) Insert(ctx context.Context, activity *TaskActivity) erro
 		activity.UpdatedAt = activity.CreatedAt
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		activity.ID, activity.TaskID, activity.RootID, activity.Type, activity.Author, activity.Role,
 		activity.Body, activity.WorkflowChoice, activity.WorkflowVersionID, activity.Status,
 		activity.Summary, activity.RunID, activity.NodeRunID, activity.SessionKey,
+		activity.ReplyToID, activity.RouterDecisionID, activity.Purpose, activity.Ordinal, boolToInt(activity.Hidden),
 		activity.CreatedAt.Format(time.RFC3339Nano), activity.UpdatedAt.Format(time.RFC3339Nano))
 	return err
 }
@@ -143,9 +164,23 @@ func (s *ActivityStore) Get(ctx context.Context, id string) (*TaskActivity, erro
 // List 按创建时间升序返回某任务的活动。rowid 作为同一时间戳的次级排序，
 // 保证并发写入后顺序稳定。
 func (s *ActivityStore) List(ctx context.Context, taskID string) ([]*TaskActivity, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+activitySelectColumns+` FROM task_activities WHERE task_id = ? ORDER BY created_at ASC, rowid ASC`,
-		strings.TrimSpace(taskID))
+	return s.list(ctx, taskID, false)
+}
+
+// ListIncludingHidden 返回完整活动流（含 hidden 行），供 include_hidden 调试与
+// Router 的调度记录使用。默认列表刻意过滤 hidden：Router 的内部投递副本不属于
+// 用户看到的对话流。
+func (s *ActivityStore) ListIncludingHidden(ctx context.Context, taskID string) ([]*TaskActivity, error) {
+	return s.list(ctx, taskID, true)
+}
+
+func (s *ActivityStore) list(ctx context.Context, taskID string, includeHidden bool) ([]*TaskActivity, error) {
+	query := `SELECT ` + activitySelectColumns + ` FROM task_activities WHERE task_id = ?`
+	if !includeHidden {
+		query += ` AND hidden = 0`
+	}
+	query += ` ORDER BY created_at ASC, rowid ASC`
+	rows, err := s.db.QueryContext(ctx, query, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -255,18 +290,29 @@ func ensureActivityUpdated(res sql.Result, id string) error {
 func scanActivityRecord(row scanner) (*TaskActivity, error) {
 	var (
 		a                TaskActivity
+		hidden           int
 		created, updated string
 	)
 	if err := row.Scan(
 		&a.ID, &a.TaskID, &a.RootID, &a.Type, &a.Author, &a.Role, &a.Body,
 		&a.WorkflowChoice, &a.WorkflowVersionID, &a.Status, &a.Summary,
-		&a.RunID, &a.NodeRunID, &a.SessionKey, &created, &updated,
+		&a.RunID, &a.NodeRunID, &a.SessionKey,
+		&a.ReplyToID, &a.RouterDecisionID, &a.Purpose, &a.Ordinal, &hidden,
+		&created, &updated,
 	); err != nil {
 		return nil, err
 	}
+	a.Hidden = hidden != 0
 	a.CreatedAt = parseActivityTime(created)
 	a.UpdatedAt = parseActivityTime(updated)
 	return &a, nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func parseActivityTime(raw string) time.Time {

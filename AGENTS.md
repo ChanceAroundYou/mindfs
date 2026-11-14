@@ -1,311 +1,62 @@
 # MindFS — AI Agent Remote Access Gateway · Result Visualization
 
 Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
-三台物理设备上跑四个 mindfs 实例（本机 / wsl / fn / pc-win），三个由 systemd 管理、pc-win 靠 Windows 计划任务；
-监听地址、单元归属与重启权限一律见下方[节点表](#节点表别叫错)，别凭印象写。
+四个实例（本机 / wsl / fn / pc-win），重启权限一律见[节点表](#节点表别叫错)，别凭印象写。
 
 ## Agent 指令入口与规范
 
-`AGENTS.md` 是**唯一**的项目指令入口（操作与架构事实源）；两个索引由它内联加载：
+`AGENTS.md` 是**唯一**的项目指令入口；两个索引由它内联加载：
 
 @docs/agent/rules/README.md
 @docs/plans/README.md
 
-- **不要新增 `CLAUDE.md` / `GEMINI.md` 这类「只导入、无正文」的壳**（2026-10-17 收束）。
-  Claude Code 自 2.1.277 起原生发现 `AGENTS.md`（内建插件 `agents-md`，缺省模式 `claude-md-or-agents-md`），
-  但**当前目录或其任一祖先**存在 `CLAUDE.md`（或 `CLAUDE.local.md`、`.claude/CLAUDE.md`）时就不再发现它 ——
-  留壳不是无害的重复，是把共享正文挡在外面。由 `web/tests/agent-docs.test.mjs` 钉住。
-- 新增工具适配器同理：只指向本文件，不复制规则正文。**只在确有必要时**加配置（例如某工具不认
-  `AGENTS.md` 自动发现，才写它自己的点名文件）；没有第二个消费者就不要预埋。
-- 代码规范索引：[docs/agent/rules/README.md](docs/agent/rules/README.md)。按任务读取对应规则；前端/后端 TODO 是各自存量事项的唯一清单。
-- 执行计划索引：[docs/plans/README.md](docs/plans/README.md)。只有标为 Active 的计划可作为当前执行清单；其余是历史记录。
-- Claude 专属 skills、hooks、settings 与会话状态继续放在 `.claude/`；`.claude/rules/README.md` 仅为旧路径指引。
-- 若规则冲突：平台/工具指令与用户明确要求优先；在其范围内，安全、权限、节点/部署边界以本文件为准，语言/模块代码约束以 `docs/agent/rules/` 为准，任务范围和验收以 Active 计划为准。具体任务提示可收紧范围，不能默默放宽仓库约定。
-- 做长任务时先确认相关规则和 Active 计划已加载；没有 Active 计划时，先建立任务清单并更新计划索引，再开始多阶段实现。
+- 不要新增 `CLAUDE.md` / `GEMINI.md` 这类空壳——存在时会遮住本文件的自动发现（`web/tests/agent-docs.test.mjs` 钉住）。
+- 代码规范：[docs/agent/rules/README.md](docs/agent/rules/README.md)；执行计划：[docs/plans/README.md](docs/plans/README.md)，只有标为 Active 的可执行。
+- 若规则冲突：平台/用户要求优先；安全、权限、节点/部署边界以本文件为准；语言/模块约束以 `docs/agent/rules/` 为准；任务范围以 Active 计划为准。
 
 ## 节点表（别叫错）
 
-**三台物理设备、四个 mindfs 实例**：本机、wsl、fn 三个由 systemd 管理（本机是 **system** 单元、
-WSL 与 fn 是 **user** 单元）；pc-win 是同一台 PC 上的第四个实例，Windows 没有 systemd，靠计划任务常驻。详见下表。
-
-| 代号 | 实际是 | 主机名 / 用户 | 节点显示名 | mindfs 单元 | 监听 | 重启 |
+| 代号 | 实际是 | 主机名 | 节点名 | 单元 | 监听 | 重启 |
 |---|---|---|---|---|---|---|
-| **本机** | Proxmox VM，Ubuntu 26.04，`home.xiaokubao.space`(192.168.1.6) | `ubuntu` / `xiaokubao` | `home` | **system**：`/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**只由用户执行** |
-| **wsl** | 用户 PC 上的 WSL，Ubuntu 24.04，`pc.xiaokubao.space` | `PC-HOME` / `nnb` | `pc` | **user**：`~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
-| **fn** | fnOS，`fn.xiaokubao.space` | `xiaokubao-fn` / `xiaokubao` | `fn` | **user**：`~/.config/systemd/user/mindfs.service`（另有 fnOS drop-in） | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
-| **pc-win** | 同一台物理 PC 上的 **Windows** 实例（与 wsl 共用内网 IP，`ssh pc` → Windows 宿主） | `PC-HOME` / `小哭包`（家目录 `C:\Users\10178`） | 走 `/mindfs-win` 前缀添加；本机 `nodes.json` 里**没有**它的条目（实测 2026-11-07 只有 local/pc/fn 三条） | **无 systemd**：计划任务 `\mindfs`（登录类型 **S4U**、Boot+Logon 双触发，2026-11-07 改）+ HKCU Run 键 | `0.0.0.0:7332`（7331 被 wsl 占着） | `ssh pc "schtasks /run /tn mindfs"`（S4U 后从 ssh 也生效，进程落 **Session 0**）；`ssh pc` 直接起的进程仍会被 sshd 杀掉。详见 memory `windows-worker-on-pc` |
+| **本机** | Proxmox VM Ubuntu 26.04 | `home.xiaokubao.space` (192.168.1.6) / `xiaokubao` | `home` | system `/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**仅用户执行** |
+| **wsl** | WSL Ubuntu 24.04 | `pc.xiaokubao.space` / `nnb` | `pc` | user `~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，Agent 可执行 |
+| **fn** | fnOS | `fn.xiaokubao.space` / `xiaokubao` | `fn` | user `~/.config/systemd/user/mindfs.service` | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，Agent 可执行 |
+| **pc-win** | 同台物理 PC 的 Windows | `ssh pc` → 宿主 / `小哭包` (`C:\Users\10178`) | 走 `/mindfs-win` 前缀；本机 `nodes.json` 无此条目 | 计划任务 `\mindfs`（S4U + BootTrigger，Session 0） | `0.0.0.0:7332` | `ssh pc "schtasks /run /tn mindfs"`；详见 memory `windows-worker-on-pc` |
 
-- **本机不叫 PC**。说「PC」时指的是 WSL 所在的那台 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → 里面的 WSL）。本机一律叫「本机」或 `ubuntu`，WSL 一律叫 `wsl` 或 `pc`，fn 一律叫 `fn`。
-- 判据（2026-09-21 复核）：本机 `curl 127.0.0.1:7331/mindfs/api/nodes` 与 `https://home.xiaokubao.space/mindfs/api/nodes` 返回完全相同（自己 `local`→home，对端 `pc`）；`https://pc.xiaokubao.space/...` 自己 `local`→pc，对端 `home`。
-- 本机没有 user bus：`systemctl --user ...` 直接报 `Failed to connect to user scope bus`，别据此误判服务不存在——查归属看 `/proc/$(pgrep -x mindfs)/cgroup`（`/system.slice/` vs `/user@...`）。
-- `/home/nnb/...` **不是**旧路径，是 WSL 端的家目录；本机是 `/home/xiaokubao`。
-- 三台设备的账户表、节点 UUID 各自独立；判「本地节点」只认各自 `/api/nodes` 里报 `local` 的那个。
-- **WSL 与 fn 都没有源码库，永远别在 worker 上编译**：它们只接收本机构建好的产物，不能 `git pull` 或 `make build`。
-  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json`，通过 ssh 安装到 WSL 与 fn；以及交叉编译 Windows 二进制安装到同机 pc-win（`scripts/deploy-pcwin.sh`，`deploy-all.sh` 第 5 步一并调用）。
-  **不推 `web/dist`**：WSL 与 fn 都是纯 worker 节点（`config.json` 的 `role=worker`），按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
-  WSL 上的 `/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传）；worker 上能查的是运行数据，不是源码。
-  **注意**：pc-win 的「装上了」与「在跑」是两件事。计划任务 `\mindfs` 自 2026-11-07 起登录类型是 **S4U**（原 `InteractiveToken`，从 ssh 触发 `schtasks /run` 起不了进程），并补了 `BootTrigger`——所以它跑在 Session 0、不需要有人登录。`deploy-pcwin.sh` 会轮询取回进程 PID 与 health，取不到就明写「未确认在跑」而不是「已重启」。自己核对：`ssh pc "netstat -ano | findstr :7332"`。
-
-## 模块地图
-
-```
-server/cmd/mindfs-server/     后端入口
-server/internal/api/http.go   HTTP 路由（REST）
-server/internal/api/ws.go     WebSocket 连接管理 + 全部 WS 消息分发（单读 goroutine）
-server/internal/api/usecase/  业务逻辑层（session CRUD、task、scheduled）
-server/internal/api/workspace.go  按 user= 派发到各账户 handler（ScopedRouter）
-server/app/workspace.go           每账户 AppContext 的惰性构建与缓存
-server/internal/session/      Session 生命周期管理（manager.go，核心热路径）
-server/internal/agent/        Agent 运行时抽象
-  ├─ types/types.go           Session 接口 + Event/ToolCall/ContextWindow 等类型
-  ├─ pool.go                  会话池（创建/复用/探测）
-  ├─ protocol.go              协议发现
-  ├─ claude/                  Claude Code 后端（claude-sdk CLI）
-  ├─ codex/                   Codex 后端
-  └─ acp/                     ACP 后端（含 elicitation 权限应答）
-server/internal/kanban/       看板任务（对话 activities + WorkflowRun；历史阶段任务启动时一次性迁移）
-server/internal/config/       配置管理
-server/internal/fs/           文件浏览/读写
-server/internal/gitview/      Git 视图
-server/internal/notify/       通知（Web Push）
-server/internal/scheduled/    定时任务
-server/internal/preferences/  用户偏好
-server/internal/auth/         账户表（users.json + bcrypt + 主账户）
-server/internal/update/       自动更新
-web/src/                      React/TS 前端（Vite 构建，dist/ 由后端静态服务）
-  ├─ App.tsx                  组合根（16 行，只拼装；状态与路由已拆到 app/）
-  ├─ app/                     状态与路由（AppRootView、useApp* hooks、realtimeWs*、appSession 等）
-  ├─ components/              UI 组件（ActionBar, SessionViewer, stream/ 等）
-  ├─ hooks/                   React hooks（useSessionStream 等）
-  ├─ services/session/        WS 通信层（前端 ↔ 后端；session.ts 是再导出门面）
-  └─ i18n/                    国际化
-```
+- **本机不叫 PC**。「PC」= WSL 所在的 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → WSL）。
+- 本机没有 user bus：`systemctl --user ...` 报错不代表服务不存在，查 `/proc/$(pgrep -x mindfs)/cgroup`。
+- `/home/nnb/...` 是 WSL 家目录，本机是 `/home/xiaokubao`。
+- **WSL 与 fn 没有源码库**，永远别在 worker 上编译。唯一分发路径是 `bash scripts/deploy-all.sh`（tar + ssh 安装），**不推 `web/dist`**（worker 是 `role=worker`，`GET /` 403）。
+- pc-win「装上了」与「在跑」是两件事，`deploy-pcwin.sh` 取不到 PID 就明写「未确认」；自己核对：`ssh pc "netstat -ano | findstr :7332"`。
 
 ## 构建与部署
 
 ```bash
-# 编译（web dist + go binary）
-make build
-
-# 仅编译后端（含 web dist）
-make install          # 安装到 ~/.local/bin/mindfs + ~/.local/share/mindfs/web/
-
-# 仅编译前端
-make build-web
-
-# Go 测试
-make test
-
-# 本地开发
-make dev              # go run 后端 + Vite 前端
-make dev-backend      # 仅后端
-make dev-web          # 仅 Vite
+make build          # web dist + go binary
+make install        # 安装到 ~/.local/bin/mindfs + ~/.local/share/mindfs/web/
+make build-web      # 仅前端
+make test           # Go 测试
+make dev            # go run 后端 + Vite 前端
+bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL/fn/pc-win → 对账
 ```
 
-**Go 直接可用，不要绕**：工具链统一在 `$HOME/.local/share/go`（1.26.5），系统级 `/usr/local/go`
-已归档为 `/usr/local/go.1.25.0.bak`（**不要**再往 PATH 里加它——两个版本共存时谁先命中取决于顺序，构建不可复现）。
-`~/.zshenv` 第 3 段会自动建 `~/.local/bin/{go,gofmt}` 符号链接（幂等，丢了会自愈）。
-所以 `go` / `make test` **裸跑即可，永久不要**再往命令前加 `export PATH=...`（无效，见下）。
-报 `go: No such file or directory` 时跑一次 `zsh -c 'command -v go'` 即可触发自愈。
+**构建/重启分工（必守）**：编译与安装由 Agent 自行执行；本机 `sudo systemctl restart mindfs` 仅用户执行（会杀所有 claude 子进程）；WSL 与 fn 的 user 单元 Agent 可直接重启。
 
-工具目录的**唯一上游**是 dotfiles 仓库的 `zsh/user-path.sh`（`~/.local/bin`、`~/.cargo/bin`），
-由 `~/.zshenv` 第 2 段注入。cron / ssh / systemd `--user` 三个不读 rc 的场景，
-由 dotfiles 的 `scripts/install-path-env.sh`（`~/.dotfiles/scripts/`，**不在本仓库**）
-从同一上游展开写进 `/etc/environment` + crontab + `~/.config/environment.d/`。
-改工具目录只改上游一处，然后跑一次那个脚本；它幂等，8 台机器都验过。
+**代码变更收尾（必守）**：走 `ship` skill（见 `.claude/skills/ship/SKILL.md`）；不要手搓 make/ssh 序列；报告成功前独立核对进程在跑。
 
-> 曾有个错误结论「Bash 工具不加载 .zshrc 所以 Go 不在 PATH」：Bash 工具其实就用 zsh、`.zshenv` 也加载了。
-> 真正原因是它先 source 的 `~/.claude/shell-snapshots/snapshot-zsh-*.sh` 末尾有一行硬编码
-> `export PATH=` 覆盖掉了。**该快照是会话级缓存，会话启动时生成一次就不再更新**——
-> 所以刚改完 PATH 配置时 Bash 工具可能仍是旧值，重开会话即可恢复，配置侧无需改动。
-> 只有 Claude Code 的 Bash 工具受此影响；ssh / cron / systemd / 交互与非交互 zsh 都正常
-> （`zsh -c 'command -v cargo'` 可直接验证）。
+Go 工具链在 `$HOME/.local/share/go`（1.26.5），裸跑 `go` / `make test` 即可，永远不要加 `export PATH=...`。
 
-**构建/重启分工（必守）**：`make build-web / make build / make install / make test` 等编译与安装验证由 Agent 自行执行并验证通过；本机 `sudo systemctl restart mindfs` 仅由用户显式执行（会杀掉所有托管的 claude 子进程），Agent 不得代为重启。WSL 与 fn 的 user 单元可由 Agent 直接重启。`plan-only` / `只出方案` 时必须先落盘方案并经用户显式批准后才动手，禁止未审先做。
+## 关键架构约束（必守）
 
-**代码变更收尾（必守）**：走 `ship` skill —— `bash scripts/deploy-all.sh` 一条命令完成门禁测试 → 提交推送 → 本机编译安装 → 推送产物到 WSL 与 fn 安装重启、交叉编译装到 pc-win → 版本与 bundle 对账。细节见 `.claude/skills/ship/SKILL.md`，不要手搓 make/ssh 序列。**报告部署成功前必须独立核对进程真的在跑**（脚本自称成功不等于上线证据，见节点表 pc-win 行）。
-
-## 关键架构事实（易踩坑）
-
-1. **单读 goroutine 架构**：`ws.go` 中每个 WebSocket 连接只有一个读 goroutine，串行调用所有 handler。**所有 handler 必须异步派发**（`go h.handleXxx(...)`），否则一个阻塞的 handler 会冻结整个连接。`session.cancel` 曾因同步派发导致"停止按钮失效"。
-2. **agent session 的 `Interrupt` 可能永久阻塞**：SDK 内部用 `context.Background()`，CLI 迟迟不 ack 时不返回。调用方必须加超时包装。
-3. **前端 `App.tsx` 已是组合根（16 行）**：核心状态、会话路由与 WS 分发都在 `web/src/app/`
-   （`AppRootView.tsx` + `useApp*` hooks + `realtimeWs*`）。改前端状态逻辑前先在 `app/` 里定位；
-   `App.tsx` 只剩拼装，别再往里加逻辑（软 300 / 硬 500，见 `docs/agent/rules/frontend/file-size.md`）。
-4. **静态 web 资源不走 go:embed**：由 `make install` 拷贝到 `~/.local/share/mindfs/web/`，修改前端后需重新 `make build-web && make install`。
-5. **systemd 服务**：重启本机会杀掉所有托管的 claude 子进程。单元路径本机是 system、WSL 与 fn 是 user，重启权限见上方节点表。
-6. **BottomSheet 拖拽**：默认 50% 高度，支持任意高度悬停，上沿 10% 吸顶；`pointercancel` 回弹 50%（避免异常悬停），触摸拖拽需防手势抢占。
-7. **SessionList 展示规则**：仅 `fork` 子会话扁平为顶级，其它子会话保持折叠；已移除计数徽标，统一为普通会话样式。
-8. **会话别名持久化**：存于 `server/internal/session/manager.go`（SQLite WAL），非前端 localStorage，保证跨端一致；浏览内容时会话锁由 `manager.go` 保持。
-9. **项目显示别名持久化**：`server/internal/fs/registry.go` 维护 `display_name/display_name_raw + EffectiveName`，`ID (=Name=basename)` 与 `RootPath` 不变；`POST /api/dirs/{id}/display-name` 仅改显示名，落盘到 `registry.json` 的 `dirs[].display_name`，经 `managedDirResponse` 与 WS `display_name_changed` 广播；前端以 `App.getRootDisplayName/currentRootDisplayName` 贯通面包屑与会话分组，同 id 合并原地 `merged` 不走 ID 漂移；`Breadcrumbs` 编辑态 `✓/×`。
-10. **主题色透传链路**：`web/src/services/nodeRegistry.ts` 的 `PALETTE` 单源 → 后端 `managedRootById._nodeColor` → 前端 `rootColor/accentHex/accentColorRaw` 贯通 `ModeIcon/SessionList 回复点/FileTree 尾点/SessionViewer 等待点/ActionBar 边框·阴影·发送按钮·Plan/附件胶囊·队列·小圆环·ModeSelector 气泡(仅 chat)·FileTree 顶栏 tab·看板 tab`；`FileTree` 以 `rootColor` prop 响应式覆盖 `getNodes()` 回退，避免切换节点不跟色。
-11. **橡木徽标零跳变**：`FileViewer/GitDiffViewer/DefaultListView` 面包屑徽标统一为 `button + rootBadgeButtonStyle + data-onboarding="project-home"`（`var(--node-badge-bg) + 13px/1.2/600/radius6/padding1px4px/border:none`），消除 `span vs button` 盒模型差异；颜色由 `rootColor` 驱动（`var(--node-badge-bg)` 底 + `rootColor` 字）。
-12. **多账户是「多配置档」，不是安全边界**（方案：`docs/multi-user-prd.md`）：
-    - **API 层不做鉴权**（用户明确决策）。服务端按客户端声明的 `user=` 分区存储，**不校验**；
-      URI 里换个 `user=` 就能读走别人的项目与会话，密码是装饰性的。不要"顺手"加 REST/WS 鉴权，别拿它挡人。
-    - **共享范围（用户定）：只有「加载的项目」和「项目里的会话」按账户分，其余一律共享。**
-      | 按账户 | 共享 |
-      |---|---|
-      | 项目列表 `registry.json` | 偏好、节点表、WebPush 订阅、提示词、看板模板 |
-      | **会话库**（`MetaDir()`：会话 DB + exchange/aux） | **上传的文件、文件批注**（`SharedMetaDir()`） |
-      | **看板任务库**、定时任务 | agent 配置、**agent 进程池**、探针、update/auth/notify |
-      - 两个 meta 解析器：`MetaDir()` 是账户私有的会话/任务目录；`SharedMetaDir()` 是上传与批注，
-        按注册表记的 `MetaLocation` 算、**不看账户**（两个账户必须算出同一个答案）。
-        主账户两者相同。改路径相关代码别用错。
-      - 共享一律用**同一份实例**，不是"同一份文件两份实例"：后者对带调度/后台循环的服务会双跑同一个任务。
-        看板/定时任务因此必须每账户一个实例——它们按本账户项目调度，且执行时用本账户的 session manager
-        （`scheduled/tasks.go` 的 `registry.GetSessionManager`），共享实例说不清该跑谁的会话。
-      - 为什么会话库和任务库按账户分、上传不按：任务库若共享，两个调度器读同一份文件会双跑，
-        且"该用谁的会话跑"无法自洽；上传与批注没有这层耦合，共享即所见即所得。
-    - 数据根：主账户 `<cfg>/`（迁移前的存量数据，行为零变化）+ 项目内 `.mindfs/`；
-      其余账户 `<cfg>/users/<id>/`，meta 落 `<cfg>/users/<id>/meta/<rootID>`，**永不碰项目里的 `.mindfs`**。
-      `users.json` 的 `primary_user_id` 记录归属；主账户删不掉，要删先 `POST /api/users/{id}/primary` 转移。
-    - 每账户一份 `api.AppContext`，由 `server/app/workspace.go` 惰性构建、
-      `api.ScopedRouter` 按 `user=` 派发到该账户的 handler 实例——**211 处 `h.AppContext` 一处都不用改**。
-      **StreamHub 必须每账户独立**，否则 WS 广播跨账户泄漏。
-    - **meta 必须按账户分**（会话/任务）：`RootInfo.MetaRoot` 非空时 `MetaDir()` 返回 `<账户目录>/meta/<rootID>`，
-      恒为 home 语义。默认 meta 是"项目内"，两人加同一项目会共用会话库（默认踩坑）。
-      加目录时 `pending.EnsureMetaDir()` 会预建 meta，漏传 `MetaRoot` 会在**别人的项目目录里建出 `.mindfs`**。
-    - **前端 `user=` 只在 `services/base.ts` 注入**（`appPath/appURL/wsURL` 三处唯一汇聚点）。
-      同源判定必须把 `ws→http`、`wss→https` 归一后再比：裸 `origin` 比较会让 `ws://host` ≠ `http://host`，
-      本机 WS 被误判成跨节点而丢掉 `user=`，**所有账户的实时流落到主账户 hub**（实测踩过，见 `web/tests/multi-account-partition.test.mjs`）。
-      跨节点请求不带本机账户 id（账户表每台机器独立，带过去对方会 404）。
-    - 共享契约有测试守着：`server/app/workspace_test.go`（共享必须是同一实例、项目/会话必须分开）。
-    - **旁路状态必须逐节点拉，且合并只能增量**（2026-09-28 修蓝灯不亮）：
-      `SessionItem` **没有** `running` 字段，小蓝灯只由 `session.pending` 决定，而它的真值来自独立的
-      `multiProjectPendingByKey` —— 这类「不随主数据返回」的状态要跟 `loadMultiProjectSessionGroups` 一样遍历节点表。
-      两个坑：① `appPath(path)` 不传 `nodeId` 会**静默打当前激活节点**（`getApiBaseURL(undefined)` → `getActiveNode()`），
-      跨节点场景必须显式传；② 合并**不能整体替换**——切节点时 `nodes-changed` 会立刻刷新，整体替换会让旧节点在跑的
-      会话当场全灭，节点请求失败也会被误当成「没有在回复」。只重算本轮成功节点的键，其余原样保留，
-      实现见 `appSession.ts` 的 `mergeReplyingStateByNode` + `scope.ts` 的 `sessionKeyNodeId`。
-      建键用 `scopeSessionKey(nid,…)` 而非 `rootSessionKey()`：后者走 `getNodeIdForRoot`，同名项目跨节点会错记。
-      远端节点的 `session.done` 收不到（没订阅那些会话），靠 `app/useReplyingSessionPoll.ts` 的 5s/visible-only 轮询兜。
-      回归测试 `web/tests/cross-node-replying-state.test.mjs`。
-
-13. **看板模型（2026-09 重做）**：卡=任务，列=全局状态（待开始/进行中/等待你/已完成/失败·取消，前端 `useAppKanbanColumns.ts` 的 `kanbanColumns`）；
-    - **任务统一走对话模型**（2026-11-12 整体替换；2026-11 阶段概念彻底删除）：
-      新建任务落库即 `task_type=conversation`，请求只带一条用户留言（`CreateTaskInput.Input`），
-      不再有阶段流水、agent/model/effort 覆盖或 start_immediately。
-      每一轮由 Router（`kanban.ActivityService`）决定：命中 workflow 就跑 `WorkflowRun`，
-      `workflow_choice=disabled` 或没有可用 workflow 时走直连执行器
-      `AppContext.RunDirectActivity`（复用任务主会话跑一轮普通对话并回写 Agent 回复）。
-      历史阶段任务在服务启动时由 `ConvertStagesToConversation` 一次性转成
-      `task_activities` + 内联 `WorkflowRun`，`task_stages_json` 清空。转换前整行备份到
-      `tasks_backup_legacy_stages` / `stage_runs_backup_legacy`，原始 `stage_runs` 保留为只读证据；
-      迁移是单向的，回滚只能从备份恢复。`legacy_import` Run 不参与启动对账，并可被用户的新 Run 替换。
-      前端不再有 `LegacyTaskView` 兼容分支，历史与新建任务统一渲染 `ConversationView`。
-      `task_stages_json`/`task_type`/`current_stage_index`/`stage_runs` 只是冻结的审计证据，
-      运行路径不读写；`/comments` 与 `/stages*` HTTP 层已删除，留言统一走 `/activities`。
-      完整规则见 `docs/migration/stages-to-conversation.md`。
-      **模板已迁移为 workflow**（2026-11-12）：三个原模板（新功能、debug、空白）已转换为已发布的 workflow
-      （`workflow-new-feature`、`workflow-debug`、`workflow-blank`），存储在控制面 `~/.config/mindfs/workflows.json`。
-      前端可通过 `GET /api/workflows/published` 获取已发布 workflow 列表并在创建任务时选用。
-      模板库已于 Phase 3 删除（2026-11）；`task_template_id`/`task_template_name`
-      两列冻结为只读来源标签，停写、不回填、不参与执行。
-    - **无并发调度**：`queued` 与调度槽位已删除（迁移时 queued→pending），新建任务恒为 `waiting_user`；重复触发由 workflow 的 NodeRun claim / `WakeWorkflowRun` single-flight 合并，不再有阶段级去重守卫。
-    - 任意状态可追加 comment 作为下一段 prompt（`POST /api/tasks/{id}/add-stage`，运行中排队尾；waiting_user 时追加即批准当前段并开跑）。
-    - **跨项目工作台**：无项目时任务视图渲染 `web/src/components/workspace/WorkspaceBoard.tsx`
-      （`useWorkspaceBoard` + `WorkspaceProjectRow/WorkspaceTaskRow`，卡片两行与看板共用 `TaskCardRows`），
-      数据来自 `GET /api/tasks/overview`（`Service.Overview` 汇总各项目，单项目失败跳过）。
-      卡片操作按卡片自带 `root_id` 派发（完成/立即执行/跳会话/跳项目），详情先切项目再选中任务。
-    - 前端守卫：`web/tests/workspace-board.test.mjs`（接线与 i18n key 契约；扇出看
-      `workspace-node-fanout.test.mjs`，新鲜度看 `workspace-realtime-freshness.test.mjs`）。
-14. **worktree 会话靠 repoint 彻底搬家**（`server/internal/api/usecase/session_repoint.go`）：
-    - **问题**：mindfs 为会话在 `<root>/.worktree/` 开工作树（`AppContext.CreateTaskWorktree`）。worktree 删掉后，
-      转录仍在 `~/.claude/projects/-home-...-mindfs--worktree-<name>/` 下、cwd 指向已不存在的目录 —— 会话能读，
-      **但不能在 mindfs 里继续聊**（主 checkout 开会话会写回主 slug，而 mindfs 侧 `related_worktree` 钉着旧 cwd，两边打架）。
-    - **解法**：`POST /api/sessions/{key}/repoint`，或 `POST /api/sessions/repoint`（body 带 `agent_session_id`，
-      给只有 `CLAUDE_CODE_SESSION_ID` 的脚本用，服务端反查 mindfs 会话）。四件事按**固定顺序**做：换 `agent_session_id`
-      （`claude.RepointTranscript` fork 后把转录搬进主 slug 目录）→ 换绑定 id + 推进游标（**一个事务**，
-      `Manager.RepointAgentBinding`）→ `ClearRelatedWorktree` 清归属。`tasks.main_session_key/worktree_path` 不动（纯历史）。
-    - **两个必须守住的坑**：
-      - **游标要推进到新转录 EOF，不能归零**。live 路径独占持久化、exchange 表已完整；游标写 0 会让下次 Full 同步
-        整份重读转录，重导的行与实时写的行不逐字相同，2026-09-16「ask 下面又渲染一轮出现过的文字」就是这个形态。
-      - **`agent_ctx_seq` 必须原样保留**（`b2a49c7` 修的 bug）。它是 Full 同步的幂等护栏，`externalSessionDeltaAfterCtxSeq`
-        在 `agentCtxSeq <= 0` 时直接放行全部 —— 写 0 会让早已渲染过的回合被重导一遍。repoint 只换 id 和游标、不增删
-        exchange，所以原值就是正确值。
-    - **顺序不可换**：先 `pool.Close` 掐断活进程，之后才动文件（否则 claude 可能正按旧路径 append）；先搬文件再写游标
-      （游标记的是新路径的 EOF）。旧 id 的转录**不删**，是回滚保险。
-    - **没有 UI 按钮**：只为 worktree 收尾服务，由 `~/.claude/skills/worktree-finish/scripts/wt-finish.sh` 的
-      `repoint` 子命令调用（`run` 的最后一步，`--detach --delay N` 让它掐断调用方之前先留时间给 agent 收尾报告）。
-    - 端到端验过 task-1/8/9/10：转录行数零丢失、uuid 零重叠、type 直方图不变、ctx_seq 保留、同步零新增、
-      活会话续聊的 `cwd` 已是主 checkout。
-    - **先判断要不要 repoint —— 转录已在主 slug 时它解决不了任何事**（2026-10-02 实测）：
-      Claude Code 按 **spawn cwd** 决定 slug，会话只要有一次是在主 checkout 起的，转录就已经在主 slug 下。
-      此时 worktree 目录被手工删掉也**不会**让会话聊不了，唯一残留是 `sessions.related_worktree_json`
-      还钉着坏路径 —— **清掉那一项就够了，不需要 fork、不换 session id、不动游标、不杀 agent 进程**。
-      反过来，转录真在 `--worktree-*` 目录下时才必须走完整 repoint。判断法：看 `session_agent_bindings
-      .external_source_path` 落在哪个 slug 目录。实测清完直接点「继续聊」即可无感续上。
-15. **控制面只在主节点，数据面按机器分**（2026-10-04，详见 `docs/multi-node-control-plane.md`）：
-    - **控制面**（账户表、偏好、提示词库、看板模板、节点表、WebPush 订阅、应用更新）
-      **只有一份真相，在主节点**；**数据面**（项目列表、会话库、任务库、文件、git、agent 进程池、定时任务）
-      每台机器各一份 —— 这本该如此。原先两类混在一起，控制面被复制并在各机漂移：
-      两个节点的 `nodes.json` 互相矛盾（同一台机器在两边拿到**不同 node id**，跨节点 bug 的根源），
-      模板本机 3 个 / PC 5 个，`stage_template.json` 只有 PC 有。
-    - **节点角色**：`nodeinfo.Role`，启动参数 `-role worker` 或配置 `{"role":"worker"}`。
-      `control` 是**默认值**（零值即它，不配置等于改造前行为）；`worker` 只提供数据面，
-      控制面端点与 `GET /` 一律 403、不注入静态目录。前缀表在 `nodeinfo.ControlPlanePrefixes()`，
-      `role_test.go` 钉住「数据面端点必须不在表内」。
-      **配置文件是 `<config-dir>/config.json`，不传 `-config` 时读这个缺省路径** ——
-      曾经 role 写进 config.json 却不生效，因为 `loadStartupConfig` 在路径为空时直接返回，
-      压根没人读文件。**而且修复必须落在 `cli/cmd`**：`make build` 装的是 `./cli/cmd`，
-      `server/cmd/mindfs-server` 只有 `make dev-backend` 用，**发布二进制里没有后者的代码** ——
-      第一版修复改在 `mindfs-server`，单元测试绿、真机 role 仍是 control。
-      另注：`cli/cmd` 在根 module，import 不到 `server/internal/*`（Go internal 规则），
-      所以 `StartOptions.Role` 是 `string` 而非 `nodeinfo.Role`，归一化在 `app.Start` 里做。
-      缺省文件不存在是常态（不报错）；显式 `-config` 指向缺失文件仍报错；flag 优先于文件。
-      测试 `cli/cmd/startup_config_test.go`。
-    - **前端铁律**：控制面请求用 `controlPath`（打页面服务器），数据面继续用 `appPath`/`appURL`
-      + `nodeId`（跟随选中节点，跨节点扇出是浏览器做的，没有后端代理层）。
-      `controlPath` **故意不接受 `nodeId`** —— 想传 nodeId 说明要的多半是数据面请求。
-      判断法：「这东西在另一台机器上有意义吗？」有 → 数据面；没有，只有一份该是权威的 → 控制面。
-      `agent-config` 刻意留在数据面（改的是本机运行时，worker 需要）。
-    - **单节点下改绑零行为变化**：`pageServerPath` 与 `appPath` 同源，只有多节点才有差异 —— 而那正是要修的 bug。
-    - **建任务只收一条留言** —— 任务可以建在任意运行节点上，后端 `CreateTask` 只认请求里的
-      `input`，不再接收、也不再回查任何阶段流水或模板（模板库与 `defaultTaskFlowStages()`
-      都已删除）。创建后的每一轮由 Router 决定走 workflow 还是直连回复；没有 stages 不是错误，
-      空留言才是。
-    - **探测角色打 `/health` 不是 `/api/node-info`**：后者自己在控制面表里，worker 上必然 403，
-      会让每个运行节点都被误判成「离线」。`/health` 是公开端点且刻意不在表内。
-    - 迁移：`scripts/migrate-control-plane-to-primary.sh`（默认预览，`--apply` 才写，幂等）。
-      WebPush 订阅**不能迁**（VAPID 私钥各自独立，密文绑定密钥），要在主节点重新订阅一次。
-    - 存量控制面数据冻结在运行节点上**不删**。
-    - **置顶（pin）也在控制面**（`/api/pins`，worker 上 403），但归属与上面几条**相反**：
-      存储是**每账户一份**（`server/internal/pins`，落 `<配置目录>/session_pins.json`），
-      与偏好的全账户共享相反。理由：项目置顶原本就住在共享偏好里，那正是它跨账户
-      泄漏的原因；会话置顶原本住各机器的会话库，那是它按机器分的原因。
-      权威在主节点、但**按账户分** —— 两个维度各管一件事。
-      - 会话键是 `rootID::sessionKey`，**不带 node id**：置顶是跨设备的一致性偏好，
-        带 node id 就等于又按机器分片。键由服务端拼，前端只传 `root_id` + `key`。
-      - 会话库的 `sessions.pinned_at` 已**退役**（只留列，不再读写；两端存量实测 0 行）。
-        刻意不与置顶表做并集：两份真相并集等于两份真相迟早分叉。
-      - 列表端只从置顶表取置顶区（`Manager.ListByKeys`，只查 meta 不读转录）。
-      - 前端 `services/pins.ts` 一律 `controlPath`；worker 列表的置顶由
-        `applyPinnedSnapshotToSessions` 把主节点那份**盖**上去（只抹不盖会得到
-        「在 PC 的项目里置顶没反应」）。
-      - **不做跨设备实时**（用户 2026-10-04 定）：只在切换项目等导航动作时刷新一次，
-        设备之间最多差一次刷新。真正的实时需要一条主节点 → 各 worker 浏览器的新通道，
-        而那些连接是浏览器直连 worker 的，主节点碰不到。
-      - 项目置顶从共享偏好**一次性回填**（`NeedsLegacySeed`，并集语义）：
-        回填必须只做一次，否则用户在新存储里取消掉的置顶会在每次重启后复活 ——
-        共享偏好里的旧值可从没被删过。
-
-16. **PWA 键盘上浮露出的色带是壳的窗口底色，运行时改不了**（2026-10-17，定制组 G-JC）：
-    - 现象只在**装到主屏的 PWA**（Edge/Chrome mobile）里出现，浏览器标签页没有 —— 用户报
-      「网页版不闪、装成 PWA 才闪」时直接指这里，别再去改 viewport 或 CSS。
-    - 那条带由**壳自己的窗口底色**填充，取自 manifest 的 `background_color`，
-      **安装 / 更新 WebAPK 时烧死**。meta `theme-color`（运行时）够不着它，页面也画不到视口之外。
-    - **已排除、别再试**：`interactive-widget=resizes-visual`、VirtualKeyboard API
-      `overlaysContent = true` + `boundingRect` 自抬。录像逐像素比对证明壳是**原生缩 WebView**
-      （闪的那一帧页面像素与前一帧完全相同、在 y=970 处被裁断），视口层面的开关一律无效。
-    - **唯一通道是 manifest**：`web/public/manifest.webmanifest`（静态那份，烧**暗色** `#0f172a`，
-      按主用主题选）+ `manifest-light.webmanifest`（亮色变体），`web/index.html` 首帧脚本按
-      `effective` 换 `link[rel=manifest]` 的 href。**壳要等下次 WebAPK 更新或重装才跟上** ——
-      所以「自适应」在这里只能是「有延迟的自适应」；同一时刻壳里只有一种底色，必然有一种主题
-      在切主题的瞬间看到色带。改配色时两份都要动。守卫测试
-      `web/tests/keyboard-no-white-flash.test.mjs`。
-
-
+1. **ws.go 单读 goroutine**：所有 handler 必须 `go h.handleXxx(...)` 异步派发，同步调用会冻结整个连接。
+2. **Interrupt 必须加超时**：SDK 内部用 `context.Background()`，调用方必须包超时。
+3. **静态资源不 embed**：`make install` 拷到 `~/.local/share/mindfs/web/`，改前端需 `make build-web && make install`。
+4. **多账户是配置档，不是安全边界**：API 层不鉴权（用户决策）；`user=` 只分项目/会话/任务库，其余全共享；共享必须用同一份实例（不是同一文件两份实例）；`MetaDir()` 账户私有 vs `SharedMetaDir()` 不看账户。见 `docs/multi-user-prd.md`。
+5. **控制面只在主节点**：账户表/偏好/节点表等在主节点；数据面（项目/会话/任务/文件/agent 池）各机器自有。前端控制面请求用 `controlPath`（不接受 nodeId），数据面用 `appPath/appURL + nodeId`。见 `docs/multi-node-control-plane.md`。
+6. **旁路状态逐节点拉，合并只能增量**：`appPath` 不传 `nodeId` 静默打激活节点；合并不能整体替换（节点失败会误清他人状态）。见 `web/tests/cross-node-replying-state.test.mjs`。
+7. **看板任务是对话模型**：新建任务只含一条用户留言，每轮由 Router 决定走 workflow 还是直连 `RunDirectActivity`；阶段/模板概念已删除，冻结列是只读证据。见 `docs/migration/stages-to-conversation.md`。
+8. **worktree 会话 repoint**：转录在 `--worktree-*` slug 下才走 `POST /api/sessions/{key}/repoint`；已在主 slug 时只清 `related_worktree`。四步顺序不可换：Close → 搬文件 → 换绑定+推进游标（事务） → 清归属。
+9. **配置文件读取**：`make build` 装的是 `./cli/cmd`，修复必须落在这里（不是 `server/cmd/mindfs-server`）；`config.json` 缺省路径 `<config-dir>/config.json`，flag 优先于文件。
 
 ## 数据流
 
@@ -315,45 +66,21 @@ make dev-web          # 仅 Vite
                                           session manager（SQLite WAL）
 ```
 
-## 开发流程
-
-```bash
-make test                   # Go 测试
-make build && make install  # 本机完整构建 + 安装
-bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL/fn/pc-win → 对账
-sudo systemctl restart mindfs   # 本机生效（用户执行）；worker 重启由 deploy-all.sh 直接执行（pc-win 不算，见节点表）
-```
-
-**WSL 与 fn 只收产物**：没有源码库，别在 worker 上 `make` / `git`。分发只有 `deploy-all.sh` 一条路径（含 pc-win 那一支），细节见上方节点表。
-
-**发版（GitHub release + 安卓 APK）是另一条路**，不走 `deploy-all.sh`：走 `apk-release` skill
-（`.claude/skills/apk-release/SKILL.md`）—— 发布说明版本必须逐字等于 TAG、`GH_REPO` 必须显式指定、
-私钥只用 `MINDFS_RELEASE_PRIVATE_KEY_FILE` 传、本机 `ANDROID_HOME` 未导出要显式指 `~/Android/Sdk`。
-
-**用户报「线上还是不对」时，先确认线上跑的是哪份产物，再谈行为**：`e2e/live/`
-是对着线上站点跑复现/验收的脚本（凭证在仓库根的 `.env`，已被 `.gitignore` 挡住）。
-它和 `e2e/`（隔离实例）不可互相替代 —— 隔离实例验「代码能不能跑」，`e2e/live/` 验
-「装到线上的 bundle 是什么行为」。跑法见 `e2e/live/README.md`。
+## 开发注意
 
 - 提交用 Conventional Commits（中文描述）。
-- 改 ws.go handler 时：检查是否在 goroutine 内派发，避免阻塞读循环。
-- 改 agent session 时：Interrupt/Cancel 调用必须有超时，永远不要 `context.Background()` 裸用。
-- 前端改完：`make build-web && make install`（不自动 embed）。
+- 改 ws.go handler：确认在 goroutine 内派发。
+- 改 agent session：Interrupt/Cancel 必须有超时，不能裸用 `context.Background()`。
+- 前端改完：`make build-web && make install`。
+- 发版走 `apk-release` skill；`GH_REPO` 必须显式指定，私钥只走 `MINDFS_RELEASE_PRIVATE_KEY_FILE`。
+- 验线上行为用 `e2e/live/`（凭证在 `.env`），不能用 `e2e/`（隔离实例）替代。
 
 ## fork 定制与上游合并（必守）
 
-这是上游 mindfs 的 fork。**每次改动都是一份会被上游合并冲掉的定制** —— 必须留下能被机器核对的痕迹，否则下一次合上游时它会被静默覆盖（历史上发生过，包括 `release-notes.md` 的整段条目丢失）。
+每次改动三件事缺一不可：
+1. **登记 `docs/upstream-customizations.yaml`**：写清「哪个文件、改了什么、为什么必须保留、可见症状」。
+2. **留针对性测试**，并在该组「针对性测试」表里列出「测试 → 钉住什么」。
+3. **提交信息标 `Scope: G-X`**，与清单组号对应。
+4. **跑 `make check-upstream`**（只看已提交文件；提交前红 = 清单没写全；提交后红 = 定制被覆盖）。
 
-**每做一个改动，三件事一起做，缺一不可：**
-
-1. **登记进 `docs/upstream-customizations.yaml`** —— 按分组格式加/改条目，写清「哪个文件、改了什么、**为什么必须保留**」。新开一组的前提是它有**独立的互斥边界**（一组 = 一块合上游时要么全留要么全弃的改动面）；否则并入已有的组。
-   条目里必须写明**可见症状**（用户看到什么），因为那才是判定「这条还得不该留」的依据 —— 只写代码位置，未来没人能判断它还有没有意义。
-2. **留下针对性测试**，并在该组的「针对性测试」表里列出「测试 → 钉住什么」。测试是防覆盖的另一半：合上游时测试红了，就知道定制被冲掉了。
-3. **提交信息标 `Scope: G-X`**（见 §7 附录的约定），与清单里的组号对应，便于 `git log` 反查。
-4. **跑 `make check-upstream`** 做机器对账：它取 `merge-base HEAD upstream/main..HEAD` 的文件级
-   delta，逐个要求在清单里登记。**它只看已提交的文件** —— 所以提交前跑红是「清单没写全」，
-   提交后跑红才是「定制被上游冲掉了」。刻意不并入 `make test`：它依赖 upstream ref，无网机器应跳过。
-
-**合上游之后**：跑全量门禁。清单里每一组的测试都必须绿 —— 红了就是那一组被覆盖了，按清单里记的「为什么必须保留」逐条恢复，不要按上游实现重写。
-
-**别把这条当成文档洁癖**：`docs/upstream-customizations.yaml` 不是给人读的历史记录，它是**合上游时的核对清单**，唯一用途就是让「哪条该留」这件事可判定。
+合上游后跑全量门禁；测试红了按清单「为什么保留」逐条恢复，不按上游重写。

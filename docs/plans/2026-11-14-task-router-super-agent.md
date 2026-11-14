@@ -1,19 +1,24 @@
 # Task Router（任务工头）— 详细设计 v2
 
-Status: **P0 方向已批准** · 2026-11-14 · 方案细化完成，**未实现、未提交、未部署**
+Status: **P0 已实现** · 2026-11-14 · shadow 隔离验收通过，门禁绿；**未提交、未部署、未重启**
 
 > 本文是 2026-11-14「批准 P0」后的细化方案。P0 指 **shadow 模式**：Router 真实运行、真实记账，
 > 但**不改变任何用户可见行为**。P1（Router 真正决定路由）与 P2（运行期协调）仍需逐阶段单独批准。
+>
+> **P0 实施记录（2026-11-14）**：P0-1…P0-8 全部落地；生产默认仍为 `router.mode=off`。
+> 定向测试见 §22；隔离实例真实 Claude 验收与 26 条 shadow 样本见 §21.1 末尾。关键提醒：
+> 当前真实 Claude + `effort=low` 的 Router turn p50 34.3s / p95 41.7s，**远未达到 P1 的 p95 ≤3s
+> 准入门槛**，`route` 必须继续保持禁用，直到 brief 体积、模型/effort 与回合开销被压下来。
 
 ## 0. 批准边界
 
 | 项 | 当前状态 |
 |---|---|
-| P0 shadow | 方向已批准；本文给出可执行的任务拆分、接口、迁移与验收 |
+| P0 shadow | **已实现**（2026-11-14）；隔离实例真实验收通过 |
 | P1 route | 未批准实现；本文给出设计与准入门槛 |
 | P2 coordinate | 未批准实现；本文只定边界与触发矩阵 |
 | 生产行为 | **不变**。P0 默认 `router.mode=off`；只有隔离实例显式开 `shadow` |
-| 代码改动 | **尚未开始**。本文落盘后等用户明确「开始 P0」再动代码 |
+| 代码改动 | P0 代码已落盘；定向/全量门禁已跑；**未 commit** |
 | 外向动作 | 不 commit / push / deploy / ship / 重启任何 mindfs 服务；需要单独授权 |
 
 ### 0.1 一页纸
@@ -1580,6 +1585,39 @@ services.Kanban.SetRouterBroadcaster(api.NewRouterDecisionBroadcaster(services))
 **P0 明确不做**：`router_say`/`run_workflow` 等动作的应用；`router_task_state` 守卫；前端调度记录面板；
 P2 触发。P0 只把「Router 能想、能记账」跑通。
 
+**P0 实施结果（2026-11-14）**
+
+| 任务 | 结果 | 证据 |
+|---|---|---|
+| P0-1 配置 | `RouterConfig` + `Normalized()`；flag > config > default；未知 mode → off；cli/cmd 与 server/cmd 各自解析后经 `StartOptions` 汇入 app | `TestRouterConfigModePrecedence`、`TestRouterConfigFromFileAndFlagPrecedence`、`TestRouterConfigInvalidDurationFails` |
+| P0-2 迁移 | `router_sessions` / `router_decisions` / `router_task_state`；`task_activities` 的 `reply_to_id` / `router_decision_id` / `purpose` / `ordinal` / `hidden`；`purpose` 回填只填空值 | `TestRouterMigrationIdempotent`、`TestRouterActivityPurposeBackfill` |
+| P0-3 隐藏会话 | `session.TypeRouter`；列表/计数/`ListMetas`/最近更新时间/搜索/WS 创建更新/pending/未读/通知全部排除；`Get` 仍可读 | `TestRouterSessionHiddenFromListSearchCountLatest`（`manager_router_visibility_test.go`） |
+| P0-4 RouterAgent | 隐藏 CC 会话；每轮注入 developer instructions；进程内 MCP server；`ToolPolicy` 在 `handleCanUseTool` 里 deny-by-default；ConfigDir 隔离；文本与 token 回传 | `TestHandleCanUseToolDeniesOutsideRouterPolicy`、`TestToolPolicyDeniesByDefault`；隔离实例真实 Claude 验收（下） |
+| P0-5 lane/账本 | 同任务串行、跨任务并行；`(task_id,turn_id)` 幂等；动作校验矩阵；shadow 不写活动/Run | `TestRouterLaneSerialPerTaskParallelAcrossTasks`、`TestRouterValidateMatrix`、`TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch`、`TestRouterDecisionStoreRoundTrip` |
+| P0-6 shadow 接线 | `CreateUserActivity` 在 legacy 分发**前**取 brief；分发后派生 `legacy_action` 并入队；`mode=off` 完全不走 | 同上 + `TestRouterModeOffDoesNotTouchRouterTables` |
+| P0-7 观测 | 决策列表/详情/Router 会话/转录/status 端点；WS `task.router.decision`；只读报告脚本 | `TestRouterAPI_ShadowDecisionAndStatus`、`TestRouterAPI_RequiresRootAndTaskScope`、`TestTruncateRouterRunes` |
+| P0-8 文档/登记 | 本文件、计划索引、`docs/upstream-customizations.yaml` 的 G-LP | `make check-upstream`（提交后转绿） |
+
+**隔离实例真实 Claude 验收**：`scripts/mindfs-iso.sh`（端口 7431，生产 7331 未触碰），
+`router.mode=shadow`、`model=sonnet`、`effort=low`。验证通过：`router_say` 与 `message_agent`
+真实产生；Bash/Read/AskUserQuestion 被策略拒绝；用户级 Stop hook 未进入 Router 转录；
+ConfigDir 落在隔离账户的 `router/claude` 下；空闲关闭后 `router_sessions.status=closed`，
+下一轮以 `resume_runtime_session` 恢复；transcript 端点可读并按 4KB 裁剪。
+
+**26 条 shadow 样本**（25 个隔离任务，`server/scripts/router_shadow_report` 导出）：
+
+```
+total 26, by_status {shadow:26}, by_agreement {mismatch:26},
+by_action_kind {message_agent:7, say:20},
+latency_ms {p50:34310, p95:41679, max:43837},
+tokens {prompt:1086227, completion:18342}
+```
+
+结论：shadow 链路可跑、记账完整、用户可见行为不变；但**延迟离 P1 门槛很远**。P1 之前必须先把
+brief 体积/模型/effort/回合开销压到 p95 ≤3s，否则 `route` 一律不开启。另观察到 notify-only
+workflow 成功后 brief 里的 `agent_reply` 仍可能停在 `running`（legacy 既有行为），P1 做守卫前需
+补一个「活动状态与 Run 终态对齐」的读数修正。
+
 ### 21.2 P1：Router 决定路由
 
 | 任务 | 内容 | 验收 |
@@ -1808,20 +1846,23 @@ SELECT * FROM router_task_state;
 
 ## 27. P0 验收清单（Definition of Done）
 
-- [ ] `mode=off`：不创建 Router session、不写 `router_decisions`、用户可见行为与今天逐字一致。
-- [ ] SQLite 旧库升级：迁移幂等；旧活动 API 字段不变；回填 `purpose` 正确。
-- [ ] Router session 不出现在列表/搜索/计数/最近更新时间；`Get` 可用。
-- [ ] 隔离实例真实 Claude：一次 `router_say` 成功；Bash/Read/AskUserQuestion 被拒绝；
+- [x] `mode=off`：不创建 Router session、不写 `router_decisions`、用户可见行为与今天逐字一致。
+- [x] SQLite 旧库升级：迁移幂等；旧活动 API 字段不变；回填 `purpose` 正确。
+- [x] Router session 不出现在列表/搜索/计数/最近更新时间；`Get` 可用。
+- [x] 隔离实例真实 Claude：一次 `router_say` 成功；Bash/Read/AskUserQuestion 被拒绝；
       用户级 Stop hook 不污染；ConfigDir 落在 `<账户>/router/claude`；空闲关闭后能 resume；
       transcript 可从自定义 config dir 读到（读不到则明确降级为只展示决策账本）。
-- [ ] shadow：brief 在 legacy 分发前快照；`legacy_action` 正确；`agreement` 可解释；
+- [x] shadow：brief 在 legacy 分发前快照；`legacy_action` 正确；`agreement` 可解释；
       **不修改任何活动/Run**。
-- [ ] 决策账本：`(task_id,turn_id)` 幂等；actions 有序；latency/token 落库。
-- [ ] 调度记录 API：列表/详情/status 可用；同账户隔离；transcript 裁剪。
-- [ ] 隔离实例跑 20+ 条任务，导出 shadow 报告；无用户可见变化。
-- [ ] `go test ./...`、`go test -race ./server/internal/kanban`、`npm test`、`tsc`、`make build` 全绿。
-- [ ] `make check-upstream` 在提交后绿；G-LP 已登记。
-- [ ] 未 commit/push/deploy/重启（除非另行授权）。
+- [x] 决策账本：`(task_id,turn_id)` 幂等；actions 有序；latency/token 落库。
+- [x] 调度记录 API：列表/详情/status 可用；同账户隔离；transcript 裁剪。
+- [x] 隔离实例跑 20+ 条任务（实跑 26 条），导出 shadow 报告；无用户可见变化。
+- [x] `go test ./...`、`go test -race ./server/internal/kanban`、`npm test`、`tsc`、`make build` 全绿。
+- [ ] `make check-upstream` 在提交后绿；G-LP 已登记（已登记；未提交前工具只比较已提交文件，预期红）。
+- [x] 未 commit/push/deploy/重启（除非另行授权）。
+
+> P1 准入补充：本次 shadow 的 Router turn p95 = 41.7s，远高于 §21.2 的 p95 ≤3s 门槛。
+> 在压到门槛内之前，不得把任何 root 设为 `route`。
 
 ---
 

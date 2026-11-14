@@ -96,7 +96,11 @@ func (h *HTTPHandler) handleTaskActivitiesList(w http.ResponseWriter, r *http.Re
 		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id required"))
 		return
 	}
-	items, err := svc.ListTaskActivities(r.Context(), rootID, taskID)
+	includeHidden := false
+	if raw := strings.TrimSpace(r.URL.Query().Get("include_hidden")); raw != "" {
+		includeHidden = raw == "1" || strings.EqualFold(raw, "true")
+	}
+	items, err := svc.ListTaskActivitiesWithHidden(r.Context(), rootID, taskID, includeHidden)
 	if err != nil {
 		respondActivityError(w, err)
 		return

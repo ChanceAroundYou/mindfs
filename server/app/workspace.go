@@ -51,6 +51,9 @@ type sharedServices struct {
 	// 各有一个实例，但必须拿到**同一个** gate，否则两个账户同时命中同一物理
 	// worktree 时互斥失效。只覆盖本进程；跨进程不宣称 durable。
 	writerGate *kanban.WriterGate
+	// routerConfig 是节点本地 Task Router 配置；mode=off（默认）时不创建任何
+	// Router 会话，行为与改造前完全一致。
+	routerConfig kanban.RouterConfig
 }
 
 type workspaceEntry struct {
@@ -274,6 +277,9 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban.SetDirectExecutor(services)
 	services.Kanban.SetWorkflowCommentSender(services)
 	services.Kanban.SetWriterGate(m.shared.writerGate)
+	services.Kanban.SetRouterConfig(m.shared.routerConfig)
+	services.Kanban.SetRouterAgent(services)
+	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)

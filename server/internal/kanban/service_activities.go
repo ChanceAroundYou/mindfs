@@ -37,6 +37,8 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetBranchResolver(func(ctx context.Context, task Task, graph WorkflowDefinition) (string, error) {
 		return s.snapshotRunIntegrationBranch(ctx, task, graph)
 	})
+	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
+	svc.SetRouter(s.RouterServiceForRoot(rootID))
 	return svc, nil
 }
 
@@ -78,6 +80,12 @@ func (s *Service) CreateUserActivity(
 // ListTaskActivities returns the conversation stream for one task. ActivityStore
 // (not the legacy ListActivities projection) is used so status/summary survive.
 func (s *Service) ListTaskActivities(ctx context.Context, rootID, taskID string) ([]*TaskActivity, error) {
+	return s.ListTaskActivitiesWithHidden(ctx, rootID, taskID, false)
+}
+
+// ListTaskActivitiesWithHidden 在 includeHidden=true 时返回含隐藏行的完整流。
+// 默认过滤由 ActivityStore 负责，这里只做任务归属校验。
+func (s *Service) ListTaskActivitiesWithHidden(ctx context.Context, rootID, taskID string, includeHidden bool) ([]*TaskActivity, error) {
 	store, err := s.taskStore(rootID)
 	if err != nil {
 		return nil, err
@@ -85,7 +93,11 @@ func (s *Service) ListTaskActivities(ctx context.Context, rootID, taskID string)
 	if _, err := store.GetTask(ctx, taskID); err != nil {
 		return nil, err
 	}
-	return NewActivityStore(store.db).List(ctx, taskID)
+	activities := NewActivityStore(store.db)
+	if includeHidden {
+		return activities.ListIncludingHidden(ctx, taskID)
+	}
+	return activities.List(ctx, taskID)
 }
 
 // GetTaskActivity loads one activity and verifies it belongs to taskID. The id

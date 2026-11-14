@@ -82,6 +82,12 @@ func main() {
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file for customizable agent(ACP-protocol) and shell")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")
 	roleFlag := flag.String("role", "", "node role: control (default, serves UI + control plane) or worker (data plane only)")
+	routerModeFlag := flag.String("router-mode", "", "task router mode: off (default), shadow, route, coordinate")
+	routerAgentFlag := flag.String("router-agent", "", "task router agent name (default claude)")
+	routerModelFlag := flag.String("router-model", "", "task router model; empty = agent default")
+	routerEffortFlag := flag.String("router-effort", "", "task router effort level (default low)")
+	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 20s (default 20s)")
+	routerIdleCloseFlag := flag.Duration("router-idle-close", 0, "close idle router sessions after this duration, e.g. 30m (default 30m)")
 	remove := flag.Bool("remove", false, "remove the managed directory")
 	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
@@ -94,7 +100,26 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	applyStartupConfig(startupCfg, explicitFlags, addr, webPushFlag, foreground, tlsFlag, certFlag, keyFlag, agentConfigFlag, notifyScriptFlag, roleFlag)
+	if err := applyStartupConfig(startupCfg, explicitFlags, startupFlags{
+		Addr:              addr,
+		WebPush:           webPushFlag,
+		Foreground:        foreground,
+		TLS:               tlsFlag,
+		Cert:              certFlag,
+		Key:               keyFlag,
+		AgentConfig:       agentConfigFlag,
+		NotifyScript:      notifyScriptFlag,
+		Role:              roleFlag,
+		RouterMode:        routerModeFlag,
+		RouterAgent:       routerAgentFlag,
+		RouterModel:       routerModelFlag,
+		RouterEffort:      routerEffortFlag,
+		RouterTurnTimeout: routerTurnTimeoutFlag,
+		RouterIdleClose:   routerIdleCloseFlag,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 	internalAutoStart := autoStartBoot || *internalAutoStartFlag
 	if internalAutoStart {
 		*foreground = true
@@ -295,15 +320,22 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- app.Start(ctx, *addr, app.StartOptions{
-			Version:         version,
-			Args:            os.Args[1:],
-			AgentConfigPath: *agentConfigFlag,
-			WebPushEnabled:  *webPushFlag,
-			NotifyScript:    *notifyScriptFlag,
-			UseTLS:          *tlsFlag,
-			CertFile:        resolvedCert,
-			KeyFile:         resolvedKey,
-			Role:            *roleFlag,
+			Version:           version,
+			Args:              os.Args[1:],
+			AgentConfigPath:   *agentConfigFlag,
+			WebPushEnabled:    *webPushFlag,
+			NotifyScript:      *notifyScriptFlag,
+			UseTLS:            *tlsFlag,
+			CertFile:          resolvedCert,
+			KeyFile:           resolvedKey,
+			Role:              *roleFlag,
+			RouterMode:        *routerModeFlag,
+			RouterAgent:       *routerAgentFlag,
+			RouterModel:       *routerModelFlag,
+			RouterEffort:      *routerEffortFlag,
+			RouterTurnTimeout: *routerTurnTimeoutFlag,
+			RouterIdleClose:   *routerIdleCloseFlag,
+			RouterRoots:       routerRoots(startupCfg),
 		})
 	}()
 	if err := waitForServer(*addr, *tlsFlag, 8*time.Second); err != nil {

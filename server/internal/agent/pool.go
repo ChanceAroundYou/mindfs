@@ -11,6 +11,7 @@ import (
 	"mindfs/server/internal/agent/acp"
 	"mindfs/server/internal/agent/claude"
 	"mindfs/server/internal/agent/codex"
+	"mindfs/server/internal/agent/proxy"
 	agenttypes "mindfs/server/internal/agent/types"
 )
 
@@ -31,33 +32,44 @@ type Pool struct {
 	memoryMu        sync.RWMutex
 	memoryCollectMu sync.Mutex
 	memorySnapshot  MemorySnapshot
+	compactProxy       *proxy.Server // nil if startup failed (non-fatal)
+	pendingProxyTokens map[string]string // sessionKey → proxy token, cleared on session creation
 }
 
 type sessionEntry struct {
-	agentName  string
-	sessionKey string
-	protocol   Protocol
-	session    agenttypes.Session
-	lastUsedAt time.Time
-	activeUses int
-	closing    bool
-	closeDone  chan struct{}
+	agentName    string
+	sessionKey   string
+	protocol     Protocol
+	session      agenttypes.Session
+	lastUsedAt   time.Time
+	activeUses   int
+	closing      bool
+	closeDone    chan struct{}
+	proxyToken   string // set when session routes through compactProxy
 }
 
 // NewPool creates a new agent pool.
 func NewPool(cfg Config) *Pool {
 	processCtx, cancel := context.WithCancel(context.Background())
-	return &Pool{
-		cfg:          cfg,
-		processCtx:   processCtx,
-		cancel:       cancel,
-		sessions:     make(map[string]*sessionEntry),
-		runtimeEnv:   make(map[string]map[string]string),
-		acp:          acp.NewRuntime(processCtx),
-		claude:       claude.NewRuntime(),
-		codex:        codex.NewRuntime(),
-		runtimeLocks: make(map[runtimeGroup]*sync.Mutex),
+	p := &Pool{
+		cfg:                cfg,
+		processCtx:         processCtx,
+		cancel:             cancel,
+		sessions:           make(map[string]*sessionEntry),
+		runtimeEnv:         make(map[string]map[string]string),
+		pendingProxyTokens: make(map[string]string),
+		acp:                acp.NewRuntime(processCtx),
+		claude:             claude.NewRuntime(),
+		codex:              codex.NewRuntime(),
+		runtimeLocks:       make(map[runtimeGroup]*sync.Mutex),
 	}
+	if ps, err := proxy.NewServer(); err == nil {
+		p.compactProxy = ps
+		log.Printf("[agent/pool] compact-strip proxy listening on 127.0.0.1:%d", ps.Port())
+	} else {
+		log.Printf("[agent/pool] compact-strip proxy failed to start (non-fatal): %v", err)
+	}
+	return p
 }
 
 // SupportsDeveloperInstructions reports whether the configured transport can
@@ -163,7 +175,9 @@ retryExisting:
 		protocol:   protocol,
 		session:    sess,
 		lastUsedAt: time.Now(),
+		proxyToken: p.pendingProxyTokens[in.SessionKey],
 	}
+	delete(p.pendingProxyTokens, in.SessionKey)
 	p.mu.Unlock()
 	return sess, nil
 }
@@ -295,6 +309,9 @@ func (p *Pool) closeSessions(entries []*sessionEntry) {
 			continue
 		}
 		_ = entry.session.Close()
+		if entry.proxyToken != "" && p.compactProxy != nil {
+			p.compactProxy.UnregisterSession(entry.proxyToken)
+		}
 	}
 }
 

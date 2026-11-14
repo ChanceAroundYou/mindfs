@@ -66,6 +66,10 @@ func (s *AppContext) emitRelatedFile(change fs.RelatedFileEvent) {
 }
 
 func (s *AppContext) BroadcastSessionMetaUpdated(rootID string, sess *session.Session) {
+	if sess != nil && sess.Type == session.TypeRouter {
+		// Router 会话是隐藏控制面：任何 spread 到会话列表的 WS 事件都不能带上它。
+		return
+	}
 	if sess == nil {
 		s.GetSessionStreamHub().BroadcastAll(WSResponse{Type: "session.meta.updated"})
 		return
@@ -111,7 +115,7 @@ func (s *AppContext) BroadcastSessionMetaUpdated(rootID string, sess *session.Se
 // 看板建的会话」永远进不了对话列表（实测：任务 #5 的会话在库里、在 API 返回里、
 // 就是不在列表里）。所以凡是建会话的路径都统一走这个函数。
 func (s *AppContext) BroadcastSessionCreated(rootID string, sess *session.Session) {
-	if s == nil || sess == nil {
+	if s == nil || sess == nil || sess.Type == session.TypeRouter {
 		return
 	}
 	s.GetSessionStreamHub().BroadcastAll(WSResponse{

@@ -65,6 +65,9 @@ type ActivityService struct {
 	executor       ActivityWorkflowExecutor
 	directExecutor ActivityDirectExecutor
 	branch         ActivityBranchResolver
+	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；
+	// shadow 只读、只记账，不改变本函数的任何返回值或副作用。
+	router *RouterService
 }
 
 // NewActivityService builds the service for one task node. workflows/recommender
@@ -102,6 +105,14 @@ func (s *ActivityService) SetDirectExecutor(e ActivityDirectExecutor) {
 func (s *ActivityService) SetBranchResolver(r ActivityBranchResolver) {
 	if s != nil {
 		s.branch = r
+	}
+}
+
+// SetRouter 装配 shadow 观察端口。Mode=off 时调用方传 nil，本服务不做任何
+// 额外读取，旧路径零变化。
+func (s *ActivityService) SetRouter(router *RouterService) {
+	if s != nil {
+		s.router = router
 	}
 }
 
@@ -148,13 +159,59 @@ func (s *ActivityService) CreateUserActivity(
 	}
 	s.broadcastCreated(userAct)
 
+	// shadow 的 Situation Brief 必须在旧路径分发之前取：旧路径一动手，active
+	// execution / run 状态就变了，之后再取到的是「旧路径已经改变过的世界」。
+	// 这里只做只读快照，任何失败都只丢观察样本，绝不影响用户留言的处理。
+	var brief *SituationBrief
+	router := s.router
+	if router != nil {
+		config := router.service.RouterConfig()
+		if config.ModeForRoot(task.RootID) == RouterModeShadow {
+			if snapshot, briefErr := buildSituationBrief(ctx, s.tasks, s.workflows, config, task, RouterTriggerUserMessage, userAct.ID); briefErr == nil {
+				brief = snapshot
+			}
+		} else {
+			router = nil
+		}
+	}
+
 	var agentAct *TaskActivity
+	var legacy *RouterLegacyAction
 	if choice == CommentWorkflowChoiceDisabled {
 		agentAct, err = s.startDirectAgent(ctx, task, body)
+		if agentAct != nil && agentAct.Status == ActivityStatusFailed {
+			legacy = &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(agentAct.Summary)}
+		} else if err == nil {
+			legacy = &RouterLegacyAction{Kind: "direct"}
+		}
 	} else {
-		agentAct, err = s.startWorkflowRun(ctx, task, body, choice, workflowVersionID, userAct.ID)
+		agentAct, legacy, err = s.startWorkflowRun(ctx, task, body, choice, workflowVersionID, userAct.ID)
+	}
+	if err != nil {
+		if legacy == nil {
+			legacy = &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}
+		}
+	}
+	if router != nil && brief != nil {
+		router.Enqueue(RouterTrigger{
+			Kind:           RouterTriggerUserMessage,
+			TaskID:         task.ID,
+			RootID:         task.RootID,
+			UserActivityID: userAct.ID,
+			PlaceholderID:  activityIDOf(agentAct),
+			TurnID:         "msg:" + userAct.ID,
+			Brief:          brief,
+			LegacyAction:   legacy,
+		})
 	}
 	return userAct, agentAct, err
+}
+
+func activityIDOf(activity *TaskActivity) string {
+	if activity == nil {
+		return ""
+	}
+	return activity.ID
 }
 
 // startDirectAgent 是「纯对话模式」的一轮：插入 pending 占位后，把用户这句
@@ -211,7 +268,7 @@ func (s *ActivityService) startWorkflowRun(
 	choice string,
 	versionID *string,
 	userActivityID string,
-) (*TaskActivity, error) {
+) (*TaskActivity, *RouterLegacyAction, error) {
 	agentAct := &TaskActivity{
 		ID:             newID("act"),
 		TaskID:         task.ID,
@@ -223,26 +280,32 @@ func (s *ActivityService) startWorkflowRun(
 		WorkflowChoice: choice,
 	}
 	if err := s.activities.Insert(ctx, agentAct); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s.broadcastCreated(agentAct)
 
 	version, err := s.resolveWorkflowVersion(ctx, userInput, choice, versionID)
+	var run *WorkflowRun
 	if err == nil {
-		err = s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct)
+		run, err = s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct)
 	}
 	if err != nil {
 		s.failActivity(ctx, agentAct, err)
-		return agentAct, nil
+		return agentAct, &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}, nil
 	}
-	return agentAct, nil
+	return agentAct, &RouterLegacyAction{
+		Kind:            "workflow",
+		WorkflowID:      version.WorkflowID,
+		WorkflowVersion: version.Version,
+		RunID:           run.ID,
+	}, nil
 }
 
 // persistWorkflowRun creates the data-plane run, links it to the agent activity,
 // and (when an executor is wired) starts asynchronous execution.
-func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, version WorkflowVersion, userActivityID string, agentAct *TaskActivity) error {
+func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, version WorkflowVersion, userActivityID string, agentAct *TaskActivity) (*WorkflowRun, error) {
 	if s.tasks == nil {
-		return errors.New("task store unavailable")
+		return nil, errors.New("task store unavailable")
 	}
 	run := &WorkflowRun{
 		ID:             newRunID(),
@@ -261,15 +324,15 @@ func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, ver
 	if s.branch != nil {
 		branch, err := s.branch(ctx, task, version.Graph)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		run.IntegrationBranch = branch
 	}
 	if err := s.tasks.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.activities.SetWorkflowLink(ctx, agentAct.ID, run.ID, version.Version); err != nil {
-		return err
+		return nil, err
 	}
 	agentAct.RunID = run.ID
 	agentAct.WorkflowVersionID = version.Version
@@ -282,7 +345,7 @@ func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, ver
 		// the turn does not die with the response writer.
 		go s.executeWorkflowRun(context.WithoutCancel(ctx), task, run, agentAct.ID)
 	}
-	return nil
+	return run, nil
 }
 
 // executeWorkflowRun 只负责把占位回复推进到 running 并唤醒运行层。

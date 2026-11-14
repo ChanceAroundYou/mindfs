@@ -82,6 +82,9 @@ func (s *Service) ensureAgentSession(
 	fastService string,
 	rootAbs string,
 	developerInstructions string,
+	configDir string,
+	tools []agenttypes.ToolSpec,
+	toolPolicy *agenttypes.ToolPolicy,
 ) (agenttypes.Session, *int, error) {
 	poolSessionKey := agentPoolSessionKey(current.Key, agentName)
 	nextModel := resolveRuntimeModel(current, nil, model)
@@ -170,6 +173,9 @@ func (s *Service) ensureAgentSession(
 		PlanMode:              nextPlanMode,
 		RootPath:              rootAbs,
 		DeveloperInstructions: developerInstructions,
+		ConfigDir:             configDir,
+		Tools:                 tools,
+		ToolPolicy:            toolPolicy,
 		AgentSessionID: strings.TrimSpace(func() string {
 			if binding == nil {
 				return ""

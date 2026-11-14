@@ -42,6 +42,33 @@ type StartOptions struct {
 	// import 不到 server/internal/nodeinfo（Go internal 规则），
 	// 而它是唯一需要设置这个字段的地方。值在使用点统一 Normalize。
 	Role string
+	// Task Router 是节点本地配置；cli/cmd 不能 import server/internal/kanban，
+	// 所以入口只传字符串/时长，在 Start 里归一化成 kanban.RouterConfig。
+	RouterMode        string
+	RouterAgent       string
+	RouterModel       string
+	RouterEffort      string
+	RouterTurnTimeout time.Duration
+	RouterIdleClose   time.Duration
+	RouterRoots       map[string]string
+}
+
+// routerConfigFromOptions 是 string -> kanban.RouterConfig 的唯一转换点。
+// 空 mode 等于 off：未配置 Router 的机器不会创建任何 Router 会话/后台任务。
+func routerConfigFromOptions(opts StartOptions) kanban.RouterConfig {
+	roots := make(map[string]kanban.RouterMode, len(opts.RouterRoots))
+	for rootID, mode := range opts.RouterRoots {
+		roots[rootID] = kanban.RouterMode(mode)
+	}
+	return kanban.RouterConfig{
+		Mode:        kanban.RouterMode(opts.RouterMode),
+		Agent:       opts.RouterAgent,
+		Model:       opts.RouterModel,
+		Effort:      opts.RouterEffort,
+		TurnTimeout: opts.RouterTurnTimeout,
+		IdleClose:   opts.RouterIdleClose,
+		RootModes:   roots,
+	}.Normalized()
 }
 
 // Start boots the HTTP/WS server.
@@ -95,17 +122,18 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	})
 
 	workspaces := newWorkspaceManager(ctx, sharedServices{
-		agentConfig: agentConfig,
-		update:      updateSvc,
-		auth:        authStore,
-		notify:      notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-		prefs:       sharedPrefs,
-		nodes:       sharedNodes,
-		webPush:     sharedWebPush,
-		workflows:   sharedWorkflows,
-		pool:        sharedPool,
-		prober:      sharedProber,
-		writerGate:  kanban.NewWriterGate(),
+		agentConfig:  agentConfig,
+		update:       updateSvc,
+		auth:         authStore,
+		notify:       notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
+		prefs:        sharedPrefs,
+		nodes:        sharedNodes,
+		webPush:      sharedWebPush,
+		workflows:    sharedWorkflows,
+		pool:         sharedPool,
+		prober:       sharedProber,
+		writerGate:   kanban.NewWriterGate(),
+		routerConfig: routerConfigFromOptions(opts),
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 

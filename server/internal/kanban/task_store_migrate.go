@@ -216,6 +216,11 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if err := migrateTaskActivities(s.db); err != nil {
 		return err
 	}
+	// Task Router 台账（Plan 2026-11-14）：三张表 + 决策索引。旧库升级后为空，
+	// mode=off 的节点永远不会写入。
+	if err := migrateRouterTables(s.db); err != nil {
+		return err
+	}
 	// WP-04 多 worktree 注册表：建表接线显式在此（与 migrateComments 同一口径），
 	// 不在任何运行时路径上懒建表。实现见 worktree_registry.go。
 	if err := s.migrateWorktreeRegistry(); err != nil {

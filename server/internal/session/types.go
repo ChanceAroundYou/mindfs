@@ -10,6 +10,10 @@ const (
 	TypeChat    = "chat"
 	TypeView    = "view"
 	TypeCommand = "command"
+	// TypeRouter 是 Task Router 的隐藏控制面会话（Plan 2026-11-14）。它不是
+	// 安全边界：所有列表/计数/搜索/最近时间/WS 事件都必须排除它，用户不能在
+	// 会话侧栏看到或直接和它聊天。GetByKey 仍可读，供「调度记录」下钻。
+	TypeRouter = "router"
 )
 
 // Exchange.Source 取值：谁写的这一行。

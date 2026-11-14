@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -26,6 +27,11 @@ type OpenOptions struct {
 	ResumeSessionID       string
 	ForkSessionID         string
 	ResumeMessageID       string
+	// ConfigDir 隔离 CLI 的 settings/hooks/sessions（Router 专用）。
+	ConfigDir string
+	// Tools/ToolPolicy 只在 Router 会话里非空；普通会话保持 nil。
+	Tools      []types.ToolSpec
+	ToolPolicy *types.ToolPolicy
 }
 
 type Runtime struct{}
@@ -48,6 +54,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		emittedAskUsers: make(map[string]struct{}),
 		rootPath:        opts.RootPath,
 		baseEnv:         cloneEnv(opts.Env),
+		toolPolicy:      opts.ToolPolicy,
 	}
 
 	optionList := []claudeagent.Option{
@@ -60,6 +67,17 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		claudeagent.WithCanUseTool(s.handleCanUseTool),
 	}
 	optionList = appendClaudeDeveloperInstructions(optionList, opts.DeveloperInstructions)
+	if strings.TrimSpace(opts.ConfigDir) != "" {
+		// Router 会话必须看不见用户的 ~/.claude（hooks/settings/会话转录）。
+		// 没有 SettingSources 时，ConfigDir 决定 CLI 的配置根。
+		optionList = append(optionList, claudeagent.WithConfigDir(strings.TrimSpace(opts.ConfigDir)))
+	}
+	if len(opts.Tools) > 0 {
+		optionList = append(optionList, claudeRouterMcpOptions(opts.Tools)...)
+	}
+	if opts.ToolPolicy != nil && len(opts.ToolPolicy.DisallowedTools) > 0 {
+		optionList = append(optionList, claudeagent.WithDisallowedTools(opts.ToolPolicy.DisallowedTools))
+	}
 	if strings.TrimSpace(opts.Command) != "" {
 		optionList = append(optionList, claudeagent.WithCLIPath(opts.Command))
 	}
@@ -145,6 +163,47 @@ func appendClaudeDeveloperInstructions(options []claudeagent.Option, developerIn
 		return append(options, claudeagent.WithExtraArgs(map[string]*string{
 			"append-system-prompt": &instructions,
 		}))
+	}
+	return options
+}
+
+// claudeRouterMcpOptions 把一个进程内 MCP server 注册给 CLI。
+//
+// WithStrictMCPConfig(true) 让 CLI 只认这里显式注册的 server，不加载用户级
+// mcp.json；这是「Router 不污染用户配置」的另一半（另一半是 ConfigDir）。
+// WithAllowedTools 只写精确工具名：CLI 不保证支持通配，而真正的闸门是
+// handleCanUseTool 里的 ToolPolicy。
+func claudeRouterMcpOptions(tools []types.ToolSpec) []claudeagent.Option {
+	server := claudeagent.CreateMcpServer(claudeagent.McpServerOptions{
+		Name:    types.RouterMCPServerName,
+		Version: "1.0.0",
+	})
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		name := strings.TrimSpace(tool.Name)
+		if name == "" || tool.Handler == nil {
+			continue
+		}
+		handler := tool.Handler
+		claudeagent.AddToolUntyped(server,
+			claudeagent.ToolDef{Name: name, Description: tool.Description, InputSchema: tool.InputSchema},
+			func(ctx context.Context, args json.RawMessage) (claudeagent.ToolResult, error) {
+				text, err := handler(ctx, args)
+				if err != nil {
+					// 工具错误回给模型，而不是结束整个回合：Router 需要看到
+					// 「参数不对/目标不存在」并自己改口。
+					return claudeagent.ErrorResult(err.Error()), nil
+				}
+				return claudeagent.TextResult(text), nil
+			})
+		names = append(names, types.RouterToolPrefix+name)
+	}
+	options := []claudeagent.Option{
+		claudeagent.WithMcpServer(types.RouterMCPServerName, server),
+		claudeagent.WithStrictMCPConfig(true),
+	}
+	if len(names) > 0 {
+		options = append(options, claudeagent.WithAllowedTools(names))
 	}
 	return options
 }

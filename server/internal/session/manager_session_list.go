@@ -91,7 +91,7 @@ func (m *Manager) LatestSessionUpdatedAt(_ context.Context) (time.Time, error) {
 	if err := db.QueryRow(`
 		SELECT updated_at
 		FROM sessions
-		WHERE archived_at IS NULL
+		WHERE archived_at IS NULL AND type <> '` + TypeRouter + `'
 		ORDER BY julianday(updated_at) DESC
 		LIMIT 1
 	`).Scan(&latest); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -115,6 +115,7 @@ func (m *Manager) ListMetas(_ context.Context) ([]*Session, error) {
 
 func (m *Manager) listSessionMetasUnsafe() ([]*Session, error) {
 	return m.querySessionMetasUnsafe(selectSessionSQL+`
+WHERE type <> '`+TypeRouter+`'
 ORDER BY updated_at DESC`, nil)
 }
 
@@ -254,5 +255,8 @@ func sessionListWhere(opts ListOptions) ([]string, []any) {
 	} else {
 		where = append(where, "archived_at IS NULL")
 	}
+	// Router 会话是隐藏控制面：不进入任何列表/计数，也不因为 task_id 相同而
+	// 混进任务子会话树。GetByKey 不走这里，所以「调度记录」仍可读取。
+	where = append(where, "type <> '"+TypeRouter+"'")
 	return where, args
 }

@@ -65,6 +65,9 @@ type session struct {
 
 	rootPath string
 	baseEnv  map[string]string
+	// toolPolicy 非空时启用 deny-by-default 工具闸门（Task Router 会话）。
+	// 普通会话为 nil，handleCanUseTool 行为完全不变。
+	toolPolicy *types.ToolPolicy
 
 	sawDelta        bool
 	sawMessageText  bool

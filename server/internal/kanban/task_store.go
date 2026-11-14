@@ -263,10 +263,14 @@ func (s *TaskStore) DeleteTask(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"stage_runs", "task_events"} {
+	for _, table := range []string{"stage_runs", "task_events", "router_decisions", "router_task_state"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE task_id = ?`, id); err != nil {
 			return err
 		}
+	}
+	// Router 会话按 (scope, owner_id) 主键，不是 task_id 列。
+	if _, err := tx.ExecContext(ctx, `DELETE FROM router_sessions WHERE scope = ? AND owner_id = ?`, string(RouterScopeTask), id); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id); err != nil {
 		return err

@@ -117,6 +117,11 @@ func (s *session) askUserWaiter(ctx context.Context, callID string) (chan askUse
 }
 
 func (s *session) handleCanUseTool(ctx context.Context, req claudeagent.ToolPermissionRequest) claudeagent.PermissionResult {
+	// ToolPolicy 是 Router 会话的真实边界：CLI 的 allowed/disallowed 列表只是
+	// 一侧提示，真正的放行/拒绝发生在这里。pre-allow 工具也会经过该回调。
+	if s.toolPolicy != nil && !s.toolPolicy.Allows(req.ToolName) {
+		return claudeagent.PermissionDeny{Reason: "tool not allowed in this session: " + req.ToolName}
+	}
 	if req.ToolName != "AskUserQuestion" {
 		return claudeagent.PermissionAllow{}
 	}

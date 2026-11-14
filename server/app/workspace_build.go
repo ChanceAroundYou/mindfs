@@ -128,6 +128,10 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetWorkflowCommentSender(services)
 	// 所有账户共用同一把物理工作树 writer gate（D15）；每账户一把等于没锁。
 	services.Kanban.SetWriterGate(m.shared.writerGate)
+	services.Kanban.SetRouterConfig(m.shared.routerConfig)
+	// Router 的 agent 适配器就是本账户的 AppContext（跑隐藏 TypeRouter 会话）。
+	services.Kanban.SetRouterAgent(services)
+	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
 	for _, root := range services.ListRoots() {

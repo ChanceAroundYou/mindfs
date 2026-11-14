@@ -189,3 +189,29 @@ func TestHandleCanUseToolAllowsAskUserQuestionWithAnswers(t *testing.T) {
 		t.Fatal("handleCanUseTool 没有返回")
 	}
 }
+
+// Router 会话的 ToolPolicy 是真正的权限边界：只放行进程内 MCP 工具，
+// 内置 Bash/Read/AskUserQuestion 一律拒绝（模型仍能通过工具错误自我纠正）。
+func TestHandleCanUseToolDeniesOutsideRouterPolicy(t *testing.T) {
+	s := newAskUserTestSession()
+	s.toolPolicy = &types.ToolPolicy{
+		AllowedTools:  []string{types.RouterToolPrefix + "*"},
+		DenyByDefault: true,
+	}
+	for _, name := range []string{"Bash", "Read", "Write", "AskUserQuestion", "mcp__other__say"} {
+		result := s.handleCanUseTool(context.Background(), claudeagent.ToolPermissionRequest{ToolName: name})
+		if _, ok := result.(claudeagent.PermissionDeny); !ok {
+			t.Fatalf("%s = %#v, want PermissionDeny", name, result)
+		}
+	}
+	allowed := s.handleCanUseTool(context.Background(), claudeagent.ToolPermissionRequest{ToolName: types.RouterToolPrefix + "say"})
+	if _, ok := allowed.(claudeagent.PermissionAllow); !ok {
+		t.Fatalf("router tool = %#v, want PermissionAllow", allowed)
+	}
+
+	// 普通会话（policy=nil）保持原行为：Bash 放行。
+	plain := newAskUserTestSession()
+	if _, ok := plain.handleCanUseTool(context.Background(), claudeagent.ToolPermissionRequest{ToolName: "Bash"}).(claudeagent.PermissionAllow); !ok {
+		t.Fatal("nil policy must preserve legacy allow behavior")
+	}
+}

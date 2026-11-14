@@ -224,8 +224,17 @@ type TaskActivity struct {
 	Status     string    `json:"status,omitempty"`
 	Summary    string    `json:"summary,omitempty"`
 	SessionKey string    `json:"session_key,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+	// Router（Plan 2026-11-14）字段。ReplyToID 把回复绑定到触发它的留言；
+	// RouterDecisionID 绑定产生该活动的决策；Purpose 区分 chat/progress/reply/result；
+	// Ordinal 保证同一回合多条回复的稳定顺序；Hidden 供内部/审计行使用，
+	// 不进入用户可见活动流。
+	ReplyToID        string    `json:"reply_to_id,omitempty"`
+	RouterDecisionID string    `json:"router_decision_id,omitempty"`
+	Purpose          string    `json:"purpose,omitempty"`
+	Ordinal          int       `json:"ordinal,omitempty"`
+	Hidden           bool      `json:"hidden,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at,omitempty"`
 }
 
 type ContinueRequest struct {

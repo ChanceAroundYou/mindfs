@@ -346,7 +346,7 @@ func (s *Service) RunTransientSlashCommand(ctx context.Context, in RunTransientS
 	}
 	root := manager.Root()
 	rootAbs, _ := root.RootDir()
-	sess, _, err := s.ensureAgentSession(turnCtx, agentPool, manager, current, agentName, in.Model, in.Mode, in.Effort, in.FastService, rootAbs, "")
+	sess, _, err := s.ensureAgentSession(turnCtx, agentPool, manager, current, agentName, in.Model, in.Mode, in.Effort, in.FastService, rootAbs, "", "", nil, nil)
 	if err != nil {
 		return err
 	}

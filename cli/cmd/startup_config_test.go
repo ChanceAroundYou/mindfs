@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeConfig 在临时的 XDG 配置目录里放一份 config.json。
@@ -25,7 +26,9 @@ func writeConfig(t *testing.T, body string) {
 // （它们只在对应字段非 nil 时才被解引用，传 nil 安全）。
 func applyRole(cfg startupConfig, explicit map[string]bool) string {
 	role := ""
-	applyStartupConfig(cfg, explicit, nil, nil, nil, nil, nil, nil, nil, nil, &role)
+	if err := applyStartupConfig(cfg, explicit, startupFlags{Role: &role}); err != nil {
+		panic(err)
+	}
 	return role
 }
 
@@ -127,6 +130,63 @@ func TestReleaseAndDevelopmentEntrypointsStaySeparated(t *testing.T) {
 	}
 	if !strings.Contains(string(buildAll), "./cli/cmd") {
 		t.Fatal("release build-all must use cli/cmd")
+	}
+}
+
+// Router 配置同样遵守 flag > config.json > 默认值；默认值本身由 app 归一化，
+// cli/cmd 只负责「有没有把文件里的值放到 flag 变量上」。
+func TestRouterConfigFromFileAndFlagPrecedence(t *testing.T) {
+	writeConfig(t, `{"router":{"mode":"shadow","agent":"claude","model":"sonnet","effort":"high","turn_timeout":"5s","idle_close":"10m","roots":{"mindfs":"shadow"}}}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, agent, model, effort := "", "", "", ""
+	turn, idle := time.Duration(0), time.Duration(0)
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{
+		RouterMode: &mode, RouterAgent: &agent, RouterModel: &model, RouterEffort: &effort,
+		RouterTurnTimeout: &turn, RouterIdleClose: &idle,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "shadow" || agent != "claude" || model != "sonnet" || effort != "high" {
+		t.Fatalf("router 字符串配置未落盘：mode=%q agent=%q model=%q effort=%q", mode, agent, model, effort)
+	}
+	if turn != 5*time.Second || idle != 10*time.Minute {
+		t.Fatalf("router 时长配置未落盘：turn=%s idle=%s", turn, idle)
+	}
+	if roots := routerRoots(cfg); roots["mindfs"] != "shadow" {
+		t.Fatalf("router roots 未透传：%+v", roots)
+	}
+
+	// 显式 flag 胜出：文件里的值必须被忽略。
+	mode, turn = "", time.Duration(0)
+	if err := applyStartupConfig(cfg, map[string]bool{"router-mode": true, "router-turn-timeout": true}, startupFlags{
+		RouterMode: &mode, RouterTurnTimeout: &turn,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "" || turn != 0 {
+		t.Fatalf("显式 flag 应胜出，却拿到 mode=%q turn=%s", mode, turn)
+	}
+}
+
+// 文件值即将生效但解析不了时必须报错，而不是静默回落到默认值。
+func TestRouterConfigInvalidDurationFails(t *testing.T) {
+	writeConfig(t, `{"router":{"turn_timeout":"soon"}}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := time.Duration(0)
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{RouterTurnTimeout: &turn}); err == nil {
+		t.Fatal("非法 turn_timeout 应当报错")
+	}
+	// 被显式 flag 覆盖时不报错：坏值不会影响运行结果。
+	if err := applyStartupConfig(cfg, map[string]bool{"router-turn-timeout": true}, startupFlags{RouterTurnTimeout: &turn}); err != nil {
+		t.Fatalf("被 flag 覆盖的文件坏值不应报错：%v", err)
 	}
 }
 

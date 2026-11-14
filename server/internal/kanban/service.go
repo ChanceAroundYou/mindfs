@@ -1,6 +1,7 @@
 package kanban
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -79,6 +80,16 @@ type Service struct {
 	// directExecutor 是「纯对话模式」的直连执行端口，由 api 层注入。
 	// ActivityServiceForRoot 每次新建的 ActivityService 都会带上它。
 	directExecutor ActivityDirectExecutor
+	// routerConfig 是节点本地 Task Router 配置。零值/off 时 Router 完全不存在。
+	routerConfig RouterConfig
+	// routerAgent 由 api 层装配（AppContext 实现 kanban.RouterAgent）；nil 时
+	// Router 不可用，shadow 记录会落 fallback，旧路径照常执行。
+	routerAgent RouterAgent
+	// routers 按 root 缓存 RouterService。必须挂在长生命周期 Service 上，
+	// 不能放在每次新建的 ActivityService 里，否则每回合都丢 lane。
+	routers map[string]*RouterService
+	// routerBroadcaster 广播决策落库/状态变化；nil 时静默（单测/老装配）。
+	routerBroadcaster RouterDecisionBroadcaster
 }
 
 // finishToken 是一次收尾的锁凭证。见 acquireTaskFinish。
@@ -170,6 +181,94 @@ func (s *Service) SetWorkflowCommentSender(sender WorkflowCommentSender) {
 	s.mu.Lock()
 	s.WorkflowCommentSenderPort = sender
 	s.mu.Unlock()
+}
+
+// SetRouterConfig 注入节点本地 Task Router 配置。装配期调一次；零值 = off。
+func (s *Service) SetRouterConfig(config RouterConfig) {
+	if s == nil {
+		return
+	}
+	config = config.Normalized()
+	s.mu.Lock()
+	s.routerConfig = config
+	if config.Mode == RouterModeOff && len(config.RootModes) == 0 {
+		// 关闭时清掉已缓存 lane，避免残留的 Router 会话继续被复用。
+		s.routers = nil
+	}
+	s.mu.Unlock()
+}
+
+// RouterConfig 返回当前配置快照（已归一化）。
+func (s *Service) RouterConfig() RouterConfig {
+	if s == nil {
+		return RouterConfig{}.Normalized()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.routerConfig
+}
+
+// SetRouterAgent 挂上 Router 的 agent 适配器（api.AppContext 实现）。nil 时
+// Router 不可用：shadow 会落 fallback，旧路径照常执行。
+func (s *Service) SetRouterAgent(agent RouterAgent) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.routerAgent = agent
+	s.mu.Unlock()
+}
+
+// SetRouterBroadcaster 挂上决策广播端口（每账户 StreamHub）。
+func (s *Service) SetRouterBroadcaster(b RouterDecisionBroadcaster) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.routerBroadcaster = b
+	s.mu.Unlock()
+}
+
+// RouterServiceForRoot 返回该 root 的 Router lane 管理器；mode=off 时返回 nil。
+// 缓存保证同一任务的所有回合共用一条 lane（同任务串行、不同任务并行）。
+func (s *Service) RouterServiceForRoot(rootID string) *RouterService {
+	if s == nil {
+		return nil
+	}
+	config := s.RouterConfig()
+	if config.ModeForRoot(rootID) == RouterModeOff {
+		return nil
+	}
+	// taskStore 自己会取 s.mu；必须先取出再拿锁，否则 newRouterService 在锁内
+	// 再调 taskStore 会自锁。
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routers == nil {
+		s.routers = make(map[string]*RouterService)
+	}
+	if existing := s.routers[rootID]; existing != nil {
+		return existing
+	}
+	created := newRouterService(s, rootID, config, store)
+	s.routers[rootID] = created
+	return created
+}
+
+// CloseRouterTask 在删除任务时关掉 Router runtime 并清账。store 删除由
+// TaskStore.DeleteTask 完成；这里只处理进程内 runtime。
+func (s *Service) CloseRouterTask(ctx context.Context, rootID, taskID string) {
+	if s == nil {
+		return
+	}
+	rs := s.RouterServiceForRoot(rootID)
+	if rs == nil {
+		return
+	}
+	rs.CloseTask(ctx, taskID)
 }
 
 // SetSessionRunningProbe 挂上「会话是否在回复」的探测函数。装配期调一次。

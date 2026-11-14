@@ -136,6 +136,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/tasks/{id}/activities", h.handleTaskActivitiesList)
 	r.Post("/api/tasks/{id}/activities", h.handleTaskActivitiesCreate)
 	r.Get("/api/tasks/{id}/activities/{activityId}", h.handleTaskActivityGet)
+	// Task Router 调度记录（只读；决策/会话是每节点自己的运行数据）。
+	r.Get("/api/tasks/{id}/router-decisions", h.handleTaskRouterDecisions)
+	r.Get("/api/tasks/{id}/router-decisions/{decisionId}", h.handleTaskRouterDecisionGet)
+	r.Get("/api/tasks/{id}/router-session", h.handleTaskRouterSession)
+	r.Get("/api/tasks/{id}/router-session/transcript", h.handleTaskRouterSessionTranscript)
+	r.Get("/api/router/status", h.handleRouterStatus)
 	r.Get("/api/tasks", h.handleKanbanTasksList)
 	r.Get("/api/tasks/overview", h.handleKanbanTasksOverview)
 	r.Post("/api/tasks", h.handleKanbanTaskCreate)

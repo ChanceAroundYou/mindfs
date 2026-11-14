@@ -426,9 +426,27 @@ test("TaskDetailPanel does not import from services directly", () => {
 test("TaskDetailPanel always renders ConversationView; the legacy branch is gone", () => {
   const panel = read("components/task/TaskDetailPanel.tsx");
   assert.match(panel, /<ConversationView/, "every task, including converted history, renders the conversation view");
+  // 同一份 /activities 只能挂一套「列表 + 输入框」：旧 CommentThread 与 ConversationView
+  // 并存时，界面上会出现两份对话流、两个工作流选择器（线上旧产物踩过）。
+  assert.equal(
+    (panel.match(/<ConversationView/g) || []).length,
+    1,
+    "TaskDetailPanel must render exactly one conversation flow",
+  );
+  assert.doesNotMatch(panel, /import[^\n]*CommentThread/, "the legacy comment thread must not be imported");
+  assert.doesNotMatch(panel, /<CommentThread/, "the legacy comment thread must not be mounted next to ConversationView");
+  assert.doesNotMatch(panel, /<ActivityInput/, "the input belongs to ConversationView, not the panel");
+  assert.doesNotMatch(panel, /WorkflowSelector/, "the workflow selector belongs to ConversationView's input");
   assert.doesNotMatch(panel, /LegacyTaskView/, "no compatibility branch may survive the stage->conversation conversion");
   assert.doesNotMatch(panel, /hasLegacyStages/, "the detail panel must not branch on stage snapshots");
   assert.doesNotMatch(panel, /task_stages_json/, "the stage snapshot marker is no longer a frontend concept");
+
+  const view = read("components/task/ConversationView.tsx");
+  assert.equal(
+    (view.match(/<ActivityInput/g) || []).length,
+    1,
+    "ConversationView must mount exactly one input",
+  );
 });
 
 test("the panel is keyed by task identity so drafts cannot leak into another task", () => {

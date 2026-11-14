@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"mindfs/server/app"
 	"mindfs/server/internal/config"
@@ -25,6 +26,12 @@ func main() {
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")
 	roleFlag := flag.String("role", "", "node role: control (default, serves UI + control plane) or worker (data plane only)")
+	routerModeFlag := flag.String("router-mode", "", "task router mode: off (default), shadow, route, coordinate")
+	routerAgentFlag := flag.String("router-agent", "", "task router agent name (default claude)")
+	routerModelFlag := flag.String("router-model", "", "task router model; empty = agent default")
+	routerEffortFlag := flag.String("router-effort", "", "task router effort level (default low)")
+	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 20s (default 20s)")
+	routerIdleCloseFlag := flag.Duration("router-idle-close", 0, "close idle router sessions after this duration, e.g. 30m (default 30m)")
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -32,18 +39,40 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	applyStartupConfig(startupCfg, explicitFlags, addr, webPushFlag, agentConfigFlag, notifyScriptFlag, roleFlag)
+	if err := applyStartupConfig(startupCfg, explicitFlags, startupFlags{
+		Addr:              addr,
+		WebPush:           webPushFlag,
+		AgentConfig:       agentConfigFlag,
+		NotifyScript:      notifyScriptFlag,
+		Role:              roleFlag,
+		RouterMode:        routerModeFlag,
+		RouterAgent:       routerAgentFlag,
+		RouterModel:       routerModelFlag,
+		RouterEffort:      routerEffortFlag,
+		RouterTurnTimeout: routerTurnTimeoutFlag,
+		RouterIdleClose:   routerIdleCloseFlag,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	if err := app.Start(ctx, *addr, app.StartOptions{
-		Version:         version,
-		Args:            os.Args[1:],
-		AgentConfigPath: *agentConfigFlag,
-		WebPushEnabled:  *webPushFlag,
-		NotifyScript:    *notifyScriptFlag,
-		Role:            *roleFlag,
+		Version:           version,
+		Args:              os.Args[1:],
+		AgentConfigPath:   *agentConfigFlag,
+		WebPushEnabled:    *webPushFlag,
+		NotifyScript:      *notifyScriptFlag,
+		Role:              *roleFlag,
+		RouterMode:        *routerModeFlag,
+		RouterAgent:       *routerAgentFlag,
+		RouterModel:       *routerModelFlag,
+		RouterEffort:      *routerEffortFlag,
+		RouterTurnTimeout: *routerTurnTimeoutFlag,
+		RouterIdleClose:   *routerIdleCloseFlag,
+		RouterRoots:       routerRoots(startupCfg),
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -58,7 +87,33 @@ type startupConfig struct {
 	NotifyScript *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
-	Role *string `json:"role"`
+	Role   *string              `json:"role"`
+	Router *startupRouterConfig `json:"router"`
+}
+
+type startupRouterConfig struct {
+	Mode        *string           `json:"mode"`
+	Agent       *string           `json:"agent"`
+	Model       *string           `json:"model"`
+	Effort      *string           `json:"effort"`
+	TurnTimeout *string           `json:"turn_timeout"`
+	IdleClose   *string           `json:"idle_close"`
+	Roots       map[string]string `json:"roots"`
+}
+
+type startupFlags struct {
+	Addr         *string
+	WebPush      *bool
+	AgentConfig  *string
+	NotifyScript *string
+	Role         *string
+
+	RouterMode        *string
+	RouterAgent       *string
+	RouterModel       *string
+	RouterEffort      *string
+	RouterTurnTimeout *time.Duration
+	RouterIdleClose   *time.Duration
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -110,22 +165,80 @@ func visitedFlags(flags *flag.FlagSet) map[string]bool {
 	return visited
 }
 
-func applyStartupConfig(cfg startupConfig, explicit map[string]bool, addr *string, webPush *bool, agentConfig *string, notifyScript *string, role *string) {
-	if cfg.Addr != nil && !explicit["addr"] {
-		*addr = strings.TrimSpace(*cfg.Addr)
+func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags startupFlags) error {
+	if flags.Addr != nil && cfg.Addr != nil && !explicit["addr"] {
+		*flags.Addr = strings.TrimSpace(*cfg.Addr)
 	}
-	if value := firstBool(cfg.WebPush, cfg.WebPushFlag); value != nil && !explicit["web-push"] {
-		*webPush = *value
+	if flags.WebPush != nil {
+		if value := firstBool(cfg.WebPush, cfg.WebPushFlag); value != nil && !explicit["web-push"] {
+			*flags.WebPush = *value
+		}
 	}
-	if cfg.AgentConfig != nil && !explicit["agent-config"] {
-		*agentConfig = strings.TrimSpace(*cfg.AgentConfig)
+	if flags.AgentConfig != nil && cfg.AgentConfig != nil && !explicit["agent-config"] {
+		*flags.AgentConfig = strings.TrimSpace(*cfg.AgentConfig)
 	}
-	if cfg.NotifyScript != nil && !explicit["notify-script"] {
-		*notifyScript = strings.TrimSpace(*cfg.NotifyScript)
+	if flags.NotifyScript != nil && cfg.NotifyScript != nil && !explicit["notify-script"] {
+		*flags.NotifyScript = strings.TrimSpace(*cfg.NotifyScript)
 	}
-	if cfg.Role != nil && !explicit["role"] {
-		*role = strings.TrimSpace(*cfg.Role)
+	if flags.Role != nil && cfg.Role != nil && !explicit["role"] {
+		*flags.Role = strings.TrimSpace(*cfg.Role)
 	}
+	router := cfg.Router
+	if router == nil {
+		return nil
+	}
+	setRouterString(flags.RouterMode, router.Mode, explicit["router-mode"])
+	setRouterString(flags.RouterAgent, router.Agent, explicit["router-agent"])
+	setRouterString(flags.RouterModel, router.Model, explicit["router-model"])
+	setRouterString(flags.RouterEffort, router.Effort, explicit["router-effort"])
+	if flags.RouterTurnTimeout != nil && !explicit["router-turn-timeout"] {
+		value, err := parseStartupDuration("router.turn_timeout", router.TurnTimeout)
+		if err != nil {
+			return err
+		}
+		if value != nil {
+			*flags.RouterTurnTimeout = *value
+		}
+	}
+	if flags.RouterIdleClose != nil && !explicit["router-idle-close"] {
+		value, err := parseStartupDuration("router.idle_close", router.IdleClose)
+		if err != nil {
+			return err
+		}
+		if value != nil {
+			*flags.RouterIdleClose = *value
+		}
+	}
+	return nil
+}
+
+func setRouterString(dst *string, value *string, explicit bool) {
+	if dst == nil || value == nil || explicit {
+		return
+	}
+	*dst = strings.TrimSpace(*value)
+}
+
+func parseStartupDuration(field string, value *string) (*time.Duration, error) {
+	if value == nil {
+		return nil, nil
+	}
+	text := strings.TrimSpace(*value)
+	if text == "" {
+		return nil, nil
+	}
+	parsed, err := time.ParseDuration(text)
+	if err != nil {
+		return nil, fmt.Errorf("config %s=%q: %w", field, text, err)
+	}
+	return &parsed, nil
+}
+
+func routerRoots(cfg startupConfig) map[string]string {
+	if cfg.Router == nil || len(cfg.Router.Roots) == 0 {
+		return nil
+	}
+	return cfg.Router.Roots
 }
 
 func firstBool(values ...*bool) *bool {

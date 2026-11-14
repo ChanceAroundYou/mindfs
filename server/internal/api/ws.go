@@ -22,6 +22,7 @@ import (
 const (
 	EventTaskActivityCreated = "task.activity.created"
 	EventTaskActivityUpdated = "task.activity.updated"
+	EventTaskRouterDecision  = "task.router.decision"
 )
 
 type TaskActivityCreatedPayload struct {
@@ -331,4 +332,42 @@ func parseClientContext(payload map[string]any, rootID string) usecase.ClientCon
 		ctx.CurrentRoot = rootID
 	}
 	return ctx
+}
+
+// taskRouterDecisionBroadcaster adapts kanban.RouterDecisionBroadcaster onto the
+// account's WS hub. Payload is deliberately a summary: the full brief/actions
+// are fetched from the decision detail endpoint, not pushed to every client.
+type taskRouterDecisionBroadcaster struct {
+	app *AppContext
+}
+
+// NewTaskRouterDecisionBroadcaster returns the per-account Router broadcaster.
+func NewTaskRouterDecisionBroadcaster(app *AppContext) kanban.RouterDecisionBroadcaster {
+	return taskRouterDecisionBroadcaster{app: app}
+}
+
+func (b taskRouterDecisionBroadcaster) RouterDecisionUpdated(rootID, taskID string, decision *kanban.RouterDecision) {
+	if b.app == nil || decision == nil {
+		return
+	}
+	kinds := make([]string, 0, len(decision.Actions))
+	for _, action := range decision.Actions {
+		kinds = append(kinds, string(action.Kind))
+	}
+	b.app.GetSessionStreamHub().BroadcastAll(WSResponse{
+		Type: EventTaskRouterDecision,
+		Payload: map[string]any{
+			"root_id": rootID,
+			"task_id": taskID,
+			"decision": map[string]any{
+				"id":           decision.ID,
+				"status":       decision.Status,
+				"trigger_kind": decision.TriggerKind,
+				"agreement":    decision.Agreement,
+				"action_kinds": kinds,
+				"latency_ms":   decision.LatencyMS,
+				"error":        decision.Error,
+			},
+		},
+	})
 }

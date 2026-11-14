@@ -144,6 +144,13 @@ type SendMessageInput struct {
 	OnSubAgentAttached     func(child *session.Session, turnID string)
 	OnSubAgentTurnFinished func(sessionKey, turnID string)
 	OnAgentDefaultsChanged func(agentName string)
+	// Router 会话专用（TypeRouter）。普通会话全部留空：
+	// DeveloperInstructions 每轮都要带（resume 也带），ConfigDir 隔离用户配置，
+	// Tools/ToolPolicy 是进程内 MCP 与 deny-by-default 闸门。
+	DeveloperInstructions string
+	ConfigDir             string
+	Tools                 []agenttypes.ToolSpec
+	ToolPolicy            *agenttypes.ToolPolicy
 }
 
 type MessageStart struct {

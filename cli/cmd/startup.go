@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type startupConfig struct {
@@ -23,7 +24,41 @@ type startupConfig struct {
 	NotifyScript *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
-	Role *string `json:"role"`
+	Role   *string              `json:"role"`
+	Router *startupRouterConfig `json:"router"`
+}
+
+// startupRouterConfig 是 Task Router 的节点本地配置。它与 agent-config 同类：
+// 只影响本机，不走控制面共享。生产不配置 = mode off。
+type startupRouterConfig struct {
+	Mode        *string           `json:"mode"`
+	Agent       *string           `json:"agent"`
+	Model       *string           `json:"model"`
+	Effort      *string           `json:"effort"`
+	TurnTimeout *string           `json:"turn_timeout"`
+	IdleClose   *string           `json:"idle_close"`
+	Roots       map[string]string `json:"roots"`
+}
+
+// startupFlags 收拢 applyStartupConfig 的操作对象。之前是 11 个位置参数，
+// 每加一个配置就要改签名和所有调用点；结构体只增字段，调用点不动。
+type startupFlags struct {
+	Addr         *string
+	WebPush      *bool
+	Foreground   *bool
+	TLS          *bool
+	Cert         *string
+	Key          *string
+	AgentConfig  *string
+	NotifyScript *string
+	Role         *string
+
+	RouterMode        *string
+	RouterAgent       *string
+	RouterModel       *string
+	RouterEffort      *string
+	RouterTurnTimeout *time.Duration
+	RouterIdleClose   *time.Duration
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -76,46 +111,99 @@ func visitedFlags(flags *flag.FlagSet) map[string]bool {
 	return visited
 }
 
-func applyStartupConfig(
-	cfg startupConfig,
-	explicit map[string]bool,
-	addr *string,
-	webPush *bool,
-	foreground *bool,
-	tlsFlag *bool,
-	cert *string,
-	key *string,
-	agentConfig *string,
-	notifyScript *string,
-	role *string,
-) {
-	if cfg.Addr != nil && !explicit["addr"] {
-		*addr = strings.TrimSpace(*cfg.Addr)
+// applyStartupConfig 把文件配置落到 flag 变量上，显式 flag 永远胜出。
+// 只有「文件值即将生效但解析不了」才返回错误；被 flag 覆盖的坏值不报错，
+// 因为它不会影响运行结果。
+func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags startupFlags) error {
+	if flags.Addr != nil && cfg.Addr != nil && !explicit["addr"] {
+		*flags.Addr = strings.TrimSpace(*cfg.Addr)
 	}
-	if value := firstBool(cfg.WebPush, cfg.WebPushFlag); value != nil && !explicit["web-push"] {
-		*webPush = *value
+	if flags.WebPush != nil {
+		if value := firstBool(cfg.WebPush, cfg.WebPushFlag); value != nil && !explicit["web-push"] {
+			*flags.WebPush = *value
+		}
 	}
-	if cfg.Foreground != nil && !explicit["foreground"] {
-		*foreground = *cfg.Foreground
+	if flags.Foreground != nil && cfg.Foreground != nil && !explicit["foreground"] {
+		*flags.Foreground = *cfg.Foreground
 	}
-	if cfg.TLS != nil && !explicit["tls"] {
-		*tlsFlag = *cfg.TLS
+	if flags.TLS != nil && cfg.TLS != nil && !explicit["tls"] {
+		*flags.TLS = *cfg.TLS
 	}
-	if cfg.Cert != nil && !explicit["cert"] {
-		*cert = strings.TrimSpace(*cfg.Cert)
+	if flags.Cert != nil && cfg.Cert != nil && !explicit["cert"] {
+		*flags.Cert = strings.TrimSpace(*cfg.Cert)
 	}
-	if cfg.Key != nil && !explicit["key"] {
-		*key = strings.TrimSpace(*cfg.Key)
+	if flags.Key != nil && cfg.Key != nil && !explicit["key"] {
+		*flags.Key = strings.TrimSpace(*cfg.Key)
 	}
-	if cfg.AgentConfig != nil && !explicit["agent-config"] {
-		*agentConfig = strings.TrimSpace(*cfg.AgentConfig)
+	if flags.AgentConfig != nil && cfg.AgentConfig != nil && !explicit["agent-config"] {
+		*flags.AgentConfig = strings.TrimSpace(*cfg.AgentConfig)
 	}
-	if cfg.NotifyScript != nil && !explicit["notify-script"] {
-		*notifyScript = strings.TrimSpace(*cfg.NotifyScript)
+	if flags.NotifyScript != nil && cfg.NotifyScript != nil && !explicit["notify-script"] {
+		*flags.NotifyScript = strings.TrimSpace(*cfg.NotifyScript)
 	}
-	if cfg.Role != nil && !explicit["role"] {
-		*role = strings.TrimSpace(*cfg.Role)
+	if flags.Role != nil && cfg.Role != nil && !explicit["role"] {
+		*flags.Role = strings.TrimSpace(*cfg.Role)
 	}
+	router := cfg.Router
+	if router == nil {
+		return nil
+	}
+	setRouterString(flags.RouterMode, router.Mode, explicit["router-mode"], "router.mode")
+	setRouterString(flags.RouterAgent, router.Agent, explicit["router-agent"], "router.agent")
+	setRouterString(flags.RouterModel, router.Model, explicit["router-model"], "router.model")
+	setRouterString(flags.RouterEffort, router.Effort, explicit["router-effort"], "router.effort")
+	if flags.RouterTurnTimeout != nil && !explicit["router-turn-timeout"] {
+		value, err := parseStartupDuration("router.turn_timeout", router.TurnTimeout)
+		if err != nil {
+			return err
+		}
+		if value != nil {
+			*flags.RouterTurnTimeout = *value
+		}
+	}
+	if flags.RouterIdleClose != nil && !explicit["router-idle-close"] {
+		value, err := parseStartupDuration("router.idle_close", router.IdleClose)
+		if err != nil {
+			return err
+		}
+		if value != nil {
+			*flags.RouterIdleClose = *value
+		}
+	}
+	return nil
+}
+
+func setRouterString(dst *string, value *string, explicit bool, field string) {
+	if dst == nil || value == nil || explicit {
+		return
+	}
+	*dst = strings.TrimSpace(*value)
+}
+
+// parseStartupDuration 接受 Go duration 字符串（"20s"、"30m"）。
+// 空值 = 未配置，返回 nil 让下游用默认值。
+func parseStartupDuration(field string, value *string) (*time.Duration, error) {
+	if value == nil {
+		return nil, nil
+	}
+	text := strings.TrimSpace(*value)
+	if text == "" {
+		return nil, nil
+	}
+	parsed, err := time.ParseDuration(text)
+	if err != nil {
+		return nil, fmt.Errorf("config %s=%q: %w", field, text, err)
+	}
+	return &parsed, nil
+}
+
+// routerRoots 把 config.json 的 roots 覆盖表原样交给 app 归一化。
+// flags 没有 roots（按项目开关不适合命令行长期携带）；空表返回 nil。
+func routerRoots(cfg startupConfig) map[string]string {
+	if cfg.Router == nil || len(cfg.Router.Roots) == 0 {
+		return nil
+	}
+	return cfg.Router.Roots
 }
 
 func firstBool(values ...*bool) *bool {

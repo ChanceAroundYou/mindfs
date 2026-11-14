@@ -123,6 +123,13 @@ type OpenSessionInput struct {
 	AgentSessionID        string
 	AgentCtxSeq           int
 	ForkPoint             ResolveForkPointOutput
+	// ConfigDir 非空时让 CLI 使用隔离的 settings/hooks/sessions 目录
+	// （Task Router 专用）。普通会话留空，完全保持改造前行为。
+	ConfigDir string
+	// Tools 是进程内 MCP 工具；非空时只有 claude 协议支持。
+	Tools []ToolSpec
+	// ToolPolicy 是 deny-by-default 的工具闸门；nil 时沿用旧行为。
+	ToolPolicy *ToolPolicy
 }
 
 type RuntimeDefaults struct {

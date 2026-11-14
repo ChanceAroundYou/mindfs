@@ -124,11 +124,20 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 
 	developerInstructions := ""
 	includeReplyTipsInUserMessage := isInitial
-	if isInitial && agentPool.SupportsDeveloperInstructions(in.Agent) {
+	if current != nil && current.Type == session.TypeRouter {
+		// Router 是隐藏控制面：没有「回答提示」这类用户面向的尾巴；它的
+		// 开发者指令必须每轮（含 resume）都带，否则重启后的 Router 会忘记
+		// 自己的角色与工具约束。
+		developerInstructions = in.DeveloperInstructions
+		includeReplyTipsInUserMessage = false
+		if strings.TrimSpace(developerInstructions) == "" || in.ToolPolicy == nil {
+			return errors.New("router session requires developer instructions and tool policy")
+		}
+	} else if isInitial && agentPool.SupportsDeveloperInstructions(in.Agent) {
 		developerInstructions = replyTips
 		includeReplyTipsInUserMessage = false
 	}
-	sess, agentCtxSeq, err := s.ensureAgentSession(turnCtx, agentPool, manager, current, in.Agent, in.Model, in.Mode, in.Effort, in.FastService, rootAbs, developerInstructions)
+	sess, agentCtxSeq, err := s.ensureAgentSession(turnCtx, agentPool, manager, current, in.Agent, in.Model, in.Mode, in.Effort, in.FastService, rootAbs, developerInstructions, in.ConfigDir, in.Tools, in.ToolPolicy)
 	if err != nil {
 		return err
 	}
