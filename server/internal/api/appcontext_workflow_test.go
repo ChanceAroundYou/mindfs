@@ -178,6 +178,7 @@ func TestRunDirectActivityCreatesAndReusesTaskMainSession(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 	app.Kanban = kanban.NewService(app)
+	app.Prober = testProberWithAgents("claude")
 
 	var captured []workflowTurnRequest
 	app.workflowTurnOverride = func(_ context.Context, req workflowTurnRequest) (string, error) {

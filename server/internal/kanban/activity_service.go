@@ -56,6 +56,16 @@ type ActivityDirectExecutor interface {
 // 只对不需要独立 worktree 的图安全。
 type ActivityBranchResolver func(ctx context.Context, task Task, graph WorkflowDefinition) (string, error)
 
+// ActivityRunLifecycle 是「新留言开始新一轮」的状态机端口。
+//
+// 它把 D3「每任务至多一个非终态 Run / 一个活动执行」落到执行入口：直接建新 Run
+// 会被 task_execution_engines 的绑定守卫拒绝，或者建成一条任务已处于终态、driver
+// 永不推进的僵尸 Run。supersede=false 时只做守卫（直连回合不冻结旧 Run）；
+// supersede=true 时把停在 waiting_user 的旧 Run 冻结为 superseded 并复位任务状态。
+type ActivityRunLifecycle interface {
+	PrepareNewUserTurn(ctx context.Context, task Task, supersede bool) error
+}
+
 type ActivityService struct {
 	tasks          *TaskStore
 	activities     *ActivityStore
@@ -65,6 +75,7 @@ type ActivityService struct {
 	executor       ActivityWorkflowExecutor
 	directExecutor ActivityDirectExecutor
 	branch         ActivityBranchResolver
+	lifecycle      ActivityRunLifecycle
 	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；
 	// shadow 只读、只记账，不改变本函数的任何返回值或副作用。
 	router *RouterService
@@ -113,6 +124,14 @@ func (s *ActivityService) SetBranchResolver(r ActivityBranchResolver) {
 func (s *ActivityService) SetRouter(router *RouterService) {
 	if s != nil {
 		s.router = router
+	}
+}
+
+// SetRunLifecycle 装配「新一轮留言」的状态机端口。装配期调用一次；nil 时
+// 维持历史行为（不守 D3，由 Run 创建守卫兜底）。
+func (s *ActivityService) SetRunLifecycle(l ActivityRunLifecycle) {
+	if s != nil {
+		s.lifecycle = l
 	}
 }
 
@@ -231,12 +250,29 @@ func (s *ActivityService) startDirectAgent(ctx context.Context, task Task, body 
 		return nil, err
 	}
 	s.broadcastCreated(agentAct)
+	// 直连只守 D3（没有活动执行），不冻结停在 waiting_user 的旧 Run。
+	if err := s.prepareUserTurn(ctx, task, false, agentAct); err != nil {
+		return agentAct, nil
+	}
 	if s.directExecutor == nil {
 		s.failActivity(ctx, agentAct, errors.New("direct executor not configured"))
 		return agentAct, nil
 	}
 	go s.executeDirectActivity(context.WithoutCancel(ctx), agentAct, task, body)
 	return agentAct, nil
+}
+
+// prepareUserTurn 把「新一轮开始」的守卫/取代交给状态机端口。失败只写回这一轮
+// 的占位回复：用户留言已经落库，不能因为拒绝而消失。
+func (s *ActivityService) prepareUserTurn(ctx context.Context, task Task, supersede bool, agentAct *TaskActivity) error {
+	if s == nil || s.lifecycle == nil {
+		return nil
+	}
+	if err := s.lifecycle.PrepareNewUserTurn(ctx, task, supersede); err != nil {
+		s.failActivity(ctx, agentAct, err)
+		return err
+	}
+	return nil
 }
 
 // executeDirectActivity 跑一轮普通对话并回写占位回复。
@@ -283,6 +319,11 @@ func (s *ActivityService) startWorkflowRun(
 		return nil, nil, err
 	}
 	s.broadcastCreated(agentAct)
+	// workflow 回合除了守 D3，还要把停在 waiting_user 的旧 Run 冻结掉：
+	// 否则新建 Run 会被绑定守卫拒绝，或者建成一条 driver 永不推进的僵尸 Run。
+	if err := s.prepareUserTurn(ctx, task, true, agentAct); err != nil {
+		return agentAct, &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}, nil
+	}
 
 	version, err := s.resolveWorkflowVersion(ctx, userInput, choice, versionID)
 	var run *WorkflowRun

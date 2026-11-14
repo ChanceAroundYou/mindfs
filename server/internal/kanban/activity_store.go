@@ -199,10 +199,14 @@ func (s *ActivityStore) list(ctx context.Context, taskID string, includeHidden b
 // ActivityByRunID returns the agent reply activity linked to a workflow run.
 // A run is produced by exactly one agent reply, so the newest match is the only
 // meaningful answer; the run_id index keeps this a point lookup.
+//
+// 必须限定 type=agent_reply：同一 Run 还会产生 attention / system_event 行
+// （节点 unknown、notify 等），它们同样带 run_id。按 run_id 取最新会把它们
+// 当成「这一轮回复」去改状态、清正文（workflow_driver_test 钉住）。
 func (s *ActivityStore) ActivityByRunID(ctx context.Context, runID string) (*TaskActivity, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+activitySelectColumns+` FROM task_activities WHERE run_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-		strings.TrimSpace(runID))
+		`SELECT `+activitySelectColumns+` FROM task_activities WHERE run_id = ? AND type = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+		strings.TrimSpace(runID), ActivityTypeAgentReply)
 	activity, err := scanActivityRecord(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrActivityNotFound
@@ -273,6 +277,19 @@ func (s *ActivityStore) UpdateBody(ctx context.Context, id string, body string) 
 		return err
 	}
 	return ensureActivityUpdated(res, id)
+}
+
+// ClearBody 清掉运行期进度正文（"步骤 i/n"）。一轮结束或被人取代后，
+// 这条正文就不是当前事实了；summary 才是终态文案。
+func (s *ActivityStore) ClearBody(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("activity id required")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET body = '', updated_at = ? WHERE id = ? AND body <> ''`,
+		time.Now().UTC().Format(time.RFC3339Nano), id)
+	return err
 }
 
 func ensureActivityUpdated(res sql.Result, id string) error {

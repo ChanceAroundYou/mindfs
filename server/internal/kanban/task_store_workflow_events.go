@@ -37,6 +37,9 @@ const (
 	WorkflowEventRunPaused     = "run_paused"
 	WorkflowEventRunResumed    = "run_resumed"
 	WorkflowEventRunCancelled  = "run_cancelled"
+	// WorkflowEventRunSuperseded 表示这一轮没有失败、也没有被人显式取消，而是被
+	// 用户的下一条留言整体取代：旧 Run 的未完成证据冻结为 cancelled，新 Run 接管。
+	WorkflowEventRunSuperseded = "run_superseded"
 	// D7: board verbs map to execution semantics. Complete/Fail are the human
 	// overrides; they stop open work exactly like cancel but record the
 	// operator's intended outcome instead of a cancellation.

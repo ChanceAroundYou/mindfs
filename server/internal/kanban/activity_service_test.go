@@ -222,6 +222,252 @@ func TestActivityService_CreateUserActivity_Disabled(t *testing.T) {
 	}
 }
 
+// seedRunState 造出「上一轮已经存在」的现场：一个绑定的 Run、一条对应
+// NodeRun，以及任务状态。nodeState 写进 Run 投影，nodeRunStatus 写进
+// NodeRun 行（两者在真实路径里由同一终态投影产生）。
+func (f *activityServiceFixture) seedRunState(t *testing.T, nodeState, nodeRunStatus, taskStatus string) (*WorkflowRun, *TaskActivity) {
+	t.Helper()
+	ctx := context.Background()
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "跑一下", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("seed CreateUserActivity: %v", err)
+	}
+	run, err := f.tasks.WorkflowRunByID(ctx, agentAct.RunID)
+	if err != nil {
+		t.Fatalf("WorkflowRunByID: %v", err)
+	}
+	run.NodeStates["agent-1"] = nodeState
+	if err := f.tasks.SaveWorkflowRun(ctx, run); err != nil {
+		t.Fatalf("SaveWorkflowRun: %v", err)
+	}
+	if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
+		ID: run.ID + ":agent-1::1:1", RunID: run.ID, NodeID: "agent-1",
+		Attempt: 1, Status: nodeRunStatus, FinishedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertWorkflowNodeRun: %v", err)
+	}
+	if err := f.tasks.UpdateTaskStatus(ctx, "task-1", taskStatus, isTerminalStatus(taskStatus)); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	if err := f.service.activities.UpdateStatus(ctx, agentAct.ID, ActivityStatusWaitingUser, nil); err != nil {
+		t.Fatalf("seed activity status: %v", err)
+	}
+	return run, agentAct
+}
+
+func (f *activityServiceFixture) wireRunLifecycle(t *testing.T) {
+	t.Helper()
+	// 生产装配是 ActivityServiceForRoot 把长生命周期的 Service 挂进来；这里只
+	// 挂上状态机本身，不装 executor，避免后台 driver 干扰断言。
+	f.service.SetRunLifecycle(NewService(testRoots{root: f.root}))
+}
+
+// 用户在一个停在 waiting_user（节点 unknown）的任务上继续发消息时，必须新开
+// 一轮：旧 Run 冻结为 superseded，新 Run 绑定到任务，旧回复结算为 cancelled。
+func TestActivityService_NewMessageSupersedesWaitingRun(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	f.wireRunLifecycle(t)
+	oldRun, oldReply := f.seedRunState(t, NodeRunUnknown, NodeRunUnknown, StatusWaitingUser)
+
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "换个方法再试", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	if agentAct.Status == ActivityStatusFailed {
+		t.Fatalf("continuation failed: %s", agentAct.Summary)
+	}
+	if agentAct.RunID == "" || agentAct.RunID == oldRun.ID {
+		t.Fatalf("new turn run = %q, want a fresh run (old %q)", agentAct.RunID, oldRun.ID)
+	}
+
+	frozen, err := f.tasks.WorkflowRunByID(ctx, oldRun.ID)
+	if err != nil {
+		t.Fatalf("reload old run: %v", err)
+	}
+	if got := ProjectStatusFromRun(frozen); got != StatusCancelled {
+		t.Fatalf("old run projects as %q, want cancelled", got)
+	}
+	events, err := f.tasks.ListWorkflowRunEvents(ctx, oldRun.ID)
+	if err != nil {
+		t.Fatalf("ListWorkflowRunEvents: %v", err)
+	}
+	if len(events) == 0 || events[len(events)-1].Type != WorkflowEventRunSuperseded {
+		t.Fatalf("old run events = %#v, want a trailing run_superseded", events)
+	}
+
+	stored, err := f.service.activities.Get(ctx, oldReply.ID)
+	if err != nil {
+		t.Fatalf("reload old reply: %v", err)
+	}
+	if stored.Status != ActivityStatusCancelled {
+		t.Fatalf("old reply status = %q, want cancelled", stored.Status)
+	}
+
+	task, err := f.tasks.GetTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status == StatusWaitingUser || isTerminalStatus(task.Status) {
+		t.Fatalf("task status = %q, want a fresh, drivable status", task.Status)
+	}
+	engine, err := taskEngineOf(ctx, f.tasks.db, "task-1")
+	if err != nil {
+		t.Fatalf("taskEngineOf: %v", err)
+	}
+	if engine.WorkflowRunID != agentAct.RunID {
+		t.Fatalf("engine bound to %q, want the new run %q", engine.WorkflowRunID, agentAct.RunID)
+	}
+}
+
+// 节点仍在跑时，新消息不能开第二个非终态 Run：占位回复给出可见拒绝，
+// 仍只有一条 Run。
+func TestActivityService_NewMessageWhileNodeRunningIsRejected(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	f.wireRunLifecycle(t)
+	f.seedRunState(t, NodeRunRunning, NodeRunRunning, StatusRunning)
+
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "插一句", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	if agentAct.Status != ActivityStatusFailed || !strings.Contains(agentAct.Summary, "还在执行") {
+		t.Fatalf("agent reply = %#v, want a visible 'still running' refusal", agentAct)
+	}
+	runs, err := f.tasks.ListWorkflowRunsForTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("ListWorkflowRunsForTask: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want the single in-flight run", len(runs))
+	}
+}
+
+// HumanGate 停住时留言不能绕过审批：拒绝并提示去批准/驳回。
+func TestActivityService_NewMessageWhileHumanGateWaitsIsRejected(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	f.wireRunLifecycle(t)
+	run, _ := f.seedRunState(t, NodeRunWaitingUser, NodeRunWaitingUser, StatusWaitingUser)
+
+	running, err := f.tasks.WorkflowRunByID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("reload run: %v", err)
+	}
+	running.Graph = WorkflowDefinition{Nodes: []WorkflowNode{{ID: "gate-1", Kind: NodeKindHumanGate}}}
+	running.NodeStates = map[string]string{"gate-1": NodeRunWaitingUser}
+	if err := f.tasks.SaveWorkflowRun(ctx, running); err != nil {
+		t.Fatalf("SaveWorkflowRun: %v", err)
+	}
+	if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
+		ID: run.ID + ":gate-1::1:1", RunID: run.ID, NodeID: "gate-1",
+		Attempt: 1, Status: NodeRunWaitingUser, FinishedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertWorkflowNodeRun: %v", err)
+	}
+
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "先跳过审批", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	if agentAct.Status != ActivityStatusFailed || !strings.Contains(agentAct.Summary, "审批") {
+		t.Fatalf("agent reply = %#v, want an approval-pointing refusal", agentAct)
+	}
+}
+
+// 已结束任务不再接受新执行；必须给出可见原因，而不是建一条永远不推进的 Run。
+func TestActivityService_NewMessageOnTerminalTaskIsRejected(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	f.wireRunLifecycle(t)
+	if err := f.tasks.UpdateTaskStatus(ctx, "task-1", StatusSuccess, true); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "再来一轮", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	if agentAct.Status != ActivityStatusFailed || !strings.Contains(agentAct.Summary, "已结束") {
+		t.Fatalf("agent reply = %#v, want a visible 'task closed' refusal", agentAct)
+	}
+	runs, err := f.tasks.ListWorkflowRunsForTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("ListWorkflowRunsForTask: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("terminal task persisted %d runs, want 0", len(runs))
+	}
+}
+
+// 一轮成功后的回复要给人看得懂的结果，而不是把节点 output 原样 JSON 出来
+// （2026-11-14 隔离实例里用户看到的就是 {"files":[...]} 这种转储）。
+func TestWorkflowReplySummaryUsesReadableOutputText(t *testing.T) {
+	cases := []struct {
+		name   string
+		output map[string]any
+		want   string
+	}{
+		{name: "summary wins", output: map[string]any{"summary": "已完成", "result": "次要"}, want: "已完成"},
+		{name: "result is human text", output: map[string]any{"result": "登录页已经改好了", "files": []any{"a.ts"}}, want: "登录页已经改好了"},
+		{name: "message key", output: map[string]any{"message": "全部通过"}, want: "全部通过"},
+		{name: "lone string value", output: map[string]any{"note": "只剩一句"}, want: "只剩一句"},
+		{name: "never raw json", output: map[string]any{"files": []any{"a.ts"}, "count": float64(2)}, want: ""},
+		{name: "ambiguous strings are not guessed", output: map[string]any{"a": "x", "b": "y"}, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := setupActivityService(t)
+			run, _ := f.seedRunState(t, NodeRunSuccess, NodeRunSuccess, StatusSuccess)
+			if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
+				ID: run.ID + ":agent-1::1:1", RunID: run.ID, NodeID: "agent-1",
+				Attempt: 1, Status: NodeRunSuccess, Output: tc.output, FinishedAt: time.Now().UTC(),
+			}); err != nil {
+				t.Fatalf("UpsertWorkflowNodeRun: %v", err)
+			}
+			if got := workflowReplySummary(ctx, f.tasks, run); got != tc.want {
+				t.Fatalf("summary = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// 运行期的「步骤 i/n」正文在结算时必须清掉：终态文案由 summary 提供，
+// 留着旧进度会被前端当成结果展示。
+func TestSettleWorkflowReplyClearsStaleProgressBody(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	run, act := f.seedRunState(t, NodeRunSuccess, NodeRunSuccess, StatusSuccess)
+	if err := f.service.activities.UpdateBody(ctx, act.ID, "步骤 2/3: 实现"); err != nil {
+		t.Fatalf("UpdateBody: %v", err)
+	}
+	if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
+		ID: run.ID + ":agent-1::1:1", RunID: run.ID, NodeID: "agent-1",
+		Attempt: 1, Status: NodeRunSuccess, Output: map[string]any{"result": "已经改好了"}, FinishedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertWorkflowNodeRun: %v", err)
+	}
+
+	// 生产里由 driver 的 projectWorkflowTaskStatus 调到这里；单测直接走同一入口。
+	NewService(testRoots{root: f.root}).settleWorkflowReply(ctx, f.tasks, run)
+
+	stored, err := f.service.activities.Get(ctx, act.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if stored.Status != ActivityStatusCompleted {
+		t.Fatalf("status = %q, want completed", stored.Status)
+	}
+	if stored.Summary != "已经改好了" {
+		t.Fatalf("summary = %q, want the readable node result", stored.Summary)
+	}
+	if stored.Body != "" {
+		t.Fatalf("body = %q, want stale progress cleared", stored.Body)
+	}
+}
+
 type fakeDirectExecutor struct {
 	reply string
 	err   error

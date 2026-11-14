@@ -332,6 +332,31 @@ func setupActivityStore(t *testing.T) *ActivityStore {
 	return NewActivityStore(store.db)
 }
 
+// 同一个 Run 会产生多类活动：Agent 占位回复、节点 unknown 的 attention、notify 的
+// system_event。结算与进度回写只能认那条 agent_reply，否则会把别人的正文清掉、
+// 或把状态写到告警行上（workflow_driver_test 的 attention/notify 用例依赖这点）。
+func TestActivityStore_ActivityByRunIDIgnoresNonReplyRows(t *testing.T) {
+	store := setupActivityStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	for _, activity := range []*TaskActivity{
+		{ID: "reply", TaskID: "task-1", Type: ActivityTypeAgentReply, RunID: "run-1", Body: "步骤 1/2: 实现", CreatedAt: base},
+		{ID: "attention", TaskID: "task-1", Type: ActivityTypeAttention, RunID: "run-1", Body: "缺字段", CreatedAt: base.Add(time.Second)},
+		{ID: "notify", TaskID: "task-1", Type: ActivityTypeSystemEvent, RunID: "run-1", Body: "任务已开始", CreatedAt: base.Add(2 * time.Second)},
+	} {
+		if err := store.Insert(ctx, activity); err != nil {
+			t.Fatalf("Insert(%s): %v", activity.ID, err)
+		}
+	}
+	got, err := store.ActivityByRunID(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("ActivityByRunID: %v", err)
+	}
+	if got.ID != "reply" {
+		t.Fatalf("ActivityByRunID = %q, want the agent reply", got.ID)
+	}
+}
+
 func tableColumns(t *testing.T, db *sql.DB, table string) map[string]bool {
 	t.Helper()
 	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)

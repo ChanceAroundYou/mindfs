@@ -328,20 +328,44 @@ func (s *Service) workflowNodeRunner() WorkflowNodeRunner {
 	return s.WorkflowNodeRunnerPort
 }
 
-// ParseWorkflowNodeEnvelope implements D5: the agent must answer with one JSON
+// ParseWorkflowNodeEnvelope implements D5: the agent must answer with a JSON
 // object carrying outcome/output/reason. Anything else is an error and must be
 // surfaced as waiting_user by the caller — no guessing, no plain-text fallback.
+//
+// 宽松只针对「envelope 外面包了什么」：真实回复会带解释文字、markdown 代码块，
+// 甚至因为本机 Stop hook 追加一段而出现多个 JSON 对象。这里扫描出所有 JSON
+// 对象，取最后一个通过严格校验的 envelope；schema（字段白名单、outcome 枚举、
+// blocked/silent 必须带 reason）一点不放宽。
 func ParseWorkflowNodeEnvelope(text string) (WorkflowNodeResult, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return WorkflowNodeResult{}, errors.New("workflow node output is empty; JSON envelope required")
 	}
+	candidates := extractJSONObjects(trimmed)
+	if len(candidates) == 0 {
+		return WorkflowNodeResult{}, errors.New("workflow node output is not a JSON envelope: no JSON object found")
+	}
+	var lastErr error
+	for i := len(candidates) - 1; i >= 0; i-- {
+		result, err := parseWorkflowNodeEnvelopeObject(candidates[i])
+		if err == nil {
+			return result, nil
+		}
+		if lastErr == nil {
+			lastErr = err
+		}
+	}
+	return WorkflowNodeResult{}, lastErr
+}
+
+// parseWorkflowNodeEnvelopeObject is the strict single-object parser.
+func parseWorkflowNodeEnvelopeObject(raw string) (WorkflowNodeResult, error) {
 	var envelope struct {
 		Outcome string         `json:"outcome"`
 		Output  map[string]any `json:"output"`
 		Reason  string         `json:"reason"`
 	}
-	dec := json.NewDecoder(strings.NewReader(trimmed))
+	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&envelope); err != nil {
 		return WorkflowNodeResult{}, fmt.Errorf("workflow node output is not a JSON envelope: %w", err)
@@ -364,4 +388,55 @@ func ParseWorkflowNodeEnvelope(text string) (WorkflowNodeResult, error) {
 		envelope.Output = map[string]any{}
 	}
 	return WorkflowNodeResult{Outcome: outcome, Output: envelope.Output, Reason: strings.TrimSpace(envelope.Reason)}, nil
+}
+
+// extractJSONObjects returns every balanced top-level {...} substring, in text
+// order. Braces inside JSON strings (including escaped quotes) do not count, and
+// a nested object is not emitted separately from its enclosing one.
+func extractJSONObjects(text string) []string {
+	var out []string
+	for i := 0; i < len(text); i++ {
+		if text[i] != '{' {
+			continue
+		}
+		end, ok := scanJSONObjectEnd(text, i)
+		if !ok {
+			continue
+		}
+		out = append(out, text[i:end+1])
+		i = end
+	}
+	return out
+}
+
+func scanJSONObjectEnd(text string, start int) (int, bool) {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case ch == '\\':
+				escaped = true
+			case ch == '"':
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
 }

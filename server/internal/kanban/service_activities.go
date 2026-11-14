@@ -37,6 +37,9 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetBranchResolver(func(ctx context.Context, task Task, graph WorkflowDefinition) (string, error) {
 		return s.snapshotRunIntegrationBranch(ctx, task, graph)
 	})
+	// D3 的执行入口守卫：同一时刻只有一个活动执行；停住的旧 Run 由下一条
+	// workflow 留言整体取代。直连回合只做守卫，不冻结旧 Run。
+	svc.SetRunLifecycle(s)
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
 	return svc, nil
@@ -189,20 +192,21 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 		return
 	}
 	status, summary := workflowReplyOutcome(ctx, store, run, task)
-	if status == "" || status == activity.Status {
-		if status == activity.Status && summary != "" && summary != activity.Summary {
-			_ = activities.UpdateStatus(ctx, activity.ID, status, &summary)
-			activity.Summary = summary
-			s.broadcastActivityUpdated(activity, map[string]any{"status": status, "summary": summary})
-		}
+	if status == "" {
+		return
+	}
+	if status == activity.Status && (summary == "" || summary == activity.Summary) {
 		return
 	}
 	if err := activities.UpdateStatus(ctx, activity.ID, status, &summary); err != nil {
 		return
 	}
+	// 终态文案由 summary 提供；「步骤 i/n」是运行期提示，结算后就不成立了。
+	_ = activities.ClearBody(ctx, activity.ID)
 	activity.Status = status
 	activity.Summary = summary
-	s.broadcastActivityUpdated(activity, map[string]any{"status": status, "summary": summary})
+	activity.Body = ""
+	s.broadcastActivityUpdated(activity, map[string]any{"status": status, "summary": summary, "body": ""})
 }
 
 // resumeWorkflowReply 把停在 waiting_user 的占位回复重新标成 running。
@@ -251,14 +255,14 @@ func workflowReplyOutcome(ctx context.Context, store *TaskStore, run *WorkflowRu
 	}
 }
 
-// workflowReplySummary 取最后一个成功节点输出的 summary；没有就取最后一个
-// 节点输出；再没有就留空，由前端回退到本地化的状态文案。
+// workflowReplySummary 取最后一个成功节点输出里给人看的那段文字；没有就留空，
+// 由前端回退到本地化的状态文案。绝不把 output 原样 JSON 出来当回复：那是节点
+// 之间的数据契约，不是给用户的结果。
 func workflowReplySummary(ctx context.Context, store *TaskStore, run *WorkflowRun) string {
 	runs, err := store.ListWorkflowNodeRuns(ctx, run.ID)
 	if err != nil {
 		return ""
 	}
-	var fallback string
 	for i := len(runs) - 1; i >= 0; i-- {
 		if runs[i].Status != NodeRunSuccess {
 			continue
@@ -266,11 +270,8 @@ func workflowReplySummary(ctx context.Context, store *TaskStore, run *WorkflowRu
 		if summary := nodeRunOutputSummary(runs[i]); summary != "" {
 			return summary
 		}
-		if fallback == "" {
-			fallback = nodeRunOutputJSON(runs[i])
-		}
 	}
-	return fallback
+	return ""
 }
 
 // workflowReplyReason 取最近一条非成功节点留下的可读原因（纯原因，不加前缀
@@ -301,23 +302,35 @@ func nodeRunText(nr NodeRun, keys ...string) string {
 	return ""
 }
 
+// nodeRunOutputSummary 从节点 output 里挑「给人看的那句」，顺序固定：显式
+// summary 最可信；其次是常见正文键；只剩一个字符串值时用它。多个字符串又
+// 没有显式键就不猜 —— 拼一段 JSON 只会让用户看到内部数据结构。
 func nodeRunOutputSummary(nr NodeRun) string {
-	if nr.Output == nil {
-		return ""
-	}
-	summary, _ := nr.Output["summary"].(string)
-	return strings.TrimSpace(summary)
-}
-
-func nodeRunOutputJSON(nr NodeRun) string {
 	if len(nr.Output) == 0 {
 		return ""
 	}
-	raw, err := marshalWorkflowJSON(nr.Output)
-	if err != nil {
-		return ""
+	for _, key := range []string{"summary", "message", "text", "result", "title", "detail"} {
+		value, _ := nr.Output[key].(string)
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
 	}
-	return strings.TrimSpace(string(raw))
+	lone := ""
+	for _, value := range nr.Output {
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			continue
+		}
+		if lone != "" {
+			return ""
+		}
+		lone = trimmed
+	}
+	return lone
 }
 
 func (s *Service) broadcastActivityUpdated(activity *TaskActivity, changes map[string]any) {

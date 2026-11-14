@@ -122,13 +122,69 @@ func TestParseWorkflowNodeEnvelopeStrictness(t *testing.T) {
 	if _, err := ParseWorkflowNodeEnvelope("完成了"); err == nil {
 		t.Fatal("plain text must not be auto-wrapped")
 	}
-	if _, err := ParseWorkflowNodeEnvelope(`{"outcome":"done"}{"outcome":"done"}`); err == nil {
-		t.Fatal("trailing JSON must fail")
-	}
 	if _, err := ParseWorkflowNodeEnvelope(`{"outcome":"done","extra":1}`); err == nil {
 		t.Fatal("unknown field must fail")
 	}
 	if _, err := ParseWorkflowNodeEnvelope(""); err == nil {
 		t.Fatal("empty output must fail")
+	}
+}
+
+// 真实 Agent 的回复很少是「纯净的一个 JSON」：会先解释两句、套 markdown 代码块，
+// 甚至因为本机 Stop hook 追加一段而出现多个 JSON 对象（2026-11-14 隔离实例实测）。
+// 解析规则因此放宽为「扫描出所有 JSON 对象，取最后一个能通过严格校验的 envelope」，
+// 字段与 outcome 的严格性不变。
+func TestParseWorkflowNodeEnvelopeToleratesSurroundingText(t *testing.T) {
+	prose, err := ParseWorkflowNodeEnvelope("已经改好了。\n" + `{"outcome":"done","output":{"files":["a.ts"]}}` + "\n收工。")
+	if err != nil {
+		t.Fatalf("prose around envelope: %v", err)
+	}
+	if prose.Outcome != WorkflowNodeDone {
+		t.Fatalf("prose result = %#v", prose)
+	}
+
+	fenced, err := ParseWorkflowNodeEnvelope("说明：\n```json\n" + `{"outcome":"done","output":{"files":["b.ts"]}}` + "\n```")
+	if err != nil {
+		t.Fatalf("fenced envelope: %v", err)
+	}
+	if fenced.Outcome != WorkflowNodeDone {
+		t.Fatalf("fenced result = %#v", fenced)
+	}
+
+	multi, err := ParseWorkflowNodeEnvelope(
+		`{"outcome":"done","output":{"step":1}}` + "\n\n" +
+			`{"outcome":"done","output":{"step":2}}`)
+	if err != nil {
+		t.Fatalf("concatenated envelopes: %v", err)
+	}
+	if multi.Output["step"] != float64(2) {
+		t.Fatalf("concatenated result = %#v, want the last valid envelope", multi)
+	}
+
+	// 最后一个 JSON 对象不是 envelope（例如 hook 的附加反馈）时，退回前一个合法的。
+	fallback, err := ParseWorkflowNodeEnvelope(`{"outcome":"done","output":{"n":1}}{"note":"hook feedback"}`)
+	if err != nil {
+		t.Fatalf("invalid trailing object: %v", err)
+	}
+	if fallback.Output["n"] != float64(1) {
+		t.Fatalf("fallback result = %#v", fallback)
+	}
+
+	// 字符串里的花括号不能把对象提前截断。
+	braces, err := ParseWorkflowNodeEnvelope(`{"outcome":"done","output":{"note":"a } b { c"}}`)
+	if err != nil {
+		t.Fatalf("braces inside string: %v", err)
+	}
+	if braces.Output["note"] != "a } b { c" {
+		t.Fatalf("braces result = %#v", braces)
+	}
+
+	// 没有任何 JSON 对象仍然是错，且错误要说清楚没有找到 envelope。
+	if _, err := ParseWorkflowNodeEnvelope("只有一段大白话"); err == nil {
+		t.Fatal("text without any JSON object must fail")
+	}
+	// 有 JSON 对象但都不合法也仍然是错：宽松只针对包裹文本，不放宽 schema。
+	if _, err := ParseWorkflowNodeEnvelope(`{"note":"x"}{"outcome":"maybe"}`); err == nil {
+		t.Fatal("invalid envelope candidates must fail")
 	}
 }

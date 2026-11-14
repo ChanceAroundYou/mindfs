@@ -81,7 +81,7 @@ func TestEnsureDirectSessionBroadcastsSessionCreated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &AppContext{Dirs: registry}
+	app := &AppContext{Dirs: registry, Prober: testProberWithAgents("claude")}
 	svc := kanban.NewService(app)
 	app.Kanban = svc
 	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{
@@ -93,7 +93,7 @@ func TestEnsureDirectSessionBroadcastsSessionCreated(t *testing.T) {
 	}
 	conn := dialHub(t, app.GetSessionStreamHub())
 
-	key, err := app.ensureDirectSession(context.Background(), detail.Task)
+	key, _, err := app.ensureDirectSession(context.Background(), detail.Task)
 	if err != nil {
 		t.Fatalf("ensureDirectSession: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestBroadcastSessionCreatedCarriesListRowShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &AppContext{Dirs: registry}
+	app := &AppContext{Dirs: registry, Prober: testProberWithAgents("claude")}
 	manager, err := app.GetSessionManager(root.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestBroadcastSessionCreatedCarriesListRowShape(t *testing.T) {
 // nil 会话不能广播出一条空壳事件：那会让前端白重拉一次列表。
 func TestBroadcastSessionCreatedSkipsNilSession(t *testing.T) {
 	registry := fs.NewRegistry(filepath.Join(t.TempDir(), "registry.json"))
-	app := &AppContext{Dirs: registry}
+	app := &AppContext{Dirs: registry, Prober: testProberWithAgents("claude")}
 	conn := dialHub(t, app.GetSessionStreamHub())
 	app.BroadcastSessionCreated("any-root", nil)
 	_ = conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))

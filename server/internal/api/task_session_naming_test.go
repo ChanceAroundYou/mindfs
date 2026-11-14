@@ -31,7 +31,7 @@ func setupSessionNamingApp(t *testing.T) (*AppContext, *kanban.Service, fs.RootI
 	if err != nil {
 		t.Fatalf("Upsert returned error: %v", err)
 	}
-	app := &AppContext{Dirs: registry}
+	app := &AppContext{Dirs: registry, Prober: testProberWithAgents("claude")}
 	svc := kanban.NewService(app)
 	app.Kanban = svc
 	return app, svc, root
@@ -45,7 +45,7 @@ func TestEnsureDirectSessionNamesSessionAfterTaskName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	key, err := app.ensureDirectSession(ctx, detail.Task)
+	key, _, err := app.ensureDirectSession(ctx, detail.Task)
 	if err != nil {
 		t.Fatalf("ensureDirectSession: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestEnsureDirectSessionFallsBackToTaskNumber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	key, err := app.ensureDirectSession(ctx, detail.Task)
+	key, _, err := app.ensureDirectSession(ctx, detail.Task)
 	if err != nil {
 		t.Fatalf("ensureDirectSession: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestBindTaskSessionNamesKeepsNumberSuffix(t *testing.T) {
 	if created.Task.TaskNumber <= 0 {
 		t.Fatalf("task_number = %d, want a positive number to build the suffix from", created.Task.TaskNumber)
 	}
-	key, err := app.ensureDirectSession(ctx, created.Task)
+	key, _, err := app.ensureDirectSession(ctx, created.Task)
 	if err != nil {
 		t.Fatalf("ensureDirectSession: %v", err)
 	}
