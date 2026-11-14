@@ -413,8 +413,16 @@ func TestWorkflowReplySummaryUsesReadableOutputText(t *testing.T) {
 		{name: "result is human text", output: map[string]any{"result": "登录页已经改好了", "files": []any{"a.ts"}}, want: "登录页已经改好了"},
 		{name: "message key", output: map[string]any{"message": "全部通过"}, want: "全部通过"},
 		{name: "lone string value", output: map[string]any{"note": "只剩一句"}, want: "只剩一句"},
+		// 执行器会往 output 里塞元数据（outcome/reason/worktree_*），它们不是给人
+		// 看的结果，参与「唯一字符串」判断会让真实正文永远被判为歧义。
+		{name: "envelope outcome is metadata", output: map[string]any{"outcome": "done", "sentence": "本次演示已完成"}, want: "本次演示已完成"},
+		{name: "empty reason is metadata", output: map[string]any{"outcome": "done", "reason": "", "note": "只有这句"}, want: "只有这句"},
+		{name: "worktree error is metadata", output: map[string]any{"outcome": "done", "worktree_error": "merge failed", "note": "结果"}, want: "结果"},
 		{name: "never raw json", output: map[string]any{"files": []any{"a.ts"}, "count": float64(2)}, want: ""},
-		{name: "ambiguous strings are not guessed", output: map[string]any{"a": "x", "b": "y"}, want: ""},
+		// 真实样本：节点 output 没有 canonical 键时，把文本字段按 key 列出来；
+		// 只报一句、或用「最长」猜一条都会丢掉模型实际汇报的另一个要点。
+		{name: "multiple strings render with keys", output: map[string]any{"a": "x", "b": "y"}, want: "a: x；b: y"},
+		{name: "keys are sorted for determinism", output: map[string]any{"file": "a.txt", "content": "hello"}, want: "content: hello；file: a.txt"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

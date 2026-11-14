@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -302,9 +303,27 @@ func nodeRunText(nr NodeRun, keys ...string) string {
 	return ""
 }
 
-// nodeRunOutputSummary 从节点 output 里挑「给人看的那句」，顺序固定：显式
-// summary 最可信；其次是常见正文键；只剩一个字符串值时用它。多个字符串又
-// 没有显式键就不猜 —— 拼一段 JSON 只会让用户看到内部数据结构。
+// nodeRunOutputMetadataKeys 是执行器写进 output 的簿记字段，不是节点产出内容。
+// 它们参与「唯一字符串」判断会让真实正文永远被判为歧义（真实样本：envelope
+// 的 outcome=done + 模型的 sentence 两把字符串，结果一条 summary 都发不出去）。
+var nodeRunOutputMetadataKeys = map[string]bool{
+	"outcome":               true,
+	"reason":                true,
+	"worktree":              true,
+	"worktree_error":        true,
+	"resumed_after_restart": true,
+	"comment_id":            true,
+}
+
+// nodeRunOutputSummary 从节点 output 里挑「给人看的那句」，顺序固定：
+//  1. 显式 summary / message / text / result / title / detail；
+//  2. 只剩一个文本字段 → 直接用它；
+//  3. 多个文本字段 → 按 key 排序后渲染成「key: value；…」。真实模型常返回
+//     conclusion/report/key_point 或 content/file 这类自由字段，没有 canonical
+//     键；挑「最长」的一条会丢掉另一个要点，渲染键名则既不猜也不漏。
+//
+// 非文本值（数组/数字/对象）一律不参与：output 是节点间数据契约，转储出来只会
+// 让用户看到内部结构。元数据键（outcome/reason/worktree_*）同理。
 func nodeRunOutputSummary(nr NodeRun) string {
 	if len(nr.Output) == 0 {
 		return ""
@@ -312,25 +331,45 @@ func nodeRunOutputSummary(nr NodeRun) string {
 	for _, key := range []string{"summary", "message", "text", "result", "title", "detail"} {
 		value, _ := nr.Output[key].(string)
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
+			return truncateSummary(trimmed)
 		}
 	}
-	lone := ""
-	for _, value := range nr.Output {
+	type textField struct{ key, value string }
+	fields := make([]textField, 0, len(nr.Output))
+	for key, value := range nr.Output {
+		if nodeRunOutputMetadataKeys[key] {
+			continue
+		}
 		text, ok := value.(string)
 		if !ok {
 			continue
 		}
-		trimmed := strings.TrimSpace(text)
-		if trimmed == "" {
-			continue
+		if trimmed := strings.TrimSpace(text); trimmed != "" {
+			fields = append(fields, textField{key: key, value: trimmed})
 		}
-		if lone != "" {
-			return ""
-		}
-		lone = trimmed
 	}
-	return lone
+	if len(fields) == 0 {
+		return ""
+	}
+	if len(fields) == 1 {
+		return truncateSummary(fields[0].value)
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
+	parts := make([]string, len(fields))
+	for i, field := range fields {
+		parts[i] = field.key + ": " + field.value
+	}
+	return truncateSummary(strings.Join(parts, "；"))
+}
+
+const maxSummaryRunes = 500
+
+func truncateSummary(text string) string {
+	runes := []rune(text)
+	if len(runes) <= maxSummaryRunes {
+		return text
+	}
+	return string(runes[:maxSummaryRunes]) + "…"
 }
 
 func (s *Service) broadcastActivityUpdated(activity *TaskActivity, changes map[string]any) {
