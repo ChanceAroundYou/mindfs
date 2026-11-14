@@ -8348,6 +8348,11 @@ groups:
       - docs/plans/2026-11-14-task-router-super-agent.md
     tests:
       - server/internal/kanban/router_shadow_test.go
+      - server/internal/api/http_router_test.go
+      - server/internal/session/manager_router_visibility_test.go
+      - server/internal/agent/types/session_tools_test.go
+      - server/internal/agent/claude/session_ask_user_test.go
+      - cli/cmd/startup_config_test.go
     anchors:
       - server/internal/kanban/router_service.go:Enqueue
       - server/internal/kanban/router_service.go:func (rs *RouterService) runShadowTurn(
@@ -8388,8 +8393,6 @@ groups:
       - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleCompactSignal('
       - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleProxied('
       - 'server/internal/agent/proxy/strip.go:func stripCompactPayload('
-      - 'server/internal/agent/proxy/strip.go:func trimSkillsBlock('
-      - 'server/internal/agent/proxy/strip.go:const skillMarker = "### Skill:"'
       - 'server/internal/agent/pool.go:compactProxy       *proxy.Server'
       - 'server/internal/agent/pool_open.go:func (p *Pool) compactProxyEnv('
 
