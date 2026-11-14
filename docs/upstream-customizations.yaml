@@ -8374,13 +8374,13 @@ groups:
       - cli/cmd/startup.go:router
       - server/scripts/router_shadow_report/main.go:// Command router_shadow_report
 
-  # ── 压缩后首请求瘦身代理（compact-strip proxy）─────────────────────────────
+  # ── 压缩后附件瘦身代理（compact-strip proxy）───────────────────────────────
   - id: G-LQ
-    title: 压缩后首请求瘦身代理（按会话 token 剥离超量 skills 与 file-restore 块）
+    title: 压缩后附件瘦身代理（剥离超量 invoked_skills 与无上限的 plan 正文）
     kind: feature
-    symptom: "Claude Code 自动压缩上下文后发出的第一个请求会把 `invoked_skills` 全文（可达 ~100KB）和最多 5 个 file-restore 块重新注入 system prompt，导致压缩刚腾出的上下文立刻被吃掉、长会话继续反复压缩（实测单次 skills 20+KB、文件 50KB；用户报「压缩反复与 200k 假上限」，memory `claude-context-window-thrash`）。现在 mindfs 托管的所有 Claude 会话都经一个本机回环代理：`ANTHROPIC_BASE_URL=http://127.0.0.1:{port}/p/{token}`，PostCompact hook 只对该 token 的下一请求做一次剥离——`invoked_skills` 总量压到 20KB、file-restore 块保留 2 个，其余请求原样透传。上游 Claude Code 无关，只影响 mindfs 内嵌启动的 Claude Code 会话。"
-    why: "用户要求「在 agent harness 内处理，而非网关」，这是 fork 的上下文成本控制，必须保留：① 代理只监听 `127.0.0.1` 随机端口，每个会话一个 token，未知 token 直接 404，不引入外部入口；② 只在收到 `/compact-signal` 后剥离**一次**，之后清标记，不影响正常请求；③ 剥离是保守的——JSON 解析/结构不符合预期时返回原 body，宁可多花 token 也不破坏请求；④ 真实上游地址由 `RegisterSession` 按会话记录，不透传客户端自带的任意 URL，避免开放代理；⑤ 代理启动失败只记日志、不阻断会话创建（non-fatal）。直连 Claude Code 启动（无 `MINDFS_*` 环境变量）时 hook 是 no-op、proxy 未注入，行为零变化。Hook 与 settings 在 `~/.agents/claude/` 下，不纳入项目仓库。"
-    boundary: "只处理 Anthropic Messages API 请求体里的 `system` 块；不改用户消息、工具结果、模型参数或流式响应。Proxy 不缓存、不落盘请求内容，token 仅进程内。与 G-LP 的 Router 工具装配共用 `pool_open.go` 的会话开启路径，但 Router 的工具策略与本代理互不依赖：`pool_open.go` 的 Router 工具装配（`session_tools.go` import）归 G-LP，proxy 主体归本组。AGENTS.md 瘦身属于同批改动但不登记在本组（文档约定，属 G-A 边界）。"
+    symptom: "Claude Code 压缩上下文后会把附件重新注入：`invoked_skills` 全文（CLI 上限 25KB，本机实测单次 20+KB）和整份 plan 正文（CLI 不设上限）。这些附件留在历史里，**之后每一轮都会重发**，压缩刚腾出的空间立刻被吃掉、长会话反复压缩（用户报「压缩反复与 200k 假上限」，memory `claude-context-window-thrash`）。现在 mindfs 托管的所有 Claude 会话都经一个本机回环代理：`ANTHROPIC_BASE_URL=http://127.0.0.1:{port}/p/{token}`，请求里带 post-compact 标记时把 skills 压到 20KB、plan 正文压到 12KB，其余字节原样透传。直连 Claude Code 启动照旧不受影响。"
+    why: "用户要求「在 agent harness 内处理，而非网关」，这是 fork 的上下文成本控制，必须保留：① 代理只监听 `127.0.0.1` 随机端口，每个会话一个 token，未知 token 直接 502，不引入外部入口；② **剥离点在 `messages`，不是 `system`**（2026-11-15 用真实请求抓包 + 2.1.283 反编译确认：CLI 的 `eot()` 把所有附件渲染成 `Ae({content})`，而 `Ae` 返回的是 `{type:user, message:{role:user,...}}`（role 为 user 的消息对象）；`system` 数组里只有提示词，永远没有 `### Skill:`。只扫 `system` 的版本是空转）；③ 判定用 CLI 渲染出的稳定前缀 `The following skills were invoked EARLIER in this session` 与 `A plan file exists from plan mode at:`，不是启发式猜块形状；④ **幂等、每条请求都剥**，不依赖 PostCompact 信号——附件在历史里会一直重发，只剥一次等于没剥；重写是确定性的，同一输入永远产出同一字节，不破坏 prompt 缓存；⑤ 预算按请求全局共享，保留 CLI 排好序的最近技能；⑥ 任何解析失败返回原 body，宁可多花 token 也不破坏请求；⑦ 真实上游地址由 `RegisterSession` 按会话记录，不透传客户端自带 URL，避免开放代理；⑧ 代理启动失败只记日志、不阻断会话创建（non-fatal）。直连 Claude Code 启动（无 `MINDFS_*` 环境变量）时 hook 是 no-op、proxy 未注入，行为零变化。Hook 与 settings 在 `~/.agents/claude/` 下，不纳入项目仓库。"
+    boundary: "只改 Anthropic Messages API 请求体 `messages[]` 里**带 post-compact 标记的 text 块**：不改 `system`、工具定义、tool_result / image 块、普通用户与助手文本、模型参数或流式响应；file-restore 只剩一句「文件太大已省略」的提示、不含正文，因此不处理。Proxy 不缓存、不落盘请求内容，token 仅进程内。`/compact-signal` 保留仅为兼容已注册的 PostCompact hook 与观测计数，不参与剥离判定，未知 token 也回 204。与 G-LP 的 Router 工具装配共用 `pool_open.go` 的会话开启路径，但 Router 的工具策略与本代理互不依赖：`pool_open.go` 的 Router 工具装配（`session_tools.go` import）归 G-LP，proxy 主体归本组。AGENTS.md 瘦身属于同批改动但不登记在本组（文档约定，属 G-A 边界）。"
     files:
       - server/internal/agent/proxy/proxy.go
       - server/internal/agent/proxy/strip.go
@@ -8392,7 +8392,10 @@ groups:
       - 'server/internal/agent/proxy/proxy.go:func NewServer() (*Server, error)'
       - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleCompactSignal('
       - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleProxied('
+      - 'server/internal/agent/proxy/strip.go:skillPreambleMarker'
       - 'server/internal/agent/proxy/strip.go:func stripCompactPayload('
+      - 'server/internal/agent/proxy/strip.go:func trimSkillsText('
+      - 'server/internal/agent/proxy/strip.go:func capPlanText('
       - 'server/internal/agent/pool.go:compactProxy       *proxy.Server'
       - 'server/internal/agent/pool_open.go:func (p *Pool) compactProxyEnv('
 

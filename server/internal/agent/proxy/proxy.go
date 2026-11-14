@@ -1,6 +1,6 @@
-// Package proxy provides a lightweight per-session HTTP proxy that strips
-// over-injected skills and file-restore blocks from the first request after
-// Claude Code performs a context compaction.
+// Package proxy provides a lightweight per-session HTTP proxy that trims
+// post-compaction attachment bloat (restored skill bodies and plan content)
+// from Claude Code requests.
 //
 // Flow:
 //
@@ -11,14 +11,19 @@
 //
 //	PostCompact hook fires (only in mindfs-managed sessions)
 //	  → POST /compact-signal  body: {"token":"<token>"}
-//	  → proxy marks that token's next request for stripping
+//	  → proxy records the signal (observability only; see below)
 //
-//	CLI sends next request to /p/{token}/v1/messages
-//	  → proxy strips invoked_skills beyond budget and excess file-restore blocks
-//	  → forwards modified request to the real ANTHROPIC_BASE_URL
-//	  → clears the strip flag
+//	CLI sends requests to /p/{token}/v1/messages
+//	  → proxy trims restored skill bodies / plan content when the post-compact
+//	    markers are present, forwards to the real ANTHROPIC_BASE_URL
 //
 //	All other requests: transparent pass-through, no buffering.
+//
+// Stripping is marker-driven and idempotent rather than gated on the signal:
+// the restored attachments stay in the conversation history until the next
+// compaction, so they are re-sent on every turn and must be trimmed every time.
+// The signal is still accepted (the hook is installed globally) and logged, but
+// it does not decide whether to strip.
 package proxy
 
 import (
@@ -34,17 +39,7 @@ import (
 	"sync"
 )
 
-// DefaultSkillBudgetBytes is the maximum total byte size kept for invoked_skills
-// content after compaction. The CLI cap is ~100 KB (25k tokens × 4 bytes/token);
-// we default to ~20 KB (~5k tokens) which is usually enough for skill names and
-// entry-point hints without the full bodies.
-const DefaultSkillBudgetBytes = 20 * 1024
-
-// DefaultMaxFileRestoreBlocks is the maximum number of file-restore blocks kept
-// after compaction. The CLI restores up to 5; we default to 2.
-const DefaultMaxFileRestoreBlocks = 2
-
-// Server is the proxy server.  One instance is shared across all Claude sessions
+// Server is the proxy server. One instance is shared across all Claude sessions
 // managed by a single Pool.
 type Server struct {
 	mu       sync.Mutex
@@ -52,13 +47,13 @@ type Server struct {
 	listener net.Listener
 	srv      *http.Server
 
-	SkillBudgetBytes     int
-	MaxFileRestoreBlocks int
+	SkillBudgetBytes int
+	PlanBudgetBytes  int
 }
 
 type sessionState struct {
 	realBaseURL string // e.g. "https://openwrt.xiaokubao.space/llmux/v1"
-	stripNext   bool
+	compactions int    // PostCompact signals seen (observability only)
 }
 
 // NewServer creates and starts the proxy server on a random loopback port.
@@ -68,10 +63,10 @@ func NewServer() (*Server, error) {
 		return nil, fmt.Errorf("proxy: listen: %w", err)
 	}
 	s := &Server{
-		sessions:             make(map[string]*sessionState),
-		listener:             ln,
-		SkillBudgetBytes:     DefaultSkillBudgetBytes,
-		MaxFileRestoreBlocks: DefaultMaxFileRestoreBlocks,
+		sessions:         make(map[string]*sessionState),
+		listener:         ln,
+		SkillBudgetBytes: DefaultSkillBudgetBytes,
+		PlanBudgetBytes:  DefaultPlanBudgetBytes,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/compact-signal", s.handleCompactSignal)
@@ -111,8 +106,12 @@ func (s *Server) Close() error {
 	return s.srv.Close()
 }
 
-// handleCompactSignal is called by the PostCompact hook to flag the next request
-// for stripping.  Body: {"token":"<token>"}
+// handleCompactSignal accepts the PostCompact hook's notification.
+// Body: {"token":"<token>"}
+//
+// Stripping no longer depends on this signal (see the package comment), but the
+// hook is installed globally, so the endpoint must stay accepted and must not
+// fail the hook when the session is unknown.
 func (s *Server) handleCompactSignal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -126,15 +125,11 @@ func (s *Server) handleCompactSignal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	st, ok := s.sessions[body.Token]
-	if ok {
-		st.stripNext = true
+	if st, ok := s.sessions[body.Token]; ok {
+		st.compactions++
 	}
 	s.mu.Unlock()
-	if !ok {
-		http.Error(w, "unknown token", http.StatusNotFound)
-		return
-	}
+	log.Printf("[proxy] post-compact signal token=%s", shortToken(body.Token))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -152,10 +147,6 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	st, ok := s.sessions[token]
-	strip := ok && st.stripNext
-	if strip {
-		st.stripNext = false
-	}
 	realBaseURL := ""
 	if ok {
 		realBaseURL = st.realBaseURL
@@ -184,9 +175,11 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip post-compact bloat if flagged.
-	if strip && len(body) > 0 {
-		if stripped, err := stripCompactPayload(body, s.SkillBudgetBytes, s.MaxFileRestoreBlocks); err == nil {
+	// Trim post-compact attachments. stripCompactPayload short-circuits with a
+	// substring check when no marker is present, so ordinary requests pay only
+	// one scan of the body.
+	if len(body) > 0 {
+		if stripped, err := stripCompactPayload(body, s.SkillBudgetBytes, s.PlanBudgetBytes); err == nil {
 			body = stripped
 		} else {
 			log.Printf("[proxy] strip error (using original): %v", err)
@@ -217,4 +210,11 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func shortToken(token string) string {
+	if len(token) <= 8 {
+		return token
+	}
+	return token[:8]
 }
