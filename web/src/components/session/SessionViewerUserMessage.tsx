@@ -2,10 +2,6 @@ import React from "react";
 import { AttachmentImage } from "./AttachmentImage";
 import { InlineTokenText } from "../common/InlineTokenText";
 import { renderToolIcon } from "../stream/toolCallIcons";
-import { TurnTokenUsage, ContextWindowBadge } from "./SessionViewerTokenViews";
-import { AgentIcon } from "../agent/AgentIcon";
-import { ForkIcon } from "./AskUserQuestionCard";
-import { MarkdownViewer } from "../common/MarkdownViewer";
 
 export function SessionViewerUserMessage(props: any) {
   const {
@@ -13,8 +9,6 @@ export function SessionViewerUserMessage(props: any) {
   promptKey, promptSaved, copySucceeded, imageAttachments, userMessageWidth, hasRichUserAttachments,
   onFileClickRef, onEditUserMessage, savePrompt, copyText, reportError, setSavedPromptKeys,
   setCopiedMessageKeys, copyResetTimersRef, pendingAck, t, themeColor, userMetaButtonStyle,
-  hideAssistantMeta, assistantMarkdownContent, canForkAgentMessage, onForkAgentMessage,
-  assistantExchangeMeta, assistantDurationLabel, tokenUsage, contextWindow,
   } = props;
   return (
 <div

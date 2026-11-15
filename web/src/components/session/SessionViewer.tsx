@@ -26,12 +26,7 @@ import {
 } from "../../hooks/useRelatedFileStats";
 
 import {
-  ContextWindowBadge,
-  TurnTokenUsage,
-} from "./SessionViewerTokenViews";
-import {
   extractUploadAttachments,
-  formatAssistantExchangeMeta,
   formatTime,
   formatToolCallFallbackResult,
   normalizeUserMessageSummary,
