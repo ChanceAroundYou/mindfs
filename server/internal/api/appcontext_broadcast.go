@@ -191,6 +191,7 @@ func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update ag
 	s.updateTaskAuxFlagsFromEvent(rootID, sessionKey, event)
 	s.updateSessionAwaitingFromEvent(rootID, sessionKey, event)
 	s.notifyAskUserIfNeeded(rootID, sessionKey, event)
+	s.recordTaskQuestionFromEvent(rootID, sessionKey, event)
 	s.GetSessionStreamHub().BroadcastSessionStream(rootID, sessionKey, event)
 }
 

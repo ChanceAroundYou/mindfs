@@ -2,15 +2,30 @@ import { useState } from "react";
 import { useI18n } from "../../i18n/index";
 import { useTaskActivities } from "../../hooks/useTaskActivities";
 import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
+import { pendingTaskPrompt } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
 
 export type ConversationMessagesProps = {
   activities: TaskActivity[];
+  rootId?: string;
+  paused?: boolean;
+  promptDeciding?: boolean;
+  promptError?: string | null;
   loading?: boolean;
   error?: string | null;
   onReload?: () => void;
   onOpenSession?: (sessionKey: string) => void;
+  onAnswerQuestion?: (
+    activity: TaskActivity,
+    answers: Record<string, string>,
+  ) => void | Promise<void>;
+  onGateDecision?: (
+    activity: TaskActivity,
+    decision: "approve" | "reject",
+  ) => void | Promise<void>;
+  onPauseTask?: () => void | Promise<void>;
+  onResumeTask?: () => void | Promise<void>;
 };
 
 /**
@@ -19,10 +34,18 @@ export type ConversationMessagesProps = {
  */
 export function ConversationMessages({
   activities,
+  rootId,
+  paused = false,
+  promptDeciding = false,
+  promptError = null,
   loading = false,
   error,
   onReload,
   onOpenSession,
+  onAnswerQuestion,
+  onGateDecision,
+  onPauseTask,
+  onResumeTask,
 }: ConversationMessagesProps) {
   const { t } = useI18n();
 
@@ -71,7 +94,15 @@ export function ConversationMessages({
         <ActivityMessage
           key={activity.id}
           activity={activity}
+          rootId={rootId}
+          paused={paused}
+          promptDeciding={promptDeciding}
+          promptError={promptError}
           onOpenSession={onOpenSession}
+          onAnswerQuestion={onAnswerQuestion}
+          onGateDecision={onGateDecision}
+          onPauseTask={onPauseTask}
+          onResumeTask={onResumeTask}
         />
       ))}
     </div>
@@ -84,7 +115,11 @@ export type ConversationViewProps = {
   nodeId?: string;
   /** 终态任务不能再发留言；输入框会换成一句说明。 */
   disabled?: boolean;
+  /** 任务已暂停：HumanGate 卡只给恢复入口。 */
+  paused?: boolean;
   onOpenSession?: (sessionKey: string) => void;
+  onPauseTask?: () => void | Promise<void>;
+  onResumeTask?: () => void | Promise<void>;
 };
 
 /**
@@ -98,17 +133,29 @@ export function ConversationView({
   rootId,
   nodeId,
   disabled = false,
+  paused = false,
   onOpenSession,
+  onPauseTask,
+  onResumeTask,
 }: ConversationViewProps) {
   const { t } = useI18n();
-  const { activities, loading, error, reload, send, sending, sendError } = useTaskActivities(
-    taskId,
-    rootId,
-    nodeId,
-  );
+  const {
+    activities,
+    loading,
+    error,
+    reload,
+    send,
+    sending,
+    sendError,
+    answerQuestion,
+    decideGate,
+    promptDeciding,
+    promptError,
+  } = useTaskActivities(taskId, rootId, nodeId);
   const [body, setBody] = useState("");
   const [choice, setChoice] = useState<WorkflowChoice>("empty");
   const [versionId, setVersionId] = useState("");
+  const pendingPrompt = pendingTaskPrompt(activities);
 
   const handleSend = async () => {
     try {
@@ -128,11 +175,19 @@ export function ConversationView({
     >
       <ConversationMessages
         activities={activities}
+        rootId={rootId}
+        paused={paused}
+        promptDeciding={promptDeciding}
+        promptError={promptError}
         loading={loading && activities.length === 0}
         // 重连补偿失败时不要把已经看到的对话换成整屏错误；只有首拉失败才让错误占位。
         error={activities.length === 0 ? error : null}
         onReload={() => void reload()}
         onOpenSession={onOpenSession}
+        onAnswerQuestion={answerQuestion}
+        onGateDecision={decideGate}
+        onPauseTask={onPauseTask}
+        onResumeTask={onResumeTask}
       />
 
       {disabled ? (
@@ -147,6 +202,22 @@ export function ConversationView({
           }}
         >
           {t("task.activity.disabled")}
+        </div>
+      ) : pendingPrompt ? (
+        // 有待回答的问题/审批时普通留言不能代替这个决定（D4），输入框整体换成提示。
+        <div
+          data-testid="conversation-prompt-pending"
+          style={{
+            fontSize: 12,
+            color: "var(--status-warn, #d97706)",
+            textAlign: "center",
+            padding: "12px 0",
+            borderTop: "1px solid var(--border-color)",
+          }}
+        >
+          {pendingPrompt.type === "question"
+            ? t("task.activity.questionPending")
+            : t("task.activity.gatePending")}
         </div>
       ) : (
         <ActivityInput

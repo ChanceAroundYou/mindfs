@@ -67,6 +67,12 @@ func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, 
 	if !changed {
 		return updated, nil
 	}
+	if gate, gateErr := NewActivityStore(store.db).Get(ctx, "wf:"+nodeRun.ID+":human_waiting"); gateErr == nil {
+		s.broadcastWorkflowActivity(ctx, store, gate, false, map[string]any{
+			"status":       gate.Status,
+			"payload_json": gate.PayloadJSON,
+		})
+	}
 	if updated.Status == NodeRunCancelled {
 		if err := store.UpdateTaskStatus(ctx, run.TaskID, StatusCancelled, true); err != nil {
 			return updated, err

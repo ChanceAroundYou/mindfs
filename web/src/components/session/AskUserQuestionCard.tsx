@@ -122,6 +122,7 @@ export function AskUserQuestionCard({
   const hasPersistedAnswers = Object.keys(persistedAnswers).length > 0;
   const [answers, setAnswers] = useState<Record<string, string>>(persistedAnswers);
   const [submitted, setSubmitted] = useState(hasPersistedAnswers);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const firstQuestionTitle = askUserQuestionTitle(questions[0]);
   const title =
     firstQuestionTitle ||
@@ -143,10 +144,12 @@ export function AskUserQuestionCard({
       setAnswers(persistedAnswers);
       setSubmitted(true);
       setExpanded(false);
+      setSubmitError(null);
       return;
     }
     setAnswers({});
     setSubmitted(false);
+    setSubmitError(null);
   }, [toolUseId, persistedAnswersKey, hasPersistedAnswers]);
 
   useEffect(() => {
@@ -383,10 +386,14 @@ export function AskUserQuestionCard({
           onClick={async () => {
             if (!canSubmit || !rootId || !sessionKey || !toolUseId || !onAnswer) return;
             setSubmitting(true);
+            setSubmitError(null);
             try {
               await onAnswer({ rootId, sessionKey, agent, toolUseId, answers });
               setSubmitted(true);
               setExpanded(false);
+            } catch (err) {
+              // 失败时保持未提交，让用户可以直接重试；错误必须可见，不能静默吞掉。
+              setSubmitError(err instanceof Error ? err.message : String(err));
             } finally {
               setSubmitting(false);
             }
@@ -405,6 +412,11 @@ export function AskUserQuestionCard({
         >
           {submitted ? t("session.askSubmitted") : submitting ? t("session.askSubmitting") : t("session.askSubmit")}
         </button>
+        {submitError && (
+          <div data-testid="ask-user-submit-error" style={{ fontSize: 12, color: "var(--status-bad, #dc2626)" }}>
+            {submitError}
+          </div>
+        )}
         </div>
       ) : null}
     </div>

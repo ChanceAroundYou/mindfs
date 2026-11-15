@@ -281,4 +281,12 @@ export const zhCNTasks = {
   "task.activity.status.waiting_user": "等待你处理",
   "task.activity.replyPending": "等待回复…",
   "task.activity.replyRunning": "正在回复…",
+  "task.activity.questionPending": "请先回答上面的问题",
+  "task.activity.gatePending": "请先处理上面的审批",
+  "task.activity.gateTitle": "人工确认",
+  "task.activity.gateWaiting": "等待你确认",
+  "task.activity.gatePaused": "任务已暂停；恢复后继续处理这次审批",
+  "task.activity.gateStop": "暂停",
+  "task.activity.gateApproved": "已批准",
+  "task.activity.gateRejected": "已驳回",
 } as const;

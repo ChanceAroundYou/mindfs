@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -126,10 +127,36 @@ func (s *TaskStore) DecideWorkflowHumanGate(ctx context.Context, run *WorkflowRu
 	if c := strings.TrimSpace(commentID); c != "" {
 		activityBody += "（决定留言 " + c + "）"
 	}
+	gateID := "wf:" + nodeRun.ID + ":human_waiting"
+	var gatePayload string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT payload_json FROM task_activities WHERE task_id=? AND id=?`, run.TaskID, gateID).Scan(&gatePayload); err == nil {
+		merged := map[string]any{}
+		if strings.TrimSpace(gatePayload) != "" {
+			_ = json.Unmarshal([]byte(gatePayload), &merged)
+		}
+		merged["decision"] = strings.TrimSpace(decision)
+		merged["status"] = status
+		encoded, err := marshalWorkflowJSON(merged)
+		if err != nil {
+			return NodeRun{}, false, err
+		}
+		gateStatus := ActivityStatusCompleted
+		if status == NodeRunCancelled {
+			gateStatus = ActivityStatusCancelled
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE task_activities SET status=?, payload_json=?, updated_at=? WHERE task_id=? AND id=?`,
+			gateStatus, encoded, stamp, run.TaskID, gateID); err != nil {
+			return NodeRun{}, false, err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return NodeRun{}, false, err
+	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO task_activities (id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
-		"wf:"+nodeRun.ID+":human:"+strings.TrimSpace(decision), run.TaskID, activityType, "user", RoleUser,
+		`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
+		"wf:"+nodeRun.ID+":human:"+strings.TrimSpace(decision), run.TaskID, s.root.ID, activityType, "user", RoleUser,
 		activityBody, CommentWorkflowChoiceEmpty, "", run.ID, nodeRun.ID, stamp); err != nil {
 		return NodeRun{}, false, err
 	}

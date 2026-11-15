@@ -113,3 +113,45 @@ export function activityBelongsToTask(
   }
   return true;
 }
+
+export type TaskActivityPayload = Record<string, unknown>;
+
+/**
+ * question / human_gate 卡的结构化内容。payload_json 是后端原样透传的字符串；
+ * 非法 JSON 或非对象一律当空对象 —— 一张坏卡不能把整段对话打崩。
+ */
+export function parseTaskActivityPayload(
+  activity: Pick<TaskActivity, "payload_json"> | null | undefined,
+): TaskActivityPayload {
+  const raw = activity?.payload_json;
+  if (typeof raw !== "string" || raw.trim() === "") return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as TaskActivityPayload)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** 仍是「等人回答/审批」的卡：只有 waiting_user 的 question / human_gate 算。 */
+export function isPendingTaskPrompt(activity: TaskActivity | null | undefined): boolean {
+  if (!activity) return false;
+  if (activity.type !== "question" && activity.type !== "human_gate") return false;
+  return normalizeActivityStatus(activity.status) === "waiting_user";
+}
+
+/**
+ * 任务对话当前挡在输入前面的那张卡。
+ *
+ * 返回最早的一条等待卡：同一时刻通常只有一张，但历史数据里可能残留多张
+ * （例如先有未回答的问题，后又出现 gate）。按数组顺序取第一条，保证 UI
+ * 的阻塞对象稳定，不会随重渲染跳动。
+ */
+export function pendingTaskPrompt(activities: TaskActivity[]): TaskActivity | null {
+  for (const activity of activities) {
+    if (isPendingTaskPrompt(activity)) return activity;
+  }
+  return null;
+}

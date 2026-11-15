@@ -10,6 +10,9 @@ export type WorkflowChoice = "specified" | "disabled" | "empty";
 // 用户留言与系统事件不带状态，所以字段可选。
 export type ActivityStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "waiting_user";
 
+/** HumanGate 的专用决定；普通留言永远不能代替它（后端 D4）。 */
+export type HumanGateDecision = "approve" | "reject";
+
 export type TaskActivity = {
   id: string;
   task_id: string;
@@ -26,6 +29,10 @@ export type TaskActivity = {
   status?: ActivityStatus | string;
   summary?: string;
   session_key?: string;
+  // payload_json 是 question / human_gate 卡的结构化内容（问题、选项、审批说明）。
+  // 后端按原样透传，前端只解析自己要用的键；解析失败按空对象处理。
+  payload_json?: string;
+  tool_use_id?: string;
   created_at: string;
   updated_at?: string;
 };

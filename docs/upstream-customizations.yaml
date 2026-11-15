@@ -8453,6 +8453,72 @@ groups:
       - 'web/src/components/action/ActionBarControls.tsx:data-state={showCancel ? "cancel" : "send"}'
 
   # ── 任务对话里的提问卡与 HumanGate 审批卡（WP0）──────────────────────────────
+  - id: G-LT
+    title: 任务对话承载 ask_user 提问卡与 HumanGate 审批卡（可回答、可审批、待处理时挡输入）
+    kind: feature
+    symptom: "会话里的 ask_user 只出现在会话查看器：任务对话里看不到问题，也没有回答入口；HumanGate 只在运行视图里能批准/驳回，任务对话里只有一行等待文字，用户不知道去哪里处理。现在 ask_user 会在任务对话里落一张 question 卡（复用 AskUserQuestionCard 的选项/多选/自定义答案），HumanGate 落一张专用审批卡（批准 / 驳回 / 暂停，暂停后同一张卡给恢复），只要还有 waiting_user 的卡，普通留言输入就被替换成提示，不能用普通消息代替决定。"
+    why: "用户明确要求「ask 这类可以选择的面板要正确传递到会话界面」「human gate 做一种类似 ask 的 UI 控件，普通消息输入被禁用，只能回复 gate 或者 stop」。必须保留：① ask_user 只在 `BroadcastSessionUpdate` 一条路径上投影成 activity，直连回合、工作流节点回合、会话查看器发起的回合都覆盖；`tool_call` awaiting=true 建卡，`tool_call_update` 的 complete 只收口不写答案，真实答案由 WS `session.answer_question` 回答成功后补写，迟到的答案允许从已 completed 的卡补一次；failed/cancelled 按 cancelled 收口，回合终结（`EndSessionTurn`）再兜底收掉该会话所有 waiting 卡 —— 否则 harness 不发 tool update（Codex 取消）时，一张已不可能回答的卡会永久挡住输入框；② question 卡 id 用 `q-` + SHA-256(session_key + NUL + tool_use_id) 前 8 字节，`INSERT ... ON CONFLICT DO NOTHING` 保证同一 tool call 重复广播只有一张卡；Card 必须带 `RootID`，否则回答时无法解析对应 root 的 store；③ HumanGate 卡由 driver 在物化 waiting NodeRun 的同一事务里写入，id 固定 `wf:<nodeRunID>:human_waiting`，payload 存 prompt/node_id/node_run_id；审批仍只走 `/api/tasks/{id}/human-gate`（D4），普通留言永不批准，决定后同一事务把卡改成 completed/cancelled 并记录 decision；④ 前端在 question/human_gate 分支必须先于 role 分支，否则会被渲染成普通 system/agent 气泡；⑤ `pendingTaskPrompt` 取最早一张 waiting 卡，输入框换成提示而不是禁用按钮，避免用户误以为留言能推进流程；⑥ 暂停 = 暂停当前任务/Run，不是替用户做审批决定，恢复后同一张卡继续可操作；⑦ 问答复用 AskUserQuestionCard，两处的问题结构、多选语义与提交状态必须是同一份实现，提交失败保持未提交以便重试。"
+    boundary: "只覆盖任务对话的 activity 投影、question/human_gate 卡渲染与回答/审批/暂停交互。不改 workflow 引擎/DAG/Loop/HumanGate 的语义与状态机（G-LE/G-LI），不改 Router 分派与直连执行器（G-LN/G-LP），不改会话查看器里提问卡的既有行为（只补提交失败不误标已提交）。本轮不实现「cancelled 任务原地重开」与对话式排队留言的可撤销 UI。"
+    files:
+      - server/internal/api/appcontext_broadcast.go
+      - server/internal/api/appcontext_notify.go
+      - server/internal/api/appcontext_task_flags.go
+      - server/internal/api/appcontext_task_prompt.go
+      - server/internal/api/appcontext_task_prompt_test.go
+      - server/internal/api/ws.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/activity_store_test.go
+      - server/internal/kanban/activity_service_test.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service_task_prompts.go
+      - server/internal/kanban/service_task_prompts_test.go
+      - server/internal/kanban/task_store_workflow_human_gate.go
+      - server/internal/kanban/task_store_workflow_node_runs.go
+      - server/internal/kanban/task_store_workflow_transitions.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/workflow_driver.go
+      - server/internal/kanban/workflow_human_gate.go
+      - server/internal/kanban/workflow_lifecycle_guards_test.go
+      - web/src/components/session/AskUserQuestionCard.tsx
+      - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/TaskHumanGateCard.tsx
+      - web/src/components/task/TaskQuestionCard.tsx
+      - web/src/components/task/useTaskDetailPanel.ts
+      - web/src/hooks/useTaskActivities.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/services/task/humanGate.ts
+      - web/src/shared/activityModel.ts
+      - web/src/shared/taskComments.ts
+      - web/tests/task-prompt-cards.test.mjs
+    tests:
+      - server/internal/api/appcontext_task_prompt_test.go
+      - server/internal/kanban/service_task_prompts_test.go
+      - server/internal/kanban/activity_store_test.go
+      - server/internal/kanban/activity_service_test.go
+      - server/internal/kanban/workflow_lifecycle_guards_test.go
+      - web/tests/task-prompt-cards.test.mjs
+    anchors:
+      - 'server/internal/kanban/service_task_prompts.go:func (s *ActivityService) RecordTaskQuestion('
+      - 'server/internal/kanban/service_task_prompts.go:func (s *ActivityService) MarkTaskQuestionAnswered('
+      - 'server/internal/kanban/service_task_prompts.go:func (s *ActivityService) CloseOpenTaskQuestions('
+      - 'server/internal/api/appcontext_task_prompt.go:func (s *AppContext) recordTaskQuestionFromEvent('
+      - 'server/internal/api/appcontext_task_prompt.go:func (s *AppContext) markTaskQuestionAnswered('
+      - 'server/internal/api/appcontext_task_prompt.go:func (s *AppContext) closeTaskQuestions('
+      - 'server/internal/api/appcontext_task_flags.go:s.closeTaskQuestions(closeCtx, rootID, sessionKey, "回合已结束，提问未回答")'
+      - 'server/internal/api/appcontext_notify.go:func askUserToolStatusClosed('
+      - 'server/internal/api/ws.go:h.AppContext.markTaskQuestionAnswered(ctx, rootID, key, toolUseID, answers)'
+      - 'server/internal/kanban/workflow_driver.go:func (s *Service) advanceWorkflowHumanGate('
+      - 'server/internal/kanban/task_store_workflow_human_gate.go:gateID := "wf:" + nodeRun.ID + ":human_waiting"'
+      - 'web/src/shared/activityModel.ts:export function pendingTaskPrompt('
+      - 'web/src/components/task/TaskQuestionCard.tsx:data-testid="task-question-card"'
+      - 'web/src/components/task/TaskHumanGateCard.tsx:data-testid="task-human-gate"'
+      - 'web/src/components/task/ConversationView.tsx:data-testid="conversation-prompt-pending"'
+      - 'web/src/hooks/useTaskActivities.ts:const answerQuestion = useCallback('
+      - 'web/src/hooks/useTaskActivities.ts:const decideGate = useCallback('
+
   - id: G-LR
     title: 前端 reasoning 块过滤纯标点占位符
     kind: fix

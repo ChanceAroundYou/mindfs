@@ -171,6 +171,13 @@ const (
 	// ActivityTypeUserMessage 是对话式模型（Phase 2）的用户留言类型。
 	// 存量 user_comment 行仍原样保留，读取端必须同时接受两者。
 	ActivityTypeUserMessage = "user_message"
+	// ActivityTypeQuestion 是任务对话里的 Agent 提问卡（ask_user）。
+	// PayloadJSON 存 questions/agent；ToolUseID 关联会话里的同一条 tool call，
+	// 回答时两处必须同步。
+	ActivityTypeQuestion = "question"
+	// ActivityTypeHumanGate 是 HumanGate 的审批卡。PayloadJSON 存
+	// prompt/node_id/node_run_id；卡片本身就是审批入口，普通留言不能批准。
+	ActivityTypeHumanGate = "human_gate"
 )
 
 // 对话式 Activity 的执行状态（spec 2026-11-12 §3.1.1）。
@@ -221,9 +228,13 @@ type TaskActivity struct {
 	RunID     string `json:"run_id,omitempty"`
 	NodeRunID string `json:"node_run_id,omitempty"`
 	// 对话式模型（Phase 2）字段。用户留言/系统事件不写 Status/Summary。
-	Status     string    `json:"status,omitempty"`
-	Summary    string    `json:"summary,omitempty"`
-	SessionKey string    `json:"session_key,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	SessionKey string `json:"session_key,omitempty"`
+	// PayloadJSON 是 question/human_gate 卡的结构化内容；ToolUseID 关联会话
+	// 里的 ask_user tool call。普通消息保持空串。
+	PayloadJSON string `json:"payload_json,omitempty"`
+	ToolUseID   string `json:"tool_use_id,omitempty"`
 	// Router（Plan 2026-11-14）字段。ReplyToID 把回复绑定到触发它的留言；
 	// RouterDecisionID 绑定产生该活动的决策；Purpose 区分 chat/progress/reply/result；
 	// Ordinal 保证同一回合多条回复的稳定顺序；Hidden 供内部/审计行使用，

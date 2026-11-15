@@ -262,6 +262,49 @@ func TestWorkflowHumanGateRequiresExplicitDecisionAndIsIdempotent(t *testing.T) 
 	}
 }
 
+// HumanGate 在任务对话里是一张等待用户决定的卡：必须带 prompt/node 身份，
+// 并在 approve/reject 后落成终态（否则面板上会永远挂着两个按钮）。
+func TestWorkflowHumanGateActivityTracksDecision(t *testing.T) {
+	ctx := context.Background()
+	store, svc, run, root := newWorkflowCommentFixture(t, "wf-gate-card-task", "wf-gate-card-run", humanGateGraph())
+	if err := svc.AdvanceWorkflowRun(ctx, store, run.TaskID); err != nil {
+		t.Fatalf("AdvanceWorkflowRun: %v", err)
+	}
+	activities := NewActivityStore(store.db)
+	gate, err := activities.Get(ctx, "wf:"+workflowNodeRunID(run.ID, "gate", "", 0, 1)+":human_waiting")
+	if err != nil {
+		t.Fatalf("gate activity: %v", err)
+	}
+	if gate.Type != ActivityTypeHumanGate || gate.Status != ActivityStatusWaitingUser {
+		t.Fatalf("gate activity = %#v, want human_gate/waiting_user", gate)
+	}
+	if gate.RootID != root.ID {
+		t.Fatalf("gate root_id = %q, want %q (broadcast and reload must stay in this account)", gate.RootID, root.ID)
+	}
+	if !strings.Contains(gate.PayloadJSON, `"prompt":"确认可以上线"`) ||
+		!strings.Contains(gate.PayloadJSON, `"node_id":"gate"`) {
+		t.Fatalf("gate payload = %q", gate.PayloadJSON)
+	}
+
+	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	gate, err = activities.Get(ctx, gate.ID)
+	if err != nil {
+		t.Fatalf("gate after approve: %v", err)
+	}
+	if gate.Status != ActivityStatusCompleted || !strings.Contains(gate.PayloadJSON, `"decision":"approve"`) {
+		t.Fatalf("gate after approve = %#v", gate)
+	}
+	decisionEcho, err := activities.Get(ctx, "wf:"+workflowNodeRunID(run.ID, "gate", "", 0, 1)+":human:approve")
+	if err != nil {
+		t.Fatalf("decision echo activity: %v", err)
+	}
+	if decisionEcho.RootID != root.ID {
+		t.Fatalf("decision echo root_id = %q, want %q", decisionEcho.RootID, root.ID)
+	}
+}
+
 func TestWorkflowHumanGateRejectCancelsAndBlocksComments(t *testing.T) {
 	ctx := context.Background()
 	store, svc, run, root := newWorkflowCommentFixture(t, "wf-gate-reject-task", "wf-gate-reject-run", humanGateGraph())

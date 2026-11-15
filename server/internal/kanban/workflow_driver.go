@@ -204,15 +204,29 @@ func (s *Service) advanceWorkflowHumanGate(ctx context.Context, store *TaskStore
 	nr := workflowAttemptNodeRun(run, node)
 	nr.Status = NodeRunWaitingUser
 	nr.Output = map[string]any{"prompt": prompt}
-	act := &TaskActivity{
-		ID:   "wf:" + nr.ID + ":" + WorkflowEventHumanWaiting,
-		Type: ActivityTypeAttention, Author: "system", Role: "system",
-		Body: "等待你确认：" + prompt,
-	}
-	if _, _, err := store.CommitWorkflowNodeTransition(ctx, run, WorkflowNodeTransition{
-		NodeRun: nr, EventType: WorkflowEventHumanWaiting, Activity: act,
-	}); err != nil {
+	payload, err := marshalWorkflowJSON(map[string]any{
+		"prompt": prompt, "node_id": node.ID, "node_run_id": nr.ID,
+	})
+	if err != nil {
 		return false, err
+	}
+	act := &TaskActivity{
+		ID:          "wf:" + nr.ID + ":" + WorkflowEventHumanWaiting,
+		Type:        ActivityTypeHumanGate,
+		Author:      "system",
+		Role:        "system",
+		Body:        "等待你确认：" + prompt,
+		Status:      ActivityStatusWaitingUser,
+		PayloadJSON: payload,
+	}
+	_, changed, err := store.CommitWorkflowNodeTransition(ctx, run, WorkflowNodeTransition{
+		NodeRun: nr, EventType: WorkflowEventHumanWaiting, Activity: act,
+	})
+	if err != nil {
+		return false, err
+	}
+	if changed {
+		s.broadcastWorkflowActivity(ctx, store, act, true, nil)
 	}
 	return false, s.projectWorkflowTaskStatus(ctx, store, run)
 }

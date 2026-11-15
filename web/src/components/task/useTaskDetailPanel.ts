@@ -64,6 +64,7 @@ export function useTaskDetailPanel({
     && !!task?.worktree_path
     && task?.worktree_missing !== true;
   const terminal = isTerminalKanbanTask(task);
+  const paused = task.status === "paused";
   const taskRunningNow = task.status === "running";
   const canCompleteTask = !terminal && !taskRunningNow;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
@@ -126,6 +127,16 @@ export function useTaskDetailPanel({
     } finally { setSaving(false); }
   };
 
+  const setPaused = async (next: "pause" | "resume") => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, next, "", nodeId));
+    } catch (error) {
+      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+    } finally { setSaving(false); }
+  };
+
   const deleteTaskCard = async () => {
     if (!task) return;
     if (!await confirmDialog({ message: t("task.deleteTaskConfirm"), confirmLabel: t("common.delete"), danger: true })) {
@@ -149,6 +160,9 @@ export function useTaskDetailPanel({
     saving,
     canFinishWorktree,
     terminal,
+    paused,
+    pauseTask: () => setPaused("pause"),
+    resumeTask: () => setPaused("resume"),
     canCompleteTask,
     numberLabel,
     saveName,

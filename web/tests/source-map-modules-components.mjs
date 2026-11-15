@@ -96,6 +96,7 @@ export const COMPONENT_MODULES = {
     "src/components/session/SessionViewerWaitingIndicator.tsx",
     "src/components/session/SessionViewerFloatingControls.tsx",
     "src/components/session/SessionViewerTimeline.tsx",
+    "src/components/session/SessionViewerTurnMeta.tsx",
     "src/components/session/sessionViewerStyles.ts",
     "src/components/session/sessionViewerGrouping.ts",
     "src/components/session/sessionViewerAskUser.ts",
@@ -107,7 +108,13 @@ export const COMPONENT_MODULES = {
   "src/components/ExternalSessionList.tsx": ["src/components/session/ExternalSessionList.tsx"],
   "src/components/AssociationView.tsx": ["src/components/session/AssociationView.tsx"],
   "src/components/TaskBoardView.tsx": ["src/components/task/TaskBoardView.tsx"],
-  "src/components/TaskDetailPanel.tsx": ["src/components/task/TaskDetailPanel.tsx"],
+  "src/components/TaskDetailPanel.tsx": [
+    "src/components/task/TaskDetailPanel.tsx",
+    "src/components/task/ConversationView.tsx",
+    "src/components/task/ActivityMessage.tsx",
+    "src/components/task/TaskQuestionCard.tsx",
+    "src/components/task/TaskHumanGateCard.tsx",
+  ],
   "src/components/TaskCardRows.tsx": [
     "src/components/task/TaskCardRows.tsx",
     "src/components/task/TaskCardFinishButton.tsx",

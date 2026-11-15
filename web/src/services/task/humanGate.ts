@@ -1,6 +1,6 @@
 import { appURL } from "../net/base";
 import { protectedJSON } from "../net/api";
-import type { NodeRunPayload } from "../../shared/taskComments";
+import type { HumanGateDecision, NodeRunPayload } from "../../shared/taskComments";
 
 // HumanGate 的专用决定端点（后端 D4）。
 //
@@ -8,7 +8,7 @@ import type { NodeRunPayload } from "../../shared/taskComments";
 // decision（+ 可选 comment_id），不做任何 fallback。重复同一决定由后端幂等，
 // 相反决定返回 409 —— 调用方按错误展示，不重试、不改写决定。
 
-export type HumanGateDecision = "approve" | "reject";
+export type { HumanGateDecision };
 
 export type HumanGateInput = {
   /** workflow 图里的节点 id（不是 mindfs 机器节点 id）。 */

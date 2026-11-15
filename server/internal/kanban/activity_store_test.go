@@ -72,6 +72,7 @@ func TestMigration006TaskActivities(t *testing.T) {
 		"id", "task_id", "root_id", "type", "role", "body",
 		"author", "status", "summary", "run_id",
 		"workflow_version_id", "workflow_choice", "session_key",
+		"payload_json", "tool_use_id",
 		"created_at", "updated_at",
 	}
 	for _, col := range required {
@@ -85,6 +86,7 @@ func TestMigration006TaskActivities(t *testing.T) {
 		"idx_task_activities_task_created",
 		"idx_task_activities_workflow_run",
 		"idx_task_activities_id",
+		"idx_task_activities_prompt_lookup",
 	} {
 		if !indexes[idx] {
 			t.Errorf("missing required index %q", idx)
@@ -354,6 +356,70 @@ func TestActivityStore_ActivityByRunIDIgnoresNonReplyRows(t *testing.T) {
 	}
 	if got.ID != "reply" {
 		t.Fatalf("ActivityByRunID = %q, want the agent reply", got.ID)
+	}
+}
+
+func TestActivityStore_PromptFieldsRoundTrip(t *testing.T) {
+	store := setupActivityStore(t)
+	ctx := context.Background()
+	payload := `{"questions":[{"question":"继续吗？","options":[{"label":"继续"},{"label":"停止"}]}],"agent":"claude"}`
+	want := &TaskActivity{
+		ID:          "q-1",
+		TaskID:      "task-1",
+		RootID:      "root-1",
+		Type:        ActivityTypeQuestion,
+		Author:      "agent",
+		Role:        RoleAgent,
+		Body:        "需要确认：继续吗？",
+		Status:      ActivityStatusWaitingUser,
+		SessionKey:  "session-1",
+		ToolUseID:   "tool-1",
+		PayloadJSON: payload,
+	}
+	if err := store.Insert(ctx, want); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	got, err := store.Get(ctx, "q-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Type != ActivityTypeQuestion || got.Status != ActivityStatusWaitingUser {
+		t.Fatalf("prompt identity/status = %q/%q", got.Type, got.Status)
+	}
+	if got.PayloadJSON != payload {
+		t.Fatalf("PayloadJSON = %q, want %q", got.PayloadJSON, payload)
+	}
+	if got.ToolUseID != "tool-1" {
+		t.Fatalf("ToolUseID = %q, want tool-1", got.ToolUseID)
+	}
+	list, err := store.List(ctx, "task-1")
+	if err != nil || len(list) != 1 || list[0].PayloadJSON != payload || list[0].ToolUseID != "tool-1" {
+		t.Fatalf("List prompt row = %#v err=%v", list, err)
+	}
+}
+
+func TestActivityStore_QuestionByToolUseID(t *testing.T) {
+	store := setupActivityStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)
+	for _, activity := range []*TaskActivity{
+		{ID: "q-other-session", TaskID: "task-1", Type: ActivityTypeQuestion, SessionKey: "session-2", ToolUseID: "tool-1", CreatedAt: base},
+		{ID: "q-other-tool", TaskID: "task-1", Type: ActivityTypeQuestion, SessionKey: "session-1", ToolUseID: "tool-2", CreatedAt: base},
+		{ID: "q-1", TaskID: "task-1", Type: ActivityTypeQuestion, SessionKey: "session-1", ToolUseID: "tool-1", CreatedAt: base.Add(time.Second)},
+	} {
+		if err := store.Insert(ctx, activity); err != nil {
+			t.Fatalf("Insert(%s): %v", activity.ID, err)
+		}
+	}
+	got, err := store.QuestionByToolUseID(ctx, "session-1", "tool-1")
+	if err != nil {
+		t.Fatalf("QuestionByToolUseID: %v", err)
+	}
+	if got.ID != "q-1" {
+		t.Fatalf("QuestionByToolUseID = %q, want q-1", got.ID)
+	}
+	if _, err := store.QuestionByToolUseID(ctx, "session-1", "missing"); !errors.Is(err, ErrActivityNotFound) {
+		t.Fatalf("missing question err = %v, want ErrActivityNotFound", err)
 	}
 }
 

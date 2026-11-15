@@ -281,4 +281,12 @@ export const enUSTasks = {
   "task.activity.status.waiting_user": "Waiting for you",
   "task.activity.replyPending": "Waiting for a reply…",
   "task.activity.replyRunning": "Replying…",
+  "task.activity.questionPending": "Answer the question above to continue",
+  "task.activity.gatePending": "Handle the approval above to continue",
+  "task.activity.gateTitle": "Human approval",
+  "task.activity.gateWaiting": "Waiting for your approval",
+  "task.activity.gatePaused": "The task is paused; resume to continue this approval",
+  "task.activity.gateStop": "Pause",
+  "task.activity.gateApproved": "Approved",
+  "task.activity.gateRejected": "Rejected",
 } as const;

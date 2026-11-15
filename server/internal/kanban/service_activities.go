@@ -67,6 +67,24 @@ func (s *Service) SetDirectExecutor(e ActivityDirectExecutor) {
 	s.mu.Unlock()
 }
 
+// broadcastWorkflowActivity 把 driver/store 在同一进程里写入的活动同步给任务对话。
+// 活动可能由后台 driver 产生，HTTP 创建路径的广播不会经过它；漏掉这一步时，
+// HumanGate 卡要等整页重拉才出现或消失。
+func (s *Service) broadcastWorkflowActivity(ctx context.Context, store *TaskStore, activity *TaskActivity, created bool, changes map[string]any) {
+	if s == nil || store == nil || activity == nil {
+		return
+	}
+	svc, err := s.ActivityServiceForRoot(store.root.ID)
+	if err != nil {
+		return
+	}
+	if created {
+		svc.broadcastCreated(activity)
+		return
+	}
+	svc.broadcastUpdated(activity, changes)
+}
+
 // CreateUserActivity is the HTTP-facing entry point: it resolves the root's
 // task store, then delegates to ActivityService.CreateUserActivity.
 func (s *Service) CreateUserActivity(

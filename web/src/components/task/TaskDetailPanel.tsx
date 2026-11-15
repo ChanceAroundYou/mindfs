@@ -135,6 +135,9 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
           rootId={task.root_id}
           nodeId={nodeId}
           disabled={terminal}
+          paused={panel.paused}
+          onPauseTask={panel.pauseTask}
+          onResumeTask={panel.resumeTask}
           onOpenSession={onOpenSession}
         />
         {/* 运行视图是对话流的下钻（默认收起），也是 human_gate 批准/驳回的唯一入口。 */}

@@ -80,12 +80,33 @@ func askUserStreamEvent(event *StreamEvent) (callID string, awaiting bool, ok bo
 		return toolCall.CallID, true, true
 	case "tool_call_update":
 		toolCall, isToolCall := event.Data.(agenttypes.ToolCall)
-		if !isToolCall || toolCall.Kind != agenttypes.ToolKindAskUser || strings.TrimSpace(toolCall.Status) != "complete" {
+		if !isToolCall || toolCall.Kind != agenttypes.ToolKindAskUser || !askUserToolStatusClosed(toolCall.Status) {
 			return "", false, false
 		}
 		return toolCall.CallID, false, true
 	}
 	return "", false, false
+}
+
+// askUserToolStatusClosed 判断 tool_call_update 是否已经把这次提问收口。
+// complete 是正常答完；failed/cancelled 是取消或失败 —— 它们同样不再等待用户。
+// 只认 complete 会让「等你回答」徽标与任务提问卡在取消后永久残留。
+func askUserToolStatusClosed(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "complete", "completed", "failed", "cancelled", "canceled", "error":
+		return true
+	}
+	return false
+}
+
+// askUserToolStatusAnswered 区分「正常答完」与「取消/失败」：只有前者能把
+// 任务提问卡收成 completed；后者由调用方按 cancelled 收口。
+func askUserToolStatusAnswered(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "complete", "completed":
+		return true
+	}
+	return false
 }
 
 func (s *AppContext) notifyScheduled(rootID, taskID, taskName, sessionKey, summary, message string, success bool) {

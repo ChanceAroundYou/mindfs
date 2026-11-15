@@ -18,6 +18,10 @@ var ErrWorkflowNodeRunNotQueued = errors.New("workflow node run is not queued")
 
 const workflowNodeRunColumns = `id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch`
 
+// workflowNodeRunColumnsQualified 是 join 查询用的列名变体：workflow_runs 也有
+// id，裸列名会歧义。
+const workflowNodeRunColumnsQualified = `nr.id,nr.run_id,nr.node_id,nr.loop_path,nr.iteration,nr.attempt,nr.agent,nr.harness,nr.model,nr.session_key,nr.status,nr.input_json,nr.output_json,nr.started_at,nr.finished_at,nr.prev_attempt_id,nr.worktree_id,nr.worktree_path,nr.worktree_branch`
+
 func scanWorkflowNodeRun(row interface{ Scan(...any) error }) (*NodeRun, error) {
 	var n NodeRun
 	var input, output, started, finished string
@@ -48,6 +52,22 @@ func (s *TaskStore) WorkflowNodeRunByKey(ctx context.Context, runID, nodeID, loo
 	node, err := scanWorkflowNodeRun(s.db.QueryRowContext(ctx,
 		`SELECT `+workflowNodeRunColumns+` FROM workflow_node_runs WHERE run_id=? AND node_id=? AND loop_path=? AND iteration=? AND attempt=?`,
 		runID, nodeID, loopPath, iteration, attempt))
+	if err != nil {
+		return NodeRun{}, err
+	}
+	return *node, nil
+}
+
+// WorkflowNodeRunBySessionKey 找这个任务下某会话当前绑定的活动 NodeRun。
+// ask_user 事件只带 session_key；工作流节点的提问卡要靠它绑定 run/node 证据。
+func (s *TaskStore) WorkflowNodeRunBySessionKey(ctx context.Context, taskID, sessionKey string) (NodeRun, error) {
+	node, err := scanWorkflowNodeRun(s.db.QueryRowContext(ctx,
+		`SELECT `+workflowNodeRunColumnsQualified+`
+		 FROM workflow_node_runs nr
+		 JOIN workflow_runs wr ON wr.id = nr.run_id
+		 WHERE wr.task_id = ? AND nr.session_key = ? AND nr.status IN (?, ?)
+		 ORDER BY nr.created_at DESC, nr.id DESC LIMIT 1`,
+		strings.TrimSpace(taskID), strings.TrimSpace(sessionKey), NodeRunRunning, NodeRunWaitingUser))
 	if err != nil {
 		return NodeRun{}, err
 	}

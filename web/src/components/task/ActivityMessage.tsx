@@ -1,15 +1,33 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import type { TaskActivity } from "../../shared/taskComments";
+import type { HumanGateDecision, TaskActivity } from "../../shared/taskComments";
 import {
   activityDisplayText,
   normalizeActivityStatus,
 } from "../../shared/activityModel";
 import { formatRelativeTime, formatFullTime } from "../../shared/datetime";
+import { TaskHumanGateCard } from "./TaskHumanGateCard";
+import { TaskQuestionCard, type TaskQuestionAnswers } from "./TaskQuestionCard";
 
 export type ActivityMessageProps = {
   activity: TaskActivity;
+  rootId?: string;
+  /** 任务已暂停：gate 卡只给恢复入口。 */
+  paused?: boolean;
+  /** 当前有在途的答题/审批；卡片按钮会被禁用。 */
+  promptDeciding?: boolean;
+  promptError?: string | null;
   onOpenSession?: (sessionKey: string) => void;
+  onAnswerQuestion?: (
+    activity: TaskActivity,
+    answers: TaskQuestionAnswers,
+  ) => void | Promise<void>;
+  onGateDecision?: (
+    activity: TaskActivity,
+    decision: HumanGateDecision,
+  ) => void | Promise<void>;
+  onPauseTask?: () => void | Promise<void>;
+  onResumeTask?: () => void | Promise<void>;
 };
 
 // i18n key 必须是字面量，模板字符串会丢失 MessageKey 的类型约束。
@@ -61,9 +79,43 @@ function parseActivityTime(value: string | undefined): number | null {
  */
 export function ActivityMessage({
   activity,
+  rootId,
+  paused = false,
+  promptDeciding = false,
+  promptError = null,
   onOpenSession,
+  onAnswerQuestion,
+  onGateDecision,
+  onPauseTask,
+  onResumeTask,
 }: ActivityMessageProps) {
   const { t, locale } = useI18n();
+
+  // question / human_gate 是专用卡：必须在 role 分支之前拦下，否则会被当成
+  // 普通 system / agent 气泡，丢掉回答与审批入口。
+  if (activity.type === "question") {
+    return (
+      <TaskQuestionCard
+        activity={activity}
+        rootId={rootId}
+        onAnswer={onAnswerQuestion}
+      />
+    );
+  }
+  if (activity.type === "human_gate") {
+    const waiting = normalizeActivityStatus(activity.status) === "waiting_user";
+    return (
+      <TaskHumanGateCard
+        activity={activity}
+        paused={paused}
+        deciding={promptDeciding}
+        error={waiting ? promptError : null}
+        onDecision={onGateDecision}
+        onPause={onPauseTask}
+        onResume={onResumeTask}
+      />
+    );
+  }
 
   // 分类只认 role。type 只区分「用户留言」与「Agent 回复」两个特例，
   // attention / merge_conflict 这类系统活动同样带 role=system，

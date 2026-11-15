@@ -136,6 +136,10 @@ func (s *TaskStore) CommitWorkflowNodeTransition(ctx context.Context, run *Workf
 
 	if act := tr.Activity; act != nil {
 		act.TaskID = run.TaskID
+		// 广播按 RootID 分区；留空会让这张卡跨账户可见，重载后也认不回本 root。
+		if act.RootID == "" {
+			act.RootID = s.root.ID
+		}
 		if act.RunID == "" {
 			act.RunID = run.ID
 		}
@@ -146,8 +150,8 @@ func (s *TaskStore) CommitWorkflowNodeTransition(ctx context.Context, run *Workf
 			act.CreatedAt = now
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO task_activities (id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
-			act.ID, act.TaskID, act.Type, act.Author, act.Role, act.Body, act.WorkflowChoice, act.WorkflowVersionID, act.RunID, act.NodeRunID, act.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+			`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, payload_json, tool_use_id, run_id, node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
+			act.ID, act.TaskID, act.RootID, act.Type, act.Author, act.Role, act.Body, act.WorkflowChoice, act.WorkflowVersionID, act.Status, act.PayloadJSON, act.ToolUseID, act.RunID, act.NodeRunID, act.CreatedAt.Format(time.RFC3339Nano)); err != nil {
 			return NodeRun{}, false, err
 		}
 	}

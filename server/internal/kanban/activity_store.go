@@ -23,7 +23,7 @@ import (
 //   - status/summary 在 Go 层用空串表示「无」，不建 CHECK 约束：存量活动类型
 //     （user_comment/attention/merge_conflict 等）超出计划的枚举，硬约束会
 //     直接拒绝现网写入。
-const activitySelectColumns = "id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at"
+const activitySelectColumns = "id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, payload_json, tool_use_id, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at"
 
 var (
 	// ErrActivityNotFound 表示按 id 找不到活动。
@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS task_activities (
 	status TEXT NOT NULL DEFAULT '',
 	summary TEXT NOT NULL DEFAULT '',
 	session_key TEXT NOT NULL DEFAULT '',
+	payload_json TEXT NOT NULL DEFAULT '',
+	tool_use_id TEXT NOT NULL DEFAULT '',
 	run_id TEXT NOT NULL DEFAULT '',
 	node_run_id TEXT NOT NULL DEFAULT '',
 	reply_to_id TEXT NOT NULL DEFAULT '',
@@ -86,6 +88,8 @@ CREATE TABLE IF NOT EXISTS task_activities (
 		`ALTER TABLE task_activities ADD COLUMN status TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN summary TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN session_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE task_activities ADD COLUMN payload_json TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE task_activities ADD COLUMN tool_use_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN run_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN node_run_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN reply_to_id TEXT NOT NULL DEFAULT ''`,
@@ -114,6 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_task_activities_task_created ON task_activities(t
 CREATE INDEX IF NOT EXISTS idx_task_activities_workflow_run ON task_activities(run_id);
 CREATE INDEX IF NOT EXISTS idx_task_activities_id ON task_activities(id);
 CREATE INDEX IF NOT EXISTS idx_task_activities_decision ON task_activities(router_decision_id);
+CREATE INDEX IF NOT EXISTS idx_task_activities_prompt_lookup ON task_activities(session_key, tool_use_id);
 `)
 	return err
 }
@@ -121,14 +126,26 @@ CREATE INDEX IF NOT EXISTS idx_task_activities_decision ON task_activities(route
 // Insert 写入一条活动，自动补齐时间戳。活动 id 在对话模型里是 UUID，预期
 // 全局唯一；表主键仍是 (task_id, id)，查询按 id 单列走 idx_task_activities_id。
 func (s *ActivityStore) Insert(ctx context.Context, activity *TaskActivity) error {
+	_, err := s.insert(ctx, activity, false)
+	return err
+}
+
+// InsertOrIgnore 写入一条活动；同 (task_id,id) 已存在时返回 created=false。
+// Prompt 卡的 id 由 (session_key, tool_use_id) 稳定派生，重复广播/重放必须
+// 落成同一张卡，不能报错也不能插出第二行。
+func (s *ActivityStore) InsertOrIgnore(ctx context.Context, activity *TaskActivity) (bool, error) {
+	return s.insert(ctx, activity, true)
+}
+
+func (s *ActivityStore) insert(ctx context.Context, activity *TaskActivity, ignoreConflict bool) (bool, error) {
 	if activity == nil {
-		return errors.New("activity required")
+		return false, errors.New("activity required")
 	}
 	activity.ID = strings.TrimSpace(activity.ID)
 	activity.TaskID = strings.TrimSpace(activity.TaskID)
 	activity.Type = strings.TrimSpace(activity.Type)
 	if activity.ID == "" || activity.TaskID == "" || activity.Type == "" {
-		return errors.New("activity id, task id and type required")
+		return false, errors.New("activity id, task id and type required")
 	}
 	if activity.CreatedAt.IsZero() {
 		activity.CreatedAt = time.Now().UTC()
@@ -136,15 +153,26 @@ func (s *ActivityStore) Insert(ctx context.Context, activity *TaskActivity) erro
 	if activity.UpdatedAt.IsZero() {
 		activity.UpdatedAt = activity.CreatedAt
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	query := `INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, payload_json, tool_use_id, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if ignoreConflict {
+		query += ` ON CONFLICT(task_id,id) DO NOTHING`
+	}
+	res, err := s.db.ExecContext(ctx, query,
 		activity.ID, activity.TaskID, activity.RootID, activity.Type, activity.Author, activity.Role,
 		activity.Body, activity.WorkflowChoice, activity.WorkflowVersionID, activity.Status,
 		activity.Summary, activity.RunID, activity.NodeRunID, activity.SessionKey,
+		activity.PayloadJSON, activity.ToolUseID,
 		activity.ReplyToID, activity.RouterDecisionID, activity.Purpose, activity.Ordinal, boolToInt(activity.Hidden),
 		activity.CreatedAt.Format(time.RFC3339Nano), activity.UpdatedAt.Format(time.RFC3339Nano))
-	return err
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
 }
 
 func (s *ActivityStore) Get(ctx context.Context, id string) (*TaskActivity, error) {
@@ -217,6 +245,57 @@ func (s *ActivityStore) ActivityByRunID(ctx context.Context, runID string) (*Tas
 	return activity, nil
 }
 
+// QuestionByToolUseID 按会话 + tool_use_id 找对应的任务提问卡。回答可以从任务
+// 对话或会话查看器任一侧发起，两处必须落到同一张卡上，所以这是点查而不是列表过滤。
+func (s *ActivityStore) QuestionByToolUseID(ctx context.Context, sessionKey, toolUseID string) (*TaskActivity, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	toolUseID = strings.TrimSpace(toolUseID)
+	if sessionKey == "" || toolUseID == "" {
+		return nil, ErrActivityNotFound
+	}
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities
+		 WHERE session_key = ? AND tool_use_id = ? AND type = ?
+		 ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+		sessionKey, toolUseID, ActivityTypeQuestion)
+	activity, err := scanActivityRecord(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrActivityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return activity, nil
+}
+
+// OpenQuestionsBySession 返回某会话里仍停在 waiting_user 的提问卡。回合结束
+// （正常完成 / 取消 / harness 失败）时用它们做兜底收口：如果 harness 没发
+// tool update，这些卡会永远挡住任务对话的输入框。
+func (s *ActivityStore) OpenQuestionsBySession(ctx context.Context, sessionKey string) ([]*TaskActivity, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities
+		 WHERE session_key = ? AND type = ? AND status = ?
+		 ORDER BY created_at ASC, rowid ASC`,
+		sessionKey, ActivityTypeQuestion, ActivityStatusWaitingUser)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []*TaskActivity{}
+	for rows.Next() {
+		activity, err := scanActivityRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, activity)
+	}
+	return items, rows.Err()
+}
+
 // SetWorkflowLink records the run/version an agent reply is executing. The
 // activity row is inserted before the run exists, so the link is written after
 // the run is persisted instead of leaving a hidden run with no activity.
@@ -233,6 +312,73 @@ func (s *ActivityStore) SetWorkflowLink(ctx context.Context, id, runID, versionI
 		return err
 	}
 	return ensureActivityUpdated(res, id)
+}
+
+// ResolvePrompt 把一张 waiting_user 的 Prompt 卡收成终态（completed/cancelled/
+// failed），同时写回 payload（例如答案或 gate 决定）。只有 waiting_user 行会
+// 变；重复/迟到的调用返回 changed=false，后到的结果绝不覆盖先到的。
+func (s *ActivityStore) ResolvePrompt(ctx context.Context, id, status, payloadJSON string, summary *string) (*TaskActivity, bool, error) {
+	status = strings.TrimSpace(status)
+	switch status {
+	case ActivityStatusCompleted, ActivityStatusCancelled, ActivityStatusFailed:
+	default:
+		return nil, false, fmt.Errorf("%w: %q", ErrInvalidActivityStatus, status)
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, false, errors.New("activity id required")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var (
+		res sql.Result
+		err error
+	)
+	if summary != nil {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE task_activities SET status=?, summary=?, payload_json=?, updated_at=? WHERE id=? AND status=?`,
+			status, *summary, payloadJSON, now, id, ActivityStatusWaitingUser)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE task_activities SET status=?, payload_json=?, updated_at=? WHERE id=? AND status=?`,
+			status, payloadJSON, now, id, ActivityStatusWaitingUser)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	activity, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	return activity, affected == 1, nil
+}
+
+// FillCompletedPromptPayload 给已经 completed、但还没有答案的 Prompt 卡补写
+// 迟到答案。以原 payload 做 CAS：并发补写只有第一个生效，已有答案不被覆盖。
+// 只对 completed 行生效，waiting_user 走 ResolvePrompt。
+func (s *ActivityStore) FillCompletedPromptPayload(ctx context.Context, id, oldPayload, payloadJSON string) (*TaskActivity, bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, false, errors.New("activity id required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET payload_json=?, updated_at=? WHERE id=? AND status=? AND payload_json=?`,
+		payloadJSON, time.Now().UTC().Format(time.RFC3339Nano), id, ActivityStatusCompleted, oldPayload)
+	if err != nil {
+		return nil, false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	activity, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	return activity, affected == 1, nil
 }
 
 // UpdateStatus 更新 Agent 回复的状态与总结，并推进 updated_at。
@@ -314,6 +460,7 @@ func scanActivityRecord(row scanner) (*TaskActivity, error) {
 		&a.ID, &a.TaskID, &a.RootID, &a.Type, &a.Author, &a.Role, &a.Body,
 		&a.WorkflowChoice, &a.WorkflowVersionID, &a.Status, &a.Summary,
 		&a.RunID, &a.NodeRunID, &a.SessionKey,
+		&a.PayloadJSON, &a.ToolUseID,
 		&a.ReplyToID, &a.RouterDecisionID, &a.Purpose, &a.Ordinal, &hidden,
 		&created, &updated,
 	); err != nil {

@@ -122,6 +122,9 @@ func (h *WSHandler) handleSessionAnswerQuestion(ctx context.Context, conn *webso
 		h.sendWSError(conn, clientID, req.ID, "session.answer_question_failed", err.Error())
 		return
 	}
+	// 答案已经交给 agent，任务对话里的同一张提问卡也要收口并写回答案；
+	// 否则会话侧答完，任务面板会一直停在 waiting_user。
+	h.AppContext.markTaskQuestionAnswered(ctx, rootID, key, toolUseID, answers)
 	if manager, err := h.AppContext.GetSessionManager(rootID); err == nil {
 		if sess, getErr := manager.Get(ctx, key, 0); getErr == nil && sess != nil && strings.TrimSpace(sess.TaskID) != "" {
 			if svc, svcErr := h.AppContext.GetKanbanService(); svcErr == nil {

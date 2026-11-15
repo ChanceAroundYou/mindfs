@@ -62,6 +62,12 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID
 		return
 	}
 	pending := hub.PendingSessionSnapshot(sessionKey)
+	// 提问卡兜底收口：放在清 pending 之前，避免同一会话在「收口—清 pending」
+	// 之间起新轮又建出新的 waiting 卡后被误收。harness 取消回合时可能完全不发
+	// tool update（Codex 当前如此），这里是最后一道防线。
+	closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	s.closeTaskQuestions(closeCtx, rootID, sessionKey, "回合已结束，提问未回答")
+	cancel()
 	s.notifySessionDone(rootID, sessionKey, requestID, pending)
 	// 广播必须在清之前：ClearSessionPending 有超时兜底，但广播是前端唯一的
 	// session.done 来源。如果先清再广播，清卡住时广播永远发不出去。

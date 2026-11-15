@@ -50,6 +50,12 @@ func (b *recordingActivityBroadcaster) createdIDs() []string {
 	return append([]string(nil), b.created...)
 }
 
+func (b *recordingActivityBroadcaster) updatedIDs() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.updated...)
+}
+
 type activityServiceFixture struct {
 	service   *ActivityService
 	tasks     *TaskStore

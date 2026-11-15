@@ -5,13 +5,15 @@
 // 错过的 `task.activity.updated` 靠这一次整表重拉补齐（Review Focus #4）。
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionServiceEvent } from "../shared/sessionTypes";
-import type { TaskActivity, WorkflowChoice } from "../shared/taskComments";
+import type { HumanGateDecision, TaskActivity, WorkflowChoice } from "../shared/taskComments";
 import {
   activityBelongsToTask,
   applyActivityCreated,
   applyActivityUpdated,
+  parseTaskActivityPayload,
 } from "../shared/activityModel";
 import { createActivity, listActivities } from "../services/activities";
+import { postTaskHumanGate } from "../services/task/humanGate";
 import { sessionService } from "../services/session";
 
 export type UseTaskActivitiesResult = {
@@ -22,6 +24,10 @@ export type UseTaskActivitiesResult = {
   send: (body: string, workflowChoice: WorkflowChoice, workflowVersionId?: string) => Promise<void>;
   sending: boolean;
   sendError: string | null;
+  answerQuestion: (activity: TaskActivity, answers: Record<string, string>) => Promise<void>;
+  decideGate: (activity: TaskActivity, decision: HumanGateDecision) => Promise<void>;
+  promptDeciding: boolean;
+  promptError: string | null;
 };
 
 function errorMessage(err: unknown): string {
@@ -38,6 +44,8 @@ export function useTaskActivities(
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [promptDeciding, setPromptDeciding] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
   const load = useCallback(async () => {
@@ -126,5 +134,91 @@ export function useTaskActivities(
     [taskId, rootId, nodeId],
   );
 
-  return { activities, loading, error, reload: load, send, sending, sendError };
+  const answerQuestion = useCallback(
+    async (activity: TaskActivity, answers: Record<string, string>) => {
+      const payload = parseTaskActivityPayload(activity);
+      const targetRoot = activity.root_id || rootId;
+      const sessionKey = activity.session_key || "";
+      const toolUseId =
+        `${activity.tool_use_id || payload.tool_use_id || ""}`.trim();
+      if (!targetRoot || !sessionKey || !toolUseId) {
+        setPromptError(errorMessage(new Error("question card is missing its session or tool id")));
+        throw new Error("question card is missing its session or tool id");
+      }
+      setPromptDeciding(true);
+      setPromptError(null);
+      try {
+        const answered = await sessionService.answerQuestion(
+          targetRoot,
+          sessionKey,
+          typeof payload.agent === "string" ? payload.agent : undefined,
+          toolUseId,
+          answers,
+        );
+        if (!answered) {
+          throw new Error("answer was not accepted");
+        }
+        // 乐观收口：WS 回声到达前先让卡片退出等待态，避免用户重复点击。
+        setActivities((prev) =>
+          applyActivityUpdated(prev, activity.id, {
+            status: "completed",
+            payload_json: JSON.stringify({ ...payload, answers }),
+          }),
+        );
+      } catch (err) {
+        setPromptError(errorMessage(err));
+        throw err;
+      } finally {
+        setPromptDeciding(false);
+      }
+    },
+    [rootId],
+  );
+
+  const decideGate = useCallback(
+    async (activity: TaskActivity, decision: HumanGateDecision) => {
+      const payload = parseTaskActivityPayload(activity);
+      const workflowNodeId = `${payload.node_id || ""}`.trim();
+      if (!workflowNodeId) {
+        setPromptError(errorMessage(new Error("human gate card is missing its node id")));
+        throw new Error("human gate card is missing its node id");
+      }
+      setPromptDeciding(true);
+      setPromptError(null);
+      try {
+        await postTaskHumanGate(
+          activity.root_id || rootId,
+          taskId,
+          { workflowNodeId, decision },
+          nodeId,
+        );
+        setActivities((prev) =>
+          applyActivityUpdated(prev, activity.id, {
+            status: decision === "approve" ? "completed" : "cancelled",
+            payload_json: JSON.stringify({ ...payload, decision }),
+          }),
+        );
+      } catch (err) {
+        setPromptError(errorMessage(err));
+        throw err;
+      } finally {
+        setPromptDeciding(false);
+      }
+    },
+    [rootId, taskId, nodeId],
+  );
+
+  return {
+    activities,
+    loading,
+    error,
+    reload: load,
+    send,
+    sending,
+    sendError,
+    answerQuestion,
+    decideGate,
+    promptDeciding,
+    promptError,
+  };
 }
