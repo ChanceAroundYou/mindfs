@@ -5872,7 +5872,7 @@ groups:
     title: 排队卡/会话尾遮挡与 assistant 复制透传
     kind: fix
     symptom: "排队消息卡的 ✎/删除/立即发送按钮下半被输入条盖住；滚到底时最后一条 user 消息的复制等按钮被悬浮输入条挡住半颗；assistant 消息点复制完全没反应。"
-    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；滚动容器缺 scroll-padding-bottom，滚到底时最后一条 user 的复制行被输入条压住；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈。"
+    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；滚动容器缺 scroll-padding-bottom，滚到底时最后一条 user 的复制行被输入条压住；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈（复制接线 2026-11-15 随整轮页脚迁到 `renderTurnFooter`，见 G-LS；`C1` 改为断言新路径）。"
     boundary: "只改三处：排队列表底间隙 4px→8px；滚动容器加由 composerOverlayInset 派生的 scroll-padding-bottom；Timeline 给 Assistant 补齐 copy props。不动 composer 高、不动按钮尺寸、不改 clipboard 链。**内容区 padding 刻意保持 24px 常量，不要改回 composerOverlayInset 派生**（用户 2026-10-23 明确要求「关联文件与对话框之间太长」）：内容区与输入条是 AppShell 网格的 main/footer 两行，本就不重叠，实测 1500x1000 / 420x900 滚到底最后一条与输入条上沿仍有 25px 净空；真正防遮挡的是 scroll-padding，两者不是一回事。相关文件分隔块间距同步收紧（marginTop 18→8、paddingTop 14→8、表头 marginBottom 6→4）。"
     tests:
       - web/tests/queued-overlay-and-copy.test.mjs
@@ -5887,7 +5887,7 @@ groups:
       - "web/src/components/session/SessionViewer.tsx:padding: \"24px 16px\""
       - "web/src/components/session/SessionViewerRelatedFiles.tsx:marginTop: \"8px\""
       - "web/src/components/session/SessionViewerTimeline.tsx:copyResetTimersRef"
-      - "web/tests/queued-overlay-and-copy.test.mjs:C1: timeline passes copy props"
+      - "web/tests/queued-overlay-and-copy.test.mjs:C1: turn footer owns copy wiring"
 
   - id: G-IY
     title: 后端文件长度规则对齐前端（软 300 / 硬 500）+ 存量分批拆分
@@ -8381,29 +8381,78 @@ groups:
 
   # ── 压缩后附件瘦身代理（compact-strip proxy）───────────────────────────────
   - id: G-LQ
-    title: 压缩后附件瘦身代理（剥离超量 invoked_skills 与无上限的 plan 正文）
+    title: 压缩后附件瘦身代理（删除 invoked_skills 附件、plan 只留路径行）
     kind: feature
-    symptom: "Claude Code 压缩上下文后会把附件重新注入：`invoked_skills` 全文（CLI 上限 25KB，本机实测单次 20+KB）和整份 plan 正文（CLI 不设上限）。这些附件留在历史里，**之后每一轮都会重发**，压缩刚腾出的空间立刻被吃掉、长会话反复压缩（用户报「压缩反复与 200k 假上限」，memory `claude-context-window-thrash`）。现在 mindfs 托管的所有 Claude 会话都经一个本机回环代理：`ANTHROPIC_BASE_URL=http://127.0.0.1:{port}/p/{token}`，请求里带 post-compact 标记时把 skills 压到 20KB、plan 正文压到 12KB，其余字节原样透传。直连 Claude Code 启动照旧不受影响。"
-    why: "用户要求「在 agent harness 内处理，而非网关」，这是 fork 的上下文成本控制，必须保留：① 代理只监听 `127.0.0.1` 随机端口，每个会话一个 token，未知 token 直接 502，不引入外部入口；② **剥离点在 `messages`，不是 `system`**（2026-11-15 用真实请求抓包 + 2.1.283 反编译确认：CLI 的 `eot()` 把所有附件渲染成 `Ae({content})`，而 `Ae` 返回的是 `{type:user, message:{role:user,...}}`（role 为 user 的消息对象）；`system` 数组里只有提示词，永远没有 `### Skill:`。只扫 `system` 的版本是空转）；③ 判定用 CLI 渲染出的稳定前缀 `The following skills were invoked EARLIER in this session` 与 `A plan file exists from plan mode at:`，不是启发式猜块形状；④ **幂等、每条请求都剥**，不依赖 PostCompact 信号——附件在历史里会一直重发，只剥一次等于没剥；重写是确定性的，同一输入永远产出同一字节，不破坏 prompt 缓存；⑤ 预算按请求全局共享，保留 CLI 排好序的最近技能；⑥ 任何解析失败返回原 body，宁可多花 token 也不破坏请求；⑦ 真实上游地址由 `RegisterSession` 按会话记录，不透传客户端自带 URL，避免开放代理；⑧ 代理启动失败只记日志、不阻断会话创建（non-fatal）。直连 Claude Code 启动（无 `MINDFS_*` 环境变量）时 hook 是 no-op、proxy 未注入，行为零变化。Hook 与 settings 在 `~/.agents/claude/` 下，不纳入项目仓库。"
-    boundary: "只改 Anthropic Messages API 请求体 `messages[]` 里**带 post-compact 标记的 text 块**：不改 `system`、工具定义、tool_result / image 块、普通用户与助手文本、模型参数或流式响应；file-restore 只剩一句「文件太大已省略」的提示、不含正文，因此不处理。Proxy 不缓存、不落盘请求内容，token 仅进程内。`/compact-signal` 保留仅为兼容已注册的 PostCompact hook 与观测计数，不参与剥离判定，未知 token 也回 204。与 G-LP 的 Router 工具装配共用 `pool_open.go` 的会话开启路径，但 Router 的工具策略与本代理互不依赖：`pool_open.go` 的 Router 工具装配（`session_tools.go` import）归 G-LP，proxy 主体归本组。AGENTS.md 瘦身属于同批改动但不登记在本组（文档约定，属 G-A 边界）。"
+    symptom: "Claude Code 压缩上下文后会把附件重新注入：`invoked_skills` 全文（CLI 自身只按 token 限 25k 总量 / 单技能 5k，≈100KB；本机 E2E 实测 3 个技能一次压缩注入 ≈102KB）和整份 plan 正文（CLI 不设上限）。这些附件留在历史里，**之后每一轮都会重发**，压缩刚腾出的空间立刻被吃掉、长会话反复压缩（用户报「压缩反复与 200k 假上限」，memory `claude-context-window-thrash`）。现在 mindfs 托管的所有 Claude 会话都经一个本机回环代理：`ANTHROPIC_BASE_URL=http://127.0.0.1:{port}/p/{token}`，请求里带 post-compact 标记时把 `invoked_skills` 附件块整块删除（消息里没有其它内容时整条消息也删掉）、把 `plan_file_reference` 收成 `A plan file exists from plan mode at: <path>` 一行（正文与 CLI 尾句都删），其余字节原样透传。2026-11-15 用户决策从「裁剪到 20KB/12KB」改为「清零但留 plan 路径」：附件正文对后续回合没有增量价值，技能与 plan 文件都还在磁盘上，模型需要时自己 Read。直连 Claude Code 启动照旧不受影响。"
+    why: "用户要求「在 agent harness 内处理，而非网关」，这是 fork 的上下文成本控制，必须保留：① 代理只监听 `127.0.0.1` 随机端口，每个会话一个 token，未知 token 直接 502，不引入外部入口；② **剥离点在 `messages`，不是 `system`**（2026-11-15 用真实请求抓包 + 2.1.283 反编译确认：CLI 的 `eot()` 把所有附件渲染成 `Ae({content})`，而 `Ae` 返回的是 `{type:user, message:{role:user,...}}`（role 为 user 的消息对象）；`system` 数组里只有提示词，永远没有 `### Skill:`。只扫 `system` 的版本是空转）；③ 判定用 CLI 渲染出的稳定前缀 `The following skills were invoked EARLIER in this session` 与 `A plan file exists from plan mode at:`，不是启发式猜块形状；④ **幂等、每条请求都剥**，不依赖 PostCompact 信号——附件在历史里会一直重发，只剥一次等于没剥；重写是确定性的，同一输入永远产出同一字节，不破坏 prompt 缓存；⑤ 删除是确定性的且不依赖历史长度：每次请求把同一组标记重写成同一结果，保留其它块顺序不变，prompt 缓存前缀稳定；⑥ 任何解析失败返回原 body，宁可多花 token 也不破坏请求；⑦ 真实上游地址由 `RegisterSession` 按会话记录，不透传客户端自带 URL，避免开放代理；⑧ 代理启动失败只记日志、不阻断会话创建（non-fatal）；⑨ **让 CLI 真的改道只能靠 `--settings`**：本机 provider 的 `ANTHROPIC_BASE_URL` 写在 `~/.claude/settings.json` 的 `env` 里，而 CLI 在启动后用 settings env 覆盖进程环境（实测：进程环境指向不可达端口，CLI 仍走 settings 并成功回包），所以 `resolveClaudeUpstreamBaseURL` 先读 settings 拿到真实上游给代理转发，再通过 `--settings`（优先级最高）把 `ANTHROPIC_BASE_URL` 重新指到代理；`--settings` 只带这一个键，认证 token 仍由用户 settings 合并下来，不复制凭据；⑩ Router 会话的隔离 ConfigDir 不许回落到 `~/.claude`。⑪ **CLI 没有关闭这条注入的开关**（2.1.283 反编译：压缩附件由 `woe()` → `Bko()`/`$ko()` 无条件构建，`CLAUDE_CODE_DISABLE_ATTACHMENTS`/`CLAUDE_CODE_SIMPLE` 只作用于每轮附件管线，不覆盖 post-compact 附件），代理是唯一控制点；`invoked_skills` 每次压缩后注入一次，之后随历史每轮重发，所以只能每轮重剥。直连 Claude Code 启动（无 `MINDFS_*` 环境变量）时 hook 是 no-op、proxy 未注入，行为零变化。Hook 与 settings 在 `~/.agents/claude/` 下，不纳入项目仓库。"
+    boundary: "只改 Anthropic Messages API 请求体 `messages[]` 里**带 post-compact 标记的 text 块**：`invoked_skills` 块整块删除（所在消息只剩它时连消息一起删），`plan_file_reference` 只保留路径首行，其余块（tool_result / image / 普通文本）与消息顺序原样保留；不改 `system`、工具定义、模型参数或流式响应；file-restore 只剩一句「文件太大已省略」的提示、不含正文，因此不处理。响应侧只做逐块 flush（`flushWriter`）保证 SSE 实时性，不改内容。Proxy 不缓存、不落盘请求内容，token 仅进程内。`/compact-signal` 保留仅为兼容已注册的 PostCompact hook 与观测计数，不参与剥离判定，未知 token 也回 204。与 G-LP 的 Router 工具装配共用 `pool_open.go` 的会话开启路径，但 Router 的工具策略与本代理互不依赖：`pool_open.go` 的 Router 工具装配（`session_tools.go` import）归 G-LP，proxy 主体归本组。`e2e/test_compact_footer.py` 是真实打满 200k 窗口、真触发自动压缩并核对四类 `[proxy]` 日志的端到端验收，刻意不进常规门禁（会真调模型烧 token），只登记在 files。AGENTS.md 瘦身属于同批改动但不登记在本组（文档约定，属 G-A 边界）。"
     files:
       - server/internal/agent/proxy/proxy.go
       - server/internal/agent/proxy/strip.go
       - server/internal/agent/pool.go
       - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_compact_upstream.go
+      - server/internal/agent/pool_compact_proxy_test.go
+      - server/internal/agent/claude/session_open.go
+      - server/internal/agent/claude/session_models_test.go
+      - e2e/test_compact_footer.py
     tests:
       - server/internal/agent/proxy/proxy_test.go
+      - server/internal/agent/pool_compact_proxy_test.go
+      - server/internal/agent/claude/session_models_test.go
     anchors:
       - 'server/internal/agent/proxy/proxy.go:func NewServer() (*Server, error)'
       - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleCompactSignal('
       - 'server/internal/agent/proxy/proxy.go:func (s *Server) handleProxied('
+      - 'server/internal/agent/proxy/proxy.go:type flushWriter struct'
       - 'server/internal/agent/proxy/strip.go:skillPreambleMarker'
       - 'server/internal/agent/proxy/strip.go:func stripCompactPayload('
-      - 'server/internal/agent/proxy/strip.go:func trimSkillsText('
-      - 'server/internal/agent/proxy/strip.go:func capPlanText('
+      - 'server/internal/agent/proxy/strip.go:func planPathLine('
       - 'server/internal/agent/pool.go:compactProxy       *proxy.Server'
       - 'server/internal/agent/pool_open.go:func (p *Pool) compactProxyEnv('
+      - 'server/internal/agent/pool_open.go:func mergeCompactProxyEnv('
+      - 'server/internal/agent/pool_compact_upstream.go:func resolveClaudeUpstreamBaseURL('
+      - 'server/internal/agent/pool_compact_upstream.go:func claudeSettingsPaths('
+      - 'server/internal/agent/claude/session_open.go:SettingsJSON string'
+      - 'server/internal/agent/claude/session_open.go:func appendClaudeExtraArgs('
+      - 'server/internal/agent/claude/session_models_test.go:func TestAppendClaudeExtraArgsKeepsSettingsAndDeveloperInstructions('
+      - 'server/internal/agent/pool_compact_proxy_test.go:func TestCompactProxyEnvRoutesCliThroughSettingsOverride('
+      - 'server/internal/agent/pool_compact_proxy_test.go:func TestMergeCompactProxyEnvHandlesNilBase('
 
+  # ── 整轮页脚（模型 / 用量 / 缓存 / 上下文）───────────────────────────────────
+  - id: G-LS
+    title: 整轮页脚——每轮末尾都显示模型、用量与上下文窗口（含工具/打断/压缩收尾）
+    kind: fix
+    symptom: "页脚曾只挂在「该轮最后一个 assistant_text」上：一轮以工具卡、思考卡或纯 reasoning 收尾时整轮没有页脚（模型名、用量、缓存、上下文窗口全丢），用 opus 时甚至只看到被过滤后的空轮；用户报「对话最后的内容又丢了（模型 用量 缓存名字等），而是显示思考过程」。现在每个助手轮次的最后一行之后都有一行页脚，一轮没有任何可渲染内容时单独产出一行纯页脚；流式进行中仍不画（与旧行为一致）；被用户打断的轮次也保留页脚。"
+    why: "这是 fork 的会话可观测性契约，必须保留：① 页脚属于**整轮**而不是某个块——`attachTurnFooter` 把同一份 `TurnMeta` 挂到该轮每条 timeline item 上，渲染时只在「助手流末尾」画一次（`isAssistantFlowEnd`：下一项不存在或下一项是 `user_text`），所以工具/思考/纯标点收尾都能拿到页脚；② 一轮零可渲染条目时产出 `type: \"turn_meta\"` 的纯页脚行：有持久 seq 时 id 用 `block:<seq>:-1`（真实块 pos ≥ 0，不会撞键），seq 为 0 的瞬时行用 `turn_meta:<idToken>`，避免多条瞬时纯页脚共用同一个 key；`turn_meta` 同时是跨轮边界，助手流遇到它就应当画页脚；③ 页脚数据从 exchange 直接取 `model_display_name`/`effort`/`fast_service`/`context_window`/`token_usage`，不依赖 assistant 正文；④ 流式最后一行暂时不画，避免「先画后改」跳动；⑤ 复制/fork 的页脚身份用「条目 id + 时间戳」而不是 assistant_text 的 promptKey，纯页脚行也能复制；⑥ `ActionBarControls` 的发送键带 `data-state=send|cancel`，这是端到端测试判定「回合是否在运行 / 打断后是否归位」的唯一稳定钩子。"
+    boundary: "只改前端会话时间线的页脚投影与渲染：`sessionBlocks.ts`/`sessionAssistantTimeline.ts`/`sessionTimeline.ts`/`sessionViewerFormat.ts` 负责把 `TurnMeta` 挂到条目并决定页脚行，`SessionViewerTimeline.tsx` 决定「只在助手流末尾画一次」，`SessionViewerTurnMeta.tsx` 只做展示。不改后端块流生成、不改 token 计量与上下文窗口推导（后端 `context_window` 事件与 `useSessionStreamCache` 的合并规则不变）、不改 reasoning 过滤（G-LR）、不改压缩事件卡（`CompactNoticeCard`）。`ActionBarControls.tsx` 的改动仅为测试钩子，控件行为与样式不变。"
+    files:
+      - web/src/components/session/SessionViewerTurnMeta.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/SessionViewerAssistantMessage.tsx
+      - web/src/components/session/sessionViewerFormat.ts
+      - web/src/hooks/sessionBlocks.ts
+      - web/src/hooks/sessionTimeline.ts
+      - web/src/hooks/sessionAssistantTimeline.ts
+      - web/src/app/useSessionStreamCache.ts
+      - web/src/components/action/ActionBarControls.tsx
+    tests:
+      - web/tests/session-blocks-render.test.mjs
+      - web/tests/session-timeline-seq.test.mjs
+      - web/tests/queued-overlay-and-copy.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+    anchors:
+      - 'web/src/hooks/sessionBlocks.ts:export function attachTurnFooter('
+      - 'web/src/hooks/sessionBlocks.ts:type: "turn_meta"'
+      - 'web/src/components/session/sessionViewerFormat.ts:export function isAssistantFlowEnd('
+      - 'web/src/components/session/SessionViewerTimeline.tsx:const endsAssistantFlow = isAssistantFlowEnd('
+      - 'web/src/components/session/SessionViewerTimeline.tsx:const renderTurnFooter'
+      - 'web/src/components/session/SessionViewerTimeline.tsx:item.type === "turn_meta"'
+      - 'web/src/components/session/SessionViewerTurnMeta.tsx:data-testid="turn-meta"'
+      - 'web/src/components/session/SessionViewerTurnMeta.tsx:data-testid="turn-meta-context"'
+      - 'web/src/components/action/ActionBarControls.tsx:data-state={showCancel ? "cancel" : "send"}'
+
+  # ── 任务对话里的提问卡与 HumanGate 审批卡（WP0）──────────────────────────────
   - id: G-LR
     title: 前端 reasoning 块过滤纯标点占位符
     kind: fix

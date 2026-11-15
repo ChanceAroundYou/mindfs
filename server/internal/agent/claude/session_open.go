@@ -32,6 +32,10 @@ type OpenOptions struct {
 	// Tools/ToolPolicy 只在 Router 会话里非空；普通会话保持 nil。
 	Tools      []types.ToolSpec
 	ToolPolicy *types.ToolPolicy
+	// SettingsJSON 作为 `--settings` 传给 CLI（最高优先级的 settings 来源）。
+	// 目前只用于把 ANTHROPIC_BASE_URL 指到 per-session 代理：用户 settings 的
+	// env 会覆盖进程环境，不这样改道 CLI 根本不会经过代理。
+	SettingsJSON string
 }
 
 type Runtime struct{}
@@ -66,7 +70,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		claudeagent.WithForwardSubagentText(true),
 		claudeagent.WithCanUseTool(s.handleCanUseTool),
 	}
-	optionList = appendClaudeDeveloperInstructions(optionList, opts.DeveloperInstructions)
+	optionList = appendClaudeExtraArgs(optionList, opts.DeveloperInstructions, opts.SettingsJSON)
 	if strings.TrimSpace(opts.ConfigDir) != "" {
 		// Router 会话必须看不见用户的 ~/.claude（hooks/settings/会话转录）。
 		// 没有 SettingSources 时，ConfigDir 决定 CLI 的配置根。
@@ -158,13 +162,22 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 	return s, nil
 }
 
-func appendClaudeDeveloperInstructions(options []claudeagent.Option, developerInstructions string) []claudeagent.Option {
+// appendClaudeExtraArgs 汇总所有 `--flag value` 形态的参数。
+//
+// SDK 的 WithExtraArgs 是**赋值**不是合并，两处各自调用会互相覆盖；
+// 所以这里一次建好 map 再交给 SDK。
+func appendClaudeExtraArgs(options []claudeagent.Option, developerInstructions, settingsJSON string) []claudeagent.Option {
+	extraArgs := map[string]*string{}
 	if instructions := strings.TrimSpace(developerInstructions); instructions != "" {
-		return append(options, claudeagent.WithExtraArgs(map[string]*string{
-			"append-system-prompt": &instructions,
-		}))
+		extraArgs["append-system-prompt"] = &instructions
 	}
-	return options
+	if settings := strings.TrimSpace(settingsJSON); settings != "" {
+		extraArgs["settings"] = &settings
+	}
+	if len(extraArgs) == 0 {
+		return options
+	}
+	return append(options, claudeagent.WithExtraArgs(extraArgs))
 }
 
 // claudeRouterMcpOptions 把一个进程内 MCP server 注册给 CLI。

@@ -99,10 +99,14 @@ test("未知块类型跳过而不是抛错", () => {
   assert.equal(items[0].content, "已知");
 });
 
-test("context_window 贴到最后一个 assistant_text（与旧渲染器同一取舍）", () => {
+test("context_window/usage 收进整轮页脚数据：工具收尾也不丢（2026-11-15 改）", () => {
+  // 旧行为是贴到最后一个 assistant_text。工具卡/思考卡收尾的轮次没有「最后一段正文」
+  // 可挂，页脚整轮消失；纯标点 reasoning 被过滤后更是整轮无行。现在数据挂到每个条目
+  // 的 turnMeta 上，渲染时只在该轮最后一行画。
   const cw = { totalTokens: 123, modelContextWindow: 456 };
+  const usage = { inputTokens: 1, outputTokens: 2 };
   const items = buildAssistantTimelineFromBlocks(
-    ex({ context_window: cw, token_usage: { inputTokens: 1, outputTokens: 2 } }),
+    ex({ context_window: cw, token_usage: usage }),
     [
       block(0, "text", { text: "一" }),
       block(1, "reasoning", { text: "想" }),
@@ -110,9 +114,69 @@ test("context_window 贴到最后一个 assistant_text（与旧渲染器同一�
       block(3, "tool_call", { toolcall: { callId: "c1", kind: "read" } }),
     ],
   );
-  assert.equal(items[0].contextWindow, undefined, "不能贴到第一段");
-  assert.deepEqual(items[2].contextWindow, cw, "必须贴到最后一个 assistant_text");
-  assert.deepEqual(items[2].tokenUsage, { inputTokens: 1, outputTokens: 2 });
+  assert.equal(items.at(-1).type, "tool", "这轮以工具卡收尾");
+  for (const item of items) {
+    assert.deepEqual(item.turnMeta.contextWindow, cw, "每个条目都要能取到本轮页脚");
+    assert.deepEqual(item.turnMeta.tokenUsage, usage);
+  }
+  assert.equal(items.at(-1).turnMeta.content, "一\n二", "页脚里带本轮正文（复制按钮用）");
+});
+
+test("整轮没有可渲染条目时仍产出纯页脚行（模型/用量不丢）", () => {
+  // 纯标点 reasoning 被过滤，整轮没有任何条目 —— 旧实现会让这一轮彻底消失，
+  // 用户既看不到模型/用量，也不知道这轮发生过。
+  const cw = { totalTokens: 10, modelContextWindow: 200000 };
+  const items = buildAssistantTimelineFromBlocks(
+    ex({ model: "ok", model_display_name: "ok", context_window: cw }),
+    [block(0, "reasoning", { text: "..." })],
+  );
+  assert.equal(items.length, 1);
+  assert.equal(items[0].type, "turn_meta");
+  assert.equal(items[0].turnMeta.modelDisplayName, "ok");
+  assert.deepEqual(items[0].turnMeta.contextWindow, cw);
+  assert.equal(items[0].id, "block:7:-1", "纯页脚行 id 不得与真实块 id 冲突");
+});
+
+test("瞬时轮次的纯页脚行 id 用传入身份，不再全撞 block:0:-1", () => {
+  // 流式期 exchange 还没有 seq（或 seq=0）。两轮都只产出纯页脚时，
+  // blockItemID(0,-1) 会让所有瞬时轮次拿到同一个 id —— React/virtual key 重复，
+  // 行会定位到同一个 start。调用方已经算好了全数组位置的 idToken，必须用它。
+  const first = buildAssistantTimelineFromBlocks(
+    ex({ seq: 0, timestamp: "2026-11-15T00:00:00Z" }),
+    [block(0, "reasoning", { text: "..." })],
+    "10",
+  );
+  const second = buildAssistantTimelineFromBlocks(
+    ex({ seq: 0, timestamp: "2026-11-15T00:00:01Z" }),
+    [block(0, "reasoning", { text: "..." })],
+    "11",
+  );
+  assert.equal(first[0].type, "turn_meta");
+  assert.equal(second[0].type, "turn_meta");
+  assert.notEqual(first[0].id, second[0].id, "瞬时纯页脚行必须按 idToken 区分");
+});
+
+test("turn_meta 是跨轮边界：上一轮页脚不能被下一轮的纯页脚行吞掉", async () => {
+  // 一轮以 assistant_text 收尾、下一轮没有可渲染条目时，next.type 是 turn_meta。
+  // 旧判据只认 user_text，于是上一轮拿不到 isAssistantFlowEnd，页脚整轮消失。
+  const { isAssistantFlowEnd } = await import(
+    "../src/components/session/sessionViewerFormat.ts"
+  );
+  assert.equal(typeof isAssistantFlowEnd, "function");
+  assert.equal(
+    isAssistantFlowEnd({ type: "assistant_text" }, { type: "turn_meta" }),
+    true,
+    "下一行是 turn_meta 时，上一轮也必须画页脚",
+  );
+  assert.equal(
+    isAssistantFlowEnd({ type: "assistant_text" }, { type: "assistant_text" }),
+    false,
+  );
+  assert.equal(
+    isAssistantFlowEnd({ type: "assistant_text" }, { type: "user_text" }),
+    true,
+  );
+  assert.equal(isAssistantFlowEnd({ type: "assistant_text" }, null), true);
 });
 
 test("块 id 用 (seq,pos)，跨 revision 稳定且互不重复", () => {

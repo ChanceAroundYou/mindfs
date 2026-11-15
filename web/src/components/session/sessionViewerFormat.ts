@@ -126,17 +126,19 @@ export function formatAssistantExchangeMeta(
   item: TimelineItem,
   agents?: AgentStatus[],
 ): string {
-  if (item.type !== "assistant_text") {
+  // 页脚数据挂在本轮每个条目上（见 TurnMeta）：工具/思考收尾的轮次也要能显示。
+  const meta = item.turnMeta;
+  if (!meta) {
     return "";
   }
   const parts = [
-    `${item.modelDisplayName || ""}`.trim() ||
-      modelDisplayName(agents, item.agent, item.model),
-    item.effort,
+    `${meta.modelDisplayName || ""}`.trim() ||
+      modelDisplayName(agents, meta.agent, meta.model),
+    meta.effort,
   ]
     .map((value) => `${value || ""}`.trim())
     .filter(Boolean);
-  if (`${item.fastService || ""}`.trim().toLowerCase() === "on") {
+  if (`${meta.fastService || ""}`.trim().toLowerCase() === "on") {
     parts.push("fast");
   }
   return parts.join(" · ");
@@ -221,6 +223,17 @@ export function isAuxiliaryTimelineItem(item: TimelineItem | null): boolean {
     item?.type === "todo" ||
     item?.type === "plan" ||
     item?.type === "compact"
+  );
+}
+
+/**
+ * 页脚属于整轮，只在该轮最后一行之后画。user_text 与 turn_meta 都是跨轮边界：
+ * 下一轮没有可渲染条目时只剩一行纯 turn_meta，上一轮也必须在这里收尾。
+ */
+export function isAssistantFlowEnd(item: TimelineItem, next: TimelineItem | null): boolean {
+  return (
+    item.type !== "user_text" &&
+    (!next || next.type === "user_text" || next.type === "turn_meta")
   );
 }
 

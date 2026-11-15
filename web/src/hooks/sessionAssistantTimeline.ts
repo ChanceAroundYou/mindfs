@@ -1,5 +1,10 @@
 import type { ExchangeAux } from "../services/session";
-import { isBlankText, normalizeToolCall, type TimelineItem } from "./sessionBlocks";
+import {
+  attachTurnFooter,
+  isBlankText,
+  normalizeToolCall,
+  type TimelineItem,
+} from "./sessionBlocks";
 import type { ExchangeLike } from "./sessionTimeline";
 import { stableTimelineID } from "./stableTimelineID";
 
@@ -11,7 +16,6 @@ function assistantSegmentItem(
   ex: ExchangeLike,
   content: string,
   segmentIndex: number,
-  includeContextWindow: boolean,
 ): TimelineItem | null {
   // 零宽 / 全空白段不算正文：见 sessionBlocks 的 isBlankText（`"\n\u200b"` 这类
   // 增量会在两段正文之间渲染成一个只有零宽字符、却带段落 margin 的空段落）。
@@ -26,13 +30,7 @@ function assistantSegmentItem(
     content,
     timestamp: ex.timestamp,
     agent: ex.agent,
-    model: ex.model,
-    modelDisplayName: ex.model_display_name,
-    effort: ex.effort,
-    fastService: ex.fast_service,
     seq: ex.seq,
-    contextWindow: includeContextWindow ? ex.context_window : undefined,
-    tokenUsage: includeContextWindow ? ex.token_usage : undefined,
   };
 }
 
@@ -43,8 +41,8 @@ export function buildAssistantTimeline(
 ): TimelineItem[] {
   const content = ex.content || "";
   if (!auxList.length) {
-    const single = assistantSegmentItem(idToken, ex, content, 0, true);
-    return single ? [single] : [];
+    const single = assistantSegmentItem(idToken, ex, content, 0);
+    return attachTurnFooter(single ? [single] : [], ex, content, idToken);
   }
 
   const lines = content === "" ? [] : content.split("\n");
@@ -71,7 +69,6 @@ export function buildAssistantTimeline(
         ex,
         lines.slice(emittedLines, aux.line).join("\n"),
         segmentIndex,
-        false,
       );
       if (segment) {
         out.push(segment);
@@ -165,25 +162,13 @@ export function buildAssistantTimeline(
       ex,
       lines.slice(emittedLines).join("\n"),
       segmentIndex,
-      true,
     );
     if (segment) {
       out.push(segment);
       segmentIndex += 1;
     }
-  } else {
-    for (let i = out.length - 1; i >= 0; i -= 1) {
-      const item = out[i];
-      if (item.type === "assistant_text") {
-        out[i] = {
-          ...item,
-          contextWindow: ex.context_window,
-          tokenUsage: ex.token_usage,
-        };
-        break;
-      }
-    }
   }
 
-  return out;
+  // 页脚数据挂到本轮每个条目上，渲染时只在最后一行画（工具/思考收尾也有页脚）。
+  return attachTurnFooter(out, ex, content, idToken);
 }

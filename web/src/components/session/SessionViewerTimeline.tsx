@@ -13,10 +13,12 @@ import type { ToolCallViewCache } from "../stream/useToolCallCard";
 import { renderAuxiliaryTimelineItem } from "./sessionViewerAuxiliaryTimelineHelpers";
 import { SessionViewerUserMessage } from "./SessionViewerUserMessage";
 import { SessionViewerAssistantMessage } from "./SessionViewerAssistantMessage";
+import { SessionViewerTurnMeta } from "./SessionViewerTurnMeta";
 import {
   extractUploadAttachments,
   formatAssistantExchangeMeta,
   formatTime,
+  isAssistantFlowEnd,
   stripImageAttachmentTokens,
   stripUploadAttachmentTokens,
   timelineItemSpacing,
@@ -70,27 +72,44 @@ export function SessionViewerTimeline({
   userMetaButtonStyle, virtual = null, toolViewCache,
 }: SessionViewerTimelineProps) {
   const reportError = useReportError();
-  const { isPersistedSeq, savePrompt } = useSessionViewerTimelineActions();
+  const { savePrompt } = useSessionViewerTimelineActions();
   const makePromptKey = (item: Extract<TimelineItem, { type: "user_text" | "assistant_text" }>) =>
     `${item.id}\n${item.timestamp || ""}\n${item.content || ""}`;
 
   const renderTimelineItem = (item: TimelineItem, idx: number, spacing = "0") => {
     const timelineItemKey = item.id || `${item.type}-${idx}`;
-    if (item.type === "thought") {
-      return <SessionViewerThoughtItem item={item} timelineItemKey={timelineItemKey} spacing={spacing} />;
-    }
-    if (item.type === "tool") {
-      return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer, toolViewCache });
-    }
-    if (item.type === "tool_group" || item.type === "todo" || item.type === "plan" || item.type === "compact") {
-      return renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, toolViewCache });
-    }
     const isUser = item.type === "user_text";
     const itemMeta = timelineItemMeta[idx];
-    const userMessageIndex = isUser ? itemMeta.userIndex : undefined;
+    // 页脚属于**整轮**：只在该轮最后一行之后画。工具/思考收尾、纯 reasoning 收尾
+    // （正文被过滤）都能拿到页脚；一轮还在流式输出时不画（与旧行为一致）。
     const next = idx + 1 < timeline.length ? timeline[idx + 1] : null;
-    const hasFollowingAssistantFlow = !isUser && !!next && next.type !== "user_text";
-    const hideAssistantMeta = !isUser && (hasFollowingAssistantFlow || (isStreaming && idx === timeline.length - 1));
+    const endsAssistantFlow = isAssistantFlowEnd(item, next);
+    const turnMeta = item.turnMeta;
+    const showFooter =
+      endsAssistantFlow &&
+      !!turnMeta &&
+      !(isStreaming && idx === timeline.length - 1);
+    const footer = showFooter && turnMeta ? renderTurnFooter(item, turnMeta, itemMeta.prevUserTs) : null;
+
+    if (item.type === "thought") {
+      return <>{<SessionViewerThoughtItem item={item} timelineItemKey={timelineItemKey} spacing={spacing} />}{footer}</>;
+    }
+    if (item.type === "tool") {
+      return <>{renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer, toolViewCache })}{footer}</>;
+    }
+    if (item.type === "tool_group" || item.type === "todo" || item.type === "plan" || item.type === "compact") {
+      return <>{renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, toolViewCache })}{footer}</>;
+    }
+    if (item.type === "turn_meta") {
+      // 整轮没有任何可渲染内容时的纯页脚行（例如只有纯标点 reasoning）。
+      if (!footer) return null;
+      return (
+        <div style={{ marginTop: spacing, alignSelf: "flex-start", display: "flex", flexDirection: "column", width: "100%" }}>
+          {footer}
+        </div>
+      );
+    }
+    const userMessageIndex = isUser ? itemMeta.userIndex : undefined;
     const time = formatTime(item.timestamp, locale);
     const uploadAttachments = isUser ? extractUploadAttachments(item.content || "") : [];
     const imageAttachments = uploadAttachments.filter((attachment) => attachment.isImage);
@@ -98,14 +117,68 @@ export function SessionViewerTimeline({
     const promptSaveContent = isUser ? stripUploadAttachmentTokens(item.content || "") : "";
     const promptKey = makePromptKey(item);
     const userMessageWidth = imageAttachments.length > 0 ? "min(320px, 100%)" : "auto";
-    const assistantMarkdownContent = !isUser ? (item.content || "").trim() : "";
-    const assistantExchangeMeta = !isUser ? formatAssistantExchangeMeta(item, agents) : "";
-    const assistantDurationLabel = !isUser ? formatSessionDuration(itemMeta.prevUserTs, item.timestamp) : "";
-    const canForkAgentMessage = !isUser && isPersistedSeq(item.seq) && !!onForkAgentMessage;
     return (
       <div key={timelineItemKey} data-session-seq={item.seq || undefined} data-user-message-index={userMessageIndex} style={{ marginTop: spacing, alignSelf: isUser ? "flex-end" : "flex-start", width: isUser ? userMessageWidth : "100%", maxWidth: isUser ? "80%" : "100%", minWidth: 0, position: "relative", display: "flex", flexDirection: "column" }}>
-        {isUser ? <SessionViewerUserMessage {...{ item, time, spacing, timelineItemKey, rootId, rootPath, displayContent, promptSaveContent, promptKey, promptSaved: !!savedPromptKeys[promptKey], copySucceeded: !!copiedMessageKeys[promptKey], imageAttachments, userMessageWidth, hasRichUserAttachments: imageAttachments.length > 0, onFileClickRef, onEditUserMessage, savePrompt, copyText, reportError, setSavedPromptKeys, setCopiedMessageKeys, copyResetTimersRef, pendingAck: item.pendingAck, t, themeColor, userMetaButtonStyle }} /> : <SessionViewerAssistantMessage {...{ item, time, spacing, timelineItemKey, rootId, rootPath, onFileClickRef, t, themeColor, userMetaButtonStyle, hideAssistantMeta, assistantMarkdownContent, promptKey, promptSaved: !!savedPromptKeys[promptKey], copySucceeded: !!copiedMessageKeys[promptKey], canForkAgentMessage, onForkAgentMessage, assistantExchangeMeta, assistantDurationLabel, tokenUsage: item.tokenUsage, contextWindow: item.contextWindow, copyText, reportError, setCopiedMessageKeys, copyResetTimersRef }} />}
+        {isUser ? <SessionViewerUserMessage {...{ item, time, spacing, timelineItemKey, rootId, rootPath, displayContent, promptSaveContent, promptKey, promptSaved: !!savedPromptKeys[promptKey], copySucceeded: !!copiedMessageKeys[promptKey], imageAttachments, userMessageWidth, hasRichUserAttachments: imageAttachments.length > 0, onFileClickRef, onEditUserMessage, savePrompt, copyText, reportError, setSavedPromptKeys, setCopiedMessageKeys, copyResetTimersRef, pendingAck: item.pendingAck, t, themeColor, userMetaButtonStyle }} /> : <SessionViewerAssistantMessage {...{ item, rootId, onFileClickRef }} />}
+        {footer}
       </div>
+    );
+  };
+
+  /**
+   * 一轮的页脚。复制 / fork 的身份用「条目 id + 时间戳」，不再依赖 assistant_text
+   * 的 promptKey —— 页脚行本身可能没有正文。
+   */
+  const renderTurnFooter = (item: TimelineItem, meta: NonNullable<TimelineItem["turnMeta"]>, prevUserTs: string | undefined) => {
+    const footerKey = `${item.id}\n${meta.timestamp || ""}`;
+    const copied = !!copiedMessageKeys[footerKey];
+    const onCopy = () => {
+      if (!meta.content) {
+        reportError("clipboard.write_failed", t("session.emptyMessageCannotCopy"));
+        return;
+      }
+      void copyText(meta.content)
+        .then(() => {
+          setCopiedMessageKeys((prev: Record<string, true>) => ({ ...prev, [footerKey]: true }));
+          if (copyResetTimersRef.current[footerKey]) {
+            window.clearTimeout(copyResetTimersRef.current[footerKey]);
+          }
+          copyResetTimersRef.current[footerKey] = window.setTimeout(() => {
+            setCopiedMessageKeys((prev: Record<string, true>) => {
+              const next = { ...prev };
+              delete next[footerKey];
+              return next;
+            });
+            delete copyResetTimersRef.current[footerKey];
+          }, 1000);
+        })
+        .catch((err: unknown) => {
+          reportError(
+            "clipboard.write_failed",
+            String((err as Error)?.message || t("session.copyFailed")),
+          );
+        });
+    };
+    const seq = Number(meta.seq || 0);
+    const onFork =
+      seq > 0 && onForkAgentMessage
+        ? () => {
+            void onForkAgentMessage(seq);
+          }
+        : undefined;
+    return (
+      <SessionViewerTurnMeta
+        meta={meta}
+        time={formatTime(meta.timestamp, locale)}
+        durationLabel={formatSessionDuration(prevUserTs, meta.timestamp)}
+        exchangeMeta={formatAssistantExchangeMeta(item, agents)}
+        copied={copied}
+        t={t}
+        themeColor={themeColor}
+        userMetaButtonStyle={userMetaButtonStyle}
+        onCopy={onCopy}
+        onFork={onFork}
+      />
     );
   };
 

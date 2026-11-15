@@ -16,6 +16,31 @@ import type {
   TokenUsage,
 } from "../services/session";
 
+/**
+ * 一轮 agent 回复的页脚数据（模型、耗时、用量、上下文窗口）。
+ *
+ * 为什么挂在**每个条目**上而不是最后一个 assistant_text 上：一轮回复可能以工具卡或
+ * 思考卡收尾（CLI 常见：最后一步先调工具，或只产出 reasoning），也可能整轮都被过滤
+ * （纯标点 reasoning）。只贴 assistant_text 会让这些轮次**没有页脚**。时间线渲染时
+ * 只在「该轮最后一行」画它，所以数据必须在每行都取得到。
+ */
+export type TurnMeta = {
+  timestamp?: string;
+  agent?: string;
+  model?: string;
+  modelDisplayName?: string;
+  effort?: string;
+  fastService?: string;
+  seq?: number;
+  contextWindow?: {
+    totalTokens: number;
+    modelContextWindow: number;
+  };
+  tokenUsage?: TokenUsage;
+  /** 该轮的正文（复制按钮用）。 */
+  content: string;
+};
+
 export type TimelineItem =
   | {
       id: string;
@@ -23,24 +48,27 @@ export type TimelineItem =
       content: string;
       timestamp?: string;
       agent?: string;
-      model?: string;
-      modelDisplayName?: string;
-      effort?: string;
-      fastService?: string;
       pendingAck?: boolean;
       seq?: number;
-      contextWindow?: {
-        totalTokens: number;
-        modelContextWindow: number;
-      };
-      tokenUsage?: TokenUsage;
+      turnMeta?: TurnMeta;
     }
-  | { id: string; type: "thought"; content: string }
-  | { id: string; type: "tool"; toolCall: ToolCall }
-  | { id: string; type: "tool_group"; kind: string; toolCalls: ToolCall[] }
-  | { id: string; type: "todo"; todoUpdate: TodoUpdate; timestamp?: string }
-  | { id: string; type: "plan"; planUpdate: PlanUpdate; timestamp?: string }
-  | { id: string; type: "compact"; compactNotice: CompactNotice; timestamp?: string };
+  | { id: string; type: "thought"; content: string; turnMeta?: TurnMeta }
+  | { id: string; type: "tool"; toolCall: ToolCall; turnMeta?: TurnMeta }
+  | { id: string; type: "tool_group"; kind: string; toolCalls: ToolCall[]; turnMeta?: TurnMeta }
+  | { id: string; type: "todo"; todoUpdate: TodoUpdate; timestamp?: string; turnMeta?: TurnMeta }
+  | { id: string; type: "plan"; planUpdate: PlanUpdate; timestamp?: string; turnMeta?: TurnMeta }
+  | { id: string; type: "compact"; compactNotice: CompactNotice; timestamp?: string; turnMeta?: TurnMeta }
+  /**
+   * 纯页脚行：整轮没有任何可渲染条目时（例如只有纯标点 reasoning 被过滤），
+   * 仍要让模型/用量/上下文可见，所以单独产出一行，只画页脚。
+   */
+  | {
+      id: string;
+      type: "turn_meta";
+      timestamp?: string;
+      seq?: number;
+      turnMeta: TurnMeta;
+    };
 
 /**
  * 渲染块所需的那部分 exchange 字段。刻意不直接引 `Session` / `SessionItem`：
@@ -149,6 +177,61 @@ export function blocksTextContent(blocks: SessionBlock[]): string {
 }
 
 /**
+ * 把 exchange 上的模型/用量/窗口字段收成一份页脚数据。
+ * 各条目共用同一个对象引用：一轮只有一份页脚，渲染时只在最后一行用。
+ */
+export function turnMetaFromExchange(
+  ex: BlockExchangeLike,
+  content: string,
+): TurnMeta {
+  return {
+    timestamp: ex.timestamp,
+    agent: ex.agent,
+    model: ex.model,
+    modelDisplayName: ex.model_display_name,
+    effort: ex.effort,
+    fastService: ex.fast_service,
+    seq: ex.seq,
+    contextWindow: ex.context_window,
+    tokenUsage: ex.token_usage,
+    content,
+  };
+}
+
+/**
+ * 给一轮的所有条目挂上页脚数据；整轮没有任何条目时产出一行纯页脚。
+ *
+ * 纯页脚行的 id 必须与真实块 id 不冲突：块 id 是 `block:<seq>:<pos>`（pos ≥ 0），
+ * 这里用 -1。瞬时轮次没有 seq，必须用调用方传入的 idToken（全数组位置）——
+ * 否则所有瞬时纯页脚行都会落到 `block:0:-1`，React/virtual key 重复。
+ */
+export function attachTurnFooter(
+  items: TimelineItem[],
+  ex: BlockExchangeLike,
+  content: string,
+  idToken?: string,
+): TimelineItem[] {
+  const meta = turnMetaFromExchange(ex, content);
+  if (items.length === 0) {
+    const seq = Number(ex.seq || 0);
+    const stableID =
+      seq > 0
+        ? blockItemID(seq, -1)
+        : `turn_meta:${idToken || meta.timestamp || "transient"}`;
+    return [
+      {
+        id: stableID,
+        type: "turn_meta",
+        timestamp: meta.timestamp,
+        seq: meta.seq,
+        turnMeta: meta,
+      },
+    ];
+  }
+  return items.map((item) => ({ ...item, turnMeta: meta }));
+}
+
+/**
  * 按 `type` 渲染块流。
  *
  * 顺序：**只按 `pos` 遍历**。后端 `BuildTurnBlocks` 与旧渲染器逐条同序（aux 按
@@ -158,6 +241,7 @@ export function blocksTextContent(blocks: SessionBlock[]): string {
 export function buildAssistantTimelineFromBlocks(
   ex: BlockExchangeLike,
   blocks: SessionBlock[],
+  idToken?: string,
 ): TimelineItem[] {
   const out: TimelineItem[] = [];
   const ordered = blocks
@@ -188,10 +272,6 @@ export function buildAssistantTimelineFromBlocks(
           content,
           timestamp: ex.timestamp,
           agent: ex.agent,
-          model: ex.model,
-          modelDisplayName: ex.model_display_name,
-          effort: ex.effort,
-          fastService: ex.fast_service,
           seq: ex.seq,
         });
         break;
@@ -221,18 +301,7 @@ export function buildAssistantTimelineFromBlocks(
         break;
     }
   }
-  // 每轮真值的 context_window / token_usage 贴到**最后一个** assistant_text 上。
-  // 与旧渲染器同一取舍（`message-mechanism-merges` 的 ⑮d 钉住了这个字面量）。
-  for (let i = out.length - 1; i >= 0; i -= 1) {
-    const item = out[i];
-    if (item.type === "assistant_text") {
-      out[i] = {
-        ...item,
-        contextWindow: ex.context_window,
-        tokenUsage: ex.token_usage,
-      };
-      break;
-    }
-  }
-  return out;
+  // 每轮真值的 context_window / token_usage 由 turnMeta 承载，渲染时贴到该轮最后一行；
+  // 没有可渲染条目（例如纯标点 reasoning 被过滤）时仍产出一行纯页脚，模型与用量不丢。
+  return attachTurnFooter(out, ex, blocksTextContent(blocks), idToken);
 }

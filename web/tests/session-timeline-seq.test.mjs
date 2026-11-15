@@ -66,9 +66,14 @@ assert.match(
 // 它们本身没错，错的是上游喂了假 seq。删掉 inferredSeq 之后这两处才真正生效。
 assert.match(
   viewer,
-  // 2026-10-06：判据改走共用谓词（不再是内联 `seq > 0`）—— 契约不变，且更强：
-  // 现在只有一个地方判定「是不是持久行」（冲突①②）。
-  /canForkAgentMessage = !isUser && isPersistedSeq\(item\.seq\)/,
+  // 2026-11-15：页脚挪到整轮末尾（TurnMeta），fork 判据改走页脚里由 exchange 带下来的
+  // seq —— 契约不变：只有持久行（seq > 0）才有 fork 按钮。
+  /const seq = Number\(meta\.seq \|\| 0\);/,
+  "fork 按钮的 seq 必须来自页脚数据（exchange 的真实 seq）",
+);
+assert.match(
+  viewer,
+  /seq > 0 && onForkAgentMessage/,
   "fork 按钮只能出现在已持久化的消息上",
 );
 assert.match(

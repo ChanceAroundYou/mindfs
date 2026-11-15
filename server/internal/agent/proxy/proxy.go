@@ -46,14 +46,12 @@ type Server struct {
 	sessions map[string]*sessionState // keyed by token
 	listener net.Listener
 	srv      *http.Server
-
-	SkillBudgetBytes int
-	PlanBudgetBytes  int
 }
 
 type sessionState struct {
 	realBaseURL string // e.g. "https://openwrt.xiaokubao.space/llmux/v1"
 	compactions int    // PostCompact signals seen (observability only)
+	requests    int    // proxied requests (first one is logged as evidence)
 }
 
 // NewServer creates and starts the proxy server on a random loopback port.
@@ -63,10 +61,8 @@ func NewServer() (*Server, error) {
 		return nil, fmt.Errorf("proxy: listen: %w", err)
 	}
 	s := &Server{
-		sessions:         make(map[string]*sessionState),
-		listener:         ln,
-		SkillBudgetBytes: DefaultSkillBudgetBytes,
-		PlanBudgetBytes:  DefaultPlanBudgetBytes,
+		sessions: make(map[string]*sessionState),
+		listener: ln,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/compact-signal", s.handleCompactSignal)
@@ -129,7 +125,7 @@ func (s *Server) handleCompactSignal(w http.ResponseWriter, r *http.Request) {
 		st.compactions++
 	}
 	s.mu.Unlock()
-	log.Printf("[proxy] post-compact signal token=%s", shortToken(body.Token))
+	log.Printf("[proxy] post-compact signal token=%s", ShortToken(body.Token))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -148,14 +144,23 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	st, ok := s.sessions[token]
 	realBaseURL := ""
+	firstRequest := false
 	if ok {
 		realBaseURL = st.realBaseURL
+		st.requests++
+		firstRequest = st.requests == 1
 	}
 	s.mu.Unlock()
 
 	if !ok {
 		http.Error(w, "unknown session token", http.StatusBadGateway)
 		return
+	}
+
+	if firstRequest {
+		// 只在首个请求打一行：这是「CLI 真的走了代理」的线上证据（曾经
+		// proxy 因为没有上游地址整条链路静默不生效，日志里一行都没有）。
+		log.Printf("[proxy] first request token=%s path=%s", ShortToken(token), remainder)
 	}
 
 	// Build target URL.
@@ -179,10 +184,11 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 	// substring check when no marker is present, so ordinary requests pay only
 	// one scan of the body.
 	if len(body) > 0 {
-		if stripped, err := stripCompactPayload(body, s.SkillBudgetBytes, s.PlanBudgetBytes); err == nil {
+		if stripped := stripCompactPayload(body); len(stripped) != len(body) {
+			// 只记尺寸，不记内容：这是「压缩后剥离真的生效」的唯一线上证据。
+			log.Printf("[proxy] compact-strip token=%s before=%d after=%d",
+				ShortToken(token), len(body), len(stripped))
 			body = stripped
-		} else {
-			log.Printf("[proxy] strip error (using original): %v", err)
 		}
 	}
 
@@ -209,10 +215,26 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	// SSE 必须逐块下发：CLI 的流式事件只有几十字节，攒满 net/http 的 4KB
+	// 缓冲才发出去会把「逐字输出」变成「一阵一阵」的。
+	_, _ = io.Copy(&flushWriter{w: w}, resp.Body)
 }
 
-func shortToken(token string) string {
+// flushWriter 在每次 Write 之后 flush，保持上游 SSE 的实时性。
+// 底层 Writer 不支持 http.Flusher 时退化成普通缓冲，不影响正确性。
+type flushWriter struct {
+	w io.Writer
+}
+
+func (f *flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if flusher, ok := f.w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return n, err
+}
+
+func ShortToken(token string) string {
 	if len(token) <= 8 {
 		return token
 	}

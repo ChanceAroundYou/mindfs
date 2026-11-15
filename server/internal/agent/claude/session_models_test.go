@@ -47,7 +47,7 @@ func TestClaudeTokenUsageIncludesCacheReadAndCreationInLogicalInput(t *testing.T
 
 func TestAppendClaudeDeveloperInstructionsUsesCLIAppendSystemPrompt(t *testing.T) {
 	options := claudeagent.DefaultOptions()
-	for _, apply := range appendClaudeDeveloperInstructions(nil, "render markdown") {
+	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", "") {
 		apply(&options)
 	}
 	if options.SystemPrompt != "" {
@@ -179,5 +179,31 @@ func TestClaudeThinkingTokensMessageUpdatesSessionIDOnly(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("events = %#v, want none", events)
+	}
+}
+
+// SDK 的 WithExtraArgs 是赋值不是合并：`--settings` 与 `--append-system-prompt`
+// 必须能同时存在。分开调用会因为后一次覆盖前一次，症状是代理静默失效。
+func TestAppendClaudeExtraArgsKeepsSettingsAndDeveloperInstructions(t *testing.T) {
+	options := claudeagent.DefaultOptions()
+	settingsJSON := `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:1/p/tok"}}`
+	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", settingsJSON) {
+		apply(&options)
+	}
+	if got := options.ExtraArgs["settings"]; got == nil || *got != settingsJSON {
+		t.Fatalf("settings extra arg = %#v, want the raw JSON", got)
+	}
+	if got := options.ExtraArgs["append-system-prompt"]; got == nil || *got != "render markdown" {
+		t.Fatalf("append-system-prompt extra arg = %#v", got)
+	}
+}
+
+func TestAppendClaudeExtraArgsWithoutSettingsOnlyAddsInstructions(t *testing.T) {
+	options := claudeagent.DefaultOptions()
+	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", "") {
+		apply(&options)
+	}
+	if _, ok := options.ExtraArgs["settings"]; ok {
+		t.Fatal("no --settings flag should be added when settingsJSON is empty")
 	}
 }

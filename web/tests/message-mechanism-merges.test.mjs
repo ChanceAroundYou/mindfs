@@ -388,19 +388,27 @@ test("【红·⑮c】selection 的去重必须**按会话**且**按完整 select
 
 test("【红·⑮d】context_window 两处必须分工明确（按 exchange 优先，会话级只兜底）", () => {
   // 2026-10-06 更正：原先判成「两处补同一字段，删一处」。核对后**不成立** —— 两者**数据源不同**：
-  //   · `buildAssistantTimeline` 贴的是**该 exchange 自己的** `context_window`（每轮真值）；
-  //   · `applySessionContextWindow` 用**会话级** `context_window` 兜底，只在行上缺字段时填。
+  //   · exchange 自己的 `context_window`（每轮真值）收进 TurnMeta，挂在该轮每个条目上；
+  //   · `applySessionContextWindow` 用**会话级** `context_window` 兜底，只在缺失时填。
   // 删掉兜底会让「服务端早期没记 per-exchange 的那类行」永远没有 token 徽标。
-  const exchangeFile = readFileSync(path.join(srcRoot, "hooks/sessionAssistantTimeline.ts"), "utf8");
+  //
+  // 2026-11-15：页脚从「最后一个 assistant_text」改成整轮页脚数据（TurnMeta），
+  // 因为工具/思考收尾、纯 reasoning 收尾的轮次原本没有 assistant_text 可挂。
+  const blocksFile = readFileSync(path.join(srcRoot, "hooks/sessionBlocks.ts"), "utf8");
   const fallbackFile = readFileSync(path.join(srcRoot, "hooks/sessionTimeline.ts"), "utf8");
   assert.match(
-    exchangeFile,
+    blocksFile,
     /contextWindow: ex\.context_window,/,
     "按 exchange 的那一路（优先级更高）missing",
   );
   assert.match(
     fallbackFile,
-    /if \(\s*item\.contextWindow\?\.totalTokens &&\s*item\.contextWindow\?\.modelContextWindow\s*\) \{\s*\n\s*return items;/,
+    /const meta = item\.turnMeta;/,
+    "会话级兜底必须认 TurnMeta，否则工具/思考收尾的轮次拿不到会话级窗口",
+  );
+  assert.match(
+    fallbackFile,
+    /meta\.contextWindow\?\.totalTokens &&\s*meta\.contextWindow\?\.modelContextWindow/,
     "会话级兜底必须**只在缺失时**填 —— 不得覆盖按 exchange 的那份真值",
   );
 });

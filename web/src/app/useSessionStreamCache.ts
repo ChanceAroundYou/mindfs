@@ -379,10 +379,9 @@ export function useSessionStreamCache({
         const list = [...(prevList || [])];
         for (let i = list.length - 1; i >= 0; i -= 1) {
           const item = list[i];
-          if (
-            (item?.role === "agent" || item?.role === "assistant") &&
-            String(item?.content || "").trim()
-          ) {
+          if (item?.role === "agent" || item?.role === "assistant") {
+            // 不能要求 content 非空：只产出 reasoning（或正文被过滤）的轮次
+            // content 为空，但它仍然有模型/用量，页脚必须能拿到。
             list[i] = {
               ...item,
               ...(hasContextWindow

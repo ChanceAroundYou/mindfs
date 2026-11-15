@@ -184,6 +184,7 @@ export function buildTimelineItems(
           ...buildAssistantTimelineFromBlocks(
             { ...(ex as BlockExchangeLike), seq },
             blockList,
+            idToken,
           ),
         );
         continue;
@@ -342,23 +343,28 @@ export function applySessionContextWindow(
   }
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const item = items[i];
-    if (item.type !== "assistant_text") {
+    // 页脚数据挂在本轮每个条目上，用最后一个条目的那份即可。
+    const meta = item.turnMeta;
+    if (!meta) {
       continue;
     }
     if (
-      item.contextWindow?.totalTokens &&
-      item.contextWindow?.modelContextWindow
+      meta.contextWindow?.totalTokens &&
+      meta.contextWindow?.modelContextWindow
     ) {
       return items;
     }
     const next = [...items];
     next[i] = {
       ...item,
-      contextWindow: {
-        totalTokens,
-        modelContextWindow,
+      turnMeta: {
+        ...meta,
+        contextWindow: {
+          totalTokens,
+          modelContextWindow,
+        },
       },
-    };
+    } as TimelineItem;
     return next;
   }
   return items;

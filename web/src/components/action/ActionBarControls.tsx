@@ -230,6 +230,7 @@ export function ActionBarControls(props: ActionBarControlsProps) {
         </button>
         <button
           data-onboarding="send-action"
+          data-state={showCancel ? "cancel" : "send"}
           type="button"
           onMouseDown={(event) => event.preventDefault()}
           onClick={showCancel ? handleCancel : handleSend}

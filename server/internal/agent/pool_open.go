@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -12,15 +13,33 @@ import (
 	"mindfs/server/internal/agent/acp"
 	"mindfs/server/internal/agent/claude"
 	"mindfs/server/internal/agent/codex"
+	"mindfs/server/internal/agent/proxy"
 	agenttypes "mindfs/server/internal/agent/types"
 )
 
+// compactProxyBinding 是把一个 CLI 会话绑到 compact-strip 代理上所需的全部改动。
+//
+// settingsJSON 不是可选项：Claude Code 会把 `~/.claude/settings.json` 的 env
+// 应用到进程环境之上，SDK 传下去的 ANTHROPIC_BASE_URL 会被它盖回上游地址
+// （实测：进程环境指向不可达端口，CLI 依旧走 settings 的地址并成功回包）。
+// 只有优先级更高的 `--settings` 能让 CLI 真正走代理。
+type compactProxyBinding struct {
+	env          map[string]string
+	settingsJSON string
+}
+
 // compactProxyEnv builds the extra env vars that route this session through the
-// compact-strip proxy.  Returns nil if the proxy is not running.
+// compact-strip proxy.  Returns nil if the proxy is not running or the upstream
+// base URL cannot be resolved (a session we cannot forward is worse than no
+// proxy at all: it would fail every request).
 // Also records the token in pendingProxyTokens so GetOrCreate can attach it to
 // the sessionEntry for cleanup on close.
-func (p *Pool) compactProxyEnv(sessionKey string, def Definition) map[string]string {
+func (p *Pool) compactProxyEnv(sessionKey string, def Definition, configDir string) *compactProxyBinding {
 	if p.compactProxy == nil {
+		return nil
+	}
+	realBaseURL := resolveClaudeUpstreamBaseURL(def.Env, configDir)
+	if realBaseURL == "" {
 		return nil
 	}
 	token := make([]byte, 8)
@@ -29,12 +48,6 @@ func (p *Pool) compactProxyEnv(sessionKey string, def Definition) map[string]str
 	}
 	tok := hex.EncodeToString(token)
 
-	// Determine the real upstream base URL from the agent definition.
-	realBaseURL := def.Env["ANTHROPIC_BASE_URL"]
-	if realBaseURL == "" {
-		return nil
-	}
-
 	port := p.compactProxy.Port()
 	p.compactProxy.RegisterSession(tok, realBaseURL)
 
@@ -42,11 +55,47 @@ func (p *Pool) compactProxyEnv(sessionKey string, def Definition) map[string]str
 	p.pendingProxyTokens[sessionKey] = tok
 	p.mu.Unlock()
 
-	return map[string]string{
-		"ANTHROPIC_BASE_URL":        fmt.Sprintf("http://127.0.0.1:%d/p/%s", port, tok),
-		"MINDFS_PROXY_TOKEN":        tok,
-		"MINDFS_COMPACT_SIGNAL_URL": fmt.Sprintf("http://127.0.0.1:%d/compact-signal", port),
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d/p/%s", port, tok)
+	settingsJSON, err := json.Marshal(map[string]any{
+		"env": map[string]string{"ANTHROPIC_BASE_URL": proxyURL},
+	})
+	if err != nil {
+		p.compactProxy.UnregisterSession(tok)
+		p.mu.Lock()
+		if p.pendingProxyTokens[sessionKey] == tok {
+			delete(p.pendingProxyTokens, sessionKey)
+		}
+		p.mu.Unlock()
+		return nil
 	}
+	log.Printf("[proxy] session bound token=%s upstream=%s", proxy.ShortToken(tok), clampUpstreamForLog(realBaseURL))
+
+	return &compactProxyBinding{
+		env: map[string]string{
+			"ANTHROPIC_BASE_URL":        proxyURL,
+			"MINDFS_PROXY_TOKEN":        tok,
+			"MINDFS_COMPACT_SIGNAL_URL": fmt.Sprintf("http://127.0.0.1:%d/compact-signal", port),
+		},
+		settingsJSON: string(settingsJSON),
+	}
+}
+
+// mergeCompactProxyEnv 把代理绑定的 env 覆盖到会话 env 上。
+//
+// cloneEnv 在空输入时返回 nil，直接写会 panic —— agent 定义没有 env 是常态
+// （本机 claude 的 provider 配置就在 ~/.claude/settings.json），所以这里必须
+// 自己建 map。症状是 probe 直接 `assignment to entry in nil map`。
+func mergeCompactProxyEnv(base map[string]string, binding *compactProxyBinding) map[string]string {
+	if binding == nil {
+		return base
+	}
+	if base == nil {
+		base = make(map[string]string, len(binding.env))
+	}
+	for k, v := range binding.env {
+		base[k] = v
+	}
+	return base
 }
 
 func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definition, in agenttypes.OpenSessionInput) (agenttypes.Session, error) {
@@ -58,10 +107,10 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 	switch protocol {
 	case ProtocolClaudeSDK:
 		env := cloneEnv(def.Env)
-		if extra := p.compactProxyEnv(in.SessionKey, def); extra != nil {
-			for k, v := range extra {
-				env[k] = v
-			}
+		settingsJSON := ""
+		if binding := p.compactProxyEnv(in.SessionKey, def, in.ConfigDir); binding != nil {
+			env = mergeCompactProxyEnv(env, binding)
+			settingsJSON = binding.settingsJSON
 		}
 		return p.claude.OpenSession(ctx, claude.OpenOptions{
 			AgentName:             in.AgentName,
@@ -80,6 +129,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			ConfigDir:             in.ConfigDir,
 			Tools:                 in.Tools,
 			ToolPolicy:            in.ToolPolicy,
+			SettingsJSON:          settingsJSON,
 		})
 	case ProtocolCodexSDK:
 		var codexUserOrdinal *int

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,120 +89,90 @@ func TestStripCompactPayload_LeavesSystemArrayAlone(t *testing.T) {
 		},
 		"messages": []any{userMessage("hello")},
 	})
-	got, err := stripCompactPayload(body, 100, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := stripCompactPayload(body)
 	if !bytes.Equal(got, body) {
 		t.Error("system array must never be rewritten")
 	}
 }
 
-func TestStripCompactPayload_SkillsWithinBudgetUnchanged(t *testing.T) {
+// 2026-11-15 决策：压缩后的 invoked_skills 附件整块删除（不是裁剪）。
+// 它们只是「仅供参考」的历史指针，正文对后续回合没有增量价值；每轮重发才是
+// 上下文反复被吃满的根因。
+func TestStripCompactPayload_RemovesSkillAttachmentEntirely(t *testing.T) {
 	body := mustMarshal(map[string]any{
-		"messages": []any{userMessage(skillAttachment(2, 50))},
+		"messages": []any{userMessage("normal turn"), userMessage(skillAttachment(3, 100))},
 	})
-	got, err := stripCompactPayload(body, DefaultSkillBudgetBytes, DefaultPlanBudgetBytes)
-	if err != nil {
-		t.Fatal(err)
+	got := stripCompactPayload(body)
+	if bytes.Contains(got, []byte(skillPreambleMarker)) ||
+		bytes.Contains(got, []byte(skillSectionMarker)) {
+		t.Fatal("skill attachment must be gone, not truncated")
 	}
-	if !bytes.Equal(got, body) {
-		t.Error("skills under budget must pass through unchanged")
-	}
-}
-
-func TestStripCompactPayload_SkillsExceedBudget(t *testing.T) {
-	const budget = 1024
-	body := mustMarshal(map[string]any{
-		"messages": []any{userMessage("before compaction? no", skillAttachment(30, 200))},
-	})
-	got, err := stripCompactPayload(body, budget, DefaultPlanBudgetBytes)
-	if err != nil {
-		t.Fatal(err)
+	msgs := decodeBody(t, got)["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("empty attachment message must be dropped, got %d messages", len(msgs))
 	}
 	texts := messageTexts(t, got)
-	if len(texts) != 2 {
-		t.Fatalf("message count changed: %d", len(texts))
-	}
-	skills := texts[1]
-	if !strings.HasPrefix(skills, skillPreambleMarker) {
-		t.Error("preamble must be preserved")
-	}
-	if !strings.Contains(skills, "invoked_skills truncated") {
-		t.Error("expected truncation marker")
-	}
-	if len(skills) > budget+1024 {
-		t.Errorf("trimmed block too large: %d bytes", len(skills))
-	}
-	if n := strings.Count(skills, skillSectionMarker); n == 0 || n >= 30 {
-		t.Errorf("expected a partial set of sections, got %d", n)
+	if len(texts) != 1 || texts[0] != "normal turn" {
+		t.Fatalf("unrelated text changed: %#v", texts)
 	}
 }
 
-// The budget is per request, shared across every skills block: two messages
-// each under budget can still overflow together.
-func TestStripCompactPayload_SkillBudgetSharedAcrossMessages(t *testing.T) {
-	const budget = 1200
+// 附件块可能和正常文本/图片在同一条消息里：只删那一块，消息本身要保住。
+func TestStripCompactPayload_RemovesOnlySkillBlockFromMixedMessage(t *testing.T) {
 	body := mustMarshal(map[string]any{
 		"messages": []any{
-			userMessage(skillAttachment(5, 200)),
-			userMessage(skillAttachment(5, 200)),
+			map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "text", "text": "keep me"},
+				{"type": "text", "text": skillAttachment(30, 200)},
+				{"type": "image", "source": map[string]any{"type": "base64", "data": "AAA"}},
+			}},
 		},
 	})
-	got, err := stripCompactPayload(body, budget, DefaultPlanBudgetBytes)
-	if err != nil {
-		t.Fatal(err)
+	got := stripCompactPayload(body)
+	msgs := decodeBody(t, got)["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("message must survive: %d", len(msgs))
 	}
-	total := 0
-	for _, text := range messageTexts(t, got) {
-		if strings.Contains(text, skillPreambleMarker) {
-			total += len(text)
-		}
+	blocks := msgs[0].(map[string]any)["content"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("skill block must be dropped, got %d blocks", len(blocks))
 	}
-	if total > budget+2048 { // budgets + preambles + markers
-		t.Errorf("combined skills still too large: %d bytes", total)
+	if blocks[0].(map[string]any)["text"] != "keep me" ||
+		blocks[1].(map[string]any)["type"] != "image" {
+		t.Error("non-skill blocks must be preserved in order")
 	}
 }
 
-func TestStripCompactPayload_PlanContentCapped(t *testing.T) {
-	const budget = 512
+// plan 附件只留路径行：正文删掉，模型需要时自己 Read。
+func TestStripCompactPayload_PlanKeepsPathOnly(t *testing.T) {
 	body := mustMarshal(map[string]any{
 		"messages": []any{userMessage(planAttachment(strings.Repeat("plan line\n", 500)))},
 	})
-	got, err := stripCompactPayload(body, DefaultSkillBudgetBytes, budget)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := stripCompactPayload(body)
 	text := messageTexts(t, got)[0]
-	if !strings.HasPrefix(text, planPreambleMarker) {
-		t.Error("plan header must be preserved")
+	want := planPreambleMarker + " /work/PLAN.md"
+	if text != want {
+		t.Fatalf("plan text = %q, want %q", text, want)
 	}
-	if !strings.Contains(text, "plan content truncated") {
-		t.Error("expected plan truncation marker")
-	}
-	if !strings.Contains(text, planTailMarker) {
-		t.Error("CLI trailing sentence must be preserved")
-	}
-	if len(text) > budget+1024 {
-		t.Errorf("plan block too large: %d bytes", len(text))
+	if strings.Contains(text, planContentsMarker) || strings.Contains(text, planTailMarker) {
+		t.Error("plan body and tail must be gone")
 	}
 }
 
-func TestStripCompactPayload_ShortPlanUnchanged(t *testing.T) {
+// 短 plan 也照样收成路径行 —— 以前的「预算内原样透传」会让同一条附件
+// 每轮重发，即使它只有几 KB。
+func TestStripCompactPayload_ShortPlanAlsoReduced(t *testing.T) {
 	body := mustMarshal(map[string]any{
 		"messages": []any{userMessage(planAttachment("a short plan"))},
 	})
-	got, err := stripCompactPayload(body, DefaultSkillBudgetBytes, DefaultPlanBudgetBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, body) {
-		t.Error("short plan must pass through unchanged")
+	got := stripCompactPayload(body)
+	if text := messageTexts(t, got)[0]; text != planPreambleMarker+" /work/PLAN.md" {
+		t.Fatalf("short plan not reduced: %q", text)
 	}
 }
 
 // Determinism matters for prompt caching: the same request must always be
-// rewritten to the same bytes.
+// rewritten to the same bytes, and a second pass must be a no-op.
 func TestStripCompactPayload_Idempotent(t *testing.T) {
 	body := mustMarshal(map[string]any{
 		"messages": []any{
@@ -209,23 +180,13 @@ func TestStripCompactPayload_Idempotent(t *testing.T) {
 			userMessage(planAttachment(strings.Repeat("p", 5000))),
 		},
 	})
-	first, err := stripCompactPayload(body, 2000, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := stripCompactPayload(first, 2000, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := stripCompactPayload(body)
+	second := stripCompactPayload(first)
 	if !bytes.Equal(first, second) {
 		t.Error("strip is not idempotent")
 	}
-	third, err := stripCompactPayload(second, 2000, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(second, third) {
-		t.Error("strip is not stable on repeat")
+	if bytes.Contains(second, []byte(skillPreambleMarker)) {
+		t.Error("skill attachment came back on the second pass")
 	}
 }
 
@@ -246,28 +207,22 @@ func TestStripCompactPayload_PreservesNonTextBlocks(t *testing.T) {
 		},
 		"tools": []any{map[string]any{"name": "Read"}},
 	})
-	got, err := stripCompactPayload(body, 500, DefaultPlanBudgetBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := stripCompactPayload(body)
 	out := decodeBody(t, got)
 	msgs := out["messages"].([]any)
 	if len(msgs) != 3 {
 		t.Fatalf("message count changed: %d", len(msgs))
 	}
 	blocks := msgs[0].(map[string]any)["content"].([]any)
-	if len(blocks) != 3 {
+	if len(blocks) != 2 {
 		t.Fatalf("block count changed: %d", len(blocks))
 	}
 	if blocks[0].(map[string]any)["type"] != "tool_result" ||
-		blocks[2].(map[string]any)["type"] != "image" {
+		blocks[1].(map[string]any)["type"] != "image" {
 		t.Error("non-text blocks must be preserved")
 	}
 	if msgs[2].(map[string]any)["content"] != "plain string content" {
 		t.Error("string content must be preserved")
-	}
-	if blocks[1].(map[string]any)["text"].(string) == skillAttachment(30, 200) {
-		t.Error("skills block should have been trimmed")
 	}
 }
 
@@ -277,10 +232,7 @@ func TestStripCompactPayload_NoMarkersPassThrough(t *testing.T) {
 		"messages": []any{userMessage("a normal turn"), userMessage("and another")},
 		"model":    "opus",
 	})
-	got, err := stripCompactPayload(body, 100, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := stripCompactPayload(body)
 	if !bytes.Equal(got, body) {
 		t.Error("bodies without post-compact markers must pass through unchanged")
 	}
@@ -288,23 +240,9 @@ func TestStripCompactPayload_NoMarkersPassThrough(t *testing.T) {
 
 func TestStripCompactPayload_MalformedBodyPassThrough(t *testing.T) {
 	body := []byte(`{"messages": [ this is not json ` + skillPreambleMarker + `}`)
-	got, err := stripCompactPayload(body, 100, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := stripCompactPayload(body)
 	if !bytes.Equal(got, body) {
 		t.Error("malformed bodies must be returned unchanged")
-	}
-}
-
-func TestCutRunesDoesNotSplitUTF8(t *testing.T) {
-	s := strings.Repeat("中", 10) // 3 bytes each
-	for n := 0; n <= len(s); n++ {
-		if got := cutRunes(s, n); len(got) > n {
-			t.Fatalf("cutRunes(%d) returned %d bytes", n, len(got))
-		} else if !strings.HasPrefix(s, got) {
-			t.Fatalf("cutRunes(%d) is not a prefix", n)
-		}
 	}
 }
 
@@ -367,7 +305,6 @@ func TestProxyServer_StripsOnEveryRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	s.SkillBudgetBytes = 100
 
 	token := "strip3"
 	s.RegisterSession(token, upstream.URL)
@@ -388,7 +325,7 @@ func TestProxyServer_StripsOnEveryRequest(t *testing.T) {
 
 	payload := mustMarshal(map[string]any{
 		"model":    "opus",
-		"messages": []any{userMessage(skillAttachment(10, 100))},
+		"messages": []any{userMessage("hello"), userMessage(skillAttachment(10, 100))},
 	})
 	for i := range 2 {
 		r2, err := http.Post(
@@ -407,11 +344,13 @@ func TestProxyServer_StripsOnEveryRequest(t *testing.T) {
 	if len(bodies) != 2 {
 		t.Fatalf("expected 2 upstream requests, got %d", len(bodies))
 	}
-	if bytes.Equal(bodies[1], payload) {
-		t.Error("second request must also be stripped")
-	}
-	if !bytes.Contains(bodies[1], []byte("invoked_skills truncated")) {
-		t.Error("second request missing truncation marker")
+	for i, b := range bodies {
+		if bytes.Contains(b, []byte(skillPreambleMarker)) {
+			t.Errorf("request %d still carries the skill attachment", i)
+		}
+		if !bytes.Contains(b, []byte("hello")) {
+			t.Errorf("request %d lost its ordinary content", i)
+		}
 	}
 }
 
@@ -465,4 +404,53 @@ func mustMarshal(v any) []byte {
 		panic(err)
 	}
 	return b
+}
+
+// 首个请求的日志只用于证明「CLI 真的走了代理」。路径里带着完整能力 token，
+// 直接打 r.URL.Path 等于把 token 写进日志；必须只记短 token 和去 token 的路径。
+func TestProxyFirstRequestLogDoesNotLeakFullToken(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	s, err := NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	token := "capability-token-that-must-not-be-logged"
+	s.RegisterSession(token, upstream.URL)
+
+	var buf bytes.Buffer
+	oldWriter, oldFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	}()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://127.0.0.1:%d/p/%s/v1/messages", s.Port(), token),
+		"application/json",
+		strings.NewReader(`{"messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	logged := buf.String()
+	if strings.Contains(logged, token) {
+		t.Fatalf("proxy log leaked the full capability token: %q", logged)
+	}
+	if !strings.Contains(logged, "first request") {
+		t.Fatalf("first request was not logged: %q", logged)
+	}
+	if !strings.Contains(logged, "/v1/messages") {
+		t.Fatalf("log should keep the token-free request path: %q", logged)
+	}
 }
