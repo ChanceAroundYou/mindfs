@@ -70,6 +70,28 @@ uv pip install --python .venv/bin/python -r e2e/requirements.txt
 
 **刻意不做「每个用例重载页面」**：用例之间改用应用内导航复位（见下）。
 
+### 任务对话卡（独立实例套件）
+
+`test_task_prompt_cards_iso.py` 不走本目录的 conftest 后端——那套后端没有
+`-agent-config`，跑不了真实 Agent。它打的是 `scripts/mindfs-iso.sh start` 起的实例
+（自带 `agents.json`、端口 7431、前缀 `/mindfs`），数据准备走该实例的 HTTP API：
+
+```bash
+bash scripts/mindfs-iso.sh start
+.venv/bin/python -m pytest e2e/test_task_prompt_cards_iso.py -v -p no:cacheprovider
+bash scripts/mindfs-iso.sh stop
+```
+
+| 用例 | 钉住什么 |
+|---|---|
+| `test_human_gate_blocks_composer_pause_resume_and_approve` | Gate 卡渲染、普通输入被挡、「停止」=暂停、「恢复」后仍可审批、批准把卡收口 |
+| `test_human_gate_reject_closes_card_and_task` | 驳回走专用端点、卡片收口为 cancelled、任务终态 cancelled |
+| `test_real_agent_question_card_answer_round_trip` | 真实 Claude 调 AskUserQuestion → 任务对话出卡 → 输入被挡 → 卡内作答 → 答案写回活动并进入 Agent 最终回复 |
+
+真实 Agent 用例继承隔离实例的 Claude 默认模型；若该模型在当前代理上限流，
+用例会带 `agent_reply` 的 429 正文立即失败，换模型（隔离实例 preferences 的
+`agents.claude.model`）后再跑。
+
 ## 已知上游问题（非本分支引入）
 
 **视图交互 + 页面重载累积 8~9 次后，Go 后端整体失去响应**（连 `/api/auth/status` 都超时）。
