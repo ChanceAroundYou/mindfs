@@ -25,17 +25,78 @@ func (h *HTTPHandler) workflowStore(w http.ResponseWriter) (*kanban.WorkflowStor
 	return s, true
 }
 
+// workflowDraftListItem 是工作流管理列表的一行：草稿本身 + 可读元数据。
+// 名称/描述住在 WorkflowMeta（与修订解耦），列表必须带上它们，否则界面只能
+// 显示去掉 workflow- 前缀的内部 id。
+type workflowDraftListItem struct {
+	kanban.WorkflowDraft
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 func (h *HTTPHandler) handleWorkflowsList(w http.ResponseWriter, r *http.Request) {
 	s, ok := h.workflowStore(w)
 	if !ok {
 		return
 	}
-	items, err := s.ListDrafts(r.Context())
+	drafts, err := s.ListDrafts(r.Context())
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
+	items := make([]workflowDraftListItem, 0, len(drafts))
+	for _, draft := range drafts {
+		item := workflowDraftListItem{WorkflowDraft: draft}
+		if meta, metaErr := s.GetMeta(r.Context(), draft.WorkflowID); metaErr == nil && meta != nil {
+			item.Name = meta.Name
+			item.Description = meta.Description
+		}
+		items = append(items, item)
+	}
 	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// handleWorkflowMetaUpdate 重命名 / 改描述。只写 WorkflowMeta，不推进草稿修订，
+// 因此不影响 CAS、发布版本与历史运行快照。
+func (h *HTTPHandler) handleWorkflowMetaUpdate(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	meta, err := s.GetMeta(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, kanban.ErrWorkflowMetaNotFound) {
+			respondError(w, http.StatusNotFound, err)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			respondError(w, http.StatusBadRequest, errInvalidRequest("name cannot be empty"))
+			return
+		}
+		meta.Name = name
+	}
+	if req.Description != nil {
+		meta.Description = strings.TrimSpace(*req.Description)
+	}
+	if err := s.UpdateMeta(r.Context(), id, meta); err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"meta": meta})
 }
 
 func (h *HTTPHandler) handleWorkflowVersionsList(w http.ResponseWriter, r *http.Request) {

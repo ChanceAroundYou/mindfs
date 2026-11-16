@@ -491,3 +491,65 @@ func TestWorkflowDraftDeleteRemovesDraftAndPublishedVersions(t *testing.T) {
 		t.Fatalf("second delete = %d want 404 body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// 工作流管理要显示用户起的中文名和描述；重命名只改元数据，不推进草稿修订。
+func TestWorkflowDraftListCarriesMetaAndMetaUpdate(t *testing.T) {
+	h, svc, _ := workflowsHandler(t)
+	if rec := doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf-meta","author":"user","graph":`+wfGraphJSON+`}`); rec.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	listWorkflow := func() map[string]any {
+		t.Helper()
+		rec := doReq(t, h, http.MethodGet, "/api/workflows", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode list: %v", err)
+		}
+		for _, item := range payload.Items {
+			if item["workflow_id"] == "wf-meta" {
+				return item
+			}
+		}
+		t.Fatalf("wf-meta missing from %s", rec.Body.String())
+		return nil
+	}
+
+	item := listWorkflow()
+	if item["name"] != "wf-meta" || item["description"] != "" {
+		t.Fatalf("default meta = name:%v description:%v", item["name"], item["description"])
+	}
+
+	before, err := svc.Workflows.GetDraft(context.Background(), "wf-meta")
+	if err != nil {
+		t.Fatalf("GetDraft before: %v", err)
+	}
+	rec := doReq(t, h, http.MethodPut, "/api/workflows/wf-meta/meta", `{"name":"修复流程","description":"先定位根因，再修复并验证。"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("meta update status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	after, err := svc.Workflows.GetDraft(context.Background(), "wf-meta")
+	if err != nil {
+		t.Fatalf("GetDraft after: %v", err)
+	}
+	if after.Revision != before.Revision {
+		t.Fatalf("meta update advanced revision %s -> %s", before.Revision, after.Revision)
+	}
+
+	item = listWorkflow()
+	if item["name"] != "修复流程" || item["description"] != "先定位根因，再修复并验证。" {
+		t.Fatalf("updated meta = name:%v description:%v", item["name"], item["description"])
+	}
+
+	if rec := doReq(t, h, http.MethodPut, "/api/workflows/wf-meta/meta", `{"name":"  "}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank name status=%d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, http.MethodPut, "/api/workflows/missing/meta", `{"name":"x"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing workflow status=%d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+}

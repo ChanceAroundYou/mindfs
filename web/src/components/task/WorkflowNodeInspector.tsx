@@ -212,6 +212,17 @@ export function WorkflowNodeInspector({
       {selected.kind === "condition" ? (
         <div style={{ padding: "8px", background: "var(--button-bg)", borderRadius: "4px" }}>
           <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "8px" }}>条件分支</div>
+          <label style={{ display: "flex", gap: "6px", flexDirection: "column", alignItems: "stretch", marginBottom: "8px" }}>
+            <span>{t("task.workflowCanvas.conditionExpression")}</span>
+            <input
+              data-testid="workflow-condition-expression"
+              value={String(selected.params?.expression ?? "")}
+              onChange={(e) => patchSelected({ params: { ...selected.params, expression: e.target.value } })}
+              placeholder={t("task.workflowCanvas.conditionExpressionHint")}
+              style={{ ...panelInputStyle() }}
+            />
+            <div style={{ fontSize: "10px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.conditionExpressionHint")}</div>
+          </label>
           <label style={{ display: "flex", gap: "6px", flexDirection: "column", alignItems: "stretch" }}>
             <span>{t("task.workflowCanvas.routes")}</span>
             <input
@@ -226,6 +237,30 @@ export function WorkflowNodeInspector({
             />
             <div style={{ fontSize: "10px", color: "var(--text-secondary)" }}>用逗号分隔多个分支</div>
           </label>
+        </div>
+      ) : null}
+      {selected.kind === "human_gate" ? (
+        <div style={{ padding: "8px", background: "var(--button-bg)", borderRadius: "4px" }}>
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "8px" }}>{t("task.workflowCanvas.gatePrompt")}</div>
+          <textarea
+            data-testid="workflow-gate-prompt"
+            value={String(selected.params?.prompt ?? "")}
+            onChange={(e) => patchSelected({ params: { ...selected.params, prompt: e.target.value } })}
+            rows={4}
+            style={{ ...panelInputStyle(), width: "100%", resize: "vertical", lineHeight: 1.5 }}
+          />
+        </div>
+      ) : null}
+      {selected.kind === "notify" ? (
+        <div style={{ padding: "8px", background: "var(--button-bg)", borderRadius: "4px" }}>
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "8px" }}>{t("task.workflowCanvas.notifyMessage")}</div>
+          <textarea
+            data-testid="workflow-notify-message"
+            value={String(selected.params?.message ?? "")}
+            onChange={(e) => patchSelected({ params: { ...selected.params, message: e.target.value } })}
+            rows={4}
+            style={{ ...panelInputStyle(), width: "100%", resize: "vertical", lineHeight: 1.5 }}
+          />
         </div>
       ) : null}
     </div>

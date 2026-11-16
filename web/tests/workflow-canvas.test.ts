@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "vitest";
-import { LOOP_DEFAULT, LOOP_MAX, LOOP_MIN, newNode, validateWorkflowGraph } from "../src/shared/workflowModel.ts";
+import { LOOP_DEFAULT, LOOP_MAX, LOOP_MIN, newNode, validateWorkflowGraph, workflowDraftDisplayName, workflowNodeConfigText } from "../src/shared/workflowModel.ts";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
 
@@ -62,4 +62,32 @@ test("草稿服务层字段与后端契约一致（base_revision / confirmed_rev
   assert.ok(svc.includes("base_revision"), "update 必须带 base_revision 做 CAS");
   assert.ok(svc.includes("confirmed_revision"), "publish 必须确认具体 revision");
   assert.ok(svc.includes("/api/workflows/"), "走控制面 workflow 路由");
+});
+
+test("只读清单展示每个节点的 prompt，而不是只显示类型和 id", () => {
+  assert.equal(workflowNodeConfigText({ id: "a", kind: "agent", params: { prompt: "先复现再修" } }), "先复现再修");
+  assert.equal(workflowNodeConfigText({ id: "g", kind: "human_gate", params: { prompt: "确认发布？" } }), "确认发布？");
+  assert.equal(workflowNodeConfigText({ id: "n", kind: "notify", params: { message: "完成" } }), "完成");
+  assert.equal(workflowNodeConfigText({ id: "c", kind: "condition", params: { routes: ["pass", "fail"] } }), "pass / fail");
+  assert.equal(
+    workflowNodeConfigText({ id: "c", kind: "condition", params: { expression: "check.output.pass == true", routes: ["pass", "fail"] } }),
+    "check.output.pass == true · pass / fail",
+  );
+  assert.match(workflowNodeConfigText({ id: "l", kind: "loop", params: { max_iterations: 3, exit_expression: "done" } }), /3 轮.*done/);
+  assert.equal(workflowNodeConfigText({ id: "a", kind: "agent", params: {} }), "");
+});
+
+test("工作流标题优先显示元数据名称，缺省才回退内部 id", () => {
+  assert.equal(workflowDraftDisplayName({ workflow_id: "workflow-debug", name: "Bug 修复" }), "Bug 修复");
+  assert.equal(workflowDraftDisplayName({ workflow_id: "workflow-debug", name: "  " }), "debug");
+  assert.equal(workflowDraftDisplayName({ workflow_id: "workflow-new-feature" }), "new-feature");
+});
+
+test("桌面节点属性面板能编辑 Agent / 人工确认 / 通知的文案", () => {
+  const inspector = read("../src/components/task/WorkflowNodeInspector.tsx");
+  assert.match(inspector, /selected\.params\?\.prompt/);
+  assert.match(inspector, /selected\.kind === "human_gate"[\s\S]{0,500}?data-testid="workflow-gate-prompt"/);
+  assert.match(inspector, /selected\.kind === "notify"[\s\S]{0,500}?data-testid="workflow-notify-message"/);
+  assert.match(inspector, /data-testid="workflow-condition-expression"/);
+  assert.match(inspector, /selected\.params\?\.message/);
 });

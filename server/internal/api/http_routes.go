@@ -120,6 +120,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/workflows/{id}/publish-proposals", h.handleWorkflowPublishProposal)
 	r.Get("/api/workflows/{id}/publish-proposals", h.handleWorkflowPublishProposalList)
 	r.Put("/api/workflows/{id}", h.handleWorkflowDraftUpdate)
+	r.Put("/api/workflows/{id}/meta", h.handleWorkflowMetaUpdate)
 	r.Delete("/api/workflows/{id}", h.handleWorkflowDraftDelete)
 	r.Post("/api/workflows/{id}/publish", h.handleWorkflowDraftPublish)
 	r.Get("/api/workflows/versions/{version}", h.handleWorkflowVersionGet)

@@ -24,6 +24,32 @@ export type WorkflowGraph = {
 
 export const NODE_KINDS: WorkflowNodeKind[] = ["agent", "condition", "human_gate", "loop", "notify"];
 
+/**
+ * 节点里「人要看的那段配置」。移动端只读清单靠它展示每个节点的 prompt，
+ * 不能只显示类型和名字——那正好是用户最需要核对的内容。
+ */
+export function workflowNodeConfigText(node: WorkflowNodeDef): string {
+  const params = node.params ?? {};
+  if (node.kind === "agent" || node.kind === "human_gate") {
+    return String(params.prompt ?? "").trim();
+  }
+  if (node.kind === "notify") {
+    return String(params.message ?? "").trim();
+  }
+  if (node.kind === "condition") {
+    const expression = String(params.expression ?? "").trim();
+    const routes = Array.isArray(params.routes) ? params.routes : [];
+    const routeText = routes.map((route) => String(route)).filter(Boolean).join(" / ");
+    return [expression, routeText].filter(Boolean).join(" · ");
+  }
+  if (node.kind === "loop") {
+    const exit = String(params.exit_expression ?? "").trim();
+    const max = Number(params.max_iterations ?? LOOP_DEFAULT);
+    return `最多 ${Number.isFinite(max) ? max : LOOP_DEFAULT} 轮${exit ? ` · 退出条件 ${exit}` : ""}`;
+  }
+  return "";
+}
+
 export const LOOP_MIN = 1;
 export const LOOP_MAX = 20;
 export const LOOP_DEFAULT = 5;
@@ -34,7 +60,16 @@ export type WorkflowDraft = {
   graph: WorkflowGraph;
   author?: string;
   updated_at?: string;
+  /** 用户可见名称（控制面 WorkflowMeta）；列表接口附带，缺省回退到 workflow_id。 */
+  name?: string;
+  /** 工作流用途描述（控制面 WorkflowMeta）；列表接口附带。 */
+  description?: string;
 };
+
+/** 工作流列表/标题上给用户看的名字；没起名时只去掉内部前缀，不暴露 workflow-。 */
+export function workflowDraftDisplayName(draft: { workflow_id: string; name?: string }): string {
+  return `${draft.name || ""}`.trim() || draft.workflow_id.replace(/^workflow-/, "");
+}
 
 export type WorkflowVersion = {
   version: string;

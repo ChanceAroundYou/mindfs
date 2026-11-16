@@ -4,12 +4,13 @@ import { useResponsive } from "../../hooks/useResponsive";
 import { panelButtonStyle, panelInputStyle, panelSurfaceStyle } from "../shell/PanelShell";
 import { PromptEditor } from "../editor/PromptEditor";
 import { PlusIcon } from "../action/composerIcons";
-import { DeleteIcon } from "./taskIcons";
+import { DeleteIcon, EditPencilIcon } from "./taskIcons";
 import { WorkflowCanvas } from "./WorkflowCanvas";
 import { useWorkflowAuthoring } from "./useWorkflowAuthoring";
 import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
 import { useWorkflowDraftEditor } from "./useWorkflowDraftEditor";
 import { WorkflowProposalReview } from "./workflowAuthoring/WorkflowProposalReview";
+import { workflowDraftDisplayName } from "../../shared/workflowModel";
 import type { AgentStatus } from "../../shared/agentTypes";
 
 export type WorkflowDraftEditorProps = {
@@ -30,6 +31,9 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   const [createMode, setCreateMode] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDialogKey, setCreateDialogKey] = useState(0);
+  const [metaDialogOpen, setMetaDialogOpen] = useState(false);
+  const [metaName, setMetaName] = useState("");
+  const [metaDescription, setMetaDescription] = useState("");
   const createIdRef = useRef("");
   const { observeRevision, reset } = authoring;
   const previousDraftRef = useRef("");
@@ -108,6 +112,26 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
     setInstruction("");
   };
 
+  const openMetaDialog = () => {
+    if (!e.selected) return;
+    setMetaName(workflowDraftDisplayName(e.selected));
+    setMetaDescription(e.selected.description || "");
+    setMetaDialogOpen(true);
+  };
+
+  const closeMetaDialog = () => {
+    setMetaName("");
+    setMetaDescription("");
+    setMetaDialogOpen(false);
+  };
+
+  const submitMeta = async () => {
+    if (!e.selected) return;
+    if (await e.updateMeta(e.selected, { name: metaName, description: metaDescription })) {
+      closeMetaDialog();
+    }
+  };
+
   const save = () => void e.save();
   const publish = () => void e.publish();
   const close = () => {
@@ -154,19 +178,101 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
         </div>
       ) : null}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <strong>{createMode ? t("task.workflowAuthoring.createTitle") : t("task.workflowEditor.title")}</strong>
-        {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)" }} /> : null}
-        <span style={{ flex: 1 }} />
-        {createMode ? (
-          <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
-        ) : (
-          <>
-            <button type="button" style={panelButtonStyle("primary")} disabled={e.saving || !e.dirty || isMobile} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
-            <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving || e.dirty || !e.selected || isMobile} onClick={publish}>{t("task.workflowEditor.publish")}</button>
-          </>
-        )}
-        <button type="button" style={panelButtonStyle("secondary")} onClick={close}>{t("task.workflowEditor.close")}</button>
+      {/* 名称/描述是 WorkflowMeta（控制面），与画布草稿修订解耦，所以单独弹窗编辑。 */}
+      {metaDialogOpen && e.selected ? (
+        <div
+          data-testid="workflow-meta-dialog"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 1000,
+          }}
+        >
+          <div style={{ ...panelSurfaceStyle(), width: "min(460px, 100%)", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{t("task.workflowEditor.editMeta")}</div>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+              {t("task.workflowEditor.name")}
+              <input
+                data-testid="workflow-meta-name"
+                value={metaName}
+                onChange={(event) => setMetaName(event.target.value)}
+                style={panelInputStyle()}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+              {t("task.workflowEditor.description")}
+              <textarea
+                data-testid="workflow-meta-description"
+                value={metaDescription}
+                placeholder={t("task.workflowEditor.descriptionPlaceholder")}
+                onChange={(event) => setMetaDescription(event.target.value)}
+                rows={3}
+                style={{ ...panelInputStyle(), resize: "vertical" }}
+              />
+            </label>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" style={panelButtonStyle("secondary")} onClick={closeMetaDialog}>{t("common.cancel")}</button>
+              <button
+                type="button"
+                data-testid="workflow-meta-save"
+                style={panelButtonStyle("primary")}
+                disabled={e.metaBusy || !metaName.trim()}
+                onClick={() => void submitMeta()}
+              >
+                {e.metaBusy ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {createMode
+                ? t("task.workflowAuthoring.createTitle")
+                : e.selected ? workflowDraftDisplayName(e.selected) : t("task.workflowEditor.title")}
+            </strong>
+            {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)" }} /> : null}
+            {!createMode && e.selected ? (
+              <button
+                type="button"
+                data-testid="workflow-draft-edit-meta"
+                aria-label={t("task.workflowEditor.editMeta")}
+                title={t("task.workflowEditor.editMeta")}
+                onClick={openMetaDialog}
+                style={{ ...panelButtonStyle("secondary"), padding: "2px 6px", minWidth: "unset", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <EditPencilIcon />
+              </button>
+            ) : null}
+          </div>
+          {!createMode && e.selected?.description ? (
+            <div
+              data-testid="workflow-draft-description"
+              style={{ fontSize: 11, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {e.selected.description}
+            </div>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {createMode ? (
+            <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
+          ) : (
+            <>
+              <button type="button" style={panelButtonStyle("primary")} disabled={e.saving || !e.dirty || isMobile} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
+              <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving || e.dirty || !e.selected || isMobile} onClick={publish}>{t("task.workflowEditor.publish")}</button>
+            </>
+          )}
+          <button type="button" style={panelButtonStyle("secondary")} onClick={close}>{t("task.workflowEditor.close")}</button>
+        </div>
       </div>
       {e.error ? <div role="alert" style={{ color: "var(--danger-color,#ef4444)", fontSize: 12 }}>{e.error}</div> : null}
       {!e.loading && (e.selected || createMode) ? (
@@ -185,7 +291,6 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
             sendLabel={t("task.workflowAuthoring.generate")}
           />
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            {e.dirty ? <span>{t("task.workflowEditor.patchSaveFirst")}</span> : null}
             {isMobile ? <span>{t("task.workflowAuthoring.mobileHint")}</span> : null}
           </div>
           <WorkflowProposalReview
@@ -200,76 +305,6 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
             }}
           />
         </section>
-      ) : null}
-      {!e.loading && e.selected && !createMode ? (
-        <details data-testid="workflow-patch-panel" style={{ ...panelSurfaceStyle(), fontSize: 12 }}>
-          <summary>{t("task.workflowEditor.patchImport")}</summary>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
-            <textarea
-              data-testid="workflow-patch-text"
-              aria-label={t("task.workflowEditor.patchImport")}
-              value={e.patchText}
-              placeholder={t("task.workflowEditor.patchPlaceholder")}
-              disabled={e.dirty || e.patchBusy || isMobile}
-              onChange={(event) => e.setPatchText(event.target.value)}
-              style={{ ...panelInputStyle(), minHeight: 120, fontFamily: "monospace", fontSize: 11 }}
-            />
-            <div style={{ display: "flex", gap: 6 }}>
-              <button type="button" style={panelButtonStyle("secondary")} disabled={e.dirty || e.patchBusy || !e.patchText.trim()} onClick={() => void e.validatePatch()}>{t("task.workflowEditor.patchValidate")}</button>
-              <button type="button" style={panelButtonStyle("primary")} disabled={e.dirty || e.patchBusy || !e.patchText.trim()} onClick={() => void e.applyPatch()}>{t("task.workflowEditor.patchApply")}</button>
-            </div>
-            {e.dirty ? <div>{t("task.workflowEditor.patchSaveFirst")}</div> : null}
-            {e.patchIssues.length > 0 ? (
-              <ul data-testid="workflow-patch-issues" style={{ margin: 0, paddingLeft: 18, color: "var(--danger-color,#ef4444)" }}>
-                {e.patchIssues.map((issue, index) => (
-                  <li key={`${issue.operation_id || "op"}-${issue.field || "field"}-${index}`}>
-                    {t("task.workflowEditor.patchIssueLine", { operation: issue.operation_id || "-", field: issue.field || "-", message: issue.message })}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {e.patchDiff ? (
-              <ul data-testid="workflow-patch-diff" style={{ margin: 0, paddingLeft: 18 }}>
-                {e.patchDiff.operations.map((op, index) => (
-                  <li key={`${op.operation_id}-${index}`}>{t("task.workflowEditor.patchDiffLine", { operation: op.operation_id, op: op.op, node: op.node_id || "-" })}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </details>
-      ) : null}
-      {!e.loading && e.selected && !createMode ? (
-        <details data-testid="workflow-proposals-panel" style={{ ...panelSurfaceStyle(), fontSize: 12 }}>
-          <summary>{t("task.workflowEditor.proposalsTitle")}</summary>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
-            <div>
-              <button type="button" style={panelButtonStyle("secondary")} data-testid="workflow-proposals-refresh" disabled={e.proposalBusy} onClick={() => void e.refreshProposals()}>
-                {t("task.workflowEditor.proposalRefresh")}
-              </button>
-            </div>
-            {e.proposals.length === 0 ? <div>{t("task.workflowEditor.proposalsEmpty")}</div> : (
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {e.proposals.map((proposal) => (
-                  <li key={proposal.id} data-status={proposal.status} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span>{t("task.workflowEditor.proposalLine", { revision: proposal.revision, proposer: proposal.proposer || "-", status: proposal.status })}</span>
-                    {proposal.status === "pending" ? (
-                      <button
-                        type="button"
-                        style={panelButtonStyle("primary")}
-                        data-testid="workflow-proposal-confirm"
-                        data-proposal-id={proposal.id}
-                        disabled={e.dirty || e.proposalBusy || isMobile}
-                        onClick={() => void e.confirmProposal(proposal)}
-                      >
-                        {t("task.workflowEditor.proposalConfirm")}
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </details>
       ) : null}
       {e.loading ? <div>{t("task.workflowEditor.loading")}</div> : (
         <div style={{ display: "flex", minHeight: 0, flex: 1, gap: 12 }}>
@@ -289,7 +324,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
               </button>
             </div>
             {e.drafts.map((d) => {
-              const displayName = d.workflow_id.replace(/^workflow-/, "");
+              const displayName = workflowDraftDisplayName(d);
               const isSelected = d.workflow_id === e.selectedId;
               return (
                 <div key={d.workflow_id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -300,8 +335,15 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
                     onClick={() => { setCreateMode(false); void e.choose(d); }}
                     title={`${displayName} (${d.revision})`}
                   >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
-                      {displayName}
+                    <span style={{ display: "block", minWidth: 0 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                        {displayName}
+                      </span>
+                      {d.description ? (
+                        <span style={{ display: "block", fontSize: 10, opacity: 0.75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {d.description}
+                        </span>
+                      ) : null}
                     </span>
                   </button>
                   <button

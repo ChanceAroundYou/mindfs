@@ -16,8 +16,10 @@ import { useI18n } from "../../i18n/index";
 import { panelButtonStyle, panelSurfaceStyle } from "../shell/PanelShell";
 import {
   NODE_KINDS,
+  loopInnerGraph,
   newNode,
   validateWorkflowGraph,
+  workflowNodeConfigText,
   type WorkflowGraph,
   type WorkflowNodeDef,
   type WorkflowNodeKind,
@@ -257,11 +259,29 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
     return (
       <div data-testid="workflow-canvas-readonly" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.mobileHint")}</div>
-        {(graph.nodes || []).map((n) => (
-          <div key={n.id} style={{ ...panelSurfaceStyle(), padding: "6px 8px", fontSize: "12px" }}>
-            <strong>{labels[n.kind] || n.kind}</strong> {n.name || n.id}
-          </div>
-        ))}
+        {(graph.nodes || []).map((n) => {
+          const config = workflowNodeConfigText(n);
+          const innerNodes = n.kind === "loop" ? loopInnerGraph(n)?.nodes ?? [] : [];
+          return (
+            <div key={n.id} data-testid="workflow-readonly-node" style={{ ...panelSurfaceStyle(), padding: "6px 8px", fontSize: "12px", display: "flex", flexDirection: "column", gap: 4 }}>
+              <div><strong>{labels[n.kind] || n.kind}</strong> {n.name || n.id}</div>
+              {config ? (
+                <div style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{config}</div>
+              ) : null}
+              {innerNodes.map((inner) => {
+                const innerConfig = workflowNodeConfigText(inner);
+                return (
+                  <div key={inner.id} style={{ paddingLeft: 12, display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div><strong>{labels[inner.kind] || inner.kind}</strong> {inner.name || inner.id}</div>
+                    {innerConfig ? (
+                      <div style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{innerConfig}</div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
         {(graph.edges || []).length > 0 ? (
           <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
             {graph.edges!.map((e) => `${e.from} → ${e.to}${e.route ? ` (${e.route})` : ""}`).join("，")}
