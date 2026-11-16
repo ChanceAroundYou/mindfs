@@ -170,6 +170,16 @@ func (s *TaskStore) UpdateTaskStatus(ctx context.Context, taskID, status string,
 	return err
 }
 
+// UpdateTaskResultSummary 记录最近一轮结算后的可读结果，供看板卡/任务列表展示。
+// 与状态写入一样推进 updated_at：结果变了就是任务变了，列表排序也该跟着动。
+func (s *TaskStore) UpdateTaskResultSummary(ctx context.Context, taskID, summary string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET result_summary = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(summary), now, strings.TrimSpace(taskID))
+	return err
+}
+
 func (s *TaskStore) UpdateTaskAuxFlags(ctx context.Context, taskID string, patch TaskAuxFlagsPatch) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	set := []string{"updated_at = ?"}

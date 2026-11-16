@@ -21,6 +21,11 @@ export type KanbanTask = {
   worktree_branch?: string;
   status: TaskStatus;
   main_session_key?: string;
+  /**
+   * 最近一轮结算后的可读结果（成功摘要是节点汇报，失败/等待是原因）。
+   * 卡片用它回答「这个任务最后做到了什么」；空 = 还没有一轮结算过。
+   */
+  result_summary?: string;
   worktree_root_id?: string;
   worktree_path?: string;
   /** 派生（服务端算，不落库）：worktree_path 指向的目录已经不在了。 */

@@ -270,7 +270,7 @@ func (s *Service) projectWorkflowTaskStatus(ctx context.Context, store *TaskStor
 		}
 		currentStatus = task.Status
 	}
-	status := ProjectStatusFromRun(run)
+	status := taskStatusFromRun(run)
 	// 回合已由 executeWorkflowRun 标记为 running；此刻可能还没有节点真正开跑
 	// （Router 决策/排队）。投影得到 pending 时不能把运行中的任务降级，
 	// 否则界面会在「执行中」和「待开始」之间闪。

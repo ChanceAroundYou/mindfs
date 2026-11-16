@@ -18,7 +18,7 @@ const taskDBMetaPath = "tasks/task-kanban.db"
 
 // scheduler_admitted 已退役（本模型无调度器），不再读也不再写；
 // 列保留在表里不做破坏性迁移，恒为默认值。
-const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type"
+const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, result_summary, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type"
 
 func NewTaskStore(root fs.RootInfo) (*TaskStore, error) {
 	path, err := taskDBPath(root)
@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	status TEXT NOT NULL DEFAULT 'pending',
 	scheduler_admitted INTEGER NOT NULL DEFAULT 0,
 	main_session_key TEXT NOT NULL DEFAULT '',
+	result_summary TEXT NOT NULL DEFAULT '',
 	worktree_root_id TEXT NOT NULL DEFAULT '',
 	worktree_path TEXT NOT NULL DEFAULT '',
 	worktree_built INTEGER NOT NULL DEFAULT 0,
@@ -179,6 +180,11 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	// 新建任务由 insertTask 显式写 conversation。默认值必须是 stage，否则存量行
 	// 会被标成已转换、永远不进迁移。
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'stage'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// result_summary：最近一轮结算后的可读结果（2026-11-17 加）。看板卡片靠它
+	// 显示「任务做到了什么」；存量留空，卡片自然不渲染结果块。
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN result_summary TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return err
 	}
 	// worktree_built：这个任务**曾经建过** worktree（2026-10-01 加）。

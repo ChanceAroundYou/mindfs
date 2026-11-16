@@ -74,6 +74,7 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 		TaskTemplateName: "默认模板",
 		Status:           "waiting_user",
 		MainSessionKey:   "1791109592-9f9b6b12c4f1",
+		ResultSummary:    "登录页已经改好了",
 		CreatedAt:        time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:        time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC), CreateWorktree: true,
 		WorktreeBuilt: true,

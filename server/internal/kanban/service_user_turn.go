@@ -64,6 +64,16 @@ func (s *Service) PrepareNewUserTurn(ctx context.Context, task Task, supersede b
 		// 用户可能只是想先聊一句，再回去审批。
 		return nil
 	}
+	// 上一轮已经成功跑完、任务停在待审核：新留言是新的一轮，不是对旧轮次的
+	// 取代。旧 Run 的结果、回复与摘要都要原样保留；不能冻结成 cancelled，
+	// 更不能把用户刚看到的 completed 回复改写成「已取消」。
+	if ProjectStatusFromRun(run) == StatusSuccess {
+		if err := store.UpdateTaskStatus(ctx, current.ID, StatusPending, false); err != nil {
+			return err
+		}
+		s.broadcastTask(ctx, store, current.ID)
+		return nil
+	}
 	if gate, ok := waitingHumanGate(run); ok {
 		return fmt.Errorf("%w（%s）", ErrWorkflowWaitingApproval, gate)
 	}

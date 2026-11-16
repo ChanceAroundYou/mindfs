@@ -232,8 +232,8 @@ func TestWorkflowHumanGateRequiresExplicitDecisionAndIsIdempotent(t *testing.T) 
 		t.Fatalf("approved gate status = %q, want success", approved.Status)
 	}
 	task, _ = store.GetTask(ctx, run.TaskID)
-	if task.Status != StatusSuccess {
-		t.Fatalf("task after approval = %q, want success (downstream ran)", task.Status)
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task after approval = %q, want waiting_user (downstream ran; review before closing)", task.Status)
 	}
 	downstream, err := store.WorkflowNodeRunByKey(ctx, run.ID, "done", "", 0, 1)
 	if err != nil || downstream.Status != NodeRunSuccess {

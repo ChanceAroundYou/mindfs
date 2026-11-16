@@ -28,17 +28,20 @@ import (
 // 淘汰的字段都列在 G-AN 的清单里；丢它们的症状是工作台卡片少字段，而不是报错 ——
 // 所以测试要钉「投影后工作台读的字段必须全在」，见 http_tasks_overview_test.go。
 type overviewTaskProjection struct {
-	ID               string    `json:"id"`
-	TaskNumber       int       `json:"task_number,omitempty"`
-	RootID           string    `json:"root_id"`
-	Name             string    `json:"name,omitempty"`
-	TaskTemplateID   string    `json:"task_template_id,omitempty"`
-	TaskTemplateName string    `json:"task_template_name,omitempty"`
-	Status           string    `json:"status"`
-	MainSessionKey   string    `json:"main_session_key,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	CompletedAt      string    `json:"completed_at,omitempty"`
+	ID               string `json:"id"`
+	TaskNumber       int    `json:"task_number,omitempty"`
+	RootID           string `json:"root_id"`
+	Name             string `json:"name,omitempty"`
+	TaskTemplateID   string `json:"task_template_id,omitempty"`
+	TaskTemplateName string `json:"task_template_name,omitempty"`
+	Status           string `json:"status"`
+	MainSessionKey   string `json:"main_session_key,omitempty"`
+	// ResultSummary 是共享卡片上的「这一轮结果」。没有它，工作台卡片只能显示
+	// 任务名，任务列表和对话开头看不出区别。
+	ResultSummary string    `json:"result_summary,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	CompletedAt   string    `json:"completed_at,omitempty"`
 	// worktree 字段：前端 TaskCardRows 读取这些字段来显示 worktree 徽标。
 	// 2026-10-07 修复：之前投影丢弃了这些字段，导致工作台所有任务都显示没有 worktree。
 	CreateWorktree  bool   `json:"create_worktree,omitempty"`
@@ -78,6 +81,7 @@ func projectOverviewTask(task kanban.Task) overviewTaskProjection {
 		TaskTemplateName: task.TaskTemplateName,
 		Status:           task.Status,
 		MainSessionKey:   task.MainSessionKey,
+		ResultSummary:    task.ResultSummary,
 		CreatedAt:        task.CreatedAt,
 		UpdatedAt:        task.UpdatedAt,
 		CompletedAt:      task.CompletedAt,

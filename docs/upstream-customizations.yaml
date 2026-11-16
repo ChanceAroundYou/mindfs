@@ -8259,7 +8259,7 @@ groups:
     title: 任务 Router（super agent 总控）+ 直连执行器；阶段概念从 API/UI/类型里彻底删除
     kind: feature
     symptom: "用户在任务里发一条留言，服务端按这条留言自己决定这一轮怎么回：能匹配到 workflow 就跑 workflow（回复卡片可下钻运行视图），否则直接在任务主会话里跑一轮普通对话并回写一条 Agent 回复。界面上不再有任何阶段概念：没有阶段编辑器/阶段选项条、没有默认两段流水、没有「推进 / 立即执行」按钮、没有按阶段推进的任务状态；卡片只有完成 / 暂停 / 继续 / 取消 / 收尾 / 删除，详情只有一条对话流。"
-    why: "这是用户明确要求的方向：MindFS 做的是 super agent 的**总控 Router**，不是机械的阶段流水。必须保留：① 每轮的决定权在 `ActivityService`（Router），前端不再随包带阶段流水、不再指定 agent/model/effort 或 start_immediately；② `CreateUserActivity` 是唯一入口（`POST /api/tasks/{id}/activities`），它先落用户留言，再按 `workflow_choice` 与推荐结果选择 `startWorkflowRun` 或 `startDirectAgent`（`workflow_choice=disabled` 或没有可用 workflow 时走直连）；③ 直连执行器 `AppContext.RunDirectActivity` 复用任务主会话（`main_session_key`，失效才新建 chat 会话并回写），回复正文写回同一条 Agent 活动；④ 直连回合与 workflow 回合共用 `runWorkflowTurn` 的回合生命周期（pending 身份、EndSessionTurn、取消/超时），不允许另一套裸 `context.Background()` 发送路径；⑤ 收尾也走同一执行器：`runFinishTurn` 用固定收尾提示词跑一轮普通对话，用内存 `Finishing` 标记而不是阶段数据表达「正在收尾」；⑥ 阶段相关列/表（`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs`）只作为冻结的审计证据与一次性转换输入保留，生产路径不再读写它们；⑦ `/comments` 这一层 HTTP 适配删除，留言统一走 `/activities`；⑧ 续轮由 `Service.PrepareNewUserTurn`（`server/internal/kanban/service_user_turn.go`）把关：任务已终态/已暂停、仍有 `running` 节点、或工作流停在 HumanGate 时显式拒绝并给出可见原因；停在 waiting_user 的旧 Run 被新留言整体取代——未完成证据冻结为 cancelled、追加 `run_superseded` 事件、任务回到可推进状态、旧回复结算为 cancelled；⑨ 直连回合自己决定 Agent：已有主会话沿用 `session.InferAgentFromSession`，新会话按「第一个可用 → 第一个已安装 → 第一个」选默认值，一个都没有时显式报「没有可用的 Agent」，绝不让空 agent 落到 `SendMessage` 里变成 \"agent required\"；⑩ 工作流回复的 summary 只取节点 output 里给人看的文字：先认 summary/message/text/result/title/detail，只剩一个文本字段就直接用它，多个文本字段按 key 排序渲染成「key: value；…」；执行器写入的元数据（outcome/reason/worktree_*/resumed_after_restart/comment_id）与非文本值一律不参与，绝不把 output 原样 JSON 出来；超长截到 500 字符，并在结算时清掉运行期的「步骤 i/n」正文。结算只认 `type=agent_reply` 那一行，注意力/系统事件行同样带 run_id，不能拿它们改状态或清正文。"
+    why: "这是用户明确要求的方向：MindFS 做的是 super agent 的**总控 Router**，不是机械的阶段流水。必须保留：① 每轮的决定权在 `ActivityService`（Router），前端不再随包带阶段流水、不再指定 agent/model/effort 或 start_immediately；② `CreateUserActivity` 是唯一入口（`POST /api/tasks/{id}/activities`），它先落用户留言，再按 `workflow_choice` 与推荐结果选择 `startWorkflowRun` 或 `startDirectAgent`（`workflow_choice=disabled` 或没有可用 workflow 时走直连）；③ 直连执行器 `AppContext.RunDirectActivity` 复用任务主会话（`main_session_key`，失效才新建 chat 会话并回写），回复正文写回同一条 Agent 活动；④ 直连回合与 workflow 回合共用 `runWorkflowTurn` 的回合生命周期（pending 身份、EndSessionTurn、取消/超时），不允许另一套裸 `context.Background()` 发送路径；⑤ 收尾也走同一执行器：`runFinishTurn` 用固定收尾提示词跑一轮普通对话，用内存 `Finishing` 标记而不是阶段数据表达「正在收尾」；⑥ 阶段相关列/表（`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs`）只作为冻结的审计证据与一次性转换输入保留，生产路径不再读写它们；⑦ `/comments` 这一层 HTTP 适配删除，留言统一走 `/activities`；⑧ 续轮由 `Service.PrepareNewUserTurn`（`server/internal/kanban/service_user_turn.go`）把关：任务已终态/已暂停、仍有 `running` 节点、或工作流停在 HumanGate 时显式拒绝并给出可见原因；停在 waiting_user 的旧 Run 被新留言整体取代——未完成证据冻结为 cancelled、追加 `run_superseded` 事件、任务回到可推进状态、旧回复结算为 cancelled；已完成（Run 投影为 success、任务停在待审核）的旧 Run 不在此列：新留言开新轮，旧 Run/回复/摘要原样保留（G-LX）；⑨ 直连回合自己决定 Agent：已有主会话沿用 `session.InferAgentFromSession`，新会话按「第一个可用 → 第一个已安装 → 第一个」选默认值，一个都没有时显式报「没有可用的 Agent」，绝不让空 agent 落到 `SendMessage` 里变成 \"agent required\"；⑩ 工作流回复的 summary 只取节点 output 里给人看的文字：优先最后一个成功 **Agent** 节点（条件节点的 route 是簿记，不参与），先认 summary/message/text/result/title/detail，只剩一个文本字段就直接用它，多个文本字段按 key 排序渲染成「key: value；…」；执行器写入的元数据（outcome/reason/worktree_*/resumed_after_restart/comment_id）与非文本值一律不参与，绝不把 output 原样 JSON 出来；超长截到 500 字符，并在结算时清掉运行期的「步骤 i/n」正文。结算只认 `type=agent_reply` 那一行，注意力/系统事件行同样带 run_id，不能拿它们改状态或清正文。"
     boundary: "只管「一轮留言怎么被 Router 分派与执行」以及阶段概念的删除。不改 workflow 引擎/DAG/Loop/HumanGate 的语义（G-LE/G-LI），不改历史任务的一次性转换规则（G-LK），不改模板删除（G-LJ）。不做自动 merge/push/deploy。"
     files:
       - server/internal/kanban/activity_service.go
@@ -8555,7 +8555,7 @@ groups:
     title: 工作流结果摘要与运行视图中文化
     kind: fix
     symptom: "任务只有一句「已完成 <workflow>」，没有把 Agent 的总结发回对话；展开运行视图后输入/输出是一大段 JSON 转储（prompt/{previous_input}、changes、outcome、verification），既看不懂也和对话气泡风格割裂。现在工作流回复会从节点输出里提取 summary，或把 changes 字符串数组渲染成变更清单；运行视图把输出拆成可读正文、变更列表和验证项，并用与对话气泡一致的圆角/字号/间距；输入、时间戳和原始 JSON 在简化后不再展示。"
-    why: "必须保留：① 节点输出里的 summary 由 Router 结果转换器保证（执行节点只写自然语言，见 G-LD），否则模型只返回结构化字段时任务对话没有可读结果；② 回复摘要优先 canonical 字段（summary/message/text/result/title/detail），其次 changes 字符串数组，最后才按 key 渲染其它字符串；outcome/reason/worktree_* 是簿记字段，永远不进正文；③ 运行视图的输出必须走 readablePayload，只展示可读正文/变更清单/验证项，不再展示 input、原始 JSON 或时间戳，也不得恢复成 JSON.stringify 转储；④ 升级前已结算的空 summary 回复由启动对账补一次（只补 completed + run_id 非空 + summary 为空，幂等）；⑤ 运行视图卡片复用对话气泡的 10px 圆角、12px 内边距、13px 正文，不再另造一套字号与间距。"
+    why: "必须保留：① 节点输出里的 summary 由 Router 结果转换器保证（执行节点只写自然语言，见 G-LD），否则模型只返回结构化字段时任务对话没有可读结果；② 回复摘要优先取最后一个成功 Agent 节点的可读输出（条件节点的 route 是簿记），在节点内优先 canonical 字段（summary/message/text/result/title/detail），其次 changes 字符串数组，最后才按 key 渲染其它字符串；outcome/reason/route/worktree_* 是簿记字段，永远不进正文；③ 运行视图的输出必须走 readablePayload，只展示可读正文/变更清单/验证项，不再展示 input、原始 JSON 或时间戳，也不得恢复成 JSON.stringify 转储；④ 升级前已结算的空 summary 回复由启动对账补一次（只补 completed + run_id 非空 + summary 为空，幂等）；⑤ 运行视图卡片复用对话气泡的 10px 圆角、12px 内边距、13px 正文，不再另造一套字号与间距。"
     boundary: "只改工作流回复摘要与运行视图展示层；不动 workflow 引擎/DAG/Loop/HumanGate 状态机、不动活动数据源、不把节点 output 当正文直接转储。"
     files:
       - server/internal/kanban/service_activities.go
@@ -8673,3 +8673,49 @@ groups:
       - 'web/src/components/task/RunNodeRunRow.tsx:data-testid={`node-run-output-${nodeRun.id}`}'
       - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry'
       - 'web/src/components/task/TaskDetailPanel.tsx:refreshKey={task.updated_at}'
+
+  # ── 任务收尾停在待审核 + 结果摘要进入任务卡 ──────────────────────────────
+  - id: G-LX
+    title: 成功的一轮停在「待审核」，结果摘要写进任务行与共享卡片
+    kind: fix
+    symptom: "工作流跑完后任务直接变成「已完成」终态、对话被禁用，用户只能新建任务才能继续说；同时任务列表/工作台卡片只显示第一条用户留言，和对话里的结果看起来毫无区别。现在一轮成功的执行只推进到 waiting_user（界面「待审核」），用户读完结果可以继续发消息追问，也可以显式点「完成」收口；结算后的可读结果写到 task.result_summary，项目看板与跨项目工作台的同一张卡片都会显示。"
+    why: "用户 2026-11-17 明确要求：完成不是自动终态，先进入可以继续对话的待审核状态；且 Router 必须产出可读 summary，任务列表不能只显示原始需求。必须保留：① `taskStatusFromRun` 只在 Run 投影为 success 时降为 waiting_user，失败/取消/等待审批的映射不变；`ProjectStatusFromRun` 仍保留 success 供 Run 历史与绑定守卫使用；② `projectWorkflowTaskStatus` 是唯一任务状态投影点，且终态/暂停任务不被覆盖；③ 回复结算按 **Run 投影**而不是任务状态决定 completed/failed/cancelled/waiting，否则成功回复会被写成 waiting_user；④ `PrepareNewUserTurn` 遇到已成功的绑定 Run 时不 supersede：不冻结 Run、不写 run_superseded、不改写已完成的回复，只把任务放回 pending 让新 Run 建立；⑤ summary 优先取最后一个成功 **Agent** 节点的可读输出，条件节点的 route 是簿记（加入 metadata 键），不能当结果；⑥ 结果摘要同时写在活动 summary（对话气泡）与 task.result_summary（卡片），直连回合用回复正文兜底；⑦ 卡片只在摘要非空时渲染 3 行结果块，项目看板与工作台共用 TaskCardRows，overview 投影必须携带 result_summary（字段级守卫会红）。"
+    boundary: "只改「一轮结束后任务落在哪个状态」与「结果摘要的产出/展示」；不改 workflow 引擎/DAG/Loop/HumanGate 语义（G-LE/G-LI），不改 Router P0 决策语义（G-LP），不改历史任务的一次性转换（G-LK），不迁移存量已 success 的任务。"
+    files:
+      - server/internal/kanban/types.go
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/task_store_scan.go
+      - server/internal/kanban/task_store_write.go
+      - server/internal/kanban/workflow_engine.go
+      - server/internal/kanban/workflow_driver_loop.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service_user_turn.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/workflow_test.go
+      - server/internal/kanban/activity_service_test.go
+      - server/internal/kanban/workflow_driver_test.go
+      - server/internal/kanban/workflow_loop_test.go
+      - server/internal/kanban/workflow_comments_test.go
+      - server/internal/kanban/workflow_lifecycle_guards_test.go
+      - server/internal/kanban/workflow_runtime_test.go
+      - server/internal/api/http_task_overview.go
+      - server/internal/api/http_tasks_overview_card_parity_test.go
+      - web/src/shared/taskTypes.ts
+      - web/src/components/task/TaskCardRows.tsx
+    tests:
+      - server/internal/kanban/workflow_test.go
+      - server/internal/kanban/activity_service_test.go
+      - server/internal/api/http_tasks_overview_card_parity_test.go
+      - web/tests/task-card-result.test.mjs
+    anchors:
+      - 'server/internal/kanban/workflow_engine.go:func taskStatusFromRun(run *WorkflowRun) string {'
+      - 'server/internal/kanban/workflow_driver_loop.go:status := taskStatusFromRun(run)'
+      - 'server/internal/kanban/service_user_turn.go:if ProjectStatusFromRun(run) == StatusSuccess {'
+      - 'server/internal/kanban/service_activities.go:switch ProjectStatusFromRun(run) {'
+      - 'server/internal/kanban/service_activities.go:func workflowReplySummary(ctx context.Context, store *TaskStore, run *WorkflowRun) string {'
+      - 'server/internal/kanban/service_activities.go:"route": true,'
+      - 'server/internal/kanban/task_store.go:func (s *TaskStore) UpdateTaskResultSummary(ctx context.Context, taskID, summary string) error {'
+      - 'server/internal/kanban/task_store_migrate.go:result_summary TEXT NOT NULL DEFAULT '''''
+      - 'server/internal/api/http_task_overview.go:ResultSummary:    task.ResultSummary,'
+      - 'web/src/components/task/TaskCardRows.tsx:data-testid="task-card-result"'

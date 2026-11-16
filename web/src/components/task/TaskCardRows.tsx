@@ -231,6 +231,28 @@ export function TaskCardRows({
         </span>
       </div>
       {children}
+      {task.result_summary ? (
+        <div
+          data-testid="task-card-result"
+          title={task.result_summary}
+          style={{
+            marginTop: "6px",
+            fontSize: "11px",
+            lineHeight: "16px",
+            color: "var(--text-secondary)",
+            // 看板卡与工作台卡宽度都窄；3 行足够看出「做到了什么」，全文点进详情。
+            display: "-webkit-box",
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+            wordBreak: "break-word",
+            overflowWrap: "anywhere",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {task.result_summary}
+        </div>
+      ) : null}
       <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
           {sessionKeys.length > 0 ? (

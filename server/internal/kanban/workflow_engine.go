@@ -372,3 +372,16 @@ func ProjectStatusFromRun(run *WorkflowRun) string {
 	}
 	return StatusPending
 }
+
+// taskStatusFromRun 把 Run 投影映射成**任务看板**状态。
+//
+// 一轮全部成功不等于任务结束：执行结果要交回用户审核，用户可以继续追问，
+// 也可以显式点「完成」把它收口。因此成功只推进到 waiting_user（界面「待审核」），
+// success 只由显式完成写入。失败/取消/等待审批的语义不变。
+func taskStatusFromRun(run *WorkflowRun) string {
+	status := ProjectStatusFromRun(run)
+	if status == StatusSuccess {
+		return StatusWaitingUser
+	}
+	return status
+}

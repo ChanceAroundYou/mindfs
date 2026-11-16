@@ -245,22 +245,27 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 	if err != nil || activity == nil {
 		return
 	}
-	status, summary := workflowReplyOutcome(ctx, store, run, task)
+	status, summary := workflowReplyOutcome(ctx, store, run)
 	if status == "" {
 		return
 	}
-	if status == activity.Status && (summary == "" || summary == activity.Summary) {
-		return
+	activityChanged := !(status == activity.Status && (summary == "" || summary == activity.Summary))
+	if activityChanged {
+		if err := activities.UpdateStatus(ctx, activity.ID, status, &summary); err != nil {
+			return
+		}
+		// 终态文案由 summary 提供；「步骤 i/n」是运行期提示，结算后就不成立了。
+		_ = activities.ClearBody(ctx, activity.ID)
+		activity.Status = status
+		activity.Summary = summary
+		activity.Body = ""
+		s.broadcastActivityUpdated(activity, map[string]any{"status": status, "summary": summary, "body": ""})
 	}
-	if err := activities.UpdateStatus(ctx, activity.ID, status, &summary); err != nil {
-		return
+	// 任务行上的结果摘要供看板/工作台卡片展示；不再有活动状态要改时也要补写，
+	// 否则升级前已结算的回复会让卡片永远停在原始需求上。
+	if task.ResultSummary != summary {
+		_ = store.UpdateTaskResultSummary(ctx, run.TaskID, summary)
 	}
-	// 终态文案由 summary 提供；「步骤 i/n」是运行期提示，结算后就不成立了。
-	_ = activities.ClearBody(ctx, activity.ID)
-	activity.Status = status
-	activity.Summary = summary
-	activity.Body = ""
-	s.broadcastActivityUpdated(activity, map[string]any{"status": status, "summary": summary, "body": ""})
 }
 
 // backfillWorkflowReplySummaries 给升级前留下的空 summary 回复补一次可读结果。
@@ -311,34 +316,47 @@ func (s *Service) resumeWorkflowReply(ctx context.Context, store *TaskStore, tas
 	s.broadcastActivityUpdated(activity, map[string]any{"status": ActivityStatusRunning})
 }
 
-// workflowReplyOutcome maps the projected task state of one run to the reply
-// the Router shows the user. waiting_user 表示这一轮没结束、在等人；它不是
-// 失败，审批后同一个 Run 会继续。
+// workflowReplyOutcome maps the **run's** projection to the reply the Router
+// shows the user. 用 Run 而不是任务状态，是因为成功的一轮会把任务停在
+// waiting_user（待审核）：如果看任务状态，成功的回复会被写成 waiting_user，
+// 用户永远看不到这一轮的结果。
+//
+// waiting_user 表示这一轮没结束、在等人；它不是失败，审批后同一个 Run 会继续。
 //
 // 这里只写「内容」，不写「壳」：状态徽标与占位文案由前端按 locale 渲染，
 // 后端硬编码中文会让英文界面出现中英混排。
-func workflowReplyOutcome(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task) (string, string) {
-	switch task.Status {
+func workflowReplyOutcome(ctx context.Context, store *TaskStore, run *WorkflowRun) (string, string) {
+	switch ProjectStatusFromRun(run) {
 	case StatusSuccess:
 		return ActivityStatusCompleted, workflowReplySummary(ctx, store, run)
 	case StatusFail:
 		return ActivityStatusFailed, workflowReplyReason(ctx, store, run)
 	case StatusCancelled:
 		return ActivityStatusCancelled, workflowReplyReason(ctx, store, run)
-	case StatusWaitingUser, StatusPaused:
+	case StatusWaitingUser:
 		return ActivityStatusWaitingUser, workflowReplyReason(ctx, store, run)
 	default:
 		return "", ""
 	}
 }
 
-// workflowReplySummary 取最后一个成功节点输出里给人看的那段文字；没有就留空，
-// 由前端回退到本地化的状态文案。绝不把 output 原样 JSON 出来当回复：那是节点
-// 之间的数据契约，不是给用户的结果。
+// workflowReplySummary 取最后一个成功**Agent**节点输出里给人看的那段文字；
+// 没有 Agent 产出就退回任意成功节点。条件/通知节点排在 Agent 后面很常见，
+// 它们的输出是路由与簿记（{"route":"pass"}），不是用户要的结果。
+// 绝不把 output 原样 JSON 出来当回复：那是节点之间的数据契约。
 func workflowReplySummary(ctx context.Context, store *TaskStore, run *WorkflowRun) string {
 	runs, err := store.ListWorkflowNodeRuns(ctx, run.ID)
 	if err != nil {
 		return ""
+	}
+	kinds := workflowNodeKinds(run)
+	for i := len(runs) - 1; i >= 0; i-- {
+		if runs[i].Status != NodeRunSuccess || kinds[runs[i].NodeID] != NodeKindAgent {
+			continue
+		}
+		if summary := nodeRunOutputSummary(runs[i]); summary != "" {
+			return summary
+		}
 	}
 	for i := len(runs) - 1; i >= 0; i-- {
 		if runs[i].Status != NodeRunSuccess {
@@ -349,6 +367,26 @@ func workflowReplySummary(ctx context.Context, store *TaskStore, run *WorkflowRu
 		}
 	}
 	return ""
+}
+
+// workflowNodeKinds 展开顶层节点与 Loop 内部节点，供按类型挑节点用。
+func workflowNodeKinds(run *WorkflowRun) map[string]string {
+	kinds := map[string]string{}
+	if run == nil {
+		return kinds
+	}
+	for _, node := range run.Graph.Nodes {
+		kinds[node.ID] = node.Kind
+		if node.Kind != NodeKindLoop {
+			continue
+		}
+		if inner, err := workflowLoopGraph(node); err == nil {
+			for _, innerNode := range inner.Nodes {
+				kinds[innerNode.ID] = innerNode.Kind
+			}
+		}
+	}
+	return kinds
 }
 
 // workflowReplyReason 取最近一条非成功节点留下的可读原因（纯原因，不加前缀
@@ -389,6 +427,8 @@ var nodeRunOutputMetadataKeys = map[string]bool{
 	"worktree_error":        true,
 	"resumed_after_restart": true,
 	"comment_id":            true,
+	// 条件节点的选路结果。它是最常见的「后跑成功节点」，但不是任务产出。
+	"route": true,
 }
 
 // nodeRunOutputSummary 从节点 output 里挑「给人看的那句」，顺序固定：

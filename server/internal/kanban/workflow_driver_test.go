@@ -43,8 +43,9 @@ func TestWorkflowAdvanceRunsReadyNodesOnceAndProjectsSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if task.Status != StatusSuccess {
-		t.Fatalf("task status = %q, want success", task.Status)
+	// 一轮跑完停在待审核：success 只由用户显式「完成」写入，执行结果要先给用户看。
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want waiting_user (finished work awaits review)", task.Status)
 	}
 	nodes, err := store.ListWorkflowNodeRuns(ctx, run.ID)
 	if err != nil {
@@ -116,8 +117,8 @@ func TestWorkflowAdvanceConditionSelectsRouteAndSkipsUnselectedJoin(t *testing.T
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if task.Status != StatusSuccess {
-		t.Fatalf("task status = %q, want success", task.Status)
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want waiting_user (finished work awaits review)", task.Status)
 	}
 	miss, err := store.WorkflowNodeRunByKey(ctx, run.ID, "miss", "", 0, 1)
 	if err != nil {

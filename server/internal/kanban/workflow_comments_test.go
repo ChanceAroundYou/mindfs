@@ -301,9 +301,10 @@ func TestWorkflowCommentDeliveredWhenFinishingNodeCompletesTask(t *testing.T) {
 	if len(sender.calls) != 1 || sender.calls[0].message != "顺便改一下文案" || sender.calls[0].sessionKey != "sess-build" {
 		t.Fatalf("delivery = %#v, want the comment on sess-build before the task turns terminal", sender.calls)
 	}
+	// 跑完停在待审核（不是终态）：留言投递仍必须先于任务状态投影完成。
 	task, err := store.GetTask(ctx, run.TaskID)
-	if err != nil || task.Status != StatusSuccess {
-		t.Fatalf("task after final node = %#v err=%v, want success", task, err)
+	if err != nil || task.Status != StatusWaitingUser {
+		t.Fatalf("task after final node = %#v err=%v, want waiting_user (review)", task, err)
 	}
 	requests, err := store.ListContinueRequests(ctx, run.TaskID)
 	if err != nil || len(requests) != 1 || requests[0].Status != ContinueRequestConsumed {

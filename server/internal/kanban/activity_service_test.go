@@ -356,6 +356,90 @@ func TestActivityService_NewMessageSupersedesWaitingRun(t *testing.T) {
 	}
 }
 
+// 一轮成功结束后任务停在待审核。用户继续发消息是**新的一轮**，不是对上一轮
+// 的取代：已完成的 Run、回复与摘要都必须原样保留，不能被冻结成 cancelled、
+// 把用户刚看到的结果改写成「已取消」。
+func TestActivityService_NewMessageAfterCompletedRunStartsFreshTurn(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	f.wireRunLifecycle(t)
+	oldRun, oldReply := f.seedRunState(t, NodeRunSuccess, NodeRunSuccess, StatusRunning)
+	output := map[string]any{"summary": "接口已经加好了"}
+	oldRun.NodeOutputs["agent-1"] = output
+	if err := f.tasks.SaveWorkflowRun(ctx, oldRun); err != nil {
+		t.Fatalf("SaveWorkflowRun: %v", err)
+	}
+	if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
+		ID: oldRun.ID + ":agent-1::1:1", RunID: oldRun.ID, NodeID: "agent-1",
+		Attempt: 1, Status: NodeRunSuccess, Output: output, FinishedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertWorkflowNodeRun: %v", err)
+	}
+	projector := NewService(testRoots{root: f.root})
+	projector.SetActivityBroadcaster(f.broadcast)
+	if err := projector.projectWorkflowTaskStatus(ctx, f.service.tasks, oldRun); err != nil {
+		t.Fatalf("projectWorkflowTaskStatus: %v", err)
+	}
+	settled, err := f.tasks.GetTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if settled.Status != StatusWaitingUser || !strings.Contains(settled.ResultSummary, "接口已经加好了") {
+		t.Fatalf("settled task = %#v, want waiting_user carrying the result summary", settled)
+	}
+
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "再加个测试", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	if agentAct.Status == ActivityStatusFailed {
+		t.Fatalf("continuation failed: %s", agentAct.Summary)
+	}
+	if agentAct.RunID == "" || agentAct.RunID == oldRun.ID {
+		t.Fatalf("new turn run = %q, want a fresh run (old %q)", agentAct.RunID, oldRun.ID)
+	}
+
+	frozen, err := f.tasks.WorkflowRunByID(ctx, oldRun.ID)
+	if err != nil {
+		t.Fatalf("reload old run: %v", err)
+	}
+	if got := ProjectStatusFromRun(frozen); got != StatusSuccess {
+		t.Fatalf("old run projects as %q, want success (a finished turn is not superseded)", got)
+	}
+	events, err := f.tasks.ListWorkflowRunEvents(ctx, oldRun.ID)
+	if err != nil {
+		t.Fatalf("ListWorkflowRunEvents: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == WorkflowEventRunSuperseded {
+			t.Fatalf("finished run got a run_superseded event: %#v", events)
+		}
+	}
+
+	stored, err := f.service.activities.Get(ctx, oldReply.ID)
+	if err != nil {
+		t.Fatalf("reload old reply: %v", err)
+	}
+	if stored.Status != ActivityStatusCompleted || !strings.Contains(stored.Summary, "接口已经加好了") {
+		t.Fatalf("old reply = %#v, want the completed result left untouched", stored)
+	}
+
+	task, err := f.tasks.GetTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status == StatusWaitingUser || isTerminalStatus(task.Status) {
+		t.Fatalf("task status = %q, want a fresh, drivable status", task.Status)
+	}
+	engine, err := taskEngineOf(ctx, f.tasks.db, "task-1")
+	if err != nil {
+		t.Fatalf("taskEngineOf: %v", err)
+	}
+	if engine.WorkflowRunID != agentAct.RunID {
+		t.Fatalf("engine bound to %q, want the new run %q", engine.WorkflowRunID, agentAct.RunID)
+	}
+}
+
 // 节点仍在跑时，新消息不能开第二个非终态 Run：占位回复给出可见拒绝，
 // 仍只有一条 Run。
 func TestActivityService_NewMessageWhileNodeRunningIsRejected(t *testing.T) {
@@ -495,6 +579,41 @@ func TestWorkflowReplySummaryUsesReadableOutputText(t *testing.T) {
 	}
 }
 
+// 成功节点里混着条件/通知节点的簿记输出（{"route":"pass"}）时，结果摘要
+// 必须挑 Agent 节点的那句。以前按「最后一个成功节点」取，条件路由后跑就会
+// 把 "pass" 当结果发给用户。
+func TestWorkflowReplySummaryPrefersAgentNodeOverLaterCondition(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	run, _ := f.seedRunState(t, NodeRunSuccess, NodeRunSuccess, StatusSuccess)
+	run.Graph = WorkflowDefinition{Nodes: []WorkflowNode{
+		{ID: "agent-1", Kind: NodeKindAgent},
+		{ID: "route-1", Kind: NodeKindCondition},
+	}}
+	if err := f.tasks.SaveWorkflowRun(ctx, run); err != nil {
+		t.Fatalf("SaveWorkflowRun: %v", err)
+	}
+	for _, nr := range []NodeRun{
+		{
+			ID: run.ID + ":agent-1::1:1", RunID: run.ID, NodeID: "agent-1",
+			Attempt: 1, Status: NodeRunSuccess, Output: map[string]any{"summary": "登录页改好了"},
+			FinishedAt: time.Now().UTC(),
+		},
+		{
+			ID: run.ID + ":route-1::1:1", RunID: run.ID, NodeID: "route-1",
+			Attempt: 1, Status: NodeRunSuccess, Output: map[string]any{"route": "pass"},
+			FinishedAt: time.Now().UTC().Add(time.Second),
+		},
+	} {
+		if err := f.tasks.UpsertWorkflowNodeRun(ctx, nr); err != nil {
+			t.Fatalf("UpsertWorkflowNodeRun(%s): %v", nr.NodeID, err)
+		}
+	}
+	if got := workflowReplySummary(ctx, f.tasks, run); got != "登录页改好了" {
+		t.Fatalf("summary = %q, want the Agent node's sentence, not the condition route", got)
+	}
+}
+
 // 旧版本已经结算过的回复（summary 为空）在升级后打开仍应看到结果，而不是
 // 永远停在「已完成 <workflow>」。启动恢复只补这一类行，且幂等。
 func TestBackfillWorkflowReplySummariesForCompletedRuns(t *testing.T) {
@@ -611,6 +730,14 @@ func TestActivityService_CreateUserActivity_Disabled_WithExecutor(t *testing.T) 
 	if stored == nil || stored.Status != ActivityStatusCompleted || stored.Body != "好的，已处理" {
 		t.Fatalf("stored activity = %#v, want completed with the reply as body", stored)
 	}
+	// 直连回合的回复也要落到任务行上，否则看板卡片只能看到用户原始需求。
+	task, err := f.tasks.GetTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.ResultSummary != "好的，已处理" {
+		t.Fatalf("task result summary = %q, want the direct reply", task.ResultSummary)
+	}
 }
 
 // Router 拥有对话流：节点进度只改这一轮回复的正文，绝不新增活动行。
@@ -662,16 +789,17 @@ func TestService_WorkflowReplyProgressStaysOnRouterReply(t *testing.T) {
 func TestService_ProjectWorkflowTaskStatusSettlesRouterReply(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
-		name       string
-		nodeState  string
-		nodeStatus string
-		output     map[string]any
-		wantStatus string
-		wantInSum  string
+		name           string
+		nodeState      string
+		nodeStatus     string
+		output         map[string]any
+		wantStatus     string
+		wantInSum      string
+		wantTaskStatus string
 	}{
-		{"success", NodeRunSuccess, NodeRunSuccess, map[string]any{"summary": "改完了"}, ActivityStatusCompleted, "改完了"},
-		{"fail", NodeRunFail, NodeRunFail, map[string]any{"error": "测试没过"}, ActivityStatusFailed, "测试没过"},
-		{"waiting_user", NodeRunWaitingUser, NodeRunWaitingUser, map[string]any{"reason": "缺权限"}, ActivityStatusWaitingUser, "缺权限"},
+		{"success", NodeRunSuccess, NodeRunSuccess, map[string]any{"summary": "改完了"}, ActivityStatusCompleted, "改完了", StatusWaitingUser},
+		{"fail", NodeRunFail, NodeRunFail, map[string]any{"error": "测试没过"}, ActivityStatusFailed, "测试没过", StatusFail},
+		{"waiting_user", NodeRunWaitingUser, NodeRunWaitingUser, map[string]any{"reason": "缺权限"}, ActivityStatusWaitingUser, "缺权限", StatusWaitingUser},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -710,6 +838,18 @@ func TestService_ProjectWorkflowTaskStatusSettlesRouterReply(t *testing.T) {
 			}
 			if !strings.Contains(stored.Summary, tc.wantInSum) {
 				t.Fatalf("summary = %q, want it to contain %q", stored.Summary, tc.wantInSum)
+			}
+			// 看板卡片读的是任务行上的结果摘要：不写它，任务列表就只能看到
+			// 用户原始需求，和对话里的结果对不上。
+			task, err := f.service.tasks.GetTask(ctx, "task-1")
+			if err != nil {
+				t.Fatalf("GetTask: %v", err)
+			}
+			if task.Status != tc.wantTaskStatus {
+				t.Fatalf("task status = %q, want %q", task.Status, tc.wantTaskStatus)
+			}
+			if !strings.Contains(task.ResultSummary, tc.wantInSum) {
+				t.Fatalf("task result summary = %q, want it to contain %q", task.ResultSummary, tc.wantInSum)
 			}
 		})
 	}

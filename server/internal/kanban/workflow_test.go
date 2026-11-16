@@ -250,6 +250,31 @@ func TestProjectStatusFromRun(t *testing.T) {
 	}
 }
 
+// 一轮跑完不等于任务结束：页面要把结果交给用户审核，用户读完才能继续追问
+// 或显式点「完成」。任务级映射因此把 success 降成 waiting_user；失败/取消
+// 照旧，等待审批也照旧。
+func TestTaskStatusFromRunLeavesFinishedWorkInReview(t *testing.T) {
+	run := &WorkflowRun{Graph: wfDef(wfNode("a", NodeKindAgent)), NodeStates: map[string]string{"a": NodeRunSuccess}}
+	if got := taskStatusFromRun(run); got != StatusWaitingUser {
+		t.Fatalf("finished run = %q, want waiting_user (review before closing)", got)
+	}
+	run.NodeStates["a"] = NodeRunFail
+	if got := taskStatusFromRun(run); got != StatusFail {
+		t.Fatalf("failed run = %q, want fail", got)
+	}
+	run.NodeStates["a"] = NodeRunCancelled
+	if got := taskStatusFromRun(run); got != StatusCancelled {
+		t.Fatalf("cancelled run = %q, want cancelled", got)
+	}
+	run.NodeStates["a"] = NodeRunWaitingUser
+	if got := taskStatusFromRun(run); got != StatusWaitingUser {
+		t.Fatalf("waiting run = %q, want waiting_user", got)
+	}
+	if got := taskStatusFromRun(nil); got != "" {
+		t.Fatalf("nil run = %q, want empty (legacy drives status)", got)
+	}
+}
+
 func TestSuggestTemplateFromSuccess(t *testing.T) {
 	run := &WorkflowRun{ID: "r9", TaskID: "t9", Graph: wfDef(wfNode("a", NodeKindAgent)), NodeStates: map[string]string{"a": NodeRunSuccess}}
 	sug := SuggestTemplateFromRun(run, "user")

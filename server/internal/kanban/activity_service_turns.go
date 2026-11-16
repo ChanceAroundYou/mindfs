@@ -85,12 +85,23 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 		// 先恢复任务状态再广播终态：前端收到 activity.updated 会立刻点查任务头，
 		// 晚于广播的恢复会让界面停在「执行中」。
 		restore()
+		s.recordTurnResultSummary(ctx, task.ID, failure)
 		_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusFailed, failure)
 		return
 	}
 	_ = s.activities.UpdateBody(ctx, agentAct.ID, strings.TrimSpace(text))
 	restore()
+	s.recordTurnResultSummary(ctx, task.ID, text)
 	_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCompleted, "")
+}
+
+// recordTurnResultSummary 把这一轮的结果写回任务行，供看板卡片展示。直连回合
+// 没有 WorkflowRun 可投影，回复正文就是结果；不写的话卡片只能看到用户原始需求。
+func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, text string) {
+	if s == nil || s.tasks == nil {
+		return
+	}
+	_ = s.tasks.UpdateTaskResultSummary(ctx, taskID, truncateSummary(strings.TrimSpace(text)))
 }
 
 // startWorkflowRun 创建 pending 的 Agent 回复并落一个 WorkflowRun。

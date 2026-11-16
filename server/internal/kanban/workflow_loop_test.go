@@ -114,8 +114,8 @@ func TestWorkflowLoopIterationAdvancesOnceWithScopedNodeRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if task.Status != StatusSuccess {
-		t.Fatalf("task status = %q, want success", task.Status)
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want waiting_user (finished work awaits review)", task.Status)
 	}
 }
 

@@ -325,8 +325,8 @@ func TestWorkflowRuntimePauseLetsInFlightFinishThenResumeContinues(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if afterResume.Status != StatusSuccess {
-		t.Fatalf("task status = %q, want success after resume", afterResume.Status)
+	if afterResume.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want waiting_user after resume (finished work awaits review)", afterResume.Status)
 	}
 }
 
