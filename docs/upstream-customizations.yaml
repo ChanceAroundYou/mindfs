@@ -8438,8 +8438,8 @@ groups:
     title: 整轮页脚——每轮末尾都显示模型、用量与上下文窗口（含工具/打断/压缩收尾）
     kind: fix
     symptom: "页脚曾只挂在「该轮最后一个 assistant_text」上：一轮以工具卡、思考卡或纯 reasoning 收尾时整轮没有页脚（模型名、用量、缓存、上下文窗口全丢），用 opus 时甚至只看到被过滤后的空轮；用户报「对话最后的内容又丢了（模型 用量 缓存名字等），而是显示思考过程」。现在每个助手轮次的最后一行之后都有一行页脚，一轮没有任何可渲染内容时单独产出一行纯页脚；流式进行中仍不画（与旧行为一致）；被用户打断的轮次也保留页脚。"
-    why: "这是 fork 的会话可观测性契约，必须保留：① 页脚属于**整轮**而不是某个块——`attachTurnFooter` 把同一份 `TurnMeta` 挂到该轮每条 timeline item 上，渲染时只在「助手流末尾」画一次（`isAssistantFlowEnd`：下一项不存在或下一项是 `user_text`），所以工具/思考/纯标点收尾都能拿到页脚；② 一轮零可渲染条目时产出 `type: \"turn_meta\"` 的纯页脚行：有持久 seq 时 id 用 `block:<seq>:-1`（真实块 pos ≥ 0，不会撞键），seq 为 0 的瞬时行用 `turn_meta:<idToken>`，避免多条瞬时纯页脚共用同一个 key；`turn_meta` 同时是跨轮边界，助手流遇到它就应当画页脚；③ 页脚数据从 exchange 直接取 `model_display_name`/`effort`/`fast_service`/`context_window`/`token_usage`，不依赖 assistant 正文；④ 流式最后一行暂时不画，避免「先画后改」跳动；⑤ 复制/fork 的页脚身份用「条目 id + 时间戳」而不是 assistant_text 的 promptKey，纯页脚行也能复制；⑥ `ActionBarControls` 的发送键带 `data-state=send|cancel`，这是端到端测试判定「回合是否在运行 / 打断后是否归位」的唯一稳定钩子。"
-    boundary: "只改前端会话时间线的页脚投影与渲染：`sessionBlocks.ts`/`sessionAssistantTimeline.ts`/`sessionTimeline.ts`/`sessionViewerFormat.ts` 负责把 `TurnMeta` 挂到条目并决定页脚行，`SessionViewerTimeline.tsx` 决定「只在助手流末尾画一次」，`SessionViewerTurnMeta.tsx` 只做展示。不改后端块流生成、不改 token 计量与上下文窗口推导（后端 `context_window` 事件与 `useSessionStreamCache` 的合并规则不变）、不改 reasoning 过滤（G-LR）、不改压缩事件卡（`CompactNoticeCard`）。`ActionBarControls.tsx` 的改动仅为测试钩子，控件行为与样式不变。"
+    why: "这是 fork 的会话可观测性契约，必须保留：① 页脚属于**整轮**而不是某个块——`attachTurnFooter` 把同一份 `TurnMeta` 挂到该轮每条 timeline item 上，渲染时只在「助手流末尾」画一次（`isAssistantFlowEnd`：下一项不存在或下一项是 `user_text`），所以工具/思考/纯标点收尾都能拿到页脚；② 一轮零可渲染条目时产出 `type: \"turn_meta\"` 的纯页脚行：有持久 seq 时 id 用 `block:<seq>:-1`（真实块 pos ≥ 0，不会撞键），seq 为 0 的瞬时行用 `turn_meta:<idToken>`，避免多条瞬时纯页脚共用同一个 key；`turn_meta` 同时是跨轮边界，助手流遇到它就应当画页脚；③ 页脚数据从 exchange 直接取 `model_display_name`/`effort`/`fast_service`/`context_window`/`token_usage`，不依赖 assistant 正文；④ 流式最后一行暂时不画，避免「先画后改」跳动；⑤ 复制/fork 的页脚身份用「条目 id + 时间戳」而不是 assistant_text 的 promptKey，纯页脚行也能复制；⑥ `ActionBarControls` 的发送键带 `data-state=send|cancel`，这是端到端测试判定「回合是否在运行 / 打断后是否归位」的唯一稳定钩子；⑦ 页脚上外边距按**上一行类型**取（`turnFooterMarginTop`）：正文用 -10px（markdown 段落自带下边距，负值正好收紧），思考块/工具卡/组卡/待办/计划/压缩块收尾用 4px —— 这些条目自带边框与内边距，恒定负外边距会把页脚拽进卡片里（2026-11-16 真机：`/compact` 那一轮的复制/fork 图标与 `78%-used` 被压缩块下沿吞掉）；⑧ `SessionViewerTurnMeta` 的 `marginTop` 是**必填** prop，接线漏传即类型报错，不允许回退成组件内硬编码。"
+    boundary: "只改前端会话时间线的页脚投影与渲染：`sessionBlocks.ts`/`sessionAssistantTimeline.ts`/`sessionTimeline.ts`/`sessionViewerFormat.ts` 负责把 `TurnMeta` 挂到条目并决定页脚行，`SessionViewerTimeline.tsx` 决定「只在助手流末尾画一次」，`SessionViewerTurnMeta.tsx` 只做展示。不改后端块流生成、不改 token 计量与上下文窗口推导（后端 `context_window` 事件与 `useSessionStreamCache` 的合并规则不变）、不改 reasoning 过滤（G-LR）、不改压缩事件卡（`CompactNoticeCard` 自身样式与 10px 内边距不变，只改页脚相对它的外边距）。`ActionBarControls.tsx` 的改动仅为测试钩子，控件行为与样式不变。"
     files:
       - web/src/components/session/SessionViewerTurnMeta.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
@@ -8459,6 +8459,9 @@ groups:
       - 'web/src/hooks/sessionBlocks.ts:export function attachTurnFooter('
       - 'web/src/hooks/sessionBlocks.ts:type: "turn_meta"'
       - 'web/src/components/session/sessionViewerFormat.ts:export function isAssistantFlowEnd('
+      - 'web/src/components/session/sessionViewerFormat.ts:export function turnFooterMarginTop('
+      - 'web/src/components/session/SessionViewerTimeline.tsx:marginTop={turnFooterMarginTop(item)}'
+      - 'web/src/components/session/SessionViewerTurnMeta.tsx:marginTop,'
       - 'web/src/components/session/SessionViewerTimeline.tsx:const endsAssistantFlow = isAssistantFlowEnd('
       - 'web/src/components/session/SessionViewerTimeline.tsx:const renderTurnFooter'
       - 'web/src/components/session/SessionViewerTimeline.tsx:item.type === "turn_meta"'

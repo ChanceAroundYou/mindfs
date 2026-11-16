@@ -22,6 +22,7 @@ import {
   stripImageAttachmentTokens,
   stripUploadAttachmentTokens,
   timelineItemSpacing,
+  turnFooterMarginTop,
 } from "./sessionViewerFormat";
 
 export type SessionViewerTimelineProps = {
@@ -176,6 +177,7 @@ export function SessionViewerTimeline({
         t={t}
         themeColor={themeColor}
         userMetaButtonStyle={userMetaButtonStyle}
+        marginTop={turnFooterMarginTop(item)}
         onCopy={onCopy}
         onFork={onFork}
       />

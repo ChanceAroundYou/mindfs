@@ -22,6 +22,8 @@ export type SessionViewerTurnMetaProps = {
   t: (key: MessageKey) => string;
   themeColor: string;
   userMetaButtonStyle: React.CSSProperties;
+  /** 距上一行的上外边距：文本流收紧、卡片收尾必须为正（见 turnFooterMarginTop）。 */
+  marginTop: string;
   onCopy: () => void;
   onFork?: () => void;
 };
@@ -35,6 +37,7 @@ export function SessionViewerTurnMeta({
   t,
   themeColor,
   userMetaButtonStyle,
+  marginTop,
   onCopy,
   onFork,
 }: SessionViewerTurnMetaProps) {
@@ -52,7 +55,7 @@ export function SessionViewerTurnMeta({
         fontSize: "10px",
         color: "var(--text-secondary)",
         opacity: 0.5,
-        marginTop: "-10px",
+        marginTop,
         marginBottom: "4px",
       }}
     >
