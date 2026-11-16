@@ -71,7 +71,6 @@ test("RunTimeline shows approve/reject only for a waiting HumanGate", () => {
   assert.match(component, /onDecideGate/, "the decision goes through a parent callback");
 
   const html = renderTimeline({
-    run: { id: "run-gate" },
     nodeKinds: { g: "human_gate", a: "agent" },
     nodeRuns: [
       { id: "nr-gate", node_id: "g", status: "waiting_user", output: { prompt: "确认上线" } },
@@ -89,7 +88,6 @@ test("RunTimeline shows approve/reject only for a waiting HumanGate", () => {
 
   // 没有回调（只读用法）时不得出现按钮。
   const readOnlyHtml = renderTimeline({
-    run: { id: "run-gate-2" },
     nodeKinds: { g: "human_gate" },
     nodeRuns: [{ id: "nr-gate-2", node_id: "g", status: "waiting_user" }],
   });
@@ -97,7 +95,6 @@ test("RunTimeline shows approve/reject only for a waiting HumanGate", () => {
 
   // 点击后、回包前必须禁用两个按钮，避免重复决定。
   const busyHtml = renderTimeline({
-    run: { id: "run-gate-3" },
     nodeKinds: { g: "human_gate" },
     nodeRuns: [{ id: "nr-gate-3", node_id: "g", status: "waiting_user" }],
     onDecideGate: () => {},

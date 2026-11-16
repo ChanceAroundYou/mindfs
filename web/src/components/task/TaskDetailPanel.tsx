@@ -141,8 +141,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
           onAgentActivityChange={() => void panel.refreshTask()}
           onOpenSession={onOpenSession}
         />
-        {/* 运行视图是对话流的下钻（默认收起），也是 human_gate 批准/驳回的唯一入口。 */}
-        <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />
+        {/* 运行视图是对话流的下钻（默认收起）；human_gate 在对话卡与运行视图里都能审批。 */}
+        <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />
       </div>
     </PanelShell>
     </>

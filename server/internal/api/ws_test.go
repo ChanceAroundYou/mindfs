@@ -55,6 +55,15 @@ func newActivityWSFixture(t *testing.T) (*AppContext, *kanban.Service, string, s
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	// 活动创建会异步启动回合；回合再唤醒 workflow driver。两条都是后台
+	// goroutine，测试断言完就拆 TempDir 会撞上「driver 还在写库」。先等回合退出
+	// （此时 driver 一定已注册），再等 driver 空闲。
+	t.Cleanup(func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = svc.WaitActivityTurnsIdle(waitCtx)
+		_ = svc.WaitWorkflowRunIdle(waitCtx, root.ID, detail.Task.ID)
+	})
 
 	app := &AppContext{Kanban: svc}
 	svc.SetActivityBroadcaster(NewTaskActivityBroadcaster(app))

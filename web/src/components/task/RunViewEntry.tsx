@@ -4,27 +4,24 @@ import { RunTimeline } from "./RunTimeline";
 import { runNodeKinds } from "./runTimelineModel";
 import { useRunViewEntry } from "./useRunViewEntry";
 
-// 运行视图入口：挂在留言板**之下**的一条可展开行。
+// 运行视图入口：对话流下面的一条可展开行。
 //
-// 为什么做成独立组件：TaskDetailPanel 只加一行接线（避免它继续膨胀）。
-// 层级仍是「留言板的下钻」——入口出现在留言板之后，展开后由 RunTimeline 自带
-// 「返回留言板」按钮（data-drill-in="comment-run"）。
-//
-// 何时出现：只有任务被显式迁移到 WorkflowRun 引擎后才有运行视图可看；
-// legacy 任务一概不渲染（引擎绑定由后端 /api/tasks/{id}/engine 决定）。
-// 取数在 useRunViewEntry（.ts）里，视图层不 import services。
+// 展开后直接是简化的节点结果，不再提供「返回留言板」——入口本身就在对话流里，
+// 再点一次收起即可。
 
 export type RunViewEntryProps = {
   rootId: string;
   taskId: string;
   nodeId?: string;
+  /** 任务头每次更新递增（父层传 task.updated_at）：引擎绑定可能在对话回合里变。 */
+  refreshKey?: string;
   onOpenSession: (sessionKey: string) => void;
 };
 
-export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewEntryProps) {
+export function RunViewEntry({ rootId, taskId, nodeId, refreshKey, onOpenSession }: RunViewEntryProps) {
   const { t } = useI18n();
-  const { runId, open, run, nodeRuns, error, gateError, decidingNodeRunId, toggle, collapse, decideGate } =
-    useRunViewEntry(rootId, taskId, nodeId);
+  const { runId, open, run, nodeRuns, error, gateError, decidingNodeRunId, toggle, decideGate } =
+    useRunViewEntry(rootId, taskId, nodeId, refreshKey);
 
   if (!runId) return null;
 
@@ -63,12 +60,10 @@ export function RunViewEntry({ rootId, taskId, nodeId, onOpenSession }: RunViewE
           ) : null}
           {run ? (
             <RunTimeline
-              run={run}
               nodeRuns={nodeRuns}
               nodeNames={nodeNames}
               nodeKinds={nodeKinds}
               onOpenSession={onOpenSession}
-              onBackToComments={collapse}
               decidingNodeRunId={decidingNodeRunId}
               onDecideGate={(nodeRun, decision) => void decideGate(nodeRun, decision)}
             />

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/kanban"
@@ -43,6 +44,15 @@ func activitiesHandler(t *testing.T) (http.Handler, *kanban.Service, string, str
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	// 创建留言会异步派发回合，回合再唤醒 workflow driver。两条都是后台 goroutine，
+	// 断言完就拆 TempDir 会撞上「driver 还在写库」。先等回合退出（此时 driver 一定
+	// 已注册），再等 driver 空闲。
+	t.Cleanup(func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = svc.WaitActivityTurnsIdle(waitCtx)
+		_ = svc.WaitWorkflowRunIdle(waitCtx, root.ID, detail.Task.ID)
+	})
 	h := (&HTTPHandler{AppContext: &AppContext{Kanban: svc}}).Routes()
 	return h, svc, root.ID, detail.Task.ID
 }

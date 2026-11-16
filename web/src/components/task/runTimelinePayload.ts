@@ -7,7 +7,7 @@
 //   - changes 字符串数组作为变更清单；
 //   - verification 等扁平对象作为“检查项：结果”；
 //   - 其余字符串字段按 key 列出。
-// 原始 JSON 不进这里 —— 由调用方放进 details 折叠区，需要时仍可查。
+// 原始 JSON、输入与调试字段都不进这里：运行视图不是调试器。
 
 export type ReadablePayloadField = {
   key: string;
@@ -21,8 +21,6 @@ export type ReadablePayload = {
   items: string[];
   /** 其它可读的键值（含 verification 展平后的项）。 */
   fields: ReadablePayloadField[];
-  /** 原始 JSON；字符串 payload 没有可折叠内容。 */
-  raw: string | null;
 };
 
 const TEXT_KEYS = ["summary", "result", "message", "text", "title", "detail", "prompt"];
@@ -35,7 +33,7 @@ const METADATA_KEYS = new Set([
   "comment_id",
 ]);
 
-const EMPTY: ReadablePayload = { text: "", items: [], fields: [], raw: null };
+const EMPTY: ReadablePayload = { text: "", items: [], fields: [] };
 
 function nonEmptyString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -82,7 +80,7 @@ export function readablePayload(
   if (value === null || value === undefined) return EMPTY;
   if (typeof value === "string") {
     const text = value.trim();
-    return text === "" ? EMPTY : { text, items: [], fields: [], raw: null };
+    return text === "" ? EMPTY : { text, items: [], fields: [] };
   }
   if (typeof value !== "object" || Array.isArray(value)) return EMPTY;
 
@@ -91,9 +89,5 @@ export function readablePayload(
   const items = stringItems(payload.changes);
   const skip = new Set<string>([...TEXT_KEYS, "changes"]);
   const fields = flattenFields(payload, skip);
-  const hasReadable = text !== "" || items.length > 0 || fields.length > 0;
-  const raw = hasReadable || Object.keys(payload).length > 0
-    ? JSON.stringify(payload, null, 2)
-    : null;
-  return { text, items, fields, raw };
+  return { text, items, fields };
 }

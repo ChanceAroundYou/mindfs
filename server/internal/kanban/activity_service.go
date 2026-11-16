@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Task 5 (Phase 2): ActivityService 把「用户留言」翻译成「WorkflowRun + Agent 回复」。
@@ -79,6 +80,9 @@ type ActivityService struct {
 	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；
 	// shadow 只读、只记账，不改变本函数的任何返回值或副作用。
 	router *RouterService
+	// turnWG 跟踪本服务派发的异步回合，供测试/停机收尾等待。nil 时不跟踪。
+	// 每轮的 Add 都在启动 goroutine 之前同步完成，Wait 不会与 Add 抢跑。
+	turnWG *sync.WaitGroup
 }
 
 // NewActivityService builds the service for one task node. workflows/recommender
@@ -124,6 +128,14 @@ func (s *ActivityService) SetBranchResolver(r ActivityBranchResolver) {
 func (s *ActivityService) SetRouter(router *RouterService) {
 	if s != nil {
 		s.router = router
+	}
+}
+
+// SetTurnTracker 让调用方等待本服务派发的异步回合退出（测试收尾/停机用）。
+// 装配期调用一次；nil 时回合不登记。
+func (s *ActivityService) SetTurnTracker(wg *sync.WaitGroup) {
+	if s != nil {
+		s.turnWG = wg
 	}
 }
 
@@ -231,177 +243,6 @@ func activityIDOf(activity *TaskActivity) string {
 		return ""
 	}
 	return activity.ID
-}
-
-// startDirectAgent 是「纯对话模式」的一轮：插入 pending 占位后，把用户这句
-// 话作为普通回合交给直连执行端口。没有端口就显式失败，绝不留下永久 pending。
-func (s *ActivityService) startDirectAgent(ctx context.Context, task Task, body string) (*TaskActivity, error) {
-	agentAct := &TaskActivity{
-		ID:             newID("act"),
-		TaskID:         task.ID,
-		RootID:         task.RootID,
-		Type:           ActivityTypeAgentReply,
-		Role:           RoleAgent,
-		Body:           "",
-		Status:         ActivityStatusPending,
-		WorkflowChoice: CommentWorkflowChoiceDisabled,
-	}
-	if err := s.activities.Insert(ctx, agentAct); err != nil {
-		return nil, err
-	}
-	s.broadcastCreated(agentAct)
-	// 直连只守 D3（没有活动执行），不冻结停在 waiting_user 的旧 Run。
-	if err := s.prepareUserTurn(ctx, task, false, agentAct); err != nil {
-		return agentAct, nil
-	}
-	if s.directExecutor == nil {
-		s.failActivity(ctx, agentAct, errors.New("direct executor not configured"))
-		return agentAct, nil
-	}
-	go s.executeDirectActivity(context.WithoutCancel(ctx), agentAct, task, body)
-	return agentAct, nil
-}
-
-// prepareUserTurn 把「新一轮开始」的守卫/取代交给状态机端口。失败只写回这一轮
-// 的占位回复：用户留言已经落库，不能因为拒绝而消失。
-func (s *ActivityService) prepareUserTurn(ctx context.Context, task Task, supersede bool, agentAct *TaskActivity) error {
-	if s == nil || s.lifecycle == nil {
-		return nil
-	}
-	if err := s.lifecycle.PrepareNewUserTurn(ctx, task, supersede); err != nil {
-		s.failActivity(ctx, agentAct, err)
-		return err
-	}
-	return nil
-}
-
-// executeDirectActivity 跑一轮普通对话并回写占位回复。
-// 正文只写 Agent 的真实输出：运行中/无输出/失败这些「壳」由前端按 locale 渲染。
-func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *TaskActivity, task Task, body string) {
-	_ = s.activities.UpdateStatus(ctx, agentAct.ID, ActivityStatusRunning, nil)
-	s.broadcastUpdatedByID(ctx, agentAct.ID, map[string]any{"status": ActivityStatusRunning})
-
-	text, err := s.directExecutor.RunDirectActivity(ctx, task, body)
-	if err != nil {
-		failure := strings.TrimSpace(err.Error())
-		_ = s.activities.UpdateBody(ctx, agentAct.ID, failure)
-		_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusFailed, failure)
-		return
-	}
-	_ = s.activities.UpdateBody(ctx, agentAct.ID, strings.TrimSpace(text))
-	_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCompleted, "")
-}
-
-// startWorkflowRun 创建 pending 的 Agent 回复并落一个 WorkflowRun。
-//
-// Run 创建失败不向上抛：用户留言已经落库，把失败写回 Agent 回复（status=failed
-// + error summary）比让整条留言消失更符合对话模型。真正的输入错误（空留言、
-// 非法 choice）在调用方已经提前拒绝。
-func (s *ActivityService) startWorkflowRun(
-	ctx context.Context,
-	task Task,
-	userInput string,
-	choice string,
-	versionID *string,
-	userActivityID string,
-) (*TaskActivity, *RouterLegacyAction, error) {
-	agentAct := &TaskActivity{
-		ID:             newID("act"),
-		TaskID:         task.ID,
-		RootID:         task.RootID,
-		Type:           ActivityTypeAgentReply,
-		Role:           RoleAgent,
-		Body:           "",
-		Status:         ActivityStatusPending,
-		WorkflowChoice: choice,
-	}
-	if err := s.activities.Insert(ctx, agentAct); err != nil {
-		return nil, nil, err
-	}
-	s.broadcastCreated(agentAct)
-	// workflow 回合除了守 D3，还要把停在 waiting_user 的旧 Run 冻结掉：
-	// 否则新建 Run 会被绑定守卫拒绝，或者建成一条 driver 永不推进的僵尸 Run。
-	if err := s.prepareUserTurn(ctx, task, true, agentAct); err != nil {
-		return agentAct, &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}, nil
-	}
-
-	version, err := s.resolveWorkflowVersion(ctx, userInput, choice, versionID)
-	var run *WorkflowRun
-	if err == nil {
-		run, err = s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct)
-	}
-	if err != nil {
-		s.failActivity(ctx, agentAct, err)
-		return agentAct, &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}, nil
-	}
-	return agentAct, &RouterLegacyAction{
-		Kind:            "workflow",
-		WorkflowID:      version.WorkflowID,
-		WorkflowVersion: version.Version,
-		RunID:           run.ID,
-	}, nil
-}
-
-// persistWorkflowRun creates the data-plane run, links it to the agent activity,
-// and (when an executor is wired) starts asynchronous execution.
-func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, version WorkflowVersion, userActivityID string, agentAct *TaskActivity) (*WorkflowRun, error) {
-	if s.tasks == nil {
-		return nil, errors.New("task store unavailable")
-	}
-	run := &WorkflowRun{
-		ID:             newRunID(),
-		TaskID:         task.ID,
-		Version:        version.Version,
-		Revision:       1,
-		Graph:          cloneGraph(version.Graph),
-		TriggeredBy:    WorkflowTriggeredByUser,
-		ActivityID:     userActivityID,
-		NodeStates:     map[string]string{},
-		NodeOutputs:    map[string]map[string]any{},
-		SelectedRoutes: map[string]string{},
-		LoopState:      map[string]*LoopState{},
-		LoopExitExpr:   map[string]string{},
-	}
-	if s.branch != nil {
-		branch, err := s.branch(ctx, task, version.Graph)
-		if err != nil {
-			return nil, err
-		}
-		run.IntegrationBranch = branch
-	}
-	if err := s.tasks.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
-		return nil, err
-	}
-	if err := s.activities.SetWorkflowLink(ctx, agentAct.ID, run.ID, version.Version); err != nil {
-		return nil, err
-	}
-	agentAct.RunID = run.ID
-	agentAct.WorkflowVersionID = version.Version
-	s.broadcastUpdated(agentAct, map[string]any{
-		"run_id":              run.ID,
-		"workflow_version_id": version.Version,
-	})
-	if s.executor != nil {
-		// The HTTP request returns before the run finishes; detach cancellation so
-		// the turn does not die with the response writer.
-		go s.executeWorkflowRun(context.WithoutCancel(ctx), task, run, agentAct.ID)
-	}
-	return run, nil
-}
-
-// executeWorkflowRun 只负责把占位回复推进到 running 并唤醒运行层。
-// 终态不在这里写：唤醒是异步的，运行层会在真正结算时回写
-// （Service.settleWorkflowReply），审批后继续跑也走同一条回写路径。
-func (s *ActivityService) executeWorkflowRun(ctx context.Context, task Task, run *WorkflowRun, activityID string) {
-	if s == nil || s.executor == nil {
-		return
-	}
-	_ = s.activities.UpdateStatus(ctx, activityID, ActivityStatusRunning, nil)
-	s.broadcastUpdatedByID(ctx, activityID, map[string]any{"status": ActivityStatusRunning})
-
-	if err := s.executor.ExecuteActivityWorkflow(ctx, task, run); err != nil {
-		_ = s.OnWorkflowRunFailed(ctx, run.ID, err.Error())
-	}
 }
 
 // workflowProgressNode resolves a node's 1-based position and display name.

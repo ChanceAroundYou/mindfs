@@ -90,12 +90,13 @@ const render = (children) => renderToString(React.createElement(I18nProvider, nu
 const renderSelector = (props) => render(React.createElement(WorkflowSelector, props));
 
 test("WorkflowSelector renders the three workflow choices in order", () => {
-  // 新UI：默认状态下三个选项是隐藏的，只有非empty时才自动展开
+  // 默认收起：只留一个「自动选择」胶囊，不展示任何解释文案。
   const htmlCollapsed = renderSelector({ choice: "empty", versionId: "", onChange: () => {} });
   assert.match(htmlCollapsed, /data-testid="workflow-selector"/);
-  // 默认状态：显示简洁提示，不显示三个radio
   assert.match(htmlCollapsed, /data-testid="workflow-show-advanced"/);
+  assert.match(htmlCollapsed, /自动选择|Auto select/);
   assert.equal((htmlCollapsed.match(/role="radio"/g) || []).length, 0);
+  assert.doesNotMatch(htmlCollapsed, /AI 会根据需求自动选择|Advanced options|高级选项/);
 
   // 非empty时会自动展开，显示三个选项
   const htmlExpanded = renderSelector({ choice: "specified", versionId: "wf-v1", onChange: () => {} });
@@ -106,6 +107,9 @@ test("WorkflowSelector renders the three workflow choices in order", () => {
     "specified",
     "disabled",
   ]);
+  // 触发器只写友好名；回显里不允许出现内部版本 id。
+  assert.match(htmlExpanded, /指定工作流|Specify workflow/);
+  assert.doesNotMatch(htmlExpanded, /wf-v1/);
 });
 
 test("WorkflowSelector marks the active choice", () => {
@@ -133,14 +137,18 @@ test("WorkflowSelector wires each radio to its action", () => {
   assert.match(source, /onChange\(["']specified["'],\s*[a-zA-Z_$][\w$]*\)/);
   assert.match(source, /setShowPicker\(true\)/);
   assert.match(source, /<WorkflowPickerDialog/);
+  // 选定后收起选项面板：选择器保持成一个胶囊，而不是一直展开。
+  assert.match(source, /onSelect=\{\(id, name\) => \{[\s\S]*?setOpen\(false\)/);
 });
 
 // 选择器回显的是 workflow 名字，不是内部版本 id（wf-feature:v1 这种不该给用户看）。
-// 名字只在 id 仍对得上时生效：外部改写 versionId 后回退显示 id，绝不错标。
-test("WorkflowSelector shows the picked workflow name with an id fallback", () => {
+// 名字只在 id 仍对得上时生效：外部改写 versionId 后回退到通用「指定工作流」，
+// 绝不把版本 id 漏到界面上。
+test("WorkflowSelector shows the picked workflow name with no version-id fallback", () => {
   const source = read("components/task/WorkflowSelector.tsx");
   assert.match(source, /setPicked\(\{\s*id,\s*name\s*\}\)/);
-  assert.match(source, /picked\.id === versionId \? picked\.name : versionId/);
+  assert.match(source, /picked\.id === versionId \? picked\.name : t\("task\.workflowChoice\.manual"\)/);
+  assert.doesNotMatch(source, /picked\.id === versionId \? picked\.name : versionId/);
   const dialog = read("components/task/WorkflowPickerDialog.tsx");
   assert.match(dialog, /onSelect\(workflow\.id, workflow\.name \|\| workflow\.id\)/);
 });
@@ -188,10 +196,9 @@ test("WorkflowPickerDialog is a modal that loads options through a hook", () => 
 test("workflow selector i18n keys exist in both locales", () => {
   const keys = [
     "task.workflowChoice",
-    "task.workflowChoice.empty",
-    "task.workflowChoice.specified",
-    "task.workflowChoice.disabled",
-    "task.workflowRecommended",
+    "task.workflowChoice.auto",
+    "task.workflowChoice.manual",
+    "task.workflowChoice.none",
     "task.selectWorkflow",
     "task.noAvailableWorkflows",
   ];
@@ -201,6 +208,19 @@ test("workflow selector i18n keys exist in both locales", () => {
     assert.ok(zhCN[key].trim(), `zh-CN empty ${key}`);
     assert.ok(enUS[key].trim(), `en-US empty ${key}`);
   }
-  assert.match(zhCN["task.workflowRecommended"], /\{name\}/, "recommendation label must be parameterized");
-  assert.match(enUS["task.workflowRecommended"], /\{name\}/, "recommendation label must be parameterized");
+  // 解释性提示语、重复的三态文案与推荐标记都只剩一种说法：
+  // 选择器只保留「自动选择 / 指定工作流 / 纯对话」。
+  for (const key of [
+    "task.workflowAutoMode",
+    "task.workflowAdvancedOptions",
+    "task.workflowUseDefault",
+    "task.workflowMode",
+    "task.workflowChoice.empty",
+    "task.workflowChoice.specified",
+    "task.workflowChoice.disabled",
+    "task.workflowRecommended",
+  ]) {
+    assert.equal(zhCN[key], undefined, `zh-CN must drop ${key}`);
+    assert.equal(enUS[key], undefined, `en-US must drop ${key}`);
+  }
 });

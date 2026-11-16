@@ -4,18 +4,6 @@
 // NodeRunPayload（对齐后端 workflow_types.go）。这里只给展示层起别名，
 // 不在组件目录里再抄一份字段表 —— 两处各写一遍必然漂移。
 
-import type { NodeRunPayload, WorkflowRunPayload } from "../../shared/taskComments";
+import type { NodeRunPayload } from "../../shared/taskComments";
 
-export type WorkflowRunNodeState =
-  | "pending"
-  | "queued"
-  | "running"
-  | "success"
-  | "fail"
-  | "waiting_user"
-  | "skipped"
-  | "unknown"
-  | "cancelled";
-
-export type WorkflowRunSnapshot = WorkflowRunPayload;
 export type NodeRunSnapshot = NodeRunPayload;

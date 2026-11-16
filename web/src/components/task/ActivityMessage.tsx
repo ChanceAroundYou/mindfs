@@ -5,13 +5,19 @@ import {
   activityDisplayText,
   normalizeActivityStatus,
 } from "../../shared/activityModel";
-import { formatRelativeTime, formatFullTime } from "../../shared/datetime";
+import { workflowDisplayName } from "../../shared/workflowDisplay";
+import { formatFullTime } from "../../shared/datetime";
+import { formatTime } from "../session/sessionViewerFormat";
+import { InlineTokenText } from "../common/InlineTokenText";
+import { MarkdownViewer } from "../common/MarkdownViewer";
 import { TaskHumanGateCard } from "./TaskHumanGateCard";
 import { TaskQuestionCard, type TaskQuestionAnswers } from "./TaskQuestionCard";
 
 export type ActivityMessageProps = {
   activity: TaskActivity;
   rootId?: string;
+  /** workflow id → 友好名；页脚只用名字，不展示 `:vN` 版本号。 */
+  workflowNames?: Record<string, string> | null;
   /** 任务已暂停：gate 卡只给恢复入口。 */
   paused?: boolean;
   /** 当前有在途的答题/审批；卡片按钮会被禁用。 */
@@ -49,15 +55,6 @@ const STATUS_COLORS: Record<string, string> = {
   waiting_user: "var(--status-warn)",
 };
 
-const STATUS_ICONS: Record<string, string> = {
-  pending: "⏳",
-  running: "⚡",
-  completed: "✓",
-  failed: "✗",
-  cancelled: "○",
-  waiting_user: "⏸",
-};
-
 /**
  * created_at 在历史活动里可能缺失或非法；非法时返回 null，整块时间不渲染。
  * 直接 new Date(x).toISOString() 会在 Invalid Date 上抛 RangeError 打崩整个面板。
@@ -69,17 +66,18 @@ function parseActivityTime(value: string | undefined): number | null {
 }
 
 /**
- * 对话消息气泡：用户消息右对齐蓝色，Agent回复左对齐灰色
+ * 对话消息：与会话界面同一套视觉。
  *
- * 设计理念：
- * 1. 明确的视觉区分 - 左右对齐 + 颜色差异
- * 2. 友好的时间显示 - 相对时间 + hover显示完整时间
- * 3. 内联状态显示 - 不破坏消息流
- * 4. 移动端友好 - 响应式宽度
+ * - 用户留言：右侧灰底大圆角气泡，时间在气泡下方。
+ * - Agent 回复：无框 Markdown 正文，状态/工作流/时间/会话入口收进一行页脚。
+ * - 系统事件：居中灰字。
+ *
+ * 不再渲染「用户 / Agent」角色标签：左右位置和气泡形态已经表达了身份。
  */
 export function ActivityMessage({
   activity,
   rootId,
+  workflowNames,
   paused = false,
   promptDeciding = false,
   promptError = null,
@@ -119,14 +117,14 @@ export function ActivityMessage({
 
   // 分类只认 role。type 只区分「用户留言」与「Agent 回复」两个特例，
   // attention / merge_conflict 这类系统活动同样带 role=system，
-  // 按 type 白名单判断会把它们渲染成 Agent 气泡。
+  // 按 type 白名单判断会把它们渲染成 Agent 正文。
   const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";
   const isUser = role === "user";
   const isSystem = role === "system";
 
   const displayText = activityDisplayText(activity);
   const status = activity.status ? normalizeActivityStatus(activity.status) : null;
-  // 后端不写中文占位：进行中的提示由前端本地化，终态空正文交给状态徽标，
+  // 后端不写中文占位：进行中的提示由前端本地化，终态空正文交给页脚状态，
   // 否则英文界面会混进「正在思考...」这种硬编码中文。
   const bodyText =
     displayText ||
@@ -137,6 +135,9 @@ export function ActivityMessage({
         : "");
   const canOpenSession = !!activity.session_key && !!onOpenSession;
   const created = parseActivityTime(activity.created_at);
+  const timeLabel = created !== null ? formatTime(activity.created_at, locale) : "";
+  const fullTime = created !== null ? formatFullTime(created, locale) : undefined;
+  const workflowName = workflowDisplayName(activity.workflow_version_id, workflowNames);
 
   // 系统消息：居中显示，样式特殊
   if (isSystem) {
@@ -150,10 +151,35 @@ export function ActivityMessage({
         {created !== null && (
           <time
             dateTime={activity.created_at}
-            title={formatFullTime(created, locale)}
+            title={fullTime}
             style={systemTimeStyle}
           >
-            {formatRelativeTime(created, locale)}
+            {timeLabel}
+          </time>
+        )}
+      </div>
+    );
+  }
+
+  if (isUser) {
+    return (
+      <div
+        data-testid="activity-user"
+        data-activity-id={activity.id}
+        style={userRowStyle}
+      >
+        {bodyText && (
+          <div style={userBubbleStyle}>
+            <InlineTokenText content={bodyText} variant="inverse" />
+          </div>
+        )}
+        {created !== null && (
+          <time
+            dateTime={activity.created_at}
+            title={fullTime}
+            style={userTimeStyle}
+          >
+            {timeLabel}
           </time>
         )}
       </div>
@@ -162,56 +188,35 @@ export function ActivityMessage({
 
   return (
     <div
-      data-testid={isUser ? "activity-user" : "activity-agent"}
+      data-testid="activity-agent"
       data-activity-id={activity.id}
-      style={containerStyle(isUser)}
+      style={agentMessageStyle}
     >
-      <div style={bubbleStyle(isUser)}>
-        {/* 角色标签 + 时间 */}
-        <div style={headerStyle}>
-          <span style={roleStyle(isUser)}>
-            {isUser ? "👤" : "🤖"} {isUser ? t("task.activity.user") : t("task.activity.agent")}
+      {bodyText ? (
+        <MarkdownViewer content={bodyText} root={rootId || undefined} />
+      ) : null}
+
+      <div data-testid="activity-footer" style={footerStyle}>
+        {status && (
+          <span style={{ ...footerItemStyle, color: STATUS_COLORS[status] }}>
+            {t(STATUS_LABEL_KEYS[status])}
           </span>
-          {created !== null && (
-            <time
-              dateTime={activity.created_at}
-              title={formatFullTime(created, locale)}
-              style={timeStyle}
-            >
-              {formatRelativeTime(created, locale)}
-            </time>
-          )}
-        </div>
-
-        {/* 消息正文 */}
-        {bodyText && <div style={bodyStyle}>{bodyText}</div>}
-
-        {/* 工作流执行状态（内联显示） */}
-        {!isUser && status && (
-          <div style={statusBarStyle}>
-            <span style={{ ...statusBadgeStyle, color: STATUS_COLORS[status] }}>
-              {STATUS_ICONS[status]} {t(STATUS_LABEL_KEYS[status])}
-            </span>
-            {activity.workflow_version_id && (
-              <span style={versionBadgeStyle}>
-                {activity.workflow_version_id}
-              </span>
-            )}
-          </div>
         )}
-
-        {/* 操作按钮：运行详情就在本面板下方（RunViewEntry），不另设入口 */}
+        {workflowName && <span style={footerItemStyle}>{workflowName}</span>}
+        {timeLabel && (
+          <time dateTime={activity.created_at} title={fullTime} style={footerItemStyle}>
+            {timeLabel}
+          </time>
+        )}
         {canOpenSession && (
-          <div style={actionsStyle}>
-            <button
-              type="button"
-              data-testid="activity-open-session"
-              onClick={() => onOpenSession?.(activity.session_key as string)}
-              style={actionButtonStyle}
-            >
-              {t("task.activity.openSession")}
-            </button>
-          </div>
+          <button
+            type="button"
+            data-testid="activity-open-session"
+            onClick={() => onOpenSession?.(activity.session_key as string)}
+            style={footerButtonStyle}
+          >
+            {t("task.activity.openSession")}
+          </button>
         )}
       </div>
     </div>
@@ -220,99 +225,69 @@ export function ActivityMessage({
 
 // ========== Styles ==========
 
-const containerStyle = (isUser: boolean): React.CSSProperties => ({
-  display: "flex",
-  justifyContent: isUser ? "flex-end" : "flex-start",
-  marginBottom: 12,
-  width: "100%",
-});
-
-const bubbleStyle = (isUser: boolean): React.CSSProperties => ({
-  maxWidth: "min(80%, 600px)",
-  minWidth: "200px",
-  padding: 12,
-  borderRadius: 10,
-  background: isUser
-    ? "var(--accent-bg, rgba(59, 130, 246, 0.1))"
-    : "var(--panel-bg)",
-  border: isUser
-    ? "1px solid var(--accent-color, #3b82f6)"
-    : "1px solid var(--border-color)",
+const userRowStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: 8,
-});
-
-const headerStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 8,
-};
-
-const roleStyle = (isUser: boolean): React.CSSProperties => ({
-  fontSize: 12,
-  fontWeight: 600,
-  color: isUser ? "var(--accent-color, #3b82f6)" : "var(--text-color)",
-  display: "flex",
-  alignItems: "center",
+  alignItems: "flex-end",
   gap: 4,
-});
-
-const timeStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "var(--text-secondary)",
-  flexShrink: 0,
+  width: "100%",
 };
 
-const bodyStyle: React.CSSProperties = {
-  fontSize: 13,
+const userBubbleStyle: React.CSSProperties = {
+  padding: "10px 16px",
+  borderRadius: "18px 18px 4px 18px",
+  background: "rgba(148,163,184,0.14)",
+  color: "var(--text-primary)",
+  fontSize: 14,
   lineHeight: 1.5,
-  color: "var(--text-color)",
   whiteSpace: "pre-wrap",
+  overflowWrap: "anywhere",
   wordBreak: "break-word",
+  maxWidth: "min(80%, 640px)",
+  minWidth: 0,
 };
 
-const statusBarStyle: React.CSSProperties = {
+const userTimeStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-secondary)",
+  opacity: 0.5,
+};
+
+const agentMessageStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  width: "100%",
+  minWidth: 0,
+};
+
+const footerStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: 8,
   flexWrap: "wrap",
+  gap: "2px 8px",
+  fontSize: 10,
+  color: "var(--text-secondary)",
+  opacity: 0.5,
+  minWidth: 0,
 };
 
-const statusBadgeStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 500,
+const footerItemStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  gap: 4,
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  fontVariantNumeric: "tabular-nums",
 };
 
-const versionBadgeStyle: React.CSSProperties = {
-  fontSize: 10,
-  padding: "2px 6px",
-  borderRadius: 4,
-  background: "var(--tag-bg, rgba(148, 163, 184, 0.2))",
-  color: "var(--text-secondary)",
-  fontFamily: "monospace",
-};
-
-const actionsStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  flexWrap: "wrap",
-};
-
-const actionButtonStyle: React.CSSProperties = {
-  fontSize: 11,
-  padding: "4px 10px",
-  borderRadius: 5,
-  border: "1px solid var(--border-color)",
+const footerButtonStyle: React.CSSProperties = {
+  border: "none",
   background: "transparent",
+  padding: 0,
   color: "var(--accent-color)",
+  fontSize: 10,
   cursor: "pointer",
-  transition: "all 0.15s ease",
-  fontWeight: 500,
+  flexShrink: 0,
 };
 
 const systemMessageStyle: React.CSSProperties = {
@@ -321,7 +296,6 @@ const systemMessageStyle: React.CSSProperties = {
   alignItems: "center",
   gap: 4,
   padding: "8px 0",
-  marginBottom: 12,
 };
 
 const systemTextStyle: React.CSSProperties = {

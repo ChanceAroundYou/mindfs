@@ -55,6 +55,9 @@ type Service struct {
 	workflowDrives        map[string]*workflowDrive
 	workflowCancellers    map[string]WorkflowNodeCanceller
 	workflowCancelTimeout time.Duration
+	// activityTurns 跟踪 ActivityService 派发的异步回合。收尾时先等回合退出、
+	// 再等 workflow driver，避免回合在临时库被删除后继续唤醒 driver。
+	activityTurns sync.WaitGroup
 	// workflowFinishLocks 串行化「同一 NodeRun 的终态收尾」与「操作员取消」。
 	// 合并/关闭工作树是不可回滚的 git 副作用：如果取消在 merge 之后、CAS 之前
 	// 赢下状态，就会得到「树已合并删除、行记 cancelled」的矛盾。锁只在进程内

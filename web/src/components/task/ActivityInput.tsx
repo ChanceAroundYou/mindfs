@@ -2,19 +2,8 @@ import type React from "react";
 import { useI18n } from "../../i18n/index";
 import type { WorkflowChoice } from "../../shared/taskComments";
 import { canSendActivity } from "../../shared/activityModel";
-import { formatSendShortcut, type SendShortcut } from "../../shared/sendShortcut";
 import { PromptEditor } from "../editor/PromptEditor";
 import { WorkflowSelector } from "./WorkflowSelector";
-
-// PromptEditor 默认「回车发送、Shift+Enter 换行」，这里只把提示文案对齐，
-// 不再沿用旧 textarea 的 Ctrl/⌘+Enter（两套快捷键会让用户按错）。
-const ENTER_SEND_SHORTCUT: SendShortcut = {
-  key: "Enter",
-  alt: false,
-  ctrl: false,
-  meta: false,
-  shift: false,
-};
 
 export type ActivityInputProps = {
   body: string;
@@ -99,16 +88,6 @@ export function ActivityInput({
           {error}
         </div>
       )}
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-          {sending
-            ? t("task.activity.sending")
-            : canSend
-              ? t("task.activity.sendHint", { shortcut: formatSendShortcut(ENTER_SEND_SHORTCUT) })
-              : ""}
-        </span>
-      </div>
     </div>
   );
 }

@@ -18,6 +18,7 @@ import {
   canSendActivity,
   normalizeActivityStatus,
 } from "../src/shared/activityModel.ts";
+import { workflowDisplayName } from "../src/shared/workflowDisplay.ts";
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 const read = (rel) => fs.readFileSync(path.join(SRC, rel), "utf8");
@@ -176,6 +177,13 @@ test("normalizeActivityStatus defaults unknown/empty to pending", () => {
 });
 
 // ── 组件：状态显示（Review Focus #4 的状态面） ─────────────────────────────
+test("workflowDisplayName resolves the friendly name and never leaks the version id", () => {
+  assert.equal(workflowDisplayName("workflow-blank:v1", { "workflow-blank": "空白执行" }), "空白执行");
+  assert.equal(workflowDisplayName("workflow-blank:v12", { "workflow-blank": "空白执行" }), "空白执行");
+  assert.equal(workflowDisplayName("wf-feature:v3", {}), "");
+  assert.equal(workflowDisplayName("", { "workflow-blank": "空白执行" }), "");
+});
+
 test("ActivityMessage renders a user message on the user side", () => {
   const html = render(
     React.createElement(ActivityMessage, {
@@ -185,11 +193,13 @@ test("ActivityMessage renders a user message on the user side", () => {
   assert.match(html, /data-testid="activity-user"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /帮我修登录/);
-  assert.match(html, /👤/); // user icon
-  assert.match(html, /User|用户/);
+  // 复用会话界面的用户气泡：右对齐、灰底、大圆角，不再有角色标签/头像。
+  assert.match(html, /rgba\(148,163,184,0\.14\)/);
+  assert.doesNotMatch(html, /👤|🤖/);
+  assert.doesNotMatch(html, />用户<|>User</);
 });
 
-test("ActivityMessage shows the running status and live progress body", () => {
+test("ActivityMessage shows the running status in the footer without role chrome", () => {
   const html = render(
     React.createElement(ActivityMessage, {
       activity: { ...baseActivity, status: "running", body: "步骤 2/4: 写测试", run_id: "run-1" },
@@ -198,9 +208,10 @@ test("ActivityMessage shows the running status and live progress body", () => {
   assert.match(html, /data-testid="activity-agent"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /步骤 2\/4: 写测试/);
-  assert.match(html, /🤖/); // agent icon
-  assert.match(html, /⚡/); // running icon
+  assert.match(html, /data-testid="activity-footer"/);
   assert.match(html, /执行中|Running/);
+  assert.doesNotMatch(html, /🤖|⚡/);
+  assert.doesNotMatch(html, />Agent</);
 });
 
 test("ActivityMessage renders the summary for completed replies", () => {
@@ -212,8 +223,9 @@ test("ActivityMessage renders the summary for completed replies", () => {
   assert.match(html, /data-testid="activity-agent"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /已修复登录并补了测试/);
-  assert.match(html, /✓/); // completed icon
+  assert.match(html, /data-testid="activity-footer"/);
   assert.match(html, /已完成|Completed/);
+  assert.doesNotMatch(html, /✓/);
 });
 
 test("ActivityMessage renders failed replies as errors", () => {
@@ -225,9 +237,9 @@ test("ActivityMessage renders failed replies as errors", () => {
   assert.match(html, /data-testid="activity-agent"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /工作流校验失败/);
-  assert.match(html, /✗/); // failed icon
-  assert.match(html, /失败|Failed/);
   assert.match(html, /var\(--status-bad\)/);
+  assert.match(html, /失败|Failed/);
+  assert.doesNotMatch(html, /✗/);
 });
 
 test("ActivityMessage keeps cancelled replies visible without pretending success", () => {
@@ -239,18 +251,37 @@ test("ActivityMessage keeps cancelled replies visible without pretending success
   assert.match(html, /data-testid="activity-agent"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /用户取消/);
-  assert.match(html, /○/); // cancelled icon
   assert.match(html, /已取消|Cancelled/);
+  assert.doesNotMatch(html, /○/);
 });
 
-test("ActivityMessage offers the session action when the reply carries one", () => {
+test("ActivityMessage footer shows the friendly workflow name, not the version id", () => {
+  const html = render(
+    React.createElement(ActivityMessage, {
+      activity: {
+        ...baseActivity,
+        status: "running",
+        body: "执行中",
+        workflow_version_id: "workflow-blank:v1",
+        created_at: "2026-11-16T08:00:00Z",
+      },
+      workflowNames: { "workflow-blank": "空白执行" },
+    }),
+  );
+  assert.match(html, /data-testid="activity-footer"/);
+  assert.match(html, /空白执行/);
+  assert.doesNotMatch(html, /workflow-blank/);
+  assert.doesNotMatch(html, /:v1/);
+});
+
+test("ActivityMessage offers the session action in the footer when the reply carries one", () => {
   const html = render(
     React.createElement(ActivityMessage, {
       activity: { ...baseActivity, status: "completed", summary: "ok", run_id: "run-1", session_key: "s-1" },
       onOpenSession: () => {},
     }),
   );
-  assert.match(html, /data-testid="activity-open-session"/);
+  assert.match(html, /data-testid="activity-footer"[\s\S]*data-testid="activity-open-session"/);
   assert.match(html, /打开会话|Open session/);
   // 运行详情就在面板下方（RunViewEntry），消息里不再另设入口。
   assert.doesNotMatch(html, /data-testid="activity-view-run"/);
@@ -382,16 +413,18 @@ test("ConversationView drives the messages from useTaskActivities", () => {
   assert.match(view, /useTaskActivities\(\s*taskId,\s*rootId,\s*nodeId,?\s*\)/);
   assert.match(view, /<ConversationMessages/);
   assert.match(view, /<ActivityInput/);
+  // 页脚的工作流友好名来自控制面列表；视图层只能经 colocated hook 取数。
+  assert.match(view, /useWorkflowNames\(\)/);
+  assert.match(view, /workflowNames=\{workflowNames\}/);
+  const hook = read("components/task/useWorkflowNames.ts");
+  assert.match(hook, /listAvailableWorkflows\(/);
 });
 
 test("the activity i18n keys exist for both locales", () => {
   for (const key of [
-    "task.activity.user",
-    "task.activity.agent",
     "task.activity.empty",
     "task.activity.inputPlaceholder",
     "task.activity.send",
-    "task.activity.sendHint",
     "task.activity.sending",
     "task.activity.openSession",
     "task.activity.status.pending",
@@ -405,6 +438,10 @@ test("the activity i18n keys exist for both locales", () => {
     "task.activity.loadFailed",
   ]) {
     assert.equal(typeof zhCN[key], "string", `missing zh-CN key: ${key}`);
+  }
+  // 角色标签与快捷键提示是纯噪音，已随对话 UI 重建移除。
+  for (const key of ["task.activity.user", "task.activity.agent", "task.activity.sendHint"]) {
+    assert.equal(zhCN[key], undefined, `removed zh-CN key still exists: ${key}`);
   }
 });
 

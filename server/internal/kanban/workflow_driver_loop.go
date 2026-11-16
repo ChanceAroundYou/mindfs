@@ -263,12 +263,20 @@ func (s *Service) projectWorkflowTaskStatus(ctx context.Context, store *TaskStor
 	// A paused/cancelled task is the operator's state, not a derived one. Node
 	// completion may land after pause; projecting the run over it would make the
 	// pause look ignored and could restart claims on the next wake.
+	currentStatus := ""
 	if task, err := store.GetTask(ctx, run.TaskID); err == nil {
 		if task.Status == StatusPaused || isTerminalStatus(task.Status) {
 			return nil
 		}
+		currentStatus = task.Status
 	}
 	status := ProjectStatusFromRun(run)
+	// 回合已由 executeWorkflowRun 标记为 running；此刻可能还没有节点真正开跑
+	// （Router 决策/排队）。投影得到 pending 时不能把运行中的任务降级，
+	// 否则界面会在「执行中」和「待开始」之间闪。
+	if status == StatusPending && currentStatus == StatusRunning {
+		status = StatusRunning
+	}
 	if err := store.UpdateTaskStatus(ctx, run.TaskID, status, isTerminalStatus(status)); err != nil {
 		return err
 	}

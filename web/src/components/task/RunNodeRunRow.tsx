@@ -1,26 +1,14 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { sessionIconButtonStyle } from "./taskDetailStyles";
 import type { NodeRunSnapshot } from "./runTimelineTypes";
 import { nodeRunStatusColor, nodeRunStatusLabel } from "./runTimelineModel";
 import { readablePayload } from "./runTimelinePayload";
-import { formatFullTime } from "../../shared/datetime";
 
 // 运行时间线里的单个 NodeRun 行。
 //
-// 纯展示：输入/输出/错误只读渲染，session 跳转与 HumanGate 决定都通过回调交给
-// 父层。HumanGate 的两个按钮只在父层判定 isGate（节点类型 human_gate 且状态
-// waiting_user）时出现；deciding 时双禁用，避免一次点击发出两个决定。
-//
-// 输入/输出走 readablePayload：给用户看摘要、变更清单和验证结果；原始 JSON
-// 收在 details 里，需要排查时再展开。样式与对话气泡共用同一套圆角/字号/间距，
-// 避免「留言板是卡片、运行视图是 JSON 转储」的割裂感。
-
-function formatTime(value: string | undefined, locale: string): string | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
-  return Number.isNaN(ms) ? value : formatFullTime(ms, locale);
-}
+// 纯展示且刻意保持轻量：一行「状态点 + 节点名 + 状态 + 会话入口」，下面是结果、
+// 错误或人工审批按钮。不再渲染输入、原始 JSON、agent/model 与开始/结束时间；
+// 那些是调试信息，不是用户关心的「做了什么、成了没有」。
 
 export type RunNodeRunRowProps = {
   nodeRun: NodeRunSnapshot;
@@ -32,13 +20,9 @@ export type RunNodeRunRowProps = {
 };
 
 export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSession, onDecideGate }: RunNodeRunRowProps) {
-  const { t, locale } = useI18n();
-  const input = readablePayload(nodeRun.input);
+  const { t } = useI18n();
   const output = readablePayload(nodeRun.output);
   const errorText = nodeRun.error?.trim() || null;
-  const started = formatTime(nodeRun.started_at, locale);
-  const finished = formatTime(nodeRun.finished_at, locale);
-  const hasInput = input.text !== "" || input.items.length > 0 || input.fields.length > 0;
   const hasOutput = output.text !== "" || output.items.length > 0 || output.fields.length > 0;
 
   return (
@@ -47,7 +31,7 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
       data-node-run-id={nodeRun.id}
       data-node-id={nodeRun.node_id}
       data-status={nodeRun.status}
-      style={cardStyle}
+      style={rowStyle}
     >
       <div style={headerStyle}>
         <span
@@ -55,31 +39,21 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
           style={{ ...statusDotStyle, background: nodeRunStatusColor(nodeRun.status) }}
         />
         <span style={titleStyle}>{displayName}</span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: nodeRunStatusColor(nodeRun.status) }}>
+        <span style={{ fontSize: 11, color: nodeRunStatusColor(nodeRun.status), flexShrink: 0 }}>
           {nodeRunStatusLabel(nodeRun.status, t)}
         </span>
-        {nodeRun.agent ? (
-          <span style={metaStyle}>{nodeRun.agent}{nodeRun.model ? ` · ${nodeRun.model}` : ""}</span>
+        {nodeRun.session_key && onOpenSession ? (
+          <button
+            type="button"
+            title={t("task.runTimeline.openSession")}
+            aria-label={t("task.runTimeline.openSession")}
+            data-testid={`open-session-${nodeRun.id}`}
+            onClick={() => onOpenSession(nodeRun.session_key as string)}
+            style={sessionButtonStyle}
+          >
+            {t("task.runTimeline.openSession")}
+          </button>
         ) : null}
-        <span style={headerRightStyle}>
-          {started || finished ? (
-            <span style={metaStyle}>
-              {started ? t("task.runTimeline.started", { time: started }) : ""}{started && finished ? " · " : ""}{finished ? t("task.runTimeline.finished", { time: finished }) : ""}
-            </span>
-          ) : null}
-          {nodeRun.session_key && onOpenSession ? (
-            <button
-              type="button"
-              title={t("task.runTimeline.openSession")}
-              aria-label={t("task.runTimeline.openSession")}
-              data-testid={`open-session-${nodeRun.id}`}
-              onClick={() => onOpenSession(nodeRun.session_key as string)}
-              style={sessionIconButtonStyle}
-            >
-              <span style={{ fontSize: 11 }}>{t("task.runTimeline.openSession")}</span>
-            </button>
-          ) : null}
-        </span>
       </div>
 
       {isGate && onDecideGate ? (
@@ -87,7 +61,7 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
           data-testid={`human-gate-actions-${nodeRun.id}`}
           style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}
         >
-          <span style={{ fontSize: "11px", fontWeight: 700, color: nodeRunStatusColor("waiting_user") }}>
+          <span style={{ fontSize: 11, color: nodeRunStatusColor("waiting_user") }}>
             {deciding ? t("task.runTimeline.deciding") : null}
           </span>
           <button
@@ -111,135 +85,100 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
         </div>
       ) : null}
 
-      {hasInput ? (
-        <div data-testid={`node-run-input-${nodeRun.id}`} style={sectionStyle}>
-          <div style={sectionLabelStyle}>{t("task.runTimeline.input")}</div>
-          <ReadableValue payload={input} />
-          {input.raw ? (
-            <details data-testid={`node-run-input-raw-${nodeRun.id}`} style={rawDetailsStyle}>
-              <summary style={rawSummaryStyle}>{t("task.runTimeline.raw")}</summary>
-              <pre style={rawPreStyle}>{input.raw}</pre>
-            </details>
+      {hasOutput ? (
+        <div data-testid={`node-run-output-${nodeRun.id}`} style={resultStyle}>
+          {output.text ? <div style={bodyStyle}>{output.text}</div> : null}
+          {output.items.length > 0 ? (
+            <ul style={listStyle}>
+              {output.items.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          ) : null}
+          {output.fields.length > 0 ? (
+            <div style={fieldListStyle}>
+              {output.fields.map((field) => (
+                <div key={field.key} style={fieldRowStyle}>
+                  <span style={fieldKeyStyle}>{field.key}</span>
+                  <span style={fieldValueStyle}>{field.value}</span>
+                </div>
+              ))}
+            </div>
           ) : null}
         </div>
       ) : null}
 
-      {hasOutput ? (
-        <div data-testid={`node-run-output-${nodeRun.id}`} style={sectionStyle}>
-          <div style={sectionLabelStyle}>{t("task.runTimeline.result")}</div>
-          <ReadableValue payload={output} />
-        </div>
-      ) : null}
-      {output.raw ? (
-        <details data-testid={`node-run-raw-${nodeRun.id}`} style={rawDetailsStyle}>
-          <summary style={rawSummaryStyle}>{t("task.runTimeline.raw")}</summary>
-          <pre style={rawPreStyle}>{output.raw}</pre>
-        </details>
-      ) : null}
-
       {errorText ? (
-        <div role="alert" style={sectionStyle}>
-          <div style={{ ...sectionLabelStyle, color: nodeRunStatusColor("fail") }}>{t("task.runTimeline.error")}</div>
-          <pre style={{ ...rawPreStyle, color: nodeRunStatusColor("fail") }}>{errorText}</pre>
-        </div>
+        <div role="alert" style={{ ...bodyStyle, color: nodeRunStatusColor("fail") }}>{errorText}</div>
       ) : null}
     </div>
   );
 }
 
-function ReadableValue({ payload }: { payload: ReturnType<typeof readablePayload> }) {
-  return (
-    <>
-      {payload.text ? <div style={bodyStyle}>{payload.text}</div> : null}
-      {payload.items.length > 0 ? (
-        <ul style={listStyle}>
-          {payload.items.map((item, index) => (
-            <li key={index}>{item}</li>
-          ))}
-        </ul>
-      ) : null}
-      {payload.fields.length > 0 ? (
-        <div style={fieldListStyle}>
-          {payload.fields.map((field) => (
-            <div key={field.key} style={fieldRowStyle}>
-              <span style={fieldKeyStyle}>{field.key}</span>
-              <span style={fieldValueStyle}>{field.value}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </>
-  );
-}
-
 // ========== Styles ==========
 
-const cardStyle: React.CSSProperties = {
-  border: "1px solid var(--border-color)",
-  borderRadius: "10px",
-  background: "var(--panel-bg)",
-  padding: "12px",
+const rowStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: "8px",
+  gap: 4,
+  padding: "6px 0",
+  minWidth: 0,
 };
 
 const headerStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: "8px",
-  flexWrap: "wrap",
-};
-
-const headerRightStyle: React.CSSProperties = {
-  marginLeft: "auto",
-  display: "inline-flex",
-  gap: "4px",
-  alignItems: "center",
+  gap: 6,
+  minWidth: 0,
 };
 
 const statusDotStyle: React.CSSProperties = {
-  width: "8px",
-  height: "8px",
-  borderRadius: "999px",
+  width: 7,
+  height: 7,
+  borderRadius: 999,
   flexShrink: 0,
 };
 
 const titleStyle: React.CSSProperties = {
-  fontWeight: 700,
+  fontWeight: 600,
   fontSize: 13,
   color: "var(--text-color)",
+  flex: "1 1 auto",
+  minWidth: 0,
+  overflowWrap: "anywhere",
 };
 
-const metaStyle: React.CSSProperties = {
+const sessionButtonStyle: React.CSSProperties = {
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  color: "var(--accent-color)",
   fontSize: 11,
-  color: "var(--text-secondary)",
+  cursor: "pointer",
+  flexShrink: 0,
 };
 
-const sectionStyle: React.CSSProperties = {
+const resultStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: "4px",
-};
-
-const sectionLabelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  color: "var(--text-secondary)",
+  gap: 3,
+  paddingLeft: 13,
+  minWidth: 0,
 };
 
 const bodyStyle: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: 12.5,
   lineHeight: 1.5,
   color: "var(--text-color)",
   whiteSpace: "pre-wrap",
+  overflowWrap: "anywhere",
   wordBreak: "break-word",
 };
 
 const listStyle: React.CSSProperties = {
   margin: 0,
-  paddingLeft: 18,
-  fontSize: 13,
+  paddingLeft: 16,
+  fontSize: 12.5,
   lineHeight: 1.5,
   color: "var(--text-color)",
 };
@@ -247,13 +186,13 @@ const listStyle: React.CSSProperties = {
 const fieldListStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: 2,
+  gap: 1,
 };
 
 const fieldRowStyle: React.CSSProperties = {
   display: "flex",
   gap: 6,
-  fontSize: 12,
+  fontSize: 11.5,
   lineHeight: 1.5,
   minWidth: 0,
 };
@@ -266,38 +205,17 @@ const fieldKeyStyle: React.CSSProperties = {
 
 const fieldValueStyle: React.CSSProperties = {
   color: "var(--text-color)",
+  overflowWrap: "anywhere",
   wordBreak: "break-word",
-};
-
-const rawDetailsStyle: React.CSSProperties = {
-  marginTop: 2,
-};
-
-const rawSummaryStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "var(--accent-color)",
-  cursor: "pointer",
-};
-
-const rawPreStyle: React.CSSProperties = {
-  margin: "4px 0 0",
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-  fontSize: 11,
-  fontFamily: "monospace",
-  color: "var(--text-secondary)",
-  background: "var(--content-bg)",
-  borderRadius: 6,
-  padding: 8,
 };
 
 const gateApproveStyle = (deciding: boolean): React.CSSProperties => ({
   border: "1px solid var(--status-ok)",
   background: "var(--status-ok)",
   color: "var(--panel-bg)",
-  borderRadius: "6px",
+  borderRadius: 6,
   padding: "3px 10px",
-  fontSize: "11px",
+  fontSize: 11,
   fontWeight: 700,
   cursor: deciding ? "default" : "pointer",
   opacity: deciding ? 0.6 : 1,
@@ -307,9 +225,9 @@ const gateRejectStyle = (deciding: boolean): React.CSSProperties => ({
   border: "1px solid var(--status-bad)",
   background: "transparent",
   color: "var(--status-bad)",
-  borderRadius: "6px",
+  borderRadius: 6,
   padding: "3px 10px",
-  fontSize: "11px",
+  fontSize: 11,
   fontWeight: 700,
   cursor: deciding ? "default" : "pointer",
   opacity: deciding ? 0.6 : 1,

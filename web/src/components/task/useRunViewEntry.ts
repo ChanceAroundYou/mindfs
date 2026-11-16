@@ -21,11 +21,15 @@ export type RunViewState = {
   gateError: string;
   decidingNodeRunId: string;
   toggle: () => void;
-  collapse: () => void;
   decideGate: (nodeRun: NodeRunSnapshot, decision: HumanGateDecision) => Promise<void>;
 };
 
-export function useRunViewEntry(rootId: string, taskId: string, nodeId?: string): RunViewState {
+export function useRunViewEntry(
+  rootId: string,
+  taskId: string,
+  nodeId?: string,
+  refreshKey?: string,
+): RunViewState {
   const [runId, setRunId] = useState("");
   const [open, setOpen] = useState(false);
   const [run, setRun] = useState<WorkflowRunPayload | null>(null);
@@ -34,21 +38,44 @@ export function useRunViewEntry(rootId: string, taskId: string, nodeId?: string)
   const [gateError, setGateError] = useState("");
   const [decidingNodeRunId, setDecidingNodeRunId] = useState("");
   const busyRef = useRef(false);
+  const openRef = useRef(false);
+  const identityRef = useRef("");
+  const loadedRunIdRef = useRef("");
 
-  useEffect(() => {
-    let cancelled = false;
-    setRunId("");
-    setOpen(false);
-    setRun(null);
-    setNodeRuns([]);
+  const loadRun = useCallback(async () => {
+    const [runPayload, nodePayload] = await Promise.all([
+      fetchWorkflowRun(rootId, taskId, nodeId),
+      fetchWorkflowNodeRuns(rootId, taskId, nodeId),
+    ]);
+    setRun(runPayload);
+    setNodeRuns(nodePayload);
     setError("");
-    setGateError("");
-    setDecidingNodeRunId("");
-    busyRef.current = false;
+  }, [rootId, taskId, nodeId]);
+
+  // 任务身份变化（切换卡片/节点）时整体重置；refreshKey 变化只重新探测引擎。
+  // 引擎绑定在对话回合开始时才从 legacy 变成 workflow，只在挂载时探测一次会让
+  // 新建任务当场跑完 workflow 也看不到运行视图。
+  useEffect(() => {
+    const identity = `${rootId}|${taskId}|${nodeId || ""}`;
+    if (identityRef.current !== identity) {
+      identityRef.current = identity;
+      setRunId("");
+      setOpen(false);
+      openRef.current = false;
+      setRun(null);
+      setNodeRuns([]);
+      setError("");
+      setGateError("");
+      setDecidingNodeRunId("");
+      busyRef.current = false;
+      loadedRunIdRef.current = "";
+    }
+    let cancelled = false;
     fetchTaskEngine(rootId, taskId, nodeId)
       .then((engine) => {
         if (cancelled) return;
-        if (engine?.engine === "workflow" && engine.workflow_run_id) setRunId(engine.workflow_run_id);
+        const next = engine?.engine === "workflow" ? engine.workflow_run_id || "" : "";
+        setRunId(next);
       })
       .catch(() => {
         // 探测失败只意味着「没迁移过/节点不可达」，不在留言板上打扰用户。
@@ -56,28 +83,39 @@ export function useRunViewEntry(rootId: string, taskId: string, nodeId?: string)
     return () => {
       cancelled = true;
     };
-  }, [rootId, taskId, nodeId]);
+  }, [rootId, taskId, nodeId, refreshKey]);
 
-  const collapse = useCallback(() => setOpen(false), []);
+  // run 换了一条（新回合绑定）时旧数据立即作废；如果入口正展开，直接拉新 run，
+  // 否则等下次展开再取，避免折叠状态也发请求。
+  useEffect(() => {
+    if (loadedRunIdRef.current === runId) return;
+    loadedRunIdRef.current = runId;
+    setRun(null);
+    setNodeRuns([]);
+    setError("");
+    setGateError("");
+    setDecidingNodeRunId("");
+    if (!runId || !openRef.current) return;
+    let cancelled = false;
+    loadRun().catch((err) => {
+      if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, loadRun]);
 
   const toggle = useCallback(() => {
-    if (open) {
+    if (openRef.current) {
+      openRef.current = false;
       setOpen(false);
       return;
     }
+    openRef.current = true;
     setOpen(true);
     if (run || !runId) return;
-    void Promise.all([
-      fetchWorkflowRun(rootId, taskId, nodeId),
-      fetchWorkflowNodeRuns(rootId, taskId, nodeId),
-    ])
-      .then(([runPayload, nodePayload]) => {
-        setRun(runPayload);
-        setNodeRuns(nodePayload);
-        setError("");
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [open, run, runId, rootId, taskId, nodeId]);
+    void loadRun().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [run, runId, loadRun]);
 
   const decideGate = useCallback(
     async (nodeRun: NodeRunSnapshot, decision: HumanGateDecision) => {
@@ -103,5 +141,5 @@ export function useRunViewEntry(rootId: string, taskId: string, nodeId?: string)
     [rootId, taskId, nodeId],
   );
 
-  return { runId, open, run, nodeRuns, error, gateError, decidingNodeRunId, toggle, collapse, decideGate };
+  return { runId, open, run, nodeRuns, error, gateError, decidingNodeRunId, toggle, decideGate };
 }

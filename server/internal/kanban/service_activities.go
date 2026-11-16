@@ -31,6 +31,7 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	broadcaster := s.activityBroadcaster
 	s.mu.Unlock()
 	svc.SetBroadcaster(broadcaster)
+	svc.SetTurnTracker(&s.activityTurns)
 	// 装配 WorkflowRun 执行端口：通过 Service.WakeWorkflowRun 触发实际执行
 	svc.SetWorkflowExecutor(s)
 	s.mu.Lock()
@@ -47,6 +48,26 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
 	return svc, nil
+}
+
+// WaitActivityTurnsIdle 等所有由本 Service 派发的异步对话回合退出。
+// 只用于测试/停机收尾：先等回合（executeWorkflowRun）把 driver 装好，再
+// WaitWorkflowRunIdle 才有确定的等待对象，不会在 TempDir 拆掉后继续写库。
+func (s *Service) WaitActivityTurnsIdle(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		s.activityTurns.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // SetActivityBroadcaster 装配对话式活动流的广播端口（Task 7）。装配期调用一次；

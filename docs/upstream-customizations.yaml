@@ -7481,7 +7481,7 @@ groups:
       - web/tests/run-timeline-drill-in.test.ts
       - web/tests/conversation-view.test.mjs
     anchors:
-      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />'
       - 'web/src/components/task/ActivityMessage.tsx:const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";'
       - 'web/src/components/task/ActivityMessage.tsx:function parseActivityTime(value: string | undefined): number | null'
       - 'web/src/shared/datetime.ts:export function formatRelativeTime(timestamp: number, locale: string = "zh-CN"): string'
@@ -7602,7 +7602,7 @@ groups:
       - web/tests/run-timeline-drill-in.test.ts
       - server/internal/kanban/task_store_workflow_runs_test.go
     anchors:
-      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} onOpenSession={onOpenSession} />'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />'
       - 'web/src/components/task/useRunViewEntry.ts:engine?.engine === "workflow"'
       - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns('
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleTaskWorkflowRunGet('
@@ -8302,8 +8302,8 @@ groups:
       - web/tests/worktree-finish.test.mjs
     anchors:
       - 'server/internal/kanban/activity_service.go:type ActivityDirectExecutor interface {'
-      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) startDirectAgent('
-      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) executeDirectActivity('
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) startDirectAgent('
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) executeDirectActivity('
       - 'server/internal/api/appcontext_activity.go:func (s *AppContext) RunDirectActivity('
       - 'server/internal/api/appcontext_activity.go:return s.runWorkflowTurn(ctx, req)'
       - 'server/internal/api/appcontext_activity.go:func pickDefaultAgent('
@@ -8553,8 +8553,8 @@ groups:
   - id: G-LU
     title: 工作流结果摘要与运行视图中文化
     kind: fix
-    symptom: "任务只有一句「已完成 <workflow>」，没有把 Agent 的总结发回对话；展开运行视图后输入/输出是一大段 JSON 转储（prompt/{previous_input}、changes、outcome、verification），既看不懂也和对话气泡风格割裂。现在工作流回复会从节点输出里提取 summary，或把 changes 字符串数组渲染成变更清单；运行视图把输入/输出拆成可读正文、变更列表和验证项，原始 JSON 收进 details 折叠区，并用与对话气泡一致的圆角/字号/间距。"
-    why: "必须保留：① 节点输出里的 summary 由 Router 结果转换器保证（执行节点只写自然语言，见 G-LD），否则模型只返回结构化字段时任务对话没有可读结果；② 回复摘要优先 canonical 字段（summary/message/text/result/title/detail），其次 changes 字符串数组，最后才按 key 渲染其它字符串；outcome/reason/worktree_* 是簿记字段，永远不进正文；③ 运行视图的 input/output 必须走 readablePayload，原始 JSON 只放在 details 里，不得恢复成无条件的 JSON.stringify；④ 升级前已结算的空 summary 回复由启动对账补一次（只补 completed + run_id 非空 + summary 为空，幂等）；⑤ 运行视图卡片复用对话气泡的 10px 圆角、12px 内边距、13px 正文，不再另造一套字号与间距。"
+    symptom: "任务只有一句「已完成 <workflow>」，没有把 Agent 的总结发回对话；展开运行视图后输入/输出是一大段 JSON 转储（prompt/{previous_input}、changes、outcome、verification），既看不懂也和对话气泡风格割裂。现在工作流回复会从节点输出里提取 summary，或把 changes 字符串数组渲染成变更清单；运行视图把输出拆成可读正文、变更列表和验证项，并用与对话气泡一致的圆角/字号/间距；输入、时间戳和原始 JSON 在简化后不再展示。"
+    why: "必须保留：① 节点输出里的 summary 由 Router 结果转换器保证（执行节点只写自然语言，见 G-LD），否则模型只返回结构化字段时任务对话没有可读结果；② 回复摘要优先 canonical 字段（summary/message/text/result/title/detail），其次 changes 字符串数组，最后才按 key 渲染其它字符串；outcome/reason/worktree_* 是簿记字段，永远不进正文；③ 运行视图的输出必须走 readablePayload，只展示可读正文/变更清单/验证项，不再展示 input、原始 JSON 或时间戳，也不得恢复成 JSON.stringify 转储；④ 升级前已结算的空 summary 回复由启动对账补一次（只补 completed + run_id 非空 + summary 为空，幂等）；⑤ 运行视图卡片复用对话气泡的 10px 圆角、12px 内边距、13px 正文，不再另造一套字号与间距。"
     boundary: "只改工作流回复摘要与运行视图展示层；不动 workflow 引擎/DAG/Loop/HumanGate 状态机、不动活动数据源、不把节点 output 当正文直接转储。"
     files:
       - server/internal/kanban/service_activities.go
@@ -8580,7 +8580,6 @@ groups:
       - 'server/internal/api/workflow_output.go:func (s *AppContext) normalizeWorkflowNodeOutput('
       - 'web/src/components/task/runTimelinePayload.ts:export function readablePayload('
       - 'web/src/components/task/RunNodeRunRow.tsx:data-testid={`node-run-output-${nodeRun.id}`}'
-      - 'web/src/components/task/RunNodeRunRow.tsx:data-testid={`node-run-raw-${nodeRun.id}`}'
 
   - id: G-LV
     title: workflow 自动选择接入 Router 模型
@@ -8605,3 +8604,71 @@ groups:
       - 'server/internal/api/usecase/session_authoring.go:func RunOneShotPrompt('
       - 'server/app/workspace_build.go:services.Kanban.SetWorkflowLLM('
       - 'server/app/workspace.go:WorkflowLLM:   api.NewWorkflowLLMClient('
+
+  - id: G-LW
+    title: 任务对话界面按会话样式重做与运行状态投影修正
+    kind: fix
+    symptom: "任务明明在直连回复或 Router 决策，左上角仍显示「待开始」；对话界面有「用户 / Agent」角色标签、头像与 emoji 状态图标，Agent 回复还套一个卡片，不像会话界面；工作流页脚显示内部版本号 `wf-xxx:v1`；运行视图展开后是输入/原始 JSON/时间戳和「返回留言板」按钮，信息密度过高；新建任务当场跑完 workflow 后看不到运行视图，因为入口只在挂载时探测一次引擎绑定。"
+    why: "必须保留：① 直连回合开始时把任务投影为 running、结束时恢复原空闲状态，workflow 回合在唤醒执行层前就把任务置为 running；暂停/终态不得被回合启动复活，已在 running 的任务不得被直连恢复写成 pending；② workflow 投影得到 pending 时不得把 running 任务降级，避免 Router 决策期间任务头闪回；③ 异步启动写 running 使用 MarkRunningIfActive 条件更新，late-start 不能覆盖已经 completed/failed 的活动；④ 用户留言复用会话界面的右对齐灰底气泡与 InlineTokenText，Agent 回复无框 Markdown + 页脚状态/友好工作流名/时间/会话入口，不渲染角色标签、头像、emoji 或版本 id；⑤ 运行视图只保留节点名、状态、可读结果、错误与审批动作，输入、原始 JSON、时间戳和「返回留言板」已删除；⑥ 工作流页脚只显示 workflow 名字（`workflow_version_id` 去掉 `:vN` 后按控制面列表映射），查不到名字时宁可不显示，也不泄露版本 id；⑦ 引擎绑定会在对话回合里从 legacy 变成 workflow，运行视图入口必须随任务头更新重新探测，不能只在挂载时查一次（否则新建任务跑完 workflow 也没有入口）；⑧ 活动回合是异步 goroutine，必须先等回合退出（driver 已注册）再等 driver 空闲，测试收尾否则会在 TempDir 删除后继续写库。"
+    boundary: "只改任务对话/运行视图的展示、任务状态投影与活动状态竞态；不改 Router P0 决策语义、不改 workflow 引擎/DAG/Loop/HumanGate 状态机、不改活动数据源与多节点合并规则，也不处理 HumanGate 审批卡与运行视图审批按钮的功能性重复。"
+    files:
+      - server/internal/api/ws_test.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_service_task_status.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/activity_store_running.go
+      - server/internal/kanban/activity_store_running_test.go
+      - server/internal/kanban/activity_task_status_test.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/workflow_driver_loop.go
+      - web/src/components/task/ActivityInput.tsx
+      - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/RunNodeRunRow.tsx
+      - web/src/components/task/RunTimeline.tsx
+      - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/WorkflowSelector.tsx
+      - web/src/components/task/runTimelineModel.ts
+      - web/src/components/task/runTimelinePayload.ts
+      - web/src/components/task/runTimelineTypes.ts
+      - web/src/components/task/useRunViewEntry.ts
+      - web/src/components/task/useWorkflowNames.ts
+      - web/src/shared/workflowDisplay.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/tests/conversation-view.test.mjs
+      - web/tests/run-timeline-drill-in.test.ts
+      - web/tests/run-timeline-human-gate.test.mjs
+      - web/tests/run-timeline-readable.test.mjs
+      - web/tests/workflow-selector.test.mjs
+    tests:
+      - server/internal/kanban/activity_store_running_test.go
+      - server/internal/kanban/activity_task_status_test.go
+      - server/internal/api/ws_test.go
+      - web/tests/conversation-view.test.mjs
+      - web/tests/run-timeline-drill-in.test.ts
+      - web/tests/run-timeline-human-gate.test.mjs
+      - web/tests/run-timeline-readable.test.mjs
+      - web/tests/workflow-selector.test.mjs
+    anchors:
+      - 'server/internal/kanban/activity_service_task_status.go:func (s *ActivityService) beginTurnTaskStatus('
+      - 'server/internal/kanban/activity_service_task_status.go:func (s *ActivityService) markTurnTaskRunning('
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) executeDirectActivity('
+      - 'server/internal/kanban/activity_service_turns.go:s.markTurnTaskRunning(ctx, task.ID)'
+      - 'server/internal/kanban/activity_store_running.go:func (s *ActivityStore) MarkRunningIfActive('
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) runTurn('
+      - 'server/internal/kanban/service_activities.go:func (s *Service) WaitActivityTurnsIdle('
+      - 'server/internal/kanban/service_activities.go:svc.SetTurnTracker(&s.activityTurns)'
+      - 'server/internal/kanban/workflow_driver_loop.go:if status == StatusPending && currentStatus == StatusRunning {'
+      - 'server/internal/api/ws_test.go:svc.WaitWorkflowRunIdle(waitCtx, root.ID, detail.Task.ID)'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-footer"'
+      - 'web/src/components/task/ActivityMessage.tsx:workflowDisplayName(activity.workflow_version_id, workflowNames)'
+      - 'web/src/components/task/useWorkflowNames.ts:export function useWorkflowNames('
+      - 'web/src/shared/workflowDisplay.ts:export function workflowDisplayName('
+      - 'web/src/components/task/WorkflowSelector.tsx:const triggerLabel ='
+      - 'web/src/components/task/RunTimeline.tsx:if (list.length === 0) {'
+      - 'web/src/components/task/RunNodeRunRow.tsx:data-testid={`node-run-output-${nodeRun.id}`}'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry'
+      - 'web/src/components/task/TaskDetailPanel.tsx:refreshKey={task.updated_at}'

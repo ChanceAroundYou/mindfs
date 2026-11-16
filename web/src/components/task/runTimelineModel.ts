@@ -52,7 +52,8 @@ export function nodeRunStatusLabel(
   return key ? t(key) : taskStatusLabel(status, t);
 }
 
-export function runNodeKinds(graph: RunGraphLike): Record<string, string> {  const kinds: Record<string, string> = {};
+export function runNodeKinds(graph: RunGraphLike): Record<string, string> {
+  const kinds: Record<string, string> = {};
   for (const node of graph?.nodes ?? []) {
     if (!node?.id || !node.kind) continue;
     kinds[node.id] = node.kind;

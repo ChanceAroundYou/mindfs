@@ -5,10 +5,13 @@ import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
 import { pendingTaskPrompt } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
+import { useWorkflowNames } from "./useWorkflowNames";
 
 export type ConversationMessagesProps = {
   activities: TaskActivity[];
   rootId?: string;
+  /** workflow id → 友好名；页脚显示名字而不显示版本 id。 */
+  workflowNames?: Record<string, string> | null;
   paused?: boolean;
   promptDeciding?: boolean;
   promptError?: string | null;
@@ -35,6 +38,7 @@ export type ConversationMessagesProps = {
 export function ConversationMessages({
   activities,
   rootId,
+  workflowNames,
   paused = false,
   promptDeciding = false,
   promptError = null,
@@ -95,6 +99,7 @@ export function ConversationMessages({
           key={activity.id}
           activity={activity}
           rootId={rootId}
+          workflowNames={workflowNames}
           paused={paused}
           promptDeciding={promptDeciding}
           promptError={promptError}
@@ -159,6 +164,7 @@ export function ConversationView({
   const [choice, setChoice] = useState<WorkflowChoice>("empty");
   const [versionId, setVersionId] = useState("");
   const [composerResetKey, setComposerResetKey] = useState(0);
+  const workflowNames = useWorkflowNames();
   const pendingPrompt = pendingTaskPrompt(activities);
   const lastAgentReplyRef = useRef("");
 
@@ -202,6 +208,7 @@ export function ConversationView({
       <ConversationMessages
         activities={activities}
         rootId={rootId}
+        workflowNames={workflowNames}
         paused={paused}
         promptDeciding={promptDeciding}
         promptError={promptError}

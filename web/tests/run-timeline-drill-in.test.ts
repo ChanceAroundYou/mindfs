@@ -22,13 +22,13 @@ test("run-timeline-drill-in", async () => {
   const component = read("../src/components/task/RunTimeline.tsx");
   const detailPanel = read("../src/components/task/TaskDetailPanel.tsx");
 
-  // ── 层级契约：下钻子视图，不是平级 tab ──────────────────────────────
-  // 组件自己声明层级：data-drill-in 标记 + 返回留言板的入口。没有返回口的“下钻”
-  // 会被误当成又一级导航。
+  // ── 层级契约：对话流的下钻子视图 ──────────────────────────────────────
+  // 组件自己声明层级：data-drill-in 标记。返回留言板的按钮已删除——运行视图
+  // 就挂在对话流里，去掉按钮不会让人迷路，反而少一个无意义控件。
   assert.match(component, /data-drill-in="comment-run"/, "RunTimeline must declare it is a drill-in of a comment run");
   assert.match(component, /data-testid="run-timeline"/, "RunTimeline root must be identifiable");
-  assert.match(component, /onBackToComments/, "drill-in must offer a way back to the comment board");
-  assert.match(component, /task\.runTimeline\.backToComments/, "back navigation must be labelled via i18n");
+  assert.doesNotMatch(component, /onBackToComments|backToComments|run-timeline-back/, "the back-to-comments control is gone");
+  assert.doesNotMatch(component, /run\.id|run\.version|run\.revision/, "the run id/version header is gone");
 
   // 不得与留言板平级：a) 组件文件里不得出现 tab 语义（注释除外：说明层级的
   // 纪律性注释含“平级 tab”字样是允许的，断言只查代码）；b) TaskDetailPanel 不得
@@ -48,9 +48,8 @@ test("run-timeline-drill-in", async () => {
   // session 跳转走回调，不自己路由。
   assert.match(component, /onOpenSession/, "session jump must go through the onOpenSession callback");
 
-  // ── 渲染：run + node run 状态/输入/输出/错误/session 跳转 ──────────────
+  // ── 渲染：节点状态/结果/错误/session 跳转（输入与原始 JSON 已删除） ─────
   const html = renderTimeline({
-    run: { id: "run-1", version: "wf1:v3", revision: 2 },
     nodeNames: { n1: "研究", n2: "汇总" },
     nodeRuns: [
       {
@@ -75,26 +74,24 @@ test("run-timeline-drill-in", async () => {
       },
     ],
     onOpenSession: () => {},
-    onBackToComments: () => {},
   });
 
   assert.match(html, /data-drill-in="comment-run"/, "rendered output must carry the drill-in marker");
-  assert.match(html, /run-1/, "run id must be shown");
-  assert.match(html, /wf1:v3/, "run version must be shown");
   assert.match(html, /研究/, "node display name must be used when provided");
   assert.match(html, /汇总/, "second node name must be shown");
-  assert.match(html, /success/, "success status must be shown");
-  assert.match(html, /fail/, "fail status must be shown");
-  assert.match(html, /天气/, "node input must be shown");
-  assert.match(html, /晴/, "node output must be shown");
+  assert.match(html, /data-status="success"/, "success status must be kept on the row");
+  assert.match(html, /data-status="fail"/, "fail status must be kept on the row");
+  assert.match(html, /晴/, "node result must be shown");
   assert.match(html, /超时/, "node error must be shown");
-  assert.match(html, /sess-abc|打开会话|Open session/, "session jump affordance must appear for nodes with a session_key");
-  assert.match(html, /返回留言板|Back to comments/, "back-to-comments must be rendered when the callback is provided");
+  assert.doesNotMatch(html, /天气/, "node input is no longer shown");
+  assert.doesNotMatch(html, /run-1/, "run id is no longer shown");
+  assert.doesNotMatch(html, /wf1:v3|r2/, "run version/revision are no longer shown");
   assert.match(html, /data-testid="open-session-nr-1"/, "session button must be keyed by node run id");
+  assert.match(html, /打开会话|Open session/, "session jump affordance must appear for nodes with a session_key");
+  assert.doesNotMatch(html, /返回留言板|Back to comments/, "the back-to-comments control is gone");
 
   // 失败节点没有 session_key 时不得出现跳转按钮（避免点进去 404）。
   const noSessionHtml = renderTimeline({
-    run: { id: "run-2" },
     nodeRuns: [{ id: "nr-3", node_id: "n9", status: "running" }],
     onOpenSession: () => {},
   });
@@ -102,35 +99,39 @@ test("run-timeline-drill-in", async () => {
   assert.match(noSessionHtml, /n9/, "node_id fallback must be shown when no display name is provided");
 
   // 空态：没有 node run 时明确提示，不渲染空列表。
-  const emptyHtml = renderTimeline({ run: { id: "run-3" }, nodeRuns: [] });
+  const emptyHtml = renderTimeline({ nodeRuns: [] });
   assert.match(emptyHtml, /尚无节点执行记录|No node runs/, "empty node runs must show an explicit empty state");
 
   // Unknown 是「无法判定」，运行视图不得把它画成成功。
   const unknownHtml = renderTimeline({
-    run: { id: "run-4" },
     nodeRuns: [{ id: "nr-unknown", node_id: "n4", status: "unknown", output: { outcome: "unknown" } }],
   });
   assert.match(unknownHtml, /data-status="unknown"/, "unknown node run must keep its own status");
   assert.doesNotMatch(unknownHtml, /data-status="success"/, "unknown must never be rendered as success");
 
-  // 没有 run 时不崩。
-  const noRunHtml = renderTimeline({ run: null, nodeRuns: [] });
-  assert.match(noRunHtml, /暂无运行|No run yet/, "missing run must show an explicit state");
-
   // ── i18n 键齐全 ──────────────────────────────────────────────────────
   const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
   const en = read("../src/i18n/locales/en-US-tasks.ts");
   for (const key of [
-    "task.runTimeline.backToComments",
-    "task.runTimeline.noRun",
     "task.runTimeline.empty",
-    "task.runTimeline.input",
-    "task.runTimeline.output",
-    "task.runTimeline.error",
     "task.runTimeline.openSession",
   ]) {
     assert.ok(zh.includes(`"${key}"`), `zh-CN must define ${key}`);
     assert.ok(en.includes(`"${key}"`), `en-US must define ${key}`);
+  }
+  for (const key of [
+    "task.runTimeline.backToComments",
+    "task.runTimeline.noRun",
+    "task.runTimeline.input",
+    "task.runTimeline.output",
+    "task.runTimeline.raw",
+    "task.runTimeline.runLabel",
+    "task.runTimeline.started",
+    "task.runTimeline.finished",
+    "task.runTimeline.error",
+  ]) {
+    assert.ok(!zh.includes(`"${key}"`), `zh-CN must drop ${key}`);
+    assert.ok(!en.includes(`"${key}"`), `en-US must drop ${key}`);
   }
 });
 
@@ -156,9 +157,13 @@ test("任务详情面板只挂一条对话流，且保留运行视图入口", ()
   assert.match(hook, /engine\?\.engine === "workflow"/);
   assert.match(hook, /workflow_run_id/);
   assert.match(entry, /if \(!runId\) return null;/);
-  // 收起即回到留言板（同层折叠，不跳页）。
-  assert.ok(entry.includes("onBackToComments={collapse}"), "收起必须回到留言板（同一层级折叠）");
+  // 运行视图就在对话流里，不再提供「返回留言板」的折叠入口。
+  assert.doesNotMatch(entry, /onBackToComments/, "the back-to-comments wiring is gone");
   // 取数必须显式传 nodeId（跨节点铁律：不传会静默打激活节点）。
   assert.ok(hook.includes("fetchTaskEngine(rootId, taskId, nodeId)"));
   assert.ok(hook.includes("fetchWorkflowRun(rootId, taskId, nodeId)"));
+  // 引擎绑定在对话回合里才会从 legacy 变成 workflow；入口只在挂载时探测一次，
+  // 新建任务当场跑完 workflow 也永远看不到运行视图。任务头更新时要重新探测。
+  assert.match(panel, /refreshKey=\{task\.updated_at\}/, "task updates must re-probe the engine");
+  assert.match(hook, /refreshKey/, "the hook must react to the refresh key");
 });

@@ -64,9 +64,9 @@ func TestRouterMigrationIdempotent(t *testing.T) {
 // fakeRouterAgent 模拟一次真实 Router 回合：调用 router_say 写工具，并返回
 // 同一段文本；这样工具收集、校验、记账都走生产路径。
 type fakeRouterAgent struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	requests []RouterAgentRequest
-	action  string
+	action   string
 }
 
 func (f *fakeRouterAgent) RunRouterTurn(ctx context.Context, req RouterAgentRequest) (RouterAgentResult, error) {
@@ -441,7 +441,7 @@ func TestRouterDecisionStoreRoundTrip(t *testing.T) {
 	store := NewRouterStore(f.tasks.db)
 	decision := &RouterDecision{
 		ID: "d1", TaskID: "task-1", RootID: f.root.ID, TurnID: "t1",
-		Status: RouterDecisionShadow,
+		Status:       RouterDecisionShadow,
 		LegacyAction: &RouterLegacyAction{Kind: "direct"},
 	}
 	if err := store.InsertDecision(context.Background(), decision); err != nil {

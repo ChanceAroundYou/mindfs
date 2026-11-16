@@ -14,9 +14,9 @@ function renderTimeline(props) {
 // 运行视图是给人看的“这次到底做了什么”，不是节点 JSON 转储。
 // 真实样本（任务 #66）：output 只有 changes 字符串数组 + outcome + verification，
 // 直接 JSON.stringify 出来就是用户说的“一堆莫名其妙的东西”。
-test("run node renders readable input/output and keeps raw JSON behind a toggle", () => {
+// 简化后只保留结果本身：输入、原始 JSON、时间戳都不再渲染。
+test("run node renders only the readable result; prompts and raw JSON are gone", () => {
   const html = renderTimeline({
-    run: { id: "run-readable" },
     nodeRuns: [
       {
         id: "nr-readable",
@@ -34,24 +34,23 @@ test("run node renders readable input/output and keeps raw JSON behind a toggle"
     ],
   });
 
-  assert.match(html, /data-testid="node-run-input-nr-readable"/, "input needs a readable block");
+  assert.doesNotMatch(html, /node-run-input-/, "input blocks are gone");
+  assert.doesNotMatch(html, /把工作流页顶部的重复按钮去掉/, "prompts are not shown");
   assert.match(html, /data-testid="node-run-output-nr-readable"/, "output needs a readable block");
-  assert.match(html, /把工作流页顶部的重复按钮去掉/, "input prompt must be shown as text");
   assert.match(html, /去掉与发布重复的按钮/, "first change must be shown");
   assert.match(html, /新增删除工作流入口/, "second change must be shown");
-  const readable = html.split('data-testid="node-run-raw-')[0];
-  assert.match(readable, />go_tests</, "verification keys must be readable");
-  assert.match(readable, />pass</, "verification values must be readable");
-  assert.match(readable, /616 passed/, "verification values must be readable");
+  assert.match(html, />go_tests</, "verification keys must be readable");
+  assert.match(html, />pass</, "verification values must be readable");
+  assert.match(html, /616 passed/, "verification values must be readable");
 
-  assert.doesNotMatch(readable, /"changes"/, "raw JSON keys must not appear in the readable block");
-  assert.doesNotMatch(readable, /"outcome"/, "envelope metadata must not appear in the readable block");
-  assert.match(html, /<details[^>]*data-testid="node-run-raw-nr-readable"/, "raw payload stays available behind details");
+  assert.doesNotMatch(html, /"changes"/, "raw JSON keys must not appear");
+  assert.doesNotMatch(html, /"outcome"/, "envelope metadata must not appear");
+  assert.doesNotMatch(html, /node-run-raw-/, "raw payload details are gone");
+  assert.doesNotMatch(html, /原始数据|Raw data/, "no raw-data toggle remains");
 });
 
-test("string payloads remain readable and empty metadata does not add noise", () => {
+test("empty metadata adds no readable rows and string input stays hidden", () => {
   const html = renderTimeline({
-    run: { id: "run-string" },
     nodeRuns: [
       {
         id: "nr-string",
@@ -64,8 +63,7 @@ test("string payloads remain readable and empty metadata does not add noise", ()
       },
     ],
   });
-  assert.match(html, /直接输入/, "string input must stay visible");
-  const readable = html.split('data-testid="node-run-raw-')[0];
-  assert.doesNotMatch(readable, /outcome/, "empty/metadata-only output adds no readable rows");
-  assert.doesNotMatch(readable, /reason/, "empty reason adds no readable rows");
+  assert.doesNotMatch(html, /直接输入/, "string input is no longer rendered");
+  assert.doesNotMatch(html, /outcome/, "empty/metadata-only output adds no readable rows");
+  assert.doesNotMatch(html, /reason/, "empty reason adds no readable rows");
 });
