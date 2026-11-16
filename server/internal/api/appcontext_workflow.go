@@ -109,12 +109,13 @@ func (s *AppContext) EnsureWorkflowNodeSession(ctx context.Context, exec kanban.
 	return created.Key, nil
 }
 
-// RunWorkflowNode runs the node's turn and parses D5's strict JSON envelope.
+// RunWorkflowNode runs the node's turn and hands its natural-language reply to
+// the Router's result normalizer.
 //
-// A transport error (send failed) is returned as error. A completed turn whose
-// answer is not a valid envelope returns Outcome=Unknown with a reason and nil
-// error: D5 requires the NodeRun to become waiting_user, not fail, and the
-// driver must never guess an outcome from prose.
+// The worker is not asked to emit a machine-readable envelope. A transport
+// error (send failed) is returned as error. A completed turn is normalized to
+// outcome/summary by the Router layer; an empty reply becomes silent so the
+// driver parks as waiting_user instead of guessing success.
 func (s *AppContext) RunWorkflowNode(ctx context.Context, exec kanban.WorkflowNodeExecution) (kanban.WorkflowNodeResult, error) {
 	if strings.TrimSpace(exec.RootID) == "" {
 		return kanban.WorkflowNodeResult{}, errors.New("root_id required")
@@ -138,35 +139,30 @@ func (s *AppContext) RunWorkflowNode(ctx context.Context, exec kanban.WorkflowNo
 		Effort:          profile.Effort,
 		FastService:     normalizeFastServiceValue(profile.FastService),
 		PlanMode:        profile.PlanMode,
-		Prompt:          exec.Prompt + kanban.BuildWorkflowNodeOutputContract(exec.Node.ID),
+		Prompt:          exec.Prompt,
 	}
 	text, err := s.runWorkflowTurn(ctx, req)
 	finished := time.Now().UTC()
-	result := kanban.WorkflowNodeResult{
-		Outcome:    kanban.WorkflowNodeUnknown,
-		SessionKey: req.SessionKey,
-		StartedAt:  started,
-		FinishedAt: finished,
-	}
 	if err != nil {
-		result.Reason = err.Error()
-		return result, err
+		return kanban.WorkflowNodeResult{
+			Outcome:    kanban.WorkflowNodeUnknown,
+			SessionKey: req.SessionKey,
+			Reason:     err.Error(),
+			StartedAt:  started,
+			FinishedAt: finished,
+		}, err
 	}
-	parsed, perr := kanban.ParseWorkflowNodeEnvelope(text)
-	if perr != nil {
-		result.Reason = perr.Error()
-		return result, nil
-	}
-	parsed.SessionKey = req.SessionKey
-	parsed.StartedAt = started
-	parsed.FinishedAt = finished
-	return parsed, nil
+	result := s.normalizeWorkflowNodeOutput(ctx, exec, text)
+	result.SessionKey = req.SessionKey
+	result.StartedAt = started
+	result.FinishedAt = finished
+	return result, nil
 }
 
 // SendWorkflowComment delivers a queued user comment as a normal continuation
-// turn. Unlike RunWorkflowNode it deliberately does not append the JSON-output
-// contract and does not parse the assistant text: the user is talking to the
-// session, not asking the node for a machine-readable result.
+// turn. Unlike RunWorkflowNode it does not normalize the assistant text into a
+// workflow result: the user is talking to the session, not asking the node for
+// a work outcome.
 func (s *AppContext) SendWorkflowComment(ctx context.Context, exec kanban.WorkflowNodeExecution, message string) error {
 	if strings.TrimSpace(exec.RootID) == "" {
 		return errors.New("root_id required")

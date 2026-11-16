@@ -49,6 +49,9 @@ func (s *Service) RecoverOnStartupForRoot(ctx context.Context, rootID string, pr
 	plan.ResumeNodeRunIDs = append(plan.ResumeNodeRunIDs, wfPlan.ResumeNodeRunIDs...)
 	plan.UnknownIDs = append(plan.UnknownIDs, wfPlan.UnknownIDs...)
 	plan.NeedsUser = plan.NeedsUser || wfPlan.NeedsUser
+	// 升级前已结算的回复可能只有「已完成 <workflow>」：用已落库的 NodeRun 输出
+	// 重算一次可读 summary。幂等，只补空 summary 的 completed 行。
+	s.backfillWorkflowReplySummaries(ctx, store)
 	if plan.NeedsUser {
 		for _, id := range plan.UnknownIDs {
 			// 可确定性地拿到 task_id 就置 waiting_user；拿不到就只保留 unknown 标记，

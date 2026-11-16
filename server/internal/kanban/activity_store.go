@@ -245,6 +245,30 @@ func (s *ActivityStore) ActivityByRunID(ctx context.Context, runID string) (*Tas
 	return activity, nil
 }
 
+// CompletedWorkflowRepliesWithoutSummary 找已经结算成 completed、但 summary 为空
+// 的 workflow 回复。升级前的结果摘要只认 canonical 字段，changes 数组的产出会
+// 落成空 summary；启动对账用这批行补一次，避免历史任务永远只显示「已完成」。
+func (s *ActivityStore) CompletedWorkflowRepliesWithoutSummary(ctx context.Context) ([]*TaskActivity, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities
+		 WHERE type = ? AND status = ? AND run_id <> '' AND summary = ''
+		 ORDER BY created_at ASC, rowid ASC`,
+		ActivityTypeAgentReply, ActivityStatusCompleted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []*TaskActivity{}
+	for rows.Next() {
+		activity, err := scanActivityRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, activity)
+	}
+	return items, rows.Err()
+}
+
 // QuestionByToolUseID 按会话 + tool_use_id 找对应的任务提问卡。回答可以从任务
 // 对话或会话查看器任一侧发起，两处必须落到同一张卡上，所以这是点查而不是列表过滤。
 func (s *ActivityStore) QuestionByToolUseID(ctx context.Context, sessionKey, toolUseID string) (*TaskActivity, error) {

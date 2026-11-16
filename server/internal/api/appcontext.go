@@ -55,6 +55,9 @@ type AppContext struct {
 	// workflowTurnOverride 是 Workflow NodeRun 执行的单测接缝：不启动真实 CLI，
 	// 只验证 adapter 选中的 agent/model/session 与结果解析。生产装配恒为 nil。
 	workflowTurnOverride func(ctx context.Context, req workflowTurnRequest) (string, error)
+	// workflowOutputLLM 是 Router 的结果转换器：执行节点只写自然语言，由它把
+	// 原文整理成引擎需要的 outcome/summary。与 Router 共用 agent/model。
+	workflowOutputLLM kanban.LLMClient
 	// workflowAuthoringOverride 是 Agent 提案生成的单测接缝。它只影响生成文本，
 	// 校验、diff、dry-run 仍走生产路径；生产装配恒为 nil。
 	workflowAuthoringOverride func(ctx context.Context, req workflowAuthoringRequest) (string, error)

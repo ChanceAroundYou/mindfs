@@ -99,6 +99,36 @@ func setupActivityService(t *testing.T) *activityServiceFixture {
 	return &activityServiceFixture{service: svc, tasks: tasks, workflows: workflows, root: root, broadcast: broadcast}
 }
 
+// ActivityServiceForRoot 必须把装配好的 workflow LLM 传给推荐器；否则任务创建
+// 永远走「第一个可用 workflow」的默认路径，自动选择等于没实现。
+func TestServiceActivityServiceForRootWiresWorkflowLLM(t *testing.T) {
+	f := setupActivityService(t)
+	svc := NewService(testRoots{root: f.root})
+	svc.Workflows = f.workflows
+	svc.SetWorkflowLLM(fakeWorkflowLLM{response: `{"workflow_id":"workflow-feature","reason":"新需求","match_score":0.9}`})
+
+	activitySvc, err := svc.ActivityServiceForRoot(f.root.ID)
+	if err != nil {
+		t.Fatalf("ActivityServiceForRoot: %v", err)
+	}
+	rec, err := activitySvc.recommender.RecommendWorkflow(context.Background(), "新增一个页面")
+	if err != nil {
+		t.Fatalf("RecommendWorkflow: %v", err)
+	}
+	if rec.WorkflowID != "workflow-feature" {
+		t.Fatalf("workflow_id = %q, want workflow-feature (LLM must be wired)", rec.WorkflowID)
+	}
+}
+
+type fakeWorkflowLLM struct {
+	response string
+	err      error
+}
+
+func (f fakeWorkflowLLM) Call(context.Context, string) (string, error) {
+	return f.response, f.err
+}
+
 func TestActivityService_CreateUserActivity_WithWorkflow(t *testing.T) {
 	ctx := context.Background()
 	f := setupActivityService(t)
@@ -424,6 +454,23 @@ func TestWorkflowReplySummaryUsesReadableOutputText(t *testing.T) {
 		{name: "envelope outcome is metadata", output: map[string]any{"outcome": "done", "sentence": "本次演示已完成"}, want: "本次演示已完成"},
 		{name: "empty reason is metadata", output: map[string]any{"outcome": "done", "reason": "", "note": "只有这句"}, want: "只有这句"},
 		{name: "worktree error is metadata", output: map[string]any{"outcome": "done", "worktree_error": "merge failed", "note": "结果"}, want: "结果"},
+		// 真实样本（2026-11-16 任务 #66）：模型把结果放在 changes 字符串数组里，
+		// 顶层只有 outcome 元数据和 verification 对象。数组不能参与「输出原样
+		// JSON」的转储，但每条都是给人看的变更说明，必须成为这一轮的总结。
+		{
+			name: "changes list becomes the summary",
+			output: map[string]any{
+				"changes":      []any{"去掉与发布重复的按钮", "新增删除工作流入口"},
+				"outcome":      "done",
+				"verification": map[string]any{"go_tests": "pass", "web_tests": "pass"},
+			},
+			want: "• 去掉与发布重复的按钮\n• 新增删除工作流入口",
+		},
+		{
+			name:   "single change item",
+			output: map[string]any{"changes": []string{"只改了一处"}, "outcome": "done"},
+			want:   "• 只改了一处",
+		},
 		{name: "never raw json", output: map[string]any{"files": []any{"a.ts"}, "count": float64(2)}, want: ""},
 		// 真实样本：节点 output 没有 canonical 键时，把文本字段按 key 列出来；
 		// 只报一句、或用「最长」猜一条都会丢掉模型实际汇报的另一个要点。
@@ -445,6 +492,46 @@ func TestWorkflowReplySummaryUsesReadableOutputText(t *testing.T) {
 				t.Fatalf("summary = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// 旧版本已经结算过的回复（summary 为空）在升级后打开仍应看到结果，而不是
+// 永远停在「已完成 <workflow>」。启动恢复只补这一类行，且幂等。
+func TestBackfillWorkflowReplySummariesForCompletedRuns(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	run, act := f.seedRunState(t, NodeRunSuccess, NodeRunSuccess, StatusSuccess)
+	if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
+		ID: run.ID + ":agent-1::1:1", RunID: run.ID, NodeID: "agent-1",
+		Attempt: 1, Status: NodeRunSuccess, FinishedAt: time.Now().UTC(),
+		Output: map[string]any{"changes": []any{"修复了 A", "补了 B"}, "outcome": "done"},
+	}); err != nil {
+		t.Fatalf("UpsertWorkflowNodeRun: %v", err)
+	}
+	empty := ""
+	if err := f.service.activities.UpdateStatus(ctx, act.ID, ActivityStatusCompleted, &empty); err != nil {
+		t.Fatalf("seed empty summary: %v", err)
+	}
+
+	svc := NewService(testRoots{root: f.root})
+	svc.backfillWorkflowReplySummaries(ctx, f.tasks)
+
+	stored, err := f.service.activities.Get(ctx, act.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if stored.Summary != "• 修复了 A\n• 补了 B" {
+		t.Fatalf("summary = %q, want readable changes", stored.Summary)
+	}
+
+	// 二次执行不再改行（幂等）。
+	svc.backfillWorkflowReplySummaries(ctx, f.tasks)
+	again, err := f.service.activities.Get(ctx, act.ID)
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if again.Summary != stored.Summary || !again.UpdatedAt.Equal(stored.UpdatedAt) {
+		t.Fatalf("backfill must be idempotent: before=%#v after=%#v", stored, again)
 	}
 }
 

@@ -23,7 +23,10 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	if err != nil {
 		return nil, err
 	}
-	svc := NewActivityService(store, s.Workflows, NewWorkflowRecommender(s.Workflows, nil))
+	s.mu.Lock()
+	llm := s.workflowLLM
+	s.mu.Unlock()
+	svc := NewActivityService(store, s.Workflows, NewWorkflowRecommender(s.Workflows, llm))
 	s.mu.Lock()
 	broadcaster := s.activityBroadcaster
 	s.mu.Unlock()
@@ -54,6 +57,17 @@ func (s *Service) SetActivityBroadcaster(b ActivityBroadcaster) {
 	}
 	s.mu.Lock()
 	s.activityBroadcaster = b
+	s.mu.Unlock()
+}
+
+// SetWorkflowLLM 装配 workflow 自动选择的模型客户端。装配期调用一次；nil 时
+// 推荐器按 id 顺序退回第一个可用 workflow（升级不配置时的兼容行为）。
+func (s *Service) SetWorkflowLLM(client LLMClient) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.workflowLLM = client
 	s.mu.Unlock()
 }
 
@@ -228,6 +242,29 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 	s.broadcastActivityUpdated(activity, map[string]any{"status": status, "summary": summary, "body": ""})
 }
 
+// backfillWorkflowReplySummaries 给升级前留下的空 summary 回复补一次可读结果。
+// 只动 completed + run_id 非空 + summary 为空的行；settleWorkflowReply 内部按
+// 当前任务状态重算，写入后该行不再命中查询，因此重复启动是幂等的。
+func (s *Service) backfillWorkflowReplySummaries(ctx context.Context, store *TaskStore) {
+	if s == nil || store == nil {
+		return
+	}
+	activities, err := NewActivityStore(store.db).CompletedWorkflowRepliesWithoutSummary(ctx)
+	if err != nil {
+		return
+	}
+	for _, activity := range activities {
+		if strings.TrimSpace(activity.RunID) == "" {
+			continue
+		}
+		run, err := store.WorkflowRunByID(ctx, activity.RunID)
+		if err != nil || run == nil {
+			continue
+		}
+		s.settleWorkflowReply(ctx, store, run)
+	}
+}
+
 // resumeWorkflowReply 把停在 waiting_user 的占位回复重新标成 running。
 // 触发点：HumanGate 批准、暂停后恢复 —— 同一个 Run 继续跑，不新开回复。
 func (s *Service) resumeWorkflowReply(ctx context.Context, store *TaskStore, taskID string) {
@@ -352,6 +389,16 @@ func nodeRunOutputSummary(nr NodeRun) string {
 			return truncateSummary(trimmed)
 		}
 	}
+	// 真实模型常把结果写成 changes: ["改了什么", ...]（任务 #66 的
+	// workflow-blank 就是这样）。它不是节点间数据契约里的一个 key，而是
+	// 这一轮给人看的变更清单，必须成为回复正文；否则用户只看到「已完成」。
+	if changes := stringList(nr.Output["changes"]); len(changes) > 0 {
+		lines := make([]string, len(changes))
+		for i, change := range changes {
+			lines[i] = "• " + change
+		}
+		return truncateSummary(strings.Join(lines, "\n"))
+	}
 	type textField struct{ key, value string }
 	fields := make([]textField, 0, len(nr.Output))
 	for key, value := range nr.Output {
@@ -380,7 +427,33 @@ func nodeRunOutputSummary(nr NodeRun) string {
 	return truncateSummary(strings.Join(parts, "；"))
 }
 
-const maxSummaryRunes = 500
+// stringList 把 JSON 数组里的非空字符串按原顺序取出来；其它元素忽略。
+// 兼容 json.Unmarshal 的 []any 与单测里直接写的 []string。
+func stringList(value any) []string {
+	var raw []any
+	switch items := value.(type) {
+	case []any:
+		raw = items
+	case []string:
+		raw = make([]any, len(items))
+		for i, item := range items {
+			raw[i] = item
+		}
+	default:
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if text, ok := item.(string); ok {
+			if trimmed := strings.TrimSpace(text); trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+	}
+	return out
+}
+
+const maxSummaryRunes = 1200
 
 func truncateSummary(text string) string {
 	runes := []rune(text)

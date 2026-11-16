@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { confirmDialog } from "../../services/dialog";
 import {
   beginTaskFinishWorktree,
   deleteTask,
+  fetchTaskDetails,
   moveTask,
   renameTask,
   type TaskDetail,
@@ -35,6 +36,9 @@ export function useTaskDetailPanel({
   const [nameDraft, setNameDraft] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [saving, setSaving] = useState(false);
+  const refreshingRef = useRef(false);
+  const onMovedRef = useRef(onMoved);
+  onMovedRef.current = onMoved;
 
   useEffect(() => {
     setNameDraft(task?.name || "");
@@ -58,6 +62,24 @@ export function useTaskDetailPanel({
     return () => window.removeEventListener("keydown", onEsc);
   }, [editingName, task?.name]);
 
+  // 打开面板时先拉一次最新详情：看板快照可能是完成前缓存的，用户会看到
+  // 「任务已完成、头部还写待开始」。只按 task_number 点查，不扇出整个看板。
+  useEffect(() => {
+    if (!task?.root_id || !task.task_number) return;
+    let cancelled = false;
+    void fetchTaskDetails(task.root_id, { taskNumber: task.task_number }, nodeId)
+      .then((items) => {
+        if (cancelled || !items[0]) return;
+        onMovedRef.current?.(items[0]);
+      })
+      .catch(() => {
+        // 详情刷新失败不影响面板已有内容；下一次活动更新或手动刷新会再试。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [task?.id, task?.root_id, task?.task_number, nodeId]);
+
   if (!task || !detail) return null;
 
   const canFinishWorktree = task?.create_worktree === true
@@ -71,6 +93,20 @@ export function useTaskDetailPanel({
 
   const apply = (next: TaskDetail) => onMoved?.(next);
   const fail = (err: unknown) => reportError("file.write_failed", String((err as Error)?.message || ""));
+
+  // 活动流每次看到 Agent 回复状态变化时调用；只做点查并交给父层合并。
+  const refreshTask = async () => {
+    if (!task.root_id || !task.task_number || refreshingRef.current) return;
+    refreshingRef.current = true;
+    try {
+      const items = await fetchTaskDetails(task.root_id, { taskNumber: task.task_number }, nodeId);
+      if (items[0]) apply(items[0]);
+    } catch {
+      // 只读刷新失败不打断对话；下一次状态变化会再试。
+    } finally {
+      refreshingRef.current = false;
+    }
+  };
 
   const saveName = async () => {
     const rootId = task.root_id;
@@ -165,6 +201,7 @@ export function useTaskDetailPanel({
     resumeTask: () => setPaused("resume"),
     canCompleteTask,
     numberLabel,
+    refreshTask,
     saveName,
     finishWorktree,
     completeTask,

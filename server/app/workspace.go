@@ -278,6 +278,10 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban.SetWorkflowCommentSender(services)
 	services.Kanban.SetWriterGate(m.shared.writerGate)
 	services.Kanban.SetRouterConfig(m.shared.routerConfig)
+	// 自动选择 workflow 与 Router 共用 agent/model；未配置 agent 时保持旧回退。
+	services.Kanban.SetWorkflowLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
+	// 执行节点只写自然语言；结果转换（outcome/summary）由 Router 模型完成。
+	services.SetWorkflowOutputLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
 	services.Kanban.SetRouterAgent(services)
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
@@ -303,5 +307,6 @@ func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *
 		Version:       version,
 		LocalCLIToken: token,
 		NodeRole:      role,
+		WorkflowLLM:   api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
 	}
 }

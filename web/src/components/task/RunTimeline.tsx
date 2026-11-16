@@ -70,7 +70,7 @@ export function RunTimeline({ run, nodeRuns, nodeNames, nodeKinds, onOpenSession
           </button>
         ) : null}
         <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-          {run ? `Run ${run.id}` : t("task.runTimeline.noRun")}
+          {run ? `${t("task.runTimeline.runLabel")} ${run.id}` : t("task.runTimeline.noRun")}
           {run?.version ? ` · ${run.version}` : ""}
           {typeof run?.revision === "number" ? ` · r${run.revision}` : ""}
         </span>

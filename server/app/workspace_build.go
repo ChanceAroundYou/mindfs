@@ -129,6 +129,11 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 所有账户共用同一把物理工作树 writer gate（D15）；每账户一把等于没锁。
 	services.Kanban.SetWriterGate(m.shared.writerGate)
 	services.Kanban.SetRouterConfig(m.shared.routerConfig)
+	// 自动选择 workflow 用与 Router 同一套 agent/model；model 由 config 指定
+	// （生产用 ok 这类便宜模型）。未配置 agent 时返回 nil，保持旧回退。
+	services.Kanban.SetWorkflowLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
+	// 执行节点只写自然语言；结果转换（outcome/summary）由 Router 模型完成。
+	services.SetWorkflowOutputLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
 	// Router 的 agent 适配器就是本账户的 AppContext（跑隐藏 TypeRouter 会话）。
 	services.Kanban.SetRouterAgent(services)
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))

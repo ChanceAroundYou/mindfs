@@ -348,6 +348,14 @@ def test_human_gate_blocks_composer_pause_resume_and_approve(
     )
     payload = json.loads(approved.get("payload_json") or "{}")
     assert payload.get("decision") == "approve", f"审批结果没有写回 payload：{approved}"
+    # 任务头也必须从「待开始/等待你」自动变成完成；回复状态与任务头是两条
+    # 独立的推送，任一丢失都会出现「已批准但头部还停在等待」。
+    status = page.locator('[data-testid="task-detail-status"]')
+    assert _poll(
+        lambda: status.inner_text().strip() in {"已完成", "Completed"},
+        20,
+        "task header completed",
+    )
     # 卡收口后不再挡输入框。
     page.wait_for_selector(PROMPT_PENDING, state="detached", timeout=20_000)
 
@@ -399,7 +407,7 @@ def test_real_agent_question_card_answer_round_trip(
     # 先展开高级选项再选「纯对话」。
     page.locator(f'{ACTIVITY_INPUT} [data-testid="workflow-show-advanced"]').click()
     page.locator(f'{ACTIVITY_INPUT} [data-testid="workflow-choice-none"]').click()
-    page.fill(f"{ACTIVITY_INPUT} textarea", (
+    page.fill(f"{ACTIVITY_INPUT} [contenteditable='true']", (
         "Use the AskUserQuestion tool exactly once to ask me which color I prefer, "
         "with two options: 'crimson' and 'azure'. After I answer, reply with exactly the "
         "chosen label and nothing else. Do not use any other tool."

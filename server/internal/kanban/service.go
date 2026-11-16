@@ -77,6 +77,9 @@ type Service struct {
 	// 装配时注入（per-account StreamHub 适配器）；nil 时静默，单测与老装配不变。
 	// ActivityServiceForRoot 每次新建的 ActivityService 都会带上它。
 	activityBroadcaster ActivityBroadcaster
+	// workflowLLM 是 workflow 自动选择的语言模型客户端（推荐器）。nil 时推荐器
+	// 退化为「第一个可用 workflow」；装配时由 api 层用 Router 的 agent/model 注入。
+	workflowLLM LLMClient
 	// directExecutor 是「纯对话模式」的直连执行端口，由 api 层注入。
 	// ActivityServiceForRoot 每次新建的 ActivityService 都会带上它。
 	directExecutor ActivityDirectExecutor

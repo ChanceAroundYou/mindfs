@@ -75,7 +75,8 @@ func WorkflowNodeAgentProfileOf(node WorkflowNode) WorkflowNodeAgentProfile {
 }
 
 // WorkflowNodeResult is the adapter's answer. SessionKey is always the session
-// the turn really used; Output is only populated from the strict JSON envelope.
+// the turn really used; Output is filled by the Router result normalizer from
+// the worker's natural-language reply (summary plus any condition fields).
 type WorkflowNodeResult struct {
 	Outcome    WorkflowNodeOutcome
 	SessionKey string
@@ -206,22 +207,6 @@ func isUserInputActivity(activity *TaskActivity) bool {
 	return activity.Type == ActivityTypeUserMessage || activity.Type == ActivityTypeUserComment
 }
 
-// BuildWorkflowNodeOutputContract is the text appended to every workflow agent
-// prompt. The parser and this instruction must stay in one place: if the
-// contract says one thing and ParseWorkflowNodeEnvelope accepts another, nodes
-// silently park as waiting_user.
-func BuildWorkflowNodeOutputContract(nodeID string) string {
-	return fmt.Sprintf(
-		"\n\n<mindfs-workflow-node-output node=%q>\n"+
-			"完成本节点后，只输出一个 JSON 对象，不要 markdown 代码块，不要附加其它文字：\n"+
-			`{"outcome":"done|blocked|silent","output":{...},"reason":""}`+"\n"+
-			"outcome 只能是 done、blocked、silent；blocked/silent 必须填写 reason。\n"+
-			"output 用来把结果交给后续节点；没有结果时输出空对象。\n"+
-			"</mindfs-workflow-node-output>",
-		nodeID,
-	)
-}
-
 // PrepareWorkflowNode validates the node, resolves its session and returns the
 // execution context. The workflow attempt executor calls this before the
 // external turn so the NodeRun's session binding can be committed first.
@@ -328,9 +313,11 @@ func (s *Service) workflowNodeRunner() WorkflowNodeRunner {
 	return s.WorkflowNodeRunnerPort
 }
 
-// ParseWorkflowNodeEnvelope implements D5: the agent must answer with a JSON
-// object carrying outcome/output/reason. Anything else is an error and must be
-// surfaced as waiting_user by the caller — no guessing, no plain-text fallback.
+// ParseWorkflowNodeEnvelope parses the Router result normalizer's JSON answer
+// (outcome/output/reason). It is not sent to workers: an Agent node replies in
+// natural language, and the Router layer converts that text before it reaches
+// the engine. Anything other than a valid envelope is rejected here; callers
+// decide whether to fall back to the raw text.
 //
 // 宽松只针对「envelope 外面包了什么」：真实回复会带解释文字、markdown 代码块，
 // 甚至因为本机 Stop hook 追加一段而出现多个 JSON 对象。这里扫描出所有 JSON

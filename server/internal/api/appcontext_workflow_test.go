@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,23 @@ import (
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/kanban"
 )
+
+// fakeWorkflowOutputLLM stands in for the Router's one-shot model during the
+// result-normalization step. It records prompts so tests can prove the worker
+// never sees the JSON envelope contract.
+type fakeWorkflowOutputLLM struct {
+	prompts  []string
+	response string
+	err      error
+}
+
+func (f *fakeWorkflowOutputLLM) Call(_ context.Context, prompt string) (string, error) {
+	f.prompts = append(f.prompts, prompt)
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.response, nil
+}
 
 func newWorkflowAdapterTestApp(t *testing.T) (*AppContext, string) {
 	t.Helper()
@@ -95,13 +113,15 @@ func TestWorkflowNodeAdapterSessionReusePolicies(t *testing.T) {
 	}
 }
 
-func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope(t *testing.T) {
+func TestWorkflowNodeAdapterWorkerAnswersNaturallyAndRouterNormalizes(t *testing.T) {
 	app, rootID := newWorkflowAdapterTestApp(t)
 	var captured workflowTurnRequest
 	app.workflowTurnOverride = func(_ context.Context, req workflowTurnRequest) (string, error) {
 		captured = req
-		return `{"outcome":"done","output":{"files":["a.ts"]},"reason":""}`, nil
+		return "登录页已经实现，改了 login.tsx 和 auth.ts，验证通过。", nil
 	}
+	llm := &fakeWorkflowOutputLLM{response: `{"outcome":"done","output":{"summary":"登录页已实现并通过验证。"},"reason":""}`}
+	app.SetWorkflowOutputLLM(llm)
 	node := kanban.WorkflowNode{ID: "build", Name: "实现", Kind: kanban.NodeKindAgent, Params: map[string]any{
 		"prompt":          "实现登录页",
 		"agent":           "codex",
@@ -123,8 +143,8 @@ func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope(t *testing.
 	if result.Outcome != kanban.WorkflowNodeDone || result.SessionKey != "sess-wf-9" {
 		t.Fatalf("result = %#v", result)
 	}
-	if files, ok := result.Output["files"].([]any); !ok || len(files) != 1 || files[0] != "a.ts" {
-		t.Fatalf("output = %#v", result.Output)
+	if got := result.Output["summary"]; got != "登录页已实现并通过验证。" {
+		t.Fatalf("summary = %#v, want router-normalized summary", got)
 	}
 	if result.StartedAt.IsZero() || result.FinishedAt.IsZero() {
 		t.Fatal("workflow result is missing start/finish evidence")
@@ -136,24 +156,105 @@ func TestWorkflowNodeAdapterRunsTurnWithNodeProfileAndParsesEnvelope(t *testing.
 		captured.Effort != "high" || captured.FastService != "on" || !captured.PlanMode {
 		t.Fatalf("node profile not forwarded: %#v", captured)
 	}
-	if !strings.Contains(captured.Prompt, "实现登录页") || !strings.Contains(captured.Prompt, "<mindfs-workflow-node-output") {
-		t.Fatalf("prompt missing configured text or envelope contract: %q", captured.Prompt)
+	// The worker gets the task prompt only. It must not be asked to emit a JSON
+	// envelope; that conversion belongs to the Router layer.
+	if captured.Prompt != "实现登录页" {
+		t.Fatalf("worker prompt = %q, want the configured prompt without an output contract", captured.Prompt)
+	}
+	if len(llm.prompts) != 1 {
+		t.Fatalf("normalizer calls = %d, want 1", len(llm.prompts))
+	}
+	prompt := llm.prompts[0]
+	for _, want := range []string{"实现登录页", "登录页已经实现", "summary"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("normalizer prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 
-func TestWorkflowNodeAdapterInvalidEnvelopeBecomesUnknown(t *testing.T) {
+func TestWorkflowNodeAdapterRouterCanParkBlockedNode(t *testing.T) {
 	app, rootID := newWorkflowAdapterTestApp(t)
 	app.workflowTurnOverride = func(context.Context, workflowTurnRequest) (string, error) {
-		return "完成了，但没有 JSON", nil
+		return "缺少 API key，我没法继续。", nil
 	}
+	app.SetWorkflowOutputLLM(&fakeWorkflowOutputLLM{
+		response: `{"outcome":"blocked","reason":"缺少 API key"}`,
+	})
+	exec := workflowAdapterExec(rootID, kanban.Task{ID: "task-wf-blocked"}, kanban.WorkflowNode{ID: "build", Kind: kanban.NodeKindAgent},
+		kanban.NodeRun{ID: "nr-blocked", RunID: "run-blocked", NodeID: "build", Attempt: 1, SessionKey: "sess-blocked"})
+	result, err := app.RunWorkflowNode(context.Background(), exec)
+	if err != nil {
+		t.Fatalf("RunWorkflowNode: %v", err)
+	}
+	if result.Outcome != kanban.WorkflowNodeBlocked || result.Reason != "缺少 API key" {
+		t.Fatalf("result = %#v, want blocked with reason", result)
+	}
+}
+
+func TestWorkflowNodeAdapterNormalizerFailureFallsBackToWorkerText(t *testing.T) {
+	app, rootID := newWorkflowAdapterTestApp(t)
+	app.workflowTurnOverride = func(context.Context, workflowTurnRequest) (string, error) {
+		return "已经改好了，测试也过了。", nil
+	}
+	app.SetWorkflowOutputLLM(&fakeWorkflowOutputLLM{err: errors.New("model unavailable")})
 	exec := workflowAdapterExec(rootID, kanban.Task{ID: "task-wf-3"}, kanban.WorkflowNode{ID: "build", Kind: kanban.NodeKindAgent},
 		kanban.NodeRun{ID: "nr-10", RunID: "run-3", NodeID: "build", Attempt: 1, SessionKey: "sess-wf-10"})
 	result, err := app.RunWorkflowNode(context.Background(), exec)
 	if err != nil {
-		t.Fatalf("invalid envelope must not be a transport error: %v", err)
+		t.Fatalf("normalizer failure must not be a transport error: %v", err)
 	}
-	if result.Outcome != kanban.WorkflowNodeUnknown || !strings.Contains(result.Reason, "JSON") {
-		t.Fatalf("result = %#v, want unknown with JSON reason", result)
+	if result.Outcome != kanban.WorkflowNodeDone {
+		t.Fatalf("outcome = %q, want done fallback", result.Outcome)
+	}
+	if got := result.Output["summary"]; got != "已经改好了，测试也过了。" {
+		t.Fatalf("summary = %#v, want raw worker text", got)
+	}
+}
+
+func TestWorkflowNodeAdapterEmptyWorkerOutputIsSilent(t *testing.T) {
+	app, rootID := newWorkflowAdapterTestApp(t)
+	app.workflowTurnOverride = func(context.Context, workflowTurnRequest) (string, error) {
+		return "   ", nil
+	}
+	llm := &fakeWorkflowOutputLLM{response: `{"outcome":"done","output":{"summary":"不应该被调用"}}`}
+	app.SetWorkflowOutputLLM(llm)
+	exec := workflowAdapterExec(rootID, kanban.Task{ID: "task-wf-empty"}, kanban.WorkflowNode{ID: "build", Kind: kanban.NodeKindAgent},
+		kanban.NodeRun{ID: "nr-empty", RunID: "run-empty", NodeID: "build", Attempt: 1, SessionKey: "sess-empty"})
+	result, err := app.RunWorkflowNode(context.Background(), exec)
+	if err != nil {
+		t.Fatalf("RunWorkflowNode: %v", err)
+	}
+	if result.Outcome != kanban.WorkflowNodeSilent {
+		t.Fatalf("outcome = %q, want silent", result.Outcome)
+	}
+	if len(llm.prompts) != 0 {
+		t.Fatalf("normalizer called for empty output: %d prompts", len(llm.prompts))
+	}
+}
+
+func TestWorkflowNodeAdapterNormalizerSeesDownstreamConditionPaths(t *testing.T) {
+	app, rootID := newWorkflowAdapterTestApp(t)
+	app.workflowTurnOverride = func(context.Context, workflowTurnRequest) (string, error) {
+		return "改了 3 个文件。", nil
+	}
+	llm := &fakeWorkflowOutputLLM{response: `{"outcome":"done","output":{"summary":"改了 3 个文件。","files":"3"},"reason":""}`}
+	app.SetWorkflowOutputLLM(llm)
+	exec := workflowAdapterExec(rootID, kanban.Task{ID: "task-wf-cond"}, kanban.WorkflowNode{ID: "build", Kind: kanban.NodeKindAgent},
+		kanban.NodeRun{ID: "nr-cond", RunID: "run-cond", NodeID: "build", Attempt: 1, SessionKey: "sess-cond"})
+	exec.Run = &kanban.WorkflowRun{ID: "run-cond", Graph: kanban.WorkflowDefinition{
+		Nodes: []kanban.WorkflowNode{
+			{ID: "build", Kind: kanban.NodeKindAgent},
+			{ID: "decide", Kind: kanban.NodeKindCondition, Params: map[string]any{
+				"expression": "build.output.files > 0",
+				"routes":     []any{"yes", "no"},
+			}},
+		},
+	}}
+	if _, err := app.RunWorkflowNode(context.Background(), exec); err != nil {
+		t.Fatalf("RunWorkflowNode: %v", err)
+	}
+	if len(llm.prompts) != 1 || !strings.Contains(llm.prompts[0], "build.output.files") {
+		t.Fatalf("normalizer prompt must expose downstream condition paths:\n%v", llm.prompts)
 	}
 }
 

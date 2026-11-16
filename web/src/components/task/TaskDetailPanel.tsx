@@ -65,7 +65,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
       )}
       headerLeft={(
         <>
-          <span style={{ fontSize: "12px", fontWeight: 800, color: taskStatusColor(task.status), flexShrink: 0, whiteSpace: "nowrap" }}>
+          <span data-testid="task-detail-status" style={{ fontSize: "12px", fontWeight: 800, color: taskStatusColor(task.status), flexShrink: 0, whiteSpace: "nowrap" }}>
             {taskStatusLabel(task.status, t)}
           </span>
           {task.task_template_name ? (
@@ -138,6 +138,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
           paused={panel.paused}
           onPauseTask={panel.pauseTask}
           onResumeTask={panel.resumeTask}
+          onAgentActivityChange={() => void panel.refreshTask()}
           onOpenSession={onOpenSession}
         />
         {/* 运行视图是对话流的下钻（默认收起），也是 human_gate 批准/驳回的唯一入口。 */}
