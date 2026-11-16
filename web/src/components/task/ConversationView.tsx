@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/index";
 import { useTaskActivities } from "../../hooks/useTaskActivities";
 import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
@@ -117,6 +117,8 @@ export type ConversationViewProps = {
   disabled?: boolean;
   /** 任务已暂停：HumanGate 卡只给恢复入口。 */
   paused?: boolean;
+  /** Agent 回复的状态/摘要变化时通知父层刷新任务头（进行中/已完成）。 */
+  onAgentActivityChange?: () => void;
   onOpenSession?: (sessionKey: string) => void;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
@@ -134,6 +136,7 @@ export function ConversationView({
   nodeId,
   disabled = false,
   paused = false,
+  onAgentActivityChange,
   onOpenSession,
   onPauseTask,
   onResumeTask,
@@ -155,14 +158,37 @@ export function ConversationView({
   const [body, setBody] = useState("");
   const [choice, setChoice] = useState<WorkflowChoice>("empty");
   const [versionId, setVersionId] = useState("");
+  const [composerResetKey, setComposerResetKey] = useState(0);
   const pendingPrompt = pendingTaskPrompt(activities);
+  const lastAgentReplyRef = useRef("");
 
-  const handleSend = async () => {
+  // Agent 回复从 pending → running → completed 时，任务头也要跟着变。
+  // 活动流有独立的 WS 增量，任务头依赖 task.updated；两者丢一个就会出现
+  // 「回复已完成、头部还写待开始」。这里只对最近一条 agent_reply 的身份/状态
+  // 变化触发一次点查，不随流式正文的每个 chunk 扇出请求。
+  useEffect(() => {
+    let latest: TaskActivity | null = null;
+    for (let i = activities.length - 1; i >= 0; i -= 1) {
+      if (activities[i]?.type === "agent_reply") {
+        latest = activities[i];
+        break;
+      }
+    }
+    if (!latest) return;
+    const key = `${latest.id}:${latest.status || ""}:${latest.summary || ""}`;
+    if (key === lastAgentReplyRef.current) return;
+    lastAgentReplyRef.current = key;
+    onAgentActivityChange?.();
+  }, [activities, onAgentActivityChange]);
+
+  const handleSend = async (text: string) => {
     try {
-      await send(body, choice, versionId);
+      await send(text, choice, versionId);
       setBody("");
       setChoice("empty");
       setVersionId("");
+      // PromptEditor 内部持有文本；父层清空后必须换一个 resetKey 才会真正清空编辑器。
+      setComposerResetKey((key) => key + 1);
     } catch {
       // 错误已由 hook 写入 sendError；草稿保留，用户改完可以直接重发。
     }
@@ -231,7 +257,8 @@ export function ConversationView({
           }}
           sending={sending}
           error={sendError}
-          onSend={() => void handleSend()}
+          resetKey={composerResetKey}
+          onSend={(text) => void handleSend(text)}
         />
       )}
     </div>

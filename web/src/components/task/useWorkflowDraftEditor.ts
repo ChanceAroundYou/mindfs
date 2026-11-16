@@ -5,6 +5,7 @@ import {
   applyWorkflowDraftPatch,
   confirmWorkflowPublishProposal,
   createWorkflowDraft,
+  deleteWorkflowDraft,
   listWorkflowDrafts,
   listWorkflowPublishProposals,
   publishWorkflowDraft,
@@ -39,6 +40,7 @@ export type WorkflowDraftEditorState = {
   patchBusy: boolean;
   proposals: WorkflowPublishProposal[];
   proposalBusy: boolean;
+  deletingId: string;
   setGraph: (graph: WorkflowGraph) => void;
   setPatchText: (text: string) => void;
   validatePatch: () => Promise<void>;
@@ -48,6 +50,7 @@ export type WorkflowDraftEditorState = {
   choose: (draft: WorkflowDraft) => Promise<void>;
   reloadSelected: () => Promise<void>;
   create: () => Promise<void>;
+  remove: (draft: WorkflowDraft) => Promise<void>;
   save: () => Promise<void>;
   publish: () => Promise<void>;
   adoptDraft: (draft: WorkflowDraft) => void;
@@ -63,6 +66,7 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
   const [error, setError] = useState("");
   const [patchText, setPatchTextState] = useState("");
   const [patchIssues, setPatchIssues] = useState<WorkflowPatchIssue[]>([]);
@@ -171,6 +175,32 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   }, [t]);
+
+  const remove = useCallback(async (draft: WorkflowDraft) => {
+    const displayName = draft.workflow_id.replace(/^workflow-/, "");
+    if (!(await confirmDialog({
+      message: t("task.workflowEditor.deleteConfirm", { workflow: displayName }),
+      danger: true,
+    }))) return;
+    setDeletingId(draft.workflow_id);
+    setError("");
+    try {
+      await deleteWorkflowDraft(draft.workflow_id);
+      const remaining = drafts.filter((item) => item.workflow_id !== draft.workflow_id);
+      setDrafts(remaining);
+      if (selectedIdRef.current === draft.workflow_id) {
+        const next = remaining[0];
+        setSelectedId(next?.workflow_id ?? "");
+        setGraphState(next?.graph ?? { nodes: [], edges: [] });
+        setRevision(next?.revision ?? "");
+        setDirty(false);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeletingId("");
+    }
+  }, [drafts, t]);
 
   const save = useCallback(async () => {
     if (!selected) return;
@@ -285,5 +315,5 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
     return confirmDialog({ message: t("task.workflowEditor.leaveConfirm"), danger: true });
   }, [dirty, t]);
 
-  return { drafts, selected, selectedId, graph, revision, dirty, loading, saving, error, patchText, patchIssues, patchDiff, patchBusy, proposals, proposalBusy, setGraph, setPatchText, validatePatch, applyPatch, refreshProposals, confirmProposal, choose, reloadSelected, create, save, publish, adoptDraft, confirmLeave };
+  return { drafts, selected, selectedId, graph, revision, dirty, loading, saving, deletingId, error, patchText, patchIssues, patchDiff, patchBusy, proposals, proposalBusy, setGraph, setPatchText, validatePatch, applyPatch, refreshProposals, confirmProposal, choose, reloadSelected, create, remove, save, publish, adoptDraft, confirmLeave };
 }

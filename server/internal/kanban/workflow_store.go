@@ -290,6 +290,52 @@ func (s *WorkflowStore) ListDrafts(ctx context.Context) ([]WorkflowDraft, error)
 	return out, nil
 }
 
+// DeleteWorkflow removes a workflow and everything the control plane stores for
+// it: its draft, published versions, publish proposals and metadata.
+//
+// Published versions are immutable while the workflow exists, but deleting the
+// workflow is an explicit user action. Historical runs keep their own graph
+// snapshots in each task's data-plane database, so they do not depend on the
+// version record remaining here.
+func (s *WorkflowStore) DeleteWorkflow(ctx context.Context, workflowID string) error {
+	workflowID = strings.TrimSpace(workflowID)
+	if workflowID == "" {
+		return errors.New("workflow id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	found := false
+	if _, ok := f.Drafts[workflowID]; ok {
+		delete(f.Drafts, workflowID)
+		found = true
+	}
+	for id, v := range f.Versions {
+		if v != nil && v.WorkflowID == workflowID {
+			delete(f.Versions, id)
+			found = true
+		}
+	}
+	for id, p := range f.Proposals {
+		if p != nil && p.WorkflowID == workflowID {
+			delete(f.Proposals, id)
+			found = true
+		}
+	}
+	if _, ok := f.Meta[workflowID]; ok {
+		delete(f.Meta, workflowID)
+		found = true
+	}
+	delete(f.NextSeq, workflowID)
+	if !found {
+		return ErrDraftNotFound
+	}
+	return s.saveLocked(f)
+}
+
 // ListVersions returns all published workflow versions sorted by version id.
 func (s *WorkflowStore) ListVersions(ctx context.Context) ([]WorkflowVersion, error) {
 	s.mu.Lock()

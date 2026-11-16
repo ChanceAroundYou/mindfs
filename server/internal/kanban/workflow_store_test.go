@@ -193,3 +193,66 @@ func TestWorkflowStore_ListAvailableIncludesPublishedOnlyWorkflows(t *testing.T)
 		t.Fatalf("ListAvailable = %+v, want published workflow", list)
 	}
 }
+
+func TestWorkflowStore_DeleteWorkflowRemovesAllControlPlaneRecords(t *testing.T) {
+	dir := t.TempDir()
+	s := newWorkflowStore(dir)
+	ctx := context.Background()
+	if _, err := s.CreateDraft(ctx, "wf-del", "", "agent", wfDef(wfNode("a", NodeKindAgent))); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.GetDraft(ctx, "wf-del")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishDraft(ctx, "wf-del", d.Revision, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ProposeWorkflowPublish(ctx, "wf-del", d.Revision, "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateMeta(ctx, "wf-del", &WorkflowMeta{ID: "wf-del", Name: "Delete me", AutoSelectEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteWorkflow(ctx, "wf-del"); err != nil {
+		t.Fatalf("DeleteWorkflow: %v", err)
+	}
+
+	// A fresh store on the same dir proves the deletion was persisted.
+	fresh := newWorkflowStore(dir)
+	drafts, err := fresh.ListDrafts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts) != 0 {
+		t.Fatalf("drafts after delete = %+v, want none", drafts)
+	}
+	versions, err := fresh.ListVersions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != 0 {
+		t.Fatalf("versions after delete = %+v, want none", versions)
+	}
+	proposals, err := fresh.ListPublishProposals(ctx, "wf-del")
+	if err != nil && !errors.Is(err, ErrDraftNotFound) {
+		t.Fatal(err)
+	}
+	if len(proposals) != 0 {
+		t.Fatalf("proposals after delete = %+v, want none", proposals)
+	}
+	available, err := fresh.ListAvailable(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(available) != 0 {
+		t.Fatalf("available after delete = %+v, want none", available)
+	}
+	if _, err := fresh.GetMeta(ctx, "wf-del"); !errors.Is(err, ErrWorkflowMetaNotFound) {
+		t.Fatalf("GetMeta after delete = %v, want ErrWorkflowMetaNotFound", err)
+	}
+	if err := fresh.DeleteWorkflow(ctx, "wf-del"); !errors.Is(err, ErrDraftNotFound) {
+		t.Fatalf("second delete = %v, want ErrDraftNotFound", err)
+	}
+}

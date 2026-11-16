@@ -2,18 +2,17 @@ import type React from "react";
 import { useI18n } from "../../i18n/index";
 import type { WorkflowChoice } from "../../shared/taskComments";
 import { canSendActivity } from "../../shared/activityModel";
-import { formatSendShortcut, matchesSendShortcut, type SendShortcut } from "../../shared/sendShortcut";
+import { formatSendShortcut, type SendShortcut } from "../../shared/sendShortcut";
+import { PromptEditor } from "../editor/PromptEditor";
 import { WorkflowSelector } from "./WorkflowSelector";
 
-// 与 ActionBar 共用同一套快捷键描述与匹配（shared/sendShortcut），
-// 默认按平台给 ⌘+Enter / Ctrl+Enter，不再在视图里硬编码键位。
-const APPLE_PLATFORM = typeof navigator !== "undefined"
-  && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
-const DEFAULT_SEND_SHORTCUT: SendShortcut = {
+// PromptEditor 默认「回车发送、Shift+Enter 换行」，这里只把提示文案对齐，
+// 不再沿用旧 textarea 的 Ctrl/⌘+Enter（两套快捷键会让用户按错）。
+const ENTER_SEND_SHORTCUT: SendShortcut = {
   key: "Enter",
   alt: false,
-  ctrl: !APPLE_PLATFORM,
-  meta: APPLE_PLATFORM,
+  ctrl: false,
+  meta: false,
   shift: false,
 };
 
@@ -26,11 +25,16 @@ export type ActivityInputProps = {
   sending?: boolean;
   error?: string | null;
   placeholder?: string;
-  onSend: () => void;
+  /** 每次发送成功后由父层递增，把编辑器清空。 */
+  resetKey?: number;
+  onSend: (text: string) => void;
 };
 
 /**
  * 对话输入框：受控组件，状态由 ConversationView 持有。
+ *
+ * 与新建任务面板共用 PromptEditor（Lexical token 编辑器），不再是裸 textarea
+ * 加手搓按钮：圆角、字号、回车行为、发送键位置都跟系统其它输入框一致。
  *
  * 视图层不碰 services（仓库硬规则），发送动作通过 onSend 回调交给 hook；
  * 禁用条件统一走 canSendActivity，避免「按钮能点但请求必然 400」的假可用。
@@ -44,6 +48,7 @@ export function ActivityInput({
   sending = false,
   error,
   placeholder,
+  resetKey,
   onSend,
 }: ActivityInputProps) {
   const { t } = useI18n();
@@ -54,42 +59,33 @@ export function ActivityInput({
     sending,
   });
 
+  // 发送入口从编辑器读最新文本：输入后立刻回车时，父层 body 可能还没回流。
+  const handleSend = (text: string) => {
+    const latest = text || body;
+    if (!canSendActivity({ body: latest, workflowChoice: choice, workflowVersionId: versionId, sending })) return;
+    onBodyChange(latest);
+    onSend(latest);
+  };
+
   return (
     <div
       data-testid="activity-input"
       style={{
-        border: "1px solid var(--border-color)",
-        borderRadius: 10,
-        padding: 12,
-        background: "var(--content-bg)",
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        gap: 8,
       }}
     >
-      <textarea
+      <PromptEditor
         value={body}
-        onChange={(event) => onBodyChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (matchesSendShortcut(event.nativeEvent, DEFAULT_SEND_SHORTCUT) && canSend) {
-            event.preventDefault();
-            onSend();
-          }
-        }}
+        onChange={onBodyChange}
+        resetKey={resetKey}
         placeholder={placeholder ?? t("task.activity.inputPlaceholder")}
-        disabled={sending}
-        rows={3}
-        style={{
-          minHeight: 70,
-          fontSize: 13,
-          padding: 10,
-          border: "1px solid var(--border-color)",
-          borderRadius: 6,
-          resize: "vertical",
-          background: "var(--panel-bg)",
-          color: "inherit",
-          lineHeight: 1.5,
-        }}
+        onSend={handleSend}
+        sending={sending}
+        sendDisabled={!canSend}
+        sendTestId="activity-send"
+        sendLabel={sending ? t("task.activity.sending") : t("task.activity.send")}
       />
 
       <WorkflowSelector
@@ -104,30 +100,14 @@ export function ActivityInput({
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-          {canSend ? t("task.activity.sendHint", { shortcut: formatSendShortcut(DEFAULT_SEND_SHORTCUT) }) : ""}
+          {sending
+            ? t("task.activity.sending")
+            : canSend
+              ? t("task.activity.sendHint", { shortcut: formatSendShortcut(ENTER_SEND_SHORTCUT) })
+              : ""}
         </span>
-        <button
-          type="button"
-          data-testid="activity-send"
-          onClick={onSend}
-          disabled={!canSend}
-          style={{
-            padding: "8px 16px",
-            fontSize: 13,
-            fontWeight: 500,
-            borderRadius: 6,
-            border: "none",
-            background: canSend ? "var(--accent-color)" : "var(--border-color)",
-            color: "#fff",
-            cursor: canSend ? "pointer" : "not-allowed",
-            opacity: canSend ? 1 : 0.6,
-            transition: "all 0.15s ease",
-          }}
-        >
-          {sending ? t("task.activity.sending") : t("task.activity.send")}
-        </button>
       </div>
     </div>
   );

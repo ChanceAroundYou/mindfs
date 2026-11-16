@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/index";
 import { useResponsive } from "../../hooks/useResponsive";
 import { panelButtonStyle, panelInputStyle, panelSurfaceStyle } from "../shell/PanelShell";
+import { PromptEditor } from "../editor/PromptEditor";
+import { PlusIcon } from "../action/composerIcons";
+import { DeleteIcon } from "./taskIcons";
 import { WorkflowCanvas } from "./WorkflowCanvas";
 import { useWorkflowAuthoring } from "./useWorkflowAuthoring";
 import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
@@ -25,9 +28,8 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   const review = useWorkflowAuthoringReview(authoring, {});
   const [instruction, setInstruction] = useState("");
   const [createMode, setCreateMode] = useState(false);
-  const [editingName, setEditingName] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [searchText, setSearchText] = useState("");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createDialogKey, setCreateDialogKey] = useState(0);
   const createIdRef = useRef("");
   const { observeRevision, reset } = authoring;
   const previousDraftRef = useRef("");
@@ -43,18 +45,21 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   useEffect(() => {
     if (previousDraftRef.current && previousDraftRef.current !== e.selectedId) {
       reset();
+      setInstruction("");
     }
     previousDraftRef.current = e.selectedId;
   }, [e.selectedId, reset]);
 
-  const generate = () => {
+  const generate = (text?: string) => {
     const targetID = createMode ? createIdRef.current : e.selected?.workflow_id;
-    if (!targetID) return;
+    const instructionText = (text ?? instruction).trim();
+    if (!targetID || !instructionText) return;
+    setInstruction(instructionText);
     void authoring.generate({
       scope: createMode ? "create" : "draft",
       resourceID: targetID,
       revision: createMode ? "r0" : e.revision,
-      instruction,
+      instruction: instructionText,
     }).then((result) => {
       if (result.conflictRevision && !createMode) void e.reloadSelected();
     });
@@ -63,15 +68,44 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   // Creating through the Agent reviews against the deterministic r0 graph and
   // persists nothing until the accepted subset is applied as r1. The id is
   // fixed for the whole create session so generation and apply name one draft.
-  const startCreate = () => {
+  const openCreateDialog = () => {
     reset();
-    setCreateMode(true);
+    setInstruction("");
+    setCreateDialogKey((key) => key + 1);
+    setCreateDialogOpen(true);
+  };
+
+  const closeCreateDialog = () => {
+    setCreateDialogOpen(false);
+    setInstruction("");
+  };
+
+  const startCreate = (text: string) => {
+    const instructionText = (text || instruction).trim();
+    if (!instructionText) return;
+    reset();
     createIdRef.current = `workflow-${Date.now().toString(36)}`;
+    setInstruction(instructionText);
+    setCreateDialogOpen(false);
+    setCreateMode(true);
+    void authoring.generate({
+      scope: "create",
+      resourceID: createIdRef.current,
+      revision: "r0",
+      instruction: instructionText,
+    });
+  };
+
+  const createBlank = () => {
+    setCreateDialogOpen(false);
+    setInstruction("");
+    void e.create();
   };
 
   const cancelCreate = () => {
     setCreateMode(false);
     reset();
+    setInstruction("");
   };
 
   const save = () => void e.save();
@@ -80,78 +114,41 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
     void e.confirmLeave().then((ok) => { if (ok) onClose(); });
   };
 
-  const startEditName = (draft: typeof e.drafts[number]) => {
-    setNewName(draft.workflow_id.replace(/^workflow-/, ""));
-    setEditingName(true);
-  };
-
-  const cancelEditName = () => {
-    setEditingName(false);
-    setNewName("");
-  };
-
-  const saveNewName = () => {
-    if (!newName.trim() || !e.selected) {
-      cancelEditName();
-      return;
-    }
-    const finalId = newName.startsWith("workflow-") ? newName : `workflow-${newName}`;
-    // 这里需要后端支持重命名API，暂时只更新显示
-    // TODO: 调用重命名API
-    console.log("重命名工作流:", e.selected.workflow_id, "->", finalId);
-    cancelEditName();
-  };
-
-  const filteredDrafts = useMemo(() => {
-    if (!searchText.trim()) return e.drafts;
-    const search = searchText.toLowerCase();
-    return e.drafts.filter(d =>
-      d.workflow_id.toLowerCase().includes(search) ||
-      d.workflow_id.replace(/^workflow-/, "").toLowerCase().includes(search)
-    );
-  }, [e.drafts, searchText]);
-
   return (
     <div data-testid="workflow-draft-editor" style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", gap: 10, padding: 12 }}>
-      {/* 重命名对话框 */}
-      {editingName ? (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(0, 0, 0, 0.5)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000,
-        }}>
-          <div style={{
-            ...panelSurfaceStyle(),
-            padding: 16,
-            minWidth: 300,
-            maxWidth: 500,
+      {/* 新建工作流：唯一的创建入口，输入框与任务面板同源（PromptEditor）。 */}
+      {createDialogOpen ? (
+        <div
+          data-testid="workflow-create-dialog"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.5)",
             display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>重命名工作流</div>
-            <input
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="输入新名称"
-              style={{ ...panelInputStyle(), width: "100%" }}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") saveNewName();
-                if (e.key === "Escape") cancelEditName();
-              }}
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 1000,
+          }}
+        >
+          <div style={{ ...panelSurfaceStyle(), width: "min(540px, 100%)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{t("task.workflowEditor.newWorkflow")}</div>
+            <PromptEditor
+              value={instruction}
+              onChange={setInstruction}
+              resetKey={createDialogKey}
+              placeholder={t("task.workflowAuthoring.createDialogPlaceholder")}
+              onSend={startCreate}
+              sendDisabled={!instruction.trim() || isMobile}
+              sendTestId="workflow-agent-create"
+              sendLabel={t("task.workflowAuthoring.startCreate")}
             />
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" style={panelButtonStyle("secondary")} onClick={cancelEditName}>取消</button>
-              <button type="button" style={panelButtonStyle("primary")} onClick={saveNewName}>确定</button>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+              {isMobile ? t("task.workflowAuthoring.mobileHint") : t("task.workflowAuthoring.createHint")}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button type="button" style={panelButtonStyle("secondary")} onClick={closeCreateDialog}>{t("common.cancel")}</button>
+              <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving} onClick={createBlank}>{t("task.workflowEditor.createFromBlank")}</button>
             </div>
           </div>
         </div>
@@ -165,8 +162,6 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
           <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
         ) : (
           <>
-            <button type="button" style={panelButtonStyle("primary")} data-testid="workflow-agent-create" disabled={e.saving || e.dirty || isMobile} onClick={startCreate}>{t("task.workflowAuthoring.startCreate")}</button>
-            <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving || isMobile} onClick={() => void e.create()}>{t("task.workflowEditor.create")}</button>
             <button type="button" style={panelButtonStyle("primary")} disabled={e.saving || !e.dirty || isMobile} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
             <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving || e.dirty || !e.selected || isMobile} onClick={publish}>{t("task.workflowEditor.publish")}</button>
           </>
@@ -177,25 +172,19 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
       {!e.loading && (e.selected || createMode) ? (
         <section data-testid="workflow-authoring-panel" style={{ ...panelSurfaceStyle(), display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
           {createMode ? <div data-testid="workflow-authoring-create-hint">{t("task.workflowAuthoring.createHint")}</div> : null}
-          <textarea
-            data-testid="workflow-authoring-instruction"
-            aria-label={t("task.workflowAuthoring.title")}
+          <PromptEditor
             value={instruction}
+            onChange={setInstruction}
+            resetKey={createMode ? createIdRef.current : e.selectedId}
             placeholder={t("task.workflowAuthoring.instructionPlaceholder")}
-            disabled={e.dirty || authoring.state.phase === "generating"}
-            onChange={(event) => setInstruction(event.target.value)}
-            style={{ ...panelInputStyle(), minHeight: 56 }}
+            onSend={generate}
+            sending={authoring.state.phase === "generating"}
+            sendDisabled={e.dirty || !instruction.trim() || isMobile}
+            containerTestId="workflow-authoring-instruction"
+            sendTestId="workflow-authoring-generate"
+            sendLabel={t("task.workflowAuthoring.generate")}
           />
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              style={panelButtonStyle("primary")}
-              data-testid="workflow-authoring-generate"
-              disabled={e.dirty || !instruction.trim() || authoring.state.phase === "generating" || isMobile}
-              onClick={generate}
-            >
-              {authoring.state.phase === "generating" ? t("task.workflowAuthoring.generating") : t("task.workflowAuthoring.generate")}
-            </button>
             {e.dirty ? <span>{t("task.workflowEditor.patchSaveFirst")}</span> : null}
             {isMobile ? <span>{t("task.workflowAuthoring.mobileHint")}</span> : null}
           </div>
@@ -285,6 +274,20 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
       {e.loading ? <div>{t("task.workflowEditor.loading")}</div> : (
         <div style={{ display: "flex", minHeight: 0, flex: 1, gap: 12 }}>
           <nav aria-label={t("task.workflowEditor.drafts")} style={{ ...panelSurfaceStyle(), width: 190, padding: 8, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+              <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>{t("task.workflowEditor.drafts")}</span>
+              <button
+                type="button"
+                data-testid="workflow-create-open"
+                aria-label={t("task.workflowEditor.newWorkflow")}
+                title={t("task.workflowEditor.newWorkflow")}
+                disabled={e.saving}
+                onClick={openCreateDialog}
+                style={{ ...panelButtonStyle("secondary"), height: 24, padding: "0 8px", fontSize: 12, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <PlusIcon size={13} />
+              </button>
+            </div>
             {e.drafts.map((d) => {
               const displayName = d.workflow_id.replace(/^workflow-/, "");
               const isSelected = d.workflow_id === e.selectedId;
@@ -301,16 +304,18 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
                       {displayName}
                     </span>
                   </button>
-                  {isSelected && !createMode ? (
-                    <button
-                      type="button"
-                      onClick={() => startEditName(d)}
-                      style={{ ...panelButtonStyle("secondary"), padding: "4px 6px", minWidth: "unset", fontSize: "11px" }}
-                      title="重命名"
-                    >
-                      ✎
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    data-testid="workflow-draft-delete"
+                    data-workflow-id={d.workflow_id}
+                    aria-label={t("task.workflowEditor.delete")}
+                    title={t("task.workflowEditor.delete")}
+                    disabled={!!e.deletingId || e.saving}
+                    onClick={() => void e.remove(d)}
+                    style={{ ...panelButtonStyle("secondary"), padding: "4px 6px", minWidth: "unset", fontSize: 11, color: "#dc2626", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <DeleteIcon />
+                  </button>
                 </div>
               );
             })}

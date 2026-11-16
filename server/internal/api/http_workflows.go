@@ -187,6 +187,23 @@ func (h *HTTPHandler) handleWorkflowDraftUpdate(w http.ResponseWriter, r *http.R
 	respondJSON(w, http.StatusOK, map[string]any{"draft": d})
 }
 
+func (h *HTTPHandler) handleWorkflowDraftDelete(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.workflowStore(w)
+	if !ok {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if err := s.DeleteWorkflow(r.Context(), id); err != nil {
+		if errors.Is(err, kanban.ErrDraftNotFound) {
+			respondError(w, http.StatusNotFound, err)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
 func (h *HTTPHandler) handleWorkflowDraftPublish(w http.ResponseWriter, r *http.Request) {
 	s, ok := h.workflowStore(w)
 	if !ok {

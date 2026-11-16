@@ -191,7 +191,9 @@ test("a generation CAS conflict adopts the server revision and requests a reload
 
 test("create scope is explicit and persists only through the create apply", () => {
   const editor = read("src/components/task/WorkflowDraftEditor.tsx");
-  assert.match(editor, /data-testid="workflow-agent-create"/, "create has its own entry point");
+  assert.match(editor, /sendTestId="workflow-agent-create"/, "create has its own entry point (the create dialog's PromptEditor send action)");
+  assert.match(editor, /data-testid="workflow-create-open"/, "the sidebar exposes one create entry instead of duplicate header buttons");
+  assert.doesNotMatch(editor, /t\("task\.workflowEditor\.create"\)/, "the duplicate manual New header button is gone");
   assert.match(editor, /scope: createMode \? "create" : "draft"/, "create generation never reuses the draft gateway");
   assert.match(editor, /revision: createMode \? "r0" : e\.revision/, "create reviews against the synthetic base");
   assert.match(editor, /setCreateMode\(false\)[\s\S]{0,80}adoptDraft/, "apply adopts r1 and leaves create mode");

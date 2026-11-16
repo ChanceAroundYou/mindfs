@@ -19,6 +19,12 @@ export type PromptEditorProps = {
   sendDisabled?: boolean;
   /** 节点主题色（hex），用于发送按钮的外框与底色 */
   accentColor?: string;
+  /** 测试/定位用：挂在最外层容器上。 */
+  containerTestId?: string;
+  /** 测试/定位用：挂在发送按钮上。 */
+  sendTestId?: string;
+  /** 发送按钮的可读标签；默认沿用「保存」。 */
+  sendLabel?: string;
 };
 
 /**
@@ -40,6 +46,9 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     sending,
     sendDisabled,
     accentColor,
+    containerTestId,
+    sendTestId,
+    sendLabel,
   },
   ref
 ) {
@@ -99,7 +108,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   };
 
   return (
-    <div style={composerContainerStyle("var(--input-bg)")}>
+    <div data-testid={containerTestId} style={composerContainerStyle("var(--input-bg)")}>
       {/* 刻意**不传** fillHeight：那条路径把 contentEditable 设成 height:100% /
           maxHeight:none，高度随内容无限长高，而容器只有 minHeight、发送键又是
           absolute + bottom:6 挂在容器上 —— 任务文本一长，发送键就跟着沉到滚动视口
@@ -140,13 +149,14 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         {onSend ? (
           <button
             type="button"
+            data-testid={sendTestId}
             disabled={!canSend}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (canSend) flushAndSend();
             }}
-            title={t("common.save")}
-            aria-label={t("common.save")}
+            title={sendLabel || t("common.save")}
+            aria-label={sendLabel || t("common.save")}
             style={composerSendButtonStyle({ enabled: canSend, variant: "panel", accent: accentColor })}
           >
             <SendIcon />

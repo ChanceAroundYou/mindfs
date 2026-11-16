@@ -436,3 +436,58 @@ func TestWorkflowTaskPauseResumeCancelMapToRunLifecycle(t *testing.T) {
 		t.Fatalf("final status=%v err=%v", final.Task.Status, err)
 	}
 }
+
+func TestWorkflowDraftDeleteRemovesDraftAndPublishedVersions(t *testing.T) {
+	h, _, _ := workflowsHandler(t)
+	rec := doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf-del","author":"agent","graph":`+wfGraphJSON+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, http.MethodPost, "/api/workflows/wf-del/publish", `{"confirmed_revision":"r1","published_by":"user"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("publish status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, http.MethodDelete, "/api/workflows/wf-del", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var draftList struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	rec = doReq(t, h, http.MethodGet, "/api/workflows", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list drafts status=%d", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &draftList); err != nil {
+		t.Fatalf("decode drafts: %v", err)
+	}
+	if len(draftList.Items) != 0 {
+		t.Fatalf("drafts after delete = %s, want none", rec.Body.String())
+	}
+
+	rec = doReq(t, h, http.MethodGet, "/api/workflows/published", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list versions status=%d", rec.Code)
+	}
+	var versionList struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &versionList); err != nil {
+		t.Fatalf("decode versions: %v", err)
+	}
+	if len(versionList.Items) != 0 {
+		t.Fatalf("versions after delete = %s, want none", rec.Body.String())
+	}
+
+	rec = doReq(t, h, http.MethodGet, "/api/workflows/versions/wf-del:v1", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("deleted version lookup = %d want 404", rec.Code)
+	}
+
+	rec = doReq(t, h, http.MethodDelete, "/api/workflows/wf-del", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("second delete = %d want 404 body=%s", rec.Code, rec.Body.String())
+	}
+}

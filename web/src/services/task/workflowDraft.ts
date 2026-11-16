@@ -119,6 +119,12 @@ export async function updateWorkflowDraft(
   return payload.draft;
 }
 
+export async function deleteWorkflowDraft(workflowId: string): Promise<void> {
+  await protectedJSON<{ deleted?: string }>(controlPath(`/api/workflows/${encodeURIComponent(workflowId)}`), {
+    method: "DELETE",
+  });
+}
+
 export async function publishWorkflowDraft(
   workflowId: string,
   input: { revision: string; publishedBy?: string },

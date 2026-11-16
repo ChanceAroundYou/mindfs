@@ -22,6 +22,10 @@ test("workflow-editor-board-entry", () => {
   const editorState = read("src/components/task/useWorkflowDraftEditor.ts");
   assert.match(editorState, /listWorkflowDrafts\(\)/, "editor loads shared control-plane drafts");
   assert.match(editorState, /createWorkflowDraft\(/, "editor can create a new Draft");
+  assert.match(workflowService, /deleteWorkflowDraft\([\s\S]{0,200}?controlPath\(/, "deleting a workflow must use control-plane routing");
+  assert.match(editorState, /deleteWorkflowDraft\(/, "editor deletes a workflow through the control-plane store");
+  assert.match(editor, /workflow-draft-delete/, "editor renders a per-workflow delete control");
+  assert.match(editorState, /deleteConfirm/, "workflow deletion asks for explicit confirmation");
   assert.match(editorState, /updateWorkflowDraft\(/, "editor saves with Draft CAS");
   assert.match(editorState, /publishWorkflowDraft\(/, "editor publishes only after explicit revision confirmation");
   assert.match(editorState, /beforeunload/, "dirty Draft warns on page exit");
