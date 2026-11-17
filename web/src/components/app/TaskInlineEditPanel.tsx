@@ -2,10 +2,10 @@
 import { PanelShell } from "../shell/PanelShell";
 import { composerInputStyle } from "../action/composerStyles";
 import { findTaskProjectRoot, taskProjectScopeKey } from "../../app/appTask";
-import { CompactUploadProgress } from "../file/CompactUploadProgress";
 import { WorktreeBranchSelector } from "../task/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import { PromptEditor } from "../editor/PromptEditor";
+import { ComposerAttachmentStrip } from "../editor/ComposerAttachmentStrip";
 import { Select } from "../common/Select";
 import { useI18n } from "../../i18n";
 import type { Dispatch, SetStateAction, RefObject, ChangeEvent } from "react";
@@ -273,87 +273,13 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                     sendDisabled={!taskInlineEdit.text.trim()}
                     placeholder={t("task.editPlaceholder")}
                   />
-                  {taskInlineEdit.attachments.length > 0 || taskInlineUploadProgress ? (
-                    <div style={{ marginTop: "10px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                      {taskInlineEdit.attachments.map((attachment) => attachment.isImage && attachment.previewUrl ? (
-                        <div
-                          key={attachment.id}
-                          style={{
-                            width: "54px",
-                            height: "54px",
-                            borderRadius: "8px",
-                            border: "1px solid var(--border-color)",
-                            background: "rgba(100, 116, 139, 0.10)",
-                            position: "relative",
-                            overflow: "hidden",
-                          }}
-                        >
-                          <img src={attachment.previewUrl} alt={attachment.file.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                          <button
-                            type="button"
-                            onClick={() => removeTaskInlineAttachment(attachment.id)}
-                            disabled={taskInlineSaving}
-                            aria-label={t("task.removeAttachment", { name: attachment.file.name })}
-                            style={{
-                              position: "absolute",
-                              top: "2px",
-                              right: "2px",
-                              width: "18px",
-                              height: "18px",
-                              border: "none",
-                              borderRadius: "999px",
-                              background: "rgba(15, 23, 42, 0.72)",
-                              color: "#fff",
-                              cursor: taskInlineSaving ? "not-allowed" : "pointer",
-                              padding: 0,
-                              lineHeight: "18px",
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ) : (
-                        <span
-                          key={attachment.id}
-                          style={{
-                            maxWidth: "100%",
-                            border: "1px solid var(--border-color)",
-                            borderRadius: "999px",
-                            background: "rgba(100, 116, 139, 0.10)",
-                            color: "var(--text-color)",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            padding: "4px 7px",
-                            fontSize: "12px",
-                          }}
-                        >
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.file.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => removeTaskInlineAttachment(attachment.id)}
-                            disabled={taskInlineSaving}
-                            style={{
-                              border: "none",
-                              background: "transparent",
-                              color: "var(--text-secondary)",
-                              cursor: taskInlineSaving ? "not-allowed" : "pointer",
-                              padding: 0,
-                            }}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                      <CompactUploadProgress
-                        progress={taskInlineUploadProgress}
-                        label={t("upload.attachmentsProgress")}
-                        statusLabel={t("upload.inProgress")}
-                        cancelLabel={t("upload.cancel")}
-                        onCancel={() => taskInlineUploadAbortRef.current?.abort()}
-                      />
-                    </div>
-                  ) : null}
+                  <ComposerAttachmentStrip
+                    attachments={taskInlineEdit.attachments}
+                    uploadProgress={taskInlineUploadProgress}
+                    disabled={taskInlineSaving}
+                    onRemove={removeTaskInlineAttachment}
+                    onCancelUpload={() => taskInlineUploadAbortRef.current?.abort()}
+                  />
                   <input
                     ref={taskInlineAttachmentInputRef}
                     type="file"

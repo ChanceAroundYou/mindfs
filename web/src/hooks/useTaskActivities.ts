@@ -13,6 +13,13 @@ import {
   parseTaskActivityPayload,
 } from "../shared/activityModel";
 import { createActivity, listActivities } from "../services/activities";
+import {
+  fileTokenPath,
+  formatFileToken,
+  isUploadAbortError,
+  uploadFiles,
+} from "../services/upload";
+import type { ComposerAttachment, UploadProgress } from "../shared/uploadTypes";
 import { runTaskNow } from "../services/task/crud";
 import { postTaskHumanGate } from "../services/task/humanGate";
 import { sessionService } from "../services/session";
@@ -22,9 +29,21 @@ export type UseTaskActivitiesResult = {
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
-  send: (body: string, workflowChoice: WorkflowChoice, workflowVersionId?: string) => Promise<void>;
+  /**
+   * 发送留言。带附件时先上传，再把 `[file: ...]` token 拼进正文 —— 与新建任务
+   * 面板的发送链路一致（附件不占后端字段，仍是纯文本留言）。
+   */
+  send: (
+    body: string,
+    workflowChoice: WorkflowChoice,
+    workflowVersionId?: string,
+    attachments?: ComposerAttachment[],
+  ) => Promise<void>;
   sending: boolean;
   sendError: string | null;
+  /** 附件上传进度；上传结束（成功/失败/取消）后清空。 */
+  uploadProgress: UploadProgress | null;
+  cancelUpload: () => void;
   answerQuestion: (activity: TaskActivity, answers: Record<string, string>) => Promise<void>;
   decideGate: (activity: TaskActivity, decision: HumanGateDecision) => Promise<void>;
   /** 派发排队中的首条留言（新建任务时勾掉了「立即执行」）。 */
@@ -48,10 +67,18 @@ export function useTaskActivities(
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [runningQueued, setRunningQueued] = useState(false);
   const [promptDeciding, setPromptDeciding] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+
+  const cancelUpload = useCallback(() => {
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = null;
+    setUploadProgress(null);
+  }, []);
 
   const load = useCallback(async () => {
     if (!taskId || !rootId) {
@@ -108,15 +135,41 @@ export function useTaskActivities(
   }, [taskId, rootId, load]);
 
   const send = useCallback(
-    async (body: string, workflowChoice: WorkflowChoice, workflowVersionId?: string) => {
+    async (
+      body: string,
+      workflowChoice: WorkflowChoice,
+      workflowVersionId?: string,
+      attachments: ComposerAttachment[] = [],
+    ) => {
       try {
         setSending(true);
         setSendError(null);
+
+        let attachmentTokens = "";
+        if (attachments.length > 0) {
+          const controller = new AbortController();
+          uploadAbortRef.current = controller;
+          try {
+            const uploaded = await uploadFiles({
+              rootId,
+              files: attachments.map((attachment) => attachment.file),
+              onProgress: setUploadProgress,
+              signal: controller.signal,
+              nodeId,
+            });
+            attachmentTokens = uploaded.map((file) => formatFileToken(fileTokenPath(file))).join("\n");
+          } finally {
+            uploadAbortRef.current = null;
+            setUploadProgress(null);
+          }
+        }
+
+        const payload = [body.trim(), attachmentTokens].filter(Boolean).join("\n");
         const result = await createActivity(
           taskId,
           rootId,
           {
-            body,
+            body: payload,
             workflow_choice: workflowChoice,
             workflow_version_id: workflowVersionId,
           },
@@ -130,7 +183,8 @@ export function useTaskActivities(
           return next;
         });
       } catch (err) {
-        setSendError(errorMessage(err));
+        // 用户主动取消上传不是错误：保留草稿，不写红色错误条。
+        if (!isUploadAbortError(err)) setSendError(errorMessage(err));
         throw err;
       } finally {
         setSending(false);
@@ -238,6 +292,8 @@ export function useTaskActivities(
     send,
     sending,
     sendError,
+    uploadProgress,
+    cancelUpload,
     answerQuestion,
     decideGate,
     runQueued,

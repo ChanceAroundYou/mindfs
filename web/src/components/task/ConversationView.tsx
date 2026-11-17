@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/index";
 import { useTaskActivities } from "../../hooks/useTaskActivities";
+import { usePendingAttachments } from "../action/usePendingAttachments";
 import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
 import { pendingTaskPrompt } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
@@ -162,6 +163,8 @@ export function ConversationView({
     send,
     sending,
     sendError,
+    uploadProgress,
+    cancelUpload,
     answerQuestion,
     decideGate,
     runQueued,
@@ -173,6 +176,12 @@ export function ConversationView({
   const [choice, setChoice] = useState<WorkflowChoice>("empty");
   const [versionId, setVersionId] = useState("");
   const [composerResetKey, setComposerResetKey] = useState(0);
+  const {
+    pendingAttachments,
+    appendPendingAttachments,
+    removePendingAttachment,
+    clearPendingAttachments,
+  } = usePendingAttachments();
   const workflowNames = useWorkflowNames();
   const pendingPrompt = pendingTaskPrompt(activities);
   const lastAgentReplyRef = useRef("");
@@ -198,14 +207,15 @@ export function ConversationView({
 
   const handleSend = async (text: string) => {
     try {
-      await send(text, choice, versionId);
+      await send(text, choice, versionId, pendingAttachments);
       setBody("");
       setChoice("empty");
       setVersionId("");
+      clearPendingAttachments();
       // PromptEditor 内部持有文本；父层清空后必须换一个 resetKey 才会真正清空编辑器。
       setComposerResetKey((key) => key + 1);
     } catch {
-      // 错误已由 hook 写入 sendError；草稿保留，用户改完可以直接重发。
+      // 错误已由 hook 写入 sendError；草稿与附件保留，用户改完可以直接重发。
     }
   };
 
@@ -280,6 +290,11 @@ export function ConversationView({
           sending={sending}
           error={sendError}
           resetKey={composerResetKey}
+          attachments={pendingAttachments}
+          onAttachFiles={appendPendingAttachments}
+          onRemoveAttachment={removePendingAttachment}
+          uploadProgress={uploadProgress}
+          onCancelUpload={cancelUpload}
           onSend={(text) => void handleSend(text)}
         />
       )}

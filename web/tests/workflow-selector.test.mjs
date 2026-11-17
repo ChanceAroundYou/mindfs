@@ -7,8 +7,8 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { test } from "vitest";
 import { I18nProvider } from "../src/i18n/index.tsx";
-import { WorkflowSelector } from "../src/components/task/WorkflowSelector.tsx";
-import { WorkflowPickerList } from "../src/components/task/WorkflowPickerDialog.tsx";
+import { WorkflowMenu, WorkflowSelector } from "../src/components/task/WorkflowSelector.tsx";
+import { WorkflowOptionList } from "../src/components/task/WorkflowOptionList.tsx";
 import { zhCN } from "../src/i18n/locales/zh-CN.ts";
 import { enUS } from "../src/i18n/locales/en-US.ts";
 
@@ -85,87 +85,85 @@ test("listAvailableWorkflows forwards a trimmed user_input as a query param", as
   assert.deepEqual(await service.listAvailableWorkflows("   "), []);
 });
 
-// ── WorkflowSelector：三态按钮组 ──────────────────────────────────────────
+// ── WorkflowSelector：图标按钮 + 一级三态 + 二级列表 ───────────────────────
 const render = (children) => renderToString(React.createElement(I18nProvider, null, children));
 const renderSelector = (props) => render(React.createElement(WorkflowSelector, props));
+const renderMenu = (props) =>
+  render(React.createElement(WorkflowMenu, {
+    pickedName: "",
+    manualOpen: false,
+    onPickAuto: () => {},
+    onPickDisabled: () => {},
+    onPickManual: () => {},
+    onPickWorkflow: () => {},
+    ...props,
+  }));
 
-test("WorkflowSelector renders the three workflow choices in order", () => {
-  // 默认收起：只留一个「自动选择」胶囊，不展示任何解释文案。
-  const htmlCollapsed = renderSelector({ choice: "empty", versionId: "", onChange: () => {} });
-  assert.match(htmlCollapsed, /data-testid="workflow-selector"/);
-  assert.match(htmlCollapsed, /data-testid="workflow-show-advanced"/);
-  assert.match(htmlCollapsed, /自动选择|Auto select/);
-  assert.equal((htmlCollapsed.match(/role="radio"/g) || []).length, 0);
-  assert.doesNotMatch(htmlCollapsed, /AI 会根据需求自动选择|Advanced options|高级选项/);
-
-  // 非empty时会自动展开，显示三个选项
-  const htmlExpanded = renderSelector({ choice: "specified", versionId: "wf-v1", onChange: () => {} });
-  assert.match(htmlExpanded, /data-testid="workflow-advanced-panel"/);
-  assert.equal((htmlExpanded.match(/type="radio"/g) || []).length, 3);
-  assert.deepEqual([...htmlExpanded.matchAll(/data-choice="([^"]+)"/g)].map((m) => m[1]), [
-    "empty",
-    "specified",
-    "disabled",
-  ]);
-  // 触发器只写友好名；回显里不允许出现内部版本 id。
-  assert.match(htmlExpanded, /指定工作流|Specify workflow/);
-  assert.doesNotMatch(htmlExpanded, /wf-v1/);
+test("WorkflowSelector collapses into a single workflow icon button", () => {
+  const html = renderSelector({ choice: "empty", versionId: "", onChange: () => {} });
+  assert.match(html, /data-testid="workflow-selector"/);
+  assert.match(html, /data-testid="workflow-selector-trigger"/);
+  // 收起态只有一个按钮：没有常驻的选项面板，也没有文字胶囊。
+  assert.match(html, /aria-haspopup="menu"/);
+  assert.doesNotMatch(html, /data-testid="workflow-menu"/);
+  assert.doesNotMatch(html, /role="radio"/);
+  // 图标代表工作流（分支图），按钮用 aria-label/title 交代当前状态。
+  assert.match(html, /<svg/);
+  assert.match(html, /执行方式: 自动|Workflow choice: Auto/);
+  // 默认（自动）不显示状态圆点。
+  assert.doesNotMatch(html, /data-testid="workflow-selection-dot"/);
 });
 
-test("WorkflowSelector marks the active choice", () => {
-  // 新UI：只有非empty时才展开显示radio按钮
-  // empty状态下不显示radio，所以只测试specified和disabled
-  for (const choice of ["specified", "disabled"]) {
-    const html = renderSelector({ choice, versionId: choice === "specified" ? "wf-v1" : "", onChange: () => {} });
-    assert.equal((html.match(/checked/g) || []).length, 1, `${choice} must be the only checked radio`);
-    // HTML中checked可能在data-choice之前或之后，所以用更灵活的匹配
-    assert.match(html, new RegExp(`data-choice="${choice}"[^>]*checked|checked[^>]*data-choice="${choice}"`));
-  }
+test("WorkflowSelector marks non-default choices with a dot", () => {
+  const specified = renderSelector({ choice: "specified", versionId: "wf-v1", onChange: () => {} });
+  assert.match(specified, /data-choice="specified"/);
+  assert.match(specified, /data-testid="workflow-selection-dot"/);
+  assert.match(specified, /执行方式: 手动选择|Workflow choice: Manual/);
+  // 回显里不允许出现内部版本 id。
+  assert.doesNotMatch(specified, /wf-v1/);
 
-  // empty状态下不显示radio，而是显示默认提示
-  const htmlEmpty = renderSelector({ choice: "empty", versionId: "", onChange: () => {} });
-  assert.equal((htmlEmpty.match(/type="radio"/g) || []).length, 0);
-  assert.match(htmlEmpty, /data-testid="workflow-show-advanced"/);
+  const disabled = renderSelector({ choice: "disabled", versionId: "", onChange: () => {} });
+  assert.match(disabled, /data-choice="disabled"/);
+  assert.match(disabled, /data-testid="workflow-selection-dot"/);
+  assert.match(disabled, /执行方式: 禁用|Workflow choice: Disabled/);
 });
 
-// Node 环境下没有 DOM，点击由浏览器验证；这里钉住每个按钮都接到了 onChange，
-// 且「指定工作流」走的是弹窗而不是直接提交空 id。
-test("WorkflowSelector wires each radio to its action", () => {
-  const source = read("components/task/WorkflowSelector.tsx");
-  assert.match(source, /onChange\(["']empty["'],\s*["']["']\)/);
-  assert.match(source, /onChange\(["']disabled["'],\s*["']["']\)/);
-  assert.match(source, /onChange\(["']specified["'],\s*[a-zA-Z_$][\w$]*\)/);
-  assert.match(source, /setShowPicker\(true\)/);
-  assert.match(source, /<WorkflowPickerDialog/);
-  // 选定后收起选项面板：选择器保持成一个胶囊，而不是一直展开。
-  assert.match(source, /onSelect=\{\(id, name\) => \{[\s\S]*?setOpen\(false\)/);
+test("WorkflowMenu renders auto / disabled / manual in order", () => {
+  const html = renderMenu({ choice: "empty", versionId: "" });
+  const items = [...html.matchAll(/data-testid="workflow-choice-([a-z]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(items, ["auto", "disabled", "manual"]);
+  assert.match(html, /自动|Auto/);
+  assert.match(html, /禁用|Disabled/);
+  assert.match(html, /手动选择|Manual/);
+  // 三个一级选项的选中态只落在当前 choice 上。
+  const checked = [...html.matchAll(/aria-checked="true"/g)];
+  assert.equal(checked.length, 1);
+  assert.match(html, /data-testid="workflow-choice-auto"[^>]*aria-checked="true"|aria-checked="true"[^>]*data-testid="workflow-choice-auto"/);
+  // 二级列表默认收起；「手动选择」是展开入口，不直接提交空 id。
+  assert.doesNotMatch(html, /data-testid="workflow-manual-panel"/);
+  assert.match(html, /aria-expanded="false"/);
 });
 
-// 选择器回显的是 workflow 名字，不是内部版本 id（wf-feature:v1 这种不该给用户看）。
-// 名字只在 id 仍对得上时生效：外部改写 versionId 后回退到通用「指定工作流」，
-// 绝不把版本 id 漏到界面上。
-test("WorkflowSelector shows the picked workflow name with no version-id fallback", () => {
-  const source = read("components/task/WorkflowSelector.tsx");
-  assert.match(source, /setPicked\(\{\s*id,\s*name\s*\}\)/);
-  assert.match(source, /picked\.id === versionId \? picked\.name : t\("task\.workflowChoice\.manual"\)/);
-  assert.doesNotMatch(source, /picked\.id === versionId \? picked\.name : versionId/);
-  const dialog = read("components/task/WorkflowPickerDialog.tsx");
-  assert.match(dialog, /onSelect\(workflow\.id, workflow\.name \|\| workflow\.id\)/);
+test("WorkflowMenu expands the manual list and echoes the picked name", () => {
+  const html = renderMenu({
+    choice: "specified",
+    versionId: "wf-debug:v1",
+    pickedName: "Debug 流程",
+    manualOpen: true,
+  });
+  assert.match(html, /data-testid="workflow-manual-panel"/);
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /Debug 流程/);
+  // SSR 下列表 hook 只停在加载态；版本 id 不泄露。
+  assert.doesNotMatch(html, /wf-debug:v1/);
 });
 
-test("WorkflowSelector keeps the view free of direct service imports", () => {
-  for (const file of ["components/task/WorkflowSelector.tsx", "components/task/WorkflowPickerDialog.tsx"]) {
-    assert.doesNotMatch(read(file), /from\s*["'](?:\.\.\/)+services\//, `${file} must go through a hook`);
-  }
-});
-
-// ── WorkflowPickerDialog：列表渲染 ─────────────────────────────────────────
-test("WorkflowPickerList renders workflows, tags, and the selected marker", () => {
+test("WorkflowOptionList renders names, descriptions and the selected marker without ids", () => {
   const html = render(
-    React.createElement(WorkflowPickerList, {
+    React.createElement(WorkflowOptionList, {
       workflows: [
-        { id: "wf-debug", name: "Debug 流程", description: "定位登录问题", use_cases: [], tags: ["bug", "login"] },
-        { id: "wf-new", name: "新功能", description: "加功能", use_cases: [], tags: [] },
+        { id: "wf-debug", name: "Debug 流程", description: "定位登录问题", use_cases: [], tags: [] },
+        { id: "wf-new", name: "新功能", description: "", use_cases: [], tags: [] },
       ],
       selected: "wf-debug",
       onSelect: () => {},
@@ -173,20 +171,50 @@ test("WorkflowPickerList renders workflows, tags, and the selected marker", () =
   );
   assert.match(html, /Debug 流程/);
   assert.match(html, /定位登录问题/);
-  assert.match(html, /bug/);
-  assert.match(html, /login/);
-  const items = html.split("<li").slice(1);
-  const selected = items.filter((item) => item.includes('data-selected="true"'));
+  assert.match(html, /新功能/);
+  const items = html.split("<button").slice(1);
+  const selected = items.filter((item) => item.includes('aria-checked="true"'));
   assert.equal(selected.length, 1, "exactly one workflow may be marked selected");
   assert.match(selected[0], /Debug 流程/);
-  assert.doesNotMatch(selected[0], /新功能/);
+  assert.doesNotMatch(html, />wf-debug<|>wf-new</);
 });
 
-test("WorkflowPickerDialog is a modal that loads options through a hook", () => {
-  const dialog = read("components/task/WorkflowPickerDialog.tsx");
-  assert.match(dialog, /role="dialog"/);
-  assert.match(dialog, /aria-modal="true"/);
-  assert.match(dialog, /useWorkflowPicker\(/);
+// Node 环境下没有 DOM，点击由浏览器验证；这里钉住每项接到哪个动作，
+// 以及「手动选择」走二级展开而不是直接提交空 id。
+test("WorkflowSelector wires each mode to its action", () => {
+  const source = read("components/task/WorkflowSelector.tsx");
+  assert.match(source, /onChange\(["']empty["'],\s*["']["']\)/);
+  assert.match(source, /onChange\(["']disabled["'],\s*["']["']\)/);
+  assert.match(source, /onPickManual=\{\(\) => setManualOpen\(/);
+  assert.match(source, /onChange\(["']specified["'],\s*id\)/);
+  assert.match(source, /useState\(choice === "specified"\)/);
+  assert.match(source, /<WorkflowManualPanel/);
+  // 菜单 portal 到 body：面板正文是滚动容器，内联绝对定位会被裁掉。
+  assert.match(source, /createPortal\(/);
+  const hook = read("components/task/useWorkflowSelectorMenu.ts");
+  assert.match(hook, /pointerdown/);
+  assert.match(hook, /Escape/);
+});
+
+// 选择器回显的是 workflow 名字，不是内部版本 id（wf-feature:v1 这种不该给用户看）。
+// 名字只在 id 仍对得上时生效：外部改写 versionId 后回退到通用「手动选择」。
+test("WorkflowSelector shows the picked workflow name with no version-id fallback", () => {
+  const source = read("components/task/WorkflowSelector.tsx");
+  assert.match(source, /setPicked\(\{\s*id,\s*name\s*\}\)/);
+  assert.match(source, /picked && picked\.id === versionId \? picked\.name : ""/);
+  assert.match(source, /pickedName \|\| t\("task\.workflowChoice\.manual"\)/);
+  assert.doesNotMatch(source, /\? picked\.name : versionId/);
+  const list = read("components/task/WorkflowOptionList.tsx");
+  assert.match(list, /onSelect\(workflow\.id, workflow\.name \|\| workflow\.id\)/);
+});
+
+test("WorkflowSelector keeps the view free of direct service imports", () => {
+  for (const file of [
+    "components/task/WorkflowSelector.tsx",
+    "components/task/WorkflowOptionList.tsx",
+  ]) {
+    assert.doesNotMatch(read(file), /from\s*["'](?:\.\.\/)+services\//, `${file} must go through a hook`);
+  }
   const hook = read("components/task/useWorkflowPicker.ts");
   assert.match(hook, /from\s*["']\.\.\/\.\.\/services\/workflows["']/);
   assert.match(hook, /listAvailableWorkflows\(/);
@@ -197,8 +225,11 @@ test("workflow selector i18n keys exist in both locales", () => {
   const keys = [
     "task.workflowChoice",
     "task.workflowChoice.auto",
+    "task.workflowChoice.autoHint",
     "task.workflowChoice.manual",
+    "task.workflowChoice.manualHint",
     "task.workflowChoice.none",
+    "task.workflowChoice.noneHint",
     "task.selectWorkflow",
     "task.noAvailableWorkflows",
   ];
@@ -209,7 +240,7 @@ test("workflow selector i18n keys exist in both locales", () => {
     assert.ok(enUS[key].trim(), `en-US empty ${key}`);
   }
   // 解释性提示语、重复的三态文案与推荐标记都只剩一种说法：
-  // 选择器只保留「自动选择 / 指定工作流 / 纯对话」。
+  // 选择器只保留「自动（默认）/ 禁用 / 手动选择」。
   for (const key of [
     "task.workflowAutoMode",
     "task.workflowAdvancedOptions",

@@ -24,8 +24,8 @@ const en = fs.readFileSync(path.join(root, "src/i18n/locales/en-US.ts"), "utf8")
 // 这些数字以前在 ActionBar 与 PromptEditor 各抄一份，现在统一由 useComposerEditorHeight 给出。
 assert.match(
   promptEditor,
-  /composerEditorInsets\(isMultiLine, 96\)/,
-  "PromptEditor must take its insets from the shared composerEditorInsets helper",
+  /composerEditorInsets\(isMultiLine, extraControls \? 132 : 96\)/,
+  "PromptEditor must take its insets from the shared composerEditorInsets helper (wider when extra controls are present)",
 );
 assert.match(
   promptEditor,

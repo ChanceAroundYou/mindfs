@@ -1,8 +1,10 @@
-import type React from "react";
+import { useRef } from "react";
 import { useI18n } from "../../i18n/index";
 import type { WorkflowChoice } from "../../shared/taskComments";
+import type { ComposerAttachment, UploadProgress } from "../../shared/uploadTypes";
 import { canSendActivity } from "../../shared/activityModel";
 import { PromptEditor } from "../editor/PromptEditor";
+import { ComposerAttachmentStrip } from "../editor/ComposerAttachmentStrip";
 import { WorkflowSelector } from "./WorkflowSelector";
 
 export type ActivityInputProps = {
@@ -11,6 +13,12 @@ export type ActivityInputProps = {
   choice: WorkflowChoice;
   versionId: string;
   onWorkflowChange: (choice: WorkflowChoice, versionId: string) => void;
+  /** 待发送附件（与新建任务面板同一份模型）。 */
+  attachments?: ComposerAttachment[];
+  onAttachFiles?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
+  uploadProgress?: UploadProgress | null;
+  onCancelUpload?: () => void;
   sending?: boolean;
   error?: string | null;
   placeholder?: string;
@@ -22,11 +30,13 @@ export type ActivityInputProps = {
 /**
  * 对话输入框：受控组件，状态由 ConversationView 持有。
  *
- * 与新建任务面板共用 PromptEditor（Lexical token 编辑器），不再是裸 textarea
- * 加手搓按钮：圆角、字号、回车行为、发送键位置都跟系统其它输入框一致。
+ * 与新建任务面板共用 PromptEditor（Lexical token 编辑器）与附件条：圆角、字号、
+ * 回车行为、添加文件按钮、发送键位置都一致。工作流选择器作为右下角控件行的
+ * 第三个按钮（图标）挂在编辑器里，不再在下面另起一行三态面板。
  *
- * 视图层不碰 services（仓库硬规则），发送动作通过 onSend 回调交给 hook；
- * 禁用条件统一走 canSendActivity，避免「按钮能点但请求必然 400」的假可用。
+ * 视图层不碰 services（仓库硬规则），上传在 useTaskActivities 里做；发送动作
+ * 通过 onSend 回调交给 hook；禁用条件统一走 canSendActivity，避免「按钮能点但
+ * 请求必然 400」的假可用。
  */
 export function ActivityInput({
   body,
@@ -34,6 +44,11 @@ export function ActivityInput({
   choice,
   versionId,
   onWorkflowChange,
+  attachments = [],
+  onAttachFiles,
+  onRemoveAttachment,
+  uploadProgress,
+  onCancelUpload,
   sending = false,
   error,
   placeholder,
@@ -41,6 +56,7 @@ export function ActivityInput({
   onSend,
 }: ActivityInputProps) {
   const { t } = useI18n();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canSend = canSendActivity({
     body,
     workflowChoice: choice,
@@ -70,17 +86,42 @@ export function ActivityInput({
         onChange={onBodyChange}
         resetKey={resetKey}
         placeholder={placeholder ?? t("task.activity.inputPlaceholder")}
+        onAttach={onAttachFiles ? () => fileInputRef.current?.click() : undefined}
         onSend={handleSend}
         sending={sending}
         sendDisabled={!canSend}
         sendTestId="activity-send"
         sendLabel={sending ? t("task.activity.sending") : t("task.activity.send")}
+        extraControls={(
+          <WorkflowSelector
+            choice={choice}
+            versionId={versionId}
+            onChange={onWorkflowChange}
+          />
+        )}
       />
 
-      <WorkflowSelector
-        choice={choice}
-        versionId={versionId}
-        onChange={onWorkflowChange}
+      {onAttachFiles ? (
+        <input
+          ref={fileInputRef}
+          data-testid="activity-attachment-input"
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          onChange={(event) => {
+            const files = Array.from(event.target.files || []);
+            if (files.length > 0) onAttachFiles(files);
+            event.currentTarget.value = "";
+          }}
+        />
+      ) : null}
+
+      <ComposerAttachmentStrip
+        attachments={attachments}
+        uploadProgress={uploadProgress}
+        disabled={sending}
+        onRemove={(id) => onRemoveAttachment?.(id)}
+        onCancelUpload={onCancelUpload}
       />
 
       {error && (

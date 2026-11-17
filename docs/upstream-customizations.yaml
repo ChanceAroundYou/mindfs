@@ -7430,7 +7430,7 @@ groups:
     title: 看板会话前端：user↔agent 交替时间线、工作流三态选择、运行视图下钻、显式 nodeId
     kind: feature
     symptom: "用户在任务详情里能看到 user↔agent 交替的对话流，发留言可选工作流三态（不指定/指定并填版本/禁用），运行视图可展开看节点详情并打开会话；跨节点留言走显式 nodeId 不误落到当前激活节点。"
-    why: "前端会话流：ConversationView 是唯一的消息列表（CommentThread 已删除，它与 ConversationView 读同一份活动，同时挂载就是同一段对话出现两套，见 G-LL），留言框工作流三态必填可见（empty 不带 version、specified 必带 workflow_version_id、disabled 禁用），appURL 显式传 nodeId（跨节点铁律：appPath 不传 nodeId 静默打激活节点），comment_id 客户端生成重试复用，TaskDetailPanel 仅接线（rootId/taskId/nodeId + onOpenSession）。i18n 双语键不漂移，禁硬编码文案。"
+    why: "前端会话流：ConversationView 是唯一的消息列表（CommentThread 已删除，它与 ConversationView 读同一份活动，同时挂载就是同一段对话出现两套，见 G-LL），留言框保留工作流三态（自动=empty 不带 version、手动=specified 必带 workflow_version_id、禁用=disabled；界面形态见 G-ME 的图标选择器），appURL 显式传 nodeId（跨节点铁律：appPath 不传 nodeId 静默打激活节点），comment_id 客户端生成重试复用，TaskDetailPanel 仅接线（rootId/taskId/nodeId + onOpenSession）。i18n 双语键不漂移，禁硬编码文案。"
     boundary: "只管会话前端展示与发送；不碰执行引擎；steer/恢复留 WP-03，画布/运行视图留 WP-07。"
     files:
       - web/src/hooks/useTaskActivities.ts
@@ -8914,3 +8914,54 @@ groups:
       - 'server/internal/api/usecase/external_sessions_live_tail.go:AfterTimestamp: lastUser.Timestamp,'
       - 'server/internal/api/usecase/external_sessions_sync_helpers.go:func persistImportedExchangeContent('
       - 'server/internal/api/usecase/session_agent_open.go:persistOpenedAgentSessionBinding(ctx, manager, current, agentName, binding, sess)'
+
+  # ── 任务详情对话输入框：与新建任务面板同源 composer + 图标式工作流选择器 ──
+  - id: G-ME
+    title: 任务详情输入框复用新建任务面板的 composer（带添加文件），工作流收成图标三态选择器
+    kind: feature
+    symptom: "任务详情面板底部的发送窗口与新建任务对话框是两套：它没有添加文件按钮，也不能发附件；工作流是常驻的三段文字按钮，占一行且看不出是什么。用户 2026-11-17 要求两处长得一模一样、都带加文件按钮，并把工作流收成一个能代表工作流的小图标按钮：自动（默认）/ 禁用 / 手动选择（二级展开具体 workflow，交互同 AgentSelector 的「选 agent → 选模型」）。"
+    why: "必须保留：① 两处 composer 同源 —— 任务详情输入框与新建任务面板都用 PromptEditor + ComposerAttachmentStrip + shared/uploadTypes 的 ComposerAttachment；各写一套会让附件缩略图尺寸、上传进度、＋ 按钮位置、回车行为再次漂移；② 附件先上传再拼 `[file: ...]` token 进正文（与新建任务面板同一链路），上传在 useTaskActivities 里做（视图层禁 import services），用户取消上传不是错误、不能写红色错误条；③ 工作流三态的提交语义不变：自动=empty（交给 Router）、禁用=disabled、手动=specified + workflow_version_id；「手动选择」只展开二级列表，绝不提交空 id；④ 二级列表只在展开时挂载（懒取数，避免每次打开菜单都打 /api/workflows/available）；⑤ 菜单 portal 到 body —— 任务详情面板正文是滚动容器，内联绝对定位会被裁掉；外部 pointerdown / Escape 关闭；⑥ 回显只显示 workflow 名字，绝不把内部版本 id（wf-feature:v1）给用户看；名字只在 id 仍对得上时生效，否则回退「手动选择」；⑦ 手动列放在菜单左列、菜单右缘钉在触发按钮上，展开二级时一级列不左右跳；⑧ extraControls 存在时编辑器右内边距用 132（不是 96），否则文字会跑到按钮底下。"
+    boundary: "只改任务详情对话输入框的 composer 形态、附件链路与工作流选择器 UI；不改 Router 决策逻辑与后端 workflow_choice / workflow_version_id 语义，不改新建任务面板的保存流程，也不改主会话 ActionBar 的输入框与 workflow 列表 API。"
+    files:
+      - web/src/components/task/WorkflowSelector.tsx
+      - web/src/components/task/WorkflowOptionList.tsx
+      - web/src/components/task/useWorkflowSelectorMenu.ts
+      - web/src/components/task/ActivityInput.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/hooks/useTaskActivities.ts
+      - web/src/components/editor/PromptEditor.tsx
+      - web/src/components/editor/ComposerAttachmentStrip.tsx
+      - web/src/components/app/TaskInlineEditPanel.tsx
+      - web/src/shared/uploadTypes.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/workflow-selector.test.mjs
+      - web/tests/task-activity-composer.test.mjs
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/conversation-view.test.mjs
+    tests:
+      - web/tests/workflow-selector.test.mjs
+      - web/tests/task-activity-composer.test.mjs
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/conversation-view.test.mjs
+    anchors:
+      - 'web/src/components/task/WorkflowSelector.tsx:data-testid="workflow-selector-trigger"'
+      - 'web/src/components/task/WorkflowSelector.tsx:const triggerLabel ='
+      - 'web/src/components/task/WorkflowSelector.tsx:data-testid="workflow-choice-manual"'
+      - 'web/src/components/task/WorkflowSelector.tsx:createPortal('
+      - 'web/src/components/task/WorkflowSelector.tsx:picked && picked.id === versionId ? picked.name : ""'
+      - 'web/src/components/task/WorkflowOptionList.tsx:export function WorkflowManualPanel'
+      - 'web/src/components/task/WorkflowOptionList.tsx:data-workflow-id={workflow.id}'
+      - 'web/src/components/task/useWorkflowSelectorMenu.ts:document.addEventListener("pointerdown", handlePointerOutside);'
+      - 'web/src/components/task/ActivityInput.tsx:extraControls={('
+      - 'web/src/components/task/ActivityInput.tsx:onAttach={onAttachFiles ? () => fileInputRef.current?.click() : undefined}'
+      - 'web/src/components/editor/PromptEditor.tsx:composerEditorInsets(isMultiLine, extraControls ? 132 : 96)'
+      - 'web/src/components/editor/ComposerAttachmentStrip.tsx:data-testid="composer-attachments"'
+      - 'web/src/components/editor/ComposerAttachmentStrip.tsx:<CompactUploadProgress'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:<ComposerAttachmentStrip'
+      - 'web/src/hooks/useTaskActivities.ts:const payload = [body.trim(), attachmentTokens].filter(Boolean).join("\n");'
+      - 'web/src/hooks/useTaskActivities.ts:if (!isUploadAbortError(err)) setSendError(errorMessage(err));'
+      - 'web/src/components/task/ConversationView.tsx:await send(text, choice, versionId, pendingAttachments);'
+      - 'web/src/shared/uploadTypes.ts:export type ComposerAttachment = {'
+      - 'web/src/components/task/taskIcons.tsx:export function WorkflowIcon({ size = 13 }: { size?: number })'

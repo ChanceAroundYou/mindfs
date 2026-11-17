@@ -19,6 +19,11 @@ export type PromptEditorProps = {
   sendDisabled?: boolean;
   /** 节点主题色（hex），用于发送按钮的外框与底色 */
   accentColor?: string;
+  /**
+   * 附件/发送按钮左侧的额外控件（例如任务对话的工作流选择器）。
+   * 放在编辑器右下角控件行里，与输入框同源，不再另起一行。
+   */
+  extraControls?: React.ReactNode;
   /** 测试/定位用：挂在最外层容器上。 */
   containerTestId?: string;
   /** 测试/定位用：挂在发送按钮上。 */
@@ -46,6 +51,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     sending,
     sendDisabled,
     accentColor,
+    extraControls,
     containerTestId,
     sendTestId,
     sendLabel,
@@ -84,7 +90,8 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   }, [value, resetKey, syncEditorHeight]);
 
   const canSend = !sending && !sendDisabled;
-  const insets = composerEditorInsets(isMultiLine, 96);
+  // 右侧控件行多一个按钮时把单行留位加宽，否则文字会压在控件上。
+  const insets = composerEditorInsets(isMultiLine, extraControls ? 132 : 96);
 
   // 发送入口同步从编辑器读最新文本：内容经 onChange 异步进父 state，
   // 快打后立刻发送时父 value 还是旧值。按钮点击与回车共用这一条。
@@ -133,6 +140,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         }}
       />
       <div style={{ position: "absolute", right: "6px", bottom: "6px", display: "flex", alignItems: "center", gap: "2px", zIndex: 3 }}>
+        {extraControls}
         {onAttach ? (
           <button
             type="button"
