@@ -24,8 +24,15 @@ type startupConfig struct {
 	NotifyScript *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
-	Role   *string              `json:"role"`
-	Router *startupRouterConfig `json:"router"`
+	Role     *string                `json:"role"`
+	Router   *startupRouterConfig   `json:"router"`
+	Workflow *startupWorkflowConfig `json:"workflow"`
+}
+
+// startupWorkflowConfig 是工作流执行的节点本地开关。不配置 = 默认值（并行开启）。
+type startupWorkflowConfig struct {
+	// ParallelMainTree 控制没有独立 worktree 的任务是否共用主树并行写。
+	ParallelMainTree *bool `json:"parallel_main_tree"`
 }
 
 // startupRouterConfig 是 Task Router 的节点本地配置。它与 agent-config 同类：
@@ -59,6 +66,8 @@ type startupFlags struct {
 	RouterEffort      *string
 	RouterTurnTimeout *time.Duration
 	RouterIdleClose   *time.Duration
+
+	WorkflowParallelMainTree *bool
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -143,6 +152,10 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 	}
 	if flags.Role != nil && cfg.Role != nil && !explicit["role"] {
 		*flags.Role = strings.TrimSpace(*cfg.Role)
+	}
+	if flags.WorkflowParallelMainTree != nil && !explicit["workflow-parallel-main-tree"] &&
+		cfg.Workflow != nil && cfg.Workflow.ParallelMainTree != nil {
+		*flags.WorkflowParallelMainTree = *cfg.Workflow.ParallelMainTree
 	}
 	router := cfg.Router
 	if router == nil {

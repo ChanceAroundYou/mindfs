@@ -108,7 +108,13 @@ func (s *Service) PrepareWorkflowNodeWorktree(ctx context.Context, store *TaskSt
 	if branch == "" {
 		branch = strings.TrimSpace(run.IntegrationBranch)
 	}
-	release, err := s.AcquireWorkflowNodeWriter(ctx, node, lease.RootPath, branch)
+	var release func()
+	if intent.Independent {
+		release, err = s.AcquireWorkflowNodeWriter(ctx, node, lease.RootPath, branch)
+	} else {
+		// 共享主树：默认允许多个任务并行（任务内仍串行），总开关可收回全局独占。
+		release, err = s.AcquireWorkflowSharedTreeWriter(ctx, task.ID, node, lease.RootPath, branch)
+	}
 	if err != nil {
 		return nil, err
 	}

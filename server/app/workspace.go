@@ -54,6 +54,13 @@ type sharedServices struct {
 	// routerConfig 是节点本地 Task Router 配置；mode=off（默认）时不创建任何
 	// Router 会话，行为与改造前完全一致。
 	routerConfig kanban.RouterConfig
+	// parallelMainTree 是共享主树并行开关（nil = 默认开启）。每账户的 Kanban
+	// 实例必须拿到同一个值。
+	parallelMainTree *bool
+}
+
+func (s sharedServices) parallelMainTreeEnabled() bool {
+	return s.parallelMainTree == nil || *s.parallelMainTree
 }
 
 type workspaceEntry struct {
@@ -277,6 +284,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban.SetDirectExecutor(services)
 	services.Kanban.SetWorkflowCommentSender(services)
 	services.Kanban.SetWriterGate(m.shared.writerGate)
+	services.Kanban.SetParallelMainTree(m.shared.parallelMainTreeEnabled())
 	services.Kanban.SetRouterConfig(m.shared.routerConfig)
 	// 自动选择 workflow 与 Router 共用 agent/model；未配置 agent 时保持旧回退。
 	services.Kanban.SetWorkflowLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))

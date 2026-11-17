@@ -88,6 +88,7 @@ func main() {
 	routerEffortFlag := flag.String("router-effort", "", "task router effort level (default low)")
 	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 20s (default 20s)")
 	routerIdleCloseFlag := flag.Duration("router-idle-close", 0, "close idle router sessions after this duration, e.g. 30m (default 30m)")
+	workflowParallelMainTreeFlag := flag.Bool("workflow-parallel-main-tree", true, "run tasks without independent worktrees in parallel on the shared main tree")
 	remove := flag.Bool("remove", false, "remove the managed directory")
 	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
@@ -101,21 +102,22 @@ func main() {
 		os.Exit(1)
 	}
 	if err := applyStartupConfig(startupCfg, explicitFlags, startupFlags{
-		Addr:              addr,
-		WebPush:           webPushFlag,
-		Foreground:        foreground,
-		TLS:               tlsFlag,
-		Cert:              certFlag,
-		Key:               keyFlag,
-		AgentConfig:       agentConfigFlag,
-		NotifyScript:      notifyScriptFlag,
-		Role:              roleFlag,
-		RouterMode:        routerModeFlag,
-		RouterAgent:       routerAgentFlag,
-		RouterModel:       routerModelFlag,
-		RouterEffort:      routerEffortFlag,
-		RouterTurnTimeout: routerTurnTimeoutFlag,
-		RouterIdleClose:   routerIdleCloseFlag,
+		Addr:                     addr,
+		WebPush:                  webPushFlag,
+		Foreground:               foreground,
+		TLS:                      tlsFlag,
+		Cert:                     certFlag,
+		Key:                      keyFlag,
+		AgentConfig:              agentConfigFlag,
+		NotifyScript:             notifyScriptFlag,
+		Role:                     roleFlag,
+		RouterMode:               routerModeFlag,
+		RouterAgent:              routerAgentFlag,
+		RouterModel:              routerModelFlag,
+		RouterEffort:             routerEffortFlag,
+		RouterTurnTimeout:        routerTurnTimeoutFlag,
+		RouterIdleClose:          routerIdleCloseFlag,
+		WorkflowParallelMainTree: workflowParallelMainTreeFlag,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -320,22 +322,23 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- app.Start(ctx, *addr, app.StartOptions{
-			Version:           version,
-			Args:              os.Args[1:],
-			AgentConfigPath:   *agentConfigFlag,
-			WebPushEnabled:    *webPushFlag,
-			NotifyScript:      *notifyScriptFlag,
-			UseTLS:            *tlsFlag,
-			CertFile:          resolvedCert,
-			KeyFile:           resolvedKey,
-			Role:              *roleFlag,
-			RouterMode:        *routerModeFlag,
-			RouterAgent:       *routerAgentFlag,
-			RouterModel:       *routerModelFlag,
-			RouterEffort:      *routerEffortFlag,
-			RouterTurnTimeout: *routerTurnTimeoutFlag,
-			RouterIdleClose:   *routerIdleCloseFlag,
-			RouterRoots:       routerRoots(startupCfg),
+			Version:                  version,
+			Args:                     os.Args[1:],
+			AgentConfigPath:          *agentConfigFlag,
+			WebPushEnabled:           *webPushFlag,
+			NotifyScript:             *notifyScriptFlag,
+			UseTLS:                   *tlsFlag,
+			CertFile:                 resolvedCert,
+			KeyFile:                  resolvedKey,
+			Role:                     *roleFlag,
+			RouterMode:               *routerModeFlag,
+			RouterAgent:              *routerAgentFlag,
+			RouterModel:              *routerModelFlag,
+			RouterEffort:             *routerEffortFlag,
+			RouterTurnTimeout:        *routerTurnTimeoutFlag,
+			RouterIdleClose:          *routerIdleCloseFlag,
+			RouterRoots:              routerRoots(startupCfg),
+			WorkflowParallelMainTree: *workflowParallelMainTreeFlag,
 		})
 	}()
 	if err := waitForServer(*addr, *tlsFlag, 8*time.Second); err != nil {

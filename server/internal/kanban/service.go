@@ -42,6 +42,10 @@ type Service struct {
 	// WriterGate 是 app 级共享的物理工作树写互斥（D15）。每账户的 Service 各有一个
 	// 实例，但必须由 app 层注入**同一个** *WriterGate；为 nil 时写节点 fail closed。
 	WriterGate *WriterGate
+	// parallelMainTree 控制「没有独立 worktree 的任务」是否共用主树并行写入。
+	// nil = 默认开启（2026-11-17 用户决策：默认并行 + 总开关）。任务内仍串行；
+	// 关闭后恢复全局独占，任何时刻只有一个任务能写同一物理树。
+	parallelMainTree *bool
 
 	mu     sync.Mutex
 	stores map[string]*TaskStore
@@ -166,6 +170,27 @@ func (s *Service) SetWriterGate(gate *WriterGate) {
 	s.mu.Lock()
 	s.WriterGate = gate
 	s.mu.Unlock()
+}
+
+// SetParallelMainTree 打开/关闭「共享主树多任务并行」。装配期调一次；未调用时
+// 默认为开（用户决策：默认并行，总开关只用来收回串行行为）。
+func (s *Service) SetParallelMainTree(enabled bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.parallelMainTree = &enabled
+	s.mu.Unlock()
+}
+
+// ParallelMainTree 报告共享主树并行是否开启；零值 Service 也返回 true。
+func (s *Service) ParallelMainTree() bool {
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.parallelMainTree == nil || *s.parallelMainTree
 }
 
 // SetWorkflowNodeRunner 挂上 Workflow Agent 节点执行端口。装配期调一次。

@@ -8810,3 +8810,42 @@ groups:
       - 'web/src/components/session/SessionViewerHeader.tsx:userSelect: "none"'
       - 'web/src/components/shell/PanelShell.tsx:useSelectionContainment(bodyRef);'
       - 'e2e/live/selection_scope.py:def main() -> int:'
+
+  # ── 共享主树多任务并行（默认开 + 总开关） ─────────────────────────────
+  - id: G-MB
+    title: 没有独立 worktree 的任务默认共用主树并行执行，可用总开关收回串行
+    kind: feature
+    symptom: "同一项目下未设置独立 worktree 的任务全部挤在一把全局写锁后面：一个任务跑十分钟的 agent 回合，其余任务连开工都排不上；用户看到的是「同一 worktree 只允许一个任务跑」。用户要求：没有 worktree 时在主分支下改动的任务允许多个并行，同时留一个总开关恢复旧行为。"
+    why: "用户 2026-11-17 明确要求放宽共享主树并发。必须保留：① 物理树锁升级为共享/独占两态 + FIFO 等待队列（`workspaceLock`），**不能**退化成按 Task 分片的锁——合并/收尾/留言投递持有的是不按 Task 分片的独占锁，按 Task 分片会让它们看不见别的任务仍在写树；② 工作流写节点在共享主树上取「任务内串行 `(task,worktree)` gate + 物理树共享锁」两把，缺任一都会出现同任务两节点并发写同一 checkout 或跨任务互斥；③ `AcquireNodeWriter` 保持独占语义不变，合并/收尾/留言投递与所有共享写者互斥；④ 独立 worktree 节点仍按树独占，不受开关影响；⑤ 开关 `workflow.parallel_main_tree`（flag 同名，默认 true）由 config.json 覆盖、显式 flag 优先，经 `StartOptions` → app 级 `sharedServices` → 每个账户 Kanban Service 的 `SetParallelMainTree` 注入，所有账户必须拿到同一个值；⑥ 取消/超时的等待者必须摘队或归还已授予的许可，否则该物理树永久堵死。上游没有 Router/Workflow 主树并发这套语义，合上游后这些测试是唯一判据。"
+    boundary: "只改工作树写互斥的并发语义与开关接线；不改 workflow 引擎/DAG、Router 决策、worktree 生命周期（建树/合并/关闭流程不变，只是它们在并行写者退出后才拿到独占锁），也不改 agent 会话与前端。"
+    files:
+      - cli/cmd/mindfs.go
+      - cli/cmd/startup.go
+      - cli/cmd/startup_config_test.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+      - server/app/workspace_writer_gate_test.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_workspace_gate.go
+      - server/internal/kanban/service_workflow_workspace.go
+      - server/internal/kanban/writer_gate.go
+      - server/internal/kanban/workspace_parallel_test.go
+      - server/internal/kanban/workspace_main_tree_parallel_service_test.go
+    tests:
+      - server/internal/kanban/workspace_parallel_test.go
+      - server/internal/kanban/workspace_main_tree_parallel_service_test.go
+      - server/app/workspace_writer_gate_test.go
+      - cli/cmd/startup_config_test.go
+    anchors:
+      - 'server/internal/kanban/writer_gate.go:func (l *workspaceLock) grantLocked() {'
+      - 'server/internal/kanban/writer_gate.go:func (g *WriterGate) AcquireWorkspaceShared('
+      - 'server/internal/kanban/writer_gate.go:if !lock.removeWaiterLocked(waiter) {'
+      - 'server/internal/kanban/service_workspace_gate.go:func (s *Service) AcquireWorkflowSharedTreeWriter('
+      - 'server/internal/kanban/service_workspace_gate.go:if !s.ParallelMainTree() {'
+      - 'server/internal/kanban/service.go:func (s *Service) SetParallelMainTree(enabled bool) {'
+      - 'server/internal/kanban/service_workflow_workspace.go:release, err = s.AcquireWorkflowSharedTreeWriter(ctx, task.ID, node, lease.RootPath, branch)'
+      - 'cli/cmd/mindfs.go:flag.Bool("workflow-parallel-main-tree", true,'
+      - 'server/app/workspace.go:func (s sharedServices) parallelMainTreeEnabled() bool {'
+      - 'server/app/server.go:parallelMainTree: &opts.WorkflowParallelMainTree'

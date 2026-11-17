@@ -51,6 +51,9 @@ type StartOptions struct {
 	RouterTurnTimeout time.Duration
 	RouterIdleClose   time.Duration
 	RouterRoots       map[string]string
+	// WorkflowParallelMainTree 控制没有独立 worktree 的任务是否共用主树并行写。
+	// 入口 flag 默认 true；config.json 的 workflow.parallel_main_tree 可关闭。
+	WorkflowParallelMainTree bool
 }
 
 // routerConfigFromOptions 是 string -> kanban.RouterConfig 的唯一转换点。
@@ -122,18 +125,19 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	})
 
 	workspaces := newWorkspaceManager(ctx, sharedServices{
-		agentConfig:  agentConfig,
-		update:       updateSvc,
-		auth:         authStore,
-		notify:       notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-		prefs:        sharedPrefs,
-		nodes:        sharedNodes,
-		webPush:      sharedWebPush,
-		workflows:    sharedWorkflows,
-		pool:         sharedPool,
-		prober:       sharedProber,
-		writerGate:   kanban.NewWriterGate(),
-		routerConfig: routerConfigFromOptions(opts),
+		agentConfig:      agentConfig,
+		update:           updateSvc,
+		auth:             authStore,
+		notify:           notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
+		prefs:            sharedPrefs,
+		nodes:            sharedNodes,
+		webPush:          sharedWebPush,
+		workflows:        sharedWorkflows,
+		pool:             sharedPool,
+		prober:           sharedProber,
+		writerGate:       kanban.NewWriterGate(),
+		routerConfig:     routerConfigFromOptions(opts),
+		parallelMainTree: &opts.WorkflowParallelMainTree,
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 

@@ -128,6 +128,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetWorkflowCommentSender(services)
 	// 所有账户共用同一把物理工作树 writer gate（D15）；每账户一把等于没锁。
 	services.Kanban.SetWriterGate(m.shared.writerGate)
+	services.Kanban.SetParallelMainTree(m.shared.parallelMainTreeEnabled())
 	services.Kanban.SetRouterConfig(m.shared.routerConfig)
 	// 自动选择 workflow 用与 Router 同一套 agent/model；model 由 config 指定
 	// （生产用 ok 这类便宜模型）。未配置 agent 时返回 nil，保持旧回退。

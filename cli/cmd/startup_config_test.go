@@ -172,6 +172,32 @@ func TestRouterConfigFromFileAndFlagPrecedence(t *testing.T) {
 	}
 }
 
+// 共享主树并行：默认由 flag 的默认值（true）决定，config.json 可以收回串行；
+// 显式 flag 永远胜出。
+func TestWorkflowParallelMainTreeConfigPrecedence(t *testing.T) {
+	writeConfig(t, `{"workflow":{"parallel_main_tree":false}}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{WorkflowParallelMainTree: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+	if enabled {
+		t.Fatal("workflow.parallel_main_tree=false 没有落到 flag 变量上")
+	}
+
+	enabled = true
+	if err := applyStartupConfig(cfg, map[string]bool{"workflow-parallel-main-tree": true}, startupFlags{WorkflowParallelMainTree: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("显式 flag 应胜出，却被文件里的 false 覆盖")
+	}
+}
+
 // 文件值即将生效但解析不了时必须报错，而不是静默回落到默认值。
 func TestRouterConfigInvalidDurationFails(t *testing.T) {
 	writeConfig(t, `{"router":{"turn_timeout":"soon"}}`)

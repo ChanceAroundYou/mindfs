@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"strings"
+	"sync"
 )
 
 // D10/D15：Agent 节点的 workspace 声明与物理工作树写互斥。
@@ -37,6 +38,17 @@ func WorkflowNodeWorkspaceOf(node WorkflowNode) WorkflowNodeWorkspace {
 // AcquireNodeWriter 取得物理工作树的写入权。path 是实际目录，branch 是该树
 // 当前分支。Service 没有共享 gate 时 fail closed。
 func (s *Service) AcquireNodeWriter(ctx context.Context, workspacePath, branch string) (func(), error) {
+	gate, err := s.writerGateForWrite()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(workspacePath) == "" && strings.TrimSpace(branch) == "" {
+		return nil, ErrWorkflowWorkspaceIdentityMissing
+	}
+	return gate.AcquireWorkspace(ctx, workspacePath, branch)
+}
+
+func (s *Service) writerGateForWrite() (*WriterGate, error) {
 	if s == nil {
 		return nil, ErrWorkflowWriterGateUnavailable
 	}
@@ -46,17 +58,53 @@ func (s *Service) AcquireNodeWriter(ctx context.Context, workspacePath, branch s
 	if gate == nil {
 		return nil, ErrWorkflowWriterGateUnavailable
 	}
-	if strings.TrimSpace(workspacePath) == "" && strings.TrimSpace(branch) == "" {
-		return nil, ErrWorkflowWorkspaceIdentityMissing
-	}
-	return gate.AcquireWorkspace(ctx, workspacePath, branch)
+	return gate, nil
 }
 
 // AcquireWorkflowNodeWriter 按节点声明的 workspace intent 取 gate。只读节点
-// 直接返回 no-op release；写节点走 app 级共享 gate。
+// 直接返回 no-op release；写节点走 app 级共享 gate 的独占许可。
 func (s *Service) AcquireWorkflowNodeWriter(ctx context.Context, node WorkflowNode, workspacePath, branch string) (func(), error) {
 	if !WorkflowNodeWorkspaceOf(node).WritesWorkspace {
 		return func() {}, nil
 	}
 	return s.AcquireNodeWriter(ctx, workspacePath, branch)
+}
+
+// AcquireWorkflowSharedTreeWriter 是共享主树上写节点的许可：并行开启时取
+// 「任务内串行 + 物理树共享」两把锁，关闭时退回独占物理锁（旧行为）。
+//
+// 两个层次缺一不可：只要物理共享锁，同一任务的两个并行节点会同时写一个 checkout；
+// 只要任务锁，不同任务之间仍然互斥。合并/收尾仍走 AcquireNodeWriter 的独占锁，
+// 会等所有共享写者退出。
+func (s *Service) AcquireWorkflowSharedTreeWriter(ctx context.Context, taskID string, node WorkflowNode, workspacePath, branch string) (func(), error) {
+	if !WorkflowNodeWorkspaceOf(node).WritesWorkspace {
+		return func() {}, nil
+	}
+	if !s.ParallelMainTree() {
+		return s.AcquireNodeWriter(ctx, workspacePath, branch)
+	}
+	gate, err := s.writerGateForWrite()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(workspacePath) == "" && strings.TrimSpace(branch) == "" {
+		return nil, ErrWorkflowWorkspaceIdentityMissing
+	}
+	releaseTask, err := gate.Acquire(ctx, taskID, "")
+	if err != nil {
+		return nil, err
+	}
+	releaseTree, err := gate.AcquireWorkspaceShared(ctx, workspacePath, branch)
+	if err != nil {
+		// 第二把没拿到时第一把必须归还，否则该任务的节点永久串行。
+		releaseTask()
+		return nil, err
+	}
+	releaseOnce := sync.Once{}
+	return func() {
+		releaseOnce.Do(func() {
+			releaseTree()
+			releaseTask()
+		})
+	}, nil
 }

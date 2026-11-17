@@ -32,6 +32,7 @@ func main() {
 	routerEffortFlag := flag.String("router-effort", "", "task router effort level (default low)")
 	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 20s (default 20s)")
 	routerIdleCloseFlag := flag.Duration("router-idle-close", 0, "close idle router sessions after this duration, e.g. 30m (default 30m)")
+	workflowParallelMainTreeFlag := flag.Bool("workflow-parallel-main-tree", true, "run tasks without independent worktrees in parallel on the shared main tree")
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -40,17 +41,18 @@ func main() {
 		os.Exit(1)
 	}
 	if err := applyStartupConfig(startupCfg, explicitFlags, startupFlags{
-		Addr:              addr,
-		WebPush:           webPushFlag,
-		AgentConfig:       agentConfigFlag,
-		NotifyScript:      notifyScriptFlag,
-		Role:              roleFlag,
-		RouterMode:        routerModeFlag,
-		RouterAgent:       routerAgentFlag,
-		RouterModel:       routerModelFlag,
-		RouterEffort:      routerEffortFlag,
-		RouterTurnTimeout: routerTurnTimeoutFlag,
-		RouterIdleClose:   routerIdleCloseFlag,
+		Addr:                     addr,
+		WebPush:                  webPushFlag,
+		AgentConfig:              agentConfigFlag,
+		NotifyScript:             notifyScriptFlag,
+		Role:                     roleFlag,
+		RouterMode:               routerModeFlag,
+		RouterAgent:              routerAgentFlag,
+		RouterModel:              routerModelFlag,
+		RouterEffort:             routerEffortFlag,
+		RouterTurnTimeout:        routerTurnTimeoutFlag,
+		RouterIdleClose:          routerIdleCloseFlag,
+		WorkflowParallelMainTree: workflowParallelMainTreeFlag,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -60,19 +62,20 @@ func main() {
 	defer cancel()
 
 	if err := app.Start(ctx, *addr, app.StartOptions{
-		Version:           version,
-		Args:              os.Args[1:],
-		AgentConfigPath:   *agentConfigFlag,
-		WebPushEnabled:    *webPushFlag,
-		NotifyScript:      *notifyScriptFlag,
-		Role:              *roleFlag,
-		RouterMode:        *routerModeFlag,
-		RouterAgent:       *routerAgentFlag,
-		RouterModel:       *routerModelFlag,
-		RouterEffort:      *routerEffortFlag,
-		RouterTurnTimeout: *routerTurnTimeoutFlag,
-		RouterIdleClose:   *routerIdleCloseFlag,
-		RouterRoots:       routerRoots(startupCfg),
+		Version:                  version,
+		Args:                     os.Args[1:],
+		AgentConfigPath:          *agentConfigFlag,
+		WebPushEnabled:           *webPushFlag,
+		NotifyScript:             *notifyScriptFlag,
+		Role:                     *roleFlag,
+		RouterMode:               *routerModeFlag,
+		RouterAgent:              *routerAgentFlag,
+		RouterModel:              *routerModelFlag,
+		RouterEffort:             *routerEffortFlag,
+		RouterTurnTimeout:        *routerTurnTimeoutFlag,
+		RouterIdleClose:          *routerIdleCloseFlag,
+		RouterRoots:              routerRoots(startupCfg),
+		WorkflowParallelMainTree: *workflowParallelMainTreeFlag,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -87,8 +90,13 @@ type startupConfig struct {
 	NotifyScript *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
-	Role   *string              `json:"role"`
-	Router *startupRouterConfig `json:"router"`
+	Role     *string                `json:"role"`
+	Router   *startupRouterConfig   `json:"router"`
+	Workflow *startupWorkflowConfig `json:"workflow"`
+}
+
+type startupWorkflowConfig struct {
+	ParallelMainTree *bool `json:"parallel_main_tree"`
 }
 
 type startupRouterConfig struct {
@@ -114,6 +122,8 @@ type startupFlags struct {
 	RouterEffort      *string
 	RouterTurnTimeout *time.Duration
 	RouterIdleClose   *time.Duration
+
+	WorkflowParallelMainTree *bool
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -182,6 +192,10 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 	}
 	if flags.Role != nil && cfg.Role != nil && !explicit["role"] {
 		*flags.Role = strings.TrimSpace(*cfg.Role)
+	}
+	if flags.WorkflowParallelMainTree != nil && !explicit["workflow-parallel-main-tree"] &&
+		cfg.Workflow != nil && cfg.Workflow.ParallelMainTree != nil {
+		*flags.WorkflowParallelMainTree = *cfg.Workflow.ParallelMainTree
 	}
 	router := cfg.Router
 	if router == nil {

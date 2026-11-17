@@ -43,3 +43,20 @@ func TestTwoWorkspacesShareOneWriterGate(t *testing.T) {
 		t.Fatal("two account services do not share the writer gate")
 	}
 }
+
+// 共享主树并行开关也是进程级共享配置：每个账户的 Kanban 实例必须拿到同一个值，
+// 否则同一次部署里有的账户并行、有的串行。
+func TestEmptyWorkspaceGetsParallelMainTreeSetting(t *testing.T) {
+	disabled := false
+	m := &workspaceManager{shared: sharedServices{writerGate: kanban.NewWriterGate(), parallelMainTree: &disabled}}
+	ctx, err := m.emptyWorkspace()
+	if err != nil {
+		t.Fatalf("emptyWorkspace: %v", err)
+	}
+	if ctx.Kanban == nil {
+		t.Fatal("empty workspace has no kanban service")
+	}
+	if ctx.Kanban.ParallelMainTree() {
+		t.Fatal("empty workspace kanban ignored workflow.parallel_main_tree=false")
+	}
+}
