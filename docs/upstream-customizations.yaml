@@ -8719,3 +8719,22 @@ groups:
       - 'server/internal/kanban/task_store_migrate.go:result_summary TEXT NOT NULL DEFAULT '''''
       - 'server/internal/api/http_task_overview.go:ResultSummary:    task.ResultSummary,'
       - 'web/src/components/task/TaskCardRows.tsx:data-testid="task-card-result"'
+
+  # ── 隔离 ConfigDir 的 Claude 会话继承用户 provider 凭据 ────────────────────
+  - id: G-LY
+    title: 隔离 ConfigDir 的 Claude 会话继承用户 settings 的 provider 环境
+    kind: fix
+    symptom: "任务里发任何留言都「永远选择空白执行」：自动工作流选择从不生效，Router shadow 每轮都失败、结果整理器也不工作。journal 里刷 `Not logged in · Please run /login`（一次性会话与 router 会话）。根因不是模型或推荐器代码：Router/workflow 推荐器/结果转换器都跑在 <account>/router/claude 这个隔离 ConfigDir 下，刻意不读用户的 ~/.claude，于是 CLI 也读不到 `~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL`，落到官方登录失败。推荐器失败后按设计回退到 id 最小的 workflow，即 `workflow-blank`「空白执行」。"
+    why: "必须保留：① 隔离 ConfigDir 的意义是不让用户 hooks/plugins/tool 权限进子进程，因此只继承 provider 键（`ANTHROPIC_*` 与 `CLAUDE_CODE_USE_BEDROCK`/`CLAUDE_CODE_USE_VERTEX`），`BASH_ENV`/`OMC_SKIP_HOOKS`/`DISABLE_AUTOUPDATER` 等一律不继承；② 只在 ConfigDir 非空时补充，普通会话由 CLI 自己读用户 settings，行为零变化；③ 显式 agent env 优先于继承值，不覆盖 `applyAgentAPIProvider` 写入的 provider；④ 不把凭据落到隔离目录的 settings.json（不复制凭据），只经进程环境交给子进程；⑤ 修复后自动选择、Router shadow、结果整理器共用同一条认证路径。"
+    boundary: "只改隔离 ConfigDir 的 Claude 会话 env 合并（`withClaudeProviderEnv` + `ClaudeUserSettingsEnv`）；不改 Router 决策语义（G-LP）、不改推荐器的回退策略与超时（G-LV）、不改 compact-strip 代理的 `--settings` 改道（G-LQ），也不改用户 `~/.claude/settings.json` 本身。"
+    files:
+      - server/internal/agent/claude/session_models_helpers.go
+      - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_isolated_env_test.go
+    tests:
+      - server/internal/agent/pool_isolated_env_test.go
+    anchors:
+      - 'server/internal/agent/claude/session_models_helpers.go:func ClaudeUserSettingsEnv() map[string]string {'
+      - 'server/internal/agent/pool_open.go:func withClaudeProviderEnv(env map[string]string, configDir string) map[string]string {'
+      - 'server/internal/agent/pool_open.go:env := withClaudeProviderEnv(cloneEnv(def.Env), in.ConfigDir)'
+

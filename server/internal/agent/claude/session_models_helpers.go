@@ -160,6 +160,14 @@ func readSettingsEnv(path string) map[string]string {
 	return settings.Env
 }
 
+// ClaudeUserSettingsEnv 返回用户级 settings 的 env 块（provider 凭据与模型别名）。
+// 只读 `env`，不碰 hooks / permissions / plugins —— 隔离 ConfigDir 的会话
+// （Router、一次性推荐器/结果转换器）要靠它拿到 provider，同时不能把用户
+// hooks 带进子进程。
+func ClaudeUserSettingsEnv() map[string]string {
+	return readSettingsEnv(claudeSettingsPathOrEmpty())
+}
+
 // claudeSettingsPathOrEmpty 容错版 ClaudeSettingsPath，错误时返回空串（调用方跳过）。
 func claudeSettingsPathOrEmpty() string {
 	path, err := ClaudeSettingsPath()

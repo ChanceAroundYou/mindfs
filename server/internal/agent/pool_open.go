@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"mindfs/server/internal/agent/acp"
@@ -98,6 +99,57 @@ func mergeCompactProxyEnv(base map[string]string, binding *compactProxyBinding) 
 	return base
 }
 
+// withClaudeProviderEnv 给「隔离 ConfigDir」的 Claude 会话补上用户 settings 里的
+// provider 环境变量。
+//
+// Router / workflow 推荐器 / 结果转换器都跑在 <account>/router/claude 下，刻意
+// 不读用户的 settings：用户 hooks、plugins、tool 权限不能漏进来。代价是 CLI 也
+// 读不到 settings.env 里的 provider 凭据，于是落到官方登录并报
+// "Not logged in · Please run /login" —— 表现为 Router 每轮失败、工作流自动选择
+// 永远回退到第一个可用 workflow（按 id 排序即 workflow-blank / 「空白执行」）。
+//
+// 这里只继承 provider 相关的键（ANTHROPIC_* 与 Bedrock/Vertex 开关），hooks 与
+// 进程级开关（BASH_ENV/OMC_SKIP_HOOKS/...）一律不继承。configDir 为空时是普通
+// 会话，CLI 自己会读用户 settings，行为保持不变。显式 agent env 优先。
+func withClaudeProviderEnv(env map[string]string, configDir string) map[string]string {
+	if strings.TrimSpace(configDir) == "" {
+		return env
+	}
+	userEnv := claude.ClaudeUserSettingsEnv()
+	if len(userEnv) == 0 {
+		return env
+	}
+	inherited := map[string]string{}
+	for key, value := range userEnv {
+		if !isClaudeProviderEnvKey(key) {
+			continue
+		}
+		if _, ok := env[key]; ok {
+			continue
+		}
+		inherited[key] = value
+	}
+	if len(inherited) == 0 {
+		return env
+	}
+	merged := make(map[string]string, len(env)+len(inherited))
+	for key, value := range env {
+		merged[key] = value
+	}
+	for key, value := range inherited {
+		merged[key] = value
+	}
+	return merged
+}
+
+func isClaudeProviderEnvKey(key string) bool {
+	switch key {
+	case "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX":
+		return true
+	}
+	return strings.HasPrefix(key, "ANTHROPIC_")
+}
+
 func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definition, in agenttypes.OpenSessionInput) (agenttypes.Session, error) {
 	// Router 工具只存在于 claude 适配器；codex/acp 拿到工具说明装配错了，
 	// 必须显式失败而不是静默丢掉工具（那会让 Router 以为工具可用）。
@@ -106,7 +158,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 	}
 	switch protocol {
 	case ProtocolClaudeSDK:
-		env := cloneEnv(def.Env)
+		env := withClaudeProviderEnv(cloneEnv(def.Env), in.ConfigDir)
 		settingsJSON := ""
 		if binding := p.compactProxyEnv(in.SessionKey, def, in.ConfigDir); binding != nil {
 			env = mergeCompactProxyEnv(env, binding)
