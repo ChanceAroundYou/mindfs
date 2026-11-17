@@ -15,7 +15,8 @@ export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDi
       ? t("session.subagentRunning")
       : "";
   return (
-<ViewHeader padding="0 16px" style={{ zIndex: 10 }}>
+// CUSTOM(G-MA)：标题栏属于 chrome，拖选复制正文时不许被带进选区。
+<ViewHeader padding="0 16px" style={{ zIndex: 10, userSelect: "none" }}>
   <h1
     style={{
       display: "flex",

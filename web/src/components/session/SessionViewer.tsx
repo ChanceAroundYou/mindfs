@@ -5,6 +5,7 @@ import { buildTimelineItemMeta } from "./buildTimelineItemMeta";
 import { useSessionTimelineVirtualizer } from "./useSessionTimelineVirtualizer";
 import { useSessionWindowApply } from "./useSessionWindowApply";
 import { useSessionViewerScrollPositionEffects, useSessionViewerScrollState, useSessionViewerStickinessEffect } from "./useSessionViewerScroll";
+import { useSelectionContainment } from "../../hooks/useSelectionContainment";
 import type { TodoUpdate } from "../../shared/sessionTypes";
 import { ViewHeader } from "../../layout/ViewHeader";
 // 窗口取数（SESSION_WINDOW_SIZE / getSessionWindow / setWindowedView /
@@ -93,6 +94,9 @@ function SessionViewerInner({
   // ponytail: drawer now uses inner scroll container (upstream 6247756: BottomSheet overflow:hidden, inner overflow:auto)
   // outer drawerScrollRef is kept for BottomSheet sizing only, not for stick-to-bottom.
   const activeScrollRef = scrollRef;
+  // CUSTOM(G-MA)：拖选复制只认正文。向上拖出滚动容器时浏览器会把选区扩到会话
+  // 标题栏和上方全部正文，这里把越界的那一端拉回本容器边界（见 shared/selectionClamp）。
+  useSelectionContainment(scrollRef);
   const onFileClickRef = useRef(onFileClick);
   const copyResetTimersRef = useRef<Record<string, number>>({});
   const sessionKey = session?.key || session?.session_key || null;
@@ -411,6 +415,9 @@ function SessionViewerInner({
             padding: "24px 16px",
             boxSizing: "border-box",
             overflowX: "hidden",
+            // CUSTOM(G-MA)：正文始终可选中——即使外层（header / 侧栏）配了
+            // user-select: none，也不会顺着继承把正文一起禁掉。
+            userSelect: "text",
           }} data-mindfs-session-content-width="1">
           <div style={{ width: "100%", minWidth: 0, margin: "0", display: "flex", flexDirection: "column" }}>
             {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}

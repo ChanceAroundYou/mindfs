@@ -8783,3 +8783,30 @@ groups:
       - 'web/src/hooks/useTaskActivities.ts:runQueued: () => Promise<void>;'
       - 'web/src/services/task/crud.ts:start_immediately: options?.startImmediately ?? true'
 
+  # ── 拖选复制只认聊天正文 ─────────────────────────────────────────────
+  - id: G-MA
+    title: 拖选复制正文时选区不越出聊天区（标题栏不可选 + 选区钳制）
+    kind: fix
+    symptom: "长会话里向下滚动后再拖选正文，选区会沿着自动滚动一路扩到会话标题栏：标题、header 和上方全部正文一起被选中，用户只想复制一段正文，复制出来却是整篇。"
+    why: "用户 2026-11-17 要求「复制正文只会选中聊天正文，不会跳出去」。必须保留：① 会话标题栏与面板标题栏是 chrome，`user-select: none`，不进选区；② 正文容器显式 `user-select: text`，外层禁选不顺着继承把正文一起禁掉；③ `clampSelectionToRoot` 把「一端在正文内、另一端被拖到正文外」的选区拉回容器边界——不依赖每个 chrome 都记得配 none；④ 拖选进行中不改写选区（浏览器每次 mousemove 都会把末端重新放到指针位置，这时改选区会互相打架、实测最终选区被清空），只在 `pointerup`/`pointercancel`/`blur` 与**非拖选**的 `selectionchange` 上收紧；⑤ 两端都在容器外（侧栏里选会话名之类）一律不碰，多个会话视图并存时不互相抢选区；⑥ 会话滚动容器与面板正文各挂各的 ref，互不干扰。"
+    boundary: "只改前端选区行为（样式 + 抓选区钳制）；不改消息渲染、时间线虚拟化、滚动跟随与分页、复制按钮与「复制整段」入口，也不改拖选时的浏览器自动滚动（向上拖到容器外仍会滚到更早的消息，这是用户选定的范围）。"
+    files:
+      - web/src/shared/selectionClamp.ts
+      - web/src/hooks/useSelectionContainment.ts
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerHeader.tsx
+      - web/src/components/shell/PanelShell.tsx
+      - web/tests/selection-containment.test.mjs
+      - e2e/live/selection_scope.py
+    tests:
+      - web/tests/selection-containment.test.mjs
+      - e2e/live/selection_scope.py
+    anchors:
+      - 'web/src/shared/selectionClamp.ts:export function clampSelectionToRoot(root: Element | null, selection: Selection | null): boolean {'
+      - 'web/src/shared/selectionClamp.ts:if (startInside === endInside) return false;'
+      - 'web/src/hooks/useSelectionContainment.ts:document.addEventListener("selectionchange", clampSelection);'
+      - 'web/src/hooks/useSelectionContainment.ts:if (pointerDown) return;'
+      - 'web/src/components/session/SessionViewer.tsx:useSelectionContainment(scrollRef);'
+      - 'web/src/components/session/SessionViewerHeader.tsx:userSelect: "none"'
+      - 'web/src/components/shell/PanelShell.tsx:useSelectionContainment(bodyRef);'
+      - 'e2e/live/selection_scope.py:def main() -> int:'

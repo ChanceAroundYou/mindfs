@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { usePanelShellClose } from "../../hooks/usePanelShellClose";
+import { useSelectionContainment } from "../../hooks/useSelectionContainment";
 import { useI18n } from "../../i18n/index";
 
 /**
@@ -129,6 +130,9 @@ export function PanelShell({
   const { t } = useI18n();
   // 关闭守卫和放弃确认由逻辑 hook 统一处理。
   const requestClose = usePanelShellClose({ onClose, hasUnsavedChanges, t });
+  // CUSTOM(G-MA)：面板正文（任务对话等）拖选复制时，选区不许扩到面板标题栏。
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useSelectionContainment(bodyRef);
 
   // 跟着可视视口把可用高度写成 --panel-vh，面板据此上浮避让软键盘。
   // 必须用 visualViewport：键盘弹出时 layout 视口（100vh / dvh）纹丝不动，
@@ -219,16 +223,19 @@ export function PanelShell({
             alignItems: "center",
             gap: "8px",
             flexShrink: 0,
+            // CUSTOM(G-MA)：面板标题是 chrome，不进选区。
+            userSelect: "none",
           }}
         >
           {headerLeft}
-          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          {/* 标题槽本身仍是内容（任务名可改可复制），只把标题栏外壳设成不可选。 */}
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", userSelect: "text" }}>
             {title}
           </div>
           {headerRight}
         </header>
         {belowHeader}
-        <div className="mindfs-panel-body" style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
+        <div ref={bodyRef} className="mindfs-panel-body" style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column", userSelect: "text" }}>
           {children}
         </div>
         {footer ? (
