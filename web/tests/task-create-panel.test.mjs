@@ -3,9 +3,9 @@ import { test } from "vitest";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
 
-// 新建任务面板 = 一条留言 + 可选的 worktree 配置。任务的第一轮由后端 router
-// 决定走直连会话还是某个 workflow，所以面板上没有阶段、agent/model/effort、
-// 「立即执行」这些机械开关。
+// 新建任务面板 = 一条留言 + 可选的 worktree 配置 + 「立即执行」开关。
+// 任务的第一轮由后端 router 决定走直连会话还是某个 workflow，所以面板上没有
+// 阶段、agent/model/effort；「立即执行」只决定建完要不要马上派发首条留言。
 
 const root = path.resolve(import.meta.dirname, "..");
 const promptEditor = fs.readFileSync(path.join(root, "src/components/editor/PromptEditor.tsx"), "utf8");
@@ -82,6 +82,11 @@ assert.match(inlinePanel, /<PromptEditor/, "the create panel renders the shared 
 assert.doesNotMatch(inlinePanel, /<StageEditor\b/, "the create panel must not render a stage editor");
 assert.doesNotMatch(inlinePanel, /<AgentSelector\b/, "agent choice belongs to the router, not the create panel");
 assert.doesNotMatch(inlinePanel, /DEFAULT_TASK_MODEL|inheritAgentStage|<StageOptionsBar\b/, "stage options must be gone from the create panel");
+// 「立即执行」在对话模型里只剩一个含义：建完立刻派发首条留言（默认勾上）。
+assert.match(inlinePanel, /taskInlineEdit\.startImmediately/, "the create panel must expose the immediate-run toggle");
+assert.match(inlinePanel, /checked=\{taskInlineEdit\.startImmediately\}/, "the toggle must be a real checkbox that renders the current value");
+assert.match(tasks, /start_immediately: options\?\.startImmediately \?\? true/, "createTask must send start_immediately and default it to true");
+assert.match(tasks, /export async function runTaskNow\(/, "the queued message needs a run-now service call");
 assert.match(
   inlinePanel,
   /taskInlineAttachmentInputRef\.current\?\.click\(\)/,

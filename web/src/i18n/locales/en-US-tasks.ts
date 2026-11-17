@@ -18,6 +18,9 @@ export const enUSTasks = {
   "task.startHint": "Click the blue dot or send a message to start",
   // The task name already shows in the title slot; don't repeat it.
   "task.createDialogTitle": "Create task",
+  "task.startImmediately": "Run now",
+  "task.queued": "Queued",
+  "task.startingNow": "Starting…",
   "task.addAttachment": "Add attachment",
   "task.removeAttachment": "Remove attachment {name}",
   "task.closeErrorInfo": "Close error details",

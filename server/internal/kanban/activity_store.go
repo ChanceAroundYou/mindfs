@@ -175,6 +175,39 @@ func (s *ActivityStore) insert(ctx context.Context, activity *TaskActivity, igno
 	return affected == 1, nil
 }
 
+// ClaimFirstQueuedUserMessage 领走任务里最早一条排队留言（status=queued），
+// 并把状态清空。只有 RowsAffected==1 的调用方拿到留言：两个「立即执行」同时
+// 到达时不会派发两轮。没有排队留言时返回 ErrActivityNotFound。
+func (s *ActivityStore) ClaimFirstQueuedUserMessage(ctx context.Context, taskID string) (*TaskActivity, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities
+		 WHERE task_id = ? AND role = ? AND status = ?
+		 ORDER BY created_at ASC, rowid ASC LIMIT 1`,
+		strings.TrimSpace(taskID), RoleUser, ActivityStatusQueued)
+	activity, err := scanActivityRecord(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrActivityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET status = '', updated_at = ? WHERE id = ? AND status = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), activity.ID, ActivityStatusQueued)
+	if err != nil {
+		return nil, err
+	}
+	claimed, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if claimed == 0 {
+		return nil, ErrActivityNotFound
+	}
+	activity.Status = ""
+	return activity, nil
+}
+
 func (s *ActivityStore) Get(ctx context.Context, id string) (*TaskActivity, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+activitySelectColumns+` FROM task_activities WHERE id = ? LIMIT 1`,

@@ -196,6 +196,10 @@ const (
 	// （HumanGate、条件/输出无法判定）。它是「这一轮还没结束」，与 failed 不同：
 	// 用户批准/补充后同一个 Run 会继续，最终仍会落到 completed/failed。
 	ActivityStatusWaitingUser = "waiting_user"
+	// ActivityStatusQueued 只属于**用户留言**：新建任务时勾掉「立即执行」，
+	// 首条留言先排队，等用户点「立即执行」（RunNow）再交给 Router。
+	// Agent 回复不会使用这个状态。
+	ActivityStatusQueued = "queued"
 )
 
 const (

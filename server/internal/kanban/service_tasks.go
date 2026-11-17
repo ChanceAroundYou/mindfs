@@ -39,10 +39,17 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 	// 建任务 = 发出第一条留言。任务行先提交（ActivityService 会重新读它），
 	// 再把这条留言交给 Router：Router 自己决定这一轮跑工作流还是普通会话。
 	// 留言创建失败时删掉刚建的空任务，不让用户看到一张没有输入的卡。
+	//
+	// 「立即执行」勾掉时（StartImmediately=false）留言以 queued 落库、不派发：
+	// 任务立刻出现在看板上，用户之后点「立即执行」（RunNow）再交给 Router。
 	if input != "" {
 		activitySvc, actErr := s.ActivityServiceForRoot(rootID)
 		if actErr == nil {
-			_, _, actErr = activitySvc.CreateUserActivity(ctx, taskID, input, CommentWorkflowChoiceEmpty, nil)
+			if in.StartImmediately != nil && !*in.StartImmediately {
+				_, actErr = activitySvc.QueueUserActivity(ctx, taskID, input)
+			} else {
+				_, _, actErr = activitySvc.CreateUserActivity(ctx, taskID, input, CommentWorkflowChoiceEmpty, nil)
+			}
 		}
 		if actErr != nil {
 			_ = store.DeleteTask(ctx, taskID)

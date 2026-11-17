@@ -86,3 +86,73 @@ func TestCreateTaskStoresWorktreeOptions(t *testing.T) {
 		t.Fatalf("worktree options lost: %+v", detail.Task)
 	}
 }
+
+// 勾掉「立即执行」：任务先落卡、留言以 queued 进对话流，但这一轮不派发
+// （没有 Agent 回复、没有 Run），等用户之后点「立即执行」再开跑。
+func TestCreateTaskStartImmediatelyFalseQueuesFirstMessage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	start := false
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:           root.ID,
+		Input:            "晚点再跑",
+		StartImmediately: &start,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending {
+		t.Fatalf("task status=%s, want pending", detail.Task.Status)
+	}
+	activities, err := svc.ListTaskActivities(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("ListTaskActivities: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("activities = %d, want 1（只有排队的用户留言）", len(activities))
+	}
+	if activities[0].Type != ActivityTypeUserMessage || activities[0].Body != "晚点再跑" {
+		t.Fatalf("first activity = %+v, want user_message", activities[0])
+	}
+	if activities[0].Status != ActivityStatusQueued {
+		t.Fatalf("queued activity status=%q, want %q", activities[0].Status, ActivityStatusQueued)
+	}
+}
+
+// 「立即执行」只把最早一条排队留言派发一次；重复点击是幂等空操作。
+func TestRunNowDispatchesQueuedFirstMessageOnce(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	start := false
+	created, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:           root.ID,
+		Input:            "晚点再跑",
+		StartImmediately: &start,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: created.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	activities, err := svc.ListTaskActivities(ctx, root.ID, created.Task.ID)
+	if err != nil {
+		t.Fatalf("ListTaskActivities: %v", err)
+	}
+	if len(activities) != 2 || activities[0].Status == ActivityStatusQueued {
+		t.Fatalf("after RunNow activities = %+v, want a dispatched user message and one agent reply", activities)
+	}
+	if activities[1].Type != ActivityTypeAgentReply {
+		t.Fatalf("second activity = %+v, want agent_reply", activities[1])
+	}
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: created.Task.ID}); err != nil {
+		t.Fatalf("second RunNow: %v", err)
+	}
+	again, err := svc.ListTaskActivities(ctx, root.ID, created.Task.ID)
+	if err != nil {
+		t.Fatalf("ListTaskActivities: %v", err)
+	}
+	if len(again) != len(activities) {
+		t.Fatalf("second RunNow produced another turn: activities %d -> %d", len(activities), len(again))
+	}
+}

@@ -27,6 +27,9 @@ export async function fetchTaskDetails(rootId: string, filters?: {
  *
  * 不再随包带流水/阶段：后端把这条留言交给 router，由它决定这一轮是直接回话、
  * 还是挑一个已发布的 workflow 来跑（AGENTS.md 事实 13）。
+ *
+ * startImmediately=false 时首条留言以 queued 状态落库、不派发，任务停在
+ * 「待开始」，之后由 {@link runTaskNow} 再交给 router。
  */
 export async function createTask(
   rootId: string,
@@ -35,7 +38,7 @@ export async function createTask(
   worktreeBranchMode: "new" | "existing" = "new",
   worktreeBranch = "",
   nodeId?: string,
-  options?: { name?: string },
+  options?: { name?: string; startImmediately?: boolean },
 ): Promise<TaskDetail> {
   nodeId = nodeId || getRootNodeId(rootId);
   return protectedJSON<TaskDetail>(appURL("/api/tasks", undefined, nodeId), {
@@ -47,8 +50,22 @@ export async function createTask(
       create_worktree: createWorktree,
       worktree_branch_mode: worktreeBranchMode,
       worktree_branch: worktreeBranch,
+      start_immediately: options?.startImmediately ?? true,
       ...(options?.name ? { name: options.name } : {}),
     }),
+  });
+}
+
+/**
+ * 立即执行：把排队中的首条留言交给 router。
+ * 没有排队留言时服务端是幂等空操作（纯对话任务的回合仍由发留言驱动）。
+ */
+export async function runTaskNow(rootId: string, taskId: string, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/run-now`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId }),
   });
 }
 

@@ -52,10 +52,11 @@ export interface TaskInlineEditPanelProps {
 }
 
 /**
- * 新建任务面板 = 一条留言 + 可选的 worktree 配置。
+ * 新建任务面板 = 一条留言 + 可选的 worktree 配置 + 「立即执行」开关。
  *
  * 不再有阶段编辑：任务的第一轮由后端 router 决定走直连回话还是某个 workflow，
- * 面板上没有 agent/model/effort 可选，也没有「立即执行」这种阶段推进开关。
+ * 面板上没有 agent/model/effort 可选。唯一的机械开关是「立即执行」（默认勾上）：
+ * 勾掉时首条留言先排队，任务停在「待开始」，之后在对话流里点「立即执行」再开跑。
  */
 export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
   const PanelShell = props.PanelShell;
@@ -226,6 +227,41 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                       placeholder={t("task.namePlaceholder")}
                       style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
                     />
+                    {/* 「立即执行」默认勾上：勾掉时任务只落卡，首条留言排队等后
+                        面的「立即执行」。与 worktree 的标题行开关分开摆，是因为它
+                        属于「创建后怎么跑」，不是项目/树配置。 */}
+                    <label
+                      style={{
+                        marginLeft: "auto",
+                        height: "26px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        padding: "0 8px",
+                        borderRadius: "6px",
+                        border: `1px solid ${taskInlineEdit.startImmediately ? "var(--accent-color)" : "var(--border-color)"}`,
+                        background: taskInlineEdit.startImmediately ? "rgba(37, 99, 235, 0.10)" : "transparent",
+                        color: taskInlineEdit.startImmediately ? "var(--accent-color)" : "var(--text-secondary)",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        cursor: taskInlineSaving ? "not-allowed" : "pointer",
+                        userSelect: "none",
+                        whiteSpace: "nowrap",
+                        opacity: taskInlineSaving ? 0.6 : 1,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={taskInlineEdit.startImmediately}
+                        disabled={taskInlineSaving}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setTaskInlineEdit((prev) => prev ? { ...prev, startImmediately: checked } : prev);
+                        }}
+                        style={{ accentColor: "var(--accent-color)", cursor: taskInlineSaving ? "not-allowed" : "pointer", margin: 0 }}
+                      />
+                      {t("task.startImmediately")}
+                    </label>
                   </div>
                   <PromptEditor
                     ref={taskInlineEditorRef}

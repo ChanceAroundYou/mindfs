@@ -64,6 +64,8 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		CreateWorktree     bool   `json:"create_worktree"`
 		WorktreeBranchMode string `json:"worktree_branch_mode"`
 		WorktreeBranch     string `json:"worktree_branch"`
+		// 缺省（nil）按 true 处理：老客户端不传这个字段时行为不变。
+		StartImmediately *bool `json:"start_immediately"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
@@ -76,6 +78,7 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		CreateWorktree:     req.CreateWorktree,
 		WorktreeBranchMode: req.WorktreeBranchMode,
 		WorktreeBranch:     req.WorktreeBranch,
+		StartImmediately:   req.StartImmediately,
 	}
 	detail, err := svc.CreateTask(r.Context(), create)
 	if err != nil {

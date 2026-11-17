@@ -34,6 +34,10 @@ export type ActivityMessageProps = {
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
+  /** 排队留言上的「立即执行」：把这条留言交给 Router。 */
+  onRunQueued?: (activity: TaskActivity) => void | Promise<void>;
+  /** 正在派发排队留言：按钮禁用，避免双击。 */
+  runningQueued?: boolean;
 };
 
 // i18n key 必须是字面量，模板字符串会丢失 MessageKey 的类型约束。
@@ -86,6 +90,8 @@ export function ActivityMessage({
   onGateDecision,
   onPauseTask,
   onResumeTask,
+  onRunQueued,
+  runningQueued = false,
 }: ActivityMessageProps) {
   const { t, locale } = useI18n();
 
@@ -174,13 +180,30 @@ export function ActivityMessage({
           </div>
         )}
         {created !== null && (
-          <time
-            dateTime={activity.created_at}
-            title={fullTime}
-            style={userTimeStyle}
-          >
-            {timeLabel}
-          </time>
+          <div style={userMetaRowStyle}>
+            {activity.status === "queued" ? (
+              <>
+                <span style={queuedBadgeStyle}>{t("task.queued")}</span>
+                {onRunQueued ? (
+                  <button
+                    type="button"
+                    onClick={() => void onRunQueued(activity)}
+                    disabled={runningQueued}
+                    style={runQueuedButtonStyle(runningQueued)}
+                  >
+                    {runningQueued ? t("task.startingNow") : t("task.startImmediately")}
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+            <time
+              dateTime={activity.created_at}
+              title={fullTime}
+              style={userTimeStyle}
+            >
+              {timeLabel}
+            </time>
+          </div>
         )}
       </div>
     );
@@ -252,6 +275,36 @@ const userTimeStyle: React.CSSProperties = {
   color: "var(--text-secondary)",
   opacity: 0.5,
 };
+
+const userMetaRowStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+};
+
+const queuedBadgeStyle: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: "var(--text-secondary)",
+  border: "1px solid var(--border-color)",
+  borderRadius: 999,
+  padding: "1px 6px",
+};
+
+/** 排队留言上的「立即执行」：小胶囊，和页脚的其它元信息同一档字号。 */
+function runQueuedButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    fontSize: 11,
+    fontWeight: 700,
+    padding: "2px 8px",
+    borderRadius: 999,
+    border: "1px solid var(--accent-color)",
+    background: "rgba(37, 99, 235, 0.10)",
+    color: "var(--accent-color)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+  };
+}
 
 const agentMessageStyle: React.CSSProperties = {
   display: "flex",

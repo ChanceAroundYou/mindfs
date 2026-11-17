@@ -56,7 +56,10 @@ assert.match(inlinePanel, /ref=\{taskInlineAttachmentInputRef\}\s*type="file"/, 
 
 // 4) 建任务只发一条消息 + 可选 worktree，不再解析阶段/覆盖。
 const taskComposer = read("src/app/useTaskComposer.ts");
-assert.doesNotMatch(taskComposer, /taskStagesForCreate|defaultTaskFlowStages|startImmediately|effortOverride/, "create-task must not build a stage list");
+assert.doesNotMatch(taskComposer, /taskStagesForCreate|defaultTaskFlowStages|effortOverride/, "create-task must not build a stage list");
+// 「立即执行」是建完是否马上派发首条留言的开关（默认 true），不是阶段推进。
+assert.match(taskComposer, /startImmediately: true/, "the create dialog must default the immediate-run toggle to on");
+assert.match(taskComposer, /startImmediately: edit\.startImmediately/, "the dialog's choice must reach the create payload");
 assert.match(taskComposer, /createTask\(/, "create-task still goes through the shared service");
 
 console.log("task-panel-unification.test.mjs: OK");

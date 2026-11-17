@@ -13,6 +13,7 @@ import {
   parseTaskActivityPayload,
 } from "../shared/activityModel";
 import { createActivity, listActivities } from "../services/activities";
+import { runTaskNow } from "../services/task/crud";
 import { postTaskHumanGate } from "../services/task/humanGate";
 import { sessionService } from "../services/session";
 
@@ -26,6 +27,9 @@ export type UseTaskActivitiesResult = {
   sendError: string | null;
   answerQuestion: (activity: TaskActivity, answers: Record<string, string>) => Promise<void>;
   decideGate: (activity: TaskActivity, decision: HumanGateDecision) => Promise<void>;
+  /** 派发排队中的首条留言（新建任务时勾掉了「立即执行」）。 */
+  runQueued: () => Promise<void>;
+  runningQueued: boolean;
   promptDeciding: boolean;
   promptError: string | null;
 };
@@ -44,6 +48,7 @@ export function useTaskActivities(
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [runningQueued, setRunningQueued] = useState(false);
   const [promptDeciding, setPromptDeciding] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -208,6 +213,23 @@ export function useTaskActivities(
     [rootId, taskId, nodeId],
   );
 
+  const runQueued = useCallback(async () => {
+    setRunningQueued(true);
+    setSendError(null);
+    try {
+      await runTaskNow(rootId, taskId, nodeId);
+      // 乐观清掉排队标记；Agent 回复由 HTTP 回包/WS 增量补进活动流。
+      setActivities((prev) => prev.map((activity) => (
+        activity.status === "queued" ? { ...activity, status: "" } : activity
+      )));
+    } catch (err) {
+      setSendError(errorMessage(err));
+      throw err;
+    } finally {
+      setRunningQueued(false);
+    }
+  }, [taskId, rootId, nodeId]);
+
   return {
     activities,
     loading,
@@ -218,6 +240,8 @@ export function useTaskActivities(
     sendError,
     answerQuestion,
     decideGate,
+    runQueued,
+    runningQueued,
     promptDeciding,
     promptError,
   };

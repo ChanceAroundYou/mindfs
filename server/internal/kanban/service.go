@@ -320,6 +320,10 @@ type CreateTaskInput struct {
 	CreateWorktree     bool
 	WorktreeBranchMode string
 	WorktreeBranch     string
+	// StartImmediately 控制首条留言是否立刻交给 Router。nil 视为 true（老调用方
+	// 的「建完就开跑」行为保持不变）；false 时留言以 queued 状态落库，
+	// 任务停在「待开始」，由 RunNow（立即执行）再派发。
+	StartImmediately *bool
 }
 
 type MoveInput struct {

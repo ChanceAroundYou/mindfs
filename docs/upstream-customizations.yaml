@@ -8738,3 +8738,48 @@ groups:
       - 'server/internal/agent/pool_open.go:func withClaudeProviderEnv(env map[string]string, configDir string) map[string]string {'
       - 'server/internal/agent/pool_open.go:env := withClaudeProviderEnv(cloneEnv(def.Env), in.ConfigDir)'
 
+  # ── 新建任务「立即执行」开关与排队留言派发 ───────────────────────────────
+  - id: G-LZ
+    title: 新建任务可勾掉「立即执行」，首条留言先排队再手动派发
+    kind: feature
+    symptom: "新建任务面板少了「立即执行」开关：勾掉后任务只落卡，首条留言停在「待执行」，等用户点对话里的「立即执行」再交给 Router。默认勾选时与改造前一致——建完立刻派发首条留言。"
+    why: "用户 2026-11-17 明确要求把立即执行加回来且默认选中、勾掉可不立刻执行。必须保留：① `start_immediately` 缺省（nil）按 true 处理，老调用方/老客户端不传字段行为不变；② 勾掉时首条留言以 `queued` 状态落库且**不触发** Router（不建 Run、不发 agent 回合），任务停在待开始，`queued` 只属于用户留言，agent 回复不会使用；③ 派发入口唯一：`DispatchQueuedUserActivity` 由 RunNow 与 Resume（暂停中的排队任务）调用，先原子 claim 最早一条（`UPDATE ... WHERE status='queued'` + RowsAffected）再走 `dispatchUserActivity`，双击/重复 RunNow 幂等，绝不重复开一轮；④ 不复制分发逻辑：`CreateUserActivity` 与排队派发共用 `insertUserActivity`/`dispatchUserActivity`，Router shadow 快照仍严格早于 legacy 分发；⑤ 前端排队留言自身渲染「待执行」徽标 +「立即执行」按钮（终态任务隐藏），点完乐观清 queued 并刷新任务头。"
+    boundary: "只改新建任务的立即执行开关、用户留言的 queued 状态与派发路径；不改 Router 决策语义（G-LP）、不改一轮结束后的任务状态投影与结果摘要（G-LX）、不改 workflow 引擎/DAG，也不引入后台定时派发——排队留言只能由 RunNow/Resume 显式派发。"
+    files:
+      - server/internal/kanban/types.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_tasks.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/service_run_moves.go
+      - server/internal/kanban/service_create_test.go
+      - server/internal/api/http_tasks.go
+      - web/src/app/appTask.ts
+      - web/src/app/useTaskComposer.ts
+      - web/src/components/app/TaskInlineEditPanel.tsx
+      - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/hooks/useTaskActivities.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/services/task/crud.ts
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+    tests:
+      - server/internal/kanban/service_create_test.go
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+    anchors:
+      - 'server/internal/kanban/types.go:ActivityStatusQueued = "queued"'
+      - 'server/internal/kanban/service.go:StartImmediately *bool'
+      - 'server/internal/kanban/service_tasks.go:activitySvc.QueueUserActivity(ctx, taskID, input)'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body string) (*TaskActivity, error) {'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) DispatchQueuedUserActivity(ctx context.Context, taskID string) (*TaskActivity, *TaskActivity, error) {'
+      - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) ClaimFirstQueuedUserMessage(ctx context.Context, taskID string) (*TaskActivity, error) {'
+      - 'server/internal/kanban/service_run_moves.go:activitySvc.DispatchQueuedUserActivity(ctx, task.ID)'
+      - 'server/internal/api/http_tasks.go:StartImmediately *bool `json:"start_immediately"`'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:checked={taskInlineEdit.startImmediately}'
+      - 'web/src/components/task/ActivityMessage.tsx:t("task.startingNow") : t("task.startImmediately")'
+      - 'web/src/hooks/useTaskActivities.ts:runQueued: () => Promise<void>;'
+      - 'web/src/services/task/crud.ts:start_immediately: options?.startImmediately ?? true'
+

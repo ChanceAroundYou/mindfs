@@ -164,6 +164,11 @@ export type TaskInlineEditState = {
   createWorktreePerRoot?: Record<string, { createWorktree: boolean; worktreeBranchMode: "new" | "existing"; worktreeBranch: string }>;
   /** 新建时的任务名 */
   name?: string;
+  /**
+   * 建完是否立刻开跑。默认 true：首条留言马上交给 Router（和改造前一致）。
+   * 勾掉时任务只落卡、留言以 queued 进对话流，等用户在对话里点「立即执行」。
+   */
+  startImmediately: boolean;
   createWorktree: boolean;
   worktreeBranchMode: "new" | "existing";
   worktreeBranch: string;

@@ -44,11 +44,24 @@ func (s *Service) Resume(ctx context.Context, in MoveInput) (TaskDetail, error) 
 		}
 		return store.GetDetail(ctx, task.ID)
 	}
-	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusRunning, "resumed", in.Reason, false)
+	if _, err := s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusRunning, "resumed", in.Reason, false); err != nil {
+		return TaskDetail{}, err
+	}
+	// 暂停的也可能是「排队中」的任务：恢复同样要把排队留言交给 Router，
+	// 否则状态回到 running 但这一轮永远不开始。
+	if activitySvc, svcErr := s.ActivityServiceForRoot(task.RootID); svcErr == nil {
+		if _, _, err := activitySvc.DispatchQueuedUserActivity(ctx, task.ID); err != nil {
+			return TaskDetail{}, err
+		}
+	}
+	return store.GetDetail(ctx, task.ID)
 }
 
 // RunNow：没有工作流运行的任务只需要把暂停拨回运行；纯对话任务的回合由
 // 用户留言驱动，按钮本身不另起一轮。已有工作流时走唤醒/恢复。
+//
+// 例外是「新建任务时勾掉了立即执行」：首条留言以 queued 落库、一直没人派发。
+// 这里的「立即执行」就是把它交给 Router —— 先来先跑，只派发最早一条。
 func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) {
 	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
 	if err != nil {
@@ -71,6 +84,11 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	}
 	if task.Status == StatusPaused {
 		return s.Resume(ctx, in)
+	}
+	if activitySvc, svcErr := s.ActivityServiceForRoot(task.RootID); svcErr == nil {
+		if _, _, err := activitySvc.DispatchQueuedUserActivity(ctx, task.ID); err != nil {
+			return TaskDetail{}, err
+		}
 	}
 	return store.GetDetail(ctx, task.ID)
 }

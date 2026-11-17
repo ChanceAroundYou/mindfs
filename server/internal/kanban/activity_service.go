@@ -163,19 +163,77 @@ func (s *ActivityService) CreateUserActivity(
 	if s == nil || s.tasks == nil || s.activities == nil {
 		return nil, nil, errors.New("activity service not configured")
 	}
-	body = strings.TrimSpace(body)
-	if body == "" {
+	if strings.TrimSpace(body) == "" {
 		return nil, nil, ErrEmptyActivityBody
-	}
-	choice, err := normalizeWorkflowChoice(workflowChoice)
-	if err != nil {
-		return nil, nil, err
 	}
 	task, err := s.tasks.GetTask(ctx, taskID)
 	if err != nil {
 		return nil, nil, err
 	}
+	choice, err := normalizeWorkflowChoice(workflowChoice)
+	if err != nil {
+		return nil, nil, err
+	}
+	userAct, err := s.insertUserActivity(ctx, task, body, choice, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.dispatchUserActivity(ctx, task, userAct, workflowVersionID)
+}
 
+// QueueUserActivity 落一条「先不执行」的用户留言（新建任务勾掉「立即执行」）。
+//
+// 与 CreateUserActivity 的区别只在**不派发**：留言以 queued 状态进入对话流，
+// 任务停在「待开始」；之后 RunNow 调 DispatchQueuedUserActivity 再交给 Router。
+func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body string) (*TaskActivity, error) {
+	if s == nil || s.tasks == nil || s.activities == nil {
+		return nil, errors.New("activity service not configured")
+	}
+	if strings.TrimSpace(body) == "" {
+		return nil, ErrEmptyActivityBody
+	}
+	task, err := s.tasks.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return s.insertUserActivity(ctx, task, body, CommentWorkflowChoiceEmpty, ActivityStatusQueued)
+}
+
+// DispatchQueuedUserActivity 把最早一条排队留言交给 Router（RunNow 的实现）。
+// 没有排队留言时是幂等空操作；两个「立即执行」同时到达时只有一个能领走留言。
+func (s *ActivityService) DispatchQueuedUserActivity(ctx context.Context, taskID string) (*TaskActivity, *TaskActivity, error) {
+	if s == nil || s.tasks == nil || s.activities == nil {
+		return nil, nil, errors.New("activity service not configured")
+	}
+	taskID = strings.TrimSpace(taskID)
+	task, err := s.tasks.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	userAct, err := s.activities.ClaimFirstQueuedUserMessage(ctx, taskID)
+	if errors.Is(err, ErrActivityNotFound) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	s.broadcastUpdated(userAct, map[string]any{"status": ""})
+	return s.dispatchUserActivity(ctx, task, userAct, nil)
+}
+
+// insertUserActivity 校验并落一条用户留言，统一负责广播。
+// status 只有排队的首条留言用 queued，其余留言留空。
+func (s *ActivityService) insertUserActivity(
+	ctx context.Context,
+	task Task,
+	body string,
+	choice string,
+	status string,
+) (*TaskActivity, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, ErrEmptyActivityBody
+	}
 	userAct := &TaskActivity{
 		ID:             newID("act"),
 		TaskID:         task.ID,
@@ -184,11 +242,25 @@ func (s *ActivityService) CreateUserActivity(
 		Role:           RoleUser,
 		Body:           body,
 		WorkflowChoice: choice,
+		Status:         status,
 	}
 	if err := s.activities.Insert(ctx, userAct); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	s.broadcastCreated(userAct)
+	return userAct, nil
+}
+
+// dispatchUserActivity 把已落库的用户留言派发出去：按 workflow_choice 起 Run 或
+// 直连回一轮，shadow 模式下再给 Router 记一份观察样本。
+func (s *ActivityService) dispatchUserActivity(
+	ctx context.Context,
+	task Task,
+	userAct *TaskActivity,
+	workflowVersionID *string,
+) (*TaskActivity, *TaskActivity, error) {
+	choice := userAct.WorkflowChoice
+	body := userAct.Body
 
 	// shadow 的 Situation Brief 必须在旧路径分发之前取：旧路径一动手，active
 	// execution / run 状态就变了，之后再取到的是「旧路径已经改变过的世界」。
@@ -208,6 +280,7 @@ func (s *ActivityService) CreateUserActivity(
 
 	var agentAct *TaskActivity
 	var legacy *RouterLegacyAction
+	var err error
 	if choice == CommentWorkflowChoiceDisabled {
 		agentAct, err = s.startDirectAgent(ctx, task, body)
 		if agentAct != nil && agentAct.Status == ActivityStatusFailed {

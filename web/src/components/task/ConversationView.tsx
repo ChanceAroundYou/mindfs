@@ -29,6 +29,9 @@ export type ConversationMessagesProps = {
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
+  /** 排队留言上的「立即执行」。 */
+  onRunQueued?: (activity: TaskActivity) => void | Promise<void>;
+  runningQueued?: boolean;
 };
 
 /**
@@ -50,6 +53,8 @@ export function ConversationMessages({
   onGateDecision,
   onPauseTask,
   onResumeTask,
+  onRunQueued,
+  runningQueued = false,
 }: ConversationMessagesProps) {
   const { t } = useI18n();
 
@@ -108,6 +113,8 @@ export function ConversationMessages({
           onGateDecision={onGateDecision}
           onPauseTask={onPauseTask}
           onResumeTask={onResumeTask}
+          onRunQueued={onRunQueued}
+          runningQueued={runningQueued}
         />
       ))}
     </div>
@@ -157,6 +164,8 @@ export function ConversationView({
     sendError,
     answerQuestion,
     decideGate,
+    runQueued,
+    runningQueued,
     promptDeciding,
     promptError,
   } = useTaskActivities(taskId, rootId, nodeId);
@@ -221,6 +230,12 @@ export function ConversationView({
         onGateDecision={decideGate}
         onPauseTask={onPauseTask}
         onResumeTask={onResumeTask}
+        onRunQueued={disabled ? undefined : async () => {
+          await runQueued();
+          // 任务头（待开始）与 Agent 回复都变了，让详情面板重新点查一次。
+          onAgentActivityChange?.();
+        }}
+        runningQueued={runningQueued}
       />
 
       {disabled ? (
