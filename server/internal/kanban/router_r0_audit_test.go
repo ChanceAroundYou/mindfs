@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,33 +13,80 @@ import (
 //
 // 这三条用例只钉住「用户可见行为应该是什么」，不复制现状：
 //   - 运行中的 Agent 节点收到补充留言时，Router 必须先看到它，再把留言交给
-//     唯一的活动 Agent NodeRun（F1：现状是 Router 之前同步拒绝）；
-//   - HumanGate 等待期 Router 选了 deliver 时，动作必须被拒绝/解释，用户占位
-//     回复必须离开 pending/running，gate 保持 waiting_user（F2：现状是决策
-//     failed 而占位永久 pending）；
+//     唯一的活动 Agent NodeRun，并在 continue_requests 留下可消费的绑定
+//     （F1：现状是 Router 之前同步拒绝）；
+//   - HumanGate 等待期 Router 选了 deliver 时，动作必须被拒绝/解释：用户能看到
+//     无法投递的说明，原留言没有投递目标，gate 保持 waiting_user（F2：现状是
+//     决策 failed 而占位永久 pending）；
 //   - route 触发携带的排队 brief 在消费时必须反映实时活动执行，同时原留言
 //     ID/正文保持不变（F3：现状是入队快照原样进 prompt）。
 //
 // 仅新增测试：不改产品源码，不把现状写成预期。
 
 // waitRouteDecisionTerminal 有界等待该任务唯一一条 Router 决策走到终态。
-// 超时是明确的失败点（没有决策 / 永远 applying），不是静默通过。
+// 所有数据库查询共用同一个 deadline context；超时报告最后一轮的错误与条数，
+// 避免把「fixture 故障」和「产品回归」都折叠成一句 timeout。
 func waitRouteDecisionTerminal(t *testing.T, store *TaskStore, taskID string) *RouterDecision {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	const budget = 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	routerStore := NewRouterStore(store.db)
 	var last *RouterDecision
-	for time.Now().Before(deadline) {
-		decisions, err := NewRouterStore(store.db).ListDecisions(context.Background(), taskID, 10, time.Time{})
-		if err == nil && len(decisions) == 1 {
+	var lastErr error
+	count := 0
+	for {
+		decisions, err := routerStore.ListDecisions(ctx, taskID, 10, time.Time{})
+		lastErr = err
+		count = len(decisions)
+		if err == nil && count == 1 {
 			last = decisions[0]
 			if last.Status != RouterDecisionApplying && last.Status != RouterDecisionShadow {
 				return last
 			}
 		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("router produced no terminal decision for task %s within %s (decisions=%d lastErr=%v last=%#v)",
+				taskID, budget, count, lastErr, last)
+			return nil
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// routerLaneIdle reports whether the task lane has no running or queued turn。
+// 决策行落终态不等于副作用结束：校验拒绝之后生产代码还会执行 fallbackRoute。
+func routerLaneIdle(router *RouterService, taskID string) bool {
+	if router == nil {
+		return true
+	}
+	router.mu.Lock()
+	lane := router.lanes[taskID]
+	router.mu.Unlock()
+	if lane == nil {
+		return true
+	}
+	lane.mu.Lock()
+	defer lane.mu.Unlock()
+	return !lane.running && len(lane.queue) == 0
+}
+
+// waitRouterLaneIdle 有界等待本任务 lane 收尾。fatal=true 用于读取最终状态前的
+// 屏障；cleanup 里用 fatal=false，只报告而不阻止 fixture 继续关库。
+func waitRouterLaneIdle(t *testing.T, router *RouterService, taskID string, fatal bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if routerLaneIdle(router, taskID) {
+			return
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("router produced no terminal decision for task %s (last=%#v)", taskID, last)
-	return nil
+	if fatal {
+		t.Fatalf("router lane for task %s is still running after its decision reached a terminal state", taskID)
+	}
+	t.Errorf("router lane for task %s is still running; closing the fixture store anyway", taskID)
 }
 
 func reloadTestActivity(t *testing.T, store *TaskStore, id string) *TaskActivity {
@@ -50,9 +98,10 @@ func reloadTestActivity(t *testing.T, store *TaskStore, id string) *TaskActivity
 	return act
 }
 
-// F1：agent 节点在跑时发来的补充留言必须进入 Router 并被投递给唯一活动节点。
+// F1：agent 节点在跑时发来的补充留言必须进入 Router，并被投递给唯一活动节点。
 func TestRouterRunningAgentMessageReachesRouter(t *testing.T) {
 	ctx := context.Background()
+	const body = "补充：先把文案改了"
 	store, svc, run, root := newWorkflowCommentFixture(t, "task-r0-running", "run-r0-running", workflowCommentTestGraph)
 	build := startWorkflowAgentNode(t, store, run.ID, "build", "sess-build")
 	if err := store.UpdateTaskStatus(ctx, run.TaskID, StatusRunning, false); err != nil {
@@ -61,7 +110,7 @@ func TestRouterRunningAgentMessageReachesRouter(t *testing.T) {
 
 	agent := &scriptedRouterAgent{calls: []scriptedRouterCall{{
 		tool: "router_deliver_to_active_run",
-		args: map[string]any{"body": "补充：先把文案改了", "reason": "节点正在跑"},
+		args: map[string]any{"body": body, "reason": "节点正在跑"},
 	}}}
 	svc.SetRouterConfig(RouterConfig{Mode: RouterModeRoute, IdleClose: time.Hour})
 	svc.SetRouterAgent(agent)
@@ -70,12 +119,13 @@ func TestRouterRunningAgentMessageReachesRouter(t *testing.T) {
 		t.Fatal("route mode must create a router lane")
 	}
 	t.Cleanup(router.Close)
+	t.Cleanup(func() { waitRouterLaneIdle(t, router, run.TaskID, false) })
 	activity, err := svc.ActivityServiceForRoot(root.ID)
 	if err != nil {
 		t.Fatalf("ActivityServiceForRoot: %v", err)
 	}
 
-	userAct, placeholder, err := activity.CreateUserActivity(ctx, run.TaskID, "补充：先把文案改了", CommentWorkflowChoiceEmpty, nil)
+	userAct, placeholder, err := activity.CreateUserActivity(ctx, run.TaskID, body, CommentWorkflowChoiceEmpty, nil)
 	if err != nil {
 		t.Fatalf("CreateUserActivity: %v", err)
 	}
@@ -94,20 +144,34 @@ func TestRouterRunningAgentMessageReachesRouter(t *testing.T) {
 	if len(decision.Actions) != 1 || decision.Actions[0].Kind != RouterActionDeliver {
 		t.Fatalf("actions = %#v, want a single deliver_to_active_run", decision.Actions)
 	}
-	waitForCondition(t, func() bool {
-		act, err := NewActivityStore(store.db).Get(ctx, userAct.ID)
-		return err == nil && act.NodeRunID == build.ID
-	})
+	waitRouterLaneIdle(t, router, run.TaskID, true)
+
+	// 活动投影保留：对话流要能看出这条留言属于哪个 Run/节点。
 	bound := reloadTestActivity(t, store, userAct.ID)
 	if bound.NodeRunID != build.ID {
 		t.Fatalf("message bound to %q, want the running agent node %q", bound.NodeRunID, build.ID)
 	}
+	// 真正的投递依据是 continue_requests：原留言必须恰好一条 queued 请求，
+	// 绑定运行中节点的 id 与会话，后续节点回合结束才可消费。
+	requests, err := store.ListOpenWorkflowComments(ctx, run.TaskID)
+	if err != nil {
+		t.Fatalf("ListOpenWorkflowComments: %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("open workflow comments = %#v, want exactly the delivered user message", requests)
+	}
+	req := requests[0]
+	if req.CommentID != userAct.ID || req.Status != ContinueRequestQueued ||
+		req.NodeRunID != build.ID || req.SessionKey != build.SessionKey || req.Body != body {
+		t.Fatalf("delivery request = %#v, want queued %q on %s/%s", req, body, build.ID, build.SessionKey)
+	}
 }
 
-// F2：HumanGate 等待期 Router 选择 deliver 时必须被拒绝/解释，用户占位回复不能
-// 永远停在 pending，gate 也不能被普通留言批准或另开一次执行。
+// F2：HumanGate 等待期 Router 选择 deliver 时必须被拒绝/解释：用户看到无法投递
+// 的说明，原留言没有投递目标，gate 不被普通留言批准也不另开一次执行。
 func TestRouterHumanGateDeliverTerminatesPlaceholder(t *testing.T) {
 	ctx := context.Background()
+	const body = "补充一句"
 	store, svc, run, root := newWorkflowCommentFixture(t, "task-r0-gate", "run-r0-gate", humanGateGraph())
 	if err := svc.AdvanceWorkflowRun(ctx, store, run.TaskID); err != nil {
 		t.Fatalf("AdvanceWorkflowRun: %v", err)
@@ -119,7 +183,7 @@ func TestRouterHumanGateDeliverTerminatesPlaceholder(t *testing.T) {
 
 	agent := &scriptedRouterAgent{calls: []scriptedRouterCall{{
 		tool: "router_deliver_to_active_run",
-		args: map[string]any{"body": "补充一句", "reason": "审批等待中"},
+		args: map[string]any{"body": body, "reason": "审批等待中"},
 	}}}
 	svc.SetRouterConfig(RouterConfig{Mode: RouterModeRoute, IdleClose: time.Hour})
 	svc.SetRouterAgent(agent)
@@ -128,27 +192,51 @@ func TestRouterHumanGateDeliverTerminatesPlaceholder(t *testing.T) {
 		t.Fatal("route mode must create a router lane")
 	}
 	t.Cleanup(router.Close)
+	t.Cleanup(func() { waitRouterLaneIdle(t, router, run.TaskID, false) })
 	activity, err := svc.ActivityServiceForRoot(root.ID)
 	if err != nil {
 		t.Fatalf("ActivityServiceForRoot: %v", err)
 	}
 
-	_, placeholder, err := activity.CreateUserActivity(ctx, run.TaskID, "补充一句", CommentWorkflowChoiceEmpty, nil)
+	userAct, placeholder, err := activity.CreateUserActivity(ctx, run.TaskID, body, CommentWorkflowChoiceEmpty, nil)
 	if err != nil {
 		t.Fatalf("CreateUserActivity: %v", err)
 	}
-	if placeholder == nil {
-		t.Fatal("no placeholder activity")
+	if userAct == nil || placeholder == nil {
+		t.Fatalf("activities = %#v / %#v, want user + placeholder", userAct, placeholder)
 	}
 
-	// 先等决策终态，再读占位：apply 失败只改决策，占位的终态化不能靠时序猜。
+	// 先等决策终态，再有界等 lane 收尾：校验拒绝之后还有 fallbackRoute 等副作用，
+	// 决策行不是占位/副作用的完成屏障。
 	waitRouteDecisionTerminal(t, store, run.TaskID)
+	waitRouterLaneIdle(t, router, run.TaskID, true)
+
 	act := reloadTestActivity(t, store, placeholder.ID)
 	if act.Status == ActivityStatusPending || act.Status == ActivityStatusRunning {
 		t.Fatalf("placeholder is still %q after the deliver decision (%#v)", act.Status, act)
 	}
 	if act.Hidden {
 		t.Fatalf("deliver during HumanGate was applied as a hidden hand-off: %#v", act)
+	}
+	// 用户必须看到无法投递的说明：可见失败摘要，或一条解释正文。校验拒绝与
+	// 运行期拒绝都接受，不钉死内部状态枚举。
+	if strings.TrimSpace(act.Summary) == "" && strings.TrimSpace(act.Body) == "" {
+		t.Fatalf("placeholder left %q without any visible explanation: %#v", act.Status, act)
+	}
+
+	// 原留言不能被转交给任何节点：活动投影与 continue_requests 两条都查。
+	user := reloadTestActivity(t, store, userAct.ID)
+	if user.NodeRunID != "" || user.SessionKey != "" {
+		t.Fatalf("user message was bound to a delivery target: %#v", user)
+	}
+	requests, err := store.ListOpenWorkflowComments(ctx, run.TaskID)
+	if err != nil {
+		t.Fatalf("ListOpenWorkflowComments: %v", err)
+	}
+	for _, req := range requests {
+		if req.CommentID == userAct.ID && (req.NodeRunID != "" || req.SessionKey != "") {
+			t.Fatalf("message was queued for delivery during HumanGate: %#v", req)
+		}
 	}
 
 	gate, err = store.WorkflowNodeRunByKey(ctx, run.ID, "gate", "", 0, 1)
@@ -223,7 +311,7 @@ func TestRouterRouteRefreshesQueuedBrief(t *testing.T) {
 		t.Fatalf("fixture precondition: queued brief already has an active execution: %#v", queuedBrief.ActiveExecution)
 	}
 
-	// 入队之后世界才变化：一个 agent 节点开始跑。
+	// 旧 brief 构建后、入队前：一个 agent 节点开始跑，世界已经变化。
 	startWorkflowAgentNode(t, store, run.ID, "build", "sess-build")
 	if err := store.UpdateTaskStatus(ctx, run.TaskID, StatusRunning, false); err != nil {
 		t.Fatalf("UpdateTaskStatus: %v", err)
@@ -237,6 +325,7 @@ func TestRouterRouteRefreshesQueuedBrief(t *testing.T) {
 		t.Fatal("route mode must create a router lane")
 	}
 	t.Cleanup(router.Close)
+	t.Cleanup(func() { waitRouterLaneIdle(t, router, run.TaskID, false) })
 	router.Enqueue(RouterTrigger{
 		Kind:           RouterTriggerUserMessage,
 		TaskID:         run.TaskID,
@@ -247,9 +336,10 @@ func TestRouterRouteRefreshesQueuedBrief(t *testing.T) {
 		Brief:          queuedBrief,
 	})
 
-	// 先等决策收尾再读 prompt：agent 一定在决策落终态之前被调用，这样测试失败时
+	// 先等 lane 收尾再读 prompt：agent 一定在回合结束前被调用，这样测试失败时
 	// 也不会留下仍在写库的 Router goroutine。
 	waitRouteDecisionTerminal(t, store, run.TaskID)
+	waitRouterLaneIdle(t, router, run.TaskID, true)
 	waitForCondition(t, func() bool {
 		_, ok := agent.lastPrompt()
 		return ok
