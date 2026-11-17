@@ -70,7 +70,7 @@ T5–T10 接口在 T1 审计和 R0 结束后由工头定稿再派发，未定稿
 **Consumes:** T1 确认的路径和已有 route fixture；工头提供定稿 brief。
 **Produces:** 真实 Service/Store 集成测试，不仅是源码字符串断言。
 
-- [ ] 对唯一活动节点补充留言、0/多活动节点、queued brief、specified/disabled、回退占位建立断言矩阵。
+- [ ] 本批先写三个期望行为测试：运行中 Agent 留言进入 Router；HumanGate deliver 不得遗留 pending；route 消费时刷新旧 brief。specified/disabled 与回退沿用已有测试并复跑。
 - [ ] 使用现有 fake RouterAgent 和真实 SQLite/Service，验证请求入口到实际 effect。
 - [ ] 对已发现缺口先运行测试，保存预期失败的 RED 证据，不改源码掩盖失败。
 - [ ] 对已有正确行为保存 GREEN；提供每个新增测试钉住的行为表。
@@ -81,7 +81,7 @@ T5–T10 接口在 T1 审计和 R0 结束后由工头定稿再派发，未定稿
 
 ## Task 3: 修复审计证实的 P1 缺口（R0，依赖 T2）
 
-**Files:** 仅 T1/T2 证明需要的 `activity_service.go`、`router_service.go` 与相关职责文件；工头锁定清单后派发。
+**Files:** T1/T2 证明需要的 `activity_service.go`、`activity_service_turns.go`、`service_user_turn.go`、`router_service.go`、`router_brief.go`、`router_tools.go`、`activity_route_apply.go`；实际最小清单由 T2 结果确定。
 **Consumes:** T2 的失败用例和已有执行守卫。
 **Produces:** 不削弱 D3/HumanGate 的路由入口与消费前状态校验。
 
@@ -125,7 +125,7 @@ T5–T10 接口在 T1 审计和 R0 结束后由工头定稿再派发，未定稿
 
 - [ ] 先测 Router-owned 成功、失败、gate，显式/legacy Run 不产协调事件。
 - [ ] 事件保存与结算保证可恢复：原子写或权威状态扫描补齐，禁止仅内存回调。
-- [ ] stall 按定稿阈值和 5 分钟桶产事件，消费前可识别过时事件。
+- [ ] stall 只在已配置 probe 连续两次 30s 扫描明确 inactive、NodeRun 仍 running 且启动至少 60s 时产事件；probe 未配置/未知不认定失败。按 5 分钟桶去重，消费前复查证据；用可控 probe/时钟覆盖正常长回合与真实中断。
 - [ ] 覆盖旧 Run 到达、新回合已开始、用户手工取消和暂停，不覆盖新回合状态。
 
 **验收:** 重复扫描无重复事件；结算窗口中断后能补齐；权限矩阵通过。
