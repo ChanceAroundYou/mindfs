@@ -52,11 +52,18 @@ export function applyActivityUpdated(
 ): TaskActivity[] {
   if (!activityId || !changes) return activities;
   let matched = false;
-  const next = activities.map((activity) => {
-    if (activity.id !== activityId) return activity;
+  const next: TaskActivity[] = [];
+  for (const activity of activities) {
+    if (activity.id !== activityId) {
+      next.push(activity);
+      continue;
+    }
     matched = true;
-    return { ...activity, ...changes } as TaskActivity;
-  });
+    // Router 的 silent / deliver_to_active_run 会把占位回复标成 hidden：
+    // 行还在服务端（审计与幂等用），但用户可见活动流里必须移除。
+    if (changes.hidden === true) continue;
+    next.push({ ...activity, ...changes } as TaskActivity);
+  }
   return matched ? next : activities;
 }
 

@@ -248,6 +248,47 @@ WHERE status = ?`,
 	return res.RowsAffected()
 }
 
+// ClaimAppliedSeq 是 route 模式的动作幂等闸门：只有 applied_seq 精确等于本次
+// 动作的 seq 时才把它推进到 seq+1。返回 false 表示这一条已经应用过（或决策
+// 已不在 applying），调用方必须跳过，不能重复建活动/开 Run。
+func (s *RouterStore) ClaimAppliedSeq(ctx context.Context, id string, seq int) (bool, error) {
+	if seq < 0 {
+		return false, errors.New("router action seq must be >= 0")
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE router_decisions
+SET applied_seq = ?, updated_at = ?
+WHERE id = ? AND applied_seq = ? AND status = ?`,
+		seq+1, time.Now().UTC().Format(routerTimeLayout), strings.TrimSpace(id), seq, string(RouterDecisionApplying))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// MarkDecisionStatus 只改状态与错误文案，不重写动作/会话。route 模式应用完成
+// 或失败时用它，避免把已经落库的 actions_json 再序列化一遍。
+func (s *RouterStore) MarkDecisionStatus(ctx context.Context, id string, status RouterDecisionStatus, errText string) error {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE router_decisions SET status = ?, error = ?, updated_at = ? WHERE id = ?`,
+		string(status), errText, time.Now().UTC().Format(routerTimeLayout), strings.TrimSpace(id))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrRouterDecisionNotFound
+	}
+	return nil
+}
+
 func (s *RouterStore) UpdateDecisionResult(ctx context.Context, id string, status RouterDecisionStatus, actions []RouterAction, routerSessionKey, agreement, errText string, latencyMS, promptTokens, completionTokens int) error {
 	actionsJSON, err := json.Marshal(actions)
 	if err != nil {

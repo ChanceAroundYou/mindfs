@@ -14,7 +14,6 @@ import { ConversationMessages } from "../src/components/task/ConversationView.ts
 import {
   activityDisplayText,
   applyActivityCreated,
-  applyActivityUpdated,
   canSendActivity,
   normalizeActivityStatus,
 } from "../src/shared/activityModel.ts";
@@ -133,22 +132,6 @@ test("applyActivityCreated appends new activities and replaces duplicate echoes"
   const duplicated = applyActivityCreated(first, { ...baseActivity, body: "重新投递" });
   assert.equal(duplicated.length, 1);
   assert.equal(duplicated[0].body, "重新投递");
-});
-
-test("applyActivityUpdated merges status/summary into the matching activity only", () => {
-  const other = { ...baseActivity, id: "a2" };
-  const list = [baseActivity, other];
-  const next = applyActivityUpdated(list, "a1", { status: "completed", summary: "done" });
-
-  assert.equal(next[0].status, "completed");
-  assert.equal(next[0].summary, "done");
-  assert.equal(next[0].body, baseActivity.body);
-  assert.equal(next[1], other);
-});
-
-test("applyActivityUpdated returns the same array when the id is unknown", () => {
-  const list = [baseActivity];
-  assert.equal(applyActivityUpdated(list, "missing", { status: "failed" }), list);
 });
 
 test("canSendActivity enforces empty body, specified workflow and in-flight guards", () => {

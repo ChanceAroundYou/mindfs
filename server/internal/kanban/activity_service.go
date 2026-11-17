@@ -251,8 +251,9 @@ func (s *ActivityService) insertUserActivity(
 	return userAct, nil
 }
 
-// dispatchUserActivity 把已落库的用户留言派发出去：按 workflow_choice 起 Run 或
-// 直连回一轮，shadow 模式下再给 Router 记一份观察样本。
+// dispatchUserActivity 把已落库的用户留言派发出去：route 模式交给 Router 决策；
+// shadow 与旧路径（off）按 workflow_choice 起 Run 或直连回一轮，shadow 额外给
+// Router 记一份观察样本。
 func (s *ActivityService) dispatchUserActivity(
 	ctx context.Context,
 	task Task,
@@ -260,7 +261,15 @@ func (s *ActivityService) dispatchUserActivity(
 	workflowVersionID *string,
 ) (*TaskActivity, *TaskActivity, error) {
 	choice := userAct.WorkflowChoice
-	body := userAct.Body
+
+	// route 模式只接管「没指定 workflow」的留言。用户在界面上显式选了某个
+	// workflow 或「纯对话」时，那是明确指令，不能再用 Router 猜一遍。
+	if s.router != nil {
+		mode := s.router.service.RouterConfig().ModeForRoot(task.RootID)
+		if mode == RouterModeRoute && choice == CommentWorkflowChoiceEmpty {
+			return s.dispatchRoutedUserActivity(ctx, task, userAct)
+		}
+	}
 
 	// shadow 的 Situation Brief 必须在旧路径分发之前取：旧路径一动手，active
 	// execution / run 状态就变了，之后再取到的是「旧路径已经改变过的世界」。
@@ -278,23 +287,12 @@ func (s *ActivityService) dispatchUserActivity(
 		}
 	}
 
-	var agentAct *TaskActivity
+	agentAct, err := s.dispatchLegacyActivity(ctx, task, userAct, workflowVersionID, nil)
 	var legacy *RouterLegacyAction
-	var err error
-	if choice == CommentWorkflowChoiceDisabled {
-		agentAct, err = s.startDirectAgent(ctx, task, body)
-		if agentAct != nil && agentAct.Status == ActivityStatusFailed {
-			legacy = &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(agentAct.Summary)}
-		} else if err == nil {
-			legacy = &RouterLegacyAction{Kind: "direct"}
-		}
+	if err == nil {
+		legacy = legacyActionOf(task, userAct, agentAct)
 	} else {
-		agentAct, legacy, err = s.startWorkflowRun(ctx, task, body, choice, workflowVersionID, userAct.ID)
-	}
-	if err != nil {
-		if legacy == nil {
-			legacy = &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}
-		}
+		legacy = &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}
 	}
 	if router != nil && brief != nil {
 		router.Enqueue(RouterTrigger{
@@ -304,11 +302,110 @@ func (s *ActivityService) dispatchUserActivity(
 			UserActivityID: userAct.ID,
 			PlaceholderID:  activityIDOf(agentAct),
 			TurnID:         "msg:" + userAct.ID,
+			Mode:           RouterModeShadow,
 			Brief:          brief,
 			LegacyAction:   legacy,
 		})
 	}
 	return userAct, agentAct, err
+}
+
+// dispatchRoutedUserActivity 是 route 模式的入口：先同步落一条 pending 占位回复，
+// 快照 brief，再把回合交给 Router；旧路径只在 Router 失败/拒绝时由
+// FallbackRoute 执行。
+func (s *ActivityService) dispatchRoutedUserActivity(ctx context.Context, task Task, userAct *TaskActivity) (*TaskActivity, *TaskActivity, error) {
+	placeholder := s.newAgentActivity(task, CommentWorkflowChoiceEmpty)
+	if err := s.activities.Insert(ctx, placeholder); err != nil {
+		return userAct, nil, err
+	}
+	s.broadcastCreated(placeholder)
+	// 可见的守卫：任务已结束/暂停或已有 agent 回合在跑时，用户应立刻看到拒绝，
+	// 而不是等 Router 跑完才失败。
+	if err := s.prepareUserTurn(ctx, task, false, placeholder); err != nil {
+		return userAct, placeholder, nil
+	}
+	config := s.router.service.RouterConfig()
+	brief, err := buildSituationBrief(ctx, s.tasks, s.workflows, config, task, RouterTriggerUserMessage, userAct.ID)
+	if err != nil {
+		// brief 都取不到，Router 不会比旧路径更聪明：直接回落。回落失败只记在
+		// 占位回复的失败状态里，不再向上抛（用户留言本身已经落库）。
+		_, _ = s.dispatchFallbackForPlaceholder(ctx, task, userAct, placeholder)
+		return userAct, placeholder, nil
+	}
+	s.router.Enqueue(RouterTrigger{
+		Kind:           RouterTriggerUserMessage,
+		TaskID:         task.ID,
+		RootID:         task.RootID,
+		UserActivityID: userAct.ID,
+		PlaceholderID:  placeholder.ID,
+		TurnID:         "msg:" + userAct.ID,
+		Mode:           RouterModeRoute,
+		Brief:          brief,
+	})
+	return userAct, placeholder, nil
+}
+
+// dispatchLegacyActivity 是改造前的分发逻辑。placeholder 非空时复用它，
+// 不再新插一条 agent 回复（Router 回落路径必须复用同步占位）。
+func (s *ActivityService) dispatchLegacyActivity(
+	ctx context.Context,
+	task Task,
+	userAct *TaskActivity,
+	workflowVersionID *string,
+	placeholder *TaskActivity,
+) (*TaskActivity, error) {
+	if userAct.WorkflowChoice == CommentWorkflowChoiceDisabled {
+		return s.beginDirectAgent(ctx, task, userAct.Body, placeholder, CommentWorkflowChoiceDisabled)
+	}
+	return s.beginWorkflowRun(ctx, task, userAct.Body, userAct.WorkflowChoice, workflowVersionID, userAct.ID, placeholder)
+}
+
+func legacyActionOf(task Task, userAct *TaskActivity, agentAct *TaskActivity) *RouterLegacyAction {
+	if agentAct == nil {
+		return &RouterLegacyAction{Kind: "failed"}
+	}
+	if agentAct.Status == ActivityStatusFailed {
+		return &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(agentAct.Summary)}
+	}
+	if userAct != nil && userAct.WorkflowChoice == CommentWorkflowChoiceDisabled {
+		return &RouterLegacyAction{Kind: "direct"}
+	}
+	return &RouterLegacyAction{Kind: "workflow", RunID: agentAct.RunID}
+}
+
+// FallbackRoute 在 Router 失败或拒绝时把这一轮交回旧路径，并复用 Router 同步
+// 落下的占位回复。已经应用的决策不会走这里（那会重复执行）。
+func (s *ActivityService) FallbackRoute(ctx context.Context, taskID, userActivityID, placeholderID string) error {
+	if s == nil || s.tasks == nil || s.activities == nil {
+		return errors.New("activity service not configured")
+	}
+	task, err := s.tasks.GetTask(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return err
+	}
+	userAct, err := s.activities.Get(ctx, strings.TrimSpace(userActivityID))
+	if err != nil {
+		return err
+	}
+	var placeholder *TaskActivity
+	if id := strings.TrimSpace(placeholderID); id != "" {
+		if act, loadErr := s.activities.Get(ctx, id); loadErr == nil {
+			placeholder = act
+		}
+	}
+	_, err = s.dispatchFallbackForPlaceholder(ctx, task, userAct, placeholder)
+	return err
+}
+
+func (s *ActivityService) dispatchFallbackForPlaceholder(ctx context.Context, task Task, userAct *TaskActivity, placeholder *TaskActivity) (*TaskActivity, error) {
+	agentAct, err := s.dispatchLegacyActivity(ctx, task, userAct, nil, placeholder)
+	if err != nil {
+		if agentAct != nil {
+			s.failActivity(ctx, agentAct, err)
+		}
+		return agentAct, err
+	}
+	return agentAct, nil
 }
 
 func activityIDOf(activity *TaskActivity) string {

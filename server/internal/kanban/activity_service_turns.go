@@ -21,10 +21,10 @@ func (s *ActivityService) runTurn(ctx context.Context, fn func(context.Context))
 	}()
 }
 
-// startDirectAgent 是「纯对话模式」的一轮：插入 pending 占位后，把用户这句
-// 话作为普通回合交给直连执行端口。没有端口就显式失败，绝不留下永久 pending。
-func (s *ActivityService) startDirectAgent(ctx context.Context, task Task, body string) (*TaskActivity, error) {
-	agentAct := &TaskActivity{
+// newAgentActivity 造一条 agent 回复占位行（未落库）。choice 决定旧路径把它
+// 当作「纯对话」还是某个 workflow 的回复。
+func (s *ActivityService) newAgentActivity(task Task, choice string) *TaskActivity {
+	return &TaskActivity{
 		ID:             newID("act"),
 		TaskID:         task.ID,
 		RootID:         task.RootID,
@@ -32,14 +32,34 @@ func (s *ActivityService) startDirectAgent(ctx context.Context, task Task, body 
 		Role:           RoleAgent,
 		Body:           "",
 		Status:         ActivityStatusPending,
-		WorkflowChoice: CommentWorkflowChoiceDisabled,
+		WorkflowChoice: choice,
 	}
+}
+
+// ensureAgentActivity 复用调用方已同步落库的占位回复；没有时才新插一条。
+// Route 模式必须先有占位（用户点发送立刻能看到「正在想」），回落路径必须复用
+// 同一条，否则一次留言会出现两条 agent 回复。
+func (s *ActivityService) ensureAgentActivity(ctx context.Context, task Task, choice string, placeholder *TaskActivity) (*TaskActivity, error) {
+	if placeholder != nil {
+		return placeholder, nil
+	}
+	agentAct := s.newAgentActivity(task, choice)
 	if err := s.activities.Insert(ctx, agentAct); err != nil {
 		return nil, err
 	}
 	s.broadcastCreated(agentAct)
+	return agentAct, nil
+}
+
+// beginDirectAgent 是「纯对话模式」的一轮：占位回复已落库（或新插），把这一轮
+// 交给直连执行端口。没有端口就显式失败，绝不留下永久 pending。
+func (s *ActivityService) beginDirectAgent(ctx context.Context, task Task, body string, placeholder *TaskActivity, choice string) (*TaskActivity, error) {
+	agentAct, err := s.ensureAgentActivity(ctx, task, choice, placeholder)
+	if err != nil {
+		return nil, err
+	}
 	// 直连只守 D3（没有活动执行），不冻结停在 waiting_user 的旧 Run。
-	if err := s.prepareUserTurn(ctx, task, false, agentAct); err != nil {
+	if guardErr := s.prepareUserTurn(ctx, task, false, agentAct); guardErr != nil {
 		return agentAct, nil
 	}
 	if s.directExecutor == nil {
@@ -104,54 +124,59 @@ func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, t
 	_ = s.tasks.UpdateTaskResultSummary(ctx, taskID, truncateSummary(strings.TrimSpace(text)))
 }
 
-// startWorkflowRun 创建 pending 的 Agent 回复并落一个 WorkflowRun。
+// beginWorkflowRun 落一个 WorkflowRun 并把它挂到占位回复上。
 //
 // Run 创建失败不向上抛：用户留言已经落库，把失败写回 Agent 回复（status=failed
 // + error summary）比让整条留言消失更符合对话模型。真正的输入错误（空留言、
 // 非法 choice）在调用方已经提前拒绝。
-func (s *ActivityService) startWorkflowRun(
+func (s *ActivityService) beginWorkflowRun(
 	ctx context.Context,
 	task Task,
 	userInput string,
 	choice string,
 	versionID *string,
 	userActivityID string,
-) (*TaskActivity, *RouterLegacyAction, error) {
-	agentAct := &TaskActivity{
-		ID:             newID("act"),
-		TaskID:         task.ID,
-		RootID:         task.RootID,
-		Type:           ActivityTypeAgentReply,
-		Role:           RoleAgent,
-		Body:           "",
-		Status:         ActivityStatusPending,
-		WorkflowChoice: choice,
+	placeholder *TaskActivity,
+) (*TaskActivity, error) {
+	agentAct, err := s.ensureAgentActivity(ctx, task, choice, placeholder)
+	if err != nil {
+		return nil, err
 	}
-	if err := s.activities.Insert(ctx, agentAct); err != nil {
-		return nil, nil, err
-	}
-	s.broadcastCreated(agentAct)
 	// workflow 回合除了守 D3，还要把停在 waiting_user 的旧 Run 冻结掉：
 	// 否则新建 Run 会被绑定守卫拒绝，或者建成一条 driver 永不推进的僵尸 Run。
-	if err := s.prepareUserTurn(ctx, task, true, agentAct); err != nil {
-		return agentAct, &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}, nil
+	if guardErr := s.prepareUserTurn(ctx, task, true, agentAct); guardErr != nil {
+		return agentAct, nil
 	}
-
 	version, err := s.resolveWorkflowVersion(ctx, userInput, choice, versionID)
-	var run *WorkflowRun
 	if err == nil {
-		run, err = s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct)
+		_, err = s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct)
 	}
 	if err != nil {
 		s.failActivity(ctx, agentAct, err)
-		return agentAct, &RouterLegacyAction{Kind: "failed", Error: strings.TrimSpace(err.Error())}, nil
 	}
-	return agentAct, &RouterLegacyAction{
-		Kind:            "workflow",
-		WorkflowID:      version.WorkflowID,
-		WorkflowVersion: version.Version,
-		RunID:           run.ID,
-	}, nil
+	return agentAct, nil
+}
+
+// beginWorkflowRunVersion 是 route 的 run_workflow：版本已由决策指定（或已
+// 解析成最新版），不再经过 recommender 重新挑 workflow。
+func (s *ActivityService) beginWorkflowRunVersion(
+	ctx context.Context,
+	task Task,
+	version WorkflowVersion,
+	userActivityID string,
+	placeholder *TaskActivity,
+) (*TaskActivity, error) {
+	agentAct, err := s.ensureAgentActivity(ctx, task, CommentWorkflowChoiceEmpty, placeholder)
+	if err != nil {
+		return nil, err
+	}
+	if guardErr := s.prepareUserTurn(ctx, task, true, agentAct); guardErr != nil {
+		return agentAct, nil
+	}
+	if _, err := s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct); err != nil {
+		s.failActivity(ctx, agentAct, err)
+	}
+	return agentAct, nil
 }
 
 // persistWorkflowRun creates the data-plane run, links it to the agent activity,

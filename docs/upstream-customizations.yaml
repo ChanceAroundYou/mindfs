@@ -8259,7 +8259,7 @@ groups:
     title: 任务 Router（super agent 总控）+ 直连执行器；阶段概念从 API/UI/类型里彻底删除
     kind: feature
     symptom: "用户在任务里发一条留言，服务端按这条留言自己决定这一轮怎么回：能匹配到 workflow 就跑 workflow（回复卡片可下钻运行视图），否则直接在任务主会话里跑一轮普通对话并回写一条 Agent 回复。界面上不再有任何阶段概念：没有阶段编辑器/阶段选项条、没有默认两段流水、没有「推进 / 立即执行」按钮、没有按阶段推进的任务状态；卡片只有完成 / 暂停 / 继续 / 取消 / 收尾 / 删除，详情只有一条对话流。"
-    why: "这是用户明确要求的方向：MindFS 做的是 super agent 的**总控 Router**，不是机械的阶段流水。必须保留：① 每轮的决定权在 `ActivityService`（Router），前端不再随包带阶段流水、不再指定 agent/model/effort 或 start_immediately；② `CreateUserActivity` 是唯一入口（`POST /api/tasks/{id}/activities`），它先落用户留言，再按 `workflow_choice` 与推荐结果选择 `startWorkflowRun` 或 `startDirectAgent`（`workflow_choice=disabled` 或没有可用 workflow 时走直连）；③ 直连执行器 `AppContext.RunDirectActivity` 复用任务主会话（`main_session_key`，失效才新建 chat 会话并回写），回复正文写回同一条 Agent 活动；④ 直连回合与 workflow 回合共用 `runWorkflowTurn` 的回合生命周期（pending 身份、EndSessionTurn、取消/超时），不允许另一套裸 `context.Background()` 发送路径；⑤ 收尾也走同一执行器：`runFinishTurn` 用固定收尾提示词跑一轮普通对话，用内存 `Finishing` 标记而不是阶段数据表达「正在收尾」；⑥ 阶段相关列/表（`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs`）只作为冻结的审计证据与一次性转换输入保留，生产路径不再读写它们；⑦ `/comments` 这一层 HTTP 适配删除，留言统一走 `/activities`；⑧ 续轮由 `Service.PrepareNewUserTurn`（`server/internal/kanban/service_user_turn.go`）把关：任务已终态/已暂停、仍有 `running` 节点、或工作流停在 HumanGate 时显式拒绝并给出可见原因；停在 waiting_user 的旧 Run 被新留言整体取代——未完成证据冻结为 cancelled、追加 `run_superseded` 事件、任务回到可推进状态、旧回复结算为 cancelled；已完成（Run 投影为 success、任务停在待审核）的旧 Run 不在此列：新留言开新轮，旧 Run/回复/摘要原样保留（G-LX）；⑨ 直连回合自己决定 Agent：已有主会话沿用 `session.InferAgentFromSession`，新会话按「第一个可用 → 第一个已安装 → 第一个」选默认值，一个都没有时显式报「没有可用的 Agent」，绝不让空 agent 落到 `SendMessage` 里变成 \"agent required\"；⑩ 工作流回复的 summary 只取节点 output 里给人看的文字：优先最后一个成功 **Agent** 节点（条件节点的 route 是簿记，不参与），先认 summary/message/text/result/title/detail，只剩一个文本字段就直接用它，多个文本字段按 key 排序渲染成「key: value；…」；执行器写入的元数据（outcome/reason/worktree_*/resumed_after_restart/comment_id）与非文本值一律不参与，绝不把 output 原样 JSON 出来；超长截到 500 字符，并在结算时清掉运行期的「步骤 i/n」正文。结算只认 `type=agent_reply` 那一行，注意力/系统事件行同样带 run_id，不能拿它们改状态或清正文。"
+    why: "这是用户明确要求的方向：MindFS 做的是 super agent 的**总控 Router**，不是机械的阶段流水。必须保留：① 每轮的决定权在 `ActivityService`（Router），前端不再随包带阶段流水、不再指定 agent/model/effort 或 start_immediately；② `CreateUserActivity` 是唯一入口（`POST /api/tasks/{id}/activities`），它先落用户留言，再按 `workflow_choice` 与推荐结果选择 `beginWorkflowRun` 或 `beginDirectAgent`（`workflow_choice=disabled` 或没有可用 workflow 时走直连）；③ 直连执行器 `AppContext.RunDirectActivity` 复用任务主会话（`main_session_key`，失效才新建 chat 会话并回写），回复正文写回同一条 Agent 活动；④ 直连回合与 workflow 回合共用 `runWorkflowTurn` 的回合生命周期（pending 身份、EndSessionTurn、取消/超时），不允许另一套裸 `context.Background()` 发送路径；⑤ 收尾也走同一执行器：`runFinishTurn` 用固定收尾提示词跑一轮普通对话，用内存 `Finishing` 标记而不是阶段数据表达「正在收尾」；⑥ 阶段相关列/表（`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs`）只作为冻结的审计证据与一次性转换输入保留，生产路径不再读写它们；⑦ `/comments` 这一层 HTTP 适配删除，留言统一走 `/activities`；⑧ 续轮由 `Service.PrepareNewUserTurn`（`server/internal/kanban/service_user_turn.go`）把关：任务已终态/已暂停、仍有 `running` 节点、或工作流停在 HumanGate 时显式拒绝并给出可见原因；停在 waiting_user 的旧 Run 被新留言整体取代——未完成证据冻结为 cancelled、追加 `run_superseded` 事件、任务回到可推进状态、旧回复结算为 cancelled；已完成（Run 投影为 success、任务停在待审核）的旧 Run 不在此列：新留言开新轮，旧 Run/回复/摘要原样保留（G-LX）；⑨ 直连回合自己决定 Agent：已有主会话沿用 `session.InferAgentFromSession`，新会话按「第一个可用 → 第一个已安装 → 第一个」选默认值，一个都没有时显式报「没有可用的 Agent」，绝不让空 agent 落到 `SendMessage` 里变成 \"agent required\"；⑩ 工作流回复的 summary 只取节点 output 里给人看的文字：优先最后一个成功 **Agent** 节点（条件节点的 route 是簿记，不参与），先认 summary/message/text/result/title/detail，只剩一个文本字段就直接用它，多个文本字段按 key 排序渲染成「key: value；…」；执行器写入的元数据（outcome/reason/worktree_*/resumed_after_restart/comment_id）与非文本值一律不参与，绝不把 output 原样 JSON 出来；超长截到 500 字符，并在结算时清掉运行期的「步骤 i/n」正文。结算只认 `type=agent_reply` 那一行，注意力/系统事件行同样带 run_id，不能拿它们改状态或清正文。"
     boundary: "只管「一轮留言怎么被 Router 分派与执行」以及阶段概念的删除。不改 workflow 引擎/DAG/Loop/HumanGate 的语义（G-LE/G-LI），不改历史任务的一次性转换规则（G-LK），不改模板删除（G-LJ）。不做自动 merge/push/deploy。"
     files:
       - server/internal/kanban/activity_service.go
@@ -8303,7 +8303,7 @@ groups:
       - web/tests/worktree-finish.test.mjs
     anchors:
       - 'server/internal/kanban/activity_service.go:type ActivityDirectExecutor interface {'
-      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) startDirectAgent('
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) beginDirectAgent('
       - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) executeDirectActivity('
       - 'server/internal/api/appcontext_activity.go:func (s *AppContext) RunDirectActivity('
       - 'server/internal/api/appcontext_activity.go:return s.runWorkflowTurn(ctx, req)'
@@ -8375,7 +8375,7 @@ groups:
       - cli/cmd/startup_config_test.go
     anchors:
       - server/internal/kanban/router_service.go:Enqueue
-      - server/internal/kanban/router_service.go:func (rs *RouterService) runShadowTurn(
+      - server/internal/kanban/router_service.go:func (rs *RouterService) runRouterTurn(
       - server/internal/kanban/router_types.go:func (c RouterConfig) Normalized() RouterConfig
       - server/internal/kanban/router_tools.go:const routerActionBodyMaxBytes = 4 * 1024
       - server/internal/kanban/router_brief.go:func buildSituationBrief(
@@ -8785,11 +8785,11 @@ groups:
 
   # ── 拖选复制只认聊天正文 ─────────────────────────────────────────────
   - id: G-MA
-    title: 拖选复制正文时选区不越出聊天区（标题栏不可选 + 选区钳制）
+    title: 拖选复制正文时选区不越出聊天区（抬手时把越界选区钳制回正文）
     kind: fix
     symptom: "长会话里向下滚动后再拖选正文，选区会沿着自动滚动一路扩到会话标题栏：标题、header 和上方全部正文一起被选中，用户只想复制一段正文，复制出来却是整篇。"
-    why: "用户 2026-11-17 要求「复制正文只会选中聊天正文，不会跳出去」。必须保留：① 会话标题栏与面板标题栏是 chrome，`user-select: none`，不进选区；② 正文容器显式 `user-select: text`，外层禁选不顺着继承把正文一起禁掉；③ `clampSelectionToRoot` 把「一端在正文内、另一端被拖到正文外」的选区拉回容器边界——不依赖每个 chrome 都记得配 none；④ 拖选进行中不改写选区（浏览器每次 mousemove 都会把末端重新放到指针位置，这时改选区会互相打架、实测最终选区被清空），只在 `pointerup`/`pointercancel`/`blur` 与**非拖选**的 `selectionchange` 上收紧；⑤ 两端都在容器外（侧栏里选会话名之类）一律不碰，多个会话视图并存时不互相抢选区；⑥ 会话滚动容器与面板正文各挂各的 ref，互不干扰。"
-    boundary: "只改前端选区行为（样式 + 抓选区钳制）；不改消息渲染、时间线虚拟化、滚动跟随与分页、复制按钮与「复制整段」入口，也不改拖选时的浏览器自动滚动（向上拖到容器外仍会滚到更早的消息，这是用户选定的范围）。"
+    why: "用户 2026-11-17 要求「复制正文只会选中聊天正文，不会跳出去」。必须保留：① 越界选区由 `clampSelectionToRoot` 在抬手时拉回容器边界：一端在正文内、另一端被拖到正文外就改写到容器边界，不依赖每个 chrome 都记得配样式；② 正文容器显式 `user-select: text`；③ 拖选进行中不改写选区（浏览器每次 mousemove 都会把末端重新放到指针位置，这时改选区会互相打架、实测最终选区被清空），只在 `pointerup`/`pointercancel`/`blur` 与**非拖选**的 `selectionchange` 上收紧；④ 两端都在容器外（侧栏里选会话名之类）一律不碰，多个会话视图并存时不互相抢选区；⑤ 会话滚动容器与面板正文各挂各的 ref，互不干扰；⑥ **标题栏里一处 `user-select: none` 都不能有**——2026-11-17 实测：拖选路径上有不可选区域时，Chromium 在「向上拖选 + 自动滚动」中会静默清空整个选区（最后一次 mousemove 还有 582 字，抬手时已是 0，且不发 selectionchange；`e2e/live/selection_scope.py` 判据从「标题栏不可选」改回「松手后选区仍在正文里」就是这条）。代价是拖选过程中标题可能短暂高亮，松手后选区与复制结果只剩正文。"
+    boundary: "只改前端选区行为（抓选区钳制 + 正文可选样式）；不改消息渲染、时间线虚拟化、滚动跟随与分页、复制按钮与「复制整段」入口，也不改拖选时的浏览器自动滚动（向上拖到容器外仍会滚到更早的消息，这是用户选定的范围）。"
     files:
       - web/src/shared/selectionClamp.ts
       - web/src/hooks/useSelectionContainment.ts
@@ -8807,7 +8807,7 @@ groups:
       - 'web/src/hooks/useSelectionContainment.ts:document.addEventListener("selectionchange", clampSelection);'
       - 'web/src/hooks/useSelectionContainment.ts:if (pointerDown) return;'
       - 'web/src/components/session/SessionViewer.tsx:useSelectionContainment(scrollRef);'
-      - 'web/src/components/session/SessionViewerHeader.tsx:userSelect: "none"'
+      - 'web/src/components/session/SessionViewerHeader.tsx:CUSTOM(G-MA)：标题栏**不要**设 user-select:none'
       - 'web/src/components/shell/PanelShell.tsx:useSelectionContainment(bodyRef);'
       - 'e2e/live/selection_scope.py:def main() -> int:'
 
@@ -8849,3 +8849,41 @@ groups:
       - 'cli/cmd/mindfs.go:flag.Bool("workflow-parallel-main-tree", true,'
       - 'server/app/workspace.go:func (s sharedServices) parallelMainTreeEnabled() bool {'
       - 'server/app/server.go:parallelMainTree: &opts.WorkflowParallelMainTree'
+
+  # ── Router route 模式：真正接管任务回合 ─────────────────────────────────
+  - id: G-MC
+    title: Router route 模式接管用户留言（say / 直连 / workflow / 提问 / 静默 / 转交）
+    kind: feature
+    symptom: "router.mode 只有 shadow 能跑：决策只记录不执行，任务仍由旧的 workflow_choice 分派，用户看到的一直是「空白执行」。用户 2026-11-17 要求 Router 真正成为工头（30s 延迟可接受）。"
+    why: "用户明确要求 route 模式落地。必须保留：① 只有 workflow_choice=empty 的留言进 Router，显式指定 workflow / 纯对话是用户明确指令，仍走旧路径；② 用户点发送后**同步**落一条 pending 占位回复，Router 跑完再原地改写（say/ask_user/直连/workflow 复用同一条；silent/deliver 置 hidden），否则 30–90s 的 Router 回合里界面没有任何反馈；③ 每个动作执行前 `ClaimAppliedSeq` CAS 抢占，进程重启/重复投递绝不重复建 Run 或插活动；④ LLM 失败、动作非法、brief 构建失败才回落到旧路径并复用占位，**已部分应用**的决策只标 failed，不回落（否则重复执行）；⑤ 启动时把停在 applying 的决策标 failed（`RecoverApplyingDecisions`），不能永远 applying；⑥ 默认回合超时 90s（shadow 实测 p50 34.3s / p95 41.7s，20s 会把正常回合掐成 fallback）；⑦ `deliver_to_active_run` 把用户留言写入 continue_requests + outbox 并按 D3 绑定唯一活动 Agent NodeRun，同时隐藏占位（答复在节点会话里）；⑧ 前端收到 `hidden:true` 必须从活动流移除该行，不能继续渲染空壳。上游没有 Router，这套语义与测试是合上游后的唯一判据。"
+    boundary: "只把 Router 从观察者升级为 route 模式的决策执行者；不改 shadow 的样本/agreement 语义，不改 Router 工具白名单与提示词规则，不改 workflow 引擎、worktree 生命周期、任务状态机，也不实现 coordinate / P2 的 run_settled 触发。"
+    files:
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/router_service.go
+      - server/internal/kanban/router_store.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_route_test.go
+      - server/internal/kanban/task_store_workflow_comments.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - web/src/shared/activityModel.ts
+      - web/tests/activity-model-updates.test.mjs
+      - web/tests/conversation-view.test.mjs
+    tests:
+      - server/internal/kanban/router_route_test.go
+      - web/tests/activity-model-updates.test.mjs
+    anchors:
+      - 'server/internal/kanban/router_store.go:func (s *RouterStore) ClaimAppliedSeq('
+      - 'server/internal/kanban/router_service.go:func (rs *RouterService) finishRouteTurn('
+      - 'server/internal/kanban/router_service.go:func (rs *RouterService) fallbackRoute('
+      - 'server/internal/kanban/router_types.go:defaultRouterTurnTimeout = 90 * time.Second'
+      - 'server/internal/kanban/activity_service.go:if mode == RouterModeRoute && choice == CommentWorkflowChoiceEmpty {'
+      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) ApplyRouteActions('
+      - 'server/internal/kanban/activity_route_apply.go:if !claimed {'
+      - 'server/internal/kanban/task_store_workflow_comments.go:func (s *TaskStore) DeliverActivityToActiveNodeRun('
+      - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) SetHidden('
+      - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) SetRouteFields('
+      - 'web/src/shared/activityModel.ts:if (changes.hidden === true) continue;'

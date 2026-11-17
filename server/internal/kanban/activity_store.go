@@ -466,6 +466,39 @@ func (s *ActivityStore) UpdateStatus(ctx context.Context, id string, status stri
 	return ensureActivityUpdated(res, id)
 }
 
+// SetHidden 把一条活动移出/放回用户可见流。Router 的 silent 决策用它把占位
+// 回复变成仅审计可见的行：活动依然留在库里，include_hidden 仍可查。
+func (s *ActivityStore) SetHidden(ctx context.Context, id string, hidden bool) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("activity id required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET hidden = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(hidden), time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	return ensureActivityUpdated(res, id)
+}
+
+// SetRouteFields 落 Router 归属（决策/回复对象/purpose/序号）。占位回复复用成
+// 第一条 say 时用它，让前端能按决策追溯且多轮排序稳定。
+func (s *ActivityStore) SetRouteFields(ctx context.Context, id, decisionID, replyToID, purpose string, ordinal int) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("activity id required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET router_decision_id = ?, reply_to_id = ?, purpose = ?, ordinal = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(decisionID), strings.TrimSpace(replyToID), strings.TrimSpace(purpose), ordinal,
+		time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	return ensureActivityUpdated(res, id)
+}
+
 // UpdateBody 改写活动正文（例如 Agent 回复占位被最终文本替换），并推进 updated_at。
 func (s *ActivityStore) UpdateBody(ctx context.Context, id string, body string) error {
 	body = strings.TrimSpace(body)

@@ -30,7 +30,7 @@ func main() {
 	routerAgentFlag := flag.String("router-agent", "", "task router agent name (default claude)")
 	routerModelFlag := flag.String("router-model", "", "task router model; empty = agent default")
 	routerEffortFlag := flag.String("router-effort", "", "task router effort level (default low)")
-	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 20s (default 20s)")
+	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 90s (default 90s)")
 	routerIdleCloseFlag := flag.Duration("router-idle-close", 0, "close idle router sessions after this duration, e.g. 30m (default 30m)")
 	workflowParallelMainTreeFlag := flag.Bool("workflow-parallel-main-tree", true, "run tasks without independent worktrees in parallel on the shared main tree")
 	flag.Parse()

@@ -53,11 +53,22 @@ func newRouterService(service *Service, rootID string, config RouterConfig, stor
 	if config.IdleClose > 0 && config.ModeForRoot(rootID) != RouterModeOff {
 		go rs.sweepIdleSessions(config.IdleClose)
 	}
+	// route 模式的 apply 是「先落 applying、再逐条应用」。进程死在中间时这些行
+	// 永远不会自己前进，启动时统一标 failed，避免界面/诊断看到永久的 applying。
+	if rs.store != nil && config.ModeForRoot(rootID) != RouterModeOff {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if n, err := rs.store.RecoverApplyingDecisions(ctx, "router apply interrupted by process restart"); err != nil {
+			log.Printf("[router] recover.applying.error root=%s err=%v", rootID, err)
+		} else if n > 0 {
+			log.Printf("[router] recover.applying root=%s count=%d", rootID, n)
+		}
+		cancel()
+	}
 	return rs
 }
 
-// Enqueue 把一个触发放进任务 lane。P0 只接受 shadow；route/coordinate 由 P1
-// 实现，在此之前显式不处理，避免「以为已经接管但实际没接管」。
+// Enqueue 把一个触发放进任务 lane。shadow 只记录决策；route 在回合结束后
+	// 按 seq 应用动作（失败/非法时回落旧路径）。coordinate 尚未实现，显式不接管。
 func (rs *RouterService) Enqueue(trigger RouterTrigger) {
 	if rs == nil || rs.service == nil {
 		return
@@ -71,8 +82,12 @@ func (rs *RouterService) Enqueue(trigger RouterTrigger) {
 		rootID = rs.rootID
 	}
 	config := rs.service.RouterConfig()
-	if config.ModeForRoot(rootID) != RouterModeShadow {
+	mode := config.ModeForRoot(rootID)
+	if mode != RouterModeShadow && mode != RouterModeRoute {
 		return
+	}
+	if trigger.Mode == "" {
+		trigger.Mode = mode
 	}
 	if strings.TrimSpace(trigger.TurnID) == "" {
 		trigger.TurnID = newID("rturn")
@@ -113,7 +128,7 @@ func (rs *RouterService) drain(taskID string, lane *routerLane) {
 		lane.queue = lane.queue[1:]
 		lane.mu.Unlock()
 
-		rs.runShadowTurn(taskID, trigger)
+		rs.runRouterTurn(taskID, trigger)
 	}
 }
 
@@ -169,14 +184,19 @@ func (rs *RouterService) Close() {
 	}
 }
 
-func (rs *RouterService) runShadowTurn(taskID string, trigger RouterTrigger) {
+func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 	if rs.store == nil || rs.service == nil {
 		return
 	}
 	ctx := context.Background()
 	config := rs.service.RouterConfig().Normalized()
+	routeMode := trigger.Mode == RouterModeRoute
 	started := time.Now()
 	decisionID := newID("rdec")
+	status := RouterDecisionShadow
+	if routeMode {
+		status = RouterDecisionApplying
+	}
 	decision := &RouterDecision{
 		ID:                    decisionID,
 		TaskID:                taskID,
@@ -188,8 +208,10 @@ func (rs *RouterService) runShadowTurn(taskID string, trigger RouterTrigger) {
 		TriggerKind:           trigger.Kind,
 		TriggerRef:            trigger.TriggerRef,
 		TurnID:                trigger.TurnID,
-		Status:                RouterDecisionShadow,
-		LegacyAction:          trigger.LegacyAction,
+		Status:                status,
+	}
+	if !routeMode {
+		decision.LegacyAction = trigger.LegacyAction
 	}
 	if decision.RootID == "" {
 		decision.RootID = rs.rootID
@@ -198,17 +220,17 @@ func (rs *RouterService) runShadowTurn(taskID string, trigger RouterTrigger) {
 	if brief == nil {
 		store, err := rs.service.taskStore(rs.rootID)
 		if err != nil {
-			rs.finishFallback(ctx, decision, started, fmt.Errorf("load task store: %w", err))
+			rs.finishFallback(ctx, decision, started, fmt.Errorf("load task store: %w", err), routeMode)
 			return
 		}
 		task, err := store.GetTask(ctx, taskID)
 		if err != nil {
-			rs.finishFallback(ctx, decision, started, fmt.Errorf("load task: %w", err))
+			rs.finishFallback(ctx, decision, started, fmt.Errorf("load task: %w", err), routeMode)
 			return
 		}
 		brief, err = buildSituationBrief(ctx, store, rs.service.Workflows, config, task, trigger.Kind, trigger.UserActivityID)
 		if err != nil {
-			rs.finishFallback(ctx, decision, started, fmt.Errorf("build brief: %w", err))
+			rs.finishFallback(ctx, decision, started, fmt.Errorf("build brief: %w", err), routeMode)
 			return
 		}
 	}
@@ -226,7 +248,7 @@ func (rs *RouterService) runShadowTurn(taskID string, trigger RouterTrigger) {
 
 	agent := rs.agent()
 	if agent == nil {
-		rs.finishFallback(ctx, decision, started, errors.New("router agent unavailable"))
+		rs.finishFallback(ctx, decision, started, errors.New("router agent unavailable"), routeMode)
 		return
 	}
 	promptHash := RouterPromptHash()
@@ -262,7 +284,7 @@ func (rs *RouterService) runShadowTurn(taskID string, trigger RouterTrigger) {
 			SessionKey: sessionKey, Agent: config.Agent, Model: config.Model, Effort: config.Effort,
 			PromptHash: promptHash, Status: RouterSessionFailed, LastError: err.Error(), LastTurnAt: time.Now().UTC(),
 		})
-		rs.finishFallback(ctx, decision, started, err)
+		rs.finishFallback(ctx, decision, started, err, routeMode)
 		return
 	}
 	decision.RouterSessionKey = result.SessionKey
@@ -270,7 +292,11 @@ func (rs *RouterService) runShadowTurn(taskID string, trigger RouterTrigger) {
 		decision.RouterSessionKey = sessionKey
 	}
 	actions, synthesized := synthesizeActions(collector.snapshot(), result.FinalText)
-	status := RouterDecisionShadow
+	if routeMode {
+		rs.finishRouteTurn(ctx, config, promptHash, brief, decision, result, actions, latency)
+		return
+	}
+	status = RouterDecisionShadow
 	errText := ""
 	agreement := routerAgreement(trigger.LegacyAction, actions)
 	if validationErr := validateRouterActions(brief, actions, config); validationErr != nil {
@@ -295,7 +321,74 @@ func (rs *RouterService) runShadowTurn(taskID string, trigger RouterTrigger) {
 	rs.broadcast(decision)
 }
 
-func (rs *RouterService) finishFallback(ctx context.Context, decision *RouterDecision, started time.Time, cause error) {
+// finishRouteTurn 是 route 模式的后半程：校验失败 → rejected 并回落旧路径；
+// 校验通过 → 先持久化 actions（applying），再按 seq 应用，最后 applied/failed。
+func (rs *RouterService) finishRouteTurn(ctx context.Context, config RouterConfig, promptHash string, brief *SituationBrief, decision *RouterDecision, result RouterAgentResult, actions []RouterAction, latency int) {
+	ctx = context.Background()
+	now := func(status RouterDecisionStatus, errText string) {
+		decision.Status = status
+		decision.Error = errText
+		decision.LatencyMS = latency
+		decision.PromptTokens = result.Meta.PromptTokens
+		decision.CompletionTokens = result.Meta.CompletionTokens
+		rs.broadcast(decision)
+	}
+	if validationErr := validateRouterActions(brief, actions, config); validationErr != nil {
+		errText := validationErr.Error()
+		if updateErr := rs.store.UpdateDecisionResult(ctx, decision.ID, RouterDecisionRejected, actions, decision.RouterSessionKey, RouterAgreementNoRouter, errText,
+			latency, result.Meta.PromptTokens, result.Meta.CompletionTokens); updateErr != nil {
+			log.Printf("[router] decision.update.error id=%s err=%v", decision.ID, updateErr)
+		}
+		decision.Actions = actions
+		rs.recordSession(ctx, config, promptHash, decision.TaskID, decision.RootID, result, RouterSessionActive, "")
+		now(RouterDecisionRejected, errText)
+		rs.fallbackRoute(ctx, decision)
+		return
+	}
+	if updateErr := rs.store.UpdateDecisionResult(ctx, decision.ID, RouterDecisionApplying, actions, decision.RouterSessionKey, RouterAgreementNoRouter, "",
+		latency, result.Meta.PromptTokens, result.Meta.CompletionTokens); updateErr != nil {
+		log.Printf("[router] decision.update.error id=%s err=%v", decision.ID, updateErr)
+	}
+	decision.Actions = actions
+	rs.recordSession(ctx, config, promptHash, decision.TaskID, decision.RootID, result, RouterSessionActive, "")
+	now(RouterDecisionApplying, "")
+
+	if err := rs.applyRoute(ctx, decision); err != nil {
+		log.Printf("[router] decision.apply.error id=%s task=%s err=%v", decision.ID, decision.TaskID, err)
+		_ = rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionFailed, err.Error())
+		now(RouterDecisionFailed, err.Error())
+		return
+	}
+	if err := rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionApplied, ""); err != nil {
+		log.Printf("[router] decision.status.error id=%s err=%v", decision.ID, err)
+	}
+	now(RouterDecisionApplied, "")
+}
+
+// applyRoute 取该 root 的 ActivityService 并应用动作。ActivityService 每次新建，
+// 但 runtime 状态（lane/agent/gate）都挂在长生命周期的 Service 上。
+func (rs *RouterService) applyRoute(ctx context.Context, decision *RouterDecision) error {
+	svc, err := rs.service.ActivityServiceForRoot(rs.rootID)
+	if err != nil {
+		return fmt.Errorf("activity service: %w", err)
+	}
+	return svc.ApplyRouteActions(ctx, decision)
+}
+
+// fallbackRoute 在 Router 不可用/拒绝时把这一轮交回旧路径。占位回复复用，
+// 不新增一条；旧路径的失败会写回占位回复。
+func (rs *RouterService) fallbackRoute(ctx context.Context, decision *RouterDecision) {
+	svc, err := rs.service.ActivityServiceForRoot(rs.rootID)
+	if err != nil {
+		log.Printf("[router] fallback.unavailable task=%s err=%v", decision.TaskID, err)
+		return
+	}
+	if err := svc.FallbackRoute(ctx, decision.TaskID, decision.UserActivityID, decision.PlaceholderActivityID); err != nil {
+		log.Printf("[router] fallback.error task=%s err=%v", decision.TaskID, err)
+	}
+}
+
+func (rs *RouterService) finishFallback(ctx context.Context, decision *RouterDecision, started time.Time, cause error, routeMode bool) {
 	if decision == nil {
 		return
 	}
@@ -319,6 +412,9 @@ func (rs *RouterService) finishFallback(ctx context.Context, decision *RouterDec
 	decision.Agreement = RouterAgreementUnknown
 	decision.LatencyMS = latency
 	rs.broadcast(decision)
+	if routeMode {
+		rs.fallbackRoute(ctx, decision)
+	}
 }
 
 func (rs *RouterService) prepareSessionKey(ctx context.Context, agent RouterAgent, rootID, taskID string, config RouterConfig, promptHash string) string {

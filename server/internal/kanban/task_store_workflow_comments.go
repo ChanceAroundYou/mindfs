@@ -295,6 +295,65 @@ func (s *TaskStore) BindCommentToActiveNodeRun(ctx context.Context, taskID, comm
 	}, nil
 }
 
+// DeliverActivityToActiveNodeRun 把一条已落库的用户留言作为「运行中补充消息」
+// 交给当前唯一的活动 Agent NodeRun。route 模式的 deliver_to_active_run 用它：
+// continue_requests 与 outbox 在同一事务内写好，绑定按 D3 冻结；回复会出现在
+// 节点会话里，而不是任务对话流里的占位回复上。
+func (s *TaskStore) DeliverActivityToActiveNodeRun(ctx context.Context, taskID, activityID, expectedNodeRunID string) (ContinueRequest, error) {
+	taskID = strings.TrimSpace(taskID)
+	activityID = strings.TrimSpace(activityID)
+	if taskID == "" || activityID == "" {
+		return ContinueRequest{}, errors.New("task id and activity id required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ContinueRequest{}, err
+	}
+	defer tx.Rollback()
+	var body, author string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT body, author FROM task_activities WHERE task_id=? AND id=?`,
+		taskID, activityID).Scan(&body, &author); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ContinueRequest{}, ErrActivityNotFound
+		}
+		return ContinueRequest{}, err
+	}
+	if strings.TrimSpace(author) == "" {
+		author = "user"
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	var exists int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM continue_requests WHERE task_id=? AND comment_id=?`,
+		taskID, activityID).Scan(&exists); err != nil {
+		return ContinueRequest{}, err
+	}
+	if exists == 0 {
+		if err := insertContinueReq(ctx, tx, taskID, activityID, ContinueRequestQueued, body, author, now); err != nil {
+			return ContinueRequest{}, err
+		}
+		if err := upsertCommentOutbox(ctx, tx, taskID, activityID, ContinueRequestQueued, "", "", now); err != nil {
+			return ContinueRequest{}, err
+		}
+	}
+	b, err := s.bindCommentInTx(ctx, tx, taskID, activityID, expectedNodeRunID)
+	if err != nil {
+		return ContinueRequest{}, err
+	}
+	if b.Status != ContinueRequestQueued || b.NodeRunID == "" {
+		return ContinueRequest{}, errors.New("no single active agent node run to deliver to")
+	}
+	if err := tx.Commit(); err != nil {
+		return ContinueRequest{}, err
+	}
+	return ContinueRequest{
+		RequestID: activityID, TaskID: taskID, CommentID: activityID,
+		Status: b.Status, NodeRunID: b.NodeRunID, SessionKey: b.SessionKey,
+		CreatedAt: s.now().UTC(), UpdatedAt: s.now().UTC(),
+	}, nil
+}
+
 func scanContinueRequest(row interface{ Scan(...any) error }) (ContinueRequest, error) {
 	var r ContinueRequest
 	var created, updated string
