@@ -1,0 +1,414 @@
+# 安卓后台回复提醒：常驻通知可点 + 近实时推送 · 实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 安卓壳后台从「每 10s 串行轮询」升级为服务端长轮询的近实时推送，并让常驻「会话回复中」通知点击可进 App（单会话时直达）。
+
+**Architecture:** 服务端新增 `GET /api/replying-sessions/wait`——形状（会话集合/状态/等回答）一变立即回包，空闲超时返回，复用 ETag/304。安卓前台服务改为「每节点一条等待循环」：拿到回包立刻再发下一次；失败/旧服务端退回普通轮询。常驻前台通知补 `PendingIntent`，复用现成的 `mindfs:open-reply-session` 深链。
+
+**Tech Stack:** Go 1.26（chi + gorilla/websocket 既有栈）、React/TS（Vite + Vitest）、Android Java（Capacitor 壳，HttpURLConnection、前台服务）。
+
+**Spec:** `docs/superpowers/specs/2026-11-18-android-background-push-design.md`
+
+## Global Constraints
+
+- Go 工具链在 `$HOME/.local/share/go`，裸跑 `go` / `make test`，**不要** `export PATH=...`。
+- 提交信息：Conventional Commits（中文描述），本计划所有提交带 `Scope: G-MF`（Task 0 创建该组）。
+- 工作区里有别人的未提交改动（`e2e/live/selection_scope.py`、`web/src/components/shell/PanelShell.tsx` 等）：**只 add 本计划涉及的文件**，禁止 `git add -A` / `git checkout` 撤改动。
+- 服务端每次改动后跑 `go test ./server/...`；前端跑 `cd web && npm run typecheck && npm test`；安卓跑 `cd web/android && ./gradlew :app:assembleDebug`（以及 `make test-android`）。
+- 本机 `sudo systemctl restart mindfs` 只能由用户执行；WSL/fn 的 user 单元可 `ssh <node> 'systemctl --user restart mindfs'`。
+- API 层鉴权是用户明确决策，本计划**不**引入鉴权；只加在途上限。
+- 等待端点默认超时 20s（夹 5–30），轮询粒度 200ms，摘要刷新 ≥5s，节点快照新鲜度 90s。
+
+## Review Focus
+
+最可能被踩到、而任务测试必须钉住的行为：
+
+1. **代理/网络掐断长连接**：连续失败要退回普通轮询并在 10 分钟后重试，不能变成「提醒静默停更」或请求风暴。
+2. **回合在两次刷新之间开始又结束**：客户端必须先播种（首帧立即返回），否则完成提醒丢失。
+3. **节点掉线**：其会话不能被常驻通知永远算作「回复中」，也不能被点进一条早已结束的会话（90s 新鲜度）。
+4. **多会话同时结束**：每会话一条通知、互不覆盖；常驻通知文案显示正确数量。
+5. **点击常驻通知**：恰好 1 个会话时直达该会话；0 或多个时只打开 App，不乱跳。
+
+---
+
+### Task 0: 登记计划与定制组
+
+**Files:**
+- Modify: `docs/plans/README.md`（Active 段加一条）
+- Modify: `docs/upstream-customizations.yaml`（新增 `G-MF` 组，files/tests/anchors 随后续任务补齐后回填）
+
+**Interfaces:**
+- Produces: 组号 `G-MF`，后续所有提交用它。
+
+- [ ] **Step 1: 在 `docs/plans/README.md` 的 Active 列表顶部加一条**，指向本计划与 spec，状态写「执行中（2026-11-18 批准）」。
+- [ ] **Step 2: 在 `docs/upstream-customizations.yaml` 末尾新增 `G-MF` 组**，`kind: feature`，`title` 写「安卓后台提醒改为服务端长轮询 + 常驻通知可点 + FGS 类型改 specialUse」，`files:` 至少列出本计划将改的 8 个文件（server/internal/api/http_sessions_list.go、http_sessions_replying_wait.go、http_routes.go、stream_hub.go、server/app/server.go、web/src/services/net/replyPoller.ts、web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java、ReplyStateMerger.java、AndroidManifest.xml），`tests:`/`anchors:` 先留空数组，Task 8 回填。
+- [ ] **Step 3: 提交**
+
+```bash
+git add docs/plans/README.md docs/upstream-customizations.yaml docs/superpowers/specs/2026-11-18-android-background-push-design.md docs/superpowers/plans/2026-11-18-android-background-push.md
+git commit -m "docs(plan): 登记安卓后台提醒近实时推送计划（Scope: G-MF）"
+```
+
+---
+
+### Task 1: 服务端排序 —— `/api/replying-sessions` 顺序确定
+
+**Files:**
+- Modify: `server/internal/api/stream_hub.go:167-196`（`ListReplyingSessions`）
+- Test: `server/internal/api/stream_hub_order_test.go`（新建）
+
+**Interfaces:**
+- Produces: `ListReplyingSessions()` 按 `SessionKey` 升序；`/wait` 的签名与 ETag 依赖这条。
+
+- [ ] **Step 1: 写失败测试**
+
+```go
+func TestListReplyingSessionsSortedBySessionKey(t *testing.T) {
+	hub := NewStreamHub()
+	for _, key := range []string{"s-c", "s-a", "s-b"} {
+		hub.SetPendingReply("root-1", key, key)
+	}
+	first := hub.ListReplyingSessions()
+	second := hub.ListReplyingSessions()
+	if len(first) != 3 {
+		t.Fatalf("len=%d", len(first))
+	}
+	for i, want := range []string{"s-a", "s-b", "s-c"} {
+		if first[i].SessionKey != want {
+			t.Fatalf("first[%d]=%q want %q", i, first[i].SessionKey, want)
+		}
+	}
+	for i := range first {
+		if first[i].SessionKey != second[i].SessionKey {
+			t.Fatalf("顺序不稳定：%v vs %v", first, second)
+		}
+	}
+}
+```
+
+- [ ] **Step 2: 跑测试确认红**
+
+Run: `go test ./server/internal/api -run TestListReplyingSessionsSortedBySessionKey -count=3`
+Expected: FAIL（map 顺序随机，`-count=3` 很容易撞出非升序）
+
+- [ ] **Step 3: 实现**
+
+在 `ListReplyingSessions` 返回前加 `sort.Slice(items, func(i, j int) bool { return items[i].SessionKey < items[j].SessionKey })`，并补 `sort` import。注释写明：顺序稳定是为了 ETag/304 与等待循环签名可比。
+
+- [ ] **Step 4: 跑测试确认绿**
+
+Run: `go test ./server/internal/api -run 'TestListReplyingSessions' -count=3`
+Expected: PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/internal/api/stream_hub.go server/internal/api/stream_hub_order_test.go
+git commit -m "feat(api): 在回复会话列表按 sessionKey 稳定排序（Scope: G-MF）"
+```
+
+---
+
+### Task 2: 服务端 —— `GET /api/replying-sessions/wait`
+
+**Files:**
+- Create: `server/internal/api/http_sessions_replying_wait.go`
+- Modify: `server/internal/api/http_sessions_list.go:158-207`（抽出载荷构造函数）
+- Modify: `server/internal/api/http_routes.go:80`（注册路由）
+- Test: `server/internal/api/http_sessions_replying_wait_test.go`（新建）
+
+**Interfaces:**
+- Consumes: `AppContext.GetSessionStreamHub()`，`StreamHub.ListReplyingSessions()`（Task 1 的排序）。
+- Produces:
+  - `func (h *HTTPHandler) handleReplyingSessionsWait(w http.ResponseWriter, r *http.Request)`
+  - `func (h *HTTPHandler) replyingSessionsPayload(r *http.Request, items []ReplyingSessionState) []map[string]any`（`handleReplyingSessions` 也改用它，行为不变）
+  - 包级测试缝：`replyingWaitPollInterval = 200 * time.Millisecond`、`replyingWaitRefreshInterval = 5 * time.Second`、`replyingWaitInFlight int32`
+  - 常量：`replyingWaitDefaultTimeout = 20 * time.Second`、`replyingWaitMinTimeout = 5 * time.Second`、`replyingWaitMaxTimeout = 30 * time.Second`、`replyingWaitMaxInFlight = 32`
+  - `func replyingShapeSignature(items []ReplyingSessionState) string`（`sessionKey|status|awaiting` 按 Task 1 顺序拼接）
+  - `func replyingPayloadSignature(items []ReplyingSessionState) string`（再加 rootTitle/sessionTitle/summary/updatedAt）
+
+**端点契约：**
+
+- 查询参数 `timeout`（秒，缺省 20，夹 5–30）。
+- **无 `If-None-Match` → 立即 200**，正文 `{"sessions":[...]}`，带 `ETag`（播种）。
+- **有 `If-None-Match` → 等待**，直到：形状签名变化；或距请求开始 ≥ `replyingWaitRefreshInterval` 且载荷签名变化；或超时。然后 `respondJSONConditional`（命中则 304）。
+- 请求上下文取消 → 立即返回、不写响应。
+- 在途 > 32 → 503 + `Retry-After: 3`。
+
+- [ ] **Step 1: 写失败测试**（新文件，`app := &AppContext{Dirs: registry}`，`h := &HTTPHandler{AppContext: app}`，直接调 handler）
+
+```go
+func TestReplyingWaitFirstRequestReturnsImmediatelyWithoutETag(t *testing.T) {
+	replyingWaitPollInterval, replyingWaitRefreshInterval = 200*time.Millisecond, 50*time.Millisecond
+	hub := app.GetSessionStreamHub()
+	hub.SetPendingReply("root-1", "s-a", "A")
+	start := time.Now()
+	w := httptest.NewRecorder()
+	h.handleReplyingSessionsWait(w, httptest.NewRequest(http.MethodGet, "/api/replying-sessions/wait?timeout=5", nil))
+	if time.Since(start) > 100*time.Millisecond { t.Fatalf("首次请求必须立即返回") }
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"s-a"`) { t.Fatalf("code=%d body=%s", w.Code, w.Body.String()) }
+}
+
+func TestReplyingWaitReturnsOnShapeChange(t *testing.T) {
+	// 带 If-None-Match 起请求（goroutine），200ms 后另起一轮 replying
+	// 断言 ≤ 1s 返回，且正文包含新会话
+}
+
+func TestReplyingWaitTimeoutReturns304WhenUnchanged(t *testing.T) {
+	// 无变化的 If-None-Match 请求 + timeout=5；用注入的 pollInterval=10ms
+	// 先把超时改成可注入（见 Step 3）：timeout 仍走秒级，所以这里直接构造
+	// 一个已过期 deadline 的请求不可行 —— 用 timeout=5 会跑 5s。
+}
+```
+
+> 超时用例不要真等 5 秒：把「最小时长」也做成可注入 —— 用包级 `replyingWaitMinTimeout` / `replyingWaitDefaultTimeout` / `replyingWaitMaxTimeout`（`time.Duration`），测试里设成 `50 * time.Millisecond`，URL 仍传 `timeout=1`。断言：耗时 ≥ 50ms、`w.Code == 304`（请求头带上首次响应给的 ETag）。
+
+其余用例：
+
+```go
+func TestReplyingWaitSummaryOnlyChangeWaitsForRefresh(t *testing.T) // refresh=300ms，期间只 AppendReplyEvent，断言不早于 300ms 返回且正文带新摘要
+func TestReplyingWaitCancelledContextReturns(t *testing.T)          // ctx 取消后 handler 在 <1s 内返回
+func TestReplyingWaitRejectsWhenInFlightFull(t *testing.T)          // replyingWaitInFlight = 32 时 503 + Retry-After
+func TestReplyingWaitTimeoutClamp(t *testing.T)                     // parseReplyingWaitTimeout("1")==min, ("999")==max, ("abc")==default
+```
+
+- [ ] **Step 2: 跑测试确认红**
+
+Run: `go test ./server/internal/api -run TestReplyingWait -v`
+Expected: FAIL（方法未定义）
+
+- [ ] **Step 3: 实现**
+
+- 在 `http_sessions_list.go` 抽出 `replyingSessionsPayload`，`handleReplyingSessions` 改为 `respondJSONConditional(w, r, map[string]any{"sessions": h.replyingSessionsPayload(r, items)})`（行为不变）。
+- 新文件实现 handler：先 `atomic.AddInt32` 入在途、`defer` 减；读 `If-None-Match`；无则直接返回；有则 `time.NewTicker(replyingWaitPollInterval)` 循环，每轮只调 `ListReplyingSessions()` 算两个签名，命中条件 `break`；`select` 同时监听 `r.Context().Done()`。
+- 返回统一走 `respondJSONConditional`。
+- 超时参数解析函数 `parseReplyingWaitTimeout(raw string) time.Duration`。
+- 路由：`r.Get("/api/replying-sessions/wait", h.handleReplyingSessionsWait)`。
+
+- [ ] **Step 4: 跑测试确认绿**
+
+Run: `go test ./server/internal/api -run 'TestReplyingWait|TestReplyingSessions' -v`
+Expected: PASS；再跑 `go test ./server/internal/api` 全包 PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/internal/api/http_sessions_replying_wait.go server/internal/api/http_sessions_list.go server/internal/api/http_routes.go server/internal/api/http_sessions_replying_wait_test.go
+git commit -m "feat(api): 新增在回复会话长轮询等待端点（Scope: G-MF）"
+```
+
+---
+
+### Task 3: 服务端 —— 关停时打断等待
+
+**Files:**
+- Modify: `server/app/server.go:178-199`
+- Test: `server/app/server_wait_shutdown_test.go`（新建）
+
+**Interfaces:**
+- Produces: `func newWaitAwareServer(addr string, handler http.Handler) (*http.Server, context.CancelFunc)` —— `BaseContext` 用可取消 context；`runServer` 在 `Shutdown` 前先 `cancelWait()`。
+
+- [ ] **Step 1: 写失败测试**：起 `newWaitAwareServer("127.0.0.1:0", handler)`，handler 阻塞在 `<-r.Context().Done()`；`http.Get` 发请求；100ms 后调 `cancelWait()`；断言请求在 1s 内返回，随后 `srv.Shutdown` 在 1s 内返回。
+- [ ] **Step 2: 跑测试确认红**：`go test ./server/app -run TestWaitAwareServerCancel` → FAIL（函数未定义）。
+- [ ] **Step 3: 实现** `newWaitAwareServer` 并在 `runServer` 里替换 `&http.Server{...}` 构造；退出 goroutine 里 `cancelWait()` 放在 `server.Shutdown` 之前。
+- [ ] **Step 4: 跑测试确认绿**：`go test ./server/app -run TestWaitAwareServerCancel`。
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/app/server.go server/app/server_wait_shutdown_test.go
+git commit -m "fix(server): 关停时先取消请求上下文，长等待不再拖住重启（Scope: G-MF）"
+```
+
+---
+
+### Task 4: 前端 —— 下发 `waitUrl`
+
+**Files:**
+- Modify: `web/src/services/net/replyPoller.ts:1-30`（类型）与 `:100-125`（payload）
+- Test: `web/tests/reply-poller-wait-url.test.mjs`（新建，源码守卫，风格同 `apk-self-update.test.mjs`）
+
+**Interfaces:**
+- Produces: 原生 `configure` 载荷：
+  ```json
+  {"apiBaseUrl":"","waitUrl":"","nodes":[{"id":"home","url":"https://…/api/replying-sessions","waitUrl":"https://…/api/replying-sessions/wait"}]}
+  ```
+  `nodes` 为空时的单节点兜底：顶层 `apiBaseUrl` 与 `waitUrl` 成对出现。
+
+- [ ] **Step 1: 写失败测试**：断言 `replyPoller.ts` 里同时存在 `absoluteNodeURL("/api/replying-sessions", id)`（旧锚点，不能删）与 `absoluteNodeURL("/api/replying-sessions/wait", id)`，且 payload 的节点对象含 `waitUrl`，顶层含 `waitUrl`。
+- [ ] **Step 2: 跑测试确认红**：`cd web && npx vitest run tests/reply-poller-wait-url.test.mjs`。
+- [ ] **Step 3: 实现**：`nodes` map 改为 `{ id, url: absoluteNodeURL("/api/replying-sessions", id), waitUrl: absoluteNodeURL("/api/replying-sessions/wait", id) }`（保留 `filter(node => /^https?:\/\//i.test(node.url))`）；顶层 `waitUrl: apiBaseUrl ? apiBaseUrl + "/api/replying-sessions/wait" : ""`；两种 payload 各加字段到现有类型定义。
+- [ ] **Step 4: 跑测试确认绿 + 类型检查**：`cd web && npx vitest run tests/reply-poller-wait-url.test.mjs tests/apk-self-update.test.mjs && npm run typecheck`。
+- [ ] **Step 5: 提交**
+
+```bash
+git add web/src/services/net/replyPoller.ts web/tests/reply-poller-wait-url.test.mjs
+git commit -m "feat(web): 原生回复轮询下发长轮询地址（Scope: G-MF）"
+```
+
+---
+
+### Task 5: 安卓 —— 抽出 `ReplyStateMerger` + JVM 单测
+
+**Files:**
+- Create: `web/android/app/src/main/java/com/mindfs/app/ReplyStateMerger.java`
+- Create: `web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java`
+- Modify: `Makefile`（新增 `test-android` 目标，**不**并入 `make test`）
+
+**Interfaces:**
+```java
+final class ReplyStateMerger {
+    static final class Entry {            // 纯数据，替代现有私有 ReplyState
+        final String nodeId, rootId, sessionKey;
+        String rootTitle = "", sessionTitle = "", summary = "", updatedAt = "";
+        boolean replying = true, awaiting = false;
+        String key() { return nodeId + "\u001f" + rootId + "\u001f" + sessionKey; }
+    }
+    static final class Result {
+        List<Entry> newlyCompleted;   // 本轮从 replying 消失的（带最后摘要）
+        List<Entry> live;             // 新鲜节点上的 replying 或 awaiting
+        Set<String> currentKeys;      // 新鲜节点上出现过的全部键
+    }
+    ReplyStateMerger(long freshnessMillis);            // 生产传 90_000
+    Result applyNode(String nodeId, List<Entry> entries, long nowMillis);
+    void markNodeFailed(String nodeId);
+    Map<String, Entry> states();                       // key → Entry（只含尚未剪枝的）
+}
+```
+
+- [ ] **Step 1: 写失败测试**（JUnit4）
+  - `applyNode` 新增 replying → `live` 含它、`newlyCompleted` 空、`currentKeys` 含它。
+  - 同一节点下一次快照没有它 → `newlyCompleted` 含它且 `summary` 保留；之后 `states()` 不再含它（剪枝）。
+  - `markNodeFailed` 后其会话不进 `live`；超过 `freshnessMillis` 仍未成功同样不进。
+  - `awaiting=true, replying=false` → 进 `live`。
+  - 同一 key 的 `replying` 结束后重新开始 → 重新进 `live`（新条目）。
+- [ ] **Step 2: 跑测试确认红**：`cd web/android && ./gradlew :app:testDebugUnitTest`。
+- [ ] **Step 3: 实现** `ReplyStateMerger`：内部保存 `Map<String, Entry> states` 与 `Map<String, Long> lastSuccessAt`；`applyNode` 替换该节点全部条目、做 DONE 判定（仅对本节点）、按新鲜度算 `live`、剪掉已完成的键。
+- [ ] **Step 4: 跑测试确认绿**；Makefile 加：
+  ```make
+  # 安卓壳的纯逻辑单测（ReplyAlertPlanner / ReplyStateMerger）。不进 make test：
+  # 它要拉起 Gradle daemon，与每次 ship 的快路径无关。
+  test-android:
+  	cd $(ANDROID_DIR) && ./gradlew :app:testDebugUnitTest
+  ```
+- [ ] **Step 5: 提交**
+
+```bash
+git add web/android/app/src/main/java/com/mindfs/app/ReplyStateMerger.java web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java Makefile
+git commit -m "refactor(android): 抽出回复状态合并器并补纯逻辑单测（Scope: G-MF）"
+```
+
+---
+
+### Task 6: 安卓 —— 服务改为每节点长轮询
+
+**Files:**
+- Modify: `web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java`（轮询主体：`pollOnceSafely` / `applyReplyingSessions` / `fetchReplyingSessions` / `scheduleNextPoll` / `resumePolling` / `pausePolling` / `stopAll` / `stopPollingTask` / `recordPollDebug`）
+- Modify: `web/src/services/net/replyPoller.ts` 只用于确认载荷字段（无代码改动）
+
+**Interfaces:**
+- Consumes: Task 4 的 `waitUrl`、Task 5 的 `ReplyStateMerger`。
+- Produces（服务内部）：
+  - `private void startNodeLoops()` / `private void stopNodeLoops()`
+  - `private void runNodeLoop(NodeTarget target, int generation)`
+  - `private HttpURLConnection openConnection(NodeTarget target, String urlString)`（从 `fetchReplyingSessions` 抽出，含 token/E2EE/proof/本地 TLS）
+  - `private static final class WaitResult { int status; String etag; Map<String, ReplyStateMerger.Entry> entries; }`
+  - `private WaitResult fetchWait(NodeTarget target, String etag) throws Exception`
+  - `private void applyNodeSnapshot(NodeTarget target, Map<String, ReplyStateMerger.Entry> entries)`
+  - `NodeTarget` 新增 `final String waitUrl`（JSON `waitUrl`，缺省回退 `url + "/wait"` 仅在 `url` 以 `/api/replying-sessions` 结尾时；否则空串表示不支持）
+  - 常量：`WAIT_TIMEOUT_SECONDS = 20`、`WAIT_READ_TIMEOUT_MS = 30_000`、`POLL_FALLBACK_INTERVAL_MS = 10_000`、`WAIT_RETRY_INTERVAL_MS = 600_000`、`ERROR_BACKOFF_MS = 5_000`、`NODE_FRESH_MS = 90_000`
+
+**行为：**
+- `resumePolling()`：`startForegroundCompat` 后 `startNodeLoops()`。
+- `startNodeLoops()`：`generation++`，按 `nodeTargets()` 为每节点提交 `runNodeLoop` 到 `Executors.newScheduledThreadPool(max(2, nodeCount))`。
+- `runNodeLoop`：`while (running && generation == myGeneration)` 内：
+  - 未降级时 `fetchWait(target, etag)`：200 → 更新 etag、`applyNodeSnapshot`、清零失败计数；304 → 什么都不做；404/405 → 标记该节点 `mode=poll`；其他异常 → `failures++`，≥3 次标记 `mode=poll` 并睡 `WAIT_RETRY_INTERVAL_MS` 后重试等待。
+  - `mode=poll` 时：睡 `POLL_FALLBACK_INTERVAL_MS`，普通 GET `/api/replying-sessions`，成功后 `applyNodeSnapshot`、`failures` 清零，并在 `WAIT_RETRY_INTERVAL_MS` 之后恢复等待模式。
+- `applyNodeSnapshot`：`synchronized (applyLock)`：`merger.applyNode(...)` → 对 `newlyCompleted` 逐条 `postAlert("done", entry)` + `vibrateReplyCompletion()` → 用 `currentKeys` + `merger.states()` 构造 `ReplyAlertPlanner.Snapshot` 并 apply → `updateForegroundNotification(result.live)` → `recordPollDebug(true, states.size(), errorSummary)`。
+- `pausePolling` / `stopAll` / `onDestroy` 调 `stopNodeLoops()` 并 shutdown 线程池。
+- `recordPollDebug` 增加 `"modes": {"home":"push","fn":"poll"}` 与 `"freshNodes": N`；`describeNotificationState` 的诊断串追加「模式=push 3 / poll 1」。
+
+- [ ] **Step 1: 编译基线**：`cd web/android && ./gradlew :app:assembleDebug` → 通过（确认改造前是绿的）。
+- [ ] **Step 2: 改造**：按上述接口重写轮询主体；删除单 future 的 `pollingTask` 与 `scheduleNextPoll`；`ReplyState` 私有类替换为 `ReplyStateMerger.Entry`（`notificationIdFor` / `postAlert` / `buildReplyTitlePrefix` 改为接收 `Entry`）。
+- [ ] **Step 3: 编译**：`./gradlew :app:assembleDebug` → BUILD SUCCESSFUL；`make test-android` → PASS。
+- [ ] **Step 4: 隔离实例联调**：`bash scripts/mindfs-iso.sh`（端口 7431）起新服务端；
+  - `curl -sI 'http://127.0.0.1:7431/api/replying-sessions/wait?timeout=1'` → 立即 200 且带 `ETag`；
+  - 带该 ETag 的请求 → 等 1s 后 304；
+  - 期间用 `POST /api/sessions/{key}/messages` 起一轮 → 等待请求立刻 200。
+- [ ] **Step 5: 提交**
+
+```bash
+git add web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java
+git commit -m "feat(android): 后台回复提醒改为每节点长轮询推送（Scope: G-MF）"
+```
+
+---
+
+### Task 7: 安卓 —— 常驻通知可点 + FGS 类型改 `specialUse`
+
+**Files:**
+- Modify: `web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java`（`buildIdleNotification` / `updateForegroundNotification` / `startForegroundCompat`）
+- Modify: `web/android/app/src/main/AndroidManifest.xml`
+- Test: `web/tests/reply-poller-notification-click.test.mjs`（新建，源码守卫）
+
+**Interfaces:**
+- `private Notification buildIdleNotification(String text, ReplyStateMerger.Entry target)` —— `target != null` 时带 `nodeId/rootId/sessionKey` extras 与 `PendingIntent`；否则普通启动 Intent。
+- `updateForegroundNotification(List<Entry> live)`：`live.size() == 1` 时把该条传进去，否则传 `null`。
+- Manifest：`android:foregroundServiceType="specialUse"` + `<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>` + service 内 `<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="session reply sync"/>`。
+- `startForegroundCompat`：`Build.VERSION.SDK_INT >= 34` 用 `ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE`，`>= Q` 用原来的 dataSync 常量，低于 Q 不带类型。
+
+**测试断言：**
+- manifest 含 `specialUse`、`FOREGROUND_SERVICE_SPECIAL_USE`、`PROPERTY_SPECIAL_USE_FGS_SUBTYPE`，且不再有 `foregroundServiceType="dataSync"`。
+- 服务源码中 `buildIdleNotification` 带 `setContentIntent`；常驻通知的 extras 只在 `live.size() == 1` 时设置（断言出现 `size() == 1` 且 `putExtra("nodeId"` 在 `buildIdleNotification` 内）。
+- 已有的 `absoluteNodeURL("/api/replying-sessions", id)` 锚点仍在（`apk-self-update.test.mjs` 复跑）。
+
+- [ ] **Step 1: 写失败测试**（源码守卫），`cd web && npx vitest run tests/reply-poller-notification-click.test.mjs` → 红。
+- [ ] **Step 2: 实现**上述三处。
+- [ ] **Step 3: 跑测试确认绿**：`npx vitest run tests/reply-poller-notification-click.test.mjs tests/apk-self-update.test.mjs`。
+- [ ] **Step 4: 编译**：`cd web/android && ./gradlew :app:assembleDebug` → SUCCESS。
+- [ ] **Step 5: 提交**
+
+```bash
+git add web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java web/android/app/src/main/AndroidManifest.xml web/tests/reply-poller-notification-click.test.mjs
+git commit -m "feat(android): 常驻回复通知可点直达，前台服务改用 specialUse（Scope: G-MF）"
+```
+
+---
+
+### Task 8: 定制登记、门禁与部署核对
+
+**Files:**
+- Modify: `docs/upstream-customizations.yaml`（回填 G-MF 的 `tests`/`anchors`）
+- Modify: `docs/plans/README.md`（记执行结果）
+
+**步骤：**
+
+- [ ] **Step 1: 回填 G-MF**：`tests` 列 4 个新测试文件；`anchors` 每条「文件:片段」都要在代码里真实存在（例：`server/internal/api/http_sessions_replying_wait.go:func (h *HTTPHandler) handleReplyingSessionsWait`、`web/src/services/net/replyPoller.ts:absoluteNodeURL("/api/replying-sessions/wait", id)`、`web/android/app/src/main/AndroidManifest.xml:android:foregroundServiceType="specialUse"`、`.../ReplyStateMerger.java:final class ReplyStateMerger`）。
+- [ ] **Step 2: 全量门禁**
+
+```bash
+go test ./...
+cd web && npm run typecheck && npm test && cd ..
+make build
+make test-android
+```
+
+- [ ] **Step 3: `make check-upstream`**：提交前应报新文件未登记（预期），提交后必须转绿。
+- [ ] **Step 4: 提交**
+
+```bash
+git add docs/upstream-customizations.yaml docs/plans/README.md
+git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-MF）"
+```
+
+- [ ] **Step 5: 部署（需用户在场）**：`bash scripts/deploy-all.sh`；分发后独立核对四端版本与 `/health`。本机 `sudo systemctl restart mindfs` **由用户执行**。
+- [ ] **Step 6: 代理超时实测**：从外网（手机流量）对每个节点发一次 `curl -m 35 -w '%{time_total} %{http_code}\n' '<节点>/api/replying-sessions/wait?timeout=20'`（带该节点自己的 `user=` 参数）。预期 `20.0x 200`；若出现 `code=000`/502 且耗时 < 20s，说明代理更早掐断，把 `WAIT_TIMEOUT_SECONDS` 降到实测值以下再发一版。
+- [ ] **Step 7: 出包与真机验收**：走 `apk-release` skill 出 APK（签名密钥走 `MINDFS_RELEASE_PRIVATE_KEY_FILE`）；真机核对：后台起一轮任务 → 秒级响铃；点常驻「有会话正在回复」→ 直达该会话；两轮会话时点常驻 → 只打开 App。
+
+---
+
+## Self-Review 记录
+
+- Spec 覆盖：长轮询端点（Task 2）、确定性排序（Task 1）、在途上限（Task 2）、关停（Task 3）、每节点循环与降级/新鲜度/剪枝（Task 5+6）、常驻通知可点（Task 7）、FGS 类型（Task 7）、前端 waitUrl（Task 4）、登记与门禁（Task 0/8）、代理实测（Task 8）。
+- Review Focus 对应测试：掐断降级（Task 6 Step 4 + Task 8 Step 6）、播种（Task 2 首帧用例）、掉线新鲜度（Task 5 单测）、多会话通知（现有行为 + Task 7 断言 `size()==1`）、点击（Task 7）。
+- 已知未覆盖：Java 服务层并发（无 UI 测试基建），靠 `assembleDebug` + 真机验收兜底。

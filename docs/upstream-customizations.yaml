@@ -8965,3 +8965,23 @@ groups:
       - 'web/src/components/task/ConversationView.tsx:await send(text, choice, versionId, pendingAttachments);'
       - 'web/src/shared/uploadTypes.ts:export type ComposerAttachment = {'
       - 'web/src/components/task/taskIcons.tsx:export function WorkflowIcon({ size = 13 }: { size?: number })'
+
+  # ── 安卓后台提醒：服务端长轮询 + 常驻通知可点 + FGS 改 specialUse ────────
+  - id: G-MF
+    title: 安卓后台提醒改为服务端长轮询 + 常驻通知可点 + FGS 类型改 specialUse
+    kind: feature
+    symptom: "安卓壳后台提醒靠每 10s 逐节点串行 GET /api/replying-sessions，「任务结束 → 手机响」常在 10–30 秒后；通知栏常驻「有会话正在回复」没有 setContentIntent，点了没反应。另有既有隐患：targetSdk 36 下 dataSync 类型前台服务受 Android 15+「24 小时内 6 小时」运行额度限制，到点系统回调 onTimeout() 必须停服，推送跑一夜早上就静默失效。"
+    why: "用户 2026-11-18 要求常驻通知可点 + 后台近实时提醒（<1s）。上游没有这条链路，必须保留：① 服务端 `GET /api/replying-sessions/wait` 长轮询 —— 不带 If-None-Match 立即回快照播种（否则两次刷新之间开始又结束的回合会漏掉完成提醒），带 If-None-Match 才等待，形状（会话集合/status/awaiting_answer）变化立即回包，≥5s 才做一次摘要刷新，超时按载荷算 ETag/304，200ms 粒度只遍历内存 map，在途上限 32 回 503 + Retry-After；② 路由属数据面、不进控制面前缀表，worker 可用；③ `ListReplyingSessions()` 按 sessionKey 升序 —— 顺序随机会让多会话时 ETag 永不命中、等待循环签名抖动；④ 关停给 `http.Server` 设可取消 BaseContext，退出时先 cancel 再 Shutdown，否则长等待会把每次重启拖满超时；⑤ 前端每节点同时下发 `url` 与 `waitUrl`（旧锚点 `absoluteNodeURL(\"/api/replying-sessions\", id)` 必须保留）；⑥ 安卓前台服务每节点一条等待循环、按节点保存快照，合并/DONE 判定/90s 新鲜度抽成 `ReplyStateMerger`（不可信节点的会话不进 live 集合，避免点进几小时前的会话），旧服务端 404/405 或连续 3 次等待失败退回 10s 轮询并在 10 分钟后重试；⑦ 常驻通知补 PendingIntent：恰好 1 个 live 会话带 nodeId/rootId/sessionKey 走 `mindfs:open-reply-session` 直达，0 或多个只启动 App；⑧ 前台服务类型 dataSync → specialUse（FOREGROUND_SERVICE_SPECIAL_USE + PROPERTY_SPECIAL_USE_FGS_SUBTYPE），side-load 不受 Play 类型审查约束。"
+    boundary: "只改安卓后台提醒链路（服务端长轮询端点 + 关停取消 + 前端下发 waitUrl + 安卓轮询/常驻通知/FGS 类型）；不引入 FCM/APNs/第三方通道，不改前台 WS + 5s 可见轮询，不做通知富交互，不改 E2EE 与现有请求头，不改变「API 层不鉴权」的用户决策（只加在途上限），也不清理 showReplyNotifications 等既有死代码。"
+    files:
+      - server/internal/api/http_sessions_list.go
+      - server/internal/api/http_sessions_replying_wait.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/stream_hub.go
+      - server/app/server.go
+      - web/src/services/net/replyPoller.ts
+      - web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java
+      - web/android/app/src/main/java/com/mindfs/app/ReplyStateMerger.java
+      - web/android/app/src/main/AndroidManifest.xml
+    tests: []
+    anchors: []
