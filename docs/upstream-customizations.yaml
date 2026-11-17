@@ -8367,6 +8367,10 @@ groups:
       - server/scripts/router_shadow_report/main.go
       - docs/plans/2026-11-14-task-router-super-agent.md
       - docs/plans/README.md
+      - docs/plans/2026-11-18-super-agent-goal.md
+      - docs/plans/2026-11-18-super-agent-r0-r1.md
+      - docs/plans/2026-11-18-super-agent-dispatch.md
+      - docs/superpowers/specs/2026-11-18-super-agent-r0-r1-design.md
     tests:
       - server/internal/kanban/router_shadow_test.go
       - server/internal/api/http_router_test.go
