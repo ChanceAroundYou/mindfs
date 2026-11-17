@@ -78,6 +78,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Put("/api/pins/project", h.handlePinsProjectPut)
 	r.Put("/api/pins/session", h.handlePinsSessionPut)
 	r.Get("/api/replying-sessions", h.handleReplyingSessions)
+	// 长轮询版本（带 If-None-Match 才等待）。与普通端点同属数据面，不进控制面前缀表。
+	r.Get("/api/replying-sessions/wait", h.handleReplyingSessionsWait)
 	r.Get("/api/sessions/search", h.handleSessionSearch)
 	r.Get("/api/sessions/children", h.handleSessionChildren)
 	r.Get("/api/sessions/external", h.handleExternalSessionsList)

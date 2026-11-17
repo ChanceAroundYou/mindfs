@@ -161,6 +161,14 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	items := h.AppContext.GetSessionStreamHub().ListReplyingSessions()
+	respondJSONConditional(w, r, map[string]any{"sessions": h.replyingSessionsPayload(r, items)})
+}
+
+// replyingSessionsPayload 把 hub 内存态构造成对外的载荷。**这是昂贵的那一步**：
+// 每条都要走 GetRoot 拿项目名，标题缺失时还要走 GetSessionManager(...).GetMeta。
+// 所以长轮询等待循环（http_sessions_replying_wait.go）只在**返回时**调它一次，循环里
+// 只读纯内存的 ListReplyingSessions。普通轮询端点与等待端点共用这一份，形状不许分叉。
+func (h *HTTPHandler) replyingSessionsPayload(r *http.Request, items []ReplyingSessionState) []map[string]any {
 	payload := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		rootTitle := item.RootID
@@ -192,7 +200,7 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 		}
 		payload = append(payload, payloadItem)
 	}
-	respondJSONConditional(w, r, map[string]any{"sessions": payload})
+	return payload
 }
 
 func (h *HTTPHandler) handleSessionSearch(w http.ResponseWriter, r *http.Request) {
