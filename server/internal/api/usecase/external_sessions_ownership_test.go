@@ -24,11 +24,21 @@ func TestSyncExternalSessionDeltaSkipsLiveOwnedSession(t *testing.T) {
 	if err := manager.AddExchangeForAgentAt(liveCtx, created, "user", "old", "codex", "", "", "", stamp); err != nil {
 		t.Fatal(err)
 	}
+	if err := manager.AddExchangeForAgentAt(liveCtx, created, "agent", "", "codex", "", "", "", stamp.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	current, err := manager.Get(context.Background(), created.Key, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.UpdateAgentState(context.Background(), current, "codex", 1, "external-1"); err != nil {
+	// 已收尾的一轮：助手行带块流。只有「尾部没有块」的未收尾回合才允许重启兜底（见
+	// TestSyncExternalSessionDeltaRecoversInterruptedLiveTail），这里钉的是收尾之后
+	// 一律不自动同步。
+	if err := persistTurnBlocks(context.Background(), manager, created.Key, 2,
+		session.TurnIDForSeq(current.Exchanges, 2), "已经收尾的回复", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(context.Background(), current, "codex", 2, "external-1"); err != nil {
 		t.Fatal(err)
 	}
 	importer := &syncDeltaTestImporter{exchanges: []agenttypes.ImportedExchange{

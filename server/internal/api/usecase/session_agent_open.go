@@ -70,6 +70,41 @@ func cancelRuntimeAfterNonRecoverableError(sess agenttypes.Session, pool *agent.
 	}
 }
 
+// persistOpenedAgentSessionBinding 在「首次打开」后立刻写回转录 id。
+//
+// 原先转录 id 只在回合收尾的 UpdateAgentState 里落库（session_send.go）。如果进程死在
+// **第一轮中途**，绑定里始终是空的 —— 重启后既无法 resume，也无从找到转录（同步与重启
+// 兜底都要求 agent_session_id），那一轮内容于是永久留在转录里、用户界面看不到。
+// 打开成功的那一刻 id 就已经存在（claude = CLI session id，codex = thread id），
+// 先落库让它在「回合还没收尾」的窗口里也是真的。
+//
+// 只补空绑定：非空的绑定属于「resume 到已经存在的转录」，写错就是抹掉历史（那条路径由
+// 下面的 rebind 逻辑负责，它只在 id 真的变了时写）。
+func persistOpenedAgentSessionBinding(
+	ctx context.Context,
+	manager *session.Manager,
+	current *session.Session,
+	agentName string,
+	binding *session.AgentBinding,
+	sess agenttypes.Session,
+) {
+	if manager == nil || current == nil || binding == nil || sess == nil {
+		return
+	}
+	if strings.TrimSpace(binding.AgentSessionID) != "" {
+		return
+	}
+	agentSessionID := strings.TrimSpace(sess.SessionID())
+	if agentSessionID == "" {
+		return
+	}
+	if err := manager.UpdateAgentState(ctx, current, agentName, binding.AgentCtxSeq, agentSessionID); err != nil {
+		log.Printf("[session/model] bind.error session=%s agent=%s agent_session_id=%s err=%v", current.Key, agentName, agentSessionID, err)
+		return
+	}
+	log.Printf("[session/model] bind.done session=%s agent=%s agent_session_id=%s", current.Key, agentName, agentSessionID)
+}
+
 func (s *Service) ensureAgentSession(
 	ctx context.Context,
 	pool *agent.Pool,
@@ -219,6 +254,7 @@ func (s *Service) ensureAgentSession(
 		last := binding.AgentCtxSeq
 		ctxSeqOverride = &last
 	}
+	persistOpenedAgentSessionBinding(ctx, manager, current, agentName, binding, sess)
 	// 供应商切换后 codex 会把线程 fork 到当前供应商，线程 id 随之变化。
 	// 立刻写回绑定，避免用户「只打开不发送」时下次再 fork 出一份重复历史。
 	if manager != nil && sess != nil && openInput.AgentSessionID != "" {

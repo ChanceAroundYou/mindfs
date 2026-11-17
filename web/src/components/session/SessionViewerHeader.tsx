@@ -15,8 +15,12 @@ export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDi
       ? t("session.subagentRunning")
       : "";
   return (
-// CUSTOM(G-MA)：标题栏属于 chrome，拖选复制正文时不许被带进选区。
-<ViewHeader padding="0 16px" style={{ zIndex: 10, userSelect: "none" }}>
+// CUSTOM(G-MA)：标题栏**不要**设 user-select:none —— 只要标题栏里有一块不可选区域，
+// 拖选正文向上越过它、浏览器又在自动滚动时，Chromium 会静默清空整个选区
+// （实测：最后一次 mousemove 还有 582 字，抬手时已是 0，且不发 selectionchange）。
+// 所以越界的选区一律交给 useSelectionContainment 在抬手时拉回正文：
+// 拖选过程中标题可能短暂高亮，松手后选区和复制结果只剩正文。
+<ViewHeader padding="0 16px" style={{ zIndex: 10 }}>
   <h1
     style={{
       display: "flex",

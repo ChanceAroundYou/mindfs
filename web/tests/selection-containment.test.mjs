@@ -181,9 +181,11 @@ test("会话正文与面板正文都挂上了选区钳制，标题栏不可选",
   assert.match(panel, /useSelectionContainment\(bodyRef\)/);
   assert.match(panel, /<div ref=\{bodyRef\} className="mindfs-panel-body"/);
 
-  // chrome 侧：标题栏不可选，否则向上拖选会把标题一起复制走。
-  assert.match(header, /style=\{\{ zIndex: 10, userSelect: "none" \}\}/);
-  assert.match(panel, /userSelect: "none"/);
+  // 标题栏里**一处** user-select:none 都不能有：只要拖选路径上有不可选区域，
+  // Chromium 在「向上拖选 + 自动滚动」时会静默清空整个选区（实测 582 字 → 0，
+  // 且不发 selectionchange）。越界选区只靠抬手时的钳制兜底。
+  assert.doesNotMatch(header, /userSelect/);
+  assert.doesNotMatch(panel, /userSelect: "none"/);
 
   // 监听挂在 document 的 selectionchange 上，卸载时摘掉。
   assert.match(hook, /document\.addEventListener\("selectionchange", clampSelection\)/);

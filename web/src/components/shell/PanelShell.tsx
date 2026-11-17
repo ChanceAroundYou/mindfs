@@ -223,12 +223,13 @@ export function PanelShell({
             alignItems: "center",
             gap: "8px",
             flexShrink: 0,
-            // CUSTOM(G-MA)：面板标题是 chrome，不进选区。
-            userSelect: "none",
+            // CUSTOM(G-MA)：标题栏外壳**不能**设 user-select:none —— 整栏不可选时，
+            // 从正文向上拖选 + 浏览器自动滚动会让 Chromium 静默清空整个选区。
+            // 越界的选区由 useSelectionContainment 在抬手时拉回正文。
           }}
         >
           {headerLeft}
-          {/* 标题槽本身仍是内容（任务名可改可复制），只把标题栏外壳设成不可选。 */}
+          {/* 标题槽是内容（任务名可改可复制），保持可选。 */}
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", userSelect: "text" }}>
             {title}
           </div>

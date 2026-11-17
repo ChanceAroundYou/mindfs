@@ -84,6 +84,12 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	// 需要补历史时走用户手点的「同步」（Full）：那是显式意图，且带时间地板（见下），
 	// 只会补「比库里最新一条更新」的部分。
 	if !in.Full && session.SessionIsLiveOwned(current.Exchanges) {
+		// 唯一例外：**最后一轮没收尾**（重启把回合掐在中间）。这不是「重导历史」，
+		// 而是把用户已经在屏幕上流式看过、却随进程一起丢掉的那一段从转录补回来 ——
+		// 已收尾的回合一个字节都不碰（判据见 recoverInterruptedLiveTurn）。
+		if err := s.recoverInterruptedLiveTurn(ctx, root, in.RootID, manager, current, agentName, binding); err != nil {
+			log.Printf("[session/recovery] live_tail.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, err)
+		}
 		return out, nil
 	}
 

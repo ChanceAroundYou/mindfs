@@ -45,8 +45,9 @@ PROBE_JS = r"""
   // 会话标题在 SessionViewerHeader 的 h1 里；页面里还有侧栏 header，别拿错。
   const title = document.querySelector('header h1');
   const box = scroller ? scroller.getBoundingClientRect() : null;
-  // 起点必须落在**正文文本**上：直接按几何比例取点会偶尔落在卡片按钮/图标上，
-  // 拖选根本起不来（实测第二次跑出空选区）。用 caretRangeFromPoint 扫一个文本点。
+  // 起点必须落在**可选中的正文文本**上：按几何比例取点会落到卡片按钮/图标上，
+// 按钮上的 mousedown 根本不会起选区（实测跑出空选区）。用 caretRangeFromPoint
+// 扫一个非按钮、非 user-select:none 的文本点。
   let start = null;
   if (box) {
     for (let frac = 0.7; frac >= 0.2 && !start; frac -= 0.05) {
@@ -58,6 +59,9 @@ PROBE_JS = r"""
         if (!node || node.nodeType !== 3) continue;
         if (!node.data || node.data.trim().length < 20) continue;
         if (!content.contains(node)) continue;
+        const el = node.parentElement;
+        if (!el || el.closest('button, a, [role="button"], [contenteditable]')) continue;
+        if (getComputedStyle(el).userSelect === 'none') continue;
         start = { x, y };
         break;
       }
@@ -138,28 +142,61 @@ def main() -> int:
 
         harness.login(page, env)
         target, root = args.session, args.root
-        if not target:
-            picked = pick_long_session(page, env, root, args.min_exchanges)
-            if not picked:
+        candidates: list[str] = []
+        if target:
+            candidates = [target]
+        else:
+            for item in harness.sessions(page, env, root, limit=30):
+                if item.get("parent_session_key"):
+                    continue
+                if harness.session_total(page, env, root, item["key"]) >= args.min_exchanges:
+                    candidates.append(item["key"])
+                if len(candidates) >= 6:
+                    break
+            if not candidates:
                 print(f"× {root} 下没有 ≥{args.min_exchanges} 条的会话")
                 browser.close()
                 return 2
-            target = picked["key"]
-            print(f"会话 {target}（{picked['total']} 条历史，{picked.get('name') or '未命名'}）")
 
-        harness.open_session(page, env, root, target)
-        page.wait_for_timeout(1200)
-        info = page.evaluate(PROBE_JS)
-        if not info["hasContent"]:
+        info = None
+        start = None
+        # 会话末尾常常整屏都是工具卡（button 上 mousedown 起不了拖选），换一条再试。
+        for key in candidates:
+            target = key
+            harness.open_session(page, env, root, target)
+            page.wait_for_timeout(1200)
+            info = page.evaluate(PROBE_JS)
+            if not info["hasContent"]:
+                continue
+            start = info.get("start")
+            # 会话末尾常常整屏都是工具卡（button 上 mousedown 起不了拖选），
+            # 在整条会话的几个位置上找一屏有可选正文的。
+            for frac in (0.8, 0.6, 0.4, 0.2, 0.0):
+                if start:
+                    break
+                page.evaluate(
+                    """(frac) => {
+                        const el = document.querySelector('[data-mindfs-session-content-width]').parentElement;
+                        el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) * frac);
+                    }""",
+                    frac,
+                )
+                page.wait_for_timeout(900)
+                info = page.evaluate(PROBE_JS)
+                start = info.get("start")
+            if start:
+                break
+
+        if not info or not info["hasContent"]:
             print("× 页面里没有会话正文容器")
             browser.close()
             return 2
+        print(f"会话 {target}")
         print("header：", repr(info["headerText"][:40]))
 
-        # 从正文中点开始拖选，向上拖到标题栏位置（容器上方 20px）。不预先滚动：
-        # 会话打开就停在最新一屏，往上拖时的浏览器自动滚动负责把上方正文卷进来。
+        # 从正文里开始拖选，向上拖到标题栏位置（容器上方 20px）。
+        # 不预先定位到顶：往上拖时的浏览器自动滚动负责把上方正文卷进来。
         box = info["box"]
-        start = info.get("start")
         if not start:
             print("× 视口里没找到可拖选的正文文本")
             browser.close()

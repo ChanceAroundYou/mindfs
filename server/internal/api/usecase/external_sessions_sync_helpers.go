@@ -82,6 +82,44 @@ func appendImportedExchange(
 	seq := session.MaxExchangeSeq(target.Exchanges)
 	// S2d-2：正文走块流。aux 先攒起来一次性编译 —— persistTurnBlocks 要按 (line, 到达序)
 	// 把 aux 插进正文段之间，逐条追加做不到（那会是每条 aux 一块独立的块，顺序全丢）。
+	if err := persistImportedExchangeContent(ctx, manager, target.Key, seq,
+		session.TurnIDForSeq(target.Exchanges, seq), exchange); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// persistImportedExchangeContent 把一条导入条目的正文与 aux 落成块流 + aux 日志。
+//
+// 两条导入路径共用：常规同步（appendImportedExchange 新建行）与重启兜底
+// （applyRecoveredLiveTail 把正文补到已有的空助手行上）。块在行之后写：块要带
+// mindfs_id，而 mindfs_id 在 AddExchangeForAgentAt 里才定下来。主日志已经落了盘，
+// 块流失败不该让这一行消失（否则用户少看到一整轮）。
+func persistImportedExchangeContent(
+	ctx context.Context,
+	manager *session.Manager,
+	key string,
+	seq int,
+	turnID string,
+	exchange agenttypes.ImportedExchange,
+) error {
+	collected := importedExchangeAux(seq, exchange)
+	if err := persistTurnBlocks(ctx, manager, key, seq, turnID, exchange.Content, collected); err != nil {
+		log.Printf("[session] persist.import.blocks.error session=%s seq=%d err=%v", key, seq, err)
+	}
+	// aux 仍要逐条落盘：它还是 `GET /api/sessions/{key}` 回包里 `exchange_aux` 的来源
+	// （前端按 seq 渲染工具卡 / reasoning，正文块则单独放在 blocks 字段）。
+	// 删掉它会让所有存量读路径立刻看不到工具卡 —— 那不是 S2d-2 的范围。
+	for _, aux := range collected {
+		if err := manager.AddExchangeAux(ctx, key, aux); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// importedExchangeAux 把导入条目的 aux 规范化成可落盘的形状（seq 挂到目标行）。
+func importedExchangeAux(seq int, exchange agenttypes.ImportedExchange) []session.ExchangeAux {
 	collected := make([]session.ExchangeAux, 0, len(exchange.Aux))
 	for _, importedAux := range exchange.Aux {
 		// reasoning 走 Thought 字段，与实时路径的 thought_chunk 同一形状 ——
@@ -121,21 +159,7 @@ func appendImportedExchange(
 			ToolCall: &toolCall,
 		})
 	}
-	// 块在行之后写：块要带 mindfs_id，而 mindfs_id 在 AddExchangeForAgentAt 里才定下来。
-	// 主日志已经落了盘，块流失败不该让这一行消失（否则用户少看到一整轮）。
-	if err := persistTurnBlocks(ctx, manager, target.Key, seq,
-		session.TurnIDForSeq(target.Exchanges, seq), exchange.Content, collected); err != nil {
-		log.Printf("[session] persist.import.blocks.error session=%s seq=%d err=%v", target.Key, seq, err)
-	}
-	// aux 仍要逐条落盘：它还是 `GET /api/sessions/{key}` 回包里 `exchange_aux` 的来源
-	// （前端按 seq 渲染工具卡 / reasoning，正文块则单独放在 blocks 字段）。
-	// 删掉它会让所有存量读路径立刻看不到工具卡 —— 那不是 S2d-2 的范围。
-	for _, aux := range collected {
-		if err := manager.AddExchangeAux(ctx, target.Key, aux); err != nil {
-			return false, err
-		}
-	}
-	return true, nil
+	return collected
 }
 
 func (s *Service) resolveExternalSessionImporter(agentName string) (agenttypes.ExternalSessionImporter, error) {
