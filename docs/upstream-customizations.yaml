@@ -8366,6 +8366,7 @@ groups:
       - cli/cmd/mindfs.go
       - server/scripts/router_shadow_report/main.go
       - docs/plans/2026-11-14-task-router-super-agent.md
+      - docs/plans/README.md
     tests:
       - server/internal/kanban/router_shadow_test.go
       - server/internal/api/http_router_test.go

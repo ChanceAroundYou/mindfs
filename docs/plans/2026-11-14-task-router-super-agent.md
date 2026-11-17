@@ -1929,3 +1929,29 @@ handler 双重校验；handler 是最终权威，不依赖模型遵守 schema。
   接管路由决策；ActivityService 保留 legacy 分支」。
 - `AGENTS.md` 关键架构事实第 7 条在 P1 后更新为「每轮由 Router（隐藏 CC 会话）决定」；P0 不改，
   避免文档声称未实现的行为。
+## 29. P1 实施结果（2026-11-17，Scope: G-MC）
+
+route 模式已实现并提交 `8545bac0`，生产 `router.mode` 仍由各节点 config 决定。
+
+- **接管范围**：只有 `workflow_choice=empty` 的留言进 Router；显式指定 workflow /
+  纯对话仍走旧路径（用户明确指令不猜）。
+- **同步占位**：用户发送后立刻落一条 pending agent 回复；Router 回合结束后原地
+  改写（say / ask_user / message_agent / run_workflow 复用同一条；silent /
+  deliver_to_active_run 置 hidden）。
+- **幂等**：每个动作执行前 `ClaimAppliedSeq` CAS；进程重启/重复投递不会重复建
+  Run 或插活动。启动时 `RecoverApplyingDecisions` 把停在 applying 的决策标 failed。
+- **回落**：LLM 失败、动作校验失败、brief 构建失败才回落旧路径并复用占位；
+  已部分应用的决策只标 failed，不回落（避免重复执行）。
+- **超时**：`defaultRouterTurnTimeout` 20s → 90s（P0 shadow 实测 p50 34.3s /
+  p95 41.7s）。config 里的 `router.turn_timeout` 仍可覆盖。
+- **deliver_to_active_run**：写入 `continue_requests` + outbox 并按 D3 绑定唯一
+  活动 Agent NodeRun，隐藏占位回复。
+- **前端**：`applyActivityUpdated` 收到 `hidden:true` 时从活动流移除该行。
+- **测试**：`router_route_test.go` 11 条（say / run_workflow / message_agent /
+  ask_user / silent / LLM 失败回落 / 非法动作回落 / 显式 choice 不进 Router /
+  启动恢复 / CAS），`web/tests/activity-model-updates.test.mjs` 3 条。
+- **门禁**：`go test ./...` 全绿；web 637 通过 / 6 跳过；`tsc -b --noEmit`；
+  `make build`；`make check-upstream` 绿（1858 delta / 303 组）。
+- **未做/未验证**：coordinate 模式与 P2 触发（run_settled / gate_waiting 等）仍
+  未实现；真实 Claude 的 route 端到端验收与生产 `router.mode=route` 切换待部署
+  后执行（本机重启仅用户可做）。
