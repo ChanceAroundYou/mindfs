@@ -166,6 +166,8 @@ type RouterTrigger struct {
 	Mode         RouterMode
 	Brief        *SituationBrief     // shadow: legacy 分发前快照；route 在消费时重新构建
 	LegacyAction *RouterLegacyAction // shadow only
+	// Event 非 nil 即 coordinate 运行期事件回合；用户留言恒为 nil。
+	Event *RouterEvent
 }
 
 type RouterLegacyAction struct {

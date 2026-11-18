@@ -64,8 +64,12 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 		if err != nil {
 			return err
 		}
-		if err := routeTaskStatusError(task.Status); err != nil {
-			return err
+		// 运行期事件回合是「汇报」，不是对任务的再操作：Run 结算后任务本来就该
+		// 是终态，同一个终态闸门会把汇报本身挡成失败。用户留言保持原语义。
+		if decision.TriggerKind == RouterTriggerUserMessage {
+			if err := routeTaskStatusError(task.Status); err != nil {
+				return err
+			}
 		}
 		if err := s.applyRouteAction(ctx, decision, task, userAct, state, action); err != nil {
 			return fmt.Errorf("apply %s(seq=%d): %w", action.Kind, action.Seq, err)
@@ -166,8 +170,9 @@ func (s *ActivityService) applyRouteSay(
 		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
 	}
 	s.broadcastUpdated(act, changes)
-	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。
-	if act.RunID == "" {
+	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。运行期事件的
+	// 汇报（trigger != user_message）不得覆盖用户回合留下的任务结果摘要。
+	if act.RunID == "" && decision.TriggerKind == RouterTriggerUserMessage {
 		return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
 	}
 	return nil

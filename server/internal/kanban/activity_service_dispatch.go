@@ -17,12 +17,12 @@ func (s *ActivityService) dispatchUserActivity(
 ) (*TaskActivity, *TaskActivity, error) {
 	choice := userAct.WorkflowChoice
 
-	// route 模式只接管「没指定 workflow」的留言。用户在界面上显式选了某个
-	// workflow 或「纯对话」时，那是明确指令，不能再用 Router 猜一遍。
+	// route / coordinate 接管「没指定 workflow」的留言。用户在界面上显式选了
+	// 某个 workflow 或「纯对话」时，那是明确指令，不能再用 Router 猜一遍。
 	if s.router != nil {
 		mode := s.router.service.RouterConfig().ModeForRoot(task.RootID)
-		if mode == RouterModeRoute && choice == CommentWorkflowChoiceEmpty {
-			return s.dispatchRoutedUserActivity(ctx, task, userAct)
+		if (mode == RouterModeRoute || mode == RouterModeCoordinate) && choice == CommentWorkflowChoiceEmpty {
+			return s.dispatchRoutedUserActivity(ctx, task, userAct, mode)
 		}
 	}
 
@@ -66,7 +66,8 @@ func (s *ActivityService) dispatchUserActivity(
 }
 
 // dispatchRoutedUserActivity 同步留下可见占位，允许活动回合接收协调留言。
-func (s *ActivityService) dispatchRoutedUserActivity(ctx context.Context, task Task, userAct *TaskActivity) (*TaskActivity, *TaskActivity, error) {
+// mode 只用于回填触发（route / coordinate 共用同一条同步占位与动作应用路径）。
+func (s *ActivityService) dispatchRoutedUserActivity(ctx context.Context, task Task, userAct *TaskActivity, mode RouterMode) (*TaskActivity, *TaskActivity, error) {
 	placeholder := s.newAgentActivity(task, CommentWorkflowChoiceEmpty)
 	if err := s.activities.Insert(ctx, placeholder); err != nil {
 		return userAct, nil, err
@@ -82,7 +83,7 @@ func (s *ActivityService) dispatchRoutedUserActivity(ctx context.Context, task T
 		UserActivityID: userAct.ID,
 		PlaceholderID:  placeholder.ID,
 		TurnID:         "msg:" + userAct.ID,
-		Mode:           RouterModeRoute,
+		Mode:           mode,
 	})
 	return userAct, placeholder, nil
 }
