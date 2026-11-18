@@ -1,0 +1,83 @@
+import { test } from "vitest";
+import assert from "node:assert/strict";
+import { rawReadFileSync } from "./source-map.mjs";
+
+const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
+
+const routes = read("../../server/internal/api/http_routes.go");
+const service = read("../src/services/agent/contextSaving.ts");
+const hook = read("../src/components/agent/useContextSaving.ts");
+const indicator = read("../src/components/agent/ContextSavingIndicator.tsx");
+const chips = read("../src/components/action/ComposerTopChips.tsx");
+const zh = read("../src/i18n/locales/zh-CN-agents.ts");
+const en = read("../src/i18n/locales/en-US-agents.ts");
+
+const CONTEXT_SAVING_KEYS = [
+  "badge",
+  "badgeTitle",
+  "title",
+  "description",
+  "badgeMessages",
+  "badgeSent",
+  "badgeOriginal",
+  "badgeSaved",
+  "badgeTokens",
+  "badgeFoldMs",
+  "empty",
+  "history",
+];
+
+test("前后端用同一条路径：会话 context-saving", () => {
+  // 路径拼错时 chip 永远不出现，前端不报错、后端只会 404 —— 只能靠对齐钉住。
+  assert.match(routes, /r\.Get\("\/api\/sessions\/\{key\}\/context-saving", h\.handleSessionContextSaving\)/);
+  assert.match(service, /appURL\(`\/api\/sessions\/\$\{encodeURIComponent\(sessionKey\)\}\/context-saving`, params, nodeId\)/);
+});
+
+test("数据面必须带节点与 root，不能静默打激活节点", () => {
+  assert.match(service, /if \(rootId\) params\.set\("root", rootId\)/);
+  assert.match(service, /, params, nodeId\)/);
+  assert.match(chips, /<ContextSavingIndicator[\s\S]*?rootId=\{currentRootId \|\| undefined\}[\s\S]*?nodeId=\{rootNodeId\}/);
+});
+
+test("只在有节省或折叠过时才显示胶囊", () => {
+  assert.match(hook, /const savedBytes = contextSavingBytes\(saving\);/);
+  assert.match(hook, /const visible = savedBytes > 0 \|\| !!saving\?\.requests;/);
+  assert.match(indicator, /if \(!visible\) return null;/);
+});
+
+test("胶囊只挂在已绑定会话上，命令模式不显示", () => {
+  assert.match(
+    chips,
+    /\{hasBoundSession && mode !== "command" \? \(\s*<ContextSavingIndicator/,
+  );
+  assert.match(chips, /const currentSessionKey = String\(boundSession\?\.key \|\| boundSession\?\.session_key \|\| ""\);/);
+});
+
+test("回合结束才刷新一次，不按秒轮询", () => {
+  // 一次折叠只发生在回合结束时，轮询既浪费又看不出变化。
+  assert.match(hook, /if \(wasPending && !pending\) void refresh\(\);/);
+  assert.doesNotMatch(hook, /setInterval/);
+});
+
+test("会话切换时先清空旧数据，避免上一条会话的数字留在新会话上", () => {
+  assert.match(hook, /setSaving\(null\);/);
+  assert.match(hook, /if \(request === requestRef\.current\) setSaving\(next\);/);
+});
+
+test("详情面板列出折叠条数与本轮数字", () => {
+  assert.match(indicator, /t\("contextSaving\.badgeMessages"\), String\(latest\.blocks\)/);
+  assert.match(indicator, /t\("contextSaving\.badgeSaved"\), formatBytes\(latest\.saved_bytes\)/);
+  assert.match(indicator, /t\("contextSaving\.history", \{ requests: saving\.requests, max: formatBytes\(saving\.max_saved_bytes\) \}\)/);
+});
+
+test("文案在两种语言里成对存在", () => {
+  for (const key of CONTEXT_SAVING_KEYS) {
+    assert.ok(zh.includes(`"contextSaving.${key}":`), `zh-CN missing contextSaving.${key}`);
+    assert.ok(en.includes(`"contextSaving.${key}":`), `en-US missing contextSaving.${key}`);
+  }
+  // 占位符对不上会让徽标显示成字面量 {saved}。
+  assert.match(zh, /"contextSaving\.badge": "上下文 -\{saved\}"/);
+  assert.match(en, /"contextSaving\.badge": "Context -\{saved\}"/);
+  assert.match(zh, /"contextSaving\.history": "最近 \{requests\} 次折叠，单次最多节省 \{max\}。"/);
+  assert.match(en, /"contextSaving\.history": "\{requests\} recent folds, largest saving \{max\}\."/);
+});

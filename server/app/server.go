@@ -63,6 +63,8 @@ type StartOptions struct {
 	LiveCompactMaxDriftMessages int
 	// LiveCompactDisableFile 是急停文件；空值 = <config-dir>/context/DISABLED。
 	LiveCompactDisableFile string
+	// LiveCompactArchiveDir 是折叠存档根；空值 = <config-dir>/context。
+	LiveCompactArchiveDir string
 }
 
 // routerConfigFromOptions 是 string -> kanban.RouterConfig 的唯一转换点。
@@ -139,8 +141,12 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		return err
 	}
 	liveCompactDisableFile := opts.LiveCompactDisableFile
+	liveCompactArchiveDir := opts.LiveCompactArchiveDir
+	if liveCompactArchiveDir == "" {
+		liveCompactArchiveDir = filepath.Join(configDir, "context")
+	}
 	if liveCompactDisableFile == "" {
-		liveCompactDisableFile = filepath.Join(configDir, "context", "DISABLED")
+		liveCompactDisableFile = filepath.Join(liveCompactArchiveDir, "DISABLED")
 	}
 	sharedPool := agent.NewPoolWithOptions(agentConfig, agent.PoolOptions{
 		LiveCompactMode:             opts.LiveCompactMode,
@@ -149,6 +155,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		LiveCompactMinBodyBytes:     opts.LiveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages: opts.LiveCompactMaxDriftMessages,
 		LiveCompactDisableFile:      liveCompactDisableFile,
+		LiveCompactArchiveDir:       liveCompactArchiveDir,
 	})
 	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
 	sharedProber.Start(ctx)

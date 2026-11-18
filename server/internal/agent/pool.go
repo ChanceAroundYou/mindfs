@@ -57,6 +57,10 @@ type PoolOptions struct {
 	LiveCompactMinBodyBytes     int
 	LiveCompactMaxDriftMessages int
 	LiveCompactDisableFile      string
+	// LiveCompactArchiveDir is where folded tool output is archived. Empty
+	// leaves archiving off, which also means mode=on can only observe: every
+	// pointer would name a file that does not exist.
+	LiveCompactArchiveDir string
 }
 
 // NewPool creates a new agent pool with default options.
@@ -86,6 +90,8 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 		MinBodyBytes:     opts.LiveCompactMinBodyBytes,
 		MaxDriftMessages: opts.LiveCompactMaxDriftMessages,
 		DisableFile:      opts.LiveCompactDisableFile,
+		ArchiveDir:       opts.LiveCompactArchiveDir,
+		ArchiveEnabled:   opts.LiveCompactArchiveDir != "",
 	}); err == nil {
 		p.compactProxy = ps
 		log.Printf("[agent/pool] compact-strip proxy listening on 127.0.0.1:%d live_compact=%s", ps.Port(), ps.LiveCompactMode())

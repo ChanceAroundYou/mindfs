@@ -9248,22 +9248,43 @@ groups:
   # （G-MG，891235c1）撞号；本设计自己注明该 ID 是「暂定」，2026-11-18 集成
   # task-73 时改登记为 G-MN。提交信息保持原文，不再改写历史。
   - id: G-MN
-    title: 原生 live-compact Phase A —— 会话代理内观测候选折叠、SSE usage 与历史前缀漂移
+    title: 原生 live-compact —— Phase A 观测、Phase B1 无损折叠、B2 账本与前端胶囊
     kind: feature
-    symptom: "MindFS 的会话上下文完全由 Claude Code 自身的 auto-compact 决定：到阈值就整段摘要，不可观测、不可控、无法判断「把旧的工具结果换成指针 + 存档」能省多少。用户目标是把它做成 MindFS 原生能力（scope B），Phase A 要求先在真实流量上量出收益与风险，且不得改变任何一次请求的字节。"
-    why: "上游没有这条链路，必须保留：① 观测挂在既有每会话回环代理 server/internal/agent/proxy 上，只对 POST .../v1/messages 且 body ≥ min_body_bytes 的请求解析，count_tokens 永不触碰（改写它会改变 CLI 自己看到的上下文大小）；② off 默认零解析、shadow 只观测不改字节、on 在本构建明确告警「observing only」，三者都不会静默改写请求；③ 解析必须在请求路径之外 —— encoding/json 在本项目的嵌套解码路径对 8 MB body 实测 436 ms、58 MB 分配（同一 body 被完整校验四遍），因此请求路径只做门禁 + 入队（实测 3.5 ms/8 MB、3 allocs），分析跑在按会话 token 串行的有界工作队列上（全局 96 MiB 字节预算，仅按会话限深不构成内存上界）；④ 每个请求一个 liveCompactTurn，把「本次请求的估算」与「本次请求的 SSE usage」配成一对 —— 分析毫秒级完成而 usage 要等响应流结束，读会话级 lastUsage 会让第 N 轮配到第 N−1 轮的数，而这对数正是 Phase A 的唯一产出；压缩流/错误响应/上游失败时以 actual_in=-1 正常收口；⑤ 历史前缀漂移必须按解析后的归一化块哈希判定：Claude Code 每轮搬家 cache_control 断点，且 system 的 content 会从 block 数组翻成裸字符串、tool_result.content 在数组/字符串间翻转，按 raw bytes 哈希会每轮误报；⑥ 错误文本启发式必须行首命中且只看首尾各 20 行，否则普通 Go 源码（含 fmt.Errorf/failed 字面量）会被判成错误输出；⑦ 隔离 ConfigDir 会话（Router/workflow）只观测不折叠 —— 它们不继承用户工具权限，指针指向的存档文件可能读不到，折叠会静默变成有损；⑧ 急停文件 <config-dir>/context/DISABLED 带 1 秒 stat 缓存，本机 system 单元只能由用户重启，没有它就无法在不重启的前提下收手。"
-    boundary: "只做观测：不产生任何请求改写（B1 折叠未实现），不落账本/API/前端（B2），不做抽取卡片（B3）。不引入分词器依赖，token 估算保持可解释的粗估；不改 stripCompactPayload 的既有剥离语义；不改多节点拓扑与控制面；不改变「API 层不鉴权」的用户决策。已知硬约束登记在此以免 B1 走回头路：手写单遍字节扫描器对同一 8 MB body 仍需 73 ms，整包解析不可内联，B1 必须先解决「解析怎么进请求路径」（增量/流式改写只替换目标区间，或按前缀确定性缓存折叠计划）。lcsmoke/ 是手工冒烟工具（真实 Claude CLI + 进程内代理），有意不参与产品构建，故只登记目录不单独钉测试。"
+    symptom: "MindFS 的会话上下文完全由 Claude Code 自身的 auto-compact 决定：到阈值就整段摘要，不可观测、不可控、无法判断「把旧的工具结果换成指针 + 存档」能省多少。用户目标是把它做成 MindFS 原生能力（scope B）。Phase A 在真实流量上量收益与风险且不改一个字节；Phase B1 把旧的工具结果折成「指针 + 存档」，在不破坏上游前缀缓存的前提下缩小每轮请求体（2.6 MB 合成 body 折后 228 KB）。"
+    why: "上游没有这条链路，必须保留：① 观测挂在既有每会话回环代理 server/internal/agent/proxy 上，只对 POST .../v1/messages 且 body ≥ min_body_bytes 的请求解析，count_tokens 永不触碰（改写它会改变 CLI 自己看到的上下文大小）；② off 默认零解析、shadow 只观测不改字节、on 才折叠；三者都不会静默改写请求，且 on 在缺存档目录时明确只观测（绝不下发一个指向不存在文件的指针）；③ 解析必须在请求路径之外 —— encoding/json 在本项目的嵌套解码路径对 8 MB body 实测 436 ms、58 MB 分配（同一 body 被完整校验四遍），因此请求路径只做门禁 + 入队（实测 3.5 ms/8 MB、3 allocs），分析跑在按会话 token 串行的有界工作队列上（全局 96 MiB 字节预算，仅按会话限深不构成内存上界）；④ 每个请求一个 liveCompactTurn，把「本次请求的估算」与「本次请求的 SSE usage」配成一对 —— 分析毫秒级完成而 usage 要等响应流结束，读会话级 lastUsage 会让第 N 轮配到第 N−1 轮的数，而这对数正是 Phase A 的唯一产出；压缩流/错误响应/上游失败时以 actual_in=-1 正常收口；⑤ 历史前缀漂移必须按解析后的归一化块哈希判定：Claude Code 每轮搬家 cache_control 断点，且 system 的 content 会从 block 数组翻成裸字符串、tool_result.content 在数组/字符串间翻转，按 raw bytes 哈希会每轮误报；⑥ 错误文本启发式必须行首命中且只看首尾各 20 行，否则普通 Go 源码（含 fmt.Errorf/failed 字面量）会被判成错误输出；⑦ 隔离 ConfigDir 会话（Router/workflow）只观测不折叠 —— 它们不继承用户工具权限，指针指向的存档文件可能读不到，折叠会静默变成有损；⑧ 急停文件 <config-dir>/context/DISABLED 带 1 秒 stat 缓存，本机 system 单元只能由用户重启，没有它就无法在不重启的前提下收手。 ⑨ B1 折叠走**字节区间内联改写**：scanWireRequest 只定位区间、不解码（8 MB 上 73 ms 的整包解析不进请求路径，实例化后 2.6 MB body 实测 1.1 ms / 2400 MB/s / 26 KB 分配），planFold 只对「本次新滑出窗口」的那一块解码并渲染，其余已折叠块由按内容寻址的 pointerCache 命中（1.3 ms）；任何异常路径返回原始 body（I7）；改写前必须 verifyFold 重新扫描改写后的 body 校验消息数/角色/tool 配对。⑩ 指针必须是内容的纯函数（无时间戳/计数器/输入键序），否则 repoint 或 fork 后 CLI 重排 tool_use 键序会让整个已折叠前缀重写、缓存全失效；存档按 sha256(text) 内容寻址且不带会话段（会话键会因 repoint/fork/空闲关闭而变）。⑪ 渲染缓存用 maphash 而非 sha256：本机 Celeron 无 SHA 扩展，sha256 实测 97 MB/s（2.5 MB 候选要 22 ms，等于它要省掉的开销），maphash 6.8 GB/s；两条独立 lane 合成 128 位键，避免碰撞把别的块的指针安到这一块上。"
+    boundary: "B1 只在 `live_compact.mode=on` 且配置了存档目录、且会话不是隔离 ConfigDir 时才改写请求（工具结果的纯文本、已闭合回合、保留最新 keep_rounds 轮、未标记 is_error、≥ min_block_tokens）；off/shadow 字节不变。B2 只读：账本按会话记大小与计数（无消息文本/工具参数/路径/会话键，键只进哈希文件名），`GET /api/sessions/{key}/context-saving` 不做任何写入，胶囊只在折叠过且有节省时出现。双向都不得越界：B2 的只读性意味着读不到账本时显示「没有节省」而不是报错，也不得为了填数去猜 agent（会话没绑定 agent 时池级 key 退化成裸 key，读到空是正确行为）。不做抽取卡片（B3）。不引入分词器依赖，token 估算保持可解释的粗估；不改 stripCompactPayload 的既有剥离语义；不改多节点拓扑与控制面；不改变「API 层不鉴权」的用户决策。已知硬约束登记在此以免 B1 走回头路：手写单遍字节扫描器对同一 8 MB body 仍需 73 ms，整包解析不可内联，B1 必须先解决「解析怎么进请求路径」（增量/流式改写只替换目标区间，或按前缀确定性缓存折叠计划）。lcsmoke/ 是手工冒烟工具（真实 Claude CLI + 进程内代理），有意不参与产品构建，故只登记目录不单独钉测试。"
     files:
       - server/internal/agent/proxy/proxy.go
       - server/internal/agent/proxy/live_compact.go
       - server/internal/agent/proxy/live_compact_worker.go
       - server/internal/agent/proxy/live_compact_turn.go
       - server/internal/agent/proxy/live_compact_wire.go
+      - server/internal/agent/proxy/live_compact_wire_analysis.go
+      - server/internal/agent/proxy/live_compact_wire_drift.go
+      - server/internal/agent/proxy/live_compact_log.go
+      - server/internal/agent/proxy/live_compact_scan.go
+      - server/internal/agent/proxy/live_compact_scan_request.go
+      - server/internal/agent/proxy/live_compact_fold.go
+      - server/internal/agent/proxy/live_compact_fold_splice.go
+      - server/internal/agent/proxy/live_compact_pointer.go
+      - server/internal/agent/proxy/live_compact_pointer_cache.go
+      - server/internal/agent/proxy/live_compact_archive.go
+      - server/internal/agent/proxy/live_compact_ledger.go
       - server/internal/agent/proxy/estimate.go
       - server/internal/agent/proxy/usage.go
       - server/internal/agent/proxy/lcsmoke/
       - server/internal/agent/pool.go
       - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_context_saving.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_session_context_saving.go
+      - server/internal/api/usecase/session_context_saving.go
+      - web/src/services/agent/contextSaving.ts
+      - web/src/components/agent/useContextSaving.ts
+      - web/src/components/agent/ContextSavingIndicator.tsx
+      - web/src/components/action/ComposerTopChips.tsx
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/en-US-agents.ts
       - server/app/server.go
       - cli/cmd/mindfs.go
       - cli/cmd/startup.go
@@ -9273,6 +9294,17 @@ groups:
       - server/internal/agent/proxy/live_compact_proxy_test.go
       - server/internal/agent/proxy/live_compact_turn_test.go
       - server/internal/agent/proxy/live_compact_wire_test.go
+      - server/internal/agent/proxy/live_compact_fold_test.go
+      - server/internal/agent/proxy/live_compact_fold_cache_test.go
+      - server/internal/agent/proxy/live_compact_fold_proxy_test.go
+      - server/internal/agent/proxy/live_compact_scan_test.go
+      - server/internal/agent/proxy/live_compact_pointer_cache_test.go
+      - server/internal/agent/proxy/live_compact_archive_test.go
+      - server/internal/agent/proxy/live_compact_ledger_test.go
+      - server/internal/agent/pool_context_saving_test.go
+      - server/internal/api/http_session_context_saving_test.go
+      - server/internal/api/usecase/session_context_saving_test.go
+      - web/tests/context-saving-chip.test.mjs
       - server/internal/agent/proxy/estimate_test.go
       - server/internal/agent/proxy/usage_test.go
       - server/internal/agent/pool_compact_proxy_test.go
@@ -9286,11 +9318,44 @@ groups:
       - 'server/internal/agent/proxy/live_compact.go:func (s *Server) liveCompactDisabled() bool'
       - 'server/internal/agent/proxy/live_compact_turn.go:func (t *liveCompactTurn) completeTurn('
       - 'server/internal/agent/proxy/live_compact_worker.go:liveCompactRetainBudget = 96 << 20'
-      - 'server/internal/agent/proxy/live_compact_wire.go:func normalizeMessageHash(msg wireMessage) []byte'
-      - 'server/internal/agent/proxy/live_compact_wire.go:func looksLikeErrorText(text string) bool'
+      - 'server/internal/agent/proxy/live_compact_wire_drift.go:func normalizeMessageHash(msg wireMessage) []byte'
+      - 'server/internal/agent/proxy/live_compact_wire_drift.go:func looksLikeErrorText(text string) bool'
       - 'server/internal/agent/proxy/usage.go:func (s *usageScanner) consumeLine('
       - 'server/internal/agent/pool_open.go:p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)'
-      - 'server/app/server.go:liveCompactDisableFile = filepath.Join(configDir, "context", "DISABLED")'
+      - 'server/app/server.go:liveCompactDisableFile = filepath.Join(liveCompactArchiveDir, "DISABLED")'
       - 'cli/cmd/startup.go:live_compact'
       - 'server/internal/agent/proxy/live_compact_proxy_test.go:func TestLiveCompactSharesBodyWithoutRacingTheRewrite('
       - 'server/internal/agent/proxy/live_compact_turn_test.go:func TestLiveCompactTurnPairsOneRequestEstimateWithItsOwnUsage('
+      - 'server/internal/agent/proxy/proxy.go:body, _ = s.foldRequest(token, body)'
+      - 'server/internal/agent/proxy/live_compact_scan_request.go:func scanWireRequest(body []byte) (*scanRequest, error)'
+      - 'server/internal/agent/proxy/live_compact_fold.go:func planFold(body []byte, req *scanRequest, cfg LiveCompactConfig, store *archiveStore, cache *pointerCache) foldResult'
+      - 'server/internal/agent/proxy/live_compact_fold.go:if s.liveCompactDisabled() {'
+      - 'server/internal/agent/proxy/live_compact_fold.go:if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < part.end-part.start {'
+      - 'server/internal/agent/proxy/live_compact_fold_splice.go:func verifyFold(before *scanRequest, folded []byte) error'
+      - 'server/internal/agent/proxy/live_compact_pointer.go:func renderFoldPointer(p pointerInput) string'
+      - 'server/internal/agent/proxy/live_compact_pointer_cache.go:func pointerCacheKeyFor(toolName, inputSummary string, textSpan []byte) pointerCacheKey'
+      - 'server/internal/agent/proxy/live_compact_archive.go:func (a *archiveStore) write(text string) (string, error)'
+      - 'server/internal/agent/proxy/live_compact_archive.go:archiveRetention  = 7 * 24 * time.Hour'
+      - 'server/internal/agent/proxy/live_compact_scan_test.go:func TestFoldScannerAgreesWithReferenceAnalysis('
+      - 'server/internal/agent/proxy/live_compact_fold_cache_test.go:func TestFoldKeepsOldPointersStableAcrossTurns('
+      - 'server/internal/agent/proxy/live_compact_fold_cache_test.go:func TestFoldCacheRewritesVanishedArchive('
+      - 'server/internal/agent/proxy/live_compact_fold_proxy_test.go:func TestProxyFoldRespectsDisableFile('
+      - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) recordFoldLedger('
+      - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) SessionContextSaving(sessionKey string) ContextSaving'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:ledgerMaxBytes  = 4 << 20'
+      - 'server/internal/agent/pool.go:ArchiveDir:       opts.LiveCompactArchiveDir'
+      - 'server/internal/agent/pool_context_saving.go:func (p *Pool) SessionContextSaving(sessionKey string) proxy.ContextSaving'
+      - 'server/internal/api/usecase/session_context_saving.go:func (s *Service) GetSessionContextSaving('
+      - 'server/internal/api/usecase/session_context_saving.go:return pool.SessionContextSaving(agentPoolSessionKey(key, agentName)), nil'
+      - 'server/internal/api/http_session_context_saving.go:func (h *HTTPHandler) handleSessionContextSaving('
+      - 'server/internal/api/http_routes.go:r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)'
+      - 'server/app/server.go:liveCompactArchiveDir = filepath.Join(configDir, "context")'
+      - 'web/src/services/agent/contextSaving.ts:/context-saving`, params, nodeId)'
+      - 'web/src/components/agent/useContextSaving.ts:if (wasPending && !pending) void refresh()'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:if (!visible) return null;'
+      - 'web/src/components/action/ComposerTopChips.tsx:{hasBoundSession && mode !== "command" ? ('
+      - 'server/internal/agent/pool_context_saving_test.go:func TestNewPoolWithOptionsWiresArchiveDir('
+      - 'server/internal/api/http_session_context_saving_test.go:func TestSessionContextSavingRouteRegistered('
+      - 'server/internal/api/usecase/session_context_saving_test.go:func TestGetSessionContextSavingResolvesPoolSessionKey('
+      - 'server/internal/api/usecase/session_context_saving_test.go:func TestGetSessionContextSavingDoesNotReadBareLedger('
+      - 'server/internal/agent/proxy/lcsmoke/main.go:saving := ps.SessionContextSaving("smoke-session")'

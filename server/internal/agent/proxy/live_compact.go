@@ -31,6 +31,17 @@ type LiveCompactConfig struct {
 	// observation stop for the running process without a service restart.
 	// Empty means no brake file is wired (default off, nothing to stop).
 	DisableFile string
+	// ArchiveDir is where folded tool output is stored. Empty disables
+	// archiving, which also disables folding: a pointer must never name a file
+	// that does not exist.
+	ArchiveDir string
+	// ArchiveEnabled defaults to true when ArchiveDir is set. It exists so a
+	// node can keep observing while storage is unavailable.
+	ArchiveEnabled bool
+	// RetentionDays and MaxArchiveBytes bound the archive directory. Zero
+	// values mean the defaults (7 days, 2 GiB).
+	RetentionDays   int
+	MaxArchiveBytes int64
 }
 
 func (c LiveCompactConfig) Normalized() LiveCompactConfig {
@@ -54,6 +65,15 @@ func (c LiveCompactConfig) Normalized() LiveCompactConfig {
 	}
 	if c.MaxDriftMessages <= 0 {
 		c.MaxDriftMessages = 8192
+	}
+	if c.RetentionDays <= 0 {
+		c.RetentionDays = int(archiveRetention / (24 * time.Hour))
+	}
+	if c.MaxArchiveBytes <= 0 {
+		c.MaxArchiveBytes = archiveMaxBytes
+	}
+	if c.ArchiveDir == "" {
+		c.ArchiveEnabled = false
 	}
 	return c
 }
@@ -261,3 +281,6 @@ func driftDistanceFromTail(previousLen, drift int) int {
 	}
 	return previousLen - 1 - drift
 }
+
+// logLiveCompactSkip records a request that was left byte-identical because
+// the fold path could not proceed. Sizes only, never content.

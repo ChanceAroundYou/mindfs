@@ -230,6 +230,9 @@ archive: /home/xiaokubao/.config/mindfs/context/a1b2c3d4e5f60718293a4b5c.txt
 
 ### Phase B1：无损折叠
 
+**状态（2026-11-18）：已实现并提交，未部署、未在任何节点开 `on`。** 实施与实测见 §12.3；开闸证据
+（真实流量下的候选出现率、节省比例、0 parse 失败、drift 频率）仍需 Phase A 在节点上跑满再取。
+
 - 工具输出 → 指针 + 存档；不变量、失败开放、确定性、GC；单测 + 代理集成测试。
 - **开闸证据**（必须来自 Phase A 真实数据，不能凭预测）：候选块在长会话里持续出现；单请求预计节省达到
   可观察量级（阈值在 A 结束时按分布定，不低于 total 的 20%）；parse 失败率为 0；prefix drift 不频繁。
@@ -389,3 +392,112 @@ archive: /home/xiaokubao/.config/mindfs/context/a1b2c3d4e5f60718293a4b5c.txt
 60,737/65,624（**−7.5%**）。偏差随代码与标点密度的上升而扩大（4 字节/token 的 ASCII 假设偏乐观）。
 20k/32k 的粗阈值仍够用，但 B1 若用估算值决定「何时折」，阈值应留 10% 余量。
 
+
+### 12.3 Phase B1 实施记录（2026-11-18 深夜）
+
+**§12.2 第 3 条留给 B1 的问题已用测量回答**，结论是两条路都走：请求路径内联**字节区间扫描**（只定位、
+不解码），叠加**按内容寻址的渲染缓存**（消掉滑出窗口之外所有块的重渲染）。
+
+| 组件 | 文件 | 作用 |
+|---|---|---|
+| 扫描器 | `live_compact_scan.go` | 只记录字符区间，字符串靠 `bytes.IndexByte` + 反斜杠奇偶跳过，不解码；`scanBlock` 记 `textParts` 与 `nonText` |
+| 选择与拼接 | `live_compact_fold.go` | `pairScanRounds` / `planFold` / `applyFold` / `verifyFold` |
+| 指针渲染 | `live_compact_pointer.go` | 输入按固定偏好序归一化（与 JSON 键序无关）、首尾摘录、`encodeJSONStringLiteral` |
+| 渲染缓存 | `live_compact_pointer_cache.go` | 以 `toolName‖inputSummary‖原始转义区间` 的 128 位 maphash 为键 |
+| 存档 | `live_compact_archive.go` | `<config-dir>/context/<sha256(text)[:24]>.txt`，0700/0600，temp+rename，去重，7 天 + 2 GiB |
+
+**实测（2,622,250 B body，40 轮 × 60 KB，37 个合格块；本机 Celeron N5105，单线程）**
+
+| 步骤 | 耗时 | 吞吐 |
+|---|---|---|
+| `scanWireRequest` | 1.09 ms | 2400 MB/s，26 KB / 412 allocs |
+| `planFold` 冷（37 块全解码 + 渲染 + 写档） | ~90 ms | 29 MB/s |
+| `planFold` 热（37 块全部缓存命中） | **1.3 ms** | 2000 MB/s |
+| `verifyFold`（只重扫改写后的 body） | 0.21 ms | — |
+| 无缓存时解码全部候选（对照） | 25 ms | 105 MB/s |
+| 改写后 body | 228,535 B | 原体的 8.7% |
+
+- **每个请求只多一条新滑出窗口的回合**，所以稳态边际成本 ≈ 冷单块（约 2.4 ms）+ 热路径 2.5 ms，与
+  会话长度基本无关；而旧实现（每轮全量解码）是 26–90 ms 且随长度线性增长。
+- **热路径的键必须是原始转义区间**：解码后再哈希等于把要省的开销又做一遍。
+- **不能用 sha256 做键**：本机没有 SHA 扩展，`crypto/sha256` 实测 97 MB/s —— 2.5 MB 候选要 22 ms，
+  与它省掉的工作同量级。`hash/maphash` 实测 6.8 GB/s（同一 payload 0.35 ms），且种子每进程随机，
+  输入无法定向制造碰撞；取两条独立 lane 组成 128 位键，因为碰撞的后果是把另一块的指针安到这一块上，
+  是静默错答而不是报错。
+- **缓存命中后仍要 `os.Stat` 存档**（存在且大小相符）：GC 是 7 天/2 GiB 的异步清理，指针指向一个已经
+  被删或被截断的文件比不折叠更糟。两个方向都有测试（`TestFoldCacheRewritesVanishedArchive` /
+  `TestFoldCacheRewritesTruncatedArchive`），去掉检查都会被钉红。
+- **`verifyFold` 复用请求路径上已有的扫描结果**，只重扫改写后的 body：改写前校验从 11.7 ms 降到 0.21 ms。
+
+**不变量与测试映射**
+
+| 不变量 | 钉住的测试 |
+|---|---|
+| I1 消息数/顺序/角色 | `TestFoldPreservesMessageCountOrderAndRole` |
+| I2 tool 配对与 id | `TestFoldPreservesToolPairing`、`verifyFold` |
+| I3 thinking/image/多块结果不动 | `TestFoldSkipsToolResultsWithNonTextBlocks` |
+| I4 未折叠块解码后不变 | `TestFoldLeavesOtherBlocksDecodeIdentical` |
+| I5 同输入同字节 | `TestFoldIsDeterministic`、`TestFoldCacheHitIsByteIdentical` |
+| I6 已折叠前缀不重写 | `TestFoldKeepsOldPointersStableAcrossTurns`、`TestFoldPointerIgnoresToolInputKeyOrder` |
+| I7 异常回退原 body | `TestFoldFailsOpenOnMalformedBody`、`TestProxyFoldForwardsMalformedBody` |
+| 两套解析器不漂移 | `TestFoldScannerAgreesWithReferenceAnalysis` |
+| 门禁与急停 | `TestProxyFoldOffAndShadowForwardUnchanged`、`TestProxyFoldSkipsObserveOnlySessions`、`TestProxyFoldOnWithoutArchiveObservesOnly`、`TestProxyFoldRespectsDisableFile` |
+
+**本轮修掉的真缺陷**：`foldRequest` 原先没有读急停文件 —— 急停只停了观测，没停改写。本机 system 单元
+只能由用户重启，`DISABLED` 是唯一的不重启收手手段，因此这是必须堵的口（由
+`TestProxyFoldRespectsDisableFile` 暴露）。
+
+**仍未做**：B2（账本/API/前端）、B3（抽取卡片，需另一次设计评审）。B1 也还没有在真实流量上开过
+`mode=on`；灰度顺序按 §6 保持不变。
+
+### 12.4 Phase B2 实施记录（2026-11-19）
+
+账本、只读 API、前端胶囊三段。B2 只读：不改写入路径，不改变 B1 折叠决策，`off` 模式下一个字节都不多写。
+
+| 组件 | 文件 | 作用 |
+|---|---|---|
+| 账本 | `server/internal/agent/proxy/live_compact_ledger.go` | 每会话一个 `<config-dir>/context/ledger/<sha256(sessionKey)[:8]>.jsonl`，一次折叠一行；到 4 MiB 用自身尾部（2000 行）替换；只记大小与计数 |
+| 汇总 | 同上 `summarizeLedger` / `SessionContextSaving` | `latest` 是最近一次折叠的快照（不是累计），`requests` 是保留历史里的次数，`max_saved_bytes` 是单次最大节省 |
+| 池转发 | `server/internal/agent/pool_context_saving.go` | 代理未装配时返回零值而不是 panic（每个节点都有池，不是每个进程都有代理） |
+| 用例 | `server/internal/api/usecase/session_context_saving.go` | 查会话 → `InferAgentFromSession` → `agentPoolSessionKey`，把池级 key 交给代理 |
+| 路由 | `server/internal/api/http_routes.go` | `GET /api/sessions/{key}/context-saving` |
+| 前端服务 | `web/src/services/agent/contextSaving.ts` | `appURL(..., params, nodeId)`：数据面必须显式带节点 |
+| 前端状态 | `web/src/components/agent/useContextSaving.ts` | 挂载/切换/`pending` true→false 各拉一次；请求代际守卫防串会话 |
+| 前端视图 | `web/src/components/agent/ContextSavingIndicator.tsx` | 无节省时 `return null`；点开是 portal 浮层 |
+| 接线 | `web/src/components/action/ComposerTopChips.tsx` | 仅 `hasBoundSession && mode !== "command"` 时渲染 |
+
+**为什么要先解析 agent 再查账本**：代理按**池级** key 记账（`<agent>-<sessionKey>`），
+不是裸会话 key。前端拿到的只有裸 key，若直接透传就会永远读到空账本 —— 症状是胶囊不出现，
+不报错。由 `TestPoolSessionContextSavingForwardsPoolKey` 钉住（同一代理里 `claude-session-1`
+有 1 条、`session-1` 必须 0 条）。
+
+**本轮修掉的启动级缺陷**：`LiveCompactArchiveDir` 从未接进启动路径 —— `PoolOptions` 有这个字段，
+但 `server/app/server.go` 没赋值，于是生产上 `mode=on` 只会打一行「observing only」，折不了任何东西，
+账本永远为空，胶囊永远不出现。现在默认 `<config-dir>/context` 并沿 `PoolOptions → proxy.LiveCompactConfig`
+下传；由 `TestNewPoolWithOptionsWiresArchiveDir` 用真实请求钉住（只有 archive 那一路会写账本）。
+
+**边界**：账本不含消息文本、工具参数、路径与会话键（键只进哈希文件名）；`recent` 只回最近 200 条但
+前端只用 `latest/requests/max_saved_bytes`。隔离 ConfigDir 会话永远到不了记账点（它们不折叠），
+所以用户看到的节省不会被 Router/workflow 会话灌水。
+
+**测试映射**
+
+| 行为 | 钉住的测试 |
+|---|---|
+| 路由存在且空 key 明确报错 | `TestSessionContextSavingRouteRegistered`、`TestSessionContextSavingRequiresKey` |
+| 池级 key 不串账本 | `TestPoolSessionContextSavingForwardsPoolKey` |
+| 无代理/nil 池不 panic | `TestPoolSessionContextSavingWithoutProxy` |
+| archive dir 真的接进代理 | `TestNewPoolWithOptionsWiresArchiveDir` |
+| 前后端路径一致、节点与 root 都带上 | `web/tests/context-saving-chip.test.mjs` |
+| 无节省不显示、命令模式不显示 | 同上（`visible` 与 `hasBoundSession && mode !== "command"` 断言） |
+| 回合结束才刷新、切换会话先清空 | 同上（`wasPending && !pending`、`setSaving(null)`，并断言无 `setInterval`） |
+| 中英文案成对、占位符对得上 | 同上 |
+
+**仍未做**：B3（抽取卡片，需另一次设计评审）。B1/B2 都还没有在真实流量上开过 `mode=on`；
+灰度顺序按 §6 保持不变 —— 先 WSL 或 fn 开 24h，再本机（需用户重启），pc-win 最后。
+
+**`mode=on` 下的 `drift` 是自噪声（2026-11-19 冒烟记录）**：处理器先折叠再观测，所以 worker 哈希的是
+**折叠后**的 body，`drift` 会把「本轮新滑出的那一轮被我们换成了指针」也算成 CLI 改写了历史 ——
+真实会话 `on` 实测 `drift=3/5/7`，同一会话 `shadow` 恒为 `-1`。这不是折叠缺陷，也不影响任何决策：
+`drift` 只进日志，而 §6 的开闸判据是在 `shadow` 上取的（那时 body 按定义未被碰过）。若以后要把
+`drift` 当作 `on` 模式下的健康指标，必须改成在折叠**前**的 body 上算，而不是把折叠边界当漂移。
