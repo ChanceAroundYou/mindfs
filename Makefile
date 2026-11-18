@@ -95,8 +95,11 @@ test-web:
 
 # 安卓壳的纯逻辑单测（ReplyAlertPlanner / ReplyStateMerger）。不进 make test：
 # 它要拉起 Gradle daemon，与每次 ship 的快路径无关。
+# 与 build-android / android-verify 保持同一套环境：JAVA_HOME（ANDROID_GRADLE_ENV）与
+# Android SDK 缺一不可，否则 Gradle 会在配置阶段报一个跟被测代码无关的错。
 test-android:
-	cd $(ANDROID_DIR) && ./gradlew :app:testDebugUnitTest
+	@test -n "$(ANDROID_SDK_ROOT)$(ANDROID_HOME)" || (echo "Error: ANDROID_SDK_ROOT/ANDROID_HOME is required" >&2; exit 1)
+	cd $(ANDROID_DIR) && $(ANDROID_GRADLE_ENV) ./gradlew :app:testDebugUnitTest
 
 # fork 定制覆盖率门禁：delta 文件 ⟷ docs/upstream-customizations.yaml 对账。
 # 刻意不并入 `make test`——它依赖 upstream ref（无网机器应当跳过而非失败），
