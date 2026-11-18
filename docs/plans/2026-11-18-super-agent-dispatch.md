@@ -13,7 +13,7 @@
 | T1 基线核查 | MindFS specified 空白执行，单 worker | 独立只读；不与工头重复审计 | `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-1-report.md` | 计划 T1 的 route 定向测试；逐项证据 | 权限/模型失败、超范围、同一路径连续两次失败即报告 | 只读 1 | 审计完成；缺口转 T2 |
 | T2 R0 回归 | specified 空白执行，Scope G-MC | T1 → T2，独立 worktree | worker branch + task-2-report.md | R0 集成用例及 RED/GREEN | fixture 无法稳定构造则 NEEDS_CONTEXT；不修源码 | 实现 1 | 已完成：三例 RED，审阅通过 |
 | T3 P1 修复 | 依赖 T2 后定稿并派发 | T2 → T3，工头集成测试提交 | worker branch + task-3-report.md | T2 红转绿 + 原守卫测试 | 根因未确认不改源码 | 实现 1 | 已完成：T2 红转绿、两项竞态 + 直连摘要守卫；集成 `8cace21e`、`47785ee6` |
-| T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | running：#77 |
+| T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | blocked：首轮 6/7，D-1..D-3 已修，待重跑 S5/S7 |
 | T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | pending |
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | pending |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | pending |
@@ -188,7 +188,7 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 
 - 合并提交：`8cace21e`（T2/T3 + 登记 + README 双条目冲突解决）、`47785ee6`（直连摘要守卫 + 锚点）。
 - 门禁：定向 15.901s、kanban 包 113.290s / 115.268s、`make check-upstream` 1884/306、gofmt 干净（顺带修 `router_route_test.go` 末尾换行）。
-- 下一步：T4 隔离真实 agent 验收；创建新 worker 任务并以 `task-73` 为集成基线，禁止读线上会话或写线上库。
+- 下一步：T4 首轮已完成并裁定；按 §T4 结果 修完 D-1..D-3 后，由同一 worker 合入 `task-73` 重跑 S5/S7，再判 R0 PASS/BLOCKED。
 
 ### T4 实例
 
@@ -197,3 +197,22 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - Brief：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-4-brief.md`；报告：`task-77/.mindfs/dispatch/task-4-report.md` 与 `task-4-run.json`。
 - 隔离根 `/tmp/mindfs-r0-t4`、端口 7432；只允许改隔离配置（router.mode=route、turn_timeout=90s）；结束时停实例并核对线上 7331 仍在线。
 - 验收：spec R0 七类场景逐例证据；p50/p95 只用实际样本；模型不可用必须 BLOCKED；不改产品代码、不部署、不重启本机。
+
+### T4 结果（2026-11-18，首轮 → 修复，待重跑）
+
+- Worker 报告：`task-77/.mindfs/dispatch/task-4-report.md`（worktree 本地，`.mindfs/` 已 gitignore）；结果 JSON `/tmp/mindfs-r0-t4/result.json`。HEAD `f787808c`（已合入 `task-73`），唯一代码改动是 `e2e/test_task_router_r0.py`（`cb91412b`）。
+- 隔离自证全通过：7432 ≠ 7331、隔离配置目录 `XDG_CONFIG_HOME=/tmp/mindfs-r0-t4/config`、`/proc/<pid>/fd` 命中线上配置目录 0 次、线上 health 200 且 `config.json`/`agents.json` 指纹前后一致；结束时实例已停、7432 无监听。
+- **裁定：R0 未通过（6 pass / 1 fail / 0 blocked）。** 逐场景：S1 message_agent pass；S2 run_workflow pass（debug / feature 各一）；S3 ask_user pass；S4 specified/disabled 绕过 Router pass（决策数 0）；**S5 fail**；S6 1s 超时 fallback + 占位复用 pass；S7 同任务排队 pass（二轮）。
+- 延迟（8 个真实决策样本）：13,070 / 15,505 / 20,127 / 22,690 / 24,390 / 35,611 / 39,652 / 47,869 ms → p50 23,540ms、p95 47,869ms；S6 的 1,003ms 为超时诱发值未计入。
+- 缺陷与处置（工头独立复核代码后逐条实现，均先 RED）：
+
+| id | 级别 | 现象 | 处置 |
+|---|---|---|---|
+| D-1 | HIGH | `deliver_to_active_run` 绑定成功但投递必 `agent required` | `SendWorkflowComment` 下传节点 agent profile；`7cbe9e5e` |
+| D-2 | MEDIUM | 真实模型空回合被合成 `silent`，占位 hidden、留言消失 | 空文本视为决策缺失 → fallback 复用占位；`80039064` |
+| D-3 | MEDIUM | 取消后复用占位的回复永远 `running` | 投影后重读 Run 再结算；`59d56538` |
+| D-4 | INFO | 真实回合尾部 155.9s > 90s 超时，退化为 fallback | 不修；作为 route 准入证据（生产仍 shadow） |
+
+- 门禁：`go test ./server/internal/kanban/`（110.570s）、`go test ./server/internal/api/`（24.126s）全绿；gofmt 对改动文件干净。
+- **尚未完成**：S5 与 S7 需在隔离实例上重跑确认（D-1 是唯一 fail 的直接原因，D-2 对应 S7 首轮异常）。R0 仍未 PASS，R1/T5 保持锁定。
+
