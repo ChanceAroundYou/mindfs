@@ -14,8 +14,8 @@
 | T2 R0 回归 | specified 空白执行，Scope G-MC | T1 → T2，独立 worktree | worker branch + task-2-report.md | R0 集成用例及 RED/GREEN | fixture 无法稳定构造则 NEEDS_CONTEXT；不修源码 | 实现 1 | 已完成：三例 RED，审阅通过 |
 | T3 P1 修复 | 依赖 T2 后定稿并派发 | T2 → T3，工头集成测试提交 | worker branch + task-3-report.md | T2 红转绿 + 原守卫测试 | 根因未确认不改源码 | 实现 1 | 已完成：T2 红转绿、两项竞态 + 直连摘要守卫；集成 `8cace21e`、`47785ee6` |
 | T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | 已完成：R0 PASS（最终代码 7/7） |
-| T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | running：#79 |
-| T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | pending |
+| T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | 已完成：13 例全绿，集成 `68a07c5e`；工头补迁移/级联 `3a1aa766` |
+| T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | running：#80 |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | pending |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | pending |
 | T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | pending |
@@ -233,5 +233,24 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 允许写：`router_event_types.go`、`router_event_store.go` 与其测试；不改 Router 决策/应用逻辑、workflow runtime、docs、线上配置。
 - 报告：`task-79/.mindfs/dispatch/task-5-report.md`；提交信息 `Scope: G-MG`（登记由工头补）。
 - 派发（2026-11-18）：用户留言 `act_c62fe7a51d2abb5f`，`workflow_choice=specified` + `workflow-blank:v1`；实际启动节点 `run-6ab2f1d3c3ece7c8:execute::0:1`，claude / sonnet，会话 `1794990651-0f954e4a2491`，status=running（POST 200 与实际启动分别核对）。
+
+### T5 结果（2026-11-18）：PASS
+
+- Worker HEAD `f22b3cb0`，四个新文件 1,036 行；定向 13 例 `ok ... 5.937s`，全包 `ok ... 125.359s`，`go vet` 干净、`gofmt -l` 干净。
+- RED 分两段：无实现编译失败原文 + 占位实现 13 例逐条失败原文；GREEN 13 例全 PASS。变异验证两处：唯一键去掉 `kind` → settled/failed 去重用例红；`CompleteEvent` 去掉 `status='claimed'` 闸门 → pending 直接 complete 未报错而红。
+- 八条行为逐条 PASS（重复插入、并发领取单赢家、重开持久化、failed 不复活、complete 前必须 claimed、task/root 隔离、唯一键含 kind+实例、旧库迁移可重复）。
+- 工头复核发现两处必须修的设计问题（T5 报告自己列为风险 1、2）：建表挂在首次 `InsertEvent` 的惰性路径，违反仓库「迁移只接 `migrateSchema`」约定，启动对账先读表会撞 `no such table`；`DeleteTaskRouterData` 不删事件行，任务重建同 ID 会命中旧 `unique_key`。已按 RED→GREEN 修（`3a1aa766`），T5 的旧库迁移用例改用裸 `sql.DB` 建模。
+- 集成：`68a07c5e`（merge）；`make check-upstream` **1890 delta / 307 组**绿；`go test -p 1 ./server/internal/kanban/` 138.774s 全绿。
+- 登记：G-MG（`891235c1`），11 个 anchors 逐个核对命中。
+- 残留（非阻断）：`ListEventsByTask` 不带 rootID，隔离依赖「每 root 一份库」；`RecoverClaimedEvents` 无租约，只能在启动对账调用；`ensureRouterEventTable` 的按 `*sql.DB` 指针缓存已冗余，留待清理。
+
+### T6 实例
+
+- MindFS #80 / `task_d0affbea94e9ceee`；worktree `/home/xiaokubao/projects/mindfs/.worktree/task-80`，分支 `task-80`（创建基线 `7f1b60ee`）。
+- Worker 必须先 `git merge --no-ff task-73`（须含 `68a07c5e` / `3a1aa766` / `891235c1`；有冲突停止报告）。
+- 冻结接口与 10 条必钉行为：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-6-brief.md`。
+- 允许写：新增 `router_event_sources.go` 与其测试，改 `service_activities.go` / `workflow_runtime.go` / `workflow_driver.go` / `workflow_recovery.go` / `service_recover_startup.go` 的钩子点；不改 Router 决策与应用逻辑、T5 的 `router_event_*`、前端、docs、线上配置。
+- 报告：`task-80/.mindfs/dispatch/task-6-report.md`；提交信息 `Scope: G-MH`（登记由工头补）。
+- 派发（2026-11-18）：用户留言 `act_0192f4dce04935d0`，`workflow_choice=specified` + `workflow-blank:v1`；实际启动节点 `run-6cc5d8c70156c1b3:execute::0:1`，claude / sonnet，会话 `1794991629-e435c8c72f95`，status=running。
 
 
