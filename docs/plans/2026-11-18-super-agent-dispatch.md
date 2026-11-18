@@ -15,7 +15,7 @@
 | T3 P1 修复 | 依赖 T2 后定稿并派发 | T2 → T3，工头集成测试提交 | worker branch + task-3-report.md | T2 红转绿 + 原守卫测试 | 根因未确认不改源码 | 实现 1 | 已完成：T2 红转绿、两项竞态 + 直连摘要守卫；集成 `8cace21e`、`47785ee6` |
 | T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | 已完成：R0 PASS（最终代码 7/7） |
 | T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | 已完成：13 例全绿，集成 `68a07c5e`；工头补迁移/级联 `3a1aa766` |
-| T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | running：#80 |
+| T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | pending |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | pending |
 | T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | pending |
@@ -33,8 +33,9 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 
 ## 解锁状态
 
-- R1 T5：**已解锁并在跑**（#79，接口已冻结，见「T5 实例」）。
-- R1 T6–T10：逐项等待前一项交付后由工头冻结 brief 再派发；未补全实际 task id/worktree/报告路径不得派发。
+- R1 T5：**已完成并集成**（#79，账本 + 工头补的迁移/级联，见「T5 结果」）。
+- R1 T6：**已完成并集成**（#80，事件生产 + 硬线拆分，见「T6 结果」）。
+- R1 T7–T10：逐项等待前一项交付后由工头冻结 brief 再派发；未补全实际 task id/worktree/报告路径不得派发。T7 的 brief 必须带上 T6 留下的扫描窗口约束（见「T6 结果」第 3 条）。
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -254,3 +255,15 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 派发（2026-11-18）：用户留言 `act_0192f4dce04935d0`，`workflow_choice=specified` + `workflow-blank:v1`；实际启动节点 `run-6cc5d8c70156c1b3:execute::0:1`，claude / sonnet，会话 `1794991629-e435c8c72f95`，status=running。
 
 
+- 节点收尾：status=success，提交 `4ec3d41b feat(kanban): 从权威状态产出 Router 生命周期事件（Scope: G-MH）`，工作区干净。
+
+### T6 结果（2026-11-18）：PASS
+
+- **交付**：`router_event_sources.go`（`ScanRouterEventSources` + `emitRouterEvent` + Router-owned 判据 + 有界 payload + 确定性 TurnID + 进程内 stall 观测）与 10 条行为测试；四处生命周期钩子（结算窗口、操作员终态、HumanGate 物化、启动对账）。工作区 `task-80` HEAD `4ec3d41b`，1038 insertions / 1 deletion。
+- **10 条行为逐条 PASS**（工头独立复跑定向 10.039s 绿，读码核对）：幂等 settled、failed 独立行、gate 按 attempt、显式/legacy 只写 Notes、结算窗口可补齐且与钩子同键、stall 七子例只认明确证据、5 分钟桶去重、扫描前后权威表逐行 dump 相等、取消/暂停不产结算、迁移幂等。
+- **RED 诚实性**：9/10 可打红；行为 9 是负向断言（stub 天然满足），worker 在报告里明写「RED 无法把它打红」，未拿它冒充证明。
+- **工头复核**：四个钩子均为「先落权威状态、再写事件」，失败只记日志由扫描补齐；`settleWorkflowReply` 的调用点放在 `workflowReplyOutcome` 之前有报告解释且成立（终态来自任务行，投影不完整时后者会提前 return）；`finishWorkflowRunByOperator` 的 `-1` 行是返回值重构，无行为变化；启动对账只在 `open>0` 时产事件且不改任务状态。
+- **硬线处置（`c35ae226`）**：`workflow_runtime.go`（基线 501 → T6 前 508 → 515）与 `service_activities.go`（基线 534 → 538）**在 T6 之前就已超 500 行硬线**，`docs/agent/rules/backend/file-size.md` 无存量豁免，T6 又各追加钩子。按职责纯移动拆出 `workflow_runtime_cancel.go`（66 行，取消/中断收尾）与 `service_activity_output_text.go`（126 行，节点输出可读文本），拆分后 459 / 421 行；`go vet`/`gofmt` 干净、`go test -p 1 ./server/internal/kanban/` 123.762s 全绿。
+- **集成**：`git merge --no-ff task-80` → `df074149`；登记 G-MH（`c35ae226` 内），锚点逐条核对命中；`make check-upstream` **1894 delta / 308 组**绿。拆分同时迁移 G-LN 的 `nodeRunOutputSummary`、G-LX 的 `"route": true,` 两个锚点。
+- **交给 T7 的约束（不是 T6 缺陷）**：扫描当前遍历 root 下**全部** Run（含历史终态），每个 Run 4–5 次读 + 一次 `InsertEvent` 尝试。30s 循环接线前必须给扫描加窗口（未终态 Run + 近期终态，或先按唯一键判存在再插入），否则长寿命 root 每拍都付 O(全部历史 Run) 的 SQLite 写锁代价。
+- **残留（非阻断）**：stall 观测存进程内，重启后需重新累计两轮；`startup_reconcile` 对所有 open 的 Router-owned Run 产生（含 paused，仅读不改）；worker 用普通 `git merge` 而非 `--no-ff`（仅历史形状，集成侧已用 `--no-ff`）；新测试文件恰 500 行、无余量。
