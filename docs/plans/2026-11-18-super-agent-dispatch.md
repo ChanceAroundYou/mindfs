@@ -16,7 +16,7 @@
 | T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | 已完成：R0 PASS（最终代码 7/7） |
 | T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | 已完成：13 例全绿，集成 `68a07c5e`；工头补迁移/级联 `3a1aa766` |
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
-| T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | pending |
+| T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | 已派发（2026-11-18）：brief 冻结，MindFS #81 / `task-81` |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | pending |
 | T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | pending |
 | T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | pending |
@@ -35,7 +35,8 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 
 - R1 T5：**已完成并集成**（#79，账本 + 工头补的迁移/级联，见「T5 结果」）。
 - R1 T6：**已完成并集成**（#80，事件生产 + 硬线拆分，见「T6 结果」）。
-- R1 T7–T10：逐项等待前一项交付后由工头冻结 brief 再派发；未补全实际 task id/worktree/报告路径不得派发。T7 的 brief 必须带上 T6 留下的扫描窗口约束（见「T6 结果」第 3 条）。
+- R1 T7：**已派发**（#81，brief 已冻结，见「T7 实例」）；交付前 T8–T10 保持 gated。
+- R1 T8–T10：逐项等待前一项交付后由工头冻结 brief 再派发；未补全实际 task id/worktree/报告路径不得派发。
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -267,3 +268,13 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - **集成**：`git merge --no-ff task-80` → `df074149`；登记 G-MH（`c35ae226` 内），锚点逐条核对命中；`make check-upstream` **1894 delta / 308 组**绿。拆分同时迁移 G-LN 的 `nodeRunOutputSummary`、G-LX 的 `"route": true,` 两个锚点。
 - **交给 T7 的约束（不是 T6 缺陷）**：扫描当前遍历 root 下**全部** Run（含历史终态），每个 Run 4–5 次读 + 一次 `InsertEvent` 尝试。30s 循环接线前必须给扫描加窗口（未终态 Run + 近期终态，或先按唯一键判存在再插入），否则长寿命 root 每拍都付 O(全部历史 Run) 的 SQLite 写锁代价。
 - **残留（非阻断）**：stall 观测存进程内，重启后需重新累计两轮；`startup_reconcile` 对所有 open 的 Router-owned Run 产生（含 paused，仅读不改）；worker 用普通 `git merge` 而非 `--no-ff`（仅历史形状，集成侧已用 `--no-ff`）；新测试文件恰 500 行、无余量。
+
+### T7 实例
+
+- MindFS #81 / `task_da47cdee31bdd769`；worktree `/home/xiaokubao/projects/mindfs/.worktree/task-81`，分支 `task-81`（创建基线 `7f1b60ee`）。
+- Worker 必须先 `git merge --no-ff task-73`（须含 `df074149` / `c35ae226` / `060f2b70`；有冲突停止报告）。
+- 冻结接口、12 条必钉行为、允许文件与边界：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-7-brief.md`。
+- 关键冻结决策：coordinate 用户留言沿用 route；运行期事件只允许 `say` / `ask_user` / `silent`（`inspect_run` 为只读工具），四类执行/转交动作在校验阶段拒绝且不回落旧路径；每条原始留言最多 3 个 Router 回合，链深度 >3、预算耗尽、stall 证据失效、缺 originating user activity 一律 `skipped` 且不调模型；事件回合按 `event.TurnID` 复用决策幂等，崩溃后按 applied/applying/rejected 三态 replay，先副作用后 `CompleteEvent`；30s 循环使用**有界扫描**（`updated_at` 1h 内 ∪ 含 open NodeRun 的 Run），不再每拍遍历全部历史 Run（T6 约束）；`router_service.go` 已 499 行，允许把 `routerAgreement` 纯移动到 `router_agreement.go`，最终必须 ≤500。
+- 报告：`task-81/.mindfs/dispatch/task-7-report.md`；提交信息 `Scope: G-MI`（登记由工头补）。
+- 派发（2026-11-18）：用户留言 `act_f0d9055e85645016`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-276635592ec27a89` 节点 `execute` 启动，会话 `1794994523-fd2c47cdca2c`，进程 cwd 已核对为 `task-81`，status=running。
+- 交接给 T7 的既有约束：T6 扫描窗口（见上）；`service_activities.go` / `workflow_runtime.go` 刚拆分，改动前先看新文件位置。
