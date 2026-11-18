@@ -38,7 +38,8 @@ func (s *TaskStore) checkRouteDirectGate(ctx context.Context, taskID string) err
 
 // A reply may already be visible when its result projection runs. Keep a pause
 // or completion that committed in that interval authoritative for the task card.
-func (s *TaskStore) recordRouteReplySummary(ctx context.Context, taskID, body string) error {
+// The status list must stay in sync with routeTaskStatusError above.
+func (s *TaskStore) recordReplySummaryIfActive(ctx context.Context, taskID, body string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tasks SET result_summary=?, updated_at=? WHERE id=? AND status NOT IN (?,?,?,?)`,
 		truncateSummary(body), s.now().UTC().Format(time.RFC3339Nano), taskID,
