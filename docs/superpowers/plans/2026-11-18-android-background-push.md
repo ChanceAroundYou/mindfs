@@ -440,4 +440,15 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 - `make test-android`（`ANDROID_HOME=$HOME/Android/Sdk`）：BUILD SUCCESSFUL。
 - `make check-upstream`：✓ 1873 个 delta 文件被 306 组完整覆盖（登记提交后复跑）。
 
+**全分支评审 + 修复波（2026-11-18）：** 终审结论「可合并」，另提 3 条 Important，均已修并做了一次限定范围复审（A–G 全部 ADDRESSED、零回归）：
+
+| 提交 | 内容 |
+|---|---|
+| `dd8a91c3` | 顶层 `waitUrl` 贯通两条 bridge 到服务端兜底（不再拼 `"/wait"`）；`failNode` 区分「瞬时失败」与「判定掉线」（瞬时只按 90s 新鲜度衰减，不再一失败就闪）；503 按 `Retry-After` 退避且不计入降级计数；apply/刷新路径补 generation 校验 |
+| `73911594` | 补 `TestReplyingWaitRefreshElapsedUnchangedKeepsWaiting`（刷新到点但载荷未变必须继续等，变异验证会红） |
+| `a28bd445` | `conditional-request.test.mjs` 负例锚点重指向当前调用形状 |
+| `19b84cdc` | `make test-android` 补 `$(ANDROID_GRADLE_ENV)` 与 SDK 守卫 |
+
+复审残留（仅登记，不修）：`ReplyPollerService` 对 `apiBaseUrl` 有本地 shell 来源守卫、对 `waitUrl` 没有——只在开发构建用 localhost 且已持久化真实 base 时可达，线上下发配置（`capacitor.config.json` 为 `https://home.xiaokubao.space/mindfs/`）不可达。
+
 **仍未完成（需用户执行）：** Step 5 部署（`bash scripts/deploy-all.sh`，本机 `sudo systemctl restart mindfs` 仅用户）、Step 6 外网代理超时实测、Step 7 APK 出包与真机验收（后台秒级响铃、常驻通知点击直达/多会话只开 App）。
