@@ -74,6 +74,22 @@ func routerConfigFromOptions(opts StartOptions) kanban.RouterConfig {
 	}.Normalized()
 }
 
+// newWaitAwareServer 构造 HTTP server，并让每个请求的上下文派生自一个可取消的
+// BaseContext。长轮询端点会让 handler 阻塞十几秒；关停时只调 Shutdown 的话，
+// 它要等这些 handler 自然结束，部署/重启就被拖慢。返回的 cancelWait 在 Shutdown
+// 之前调用即可让在途请求立刻返回。
+func newWaitAwareServer(addr string, handler http.Handler) (*http.Server, context.CancelFunc) {
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		BaseContext: func(net.Listener) context.Context {
+			return waitCtx
+		},
+	}, cancelWait
+}
+
 // Start boots the HTTP/WS server.
 func Start(ctx context.Context, addr string, opts StartOptions) error {
 	agentConfig, err := agent.LoadConfigWithExtra(opts.AgentConfigPath)
@@ -177,11 +193,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 
 	handler := api.LoggingMiddleware(mux)
 
-	server := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	server, cancelWait := newWaitAwareServer(addr, handler)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -196,6 +208,8 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		if primary.Agents != nil {
 			primary.Agents.CloseAll()
 		}
+		// 先取消请求上下文：长等待端点立刻返回，Shutdown 不必等它们超时。
+		cancelWait()
 		server.Shutdown(context.Background())
 	}()
 
