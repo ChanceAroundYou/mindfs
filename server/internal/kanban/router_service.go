@@ -29,8 +29,13 @@ type RouterService struct {
 
 	mu    sync.Mutex
 	lanes map[string]*routerLane
-	// closed 用于进程退出/测试时让空闲清扫停止。
+	// closed 用于进程退出/测试时让空闲清扫与 coordinate 循环停止。
 	closed chan struct{}
+	// coordinate 专用：事件领取者标识与循环运行标志。
+	claimerID         string
+	coordinateMu      sync.Mutex
+	coordinateRunning bool
+	coordinateDone    chan struct{}
 }
 
 type routerLane struct {
@@ -50,19 +55,29 @@ func newRouterService(service *Service, rootID string, config RouterConfig, stor
 		rs.store = NewRouterStore(store.db)
 	}
 	config = config.Normalized()
-	if config.IdleClose > 0 && config.ModeForRoot(rootID) != RouterModeOff {
+	mode := config.ModeForRoot(rootID)
+	if config.IdleClose > 0 && mode != RouterModeOff {
 		go rs.sweepIdleSessions(config.IdleClose)
 	}
 	// route 模式的 apply 是「先落 applying、再逐条应用」。进程死在中间时这些行
 	// 永远不会自己前进，启动时统一标 failed，避免界面/诊断看到永久的 applying。
-	if rs.store != nil && config.ModeForRoot(rootID) != RouterModeOff {
+	// coordinate 的事件决策不能用同一把扫帚：applying 表示事件还没落终态，必须
+	// 留给 replay 重新应用，所以只回收用户留言那一类。
+	if rs.store != nil && mode != RouterModeOff {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if n, err := rs.store.RecoverApplyingDecisions(ctx, "router apply interrupted by process restart"); err != nil {
+		recover := rs.store.RecoverApplyingDecisions
+		if mode == RouterModeCoordinate {
+			recover = rs.store.recoverInterruptedUserMessageDecisions
+		}
+		if n, err := recover(ctx, "router apply interrupted by process restart"); err != nil {
 			log.Printf("[router] recover.applying.error root=%s err=%v", rootID, err)
 		} else if n > 0 {
 			log.Printf("[router] recover.applying root=%s count=%d", rootID, n)
 		}
 		cancel()
+	}
+	if mode == RouterModeCoordinate {
+		rs.startCoordinate()
 	}
 	return rs
 }
@@ -83,7 +98,14 @@ func (rs *RouterService) Enqueue(trigger RouterTrigger) {
 	}
 	config := rs.service.RouterConfig()
 	mode := config.ModeForRoot(rootID)
-	if mode != RouterModeShadow && mode != RouterModeRoute {
+	// coordinate 是 route 的超集：用户留言沿用同步占位 + 动作应用，运行期事件
+	// 只允许汇报类动作。事件令在非 coordinate 模式下保持 pending，绝不调模型。
+	if trigger.Event != nil {
+		if mode != RouterModeCoordinate {
+			return
+		}
+		trigger.Mode = RouterModeCoordinate
+	} else if mode != RouterModeShadow && mode != RouterModeRoute && mode != RouterModeCoordinate {
 		return
 	}
 	if trigger.Mode == "" {
@@ -182,19 +204,27 @@ func (rs *RouterService) Close() {
 	default:
 		close(rs.closed)
 	}
+	rs.waitCoordinateLoop(routerCoordinateRecoverTimeout)
 }
 
 func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 	if rs.store == nil || rs.service == nil {
 		return
 	}
+	if trigger.Event != nil {
+		// 运行期事件回合与用户留言共用 lane，但语义不同：动作白名单只有汇报，
+		// 任何失败落事件终态，绝不回落旧路径。
+		rs.runCoordinateEventTurn(taskID, trigger)
+		return
+	}
 	ctx := context.Background()
 	config := rs.service.RouterConfig().Normalized()
-	routeMode := trigger.Mode == RouterModeRoute
+	// applyMode = 这一轮的动作真的会落可见副作用（route 与 coordinate 留言）。
+	applyMode := trigger.Mode == RouterModeRoute || trigger.Mode == RouterModeCoordinate
 	started := time.Now()
 	decisionID := newID("rdec")
 	status := RouterDecisionShadow
-	if routeMode {
+	if applyMode {
 		status = RouterDecisionApplying
 	}
 	decision := &RouterDecision{
@@ -210,7 +240,7 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 		TurnID:                trigger.TurnID,
 		Status:                status,
 	}
-	if !routeMode {
+	if !applyMode {
 		decision.LegacyAction = trigger.LegacyAction
 	}
 	if decision.RootID == "" {
@@ -218,10 +248,10 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 	}
 	brief, err := rs.turnBrief(ctx, taskID, trigger, config)
 	if err != nil {
-		rs.finishFallback(ctx, decision, started, err, routeMode)
+		rs.finishFallback(ctx, decision, started, err, applyMode)
 		return
 	}
-	if err := routeTaskStatusError(brief.Task.Status); routeMode && err != nil {
+	if err := routeTaskStatusError(brief.Task.Status); applyMode && err != nil {
 		decision.Status = RouterDecisionRejected
 		decision.Error = err.Error()
 	}
@@ -251,7 +281,7 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 
 	agent := rs.agent()
 	if agent == nil {
-		rs.finishFallback(ctx, decision, started, errors.New("router agent unavailable"), routeMode)
+		rs.finishFallback(ctx, decision, started, errors.New("router agent unavailable"), applyMode)
 		return
 	}
 	promptHash := RouterPromptHash()
@@ -287,7 +317,7 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 			SessionKey: sessionKey, Agent: config.Agent, Model: config.Model, Effort: config.Effort,
 			PromptHash: promptHash, Status: RouterSessionFailed, LastError: err.Error(), LastTurnAt: time.Now().UTC(),
 		})
-		rs.finishFallback(ctx, decision, started, err, routeMode)
+		rs.finishFallback(ctx, decision, started, err, applyMode)
 		return
 	}
 	decision.RouterSessionKey = result.SessionKey
@@ -298,10 +328,10 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 	if synthErr != nil {
 		// 空回合不是「故意沉默」：显式 silent 只能来自 router_silent 工具。
 		// 没有决策就把这一轮交回旧路径，避免用户留言被隐藏占位吞掉。
-		rs.finishFallback(ctx, decision, started, synthErr, routeMode)
+		rs.finishFallback(ctx, decision, started, synthErr, applyMode)
 		return
 	}
-	if routeMode {
+	if applyMode {
 		rs.finishRouteTurn(ctx, config, promptHash, brief, decision, result, actions, latency)
 		return
 	}
@@ -457,10 +487,3 @@ func (rs *RouterService) broadcast(decision *RouterDecision) {
 		broadcaster.RouterDecisionUpdated(decision.RootID, decision.TaskID, decision)
 	}
 }
-
-// routerAgreement 是 shadow 的可解释比较：
-//   - legacy 失败/不可判定 -> unknown；
-//   - legacy workflow vs run_workflow：同 workflow -> match，否则 mismatch；
-//   - legacy direct vs message_agent -> match；
-//   - legacy none vs silent -> match；
-//   - 其余组合 -> mismatch。

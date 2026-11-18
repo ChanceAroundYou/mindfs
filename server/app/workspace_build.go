@@ -153,6 +153,11 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		} else if plan.NeedsUser {
 			log.Printf("[kanban/recover] root=%s needs-user unknown=%v", root.ID, plan.UnknownIDs)
 		}
+		// coordinate 模式：启动对账之后再构造 Router runtime，让事件循环立即
+		// 接管 startup_reconcile 与结算事件；其它模式维持按需懒构造。
+		if services.Kanban.RouterConfig().ModeForRoot(root.ID) == kanban.RouterModeCoordinate {
+			services.Kanban.RouterServiceForRoot(root.ID)
+		}
 	}
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
