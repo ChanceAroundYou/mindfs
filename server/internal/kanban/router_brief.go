@@ -35,6 +35,10 @@ type SituationBrief struct {
 	Workflows        []RouterBriefWorkflow `json:"workflows,omitempty"`
 	Limits           RouterBriefLimits     `json:"limits"`
 	PolicyHints      []string              `json:"policy_hints,omitempty"`
+	// 运行期事件回合的三段证据（Plan 2026-11-18，R1 T8）。用户留言回合保持 nil。
+	Event    *RouterBriefEvent    `json:"event,omitempty"`
+	Evidence *RouterBriefEvidence `json:"evidence,omitempty"`
+	Budget   *RouterBriefBudget   `json:"budget,omitempty"`
 }
 
 type RouterBriefTask struct {
@@ -139,6 +143,14 @@ func (rs *RouterService) turnBrief(ctx context.Context, taskID string, trigger R
 	brief, err := buildSituationBrief(ctx, store, rs.service.Workflows, config, task, trigger.Kind, trigger.UserActivityID)
 	if err != nil {
 		return nil, fmt.Errorf("build brief: %w", err)
+	}
+	// 运行期事件回合补证据三段；事件语义与用户留言不同，必须单独挂载后再按
+	// 事件顺序重新裁剪（buildSituationBrief 只认用户回合的裁剪顺序）。
+	if trigger.Event != nil {
+		if err := attachRouterEventBrief(ctx, store, brief, *trigger.Event); err != nil {
+			return nil, fmt.Errorf("attach event brief: %w", err)
+		}
+		brief = capSituationBrief(brief)
 	}
 	return brief, nil
 }
@@ -350,6 +362,13 @@ func capSituationBrief(brief *SituationBrief) *SituationBrief {
 	if briefSize(brief) <= routerBriefMaxBytes {
 		return brief
 	}
+	// 事件 brief 的补充顺序：证据节点条数先收缩，再丢最近活动，然后缩节点摘要，
+	// 再缩用户原始要求，最后缩未验证项。任何证据裁剪都要置 Evidence.Truncated。
+	if trimRouterEventNodes(brief, routerEventBriefKeptNodes) {
+		if briefSize(brief) <= routerBriefMaxBytes {
+			return brief
+		}
+	}
 	for len(brief.RecentActivities) > 0 && briefSize(brief) > routerBriefMaxBytes {
 		brief.RecentActivities = brief.RecentActivities[1:]
 	}
@@ -359,10 +378,58 @@ func capSituationBrief(brief *SituationBrief) *SituationBrief {
 		}
 		activity.BodyExcerpt = truncateRouterText(activity.BodyExcerpt, 200)
 	}
+	trimRouterEventExcerpts(brief)
 	if brief.Trigger.UserMessage != nil && briefSize(brief) > routerBriefMaxBytes {
-		brief.Trigger.UserMessage.Body = truncateRouterText(brief.Trigger.UserMessage.Body, 2000)
+		brief.Trigger.UserMessage.Body = truncateRouterText(brief.Trigger.UserMessage.Body, routerEventBriefUserMessageLimit)
 	}
+	trimRouterEventUnverified(brief)
 	return brief
+}
+
+// trimRouterEventNodes 把证据节点收缩到 keep 条并累计被省略数；返回是否有裁剪。
+func trimRouterEventNodes(brief *SituationBrief, keep int) bool {
+	if brief == nil || brief.Event == nil || brief.Evidence == nil || len(brief.Evidence.Nodes) <= keep {
+		return false
+	}
+	omitted := len(brief.Evidence.Nodes) - keep
+	brief.Evidence.Nodes = brief.Evidence.Nodes[:keep]
+	brief.Evidence.OmittedNodes += omitted
+	brief.Evidence.Truncated = true
+	return true
+}
+
+// trimRouterEventExcerpts 把节点摘要压到 200 字节；返回是否有裁剪。
+func trimRouterEventExcerpts(brief *SituationBrief) bool {
+	if brief == nil || brief.Event == nil || brief.Evidence == nil {
+		return false
+	}
+	trimmed := false
+	for i := range brief.Evidence.Nodes {
+		node := &brief.Evidence.Nodes[i]
+		if len(node.OutputExcerpt) > 200 {
+			node.OutputExcerpt = truncateRouterText(node.OutputExcerpt, 200)
+			trimmed = true
+		}
+		if len(node.ErrorExcerpt) > 200 {
+			node.ErrorExcerpt = truncateRouterText(node.ErrorExcerpt, 200)
+			trimmed = true
+		}
+	}
+	if trimmed {
+		brief.Evidence.Truncated = true
+	}
+	return trimmed
+}
+
+// trimRouterEventUnverified 把未验证项压到最后 5 条；返回是否有裁剪。
+func trimRouterEventUnverified(brief *SituationBrief) bool {
+	if brief == nil || brief.Event == nil || brief.Evidence == nil ||
+		len(brief.Evidence.Unverified) <= routerEventBriefKeptUnverifd {
+		return false
+	}
+	brief.Evidence.Unverified = brief.Evidence.Unverified[:routerEventBriefKeptUnverifd]
+	brief.Evidence.Truncated = true
+	return true
 }
 
 func briefSize(brief *SituationBrief) int {

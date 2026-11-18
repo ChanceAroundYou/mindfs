@@ -129,6 +129,9 @@ func (s *ActivityService) applyRouteAction(
 
 // applyRouteSay 渲染 Router 的直接回复。第一条 say 复用同步占位（用户已经
 // 看到「正在想」的那条），之后每条新起一条活动，Ordinal 保序。
+//
+// 运行期事件回合没有占位，用确定 effect ID 插入并 InsertOrIgnore：同一决策/动作
+// 重复应用必须落成同一行，绝不出现第二条可见汇报。
 func (s *ActivityService) applyRouteSay(
 	ctx context.Context,
 	decision *RouterDecision,
@@ -143,13 +146,16 @@ func (s *ActivityService) applyRouteSay(
 	}
 	act := state.take()
 	if act == nil {
+		effectID := routeEffectActivityID(decision, action)
 		act = s.newAgentActivity(task, CommentWorkflowChoiceEmpty)
+		if effectID != "" {
+			act.ID = effectID
+		}
 		act.Body = body
 		act.Status = ActivityStatusCompleted
-		if err := s.activities.Insert(ctx, act); err != nil {
+		if err := s.insertRouteReply(ctx, act, effectID != ""); err != nil {
 			return err
 		}
-		s.broadcastCreated(act)
 	} else {
 		if err := s.activities.UpdateBody(ctx, act.ID, body); err != nil {
 			return err
@@ -201,13 +207,16 @@ func (s *ActivityService) applyRouteAskUser(
 	}
 	act := state.take()
 	if act == nil {
+		effectID := routeEffectActivityID(decision, action)
 		act = s.newAgentActivity(task, CommentWorkflowChoiceEmpty)
+		if effectID != "" {
+			act.ID = effectID
+		}
 		act.Body = body
 		act.Status = ActivityStatusWaitingUser
-		if err := s.activities.Insert(ctx, act); err != nil {
+		if err := s.insertRouteReply(ctx, act, effectID != ""); err != nil {
 			return err
 		}
-		s.broadcastCreated(act)
 	} else {
 		if err := s.activities.UpdateBody(ctx, act.ID, body); err != nil {
 			return err
@@ -328,7 +337,41 @@ func (s *ActivityService) hideRouteActivity(ctx context.Context, state *routeApp
 	return nil
 }
 
-// markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。
+// routeEffectActivityID 给出运行期事件回合的确定活动 ID。用户留言保持既有语义：
+// 复用同步占位，或每次新起随机 ID 的活动。
+func routeEffectActivityID(decision *RouterDecision, action RouterAction) string {
+	if decision == nil || decision.TriggerKind == RouterTriggerUserMessage {
+		return ""
+	}
+	return routerEventEffectID(decision.ID, action.Seq)
+}
+
+// insertRouteReply 插入一条回复活动。确定 ID 路径用 InsertOrIgnore：已存在同一行
+// 时只更新正文/状态（可广播 updated），不插第二行、不广播 created。
+func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivity, deterministic bool) error {
+	if !deterministic {
+		if err := s.activities.Insert(ctx, act); err != nil {
+			return err
+		}
+		s.broadcastCreated(act)
+		return nil
+	}
+	created, err := s.activities.InsertOrIgnore(ctx, act)
+	if err != nil {
+		return err
+	}
+	if created {
+		s.broadcastCreated(act)
+		return nil
+	}
+	if err := s.activities.UpdateBody(ctx, act.ID, act.Body); err != nil {
+		return err
+	}
+	return s.activities.UpdateStatus(ctx, act.ID, act.Status, nil)
+}
+
+// markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。运行期事件的
+// 汇报默认 purpose=progress；用户留言仍是 reply 或调用方指定值。
 func (s *ActivityService) markRouteReply(
 	ctx context.Context,
 	decision *RouterDecision,
@@ -339,6 +382,9 @@ func (s *ActivityService) markRouteReply(
 	purpose := strings.TrimSpace(action.Purpose)
 	if purpose == "" {
 		purpose = "reply"
+		if decision.TriggerKind != RouterTriggerUserMessage {
+			purpose = "progress"
+		}
 	}
 	if err := s.activities.SetRouteFields(ctx, act.ID, decision.ID, userAct.ID, purpose, action.Seq); err != nil {
 		return nil, err
