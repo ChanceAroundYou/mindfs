@@ -9200,3 +9200,25 @@ groups:
       - 'server/internal/kanban/router_coordinate_turn.go:if len(decision.Actions) == 0 && decision.AppliedSeq == 0 && strings.TrimSpace(decision.RouterSessionKey) == "" {'
       - 'server/internal/kanban/router_coordinate_turn_test.go:func TestCoordinatorReplayRepairsUnwrittenRuntimeEffect(t *testing.T) {'
       - 'server/internal/kanban/router_coordinate_turn_test.go:func TestCoordinatorReplayRetriesInterruptedModelTurn(t *testing.T) {'
+
+  # ── Router 并发/重启故障矩阵（T9）：只加测试，钉住恢复语义 ──
+  - id: G-ML
+    title: Router 运行期事件的并发与重启恢复矩阵（测试）
+    kind: fix
+    symptom: "coordinate 模式的恢复语义（重启回收 claimed、确定 effect 幂等、CAS 单次领取、预算跨重启、无法重放即终态）没有回归网：任何一处被改坏，表现都是「重启后少一条汇报」或「同一事件汇报两遍」，线上没有可见报错，只能翻账本才发现。"
+    why: "用户授权的 R1 要求无丢事件、无重复可见回复、无盲目外部执行；T7/T8 的用例只覆盖同进程内的 replay，跨进程重启与并发领取没有任何断言。T9 的 8 条行为只写测试、生产代码零改动，并用 6 个缺陷注入（含 1 个加严变体）证明每条关键保护都承重：去掉 `RecoverClaimedEvents`、`ClaimEvent` 去掉 status 条件、effect ID 退回随机、删预算分支、failed 分支也 retry、去掉运行期终态豁免，各自都能打红对应用例。"
+    boundary: "只新增 `router_coordinate_recovery_test.go`；不覆盖 OS 级 kill -9、SQLite 语句中途崩溃、真实双进程、30s 循环时钟注入，也不宣称 R3 通用副作用恢复（外部执行/投递/merge/gate 审批）。T7 已知的扫描窗口取舍（早于 1h 且无 open NodeRun）不在范围内。"
+    files:
+      - server/internal/kanban/router_coordinate_recovery_test.go
+    tests:
+      - server/internal/kanban/router_coordinate_recovery_test.go
+    anchors:
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryPendingEventSurvivesRestart(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryClaimedEventRequeuedAfterRestart(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryEffectBeforeCursorDoesNotDuplicate(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryConcurrentClaimSingleEffect(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryDelayedOldRunEventKeepsNewRun(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryPausedAndTerminalTaskStillReports(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryBudgetSurvivesRestart(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryUnreplayableDecisionFailsWithoutModelCall(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_recovery_test.go:func (f *coordinateFixture) restartRouter(t *testing.T) *RouterService {'
