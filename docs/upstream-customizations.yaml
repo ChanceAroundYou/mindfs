@@ -7833,6 +7833,7 @@ groups:
       - server/internal/kanban/workflow_driver_loop.go
       - server/internal/kanban/workflow_recovery.go
       - server/internal/kanban/workflow_runtime.go
+      - server/internal/kanban/workflow_runtime_cancel.go
       - server/internal/kanban/workflow_comments.go
       - server/internal/kanban/workflow_human_gate.go
       - server/internal/kanban/task_store_workflow_events.go
@@ -7893,6 +7894,7 @@ groups:
       - 'server/internal/kanban/workflow_runtime.go:func (s *Service) CancelWorkflowRun('
       - 'server/internal/kanban/workflow_runtime.go:func (s *Service) finishWorkflowRunByOperator('
       - 'server/internal/kanban/workflow_runtime.go:func (s *Service) CreateWorkflowNodeAttempt('
+      - 'server/internal/kanban/workflow_runtime_cancel.go:func (s *Service) cancelOpenWorkflowNodeRuns('
       - 'server/internal/kanban/workflow_runtime.go:if fresh, ok, err := s.workflowRunForTask(ctx, store, task.ID); err == nil && ok {'
       - 'server/internal/kanban/workflow_runtime_test.go:func TestWorkflowCancelSettlesBoundReplyActivity('
       - 'server/internal/api/appcontext_workflow.go:profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)'
@@ -8271,6 +8273,7 @@ groups:
       - server/internal/kanban/activity_service_test.go
       - server/internal/kanban/activity_store.go
       - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service_activity_output_text.go
       - server/internal/kanban/service_user_turn.go
       - server/internal/kanban/service_comments.go
       - server/internal/kanban/worktree_finish_turn.go
@@ -8314,7 +8317,7 @@ groups:
       - 'server/internal/api/appcontext_activity.go:return s.runWorkflowTurn(ctx, req)'
       - 'server/internal/api/appcontext_activity.go:func pickDefaultAgent('
       - 'server/internal/kanban/service_user_turn.go:func (s *Service) PrepareNewUserTurn('
-      - 'server/internal/kanban/service_activities.go:func nodeRunOutputSummary('
+      - 'server/internal/kanban/service_activity_output_text.go:func nodeRunOutputSummary('
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) runFinishTurn('
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) acquireTaskFinish(rootID, taskID string) (func(), error)'
       - 'web/src/app/useAppKanbanColumns.ts:const kanbanColumns: KanbanColumn[] = ['
@@ -9070,3 +9073,30 @@ groups:
       - 'server/internal/kanban/router_event_store.go:must be claimed before completing'
       - 'server/internal/kanban/task_store_migrate.go:migrateRouterEventTable(s.db)'
       - 'server/internal/kanban/router_store.go:DELETE FROM router_events WHERE task_id = ?'
+
+  # ── Router 生命周期事件生产（T6）：权威状态 → 幂等事件 ─────────────────────
+  - id: G-MH
+    title: Router 生命周期事件生产（扫描 + 生命周期钩子）
+    kind: feature
+    symptom: "事件账本有了表，但没有任何东西往里写：Run 结束/失败、HumanGate 进入等待、启动对账、节点卡住这些事实仍然只存在于各自的内存路径里，进程死在「状态已落库、事件未写」的窗口就永远补不上，coordinate 模式也没有可消费的事件流。"
+    why: "用户 2026-11-18 授权的 R1 计划（T6）要求事件只来自权威持久化状态。必须保留：① `ScanRouterEventSources` 以 Task/Run/NodeRun/Activity 为唯一事实来源，同一 now 区间重复调用只产首次那组事件；只写 `router_events`，不改 Task/Run/NodeRun/Activity、不推进游标；② Router-owned 判据唯一：`TriggeredBy != legacy_import` 且存在绑定该 Run、带 `router_decision_id` 的活动；显式/legacy Run 零事件且 Notes 记录跳过原因；③ 终态判定优先 Run 投影，只有该 Run 仍是任务当前绑定 Run 时才用任务行 success/fail 解释操作员 Complete/Fail（旧 Run 绝不借用新回合状态）；cancelled 永不产事件；④ gate 按 `nodeRunID:attempt` 去重、stall 只认探针连续两次 inactive（≥30s）、运行 ≥60s、有 SessionKey 的明确证据，并按 5 分钟桶去重；⑤ 钩子（结算窗口、操作员终态、gate 物化、启动对账）与扫描共用同一判据与唯一键，先落权威状态再写事件，写失败只记日志由扫描补齐；⑥ 事件 payload 有界（≤8KB、节点 ≤64、不含 output/session/git），TurnID 由 (runID, kind, instanceKey) 稳定派生，默认 `run_workflow` 之后的一轮回复不再被拆成多个 turn。"
+    boundary: "只产事件，不消费（T7 的 coordinate lane/预算）、不改 Router 决策与应用逻辑、不改 `router_prompt.md`、不新增 HTTP 端点、不启动后台扫描 goroutine（循环归 T7）。stall 观测是进程内加速器，不跨进程宣称 durable；重启后需重新累计两轮观测。"
+    files:
+      - server/internal/kanban/router_event_sources.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/workflow_driver.go
+      - server/internal/kanban/workflow_recovery.go
+      - server/internal/kanban/workflow_runtime.go
+    tests:
+      - server/internal/kanban/router_event_sources_test.go
+    anchors:
+      - 'server/internal/kanban/router_event_sources.go:func (s *Service) ScanRouterEventSources('
+      - 'server/internal/kanban/router_event_sources.go:func (s *Service) emitRouterEvent('
+      - 'server/internal/kanban/router_event_sources.go:func (s *Service) routerEventOriginForRun('
+      - 'server/internal/kanban/router_event_sources.go:if run.TriggeredBy == WorkflowTriggeredByLegacyImport {'
+      - 'server/internal/kanban/router_event_sources.go:routerEventStallMinRuntime = 60 * time.Second'
+      - 'server/internal/kanban/router_event_sources.go:return "revt-turn:" + hex.EncodeToString(sum[:8])'
+      - 'server/internal/kanban/service_activities.go:s.emitRunTerminalRouterEvent(ctx, store, run)'
+      - 'server/internal/kanban/workflow_driver.go:RouterEventGateWaiting, instanceKey'
+      - 'server/internal/kanban/workflow_recovery.go:RouterEventStartupReconcile'
+      - 'server/internal/kanban/workflow_runtime.go:s.emitOperatorOutcomeRouterEvent(ctx, store, run.ID, status)'
