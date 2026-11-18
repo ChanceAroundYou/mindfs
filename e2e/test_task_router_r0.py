@@ -38,6 +38,7 @@ import urllib.request
 BODY_LIMIT = 300
 DECISION_TIMEOUT = 240
 EXEC_TIMEOUT = 300
+CANCEL_SETTLE_TIMEOUT = 60
 POLL_INTERVAL = 2.0
 
 SCENARIO_NAMES = {
@@ -799,8 +800,32 @@ def scenario_fallback_timeout(client, induction):
     users = [a for a in items if a.get("role") == "user"]
     reused = bool(placeholder_final.get("run_id")) or placeholder_final.get("status") in ("completed", "running")
     single_execution = len(agent_rows) == 1 and len(nodes) <= 1 and len(users) == 1
-    passed = fallback and reused and single_execution and len(decisions) == 1
     cancel_note = client.cancel_task(task_id)
+    # D-3 守卫：取消/失败收尾后，可见的 agent 回复不能停在 running/pending。
+    # 首轮 S6 的取消路径用过期 Run 结算，复用的回复活动曾永久停在 running；
+    # 把「收尾后无残留」变成判据，而不是只记录取消请求本身。
+    try:
+        post_cancel = wait_for(
+            lambda: client.activities(task_id),
+            lambda acts: not any(
+                a.get("type") == "agent_reply"
+                and not a.get("hidden")
+                and (a.get("status") or "") in ("running", "pending")
+                for a in acts
+            ),
+            CANCEL_SETTLE_TIMEOUT,
+            what="visible agent replies settle after cancel",
+        )
+    except TimeoutError:
+        post_cancel = client.activities(task_id)
+    stuck = [
+        {"id": a.get("id"), "type": a.get("type"), "status": a.get("status"), "hidden": bool(a.get("hidden"))}
+        for a in post_cancel
+        if a.get("type") == "agent_reply"
+        and not a.get("hidden")
+        and (a.get("status") or "") in ("running", "pending")
+    ]
+    passed = fallback and reused and single_execution and len(decisions) == 1 and not stuck
     evidence = {
         "task_id": task_id,
         "request": body,
@@ -827,8 +852,18 @@ def scenario_fallback_timeout(client, induction):
         "engine": {"engine": engine.get("engine"), "workflow_run_id": engine.get("workflow_run_id")},
         "node_runs": [{"node_id": n.get("node_id"), "status": n.get("status")} for n in nodes],
         "cancel": cancel_note,
+        "cancel_settle": {
+            "wait_seconds": CANCEL_SETTLE_TIMEOUT,
+            "activities": [
+                {"id": a.get("id"), "type": a.get("type"), "status": a.get("status"), "hidden": bool(a.get("hidden"))}
+                for a in post_cancel
+            ],
+            "stuck_running": stuck,
+        },
     }
     notes = "" if passed else "期望：单次回退、复用同步占位、不重复执行；实际见 evidence。"
+    if stuck:
+        notes = "取消收尾后仍有可见 agent 回复停在 running/pending：" + json.dumps(stuck, ensure_ascii=False)
     return result(6, passed, evidence, int((time.time() - started) * 1000), notes)
 
 
