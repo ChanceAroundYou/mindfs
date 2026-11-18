@@ -211,6 +211,16 @@ brief 在 `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-9-brief.md`。冻�
 
 **验收:** R0/R1 逐项证据齐全、门禁通过、独立评审无未处理重要缺陷。
 
+**T10 派发（2026-11-18）**：MindFS #84 / `task_94ec32d147fcc1d6`，worktree `task-84`，
+brief 在 `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-10-brief.md`。冻结要点：
+只新增 `e2e/test_task_router_coordinate.py`（≤500 行、仅标准库，可选 `e2e/t10-iso-driver.sh`
+≤200 行），生产代码与既有测试零改动，发现真缺陷报 BLOCKED；隔离根 `/tmp/mindfs-r1-t10`、
+端口 7433、`MINDFS_ISO_KEEP=1`，隔离配置 coordinate + sonnet / effort low /
+`turn_timeout=180s`（T4 实测真实回合尾部 155.9s > 90s，只放宽隔离配置）；`router_events`
+无 HTTP 端点，只读 SQLite + `/router-decisions` 验证；四场景 A 需求→执行→主动汇报、
+B 中途留言有归宿、C 失败/gate 明确说明（普通留言不得批准、approve 200、重复 409）、
+D 仅重启隔离进程并核对 pending/claimed 与已有结果。
+
 ## 执行门禁与依赖
 
 T1 → T2 → T3 → T4 → R0 PASS → T5 → T6 → T7 → T8 → T9 → T10。

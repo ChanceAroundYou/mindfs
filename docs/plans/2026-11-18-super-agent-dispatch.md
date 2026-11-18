@@ -354,3 +354,4 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
   - 验证口径：`router_events` **没有 HTTP 端点**，只允许只读取 SQLite（`file:...?mode=ro`）+ `GET /api/tasks/{id}/router-decisions`；脚本入参 `--base/--user/--root/--db/--out/--scenarios`，结果 JSON `{scenario,pass,status,evidence,latency_ms,notes}`，退出码 0/1/2。
   - web 门禁允许 `blocked`（worktree 无 node_modules，只能符号链接主 checkout 的只读依赖后 `make build-web`），须写明原因；不跑 android/APK/deploy。
 - 报告：`task-84/.mindfs/dispatch/task-10-report.md`；提交信息 `test(e2e): 隔离真实 Router coordinate 闭环验收（Scope: G-MM）`（登记由工头补）。
+- 派发（2026-11-18）：用户留言 `act_b25cfa6f730e4ae8`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-577bf900a57d519d` 节点 `execute` 启动（`run-577bf900a57d519d:execute::0:1`，claude / sonnet，会话 `1795013048-26f8d5c14d71`），进程 pid 642911 的 `/proc/<pid>/cwd` 已核对为 `task-84`。
