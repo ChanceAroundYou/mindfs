@@ -9143,3 +9143,34 @@ groups:
       - 'server/internal/kanban/router_agreement.go:func routerAgreement(legacy *RouterLegacyAction, actions []RouterAction) string {'
       - 'server/internal/kanban/router_prompt.md:**运行期事件回合**'
       - 'server/app/workspace_build.go:if services.Kanban.RouterConfig().ModeForRoot(root.ID) == kanban.RouterModeCoordinate {'
+
+  # ── Router 运行期证据 brief 与里程碑汇报（T8）：事件回合只看自己的 Run ─────
+  - id: G-MJ
+    title: Router 运行期事件证据 brief 与确定性里程碑汇报
+    kind: feature
+    symptom: "T7 已经能让 coordinate 消费 Run 结束/失败/gate 等待/停摆/启动对账事件，但事件回合拿到的 SituationBrief 仍是用户留言那一套：LatestRun 是任务当前最新 Run（旧事件会拿新 Run 的节点顶替）、Workflows 列着可开的新执行、没有任何节点输出证据，模型只能凭事件类型编汇报；同时运行期 say 没有确定活动标识，重复应用同一决策会插出第二条可见汇报，甚至可能把旧 Run 的结果活动改写掉。"
+    why: "用户 2026-11-18 授权的 R1 计划（T8）要求汇报必须可追溯到真实节点结果。上游没有这条链路，必须保留：① 事件 brief 只读 `event.RunID` 那个 Run 的节点证据（`WorkflowRunByID` + `ListWorkflowNodeRuns`），并把 `LatestRun`/`ActiveExecution`/`Workflows` 置空——运行期动作本来就不许开新执行，给出别的 Run 或 workflow 目录只会让模型把汇报写错对象；Run 不存在时写 `run_status=missing` 与未验证项；② 证据有界：节点按 failed→waiting_user→running→queued→pending→cancelled→success 取前 20，输出摘要复用 `nodeRunOutputSummary` 截 800 字节、错误摘要 500 字节，事件载荷只保留白名单键、单值 500 字节、整包 2KB，任何裁剪都置 `Truncated` 并把省略数写出来；未验证项（终态任务下的非终态节点、成功无输出、失败无错误、停摆事件不宣告失败、gate 事件缺 waiting_user 节点、完成事件无成功节点）给模型直读，24KB 紧急裁剪后仍保留「还有 N 条」标记；③ 预算随 brief 下发（每条原始留言 ≤3 回合、链深度 ≤3），模型能自己看到还剩几轮；④ 运行期 say/ask_user 用确定 effect ID（`act-rtev-<sha256(decisionID:seq) 前 20>` + `InsertOrIgnore`），同一决策同一动作重复应用只落同一行、不广播第二条 created，`RunID` 恒为空、不写任务结果摘要，绝不通过任何方式绑成旧 Run 的结果活动；⑤ 运行期 say 默认 `purpose=progress`：工具默认值、模型只说话时合成的 say、应用层默认值三处都按事件语义改写，用户留言仍是 chat/reply；⑥ 事件回合不带 workflow 目录，所以 `router_run_workflow` 的目录可用性检查必须跳过事件 brief（`isRuntimeEventBrief`），让拒绝原因始终是运行期白名单那句「运行期事件回合不允许」，而不是误导性的「目录里没有这个 workflow」；⑦ 提示词补规则 11–14：只依据 brief.event/brief.evidence 汇报、未验证项按未验证描述、silent 必须说明理由、自然语言不输出 JSON/内部 ID。"
+    boundary: "只做汇报侧：不产事件（T6）、不做消费循环/预算闸门（T7）、不改事件账本语义与 `router_event_*store/sources/coordinate` 行为、不启新 Run、不直连 agent、不 cancel/retry/审批/merge、不新增 HTTP 端点、不改前端与线上配置。用户留言回合的 brief、活动语义、结果摘要写入保持不变；`router_tools.go` 只在事件 brief 分支跳过目录检查并调整 say 默认 purpose。"
+    files:
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/router_event_brief_test.go
+      - server/internal/kanban/router_event_effect_test.go
+    anchors:
+      - 'server/internal/kanban/router_event_brief.go:func attachRouterEventBrief(ctx context.Context, store *TaskStore, brief *SituationBrief, event RouterEvent) error {'
+      - 'server/internal/kanban/router_event_brief.go:routerEventBriefMaxNodes          = 20'
+      - 'server/internal/kanban/router_event_brief.go:func routerEventEffectID(decisionID string, seq int) string {'
+      - 'server/internal/kanban/router_brief.go:if trigger.Event != nil {'
+      - 'server/internal/kanban/router_brief.go:Event    *RouterBriefEvent    `json:"event,omitempty"`'
+      - 'server/internal/kanban/router_brief.go:func trimRouterEventUnverified(brief *SituationBrief) bool {'
+      - 'server/internal/kanban/activity_route_apply.go:func routeEffectActivityID(decision *RouterDecision, action RouterAction) string {'
+      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivity, deterministic bool) error {'
+      - 'server/internal/kanban/activity_route_apply.go:if purpose == "" {'
+      - 'server/internal/kanban/router_coordinate_turn.go:actions[i].Purpose = "progress"'
+      - 'server/internal/kanban/router_tools.go:func isRuntimeEventBrief(brief *SituationBrief) bool {'
+      - 'server/internal/kanban/router_prompt.md:**运行期事件只依据 `brief.event` 与 `brief.evidence` 汇报**'
