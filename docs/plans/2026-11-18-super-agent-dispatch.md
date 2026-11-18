@@ -13,8 +13,8 @@
 | T1 基线核查 | MindFS specified 空白执行，单 worker | 独立只读；不与工头重复审计 | `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-1-report.md` | 计划 T1 的 route 定向测试；逐项证据 | 权限/模型失败、超范围、同一路径连续两次失败即报告 | 只读 1 | 审计完成；缺口转 T2 |
 | T2 R0 回归 | specified 空白执行，Scope G-MC | T1 → T2，独立 worktree | worker branch + task-2-report.md | R0 集成用例及 RED/GREEN | fixture 无法稳定构造则 NEEDS_CONTEXT；不修源码 | 实现 1 | 已完成：三例 RED，审阅通过 |
 | T3 P1 修复 | 依赖 T2 后定稿并派发 | T2 → T3，工头集成测试提交 | worker branch + task-3-report.md | T2 红转绿 + 原守卫测试 | 根因未确认不改源码 | 实现 1 | 已完成：T2 红转绿、两项竞态 + 直连摘要守卫；集成 `8cace21e`、`47785ee6` |
-| T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | blocked：首轮 6/7，D-1..D-3 已修，待重跑 S5/S7 |
-| T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | pending |
+| T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | 已完成：R0 PASS（最终代码 7/7） |
+| T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | running：#79 |
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | pending |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | pending |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | pending |
@@ -31,9 +31,10 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 
 - 2026-11-18：通过本机 API 读取项目、工作流、health；创建 #73，调用 rebuild-worktree 成功；尚无代码实施或真实 route 验收通过声明。
 
-## 尚未解锁
+## 解锁状态
 
-- R1 T5–T10：等待 R0 门禁和接口定稿。
+- R1 T5：**已解锁并在跑**（#79，接口已冻结，见「T5 实例」）。
+- R1 T6–T10：逐项等待前一项交付后由工头冻结 brief 再派发；未补全实际 task id/worktree/报告路径不得派发。
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -214,5 +215,22 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 | D-4 | INFO | 真实回合尾部 155.9s > 90s 超时，退化为 fallback | 不修；作为 route 准入证据（生产仍 shadow） |
 
 - 门禁：`go test ./server/internal/kanban/`（110.570s）、`go test ./server/internal/api/`（24.126s）全绿；gofmt 对改动文件干净。
-- **尚未完成**：S5 与 S7 需在隔离实例上重跑确认（D-1 是唯一 fail 的直接原因，D-2 对应 S7 首轮异常）。R0 仍未 PASS，R1/T5 保持锁定。
+- **当时未完成**：S5 与 S7 需在隔离实例上重跑确认（D-1 是唯一 fail 的直接原因，D-2 对应 S7 首轮异常）。当时 R0 未 PASS、R1/T5 锁定；后续裁定见下。
+
+### T4 裁定（2026-11-18）：R0 PASS
+
+- 复核轮（HEAD `05aee6c3`）：S5 **PASS**（`continue_requests=consumed`、节点会话真实续聊回合、无 `agent required`）、S7 **PASS**（两条留言均产生真实动作与可见回复，`silent_turns=0`）。
+- S6 复验：1s 超时诱发 `fallback`（1,003ms）→ 取消后复用回复活动 **1.5ms 结算为 `cancelled`**，无 `running`/`pending` 残留（对照首轮同一路径 20s 后仍 `running`）。
+- 全量轮（产物 HEAD `8765b748`，产品代码与 `05aee6c3` 逐字节一致，差异仅验收脚本新增 `cancel_settle` 判据）：**七场景 7 pass / 0 fail / 0 blocked**，8 条真实决策延迟 p50 11,804ms / p95 22,527ms；隔离自证与收尾复验通过（7432 无监听、线上 health 200、`config.json`/`agents.json` 指纹全程一致）。
+- 结论：**R0 通过，解锁 R1**。残留（非阻断）：Router 占位在 deliver 后仍是 `hidden=true`+`pending`（用户不可见）；样本仅单机单账户、llmux 别名模型，不能外推生产分布；D-4（真实回合尾部 155.9s > 90s 超时）不修，生产仍 shadow。
+- 证据：`task-77/.mindfs/dispatch/task-4-report.md`（首轮 / 复核轮 / 全量轮三节）与 `task-4-run-final.json`；验收脚本 `e2e/test_task_router_r0.py` 已合入 `task-73`（`8608e60b`）。
+
+### T5 实例
+
+- MindFS #79 / `task_4a39f4fa385bbd34`；worktree `/home/xiaokubao/projects/mindfs/.worktree/task-79`，分支 `task-79`（创建基线 `7f1b60ee`）。
+- Worker 必须先 `git merge --no-ff task-73`（无冲突；有冲突停止报告）。
+- 冻结接口与八条必钉行为：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-5-brief.md`。
+- 允许写：`router_event_types.go`、`router_event_store.go` 与其测试；不改 Router 决策/应用逻辑、workflow runtime、docs、线上配置。
+- 报告：`task-79/.mindfs/dispatch/task-5-report.md`；提交信息 `Scope: G-MG`（登记由工头补）。
+
 
