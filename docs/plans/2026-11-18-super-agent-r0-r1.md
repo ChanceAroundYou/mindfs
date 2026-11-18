@@ -180,6 +180,16 @@ T5–T10 接口在 T1 审计和 R0 结束后由工头定稿再派发，未定稿
 `router_store.go` 的会话部分同时纯移动到 `router_session_store.go`，让账本文件回到
 500 行硬线内。T9 的矩阵从「这两个窗口已被钉住」出发，不重复它们。
 
+**T9 派发（2026-11-18）**：MindFS #83 / `task_072cb6c084d1c07c`，worktree `task-83`，
+brief 在 `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-9-brief.md`。冻结要点：
+只新增 `router_coordinate_recovery_test.go`（>500 行可再拆一个 `_restart_test.go`），
+生产文件零改动，发现真缺陷报 BLOCKED；「重启」用同库 `newRouterService(...)` 新实例 +
+立即 `Close()` 收回收权，断言只认最终状态；8 条行为（pending 存活 / claimed 回收 /
+效果先于游标 / 并发领取单效果 / 旧 Run 迟到事件 / 暂停终态仍汇报 / 预算跨重启 /
+无法重放即终态）；RED 证据是 5 个强制缺陷注入（M1 去 `RecoverClaimedEvents`、M2
+`ClaimEvent` 恒真、M3 effect ID 退回随机、M4 删预算分支、M5 failed 也 retry），
+每个都要有失败原文，还原后 GREEN 且生产文件零 diff。
+
 ## Task 10: 真实闭环与工程集成（R1，依赖 T9）
 
 **Files:** Create `e2e/test_task_router_coordinate.py`；文档与定制清单由工头更新。

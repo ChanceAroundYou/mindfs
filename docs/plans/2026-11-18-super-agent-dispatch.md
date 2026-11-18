@@ -18,7 +18,7 @@
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **PASS（2026-11-18）**：#82 交付并集成（`93f96f14` + 工头修正 `f7dcc5bb`），8 条行为 + 工头补 3 条，`Scope: G-MJ` |
-| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | 前置已修（G-MK），待冻结派发 |
+| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | **已派发（2026-11-18）**：#83 实例见「T9 实例」；前置 G-MK |
 | T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | pending |
 
 T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定稿 brief；未补全不得派发。
@@ -318,4 +318,13 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - **回归用例**：`router_coordinate_turn_test.go` 的 `TestCoordinatorReplayRepairsUnwrittenRuntimeEffect`（先 RED 于「no activity carries the decision」）与 `TestCoordinatorReplayRetriesInterruptedModelTurn`（先 RED 于「model calls = 0, want exactly 1 retry」）；kanban 全包 `-p 1 -count=1` 144.295s 绿，`go vet` 干净。
 - **附带的纯移动**：`router_store.go`（527 → 412 行）的会话部分移到 `router_session_store.go`（164 行），账本文件回到 500 行硬线内；G-LP files 已补新文件。
 - **登记**：G-MK（9 个锚点）；集成在 `task-73`，未 push / 未 deploy / 未合并 main。
-- **下一步**：冻结 T9 brief 并创建任务实例。
+
+### T9 实例（2026-11-18）
+
+- MindFS #83 / `task_072cb6c084d1c07c`；worktree `/home/xiaokubao/projects/mindfs/.worktree/task-83`，分支 `task-83`（创建基线 `7f1b60ee`，任务 API 返回 `worktree_built=true`）。
+- Worker 必须先 `git merge --no-ff task-73`（须含 `2fa683da` / `f7dcc5bb` / `bf1071d5` / `a292a7f7` / `a219174c`；有冲突停止报告）。
+- 冻结 brief：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-9-brief.md`。
+- 关键冻结决策：**只写测试**（`router_coordinate_recovery_test.go`，>500 行可再拆一个 `_restart_test.go`），生产文件一律不动，发现真缺陷报 BLOCKED 由工头另开前置修正；「重启」统一用同库 `newRouterService(...)` 新实例 + 立即 `Close()` 收回消费权，断言只用最终状态，不允许假设构造期首拍没跑；8 条行为覆盖「pending 跨重启存活 / claimed 跨重启回收 / 效果已写游标未推进 / 并发领取单效果 / 旧 Run 迟到事件 / 暂停与终态仍汇报 / 预算跨重启 / 无法重放即终态」；RED 证据改为**5 个强制缺陷注入**（M1 去掉 `RecoverClaimedEvents`、M2 `ClaimEvent` 恒真、M3 effect ID 退回随机、M4 删预算分支、M5 failed 也 retry），每个都要有红的用例与失败原文，还原后 GREEN 且生产文件零 diff；注入撤改一律 `cp` 备份还原，禁止 `git checkout --` / 裸 stash。
+- 不得重复 T7 已钉的三个 replay 用例（`TestCoordinatorCrashReplayCompletesWithoutModelCall`、`TestCoordinatorReplayRepairsUnwrittenRuntimeEffect`、`TestCoordinatorReplayRetriesInterruptedModelTurn`）。
+- 报告：`task-83/.mindfs/dispatch/task-9-report.md`；提交信息 `Scope: G-ML`（登记由工头补）。
+- 派发（2026-11-18）：用户留言 `act_9df0d93ee963dc78`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-6c11062be74b8e1e` 节点 `execute` 启动（`run-6c11062be74b8e1e:execute::0:1`，claude / sonnet，会话 `1795002744-753e92ae2bf4`），进程 pid 4185625 的 `/proc/<pid>/cwd` 已核对为 `task-83`。
