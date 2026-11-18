@@ -187,6 +187,7 @@
 - [x] **Step 4：** 前端 —— 服务（`appURL(..., nodeId)`）、hook（挂载/切换/`pending` true→false 各拉一次、代际守卫、无轮询）、胶囊（无节省 `return null`、portal 浮层）、`ComposerTopChips` 接线、中英各 12 条文案。
 - [x] **Step 5：** 测试 —— 路由存在/空 key、池级 key 不串账本、无代理不 panic、archive dir 真接进代理；前端结构测试 8 条（路径一致、节点与 root、显隐、刷新时机、切换清空、文案成对）并做变异验证（三处变异各钉红一条对应用例）。
 - [x] **Step 6：** 门禁：`go test -count=1 ./...` 全绿（28 包 ok）、web 233 文件 / 659 用例通过、`tsc -b --noEmit` 干净、`make build` 成功。
+- [x] **Step 6b（2026-11-19 收尾）：** 补 `usecase/session_context_saving_test.go`（真实池 + 真实代理写账本，钉住「先解析 agent 再查池级 key」；变异验证过），`lcsmoke -mode/账本读回`；真实 CLI `-mode on` 冒烟 8 次折叠、`latest={saved=72227,blocks=5}`；记录 `on` 模式 `drift` 自噪声（spec §12.4）。全量门禁与 `make check-upstream`（1915 delta / 307 组）复跑通过。
 - [ ] **Step 7（未做）：** 与 B1 Step 7 合并 —— 灰度顺序仍是 WSL/fn → 本机（用户重启）→ pc-win。
 
 ## 明确不在本计划内
