@@ -330,7 +330,12 @@ func (s *RouterStore) DeleteTaskRouterData(ctx context.Context, taskID string) e
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM router_task_state WHERE task_id = ?`, taskID); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM router_sessions WHERE scope = ? AND owner_id = ?`, string(RouterScopeTask), taskID)
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM router_sessions WHERE scope = ? AND owner_id = ?`, string(RouterScopeTask), taskID); err != nil {
+		return err
+	}
+	// 事件账本的 unique_key 含 task_id：不清掉的话，任务重建同 ID 会命中旧键，
+	// 新 Run 的事件永远插不进去。
+	_, err := s.db.ExecContext(ctx, `DELETE FROM router_events WHERE task_id = ?`, taskID)
 	return err
 }
 

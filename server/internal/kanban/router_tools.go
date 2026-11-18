@@ -423,15 +423,22 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 	return nil
 }
 
+// errRouterEmptyDecision marks a model turn that produced no decision at all:
+// zero write-tool calls and no visible final text. Treating it as a deliberate
+// silence would hide the user's message behind a placeholder, so callers must
+// fall back to the legacy path the same way they do for model failures.
+var errRouterEmptyDecision = errors.New("router produced no decision: empty final text and no tool calls")
+
 // synthesizeActions 处理「模型只说了话、没调写入工具」的情况：非空最终文本
-// 合成为 say(chat)，空文本合成为 silent。这让每轮都有可记账的决策。
-func synthesizeActions(actions []RouterAction, finalText string) ([]RouterAction, bool) {
+// 合成为 say(chat)。空文本说明这一轮没有任何决策——既没有工具调用，也没有可
+// 转述的话，返回错误由调用方回落旧路径；silent 只能来自显式的 router_silent 工具。
+func synthesizeActions(actions []RouterAction, finalText string) ([]RouterAction, bool, error) {
 	if len(actions) > 0 {
-		return actions, false
+		return actions, false, nil
 	}
 	text := strings.TrimSpace(finalText)
 	if text == "" {
-		return []RouterAction{{Kind: RouterActionSilent, Reason: "no action", Seq: 0}}, true
+		return nil, false, errRouterEmptyDecision
 	}
-	return []RouterAction{{Kind: RouterActionSay, Body: text, Purpose: "chat", Seq: 0}}, true
+	return []RouterAction{{Kind: RouterActionSay, Body: text, Purpose: "chat", Seq: 0}}, true, nil
 }

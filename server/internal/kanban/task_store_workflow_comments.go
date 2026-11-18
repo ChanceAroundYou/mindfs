@@ -310,13 +310,18 @@ func (s *TaskStore) DeliverActivityToActiveNodeRun(ctx context.Context, taskID, 
 		return ContinueRequest{}, err
 	}
 	defer tx.Rollback()
-	var body, author string
+	// Read task status in the transaction that creates the binding. A pause that
+	// committed first must block delivery even while the Agent node remains running.
+	var body, author, taskStatus string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT body, author FROM task_activities WHERE task_id=? AND id=?`,
-		taskID, activityID).Scan(&body, &author); err != nil {
+		`SELECT a.body, a.author, t.status FROM task_activities a JOIN tasks t ON t.id=a.task_id
+		 WHERE a.task_id=? AND a.id=?`, taskID, activityID).Scan(&body, &author, &taskStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ContinueRequest{}, ErrActivityNotFound
 		}
+		return ContinueRequest{}, err
+	}
+	if err := routeTaskStatusError(taskStatus); err != nil {
 		return ContinueRequest{}, err
 	}
 	if strings.TrimSpace(author) == "" {

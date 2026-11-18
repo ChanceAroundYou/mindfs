@@ -349,6 +349,41 @@ func TestRouterRouteAgentFailureFallsBackToLegacy(t *testing.T) {
 	}
 }
 
+// TestRouterRouteEmptyFinalTextFallsBackInsteadOfSilent pins T4 D-2: a model
+// turn with no tool call and no visible text is a failed decision, not a
+// deliberate silence. Turning it into `silent` hides the user's message behind a
+// hidden placeholder, so route mode must fall back to the legacy path instead.
+func TestRouterRouteEmptyFinalTextFallsBackInsteadOfSilent(t *testing.T) {
+	f := newRouteFixture(t, RouterModeRoute)
+	f.agent.final = "   " // 无工具调用、空最终文本
+	ctx := context.Background()
+
+	_, placeholder, err := f.activity.CreateUserActivity(ctx, "task-1", "帮我看看这个报错", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	decision := f.waitDecision(t, RouterDecisionFallback)
+	if !strings.Contains(decision.Error, "no decision") {
+		t.Fatalf("fallback error = %q, want an explicit empty-decision failure", decision.Error)
+	}
+	var runs []*WorkflowRun
+	waitForCondition(t, func() bool {
+		runs = f.runs(t)
+		return len(runs) == 1
+	})
+	act := f.reloadActivity(t, placeholder.ID)
+	if act.RunID != runs[0].ID {
+		t.Fatalf("fallback must reuse the placeholder: run id %q want %q", act.RunID, runs[0].ID)
+	}
+	all, err := NewActivityStore(f.store.db).ListIncludingHidden(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("ListIncludingHidden: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("activities = %d, want user + one reused placeholder", len(all))
+	}
+}
+
 func TestRouterRouteInvalidActionsRejectAndFallBack(t *testing.T) {
 	f := newRouteFixture(t, RouterModeRoute)
 	f.agent.calls = []scriptedRouterCall{

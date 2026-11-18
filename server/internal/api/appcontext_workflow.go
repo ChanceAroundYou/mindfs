@@ -174,11 +174,22 @@ func (s *AppContext) SendWorkflowComment(ctx context.Context, exec kanban.Workfl
 	if message == "" {
 		return errors.New("comment message required")
 	}
+	// The comment is a continuation turn in the node's session, so it must run
+	// with the same agent profile as the node. Omitting it makes the turn layer
+	// reject the send as "agent required" and the comment silently degrades into
+	// a delivery-failed line.
+	profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)
 	req := workflowTurnRequest{
 		RootID:          exec.RootID,
 		RuntimeRootPath: exec.RuntimeRootPath,
 		SessionKey:      strings.TrimSpace(exec.NodeRun.SessionKey),
 		SessionName:     s.sessionTitle(exec.RootID, exec.NodeRun.SessionKey),
+		Agent:           profile.Agent,
+		Model:           profile.Model,
+		Mode:            profile.Mode,
+		Effort:          profile.Effort,
+		FastService:     normalizeFastServiceValue(profile.FastService),
+		PlanMode:        profile.PlanMode,
 		Prompt:          message,
 	}
 	_, err := s.runWorkflowTurn(ctx, req)
