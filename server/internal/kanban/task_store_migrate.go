@@ -227,6 +227,11 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if err := migrateRouterTables(s.db); err != nil {
 		return err
 	}
+	// Router 生命周期事件账本（Plan 2026-11-18，R1 T5）。与上面三张表同一口径：
+	// 建表只在这里，不在第一次 InsertEvent 的惰性路径上——启动对账会先读表。
+	if err := migrateRouterEventTable(s.db); err != nil {
+		return err
+	}
 	// WP-04 多 worktree 注册表：建表接线显式在此（与 migrateComments 同一口径），
 	// 不在任何运行时路径上懒建表。实现见 worktree_registry.go。
 	if err := s.migrateWorktreeRegistry(); err != nil {
