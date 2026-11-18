@@ -93,6 +93,11 @@ test-web:
 	cd $(WEB_DIR) && $(NPM) run typecheck
 	cd $(WEB_DIR) && $(NPM) test
 
+# 安卓壳的纯逻辑单测（ReplyAlertPlanner / ReplyStateMerger）。不进 make test：
+# 它要拉起 Gradle daemon，与每次 ship 的快路径无关。
+test-android:
+	cd $(ANDROID_DIR) && ./gradlew :app:testDebugUnitTest
+
 # fork 定制覆盖率门禁：delta 文件 ⟷ docs/upstream-customizations.yaml 对账。
 # 刻意不并入 `make test`——它依赖 upstream ref（无网机器应当跳过而非失败），
 # 且合上游前后才是它真正要跑的时刻（见 .claude/skills/upstream-merge）。
