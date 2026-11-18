@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 )
 
 // workflowAdvanceStepLimit bounds one Advance call. Every iteration persists at
@@ -227,6 +229,16 @@ func (s *Service) advanceWorkflowHumanGate(ctx context.Context, store *TaskStore
 	}
 	if changed {
 		s.broadcastWorkflowActivity(ctx, store, act, true, nil)
+		// 等待行刚刚物化：这是 gate_waiting 的权威状态落库点。attempt 已冻结在
+		// NodeRun 上，重复物化会命中同一 InstanceKey 被账本去重；事件写失败只记
+		// 日志，扫描会从 waiting 行补齐。
+		instanceKey, keyErr := RouterEventInstanceKey(RouterEventGateWaiting, run.ID, nr.ID, nr.Attempt, time.Now().UTC())
+		if keyErr != nil {
+			log.Printf("[kanban/router-events] gate instance key run=%s node_run=%s err=%v", run.ID, nr.ID, keyErr)
+		} else if err := s.emitRouterEvent(ctx, store, run.ID, RouterEventGateWaiting, instanceKey, "", "", "", nr.Attempt,
+			map[string]any{"node_id": node.ID, "node_run_id": nr.ID, "attempt": nr.Attempt}); err != nil {
+			log.Printf("[kanban/router-events] gate hook run=%s node_run=%s err=%v", run.ID, nr.ID, err)
+		}
 	}
 	return false, s.projectWorkflowTaskStatus(ctx, store, run)
 }
