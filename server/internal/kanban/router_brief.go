@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -119,6 +120,27 @@ func (b *SituationBrief) Hash() string {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:6])
+}
+
+// turnBrief preserves the pre-dispatch shadow snapshot. Route decisions must observe
+// the current execution and the original message when the task lane reaches that turn.
+func (rs *RouterService) turnBrief(ctx context.Context, taskID string, trigger RouterTrigger, config RouterConfig) (*SituationBrief, error) {
+	if trigger.Mode != RouterModeRoute && trigger.Brief != nil {
+		return trigger.Brief, nil
+	}
+	store, err := rs.service.taskStore(rs.rootID)
+	if err != nil {
+		return nil, fmt.Errorf("load task store: %w", err)
+	}
+	task, err := store.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("load task: %w", err)
+	}
+	brief, err := buildSituationBrief(ctx, store, rs.service.Workflows, config, task, trigger.Kind, trigger.UserActivityID)
+	if err != nil {
+		return nil, fmt.Errorf("build brief: %w", err)
+	}
+	return brief, nil
 }
 
 // buildSituationBrief 只读任务库与 workflow 目录，不写任何状态。
@@ -259,15 +281,22 @@ func briefActiveExecution(ctx context.Context, store *TaskStore, run *WorkflowRu
 	if err != nil {
 		return execution
 	}
+	kinds := workflowNodeKinds(run)
 	for _, nodeRun := range runs {
-		if nodeRun.Status != NodeRunRunning && nodeRun.Status != NodeRunWaitingUser {
+		if kinds[nodeRun.NodeID] != NodeKindAgent || nodeRun.Status != NodeRunRunning {
 			continue
+		}
+		// A running Agent without a session still counts towards store uniqueness.
+		// Even another, bound Agent cannot accept implicit delivery in that case.
+		if strings.TrimSpace(nodeRun.SessionKey) == "" {
+			execution.CurrentNodes = nil
+			return execution
 		}
 		execution.CurrentNodes = append(execution.CurrentNodes, RouterBriefNode{
 			NodeID:         nodeRun.NodeID,
 			Name:           nodeRun.NodeID,
 			Status:         nodeRun.Status,
-			SessionPresent: strings.TrimSpace(nodeRun.SessionKey) != "",
+			SessionPresent: true,
 		})
 	}
 	return execution
