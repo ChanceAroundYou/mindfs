@@ -8367,6 +8367,10 @@ groups:
       - server/scripts/router_shadow_report/main.go
       - docs/plans/2026-11-14-task-router-super-agent.md
       - docs/plans/README.md
+      - docs/plans/2026-11-18-super-agent-goal.md
+      - docs/plans/2026-11-18-super-agent-r0-r1.md
+      - docs/plans/2026-11-18-super-agent-dispatch.md
+      - docs/superpowers/specs/2026-11-18-super-agent-r0-r1-design.md
     tests:
       - server/internal/kanban/router_shadow_test.go
       - server/internal/api/http_router_test.go
@@ -8855,18 +8859,26 @@ groups:
   - id: G-MC
     title: Router route 模式接管用户留言（say / 直连 / workflow / 提问 / 静默 / 转交）
     kind: feature
-    symptom: "router.mode 只有 shadow 能跑：决策只记录不执行，任务仍由旧的 workflow_choice 分派，用户看到的一直是「空白执行」。用户 2026-11-17 要求 Router 真正成为工头（30s 延迟可接受）。"
-    why: "用户明确要求 route 模式落地。必须保留：① 只有 workflow_choice=empty 的留言进 Router，显式指定 workflow / 纯对话是用户明确指令，仍走旧路径；② 用户点发送后**同步**落一条 pending 占位回复，Router 跑完再原地改写（say/ask_user/直连/workflow 复用同一条；silent/deliver 置 hidden），否则 30–90s 的 Router 回合里界面没有任何反馈；③ 每个动作执行前 `ClaimAppliedSeq` CAS 抢占，进程重启/重复投递绝不重复建 Run 或插活动；④ LLM 失败、动作非法、brief 构建失败才回落到旧路径并复用占位，**已部分应用**的决策只标 failed，不回落（否则重复执行）；⑤ 启动时把停在 applying 的决策标 failed（`RecoverApplyingDecisions`），不能永远 applying；⑥ 默认回合超时 90s（shadow 实测 p50 34.3s / p95 41.7s，20s 会把正常回合掐成 fallback）；⑦ `deliver_to_active_run` 把用户留言写入 continue_requests + outbox 并按 D3 绑定唯一活动 Agent NodeRun，同时隐藏占位（答复在节点会话里）；⑧ 前端收到 `hidden:true` 必须从活动流移除该行，不能继续渲染空壳。上游没有 Router，这套语义与测试是合上游后的唯一判据。"
+    symptom: "router.mode 只有 shadow 能跑：决策只记录不执行，任务仍由旧的 workflow_choice 分派，用户看到的一直是「空白执行」。用户 2026-11-17 要求 Router 真正成为工头（30s 延迟可接受）。2026-11-18 的 R0 回归进一步钉住：运行中留言投递被执行守卫提前拒绝、排队 brief 沿用入队时快照、模型回合期间暂停/终态/进入 HumanGate 后仍会应用过期决策。"
+    why: "用户明确要求 route 模式落地。必须保留：① 只有 workflow_choice=empty 的留言进 Router，显式指定 workflow / 纯对话是用户明确指令，仍走旧路径；② 用户点发送后**同步**落一条 pending 占位回复，Router 跑完再原地改写（say/ask_user/直连/workflow 复用同一条；silent/deliver 置 hidden），否则 30–90s 的 Router 回合里界面没有任何反馈；③ 每个动作执行前 `ClaimAppliedSeq` CAS 抢占，进程重启/重复投递绝不重复建 Run 或插活动；④ LLM 失败、动作非法、brief 构建失败才回落到旧路径并复用占位，**已部分应用**的决策只标 failed，不回落（否则重复执行）；⑤ 启动时把停在 applying 的决策标 failed（`RecoverApplyingDecisions`），不能永远 applying；⑥ 默认回合超时 90s（shadow 实测 p50 34.3s / p95 41.7s，20s 会把正常回合掐成 fallback）；⑦ `deliver_to_active_run` 把用户留言写入 continue_requests + outbox 并按 D3 绑定唯一活动 Agent NodeRun，同时隐藏占位（答复在节点会话里）；⑧ 前端收到 `hidden:true` 必须从活动流移除该行，不能继续渲染空壳；⑨ 模型回合可能跑几十秒，期间任务可被暂停/完成/取消或进入 HumanGate：**每个动作应用前重读任务状态**，暂停/终态立即失败并收尾空占位，投递与暂停在**同一绑定事务**内判定，Router 发起的直连在 gate 出现时拒绝（用户显式纯对话仍放行）；⑩ 迟到的 say 不能覆盖终态结果摘要，结果投影带状态条件（paused/success/fail/cancelled 不写）；Router 发起的直连回合同样走这条带条件的投影，避免回合收尾时覆盖操作员刚写的完成/暂停结果。注：say/ask_user/silent 是可见性写入，暂停时收尾与在途节点语义一致，不额外做原子条件；需要与暂停严格排序的是投递绑定。排队等待的留言在消费时按当前 UserActivityID 重建 brief，不复用入队快照。上游没有 Router，这套语义与测试是合上游后的唯一判据。"
     boundary: "只把 Router 从观察者升级为 route 模式的决策执行者；不改 shadow 的样本/agreement 语义，不改 Router 工具白名单与提示词规则，不改 workflow 引擎、worktree 生命周期、任务状态机，也不实现 coordinate / P2 的 run_settled 触发。"
     files:
       - server/internal/kanban/activity_route_apply.go
       - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_service_dispatch.go
       - server/internal/kanban/activity_service_turns.go
       - server/internal/kanban/activity_store.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_r0_apply_guards_test.go
+      - server/internal/kanban/router_r0_apply_test.go
+      - server/internal/kanban/router_r0_audit_test.go
+      - server/internal/kanban/router_r0_guard_test.go
+      - server/internal/kanban/router_route_test.go
       - server/internal/kanban/router_service.go
+      - server/internal/kanban/router_service_sessions.go
       - server/internal/kanban/router_store.go
       - server/internal/kanban/router_types.go
-      - server/internal/kanban/router_route_test.go
+      - server/internal/kanban/task_store_router_guards.go
       - server/internal/kanban/task_store_workflow_comments.go
       - cli/cmd/mindfs.go
       - server/cmd/mindfs-server/main.go
@@ -8874,6 +8886,10 @@ groups:
       - web/tests/activity-model-updates.test.mjs
       - web/tests/conversation-view.test.mjs
     tests:
+      - server/internal/kanban/router_r0_apply_guards_test.go
+      - server/internal/kanban/router_r0_apply_test.go
+      - server/internal/kanban/router_r0_audit_test.go
+      - server/internal/kanban/router_r0_guard_test.go
       - server/internal/kanban/router_route_test.go
       - web/tests/activity-model-updates.test.mjs
     anchors:
@@ -8881,10 +8897,19 @@ groups:
       - 'server/internal/kanban/router_service.go:func (rs *RouterService) finishRouteTurn('
       - 'server/internal/kanban/router_service.go:func (rs *RouterService) fallbackRoute('
       - 'server/internal/kanban/router_types.go:defaultRouterTurnTimeout = 90 * time.Second'
-      - 'server/internal/kanban/activity_service.go:if mode == RouterModeRoute && choice == CommentWorkflowChoiceEmpty {'
+      - 'server/internal/kanban/activity_service_dispatch.go:if mode == RouterModeRoute && choice == CommentWorkflowChoiceEmpty {'
+      - 'server/internal/kanban/activity_service_turns.go:errors.Is(err, ErrWorkflowTurnActive)'
+      - 'server/internal/kanban/activity_service_turns.go:s.tasks.recordReplySummaryIfActive('
+      - 'server/internal/kanban/activity_service_turns.go:if err := s.tasks.checkRouteDirectGate(ctx, task.ID); err != nil {'
+      - 'server/internal/kanban/router_brief.go:if trigger.Mode != RouterModeRoute && trigger.Brief != nil {'
+      - 'server/internal/kanban/router_brief.go:kinds[nodeRun.NodeID] != NodeKindAgent'
       - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) ApplyRouteActions('
       - 'server/internal/kanban/activity_route_apply.go:if !claimed {'
+      - 'server/internal/kanban/activity_route_apply.go:if err := routeTaskStatusError(task.Status); err != nil {'
+      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) failUnusedRoutePlaceholder('
+      - 'server/internal/kanban/task_store_router_guards.go:func routeTaskStatusError('
       - 'server/internal/kanban/task_store_workflow_comments.go:func (s *TaskStore) DeliverActivityToActiveNodeRun('
+      - 'server/internal/kanban/task_store_workflow_comments.go:if err := routeTaskStatusError(taskStatus); err != nil {'
       - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) SetHidden('
       - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) SetRouteFields('
       - 'web/src/shared/activityModel.ts:if (changes.hidden === true) continue;'
