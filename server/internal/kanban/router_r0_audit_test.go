@@ -167,38 +167,32 @@ func TestRouterRunningAgentMessageReachesRouter(t *testing.T) {
 	}
 }
 
-// explainsUndeliverable 判断用户可见文字是否在解释「留言为什么没转交」。
-// 接受产品已有的等待审批提示（ErrWorkflowWaitingApproval）、store 的
-// no active agent node 错误，以及明确的无法转交/无可用投递目标措辞；
-// 只写「已转交」这类成功口径不算解释。
 func explainsUndeliverable(text string) bool {
-	if strings.TrimSpace(text) == "" {
-		return false
-	}
-	// 声称已转交的文案不能当成拒绝原因，即使另外还带了别的字。
-	if strings.Contains(text, "已转交") {
-		return false
-	}
-	lowered := strings.ToLower(text)
-	if strings.Contains(lowered, "等待你审批") || strings.Contains(lowered, "等待审批") {
-		return true
-	}
-	for _, marker := range []string{
-		"无法转交", "不能转交", "未转交", "无可转交",
-		"无法投递", "不能投递", "未投递", "无可投递",
-		"没有可投递", "没有可用的", "没有可用", "无可用的",
-		"没有活动节点", "无活动节点", "没有活动的", "无活动的",
-		"没有正在运行", "没有运行中",
+	return strings.Contains(text, ErrWorkflowWaitingApproval.Error()) ||
+		strings.Contains(text, "no single active agent node run to deliver to") ||
+		strings.Contains(text, "无法转交") ||
+		strings.Contains(text, "无法投递")
+}
+
+func TestExplainsUndeliverable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		want bool
+	}{
+		{name: "approval required", text: ErrWorkflowWaitingApproval.Error(), want: true},
+		{name: "no delivery target", text: "no single active agent node run to deliver to", want: true},
+		{name: "explicit delivery failure", text: "当前无法投递留言", want: true},
+		{name: "quotes success in failure explanation", text: "没有转交：“已转交”是错误提示，当前无法转交", want: true},
+		{name: "successful delivery", text: "已转交", want: false},
+		{name: "unrelated workflow availability", text: "没有可用的工作流", want: false},
 	} {
-		if strings.Contains(lowered, strings.ToLower(marker)) {
-			return true
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := explainsUndeliverable(tc.text); got != tc.want {
+				t.Errorf("explainsUndeliverable(%q) = %t, want %t", tc.text, got, tc.want)
+			}
+		})
 	}
-	if strings.Contains(lowered, "no single active agent node") ||
-		strings.Contains(lowered, "no active agent node") {
-		return true
-	}
-	return false
 }
 
 // F2：HumanGate 等待期 Router 选择 deliver 时必须被拒绝/解释：用户看到无法投递
@@ -252,10 +246,7 @@ func TestRouterHumanGateDeliverTerminatesPlaceholder(t *testing.T) {
 	if act.Hidden {
 		t.Fatalf("deliver during HumanGate was applied as a hidden hand-off: %#v", act)
 	}
-	// 用户必须看到「为什么没转交」的语义，而不只是有文字：产品已有的等待审批
-	// 提示、store 的 no active agent node 错误、或明确的无法转交/无可用投递目标
-	// 都算有效解释；只写「已转交」这类成功口径不能通过。校验拒绝与运行期拒绝
-	// 都接受，不钉死内部状态枚举。
+	// 校验拒绝和运行期拒绝都需要向用户说明留言无法投递或工作流正在等待审批。
 	visible := strings.TrimSpace(strings.Join([]string{act.Summary, act.Body}, "\n"))
 	if !explainsUndeliverable(visible) {
 		t.Fatalf("placeholder does not explain why delivery was rejected: status=%q summary=%q body=%q", act.Status, act.Summary, act.Body)
