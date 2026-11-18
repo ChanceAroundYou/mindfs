@@ -1201,19 +1201,39 @@ public class ReplyPollerService extends Service {
         }
         // 常驻通知只报状态，不带项目/会话名：它整天挂在通知栏，名字属于隐私噪音。
         String text = live.size() == 1 ? "有会话正在回复" : live.size() + " 个会话回复中";
-        Notification n = buildIdleNotification(text);
+        // 恰好一个 live 会话才直达；零个或多个不替用户选（target 为 null 时只拉起 App）。
+        ReplyStateMerger.Entry target = live.size() == 1 ? live.get(0) : null;
+        Notification n = buildIdleNotification(text, target);
         try { startForegroundCompat(FOREGROUND_ID, n); }
         catch (RuntimeException ex) { notificationManager.notify(FOREGROUND_ID, n); }
     }
 
-    private Notification buildIdleNotification() { return buildIdleNotification("MindFS"); }
-    private Notification buildIdleNotification(String text) {
+    private Notification buildIdleNotification() { return buildIdleNotification("MindFS", null); }
+
+    // 常驻通知始终可点。恰好一个 live 会话时带上该会话的 extras，点一下直达；
+    // 零个或多个时不替用户选，只把 App 拉起来。extras 只在 target 非空时写，
+    // PendingIntent 每次都用 UPDATE_CURRENT 重发，计数变化后不会残留上一轮的目标。
+    private Notification buildIdleNotification(String text, ReplyStateMerger.Entry target) {
+        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (launchIntent == null) launchIntent = new Intent(this, MainActivity.class);
+        launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if (target != null) {
+            launchIntent.putExtra("nodeId", target.nodeId);
+            launchIntent.putExtra("rootId", target.rootId);
+            launchIntent.putExtra("sessionKey", target.sessionKey);
+        }
+        PendingIntent contentIntent = PendingIntent.getActivity(
+                this,
+                FOREGROUND_ID,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(this, SERVICE_CHANNEL_ID)
                 : new Notification.Builder(this);
         b.setSmallIcon(R.drawable.ic_stat_mindfs_notification)
          .setContentTitle(text == null || text.isEmpty() ? "MindFS" : text)
          .setContentText("")
+         .setContentIntent(contentIntent)
          .setOngoing(true)
          .setOnlyAlertOnce(true)
          .setShowWhen(false)
@@ -1613,7 +1633,11 @@ public class ReplyPollerService extends Service {
     }
 
     private void startForegroundCompat(int notificationId, Notification notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+ 只认 manifest 声明的类型；specialUse 没有 dataSync 的 6 小时限制。
+            startForeground(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Q–13 没有 specialUse 语义，沿用 dataSync（manifest 里两种类型都声明了）。
             startForeground(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         } else {
             startForeground(notificationId, notification);
