@@ -190,6 +190,14 @@ brief 在 `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-9-brief.md`。冻�
 `ClaimEvent` 恒真、M3 effect ID 退回随机、M4 删预算分支、M5 failed 也 retry），
 每个都要有失败原文，还原后 GREEN 且生产文件零 diff。
 
+**T9 结果（2026-11-18，PASS）**：交付 `4e4d2235`（491 行、8 条行为），集成 `d5d31a5e`，
+登记 G-ML（`9a418944`）。worker 做了 6 个注入（含加严变体 M5b 与可选 M6），工头另做两次
+独立注入复核；定向 3.451s、`-race -count=3` 24.777s、kanban 全包 135.456s、
+`check-upstream` 1905/312 全绿。诚实记录：worker 首版 M2 用例没钉住 CAS（B 的 lane 在 A
+结束后才跑），改成「A 阻塞期间判定 B 是否进模型回合」后才拿到真 RED；M4 首版删除分支
+导致编译失败，明确不作为证据。残留：未覆盖 kill -9 / SQLite 单语句中断 / 真实双进程 /
+时钟注入，不宣称 R3 通用副作用恢复。T10 解锁。
+
 ## Task 10: 真实闭环与工程集成（R1，依赖 T9）
 
 **Files:** Create `e2e/test_task_router_coordinate.py`；文档与定制清单由工头更新。

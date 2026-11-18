@@ -18,8 +18,8 @@
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **PASS（2026-11-18）**：#82 交付并集成（`93f96f14` + 工头修正 `f7dcc5bb`），8 条行为 + 工头补 3 条，`Scope: G-MJ` |
-| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | **已派发（2026-11-18）**：#83 实例见「T9 实例」；前置 G-MK |
-| T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | pending |
+| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | **PASS（2026-11-18）**：#83 交付（`4e4d2235`）并集成 `d5d31a5e`，8 条行为、6 个缺陷注入，`Scope: G-ML` |
+| T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | T9 已 PASS，待冻结 brief |
 
 T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定稿 brief；未补全不得派发。
 
@@ -328,3 +328,15 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 不得重复 T7 已钉的三个 replay 用例（`TestCoordinatorCrashReplayCompletesWithoutModelCall`、`TestCoordinatorReplayRepairsUnwrittenRuntimeEffect`、`TestCoordinatorReplayRetriesInterruptedModelTurn`）。
 - 报告：`task-83/.mindfs/dispatch/task-9-report.md`；提交信息 `Scope: G-ML`（登记由工头补）。
 - 派发（2026-11-18）：用户留言 `act_9df0d93ee963dc78`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-6c11062be74b8e1e` 节点 `execute` 启动（`run-6c11062be74b8e1e:execute::0:1`，claude / sonnet，会话 `1795002744-753e92ae2bf4`），进程 pid 4185625 的 `/proc/<pid>/cwd` 已核对为 `task-83`。
+
+### T9 结果（2026-11-18，工头裁决 PASS）
+
+- **交付**：`4e4d2235 test(kanban): 补齐并发与重启故障矩阵（Scope: G-ML）`；唯一改动是新增 `server/internal/kanban/router_coordinate_recovery_test.go`（491 行、8 个 `TestRecovery*`），`git diff --stat -- 'server/**/*.go' ':!*_test.go'` 为空（生产文件零改动）。集成 `d5d31a5e`，登记 `9a418944`。
+- **8 条行为全部 GREEN**：① pending 跨重启存活（模型 1 次、汇报 1 条、决策 1 条）；② claimed 跨重启由 `RecoverClaimedEvents` 回收（模型 1 次、`claimed_by` 不再挂死进程）；③ 效果已写游标未推进 → `replayed`、零模型、活动总数不变、effect 行恰好 1 条且正文不变、`applied_seq=1`；④ 两实例同事件并发领取 → B 未进模型回合、模型 1 次、决策 1 条、事件 done；⑤ 旧 Run 迟到事件 → `run-new` 的 `NodeStates` 逐键不变、零新 Run、零直连、任务状态不变；⑥ paused/success/cancelled 三例都收到汇报且状态不变；⑦ 预算跨重启仍 skipped、零模型、决策仍为 3；⑧ failed 决策不重放 → 事件 failed 且带原失败文案、零模型、零可见活动。
+- **RED 证据是缺陷注入（6 个，含 1 个加严变体）**：M1 去 `RecoverClaimedEvents` → ② 红（`event ... stuck at status "claimed" (claimed_by="dead-process")`）；M2 `ClaimEvent` 去 status 条件 → ④ 红（`the second instance entered a model turn instead of losing the claim CAS`）；M3 effect ID 退回随机 → ③ 红（`activities before=2 after=3`）；M4 删预算分支（`&& false` 保编译）→ ⑦ 红；M5 failed 分支也 retry → ⑧ 红在「interrupted decision could not be recovered」；M5b 同时放宽 `DeleteInterruptedDecision` → ⑧ 红在「期望 failed 得到 done」，证明「不盲目重跑」这道闸门承重。可选 M6（去掉运行期终态豁免）→ ⑥ 三子例全红。所有 `/tmp` 备份 md5 与 `HEAD:` 逐一核对，还原后生产文件零 diff。
+- **工头的诚实记录**：worker 首版 M2 注入后用例仍 GREEN，它没有放过——用一次性探针确认注入有效而用例没钉住（B 的 lane 在 A 结束后才跑），改成「A 仍阻塞时判定 B 是否进入模型回合」后才取得真实 RED。M4 首版直接删分支导致编译失败，明确不作为证据，改成 `&& false`。
+- **工头独立复核**：定向 `-run TestRecovery` 3.451s 绿；`-race -count=3` 24.777s 绿（无 race 报告）；kanban 全包 `-p 1 -count=1` 135.456s 绿；`go vet` 与 `gofmt -l` 干净。另做**两次独立注入**（未信报告）：effect ID 追加 `return ""` → ③ 红 `activities before=2 after=3`；`RecoverClaimedEvents` 调用替换为空 → ② 红 `stuck at status "claimed"`；两次都从 `/tmp` 副本还原并复绿。
+- **门禁**：`make check-upstream` 1905 delta / 312 组绿（G-ML 9 锚点命中）。
+- **残留（非阻断，已写入 G-ML boundary）**：未模拟 OS 级 `kill -9`/断电、SQLite 单语句中途崩溃、真实双进程（同进程两个 `RouterService` 近似）、30s 循环时钟注入；只证明 R1 通知/协调恢复，**不**证明 R3 通用副作用恢复；行为 4 依赖进程内诊断接口 `activeLanes()`。
+- **未做**：未 push / 未 deploy / 未合并 main / 未重启任何节点；生产 `router.mode` 未动。
+- **下一步**：T10（真实闭环与工程集成）已解锁，需先冻结 brief 并创建任务实例。
