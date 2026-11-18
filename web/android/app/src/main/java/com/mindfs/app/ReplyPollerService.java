@@ -304,9 +304,13 @@ public class ReplyPollerService extends Service {
         running = false;
         stopNodeLoops();
         List<ReplyStateMerger.Entry> tracked;
+        Set<String> notified;
         synchronized (applyLock) {
             tracked = new ArrayList<>(merger.states().values());
+            // 与 applyNodeSnapshot 的读改写同一把锁：不能读到在途应用写下的半套集合。
+            notified = readAwaitingNotifiedLocked();
             merger = new ReplyStateMerger(NODE_FRESH_MS);
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_AWAITING_NOTIFIED).apply();
         }
         for (ReplyStateMerger.Entry entry : tracked) {
             notificationManager.cancel(notificationIdFor(entry));
@@ -317,7 +321,6 @@ public class ReplyPollerService extends Service {
             }
             alertNotificationIds.clear();
         }
-        Set<String> notified = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getStringSet(PREF_AWAITING_NOTIFIED, new HashSet<>());
         for (String k : notified) {
             String[] parts = k.split("\u001f", 3);
             if (parts.length < 3) {
@@ -327,7 +330,6 @@ public class ReplyPollerService extends Service {
         }
         notificationManager.cancel(FOREGROUND_ID);
         notificationSignatures.clear();
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_AWAITING_NOTIFIED).apply();
         states.clear();
         nodeModes.clear();
         nodeResults.clear();
@@ -827,6 +829,14 @@ public class ReplyPollerService extends Service {
         return localTrustAllSocketFactory;
     }
 
+    // 只能在 applyLock 内调用：awaiting 集合是「读-改-写」，两个节点的循环并发应用时
+    // 必须串行，否则后写的一方会覆盖另一方刚加进去的键（提醒被重复发、撤销路径丢失）。
+    private Set<String> readAwaitingNotifiedLocked() {
+        Set<String> stored = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getStringSet(PREF_AWAITING_NOTIFIED, new HashSet<String>());
+        return new HashSet<>(stored);
+    }
+
     // 把一个节点的权威快照应用到合并视图：DONE 判定、awaiting 提醒、常驻通知都在这里。
     // 网络请求在外层完成；applyLock 只保护「应用」这一段，绝不持锁做 I/O。
     private void applyNodeSnapshot(NodeTarget target, Map<String, ReplyStateMerger.Entry> entries) {
@@ -837,13 +847,12 @@ public class ReplyPollerService extends Service {
         if (entries != null) {
             snapshot.addAll(entries.values());
         }
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        Set<String> awaitingNotified = new HashSet<>(
-            prefs.getStringSet(PREF_AWAITING_NOTIFIED, new HashSet<String>()));
         synchronized (applyLock) {
             if (!running) {
                 return;
             }
+            // 读取-修改-写回都在锁内：两个节点同时应用时不能互相覆盖 awaiting 集合。
+            Set<String> awaitingNotified = readAwaitingNotifiedLocked();
             long now = System.currentTimeMillis();
             ReplyStateMerger.Result result = merger.applyNode(target.id, snapshot, now);
             nodeLastSuccessAt.put(diagnosticKey(target), now);
@@ -890,7 +899,8 @@ public class ReplyPollerService extends Service {
                 }
                 notificationManager.cancel(notificationIdFor(parts[0], parts[1], parts[2]));
             }
-            prefs.edit().putStringSet(PREF_AWAITING_NOTIFIED, plan.awaitingNotified).apply();
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putStringSet(PREF_AWAITING_NOTIFIED, plan.awaitingNotified).apply();
 
             // 3. 常驻前台服务通知：只说「有几个在跑」，不点名。
             updateForegroundNotification(result.live);
