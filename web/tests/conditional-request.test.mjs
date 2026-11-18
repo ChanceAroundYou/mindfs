@@ -56,7 +56,9 @@ for (const [needle, label] of [
   [/respondJSONConditional\(w, r, map\[string\]any\{\s*"entries": out\.Entries,/, "tree 正常响应"],
   [/respondJSONConditional\(w, r, out\.Status\)/, "git status"],
   [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": \[\]map\[string\]any\{\}\}\),?/, "replying-sessions 空响应"],
-  [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": payload\}\)/, "replying-sessions 正常响应"],
+  // 2026-11-18（G-MF）：载荷组装抽成 replyingSessionsPayload（普通轮询与长轮询共用一份），
+  // 所以不再钉「参数是 payload」这个字面形状 —— 只钉「sessions 经 respondJSONConditional 发出」。意图不变。
+  [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": h\.replyingSessionsPayload\(r, /, "replying-sessions 正常响应"],
 ]) {
   assert.match(httpDomain, needle, `${label} 必须走 respondJSONConditional`);
 }
