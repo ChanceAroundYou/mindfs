@@ -117,6 +117,7 @@ test("auto update checks on launch and on returning to foreground", async () => 
 
 test("reply alerts are per-session and cross-node", async () => {
   const service = read("../web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java");
+  const merger = read("../web/android/app/src/main/java/com/mindfs/app/ReplyStateMerger.java");
   const activity = read("../web/android/app/src/main/java/com/mindfs/app/MainActivity.java");
   const poller = read("src/services/net/replyPoller.ts");
 
@@ -127,10 +128,13 @@ test("reply alerts are per-session and cross-node", async () => {
   // 复合键：三台机器上同名 root/session 不能互相覆盖。
   assert.match(service, /static String compositeKey\(String nodeId, String rootId, String sessionKey\)/);
   assert.match(service, /notificationIdFor\(String nodeId, String rootId, String sessionKey\)/);
-  // 只对响应成功的节点判定「消失 = 完成」，离线节点不能当成任务结束。
-  assert.match(service, /okNodes\.contains\(state\.nodeId\)/);
-  // 正在看的会话不打扰；切到后台即清空。
-  assert.match(service, /viewingKey\.equals\(state\.key\)/);
+  // 只对响应成功的节点判定「消失 = 完成」：每个成功快照都走 merger.applyNode(target.id, …)，
+  // 合并器只看本节点自己的条目（node.equals(state.nodeId)），其他节点仍列着同一会话也不算完成，
+  // 离线节点更不能被当成任务结束。
+  assert.match(service, /merger\.applyNode\(target\.id, snapshot, now\)/);
+  assert.match(merger, /!node\.equals\(state\.nodeId\) \|\| incoming\.containsKey\(state\.key\(\)\)/);
+  // 正在看的会话不打扰；切到后台即清空（Entry 的键 = nodeId␟rootId␟sessionKey）。
+  assert.match(service, /viewingKey\.equals\(stateKey\)/);
   assert.match(activity, /clearReplyViewing\(\)/);
   // 前台继续轮询（onResume 不再 pause）。
   assert.match(activity, /ensureReplyPollerRunning\(\)/);
