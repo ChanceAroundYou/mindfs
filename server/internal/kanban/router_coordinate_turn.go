@@ -119,6 +119,13 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 		rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, synthErr.Error())
 		return
 	}
+	// 模型只说话没调工具时合成出的 say 默认 purpose=chat（那是用户对话的语义）。
+	// 事件回合这句是进度汇报，统一改写成 progress，再交给同一个应用层。
+	for i := range actions {
+		if actions[i].Kind == RouterActionSay && strings.TrimSpace(actions[i].Purpose) != "progress" {
+			actions[i].Purpose = "progress"
+		}
+	}
 	rs.finishCoordinateEventTurn(ctx, config, promptHash, brief, decision, result, actions, latency, event)
 }
 
