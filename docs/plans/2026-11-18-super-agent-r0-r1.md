@@ -164,6 +164,22 @@ T5–T10 接口在 T1 审计和 R0 结束后由工头定稿再派发，未定稿
 
 **验收:** 每个故障点都有重启后断言；无丢事件、重复可见回复或盲目外部执行。
 
+**T9 前置（工头修正 2026-11-18，Scope G-MK）**：冻结 brief 前用两个临时探针（跑完即删）
+实测 T7 replay 的两个崩溃窗口，都是真缺陷，已修并各留一条回归用例：
+
+- 运行期决策先 `ClaimAppliedSeq` 推游标、再写可见活动：崩在两者之间后 replay 跳过该
+  动作并把事件标 done「replayed」，汇报永久丢失。运行期副作用 ID 是确定的，改为先写
+  效果、后推游标（`AdvanceAppliedSeq`，单调、不要求 seq 精确衔接）；用户留言仍先抢
+  游标，避免重复建 Run / 插活动。
+- 决策行已插入、模型回合零结果就崩溃：零动作的 applying 被 replay 当成已应用，事件静默
+  done。改为 `DeleteInterruptedDecision` 只删「零动作 + 游标未动 + 无会话键」的行并重跑
+  模型；其它无法收尾的状态一律落事件 failed，不再永久留在 claimed。
+
+回归用例：`TestCoordinatorReplayRepairsUnwrittenRuntimeEffect`、
+`TestCoordinatorReplayRetriesInterruptedModelTurn`（`router_coordinate_turn_test.go`）。
+`router_store.go` 的会话部分同时纯移动到 `router_session_store.go`，让账本文件回到
+500 行硬线内。T9 的矩阵从「这两个窗口已被钉住」出发，不重复它们。
+
 ## Task 10: 真实闭环与工程集成（R1，依赖 T9）
 
 **Files:** Create `e2e/test_task_router_coordinate.py`；文档与定制清单由工头更新。

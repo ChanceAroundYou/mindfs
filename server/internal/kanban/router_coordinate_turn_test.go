@@ -209,3 +209,87 @@ func TestCoordinatorRuntimeSayKeepsTaskSummary(t *testing.T) {
 		t.Fatal("runtime say was not visible in the origin thread")
 	}
 }
+
+// 行为 13：游标已经推进、可见汇报却没写成（进程死在「先推游标、再写活动」
+// 之间）。运行期汇报的确定 effect ID 本身就是幂等闸门，replay 必须重放这条
+// 动作把它补回来；把 applied_seq 当成「副作用已完成」会永久丢掉这次汇报。
+func TestCoordinatorReplayRepairsUnwrittenRuntimeEffect(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	f := newCoordinateFixture(t, RouterModeCoordinate)
+	f.stopLoop(t)
+	user := f.addUserActivity(t, "uact-repair")
+	decision := &RouterDecision{
+		ID: "rdec-repair", TaskID: "task-1", RootID: f.root.ID, UserActivityID: user,
+		TriggerKind: RouterTriggerRunSettled, TriggerRef: "run-repair", TurnID: "repair-turn",
+		Status: RouterDecisionApplying, AppliedSeq: 1,
+		Actions: []RouterAction{{Seq: 0, Kind: RouterActionSay, Body: "补回来的汇报"}},
+	}
+	must(t, NewRouterStore(f.store.db).InsertDecision(ctx, decision), "InsertDecision")
+	ev := f.addEvent(t, RouterEvent{Kind: RouterEventRunSettled, TurnID: "repair-turn", UserActivityID: user})
+	if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
+		t.Fatalf("ConsumeRouterEvents: %v", err)
+	}
+	f.waitEvent(t, ev.ID, RouterEventDone)
+	if got := f.waitDecision(t, "task-1", "repair-turn", RouterDecisionApplied); got.ID != decision.ID {
+		t.Fatalf("decision = %s, want the replayed row %s", got.ID, decision.ID)
+	}
+	if calls := len(f.agent.sessions); calls != 0 {
+		t.Fatalf("model calls = %d, want 0: replay must not spend a new model turn", calls)
+	}
+	activities, err := NewActivityStore(f.store.db).List(ctx, "task-1")
+	must(t, err, "List activities")
+	var report *TaskActivity
+	for _, act := range activities {
+		if act.RouterDecisionID == decision.ID {
+			report = act
+		}
+	}
+	if report == nil {
+		t.Fatal("replay dropped the runtime report: no activity carries the decision")
+	}
+	if report.ID != wantRouterEffectID(decision.ID, 0) || report.Body != "补回来的汇报" ||
+		report.Status != ActivityStatusCompleted || report.Purpose != "progress" {
+		t.Fatalf("report = %#v, want the deterministic effect row", report)
+	}
+}
+
+// 行为 14：决策行已插入、模型回合没留下任何结果就崩溃。零动作的 applying 不
+// 等于「已应用」；replay 必须删掉这行重跑一轮，否则事件会静默 done 而用户
+// 永远收不到这次汇报。
+func TestCoordinatorReplayRetriesInterruptedModelTurn(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	f := newCoordinateFixture(t, RouterModeCoordinate)
+	f.stopLoop(t)
+	f.agent.calls = []scriptedRouterCall{{tool: "router_say", args: map[string]any{"body": "重跑后的汇报"}}}
+	user := f.addUserActivity(t, "uact-retry")
+	must(t, NewRouterStore(f.store.db).InsertDecision(ctx, &RouterDecision{
+		ID: "rdec-stale", TaskID: "task-1", RootID: f.root.ID, UserActivityID: user,
+		TriggerKind: RouterTriggerRunSettled, TriggerRef: "run-retry", TurnID: "retry-turn",
+		Status: RouterDecisionApplying,
+	}), "InsertDecision")
+	ev := f.addEvent(t, RouterEvent{Kind: RouterEventRunSettled, TurnID: "retry-turn", UserActivityID: user})
+	if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
+		t.Fatalf("ConsumeRouterEvents: %v", err)
+	}
+	f.waitEvent(t, ev.ID, RouterEventDone)
+	if calls := len(f.agent.sessions); calls != 1 {
+		t.Fatalf("model calls = %d, want exactly 1 retry", calls)
+	}
+	decisions := f.decisions(t, "task-1")
+	if len(decisions) != 1 || decisions[0].ID == "rdec-stale" || decisions[0].Status != RouterDecisionApplied {
+		t.Fatalf("decisions = %#v, want one fresh applied row replacing the stale one", decisions)
+	}
+	activities, err := NewActivityStore(f.store.db).List(ctx, "task-1")
+	must(t, err, "List activities")
+	reports := 0
+	for _, act := range activities {
+		if act.RouterDecisionID == decisions[0].ID && act.Body == "重跑后的汇报" {
+			reports++
+		}
+	}
+	if reports != 1 {
+		t.Fatalf("visible reports = %d, want exactly 1 after the retried model turn", reports)
+	}
+}

@@ -16,31 +16,6 @@ import (
 
 const routerTimeLayout = time.RFC3339Nano
 
-const (
-	RouterSessionActive = "active"
-	RouterSessionIdle   = "idle"
-	RouterSessionClosed = "closed"
-	RouterSessionFailed = "failed"
-)
-
-type RouterSessionRecord struct {
-	Scope      RouterScope
-	OwnerID    string
-	RootID     string
-	SessionKey string
-	Agent      string
-	Model      string
-	Effort     string
-	ConfigDir  string
-	Cwd        string
-	PromptHash string
-	Status     string
-	LastError  string
-	LastTurnAt time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
-
 // migrateRouterTables 建 Router 三张表。可重复执行；旧库升级后三表为空，
 // 行为与改造前完全一致。
 func migrateRouterTables(db *sql.DB) error {
@@ -251,6 +226,9 @@ WHERE status = ?`,
 // ClaimAppliedSeq 是 route 模式的动作幂等闸门：只有 applied_seq 精确等于本次
 // 动作的 seq 时才把它推进到 seq+1。返回 false 表示这一条已经应用过（或决策
 // 已不在 applying），调用方必须跳过，不能重复建活动/开 Run。
+//
+// 运行期事件不用它做闸门：那里的副作用 ID 是确定的，反过来「先推游标、再写
+// 效果」会留下一条永久跳过的汇报（见 AdvanceAppliedSeq）。
 func (s *RouterStore) ClaimAppliedSeq(ctx context.Context, id string, seq int) (bool, error) {
 	if seq < 0 {
 		return false, errors.New("router action seq must be >= 0")
@@ -260,6 +238,41 @@ UPDATE router_decisions
 SET applied_seq = ?, updated_at = ?
 WHERE id = ? AND applied_seq = ? AND status = ?`,
 		seq+1, time.Now().UTC().Format(routerTimeLayout), strings.TrimSpace(id), seq, string(RouterDecisionApplying))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// AdvanceAppliedSeq 推进运行期事件决策的进度游标。运行期副作用靠确定 effect ID
+// 幂等，游标只是观测值：它不要求 seq 精确衔接，也不能反过来充当副作用闸门。
+func (s *RouterStore) AdvanceAppliedSeq(ctx context.Context, id string, seq int) error {
+	if seq < 0 {
+		return errors.New("router action seq must be >= 0")
+	}
+	_, err := s.db.ExecContext(ctx, `
+UPDATE router_decisions
+SET applied_seq = ?, updated_at = ?
+WHERE id = ? AND status = ? AND applied_seq < ?`,
+		seq+1, time.Now().UTC().Format(routerTimeLayout), strings.TrimSpace(id),
+		string(RouterDecisionApplying), seq+1)
+	return err
+}
+
+// DeleteInterruptedDecision 删掉一行「模型回合根本没跑完」的 applying 决策：
+// 没有任何动作、游标未推进、也没有会话键。三条前提之外一律拒绝，避免误删
+// 已经产生副作用的决策。删掉之后事件回合可以重新调模型；没有动作就没有
+// 可见副作用可重复。
+func (s *RouterStore) DeleteInterruptedDecision(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+DELETE FROM router_decisions
+WHERE id = ? AND status = ? AND applied_seq = 0
+  AND actions_json IN ('[]', '', 'null') AND router_session_key = ''`,
+		strings.TrimSpace(id), string(RouterDecisionApplying))
 	if err != nil {
 		return false, err
 	}
@@ -336,134 +349,6 @@ func (s *RouterStore) DeleteTaskRouterData(ctx context.Context, taskID string) e
 	// 事件账本的 unique_key 含 task_id：不清掉的话，任务重建同 ID 会命中旧键，
 	// 新 Run 的事件永远插不进去。
 	_, err := s.db.ExecContext(ctx, `DELETE FROM router_events WHERE task_id = ?`, taskID)
-	return err
-}
-
-func (s *RouterStore) UpsertSession(ctx context.Context, record *RouterSessionRecord) error {
-	if record == nil {
-		return errors.New("router session record required")
-	}
-	record.OwnerID = strings.TrimSpace(record.OwnerID)
-	record.RootID = strings.TrimSpace(record.RootID)
-	record.SessionKey = strings.TrimSpace(record.SessionKey)
-	if record.OwnerID == "" || record.SessionKey == "" {
-		return errors.New("router session owner id and session key required")
-	}
-	scope := record.Scope
-	if scope == "" {
-		scope = RouterScopeTask
-	}
-	now := time.Now().UTC()
-	if record.CreatedAt.IsZero() {
-		record.CreatedAt = now
-	}
-	record.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO router_sessions (
-  scope, owner_id, root_id, session_key, agent, model, effort, config_dir, cwd,
-  prompt_hash, status, last_error, last_turn_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(scope, owner_id) DO UPDATE SET
-  root_id = excluded.root_id,
-  session_key = excluded.session_key,
-  agent = excluded.agent,
-  model = excluded.model,
-  effort = excluded.effort,
-  config_dir = excluded.config_dir,
-  cwd = excluded.cwd,
-  prompt_hash = excluded.prompt_hash,
-  status = excluded.status,
-  last_error = excluded.last_error,
-  last_turn_at = excluded.last_turn_at,
-  updated_at = excluded.updated_at`,
-		string(scope), record.OwnerID, record.RootID, record.SessionKey, record.Agent,
-		record.Model, record.Effort, record.ConfigDir, record.Cwd, record.PromptHash,
-		record.Status, record.LastError, formatRouterTime(record.LastTurnAt),
-		record.CreatedAt.Format(routerTimeLayout), record.UpdatedAt.Format(routerTimeLayout))
-	return err
-}
-
-func (s *RouterStore) Session(ctx context.Context, scope RouterScope, ownerID string) (*RouterSessionRecord, error) {
-	if scope == "" {
-		scope = RouterScopeTask
-	}
-	row := s.db.QueryRowContext(ctx, `
-SELECT scope, owner_id, root_id, session_key, agent, model, effort, config_dir, cwd,
-       prompt_hash, status, last_error, last_turn_at, created_at, updated_at
-FROM router_sessions WHERE scope = ? AND owner_id = ? LIMIT 1`,
-		string(scope), strings.TrimSpace(ownerID))
-	var (
-		record                     RouterSessionRecord
-		scopeText                  string
-		lastTurn, created, updated string
-	)
-	if err := row.Scan(&scopeText, &record.OwnerID, &record.RootID, &record.SessionKey,
-		&record.Agent, &record.Model, &record.Effort, &record.ConfigDir, &record.Cwd,
-		&record.PromptHash, &record.Status, &record.LastError, &lastTurn, &created, &updated); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	record.Scope = RouterScope(scopeText)
-	record.LastTurnAt = parseRouterTime(lastTurn)
-	record.CreatedAt = parseRouterTime(created)
-	record.UpdatedAt = parseRouterTime(updated)
-	return &record, nil
-}
-
-func (s *RouterStore) DeleteSession(ctx context.Context, scope RouterScope, ownerID string) error {
-	if scope == "" {
-		scope = RouterScopeTask
-	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM router_sessions WHERE scope = ? AND owner_id = ?`, string(scope), strings.TrimSpace(ownerID))
-	return err
-}
-
-// ListSessions 按 root 返回某一作用域下的 Router 会话，供空闲清扫使用。
-func (s *RouterStore) ListSessions(ctx context.Context, scope RouterScope, rootID string) ([]*RouterSessionRecord, error) {
-	if scope == "" {
-		scope = RouterScopeTask
-	}
-	rows, err := s.db.QueryContext(ctx, `
-SELECT scope, owner_id, root_id, session_key, agent, model, effort, config_dir, cwd,
-       prompt_hash, status, last_error, last_turn_at, created_at, updated_at
-FROM router_sessions WHERE scope = ? AND root_id = ?`,
-		string(scope), strings.TrimSpace(rootID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]*RouterSessionRecord, 0)
-	for rows.Next() {
-		var (
-			record                     RouterSessionRecord
-			scopeText                  string
-			lastTurn, created, updated string
-		)
-		if err := rows.Scan(&scopeText, &record.OwnerID, &record.RootID, &record.SessionKey,
-			&record.Agent, &record.Model, &record.Effort, &record.ConfigDir, &record.Cwd,
-			&record.PromptHash, &record.Status, &record.LastError, &lastTurn, &created, &updated); err != nil {
-			return nil, err
-		}
-		record.Scope = RouterScope(scopeText)
-		record.LastTurnAt = parseRouterTime(lastTurn)
-		record.CreatedAt = parseRouterTime(created)
-		record.UpdatedAt = parseRouterTime(updated)
-		out = append(out, &record)
-	}
-	return out, rows.Err()
-}
-
-// UpdateSessionStatus 更新 Router 会话状态（空闲关闭/失败）。
-func (s *RouterStore) UpdateSessionStatus(ctx context.Context, scope RouterScope, ownerID, status, errText string) error {
-	if scope == "" {
-		scope = RouterScopeTask
-	}
-	_, err := s.db.ExecContext(ctx, `
-UPDATE router_sessions SET status = ?, last_error = ?, updated_at = ?
-WHERE scope = ? AND owner_id = ?`,
-		status, errText, time.Now().UTC().Format(routerTimeLayout), string(scope), strings.TrimSpace(ownerID))
 	return err
 }
 

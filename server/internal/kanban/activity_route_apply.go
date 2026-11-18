@@ -23,9 +23,13 @@ func (st *routeApplyState) take() *TaskActivity {
 	return st.placeholder
 }
 
-// ApplyRouteActions 按 seq 顺序应用 Router 决策。每条动作先 ClaimAppliedSeq，
-// 抢占成功才执行 —— 进程重启或重复投递时，已经应用过的动作必须跳过，不能
-// 重复建 Run / 插活动。
+// ApplyRouteActions 按 seq 顺序应用 Router 决策。用户留言的每条动作先
+// ClaimAppliedSeq，抢占成功才执行 —— 进程重启或重复投递时，已经应用过的动作
+// 必须跳过，不能重复建 Run / 插活动。
+//
+// 运行期事件相反：可见汇报用确定 effect ID（routeEffectActivityID），重复应用
+// 只会改写同一行。所以它先写效果、后推游标。倒过来一旦崩在两者之间，重放就会
+// 把这条当成已应用，用户永远看不到这次汇报。
 func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *RouterDecision) (applyErr error) {
 	if s == nil || s.tasks == nil || s.activities == nil {
 		return errors.New("activity service not configured")
@@ -51,29 +55,52 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 		return err
 	}
 	store := NewRouterStore(s.tasks.db)
+	runtimeEvent := decision.TriggerKind != RouterTriggerUserMessage
 	for _, action := range decision.Actions {
-		claimed, err := store.ClaimAppliedSeq(ctx, decision.ID, action.Seq)
-		if err != nil {
-			return fmt.Errorf("claim seq %d: %w", action.Seq, err)
-		}
-		if !claimed {
-			continue
-		}
-		// The model and previous actions may have yielded to an operator decision.
-		task, err := s.tasks.GetTask(ctx, decision.TaskID)
-		if err != nil {
-			return err
-		}
-		// 运行期事件回合是「汇报」，不是对任务的再操作：Run 结算后任务本来就该
-		// 是终态，同一个终态闸门会把汇报本身挡成失败。用户留言保持原语义。
-		if decision.TriggerKind == RouterTriggerUserMessage {
-			if err := routeTaskStatusError(task.Status); err != nil {
-				return err
+		if !runtimeEvent {
+			claimed, err := store.ClaimAppliedSeq(ctx, decision.ID, action.Seq)
+			if err != nil {
+				return fmt.Errorf("claim seq %d: %w", action.Seq, err)
+			}
+			if !claimed {
+				continue
 			}
 		}
-		if err := s.applyRouteAction(ctx, decision, task, userAct, state, action); err != nil {
-			return fmt.Errorf("apply %s(seq=%d): %w", action.Kind, action.Seq, err)
+		if err := s.applyCheckedRouteAction(ctx, decision, userAct, state, action); err != nil {
+			return err
 		}
+		if runtimeEvent {
+			if err := store.AdvanceAppliedSeq(ctx, decision.ID, action.Seq); err != nil {
+				return fmt.Errorf("advance seq %d: %w", action.Seq, err)
+			}
+		}
+	}
+	return nil
+}
+
+// applyCheckedRouteAction 取任务、做用户留言的状态闸门，再执行动作。运行期
+// 事件只在 Run 结算后汇报，任务本来就是终态，所以闸门只属于用户留言。
+func (s *ActivityService) applyCheckedRouteAction(
+	ctx context.Context,
+	decision *RouterDecision,
+	userAct *TaskActivity,
+	state *routeApplyState,
+	action RouterAction,
+) error {
+	// The model and previous actions may have yielded to an operator decision.
+	task, err := s.tasks.GetTask(ctx, decision.TaskID)
+	if err != nil {
+		return err
+	}
+	// 运行期事件回合是「汇报」，不是对任务的再操作：Run 结算后任务本来就该
+	// 是终态，同一个终态闸门会把汇报本身挡成失败。用户留言保持原语义。
+	if decision.TriggerKind == RouterTriggerUserMessage {
+		if err := routeTaskStatusError(task.Status); err != nil {
+			return err
+		}
+	}
+	if err := s.applyRouteAction(ctx, decision, task, userAct, state, action); err != nil {
+		return fmt.Errorf("apply %s(seq=%d): %w", action.Kind, action.Seq, err)
 	}
 	return nil
 }

@@ -18,7 +18,7 @@
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **PASS（2026-11-18）**：#82 交付并集成（`93f96f14` + 工头修正 `f7dcc5bb`），8 条行为 + 工头补 3 条，`Scope: G-MJ` |
-| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | T8 PASS，待冻结派发 |
+| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | 前置已修（G-MK），待冻结派发 |
 | T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | pending |
 
 T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定稿 brief；未补全不得派发。
@@ -310,3 +310,12 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - **未做**：未 push / 未 deploy / 未合并 main / 未重启 any node；生产 `router.mode` 未动。
 - **残留（非阻断）**：① 事件 brief 不携带 workflow 目录是设计本意，代价是模型在事件回合看不到可开执行，由白名单兜底；② 未验证项文案是给模型看的证据而非成品文案，靠提示词规则 12 约束；③ effect ID 公式若被改，行为 6 会红（有意为之）。
 - **下一步**：T9（并发/重启故障矩阵）已解锁，需先冻结 brief。
+
+### T9 前置（2026-11-18，工头修正）
+
+- **两个真实崩溃窗口**（临时探针实测，非推断）：① 运行期决策先推 `applied_seq` 再写可见活动 → 崩在中间时 replay 跳过动作、事件 done「replayed」，汇报永久丢失；② 零动作 applying（模型回合中途崩溃）被主动当成已应用，事件静默 done。
+- **修复**：运行期副作用确定 ID 本身就是幂等闸门，改为先写效果、后推游标（`AdvanceAppliedSeq`，单调）；零动作 applying 由 `DeleteInterruptedDecision` 按「零动作 + 游标未动 + 无会话键」删除后重跑模型；其它无法收尾的状态落事件 failed。
+- **回归用例**：`router_coordinate_turn_test.go` 的 `TestCoordinatorReplayRepairsUnwrittenRuntimeEffect`（先 RED 于「no activity carries the decision」）与 `TestCoordinatorReplayRetriesInterruptedModelTurn`（先 RED 于「model calls = 0, want exactly 1 retry」）；kanban 全包 `-p 1 -count=1` 144.295s 绿，`go vet` 干净。
+- **附带的纯移动**：`router_store.go`（527 → 412 行）的会话部分移到 `router_session_store.go`（164 行），账本文件回到 500 行硬线内；G-LP files 已补新文件。
+- **登记**：G-MK（9 个锚点）；集成在 `task-73`，未 push / 未 deploy / 未合并 main。
+- **下一步**：冻结 T9 brief 并创建任务实例。

@@ -8338,6 +8338,7 @@ groups:
       - server/internal/kanban/router_prompt.md
       - server/internal/kanban/router_service.go
       - server/internal/kanban/router_store.go
+      - server/internal/kanban/router_session_store.go
       - server/internal/kanban/router_tools.go
       - server/internal/kanban/service_router.go
       - server/internal/kanban/activity_service.go
@@ -9174,3 +9175,28 @@ groups:
       - 'server/internal/kanban/router_coordinate_turn.go:actions[i].Purpose = "progress"'
       - 'server/internal/kanban/router_tools.go:func isRuntimeEventBrief(brief *SituationBrief) bool {'
       - 'server/internal/kanban/router_prompt.md:**运行期事件只依据 `brief.event` 与 `brief.evidence` 汇报**'
+
+  # ── Router 运行期汇报的崩溃窗口（T9 前置）：先写效果再推游标、中断回合重跑 ──
+  - id: G-MK
+    title: Router 运行期汇报的崩溃窗口修复（效果先于游标、零动作 applying 重跑）
+    kind: fix
+    symptom: "coordinate 模式下进程如果在两个窗口里退出，用户会永久收不到这次运行期汇报，而事件账本却显示已完成：① 决策逐条应用时先推进 `applied_seq`、再写可见活动，崩在两者之间后 replay 看到游标已前进就跳过该动作，直接把决策标 applied、事件标 done（原因 `replayed`）；② 决策行插入后、模型回合写回任何结果之前崩溃，留下的是一行零动作的 applying，replay 把它当成「动作已经应用完」，同样静默 done。两者都没有任何可见症状，只有翻 `router_decisions` 与活动流才能发现少了一条汇报。"
+    why: "用户授权的 R1（T8/T9）要求「无丢事件、无重复可见回复」。上游没有这条链路，必须保留：① 运行期事件的可见副作用 ID 是确定的（`act-rtev-<sha256(decisionID:seq) 前 20>` + `InsertOrIgnore`），幂等闸门就是这行活动本身，所以应用顺序必须是「先写效果、后推游标」；倒过来会把崩溃变成永久丢汇报。用户留言没有确定 ID，仍然先 `ClaimAppliedSeq` 再执行，避免重复建 Run / 插活动 —— 两条路径的分界是 `trigger_kind == user_message`。② 运行期游标用 `AdvanceAppliedSeq`（单调、不要求 seq 精确衔接，只是观测值），不能反过来当副作用闸门。③ 零动作 + 游标未动 + 无会话键的 applying 只可能是「模型回合没跑完」：`DeleteInterruptedDecision` 按这三条前提删除后重跑模型；任何其它无法收尾的决策状态都必须落事件 failed 并标决策 failed，不能把事件永久留在 claimed（重启回收之外没有第二个机会）。④ replay 的三种结局（已收尾 / 可重跑 / 不可恢复）必须显式返回，调用方不能像以前那样忽略返回值。"
+    boundary: "只改运行期事件决策的应用顺序与 replay 收尾；用户留言的 claim-first 顺序、占位改写、Run/直连语义、事件账本（T5）、事件生产（T6）、消费循环/预算（T7）、证据 brief 与文案（T8）都不动。不新增外部副作用、不自动 cancel/retry/approve/merge、不改生产 Router 配置。`router_session_store.go` 是 `router_store.go` 会话部分的纯移动（账本文件已过 500 行硬线），行为零变化。已知未覆盖：修复前遗留的「游标已前进、效果缺失」历史行不会被自动补齐（coordinate 尚未在生产启用，当前无此类数据）。"
+    files:
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/router_store.go
+      - server/internal/kanban/router_session_store.go
+    tests:
+      - server/internal/kanban/router_coordinate_turn_test.go
+    anchors:
+      - 'server/internal/kanban/activity_route_apply.go:runtimeEvent := decision.TriggerKind != RouterTriggerUserMessage'
+      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) applyCheckedRouteAction('
+      - 'server/internal/kanban/router_store.go:func (s *RouterStore) AdvanceAppliedSeq(ctx context.Context, id string, seq int) error {'
+      - 'server/internal/kanban/router_store.go:func (s *RouterStore) DeleteInterruptedDecision(ctx context.Context, id string) (bool, error) {'
+      - "server/internal/kanban/router_store.go:AND actions_json IN ('[]', '', 'null') AND router_session_key = ''"
+      - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) retryInterruptedTurnDecision(ctx context.Context, existing *RouterDecision, event RouterEvent) bool {'
+      - 'server/internal/kanban/router_coordinate_turn.go:if len(decision.Actions) == 0 && decision.AppliedSeq == 0 && strings.TrimSpace(decision.RouterSessionKey) == "" {'
+      - 'server/internal/kanban/router_coordinate_turn_test.go:func TestCoordinatorReplayRepairsUnwrittenRuntimeEffect(t *testing.T) {'
+      - 'server/internal/kanban/router_coordinate_turn_test.go:func TestCoordinatorReplayRetriesInterruptedModelTurn(t *testing.T) {'

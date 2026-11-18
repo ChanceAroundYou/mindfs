@@ -55,17 +55,24 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 	}
 	if err := rs.store.InsertDecision(ctx, decision); err != nil {
 		if errors.Is(err, ErrRouterDecisionExists) {
-			// 同一 turn 已有行：说明上一轮死在了「插入之后、应用之前」。交给
-			// replay 收尾，绝不再调模型。
-			if existing, getErr := rs.store.DecisionByTurn(ctx, taskID, decision.TurnID); getErr == nil {
-				if !rs.replayCoordinateEventDecision(ctx, existing, event) {
-					rs.failCoordinateEventTurn(ctx, existing, RouterDecisionFailed, event.ID, "decision turn already exists")
-				}
+			// 同一 turn 已有行：上一轮死在了「插入之后、应用之前」。能收尾就收尾；
+			// 只有零动作的 applying 才代表模型回合没跑完，删行重跑。
+			existing, getErr := rs.store.DecisionByTurn(ctx, taskID, decision.TurnID)
+			if getErr != nil {
+				rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, getErr.Error())
 				return
 			}
+			if !rs.retryInterruptedTurnDecision(ctx, existing, event) {
+				return
+			}
+			if insertErr := rs.store.InsertDecision(ctx, decision); insertErr != nil {
+				rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, insertErr.Error())
+				return
+			}
+		} else {
+			rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, err.Error())
+			return
 		}
-		rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, err.Error())
-		return
 	}
 
 	agent := rs.agent()
@@ -146,8 +153,9 @@ func (rs *RouterService) beginCoordinateEventTurn(ctx context.Context, decision 
 	}
 	existing, err := rs.store.DecisionByTurn(ctx, decision.TaskID, decision.TurnID)
 	if err == nil && existing != nil {
-		rs.replayCoordinateEventDecision(ctx, existing, *event)
-		return false
+		if !rs.retryInterruptedTurnDecision(ctx, existing, *event) {
+			return false
+		}
 	}
 	if err != nil && !errors.Is(err, ErrRouterDecisionNotFound) {
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "load decision: "+err.Error())
@@ -217,19 +225,26 @@ func (rs *RouterService) stallEvidenceHolds(ctx context.Context, event RouterEve
 	return nodeRun.Status == NodeRunRunning
 }
 
-// replayCoordinateEventDecision 收尾「决策已存在」的事件。返回 true 表示已处理
-// （不再调模型）。applied 直接 done；applying 再跑一次 ApplyRouteActions
-// （ClaimAppliedSeq 幂等）；拒绝/失败按原错误落终态。零模型调用、零重复可见活动。
-func (rs *RouterService) replayCoordinateEventDecision(ctx context.Context, decision *RouterDecision, event RouterEvent) bool {
+// replayCoordinateEventDecision 收尾「决策已存在」的事件。第一个返回值表示
+// 本回合已处理完（调用方直接 return）；第二个返回值表示决策只插了一行、模型
+// 回合没留下任何结果，调用方应删行重跑（见 retryInterruptedTurnDecision）。
+// applied 直接 done；applying 再跑一次 ApplyRouteActions（确定 effect ID 幂等）；
+// 拒绝/失败按原错误落终态。零模型调用、零重复可见活动。
+func (rs *RouterService) replayCoordinateEventDecision(ctx context.Context, decision *RouterDecision, event RouterEvent) (handled bool, retry bool) {
 	if rs == nil || rs.store == nil || decision == nil {
-		return false
+		return false, false
 	}
 	reason := strings.TrimSpace(decision.Error)
 	switch decision.Status {
 	case RouterDecisionApplied:
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventDone, "replayed")
-		return true
+		return true, false
 	case RouterDecisionApplying:
+		if len(decision.Actions) == 0 && decision.AppliedSeq == 0 && strings.TrimSpace(decision.RouterSessionKey) == "" {
+			// 进程死在模型回合里：没有动作就没有副作用可重放，也没有结果可收尾。
+			// 交给调用方删行重跑；否则这里会静默 done，汇报永久丢失。
+			return false, true
+		}
 		if err := rs.applyRoute(ctx, decision); err != nil {
 			log.Printf("[router/coordinate] replay.apply.error id=%s err=%v", decision.ID, err)
 			_ = rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionFailed, err.Error())
@@ -237,7 +252,7 @@ func (rs *RouterService) replayCoordinateEventDecision(ctx context.Context, deci
 			decision.Error = err.Error()
 			rs.broadcast(decision)
 			rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, err.Error())
-			return true
+			return true, false
 		}
 		if err := rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionApplied, ""); err != nil {
 			log.Printf("[router/coordinate] replay.status.error id=%s err=%v", decision.ID, err)
@@ -246,22 +261,52 @@ func (rs *RouterService) replayCoordinateEventDecision(ctx context.Context, deci
 		decision.Error = ""
 		rs.broadcast(decision)
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventDone, "replayed")
-		return true
+		return true, false
 	case RouterDecisionRejected, RouterDecisionFailed, RouterDecisionFallback:
 		if reason == "" {
 			reason = "decision " + string(decision.Status)
 		}
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, reason)
-		return true
+		return true, false
 	case RouterDecisionShadow:
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "shadow decision cannot be applied")
-		return true
+		return true, false
 	case RouterDecisionSkipped, RouterDecisionBypassed:
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "decision was "+string(decision.Status))
-		return true
+		return true, false
 	default:
+		return false, false
+	}
+}
+
+// retryInterruptedTurnDecision 处理「同一 turn 已有决策行」。返回 true 表示那行
+// 只是模型回合的残骸、已删掉，调用方可以继续重跑模型。任何无法收尾也无法
+// 重跑的状态都必须落事件终态，不能把事件永久留在 claimed。
+func (rs *RouterService) retryInterruptedTurnDecision(ctx context.Context, existing *RouterDecision, event RouterEvent) bool {
+	if existing == nil {
+		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "decision turn already exists")
 		return false
 	}
+	if handled, retry := rs.replayCoordinateEventDecision(ctx, existing, event); handled || !retry {
+		if !handled {
+			reason := "decision " + string(existing.Status) + " cannot be replayed"
+			_ = rs.store.MarkDecisionStatus(ctx, existing.ID, RouterDecisionFailed, reason)
+			rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, reason)
+		}
+		return false
+	}
+	deleted, err := rs.store.DeleteInterruptedDecision(ctx, existing.ID)
+	if err != nil || !deleted {
+		reason := "interrupted decision could not be recovered"
+		if err != nil {
+			reason += ": " + err.Error()
+		}
+		_ = rs.store.MarkDecisionStatus(ctx, existing.ID, RouterDecisionFailed, reason)
+		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, reason)
+		return false
+	}
+	log.Printf("[router/coordinate] decision.retry id=%s turn=%s", existing.ID, existing.TurnID)
+	return true
 }
 
 // finishCoordinateEventTurn 复用 route 的「先落 actions、再按 seq 应用」路径，
