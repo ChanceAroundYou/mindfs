@@ -415,3 +415,50 @@ func TestWorkflowRuntimeCancelIsBoundedAndPreservesWorktree(t *testing.T) {
 // the open Agent turn, freeze later nodes, block queued comments, persist the
 // asserted terminal status, and leave a typed run event behind. Neither verb
 // may rewrite the historical NodeRun into a fake success.
+
+// TestWorkflowCancelSettlesBoundReplyActivity pins T4 D-3: CancelWorkflowRun
+// projected cancelled node states through a second run load, but settled the
+// bound reply activity with the stale pre-projection snapshot. The reply row
+// therefore stayed `running` forever and the conversation view kept a spinner
+// on an already-cancelled task.
+func TestWorkflowCancelSettlesBoundReplyActivity(t *testing.T) {
+	ctx := context.Background()
+	svc, root, store, task, run := newRuntimeHarness(t, agentGraph("a", "b"), "run-cancel-reply")
+	runner := newRuntimeRunner(0)
+	runner.release = make(chan struct{})
+	svc.SetWorkflowNodeRunner(runner)
+	svc.SetWorkflowNodeCanceller(&runtimeCanceller{})
+	svc.workflowCancelTimeout = 50 * time.Millisecond
+
+	acts := NewActivityStore(store.db)
+	reply := &TaskActivity{
+		ID:     "act-cancel-reply",
+		TaskID: task.ID,
+		RootID: root.ID,
+		Type:   ActivityTypeAgentReply,
+		Author: "agent",
+		Role:   RoleAgent,
+		Status: ActivityStatusRunning,
+		RunID:  run.ID,
+	}
+	if err := acts.Insert(ctx, reply); err != nil {
+		t.Fatalf("insert reply activity: %v", err)
+	}
+
+	if err := svc.WakeWorkflowRun(ctx, root.ID, task.ID, "test"); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	waitRuntimeStarted(t, runner)
+	if err := svc.CancelWorkflowRun(ctx, root.ID, task.ID, "user_cancel"); err != nil {
+		t.Fatalf("CancelWorkflowRun: %v", err)
+	}
+	waitRuntimeIdle(t, svc, root.ID, task.ID)
+
+	got, err := acts.Get(ctx, reply.ID)
+	if err != nil {
+		t.Fatalf("reload reply activity: %v", err)
+	}
+	if got.Status != ActivityStatusCancelled {
+		t.Fatalf("reply activity status = %q, want cancelled (a cancelled run must not leave a running reply)", got.Status)
+	}
+}
