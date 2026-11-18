@@ -5,10 +5,14 @@
 //
 //	go run ./server/internal/agent/proxy/lcsmoke -model ok
 //
-// It starts an in-process proxy in shadow mode, points a child `claude -p`
-// session at it, and prints one [live-compact] line per observed request. The
-// prompt makes the child read several large files so candidate tool results
-// appear once they fall outside keep_rounds.
+// It starts an in-process proxy, points a child `claude -p` session at it, and
+// prints one [live-compact] line per observed request. The prompt makes the
+// child read several large files so candidate tool results appear once they
+// fall outside keep_rounds.
+//
+// With -mode=on it also folds, and then prints the ledger summary the context
+// chip reads (SessionContextSaving) — that is the B2 end-to-end path: real CLI
+// → proxy → fold → ledger → API summary, with no MindFS server in between.
 package main
 
 import (
@@ -46,6 +50,8 @@ func main() {
 	dir := flag.String("dir", "", "working directory for the child session (default: current directory)")
 	minBody := flag.Int("min-body", 2048, "min_body_bytes for the probe proxy")
 	keep := flag.Int("keep", 3, "keep_rounds for the probe proxy")
+	mode := flag.String("mode", string(proxy.LiveCompactShadow), "live-compact mode: shadow (observe only) or on (fold)")
+	prompt := flag.String("prompt", "", "override the child prompt (default: read six repo files one at a time)")
 	flag.Parse()
 
 	upstream := userUpstream()
@@ -67,12 +73,14 @@ func main() {
 	defer os.RemoveAll(tmp)
 
 	ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
-		Mode:             proxy.LiveCompactShadow,
+		Mode:             *mode,
 		KeepRounds:       *keep,
 		MinBlockTokens:   2000,
 		MinBodyBytes:     *minBody,
 		MaxDriftMessages: 8192,
 		DisableFile:      filepath.Join(tmp, "DISABLED"),
+		ArchiveDir:       filepath.Join(tmp, "context"),
+		ArchiveEnabled:   true,
 	})
 	if err != nil {
 		panic(err)
@@ -89,16 +97,19 @@ func main() {
 		panic(err)
 	}
 
-	prompt := `Use the Read tool to read these files in order, exactly one Read call each, then reply with exactly DONE:
+	childPrompt := *prompt
+	if childPrompt == "" {
+		childPrompt = `Use the Read tool to read these files in order, exactly one Read call each, then reply with exactly DONE:
 server/app/server.go
 server/internal/agent/pool.go
 server/internal/agent/proxy/proxy.go
 cli/cmd/mindfs.go
 server/internal/kanban/workflow_agent_ops.go
 server/internal/kanban/service_outbox.go`
+	}
 
 	cmd := exec.Command("claude",
-		"-p", prompt,
+		"-p", childPrompt,
 		"--model", *model,
 		"--settings", settingsPath,
 		"--allowedTools", "Read",
@@ -110,4 +121,10 @@ server/internal/kanban/service_outbox.go`
 	// Give the proxy handler a moment to finish logging the last request.
 	time.Sleep(500 * time.Millisecond)
 	fmt.Fprintf(os.Stderr, "claude exit: %v\n", runErr)
+
+	// B2 path: read back the ledger exactly as the session page does. In shadow
+	// mode this stays empty on purpose (nothing is folded, nothing is recorded).
+	saving := ps.SessionContextSaving("smoke-session")
+	fmt.Fprintf(os.Stderr, "ledger: requests=%d max_saved=%d latest={saved=%d blocks=%d}\n",
+		saving.Requests, saving.MaxSavedBytes, saving.Latest.SavedBytes, saving.Latest.Blocks)
 }

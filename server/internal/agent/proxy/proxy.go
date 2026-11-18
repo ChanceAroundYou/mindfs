@@ -293,6 +293,12 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 	// returns a new slice, stripCompactPayload before it also returns a new
 	// one, and forwarding uses bytes.NewReader. keep-alive of that property is
 	// pinned by TestLiveCompactSharesBodyWithoutRacingTheRewrite.
+	//
+	// Known artifact: in mode=on the worker fingerprints the folded body, so
+	// `drift` also counts our own fold boundary — each turn a newly folded
+	// round looks like the CLI rewrote that message (observed 3/5/7 on a real
+	// session). It is not a bug and nothing reads drift but the log; the drift
+	// gate in the design is measured in shadow, where the body is untouched.
 	var turn *liveCompactTurn
 	if r.Method == http.MethodPost && isMessagesPath(remainder) {
 		body, _ = s.foldRequest(token, body)
