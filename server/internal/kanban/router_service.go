@@ -68,7 +68,7 @@ func newRouterService(service *Service, rootID string, config RouterConfig, stor
 }
 
 // Enqueue 把一个触发放进任务 lane。shadow 只记录决策；route 在回合结束后
-// 按 seq 应用动作（失败/非法时回落旧路径）。coordinate 尚未实现，显式不接管。
+// 按 seq 应用动作。模型或校验失败才回落，apply 失败只记终态。
 func (rs *RouterService) Enqueue(trigger RouterTrigger) {
 	if rs == nil || rs.service == nil {
 		return
@@ -221,12 +221,9 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 		rs.finishFallback(ctx, decision, started, err, routeMode)
 		return
 	}
-	if routeMode && (brief.Task.Status == StatusPaused || isTerminalStatus(brief.Task.Status)) {
+	if err := routeTaskStatusError(brief.Task.Status); routeMode && err != nil {
 		decision.Status = RouterDecisionRejected
-		decision.Error = ErrTaskClosed.Error()
-		if brief.Task.Status == StatusPaused {
-			decision.Error = ErrTaskPaused.Error()
-		}
+		decision.Error = err.Error()
 	}
 	decision.BriefHash = brief.Hash()
 	if raw, err := json.Marshal(brief); err == nil {

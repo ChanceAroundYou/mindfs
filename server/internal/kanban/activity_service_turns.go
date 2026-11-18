@@ -62,6 +62,14 @@ func (s *ActivityService) beginDirectAgent(ctx context.Context, task Task, body 
 	if guardErr := s.prepareUserTurn(ctx, task, false, agentAct); guardErr != nil {
 		return agentAct, nil
 	}
+	// A user can explicitly start a direct conversation while approval is pending.
+	// A Router decision cannot make that choice on the user's behalf.
+	if agentAct.RouterDecisionID != "" {
+		if err := s.tasks.checkRouteDirectGate(ctx, task.ID); err != nil {
+			s.failActivity(ctx, agentAct, err)
+			return agentAct, nil
+		}
+	}
 	if s.directExecutor == nil {
 		s.failActivity(ctx, agentAct, errors.New("direct executor not configured"))
 		return agentAct, nil

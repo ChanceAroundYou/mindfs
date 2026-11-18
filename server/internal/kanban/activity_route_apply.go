@@ -46,10 +46,6 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 			}
 		}
 	}()
-	task, err := s.tasks.GetTask(ctx, strings.TrimSpace(decision.TaskID))
-	if err != nil {
-		return err
-	}
 	userAct, err := s.activities.Get(ctx, strings.TrimSpace(decision.UserActivityID))
 	if err != nil {
 		return err
@@ -62,6 +58,14 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 		}
 		if !claimed {
 			continue
+		}
+		// The model and previous actions may have yielded to an operator decision.
+		task, err := s.tasks.GetTask(ctx, decision.TaskID)
+		if err != nil {
+			return err
+		}
+		if err := routeTaskStatusError(task.Status); err != nil {
+			return err
 		}
 		if err := s.applyRouteAction(ctx, decision, task, userAct, state, action); err != nil {
 			return fmt.Errorf("apply %s(seq=%d): %w", action.Kind, action.Seq, err)
@@ -164,7 +168,7 @@ func (s *ActivityService) applyRouteSay(
 	s.broadcastUpdated(act, changes)
 	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。
 	if act.RunID == "" {
-		s.recordTurnResultSummary(ctx, task.ID, body)
+		return s.tasks.recordRouteReplySummary(ctx, task.ID, body)
 	}
 	return nil
 }
