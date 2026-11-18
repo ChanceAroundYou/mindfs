@@ -421,13 +421,17 @@ func trimRouterEventExcerpts(brief *SituationBrief) bool {
 	return trimmed
 }
 
-// trimRouterEventUnverified 把未验证项压到最后 5 条；返回是否有裁剪。
+// trimRouterEventUnverified 把未验证项压到 5 条；返回是否有裁剪。最后一条固定
+// 换成「还有 N 条」的标记：证据不全必须能看出来，不能裁成恰好 5 条就装完整。
 func trimRouterEventUnverified(brief *SituationBrief) bool {
 	if brief == nil || brief.Event == nil || brief.Evidence == nil ||
 		len(brief.Evidence.Unverified) <= routerEventBriefKeptUnverifd {
 		return false
 	}
-	brief.Evidence.Unverified = brief.Evidence.Unverified[:routerEventBriefKeptUnverifd]
+	items := brief.Evidence.Unverified
+	kept := append([]string(nil), items[:routerEventBriefKeptUnverifd-1]...)
+	brief.Evidence.Unverified = append(kept,
+		fmt.Sprintf("… and %d more unverified items", len(items)-(routerEventBriefKeptUnverifd-1)))
 	brief.Evidence.Truncated = true
 	return true
 }

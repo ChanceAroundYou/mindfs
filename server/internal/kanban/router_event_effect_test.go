@@ -160,7 +160,39 @@ func TestRuntimeSilentReason(t *testing.T) {
 	}
 }
 
-// 行为 8：端到端可追溯。Router 看到的 prompt 含事件 ID 与节点输出摘要，最终 say
+// 行为 8b：模型只说话、没调写入工具时，合成出来的 say 在事件回合里也必须是
+// progress。`synthesizeActions` 是用户对话的默认 chat，事件回合要改写成汇报。
+func TestRuntimeEventSynthesizedSayIsProgress(t *testing.T) {
+	ctx := context.Background()
+	f := newCoordinateFixture(t, RouterModeCoordinate)
+	f.stopLoop(t)
+	const body = "两个节点都成功了，没有别的要说的"
+	agent := &scriptedRouterAgent{final: body}
+	f.svc.SetRouterAgent(agent)
+	f.addRun(t, "task-1", "run-synth", WorkflowTriggeredByUser, map[string]string{"agent-1": NodeRunSuccess})
+	f.addNodeRun(t, NodeRun{ID: "nr-synth", RunID: "run-synth", NodeID: "agent-1", Attempt: 1,
+		Status: NodeRunSuccess, Output: map[string]any{"summary": "完成"}})
+	f.setTaskStatus(t, "task-1", StatusSuccess)
+	user := f.addUserActivity(t, "uact-synth")
+	ev := f.addEvent(t, RouterEvent{
+		Kind: RouterEventRunSettled, TurnID: "synth-turn", UserActivityID: user, RunID: "run-synth",
+		PayloadJSON: `{"run_id":"run-synth","status":"success"}`,
+	})
+	if _, err := f.router.ConsumeRouterEvents(ctx, time.Now().UTC()); err != nil {
+		t.Fatalf("ConsumeRouterEvents: %v", err)
+	}
+	f.waitEvent(t, ev.ID, RouterEventDone)
+
+	decision, err := NewRouterStore(f.store.db).DecisionByTurn(ctx, "task-1", ev.TurnID)
+	must(t, err, "DecisionByTurn")
+	if len(decision.Actions) != 1 || decision.Actions[0].Kind != RouterActionSay || decision.Actions[0].Body != body {
+		t.Fatalf("decision actions = %#v, want one synthesized say", decision.Actions)
+	}
+	if decision.Actions[0].Purpose != "progress" {
+		t.Fatalf("synthesized say purpose = %q, want progress for runtime events", decision.Actions[0].Purpose)
+	}
+}
+
 // 出现在原始留言线程里并指向原始留言。
 func TestRuntimeEventPromptTraceability(t *testing.T) {
 	ctx := context.Background()
@@ -211,5 +243,10 @@ func TestRuntimeEventPromptTraceability(t *testing.T) {
 	}
 	if reply.Body != body || reply.ReplyToID != user || reply.RunID != "" {
 		t.Fatalf("final say = %#v, want body %q replying to %q without a run binding", reply, body, user)
+	}
+	// 模型没写 purpose 时，运行期 say 的默认必须是 progress（用户留言仍是 chat）。
+	// 只能在工具默认值层做：apply 层看到的已经是工具填好的值。
+	if reply.Purpose != "progress" {
+		t.Fatalf("final say purpose = %q, want progress for runtime events", reply.Purpose)
 	}
 }

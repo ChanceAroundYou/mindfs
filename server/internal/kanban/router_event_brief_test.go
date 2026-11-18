@@ -256,6 +256,72 @@ func TestEventBriefBoundedTruncation(t *testing.T) {
 	}
 }
 
+// 行为 4b：未验证项的裁剪必须留下「还有 N 条」标记。证据不全要能看出来，
+// 不能裁成恰好 5 条就装完整。
+func TestEventBriefUnverifiedTruncation(t *testing.T) {
+	ctx := context.Background()
+	f, user := eventBriefFixture(t)
+	graph := wfDef()
+	states := map[string]string{}
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("node-%02d", i)
+		graph.Nodes = append(graph.Nodes, wfNode(id, NodeKindAgent))
+		states[id] = NodeRunSuccess
+	}
+	must(t, f.store.CreateWorkflowRunAndSetEngine(ctx, &WorkflowRun{
+		ID: "run-novout", TaskID: "task-1", Revision: 1, Graph: graph, NodeStates: states,
+	}), "create silent run")
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("node-%02d", i)
+		// 成功但没有记录输出：每条都是一个未验证项。
+		f.addNodeRun(t, NodeRun{ID: "nr-" + id, RunID: "run-novout", NodeID: id, Attempt: 1, Status: NodeRunSuccess})
+	}
+	f.setTaskStatus(t, "task-1", StatusSuccess)
+	ev := RouterEvent{
+		ID: "revt-novout", RootID: f.root.ID, TaskID: "task-1", RunID: "run-novout",
+		Kind: RouterEventRunSettled, TurnID: "revt-turn:novout", UserActivityID: user,
+		PayloadJSON: `{"run_id":"run-novout"}`,
+	}
+	brief, err := f.router.turnBrief(ctx, "task-1", eventBriefTrigger(f, ev), RouterConfig{})
+	must(t, err, "turnBrief")
+
+	if brief.Evidence == nil || len(brief.Evidence.Unverified) == 0 {
+		t.Fatalf("evidence lost its unverified items: %#v", brief.Evidence)
+	}
+	// 常规上限是 10 条 + 「还有 N 条」标记；5 条是 24KB 紧急裁剪路径。
+	if len(brief.Evidence.Unverified) > routerEventBriefUnverifiedLimit+1 {
+		t.Fatalf("unverified items = %d, want <= %d plus marker",
+			len(brief.Evidence.Unverified), routerEventBriefUnverifiedLimit)
+	}
+	last := brief.Evidence.Unverified[len(brief.Evidence.Unverified)-1]
+	if !strings.Contains(last, "more unverified items") {
+		t.Fatalf("unverified omission marker missing, last = %q (all=%#v)", last, brief.Evidence.Unverified)
+	}
+}
+
+// 行为 4c：24KB 紧急裁剪把未验证项压到 5 条时，标记必须保留。
+func TestTrimRouterEventUnverifiedKeepsMarker(t *testing.T) {
+	brief := &SituationBrief{
+		Event: &RouterBriefEvent{ID: "revt-marker"},
+		Evidence: &RouterBriefEvidence{Unverified: []string{
+			"a", "b", "c", "d", "e", "f", "g", "h",
+		}},
+	}
+	if !trimRouterEventUnverified(brief) {
+		t.Fatal("trim reported no change for 8 items")
+	}
+	if len(brief.Evidence.Unverified) != routerEventBriefKeptUnverifd {
+		t.Fatalf("unverified items = %d, want %d", len(brief.Evidence.Unverified), routerEventBriefKeptUnverifd)
+	}
+	last := brief.Evidence.Unverified[len(brief.Evidence.Unverified)-1]
+	if last != "… and 4 more unverified items" {
+		t.Fatalf("last unverified item = %q, want the omission marker", last)
+	}
+	if !brief.Evidence.Truncated {
+		t.Fatal("trim must set evidence.truncated")
+	}
+}
+
 // 行为 5：旧事件不串话。事件指向 run-old 时证据只能来自 run-old，即使任务当前
 // 引擎已经换成 run-new。
 func TestEventBriefOldRunNotCrossTalk(t *testing.T) {
