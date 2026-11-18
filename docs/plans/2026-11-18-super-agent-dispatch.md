@@ -19,7 +19,7 @@
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **PASS（2026-11-18）**：#82 交付并集成（`93f96f14` + 工头修正 `f7dcc5bb`），8 条行为 + 工头补 3 条，`Scope: G-MJ` |
 | T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | **PASS（2026-11-18）**：#83 交付（`4e4d2235`）并集成 `d5d31a5e`，8 条行为、6 个缺陷注入，`Scope: G-ML` |
-| T10 集成验收 | T9 后独占运行，`Scope: G-MM` | 全链依赖 | `e2e/test_task_router_coordinate.py` + task-10-report.md + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | **已派发（2026-11-18）**：#84 / `task-84`，brief 已冻结 |
+| T10 集成验收 | T9 后独占运行，`Scope: G-MM` | 全链依赖 | `e2e/test_task_router_coordinate.py` + task-10-report.md + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | **PASS（2026-11-19）**：#84 交付 `c6a4e629` 并集成 `task-73`，四场景 + 门禁五项复跑通过，登记 G-MM |
 
 T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定稿 brief；未补全不得派发。
 
@@ -37,7 +37,8 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - R1 T6：**已完成并集成**（#80，事件生产 + 硬线拆分，见「T6 结果」）。
 - R1 T7：**已完成并集成**（#81，coordinate 消费 + 预算 + 有界扫描，见「T7 结果」）。
 - R1 T8：**PASS 并集成**（#82，交付 `93f96f14` + 工头修正 `f7dcc5bb`，登记 `bf1071d5`，见「T8 结果」）。
-- R1 T9：**PASS 并集成**（#83，交付 `4e4d2235` + 集成 `d5d31a5e` + 登记 `9a418944`，见「T9 结果」）。T10 已解锁并派发（#84，见「T10 实例」）。
+- R1 T9：**PASS 并集成**（#83，交付 `4e4d2235` + 集成 `d5d31a5e` + 登记 `9a418944`，见「T9 结果」）。
+- R1 T10：**PASS 并集成**（#84，交付 `c6a4e629` + fast-forward 集成 + 登记 G-MM，见「T10 结果」）。**R1 全部完成。**
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -356,3 +357,15 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 报告：`task-84/.mindfs/dispatch/task-10-report.md`；提交信息 `test(e2e): 隔离真实 Router coordinate 闭环验收（Scope: G-MM）`（登记由工头补）。
 - 派发（2026-11-18）：用户留言 `act_b25cfa6f730e4ae8`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-577bf900a57d519d` 节点 `execute` 启动（`run-577bf900a57d519d:execute::0:1`，claude / sonnet，会话 `1795013048-26f8d5c14d71`），进程 pid 642911 的 `/proc/<pid>/cwd` 已核对为 `task-84`。
 - **前置阻塞与解除（2026-11-18）**：首次合并 `task-73` 在 `docs/plans/README.md` 与 `docs/upstream-customizations.yaml` 冲突（task-84 基线是 main 的 `8ff43f92`，task-73 分叉于 `7f1b60ee`），worker 按 brief 取证后 `merge --abort` 并报 BLOCKED，未写任何产品/测试文件。根因是两边分别登记了 **G-MG**：main 的 live-compact Phase A（其 spec 自注「暂定」）与 R1 T5 事件账本撞号。工头裁定：G-MG 归 R1 T5，live-compact 改登记 **G-MN**（registry 写撞号说明，spec/plan/README 同步，`8ff43f92` 提交信息保持原文），并在 `task-73` 合入 main、提交 `78483d17`；`make check-upstream` 1919 delta / 313 组绿。随后以 `act_fda972035e2671ca` 通知 worker 从合并重跑（Run `run-2f2cfabce0faae3c`，会话 `1795013337-a6e78fcdd871`，pid 698190 cwd 已核对为 `task-84`）。
+
+### T10 结果（2026-11-19，工头裁决 PASS）
+
+- **交付**：`c6a4e629 test(e2e): 隔离真实 Router coordinate 闭环验收（Scope: G-MM）`——新增 6 个 `e2e/test_task_router_coordinate*.py`（200 / 285 / 301 / 192 / 471 / 75 行，全部 ≤500；纯标准库），`git show --stat` 只有 e2e，产品代码/既有测试/docs 零改动。集成：`task-73` fast-forward 到 `c6a4e629`；登记 G-MM（kind=docs，6 文件 + 4 锚点）。
+- **脚本边界复核**：`--db` 用 `sqlite3.connect("file:...?mode=ro", uri=True)` 只读，文件内无 INSERT/UPDATE/DELETE；`--base` 含 `:7331` 或 `--iso-port==7331` 直接退出 2，线上只做 `GET /health`；场景 D 的 subprocess 只调 `scripts/mindfs-iso.sh stop|start`，env 固定 `MINDFS_ISO_ROOT/PORT/KEEP=1` 并 `pop(ANTHROPIC_BASE_URL)`。
+- **门禁（工头在 `task-84` 内独立重跑，日志 `.mindfs/foreman-review/`）**：Go 全仓 `GOMAXPROCS=1 go test -p 1 -count=1 ./...` 28 ok / 10 no-test / **0 FAIL**；`npx tsc --noEmit -p tsconfig.json` clean；`npm test` 232 文件，**651 passed / 6 skipped**；`make build` → `v0.5.5-1119-69-gc6a4e629`；`make check-upstream` 登记后 **1925 delta / 314 组**绿。
+- **库侧只读断言**：`router_events` 21 行全部 `done`（13 run_settled / 5 run_failed / 3 gate_waiting），无 pending/claimed 残留；21 条 `act-rtev-*` 汇报的 `reply_to_id` 全部解析到 `user_message`，正文对 `run-/rdec_/revt_/act_/act-rtev-/task_` 0 命中；每任务 effect 行数 == 不同 `router_decision_id` 数；`continue_requests` 0 行；场景 D 重启前 `revt_70b842876afd66ea` 为 `pending`，重启后 `done`，`run_count` 1→1，新增活动只有 `act-rtev-23812bb3239c75f9750c`；隔离自证（端口/配置目录/零句柄/cwd）与线上 7331 health 前后 200 均在证据里。
+- **四场景**：A 需求→执行→主动汇报（决策 `trigger_kind=run_settled`，事件 done，汇报正文提到节点结果）；B 中途留言有归宿（两条留言均被判 `say` 并各自绑定 `reply_to_id`）；C 失败 + gate（未知 agent 确定性失败；普通留言不批准 gate；approve 幂等 200、重复 409）；D 仅重启隔离进程（无 pending/claimed 残留、无重复 effect、无新 Run）。
+- **发现的展示冗余（裁定：不阻断）**：结算回填的 `reply` 行与 `run_settled` 汇报行都含结果句。复核三份汇报原文后确认它们都额外带了规格要求的「未验证项」——A 截断提示、C 失败节点/尝试次数/错误原文、D「只回一句确认、没有实际验证支撑」+ 重跑建议。两种修法都会造成实质损失：「事件回合一律 silent」删掉规格要求的未验证项与失败证据；「结算不回填 summary」让事件回合 failed/skipped/预算耗尽时用户完全看不到结果。故记为 **UX 残留**：后续 UI 任务可折叠同一留言下的 `purpose=progress` 行，T8 冻结契约禁止把汇报绑定/改写到旧 Run 的结果活动。完整复核见 `task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-10-foreman-review.md`。
+- **残留（非阻断）**：`deliver_to_active_run` 本轮真实流量未触发（两次中途留言都判 `say`），回归防护只有间接证据；`ask_user` / `silent` / 3 回合预算未在真实场景触发；未覆盖 kill -9、SQLite 语句中断、真实双进程；汇报正文含「事件数据被截断」这类给模型看的证据口吻。
+- **未做**：push / deploy / 合并 main / 重启任何节点；生产 `router.mode` 未动。切 coordinate 与生产启停需用户单独授权。
+- **下一步**：R1 收尾完成。若要上线，需用户授权 ship 流程与 `router.mode` 切换；R2（验收条目与返工循环）尚未启动。

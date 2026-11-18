@@ -9223,6 +9223,26 @@ groups:
       - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryUnreplayableDecisionFailsWithoutModelCall(t *testing.T) {'
       - 'server/internal/kanban/router_coordinate_recovery_test.go:func (f *coordinateFixture) restartRouter(t *testing.T) *RouterService {'
 
+  # ── Router R1 T10：隔离实例真实闭环验收脚本 ────────────────────────────
+  - id: G-MM
+    title: Router coordinate 真实闭环四场景验收（隔离实例、只读证据）
+    kind: docs
+    symptom: "R1 的对外承诺（需求→执行→主动汇报、中途留言有归宿、失败/gate 明确说明、隔离进程重启对账）只有单元测试钉住，没有任何一条用真实 Claude 跑通的闭环证据；coordinate 一旦从 shadow 切到 route 后回归，只能等用户在生产里发现，无法在隔离实例一键复现。"
+    why: "上游没有 Router coordinate，也没有 e2e 目录；这组脚本是本 fork 的验收资产，必须保留：① 只作用于隔离实例（端口 7433、隔离根 /tmp/mindfs-r1-t10），`--base` 含 :7331 直接退出 2，线上只做 GET /health；② `router_events` 没有 HTTP 端点，脚本用 `sqlite3.connect(\"file:...?mode=ro\", uri=True)` 只读账本，绝不写产品库；③ 四场景断言可见行为与持久证据（决策 trigger_kind、事件终态、effect 活动唯一、reply_to_id 指回原留言、continue_requests 终态、重启后无 pending/claimed、无新 Run、无重复 effect），而不是实现细节。e2e/ 同时被 G-BA 的前缀条目覆盖，本组给它独立的语义与失败症状，避免合上游时被当成普通前端目录资产。"
+    boundary: "只覆盖隔离实例的真实 agent 验收，不替代线上 e2e/live；不验证生产 router.mode 切换，不覆盖 kill -9 / SQLite 单语句中断，也不宣称 R3 通用副作用恢复。脚本是 Python 验收工具而非 Go/Vitest 测试，故 kind=docs 豁免「必须有针对性测试」，不伪装成单元测试。"
+    files:
+      - e2e/test_task_router_coordinate.py
+      - e2e/test_task_router_coordinate_ab.py
+      - e2e/test_task_router_coordinate_c.py
+      - e2e/test_task_router_coordinate_cd.py
+      - e2e/test_task_router_coordinate_common.py
+      - e2e/test_task_router_coordinate_fixtures.py
+    anchors:
+      - 'e2e/test_task_router_coordinate.py:ONLINE_PORT = 7331'
+      - 'e2e/test_task_router_coordinate_common.py:self.uri = f"file:{urllib.parse.quote(path)}?mode=ro"'
+      - 'e2e/test_task_router_coordinate_ab.py:def scenario_a(client, db, fixture_versions):'
+      - 'e2e/test_task_router_coordinate_cd.py:def scenario_d(client, db, fixture_versions, iso_root, iso_port, repo):'
+
   # ── 原生上下文活压缩 Phase A：会话代理内的观测面 ─────────────────────────
   # 撞号说明：8ff43f92 的提交信息与本设计原文写的是 G-MG，与 R1 T5 的事件账本组
   # （G-MG，891235c1）撞号；本设计自己注明该 ID 是「暂定」，2026-11-18 集成

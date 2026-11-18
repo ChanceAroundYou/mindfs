@@ -8,6 +8,8 @@
 **Spec:** `docs/superpowers/specs/2026-11-18-super-agent-r0-r1-design.md`
 **授权:** 用户已要求文档、小任务、worktree 与实际派发；当前先执行 R0，R1 在 R0 门禁后按依赖推进。R2–R5 不执行。
 
+**状态（2026-11-19）：R0 与 R1（T1–T10）全部通过工头验收，已集成到总任务分支 `task-73`（HEAD `c6a4e629` + 登记提交）。未 push、未部署、未合并 main、未重启任何节点；生产 `router.mode` 保持各节点现值。**
+
 ## Global Constraints
 
 - 本机 system mindfs 不重启；不改生产 Router/账户/工作流配置；不动其他会话文件。
@@ -220,6 +222,24 @@ brief 在 `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-10-brief.md`。冻
 无 HTTP 端点，只读 SQLite + `/router-decisions` 验证；四场景 A 需求→执行→主动汇报、
 B 中途留言有归宿、C 失败/gate 明确说明（普通留言不得批准、approve 200、重复 409）、
 D 仅重启隔离进程并核对 pending/claimed 与已有结果。
+
+**T10 结果（2026-11-19，PASS）**：交付 `c6a4e629`（6 个 `e2e/test_task_router_coordinate*.py`，
+200/285/301/192/471/75 行全部 ≤500，纯标准库，产品代码/既有测试/docs 零改动），
+集成到 `task-73`（fast-forward），登记 G-MM。工头独立复跑门禁：Go 全仓 28 ok / 10 no-test / 0 FAIL、
+`tsc` clean、web 232 文件 / **651 passed / 6 skipped**、`make build` `v0.5.5-1119-69-gc6a4e629`、
+`make check-upstream`（登记后）1925 delta / 314 组。库侧只读断言：`router_events` 21 行全 `done`
+（13 settled / 5 failed / 3 gate_waiting），无 pending/claimed；21 条 `act-rtev-*` 的
+`reply_to_id` 全部指回 `user_message`，正文对内部 ID 0 命中；每任务 effect 行数 == 不同决策数；
+`continue_requests` 0 行；场景 D 重启前 `pending` → 重启后 `done`，`run_count` 1→1，新增活动只有
+一条确定 effect。四场景 A/B/C/D 全部可追溯（B 的两条中途留言都被判 `say`，`deliver` 路径本轮
+真实流量未触发）。**发现的展示冗余不阻断 R1**：结算回填的 reply 行与 `run_settled` 汇报行都含
+结果句——设计规格要求汇报「说明结果与未验证项」，三份汇报都额外带了截断提示 / 失败节点与错误 /
+「结论没有实际验证支撑」的未验证项；静默汇报会删掉这些内容，去掉结算回填则事件回合失败时用户
+完全看不到结果（结算行是保证路径、汇报行是尽力路径）。登记为 UX 残留：后续 UI 任务可折叠同一
+留言下的 `purpose=progress` 行；T8 冻结契约禁止把汇报绑定/改写到旧 Run 的结果活动。
+**残留（非阻断）**：`deliver` 分支无真实流量证据；`ask_user` / `silent` / 3 回合预算未在真实场景触发；
+未覆盖 kill -9、SQLite 语句中断、真实双进程；汇报正文含「事件数据被截断」这类证据口吻。
+**未做**：push / deploy / 合并 main / 重启；切 coordinate 与生产启停需用户单独授权。
 
 ## 执行门禁与依赖
 
