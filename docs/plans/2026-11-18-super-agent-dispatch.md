@@ -17,7 +17,7 @@
 | T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | 已完成：13 例全绿，集成 `68a07c5e`；工头补迁移/级联 `3a1aa766` |
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
-| T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | pending |
+| T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **派发中（2026-11-18）**：#82 / `task_232b8afa0212c92c`，brief 已冻结 |
 | T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | pending |
 | T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | pending |
 
@@ -36,7 +36,7 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - R1 T5：**已完成并集成**（#79，账本 + 工头补的迁移/级联，见「T5 结果」）。
 - R1 T6：**已完成并集成**（#80，事件生产 + 硬线拆分，见「T6 结果」）。
 - R1 T7：**已完成并集成**（#81，coordinate 消费 + 预算 + 有界扫描，见「T7 结果」）。
-- R1 T8–T10：T7 已 PASS，可逐项冻结 brief 派发（T8 汇报证据 → T9 失败矩阵/恢复 → T10 集成验收）；未补全实际 task id/worktree/报告路径不得派发。
+- R1 T8：**已冻结派发**（#82 / `task_232b8afa0212c92c`，worktree `task-82`，brief `task-8-brief.md`，报告 `task-82/.mindfs/dispatch/task-8-report.md`）。T9–T10 继续 gated；未补全实际 task id/worktree/报告路径不得派发。
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -289,3 +289,12 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - **登记与门禁**：G-MC 的 `activity_service_dispatch.go` 锚点更新为 route/coordinate 共用条件；新增 G-MI（17 个锚点，逐条 grep 命中）；`make check-upstream` **1900 delta / 309 组**绿。集成提交 `f939c4a5`。
 - **残留（非阻断）**：① 有界扫描的取舍——钩子漏写且早于 1h 窗口、又无 open NodeRun 的终态 Run 不会被 30s 循环补齐（启动对账的全量扫描兜底）；② `waiting_user` 计入 open 比 brief 字面更宽，理由是 gate 可能停数小时；③ brief 构建失败只落事件 failed、不写决策行（决策行在 brief 成功后插入）；④ 事件决策若永远 replay 不成功会停在 applying，只能等下次消费同一事件再试；⑤ 崩溃 replay 用例的「构造期回收 → 手动消费」之间有一个很窄的调度窗口（后台首拍可能先消费），`-count=10` 未复现，语义仍由同用例的零模型/零新增活动断言兜底；⑥ 循环里的扫描/消费用独立 2 分钟 ctx，`Close` 最多等 5s，正在跑的一拍会在关库后自然报错退出。
 - **下一步**：T8（brief 运行期证据 + 里程碑文案）现在可冻结派发；T9/T10 继续 gated。
+
+### T8 实例
+
+- MindFS #82 / `task_232b8afa0212c92c`；worktree `/home/xiaokubao/projects/mindfs/.worktree/task-82`，分支 `task-82`（创建基线 `7f1b60ee`）。
+- Worker 必须先 `git merge --no-ff task-73`（须含 `f939c4a5` / `6a1e5bd6`；有冲突停止报告）。
+- 冻结接口、8 条必钉行为、允许文件与边界：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-8-brief.md`。
+- 关键冻结决策：事件 brief 只读 `event.RunID` 指向的 Run（不得用任务最新 Run 顶替），并清空 `LatestRun` / `ActiveExecution` / `Workflows` 防止串话；`Trigger.Ref=event.ID`、原始留言正文放宽到 2000 字节；节点证据复用 `nodeRunOutputSummary`，≤20 条、失败/等待/运行优先保留，未验证项 ≤10 条；payload 只留白名单键、≤2KB；任何裁剪置 `Truncated`，序列化后仍 ≤24KB；运行期 say/ask_user 用 `act-rtev-<sha256(decisionID:seq)[:20]>` 确定 ID + `InsertOrIgnore`，`RunID` 保持空、默认 `purpose=progress`，绝不改写旧 Run 的唯一结果活动；`silent` 理由继续落在 `router_decisions.actions_json`，不改事件语义。
+- 报告：`task-82/.mindfs/dispatch/task-8-report.md`；提交信息 `Scope: G-MJ`（登记由工头补）。
+- 派发后在此记录用户留言 / Run / 节点 / 会话与进程 cwd 核对结果。
