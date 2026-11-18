@@ -9041,3 +9041,32 @@ groups:
       - 'web/android/app/src/main/java/com/mindfs/app/MainActivity.java:ReplyPollerService.EXTRA_WAIT_URL'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerPlugin.java:ReplyPollerService.EXTRA_WAIT_URL'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:private static String resolveWaitUrl'
+
+  # ── R1 T5：Router 生命周期事件账本（持久化 + CAS 领取 + 重启恢复）─────────
+  - id: G-MG
+    title: Router 生命周期事件账本（router_events + 六个 Store 方法）
+    kind: feature
+    symptom: "Router 只在决策当回合同步动作，Run 结束/失败/gate 等待/卡住这些事后事实没有持久载体：进程重启就丢，多轮留言也没有可恢复的事件来源，coordinate 模式无从消费。"
+    why: "用户 2026-11-18 授权的 R1 计划（T5）要求先有持久事件账本，再做事件生产（T6）与消费（T7）。上游没有这条链路，必须保留：① `router_events` 表以 `unique_key = taskID\x00runID\x00kind\x00instanceKey` 去重，重复插入返回已有行且不覆盖（事件是事实，不是状态）；② `ClaimEvent` 是 CAS（pending→claimed），`CompleteEvent` 只接受 claimed→done|failed|skipped，直接 complete pending 报错，防止「先推进游标后丢副作用」；③ `RecoverClaimedEvents` 只在启动对账调用，把遗留 claimed 打回 pending并记录原因，绝不复活动终态；④ 实例键规则（settled/failed/reconcile=RunID，gate=nodeRunID:attempt，stalled=RunID:5 分钟桶）是 T6/T7 去重与清醒度的共同口径；⑤ 建表接在 `TaskStore.migrateSchema`（与 router 三张表同一口径，不在运行时惰性建表）——启动对账会先读表，懒建表会撞 no such table；⑥ `DeleteTaskRouterData` 必须连删 `router_events`，否则任务重建同 ID 命中旧 unique_key、新事件永远插不进去。"
+    boundary: "只做持久账本与 Store 方法；不产事件（T6）、不做 coordinate 消费/预算（T7）、不改 Router 决策与应用逻辑、不改 `router_prompt.md`、不新增 HTTP 端点、不启动后台 goroutine。`PayloadJSON` 限 8KB，超限拒绝而非截断落库；时间统一 UTC 走 `routerTimeLayout`。"
+    files:
+      - server/internal/kanban/router_event_types.go
+      - server/internal/kanban/router_event_store.go
+      - server/internal/kanban/router_store.go
+      - server/internal/kanban/task_store_migrate.go
+    tests:
+      - server/internal/kanban/router_event_types_test.go
+      - server/internal/kanban/router_event_store_test.go
+      - server/internal/kanban/router_event_migrate_test.go
+    anchors:
+      - 'server/internal/kanban/router_event_types.go:RouterEventStartupReconcile RouterEventKind = "startup_reconcile"'
+      - 'server/internal/kanban/router_event_types.go:func RouterEventUniqueKey('
+      - 'server/internal/kanban/router_event_types.go:func RouterEventInstanceKey('
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) InsertEvent('
+      - 'server/internal/kanban/router_event_store.go:ON CONFLICT(unique_key) DO NOTHING'
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) ClaimEvent('
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) CompleteEvent('
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RecoverClaimedEvents('
+      - 'server/internal/kanban/router_event_store.go:must be claimed before completing'
+      - 'server/internal/kanban/task_store_migrate.go:migrateRouterEventTable(s.db)'
+      - 'server/internal/kanban/router_store.go:DELETE FROM router_events WHERE task_id = ?'
