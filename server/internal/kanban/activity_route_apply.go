@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // routeApplyState 在一条决策的动作序列内复用同一份占位回复：第一条回复类动作
@@ -25,13 +26,26 @@ func (st *routeApplyState) take() *TaskActivity {
 // ApplyRouteActions 按 seq 顺序应用 Router 决策。每条动作先 ClaimAppliedSeq，
 // 抢占成功才执行 —— 进程重启或重复投递时，已经应用过的动作必须跳过，不能
 // 重复建 Run / 插活动。
-func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *RouterDecision) error {
+func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *RouterDecision) (applyErr error) {
 	if s == nil || s.tasks == nil || s.activities == nil {
 		return errors.New("activity service not configured")
 	}
 	if decision == nil {
 		return errors.New("router decision required")
 	}
+	state := &routeApplyState{}
+	if id := strings.TrimSpace(decision.PlaceholderActivityID); id != "" {
+		if act, loadErr := s.activities.Get(ctx, id); loadErr == nil {
+			state.placeholder = act
+		}
+	}
+	defer func() {
+		if applyErr != nil && !state.used {
+			if err := s.failUnusedRoutePlaceholder(ctx, decision, applyErr.Error()); err != nil {
+				applyErr = errors.Join(applyErr, fmt.Errorf("finish router placeholder: %w", err))
+			}
+		}
+	}()
 	task, err := s.tasks.GetTask(ctx, strings.TrimSpace(decision.TaskID))
 	if err != nil {
 		return err
@@ -39,12 +53,6 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 	userAct, err := s.activities.Get(ctx, strings.TrimSpace(decision.UserActivityID))
 	if err != nil {
 		return err
-	}
-	state := &routeApplyState{}
-	if id := strings.TrimSpace(decision.PlaceholderActivityID); id != "" {
-		if act, loadErr := s.activities.Get(ctx, id); loadErr == nil {
-			state.placeholder = act
-		}
 	}
 	store := NewRouterStore(s.tasks.db)
 	for _, action := range decision.Actions {
@@ -60,6 +68,29 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 		}
 	}
 	return nil
+}
+
+// Only close the original, still-empty reply. A retried decision may load a reply
+// already claimed by a worker or filled by an earlier action.
+func (s *ActivityService) failUnusedRoutePlaceholder(ctx context.Context, decision *RouterDecision, reason string) error {
+	id := strings.TrimSpace(decision.PlaceholderActivityID)
+	if id == "" {
+		return nil
+	}
+	result, err := s.activities.db.ExecContext(ctx, `
+UPDATE task_activities SET status=?, summary=?, updated_at=?
+WHERE id=? AND task_id=? AND type=? AND role=? AND status=?
+  AND hidden=0 AND run_id='' AND router_decision_id='' AND body='' AND summary=''`,
+		ActivityStatusFailed, reason, time.Now().UTC().Format(time.RFC3339Nano),
+		id, decision.TaskID, ActivityTypeAgentReply, RoleAgent, ActivityStatusPending)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err == nil && updated > 0 {
+		s.broadcastUpdatedByID(ctx, id, map[string]any{"status": ActivityStatusFailed, "summary": reason})
+	}
+	return err
 }
 
 func (s *ActivityService) applyRouteAction(

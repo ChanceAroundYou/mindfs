@@ -72,6 +72,19 @@ func (s *ActivityService) beginDirectAgent(ctx context.Context, task Task, body 
 	return agentAct, nil
 }
 
+// prepareRouterTurn 允许协调正在执行的节点，任务暂停、结束和其他错误仍立即反馈。
+func (s *ActivityService) prepareRouterTurn(ctx context.Context, task Task, placeholder *TaskActivity) error {
+	if s.lifecycle == nil {
+		return nil
+	}
+	err := s.lifecycle.PrepareNewUserTurn(ctx, task, false)
+	if err == nil || errors.Is(err, ErrWorkflowTurnActive) {
+		return nil
+	}
+	s.failActivity(ctx, placeholder, err)
+	return err
+}
+
 // prepareUserTurn 把「新一轮开始」的守卫/取代交给状态机端口。失败只写回这一轮
 // 的占位回复：用户留言已经落库，不能因为拒绝而消失。
 func (s *ActivityService) prepareUserTurn(ctx context.Context, task Task, supersede bool, agentAct *TaskActivity) error {
