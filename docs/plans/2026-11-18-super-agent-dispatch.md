@@ -19,7 +19,7 @@
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **PASS（2026-11-18）**：#82 交付并集成（`93f96f14` + 工头修正 `f7dcc5bb`），8 条行为 + 工头补 3 条，`Scope: G-MJ` |
 | T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | **PASS（2026-11-18）**：#83 交付（`4e4d2235`）并集成 `d5d31a5e`，8 条行为、6 个缺陷注入，`Scope: G-ML` |
-| T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | T9 已 PASS，待冻结 brief |
+| T10 集成验收 | T9 后独占运行，`Scope: G-MM` | 全链依赖 | `e2e/test_task_router_coordinate.py` + task-10-report.md + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | **已派发（2026-11-18）**：#84 / `task-84`，brief 已冻结 |
 
 T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定稿 brief；未补全不得派发。
 
@@ -36,7 +36,8 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - R1 T5：**已完成并集成**（#79，账本 + 工头补的迁移/级联，见「T5 结果」）。
 - R1 T6：**已完成并集成**（#80，事件生产 + 硬线拆分，见「T6 结果」）。
 - R1 T7：**已完成并集成**（#81，coordinate 消费 + 预算 + 有界扫描，见「T7 结果」）。
-- R1 T8：**PASS 并集成**（#82，交付 `93f96f14` + 工头修正 `f7dcc5bb`，登记 `bf1071d5`，见「T8 结果」）。T9 已解锁，T10 继续 gated。
+- R1 T8：**PASS 并集成**（#82，交付 `93f96f14` + 工头修正 `f7dcc5bb`，登记 `bf1071d5`，见「T8 结果」）。
+- R1 T9：**PASS 并集成**（#83，交付 `4e4d2235` + 集成 `d5d31a5e` + 登记 `9a418944`，见「T9 结果」）。T10 已解锁并派发（#84，见「T10 实例」）。
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -339,4 +340,17 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - **门禁**：`make check-upstream` 1905 delta / 312 组绿（G-ML 9 锚点命中）。
 - **残留（非阻断，已写入 G-ML boundary）**：未模拟 OS 级 `kill -9`/断电、SQLite 单语句中途崩溃、真实双进程（同进程两个 `RouterService` 近似）、30s 循环时钟注入；只证明 R1 通知/协调恢复，**不**证明 R3 通用副作用恢复；行为 4 依赖进程内诊断接口 `activeLanes()`。
 - **未做**：未 push / 未 deploy / 未合并 main / 未重启任何节点；生产 `router.mode` 未动。
-- **下一步**：T10（真实闭环与工程集成）已解锁，需先冻结 brief 并创建任务实例。
+- **下一步**：T10（真实闭环与工程集成）已冻结 brief 并派发，见「T10 实例」。
+
+### T10 实例（2026-11-18）
+
+- MindFS #84 / `task_94ec32d147fcc1d6`；worktree `/home/xiaokubao/projects/mindfs/.worktree/task-84`，分支 `task-84`（任务 API 返回 `worktree_built=true`）。
+- Worker 必须先 `git merge --no-ff task-73`（须含 `186e10e7` / `4e4d2235` / `d5d31a5e` / `9a418944` / `9af54217`；有冲突停止报告）。
+- 冻结 brief：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-10-brief.md`。
+- 关键冻结决策：
+  - **只新增** `e2e/test_task_router_coordinate.py`（≤500 行，仅标准库）+ 可选 `e2e/t10-iso-driver.sh`（≤200 行）；生产代码、Go 测试、共享文档、定制清单、其他 worktree、主 checkout、`~/.config/mindfs` 一律不写；发现真缺陷报 BLOCKED 并给复现，不做顺手修复。
+  - 隔离根 `/tmp/mindfs-r1-t10`、端口 **7433**（避开 T4 的 7432）与 `MINDFS_ISO_KEEP=1`；隔离配置 `router.mode=coordinate` + sonnet / effort low / `turn_timeout=180s`（T4 实测真实回合尾部 155.9s > 90s，D-4 不改产品默认，只在隔离配置放宽）。
+  - 场景 A 需求→执行→主动汇报（第二条决策 `trigger_kind=run_settled` + 事件行 done）；B 中途留言有归宿（`continue_requests` 终态或可见活动；`delivery_failed` 带「agent required」= D-1 回归，直接 BLOCKED）；C 失败 + gate（未知 agent 确定性失败；普通留言不得批准 gate；专用端点 approve 200、重复 409、下游节点继续）；D 重启只限隔离进程（同根重启，断言无 pending/claimed 残留、无重复 effect、无新 Run；错过 pending 窗口可如实记 blocked）。
+  - 验证口径：`router_events` **没有 HTTP 端点**，只允许只读取 SQLite（`file:...?mode=ro`）+ `GET /api/tasks/{id}/router-decisions`；脚本入参 `--base/--user/--root/--db/--out/--scenarios`，结果 JSON `{scenario,pass,status,evidence,latency_ms,notes}`，退出码 0/1/2。
+  - web 门禁允许 `blocked`（worktree 无 node_modules，只能符号链接主 checkout 的只读依赖后 `make build-web`），须写明原因；不跑 android/APK/deploy。
+- 报告：`task-84/.mindfs/dispatch/task-10-report.md`；提交信息 `test(e2e): 隔离真实 Router coordinate 闭环验收（Scope: G-MM）`（登记由工头补）。
