@@ -138,11 +138,13 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 
 // recordTurnResultSummary 把这一轮的结果写回任务行，供看板卡片展示。直连回合
 // 没有 WorkflowRun 可投影，回复正文就是结果；不写的话卡片只能看到用户原始需求。
+// 回合可能跑几十秒，期间操作员可能已经暂停/完成/取消任务：那条结果更新，不能被
+// 迟到的回复覆盖（与 Router say 共用同一个带状态条件的投影）。
 func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, text string) {
 	if s == nil || s.tasks == nil {
 		return
 	}
-	_ = s.tasks.UpdateTaskResultSummary(ctx, taskID, truncateSummary(strings.TrimSpace(text)))
+	_ = s.tasks.recordReplySummaryIfActive(ctx, taskID, truncateSummary(strings.TrimSpace(text)))
 }
 
 // beginWorkflowRun 落一个 WorkflowRun 并把它挂到占位回复上。

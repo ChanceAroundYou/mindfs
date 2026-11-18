@@ -134,6 +134,63 @@ func TestRouterApplyRechecksStateAfterModel(t *testing.T) {
 	}
 }
 
+// Complete the task from inside a Router-started direct turn: the turn's late
+// reply must not replace the operator's terminal result summary.
+type completingDirectExecutor struct {
+	complete func()
+	reply    string
+	done     chan struct{}
+}
+
+func (e *completingDirectExecutor) RunDirectActivity(context.Context, Task, string) (string, error) {
+	e.complete()
+	close(e.done)
+	return e.reply, nil
+}
+
+func TestRouterDirectResultDoesNotOverwriteTerminalSummary(t *testing.T) {
+	ctx := context.Background()
+	f := newRouteFixture(t, RouterModeRoute)
+	const summary = "已验收"
+	if err := f.store.UpdateTaskResultSummary(ctx, "task-1", summary); err != nil {
+		t.Fatal(err)
+	}
+	f.agent.calls = []scriptedRouterCall{{
+		tool: "router_message_agent",
+		args: map[string]any{"body": "直连修复"},
+	}}
+	var completeErr error
+	direct := &completingDirectExecutor{reply: "迟到的直连回复", done: make(chan struct{})}
+	direct.complete = func() {
+		_, completeErr = f.svc.Complete(ctx, MoveInput{RootID: f.rootID, TaskID: "task-1"})
+	}
+	f.svc.SetDirectExecutor(direct)
+
+	_, reply, err := f.activity.CreateUserActivity(ctx, "task-1", "修复登录", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.waitDecision(t, RouterDecisionApplied)
+	select {
+	case <-direct.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("direct executor did not run")
+	}
+	if err := f.svc.WaitActivityTurnsIdle(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if completeErr != nil {
+		t.Fatal(completeErr)
+	}
+	task, err := f.store.GetTask(ctx, "task-1")
+	if err != nil || task.Status != StatusSuccess || task.ResultSummary != summary {
+		t.Errorf("task status=%q summary=%q err=%v, want the terminal summary preserved", task.Status, task.ResultSummary, err)
+	}
+	if got := reloadTestActivity(t, f.store, reply.ID); got.Status != ActivityStatusCompleted || got.Body != "迟到的直连回复" {
+		t.Errorf("direct reply status=%q body=%q", got.Status, got.Body)
+	}
+}
+
 // Complete the task when the first reply becomes visible, before its summary
 // projection or the second action can write.
 type completeAfterReply struct {

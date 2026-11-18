@@ -168,7 +168,7 @@ func (s *ActivityService) applyRouteSay(
 	s.broadcastUpdated(act, changes)
 	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。
 	if act.RunID == "" {
-		return s.tasks.recordRouteReplySummary(ctx, task.ID, body)
+		return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
 	}
 	return nil
 }
