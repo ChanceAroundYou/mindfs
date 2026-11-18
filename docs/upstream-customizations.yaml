@@ -9118,4 +9118,4 @@ groups:
       - 'server/internal/api/http_session_context_saving_test.go:func TestSessionContextSavingRouteRegistered('
       - 'server/internal/api/usecase/session_context_saving_test.go:func TestGetSessionContextSavingResolvesPoolSessionKey('
       - 'server/internal/api/usecase/session_context_saving_test.go:func TestGetSessionContextSavingDoesNotReadBareLedger('
-      - 'server/internal/agent/proxy/lcsmoke/main.go:-mode on it also folds'
+      - 'server/internal/agent/proxy/lcsmoke/main.go:saving := ps.SessionContextSaving("smoke-session")'
