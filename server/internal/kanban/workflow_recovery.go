@@ -186,6 +186,7 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 		if err != nil {
 			return plan, err
 		}
+		resumedBefore, unknownBefore := len(plan.ResumeNodeRunIDs), len(plan.UnknownIDs)
 		wake := false
 		for _, nr := range open {
 			// agent-done 证据优先于所有「副作用不明」判断：回合已经返回，重启
@@ -250,6 +251,19 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 				if !paused {
 					_ = store.UpdateTaskStatus(ctx, b.taskID, StatusWaitingUser, false)
 				}
+			}
+		}
+		if len(open) > 0 {
+			// 启动对账也是一次权威状态落库：把「这个 Run 重启后被怎么处理」记成
+			// 一条 startup_reconcile，供 Router 在下一个回合看到。InstanceKey 是
+			// RunID，重复启动不会重复产事件。
+			if err := s.emitRouterEvent(ctx, store, b.runID, RouterEventStartupReconcile, "", "", "", "", 0,
+				map[string]any{
+					"open_node_runs": len(open),
+					"resumed":        len(plan.ResumeNodeRunIDs) - resumedBefore,
+					"unknown":        len(plan.UnknownIDs) - unknownBefore,
+				}); err != nil {
+				log.Printf("[kanban/recover] router event failed root=%s run=%s err=%v", rootID, b.runID, err)
 			}
 		}
 		if wake && !paused {

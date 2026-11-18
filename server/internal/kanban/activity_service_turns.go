@@ -62,6 +62,14 @@ func (s *ActivityService) beginDirectAgent(ctx context.Context, task Task, body 
 	if guardErr := s.prepareUserTurn(ctx, task, false, agentAct); guardErr != nil {
 		return agentAct, nil
 	}
+	// A user can explicitly start a direct conversation while approval is pending.
+	// A Router decision cannot make that choice on the user's behalf.
+	if agentAct.RouterDecisionID != "" {
+		if err := s.tasks.checkRouteDirectGate(ctx, task.ID); err != nil {
+			s.failActivity(ctx, agentAct, err)
+			return agentAct, nil
+		}
+	}
 	if s.directExecutor == nil {
 		s.failActivity(ctx, agentAct, errors.New("direct executor not configured"))
 		return agentAct, nil
@@ -70,6 +78,19 @@ func (s *ActivityService) beginDirectAgent(ctx context.Context, task Task, body 
 		s.executeDirectActivity(ctx, agentAct, task, body)
 	})
 	return agentAct, nil
+}
+
+// prepareRouterTurn 允许协调正在执行的节点，任务暂停、结束和其他错误仍立即反馈。
+func (s *ActivityService) prepareRouterTurn(ctx context.Context, task Task, placeholder *TaskActivity) error {
+	if s.lifecycle == nil {
+		return nil
+	}
+	err := s.lifecycle.PrepareNewUserTurn(ctx, task, false)
+	if err == nil || errors.Is(err, ErrWorkflowTurnActive) {
+		return nil
+	}
+	s.failActivity(ctx, placeholder, err)
+	return err
 }
 
 // prepareUserTurn 把「新一轮开始」的守卫/取代交给状态机端口。失败只写回这一轮
@@ -117,11 +138,13 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 
 // recordTurnResultSummary 把这一轮的结果写回任务行，供看板卡片展示。直连回合
 // 没有 WorkflowRun 可投影，回复正文就是结果；不写的话卡片只能看到用户原始需求。
+// 回合可能跑几十秒，期间操作员可能已经暂停/完成/取消任务：那条结果更新，不能被
+// 迟到的回复覆盖（与 Router say 共用同一个带状态条件的投影）。
 func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, text string) {
 	if s == nil || s.tasks == nil {
 		return
 	}
-	_ = s.tasks.UpdateTaskResultSummary(ctx, taskID, truncateSummary(strings.TrimSpace(text)))
+	_ = s.tasks.recordReplySummaryIfActive(ctx, taskID, truncateSummary(strings.TrimSpace(text)))
 }
 
 // beginWorkflowRun 落一个 WorkflowRun 并把它挂到占位回复上。
