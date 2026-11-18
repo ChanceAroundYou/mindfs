@@ -54,6 +54,15 @@ type StartOptions struct {
 	// WorkflowParallelMainTree 控制没有独立 worktree 的任务是否共用主树并行写。
 	// 入口 flag 默认 true；config.json 的 workflow.parallel_main_tree 可关闭。
 	WorkflowParallelMainTree bool
+	// LiveCompact 是节点本地的上下文活压缩配置。空值 = off。
+	// 入口传字符串/整数，app 再转成 proxy.LiveCompactConfig，原因同 Router。
+	LiveCompactMode             string
+	LiveCompactKeepRounds       int
+	LiveCompactMinBlockTokens   int
+	LiveCompactMinBodyBytes     int
+	LiveCompactMaxDriftMessages int
+	// LiveCompactDisableFile 是急停文件；空值 = <config-dir>/context/DISABLED。
+	LiveCompactDisableFile string
 }
 
 // routerConfigFromOptions 是 string -> kanban.RouterConfig 的唯一转换点。
@@ -129,7 +138,18 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if err != nil {
 		return err
 	}
-	sharedPool := agent.NewPool(agentConfig)
+	liveCompactDisableFile := opts.LiveCompactDisableFile
+	if liveCompactDisableFile == "" {
+		liveCompactDisableFile = filepath.Join(configDir, "context", "DISABLED")
+	}
+	sharedPool := agent.NewPoolWithOptions(agentConfig, agent.PoolOptions{
+		LiveCompactMode:             opts.LiveCompactMode,
+		LiveCompactKeepRounds:       opts.LiveCompactKeepRounds,
+		LiveCompactMinBlockTokens:   opts.LiveCompactMinBlockTokens,
+		LiveCompactMinBodyBytes:     opts.LiveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages: opts.LiveCompactMaxDriftMessages,
+		LiveCompactDisableFile:      liveCompactDisableFile,
+	})
 	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
 	sharedProber.Start(ctx)
 	sharedPool.StartIdleReleaseLoop(ctx, func() time.Duration {

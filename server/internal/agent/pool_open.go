@@ -50,7 +50,13 @@ func (p *Pool) compactProxyEnv(sessionKey string, def Definition, configDir stri
 	tok := hex.EncodeToString(token)
 
 	port := p.compactProxy.Port()
-	p.compactProxy.RegisterSession(tok, realBaseURL)
+	// 隔离 ConfigDir 的会话（Router/工作流/结果改写）拿不到用户归档目录的读取权限，
+	// 折叠出的指针对它们等于丢失内容；只测量，不折叠。
+	if strings.TrimSpace(configDir) == "" {
+		p.compactProxy.RegisterSessionWithKey(tok, realBaseURL, sessionKey)
+	} else {
+		p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)
+	}
 
 	p.mu.Lock()
 	p.pendingProxyTokens[sessionKey] = tok

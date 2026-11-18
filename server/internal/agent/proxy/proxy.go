@@ -37,32 +37,74 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Server is the proxy server. One instance is shared across all Claude sessions
 // managed by a single Pool.
 type Server struct {
-	mu       sync.Mutex
-	sessions map[string]*sessionState // keyed by token
-	listener net.Listener
-	srv      *http.Server
+	mu          sync.Mutex
+	sessions    map[string]*sessionState // keyed by token
+	listener    net.Listener
+	srv         *http.Server
+	liveCompact LiveCompactConfig
+
+	// Emergency brake: the presence of DisableFile turns live-compact off for
+	// the running process. Checked at most once per second.
+	disableMu        sync.Mutex
+	disableCheckedAt time.Time
+	disableCache     bool
+
+	// Observation queue. Parsing a multi-megabyte body costs hundreds of
+	// milliseconds, so it must never run on the request path. See
+	// live_compact_worker.go.
+	workMu       sync.Mutex
+	workQueues   map[string][]liveCompactJob
+	workReady    chan string
+	workStop     chan struct{}
+	workClosed   bool
+	workInFlight int
+	workRetained int
+	workDropped  int
+	workerWG     sync.WaitGroup
 }
 
 type sessionState struct {
 	realBaseURL string // e.g. "https://openwrt.xiaokubao.space/llmux/v1"
 	compactions int    // PostCompact signals seen (observability only)
 	requests    int    // proxied requests (first one is logged as evidence)
+	sessionKey  string // MindFS session key, for the live-compact ledger
+	foldAllowed bool   // false for isolated-ConfigDir (Router/workflow) sessions
+	live        liveCompactState
 }
 
 // NewServer creates and starts the proxy server on a random loopback port.
 func NewServer() (*Server, error) {
+	return NewServerWithLiveCompact(LiveCompactConfig{})
+}
+
+// NewServerWithLiveCompact starts the proxy with the given context-management
+// configuration. The configuration is node-local and defaults to off.
+func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
+	cfg := liveCompact.Normalized()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("proxy: listen: %w", err)
 	}
 	s := &Server{
-		sessions: make(map[string]*sessionState),
-		listener: ln,
+		sessions:    make(map[string]*sessionState),
+		liveCompact: cfg,
+		listener:    ln,
+		workQueues:  make(map[string][]liveCompactJob),
+	}
+	s.initLiveCompactWorkers()
+	if cfg.Mode == LiveCompactOn {
+		// Phase A ships observability only. Be explicit rather than silently
+		// wrapping a request differently than the operator asked for.
+		log.Printf("[live-compact] mode=on is not implemented in this build; observing only")
+	}
+	if cfg.Observes() && s.liveCompactDisabled() {
+		log.Printf("[live-compact] disabled by brake file %s", cfg.DisableFile)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/compact-signal", s.handleCompactSignal)
@@ -84,8 +126,25 @@ func (s *Server) Port() int {
 // RegisterSession registers a new session token with its real upstream base URL.
 // Called by the Pool when opening a Claude session.
 func (s *Server) RegisterSession(token, realBaseURL string) {
+	s.RegisterSessionWithKey(token, realBaseURL, "")
+}
+
+// RegisterSessionWithKey also records the MindFS session key so live-compact
+// observations can be attributed without exposing the key in logs.
+func (s *Server) RegisterSessionWithKey(token, realBaseURL, sessionKey string) {
 	s.mu.Lock()
-	s.sessions[token] = &sessionState{realBaseURL: realBaseURL}
+	s.sessions[token] = &sessionState{realBaseURL: realBaseURL, sessionKey: sessionKey, foldAllowed: true}
+	s.mu.Unlock()
+}
+
+// RegisterSessionObserveOnly registers a session that may be measured but must
+// never be folded. Isolated-ConfigDir sessions (Router, workflow recommenders,
+// result transformers) inherit none of the user's tool permissions, so a
+// pointer to an archive file could be unreadable for them; folding there would
+// silently become lossy.
+func (s *Server) RegisterSessionObserveOnly(token, realBaseURL, sessionKey string) {
+	s.mu.Lock()
+	s.sessions[token] = &sessionState{realBaseURL: realBaseURL, sessionKey: sessionKey, foldAllowed: false}
 	s.mu.Unlock()
 }
 
@@ -97,9 +156,21 @@ func (s *Server) UnregisterSession(token string) {
 	s.mu.Unlock()
 }
 
+// SessionFoldAllowed reports whether the given token may be folded. Unknown
+// tokens return false. Used by diagnostics and tests; folding decisions inside
+// the proxy use the same session state.
+func (s *Server) SessionFoldAllowed(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[token]
+	return ok && st.foldAllowed
+}
+
 // Close shuts down the proxy server.
 func (s *Server) Close() error {
-	return s.srv.Close()
+	err := s.srv.Close()
+	s.closeLiveCompactWorkers()
+	return err
 }
 
 // handleCompactSignal accepts the PostCompact hook's notification.
@@ -123,6 +194,7 @@ func (s *Server) handleCompactSignal(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if st, ok := s.sessions[body.Token]; ok {
 		st.compactions++
+		st.live.compactionEpoch++
 	}
 	s.mu.Unlock()
 	log.Printf("[proxy] post-compact signal token=%s", ShortToken(body.Token))
@@ -192,9 +264,27 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Phase A: observe only, off the request path. The analysis runs on a
+	// worker after the response is done; the forwarded body is unchanged.
+	//
+	// Only the main Messages endpoint is in scope. Folding count_tokens would
+	// change the context size the CLI itself sees, which is a different
+	// behavior change and not approved by the design.
+	//
+	// The worker shares this body slice instead of copying it. That is safe
+	// only because everything below reads it: stripCompactPayload rebuilds
+	// from decoded maps rather than editing in place, and the forward request
+	// gets bytes.NewReader. Keep it that way — an in-place rewrite here would
+	// race the worker.
+	var turn *liveCompactTurn
+	if r.Method == http.MethodPost && isMessagesPath(remainder) {
+		turn = s.observeLiveCompact(token, body)
+	}
+
 	// Forward request.
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(body))
 	if err != nil {
+		s.recordLiveCompactUsage(token, turn, usageTotals{})
 		http.Error(w, "build request", http.StatusInternalServerError)
 		return
 	}
@@ -203,6 +293,7 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
+		s.recordLiveCompactUsage(token, turn, usageTotals{})
 		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -217,7 +308,26 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	// SSE 必须逐块下发：CLI 的流式事件只有几十字节，攒满 net/http 的 4KB
 	// 缓冲才发出去会把「逐字输出」变成「一阵一阵」的。
-	_, _ = io.Copy(&flushWriter{w: w}, resp.Body)
+	//
+	// usage 扫描只在未压缩响应上启用：带 Content-Encoding 的体是压缩字节，
+	// 逐块解压只为观测不值得，宁可把 actual 记成未知。
+	var scanner *usageScanner
+	reader := io.Reader(resp.Body)
+	if turn != nil && resp.Header.Get("Content-Encoding") == "" {
+		scanner = newUsageScanner()
+		reader = io.TeeReader(resp.Body, scanner)
+	}
+	_, _ = io.Copy(&flushWriter{w: w}, reader)
+	if turn != nil {
+		var totals usageTotals
+		if scanner != nil {
+			// This turn's own totals: the log line pairs them with this
+			// request's estimate. A stream with no usage block leaves Seen
+			// false, and the turn still closes with actual_in=-1.
+			totals = scanner.Totals()
+		}
+		s.recordLiveCompactUsage(token, turn, totals)
+	}
 }
 
 // flushWriter 在每次 Write 之后 flush，保持上游 SSE 的实时性。

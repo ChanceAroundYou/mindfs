@@ -9222,3 +9222,55 @@ groups:
       - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryBudgetSurvivesRestart(t *testing.T) {'
       - 'server/internal/kanban/router_coordinate_recovery_test.go:func TestRecoveryUnreplayableDecisionFailsWithoutModelCall(t *testing.T) {'
       - 'server/internal/kanban/router_coordinate_recovery_test.go:func (f *coordinateFixture) restartRouter(t *testing.T) *RouterService {'
+
+  # ── 原生上下文活压缩 Phase A：会话代理内的观测面 ─────────────────────────
+  # 撞号说明：8ff43f92 的提交信息与本设计原文写的是 G-MG，与 R1 T5 的事件账本组
+  # （G-MG，891235c1）撞号；本设计自己注明该 ID 是「暂定」，2026-11-18 集成
+  # task-73 时改登记为 G-MN。提交信息保持原文，不再改写历史。
+  - id: G-MN
+    title: 原生 live-compact Phase A —— 会话代理内观测候选折叠、SSE usage 与历史前缀漂移
+    kind: feature
+    symptom: "MindFS 的会话上下文完全由 Claude Code 自身的 auto-compact 决定：到阈值就整段摘要，不可观测、不可控、无法判断「把旧的工具结果换成指针 + 存档」能省多少。用户目标是把它做成 MindFS 原生能力（scope B），Phase A 要求先在真实流量上量出收益与风险，且不得改变任何一次请求的字节。"
+    why: "上游没有这条链路，必须保留：① 观测挂在既有每会话回环代理 server/internal/agent/proxy 上，只对 POST .../v1/messages 且 body ≥ min_body_bytes 的请求解析，count_tokens 永不触碰（改写它会改变 CLI 自己看到的上下文大小）；② off 默认零解析、shadow 只观测不改字节、on 在本构建明确告警「observing only」，三者都不会静默改写请求；③ 解析必须在请求路径之外 —— encoding/json 在本项目的嵌套解码路径对 8 MB body 实测 436 ms、58 MB 分配（同一 body 被完整校验四遍），因此请求路径只做门禁 + 入队（实测 3.5 ms/8 MB、3 allocs），分析跑在按会话 token 串行的有界工作队列上（全局 96 MiB 字节预算，仅按会话限深不构成内存上界）；④ 每个请求一个 liveCompactTurn，把「本次请求的估算」与「本次请求的 SSE usage」配成一对 —— 分析毫秒级完成而 usage 要等响应流结束，读会话级 lastUsage 会让第 N 轮配到第 N−1 轮的数，而这对数正是 Phase A 的唯一产出；压缩流/错误响应/上游失败时以 actual_in=-1 正常收口；⑤ 历史前缀漂移必须按解析后的归一化块哈希判定：Claude Code 每轮搬家 cache_control 断点，且 system 的 content 会从 block 数组翻成裸字符串、tool_result.content 在数组/字符串间翻转，按 raw bytes 哈希会每轮误报；⑥ 错误文本启发式必须行首命中且只看首尾各 20 行，否则普通 Go 源码（含 fmt.Errorf/failed 字面量）会被判成错误输出；⑦ 隔离 ConfigDir 会话（Router/workflow）只观测不折叠 —— 它们不继承用户工具权限，指针指向的存档文件可能读不到，折叠会静默变成有损；⑧ 急停文件 <config-dir>/context/DISABLED 带 1 秒 stat 缓存，本机 system 单元只能由用户重启，没有它就无法在不重启的前提下收手。"
+    boundary: "只做观测：不产生任何请求改写（B1 折叠未实现），不落账本/API/前端（B2），不做抽取卡片（B3）。不引入分词器依赖，token 估算保持可解释的粗估；不改 stripCompactPayload 的既有剥离语义；不改多节点拓扑与控制面；不改变「API 层不鉴权」的用户决策。已知硬约束登记在此以免 B1 走回头路：手写单遍字节扫描器对同一 8 MB body 仍需 73 ms，整包解析不可内联，B1 必须先解决「解析怎么进请求路径」（增量/流式改写只替换目标区间，或按前缀确定性缓存折叠计划）。lcsmoke/ 是手工冒烟工具（真实 Claude CLI + 进程内代理），有意不参与产品构建，故只登记目录不单独钉测试。"
+    files:
+      - server/internal/agent/proxy/proxy.go
+      - server/internal/agent/proxy/live_compact.go
+      - server/internal/agent/proxy/live_compact_worker.go
+      - server/internal/agent/proxy/live_compact_turn.go
+      - server/internal/agent/proxy/live_compact_wire.go
+      - server/internal/agent/proxy/estimate.go
+      - server/internal/agent/proxy/usage.go
+      - server/internal/agent/proxy/lcsmoke/
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_open.go
+      - server/app/server.go
+      - cli/cmd/mindfs.go
+      - cli/cmd/startup.go
+      - server/cmd/mindfs-server/main.go
+      - docs/plans/README.md
+    tests:
+      - server/internal/agent/proxy/live_compact_proxy_test.go
+      - server/internal/agent/proxy/live_compact_turn_test.go
+      - server/internal/agent/proxy/live_compact_wire_test.go
+      - server/internal/agent/proxy/estimate_test.go
+      - server/internal/agent/proxy/usage_test.go
+      - server/internal/agent/pool_compact_proxy_test.go
+      - cli/cmd/startup_config_test.go
+    anchors:
+      - 'server/internal/agent/proxy/proxy.go:turn = s.observeLiveCompact(token, body)'
+      - 'server/internal/agent/proxy/proxy.go:if turn != nil && resp.Header.Get("Content-Encoding") == ""'
+      - 'server/internal/agent/proxy/live_compact.go:func (s *Server) analyzeLiveCompact('
+      - 'server/internal/agent/proxy/live_compact.go:actual_in=%d cand_blocks=%d cand_error_blocks=%d'
+      - 'server/internal/agent/proxy/live_compact.go:func isMessagesPath(path string) bool'
+      - 'server/internal/agent/proxy/live_compact.go:func (s *Server) liveCompactDisabled() bool'
+      - 'server/internal/agent/proxy/live_compact_turn.go:func (t *liveCompactTurn) completeTurn('
+      - 'server/internal/agent/proxy/live_compact_worker.go:liveCompactRetainBudget = 96 << 20'
+      - 'server/internal/agent/proxy/live_compact_wire.go:func normalizeMessageHash(msg wireMessage) []byte'
+      - 'server/internal/agent/proxy/live_compact_wire.go:func looksLikeErrorText(text string) bool'
+      - 'server/internal/agent/proxy/usage.go:func (s *usageScanner) consumeLine('
+      - 'server/internal/agent/pool_open.go:p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)'
+      - 'server/app/server.go:liveCompactDisableFile = filepath.Join(configDir, "context", "DISABLED")'
+      - 'cli/cmd/startup.go:live_compact'
+      - 'server/internal/agent/proxy/live_compact_proxy_test.go:func TestLiveCompactSharesBodyWithoutRacingTheRewrite('
+      - 'server/internal/agent/proxy/live_compact_turn_test.go:func TestLiveCompactTurnPairsOneRequestEstimateWithItsOwnUsage('
