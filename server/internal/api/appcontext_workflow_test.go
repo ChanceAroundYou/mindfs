@@ -317,3 +317,40 @@ func TestRunDirectActivityCreatesAndReusesTaskMainSession(t *testing.T) {
 		t.Fatalf("second turn reused session = %#v, want %q", captured, captured[0].SessionKey)
 	}
 }
+
+// TestSendWorkflowCommentCarriesNodeAgentProfile pins the T4 D-1 defect: a
+// queued user comment is a continuation turn inside the node's session, so it
+// must reuse the node's agent profile. Sending without Agent makes the turn
+// layer reject the message with "agent required" and the user only sees a
+// delivery-failed line.
+func TestSendWorkflowCommentCarriesNodeAgentProfile(t *testing.T) {
+	app, rootID := newWorkflowAdapterTestApp(t)
+	var captured workflowTurnRequest
+	app.workflowTurnOverride = func(_ context.Context, req workflowTurnRequest) (string, error) {
+		captured = req
+		return "", nil
+	}
+	node := kanban.WorkflowNode{ID: "slow", Name: "长任务", Kind: kanban.NodeKindAgent, Params: map[string]any{
+		"agent":        "claude",
+		"model":        "sonnet",
+		"effort":       "low",
+		"fast_service": "ON",
+		"plan_mode":    true,
+	}}
+	exec := workflowAdapterExec(rootID, kanban.Task{ID: "task-wf-comment", TaskNumber: 11, Name: "长任务"}, node,
+		kanban.NodeRun{ID: "nr-comment", RunID: "run-comment", NodeID: "slow", Attempt: 1, SessionKey: "sess-wf-comment"})
+
+	if err := app.SendWorkflowComment(context.Background(), exec, "  补充：请在完成后顺便说明耗时。  "); err != nil {
+		t.Fatalf("SendWorkflowComment: %v", err)
+	}
+	if captured.Agent != "claude" || captured.Model != "sonnet" || captured.Effort != "low" ||
+		captured.FastService != "on" || !captured.PlanMode {
+		t.Fatalf("comment turn lost the node agent profile: %#v", captured)
+	}
+	if captured.SessionKey != "sess-wf-comment" || captured.RootID != rootID {
+		t.Fatalf("comment turn scope = %#v", captured)
+	}
+	if captured.Prompt != "补充：请在完成后顺便说明耗时。" {
+		t.Fatalf("comment prompt = %q, want the trimmed user body", captured.Prompt)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -34,6 +35,10 @@ type SituationBrief struct {
 	Workflows        []RouterBriefWorkflow `json:"workflows,omitempty"`
 	Limits           RouterBriefLimits     `json:"limits"`
 	PolicyHints      []string              `json:"policy_hints,omitempty"`
+	// 运行期事件回合的三段证据（Plan 2026-11-18，R1 T8）。用户留言回合保持 nil。
+	Event    *RouterBriefEvent    `json:"event,omitempty"`
+	Evidence *RouterBriefEvidence `json:"evidence,omitempty"`
+	Budget   *RouterBriefBudget   `json:"budget,omitempty"`
 }
 
 type RouterBriefTask struct {
@@ -119,6 +124,35 @@ func (b *SituationBrief) Hash() string {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:6])
+}
+
+// turnBrief preserves the pre-dispatch shadow snapshot. Route decisions must observe
+// the current execution and the original message when the task lane reaches that turn.
+func (rs *RouterService) turnBrief(ctx context.Context, taskID string, trigger RouterTrigger, config RouterConfig) (*SituationBrief, error) {
+	if trigger.Mode != RouterModeRoute && trigger.Brief != nil {
+		return trigger.Brief, nil
+	}
+	store, err := rs.service.taskStore(rs.rootID)
+	if err != nil {
+		return nil, fmt.Errorf("load task store: %w", err)
+	}
+	task, err := store.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("load task: %w", err)
+	}
+	brief, err := buildSituationBrief(ctx, store, rs.service.Workflows, config, task, trigger.Kind, trigger.UserActivityID)
+	if err != nil {
+		return nil, fmt.Errorf("build brief: %w", err)
+	}
+	// 运行期事件回合补证据三段；事件语义与用户留言不同，必须单独挂载后再按
+	// 事件顺序重新裁剪（buildSituationBrief 只认用户回合的裁剪顺序）。
+	if trigger.Event != nil {
+		if err := attachRouterEventBrief(ctx, store, brief, *trigger.Event); err != nil {
+			return nil, fmt.Errorf("attach event brief: %w", err)
+		}
+		brief = capSituationBrief(brief)
+	}
+	return brief, nil
 }
 
 // buildSituationBrief 只读任务库与 workflow 目录，不写任何状态。
@@ -259,15 +293,22 @@ func briefActiveExecution(ctx context.Context, store *TaskStore, run *WorkflowRu
 	if err != nil {
 		return execution
 	}
+	kinds := workflowNodeKinds(run)
 	for _, nodeRun := range runs {
-		if nodeRun.Status != NodeRunRunning && nodeRun.Status != NodeRunWaitingUser {
+		if kinds[nodeRun.NodeID] != NodeKindAgent || nodeRun.Status != NodeRunRunning {
 			continue
+		}
+		// A running Agent without a session still counts towards store uniqueness.
+		// Even another, bound Agent cannot accept implicit delivery in that case.
+		if strings.TrimSpace(nodeRun.SessionKey) == "" {
+			execution.CurrentNodes = nil
+			return execution
 		}
 		execution.CurrentNodes = append(execution.CurrentNodes, RouterBriefNode{
 			NodeID:         nodeRun.NodeID,
 			Name:           nodeRun.NodeID,
 			Status:         nodeRun.Status,
-			SessionPresent: strings.TrimSpace(nodeRun.SessionKey) != "",
+			SessionPresent: true,
 		})
 	}
 	return execution
@@ -321,6 +362,13 @@ func capSituationBrief(brief *SituationBrief) *SituationBrief {
 	if briefSize(brief) <= routerBriefMaxBytes {
 		return brief
 	}
+	// 事件 brief 的补充顺序：证据节点条数先收缩，再丢最近活动，然后缩节点摘要，
+	// 再缩用户原始要求，最后缩未验证项。任何证据裁剪都要置 Evidence.Truncated。
+	if trimRouterEventNodes(brief, routerEventBriefKeptNodes) {
+		if briefSize(brief) <= routerBriefMaxBytes {
+			return brief
+		}
+	}
 	for len(brief.RecentActivities) > 0 && briefSize(brief) > routerBriefMaxBytes {
 		brief.RecentActivities = brief.RecentActivities[1:]
 	}
@@ -330,10 +378,62 @@ func capSituationBrief(brief *SituationBrief) *SituationBrief {
 		}
 		activity.BodyExcerpt = truncateRouterText(activity.BodyExcerpt, 200)
 	}
+	trimRouterEventExcerpts(brief)
 	if brief.Trigger.UserMessage != nil && briefSize(brief) > routerBriefMaxBytes {
-		brief.Trigger.UserMessage.Body = truncateRouterText(brief.Trigger.UserMessage.Body, 2000)
+		brief.Trigger.UserMessage.Body = truncateRouterText(brief.Trigger.UserMessage.Body, routerEventBriefUserMessageLimit)
 	}
+	trimRouterEventUnverified(brief)
 	return brief
+}
+
+// trimRouterEventNodes 把证据节点收缩到 keep 条并累计被省略数；返回是否有裁剪。
+func trimRouterEventNodes(brief *SituationBrief, keep int) bool {
+	if brief == nil || brief.Event == nil || brief.Evidence == nil || len(brief.Evidence.Nodes) <= keep {
+		return false
+	}
+	omitted := len(brief.Evidence.Nodes) - keep
+	brief.Evidence.Nodes = brief.Evidence.Nodes[:keep]
+	brief.Evidence.OmittedNodes += omitted
+	brief.Evidence.Truncated = true
+	return true
+}
+
+// trimRouterEventExcerpts 把节点摘要压到 200 字节；返回是否有裁剪。
+func trimRouterEventExcerpts(brief *SituationBrief) bool {
+	if brief == nil || brief.Event == nil || brief.Evidence == nil {
+		return false
+	}
+	trimmed := false
+	for i := range brief.Evidence.Nodes {
+		node := &brief.Evidence.Nodes[i]
+		if len(node.OutputExcerpt) > 200 {
+			node.OutputExcerpt = truncateRouterText(node.OutputExcerpt, 200)
+			trimmed = true
+		}
+		if len(node.ErrorExcerpt) > 200 {
+			node.ErrorExcerpt = truncateRouterText(node.ErrorExcerpt, 200)
+			trimmed = true
+		}
+	}
+	if trimmed {
+		brief.Evidence.Truncated = true
+	}
+	return trimmed
+}
+
+// trimRouterEventUnverified 把未验证项压到 5 条；返回是否有裁剪。最后一条固定
+// 换成「还有 N 条」的标记：证据不全必须能看出来，不能裁成恰好 5 条就装完整。
+func trimRouterEventUnverified(brief *SituationBrief) bool {
+	if brief == nil || brief.Event == nil || brief.Evidence == nil ||
+		len(brief.Evidence.Unverified) <= routerEventBriefKeptUnverifd {
+		return false
+	}
+	items := brief.Evidence.Unverified
+	kept := append([]string(nil), items[:routerEventBriefKeptUnverifd-1]...)
+	brief.Evidence.Unverified = append(kept,
+		fmt.Sprintf("… and %d more unverified items", len(items)-(routerEventBriefKeptUnverifd-1)))
+	brief.Evidence.Truncated = true
+	return true
 }
 
 func briefSize(brief *SituationBrief) int {

@@ -23,8 +23,8 @@ const (
 )
 
 const (
-	defaultRouterAgent       = "claude"
-	defaultRouterEffort      = "low"
+	defaultRouterAgent  = "claude"
+	defaultRouterEffort = "low"
 	// Router 回合的实测量级：冷进程 + 读 brief 常常 30–45s，20s 会把正常回合
 	// 掐成 fallback（2026-11-14 shadow 26 条样本 p50 34.3s / p95 41.7s）。
 	defaultRouterTurnTimeout = 90 * time.Second
@@ -164,8 +164,10 @@ type RouterTrigger struct {
 	// Mode 是入队时的 Router 模式（shadow 只观察，route 真正应用动作）。
 	// 为空时按 shadow 处理，保持老调用方语义。
 	Mode         RouterMode
-	Brief        *SituationBrief     // shadow: 分发前快照；route: 入队时快照
+	Brief        *SituationBrief     // shadow: legacy 分发前快照；route 在消费时重新构建
 	LegacyAction *RouterLegacyAction // shadow only
+	// Event 非 nil 即 coordinate 运行期事件回合；用户留言恒为 nil。
+	Event *RouterEvent
 }
 
 type RouterLegacyAction struct {

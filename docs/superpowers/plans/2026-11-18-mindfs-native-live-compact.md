@@ -146,11 +146,11 @@
 - Modify: `docs/superpowers/specs/2026-11-18-mindfs-native-live-compact-design.md`
 
 **Interfaces:**
-- 分组：`G-MG`，`kind: feature`，登记 Phase A 涉及的全部文件与测试；B1/B2 在同一组内追加。
+- 分组：`G-MN`，`kind: feature`，登记 Phase A 涉及的全部文件与测试；B1/B2 在同一组内追加。
 
-- [ ] **Step 1:** 在 `groups:` 中新增 `G-MG`，`files` 覆盖：`server/internal/agent/proxy/proxy.go`、`live_compact.go`、`live_compact_worker.go`、`live_compact_turn.go`、`live_compact_wire.go`、`estimate.go`、`usage.go`、`server/internal/agent/pool.go`、`pool_open.go`、`server/app/server.go`、`cli/cmd/mindfs.go`、`cli/cmd/startup.go`、`server/cmd/mindfs-server/main.go`。
+- [ ] **Step 1:** 在 `groups:` 中新增 `G-MN`，`files` 覆盖：`server/internal/agent/proxy/proxy.go`、`live_compact.go`、`live_compact_worker.go`、`live_compact_turn.go`、`live_compact_wire.go`、`estimate.go`、`usage.go`、`server/internal/agent/pool.go`、`pool_open.go`、`server/app/server.go`、`cli/cmd/mindfs.go`、`cli/cmd/startup.go`、`server/cmd/mindfs-server/main.go`。
 - [ ] **Step 2:** `tests` 列出 Task A1–A5 的测试文件；`anchors` 钉住 `[live-compact]` 日志行、`isMessagesPath`、`RegisterSessionObserveOnly`、`DISABLED` 路径、默认值 3/2000/100 KiB/8192、`liveCompactTurn` 配对与 `liveCompactRetainBudget`。
-- [ ] **Step 3:** 提交信息标 `Scope: G-MG`；随后 `make check-upstream` 必须绿（该工具只比较已提交文件，提交前红是预期形态）。
+- [ ] **Step 3:** 提交信息标 `Scope: G-MN`；随后 `make check-upstream` 必须绿（该工具只比较已提交文件，提交前红是预期形态）。
 - [ ] **Step 4:** 全量门禁：`go test -count=1 ./...`、`go test -race ./server/internal/agent/...`、`make build`。
 
 ## 明确不在本计划内

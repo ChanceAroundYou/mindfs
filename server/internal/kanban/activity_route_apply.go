@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // routeApplyState 在一条决策的动作序列内复用同一份占位回复：第一条回复类动作
@@ -22,23 +23,19 @@ func (st *routeApplyState) take() *TaskActivity {
 	return st.placeholder
 }
 
-// ApplyRouteActions 按 seq 顺序应用 Router 决策。每条动作先 ClaimAppliedSeq，
-// 抢占成功才执行 —— 进程重启或重复投递时，已经应用过的动作必须跳过，不能
-// 重复建 Run / 插活动。
-func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *RouterDecision) error {
+// ApplyRouteActions 按 seq 顺序应用 Router 决策。用户留言的每条动作先
+// ClaimAppliedSeq，抢占成功才执行 —— 进程重启或重复投递时，已经应用过的动作
+// 必须跳过，不能重复建 Run / 插活动。
+//
+// 运行期事件相反：可见汇报用确定 effect ID（routeEffectActivityID），重复应用
+// 只会改写同一行。所以它先写效果、后推游标。倒过来一旦崩在两者之间，重放就会
+// 把这条当成已应用，用户永远看不到这次汇报。
+func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *RouterDecision) (applyErr error) {
 	if s == nil || s.tasks == nil || s.activities == nil {
 		return errors.New("activity service not configured")
 	}
 	if decision == nil {
 		return errors.New("router decision required")
-	}
-	task, err := s.tasks.GetTask(ctx, strings.TrimSpace(decision.TaskID))
-	if err != nil {
-		return err
-	}
-	userAct, err := s.activities.Get(ctx, strings.TrimSpace(decision.UserActivityID))
-	if err != nil {
-		return err
 	}
 	state := &routeApplyState{}
 	if id := strings.TrimSpace(decision.PlaceholderActivityID); id != "" {
@@ -46,20 +43,89 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 			state.placeholder = act
 		}
 	}
+	defer func() {
+		if applyErr != nil && !state.used {
+			if err := s.failUnusedRoutePlaceholder(ctx, decision, applyErr.Error()); err != nil {
+				applyErr = errors.Join(applyErr, fmt.Errorf("finish router placeholder: %w", err))
+			}
+		}
+	}()
+	userAct, err := s.activities.Get(ctx, strings.TrimSpace(decision.UserActivityID))
+	if err != nil {
+		return err
+	}
 	store := NewRouterStore(s.tasks.db)
+	runtimeEvent := decision.TriggerKind != RouterTriggerUserMessage
 	for _, action := range decision.Actions {
-		claimed, err := store.ClaimAppliedSeq(ctx, decision.ID, action.Seq)
-		if err != nil {
-			return fmt.Errorf("claim seq %d: %w", action.Seq, err)
+		if !runtimeEvent {
+			claimed, err := store.ClaimAppliedSeq(ctx, decision.ID, action.Seq)
+			if err != nil {
+				return fmt.Errorf("claim seq %d: %w", action.Seq, err)
+			}
+			if !claimed {
+				continue
+			}
 		}
-		if !claimed {
-			continue
+		if err := s.applyCheckedRouteAction(ctx, decision, userAct, state, action); err != nil {
+			return err
 		}
-		if err := s.applyRouteAction(ctx, decision, task, userAct, state, action); err != nil {
-			return fmt.Errorf("apply %s(seq=%d): %w", action.Kind, action.Seq, err)
+		if runtimeEvent {
+			if err := store.AdvanceAppliedSeq(ctx, decision.ID, action.Seq); err != nil {
+				return fmt.Errorf("advance seq %d: %w", action.Seq, err)
+			}
 		}
 	}
 	return nil
+}
+
+// applyCheckedRouteAction 取任务、做用户留言的状态闸门，再执行动作。运行期
+// 事件只在 Run 结算后汇报，任务本来就是终态，所以闸门只属于用户留言。
+func (s *ActivityService) applyCheckedRouteAction(
+	ctx context.Context,
+	decision *RouterDecision,
+	userAct *TaskActivity,
+	state *routeApplyState,
+	action RouterAction,
+) error {
+	// The model and previous actions may have yielded to an operator decision.
+	task, err := s.tasks.GetTask(ctx, decision.TaskID)
+	if err != nil {
+		return err
+	}
+	// 运行期事件回合是「汇报」，不是对任务的再操作：Run 结算后任务本来就该
+	// 是终态，同一个终态闸门会把汇报本身挡成失败。用户留言保持原语义。
+	if decision.TriggerKind == RouterTriggerUserMessage {
+		if err := routeTaskStatusError(task.Status); err != nil {
+			return err
+		}
+	}
+	if err := s.applyRouteAction(ctx, decision, task, userAct, state, action); err != nil {
+		return fmt.Errorf("apply %s(seq=%d): %w", action.Kind, action.Seq, err)
+	}
+	return nil
+}
+
+// Only close the original, still-empty reply. A retried decision may load a reply
+// already claimed by a worker or filled by an earlier action.
+func (s *ActivityService) failUnusedRoutePlaceholder(ctx context.Context, decision *RouterDecision, reason string) error {
+	id := strings.TrimSpace(decision.PlaceholderActivityID)
+	if id == "" {
+		return nil
+	}
+	result, err := s.activities.db.ExecContext(ctx, `
+UPDATE task_activities SET status=?, summary=?, updated_at=?
+WHERE id=? AND task_id=? AND type=? AND role=? AND status=?
+  AND hidden=0 AND run_id='' AND router_decision_id='' AND body='' AND summary=''`,
+		ActivityStatusFailed, reason, time.Now().UTC().Format(time.RFC3339Nano),
+		id, decision.TaskID, ActivityTypeAgentReply, RoleAgent, ActivityStatusPending)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err == nil && updated > 0 {
+		s.broadcastUpdatedByID(ctx, id, map[string]any{"status": ActivityStatusFailed, "summary": reason})
+	}
+	return err
 }
 
 func (s *ActivityService) applyRouteAction(
@@ -90,6 +156,9 @@ func (s *ActivityService) applyRouteAction(
 
 // applyRouteSay 渲染 Router 的直接回复。第一条 say 复用同步占位（用户已经
 // 看到「正在想」的那条），之后每条新起一条活动，Ordinal 保序。
+//
+// 运行期事件回合没有占位，用确定 effect ID 插入并 InsertOrIgnore：同一决策/动作
+// 重复应用必须落成同一行，绝不出现第二条可见汇报。
 func (s *ActivityService) applyRouteSay(
 	ctx context.Context,
 	decision *RouterDecision,
@@ -104,13 +173,16 @@ func (s *ActivityService) applyRouteSay(
 	}
 	act := state.take()
 	if act == nil {
+		effectID := routeEffectActivityID(decision, action)
 		act = s.newAgentActivity(task, CommentWorkflowChoiceEmpty)
+		if effectID != "" {
+			act.ID = effectID
+		}
 		act.Body = body
 		act.Status = ActivityStatusCompleted
-		if err := s.activities.Insert(ctx, act); err != nil {
+		if err := s.insertRouteReply(ctx, act, effectID != ""); err != nil {
 			return err
 		}
-		s.broadcastCreated(act)
 	} else {
 		if err := s.activities.UpdateBody(ctx, act.ID, body); err != nil {
 			return err
@@ -131,9 +203,10 @@ func (s *ActivityService) applyRouteSay(
 		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
 	}
 	s.broadcastUpdated(act, changes)
-	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。
-	if act.RunID == "" {
-		s.recordTurnResultSummary(ctx, task.ID, body)
+	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。运行期事件的
+	// 汇报（trigger != user_message）不得覆盖用户回合留下的任务结果摘要。
+	if act.RunID == "" && decision.TriggerKind == RouterTriggerUserMessage {
+		return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
 	}
 	return nil
 }
@@ -161,13 +234,16 @@ func (s *ActivityService) applyRouteAskUser(
 	}
 	act := state.take()
 	if act == nil {
+		effectID := routeEffectActivityID(decision, action)
 		act = s.newAgentActivity(task, CommentWorkflowChoiceEmpty)
+		if effectID != "" {
+			act.ID = effectID
+		}
 		act.Body = body
 		act.Status = ActivityStatusWaitingUser
-		if err := s.activities.Insert(ctx, act); err != nil {
+		if err := s.insertRouteReply(ctx, act, effectID != ""); err != nil {
 			return err
 		}
-		s.broadcastCreated(act)
 	} else {
 		if err := s.activities.UpdateBody(ctx, act.ID, body); err != nil {
 			return err
@@ -288,7 +364,41 @@ func (s *ActivityService) hideRouteActivity(ctx context.Context, state *routeApp
 	return nil
 }
 
-// markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。
+// routeEffectActivityID 给出运行期事件回合的确定活动 ID。用户留言保持既有语义：
+// 复用同步占位，或每次新起随机 ID 的活动。
+func routeEffectActivityID(decision *RouterDecision, action RouterAction) string {
+	if decision == nil || decision.TriggerKind == RouterTriggerUserMessage {
+		return ""
+	}
+	return routerEventEffectID(decision.ID, action.Seq)
+}
+
+// insertRouteReply 插入一条回复活动。确定 ID 路径用 InsertOrIgnore：已存在同一行
+// 时只更新正文/状态（可广播 updated），不插第二行、不广播 created。
+func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivity, deterministic bool) error {
+	if !deterministic {
+		if err := s.activities.Insert(ctx, act); err != nil {
+			return err
+		}
+		s.broadcastCreated(act)
+		return nil
+	}
+	created, err := s.activities.InsertOrIgnore(ctx, act)
+	if err != nil {
+		return err
+	}
+	if created {
+		s.broadcastCreated(act)
+		return nil
+	}
+	if err := s.activities.UpdateBody(ctx, act.ID, act.Body); err != nil {
+		return err
+	}
+	return s.activities.UpdateStatus(ctx, act.ID, act.Status, nil)
+}
+
+// markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。运行期事件的
+// 汇报默认 purpose=progress；用户留言仍是 reply 或调用方指定值。
 func (s *ActivityService) markRouteReply(
 	ctx context.Context,
 	decision *RouterDecision,
@@ -299,6 +409,9 @@ func (s *ActivityService) markRouteReply(
 	purpose := strings.TrimSpace(action.Purpose)
 	if purpose == "" {
 		purpose = "reply"
+		if decision.TriggerKind != RouterTriggerUserMessage {
+			purpose = "progress"
+		}
 	}
 	if err := s.activities.SetRouteFields(ctx, act.ID, decision.ID, userAct.ID, purpose, action.Seq); err != nil {
 		return nil, err

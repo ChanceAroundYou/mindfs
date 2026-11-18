@@ -164,6 +164,10 @@ func (e *routerToolEnv) sayTool() RouterToolSpec {
 			purpose := strings.TrimSpace(args.Purpose)
 			if purpose == "" {
 				purpose = "chat"
+				// 运行期事件回合的 say 是进度汇报，不是对话；默认 progress。
+				if isRuntimeEventBrief(e.brief) {
+					purpose = "progress"
+				}
 			}
 			if purpose != "chat" && purpose != "progress" {
 				return "", fmt.Errorf("invalid purpose %q", purpose)
@@ -196,7 +200,10 @@ func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {
 			if workflowID == "" {
 				return "", errors.New("workflow_id required")
 			}
-			if !briefHasWorkflow(e.brief, workflowID) {
+			// 运行期事件回合的 brief 不带 workflow 目录（T8 有意置空：事件回合本来
+			// 就禁止开新执行）。这里不再按目录拒绝，否则模型看到的是「没有这个
+			// workflow」而不是「运行期不许跑 workflow」；统一交给运行期白名单。
+			if !isRuntimeEventBrief(e.brief) && !briefHasWorkflow(e.brief, workflowID) {
 				return "", fmt.Errorf("workflow %q is not available for this task", workflowID)
 			}
 			return e.record(RouterAction{
@@ -355,6 +362,13 @@ func briefHasWorkflow(brief *SituationBrief, workflowID string) bool {
 	return false
 }
 
+// isRuntimeEventBrief 表示这是运行期事件回合的 brief（T8 的 Event 三段已挂上）。
+// 事件回合不携带 workflow 目录，也不允许开新执行，所以「目录里没有这个 workflow」
+// 的检查对它不成立；真正该拒绝它的是运行期动作白名单。
+func isRuntimeEventBrief(brief *SituationBrief) bool {
+	return brief != nil && brief.Event != nil
+}
+
 // validateRouterActions 做跨动作校验。返回的错误会让整条决策标 rejected，
 // 而不是只丢坏动作：半套动作比没有动作更危险。
 func validateRouterActions(brief *SituationBrief, actions []RouterAction, config RouterConfig) error {
@@ -387,7 +401,10 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			}
 		case RouterActionRunWorkflow:
 			executions++
-			if briefHasWorkflow(brief, action.WorkflowID) == false {
+			// 运行期事件 brief 不带 workflow 目录，也不许开新执行：可用性检查
+			// 交给运行期白名单（它会以「运行期事件回合不允许」拒绝），别在这里
+			// 用「目录里没有」误导模型。
+			if !isRuntimeEventBrief(brief) && briefHasWorkflow(brief, action.WorkflowID) == false {
 				return fmt.Errorf("workflow %q is not available", action.WorkflowID)
 			}
 		case RouterActionMessageAgent, RouterActionDeliver:
@@ -423,15 +440,22 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 	return nil
 }
 
+// errRouterEmptyDecision marks a model turn that produced no decision at all:
+// zero write-tool calls and no visible final text. Treating it as a deliberate
+// silence would hide the user's message behind a placeholder, so callers must
+// fall back to the legacy path the same way they do for model failures.
+var errRouterEmptyDecision = errors.New("router produced no decision: empty final text and no tool calls")
+
 // synthesizeActions 处理「模型只说了话、没调写入工具」的情况：非空最终文本
-// 合成为 say(chat)，空文本合成为 silent。这让每轮都有可记账的决策。
-func synthesizeActions(actions []RouterAction, finalText string) ([]RouterAction, bool) {
+// 合成为 say(chat)。空文本说明这一轮没有任何决策——既没有工具调用，也没有可
+// 转述的话，返回错误由调用方回落旧路径；silent 只能来自显式的 router_silent 工具。
+func synthesizeActions(actions []RouterAction, finalText string) ([]RouterAction, bool, error) {
 	if len(actions) > 0 {
-		return actions, false
+		return actions, false, nil
 	}
 	text := strings.TrimSpace(finalText)
 	if text == "" {
-		return []RouterAction{{Kind: RouterActionSilent, Reason: "no action", Seq: 0}}, true
+		return nil, false, errRouterEmptyDecision
 	}
-	return []RouterAction{{Kind: RouterActionSay, Body: text, Purpose: "chat", Seq: 0}}, true
+	return []RouterAction{{Kind: RouterActionSay, Body: text, Purpose: "chat", Seq: 0}}, true, nil
 }

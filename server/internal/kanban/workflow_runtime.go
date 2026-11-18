@@ -235,6 +235,13 @@ func (s *Service) CancelWorkflowRun(ctx context.Context, rootID, taskID, reason 
 	if err := store.UpdateTaskStatus(ctx, task.ID, StatusCancelled, true); err != nil {
 		return err
 	}
+	// projectRunCancelled 在另一次加载里写回新的 NodeStates，这里的 run 仍是
+	// 取消前的快照。settleWorkflowReply 用 run 判断「节点是否全部终态」，过期
+	// 快照会让它以为还有 running 节点而直接返回，绑定回复就永远停在 running。
+	// 投影与任务状态落库之后重读一次再结算。
+	if fresh, ok, err := s.workflowRunForTask(ctx, store, task.ID); err == nil && ok {
+		run = fresh
+	}
 	s.settleWorkflowReply(ctx, store, run)
 	_ = store.AddEvent(ctx, TaskEvent{
 		ID: newID("event"), TaskID: task.ID, Type: "cancelled",
@@ -245,62 +252,6 @@ func (s *Service) CancelWorkflowRun(ctx context.Context, rootID, taskID, reason 
 	}
 	s.broadcastTask(ctx, store, task.ID)
 	return nil
-}
-
-// cancelOpenWorkflowNodeRuns snapshots open rows, asks the adapter to stop
-// their live turns, then marks them cancelled while they are still open. Doing
-// the marking before the driver context is cancelled is deliberate: a finishing
-// callback must lose the CAS and preserve the operator's terminal state.
-func (s *Service) cancelOpenWorkflowNodeRuns(ctx context.Context, rootID string, store *TaskStore, runID, reason string) error {
-	open, err := store.ListOpenWorkflowNodeRuns(ctx, runID)
-	if err != nil {
-		return err
-	}
-	s.interruptWorkflowNodeRuns(ctx, rootID, open)
-	for _, nr := range open {
-		// 与合并收尾共用锁：agent 已返回、正在 merge 的行不能被这里改成
-		// cancelled；等收尾 CAS 成功后，这次取消自然 CAS 失败（changed=false）。
-		unlock := s.lockWorkflowNodeFinish(nr.ID)
-		_, cerr := store.CancelWorkflowNodeRun(ctx, nr, reason)
-		unlock()
-		if cerr != nil {
-			return cerr
-		}
-	}
-	return nil
-}
-
-// interruptWorkflowNodeRuns asks the adapter to stop the live turn behind each
-// running row. It is bounded per row: an SDK that never acknowledges must not
-// hold an operator verb hostage. Terminal state is persisted by the caller
-// afterwards, so a late adapter reply cannot rewrite it.
-func (s *Service) interruptWorkflowNodeRuns(ctx context.Context, rootID string, open []NodeRun) {
-	canceller := s.workflowCancellerFor(rootID)
-	timeout := s.workflowCancelTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	for _, nr := range open {
-		if nr.Status != NodeRunRunning || strings.TrimSpace(nr.SessionKey) == "" || canceller == nil {
-			continue
-		}
-		cctx, cancel := context.WithTimeout(ctx, timeout)
-		_ = canceller.CancelWorkflowNode(cctx, nr)
-		cancel()
-	}
-}
-
-// stopWorkflowDriver cancels the single-flight driver so it cannot claim the
-// next node. The driver itself only exits after its current step returns; the
-// caller has already made the observable rows terminal, so that step's late
-// write is a CAS no-op.
-func (s *Service) stopWorkflowDriver(rootID, taskID string) {
-	s.mu.Lock()
-	if d := s.workflowDrives[workflowDriveKey(rootID, taskID)]; d != nil {
-		d.pending = false
-		d.cancel()
-	}
-	s.mu.Unlock()
 }
 
 // finishWorkflowRunByOperator implements D7's per-verb mapping for Complete and
@@ -341,7 +292,14 @@ func (s *Service) finishWorkflowRunByOperator(ctx context.Context, rootID, taskI
 	if err := store.BlockWorkflowCommentQueue(ctx, task.ID); err != nil {
 		return TaskDetail{}, err
 	}
-	return s.setTaskStatus(ctx, rootID, task.ID, status, taskEvent, reason, true)
+	detail, err := s.setTaskStatus(ctx, rootID, task.ID, status, taskEvent, reason, true)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	// 操作员终态不重写 Run 投影，事件按操作员给出的任务终态产生；事件写失败
+	// 不回滚已经落库的决定，下一次扫描会补齐。
+	s.emitOperatorOutcomeRouterEvent(ctx, store, run.ID, status)
+	return detail, nil
 }
 
 // projectRunCancelled rewrites the run projection for rows that cancellation

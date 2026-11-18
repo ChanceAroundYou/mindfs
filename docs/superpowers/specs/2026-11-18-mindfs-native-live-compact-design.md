@@ -2,7 +2,7 @@
 
 - 日期：2026-11-18
 - 状态：设计草案（待批准）
-- Scope：G-MG（暂定，实现时按清单顺序确认）
+- Scope：G-MN（暂定，实现时按清单顺序确认）
 - 参考实现：`Tranquillitatis-Lab/dsh-live-compact`（MIT，仅参考策略，不引入代码或依赖）
 
 ## 1. 背景与意图
@@ -53,7 +53,7 @@ MindFS 的 Claude 会话每轮把完整历史重新发给上游。长会话的�
 - 请求 body 上限 32MB，不得放大；不得把整段响应缓冲后转发（SSE 必须逐块下发）。
 - 不修改 `~/.claude/settings.json`；所有注入继续走 `--settings`（`pool_open.go` 已实现）。
 - 本机 system 单元重启仅用户执行；A 阶段验证需要用户配合。
-- 新增文件与改动必须登记 `docs/upstream-customizations.yaml`（G-MG），并在提交信息标 `Scope: G-MG`。
+- 新增文件与改动必须登记 `docs/upstream-customizations.yaml`（G-MN），并在提交信息标 `Scope: G-MN`。
 - `make check-upstream` 只比较已提交文件；登记必须在提交前写全。
 
 ## 4. 方案对比
@@ -242,7 +242,7 @@ archive: /home/xiaokubao/.config/mindfs/context/a1b2c3d4e5f60718293a4b5c.txt
 
 - 每会话账本 JSONL + 只读 API + 前端最小状态（会话页一个「上下文」chip，点开看折叠摘要与节省）。
 - 按节点推广到 wsl / fn / pc-win；`deploy-all.sh` 全绿。
-- 登记 G-MG（`docs/upstream-customizations.yaml`：文件、改了什么、为什么保留、可见症状、针对性测试表）、更新 `docs/plans/README.md`。
+- 登记 G-MN（`docs/upstream-customizations.yaml`：文件、改了什么、为什么保留、可见症状、针对性测试表）、更新 `docs/plans/README.md`。
 
 ### Phase B3：抽取卡片（需另一次设计评审）
 
