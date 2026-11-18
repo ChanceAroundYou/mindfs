@@ -69,6 +69,8 @@ public class ReplyPollerService extends Service {
     static final String ACTION_CLEAR_COMPLETED = "com.mindfs.app.reply_poller.CLEAR_COMPLETED";
     static final String ACTION_STOP = "com.mindfs.app.reply_poller.STOP";
     static final String EXTRA_API_BASE_URL = "apiBaseUrl";
+    // 单节点兜底用的长轮询整条地址，由前端算好（前缀 + user= 账户参数），原生不许自己拼。
+    static final String EXTRA_WAIT_URL = "waitUrl";
     static final String EXTRA_TOKEN = "token";
     static final String EXTRA_E2EE_REQUIRED = "e2eeRequired";
     static final String EXTRA_E2EE_NODE_ID = "e2eeNodeId";
@@ -80,6 +82,7 @@ public class ReplyPollerService extends Service {
     private static final String TAG = "MindFSReplyPoller";
     private static final String PREFS_NAME = "mindfs_reply_poller";
     private static final String PREF_API_BASE_URL = "api_base_url";
+    private static final String PREF_WAIT_URL = "wait_url";
     private static final String PREF_TOKEN = "token";
     private static final String PREF_E2EE_REQUIRED = "e2ee_required";
     private static final String PREF_E2EE_NODE_ID = "e2ee_node_id";
@@ -112,6 +115,10 @@ public class ReplyPollerService extends Service {
     private static final long WAIT_RETRY_INTERVAL_MS = 600_000;
     // 未降级的偶发错误退避；连续 3 次才降级。
     private static final long ERROR_BACKOFF_MS = 5_000;
+    // 服务端在途等待数到顶时回 503 + Retry-After: 3（spec §1）。读不到/非法时按 3s，
+    // 上限 60s，避免一个离谱的响应头把这条节点饿死。
+    private static final long DEFAULT_RETRY_AFTER_MS = 3_000L;
+    private static final long MAX_RETRY_AFTER_MS = 60_000L;
     // 节点的快照只在最近 90s 内成功过才算「可信」，否则不进 live、不参与「恰好 1 个」直达。
     private static final long NODE_FRESH_MS = 90_000;
     private static final int WAIT_FAILURES_BEFORE_FALLBACK = 3;
@@ -144,6 +151,8 @@ public class ReplyPollerService extends Service {
         Collections.synchronizedSet(new HashSet<Integer>());
     private volatile boolean running = false;
     private String apiBaseUrl = "";
+    // 单节点兜底的长轮询整条地址（前端随 apiBaseUrl 成对下发）；空串时走老配置的兜底拼接。
+    private String waitUrl = "";
     private String token = "";
     private boolean e2eeRequired = false;
     private String e2eeNodeId = "";
@@ -211,6 +220,11 @@ public class ReplyPollerService extends Service {
             apiBaseUrl = nextApiBaseUrl;
             editor.putString(PREF_API_BASE_URL, apiBaseUrl);
         }
+        if (intent.hasExtra(EXTRA_WAIT_URL)) {
+            // 与 apiBaseUrl 成对下发：节点表为空时是完整兜底地址，有节点表时是空串。
+            waitUrl = safe(intent.getStringExtra(EXTRA_WAIT_URL));
+            editor.putString(PREF_WAIT_URL, waitUrl);
+        }
         if (intent.hasExtra(EXTRA_TOKEN)) {
             token = safe(intent.getStringExtra(EXTRA_TOKEN));
             editor.putString(PREF_TOKEN, token);
@@ -252,6 +266,7 @@ public class ReplyPollerService extends Service {
     private void loadConfig() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         apiBaseUrl = safe(prefs.getString(PREF_API_BASE_URL, ""));
+        waitUrl = safe(prefs.getString(PREF_WAIT_URL, ""));
         token = safe(prefs.getString(PREF_TOKEN, ""));
         e2eeRequired = prefs.getBoolean(PREF_E2EE_REQUIRED, false);
         e2eeNodeId = safe(prefs.getString(PREF_E2EE_NODE_ID, ""));
@@ -430,6 +445,16 @@ public class ReplyPollerService extends Service {
                         setNodeMode(target, "poll", "等待端点不可用（HTTP " + result.status + "）");
                         continue;
                     }
+                    if (result.status == 503) {
+                        // 在途等待数到顶：服务器忙，不是节点坏了。按 Retry-After 退避，
+                        // 且不计入 3 次失败降级 —— 否则一次高峰就把节点误判离线并退回 10s 轮询 10 分钟。
+                        failures = 0;
+                        setNodeMode(target, "push", "服务端忙（503），退避 " + (result.retryAfterMillis / 1000L) + "s");
+                        if (!sleepWhileRunning(result.retryAfterMillis, generation)) {
+                            return;
+                        }
+                        continue;
+                    }
                     if (result.status != 200 && result.status != 304) {
                         throw new IllegalStateException("HTTP " + result.status);
                     }
@@ -438,11 +463,11 @@ public class ReplyPollerService extends Service {
                         etag = result.etag;
                     }
                     if (result.status == 200) {
-                        applyNodeSnapshot(target, result.entries);
+                        applyNodeSnapshot(target, result.entries, generation);
                         setNodeMode(target, "push", "等待返回 200");
                     } else {
                         // 304：快照没变，但要刷新节点新鲜度，否则空闲节点 90s 后会被判成掉线。
-                        refreshNodeFreshness(target);
+                        refreshNodeFreshness(target, generation);
                         setNodeMode(target, "push", "等待返回 304");
                     }
                 } catch (Exception ex) {
@@ -450,7 +475,8 @@ public class ReplyPollerService extends Service {
                         return;
                     }
                     failures++;
-                    failNode(target, ex);
+                    // 连续失败到阈值才算「判掉线」，单次失败交给 90s 新鲜度窗口。
+                    failNode(target, ex, failures >= WAIT_FAILURES_BEFORE_FALLBACK);
                     setNodeMode(target, "push", "等待失败：" + summarize(ex));
                     if (failures >= WAIT_FAILURES_BEFORE_FALLBACK) {
                         failures = 0;
@@ -471,7 +497,7 @@ public class ReplyPollerService extends Service {
                 return;
             }
             try {
-                applyNodeSnapshot(target, fetchReplyingSessions(target));
+                applyNodeSnapshot(target, fetchReplyingSessions(target), generation);
                 failures = 0;
                 setNodeMode(target, "poll", "轮询正常");
             } catch (Exception ex) {
@@ -479,7 +505,8 @@ public class ReplyPollerService extends Service {
                     return;
                 }
                 failures++;
-                failNode(target, ex);
+                // 轮询路径同样只在连续失败到阈值时才判掉线。
+                failNode(target, ex, failures >= WAIT_FAILURES_BEFORE_FALLBACK);
                 setNodeMode(target, "poll", "轮询失败：" + summarize(ex));
                 if (!sleepWhileRunning(ERROR_BACKOFF_MS, generation)) {
                     return;
@@ -525,10 +552,16 @@ public class ReplyPollerService extends Service {
         final int status;
         final String etag;
         final Map<String, ReplyStateMerger.Entry> entries;
+        // 503 时服务端会带 Retry-After；单位毫秒，其余状态为 0。
+        final long retryAfterMillis;
         WaitResult(int status, String etag, Map<String, ReplyStateMerger.Entry> entries) {
+            this(status, etag, entries, 0L);
+        }
+        WaitResult(int status, String etag, Map<String, ReplyStateMerger.Entry> entries, long retryAfterMillis) {
             this.status = status;
             this.etag = etag == null ? "" : etag;
             this.entries = entries == null ? Collections.<String, ReplyStateMerger.Entry>emptyMap() : entries;
+            this.retryAfterMillis = retryAfterMillis > 0L ? retryAfterMillis : 0L;
         }
     }
 
@@ -550,6 +583,24 @@ public class ReplyPollerService extends Service {
             return urlString;
         }
         return urlString + (urlString.contains("?") ? "&" : "?") + "timeout=" + WAIT_TIMEOUT_SECONDS;
+    }
+
+    // Retry-After 只按「秒数」解析（服务端发的就是 3）。HTTP-date 形态解析不了时回落默认，
+    // 那种情况下退避 3s 也不会出错，只是没跟着服务端走。
+    private static long parseRetryAfterMillis(String raw) {
+        String value = safe(raw);
+        if (value.isEmpty()) {
+            return DEFAULT_RETRY_AFTER_MS;
+        }
+        try {
+            long seconds = Long.parseLong(value);
+            if (seconds <= 0L) {
+                return DEFAULT_RETRY_AFTER_MS;
+            }
+            return Math.min(seconds, MAX_RETRY_AFTER_MS / 1000L) * 1000L;
+        } catch (NumberFormatException ex) {
+            return DEFAULT_RETRY_AFTER_MS;
+        }
     }
 
     // 节点表由前端推送（每项是算好的完整 URL）。没推过时退回单节点 apiBaseUrl，
@@ -577,7 +628,9 @@ public class ReplyPollerService extends Service {
         }
         if (out.isEmpty() && !apiBaseUrl.isEmpty()) {
             String url = apiBaseUrl + "/api/replying-sessions";
-            out.add(new NodeTarget("", url, url + "/wait"));
+            // 优先用前端下发的整条 waitUrl（带挂载前缀与 user= 账户参数）；
+            // resolveWaitUrl 里的 +"/wait" 只是老配置/从未 configure 过时的最后兜底。
+            out.add(new NodeTarget("", url, resolveWaitUrl(url, waitUrl)));
         }
         return out;
     }
@@ -666,6 +719,11 @@ public class ReplyPollerService extends Service {
             }
             if (status == HttpURLConnection.HTTP_NOT_FOUND || status == HttpURLConnection.HTTP_BAD_METHOD) {
                 return new WaitResult(status, "", null);
+            }
+            if (status == HttpURLConnection.HTTP_UNAVAILABLE) {
+                // 在途等待数到顶（spec §1）：这是「服务器忙」，不是节点坏了 ——
+                // 交给调用方按 Retry-After 退避，且不计入连续失败。
+                return new WaitResult(status, "", null, parseRetryAfterMillis(conn.getHeaderField("Retry-After")));
             }
             InputStream stream = status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream();
             String body = readAll(stream);
@@ -839,8 +897,9 @@ public class ReplyPollerService extends Service {
 
     // 把一个节点的权威快照应用到合并视图：DONE 判定、awaiting 提醒、常驻通知都在这里。
     // 网络请求在外层完成；applyLock 只保护「应用」这一段，绝不持锁做 I/O。
-    private void applyNodeSnapshot(NodeTarget target, Map<String, ReplyStateMerger.Entry> entries) {
-        if (!running) {
+    // generation 必须匹配：旧循环在途的响应（最长 30s）不能把「已不在节点表里的节点」写回来。
+    private void applyNodeSnapshot(NodeTarget target, Map<String, ReplyStateMerger.Entry> entries, int generation) {
+        if (!isCurrentLoop(generation)) {
             return;
         }
         List<ReplyStateMerger.Entry> snapshot = new ArrayList<>();
@@ -848,7 +907,7 @@ public class ReplyPollerService extends Service {
             snapshot.addAll(entries.values());
         }
         synchronized (applyLock) {
-            if (!running) {
+            if (!isCurrentLoop(generation)) {
                 return;
             }
             // 读取-修改-写回都在锁内：两个节点同时应用时不能互相覆盖 awaiting 集合。
@@ -909,12 +968,13 @@ public class ReplyPollerService extends Service {
     }
 
     // 304：快照内容没变，但这也是「节点还活着」的证据 —— 原样回填一次，刷新新鲜度。
-    private void refreshNodeFreshness(NodeTarget target) {
-        if (!running) {
+    // 与 applyNodeSnapshot 一样，旧 generation 的响应直接丢弃（节点已不在配置里）。
+    private void refreshNodeFreshness(NodeTarget target, int generation) {
+        if (!isCurrentLoop(generation)) {
             return;
         }
         synchronized (applyLock) {
-            if (!running) {
+            if (!isCurrentLoop(generation)) {
                 return;
             }
             List<ReplyStateMerger.Entry> current = new ArrayList<>();
@@ -933,14 +993,19 @@ public class ReplyPollerService extends Service {
 
     // 节点失败：保留它的条目（离线不等于任务结束），但从 live 里摘掉并刷新常驻通知，
     // 否则节点掉线后常驻通知会永远显示「有会话正在回复」。
-    private void failNode(NodeTarget target, Exception ex) {
+    // 只有「连续失败到判掉线」（declaredDown）才立刻 markNodeFailed 把新鲜度摘掉；
+    // 单次超时/代理掐断属于暂时性失败，保留 lastSuccessAt，让 90s 新鲜度窗口决定何时
+    // 不再可信 —— 否则一次读超时就会让常驻通知在「有会话正在回复」和空闲之间闪。
+    private void failNode(NodeTarget target, Exception ex, boolean declaredDown) {
         Log.w(TAG, "reply wait failed node=" + diagnosticKey(target), ex);
         synchronized (applyLock) {
             if (!running) {
                 return;
             }
-            merger.markNodeFailed(target.id);
-            nodeLastSuccessAt.remove(diagnosticKey(target));
+            if (declaredDown) {
+                merger.markNodeFailed(target.id);
+                nodeLastSuccessAt.remove(diagnosticKey(target));
+            }
             // applyNode 会按各节点自己的 lastSuccessAt 重算全局 live；伪节点没有条目，
             // 所以 DONE 判定不会命中任何会话。
             ReplyStateMerger.Result result = merger.applyNode(

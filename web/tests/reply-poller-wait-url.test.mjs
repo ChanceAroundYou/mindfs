@@ -65,3 +65,51 @@ test("configure 的 TS 类型声明了 waitUrl（否则 typecheck 与原生载�
     "节点类型缺 waitUrl",
   );
 });
+
+// ── 原生侧：顶层 waitUrl 必须真的被读走 ────────────────────────────────
+// 前端发了顶层 waitUrl，但如果两条原生桥都不转发、服务又自己拼 /wait，这一条就是死载荷。
+// 挂载前缀与 user= 账户参数只有前端知道，原生拼出来必然 404 —— 所以两头都钉死。
+const SERVICE = "../web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java";
+const ACTIVITY = "../web/android/app/src/main/java/com/mindfs/app/MainActivity.java";
+const PLUGIN = "../web/android/app/src/main/java/com/mindfs/app/ReplyPollerPlugin.java";
+
+// 按花括号配平取方法正文；被断言的方法正文里没有带花括号的字符串字面量。
+function methodBody(source, signature) {
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `找不到方法签名：${signature}`);
+  const open = source.indexOf("{", start);
+  assert.notEqual(open, -1, `方法没有正文：${signature}`);
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") {
+      depth--;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  throw new Error(`方法未闭合：${signature}`);
+}
+
+test("顶层 waitUrl 经两条原生桥进入服务，单节点兜底不再自己拼 /wait", async () => {
+  const service = read(SERVICE);
+  const activity = read(ACTIVITY);
+  const plugin = read(PLUGIN);
+
+  // 1) 服务侧常量存在，且键名与前端下发的 "waitUrl" 一致。
+  assert.match(service, /static final String EXTRA_WAIT_URL = "waitUrl";/, "服务缺 EXTRA_WAIT_URL 常量");
+
+  // 2) WebView JS 桥：MainActivity.ReplyPollerBridge.configure 必须转发 waitUrl。
+  const bridge = methodBody(activity, "public void configure(String rawJSON)");
+  assert.match(bridge, /payload\.optString\("waitUrl"/, "WebView 桥丢了顶层 waitUrl");
+  assert.match(bridge, /EXTRA_WAIT_URL/, "WebView 桥没把 waitUrl 放进 Intent");
+
+  // 3) Capacitor 插件路径同样转发。
+  const pluginConfigure = methodBody(plugin, "public void configure(PluginCall call)");
+  assert.match(pluginConfigure, /call\.getString\("waitUrl"/, "Capacitor 插件丢了顶层 waitUrl");
+  assert.match(pluginConfigure, /EXTRA_WAIT_URL/, "Capacitor 插件没把 waitUrl 放进 Intent");
+
+  // 4) 单节点兜底必须用收到的整条 waitUrl；不许回到 url + "/wait" 的字符串拼接。
+  const targets = methodBody(service, "private List<NodeTarget> nodeTargets()");
+  assert.match(targets, /new NodeTarget\("", url, resolveWaitUrl\(url, waitUrl\)\)/, "兜底没用下发的 waitUrl");
+  assert.doesNotMatch(targets, /new NodeTarget\("", url, url \+ "\/wait"\)/, "兜底又回到自己拼 /wait");
+});

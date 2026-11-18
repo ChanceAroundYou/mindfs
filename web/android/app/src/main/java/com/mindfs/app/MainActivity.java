@@ -564,6 +564,10 @@ public class MainActivity extends BridgeActivity {
                 if (!apiBaseUrl.isEmpty()) {
                     intent.putExtra(ReplyPollerService.EXTRA_API_BASE_URL, apiBaseUrl);
                 }
+                if (payload.has("waitUrl")) {
+                    // 单节点兜底的长轮询地址也由前端算好（挂载前缀 + user=），原生不许自己拼。
+                    intent.putExtra(ReplyPollerService.EXTRA_WAIT_URL, payload.optString("waitUrl", ""));
+                }
                 if (nodes != null) {
                     intent.putExtra(ReplyPollerService.EXTRA_NODES, nodes.toString());
                 }
