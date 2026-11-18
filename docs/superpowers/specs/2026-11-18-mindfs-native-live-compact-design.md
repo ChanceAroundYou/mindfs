@@ -230,6 +230,9 @@ archive: /home/xiaokubao/.config/mindfs/context/a1b2c3d4e5f60718293a4b5c.txt
 
 ### Phase B1：无损折叠
 
+**状态（2026-11-18）：已实现并提交，未部署、未在任何节点开 `on`。** 实施与实测见 §12.3；开闸证据
+（真实流量下的候选出现率、节省比例、0 parse 失败、drift 频率）仍需 Phase A 在节点上跑满再取。
+
 - 工具输出 → 指针 + 存档；不变量、失败开放、确定性、GC；单测 + 代理集成测试。
 - **开闸证据**（必须来自 Phase A 真实数据，不能凭预测）：候选块在长会话里持续出现；单请求预计节省达到
   可观察量级（阈值在 A 结束时按分布定，不低于 total 的 20%）；parse 失败率为 0；prefix drift 不频繁。
@@ -389,3 +392,60 @@ archive: /home/xiaokubao/.config/mindfs/context/a1b2c3d4e5f60718293a4b5c.txt
 60,737/65,624（**−7.5%**）。偏差随代码与标点密度的上升而扩大（4 字节/token 的 ASCII 假设偏乐观）。
 20k/32k 的粗阈值仍够用，但 B1 若用估算值决定「何时折」，阈值应留 10% 余量。
 
+
+### 12.3 Phase B1 实施记录（2026-11-18 深夜）
+
+**§12.2 第 3 条留给 B1 的问题已用测量回答**，结论是两条路都走：请求路径内联**字节区间扫描**（只定位、
+不解码），叠加**按内容寻址的渲染缓存**（消掉滑出窗口之外所有块的重渲染）。
+
+| 组件 | 文件 | 作用 |
+|---|---|---|
+| 扫描器 | `live_compact_scan.go` | 只记录字符区间，字符串靠 `bytes.IndexByte` + 反斜杠奇偶跳过，不解码；`scanBlock` 记 `textParts` 与 `nonText` |
+| 选择与拼接 | `live_compact_fold.go` | `pairScanRounds` / `planFold` / `applyFold` / `verifyFold` |
+| 指针渲染 | `live_compact_pointer.go` | 输入按固定偏好序归一化（与 JSON 键序无关）、首尾摘录、`encodeJSONStringLiteral` |
+| 渲染缓存 | `live_compact_pointer_cache.go` | 以 `toolName‖inputSummary‖原始转义区间` 的 128 位 maphash 为键 |
+| 存档 | `live_compact_archive.go` | `<config-dir>/context/<sha256(text)[:24]>.txt`，0700/0600，temp+rename，去重，7 天 + 2 GiB |
+
+**实测（2,622,250 B body，40 轮 × 60 KB，37 个合格块；本机 Celeron N5105，单线程）**
+
+| 步骤 | 耗时 | 吞吐 |
+|---|---|---|
+| `scanWireRequest` | 1.09 ms | 2400 MB/s，26 KB / 412 allocs |
+| `planFold` 冷（37 块全解码 + 渲染 + 写档） | ~90 ms | 29 MB/s |
+| `planFold` 热（37 块全部缓存命中） | **1.3 ms** | 2000 MB/s |
+| `verifyFold`（只重扫改写后的 body） | 0.21 ms | — |
+| 无缓存时解码全部候选（对照） | 25 ms | 105 MB/s |
+| 改写后 body | 228,535 B | 原体的 8.7% |
+
+- **每个请求只多一条新滑出窗口的回合**，所以稳态边际成本 ≈ 冷单块（约 2.4 ms）+ 热路径 2.5 ms，与
+  会话长度基本无关；而旧实现（每轮全量解码）是 26–90 ms 且随长度线性增长。
+- **热路径的键必须是原始转义区间**：解码后再哈希等于把要省的开销又做一遍。
+- **不能用 sha256 做键**：本机没有 SHA 扩展，`crypto/sha256` 实测 97 MB/s —— 2.5 MB 候选要 22 ms，
+  与它省掉的工作同量级。`hash/maphash` 实测 6.8 GB/s（同一 payload 0.35 ms），且种子每进程随机，
+  输入无法定向制造碰撞；取两条独立 lane 组成 128 位键，因为碰撞的后果是把另一块的指针安到这一块上，
+  是静默错答而不是报错。
+- **缓存命中后仍要 `os.Stat` 存档**（存在且大小相符）：GC 是 7 天/2 GiB 的异步清理，指针指向一个已经
+  被删或被截断的文件比不折叠更糟。两个方向都有测试（`TestFoldCacheRewritesVanishedArchive` /
+  `TestFoldCacheRewritesTruncatedArchive`），去掉检查都会被钉红。
+- **`verifyFold` 复用请求路径上已有的扫描结果**，只重扫改写后的 body：改写前校验从 11.7 ms 降到 0.21 ms。
+
+**不变量与测试映射**
+
+| 不变量 | 钉住的测试 |
+|---|---|
+| I1 消息数/顺序/角色 | `TestFoldPreservesMessageCountOrderAndRole` |
+| I2 tool 配对与 id | `TestFoldPreservesToolPairing`、`verifyFold` |
+| I3 thinking/image/多块结果不动 | `TestFoldSkipsToolResultsWithNonTextBlocks` |
+| I4 未折叠块解码后不变 | `TestFoldLeavesOtherBlocksDecodeIdentical` |
+| I5 同输入同字节 | `TestFoldIsDeterministic`、`TestFoldCacheHitIsByteIdentical` |
+| I6 已折叠前缀不重写 | `TestFoldKeepsOldPointersStableAcrossTurns`、`TestFoldPointerIgnoresToolInputKeyOrder` |
+| I7 异常回退原 body | `TestFoldFailsOpenOnMalformedBody`、`TestProxyFoldForwardsMalformedBody` |
+| 两套解析器不漂移 | `TestFoldScannerAgreesWithReferenceAnalysis` |
+| 门禁与急停 | `TestProxyFoldOffAndShadowForwardUnchanged`、`TestProxyFoldSkipsObserveOnlySessions`、`TestProxyFoldOnWithoutArchiveObservesOnly`、`TestProxyFoldRespectsDisableFile` |
+
+**本轮修掉的真缺陷**：`foldRequest` 原先没有读急停文件 —— 急停只停了观测，没停改写。本机 system 单元
+只能由用户重启，`DISABLED` 是唯一的不重启收手手段，因此这是必须堵的口（由
+`TestProxyFoldRespectsDisableFile` 暴露）。
+
+**仍未做**：B2（账本/API/前端）、B3（抽取卡片，需另一次设计评审）。B1 也还没有在真实流量上开过
+`mode=on`；灰度顺序按 §6 保持不变。

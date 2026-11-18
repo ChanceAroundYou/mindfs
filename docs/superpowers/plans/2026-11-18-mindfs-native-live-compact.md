@@ -153,9 +153,27 @@
 - [ ] **Step 3:** 提交信息标 `Scope: G-MG`；随后 `make check-upstream` 必须绿（该工具只比较已提交文件，提交前红是预期形态）。
 - [ ] **Step 4:** 全量门禁：`go test -count=1 ./...`、`go test -race ./server/internal/agent/...`、`make build`。
 
+### Task B1: 无损折叠（用户指令追加，2026-11-18 深夜；已完成，未开 `on`）
+
+**Files:**
+- Create: `server/internal/agent/proxy/live_compact_scan.go`、`live_compact_fold.go`、`live_compact_pointer.go`、`live_compact_pointer_cache.go`、`live_compact_archive.go`
+- Modify: `server/internal/agent/proxy/proxy.go`（`Server.archive` / `Server.pointerCache`，handler 先折后观测）、`live_compact.go`（配置项与 `[live-compact] fold` 日志行）
+- Test: `live_compact_fold_test.go`、`live_compact_fold_proxy_test.go`、`live_compact_pointer_cache_test.go`、`live_compact_archive_test.go`
+
+**Interfaces:**
+- `scanWireRequest(body) (*scanRequest, error)` → 只记录区间；`planFold(body, req, cfg, store, cache) foldResult` → 纯函数式的替换计划（存档写盘是唯一副作用）；`verifyFold(before *scanRequest, folded []byte) error` 复用请求路径已有的扫描结果。
+
+- [x] **Step 1（§12.2 第 3 条的前置问题）：** 实测两条路——内联字节区间扫描 2.6 MB 为 1.09 ms / 2400 MB/s / 26 KB 分配；解码全部候选 25 ms。结论：扫描内联、只解码本次新滑出窗口的块。
+- [x] **Step 2：** 扫描器与渲染缓存落地；热路径 1.3 ms（37 块全命中），冷路径 ~90 ms（每轮只有一块是冷的）。
+- [x] **Step 3：** 存档（内容寻址、0700/0600、temp+rename、去重、7 天 + 2 GiB、限频 sweep、失败记忆化）。
+- [x] **Step 4：** 不变量 I1–I7、两套解析器一致性、门禁与急停全部有测试；关键守卫做过变异验证（恒定缓存键、跳过存档存在性/大小检查、放开急停，均能把测试钉红）。
+- [x] **Step 5：** 修掉本轮暴露的真缺陷：`foldRequest` 原先只停观测不停改写，急停文件对折叠无效。
+- [x] **Step 6：** 门禁：`go test -count=1 ./...` 全绿、`go test -race ./server/internal/agent/proxy/` 绿、`go vet` 干净、`make build` 成功。
+- [ ] **Step 7（未做）：** 真实流量灰度 —— 先 WSL 或 fn 开 `on` 观察 24h，再本机（需用户重启），pc-win 最后。
+
 ## 明确不在本计划内
 
-- B1 折叠实现（指针渲染、存档、GC、不变量 I1–I7 的改写测试）。
 - B2 账本 JSONL / 只读 API / 前端上下文 chip / 多节点推广。
 - B3 抽取卡片。
-- 任何 `mode=on` 的线上启用。
+- 任何 `mode=on` 的线上启用（B1 代码已就绪，灰度顺序见 spec §6）。
+- （B1 折叠实现原不在本计划内，2026-11-18 由用户指令「把 B 全部做完」追加为 Task B1。）

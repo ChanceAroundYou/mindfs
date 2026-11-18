@@ -41,6 +41,9 @@
 - [ ] `server/internal/agent/config.go`（335，B2 已拆一轮）— 剩装载/合并一条线，可按「装载」「合并」再拆。
 - [ ] `server/internal/agent/pool.go`（303，B2 已拆一轮）— 剩获取/关闭主路径。
 - [ ] `server/internal/agent/probe_run.go`（440，B2 已拆一轮）— 探测执行：可按 configured / installed 两条线拆。
+- [ ] `server/internal/agent/proxy/live_compact_wire_test.go`（327）— Phase A 的解析/哈希测试；可按「解析与配对」「drift 哈希」两条线拆。
+- [ ] `server/internal/agent/proxy/live_compact_proxy_test.go`（454）— 代理层集成测试；可按「模式与透传」「队列/并发」两条线拆。
+- [ ] `server/internal/agent/proxy/proxy.go`（365）— 会话代理主体；同一批改动里顺带时，可按「路由/handler」与「会话注册」拆。
 - [x] `server/internal/agent/probe_status_query.go`（232 行，已达标）
 - [x] `server/internal/api/agent_api_provider_files.go` — JSON family (read/writeJSONObject + normalize* + ensureJSONObject) 拆出 `agent_api_provider_json.go`；YAML/env/model/URL/managed-block 留原文件。
 - [ ] `server/internal/api/usecase/git_worktree.go` — worktree 生命周期（建/删/收尾）。

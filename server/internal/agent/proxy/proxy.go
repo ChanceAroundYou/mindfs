@@ -48,6 +48,13 @@ type Server struct {
 	listener    net.Listener
 	srv         *http.Server
 	liveCompact LiveCompactConfig
+	// archive stores folded tool output. Nil when archiving is disabled, which
+	// also disables folding (mode=on still observes).
+	archive *archiveStore
+	// pointerCache memoizes rendered fold pointers by block content so a
+	// resent history costs a hash and a stat per already-folded block instead
+	// of a decode, a render, and an archive write. Nil-safe.
+	pointerCache *pointerCache
 
 	// Emergency brake: the presence of DisableFile turns live-compact off for
 	// the running process. Checked at most once per second.
@@ -97,11 +104,17 @@ func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
 		listener:    ln,
 		workQueues:  make(map[string][]liveCompactJob),
 	}
+	if cfg.ArchiveEnabled && cfg.ArchiveDir != "" {
+		s.archive = newArchiveStore(cfg.ArchiveDir,
+			time.Duration(cfg.RetentionDays)*24*time.Hour, cfg.MaxArchiveBytes)
+		s.pointerCache = newPointerCache()
+	}
 	s.initLiveCompactWorkers()
-	if cfg.Mode == LiveCompactOn {
-		// Phase A ships observability only. Be explicit rather than silently
-		// wrapping a request differently than the operator asked for.
-		log.Printf("[live-compact] mode=on is not implemented in this build; observing only")
+	if cfg.Mode == LiveCompactOn && s.archive == nil {
+		// mode=on without an archive directory cannot fold: every pointer would
+		// name a file that does not exist. Say so rather than silently
+		// observing.
+		log.Printf("[live-compact] mode=on but no archive directory; observing only")
 	}
 	if cfg.Observes() && s.liveCompactDisabled() {
 		log.Printf("[live-compact] disabled by brake file %s", cfg.DisableFile)
@@ -264,20 +277,20 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Phase A: observe only, off the request path. The analysis runs on a
-	// worker after the response is done; the forwarded body is unchanged.
+	// Live compact, in two stages.
 	//
-	// Only the main Messages endpoint is in scope. Folding count_tokens would
-	// change the context size the CLI itself sees, which is a different
-	// behavior change and not approved by the design.
+	// Fold first: in mode=on the body may be rewritten here, and the worker
+	// below must observe what is actually forwarded (otherwise the measured
+	// candidate set would describe a request that never left the process).
 	//
-	// The worker shares this body slice instead of copying it. That is safe
-	// only because everything below reads it: stripCompactPayload rebuilds
-	// from decoded maps rather than editing in place, and the forward request
-	// gets bytes.NewReader. Keep it that way — an in-place rewrite here would
-	// race the worker.
+	// Then observe off the request path. The load-bearing invariant is that
+	// the body slice handed to the worker is never written again: foldRequest
+	// returns a new slice, stripCompactPayload before it also returns a new
+	// one, and forwarding uses bytes.NewReader. keep-alive of that property is
+	// pinned by TestLiveCompactSharesBodyWithoutRacingTheRewrite.
 	var turn *liveCompactTurn
 	if r.Method == http.MethodPost && isMessagesPath(remainder) {
+		body, _ = s.foldRequest(token, body)
 		turn = s.observeLiveCompact(token, body)
 	}
 
