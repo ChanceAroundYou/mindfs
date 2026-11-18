@@ -166,6 +166,39 @@ func TestReplyingWaitSummaryOnlyChangeWaitsForRefresh(t *testing.T) {
 	}
 }
 
+func TestReplyingWaitRefreshElapsedUnchangedKeepsWaiting(t *testing.T) {
+	h, hub := newReplyingWaitTestHandler(t)
+	// 刷新间隔 50ms、超时 500ms，且全程没有任何状态变化：handler 必须一直等到超时，
+	// 不能在刷新间隔到点时就返回 —— 载荷签名没变就不该唤醒客户端。
+	// 少了这条用例，删掉 replyingPayloadSignature 的比对（每个 refresh 都返回一次）也全绿。
+	replyingWaitTuning(t, 10*time.Millisecond, 50*time.Millisecond, 100*time.Millisecond, 500*time.Millisecond, time.Second)
+	hub.SetPendingReply("root-1", "s-a", "A")
+	etag := seedReplyingWaitETag(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/replying-sessions/wait", nil)
+	req.Header.Set("If-None-Match", etag)
+	w := httptest.NewRecorder()
+
+	start := time.Now()
+	h.handleReplyingSessionsWait(w, req)
+	elapsed := time.Since(start)
+
+	// 若回归成「刷新间隔一到就返回」，这里会是 ≈50ms。
+	if elapsed < 450*time.Millisecond {
+		t.Fatalf("刷新间隔到点但载荷未变时不应提前返回：%s", elapsed)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("超时用例过慢：%s", elapsed)
+	}
+	// 载荷与 If-None-Match 完全一致 → respondJSONConditional 回 304 且无正文。
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("304 不应带正文：%q", w.Body.String())
+	}
+}
+
 func TestReplyingWaitCancelledContextReturns(t *testing.T) {
 	h, hub := newReplyingWaitTestHandler(t)
 	replyingWaitTuning(t, 10*time.Millisecond, time.Second, 5*time.Second, 20*time.Second, 30*time.Second)
