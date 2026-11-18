@@ -17,8 +17,8 @@
 | T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | 已完成：13 例全绿，集成 `68a07c5e`；工头补迁移/级联 `3a1aa766` |
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
 | T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
-| T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **派发中（2026-11-18）**：#82 / `task_232b8afa0212c92c`，brief 已冻结 |
-| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | pending |
+| T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | **PASS（2026-11-18）**：#82 交付并集成（`93f96f14` + 工头修正 `f7dcc5bb`），8 条行为 + 工头补 3 条，`Scope: G-MJ` |
+| T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | T8 PASS，待冻结派发 |
 | T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | pending |
 
 T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定稿 brief；未补全不得派发。
@@ -36,7 +36,7 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - R1 T5：**已完成并集成**（#79，账本 + 工头补的迁移/级联，见「T5 结果」）。
 - R1 T6：**已完成并集成**（#80，事件生产 + 硬线拆分，见「T6 结果」）。
 - R1 T7：**已完成并集成**（#81，coordinate 消费 + 预算 + 有界扫描，见「T7 结果」）。
-- R1 T8：**已冻结派发**（#82 / `task_232b8afa0212c92c`，worktree `task-82`，brief `task-8-brief.md`，报告 `task-82/.mindfs/dispatch/task-8-report.md`）。T9–T10 继续 gated；未补全实际 task id/worktree/报告路径不得派发。
+- R1 T8：**PASS 并集成**（#82，交付 `93f96f14` + 工头修正 `f7dcc5bb`，登记 `bf1071d5`，见「T8 结果」）。T9 已解锁，T10 继续 gated。
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -298,3 +298,15 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 关键冻结决策：事件 brief 只读 `event.RunID` 指向的 Run（不得用任务最新 Run 顶替），并清空 `LatestRun` / `ActiveExecution` / `Workflows` 防止串话；`Trigger.Ref=event.ID`、原始留言正文放宽到 2000 字节；节点证据复用 `nodeRunOutputSummary`，≤20 条、失败/等待/运行优先保留，未验证项 ≤10 条；payload 只留白名单键、≤2KB；任何裁剪置 `Truncated`，序列化后仍 ≤24KB；运行期 say/ask_user 用 `act-rtev-<sha256(decisionID:seq)[:20]>` 确定 ID + `InsertOrIgnore`，`RunID` 保持空、默认 `purpose=progress`，绝不改写旧 Run 的唯一结果活动；`silent` 理由继续落在 `router_decisions.actions_json`，不改事件语义。
 - 报告：`task-82/.mindfs/dispatch/task-8-report.md`；提交信息 `Scope: G-MJ`（登记由工头补）。
 - 派发（2026-11-18）：用户留言 `act_fc8476a6fa4faadf`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-3c5376128222f681` 节点 `execute` 启动，会话 `1794997998-e28baf3f7e3e`，进程 pid 3907496 的 cwd 已核对为 `task-82`。
+
+### T8 结果（2026-11-18，工头裁决 PASS）
+
+- **交付**：`93f96f14 feat(kanban): 运行期事件证据 brief 与确定性里程碑汇报（Scope: G-MJ）`；新增 `router_event_brief.go`（427 行）+ 两个测试文件，改 `router_brief.go` / `activity_route_apply.go` / `router_prompt.md`。工头修正 `f7dcc5bb`，登记 `bf1071d5`，集成 `2fa683da`。
+- **8 条行为 + 工头补 3 条，全部 PASS**：① settled 证据三段齐全 + 原始留言 + 两节点输出可读 + 不泄露别的 Run/workflow；② failed 节点错误摘要与 `run_status=failed`（不是任务状态）+ attempt 透传；③ gate_waiting 带 `waiting_user`/`human_gate` 节点 + 策略提示明确不能代批；④ 25 节点 / 超长输出 / 超大 payload → ≤20 节点、`omitted_nodes>0`、`truncated`、payload 只剩白名单、序列化 ≤24KB；⑤ 旧事件不串话（事件指 `run-old`、任务引擎已 `run-new`，证据只含 `run-old` 节点、`LatestRun` 空）；⑥ 同一决策/动作重复应用只落一条、ID 为 `act-rtev-<sha256>`、`RunID=""`、`purpose=progress`、旧 Run 结果活动逐字节不变；⑦ 运行期 silent 理由落库可读、事件 done、可见活动不增加；⑧ 假 agent 捕获 prompt 含事件 ID 与两个节点摘要、最终 say 在原始留言线程且 `ReplyToID` 指向它。工头补：⑨ `router_say` 工具默认值在事件回合为 `progress`（变异验证：去掉即红）；⑩ 模型只说话时合成 say 也是 `progress`（同上）；⑪ 24KB 紧急裁剪的未验证项保留「还有 N 条」标记。
+- **RED 诚实性**：worker 在 `/tmp/t8-red`（基线 `6a1e5bd6` + 两个测试文件 + 只编译不实现的桩）复跑，8 条全部在各自断言处失败；报告如实记录首轮第 5 条因 fixture 非终态而「错误地红」，修正 fixture 后重跑才是干净的 RED。
+- **工头裁决 NEEDS_CONTEXT**：worker 报告的唯一冲突是 `TestCoordinatorRuntimeEventActionWhitelist/run_workflow` 文案——事件 brief 按冻结条款置空 `Workflows` 后，工具处理器先以「workflow 不可用」早退，遮住了 T7 钉住的白名单文案。裁决：**不改 T7 测试**，而是让事件 brief 跳过目录可用性检查（`isRuntimeEventBrief`，工具处理器与 `validateRouterActions` 两处），理由是这样拒绝原因才准确（「运行期不许跑 workflow」而非「目录里没有」）；两种行为的执行语义本来就一致（零新 Run、决策 rejected、事件 failed）。
+- **工头复核发现并修的三处**：① `router_say` 工具默认 `chat` 让应用层的 `progress` 默认不可达；② 合成 say 绕过同一默认值；③ 5 条裁剪把「还有 N 条」标记吃掉，brief 看起来像证据完整。三处都有定向用例并做变异验证。
+- **门禁**：定向 4.728s 绿；kanban 全包 `-p 1 -count=1` 136.763s 绿；`go vet ./server/internal/kanban/` 干净；`gofmt -l` 全部改动文件无输出；行数逐文件 ≤500（427 / 370 / 252 / 482 / 442 / 361 / 461）；`make check-upstream` **1903 delta / 310 组**绿（G-MJ 12 锚点逐条 grep 命中）。
+- **未做**：未 push / 未 deploy / 未合并 main / 未重启 any node；生产 `router.mode` 未动。
+- **残留（非阻断）**：① 事件 brief 不携带 workflow 目录是设计本意，代价是模型在事件回合看不到可开执行，由白名单兜底；② 未验证项文案是给模型看的证据而非成品文案，靠提示词规则 12 约束；③ effect ID 公式若被改，行为 6 会红（有意为之）。
+- **下一步**：T9（并发/重启故障矩阵）已解锁，需先冻结 brief。
