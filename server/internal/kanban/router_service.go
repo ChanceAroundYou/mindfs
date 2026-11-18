@@ -294,7 +294,13 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 	if decision.RouterSessionKey == "" {
 		decision.RouterSessionKey = sessionKey
 	}
-	actions, synthesized := synthesizeActions(collector.snapshot(), result.FinalText)
+	actions, synthesized, synthErr := synthesizeActions(collector.snapshot(), result.FinalText)
+	if synthErr != nil {
+		// 空回合不是「故意沉默」：显式 silent 只能来自 router_silent 工具。
+		// 没有决策就把这一轮交回旧路径，避免用户留言被隐藏占位吞掉。
+		rs.finishFallback(ctx, decision, started, synthErr, routeMode)
+		return
+	}
 	if routeMode {
 		rs.finishRouteTurn(ctx, config, promptHash, brief, decision, result, actions, latency)
 		return

@@ -235,6 +235,13 @@ func (s *Service) CancelWorkflowRun(ctx context.Context, rootID, taskID, reason 
 	if err := store.UpdateTaskStatus(ctx, task.ID, StatusCancelled, true); err != nil {
 		return err
 	}
+	// projectRunCancelled 在另一次加载里写回新的 NodeStates，这里的 run 仍是
+	// 取消前的快照。settleWorkflowReply 用 run 判断「节点是否全部终态」，过期
+	// 快照会让它以为还有 running 节点而直接返回，绑定回复就永远停在 running。
+	// 投影与任务状态落库之后重读一次再结算。
+	if fresh, ok, err := s.workflowRunForTask(ctx, store, task.ID); err == nil && ok {
+		run = fresh
+	}
 	s.settleWorkflowReply(ctx, store, run)
 	_ = store.AddEvent(ctx, TaskEvent{
 		ID: newID("event"), TaskID: task.ID, Type: "cancelled",
