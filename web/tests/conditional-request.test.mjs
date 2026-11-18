@@ -72,8 +72,11 @@ assert.ok(
   !/respondJSONList\(w, r, out\.Status\)/.test(httpDomain),
   "git status 绝不能用 respondJSONList —— dirty_count: 0 / clean: false 会被删掉",
 );
+// 2026-11-18（G-MF）：载荷组装抽成 replyingSessionsPayload 后，旧负例
+// `respondJSONList(... "sessions": payload)` 已经匹配不到任何东西（死守卫）。
+// 改钉当前调用形状：sessions 只能经 respondJSONConditional + replyingSessionsPayload 发出。
 assert.ok(
-  !/respondJSONList\(w, r, map\[string\]any\{"sessions": payload\}\)/.test(httpDomain),
+  !/respondJSONList\(w, r, map\[string\]any\{"sessions": h\.replyingSessionsPayload\(/.test(httpDomain),
   "replying-sessions 绝不能用 respondJSONList",
 );
 
