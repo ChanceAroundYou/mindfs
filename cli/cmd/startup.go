@@ -27,6 +27,18 @@ type startupConfig struct {
 	Role     *string                `json:"role"`
 	Router   *startupRouterConfig   `json:"router"`
 	Workflow *startupWorkflowConfig `json:"workflow"`
+	// LiveCompact 是节点本地的上下文活压缩配置。不配置 = off。
+	LiveCompact *startupLiveCompactConfig `json:"live_compact"`
+}
+
+// startupLiveCompactConfig 只影响本机，不走控制面共享。mode 默认 off；
+// shadow 只测量不生效，on 在 Phase B1 之后才会改写请求。
+type startupLiveCompactConfig struct {
+	Mode             *string `json:"mode"`
+	KeepRounds       *int    `json:"keep_rounds"`
+	MinBlockTokens   *int    `json:"min_block_tokens"`
+	MinBodyBytes     *int    `json:"min_body_bytes"`
+	MaxDriftMessages *int    `json:"max_drift_messages"`
 }
 
 // startupWorkflowConfig 是工作流执行的节点本地开关。不配置 = 默认值（并行开启）。
@@ -68,6 +80,12 @@ type startupFlags struct {
 	RouterIdleClose   *time.Duration
 
 	WorkflowParallelMainTree *bool
+
+	LiveCompactMode             *string
+	LiveCompactKeepRounds       *int
+	LiveCompactMinBlockTokens   *int
+	LiveCompactMinBodyBytes     *int
+	LiveCompactMaxDriftMessages *int
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -156,6 +174,25 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 	if flags.WorkflowParallelMainTree != nil && !explicit["workflow-parallel-main-tree"] &&
 		cfg.Workflow != nil && cfg.Workflow.ParallelMainTree != nil {
 		*flags.WorkflowParallelMainTree = *cfg.Workflow.ParallelMainTree
+	}
+	if live := cfg.LiveCompact; live != nil {
+		if flags.LiveCompactMode != nil && live.Mode != nil && !explicit["live-compact-mode"] {
+			*flags.LiveCompactMode = strings.TrimSpace(*live.Mode)
+		}
+		if flags.LiveCompactKeepRounds != nil && live.KeepRounds != nil && !explicit["live-compact-keep-rounds"] {
+			*flags.LiveCompactKeepRounds = *live.KeepRounds
+		}
+		if flags.LiveCompactMinBlockTokens != nil && live.MinBlockTokens != nil && !explicit["live-compact-min-block-tokens"] {
+			*flags.LiveCompactMinBlockTokens = *live.MinBlockTokens
+		}
+		// These two have no CLI flag: they are tuning knobs for a node's
+		// config.json, not something to carry on every command line.
+		if flags.LiveCompactMinBodyBytes != nil && live.MinBodyBytes != nil {
+			*flags.LiveCompactMinBodyBytes = *live.MinBodyBytes
+		}
+		if flags.LiveCompactMaxDriftMessages != nil && live.MaxDriftMessages != nil {
+			*flags.LiveCompactMaxDriftMessages = *live.MaxDriftMessages
+		}
 	}
 	router := cfg.Router
 	if router == nil {

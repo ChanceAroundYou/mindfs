@@ -198,6 +198,39 @@ func TestWorkflowParallelMainTreeConfigPrecedence(t *testing.T) {
 	}
 }
 
+func TestLiveCompactConfigPrecedence(t *testing.T) {
+	writeConfig(t, `{"live_compact":{"mode":"shadow","keep_rounds":5,"min_block_tokens":3000,"min_body_bytes":2048,"max_drift_messages":64}}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := ""
+	keep, minBlock, minBody, maxDrift := 0, 0, 0, 0
+	flags := startupFlags{
+		LiveCompactMode:             &mode,
+		LiveCompactKeepRounds:       &keep,
+		LiveCompactMinBlockTokens:   &minBlock,
+		LiveCompactMinBodyBytes:     &minBody,
+		LiveCompactMaxDriftMessages: &maxDrift,
+	}
+	if err := applyStartupConfig(cfg, map[string]bool{}, flags); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "shadow" || keep != 5 || minBlock != 3000 || minBody != 2048 || maxDrift != 64 {
+		t.Fatalf("live_compact 文件值没有落到 flag 变量上: mode=%q keep=%d min_block=%d min_body=%d drift=%d",
+			mode, keep, minBlock, minBody, maxDrift)
+	}
+
+	mode = "on"
+	if err := applyStartupConfig(cfg, map[string]bool{"live-compact-mode": true}, flags); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "on" {
+		t.Fatal("显式 flag 应胜出，却被文件里的 shadow 覆盖")
+	}
+}
+
 // 文件值即将生效但解析不了时必须报错，而不是静默回落到默认值。
 func TestRouterConfigInvalidDurationFails(t *testing.T) {
 	writeConfig(t, `{"router":{"turn_timeout":"soon"}}`)

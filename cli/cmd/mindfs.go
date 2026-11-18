@@ -89,6 +89,11 @@ func main() {
 	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 90s (default 90s)")
 	routerIdleCloseFlag := flag.Duration("router-idle-close", 0, "close idle router sessions after this duration, e.g. 30m (default 30m)")
 	workflowParallelMainTreeFlag := flag.Bool("workflow-parallel-main-tree", true, "run tasks without independent worktrees in parallel on the shared main tree")
+	liveCompactModeFlag := flag.String("live-compact-mode", "", "context live-compact mode: off (default), shadow (measure only), on")
+	liveCompactKeepRoundsFlag := flag.Int("live-compact-keep-rounds", 0, "newest completed tool rounds kept verbatim (default 3)")
+	liveCompactMinBlockTokensFlag := flag.Int("live-compact-min-block-tokens", 0, "minimum estimated tokens for a tool result to be folded (default 2000)")
+	liveCompactMinBodyBytes := 0
+	liveCompactMaxDriftMessages := 0
 	remove := flag.Bool("remove", false, "remove the managed directory")
 	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
@@ -102,22 +107,27 @@ func main() {
 		os.Exit(1)
 	}
 	if err := applyStartupConfig(startupCfg, explicitFlags, startupFlags{
-		Addr:                     addr,
-		WebPush:                  webPushFlag,
-		Foreground:               foreground,
-		TLS:                      tlsFlag,
-		Cert:                     certFlag,
-		Key:                      keyFlag,
-		AgentConfig:              agentConfigFlag,
-		NotifyScript:             notifyScriptFlag,
-		Role:                     roleFlag,
-		RouterMode:               routerModeFlag,
-		RouterAgent:              routerAgentFlag,
-		RouterModel:              routerModelFlag,
-		RouterEffort:             routerEffortFlag,
-		RouterTurnTimeout:        routerTurnTimeoutFlag,
-		RouterIdleClose:          routerIdleCloseFlag,
-		WorkflowParallelMainTree: workflowParallelMainTreeFlag,
+		Addr:                        addr,
+		WebPush:                     webPushFlag,
+		Foreground:                  foreground,
+		TLS:                         tlsFlag,
+		Cert:                        certFlag,
+		Key:                         keyFlag,
+		AgentConfig:                 agentConfigFlag,
+		NotifyScript:                notifyScriptFlag,
+		Role:                        roleFlag,
+		RouterMode:                  routerModeFlag,
+		RouterAgent:                 routerAgentFlag,
+		RouterModel:                 routerModelFlag,
+		RouterEffort:                routerEffortFlag,
+		RouterTurnTimeout:           routerTurnTimeoutFlag,
+		RouterIdleClose:             routerIdleCloseFlag,
+		WorkflowParallelMainTree:    workflowParallelMainTreeFlag,
+		LiveCompactMode:             liveCompactModeFlag,
+		LiveCompactKeepRounds:       liveCompactKeepRoundsFlag,
+		LiveCompactMinBlockTokens:   liveCompactMinBlockTokensFlag,
+		LiveCompactMinBodyBytes:     &liveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages: &liveCompactMaxDriftMessages,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -322,23 +332,28 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- app.Start(ctx, *addr, app.StartOptions{
-			Version:                  version,
-			Args:                     os.Args[1:],
-			AgentConfigPath:          *agentConfigFlag,
-			WebPushEnabled:           *webPushFlag,
-			NotifyScript:             *notifyScriptFlag,
-			UseTLS:                   *tlsFlag,
-			CertFile:                 resolvedCert,
-			KeyFile:                  resolvedKey,
-			Role:                     *roleFlag,
-			RouterMode:               *routerModeFlag,
-			RouterAgent:              *routerAgentFlag,
-			RouterModel:              *routerModelFlag,
-			RouterEffort:             *routerEffortFlag,
-			RouterTurnTimeout:        *routerTurnTimeoutFlag,
-			RouterIdleClose:          *routerIdleCloseFlag,
-			RouterRoots:              routerRoots(startupCfg),
-			WorkflowParallelMainTree: *workflowParallelMainTreeFlag,
+			Version:                     version,
+			Args:                        os.Args[1:],
+			AgentConfigPath:             *agentConfigFlag,
+			WebPushEnabled:              *webPushFlag,
+			NotifyScript:                *notifyScriptFlag,
+			UseTLS:                      *tlsFlag,
+			CertFile:                    resolvedCert,
+			KeyFile:                     resolvedKey,
+			Role:                        *roleFlag,
+			RouterMode:                  *routerModeFlag,
+			RouterAgent:                 *routerAgentFlag,
+			RouterModel:                 *routerModelFlag,
+			RouterEffort:                *routerEffortFlag,
+			RouterTurnTimeout:           *routerTurnTimeoutFlag,
+			RouterIdleClose:             *routerIdleCloseFlag,
+			RouterRoots:                 routerRoots(startupCfg),
+			WorkflowParallelMainTree:    *workflowParallelMainTreeFlag,
+			LiveCompactMode:             *liveCompactModeFlag,
+			LiveCompactKeepRounds:       *liveCompactKeepRoundsFlag,
+			LiveCompactMinBlockTokens:   *liveCompactMinBlockTokensFlag,
+			LiveCompactMinBodyBytes:     liveCompactMinBodyBytes,
+			LiveCompactMaxDriftMessages: liveCompactMaxDriftMessages,
 		})
 	}()
 	if err := waitForServer(*addr, *tlsFlag, 8*time.Second); err != nil {

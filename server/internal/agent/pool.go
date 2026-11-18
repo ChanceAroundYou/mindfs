@@ -17,39 +17,55 @@ import (
 
 // Pool routes agent session creation to protocol-specific runtimes.
 type Pool struct {
-	cfg             Config
-	processCtx      context.Context
-	cancel          context.CancelFunc
-	mu              sync.Mutex
-	sessions        map[string]*sessionEntry
-	runtimeEnv      map[string]map[string]string
-	closed          bool
-	acp             *acp.Runtime
-	claude          *claude.Runtime
-	codex           *codex.Runtime
-	runtimeLocksMu  sync.Mutex
-	runtimeLocks    map[runtimeGroup]*sync.Mutex
-	memoryMu        sync.RWMutex
-	memoryCollectMu sync.Mutex
-	memorySnapshot  MemorySnapshot
-	compactProxy       *proxy.Server // nil if startup failed (non-fatal)
+	cfg                Config
+	processCtx         context.Context
+	cancel             context.CancelFunc
+	mu                 sync.Mutex
+	sessions           map[string]*sessionEntry
+	runtimeEnv         map[string]map[string]string
+	closed             bool
+	acp                *acp.Runtime
+	claude             *claude.Runtime
+	codex              *codex.Runtime
+	runtimeLocksMu     sync.Mutex
+	runtimeLocks       map[runtimeGroup]*sync.Mutex
+	memoryMu           sync.RWMutex
+	memoryCollectMu    sync.Mutex
+	memorySnapshot     MemorySnapshot
+	compactProxy       *proxy.Server     // nil if startup failed (non-fatal)
 	pendingProxyTokens map[string]string // sessionKey → proxy token, cleared on session creation
 }
 
 type sessionEntry struct {
-	agentName    string
-	sessionKey   string
-	protocol     Protocol
-	session      agenttypes.Session
-	lastUsedAt   time.Time
-	activeUses   int
-	closing      bool
-	closeDone    chan struct{}
-	proxyToken   string // set when session routes through compactProxy
+	agentName  string
+	sessionKey string
+	protocol   Protocol
+	session    agenttypes.Session
+	lastUsedAt time.Time
+	activeUses int
+	closing    bool
+	closeDone  chan struct{}
+	proxyToken string // set when session routes through compactProxy
 }
 
-// NewPool creates a new agent pool.
+// PoolOptions carries node-local feature configuration that is not part of the
+// agents.json definitions.
+type PoolOptions struct {
+	LiveCompactMode             string
+	LiveCompactKeepRounds       int
+	LiveCompactMinBlockTokens   int
+	LiveCompactMinBodyBytes     int
+	LiveCompactMaxDriftMessages int
+	LiveCompactDisableFile      string
+}
+
+// NewPool creates a new agent pool with default options.
 func NewPool(cfg Config) *Pool {
+	return NewPoolWithOptions(cfg, PoolOptions{})
+}
+
+// NewPoolWithOptions creates a new agent pool with node-local options.
+func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 	processCtx, cancel := context.WithCancel(context.Background())
 	p := &Pool{
 		cfg:                cfg,
@@ -63,9 +79,16 @@ func NewPool(cfg Config) *Pool {
 		codex:              codex.NewRuntime(),
 		runtimeLocks:       make(map[runtimeGroup]*sync.Mutex),
 	}
-	if ps, err := proxy.NewServer(); err == nil {
+	if ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
+		Mode:             opts.LiveCompactMode,
+		KeepRounds:       opts.LiveCompactKeepRounds,
+		MinBlockTokens:   opts.LiveCompactMinBlockTokens,
+		MinBodyBytes:     opts.LiveCompactMinBodyBytes,
+		MaxDriftMessages: opts.LiveCompactMaxDriftMessages,
+		DisableFile:      opts.LiveCompactDisableFile,
+	}); err == nil {
 		p.compactProxy = ps
-		log.Printf("[agent/pool] compact-strip proxy listening on 127.0.0.1:%d", ps.Port())
+		log.Printf("[agent/pool] compact-strip proxy listening on 127.0.0.1:%d live_compact=%s", ps.Port(), ps.LiveCompactMode())
 	} else {
 		log.Printf("[agent/pool] compact-strip proxy failed to start (non-fatal): %v", err)
 	}

@@ -33,6 +33,11 @@ func main() {
 	routerTurnTimeoutFlag := flag.Duration("router-turn-timeout", 0, "task router turn timeout, e.g. 90s (default 90s)")
 	routerIdleCloseFlag := flag.Duration("router-idle-close", 0, "close idle router sessions after this duration, e.g. 30m (default 30m)")
 	workflowParallelMainTreeFlag := flag.Bool("workflow-parallel-main-tree", true, "run tasks without independent worktrees in parallel on the shared main tree")
+	liveCompactModeFlag := flag.String("live-compact-mode", "", "context live-compact mode: off (default), shadow (measure only), on")
+	liveCompactKeepRoundsFlag := flag.Int("live-compact-keep-rounds", 0, "newest completed tool rounds kept verbatim (default 3)")
+	liveCompactMinBlockTokensFlag := flag.Int("live-compact-min-block-tokens", 0, "minimum estimated tokens for a tool result to be folded (default 2000)")
+	liveCompactMinBodyBytes := 0
+	liveCompactMaxDriftMessages := 0
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -41,18 +46,23 @@ func main() {
 		os.Exit(1)
 	}
 	if err := applyStartupConfig(startupCfg, explicitFlags, startupFlags{
-		Addr:                     addr,
-		WebPush:                  webPushFlag,
-		AgentConfig:              agentConfigFlag,
-		NotifyScript:             notifyScriptFlag,
-		Role:                     roleFlag,
-		RouterMode:               routerModeFlag,
-		RouterAgent:              routerAgentFlag,
-		RouterModel:              routerModelFlag,
-		RouterEffort:             routerEffortFlag,
-		RouterTurnTimeout:        routerTurnTimeoutFlag,
-		RouterIdleClose:          routerIdleCloseFlag,
-		WorkflowParallelMainTree: workflowParallelMainTreeFlag,
+		Addr:                        addr,
+		WebPush:                     webPushFlag,
+		AgentConfig:                 agentConfigFlag,
+		NotifyScript:                notifyScriptFlag,
+		Role:                        roleFlag,
+		RouterMode:                  routerModeFlag,
+		RouterAgent:                 routerAgentFlag,
+		RouterModel:                 routerModelFlag,
+		RouterEffort:                routerEffortFlag,
+		RouterTurnTimeout:           routerTurnTimeoutFlag,
+		RouterIdleClose:             routerIdleCloseFlag,
+		WorkflowParallelMainTree:    workflowParallelMainTreeFlag,
+		LiveCompactMode:             liveCompactModeFlag,
+		LiveCompactKeepRounds:       liveCompactKeepRoundsFlag,
+		LiveCompactMinBlockTokens:   liveCompactMinBlockTokensFlag,
+		LiveCompactMinBodyBytes:     &liveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages: &liveCompactMaxDriftMessages,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -62,20 +72,25 @@ func main() {
 	defer cancel()
 
 	if err := app.Start(ctx, *addr, app.StartOptions{
-		Version:                  version,
-		Args:                     os.Args[1:],
-		AgentConfigPath:          *agentConfigFlag,
-		WebPushEnabled:           *webPushFlag,
-		NotifyScript:             *notifyScriptFlag,
-		Role:                     *roleFlag,
-		RouterMode:               *routerModeFlag,
-		RouterAgent:              *routerAgentFlag,
-		RouterModel:              *routerModelFlag,
-		RouterEffort:             *routerEffortFlag,
-		RouterTurnTimeout:        *routerTurnTimeoutFlag,
-		RouterIdleClose:          *routerIdleCloseFlag,
-		RouterRoots:              routerRoots(startupCfg),
-		WorkflowParallelMainTree: *workflowParallelMainTreeFlag,
+		Version:                     version,
+		Args:                        os.Args[1:],
+		AgentConfigPath:             *agentConfigFlag,
+		WebPushEnabled:              *webPushFlag,
+		NotifyScript:                *notifyScriptFlag,
+		Role:                        *roleFlag,
+		RouterMode:                  *routerModeFlag,
+		RouterAgent:                 *routerAgentFlag,
+		RouterModel:                 *routerModelFlag,
+		RouterEffort:                *routerEffortFlag,
+		RouterTurnTimeout:           *routerTurnTimeoutFlag,
+		RouterIdleClose:             *routerIdleCloseFlag,
+		RouterRoots:                 routerRoots(startupCfg),
+		WorkflowParallelMainTree:    *workflowParallelMainTreeFlag,
+		LiveCompactMode:             *liveCompactModeFlag,
+		LiveCompactKeepRounds:       *liveCompactKeepRoundsFlag,
+		LiveCompactMinBlockTokens:   *liveCompactMinBlockTokensFlag,
+		LiveCompactMinBodyBytes:     liveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages: liveCompactMaxDriftMessages,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -93,10 +108,20 @@ type startupConfig struct {
 	Role     *string                `json:"role"`
 	Router   *startupRouterConfig   `json:"router"`
 	Workflow *startupWorkflowConfig `json:"workflow"`
+	// LiveCompact 是节点本地的上下文活压缩配置。不配置 = off。
+	LiveCompact *startupLiveCompactConfig `json:"live_compact"`
 }
 
 type startupWorkflowConfig struct {
 	ParallelMainTree *bool `json:"parallel_main_tree"`
+}
+
+type startupLiveCompactConfig struct {
+	Mode             *string `json:"mode"`
+	KeepRounds       *int    `json:"keep_rounds"`
+	MinBlockTokens   *int    `json:"min_block_tokens"`
+	MinBodyBytes     *int    `json:"min_body_bytes"`
+	MaxDriftMessages *int    `json:"max_drift_messages"`
 }
 
 type startupRouterConfig struct {
@@ -124,6 +149,12 @@ type startupFlags struct {
 	RouterIdleClose   *time.Duration
 
 	WorkflowParallelMainTree *bool
+
+	LiveCompactMode             *string
+	LiveCompactKeepRounds       *int
+	LiveCompactMinBlockTokens   *int
+	LiveCompactMinBodyBytes     *int
+	LiveCompactMaxDriftMessages *int
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -196,6 +227,23 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 	if flags.WorkflowParallelMainTree != nil && !explicit["workflow-parallel-main-tree"] &&
 		cfg.Workflow != nil && cfg.Workflow.ParallelMainTree != nil {
 		*flags.WorkflowParallelMainTree = *cfg.Workflow.ParallelMainTree
+	}
+	if live := cfg.LiveCompact; live != nil {
+		if flags.LiveCompactMode != nil && live.Mode != nil && !explicit["live-compact-mode"] {
+			*flags.LiveCompactMode = strings.TrimSpace(*live.Mode)
+		}
+		if flags.LiveCompactKeepRounds != nil && live.KeepRounds != nil && !explicit["live-compact-keep-rounds"] {
+			*flags.LiveCompactKeepRounds = *live.KeepRounds
+		}
+		if flags.LiveCompactMinBlockTokens != nil && live.MinBlockTokens != nil && !explicit["live-compact-min-block-tokens"] {
+			*flags.LiveCompactMinBlockTokens = *live.MinBlockTokens
+		}
+		if flags.LiveCompactMinBodyBytes != nil && live.MinBodyBytes != nil {
+			*flags.LiveCompactMinBodyBytes = *live.MinBodyBytes
+		}
+		if flags.LiveCompactMaxDriftMessages != nil && live.MaxDriftMessages != nil {
+			*flags.LiveCompactMaxDriftMessages = *live.MaxDriftMessages
+		}
 	}
 	router := cfg.Router
 	if router == nil {

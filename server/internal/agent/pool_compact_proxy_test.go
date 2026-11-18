@@ -135,6 +135,41 @@ func TestCompactProxyEnvReturnsNilWhenUpstreamUnknown(t *testing.T) {
 	}
 }
 
+func TestCompactProxyEnvMarksIsolatedSessionsObserveOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://process-env.example/v1")
+	writeClaudeSettings(t, filepath.Join(home, ".claude"), "https://settings.example/v1")
+
+	ps, err := proxy.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ps.Close()
+	p := &Pool{compactProxy: ps, pendingProxyTokens: map[string]string{}}
+
+	userBinding := p.compactProxyEnv("session-user", Definition{}, "")
+	if userBinding == nil {
+		t.Fatal("user session should be proxied")
+	}
+	if !ps.SessionFoldAllowed(userBinding.env["MINDFS_PROXY_TOKEN"]) {
+		t.Fatal("user session must be foldable")
+	}
+
+	// Router / workflow sessions run under an isolated ConfigDir and inherit
+	// none of the user's tool permissions: archive pointers could be unreadable,
+	// so they are measured but never folded.
+	isolated := t.TempDir()
+	isoBinding := p.compactProxyEnv("session-iso", Definition{}, isolated)
+	if isoBinding == nil {
+		t.Fatal("isolated session should still be proxied for measurement")
+	}
+	if ps.SessionFoldAllowed(isoBinding.env["MINDFS_PROXY_TOKEN"]) {
+		t.Fatal("isolated ConfigDir session must be observe-only")
+	}
+}
+
 // cloneEnv 在空输入时返回 nil。agent 定义没有 env 是常态（本机 claude 的
 // provider 配置在 ~/.claude/settings.json），所以合并必须自己建 map ——
 // 否则 probe 直接 panic：assignment to entry in nil map。
