@@ -464,36 +464,3 @@ func (rs *RouterService) broadcast(decision *RouterDecision) {
 //   - legacy direct vs message_agent -> match；
 //   - legacy none vs silent -> match；
 //   - 其余组合 -> mismatch。
-func routerAgreement(legacy *RouterLegacyAction, actions []RouterAction) string {
-	if legacy == nil {
-		return RouterAgreementNoRouter
-	}
-	switch legacy.Kind {
-	case "failed", "":
-		return RouterAgreementUnknown
-	case "workflow":
-		for _, action := range actions {
-			if action.Kind == RouterActionRunWorkflow {
-				if action.WorkflowID == legacy.WorkflowID {
-					return RouterAgreementMatch
-				}
-				return RouterAgreementMismatch
-			}
-		}
-		return RouterAgreementMismatch
-	case "direct":
-		for _, action := range actions {
-			if action.Kind == RouterActionMessageAgent {
-				return RouterAgreementMatch
-			}
-		}
-		return RouterAgreementMismatch
-	case "none":
-		if len(actions) == 1 && actions[0].Kind == RouterActionSilent {
-			return RouterAgreementMatch
-		}
-		return RouterAgreementMismatch
-	default:
-		return RouterAgreementUnknown
-	}
-}
