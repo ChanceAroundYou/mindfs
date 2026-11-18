@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"mindfs/internal/codexsync"
@@ -142,6 +143,10 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if err := sharedWebPush.SetRelayURL(opts.WebPushRelayURL); err != nil {
 		// 配置写错不该让节点起不来：本机推送照常，只是 worker 的通知到不了浏览器。
 		log.Printf("[webpush] relay.config.error err=%v", err)
+	} else if sharedWebPush.RelayEnabled() {
+		// 启动日志里能直接看出这台机器会不会转发通知 —— 排查「worker 不提醒」时，
+		// 第一件事就是确认它有没有中继地址。
+		log.Printf("[webpush] relay.enabled url=%s", strings.TrimSpace(opts.WebPushRelayURL))
 	}
 	sharedWorkflows, err := kanban.NewWorkflowStoreDefault()
 	if err != nil {
