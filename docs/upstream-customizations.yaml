@@ -8911,7 +8911,7 @@ groups:
       - 'server/internal/kanban/router_route_test.go:func TestRouterRouteEmptyFinalTextFallsBackInsteadOfSilent('
       - 'server/internal/kanban/router_service.go:func (rs *RouterService) fallbackRoute('
       - 'server/internal/kanban/router_types.go:defaultRouterTurnTimeout = 90 * time.Second'
-      - 'server/internal/kanban/activity_service_dispatch.go:if mode == RouterModeRoute && choice == CommentWorkflowChoiceEmpty {'
+      - 'server/internal/kanban/activity_service_dispatch.go:if (mode == RouterModeRoute || mode == RouterModeCoordinate) && choice == CommentWorkflowChoiceEmpty {'
       - 'server/internal/kanban/activity_service_turns.go:errors.Is(err, ErrWorkflowTurnActive)'
       - 'server/internal/kanban/activity_service_turns.go:s.tasks.recordReplySummaryIfActive('
       - 'server/internal/kanban/activity_service_turns.go:if err := s.tasks.checkRouteDirectGate(ctx, task.ID); err != nil {'
@@ -9100,3 +9100,46 @@ groups:
       - 'server/internal/kanban/workflow_driver.go:RouterEventGateWaiting, instanceKey'
       - 'server/internal/kanban/workflow_recovery.go:RouterEventStartupReconcile'
       - 'server/internal/kanban/workflow_runtime.go:s.emitOperatorOutcomeRouterEvent(ctx, store, run.ID, status)'
+
+  # ── Router coordinate 消费（T7）：事件循环、预算、运行期汇报回合 ───────────
+  - id: G-MI
+    title: Router coordinate 模式消费运行期事件（有界扫描 + 预算 + 只读汇报回合）
+    kind: feature
+    symptom: "T5/T6 已经把 Run 结束/失败/gate 等待/停摆/启动对账写成持久事件，但没有任何消费者：事件永远停在 pending，Router 仍然只在用户留言进来的那一刻跑一轮，任务跑完之后用户收不到任何来自工头的汇报，进程重启也接不上上次的现场。"
+    why: "用户 2026-11-18 授权的 R1 计划（T7）要求 coordinate 成为事件的消费者，同时守住 R1 的权限边界。必须保留：① coordinate 是 route 的超集——`workflow_choice=empty` 的留言仍走同一条同步占位 + 动作应用路径，`specified` / `disabled` 严格绕过；事件令在非 coordinate 模式下保持 pending、绝不调模型；② 每拍先有界扫描再消费：候选 Run 只含窗口内（1h）更新过或仍有 open NodeRun 的，禁止 30s 一拍全量重扫历史 Run；代价是钩子漏写且早于窗口的终态 Run 不补齐（启动对账的全量扫描兜底）；③ 事件回合先 `ClaimEvent` CAS 再跑：已有同 turn 决策走 replay（applied→done、applying→重跑 ApplyRouteActions→done、拒绝/失败按原错误落终态），零模型调用、零重复可见活动；④ 三条预算闸门：缺原始留言 / 链深度 >3 / 同一原始留言已消耗 3 个回合 → skipped，零模型调用；`run_stalled` 消费前必须重查 NodeRun 仍 running，否则 skipped；⑤ 运行期白名单只有 `say` / `ask_user` / `silent`（只读工具不在 actions 里，保持可用）；`run_workflow` / `message_agent` / `deliver_to_active_run` 一律拒绝，且任何失败（模型/校验/应用/插入冲突）都把事件落 failed/skipped，绝不 `fallbackRoute`、绝不新开 Run 或直连、绝不自动 cancel/retry/审批/merge；⑥ 顺序不可换：可见副作用成功 → 决策 applied → 事件 done；⑦ 运行期 say 不得覆盖 `task.result_summary`（`recordReplySummaryIfActive` 只对用户留言生效），且用户留言回合的既有语义不变；⑧ 应用动作前的终态闸门只对用户留言生效——Run 结算后任务本来就该是终态，否则运行期汇报会被自己的终态闸门挡成失败；⑨ 30s 循环只在 coordinate 模式启动（先立即一拍再 ticker），`Close` 必能让它退出；启动时 `RecoverClaimedEvents` 把遗留 claimed 打回 pending，事件决策的 applying 留给 replay 而不是启动标 failed。"
+    boundary: "只做消费侧：不产事件（T6）、不改事件账本与 Store 方法、不改 route/shadow 语义、不做 T8 的 brief 证据扩展与里程碑文案、不做 P2 的自动 cancel/retry/merge、不新增 HTTP 端点、不改前端。循环只处理 Router-owned Run 的事件（T6 判据）；`router_coordinate` 的 30s 间隔是常量，不是配置项。"
+    files:
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/router_agreement.go
+      - server/internal/kanban/router_coordinate_test.go
+      - server/internal/kanban/router_coordinate_scan_test.go
+      - server/internal/kanban/router_coordinate_turn_test.go
+      - server/internal/kanban/router_service.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/activity_service_dispatch.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/app/workspace_build.go
+    tests:
+      - server/internal/kanban/router_coordinate_test.go
+      - server/internal/kanban/router_coordinate_scan_test.go
+      - server/internal/kanban/router_coordinate_turn_test.go
+    anchors:
+      - 'server/internal/kanban/router_coordinate.go:func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {'
+      - 'server/internal/kanban/router_coordinate.go:func (rs *RouterService) ConsumeRouterEvents(ctx context.Context, now time.Time) (RouterCoordinateConsumeResult, error) {'
+      - 'server/internal/kanban/router_coordinate.go:func (s *Service) scanRouterEventSourcesBounded(ctx context.Context, rootID string, now time.Time, window time.Duration) (RouterEventScanResult, error) {'
+      - 'server/internal/kanban/router_coordinate.go:RouterCoordinateMaxTurnsPerUserActivity = 3'
+      - 'server/internal/kanban/router_coordinate.go:func (s *RouterStore) recoverInterruptedUserMessageDecisions(ctx context.Context, reason string) (int64, error) {'
+      - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) beginCoordinateEventTurn('
+      - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) replayCoordinateEventDecision('
+      - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) finishCoordinateEventTurn('
+      - 'server/internal/kanban/router_coordinate_turn.go:case RouterActionSay, RouterActionAskUser, RouterActionSilent:'
+      - 'server/internal/kanban/router_service.go:if trigger.Event != nil {'
+      - 'server/internal/kanban/router_service.go:recover = rs.store.recoverInterruptedUserMessageDecisions'
+      - 'server/internal/kanban/router_service.go:rs.waitCoordinateLoop(routerCoordinateRecoverTimeout)'
+      - 'server/internal/kanban/activity_service_dispatch.go:if (mode == RouterModeRoute || mode == RouterModeCoordinate) && choice == CommentWorkflowChoiceEmpty {'
+      - 'server/internal/kanban/activity_route_apply.go:if decision.TriggerKind == RouterTriggerUserMessage {'
+      - 'server/internal/kanban/router_agreement.go:func routerAgreement(legacy *RouterLegacyAction, actions []RouterAction) string {'
+      - 'server/internal/kanban/router_prompt.md:**运行期事件回合**'
+      - 'server/app/workspace_build.go:if services.Kanban.RouterConfig().ModeForRoot(root.ID) == kanban.RouterModeCoordinate {'

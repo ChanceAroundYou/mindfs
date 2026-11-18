@@ -16,7 +16,7 @@
 | T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | 已完成：R0 PASS（最终代码 7/7） |
 | T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | 已完成：13 例全绿，集成 `68a07c5e`；工头补迁移/级联 `3a1aa766` |
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | 已完成：10 条行为 PASS，集成 `df074149`；硬线拆分 `c35ae226` |
-| T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | 已派发（2026-11-18）：brief 冻结，MindFS #81 / `task-81` |
+| T7 消费预算 | T6 后冻结 brief | T6 → T7 | worker branch + task-7-report.md | 模式/链深度/动作权限矩阵 | 自动开执行/cancel/retry 即拒绝 | 实现 1 | **PASS（2026-11-18）**：#81 交付并集成，12/12 行为、`Scope: G-MI` |
 | T8 汇报证据 | T7 后冻结 brief | T7 → T8 | worker branch + task-8-report.md | 来源/摘要/确定 effect 测试 | 串话/重复可见回复即拒绝 | 实现 1 | pending |
 | T9 故障矩阵 | T8 后派发 | T8 → T9 | 测试提交 + task-9-report.md | 重启与并发故障点断言 | 生产重启、盲目重放即停止 | 实现 1 | pending |
 | T10 集成验收 | T9 后独占运行 | 全链依赖 | 总任务分支 + 全量日志 | 计划 T10 全量门禁与真实闭环 | 任一门禁失败不集成发布 | 实现/真实求解 1 | pending |
@@ -35,8 +35,8 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 
 - R1 T5：**已完成并集成**（#79，账本 + 工头补的迁移/级联，见「T5 结果」）。
 - R1 T6：**已完成并集成**（#80，事件生产 + 硬线拆分，见「T6 结果」）。
-- R1 T7：**已派发**（#81，brief 已冻结，见「T7 实例」）；交付前 T8–T10 保持 gated。
-- R1 T8–T10：逐项等待前一项交付后由工头冻结 brief 再派发；未补全实际 task id/worktree/报告路径不得派发。
+- R1 T7：**已完成并集成**（#81，coordinate 消费 + 预算 + 有界扫描，见「T7 结果」）。
+- R1 T8–T10：T7 已 PASS，可逐项冻结 brief 派发（T8 汇报证据 → T9 失败矩阵/恢复 → T10 集成验收）；未补全实际 task id/worktree/报告路径不得派发。
 - R2–R5：仅路线图，不属于本轮执行。
 
 ### T1 实例
@@ -278,3 +278,14 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 报告：`task-81/.mindfs/dispatch/task-7-report.md`；提交信息 `Scope: G-MI`（登记由工头补）。
 - 派发（2026-11-18）：用户留言 `act_f0d9055e85645016`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-276635592ec27a89` 节点 `execute` 启动，会话 `1794994523-fd2c47cdca2c`，进程 cwd 已核对为 `task-81`，status=running。
 - 交接给 T7 的既有约束：T6 扫描窗口（见上）；`service_activities.go` / `workflow_runtime.go` 刚拆分，改动前先看新文件位置。
+
+### T7 结果（2026-11-18）：PASS
+
+- **交付**：`router_coordinate.go`（327 行：触发映射、消费、30s 循环、有界扫描、coordinate 专用启动回收）与 `router_coordinate_turn.go`（354 行：claim/闸门/replay/白名单/失败终态）；`router_agreement.go`（41 行，纯移动）；三个行为测试文件 447/176/211 行。`router_service.go` 499 → 489 行（搬走 `routerAgreement` 后新增事件闸门/分派/Close）。工作区 `task-81` HEAD `b764dd49`。
+- **12 条行为逐条 PASS**：模式矩阵（off/shadow/route 零读写、事件仍 pending、Event 触发被忽略；coordinate 起循环且 Close 收敛）、coordinate 用户留言沿用 route 同步占位（empty 应用、specified/disabled 零决策）、settled 事件汇报（turn/kind/ref 与事件一致、回复线程指向原始留言）、同任务串行/跨任务并行、回合预算（3 条决策后第 4 个事件 skipped 零模型）、链深度 3 处理 / 4 skipped / 缺原始留言 skipped、运行期动作白名单三类执行动作各自拒绝且零新 Run/零直连、stall 重查（NodeRun 已终态 skipped、running 正常汇报）、模型失败即终态且不重试、崩溃 replay（构造期回收 + 零模型 + 零新增活动）、有界扫描窗口（2h 前终态不产、1h 内正常产、窗口外有 open NodeRun 仍扫描）、运行期 say 不覆盖任务结果摘要。
+- **RED 诚实性**：worker 在 `/tmp/t7-red` 用「基线 86561f0e + 三个测试文件 + 空桩」复跑，12 条全部在各自断言处失败（原文进报告）；空桩覆盖两个冻结接口与 `RouterTrigger.Event`，没有一条靠空实现或 `t.Skip` 通过。
+- **工头独立复核**：定向 `-run TestCoordinator` 7.199s 绿；kanban 全包 `-p 1 -count=1` 137.448s 绿；崩溃 replay 用例 `-count=10` 3.163s 绿；`go build ./...` 退出 0；`gofmt -l` 与 `go vet ./server/internal/kanban/ ./server/app/` 无输出；行数逐文件复核均 ≤500。
+- **工头批准的偏移**：① `activity_route_apply.go` 的终态闸门从「所有动作」收窄为 `trigger_kind == user_message`——Run 结算后任务本来就该是终态，不豁免会把运行期汇报挡成 `ErrTaskClosed`；用户留言语义由行为 2 单独钉住，行为 3 用 `StatusSuccess` 任务钉住运行期路径。② 事件决策的 applying 不参与启动期 `RecoverApplyingDecisions`，改由 replay 重跑 `ApplyRouteActions`（`ClaimAppliedSeq` 幂等），避免把已经可见的汇报标成失败。
+- **登记与门禁**：G-MC 的 `activity_service_dispatch.go` 锚点更新为 route/coordinate 共用条件；新增 G-MI（17 个锚点，逐条 grep 命中）；`make check-upstream` **1900 delta / 309 组**绿。集成提交 `f939c4a5`。
+- **残留（非阻断）**：① 有界扫描的取舍——钩子漏写且早于 1h 窗口、又无 open NodeRun 的终态 Run 不会被 30s 循环补齐（启动对账的全量扫描兜底）；② `waiting_user` 计入 open 比 brief 字面更宽，理由是 gate 可能停数小时；③ brief 构建失败只落事件 failed、不写决策行（决策行在 brief 成功后插入）；④ 事件决策若永远 replay 不成功会停在 applying，只能等下次消费同一事件再试；⑤ 崩溃 replay 用例的「构造期回收 → 手动消费」之间有一个很窄的调度窗口（后台首拍可能先消费），`-count=10` 未复现，语义仍由同用例的零模型/零新增活动断言兜底；⑥ 循环里的扫描/消费用独立 2 分钟 ctx，`Close` 最多等 5s，正在跑的一拍会在关库后自然报错退出。
+- **下一步**：T8（brief 运行期证据 + 里程碑文案）现在可冻结派发；T9/T10 继续 gated。
