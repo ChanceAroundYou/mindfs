@@ -232,5 +232,6 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 冻结接口与八条必钉行为：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-5-brief.md`。
 - 允许写：`router_event_types.go`、`router_event_store.go` 与其测试；不改 Router 决策/应用逻辑、workflow runtime、docs、线上配置。
 - 报告：`task-79/.mindfs/dispatch/task-5-report.md`；提交信息 `Scope: G-MG`（登记由工头补）。
+- 派发（2026-11-18）：用户留言 `act_c62fe7a51d2abb5f`，`workflow_choice=specified` + `workflow-blank:v1`；实际启动节点 `run-6ab2f1d3c3ece7c8:execute::0:1`，claude / sonnet，会话 `1794990651-0f954e4a2491`，status=running（POST 200 与实际启动分别核对）。
 
 
