@@ -245,6 +245,10 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 	if err != nil || activity == nil {
 		return
 	}
+	// 生命周期事件在结算窗口产生，且只依赖权威状态：投影可能只覆盖部分节点
+	// （终态来自任务行），所以不能等到 workflowReplyOutcome 给出文案之后；
+	// 判据与扫描共用 routerEventTerminalKind，写失败由下一次扫描补齐。
+	s.emitRunTerminalRouterEvent(ctx, store, run)
 	status, summary := workflowReplyOutcome(ctx, store, run)
 	if status == "" {
 		return

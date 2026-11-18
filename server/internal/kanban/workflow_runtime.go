@@ -348,7 +348,14 @@ func (s *Service) finishWorkflowRunByOperator(ctx context.Context, rootID, taskI
 	if err := store.BlockWorkflowCommentQueue(ctx, task.ID); err != nil {
 		return TaskDetail{}, err
 	}
-	return s.setTaskStatus(ctx, rootID, task.ID, status, taskEvent, reason, true)
+	detail, err := s.setTaskStatus(ctx, rootID, task.ID, status, taskEvent, reason, true)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	// 操作员终态不重写 Run 投影，事件按操作员给出的任务终态产生；事件写失败
+	// 不回滚已经落库的决定，下一次扫描会补齐。
+	s.emitOperatorOutcomeRouterEvent(ctx, store, run.ID, status)
+	return detail, nil
 }
 
 // projectRunCancelled rewrites the run projection for rows that cancellation
