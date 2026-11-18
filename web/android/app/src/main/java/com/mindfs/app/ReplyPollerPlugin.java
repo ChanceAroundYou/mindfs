@@ -53,6 +53,10 @@ public class ReplyPollerPlugin extends Plugin {
         Intent intent = new Intent(getContext(), ReplyPollerService.class);
         intent.setAction(ReplyPollerService.ACTION_CONFIGURE);
         intent.putExtra(ReplyPollerService.EXTRA_API_BASE_URL, apiBaseUrl);
+        if (call.getData().has("waitUrl")) {
+            // 单节点兜底的长轮询地址由前端算好（挂载前缀 + user=），原生不许自己拼。
+            intent.putExtra(ReplyPollerService.EXTRA_WAIT_URL, call.getString("waitUrl", ""));
+        }
         if (call.getData().has("token")) {
             intent.putExtra(ReplyPollerService.EXTRA_TOKEN, call.getString("token", ""));
         }

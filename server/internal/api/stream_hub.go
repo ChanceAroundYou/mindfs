@@ -1,6 +1,7 @@
 package api
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -192,6 +193,10 @@ func (h *StreamHub) ListReplyingSessions() []ReplyingSessionState {
 			AwaitingAnswer: state.AwaitingAnswer,
 		})
 	}
+	// 排序是为了让这份列表**可比较**：ETag/304 与等待循环的签名都是「把列表内容拼成
+	// 指纹」，map 的随机顺序会让同一份状态每轮算出不同指纹，于是长轮询每次都当成
+	// 变化、304 永不命中。所以按 SessionKey 升序，顺序稳定不靠运气。
+	sort.Slice(items, func(i, j int) bool { return items[i].SessionKey < items[j].SessionKey })
 	return items
 }
 

@@ -62,6 +62,14 @@ func (s *ActivityService) beginDirectAgent(ctx context.Context, task Task, body 
 	if guardErr := s.prepareUserTurn(ctx, task, false, agentAct); guardErr != nil {
 		return agentAct, nil
 	}
+	// A user can explicitly start a direct conversation while approval is pending.
+	// A Router decision cannot make that choice on the user's behalf.
+	if agentAct.RouterDecisionID != "" {
+		if err := s.tasks.checkRouteDirectGate(ctx, task.ID); err != nil {
+			s.failActivity(ctx, agentAct, err)
+			return agentAct, nil
+		}
+	}
 	if s.directExecutor == nil {
 		s.failActivity(ctx, agentAct, errors.New("direct executor not configured"))
 		return agentAct, nil
@@ -70,6 +78,19 @@ func (s *ActivityService) beginDirectAgent(ctx context.Context, task Task, body 
 		s.executeDirectActivity(ctx, agentAct, task, body)
 	})
 	return agentAct, nil
+}
+
+// prepareRouterTurn 允许协调正在执行的节点，任务暂停、结束和其他错误仍立即反馈。
+func (s *ActivityService) prepareRouterTurn(ctx context.Context, task Task, placeholder *TaskActivity) error {
+	if s.lifecycle == nil {
+		return nil
+	}
+	err := s.lifecycle.PrepareNewUserTurn(ctx, task, false)
+	if err == nil || errors.Is(err, ErrWorkflowTurnActive) {
+		return nil
+	}
+	s.failActivity(ctx, placeholder, err)
+	return err
 }
 
 // prepareUserTurn 把「新一轮开始」的守卫/取代交给状态机端口。失败只写回这一轮

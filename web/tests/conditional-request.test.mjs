@@ -56,7 +56,9 @@ for (const [needle, label] of [
   [/respondJSONConditional\(w, r, map\[string\]any\{\s*"entries": out\.Entries,/, "tree 正常响应"],
   [/respondJSONConditional\(w, r, out\.Status\)/, "git status"],
   [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": \[\]map\[string\]any\{\}\}\),?/, "replying-sessions 空响应"],
-  [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": payload\}\)/, "replying-sessions 正常响应"],
+  // 2026-11-18（G-MF）：载荷组装抽成 replyingSessionsPayload（普通轮询与长轮询共用一份），
+  // 所以不再钉「参数是 payload」这个字面形状 —— 只钉「sessions 经 respondJSONConditional 发出」。意图不变。
+  [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": h\.replyingSessionsPayload\(r, /, "replying-sessions 正常响应"],
 ]) {
   assert.match(httpDomain, needle, `${label} 必须走 respondJSONConditional`);
 }
@@ -70,8 +72,11 @@ assert.ok(
   !/respondJSONList\(w, r, out\.Status\)/.test(httpDomain),
   "git status 绝不能用 respondJSONList —— dirty_count: 0 / clean: false 会被删掉",
 );
+// 2026-11-18（G-MF）：载荷组装抽成 replyingSessionsPayload 后，旧负例
+// `respondJSONList(... "sessions": payload)` 已经匹配不到任何东西（死守卫）。
+// 改钉当前调用形状：sessions 只能经 respondJSONConditional + replyingSessionsPayload 发出。
 assert.ok(
-  !/respondJSONList\(w, r, map\[string\]any\{"sessions": payload\}\)/.test(httpDomain),
+  !/respondJSONList\(w, r, map\[string\]any\{"sessions": h\.replyingSessionsPayload\(/.test(httpDomain),
   "replying-sessions 绝不能用 respondJSONList",
 );
 

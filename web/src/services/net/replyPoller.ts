@@ -7,8 +7,9 @@ import { isNativeShellRuntime, supportsCustomNativePlugins } from "../platform/r
 type ReplyPollerPlugin = {
   configure(options: {
     apiBaseUrl?: string;
+    waitUrl?: string;
     token?: string;
-    nodes?: Array<{ id: string; url: string }>;
+    nodes?: Array<{ id: string; url: string; waitUrl: string }>;
     viewing?: string;
   }): Promise<void>;
   dismiss(options: { nodeId: string; rootId: string; sessionKey: string }): Promise<void>;
@@ -105,16 +106,24 @@ export async function syncNativeReplyPoller(): Promise<void> {
   const apiBaseUrl = nativeReplyPollerBaseURL();
   // 每个节点的完整 URL 由这里算（节点路由、user= 账户参数、挂载前缀都在 appPath 里）。
   // 原生只负责 GET，不许自己拼 —— 它只拿得到 origin，拼出来就是 404。
+  // 同一节点给两条：url 是普通轮询（降级路径），waitUrl 是长轮询（近实时提醒）。
   const nodes = getNodes()
     .map((node) => String((node as { id?: string })?.id || "").trim())
     .filter(Boolean)
-    .map((id) => ({ id, url: absoluteNodeURL("/api/replying-sessions", id) }))
+    .map((id) => ({
+      id,
+      url: absoluteNodeURL("/api/replying-sessions", id),
+      waitUrl: absoluteNodeURL("/api/replying-sessions/wait", id),
+    }))
     .filter((node) => /^https?:\/\//i.test(node.url));
   if (!nodes.length && !/^https?:\/\//i.test(apiBaseUrl)) {
     return;
   }
+  // 单节点兜底：apiBaseUrl 与 waitUrl 成对下发（有节点表时两条一起留空，原生只按节点表逐节点等待）。
+  const fallbackBaseUrl = nodes.length ? "" : apiBaseUrl;
   const payload = {
-    apiBaseUrl: nodes.length ? "" : apiBaseUrl,
+    apiBaseUrl: fallbackBaseUrl,
+    waitUrl: fallbackBaseUrl ? `${fallbackBaseUrl}/api/replying-sessions/wait` : "",
     nodes,
     viewing: viewingKey,
   };

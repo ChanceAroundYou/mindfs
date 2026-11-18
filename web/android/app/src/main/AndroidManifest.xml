@@ -41,7 +41,13 @@
             android:name=".ReplyPollerService"
             android:exported="false"
             android:stopWithTask="true"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse|dataSync">
+            <!-- Android 14+ 走 specialUse（dataSync 有 6 小时上限）；API 29–33 没有
+                 specialUse 语义，仍由 startForegroundCompat 传 dataSync，所以两种类型都声明。 -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="session reply sync" />
+        </service>
     </application>
 
     <!-- Permissions -->
@@ -51,6 +57,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- API 29–33 的启动路径仍传 dataSync 类型，权限保留。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>
