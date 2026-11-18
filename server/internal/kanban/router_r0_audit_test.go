@@ -168,7 +168,8 @@ func TestRouterRunningAgentMessageReachesRouter(t *testing.T) {
 }
 
 func explainsUndeliverable(text string) bool {
-	return strings.Contains(text, ErrWorkflowWaitingApproval.Error()) ||
+	return strings.Contains(text, "等待你审批") ||
+		strings.Contains(text, "等待审批") ||
 		strings.Contains(text, "no single active agent node run to deliver to") ||
 		strings.Contains(text, "无法转交") ||
 		strings.Contains(text, "无法投递")
@@ -181,6 +182,9 @@ func TestExplainsUndeliverable(t *testing.T) {
 		want bool
 	}{
 		{name: "approval required", text: ErrWorkflowWaitingApproval.Error(), want: true},
+		{name: "waiting for your approval", text: "等待你审批，留言不会显示为已转交。", want: true},
+		{name: "waiting for your approval with quoted status", text: "工作流正在等待你审批，留言不会显示为“已转交”。", want: true},
+		{name: "waiting for approval", text: "工作流正在等待审批。", want: true},
 		{name: "no delivery target", text: "no single active agent node run to deliver to", want: true},
 		{name: "explicit delivery failure", text: "当前无法投递留言", want: true},
 		{name: "quotes success in failure explanation", text: "没有转交：“已转交”是错误提示，当前无法转交", want: true},
