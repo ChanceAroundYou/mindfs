@@ -350,14 +350,14 @@ func TestRouterEventUniqueKeySeparatesKindAndInstance(t *testing.T) {
 }
 
 // 行为 8：旧库（无 router_events）上迁移可重复执行，且不改历史行。
+// 旧库用一个裸 sql.DB 建模：TaskStore 打开时就会跑 migrateSchema（含本迁移），
+// 那样已经证明不了「旧库首次迁移」这条路径。
 func TestRouterEventMigrationRepeatableOnOldDatabase(t *testing.T) {
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	tasks, err := NewTaskStore(root)
+	db, err := sql.Open("sqlite", t.TempDir()+"/old.db")
 	if err != nil {
-		t.Fatalf("NewTaskStore: %v", err)
+		t.Fatalf("open raw db: %v", err)
 	}
-	defer tasks.Close()
-	db := tasks.db
+	defer db.Close()
 
 	var name string
 	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='router_events'`).Scan(&name)
