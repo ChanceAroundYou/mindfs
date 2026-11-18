@@ -297,4 +297,4 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - 冻结接口、8 条必钉行为、允许文件与边界：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-8-brief.md`。
 - 关键冻结决策：事件 brief 只读 `event.RunID` 指向的 Run（不得用任务最新 Run 顶替），并清空 `LatestRun` / `ActiveExecution` / `Workflows` 防止串话；`Trigger.Ref=event.ID`、原始留言正文放宽到 2000 字节；节点证据复用 `nodeRunOutputSummary`，≤20 条、失败/等待/运行优先保留，未验证项 ≤10 条；payload 只留白名单键、≤2KB；任何裁剪置 `Truncated`，序列化后仍 ≤24KB；运行期 say/ask_user 用 `act-rtev-<sha256(decisionID:seq)[:20]>` 确定 ID + `InsertOrIgnore`，`RunID` 保持空、默认 `purpose=progress`，绝不改写旧 Run 的唯一结果活动；`silent` 理由继续落在 `router_decisions.actions_json`，不改事件语义。
 - 报告：`task-82/.mindfs/dispatch/task-8-report.md`；提交信息 `Scope: G-MJ`（登记由工头补）。
-- 派发后在此记录用户留言 / Run / 节点 / 会话与进程 cwd 核对结果。
+- 派发（2026-11-18）：用户留言 `act_fc8476a6fa4faadf`，`workflow_choice=specified` + `workflow-blank:v1`；Run `run-3c5376128222f681` 节点 `execute` 启动，会话 `1794997998-e28baf3f7e3e`，进程 pid 3907496 的 cwd 已核对为 `task-82`。
