@@ -451,4 +451,6 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 
 复审残留（仅登记，不修）：`ReplyPollerService` 对 `apiBaseUrl` 有本地 shell 来源守卫、对 `waitUrl` 没有——只在开发构建用 localhost 且已持久化真实 base 时可达，线上下发配置（`capacitor.config.json` 为 `https://home.xiaokubao.space/mindfs/`）不可达。
 
-**仍未完成（需用户执行）：** Step 5 部署（`bash scripts/deploy-all.sh`，本机 `sudo systemctl restart mindfs` 仅用户）、Step 6 外网代理超时实测、Step 7 APK 出包与真机验收（后台秒级响铃、常驻通知点击直达/多会话只开 App）。
+**已部署并出包（2026-11-18）：** `bash scripts/deploy-all.sh` 退出 0，四端 `v0.5.5-1118-159-g055d138d`（本机、WSL、fn、pc-win；pc-win PID 35344 health 200）。WSL/fn 上长轮询实测 `seed=200 <1ms` → `If-None-Match` 超时 `304 @5.0–5.3s`；本机重启后 `/mindfs/api/replying-sessions/wait` 返回 200。APK 发布 tag `v0.5.5-1119`（`6d…` 见 GitHub）：`versionName=v0.5.5-1119`、`versionCode=5051120`（1118 为 …1119，单调递增），签名证书 `CN=MindFS`，APK sha256 `92284f2e39609994d4f91325d2c0658fc7324f6ea98664356b2aa690d2ab0a78`，`make verify-release` 通过，线上 `android-version.json` 版本字段为 `v0.5.5-1119` 且 `.apk` 直链可下载。
+
+**仍未完成（需用户执行）：** Step 6 外网代理超时实测、Step 7 真机验收（后台秒级响铃、常驻通知点击直达/多会话只开 App、挂一夜确认 `specialUse` 前台服务存活）。
