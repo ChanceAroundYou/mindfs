@@ -11,8 +11,8 @@
 | 任务 | 工作流/执行方式 | 独立性/依赖 | 输出路径 | 验收命令/标准 | 停止条件 | 并发占用 | 状态 |
 |---|---|---|---|---|---|---|---|
 | T1 基线核查 | MindFS specified 空白执行，单 worker | 独立只读；不与工头重复审计 | `.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-1-report.md` | 计划 T1 的 route 定向测试；逐项证据 | 权限/模型失败、超范围、同一路径连续两次失败即报告 | 只读 1 | 审计完成；缺口转 T2 |
-| T2 R0 回归 | specified 空白执行，Scope G-MC | T1 → T2，独立 worktree | worker branch + task-2-report.md | R0 集成用例及 RED/GREEN | fixture 无法稳定构造则 NEEDS_CONTEXT；不修源码 | 实现 1 | running：#75 |
-| T3 P1 修复 | 依赖 T2 后定稿并派发 | T2 → T3，工头集成测试提交 | worker branch + task-3-report.md | T2 红转绿 + 原守卫测试 | 根因未确认不改源码 | 实现 1 | pending |
+| T2 R0 回归 | specified 空白执行，Scope G-MC | T1 → T2，独立 worktree | worker branch + task-2-report.md | R0 集成用例及 RED/GREEN | fixture 无法稳定构造则 NEEDS_CONTEXT；不修源码 | 实现 1 | 已完成：三例 RED，审阅通过 |
+| T3 P1 修复 | 依赖 T2 后定稿并派发 | T2 → T3，工头集成测试提交 | worker branch + task-3-report.md | T2 红转绿 + 原守卫测试 | 根因未确认不改源码 | 实现 1 | 已完成：T2 红转绿、两项竞态 + 直连摘要守卫；集成 `8cace21e`、`47785ee6` |
 | T4 真实验收 | 依赖 T3；独占隔离实例 | 不与其他计时/真实求解并发 | 独立运行根 + task-4-report.md | R0 场景逐例完整证据 | 模型不可用则 BLOCKED，不改生产配置 | 实现/真实求解 1 | pending |
 | T5 事件账本 | R0 PASS 后冻结接口 | T4 → T5 | worker branch + task-5-report.md | 去重/领取/重启/隔离测试 | R0 未通过或接口未冻结不启动 | 实现 1 | pending |
 | T6 事件生产 | T5 后冻结 brief | T5 → T6 | worker branch + task-6-report.md | 来源/重扫/结算窗口测试 | 接管 legacy/显式任务即拒绝 | 实现 1 | pending |
@@ -89,3 +89,103 @@ T2–T10 启动前更新其实际 task id、worktree、绝对报告路径与定�
 - T2 / #75：原生 NodeRun `run-0058b108bf1254df:execute::0:1` 为 running，会话 `1794956358-251b0ddfdf4a`；实际 claude PID 1378875 的 cwd 为 task-75。
 - 当前未修产品源码，未跑真实 route 场景，未完成 R0/R1，未合回 main/推送/部署。
 - 下一门禁：读取 T2 报告与 RED 证据 → 独立审阅测试 → T3 最小修复 → R0 真实隔离验收。
+
+## 继续执行：T2 独立审阅
+
+- #75 NodeRun 已 success；提交 `3a94538218a210a302b377e3cbd4d36b6a9e7284`，只新增 280 行测试文件。
+- 工头已读取完整报告：三项期望行为均 RED，原有 10 项锚定测试 GREEN；正则前缀碰撞已记录，不误判原组回归。
+- 审阅线 R2：只读 Codex 子代理；实现并发 0、只读并发 1；不得派子代理、修改代码或重复跑现有测试。
+- 输入：T2 frozen brief、实现报告、base `3b6c1710` 到 head `3a945382` 的独立 diff 包。
+- 输出：`/home/xiaokubao/projects/mindfs/.worktree/task-75/.mindfs/dispatch/task-2-review.md`。
+- 验收：分别给 spec compliance 和 quality verdict；具体缺陷带行号。重要缺陷未裁定不派 T3。
+- 停止条件：缺少证据、需要扩大任务范围或发现重要缺陷则报告，不自己修复。
+
+### T2 修订轮 1/5
+
+- 独立审阅要求三项重要修订：F1 验证 continue_requests；F2 验证可见解释且等 lane 完成；不可只凭决策终态。
+- 工作流：通过 HTTP `/api/sessions/{key}/messages` 续发原 worker 会话 `1794956358-251b0ddfdf4a`，不新建执行线。
+- 工作区 /home/xiaokubao/projects/mindfs/.worktree/task-75；输出沿用 task-2-report.md 并追加本轮测试证据；Scope G-MC。
+- 验收：三条仍因产品缺口 RED、原组 GREEN，独立 scoped re-review；实现并发 1，只读审阅已结束。
+- 停止：不可恢复原会话则改用同卡任务 follow-up；不修改产品源码，不改其他 worktree。
+
+### T2 修订轮 2/5
+
+- 工作流：续发原 MindFS worker 会话；工作区 task-75，唯一修改测试文件。
+- 剩余问题：F2 必须验证用户可见文字表达无法投递或等待人工审批；不能把任意非空正文当解释。
+- 输出：同一 task-2-report.md 追加测试与提交证据；独立复审 task-2-rereview-2.md。
+- 验收：F2 原因准确 RED，原有其他断言保留；只读审阅与实现各占 1 个并发以内。
+- 停止：无法构造语义断言或发现越界则报告，不改产品源码。
+
+### T3 准备（尚未派发）
+
+- MindFS #76，worktree `/home/xiaokubao/projects/mindfs/.worktree/task-76`；等待 T2 修订与独立复审通过。
+- 主分支已推进到 `055d138d`，自原基线以来没有 kanban 代码差异；T3 由新 worktree 基线接入审阅通过的测试提交。
+
+### T2 修订轮 3/5：更换执行方式
+
+- 前两轮复审连续发现 F2 提示语义未收紧；按用户级工程规则更换方法和执行者，改为产品现有审批错误及明确投递失败字符串的精确断言。
+- 工作流：Codex 子代理，使用 #75 原有 worktree，仅修改测试文件；原 MindFS 会话已结束。
+- 独立性：只占实现 1；评审完成后占只读 1，不与其他实现并行。
+- 输入：原 brief、两轮评审、当前 HEAD 49e8edb1；报告 `.mindfs/dispatch/task-2-fix3-report.md`。
+- 验收：F2 对产品审批错误/确切无活动 Agent 错误为真，对“已转交”“没有可用的工作流”为假；原 F2 在修复前仍因 pending RED。
+- 停止：需要修改产品代码、改变用户契约、原 worktree 非干净或基线不符立即报告。
+
+### T2 修订轮 4/5
+
+- 第三轮复审指出等待审批的合理短语仍会误拒；使用更强的独立实现者完成最小修正。
+- 工作区 task-75；仅改 router_r0_audit_test.go；报告 task-2-fix4-report.md。
+- 验收：明确“等待你审批”及带成功提示引述的拒绝案例为真，“没有可用的工作流”与“已转交”为假；原 F2 仍 RED。
+- 并发：实现 1，审阅最多 1；无法满足则停止并报告，不改产品代码。
+
+### T3 实际派发
+
+- MindFS #76 worktree `task-76`；使用本会话 Codex 实现代理派发，任务卡与分支保留在 MindFS 中，执行状态以此记录为准。
+- 已 cherry-pick 经审阅测试至 `9b289f4e`；它是故意 RED 的实现基线，禁止部署。
+- Brief：`task-73/.superpowers/sdd/2026-11-18-super-agent-r0-r1/task-3-brief.md`。
+- 输出：`task-76/.mindfs/dispatch/task-3-report.md` 和独立提交。
+- 验收：三项测试 GREEN、原 route/shadow/guard 测试通过、所修改源文件 <=500 行；独立评审后集成。
+- 停止：根因不成立、需要越过指定范围或同一路径连错两次时上报。实现并发 1。
+
+### T3 独立审阅
+
+- 实现提交 eab1ea09；定向 17.540s、kanban 包 106.164s 通过；G-MC 路径迁移待工头登记。
+- 审阅方式：只读子代理，输入 T3 brief、报告和 9b289f4e..eab1ea09 diff；独立性：实现任务已完成，审阅与实现不并行。
+- 输出：task-76/.mindfs/dispatch/task-3-review.md。验收：需求与代码质量两个 verdict、证据行号；重要问题清零后集成。
+- 停止：发现守卫倒退、未覆盖副作用或上下文不足时报告；审阅不改源码、不重复跑现有整套测试。只读并发 1。
+
+### T3 修订轮 1/5
+
+- 独立评审确认两项重要竞态：模型运行期间暂停/终态后仍应用动作，及进入 HumanGate 后仍按旧状态启动直连。
+- 续用 #76 原实现子代理，独占实现槽位；输入 task-3-review.md，输出追加 task-3-report.md。
+- 验收：三个确定性竞态测试先 RED 后 GREEN，定向原回归仍通过；投递状态与绑定事务的先后有明确保障。
+- 停止：需要改变明确纯对话行为、无法保障事务先后或两次方法失败即报告；不自动回退产生重复副作用。
+
+### T3 修订轮 1/5 结果
+
+- 实现提交 `7a8f0906`（Scope G-MC）：动作应用前逐次重读任务状态；暂停/终态拒绝并收尾空占位；`DeliverActivityToActiveNodeRun` 在同一绑定事务内读任务状态；Router 发起的直连在 gate 出现时拒绝，用户显式纯对话保留。
+- 测试先 RED 后 GREEN：`TestRouterApplyRechecksStateAfterModel` 三个子例（paused→deliver、success→say、gate→direct）与 `TestRouterCompletionBetweenAppliedRepliesKeepsFirstEffect`；失败原因分别为“暂停任务接受绑定并写 continue_requests”“终态摘要被迟到回复覆盖”“gate 已 waiting_user 仍启动直连”。
+- 工头独立复跑定向集（15.901s）与完整 kanban 包（113.290s）均通过；修改源文件均 <500 行。
+- 实现报告未按要求追加修订段落，证据以上述提交与原始日志为准，本记录补上。
+
+### T3 独立复审（修订轮 1 后）
+
+- 复审提交 `7a8f0906`，输出 CHANGES REQUIRED：1 HIGH / 2 MEDIUM / 2 LOW。
+- HIGH：Router 发起的直连回合收尾仍用无状态条件的 `UpdateTaskResultSummary`；回合中完成任务后，迟到的直连回复会覆盖已验收摘要（overlay 实测 `summary="迟到的直连回复"`）。
+- MEDIUM 1：say/ask_user/silent 仍是检查后写入；暂停恰好落在检查与写入之间时，可见回复可能落在已暂停任务上，决策仍记 applied。
+- MEDIUM 2：G-MC 锚点仍指向已迁移的 `activity_service.go`，新守卫文件与新测试未登记；`check-upstream` 在 HEAD 为红。
+- LOW：摘要投影从吞错改为返回错误后，已生效决策可能被标 failed；终态状态列表在 Go 与 SQL 两处重复。
+
+### T3 修订轮 2/5
+
+- 因原实现子代理已结束，本轮由工头在主循环实现，保持“实现后独立复审”的分离；实现槽位仍为 1。
+- HIGH 先 RED：新增 `TestRouterDirectResultDoesNotOverwriteTerminalSummary`，实测 `task status="success" summary="迟到的直连回复"` 失败，原因正确。
+- 修复：直连回合的摘要投影改走与 Router say 共用的 `recordReplySummaryIfActive`（带 `status NOT IN (paused,success,fail,cancelled)` 条件）；提交 `2b50ec9b`。新增用例 GREEN，三个竞态用例与完整 kanban 包（115.268s）通过。
+- MEDIUM 1 裁定：不扩大活动写接口。暂停本就允许在途节点收尾，可见回复落在暂停任务是同一语义；必须与暂停严格排序的是**投递绑定**，已由事务内判定覆盖。该裁定写入 G-MC `why`。
+- MEDIUM 2 已处理：G-MC 锚点迁移到 `activity_service_dispatch.go`，登记 `activity_service_dispatch.go`、`router_brief.go`、`router_service_sessions.go`、`task_store_router_guards.go`、四个 R0 测试文件与新增守卫锚点；`make check-upstream` 绿（1884 delta / 306 组）。
+- LOW 保留：摘要投影错误显式上报，不静默吞掉；终态状态列表在 `task_store_router_guards.go` 加同步注释。
+
+### T3 集成
+
+- 合并提交：`8cace21e`（T2/T3 + 登记 + README 双条目冲突解决）、`47785ee6`（直连摘要守卫 + 锚点）。
+- 门禁：定向 15.901s、kanban 包 113.290s / 115.268s、`make check-upstream` 1884/306、gofmt 干净（顺带修 `router_route_test.go` 末尾换行）。
+- 下一步：T4 隔离真实 agent 验收；创建新 worker 任务并以 `task-73` 为集成基线，禁止读线上会话或写线上库。
