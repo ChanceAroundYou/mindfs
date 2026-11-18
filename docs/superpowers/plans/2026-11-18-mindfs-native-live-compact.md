@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在现有 Claude 会话回环代理里加入可观测、可回滚的上下文活压缩；本计划只交付 Phase A（只测量、不改写），并用真实流量数据决定 B1 是否开闸。
+**Goal:** 在现有 Claude 会话回环代理里加入可观测、可回滚的上下文活压缩。原计划只交付 Phase A（只测量、不改写）；2026-11-18 用户指令「把 B 全部做完」后追加 Task B1（无损折叠）与 Task B2（账本 + 只读 API + 前端胶囊）。B3（抽取卡片）明确不在本计划内，需另一次设计评审。线上 `mode=on` 仍未启用。
 
-**Architecture:** 沿用 `server/internal/agent/proxy`（MindFS 已有的每会话回环 HTTP 代理）。Phase A 只在 `POST .../v1/messages` 且 body ≥ `min_body_bytes` 时解析请求，统计候选折叠块/字节/估算 token、SSE `usage` 与历史前缀漂移，每个大请求打一行结构化日志；请求与响应字节保持原样。`off` 是默认值，零解析开销；`shadow` 只观测；`on` 在本构建中也会退化为观测，直到 B1 落地。
+**Architecture:** 沿用 `server/internal/agent/proxy`（MindFS 已有的每会话回环 HTTP 代理）。Phase A 只在 `POST .../v1/messages` 且 body ≥ `min_body_bytes` 时解析请求，统计候选折叠块/字节/估算 token、SSE `usage` 与历史前缀漂移，每个大请求打一行结构化日志；请求与响应字节保持原样。B1 在同一接缝上做字节区间内联改写，把窗口外的旧工具结果折成「指针 + 内容寻址存档」。B2 把每次折叠记进每会话 JSONL 账本，经只读 API 供会话页的「上下文」胶囊展示。`off` 是默认值，零解析开销；`shadow` 只观测；`on` 才折叠。
 
 **Tech Stack:** Go 1.26（`net/http`、`encoding/json`、`httptest`、`-race`）；配置沿用 `config.json → flag → app.StartOptions → agent.Pool → proxy` 管线。
 
@@ -171,9 +171,26 @@
 - [x] **Step 6：** 门禁：`go test -count=1 ./...` 全绿、`go test -race ./server/internal/agent/proxy/` 绿、`go vet` 干净、`make build` 成功。
 - [ ] **Step 7（未做）：** 真实流量灰度 —— 先 WSL 或 fn 开 `on` 观察 24h，再本机（需用户重启），pc-win 最后。
 
+### Task B2: 账本 + 只读 API + 前端上下文 capsule（用户指令「把 B 全部做完」；已完成，未开 `on`）
+
+**Files:**
+- Create: `server/internal/agent/proxy/live_compact_ledger.go`、`server/internal/agent/pool_context_saving.go`、`server/internal/api/http_session_context_saving.go`、`server/internal/api/usecase/session_context_saving.go`、`web/src/services/agent/contextSaving.ts`、`web/src/components/agent/useContextSaving.ts`、`web/src/components/agent/ContextSavingIndicator.tsx`
+- Modify: `server/internal/agent/pool.go`（`LiveCompactArchiveDir`）、`server/app/server.go`（默认 `<config-dir>/context` 并下传）、`server/internal/api/http_routes.go`、`web/src/components/action/ComposerTopChips.tsx`、两份 locale
+- Test: `live_compact_ledger_test.go`、`pool_context_saving_test.go`、`http_session_context_saving_test.go`、`web/tests/context-saving-chip.test.mjs`
+
+**Interfaces:**
+- `proxy.ContextSaving{Latest, Requests, MaxSavedBytes, Recent}`；`(*Server).SessionContextSaving(sessionKey string) ContextSaving`；`(*Pool).SessionContextSaving(...)`；`(*Service).GetSessionContextSaving(ctx, GetSessionContextSavingInput) (proxy.ContextSaving, error)`；`GET /api/sessions/{key}/context-saving`。
+
+- [x] **Step 1：** 账本落地 —— 每会话一个 `<config-dir>/context/ledger/<sha256(key)[:8]>.jsonl`，一次折叠一行，只记大小与计数；4 MiB 用自身尾部 2000 行替换。
+- [x] **Step 2：** 修掉启动级缺陷 —— `LiveCompactArchiveDir` 从未接进启动路径，生产 `mode=on` 折不了任何东西；现在默认 `<config-dir>/context` 并沿 `PoolOptions` 下传到代理。
+- [x] **Step 3：** 只读链路 —— 代理只读方法 → 池转发（无代理返回零值）→ 用例（`InferAgentFromSession` + `agentPoolSessionKey` 解析池级 key）→ chi 路由。
+- [x] **Step 4：** 前端 —— 服务（`appURL(..., nodeId)`）、hook（挂载/切换/`pending` true→false 各拉一次、代际守卫、无轮询）、胶囊（无节省 `return null`、portal 浮层）、`ComposerTopChips` 接线、中英各 12 条文案。
+- [x] **Step 5：** 测试 —— 路由存在/空 key、池级 key 不串账本、无代理不 panic、archive dir 真接进代理；前端结构测试 8 条（路径一致、节点与 root、显隐、刷新时机、切换清空、文案成对）并做变异验证（三处变异各钉红一条对应用例）。
+- [x] **Step 6：** 门禁：`go test -count=1 ./...` 全绿（28 包 ok）、web 233 文件 / 659 用例通过、`tsc -b --noEmit` 干净、`make build` 成功。
+- [ ] **Step 7（未做）：** 与 B1 Step 7 合并 —— 灰度顺序仍是 WSL/fn → 本机（用户重启）→ pc-win。
+
 ## 明确不在本计划内
 
-- B2 账本 JSONL / 只读 API / 前端上下文 chip / 多节点推广。
 - B3 抽取卡片。
 - 任何 `mode=on` 的线上启用（B1 代码已就绪，灰度顺序见 spec §6）。
 - （B1 折叠实现原不在本计划内，2026-11-18 由用户指令「把 B 全部做完」追加为 Task B1。）

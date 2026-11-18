@@ -35,6 +35,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,9 @@ type Server struct {
 	// resent history costs a hash and a stat per already-folded block instead
 	// of a decode, a render, and an archive write. Nil-safe.
 	pointerCache *pointerCache
+	// ledger is the per-session fold ledger behind the context chip. Nil when
+	// no directory is configured.
+	ledger *ledgerStore
 
 	// Emergency brake: the presence of DisableFile turns live-compact off for
 	// the running process. Checked at most once per second.
@@ -108,6 +112,7 @@ func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
 		s.archive = newArchiveStore(cfg.ArchiveDir,
 			time.Duration(cfg.RetentionDays)*24*time.Hour, cfg.MaxArchiveBytes)
 		s.pointerCache = newPointerCache()
+		s.ledger = newLedgerStore(filepath.Join(cfg.ArchiveDir, ledgerDirName))
 	}
 	s.initLiveCompactWorkers()
 	if cfg.Mode == LiveCompactOn && s.archive == nil {

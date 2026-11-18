@@ -449,3 +449,49 @@ archive: /home/xiaokubao/.config/mindfs/context/a1b2c3d4e5f60718293a4b5c.txt
 
 **仍未做**：B2（账本/API/前端）、B3（抽取卡片，需另一次设计评审）。B1 也还没有在真实流量上开过
 `mode=on`；灰度顺序按 §6 保持不变。
+
+### 12.4 Phase B2 实施记录（2026-11-19）
+
+账本、只读 API、前端胶囊三段。B2 只读：不改写入路径，不改变 B1 折叠决策，`off` 模式下一个字节都不多写。
+
+| 组件 | 文件 | 作用 |
+|---|---|---|
+| 账本 | `server/internal/agent/proxy/live_compact_ledger.go` | 每会话一个 `<config-dir>/context/ledger/<sha256(sessionKey)[:8]>.jsonl`，一次折叠一行；到 4 MiB 用自身尾部（2000 行）替换；只记大小与计数 |
+| 汇总 | 同上 `summarizeLedger` / `SessionContextSaving` | `latest` 是最近一次折叠的快照（不是累计），`requests` 是保留历史里的次数，`max_saved_bytes` 是单次最大节省 |
+| 池转发 | `server/internal/agent/pool_context_saving.go` | 代理未装配时返回零值而不是 panic（每个节点都有池，不是每个进程都有代理） |
+| 用例 | `server/internal/api/usecase/session_context_saving.go` | 查会话 → `InferAgentFromSession` → `agentPoolSessionKey`，把池级 key 交给代理 |
+| 路由 | `server/internal/api/http_routes.go` | `GET /api/sessions/{key}/context-saving` |
+| 前端服务 | `web/src/services/agent/contextSaving.ts` | `appURL(..., params, nodeId)`：数据面必须显式带节点 |
+| 前端状态 | `web/src/components/agent/useContextSaving.ts` | 挂载/切换/`pending` true→false 各拉一次；请求代际守卫防串会话 |
+| 前端视图 | `web/src/components/agent/ContextSavingIndicator.tsx` | 无节省时 `return null`；点开是 portal 浮层 |
+| 接线 | `web/src/components/action/ComposerTopChips.tsx` | 仅 `hasBoundSession && mode !== "command"` 时渲染 |
+
+**为什么要先解析 agent 再查账本**：代理按**池级** key 记账（`<agent>-<sessionKey>`），
+不是裸会话 key。前端拿到的只有裸 key，若直接透传就会永远读到空账本 —— 症状是胶囊不出现，
+不报错。由 `TestPoolSessionContextSavingForwardsPoolKey` 钉住（同一代理里 `claude-session-1`
+有 1 条、`session-1` 必须 0 条）。
+
+**本轮修掉的启动级缺陷**：`LiveCompactArchiveDir` 从未接进启动路径 —— `PoolOptions` 有这个字段，
+但 `server/app/server.go` 没赋值，于是生产上 `mode=on` 只会打一行「observing only」，折不了任何东西，
+账本永远为空，胶囊永远不出现。现在默认 `<config-dir>/context` 并沿 `PoolOptions → proxy.LiveCompactConfig`
+下传；由 `TestNewPoolWithOptionsWiresArchiveDir` 用真实请求钉住（只有 archive 那一路会写账本）。
+
+**边界**：账本不含消息文本、工具参数、路径与会话键（键只进哈希文件名）；`recent` 只回最近 200 条但
+前端只用 `latest/requests/max_saved_bytes`。隔离 ConfigDir 会话永远到不了记账点（它们不折叠），
+所以用户看到的节省不会被 Router/workflow 会话灌水。
+
+**测试映射**
+
+| 行为 | 钉住的测试 |
+|---|---|
+| 路由存在且空 key 明确报错 | `TestSessionContextSavingRouteRegistered`、`TestSessionContextSavingRequiresKey` |
+| 池级 key 不串账本 | `TestPoolSessionContextSavingForwardsPoolKey` |
+| 无代理/nil 池不 panic | `TestPoolSessionContextSavingWithoutProxy` |
+| archive dir 真的接进代理 | `TestNewPoolWithOptionsWiresArchiveDir` |
+| 前后端路径一致、节点与 root 都带上 | `web/tests/context-saving-chip.test.mjs` |
+| 无节省不显示、命令模式不显示 | 同上（`visible` 与 `hasBoundSession && mode !== "command"` 断言） |
+| 回合结束才刷新、切换会话先清空 | 同上（`wasPending && !pending`、`setSaving(null)`，并断言无 `setInterval`） |
+| 中英文案成对、占位符对得上 | 同上 |
+
+**仍未做**：B3（抽取卡片，需另一次设计评审）。B1/B2 都还没有在真实流量上开过 `mode=on`；
+灰度顺序按 §6 保持不变 —— 先 WSL 或 fn 开 24h，再本机（需用户重启），pc-win 最后。

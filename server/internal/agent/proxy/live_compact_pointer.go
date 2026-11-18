@@ -122,6 +122,14 @@ func truncateRunes(s string, limit int) string {
 // excerptLines renders the head and tail of the folded text. Lines are trimmed
 // of trailing whitespace so a file with CRLF endings does not produce a card
 // full of stray \r.
+// pointerExcerptLimit bounds the excerpt itself. Selecting head/tail *lines*
+// is not enough: a real tool result is often one enormous line (minified JSON,
+// a single grep hit, a long stack frame), and then "first 8 lines" is the whole
+// text — the pointer would be larger than the result it replaces. Measured on
+// the ledger: a 8,001-byte single-line result produced a 1,080-byte *increase*
+// per request. So the excerpt is also bounded by characters, keeping both ends.
+const pointerExcerptLimit = 1600
+
 func excerptLines(text string, head, tail int) string {
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(normalized, "\n")
@@ -142,6 +150,31 @@ func excerptLines(text string, head, tail int) string {
 	excerpt = append(excerpt, "…")
 	excerpt = append(excerpt, lines[len(lines)-tail:]...)
 	return strings.Join(excerpt, "\n")
+}
+
+// clampExcerpt keeps both ends of an excerpt within limit runes. When it cuts,
+// it says so inline, so the model knows material was omitted between the two
+// halves rather than assuming they are adjacent.
+func clampExcerpt(excerpt string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(excerpt)
+	if len(runes) <= limit {
+		return excerpt
+	}
+	separator := []rune("\n…（中间省略）…\n")
+	room := limit - len(separator)
+	if room < 2 {
+		return string(runes[:limit])
+	}
+	headLen := room / 2
+	tailLen := room - headLen
+	var builder strings.Builder
+	builder.WriteString(string(runes[:headLen]))
+	builder.WriteString(string(separator))
+	builder.WriteString(string(runes[len(runes)-tailLen:]))
+	return builder.String()
 }
 
 // formatThousands groups digits for readability. Hand-rolled rather than
@@ -183,7 +216,7 @@ func renderFoldPointer(p pointerInput) string {
 		head, tail = pointerErrorHeadLines, pointerErrorTailLines
 		note = "首尾各 20 行"
 	}
-	excerpt := excerptLines(p.text, head, tail)
+	excerpt := clampExcerpt(excerptLines(p.text, head, tail), pointerExcerptLimit)
 
 	var builder strings.Builder
 	builder.WriteString("[MindFS live-compact] 历史工具输出已折叠（这不是当前指令）\n")

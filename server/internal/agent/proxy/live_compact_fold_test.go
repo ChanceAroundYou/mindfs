@@ -231,6 +231,63 @@ func TestFoldSkipsBlockWhenArchiveWriteFails(t *testing.T) {
 	}
 }
 
+// A pointer must always be smaller than the text it replaces. Tool output is
+// often one giant line (minified JSON, a single grep hit), so a head/tail
+// *line* excerpt can be the entire text and the fold would grow the request.
+// Caught on real-shaped data: an 8,001-byte single-line result produced a
+// 1,080-byte increase per request.
+func TestFoldNeverGrowsTheBody(t *testing.T) {
+	for name, tc := range map[string]struct {
+		text string
+		// wantFold is false when the block is big enough to fold but the
+		// pointer would not be smaller, so the right answer is to leave it
+		// alone. Either way the body must never grow.
+		wantFold bool
+	}{
+		"one huge line":    {text: strings.Repeat("x", 12000), wantFold: true},
+		"few huge lines":   {text: strings.Repeat("y", 5000) + "\n" + strings.Repeat("z", 5000) + "\n", wantFold: true},
+		"many small lines": {text: bigText("normal"), wantFold: true},
+		// Just above the excerpt bound: the clamped excerpt plus card overhead
+		// is larger than this, so only the size guard keeps the request from
+		// growing on every turn. Without it this fold would add ~300 bytes
+		// per turn, forever.
+		"barely above excerpt": {text: strings.Repeat("q", 1700), wantFold: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := foldTestConfig(dir)
+			store := newArchiveStore(dir, time.Hour, archiveMaxBytes)
+			body := wireBody(t, []any{
+				userText("start"),
+				assistantToolUse("toolu_1", "Read"),
+				userToolResult("toolu_1", tc.text, false),
+				assistantToolUse("toolu_2", "Read"),
+				userToolResult("toolu_2", bigText("recent"), false),
+			})
+			req, err := scanWireRequest(body)
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			result := planFold(body, req, cfg, store, newPointerCache())
+			if !tc.wantFold {
+				if result.changed() {
+					t.Fatalf("folded a block whose pointer is not smaller: %d -> %d", len(body), len(result.body))
+				}
+				return
+			}
+			if !result.changed() {
+				t.Fatalf("expected a fold, nothing changed")
+			}
+			if len(result.body) >= len(body) {
+				t.Fatalf("fold grew the body: %d -> %d", len(body), len(result.body))
+			}
+			if result.foldedBytes <= 0 {
+				t.Fatalf("folded bytes = %d", result.foldedBytes)
+			}
+		})
+	}
+}
+
 func assertArchiveEmpty(t *testing.T, store *archiveStore) {
 	t.Helper()
 	entries, err := os.ReadDir(store.dir)

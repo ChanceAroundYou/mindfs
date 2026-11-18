@@ -171,7 +171,7 @@ func planFold(body []byte, req *scanRequest, cfg LiveCompactConfig, store *archi
 					// The sweep can have removed the archive since the entry was
 					// written. A pointer to a missing file is worse than a
 					// full-size result, so verify before reusing it.
-					if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) {
+					if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < part.end-part.start {
 						replacements = append(replacements, foldReplacement{
 							start: part.start, end: part.end, literal: entry.literal,
 						})
@@ -204,6 +204,14 @@ func planFold(body []byte, req *scanRequest, cfg LiveCompactConfig, store *archi
 					archivePath:  archivePath,
 					errorText:    looksLikeErrorText(text),
 				}))
+				// A fold that is not smaller is not a fold. This is the
+				// backstop for the excerpt bound above: whatever the reason,
+				// a pointer that costs more bytes than the result it replaces
+				// would make every subsequent turn bigger, permanently.
+				if len(literal) >= part.end-part.start {
+					result.skipped++
+					continue
+				}
 				cache.put(key, cachedPointer{
 					literal: literal,
 					path:    archivePath,
@@ -270,7 +278,9 @@ func (s *Server) foldRequest(token string, body []byte) ([]byte, foldResult) {
 			return body, foldResult{}
 		}
 		s.archive.sweep(time.Now())
-		logLiveCompactFold(token, result, time.Since(start))
+		elapsed := time.Since(start)
+		logLiveCompactFold(token, result, elapsed)
+		s.recordFoldLedger(token, cfg.Mode, len(body), len(result.body), result, elapsed)
 		return result.body, result
 	}
 	return body, result

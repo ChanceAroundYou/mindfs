@@ -91,6 +91,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	// body 里带 agent_session_id，服务端反查 mindfs 会话。
 	r.Post("/api/sessions/repoint", h.handleSessionRepoint)
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.handleSessionToolCallGet)
+	r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)
 	r.Post("/api/sessions/{key}/sync", h.handleSessionSync)
 	r.Get("/api/sessions/{key}", h.handleSessionGet)
 	r.Post("/api/sessions/{key}/messages", h.handleSessionUserMessage)

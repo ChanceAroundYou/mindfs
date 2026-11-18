@@ -2,6 +2,7 @@ import React from "react";
 import { WorktreeBranchSelector } from "../task/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import { CodexRateLimitIndicator } from "../agent/CodexRateLimitIndicator";
+import { ContextSavingIndicator } from "../agent/ContextSavingIndicator";
 import { AgentMemoryIndicator } from "../agent/AgentMemoryIndicator";
 import { useI18n } from "../../i18n";
 import { appAccentHexToRgba } from "../../shared/actionBarUtils";
@@ -64,6 +65,9 @@ export function ComposerTopChips({
   const rootNodeId = useRootNodeId(currentRootId || "");
   const rgba = (alpha: number) => appAccentHexToRgba(accentHex, alpha);
   const hasBoundSession = !!currentSession;
+  const boundSession = currentSession as { key?: string; session_key?: string; root_id?: string; pending?: boolean } | null;
+  const currentSessionKey = String(boundSession?.key || boundSession?.session_key || "");
+  const currentSessionPending = !!boundSession?.pending;
   // 徽标带是流内的一行：选择器弹层打开时隐藏内容但保留行高，避免布局跳动。
   const contentHidden = agentSelectorOpen || modeSelectorOpen;
 
@@ -111,6 +115,14 @@ export function ComposerTopChips({
           ) : null}
           {mode !== "command" ? (
             <CodexRateLimitIndicator agent={agent} refreshToken={codexRateLimitsRefreshToken} nodeId={rootNodeId} />
+          ) : null}
+          {hasBoundSession && mode !== "command" ? (
+            <ContextSavingIndicator
+              sessionKey={currentSessionKey}
+              rootId={currentRootId || undefined}
+              nodeId={rootNodeId}
+              pending={!!currentSessionPending}
+            />
           ) : null}
         </div>
       </div>

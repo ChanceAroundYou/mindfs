@@ -246,3 +246,31 @@ func TestProxyFoldForwardsMalformedBody(t *testing.T) {
 		t.Fatal("a malformed body was rewritten")
 	}
 }
+
+// httptestUpstream starts a minimal SSE upstream and returns its URL. Shared by
+// the handler-level tests in this package.
+func httptestUpstream(t *testing.T) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data\n")
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+// postToProxy sends body through the proxy for token and discards the response.
+func postToProxy(t *testing.T, s *Server, token string, body []byte) {
+	t.Helper()
+	resp, err := http.Post(
+		fmt.Sprintf("http://127.0.0.1:%d/p/%s/v1/messages", s.Port(), token),
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
