@@ -94,6 +94,8 @@ func main() {
 	liveCompactMinBlockTokensFlag := flag.Int("live-compact-min-block-tokens", 0, "minimum estimated tokens for a tool result to be folded (default 2000)")
 	liveCompactMinBodyBytes := 0
 	liveCompactMaxDriftMessages := 0
+	// 只由 config.json 填充；没有对应 flag（见 startupFlags.WebPushRelayURL）。
+	webPushRelayURL := ""
 	remove := flag.Bool("remove", false, "remove the managed directory")
 	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
@@ -128,6 +130,7 @@ func main() {
 		LiveCompactMinBlockTokens:   liveCompactMinBlockTokensFlag,
 		LiveCompactMinBodyBytes:     &liveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages: &liveCompactMaxDriftMessages,
+		WebPushRelayURL:             &webPushRelayURL,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -336,6 +339,7 @@ func main() {
 			Args:                        os.Args[1:],
 			AgentConfigPath:             *agentConfigFlag,
 			WebPushEnabled:              *webPushFlag,
+			WebPushRelayURL:             webPushRelayURL,
 			NotifyScript:                *notifyScriptFlag,
 			UseTLS:                      *tlsFlag,
 			CertFile:                    resolvedCert,

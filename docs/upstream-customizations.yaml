@@ -9008,28 +9008,49 @@ groups:
 
   # ── 安卓后台提醒：服务端长轮询 + 常驻通知可点 + FGS 改 specialUse ────────
   - id: G-MF
-    title: 安卓后台提醒改为服务端长轮询 + 常驻通知可点 + FGS 类型改 specialUse
+    title: 安卓后台提醒改为服务端长轮询 + 常驻通知可点 + FGS 类型改 specialUse（含 worker 推送中继与后台存活修复）
     kind: feature
     symptom: "安卓壳后台提醒靠每 10s 逐节点串行 GET /api/replying-sessions，「任务结束 → 手机响」常在 10–30 秒后；通知栏常驻「有会话正在回复」没有 setContentIntent，点了没反应。另有既有隐患：targetSdk 36 下 dataSync 类型前台服务受 Android 15+「24 小时内 6 小时」运行额度限制，到点系统回调 onTimeout() 必须停服，推送跑一夜早上就静默失效。"
-    why: "用户 2026-11-18 要求常驻通知可点 + 后台近实时提醒（<1s）。上游没有这条链路，必须保留：① 服务端 `GET /api/replying-sessions/wait` 长轮询 —— 不带 If-None-Match 立即回快照播种（否则两次刷新之间开始又结束的回合会漏掉完成提醒），带 If-None-Match 才等待，形状（会话集合/status/awaiting_answer）变化立即回包，≥5s 才做一次摘要刷新，超时按载荷算 ETag/304，200ms 粒度只遍历内存 map，在途上限 32 回 503 + Retry-After；② 路由属数据面、不进控制面前缀表，worker 可用；③ `ListReplyingSessions()` 按 sessionKey 升序 —— 顺序随机会让多会话时 ETag 永不命中、等待循环签名抖动；④ 关停给 `http.Server` 设可取消 BaseContext，退出时先 cancel 再 Shutdown，否则长等待会把每次重启拖满超时；⑤ 前端每节点同时下发 `url` 与 `waitUrl`（旧锚点 `absoluteNodeURL(\"/api/replying-sessions\", id)` 必须保留），顶层兜底 `waitUrl` 由 `MainActivity.ReplyPollerBridge.configure` 与 `ReplyPollerPlugin.configure` 以 `EXTRA_WAIT_URL` 下传，单节点兜底 `NodeTarget` 只用收到的值（`resolveWaitUrl` 里的 `+\"/wait\"` 仅是老配置/从未 configure 时的最后兜底）——原生自己拼 URL 必然漏部署前缀；⑥ 安卓前台服务每节点一条等待循环、按节点保存快照，合并/DONE 判定/90s 新鲜度抽成 `ReplyStateMerger`（不可信节点的会话不进 live 集合，避免点进几小时前的会话），旧服务端 404/405 或连续 3 次等待失败退回 10s 轮询并在 10 分钟后重试；⑦ 常驻通知补 PendingIntent：恰好 1 个 live 会话带 nodeId/rootId/sessionKey 走 `mindfs:open-reply-session` 直达，0 或多个只启动 App；⑧ 前台服务类型 dataSync → specialUse（FOREGROUND_SERVICE_SPECIAL_USE + PROPERTY_SPECIAL_USE_FGS_SUBTYPE），side-load 不受 Play 类型审查约束。"
-    boundary: "只改安卓后台提醒链路（服务端长轮询端点 + 关停取消 + 前端下发 waitUrl + 安卓轮询/常驻通知/FGS 类型）；不引入 FCM/APNs/第三方通道，不改前台 WS + 5s 可见轮询，不做通知富交互，不改 E2EE 与现有请求头，不改变「API 层不鉴权」的用户决策（只加在途上限），也不清理 showReplyNotifications 等既有死代码。另：Gradle/JUnit 测试 `web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java` 不列在 tests —— check-upstream 只认 `*_test.go` 或 web 测试运行器 glob，JUnit 用例跑不到会误报；改为在 anchors 里钉住 `class ReplyStateMergerTest`，由 `make test-android` 单独执行。"
+    why: "用户 2026-11-18 要求常驻通知可点 + 后台近实时提醒（<1s）。上游没有这条链路，必须保留：① 服务端 `GET /api/replying-sessions/wait` 长轮询 —— 不带 If-None-Match 立即回快照播种（否则两次刷新之间开始又结束的回合会漏掉完成提醒），带 If-None-Match 才等待，形状（会话集合/status/awaiting_answer）变化立即回包，≥5s 才做一次摘要刷新，超时按载荷算 ETag/304，200ms 粒度只遍历内存 map，在途上限 32 回 503 + Retry-After；② 路由属数据面、不进控制面前缀表，worker 可用；③ `ListReplyingSessions()` 按 sessionKey 升序 —— 顺序随机会让多会话时 ETag 永不命中、等待循环签名抖动；④ 关停给 `http.Server` 设可取消 BaseContext，退出时先 cancel 再 Shutdown，否则长等待会把每次重启拖满超时；⑤ 前端每节点同时下发 `url` 与 `waitUrl`（旧锚点 `absoluteNodeURL(\"/api/replying-sessions\", id)` 必须保留），顶层兜底 `waitUrl` 由 `MainActivity.ReplyPollerBridge.configure` 与 `ReplyPollerPlugin.configure` 以 `EXTRA_WAIT_URL` 下传，单节点兜底 `NodeTarget` 只用收到的值（`resolveWaitUrl` 里的 `+\"/wait\"` 仅是老配置/从未 configure 时的最后兜底）——原生自己拼 URL 必然漏部署前缀；⑥ 安卓前台服务每节点一条等待循环、按节点保存快照，合并/DONE 判定/90s 新鲜度抽成 `ReplyStateMerger`（不可信节点的会话不进 live 集合，避免点进几小时前的会话），旧服务端 404/405 或连续 3 次等待失败退回 10s 轮询并在 10 分钟后重试；⑦ 常驻通知补 PendingIntent：恰好 1 个 live 会话带 nodeId/rootId/sessionKey 走 `mindfs:open-reply-session` 直达，0 或多个只启动 App；⑧ 前台服务类型 dataSync → specialUse（FOREGROUND_SERVICE_SPECIAL_USE + PROPERTY_SPECIAL_USE_FGS_SUBTYPE），side-load 不受 Play 类型审查约束。**2026-11-19 追加（用户报「后台时间一长完全没有新提示」「网页后台不提示」）**：⑨ worker 通知中继 —— 订阅只在控制节点（/api/web-push/* 是控制面、每节点 VAPID 密钥不同、浏览器对每个源只有一条订阅），worker 因此永远发不出推送；webpush.Service.SetRelayURL + POST /api/web-push/relay 让 worker 把载荷交给控制节点代发（config.json 的 web_push_relay_url；接收端只校验通知类型白名单与「URL 必须是相对路径」—— 通知点击会 openWindow，放行绝对 URL 等于开一条钓鱼通道）；⑩ 网页后台提醒 —— 页面隐藏后定时器节流到约 1 次/分钟、数分钟后整页冻结，因此 5s 轮询不再在隐藏时短路（useReplyingSessionPoll），useNotificationSound 在 AudioContext 被挂起时先 resume 再排音并在 visibilitychange 恢复，真正的后台通道是 Web Push：useBackgroundPush 在权限已 granted 时静默订阅、权限还是 default 时等用户第一次交互再弹框、拒绝后不再弹，每次回前台补一次对账；⑪ 安卓存活 —— onStartCommand 对系统粘性重启的 null intent 调 resumePolling() 并返回 START_STICKY（旧实现直接 START_NOT_STICKY：服务起来、前台通知在、循环一条没开），stopWithTask=false（划卡片不该静音提醒），ReplyPollerBootReceiver 接 BOOT_COMPLETED / MY_PACKAGE_REPLACED（START_STICKY 不跨重启、不跨重装），AlarmManager.setAndAllowWhileIdle 15 分钟兜底唤醒（不用 setExact：Android 14+ 需要 SCHEDULE_EXACT_ALARM），长轮询失败从固定 10 分钟改指数退避 15s→30s→60s（ReplyRetryPolicy，仅端点 404/405 用长等待），resumePolling 幂等且用 resumeSignal 让退避中的循环提前醒来；REQUEST_IGNORE_BATTERY_OPTIMIZATIONS + 插件 batteryStatus/requestBatteryExemption + 关于弹窗「允许后台运行」按钮与诊断串里的电池优化状态。"
+    boundary: "只改安卓后台提醒链路（服务端长轮询端点 + 关停取消 + 前端下发 waitUrl + 安卓轮询/常驻通知/FGS 类型）；不引入 FCM/APNs/第三方通道，不改前台 WS + 5s 可见轮询，不做通知富交互，不改 E2EE 与现有请求头，不改变「API 层不鉴权」的用户决策（只加在途上限），也不清理 showReplyNotifications 等既有死代码。中继沿用「API 层不鉴权」的同一条决策：/api/web-push/relay 不鉴权，只做类型白名单 + 相对 URL 两项校验；不引入 FCM；不做跨节点订阅分片（订阅只在控制节点）；不改 replyPoller 的 configure 载荷契约。另：Gradle/JUnit 测试 `web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java` 不列在 tests —— check-upstream 只认 `*_test.go` 或 web 测试运行器 glob，JUnit 用例跑不到会误报；改为在 anchors 里钉住 `class ReplyStateMergerTest`，由 `make test-android` 单独执行。"
     files:
       - server/internal/api/http_sessions_list.go
       - server/internal/api/http_sessions_replying_wait.go
       - server/internal/api/http_routes.go
+      - server/internal/api/http_webpush.go
       - server/internal/api/stream_hub.go
       - server/app/server.go
+      - server/internal/webpush/relay.go
+      - server/internal/webpush/service.go
+      - server/internal/webpush/send.go
+      - server/internal/webpush/notify_payload.go
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - web/src/App.tsx
+      - web/src/app/useBackgroundPush.ts
+      - web/src/app/useReplyingSessionPoll.ts
+      - web/src/app/useNotificationSound.ts
+      - web/src/services/webPush.ts
       - web/src/services/net/replyPoller.ts
+      - web/src/hooks/useTestNativeReplyAlert.ts
+      - web/src/components/file/FileTreeAboutDialog.tsx
       - web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java
+      - web/android/app/src/main/java/com/mindfs/app/ReplyPollerBootReceiver.java
+      - web/android/app/src/main/java/com/mindfs/app/ReplyPollerPlugin.java
+      - web/android/app/src/main/java/com/mindfs/app/ReplyRetryPolicy.java
       - web/android/app/src/main/java/com/mindfs/app/ReplyStateMerger.java
       - web/android/app/src/main/AndroidManifest.xml
       - Makefile
     tests:
       - server/internal/api/stream_hub_order_test.go
       - server/internal/api/http_sessions_replying_wait_test.go
+      - server/internal/api/http_webpush_relay_test.go
+      - server/internal/webpush/relay_test.go
       - server/app/server_wait_shutdown_test.go
       - web/tests/reply-poller-wait-url.test.mjs
       - web/tests/reply-poller-notification-click.test.mjs
+      - web/tests/background-reply-push.test.mjs
+      - web/tests/android-background-poller-liveness.test.mjs
     anchors:
       - 'server/internal/api/http_sessions_replying_wait.go:func (h *HTTPHandler) handleReplyingSessionsWait'
       - 'server/internal/api/http_routes.go:/api/replying-sessions/wait'
@@ -9045,6 +9066,21 @@ groups:
       - 'web/android/app/src/main/java/com/mindfs/app/MainActivity.java:ReplyPollerService.EXTRA_WAIT_URL'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerPlugin.java:ReplyPollerService.EXTRA_WAIT_URL'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:private static String resolveWaitUrl'
+      - 'server/internal/api/http_routes.go:/api/web-push/relay'
+      - 'server/internal/webpush/relay.go:func (s *Service) Relay('
+      - 'server/internal/webpush/relay.go:func ValidateRelayedPayload('
+      - 'cli/cmd/startup.go:web_push_relay_url'
+      - 'server/app/server.go:sharedWebPush.SetRelayURL(opts.WebPushRelayURL)'
+      - 'web/src/app/useBackgroundPush.ts:export function useBackgroundPush'
+      - 'web/src/services/webPush.ts:export async function ensureWebPushSubscribed'
+      - 'web/src/app/useNotificationSound.ts:const resumeOnVisible = () =>'
+      - 'web/android/app/src/main/AndroidManifest.xml:android:stopWithTask="false"'
+      - 'web/android/app/src/main/AndroidManifest.xml:android.intent.action.BOOT_COMPLETED'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:if (intent == null) {'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:private void scheduleWatchdog()'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerBootReceiver.java:class ReplyPollerBootReceiver'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyRetryPolicy.java:final class ReplyRetryPolicy'
+      - 'web/android/app/src/test/java/com/mindfs/app/ReplyRetryPolicyTest.java:class ReplyRetryPolicyTest'
 
   # ── R1 T5：Router 生命周期事件账本（持久化 + CAS 领取 + 重启恢复）─────────
   - id: G-MG

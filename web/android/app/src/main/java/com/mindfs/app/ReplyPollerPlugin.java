@@ -3,7 +3,10 @@ package com.mindfs.app;
 import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
@@ -90,6 +93,50 @@ public class ReplyPollerPlugin extends Plugin {
         intent.setAction(ReplyPollerService.ACTION_PAUSE);
         getContext().startService(intent);
         call.resolve();
+    }
+
+    /**
+     * 电池优化白名单状态。Doze 会掐掉后台网络与闹钟：国产 ROM 的「后台清理」更激进，
+     * 用户看到的就是「后台时间一长完全不再提醒」。app 只能引导，不能代替用户点。
+     */
+    @PluginMethod
+    public void batteryStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("ignoring", isIgnoringBatteryOptimizations());
+        call.resolve(result);
+    }
+
+    /** 跳系统确认框申请「不受电池优化限制」。用户拒绝时只是回到原页面，不报错。 */
+    @PluginMethod
+    public void requestBatteryExemption(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("ignoring", isIgnoringBatteryOptimizations());
+        if (!isIgnoringBatteryOptimizations()) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                intent.setData(Uri.parse("package:" + getContext().getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(intent);
+            } catch (RuntimeException ex) {
+                // 部分 ROM 没有这个 activity：退回电池优化总列表，至少让用户能自己关。
+                try {
+                    Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(fallback);
+                } catch (RuntimeException ignored) {
+                    result.put("error", "battery_settings_unavailable");
+                }
+            }
+        }
+        call.resolve(result);
+    }
+
+    private boolean isIgnoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        return pm != null && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
     }
 
     @PluginMethod

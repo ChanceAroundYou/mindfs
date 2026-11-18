@@ -1,10 +1,11 @@
 package com.mindfs.app;
 
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.Manifest;
 import android.app.PendingIntent;
+import android.Manifest;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -68,6 +69,9 @@ public class ReplyPollerService extends Service {
     static final String ACTION_PAUSE = "com.mindfs.app.reply_poller.PAUSE";
     static final String ACTION_CLEAR_COMPLETED = "com.mindfs.app.reply_poller.CLEAR_COMPLETED";
     static final String ACTION_STOP = "com.mindfs.app.reply_poller.STOP";
+    // 定时唤醒：进程被系统清掉/循环死掉时的兜底。它只是把同一个服务再起一次，
+    // ACTION_RESUME 是幂等的，所以正常运行时这条唤醒等于空操作。
+    static final String ACTION_WATCHDOG = "com.mindfs.app.reply_poller.WATCHDOG";
     static final String EXTRA_API_BASE_URL = "apiBaseUrl";
     // 单节点兜底用的长轮询整条地址，由前端算好（前缀 + user= 账户参数），原生不许自己拼。
     static final String EXTRA_WAIT_URL = "waitUrl";
@@ -111,8 +115,7 @@ public class ReplyPollerService extends Service {
     private static final int WAIT_TIMEOUT_SECONDS = 20;
     private static final int WAIT_READ_TIMEOUT_MS = 30_000;
     // 降级成普通轮询后的间隔；10 分钟后再试一次长轮询（旧服务端可能已经升级）。
-    private static final long POLL_FALLBACK_INTERVAL_MS = 10_000;
-    private static final long WAIT_RETRY_INTERVAL_MS = 600_000;
+    private static final long POLL_FALLBACK_INTERVAL_MS = ReplyRetryPolicy.POLL_INTERVAL_MILLIS;
     // 未降级的偶发错误退避；连续 3 次才降级。
     private static final long ERROR_BACKOFF_MS = 5_000;
     // 服务端在途等待数到顶时回 503 + Retry-After: 3（spec §1）。读不到/非法时按 3s，
@@ -135,6 +138,8 @@ public class ReplyPollerService extends Service {
     // 每个节点一条等待循环；线程池随 resume/stop 启停，nodeGeneration 让旧循环退出。
     private ScheduledExecutorService nodeExecutor;
     private volatile int nodeGeneration = 0;
+    // 每次「回到前台」自增；退避中的循环看到它变了就提前醒来重试。
+    private volatile int resumeSignal = 0;
     private String activeNodesSignature = "";
     // 合并 + DONE 判定 + 新鲜度全在 ReplyStateMerger 里；所有应用都串行化在 applyLock 下。
     private final Object applyLock = new Object();
@@ -193,6 +198,19 @@ public class ReplyPollerService extends Service {
         if (ACTION_STOP.equals(action)) {
             stopAll();
             return START_NOT_STICKY;
+        }
+        if (ACTION_WATCHDOG.equals(action)) {
+            // Doze/待机里进程可能被清掉、前台服务也可能被系统停掉；这条唤醒只负责
+            // 「把轮询再拉起来」。resumePolling 幂等，正常运行时时它什么也不改。
+            resumePolling();
+            return START_STICKY;
+        }
+        // 系统粘性重启（进程被杀后重建）给的 intent 是 null，旧实现直接 START_NOT_STICKY
+        // 返回 —— 服务起来了、前台通知在、循环一条没开，用户看到的就是「后台再也不提醒」。
+        if (intent == null) {
+            Log.i(TAG, "service restarted by system without intent, resuming polling");
+            resumePolling();
+            return START_STICKY;
         }
         return START_NOT_STICKY;
     }
@@ -263,6 +281,18 @@ public class ReplyPollerService extends Service {
         }
     }
 
+    /**
+     * 用户是否已经配置过（= 至少在 app 里打开过一次）。开机广播与系统重启都靠它
+     * 决定要不要拉起服务：没配过就拉起来只会得到一条指向空地址的前台通知。
+     */
+    static boolean isConfigured(Context context) {
+        if (context == null) {
+            return false;
+        }
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        return !safe(prefs.getString(PREF_API_BASE_URL, "")).isEmpty();
+    }
+
     private void loadConfig() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         apiBaseUrl = safe(prefs.getString(PREF_API_BASE_URL, ""));
@@ -304,7 +334,63 @@ public class ReplyPollerService extends Service {
             .apply();
         running = true;
         startForegroundCompat(FOREGROUND_ID, buildIdleNotification());
-        startNodeLoops();
+        // 幂等：MainActivity 每次 onResume 都会调一次，重复调用不能把正在进行的
+        // 长轮询打断（每条等待请求后面跟着一个 nginx 499）。
+        if (nodeExecutor == null || nodeExecutor.isShutdown()) {
+            startNodeLoops();
+        } else {
+            // 循环还在跑：不清掉正在进行的等待（那会多出一次 499），但要让处在
+            // 退避里的循环立刻重试 —— 用户回到前台就是「网络大概好了」的最强信号。
+            resumeSignal++;
+        }
+        scheduleWatchdog();
+    }
+
+    /** 15 分钟一次的兜底唤醒（Doze 下 setAndAllowWhileIdle 的真实下限）。 */
+    private static final long WATCHDOG_INTERVAL_MS = 15 * 60_000L;
+    private static final int WATCHDOG_REQUEST_CODE = 750100;
+
+    private void scheduleWatchdog() {
+        if (apiBaseUrl.isEmpty()) {
+            return;
+        }
+        AlarmManager alarms = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (alarms == null) {
+            return;
+        }
+        try {
+            PendingIntent pending = PendingIntent.getService(
+                this,
+                WATCHDOG_REQUEST_CODE,
+                new Intent(this, ReplyPollerService.class).setAction(ACTION_WATCHDOG),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+            long at = System.currentTimeMillis() + WATCHDOG_INTERVAL_MS;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // setAndAllowWhileIdle 而不是 setExactAndAllowWhileIdle：后者在 Android 14+
+                // 需要 SCHEDULE_EXACT_ALARM 特殊权限，没授权会直接抛 SecurityException；
+                // 提醒差几分钟可以接受，因此不做精确闹钟。
+                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending);
+            } else {
+                alarms.set(AlarmManager.RTC_WAKEUP, at, pending);
+            }
+        } catch (RuntimeException ex) {
+            Log.w(TAG, "watchdog schedule failed", ex);
+        }
+    }
+
+    private void cancelWatchdog() {
+        AlarmManager alarms = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (alarms == null) {
+            return;
+        }
+        PendingIntent pending = PendingIntent.getService(
+            this,
+            WATCHDOG_REQUEST_CODE,
+            new Intent(this, ReplyPollerService.class).setAction(ACTION_WATCHDOG),
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        alarms.cancel(pending);
     }
 
     private void pausePolling() {
@@ -349,6 +435,7 @@ public class ReplyPollerService extends Service {
         nodeModes.clear();
         nodeResults.clear();
         nodeLastSuccessAt.clear();
+        cancelWatchdog();
         stopForegroundCompat();
         stopSelf();
     }
@@ -430,18 +517,27 @@ public class ReplyPollerService extends Service {
         int failures = 0;
         // retryWaitAt：> now 表示这一轮走普通轮询，到点再试长轮询。MAGIC 上限 = 该节点没有长轮询端点。
         long retryWaitAt = target.waitUrl.isEmpty() ? Long.MAX_VALUE : 0L;
+        int signalSeen = resumeSignal;
         if (target.waitUrl.isEmpty()) {
             setNodeMode(target, "poll", "长轮询不可用");
         }
         while (running && nodeGeneration == generation) {
+            // 「回到前台」只把退避窗口清掉，正在等的那条长轮询不动 —— 打断它只会多一次 499。
+            if (resumeSignal != signalSeen) {
+                signalSeen = resumeSignal;
+                if (retryWaitAt != Long.MAX_VALUE && System.currentTimeMillis() < retryWaitAt) {
+                    retryWaitAt = 0L;
+                }
+            }
             if (System.currentTimeMillis() >= retryWaitAt) {
                 try {
                     // 第一次不带 If-None-Match：服务端立刻回全量快照，用来播种。
                     WaitResult result = fetchWait(target, etag);
                     if (result.status == 404 || result.status == 405) {
-                        // 旧服务端：立刻退回轮询，不要先睡 10 分钟。
+                        // 旧服务端：这是「能力」问题而不是网络抖动，等待时间可以长；
+                        // 但 10s 的普通轮询仍然照跑，所以提醒不会断。
                         failures = 0;
-                        retryWaitAt = System.currentTimeMillis() + WAIT_RETRY_INTERVAL_MS;
+                        retryWaitAt = System.currentTimeMillis() + ReplyRetryPolicy.ENDPOINT_MISSING_MILLIS;
                         setNodeMode(target, "poll", "等待端点不可用（HTTP " + result.status + "）");
                         continue;
                     }
@@ -478,14 +574,12 @@ public class ReplyPollerService extends Service {
                     // 连续失败到阈值才算「判掉线」，单次失败交给 90s 新鲜度窗口。
                     failNode(target, ex, failures >= WAIT_FAILURES_BEFORE_FALLBACK);
                     setNodeMode(target, "push", "等待失败：" + summarize(ex));
-                    if (failures >= WAIT_FAILURES_BEFORE_FALLBACK) {
-                        failures = 0;
-                        retryWaitAt = System.currentTimeMillis() + WAIT_RETRY_INTERVAL_MS;
-                        setNodeMode(target, "poll", "连续 " + WAIT_FAILURES_BEFORE_FALLBACK
-                            + " 次等待失败，10 分钟后重试长轮询");
-                        continue;
-                    }
-                    if (!sleepWhileRunning(ERROR_BACKOFF_MS, generation)) {
+                    // 长轮询失败一律走指数退避（15s→30s→60s 封顶），不再一停十分钟。
+                    // 降到普通轮询也行，但 10s 一次的代价换不来多久的时间 —— 退避
+                    // 用不着把「重试间隔」和「降级模式」绑在一起。
+                    long delay = ReplyRetryPolicy.retryDelayMillis(failures);
+                    setNodeMode(target, "push", "等待失败 " + failures + " 次，" + (delay / 1000L) + "s 后重试");
+                    if (!sleepWhileRunning(delay, generation, resumeSignal)) {
                         return;
                     }
                 }
@@ -523,6 +617,30 @@ public class ReplyPollerService extends Service {
     private boolean sleepWhileRunning(long millis, int generation) {
         long deadline = System.currentTimeMillis() + millis;
         while (isCurrentLoop(generation)) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                return true;
+            }
+            try {
+                Thread.sleep(Math.min(remaining, 1000L));
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 与 {@link #sleepWhileRunning(long, int)} 相同，但期间只要 {@code resumeSignal}
+     * 变了就提前醒来返回 true —— 「回到前台」不该再等满退避窗口。
+     */
+    private boolean sleepWhileRunning(long millis, int generation, int signalAtEntry) {
+        long deadline = System.currentTimeMillis() + millis;
+        while (isCurrentLoop(generation)) {
+            if (resumeSignal != signalAtEntry) {
+                return true;
+            }
             long remaining = deadline - System.currentTimeMillis();
             if (remaining <= 0) {
                 return true;
@@ -1115,6 +1233,14 @@ public class ReplyPollerService extends Service {
         sb.append(" · 轮询始于=").append(startedAt.isEmpty() ? "未启动" : startedAt);
         sb.append(" · 模式=").append(pollModeSummary(prefs.getString(PREF_DEBUG, "")));
         sb.append(" · 最近提醒=").append(lastAlert.isEmpty() ? "无" : lastAlert);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.os.PowerManager pm =
+                (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            boolean exempt = pm != null && pm.isIgnoringBatteryOptimizations(context.getPackageName());
+            // 这一条决定「后台能不能长期活着」：没进白名单时，Doze / 厂商清理会让
+            // 前台服务之外的进程被反复清掉，现象就是「时间一长完全没有新提示」。
+            sb.append(" · 电池优化=").append(exempt ? "已豁免" : "受限（建议在设置里允许后台运行）");
+        }
         return sb.toString();
     }
 
@@ -1761,7 +1887,7 @@ public class ReplyPollerService extends Service {
         return builder.toString();
     }
 
-    private static String safe(String value) {
+    static String safe(String value) {
         return value == null ? "" : value.trim();
     }
 

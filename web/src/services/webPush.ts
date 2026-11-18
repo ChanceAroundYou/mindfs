@@ -268,6 +268,80 @@ export async function unsubscribeWebPush(): Promise<WebPushStatus> {
   return getWebPushStatus();
 }
 
+/**
+ * 页面在后台时**唯一**还能送达的通道就是 Web Push：标签页被冻结后，5s 轮询
+ * 与 WebAudio 都不再执行。这里负责让「已经授权过的浏览器」自动完成订阅 ——
+ * 以前只有通知面板里手动点开关才会订阅，所以服务端订阅表长期是 0 条，
+ * 后台提醒事实上从未生效。
+ *
+ * 不主动弹权限框（`prompt: false`，默认）：静默订阅只发生在权限已是 granted 时。
+ * 需要弹框的场景由调用方在用户第一次真实交互后传 `prompt: true`。
+ */
+export async function ensureWebPushSubscribed(options: { prompt?: boolean } = {}): Promise<WebPushStatus> {
+  if (capabilityReason()) {
+    return getWebPushStatus();
+  }
+  if (Notification.permission === "denied") {
+    return getWebPushStatus();
+  }
+  if (Notification.permission === "default") {
+    if (!options.prompt) {
+      return getWebPushStatus();
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      markBackgroundPushDeclined();
+      return getWebPushStatus();
+    }
+  }
+  const server = await fetchServerStatus().catch(() => ({} as ServerStatus));
+  if (!server.enabled || !server.vapid_public_key) {
+    return getWebPushStatus();
+  }
+  const registration = await ensureServiceWorkerRegistration();
+  const applicationServerKey = urlBase64ToArrayBuffer(server.vapid_public_key);
+  let existing = await registration.pushManager.getSubscription();
+  if (existing && !arrayBufferEqual(existing.options?.applicationServerKey, applicationServerKey)) {
+    // 换了节点（VAPID 公钥不同）时，旧订阅对当前服务端无效。
+    await existing.unsubscribe().catch(() => false);
+    existing = null;
+  }
+  const subscription =
+    existing ??
+    await withTimeout(
+      registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey }),
+      pushSubscribeTimeoutMs,
+      translateNow("webPush.subscribeTimeout"),
+    );
+  // 每次启动都回传一次：服务端订阅表在换 config-dir / 重装后会丢，而 upsert 幂等。
+  await saveSubscription(subscription, currentPlatform());
+  return getWebPushStatus();
+}
+
+const backgroundPushDeclinedKey = "mindfs.webpush.autoDeclined";
+
+/** 用户在系统权限框里点过「不允许」后不再反复弹；权限本身也改不回来。 */
+export function backgroundPushDeclined(): boolean {
+  try {
+    return window.localStorage.getItem(backgroundPushDeclinedKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markBackgroundPushDeclined(): void {
+  try {
+    window.localStorage.setItem(backgroundPushDeclinedKey, "1");
+  } catch {
+    // localStorage 不可用（隐私模式）时只是会再问一次，不影响功能。
+  }
+}
+
+/** 权限还是 default 时才值得等一次用户交互去弹框。 */
+export function needsNotificationPermission(): boolean {
+  return hasNotificationAPI() && Notification.permission === "default";
+}
+
 export async function sendWebPushTest(): Promise<void> {
   const subscription = await currentSubscription();
   const endpoint = subscription?.endpoint || "";

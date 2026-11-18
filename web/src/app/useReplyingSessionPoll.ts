@@ -181,16 +181,16 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
 
   // 跨节点时远端节点的 session.user_message / session.done 都收不到（没订阅那些会话），
   // 低频轮询兜住「开始/结束」这两个时刻 —— 有 WS 实时兜底的本机节点不必重复问。
-  // ponytail: 固定 5s + visible-only。调小到 2s 更跟手但请求翻倍；
-  // 要零延迟得让远端节点把 pending 变更跨机广播出去，那是另一个议题。
+  //
+  // 后台标签页**照样轮询**：浏览器会把定时器节流到约 1 次/分钟，那仍然能在标签页被
+  // 冻结前抓到完成时刻。真正的后台保障是 Web Push（见 useBackgroundPush）——页面
+  // 被冻结后这里一次都跑不到，只能靠推送。早先这里在隐藏时直接 return，等于把
+  // 「后台 1 次/分钟」也扔掉了，用户看到的就是「切回前台才响」。
   useEffect(() => {
     if (!multiProjectSessionsEnabled) {
       return;
     }
     const timer = window.setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
-        return;
-      }
       void refreshMultiProjectReplyingSessions();
     }, REMOTE_REPLY_POLL_MS);
     return () => window.clearInterval(timer);

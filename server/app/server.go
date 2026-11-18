@@ -32,6 +32,9 @@ type StartOptions struct {
 	Args            []string
 	AgentConfigPath string
 	WebPushEnabled  bool
+	// WebPushRelayURL 非空时，本节点把通知交给控制节点代发（worker 用）。
+	// 控制节点自己不配置：它就是中继的接收方。
+	WebPushRelayURL string
 	NotifyScript    string
 	UseTLS          bool
 	CertFile        string
@@ -136,6 +139,10 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		log.Printf("[nodes] init.error err=%v", err)
 	}
 	sharedWebPush := webpush.NewService(webPushConfig, webpush.NewStoreAt(configDir))
+	if err := sharedWebPush.SetRelayURL(opts.WebPushRelayURL); err != nil {
+		// 配置写错不该让节点起不来：本机推送照常，只是 worker 的通知到不了浏览器。
+		log.Printf("[webpush] relay.config.error err=%v", err)
+	}
 	sharedWorkflows, err := kanban.NewWorkflowStoreDefault()
 	if err != nil {
 		return err

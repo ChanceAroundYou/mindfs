@@ -15,6 +15,8 @@ type ReplyPollerPlugin = {
   dismiss(options: { nodeId: string; rootId: string; sessionKey: string }): Promise<void>;
   testAlert(): Promise<{ error?: string; diag?: string }>;
   debugStatus(): Promise<{ debug?: string }>;
+  batteryStatus(): Promise<{ ignoring?: boolean; error?: string }>;
+  requestBatteryExemption(): Promise<{ ignoring?: boolean; error?: string }>;
 };
 
 type NativeReplyPollerBridge = {
@@ -257,6 +259,42 @@ export async function testNativeReplyAlert(): Promise<string> {
     // 老版本 App 没有 debugStatus，只显示投递结果。
   }
   return [head, diag, poll].filter(Boolean).join("\n");
+}
+
+/** 电池优化白名单状态；老版本 app 没有这个插件方法，返回 null。 */
+export async function readBatteryExemption(): Promise<boolean | null> {
+  try {
+    const result = await ReplyPoller.batteryStatus();
+    if (typeof result?.ignoring !== "boolean") {
+      return null;
+    }
+    return result.ignoring;
+  } catch {
+    return null;
+  }
+}
+
+/** 申请「不受电池优化限制」：跳系统确认框，用户点允许后返回新状态。 */
+export async function requestBatteryExemption(): Promise<boolean | null> {
+  try {
+    const result = await ReplyPoller.requestBatteryExemption();
+    if (typeof result?.ignoring === "boolean") {
+      return result.ignoring;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function describeBatteryExemption(ignoring: boolean | null): string {
+  if (ignoring === null) {
+    return "";
+  }
+  if (ignoring) {
+    return "电池优化：已豁免";
+  }
+  return "电池优化：受限（系统可能在一段时间后清掉后台轮询；建议点右侧按钮允许后台运行）";
 }
 
 function describePollDebug(raw: string): string {

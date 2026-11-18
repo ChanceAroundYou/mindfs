@@ -12,7 +12,7 @@ type SessionNotification = notify.SessionNotification
 type ScheduledNotification = notify.ScheduledNotification
 
 func (s *Service) NotifySession(ctx context.Context, in SessionNotification) {
-	if s == nil || !s.Enabled() {
+	if s == nil || (!s.Enabled() && !s.RelayEnabled()) {
 		return
 	}
 	payload := BuildSessionPayload(in)

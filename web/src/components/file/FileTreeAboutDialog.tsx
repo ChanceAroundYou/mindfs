@@ -34,6 +34,11 @@ export function FileTreeAboutDialog({ open, isNativeApp, onClose }: FileTreeAbou
             测试提醒
           </button>
         ) : null}
+        {isNativeApp && replyAlert.supported && replyAlert.batteryIgnoring === false ? (
+          <button type="button" onClick={() => { void replyAlert.requestExemption(); }} style={{ border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-primary)", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", marginRight: "8px" }}>
+            允许后台运行
+          </button>
+        ) : null}
         {apkUpdate.message || replyAlert.message ? (
           <p style={{ margin: "10px 0 0", fontSize: "11px", lineHeight: 1.5, color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{apkUpdate.message || replyAlert.message}</p>
         ) : null}

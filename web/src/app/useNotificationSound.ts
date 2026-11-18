@@ -62,19 +62,24 @@ const SCORES: Record<NotifyEvent, Note[]> = {
   ],
 };
 
+/** 模块级共享 AudioContext：这个 hook 有 5 处调用点，每处建一个会撞浏览器
+ *  的上下文上限，也让「后台恢复」要逐个去 resume。一个就够。 */
+let sharedAudioContext: AudioContext | null = null;
+
+function ensureSharedAudioContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  const Ctor =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctor) return null;
+  if (!sharedAudioContext) sharedAudioContext = new Ctor();
+  return sharedAudioContext;
+}
+
 export function useNotificationSound() {
-  const audioContextRef = useRef<AudioContext | null>(null);
   const unlockedRef = useRef(false);
 
-  const ensureAudioContext = useCallback((): AudioContext | null => {
-    if (typeof window === "undefined") return null;
-    const Ctor =
-      window.AudioContext ||
-      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctor) return null;
-    if (!audioContextRef.current) audioContextRef.current = new Ctor();
-    return audioContextRef.current;
-  }, []);
+  const ensureAudioContext = useCallback((): AudioContext | null => ensureSharedAudioContext(), []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -84,14 +89,22 @@ export function useNotificationSound() {
       if (ctx.state === "running") { unlockedRef.current = true; return; }
       void ctx.resume().then(() => { unlockedRef.current = ctx.state === "running"; }).catch(() => {});
     };
+    // 后台标签页会被浏览器挂起音频上下文（移动端尤其如此）。回到前台时先 resume，
+    // 否则后台期间排到的那条提示音会静默丢弃 —— 用户听到的是「切回来才响」，
+    // 实际上那条提醒早就到了。
+    const resumeOnVisible = () => {
+      if (document.visibilityState === "visible") unlock();
+    };
     const opts: AddEventListenerOptions = { passive: true };
     window.addEventListener("pointerdown", unlock, opts);
     window.addEventListener("keydown", unlock, opts);
     window.addEventListener("touchstart", unlock, opts);
+    document.addEventListener("visibilitychange", resumeOnVisible);
     return () => {
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
       window.removeEventListener("touchstart", unlock);
+      document.removeEventListener("visibilitychange", resumeOnVisible);
     };
   }, [ensureAudioContext]);
 
@@ -99,28 +112,41 @@ export function useNotificationSound() {
     const settings = loadSettings();
     if (!settings.enabled || !settings.events[event]) return;
     const ctx = ensureAudioContext();
-    if (!ctx || ctx.state !== "running") return;
-    unlockedRef.current = true;
-    const notes = SCORES[event];
-    try {
-      const now = ctx.currentTime;
-      for (const note of notes) {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        const peak = Math.max(0.0001, settings.volume * (note.gain ?? 1));
-        osc.type = note.type;
-        osc.frequency.setValueAtTime(note.freq, now + note.at);
-        gain.gain.setValueAtTime(0.0001, now + note.at);
-        gain.gain.exponentialRampToValueAtTime(peak, now + note.at + 0.008);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + note.at + note.dur);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now + note.at);
-        osc.stop(now + note.at + note.dur + 0.02);
+    if (!ctx) return;
+
+    const schedule = () => {
+      const notes = SCORES[event];
+      unlockedRef.current = true;
+      try {
+        const now = ctx.currentTime;
+        for (const note of notes) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          const peak = Math.max(0.0001, settings.volume * (note.gain ?? 1));
+          osc.type = note.type;
+          osc.frequency.setValueAtTime(note.freq, now + note.at);
+          gain.gain.setValueAtTime(0.0001, now + note.at);
+          gain.gain.exponentialRampToValueAtTime(peak, now + note.at + 0.008);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + note.at + note.dur);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + note.at);
+          osc.stop(now + note.at + note.dur + 0.02);
+        }
+      } catch (e) {
+        if (unlockedRef.current) console.error("Failed to play notification sound:", e);
       }
-    } catch (e) {
-      if (unlockedRef.current) console.error("Failed to play notification sound:", e);
+    };
+
+    if (ctx.state === "running") {
+      schedule();
+      return;
     }
+    // 被挂起时先尝试恢复再排音：桌面浏览器允许在没有新手势的情况下恢复
+    // 一个此前被用户手势解锁过的上下文；恢复不了就放弃（不制造噪音）。
+    void ctx.resume()
+      .then(() => { if (ctx.state === "running") schedule(); })
+      .catch(() => {});
   }, [ensureAudioContext]);
 
   return { play };

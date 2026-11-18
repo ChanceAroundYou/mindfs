@@ -13,15 +13,18 @@ import (
 )
 
 type startupConfig struct {
-	Addr         *string `json:"addr"`
-	WebPush      *bool   `json:"webPush"`
-	WebPushFlag  *bool   `json:"web-push"`
-	Foreground   *bool   `json:"foreground"`
-	TLS          *bool   `json:"tls"`
-	Cert         *string `json:"cert"`
-	Key          *string `json:"key"`
-	AgentConfig  *string `json:"agent-config"`
-	NotifyScript *string `json:"notify-script"`
+	Addr        *string `json:"addr"`
+	WebPush     *bool   `json:"webPush"`
+	WebPushFlag *bool   `json:"web-push"`
+	// WebPushRelayURL 是「把本节点通知交给控制节点代发」的地址，只有 worker 需要。
+	// 只在 config.json 里配：它是每台机器的部署事实，不适合跟着命令行到处走。
+	WebPushRelayURL *string `json:"web_push_relay_url"`
+	Foreground      *bool   `json:"foreground"`
+	TLS             *bool   `json:"tls"`
+	Cert            *string `json:"cert"`
+	Key             *string `json:"key"`
+	AgentConfig     *string `json:"agent-config"`
+	NotifyScript    *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
 	Role     *string                `json:"role"`
@@ -70,7 +73,9 @@ type startupFlags struct {
 	Key          *string
 	AgentConfig  *string
 	NotifyScript *string
-	Role         *string
+	// WebPushRelayURL 没有对应 flag：只在 config.json 里配（见 startupConfig）。
+	WebPushRelayURL *string
+	Role            *string
 
 	RouterMode        *string
 	RouterAgent       *string
@@ -167,6 +172,9 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 	}
 	if flags.NotifyScript != nil && cfg.NotifyScript != nil && !explicit["notify-script"] {
 		*flags.NotifyScript = strings.TrimSpace(*cfg.NotifyScript)
+	}
+	if flags.WebPushRelayURL != nil && cfg.WebPushRelayURL != nil {
+		*flags.WebPushRelayURL = strings.TrimSpace(*cfg.WebPushRelayURL)
 	}
 	if flags.Role != nil && cfg.Role != nil && !explicit["role"] {
 		*flags.Role = strings.TrimSpace(*cfg.Role)

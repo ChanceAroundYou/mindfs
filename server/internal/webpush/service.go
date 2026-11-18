@@ -16,6 +16,8 @@ type Service struct {
 
 	mu     sync.Mutex
 	recent map[string]time.Time
+	// relayURL 非空时，本节点的通知转给控制节点代发（见 relay.go）。
+	relayURL string
 }
 
 func NewService(config Config, store *Store) *Service {
@@ -60,6 +62,7 @@ func (s *Service) Status() map[string]any {
 		"vapid_public_key":   s.PublicKey(),
 		"subscription_count": count,
 		"platform_counts":    platforms,
+		"relay_enabled":      s.RelayEnabled(),
 	}
 }
 
@@ -78,7 +81,7 @@ func (s *Service) DeleteSubscription(endpoint string) error {
 }
 
 func (s *Service) NotifyScheduled(ctx context.Context, in ScheduledNotification) {
-	if s == nil || !s.Enabled() {
+	if s == nil || (!s.Enabled() && !s.RelayEnabled()) {
 		return
 	}
 	payload := BuildScheduledPayload(in)
@@ -86,7 +89,7 @@ func (s *Service) NotifyScheduled(ctx context.Context, in ScheduledNotification)
 }
 
 func (s *Service) NotifyPayload(ctx context.Context, eventID string, payload Payload) {
-	if s == nil || !s.Enabled() {
+	if s == nil || (!s.Enabled() && !s.RelayEnabled()) {
 		return
 	}
 	s.sendAsync(ctx, firstNonEmpty(eventID, notify.EventID(payload), payload.Tag), payload)

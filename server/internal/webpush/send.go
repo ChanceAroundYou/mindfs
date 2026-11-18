@@ -19,6 +19,16 @@ func (s *Service) sendAsync(ctx context.Context, eventID string, payload Payload
 		return
 	}
 	go func() {
+		// 先中继、再本地发。控制节点没有 relayURL，只有 worker 会走到第一条；
+		// 两条都成功也不会给用户多一条通知 —— service worker 按 tag 覆盖。
+		if s.RelayEnabled() {
+			if err := s.Relay(payload, eventID); err != nil {
+				log.Printf("[webpush] relay.error type=%s tag=%s err=%v", payload.Type, payload.Tag, err)
+			}
+		}
+		if !s.Enabled() {
+			return
+		}
 		if err := s.send(ctx, payload); err != nil {
 			log.Printf("[webpush] send.error type=%s tag=%s err=%v", payload.Type, payload.Tag, err)
 		}

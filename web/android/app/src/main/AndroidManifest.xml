@@ -37,10 +37,13 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
+        <!-- stopWithTask=false：从最近任务里划掉 app 不该连带杀掉常驻轮询。
+             用户从不靠划卡片表达「我不要提醒了」，而划一下就把后台提醒静音，
+             表现正是「后台时间一长完全没有新提示」。真停用走 ACTION_STOP。 -->
         <service
             android:name=".ReplyPollerService"
             android:exported="false"
-            android:stopWithTask="true"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse|dataSync">
             <!-- Android 14+ 走 specialUse（dataSync 有 6 小时上限）；API 29–33 没有
                  specialUse 语义，仍由 startForegroundCompat 传 dataSync，所以两种类型都声明。 -->
@@ -48,6 +51,18 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="session reply sync" />
         </service>
+
+        <!-- 开机 / 应用更新后把常驻轮询拉起来：系统的 START_STICKY 不跨重启，
+             而用户装完更新或重启手机之后如果没有手动点开 app，轮询就永远不会开始。 -->
+        <receiver
+            android:name=".ReplyPollerBootReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->
@@ -61,4 +76,7 @@
     <!-- API 29–33 的启动路径仍传 dataSync 类型，权限保留。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 开机自启 + 让用户能申请「不受电池优化限制」（Doze 会限制后台网络与闹钟）。 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

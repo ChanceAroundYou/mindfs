@@ -135,7 +135,10 @@ func (s *AppContext) notifyPayload(ctx context.Context, eventID string, payload 
 	if s == nil {
 		return
 	}
-	if s.WebPush != nil && s.WebPush.Enabled() {
+	// worker 上没有 VAPID 密钥（Enabled=false），但有中继地址：NotifyPayload 自己判断
+	// 「本地能发 / 能中继 / 都不行」，所以这里不按 Enabled 预筛，否则 worker 的通知
+	// 永远到不了控制节点。
+	if s.WebPush != nil && (s.WebPush.Enabled() || s.WebPush.RelayEnabled()) {
 		s.WebPush.NotifyPayload(ctx, eventID, payload)
 	}
 	if s.Notify != nil && s.Notify.Enabled() {

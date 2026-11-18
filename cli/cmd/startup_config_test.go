@@ -265,3 +265,21 @@ func makeTargetBody(makefile, target string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// worker 靠 config.json 里的 web_push_relay_url 把通知交给控制节点；
+// 它没有命令行 flag，所以只能由文件填充。
+func TestWebPushRelayURLComesFromConfigFile(t *testing.T) {
+	writeConfig(t, `{"role":"worker","web_push_relay_url":"  http://192.168.1.6:7331/mindfs/api/web-push/relay  "}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay := ""
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{WebPushRelayURL: &relay}); err != nil {
+		t.Fatal(err)
+	}
+	if relay != "http://192.168.1.6:7331/mindfs/api/web-push/relay" {
+		t.Fatalf("web_push_relay_url 没有落到启动参数上: %q", relay)
+	}
+}
