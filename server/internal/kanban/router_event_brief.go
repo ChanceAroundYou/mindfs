@@ -46,6 +46,31 @@ var routerEventBriefPayloadKeys = []string{
 	"status", "reason", "error", "attempt", "since",
 }
 
+// routerEventBriefProducerKeys 是生产端自己写进事件载荷、但不进 brief 的键：
+// `routerEventPayload` 的节点摘要（nodes / nodes_truncated / workflow_id /
+// revision）、停摆事件的 started_at、启动对账的 open_node_runs / resumed /
+// unknown。它们不是「未知键」——把自家摘要当成越界载荷，会让每条真实事件都报
+// truncated，汇报里凭空多一句「载荷被截断、信息不全」。
+var routerEventBriefProducerKeys = []string{
+	"nodes", "nodes_truncated", "workflow_id", "revision",
+	"started_at", "open_node_runs", "resumed", "unknown",
+}
+
+// routerEventBriefControlledKey 判断该键是否由生产端受控写入（白名单或摘要）。
+func routerEventBriefControlledKey(key string) bool {
+	for _, allowed := range routerEventBriefPayloadKeys {
+		if key == allowed {
+			return true
+		}
+	}
+	for _, producer := range routerEventBriefProducerKeys {
+		if key == producer {
+			return true
+		}
+	}
+	return false
+}
+
 type RouterBriefEvent struct {
 	ID         string         `json:"id"`
 	Kind       string         `json:"kind"`
@@ -376,12 +401,8 @@ func routerEventBriefPayload(payloadJSON string) (map[string]any, bool) {
 		return nil, true
 	}
 	truncated := false
-	allowed := make(map[string]bool, len(routerEventBriefPayloadKeys))
-	for _, key := range routerEventBriefPayloadKeys {
-		allowed[key] = true
-	}
 	for key := range decoded {
-		if !allowed[key] {
+		if !routerEventBriefControlledKey(key) {
 			truncated = true
 		}
 	}

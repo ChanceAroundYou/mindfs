@@ -99,6 +99,8 @@ export const zhCNTasks = {
   "task.runTimeline.expand": "查看运行视图",
   "task.runTimeline.collapse": "收起运行视图",
   "task.runTimeline.loading": "加载运行…",
+  "task.runTimeline.openWorkflowSession": "工作流会话",
+  "task.runTimeline.noWorkflowSession": "暂无工作流会话",
   "task.runTimeline.empty": "该运行尚无节点执行记录",
   // NodeRun 独有的三个状态（任务状态词表里没有，任务状态守卫钉住不许加进 task.status.*）
   "task.runTimeline.status.queued": "排队中",
@@ -246,6 +248,8 @@ export const zhCNTasks = {
   "task.activity.send": "发送",
   "task.activity.sending": "发送中…",
   "task.activity.openSession": "打开会话",
+  "task.activity.reports": "运行汇报 {count} 条",
+  "task.activity.reportsHide": "收起运行汇报",
   "task.activity.disabled": "任务已结束，无法继续留言",
   "task.activity.status.pending": "等待中",
   "task.activity.status.running": "执行中",

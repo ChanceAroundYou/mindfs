@@ -3,9 +3,10 @@ import { useI18n } from "../../i18n/index";
 import { useTaskActivities } from "../../hooks/useTaskActivities";
 import { usePendingAttachments } from "../action/usePendingAttachments";
 import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
-import { pendingTaskPrompt } from "../../shared/activityModel";
+import { pendingTaskPrompt, conversationRows } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
+import { ActivityReportsGroup } from "./ActivityReportsGroup";
 import { useWorkflowNames } from "./useWorkflowNames";
 
 export type ConversationMessagesProps = {
@@ -100,24 +101,33 @@ export function ConversationMessages({
       data-testid="conversation-messages"
       style={{ display: "flex", flexDirection: "column", gap: 10 }}
     >
-      {activities.map((activity) => (
-        <ActivityMessage
-          key={activity.id}
-          activity={activity}
-          rootId={rootId}
-          workflowNames={workflowNames}
-          paused={paused}
-          promptDeciding={promptDeciding}
-          promptError={promptError}
-          onOpenSession={onOpenSession}
-          onAnswerQuestion={onAnswerQuestion}
-          onGateDecision={onGateDecision}
-          onPauseTask={onPauseTask}
-          onResumeTask={onResumeTask}
-          onRunQueued={onRunQueued}
-          runningQueued={runningQueued}
-        />
-      ))}
+      {conversationRows(activities).map((row) => {
+        const messageProps = {
+          rootId,
+          workflowNames,
+          paused,
+          promptDeciding,
+          promptError,
+          onOpenSession,
+          onAnswerQuestion,
+          onGateDecision,
+          onPauseTask,
+          onResumeTask,
+          onRunQueued,
+          runningQueued,
+        };
+        if (row.kind === "reports") {
+          return (
+            <ActivityReportsGroup
+              key={`reports:${row.parentId}`}
+              parentId={row.parentId}
+              reports={row.reports}
+              {...messageProps}
+            />
+          );
+        }
+        return <ActivityMessage key={row.activity.id} activity={row.activity} {...messageProps} />;
+      })}
     </div>
   );
 }

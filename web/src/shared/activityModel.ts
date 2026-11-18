@@ -162,3 +162,63 @@ export function pendingTaskPrompt(activities: TaskActivity[]): TaskActivity | nu
   }
   return null;
 }
+
+/** 结算行：带 summary 的终态 agent 回复。折叠只在它落地后才允许。 */
+function isSettledReply(activity: TaskActivity): boolean {
+  if (activity.type !== "agent_reply" || activity.role !== "agent") return false;
+  const status = normalizeActivityStatus(activity.status);
+  if (status !== "completed" && status !== "failed" && status !== "waiting_user") return false;
+  return (activity.summary || "").trim() !== "";
+}
+
+/**
+ * 对话流的行序列：普通活动一行，折叠后的运行汇报一组。
+ *
+ * 为什么需要折叠：结算回复（保证路径）与运行期 `purpose=progress` 汇报
+ * （尽力路径）都写结果句。T10 裁定两条数据都不能删（结算回填保证终态可见，
+ * 汇报带失败节点/未验证项等增量信息），所以只能在展示层去重：同一留言下
+ * 第一个已结算的回复留在原位，其余 progress 行折成它后面的一组。
+ *
+ * 不折叠的三种情况，都是「折叠会藏掉用户正要的信息」：
+ * - 父行还没结算（运行中用户就靠这行知道流程起来了）；
+ * - progress 行没有 reply_to_id，无法确定归属；
+ * - 同一留言下没有结算回复（全是 progress，那它们就是唯一的信息）。
+ */
+export type ConversationRow =
+  | { kind: "activity"; activity: TaskActivity }
+  | { kind: "reports"; parentId: string; reports: TaskActivity[] };
+
+export function conversationRows(activities: TaskActivity[]): ConversationRow[] {
+  const settledByMessage = new Map<string, string>();
+  for (const activity of activities) {
+    const messageId = (activity.reply_to_id || "").trim();
+    if (messageId === "" || settledByMessage.has(messageId)) continue;
+    if (isSettledReply(activity)) settledByMessage.set(messageId, activity.id);
+  }
+  // 折叠目标：父行 = 同一留言下第一个已结算的回复；父行自己与 purpose 缺省的
+  // 历史行都不折。先算一遍归属，输出时再按父行位置插组 —— 组必须紧跟它所属的
+  // 那一轮，不能因为汇报到达得晚就掉到下一轮留言后面。
+  const parentOf = (activity: TaskActivity): string => {
+    const messageId = (activity.reply_to_id || "").trim();
+    const parentId = messageId ? settledByMessage.get(messageId) : undefined;
+    if (!parentId || parentId === activity.id || activity.purpose !== "progress") return "";
+    return parentId;
+  };
+  const reportsByParent = new Map<string, TaskActivity[]>();
+  for (const activity of activities) {
+    const parentId = parentOf(activity);
+    if (parentId === "") continue;
+    const reports = reportsByParent.get(parentId);
+    if (reports) reports.push(activity);
+    else reportsByParent.set(parentId, [activity]);
+  }
+
+  const rows: ConversationRow[] = [];
+  for (const activity of activities) {
+    if (parentOf(activity) !== "") continue;
+    rows.push({ kind: "activity", activity });
+    const reports = reportsByParent.get(activity.id);
+    if (reports) rows.push({ kind: "reports", parentId: activity.id, reports });
+  }
+  return rows;
+}

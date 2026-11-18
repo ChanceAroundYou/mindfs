@@ -8,7 +8,7 @@
 **Spec:** `docs/superpowers/specs/2026-11-18-super-agent-r0-r1-design.md`
 **授权:** 用户已要求文档、小任务、worktree 与实际派发；当前先执行 R0，R1 在 R0 门禁后按依赖推进。R2–R5 不执行。
 
-**状态（2026-11-19）：R0 与 R1（T1–T10）全部通过工头验收，已集成到总任务分支 `task-73`（HEAD `c6a4e629` + 登记提交）。未 push、未部署、未合并 main、未重启任何节点；生产 `router.mode` 保持各节点现值。**
+**状态（2026-11-19）：R0 与 R1（T1–T10）全部通过工头验收，已集成到总任务分支 `task-73`（HEAD `c6a4e629` + 登记提交）；R1 收尾（汇报折叠、直达工作流会话、事件 brief 假截断）同日完成，见下节。未 push、未部署、未合并 main、未重启任何节点；生产 `router.mode` 保持各节点现值。**
 
 ## Global Constraints
 
@@ -240,6 +240,32 @@ D 仅重启隔离进程并核对 pending/claimed 与已有结果。
 **残留（非阻断）**：`deliver` 分支无真实流量证据；`ask_user` / `silent` / 3 回合预算未在真实场景触发；
 未覆盖 kill -9、SQLite 语句中断、真实双进程；汇报正文含「事件数据被截断」这类证据口吻。
 **未做**：push / deploy / 合并 main / 重启；切 coordinate 与生产启停需用户单独授权。
+
+**R1 收尾（2026-11-19，用户要求修已知问题 + 加直达入口）**：两处 UX 残留落地，数据路径零改动。
+
+- **运行汇报折叠（`Scope: G-MO`）**：T10 裁定的「结果句说两遍」只在前端展示层处理。结算 reply
+  留在原位；同一 `reply_to_id` 下、`purpose=progress` 的汇报行折进紧跟父行的「运行汇报 N 条」，
+  展开复用 `ActivityMessage`。折叠前提是父行已结算（completed/failed/waiting_user 且 summary
+  非空）——运行中的 progress 行是用户唯一进度信号；无 `reply_to_id` 的汇报没有归属，同样保持
+  可见；归属按留言精确映射，不是「最近一条结算行」。纯派生函数 `conversationRows` 单测 +
+  SSR 默认折叠断言（9 例），两个关键守卫做过变异验证（只认 completed、按最近结算行归属，均
+  会打红）。
+- **直达工作流会话（`Scope: G-MO`）**：任务详情页运行视图入口旁新增按钮，落点由纯函数
+  `pickWorkflowSessionKey` 决定（running > waiting_user > 最近一条有 `session_key` 的节点；
+  空白键跳过；末尾无会话节点不能顶掉前面的真会话）。节点行在引擎绑定到 workflow 时即预取、
+  按 `refreshKey` 重取（`session_key` 是回合中途绑定到 NodeRun 的），不需要展开运行视图。
+  重取期间已知键仍可点（绑定后不再变化），只有首次加载且无键时显示「加载中」，不把未完成
+  误报成「暂无工作流会话」。10 例测试；优先级与空白键过滤做过变异验证。
+- **事件 brief 的假截断（`Scope: G-MJ` 补登）**：生产端自己写的事件载荷键（`nodes` /
+  `nodes_truncated` / `workflow_id` / `revision`、停摆的 `started_at`、启动对账的
+  `open_node_runs` / `resumed` / `unknown`）此前全被当成「未知键」，导致每条真实事件在汇报里
+  多一句「载荷被截断、信息不全」。改为受控键集合（仍不进 brief 载荷，节点证据走
+  `brief.evidence`）；真未知键 / 超长值 / 坏 JSON 照旧标 truncated。停摆与对账两类载荷各留
+  回归用例，删 `resumed` 与删 `started_at` 的变异均打红。
+
+**门禁（2026-11-19）**：`go test -count=1 ./...` 全绿、web 235 文件 / 677 通过 / 6 跳过、
+`tsc --noEmit` clean、`make build`、`make check-upstream`（见提交后记录）。未 push / 未部署 /
+未重启；生产 `router.mode` 未动。
 
 ## 执行门禁与依赖
 

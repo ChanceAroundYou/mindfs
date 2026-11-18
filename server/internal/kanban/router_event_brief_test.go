@@ -368,3 +368,111 @@ func TestEventBriefOldRunNotCrossTalk(t *testing.T) {
 		t.Fatalf("evidence leaked the current run's node: %#v", brief.Evidence.Nodes)
 	}
 }
+
+// 行为 6：生产载荷不算截断。routerEventPayload 自己写的摘要键（nodes /
+// workflow_id / revision / nodes_truncated）是受控摘要，不属于「未知键」，不得
+// 仅因它们存在就让 brief 报 truncated —— 否则每条真实事件都会在用户可见汇报
+// 里多出一句「事件载荷被截断」，而实际信息完整。
+func TestEventBriefProductionPayloadIsNotTruncated(t *testing.T) {
+	ctx := context.Background()
+	f, user := eventBriefFixture(t)
+	f.addRun(t, "task-1", "run-prod", WorkflowTriggeredByUser, map[string]string{"agent-1": NodeRunSuccess})
+	f.addNodeRun(t, NodeRun{ID: "nr-prod", RunID: "run-prod", NodeID: "agent-1", Attempt: 1,
+		Status: NodeRunSuccess, Output: map[string]any{"summary": "改好了"}})
+	f.setTaskStatus(t, "task-1", StatusSuccess)
+	payload := `{"nodes":{"agent-1":"success"},"revision":3,"run_id":"run-prod","task_id":"task-1","workflow_id":"wf-1"}`
+	ev := RouterEvent{
+		ID: "revt-prod", RootID: f.root.ID, TaskID: "task-1", RunID: "run-prod",
+		Kind: RouterEventRunSettled, TurnID: "revt-turn:prod", UserActivityID: user,
+		PayloadJSON: payload,
+	}
+	brief, err := f.router.turnBrief(ctx, "task-1", eventBriefTrigger(f, ev), RouterConfig{})
+	must(t, err, "turnBrief")
+
+	if brief.Event == nil {
+		t.Fatalf("event brief has no event section")
+	}
+	if brief.Event.Truncated {
+		t.Fatalf("controlled summary keys must not mark the payload truncated: %#v", brief.Event)
+	}
+	for _, item := range brief.Evidence.Unverified {
+		if strings.Contains(item, "payload was truncated") {
+			t.Fatalf("no truncation caveat expected, got unverified=%#v", brief.Evidence.Unverified)
+		}
+	}
+	// 受控摘要键不得漏进给模型的载荷（brief 只放白名单字段）。
+	for _, key := range []string{"nodes", "workflow_id", "revision"} {
+		if _, ok := brief.Event.Payload[key]; ok {
+			t.Fatalf("summary key %q leaked into brief payload: %#v", key, brief.Event.Payload)
+		}
+	}
+}
+
+// 行为 6b：停摆与启动对账的载荷同样是生产端自己写的（stall 带 started_at，
+// reconcile 带 open_node_runs/resumed/unknown）。它们不是白名单字段、不进 brief，
+// 但也绝不能算「未知键」—— 否则这两类事件的汇报里会凭空出现「载荷被截断」。
+func TestEventBriefStallAndReconcilePayloadsAreNotTruncated(t *testing.T) {
+	ctx := context.Background()
+	f, user := eventBriefFixture(t)
+	f.addRun(t, "task-1", "run-stall", WorkflowTriggeredByUser, map[string]string{"agent-1": NodeRunRunning})
+	f.addNodeRun(t, NodeRun{ID: "nr-stall", RunID: "run-stall", NodeID: "agent-1", Attempt: 1, Status: NodeRunRunning})
+	cases := map[string]struct {
+		kind    RouterEventKind
+		payload string
+	}{
+		"stall": {
+			kind:    RouterEventRunStalled,
+			payload: `{"run_id":"run-stall","task_id":"task-1","nodes":{"agent-1":"running"},"node_id":"agent-1","node_run_id":"nr-stall","attempt":1,"started_at":"2026-11-19T10:00:00Z"}`,
+		},
+		"reconcile": {
+			kind:    RouterEventStartupReconcile,
+			payload: `{"run_id":"run-stall","task_id":"task-1","nodes":{},"open_node_runs":1,"resumed":1,"unknown":0}`,
+		},
+	}
+	for name, tc := range cases {
+		ev := RouterEvent{
+			ID: "revt-" + name, RootID: f.root.ID, TaskID: "task-1", RunID: "run-stall",
+			Kind: tc.kind, TurnID: "revt-turn:" + name, UserActivityID: user,
+			PayloadJSON: tc.payload,
+		}
+		brief, err := f.router.turnBrief(ctx, "task-1", eventBriefTrigger(f, ev), RouterConfig{})
+		must(t, err, "turnBrief %s", name)
+		if brief.Event == nil {
+			t.Fatalf("%s: event brief has no event section", name)
+		}
+		if brief.Event.Truncated {
+			t.Fatalf("%s: producer payload must not be flagged truncated: %#v", name, brief.Event.Payload)
+		}
+		for _, item := range brief.Evidence.Unverified {
+			if strings.Contains(item, "payload was truncated") {
+				t.Fatalf("%s: no truncation caveat expected, got unverified=%#v", name, brief.Evidence.Unverified)
+			}
+		}
+	}
+}
+
+// 行为 7：真截断仍然报。未知键 / 超长值 / 坏 JSON 都必须照旧标 truncated，
+// 不能因为放行受控摘要键就把「证据真的不全」也一起吞掉。
+func TestEventBriefUnknownKeysStillTruncated(t *testing.T) {
+	ctx := context.Background()
+	f, user := eventBriefFixture(t)
+	f.addRun(t, "task-1", "run-unk", WorkflowTriggeredByUser, map[string]string{"agent-1": NodeRunSuccess})
+	f.setTaskStatus(t, "task-1", StatusSuccess)
+	cases := map[string]string{
+		"unknown-key": `{"run_id":"run-unk","internal_secret":"x"}`,
+		"oversize":    `{"run_id":"run-unk","error":"` + strings.Repeat("y", 3000) + `"}`,
+		"broken-json": `{"run_id":`,
+	}
+	for name, payload := range cases {
+		ev := RouterEvent{
+			ID: "revt-unk-" + name, RootID: f.root.ID, TaskID: "task-1", RunID: "run-unk",
+			Kind: RouterEventRunSettled, TurnID: "revt-turn:" + name, UserActivityID: user,
+			PayloadJSON: payload,
+		}
+		brief, err := f.router.turnBrief(ctx, "task-1", eventBriefTrigger(f, ev), RouterConfig{})
+		must(t, err, "turnBrief %s", name)
+		if brief.Event == nil || !brief.Event.Truncated {
+			t.Fatalf("%s: payload must stay truncated: %#v", name, brief.Event)
+		}
+	}
+}

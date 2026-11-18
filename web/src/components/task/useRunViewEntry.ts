@@ -17,6 +17,8 @@ export type RunViewState = {
   open: boolean;
   run: WorkflowRunPayload | null;
   nodeRuns: NodeRunPayload[];
+  /** 节点会话仍在决定中：直接跳会话的按钮据此禁用，不把「还没取到」当成「没有」。 */
+  nodeRunsLoading: boolean;
   error: string;
   gateError: string;
   decidingNodeRunId: string;
@@ -34,6 +36,7 @@ export function useRunViewEntry(
   const [open, setOpen] = useState(false);
   const [run, setRun] = useState<WorkflowRunPayload | null>(null);
   const [nodeRuns, setNodeRuns] = useState<NodeRunPayload[]>([]);
+  const [nodeRunsLoading, setNodeRunsLoading] = useState(false);
   const [error, setError] = useState("");
   const [gateError, setGateError] = useState("");
   const [decidingNodeRunId, setDecidingNodeRunId] = useState("");
@@ -95,15 +98,32 @@ export function useRunViewEntry(
     setError("");
     setGateError("");
     setDecidingNodeRunId("");
-    if (!runId || !openRef.current) return;
+  }, [runId, rootId, taskId, nodeId]);
+
+  // 任务详情页的「跳到工作流会话」按钮不需要展开运行视图，所以节点行不能等
+  // toggle：引擎一绑定到 workflow 就取一次。按 refreshKey 重取是因为节点会话
+  // 是回合中途才绑定的，第一次取到的行可能还没有 session_key。
+  useEffect(() => {
+    if (!runId) {
+      setNodeRunsLoading(false);
+      return undefined;
+    }
     let cancelled = false;
-    loadRun().catch((err) => {
-      if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-    });
+    setNodeRunsLoading(true);
+    fetchWorkflowNodeRuns(rootId, taskId, nodeId)
+      .then((payload) => {
+        if (!cancelled) setNodeRuns(payload);
+      })
+      .catch(() => {
+        // 预取失败只是少了快捷入口；展开运行视图时还会再拉一次并展示错误。
+      })
+      .finally(() => {
+        if (!cancelled) setNodeRunsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [runId, loadRun]);
+  }, [runId, rootId, taskId, nodeId, refreshKey]);
 
   const toggle = useCallback(() => {
     if (openRef.current) {
@@ -141,5 +161,16 @@ export function useRunViewEntry(
     [rootId, taskId, nodeId],
   );
 
-  return { runId, open, run, nodeRuns, error, gateError, decidingNodeRunId, toggle, decideGate };
+  return {
+    runId,
+    open,
+    run,
+    nodeRuns,
+    nodeRunsLoading,
+    error,
+    gateError,
+    decidingNodeRunId,
+    toggle,
+    decideGate,
+  };
 }
