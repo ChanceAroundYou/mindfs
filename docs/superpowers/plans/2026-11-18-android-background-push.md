@@ -412,3 +412,32 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 - Spec 覆盖：长轮询端点（Task 2）、确定性排序（Task 1）、在途上限（Task 2）、关停（Task 3）、每节点循环与降级/新鲜度/剪枝（Task 5+6）、常驻通知可点（Task 7）、FGS 类型（Task 7）、前端 waitUrl（Task 4）、登记与门禁（Task 0/8）、代理实测（Task 8）。
 - Review Focus 对应测试：掐断降级（Task 6 Step 4 + Task 8 Step 6）、播种（Task 2 首帧用例）、掉线新鲜度（Task 5 单测）、多会话通知（现有行为 + Task 7 断言 `size()==1`）、点击（Task 7）。
 - 已知未覆盖：Java 服务层并发（无 UI 测试基建），靠 `assembleDebug` + 真机验收兜底。
+---
+
+## 实施结果
+
+**Task 0–8 已实现并提交 main，未部署、未出包、未做真机验收。** 提交（均带 `Scope: G-MF`）：
+
+| 任务 | 提交 | 内容 |
+|---|---|---|
+| Task 0 | `9d55743d` | 计划 + spec + `docs/plans/README.md` + `G-MF` 空组登记 |
+| Task 1 | `8c9ef5c4` | `stream_hub.go` 按 `sessionKey` 稳定排序 + `stream_hub_order_test.go` |
+| Task 2 | `2821fad8` | `GET /api/replying-sessions/wait` 长轮询 + 载荷抽取 + 路由 + `http_sessions_replying_wait_test.go` |
+| Task 3 | `9bd064c8` | `newWaitAwareServer` 可取消 BaseContext + `server_wait_shutdown_test.go` |
+| Task 4 | `78074250`、`2f12d5f7` | 前端下发 `waitUrl` + `reply-poller-wait-url.test.mjs`；重锚 `conditional-request.test.mjs` |
+| Task 5 | `a2b78e59` | `ReplyStateMerger` + JUnit 单测 + `Makefile` 的 `test-android` |
+| Task 6 | `8216251c`、`23a87f56` | `ReplyPollerService` 每节点长轮询循环；awaiting 集合读写移入 `applyLock` |
+| Task 7 | `f6301f94`、`329c3733` | 常驻通知 PendingIntent 可点 + `specialUse|dataSync`；`reply-poller-notification-click.test.mjs`；重锚 `apk-self-update.test.mjs` |
+| Task 8 | 紧随本节的登记提交 | 回填 `G-MF` 的 `files`/`tests`/`anchors`，spec 状态改「已批准」 |
+
+登记要点：`G-MF.files` 补 `Makefile`（Task 5 第 10 个文件）；`tests` 只列 check-upstream 认的 5 个（3 个 `*_test.go` + 2 个 `*.test.mjs`）；JUnit 的 `ReplyStateMergerTest.java` 跑不到 check-upstream 的运行器 glob，改登记在 `anchors`（`class ReplyStateMergerTest`），由 `make test-android` 执行。
+
+**门禁（2026-11-18）：**
+
+- `go test ./...`：首次运行 `server/internal/kanban` 偶发失败（既有 flaky，见 memory `kanban-gate-flaky-sqlite-io`）；`go test -count=1 ./...` 复跑全绿（退出 0）。
+- `cd web && npm run typecheck && npm test`：typecheck clean；232 文件通过 / 5 跳过，650 用例通过 / 6 跳过。
+- `make build`：成功（`v0.5.5-1118-153-g329c3733-dirty`）。
+- `make test-android`（`ANDROID_HOME=$HOME/Android/Sdk`）：BUILD SUCCESSFUL。
+- `make check-upstream`：✓ 1873 个 delta 文件被 306 组完整覆盖（登记提交后复跑）。
+
+**仍未完成（需用户执行）：** Step 5 部署（`bash scripts/deploy-all.sh`，本机 `sudo systemctl restart mindfs` 仅用户）、Step 6 外网代理超时实测、Step 7 APK 出包与真机验收（后台秒级响铃、常驻通知点击直达/多会话只开 App）。
