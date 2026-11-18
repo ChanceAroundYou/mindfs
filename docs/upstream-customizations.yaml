@@ -8727,7 +8727,7 @@ groups:
       - 'server/internal/kanban/service_user_turn.go:if ProjectStatusFromRun(run) == StatusSuccess {'
       - 'server/internal/kanban/service_activities.go:switch ProjectStatusFromRun(run) {'
       - 'server/internal/kanban/service_activities.go:func workflowReplySummary(ctx context.Context, store *TaskStore, run *WorkflowRun) string {'
-      - 'server/internal/kanban/service_activities.go:"route": true,'
+      - 'server/internal/kanban/service_activity_output_text.go:"route": true,'
       - 'server/internal/kanban/task_store.go:func (s *TaskStore) UpdateTaskResultSummary(ctx context.Context, taskID, summary string) error {'
       - 'server/internal/kanban/task_store_migrate.go:result_summary TEXT NOT NULL DEFAULT '''''
       - 'server/internal/api/http_task_overview.go:ResultSummary:    task.ResultSummary,'
