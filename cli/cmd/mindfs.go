@@ -102,6 +102,8 @@ func main() {
 	liveCompactLargeBlockTokens := 0
 	// 只由 config.json 填充；没有对应 flag（见 startupFlags.WebPushRelayURL）。
 	webPushRelayURL := ""
+	// 任务派发默认 Agent/模型，同样只走 config.json（task 段）。
+	taskAgent, taskModel := "", ""
 	remove := flag.Bool("remove", false, "remove the managed directory")
 	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
@@ -143,6 +145,8 @@ func main() {
 		LiveCompactMaxFoldBytes:     &liveCompactMaxFoldBytes,
 		LiveCompactLargeBlockTokens: &liveCompactLargeBlockTokens,
 		WebPushRelayURL:             &webPushRelayURL,
+		TaskAgent:                   &taskAgent,
+		TaskModel:                   &taskModel,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -364,6 +368,8 @@ func main() {
 			RouterTurnTimeout:           *routerTurnTimeoutFlag,
 			RouterIdleClose:             *routerIdleCloseFlag,
 			RouterRoots:                 routerRoots(startupCfg),
+			TaskAgent:                   taskAgent,
+			TaskModel:                   taskModel,
 			WorkflowParallelMainTree:    *workflowParallelMainTreeFlag,
 			LiveCompactMode:             *liveCompactModeFlag,
 			LiveCompactKeepRounds:       *liveCompactKeepRoundsFlag,

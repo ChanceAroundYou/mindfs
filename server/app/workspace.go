@@ -54,6 +54,9 @@ type sharedServices struct {
 	// routerConfig 是节点本地 Task Router 配置；mode=off（默认）时不创建任何
 	// Router 会话，行为与改造前完全一致。
 	routerConfig kanban.RouterConfig
+	// taskConfig 是新任务派发的默认 Agent/模型（节点本地）。每账户的
+	// AppContext 必须拿到同一份值。
+	taskConfig taskConfig
 	// parallelMainTree 是共享主树并行开关（nil = 默认开启）。每账户的 Kanban
 	// 实例必须拿到同一个值。
 	parallelMainTree *bool
@@ -262,6 +265,9 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 		Auth:    m.shared.auth,
 		Notify:  m.shared.notify,
 		WebPush: m.shared.webPush,
+
+		TaskAgent: m.shared.taskConfig.Agent,
+		TaskModel: m.shared.taskConfig.Model,
 	}
 	// 空工作区也要有置顶表：这个账户 id 解析不到（跨机器带过来的用户名对方没有），
 	// 语义是回落到对方主账户 —— 那主账户的置顶就该看得见，不能因为「没有数据目录」

@@ -27,8 +27,11 @@ type startupConfig struct {
 	NotifyScript    *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
-	Role     *string                `json:"role"`
-	Router   *startupRouterConfig   `json:"router"`
+	Role   *string              `json:"role"`
+	Router *startupRouterConfig `json:"router"`
+	// Task 是新任务派发默认 Agent/模型的节点本地配置。只走 config.json：
+	// 它是每台机器的部署事实（装了什么 Agent），不做命令行 flag。
+	Task     *startupTaskConfig     `json:"task"`
 	Workflow *startupWorkflowConfig `json:"workflow"`
 	// LiveCompact 是节点本地的上下文活压缩配置。不配置 = off。
 	LiveCompact *startupLiveCompactConfig `json:"live_compact"`
@@ -56,6 +59,13 @@ type startupLiveCompactConfig struct {
 type startupWorkflowConfig struct {
 	// ParallelMainTree 控制没有独立 worktree 的任务是否共用主树并行写。
 	ParallelMainTree *bool `json:"parallel_main_tree"`
+}
+
+// startupTaskConfig 是新任务派发的默认 Agent/模型。不配置时由 app 归一化为
+// claude + sonnet。
+type startupTaskConfig struct {
+	Agent *string `json:"agent"`
+	Model *string `json:"model"`
 }
 
 // startupRouterConfig 是 Task Router 的节点本地配置。它与 agent-config 同类：
@@ -91,6 +101,10 @@ type startupFlags struct {
 	RouterEffort      *string
 	RouterTurnTimeout *time.Duration
 	RouterIdleClose   *time.Duration
+
+	// 任务派发默认值没有 CLI flag：只由 config.json 的 task 段填充。
+	TaskAgent *string
+	TaskModel *string
 
 	WorkflowParallelMainTree *bool
 
@@ -236,6 +250,14 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		}
 	}
 	router := cfg.Router
+	if task := cfg.Task; task != nil {
+		if flags.TaskAgent != nil && task.Agent != nil {
+			*flags.TaskAgent = strings.TrimSpace(*task.Agent)
+		}
+		if flags.TaskModel != nil && task.Model != nil {
+			*flags.TaskModel = strings.TrimSpace(*task.Model)
+		}
+	}
 	if router == nil {
 		return nil
 	}

@@ -104,6 +104,9 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		Auth:       m.shared.auth,
 		Notify:     m.shared.notify,
 		WebPush:    m.shared.webPush,
+
+		TaskAgent: m.shared.taskConfig.Agent,
+		TaskModel: m.shared.taskConfig.Model,
 	}
 	services.Scheduled = scheduled.NewService(services, services)
 	if err := normalizeRegisteredForkSessions(m.ctx, services); err != nil {

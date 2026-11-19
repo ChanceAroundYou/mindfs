@@ -310,3 +310,23 @@ func TestWebPushRelayURLComesFromConfigFile(t *testing.T) {
 		t.Fatalf("web_push_relay_url 没有落到启动参数上: %q", relay)
 	}
 }
+
+// 任务派发默认值（config.json 的 task 段）。没写就是内建 claude + sonnet
+// （由 app 归一化）；写了就要落到 flag 变量上，最终进 StartOptions。
+func TestTaskConfigFromFile(t *testing.T) {
+	writeConfig(t, `{"task":{"agent":"codex","model":"gpt-6.1-terra"}}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, model := "", ""
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{
+		TaskAgent: &agent, TaskModel: &model,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if agent != "codex" || model != "gpt-6.1-terra" {
+		t.Fatalf("task 配置未落盘：agent=%q model=%q", agent, model)
+	}
+}

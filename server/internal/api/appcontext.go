@@ -42,6 +42,11 @@ type AppContext struct {
 	Pins      *pins.Store
 	Scheduled *scheduled.Service
 	Kanban    *kanban.Service
+	// TaskAgent / TaskModel 是新任务派发默认落到的 Agent 与模型（节点本地
+	// 配置 task.agent / task.model，由 server/app 归一化出 claude + sonnet）。
+	// 空值 = 没配置：选 Agent 退回「探针顺序里第一个可用」的老启发式。
+	TaskAgent string
+	TaskModel string
 
 	mu                       sync.RWMutex
 	sessionWorktreeMu        sync.Mutex

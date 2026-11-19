@@ -38,17 +38,36 @@ func (s *AppContext) RunDirectActivity(ctx context.Context, task kanban.Task, bo
 		SessionKey:      key,
 		SessionName:     s.sessionTitle(task.RootID, key),
 		Agent:           agentName,
+		Model:           s.taskModelFor(agentName),
 		Prompt:          body,
 	}
 	return s.runWorkflowTurn(ctx, req)
 }
 
-// pickDefaultAgent selects the Agent for a direct task turn, mirroring the
-// frontend's heuristic (first available, else first) with one extra rung:
-// an installed-but-not-yet-probed Agent beats a merely configured one.
-// Callers pass GetAllStatuses, which keeps agents.json order for configured
-// agents, so ties are deterministic.
-func pickDefaultAgent(statuses []agent.Status) string {
+// pickAgent selects the Agent for a direct task turn. An explicit preference
+// wins whenever that Agent is actually usable (available or at least
+// installed); this is what keeps task dispatch on the configured Agent instead
+// of letting agents.json order decide. Without a usable preference it falls
+// back to the historical heuristic (first available, else first installed,
+// else first configured), so a machine without the preferred Agent keeps
+// working. Callers pass GetAllStatuses, which keeps agents.json order for
+// configured agents, so ties are deterministic.
+func pickAgent(statuses []agent.Status, preferred string) string {
+	preferred = strings.TrimSpace(preferred)
+	if preferred != "" {
+		for _, status := range statuses {
+			if strings.TrimSpace(status.Name) != preferred {
+				continue
+			}
+			// Available 是探针刚确认过；Installed 单独也算，因为启动/探针
+			// 间隙里 Available 还是 false —— 那段窗口正是任务最容易派发
+			// 到列表里第一个可用 Agent 的时候。
+			if status.Available || status.Installed {
+				return preferred
+			}
+			break
+		}
+	}
 	var installed string
 	var first string
 	for _, status := range statuses {
@@ -77,7 +96,18 @@ func (s *AppContext) defaultAgent() string {
 	if prober == nil {
 		return ""
 	}
-	return pickDefaultAgent(prober.GetAllStatuses())
+	return pickAgent(prober.GetAllStatuses(), s.TaskAgent)
+}
+
+// taskModelFor 只给「与任务默认 Agent 一致」的会话套默认模型；别的 Agent 的
+// 会话（例如修复前建好的 codex 主会话）拿自己的模型，否则会把 claude 的模型名
+// 发到不认它的 Agent 上，发送边界直接失败。
+func (s *AppContext) taskModelFor(agentName string) string {
+	agentName = strings.TrimSpace(agentName)
+	if agentName == "" || agentName != strings.TrimSpace(s.TaskAgent) {
+		return ""
+	}
+	return strings.TrimSpace(s.TaskModel)
 }
 
 // ensureDirectSession 复用任务主会话；没有（或已失效）就建一个普通 chat 会话
@@ -115,6 +145,7 @@ func (s *AppContext) ensureDirectSession(ctx context.Context, task kanban.Task) 
 		Input: session.CreateInput{
 			Type:   session.TypeChat,
 			Agent:  agentName,
+			Model:  s.taskModelFor(agentName),
 			Name:   name,
 			TaskID: task.ID,
 		},

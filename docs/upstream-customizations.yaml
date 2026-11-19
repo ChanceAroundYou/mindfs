@@ -8285,7 +8285,7 @@ groups:
     title: 任务 Router（super agent 总控）+ 直连执行器；阶段概念从 API/UI/类型里彻底删除
     kind: feature
     symptom: "用户在任务里发一条留言，服务端按这条留言自己决定这一轮怎么回：能匹配到 workflow 就跑 workflow（回复卡片可下钻运行视图），否则直接在任务主会话里跑一轮普通对话并回写一条 Agent 回复。界面上不再有任何阶段概念：没有阶段编辑器/阶段选项条、没有默认两段流水、没有「推进 / 立即执行」按钮、没有按阶段推进的任务状态；卡片只有完成 / 暂停 / 继续 / 取消 / 收尾 / 删除，详情只有一条对话流。"
-    why: "这是用户明确要求的方向：MindFS 做的是 super agent 的**总控 Router**，不是机械的阶段流水。必须保留：① 每轮的决定权在 `ActivityService`（Router），前端不再随包带阶段流水、不再指定 agent/model/effort 或 start_immediately；② `CreateUserActivity` 是唯一入口（`POST /api/tasks/{id}/activities`），它先落用户留言，再按 `workflow_choice` 与推荐结果选择 `beginWorkflowRun` 或 `beginDirectAgent`（`workflow_choice=disabled` 或没有可用 workflow 时走直连）；③ 直连执行器 `AppContext.RunDirectActivity` 复用任务主会话（`main_session_key`，失效才新建 chat 会话并回写），回复正文写回同一条 Agent 活动；④ 直连回合与 workflow 回合共用 `runWorkflowTurn` 的回合生命周期（pending 身份、EndSessionTurn、取消/超时），不允许另一套裸 `context.Background()` 发送路径；⑤ 收尾也走同一执行器：`runFinishTurn` 用固定收尾提示词跑一轮普通对话，用内存 `Finishing` 标记而不是阶段数据表达「正在收尾」；⑥ 阶段相关列/表（`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs`）只作为冻结的审计证据与一次性转换输入保留，生产路径不再读写它们；⑦ `/comments` 这一层 HTTP 适配删除，留言统一走 `/activities`；⑧ 续轮由 `Service.PrepareNewUserTurn`（`server/internal/kanban/service_user_turn.go`）把关：任务已终态/已暂停、仍有 `running` 节点、或工作流停在 HumanGate 时显式拒绝并给出可见原因；停在 waiting_user 的旧 Run 被新留言整体取代——未完成证据冻结为 cancelled、追加 `run_superseded` 事件、任务回到可推进状态、旧回复结算为 cancelled；已完成（Run 投影为 success、任务停在待审核）的旧 Run 不在此列：新留言开新轮，旧 Run/回复/摘要原样保留（G-LX）；⑨ 直连回合自己决定 Agent：已有主会话沿用 `session.InferAgentFromSession`，新会话按「第一个可用 → 第一个已安装 → 第一个」选默认值，一个都没有时显式报「没有可用的 Agent」，绝不让空 agent 落到 `SendMessage` 里变成 \"agent required\"；⑩ 工作流回复的 summary 只取节点 output 里给人看的文字：优先最后一个成功 **Agent** 节点（条件节点的 route 是簿记，不参与），先认 summary/message/text/result/title/detail，只剩一个文本字段就直接用它，多个文本字段按 key 排序渲染成「key: value；…」；执行器写入的元数据（outcome/reason/worktree_*/resumed_after_restart/comment_id）与非文本值一律不参与，绝不把 output 原样 JSON 出来；超长截到 500 字符，并在结算时清掉运行期的「步骤 i/n」正文。结算只认 `type=agent_reply` 那一行，注意力/系统事件行同样带 run_id，不能拿它们改状态或清正文。"
+    why: "这是用户明确要求的方向：MindFS 做的是 super agent 的**总控 Router**，不是机械的阶段流水。必须保留：① 每轮的决定权在 `ActivityService`（Router），前端不再随包带阶段流水、不再指定 agent/model/effort 或 start_immediately；② `CreateUserActivity` 是唯一入口（`POST /api/tasks/{id}/activities`），它先落用户留言，再按 `workflow_choice` 与推荐结果选择 `beginWorkflowRun` 或 `beginDirectAgent`（`workflow_choice=disabled` 或没有可用 workflow 时走直连）；③ 直连执行器 `AppContext.RunDirectActivity` 复用任务主会话（`main_session_key`，失效才新建 chat 会话并回写），回复正文写回同一条 Agent 活动；④ 直连回合与 workflow 回合共用 `runWorkflowTurn` 的回合生命周期（pending 身份、EndSessionTurn、取消/超时），不允许另一套裸 `context.Background()` 发送路径；⑤ 收尾也走同一执行器：`runFinishTurn` 用固定收尾提示词跑一轮普通对话，用内存 `Finishing` 标记而不是阶段数据表达「正在收尾」；⑥ 阶段相关列/表（`task_stages_json`/`task_type`/`current_stage_index`/`stage_runs`）只作为冻结的审计证据与一次性转换输入保留，生产路径不再读写它们；⑦ `/comments` 这一层 HTTP 适配删除，留言统一走 `/activities`；⑧ 续轮由 `Service.PrepareNewUserTurn`（`server/internal/kanban/service_user_turn.go`）把关：任务已终态/已暂停、仍有 `running` 节点、或工作流停在 HumanGate 时显式拒绝并给出可见原因；停在 waiting_user 的旧 Run 被新留言整体取代——未完成证据冻结为 cancelled、追加 `run_superseded` 事件、任务回到可推进状态、旧回复结算为 cancelled；已完成（Run 投影为 success、任务停在待审核）的旧 Run 不在此列：新留言开新轮，旧 Run/回复/摘要原样保留（G-LX）；⑨ 直连回合自己决定 Agent：已有主会话沿用 `session.InferAgentFromSession`，新会话按节点配置的 `task.agent`（默认 claude，见 G-NF）→「第一个可用 → 第一个已安装 → 第一个」选默认值，一个都没有时显式报「没有可用的 Agent」，绝不让空 agent 落到 `SendMessage` 里变成 \"agent required\"；⑩ 工作流回复的 summary 只取节点 output 里给人看的文字：优先最后一个成功 **Agent** 节点（条件节点的 route 是簿记，不参与），先认 summary/message/text/result/title/detail，只剩一个文本字段就直接用它，多个文本字段按 key 排序渲染成「key: value；…」；执行器写入的元数据（outcome/reason/worktree_*/resumed_after_restart/comment_id）与非文本值一律不参与，绝不把 output 原样 JSON 出来；超长截到 500 字符，并在结算时清掉运行期的「步骤 i/n」正文。结算只认 `type=agent_reply` 那一行，注意力/系统事件行同样带 run_id，不能拿它们改状态或清正文。"
     boundary: "只管「一轮留言怎么被 Router 分派与执行」以及阶段概念的删除。不改 workflow 引擎/DAG/Loop/HumanGate 的语义（G-LE/G-LI），不改历史任务的一次性转换规则（G-LK），不改模板删除（G-LJ）。不做自动 merge/push/deploy。"
     files:
       - server/internal/kanban/activity_service.go
@@ -8334,7 +8334,7 @@ groups:
       - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) executeDirectActivity('
       - 'server/internal/api/appcontext_activity.go:func (s *AppContext) RunDirectActivity('
       - 'server/internal/api/appcontext_activity.go:return s.runWorkflowTurn(ctx, req)'
-      - 'server/internal/api/appcontext_activity.go:func pickDefaultAgent('
+      - 'server/internal/api/appcontext_activity.go:func pickAgent('
       - 'server/internal/kanban/service_user_turn.go:func (s *Service) PrepareNewUserTurn('
       - 'server/internal/kanban/service_activity_output_text.go:func nodeRunOutputSummary('
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) runFinishTurn('
@@ -10106,3 +10106,39 @@ groups:
       - 'web/src/components/workspace/workspaceStyles.ts:maxWidth: "55%",'
       - 'web/src/components/workspace/workspaceStyles.ts:minWidth: "24px",'
       - 'web/tests/workspace-project-toggle.test.ts:toggle before the project name'
+  - id: G-NF
+    title: 任务派发默认 Agent/模型可配（默认 claude + sonnet），不再由探针顺序决定
+    kind: fix
+    symptom: "2026-11-20 用户重启后报「莫名其妙派发任务的似乎就变成 codex 执行了 我希望主要是 claude code + sonnet」。现场：任务 #93 / #94 的主会话由 codex 建出（`[session/model] open ... agent=codex model=\"gpt-6.1-terra\"`），Router 本身仍是 claude/ok。根因不在 Router：llmux 修好后 codex 探针变 Available，而 `pickAgent` 的旧启发式取「agents.json 顺序里第一个可用」，codex 排在 claude 之前，于是所有新建任务的直连主会话都落到 codex。"
+    why: "必须保留：任务派发的默认 Agent/模型是**节点本地配置**（config.json 的 `task.agent` / `task.model`），不是探针顺序的副产品。(1) 归一化在 `server/app/taskConfigFromOptions`：agent 空 → claude，agent 与 model 都空 → sonnet；只配 agent 不配 model 时模型留空，用该 Agent 自己的默认，不硬塞 sonnet。(2) 选择顺序：配置的 Agent 只要 `Available` **或** `Installed` 就胜出 —— 单看 Available 不够，启动/探针间隙里它还是 false，那正是任务最容易落到列表第一个可用 Agent 的窗口；配置的 Agent 没装或不在列表里才回退旧启发式（第一个可用 → 第一个已安装 → 第一个），所以没装 claude 的机器照常能派发。(3) 模型只套在「与 task.agent 一致」的会话上：新建主会话把 Model 落进会话，每轮再随请求带一次；别的 Agent 的会话（修复前建好的 codex 主会话）绝不塞 claude 的模型名，那会在发送边界直接失败。(4) 已有主会话仍沿用会话自己的 Agent（上下文连续），新配置只影响之后新建的任务。cli/cmd 与 server/cmd/mindfs-server 两份入口的 config 解析都要认 `task` 段（没有 CLI flag：那是每台机器装了什么 Agent 的部署事实）。"
+    boundary: "不改 Router 配置（`router.model` 仍是用户定下的 ok）；不改工作流节点自己的 agent/model（节点参数已有的照旧优先，`workflow-blank/debug/new-feature` 本来就写死 claude + sonnet）；不给存量 codex 主会话做迁移或换 Agent；不改前端 Agent 选择（新建会话面板、定时任务对话框仍是用户显式选）；不加 UI 配置入口，也没有 CLI flag。"
+    files:
+      - server/internal/api/appcontext.go
+      - server/internal/api/appcontext_activity.go
+      - server/internal/api/appcontext_activity_test.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+      - server/app/task_dispatch_defaults_test.go
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - cli/cmd/startup_config_test.go
+      - server/cmd/mindfs-server/main.go
+    tests:
+      - server/internal/api/appcontext_activity_test.go
+      - server/app/task_dispatch_defaults_test.go
+      - cli/cmd/startup_config_test.go
+    anchors:
+      - 'server/internal/api/appcontext_activity.go:func pickAgent(statuses []agent.Status, preferred string) string {'
+      - 'server/internal/api/appcontext_activity.go:if status.Available || status.Installed {'
+      - 'server/internal/api/appcontext_activity.go:Model:           s.taskModelFor(agentName),'
+      - 'server/internal/api/appcontext_activity.go:func (s *AppContext) taskModelFor(agentName string) string {'
+      - 'server/app/server.go:func taskConfigFromOptions(opts StartOptions) taskConfig {'
+      - 'server/app/server.go:taskConfig:       taskConfigFromOptions(opts),'
+      - 'server/app/workspace_build.go:TaskModel: m.shared.taskConfig.Model,'
+      - 'cli/cmd/startup.go:Task     *startupTaskConfig     `json:"task"`'
+      - 'cli/cmd/mindfs.go:TaskModel:                   taskModel,'
+      - 'server/cmd/mindfs-server/main.go:TaskModel:                   taskModel,'
+      - 'server/internal/api/appcontext_activity_test.go:func TestPickAgentPrefersConfiguredTaskAgent('
+      - 'server/internal/api/appcontext_activity_test.go:func TestRunDirectActivityUsesTaskDefaultsForNewMainSession('
+      - 'server/app/task_dispatch_defaults_test.go:func TestTaskConfigDefaults('

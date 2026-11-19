@@ -45,6 +45,8 @@ func main() {
 	liveCompactMinFoldBytes := 0
 	liveCompactMaxFoldBytes := 0
 	liveCompactLargeBlockTokens := 0
+	// 任务派发默认 Agent/模型，只走 config.json（task 段），没有 CLI flag。
+	taskAgent, taskModel := "", ""
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -76,6 +78,8 @@ func main() {
 		LiveCompactMinFoldBytes:     &liveCompactMinFoldBytes,
 		LiveCompactMaxFoldBytes:     &liveCompactMaxFoldBytes,
 		LiveCompactLargeBlockTokens: &liveCompactLargeBlockTokens,
+		TaskAgent:                   &taskAgent,
+		TaskModel:                   &taskModel,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -98,6 +102,8 @@ func main() {
 		RouterTurnTimeout:           *routerTurnTimeoutFlag,
 		RouterIdleClose:             *routerIdleCloseFlag,
 		RouterRoots:                 routerRoots(startupCfg),
+		TaskAgent:                   taskAgent,
+		TaskModel:                   taskModel,
 		WorkflowParallelMainTree:    *workflowParallelMainTreeFlag,
 		LiveCompactMode:             *liveCompactModeFlag,
 		LiveCompactKeepRounds:       *liveCompactKeepRoundsFlag,
@@ -124,8 +130,10 @@ type startupConfig struct {
 	NotifyScript *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
-	Role     *string                `json:"role"`
-	Router   *startupRouterConfig   `json:"router"`
+	Role   *string              `json:"role"`
+	Router *startupRouterConfig `json:"router"`
+	// Task 是新任务派发默认 Agent/模型的节点本地配置。只走 config.json。
+	Task     *startupTaskConfig     `json:"task"`
 	Workflow *startupWorkflowConfig `json:"workflow"`
 	// LiveCompact 是节点本地的上下文活压缩配置。不配置 = off。
 	LiveCompact *startupLiveCompactConfig `json:"live_compact"`
@@ -151,6 +159,11 @@ type startupLiveCompactConfig struct {
 	LargeBlockTokens *int `json:"large_block_tokens"`
 }
 
+type startupTaskConfig struct {
+	Agent *string `json:"agent"`
+	Model *string `json:"model"`
+}
+
 type startupRouterConfig struct {
 	Mode        *string           `json:"mode"`
 	Agent       *string           `json:"agent"`
@@ -174,6 +187,10 @@ type startupFlags struct {
 	RouterEffort      *string
 	RouterTurnTimeout *time.Duration
 	RouterIdleClose   *time.Duration
+
+	// 任务派发默认值没有 CLI flag：只由 config.json 的 task 段填充。
+	TaskAgent *string
+	TaskModel *string
 
 	WorkflowParallelMainTree *bool
 
@@ -295,6 +312,14 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		}
 		if flags.LiveCompactLargeBlockTokens != nil && live.LargeBlockTokens != nil {
 			*flags.LiveCompactLargeBlockTokens = *live.LargeBlockTokens
+		}
+	}
+	if task := cfg.Task; task != nil {
+		if flags.TaskAgent != nil && task.Agent != nil {
+			*flags.TaskAgent = strings.TrimSpace(*task.Agent)
+		}
+		if flags.TaskModel != nil && task.Model != nil {
+			*flags.TaskModel = strings.TrimSpace(*task.Model)
 		}
 	}
 	router := cfg.Router

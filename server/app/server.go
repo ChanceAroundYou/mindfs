@@ -55,6 +55,11 @@ type StartOptions struct {
 	RouterTurnTimeout time.Duration
 	RouterIdleClose   time.Duration
 	RouterRoots       map[string]string
+	// TaskAgent / TaskModel 是新任务派发的默认 Agent 与模型（节点本地
+	// config.json 的 task 段）。空值 = 内建 claude + sonnet，见
+	// taskConfigFromOptions。
+	TaskAgent string
+	TaskModel string
 	// WorkflowParallelMainTree 控制没有独立 worktree 的任务是否共用主树并行写。
 	// 入口 flag 默认 true；config.json 的 workflow.parallel_main_tree 可关闭。
 	WorkflowParallelMainTree bool
@@ -77,6 +82,29 @@ type StartOptions struct {
 	LiveCompactDisableFile string
 	// LiveCompactArchiveDir 是折叠存档根；空值 = <config-dir>/context。
 	LiveCompactArchiveDir string
+}
+
+// taskConfig 是新任务派发的默认 Agent/模型。它是节点本地配置，不进控制面：
+// 每台机器装了什么 Agent 各不相同。
+type taskConfig struct {
+	Agent string
+	Model string
+}
+
+// taskConfigFromOptions 归一化任务派发默认值。未配置 = claude + sonnet：
+// 选 Agent 原本退回「探针顺序里第一个可用」，llmux 恢复后 codex 先可用，
+// 新任务就整批落到了 codex（2026-11-20 事故）。显式配了 Agent 而没配模型时
+// 模型留空，用该 Agent 自己的默认，不硬塞 sonnet。
+func taskConfigFromOptions(opts StartOptions) taskConfig {
+	agent := strings.TrimSpace(opts.TaskAgent)
+	model := strings.TrimSpace(opts.TaskModel)
+	if agent == "" {
+		agent = "claude"
+		if model == "" {
+			model = "sonnet"
+		}
+	}
+	return taskConfig{Agent: agent, Model: model}
 }
 
 // routerConfigFromOptions 是 string -> kanban.RouterConfig 的唯一转换点。
@@ -206,6 +234,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		prober:           sharedProber,
 		writerGate:       kanban.NewWriterGate(),
 		routerConfig:     routerConfigFromOptions(opts),
+		taskConfig:       taskConfigFromOptions(opts),
 		parallelMainTree: &opts.WorkflowParallelMainTree,
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
