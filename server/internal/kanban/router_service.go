@@ -320,7 +320,9 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 			SessionKey: sessionKey, Agent: config.Agent, Model: config.Model, Effort: config.Effort,
 			PromptHash: promptHash, Status: RouterSessionFailed, LastError: err.Error(), LastTurnAt: time.Now().UTC(),
 		})
-		rs.finishFallback(ctx, decision, started, err, applyMode)
+		// 写工具返回 recorded 就是已发生的事实：回合后置失败（多半是 90s 死线
+		// 打在 persistTurnBlocks 上）不能把这些决定一起丢掉。
+		rs.finishTurnFailure(ctx, config, decision, brief, collector.snapshot(), err, started, applyMode)
 		return
 	}
 	decision.RouterSessionKey = result.SessionKey
@@ -419,52 +421,6 @@ func (rs *RouterService) applyRoute(ctx context.Context, decision *RouterDecisio
 		return fmt.Errorf("activity service: %w", err)
 	}
 	return svc.ApplyRouteActions(ctx, decision)
-}
-
-// fallbackRoute 在 Router 不可用/拒绝时把这一轮交回旧路径。占位回复复用，
-// 不新增一条；旧路径的失败会写回占位回复。
-func (rs *RouterService) fallbackRoute(ctx context.Context, decision *RouterDecision) {
-	svc, err := rs.service.ActivityServiceForRoot(rs.rootID)
-	if err != nil {
-		log.Printf("[router] fallback.unavailable task=%s err=%v", decision.TaskID, err)
-		return
-	}
-	if err := svc.FallbackRoute(ctx, decision.TaskID, decision.UserActivityID, decision.PlaceholderActivityID); err != nil {
-		log.Printf("[router] fallback.error task=%s err=%v", decision.TaskID, err)
-	}
-}
-
-func (rs *RouterService) finishFallback(ctx context.Context, decision *RouterDecision, started time.Time, cause error, routeMode bool) {
-	if decision == nil {
-		return
-	}
-	if strings.TrimSpace(decision.BriefJSON) == "" {
-		decision.BriefJSON = "{}"
-	}
-	if err := rs.store.InsertDecision(ctx, decision); err != nil && !errors.Is(err, ErrRouterDecisionExists) {
-		log.Printf("[router] decision.insert.error id=%s err=%v", decision.ID, err)
-		return
-	}
-	latency := int(time.Since(started).Milliseconds())
-	errText := ""
-	if cause != nil {
-		errText = cause.Error()
-	}
-	if err := rs.store.UpdateDecisionResult(ctx, decision.ID, RouterDecisionFallback, nil, "", RouterAgreementUnknown, errText, latency, 0, 0); err != nil {
-		log.Printf("[router] decision.fallback.error id=%s err=%v", decision.ID, err)
-	}
-	// 回落是「用户看到的结果其实是旧路径跑的」的唯一线索。没有这一行，
-	// 线上只能看到一条 90s 后出现的普通回复，分不清是 Router 超时还是模型故意沉默。
-	log.Printf("[router] fallback task=%s decision=%s latency_ms=%d route_mode=%v cause=%s",
-		decision.TaskID, decision.ID, latency, routeMode, errText)
-	decision.Status = RouterDecisionFallback
-	decision.Error = errText
-	decision.Agreement = RouterAgreementUnknown
-	decision.LatencyMS = latency
-	rs.broadcast(decision)
-	if routeMode {
-		rs.fallbackRoute(ctx, decision)
-	}
 }
 
 func (rs *RouterService) agent() RouterAgent {

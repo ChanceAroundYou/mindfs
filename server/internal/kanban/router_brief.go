@@ -213,7 +213,17 @@ func buildSituationBrief(
 	}
 	if run, err := store.WorkflowRunForTask(ctx, task.ID); err == nil && run != nil {
 		brief.LatestRun = briefRun(ctx, store, run, task)
-		if isActiveTaskStatus(task.Status) {
+		// 闸门按「Run 投影后的状态」判，而不是可能滞后的任务行：任务行写着
+		// waiting_user、节点其实还在跑时，Router 会被告知「没有活动执行」，于是
+		// 把一条本该转交的留言判成新开一轮。
+		//
+		// 但「活动」必须还有可变化的节点：整轮 success 的 Run 投影到 waiting_user
+		// 只是为了让用户来审核，它已经没有节点会自己再动一下。若仍报成活动执行，
+		// 校验层会永久拒绝 run_workflow / message_agent，Router 只能反复劝用户
+		// 「先结算 Run」——而界面上根本没有这个入口（#88 现场）。
+		// 暂停是操作员状态，不是「这一轮跑完了」：暂停任务照旧挡新执行。
+		status := briefTaskStatus(run, task)
+		if isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run)) {
 			brief.ActiveExecution = briefActiveExecution(ctx, store, run, task)
 		}
 	}
@@ -247,6 +257,36 @@ func briefActivities(items []*TaskActivity, triggerUserActivityID string) []Rout
 	return out
 }
 
+// briefTaskStatus 是 brief 里「任务现在到底在干什么」的唯一来源。
+//
+// 任务行的 status 由另一条投影写入，可能落后于 Run 的节点事实（实测：任务行
+// waiting_user、节点却在 running）。brief 是 Router 的唯一世界快照，陈旧状态会
+// 直接变成错误决策，所以这里以 Run 投影为准；只有操作员拥有的状态（暂停）与
+// 任务已经终态这两种「投影看不见 / 不该覆盖」的情况才采信任务行。
+func briefTaskStatus(run *WorkflowRun, task Task) string {
+	if task.Status == StatusPaused || isTerminalStatus(task.Status) {
+		return task.Status
+	}
+	if run == nil {
+		return task.Status
+	}
+	derived := taskStatusFromRun(run)
+	// 投影是节点事实，但两份证据都可能落后：任务行会停在上一轮的 waiting_user，
+	// 而 NodeStates 在节点刚 claim 的那一瞬间也可能还没写进去（NodeRun 行已经是
+	// running）。两边都说「有活动」时以投影为准；一边说在跑、另一边说空闲时采信
+	// 更活跃的那个——宁可多报一次活动，也不要把一条本该转交的留言判成新开一轮。
+	if isTerminalStatus(derived) || isActiveTaskStatus(derived) {
+		return derived
+	}
+	if isActiveTaskStatus(task.Status) {
+		return task.Status
+	}
+	if derived != "" {
+		return derived
+	}
+	return task.Status
+}
+
 func briefRun(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task) *RouterBriefRun {
 	if run == nil {
 		return nil
@@ -271,16 +311,18 @@ func briefRun(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task
 		}
 	}
 	// NodeStates 不保留节点名；用 NodeRun 行补 waiting_user 的节点 ID。
-	if runs, err := store.ListWorkflowNodeRuns(ctx, run.ID); err == nil {
-		for _, nodeRun := range runs {
-			if nodeRun.Status == NodeRunWaitingUser {
-				waiting = append(waiting, nodeRun.NodeID)
+	if store != nil {
+		if runs, err := store.ListWorkflowNodeRuns(ctx, run.ID); err == nil {
+			for _, nodeRun := range runs {
+				if nodeRun.Status == NodeRunWaitingUser {
+					waiting = append(waiting, nodeRun.NodeID)
+				}
 			}
 		}
 	}
 	return &RouterBriefRun{
 		ID:               run.ID,
-		Status:           task.Status,
+		Status:           briefTaskStatus(run, task),
 		Version:          run.Version,
 		NodeSummary:      summary,
 		WaitingUserNodes: waiting,
@@ -291,8 +333,11 @@ func briefActiveExecution(ctx context.Context, store *TaskStore, run *WorkflowRu
 	execution := &RouterBriefExecution{
 		Kind:      "workflow",
 		RunID:     run.ID,
-		Status:    task.Status,
+		Status:    briefTaskStatus(run, task),
 		StartedAt: run.CreatedAt.UTC().Format(rfc3339),
+	}
+	if store == nil {
+		return execution
 	}
 	runs, err := store.ListWorkflowNodeRuns(ctx, run.ID)
 	if err != nil {
@@ -354,101 +399,6 @@ func briefWorkflows(ctx context.Context, workflows *WorkflowStore) []RouterBrief
 	return out
 }
 
-// capSituationBrief 按「先砍 workflows，再砍 recent_activities，再砍 excerpt」
-// 的顺序把 brief 压到上限内。24KB 是硬上限，宁可少信息也不撑爆上下文。
-func capSituationBrief(brief *SituationBrief) *SituationBrief {
-	if brief == nil {
-		return nil
-	}
-	if briefSize(brief) <= routerBriefMaxBytes {
-		return brief
-	}
-	brief.Workflows = nil
-	if briefSize(brief) <= routerBriefMaxBytes {
-		return brief
-	}
-	// 事件 brief 的补充顺序：证据节点条数先收缩，再丢最近活动，然后缩节点摘要，
-	// 再缩用户原始要求，最后缩未验证项。任何证据裁剪都要置 Evidence.Truncated。
-	if trimRouterEventNodes(brief, routerEventBriefKeptNodes) {
-		if briefSize(brief) <= routerBriefMaxBytes {
-			return brief
-		}
-	}
-	for len(brief.RecentActivities) > 0 && briefSize(brief) > routerBriefMaxBytes {
-		brief.RecentActivities = brief.RecentActivities[1:]
-	}
-	for _, activity := range brief.RecentActivities {
-		if briefSize(brief) <= routerBriefMaxBytes {
-			break
-		}
-		activity.BodyExcerpt = truncateRouterText(activity.BodyExcerpt, 200)
-	}
-	trimRouterEventExcerpts(brief)
-	if brief.Trigger.UserMessage != nil && briefSize(brief) > routerBriefMaxBytes {
-		brief.Trigger.UserMessage.Body = truncateRouterText(brief.Trigger.UserMessage.Body, routerEventBriefUserMessageLimit)
-	}
-	trimRouterEventUnverified(brief)
-	return brief
-}
-
-// trimRouterEventNodes 把证据节点收缩到 keep 条并累计被省略数；返回是否有裁剪。
-func trimRouterEventNodes(brief *SituationBrief, keep int) bool {
-	if brief == nil || brief.Event == nil || brief.Evidence == nil || len(brief.Evidence.Nodes) <= keep {
-		return false
-	}
-	omitted := len(brief.Evidence.Nodes) - keep
-	brief.Evidence.Nodes = brief.Evidence.Nodes[:keep]
-	brief.Evidence.OmittedNodes += omitted
-	brief.Evidence.Truncated = true
-	return true
-}
-
-// trimRouterEventExcerpts 把节点摘要压到 200 字节；返回是否有裁剪。
-func trimRouterEventExcerpts(brief *SituationBrief) bool {
-	if brief == nil || brief.Event == nil || brief.Evidence == nil {
-		return false
-	}
-	trimmed := false
-	for i := range brief.Evidence.Nodes {
-		node := &brief.Evidence.Nodes[i]
-		if len(node.OutputExcerpt) > 200 {
-			node.OutputExcerpt = truncateRouterText(node.OutputExcerpt, 200)
-			trimmed = true
-		}
-		if len(node.ErrorExcerpt) > 200 {
-			node.ErrorExcerpt = truncateRouterText(node.ErrorExcerpt, 200)
-			trimmed = true
-		}
-	}
-	if trimmed {
-		brief.Evidence.Truncated = true
-	}
-	return trimmed
-}
-
-// trimRouterEventUnverified 把未验证项压到 5 条；返回是否有裁剪。最后一条固定
-// 换成「还有 N 条」的标记：证据不全必须能看出来，不能裁成恰好 5 条就装完整。
-func trimRouterEventUnverified(brief *SituationBrief) bool {
-	if brief == nil || brief.Event == nil || brief.Evidence == nil ||
-		len(brief.Evidence.Unverified) <= routerEventBriefKeptUnverifd {
-		return false
-	}
-	items := brief.Evidence.Unverified
-	kept := append([]string(nil), items[:routerEventBriefKeptUnverifd-1]...)
-	brief.Evidence.Unverified = append(kept,
-		fmt.Sprintf("… and %d more unverified items", len(items)-(routerEventBriefKeptUnverifd-1)))
-	brief.Evidence.Truncated = true
-	return true
-}
-
-func briefSize(brief *SituationBrief) int {
-	raw, err := json.Marshal(brief)
-	if err != nil {
-		return 0
-	}
-	return len(raw)
-}
-
 func isActiveTaskStatus(status string) bool {
 	switch status {
 	case StatusRunning, StatusWaitingUser, StatusPaused:
@@ -456,6 +406,24 @@ func isActiveTaskStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// workflowRunHasOpenNodes 报告 Run 里是否还有「不需要新操作也可能变化」的节点。
+// 全部终态（success/skipped/fail/cancelled）的 Run 已经收尾，即使它投影成
+// waiting_user（待审核）也不再是活动执行。NodeStates 为空表示节点还没写投影
+// （刚建的 Run），按未收尾处理。
+func workflowRunHasOpenNodes(run *WorkflowRun) bool {
+	if run == nil || len(run.Graph.Nodes) == 0 {
+		return false
+	}
+	for _, node := range run.Graph.Nodes {
+		switch run.NodeStates[node.ID] {
+		case NodeRunSuccess, NodeRunSkipped, NodeRunFail, NodeRunCancelled:
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func truncateRouterText(text string, limit int) string {
