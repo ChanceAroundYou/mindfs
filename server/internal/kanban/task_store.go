@@ -180,6 +180,24 @@ func (s *TaskStore) UpdateTaskResultSummary(ctx context.Context, taskID, summary
 	return err
 }
 
+// ReplaceTaskResultSummaryIfUnchanged 与 ActivityStore.ReplaceSummaryIfUnchanged
+// 同一条口径：异步压缩落地时只改写「还是它读到的那个值」，否则放弃。
+// 操作员改写、下一轮结算、暂停完成都必须赢过迟到的压缩结果。
+func (s *TaskStore) ReplaceTaskResultSummaryIfUnchanged(ctx context.Context, taskID, want, summary string) (bool, error) {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET result_summary = ?, updated_at = ? WHERE id = ? AND result_summary = ?`,
+		summary, now, strings.TrimSpace(taskID), want)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 func (s *TaskStore) UpdateTaskAuxFlags(ctx context.Context, taskID string, patch TaskAuxFlagsPatch) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	set := []string{"updated_at = ?"}

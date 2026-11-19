@@ -206,12 +206,17 @@ export function PanelShell({
             .mindfs-panel-dialog {
               width: 100% !important;
               height: auto !important;
-              max-height: var(--panel-vh, 60dvh) !important;
+              /* 任务 #87 第 5 条：遮罩从 top:36px 开始，卡片却按整屏高度封顶，
+                 结果卡片比遮罩高 36px+padding —— 底部（运行视图）露在可见区外，
+                 正文滚到底也看不见。把顶栏 36px 与上下 padding 20px 一并扣掉。 */
+              max-height: calc(var(--panel-vh, 100dvh) - 56px) !important;
             }
             .mindfs-panel-body {
               min-height: 0 !important;
               overflow: auto !important;
               -webkit-overflow-scrolling: touch;
+              /* 滚到边界别把滚动传给背后的页面（否则一滑就整个页面跟着动）。 */
+              overscroll-behavior: contain;
             }
           }
         `}</style>

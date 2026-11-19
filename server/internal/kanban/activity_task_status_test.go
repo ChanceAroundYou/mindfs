@@ -8,7 +8,7 @@ import (
 
 // 对话回合一开始，任务头就必须离开「待开始」。直连回合没有 WorkflowRun
 // 可以投影状态，过去只改活动状态、任务一直停在 pending，界面左上角因此显示
-// 「待开始」；回合结束后回到空闲（pending），否则任务会永远停在运行中。
+// 「待开始」；回合结束后停在「待审核」—— agent 回了话，等人看。
 type blockingDirectExecutor struct {
 	started chan struct{}
 	release chan struct{}
@@ -78,8 +78,11 @@ func TestActivityService_DirectTurnMarksTaskRunningAndRestoresIdle(t *testing.T)
 	close(exec.release)
 	// 先等终态活动落库（恢复任务状态发生在终态广播之前），再断言任务回空闲；
 	// 否则测试会在后台写库完成前结束，TempDir 清理与写入互相打架。
+	//
+	// 回话之后的「空闲」是**待审核**而不是「未开始」：agent 已经回了话，等用户看
+	// （用户实测 #87：回复完成后卡片仍写着未开始）。
 	waitActivityStatus(t, f.service.activities, agentAct.ID, ActivityStatusCompleted)
-	waitTaskStatus(t, f.tasks, "task-1", StatusPending)
+	waitTaskStatus(t, f.tasks, "task-1", StatusWaitingUser)
 }
 
 // workflow 回合在 Router/首个节点启动之前就有一个 running 的占位回复；此时

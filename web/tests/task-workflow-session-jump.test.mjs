@@ -69,23 +69,48 @@ const render = (props) =>
     React.createElement(I18nProvider, null, React.createElement(WorkflowSessionJump, props)),
   );
 
+// 页面 locale 由运行环境决定（node 里通常是 en-US），所以断言两种语言都认；
+// 关键是「文字只出现在 title/aria-label 里，按钮体里只有图标」。
+const titled = (html, zh, en) =>
+  new RegExp(`aria-label="${zh}"`).test(html) || new RegExp(`aria-label="${en}"`).test(html);
+// 加载中的英文是省略号形式（Loading…/Loading...），按前缀认。
+const loadingTitled = (html) => /aria-label="(加载中|Loading)/.test(html);
+
 test("按钮直接打开会话，不需要先展开运行视图", () => {
   const html = render({ sessionKey: "sess-live", loading: false, onOpenSession: () => {} });
   assert.match(html, /data-testid="workflow-session-jump"/, "the jump button must be identifiable");
-  assert.match(html, /工作流会话|Workflow session/, "the button must name its target");
+  assert.ok(titled(html, "工作流会话", "Workflow session"), "the icon-only button must still name its target for assistive tech");
+  assert.match(html, /title="(工作流会话|Workflow session)"/, "the icon-only button must explain itself on hover");
   assert.doesNotMatch(html, /disabled/, "a node with a session must be clickable");
+});
+
+// 任务 #87 第 4 条：它原来是一枚带文字的独立胶囊，和运行视图里的逐节点入口抢
+// 位置。现在是一枚图标按钮，复用已有的 WorkflowIcon —— 不新画图标。
+test("入口收成一枚复用 WorkflowIcon 的图标按钮，不再是一枚文字胶囊", () => {
+  const src = read("../src/components/task/WorkflowSessionJump.tsx");
+  assert.match(src, /import \{ WorkflowIcon \} from "\.\/taskIcons"/, "the jump must reuse the existing workflow icon");
+  assert.match(src, /<WorkflowIcon/, "the icon must actually be rendered");
+  assert.doesNotMatch(
+    src,
+    /\{label\}\s*<\/button>/,
+    "the label must move out of the button body into title/aria-label",
+  );
+  const html = render({ sessionKey: "sess-live", loading: false, onOpenSession: () => {} });
+  // 按钮体必须是「只有图标」：开标签之后紧跟 svg，闭标签之前没有任何文本。
+  assert.match(html, /<button[^>]*>(\s*)<svg[\s\S]*?<\/svg><\/button>/, "the button body must contain only the icon");
+  assert.doesNotMatch(html, />工作流会话</, "no visible text pill anymore");
 });
 
 test("没有可跳会话时按钮禁用并说明原因", () => {
   const html = render({ sessionKey: "", loading: false, onOpenSession: () => {} });
   assert.match(html, /disabled/, "a jump with no session must be disabled");
-  assert.match(html, /暂无工作流会话|No workflow session/, "the disabled state must explain itself");
+  assert.ok(titled(html, "暂无工作流会话", "No workflow session"), "the disabled state must explain itself");
 });
 
 test("加载中按钮禁用，避免把空结果当成「没有会话」", () => {
   const html = render({ sessionKey: "", loading: true, onOpenSession: () => {} });
   assert.match(html, /disabled/, "loading must not look like an empty session list");
-  assert.match(html, /加载中|Loading/, "loading must say so instead of claiming there is no session");
+  assert.ok(loadingTitled(html), "loading must say so instead of claiming there is no session");
   assert.doesNotMatch(html, /暂无工作流会话|No workflow session/, "an unfinished fetch is not proof of absence");
 });
 

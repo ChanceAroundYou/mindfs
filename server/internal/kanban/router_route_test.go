@@ -180,6 +180,14 @@ func TestRouterRouteSayRepliesWithoutLegacyDispatch(t *testing.T) {
 	if act.Status != ActivityStatusCompleted || act.Body != "收到，我先梳理一下" {
 		t.Fatalf("applied say = status %q body %q", act.Status, act.Body)
 	}
+	// 回了话就是「等人看」：任务头停在待审核，不能退回未开始（任务 #87）。
+	task, err := f.store.GetTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want waiting_user after a router say", task.Status)
+	}
 	if runs := f.runs(t); len(runs) != 0 {
 		t.Fatalf("route say started legacy runs: %#v", runs)
 	}

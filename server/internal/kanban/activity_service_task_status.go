@@ -52,3 +52,22 @@ func (s *ActivityService) markTurnTaskRunning(ctx context.Context, taskID string
 	}
 	_ = s.tasks.UpdateTaskStatus(ctx, taskID, StatusRunning, false)
 }
+
+// markTurnTaskWaitingUser 把「这一轮已经回了话」投影到任务头：待审核。
+//
+// 没有 WorkflowRun 可投影的回合（Router 直接答复、直连会话）以前只改活动状态，
+// 任务行会退回 pending —— 用户看到的是一轮已经回了话、任务却写着「未开始」。
+// 待审核才是真相：agent 说完了，等用户看。暂停与终态是操作者的状态，不复活。
+func (s *ActivityService) markTurnTaskWaitingUser(ctx context.Context, taskID string) {
+	if s == nil || s.tasks == nil {
+		return
+	}
+	task, err := s.tasks.GetTask(ctx, taskID)
+	if err != nil {
+		return
+	}
+	if task.Status == StatusWaitingUser || task.Status == StatusPaused || isTerminalStatus(task.Status) {
+		return
+	}
+	_ = s.tasks.UpdateTaskStatus(ctx, taskID, StatusWaitingUser, false)
+}

@@ -93,7 +93,12 @@ assert.match(panelShell, /maxHeight: "min\(88dvh, calc\(var\(--panel-vh, 100dvh\
 assert.match(panelShell, /height: viewportHeight \? `\$\{viewportHeight\}px` : "100dvh",/, "the overlay's own height must follow the visible viewport too, or the card stays centered against the wrong box");
 const mobileBlock = panelShell.slice(panelShell.indexOf("@media (max-width: 640px)"));
 assert.match(mobileBlock, /align-items: flex-start !important;/, "on mobile the card anchors to the top so it floats above the keyboard instead of being centered away");
-assert.match(mobileBlock, /max-height: var\(--panel-vh, 60dvh\) !important;/, "the mobile height cap must read --panel-vh, so it shrinks as the keyboard rises");
+assert.match(
+  mobileBlock,
+  /max-height: calc\(var\(--panel-vh, 100dvh\) - 56px\) !important;/,
+  "the mobile height cap must read --panel-vh and subtract the top bar + padding, or the bottom of a long panel (the run view) sits outside the visible area",
+);
+assert.match(mobileBlock, /overscroll-behavior: contain;/, "the scrolling body must not chain scrolls to the page behind the panel");
 
 function walk(dir) {
   const out = [];

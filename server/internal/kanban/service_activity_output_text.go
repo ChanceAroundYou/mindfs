@@ -7,6 +7,10 @@ import (
 
 // 节点输出的可读文本提取（Plan 2026-11-18 集成拆分：原在 service_activities.go，
 // 文件超过 500 行硬线后按职责拆出；仅移动代码，语义不变）。
+//
+// 2026-11-19（任务 #87 第 1 条）：这里曾经对 summary 做 1200 字截断，用户看到
+// 一半句子加「…」。截断只该发生在把正文喂给**模型**的地方（brief 有字节上限），
+// 落到任务详情给人看的总结必须是全文；展示端的窄卡片本来就另有 3 行 CSS 裁剪。
 
 func nodeRunText(nr NodeRun, keys ...string) string {
 	for _, key := range keys {
@@ -48,7 +52,7 @@ func nodeRunOutputSummary(nr NodeRun) string {
 	for _, key := range []string{"summary", "message", "text", "result", "title", "detail"} {
 		value, _ := nr.Output[key].(string)
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return truncateSummary(trimmed)
+			return trimmed
 		}
 	}
 	// 真实模型常把结果写成 changes: ["改了什么", ...]（任务 #66 的
@@ -59,7 +63,7 @@ func nodeRunOutputSummary(nr NodeRun) string {
 		for i, change := range changes {
 			lines[i] = "• " + change
 		}
-		return truncateSummary(strings.Join(lines, "\n"))
+		return strings.Join(lines, "\n")
 	}
 	type textField struct{ key, value string }
 	fields := make([]textField, 0, len(nr.Output))
@@ -79,14 +83,14 @@ func nodeRunOutputSummary(nr NodeRun) string {
 		return ""
 	}
 	if len(fields) == 1 {
-		return truncateSummary(fields[0].value)
+		return fields[0].value
 	}
 	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
 	parts := make([]string, len(fields))
 	for i, field := range fields {
 		parts[i] = field.key + ": " + field.value
 	}
-	return truncateSummary(strings.Join(parts, "；"))
+	return strings.Join(parts, "；")
 }
 
 // stringList 把 JSON 数组里的非空字符串按原顺序取出来；其它元素忽略。
@@ -115,12 +119,18 @@ func stringList(value any) []string {
 	return out
 }
 
-const maxSummaryRunes = 1200
+// maxStoredSummaryRunes 是写入 task_activities.summary / tasks.result_summary 的
+// 兜底上限，不是展示上限。历史值是 1200，实测把真实总结截在半句（任务 #87：
+// 17 条活动行 summary 长度恰好 1201，末尾带「…」）。现在的口径：
+//   - 正常路径写全文（Router 结算时已经由压缩总结保证简短）；
+//   - 只有病态输出（单个节点把几 MB 的转录吐进 output）才截到这个上限，
+//     避免一行活动把任务库和 WS 广播撑爆。
+const maxStoredSummaryRunes = 20000
 
 func truncateSummary(text string) string {
 	runes := []rune(text)
-	if len(runes) <= maxSummaryRunes {
+	if len(runes) <= maxStoredSummaryRunes {
 		return text
 	}
-	return string(runes[:maxSummaryRunes]) + "…"
+	return string(runes[:maxStoredSummaryRunes]) + "…"
 }

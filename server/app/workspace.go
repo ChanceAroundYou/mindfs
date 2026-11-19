@@ -290,6 +290,8 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban.SetWorkflowLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
 	// 执行节点只写自然语言；结果转换（outcome/summary）由 Router 模型完成。
 	services.SetWorkflowOutputLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
+	// 结算结果压缩（task #87）：同一套便宜 agent/model，把节点原文压成一段短总结。
+	services.Kanban.SetSummaryCompressor(api.NewWorkflowSummaryCompressor(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
 	services.Kanban.SetRouterAgent(services)
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)

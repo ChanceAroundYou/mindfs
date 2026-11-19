@@ -206,6 +206,9 @@ func (s *ActivityService) applyRouteSay(
 	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。运行期事件的
 	// 汇报（trigger != user_message）不得覆盖用户回合留下的任务结果摘要。
 	if act.RunID == "" && decision.TriggerKind == RouterTriggerUserMessage {
+		// 这一轮已经回了话、又没有 Run 可投影任务头：任务必须停在「待审核」，
+		// 不能退回「未开始」（用户实测：#87 回复完成后卡片仍是未开始）。
+		s.markTurnTaskWaitingUser(ctx, task.ID)
 		return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
 	}
 	return nil
@@ -263,6 +266,10 @@ func (s *ActivityService) applyRouteAskUser(
 		"purpose": fields["purpose"], "ordinal": action.Seq,
 		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
 	})
+	// 提问就是「等人回话」：任务头与活动状态一致，停在待审核。
+	if decision.TriggerKind == RouterTriggerUserMessage && act.RunID == "" {
+		s.markTurnTaskWaitingUser(ctx, task.ID)
+	}
 	return nil
 }
 

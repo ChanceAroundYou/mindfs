@@ -1,11 +1,15 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
+import { WorkflowIcon } from "./taskIcons";
 
 // 任务详情页的「跳到工作流会话」按钮。
 //
 // 工作流节点在各自的 agent 会话里干活，任务对话只放汇报。没有这个入口时，
-// 想看节点实际做了什么必须先展开运行视图、再逐节点点「打开会话」。这里把
-// 「最值得看的那条会话」提到详情页顶层，一次点击直达。
+// 想看节点实际做了什么必须先展开运行视图、再逐节点点「打开会话」。
+//
+// 任务 #87 第 4 条：它原来是一枚带文字的独立胶囊，和运行视图里的逐节点入口
+// 抢位置。现在收成一枚图标按钮（复用已有的 WorkflowIcon），名字放在 title /
+// aria-label 里 —— 位置不变、信息不减，视觉噪音没了。
 //
 // 只负责展示：选哪条会话由 pickWorkflowSessionKey（纯函数）决定，落点与取数
 // 都在 useRunViewEntry；按钮不自己路由。
@@ -38,30 +42,33 @@ export function WorkflowSessionJump({ sessionKey, loading, onOpenSession }: Work
         onOpenSession(sessionKey);
       }}
       title={label}
+      aria-label={label}
       style={hasSession ? buttonStyle : disabledStyle}
     >
-      {label}
+      <WorkflowIcon size={13} />
     </button>
   );
 }
 
 const buttonStyle: React.CSSProperties = {
   alignSelf: "flex-start",
-  border: "1px solid var(--accent-color)",
-  background: "rgba(37, 99, 235, 0.10)",
-  color: "var(--accent-color)",
+  width: 24,
+  height: 24,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  border: "1px solid var(--border-color)",
+  background: "transparent",
+  color: "var(--text-secondary)",
   borderRadius: 6,
-  padding: "3px 8px",
-  fontSize: 12,
-  fontWeight: 700,
+  padding: 0,
   cursor: "pointer",
+  flexShrink: 0,
 };
 
 const disabledStyle: React.CSSProperties = {
   ...buttonStyle,
-  borderColor: "var(--border-color)",
-  background: "transparent",
   color: "var(--text-secondary)",
-  fontWeight: 400,
+  opacity: 0.45,
   cursor: "not-allowed",
 };

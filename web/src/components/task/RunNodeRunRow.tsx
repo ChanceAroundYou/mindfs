@@ -1,14 +1,23 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import type { NodeRunSnapshot } from "./runTimelineTypes";
-import { nodeRunStatusColor, nodeRunStatusLabel } from "./runTimelineModel";
+import {
+  formatNodeRunDuration,
+  nodeRunDurationMs,
+  nodeRunStatusColor,
+  nodeRunStatusLabel,
+} from "./runTimelineModel";
 import { readablePayload } from "./runTimelinePayload";
 
 // 运行时间线里的单个 NodeRun 行。
 //
-// 纯展示且刻意保持轻量：一行「状态点 + 节点名 + 状态 + 会话入口」，下面是结果、
-// 错误或人工审批按钮。不再渲染输入、原始 JSON、agent/model 与开始/结束时间；
-// 那些是调试信息，不是用户关心的「做了什么、成了没有」。
+// 纯展示且刻意保持轻量：一行「状态点 + 节点名 + 状态 + 耗时 + 尝试次数 + 会话入口」，
+// 下面是变更清单、验证字段、错误或人工审批按钮。
+//
+// 任务 #87 第 3 条：节点输出里的自然语言段落（summary/result/message…）就是
+// Router 回复的原文，再抄一遍只是噪音 —— 详情去会话里看。运行视图只保留回复里
+// 没有的信息：耗时、第几次尝试、改了哪些东西、验证结果、失败原因、会话入口。
+// HumanGate 行的 prompt 例外，那是审批问题本身。
 
 export type RunNodeRunRowProps = {
   nodeRun: NodeRunSnapshot;
@@ -21,9 +30,12 @@ export type RunNodeRunRowProps = {
 
 export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSession, onDecideGate }: RunNodeRunRowProps) {
   const { t } = useI18n();
-  const output = readablePayload(nodeRun.output);
+  const output = readablePayload(nodeRun.output, { gatePrompt: isGate });
   const errorText = nodeRun.error?.trim() || null;
   const hasOutput = output.text !== "" || output.items.length > 0 || output.fields.length > 0;
+  const durationMs = nodeRunDurationMs(nodeRun);
+  const durationText = durationMs === null ? "" : formatNodeRunDuration(durationMs, t);
+  const showAttempt = (nodeRun.attempt ?? 1) > 1;
 
   return (
     <div
@@ -39,6 +51,16 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
           style={{ ...statusDotStyle, background: nodeRunStatusColor(nodeRun.status) }}
         />
         <span style={titleStyle}>{displayName}</span>
+        {durationText ? (
+          <span data-testid={`node-run-duration-${nodeRun.id}`} style={metaStyle}>
+            {durationText}
+          </span>
+        ) : null}
+        {showAttempt ? (
+          <span data-testid={`node-run-attempt-${nodeRun.id}`} style={metaStyle}>
+            {t("task.runTimeline.attempt", { n: nodeRun.attempt })}
+          </span>
+        ) : null}
         <span style={{ fontSize: 11, color: nodeRunStatusColor(nodeRun.status), flexShrink: 0 }}>
           {nodeRunStatusLabel(nodeRun.status, t)}
         </span>
@@ -146,6 +168,13 @@ const titleStyle: React.CSSProperties = {
   flex: "1 1 auto",
   minWidth: 0,
   overflowWrap: "anywhere",
+};
+
+const metaStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: "var(--text-secondary)",
+  flexShrink: 0,
+  fontVariantNumeric: "tabular-nums",
 };
 
 const sessionButtonStyle: React.CSSProperties = {

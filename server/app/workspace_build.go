@@ -135,6 +135,9 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetWorkflowLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
 	// 执行节点只写自然语言；结果转换（outcome/summary）由 Router 模型完成。
 	services.SetWorkflowOutputLLM(api.NewWorkflowLLMClient(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
+	// 结算结果压缩（task #87）：同一套便宜 agent/model，把节点原文压成一段短总结。
+	// 未配置 agent 时 NewWorkflowLLMClient 返回 nil，压缩器缺席 → 保持原文。
+	services.Kanban.SetSummaryCompressor(api.NewWorkflowSummaryCompressor(services, m.shared.routerConfig.Agent, m.shared.routerConfig.Model))
 	// Router 的 agent 适配器就是本账户的 AppContext（跑隐藏 TypeRouter 会话）。
 	services.Kanban.SetRouterAgent(services)
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))

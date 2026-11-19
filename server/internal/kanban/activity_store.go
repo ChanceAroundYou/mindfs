@@ -528,6 +528,30 @@ func (s *ActivityStore) ClearBody(ctx context.Context, id string) error {
 	return err
 }
 
+// ReplaceSummaryIfUnchanged 是异步总结压缩的落地闸门（任务 #87 第 2 条）。
+//
+// 压缩是后台模型调用，落地时这条回复可能已经被操作员改判、被下一轮覆盖，
+// 或者已经被别的路径写了新 summary。只在「summary 仍是我们读到的那个值」时
+// 改写，否则放弃 —— 迟到的压缩绝不能把后来的权威结果盖掉。
+// 返回是否真的写入，调用方据此决定要不要广播。
+func (s *ActivityStore) ReplaceSummaryIfUnchanged(ctx context.Context, id, want, summary string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, errors.New("activity id required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET summary = ?, updated_at = ? WHERE id = ? AND summary = ?`,
+		summary, time.Now().UTC().Format(time.RFC3339Nano), id, want)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 func ensureActivityUpdated(res sql.Result, id string) error {
 	n, err := res.RowsAffected()
 	if err != nil {

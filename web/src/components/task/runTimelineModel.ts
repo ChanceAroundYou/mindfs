@@ -83,3 +83,29 @@ export function pickWorkflowSessionKey(
   if (live) return (live.session_key as string).trim();
   return (usable[usable.length - 1].session_key as string).trim();
 }
+
+// 节点耗时（started_at → finished_at）。缺任一端、时间非法或倒挂都返回 null：
+// 运行视图宁可不显示，也不能编一个数出来。
+export function nodeRunDurationMs(nodeRun: {
+  started_at?: string;
+  finished_at?: string;
+}): number | null {
+  if (!nodeRun.started_at || !nodeRun.finished_at) return null;
+  const start = Date.parse(nodeRun.started_at);
+  const end = Date.parse(nodeRun.finished_at);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return end - start;
+}
+
+// 耗时的展示文案：一分钟以内按秒，超过按「分 秒」。文案走 i18n，不在这里硬编码。
+export function formatNodeRunDuration(
+  ms: number,
+  t: (key: MessageKey, params?: MessageParams) => string,
+): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return t("task.runTimeline.durationSeconds", { n: seconds });
+  return t("task.runTimeline.durationMinutes", {
+    m: Math.floor(seconds / 60),
+    s: seconds % 60,
+  });
+}

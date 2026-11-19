@@ -132,6 +132,8 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 	}
 	_ = s.activities.UpdateBody(ctx, agentAct.ID, strings.TrimSpace(text))
 	restore()
+	// 直连回合也没有 Run 可投影任务头：回了话就要停在待审核，而不是退回未开始。
+	s.markTurnTaskWaitingUser(ctx, task.ID)
 	s.recordTurnResultSummary(ctx, task.ID, text)
 	_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCompleted, "")
 }

@@ -9482,36 +9482,6 @@ groups:
       - 'server/internal/kanban/router_inspect_run_test.go:func TestRouterInspectRunServesEventTurn('
       - 'server/internal/kanban/router_event_lease_tick_test.go:func TestCoordinatorTickReclaimsStaleClaims('
 
-  # ── 会话工作树归属清理：给「repoint 拒绝做、又无清归属入口」那批会话收尾 ──────
-  - id: G-MQ
-    title: 会话工作树归属清理（原生端点 /api/sessions/{key}/worktree-ownership）
-    kind: fix
-    symptom: "一批会话的 `related_worktree` 指向早已删除的目录（`.worktree/task-36/37/38`、`/tmp/mindfs-recovery`、`llmux/src` 等），运行时 cwd 却早就离开了那儿。界面上它们永远挂着「目录不存在」徽标，而唯一看起来能治的 `POST /api/sessions/repoint` 在「会话已经在这个目录里」那一步直接 400 —— 那一步排在 fork 转录等**所有副作用之前**（刻意的：不该为一次无效变更造新 id），于是这批会话两头不通：repoint 拒绝做，清归属又没有入口。"
-    why: "repoint 的语义是「fork 新转录 + 换 id + 搬文件 + 清归属」，治不了这个形状的病：该动的只有 `related_worktree` 一列，搬转录只会多造一份副本（这些转录要么还在主 slug、要么压根不存在）。必须保留：① `ClearSessionWorktreeOwnership` 只摘 `related_worktree`，刻意不碰转录、binding、游标 —— 与 `RepointSession` 末尾「刻意不同任务侧归属」同一条边界，这里也只清会话侧；② 归属目录**仍然存在**时默认拒绝（那是活着的工作树，把人踢出去不该是「修一条坏行」的副作用），`force` 才是明确出口；③ 摘归属后若 `work_dir` 恰好就是那个已删目录也必须清成空串 —— `work_dir` 优先级高于 `related_worktree`，只摘归属不改 work_dir 的话运行时 cwd 还在原地，「徽标没了但还在往不存在的目录干活」；④ 复用 repoint 的两个既有判据：反查只认 `claude` binding（脚本手里只有 `CLAUDE_CODE_SESSION_ID`），正在回复（`HasActiveUse`）的会话拒绝换道；⑤ 清前 `pool.Close` 池级 key，agent 名按会话自己的绑定解析（既可能是 claude 也可能是 codex/dsh），不能硬编码；⑥ 顺带 `RemoveRelatedFilesUnder` 旧工作树前缀，否则「相关文件」面板指着一堆不存在的路径；⑦ 清完广播 `session.meta.updated`，否则前端要等下一次整表重拉才掉徽标 —— 而用户点的就是「让它消失」。"
-    boundary: "只清**会话侧**归属，不 fork/搬转录、不动 `session_agent_bindings`、不推进游标、不碰任务侧 worktree 引用（`Task.WorktreePath`），不删目录也不跑 git。无转录的会话仍然修不了 repoint 那条路 —— 本端点治的是「徽标与运行时 cwd」，不是「把转录搬走」；`force` 不宣称安全，它只是那个人明确要求的出口。"
-    files:
-      - server/internal/api/usecase/session_worktree_ownership.go
-      - server/internal/api/http_session_worktree_ownership.go
-      - server/internal/api/http_routes.go
-    tests:
-      - server/internal/api/usecase/session_worktree_ownership_test.go
-      - server/internal/api/http_session_worktree_ownership_test.go
-    anchors:
-      - 'server/internal/api/usecase/session_worktree_ownership.go:func (s *Service) ClearSessionWorktreeOwnership('
-      - 'server/internal/api/usecase/session_worktree_ownership.go:worktree 目录仍然存在'
-      - 'server/internal/api/usecase/session_worktree_ownership.go:manager.ClearRelatedWorktree(ctx, key)'
-      - 'server/internal/api/usecase/session_worktree_ownership.go:manager.SetWorkDir(ctx, key, "")'
-      - 'server/internal/api/usecase/session_worktree_ownership.go:FindAgentBindingByAgentSession(ctx, "claude", agentSessionID)'
-      - 'server/internal/api/usecase/session_worktree_ownership.go:session.InferAgentFromSession(current)'
-      - 'server/internal/api/http_session_worktree_ownership.go:handleSessionWorktreeOwnershipClear'
-      - 'server/internal/api/http_session_worktree_ownership.go:h.AppContext.BroadcastSessionMetaUpdated(rootID, out.Session)'
-      - 'server/internal/api/http_routes.go:/api/sessions/{key}/worktree-ownership'
-      - 'server/internal/api/http_routes.go:/api/sessions/worktree-ownership'
-      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipRefusesWhenDirectoryStillExists('
-      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipClearsMissingWorktree('
-      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipClearsStaleWorkDir('
-      - 'server/internal/api/http_session_worktree_ownership_test.go:func TestSessionWorktreeOwnershipRouteRegistered('
-
   # ── Router 工具句柄按轮路由 + deliver 前置闸门（「已转交」假动作）─────────────
   - id: G-MR
     title: Router 工具句柄按轮路由 + deliver_to_active_run 前置目标闸门
@@ -9540,3 +9510,63 @@ groups:
       - 'server/internal/api/router_runtime_bindings_test.go:func TestRouterToolBindingsFollowCurrentTurn('
       - 'server/internal/kanban/router_tools_delivery_test.go:func TestRouterDeliverToolRejectsWithoutSingleActiveNode('
       - 'server/internal/kanban/router_tools_delivery_test.go:blocked_agent_node_explains_retry'
+
+  # ── 任务详情面板：总结不截断 + 结算压缩 + 运行视图去原文 + 图标入口 + 移动端滚动 ──
+  - id: G-MS
+    title: 任务详情面板展示收口（总结不截断、结算由 Router 压缩、运行视图只显示增量信息、会话入口图标化、移动端长面板可滚）
+    kind: fix
+    symptom: "任务详情面板五处展示问题（用户 2026-11-19 报告，任务 #87）：① 总结被截断 —— 线上 17 条活动行 summary 长度恰好 1201 字符、末尾带「…」，句子停在一半。② 总结与节点原文没有区别 —— 结算文案就是最后一个成功 Agent 节点 output 的原样搬运。③ 运行视图里又是同一段原文 —— 详情去会话里看就好。④ 独立的「工作流会话」文字胶囊多余 —— 运行视图里已有逐节点入口。⑤ 移动端长面板被限制滚动，运行视图在可见区外。另有一处状态回归：一轮回复完成后任务卡片写着「未开始」而不是「待审核」。"
+    why: "必须保留：① 截断只该发生在把正文喂给**模型**的地方（brief 有字节上限），落到任务详情的总结是全文；仅保留 20000 字符的病态输出兜底（单节点吐几 MB 转录时不让一行活动撑爆任务库与 WS 广播）。② 结算先写原文（任何时刻都有可见结果），再由与 Router 同一 agent/model（effort=low）的一次性回合压成 1–3 句，CAS 换掉「还是它读到的那个值」的两行（活动 summary + 任务 result_summary）—— 操作员改判、下一轮结算、暂停/完成一律赢；失败/超时/空/过长/等同原文一律保持原文。重复结算（审批继续、启动对账）按 (activity, raw) 复用压缩结果，绝不把压缩结果盖回原文再压一次。刻意不走 Router 每任务 lane（单飞串行，再排队会和正在跑的回合互等）。提示词里的「用户这一轮的要求」必须回溯到真正的用户留言（Route 路径看 ReplyToID，legacy 路径按列表位置回溯）——结算时回复自己的 body 已被清空。③ 运行视图不再重复展示 summary/result/message/text/title/detail 与字符串 output（那是回复原文），只留 changes 变更清单、verification 等扁平字段、耗时（started_at→finished_at，缺端点/非法/倒挂一律不显示）、第 N 次尝试、错误与 HumanGate 的 prompt（审批问题本身）。④ 会话入口复用已有 WorkflowIcon，文字只进 title/aria-label。⑤ 移动端卡片高度必须扣掉顶栏 36px 与上下 padding 20px（遮罩从 top:36px 起，旧规则按整屏封顶会让卡片底部 36px+ 露在可见区外），滚动容器加 overscroll-behavior: contain。⑥ 没有 Run 可投影的回合（Router say/ask_user、直连会话）回话后任务头停在 waiting_user（待审核），不能退回 pending —— 暂停与终态不复活。"
+    boundary: "只改展示与结算文案：不动 activity/事件/决策的数据模型，不新增 HTTP 端点，不改路由与权限，不改 coordinator（coordinate 模式）的动作白名单/预算/幂等，不改 workflow 引擎的投影语义（有 Run 的回合仍按 taskStatusFromRun 投影）。压缩只影响文案，不宣称提升任务正确性；进程重启后 compressedReplies 丢失，最坏多压一次。移动端修复只针对 PanelShell 的 max-width:640px 分支。"
+    files:
+      - server/internal/kanban/service_activity_output_text.go
+      - server/internal/kanban/service_activities_summary.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_service_task_status.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/api/workflow_llm.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+      - web/src/components/shell/PanelShell.tsx
+      - web/src/components/task/RunNodeRunRow.tsx
+      - web/src/components/task/WorkflowSessionJump.tsx
+      - web/src/components/task/runTimelineModel.ts
+      - web/src/components/task/runTimelinePayload.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - server/internal/kanban/service_activity_summary_test.go
+      - server/internal/kanban/activity_task_status_test.go
+      - server/internal/kanban/router_route_test.go
+      - web/tests/run-timeline-readable.test.mjs
+      - web/tests/task-workflow-session-jump.test.mjs
+      - web/tests/task-panel-options.test.mjs
+    anchors:
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 20000'
+      - 'server/internal/kanban/service_activities_summary.go:func (s *Service) scheduleReplySummaryCompression('
+      - 'server/internal/kanban/service_activities_summary.go:func (s *Service) applyCompressedReplySummary('
+      - 'server/internal/kanban/service_activities_summary.go:func (s *Service) resolveCompressUserMessage('
+      - 'server/internal/kanban/service_activities_summary.go:activities.ReplaceSummaryIfUnchanged(ctx, activityID, raw, text)'
+      - 'server/internal/kanban/service_activities_summary.go:store.ReplaceTaskResultSummaryIfUnchanged(ctx, taskID, raw, text)'
+      - 'server/internal/kanban/service_activities_summary.go:const runSummaryCompressMaxRunes = 600'
+      - 'server/internal/kanban/service_activities_summary.go:_, width := utf8.DecodeRuneInString(text[idx:])'
+      - 'server/internal/kanban/service_activities.go:s.scheduleReplySummaryCompression(ctx, store, run, activity, raw)'
+      - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) ReplaceSummaryIfUnchanged('
+      - 'server/internal/kanban/task_store.go:func (s *TaskStore) ReplaceTaskResultSummaryIfUnchanged('
+      - 'server/internal/api/workflow_llm.go:func NewWorkflowSummaryCompressor('
+      - 'server/internal/api/workflow_llm.go:func (c workflowLLMClient) Compress('
+      - 'server/app/workspace_build.go:services.Kanban.SetSummaryCompressor(api.NewWorkflowSummaryCompressor('
+      - 'server/internal/kanban/activity_service_task_status.go:func (s *ActivityService) markTurnTaskWaitingUser('
+      - 'server/internal/kanban/activity_route_apply.go:s.markTurnTaskWaitingUser(ctx, task.ID)'
+      - 'server/internal/kanban/activity_service_turns.go:s.markTurnTaskWaitingUser(ctx, task.ID)'
+      - 'web/src/components/task/runTimelinePayload.ts:const PROSE_KEYS = ["summary", "result", "message", "text", "title", "detail"];'
+      - 'web/src/components/task/runTimelineModel.ts:export function nodeRunDurationMs('
+      - 'web/src/components/task/WorkflowSessionJump.tsx:<WorkflowIcon size={13} />'
+      - 'web/src/components/shell/PanelShell.tsx:max-height: calc(var(--panel-vh, 100dvh) - 56px) !important;'
+      - 'server/internal/kanban/service_activity_summary_test.go:func TestSettleWorkflowReplyKeepsLongSummary('
+      - 'server/internal/kanban/service_activity_summary_test.go:func TestSettleWorkflowReplyCompressesSummary('
+      - 'web/tests/run-timeline-readable.test.mjs:test("prose output fields are not repeated inside the run view"'

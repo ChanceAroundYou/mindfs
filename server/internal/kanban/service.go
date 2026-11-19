@@ -62,6 +62,12 @@ type Service struct {
 	// activityTurns 跟踪 ActivityService 派发的异步回合。收尾时先等回合退出、
 	// 再等 workflow driver，避免回合在临时库被删除后继续唤醒 driver。
 	activityTurns sync.WaitGroup
+	// summaryCompressor 是结算结果的压缩端口（任务 #87 第 2 条）。nil 时保持
+	// 引擎挑出的原文；装配时由 api 层用 Router 的 agent/model 注入。
+	summaryCompressor SummaryCompressor
+	// compressedReplies 记录「哪条回复的 summary 已经是压缩结果」，键为活动 id。
+	// 见 service_activities_summary.go 的 compressedReply；只影响是否重复压缩。
+	compressedReplies map[string]compressedReply
 	// workflowFinishLocks 串行化「同一 NodeRun 的终态收尾」与「操作员取消」。
 	// 合并/关闭工作树是不可回滚的 git 副作用：如果取消在 merge 之后、CAS 之前
 	// 赢下状态，就会得到「树已合并删除、行记 cancelled」的矛盾。锁只在进程内
@@ -116,7 +122,7 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(roots RootProvider) *Service {
-	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second}
+	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}}
 }
 
 // lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径

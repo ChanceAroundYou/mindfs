@@ -252,6 +252,13 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 	if status == "" {
 		return
 	}
+	// 任务 #87 第 2 条：同一条 Run 重复结算（审批继续、启动对账）时，summary 可能
+	// 已经被上一次结算压过。压缩只认「原文 → 压缩结果」这一份记录，识别到就
+	// 沿用它，绝不把压缩结果盖回原文再压一次。
+	raw := summary
+	if cached, ok := s.compressedReplyFor(activity.ID, raw); ok {
+		summary = cached
+	}
 	activityChanged := !(status == activity.Status && (summary == "" || summary == activity.Summary))
 	if activityChanged {
 		if err := activities.UpdateStatus(ctx, activity.ID, status, &summary); err != nil {
@@ -268,6 +275,11 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 	// 否则升级前已结算的回复会让卡片永远停在原始需求上。
 	if task.ResultSummary != summary {
 		_ = store.UpdateTaskResultSummary(ctx, run.TaskID, summary)
+	}
+	// 原文先落地（上面两处写入），再异步压缩：任何时刻用户都能看到结果，
+	// 压缩只是把同一句话变短。pending 分支的调度自己会识别「已经压过」。
+	if status == ActivityStatusCompleted {
+		s.scheduleReplySummaryCompression(ctx, store, run, activity, raw)
 	}
 }
 
