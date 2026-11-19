@@ -16,6 +16,7 @@ import { useI18n } from "../i18n";
 import { getRootNodeId } from "../services/net/rootNode";
 import { shouldApplyTaskDetail } from "../services/taskDetailOrder";
 import {
+  archiveTask,
   beginTaskFinishWorktree,
   deleteTask,
   fetchTaskDetails,
@@ -331,6 +332,15 @@ export function useTaskBoard(params: UseTaskBoardParams) {
         });
         if (!ok) return;
         await deleteTask(rootId, task.id, nodeId);
+        refreshWorkspaceBoard();
+        return;
+      }
+      // 归档 / 取消归档：只换任务自己的标记，卡片在「完成/取消」与「归档」两个
+      // 子组之间挪位置。applyTaskDetails 换得掉卡片内容，换不掉它落在哪个子组、
+      // 以及工作台要不要还显示它 —— 所以照样重拉一次结构。
+      if (action === "archive-task" || action === "unarchive-task") {
+        const detail = await archiveTask(rootId, task.id, action === "archive-task", nodeId);
+        applyTaskDetails(rootId, [detail]);
         refreshWorkspaceBoard();
         return;
       }

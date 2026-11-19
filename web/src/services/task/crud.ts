@@ -93,6 +93,22 @@ export async function deleteTask(rootId: string, taskId: string, nodeId?: string
 }
 
 /**
+ * 归档 / 取消归档一张终态任务卡。
+ *
+ * 归档只打标记：卡片从工作台隐藏、留在看板「已结束 → 归档」子组；服务端还会给
+ * 相关会话打归档标记，但**不删**任何后代会话或转录。取消归档只清任务自己的标记，
+ * 不会反过来解开会话（会话可能是用户自己归档的）。
+ */
+export async function archiveTask(rootId: string, taskId: string, archived: boolean, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/archive`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, archived }),
+  });
+}
+
+/**
  * 重建已删除的任务 worktree。
  *
  * 显式动作，服务端不自动重建：目录没了之后那个分支可能还在（代码还在分支上）也可能已经

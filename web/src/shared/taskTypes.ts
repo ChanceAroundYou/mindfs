@@ -43,6 +43,11 @@ export type KanbanTask = {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  /**
+   * 非空 = 已归档（服务端落库）。归档只是任务自己的标记：卡片从工作台隐藏、
+   * 留在看板「已结束 → 归档」子组；相关会话同样只被打上归档标记，没有被删除。
+   */
+  archived_at?: string;
   aux_flags?: {
     ask_user_waiting?: boolean;
     has_plan?: boolean;

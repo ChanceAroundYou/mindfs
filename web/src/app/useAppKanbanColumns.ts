@@ -39,19 +39,26 @@ export function useAppKanbanColumns(params: UseAppKanbanColumnsParams) {
     },
     {
       index: 3,
-      // 已结束 = 完成 + 取消；失败合并进取消。
+      // 已结束 = 完成 + 取消（失败合并进取消）+ 归档（#86：archived_at 非空）。
+      // 归档是一个**独立子组**而不是另一列：归档的任务仍然是终态任务，只是被
+      // 用户收起来了；`tasks` 三组之和必须等于这里，否则列头数字会对不上。
       name: t("task.column.ended"),
       tasks: kanbanTasks.filter((task) => task.status === "success" || task.status === "fail" || task.status === "cancelled"),
       groups: [{
         key: "success",
         name: t("task.group.completed"),
         tone: "success" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "success"),
+        tasks: kanbanTasks.filter((task) => !task.archived_at && task.status === "success"),
       }, {
         key: "cancelled",
         name: t("task.group.cancelled"),
         tone: "muted" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
+        tasks: kanbanTasks.filter((task) => !task.archived_at && (task.status === "fail" || task.status === "cancelled")),
+      }, {
+        key: "archived",
+        name: t("task.group.archived"),
+        tone: "muted" as const,
+        tasks: kanbanTasks.filter((task) => !!task.archived_at),
       }],
       // 别在这里滤掉空分组：TaskBoardView 用「groups 非空」决定走不走分组渲染，
       // 滤掉「已完成」后，只要「已取消」有任务就整组看不见——列头却仍按 tasks.length

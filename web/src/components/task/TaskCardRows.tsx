@@ -10,6 +10,7 @@ import type { SessionPresentationSummary } from "../../shared/sessionPresentatio
 import type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 export type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { TaskCardFinishButton } from "./TaskCardFinishButton";
+import { ArchiveIcon } from "../session/sessionListShared";
 import {
   DeleteIcon,
   TaskCancelIcon,
@@ -408,21 +409,55 @@ export function TaskCardRows({
             </>
           ) : (
             <>
-              {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
-              {canReopen ? (
+              {/* 归档的卡片只剩「取消归档 + 删除」：活已经收起来了，能做的要么是把它
+                  拿回「完成/取消」组，要么是真删掉。finish/reopen 在归档时也收起来 ——
+                  归档语义是「这条已经翻篇」，留一堆操作键只会让人误以为它还在流转。 */}
+              {task.archived_at ? (
                 <button
                   type="button"
-                  title={t("task.reopen")}
-                  aria-label={t("task.reopen")}
+                  title={t("task.actionUnarchive")}
+                  aria-label={t("task.actionUnarchive")}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onMove(task, "reopen");
+                    onMove(task, "unarchive-task");
                   }}
                   style={taskCardIconButtonStyle("accent")}
                 >
-                  <TaskReopenIcon />
+                  <ArchiveIcon />
                 </button>
-              ) : null}
+              ) : (
+                <>
+                  {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
+                  {canReopen ? (
+                    <button
+                      type="button"
+                      title={t("task.reopen")}
+                      aria-label={t("task.reopen")}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onMove(task, "reopen");
+                      }}
+                      style={taskCardIconButtonStyle("accent")}
+                    >
+                      <TaskReopenIcon />
+                    </button>
+                  ) : null}
+                  {/* 归档：只打标记，卡片挪去「已结束 → 归档」子组并从工作台隐藏；
+                      相关会话被一起打上归档标记，但不会被删除。 */}
+                  <button
+                    type="button"
+                    title={t("task.actionArchive")}
+                    aria-label={t("task.actionArchive")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onMove(task, "archive-task");
+                    }}
+                    style={taskCardIconButtonStyle()}
+                  >
+                    <ArchiveIcon />
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 title={t("task.deleteTask")}
