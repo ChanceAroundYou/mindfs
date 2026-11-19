@@ -178,3 +178,12 @@ PID 19820、health 200；本机二进制与 `/` 引用的 bundle 均为刚装的
 本机 `curl /` 返回的 bundle 与刚装的 `web/dist` 不一致 —— 运行中仍是 11-19 17:33 启动的旧进程
 （exe deleted），重启后消解。
 
+**抬版 `v0.5.5-1200`（2026-11-20 01:2x）**：用户要求把版本号直接抬到 1200。tag `v0.5.5-1200`
+打在 `fee35758`（当时 HEAD），已推 origin（安卓 APK 也从该 tag 出包，见安卓计划）。并发会话
+在部署期间继续提交，`deploy-all` 的分支跟随两次拿到 `v0.5.5-1200-N-g…-dirty`，改为
+`git worktree add --detach fee35758` 钉死提交：门禁（`go test ./...`、`tsc`、Vitest 712 通过）
+→ `make build`/`make install` → `deploy-wsl.sh` / `deploy-fn.sh` / `deploy-pcwin.sh` 显式传
+`v0.5.5-1200`。独立核对：四端 `mindfs --version` 逐字一致 `v0.5.5-1200`，WSL/fn `is-active` +
+`/mindfs/health` 200，pc-win PID 47836 + health 200，本机 `/` 的 bundle 与刚装的一致；本机
+system 单元仍是旧进程，待用户 `sudo systemctl restart mindfs`。
+
