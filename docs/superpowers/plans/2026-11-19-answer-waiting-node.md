@@ -1,7 +1,7 @@
 # 用户答复回填停住的 Agent 节点（answer-waiting-node）
 
 - 日期：2026-11-19
-- 状态：已实现并提交（未 push / 未部署 / 本机待用户重启），执行记录见文末
+- 状态：已实现并提交、隔离验收（真实模型）通过（未 push / 未部署 / 本机待用户重启），执行记录见文末
 - 上游：`dad415bf`（`Scope: G-MR`，修掉「已转交」假动作）
 - 定制登记：`Scope: G-MT`
 
@@ -218,10 +218,56 @@ type ActivityNodeAnswerer interface {
 - 变异验证 4 处（各自打红对应用例后还原）：去掉 `Input["user_answer"]` 注入 → prompt 用例红；
   去掉幂等分支 → 幂等用例红；去掉工具闸门的目标解析 → 闸门用例红；去掉投影守卫 → 目标校验用例红。
 
+### 隔离验收（2026-11-19，真实模型）
+
+环境：worktree `/tmp/mindfs-gmt-iso-wt`（detach 在 `1b9aebed`，`web/dist` 与 `agents.json`
+软链）+ 隔离实例 `/tmp/mindfs-answer-iso`（端口 **7434**，`router.mode=route`、
+`agent=claude`、`model=sonnet`、`effort=low`、`turn_timeout=180s`）；隔离自检「隔离成立」，
+线上 7331 全程未碰（验收前后 `/mindfs/health` 均 200）。
+
+脚本：`e2e/test_task_router_answer.py`（纯标准库，复用 `test_task_router_coordinate_common.Client`；
+`--db` 可选，只读 `workflow_run_events`）。跑法：
+
+```bash
+python3 e2e/test_task_router_answer.py \
+  --base http://127.0.0.1:7434/mindfs --user <uid> --root proj \
+  --db <config>/users/<uid>/meta/proj/tasks/task-kanban.db
+```
+
+链路（单 Agent 夹具，节点在没收到答复时自报「需要用户确认选 A 还是 B」，收到
+「## 用户答复」才按答复收尾）：
+
+1. `workflow_choice=specified` 先把流程跑起来 → 节点 `blocked` → NodeRun 与 Run 投影都停在
+   `waiting_user`，`output.reason` 说明原因；
+2. 用户发「我希望是A」（`workflow_choice=empty`）→ 决策 `action_kinds=["answer_waiting_node"]`、
+   `status=applied`，动作里 `node_run_id` 钉住的就是那条停住的行；
+3. 出现 attempt+1 行：`prev_attempt_id` 指回原行、`session_key` 与原行逐字一致、
+   `input.user_answer` 与动作 `body` 逐字一致并含用户原话；
+4. 该行带着答复重跑 `success`，输出「已按用户答复采用方案A。」，Run 投影推进到
+   `node_states={"run":"success"}`；
+5. 用户看到事实回执「已把你的答复交给「run」节点，正在带着答复重跑。」（`purpose=reply`、
+   `reply_to_id` 指回用户留言）；
+6. 账本 `node_retried`：`reason=user_answer`、`prev_attempt_id` / `answer_activity_id` /
+   `answer_excerpt` 全部对得上；任务最终停在**待审核**（G-MS 语义：Run 结算成功即待审核，
+   不是「节点还在等答复」，后者由 Run 投影排除）。
+
+**结果：连续 3 轮全部 PASS**（36.1 s / 42.1 s / 39.1 s，最终一轮 `task_348308f5a75af7e6`、
+决策延迟 13.96 s、整条链路 39.1 s）。三条实测事实写进脚本断言：
+
+1. **Router 会把用户原话整理成动作 body**：实测出现「用户确认采用方案 A（原话：「我希望是A」）。
+   请按方案 A 继续执行后续流程。」。因此断言改为「`input.user_answer` == 决策里的
+   `action.body` 且含用户原话」，而不是「逐字等于用户原话」—— 后者是错的口径。
+2. **节点 blocked 的措辞每次不同**（模型自述），断言只认 `output.outcome == "blocked"` 且
+   `reason` 非空，不钉具体字句。
+3. **成功结算后任务状态是 `waiting_user`（待审核）**，不是 `success`（`taskStatusFromRun`
+   在 G-MS 里就是这么定的）。第一轮把「任务不是 waiting_user」当断言，实测红；已按真实
+   语义修正。
+
+未覆盖：多候选节点时的 `node_id` 指派、HumanGate 停住时工具的拒绝话术、答复后节点再次
+`waiting_user` 的二轮答复；这三条只有单测覆盖，未上真实模型。
+
 ### 未做 / 残留
 
-- 未在隔离实例里用真实模型跑「停住 → 答复 → 节点重跑」全链路；本条改动只走既有
-  节点生命周期，但真实模型的答复质量未验收。
 - 未覆盖 kill -9 / SQLite 语句中断下的跨进程幂等（与 R1 T9 边界一致）。
 - 未 push、未部署；本机 system 单元重启仍需用户执行。
 - `make check-upstream`（在干净 worktree 的提交树上跑 `go run ./scripts/check-upstream`）：
