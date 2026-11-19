@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { pruneChildState } from "../../shared/sessionTree";
 import { COLLAPSED_CHILD_SESSION_LIMIT, parseForkSessionSource } from "./sessionListShared";
+import { orderTaskGroupedRows } from "./sessionTaskGroups";
 import type { SessionItem, VisibleSessionRow } from "./sessionListTypes";
 
 type Scope = { rootId?: string; nodeId?: string };
@@ -74,21 +75,29 @@ export function useSessionChildTree({
       }
     }
     const rows: VisibleSessionRow[] = [];
-    const append = (item: SessionItem) => {
-      rows.push({ type: "session", session: item });
+    const append = (item: SessionItem, nested = false) => {
+      rows.push({ type: "session", session: item, nested });
       const children = childrenByParent.get(item.key) || [];
       const key = stateKey(item, scope);
       const expanded = !!expandedChildren[key];
       const active = activeParents.has(item.key);
       const visible = active ? (expanded ? children : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)) : [];
-      visible.forEach(append);
+      visible.forEach((child) => append(child, nested));
       const collapsedBase = collapsedBaseCount[key] ?? children.length;
       const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
       if (active && (hiddenCount > 0 || expanded || childrenHasMore[key])) {
         rows.push({ type: "child-toggle", parent: item, loadedChildCount: collapsedBase, hiddenCount, expanded });
       }
     };
-    topLevel.forEach(append);
+    // 任务分组（2026-11-20 用户决策）：同一 task_id 下的顶层会话先出分组头，
+    // 成员紧随其后并缩进一级。分组只在有多条会话时出现，单条会话的展示不变。
+    for (const entry of orderTaskGroupedRows(topLevel)) {
+      if (entry.kind === "group") {
+        rows.push({ type: "task-group", taskId: entry.taskId, label: entry.label, count: entry.count });
+        continue;
+      }
+      append(entry.session, entry.nested);
+    }
     return rows;
   };
 

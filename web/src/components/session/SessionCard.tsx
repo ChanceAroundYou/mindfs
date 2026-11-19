@@ -27,6 +27,7 @@ function SessionCard({
   highlightQuery,
   syncing = false,
   unread = false,
+  nested = false,
   onSelect,
   onSync,
   onPin,
@@ -42,6 +43,9 @@ function SessionCard({
   highlightQuery?: string;
   syncing?: boolean;
   unread?: boolean;
+  // nested：被收进任务分组，只借子会话的缩进。语义上它仍是顶层会话，
+  // 所以 isSubagent 不动 —— 顶部徽标、右键菜单、跳转行为都保持原样。
+  nested?: boolean;
   onSelect?: (session: SessionItem) => void;
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
@@ -96,7 +100,9 @@ function SessionCard({
         borderRadius: "8px",
         position: "relative",
         // 子代理的折角回到名字前：保留原有 10px 子层级缩进，和普通会话图标位一起布局。
-        paddingLeft: isSubagent ? "10px" : 0,
+        // 子代理与任务分组内的会话共用同一级缩进：前者本来就是子层级，后者是
+        // 分组头的从属行（2026-11-20 方案 A）。
+        paddingLeft: isSubagent || nested ? "10px" : 0,
       }}
     >
       <div
@@ -116,7 +122,7 @@ function SessionCard({
           minWidth: 0,
           display: "flex",
           alignItems: "center",
-          gap: isSubagent ? "3px" : "6px",
+          gap: isSubagent || nested ? "3px" : "6px",
           transition: "all 0.15s ease",
           position: "relative",
         }}

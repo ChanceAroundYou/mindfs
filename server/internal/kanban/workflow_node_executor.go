@@ -37,6 +37,9 @@ type WorkflowNodeExecution struct {
 	// ReuseSessionKey is the earlier attempt/iteration session for
 	// session_reuse_policy=same_stage. Empty means there is none.
 	ReuseSessionKey string
+	// RunSessionKey 是这一轮 Run 已经绑定的共享会话（session_reuse_policy=run）。
+	// 为空表示还没建：适配器建好之后由 prepare 写回 Run，后续节点直接复用。
+	RunSessionKey string
 	Prompt          string
 	// UserInput 是触发本次 Run 的用户留言（{previous_input} 的解析结果）。
 	// 它只用于给这条节点会话起一个能区分轮次的名字 —— 同一条任务每开一轮
@@ -97,15 +100,16 @@ type WorkflowNodeRunner interface {
 	RunWorkflowNode(ctx context.Context, exec WorkflowNodeExecution) (WorkflowNodeResult, error)
 }
 
-// WorkflowNodeSessionPolicy reads the node param; D2 default is per-node (new
-// session, isolated context). Only explicit task_main reuses the task session.
+// WorkflowNodeSessionPolicy reads the node param. 默认是 run（2026-11-20 用户
+// 决策）：一轮 Run 的所有节点共用一条会话，一次工作流就是一段对话；节点显式
+// 写 always_new / per_node 才单独开会话，task_main 则并入任务主会话。
 func WorkflowNodeSessionPolicy(node WorkflowNode) string {
 	raw, _ := node.Params["session_reuse_policy"].(string)
 	switch p := strings.TrimSpace(raw); p {
-	case SessionReuseTaskMain, SessionReuseSameStage, SessionReuseAlwaysNew, SessionReusePerNode:
+	case SessionReuseTaskMain, SessionReuseSameStage, SessionReuseAlwaysNew, SessionReusePerNode, SessionReuseRun:
 		return p
 	default:
-		return SessionReusePerNode
+		return SessionReuseRun
 	}
 }
 
@@ -275,11 +279,33 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 		}
 		exec.ReuseSessionKey = key
 	}
+	// run：一轮 Run 一条会话。持锁读-建-写回，并行分支同时起步时也只有一条
+	// 会话会被记成 Run 的会话（另一条的建会话请求在锁内看到已有 key 就复用）。
+	if exec.SessionPolicy == SessionReuseRun {
+		release := s.lockWorkflowRunSession(run.ID)
+		defer release()
+		key, err := store.WorkflowRunSessionKey(ctx, run.ID)
+		if err != nil {
+			return WorkflowNodeExecution{}, err
+		}
+		exec.RunSessionKey = key
+	}
 	sessionKey, err := runner.EnsureWorkflowNodeSession(ctx, exec)
 	if err != nil {
 		return WorkflowNodeExecution{}, err
 	}
 	exec.NodeRun.SessionKey = strings.TrimSpace(sessionKey)
+	if exec.SessionPolicy == SessionReuseRun && exec.NodeRun.SessionKey != "" {
+		// 先到先得；返回的 key 才是 Run 的会话。理论上锁内不会落败，跨进程
+		// 并发时仍以库里已写入的为准。
+		bound, err := store.SetWorkflowRunSessionKey(ctx, run.ID, exec.NodeRun.SessionKey)
+		if err != nil {
+			return WorkflowNodeExecution{}, err
+		}
+		if bound != "" {
+			exec.NodeRun.SessionKey = bound
+		}
+	}
 	return exec, nil
 }
 

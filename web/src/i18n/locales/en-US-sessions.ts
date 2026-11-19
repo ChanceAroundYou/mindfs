@@ -17,6 +17,8 @@ export const enUSSessions = {
   "sessionList.expandChildren": "Expand child sessions",
   "sessionList.remainingChildren": "{count} child sessions left",
   "sessionList.remainingSessions": "{count} sessions left",
+  "sessionList.taskGroupTitle": "{count} sessions in task \"{name}\"",
+  "sessionList.taskGroupFallback": "Task sessions",
   "sessionList.nodeUnreachable": "Node unreachable — showing last fetched content",
   "sessionList.pinProject": "Pin project",
   "sessionList.unpinProject": "Unpin project",

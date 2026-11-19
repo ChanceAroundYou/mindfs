@@ -78,6 +78,9 @@ type Service struct {
 	// 赢下状态，就会得到「树已合并删除、行记 cancelled」的矛盾。锁只在进程内
 	// 有效，跨进程语义本来就未宣称 durable。
 	workflowFinishLocks map[string]*workflowFinishLock
+	// workflowRunSessionLocks 串行化「同一轮 Run 首次绑定共享会话」：并行分支
+	// 同时起步时只能有一条会话被记成 Run 的会话，否则另一条立刻变成孤儿。
+	workflowRunSessionLocks map[string]*workflowFinishLock
 	// finishTurnDone 是「收尾回合跑完之后」的回调，由 api 层在装配时挂上。
 	// 见 worktree_finish.go 的 notifyFinishTurnOutcome。
 	finishTurnDone func(rootID, taskID string, succeeded bool)
@@ -127,7 +130,7 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(roots RootProvider) *Service {
-	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}}
+	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowRunSessionLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}}
 }
 
 // lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径
@@ -158,6 +161,40 @@ func (s *Service) lockWorkflowNodeFinish(nodeRunID string) func() {
 		lock.refs--
 		if lock.refs == 0 && s.workflowFinishLocks[nodeRunID] == lock {
 			delete(s.workflowFinishLocks, nodeRunID)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// lockWorkflowRunSession 取得某一轮 Run 的「首次绑定共享会话」锁。与
+// lockWorkflowNodeFinish 同一套引用计数语义：持锁期间完成「读 Run 会话 →
+// 没有就建 → 写回 Run」这一整段，并行分支才不会各开一条会话。
+func (s *Service) lockWorkflowRunSession(runID string) func() {
+	if s == nil {
+		return func() {}
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return func() {}
+	}
+	s.mu.Lock()
+	if s.workflowRunSessionLocks == nil {
+		s.workflowRunSessionLocks = map[string]*workflowFinishLock{}
+	}
+	lock := s.workflowRunSessionLocks[runID]
+	if lock == nil {
+		lock = &workflowFinishLock{}
+		s.workflowRunSessionLocks[runID] = lock
+	}
+	lock.refs++
+	s.mu.Unlock()
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 && s.workflowRunSessionLocks[runID] == lock {
+			delete(s.workflowRunSessionLocks, runID)
 		}
 		s.mu.Unlock()
 	}

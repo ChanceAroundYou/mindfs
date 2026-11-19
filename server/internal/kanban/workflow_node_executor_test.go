@@ -41,6 +41,11 @@ func TestWorkflowAgentNodeUsesWorkflowRunner(t *testing.T) {
 	}
 	run := &WorkflowRun{ID: "wf-runner-run", TaskID: "wf-runner-task", Revision: 1,
 		Graph: WorkflowDefinition{Nodes: []WorkflowNode{{ID: "build", Kind: NodeKindAgent, Params: map[string]any{"prompt": "实现登录页"}}}}}
+	// session_reuse_policy=run 的「先到先得」要写回 workflow_runs.session_key，
+	// 所以 Run 必须是持久化的行——生产路径里它本来就由 driver 从库里读出来。
+	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		t.Fatalf("CreateWorkflowRunAndSetEngine: %v", err)
+	}
 	node := run.Graph.Nodes[0]
 	nodeRun := NodeRun{ID: "nr-build", RunID: run.ID, NodeID: "build", LoopPath: "l/2", Iteration: 1, Attempt: 2, Status: NodeRunQueued}
 
@@ -61,7 +66,7 @@ func TestWorkflowAgentNodeUsesWorkflowRunner(t *testing.T) {
 		got.NodeRun.LoopPath != "l/2" || got.NodeRun.Iteration != 1 || got.NodeRun.Attempt != 2 {
 		t.Fatalf("runner received NodeRun %#v, want exact identity %#v", got.NodeRun, nodeRun)
 	}
-	if got.NodeRun.SessionKey != "wf-session-1" || got.Prompt != "实现登录页" || got.SessionPolicy != SessionReusePerNode {
+	if got.NodeRun.SessionKey != "wf-session-1" || got.Prompt != "实现登录页" || got.SessionPolicy != SessionReuseRun {
 		t.Fatalf("runner exec = %#v", got)
 	}
 	if got.Task.ID != "wf-runner-task" || got.RootID != root.ID {
@@ -72,17 +77,20 @@ func TestWorkflowAgentNodeUsesWorkflowRunner(t *testing.T) {
 	}
 }
 
-func TestWorkflowNodeSessionPolicyDefaultsToPerNode(t *testing.T) {
+func TestWorkflowNodeSessionPolicyDefaultsToRun(t *testing.T) {
 	cases := []struct {
 		param string
 		want  string
 	}{
-		{"", SessionReusePerNode},
+		// 2026-11-20 用户决策：一轮 Run 一条会话，缺省即 run；旧的 per_node 仍是
+		// 显式可选项。
+		{"", SessionReuseRun},
+		{"run", SessionReuseRun},
 		{"per_node", SessionReusePerNode},
 		{"task_main", SessionReuseTaskMain},
 		{"same_stage", SessionReuseSameStage},
 		{"always_new", SessionReuseAlwaysNew},
-		{"something_else", SessionReusePerNode},
+		{"something_else", SessionReuseRun},
 	}
 	for _, tc := range cases {
 		node := WorkflowNode{ID: "n", Kind: NodeKindAgent, Params: map[string]any{"session_reuse_policy": tc.param}}

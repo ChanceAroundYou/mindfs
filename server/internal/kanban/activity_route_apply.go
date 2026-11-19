@@ -324,7 +324,7 @@ func (s *ActivityService) applyRouteRunWorkflow(
 	if _, err := s.markRouteReply(ctx, decision, userAct, act, action); err != nil {
 		return err
 	}
-	begun, err := s.beginWorkflowRunVersion(ctx, task, version, userAct.ID, act)
+	begun, err := s.beginWorkflowRunVersion(ctx, task, version, userAct.ID, act, action.SessionMode)
 	if err != nil {
 		return err
 	}

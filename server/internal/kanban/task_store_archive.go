@@ -158,6 +158,25 @@ func (s *TaskStore) TaskRelatedSessionKeys(ctx context.Context, taskID string) (
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// session_reuse_policy=run（2026-11-20 起的默认）：一轮 Run 的共享会话只记
+	// 在 workflow_runs.session_key 上，节点行反查不到，必须单独收一遍。
+	rows, err = s.db.QueryContext(ctx,
+		`SELECT DISTINCT session_key FROM workflow_runs WHERE task_id = ? AND session_key != ''`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		add(key)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	rows, err = s.db.QueryContext(ctx,
 		`SELECT DISTINCT session_key FROM task_activities WHERE task_id = ? AND session_key != ''`, taskID)
 	if err != nil {

@@ -191,6 +191,13 @@ const (
 	RouterActionSuggestFinish RouterActionKind = "suggest_finish" // P2
 )
 
+// run_workflow 的会话模式（2026-11-20 用户决策）：默认新开一段会话；
+// continue 接续任务最近实际在用的那条会话。
+const (
+	RouterSessionModeNew      = "new"
+	RouterSessionModeContinue = "continue"
+)
+
 type RouterAction struct {
 	Seq        int              `json:"seq"`
 	Kind       RouterActionKind `json:"kind"`
@@ -204,7 +211,10 @@ type RouterAction struct {
 	// NodeRunID 是 answer_waiting_node 的目标：工具在当轮就把它解析成具体行，
 	// apply 阶段不再重新判定「哪个节点在等我答复」。
 	NodeRunID string `json:"node_run_id,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	// SessionMode 只对 run_workflow 有意义：new（默认）= 这一轮开一段新会话，
+	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。
+	SessionMode string `json:"session_mode,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // IsExecutionAction 报告动作是否会启动/继续一次执行。用于跨动作校验与

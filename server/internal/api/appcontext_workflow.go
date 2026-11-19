@@ -69,6 +69,16 @@ func (s *AppContext) EnsureWorkflowNodeSession(ctx context.Context, exec kanban.
 		}
 	case kanban.SessionReuseAlwaysNew:
 		// Explicitly never reuse.
+	case kanban.SessionReuseRun:
+		// 2026-11-20 起的默认：一轮 Run 一条会话。Run 已绑定的会话优先；没有
+		// 时回落到这个 NodeRun 自己已绑定的会话 —— 升级前创建的 Run 没有共享
+		// 会话，恢复中的节点必须继续它原来那段对话，而不是被切到新对话。
+		if reusable(exec.RunSessionKey) {
+			return strings.TrimSpace(exec.RunSessionKey), nil
+		}
+		if reusable(exec.NodeRun.SessionKey) {
+			return strings.TrimSpace(exec.NodeRun.SessionKey), nil
+		}
 	default: // per_node
 		// A persisted NodeRun session means this is a resume/re-claim, not a
 		// fresh attempt; continue the conversation it already started.
@@ -94,6 +104,10 @@ func (s *AppContext) EnsureWorkflowNodeSession(ctx context.Context, exec kanban.
 	// 里完全一样。把节点名、重试/循环标记与触发这轮的用户留言拼进后缀，轮次之间
 	// 才分得开。
 	name := kanban.WorkflowNodeSessionName(base, exec.Node.Name, exec.UserInput, exec.NodeRun)
+	if policy == kanban.SessionReuseRun {
+		// 共享会话不属于某个节点：名字里不出现节点名，只带这轮留言的片段。
+		name = kanban.WorkflowRunSessionName(base, exec.UserInput)
+	}
 	created, err := uc.CreateSession(ctx, usecase.CreateSessionInput{
 		RootID: exec.RootID,
 		Input: session.CreateInput{

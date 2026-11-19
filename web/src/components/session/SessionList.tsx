@@ -14,6 +14,7 @@ import {
   isSessionSyncing,
 } from "./sessionListShared";
 import type { SessionItem, SessionListProps, VisibleSessionRow } from "./sessionListTypes";
+import { TaskSessionGroupHeader } from "./TaskSessionGroupHeader";
 import { useSessionChildTree } from "./useSessionChildTree";
 
 export type {
@@ -293,6 +294,16 @@ export function SessionList({
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {visibleSessions.map((row) => {
+              if (row.type === "task-group") {
+                return (
+                  <TaskSessionGroupHeader
+                    key={`task-group-${row.taskId}`}
+                    taskId={row.taskId}
+                    label={row.label}
+                    count={row.count}
+                  />
+                );
+              }
               if (row.type === "child-toggle") {
                 const loading = !!loadingChildren[row.parent.key];
                 const hasMoreChildren = !!childrenHasMore[row.parent.key];
@@ -325,6 +336,7 @@ export function SessionList({
                   key={`${String((session as any)._nodeId || "")}::${session.key}`}
                   session={session}
                   sessionByKey={sessionByKey}
+                  nested={row.nested}
                   selected={session.key === selectedKey}
                   parentHighlighted={!!selectedParentKey && session.key === selectedParentKey}
                   highlightQuery={searchResultsMode ? searchQuery : ""}

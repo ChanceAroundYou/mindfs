@@ -22,6 +22,7 @@ import type {
   SessionItem,
   VisibleSessionRow,
 } from "./sessionListTypes";
+import { TaskSessionGroupHeader } from "./TaskSessionGroupHeader";
 import { useMultiProjectSessionList } from "./useMultiProjectSessionList";
 
 export function MultiProjectSessionList({
@@ -192,6 +193,16 @@ export function MultiProjectSessionList({
                       没徽标、没选中时这段留白照旧在，行距不因状态变化而抖。 */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingTop: TOP_BADGE_LIFT_PX }}>
                     {rows.map((row) => {
+                      if (row.type === "task-group") {
+                        return (
+                          <TaskSessionGroupHeader
+                            key={`task-group-${group.rootId}-${row.taskId}`}
+                            taskId={row.taskId}
+                            label={row.label}
+                            count={row.count}
+                          />
+                        );
+                      }
                       if (row.type === "child-toggle") {
                         const stateKey = childStateKey(row.parent, group.rootId, groupNodeId);
                         const loadingChild = !!loadingChildren[stateKey];
@@ -228,6 +239,7 @@ export function MultiProjectSessionList({
                           session={{ ...session, root_id: sessionRoot }}
                           nodeColor={groupColor}
                           sessionByKey={sessionByKey}
+                          nested={row.nested}
                           selected={session.key === selectedKey && sessionRoot === selectedRootId && String((group as any)._nodeId || "") === String(selectedNodeId || "")}
                           parentHighlighted={false}
                           highlightQuery=""

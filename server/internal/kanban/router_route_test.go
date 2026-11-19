@@ -242,6 +242,57 @@ func TestRouterRouteRunWorkflowStartsRunWithPlaceholder(t *testing.T) {
 	})
 }
 
+// session_mode：continue 把新一轮 Run 直接绑到任务最近在用的会话；缺省 new
+// 留空，由第一个节点惰性建新会话（2026-11-20 用户决策）。
+func TestRouterRouteRunWorkflowSessionMode(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        map[string]any
+		wantMain    bool
+		description string
+	}{
+		{
+			name:        "continue binds the latest task session",
+			args:        map[string]any{"workflow_id": "workflow-feature", "session_mode": "continue"},
+			wantMain:    true,
+			description: "continue 必须接续任务主会话",
+		},
+		{
+			name:        "default starts a new session",
+			args:        map[string]any{"workflow_id": "workflow-feature"},
+			wantMain:    false,
+			description: "默认 new 不能落在任务主会话里",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRouteFixture(t, RouterModeRoute)
+			ctx := context.Background()
+			if err := f.svc.SetTaskMainSessionKey(ctx, f.rootID, "task-1", "sess-main"); err != nil {
+				t.Fatalf("SetTaskMainSessionKey: %v", err)
+			}
+			f.agent.calls = []scriptedRouterCall{{tool: "router_run_workflow", args: tc.args}}
+			if _, _, err := f.activity.CreateUserActivity(ctx, "task-1", "接着上一轮做", CommentWorkflowChoiceEmpty, nil); err != nil {
+				t.Fatalf("CreateUserActivity: %v", err)
+			}
+			f.waitDecision(t, RouterDecisionApplied)
+			runs := f.runs(t)
+			if len(runs) != 1 {
+				t.Fatalf("runs = %d, want 1", len(runs))
+			}
+			// new 的会话是第一个节点惰性建的，这里只钉「不接续主会话」这条
+			// 用户可见契约；建会话/写回 Run 由 prepare 层的用例覆盖。
+			got := runs[0].SessionKey
+			if tc.wantMain && got != "sess-main" {
+				t.Fatalf("run session = %q, want sess-main (%s)", got, tc.description)
+			}
+			if !tc.wantMain && got == "sess-main" {
+				t.Fatalf("run session = %q, must not reuse the task main session (%s)", got, tc.description)
+			}
+		})
+	}
+}
+
 func TestRouterRouteMessageAgentUsesRouterBody(t *testing.T) {
 	f := newRouteFixture(t, RouterModeRoute)
 	f.agent.calls = []scriptedRouterCall{{

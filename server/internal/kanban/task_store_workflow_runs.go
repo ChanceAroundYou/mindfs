@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
  selected_routes_json TEXT NOT NULL DEFAULT '{}', loop_state_json TEXT NOT NULL DEFAULT '{}',
  loop_exit_expr_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  integration_branch TEXT NOT NULL DEFAULT '',
- triggered_by TEXT NOT NULL DEFAULT '', activity_id TEXT NOT NULL DEFAULT ''
+ triggered_by TEXT NOT NULL DEFAULT '', activity_id TEXT NOT NULL DEFAULT '',
+ session_key TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_task ON workflow_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_task_created ON workflow_runs(task_id,created_at DESC);
@@ -52,6 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(run_
 		{"workflow_runs", "integration_branch", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_runs", "triggered_by", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_runs", "activity_id", "TEXT NOT NULL DEFAULT ''"},
+		{"workflow_runs", "session_key", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_id", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_path", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_branch", "TEXT NOT NULL DEFAULT ''"},
@@ -124,7 +126,8 @@ func (s *TaskStore) migrateWorkflowRunsDropTaskUnique() error {
  node_states_json TEXT NOT NULL DEFAULT '{}', node_outputs_json TEXT NOT NULL DEFAULT '{}',
  selected_routes_json TEXT NOT NULL DEFAULT '{}', loop_state_json TEXT NOT NULL DEFAULT '{}',
  loop_exit_expr_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
- integration_branch TEXT NOT NULL DEFAULT '', triggered_by TEXT NOT NULL DEFAULT '', activity_id TEXT NOT NULL DEFAULT ''
+ integration_branch TEXT NOT NULL DEFAULT '', triggered_by TEXT NOT NULL DEFAULT '', activity_id TEXT NOT NULL DEFAULT '',
+ session_key TEXT NOT NULL DEFAULT ''
 )`,
 		`INSERT INTO workflow_runs(id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at)
  SELECT id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at FROM workflow_runs_task_unique_legacy`,
@@ -219,7 +222,7 @@ func (s *TaskStore) CreateWorkflowRunAndSetEngine(ctx context.Context, run *Work
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_runs(id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch,triggered_by,activity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID, run.Version, run.Revision, graph, states, outputs, routes, loops, exits, now, now, strings.TrimSpace(run.IntegrationBranch), strings.TrimSpace(run.TriggeredBy), strings.TrimSpace(run.ActivityID))
+	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_runs(id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch,triggered_by,activity_id,session_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID, run.Version, run.Revision, graph, states, outputs, routes, loops, exits, now, now, strings.TrimSpace(run.IntegrationBranch), strings.TrimSpace(run.TriggeredBy), strings.TrimSpace(run.ActivityID), strings.TrimSpace(run.SessionKey))
 	if err != nil {
 		return err
 	}
@@ -230,12 +233,12 @@ func (s *TaskStore) CreateWorkflowRunAndSetEngine(ctx context.Context, run *Work
 	return tx.Commit()
 }
 
-const workflowRunColumns = `id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch,triggered_by,activity_id`
+const workflowRunColumns = `id,task_id,version,revision,graph_json,node_states_json,node_outputs_json,selected_routes_json,loop_state_json,loop_exit_expr_json,created_at,updated_at,integration_branch,triggered_by,activity_id,session_key`
 
 func scanWorkflowRun(row interface{ Scan(...any) error }) (*WorkflowRun, error) {
 	var r WorkflowRun
 	var graph, states, outputs, routes, loops, exits, created, updated string
-	if err := row.Scan(&r.ID, &r.TaskID, &r.Version, &r.Revision, &graph, &states, &outputs, &routes, &loops, &exits, &created, &updated, &r.IntegrationBranch, &r.TriggeredBy, &r.ActivityID); err != nil {
+	if err := row.Scan(&r.ID, &r.TaskID, &r.Version, &r.Revision, &graph, &states, &outputs, &routes, &loops, &exits, &created, &updated, &r.IntegrationBranch, &r.TriggeredBy, &r.ActivityID, &r.SessionKey); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWorkflowRunNotFound
 		}
@@ -298,6 +301,84 @@ func (s *TaskStore) ListWorkflowRunsForTask(ctx context.Context, taskID string) 
 }
 func (s *TaskStore) WorkflowRunByID(ctx context.Context, runID string) (*WorkflowRun, error) {
 	return scanWorkflowRun(s.db.QueryRowContext(ctx, `SELECT `+workflowRunColumns+` FROM workflow_runs WHERE id=?`, runID))
+}
+
+// WorkflowRunSessionKey 读这一轮 Run 已经绑定的共享会话，没绑定返回空串。
+func (s *TaskStore) WorkflowRunSessionKey(ctx context.Context, runID string) (string, error) {
+	var key string
+	if err := s.db.QueryRowContext(ctx, `SELECT session_key FROM workflow_runs WHERE id=?`, strings.TrimSpace(runID)).Scan(&key); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrWorkflowRunNotFound
+		}
+		return "", err
+	}
+	return strings.TrimSpace(key), nil
+}
+
+// SetWorkflowRunSessionKey 把这一轮 Run 绑到一条共享会话上（session_reuse_policy=run）。
+//
+// 先到先得：只在 session_key 还是空的时候写入，然后读回最终值。并行分支同时
+// 首次执行时，两边都会尝试建会话，但只有一条会被记成 Run 的会话；调用方拿
+// 返回的 key 去跑节点，落败的那条会话不会被使用。
+//
+// 刻意不走 saveWorkflowRunTx / revision CAS：会话绑定不是运行状态，推进 revision
+// 会让正在跑的 driver 撞 ErrRunConflict。
+func (s *TaskStore) SetWorkflowRunSessionKey(ctx context.Context, runID, sessionKey string) (string, error) {
+	runID = strings.TrimSpace(runID)
+	sessionKey = strings.TrimSpace(sessionKey)
+	if runID == "" || sessionKey == "" {
+		return "", errors.New("workflow run id and session key required")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE workflow_runs SET session_key=? WHERE id=? AND session_key=''`, sessionKey, runID); err != nil {
+		return "", err
+	}
+	var current string
+	if err := s.db.QueryRowContext(ctx, `SELECT session_key FROM workflow_runs WHERE id=?`, runID).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrWorkflowRunNotFound
+		}
+		return "", err
+	}
+	return strings.TrimSpace(current), nil
+}
+
+// LatestTaskSessionKey 返回「这条任务最近一次真正在用的会话」，供 Router 选择
+// 接续（session_mode=continue）时把新一轮 Run 直接绑上去。
+//
+// 顺序：最近一条带会话的对话活动 → 最近一轮 Run 的共享会话 → 任务主会话。
+// 活动排在前面是因为它反映「用户/agent 最后实际在哪条会话里说话」；Run 表次之
+// 是为了兜住「活动已被清理但 Run 还在」的历史任务。
+func (s *TaskStore) LatestTaskSessionKey(ctx context.Context, taskID string) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return "", errors.New("task id required")
+	}
+	var key string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT session_key FROM task_activities WHERE task_id=? AND session_key != '' ORDER BY created_at DESC,rowid DESC LIMIT 1`,
+		taskID).Scan(&key)
+	if err == nil && strings.TrimSpace(key) != "" {
+		return strings.TrimSpace(key), nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	err = s.db.QueryRowContext(ctx,
+		`SELECT session_key FROM workflow_runs WHERE task_id=? AND session_key != '' ORDER BY created_at DESC,rowid DESC LIMIT 1`,
+		taskID).Scan(&key)
+	if err == nil && strings.TrimSpace(key) != "" {
+		return strings.TrimSpace(key), nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT main_session_key FROM tasks WHERE id=?`, taskID).Scan(&key); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(key), nil
 }
 func (s *TaskStore) SaveWorkflowRun(ctx context.Context, run *WorkflowRun) error {
 	tx, err := s.db.BeginTx(ctx, nil)

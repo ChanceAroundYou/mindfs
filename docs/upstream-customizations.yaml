@@ -10164,6 +10164,73 @@ groups:
       - 'server/internal/api/appcontext_activity_test.go:func TestPickAgentPrefersConfiguredTaskAgent('
       - 'server/internal/api/appcontext_activity_test.go:func TestRunDirectActivityUsesTaskDefaultsForNewMainSession('
       - 'server/app/task_dispatch_defaults_test.go:func TestTaskConfigDefaults('
+  - id: G-NG
+    title: 任务会话收拢（一轮 Run 一条会话 + Router session_mode + 侧栏按 task_id 分组）
+    kind: feature
+    symptom: "2026-11-20 用户报「一个任务有多个会话时要收拢成父子结构」，并定下策略：一轮工作流应只有一条会话，工作流内部可自行选择切不切新对话；跨轮由 Router 决定接续还是新开（默认新开）；侧栏按任务分组。改动前 `session_reuse_policy` 默认 `per_node`，一轮 workflow 每个 Agent 节点各建一条会话，同一任务在侧栏散成若干条互不相干的顶层会话。"
+    why: "必须保留：(1) `SessionReuseRun = \"run\"` 是默认策略（`workflow_node_executor.go` 的 `WorkflowNodeSessionPolicy` 空值/未知值都落 run），显式 `per_node`/`always_new`/`same_stage` 照旧；(2) `workflow_runs.session_key` 记一轮 Run 的共享会话，`SetWorkflowRunSessionKey` 先到先得（`WHERE session_key=''`）且**不推进 revision**——推进会撞 driver 的 CAS；`lockWorkflowRunSession` 按 runID 串行化「读→建→写回」，否则并行分支同时起步会各建一条；(3) `LatestTaskSessionKey` 顺序固定为「最近活动 → 最近 Run 共享会话 → 任务主会话」，Router 的 `session_mode=continue` 靠它预填；(4) `router_run_workflow` 的 `session_mode` 缺省 new、非法值当轮拒绝（工具与 `validateRouterActions` 两处），否则拼错会静默退化成 new；(5) 提示词规则 4 必须同时写「一轮共用一条会话」与「跨轮你选 new/continue」，缺一句模型就滑回每轮新会话；(6) 归档级联必须收 `workflow_runs.session_key`（只记在 Run 上，节点行反查不到），漏收会让归档会话继续留在侧栏；(7) 侧栏分组零数据改动：`sessionTaskGroups.ts` 只对 ≥2 条顶层会话成组，`nested` 只借缩进、不得改 `isSubagent`（否则顶栏徽标会被当子会话隐藏），搜索结果保持平铺；(8) 节点「本节点另起会话」写 `session_reuse_policy=always_new`，取消则删参数回到 run。"
+    boundary: "不迁移任何存量会话结构（用户选方案 A：分组纯展示，`parent_session_key`/归属/JSONL 不动）；不把存量散落会话合并成一条；不做分组折叠；不改 Router 的 `session_mode` 默认以外语义（`message_agent` 仍留在任务最近会话）；前端节点参数字符串 `always_new` 与后端 `SessionReuseAlwaysNew` 必须一致。"
+    files:
+      - server/internal/kanban/types.go
+      - server/internal/kanban/workflow_types.go
+      - server/internal/kanban/workflow_node_executor.go
+      - server/internal/kanban/workflow_node_executor_test.go
+      - server/internal/kanban/workflow_session_name.go
+      - server/internal/kanban/workflow_run_session_test.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/task_store_archive.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/router_prompt_guidance_test.go
+      - server/internal/kanban/router_session_mode_test.go
+      - server/internal/kanban/router_route_test.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/api/appcontext_workflow.go
+      - server/internal/api/appcontext_workflow_test.go
+      - web/src/components/session/sessionListTypes.ts
+      - web/src/components/session/useSessionChildTree.ts
+      - web/src/components/session/sessionTaskGroups.ts
+      - web/src/components/session/TaskSessionGroupHeader.tsx
+      - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/shared/workflowModel.ts
+      - web/src/components/task/WorkflowNodeInspector.tsx
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/session-task-group.test.mjs
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-20-task-session-consolidation.md
+    tests:
+      - server/internal/kanban/workflow_run_session_test.go
+      - server/internal/kanban/router_session_mode_test.go
+      - server/internal/kanban/router_prompt_guidance_test.go
+      - server/internal/kanban/router_route_test.go
+      - server/internal/kanban/workflow_node_executor_test.go
+      - server/internal/api/appcontext_workflow_test.go
+      - web/tests/session-task-group.test.mjs
+    anchors:
+      - 'server/internal/kanban/types.go:	SessionReuseRun = "run"'
+      - 'server/internal/kanban/workflow_session_name.go:func WorkflowRunSessionName(base, userInput string) string {'
+      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) SetWorkflowRunSessionKey(ctx context.Context, runID, sessionKey string) (string, error) {'
+      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) LatestTaskSessionKey(ctx context.Context, taskID string) (string, error) {'
+      - 'server/internal/kanban/service.go:func (s *Service) lockWorkflowRunSession(runID string) func() {'
+      - 'server/internal/kanban/router_types.go:	RouterSessionModeNew      = "new"'
+      - 'server/internal/kanban/router_prompt.md:一轮 workflow 内部的所有节点默认共用**一条**会话'
+      - 'server/internal/kanban/task_store_archive.go:SELECT DISTINCT session_key FROM workflow_runs WHERE task_id = ? AND session_key != '''''
+      - 'web/src/components/session/sessionTaskGroups.ts:export function orderTaskGroupedRows(topLevel: SessionItem[]): TaskGroupedEntry[] {'
+      - 'web/src/components/session/sessionTaskGroups.ts:export function taskSessionGroupLabel(sessions: SessionItem[]): string {'
+      - 'web/src/components/session/TaskSessionGroupHeader.tsx:export function TaskSessionGroupHeader({ taskId, label, count }: {'
+      - 'web/src/components/session/useSessionChildTree.ts:for (const entry of orderTaskGroupedRows(topLevel)) {'
+      - 'web/src/components/session/sessionListTypes.ts:| { type: "task-group"; taskId: string; label: string; count: number }'
+      - 'web/src/components/session/SessionCard.tsx:paddingLeft: isSubagent || nested ? "10px" : 0,'
+      - 'web/src/shared/workflowModel.ts:export const WORKFLOW_NODE_NEW_SESSION_POLICY = "always_new";'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:data-testid="workflow-node-new-session"'
   - id: G-NH
     title: 工作流编辑器的四处交互修复（删除键失效 / 节点卡片错位 / 独立 worktree 开关 / 草稿卡挤）
     kind: fix

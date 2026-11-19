@@ -46,6 +46,22 @@ func WorkflowNodeSessionName(base, nodeLabel, userInput string, nodeRun NodeRun)
 	return base + " · " + suffix
 }
 
+// WorkflowRunSessionName 给「一轮工作流共用的那条会话」起名。
+//
+// 与节点会话名同源（任务名 / #N + 这轮留言片段），但不带节点名 —— 它不属于
+// 某个节点。留言为空时退回 base，保证名字永远非空。
+func WorkflowRunSessionName(base, userInput string) string {
+	base = strings.TrimSpace(base)
+	snippet := firstLineSnippet(userInput, 20)
+	if snippet == "" {
+		return base
+	}
+	if base == "" {
+		return snippet
+	}
+	return base + " · " + snippet
+}
+
 // WorkflowNodeRunMarker 给「同一条留言把同一个节点又跑一遍」一个短标记：
 // 重试会建 attempt+1 的 NodeRun（session_key 为空，per_node 策略于是又开一个
 // 新会话），循环每次迭代同理 —— 这两条路径的节点名与触发留言都和首次执行

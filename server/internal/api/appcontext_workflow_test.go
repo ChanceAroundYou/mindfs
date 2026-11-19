@@ -61,37 +61,64 @@ func TestWorkflowNodeAdapterSessionReusePolicies(t *testing.T) {
 	node := kanban.WorkflowNode{ID: "build", Name: "实现", Kind: kanban.NodeKindAgent}
 	nodeRun := kanban.NodeRun{ID: "nr-1", RunID: "run-1", NodeID: "build", Attempt: 1}
 
-	// D2 default: per_node creates its own session. 名字带上节点名 —— 同一条任务
-	// 每轮都会新开 worker 会话，只叫「任务名 / #7」在会话列表里分不出谁是谁。
-	first, err := app.EnsureWorkflowNodeSession(ctx, workflowAdapterExec(rootID, task, node, nodeRun))
+	// 默认策略是 run（2026-11-20）：一轮 Run 一条会话。首次没有 Run 会话时建
+	// 一条 —— 名字不带节点名，它不属于某个节点，只带这轮留言片段。
+	runExec := workflowAdapterExec(rootID, task, node, nodeRun)
+	runExec.UserInput = "把这轮做完"
+	first, err := app.EnsureWorkflowNodeSession(ctx, runExec)
 	if err != nil {
-		t.Fatalf("per_node first: %v", err)
+		t.Fatalf("run first: %v", err)
 	}
-	if got := sessionNameForTest(t, app, rootID, first); got != "工作流任务 / #7 · 实现" {
-		t.Fatalf("session name = %q, want 工作流任务 / #7 · 实现", got)
+	if got := sessionNameForTest(t, app, rootID, first); got != "工作流任务 / #7 · 把这轮做完" {
+		t.Fatalf("run session name = %q, want 工作流任务 / #7 · 把这轮做完", got)
 	}
-	// A different node instance must not inherit the previous node's session.
-	nodeRun2 := kanban.NodeRun{ID: "nr-2", RunID: "run-1", NodeID: "review", Attempt: 1}
-	second, err := app.EnsureWorkflowNodeSession(ctx, workflowAdapterExec(rootID, task, node, nodeRun2))
-	if err != nil {
-		t.Fatalf("per_node second: %v", err)
+	// 同一轮 Run 的另一个节点拿到的是同一条会话（prepare 已把 key 写回 Run）。
+	second := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: "nr-2", RunID: "run-1", NodeID: "review", Attempt: 1})
+	second.RunSessionKey = first
+	got, err := app.EnsureWorkflowNodeSession(ctx, second)
+	if err != nil || got != first {
+		t.Fatalf("run second node = %q err=%v, want %q", got, err, first)
 	}
-	if second == first {
+	// 升级前的 Run 没有共享会话，但节点已绑过会话：恢复时必须继续它，不能被
+	// 切到一段新对话。
+	legacy := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: "nr-legacy", RunID: "run-1", NodeID: "build", Attempt: 1, SessionKey: first})
+	got, err = app.EnsureWorkflowNodeSession(ctx, legacy)
+	if err != nil || got != first {
+		t.Fatalf("run legacy resume = %q err=%v, want %q", got, err, first)
+	}
+
+	// 显式 per_node：每个节点实例自己的会话，名字带上节点名以区分。
+	perNode := func(runID, nodeID string) string {
+		t.Helper()
+		exec := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: "nr-" + nodeID, RunID: runID, NodeID: nodeID, Attempt: 1})
+		exec.SessionPolicy = kanban.SessionReusePerNode
+		key, err := app.EnsureWorkflowNodeSession(ctx, exec)
+		if err != nil {
+			t.Fatalf("per_node %s: %v", nodeID, err)
+		}
+		return key
+	}
+	nodeFirst := perNode("run-per-node", "build")
+	if got := sessionNameForTest(t, app, rootID, nodeFirst); got != "工作流任务 / #7 · 实现" {
+		t.Fatalf("per_node session name = %q, want 工作流任务 / #7 · 实现", got)
+	}
+	if nodeSecond := perNode("run-per-node", "review"); nodeSecond == nodeFirst {
 		t.Fatal("per_node reused another node run's session")
 	}
 	// Resume: the NodeRun already has a bound session, so keep it.
-	resumed := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: "nr-1", RunID: "run-1", NodeID: "build", Attempt: 1, SessionKey: first})
-	got, err := app.EnsureWorkflowNodeSession(ctx, resumed)
-	if err != nil || got != first {
-		t.Fatalf("per_node resume = %q err=%v, want %q", got, err, first)
+	resumed := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: "nr-1", RunID: "run-1", NodeID: "build", Attempt: 1, SessionKey: nodeFirst})
+	resumed.SessionPolicy = kanban.SessionReusePerNode
+	got, err = app.EnsureWorkflowNodeSession(ctx, resumed)
+	if err != nil || got != nodeFirst {
+		t.Fatalf("per_node resume = %q err=%v, want %q", got, err, nodeFirst)
 	}
 	// same_stage continues the earlier iteration/attempt session.
 	same := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: "nr-3", RunID: "run-1", NodeID: "build", Attempt: 2})
 	same.SessionPolicy = kanban.SessionReuseSameStage
-	same.ReuseSessionKey = second
+	same.ReuseSessionKey = nodeFirst
 	got, err = app.EnsureWorkflowNodeSession(ctx, same)
-	if err != nil || got != second {
-		t.Fatalf("same_stage = %q err=%v, want %q", got, err, second)
+	if err != nil || got != nodeFirst {
+		t.Fatalf("same_stage = %q err=%v, want %q", got, err, nodeFirst)
 	}
 	// always_new ignores the bound session.
 	fresh := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: "nr-4", RunID: "run-1", NodeID: "build", Attempt: 3, SessionKey: first})
@@ -154,6 +181,9 @@ func TestWorkflowNodeAdapterSessionNamesDifferPerAttempt(t *testing.T) {
 	attempt := func(nodeRunID string, n int) string {
 		t.Helper()
 		exec := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: nodeRunID, RunID: "run-attempt", NodeID: "execute", Attempt: n})
+		// 重试标记属于「每节点一条会话」的语义；run 策略下重试回到同一条 Run
+		// 会话（那正是默认要的行为），所以这里显式 per_node 来钉命名规则。
+		exec.SessionPolicy = kanban.SessionReusePerNode
 		exec.UserInput = "请提交修改"
 		key, err := app.EnsureWorkflowNodeSession(ctx, exec)
 		if err != nil {

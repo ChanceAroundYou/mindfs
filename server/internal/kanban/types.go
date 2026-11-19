@@ -27,8 +27,13 @@ const (
 	SessionReuseTaskMain  = "task_main"
 	SessionReuseSameStage = "same_stage"
 	SessionReuseAlwaysNew = "always_new"
-	// SessionReusePerNode 是 workflow Agent 节点的默认（D2）：每个节点实例
-	// 自己的 session，只有显式 task_main 才复用任务主会话。
+	// SessionReuseRun 是 workflow Agent 节点的默认（2026-11-20 用户决策，
+	// 取代 D2 的 per_node）：同一轮 Run 的所有节点共用一条会话，一次工作流
+	// 就是一段对话。节点想单独开一段对话时显式设 always_new。
+	SessionReuseRun = "run"
+	// SessionReusePerNode 是旧默认：每个节点实例自己的 session。保留是为了
+	// 存量节点定义（没有 session_reuse_policy 的按新默认 run 走，显式写
+	// per_node 的继续按节点隔离）。
 	SessionReusePerNode = "per_node"
 )
 

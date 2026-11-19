@@ -184,7 +184,7 @@ func (s *ActivityService) beginWorkflowRun(
 	}
 	version, err := s.resolveWorkflowVersion(ctx, userInput, choice, versionID)
 	if err == nil {
-		_, err = s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct)
+		_, err = s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct, "")
 	}
 	if err != nil {
 		s.failActivity(ctx, agentAct, err)
@@ -211,6 +211,7 @@ func (s *ActivityService) beginWorkflowRunVersion(
 	version WorkflowVersion,
 	userActivityID string,
 	placeholder *TaskActivity,
+	sessionMode string,
 ) (*TaskActivity, error) {
 	agentAct, err := s.ensureAgentActivity(ctx, task, CommentWorkflowChoiceEmpty, placeholder)
 	if err != nil {
@@ -219,7 +220,7 @@ func (s *ActivityService) beginWorkflowRunVersion(
 	if guardErr := s.prepareUserTurn(ctx, task, true, agentAct); guardErr != nil {
 		return agentAct, nil
 	}
-	if _, err := s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct); err != nil {
+	if _, err := s.persistWorkflowRun(ctx, task, version, userActivityID, agentAct, sessionMode); err != nil {
 		s.failActivity(ctx, agentAct, err)
 	}
 	return agentAct, nil
@@ -227,7 +228,10 @@ func (s *ActivityService) beginWorkflowRunVersion(
 
 // persistWorkflowRun creates the data-plane run, links it to the agent activity,
 // and (when an executor is wired) starts asynchronous execution.
-func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, version WorkflowVersion, userActivityID string, agentAct *TaskActivity) (*WorkflowRun, error) {
+//
+// sessionMode 只影响 Run 的共享会话（session_reuse_policy=run）：continue 时
+// 先绑定任务最近实际在用的会话，new/空则留空，由第一个节点惰性建新会话。
+func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, version WorkflowVersion, userActivityID string, agentAct *TaskActivity, sessionMode string) (*WorkflowRun, error) {
 	if s.tasks == nil {
 		return nil, errors.New("task store unavailable")
 	}
@@ -244,6 +248,13 @@ func (s *ActivityService) persistWorkflowRun(ctx context.Context, task Task, ver
 		SelectedRoutes: map[string]string{},
 		LoopState:      map[string]*LoopState{},
 		LoopExitExpr:   map[string]string{},
+	}
+	if strings.TrimSpace(sessionMode) == RouterSessionModeContinue {
+		// 接续：绑到任务最近实际在用的会话。查不到就留空，退化成新会话 ——
+		// 「接续不了」不该让这一轮直接失败。
+		if key, err := s.tasks.LatestTaskSessionKey(ctx, task.ID); err == nil {
+			run.SessionKey = key
+		}
 	}
 	if s.branch != nil {
 		branch, err := s.branch(ctx, task, version.Graph)

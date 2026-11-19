@@ -221,13 +221,18 @@ func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {
 		InputSchema: objectSchema(map[string]any{
 			"workflow_id": map[string]any{"type": "string", "minLength": 1},
 			"version_id":  map[string]any{"type": "string"},
-			"reason":      map[string]any{"type": "string"},
+			"session_mode": map[string]any{
+				"type": "string", "enum": []string{RouterSessionModeNew, RouterSessionModeContinue},
+				"description": "new（默认）= 这一轮开一段新会话；continue = 接续任务最近在用的会话",
+			},
+			"reason": map[string]any{"type": "string"},
 		}, []string{"workflow_id"}),
 		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var args struct {
-				WorkflowID string `json:"workflow_id"`
-				VersionID  string `json:"version_id"`
-				Reason     string `json:"reason"`
+				WorkflowID  string `json:"workflow_id"`
+				VersionID   string `json:"version_id"`
+				SessionMode string `json:"session_mode"`
+				Reason      string `json:"reason"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
@@ -236,6 +241,14 @@ func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {
 			if workflowID == "" {
 				return "", errors.New("workflow_id required")
 			}
+			sessionMode := strings.TrimSpace(args.SessionMode)
+			switch sessionMode {
+			case "":
+				sessionMode = RouterSessionModeNew
+			case RouterSessionModeNew, RouterSessionModeContinue:
+			default:
+				return "", fmt.Errorf("session_mode must be %q or %q", RouterSessionModeNew, RouterSessionModeContinue)
+			}
 			// 运行期事件回合的 brief 不带 workflow 目录（T8 有意置空：事件回合本来
 			// 就禁止开新执行）。这里不再按目录拒绝，否则模型看到的是「没有这个
 			// workflow」而不是「运行期不许跑 workflow」；统一交给运行期白名单。
@@ -243,10 +256,11 @@ func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {
 				return "", fmt.Errorf("workflow %q is not available for this task", workflowID)
 			}
 			return e.record(RouterAction{
-				Kind:       RouterActionRunWorkflow,
-				WorkflowID: workflowID,
-				VersionID:  strings.TrimSpace(args.VersionID),
-				Reason:     truncateRouterText(args.Reason, 500),
+				Kind:        RouterActionRunWorkflow,
+				WorkflowID:  workflowID,
+				VersionID:   strings.TrimSpace(args.VersionID),
+				SessionMode: sessionMode,
+				Reason:      truncateRouterText(args.Reason, 500),
 			})
 		},
 	}
@@ -410,6 +424,11 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			}
 		case RouterActionRunWorkflow:
 			executions++
+			switch action.SessionMode {
+			case "", RouterSessionModeNew, RouterSessionModeContinue:
+			default:
+				return fmt.Errorf("invalid session_mode %q", action.SessionMode)
+			}
 			// 运行期事件 brief 不带 workflow 目录，也不许开新执行：可用性检查
 			// 交给运行期白名单（它会以「运行期事件回合不允许」拒绝），别在这里
 			// 用「目录里没有」误导模型。

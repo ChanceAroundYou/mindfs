@@ -123,8 +123,12 @@ type WorkflowRun struct {
 	// TriggeredBy / ActivityID 记录 Run 的来源（对话式任务 Phase 2）。TriggeredBy
 	// 取值 user / agent_auto / scheduled；ActivityID 指向触发它的用户留言活动。
 	// 两者在创建时写入、之后不再改，属于审计信息而不是运行状态。
-	TriggeredBy    string                    `json:"triggered_by,omitempty"`
-	ActivityID     string                    `json:"activity_id,omitempty"`
+	TriggeredBy string `json:"triggered_by,omitempty"`
+	ActivityID  string `json:"activity_id,omitempty"`
+	// SessionKey 是这一轮 Run 的共享会话（session_reuse_policy=run，2026-11-20
+	// 起的默认）。创建 Run 时为空 = 第一个节点执行时惰性创建；Router 选「接续」
+	// 时预置成上一条会话。为空与非空都必须能读回，所以不进 Run 的 CAS 更新。
+	SessionKey     string                    `json:"session_key,omitempty"`
 	NodeStates     map[string]string         `json:"node_states,omitempty"`
 	NodeOutputs    map[string]map[string]any `json:"node_outputs,omitempty"`
 	SelectedRoutes map[string]string         `json:"selected_routes,omitempty"`

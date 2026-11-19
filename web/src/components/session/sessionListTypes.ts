@@ -72,7 +72,12 @@ export type SessionListProps = {
 };
 
 export type VisibleSessionRow =
-  | { type: "session"; session: SessionItem }
+  // nested：这一行被收进了任务分组（见 sessionTaskGroups.ts）。只影响缩进，
+  // 不改 isSubagent —— 分组里的会话仍然是普通会话，顶部徽标照常显示。
+  | { type: "session"; session: SessionItem; nested?: boolean }
+  // task-group：按 task_id 分组的说明行，成员紧随其后。它不是可点元素，
+  // 入口仍是下面每一张会话卡。
+  | { type: "task-group"; taskId: string; label: string; count: number }
   | {
       type: "child-toggle";
       parent: SessionItem;
