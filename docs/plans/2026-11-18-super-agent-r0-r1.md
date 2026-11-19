@@ -411,3 +411,26 @@ G-NF（`7888797c`）改成 `task.agent/task.model` 默认 claude + sonnet，回�
 ① `router.model` 由 `ok` 改 `sonnet`（节点本地配置 + 重启系统单元，需用户授权）；
 ② 决定 route 模式下事件账本的去向：route 也启动消费循环（route ⊂ coordinate），或 route
 停止生产事件。在此之前 R2 的「验收条目 + 证据关联」会建在一条写不通的账本上。
+
+## 用户裁定与配置变更（2026-11-20）
+
+上一节的两条建议由用户裁定如下，均只改本机节点配置（`~/.config/mindfs/config.json`，
+备份 `config.json.bak-20261120-0250`），不改代码：
+
+- **`router.model` 保持 `ok`**（否决「改 sonnet」）。代价照旧：决策延迟贴着死线、fallback
+  仍会发生；缓解靠 `finishTurnFailure` 的动作救回。
+- **`turn_timeout` 90s → 180s**。依据：Router 真实回合的 CLI `duration_ms` 12 条样本
+  41.5–127.5s（max 127.5s），另有 salvage 轮记录的 155.9s 尾部；90s 死线切掉的回合里有
+  本可在 100–130s 完成的。事件回合与用户回合共用该值（`router_coordinate_turn.go` 与
+  `router_service.go` 都取 `config.TurnTimeout`），领取租约 10 分钟仍大于 2× 超时。
+- **`router.mode` route → coordinate**：批准打开消费循环（`startCoordinate` 只在 coordinate
+  下启动；coordinate 是 route 的超集，用户留言路径不变，新增 30s 一拍的事件消费）。
+- **旧账处置**：5 条 11-19 的 pending 事件（`gate_waiting` 1、`run_settled` 2、
+  `startup_reconcile` 1、`run_failed` 1）在开启前手工标 `skipped`，
+  `claimed_by=router-manual-skip`、理由写入 `last_error` —— 否则首拍会一次性对两天前的 Run
+  冒出 5 条过期汇报。行保留，审计可查。
+
+生效方式：**本机 `sudo systemctl restart mindfs`（仅用户执行）**。重启后验收观察点：
+① `GET /api/router/status` 报 `mode=coordinate`；② `[router/coordinate]` 每 30s 一拍、
+新事件从 pending → done；③ 每个事件恰好一条可见汇报且 `reply_to_id` 指回原留言；
+④ fallback 率应低于 48%（更大窗口）；⑤ `router_events` 不再只写不读。
