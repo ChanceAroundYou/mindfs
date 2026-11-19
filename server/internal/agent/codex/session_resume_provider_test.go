@@ -25,6 +25,12 @@ func TestIsCodexProviderMismatch(t *testing.T) {
 			want: true,
 		},
 		{
+			// codex 0.170.0 换的新文案（2026-11-19 fn 上 CMAI 会话实际报的）。
+			name: "codex 0.170 rejects provider change on resume",
+			err:  errString("codex thread error: app server error (-32600): failed to load configuration: Cannot change this thread's model provider from `openai` to `llmux` on resume."),
+			want: true,
+		},
+		{
 			name: "unrelated app server error",
 			err:  errString(`app server error (-32600): no rollout found for thread id 01a1`),
 			want: false,
@@ -119,6 +125,86 @@ func TestRethreadCodexResumeWithoutClientIsNoop(t *testing.T) {
 	forked, ok := rethreadCodexResumeOnProviderMismatch(context.Background(), nil, "01a1bf60", codexsdk.ThreadOptions{}, "/tmp")
 	if ok || forked != "" {
 		t.Fatalf("rethread without client = (%q, %v), want empty/false", forked, ok)
+	}
+}
+
+// 主判定不依赖错误文案：只要线程元数据记录的供应商与当前配置不同就必须 fork。
+// 2026-11-19 codex 0.170.0 改了错误文案，靠字符串匹配的路径整条失效，这条兜住。
+func TestCodexThreadProviderNeedsForkFrom(t *testing.T) {
+	cases := []struct {
+		name         string
+		persisted    string
+		readOK       bool
+		provider     string
+		wantFork     bool
+		wantMetadata bool
+	}{
+		{name: "switch openai to llmux", persisted: "openai", readOK: true, provider: "llmux", wantFork: true, wantMetadata: true},
+		{name: "switch llmux to openai", persisted: "llmux", readOK: true, provider: "openai", wantFork: true, wantMetadata: true},
+		{name: "case-insensitive match", persisted: "LLMUX", readOK: true, provider: "llmux", wantFork: false, wantMetadata: true},
+		{name: "metadata without provider", persisted: "", readOK: true, provider: "llmux", wantFork: false, wantMetadata: true},
+		{name: "thread read failed", persisted: "", readOK: false, provider: "llmux", wantFork: false, wantMetadata: false},
+		{name: "current provider unknown", persisted: "openai", readOK: true, provider: "", wantFork: false, wantMetadata: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fork, byMetadata := codexThreadProviderNeedsForkFrom(tc.persisted, tc.readOK, tc.provider)
+			if fork != tc.wantFork || byMetadata != tc.wantMetadata {
+				t.Fatalf("needsFork=%v byMetadata=%v, want %v/%v", fork, byMetadata, tc.wantFork, tc.wantMetadata)
+			}
+		})
+	}
+}
+
+// 元数据读不到时退回探针结果；元数据一致但线程已被别处按旧供应商加载时，
+// 探针返回的生效供应商仍要能触发 fork。
+func TestCodexResumeProbeResult(t *testing.T) {
+	cases := []struct {
+		name         string
+		persisted    string
+		readOK       bool
+		provider     string
+		result       string
+		err          error
+		wantFork     bool
+		wantMetadata bool
+	}{
+		{
+			name:      "metadata mismatch wins without probing",
+			persisted: "openai", readOK: true, provider: "llmux",
+			result: `{"modelProvider":"llmux"}`, wantFork: true, wantMetadata: true,
+		},
+		{
+			name:      "metadata agrees and resume agrees",
+			persisted: "llmux", readOK: true, provider: "llmux",
+			result: `{"modelProvider":"llmux"}`, wantFork: false, wantMetadata: false,
+		},
+		{
+			name:      "metadata agrees but loaded on old provider",
+			persisted: "llmux", readOK: true, provider: "llmux",
+			result: `{"modelProvider":"openai"}`, wantFork: true, wantMetadata: false,
+		},
+		{
+			name:      "metadata unreadable falls back to new error text",
+			persisted: "", readOK: false, provider: "llmux",
+			err:      errString("app server error (-32600): failed to load configuration: Cannot change this thread's model provider from `openai` to `llmux` on resume."),
+			wantFork: true, wantMetadata: false,
+		},
+		{
+			name:      "metadata unreadable and resume agrees",
+			persisted: "", readOK: false, provider: "llmux",
+			result: `{"modelProvider":"llmux"}`, wantFork: false, wantMetadata: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fork, byMetadata := codexResumeProbeResult(
+				tc.persisted, tc.readOK, tc.provider, json.RawMessage(tc.result), tc.err,
+			)
+			if fork != tc.wantFork || byMetadata != tc.wantMetadata {
+				t.Fatalf("needsFork=%v byMetadata=%v, want %v/%v", fork, byMetadata, tc.wantFork, tc.wantMetadata)
+			}
+		})
 	}
 }
 

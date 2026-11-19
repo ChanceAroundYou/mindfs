@@ -18,13 +18,18 @@ const (
 )
 
 // isCodexProviderMismatch 判定 thread/resume 的失败是否属于「线程记录的供应商
-// 与当前配置不一致」。codex app-server 实测两种文案：
+// 与当前配置不一致」。codex app-server 实测三种文案：
 //
 //	This chat uses probe-provider, but your current provider is openai. Switch to probe-provider to continue.
 //	This chat uses model provider "llmux", which is no longer configured. Restore this provider's configuration to continue.
+//	Cannot change this thread's model provider from `openai` to `llmux` on resume.
 //
-// 这两种情况下 thread/resume 不带 modelProvider 会失败；带上当前供应商仍失败时，
-// 唯一能让历史对话继续的路径是 thread/fork 到当前供应商。
+// 第三种是 codex 0.170.0 起的文案（2026-11-19 fn 上 CMAI 会话实测）。三种情况下
+// thread/resume 都不能把线程换到当前供应商；唯一能让历史对话继续的路径是
+// thread/fork 到当前供应商。
+//
+// 这只是兜底：主判定在 codexThreadProviderNeedsFork，直接读线程记录的供应商，
+// 不受文案变化影响。
 func isCodexProviderMismatch(err error) bool {
 	if err == nil {
 		return false
@@ -34,6 +39,9 @@ func isCodexProviderMismatch(err error) bool {
 		return false
 	}
 	if strings.Contains(value, "no longer configured") {
+		return true
+	}
+	if strings.Contains(value, "cannot change this thread's model provider") {
 		return true
 	}
 	return strings.Contains(value, "current provider") && strings.Contains(value, "switch to")
@@ -73,6 +81,41 @@ func resolveCodexModelProvider(ctx context.Context, client *codexsdk.Codex, cwd 
 	return codexModelProviderFromConfig(resp)
 }
 
+// codexThreadProvider 读线程元数据里记录的供应商。thread/read 不加载线程、
+// 不碰 writer 锁，返回体只有元数据（实测 1.7 KB），所以能在 resume 之前安全调用；
+// 2026-11-19 实测「先 read 再 resume」与「直接 resume」结果一致，read 没有副作用。
+// 读不到（线程不存在、旧版 app-server 不认这个 RPC）时第二返回值为 false，
+// 调用方退回按错误文案判定。
+func codexThreadProvider(ctx context.Context, client *codexsdk.Codex, threadID string) (string, bool) {
+	if client == nil || strings.TrimSpace(threadID) == "" {
+		return "", false
+	}
+	var response struct {
+		Thread struct {
+			ModelProvider string `json:"modelProvider"`
+		} `json:"thread"`
+	}
+	params := map[string]any{"threadId": strings.TrimSpace(threadID)}
+	if err := client.AppServerRPCTyped(ctx, "thread/read", params, &response); err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(response.Thread.ModelProvider), true
+}
+
+// codexThreadProviderNeedsForkFrom 是主判定的纯逻辑：线程记录的供应商与当前
+// 配置不一致时必须 fork。它不依赖 app-server 的错误文案 —— 2026-11-19 codex
+// 0.170.0 换了文案，靠字符串匹配的旧判定当场失效，整条会话报
+// `Cannot change this thread's model provider ... on resume`。
+//
+// ok=false 表示元数据没读到（线程不存在、旧版 app-server 不认 thread/read），
+// 调用方退回探针路径，保持原有「不在 open 阶段报错」的惰性语义。
+func codexThreadProviderNeedsForkFrom(persisted string, ok bool, provider string) (needsFork bool, byMetadata bool) {
+	if !ok || strings.TrimSpace(provider) == "" {
+		return false, false
+	}
+	return persisted != "" && !strings.EqualFold(persisted, provider), true
+}
+
 // codexResumeProbeParams 组装探测用的 thread/resume 参数。modelProvider 必须始终
 // 带上：不带它时 app-server 会把线程按 rollout 里记录的旧供应商加载，之后 SDK 带着
 // 正确供应商的 resume 就成了空操作 —— 2026-11-11 冰晶智能会话正是这样继续走 ChatGPT，
@@ -88,9 +131,9 @@ func codexResumeProbeParams(threadID, cwd, provider string) map[string]any {
 	return params
 }
 
-// codexResumeNeedsFork 判定探测结果是否必须 fork 到当前供应商：显式的供应商
-// 不一致错误，或 resume 成功但回报的生效供应商不是当前配置（线程已被别处按旧
-// 供应商加载，此时带供应商的 resume 不会改写它）。
+// codexResumeNeedsFork 判定 resume 的**结果**是否说明线程已不能按当前供应商继续：
+// 显式的供应商不一致错误，或 resume 成功但回报的生效供应商不是当前配置（线程
+// 已被别处按旧供应商加载，此时带供应商的 resume 不会改写它）。
 func codexResumeNeedsFork(result json.RawMessage, provider string, err error) bool {
 	if err != nil {
 		return isCodexProviderMismatch(err)
@@ -103,6 +146,27 @@ func codexResumeNeedsFork(result json.RawMessage, provider string, err error) bo
 	}
 	got := strings.TrimSpace(resp.ModelProvider)
 	return got != "" && !strings.EqualFold(got, provider)
+}
+
+// codexResumeProbeResult 决定一次 resume 前检查是否要 fork，并给出判定依据，
+// 便于单测与日志区分「元数据不一致」与「探针失败」两条路径。
+func codexResumeProbeResult(
+	persistedProvider string,
+	persistedOK bool,
+	provider string,
+	result json.RawMessage,
+	probeErr error,
+) (needsFork bool, byMetadata bool) {
+	if persistedOK {
+		// 元数据能读到且与当前配置一致：仍要看探针，因为线程可能已被别处按旧
+		// 供应商加载，那种情况下 resume 返回的生效供应商会暴露出来。
+		if persistedProvider != "" && !strings.EqualFold(persistedProvider, provider) {
+			return true, true
+		}
+		return codexResumeNeedsFork(result, provider, probeErr), false
+	}
+	// 读不到元数据（线程不存在 / 旧版 app-server）：退回按错误文案判定。
+	return codexResumeNeedsFork(result, provider, probeErr), false
 }
 
 // rethreadCodexResumeOnProviderMismatch 在恢复线程前先让 app-server 校验一次。
@@ -126,12 +190,25 @@ func rethreadCodexResumeOnProviderMismatch(ctx context.Context, client *codexsdk
 		log.Printf("[codex] resume.provider_probe.skipped thread=%s reason=config_unavailable", threadID)
 		return "", false
 	}
-	result, err := client.AppServerRPC(probeCtx, "thread/resume", codexResumeProbeParams(threadID, rootPath, provider))
-	if !codexResumeNeedsFork(result, provider, err) {
-		if err != nil {
-			log.Printf("[codex] resume.provider_probe.error thread=%s provider=%s err=%v", threadID, provider, err)
+	// 先读线程自己记录的供应商：这一步与 app-server 的报错文案无关，是主判定。
+	persisted, readOK := codexThreadProvider(probeCtx, client, threadID)
+	mismatch, byMetadata := codexThreadProviderNeedsForkFrom(persisted, readOK, provider)
+	var probeErr error
+	if !mismatch {
+		// 未命中主判定时仍探一次：线程可能已被别处按旧供应商加载（此时带供应商
+		// 的 resume 不会改写它），这种情况只有返回值看得到。
+		var result json.RawMessage
+		result, probeErr = client.AppServerRPC(probeCtx, "thread/resume", codexResumeProbeParams(threadID, rootPath, provider))
+		mismatch, _ = codexResumeProbeResult(persisted, readOK, provider, result, probeErr)
+	}
+	if !mismatch {
+		if probeErr != nil {
+			log.Printf("[codex] resume.provider_probe.error thread=%s provider=%s err=%v", threadID, provider, probeErr)
 		}
 		return "", false
+	}
+	if byMetadata {
+		log.Printf("[codex] resume.provider_mismatch.metadata thread=%s persisted=%s current=%s", threadID, persisted, provider)
 	}
 	forkOptions := threadOptions
 	forkOptions.ModelProvider = provider
