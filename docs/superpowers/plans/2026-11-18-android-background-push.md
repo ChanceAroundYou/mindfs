@@ -454,3 +454,24 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 **已部署并出包（2026-11-18）：** `bash scripts/deploy-all.sh` 退出 0，四端 `v0.5.5-1118-159-g055d138d`（本机、WSL、fn、pc-win；pc-win PID 35344 health 200）。WSL/fn 上长轮询实测 `seed=200 <1ms` → `If-None-Match` 超时 `304 @5.0–5.3s`；本机重启后 `/mindfs/api/replying-sessions/wait` 返回 200。APK 发布 tag `v0.5.5-1119`（`6d…` 见 GitHub）：`versionName=v0.5.5-1119`、`versionCode=5051120`（1118 为 …1119，单调递增），签名证书 `CN=MindFS`，APK sha256 `92284f2e39609994d4f91325d2c0658fc7324f6ea98664356b2aa690d2ab0a78`，`make verify-release` 通过，线上 `android-version.json` 版本字段为 `v0.5.5-1119` 且 `.apk` 直链可下载。
 
 **仍未完成（需用户执行）：** Step 6 外网代理超时实测、Step 7 真机验收（后台秒级响铃、常驻通知点击直达/多会话只开 App、挂一夜确认 `specialUse` 前台服务存活）。
+
+## 第二轮回补：完成账本 + 子会话静默（2026-11-19，Scope: G-MX）
+
+用户 `v0.5.5-1120` 装完仍报「后台时间一长完全没有提醒」，并另提「子任务完成不要提醒」。前者说明上一轮（Task 0–8）修的是**投递链路**，而漏掉的是**事件来源**：完成判定一直是纯客户端边沿检测（上一帧 replying=true、这一帧消失），手机在后台被冻结/被 ROM 清掉进程的那段时间跑完的回合，客户端从头到尾没见过 —— 醒来后 pending 表里根本没有这条，也就永远补不出来。这一轮改的是架构，不是又打一个补丁：
+
+| 层 | 改动 | 文件 |
+|---|---|---|
+| 源头 | 子会话标记收敛到唯一源头 `SetPendingReply`（所有调用点都是 `OnSubAgentAttached`） | `stream_hub_pending.go`、`stream_hub_types.go` |
+| 服务端 | 进程内完成账本：单调 `seq` + `epoch`（进程身份），256 条 / 24h；`/api/replying-sessions` 与 `/wait` 共用一份 `replyingPayload`，带 `completed_since` 才回 `completed[]`；长轮询用 `HasCompletionsSince` 提前唤醒 | `stream_hub_completions.go`、`http_sessions_list.go`、`http_sessions_replying_wait.go` |
+| 推送 | 子会话不推 Web Push | `appcontext_notify.go` |
+| 安卓 | `ReplyCompletionFeed` 按节点游标补发（未播种/epoch 变化/head 回退静默重播种，一次最多补最新 8 条，跳过 subSession）；老服务端无 `completedEpoch` 自动退回边沿检测 | `ReplyCompletionFeed.java`、`ReplyPollerService.java` |
+| 安卓存活 | CONFIGURE 返回 `START_STICKY`；`onTaskRemoved` 把兜底闹钟提前到 1 分钟；兜底唤醒改走广播接收器（`PendingIntent.getService` 在 Android 8+ 后台起不来服务）；`configure()` 在 running=false 时补建循环；服务启动统一捕获异常 | 同上 + `ReplyPollerWatchdogReceiver.java`、`MainActivity.java`、`ReplyPollerPlugin.java` |
+| 网页 | 轮询路径按子会话剔除完成音（未读徽标照标），`carrySubSessionKeys` 跨帧保留标记 | `useReplyingSessionPoll.ts`、`pendingCompletion.ts` |
+
+**门禁（2026-11-19）：** 隔离 worktree 跑 `go test -count=1 ./...` 全绿（工作区里 `kanban` 的 gate 校验与 `api` 的两条用例是另一条会话在飞的未提交改动所致，与本轮无关 —— 干净 worktree 上同一提交全绿）；web `tsc` clean、Vitest 236 文件 / 691 通过 / 6 跳过；`make test-android` BUILD SUCCESSFUL（`ReplyCompletionFeedTest` 8、`ReplyStateMergerTest` 10、`ReplyRetryPolicyTest` 5）；`make check-upstream` 里 G-MX 全绿（剩余红是 G-MN / G-MV / G-MO 三组别的会话在飞的工作）。
+
+**已部署（2026-11-19）：** 四端 `v0.5.5-1120-18-g056423c9-dirty`（本机二进制已装、待用户 `sudo systemctl restart mindfs`；WSL/fn user 单元已重启并核对；pc-win PID 22592、health 200，7332 LISTENING）。WSL/fn 上实测 `/api/replying-sessions` 已带 `completedEpoch`/`completedSeq`，带 `completed_since=0` 时返回 `completed[]`。
+
+**APK 已构建未发布：** `dist/mindfs_v0.5.5-1120-18-g056423c9_android.apk`（7.4 MB，`versionCode=5051121`、`versionName=v0.5.5-1120-18-g056423c9`、证书 `CN=MindFS`、sha256 `8061ac25df9f29a16bd1d241d80f82587b54daff770b8a464679aa358e73de30`）。**未打 tag、未推 GitHub** —— 发布是对外动作，等用户确认。
+
+**端到端仍未验：** 本机在跑的进程还是重启前的旧二进制（`/api/replying-sessions` 无 `completedEpoch`），要等用户重启后账本才生效；没有连接安卓设备的 adb 目标，真机验收仍需用户执行。
