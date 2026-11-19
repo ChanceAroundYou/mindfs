@@ -10009,6 +10009,9 @@ groups:
       - server/internal/kanban/service_archive_test.go
       - server/internal/kanban/task_archive_dismissal_test.go
       - web/tests/task-archive.test.mjs
+      # 浏览器端到端验收（隔离实例 + Playwright，刻意不进常规门禁）：归档键与删除键同排、
+      # 点归档后卡片落到「已结束 → 归档」且工作台隐藏、取消归档回到「完成」。
+      - e2e/test_kanban_archive.py
     anchors:
       - 'server/internal/kanban/types.go:ArchivedAt string       `json:"archived_at,omitempty"`'
       - 'server/internal/kanban/task_store_migrate.go:archived_at TEXT NOT NULL DEFAULT '''''

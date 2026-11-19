@@ -135,3 +135,29 @@
 
 不删任何数据（任务卡/会话/JSONL 全留，删除仍走 `DELETE /api/tasks/{id}`）；不改
 `usecase.ArchiveSession` 的破坏性语义；不做归档批量操作/保留期清理；不新增看板列。
+
+### 独立验收（2026-11-20，验收会话 mindfs-7b）
+
+实现由另一条会话提交（`28af85d1`/`b3a9770c`/`9c18b6ac`/`82c6b4d5`/`07544178`），这里的
+结论全部由验收会话在**未被实现方触碰**的干净 worktree（`/tmp/mindfs-verify`，`git worktree
+add --detach HEAD`）与隔离实例上重新跑出来：
+
+- **全量门禁（干净 worktree）**：`go test -count=1 ./...` 28 个包全绿、`tsc` clean、
+  web 242 文件 / 711 用例通过 / 6 跳过、`make build` 成功（`v0.5.5-1121-27-g07544178`）、
+  `make check-upstream` 2032 delta / 329 组全绿。共享工作区里 check-upstream 曾报 G-MN 锚点红，
+  经同 HEAD 的干净 worktree 复跑排除为另一条会话在飞的未提交改动（live_compact）。
+- **变异复验（验收侧独立做，逐个还原）**：去掉 `ListTasksDueForArchive` 的
+  `archive_dismissed_at = ''` → `TestUnarchivedTaskIsNotAutoArchivedAgain` 红；
+  去掉三处留痕清理 → `TestArchiveDismissalLifetime` 红。
+- **隔离实例（端口 7453，专用 `XDG_CONFIG_HOME`，线上 7331 全程未碰）**：归档写
+  `archived_at`、看板保留而工作台消失、取消归档恢复；把 `completed_at` 老化 8 天 → 重启
+  触发启动扫描，日志 `[kanban/archive] auto-archived=1` 且库里 `archived_at` 真被写入；
+  再取消归档 → 二次重启不再被抓走（库里 `archived_at=''`、`archive_dismissed_at` 有戳、
+  `completed_at` 未被改动）。
+- **浏览器端到端**：新增 `e2e/test_kanban_archive.py`（隔离后端 + Playwright，跑两遍均
+  PASS，单遍 ~13 s）——归档键与删除键同排、点归档后卡片落进「已结束 → 归档」、工作台
+  看不到、取消归档回到「完成」子组。**注**：用例在登录后显式 reload 一次，绕开一个与
+  本功能无关的首屏竞态（登录后 `protectedAPIReady()` 仍为 false，看板/工作台加载 effect
+  被静默挡掉且不再重试：首屏看板四列全 0、`/api/tasks?root=` 一次都不发，reload 后正常）。
+  这是既存问题（G-NB 只改动 8 个前端文件，未触 init/loader），已在小节里写明，未顺手修。
+
