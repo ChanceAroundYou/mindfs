@@ -10089,3 +10089,19 @@ groups:
       - 'web/src/components/task/useTaskDetailPanel.ts:const canReopenTask = terminal;'
       - 'web/src/components/task/TaskDetailPanel.tsx:{canReopenTask ? ('
       - 'web/src/app/useTaskBoard.ts:if (action === "cancel" || action === "reopen" || action === "rebuild-worktree") {'
+  - id: G-ND
+    title: 工作台项目头的折叠箭头移到项目名之前
+    kind: feature
+    symptom: "工作台每个项目的展开/收起箭头挂在行尾（靠 `marginLeft: auto` 撑开），项目名在最左、箭头隔着一整行空白，读名字和看折叠状态都要横跨整行。"
+    why: "必须保留：折叠箭头是这一行的主控，必须与它控制的对象（项目名）相邻，所以排在项目名之前（行首），靠右偏移随之删除；左侧三件（箭头 + 项目名 + 计数）紧凑贴左，**不**让项目名吃掉剩余宽度 —— 行的右半边刻意留空。项目名仍以 `maxWidth: 55%` 封顶并配 `minWidth: 0` + 省略号，超长时截断而不是把计数徽章顶出行外。热区（40×24）、`aria-label`/`title` 文案、箭头旋转语义（collapsed → 0deg、展开 → 90deg）、点击回调一律不改，折叠状态本身仍由 useWorkspaceBoard 持有。"
+    boundary: "只改工作台项目头的子元素顺序与项目名的宽度上限；不动任务卡网格、计数徽章样式、折叠状态存储与「项目名跳看板」的热区划分（头仍然只有名字和箭头两个热区）。"
+    files:
+      - web/src/components/workspace/WorkspaceProjectRow.tsx
+      - web/src/components/workspace/workspaceStyles.ts
+    tests:
+      - web/tests/workspace-project-toggle.test.ts
+      - e2e/test_workspace_project_toggle.py
+    anchors:
+      - 'web/src/components/workspace/WorkspaceProjectRow.tsx:aria-label={collapsed ? t("task.workspaceExpand") : t("task.workspaceCollapse")}'
+      - 'web/src/components/workspace/workspaceStyles.ts:maxWidth: "55%",'
+      - 'web/tests/workspace-project-toggle.test.ts:toggle before the project name'

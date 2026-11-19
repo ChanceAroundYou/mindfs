@@ -85,7 +85,14 @@ export const workspaceProjectNameButtonStyle = (color: string | null): React.CSS
   ...rootBadgeButtonStyle,
   color: String(color || "").trim() || "var(--text-primary)",
   cursor: "pointer",
+  // 左侧三个元素（箭头 + 名字 + 计数）紧凑贴左，名字**不**吃剩余宽度 ——
+  // 行的右半边刻意留空，视线不会在项目头里来回扫。名字宽度仍以 55% 封顶，
+  // 超长时省略而不是把计数徽章顶出行外。
   maxWidth: "55%",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
   textAlign: "left",
 });
 
@@ -95,9 +102,11 @@ export const workspaceProjectNameButtonStyle = (color: string | null): React.CSS
  * 刻意**不给**边框和底色（`background: transparent` + `border: none`）：
  * 项目头已经是「有底色的名字 + 中性徽章」，再加一个带框的按钮就三块底色打架，
  * 反而看不出该点哪。现在只留箭头，热区靠 minWidth/height 撑。
+ *
+ * 位置：排在项目名**之前**（行首）。之前靠 `marginLeft: auto` 钉在行尾，
+ * 折叠箭头离名字一站远，读的时候要横跨整行；挪到前面后不再需要任何靠右偏移。
  */
 export const workspaceProjectToggleStyle: React.CSSProperties = {
-  marginLeft: "auto",
   minWidth: "40px",
   height: "24px",
   padding: "0 6px",

@@ -16,9 +16,9 @@ import {
 } from "./workspaceStyles";
 
 /**
- * 单个项目组：项目名 + 计数 + 折叠箭头，下面是任务卡网格。
+ * 单个项目组：折叠箭头 + 项目名 + 计数，下面是任务卡网格。
  *
- * 头**只有两个热区**：项目名（跳该项目看板）和折叠箭头（展开/收起）。
+ * 头**只有两个热区**：折叠箭头（展开/收起，行首、名字前面）和项目名（跳该项目看板）。
  * 以前整行都能点，结果是想「扫一眼」的人也会被带跳走 —— 空白处、计数、节点色点
  * 都成了跳转陷阱。现在那几个不可点的部分老老实实当静态内容。
  *
@@ -63,6 +63,15 @@ export function WorkspaceProjectRow({
       <div style={workspaceProjectHeaderStyle}>
         <button
           type="button"
+          aria-label={collapsed ? t("task.workspaceExpand") : t("task.workspaceCollapse")}
+          title={collapsed ? t("task.workspaceExpand") : t("task.workspaceCollapse")}
+          onClick={() => onToggle(group.key)}
+          style={workspaceProjectToggleStyle}
+        >
+          <TaskGroupChevronIcon collapsed={collapsed} />
+        </button>
+        <button
+          type="button"
           title={group.rootName}
           onClick={openProject}
           style={workspaceProjectNameButtonStyle(group.color)}
@@ -73,15 +82,6 @@ export function WorkspaceProjectRow({
             待审核」时显示同一个数字（用户实测「需要你3 3」）。待审核的信息没丢 ——
             每张卡标题行本来就有状态文字（· 待审核），「待审核」筛选档位也在。 */}
         <span style={workspaceCountBadgeStyle}>{group.tasks.length}</span>
-        <button
-          type="button"
-          aria-label={collapsed ? t("task.workspaceExpand") : t("task.workspaceCollapse")}
-          title={collapsed ? t("task.workspaceExpand") : t("task.workspaceCollapse")}
-          onClick={() => onToggle(group.key)}
-          style={workspaceProjectToggleStyle}
-        >
-          <TaskGroupChevronIcon collapsed={collapsed} />
-        </button>
       </div>
       {collapsed ? null : (
         <div style={workspaceTaskGridStyle(isMobile)}>
