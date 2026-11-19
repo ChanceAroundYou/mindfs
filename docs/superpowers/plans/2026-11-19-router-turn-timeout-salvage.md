@@ -226,6 +226,11 @@ system 单元仍是旧进程，待用户 `sudo systemctl restart mindfs`。
 **门禁（2026-11-20）**：`go test -count=1 ./...` 全绿；web 247 文件 / 743 通过 / 6 跳过；
 `tsc -b --noEmit` clean。登记并入 G-NB（同一组定制，未新开 ID）。
 
-**未生效部分**：这些改动尚未提交、未部署；本机运行中的进程（`6764a257`，02:55 启动）与
-安装的二进制（`0675f772`）都不含本轮后端改动，前端 bundle 缺本轮 handler。要看到侧栏真的
-消失，需要重新构建安装后由用户执行 `sudo systemctl restart mindfs`。
+**提交与安装（2026-11-20）**：提交 `07424b66` 并推到 `origin/main`；`make check-upstream`
+2057 delta / 335 组全绿。因共享工作区有另一条会话的在飞文件，从 `git worktree add --detach
+07424b66` 的干净树构建安装，`~/.local/bin/mindfs --version` = `v0.5.5-1200-21-g07424b66`，
+静态资源同步到 `~/.local/share/mindfs/web/`。
+
+**未生效部分**：本机 system 单元仍在跑 02:55 启动的旧进程（PID 990089，`/proc/990089/exe`
+指向 `(deleted)`），要看到侧栏真的消失，需用户执行 `sudo systemctl restart mindfs`。
+WSL / fn / pc-win 未分发（下次 `deploy-all` 自然带上这个提交）。
