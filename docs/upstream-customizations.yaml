@@ -7267,22 +7267,27 @@ groups:
   - id: G-KO
     title: Codex 供应商不一致时 fork 续聊 + 配置恢复不留悬空 model_provider
     kind: fix
-    symptom: "切换 API 供应商或在 MindFS 里恢复/切换配置后，打开任何旧 Codex 会话都报 app server error (-32600)：This chat uses model provider \"llmux\", which is no longer configured（或 ..., but your current provider is openai. Switch to ... to continue.），整段对话无法继续；恢复官方配置后连新建会话也可能报同一句；已切到 llmux 的会话若线程由 VS Code 创建（rollout 记着 openai），只打开不报错但之后每轮仍走 ChatGPT，上下文超窗口时报 Error running remote compact task: workspace routing discovery failed。"
-    why: "codex app-server 把创建时的 model_provider 记进线程元数据（~/.codex/state_5.sqlite 的 threads.model_provider），thread/resume 要求它等于当前生效的 model_provider。2026-11-09 用隔离 CODEX_HOME 在真机 app-server 实测：线程已被按旧供应商加载后，resume 的 modelProvider 覆盖参数对两种报错都无效，唯一可行路径是 thread/fork 到当前供应商（fork 复制完整历史，实测成功）。2026-11-11 补充并修正：覆盖参数在「首次加载」时是生效的，先前探针自己先发了一次不带 modelProvider 的 thread/resume，把线程按 rollout 里的旧供应商加载了，之后的 SDK resume 才变成空操作——所以探针必须带当前供应商（config/read 取，缺省回落 openai），并按返回值里的生效供应商判断是否需要 fork；fork 参数也要带供应商，否则 fork 出的仍是同一供应商的新线程。所以 OpenSession 在 resume 前用一次本地 thread/resume 探测，命中供应商不一致时 fork 成新线程并返回新 id；上层 ensureAgentSession 立刻把新 id 写回绑定（UpdateAgentState 只更新 agent_session_id/agent_ctx_seq，保留 external_source_* 游标），避免「只打开不发送」时反复 fork 出重复历史。配套修的第二个坑：恢复官方配置时 preserveCodexModelProviderKey 会把当前 key 硬塞进没有任何 model_providers 表的配置，留下悬空 model_provider，新建会话同样报错；现在只有恢复内容真的定义了该 provider 表才保留选择器。"
-    boundary: "只管 codex 线程的供应商不一致续聊与配置恢复时的 provider 选择器一致性。不改 Claude/ACP；不改供应商切换写配置的格式（仍复用同一个 provider key）；不直接改写 Codex 的 state_*.sqlite 与 rollout 文件。"
+    symptom: "切换 API 供应商或在 MindFS 里恢复/切换配置后，打开任何旧 Codex 会话都报 app server error (-32600)：This chat uses model provider \"llmux\", which is no longer configured（或 ..., but your current provider is openai. Switch to ... to continue.），整段对话无法继续；codex 0.170.0 起同一场景改成报 failed to load configuration: Cannot change this thread's model provider from `openai` to `llmux` on resume.（2026-11-19 fn 上 CMAI 会话实测）；恢复官方配置后连新建会话也可能报同一句；已切到 llmux 的会话若线程由 VS Code 创建（rollout 记着 openai），只打开不报错但之后每轮仍走 ChatGPT，上下文超窗口时报 Error running remote compact task: workspace routing discovery failed。"
+    why: "codex app-server 把创建时的 model_provider 记进线程元数据（~/.codex/state_5.sqlite 的 threads.model_provider），thread/resume 要求它等于当前生效的 model_provider。2026-11-09 用隔离 CODEX_HOME 在真机 app-server 实测：线程已被按旧供应商加载后，resume 的 modelProvider 覆盖参数对两种报错都无效，唯一可行路径是 thread/fork 到当前供应商（fork 复制完整历史，实测成功）。2026-11-11 补充并修正：覆盖参数在「首次加载」时是生效的，先前探针自己先发了一次不带 modelProvider 的 thread/resume，把线程按 rollout 里的旧供应商加载了，之后的 SDK resume 才变成空操作——所以探针必须带当前供应商（config/read 取，缺省回落 openai），并按返回值里的生效供应商判断是否需要 fork；fork 参数也要带供应商，否则 fork 出的仍是同一供应商的新线程。所以 OpenSession 在 resume 前用一次本地 thread/resume 探测，命中供应商不一致时 fork 成新线程并返回新 id；上层 ensureAgentSession 立刻把新 id 写回绑定（UpdateAgentState 只更新 agent_session_id/agent_ctx_seq，保留 external_source_* 游标），避免「只打开不发送」时反复 fork 出重复历史。配套修的第二个坑：恢复官方配置时 preserveCodexModelProviderKey 会把当前 key 硬塞进没有任何 model_providers 表的配置，留下悬空 model_provider，新建会话同样报错；现在只有恢复内容真的定义了该 provider 表才保留选择器。**2026-11-19 加固（根治文案依赖）**：codex 0.170.0（fn 于 10:59 升级）换了错误文案，isCodexProviderMismatch 只认旧两句，于是探测把失败当「无关错误」→ 判定无需 fork → 带当前供应商 resume 当场报错，整条会话打不开。改为两级判定：主判定 codexThreadProvider 用 thread/read 直接读线程元数据里的 modelProvider 与当前配置比对（不依赖任何错误文案，实测返回体仅 1.7 KB、不加载线程、不碰 writer 锁，且「先 read 再 resume」与「直接 resume」结果逐字一致，无副作用）；只有读不到元数据时才退回按错误文案判定，并补上 0.170 的新文案。fn 上用报错线程 01a1f1c0（记录 openai、当前 llmux）跑真实 0.170.0 端到端：metadata 判定 → fork → 新线程 resume 成功；反向用例（线程已是 llmux）确认不会被误 fork。"
+    boundary: "只管 codex 线程的供应商不一致续聊与配置恢复时的 provider 选择器一致性。不改 Claude/ACP；不改供应商切换写配置的格式（仍复用同一个 provider key）；不直接改写 Codex 的 state_*.sqlite 与 rollout 文件；thread/read 只读取元数据，不改变线程状态。"
     files:
       - server/internal/agent/codex/session_open.go
       - server/internal/agent/codex/session_resume_provider.go
       - server/internal/agent/codex/session_resume_provider_test.go
+      - server/internal/agent/codex/session_resume_provider_live_test.go
       - server/internal/api/agent_api_provider_codex.go
       - server/internal/api/agent_api_provider_test.go
       - server/internal/api/usecase/session_agent_open.go
     tests:
       - server/internal/agent/codex/session_resume_provider_test.go
+      - server/internal/agent/codex/session_resume_provider_live_test.go
       - server/internal/api/agent_api_provider_test.go
     anchors:
       - 'server/internal/agent/codex/session_open.go:rethreadCodexResumeOnProviderMismatch(ctx, client, resumeID, threadOptions, opts.RootPath)'
       - 'server/internal/agent/codex/session_resume_provider.go:func isCodexProviderMismatch(err error) bool'
+      - 'server/internal/agent/codex/session_resume_provider.go:func codexThreadProvider(ctx context.Context, client *codexsdk.Codex, threadID string) (string, bool)'
+      - 'server/internal/agent/codex/session_resume_provider.go:func codexThreadProviderNeedsForkFrom(persisted string, ok bool, provider string) (needsFork bool, byMetadata bool)'
+      - 'server/internal/agent/codex/session_resume_provider.go:func codexResumeProbeResult('
       - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(probeCtx, client, forkOptions, threadID, nil)'
       - 'server/internal/agent/codex/session_resume_provider.go:func codexResumeProbeParams(threadID, cwd, provider string) map[string]any'
       - 'server/internal/api/agent_api_provider_codex.go:func hasCodexModelProviderTable(existing, providerName string) bool'
@@ -7512,7 +7517,7 @@ groups:
     tests:
       - server/internal/kanban/workflow_node_prompt_test.go
     anchors:
-      - 'server/internal/kanban/workflow_node_executor.go:func (s *Service) resolveWorkflowNodePrompt('
+      - 'server/internal/kanban/workflow_node_executor.go:func resolveWorkflowNodePrompt(node WorkflowNode, prompt string, values map[string]string) (string, error) {'
       - 'server/internal/kanban/workflow_node_executor.go:func WorkflowPromptValues('
       - 'server/internal/kanban/workflow_node_executor.go:var WorkflowPromptPlaceholders = []string{"previous_input", "task_initial_input", "task_number"}'
       - 'server/internal/kanban/workflow_node_prompt_test.go:func TestWorkflowNodeAttemptSendsResolvedPromptToRunner('
@@ -9305,8 +9310,8 @@ groups:
     title: 原生 live-compact —— Phase A 观测、Phase B1 无损折叠、B2 账本与前端胶囊
     kind: feature
     symptom: "MindFS 的会话上下文完全由 Claude Code 自身的 auto-compact 决定：到阈值就整段摘要，不可观测、不可控、无法判断「把旧的工具结果换成指针 + 存档」能省多少。用户目标是把它做成 MindFS 原生能力（scope B）。Phase A 在真实流量上量收益与风险且不改一个字节；Phase B1 把旧的工具结果折成「指针 + 存档」，在不破坏上游前缀缓存的前提下缩小每轮请求体（2.6 MB 合成 body 折后 228 KB）。"
-    why: "上游没有这条链路，必须保留：① 观测挂在既有每会话回环代理 server/internal/agent/proxy 上，只对 POST .../v1/messages 且 body ≥ min_body_bytes 的请求解析，count_tokens 永不触碰（改写它会改变 CLI 自己看到的上下文大小）；② off 默认零解析、shadow 只观测不改字节、on 才折叠；三者都不会静默改写请求，且 on 在缺存档目录时明确只观测（绝不下发一个指向不存在文件的指针）；③ 解析必须在请求路径之外 —— encoding/json 在本项目的嵌套解码路径对 8 MB body 实测 436 ms、58 MB 分配（同一 body 被完整校验四遍），因此请求路径只做门禁 + 入队（实测 3.5 ms/8 MB、3 allocs），分析跑在按会话 token 串行的有界工作队列上（全局 96 MiB 字节预算，仅按会话限深不构成内存上界）；④ 每个请求一个 liveCompactTurn，把「本次请求的估算」与「本次请求的 SSE usage」配成一对 —— 分析毫秒级完成而 usage 要等响应流结束，读会话级 lastUsage 会让第 N 轮配到第 N−1 轮的数，而这对数正是 Phase A 的唯一产出；压缩流/错误响应/上游失败时以 actual_in=-1 正常收口；⑤ 历史前缀漂移必须按解析后的归一化块哈希判定：Claude Code 每轮搬家 cache_control 断点，且 system 的 content 会从 block 数组翻成裸字符串、tool_result.content 在数组/字符串间翻转，按 raw bytes 哈希会每轮误报；⑥ 错误文本启发式必须行首命中且只看首尾各 20 行，否则普通 Go 源码（含 fmt.Errorf/failed 字面量）会被判成错误输出；⑦ 隔离 ConfigDir 会话（Router/workflow）只观测不折叠 —— 它们不继承用户工具权限，指针指向的存档文件可能读不到，折叠会静默变成有损；⑧ 急停文件 <config-dir>/context/DISABLED 带 1 秒 stat 缓存，本机 system 单元只能由用户重启，没有它就无法在不重启的前提下收手。 ⑨ B1 折叠走**字节区间内联改写**：scanWireRequest 只定位区间、不解码（8 MB 上 73 ms 的整包解析不进请求路径，实例化后 2.6 MB body 实测 1.1 ms / 2400 MB/s / 26 KB 分配），planFold 只对「本次新滑出窗口」的那一块解码并渲染，其余已折叠块由按内容寻址的 pointerCache 命中（1.3 ms）；任何异常路径返回原始 body（I7）；改写前必须 verifyFold 重新扫描改写后的 body 校验消息数/角色/tool 配对。⑩ 指针必须是内容的纯函数（无时间戳/计数器/输入键序），否则 repoint 或 fork 后 CLI 重排 tool_use 键序会让整个已折叠前缀重写、缓存全失效；存档按 sha256(text) 内容寻址且不带会话段（会话键会因 repoint/fork/空闲关闭而变）。⑪ 渲染缓存用 maphash 而非 sha256：本机 Celeron 无 SHA 扩展，sha256 实测 97 MB/s（2.5 MB 候选要 22 ms，等于它要省掉的开销），maphash 6.8 GB/s；两条独立 lane 合成 128 位键，避免碰撞把别的块的指针安到这一块上。"
-    boundary: "B1 只在 `live_compact.mode=on` 且配置了存档目录、且会话不是隔离 ConfigDir 时才改写请求（工具结果的纯文本、已闭合回合、保留最新 keep_rounds 轮、未标记 is_error、≥ min_block_tokens）；off/shadow 字节不变。B2 只读：账本按会话记大小与计数（无消息文本/工具参数/路径/会话键，键只进哈希文件名），`GET /api/sessions/{key}/context-saving` 不做任何写入，胶囊只在折叠过且有节省时出现。双向都不得越界：B2 的只读性意味着读不到账本时显示「没有节省」而不是报错，也不得为了填数去猜 agent（会话没绑定 agent 时池级 key 退化成裸 key，读到空是正确行为）。不做抽取卡片（B3）。不引入分词器依赖，token 估算保持可解释的粗估；不改 stripCompactPayload 的既有剥离语义；不改多节点拓扑与控制面；不改变「API 层不鉴权」的用户决策。已知硬约束登记在此以免 B1 走回头路：手写单遍字节扫描器对同一 8 MB body 仍需 73 ms，整包解析不可内联，B1 必须先解决「解析怎么进请求路径」（增量/流式改写只替换目标区间，或按前缀确定性缓存折叠计划）。lcsmoke/ 是手工冒烟工具（真实 Claude CLI + 进程内代理），有意不参与产品构建，故只登记目录不单独钉测试。"
+    why: "上游没有这条链路，必须保留：① 观测挂在既有每会话回环代理 server/internal/agent/proxy 上，只对 POST .../v1/messages 且 body ≥ min_body_bytes 的请求解析，count_tokens 永不触碰（改写它会改变 CLI 自己看到的上下文大小）；② off 默认零解析、shadow 只观测不改字节、on 才折叠；三者都不会静默改写请求，且 on 在缺存档目录时明确只观测（绝不下发一个指向不存在文件的指针）；③ 解析必须在请求路径之外 —— encoding/json 在本项目的嵌套解码路径对 8 MB body 实测 436 ms、58 MB 分配（同一 body 被完整校验四遍），因此请求路径只做门禁 + 入队（实测 3.5 ms/8 MB、3 allocs），分析跑在按会话 token 串行的有界工作队列上（全局 96 MiB 字节预算，仅按会话限深不构成内存上界）；④ 每个请求一个 liveCompactTurn，把「本次请求的估算」与「本次请求的 SSE usage」配成一对 —— 分析毫秒级完成而 usage 要等响应流结束，读会话级 lastUsage 会让第 N 轮配到第 N−1 轮的数，而这对数正是 Phase A 的唯一产出；压缩流/错误响应/上游失败时以 actual_in=-1 正常收口；⑤ 历史前缀漂移必须按解析后的归一化块哈希判定：Claude Code 每轮搬家 cache_control 断点，且 system 的 content 会从 block 数组翻成裸字符串、tool_result.content 在数组/字符串间翻转，按 raw bytes 哈希会每轮误报；⑥ 错误文本启发式必须行首命中且只看首尾各 20 行，否则普通 Go 源码（含 fmt.Errorf/failed 字面量）会被判成错误输出；⑦ 隔离 ConfigDir 会话（Router/workflow）只观测不折叠 —— 它们不继承用户工具权限，指针指向的存档文件可能读不到，折叠会静默变成有损；⑧ 急停文件 <config-dir>/context/DISABLED 带 1 秒 stat 缓存，本机 system 单元只能由用户重启，没有它就无法在不重启的前提下收手。 ⑨ B1 折叠走**字节区间内联改写**：scanWireRequest 只定位区间、不解码（8 MB 上 73 ms 的整包解析不进请求路径，实例化后 2.6 MB body 实测 1.1 ms / 2400 MB/s / 26 KB 分配），planFold 只对「本次新滑出窗口」的那一块解码并渲染，其余已折叠块由按内容寻址的 pointerCache 命中（1.3 ms）；任何异常路径返回原始 body（I7）；改写前必须 verifyFold 重新扫描改写后的 body 校验消息数/角色/tool 配对。⑩ 指针必须是内容的纯函数（无时间戳/计数器/输入键序），否则 repoint 或 fork 后 CLI 重排 tool_use 键序会让整个已折叠前缀重写、缓存全失效；存档按 sha256(text) 内容寻址且不带会话段（会话键会因 repoint/fork/空闲关闭而变）。⑪ 渲染缓存用 maphash 而非 sha256：本机 Celeron 无 SHA 扩展，sha256 实测 97 MB/s（2.5 MB 候选要 22 ms，等于它要省掉的开销），maphash 6.8 GB/s；两条独立 lane 合成 128 位键，避免碰撞把别的块的指针安到这一块上。 ⑫ §12.5 的实测把「折叠该多频繁」变成了硬约束：上游 cache_read 按 0.1x 计费，而折叠边界每移动一次，右侧全部前缀缓存失效并按 1.05x 重建，每轮小折在数学上永远为负。因此 (A) 每会话一个永不淘汰的已提交集合 foldCommits（pointerCache 在 4096 条整体重置，不能当承诺记录），已提交块在后续每轮无条件折回（I8），折叠边界单调右移；(B) rail 门禁：估算上下文未过 rail_tokens 时不提交任何新块，只折已提交块（I9，未触发时折叠区逐字节不变，上游缓存前缀保持有效）；过闸后按最旧优先提交到 target_tokens，单次事件受 min_fold_bytes / max_fold_bytes 约束，单块 ≥ large_block_tokens 时即使未过闸也单独放行，并且含这类结果的回合**不受 keep_rounds 保护**（吸收 dsh 的 cutLongReadRound）；豁免对象是所有含巨型可折结果的回合而不只是最新一轮，因为承诺集每轮按原始转录重算、不像 dsh 那样改写会话本体，只豁免最新一轮会让先前已提交的那一轮在新长轮出现时滑回保护区、指针无声展开（I8）。这五项只走 config.json，不加 CLI flag。 ⑬ shadow 不能只挂观测：它必须**预演同一套 rail 政策**，否则 Step 9 的 24h 预演无从判定准入（`gate=fold` 次数、`est_after/est_before`）。因此 shadow/无存档时请求路径执行 `previewFold` —— 用同一份 `collectFoldCandidates` + `decideFoldBudget` 算出决策与「本请求会折掉多少 token」，写进 `[live-compact] <mode>` 日志的 `gate=` / `would_fold_tokens=`；它不渲染指针、不碰 pointerCache、不写存档、不改 body，但会把「本请求会提交的块」记进同一个 `foldCommits` —— 否则每轮都像没折过、门禁每轮都触发，预演出来的就不是 mode=on 实际执行的政策。预演尺寸用字节区间估算而非解码后的精确估算，min/max_fold_bytes 的边缘可能与真实 planner 差一个 JSON 转义开销；门禁判定本身只依赖估算 token 与候选资格。 ⑭ rail 必须按**上游 token** 计量，而不是按字节估算：B4 三臂实测（2026-11-19）`actual_in ≈ est_in × 1.33`，130k 的估算闸实际落在 ~174k 上游 token，已经越过 CLI 约 167k 的自动压缩阈值——「过闸才折」等于「已经晚了」。因此会话维护一对校准样本（上一请求的上游 usage 与代理自己为它转发的估算），`foldContext.actual` / `forwardEst` 把 growth 与 target 一并折算到上游单位；样本缺失（首请求、usage 扫描失败、压缩流）退化为 1:1，即旧的纯估算行为，并做 0.5x–3x 截断防止单次坏样本把闸门推飞。上游样本只在 `Seen && ContextTokens()>0` 时写入：某些错误路径会给出 `message_start` + 空 usage，用 0 覆盖好样本会让闸门永久退化。同轮把 `max_fold_bytes` 的零值语义从「不限」改为「默认 262144」——与已批准 spec §12.6 的表一致，否则一次事件可以折掉整段历史。"
+    boundary: "B1 只在 `live_compact.mode=on` 且配置了存档目录、且会话不是隔离 ConfigDir 时才改写请求（工具结果的纯文本、已闭合回合、保留最新 keep_rounds 轮、未标记 is_error、≥ min_block_tokens）；off/shadow 字节不变。B2 只读：账本按会话记大小与计数（无消息文本/工具参数/路径/会话键，键只进哈希文件名），`GET /api/sessions/{key}/context-saving` 不做任何写入，胶囊只在折叠过且有节省时出现。双向都不得越界：B2 的只读性意味着读不到账本时显示「没有节省」而不是报错，也不得为了填数去猜 agent（会话没绑定 agent 时池级 key 退化成裸 key，读到空是正确行为）。不做抽取卡片（B3）。不引入分词器依赖，token 估算保持可解释的粗估；不改 stripCompactPayload 的既有剥离语义；不改多节点拓扑与控制面；不改变「API 层不鉴权」的用户决策。已知硬约束登记在此以免 B1 走回头路：手写单遍字节扫描器对同一 8 MB body 仍需 73 ms，整包解析不可内联，B1 必须先解决「解析怎么进请求路径」（增量/流式改写只替换目标区间，或按前缀确定性缓存折叠计划）。lcsmoke/ 是手工冒烟工具（真实 Claude CLI + 进程内代理），有意不参与产品构建，故只登记目录不单独钉测试。B4 的提交集与 rail 判定都是进程内状态：重启后从空集开始，CLI 重发原文时按当时策略重新判定，不保证跨重启折回；折叠边界处没有 cache_control 断点（B5 未启动），所以折叠区自身不进缓存 —— 这是「低频大折」而非「零代价」的原因，mode=on 的开闸仍受 §12.5 验收约束。长读豁免只认「单 part、非 error、≥ large_block_tokens」的工具结果：多 part 或错误结果本就不可折，豁免它们的回合只会白丢 keep_rounds 保护。shadow 的预演只读：off 仍然零解析；shadow 不写存档、不改 body、不填充渲染缓存，唯一的写是进程内的 `foldCommits`（重启即清）；`previewFold` 不承诺与 planner 逐字节一致，它的用途是政策准入统计，不是结果复刻。"
     files:
       - server/internal/agent/proxy/proxy.go
       - server/internal/agent/proxy/live_compact.go
@@ -9320,6 +9325,8 @@ groups:
       - server/internal/agent/proxy/live_compact_scan_request.go
       - server/internal/agent/proxy/live_compact_fold.go
       - server/internal/agent/proxy/live_compact_fold_splice.go
+      - server/internal/agent/proxy/live_compact_fold_gate.go
+      - server/internal/agent/proxy/live_compact_commits.go
       - server/internal/agent/proxy/live_compact_pointer.go
       - server/internal/agent/proxy/live_compact_pointer_cache.go
       - server/internal/agent/proxy/live_compact_archive.go
@@ -9351,6 +9358,8 @@ groups:
       - server/internal/agent/proxy/live_compact_fold_test.go
       - server/internal/agent/proxy/live_compact_fold_cache_test.go
       - server/internal/agent/proxy/live_compact_fold_proxy_test.go
+      - server/internal/agent/proxy/live_compact_fold_gate_test.go
+      - server/internal/agent/proxy/live_compact_shadow_preview_test.go
       - server/internal/agent/proxy/live_compact_scan_test.go
       - server/internal/agent/proxy/live_compact_pointer_cache_test.go
       - server/internal/agent/proxy/live_compact_archive_test.go
@@ -9364,7 +9373,7 @@ groups:
       - server/internal/agent/pool_compact_proxy_test.go
       - cli/cmd/startup_config_test.go
     anchors:
-      - 'server/internal/agent/proxy/proxy.go:turn = s.observeLiveCompact(token, body)'
+      - 'server/internal/agent/proxy/proxy.go:turn = s.observeLiveCompact(token, body, gate)'
       - 'server/internal/agent/proxy/proxy.go:if turn != nil && resp.Header.Get("Content-Encoding") == ""'
       - 'server/internal/agent/proxy/live_compact.go:func (s *Server) analyzeLiveCompact('
       - 'server/internal/agent/proxy/live_compact.go:actual_in=%d cand_blocks=%d cand_error_blocks=%d'
@@ -9380,11 +9389,34 @@ groups:
       - 'cli/cmd/startup.go:live_compact'
       - 'server/internal/agent/proxy/live_compact_proxy_test.go:func TestLiveCompactSharesBodyWithoutRacingTheRewrite('
       - 'server/internal/agent/proxy/live_compact_turn_test.go:func TestLiveCompactTurnPairsOneRequestEstimateWithItsOwnUsage('
-      - 'server/internal/agent/proxy/proxy.go:body, _ = s.foldRequest(token, body)'
+      - 'server/internal/agent/proxy/proxy.go:body, _, gate = s.foldRequest(token, body)'
       - 'server/internal/agent/proxy/live_compact_scan_request.go:func scanWireRequest(body []byte) (*scanRequest, error)'
       - 'server/internal/agent/proxy/live_compact_fold.go:func planFold(body []byte, req *scanRequest, cfg LiveCompactConfig, store *archiveStore, cache *pointerCache) foldResult'
+      - 'server/internal/agent/proxy/live_compact_fold.go:func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store *archiveStore, cache *pointerCache, commits *foldCommits, fc foldContext) (foldResult, liveCompactGate)'
+      - 'server/internal/agent/proxy/live_compact_fold_gate.go:func decideFoldBudget(cfg LiveCompactConfig, fc foldContext, current int, largeBlock bool) (foldBudget, liveCompactGate)'
+      - 'server/internal/agent/proxy/live_compact_fold_gate.go:func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *foldCommits, fc foldContext) (foldPreview, liveCompactGate)'
+      - 'server/internal/agent/proxy/live_compact_fold_gate.go:wouldFoldTokens int'
+      - 'server/internal/agent/proxy/live_compact_shadow_preview_test.go:func TestShadowPreviewKeepsCommittedBlocksBelowRail('
+      - 'server/internal/agent/proxy/live_compact_shadow_preview_test.go:func TestShadowObservationLogsGateAndWouldFoldTokens('
+      - 'server/internal/agent/proxy/live_compact_log.go:gate=%s fold_ms=%d'
+      - 'server/internal/agent/proxy/live_compact.go:would_fold_tokens=%d'
+      - 'server/cmd/mindfs-server/main.go:liveCompactRailTokens := 0'
+      - 'server/internal/agent/proxy/live_compact_commits.go:type foldCommits struct {'
+      - 'server/internal/agent/proxy/live_compact_fold.go:func roundHasOversizedResult('
+      - 'server/internal/agent/proxy/live_compact_fold.go:if index < protectedFrom || roundHasOversizedResult('
+      - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestCarvedOutCommitSurvivesNewerOversizedRound('
+      - 'server/internal/agent/proxy/live_compact_fold_gate.go:func (fc foldContext) actualScale() (num, den int)'
+      - 'server/internal/agent/proxy/live_compact_fold.go:func (s *Server) noteActualContext(token string, totals usageTotals)'
+      - 'server/internal/agent/proxy/live_compact_fold.go:func (s *Server) sessionCalibration(token string) (actual, forwardEst int)'
+      - 'server/internal/agent/proxy/live_compact.go:c.MaxFoldBytes = 262144'
+      - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestRailUsesUpstreamTokenScale('
+      - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestFoldStopsAtTargetInUpstreamUnits('
+      - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestSessionCalibrationRoundTrip('
+      - 'server/internal/agent/proxy/live_compact_commits.go:keys map[pointerCacheKey]struct{}'
+      - 'server/internal/agent/proxy/live_compact.go:c.RailTokens = 130000'
+      - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestProxyFoldKeepsCommittedPrefixAcrossTurns('
       - 'server/internal/agent/proxy/live_compact_fold.go:if s.liveCompactDisabled() {'
-      - 'server/internal/agent/proxy/live_compact_fold.go:if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < part.end-part.start {'
+      - 'server/internal/agent/proxy/live_compact_fold.go:if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < spanLen {'
       - 'server/internal/agent/proxy/live_compact_fold_splice.go:func verifyFold(before *scanRequest, folded []byte) error'
       - 'server/internal/agent/proxy/live_compact_pointer.go:func renderFoldPointer(p pointerInput) string'
       - 'server/internal/agent/proxy/live_compact_pointer_cache.go:func pointerCacheKeyFor(toolName, inputSummary string, textSpan []byte) pointerCacheKey'
@@ -9484,6 +9516,36 @@ groups:
       - 'server/internal/kanban/router_inspect_run_test.go:func TestRouterInspectRunServesEventTurn('
       - 'server/internal/kanban/router_event_lease_tick_test.go:func TestCoordinatorTickReclaimsStaleClaims('
 
+  # ── 会话工作树归属清理：给「repoint 拒绝做、又无清归属入口」那批会话收尾 ──────
+  - id: G-MQ
+    title: 会话工作树归属清理（原生端点 /api/sessions/{key}/worktree-ownership）
+    kind: fix
+    symptom: "一批会话的 `related_worktree` 指向早已删除的目录（`.worktree/task-36/37/38`、`/tmp/mindfs-recovery`、`llmux/src` 等），运行时 cwd 却早就离开了那儿。界面上它们永远挂着「目录不存在」徽标，而唯一看起来能治的 `POST /api/sessions/repoint` 在「会话已经在这个目录里」那一步直接 400 —— 那一步排在 fork 转录等**所有副作用之前**（刻意的：不该为一次无效变更造新 id），于是这批会话两头不通：repoint 拒绝做，清归属又没有入口。"
+    why: "repoint 的语义是「fork 新转录 + 换 id + 搬文件 + 清归属」，治不了这个形状的病：该动的只有 `related_worktree` 一列，搬转录只会多造一份副本（这些转录要么还在主 slug、要么压根不存在）。必须保留：① `ClearSessionWorktreeOwnership` 只摘 `related_worktree`，刻意不碰转录、binding、游标 —— 与 `RepointSession` 末尾「刻意不同任务侧归属」同一条边界，这里也只清会话侧；② 归属目录**仍然存在**时默认拒绝（那是活着的工作树，把人踢出去不该是「修一条坏行」的副作用），`force` 才是明确出口；③ 摘归属后若 `work_dir` 恰好就是那个已删目录也必须清成空串 —— `work_dir` 优先级高于 `related_worktree`，只摘归属不改 work_dir 的话运行时 cwd 还在原地，「徽标没了但还在往不存在的目录干活」；④ 复用 repoint 的两个既有判据：反查只认 `claude` binding（脚本手里只有 `CLAUDE_CODE_SESSION_ID`），正在回复（`HasActiveUse`）的会话拒绝换道；⑤ 清前 `pool.Close` 池级 key，agent 名按会话自己的绑定解析（既可能是 claude 也可能是 codex/dsh），不能硬编码；⑥ 顺带 `RemoveRelatedFilesUnder` 旧工作树前缀，否则「相关文件」面板指着一堆不存在的路径；⑦ 清完广播 `session.meta.updated`，否则前端要等下一次整表重拉才掉徽标 —— 而用户点的就是「让它消失」。"
+    boundary: "只清**会话侧**归属，不 fork/搬转录、不动 `session_agent_bindings`、不推进游标、不碰任务侧 worktree 引用（`Task.WorktreePath`），不删目录也不跑 git。无转录的会话仍然修不了 repoint 那条路 —— 本端点治的是「徽标与运行时 cwd」，不是「把转录搬走」；`force` 不宣称安全，它只是那个人明确要求的出口。"
+    files:
+      - server/internal/api/usecase/session_worktree_ownership.go
+      - server/internal/api/http_session_worktree_ownership.go
+      - server/internal/api/http_routes.go
+    tests:
+      - server/internal/api/usecase/session_worktree_ownership_test.go
+      - server/internal/api/http_session_worktree_ownership_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_worktree_ownership.go:func (s *Service) ClearSessionWorktreeOwnership('
+      - 'server/internal/api/usecase/session_worktree_ownership.go:worktree 目录仍然存在'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:manager.ClearRelatedWorktree(ctx, key)'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:manager.SetWorkDir(ctx, key, "")'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:FindAgentBindingByAgentSession(ctx, "claude", agentSessionID)'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:session.InferAgentFromSession(current)'
+      - 'server/internal/api/http_session_worktree_ownership.go:handleSessionWorktreeOwnershipClear'
+      - 'server/internal/api/http_session_worktree_ownership.go:h.AppContext.BroadcastSessionMetaUpdated(rootID, out.Session)'
+      - 'server/internal/api/http_routes.go:/api/sessions/{key}/worktree-ownership'
+      - 'server/internal/api/http_routes.go:/api/sessions/worktree-ownership'
+      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipRefusesWhenDirectoryStillExists('
+      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipClearsMissingWorktree('
+      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipClearsStaleWorkDir('
+      - 'server/internal/api/http_session_worktree_ownership_test.go:func TestSessionWorktreeOwnershipRouteRegistered('
+
   # ── Router 工具句柄按轮路由 + deliver 前置闸门（「已转交」假动作）─────────────
   - id: G-MR
     title: Router 工具句柄按轮路由 + deliver_to_active_run 前置目标闸门
@@ -9517,8 +9579,8 @@ groups:
   - id: G-MS
     title: 任务详情面板展示收口（总结不截断、结算由 Router 压缩、运行视图只显示增量信息、会话入口图标化、移动端长面板可滚）
     kind: fix
-    symptom: "任务详情面板五处展示问题（用户 2026-11-19 报告，任务 #87）：① 总结被截断 —— 线上 17 条活动行 summary 长度恰好 1201 字符、末尾带「…」，句子停在一半。② 总结与节点原文没有区别 —— 结算文案就是最后一个成功 Agent 节点 output 的原样搬运。③ 运行视图里又是同一段原文 —— 详情去会话里看就好。④ 独立的「工作流会话」文字胶囊多余 —— 运行视图里已有逐节点入口。⑤ 移动端长面板被限制滚动，运行视图在可见区外。另有一处状态回归：一轮回复完成后任务卡片写着「未开始」而不是「待审核」。"
-    why: "必须保留：① 截断只该发生在把正文喂给**模型**的地方（brief 有字节上限），落到任务详情的总结是全文；仅保留 20000 字符的病态输出兜底（单节点吐几 MB 转录时不让一行活动撑爆任务库与 WS 广播）。② 结算先写原文（任何时刻都有可见结果），再由与 Router 同一 agent/model（effort=low）的一次性回合压成 1–3 句，CAS 换掉「还是它读到的那个值」的两行（活动 summary + 任务 result_summary）—— 操作员改判、下一轮结算、暂停/完成一律赢；失败/超时/空/过长/等同原文一律保持原文。重复结算（审批继续、启动对账）按 (activity, raw) 复用压缩结果，绝不把压缩结果盖回原文再压一次。刻意不走 Router 每任务 lane（单飞串行，再排队会和正在跑的回合互等）。提示词里的「用户这一轮的要求」必须回溯到真正的用户留言（Route 路径看 ReplyToID，legacy 路径按列表位置回溯）——结算时回复自己的 body 已被清空。③ 运行视图不再重复展示 summary/result/message/text/title/detail 与字符串 output（那是回复原文），只留 changes 变更清单、verification 等扁平字段、耗时（started_at→finished_at，缺端点/非法/倒挂一律不显示）、第 N 次尝试、错误与 HumanGate 的 prompt（审批问题本身）。④ 会话入口复用已有 WorkflowIcon，文字只进 title/aria-label。⑤ 移动端卡片高度必须扣掉顶栏 36px 与上下 padding 20px（遮罩从 top:36px 起，旧规则按整屏封顶会让卡片底部 36px+ 露在可见区外），滚动容器加 overscroll-behavior: contain。⑥ 没有 Run 可投影的回合（Router say/ask_user、直连会话）回话后任务头停在 waiting_user（待审核），不能退回 pending —— 暂停与终态不复活。"
+    symptom: "任务详情面板五处展示问题（用户 2026-11-19 报告，任务 #87）：① 总结被截断 —— 线上 17 条活动行 summary 长度恰好 1201 字符、末尾带「…」，句子停在一半。② 总结与节点原文没有区别 —— 结算文案就是最后一个成功 Agent 节点 output 的原样搬运。③ 运行视图里又是同一段原文 —— 详情去会话里看就好。④ 独立的「工作流会话」文字胶囊多余 —— 运行视图里已有逐节点入口（该独立入口已于 2026-11-19 整体删除，逐节点入口改为会话列表同款图标，见 G-MV）。⑤ 移动端长面板被限制滚动，运行视图在可见区外。另有一处状态回归：一轮回复完成后任务卡片写着「未开始」而不是「待审核」。"
+    why: "必须保留：① 截断只该发生在把正文喂给**模型**的地方（brief 有字节上限），落到任务详情的总结是全文；仅保留 20000 字符的病态输出兜底（单节点吐几 MB 转录时不让一行活动撑爆任务库与 WS 广播）。② 结算先写原文（任何时刻都有可见结果），再由与 Router 同一 agent/model（effort=low）的一次性回合压成 1–3 句，CAS 换掉「还是它读到的那个值」的两行（活动 summary + 任务 result_summary）—— 操作员改判、下一轮结算、暂停/完成一律赢；失败/超时/空/过长/等同原文一律保持原文。重复结算（审批继续、启动对账）按 (activity, raw) 复用压缩结果，绝不把压缩结果盖回原文再压一次。刻意不走 Router 每任务 lane（单飞串行，再排队会和正在跑的回合互等）。提示词里的「用户这一轮的要求」必须回溯到真正的用户留言（Route 路径看 ReplyToID，legacy 路径按列表位置回溯）——结算时回复自己的 body 已被清空。③ 运行视图不再重复展示 summary/result/message/text/title/detail 与字符串 output（那是回复原文），只留 changes 变更清单、verification 等扁平字段、耗时（started_at→finished_at，缺端点/非法/倒挂一律不显示）、第 N 次尝试、错误与 HumanGate 的 prompt（审批问题本身）。④ 运行视图不再重复总结原文，会话入口只留逐节点图标 —— 独立的 WorkflowSessionJump 已在 G-MV 中整体删除，文字只进 title/aria-label。⑤ 移动端卡片高度必须扣掉顶栏 36px 与上下 padding 20px（遮罩从 top:36px 起，旧规则按整屏封顶会让卡片底部 36px+ 露在可见区外），滚动容器加 overscroll-behavior: contain。⑥ 没有 Run 可投影的回合（Router say/ask_user、直连会话）回话后任务头停在 waiting_user（待审核），不能退回 pending —— 暂停与终态不复活。"
     boundary: "只改展示与结算文案：不动 activity/事件/决策的数据模型，不新增 HTTP 端点，不改路由与权限，不改 coordinator（coordinate 模式）的动作白名单/预算/幂等，不改 workflow 引擎的投影语义（有 Run 的回合仍按 taskStatusFromRun 投影）。压缩只影响文案，不宣称提升任务正确性；进程重启后 compressedReplies 丢失，最坏多压一次。移动端修复只针对 PanelShell 的 max-width:640px 分支。"
     files:
       - server/internal/kanban/service_activity_output_text.go
@@ -9535,7 +9597,6 @@ groups:
       - server/app/workspace_build.go
       - web/src/components/shell/PanelShell.tsx
       - web/src/components/task/RunNodeRunRow.tsx
-      - web/src/components/task/WorkflowSessionJump.tsx
       - web/src/components/task/runTimelineModel.ts
       - web/src/components/task/runTimelinePayload.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
@@ -9545,7 +9606,6 @@ groups:
       - server/internal/kanban/activity_task_status_test.go
       - server/internal/kanban/router_route_test.go
       - web/tests/run-timeline-readable.test.mjs
-      - web/tests/task-workflow-session-jump.test.mjs
       - web/tests/task-panel-options.test.mjs
     anchors:
       - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 20000'
@@ -9567,7 +9627,6 @@ groups:
       - 'server/internal/kanban/activity_service_turns.go:s.markTurnTaskWaitingUser(ctx, task.ID)'
       - 'web/src/components/task/runTimelinePayload.ts:const PROSE_KEYS = ["summary", "result", "message", "text", "title", "detail"];'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunDurationMs('
-      - 'web/src/components/task/WorkflowSessionJump.tsx:<WorkflowIcon size={13} />'
       - 'web/src/components/shell/PanelShell.tsx:max-height: calc(var(--panel-vh, 100dvh) - 56px) !important;'
       - 'server/internal/kanban/service_activity_summary_test.go:func TestSettleWorkflowReplyKeepsLongSummary('
       - 'server/internal/kanban/service_activity_summary_test.go:func TestSettleWorkflowReplyCompressesSummary('
@@ -9625,6 +9684,7 @@ groups:
       - 'server/internal/kanban/workflow_node_answer_test.go:func TestAnswerWaitingNodeRetriesWithAnswer(t *testing.T) {'
       - 'server/internal/kanban/activity_route_answer_test.go:func TestApplyRouteAnswerWaitingNodeRendersConfirmation(t *testing.T) {'
       - 'e2e/test_task_router_answer.py:if ":7331" in args.base:'
+
   # ── 执行历史审计：worker 无工作流库降级 + Router brief 不截断需求 + 删卡级联 + Router 结果日志 ──
   - id: G-MU
     title: 执行历史审计的四处修复（worker 无 workflow 降级直连、Router 触发留言不截断、删卡级联清数据面、Router 决策结果留日志）
@@ -9658,6 +9718,73 @@ groups:
       - 'server/internal/kanban/router_brief_trigger_body_test.go:func TestSituationBrief_TriggerUserMessageIsNotCutAtActivityExcerpt(t *testing.T) {'
       - 'server/internal/kanban/task_store_delete_cascade_test.go:func TestDeleteTask_RemovesTaskOwnedRows(t *testing.T) {'
       - 'server/internal/kanban/router_observability_test.go:func TestFinishFallbackLogsOutcome(t *testing.T) {'
+
+  # ── 运行视图多轮历史 + 会话入口图标化 + worker 会话名分轮 ──
+  - id: G-MV
+    title: 运行视图逐轮展示全部历史、逐节点会话入口改为会话列表图标、worker 会话名带上节点与触发留言
+    kind: fix
+    symptom: "用户 2026-11-19 报告（任务 #87）：① 明明多轮执行了，运行视图里只有一个块、一直在覆盖 —— `GET /api/tasks/{id}/workflow-run/nodes` 只回引擎绑定的最新一条 WorkflowRun（D14 一个任务一次只绑定一条非终态 Run），前几轮整块消失。② 运行视图展开按钮旁边的工作流会话按钮多余；逐节点的「打开会话」是文字按钮且图标语义是「工作流」，用户要求改成右侧会话列表那种「跳转到会话」的图标。③ 同一条任务每开一轮 worker 会话，标题都是「任务名 / #N」，会话列表里一排同名项，分不出哪条是哪一轮。"
+    why: "必须保留：① 端点按 Run 分组返回任务的全部轮次（`runs`，旧的在前，因为 `ListWorkflowRunsForTask` 是新的在前、运行视图按对话顺序展示）；平铺 `node_runs` 形状继续保留（既有调用方、重试端点与「取最近一次执行」的语义都用它）。② 视图逐轮渲染，每轮用**自己**的 graph 快照取节点名与节点类型（不同轮的图可能不同）；只有一轮时不打「第 N 轮」标签；没有节点行的轮次不占块，轮次号在可见轮次之间连续编号；展开时才取数，refreshKey 变化时重取（新 Run 与 session_key 都是回合中途才出现的）。③ 独立的 WorkflowSessionJump 组件与 `pickWorkflowSessionKey` 整体删除；逐节点入口改用会话列表同款图标（`ModeIcon type=\"task\"` + `AgentIcon` 角标），文字只留 title/aria-label，`data-testid=\"open-session-{id}\"` 不变。④ worker 会话名 = `任务名 / #N · 节点名 · 触发留言首行`，由纯函数 `WorkflowNodeSessionName` 拼接：留言只取第一行、按 rune 截断到 20 字符加省略号；base 与节点名相同时不重复；没有留言时退化为 `base · 节点名`。"
+    boundary: "只改展示与命名：不改 Router 决策、不改 Run 生命周期与引擎绑定（一个任务仍一次只绑定一条非终态 Run）；不引入会话名去重查询（同一条留言重复触发同一节点仍会同名）；不动任务改名链路（`bindTaskSessionNames` 只改 MainSessionKey，worker 会话名不会被任务改名覆盖）；不新增写路径，端点只读。"
+    files:
+      - server/internal/api/http_workflows.go
+      - server/internal/api/http_workflow_node_runs.go
+      - server/internal/api/appcontext_workflow.go
+      - server/internal/kanban/workflow_node_executor.go
+      - server/internal/kanban/workflow_session_name.go
+      - web/src/services/task/runView.ts
+      - web/src/shared/taskComments.ts
+      - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/useRunViewEntry.ts
+      - web/src/components/task/runTimelineModel.ts
+      - web/src/components/task/RunNodeRunRow.tsx
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - server/internal/api/http_workflows_test.go
+      - server/internal/api/http_workflow_node_runs_test.go
+      - server/internal/api/appcontext_workflow_test.go
+      - server/internal/kanban/workflow_session_name_test.go
+      - web/tests/task-workflow-run-history.test.mjs
+    anchors:
+      - 'server/internal/api/http_workflow_node_runs.go:type runWithNodeRuns struct {'
+      - 'server/internal/api/http_workflow_node_runs.go:respondJSON(w, http.StatusOK, map[string]any{"node_runs": flat, "runs": groups})'
+      - 'server/internal/api/appcontext_workflow.go:name := kanban.WorkflowNodeSessionName(base, exec.Node.Name, exec.UserInput)'
+      - 'server/internal/kanban/workflow_session_name.go:func WorkflowNodeSessionName(base, nodeLabel, userInput string) string {'
+      - 'server/internal/kanban/workflow_session_name.go:suffix := strings.Join(parts, " · ")'
+      - 'server/internal/kanban/workflow_node_executor.go:UserInput:       values["previous_input"],'
+      - 'web/src/services/task/runView.ts:export async function fetchWorkflowNodeRuns('
+      - 'web/src/shared/taskComments.ts:export type WorkflowRunNodeRuns = WorkflowRunPayload & { node_runs?: NodeRunPayload[] };'
+      - 'web/src/components/task/runTimelineModel.ts:export function runHistoryGroups('
+      - 'web/src/components/task/runTimelineModel.ts:export function runNodeNames(graph: RunGraphLike): Record<string, string> {'
+      - 'web/src/components/task/RunViewEntry.tsx:runHistoryGroups(runs)'
+      - 'web/src/components/task/RunViewEntry.tsx:t("task.runTimeline.roundLabel", { n: group.round })'
+      - 'web/src/components/task/RunNodeRunRow.tsx:<SessionTypeIcon type="task" agent={nodeRun.agent || ""} />'
+      - 'web/src/components/common/SessionTypeIcon.tsx:export function SessionTypeIcon({ type, agent, shellLabel, shellTitle, color }: SessionTypeIconProps) {'
+      - 'web/src/components/task/runTimelineModel.ts:export function legacyRunsFromNodeRuns('
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.roundLabel": "第 {n} 轮",'
+      - 'server/internal/api/http_workflow_node_runs_test.go:func TestWorkflowNodeRunsListReturnsEveryRound(t *testing.T) {'
+      - 'server/internal/api/appcontext_workflow_test.go:func TestWorkflowNodeAdapterSessionNamesDifferPerRound(t *testing.T) {'
+      - 'server/internal/kanban/workflow_session_name_test.go:func TestWorkflowNodeSessionNameDiffersAcrossRounds(t *testing.T) {'
+      - 'web/tests/task-workflow-run-history.test.mjs:test("按 Run 分组，轮的顺序 = 后端给的顺序（旧的在前）", () => {'
+
+  # ── Router 提示词：会话连续性优先于新开工作流 ──
+  - id: G-MW
+    title: Router 提示词优先沿用任务主会话，只有可复用的固定流程才新开工作流
+    kind: fix
+    symptom: "用户 2026-11-19 报告：每条留言都被派给工作流，每一轮都新建一个 worker 会话，同一件事被拆成一串互不相干的会话，改代码、修 bug、追问细节这类持续对话也拿不到上一轮上下文。"
+    why: "必须保留：规则 4 先判 `router_message_agent`（沿用任务主会话、与前几轮同一段上下文），只有 brief 里的 workflow 描述确实匹配「可复用的固定流程」且这条留言不是在改代码/修 bug/追问细节时才 `router_run_workflow`；并明确写出「会话连续性」原则 —— `run_workflow` 每轮新建节点会话，连续处理同一件事默认 `message_agent`，拿不准时选 `message_agent` 不选 workflow。可复用的固定流程判据必须同时保留，否则会滑回「一律直连」。"
+    boundary: "只改提示词文本与其内容守卫：不改 Router 的动作集合、校验、幂等键与 coordinate 白名单，不动 `router.mode`，不新增 HTTP 端点。提示词哈希变化会让 Router 运行时重建/重开会话，这是 `RouterPromptHash` 的既定语义。"
+    files:
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/router_prompt_guidance_test.go
+    anchors:
+      - 'server/internal/kanban/router_prompt.md:→ `router_message_agent`（它沿用任务主会话，和前几轮是同一段上下文）'
+      - 'server/internal/kanban/router_prompt.md:才 `router_run_workflow`（workflow_id 必须来自 brief）'
+      - 'server/internal/kanban/router_prompt.md:**会话连续性**'
+      - 'server/internal/kanban/router_prompt.md:拿不准时选 `message_agent`，不要选 workflow。'
+      - 'server/internal/kanban/router_prompt_guidance_test.go:func TestRouterPromptPrefersMessageAgentForContinuity(t *testing.T) {'
 
   # ── 子任务完成静默 + 安卓后台完成补发（服务端完成账本） ──────────────
   - id: G-MX
@@ -9738,10 +9865,6 @@ groups:
       - server/internal/kanban/task_store_workflow_human_gate.go
       - server/internal/kanban/service_gate_note.go
       - server/internal/api/http_task_human_gate.go
-      - docs/plans/README.md
-      - e2e/test_task_router_gate_note.py
-      - e2e/test_task_router_coordinate_common.py
-      - docs/superpowers/plans/2026-11-19-task-gate-and-reports-unfold.md
       - web/src/components/task/ActivityMessage.tsx
       - web/src/components/task/ConversationView.tsx
       - web/src/components/task/TaskHumanGateCard.tsx
@@ -9751,9 +9874,6 @@ groups:
       - web/src/shared/workflowModel.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
-      - server/internal/api/http_workflows_test.go
-      - server/internal/kanban/workflow_runtime_test.go
-      - server/internal/kanban/workflow_lifecycle_guards_test.go
     tests:
       - server/internal/kanban/workflow_terminal_gate_test.go
       - server/internal/kanban/workflow_human_gate_context_test.go
