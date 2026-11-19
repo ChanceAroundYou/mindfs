@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "vitest";
-import { LOOP_DEFAULT, LOOP_MAX, LOOP_MIN, newNode, validateWorkflowGraph, workflowDraftDisplayName, workflowNodeConfigText } from "../src/shared/workflowModel.ts";
+import { LOOP_DEFAULT, LOOP_MAX, LOOP_MIN, NODE_KINDS, newNode, validateWorkflowGraph, workflowDraftDisplayName, workflowNodeConfigText } from "../src/shared/workflowModel.ts";
+import { flowEdges, flowNodes } from "../src/components/task/workflowAuthoring/flowGraph.ts";
+import { generateReactFlowNodeStyle } from "../src/components/task/workflowNodeStyles.ts";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
 
@@ -109,6 +111,32 @@ test("工作流标题优先显示元数据名称，缺省才回退内部 id", ()
   assert.equal(workflowDraftDisplayName({ workflow_id: "workflow-debug", name: "Bug 修复" }), "Bug 修复");
   assert.equal(workflowDraftDisplayName({ workflow_id: "workflow-debug", name: "  " }), "debug");
   assert.equal(workflowDraftDisplayName({ workflow_id: "workflow-new-feature" }), "new-feature");
+});
+
+test("节点样式不得自带 transform：xyflow 就是靠它定位的", () => {
+  // xyflow v12 的 NodeWrapper 把 `...node.style` 铺在 `transform: translate(x,y)`
+  // **之后**（node_modules/@xyflow/react/dist/esm/index.js 的 NodeWrapper），
+  // 所以 node.style 里出现任何 transform 都会顶掉定位：所有节点叠在画布原点，
+  // 拖动只改 state、不改视觉 —— 这正是「节点看不见、拖不动」的现场。
+  const graph = {
+    nodes: NODE_KINDS.map((kind, i) => ({ id: `n${i}`, kind, params: {}, position: { x: 100 + i * 200, y: 120 } })),
+    edges: [],
+  };
+  const nodes = flowNodes(graph, {});
+  assert.equal(nodes.length, NODE_KINDS.length);
+  for (const n of nodes) {
+    assert.equal(n.style?.transform, undefined, `${n.id} 的 style 不得覆盖定位 transform`);
+  }
+  for (const kind of NODE_KINDS) {
+    assert.equal(
+      (generateReactFlowNodeStyle(kind) as Record<string, unknown>).transform,
+      undefined,
+      `${kind} 的节点样式不得覆盖定位 transform`,
+    );
+  }
+  // 位置原样交给 flow 层：拖动后的坐标要能落库。
+  assert.deepEqual(nodes.map((n) => n.position), graph.nodes.map((n) => n.position));
+  assert.equal(flowEdges({ nodes: [], edges: [{ from: "n0", to: "n2" }] }).length, 1);
 });
 
 test("桌面节点属性面板能编辑 Agent / 人工确认 / 通知的文案", () => {

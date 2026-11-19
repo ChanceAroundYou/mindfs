@@ -10106,6 +10106,28 @@ groups:
       - 'web/src/components/workspace/workspaceStyles.ts:maxWidth: "55%",'
       - 'web/src/components/workspace/workspaceStyles.ts:minWidth: "24px",'
       - 'web/tests/workspace-project-toggle.test.ts:toggle before the project name'
+  - id: G-NE
+    title: 工作流画布节点可见性与拖动（node.style 不得覆盖 xyflow 定位 transform）
+    kind: fix
+    symptom: "2026-11-20 用户报「工作流管理和编辑的界面…各种显示不完整 节点都看不见了 也没办法拖动」。现场在隔离实例（7431）用 Chromium 复现：画布上 4 个 `.react-flow__node` 的 inline / computed transform 全是 `none`，包围盒完全相同（x=671,y=395,w=120,h=46），拖动后 transform 依旧不动 —— 节点全叠在画布原点，看起来就是「节点看不见 / 显示不完整 / 拖不动」。"
+    why: "必须保留：`generateReactFlowNodeStyle()` 返回的样式会被 `flowNodes()` 放进 `node.style`，而 xyflow v12 的 NodeWrapper 是把 `...node.style` 铺在它自己的 `transform: translate(x,y)` **之后**（见 node_modules/@xyflow/react 的 NodeWrapper），因此 `node.style` 里任何 transform（连 `transform: \"none\"` 也算）都会顶掉定位：坐标只在 state 里变、视觉不动。所以此函数从此**不许**产出 `transform`，节点形状差异只用背景色 / 边框 / 圆角表达（diamond 用 4px 圆角、circle 用 50%）。同轮修的四处都是同一批症状的真实来源：(1) 断点判定只取一次 `useState(isNarrow)` 快照，窄窗口打开后放大永远停在只读清单 —— 改为监听 resize 实时重算；(2) 画布固定 `height: 520px` 在矮视口里被挤到折叠线以下 —— 改为 `flex: 1, minHeight: 360px` 并让根容器 `height: 100%`；(3) `addNode` 把新节点按递增 y 摆，第 5 个起落在画布外且不重算视口 —— 改为与 `flowNodes()` 同一套 4 列网格（x=80+230·(i%4)，y=80+150·⌊i/4⌋），并在一帧后 `fitView`；(4) `addNode` 连着发两次不一致的 onChange、且新节点缺 `data.kind`（图标要等重建才出现）—— 改为只发一次、prev 先带上新定义、data 带 kind。属性面板锚点也从被点中的子元素改成最近的 `.react-flow__node`（否则浮动窗口贴着图标/文字算位置）。"
+    boundary: "只动画布的表现层与新增节点落位，不改 `graphFrom()` 持久化契约（position 仍原样落库）、不改图校验、不改 Loop 子图的 `params.graph` 往返、不改只读清单（移动端）的内容；不引入新的依赖，也不改 `MOBILE_BREAKPOINT = 720` 的取值；`tsc`/Vitest 不覆盖像素，所以「节点真的分开且能拖」由 `/tmp` 下的 Playwright 探针在隔离实例上取证（不写入仓库）。"
+    files:
+      - web/src/components/task/workflowNodeStyles.ts
+      - web/src/components/task/WorkflowCanvas.tsx
+      - web/src/components/task/workflowAuthoring/WorkflowLoopCanvas.tsx
+      - web/tests/workflow-canvas.test.ts
+    tests:
+      - web/tests/workflow-canvas.test.ts
+    anchors:
+      - 'web/src/components/task/workflowNodeStyles.ts:export function generateReactFlowNodeStyle(kind: WorkflowNodeKind) {'
+      - 'web/src/components/task/workflowNodeStyles.ts:**不要在这里返回 transform**'
+      - 'web/src/components/task/WorkflowCanvas.tsx:const onResize = () => setNarrow(isNarrow());'
+      - 'web/src/components/task/WorkflowCanvas.tsx:position: { x: 80 + (index % 4) * 230, y: 80 + Math.floor(index / 4) * 150 },'
+      - 'web/src/components/task/WorkflowCanvas.tsx:flex: 1, minHeight: "360px", overflow: "hidden", position: "relative"'
+      - 'web/src/components/task/WorkflowCanvas.tsx:event.target.closest(".react-flow__node")'
+      - 'web/src/components/task/workflowAuthoring/WorkflowLoopCanvas.tsx:position: { x: 80 + (index % 4) * 230, y: 80 + Math.floor(index / 4) * 150 },'
+      - 'web/tests/workflow-canvas.test.ts:节点样式不得自带 transform：xyflow 就是靠它定位的'
   - id: G-NF
     title: 任务派发默认 Agent/模型可配（默认 claude + sonnet），不再由探针顺序决定
     kind: fix

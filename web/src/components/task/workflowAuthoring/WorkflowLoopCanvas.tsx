@@ -6,6 +6,7 @@ import {
   addEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -36,6 +37,7 @@ export type WorkflowLoopCanvasProps = {
 
 export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanvasProps) {
   const { t } = useI18n();
+  const { fitView } = useReactFlow();
   const inner = useMemo<WorkflowGraph>(() => loopInnerGraph(loop) ?? { nodes: [], edges: [] }, [loop]);
   const labels = useMemo(() => {
     const out: Record<string, string> = {};
@@ -78,15 +80,24 @@ export function WorkflowLoopCanvas({ loop, onChange, onBack }: WorkflowLoopCanva
   const addNode = useCallback(
     (kind: WorkflowNodeKind) => {
       const def = newNode(kind);
+      // 与 flowNodes 的默认网格一致，避免新节点逐层错位叠在一起。
+      const index = nodes.length;
       const nextNodes = [
         ...nodes,
-        { id: def.id, position: { x: 120 + nodes.length * 30, y: 120 + nodes.length * 20 }, data: { label: `${labels[kind]}: ${def.id}` } },
+        {
+          id: def.id,
+          position: { x: 80 + (index % 4) * 230, y: 80 + Math.floor(index / 4) * 150 },
+          data: { label: labels[kind] ?? kind, kind },
+        },
       ];
       setNodes(nextNodes);
       setSelectedId(def.id);
       emit(nextNodes, edges, { ...inner, nodes: [...inner.nodes, def] });
+      requestAnimationFrame(() => {
+        void fitView({ padding: 0.2, maxZoom: 1, duration: 200 });
+      });
     },
-    [nodes, edges, labels, emit, inner, setNodes],
+    [nodes, edges, labels, emit, inner, setNodes, fitView],
   );
 
   const removeSelected = useCallback(() => {

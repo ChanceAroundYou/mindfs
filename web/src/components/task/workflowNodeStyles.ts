@@ -59,6 +59,11 @@ export function getNodeStyle(kind: WorkflowNodeKind): NodeStyleConfig {
 }
 
 // ReactFlow 节点样式生成器
+//
+// **不要在这里返回 transform**：xyflow v12 的 NodeWrapper 把 `...node.style` 铺在
+// 自己的 `transform: translate(x,y)` 之后（见 @xyflow/react 的 NodeWrapper），
+// 于是任何 transform（连 `none` 也算）都会顶掉定位 —— 所有节点叠在画布原点、
+// 拖动只改 state 不改视觉。形状差异只用颜色/边框/圆角表达。
 export function generateReactFlowNodeStyle(kind: WorkflowNodeKind) {
   const config = getNodeStyle(kind);
   return {
@@ -75,7 +80,6 @@ export function generateReactFlowNodeStyle(kind: WorkflowNodeKind) {
     alignItems: "center",
     justifyContent: "center",
     boxShadow: "0 2px 8px rgba(0, 0, 0, 0.08)",
-    transform: config.shape === "diamond" ? "rotate(45deg)" : "none",
   };
 }
 

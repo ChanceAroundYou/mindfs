@@ -7,6 +7,7 @@ import {
   addEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -73,12 +74,30 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) {
 
 function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents = [] }: WorkflowCanvasProps) {
   const { t } = useI18n();
-  const [narrow] = useState(isNarrow);
+  const { fitView } = useReactFlow();
+  // 断点判定必须跟着 resize 走：只取一次快照的话，窄窗口打开后再放大，
+  // 画布永远停在只读清单上（看起来就像「节点看不见、也拖不动」）。
+  const [narrow, setNarrow] = useState(isNarrow);
   const [touched, setTouched] = useState(false);
   const [selectedId, setSelectedId] = useState<string>("");
   const [openLoopId, setOpenLoopId] = useState<string>("");
   const [inspectorPosition, setInspectorPosition] = useState<{ x: number; y: number } | null>(null);
   const inspectorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onResize = () => setNarrow(isNarrow());
+    window.addEventListener("resize", onResize);
+    onResize();
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const fitSoon = useCallback(() => {
+    // 新节点要等一帧才被测出尺寸；不重算视口的话，第 5 个及以后的节点
+    // 会落在 520px 画布之外 —— 那正是「加完节点却看不见」的第二个来源。
+    requestAnimationFrame(() => {
+      void fitView({ padding: 0.2, maxZoom: 1, duration: 200 });
+    });
+  }, [fitView]);
 
   const labels = useMemo(() => {
     const out: Record<string, string> = {};
@@ -115,8 +134,10 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
 
   const handleNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
     setSelectedId(node.id);
-    // 计算浮动窗口位置：智能定位，避免超出屏幕
-    const rect = (event.target as HTMLElement).getBoundingClientRect?.();
+    // 计算浮动窗口位置：智能定位，避免超出屏幕。
+    // 锚点取整个节点框（点到的可能是内部图标/文字），不是被点中的那个子元素。
+    const target = event.target instanceof Element ? event.target.closest(".react-flow__node") : null;
+    const rect = (target ?? (event.target as HTMLElement))?.getBoundingClientRect?.();
     if (rect) {
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
@@ -214,17 +235,24 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
   const addNode = useCallback(
     (kind: WorkflowNodeKind) => {
       const def = newNode(kind);
-      // 改为竖向排列：固定 x，每个新节点 y 向下递增
+      // 与 flowNodes 的默认排布同一套网格：4 列换行，新节点永远不叠在已有节点上。
+      const index = nodes.length;
       const nextNodes = [
         ...nodes,
-        { id: def.id, position: { x: 250, y: 100 + nodes.length * 120 }, data: { label: `${labels[kind]}: ${def.id}` } },
+        {
+          id: def.id,
+          position: { x: 80 + (index % 4) * 230, y: 80 + Math.floor(index / 4) * 150 },
+          data: { label: labels[kind] ?? kind, kind },
+        },
       ];
       setNodes(nextNodes);
       setSelectedId(def.id);
-      emit(nextNodes, edges);
+      setTouched(true);
+      // 只发一次 onChange：graphFrom 的 kind/params 来自 prev，所以 prev 必须已经带上新定义。
       onChange(graphFrom(nextNodes, edges, { ...graph, nodes: [...(graph.nodes || []), def] }));
+      fitSoon();
     },
-    [nodes, edges, labels, emit, onChange, graph, setNodes],
+    [nodes, edges, labels, onChange, graph, setNodes, fitSoon],
   );
 
   const errors = useMemo(() => validateWorkflowGraph(graph), [graph]);
@@ -292,7 +320,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
   }
 
   return (
-    <div data-testid="workflow-canvas" data-draft-id={draftId} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <div data-testid="workflow-canvas" data-draft-id={draftId} style={{ display: "flex", flexDirection: "column", gap: "8px", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
         <span style={{ fontSize: "12px", fontWeight: 600 }}>{t("task.workflowCanvas.title")}</span>
         {dirtyNow ? (
@@ -342,7 +370,9 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
         </button>
       </div>
 
-      <div style={{ ...panelSurfaceStyle(), padding: 0, height: "520px", overflow: "hidden", position: "relative" }}>
+      {/* 画布吃掉剩余高度（下限 360px）：固定 520px 在矮窗口里会被挤到折叠线以下，
+          看着就像「显示不完整」。父列有确定高度时 flex 生效，没有时退回 minHeight。 */}
+      <div style={{ ...panelSurfaceStyle(), padding: 0, flex: 1, minHeight: "360px", overflow: "hidden", position: "relative" }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
