@@ -8928,7 +8928,7 @@ groups:
       - 'server/internal/kanban/router_service.go:func (rs *RouterService) finishRouteTurn('
       - 'server/internal/kanban/router_service.go:if synthErr != nil {'
       - 'server/internal/kanban/router_route_test.go:func TestRouterRouteEmptyFinalTextFallsBackInsteadOfSilent('
-      - 'server/internal/kanban/router_service.go:func (rs *RouterService) fallbackRoute('
+      - 'server/internal/kanban/router_service_recovery.go:func (rs *RouterService) fallbackRoute('
       - 'server/internal/kanban/router_types.go:defaultRouterTurnTimeout = 90 * time.Second'
       - 'server/internal/kanban/activity_service_dispatch.go:if (mode == RouterModeRoute || mode == RouterModeCoordinate) && choice == CommentWorkflowChoiceEmpty {'
       - 'server/internal/kanban/activity_service_turns.go:errors.Is(err, ErrWorkflowTurnActive)'
@@ -9227,7 +9227,7 @@ groups:
       - 'server/internal/kanban/router_event_brief_test.go:func TestEventBriefUnknownKeysStillTruncated(t *testing.T) {'
       - 'server/internal/kanban/router_brief.go:if trigger.Event != nil {'
       - 'server/internal/kanban/router_brief.go:Event    *RouterBriefEvent    `json:"event,omitempty"`'
-      - 'server/internal/kanban/router_brief.go:func trimRouterEventUnverified(brief *SituationBrief) bool {'
+      - 'server/internal/kanban/router_brief_cap.go:func trimRouterEventUnverified(brief *SituationBrief) bool {'
       - 'server/internal/kanban/activity_route_apply.go:func routeEffectActivityID(decision *RouterDecision, action RouterAction) string {'
       - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivity, deterministic bool) error {'
       - 'server/internal/kanban/activity_route_apply.go:if purpose == "" {'
@@ -9711,7 +9711,7 @@ groups:
       - 'server/internal/kanban/router_brief.go:BodyExcerpt: truncateRouterText(item.Body, routerBriefActivityExcerpt),'
       - 'server/internal/kanban/task_store.go:DELETE FROM workflow_run_events WHERE run_id IN (SELECT id FROM workflow_runs WHERE task_id = ?)'
       - 'server/internal/kanban/task_store.go:"task_activities",'
-      - 'server/internal/kanban/router_service.go:[router] fallback task=%s decision=%s latency_ms=%d route_mode=%v cause=%s'
+      - 'server/internal/kanban/router_service_recovery.go:[router] fallback task=%s decision=%s latency_ms=%d route_mode=%v cause=%s'
       - 'server/internal/kanban/router_service.go:[router] applied task=%s decision=%s actions=%d kinds=%s latency_ms=%d'
       - 'server/internal/kanban/router_types.go:func routerActionKinds(actions []RouterAction) string {'
       - 'server/internal/kanban/activity_service_worker_fallback_test.go:func TestActivityService_NoWorkflowsFallsBackToDirectTurn(t *testing.T) {'
@@ -9924,3 +9924,44 @@ groups:
       - 'server/internal/kanban/workflow_terminal_gate_test.go:func TestAdvanceWorkflowRunHealsParkedTerminalHumanGate(t *testing.T) {'
       - 'server/internal/kanban/workflow_terminal_gate_test.go:func TestHumanGateApproveCarriesNoteAsUserMessage(t *testing.T) {'
       - 'web/tests/gate-waiting-consistency.test.mjs:test("#88 形状：等待审批时占位回复不显示，只留审批卡", () => {'
+  - id: G-MZ
+    title: 已结算的 Run（全节点终态）不再算「活动执行」，Router 不会把用户卡在「先结算 Run」
+    kind: fix
+    symptom: "用户 2026-11-19 在任务 #88「收尾」上连续发留言，Router 只回「请先结算 Run / 批准或驳回」，而界面上没有「结算 Run」入口、也没有待批卡片，用户原话「这个权限的限制有点古怪 你应该先排查相关问题，我是在正常交互的 不应该被卡死」。现场：Run run-d3ef85eed889c18f 四节点全 success、末端 gate 已批准、任务行 waiting_user。"
+    why: "必须保留：`taskStatusFromRun` 把「全部节点 success」的 Run 投影成 `waiting_user`（待审核，用户点「完成」），`isActiveTaskStatus` 又把它算作活动执行，于是 Situation Brief 给已结算的 Run 挂上 `active_execution`（current_nodes 为空）。`validateRouterActions` 在 ActiveExecution 非空时硬拒 `run_workflow` 与 `message_agent`，`deliver_to_active_run` 要 1 个活动节点、`answer_waiting_node` 要有 waiting_user 节点，两者都不成立，Router 只剩 `router_say` —— 而 `PrepareNewUserTurn` 本来对 success 的 Run 显式放行下一轮，拦住用户的只有 brief。修复：`workflowRunHasOpenNodes` 只在图里还有状态不在 {success, skipped, fail, cancelled} 的节点（或 NodeStates 为空、投影还没写）时算未结算；brief 仅在 `isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run))` 时挂 ActiveExecution。暂停是操作员状态，即使节点全收齐也照旧挡新执行；gate 停在 waiting_user、agent 节点停住、节点在跑、刚建出来的 Run 全部照旧是活动执行；`unknown` 节点也算开放（需要操作员 retry/resume）。"
+    boundary: "不改活动执行与动作语义（ActiveExecution 的含义收窄为「真有可能变化的执行」，校验层一字未改）；不改 `briefRun.Status` 的任务级口径（仍是 waiting_user）；不解决历史 Run 的展示与结算入口，不做「结算 Run」这个产品动作；不覆盖 `unknown` 节点需要人工 retry 的展示引导；不改前端。"
+    files:
+      - server/internal/kanban/router_brief.go
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-19-router-settled-run-livelock.md
+    tests:
+      - server/internal/kanban/router_brief_active_execution_test.go
+    anchors:
+      - 'server/internal/kanban/router_brief.go:if isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run)) {'
+      - 'server/internal/kanban/router_brief.go:func workflowRunHasOpenNodes(run *WorkflowRun) bool {'
+      - 'server/internal/kanban/router_brief.go:case NodeRunSuccess, NodeRunSkipped, NodeRunFail, NodeRunCancelled:'
+  - id: G-NA
+    title: Router 回合失败不再丢弃已记录的动作，超时对用户可见，brief 状态跟随 Run 投影
+    kind: fix
+    symptom: "任务 #86（看板归档）2026-11-19 11:34:59 模型已把 router_ask_user 记成 recorded，11:35:02 撞 90s 死线、persistTurnBlocks 在已取消的 ctx 上失败，整轮被判 fallback、动作被丢弃（actions_json=[]），旧路径还另起了一条 Run —— 用户什么都没看到，原话「你只说了半句话 根本没有总结完」。同一进程当天 4 次复现（latency_ms 全部 9001x），成功回合耗时 52.6–81.0 s。另：brief 里 latest_run.status / active_execution.status 直接抄 task.Status，任务行写着 waiting_user、节点却在 running 时，Router 被告知「没有活动执行」。"
+    why: "必须保留：(1) Router 写工具返回 {\"status\":\"recorded\"} 就是已发生的事实，回合后置失败不能把它抹掉 —— runRouterTurn 的错误分支改走 finishTurnFailure，把 collector.snapshot() 照旧过 validateRouterActions 后按 route 路径应用（独立 context.Background()），救回即不回落，否则旧路径会另起 Run 把同一句话执行两遍。(2) 超时必须对用户可见：写一条 type=attention / role=system 的系统行，ID 为 router-turn-timeout:<decisionID> 走 InsertOrIgnore，重放不会写出第二行；非超时失败不写（回落本身已有回复，再插一行只是噪声）。(3) briefTaskStatus 以 Run 投影为准，但两份证据都可能落后：投影说在跑就采信投影，投影说空闲而任务行说在跑时采信任务行；暂停与任务终态仍以任务行为准。与 G-MZ 的 workflowRunHasOpenNodes 闸门叠加使用。"
+    boundary: "不切换 router.model（用户明确保持 ok）；不改 90s 超时值；不改节点间产出传递（WorkflowPromptPlaceholders 仍只有 previous_input/task_initial_input/task_number，workflow-debug 的 locate 读不到 input 产出是另一条产品缺口）；不把已 recorded 的动作当作完整决策（仍逐条校验，非法照样拒绝）；不动 shadow / coordinate 事件的失败语义（事件回合不回落、不写这条系统行）。router_brief_cap.go 是纯移动（为守 500 行硬线拆出体积裁剪函数），行为零变化。"
+    files:
+      - server/internal/kanban/router_service.go
+      - server/internal/kanban/router_service_recovery.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_brief_cap.go
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-19-router-turn-timeout-salvage.md
+    tests:
+      - server/internal/kanban/router_timeout_salvage_test.go
+    anchors:
+      - 'server/internal/kanban/router_service.go:rs.finishTurnFailure(ctx, config, decision, brief, collector.snapshot(), err, started, applyMode)'
+      - 'server/internal/kanban/router_service_recovery.go:func (rs *RouterService) finishTurnFailure('
+      - 'server/internal/kanban/router_service_recovery.go:func (rs *RouterService) salvageRouteActions('
+      - 'server/internal/kanban/router_service_recovery.go:func (rs *RouterService) notifyRouterTurnTimeout('
+      - 'server/internal/kanban/router_service_recovery.go:func isRouterTurnTimeout(err error) bool {'
+      - 'server/internal/kanban/router_brief.go:func briefTaskStatus(run *WorkflowRun, task Task) string {'
+      - 'server/internal/kanban/router_brief.go:Status:           briefTaskStatus(run, task),'
+      - 'server/internal/kanban/router_brief_cap.go:func capSituationBrief(brief *SituationBrief) *SituationBrief {'
+      - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteTimeoutKeepsRecordedActions(t *testing.T) {'
