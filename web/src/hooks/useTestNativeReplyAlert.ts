@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   describeBatteryExemption,
+  describeBatterySettingsPage,
+  openAppBatterySettings,
   readBatteryExemption,
   requestBatteryExemption,
   testNativeReplyAlert,
@@ -16,6 +18,7 @@ export function useTestNativeReplyAlert(): {
   supported: boolean;
   batteryIgnoring: boolean | null;
   requestExemption: () => Promise<void>;
+  openBatterySettings: () => Promise<void>;
 } {
   const [message, setMessage] = useState("");
   const [batteryIgnoring, setBatteryIgnoring] = useState<boolean | null>(null);
@@ -48,5 +51,19 @@ export function useTestNativeReplyAlert(): {
     }
   }, []);
 
-  return { message, run, supported: supportsCustomNativePlugins(), batteryIgnoring, requestExemption };
+  // 国产 ROM 的「允许后台运行 / 应用速冻」名单：AOSP 豁免覆盖不到它，且无 API 可读，
+  // 只能跳页面让用户自己放行。返回值只用于告诉用户「跳到哪了」。
+  const openBatterySettings = useCallback(async () => {
+    const opened = await openAppBatterySettings();
+    setMessage(describeBatterySettingsPage(opened));
+  }, []);
+
+  return {
+    message,
+    run,
+    supported: supportsCustomNativePlugins(),
+    batteryIgnoring,
+    requestExemption,
+    openBatterySettings,
+  };
 }

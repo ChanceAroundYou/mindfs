@@ -17,6 +17,7 @@ type ReplyPollerPlugin = {
   debugStatus(): Promise<{ debug?: string }>;
   batteryStatus(): Promise<{ ignoring?: boolean; error?: string }>;
   requestBatteryExemption(): Promise<{ ignoring?: boolean; error?: string }>;
+  openAppBatterySettings(): Promise<{ opened?: string; error?: string }>;
 };
 
 type NativeReplyPollerBridge = {
@@ -287,8 +288,42 @@ export async function requestBatteryExemption(): Promise<boolean | null> {
   }
 }
 
-export function describeBatteryExemption(ignoring: boolean | null): string {
-  if (ignoring === null) {
+/**
+ * 跳到系统的「本应用后台耗电」页面。
+ *
+ * AOSP 的电池优化豁免不覆盖国产 ROM 自己的省电策略：实测 ColorOS 上 deviceidle 白名单
+ * 已放行、standby bucket 已 EXEMPTED、前台服务在跑，切后台约 2 分钟后进程仍会被
+ * cgroup 冻结，闹钟被推迟到 +2d23h —— 只有 ROM 那份「允许后台运行 / 应用速冻」名单
+ * 管用，而它没有公开 API，只能把用户送到页面。
+ *
+ * 返回原生实际打开的页面标识；老版本 App 没有这个方法时返回 null（调用方据此提示升级）。
+ */
+export async function openAppBatterySettings(): Promise<string | null> {
+  try {
+    const result = await ReplyPoller.openAppBatterySettings();
+    if (typeof result?.opened === "string" && result.opened) {
+      return result.opened;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function describeBatterySettingsPage(opened: string | null): string {
+  if (!opened) {
+    return "当前 App 版本还不支持一键跳转：请到「设置 → 电池 → 应用耗电管理」里给 MindFS 打开「允许后台运行」。";
+  }
+  const where =
+    opened === "oplus-power"
+      ? "已打开「电池 → 应用耗电管理」"
+      : opened === "app-details"
+        ? "已打开本应用的系统详情页"
+        : "已打开电池优化列表";
+  return `${where}：请找到 MindFS 并允许后台运行（OPPO/一加/realme 还需关掉「应用速冻」）。系统自带的电池优化豁免不等于这个名单，两个都要放行。`;
+}
+
+export function describeBatteryExemption(ignoring: boolean | null): string {  if (ignoring === null) {
     return "";
   }
   if (ignoring) {

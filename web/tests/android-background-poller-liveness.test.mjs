@@ -135,3 +135,46 @@ test("定时唤醒兜底（3 分钟一次精确闹钟，不占状态栏）", asy
   assert.match(service, /PREF_LAST_WAKE/, "必须记录最近一次 watchdog 唤醒");
   assert.match(service, /最近唤醒=/, "诊断串必须展示最近唤醒时间");
 });
+
+test("国产 ROM 的独立后台限制：一键跳到系统电池页并说明", async () => {
+  // ColorOS 的冻结在 AOSP 的电池优化豁免之外：实测该机 deviceidle 白名单已放行、
+  // standby bucket=EXEMPTED、前台服务在跑，切后台约 2 分钟后进程仍被 cgroup 冻结
+  // （cgroup.freeze=1、CPU 归零、长轮询读超时永不触发），闹钟被推迟到 +2d23h。
+  // 唯一有效的是 ROM 自己那份「允许后台运行 / 应用速冻」名单，无公开 API 可读写。
+  const plugin = read("android/app/src/main/java/com/mindfs/app/ReplyPollerPlugin.java");
+  assert.match(plugin, /public void openAppBatterySettings\(PluginCall call\)/, "缺跳转方法");
+  assert.match(plugin, /com\.oplus\.battery/, "缺 ColorOS 电池包名");
+  assert.match(
+    plugin,
+    /com\.oplus\.powermanager\.fuelgaue\.PowerConsumptionActivity/,
+    "缺「应用耗电管理」页（实测该页存在且可从列表里给单个应用放行）",
+  );
+  assert.match(
+    plugin,
+    /ACTION_APPLICATION_DETAILS_SETTINGS/,
+    "非 OPPO 机型必须有 AOSP 兜底，否则按钮在别的 ROM 上直接抛 ActivityNotFound",
+  );
+  assert.doesNotMatch(plugin, /openAppBatterySettings[\s\S]{0,400}?isIgnoringBatteryOptimizations\(\)\)\s*\{[\s\S]{0,80}?return/,
+    "跳转不能以「已豁免」为前提：AOSP 豁免与 ROM 冻结是两件事");
+
+  const service = read("src/services/net/replyPoller.ts");
+  assert.match(service, /openAppBatterySettings\(\): Promise</, "缺插件方法声明");
+  assert.match(service, /export async function openAppBatterySettings/, "缺服务层导出");
+
+  const hook = read("src/hooks/useTestNativeReplyAlert.ts");
+  assert.match(hook, /openBatterySettings/, "hook 必须代持服务调用（组件层不许直接 import services）");
+
+  const dialog = read("src/components/file/FileTreeAboutDialog.tsx");
+  assert.match(dialog, /系统电池设置/, "关于弹窗要给入口");
+  assert.match(
+    dialog,
+    /replyAlert\.openBatterySettings/,
+    "按钮必须真的调原生跳转",
+  );
+  // 入口不能只在「AOSP 未豁免」时出现 —— 出问题的那台机器恰恰是已豁免的。
+  assert.doesNotMatch(
+    dialog,
+    /replyAlert\.supported && replyAlert\.batteryIgnoring === false[\s\S]{0,200}?系统电池设置/,
+    "系统电池设置入口不能绑在 AOSP 豁免状态上",
+  );
+});

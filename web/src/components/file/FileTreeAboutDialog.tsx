@@ -34,6 +34,11 @@ export function FileTreeAboutDialog({ open, isNativeApp, onClose }: FileTreeAbou
             测试提醒
           </button>
         ) : null}
+        {isNativeApp && replyAlert.supported ? (
+          <button type="button" onClick={() => { void replyAlert.openBatterySettings(); }} style={{ border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-primary)", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", marginRight: "8px" }}>
+            系统电池设置
+          </button>
+        ) : null}
         {isNativeApp && replyAlert.supported && replyAlert.batteryIgnoring === false ? (
           <button type="button" onClick={() => { void replyAlert.requestExemption(); }} style={{ border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-primary)", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", marginRight: "8px" }}>
             允许后台运行

@@ -1,6 +1,7 @@
 package com.mindfs.app;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -26,6 +27,10 @@ import com.getcapacitor.annotation.PermissionCallback;
 )
 public class ReplyPollerPlugin extends Plugin {
     private static final String TAG = "MindFSReplyPoller";
+    // ColorOS 的「电池 → 应用耗电管理」页。名单状态没有任何公开 API 可读，只能跳页面。
+    private static final String OPLUS_BATTERY_PACKAGE = "com.oplus.battery";
+    private static final String OPLUS_POWER_PAGE =
+        "com.oplus.powermanager.fuelgaue.PowerConsumptionActivity";
 
     @PluginMethod
     public void requestPermission(PluginCall call) {
@@ -129,6 +134,56 @@ public class ReplyPollerPlugin extends Plugin {
             }
         }
         call.resolve(result);
+    }
+
+    /**
+     * 跳到「本应用的后台耗电设置」。
+     *
+     * <p>为什么单开一个入口：AOSP 的电池优化豁免**不覆盖**国产 ROM 自己的省电策略。
+     * 实测（ColorOS / PLJ110）：deviceidle 白名单已放行、standby bucket=EXEMPTED、
+     * 前台服务在跑、精确闹钟已授权，切后台约 2 分钟后进程仍被按 cgroup 冻结
+     * （{@code cgroup.freeze=1}、CPU tick 归零、长轮询的读超时永不触发），同时闹钟被
+     * 推迟到 {@code +2d23h}。那份「允许后台运行 / 应用速冻」名单既没有公开 API 可读，
+     * 也无法代用户勾选 —— 只能把人送到页面。</p>
+     */
+    @PluginMethod
+    public void openAppBatterySettings(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("opened", "");
+        Context context = getContext();
+        // OPPO/一加/realme 的「电池 → 应用耗电管理」：单应用放行就在这个列表里。
+        Intent oplus = new Intent().setComponent(
+            new ComponentName(OPLUS_BATTERY_PACKAGE, OPLUS_POWER_PAGE));
+        if (tryStartActivity(context, oplus)) {
+            result.put("opened", "oplus-power");
+            call.resolve(result);
+            return;
+        }
+        Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+        details.setData(Uri.parse("package:" + context.getPackageName()));
+        if (tryStartActivity(context, details)) {
+            result.put("opened", "app-details");
+            call.resolve(result);
+            return;
+        }
+        if (tryStartActivity(context, new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))) {
+            result.put("opened", "battery-optimization-list");
+        } else {
+            result.put("error", "battery_settings_unavailable");
+        }
+        call.resolve(result);
+    }
+
+    private boolean tryStartActivity(Context context, Intent intent) {
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            return true;
+        } catch (RuntimeException ex) {
+            // 机型上没有这个页面（不同 ROM / 精简版系统）：继续试下一层，不抛给 JS。
+            Log.w(TAG, "start activity failed: " + intent, ex);
+            return false;
+        }
     }
 
     private boolean isIgnoringBatteryOptimizations() {
