@@ -267,6 +267,36 @@ D 仅重启隔离进程并核对 pending/claimed 与已有结果。
 `tsc --noEmit` clean、`make build`、`make check-upstream`（见提交后记录）。未 push / 未部署 /
 未重启；生产 `router.mode` 未动。
 
+**R1 留存缺口收口（2026-11-19，`Scope: G-MP`）**：R1 完成时列的四处「跑起来才会撞」的缺口
+按 1 → 4 → 2 → 3 逐个 RED→GREEN，每处都做变异验证（故意破坏守卫 → 对应用例打红 → 还原复绿）。
+
+1. **删卡级联 + 关 lane**：`router_events` 的 `unique_key` 含 task_id，删卡却留行 → 任务用同 ID
+   重建时 `InsertEvent`（ON CONFLICT DO NOTHING）静默吞掉每一条新事件，账本看起来「这次一条都
+   没有」。级联单收到 `TaskStore.DeleteTask`（删卡的唯一事务），删掉只给测试调用的
+   `DeleteTaskRouterData`（口径对但生产零调用者，钉住它等于没钉）；`Service.DeleteTask` 在删库
+   前先 `CloseRouterTask` 关进程内 lane（清 session、丢排队回合），不让排队回合拿已不存在的任务
+   调模型。变异：移出 `router_events` 列表 → 两条账本用例红；删 `CloseRouterTask` → lane 用例红。
+2. **运行期 `inspect_run`**：事件 brief 有意清空 `LatestRun`（不许模型拿任务最新 Run 顶替），
+   而 `inspectRun` 只认 `LatestRun` —— 事件回合里唯一的读工具 100% 报 "no workflow run"，模型
+   只能凭摘要猜哪个节点失败。改为事件回合以 `brief.Event.RunID` 为目标并按 ID 读库，用户回合
+   仍走 `LatestRun`；传别的 run id 一律拒绝（不退回去用最新 Run）。变异：事件分支回落
+   `LatestRun` → 外来 run 用例红。
+3. **领取租约**：claimed 行原来只有进程重启（`RecoverClaimedEvents`）能救。新增
+   `ReclaimStaleEvents(before)` 按 `claimed_at`（不是 `created_at` —— 排队久但刚领走的事件是活
+   的）把超租约行打回 pending 并保留原领取者，接进 `coordinateTick` 每拍执行；CAS 保证误判时第
+   二个回合拿不到同一事件，运行期 effect ID 确定所以不重复副作用。变异：循环里去调用 → tick
+   用例红；删 canonical 时间条件 → 「新鲜领取不许被抢」用例红。
+4. **账本保留策略**：`PruneEvents(cutoff, limit)` 只删 done|failed|skipped 且按 id 子查询 + LIMIT
+   分批（不依赖 `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`）；pending/claimed 再老也留着（删它们等于
+   静默丢事件）。`coordinateTick` 里只第 0 拍与每 120 拍跑一次（一拍 30s ≈ 1 小时），回收不是
+   热路径。`router_decisions` 明确不回收（诊断面）。变异：去终态过滤 → 未办完行被误删；去 LIMIT
+   → 分批用例红；循环里去调用 / 去掉拍数节流 → 两个 tick 用例红。
+
+**门禁（2026-11-19，G-MP 后）**：`go test -count=1 ./...` 28 包全绿、定向 `-race` 9.708s 全绿、
+`make check-upstream` 1957 delta / 316 组全绿（G-MP 18 锚点逐个核对存在，G-MG ⑥ 与
+`DeleteTaskRouterData` 锚点已同步改写）。仍未 push / 未部署 / 未合并 main / 未重启；生产
+`router.mode` 未动。
+
 ## 执行门禁与依赖
 
 T1 → T2 → T3 → T4 → R0 PASS → T5 → T6 → T7 → T8 → T9 → T10。
