@@ -296,7 +296,33 @@ func (s *TaskStore) DeleteTask(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"stage_runs", "task_events", "router_decisions", "router_task_state", "router_events"} {
+	// workflow 的三张表按 run 归属：node_run / run_event 没有 task_id 列，只能先
+	// 按 run_id 子查询。子表必须先删，否则删 run 后子行再也找不到归属。
+	runOwned := []string{
+		`DELETE FROM workflow_run_events WHERE run_id IN (SELECT id FROM workflow_runs WHERE task_id = ?)`,
+		`DELETE FROM workflow_node_runs WHERE run_id IN (SELECT id FROM workflow_runs WHERE task_id = ?)`,
+		`DELETE FROM workflow_runs WHERE task_id = ?`,
+	}
+	for _, stmt := range runOwned {
+		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
+			return err
+		}
+	}
+	// 任务自有的数据面行。漏一张就会留下指向已删除任务的孤儿（实测删卡后
+	// 6 条 task_activities 仍在库里被页面查出来）。
+	for _, table := range []string{
+		"task_activities",
+		"continue_requests",
+		"outbox_items",
+		"node_runs",
+		"task_worktrees",
+		"task_execution_engines",
+		"stage_runs",
+		"task_events",
+		"router_decisions",
+		"router_task_state",
+		"router_events",
+	} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE task_id = ?`, id); err != nil {
 			return err
 		}

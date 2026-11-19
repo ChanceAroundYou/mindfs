@@ -405,6 +405,10 @@ func (rs *RouterService) finishRouteTurn(ctx context.Context, config RouterConfi
 		log.Printf("[router] decision.status.error id=%s err=%v", decision.ID, err)
 	}
 	now(RouterDecisionApplied, "")
+	// 与 fallback 对称：成功的决策也要留一行，记下动作种类——「假转交」那次
+	// 线上表现是只有一条 say，但日志里什么都没有。
+	log.Printf("[router] applied task=%s decision=%s actions=%d kinds=%s latency_ms=%d",
+		decision.TaskID, decision.ID, len(actions), routerActionKinds(actions), latency)
 }
 
 // applyRoute 取该 root 的 ActivityService 并应用动作。ActivityService 每次新建，
@@ -449,6 +453,10 @@ func (rs *RouterService) finishFallback(ctx context.Context, decision *RouterDec
 	if err := rs.store.UpdateDecisionResult(ctx, decision.ID, RouterDecisionFallback, nil, "", RouterAgreementUnknown, errText, latency, 0, 0); err != nil {
 		log.Printf("[router] decision.fallback.error id=%s err=%v", decision.ID, err)
 	}
+	// 回落是「用户看到的结果其实是旧路径跑的」的唯一线索。没有这一行，
+	// 线上只能看到一条 90s 后出现的普通回复，分不清是 Router 超时还是模型故意沉默。
+	log.Printf("[router] fallback task=%s decision=%s latency_ms=%d route_mode=%v cause=%s",
+		decision.TaskID, decision.ID, latency, routeMode, errText)
 	decision.Status = RouterDecisionFallback
 	decision.Error = errText
 	decision.Agreement = RouterAgreementUnknown

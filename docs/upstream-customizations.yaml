@@ -9114,7 +9114,7 @@ groups:
       - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RecoverClaimedEvents('
       - 'server/internal/kanban/router_event_store.go:must be claimed before completing'
       - 'server/internal/kanban/task_store_migrate.go:migrateRouterEventTable(s.db)'
-      - 'server/internal/kanban/task_store.go:"router_decisions", "router_task_state", "router_events"'
+      - 'server/internal/kanban/task_store.go:"router_task_state",'
 
   # ── Router 生命周期事件生产（T6）：权威状态 → 幂等事件 ─────────────────────
   - id: G-MH
@@ -9463,7 +9463,7 @@ groups:
       - server/internal/kanban/router_event_prune_test.go
       - server/internal/kanban/router_event_prune_tick_test.go
     anchors:
-      - 'server/internal/kanban/task_store.go:"router_decisions", "router_task_state", "router_events"'
+      - 'server/internal/kanban/task_store.go:"router_task_state",'
       - 'server/internal/kanban/service_run_moves.go:s.CloseRouterTask(ctx, in.RootID, task.ID)'
       - 'server/internal/kanban/router_tools.go:targetRunID = strings.TrimSpace(e.brief.Event.RunID)'
       - 'server/internal/kanban/router_tools.go:is not the run of this turn'
@@ -9621,3 +9621,36 @@ groups:
       - 'server/internal/kanban/router_tools_answer_test.go:t.Run("single_waiting_node_is_recorded"'
       - 'server/internal/kanban/workflow_node_answer_test.go:func TestAnswerWaitingNodeRetriesWithAnswer(t *testing.T) {'
       - 'server/internal/kanban/activity_route_answer_test.go:func TestApplyRouteAnswerWaitingNodeRendersConfirmation(t *testing.T) {'
+  # ── 执行历史审计：worker 无工作流库降级 + Router brief 不截断需求 + 删卡级联 + Router 结果日志 ──
+  - id: G-MU
+    title: 执行历史审计的四处修复（worker 无 workflow 降级直连、Router 触发留言不截断、删卡级联清数据面、Router 决策结果留日志）
+    kind: fix
+    symptom: "用户 2026-11-19 要求审计所有执行历史，复现出四类缺陷。① worker 完全不能执行：WSL 上 task_b0d1cc71d3d2a385 的三条留言在 6–13ms 内全部 failed（`no auto-select eligible workflows` / `workflow version not found`）——`/api/workflows` 属于控制面、worker 恒 403，deploy 也不推 workflows.json，于是每条留言都走进 `beginWorkflowRun → resolveWorkflowVersion` 的「没有可用 workflow」分支；pc-win 结构相同（从未有过一条任务）。② Router 把用户需求砍半：`routerBriefActivityExcerpt = 500` 同时套在「最近活动摘录」和 `Trigger.UserMessage.Body` 上，一条 574 字节的需求被截在第 189 个字符（`…5. 移动端下…`），Router 于是 `ask_user` 去问用户第 5 条要什么。③ 删卡留孤儿：`TaskStore.DeleteTask` 手写表名只清 5 张，漏了 `task_activities/continue_requests/outbox_items/node_runs/task_worktrees/task_execution_engines/workflow_runs/workflow_node_runs/workflow_run_events`，WSL 删卡后 6 条活动仍在库里被页面查出。④ Router 决策不可观测：24 小时 17 条决策（含 4 条 90s 超时回落）在 journalctl 里 `[router]` 一行都没有——只有错误路径打日志，「用户看到的结果其实是旧路径跑的」没有任何痕迹。"
+    why: "必须保留：① 无 workflow 库是这台机器的能力缺口，不是用户输入错误：库为空且配了直连执行端口时把这一轮交给直连回合（显式指定版本的留言同样降级，否则界面还选着上次的 workflow 时节点继续 100% 失败）；没有直连端口时保留原来的 `ErrNoAvailableWorkflows` 失败语义，绝不伪装成功。② 触发留言是 Router 唯一的决策输入，改用独立的 8000 字节上限（`routerBriefTriggerBodyLimit`）并保留 24KB 的 `capSituationBrief` 硬上限兜底；最近活动摘录仍是 500 字节，避免同一段正文搬两遍。③ 删卡必须在一张事务里带走任务拥有的全部数据面行；workflow 子表没有 task_id，只能按 `run_id IN (SELECT ...)` 先删子行再删 run。④ fallback 与 applied 各留一行 `[router]`，记 task/decision/latency 与动作种类——「假转交」那次的指纹就是只有一条 say。"
+    boundary: "不做「把 workflows.json 单向镜像到 worker」的中期方案（worker 仍不能跑 workflow，只保证留言有回复）；不改 `router.mode`；不改 Router 的模型/超时/预算；不回收 `router_decisions`；不覆盖 kill -9 / SQLite 语句中断（整段删除在一个事务里，失败即整体回滚）；日志只加结果行，不引入采样或结构化日志框架。删卡只删 `task_worktrees` 登记行，不删磁盘上的 worktree 目录（任务已消失，残留目录按 owner 手工清理）；`Service.DeleteTask` 的 `assertNotRunning` 闸门不变，仍在有活动执行时拒绝删除。"
+    files:
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_service.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/task_store.go
+    tests:
+      - server/internal/kanban/activity_service_worker_fallback_test.go
+      - server/internal/kanban/router_brief_trigger_body_test.go
+      - server/internal/kanban/task_store_delete_cascade_test.go
+      - server/internal/kanban/router_observability_test.go
+    anchors:
+      - 'server/internal/kanban/activity_service_turns.go:if s.directExecutor != nil && !s.hasWorkflowLibrary(ctx) {'
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) hasWorkflowLibrary(ctx context.Context) bool {'
+      - 'server/internal/kanban/router_brief.go:routerBriefTriggerBodyLimit = 8000'
+      - 'server/internal/kanban/router_brief.go:Body:           truncateRouterText(item.Body, routerBriefTriggerBodyLimit),'
+      - 'server/internal/kanban/router_brief.go:BodyExcerpt: truncateRouterText(item.Body, routerBriefActivityExcerpt),'
+      - 'server/internal/kanban/task_store.go:DELETE FROM workflow_run_events WHERE run_id IN (SELECT id FROM workflow_runs WHERE task_id = ?)'
+      - 'server/internal/kanban/task_store.go:"task_activities",'
+      - 'server/internal/kanban/router_service.go:[router] fallback task=%s decision=%s latency_ms=%d route_mode=%v cause=%s'
+      - 'server/internal/kanban/router_service.go:[router] applied task=%s decision=%s actions=%d kinds=%s latency_ms=%d'
+      - 'server/internal/kanban/router_types.go:func routerActionKinds(actions []RouterAction) string {'
+      - 'server/internal/kanban/activity_service_worker_fallback_test.go:func TestActivityService_NoWorkflowsFallsBackToDirectTurn(t *testing.T) {'
+      - 'server/internal/kanban/router_brief_trigger_body_test.go:func TestSituationBrief_TriggerUserMessageIsNotCutAtActivityExcerpt(t *testing.T) {'
+      - 'server/internal/kanban/task_store_delete_cascade_test.go:func TestDeleteTask_RemovesTaskOwnedRows(t *testing.T) {'
+      - 'server/internal/kanban/router_observability_test.go:func TestFinishFallbackLogsOutcome(t *testing.T) {'

@@ -22,6 +22,11 @@ const (
 	routerBriefMaxBytes        = 24 * 1024
 	routerBriefMaxActivities   = 10
 	routerBriefActivityExcerpt = 500
+	// routerBriefTriggerBodyLimit 单独给「触发这一轮的留言」：它是 Router 唯一的
+	// 决策输入，500 字节的摘录上限会把需求砍成半句话（实测 574 字节的需求被截在
+	// 第 189 个字符，Router 转头去问用户第 5 条要什么）。仍设上限，避免一条超大
+	// 粘贴把 brief 预算撑破；整体 24KB 的硬上限由 capSituationBrief 兜底。
+	routerBriefTriggerBodyLimit = 8000
 	routerBriefMaxWorkflows    = 20
 )
 
@@ -199,7 +204,7 @@ func buildSituationBrief(
 			if item, err := activities.Get(ctx, userActivityID); err == nil && item != nil {
 				brief.Trigger.UserMessage = &RouterBriefUserMessage{
 					ID:             item.ID,
-					Body:           truncateRouterText(item.Body, routerBriefActivityExcerpt),
+					Body:           truncateRouterText(item.Body, routerBriefTriggerBodyLimit),
 					WorkflowChoice: item.WorkflowChoice,
 					At:             item.CreatedAt.UTC().Format(rfc3339),
 				}

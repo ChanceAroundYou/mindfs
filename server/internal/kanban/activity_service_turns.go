@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 )
 
@@ -167,6 +168,15 @@ func (s *ActivityService) beginWorkflowRun(
 	if err != nil {
 		return nil, err
 	}
+	// 没有工作流库的节点（worker）不能执行 workflow：`/api/workflows` 属于控制面，
+	// worker 上恒为 403，deploy 也不会推 workflows.json。此时若照常解析版本，每条
+	// 留言都会在毫秒级落 failed（"no auto-select eligible workflows"），节点等于
+	// 完全不能执行。库为空是这台机器的能力缺口，不是用户输入错误——把这一轮交给
+	// 直连回合，至少还能回答与干活。显式指定版本的留言同样满足不了，一并降级。
+	if s.directExecutor != nil && !s.hasWorkflowLibrary(ctx) {
+		log.Printf("[workflow] no workflow library on this node, falling back to direct turn task=%s choice=%s", task.ID, choice)
+		return s.beginDirectAgent(ctx, task, userInput, placeholder, CommentWorkflowChoiceDisabled)
+	}
 	// workflow 回合除了守 D3，还要把停在 waiting_user 的旧 Run 冻结掉：
 	// 否则新建 Run 会被绑定守卫拒绝，或者建成一条 driver 永不推进的僵尸 Run。
 	if guardErr := s.prepareUserTurn(ctx, task, true, agentAct); guardErr != nil {
@@ -180,6 +190,17 @@ func (s *ActivityService) beginWorkflowRun(
 		s.failActivity(ctx, agentAct, err)
 	}
 	return agentAct, nil
+}
+
+// hasWorkflowLibrary 判断这台机器有没有任何已发布的 workflow。worker 的
+// `/api/workflows` 属于控制面且 deploy 不推 workflows.json，库为空是常态；
+// 控制面库读失败也按「没有可执行的 workflow」处理，由调用方降级并打日志。
+func (s *ActivityService) hasWorkflowLibrary(ctx context.Context) bool {
+	if s == nil || s.workflows == nil {
+		return false
+	}
+	versions, err := s.workflows.ListVersions(ctx)
+	return err == nil && len(versions) > 0
 }
 
 // beginWorkflowRunVersion 是 route 的 run_workflow：版本已由决策指定（或已

@@ -213,6 +213,19 @@ func (a RouterAction) IsExecutionAction() bool {
 	return a.Kind == RouterActionRunWorkflow || a.Kind == RouterActionMessageAgent || a.Kind == RouterActionAnswerWaiting
 }
 
+// routerActionKinds 把动作种类压成一行日志（say,deliver...）。只用于观测：
+// 决策问题首先是「模型到底做了什么」，这比完整动作体省好几行日志。
+func routerActionKinds(actions []RouterAction) string {
+	if len(actions) == 0 {
+		return "none"
+	}
+	kinds := make([]string, 0, len(actions))
+	for _, action := range actions {
+		kinds = append(kinds, string(action.Kind))
+	}
+	return strings.Join(kinds, ",")
+}
+
 type RouterDecisionStatus string
 
 const (
