@@ -51,7 +51,7 @@
 ## 验证
 
 - `go test -count=1 ./server/internal/kanban/ ./server/internal/api/` 全绿（192.2 s / 45.1 s）。
-- web 定向 4 个文件 25 例全绿；全量 `npm test`、`tsc`、`make build`、`make check-upstream` 见执行记录。
+- web 定向 4 个文件 25 例全绿；全量门禁在干净提交树上复跑，见[执行记录](#执行记录提交-637fdb5e-scope-g-my)。
 - 新增测试：`workflow_terminal_gate_test.go`（定义期拒绝、运行期自动放行、停放 gate 自愈、
   附言落成用户留言且驳回不排队）、`workflow_human_gate_context_test.go`（节点名 + 上游摘要）、
   `task-human-gate-card.test.mjs`、`gate-waiting-consistency.test.mjs`、`activity-reports-inline.test.mjs`、
@@ -73,6 +73,26 @@ C pass 15024ms  authoring 400 'human_gate "verify" cannot be the last node: add 
 场景 C 的旧版本无法从 HTTP 建出来（定义期已拒绝），脚本把已发布版本直接写进**隔离实例**的
 `workflows.json`（`--iso-root` 白名单校验，线上路径一律拒绝），专门验证「升级前已发布的末端 gate
 不会再卡住用户」。
+
+## 执行记录（提交 `637fdb5e`，`Scope: G-MY`）
+
+在 `git worktree add --detach /tmp/mindfs-gmy HEAD` 的**干净提交树**上跑全量门禁（不在脏工作区跑，
+理由见下面第一条）：
+
+| 门禁 | 结果 |
+|---|---|
+| `go test -count=1 ./...` | 28 包全绿，`server/internal/kanban` 247.9 s |
+| `npm test`（Vitest） | 240 文件通过 / 5 跳过，704 例通过 / 6 跳过 |
+| `npx tsc -b --noEmit` | clean |
+| `npx vite build` | 成功（`✓ built in 1m 4s`） |
+| `go run ./scripts/check-upstream` | **未通过**：4 个 delta 文件未被任何组登记，全是 G-MQ 的 `*_session_worktree_ownership*`（另一条会话的提交 `702e6ef1` 已在 main 上，但它的 G-MQ 登记还只存在于那个会话的未提交工作区里）。本轮 G-MY 自身零告警：无未覆盖文件、无锚点失配、无幽灵条目。 |
+
+**本轮真实缺陷（已修）**：第一次提交漏了 `workflow_lifecycle_guards_test.go` 里
+`ResolveWorkflowHumanGate` 的调用点适配（多一个 `note` 参数）。工作区里这份文件已经改过，所以
+只跑定向包测试看不出来；在干净树上 `go test ./...` 时 `server/internal/kanban` **直接编译失败**。
+用临时索引 `git commit --amend` 补上该文件、并把它加进 G-MY 的 `files` 列表后复跑通过。
+教训：签名变更必须全仓 `grep` 调用点（含 `_test.go`），并且门禁要在干净提交树上跑 —— 脏工作区
+会用未提交的改动把编译错误掩盖掉。
 
 ## 未做 / 残留
 
