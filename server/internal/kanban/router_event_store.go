@@ -314,6 +314,77 @@ WHERE status = ?`,
 	return int(n), nil
 }
 
+// ReclaimStaleEvents 是领取租约的兜底：claimed 行的 claimed_at 早于 before 就
+// 打回 pending，LastError 记录原因与原领取者。与 RecoverClaimedEvents 的区别是
+// 时间条件 —— 那个只在启动跑一次（进程还活着就永远等不到），这个可以每拍跑。
+//
+// 判据是 claimed_at 不是 created_at：排队很久但刚被领走的事件是活的。
+// done/failed/skipped 绝不复活。
+func (s *RouterStore) ReclaimStaleEvents(ctx context.Context, before time.Time, reason string) (int, error) {
+	if err := s.ensureRouterEventTable(); err != nil {
+		return 0, err
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "router event lease expired"
+	}
+	now := time.Now().UTC().Format(routerTimeLayout)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE router_events
+SET status = ?,
+    last_error = CASE WHEN claimed_by <> '' THEN ? || ' (claimed by ' || claimed_by || ')' ELSE ? END,
+    claimed_by = '',
+    claimed_at = '',
+    updated_at = ?
+WHERE status = ? AND claimed_at <> '' AND claimed_at < ?`,
+		RouterEventPending, reason, reason, now, RouterEventClaimed, before.UTC().Format(routerTimeLayout))
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// PruneEvents 回收已终态且早于 cutoff 的行，单次最多 limit 行。
+//
+// 账本是 append-only 的，但「append-only」说的是不覆写，不是永不回收：每个 Run
+// 结算都落一行，节点跑上一年这张表就无限长，而没有任何东西读它（诊断只看最近的）。
+//
+// 只删 done|failed|skipped。pending/claimed 是还没办完的事，再老也得留着 ——
+// 删掉它们等于静默丢事件。分批（子查询取 id + LIMIT）是为了不长事务扫表：
+// 一次删不完下一拍接着删，不依赖 SQLITE_ENABLE_UPDATE_DELETE_LIMIT 编译选项。
+func (s *RouterStore) PruneEvents(ctx context.Context, cutoff time.Time, limit int) (int, error) {
+	if err := s.ensureRouterEventTable(); err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		limit = routerEventPruneLimit
+	}
+	// 与 scanRouterEventSourcesBounded 同一口径：created_at 是 RFC3339Nano，
+	// 小数位长度不定，直接字符串比较会把 '...:00.5Z' 排到 '...:00Z' 前面。
+	// 截到整秒再比，代价是保留边界有 1 秒粒度，对按天计的保留期无所谓。
+	cut := cutoff.UTC().Format(routerCoordinateSQLTimeLayout)
+	res, err := s.db.ExecContext(ctx, `
+DELETE FROM router_events
+WHERE id IN (
+  SELECT id FROM router_events
+  WHERE status IN (?, ?, ?) AND substr(created_at, 1, 19) < ?
+  ORDER BY created_at ASC, id ASC
+  LIMIT ?
+)`, RouterEventDone, RouterEventFailed, RouterEventSkipped, cut, limit)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 func (s *RouterStore) eventByUniqueKey(ctx context.Context, uniqueKey string) (RouterEvent, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+routerEventColumns+` FROM router_events WHERE unique_key = ? LIMIT 1`, uniqueKey)
 	return scanRouterEvent(row)

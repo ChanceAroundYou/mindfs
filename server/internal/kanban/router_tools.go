@@ -108,16 +108,50 @@ func (e *routerToolEnv) inspectRunTool() RouterToolSpec {
 	}
 }
 
+// inspectRun 是唯一的只读工具：给模型看一个 Run 的节点终态与输出摘要。
+//
+// 目标 Run 由 brief 的形态决定，不能靠「任务最新 Run」兜底：
+//   - 用户留言回合：brief.LatestRun 就是这一轮要看的 Run；
+//   - 运行期事件回合：brief.LatestRun 被刻意置 nil（事件 brief 不许让模型把任务
+//     最新 Run 当成事件的 Run），目标 Run 是 brief.Event.RunID。
+// 事件回合以前在这里直接报 "no workflow run"，而 spec 明确允许 inspect_run ——
+// 于是模型只能凭摘要猜事件那个 Run 里到底哪个节点失败了。
 func (e *routerToolEnv) inspectRun(ctx context.Context, runID string) (string, error) {
-	if e.brief == nil || e.brief.LatestRun == nil {
+	targetRunID, target := "", (*RouterBriefRun)(nil)
+	switch {
+	case e.brief == nil:
+		return "", errors.New("no situation brief for this turn")
+	case e.brief.Event != nil:
+		targetRunID = strings.TrimSpace(e.brief.Event.RunID)
+		if targetRunID == "" {
+			return "", errors.New("runtime event has no run id")
+		}
+	case e.brief.LatestRun != nil:
+		targetRunID, target = e.brief.LatestRun.ID, e.brief.LatestRun
+	default:
 		return "", errors.New("no workflow run for this task")
 	}
-	if runID != "" && runID != e.brief.LatestRun.ID {
-		return "", fmt.Errorf("run %s is not the latest run of this task", runID)
+	if runID != "" && runID != targetRunID {
+		return "", fmt.Errorf("run %s is not the run of this turn (%s)", runID, targetRunID)
 	}
-	payload := map[string]any{"run": e.brief.LatestRun}
+	payload := map[string]any{}
+	if target != nil {
+		payload["run"] = target
+	} else if e.store != nil {
+		// 事件 brief 有意不展开 Run 摘要（它描述节点证据，不重写 Run 快照）：
+		// 这里按 ID 取，取不到就如实报错，不拿别的 Run 顶替。
+		run, err := e.store.WorkflowRunByID(ctx, targetRunID)
+		if err != nil {
+			return "", fmt.Errorf("load run %s: %w", targetRunID, err)
+		}
+		task, taskErr := e.store.GetTask(ctx, run.TaskID)
+		if taskErr != nil {
+			return "", fmt.Errorf("load task %s: %w", run.TaskID, taskErr)
+		}
+		payload["run"] = briefRun(ctx, e.store, run, task)
+	}
 	if e.store != nil {
-		if nodes, err := e.store.ListWorkflowNodeRuns(ctx, e.brief.LatestRun.ID); err == nil {
+		if nodes, err := e.store.ListWorkflowNodeRuns(ctx, targetRunID); err == nil {
 			items := make([]map[string]any, 0, len(nodes))
 			for _, node := range nodes {
 				items = append(items, map[string]any{

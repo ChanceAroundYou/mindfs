@@ -67,3 +67,19 @@ export function isWaitingHumanGate(
 ): boolean {
   return nodeRun.status === "waiting_user" && nodeKinds?.[nodeRun.node_id] === "human_gate";
 }
+
+// 「跳到工作流会话」的落点：运行中 > 等待用户 > 最近一条有会话的节点。
+//
+// 用户点这个按钮的目的通常是「看看它现在在干什么 / 接管它」，所以活着的节点
+// 优先；全部收尾后落回最近一次执行（ListWorkflowNodeRuns 按 created_at 升序）。
+// 没有 session_key 的节点跳过 —— 跳过去只会打开空页面。
+export function pickWorkflowSessionKey(
+  nodeRuns: ReadonlyArray<{ status?: string; session_key?: string }> | null | undefined,
+): string {
+  const usable = (nodeRuns || []).filter((nodeRun) => (nodeRun.session_key || "").trim() !== "");
+  if (usable.length === 0) return "";
+  const byStatus = (status: string) => usable.find((nodeRun) => nodeRun.status === status);
+  const live = byStatus("running") || byStatus("waiting_user");
+  if (live) return (live.session_key as string).trim();
+  return (usable[usable.length - 1].session_key as string).trim();
+}

@@ -9087,7 +9087,7 @@ groups:
     title: Router 生命周期事件账本（router_events + 六个 Store 方法）
     kind: feature
     symptom: "Router 只在决策当回合同步动作，Run 结束/失败/gate 等待/卡住这些事后事实没有持久载体：进程重启就丢，多轮留言也没有可恢复的事件来源，coordinate 模式无从消费。"
-    why: "用户 2026-11-18 授权的 R1 计划（T5）要求先有持久事件账本，再做事件生产（T6）与消费（T7）。上游没有这条链路，必须保留：① `router_events` 表以 `unique_key = taskID\x00runID\x00kind\x00instanceKey` 去重，重复插入返回已有行且不覆盖（事件是事实，不是状态）；② `ClaimEvent` 是 CAS（pending→claimed），`CompleteEvent` 只接受 claimed→done|failed|skipped，直接 complete pending 报错，防止「先推进游标后丢副作用」；③ `RecoverClaimedEvents` 只在启动对账调用，把遗留 claimed 打回 pending并记录原因，绝不复活动终态；④ 实例键规则（settled/failed/reconcile=RunID，gate=nodeRunID:attempt，stalled=RunID:5 分钟桶）是 T6/T7 去重与清醒度的共同口径；⑤ 建表接在 `TaskStore.migrateSchema`（与 router 三张表同一口径，不在运行时惰性建表）——启动对账会先读表，懒建表会撞 no such table；⑥ `DeleteTaskRouterData` 必须连删 `router_events`，否则任务重建同 ID 命中旧 unique_key、新事件永远插不进去。"
+    why: "用户 2026-11-18 授权的 R1 计划（T5）要求先有持久事件账本，再做事件生产（T6）与消费（T7）。上游没有这条链路，必须保留：① `router_events` 表以 `unique_key = taskID\x00runID\x00kind\x00instanceKey` 去重，重复插入返回已有行且不覆盖（事件是事实，不是状态）；② `ClaimEvent` 是 CAS（pending→claimed），`CompleteEvent` 只接受 claimed→done|failed|skipped，直接 complete pending 报错，防止「先推进游标后丢副作用」；③ `RecoverClaimedEvents` 只在启动对账调用，把遗留 claimed 打回 pending并记录原因，绝不复活动终态；④ 实例键规则（settled/failed/reconcile=RunID，gate=nodeRunID:attempt，stalled=RunID:5 分钟桶）是 T6/T7 去重与清醒度的共同口径；⑤ 建表接在 `TaskStore.migrateSchema`（与 router 三张表同一口径，不在运行时惰性建表）——启动对账会先读表，懒建表会撞 no such table；⑥ 删任务必须连删 `router_events`，否则任务重建同 ID 命中旧 unique_key、新事件永远插不进去；级联已单收到 `TaskStore.DeleteTask`（G-MP 删掉了只给测试调用的 `DeleteTaskRouterData`）。"
     boundary: "只做持久账本与 Store 方法；不产事件（T6）、不做 coordinate 消费/预算（T7）、不改 Router 决策与应用逻辑、不改 `router_prompt.md`、不新增 HTTP 端点、不启动后台 goroutine。`PayloadJSON` 限 8KB，超限拒绝而非截断落库；时间统一 UTC 走 `routerTimeLayout`。"
     files:
       - server/internal/kanban/router_event_types.go
@@ -9109,7 +9109,7 @@ groups:
       - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RecoverClaimedEvents('
       - 'server/internal/kanban/router_event_store.go:must be claimed before completing'
       - 'server/internal/kanban/task_store_migrate.go:migrateRouterEventTable(s.db)'
-      - 'server/internal/kanban/router_store.go:DELETE FROM router_events WHERE task_id = ?'
+      - 'server/internal/kanban/task_store.go:"router_decisions", "router_task_state", "router_events"'
 
   # ── Router 生命周期事件生产（T6）：权威状态 → 幂等事件 ─────────────────────
   - id: G-MH
@@ -9186,7 +9186,7 @@ groups:
     title: Router 运行期事件证据 brief 与确定性里程碑汇报
     kind: feature
     symptom: "T7 已经能让 coordinate 消费 Run 结束/失败/gate 等待/停摆/启动对账事件，但事件回合拿到的 SituationBrief 仍是用户留言那一套：LatestRun 是任务当前最新 Run（旧事件会拿新 Run 的节点顶替）、Workflows 列着可开的新执行、没有任何节点输出证据，模型只能凭事件类型编汇报；同时运行期 say 没有确定活动标识，重复应用同一决策会插出第二条可见汇报，甚至可能把旧 Run 的结果活动改写掉。"
-    why: "用户 2026-11-18 授权的 R1 计划（T8）要求汇报必须可追溯到真实节点结果。上游没有这条链路，必须保留：① 事件 brief 只读 `event.RunID` 那个 Run 的节点证据（`WorkflowRunByID` + `ListWorkflowNodeRuns`），并把 `LatestRun`/`ActiveExecution`/`Workflows` 置空——运行期动作本来就不许开新执行，给出别的 Run 或 workflow 目录只会让模型把汇报写错对象；Run 不存在时写 `run_status=missing` 与未验证项；② 证据有界：节点按 failed→waiting_user→running→queued→pending→cancelled→success 取前 20，输出摘要复用 `nodeRunOutputSummary` 截 800 字节、错误摘要 500 字节，事件载荷只保留白名单键、单值 500 字节、整包 2KB，任何裁剪都置 `Truncated` 并把省略数写出来；未验证项（终态任务下的非终态节点、成功无输出、失败无错误、停摆事件不宣告失败、gate 事件缺 waiting_user 节点、完成事件无成功节点）给模型直读，24KB 紧急裁剪后仍保留「还有 N 条」标记；③ 预算随 brief 下发（每条原始留言 ≤3 回合、链深度 ≤3），模型能自己看到还剩几轮；④ 运行期 say/ask_user 用确定 effect ID（`act-rtev-<sha256(decisionID:seq) 前 20>` + `InsertOrIgnore`），同一决策同一动作重复应用只落同一行、不广播第二条 created，`RunID` 恒为空、不写任务结果摘要，绝不通过任何方式绑成旧 Run 的结果活动；⑤ 运行期 say 默认 `purpose=progress`：工具默认值、模型只说话时合成的 say、应用层默认值三处都按事件语义改写，用户留言仍是 chat/reply；⑥ 事件回合不带 workflow 目录，所以 `router_run_workflow` 的目录可用性检查必须跳过事件 brief（`isRuntimeEventBrief`），让拒绝原因始终是运行期白名单那句「运行期事件回合不允许」，而不是误导性的「目录里没有这个 workflow」；⑦ 提示词补规则 11–14：只依据 brief.event/brief.evidence 汇报、未验证项按未验证描述、silent 必须说明理由、自然语言不输出 JSON/内部 ID。"
+    why: "用户 2026-11-18 授权的 R1 计划（T8）要求汇报必须可追溯到真实节点结果。上游没有这条链路，必须保留：① 事件 brief 只读 `event.RunID` 那个 Run 的节点证据（`WorkflowRunByID` + `ListWorkflowNodeRuns`），并把 `LatestRun`/`ActiveExecution`/`Workflows` 置空——运行期动作本来就不许开新执行，给出别的 Run 或 workflow 目录只会让模型把汇报写错对象；Run 不存在时写 `run_status=missing` 与未验证项；② 证据有界：节点按 failed→waiting_user→running→queued→pending→cancelled→success 取前 20，输出摘要复用 `nodeRunOutputSummary` 截 800 字节、错误摘要 500 字节，事件载荷只保留白名单键、单值 500 字节、整包 2KB，任何裁剪都置 `Truncated` 并把省略数写出来；未验证项（终态任务下的非终态节点、成功无输出、失败无错误、停摆事件不宣告失败、gate 事件缺 waiting_user 节点、完成事件无成功节点）给模型直读，24KB 紧急裁剪后仍保留「还有 N 条」标记；③ 预算随 brief 下发（每条原始留言 ≤3 回合、链深度 ≤3），模型能自己看到还剩几轮；④ 运行期 say/ask_user 用确定 effect ID（`act-rtev-<sha256(decisionID:seq) 前 20>` + `InsertOrIgnore`），同一决策同一动作重复应用只落同一行、不广播第二条 created，`RunID` 恒为空、不写任务结果摘要，绝不通过任何方式绑成旧 Run 的结果活动；⑤ 运行期 say 默认 `purpose=progress`：工具默认值、模型只说话时合成的 say、应用层默认值三处都按事件语义改写，用户留言仍是 chat/reply；⑥ 事件回合不带 workflow 目录，所以 `router_run_workflow` 的目录可用性检查必须跳过事件 brief（`isRuntimeEventBrief`），让拒绝原因始终是运行期白名单那句「运行期事件回合不允许」，而不是误导性的「目录里没有这个 workflow」；⑦ 提示词补规则 11–14：只依据 brief.event/brief.evidence 汇报、未验证项按未验证描述、silent 必须说明理由、自然语言不输出 JSON/内部 ID。（2026-11-19 补）⑧ 生产端 `routerEventPayload` 自己写的摘要键（`nodes`/`nodes_truncated`/`workflow_id`/`revision`）是受控键：它们不进 brief 载荷（节点证据在 `brief.evidence` 里），也不得被判成越界截断 —— 否则每条真实事件都会多一句「载荷被截断」，把没被裁过的信息说成不全。"
     boundary: "只做汇报侧：不产事件（T6）、不做消费循环/预算闸门（T7）、不改事件账本语义与 `router_event_*store/sources/coordinate` 行为、不启新 Run、不直连 agent、不 cancel/retry/审批/merge、不新增 HTTP 端点、不改前端与线上配置。用户留言回合的 brief、活动语义、结果摘要写入保持不变；`router_tools.go` 只在事件 brief 分支跳过目录检查并调整 say 默认 purpose。"
     files:
       - server/internal/kanban/router_event_brief.go
@@ -9202,6 +9202,11 @@ groups:
       - 'server/internal/kanban/router_event_brief.go:func attachRouterEventBrief(ctx context.Context, store *TaskStore, brief *SituationBrief, event RouterEvent) error {'
       - 'server/internal/kanban/router_event_brief.go:routerEventBriefMaxNodes          = 20'
       - 'server/internal/kanban/router_event_brief.go:func routerEventEffectID(decisionID string, seq int) string {'
+      - 'server/internal/kanban/router_event_brief.go:var routerEventBriefProducerKeys = []string{'
+      - 'server/internal/kanban/router_event_brief.go:func routerEventBriefControlledKey(key string) bool {'
+      - 'server/internal/kanban/router_event_brief_test.go:func TestEventBriefProductionPayloadIsNotTruncated(t *testing.T) {'
+      - 'server/internal/kanban/router_event_brief_test.go:func TestEventBriefStallAndReconcilePayloadsAreNotTruncated(t *testing.T) {'
+      - 'server/internal/kanban/router_event_brief_test.go:func TestEventBriefUnknownKeysStillTruncated(t *testing.T) {'
       - 'server/internal/kanban/router_brief.go:if trigger.Event != nil {'
       - 'server/internal/kanban/router_brief.go:Event    *RouterBriefEvent    `json:"event,omitempty"`'
       - 'server/internal/kanban/router_brief.go:func trimRouterEventUnverified(brief *SituationBrief) bool {'
@@ -9395,3 +9400,79 @@ groups:
       - 'server/internal/api/usecase/session_context_saving_test.go:func TestGetSessionContextSavingResolvesPoolSessionKey('
       - 'server/internal/api/usecase/session_context_saving_test.go:func TestGetSessionContextSavingDoesNotReadBareLedger('
       - 'server/internal/agent/proxy/lcsmoke/main.go:saving := ps.SessionContextSaving("smoke-session")'
+
+  # ── 任务详情的 Router 展示收口：运行汇报折叠 + 直达工作流会话 ────────
+  - id: G-MO
+    title: 任务详情展示收口 —— purpose=progress 运行汇报折叠 + 直达工作流会话
+    kind: fix
+    symptom: "R1 T10 复核登记的 UX 残留：同一轮任务结算后用户会看到同一句结果被说两遍 —— 引擎结算回填的 reply 行（status+summary）与 Router 运行期事件 say 出来的 purpose=progress 汇报行；后者另带失败节点/未验证项等增量信息，两条都不能删。另一处：工作流节点在各自的 agent 会话里干活，任务对话只放汇报，用户想看节点实际做了什么、或接管那个会话，必须先展开运行视图、再逐节点点「打开会话」。"
+    why: "必须保留：① 折叠只做在展示层 —— 结算 reply 留在原位，同一 reply_to_id 下的 progress 行折进紧跟父行的「运行汇报 N 条」，展开复用 ActivityMessage；绝不删活动数据、不改活动语义、不把汇报绑回旧 Run 的结果活动（T8 冻结契约）。② 可折叠的前提是父行已结算（completed/failed/waiting_user 且 summary 非空）—— 运行中用户正是靠 progress 行知道流程起来了，折叠等于藏进度；无 reply_to_id 的 progress 行没有归属，同样保持可见。③ 归属按 reply_to_id 精确映射，不取「最近一条结算行」，多轮留言各自折回自己那轮。④ 直达按钮的落点是纯函数 pickWorkflowSessionKey：running > waiting_user > 最近一条有 session_key 的节点（ListWorkflowNodeRuns 按 created_at 升序，最后一条即最近执行）；空白 session_key 跳过，末尾没有会话的节点不能顶掉前面真正的会话。⑤ 节点行必须提前取（引擎一绑定到 workflow 就取，不等展开运行视图），并按 refreshKey 重取 —— session_key 是回合中途才绑定到 NodeRun 的。⑥ 重取期间已知会话键仍可点（session_key 绑定后不再变化），只有首次加载且尚无键时显示「加载中」，不得把未完成误报成「暂无工作流会话」。"
+    boundary: "只改前端展示层与 run/node-run 取数时机；不动活动/事件/决策/结果摘要的数据路径，不新增 HTTP 端点，不改路由与权限。折叠不覆盖 purpose=chat/reply/result 与无归属的汇报；直达按钮只对已绑定 workflow 引擎的任务出现（RunViewEntry 原有的 `if (!runId) return null` 分支不变）。"
+    files:
+      - web/src/shared/activityModel.ts
+      - web/src/shared/taskComments.ts
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/ActivityReportsGroup.tsx
+      - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/useRunViewEntry.ts
+      - web/src/components/task/runTimelineModel.ts
+      - web/src/components/task/WorkflowSessionJump.tsx
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - web/tests/activity-report-collapse.test.mjs
+      - web/tests/task-workflow-session-jump.test.mjs
+    anchors:
+      - 'web/src/shared/activityModel.ts:export function conversationRows(activities: TaskActivity[]): ConversationRow[] {'
+      - 'web/src/shared/activityModel.ts:if (!parentId || parentId === activity.id || activity.purpose !== "progress") return "";'
+      - 'web/src/components/task/ActivityReportsGroup.tsx:data-testid="activity-reports-group"'
+      - 'web/src/components/task/ConversationView.tsx:conversationRows(activities)'
+      - 'web/src/components/task/runTimelineModel.ts:export function pickWorkflowSessionKey('
+      - 'web/src/components/task/RunViewEntry.tsx:<WorkflowSessionJump'
+      - 'web/src/components/task/useRunViewEntry.ts:[runId, rootId, taskId, nodeId, refreshKey]'
+      - 'web/tests/activity-report-collapse.test.mjs:test("对话流默认折叠：结果句只出现一次，汇报正文与计数可见"'
+      - 'web/tests/task-workflow-session-jump.test.mjs:test("重取期间的旧会话键仍可点，不闪禁用"'
+
+  # ── R1 留存缺口收口：删卡级联/关 lane、事件回合 inspect_run、领取租约、账本保留 ──
+  - id: G-MP
+    title: R1 留存缺口 —— 删任务级联 + lane 收敛、运行期 inspect_run、领取租约、账本保留策略
+    kind: fix
+    symptom: "R1 收尾复核列出的四处留存缺口，都在「跑起来之后才会撞」的路径上：① 删任务不清 `router_events`、也不关进程内 lane —— 同 ID 重建的任务第一件事就撞旧 unique_key（`InsertEvent` 是 ON CONFLICT DO NOTHING），新 Run 的事件一条也插不进去且不报错；lane 里排队的回合还会拿着一张已不存在的任务调模型。② 运行期事件回合里唯一的读工具 `inspect_run` 100% 不可用 —— 事件 brief 故意清空 `LatestRun`（不让模型拿任务最新 Run 顶替），而 `inspectRun` 只认 `LatestRun`，于是每个事件回合的模型都在「没有 Run 可看」的假信息上决策。③ claimed 行只有进程重启才能救回来，回合 panic 被吞/超时漏 complete 后事件永久停在 claimed，账本上既不 pending 也不终态。④ 账本只增不删，长期运行的节点上这张表无限长。"
+    why: "用户 2026-11-18 授权的 R1 计划要求 R0/R1 的机制在生产打开前不留已知留存缺口。必须保留：① 级联删 `router_events` 单收到 `TaskStore.DeleteTask`（唯一删卡事务），并删掉只给测试调用的 `DeleteTaskRouterData` —— 后者口径正确但生产零调用者，钉住它等于没钉；`Service.DeleteTask` 在删库前先 `CloseRouterTask` 关 lane（清 session、丢队列），卡片消失后不能还有回合在跑。② 运行期回合 `inspectRun` 以 `brief.Event.RunID` 为目标并读库（事件 brief 不含 run 结构），用户回合仍走 `LatestRun`；传了别的 run id 一律拒绝 —— 而不是退回去用 `LatestRun` 顶替。③ 领取租约 `ReclaimStaleEvents(before)` 按 `claimed_at` 判定（不是 `created_at`：排队很久但刚领走的事件是活的），打回 pending 并保留原领取者；CAS 保证误判时第二个回合拿不到同一事件，运行期 effect ID 确定所以不会重复副作用。④ 回收 `PruneEvents(cutoff, limit)` 只删 done|failed|skipped 且按 id 子查询 + LIMIT 分批（不依赖 SQLITE_ENABLE_UPDATE_DELETE_LIMIT）；pending/claimed 再老也留着。`router_decisions` 明确不在回收范围（它是诊断面）。"
+    boundary: "只补留存缺口，不改 coordinate 的动作白名单/预算/幂等口径，不新增 HTTP 端点，不动 `router_prompt.md`，不改生产 `router.mode`。租约不宣称覆盖 kill -9 与 SQLite 语句中断；回收不承诺秒级精确的保留边界（`created_at` 截到整秒比较，1 秒粒度）。"
+    files:
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/service_run_moves.go
+      - server/internal/kanban/router_store.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_event_store.go
+      - server/internal/kanban/router_event_types.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_service.go
+    tests:
+      - server/internal/kanban/task_delete_test.go
+      - server/internal/kanban/router_event_migrate_test.go
+      - server/internal/kanban/router_inspect_run_test.go
+      - server/internal/kanban/router_event_lease_test.go
+      - server/internal/kanban/router_event_lease_tick_test.go
+      - server/internal/kanban/router_event_prune_test.go
+      - server/internal/kanban/router_event_prune_tick_test.go
+    anchors:
+      - 'server/internal/kanban/task_store.go:"router_decisions", "router_task_state", "router_events"'
+      - 'server/internal/kanban/service_run_moves.go:s.CloseRouterTask(ctx, in.RootID, task.ID)'
+      - 'server/internal/kanban/router_tools.go:targetRunID = strings.TrimSpace(e.brief.Event.RunID)'
+      - 'server/internal/kanban/router_tools.go:is not the run of this turn'
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) ReclaimStaleEvents('
+      - 'server/internal/kanban/router_event_store.go:WHERE status = ? AND claimed_at <> '''' AND claimed_at < ?'
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) PruneEvents('
+      - 'server/internal/kanban/router_event_store.go:WHERE status IN (?, ?, ?) AND substr(created_at, 1, 19) < ?'
+      - 'server/internal/kanban/router_event_types.go:const routerEventPruneLimit = 200'
+      - 'server/internal/kanban/router_coordinate.go:routerEventClaimLease = 10 * time.Minute'
+      - 'server/internal/kanban/router_coordinate.go:routerEventRetention = 7 * 24 * time.Hour'
+      - 'server/internal/kanban/router_coordinate.go:if tick%routerEventPruneEveryTicks != 0 {'
+      - 'server/internal/kanban/router_coordinate.go:rs.pruneExpiredEvents(ctx, now)'
+      - 'server/internal/kanban/router_service.go:coordinateTicks int'
+      - 'server/internal/kanban/router_event_prune_test.go:func TestRouterEventPruneRemovesOnlyOldTerminalRows('
+      - 'server/internal/kanban/router_event_prune_tick_test.go:func TestCoordinatorTickPruneRunsEveryNthTick('
+      - 'server/internal/kanban/router_inspect_run_test.go:func TestRouterInspectRunServesEventTurn('
+      - 'server/internal/kanban/router_event_lease_tick_test.go:func TestCoordinatorTickReclaimsStaleClaims('

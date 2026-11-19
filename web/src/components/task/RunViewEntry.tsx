@@ -1,8 +1,9 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import { RunTimeline } from "./RunTimeline";
-import { runNodeKinds } from "./runTimelineModel";
+import { pickWorkflowSessionKey, runNodeKinds } from "./runTimelineModel";
 import { useRunViewEntry } from "./useRunViewEntry";
+import { WorkflowSessionJump } from "./WorkflowSessionJump";
 
 // 运行视图入口：对话流下面的一条可展开行。
 //
@@ -20,7 +21,7 @@ export type RunViewEntryProps = {
 
 export function RunViewEntry({ rootId, taskId, nodeId, refreshKey, onOpenSession }: RunViewEntryProps) {
   const { t } = useI18n();
-  const { runId, open, run, nodeRuns, error, gateError, decidingNodeRunId, toggle, decideGate } =
+  const { runId, open, run, nodeRuns, nodeRunsLoading, error, gateError, decidingNodeRunId, toggle, decideGate } =
     useRunViewEntry(rootId, taskId, nodeId, refreshKey);
 
   if (!runId) return null;
@@ -33,23 +34,30 @@ export function RunViewEntry({ rootId, taskId, nodeId, refreshKey, onOpenSession
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px" }} data-testid="run-view-entry">
-      <button
-        type="button"
-        onClick={toggle}
-        data-testid="run-view-toggle"
-        style={{
-          alignSelf: "flex-start",
-          border: "1px solid var(--border-color)",
-          background: "transparent",
-          color: "var(--text-secondary)",
-          borderRadius: "6px",
-          padding: "3px 8px",
-          fontSize: "12px",
-          cursor: "pointer",
-        }}
-      >
-        {open ? t("task.runTimeline.collapse") : t("task.runTimeline.expand")}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+        <button
+          type="button"
+          onClick={toggle}
+          data-testid="run-view-toggle"
+          style={{
+            alignSelf: "flex-start",
+            border: "1px solid var(--border-color)",
+            background: "transparent",
+            color: "var(--text-secondary)",
+            borderRadius: "6px",
+            padding: "3px 8px",
+            fontSize: "12px",
+            cursor: "pointer",
+          }}
+        >
+          {open ? t("task.runTimeline.collapse") : t("task.runTimeline.expand")}
+        </button>
+        <WorkflowSessionJump
+          sessionKey={pickWorkflowSessionKey(nodeRuns)}
+          loading={nodeRunsLoading}
+          onOpenSession={onOpenSession}
+        />
+      </div>
       {open ? (
         <>
           {error ? <div style={{ fontSize: "12px", color: "var(--danger-color, #ef4444)" }}>{error}</div> : null}

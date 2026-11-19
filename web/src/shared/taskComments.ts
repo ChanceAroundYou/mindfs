@@ -33,6 +33,14 @@ export type TaskActivity = {
   // 后端按原样透传，前端只解析自己要用的键；解析失败按空对象处理。
   payload_json?: string;
   tool_use_id?: string;
+  // Router 归属（Plan 2026-11-14）：回复绑定到触发它的留言，purpose 区分
+  // chat/progress/reply/result。运行期事件的汇报是 purpose=progress：
+  // 同一留言下它会与结算回复重复展示同一条结果句，前端据此折叠。
+  reply_to_id?: string;
+  purpose?: "chat" | "progress" | "reply" | "result" | string;
+  router_decision_id?: string;
+  ordinal?: number;
+  hidden?: boolean;
   created_at: string;
   updated_at?: string;
 };
