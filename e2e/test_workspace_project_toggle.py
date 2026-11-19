@@ -78,7 +78,7 @@ def test_toggle_sits_before_name_and_click_still_collapses(
     name_box = name_button.bounding_box()
     assert toggle_box and name_box
     assert toggle_box["x"] < name_box["x"], f"箭头应在项目名左侧：{toggle_box} vs {name_box}"
-    assert toggle_box["width"] >= 39, f"热区宽度应保持约 40px：{toggle_box}"
+    assert 22 <= toggle_box["width"] <= 26, f"热区宽度应收到约 24px：{toggle_box}"
     assert toggle_box["height"] >= 23, f"热区高度应保持约 24px：{toggle_box}"
 
     # 左侧三个元素紧凑贴左，右半边留空：计数紧挨名字，且不贴到行尾。

@@ -26,7 +26,8 @@ describe("workspace project toggle", () => {
       // 无障碍标签与热区尺寸不随位置调整而改变
       expect(toggle).toContain(`aria-label="${label}"`);
       expect(toggle).toContain(`title="${label}"`);
-      expect(toggle).toContain("min-width:40px;height:24px");
+      expect(toggle).toContain("min-width:24px;height:24px");
+      expect(toggle).toContain("padding:0 2px");
       // 图标方向仍在，箭头状态由 collapsed 决定
       expect(toggle).toContain(`rotate(${collapsed ? 0 : 90}deg)`);
       // 不再靠 margin-left:auto 钉在行尾

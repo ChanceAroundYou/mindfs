@@ -97,7 +97,8 @@ export const workspaceProjectNameButtonStyle = (color: string | null): React.CSS
 });
 
 /**
- * 折叠热区：只有 12px 的箭头太小了，整块撑成 40×24 的可点区。
+ * 折叠热区：只有 12px 的箭头太小了，但也不需要整块 40px 宽 —— 箭头前后留 2px
+ * 就够了，热区收到 24×24（用户 2026-11-20 反馈「占地面积太大」）。
  *
  * 刻意**不给**边框和底色（`background: transparent` + `border: none`）：
  * 项目头已经是「有底色的名字 + 中性徽章」，再加一个带框的按钮就三块底色打架，
@@ -107,10 +108,10 @@ export const workspaceProjectNameButtonStyle = (color: string | null): React.CSS
  * 折叠箭头离名字一站远，读的时候要横跨整行；挪到前面后不再需要任何靠右偏移。
  */
 export const workspaceProjectToggleStyle: React.CSSProperties = {
-  minWidth: "40px",
+  minWidth: "24px",
   height: "24px",
-  padding: "0 6px",
-  borderRadius: "7px",
+  padding: "0 2px",
+  borderRadius: "6px",
   border: "none",
   background: "transparent",
   display: "inline-flex",
