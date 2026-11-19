@@ -94,6 +94,19 @@ C pass 15024ms  authoring 400 'human_gate "verify" cannot be the last node: add 
 教训：签名变更必须全仓 `grep` 调用点（含 `_test.go`），并且门禁要在干净提交树上跑 —— 脏工作区
 会用未提交的改动把编译错误掩盖掉。
 
+**登记被并行提交覆盖（已修，`55e622d4`）**：另一条会话的 `94b2d2dd`（G-KO 登记）落库时用的是
+`docs/upstream-customizations.yaml` 改动中途的工作区副本，把 G-MY 的 `files` 从 28 条覆盖回 21 条，
+丢掉的正好是计划文档、两个 e2e 脚本与三个测试/夹具文件。`make check-upstream` 当时**不会报警**：
+这些路径被 `docs/`、`e2e/` 前缀条目和 G-Y / G-LI / G-KV / G-LE 等旧组兜住，覆盖检查照样通过，
+但「这几个文件属于 G-MY」这条归属已经没了。`55e622d4` 逐条补回（与 `637fdb5e` 比对无差）。
+教训：同一个 worktree 里多人并行改同一份登记文件时，提交前要用 `git show HEAD:<file>` 取基线、
+只叠加自己那几条，并**提交后复核自己那块还剩几条** —— 覆盖检查绿不等于归属还在。
+
+**该提交之后的 check-upstream 状态**：仍未通过（4 个幽灵条目 + 57 处分组不自洽），全部来自其他
+会话在飞的工作 —— G-MN（30 处，live compact B4，工作区未提交）、G-MV（24 处，运行视图多轮）、
+G-MW（6 处，Router 提示词）与 G-LM（1 处，`workflow_node_executor.go` 的 `resolveWorkflowNodePrompt`
+正在被拆成纯函数 + 方法包装，锚点先提交、代码还没提交）。G-MY 自身在整份清单里零告警。
+
 ## 未做 / 残留
 
 - 不迁移历史任务、不重发旧工作流版本（旧版本靠运行期自动放行）。
