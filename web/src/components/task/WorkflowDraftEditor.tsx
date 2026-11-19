@@ -328,23 +328,16 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
               const isSelected = d.workflow_id === e.selectedId;
               return (
                 <div key={d.workflow_id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  {/* 描述不进卡片：190px 宽的列表里挤两行字，名字反而被压到看不清。
+                      想读描述把鼠标停在卡上看 title；单行名字仍然省略号截断。 */}
                   <button
                     type="button"
-                    style={{ ...panelButtonStyle(isSelected ? "primary" : "secondary"), textAlign: "left", flex: 1, minWidth: 0 }}
+                    style={{ ...panelButtonStyle(isSelected ? "primary" : "secondary"), display: "block", textAlign: "left", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                     aria-current={isSelected}
                     onClick={() => { setCreateMode(false); void e.choose(d); }}
-                    title={`${displayName} (${d.revision})`}
+                    title={d.description ? `${displayName} (${d.revision}) — ${d.description}` : `${displayName} (${d.revision})`}
                   >
-                    <span style={{ display: "block", minWidth: 0 }}>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
-                        {displayName}
-                      </span>
-                      {d.description ? (
-                        <span style={{ display: "block", fontSize: 10, opacity: 0.75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {d.description}
-                        </span>
-                      ) : null}
-                    </span>
+                    {displayName}
                   </button>
                   <button
                     type="button"

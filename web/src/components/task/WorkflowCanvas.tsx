@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   Background,
   Controls,
@@ -31,6 +32,7 @@ import type { AgentStatus } from "../../shared/agentTypes";
 import { nodeTypes } from "./WorkflowNode";
 import { WorkflowNodeIcon } from "./WorkflowNodeIcons";
 import { WorkflowNodeInspector } from "./WorkflowNodeInspector";
+import { nodeScreenRect, placeInspectorNear } from "./workflowInspectorPlacement";
 import { getNodeStyle } from "./workflowNodeStyles";
 
 // 工作流草稿画布（WP-07）：**桌面端**的 Draft 图编辑器。
@@ -134,34 +136,11 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
 
   const handleNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
     setSelectedId(node.id);
-    // 计算浮动窗口位置：智能定位，避免超出屏幕。
     // 锚点取整个节点框（点到的可能是内部图标/文字），不是被点中的那个子元素。
     const target = event.target instanceof Element ? event.target.closest(".react-flow__node") : null;
-    const rect = (target ?? (event.target as HTMLElement))?.getBoundingClientRect?.();
+    const rect = target?.getBoundingClientRect() ?? nodeScreenRect(document, node.id);
     if (rect) {
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      const inspectorWidth = 400; // 浮动窗口最大宽度
-      const inspectorHeight = 500; // 预估高度
-
-      let x = rect.right + 10;
-      let y = rect.top;
-
-      // 如果右侧空间不够，放到左侧
-      if (x + inspectorWidth > viewportWidth) {
-        x = rect.left - inspectorWidth - 10;
-        // 如果左侧也不够，就放在可视区域内
-        if (x < 10) {
-          x = Math.max(10, viewportWidth - inspectorWidth - 10);
-        }
-      }
-
-      // 如果超出底部，向上调整
-      if (y + inspectorHeight > viewportHeight) {
-        y = Math.max(10, viewportHeight - inspectorHeight - 10);
-      }
-
-      setInspectorPosition({ x, y });
+      setInspectorPosition(placeInspectorNear(rect, { width: window.innerWidth, height: window.innerHeight }));
     }
   }, []);
 
@@ -196,30 +175,58 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
     emit(nextNodes, nextEdges);
   }, [selectedId, nodes, edges, emit, setNodes, setEdges]);
 
-  // 点击画布外部关闭浮动窗口 + 键盘快捷键
+  // 点画布外部只关卡片，**不清选中**。清选中会让「删除选中节点」按钮在
+  // mousedown 与 mouseup 之间变成 disabled，浏览器随后就不再派发 click ——
+  // 那正是「删除按钮按了没反应」的根因。（清选中只由 Esc / 关闭键 / 删除负责。）
   useEffect(() => {
     if (!inspectorPosition) return;
     const handleClickOutside = (event: MouseEvent) => {
       // 这里的 Node 是 @xyflow/react 的节点类型，不能拿 DOM 的 Node 断言；
       // 先用 instanceof Element 收窄 EventTarget。
       if (inspectorRef.current && event.target instanceof Element && !inspectorRef.current.contains(event.target)) {
-        closeInspector();
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closeInspector();
-      } else if (event.key === "Delete" && selectedId) {
-        removeSelected();
+        setInspectorPosition(null);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [inspectorPosition]);
+
+  // 快捷键与卡片开合无关：Esc 关卡片，Delete 删选中节点。Delete 必须避开
+  // 输入框，否则在 prompt 里退格删字会顺手把节点删掉。
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeInspector();
+        return;
+      }
+      if (event.key !== "Delete" || !selectedId) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) {
+        return;
+      }
+      removeSelected();
     };
-  }, [inspectorPosition, closeInspector, selectedId, removeSelected]);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closeInspector, selectedId, removeSelected]);
+
+  // 画布平移/缩放后节点在屏幕上换了位置，卡片得跟着走；否则用户看到的就是
+  // 「卡片还留在原地」。每帧最多重算一次，拖动视口时不至于每次都 setState。
+  const viewportFrame = useRef(0);
+  const handleViewportMove = useCallback(() => {
+    if (!selectedId || viewportFrame.current) return;
+    viewportFrame.current = requestAnimationFrame(() => {
+      viewportFrame.current = 0;
+      const rect = nodeScreenRect(document, selectedId);
+      if (rect) setInspectorPosition(placeInspectorNear(rect, { width: window.innerWidth, height: window.innerHeight }));
+    });
+  }, [selectedId]);
+  useEffect(
+    () => () => {
+      if (viewportFrame.current) cancelAnimationFrame(viewportFrame.current);
+    },
+    [],
+  );
 
   const onConnect = useCallback(
     (c: Connection) => {
@@ -381,6 +388,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
           onConnect={onConnect}
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeDoubleClick}
+          onMove={handleViewportMove}
           onNodesDelete={(deleted) => emit(nodes.filter((n) => !deleted.some((d) => d.id === n.id)), edges)}
           nodeTypes={nodeTypes}
           defaultEdgeOptions={{
@@ -410,19 +418,24 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
         </div>
       </div>
 
-      {selected && inspectorPosition ? (
-        <WorkflowNodeInspector
-          node={selected}
-          position={inspectorPosition}
-          inspectorRef={inspectorRef}
-          labels={labels}
-          dirty={dirtyNow}
-          agents={agents}
-          onClose={closeInspector}
-          onPatch={patchSelected}
-          onOpenLoop={() => setOpenLoopId(selected.id)}
-        />
-      ) : null}
+      {/* portal 到 body：祖先 <main> 的 contain: paint 会给 position: fixed 建立
+          包含块，不逃出去卡片就会整体偏移一个侧边栏宽度。 */}
+      {selected && inspectorPosition
+        ? createPortal(
+            <WorkflowNodeInspector
+              node={selected}
+              position={inspectorPosition}
+              inspectorRef={inspectorRef}
+              labels={labels}
+              dirty={dirtyNow}
+              agents={agents}
+              onClose={closeInspector}
+              onPatch={patchSelected}
+              onOpenLoop={() => setOpenLoopId(selected.id)}
+            />,
+            document.body,
+          )
+        : null}
         </>
       )}
 

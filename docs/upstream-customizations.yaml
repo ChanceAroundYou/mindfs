@@ -10164,3 +10164,31 @@ groups:
       - 'server/internal/api/appcontext_activity_test.go:func TestPickAgentPrefersConfiguredTaskAgent('
       - 'server/internal/api/appcontext_activity_test.go:func TestRunDirectActivityUsesTaskDefaultsForNewMainSession('
       - 'server/app/task_dispatch_defaults_test.go:func TestTaskConfigDefaults('
+  - id: G-NH
+    title: 工作流编辑器的四处交互修复（删除键失效 / 节点卡片错位 / 独立 worktree 开关 / 草稿卡挤）
+    kind: fix
+    symptom: "2026-11-20 用户逐条报四条：「删除选择节点按钮无效」「节点没有给新会话还是复用会话的按钮，没有 worktree 选项」「缩放画布后点击 node，卡片还是出现在原地而非节点的附近」「左侧工作流名称的小卡太挤了，不要把描述塞进去」。隔离实例（7431，Chromium）取证：(1) 选中节点后删除键 disabled=False，mousedown 之后变 True、卡片消失，mouseup 后节点数仍是 1 —— click 从未派发；(2) 卡片期望 x=766/789/949，实测 1026/1049/1209，恒定 +260，y 恒被夹到 390；(3) 面板里 worktree 选项根本不存在（引擎 side 已支持 `worktree=independent`）；(4) 草稿卡渲染了第二行描述。"
+    why: "必须保留：(1) 点卡片外部**只关卡片、不清选中** —— 原实现调 `closeInspector()` 顺手清 `selectedId`，按钮在 mousedown 与 mouseup 之间变成 disabled，浏览器随后不再派发 click，这就是「删除键按了没反应」的根因；同时把 keydown 拆成独立 effect（不再挂在 `inspectorPosition` 上），Delete 必须避开 INPUT/TEXTAREA/SELECT/contentEditable，否则在 prompt 里删字会顺手删节点。(2) 卡片 portal 到 `document.body` —— 祖先 `<main class=\"mindfs-font-scale-region\">` 带 `contain: paint`，会给后代的 `position: fixed` 建立包含块，卡片于是相对 main 而不是视口定位，恒定偏移一个侧边栏宽度；定位数学抽到 `workflowInspectorPlacement.ts` 纯函数，并用 ReactFlow `onMove`（rAF 节流）按 `.react-flow__node[data-id]` 重新量节点框，缩放/平移后卡片跟着节点走。(3) 节点面板补「独立 worktree」勾选（`worktree=independent`，取消即删键回落共享主树）；后端没有集成分支快照时这类节点会直接失败，所以提示文案要点明。(4) 草稿卡只显示名字，描述进 `title` 提示 —— 190px 宽的列表里挤两行字，名字反而看不清。"
+    boundary: "只动前端表现层与节点参数编辑：不改后端 worktree/会话归属语义（`service_workspace_gate.go` 的 `worktree == \"independent\"` 判定与集成分支要求原样）、不改图校验与持久化契约（`params` 原样落库）、不改 Router；不引入新依赖（`react-dom` 的 `createPortal` 是既有依赖）。像素级「卡片贴节点、删除真的生效」由隔离实例上的 Playwright 探针取证（不写入仓库）；Vitest 覆盖纯函数与源码不变量。"
+    files:
+      - web/src/components/task/workflowInspectorPlacement.ts
+      - web/src/components/task/WorkflowCanvas.tsx
+      - web/src/components/task/WorkflowNodeInspector.tsx
+      - web/src/components/task/WorkflowDraftEditor.tsx
+      - web/src/shared/workflowModel.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/workflow-inspector-placement.test.ts
+    tests:
+      - web/tests/workflow-inspector-placement.test.ts
+    anchors:
+      - 'web/src/components/task/workflowInspectorPlacement.ts:export function placeInspectorNear(rect: ScreenRect, viewport: ViewportSize): { x: number; y: number } {'
+      - 'web/src/components/task/workflowInspectorPlacement.ts:export function nodeScreenRect('
+      - 'web/src/components/task/WorkflowCanvas.tsx:setInspectorPosition(null);'
+      - 'web/src/components/task/WorkflowCanvas.tsx:onMove={handleViewportMove}'
+      - 'web/src/components/task/WorkflowCanvas.tsx:createPortal('
+      - 'web/src/components/task/WorkflowCanvas.tsx:isContentEditable'
+      - 'web/src/shared/workflowModel.ts:export function workflowNodeUsesOwnWorktree(node: WorkflowNodeDef): boolean {'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:data-testid="workflow-node-independent-worktree"'
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:title={d.description ?'
+      - 'web/tests/workflow-inspector-placement.test.ts:点卡片外面只关卡片，不能清选中'

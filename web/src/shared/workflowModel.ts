@@ -16,6 +16,57 @@ export type WorkflowNodeDef = {
 
 export type WorkflowEdgeDef = { from: string; to: string; route?: string };
 
+/**
+ * 工作流节点会话归属（2026-11-20 用户决策）：一轮 Run 默认共用一条会话
+ * （后端 `session_reuse_policy=run`）。存量的 per_node / same_stage / always_new
+ * 都表示「这个节点自己一段对话」，所以「另起会话」的判据是「显式策略且不是 run」。
+ */
+export const WORKFLOW_NODE_NEW_SESSION_POLICY = "always_new";
+
+export function workflowNodeStartsNewSession(node: WorkflowNodeDef): boolean {
+  const policy = String(node.params?.session_reuse_policy ?? "").trim();
+  return !!policy && policy !== "run";
+}
+
+/** 勾选写 always_new；取消删掉参数，回到这一轮 Run 的共享会话。 */
+export function setWorkflowNodeStartsNewSession(
+  params: Record<string, unknown> | undefined,
+  startsNew: boolean,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...(params ?? {}) };
+  if (startsNew) {
+    next.session_reuse_policy = WORKFLOW_NODE_NEW_SESSION_POLICY;
+  } else {
+    delete next.session_reuse_policy;
+  }
+  return next;
+}
+
+/**
+ * 节点独立 worktree（后端 D10 的显式 opt-in）：`worktree=independent` 让这个
+ * Agent 节点单建一棵树，天然可与共享主树并发；节点结束时按 Run 创建时快照的
+ * 集成分支合并。别的值（含拼错）后端一律回落共享主树，所以这里只认这一个值。
+ */
+export const WORKFLOW_NODE_INDEPENDENT_WORKTREE = "independent";
+
+export function workflowNodeUsesOwnWorktree(node: WorkflowNodeDef): boolean {
+  return String(node.params?.worktree ?? "").trim() === WORKFLOW_NODE_INDEPENDENT_WORKTREE;
+}
+
+/** 勾选写 worktree=independent；取消删掉参数，回到共享主树。 */
+export function setWorkflowNodeUsesOwnWorktree(
+  params: Record<string, unknown> | undefined,
+  independent: boolean,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...(params ?? {}) };
+  if (independent) {
+    next.worktree = WORKFLOW_NODE_INDEPENDENT_WORKTREE;
+  } else {
+    delete next.worktree;
+  }
+  return next;
+}
+
 export type WorkflowGraph = {
   nodes: WorkflowNodeDef[];
   edges?: WorkflowEdgeDef[];

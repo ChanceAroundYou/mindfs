@@ -144,6 +144,11 @@ export const zhCNTasks = {
   "task.workflowCanvas.agent": "Agent",
   "task.workflowCanvas.model": "模型",
   "task.workflowCanvas.writesWorkspace": "写工作区（串行执行）",
+  // 2026-11-20 用户决策：一轮 Run 默认共用一条会话，节点可显式另起。
+  "task.workflowCanvas.newSessionPerNode": "本节点另起会话",
+  "task.workflowCanvas.newSessionPerNodeHint": "默认与其他节点共用同一轮的会话；勾选后这个节点单独开一段对话。",
+  "task.workflowCanvas.independentWorktree": "本节点独立 worktree",
+  "task.workflowCanvas.independentWorktreeHint": "勾选后这个节点单建一棵树，可与共享主树并发；结束时按项目当前分支合并。项目没有当前分支时这一轮会直接失败。",
   "task.workflowCanvas.maxIterations": "最大迭代次数",
   "task.workflowCanvas.conditionExpression": "条件表达式",
   "task.workflowCanvas.conditionExpressionHint": "形如 check.output.pass == true；分支名与出边 route 对应。",
