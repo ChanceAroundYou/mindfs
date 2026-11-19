@@ -208,11 +208,13 @@ func TestOverviewExcludesArchivedTasks(t *testing.T) {
 }
 
 type recordingSessionArchiver struct {
-	calls [][]string
+	calls   [][]string
+	taskIDs []string
 }
 
-func (r *recordingSessionArchiver) ArchiveSessions(_ context.Context, _ string, keys []string) error {
+func (r *recordingSessionArchiver) ArchiveSessions(_ context.Context, _ string, taskID string, keys []string) error {
 	r.calls = append(r.calls, append([]string(nil), keys...))
+	r.taskIDs = append(r.taskIDs, taskID)
 	return nil
 }
 
@@ -240,6 +242,9 @@ func TestArchiveTaskCascadesMarksAndUnarchiveLeavesSessionsAlone(t *testing.T) {
 	}
 	if len(archiver.calls) != 1 || len(archiver.calls[0]) != 1 || archiver.calls[0][0] != "s-main" {
 		t.Fatalf("cascade calls = %v, want one call with [s-main]", archiver.calls)
+	}
+	if len(archiver.taskIDs) != 1 || archiver.taskIDs[0] != "task-1" {
+		t.Fatalf("cascade taskIDs = %v, want [task-1] (archiver needs taskID to find all owned sessions)", archiver.taskIDs)
 	}
 
 	// 取消归档只清任务自己的标记：会话可能是用户自己归档的，不能被反向解开。

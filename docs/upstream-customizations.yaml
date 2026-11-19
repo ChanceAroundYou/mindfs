@@ -10008,9 +10008,9 @@ groups:
   - id: G-NB
     title: 看板任务归档（终态任务收进「已结束 → 归档」子组，级联只打标记不删后代）
     kind: feature
-    symptom: "看板「已结束」列只增不减：跑完/取消的任务全堆在「完成」「取消」两个子组里，两个月后找一条在途任务要在几百张已结束的卡里翻；工作台（跨项目总览）同样被历史任务占满。"
-    why: "必须保留：任务归档是**任务自己的一个标记**（archived_at），不是删除，也不是会话归档 —— (1) 「已结束」列新增第三个子组「归档」，完成/取消两组不再包含已归档任务，三组之和等于列头数字；卡片从工作台隐藏（GET /api/tasks/overview 走 SQL 层 ExcludeArchived，避免归档行先占掉 Limit 名额）。(2) 终态任务超过 7 天自动归档：起算点 completed_at，空则回退 updated_at（取消/失败任务 completed_at 本来就是空），后端低频扫描（启动一次 + 每小时）**真写** archived_at 并级联归档会话 —— 界面上现算「看起来归档了」会让取消归档、排序、工作台过滤三处各算各的。(3) 级联语义按用户裁定 A：只给相关会话（任务主会话 / 工作流节点会话 / 活动绑定会话 / Router 调度会话）打归档标记，**绝不删除**后代会话与 JSONL。现有的 usecase.ArchiveSession 是破坏性的（先删子树再标记自己），所以任务归档走另一条只标记的路径 —— kanban.SessionArchiver 端口结构上就没有删除能力，api 层适配器只调 session.Manager.SetArchived。(4) 取消归档只清任务自己的标记，不反向解开会话（会话可能是用户自己归档的）。(5) 归档只属于终态：非终态归档返回 409 ErrTaskNotArchivable（在跑的 Run 被藏起来是「看不见却还在跑」的事故形状）；任何把任务拉回非终态的写入（UpdateTaskStatus 的非终态分支、ReopenTask）顺手清掉 archived_at，否则卡片会「明明在跑却躺在归档组里」。(6) 取消归档留 archive_dismissed_at：自动归档只看时间戳，而时间戳刻意不动，没有这列的话用户点完取消归档、下一拍扫描会再收走它（「取消归档只维持一小时」）；显式归档或任务回到非终态时清空，留痕只约束这一轮终态的取舍。"
-    boundary: "不删除任何数据（任务卡、会话、JSONL 一律保留；删除仍走 DELETE /api/tasks/{id}）；不改 usecase.ArchiveSession 的破坏性语义（会话面板的归档入口行为不变）；不提供归档任务的批量操作/保留期清理；不改看板四列结构（归档是子组不是新列）；不覆盖任务归档时的会话级联失败重试（尽力而为，日志 [kanban/archive]）；web 侧 TaskCardRows 复用会话面板的 ArchiveIcon（不新增图标）。"
+    symptom: "看板「已结束」列只增不减：跑完/取消的任务全堆在「完成」「取消」两个子组里，两个月后找一条在途任务要在几百张已结束的卡里翻；工作台（跨项目总览）同样被历史任务占满。另一半（2026-11-20 用户报「把任务归档了，会话还在原地」）：任务归档后侧栏会话列表纹丝不动，点进去是「看板归档 / #86」的会话还在正常位置。"
+    why: "必须保留：任务归档是**任务自己的一个标记**（archived_at），不是删除，也不是会话归档 —— (1) 「已结束」列新增第三个子组「归档」，完成/取消两组不再包含已归档任务，三组之和等于列头数字；卡片从工作台隐藏（GET /api/tasks/overview 走 SQL 层 ExcludeArchived，避免归档行先占掉 Limit 名额）。(2) 终态任务超过 7 天自动归档：起算点 completed_at，空则回退 updated_at（取消/失败任务 completed_at 本来就是空），后端低频扫描（启动一次 + 每小时）**真写** archived_at 并级联归档会话 —— 界面上现算「看起来归档了」会让取消归档、排序、工作台过滤三处各算各的。(3) 级联语义按用户裁定 A：只给相关会话（任务主会话 / 工作流节点会话 / 活动绑定会话 / Router 调度会话）打归档标记，**绝不删除**后代会话与 JSONL。现有的 usecase.ArchiveSession 是破坏性的（先删子树再标记自己），所以任务归档走另一条只标记的路径 —— kanban.SessionArchiver 端口结构上就没有删除能力，api 层适配器只调 session.Manager.SetArchived。(4) 取消归档只清任务自己的标记，不反向解开会话（会话可能是用户自己归档的）。(5) 归档只属于终态：非终态归档返回 409 ErrTaskNotArchivable（在跑的 Run 被藏起来是「看不见却还在跑」的事故形状）；任何把任务拉回非终态的写入（UpdateTaskStatus 的非终态分支、ReopenTask）顺手清掉 archived_at，否则卡片会「明明在跑却躺在归档组里」。(6) 取消归档留 archive_dismissed_at：自动归档只看时间戳，而时间戳刻意不动，没有这列的话用户点完取消归档、下一拍扫描会再收走它（「取消归档只维持一小时」）；显式归档或任务回到非终态时清空，留痕只约束这一轮终态的取舍。(7) 级联必须收齐并让侧栏立刻消失：目标 key = kanban 给的种子 ∪ task_id 命中的会话 ∪ 按 parent_session_key 递归到的全部后代（subagent 会话 task_id 为空，只能靠父子链）；只按种子收是历史缺陷 —— Run 共享会话、对话式新增的会话都不在种子列里。落库后再逐条广播 session.meta.updated（payload 带 archived_at），前端命中 archived_at 就把该会话从缓存与主列表摘除并 **return**，不再走增量刷新（归档不改 updated_at，增量既拉不回来也删不掉）。缺广播那一段就是用户看到的「库里归档了、侧栏还在原地」。"
+    boundary: "不删除任何数据（任务卡、会话、JSONL 一律保留；删除仍走 DELETE /api/tasks/{id}）；不改 usecase.ArchiveSession 的破坏性语义（会话面板的归档入口行为不变）；不提供归档任务的批量操作/保留期清理；不改看板四列结构（归档是子组不是新列）；不覆盖任务归档时的会话级联失败重试（尽力而为，日志 [kanban/archive]）；取消任务归档不反向解开会话；web 侧 TaskCardRows 复用会话面板的 ArchiveIcon（不新增图标）。归档侧栏即时摘除只覆盖本进程在线客户端：广播到达即摘，断线重连靠列表接口的 archived_at 过滤（本来就有）；不做「归档后自动切走当前打开的会话」——用户可能正看着它。"
     files:
       - server/internal/kanban/types.go
       - server/internal/kanban/task_store.go
@@ -10021,8 +10021,10 @@ groups:
       - server/internal/kanban/service_tasks.go
       - server/internal/kanban/service_archive.go
       - server/internal/api/http_tasks_archive.go
+      - server/internal/api/ws_broadcast.go
       - server/internal/api/http_routes.go
       - server/app/workspace_build.go
+      - web/src/app/realtimeWsSessionMeta.ts
       - web/src/app/useAppKanbanColumns.ts
       - web/src/app/useTaskBoard.ts
       - web/src/components/task/TaskCardRows.tsx
@@ -10036,7 +10038,13 @@ groups:
     tests:
       - server/internal/kanban/service_archive_test.go
       - server/internal/kanban/task_archive_dismissal_test.go
+      # 会话级联的范围与落库：task_id 命中 / 种子 / 父子链递归 / 无关任务不误伤，
+      # 外加广播载荷必须带 archived_at（前端靠它摘侧栏）。
+      - server/internal/api/http_tasks_archive_test.go
       - web/tests/task-archive.test.mjs
+      # 真 handler 行为：archived_at 命中 → 从缓存与主列表摘除并提前 return；
+      # 未归档帧照常合并并触发增量刷新（取消归档后会话回得来）。
+      - web/tests/task-archive-prunes-sessions.test.mjs
       # 浏览器端到端验收（隔离实例 + Playwright，刻意不进常规门禁）：归档键与删除键同排、
       # 点归档后卡片落到「已结束 → 归档」且工作台隐藏、取消归档回到「完成」。
       - e2e/test_kanban_archive.py
@@ -10058,6 +10066,12 @@ groups:
       - 'server/internal/kanban/service_archive.go:func (s *Service) StartArchiveSweeper('
       - 'server/internal/kanban/service_tasks.go:store.ListTasks(ctx, ListTasksOptions{Limit: 50, ExcludeArchived: true})'
       - 'server/internal/api/http_tasks_archive.go:func (h *HTTPHandler) handleKanbanTaskArchive('
+      - 'server/internal/api/http_tasks_archive.go:func taskArchiveTargetKeys('
+      - 'server/internal/api/http_tasks_archive.go:func (a taskSessionArchiver) broadcastArchived('
+      - 'server/internal/api/http_tasks_archive.go:Type: "session.meta.updated",'
+      - 'server/internal/api/ws_broadcast.go:"archived_at": sess.ArchivedAt,'
+      - 'web/src/app/realtimeWsSessionMeta.ts:if (payload.session.archived_at) {'
+      - 'server/internal/api/http_tasks_archive_test.go:func TestTaskSessionArchiverMarksTaskSessionsAndDescendants(t *testing.T) {'
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/archive", h.handleKanbanTaskArchive)'
       - 'server/app/workspace_build.go:services.Kanban.SetSessionArchiver(api.NewTaskSessionArchiver(services))'
       - 'server/app/workspace_build.go:services.Kanban.StartArchiveSweeper(m.ctx)'

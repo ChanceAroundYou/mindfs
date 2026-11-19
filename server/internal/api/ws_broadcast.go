@@ -107,7 +107,10 @@ func sessionMetaUpdatedPayload(sess *session.Session) map[string]any {
 		"work_dir":            sess.WorkDir,
 		"aux_flags":           sess.Aux.AuxFlagsPayload(),
 		"pinned_at":           sess.PinnedAt,
-		"updated_at":          sess.UpdatedAt,
+		// archived_at 让前端在任务归档级联广播后把会话从主视图摘掉（否则库里
+		// 已归档、侧栏还挂着）。nil = 未归档。
+		"archived_at": sess.ArchivedAt,
+		"updated_at":  sess.UpdatedAt,
 	}
 }
 

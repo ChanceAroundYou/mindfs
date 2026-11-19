@@ -13,8 +13,11 @@ import (
 // 与 usecase.ArchiveSession 刻意分开：那条路径会把后代会话真删掉（归档区按项目
 // 平铺，子会话留着只会变孤儿行）。任务归档的级联语义是用户裁定的 A ——
 // **只打标记、不删后代**，所以这里只提供标记能力，删不掉任何东西。
+//
+// 入参同时带 taskID 和种子 key：实现方要用 taskID 找齐「名下的全部会话」，再用
+// 种子 key 兜住 task_id 为空的老数据，最后按父子链把子会话一起收进来。
 type SessionArchiver interface {
-	ArchiveSessions(ctx context.Context, rootID string, sessionKeys []string) error
+	ArchiveSessions(ctx context.Context, rootID, taskID string, sessionKeys []string) error
 }
 
 // SetSessionArchiver 由 api 层在装配时注入；nil 时归档只改任务标记（单测、
@@ -79,10 +82,9 @@ func (s *Service) archiveRelatedSessions(ctx context.Context, store *TaskStore, 
 		log.Printf("[kanban/archive] task=%s session-keys error=%v", taskID, err)
 		return
 	}
-	if len(keys) == 0 {
-		return
-	}
-	if err := archiver.ArchiveSessions(ctx, rootID, keys); err != nil {
+	// 即使种子 key 为空也要调用：实现方还会按 taskID 找齐名下会话、按父子链收
+	// 子会话。种子为空只代表「没有可枚举的列」，不代表「没有会话」。
+	if err := archiver.ArchiveSessions(ctx, rootID, taskID, keys); err != nil {
 		log.Printf("[kanban/archive] task=%s session-archive error=%v keys=%v", taskID, err, keys)
 		return
 	}

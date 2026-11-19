@@ -187,3 +187,45 @@ PID 19820、health 200；本机二进制与 `/` 引用的 bundle 均为刚装的
 `/mindfs/health` 200，pc-win PID 47836 + health 200，本机 `/` 的 bundle 与刚装的一致；本机
 system 单元仍是旧进程，待用户 `sudo systemctl restart mindfs`。
 
+
+## 追加轮（2026-11-20）：归档任务后侧栏会话必须一起消失
+
+**用户现场**：「现在的归档还是失败，把任务归档了，会话还在原地。」
+
+**根因（两步，缺一不可）**：
+
+1. **级联范围不全**：`TaskRelatedSessionKeys` 只汇总「列上有 key」的会话（任务主会话 /
+   节点会话 / Run 共享会话 / 活动会话 / Router 会话）。对话式任务里挂在任务下、但没写进
+   这些列的会话（以及 subagent 派生的子会话，`task_id` 为空）收不进来 —— 归档后它们仍是
+   `archived_at = NULL`，列表接口照常返回。
+2. **界面没有收敛通道**：`handleKanbanTaskArchive` 只广播 `task.updated`，前端那一下只重拉
+   看板；会话列表没有任何东西能让它知道「这些会话刚被归档」。结果是库里已归档（老路径覆盖到
+   的那部分）、侧栏还挂着「看板归档 / #86」—— 用户看到的就是「归档了任务，会话没归档」。
+
+**修法**：
+
+- `kanban.SessionArchiver` 入参改成 `(ctx, rootID, taskID, seeds)`：种子为空也要调用，
+  实现方还要按 `taskID` 找齐名下会话。
+- api 层 `taskSessionArchiver` 用纯函数 `taskArchiveTargetKeys` 算目标集：
+  **种子 ∪ `task_id` 命中 ∪ 按 `parent_session_key` 递归到的全部后代**（去重），逐条
+  `SetArchived(true)`（单个 key 失败跳过，尽力而为）。
+- 落库后逐条广播 `session.meta.updated`，`sessionMetaUpdatedPayload` 新增 `archived_at`；
+  前端 `realtimeWsSessionMeta.ts` 命中 `archived_at` 就把该会话从 `sessionCacheRef` 与主列表
+  摘掉、`bumpCacheVersion`、必要时重拉多项目分组，并 **提前 return**（归档不改 `updated_at`，
+  走增量刷新既拉不回来也删不掉）。未归档帧照常合并 + 刷新，取消归档后会话能回来。
+
+**测试（都做了变异验证）**：
+
+- `server/internal/api/http_tasks_archive_test.go`：纯函数三条（范围/去重/空输入）+
+  真实 `session.Manager` 落库一条（`task_id` / 种子 / 子孙全部 `archived_at` 非空，无关任务不误伤）+
+  广播载荷带 `archived_at` 一条。变异：去掉 `task_id` 匹配 → 红；去掉父子 BFS → 红。
+- `web/tests/task-archive-prunes-sessions.test.mjs`：transpile + vm 跑**真 handler** 两条
+  （归档帧摘缓存/摘列表/不触发增量刷新；未归档帧照常合并并刷新）。变异：把 `archived_at`
+  分支关掉 → 红。
+
+**门禁（2026-11-20）**：`go test -count=1 ./...` 全绿；web 247 文件 / 743 通过 / 6 跳过；
+`tsc -b --noEmit` clean。登记并入 G-NB（同一组定制，未新开 ID）。
+
+**未生效部分**：这些改动尚未提交、未部署；本机运行中的进程（`6764a257`，02:55 启动）与
+安装的二进制（`0675f772`）都不含本轮后端改动，前端 bundle 缺本轮 handler。要看到侧栏真的
+消失，需要重新构建安装后由用户执行 `sudo systemctl restart mindfs`。

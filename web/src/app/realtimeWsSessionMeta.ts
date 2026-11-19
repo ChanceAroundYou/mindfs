@@ -37,6 +37,24 @@ export function createSessionMetaHandlers(
           const rootID = payload.root_id;
           const sessionKey = payload.session.key;
           const cacheKey = rootSessionKey(rootID, sessionKey);
+          // 任务归档的会话级联（后端 SetArchived(...,true) + 广播带 archived_at）：
+          // 这里把整棵被归档的会话从主视图与缓存里摘掉。不补这一段，库里已归档、
+          // 侧栏还挂着「看板归档 / #86」——用户看到的就是「归档了任务，会话没归档」。
+          // 取消归档（archived_at 为空）不走这条，照常走增量刷新放回列表。
+          if (payload.session.archived_at) {
+            delete sessionCacheRef.current[cacheKey];
+            setSessions((prev) =>
+              prev.filter(
+                (item) =>
+                  String(item.key || item.session_key || "") !== sessionKey,
+              ),
+            );
+            bumpCacheVersion();
+            if (multiProjectSessionsEnabled) {
+              scheduleMultiProjectSessionReload();
+            }
+            return;
+          }
           const cached =
             sessionCacheRef.current[cacheKey] ||
             ({
