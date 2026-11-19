@@ -108,6 +108,7 @@ export type UseAppViewCompositionParams = {
   loadingOlderSessions: boolean;
   mainDirectoryErrorRef: React.RefObject<string>;
   mainEntriesRef: React.RefObject<FileEntry[]>;
+  mainView: MainViewMode;
   mainViewRef: React.RefObject<MainViewMode>;
   managedRootByIdRef: React.RefObject<Record<string, ManagedRootPayload>>;
   managedRootByKeyRef: React.RefObject<Record<string, ManagedRootPayload>>;

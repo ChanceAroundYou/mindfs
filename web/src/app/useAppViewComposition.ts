@@ -70,7 +70,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     kanbanTasks, kanbanTasksLoading, lastMainSessionSnapshotRef, loadChildSessionsForParent,
     loadKanbanTasks, loadMoreGitHistory, loadMoreMultiProjectSessions, loadingExternalSessions,
     loadingOlderExternalSessions, loadingOlderSessions, mainDirectoryErrorRef, mainEntriesRef,
-    mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIds,
+    mainView, mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIds,
     multiProjectPendingByKey, multiProjectSessionGroups, multiProjectSessionsEnabled, multiProjectSessionsLoading,
     openGitCommitDiff, openGitDiff, openRelatedFileDiff, openSessionSearch,
     openTaskCreateDialog, pendingPluginTrust, pluginBypass,
@@ -339,7 +339,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
   }, [applyTaskDetails]);
   const { kanbanTaskPanel
   } = useAppKanbanTaskPanel({
-    workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard,
+    workspaceOpen, mainView, currentRootId, currentRootIdRef, workspaceBoard,
     workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject,
     setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject,
     openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading,

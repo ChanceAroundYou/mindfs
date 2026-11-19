@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TaskBoardView } from "../components/task/TaskBoardView";
 import { WorkflowDraftEditor } from "../components/task/WorkflowDraftEditor";
 import type { SessionItem } from "./appSession";
@@ -6,12 +6,16 @@ import type { KanbanTask } from "../services/tasks";
 import type { WorkspaceBoard, WorkspaceBoardFilter } from "./useWorkspaceBoard";
 import type { AgentStatus } from "../shared/agentTypes";
 import type { KanbanColumn, MoveKanbanAction } from "../components/task/taskBoardTypes";
+import type { MainViewMode } from "./appPath";
+import { boardKeepsWorkflowEditor } from "../components/task/workflowEditorLayout";
 
 /**
  * 看板面板那一个 <TaskBoardView>。
  */
 export type UseAppKanbanTaskPanelParams = {
   workspaceOpen: boolean;
+  /** 主视图模式：编辑器只在看板（含跨项目工作台）里存在，离开就重置。 */
+  mainView: MainViewMode;
   currentRootId: string | null;
   currentRootIdRef: React.RefObject<string | null>;
   workspaceBoard: WorkspaceBoard;
@@ -59,11 +63,20 @@ export type UseAppKanbanTaskPanelParams = {
  * 名字叫 sessionByKey 只是 TaskBoardView 的 prop 名，别被它带回错误的那张表。
  */
 export function useAppKanbanTaskPanel(params: UseAppKanbanTaskPanelParams) {
-  const { workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks, agents } = params;
+  const { workspaceOpen, mainView, currentRootId, currentRootIdRef, workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject, setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject, openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading, kanbanColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor, handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen, setTaskSessionErrorDialog, loadKanbanTasks, agents } = params;
 
   // 工作流草稿编辑器是独立页（listWorkflowDrafts 走控制面），盖掉看板本身；
   // 看板状态都住在 app 层 hook 里，来回切换不会丢数据。
   const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
+
+  /* 编辑器只属于看板这一次停留。看板面板在 files/chat 态根本不渲染（DefaultListView
+     的 topContent 是条件渲染），但 open 标记住在这一层，会活过整段离开——用户切去
+     文件/会话再切回看板，看到的第一屏还是工作流编辑器，而不是看板。所以离开看板就
+     把标记清掉，回来落回看板。真正的脏改动提醒在编辑器自己的关闭路径上（confirmLeave）。 */
+  const boardVisible = boardKeepsWorkflowEditor(mainView);
+  useEffect(() => {
+    if (!boardVisible) setWorkflowEditorOpen(false);
+  }, [boardVisible]);
 
   const kanbanTaskPanel = workflowEditorOpen ? (
     <WorkflowDraftEditor onClose={() => setWorkflowEditorOpen(false)} agents={agents} />

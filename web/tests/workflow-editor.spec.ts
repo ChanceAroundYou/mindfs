@@ -179,28 +179,23 @@ test.describe('Workflow Editor - Desktop', () => {
 });
 
 test.describe('Workflow Editor - Mobile', () => {
+  // G-NI：手机不再是只读清单，画布本身可编辑，属性面板换成贴底抽屉。
+  // 注意本文件的选择器早于当前入口（`workflow-editor-button` 已不存在），
+  // 这条用例钉的是「窄屏能编辑」这个契约本身，入口需按当前 UI 调整后才能归入 e2e。
   test.use({ viewport: { width: 375, height: 667 } }); // iPhone SE
 
-  test('should display read-only view on mobile', async ({ page }) => {
+  test('keeps the canvas editable and opens the inspector as a bottom sheet', async ({ page }) => {
     await page.goto(`${BASE_URL}/mindfs`);
-    await page.click('[data-testid="workflow-editor-button"]');
 
-    // 验证显示只读视图
-    await expect(page.locator('[data-testid="workflow-canvas-readonly"]')).toBeVisible();
+    // 窄屏仍然是真画布，只读清单只由显式 readOnly 触发。
+    await expect(page.locator('.react-flow')).toBeVisible();
+    await expect(page.locator('[data-testid="workflow-canvas-readonly"]')).toHaveCount(0);
 
-    // 验证画布不可见
-    await expect(page.locator('.react-flow')).not.toBeVisible();
-  });
-
-  test('should show workflow nodes list on mobile', async ({ page }) => {
-    await page.goto(`${BASE_URL}/mindfs`);
-    await page.click('[data-testid="workflow-editor-button"]');
-
-    // 验证节点列表可见
-    await expect(page.locator('[data-testid="workflow-canvas-readonly"]')).toBeVisible();
-
-    // 验证有提示信息
-    await expect(page.locator('text=/桌面端编辑/i')).toBeVisible();
+    // 点节点后属性面板是贴底抽屉，不是贴节点卡片。
+    await page.locator('.react-flow__node').first().click();
+    const inspector = page.locator('[data-testid="workflow-canvas-inspector"]');
+    await expect(inspector).toBeVisible();
+    await expect(inspector).toHaveAttribute('data-layout', 'sheet');
   });
 });
 

@@ -14,6 +14,7 @@ import {
 import { AgentSelector } from "../agent/AgentSelector";
 import type { AgentStatus } from "../../shared/agentTypes";
 import { WorkflowNodeIcon, CloseIcon, LoopNodeIcon } from "./WorkflowNodeIcons";
+import { inspectorFrame, type InspectorLayout } from "./workflowEditorLayout";
 
 // 节点属性浮动窗口。从 WorkflowCanvas 拆出来只为守住 500 行硬线，
 // 行为与拆前一致：位置由父层算好（画布点击处附近），点外部/Esc 关闭由父层管。
@@ -21,6 +22,8 @@ import { WorkflowNodeIcon, CloseIcon, LoopNodeIcon } from "./WorkflowNodeIcons";
 export type WorkflowNodeInspectorProps = {
   node: WorkflowNodeDef;
   position: { x: number; y: number };
+  /** anchored：贴着节点（桌面）；sheet：贴底的抽屉（手机，忽略 position）。 */
+  layout?: InspectorLayout;
   inspectorRef: React.Ref<HTMLDivElement>;
   labels: Record<string, string>;
   dirty: boolean;
@@ -33,6 +36,7 @@ export type WorkflowNodeInspectorProps = {
 export function WorkflowNodeInspector({
   node: selected,
   position,
+  layout = "anchored",
   inspectorRef,
   labels,
   dirty,
@@ -47,13 +51,11 @@ export function WorkflowNodeInspector({
     <div
       ref={inspectorRef}
       data-testid="workflow-canvas-inspector"
+      data-layout={layout}
       style={{
         position: "fixed",
-        left: position.x,
-        top: position.y,
+        ...inspectorFrame(layout, position),
         zIndex: 1000,
-        maxWidth: "400px",
-        maxHeight: "80vh",
         overflowY: "auto",
         ...panelSurfaceStyle(),
         display: "flex",

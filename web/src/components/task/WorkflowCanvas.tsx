@@ -136,13 +136,18 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
 
   const handleNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
     setSelectedId(node.id);
+    // 窄屏（手机）上卡片换成底部抽屉：不做「贴着节点」的定位数学，抽屉固定贴底。
+    if (narrow) {
+      setInspectorPosition({ x: 0, y: 0 });
+      return;
+    }
     // 锚点取整个节点框（点到的可能是内部图标/文字），不是被点中的那个子元素。
     const target = event.target instanceof Element ? event.target.closest(".react-flow__node") : null;
     const rect = target?.getBoundingClientRect() ?? nodeScreenRect(document, node.id);
     if (rect) {
       setInspectorPosition(placeInspectorNear(rect, { width: window.innerWidth, height: window.innerHeight }));
     }
-  }, []);
+  }, [narrow]);
 
   const handleNodeDoubleClick = useCallback((event: React.MouseEvent, node: Node) => {
     if ((graph.nodes || []).some((d) => d.id === node.id && d.kind === "loop")) {
@@ -214,13 +219,14 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
   // 「卡片还留在原地」。每帧最多重算一次，拖动视口时不至于每次都 setState。
   const viewportFrame = useRef(0);
   const handleViewportMove = useCallback(() => {
-    if (!selectedId || viewportFrame.current) return;
+    // 抽屉模式不贴节点，平移/缩放不需要重锚。
+    if (!selectedId || narrow || viewportFrame.current) return;
     viewportFrame.current = requestAnimationFrame(() => {
       viewportFrame.current = 0;
       const rect = nodeScreenRect(document, selectedId);
       if (rect) setInspectorPosition(placeInspectorNear(rect, { width: window.innerWidth, height: window.innerHeight }));
     });
-  }, [selectedId]);
+  }, [selectedId, narrow]);
   useEffect(
     () => () => {
       if (viewportFrame.current) cancelAnimationFrame(viewportFrame.current);
@@ -290,10 +296,12 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
     [graph, onChange, selected],
   );
 
-  if (narrow || readOnly) {
+  // 只读模式保留成显式开关（父层不再按移动端传它）：窄屏现在是可编辑的，
+  // 尺寸只影响排布，不影响能力。
+  if (readOnly) {
     return (
       <div data-testid="workflow-canvas-readonly" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-        <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.mobileHint")}</div>
+        <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.workflowCanvas.readOnlyHint")}</div>
         {(graph.nodes || []).map((n) => {
           const config = workflowNodeConfigText(n);
           const innerNodes = n.kind === "loop" ? loopInnerGraph(n)?.nodes ?? [] : [];
@@ -327,7 +335,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
   }
 
   return (
-    <div data-testid="workflow-canvas" data-draft-id={draftId} style={{ display: "flex", flexDirection: "column", gap: "8px", height: "100%", minHeight: 0 }}>
+    <div data-testid="workflow-canvas" data-draft-id={draftId} style={{ display: "flex", flexDirection: "column", gap: "8px", height: narrow ? "auto" : "100%", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
         <span style={{ fontSize: "12px", fontWeight: 600 }}>{t("task.workflowCanvas.title")}</span>
         {dirtyNow ? (
@@ -352,18 +360,21 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
             <button
               key={k}
               type="button"
+              aria-label={labels[k]}
+              title={labels[k]}
               onClick={() => addNode(k)}
               style={{
                 ...panelButtonStyle("secondary"),
                 display: "flex",
                 alignItems: "center",
-                gap: "6px",
+                gap: narrow ? 0 : "6px",
+                padding: narrow ? "6px 8px" : undefined,
                 color: style.color,
                 borderColor: style.borderColor,
               }}
             >
               <WorkflowNodeIcon kind={k} size={16} />
-              {labels[k]}
+              {narrow ? null : labels[k]}
             </button>
           );
         })}
@@ -378,8 +389,9 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
       </div>
 
       {/* 画布吃掉剩余高度（下限 360px）：固定 520px 在矮窗口里会被挤到折叠线以下，
-          看着就像「显示不完整」。父列有确定高度时 flex 生效，没有时退回 minHeight。 */}
-      <div style={{ ...panelSurfaceStyle(), padding: 0, flex: 1, minHeight: "360px", overflow: "hidden", position: "relative" }}>
+          看着就像「显示不完整」。父列有确定高度时 flex 生效，没有时退回 minHeight。
+          手机上父列是自然高度（整页滚动），这里改成固定高度，否则 flex 解析成 0。 */}
+      <div style={{ ...panelSurfaceStyle(), padding: 0, flex: narrow ? "none" : 1, height: narrow ? "min(58vh, 520px)" : undefined, minHeight: narrow ? "320px" : "360px", overflow: "hidden", position: "relative" }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -402,7 +414,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
           <Background />
           <Controls />
         </ReactFlow>
-        {/* 提示：快捷键 */}
+        {/* 提示：桌面写快捷键，手机写触屏手势（手机没有 Esc/Delete 键）。 */}
         <div style={{
           position: "absolute",
           bottom: "8px",
@@ -414,7 +426,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
           borderRadius: "4px",
           opacity: 0.7,
         }}>
-          Esc: 关闭 | Delete: 删除节点
+          {narrow ? t("task.workflowCanvas.touchHint") : "Esc: 关闭 | Delete: 删除节点"}
         </div>
       </div>
 
@@ -425,6 +437,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
             <WorkflowNodeInspector
               node={selected}
               position={inspectorPosition}
+              layout={narrow ? "sheet" : "anchored"}
               inspectorRef={inspectorRef}
               labels={labels}
               dirty={dirtyNow}

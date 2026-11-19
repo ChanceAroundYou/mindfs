@@ -72,10 +72,13 @@ test("末端 human_gate 被画布校验拒绝：审批只能拦在执行中间",
   assert.deepEqual(withDownstream, []);
 });
 
-test("画布只在桌面渲染、移动端只读、脏标记与离开提醒存在", () => {
+test("画布在窄屏同样是可编辑的（只读只是显式开关），脏标记与离开提醒存在", () => {
   const canvas = read("../src/components/task/WorkflowCanvas.tsx");
-  // 移动端断点 + 只读分支。
+  // 窄屏断点仍在，但只影响排布（底部抽屉、图标按钮），不再把画布降级成只读清单。
   assert.match(canvas, /MOBILE_BREAKPOINT = 720/);
+  // 只读清单只由显式 readOnly 触发：`narrow || readOnly` 曾让手机完全不能编辑。
+  assert.match(canvas, /if \(readOnly\)/);
+  assert.doesNotMatch(canvas, /narrow \|\| readOnly/);
   assert.match(canvas, /data-testid="workflow-canvas-readonly"/);
   // 脏红点与 beforeunload 离开提醒。
   assert.match(canvas, /data-testid="workflow-canvas-dirty"/);

@@ -124,20 +124,21 @@ test("the review hook applies once, revalidates the subset, and never publishes"
 
 test("publishing stays a separate, explicitly confirmed action", () => {
   const editor = read("src/components/task/WorkflowDraftEditor.tsx");
-  assert.match(editor, /disabled=\{e\.saving \|\| e\.dirty \|\| !e\.selected \|\| isMobile\}/, "dirty drafts cannot publish");
+  assert.match(editor, /disabled=\{e\.saving \|\| e\.dirty \|\| !e\.selected\}/, "dirty drafts cannot publish");
   assert.doesNotMatch(editor, /confirmProposal/, "publish proposals are internal; there is no second user-facing confirmation path");
   const svc = read("src/services/task/workflowDraft.ts");
   assert.match(svc, /confirmed_revision/, "publish names the exact revision");
 });
 
-test("mobile keeps the graph readable and does not require canvas editing", () => {
+test("mobile keeps editing: narrow screens no longer downgrade the canvas", () => {
   const canvas = read("src/components/task/WorkflowCanvas.tsx");
-  assert.match(canvas, /if \(narrow \|\| readOnly\)/, "narrow screens take the read-only list before any sub-canvas");
+  assert.match(canvas, /if \(readOnly\)/, "only an explicit readOnly takes the read-only list");
+  assert.doesNotMatch(canvas, /narrow \|\| readOnly/, "narrow screens must stay editable");
   assert.match(canvas, /workflow-canvas-readonly/);
   assert.match(canvas, /workflowNodeConfigText/, "the read-only list shows each node's prompt, not just its kind");
   assert.match(canvas, /loopInnerGraph/, "loop inner nodes are listed too, with their own prompts");
   const editor = read("src/components/task/WorkflowDraftEditor.tsx");
-  assert.match(editor, /readOnly=\{isMobile\}/, "the editor passes read-only on mobile");
+  assert.doesNotMatch(editor, /readOnly=\{isMobile\}/, "mobile edits the real canvas");
 });
 
 test("server dry-run issues are the apply gate, not a status string", () => {
