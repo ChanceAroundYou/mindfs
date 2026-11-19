@@ -38,6 +38,10 @@ type WorkflowNodeExecution struct {
 	// session_reuse_policy=same_stage. Empty means there is none.
 	ReuseSessionKey string
 	Prompt          string
+	// UserInput 是触发本次 Run 的用户留言（{previous_input} 的解析结果）。
+	// 它只用于给这条节点会话起一个能区分轮次的名字 —— 同一条任务每开一轮
+	// 就是一个新会话，名字全一样时用户在会话列表里分不出谁是谁。
+	UserInput string
 }
 
 // WorkflowNodeAgentProfile is the per-node agent selection. Workflow nodes pick
@@ -130,8 +134,7 @@ var WorkflowPromptPlaceholders = []string{"previous_input", "task_initial_input"
 // A placeholder that cannot be resolved is a hard error: sending the raw
 // `{previous_input}` text is worse than failing, because the agent answers
 // something plausible about a task it never saw.
-func (s *Service) resolveWorkflowNodePrompt(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task, node WorkflowNode, prompt string) (string, error) {
-	values := WorkflowPromptValues(ctx, store, run, task)
+func resolveWorkflowNodePrompt(node WorkflowNode, prompt string, values map[string]string) (string, error) {
 	// 替换是纯字符串替换，空值会把占位符「悄悄抹掉」，留下一条没有需求的空
 	// prompt。所以先按空值判定失败，再替换。
 	for _, key := range WorkflowPromptPlaceholders {
@@ -242,7 +245,8 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 	if err != nil {
 		return WorkflowNodeExecution{}, err
 	}
-	prompt, err := s.resolveWorkflowNodePrompt(ctx, store, run, task, node, rawPrompt)
+	values := WorkflowPromptValues(ctx, store, run, task)
+	prompt, err := resolveWorkflowNodePrompt(node, rawPrompt, values)
 	if err != nil {
 		return WorkflowNodeExecution{}, err
 	}
@@ -260,6 +264,7 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 		NodeRun:         nodeRun,
 		SessionPolicy:   WorkflowNodeSessionPolicy(node),
 		Prompt:          prompt,
+		UserInput:       values["previous_input"],
 	}
 	// D2 same_stage：同一 node + loop_path 的历次 iteration/attempt 复用同一个
 	// session。NodeRun 自己是新行，所以往前找最近一个已绑定 session 的行。

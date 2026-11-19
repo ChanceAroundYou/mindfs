@@ -63,6 +63,14 @@ export type WorkflowRunPayload = {
   updated_at?: string;
 };
 
+/**
+ * 一轮历史运行：Run 快照 + 这一轮自己的节点执行行。
+ *
+ * 后端 `/workflow-run/nodes` 现在按 Run 分组返回，这样多轮任务不会只剩最后一次
+ * 执行（旧形状把 `runs` 省掉时，展示层回落到只画当前 Run）。
+ */
+export type WorkflowRunNodeRuns = WorkflowRunPayload & { node_runs?: NodeRunPayload[] };
+
 // 后端 workflow_types.go 的 NodeRun 原样映射。展示层直接复用这一份类型
 // （runTimelineTypes 只做别名），避免两处字段各写一遍后漂移。
 export type NodeRunPayload = {

@@ -61,13 +61,14 @@ func TestWorkflowNodeAdapterSessionReusePolicies(t *testing.T) {
 	node := kanban.WorkflowNode{ID: "build", Name: "实现", Kind: kanban.NodeKindAgent}
 	nodeRun := kanban.NodeRun{ID: "nr-1", RunID: "run-1", NodeID: "build", Attempt: 1}
 
-	// D2 default: per_node creates its own session, named after the task.
+	// D2 default: per_node creates its own session. 名字带上节点名 —— 同一条任务
+	// 每轮都会新开 worker 会话，只叫「任务名 / #7」在会话列表里分不出谁是谁。
 	first, err := app.EnsureWorkflowNodeSession(ctx, workflowAdapterExec(rootID, task, node, nodeRun))
 	if err != nil {
 		t.Fatalf("per_node first: %v", err)
 	}
-	if got := sessionNameForTest(t, app, rootID, first); got != "工作流任务 / #7" {
-		t.Fatalf("session name = %q, want 工作流任务 / #7", got)
+	if got := sessionNameForTest(t, app, rootID, first); got != "工作流任务 / #7 · 实现" {
+		t.Fatalf("session name = %q, want 工作流任务 / #7 · 实现", got)
 	}
 	// A different node instance must not inherit the previous node's session.
 	nodeRun2 := kanban.NodeRun{ID: "nr-2", RunID: "run-1", NodeID: "review", Attempt: 1}
@@ -110,6 +111,35 @@ func TestWorkflowNodeAdapterSessionReusePolicies(t *testing.T) {
 	got, err = app.EnsureWorkflowNodeSession(ctx, mainExec)
 	if err != nil || got != first {
 		t.Fatalf("task_main = %q err=%v, want %q", got, err, first)
+	}
+}
+
+// 同一条任务、同一个节点，两轮不同留言必须得到不同的会话名 —— 否则会话列表
+// 里一排「任务名 / #N · 节点名」，用户分不出哪条是哪一轮（任务 #87 第 3 条）。
+func TestWorkflowNodeAdapterSessionNamesDifferPerRound(t *testing.T) {
+	ctx := context.Background()
+	app, rootID := newWorkflowAdapterTestApp(t)
+	task := kanban.Task{ID: "task-wf-name", TaskNumber: 12, Name: "任务详情面板修改"}
+	node := kanban.WorkflowNode{ID: "build", Name: "实现", Kind: kanban.NodeKindAgent}
+
+	round := func(nodeRunID, userInput string) string {
+		t.Helper()
+		exec := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: nodeRunID, RunID: "run-" + nodeRunID, NodeID: "build", Attempt: 1})
+		exec.UserInput = userInput
+		key, err := app.EnsureWorkflowNodeSession(ctx, exec)
+		if err != nil {
+			t.Fatalf("ensure %s: %v", nodeRunID, err)
+		}
+		return sessionNameForTest(t, app, rootID, key)
+	}
+
+	first := round("nr-1", "把运行视图改成多轮展示")
+	second := round("nr-2", "再补一个会话图标")
+	if first == second {
+		t.Fatalf("two rounds share the same session name %q", first)
+	}
+	if !strings.Contains(first, "把运行视图改成多轮展示") || !strings.Contains(second, "再补一个会话图标") {
+		t.Fatalf("names must carry the triggering message: %q / %q", first, second)
 	}
 }
 

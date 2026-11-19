@@ -99,9 +99,9 @@ export const zhCNTasks = {
   "task.runTimeline.expand": "查看运行视图",
   "task.runTimeline.collapse": "收起运行视图",
   "task.runTimeline.loading": "加载运行…",
-  "task.runTimeline.openWorkflowSession": "工作流会话",
-  "task.runTimeline.noWorkflowSession": "暂无工作流会话",
   "task.runTimeline.empty": "该运行尚无节点执行记录",
+  // 一个任务可能跑过多轮运行；多轮时按轮次分块展示，这是块标题。
+  "task.runTimeline.roundLabel": "第 {n} 轮",
   // NodeRun 独有的三个状态（任务状态词表里没有，任务状态守卫钉住不许加进 task.status.*）
   "task.runTimeline.status.queued": "排队中",
   "task.runTimeline.status.skipped": "已跳过",

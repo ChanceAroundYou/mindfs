@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTaskEngine, fetchWorkflowNodeRuns, fetchWorkflowRun } from "../../services/task/runView";
 import { postTaskHumanGate, type HumanGateDecision } from "../../services/task/humanGate";
-import type { NodeRunPayload, WorkflowRunPayload } from "../../shared/taskComments";
+import type { WorkflowRunNodeRuns } from "../../shared/taskComments";
 import type { NodeRunSnapshot } from "./RunTimeline";
+import { legacyRunsFromNodeRuns } from "./runTimelineModel";
 
 // 运行视图入口的取数逻辑（.ts，允许 import services —— 视图 .tsx 不允许）。
 //
@@ -10,15 +11,14 @@ import type { NodeRunSnapshot } from "./RunTimeline";
 // 入口不渲染。所有请求显式传 nodeId（跨节点铁律：不传会静默打激活节点）。
 //
 // HumanGate 决定也在这里发出（视图层不 import services）：一次只允许一个决定在途
-// （busyRef 挡住同一帧的重复点击），成功后重拉 run + node runs，让连线/project 状态
+// （busyRef 挡住同一帧的重复点击），成功后重拉整份运行历史，让连线/project 状态
 // 与后端权威结果一致；错误只展示，不重试、不改写决定。
 export type RunViewState = {
   runId: string;
   open: boolean;
-  run: WorkflowRunPayload | null;
-  nodeRuns: NodeRunPayload[];
-  /** 节点会话仍在决定中：直接跳会话的按钮据此禁用，不把「还没取到」当成「没有」。 */
-  nodeRunsLoading: boolean;
+  /** 按轮次分组的运行历史（旧的在前）；未取到为 null，空数组是「取到了但一条都没有」。 */
+  runs: WorkflowRunNodeRuns[] | null;
+  loading: boolean;
   error: string;
   gateError: string;
   decidingNodeRunId: string;
@@ -34,9 +34,8 @@ export function useRunViewEntry(
 ): RunViewState {
   const [runId, setRunId] = useState("");
   const [open, setOpen] = useState(false);
-  const [run, setRun] = useState<WorkflowRunPayload | null>(null);
-  const [nodeRuns, setNodeRuns] = useState<NodeRunPayload[]>([]);
-  const [nodeRunsLoading, setNodeRunsLoading] = useState(false);
+  const [runs, setRuns] = useState<WorkflowRunNodeRuns[] | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [gateError, setGateError] = useState("");
   const [decidingNodeRunId, setDecidingNodeRunId] = useState("");
@@ -44,16 +43,6 @@ export function useRunViewEntry(
   const openRef = useRef(false);
   const identityRef = useRef("");
   const loadedRunIdRef = useRef("");
-
-  const loadRun = useCallback(async () => {
-    const [runPayload, nodePayload] = await Promise.all([
-      fetchWorkflowRun(rootId, taskId, nodeId),
-      fetchWorkflowNodeRuns(rootId, taskId, nodeId),
-    ]);
-    setRun(runPayload);
-    setNodeRuns(nodePayload);
-    setError("");
-  }, [rootId, taskId, nodeId]);
 
   // 任务身份变化（切换卡片/节点）时整体重置；refreshKey 变化只重新探测引擎。
   // 引擎绑定在对话回合开始时才从 legacy 变成 workflow，只在挂载时探测一次会让
@@ -65,8 +54,8 @@ export function useRunViewEntry(
       setRunId("");
       setOpen(false);
       openRef.current = false;
-      setRun(null);
-      setNodeRuns([]);
+      setRuns(null);
+      setLoading(false);
       setError("");
       setGateError("");
       setDecidingNodeRunId("");
@@ -88,54 +77,58 @@ export function useRunViewEntry(
     };
   }, [rootId, taskId, nodeId, refreshKey]);
 
-  // run 换了一条（新回合绑定）时旧数据立即作废；如果入口正展开，直接拉新 run，
-  // 否则等下次展开再取，避免折叠状态也发请求。
+  // 引擎换绑到新 Run 时旧轮次立即作废：新回合建的 Run 与旧 Run 的节点行是两套
+  // 数据，混在一份 runs 里会让「第 N 轮」错位。
   useEffect(() => {
     if (loadedRunIdRef.current === runId) return;
     loadedRunIdRef.current = runId;
-    setRun(null);
-    setNodeRuns([]);
+    setRuns(null);
     setError("");
     setGateError("");
     setDecidingNodeRunId("");
-  }, [runId, rootId, taskId, nodeId]);
+  }, [runId]);
 
-  // 任务详情页的「跳到工作流会话」按钮不需要展开运行视图，所以节点行不能等
-  // toggle：引擎一绑定到 workflow 就取一次。按 refreshKey 重取是因为节点会话
-  // 是回合中途才绑定的，第一次取到的行可能还没有 session_key。
+  // 展开时才取数（折叠状态不发请求）。refreshKey 也重取：新回合开始的 Run 与
+  // 节点行都是回合中途才出现的，不跟着重取就永远停在展开那一刻的快照。
+  //
+  // 旧后端（还没升级、只回平铺 node_runs、没有 runs）在这里就地归一化成「一轮」：
+  // 不归一化的话展示层拿到 runs=null 会「加载结束、什么都不画」，升级窗口里运行
+  // 视图就是一片空白。归一化只在这一层，视图与纯函数仍然只认一种形状。
   useEffect(() => {
-    if (!runId) {
-      setNodeRunsLoading(false);
+    if (!open || !runId) {
+      setLoading(false);
       return undefined;
     }
     let cancelled = false;
-    setNodeRunsLoading(true);
+    setLoading(true);
     fetchWorkflowNodeRuns(rootId, taskId, nodeId)
-      .then((payload) => {
-        if (!cancelled) setNodeRuns(payload);
+      .then(async (result) => {
+        if (cancelled) return;
+        if (result.runs !== null) {
+          setRuns(result.runs);
+        } else {
+          // 旧后端：补取引擎绑定的 Run 快照，把平铺节点行归一化成「一轮」。
+          const snapshot = await fetchWorkflowRun(rootId, taskId, nodeId).catch(() => null);
+          if (cancelled) return;
+          setRuns(legacyRunsFromNodeRuns(result.nodeRuns, snapshot, runId, taskId));
+        }
+        setError("");
       })
-      .catch(() => {
-        // 预取失败只是少了快捷入口；展开运行视图时还会再拉一次并展示错误。
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
-        if (!cancelled) setNodeRunsLoading(false);
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [runId, rootId, taskId, nodeId, refreshKey]);
+  }, [open, runId, rootId, taskId, nodeId, refreshKey]);
 
   const toggle = useCallback(() => {
-    if (openRef.current) {
-      openRef.current = false;
-      setOpen(false);
-      return;
-    }
-    openRef.current = true;
-    setOpen(true);
-    if (run || !runId) return;
-    void loadRun().catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [run, runId, loadRun]);
+    openRef.current = !openRef.current;
+    setOpen(openRef.current);
+  }, []);
 
   const decideGate = useCallback(
     async (nodeRun: NodeRunSnapshot, decision: HumanGateDecision) => {
@@ -145,12 +138,13 @@ export function useRunViewEntry(
       setGateError("");
       try {
         await postTaskHumanGate(rootId, taskId, { workflowNodeId: nodeRun.node_id, decision }, nodeId);
-        const [runPayload, nodePayload] = await Promise.all([
-          fetchWorkflowRun(rootId, taskId, nodeId),
-          fetchWorkflowNodeRuns(rootId, taskId, nodeId),
-        ]);
-        setRun(runPayload);
-        setNodeRuns(nodePayload);
+        const result = await fetchWorkflowNodeRuns(rootId, taskId, nodeId);
+        if (result.runs !== null) {
+          setRuns(result.runs);
+        } else {
+          const snapshot = await fetchWorkflowRun(rootId, taskId, nodeId).catch(() => null);
+          setRuns(legacyRunsFromNodeRuns(result.nodeRuns, snapshot, runId, taskId));
+        }
       } catch (err) {
         setGateError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -158,15 +152,14 @@ export function useRunViewEntry(
         setDecidingNodeRunId("");
       }
     },
-    [rootId, taskId, nodeId],
+    [rootId, taskId, nodeId, runId],
   );
 
   return {
     runId,
     open,
-    run,
-    nodeRuns,
-    nodeRunsLoading,
+    runs,
+    loading,
     error,
     gateError,
     decidingNodeRunId,

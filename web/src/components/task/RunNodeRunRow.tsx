@@ -1,5 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
+import { SessionTypeIcon } from "../common/SessionTypeIcon";
 import type { NodeRunSnapshot } from "./runTimelineTypes";
 import {
   formatNodeRunDuration,
@@ -73,7 +74,9 @@ export function RunNodeRunRow({ nodeRun, displayName, isGate, deciding, onOpenSe
             onClick={() => onOpenSession(nodeRun.session_key as string)}
             style={sessionButtonStyle}
           >
-            {t("task.runTimeline.openSession")}
+            {/* 与会话列表同一套图标（同一个组件）：会话类型图标 + 右下角 agent 角标。
+                它表示「跳到会话」，不是「这是个工作流节点」。 */}
+            <SessionTypeIcon type="task" agent={nodeRun.agent || ""} />
           </button>
         ) : null}
       </div>
@@ -177,14 +180,17 @@ const metaStyle: React.CSSProperties = {
   fontVariantNumeric: "tabular-nums",
 };
 
+// 会话入口是一枚图标按钮：只做「跳到这条会话」，文字留在 title / aria-label 里。
+// 尺寸与会话列表的图标位一致（18px 定位盒），角标才不会跟着漂。
 const sessionButtonStyle: React.CSSProperties = {
   border: "none",
   background: "transparent",
   padding: 0,
-  color: "var(--accent-color)",
-  fontSize: 11,
   cursor: "pointer",
   flexShrink: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
 };
 
 const resultStyle: React.CSSProperties = {

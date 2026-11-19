@@ -113,7 +113,7 @@ test("the run-view hook decides once and refreshes the run afterwards", () => {
   assert.match(hook, /busyRef\.current|decidingId/, "duplicate clicks are gated");
 
   const entry = read("../src/components/task/RunViewEntry.tsx");
-  assert.match(entry, /runNodeKinds\(/, "node kinds come from the run graph");
+  assert.match(entry, /runHistoryGroups\(/, "node kinds come from each round's run snapshot");
   assert.match(entry, /nodeKinds=\{/, "RunTimeline receives the node kinds");
   assert.match(entry, /onDecideGate=\{/, "RunTimeline receives the decision callback");
   assert.match(entry, /decidingNodeRunId=\{/, "RunTimeline receives the busy state");

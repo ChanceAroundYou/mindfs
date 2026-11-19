@@ -77,19 +77,22 @@ func (s *AppContext) EnsureWorkflowNodeSession(ctx context.Context, exec kanban.
 		}
 	}
 	profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)
-	name := kanban.TaskSessionName(strings.TrimSpace(exec.Task.Name), exec.Task.TaskNumber)
-	if name == "" {
-		name = strings.TrimSpace(exec.Task.TaskTemplateName)
+	base := kanban.TaskSessionName(strings.TrimSpace(exec.Task.Name), exec.Task.TaskNumber)
+	if base == "" {
+		base = strings.TrimSpace(exec.Task.TaskTemplateName)
 	}
-	if name == "" {
-		name = strings.TrimSpace(exec.Node.Name)
+	if base == "" {
+		base = strings.TrimSpace(exec.Node.Name)
 	}
-	if name == "" {
-		name = strings.TrimSpace(exec.Node.ID)
+	if base == "" {
+		base = strings.TrimSpace(exec.Node.ID)
 	}
-	if name == "" {
-		name = usecase.BuildFallbackSessionName(exec.Prompt)
+	if base == "" {
+		base = usecase.BuildFallbackSessionName(exec.Prompt)
 	}
+	// 同一条任务每轮都会新建 worker 会话，名字只取任务名+编号会让它们在会话列表
+	// 里完全一样。把节点名与触发这轮的用户留言拼进后缀，轮次之间才分得开。
+	name := kanban.WorkflowNodeSessionName(base, exec.Node.Name, exec.UserInput)
 	created, err := uc.CreateSession(ctx, usecase.CreateSessionInput{
 		RootID: exec.RootID,
 		Input: session.CreateInput{

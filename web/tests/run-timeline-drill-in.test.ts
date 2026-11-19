@@ -161,7 +161,9 @@ test("任务详情面板只挂一条对话流，且保留运行视图入口", ()
   assert.doesNotMatch(entry, /onBackToComments/, "the back-to-comments wiring is gone");
   // 取数必须显式传 nodeId（跨节点铁律：不传会静默打激活节点）。
   assert.ok(hook.includes("fetchTaskEngine(rootId, taskId, nodeId)"));
-  assert.ok(hook.includes("fetchWorkflowRun(rootId, taskId, nodeId)"));
+  // 运行视图的数据源是一个端点：它按 Run 分组返回所有轮次（含每轮节点行），
+  // 不再先取单条 run 再取节点行 —— 那样只能看到引擎绑定的最新一轮。
+  assert.ok(hook.includes("fetchWorkflowNodeRuns(rootId, taskId, nodeId)"));
   // 引擎绑定在对话回合里才会从 legacy 变成 workflow；入口只在挂载时探测一次，
   // 新建任务当场跑完 workflow 也永远看不到运行视图。任务头更新时要重新探测。
   assert.match(panel, /refreshKey=\{task\.updated_at\}/, "task updates must re-probe the engine");

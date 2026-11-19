@@ -386,24 +386,6 @@ func (h *HTTPHandler) handleTaskWorkflowRunEdit(w http.ResponseWriter, r *http.R
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (h *HTTPHandler) handleTaskWorkflowNodeRunsGet(w http.ResponseWriter, r *http.Request) {
-	_, store, _, ok := h.taskWorkflowStore(w, r)
-	if !ok {
-		return
-	}
-	engine, err := store.TaskEngine(r.Context(), chi.URLParam(r, "id"))
-	if err != nil || engine.Engine != kanban.EngineWorkflow {
-		respondError(w, http.StatusNotFound, kanban.ErrWorkflowRunNotFound)
-		return
-	}
-	nodes, err := store.ListWorkflowNodeRuns(r.Context(), engine.WorkflowRunID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err)
-		return
-	}
-	respondJSON(w, http.StatusOK, map[string]any{"node_runs": nodes})
-}
-
 // handleTaskWorkflowNodeRunRetry is the explicit D9 recovery action: it creates
 // a new attempt linked to the failed/unknown NodeRun. It never rewrites the
 // original row, its output, or the comment that was bound to it.

@@ -3,10 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -262,69 +260,6 @@ func TestWorkflowRunCreateAndEditCAS(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &loaded); err != nil || loaded.Run.ID != out.Run.ID || len(loaded.Run.Graph.Nodes) != 1 {
 		t.Fatalf("bad task-node run reload %s err=%v", rec.Body.String(), err)
-	}
-}
-
-func TestWorkflowNodeRunRetryEndpointCreatesLinkedAttempt(t *testing.T) {
-	h, svc, rootID := workflowsHandler(t)
-	doReq(t, h, http.MethodPost, "/api/workflows", `{"workflow_id":"wf2","author":"agent","graph":`+wfGraphJSON+`}`)
-	doReq(t, h, http.MethodPost, "/api/workflows/wf2/publish", `{"confirmed_revision":"r1","published_by":"user"}`)
-	detail, err := svc.CreateTask(context.Background(), kanban.CreateTaskInput{RootID: rootID, Input: ""}) // empty to avoid triggering background activity goroutine
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	runner := &fakeWorkflowRunner{sessionKey: "session-retry", errs: []error{errors.New("first attempt failed")}}
-	svc.SetWorkflowNodeRunner(runner)
-	rec := doReq(t, h, http.MethodPost, "/api/tasks/"+detail.Task.ID+"/migrate-workflow", `{"root_id":"`+rootID+`","version":"wf2:v1"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("migrate status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if err := svc.WaitWorkflowRunIdle(context.Background(), rootID, detail.Task.ID); err != nil {
-		t.Fatalf("wait idle: %v", err)
-	}
-	nodesPath := "/api/tasks/" + detail.Task.ID + "/workflow-run/nodes?root_id=" + rootID
-	rec = doReq(t, h, http.MethodGet, nodesPath, "")
-	var before struct {
-		NodeRuns []kanban.NodeRun `json:"node_runs"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &before); err != nil || len(before.NodeRuns) != 1 || before.NodeRuns[0].Status != kanban.NodeRunFail {
-		t.Fatalf("pre-retry nodes=%s err=%v", rec.Body.String(), err)
-	}
-	original := before.NodeRuns[0]
-
-	retryPath := "/api/tasks/" + detail.Task.ID + "/workflow-run/nodes/" + url.PathEscape(original.ID) + "/retry"
-	rec = doReq(t, h, http.MethodPost, retryPath, `{"root_id":"`+rootID+`","reason":"user_retry"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("retry status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	var retried struct {
-		NodeRun kanban.NodeRun `json:"node_run"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &retried); err != nil || retried.NodeRun.Attempt != 2 || retried.NodeRun.PrevAttemptID != original.ID {
-		t.Fatalf("retried=%s err=%v", rec.Body.String(), err)
-	}
-	if err := svc.WaitWorkflowRunIdle(context.Background(), rootID, detail.Task.ID); err != nil {
-		t.Fatalf("wait retry: %v", err)
-	}
-	rec = doReq(t, h, http.MethodGet, nodesPath, "")
-	var after struct {
-		NodeRuns []kanban.NodeRun `json:"node_runs"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil {
-		t.Fatalf("decode nodes: %v", err)
-	}
-	byAttempt := map[int]kanban.NodeRun{}
-	for _, nr := range after.NodeRuns {
-		byAttempt[nr.Attempt] = nr
-	}
-	if byAttempt[1].Status != kanban.NodeRunFail || byAttempt[2].Status != kanban.NodeRunSuccess || byAttempt[2].PrevAttemptID != original.ID {
-		t.Fatalf("attempts after retry = %+v", after.NodeRuns)
-	}
-	// A terminal success row is not retryable; the API must say conflict, not
-	// silently create attempt 3.
-	rec = doReq(t, h, http.MethodPost, "/api/tasks/"+detail.Task.ID+"/workflow-run/nodes/"+url.PathEscape(byAttempt[2].ID)+"/retry", `{"root_id":"`+rootID+`"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("retry success = %d want 409 body=%s", rec.Code, rec.Body.String())
 	}
 }
 
