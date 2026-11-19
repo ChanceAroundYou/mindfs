@@ -171,3 +171,10 @@ add --detach HEAD`）与隔离实例上重新跑出来：
 PID 19820、health 200；本机二进制与 `/` 引用的 bundle 均为刚装的那版，system 单元仍在跑旧
 进程（exe 已 deleted），待用户 `sudo systemctl restart mindfs`。
 
+**复跑与现场复核（2026-11-20 01:02–01:10）**：首轮本会话的 `deploy-all` 在 WSL 打包处报
+`tar: agents.json: Cannot open`（同一时刻另一会话也在部署，属并发抢跑）；随后单独复跑
+`deploy-wsl.sh` / `deploy-fn.sh` / `deploy-pcwin.sh` 全部通过，三端仍是
+`v0.5.5-1121-31-g9e29cdd2`（WSL/fn `is-active` + health 200，pc-win 当前 PID 38800 + health 200）。
+本机 `curl /` 返回的 bundle 与刚装的 `web/dist` 不一致 —— 运行中仍是 11-19 17:33 启动的旧进程
+（exe deleted），重启后消解。
+

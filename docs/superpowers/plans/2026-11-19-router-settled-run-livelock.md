@@ -1,7 +1,7 @@
 # Router 收尾死锁：已结算的 Run 不再算「活动执行」（router-settled-run-livelock）
 
 - 日期：2026-11-19
-- 状态：实现完成、包级门禁通过；**未提交 / 未部署 / 本机待用户重启**
+- 状态：已提交（`a152553b` + `6e64b0d0`，登记 `3ff944f9`）；已随 `v0.5.5-1121-31-g9e29cdd2` 部署四端（2026-11-20），本机 system 单元待用户重启
 - 上游：无（Router 是本 fork 自有能力）
 - 定制登记：`Scope: G-MZ`
 
@@ -63,8 +63,9 @@
 
 ## 未做 / 残留
 
-- 未提交、未部署；部署后 #88 不需要手动「结算」，用户的下一条留言就会正常被 Router
-  路由（message_agent / run_workflow 均可）。
+- 已提交（`a152553b` + `6e64b0d0`）并随 `v0.5.5-1121-31-g9e29cdd2` 部署四端（2026-11-20）；本机
+  重启后 #88 不需要手动「结算」，用户的下一条留言就会正常被 Router 路由（message_agent /
+  run_workflow 均可）。
 - `latest_run.status` 仍沿用任务级口径（`waiting_user`），没有改成 Run 投影的 `success`；
   提示词规则 3 以 `waiting_user_nodes` 为准，不受影响。
 - `unknown` 状态的节点仍算开放：那需要操作员在运行视图里 retry/resume，与 gate 同类。
