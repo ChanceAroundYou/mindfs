@@ -69,7 +69,11 @@ type Task struct {
 	CreatedAt     time.Time    `json:"created_at"`
 	UpdatedAt     time.Time    `json:"updated_at"`
 	CompletedAt   string       `json:"completed_at,omitempty"`
-	AuxFlags      TaskAuxFlags `json:"aux_flags"`
+	// ArchivedAt 非空 = 已归档。归档只是任务自己的标记：卡片从工作台隐藏、留在
+	// 看板「已结束 → 归档」子组；级联到相关会话时同样只打标记，绝不删后代会话。
+	// 取消归档只清这一列，不会反过来解开会话的归档标记。
+	ArchivedAt string       `json:"archived_at,omitempty"`
+	AuxFlags   TaskAuxFlags `json:"aux_flags"`
 	// WorktreeMissing 是**派生**字段，不落库：序列化时按 WorktreePath 此刻是否还是
 	// 目录算出来。worktree 目录会事后被删（DELETE /api/git/worktrees、
 	// wt-finish.sh cleanup、手工 rm），而 WorktreePath 全仓只有 ensureTaskWorktree

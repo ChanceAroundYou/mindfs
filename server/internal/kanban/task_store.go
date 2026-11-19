@@ -24,6 +24,9 @@ type ListTasksOptions struct {
 	After      string
 	Before     string
 	Limit      int
+	// ExcludeArchived 给工作台用：归档的任务不在工作台显示（也应该让位给
+	// 未归档任务，而不是先占掉 LIMIT 的名额再被滤掉）。
+	ExcludeArchived bool
 }
 
 func (s *TaskStore) CreateTask(ctx context.Context, task Task, event TaskEvent) (Task, error) {
@@ -69,6 +72,9 @@ func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Tas
 	if strings.TrimSpace(opts.Before) != "" {
 		where = append(where, "updated_at < ?")
 		args = append(args, strings.TrimSpace(opts.Before))
+	}
+	if opts.ExcludeArchived {
+		where = append(where, "archived_at = ''")
 	}
 	limitClause := ""
 	if opts.Limit > 0 {
@@ -165,6 +171,13 @@ func (s *TaskStore) UpdateTaskStatus(ctx context.Context, taskID, status string,
 		set = append(set, "aux_ask_user_waiting = ?")
 		args = append(args, 0)
 	}
+	// 归档只属于终态任务：任何把任务拉回非终态的写入（重开、恢复、新的执行轮）
+	// 都必须顺手清掉归档标记，否则卡片会「明明在跑却躺在归档组里」。
+	// archive_dismissed_at 一起清：那是针对旧一轮终态的取舍，新一轮开始后自动归档
+	// 应该重新按新的完成时间正常生效。
+	if !isTerminalStatus(strings.TrimSpace(status)) {
+		set = append(set, "archived_at = ''", "archive_dismissed_at = ''")
+	}
 	args = append(args, strings.TrimSpace(taskID))
 	_, err := s.db.ExecContext(ctx, `UPDATE tasks SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...)
 	return err
@@ -177,8 +190,10 @@ func (s *TaskStore) UpdateTaskStatus(ctx context.Context, taskID, status string,
 // completed_at，没有清空分支，而 redo 一个已完成任务必须把封板时间清掉。
 func (s *TaskStore) ReopenTask(ctx context.Context, taskID string) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
+	// archived_at = ''：重开后任务回到活动列，归档标记必须一起清掉（归档只属于终态）。
+	// archive_dismissed_at 同理：它约束的是旧一轮终态下的自动归档，重开后重新计。
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE tasks SET status = ?, completed_at = '', updated_at = ? WHERE id = ?`,
+		`UPDATE tasks SET status = ?, completed_at = '', archived_at = '', archive_dismissed_at = '', updated_at = ? WHERE id = ?`,
 		StatusWaitingUser, now, strings.TrimSpace(taskID))
 	return err
 }

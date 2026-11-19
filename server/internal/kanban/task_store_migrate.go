@@ -18,7 +18,7 @@ const taskDBMetaPath = "tasks/task-kanban.db"
 
 // scheduler_admitted 已退役（本模型无调度器），不再读也不再写；
 // 列保留在表里不做破坏性迁移，恒为默认值。
-const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, result_summary, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type"
+const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, result_summary, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json, task_type, archived_at"
 
 func NewTaskStore(root fs.RootInfo) (*TaskStore, error) {
 	path, err := taskDBPath(root)
@@ -110,7 +110,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 	labels_json TEXT NOT NULL DEFAULT '[]',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
-	completed_at TEXT NOT NULL DEFAULT ''
+	completed_at TEXT NOT NULL DEFAULT '',
+	archived_at TEXT NOT NULL DEFAULT '',
+	archive_dismissed_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS stage_runs (
 	id TEXT PRIMARY KEY,
@@ -185,6 +187,21 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	// result_summary：最近一轮结算后的可读结果（2026-11-17 加）。看板卡片靠它
 	// 显示「任务做到了什么」；存量留空，卡片自然不渲染结果块。
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN result_summary TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// archived_at：任务归档标记（2026-11-19 加，#86 看板归档）。非空 = 从工作台
+	// 隐藏、留在看板「已结束 → 归档」子组。存量一律空（read as 未归档，零回归）。
+	// 只增列；取消归档只清这一列，不删任何会话或 JSONL。
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN archived_at TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// archive_dismissed_at：用户手动「取消归档」的留痕（2026-11-19 加，#86）。
+	//
+	// 自动归档的判据是「archived_at 空 + 时间戳够老」，而取消归档只清 archived_at、
+	// 时间戳按设计不动 —— 没有这一列的话，用户点完取消归档，下一拍扫描会把同一张卡
+	// 再收起来（「取消归档只维持一小时」）。非空 = 这张卡用户明确要留在板上，自动
+	// 归档不再碰它；显式归档或任务回到非终态时清空，语义重新跟随状态。
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN archive_dismissed_at TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return err
 	}
 	// worktree_built：这个任务**曾经建过** worktree（2026-10-01 加）。

@@ -94,7 +94,7 @@ func (s *Service) Overview(ctx context.Context) ([]TaskOverviewItem, error) {
 		if err != nil {
 			continue
 		}
-		tasks, err := store.ListTasks(ctx, ListTasksOptions{Limit: 50})
+		tasks, err := store.ListTasks(ctx, ListTasksOptions{Limit: 50, ExcludeArchived: true})
 		if err != nil {
 			continue
 		}

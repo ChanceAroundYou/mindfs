@@ -65,6 +65,11 @@ type Service struct {
 	// summaryCompressor 是结算结果的压缩端口（任务 #87 第 2 条）。nil 时保持
 	// 引擎挑出的原文；装配时由 api 层用 Router 的 agent/model 注入。
 	summaryCompressor SummaryCompressor
+	// sessionArchiver 是任务归档级联用的「只打标记」端口（#86）。nil 时只改
+	// 任务自己的 archived_at，不动会话。
+	sessionArchiver SessionArchiver
+	// archiveSweepOnce 保证低频归档扫描在同一实例里只起一个 goroutine。
+	archiveSweepOnce sync.Once
 	// compressedReplies 记录「哪条回复的 summary 已经是压缩结果」，键为活动 id。
 	// 见 service_activities_summary.go 的 compressedReply；只影响是否重复压缩。
 	compressedReplies map[string]compressedReply

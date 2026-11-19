@@ -42,6 +42,11 @@ type overviewTaskProjection struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 	CompletedAt   string    `json:"completed_at,omitempty"`
+	// ArchivedAt 共享卡片读它来决定给「归档」还是「取消归档」键（#86）。
+	// 工作台当前在 SQL 层就把归档任务滤掉了，所以这个键事实上恒为空；留着是因为
+	// 卡片读什么、投影带什么必须一一对应（见 http_tasks_overview_card_parity_test.go），
+	// 哪天放宽过滤也不会静默降级。
+	ArchivedAt string `json:"archived_at,omitempty"`
 	// worktree 字段：前端 TaskCardRows 读取这些字段来显示 worktree 徽标。
 	// 2026-10-07 修复：之前投影丢弃了这些字段，导致工作台所有任务都显示没有 worktree。
 	CreateWorktree  bool   `json:"create_worktree,omitempty"`
@@ -85,6 +90,7 @@ func projectOverviewTask(task kanban.Task) overviewTaskProjection {
 		CreatedAt:        task.CreatedAt,
 		UpdatedAt:        task.UpdatedAt,
 		CompletedAt:      task.CompletedAt,
+		ArchivedAt:       task.ArchivedAt,
 		CreateWorktree:   task.CreateWorktree,
 		WorktreePath:     task.WorktreePath,
 		WorktreeBuilt:    task.WorktreeBuilt,

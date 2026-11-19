@@ -143,6 +143,8 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
+	// 看板任务归档的会话级联只打标记、不删后代（#86，用户裁定 A）。
+	services.Kanban.SetSessionArchiver(api.NewTaskSessionArchiver(services))
 	for _, root := range services.ListRoots() {
 		services.Kanban.SetWorkflowNodeCancellerForRoot(root.ID, workflowNodeCanceller{rootID: root.ID, svc: services})
 		// WP-03 启动恢复：必须在 KickPending（异步起 RunTask）之前同步执行，
@@ -162,6 +164,10 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 			services.Kanban.RouterServiceForRoot(root.ID)
 		}
 	}
+	// 看板归档（#86）：启动即扫一次，之后每小时把超过 7 天的终态任务真正归档。
+	// 低频是有意的 —— 归档不是实时语义，晚一小时没有可见影响；真写 archived_at
+	// 才能让「取消归档 / 工作台过滤 / 分组」三处只有一个答案。
+	services.Kanban.StartArchiveSweeper(m.ctx)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err
