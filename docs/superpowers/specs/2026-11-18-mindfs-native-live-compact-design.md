@@ -896,7 +896,9 @@ DSH 自身的官方 pruner 与大摘要**不是**对照对象，只在 dshlc 显
 | 13 | 官方压缩后 | dshlc 见到新的官方压缩卡片（`source.kind=compact-checkpoint`）跳过一拍，同一张卡只跳一次（`cooldown.js`） | 压缩后历史重启，commits 自然失配，rail 重新计时 | 等价 |
 | 14 | 诊断 | dshlc 用 `spine-decisions.jsonl` 记 skip reason | 日志 `gate=` + `skipped`/`archive_errors` 计数 | 相当 |
 
-#### 需要吸收的四项（按价值排序）——B6 已全部补齐（2026-11-20）
+#### 需要吸收的四项（按价值排序）——B6 已全部补齐（2026-11-20，`593b2fc8`）
+
+> 已提交 `593b2fc8`（Scope: G-MN），`make check-upstream` 绿（2055 delta / 335 组）；`mode=on` 仍未在任一节点开启，激活顺序见 §6。
 
 1. **账本与胶囊加 `rewrite`**：每次折叠事件记下「紧接那一请求的 `input_tokens`」（1× 重算量）与
    事件的 saved，并列显示。验收样例直接用 §12.8 的表（31–54k rewrite vs 36–96k saved）。

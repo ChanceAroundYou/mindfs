@@ -402,12 +402,12 @@ body。3 次预热全部满命中（`in` 5–53、`read` 36,864–65,579），�
 结果永不折叠。四项都未实现，等授权。
 
 **门禁**：`go test ./server/internal/agent/proxy/` 全绿；本次只改文档，无生产代码改动（100k/20k
-默认值已在 `9e29cdd2` 落地）。**未提交。**
+默认值已在 `9e29cdd2` 落地）。**已提交（`593b2fc8`）。**
 
 ### Task B6 续：四个缺口全部补齐（2026-11-20，用户指令「请继续补全有价值的缺失部分」）
 
 按 spec §12.9「需要吸收的四项」逐项实现，全部先 RED 后 GREEN 并做变异验证。**未开任何节点的
-`mode=on`，未部署，未提交。**
+`mode=on`，未部署。已提交 `593b2fc8`（34 文件），`make check-upstream` 绿（2055 delta / 335 组）。**
 
 1. **账本与胶囊加 `rewrite`**：`LedgerEntry.rewrite_tokens`（`-1` = 未读到用量）、
    `ContextSaving.total_rewrite_tokens`。折叠时只生成 `foldLedgerPending`，回合结束由
