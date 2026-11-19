@@ -35,9 +35,16 @@ func main() {
 	workflowParallelMainTreeFlag := flag.Bool("workflow-parallel-main-tree", true, "run tasks without independent worktrees in parallel on the shared main tree")
 	liveCompactModeFlag := flag.String("live-compact-mode", "", "context live-compact mode: off (default), shadow (measure only), on")
 	liveCompactKeepRoundsFlag := flag.Int("live-compact-keep-rounds", 0, "newest completed tool rounds kept verbatim (default 3)")
+	liveCompactKeepTailTokens := 0
 	liveCompactMinBlockTokensFlag := flag.Int("live-compact-min-block-tokens", 0, "minimum estimated tokens for a tool result to be folded (default 2000)")
 	liveCompactMinBodyBytes := 0
 	liveCompactMaxDriftMessages := 0
+	// Rail gate and fold budget (design §12.6). 只由 config.json 填充，没有 CLI flag。
+	liveCompactRailTokens := 0
+	liveCompactTargetTokens := 0
+	liveCompactMinFoldBytes := 0
+	liveCompactMaxFoldBytes := 0
+	liveCompactLargeBlockTokens := 0
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -60,9 +67,15 @@ func main() {
 		WorkflowParallelMainTree:    workflowParallelMainTreeFlag,
 		LiveCompactMode:             liveCompactModeFlag,
 		LiveCompactKeepRounds:       liveCompactKeepRoundsFlag,
+		LiveCompactKeepTailTokens:   &liveCompactKeepTailTokens,
 		LiveCompactMinBlockTokens:   liveCompactMinBlockTokensFlag,
 		LiveCompactMinBodyBytes:     &liveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages: &liveCompactMaxDriftMessages,
+		LiveCompactRailTokens:       &liveCompactRailTokens,
+		LiveCompactTargetTokens:     &liveCompactTargetTokens,
+		LiveCompactMinFoldBytes:     &liveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:     &liveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens: &liveCompactLargeBlockTokens,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -88,9 +101,15 @@ func main() {
 		WorkflowParallelMainTree:    *workflowParallelMainTreeFlag,
 		LiveCompactMode:             *liveCompactModeFlag,
 		LiveCompactKeepRounds:       *liveCompactKeepRoundsFlag,
+		LiveCompactKeepTailTokens:   liveCompactKeepTailTokens,
 		LiveCompactMinBlockTokens:   *liveCompactMinBlockTokensFlag,
 		LiveCompactMinBodyBytes:     liveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages: liveCompactMaxDriftMessages,
+		LiveCompactRailTokens:       liveCompactRailTokens,
+		LiveCompactTargetTokens:     liveCompactTargetTokens,
+		LiveCompactMinFoldBytes:     liveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:     liveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens: liveCompactLargeBlockTokens,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -119,9 +138,17 @@ type startupWorkflowConfig struct {
 type startupLiveCompactConfig struct {
 	Mode             *string `json:"mode"`
 	KeepRounds       *int    `json:"keep_rounds"`
+	KeepTailTokens   *int    `json:"keep_tail_tokens"`
 	MinBlockTokens   *int    `json:"min_block_tokens"`
 	MinBodyBytes     *int    `json:"min_body_bytes"`
 	MaxDriftMessages *int    `json:"max_drift_messages"`
+	// Rail gate and fold budget (design §12.6). No CLI flags: node tuning
+	// knobs, not something to carry on every command line.
+	RailTokens       *int `json:"rail_tokens"`
+	TargetTokens     *int `json:"target_tokens"`
+	MinFoldBytes     *int `json:"min_fold_bytes"`
+	MaxFoldBytes     *int `json:"max_fold_bytes"`
+	LargeBlockTokens *int `json:"large_block_tokens"`
 }
 
 type startupRouterConfig struct {
@@ -152,9 +179,15 @@ type startupFlags struct {
 
 	LiveCompactMode             *string
 	LiveCompactKeepRounds       *int
+	LiveCompactKeepTailTokens   *int
 	LiveCompactMinBlockTokens   *int
 	LiveCompactMinBodyBytes     *int
 	LiveCompactMaxDriftMessages *int
+	LiveCompactRailTokens       *int
+	LiveCompactTargetTokens     *int
+	LiveCompactMinFoldBytes     *int
+	LiveCompactMaxFoldBytes     *int
+	LiveCompactLargeBlockTokens *int
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -235,6 +268,10 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		if flags.LiveCompactKeepRounds != nil && live.KeepRounds != nil && !explicit["live-compact-keep-rounds"] {
 			*flags.LiveCompactKeepRounds = *live.KeepRounds
 		}
+		// No CLI flag: the tail budget is node tuning, like the fold budget.
+		if flags.LiveCompactKeepTailTokens != nil && live.KeepTailTokens != nil {
+			*flags.LiveCompactKeepTailTokens = *live.KeepTailTokens
+		}
 		if flags.LiveCompactMinBlockTokens != nil && live.MinBlockTokens != nil && !explicit["live-compact-min-block-tokens"] {
 			*flags.LiveCompactMinBlockTokens = *live.MinBlockTokens
 		}
@@ -243,6 +280,21 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		}
 		if flags.LiveCompactMaxDriftMessages != nil && live.MaxDriftMessages != nil {
 			*flags.LiveCompactMaxDriftMessages = *live.MaxDriftMessages
+		}
+		if flags.LiveCompactRailTokens != nil && live.RailTokens != nil {
+			*flags.LiveCompactRailTokens = *live.RailTokens
+		}
+		if flags.LiveCompactTargetTokens != nil && live.TargetTokens != nil {
+			*flags.LiveCompactTargetTokens = *live.TargetTokens
+		}
+		if flags.LiveCompactMinFoldBytes != nil && live.MinFoldBytes != nil {
+			*flags.LiveCompactMinFoldBytes = *live.MinFoldBytes
+		}
+		if flags.LiveCompactMaxFoldBytes != nil && live.MaxFoldBytes != nil {
+			*flags.LiveCompactMaxFoldBytes = *live.MaxFoldBytes
+		}
+		if flags.LiveCompactLargeBlockTokens != nil && live.LargeBlockTokens != nil {
+			*flags.LiveCompactLargeBlockTokens = *live.LargeBlockTokens
 		}
 	}
 	router := cfg.Router

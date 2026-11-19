@@ -55,7 +55,7 @@ func foldBody(t *testing.T, rounds, size int) []byte {
 func TestProxyFoldOnRewritesOldToolResults(t *testing.T) {
 	archiveDir := filepath.Join(t.TempDir(), "context")
 	s, err := NewServerWithLiveCompact(LiveCompactConfig{
-		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100,
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1,
 		MinBodyBytes: 1, ArchiveDir: archiveDir, ArchiveEnabled: true,
 	})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestProxyFoldOffAndShadowForwardUnchanged(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			archiveDir := filepath.Join(t.TempDir(), "context")
 			s, err := NewServerWithLiveCompact(LiveCompactConfig{
-				Mode: mode, KeepRounds: 1, MinBlockTokens: 100,
+				Mode: mode, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1,
 				MinBodyBytes: 1, ArchiveDir: archiveDir, ArchiveEnabled: true,
 			})
 			if err != nil {
@@ -131,7 +131,7 @@ func TestProxyFoldOffAndShadowForwardUnchanged(t *testing.T) {
 func TestProxyFoldSkipsObserveOnlySessions(t *testing.T) {
 	archiveDir := filepath.Join(t.TempDir(), "context")
 	s, err := NewServerWithLiveCompact(LiveCompactConfig{
-		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100,
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1,
 		MinBodyBytes: 1, ArchiveDir: archiveDir, ArchiveEnabled: true,
 	})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestProxyFoldSkipsObserveOnlySessions(t *testing.T) {
 // name a file that does not exist. It degrades to observation.
 func TestProxyFoldOnWithoutArchiveObservesOnly(t *testing.T) {
 	s, err := NewServerWithLiveCompact(LiveCompactConfig{
-		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, MinBodyBytes: 1,
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1, MinBodyBytes: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestProxyFoldRespectsDisableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, err := NewServerWithLiveCompact(LiveCompactConfig{
-		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, MinBodyBytes: 1,
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1, MinBodyBytes: 1,
 		ArchiveDir: filepath.Join(dir, "context"), ArchiveEnabled: true, DisableFile: brake,
 	})
 	if err != nil {
@@ -229,7 +229,7 @@ func TestProxyFoldRespectsDisableFile(t *testing.T) {
 func TestProxyFoldForwardsMalformedBody(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewServerWithLiveCompact(LiveCompactConfig{
-		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, MinBodyBytes: 1,
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1, MinBodyBytes: 1,
 		ArchiveDir: filepath.Join(dir, "context"), ArchiveEnabled: true,
 	})
 	if err != nil {

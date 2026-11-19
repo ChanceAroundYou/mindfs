@@ -188,7 +188,129 @@
 - [x] **Step 5：** 测试 —— 路由存在/空 key、池级 key 不串账本、无代理不 panic、archive dir 真接进代理；前端结构测试 8 条（路径一致、节点与 root、显隐、刷新时机、切换清空、文案成对）并做变异验证（三处变异各钉红一条对应用例）。
 - [x] **Step 6：** 门禁：`go test -count=1 ./...` 全绿（28 包 ok）、web 233 文件 / 659 用例通过、`tsc -b --noEmit` 干净、`make build` 成功。
 - [x] **Step 6b（2026-11-19 收尾）：** 补 `usecase/session_context_saving_test.go`（真实池 + 真实代理写账本，钉住「先解析 agent 再查池级 key」；变异验证过），`lcsmoke -mode/账本读回`；真实 CLI `-mode on` 冒烟 8 次折叠、`latest={saved=72227,blocks=5}`；记录 `on` 模式 `drift` 自噪声（spec §12.4）。全量门禁与 `make check-upstream`（1915 delta / 307 组）复跑通过。
-- [ ] **Step 7（未做）：** 与 B1 Step 7 合并 —— 灰度顺序仍是 WSL/fn → 本机（用户重启）→ pc-win。
+- [x] **Step 6c（2026-11-19 隔离实例 A/B 对比）：** 同一工作负载（**一条会话**、6 次顺序大文件 Read、每次 93,755 B）、两个隔离实例（7441 `shadow` / 7442 `on`，`XDG_CONFIG_HOME=${root}/config`，线上 7331 未碰），经 MindFS 真实 WS 回环（`session.message` → CLI → 代理 → 上游）跑完。结果：`on` 侧第 2/3/4/5 轮 `est_in` 相对 `shadow` 缓降 0.1% → 26.0% → 41.1% → 51.5%，第 1 轮完全一致（42632 vs 42585，+0.1% 是请求里的随机 uuid）；账本 `requests=5`、`max_saved_bytes=378,240`、折叠 4 块 / 93,756 tokens_est；末轮 `req_bytes=651,731 → folded_bytes=273,491`（-58%）；存档 4 个 93,755 B 文件（0700/0600，内容可读回原文）。正确性：两侧模型都完成了任务；**`shadow` 在 7 轮时撞上 200k 窗口并自动压缩失败（`Prompt is too long`），`on` 未触发压缩**，墙钟 521.4 s vs 301.8 s。未开 `on` 的线上节点、未提交。
+- [x] **Step 6d（2026-11-19 缓存代价复测）：** 增加第三臂 `control`（7443，`mode=on` + `keep_rounds=20`，6 轮内零可折块），把「`on` 代码路径」与「实际改写」分开。结论：`on` 自第 4 个请求起 `cache_read` 钉死 ~17.86k，`input_tokens` 37.3k → 75.5k，每轮全价重算折叠后历史；第 2–5 请求按 1x/0.1x 折算 shadow ≈179.2k、control ≈179.0k、on ≈237.4k —— **原始 token −24.7%、成本 +32.5%**；control 与 shadow 逐轮重合，证明是改写而非代码路径导致。**这违反 §9 优先级 2，`mode=on` 开闸前必须解决**；实测与方法见 spec §12.5（含补 `cache_control` 断点等候选方向，需另一次评审）。
+- [ ] **Step 7（未做，且被 Step 6d 阻塞）：** 与 B1 Step 7 合并 —— 灰度顺序仍是 WSL/fn → 本机（用户重启）→ pc-win，但先要解决缓存代价。
+
+### Task B4: 低频大折 + 单调边界（2026-11-19 用户批准；Phase A 先做）
+
+**Files:**
+- Modify: `server/internal/agent/proxy/live_compact.go`（新增 5 个配置项与默认值）
+- Modify: `server/internal/agent/proxy/live_compact_fold.go`（提交集、rail 门禁、预算选择）
+- Modify: `server/internal/agent/proxy/proxy.go`（`foldRequest` 前算 est/growth；`gate` 传进观测）
+- Create: `server/internal/agent/proxy/live_compact_commits.go`（会话级已提交集合）
+- Modify: `server/internal/agent/proxy/live_compact_worker.go` / `live_compact.go`（`gate=` 日志字段）
+- Modify: `cli/cmd/startup.go`、`cli/cmd/mindfs.go`、`server/cmd/mindfs-server/main.go`、`server/app/*`、`server/internal/agent/pool.go`（config.json → PoolOptions → proxy 同管线，只走文件）
+- Test: `live_compact_commits_test.go`、`live_compact_fold_gate_test.go`、`live_compact_fold_proxy_test.go`（补 Gate 用例）
+
+**Interfaces:**
+- `foldCommits{has(key) bool; add(key)}`；`foldBudget{commitNew bool; minNewBytes, maxNewBytes int}`；`planFoldCommit(body, req, cfg, store, cache, commits, budget) foldResult`（`planFold` 保留为「全部提交」的兼容包装，既有测试不动）。
+- `foldResult` 新增 `stickyBlocks` / `newBlocks`。
+
+- [x] **Step 1（RED）：** 写 I8 用例——同一会话第二次请求时 `committed` 命中的块必须折回，即使 rail 门禁关闭；再写「pointerCache 清空后仍折回」（模拟 4096 条重置）。
+- [x] **Step 2（RED）：** 写 I9 用例——未过 rail 时，连续两次请求的折叠区逐字节一致；过 rail 后新提交，边界只右移。
+- [x] **Step 3（RED）：** 写预算用例——`min_fold_bytes` 拦住小刀、`max_fold_bytes` 截断、`large_block_tokens` 在未过 rail 时单独放行、收尾到 `target_tokens` 停止。
+- [x] **Step 4（GREEN）：** 实现 `live_compact_commits.go` 与 `planFoldCommit`；`foldRequest` 计算 est/growth、判定 gate、把 `gate` 交给观测。
+- [x] **Step 5（GREEN）：** 配置与启动管线（只走 `config.json`）；`Normalized()` 默认值 130000/100000/32768/262144/32000 与 `target < rail` 校验。
+- [x] **Step 6：** 变异验证——去掉提交集、去掉 rail 门禁、去掉 min_fold 守卫，各自应钉红对应用例。
+- [x] **Step 7：** 门禁：`go test -count=1 ./...`、`go test -race ./server/internal/agent/proxy/`、`make build`。
+- [x] **Step 8（隔离实例三臂）：** 复用 `/tmp/lcbench` 的 Read 负载（本轮 8×93,755 B），验收 §12.6 四条。**第一次 FAIL**（2.26×），见下方「Step 8 结果」。
+- [x] **Step 8b（2026-11-19，追加）：** 按 §12.7 复盘（缓存语义 + 折深定律）改默认值，再补 `keep_tail_tokens`；**第二次三臂 PASS**，见下方「Step 8 复测第二次」。
+- [ ] **Step 9（未做，单独授权）：** WSL/fn `shadow` 24h 预演；准入 ≥3 次 `gate=fold` 且平均 `est_after/est_before < 0.8`。
+
+**B4 实施结果（2026-11-19，Step 1–8 完成，Step 8 验收 FAIL；Step 9 未做）：**
+
+- **提交集**：`live_compact_commits.go`，进程内、按会话、永不淘汰（`pointerCache` 在 4096 条整体重置，不能当承诺记录）。`planFoldCommit` 两遍：先无条件折已提交块（I8），再在门禁放行时按最旧优先提交新块。
+- **门禁**：`live_compact_fold_gate.go` 的 `decideFoldBudget` —— `est<=0` 或 rail 非正 → `unmeasured`（保持旧「全部提交」语义，兼容负 rail 的存量用例）；`large_block` 或 `est - sticky + growth > rail` → `fold`；否则 `below-rail`（只折已提交块，I9）。
+- **预算**：`min_fold_bytes` 不足则整组丢弃并记 `gate=no-backlog`（不回累积）；`max_fold_bytes` 截断本次；收尾依据 `target_tokens` 停止。`planFold` 保留为全提交包装，B1 既有用例零改动。
+- **配置**：`rail_tokens` / `target_tokens` / `min_fold_bytes` / `max_fold_bytes` / `large_block_tokens` 只走 `config.json`，经 `startupConfig → startupFlags → server.Options → PoolOptions → proxy.LiveCompactConfig`；默认 130000/100000/32768/0/32000，`target >= rail` 时拉到 `rail*3/4`，负 rail 关闸。`TestLiveCompactRailConfigFromFile` 钉住文件值落地。
+- **修掉的缺陷**：`proxy.go` 里 `body, _, gate := s.foldRequest(...)` 在 `if` 内重新声明 `body`（因为 `gate` 是新变量），改写的 body 被静默丢弃——`TestProxyFoldOnRewritesOldToolResults` 抓到的正是这个。
+- **测试**：`live_compact_fold_gate_test.go` 11 条（I8 命中/缓存重置、I9 逐字节稳定、min/max/large-block 预算、默认值归一化、经真实 handler 的跨轮 I8）。既有用例里依赖「默认全折」的（`pool_context_saving_test.go`、`usecase/session_context_saving_test.go`）显式 `RailTokens: -1`。
+- **长读豁免（2026-11-19 补）**：`keep_rounds` 原来先把最近轮整片挡在候选之外，`large_block` 只能对已经出窗的块生效——最新一轮的巨型读取永远折不了，恰好是「这一轮就会撞窗口」的那种请求。现在 `collectFoldCandidates` 用 `roundHasOversizedResult` 把所有含 ≥ `large_block_tokens` 可折结果的轮**全部**豁免出 keep 窗口，而不只是最新一轮：承诺集按原始转录重算（dsh 是把会话本体改写掉，所以它只需要 `longSpan` 指最新长轮），只豁免最新一轮会让先前已提交的那一轮在新长轮出现时滑回窗口内、指针无声展开，违反 I8。普通轮仍由 `keep_rounds` 保护（门禁放行也不折最新普通轮）。`TestNewestRoundWithOversizedResultIsNotProtected` / `TestNewestNormalRoundStaysProtected` / `TestCarvedOutCommitSurvivesNewerOversizedRound` 三条钉住；变异：去掉豁免 → 第 1、3 条红；退回「只豁免最新一轮」→ 第 3 条红；无视 keep 窗口 → 第 2、3 条红。
+- **shadow 预演（2026-11-19 补，§12.6「观测」）**：shadow 原来只挂观测、`gate` 恒为 `unmeasured`，Step 9 的准入判据（`gate=fold` 次数、`est_after/est_before`）无从统计。现在 shadow（以及 `on` 但无存档）在请求路径执行 `previewFold`：复用同一份 `collectFoldCandidates` + `decideFoldBudget` 算出决策与「本请求会折掉多少 token」，写进 `[live-compact] <mode>` 日志的 `gate=` / `would_fold_tokens=`；`fold` 行补 `gate=`。预演不渲染指针、不碰 `pointerCache`、不写存档、不改 body，但会把「本请求会提交的块」记进同一个 `foldCommits` —— 否则每轮都像没折过、门禁每轮都触发，预演的不是 `on` 实际执行的政策。`planFoldCommit` 的 gate 也回填 `would_fold_tokens`（`on` 下等于本次实际折掉的）。测试 `live_compact_shadow_preview_test.go` 4 条（预演不改 body / 不写存档、提交后低于 rail 仍计入 sticky、巨型块低于 rail 也触发、日志字段）；变异：关掉 shadow 预演 → 前 3 条红；预演不写提交集 → sticky 那条红。
+- **配套**：`server/cmd/mindfs-server/main.go`（独立 server 二进制的重复 config 解析）补上 5 个新键，与 `cli/cmd` 同管线；只读改文件，不加 CLI flag。
+- **变异验证**：去掉提交集 → 3 条 I8 红；关掉 rail 比较 → 同上；去掉 `min_fold_bytes` / `max_fold_bytes` / `large_block` 分支 → 各钉红对应用例；长读豁免三处变异见上条；还原后全绿。
+- **门禁**：`go test -count=1 ./...` 除 `server/internal/api` 的 `TestWorkflowNodeAdapterSessionReusePolicies` 外全绿（28 包 ok，含 `server/internal/kanban`）；`go test -race ./server/internal/agent/proxy/` 绿、`make build` 成功。该 api 失败属同工作区另一条会话的在飞改动：未跟踪的 `server/internal/kanban/workflow_session_name.go` + 修改中的 `appcontext_workflow.go` 把会话名改成「任务名 / #编号 · 节点」，测试仍期望旧名，不在本任务范围。
+
+**Step 8 结果（2026-11-19）：FAIL，未在任何节点开 `mode=on`。**
+
+三臂隔离实例（7441 `shadow` / 7442 `control`=`on` + rail 关闭（1e9）/ 7443 `on` 默认值；线上 7331 未触碰，二进制 `v0.5.5-1120-11-g1b9aebed-dirty`），负载为 8×93,755 B 顺序 Read + 一次 `wc` 校验（比 §12.6 写的 6 次多两个文件，其余同构）。
+
+| 臂 | 提交新块的折叠 | 首次自动压缩 | max est_in | 末轮 est_in | 折算成本 | 墙钟 |
+|---|---|---|---|---|---|---|
+| `shadow` | 0 | 第 6 个请求（epoch 0→1） | 123,065 | 121,643 | 327,876 | 651 s |
+| `control` | 0 | 第 6 个请求 | 123,124 | 122,336 | 369,205 | 718 s |
+| `on` | 3 次（日志 7 行，含 sticky 重渲染） | 第 15 个请求（epoch 0→1） | 114,490 | 58,665 | 740,634 | 1,069 s |
+
+折算成本 = `input×1 + cache_creation×1.25 + cache_read×0.1`（§12.5 同法）。`control` 与 `shadow` 逐请求重合（差异来自多一轮），说明 `on` 代码路径在「不折」时本身不加成本。
+
+四条验收：
+
+1. **折叠事件 ≤2：FAIL** —— 3 次提交新块（最终折叠区 5 块 / 74,511 tokens_est / 298,042 B）。
+2. **`on` 不撞 `Prompt is too long`、`shadow` 撞：未复现** —— 三臂都没有该错误；实际失败形态是 CLI 自动压缩（epoch 0→1），`shadow` 在第 6 个请求、`on` 在第 15 个请求。折叠确实推迟了压缩（`shadow` 读到第 5 个文件后压缩，`on` 读到第 8 个文件后压缩），但没能避免。
+3. **成本 ≤ `shadow × 1.10`：FAIL** —— 740,634 / 327,876 = **2.26×**。总量对比被 agent 自身行为差异放大：`on` 臂改用 offset/limit 分块读（16 次 Read vs 8 次；第一次重复读发生在首个折叠之前，不是折叠导致的），只看总量会高估折叠的代价。但折叠自身的代价可以单独量出来：每次提交新块后的下一个请求 `cache_read` 掉到 9,362、`input` 涨到 ~121k（整段历史全价重算），同臂普通请求约 31k；三次事件合计 ≈ **+275k**。即使三臂读法完全一致，`on` 也约 1.8× `shadow`。
+4. **末轮 `est_in` ≤ `shadow × 0.8`：数值 PASS（0.48），但不是证据** —— 两边末轮都在自动压缩之后，比较的是压缩后的上下文，不是策略效果。
+
+另外两点：
+
+- **rail 的量纲不对**：实测 `actual_in ≈ est_in × 1.33`（114,490 → 152,382；llmux 的 usage 已知会放大，绝对值不可信，但方向一致）。按这个比例，rail 130k `est` ≈ 174k actual，已经越过 CLI 的自动压缩阈值（约窗口 −33k ≈ 167k）——「过 rail 才折」等于「已经晚了」。
+- **`max_fold_bytes` 默认值与已批准 spec 不一致**：spec §12.6 表与计划正文都写 262,144 B，代码 `Normalized()` 给 0（不限），`TestLiveCompactNormalizesRailDefaults` 也钉 0。本轮 `on` 有一次事件折了 3 块 / 298,042 B，超过了文档写的单次上限。
+
+结论：B4 默认值不满足 §12.6；在修正 rail 量纲与折叠预算前不进入 Step 9，也不在任何节点开 `mode=on`。复测用的三臂脚本与日志在 `/tmp/lcbench/`（`run_arm_b4.sh`、`analyze_b4.py`、`logs/`），属一次性实验产物，未入库。
+
+**Step 8 后口径修正（2026-11-19，未复测）：**
+
+- **rail 改按上游 token 计量**：会话保存一对校准样本（上一请求的上游 `ContextTokens()` 与代理为它转发的估算），`foldContext.actual / forwardEst` 把 growth 与 `target_tokens` 一起折算；样本缺失（首请求 / usage 未扫到 / 压缩流）退化为 1:1，即旧的纯估算行为；样本比截断在 0.5x–3x。上游样本只在 `Seen && ContextTokens()>0` 时写入，用 0 覆盖好样本会让闸门永久退化。观测行新增 `gate_projected=`。
+- **`max_fold_bytes` 零值语义改为「默认 262144」**，与本节表格和 spec §12.6 一致；此前 `Normalized()` 给 0（不限），一次事件可折掉整段历史。
+- **shadow 预演同步扣减 sticky**：shadow 转发的是未折 body，它测到的上游上下文仍含 mode=on 会折掉的块，按上游单位扣掉后预演才与真实 planner 同口径。
+- 测试 6 条（`TestRailUsesUpstreamTokenScale` / `TestActualScaleClampsOutliers` / `TestRailFallsBackToEstimator` / `TestFoldStopsAtTargetInUpstreamUnits` / `TestSessionCalibrationRoundTrip` / `TestShadowPreviewSubtractsStickyInUpstreamUnits`），变异 5 处各自钉红；`Normalized()` 默认值用例改为 262144。
+- **注意方向**：修正后 rail 会更早触发（130k 现在是 130k 上游 token，而原来的 130k est ≈ 174k 上游），即**折得更频繁**。在每次事件都近乎全量缓存重建的前提下，这与成本目标相反 —— 复测前应先定「事件间隔」策略，见 B5 的取舍。
+
+**Step 8 复盘 spike（2026-11-19，离线 wire 级，结论写进 spec §12.7）**
+
+在调参之前先测清缓存语义。脚本在 `/tmp/lcspike/`（一次性，未入库），每个请求加随机 UUID 前缀隔离跨臂污染（此前两轮测量得出「`cache_control` 有效」的错误结论，正是跨臂污染造成的；单个臂的第一个请求命中了上一个臂已写下的缓存）。
+
+1. **命中 = 最长公共前缀，`cache_control` 完全无效**。同一份 8 轮转录改最后一轮 → `cache_read` 133,632→117,248；改中间一轮 → 65,024；改第一条 → 0。Q1（全程无 `cache_control`）与 Q2（只在 `system` 上带一个）返回**完全相同**的 `hit=70,144` / `bytes=124,861`。**→ B5 的前提被否决**，该方向只在切到 Anthropic 直连时才有意义。
+2. **收益由折深决定，与折频无关**。7/8 块（深折）：324,675 → **287,879（−11.3%）**；4/8 块：361,878（+11.5%）；2/8 块：426,379（+31.0%）。另一组 80 KB/轮：折一次浅的 +16%，**每轮重折 2.54×**。
+3. **代价定律**：`回收轮数 ≈ 10 × F / (S − F)`（F 折后、S 折前）。B4 原默认 `130k→100k` 相对 200k 窗口只砍约 15%，回收期约 33 轮，而门禁 3 轮左右就触发一次 —— 算术上必亏，与 Step 8 的 2.26× 一致。
+4. **dsh 赢在形状不在阈值**：它把切点写回会话本体（`surfaceOp:{op:"replace"}`），前缀此后逐字节不变。我们作为线上代理只能靠 `foldCommits`（切一次就不动）逼近同样的稳定性。dsh 的 20k/650k 是它的窗口与工具形态，不可照搬；可搬的是「触发晚、一刀深、之后不再切」。
+
+**默认值修订（spec §12.7(d)，已落地）**：`rail_tokens` 130,000 → **160,000**（按窗口比例）；`target_tokens` 100,000 → **40,000**（实际约束通常落到尾部预算）；`min_fold_bytes` 32,768 → **4,096**（dsh `chunkMin` 是 1k token；门槛从「够不够一次断点」变成「折完是不是真的更小」）；`max_fold_bytes` 262,144 **语义改为「单块上限」**，一次事件最多排空 8 块（`foldMaxChunksPerEvent`，对应 dsh 的 8 遍 drain）——保留原来的「事件总上限」会让一次只折两块，那正是 §12.7(b) 实测比不折更贵的浅折。`TestFoldEventRespectsMaxBytes` 改成钉「一块一块排空、到 8 块停」，`TestLiveCompactNormalizesRailDefaults` 钉新默认值。
+
+**Step 8 复测第一次：仍然 FAIL（2026-11-19，只改阈值）**
+
+先只改默认值（`rail=160000 / target=40000 / min_fold=4096`）重跑三臂，`on` 仍是 **2.0× shadow**（713,425 / 353,809），6 次折叠事件、5 次提交新块，日志形态很明确：
+
+```
+msgs=8  rounds=3  est_in=96089  actual_in=128064 → fold blocks=1 new_blocks=1
+msgs=10 rounds=4  est_in=96610  actual_in=128728 → fold blocks=2 new_blocks=1
+msgs=12 rounds=5  ...                            → fold blocks=3 new_blocks=1   （共 5 次）
+```
+
+**每轮只折掉一块**。根因不在阈值：`keep_rounds=3` 保护的尾部按轮数算，这个负载每轮 ≈ 25k token，3 轮 = 75k 尾部；rail 在 160k 触发时只有 1 轮滑出保护区，于是每次事件都只够折一块 —— 正是 §12.7(b) 判定为「比不折更贵」的浅折。dsh 对应的是 `keepRoundTokens=32000`：尾部**按 token 封顶**，不只是按轮数。
+
+**补 `keep_tail_tokens`（dsh `keepRoundTokens` 的对应物）**：从最旧的受保护轮开始按估算 token 累计，超过预算就把它移出保护区（最新一轮永不折，巨型块仍由 `large_block_tokens` 单独放行）。默认 32000，只走 `config.json`（无 CLI flag），与折叠预算同管线（`startupConfig → startupFlags → server.Options → PoolOptions → proxy`）。`collectFoldCandidates` 里 `protectedFrom` 现在是「轮数」与「字节预算」两个约束的**较大者**。`TestKeepTailTokensShrinksProtectedWindow` 三条（轮数约束、token 约束、最新轮永不折）；变异：关掉预算 → 第二条红。`TestCarvedOutCommitSurvivesNewerOversizedRound` 显式把预算设成 1<<30，因为它钉的是 keep 窗口滑动，不该被字节预算掩盖。
+
+**Step 8 复测第二次：PASS（2026-11-19，`keep_tail_tokens=32000`）**
+
+同样负载（三臂都是 8×93,755 B 顺序 Read；`run_arm_b4.sh` 每次 `rm -rf` 自己的项目目录，三臂逐字节同构）：
+
+| 臂 | 提交新块的折叠 | 自动压缩 | max `actual_in` | 末轮 `est_in` | 折算成本 | 墙钟 |
+|---|---|---|---|---|---|---|
+| `shadow` | 0 | 第 6 请求压缩，随后 **`Prompt is too long`** | 203,075 | 96,174 | 353,809 | 573 s |
+| `control`（`on`，rail 关） | 0 | 第 6 请求压缩成功 | 164,872 | 122,191 | 396,604 | 570 s |
+| `on`（新默认） | **2 次**（各 3 块） | **从未** | **129,994** | **73,900** | **350,096** | 485 s |
+
+四条验收：① 折叠事件 2 次 ≤2 **PASS**；② `on` 不撞 `Prompt is too long`、`shadow` 撞 **PASS**（shadow 的压缩 summarization 直接失败）；③ 成本 350,096 / 353,809 = **0.99×** ≤1.10 **PASS**（相对 `control` 是 −11.7%）；④ 末轮 `est_in` 73,900 / 96,174 = **0.77** ≤0.8 **PASS**。形态也对：两次事件各折 3 块，中间 3 个请求 `gate=below-rail` 且 sticky 重放同样的折叠区（I8/I9 在真实流量上成立），`actual_in` 在 128k→57k、130k→59k 之间锯一次再长回去。
+
+**仍未证明的事**：`cache_creation` 在本上游恒为 0，折算仍按 §12.5 的相对口径；`shadow` 臂的 `Prompt is too long` 是压缩失败而非窗口硬拒，所以第 2 条验收按「是否撞上」记 PASS 有解释空间（`on` 全程 130k 以下，没有到过阈值，这是更强的证据）。n=1 负载、单机 llmux 别名模型。Step 9 的 24h `shadow` 预演仍未做。
+
+### Task B5（已否决，2026-11-19）：折叠边界补 `cache_control`
+
+原条件是「B4 Step 8 无法把折算成本压到 `shadow × 1.10` 以内时启动」。前置 spike 已给出答案：
+本链路（llmux → 上游）按**最长公共前缀**自动缓存，`cache_control` 被忽略（spec §12.7(a)，Q1/Q2 逐字相同）。
+补断点不可能让折叠后的前缀命中，因此**不启动**；若将来切到 Anthropic 直连，本节作为前置 spike 清单
+（`cache_control` 能否挂在 `tool_result` 上、第二个请求的 `cache_read` 是否覆盖折叠区）仍然有效。
 
 ## 明确不在本计划内
 

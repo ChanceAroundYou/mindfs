@@ -87,6 +87,18 @@ type sessionState struct {
 	sessionKey  string // MindFS session key, for the live-compact ledger
 	foldAllowed bool   // false for isolated-ConfigDir (Router/workflow) sessions
 	live        liveCompactState
+	// lastEstimate is the previous messages request's pre-fold size estimate,
+	// used for the rail projection (design §12.6).
+	lastEstimate int
+	// lastActual and lastForwardEst are the calibration pair for the rail: the
+	// upstream-reported context size of the previous request and the proxy's
+	// estimate for the body it forwarded. Together they let the rail compare
+	// against real tokens instead of byte estimates (see foldContext.actualScale).
+	lastActual     int
+	lastForwardEst int
+	// commits is the set of blocks this session has committed to folding. It is
+	// never evicted: losing it would unfold the whole prefix.
+	commits *foldCommits
 }
 
 // NewServer creates and starts the proxy server on a random loopback port.
@@ -287,6 +299,9 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 	// Fold first: in mode=on the body may be rewritten here, and the worker
 	// below must observe what is actually forwarded (otherwise the measured
 	// candidate set would describe a request that never left the process).
+	// foldRequest also measures the original size and applies the rail gate
+	// (design §12.6), so it runs for shadow too: that is what lets a shadow node
+	// preview the policy it would apply.
 	//
 	// Then observe off the request path. The load-bearing invariant is that
 	// the body slice handed to the worker is never written again: foldRequest
@@ -301,8 +316,11 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 	// gate in the design is measured in shadow, where the body is untouched.
 	var turn *liveCompactTurn
 	if r.Method == http.MethodPost && isMessagesPath(remainder) {
-		body, _ = s.foldRequest(token, body)
-		turn = s.observeLiveCompact(token, body)
+		// Assign, never declare: `body, _, gate := ...` here would shadow the
+		// outer body inside the if-block and forward the unfolded bytes.
+		var gate liveCompactGate
+		body, _, gate = s.foldRequest(token, body)
+		turn = s.observeLiveCompact(token, body, gate)
 	}
 
 	// Forward request.

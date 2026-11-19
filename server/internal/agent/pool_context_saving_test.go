@@ -19,7 +19,9 @@ import (
 func TestPoolSessionContextSavingForwardsPoolKey(t *testing.T) {
 	archiveDir := filepath.Join(t.TempDir(), "context")
 	ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
-		Mode: proxy.LiveCompactOn, ArchiveDir: archiveDir, ArchiveEnabled: true,
+		// RailTokens: -1 disables the rail gate: these cases pin the ledger
+		// wiring, not the fold policy (design §12.6).
+		Mode: proxy.LiveCompactOn, RailTokens: -1, ArchiveDir: archiveDir, ArchiveEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +60,7 @@ func TestNewPoolWithOptionsWiresArchiveDir(t *testing.T) {
 	archiveDir := filepath.Join(t.TempDir(), "context")
 	p := NewPoolWithOptions(Config{}, PoolOptions{
 		LiveCompactMode:       proxy.LiveCompactOn,
+		LiveCompactRailTokens: -1,
 		LiveCompactArchiveDir: archiveDir,
 	})
 	t.Cleanup(p.CloseAll)

@@ -183,7 +183,7 @@ func TestLedgerNilStore(t *testing.T) {
 func TestProxyFoldWritesLedger(t *testing.T) {
 	archiveDir := filepath.Join(t.TempDir(), "context")
 	s, err := NewServerWithLiveCompact(LiveCompactConfig{
-		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100,
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1,
 		MinBodyBytes: 1, ArchiveDir: archiveDir, ArchiveEnabled: true,
 	})
 	if err != nil {
@@ -232,7 +232,7 @@ func TestSessionContextSavingUnknownSession(t *testing.T) {
 func TestObserveOnlySessionDoesNotWriteLedger(t *testing.T) {
 	archiveDir := filepath.Join(t.TempDir(), "context")
 	s, err := NewServerWithLiveCompact(LiveCompactConfig{
-		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100,
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1,
 		MinBodyBytes: 1, ArchiveDir: archiveDir, ArchiveEnabled: true,
 	})
 	if err != nil {

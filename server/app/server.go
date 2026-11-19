@@ -62,9 +62,17 @@ type StartOptions struct {
 	// 入口传字符串/整数，app 再转成 proxy.LiveCompactConfig，原因同 Router。
 	LiveCompactMode             string
 	LiveCompactKeepRounds       int
+	LiveCompactKeepTailTokens   int
 	LiveCompactMinBlockTokens   int
 	LiveCompactMinBodyBytes     int
 	LiveCompactMaxDriftMessages int
+	// Rail gate and fold budget (design §12.7). Zero values mean the proxy
+	// defaults; a negative LiveCompactRailTokens disables the gate.
+	LiveCompactRailTokens       int
+	LiveCompactTargetTokens     int
+	LiveCompactMinFoldBytes     int
+	LiveCompactMaxFoldBytes     int
+	LiveCompactLargeBlockTokens int
 	// LiveCompactDisableFile 是急停文件；空值 = <config-dir>/context/DISABLED。
 	LiveCompactDisableFile string
 	// LiveCompactArchiveDir 是折叠存档根；空值 = <config-dir>/context。
@@ -163,9 +171,15 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	sharedPool := agent.NewPoolWithOptions(agentConfig, agent.PoolOptions{
 		LiveCompactMode:             opts.LiveCompactMode,
 		LiveCompactKeepRounds:       opts.LiveCompactKeepRounds,
+		LiveCompactKeepTailTokens:   opts.LiveCompactKeepTailTokens,
 		LiveCompactMinBlockTokens:   opts.LiveCompactMinBlockTokens,
 		LiveCompactMinBodyBytes:     opts.LiveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages: opts.LiveCompactMaxDriftMessages,
+		LiveCompactRailTokens:       opts.LiveCompactRailTokens,
+		LiveCompactTargetTokens:     opts.LiveCompactTargetTokens,
+		LiveCompactMinFoldBytes:     opts.LiveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:     opts.LiveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens: opts.LiveCompactLargeBlockTokens,
 		LiveCompactDisableFile:      liveCompactDisableFile,
 		LiveCompactArchiveDir:       liveCompactArchiveDir,
 	})

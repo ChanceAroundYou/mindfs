@@ -19,6 +19,11 @@ import "sync"
 type liveCompactTurn struct {
 	mu sync.Mutex
 
+	// gate is set on the request path before the work is queued, so the
+	// observation line can report the rail decision for this exact request
+	// without reading shared session state from the worker.
+	gate liveCompactGate
+
 	analysis    liveCompactObservation
 	hasAnalysis bool
 

@@ -53,9 +53,15 @@ type sessionEntry struct {
 type PoolOptions struct {
 	LiveCompactMode             string
 	LiveCompactKeepRounds       int
+	LiveCompactKeepTailTokens   int
 	LiveCompactMinBlockTokens   int
 	LiveCompactMinBodyBytes     int
 	LiveCompactMaxDriftMessages int
+	LiveCompactRailTokens       int
+	LiveCompactTargetTokens     int
+	LiveCompactMinFoldBytes     int
+	LiveCompactMaxFoldBytes     int
+	LiveCompactLargeBlockTokens int
 	LiveCompactDisableFile      string
 	// LiveCompactArchiveDir is where folded tool output is archived. Empty
 	// leaves archiving off, which also means mode=on can only observe: every
@@ -86,9 +92,15 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 	if ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
 		Mode:             opts.LiveCompactMode,
 		KeepRounds:       opts.LiveCompactKeepRounds,
+		KeepTailTokens:   opts.LiveCompactKeepTailTokens,
 		MinBlockTokens:   opts.LiveCompactMinBlockTokens,
 		MinBodyBytes:     opts.LiveCompactMinBodyBytes,
 		MaxDriftMessages: opts.LiveCompactMaxDriftMessages,
+		RailTokens:       opts.LiveCompactRailTokens,
+		TargetTokens:     opts.LiveCompactTargetTokens,
+		MinFoldBytes:     opts.LiveCompactMinFoldBytes,
+		MaxFoldBytes:     opts.LiveCompactMaxFoldBytes,
+		LargeBlockTokens: opts.LiveCompactLargeBlockTokens,
 		DisableFile:      opts.LiveCompactDisableFile,
 		ArchiveDir:       opts.LiveCompactArchiveDir,
 		ArchiveEnabled:   opts.LiveCompactArchiveDir != "",

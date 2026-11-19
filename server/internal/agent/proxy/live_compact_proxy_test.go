@@ -179,7 +179,7 @@ func TestLiveCompactDisableFileStopsObservation(t *testing.T) {
 	defer s.Close()
 	s.RegisterSessionWithKey("tok", "http://127.0.0.1:1", "s1")
 	body := wireBody(t, foldTestMessages(5, 8001))
-	if s.observeLiveCompact("tok", body) == nil {
+	if s.observeLiveCompact("tok", body, liveCompactGate{}) == nil {
 		t.Fatal("baseline observation missing")
 	}
 
@@ -187,7 +187,7 @@ func TestLiveCompactDisableFileStopsObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	resetDisableCache(s)
-	if s.observeLiveCompact("tok", body) != nil {
+	if s.observeLiveCompact("tok", body, liveCompactGate{}) != nil {
 		t.Fatal("brake file present but observation still ran")
 	}
 
@@ -195,7 +195,7 @@ func TestLiveCompactDisableFileStopsObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	resetDisableCache(s)
-	if s.observeLiveCompact("tok", body) == nil {
+	if s.observeLiveCompact("tok", body, liveCompactGate{}) == nil {
 		t.Fatal("brake removed but observation stayed blocked")
 	}
 }
@@ -214,7 +214,7 @@ func TestLiveCompactObserveOnlySessionIsNotFoldable(t *testing.T) {
 	}
 	defer s.Close()
 	s.RegisterSessionObserveOnly("tok", "http://127.0.0.1:1", "router-session")
-	if s.observeLiveCompact("tok", wireBody(t, foldTestMessages(5, 8001))) == nil {
+	if s.observeLiveCompact("tok", wireBody(t, foldTestMessages(5, 8001)), liveCompactGate{}) == nil {
 		t.Fatal("observe-only session should still be measured")
 	}
 	if !s.flushLiveCompactWork(2 * time.Second) {
@@ -278,7 +278,7 @@ func TestLiveCompactSkipsSmallBodies(t *testing.T) {
 	if int64(len(body)) >= 100<<10 {
 		t.Fatalf("test body grew to %d bytes; adjust the fixture below the threshold", len(body))
 	}
-	if s.observeLiveCompact("tok", body) != nil {
+	if s.observeLiveCompact("tok", body, liveCompactGate{}) != nil {
 		t.Fatal("body below min_body_bytes was queued for parsing")
 	}
 	s.mu.Lock()

@@ -199,17 +199,18 @@ func TestWorkflowParallelMainTreeConfigPrecedence(t *testing.T) {
 }
 
 func TestLiveCompactConfigPrecedence(t *testing.T) {
-	writeConfig(t, `{"live_compact":{"mode":"shadow","keep_rounds":5,"min_block_tokens":3000,"min_body_bytes":2048,"max_drift_messages":64}}`)
+	writeConfig(t, `{"live_compact":{"mode":"shadow","keep_rounds":5,"keep_tail_tokens":40000,"min_block_tokens":3000,"min_body_bytes":2048,"max_drift_messages":64}}`)
 
 	cfg, err := loadStartupConfig("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	mode := ""
-	keep, minBlock, minBody, maxDrift := 0, 0, 0, 0
+	keep, minBlock, minBody, maxDrift, keepTail := 0, 0, 0, 0, 0
 	flags := startupFlags{
 		LiveCompactMode:             &mode,
 		LiveCompactKeepRounds:       &keep,
+		LiveCompactKeepTailTokens:   &keepTail,
 		LiveCompactMinBlockTokens:   &minBlock,
 		LiveCompactMinBodyBytes:     &minBody,
 		LiveCompactMaxDriftMessages: &maxDrift,
@@ -217,9 +218,9 @@ func TestLiveCompactConfigPrecedence(t *testing.T) {
 	if err := applyStartupConfig(cfg, map[string]bool{}, flags); err != nil {
 		t.Fatal(err)
 	}
-	if mode != "shadow" || keep != 5 || minBlock != 3000 || minBody != 2048 || maxDrift != 64 {
-		t.Fatalf("live_compact 文件值没有落到 flag 变量上: mode=%q keep=%d min_block=%d min_body=%d drift=%d",
-			mode, keep, minBlock, minBody, maxDrift)
+	if mode != "shadow" || keep != 5 || keepTail != 40000 || minBlock != 3000 || minBody != 2048 || maxDrift != 64 {
+		t.Fatalf("live_compact 文件值没有落到 flag 变量上: mode=%q keep=%d keep_tail=%d min_block=%d min_body=%d drift=%d",
+			mode, keep, keepTail, minBlock, minBody, maxDrift)
 	}
 
 	mode = "on"
@@ -228,6 +229,32 @@ func TestLiveCompactConfigPrecedence(t *testing.T) {
 	}
 	if mode != "on" {
 		t.Fatal("显式 flag 应胜出，却被文件里的 shadow 覆盖")
+	}
+}
+
+// 折叠门禁与预算（design §12.6）只走 config.json：没有对应 flag，
+// 文件里有值就必须原样落到运行期配置。
+func TestLiveCompactRailConfigFromFile(t *testing.T) {
+	writeConfig(t, `{"live_compact":{"rail_tokens":120000,"target_tokens":90000,"min_fold_bytes":4096,"max_fold_bytes":65536,"large_block_tokens":24000}}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rail, target, minFold, maxFold, largeBlock := 0, 0, 0, 0, 0
+	flags := startupFlags{
+		LiveCompactRailTokens:       &rail,
+		LiveCompactTargetTokens:     &target,
+		LiveCompactMinFoldBytes:     &minFold,
+		LiveCompactMaxFoldBytes:     &maxFold,
+		LiveCompactLargeBlockTokens: &largeBlock,
+	}
+	if err := applyStartupConfig(cfg, map[string]bool{}, flags); err != nil {
+		t.Fatal(err)
+	}
+	if rail != 120000 || target != 90000 || minFold != 4096 || maxFold != 65536 || largeBlock != 24000 {
+		t.Fatalf("门禁/预算文件值没有落地: rail=%d target=%d min=%d max=%d large=%d",
+			rail, target, minFold, maxFold, largeBlock)
 	}
 }
 

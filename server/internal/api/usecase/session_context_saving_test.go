@@ -167,7 +167,9 @@ func newContextSavingFixture(t *testing.T) (*contextSavingTestRegistry, *Service
 func recordFoldInLedger(t *testing.T, archiveDir, sessionKey string) {
 	t.Helper()
 	ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
-		Mode: proxy.LiveCompactOn, ArchiveDir: archiveDir, ArchiveEnabled: true,
+		// RailTokens: -1 disables the rail gate: this helper only needs one
+		// real fold on disk, not the fold policy (design §12.6).
+		Mode: proxy.LiveCompactOn, RailTokens: -1, ArchiveDir: archiveDir, ArchiveEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("proxy: %v", err)

@@ -19,6 +19,14 @@ type LiveCompactConfig struct {
 	Mode string
 	// KeepRounds is the number of newest completed tool rounds left verbatim.
 	KeepRounds int
+	// KeepTailTokens bounds the same protected tail by size, not just by round
+	// count (design §12.7(d), dsh's keepRoundTokens). Three rounds of small
+	// reads is a fine tail; three rounds holding 90 KB reads is 75k tokens of
+	// tail on a 200k window, and then a rail that fires at 160k has only one
+	// aged-out round to cut — a shallow fold every turn, which §12.7(b) measured
+	// as more expensive than not folding. The newest round always stays.
+	// Zero means the default.
+	KeepTailTokens int
 	// MinBlockTokens is the per-tool-result size needed to become a candidate.
 	MinBlockTokens int
 	// MinBodyBytes skips JSON parsing for requests too small to contain a
@@ -27,6 +35,25 @@ type LiveCompactConfig struct {
 	// MaxDriftMessages bounds the per-message fingerprint history kept for
 	// detecting CLI-side history rewrites. A zero value means the default.
 	MaxDriftMessages int
+	// RailTokens is the upstream-token trigger for folding new blocks (design
+	// §12.7). Below it, already-committed folds are still applied but no new
+	// block is committed, because a fold invalidates the upstream prefix cache
+	// from the boundary onward. Zero means the default.
+	RailTokens int
+	// TargetTokens is the low-water line one fold event commits down to. It
+	// sits far below the rail on purpose: the model is "fold deep, fold rarely"
+	// (§12.7(b) — a shallow fold cannot repay the cache rewrite it costs). In
+	// practice keep_rounds is the binding constraint; the target only stops an
+	// event early when the context was already small.
+	TargetTokens int
+	// MinFoldBytes rejects a fold event too small to be worth a cache break.
+	MinFoldBytes int
+	// MaxFoldBytes caps one event. Zero means the default cap (262144); no
+	// caller can accidentally disable the cap by leaving it unset.
+	MaxFoldBytes int
+	// LargeBlockTokens lets a single oversized tool result be folded even below
+	// the rail: one such result dominates the context on its own.
+	LargeBlockTokens int
 	// DisableFile is the emergency brake. When the file exists, folding and
 	// observation stop for the running process without a service restart.
 	// Empty means no brake file is wired (default off, nothing to stop).
@@ -57,6 +84,9 @@ func (c LiveCompactConfig) Normalized() LiveCompactConfig {
 	if c.KeepRounds <= 0 {
 		c.KeepRounds = 3
 	}
+	if c.KeepTailTokens <= 0 {
+		c.KeepTailTokens = 32000
+	}
 	if c.MinBlockTokens <= 0 {
 		c.MinBlockTokens = 2000
 	}
@@ -65,6 +95,49 @@ func (c LiveCompactConfig) Normalized() LiveCompactConfig {
 	}
 	if c.MaxDriftMessages <= 0 {
 		c.MaxDriftMessages = 8192
+	}
+	// A negative rail disables the gate; zero means the default.
+	//
+	// The defaults are the "fold deep, fold rarely" shape measured in design
+	// §12.7: trigger late (160k upstream tokens, just under the CLI's ~167k
+	// auto-compact threshold on a 200k window), then cut all the way down
+	// (target 40k ≈ dsh's 32k tail) so one event repays its cache rewrite in a
+	// round or two. The earlier 130k/100k pair folded every ~3 rounds by ~15%,
+	// which needs ~33 rounds to break even and measured 2.26x the cost of not
+	// folding at all (plan, B4 Step 8).
+	if c.RailTokens == 0 {
+		c.RailTokens = 160000
+	}
+	if c.RailTokens > 0 {
+		if c.TargetTokens <= 0 {
+			c.TargetTokens = 40000
+		}
+		// A target at or above the rail would make one event commit nothing and
+		// leave the next request above the rail again.
+		if c.TargetTokens >= c.RailTokens {
+			c.TargetTokens = c.RailTokens * 3 / 4
+		}
+	}
+	// dsh's chunkMin is 1000 tokens for one cut; below that the cache break is
+	// pure loss (design §12.7(b)).
+	if c.MinFoldBytes <= 0 {
+		c.MinFoldBytes = 4096
+	}
+	// Zero means the default cap, not "unlimited": one event must not fold the
+	// whole history (design §12.6 budget). A value below the minimum would make
+	// every event impossible, so it is raised to the minimum.
+	//
+	// This caps one chunk; one event may drain up to foldMaxChunksPerEvent of
+	// them (design §12.7(d)). A whole-event cap would stop the drain after ~2
+	// blocks, which is the shallow fold §12.7(b) measured as worse than none.
+	if c.MaxFoldBytes == 0 {
+		c.MaxFoldBytes = 262144
+	}
+	if c.MaxFoldBytes > 0 && c.MaxFoldBytes < c.MinFoldBytes {
+		c.MaxFoldBytes = c.MinFoldBytes
+	}
+	if c.LargeBlockTokens <= 0 {
+		c.LargeBlockTokens = 32000
 	}
 	if c.RetentionDays <= 0 {
 		c.RetentionDays = int(archiveRetention / (24 * time.Hour))
@@ -114,6 +187,16 @@ type liveCompactObservation struct {
 	driftAt         int
 	driftFromTail   int
 	parseMillis     int64
+	// gate is the rail decision taken on the request path (design §12.6).
+	gateDecision string
+	gateEst      int
+	gateGrowth   int
+	// gateProjected is the rail input in upstream tokens when the session has a
+	// calibration sample, estimator tokens otherwise.
+	gateProjected int
+	// wouldFoldTokens is what this request's fold replaces (sticky plus new).
+	// In shadow it is the rehearsal's answer, not a rewrite.
+	wouldFoldTokens int
 }
 
 // isMessagesPath reports whether a proxied path is the main Messages endpoint.
@@ -154,7 +237,7 @@ func (s *Server) liveCompactDisabled() bool {
 // hand the same turn to recordLiveCompactUsage (or abandonLiveCompactTurn when
 // the upstream call failed) so the log line can pair this request's estimate
 // with this request's usage.
-func (s *Server) observeLiveCompact(token string, body []byte) *liveCompactTurn {
+func (s *Server) observeLiveCompact(token string, body []byte, gate liveCompactGate) *liveCompactTurn {
 	cfg := s.liveCompact
 	if !cfg.Observes() || len(body) < cfg.MinBodyBytes {
 		return nil
@@ -162,7 +245,7 @@ func (s *Server) observeLiveCompact(token string, body []byte) *liveCompactTurn 
 	if s.liveCompactDisabled() {
 		return nil
 	}
-	turn := &liveCompactTurn{}
+	turn := &liveCompactTurn{gate: gate}
 	tokenCopy := token
 	// body comes from io.ReadAll in the handler and is never mutated after this
 	// point, so it can be shared with the worker instead of copied. A copy here
@@ -235,6 +318,11 @@ func (s *Server) analyzeLiveCompact(token string, turn *liveCompactTurn, body []
 		driftAt:         drift,
 		driftFromTail:   driftDistanceFromTail(previousLen, drift),
 		parseMillis:     parseMillis,
+		gateDecision:    turn.gate.decision,
+		gateEst:         turn.gate.est,
+		gateGrowth:      turn.gate.growth,
+		gateProjected:   turn.gate.projected,
+		wouldFoldTokens: turn.gate.wouldFoldTokens,
 	}
 	if final, totals, ready := turn.completeAnalysis(obs); ready {
 		s.logLiveCompact(token, final, totals)
@@ -249,6 +337,7 @@ func (s *Server) recordLiveCompactUsage(token string, turn *liveCompactTurn, tot
 	if turn == nil {
 		return
 	}
+	s.noteActualContext(token, totals)
 	if final, usage, ready := turn.completeTurn(totals); ready {
 		s.logLiveCompact(token, final, usage)
 	}
@@ -266,10 +355,11 @@ func (s *Server) logLiveCompact(token string, obs liveCompactObservation, totals
 	if !obs.foldAllowed {
 		scope = "observe-only"
 	}
-	log.Printf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d cand_blocks=%d cand_error_blocks=%d cand_tokens=%d cand_bytes=%d drift=%d drift_age=%d parse_ms=%d",
+	log.Printf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d cand_blocks=%d cand_error_blocks=%d cand_tokens=%d cand_bytes=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d would_fold_tokens=%d",
 		obs.mode, ShortToken(token), scope, obs.messages, obs.rounds, obs.closedRounds,
 		obs.keepRounds, obs.epoch, obs.estimatedInput, actual, obs.candidates, obs.errorCandidates,
-		obs.candidateTokens, obs.candidateBytes, obs.driftAt, obs.driftFromTail, obs.parseMillis)
+		obs.candidateTokens, obs.candidateBytes, obs.driftAt, obs.driftFromTail, obs.parseMillis,
+		obs.gateDecision, obs.gateEst, obs.gateGrowth, obs.gateProjected, obs.wouldFoldTokens)
 }
 
 // driftDistanceFromTail reports how far before the previous request's tail the

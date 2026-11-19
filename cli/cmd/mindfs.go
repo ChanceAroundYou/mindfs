@@ -91,9 +91,15 @@ func main() {
 	workflowParallelMainTreeFlag := flag.Bool("workflow-parallel-main-tree", true, "run tasks without independent worktrees in parallel on the shared main tree")
 	liveCompactModeFlag := flag.String("live-compact-mode", "", "context live-compact mode: off (default), shadow (measure only), on")
 	liveCompactKeepRoundsFlag := flag.Int("live-compact-keep-rounds", 0, "newest completed tool rounds kept verbatim (default 3)")
+	liveCompactKeepTailTokens := 0
 	liveCompactMinBlockTokensFlag := flag.Int("live-compact-min-block-tokens", 0, "minimum estimated tokens for a tool result to be folded (default 2000)")
 	liveCompactMinBodyBytes := 0
 	liveCompactMaxDriftMessages := 0
+	liveCompactRailTokens := 0
+	liveCompactTargetTokens := 0
+	liveCompactMinFoldBytes := 0
+	liveCompactMaxFoldBytes := 0
+	liveCompactLargeBlockTokens := 0
 	// 只由 config.json 填充；没有对应 flag（见 startupFlags.WebPushRelayURL）。
 	webPushRelayURL := ""
 	remove := flag.Bool("remove", false, "remove the managed directory")
@@ -127,9 +133,15 @@ func main() {
 		WorkflowParallelMainTree:    workflowParallelMainTreeFlag,
 		LiveCompactMode:             liveCompactModeFlag,
 		LiveCompactKeepRounds:       liveCompactKeepRoundsFlag,
+		LiveCompactKeepTailTokens:   &liveCompactKeepTailTokens,
 		LiveCompactMinBlockTokens:   liveCompactMinBlockTokensFlag,
 		LiveCompactMinBodyBytes:     &liveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages: &liveCompactMaxDriftMessages,
+		LiveCompactRailTokens:       &liveCompactRailTokens,
+		LiveCompactTargetTokens:     &liveCompactTargetTokens,
+		LiveCompactMinFoldBytes:     &liveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:     &liveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens: &liveCompactLargeBlockTokens,
 		WebPushRelayURL:             &webPushRelayURL,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -355,9 +367,15 @@ func main() {
 			WorkflowParallelMainTree:    *workflowParallelMainTreeFlag,
 			LiveCompactMode:             *liveCompactModeFlag,
 			LiveCompactKeepRounds:       *liveCompactKeepRoundsFlag,
+			LiveCompactKeepTailTokens:   liveCompactKeepTailTokens,
 			LiveCompactMinBlockTokens:   *liveCompactMinBlockTokensFlag,
 			LiveCompactMinBodyBytes:     liveCompactMinBodyBytes,
 			LiveCompactMaxDriftMessages: liveCompactMaxDriftMessages,
+			LiveCompactRailTokens:       liveCompactRailTokens,
+			LiveCompactTargetTokens:     liveCompactTargetTokens,
+			LiveCompactMinFoldBytes:     liveCompactMinFoldBytes,
+			LiveCompactMaxFoldBytes:     liveCompactMaxFoldBytes,
+			LiveCompactLargeBlockTokens: liveCompactLargeBlockTokens,
 		})
 	}()
 	if err := waitForServer(*addr, *tlsFlag, 8*time.Second); err != nil {

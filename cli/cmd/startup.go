@@ -39,9 +39,17 @@ type startupConfig struct {
 type startupLiveCompactConfig struct {
 	Mode             *string `json:"mode"`
 	KeepRounds       *int    `json:"keep_rounds"`
+	KeepTailTokens   *int    `json:"keep_tail_tokens"`
 	MinBlockTokens   *int    `json:"min_block_tokens"`
 	MinBodyBytes     *int    `json:"min_body_bytes"`
 	MaxDriftMessages *int    `json:"max_drift_messages"`
+	// Rail gate and fold budget (design §12.6). No CLI flags: these are node
+	// tuning knobs, not something to carry on every command line.
+	RailTokens       *int `json:"rail_tokens"`
+	TargetTokens     *int `json:"target_tokens"`
+	MinFoldBytes     *int `json:"min_fold_bytes"`
+	MaxFoldBytes     *int `json:"max_fold_bytes"`
+	LargeBlockTokens *int `json:"large_block_tokens"`
 }
 
 // startupWorkflowConfig 是工作流执行的节点本地开关。不配置 = 默认值（并行开启）。
@@ -88,9 +96,15 @@ type startupFlags struct {
 
 	LiveCompactMode             *string
 	LiveCompactKeepRounds       *int
+	LiveCompactKeepTailTokens   *int
 	LiveCompactMinBlockTokens   *int
 	LiveCompactMinBodyBytes     *int
 	LiveCompactMaxDriftMessages *int
+	LiveCompactRailTokens       *int
+	LiveCompactTargetTokens     *int
+	LiveCompactMinFoldBytes     *int
+	LiveCompactMaxFoldBytes     *int
+	LiveCompactLargeBlockTokens *int
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -190,6 +204,10 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		if flags.LiveCompactKeepRounds != nil && live.KeepRounds != nil && !explicit["live-compact-keep-rounds"] {
 			*flags.LiveCompactKeepRounds = *live.KeepRounds
 		}
+		// No CLI flag: the tail budget is node tuning, like the fold budget.
+		if flags.LiveCompactKeepTailTokens != nil && live.KeepTailTokens != nil {
+			*flags.LiveCompactKeepTailTokens = *live.KeepTailTokens
+		}
 		if flags.LiveCompactMinBlockTokens != nil && live.MinBlockTokens != nil && !explicit["live-compact-min-block-tokens"] {
 			*flags.LiveCompactMinBlockTokens = *live.MinBlockTokens
 		}
@@ -200,6 +218,21 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		}
 		if flags.LiveCompactMaxDriftMessages != nil && live.MaxDriftMessages != nil {
 			*flags.LiveCompactMaxDriftMessages = *live.MaxDriftMessages
+		}
+		if flags.LiveCompactRailTokens != nil && live.RailTokens != nil {
+			*flags.LiveCompactRailTokens = *live.RailTokens
+		}
+		if flags.LiveCompactTargetTokens != nil && live.TargetTokens != nil {
+			*flags.LiveCompactTargetTokens = *live.TargetTokens
+		}
+		if flags.LiveCompactMinFoldBytes != nil && live.MinFoldBytes != nil {
+			*flags.LiveCompactMinFoldBytes = *live.MinFoldBytes
+		}
+		if flags.LiveCompactMaxFoldBytes != nil && live.MaxFoldBytes != nil {
+			*flags.LiveCompactMaxFoldBytes = *live.MaxFoldBytes
+		}
+		if flags.LiveCompactLargeBlockTokens != nil && live.LargeBlockTokens != nil {
+			*flags.LiveCompactLargeBlockTokens = *live.LargeBlockTokens
 		}
 	}
 	router := cfg.Router
