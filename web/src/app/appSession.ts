@@ -6,6 +6,7 @@
 
 import { normalizeFastService } from "./appTask";
 
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { sessionKeyNodeId, scopeSessionKey } from "../shared/scope";
 import type { SessionPresence } from "../shared/sessionPresence";
 import type { SessionAuxFlags } from "../shared/sessionTypes";
@@ -169,9 +170,8 @@ export function applyPendingToMultiProjectGroups(
   pendingByKey: Record<string, boolean>,
   awaitingByKey?: Record<string, boolean>,
 ): MultiProjectSessionGroup[] {
-  return groups.map((group) => ({
-    ...group,
-    sessions: group.sessions.map((session) => {
+  return groups.map((group) => {
+    const sessions = group.sessions.map((session) => {
       const key = scopeSessionKey(group._nodeId || "", group.rootId, session.key || session.session_key);
       const next: any = {
         ...(session as any),
@@ -194,8 +194,10 @@ export function applyPendingToMultiProjectGroups(
         }
       }
       return next as SessionItem;
-    }) as SessionItem[],
-  }));
+    }) as SessionItem[];
+    // 盖章后重排：在跑的会话压过已完成的会话（排序规则见 sessionListMerge）。
+    return { ...group, sessions: mergeSessionItems(sessions, []) };
+  });
 }
 export function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {
   const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];

@@ -360,9 +360,10 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
       setMultiProjectSessionGroups((prev) => {
         const prevList = Array.isArray(prev) ? prev : [];
         const scopeOf = (g: any) => `${String(g?._nodeId || "").trim()}::${String(g?.rootId || "")}`;
-        // 分组是按**空数组**重建的（服务端 payload 里没有 activity_at），
-        // 而 activity_at 是客户端在 stream 事件上推进的覆盖层 —— 不继承的话，
-        // 完成灭灯触发的那次重拉会把时间从「刚刚」打回最后一条对话消息的时间。
+        // 分组是按**空数组**重建的：服务端 payload 不带「正在回复」这条旁路真值，
+        // 也不带本节点 stream 推进过的时间覆盖层。重建后必须立刻用 pending 真相表
+        // 重新盖章（见末尾 applyPendingToMultiProjectGroups）—— 它同时负责组内重排，
+        // 否则重拉那一刻正在跑的会话会掉回服务端 updated_at 决定的旧位置。
         const nextMap = new Map(nextGroups.map((g) => [scopeOf(g), g]));
         const ridSet = new Set(nextGroups.map((g) => String(g.rootId || "")).filter(Boolean));
         const queriedNids = new Set(nodeIds); // 本轮实际请求过的节点

@@ -5,12 +5,14 @@ export type PinAwareSessionItem = {
   root_id?: string;
   updated_at?: string;
   pinned_at?: string | null;
+  /** 服务端 `/api/replying-sessions` 的旁路真值，由前端盖上（见 appSession.applyPendingToMultiProjectGroups）。 */
+  pending?: boolean;
 };
 
 /**
  * 项目/会话按活动时间重排的迟滞阈值（毫秒）。
  *
- * 两个都在进行的会话会每 100ms 交替推进 activity_at，若比较器按毫秒
+ * 两个都在跑的会话会每 100ms 交替推进 `updated_at`（本节点 stream 事件），若比较器按毫秒
  * 直接比大小，列表会疯狂交替抖动。差距小于该阈值时视为"同时在跑"，
  * 保持原有相对顺序（fallback 到稳定的 compareStable），不重排。
  */
@@ -115,15 +117,13 @@ export function mergeSessionItems<T extends PinAwareSessionItem>(
 }
 
 /**
- * 全量重拉（`replace`）时把客户端流式时间戳从旧列表继承回来。
+ * 把控制面下发的置顶快照盖回列表项，并按现行比较器重排。
  *
- * 服务端 `updated_at` 是**最后一条对话消息**的落库时间：agent 连跑 12 分钟工具时它一直
- * 停在那 12 分钟前。`activity_at` 是客户端在 stream 事件上推进的覆盖层（不落盘），
- * 所以全量替换会把它整条丢掉 —— 表现为「完成灭灯后，时间从『刚刚』跳回『12m』」。
- *
- * 只做继承，**不做新旧判定**：是否该保留由 `mergeSessionItems` 那一条规则统一决定
- * （`activity_at` 一旦落后于 `updated_at` 就删），两处各写一遍迟早分叉。
- * 键按 `_nodeId::sessionKey` 作用域 —— 与归并同构，跨节点同名会话不会互相继承。
+ * 重排必须走 `compareSessionItems`：调用方（全量重拉、置顶快照回填）拿到的条目
+ * 可能带着 `pending`，若只排序不认它，正在回复的会话会被打回服务端 `updated_at`
+ * 决定的旧位置。`pending` 是旁路真值、不随服务端 payload 下发，重拉后由
+ * `applyPendingToMultiProjectGroups`（多项目）或 `sessionsWithPresence`（单项目）
+ * 重新盖上；本函数不负责继承，也不要在这里另写一套"新旧判定"。
  */
 export function applyPinnedSnapshotToSessions<T extends PinAwareSessionItem>(
   items: T[],
@@ -162,6 +162,14 @@ function compareSessionItems(left: PinAwareSessionItem, right: PinAwareSessionIt
   const rightPinned = !!right.pinned_at;
   if (leftPinned !== rightPinned) {
     return leftPinned ? -1 : 1;
+  }
+  // 「正在回复」是硬分桶：服务端 updated_at 是最后一条对话消息的落库时间，
+  // agent 连跑十分钟工具时它一直停在起跑时刻，只按它排会让在跑的会话被刚完成的压下去。
+  // pending 来自 /api/replying-sessions（轮询 + 本节点实时流），是「它现在还在跑」的真值。
+  const leftPending = !!left.pending;
+  const rightPending = !!right.pending;
+  if (leftPending !== rightPending) {
+    return leftPending ? -1 : 1;
   }
   const leftUpdated = sessionActivityTime(left);
   const rightUpdated = sessionActivityTime(right);

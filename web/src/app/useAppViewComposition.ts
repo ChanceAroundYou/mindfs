@@ -10,6 +10,7 @@ import { useAppWorkspaceActions } from "./useAppWorkspaceActions";
 import { GitFileStat, MultiProjectSessionGroup, SessionItem, SlashCommandResult } from "./appSession";
 import { ManagedRootPayload, shouldShowUpdateButton, updateButtonLabel, updateSummaryText } from "./appMisc";
 import { applyPresenceToItems } from "../shared/sessionPresence";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { MainViewMode, buildFileScrollKey } from "./appPath";
 import type { URLState } from "./appPath";
 import { useAppWorkspaceBoardComposition } from "./useAppWorkspaceBoardComposition";
@@ -103,7 +104,9 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
       const pending = !!multiProjectPendingByKey[rootSessionKey(root, key)];
       return pending === !!item.pending ? item : ({ ...item, pending } as SessionItem);
     });
-    return applyPresenceToItems(projected);
+    // 单项目列表同样要按 pending 重排：只按服务端 updated_at 排，正在回复的会话会被
+    // 刚完成的会话压到下面（updated_at 停在最后一条对话消息，长工具回合时一直是旧值）。
+    return applyPresenceToItems(mergeSessionItems(projected, []));
   }, [sessions, currentRootId, multiProjectPendingByKey, rootSessionKey]);
 
   const groupsWithPresence = useMemo(
