@@ -228,7 +228,8 @@ const headerJsx = projectRow.slice(projectRow.indexOf("<div style={workspaceProj
 assert.doesNotMatch(headerJsx, /role="button"[\s\S]*?onClick=\{\(\) => onOpenProject/, "the whole project header must not be a click target");
 assert.match(projectRow, /onClick=\{openProject\}/, "the project name button is what opens the project board");
 assert.match(projectRow, /onClick=\{\(\) => onToggle\(group\.key\)\}/, "the chevron toggles collapse");
-// 折叠键刻意无框无底：只看得见箭头，热区仍靠 40×24 撑（12px 图标点不准）
+// 折叠键刻意无框无底：只看得见箭头，热区由 24×24 撑（b25e4b3a 按用户反馈收窄，
+// 原 40×24 占了太多横向空间；G-ND 的 e2e 用几何断言 22–26px 钉住这一版）。
 assert.match(
   styles,
   /export const workspaceProjectToggleStyle[\s\S]*?border: "none"[\s\S]*?background: "transparent"/,
@@ -236,8 +237,8 @@ assert.match(
 );
 assert.match(
   styles,
-  /export const workspaceProjectToggleStyle[\s\S]*?minWidth: "40px"[\s\S]*?height: "24px"/,
-  "the collapse target must stay a comfortable 40x24, not a 12px icon",
+  /export const workspaceProjectToggleStyle[\s\S]*?minWidth: "24px"[\s\S]*?height: "24px"/,
+  "the collapse target must stay a 24x24 hot zone, not a 12px icon",
 );
 // 内边距只由 DefaultListView 的 topContent 包裹层给（移动端 16/16/0，桌面 8/16/24）。
 // 工作台根原来还叠了一层 12px，两个视图的边距因此对不上，底边宽出一截。
