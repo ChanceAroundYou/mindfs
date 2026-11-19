@@ -475,3 +475,38 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 **APK 已构建未发布：** `dist/mindfs_v0.5.5-1120-18-g056423c9_android.apk`（7.4 MB，`versionCode=5051121`、`versionName=v0.5.5-1120-18-g056423c9`、证书 `CN=MindFS`、sha256 `8061ac25df9f29a16bd1d241d80f82587b54daff770b8a464679aa358e73de30`）。**未打 tag、未推 GitHub** —— 发布是对外动作，等用户确认。
 
 **端到端仍未验：** 本机在跑的进程还是重启前的旧二进制（`/api/replying-sessions` 无 `completedEpoch`），要等用户重启后账本才生效；没有连接安卓设备的 adb 目标，真机验收仍需用户执行。
+
+## 第三轮：兜底闹钟从不送达（2026-11-19 晚，Scope: G-MX）
+
+**用户报告（1121 装后）**：「还是不行 这几分钟内没有任何会话完成的提示 我打开 app 到前台才出现提示」。
+
+**证据（nginx 访问日志 8 小时 + 本机进程，2026-11-19）**
+
+| 观测 | 事实 |
+|---|---|
+| 手机 192.168.1.149 → `home.xiaokubao.space/mindfs` | 原生轮询 UA `Dalvik/2.1.0 (…Android 17; PLJ110…)` 打 `/wait?timeout=20`，WebView 用 `…wv` UA |
+| 存活窗口 | 13:14–13:17、15:08–15:19、16:23–16:40、19:19–19:21、20:16（1 分钟）、20:39–20:48 |
+| 静默窗口 | **110 / 63 / 158 / 54 / 22 分钟**，每段都以「用户打开 App」的同一分钟结束 |
+| 原生与 WebView | **同一分钟一起出现、一起消失**；没有一分钟是「App 在后台、原生轮询还活着」 |
+| `completed_since` | 8 小时 0 次（本机无 `completedEpoch`，客户端游标无从播种 —— 不能据此判断 APK 版本） |
+| 本机进程 | `PID 126`，`/proc/126/exe` 指向已删除路径，启动于 17:33；二进制 18:27 被替换 ⇒ 跑的是启动前的旧二进制 |
+| 通知侧 | 渠道 `mindfs_reply_alert_v5` 未静音、总开关开、勿扰关、电池优化已豁免 |
+
+**结论**：不是通知被拦，是**后台没有任何东西在跑**。切后台 1–4 分钟进程就被 ROM 冻死/清掉，而 15 分钟一次的 `setAndAllowWhileIdle`（inexact）**一次都没响** —— 国产 ROM 的省电模式会无限推迟 inexact 闹钟。第 4 次修同一症状，因此按系统化调试的规矩停下来问了用户方向，用户选择「精确闹钟兜底」。
+
+**改动**（`Scope: G-MX`）
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| 闹钟 API | `setAndAllowWhileIdle`（inexact） | `setAlarmClock(AlarmClockInfo)`：AOSP 不延迟、Doze/待机同样唤醒、**不需要** `SCHEDULE_EXACT_ALARM` 授权；以它送达的广播自带「允许启动前台服务」豁免 |
+| 间隔 | 15 分钟 | **3 分钟**（`WATCHDOG_INTERVAL_MS`，接收器取同一常量，不再写字面量） |
+| `onTaskRemoved` | 1 分钟后 | 10 秒后 |
+| 暂停 | 不取消闹钟 | `pausePolling()` 取消（否则 3 分钟后闹钟会把轮询拉回来） |
+| 可观测性 | 无 | `ACTION_WATCHDOG` 写 `PREF_LAST_WAKE`；诊断串新增「巡检=每 3 分钟 · 最近唤醒=…」 |
+| 状态栏 | — | 常驻闹钟图标（`setAlarmClock` 的可见性代价），点它回到 App |
+
+**为什么「最近唤醒」是关键证据**：闹钟按时送达 = 时间戳持续前进（ROM 只是冻进程）；时间戳停住 = ROM 直接 force-stop 并取消了闹钟（系统语义），届时唯一出路是厂商白名单（自启动 / 后台无限制 / 锁定后台），不是继续改代码。
+
+**门禁**：`npx vitest run web/tests/android-background-poller-liveness.test.mjs` 6 passed；两个变异（间隔退回 15 分钟、pause 去掉 `cancelWatchdog()`）各自打红对应用例后还原复绿；`make test-android` BUILD SUCCESSFUL。
+
+**残留**：仍不承诺必达（force-stop 会取消闹钟）；未做真机验收（无 adb 目标）；完成账本要在本机 `sudo systemctl restart mindfs` 后才生效 —— 与本次闹钟修复相互独立，账本负责「醒来后补发」，闹钟负责「定期醒来」。

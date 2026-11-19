@@ -90,10 +90,29 @@ test("电池优化白名单状态可见、可申请", async () => {
   assert.match(service, /电池优化=/, "诊断串必须报告电池优化状态");
 });
 
-test("定时唤醒兜底（Doze 下限 15 分钟）", async () => {
+test("定时唤醒兜底（3 分钟一次 setAlarmClock）", async () => {
   const service = read(SERVICE);
+  const receiver = read("android/app/src/main/java/com/mindfs/app/ReplyPollerWatchdogReceiver.java");
   assert.match(service, /ACTION_WATCHDOG/, "缺 watchdog 动作");
-  assert.match(service, /setAndAllowWhileIdle/, "闹钟必须能在 Doze 下唤醒");
+  // 2026-11-19：nginx 实测 8 小时里 110/63/158/54/22 分钟六段静默，15 分钟一次的
+  // setAndAllowWhileIdle **一次都没响**（inexact 闹钟在国产 ROM 的省电模式里被无限推迟）。
+  // 改为 setAlarmClock：AOSP 保证不延迟、Doze 下同样唤醒，且不需要 SCHEDULE_EXACT_ALARM
+  // 授权（setExactAndAllowWhileIdle 未授权会抛 SecurityException）。
+  assert.match(service, /WATCHDOG_INTERVAL_MS = 3 \* 60_000L/, "巡检间隔必须是 3 分钟，15 分钟等于没有兜底");
+  assert.match(service, /setAlarmClock\(/, "必须用 setAlarmClock，inexact 闹钟会被省电模式吞掉");
+  assert.doesNotMatch(service, /alarms\.setAndAllowWhileIdle/, "回退到 inexact 闹钟等于回到「后台完全没提醒」");
+  assert.match(receiver, /ReplyPollerService\.WATCHDOG_INTERVAL_MS/, "接收器不能自己写一个间隔字面量");
+  assert.doesNotMatch(receiver, /15 \* 60_000L/, "15 分钟的旧间隔必须消失");
   assert.match(service, /scheduleWatchdog\(\)/, "resumePolling 必须续约 watchdog");
   assert.match(service, /cancelWatchdog\(\)/, "stopAll 必须取消 watchdog");
+  // 间隔缩到 3 分钟后，pause 不取消巡检 = 「暂停」最多维持 3 分钟。
+  assert.match(
+    service,
+    /private void pausePolling\(\) \{[\s\S]{0,300}?cancelWatchdog\(\);/,
+    "暂停必须取消巡检，否则下一次闹钟会把轮询重新拉起来",
+  );
+  // 闹钟有没有真的响，是区分「ROM 冻进程」与「ROM 直接清掉并取消闹钟」的唯一证据：
+  // 前者时间戳持续前进，后者停在某一点。诊断串必须把它暴露出来。
+  assert.match(service, /PREF_LAST_WAKE/, "必须记录最近一次 watchdog 唤醒");
+  assert.match(service, /最近唤醒=/, "诊断串必须展示最近唤醒时间");
 });

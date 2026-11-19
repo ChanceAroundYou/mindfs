@@ -210,6 +210,12 @@ public class ReplyPollerService extends Service {
         if (ACTION_WATCHDOG.equals(action)) {
             // Doze/待机里进程可能被清掉、前台服务也可能被系统停掉；这条唤醒只负责
             // 「把轮询再拉起来」。resumePolling 幂等，正常运行时时它什么也不改。
+            // 记下时间戳：闹钟到底有没有响，是区分「ROM 冻进程」与「ROM 直接清掉并
+            // 取消闹钟（force-stop 语义）」的唯一证据 —— 前者这里会持续更新，后者会停在
+            // 某个时间点不再前进。
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putString(PREF_LAST_WAKE, new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(new Date()))
+                .apply();
             resumePolling();
             return START_STICKY;
         }
@@ -370,17 +376,27 @@ public class ReplyPollerService extends Service {
         scheduleWatchdog();
     }
 
-    /** 15 分钟一次的兜底唤醒（Doze 下 setAndAllowWhileIdle 的真实下限）。 */
-    private static final long WATCHDOG_INTERVAL_MS = 15 * 60_000L;
+    /**
+     * 兜底唤醒间隔（也是「App 在后台时提醒最晚会迟到多久」）。
+     *
+     * <p>2026-11-19 的 nginx 实测：切后台 1–4 分钟后原生 /wait 与 WebView 轮询**同时**消失，
+     * 8 小时里 110/63/158/54/22 分钟六段静默，每一段都以「用户打开 App」结束 —— 进程被
+     * ROM 冻死/清掉，而 15 分钟一次的 {@code setAndAllowWhileIdle} 一次都没把它拉回来
+     * （inexact 闹钟在国产 ROM 的省电模式里会被无限推迟）。改为 {@code setAlarmClock}：
+     * AOSP 保证不延迟、Doze 与待机同样唤醒，间隔按「用户能接受的最大迟到」定为 3 分钟。
+     * 代价是状态栏会常驻闹钟图标（系统对 setAlarmClock 的可见性要求）。</p>
+     */
+    static final long WATCHDOG_INTERVAL_MS = 3 * 60_000L;
     private static final int WATCHDOG_REQUEST_CODE = 750100;
+    private static final String PREF_LAST_WAKE = "last_wake";
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         // 从最近任务里划掉不等于「别提醒了」（manifest 里 stopWithTask=false）。划卡之后
-        // 进程仍可能被 ROM 顺手清掉，这里先把兜底闹钟提前到 1 分钟后 —— 真被清掉时，
-        // 15 分钟的窗口太长，用户划一下就会以为「后台提醒又没了」。
+        // 进程仍可能被 ROM 顺手清掉，这里先把兜底闹钟提前到 10 秒后 —— 真被清掉时要马上
+        // 回来，等满 3 分钟的巡检窗口用户就会发现「划一下提醒就没了」。
         if (running) {
-            scheduleWatchdogAt(this, 60_000L);
+            scheduleWatchdogAt(this, 10_000L);
         }
         super.onTaskRemoved(rootIntent);
     }
@@ -405,17 +421,29 @@ public class ReplyPollerService extends Service {
         try {
             PendingIntent pending = watchdogPendingIntent(context);
             long at = System.currentTimeMillis() + Math.max(0L, delayMillis);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                // setAndAllowWhileIdle 而不是 setExactAndAllowWhileIdle：后者在 Android 14+
-                // 需要 SCHEDULE_EXACT_ALARM 特殊权限，没授权会直接抛 SecurityException；
-                // 提醒差几分钟可以接受，因此不做精确闹钟。
-                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending);
-            } else {
-                alarms.set(AlarmManager.RTC_WAKEUP, at, pending);
-            }
+            // setAlarmClock：AOSP 保证不延迟，Doze/省电模式里同样唤醒，而且是**唯一**
+            // 不需要 SCHEDULE_EXACT_ALARM 授权的精确闹钟（setExactAndAllowWhileIdle 在
+            // Android 12+ 未授权会直接抛 SecurityException，国产 ROM 还会把 inexact 闹钟
+            // 无限推迟 —— 这正是 2026-11-19 实测「闹钟一次都没响」的原因）。
+            // showIntent：用户点状态栏的闹钟图标时回到 App。
+            alarms.setAlarmClock(
+                new AlarmManager.AlarmClockInfo(at, watchdogShowIntent(context)),
+                pending
+            );
         } catch (RuntimeException ex) {
             Log.w(TAG, "watchdog schedule failed", ex);
         }
+    }
+
+    private static PendingIntent watchdogShowIntent(Context context) {
+        Intent intent = new Intent(context, MainActivity.class)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return PendingIntent.getActivity(
+            context,
+            WATCHDOG_REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
     }
 
     static void cancelWatchdog(Context context) {
@@ -444,6 +472,9 @@ public class ReplyPollerService extends Service {
     private void pausePolling() {
         Log.i(TAG, "pause polling");
         running = false;
+        // 必须取消巡检：间隔缩到 3 分钟后，忘了这一句就等于「暂停」最多维持 3 分钟 ——
+        // 下一次 watchdog 会把服务重新拉起来。stopAll 早已取消，这里补齐。
+        cancelWatchdog();
         stopNodeLoops();
         stopForegroundCompat();
         stopSelf();
@@ -1382,7 +1413,12 @@ public class ReplyPollerService extends Service {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String startedAt = prefs.getString(PREF_STARTED_AT, "");
         String lastAlert = prefs.getString(PREF_LAST_ALERT, "");
+        String lastWake = prefs.getString(PREF_LAST_WAKE, "");
         sb.append(" · 轮询始于=").append(startedAt.isEmpty() ? "未启动" : startedAt);
+        // 巡检间隔与「最近唤醒」放在一起：数值一直不前进 = 系统在清后台并取消了闹钟，
+        // 这时唯一的出路是厂商白名单（自启动 / 后台无限制 / 锁定后台），不是再改代码。
+        sb.append(" · 巡检=每").append(WATCHDOG_INTERVAL_MS / 60_000L).append("分钟");
+        sb.append(" · 最近唤醒=").append(lastWake.isEmpty() ? "无" : lastWake);
         sb.append(" · 模式=").append(pollModeSummary(prefs.getString(PREF_DEBUG, "")));
         sb.append(" · 最近提醒=").append(lastAlert.isEmpty() ? "无" : lastAlert);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
