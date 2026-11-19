@@ -8709,10 +8709,10 @@ groups:
 
   # ── 任务收尾停在待审核 + 结果摘要进入任务卡 ──────────────────────────────
   - id: G-LX
-    title: 成功的一轮停在「待审核」，结果摘要写进任务行与共享卡片
+    title: 一轮结束停在「待审核」（成功与失败都算），结果摘要写进任务行与共享卡片
     kind: fix
     symptom: "工作流跑完后任务直接变成「已完成」终态、对话被禁用，用户只能新建任务才能继续说；同时任务列表/工作台卡片只显示第一条用户留言，和对话里的结果看起来毫无区别。现在一轮成功的执行只推进到 waiting_user（界面「待审核」），用户读完结果可以继续发消息追问，也可以显式点「完成」收口；结算后的可读结果写到 task.result_summary，项目看板与跨项目工作台的同一张卡片都会显示。"
-    why: "用户 2026-11-17 明确要求：完成不是自动终态，先进入可以继续对话的待审核状态；且 Router 必须产出可读 summary，任务列表不能只显示原始需求。必须保留：① `taskStatusFromRun` 只在 Run 投影为 success 时降为 waiting_user，失败/取消/等待审批的映射不变；`ProjectStatusFromRun` 仍保留 success 供 Run 历史与绑定守卫使用；② `projectWorkflowTaskStatus` 是唯一任务状态投影点，且终态/暂停任务不被覆盖；③ 回复结算按 **Run 投影**而不是任务状态决定 completed/failed/cancelled/waiting，否则成功回复会被写成 waiting_user；④ `PrepareNewUserTurn` 遇到已成功的绑定 Run 时不 supersede：不冻结 Run、不写 run_superseded、不改写已完成的回复，只把任务放回 pending 让新 Run 建立；⑤ summary 优先取最后一个成功 **Agent** 节点的可读输出，条件节点的 route 是簿记（加入 metadata 键），不能当结果；⑥ 结果摘要同时写在活动 summary（对话气泡）与 task.result_summary（卡片），直连回合用回复正文兜底；⑦ 卡片只在摘要非空时渲染 3 行结果块，项目看板与工作台共用 TaskCardRows，overview 投影必须携带 result_summary（字段级守卫会红）。"
+    why: "用户 2026-11-17 明确要求：完成不是自动终态，先进入可以继续对话的待审核状态；且 Router 必须产出可读 summary，任务列表不能只显示原始需求。必须保留：① `taskStatusFromRun` 把 Run 投影的 success 与 fail 都降为 waiting_user（一轮的成败不是任务的结论，失败证据仍在 Run 投影/回复行/NodeRun 输出里；G-NC 把 fail 也纳入），取消/等待审批的映射不变；`ProjectStatusFromRun` 仍保留 success 供 Run 历史与绑定守卫使用；② `projectWorkflowTaskStatus` 是唯一任务状态投影点，且终态/暂停任务不被覆盖；③ 回复结算按 **Run 投影**而不是任务状态决定 completed/failed/cancelled/waiting，否则成功回复会被写成 waiting_user；④ `PrepareNewUserTurn` 遇到已终态（成功/失败/取消）的绑定 Run 时不 supersede：不冻结 Run、不写 run_superseded、不改写已结算的回复，只把任务放回 pending 让新 Run 建立（G-NC 扩展到失败与取消）；⑤ summary 优先取最后一个成功 **Agent** 节点的可读输出，条件节点的 route 是簿记（加入 metadata 键），不能当结果；⑥ 结果摘要同时写在活动 summary（对话气泡）与 task.result_summary（卡片），直连回合用回复正文兜底；⑦ 卡片只在摘要非空时渲染 3 行结果块，项目看板与工作台共用 TaskCardRows，overview 投影必须携带 result_summary（字段级守卫会红）。"
     boundary: "只改「一轮结束后任务落在哪个状态」与「结果摘要的产出/展示」；不改 workflow 引擎/DAG/Loop/HumanGate 语义（G-LE/G-LI），不改 Router P0 决策语义（G-LP），不改历史任务的一次性转换（G-LK），不迁移存量已 success 的任务。"
     files:
       - server/internal/kanban/types.go
@@ -8725,6 +8725,7 @@ groups:
       - server/internal/kanban/service_activities.go
       - server/internal/kanban/service_user_turn.go
       - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/service_reopen_test.go
       - server/internal/kanban/workflow_test.go
       - server/internal/kanban/activity_service_test.go
       - server/internal/kanban/workflow_driver_test.go
@@ -8739,12 +8740,13 @@ groups:
     tests:
       - server/internal/kanban/workflow_test.go
       - server/internal/kanban/activity_service_test.go
+      - server/internal/kanban/service_reopen_test.go
       - server/internal/api/http_tasks_overview_card_parity_test.go
       - web/tests/task-card-result.test.mjs
     anchors:
       - 'server/internal/kanban/workflow_engine.go:func taskStatusFromRun(run *WorkflowRun) string {'
       - 'server/internal/kanban/workflow_driver_loop.go:status := taskStatusFromRun(run)'
-      - 'server/internal/kanban/service_user_turn.go:if ProjectStatusFromRun(run) == StatusSuccess {'
+      - 'server/internal/kanban/service_user_turn.go:if isTerminalStatus(ProjectStatusFromRun(run)) {'
       - 'server/internal/kanban/service_activities.go:switch ProjectStatusFromRun(run) {'
       - 'server/internal/kanban/service_activities.go:func workflowReplySummary(ctx context.Context, store *TaskStore, run *WorkflowRun) string {'
       - 'server/internal/kanban/service_activity_output_text.go:"route": true,'
@@ -9967,8 +9969,6 @@ groups:
       - 'server/internal/kanban/router_brief_cap.go:func capSituationBrief(brief *SituationBrief) *SituationBrief {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteTimeoutKeepsRecordedActions(t *testing.T) {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteNonTimeoutSalvageKeepsActionsWithoutTimeoutNotice(t *testing.T) {'
-  # 撞号说明：本轮开发时同工作区另一条会话的归档计划已在 docs/plans/README.md 里
-  # 自称 Scope: G-NB（尚未登记本表）。为避免两组抢同一个 ID，本组取 G-NC。
   - id: G-NC
     title: 一轮失败不封板、终态任务可「回到待审核」继续对话
     kind: fix
