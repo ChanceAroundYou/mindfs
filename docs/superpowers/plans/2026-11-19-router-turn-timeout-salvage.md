@@ -70,6 +70,7 @@
 | `TestRouterRouteTimeoutKeepsRecordedActions` | 超时前 recorded 的 `say` 被应用、决策 applied、占位回复落正文、不回落、系统行说「已保留并执行」 |
 | `TestRouterRouteTimeoutWithoutActionsNotifiesAndFallsBack` | 无动作的超时照旧回落并复用占位，同时有可见系统行 |
 | `TestRouterRouteNonTimeoutFailureWritesNoNotice` | 非超时失败不写系统行（防止下一个人顺手放宽） |
+| `TestRouterRouteNonTimeoutSalvageKeepsActionsWithoutTimeoutNotice` | 非超时失败（CLI 崩溃）也要救回已记录动作，但**不能**写「超过 90 秒」的假告知：救回与超时告知是两件事 |
 | `TestBriefTaskStatusFollowsRunProjection` | 任务行 `waiting_user` + 节点 `running` → 派生 `running`；暂停/终态覆盖；无 Run 保持原值 |
 
 变异验证（逐个打红后还原）：
@@ -77,6 +78,8 @@
 1. 关掉 salvage 分支 → `...KeepsRecordedActions` 红（决策永远等不到 applied）。
 2. `notifyRouterTurnTimeout` 直接 return → 两条超时用例同时红。
 3. `briefTaskStatus` 退回 `return task.Status` → brief 用例红。
+4. 救回分支的告知行退回无条件调用 → `...NonTimeoutSalvageKeepsActionsWithoutTimeoutNotice`
+   红：CLI 崩溃被写成「调度回合超过 90 秒未完成」（2026-11-19 收尾复验发现并修掉）。
 
 回归：`go test ./server/internal/kanban/ -count=1` 全绿（含既有的
 `TestRouterDeliverToolRejectsWithoutSingleActiveNode`、`TestRouterRouteRefreshesQueuedBrief`、

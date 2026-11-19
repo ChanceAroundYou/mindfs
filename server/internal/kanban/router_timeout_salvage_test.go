@@ -152,6 +152,44 @@ func TestRouterRouteTimeoutWithoutActionsNotifiesAndFallsBack(t *testing.T) {
 	}
 }
 
+// 非超时失败也要救回动作，但不能谎称「超过 90 秒」：告知行只对超时写。
+// 「救回」与「超时告知」是两件事，救回分支最容易顺手把两者焊死。
+func TestRouterRouteNonTimeoutSalvageKeepsActionsWithoutTimeoutNotice(t *testing.T) {
+	f := newRouteFixture(t, RouterModeRoute)
+	f.svc.SetRouterAgent(&failingRouterAgent{
+		calls: []scriptedRouterCall{{
+			tool: "router_say",
+			args: map[string]any{"body": "崩溃前已经决定的回复"},
+		}},
+		cause: errors.New("router cli crashed"),
+	})
+	ctx := context.Background()
+
+	_, placeholder, err := f.activity.CreateUserActivity(ctx, "task-1", "帮我看下这个报错", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	decision := f.waitDecision(t, RouterDecisionApplied)
+	if len(decision.Actions) != 1 || decision.Actions[0].Kind != RouterActionSay {
+		t.Fatalf("salvaged actions = %#v, want the recorded say", decision.Actions)
+	}
+	act := f.reloadActivity(t, placeholder.ID)
+	if act.Status != ActivityStatusCompleted || act.Body != "崩溃前已经决定的回复" {
+		t.Fatalf("placeholder = status %q body %q, want the salvaged say", act.Status, act.Body)
+	}
+	if runs := f.runs(t); len(runs) != 0 {
+		t.Fatalf("salvaged decision fell back to a legacy run: %#v", runs)
+	}
+	// 告知行在决策落 applied 之后才写，给一个短窗口再看：非超时不该有任何这样的行。
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if notice := findTimeoutNotice(t, f, ctx); notice != nil {
+			t.Fatalf("non-timeout salvage wrote a timeout notice: %#v", notice)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // 非超时失败（例如 CLI 崩溃）不写系统行：回落本身就会给出一条旧路径回复，
 // 再插一行只是噪声。这条钉住「只对超时可见告知」的范围，防止下一个人顺手放宽。
 func TestRouterRouteNonTimeoutFailureWritesNoNotice(t *testing.T) {

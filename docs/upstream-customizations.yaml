@@ -9944,7 +9944,7 @@ groups:
     title: Router 回合失败不再丢弃已记录的动作，超时对用户可见，brief 状态跟随 Run 投影
     kind: fix
     symptom: "任务 #86（看板归档）2026-11-19 11:34:59 模型已把 router_ask_user 记成 recorded，11:35:02 撞 90s 死线、persistTurnBlocks 在已取消的 ctx 上失败，整轮被判 fallback、动作被丢弃（actions_json=[]），旧路径还另起了一条 Run —— 用户什么都没看到，原话「你只说了半句话 根本没有总结完」。同一进程当天 4 次复现（latency_ms 全部 9001x），成功回合耗时 52.6–81.0 s。另：brief 里 latest_run.status / active_execution.status 直接抄 task.Status，任务行写着 waiting_user、节点却在 running 时，Router 被告知「没有活动执行」。"
-    why: "必须保留：(1) Router 写工具返回 {\"status\":\"recorded\"} 就是已发生的事实，回合后置失败不能把它抹掉 —— runRouterTurn 的错误分支改走 finishTurnFailure，把 collector.snapshot() 照旧过 validateRouterActions 后按 route 路径应用（独立 context.Background()），救回即不回落，否则旧路径会另起 Run 把同一句话执行两遍。(2) 超时必须对用户可见：写一条 type=attention / role=system 的系统行，ID 为 router-turn-timeout:<decisionID> 走 InsertOrIgnore，重放不会写出第二行；非超时失败不写（回落本身已有回复，再插一行只是噪声）。(3) briefTaskStatus 以 Run 投影为准，但两份证据都可能落后：投影说在跑就采信投影，投影说空闲而任务行说在跑时采信任务行；暂停与任务终态仍以任务行为准。与 G-MZ 的 workflowRunHasOpenNodes 闸门叠加使用。"
+    why: "必须保留：(1) Router 写工具返回 {\"status\":\"recorded\"} 就是已发生的事实，回合后置失败不能把它抹掉 —— runRouterTurn 的错误分支改走 finishTurnFailure，把 collector.snapshot() 照旧过 validateRouterActions 后按 route 路径应用（独立 context.Background()），救回即不回落，否则旧路径会另起 Run 把同一句话执行两遍。(2) 超时必须对用户可见：写一条 type=attention / role=system 的系统行，ID 为 router-turn-timeout:<decisionID> 走 InsertOrIgnore，重放不会写出第二行；非超时失败不写（回落本身已有回复，再插一行只是噪声）；这条闸门同样管住救回分支 —— CLI 崩溃也会救回已记录动作，但绝不能写成「超过 90 秒」的假消息。(3) briefTaskStatus 以 Run 投影为准，但两份证据都可能落后：投影说在跑就采信投影，投影说空闲而任务行说在跑时采信任务行；暂停与任务终态仍以任务行为准。与 G-MZ 的 workflowRunHasOpenNodes 闸门叠加使用。"
     boundary: "不切换 router.model（用户明确保持 ok）；不改 90s 超时值；不改节点间产出传递（WorkflowPromptPlaceholders 仍只有 previous_input/task_initial_input/task_number，workflow-debug 的 locate 读不到 input 产出是另一条产品缺口）；不把已 recorded 的动作当作完整决策（仍逐条校验，非法照样拒绝）；不动 shadow / coordinate 事件的失败语义（事件回合不回落、不写这条系统行）。router_brief_cap.go 是纯移动（为守 500 行硬线拆出体积裁剪函数），行为零变化。"
     files:
       - server/internal/kanban/router_service.go
@@ -9965,3 +9965,4 @@ groups:
       - 'server/internal/kanban/router_brief.go:Status:           briefTaskStatus(run, task),'
       - 'server/internal/kanban/router_brief_cap.go:func capSituationBrief(brief *SituationBrief) *SituationBrief {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteTimeoutKeepsRecordedActions(t *testing.T) {'
+      - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteNonTimeoutSalvageKeepsActionsWithoutTimeoutNotice(t *testing.T) {'

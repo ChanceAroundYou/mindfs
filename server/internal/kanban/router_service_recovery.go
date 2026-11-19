@@ -82,8 +82,10 @@ func (rs *RouterService) salvageRouteActions(
 		decision.Status = RouterDecisionFailed
 		decision.Error = err.Error()
 		rs.broadcast(decision)
-		// 动作只应用了一部分（或一条都没成功）：更要让用户知道这轮是被截断的。
-		rs.notifyRouterTurnTimeout(config, decision, len(actions))
+		// 动作只应用了一部分（或一条都没成功）：超时的话更要让用户知道这轮被截断了。
+		if isRouterTurnTimeout(cause) {
+			rs.notifyRouterTurnTimeout(config, decision, len(actions))
+		}
 		return true
 	}
 	if err := rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionApplied, note); err != nil {
@@ -94,7 +96,11 @@ func (rs *RouterService) salvageRouteActions(
 	rs.broadcast(decision)
 	log.Printf("[router] salvaged task=%s decision=%s actions=%d kinds=%s latency_ms=%d cause=%s",
 		decision.TaskID, decision.ID, len(actions), routerActionKinds(actions), latency, cause)
-	rs.notifyRouterTurnTimeout(config, decision, len(actions))
+	// 告知行只说「超时」：救回本身与失败原因无关，CLI 崩溃也会救回动作，
+	// 但写成「超过 90 秒」就是假消息。
+	if isRouterTurnTimeout(cause) {
+		rs.notifyRouterTurnTimeout(config, decision, len(actions))
+	}
 	return true
 }
 
