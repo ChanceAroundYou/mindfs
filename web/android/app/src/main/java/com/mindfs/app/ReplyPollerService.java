@@ -382,9 +382,13 @@ public class ReplyPollerService extends Service {
      * <p>2026-11-19 的 nginx 实测：切后台 1–4 分钟后原生 /wait 与 WebView 轮询**同时**消失，
      * 8 小时里 110/63/158/54/22 分钟六段静默，每一段都以「用户打开 App」结束 —— 进程被
      * ROM 冻死/清掉，而 15 分钟一次的 {@code setAndAllowWhileIdle} 一次都没把它拉回来
-     * （inexact 闹钟在国产 ROM 的省电模式里会被无限推迟）。改为 {@code setAlarmClock}：
-     * AOSP 保证不延迟、Doze 与待机同样唤醒，间隔按「用户能接受的最大迟到」定为 3 分钟。
-     * 代价是状态栏会常驻闹钟图标（系统对 setAlarmClock 的可见性要求）。</p>
+     * （inexact 闹钟在国产 ROM 的省电模式里会被无限推迟）。改为精确闹钟，间隔按「用户能
+     * 接受的最大迟到」定为 3 分钟。</p>
+     *
+     * <p>精确闹钟有两个 API，选 {@code setExactAndAllowWhileIdle} 而不是
+     * {@code setAlarmClock}：后者会被系统当成「用户自己设的闹钟」，在状态栏常驻一个闹钟
+     * 图标，用户明确不要。前者的代价只是 Doze 深度睡眠下被限频到约 9 分钟一次（不是无限
+     * 推迟），而本 App 已申请「不受电池优化限制」，在豁免名单里 Doze 那条限频不生效。</p>
      */
     static final long WATCHDOG_INTERVAL_MS = 3 * 60_000L;
     private static final int WATCHDOG_REQUEST_CODE = 750100;
@@ -421,35 +425,21 @@ public class ReplyPollerService extends Service {
         try {
             PendingIntent pending = watchdogPendingIntent(context);
             long at = System.currentTimeMillis() + Math.max(0L, delayMillis);
-            // setAlarmClock：AOSP 保证不延迟，Doze/省电模式里同样唤醒 —— 这是唯一能压住
-            // 「inexact 闹钟被无限推迟」的手段。代价有两个：状态栏常驻闹钟图标（系统的
-            // 可见性要求），以及 Android 12+ 对 targetSdk>=31 要求 SCHEDULE_EXACT_ALARM
-            // 授权（或在省电豁免名单里）。没授权时它会抛 SecurityException，而这条路径上
-            // 一次失败就是「后台永远不再巡检」，所以必须先判定、再退回 inexact 兜底。
+            // 精确闹钟：AOSP 保证不延迟，Doze 下同样允许唤醒 —— 这是唯一能压住
+            // 「inexact 闹钟被无限推迟」的手段。用 setExactAndAllowWhileIdle 而不是
+            // setAlarmClock：后者会在状态栏常驻闹钟图标（系统把它当用户设的闹钟）。
+            // Android 12+ 对 targetSdk>=31 要求 SCHEDULE_EXACT_ALARM 授权（或在省电
+            // 豁免名单里）；没授权时两者都抛 SecurityException，而这条路径上一次失败
+            // 就是「后台永远不再巡检」，所以必须先判定、再退回 inexact 兜底。
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarms.canScheduleExactAlarms()) {
                 Log.w(TAG, "watchdog: exact alarm not permitted, falling back to inexact");
                 alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending);
                 return;
             }
-            // showIntent：用户点状态栏的闹钟图标时回到 App。
-            alarms.setAlarmClock(
-                new AlarmManager.AlarmClockInfo(at, watchdogShowIntent(context)),
-                pending
-            );
+            alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending);
         } catch (RuntimeException ex) {
             Log.w(TAG, "watchdog schedule failed", ex);
         }
-    }
-
-    private static PendingIntent watchdogShowIntent(Context context) {
-        Intent intent = new Intent(context, MainActivity.class)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        return PendingIntent.getActivity(
-            context,
-            WATCHDOG_REQUEST_CODE,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
     }
 
     static void cancelWatchdog(Context context) {
@@ -1425,7 +1415,7 @@ public class ReplyPollerService extends Service {
         // 这时唯一的出路是厂商白名单（自启动 / 后台无限制 / 锁定后台），不是再改代码。
         sb.append(" · 巡检=每").append(WATCHDOG_INTERVAL_MS / 60_000L).append("分钟");
         sb.append(" · 最近唤醒=").append(lastWake.isEmpty() ? "无" : lastWake);
-        // 精确闹钟授权（或省电豁免）决定巡检是 setAlarmClock 还是 inexact 兜底：
+        // 精确闹钟授权（或省电豁免）决定巡检是 setExactAndAllowWhileIdle 还是 inexact 兜底：
         // 没有它，巡检可能被 ROM 推迟到「根本没有」。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);

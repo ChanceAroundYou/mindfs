@@ -90,17 +90,18 @@ test("电池优化白名单状态可见、可申请", async () => {
   assert.match(service, /电池优化=/, "诊断串必须报告电池优化状态");
 });
 
-test("定时唤醒兜底（3 分钟一次 setAlarmClock）", async () => {
+test("定时唤醒兜底（3 分钟一次精确闹钟，不占状态栏）", async () => {
   const service = read(SERVICE);
   const receiver = read("android/app/src/main/java/com/mindfs/app/ReplyPollerWatchdogReceiver.java");
   assert.match(service, /ACTION_WATCHDOG/, "缺 watchdog 动作");
   // 2026-11-19：nginx 实测 8 小时里 110/63/158/54/22 分钟六段静默，15 分钟一次的
   // setAndAllowWhileIdle **一次都没响**（inexact 闹钟在国产 ROM 的省电模式里被无限推迟）。
-  // 改为 setAlarmClock：AOSP 保证不延迟、Doze 下同样唤醒，且不需要 SCHEDULE_EXACT_ALARM
-  // 授权（setExactAndAllowWhileIdle 未授权会抛 SecurityException）。
+  // 改用精确闹钟。具体 API 选 setExactAndAllowWhileIdle 而不是 setAlarmClock：后者会被
+  // 系统当成「用户设的闹钟」，在状态栏常驻闹钟图标，用户明确不要。
   assert.match(service, /WATCHDOG_INTERVAL_MS = 3 \* 60_000L/, "巡检间隔必须是 3 分钟，15 分钟等于没有兜底");
-  assert.match(service, /setAlarmClock\(/, "必须用 setAlarmClock，inexact 闹钟会被省电模式吞掉");
-  // setAlarmClock 在 Android 12+ 对 targetSdk>=31 需要 SCHEDULE_EXACT_ALARM（或省电豁免）。
+  assert.match(service, /setExactAndAllowWhileIdle\(/, "必须用精确闹钟，inexact 闹钟会被省电模式吞掉");
+  assert.doesNotMatch(service, /setAlarmClock\(/, "setAlarmClock 会在状态栏常驻闹钟图标，改用 setExactAndAllowWhileIdle");
+  // 精确闹钟在 Android 12+ 对 targetSdk>=31 需要 SCHEDULE_EXACT_ALARM（或省电豁免）。
   // 未授权时它会抛 SecurityException，直接退回 inexact 就是「换了个名字的老毛病」——
   // 所以必须先判定授权，再把 inexact 当作兜底。
   assert.match(service, /canScheduleExactAlarms\(\)/, "排精确闹钟前必须判定授权，否则 SecurityException 会静默断掉巡检链");

@@ -498,16 +498,20 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 
 | 项 | 旧 | 新 |
 |---|---|---|
-| 闹钟 API | `setAndAllowWhileIdle`（inexact） | `setAlarmClock(AlarmClockInfo)`：AOSP 不延迟、Doze/待机同样唤醒；以它送达的广播自带「允许启动前台服务」豁免 |
+| 闹钟 API | `setAndAllowWhileIdle`（inexact） | 精确闹钟 `setExactAndAllowWhileIdle`：不延迟、Doze 下同样唤醒，**不占状态栏图标**（`setAlarmClock` 会被当成用户设的闹钟而常驻图标，用户明确不要；`setExactAndAllowWhileIdle` 的代价只是 Doze 下约 9 分钟限频，而本 App 在电池优化豁免名单里）；以精确闹钟送达的广播自带「允许启动前台服务」豁免 |
 | 精确闹钟授权 | 未声明 | 补 `SCHEDULE_EXACT_ALARM`（Android 12+ / targetSdk 36 必需）。`canScheduleExactAlarms()` 为假时**退回 inexact**，并在诊断串报「精确闹钟=未授权」；收到 `SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED` 时重排（授予时系统会删掉先前排不上的闹钟） |
 | 间隔 | 15 分钟 | **3 分钟**（`WATCHDOG_INTERVAL_MS`，接收器取同一常量，不再写字面量） |
 | `onTaskRemoved` | 1 分钟后 | 10 秒后 |
 | 暂停 | 不取消闹钟 | `pausePolling()` 取消（否则 3 分钟后闹钟会把轮询拉回来） |
 | 可观测性 | 无 | `ACTION_WATCHDOG` 写 `PREF_LAST_WAKE`；诊断串新增「巡检=每 3 分钟 · 最近唤醒=…」 |
-| 状态栏 | — | 常驻闹钟图标（`setAlarmClock` 的可见性代价），点它回到 App |
+| 状态栏 | — | 不新增图标（2026-11-19 晚按用户反馈把 `setAlarmClock` 换成 `setExactAndAllowWhileIdle`） |
 
 **为什么「最近唤醒」是关键证据**：闹钟按时送达 = 时间戳持续前进（ROM 只是冻进程）；时间戳停住 = ROM 直接 force-stop 并取消了闹钟（系统语义），届时唯一出路是厂商白名单（自启动 / 后台无限制 / 锁定后台），不是继续改代码。
 
 **门禁**：`npx vitest run web/tests/android-background-poller-liveness.test.mjs` 6 passed；三个变异（间隔退回 15 分钟、pause 去掉 `cancelWatchdog()`、删 `SCHEDULE_EXACT_ALARM` 声明）各自打红对应用例后还原复绿；`make test-android` BUILD SUCCESSFUL。
 
 **残留**：仍不承诺必达（force-stop 会取消闹钟）；未做真机验收（无 adb 目标）；完成账本要在本机 `sudo systemctl restart mindfs` 后才生效 —— 与本次闹钟修复相互独立，账本负责「醒来后补发」，闹钟负责「定期醒来」。
+
+**2026-11-19 晚追加（同 `Scope: G-MX`）**：用户反馈「状态栏多一个闹钟图标、太麻烦，为什么别的 App 能实时提醒」。图标是 `setAlarmClock` 的语义代价（系统把它当用户设的闹钟），已改用 `setExactAndAllowWhileIdle` —— 同样受 `SCHEDULE_EXACT_ALARM` 约束、同样在 Doze 下唤醒，但不占状态栏；只有在深度 Doze 且不在电池优化豁免名单时才可能被限频到约 9 分钟一次。**这不是「实时」**：轮询无论怎么调优都只能跑在系统允许的缝隙里，真正实时的提醒来自系统级推送通道（FCM / 厂商推送），那是另一条架构路线，见下节。
+
+**「别的 App 为什么实时」**：微信、钉钉这类国产 App 靠的是手机厂商在系统进程里跑的一条常驻长连接（OPPO/一加是 OPPO 推送，小米 MiPush，华为 HMS Push），App 被冻、被杀、被划掉都不影响它送达；海外机型走 FCM。第三方 App 要用这条通道，必须在厂商开放平台注册应用、登记包名与签名、接 SDK，并由服务端调厂商接口发消息 —— 这是本项目目前明确排除的（G-MX boundary：不做 FCM/APNs）。本轮把「自建轮询 + 兜底闹钟」压到它的物理上限（≤3 分钟、无图标），要再往前只有两条路：接系统推送，或接受这个延迟。
