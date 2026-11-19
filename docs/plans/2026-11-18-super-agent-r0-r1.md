@@ -324,6 +324,55 @@ R2–R5 不执行）。** 观察窗建议至少 24h 或 ≥10 条真实留言，
 未过判据就先修观测到的问题，不进入 R2；过了再由用户批准 R2 的第一批（验收条目存储 +
 证据关联）。
 
+## 线上问题修复轮（2026-11-19，Scope: G-MU）
+
+按执行历史审计逐条 RED→GREEN，四处都是「线上真的会发生」而不是推测：
+
+1. **worker/pc 没有工作流库**：`workflow_choice=empty` 的留言在 Worker 上 6–13ms 必失败
+   （`resolveWorkflowVersion → ErrNoAvailableWorkflows`）。改为 `hasWorkflowLibrary` 为假时
+   落直连一轮；`SetDirectExecutor` 本就每节点接线，worker 与主节点同路径。
+2. **Router brief 截断需求**：触发留言的 `Body` 过去复用 500B 的历史摘要上限。改为独立
+   `routerBriefTriggerBodyLimit = 8000`，24KiB 硬顶与历史摘要 500B 不变。
+3. **删卡留下孤儿**：`DeleteTask` 单事务清 9 张任务自有表 + 3 张按 `run_id` 子查询的
+   workflow 子表 + `router_sessions`（`router_events` 漏删会让同 ID 重建任务一条事件都插不进）。
+4. **Router 零日志**：24h 17 条决策、4 次 90s 回落没有一行 `[router]`。成功/回落各补一行
+   （`applied ... kinds=...` / `fallback ... cause=...`），真实测试输出已见两行。
+
+测试：`activity_service_worker_fallback_test.go`、`router_brief_trigger_body_test.go`、
+`task_store_delete_cascade_test.go`、`router_observability_test.go`。门禁：kanban 包 181.6s 绿、
+`go test ./...` 只命中既有 TempDir 清理 flaky（`-count=3` 复绿）、web 693 pass / 6 skip、
+`tsc` clean。提交 `ce539420`，部署四端 `v0.5.5-1120-12-gce539420`：本机已安装待用户重启、
+WSL/fn 版本逐字一致 + health 200、pc-win PID 48280 + health 200 + `netstat` 7332 独立核对。
+登记 G-MU。
+
+残留：worker 直连降级只有单测 + 隔离实例证据（隔离日志已见
+`[workflow] no workflow library on this node, falling back to direct turn`），未在 WSL/pc 上
+新建真实任务（避免污染用户数据）；`workflows.json` 控制面 → worker 的单向镜像（中期方案）未做。
+
+## P2 决策延迟 A/B（2026-11-19，隔离双实例）
+
+线上 route 观察到的量级（41.6–51.8s applied、4 次 90.0s fallback）与 R0 隔离样本
+（sonnet p50 11.8s / p95 22.5s）差一个数量级，变量有两个候选：`router.model=ok` 与
+`turn_timeout=90s`。为把「模型」从「超时」里拆出来，在同一二进制
+`v0.5.5-1120-12-gce539420` 上起两个隔离实例（7451 `model=ok` / 7452 `model=sonnet`，其余
+逐字相同：`mode=route`、`effort=low`、`turn_timeout=90s`、`idle_close=30m`，各自独立
+`XDG_CONFIG_HOME` 与隔离项目）。测量脚本复用 `e2e/test_task_router_r0.py` 的 Client，同一组
+4 条模糊留言轮流发，每条一个新建任务，只量 `router_decisions.latency_ms`，不等后续执行。
+
+| 臂 | 样本（ms） | 结果 |
+|---|---|---|
+| `ok` | 90013 fallback / 72117 say / 41405 applied / 90052 fallback / 90015 fallback | **3/5 撞 90s 超时**；可用决策 2 条，41.4s 与 72.1s |
+| `sonnet` | 14005 / 15611 / 18413 / 13571 / 12967 | **5/5 applied**，p50 14.0s / p95 18.4s |
+
+两臂都是每任务一条新 Router 会话，冷启动代价相同。结论：`ok` 别名在本机既慢 3–5 倍、
+90s 内完成率仅 2/5；`sonnet` 稳定 13–18s。fallback 不是无感——它回落旧路径（本机默认
+codex），用户拿到的是另一条执行链的答复，Router 决策被丢弃。
+
+**建议：生产 `router.model` 从 `ok` 改为 `sonnet`，`turn_timeout` 保持 90s**（`ok` 的自然
+延迟已贴着 90s，放大超时只会让用户多等几分钟）。该值在节点本地 `config.json`
+（`~/.config/mindfs`），修改与重启系统单元均需用户授权；本轮未改生产配置。证据
+`/tmp/ab-ok.json`、`/tmp/ab-son.json`。局限：每臂 5 条、单机、单个别名，不作为通用模型基准。
+
 ## 执行门禁与依赖
 
 T1 → T2 → T3 → T4 → R0 PASS → T5 → T6 → T7 → T8 → T9 → T10。
