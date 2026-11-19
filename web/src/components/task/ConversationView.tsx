@@ -3,10 +3,9 @@ import { useI18n } from "../../i18n/index";
 import { useTaskActivities } from "../../hooks/useTaskActivities";
 import { usePendingAttachments } from "../action/usePendingAttachments";
 import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
-import { pendingTaskPrompt, conversationRows } from "../../shared/activityModel";
+import { pendingTaskPrompt, visibleConversationActivities } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
-import { ActivityReportsGroup } from "./ActivityReportsGroup";
 import { useWorkflowNames } from "./useWorkflowNames";
 
 export type ConversationMessagesProps = {
@@ -28,6 +27,7 @@ export type ConversationMessagesProps = {
   onGateDecision?: (
     activity: TaskActivity,
     decision: "approve" | "reject",
+    note?: string,
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
@@ -96,38 +96,31 @@ export function ConversationMessages({
     );
   }
 
+  // 运行汇报（purpose=progress）按时间顺序原样平铺：用户需要看到流程跑到了哪一步，
+  // 折叠只会把它藏起来。区分靠每行上的浅色「运行汇报」标记。
+  const messageProps = {
+    rootId,
+    workflowNames,
+    paused,
+    promptDeciding,
+    promptError,
+    onOpenSession,
+    onAnswerQuestion,
+    onGateDecision,
+    onPauseTask,
+    onResumeTask,
+    onRunQueued,
+    runningQueued,
+  };
+
   return (
     <div
       data-testid="conversation-messages"
       style={{ display: "flex", flexDirection: "column", gap: 10 }}
     >
-      {conversationRows(activities).map((row) => {
-        const messageProps = {
-          rootId,
-          workflowNames,
-          paused,
-          promptDeciding,
-          promptError,
-          onOpenSession,
-          onAnswerQuestion,
-          onGateDecision,
-          onPauseTask,
-          onResumeTask,
-          onRunQueued,
-          runningQueued,
-        };
-        if (row.kind === "reports") {
-          return (
-            <ActivityReportsGroup
-              key={`reports:${row.parentId}`}
-              parentId={row.parentId}
-              reports={row.reports}
-              {...messageProps}
-            />
-          );
-        }
-        return <ActivityMessage key={row.activity.id} activity={row.activity} {...messageProps} />;
-      })}
+      {visibleConversationActivities(activities).map((activity) => (
+        <ActivityMessage key={activity.id} activity={activity} {...messageProps} />
+      ))}
     </div>
   );
 }

@@ -9416,35 +9416,29 @@ groups:
 
   # ── 任务详情的 Router 展示收口：运行汇报折叠 + 直达工作流会话 ────────
   - id: G-MO
-    title: 任务详情展示收口 —— purpose=progress 运行汇报折叠 + 直达工作流会话
+    title: 任务详情展示收口 —— 运行汇报先折叠后平铺（2026-11-19 用户裁定改平铺）+ 直达工作流会话
     kind: fix
     symptom: "R1 T10 复核登记的 UX 残留：同一轮任务结算后用户会看到同一句结果被说两遍 —— 引擎结算回填的 reply 行（status+summary）与 Router 运行期事件 say 出来的 purpose=progress 汇报行；后者另带失败节点/未验证项等增量信息，两条都不能删。另一处：工作流节点在各自的 agent 会话里干活，任务对话只放汇报，用户想看节点实际做了什么、或接管那个会话，必须先展开运行视图、再逐节点点「打开会话」。"
-    why: "必须保留：① 折叠只做在展示层 —— 结算 reply 留在原位，同一 reply_to_id 下的 progress 行折进紧跟父行的「运行汇报 N 条」，展开复用 ActivityMessage；绝不删活动数据、不改活动语义、不把汇报绑回旧 Run 的结果活动（T8 冻结契约）。② 可折叠的前提是父行已结算（completed/failed/waiting_user 且 summary 非空）—— 运行中用户正是靠 progress 行知道流程起来了，折叠等于藏进度；无 reply_to_id 的 progress 行没有归属，同样保持可见。③ 归属按 reply_to_id 精确映射，不取「最近一条结算行」，多轮留言各自折回自己那轮。④ 直达按钮的落点是纯函数 pickWorkflowSessionKey：running > waiting_user > 最近一条有 session_key 的节点（ListWorkflowNodeRuns 按 created_at 升序，最后一条即最近执行）；空白 session_key 跳过，末尾没有会话的节点不能顶掉前面真正的会话。⑤ 节点行必须提前取（引擎一绑定到 workflow 就取，不等展开运行视图），并按 refreshKey 重取 —— session_key 是回合中途才绑定到 NodeRun 的。⑥ 重取期间已知会话键仍可点（session_key 绑定后不再变化），只有首次加载且尚无键时显示「加载中」，不得把未完成误报成「暂无工作流会话」。"
-    boundary: "只改前端展示层与 run/node-run 取数时机；不动活动/事件/决策/结果摘要的数据路径，不新增 HTTP 端点，不改路由与权限。折叠不覆盖 purpose=chat/reply/result 与无归属的汇报；直达按钮只对已绑定 workflow 引擎的任务出现（RunViewEntry 原有的 `if (!runId) return null` 分支不变）。"
+    why: "必须保留：① 运行视图仍是对话流的下钻（`if (!runId) return null`，排在 ConversationView 之后）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只在页脚加一个浅色「运行汇报」标记做区分（`isRunReport` + `activity-report-tag`）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
+    boundary: "只改前端展示层；不动活动/事件/决策/结果摘要的数据路径，不新增 HTTP 端点，不改路由与权限。平铺不改变任何活动的可见性判定 —— 唯一例外是等待审批时隐藏同一 Run 的占位回复（见 G-MY 的 `visibleConversationActivities`），那是「一张审批卡」的可读性要求，不是折叠。"
     files:
       - web/src/shared/activityModel.ts
       - web/src/shared/taskComments.ts
       - web/src/components/task/ConversationView.tsx
-      - web/src/components/task/ActivityReportsGroup.tsx
       - web/src/components/task/RunViewEntry.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/runTimelineModel.ts
-      - web/src/components/task/WorkflowSessionJump.tsx
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
     tests:
-      - web/tests/activity-report-collapse.test.mjs
-      - web/tests/task-workflow-session-jump.test.mjs
+      - web/tests/activity-reports-inline.test.mjs
     anchors:
-      - 'web/src/shared/activityModel.ts:export function conversationRows(activities: TaskActivity[]): ConversationRow[] {'
-      - 'web/src/shared/activityModel.ts:if (!parentId || parentId === activity.id || activity.purpose !== "progress") return "";'
-      - 'web/src/components/task/ActivityReportsGroup.tsx:data-testid="activity-reports-group"'
-      - 'web/src/components/task/ConversationView.tsx:conversationRows(activities)'
-      - 'web/src/components/task/runTimelineModel.ts:export function pickWorkflowSessionKey('
-      - 'web/src/components/task/RunViewEntry.tsx:<WorkflowSessionJump'
-      - 'web/src/components/task/useRunViewEntry.ts:[runId, rootId, taskId, nodeId, refreshKey]'
-      - 'web/tests/activity-report-collapse.test.mjs:test("对话流默认折叠：结果句只出现一次，汇报正文与计数可见"'
-      - 'web/tests/task-workflow-session-jump.test.mjs:test("重取期间的旧会话键仍可点，不闪禁用"'
+      - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-report-tag"'
+      - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
+      - 'web/src/components/task/RunViewEntry.tsx:if (!runId) return null;'
+      - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns(rootId, taskId, nodeId)'
+      - 'web/tests/activity-reports-inline.test.mjs:test("运行汇报按时间顺序原样渲染，不折叠也不隐藏"'
 
   # ── R1 留存缺口收口：删卡级联/关 lane、事件回合 inspect_run、领取租约、账本保留 ──
   - id: G-MP
@@ -9723,3 +9717,72 @@ groups:
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerPlugin.java:private void startServiceSafely(Intent intent) {'
       - 'web/android/app/src/main/java/com/mindfs/app/MainActivity.java:private void startReplyPollerService(Intent intent) {'
       - 'web/android/app/src/main/AndroidManifest.xml:android:name=".ReplyPollerWatchdogReceiver"'
+
+  # ── 审批收尾：末端 gate 禁定义 + 审批卡可读化 + 附言交给 Router ─────────
+  - id: G-MY
+    title: 末端 human_gate 不允许做最后节点；审批卡说明「在批什么」并接受附言交给 Router
+    kind: fix
+    symptom: "用户 2026-11-19 对任务 #88「收尾」的任务详情面板逐条报告：① 整轮已经跑完，末尾还挂着一个人工确认，卡片上什么都不说，用户「都不知道要我审批什么」，而任务本身有自己的完成按钮，多这一步毫无意义；② 卡片没有额外的输入口，只有批准 / 驳回；③ 同一屏里占位回复显示「等待你处理」、审批状态却是「已完成」，两处口径冲突；④ 运行汇报被折叠起来，用户看不到流程跑到哪一步。现场数据：`workflow-new-feature:v1` 的图是 input→plan→implement→verify(human_gate)，verify 就是最后一个节点。"
+    why: "必须保留：① 定义期规则 `ValidateWorkflowDefinitionForAuthoring` 拒绝「human_gate 没有出边」，只挂在草稿创建 / 更新与 typed patch 校验上；**不能**进 `ValidateWorkflowDefinition` —— 已发布的 `workflow-new-feature:v1` 必须仍然能建 Run。前端画布 `validateWorkflowGraph` 镜像同一条规则（用户在画布上连完就该看到红字，而不是保存时才被服务端拒绝）。② 运行期兼容：`engine` 看见末端 gate 时由 `autoPassTerminalGate` 直接以 success 收尾（输出带 `auto_approved:true`，不写等待卡、不写假「已批准」气泡）；升级前已经停在 waiting_user 的末端 gate 由 driver 每次推进前的 `healParkedTerminalGates` 与启动对账的 `hasParkedTerminalHumanGate` 唤醒收尾，`AutoApproveTerminalHumanGate` 在同一事务里 CAS 节点行、合并 run 投影、补事件、把审批卡结算成 completed（payload 带 auto_approved）。③ 审批卡内容由 `gateActivityPayload` 生成：`node_name`（缺名字回落节点 id）+ `prompt` + `upstream`（入边节点的 `nodeRunOutputSummary`，没有产出的跳过），前端 `TaskHumanGateCard` 渲染节点名、上游产出摘要与自动通过标记。④ 卡片内附言：`HumanGateInput.note` 随批准提交，后端 `ResolveWorkflowHumanGate` 只对 approve 且非空附言走 `QueueUserActivity` 落成排队用户留言，等这一轮真的 `StatusSuccess` 收尾后由 `dispatchQueuedGateNote` → `DispatchQueuedUserActivity` 交给 Router 决定下一轮；失败/取消的回合附言留在队列、不假装执行；驳回永不排队。⑤ 展示层：同一 Run 有等待中的审批卡时，`visibleConversationActivities` 隐藏那条 waiting_user 的占位回复（#88 的两张冲突卡），gate 结算后占位回复回到结果行；审批等待态文案改为「待你审批」；运行汇报不再折叠，改为按时间平铺 + 浅色「运行汇报」标记。"
+    boundary: "不改 D4（普通留言永远不能批准/驳回）；不新增 Router 动作 —— 附言复用既有用户留言通道；不迁移历史任务、不重发旧工作流版本（旧版本靠运行期自动放行）；不改 gate 的幂等与 409 语义；不做运行视图重构与虚拟化改动；`auto_approved` 只影响展示与审计，不写用户决定证据；队列里多条附言只在这一轮收尾时派发最早一条，其余留到下一次收尾（不丢、不并发派发）；`ValidateWorkflowDefinition` 保持宽松，旧版本创建 Run 的能力不能被定义期规则收紧。"
+    files:
+      - server/internal/kanban/workflow_validate.go
+      - server/internal/kanban/workflow_store.go
+      - server/internal/kanban/workflow_agent_ops.go
+      - server/internal/kanban/workflow_human_gate_terminal.go
+      - server/internal/kanban/workflow_human_gate_payload.go
+      - server/internal/kanban/workflow_human_gate.go
+      - server/internal/kanban/workflow_driver.go
+      - server/internal/kanban/workflow_driver_loop.go
+      - server/internal/kanban/workflow_recovery.go
+      - server/internal/kanban/task_store_workflow_human_gate.go
+      - server/internal/kanban/service_gate_note.go
+      - server/internal/api/http_task_human_gate.go
+      - docs/plans/README.md
+      - e2e/test_task_router_gate_note.py
+      - e2e/test_task_router_coordinate_common.py
+      - docs/superpowers/plans/2026-11-19-task-gate-and-reports-unfold.md
+      - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/TaskHumanGateCard.tsx
+      - web/src/shared/activityModel.ts
+      - web/src/hooks/useTaskActivities.ts
+      - web/src/services/task/humanGate.ts
+      - web/src/shared/workflowModel.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - server/internal/api/http_workflows_test.go
+      - server/internal/kanban/workflow_runtime_test.go
+      - server/internal/kanban/workflow_lifecycle_guards_test.go
+    tests:
+      - server/internal/kanban/workflow_terminal_gate_test.go
+      - server/internal/kanban/workflow_human_gate_context_test.go
+      - web/tests/task-human-gate-card.test.mjs
+      - web/tests/gate-waiting-consistency.test.mjs
+      - web/tests/activity-reports-inline.test.mjs
+      - web/tests/workflow-canvas.test.ts
+    anchors:
+      - 'server/internal/kanban/workflow_validate.go:func ValidateWorkflowDefinitionForAuthoring(d WorkflowDefinition) error {'
+      - 'server/internal/kanban/workflow_validate.go:cannot be the last node: add a node after it'
+      - 'server/internal/kanban/workflow_driver.go:if workflowNodeIsTerminal(run.Graph, node.ID) {'
+      - 'server/internal/kanban/workflow_driver.go:if healed, err := s.healParkedTerminalGates(ctx, store, run); err != nil {'
+      - 'server/internal/kanban/task_store_workflow_human_gate.go:func (s *TaskStore) AutoApproveTerminalHumanGate(ctx context.Context, run *WorkflowRun, nodeRun NodeRun) (NodeRun, bool, error) {'
+      - 'server/internal/kanban/workflow_recovery.go:if run, err := store.WorkflowRunByID(ctx, b.runID); err == nil && hasParkedTerminalHumanGate(run) {'
+      - 'server/internal/kanban/workflow_human_gate_payload.go:func gateActivityPayload(run *WorkflowRun, node WorkflowNode, nr NodeRun) (string, error) {'
+      - 'server/internal/kanban/workflow_human_gate_payload.go:payload["upstream"] = upstream'
+      - 'server/internal/kanban/workflow_human_gate.go:func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, nodeID, decision, commentID, note string) (NodeRun, error) {'
+      - 'server/internal/kanban/workflow_human_gate.go:} else if _, err := activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed); err != nil {'
+      - 'server/internal/kanban/service_gate_note.go:func (s *Service) dispatchQueuedGateNote(ctx context.Context, store *TaskStore, run *WorkflowRun) {'
+      - 'server/internal/api/http_task_human_gate.go:Note string `json:"note"`'
+      - 'web/src/shared/activityModel.ts:export function visibleConversationActivities(activities: TaskActivity[]): TaskActivity[] {'
+      - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
+      - 'web/src/components/task/TaskHumanGateCard.tsx:const upstream = gateUpstream(payload.upstream);'
+      - 'web/src/components/task/TaskHumanGateCard.tsx:data-testid="task-human-gate-note"'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-report-tag"'
+      - 'web/src/services/task/humanGate.ts:...(trimmedNote ? { note: trimmedNote } : {}),'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.activity.gateWaiting": "待你审批",'
+      - 'web/src/shared/workflowModel.ts:人工确认（human_gate）节点 ${n.id} 不能是最后一个节点'
+      - 'web/tests/workflow-canvas.test.ts:test("末端 human_gate 被画布校验拒绝：审批只能拦在执行中间"'
+      - 'server/internal/kanban/workflow_terminal_gate_test.go:func TestAdvanceWorkflowRunHealsParkedTerminalHumanGate(t *testing.T) {'
+      - 'server/internal/kanban/workflow_terminal_gate_test.go:func TestHumanGateApproveCarriesNoteAsUserMessage(t *testing.T) {'
+      - 'web/tests/gate-waiting-consistency.test.mjs:test("#88 形状：等待审批时占位回复不显示，只留审批卡", () => {'

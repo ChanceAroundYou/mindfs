@@ -283,6 +283,8 @@ func (s *Service) projectWorkflowTaskStatus(ctx context.Context, store *TaskStor
 	// 任务投影是这一轮唯一可信的终态来源：把结果结算回 Router 的回复。
 	// 运行中（status=running）settle 是 no-op。
 	s.settleWorkflowReply(ctx, store, run)
+	// 审批附言（若有）排在这一轮之后：成功收尾才交给下一轮。
+	s.dispatchQueuedGateNote(ctx, store, run)
 	if detail, err := store.GetDetail(ctx, run.TaskID); err == nil && s != nil && s.Runner != nil {
 		s.Runner.TaskUpdated(detail.Task.RootID, detail)
 	}

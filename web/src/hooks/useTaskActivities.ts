@@ -45,7 +45,7 @@ export type UseTaskActivitiesResult = {
   uploadProgress: UploadProgress | null;
   cancelUpload: () => void;
   answerQuestion: (activity: TaskActivity, answers: Record<string, string>) => Promise<void>;
-  decideGate: (activity: TaskActivity, decision: HumanGateDecision) => Promise<void>;
+  decideGate: (activity: TaskActivity, decision: HumanGateDecision, note?: string) => Promise<void>;
   /** 派发排队中的首条留言（新建任务时勾掉了「立即执行」）。 */
   runQueued: () => Promise<void>;
   runningQueued: boolean;
@@ -235,7 +235,7 @@ export function useTaskActivities(
   );
 
   const decideGate = useCallback(
-    async (activity: TaskActivity, decision: HumanGateDecision) => {
+    async (activity: TaskActivity, decision: HumanGateDecision, note?: string) => {
       const payload = parseTaskActivityPayload(activity);
       const workflowNodeId = `${payload.node_id || ""}`.trim();
       if (!workflowNodeId) {
@@ -248,7 +248,7 @@ export function useTaskActivities(
         await postTaskHumanGate(
           activity.root_id || rootId,
           taskId,
-          { workflowNodeId, decision },
+          { workflowNodeId, decision, note },
           nodeId,
         );
         setActivities((prev) =>

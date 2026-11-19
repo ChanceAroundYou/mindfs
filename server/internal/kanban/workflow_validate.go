@@ -195,6 +195,32 @@ func toInt(v any) (int, bool) {
 	return 0, false
 }
 
+// ValidateWorkflowDefinitionForAuthoring is the authoring-time gate: it runs the
+// base validation and then rejects graphs a user could not meaningfully approve.
+//
+// 末端 human_gate 是 2026-11-19 用户裁定：审批只能拦在执行中间。放在最后的
+// gate 没有下游可批，用户只会看到一张「批了也不发生任何事」的卡，任务还得
+// 再点一次自己的完成按钮。
+//
+// 已发布的旧版本（workflow-new-feature:v1 的末端 verify）必须仍然能建 Run，
+// 所以这条规则**不能**进 ValidateWorkflowDefinition；运行期由 driver 自动放行。
+func ValidateWorkflowDefinitionForAuthoring(d WorkflowDefinition) error {
+	if err := ValidateWorkflowDefinition(d); err != nil {
+		return err
+	}
+	outgoing := make(map[string]bool, len(d.Edges))
+	for _, e := range d.Edges {
+		outgoing[e.From] = true
+	}
+	for _, n := range d.Nodes {
+		if n.Kind != NodeKindHumanGate || outgoing[n.ID] {
+			continue
+		}
+		return fmt.Errorf("human_gate %q cannot be the last node: add a node after it; a gate with no downstream has nothing to approve", n.ID)
+	}
+	return nil
+}
+
 // ValidateWorkflowDefinition checks: non-empty nodes, unique ids, valid kinds,
 // edges reference existing nodes, DAG (no cycles), condition routes declared,
 // loop bounds 1..20 explicit, no nested loops.

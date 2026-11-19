@@ -147,7 +147,7 @@ func (s *WorkflowStore) CreateDraft(ctx context.Context, workflowID, rootID, aut
 	if workflowID = strings.TrimSpace(workflowID); workflowID == "" {
 		return WorkflowDraft{}, errors.New("workflow id required")
 	}
-	if err := ValidateWorkflowDefinition(graph); err != nil {
+	if err := ValidateWorkflowDefinitionForAuthoring(graph); err != nil {
 		return WorkflowDraft{}, err
 	}
 	s.mu.Lock()
@@ -171,7 +171,7 @@ func (s *WorkflowStore) CreateDraft(ctx context.Context, workflowID, rootID, aut
 
 // UpdateDraft applies CAS: baseRevision must equal current revision.
 func (s *WorkflowStore) UpdateDraft(ctx context.Context, workflowID, baseRevision, author string, graph WorkflowDefinition) (WorkflowDraft, error) {
-	if err := ValidateWorkflowDefinition(graph); err != nil {
+	if err := ValidateWorkflowDefinitionForAuthoring(graph); err != nil {
 		return WorkflowDraft{}, err
 	}
 	s.mu.Lock()

@@ -186,6 +186,13 @@ export function validateWorkflowGraph(graph: WorkflowGraph): string[] {
     if (!ids.has(e.to)) errors.push(`边终点不存在：${e.to}`);
     if (e.from === e.to) errors.push(`边不能自指：${e.from}`);
   }
+  // 末端 human_gate 没有可批的下游，审批只能拦在执行中间（G-MY；服务端
+  // ValidateWorkflowDefinitionForAuthoring 同一条规则，画布先拦一道）。
+  const hasOutgoing = new Set((graph?.edges ?? []).map((e) => e.from));
+  for (const n of nodes) {
+    if (n.kind !== "human_gate" || !n.id || hasOutgoing.has(n.id)) continue;
+    errors.push(`人工确认（human_gate）节点 ${n.id} 不能是最后一个节点：它后面必须还有节点，否则批了也不会发生任何事`);
+  }
   return errors;
 }
 

@@ -193,12 +193,15 @@ class Client:
         )
         return (resp or {}).get("node_runs") or []
 
-    def human_gate(self, task_id, node_id, decision):
-        return self.call(
-            "POST",
-            f"/api/tasks/{task_id}/human-gate",
-            {"root_id": self.root, "node_id": node_id, "decision": decision},
-        )
+    def human_gate(self, task_id, node_id, decision, note=""):
+        payload = {"root_id": self.root, "node_id": node_id, "decision": decision}
+        if note:
+            payload["note"] = note
+        return self.call("POST", f"/api/tasks/{task_id}/human-gate", payload)
+
+    def create_specified_activity(self, task_id, body, version_id):
+        """显式指定版本建的一轮（main 会话需求）：审批前不需要 Router 决策。"""
+        return self.post_activity(task_id, body, choice="specified", version_id=version_id)
 
 
 class DB:

@@ -3,6 +3,7 @@ import { useI18n } from "../../i18n/index";
 import type { HumanGateDecision, TaskActivity } from "../../shared/taskComments";
 import {
   activityDisplayText,
+  isRunReport,
   normalizeActivityStatus,
 } from "../../shared/activityModel";
 import { workflowDisplayName } from "../../shared/workflowDisplay";
@@ -31,6 +32,7 @@ export type ActivityMessageProps = {
   onGateDecision?: (
     activity: TaskActivity,
     decision: HumanGateDecision,
+    note?: string,
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
@@ -220,6 +222,11 @@ export function ActivityMessage({
       ) : null}
 
       <div data-testid="activity-footer" style={footerStyle}>
+        {isRunReport(activity) && (
+          <span data-testid="activity-report-tag" style={reportTagStyle}>
+            {t("task.activity.reportTag")}
+          </span>
+        )}
         {status && (
           <span style={{ ...footerItemStyle, color: STATUS_COLORS[status] }}>
             {t(STATUS_LABEL_KEYS[status])}
@@ -331,6 +338,25 @@ const footerItemStyle: React.CSSProperties = {
   minWidth: 0,
   overflowWrap: "anywhere",
   fontVariantNumeric: "tabular-nums",
+};
+
+/**
+ * 运行汇报标记：浅色描边胶囊。
+ *
+ * 页脚整体 opacity 0.5，这里单独恢复不透明度，否则「运行汇报」四个字几乎看不见，
+ * 用户又分不清这条是结算结果还是过程上报。
+ */
+const reportTagStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "0 6px",
+  borderRadius: 999,
+  border: "1px solid var(--border-color)",
+  fontSize: 9,
+  fontWeight: 700,
+  lineHeight: "14px",
+  color: "var(--text-secondary)",
+  opacity: 1,
 };
 
 const footerButtonStyle: React.CSSProperties = {

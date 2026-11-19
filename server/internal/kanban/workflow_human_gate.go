@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -21,7 +22,7 @@ const workflowGateSyncWait = 5 * time.Second
 // idempotent; the opposite decision is rejected by the store. Rejection ends the
 // run as cancelled and blocks every undelivered comment instead of forwarding it
 // to a later node.
-func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, nodeID, decision, commentID string) (NodeRun, error) {
+func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, nodeID, decision, commentID, note string) (NodeRun, error) {
 	if s == nil {
 		return NodeRun{}, errors.New("kanban service not configured")
 	}
@@ -85,6 +86,18 @@ func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, 
 		return updated, nil
 	}
 	s.resumeWorkflowReply(ctx, store, run.TaskID)
+	// 审批附言：先作为排队用户留言落库（用户在时间线里立刻能看到），等这一轮
+	// 收尾后由 driver 交给下一轮（route 模式下就是 Router）。必须是「先排队再
+	// 唤醒」：这一轮可能在本请求返回前就结算，结算钩子才是唯一的投递点。
+	// 驳回没有「下一轮」，附言不排队。
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		activitySvc, err := s.ActivityServiceForRoot(rootID)
+		if err != nil {
+			log.Printf("[kanban/human-gate] note queue skipped task=%s err=%v", run.TaskID, err)
+		} else if _, err := activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed); err != nil {
+			log.Printf("[kanban/human-gate] note queue failed task=%s err=%v", run.TaskID, err)
+		}
+	}
 	if err := s.WakeWorkflowRun(ctx, rootID, run.TaskID, "human_gate_approved"); err != nil {
 		return updated, err
 	}

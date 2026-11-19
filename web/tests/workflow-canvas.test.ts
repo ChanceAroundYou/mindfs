@@ -42,6 +42,34 @@ test("画布校验与服务端语义一致：五类节点、Loop 上限、condit
   assert.ok(LOOP_MIN === 1 && LOOP_MAX === 20);
 });
 
+test("末端 human_gate 被画布校验拒绝：审批只能拦在执行中间", () => {
+  // 与服务端 ValidateWorkflowDefinitionForAuthoring 同构（G-MY）。
+  const terminal = validateWorkflowGraph({
+    nodes: [
+      { id: "a1", kind: "agent", params: {} },
+      { id: "gate", kind: "human_gate", params: { prompt: "ok?" } },
+    ],
+    edges: [{ from: "a1", to: "gate" }],
+  });
+  assert.ok(
+    terminal.some((e) => e.includes("human_gate")),
+    `expected terminal gate error, got ${terminal.join("|")}`,
+  );
+  // 后面还有节点时正常。
+  const withDownstream = validateWorkflowGraph({
+    nodes: [
+      { id: "a1", kind: "agent", params: {} },
+      { id: "gate", kind: "human_gate", params: { prompt: "ok?" } },
+      { id: "a2", kind: "agent", params: {} },
+    ],
+    edges: [
+      { from: "a1", to: "gate" },
+      { from: "gate", to: "a2" },
+    ],
+  });
+  assert.deepEqual(withDownstream, []);
+});
+
 test("画布只在桌面渲染、移动端只读、脏标记与离开提醒存在", () => {
   const canvas = read("../src/components/task/WorkflowCanvas.tsx");
   // 移动端断点 + 只读分支。

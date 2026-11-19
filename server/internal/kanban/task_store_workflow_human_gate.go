@@ -173,3 +173,120 @@ func (s *TaskStore) DecideWorkflowHumanGate(ctx context.Context, run *WorkflowRu
 	run.UpdatedAt = now
 	return nodeRun, true, nil
 }
+
+// AutoApproveTerminalHumanGate closes a legacy terminal gate that is parked in
+// waiting_user. A gate with no outgoing edge has nothing downstream to approve,
+// so it must not block the run (2026-11-19 用户裁定).
+//
+// It deliberately writes no extra user-role activity (unlike an explicit
+// approve): nobody approved anything, and a "已批准人工确认节点" bubble would be
+// a false record. The gate activity itself is settled with auto_approved.
+func (s *TaskStore) AutoApproveTerminalHumanGate(ctx context.Context, run *WorkflowRun, nodeRun NodeRun) (NodeRun, bool, error) {
+	if run == nil {
+		return NodeRun{}, false, errors.New("workflow run required")
+	}
+	now := time.Now().UTC()
+	stamp := now.Format(time.RFC3339Nano)
+	output := map[string]any{"auto_approved": true, "status": NodeRunSuccess}
+	for k, v := range nodeRun.Output {
+		output[k] = v
+	}
+	outputJSON, err := marshalWorkflowJSON(output)
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE workflow_node_runs SET status=?, output_json=?, finished_at=?, updated_at=? WHERE id=? AND status=?`,
+		NodeRunSuccess, outputJSON, stamp, stamp, nodeRun.ID, NodeRunWaitingUser)
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	if changed != 1 {
+		existing, err := s.WorkflowNodeRunByKey(ctx, run.ID, nodeRun.NodeID, nodeRun.LoopPath, nodeRun.Iteration, nodeRun.Attempt)
+		if err != nil {
+			return NodeRun{}, false, err
+		}
+		return existing, false, nil
+	}
+
+	states := cloneWorkflowStringMap(run.NodeStates)
+	states[nodeRun.NodeID] = NodeRunSuccess
+	outputs := cloneWorkflowOutputMap(run.NodeOutputs)
+	outputs[nodeRun.NodeID] = output
+	statesJSON, err := marshalWorkflowJSON(states)
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	outputsJSON, err := marshalWorkflowJSON(outputs)
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	routesJSON, err := marshalWorkflowJSON(run.SelectedRoutes)
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	updated, err := tx.ExecContext(ctx,
+		`UPDATE workflow_runs SET revision=revision+1,node_states_json=?,node_outputs_json=?,selected_routes_json=?,updated_at=? WHERE id=? AND revision=?`,
+		statesJSON, outputsJSON, routesJSON, stamp, run.ID, run.Revision)
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	rows, err := updated.RowsAffected()
+	if err != nil {
+		return NodeRun{}, false, err
+	}
+	if rows != 1 {
+		return NodeRun{}, false, ErrRunConflict
+	}
+	if _, err := appendWorkflowRunEventTx(ctx, tx, WorkflowRunEvent{
+		RunID: run.ID, Type: WorkflowEventNodeSucceeded, NodeID: nodeRun.NodeID, NodeRunID: nodeRun.ID,
+		Attempt: nodeRun.Attempt, Payload: map[string]any{"auto_approved": true, "status": NodeRunSuccess},
+		CreatedAt: now,
+	}); err != nil {
+		return NodeRun{}, false, err
+	}
+	gateID := "wf:" + nodeRun.ID + ":human_waiting"
+	var gatePayload string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT payload_json FROM task_activities WHERE task_id=? AND id=?`, run.TaskID, gateID).Scan(&gatePayload); err == nil {
+		merged := map[string]any{}
+		if strings.TrimSpace(gatePayload) != "" {
+			_ = json.Unmarshal([]byte(gatePayload), &merged)
+		}
+		merged["auto_approved"] = true
+		merged["status"] = NodeRunSuccess
+		encoded, err := marshalWorkflowJSON(merged)
+		if err != nil {
+			return NodeRun{}, false, err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE task_activities SET status=?, payload_json=?, updated_at=? WHERE task_id=? AND id=?`,
+			ActivityStatusCompleted, encoded, stamp, run.TaskID, gateID); err != nil {
+			return NodeRun{}, false, err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return NodeRun{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return NodeRun{}, false, err
+	}
+
+	nodeRun.Status = NodeRunSuccess
+	nodeRun.Output = output
+	nodeRun.FinishedAt = now
+	run.NodeStates = states
+	run.NodeOutputs = outputs
+	run.Revision++
+	run.UpdatedAt = now
+	return nodeRun, true, nil
+}

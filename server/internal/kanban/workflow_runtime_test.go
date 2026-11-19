@@ -219,7 +219,11 @@ func TestWorkflowRuntimeApprovedTriggersWakeDriver(t *testing.T) {
 
 		// 任务已无阶段：迁移必须显式指定已发布的 workflow version。
 		svc.Workflows = NewWorkflowStoreAt(t.TempDir())
-		draft, err := svc.Workflows.CreateDraft(ctx, "wf-gate", "", "tester", wfDef(wfNode("gate", NodeKindHumanGate)))
+		// 审批只能拦在执行中间：末端 gate 现在被定义写入拒绝，所以后面挂一个
+		// notify 作为真实下游（2026-11-19 用户裁定）。
+		gateGraph := wfDef(wfNode("gate", NodeKindHumanGate), wfNode("after", NodeKindNotify))
+		gateGraph.Edges = []WorkflowEdge{{From: "gate", To: "after"}}
+		draft, err := svc.Workflows.CreateDraft(ctx, "wf-gate", "", "tester", gateGraph)
 		if err != nil {
 			t.Fatalf("CreateDraft: %v", err)
 		}

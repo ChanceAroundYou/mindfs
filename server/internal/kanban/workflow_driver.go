@@ -53,6 +53,13 @@ func (s *Service) AdvanceWorkflowRun(ctx context.Context, store *TaskStore, task
 			}
 			return err
 		}
+		// 升级前留下的末端 gate 停在 waiting_user，EngineReadyNodes 看不见它。
+		// 先兼容收尾，再照常推进。
+		if healed, err := s.healParkedTerminalGates(ctx, store, run); err != nil {
+			return err
+		} else if healed {
+			continue
+		}
 		ready, skipped, err := EngineReadyNodes(run)
 		if err != nil {
 			return err
@@ -195,6 +202,10 @@ func (s *Service) advanceWorkflowNotify(ctx context.Context, store *TaskStore, r
 // then stops: approval is a dedicated decision (D4), never inferred from a
 // normal comment or from the fact that the node became ready.
 func (s *Service) advanceWorkflowHumanGate(ctx context.Context, store *TaskStore, run *WorkflowRun, node WorkflowNode) (bool, error) {
+	// 末端 gate 没有可批的下游：旧版本按自动通过收尾，绝不物化等待卡。
+	if workflowNodeIsTerminal(run.Graph, node.ID) {
+		return s.autoPassTerminalGate(ctx, store, run, node)
+	}
 	prompt, _ := node.Params["prompt"].(string)
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -206,9 +217,9 @@ func (s *Service) advanceWorkflowHumanGate(ctx context.Context, store *TaskStore
 	nr := workflowAttemptNodeRun(run, node)
 	nr.Status = NodeRunWaitingUser
 	nr.Output = map[string]any{"prompt": prompt}
-	payload, err := marshalWorkflowJSON(map[string]any{
-		"prompt": prompt, "node_id": node.ID, "node_run_id": nr.ID,
-	})
+	// 卡片内容由 payload 决定：节点名 + 审批提示 + 上游产出摘要。没有上游时
+	// upstream 键直接省略（旧图/首节点），前端据此不渲染空块。
+	payload, err := gateActivityPayload(run, node, nr)
 	if err != nil {
 		return false, err
 	}

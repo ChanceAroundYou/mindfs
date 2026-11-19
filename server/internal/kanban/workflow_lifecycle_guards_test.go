@@ -102,7 +102,7 @@ func TestHumanGateApproveDoesNotBlockOnLongDownstreamTurn(t *testing.T) {
 	requestCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	approved, err := svc.ResolveWorkflowHumanGate(requestCtx, root.ID, run.TaskID, "gate", "approve", "")
+	approved, err := svc.ResolveWorkflowHumanGate(requestCtx, root.ID, run.TaskID, "gate", "approve", "", "")
 	if err != nil {
 		t.Fatalf("approve with blocking downstream: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestWorkflowHumanGateCannotResurrectTerminalTask(t *testing.T) {
 	if _, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: run.TaskID, Reason: "done_by_user"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", ""); !errors.Is(err, ErrWorkflowNodeRunNotActionable) {
+	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", "", ""); !errors.Is(err, ErrWorkflowNodeRunNotActionable) {
 		t.Fatalf("approve on terminal task err = %v, want ErrWorkflowNodeRunNotActionable", err)
 	}
 	gate, err := store.WorkflowNodeRunByKey(ctx, run.ID, "gate", "", 0, 1)
@@ -224,7 +224,7 @@ func TestWorkflowHumanGateRequiresExplicitDecisionAndIsIdempotent(t *testing.T) 
 		t.Fatalf("task status after comment = %q, want waiting_user", task.Status)
 	}
 
-	approved, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", "c1")
+	approved, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", "c1", "")
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -240,11 +240,11 @@ func TestWorkflowHumanGateRequiresExplicitDecisionAndIsIdempotent(t *testing.T) 
 		t.Fatalf("downstream = %#v err=%v, want success", downstream, err)
 	}
 
-	dup, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", "c1")
+	dup, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", "c1", "")
 	if err != nil || dup.Status != NodeRunSuccess {
 		t.Fatalf("duplicate approve = %#v err=%v, want idempotent success", dup, err)
 	}
-	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "reject", "c1"); !errors.Is(err, ErrWorkflowHumanGateAlreadyDecided) {
+	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "reject", "c1", ""); !errors.Is(err, ErrWorkflowHumanGateAlreadyDecided) {
 		t.Fatalf("opposite decision err = %v, want ErrWorkflowHumanGateAlreadyDecided", err)
 	}
 	events, err := store.ListWorkflowRunEvents(ctx, run.ID)
@@ -286,7 +286,7 @@ func TestWorkflowHumanGateActivityTracksDecision(t *testing.T) {
 		t.Fatalf("gate payload = %q", gate.PayloadJSON)
 	}
 
-	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", ""); err != nil {
+	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "approve", "", ""); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	gate, err = activities.Get(ctx, gate.ID)
@@ -313,7 +313,7 @@ func TestWorkflowHumanGateRejectCancelsAndBlocksComments(t *testing.T) {
 	}
 	postTestComment(t, store, run.TaskID, "c1", "先别上线", "")
 
-	rejected, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "reject", "c1")
+	rejected, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "reject", "c1", "")
 	if err != nil {
 		t.Fatalf("reject: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestWorkflowHumanGateRejectCancelsAndBlocksComments(t *testing.T) {
 	if len(requests) != 1 || requests[0].Status != ContinueRequestBlocked {
 		t.Fatalf("comments after reject = %#v, want blocked", requests)
 	}
-	dup, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "reject", "c1")
+	dup, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "reject", "c1", "")
 	if err != nil || dup.Status != NodeRunCancelled {
 		t.Fatalf("duplicate reject = %#v err=%v, want idempotent cancelled", dup, err)
 	}
@@ -346,7 +346,7 @@ func TestWorkflowHumanGateInvalidDecisionKeepsWaiting(t *testing.T) {
 	if err := svc.AdvanceWorkflowRun(ctx, store, run.TaskID); err != nil {
 		t.Fatalf("AdvanceWorkflowRun: %v", err)
 	}
-	_, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "maybe", "")
+	_, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "maybe", "", "")
 	if err == nil || !strings.Contains(err.Error(), "invalid human gate decision") {
 		t.Fatalf("invalid decision err = %v, want explicit invalid error", err)
 	}

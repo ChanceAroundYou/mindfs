@@ -29,8 +29,9 @@ func workflowsHandler(t *testing.T) (http.Handler, *kanban.Service, string) {
 const wfGraphJSON = `{"nodes":[{"id":"a","name":"a","kind":"agent","params":{"prompt":"do it"}}]}`
 
 // 阶段移除后，migrate-workflow 不再能从「任务里剩下的阶段」推导图谱，必须显式给版本。
-// 这两个生命周期用例只需要一个「迁移后停在等人」的局面，所以发布一张单 human_gate 的图。
-const wfGateGraphJSON = `{"nodes":[{"id":"gate","name":"gate","kind":"human_gate","params":{"prompt":"ok?"}}]}`
+// 这两个生命周期用例只需要一个「迁移后停在等人」的局面，所以发布一张 gate → notify 的图。
+// gate 后面必须还有节点：末端 human_gate 没有可批的下游，定义期就被拒绝（G-MY）。
+const wfGateGraphJSON = `{"nodes":[{"id":"gate","name":"gate","kind":"human_gate","params":{"prompt":"ok?"}},{"id":"done","name":"done","kind":"notify","params":{"message":"ok"}}],"edges":[{"from":"gate","to":"done"}]}`
 
 func publishGateWorkflow(t *testing.T, h http.Handler) string {
 	t.Helper()
@@ -357,10 +358,18 @@ func TestWorkflowTaskCompleteAndFailFreezeRun(t *testing.T) {
 					} `json:"graph"`
 				} `json:"run"`
 			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &migrated); err != nil || len(migrated.Run.Graph.Nodes) != 1 {
+			if err := json.Unmarshal(rec.Body.Bytes(), &migrated); err != nil {
 				t.Fatalf("migrate response %s err=%v", rec.Body.String(), err)
 			}
-			gateID := migrated.Run.Graph.Nodes[0].ID
+			gateID := ""
+			for _, node := range migrated.Run.Graph.Nodes {
+				if node.ID == "gate" {
+					gateID = node.ID
+				}
+			}
+			if gateID == "" {
+				t.Fatalf("migrate response %s err=no gate node", rec.Body.String())
+			}
 			if err := svc.WaitWorkflowRunIdle(context.Background(), rootID, detail.Task.ID); err != nil {
 				t.Fatalf("wait idle: %v", err)
 			}

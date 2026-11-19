@@ -75,7 +75,14 @@ type WorkflowDiff struct {
 // deterministic diff plus all structural issues. It never mutates base, never
 // writes to a store, and never evaluates an expression or runs an Agent.
 func ValidateWorkflowPatch(base WorkflowDefinition, patch WorkflowPatch) (WorkflowDiff, []WorkflowPatchIssue, error) {
-	_, diff, issues := ApplyWorkflowPatchToGraph(base, patch, nil)
+	graph, diff, issues := ApplyWorkflowPatchToGraph(base, patch, nil)
+	if len(issues) == 0 {
+		// 草稿补丁与 CreateDraft/UpdateDraft 同一套“可发布”规则：末端 human_gate
+		// 在写入口就该被拒，而不是等到发布/运行才变成一张空审批卡。
+		if err := ValidateWorkflowDefinitionForAuthoring(graph); err != nil {
+			issues = append(issues, WorkflowPatchIssue{Field: "graph", Message: err.Error()})
+		}
+	}
 	if len(issues) > 0 {
 		return diff, issues, &WorkflowPatchError{Issues: issues}
 	}

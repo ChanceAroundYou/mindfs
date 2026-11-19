@@ -163,62 +163,38 @@ export function pendingTaskPrompt(activities: TaskActivity[]): TaskActivity | nu
   return null;
 }
 
-/** 结算行：带 summary 的终态 agent 回复。折叠只在它落地后才允许。 */
-function isSettledReply(activity: TaskActivity): boolean {
-  if (activity.type !== "agent_reply" || activity.role !== "agent") return false;
-  const status = normalizeActivityStatus(activity.status);
-  if (status !== "completed" && status !== "failed" && status !== "waiting_user") return false;
-  return (activity.summary || "").trim() !== "";
+/**
+ * 运行汇报行：`purpose=progress` 的 Agent 回复。
+ *
+ * 这类行不再折叠（2026-11-19 用户裁定），但需要一个可见标记，让用户能分清
+ * 「这一轮的结算结果」与「运行过程中 Router 的上报」。
+ */
+export function isRunReport(activity: TaskActivity): boolean {
+  return activity.type === "agent_reply" && activity.role === "agent" && activity.purpose === "progress";
 }
 
 /**
- * 对话流的行序列：普通活动一行，折叠后的运行汇报一组。
+ * 对话流实际要渲染的活动。
  *
- * 为什么需要折叠：结算回复（保证路径）与运行期 `purpose=progress` 汇报
- * （尽力路径）都写结果句。T10 裁定两条数据都不能删（结算回填保证终态可见，
- * 汇报带失败节点/未验证项等增量信息），所以只能在展示层去重：同一留言下
- * 第一个已结算的回复留在原位，其余 progress 行折成它后面的一组。
+ * 唯一的过滤：同一 Run 正停在审批卡上时，隐藏那条等待中的占位回复。
+ * 结算会把 gate 的 prompt 写进占位回复的 summary，于是 #88 现场出现两张
+ * 冲突的卡：一张「验收 / 等待你处理」的回复，一张真正的审批卡。用户分不清
+ * 该点哪个，也读不出「审批已经完成」的错觉。占位回复不是结果，审批卡才是
+ * 唯一的处理入口；gate 结算后（success/cancelled）占位回复照常回到结果行。
  *
- * 不折叠的三种情况，都是「折叠会藏掉用户正要的信息」：
- * - 父行还没结算（运行中用户就靠这行知道流程起来了）；
- * - progress 行没有 reply_to_id，无法确定归属；
- * - 同一留言下没有结算回复（全是 progress，那它们就是唯一的信息）。
+ * 没有审批卡的 waiting_user 回复（条件求值失败等）不过滤：那行就是唯一说明。
  */
-export type ConversationRow =
-  | { kind: "activity"; activity: TaskActivity }
-  | { kind: "reports"; parentId: string; reports: TaskActivity[] };
-
-export function conversationRows(activities: TaskActivity[]): ConversationRow[] {
-  const settledByMessage = new Map<string, string>();
+export function visibleConversationActivities(activities: TaskActivity[]): TaskActivity[] {
+  const waitingRuns = new Set<string>();
   for (const activity of activities) {
-    const messageId = (activity.reply_to_id || "").trim();
-    if (messageId === "" || settledByMessage.has(messageId)) continue;
-    if (isSettledReply(activity)) settledByMessage.set(messageId, activity.id);
+    if (activity.type === "human_gate" && normalizeActivityStatus(activity.status) === "waiting_user" && activity.run_id) {
+      waitingRuns.add(activity.run_id);
+    }
   }
-  // 折叠目标：父行 = 同一留言下第一个已结算的回复；父行自己与 purpose 缺省的
-  // 历史行都不折。先算一遍归属，输出时再按父行位置插组 —— 组必须紧跟它所属的
-  // 那一轮，不能因为汇报到达得晚就掉到下一轮留言后面。
-  const parentOf = (activity: TaskActivity): string => {
-    const messageId = (activity.reply_to_id || "").trim();
-    const parentId = messageId ? settledByMessage.get(messageId) : undefined;
-    if (!parentId || parentId === activity.id || activity.purpose !== "progress") return "";
-    return parentId;
-  };
-  const reportsByParent = new Map<string, TaskActivity[]>();
-  for (const activity of activities) {
-    const parentId = parentOf(activity);
-    if (parentId === "") continue;
-    const reports = reportsByParent.get(parentId);
-    if (reports) reports.push(activity);
-    else reportsByParent.set(parentId, [activity]);
-  }
-
-  const rows: ConversationRow[] = [];
-  for (const activity of activities) {
-    if (parentOf(activity) !== "") continue;
-    rows.push({ kind: "activity", activity });
-    const reports = reportsByParent.get(activity.id);
-    if (reports) rows.push({ kind: "reports", parentId: activity.id, reports });
-  }
-  return rows;
+  if (waitingRuns.size === 0) return activities;
+  return activities.filter((activity) => {
+    if (activity.type !== "agent_reply" || activity.role !== "agent") return true;
+    if (normalizeActivityStatus(activity.status) !== "waiting_user") return true;
+    return !(activity.run_id && waitingRuns.has(activity.run_id));
+  });
 }

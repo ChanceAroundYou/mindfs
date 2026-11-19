@@ -266,6 +266,14 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 				log.Printf("[kanban/recover] router event failed root=%s run=%s err=%v", rootID, b.runID, err)
 			}
 		}
+		// 升级前留下的末端 human_gate 停在 waiting_user，没有 queued/running 行，
+		// 上面的对账看不到它。必须唤醒 driver，让兼容收尾把它放行；否则任务会
+		// 卡在一张永远没人需要批的审批卡上。
+		if !wake && !paused {
+			if run, err := store.WorkflowRunByID(ctx, b.runID); err == nil && hasParkedTerminalHumanGate(run) {
+				wake = true
+			}
+		}
 		if wake && !paused {
 			if err := s.WakeWorkflowRun(ctx, rootID, b.taskID, "startup_reconcile"); err != nil {
 				log.Printf("[kanban/recover] workflow wake failed root=%s task=%s err=%v", rootID, b.taskID, err)

@@ -15,6 +15,8 @@ export type HumanGateInput = {
   workflowNodeId: string;
   decision: HumanGateDecision;
   commentId?: string;
+  /** 审批附言：只在批准时随请求提交，后端转成排队用户留言交给 Router。 */
+  note?: string;
 };
 
 export async function postTaskHumanGate(
@@ -23,6 +25,9 @@ export async function postTaskHumanGate(
   input: HumanGateInput,
   nodeId?: string,
 ): Promise<NodeRunPayload> {
+  // 空附言必须整键省略：后端把「有 note」当作用户真的留了话，空串会让它在
+  // 时间线上多出一条空留言。
+  const trimmedNote = (input.note || "").trim();
   const payload = await protectedJSON<{ node_run?: NodeRunPayload }>(
     appURL(`/api/tasks/${encodeURIComponent(taskId)}/human-gate`, undefined, nodeId),
     {
@@ -33,6 +38,7 @@ export async function postTaskHumanGate(
         node_id: input.workflowNodeId,
         decision: input.decision,
         ...(input.commentId ? { comment_id: input.commentId } : {}),
+        ...(trimmedNote ? { note: trimmedNote } : {}),
       }),
     },
   );
