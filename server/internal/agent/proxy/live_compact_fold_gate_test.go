@@ -495,10 +495,10 @@ func TestSessionCalibrationRoundTrip(t *testing.T) {
 
 func TestLiveCompactNormalizesRailDefaults(t *testing.T) {
 	cfg := LiveCompactConfig{}.Normalized()
-	// "Fold deep, fold rarely" (design §12.7(d)): trigger just below the
-	// auto-compact threshold, then cut all the way down.
-	if cfg.RailTokens != 160000 || cfg.TargetTokens != 40000 {
-		t.Fatalf("rail/target = %d/%d, want 160000/40000", cfg.RailTokens, cfg.TargetTokens)
+	// "Fold deep, fold rarely" (design §12.7(d)): cut all the way down behind
+	// the protected tail, and keep the resident request around 100k.
+	if cfg.RailTokens != 100000 || cfg.TargetTokens != 20000 {
+		t.Fatalf("rail/target = %d/%d, want 100000/20000", cfg.RailTokens, cfg.TargetTokens)
 	}
 	if cfg.MinFoldBytes != 4096 || cfg.MaxFoldBytes != 262144 || cfg.LargeBlockTokens != 32000 {
 		t.Fatalf("fold budget = %d/%d/%d, want 4096/262144/32000", cfg.MinFoldBytes, cfg.MaxFoldBytes, cfg.LargeBlockTokens)

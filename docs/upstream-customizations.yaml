@@ -9416,7 +9416,7 @@ groups:
       - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestFoldStopsAtTargetInUpstreamUnits('
       - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestSessionCalibrationRoundTrip('
       - 'server/internal/agent/proxy/live_compact_commits.go:keys map[pointerCacheKey]struct{}'
-      - 'server/internal/agent/proxy/live_compact.go:c.RailTokens = 160000'
+      - 'server/internal/agent/proxy/live_compact.go:c.RailTokens = 100000'
       - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestProxyFoldKeepsCommittedPrefixAcrossTurns('
       - 'server/internal/agent/proxy/live_compact_fold.go:if s.liveCompactDisabled() {'
       - 'server/internal/agent/proxy/live_compact_fold.go:if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < spanLen {'

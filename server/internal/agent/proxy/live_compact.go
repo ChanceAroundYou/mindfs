@@ -38,13 +38,16 @@ type LiveCompactConfig struct {
 	// RailTokens is the upstream-token trigger for folding new blocks (design
 	// §12.7). Below it, already-committed folds are still applied but no new
 	// block is committed, because a fold invalidates the upstream prefix cache
-	// from the boundary onward. Zero means the default.
+	// from the boundary onward. Zero means the default (100k). The rail is the
+	// resident-context ceiling the user asked for: 160k measured within noise of
+	// 100k on cost but let requests reach 130k, while 100k peaked at 95k.
 	RailTokens int
 	// TargetTokens is the low-water line one fold event commits down to. It
 	// sits far below the rail on purpose: the model is "fold deep, fold rarely"
 	// (§12.7(b) — a shallow fold cannot repay the cache rewrite it costs). In
-	// practice keep_rounds is the binding constraint; the target only stops an
-	// event early when the context was already small.
+	// practice keep_rounds and keep_tail_tokens are the binding constraints; the
+	// target only stops an event early when the context was already small. At a
+	// 100k rail it is also never the binding one: the tail alone can be 50k+.
 	TargetTokens int
 	// MinFoldBytes rejects a fold event too small to be worth a cache break.
 	MinFoldBytes int
@@ -99,18 +102,22 @@ func (c LiveCompactConfig) Normalized() LiveCompactConfig {
 	// A negative rail disables the gate; zero means the default.
 	//
 	// The defaults are the "fold deep, fold rarely" shape measured in design
-	// §12.7: trigger late (160k upstream tokens, just under the CLI's ~167k
-	// auto-compact threshold on a 200k window), then cut all the way down
-	// (target 40k ≈ dsh's 32k tail) so one event repays its cache rewrite in a
-	// round or two. The earlier 130k/100k pair folded every ~3 rounds by ~15%,
-	// which needs ~33 rounds to break even and measured 2.26x the cost of not
-	// folding at all (plan, B4 Step 8).
+	// §12.7: cut all the way down (target 20k; the protected tail — keep_rounds
+	// plus keep_tail_tokens ≈ 32k — is what actually stops the cut) so one event
+	// repays its cache rewrite in a round or two. The rail is 100k, not the
+	// CLI's ~167k auto-compact threshold: the seven-arm uniform-read bench put
+	// 100k within noise of 160k on cost (339,933–380,111 vs 340,190–367,914) but
+	// capped the resident request at 95.2k instead of 129.7k. Going lower is not
+	// free: 50k folds one block per turn, re-prices the whole tail every turn,
+	// and measured ~+10% (plan, B4 Step 8). The earlier 130k/100k pair folded
+	// every ~3 rounds by ~15%, which needs ~33 rounds to break even and measured
+	// 2.26x the cost of not folding at all.
 	if c.RailTokens == 0 {
-		c.RailTokens = 160000
+		c.RailTokens = 100000
 	}
 	if c.RailTokens > 0 {
 		if c.TargetTokens <= 0 {
-			c.TargetTokens = 40000
+			c.TargetTokens = 20000
 		}
 		// A target at or above the rail would make one event commit nothing and
 		// leave the next request above the rail again.
