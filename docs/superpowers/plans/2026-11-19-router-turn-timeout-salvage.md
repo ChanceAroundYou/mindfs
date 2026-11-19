@@ -161,3 +161,13 @@ add --detach HEAD`）与隔离实例上重新跑出来：
   被静默挡掉且不再重试：首屏看板四列全 0、`/api/tasks?root=` 一次都不发，reload 后正常）。
   这是既存问题（G-NB 只改动 8 个前端文件，未触 init/loader），已在小节里写明，未顺手修。
 
+### 部署（2026-11-20）
+
+`deploy-all.sh` 从 `HEAD` 干净 worktree 构建（共享工作区当时有 live-compact 会话的在飞文件，
+不能编进二进制），四端同版本 **`v0.5.5-1121-31-g9e29cdd2`**；`origin/main` 已推到 `9e29cdd2`
+（连同本次之前积压的全部计划提交）。中途另一会话提交 `9e29cdd2`，首轮构建因此挂上 `-dirty`
+且源码落后一个提交，同步后重跑一轮，最终四端都是干净版本号。独立核对：WSL/fn
+`mindfs --version` 逐字一致、`systemctl --user is-active`、`/mindfs/health` 200；pc-win
+PID 19820、health 200；本机二进制与 `/` 引用的 bundle 均为刚装的那版，system 单元仍在跑旧
+进程（exe 已 deleted），待用户 `sudo systemctl restart mindfs`。
+
