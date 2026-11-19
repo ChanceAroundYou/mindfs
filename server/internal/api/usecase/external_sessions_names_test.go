@@ -66,7 +66,11 @@ func TestListExternalSessionsUsesPersistentMindFSName(t *testing.T) {
 // 迁移提示的剥壳是「首行 + 尾行」双锚点，中间整段（含绝对路径）不参与判断。
 // 路径改成绝对路径后必须仍能剥掉，否则导入会话的首条 user 气泡会一直挂着这段提示。
 func TestStripExternalSessionPrefixRemovesAbsolutePathHint(t *testing.T) {
-	hint := buildSwitchReadHint("/abs/root/.mindfs/sessions/1234-abcd.jsonl", 20)
+	hint := buildSwitchReadHint([]switchReadTarget{{
+		Path:  "/abs/root/.mindfs/sessions/1234-abcd.jsonl",
+		Lines: 20,
+		Kind:  "log",
+	}})
 	got := stripExternalSessionPrefix(hint + "真正的问题")
 	if got != "真正的问题" {
 		t.Fatalf("stripped = %q, want just the user message", got)
@@ -77,6 +81,14 @@ func TestStripExternalSessionPrefixRemovesAbsolutePathHint(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.ToLower(hint), "this session was migrated from elsewhere.") {
 		t.Fatalf("hint lost its first line, importer would render it as a user bubble: %q", hint)
+	}
+
+	// 历史里落盘的旧文案也要能剥掉：旧尾句与新尾句不同。
+	legacy := "This session was migrated from elsewhere. Your context may lag behind this session;\n" +
+		"Before replying, read the last 20 lines from /abs/root/.mindfs/sessions/1234-abcd.jsonl to recover context.\n" +
+		"Only if reading fails, output a brief error and stop.\n\n"
+	if legacyGot := stripExternalSessionPrefix(legacy + "真正的问题"); legacyGot != "真正的问题" {
+		t.Fatalf("legacy stripped = %q, want just the user message", legacyGot)
 	}
 
 	// 非迁移提示不得被误剥。

@@ -211,16 +211,5 @@ func shortExternalSessionTitleForAPI(text string) string {
 }
 
 func stripExternalSessionPrefixForAPI(text string) string {
-	text = strings.TrimSpace(text)
-	const prefix = "This session was migrated from elsewhere. Your context may lag behind this session;"
-	const tail = "Only if reading fails, output a brief error and stop."
-	normalized := strings.ReplaceAll(text, "\\n", "\n")
-	if !strings.HasPrefix(normalized, prefix) {
-		return text
-	}
-	idx := strings.Index(normalized, tail)
-	if idx < 0 {
-		return text
-	}
-	return strings.TrimSpace(normalized[idx+len(tail):])
+	return usecase.StripSwitchHint(text)
 }

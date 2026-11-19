@@ -207,17 +207,22 @@ func TestCleanFrontendResourcePathUsesDeployPrefix(t *testing.T) {
 }
 
 // 与 usecase 侧同名函数同源：API 层序列化 session 时也要剥掉迁移提示。
-// 覆盖绝对路径形态 —— 相对路径时代的测试早就不存在，剥壳逻辑零覆盖。
+// 覆盖新文案（宽松、多候选）与历史里落盘的旧文案两种形态。
 func TestStripExternalSessionPrefixForAPIRemovesAbsolutePathHint(t *testing.T) {
-	hint := "This session was migrated from elsewhere. Your context may lag behind this session;\n" +
-		"Before replying, read the last 20 lines from /abs/root/.mindfs/sessions/1234-abcd.jsonl to recover context.\n" +
-		"If you still need more context, decide and read older history yourself.\n" +
-		"When continuing to read, keep each backward batch to about 20 lines.\n\n" +
-		"Execution order: read history first, then compose the final answer.\n" +
-		"Note: do not send any natural-language response before finishing the required history reads. Start reading immediately via tools/commands.\n" +
-		"Only if reading fails, output a brief error and stop.\n\n"
+	hint := "This session was migrated from elsewhere. Your context may lag behind this session.\n" +
+		"These notes are optional hints for catching up; they are not a blocking requirement.\n" +
+		"Candidate history files, newest lines first — try them in order and skip any that do not exist:\n" +
+		"1. /abs/root/.mindfs/sessions/1234-abcd.jsonl (MindFS exchange log; turn metadata, text may be empty on newer sessions); read about the last 20 lines.\n" +
+		"Never stop just because a history file is missing; continue with the request and state any assumptions you had to make.\n\n"
 	got := stripExternalSessionPrefixForAPI(hint + "真正的问题")
 	if got != "真正的问题" {
 		t.Fatalf("stripped = %q, want just the user message", got)
+	}
+
+	legacy := "This session was migrated from elsewhere. Your context may lag behind this session;\n" +
+		"Before replying, read the last 20 lines from /abs/root/.mindfs/sessions/1234-abcd.jsonl to recover context.\n" +
+		"Only if reading fails, output a brief error and stop.\n\n"
+	if got := stripExternalSessionPrefixForAPI(legacy + "真正的问题"); got != "真正的问题" {
+		t.Fatalf("legacy stripped = %q, want just the user message", got)
 	}
 }

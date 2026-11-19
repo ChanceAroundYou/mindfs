@@ -3,9 +3,10 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -291,27 +292,48 @@ func switchReadHintPath(manager *session.Manager, sessionKey string) string {
 	return filepath.ToSlash(absLogPath)
 }
 
-// switchReadHintTarget 决定提示让 agent 去读哪个文件、读多少行。
+// switchReadTarget 是提示里列出的一个候选历史文件。
+type switchReadTarget struct {
+	Path  string
+	Lines int
+	Kind  string // "blocks"（正文）| "log"（交换元数据）
+}
+
+// switchReadHintTargets 决定提示让 agent 去读哪些文件、各读多少行。
 //
 // 主日志自 S2d-2（G-BH）起 content 恒空，正文只在块流行里 —— 把「读最后 N 行」
 // 指向主日志，agent 拿到的是一串没有内容的行，恢复不出任何上下文（2026-11-12 fn
 // 实测：43 行交换行全是空 content，正文 596 个块另存）。所以块流可用时优先块流，
-// 行数换算成「未见过的块行数」；块流不存在（S2d-2 之前的历史会话）才回落主日志。
+// 行数换算成「未见过的块行数」；主日志只作为第二个候选一并列出。
+//
+// 只列出真实存在的文件。一个都不存在时返回空列表，由提示自己兜底：让 agent 去读
+// 自己的会话记录或直接用现有上下文继续，而不是让本轮停摆（2026-11-19 fn 实测：
+// 压缩后残留的失效路径让 agent 直接停下）。
 //
 // seen 是 agent 已看到的交换行数，exchangeLines 是主日志口径的读取量。
-func switchReadHintTarget(manager *session.Manager, sessionKey string, exchanges []session.Exchange, seen, exchangeLines int) (string, int) {
+func switchReadHintTargets(manager *session.Manager, sessionKey string, exchanges []session.Exchange, seen, exchangeLines int) []switchReadTarget {
 	if manager == nil {
-		return "", 0
+		return nil
 	}
+	var targets []switchReadTarget
 	if blocksPath := manager.BlocksLogAbsolutePath(sessionKey); strings.TrimSpace(blocksPath) != "" {
 		if unseen, err := manager.CountBlocksAfterSeq(sessionKey, lastSeenExchangeSeq(exchanges, seen)); err == nil && unseen > 0 {
 			if unseen > switchContextTailBlocks {
 				unseen = switchContextTailBlocks
 			}
-			return filepath.ToSlash(blocksPath), unseen
+			targets = append(targets, switchReadTarget{Path: filepath.ToSlash(blocksPath), Lines: unseen, Kind: "blocks"})
 		}
 	}
-	return switchReadHintPath(manager, sessionKey), exchangeLines
+	if logPath := switchReadHintPath(manager, sessionKey); strings.TrimSpace(logPath) != "" && exchangeLines > 0 {
+		targets = append(targets, switchReadTarget{Path: filepath.ToSlash(logPath), Lines: exchangeLines, Kind: "log"})
+	}
+	readable := targets[:0]
+	for _, target := range targets {
+		if _, err := os.Stat(filepath.FromSlash(target.Path)); err == nil {
+			readable = append(readable, target)
+		}
+	}
+	return readable
 }
 
 // lastSeenExchangeSeq 取 agent 最后看过的那条交换行的 seq。
@@ -332,14 +354,64 @@ func lastSeenExchangeSeq(exchanges []session.Exchange, seen int) int {
 	return seen
 }
 
-func buildSwitchReadHint(exchangeLogPath string, lines int) string {
-	return "This session was migrated from elsewhere. Your context may lag behind this session;\n" +
-		"Before replying, read the last " + strconv.Itoa(lines) + " lines from " + exchangeLogPath + " to recover context.\n" +
-		"If you still need more context, decide and read older history yourself.\n" +
-		"When continuing to read, keep each backward batch to about " + strconv.Itoa(switchContextTailLines) + " lines.\n\n" +
-		"Execution order: read history first, then compose the final answer.\n" +
-		"Note: do not send any natural-language response before finishing the required history reads. Start reading immediately via tools/commands.\n" +
-		"Only if reading fails, output a brief error and stop.\n\n"
+const (
+	// switchHintProbe 是迁移提示的稳定指纹：导入/标题剥离都按它判断是不是提示。
+	switchHintProbe = "This session was migrated from elsewhere."
+	// switchHintPrefix 是提示的第一行，必须与 switchHintProbe 同源。
+	switchHintPrefix = switchHintProbe + " Your context may lag behind this session."
+	// switchHintTail 是提示的最后一行；剥离逻辑切开它之后的内容。
+	switchHintTail = "Never stop just because a history file is missing; continue with the request and state any assumptions you had to make."
+	// legacySwitchHintTail 是旧提示的末句，仅用于剥离历史里已经落盘的老文案。
+	legacySwitchHintTail = "Only if reading fails, output a brief error and stop."
+)
+
+// buildSwitchReadHint 生成迁移提示。
+//
+// 它是**可选的补上下文线索**，不是硬性要求：列出的路径可能因为压缩后残留、
+// 账户/项目 meta 迁移、文件被清理等原因失效，所以文案明确「跳过不存在的文件」，
+// 并在全部读不到时让 agent 去读自己的会话记录或直接用现有上下文继续，绝不喊停。
+func buildSwitchReadHint(targets []switchReadTarget) string {
+	var b strings.Builder
+	b.WriteString(switchHintPrefix)
+	b.WriteString("\nThese notes are optional hints for catching up; they are not a blocking requirement.\n")
+	if len(targets) == 0 {
+		b.WriteString("No MindFS-side history file could be located for this session.\n")
+	} else {
+		b.WriteString("Candidate history files, newest lines first — try them in order and skip any that do not exist:\n")
+		for i, target := range targets {
+			label := "MindFS exchange log; turn metadata, text may be empty on newer sessions"
+			if target.Kind == "blocks" {
+				label = "MindFS block stream; carries the full message text"
+			}
+			fmt.Fprintf(&b, "%d. %s (%s); read about the last %d lines.\n", i+1, target.Path, label, target.Lines)
+		}
+	}
+	b.WriteString("If you cannot find or read the history, read the session record kept by your own agent runtime (Codex keeps transcripts under ~/.codex/sessions; Claude Code under ~/.claude/projects), or simply continue with the context you already have.\n")
+	b.WriteString(switchHintTail)
+	b.WriteString("\n\n")
+	return b.String()
+}
+
+// StripSwitchHint 去掉开头这段迁移提示（若存在）。
+//
+// 同时认新文案与旧文案：历史里落盘的旧提示仍会出现在导入会话的首条气泡里。
+func StripSwitchHint(text string) string {
+	normalized := strings.ReplaceAll(strings.TrimSpace(text), "\\n", "\n")
+	if !strings.HasPrefix(normalized, switchHintProbe) {
+		return text
+	}
+	end := -1
+	for _, tail := range []string{switchHintTail, legacySwitchHintTail} {
+		if idx := strings.Index(normalized, tail); idx >= 0 {
+			if next := idx + len(tail); end < 0 || next < end {
+				end = next
+			}
+		}
+	}
+	if end < 0 {
+		return text
+	}
+	return strings.TrimSpace(normalized[end:])
 }
 
 func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInput) error {

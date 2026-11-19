@@ -446,18 +446,21 @@ func TestPrependSwitchHintPointsAtBlocksWhenAvailable(t *testing.T) {
 	})
 
 	wantPath := filepath.ToSlash(filepath.Join(rootDir, ".mindfs", "sessions", created.Key+".blocks.jsonl"))
-	wantRead := "read the last 3 lines from " + wantPath
-	if !strings.Contains(got, wantRead) {
-		t.Fatalf("switch hint does not ask for the unseen block lines %q: %q", wantRead, got)
+	if !strings.Contains(got, wantPath) {
+		t.Fatalf("switch hint does not point at the block stream %q: %q", wantPath, got)
+	}
+	if !strings.Contains(got, "last 3 lines") {
+		t.Fatalf("switch hint does not ask for the unseen block lines: %q", got)
 	}
 }
 
-// 日志文件不可读时不要注入迁移提示。
+// 迁移提示必须是「可选线索」，不能要求 agent 读不到就停下。
 //
-// 提示文案最后一句是「Only if reading fails, output a brief error and stop」——
-// 路径解析错位（2026-11-12 fn 实测）时，这一句直接让 agent 每轮停摆。少一份上下文
-// 可以接受，整轮无法继续不行。
-func TestPrependSwitchHintSkippedWhenLogMissing(t *testing.T) {
+// 现场（2026-11-19 fn / CMAI / codex）：会话压缩后，历史里残留的旧提示仍带着一个
+// 已失效的绝对路径；文案末句「Only if reading fails, output a brief error and stop」
+// 让 agent 原地停下，整轮报废。提示要列出多个候选位置，并在一个都读不到时明确让
+// agent 去读自己的会话记录或直接用现有上下文继续。
+func TestPrependSwitchHintIsLenientAndListsCandidates(t *testing.T) {
 	rootDir := t.TempDir()
 	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
 	created, err := manager.Create(context.Background(), session.CreateInput{
@@ -467,8 +470,56 @@ func TestPrependSwitchHintSkippedWhenLogMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create session: %v", err)
 	}
-	if err := os.Remove(manager.ExchangeLogAbsolutePath(created.Key)); err != nil {
-		t.Fatalf("remove exchange log: %v", err)
+	if err := manager.AppendBlocks(context.Background(), created.Key, []session.Block{
+		{Seq: 1, Pos: 0, Type: session.BlockTypeText, Text: "seen"},
+		{Seq: 2, Pos: 0, Type: session.BlockTypeText, Text: "unseen"},
+	}); err != nil {
+		t.Fatalf("AppendBlocks: %v", err)
+	}
+
+	service := &Service{}
+	codexSeen := 1
+	linesBefore := 2
+	got := service.BuildPrompt(BuildPromptInput{
+		Session:             created,
+		Manager:             manager,
+		Agent:               "codex",
+		Message:             "继续",
+		AgentCtxSeq:         &codexSeen,
+		LinesBeforeThisTurn: &linesBefore,
+	})
+
+	blocksPath := filepath.ToSlash(filepath.Join(rootDir, ".mindfs", "sessions", created.Key+".blocks.jsonl"))
+	logPath := filepath.ToSlash(filepath.Join(rootDir, ".mindfs", "sessions", created.Key+".jsonl"))
+	for _, want := range []string{blocksPath, logPath, "~/.codex/sessions", "~/.claude/projects"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("lenient hint missing %q: %q", want, got)
+		}
+	}
+	for _, banned := range []string{"output a brief error and stop", "do not send any natural-language response"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("hint still contains the blocking instruction %q: %q", banned, got)
+		}
+	}
+}
+
+// 一个 MindFS 侧文件都读不到时，仍然给出宽松提示：不要停下，去读自己的会话记录
+// 或用现有上下文继续（而不是像旧文案那样让 agent 报错停摆）。
+func TestPrependSwitchHintLenientWhenAllFilesMissing(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	for _, path := range []string{
+		manager.ExchangeLogAbsolutePath(created.Key),
+		manager.BlocksLogAbsolutePath(created.Key),
+	} {
+		_ = os.Remove(path)
 	}
 
 	service := &Service{}
@@ -482,8 +533,14 @@ func TestPrependSwitchHintSkippedWhenLogMissing(t *testing.T) {
 		AgentCtxSeq:         &codexSeen,
 		LinesBeforeThisTurn: &linesBefore,
 	})
-	if strings.Contains(got, "This session was migrated from elsewhere.") {
-		t.Fatalf("missing exchange log still got the migration hint: %q", got)
+	if !strings.Contains(got, "~/.codex/sessions") {
+		t.Fatalf("hint does not point at the agent's own session records: %q", got)
+	}
+	if strings.Contains(got, manager.ExchangeLogAbsolutePath(created.Key)) {
+		t.Fatalf("hint still lists a file that does not exist: %q", got)
+	}
+	if strings.Contains(got, "output a brief error and stop") {
+		t.Fatalf("hint tells the agent to stop when files are missing: %q", got)
 	}
 	if !strings.Contains(got, "hi") {
 		t.Fatalf("user message lost: %q", got)
