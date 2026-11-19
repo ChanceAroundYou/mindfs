@@ -434,3 +434,39 @@ G-NF（`7888797c`）改成 `task.agent/task.model` 默认 claude + sonnet，回�
 ① `GET /api/router/status` 报 `mode=coordinate`；② `[router/coordinate]` 每 30s 一拍、
 新事件从 pending → done；③ 每个事件恰好一条可见汇报且 `reply_to_id` 指回原留言；
 ④ fallback 率应低于 48%（更大窗口）；⑤ `router_events` 不再只写不读。
+
+## 重启后验收：coordinate 开闸首个真实闭环（2026-11-20 02:55）
+
+用户已执行本机 `sudo systemctl restart mindfs`（02:55:26，PID 990089，`/proc/<pid>/exe` 未
+deleted）。运行二进制 `mindfs --version` = `v0.5.5-1200-8-g6764a257`，`7888797c`（G-NF
+claude+sonnet 派发默认）是其祖先，故本次重启同时带上了任务派发修复。
+
+**配置生效（只读核对）**：`GET /mindfs/api/router/status` → `mode=coordinate`、
+`turn_timeout_ms=180000`、`agent=claude`、`model=ok`、`effort=low`、`idle_close_ms=1800000`
+（裸 `/api/router/status` 因根前缀是 404，正常）。
+
+**首个事件闭环（验收点 ②③⑤）**：启动后 8s（02:55:34）消费循环领取了 llmux root 的最后一条
+pending 事件 `revt_9e53a28b4d460d86`（`run_failed`，task_7dbb14bf29eb9794，11-19 13:17:40Z
+产生），`claimed_by=router-coordinator-llmux-990089`；决策 `rdec_2c35b5e532c9924d` 为
+`applied`（latency 23.2s，动作 `say(purpose=progress)`），事件 02:55:51 落 `done`。可见汇报
+`act-rtev-08388ad83ab7814d302a`：`role=agent`、`purpose=progress`、`hidden=0`、
+`status=completed`、`reply_to_id=act_071c3fe1acb618ba` —— 正是原留言，且该事件只此一条
+汇报。汇报正文「第一步输入节点就失败，网关 400 / credits 不足，不自动重试」与 `run_failed`
+事实一致。
+
+**口径修正（重要）**：昨夜记的「5 条 pending」只统计了 **mindfs root** 的库。任务库是
+**每 root 一份**（本机两份：`projects/mindfs/.mindfs/tasks/task-kanban.db` 与
+`projects/llmux/.mindfs/tasks/task-kanban.db`），llmux root 还有 1 条未计入的 pending，
+正好成了 coordinate 的首个真实样本。手工 skip 只覆盖 mindfs root 的 5 条（现状：5 skipped /
+0 pending）；llmux root 现状：1 done / 0 pending。
+
+**重启瞬间的 1 条 fallback 不是模型失败**：`rdec_f816b09e58973fc6`（task_5cbbf1b90ff43412）
+02:55:26 以 `response stream ended unexpectedly` 落 fallback，同一秒旧进程（PID 58000）被
+SIGTERM —— 是重启打断了在飞回合。新进程自 02:55:26 起**无任何** `[router/coordinate]` 错误/
+回收/清理日志。
+
+**观察口径**：消费循环每拍不写日志（只在 error / reclaim / prune / consume 动作时打），所以
+「每 30s 一拍」只能由事件时间线反推，不能靠日志逐拍核对；本次证据是「启动后 8s 内领取、25s
+内完成」。**待更长窗口**：验收点 ④（fallback 率低于 48%）以及 G-NF 的 claude+sonnet 派发
+（重启后只恢复了既有数字会话，均 `agent=claude`，尚未有新建任务样本）。R2 仍未启动，需新
+授权与独立 goal/brief。
