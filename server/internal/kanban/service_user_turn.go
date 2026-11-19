@@ -64,10 +64,13 @@ func (s *Service) PrepareNewUserTurn(ctx context.Context, task Task, supersede b
 		// 用户可能只是想先聊一句，再回去审批。
 		return nil
 	}
-	// 上一轮已经成功跑完、任务停在待审核：新留言是新的一轮，不是对旧轮次的
+	// 上一轮已经结束（成功 / 失败 / 取消）：新留言是新的一轮，不是对旧轮次的
 	// 取代。旧 Run 的结果、回复与摘要都要原样保留；不能冻结成 cancelled，
-	// 更不能把用户刚看到的 completed 回复改写成「已取消」。
-	if ProjectStatusFromRun(run) == StatusSuccess {
+	// 更不能把用户刚看到的回复改写成「已取消」。
+	//
+	// 失败也在这里：一轮失败停在待审核，用户继续发消息就是重试。以前只有成功
+	// 放行，失败只能新建任务（2026-11-19 用户现场：一次 502 就把任务封板）。
+	if isTerminalStatus(ProjectStatusFromRun(run)) {
 		if err := store.UpdateTaskStatus(ctx, current.ID, StatusPending, false); err != nil {
 			return err
 		}

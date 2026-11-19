@@ -101,8 +101,10 @@ func TestWorkflowNodeAttemptFailingRunnerProjectsFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if task.Status != StatusFail {
-		t.Fatalf("task status = %q, want fail", task.Status)
+	// 一轮失败不等于任务结束：失败证据留在 NodeRun 输出与账本里，任务行回到
+	// 待审核等用户决定（继续追问 / 收口），不写 fail 终态（2026-11-19 用户现场）。
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want waiting_user (a failed round is handed back for review)", task.Status)
 	}
 	// 对话流归 Router：节点终态不新开活动行；失败原因留在 NodeRun 输出里，
 	// 由 Router 在结算这一轮回复时带上。

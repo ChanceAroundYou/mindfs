@@ -113,6 +113,12 @@ func (h *HTTPHandler) handleKanbanTaskFail(w http.ResponseWriter, r *http.Reques
 	h.handleKanbanTaskMove(w, r, "fail")
 }
 
+// handleKanbanTaskReopen 把完成 / 失败 / 取消的任务放回「待审核」，让这条对话
+// 继续。终态是封板，封错了（点早了 / 一次偶发失败 / 取消后改主意）得有出路。
+func (h *HTTPHandler) handleKanbanTaskReopen(w http.ResponseWriter, r *http.Request) {
+	h.handleKanbanTaskMove(w, r, "reopen")
+}
+
 // handleKanbanTaskDelete 删掉一张任务卡（终态任务的「删除」按钮）。
 //
 // 与「取消」是两回事：取消只改状态，卡片还留在板上；删除把它从板上拿走。
@@ -285,6 +291,8 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 		detail, err = svc.Cancel(r.Context(), in)
 	case "fail":
 		detail, err = svc.Fail(r.Context(), in)
+	case "reopen":
+		detail, err = svc.Reopen(r.Context(), in)
 	default:
 		err = errInvalidRequest("unsupported task action")
 	}

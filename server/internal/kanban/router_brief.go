@@ -275,7 +275,14 @@ func briefTaskStatus(run *WorkflowRun, task Task) string {
 	// 而 NodeStates 在节点刚 claim 的那一瞬间也可能还没写进去（NodeRun 行已经是
 	// running）。两边都说「有活动」时以投影为准；一边说在跑、另一边说空闲时采信
 	// 更活跃的那个——宁可多报一次活动，也不要把一条本该转交的留言判成新开一轮。
-	if isTerminalStatus(derived) || isActiveTaskStatus(derived) {
+	//
+	// 但终态的 Run 只有在任务行也是终态时才算任务结论。任务行不是终态，说明这
+	// 条 Run 只是上一轮的证据（被取代、或用户点了「回到待审核」）：采信任务行，
+	// 否则 apply 闸门会拿旧结论把新留言判成「任务已结束」。
+	if isTerminalStatus(derived) {
+		return task.Status
+	}
+	if isActiveTaskStatus(derived) {
 		return derived
 	}
 	if isActiveTaskStatus(task.Status) {

@@ -170,6 +170,19 @@ func (s *TaskStore) UpdateTaskStatus(ctx context.Context, taskID, status string,
 	return err
 }
 
+// ReopenTask 把终态任务放回「待审核」。只动状态与 completed_at：
+// 上一轮的 Run、回复、结果摘要都是证据，重开不该抹掉它们。
+//
+// 单独的 SQL 而不是复用 UpdateTaskStatus：后者只会在 completed=true 时写
+// completed_at，没有清空分支，而 redo 一个已完成任务必须把封板时间清掉。
+func (s *TaskStore) ReopenTask(ctx context.Context, taskID string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status = ?, completed_at = '', updated_at = ? WHERE id = ?`,
+		StatusWaitingUser, now, strings.TrimSpace(taskID))
+	return err
+}
+
 // UpdateTaskResultSummary 记录最近一轮结算后的可读结果，供看板卡/任务列表展示。
 // 与状态写入一样推进 updated_at：结果变了就是任务变了，列表排序也该跟着动。
 func (s *TaskStore) UpdateTaskResultSummary(ctx context.Context, taskID, summary string) error {

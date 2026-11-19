@@ -5,7 +5,7 @@
  * Icons: ImportIcon, EditPencilIcon, HorizontalDotsIcon, PlusSmallIcon,
  * CheckIconSmall, TaskCompleteIcon, TaskQueuedSpinnerIcon, TaskPauseIcon,
  * TaskResumeIcon, TaskRebuildWorktreeIcon, TaskFinishWorktreeIcon,
- * TaskSessionErrorIcon, TaskCancelIcon, DeleteIcon, TaskPlanAuxIcon,
+ * TaskSessionErrorIcon, TaskCancelIcon, TaskReopenIcon, DeleteIcon, TaskPlanAuxIcon,
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
  * ChevronDownSmallIcon, WorkflowIcon.
  * Task styles: taskCardSurfaceStyle,
@@ -235,6 +235,31 @@ export function TaskCancelIcon() {
     >
       <circle cx="12" cy="12" r="9" />
       <path d="M5.6 5.6 18.4 18.4" />
+    </svg>
+  );
+}
+
+/**
+ * 回到待审核：一个回退箭头（undo）。
+ *
+ * 与「删除」的垃圾桶、「取消」的作废符区分开：这个动作不销毁任何东西，
+ * 只是把已封板的任务放回可继续对话的状态，上一轮的 Run 与回复都还留着。
+ */
+export function TaskReopenIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
     </svg>
   );
 }

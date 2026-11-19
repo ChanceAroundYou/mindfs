@@ -88,9 +88,12 @@ assert.equal(
   "the finish button must render in BOTH the non-terminal and the terminal branch",
 );
 // 终态分支里删除键仍在收尾键之后 —— 顺序反了会让「收尾」被挤出可视区。
-assert.match(
-  cardRows,
-  /canFinishWorktree \? <TaskCardFinishButton[^>]*\/> : null\}\s*<button[\s\S]{0,400}?onMove\(task, "delete-task"\)/,
+// 中间允许夹其它终态键（回到待审核、归档）：按位置比，不绑死中间有哪些按钮，
+// 否则每加一个终态动作都得改这条测试。
+const terminalFinishAt = cardRows.lastIndexOf("canFinishWorktree ? <TaskCardFinishButton");
+const terminalDeleteAt = cardRows.indexOf('onMove(task, "delete-task")', terminalFinishAt);
+assert.ok(
+  terminalFinishAt > 0 && terminalDeleteAt > terminalFinishAt,
   "in the terminal branch the finish key comes before delete",
 );
 assert.match(finishButton, /onMove\(task, "finish-worktree"\)/, "the extracted finish button preserves its action");

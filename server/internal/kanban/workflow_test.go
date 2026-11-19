@@ -250,17 +250,18 @@ func TestProjectStatusFromRun(t *testing.T) {
 	}
 }
 
-// 一轮跑完不等于任务结束：页面要把结果交给用户审核，用户读完才能继续追问
-// 或显式点「完成」。任务级映射因此把 success 降成 waiting_user；失败/取消
-// 照旧，等待审批也照旧。
+// 一轮跑完（成功或失败）不等于任务结束：页面要把结果交给用户审核，用户读完
+// 才能继续追问或显式点「完成」。任务级映射因此把 success 与 fail 都降成
+// waiting_user —— 一次失败就是可重试的一轮，不是封板（2026-11-19 用户现场：
+// 一个节点撞 502 就把任务扔进「已结束 → 取消」）。取消仍是操作员的终态。
 func TestTaskStatusFromRunLeavesFinishedWorkInReview(t *testing.T) {
 	run := &WorkflowRun{Graph: wfDef(wfNode("a", NodeKindAgent)), NodeStates: map[string]string{"a": NodeRunSuccess}}
 	if got := taskStatusFromRun(run); got != StatusWaitingUser {
 		t.Fatalf("finished run = %q, want waiting_user (review before closing)", got)
 	}
 	run.NodeStates["a"] = NodeRunFail
-	if got := taskStatusFromRun(run); got != StatusFail {
-		t.Fatalf("failed run = %q, want fail", got)
+	if got := taskStatusFromRun(run); got != StatusWaitingUser {
+		t.Fatalf("failed run = %q, want waiting_user (a failed turn is not a closed task)", got)
 	}
 	run.NodeStates["a"] = NodeRunCancelled
 	if got := taskStatusFromRun(run); got != StatusCancelled {

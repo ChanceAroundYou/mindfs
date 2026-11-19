@@ -89,6 +89,8 @@ export function useTaskDetailPanel({
   const paused = task.status === "paused";
   const taskRunningNow = task.status === "running";
   const canCompleteTask = !terminal && !taskRunningNow;
+  // 终态是封板，封错了得有出路：完成 / 失败 / 取消都能放回「待审核」继续对话。
+  const canReopenTask = terminal;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   const apply = (next: TaskDetail) => onMoved?.(next);
@@ -173,6 +175,17 @@ export function useTaskDetailPanel({
     } finally { setSaving(false); }
   };
 
+  // 回到待审核：会话输入框会随状态重新打开，旧轮次的 Run / 回复原样保留。
+  const reopenTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "reopen", "", nodeId));
+    } catch (error) {
+      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+    } finally { setSaving(false); }
+  };
+
   const deleteTaskCard = async () => {
     if (!task) return;
     if (!await confirmDialog({ message: t("task.deleteTaskConfirm"), confirmLabel: t("common.delete"), danger: true })) {
@@ -200,11 +213,13 @@ export function useTaskDetailPanel({
     pauseTask: () => setPaused("pause"),
     resumeTask: () => setPaused("resume"),
     canCompleteTask,
+    canReopenTask,
     numberLabel,
     refreshTask,
     saveName,
     finishWorktree,
     completeTask,
+    reopenTask,
     deleteTaskCard,
   };
 }

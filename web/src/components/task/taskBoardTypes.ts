@@ -11,6 +11,6 @@ export type KanbanColumn = {
 
 export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
 
-export type TaskCardAction = "pause" | "resume" | "complete" | "cancel" | "delete-task" | "finish-worktree";
+export type TaskCardAction = "pause" | "resume" | "complete" | "cancel" | "reopen" | "delete-task" | "finish-worktree";
 
 export type MoveKanbanAction = TaskCardAction | "rebuild-worktree";

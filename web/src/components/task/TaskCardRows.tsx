@@ -16,6 +16,7 @@ import {
   TaskCompleteIcon,
   TaskPauseIcon,
   TaskPlanAuxIcon,
+  TaskReopenIcon,
   TaskResumeIcon,
   TaskSessionErrorIcon,
   taskAuxBadgeStyle,
@@ -146,6 +147,9 @@ export function TaskCardRows({
   const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;
   // 完成只要求「不在跑」：活还在动时先暂停；终态没有后续可完成。
   const canComplete = !terminal && !taskRunning;
+  // 终态卡片可以「回到待审核」继续对话：完成点早了、一次偶发失败、取消后改主意，
+  // 以前只能删卡重建。
+  const canReopen = terminal;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || taskNameFallback || t("task.unnamed");
   const title = task.task_template_name || taskNameFallback || t("task.defaultTitle");
@@ -405,6 +409,20 @@ export function TaskCardRows({
           ) : (
             <>
               {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
+              {canReopen ? (
+                <button
+                  type="button"
+                  title={t("task.reopen")}
+                  aria-label={t("task.reopen")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onMove(task, "reopen");
+                  }}
+                  style={taskCardIconButtonStyle("accent")}
+                >
+                  <TaskReopenIcon />
+                </button>
+              ) : null}
               <button
                 type="button"
                 title={t("task.deleteTask")}

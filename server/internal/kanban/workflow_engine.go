@@ -375,12 +375,17 @@ func ProjectStatusFromRun(run *WorkflowRun) string {
 
 // taskStatusFromRun 把 Run 投影映射成**任务看板**状态。
 //
-// 一轮全部成功不等于任务结束：执行结果要交回用户审核，用户可以继续追问，
-// 也可以显式点「完成」把它收口。因此成功只推进到 waiting_user（界面「待审核」），
-// success 只由显式完成写入。失败/取消/等待审批的语义不变。
+// 一轮跑完（成功或失败）都不等于任务结束：执行结果要交回用户审核，用户可以
+// 继续追问，也可以显式点「完成」把它收口。因此成功与失败都只推进到
+// waiting_user（界面「待审核」），success / fail 只由显式动作写入。
+//
+// 一次失败就是封板是错的（2026-11-19 用户：任务 #91 的 execute 撞 502，一轮就
+// 被扔进「已结束 → 取消」，再发留言直接「任务已结束」）。失败信息仍然完整可见
+// —— 回复按 Run 投影结算成 failed + 原因，只是任务本身还开着。
+// 取消仍是终态：那是操作员的决定，不是一轮的结果。
 func taskStatusFromRun(run *WorkflowRun) string {
 	status := ProjectStatusFromRun(run)
-	if status == StatusSuccess {
+	if status == StatusSuccess || status == StatusFail {
 		return StatusWaitingUser
 	}
 	return status

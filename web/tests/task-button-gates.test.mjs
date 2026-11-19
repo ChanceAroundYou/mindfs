@@ -55,7 +55,7 @@ const cardGates = new Function(
   "taskStatusLabel",
   `return ((task) => {
 ${gateSrc}
-return { canComplete, canPause, canResume, canFinishWorktree, worktreeTagState };
+return { canComplete, canPause, canResume, canReopen, canFinishWorktree, worktreeTagState };
 });`,
 );
 const gatesWithDeps = cardGates((key) => key, isTerminalKanbanTask, (status) => status);
@@ -122,5 +122,30 @@ test("the badge state follows the directory, not the status", () => {
 const panel = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
 assert.doesNotMatch(panel, /const canRunStage = /, "the detail panel must not own a stage run gate");
 assert.doesNotMatch(panel, /finishActive/, "the detail panel must not duplicate a finish-active gate");
+
+// 回到待审核（2026-11-19 用户：完成/取消的任务要能继续对话）：卡片与详情面板
+// 都只在终态给这个键，一处接线断了用户就只能删卡重建。
+test("回到待审核 is offered exactly for terminal tasks, on card and panel", () => {
+  for (const status of ["success", "fail", "cancelled"]) {
+    assert.equal(gatesOf(worktreeTask({ status })).canReopen, true, `${status}: reopen must be offered`);
+  }
+  for (const status of ["pending", "waiting_user", "paused", "running"]) {
+    assert.equal(gatesOf(worktreeTask({ status })).canReopen, false, `${status}: nothing closed to reopen`);
+  }
+
+  const hooks = fs.readFileSync(path.join(root, "src/components/task/useTaskDetailPanel.ts"), "utf8");
+  assert.match(hooks, /const canReopenTask = terminal;/, "the panel gate must follow the terminal status");
+  assert.match(hooks, /moveTask\(task\.root_id, task\.id, "reopen"/, "the panel must call the reopen route");
+
+  const crud = fs.readFileSync(path.join(root, "src/services/task/crud.ts"), "utf8");
+  assert.match(crud, /"complete" \| "cancel" \| "fail" \| "reopen"/, "moveTask must expose the reopen action");
+
+  const board = fs.readFileSync(path.join(root, "src/app/useTaskBoard.ts"), "utf8");
+  assert.match(
+    board,
+    /action === "cancel" \|\| action === "reopen" \|\| action === "rebuild-worktree"/,
+    "reopen moves a card between columns, so the board must refetch",
+  );
+});
 
 console.log("task-button-gates.test.mjs: OK");

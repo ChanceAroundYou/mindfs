@@ -798,7 +798,9 @@ func TestService_ProjectWorkflowTaskStatusSettlesRouterReply(t *testing.T) {
 		wantTaskStatus string
 	}{
 		{"success", NodeRunSuccess, NodeRunSuccess, map[string]any{"summary": "改完了"}, ActivityStatusCompleted, "改完了", StatusWaitingUser},
-		{"fail", NodeRunFail, NodeRunFail, map[string]any{"error": "测试没过"}, ActivityStatusFailed, "测试没过", StatusFail},
+		// 一轮失败也交回待审核：回复行照实标 failed 并带原因（证据），但任务不封板，
+		// 用户可以接着发消息重试（2026-11-19 用户现场：一次 502 把任务扔进了取消）。
+		{"fail", NodeRunFail, NodeRunFail, map[string]any{"error": "测试没过"}, ActivityStatusFailed, "测试没过", StatusWaitingUser},
 		{"waiting_user", NodeRunWaitingUser, NodeRunWaitingUser, map[string]any{"reason": "缺权限"}, ActivityStatusWaitingUser, "缺权限", StatusWaitingUser},
 	}
 	for _, tc := range cases {

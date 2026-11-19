@@ -8,7 +8,7 @@ import { ConversationView } from "./ConversationView";
 import { RunViewEntry } from "./RunViewEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
-import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon } from "./taskIcons";
+import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskReopenIcon } from "./taskIcons";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
 
 export type TaskDetailPanelProps = {
@@ -33,10 +33,12 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
     canFinishWorktree,
     terminal,
     canCompleteTask,
+    canReopenTask,
     numberLabel,
     saveName,
     finishWorktree,
     completeTask,
+    reopenTask,
     deleteTaskCard,
   } = panel;
 
@@ -107,6 +109,20 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeI
               style={{ ...pencilStyle(false), color: "var(--status-ok)", opacity: saving ? 0.4 : 1 }}
             >
               <TaskCompleteIcon />
+            </button>
+          ) : null}
+          {canReopenTask ? (
+            // 终态任务（完成 / 失败 / 取消）回到待审核：输入框随之重新打开，
+            // 上一轮的 Run 与回复都原样留着，直接继续写下一轮。
+            <button
+              type="button"
+              title={t("task.reopen")}
+              aria-label={t("task.reopen")}
+              disabled={saving}
+              onClick={() => void reopenTask()}
+              style={{ ...pencilStyle(false), color: "var(--status-warn)", opacity: saving ? 0.4 : 1 }}
+            >
+              <TaskReopenIcon />
             </button>
           ) : null}
           {terminal ? (

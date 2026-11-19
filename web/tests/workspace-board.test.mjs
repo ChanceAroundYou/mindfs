@@ -313,9 +313,10 @@ assert.match(
   "the live version must win only when it is strictly newer, so a late fan-out response cannot revert a fresh card",
 );
 // 卡片动作与收尾要能触发结构重拉（卡片还在不在、worktree 徽标），转发 ref 为空即跳过。
+// 回到待审核同样要重拉：它把卡片从「完成/失败」列搬回「待审核」列，只改详情搬不动卡。
 assert.match(
   app,
-  /if \(action === "cancel" \|\| action === "rebuild-worktree"\) \{\s*refreshWorkspaceBoard\(\);/,
+  /if \(action === "cancel" \|\| action === "reopen" \|\| action === "rebuild-worktree"\) \{\s*refreshWorkspaceBoard\(\);/,
   "cancel moves a card out of the current filter and rebuild changes the worktree badge — both need a re-fetch",
 );
 assert.match(

@@ -2,6 +2,8 @@ package kanban
 
 import (
 	"context"
+	"strings"
+	"time"
 )
 
 // 任务级动作：暂停 / 恢复 / 完成 / 取消 / 失败 / 删除。
@@ -126,6 +128,40 @@ func (s *Service) Cancel(ctx context.Context, in MoveInput) (TaskDetail, error) 
 		return store.GetDetail(ctx, task.ID)
 	}
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusCancelled, "cancelled", in.Reason, true)
+}
+
+// Reopen：把终态任务（完成 / 失败 / 取消）放回「待审核」，让这条对话继续。
+//
+// 终态是封板，封错了得有出路：用户点「完成」点早了、任务被一次偶发失败带进
+// 已结束、取消之后又改主意，以前只能删卡重建（2026-11-19 用户要求补这个按钮）。
+//
+// 只改任务行：上一轮的 Run、回复与结果摘要是证据，原样保留。下一轮留言由
+// PrepareNewUserTurn 按「终态 Run 不算取代」的语义新开一条，不会改写旧结论。
+// 非终态任务是幂等的（返回当前详情、不写事件、不广播）。
+func (s *Service) Reopen(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if !isTerminalStatus(task.Status) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	previous := task.Status
+	if err := store.ReopenTask(ctx, task.ID); err != nil {
+		return TaskDetail{}, err
+	}
+	_ = store.AddEvent(ctx, TaskEvent{
+		ID:        newID("event"),
+		TaskID:    task.ID,
+		Type:      "reopened",
+		Payload:   eventPayload(map[string]any{"from": previous, "reason": strings.TrimSpace(in.Reason)}),
+		CreatedAt: time.Now().UTC(),
+	})
+	detail, err := store.GetDetail(ctx, task.ID)
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(in.RootID, detail)
+	}
+	return detail, err
 }
 
 // Complete：任何非终态任务都可一键完成。

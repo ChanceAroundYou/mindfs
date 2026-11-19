@@ -9967,3 +9967,49 @@ groups:
       - 'server/internal/kanban/router_brief_cap.go:func capSituationBrief(brief *SituationBrief) *SituationBrief {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteTimeoutKeepsRecordedActions(t *testing.T) {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteNonTimeoutSalvageKeepsActionsWithoutTimeoutNotice(t *testing.T) {'
+  # 撞号说明：本轮开发时同工作区另一条会话的归档计划已在 docs/plans/README.md 里
+  # 自称 Scope: G-NB（尚未登记本表）。为避免两组抢同一个 ID，本组取 G-NC。
+  - id: G-NC
+    title: 一轮失败不封板、终态任务可「回到待审核」继续对话
+    kind: fix
+    symptom: "用户 2026-11-19 在任务 #91 上跑 workflow，execute 节点撞上游 502（insufficient credits），整条任务当场变成「失败/已结束」：详情面板输入框禁用、提示「任务已结束，无法继续留言」，看板卡片进「失败·取消」列，只能删卡重建 —— 用户原话「你的这个任务本身失败了 且无法继续对话和操作」「不要把一次失败的任务就扔进取消，这个逻辑不对」。反方向同样缺：点早了「完成」或误点「取消」之后，没有任何入口回到对话。"
+    why: "必须保留：(1) 一轮的成败不是任务的结论。`taskStatusFromRun` 把 Run 投影的 success / fail 一律落到 `waiting_user`（界面「待审核」），success / fail 只由显式动作（完成 / 取消）写入；一轮失败的证据仍在——Run 的 `ProjectStatusFromRun` 照旧是 fail,回复行照旧标 failed 并带失败原因,NodeRun 输出与账本原样保留。不这么改,一次 502 就等于封板。(2) 终态必须可逆：新增 `POST /api/tasks/{id}/reopen` → `Service.Reopen` → `TaskStore.ReopenTask`,把 status 改回 waiting_user、清 `completed_at`,上一轮的 Run / 回复 / 结果摘要全部保留(它们是证据),写一条 `reopened` 事件并广播;非终态调用幂等返回当前详情、不写事件。(3) 重开后要真能继续发消息：`PrepareNewUserTurn` 对**任何终态 Run**（success / fail / cancelled）都按「这是上一轮」放行新回合,不再冻结成 cancelled、不改写用户刚看到的回复;`briefTaskStatus` 在投影是终态而任务行不是时采信任务行,否则 Router 的 apply 闸门会拿旧 Run 结论把新留言判成「任务已结束」。(4) 两个入口都要有：详情面板头部与卡片终态分支各一个「回到待审核」键,卡片动作还要触发看板重拉（它在列之间挪位置,`applyTaskDetails` 搬不动卡片）。(5) 禁用提示要指路：`task.activity.disabled` 改为「任务已结束，无法继续留言。想接着聊就点上方『回到待审核』。」"
+    boundary: "不改 `ProjectStatusFromRun`（Run 级仍是终态，结算回复、绑定闸门、按 Run 归属的逻辑一字未改）；不改取消语义（取消仍是操作员的决定，不在一轮结束后自动发生）；`fail` 状态词与列仍在（显式「取消/失败」路径和存量数据照旧渲染）；重开不重跑任何东西、不清空历史、不新建 Run，下一轮由用户留言触发；不覆盖「归档」任务的语义（归档由另一组负责，重开只清终态标记）。前端只加键与文案，不改对话视图结构。"
+    files:
+      - server/internal/kanban/workflow_engine.go
+      - server/internal/kanban/service_user_turn.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/service_run_moves.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - web/src/services/task/crud.ts
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/useTaskDetailPanel.ts
+      - web/src/components/task/taskBoardTypes.ts
+      - web/src/components/task/taskIcons.tsx
+      - web/src/app/useTaskBoard.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-19-task-reopen-and-failed-round-review.md
+    tests:
+      - server/internal/kanban/service_reopen_test.go
+      - server/internal/kanban/workflow_test.go
+      - server/internal/kanban/activity_service_test.go
+      - server/internal/kanban/workflow_executor_test.go
+      - web/tests/task-button-gates.test.mjs
+    anchors:
+      - 'server/internal/kanban/workflow_engine.go:func taskStatusFromRun(run *WorkflowRun) string {'
+      - 'server/internal/kanban/workflow_engine.go:if status == StatusSuccess || status == StatusFail {'
+      - 'server/internal/kanban/service_user_turn.go:if isTerminalStatus(ProjectStatusFromRun(run)) {'
+      - 'server/internal/kanban/router_brief.go:if isTerminalStatus(derived) {'
+      - 'server/internal/kanban/task_store.go:func (s *TaskStore) ReopenTask(ctx context.Context, taskID string) error {'
+      - 'server/internal/kanban/service_run_moves.go:func (s *Service) Reopen(ctx context.Context, in MoveInput) (TaskDetail, error) {'
+      - 'server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskReopen(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/reopen", h.handleKanbanTaskReopen)'
+      - 'web/src/components/task/TaskCardRows.tsx:const canReopen = terminal;'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const canReopenTask = terminal;'
+      - 'web/src/components/task/TaskDetailPanel.tsx:{canReopenTask ? ('
+      - 'web/src/app/useTaskBoard.ts:if (action === "cancel" || action === "reopen" || action === "rebuild-worktree") {'
