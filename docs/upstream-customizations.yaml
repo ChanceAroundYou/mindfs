@@ -2343,16 +2343,21 @@ groups:
     title: 会话列表按实时活动时间排序 + 退役多项目列表预渲染缓存
     kind: fix
     symptom: "列表排序键是 updated_at：服务端只在回合收尾推进它，于是回复还在流的时候会话停在原地、回答完了才跳一下；切走再回来时顺序又回去了。多项目列表另有一层 IndexedDB 预渲染按账户存整份快照，会先画上一次的结果再被节点响应重排 —— 用户看到列表「闪一下又变」。"
-    why: "新增客户端专属覆盖层 activity_at（不落盘）：流事件到达就把它盖到会话与项目分组上，100ms 粒度（Math.floor(t/100)*100，避免纯前端漂移让排序抖动）。覆盖必须插在「节点归属过滤」之前 —— 那条过滤会把发往别的节点的帧丢掉，而活动时间要在任何重排之前先推进。合并只认更新的覆盖层，绝不把活动时间往回拨；一旦持久 updated_at 追上，覆盖层自动删除。项目分组改按节点表顺序分区，未配置的节点排最后且顺序稳定。退役多项目预渲染与其缓存键。活动时间重排加 30s 迟滞阈值：两个都在跑的会话每 100ms 交替推进 activity_at，比较器按毫秒直接比大小会让列表疯狂交替。"
-    boundary: "排序键与流事件如何推进它；多项目预渲染的退役。C1 补色、C2 逐组合并、_unreachable 三条定制全部保留。"
+    why: "会话级排序有两个硬分桶，都必须在比较器里，且必须在盖章之后重排。（1）`pending`（= /api/replying-sessions 的旁路真值）优先于时间：服务端 `updated_at` 只在回合收尾推进，agent 连跑十分钟工具时它还停在起跑时刻，只按时间排会让在跑的会话被刚完成的压到下面；`pending` 不在服务端 payload 里，每次由前端重新盖上（applyPendingToMultiProjectGroups / sessionsWithPresence），所以盖完必须重排，不能只贴标记。（2）时间比较带 30s 迟滞：两个都在跑的会话会每 100ms 交替推进 updated_at（本节点 stream 事件），按毫秒直接比会让列表疯狂交替。`mergeSessionItems` 是唯一排序实现（含 `applyPinnedSnapshotToSessions` 的重排），任何「贴完 pending 就返回」的路径都是回归。（已退役）原客户端覆盖层 activity_at 从未落盘也从未被读，与 updated_at 推进语义重复，已删除，遗留假注释一并清掉，不要再复活。项目分组改按节点表顺序分区，未配置的节点排最后且顺序稳定。退役多项目预渲染与其缓存键。"
+    boundary: "会话级排序键（pending 分桶 + 时间 + 迟滞）；多项目预渲染的退役。项目分组层的排序（orderProjectGroupsByNode）仍只看会话时间，不含 pending 分桶 —— 已知残留，不改。C1 补色、C2 逐组合并、_unreachable 三条定制全部保留。"
     tests:
       - server/internal/session/manager_latest_updated_at_test.go
       - web/tests/session-list-merge.test.mjs
       - web/tests/multi-account-partition.test.mjs
+      - web/tests/cross-node-replying-state.test.mjs
+      - web/tests/ask-user-badge-live.test.mjs
     files:
       - web/src/services/session/sessionListMerge.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/app/useMultiProjectSessions.ts
+      - web/src/app/appSession.ts
+      - web/src/app/useAppViewComposition.ts
+      - web/src/app/useSessionListLoading.ts
       - docs/plans/session-activity-unified.md
       - web/src/components/session/useMultiProjectSessionList.ts
       - web/src/components/session/SessionCard.tsx
@@ -2363,6 +2368,9 @@ groups:
       - web/src/services/session/sessionListMerge.ts:orderProjectGroupsByNode
       - web/src/services/session/sessionListMerge.ts:projectActivityTime
       - web/src/services/session/sessionListMerge.ts:ACTIVITY_REORDER_HYSTERESIS_MS
+      - web/src/services/session/sessionListMerge.ts:const leftPending = !!left.pending;
+      - 'web/src/app/appSession.ts:return { ...group, sessions: mergeSessionItems(sessions, []) }'
+      - web/src/app/useAppViewComposition.ts:sessionsWithPresence
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
       - server/internal/session/manager_session_list.go:LatestSessionUpdatedAt
 
