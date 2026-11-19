@@ -33,8 +33,13 @@ const { scopeSessionKey, sessionKeyNodeId } = loadModule("src/shared/scope.ts", 
   "sessionKeyNodeId",
 ]);
 
+const { mergeSessionItems } = loadModule("src/services/session/sessionListMerge.ts", [
+  "mergeSessionItems",
+]);
+
 // appSession.ts 依赖 ./appTask 与 ../services/session，只取本次用到的那一个纯函数：
 // 用桩 module 顶掉那些 require，避免把 React 依赖拖进沙箱。
+// sessionListMerge 接真模块：pending 盖上之后的重排必须走生产比较器，不能用桩糊弄。
 {
   const sourcePath = path.resolve(import.meta.dirname, "..", "src/app/appSession.ts");
   const source = fs.readFileSync(sourcePath, "utf8");
@@ -46,6 +51,7 @@ const { scopeSessionKey, sessionKeyNodeId } = loadModule("src/shared/scope.ts", 
     module: { exports: {} },
     require: (id) => {
       if (id.includes("scope")) return { sessionKeyNodeId, scopeSessionKey };
+      if (id.includes("sessionListMerge")) return { mergeSessionItems };
       if (id.includes("appTask")) return { normalizeFastService: (v) => v };
       return {};
     },
@@ -80,6 +86,38 @@ const groups = [
 const projected = applyPendingToMultiProjectGroups(groups, { "pc::go::s1": true });
 assert.equal(projected[0].sessions[0].pending, false, "home group must not inherit PC pending state");
 assert.equal(projected[1].sessions[0].pending, true, "PC group must read its node-scoped pending key");
+
+// 盖章之后必须立刻重排：在跑的会话要压过已完成的会话（服务端 updated_at 是
+// 「最后一条对话消息」，长工具回合期间它一直停在起跑时刻，排序会把它压在下面）。
+// 键挑成 localeCompare 也会把完成那条排前面，确保不是兜底排序蒙对的。
+const pendingOrder = applyPendingToMultiProjectGroups(
+  [
+    {
+      rootId: "go",
+      _nodeId: "home",
+      sessions: [
+        {
+          key: "1799000000-done",
+          session_key: "1799000000-done",
+          root_id: "go",
+          updated_at: "2026-07-30T15:00:00.000Z",
+        },
+        {
+          key: "1791000000-running",
+          session_key: "1791000000-running",
+          root_id: "go",
+          updated_at: "2026-07-30T14:00:00.000Z",
+        },
+      ],
+    },
+  ],
+  { "home::go::1791000000-running": true },
+);
+assert.equal(
+  JSON.stringify(pendingOrder[0].sessions.map((item) => item.key)),
+  JSON.stringify(["1791000000-running", "1799000000-done"]),
+  "盖上 pending 后必须在组内重排，把在跑的会话提到已完成的上面",
+);
 
 // 实际 App core 不得再按 rootId 反查节点；必须复用已验证的分组节点投影。
 const coreSource = fs.readFileSync(

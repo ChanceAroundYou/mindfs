@@ -84,24 +84,61 @@ const activeOrder = mergeSessionItems(
 );
 assert.equal(JSON.stringify(activeOrder.map((item) => item.key)), JSON.stringify(["pinned-live", "pinned-old", "plain-live", "plain-old"]));
 
-// 两个都在跑的会话（活动差距 < 迟滞阈值）不得交替抖动：保持输入时的相对顺序。
-const duelingLive = mergeSessionItems(
+// 「正在回复」是排序的硬分桶：只要服务端报它在跑，就必须排在已完成的会话之上，
+// 哪怕它落库的 updated_at 更旧 —— 服务端 updated_at 是「最后一条对话消息」的时间，
+// agent 连跑十分钟工具时它一直停在起跑时刻，而刚结束的那条已经写到了更晚。
+// 键也挑成 localeCompare 会把完成那条排前面，确保结果不是兜底排序蒙对的。
+const runningOverDone = mergeSessionItems(
   [
-    { key: "live-a", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:10.000Z" },
-    { key: "live-b", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:05.000Z" },
+    { key: "1799000000-done", updated_at: "2026-07-30T15:00:00.000Z" },
+    { key: "1791000000-running", updated_at: "2026-07-30T14:50:00.000Z", pending: true },
   ],
   [],
 );
-assert.equal(JSON.stringify(duelingLive.map((item) => item.key)), JSON.stringify(["live-a", "live-b"]));
-// 差距拉开到阈值以上时，更新的必须排前面（迟滞只抑抖动，不锁死顺序）。
-const settledLive = mergeSessionItems(
+assert.equal(
+  JSON.stringify(runningOverDone.map((item) => item.key)),
+  JSON.stringify(["1791000000-running", "1799000000-done"]),
+  "在跑的会话必须压过已完成的会话",
+);
+
+// 迟滞只作用于同一个分桶：两条都在跑时仍按 updated_at 排（差距够大就换位）。
+const twoRunning = mergeSessionItems(
   [
-    { key: "live-a", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:01:00.000Z" },
-    { key: "live-b", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:00.000Z" },
+    { key: "1799000000-run-old", updated_at: "2026-07-30T14:00:00.000Z", pending: true },
+    { key: "1791000000-run-new", updated_at: "2026-07-30T15:00:00.000Z", pending: true },
   ],
   [],
 );
-assert.equal(JSON.stringify(settledLive.map((item) => item.key)), JSON.stringify(["live-a", "live-b"]));
+assert.equal(
+  JSON.stringify(twoRunning.map((item) => item.key)),
+  JSON.stringify(["1791000000-run-new", "1799000000-run-old"]),
+);
+
+// 置顶优先级更高：置顶的已完成会话仍压过未置顶的在跑会话；置顶分区内部照样在跑优先。
+const pinVsRunning = mergeSessionItems(
+  [
+    { key: "1791000000-pinned-done", root_id: "root", updated_at: "2026-07-30T10:00:00.000Z", pinned_at: "2026-07-30T13:00:00.000Z" },
+    { key: "1799000000-plain-running", root_id: "root", updated_at: "2026-07-30T15:00:00.000Z", pending: true },
+    { key: "1792000000-pinned-running", root_id: "root", updated_at: "2026-07-30T09:00:00.000Z", pinned_at: "2026-07-30T12:00:00.000Z", pending: true },
+  ],
+  [],
+);
+assert.equal(
+  JSON.stringify(pinVsRunning.map((item) => item.key)),
+  JSON.stringify(["1792000000-pinned-running", "1791000000-pinned-done", "1799000000-plain-running"]),
+  "在跑分桶不能越过置顶边界",
+);
+
+// 全量重拉（置顶快照）会重排整张表，pending 分桶必须仍然生效。
+const snapshot = applyPinnedSnapshotToSessions(
+  runningOverDone.map((item) => ({ root_id: "root", ...item })),
+  "root",
+  [],
+);
+assert.equal(
+  JSON.stringify(snapshot.map((item) => item.key)),
+  JSON.stringify(["1791000000-running", "1799000000-done"]),
+);
 
 const projectGroups = [
   { rootId: "home-plain-old", _nodeId: "home", latestSessionTime: "2026-07-30T05:00:00.000Z", sessions: [] },

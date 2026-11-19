@@ -34,11 +34,16 @@ function loadModule(relPath, exportNames, requireStub = () => ({})) {
 
 const { scopeSessionKey } = loadModule("src/shared/scope.ts", ["scopeSessionKey"]);
 
+const { mergeSessionItems } = loadModule("src/services/session/sessionListMerge.ts", [
+  "mergeSessionItems",
+]);
+
 const { applyPendingToMultiProjectGroups } = loadModule(
   "src/app/appSession.ts",
   ["applyPendingToMultiProjectGroups"],
   (id) => {
     if (id.includes("scope")) return { sessionKeyNodeId: () => "", scopeSessionKey };
+    if (id.includes("sessionListMerge")) return { mergeSessionItems };
     if (id.includes("appTask")) return { normalizeFastService: (v) => v };
     return {};
   },
