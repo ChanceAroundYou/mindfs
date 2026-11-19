@@ -100,9 +100,27 @@ test("定时唤醒兜底（3 分钟一次 setAlarmClock）", async () => {
   // 授权（setExactAndAllowWhileIdle 未授权会抛 SecurityException）。
   assert.match(service, /WATCHDOG_INTERVAL_MS = 3 \* 60_000L/, "巡检间隔必须是 3 分钟，15 分钟等于没有兜底");
   assert.match(service, /setAlarmClock\(/, "必须用 setAlarmClock，inexact 闹钟会被省电模式吞掉");
-  assert.doesNotMatch(service, /alarms\.setAndAllowWhileIdle/, "回退到 inexact 闹钟等于回到「后台完全没提醒」");
+  // setAlarmClock 在 Android 12+ 对 targetSdk>=31 需要 SCHEDULE_EXACT_ALARM（或省电豁免）。
+  // 未授权时它会抛 SecurityException，直接退回 inexact 就是「换了个名字的老毛病」——
+  // 所以必须先判定授权，再把 inexact 当作兜底。
+  assert.match(service, /canScheduleExactAlarms\(\)/, "排精确闹钟前必须判定授权，否则 SecurityException 会静默断掉巡检链");
+  const idxGuard = service.indexOf("canScheduleExactAlarms()");
+  const idxFallback = service.indexOf("alarms.setAndAllowWhileIdle");
+  assert.ok(idxFallback > idxGuard, "inexact 只能是「没授权」时的兜底，不能是主路径");
+  assert.match(
+    read(MANIFEST),
+    /android\.permission\.SCHEDULE_EXACT_ALARM/,
+    "缺 SCHEDULE_EXACT_ALARM：Android 12+ 排不了精确闹钟",
+  );
   assert.match(receiver, /ReplyPollerService\.WATCHDOG_INTERVAL_MS/, "接收器不能自己写一个间隔字面量");
   assert.doesNotMatch(receiver, /15 \* 60_000L/, "15 分钟的旧间隔必须消失");
+  // 授予精确闹钟时系统会删掉先前排不上的闹钟并发这条广播；不重排的话授权后巡检链仍是断的。
+  assert.match(
+    read(MANIFEST),
+    /android\.app\.action\.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED/,
+    "缺授权变化广播：用户授权后闹钟不会自动重排",
+  );
+  assert.match(receiver, /ACTION_EXACT_ALARM_PERMISSION_CHANGED/);
   assert.match(service, /scheduleWatchdog\(\)/, "resumePolling 必须续约 watchdog");
   assert.match(service, /cancelWatchdog\(\)/, "stopAll 必须取消 watchdog");
   // 间隔缩到 3 分钟后，pause 不取消巡检 = 「暂停」最多维持 3 分钟。

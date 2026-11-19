@@ -421,10 +421,16 @@ public class ReplyPollerService extends Service {
         try {
             PendingIntent pending = watchdogPendingIntent(context);
             long at = System.currentTimeMillis() + Math.max(0L, delayMillis);
-            // setAlarmClock：AOSP 保证不延迟，Doze/省电模式里同样唤醒，而且是**唯一**
-            // 不需要 SCHEDULE_EXACT_ALARM 授权的精确闹钟（setExactAndAllowWhileIdle 在
-            // Android 12+ 未授权会直接抛 SecurityException，国产 ROM 还会把 inexact 闹钟
-            // 无限推迟 —— 这正是 2026-11-19 实测「闹钟一次都没响」的原因）。
+            // setAlarmClock：AOSP 保证不延迟，Doze/省电模式里同样唤醒 —— 这是唯一能压住
+            // 「inexact 闹钟被无限推迟」的手段。代价有两个：状态栏常驻闹钟图标（系统的
+            // 可见性要求），以及 Android 12+ 对 targetSdk>=31 要求 SCHEDULE_EXACT_ALARM
+            // 授权（或在省电豁免名单里）。没授权时它会抛 SecurityException，而这条路径上
+            // 一次失败就是「后台永远不再巡检」，所以必须先判定、再退回 inexact 兜底。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarms.canScheduleExactAlarms()) {
+                Log.w(TAG, "watchdog: exact alarm not permitted, falling back to inexact");
+                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending);
+                return;
+            }
             // showIntent：用户点状态栏的闹钟图标时回到 App。
             alarms.setAlarmClock(
                 new AlarmManager.AlarmClockInfo(at, watchdogShowIntent(context)),
@@ -1419,6 +1425,13 @@ public class ReplyPollerService extends Service {
         // 这时唯一的出路是厂商白名单（自启动 / 后台无限制 / 锁定后台），不是再改代码。
         sb.append(" · 巡检=每").append(WATCHDOG_INTERVAL_MS / 60_000L).append("分钟");
         sb.append(" · 最近唤醒=").append(lastWake.isEmpty() ? "无" : lastWake);
+        // 精确闹钟授权（或省电豁免）决定巡检是 setAlarmClock 还是 inexact 兜底：
+        // 没有它，巡检可能被 ROM 推迟到「根本没有」。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            boolean exact = alarms != null && alarms.canScheduleExactAlarms();
+            sb.append(" · 精确闹钟=").append(exact ? "已授权" : "未授权（巡检可能被推迟）");
+        }
         sb.append(" · 模式=").append(pollModeSummary(prefs.getString(PREF_DEBUG, "")));
         sb.append(" · 最近提醒=").append(lastAlert.isEmpty() ? "无" : lastAlert);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

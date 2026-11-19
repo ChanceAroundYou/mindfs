@@ -498,7 +498,8 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 
 | 项 | 旧 | 新 |
 |---|---|---|
-| 闹钟 API | `setAndAllowWhileIdle`（inexact） | `setAlarmClock(AlarmClockInfo)`：AOSP 不延迟、Doze/待机同样唤醒、**不需要** `SCHEDULE_EXACT_ALARM` 授权；以它送达的广播自带「允许启动前台服务」豁免 |
+| 闹钟 API | `setAndAllowWhileIdle`（inexact） | `setAlarmClock(AlarmClockInfo)`：AOSP 不延迟、Doze/待机同样唤醒；以它送达的广播自带「允许启动前台服务」豁免 |
+| 精确闹钟授权 | 未声明 | 补 `SCHEDULE_EXACT_ALARM`（Android 12+ / targetSdk 36 必需）。`canScheduleExactAlarms()` 为假时**退回 inexact**，并在诊断串报「精确闹钟=未授权」；收到 `SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED` 时重排（授予时系统会删掉先前排不上的闹钟） |
 | 间隔 | 15 分钟 | **3 分钟**（`WATCHDOG_INTERVAL_MS`，接收器取同一常量，不再写字面量） |
 | `onTaskRemoved` | 1 分钟后 | 10 秒后 |
 | 暂停 | 不取消闹钟 | `pausePolling()` 取消（否则 3 分钟后闹钟会把轮询拉回来） |
@@ -507,6 +508,6 @@ git commit -m "docs(custom): 登记安卓后台推送定制组 G-MF（Scope: G-M
 
 **为什么「最近唤醒」是关键证据**：闹钟按时送达 = 时间戳持续前进（ROM 只是冻进程）；时间戳停住 = ROM 直接 force-stop 并取消了闹钟（系统语义），届时唯一出路是厂商白名单（自启动 / 后台无限制 / 锁定后台），不是继续改代码。
 
-**门禁**：`npx vitest run web/tests/android-background-poller-liveness.test.mjs` 6 passed；两个变异（间隔退回 15 分钟、pause 去掉 `cancelWatchdog()`）各自打红对应用例后还原复绿；`make test-android` BUILD SUCCESSFUL。
+**门禁**：`npx vitest run web/tests/android-background-poller-liveness.test.mjs` 6 passed；三个变异（间隔退回 15 分钟、pause 去掉 `cancelWatchdog()`、删 `SCHEDULE_EXACT_ALARM` 声明）各自打红对应用例后还原复绿；`make test-android` BUILD SUCCESSFUL。
 
 **残留**：仍不承诺必达（force-stop 会取消闹钟）；未做真机验收（无 adb 目标）；完成账本要在本机 `sudo systemctl restart mindfs` 后才生效 —— 与本次闹钟修复相互独立，账本负责「醒来后补发」，闹钟负责「定期醒来」。

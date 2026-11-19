@@ -53,10 +53,16 @@
         </service>
 
         <!-- 兜底唤醒闹钟的接收端：进程被 ROM 清掉后靠它把前台轮询拉回来。
-             广播接收器可以申请前台服务，PendingIntent.getService 在后台起不来。 -->
+             广播接收器可以申请前台服务，PendingIntent.getService 在后台起不来。
+             额外收 SCHEDULE_EXACT_ALARM 授权变化广播：系统在撤销/授予时会删除已排的
+             精确闹钟，不重排的话巡检链就断了。 -->
         <receiver
             android:name=".ReplyPollerWatchdogReceiver"
-            android:exported="false" />
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <!-- 开机 / 应用更新后把常驻轮询拉起来：系统的 START_STICKY 不跨重启，
              而用户装完更新或重启手机之后如果没有手动点开 app，轮询就永远不会开始。 -->
@@ -85,4 +91,9 @@
     <!-- 开机自启 + 让用户能申请「不受电池优化限制」（Doze 会限制后台网络与闹钟）。 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 兜底巡检用 setAlarmClock。Android 12+ 对 targetSdk>=31 的应用要求这条权限（或
+         在系统的省电豁免名单里）才能排精确闹钟 —— 没有它 setAlarmClock 抛 SecurityException，
+         后台巡检就彻底断了。用户可随时撤销；撤销时系统会删除已排的闹钟并发广播，由
+         ReplyPollerWatchdogReceiver 重新排上（此时退回 inexact，等授权回来再精确）。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 </manifest>

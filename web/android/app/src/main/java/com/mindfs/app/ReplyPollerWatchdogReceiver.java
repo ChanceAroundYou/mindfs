@@ -22,11 +22,17 @@ import androidx.core.content.ContextCompat;
  */
 public class ReplyPollerWatchdogReceiver extends BroadcastReceiver {
     private static final String TAG = "MindFSReplyPoller";
+    // 系统在「授予」SCHEDULE_EXACT_ALARM 时会发这条广播，并同时删掉之前排不上的闹钟。
+    // 不重排的话，用户刚授权、巡检链却是断的。撤销时系统**不发**广播（只删闹钟），
+    // 那种情况只能等下一次打开 App / 重启手机重新排。
+    private static final String ACTION_EXACT_ALARM_PERMISSION_CHANGED =
+        "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED";
 
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent == null ? "" : intent.getAction();
-        if (!ReplyPollerService.ACTION_WATCHDOG.equals(action)) {
+        boolean permissionChanged = ACTION_EXACT_ALARM_PERMISSION_CHANGED.equals(action);
+        if (!permissionChanged && !ReplyPollerService.ACTION_WATCHDOG.equals(action)) {
             return;
         }
         // 先排下一次：无论下面这次能不能把服务拉起来，3 分钟后都要再试一次。
@@ -44,7 +50,7 @@ public class ReplyPollerWatchdogReceiver extends BroadcastReceiver {
             } else {
                 context.startService(start);
             }
-            Log.i(TAG, "watchdog: reply poller restarted");
+            Log.i(TAG, "watchdog: reply poller restarted action=" + action);
         } catch (RuntimeException ex) {
             // Android 12+ 在后台拒绝启动前台服务（应用不在电池优化白名单里时最常见）。
             // 这不是崩溃理由：下一轮闹钟、开机广播、或者用户下次打开 App 都会再试。
