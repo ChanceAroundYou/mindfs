@@ -379,3 +379,35 @@ T1 → T2 → T3 → T4 → R0 PASS → T5 → T6 → T7 → T8 → T9 → T10�
 T1 无代码修改；T2/T3 的确认缺口由工头补入 brief 后执行；T5–T10 完整接口冻结后才派发。
 所有任务开始/停止、MindFS task id、worktree、commit、测试和评审路径见派发表。
 只创建任务卡不等于派发；HTTP 接受请求不等于 worker 已运行；worker 报 DONE 不等于验收通过。
+
+## 观察窗结果与 R2 裁定输入（2026-11-20）
+
+生产 `router.mode=route` 自 2026-11-19 11:14（本机 system 单元重启）起生效。截至
+2026-11-20 02:43 已积累 30 条真实留言决策，观察窗在时间（约 15.5h）与样本数（≥10）上都已
+达标，按判据逐条核对如下（只读取证：`tasks/task-kanban.db` 以 `mode=ro` 打开，7331 未碰）：
+
+1. **成功率与 fallback 原因可解释 —— 部分达标。** 30 条中 applied 15 / fallback 14 /
+   applying 1（在飞）；14 条 fallback 全部是同一原因 `persist turn blocks: context deadline
+   exceeded`，没有模型报错或校验失败连发。但 fallback 比例 14/29 ≈ **48%**，不能算「可解释、
+   可接受」。延迟 p50 90.0s / p95 90.0s（被超时样本主导），15 条成功回合 41.6–81.0s。
+2. **事件数与效果数对齐 —— 未达标。** `router_events` 5 条（`gate_waiting` 1、`run_settled`
+   2、`startup_reconcile` 1、`run_failed` 1），全部 `pending`、`claimed_by` 为空、从未被领取。
+   根因：`startCoordinate` 只由 `newRouterService` 在 **coordinate** 模式下启动，route 模式不
+   跑消费循环；而 `PruneEvents` 按设计只删终态行，pending 永生 —— route 模式下事件账本是
+   **只写不读且无界增长**。生产 `router.mode` 是 `route`，这条链路当前等于没接通。
+3. **延迟分布有样本 —— 达标（口径见第 1 条）。** 已不再缺样本，缺的是把 `ok` 换成能在 90s
+   内稳定收尾的模型：P2 A/B（同机、同留言、同配置）`ok` 3/5 撞超时、`sonnet` 5/5 applied
+   p50 14.0s。本机 `config.json` 仍是 `router.model=ok`。
+4. **真实场景证据 —— 部分达标。** `deliver_to_active_run` 已有 1 条真实 applied（11-19
+   11:55Z，修复前 T10 记的「无真实流量」缺口就此补上）；`ask_user` 2 条真实 applied；
+   `gate_waiting` 事件真实产生（但按第 2 条未被消费）；`run_stalled` 仍无真实样本。
+
+**失败路径的连带影响已修复。** 48% fallback 会回落旧执行路径，而旧路径的默认 Agent 当时由
+探针顺序决定（llmux 恢复后 codex 先可用），这就是「新任务莫名跑 codex」的直接来源。已由
+G-NF（`7888797c`）改成 `task.agent/task.model` 默认 claude + sonnet，回落后也落在 claude
+上；既有 codex 主会话按设计保持原 Agent 不变。
+
+**裁定建议（需用户批准，本计划不自动执行 R2）：** 观察窗未过判据，先做两件事再谈 R2 ——
+① `router.model` 由 `ok` 改 `sonnet`（节点本地配置 + 重启系统单元，需用户授权）；
+② 决定 route 模式下事件账本的去向：route 也启动消费循环（route ⊂ coordinate），或 route
+停止生产事件。在此之前 R2 的「验收条目 + 证据关联」会建在一条写不通的账本上。
