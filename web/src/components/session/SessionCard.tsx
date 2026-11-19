@@ -210,6 +210,10 @@ function SessionCard({
               unread={unread}
             />
             <span
+              // 名字单行截断：侧栏窄，长名字（任务名 · 节点名 · 触发留言）会被
+              // 截掉后半段，而区分同一任务不同轮次的正是后半段。title 让鼠标
+              // 悬停能看到全名，不用改行高。
+              title={displayName}
               style={{
                 display: "block",
                 fontSize: "13px",

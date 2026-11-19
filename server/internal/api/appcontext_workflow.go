@@ -91,8 +91,9 @@ func (s *AppContext) EnsureWorkflowNodeSession(ctx context.Context, exec kanban.
 		base = usecase.BuildFallbackSessionName(exec.Prompt)
 	}
 	// 同一条任务每轮都会新建 worker 会话，名字只取任务名+编号会让它们在会话列表
-	// 里完全一样。把节点名与触发这轮的用户留言拼进后缀，轮次之间才分得开。
-	name := kanban.WorkflowNodeSessionName(base, exec.Node.Name, exec.UserInput)
+	// 里完全一样。把节点名、重试/循环标记与触发这轮的用户留言拼进后缀，轮次之间
+	// 才分得开。
+	name := kanban.WorkflowNodeSessionName(base, exec.Node.Name, exec.UserInput, exec.NodeRun)
 	created, err := uc.CreateSession(ctx, usecase.CreateSessionInput{
 		RootID: exec.RootID,
 		Input: session.CreateInput{

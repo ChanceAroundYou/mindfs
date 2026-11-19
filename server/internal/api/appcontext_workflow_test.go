@@ -143,6 +143,38 @@ func TestWorkflowNodeAdapterSessionNamesDifferPerRound(t *testing.T) {
 	}
 }
 
+// 重试是同一条留言、同一个节点、新的 attempt：节点名与留言都一样，只有 attempt
+// 不同。线上出现过（task_94ec32d 的 execute 重试），两个会话名必须仍能分开。
+func TestWorkflowNodeAdapterSessionNamesDifferPerAttempt(t *testing.T) {
+	ctx := context.Background()
+	app, rootID := newWorkflowAdapterTestApp(t)
+	task := kanban.Task{ID: "task-wf-attempt", TaskNumber: 13, Name: "收尾"}
+	node := kanban.WorkflowNode{ID: "execute", Name: "执行", Kind: kanban.NodeKindAgent}
+
+	attempt := func(nodeRunID string, n int) string {
+		t.Helper()
+		exec := workflowAdapterExec(rootID, task, node, kanban.NodeRun{ID: nodeRunID, RunID: "run-attempt", NodeID: "execute", Attempt: n})
+		exec.UserInput = "请提交修改"
+		key, err := app.EnsureWorkflowNodeSession(ctx, exec)
+		if err != nil {
+			t.Fatalf("ensure %s: %v", nodeRunID, err)
+		}
+		return sessionNameForTest(t, app, rootID, key)
+	}
+
+	first := attempt("nr-a1", 1)
+	retry := attempt("nr-a2", 2)
+	if first == retry {
+		t.Fatalf("retry reused the first attempt's name %q", first)
+	}
+	if !strings.Contains(retry, "第2次") {
+		t.Fatalf("retry name %q must carry the attempt marker", retry)
+	}
+	if strings.Contains(first, "第1次") {
+		t.Fatalf("first attempt name %q must stay clean", first)
+	}
+}
+
 func TestWorkflowNodeAdapterWorkerAnswersNaturallyAndRouterNormalizes(t *testing.T) {
 	app, rootID := newWorkflowAdapterTestApp(t)
 	var captured workflowTurnRequest
