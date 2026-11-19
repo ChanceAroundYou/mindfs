@@ -77,6 +77,7 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 		ResultSummary:    "登录页已经改好了",
 		CreatedAt:        time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:        time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC), CreateWorktree: true,
+		ArchivedAt: "2026-11-18T00:00:00Z",
 		WorktreeBuilt: true,
 		WorktreePath:  "/tmp/worktree/task_parity",
 		AuxFlags: kanban.TaskAuxFlags{
