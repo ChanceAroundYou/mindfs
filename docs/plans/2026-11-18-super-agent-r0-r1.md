@@ -294,8 +294,9 @@ D 仅重启隔离进程并核对 pending/claimed 与已有结果。
 
 **门禁（2026-11-19，G-MP 后）**：`go test -count=1 ./...` 28 包全绿、定向 `-race` 9.708s 全绿、
 `make check-upstream` 1957 delta / 316 组全绿（G-MP 18 锚点逐个核对存在，G-MG ⑥ 与
-`DeleteTaskRouterData` 锚点已同步改写）。仍未 push / 未部署 / 未合并 main / 未重启；生产
-`router.mode` 未动。
+`DeleteTaskRouterData` 锚点已同步改写）。已于 2026-11-19 合并 main（`7f9e710c`，与 main 的两条 notify 提交零冲突合并）并
+`bash scripts/deploy-all.sh` 部署四端，版本 `v0.5.5-1120-4-g7f9e710c-dirty`（`-dirty` 来自本机
+另一会话未提交的 live-compact 文档）。生产 `router.mode` 未动。
 
 ## 执行门禁与依赖
 
