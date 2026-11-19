@@ -169,5 +169,9 @@ func (s *Service) DeleteTask(ctx context.Context, in MoveInput) error {
 	if err := s.assertNotRunning(ctx, store, task); err != nil {
 		return err
 	}
+	// 先关进程内 lane 再删库：卡片消失之后不能还有回合在跑，也不能留一堆
+	// 排队回合去拿一张已不存在的任务调模型。lane 是每任务一条，关它不影响
+	// 同 root 的其他任务。
+	s.CloseRouterTask(ctx, in.RootID, task.ID)
 	return store.DeleteTask(ctx, task.ID)
 }

@@ -9051,7 +9051,7 @@ groups:
     title: Router 生命周期事件账本（router_events + 六个 Store 方法）
     kind: feature
     symptom: "Router 只在决策当回合同步动作，Run 结束/失败/gate 等待/卡住这些事后事实没有持久载体：进程重启就丢，多轮留言也没有可恢复的事件来源，coordinate 模式无从消费。"
-    why: "用户 2026-11-18 授权的 R1 计划（T5）要求先有持久事件账本，再做事件生产（T6）与消费（T7）。上游没有这条链路，必须保留：① `router_events` 表以 `unique_key = taskID\x00runID\x00kind\x00instanceKey` 去重，重复插入返回已有行且不覆盖（事件是事实，不是状态）；② `ClaimEvent` 是 CAS（pending→claimed），`CompleteEvent` 只接受 claimed→done|failed|skipped，直接 complete pending 报错，防止「先推进游标后丢副作用」；③ `RecoverClaimedEvents` 只在启动对账调用，把遗留 claimed 打回 pending并记录原因，绝不复活动终态；④ 实例键规则（settled/failed/reconcile=RunID，gate=nodeRunID:attempt，stalled=RunID:5 分钟桶）是 T6/T7 去重与清醒度的共同口径；⑤ 建表接在 `TaskStore.migrateSchema`（与 router 三张表同一口径，不在运行时惰性建表）——启动对账会先读表，懒建表会撞 no such table；⑥ `DeleteTaskRouterData` 必须连删 `router_events`，否则任务重建同 ID 命中旧 unique_key、新事件永远插不进去。"
+    why: "用户 2026-11-18 授权的 R1 计划（T5）要求先有持久事件账本，再做事件生产（T6）与消费（T7）。上游没有这条链路，必须保留：① `router_events` 表以 `unique_key = taskID\x00runID\x00kind\x00instanceKey` 去重，重复插入返回已有行且不覆盖（事件是事实，不是状态）；② `ClaimEvent` 是 CAS（pending→claimed），`CompleteEvent` 只接受 claimed→done|failed|skipped，直接 complete pending 报错，防止「先推进游标后丢副作用」；③ `RecoverClaimedEvents` 只在启动对账调用，把遗留 claimed 打回 pending并记录原因，绝不复活动终态；④ 实例键规则（settled/failed/reconcile=RunID，gate=nodeRunID:attempt，stalled=RunID:5 分钟桶）是 T6/T7 去重与清醒度的共同口径；⑤ 建表接在 `TaskStore.migrateSchema`（与 router 三张表同一口径，不在运行时惰性建表）——启动对账会先读表，懒建表会撞 no such table；⑥ 删任务必须连删 `router_events`，否则任务重建同 ID 命中旧 unique_key、新事件永远插不进去；级联已单收到 `TaskStore.DeleteTask`（G-MP 删掉了只给测试调用的 `DeleteTaskRouterData`）。"
     boundary: "只做持久账本与 Store 方法；不产事件（T6）、不做 coordinate 消费/预算（T7）、不改 Router 决策与应用逻辑、不改 `router_prompt.md`、不新增 HTTP 端点、不启动后台 goroutine。`PayloadJSON` 限 8KB，超限拒绝而非截断落库；时间统一 UTC 走 `routerTimeLayout`。"
     files:
       - server/internal/kanban/router_event_types.go
@@ -9073,7 +9073,7 @@ groups:
       - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RecoverClaimedEvents('
       - 'server/internal/kanban/router_event_store.go:must be claimed before completing'
       - 'server/internal/kanban/task_store_migrate.go:migrateRouterEventTable(s.db)'
-      - 'server/internal/kanban/router_store.go:DELETE FROM router_events WHERE task_id = ?'
+      - 'server/internal/kanban/task_store.go:"router_decisions", "router_task_state", "router_events"'
 
   # ── Router 生命周期事件生产（T6）：权威状态 → 幂等事件 ─────────────────────
   - id: G-MH
@@ -9396,3 +9396,47 @@ groups:
       - 'web/src/components/task/useRunViewEntry.ts:[runId, rootId, taskId, nodeId, refreshKey]'
       - 'web/tests/activity-report-collapse.test.mjs:test("对话流默认折叠：结果句只出现一次，汇报正文与计数可见"'
       - 'web/tests/task-workflow-session-jump.test.mjs:test("重取期间的旧会话键仍可点，不闪禁用"'
+
+  # ── R1 留存缺口收口：删卡级联/关 lane、事件回合 inspect_run、领取租约、账本保留 ──
+  - id: G-MP
+    title: R1 留存缺口 —— 删任务级联 + lane 收敛、运行期 inspect_run、领取租约、账本保留策略
+    kind: fix
+    symptom: "R1 收尾复核列出的四处留存缺口，都在「跑起来之后才会撞」的路径上：① 删任务不清 `router_events`、也不关进程内 lane —— 同 ID 重建的任务第一件事就撞旧 unique_key（`InsertEvent` 是 ON CONFLICT DO NOTHING），新 Run 的事件一条也插不进去且不报错；lane 里排队的回合还会拿着一张已不存在的任务调模型。② 运行期事件回合里唯一的读工具 `inspect_run` 100% 不可用 —— 事件 brief 故意清空 `LatestRun`（不让模型拿任务最新 Run 顶替），而 `inspectRun` 只认 `LatestRun`，于是每个事件回合的模型都在「没有 Run 可看」的假信息上决策。③ claimed 行只有进程重启才能救回来，回合 panic 被吞/超时漏 complete 后事件永久停在 claimed，账本上既不 pending 也不终态。④ 账本只增不删，长期运行的节点上这张表无限长。"
+    why: "用户 2026-11-18 授权的 R1 计划要求 R0/R1 的机制在生产打开前不留已知留存缺口。必须保留：① 级联删 `router_events` 单收到 `TaskStore.DeleteTask`（唯一删卡事务），并删掉只给测试调用的 `DeleteTaskRouterData` —— 后者口径正确但生产零调用者，钉住它等于没钉；`Service.DeleteTask` 在删库前先 `CloseRouterTask` 关 lane（清 session、丢队列），卡片消失后不能还有回合在跑。② 运行期回合 `inspectRun` 以 `brief.Event.RunID` 为目标并读库（事件 brief 不含 run 结构），用户回合仍走 `LatestRun`；传了别的 run id 一律拒绝 —— 而不是退回去用 `LatestRun` 顶替。③ 领取租约 `ReclaimStaleEvents(before)` 按 `claimed_at` 判定（不是 `created_at`：排队很久但刚领走的事件是活的），打回 pending 并保留原领取者；CAS 保证误判时第二个回合拿不到同一事件，运行期 effect ID 确定所以不会重复副作用。④ 回收 `PruneEvents(cutoff, limit)` 只删 done|failed|skipped 且按 id 子查询 + LIMIT 分批（不依赖 SQLITE_ENABLE_UPDATE_DELETE_LIMIT）；pending/claimed 再老也留着。`router_decisions` 明确不在回收范围（它是诊断面）。"
+    boundary: "只补留存缺口，不改 coordinate 的动作白名单/预算/幂等口径，不新增 HTTP 端点，不动 `router_prompt.md`，不改生产 `router.mode`。租约不宣称覆盖 kill -9 与 SQLite 语句中断；回收不承诺秒级精确的保留边界（`created_at` 截到整秒比较，1 秒粒度）。"
+    files:
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/service_run_moves.go
+      - server/internal/kanban/router_store.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_event_store.go
+      - server/internal/kanban/router_event_types.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_service.go
+    tests:
+      - server/internal/kanban/task_delete_test.go
+      - server/internal/kanban/router_event_migrate_test.go
+      - server/internal/kanban/router_inspect_run_test.go
+      - server/internal/kanban/router_event_lease_test.go
+      - server/internal/kanban/router_event_lease_tick_test.go
+      - server/internal/kanban/router_event_prune_test.go
+      - server/internal/kanban/router_event_prune_tick_test.go
+    anchors:
+      - 'server/internal/kanban/task_store.go:"router_decisions", "router_task_state", "router_events"'
+      - 'server/internal/kanban/service_run_moves.go:s.CloseRouterTask(ctx, in.RootID, task.ID)'
+      - 'server/internal/kanban/router_tools.go:targetRunID = strings.TrimSpace(e.brief.Event.RunID)'
+      - 'server/internal/kanban/router_tools.go:is not the run of this turn'
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) ReclaimStaleEvents('
+      - 'server/internal/kanban/router_event_store.go:WHERE status = ? AND claimed_at <> '''' AND claimed_at < ?'
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) PruneEvents('
+      - 'server/internal/kanban/router_event_store.go:WHERE status IN (?, ?, ?) AND substr(created_at, 1, 19) < ?'
+      - 'server/internal/kanban/router_event_types.go:const routerEventPruneLimit = 200'
+      - 'server/internal/kanban/router_coordinate.go:routerEventClaimLease = 10 * time.Minute'
+      - 'server/internal/kanban/router_coordinate.go:routerEventRetention = 7 * 24 * time.Hour'
+      - 'server/internal/kanban/router_coordinate.go:if tick%routerEventPruneEveryTicks != 0 {'
+      - 'server/internal/kanban/router_coordinate.go:rs.pruneExpiredEvents(ctx, now)'
+      - 'server/internal/kanban/router_service.go:coordinateTicks int'
+      - 'server/internal/kanban/router_event_prune_test.go:func TestRouterEventPruneRemovesOnlyOldTerminalRows('
+      - 'server/internal/kanban/router_event_prune_tick_test.go:func TestCoordinatorTickPruneRunsEveryNthTick('
+      - 'server/internal/kanban/router_inspect_run_test.go:func TestRouterInspectRunServesEventTurn('
+      - 'server/internal/kanban/router_event_lease_tick_test.go:func TestCoordinatorTickReclaimsStaleClaims('

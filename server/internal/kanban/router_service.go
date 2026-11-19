@@ -36,6 +36,9 @@ type RouterService struct {
 	coordinateMu      sync.Mutex
 	coordinateRunning bool
 	coordinateDone    chan struct{}
+	// coordinateTicks 只在 coordinateLoop 的 goroutine 里读写（测试先停循环），
+	// 用于低频杂活（账本回收）的拍数节流。
+	coordinateTicks int
 }
 
 type routerLane struct {

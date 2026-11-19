@@ -41,6 +41,10 @@ const RouterEventMaxPayloadBytes = 8192
 // 5 分钟窗口内只产生一条停摆事件。
 const routerEventStallBucket = 5 * time.Minute
 
+// routerEventPruneLimit 是单次回收的行数上限。分批是为了不长事务锁表；
+// 这个数只是「一拍删多少」，不是保留期。
+const routerEventPruneLimit = 200
+
 // RouterEvent 是一行持久事件。字段与 schema 一一对应；时间一律 UTC。
 type RouterEvent struct {
 	ID               string // newID("revt")

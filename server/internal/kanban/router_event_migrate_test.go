@@ -31,7 +31,10 @@ func TestTaskStoreOpenCreatesRouterEventTable(t *testing.T) {
 
 // 删除任务必须连带清掉事件账本行：否则任务重建同 ID 时会命中旧 unique_key，
 // 新 Run 的事件永远插不进去，协调消费端就会一直看不到这个任务。
-func TestDeleteTaskRouterDataRemovesEvents(t *testing.T) {
+//
+// 判据必须走 TaskStore.DeleteTask 本身（删卡的唯一事务），而不是某条只给测试
+// 调用的清账捷径 —— 后者在生产里没人调，钉住它等于没钉。
+func TestDeleteTaskRemovesRouterEventLedger(t *testing.T) {
 	root := fs.NewRootInfo("root", "root", t.TempDir())
 	tasks, err := NewTaskStore(root)
 	if err != nil {
@@ -41,9 +44,13 @@ func TestDeleteTaskRouterDataRemovesEvents(t *testing.T) {
 	store := NewRouterStore(tasks.db)
 	ctx := context.Background()
 
+	if _, err := tasks.CreateTask(ctx, Task{ID: "task-1", RootID: root.ID, Status: StatusWaitingUser},
+		TaskEvent{ID: "evt-1", TaskID: "task-1", Type: "created"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	mustInsertRouterEvent(t, store, baseRouterEvent(RouterEventRunSettled, "run-1"))
-	if err := store.DeleteTaskRouterData(ctx, "task-1"); err != nil {
-		t.Fatalf("DeleteTaskRouterData: %v", err)
+	if err := tasks.DeleteTask(ctx, "task-1"); err != nil {
+		t.Fatalf("DeleteTask: %v", err)
 	}
 	events, err := store.ListEventsByTask(ctx, "task-1")
 	if err != nil {

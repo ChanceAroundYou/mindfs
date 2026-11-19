@@ -330,28 +330,6 @@ WHERE id = ?`,
 	return nil
 }
 
-// DeleteTaskRouterData 删除一个任务的全部 Router 运行数据。tasks/runs/activities
-// 本身由 TaskStore.DeleteTask 删除，这里只清 Router 独有的表。
-func (s *RouterStore) DeleteTaskRouterData(ctx context.Context, taskID string) error {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return nil
-	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM router_decisions WHERE task_id = ?`, taskID); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM router_task_state WHERE task_id = ?`, taskID); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM router_sessions WHERE scope = ? AND owner_id = ?`, string(RouterScopeTask), taskID); err != nil {
-		return err
-	}
-	// 事件账本的 unique_key 含 task_id：不清掉的话，任务重建同 ID 会命中旧键，
-	// 新 Run 的事件永远插不进去。
-	_, err := s.db.ExecContext(ctx, `DELETE FROM router_events WHERE task_id = ?`, taskID)
-	return err
-}
-
 const routerDecisionColumns = `id, task_id, root_id, scope, owner_id, user_activity_id,
 placeholder_activity_id, trigger_kind, trigger_ref, router_session_key, turn_id,
 brief_hash, brief_json, actions_json, status, applied_seq, legacy_action_json,

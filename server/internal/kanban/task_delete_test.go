@@ -80,6 +80,84 @@ func TestTaskStoreDeleteTaskRemovesCardAndItsRows(t *testing.T) {
 	}
 }
 
+// 删卡必须连事件账本一起清。账本的 unique_key 含 task_id，删卡却留行的话：
+// 任务用同 ID 重建时第一件事就撞旧键（InsertEvent 走 ON CONFLICT DO NOTHING），
+// 新 Run 的事件永远插不进去 —— 账本看起来「这次一条都没有」，且不报错。
+//
+// 这里走 Service 的生产路径（不是直接调 Store），因为用户点的是那个键。
+func TestServiceDeleteTaskRemovesRouterEventLedger(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "带着账本一起走"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := NewRouterStore(store.db)
+	mustInsertRouterEvent(t, events, RouterEvent{
+		RootID: root.ID, TaskID: detail.Task.ID, RunID: "run-doomed",
+		Kind: RouterEventRunSettled, InstanceKey: "run-doomed", TurnID: "turn-doomed",
+		Status: RouterEventPending,
+	})
+
+	if err := svc.DeleteTask(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("DeleteTask 报错：%v", err)
+	}
+	left, err := events.ListEventsByTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("ListEventsByTask：%v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("删卡后账本还剩 %d 条事件，都该被清掉", len(left))
+	}
+}
+
+// 删卡必须关掉进程内 lane：卡片消失之后，排队里没开始的回合不能再跑 ——
+// 它们会拿一张已不存在的任务去调模型，并把结果写进没人看的地方。
+func TestServiceDeleteTaskClosesRouterLane(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	svc.SetRouterConfig(RouterConfig{Mode: RouterModeShadow})
+
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Input: "别让排队的跑"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := svc.RouterServiceForRoot(root.ID)
+	if router == nil {
+		t.Fatal("shadow 模式下应当有 Router lane 管理器")
+	}
+	defer router.Close()
+	// 造一条「正在跑、队列里还有活」的 lane：直接摆状态是确定的，
+	// 比 Enqueue + 等 drain 更不容易与断言抢时序。
+	lane := router.lane(detail.Task.ID)
+	lane.mu.Lock()
+	lane.running = true
+	lane.queue = []RouterTrigger{{Kind: RouterTriggerUserMessage, TaskID: detail.Task.ID, RootID: root.ID}}
+	lane.mu.Unlock()
+
+	if err := svc.DeleteTask(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("DeleteTask 报错：%v", err)
+	}
+
+	router.mu.Lock()
+	_, still := router.lanes[detail.Task.ID]
+	router.mu.Unlock()
+	if still {
+		t.Fatal("lane 还在 —— 删卡必须把它从管理器里摘掉")
+	}
+	lane.mu.Lock()
+	queued := len(lane.queue)
+	lane.mu.Unlock()
+	if queued != 0 {
+		t.Fatalf("排队里还剩 %d 个回合，都该被丢弃", queued)
+	}
+}
+
 func TestTaskStoreDeleteTaskRejectsUnknownID(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewTaskStore(rootfs.NewRootInfo("test", "test", t.TempDir()))

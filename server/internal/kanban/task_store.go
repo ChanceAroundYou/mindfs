@@ -249,14 +249,19 @@ func (s *TaskStore) ClearWorktreeRefs(ctx context.Context, taskID string) error 
 	return s.setWorktreeRefsKeepBuilt(ctx, taskID, "", "")
 }
 
-// DeleteTask 彻底删掉一张任务卡：tasks 行 + 它名下的 stage_runs 和 task_events。
-// stage_runs 是迁移前的只读证据，任务卡删掉时一并清掉，避免留下没有主人的行。
+// DeleteTask 彻底删掉一张任务卡：tasks 行 + 它名下的 stage_runs、task_events
+// 与 Router 账本（决策/任务态/会话/事件）。stage_runs 是迁移前的只读证据，
+// 任务卡删掉时一并清掉，避免留下没有主人的行。
 //
 // 只删卡片本身 —— worktree 目录、分支、会话都不是这张卡的一部分，用户要的是
 // 「别再堆在板上」，不是「把活删掉」。
 //
-// 三张表必须在一个事务里一起消失：留下孤儿 stage_runs / events 只会让
+// 这几张表必须在一个事务里一起消失：留下孤儿 stage_runs / events 只会让
 // 「按 task_id 捞出来的证据」指向一个已经不存在的任务。
+//
+// router_events 尤其不能漏：它的 unique_key 含 task_id，删卡却留行的话，任务
+// 用同 ID 重建时第一件事就撞上旧键（InsertEvent 是 ON CONFLICT DO NOTHING），
+// 新 Run 的事件永远插不进去，且不报错 —— 账本看起来「这次一条都没有」。
 //
 // 先 GetTask 是为了沿用「任务不存在」那套错误语义（sql.ErrNoRows），
 // 不让一个不存在的 id 静默返回成功。
@@ -273,7 +278,7 @@ func (s *TaskStore) DeleteTask(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"stage_runs", "task_events", "router_decisions", "router_task_state"} {
+	for _, table := range []string{"stage_runs", "task_events", "router_decisions", "router_task_state", "router_events"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE task_id = ?`, id); err != nil {
 			return err
 		}

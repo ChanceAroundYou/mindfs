@@ -30,6 +30,17 @@ const (
 	routerCoordinateClaimPrefix    = "router-coordinator-"
 	routerCoordinateTickTimeout    = 2 * time.Minute
 	routerCoordinateRecoverTimeout = 5 * time.Second
+	// routerEventClaimLease 是事件领取租约：超过它就认为领取者已死/已丢回合。
+	// 取回合超时（90s）的若干倍：正常回合一定在租约内收尾，误判只会让一个
+	// 还在跑的回合与被打回的事件并存（ClaimEvent 是 CAS，第二个回合拿不到），
+	// 不会重复产生副作用（运行期 effect ID 是确定的）。
+	routerEventClaimLease = 10 * time.Minute
+	// routerEventRetention 是账本保留期：终态行留 7 天够查「上周那次结算」，
+	// 再老就没有人读了。pending/claimed 不受它影响（见 PruneEvents）。
+	routerEventRetention = 7 * 24 * time.Hour
+	// routerEventPruneEveryTicks 是回收频率（以拍计）。一拍 30s，120 拍即约
+	// 1 小时一次 —— 回收是个后台杂活，没必要每拍打一条 DELETE。
+	routerEventPruneEveryTicks = 120
 )
 
 // RouterCoordinateConsumeResult 是一拍的消费统计，供测试与诊断。
@@ -182,17 +193,66 @@ func (rs *RouterService) coordinateLoop(done chan struct{}) {
 	}
 }
 
-// coordinateTick 是一拍：先补事件（有界扫描），再消费。扫描/消费失败只记日志，
-// 不能让循环退出——下一拍会重试，事件账本保证幂等。
+// coordinateTick 是一拍：先收回过期领取，再补事件（有界扫描），最后消费。
+// 各步失败只记日志，不能让循环退出——下一拍会重试，事件账本保证幂等。
 func (rs *RouterService) coordinateTick() {
 	ctx, cancel := context.WithTimeout(context.Background(), routerCoordinateTickTimeout)
 	defer cancel()
 	now := time.Now().UTC()
+	rs.reclaimStaleEventClaims(ctx, now)
+	rs.pruneExpiredEvents(ctx, now)
 	if _, err := rs.service.scanRouterEventSourcesBounded(ctx, rs.rootID, now, routerCoordinateScanWindow); err != nil {
 		log.Printf("[router/coordinate] scan.error root=%s err=%v", rs.rootID, err)
 	}
 	if _, err := rs.ConsumeRouterEvents(ctx, now); err != nil {
 		log.Printf("[router/coordinate] consume.error root=%s err=%v", rs.rootID, err)
+	}
+}
+
+// reclaimStaleEventClaims 把领了太久的事件打回 pending。启动对账只在进程重启
+// 时跑；进程不死、某回合又把事件丢在 claimed（panic 被吞 / 提前 return），
+// 这条事件就再也不会被消费，账本上既非 pending 也非终态。
+func (rs *RouterService) reclaimStaleEventClaims(ctx context.Context, now time.Time) {
+	if rs == nil || rs.store == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	n, err := rs.store.ReclaimStaleEvents(ctx, now.Add(-routerEventClaimLease), "claim lease expired")
+	if err != nil {
+		log.Printf("[router/coordinate] reclaim.error root=%s err=%v", rs.rootID, err)
+		return
+	}
+	if n > 0 {
+		log.Printf("[router/coordinate] reclaim root=%s count=%d", rs.rootID, n)
+	}
+}
+
+// pruneExpiredEvents 低频回收账本。只在 coordinate 循环的 goroutine 里被调用
+// （测试里先 stopLoop 再由测试独占），所以拍数用普通计数器即可。
+//
+// 第 0 拍（启动）与之后每 routerEventPruneEveryTicks 拍各跑一次：账本回收是
+// 后台杂活，每拍打一条 DELETE 只会白白争 SQLite 写锁。
+func (rs *RouterService) pruneExpiredEvents(ctx context.Context, now time.Time) {
+	if rs == nil || rs.store == nil {
+		return
+	}
+	tick := rs.coordinateTicks
+	rs.coordinateTicks++
+	if tick%routerEventPruneEveryTicks != 0 {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	n, err := rs.store.PruneEvents(ctx, now.Add(-routerEventRetention), routerEventPruneLimit)
+	if err != nil {
+		log.Printf("[router/coordinate] prune.error root=%s err=%v", rs.rootID, err)
+		return
+	}
+	if n > 0 {
+		log.Printf("[router/coordinate] prune root=%s count=%d", rs.rootID, n)
 	}
 }
 
