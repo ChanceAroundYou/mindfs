@@ -62,13 +62,24 @@ func newPointerCache() *pointerCache {
 	return &pointerCache{entries: make(map[pointerCacheKey]cachedPointer)}
 }
 
+// pointerVariantFailed separates the card for an is_error result from the card
+// for identical text that succeeded. The card text differs (it says the result
+// failed), so the cache key must differ too.
+const pointerVariantFailed = "is_error"
+
 func pointerCacheKeyFor(toolName, inputSummary string, textSpan []byte) pointerCacheKey {
+	return pointerCacheKeyForVariant(toolName, inputSummary, "", textSpan)
+}
+
+func pointerCacheKeyForVariant(toolName, inputSummary, variant string, textSpan []byte) pointerCacheKey {
 	sum := func(seed maphash.Seed) uint64 {
 		var hash maphash.Hash
 		hash.SetSeed(seed)
 		_, _ = hash.WriteString(toolName)
 		_ = hash.WriteByte(0)
 		_, _ = hash.WriteString(inputSummary)
+		_ = hash.WriteByte(0)
+		_, _ = hash.WriteString(variant)
 		_ = hash.WriteByte(0)
 		_, _ = hash.Write(textSpan)
 		return hash.Sum64()

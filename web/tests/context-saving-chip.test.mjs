@@ -22,9 +22,12 @@ const CONTEXT_SAVING_KEYS = [
   "badgeOriginal",
   "badgeSaved",
   "badgeTokens",
+  "badgeRewrite",
+  "unknown",
   "badgeFoldMs",
   "empty",
   "history",
+  "rewriteTotal",
 ];
 
 test("前后端用同一条路径：会话 context-saving", () => {
@@ -67,6 +70,16 @@ test("会话切换时先清空旧数据，避免上一条会话的数字留在�
 test("详情面板列出折叠条数与本轮数字", () => {
   assert.match(indicator, /t\("contextSaving\.badgeMessages"\), String\(latest\.blocks\)/);
   assert.match(indicator, /t\("contextSaving\.badgeSaved"\), formatBytes\(latest\.saved_bytes\)/);
+});
+
+test("折叠的代价与收益并列显示：本轮重算 token 与节省同屏", () => {
+  // 只报节省会让人以为折叠免费；rewrite_tokens 是那一请求按 1x 计价的部分。
+  assert.match(service, /rewrite_tokens: number;/);
+  assert.match(service, /total_rewrite_tokens: number;/);
+  assert.match(indicator, /t\("contextSaving\.badgeRewrite"\),\s*latest\.rewrite_tokens >= 0 \? String\(latest\.rewrite_tokens\) : t\("contextSaving\.unknown"\)/);
+  assert.match(indicator, /t\("contextSaving\.rewriteTotal", \{ rewrite: String\(saving\.total_rewrite_tokens\) \}\)/);
+  // -1 是「这一轮没读到用量」，不能显示成 0 或省略。
+  assert.match(indicator, /saving\.total_rewrite_tokens > 0/);
   assert.match(indicator, /t\("contextSaving\.history", \{ requests: saving\.requests, max: formatBytes\(saving\.max_saved_bytes\) \}\)/);
 });
 

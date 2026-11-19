@@ -13,6 +13,11 @@ export type ContextSavingEntry = {
   skipped: number;
   archive_errors: number;
   fold_ms: number;
+  /**
+   * The fold request's own input_tokens: the part of it billed at 1x instead of
+   * the 0.1x cache read. -1 means the turn ended without a usage sample.
+   */
+  rewrite_tokens: number;
 };
 
 /**
@@ -25,6 +30,8 @@ export type SessionContextSaving = {
   latest: ContextSavingEntry;
   requests: number;
   max_saved_bytes: number;
+  /** Sum of the known rewrite samples; unknown ones are excluded. */
+  total_rewrite_tokens: number;
   recent: ContextSavingEntry[] | null;
 };
 

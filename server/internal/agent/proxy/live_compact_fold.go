@@ -1,11 +1,5 @@
 package proxy
 
-import (
-	"os"
-	"sort"
-	"time"
-)
-
 // The fold planner.
 //
 // Everything here works on byte spans recorded by scanWireRequest. The rewrite
@@ -86,6 +80,9 @@ type scanFoldCandidate struct {
 	inputSummary string
 	key          pointerCacheKey
 	approxTokens int
+	// failed marks a tool_result with is_error=true. It is foldable once it
+	// clears min_block_tokens, and its card says the result failed.
+	failed bool
 }
 
 // renderedFold is the replacement for one candidate plus the numbers the log
@@ -94,6 +91,9 @@ type renderedFold struct {
 	replacement foldReplacement
 	tokens      int
 	textBytes   int
+	// path is the archive file backing this pointer. Its base name is the
+	// block's stable identity across restarts (see foldCommitRecord).
+	path string
 }
 
 type foldSkip int
@@ -162,8 +162,10 @@ func pairScanRounds(messages []scanMessage) []*scanToolRound {
 }
 
 // collectFoldCandidates returns the eligible results in wire order: closed
-// rounds outside the newest keepRounds rounds, never a failed result, only pure
-// text, exactly one text part.
+// rounds outside the newest keepRounds rounds, only pure text, exactly one text
+// part. A failed (is_error) result is foldable once it clears min_block_tokens:
+// a huge error dump is exactly what blows the context window, and the pointer
+// keeps a 20/20-line excerpt plus the archive path.
 //
 // One carve-out: rounds holding a result at or above large_block_tokens are
 // eligible even inside the keep window. dsh does the same (index.js:650
@@ -224,7 +226,7 @@ func collectFoldCandidates(body []byte, req *scanRequest, cfg LiveCompactConfig)
 				}
 				// A result that carries an image/document/unknown block keeps
 				// its bytes (I3), even if it also has text.
-				if block.nonText || block.isError {
+				if block.nonText {
 					continue
 				}
 				// Replacing several text blocks with one pointer would change
@@ -238,8 +240,18 @@ func collectFoldCandidates(body []byte, req *scanRequest, cfg LiveCompactConfig)
 					continue
 				}
 				part := block.textParts[0]
+				approxTokens := estimateByteTokens(body[part.start:part.end])
+				// A small failed result stays verbatim: folding it saves
+				// nothing, and its text is often the whole diagnostic.
+				if block.isError && approxTokens < cfg.MinBlockTokens {
+					continue
+				}
 				toolName := round.names[block.toolUseID]
 				inputSummary := summarizeToolInput(body, round.inputs[block.toolUseID])
+				variant := ""
+				if block.isError {
+					variant = pointerVariantFailed
+				}
 				candidates = append(candidates, scanFoldCandidate{
 					messageIndex: messageIndex,
 					blockIndex:   blockIndex,
@@ -249,11 +261,12 @@ func collectFoldCandidates(body []byte, req *scanRequest, cfg LiveCompactConfig)
 					// Key on the raw (still escaped) span: the pointer is a pure
 					// function of this content, and hashing the escaped form
 					// avoids the decode this cache exists to skip.
-					key: pointerCacheKeyFor(toolName, inputSummary, body[part.start:part.end]),
+					key: pointerCacheKeyForVariant(toolName, inputSummary, variant, body[part.start:part.end]),
 					// A byte-based estimate is close enough to decide whether a
 					// block is oversized; the exact count is computed after the
 					// decode that a fold needs anyway.
-					approxTokens: estimateByteTokens(body[part.start:part.end]),
+					approxTokens: approxTokens,
+					failed:       block.isError,
 				})
 			}
 		}
@@ -268,7 +281,7 @@ func roundResultTokens(body []byte, req *scanRequest, round *scanToolRound) int 
 	total := 0
 	for _, messageIndex := range round.resultIndexes {
 		for _, block := range req.messages[messageIndex].blocks {
-			if block.typ != "tool_result" || block.nonText || block.isError || len(block.textParts) != 1 {
+			if block.typ != "tool_result" || block.nonText || len(block.textParts) != 1 {
 				continue
 			}
 			part := block.textParts[0]
@@ -280,8 +293,9 @@ func roundResultTokens(body []byte, req *scanRequest, round *scanToolRound) int 
 
 // roundHasOversizedResult reports whether a closed round holds a foldable
 // result at or above large_block_tokens. Only results this planner could
-// actually fold count: a multi-part or error result is never a candidate, so
-// exempting its round would drop protection for nothing.
+// actually fold count: a multi-part or non-text result is never a candidate, so
+// exempting its round would drop protection for nothing. A failed result counts
+// once it clears min_block_tokens, the same bar the candidate set uses.
 func roundHasOversizedResult(body []byte, req *scanRequest, round *scanToolRound, cfg LiveCompactConfig) bool {
 	// An unset threshold must not exempt everything: a caller that skips
 	// Normalized would otherwise fold the round the model just read.
@@ -290,7 +304,7 @@ func roundHasOversizedResult(body []byte, req *scanRequest, round *scanToolRound
 	}
 	for _, messageIndex := range round.resultIndexes {
 		for _, block := range req.messages[messageIndex].blocks {
-			if block.typ != "tool_result" || block.nonText || block.isError || len(block.textParts) != 1 {
+			if block.typ != "tool_result" || block.nonText || len(block.textParts) != 1 {
 				continue
 			}
 			part := block.textParts[0]
@@ -300,369 +314,4 @@ func roundHasOversizedResult(body []byte, req *scanRequest, round *scanToolRound
 		}
 	}
 	return false
-}
-
-// renderPointer produces the pointer for one candidate, reusing the archive and
-// the rendered literal when they are still valid.
-func renderPointer(body []byte, candidate scanFoldCandidate, store *archiveStore, cache *pointerCache) (renderedFold, foldSkip) {
-	spanLen := candidate.part.end - candidate.part.start
-	if entry, hit := cache.get(candidate.key); hit {
-		// The sweep can have removed the archive since the entry was written. A
-		// pointer to a missing file is worse than a full-size result, so verify
-		// before reusing it.
-		if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < spanLen {
-			return renderedFold{
-				replacement: foldReplacement{start: candidate.part.start, end: candidate.part.end, literal: entry.literal},
-				tokens:      entry.tokens,
-				textBytes:   entry.bytes,
-			}, foldOK
-		}
-	}
-	text, err := jsonStringAt(body, candidate.part.start, candidate.part.end)
-	if err != nil || text == "" {
-		return renderedFold{}, foldSkipDecode
-	}
-	tokens := estimateTokens(text)
-	archivePath, err := store.write(text)
-	if err != nil {
-		return renderedFold{}, foldSkipArchive
-	}
-	literal := encodeJSONStringLiteral(renderFoldPointer(pointerInput{
-		toolName:     candidate.toolName,
-		inputSummary: candidate.inputSummary,
-		text:         text,
-		tokens:       tokens,
-		archivePath:  archivePath,
-		errorText:    looksLikeErrorText(text),
-	}))
-	// A fold that is not smaller is not a fold. This is the backstop for the
-	// excerpt bound above: whatever the reason, a pointer that costs more bytes
-	// than the result it replaces would make every subsequent turn bigger,
-	// permanently.
-	if len(literal) >= spanLen {
-		return renderedFold{}, foldSkipTooBig
-	}
-	cache.put(candidate.key, cachedPointer{
-		literal: literal,
-		path:    archivePath,
-		tokens:  tokens,
-		bytes:   len(text),
-	})
-	return renderedFold{
-		replacement: foldReplacement{start: candidate.part.start, end: candidate.part.end, literal: literal},
-		tokens:      tokens,
-		textBytes:   len(text),
-	}, foldOK
-}
-
-// planFold is the Phase B1 planner: commit every eligible block. It is kept
-// for tests and for callers that have no request-size measurement; foldRequest
-// uses planFoldCommit with the rail gate.
-func planFold(body []byte, req *scanRequest, cfg LiveCompactConfig, store *archiveStore, cache *pointerCache) foldResult {
-	result, _ := planFoldCommit(body, req, cfg, store, cache, nil, foldContext{})
-	return result
-}
-
-// planFoldCommit plans a fold under the §12.6 policy.
-//
-// Two passes: first the session's committed blocks (always folded, invariant
-// I8), then — only when the rail fired — new blocks, oldest first, until the
-// projection is under target_tokens or the event budget is spent.
-func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store *archiveStore, cache *pointerCache, commits *foldCommits, fc foldContext) (foldResult, liveCompactGate) {
-	var result foldResult
-	candidates, multiPart := collectFoldCandidates(body, req, cfg)
-	result.skipped += multiPart
-	gate := liveCompactGate{decision: gateBelowRail, est: fc.est, growth: fc.growth}
-	if fc.est <= 0 {
-		gate.decision = gateUnmeasured
-	}
-	if len(candidates) == 0 {
-		return result, gate
-	}
-
-	var replacements []foldReplacement
-	used := make([]bool, len(candidates))
-	stickyTokens := 0
-
-	// Pass 1: committed blocks are folded unconditionally. This is what makes
-	// the fold boundary monotone across turns.
-	for index, candidate := range candidates {
-		if !commits.has(candidate.key) {
-			continue
-		}
-		rendered, outcome := renderPointer(body, candidate, store, cache)
-		if outcome != foldOK {
-			// Cannot render a pointer to a missing or broken archive. Leaving
-			// the block unfolded is the only safe choice here; it is a disk
-			// failure, not a policy decision.
-			result.skipped++
-			if outcome == foldSkipArchive {
-				result.archiveFailures++
-			}
-			continue
-		}
-		used[index] = true
-		replacements = append(replacements, rendered.replacement)
-		result.stickyBlocks++
-		result.foldedBlocks++
-		result.foldedTokens += rendered.tokens
-		result.foldedBytes += rendered.textBytes
-		stickyTokens += rendered.tokens
-	}
-
-	// Pass 2: decide whether this request may commit new blocks. Upstream
-	// calibration already reflects the sticky blocks (the previous request was
-	// folded before it was sent), so the estimator subtraction only applies on
-	// the fallback path.
-	current := fc.est - stickyTokens
-	if fc.actual > 0 {
-		current = fc.actual
-	}
-	scaleNum, scaleDen := fc.actualScale()
-	largeBlock := false
-	for index, candidate := range candidates {
-		if used[index] {
-			continue
-		}
-		if candidate.approxTokens >= cfg.LargeBlockTokens {
-			largeBlock = true
-			break
-		}
-	}
-	budget, decided := decideFoldBudget(cfg, fc, current, largeBlock)
-	gate = decided
-
-	if budget.commitNew {
-		var newReplacements []foldReplacement
-		var newKeys []pointerCacheKey
-		newBytes, newTokens := 0, 0
-		// Chunked drain (design §12.7(d)): max_fold_bytes bounds one chunk, and
-		// one event may drain up to foldMaxChunksPerEvent of them. A single
-		// global cap would end the event after ~2 blocks and leave the context
-		// shallow-folded — the shape §12.7(b) measured as strictly worse than
-		// not folding. The chunk cap still bounds the work and the latency of
-		// one request; the chunk count bounds the whole event.
-		chunkBytes, chunks := 0, 1
-		for index, candidate := range candidates {
-			if used[index] {
-				continue
-			}
-			width := candidate.part.end - candidate.part.start
-			if budget.maxNewBytes > 0 && chunkBytes > 0 && chunkBytes+width > budget.maxNewBytes {
-				if chunks >= foldMaxChunksPerEvent {
-					break
-				}
-				chunks++
-				chunkBytes = 0
-			}
-			rendered, outcome := renderPointer(body, candidate, store, cache)
-			if outcome != foldOK {
-				result.skipped++
-				if outcome == foldSkipArchive {
-					result.archiveFailures++
-				}
-				continue
-			}
-			if rendered.tokens < cfg.MinBlockTokens {
-				continue
-			}
-			newReplacements = append(newReplacements, rendered.replacement)
-			newKeys = append(newKeys, candidate.key)
-			chunkBytes += width
-			newBytes += rendered.textBytes
-			newTokens += rendered.tokens
-			if fc.est > 0 && current+fc.growth*scaleNum/scaleDen-newTokens*scaleNum/scaleDen <= cfg.TargetTokens {
-				break
-			}
-		}
-		// A fold event that is too small does not justify a cache break. Drop
-		// the whole new set; never go back to accumulate more.
-		if budget.minNewBytes > 0 && newBytes < budget.minNewBytes {
-			gate.decision = gateNoBacklog
-		} else {
-			for index := range newReplacements {
-				commits.add(newKeys[index])
-				replacements = append(replacements, newReplacements[index])
-			}
-			result.newBlocks += len(newReplacements)
-			result.foldedBlocks += len(newReplacements)
-			result.foldedTokens += newTokens
-			result.foldedBytes += newBytes
-		}
-	}
-
-	if len(replacements) == 0 {
-		return result, gate
-	}
-	sort.Slice(replacements, func(i, j int) bool { return replacements[i].start < replacements[j].start })
-	rewritten, ok := applyFold(body, replacements)
-	if !ok {
-		// Overlapping or out-of-range spans mean the scan disagreed with
-		// itself. Fail open: forward the original body (I7). Commits already
-		// recorded in this call stay recorded; the next request will render
-		// them again, so the only cost is one unfolded turn.
-		result.skipped += result.foldedBlocks
-		result.foldedBlocks, result.foldedTokens, result.foldedBytes = 0, 0, 0
-		result.stickyBlocks, result.newBlocks = 0, 0
-		return result, gate
-	}
-	result.body = rewritten
-	return result, gate
-}
-
-// foldRequest runs the fold on the request path. It returns the body to
-// forward, the fold result, and the rail decision (which the observation line
-// logs so shadow can preview the same policy).
-//
-// Any error path returns the original body (I7).
-func (s *Server) foldRequest(token string, body []byte) ([]byte, foldResult, liveCompactGate) {
-	cfg := s.liveCompact
-	if !cfg.Observes() {
-		return body, foldResult{}, liveCompactGate{}
-	}
-	// Measured before folding: the rail compares like with like across turns,
-	// and a post-fold estimate would shrink right after every event and mask
-	// the next one.
-	est := estimateByteTokens(body)
-	growth := s.noteRequestEstimate(token, est)
-	actual, forwardEst := s.sessionCalibration(token)
-	fc := foldContext{est: est, growth: growth, actual: actual, forwardEst: forwardEst}
-	measured := liveCompactGate{est: est, growth: growth}
-	// The brake must stop the rewrite, not just the measurement. It is the only
-	// way an operator can turn folding off without restarting the service, and
-	// on this node the service restart is user-only.
-	if s.liveCompactDisabled() {
-		measured.decision = gateDisabled
-		return body, foldResult{}, measured
-	}
-	if !s.sessionFoldAllowed(token) {
-		measured.decision = gateObserveOnly
-		return body, foldResult{}, measured
-	}
-	start := time.Now()
-	req, err := scanWireRequest(body)
-	if err != nil {
-		logLiveCompactSkip(token, "scan")
-		measured.decision = gateScanFailed
-		return body, foldResult{}, measured
-	}
-	// Shadow (and on without an archive) rehearses the policy: it reports the
-	// decision and the savings a fold would produce, but never rewrites the
-	// body or writes an archive. This is what lets a 24h shadow rehearsal on a
-	// live node gate mode=on admission (design §12.6 观测).
-	if cfg.Mode != LiveCompactOn || s.archive == nil {
-		_, gate := previewFold(body, req, cfg, s.sessionFoldCommits(token), fc)
-		// Shadow forwards the body untouched: its estimate is the measured one.
-		s.noteForwardEstimate(token, est)
-		return body, foldResult{}, gate
-	}
-	result, gate := planFoldCommit(body, req, cfg, s.archive, s.pointerCache,
-		s.sessionFoldCommits(token), fc)
-	gate.wouldFoldTokens = result.foldedTokens
-	gate.wouldFoldBlocks = result.foldedBlocks
-	if result.changed() {
-		// Validate the rewrite before it is allowed onto the wire. This is the
-		// one place where a scanner bug would reach the upstream, so the check
-		// is cheap and structural: same message count, same tool pairing.
-		if err := verifyFold(req, result.body); err != nil {
-			logLiveCompactSkipDetails(token, "verify", err)
-			s.noteForwardEstimate(token, est)
-			return body, foldResult{}, gate
-		}
-		s.archive.sweep(time.Now())
-		elapsed := time.Since(start)
-		logLiveCompactFold(token, result, gate.decision, elapsed)
-		s.recordFoldLedger(token, cfg.Mode, len(body), len(result.body), result, elapsed)
-		forwarded := est - result.foldedTokens
-		if forwarded < 0 {
-			forwarded = 0
-		}
-		s.noteForwardEstimate(token, forwarded)
-		return result.body, result, gate
-	}
-	s.noteForwardEstimate(token, est)
-	return body, result, gate
-}
-
-// sessionFoldAllowed is the request-path read of the same flag the observation
-// worker uses.
-func (s *Server) sessionFoldAllowed(token string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.sessions[token]
-	return ok && st.foldAllowed
-}
-
-// noteRequestEstimate records this request's pre-fold size and returns how much
-// it grew since the previous one. The first request of a session returns zero:
-// its whole size would otherwise look like growth.
-func (s *Server) noteRequestEstimate(token string, est int) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.sessions[token]
-	if !ok {
-		return 0
-	}
-	growth := 0
-	if st.lastEstimate > 0 && est > st.lastEstimate {
-		growth = est - st.lastEstimate
-	}
-	st.lastEstimate = est
-	return growth
-}
-
-// sessionCalibration returns the previous request's upstream/estimator pair.
-// Missing values (first request, failed usage scan) leave the rail on its
-// estimator-only fallback.
-func (s *Server) sessionCalibration(token string) (actual, forwardEst int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.sessions[token]
-	if !ok {
-		return 0, 0
-	}
-	return st.lastActual, st.lastForwardEst
-}
-
-// noteForwardEstimate records the estimator size of the body this request
-// forwarded. It is one half of the calibration pair; the other half arrives
-// with the response usage.
-func (s *Server) noteForwardEstimate(token string, est int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.sessions[token]
-	if !ok {
-		return
-	}
-	st.lastForwardEst = est
-}
-
-// noteActualContext records the upstream-reported context size for the request
-// that just finished. Both an unseen usage block and a seen-but-zero count mean
-// "no sample", and neither may overwrite a good one.
-func (s *Server) noteActualContext(token string, totals usageTotals) {
-	actual := totals.ContextTokens()
-	if !totals.Seen || actual <= 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if st, ok := s.sessions[token]; ok {
-		st.lastActual = actual
-	}
-}
-
-// sessionFoldCommits returns the session's commitment set, creating it on first
-// use.
-func (s *Server) sessionFoldCommits(token string) *foldCommits {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.sessions[token]
-	if !ok {
-		return nil
-	}
-	if st.commits == nil {
-		st.commits = newFoldCommits()
-	}
-	return st.commits
 }

@@ -158,17 +158,28 @@ func (a *archiveStore) recordFailure(text string) {
 	a.mu.Unlock()
 }
 
-// sweep enforces the retention window and the byte cap. It runs at most once
-// per archiveScanInterval; callers may call it on every fold without paying for
-// a directory walk each time.
+// sweep enforces the retention window and the byte cap without a protection
+// set. Kept for callers that have no sessions to protect (tests, diagnostics).
+func (a *archiveStore) sweep(now time.Time) {
+	a.sweepProtected(now, nil)
+}
+
+// sweepProtected enforces the retention window and the byte cap. It runs at
+// most once per archiveScanInterval; callers may call it on every fold without
+// paying for a directory walk each time.
 //
 // Order of deletion: files older than the retention window first, then oldest
-// first until the total fits under the cap. A file that is still pointed at by
-// a live conversation is not tracked here — the pointer would then reference a
-// deleted file. That trade-off is why the retention window is a full week: a
-// conversation older than that has almost certainly left the CLI's context
-// window already, and the pointer is a hint, not a guarantee.
-func (a *archiveStore) sweep(now time.Time) {
+// first until the total fits under the cap.
+//
+// Files still referenced are never deleted, in either phase: `live` carries the
+// archive names of this process's commitments, and the persisted commit logs
+// (within the same retention window) cover sessions that have not folded since
+// the last restart. Deleting a referenced archive is the one failure that
+// cannot be repaired: the pointer is already inside the model's context, so the
+// block would silently unfold and the prefix would be resent at full price.
+// When protection alone keeps the directory over the cap it stays over the cap
+// and says so; folding then degrades (new blocks stay whole) instead.
+func (a *archiveStore) sweepProtected(now time.Time, live map[string]struct{}) {
 	if a == nil || a.dir == "" {
 		return
 	}
@@ -187,7 +198,13 @@ func (a *archiveStore) sweep(now time.Time) {
 		}
 		return
 	}
+	cutoff := now.Add(-a.retention)
+	protected := a.referencedAfter(cutoff)
+	for name := range live {
+		protected[name] = struct{}{}
+	}
 	type candidate struct {
+		name    string
 		path    string
 		size    int64
 		modTime time.Time
@@ -203,14 +220,19 @@ func (a *archiveStore) sweep(now time.Time) {
 			continue
 		}
 		files = append(files, candidate{
+			name:    entry.Name(),
 			path:    filepath.Join(a.dir, entry.Name()),
 			size:    info.Size(),
 			modTime: info.ModTime(),
 		})
 		total += info.Size()
 	}
-	removed, freed := 0, int64(0)
+	removed, keptProtected, freed := 0, 0, int64(0)
 	drop := func(item candidate) {
+		if _, ok := protected[item.name]; ok {
+			keptProtected++
+			return
+		}
 		if err := os.Remove(item.path); err != nil {
 			return
 		}
@@ -236,7 +258,23 @@ func (a *archiveStore) sweep(now time.Time) {
 			drop(item)
 		}
 	}
-	if removed > 0 {
-		log.Printf("[live-compact] archive-sweep removed=%d freed_bytes=%d remaining_bytes=%d", removed, freed, total)
+	if removed > 0 || keptProtected > 0 {
+		log.Printf("[live-compact] archive-sweep removed=%d freed_bytes=%d remaining_bytes=%d protected=%d over_cap=%t",
+			removed, freed, total, keptProtected, total > a.maxBytes)
+	}
+	a.pruneCommitLogs(cutoff)
+}
+
+// pruneCommitLogs drops commit logs that have not been written for longer than
+// the archive retention window. Their records are already outside the
+// protection horizon, so the archives they name are sweepable; keeping the logs
+// would only pin dead sessions' file names forever.
+func (a *archiveStore) pruneCommitLogs(cutoff time.Time) {
+	for _, path := range a.commitLogFiles() {
+		info, err := os.Stat(path)
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(path)
 	}
 }

@@ -179,21 +179,28 @@ type liveCompactState struct {
 }
 
 type liveCompactObservation struct {
-	mode            string
-	foldAllowed     bool
-	messages        int
-	rounds          int
-	closedRounds    int
-	keepRounds      int
-	epoch           int
-	estimatedInput  int
-	candidates      int
-	errorCandidates int
-	candidateTokens int
-	candidateBytes  int
-	driftAt         int
-	driftFromTail   int
-	parseMillis     int64
+	mode             string
+	foldAllowed      bool
+	messages         int
+	rounds           int
+	closedRounds     int
+	keepRounds       int
+	epoch            int
+	estimatedInput   int
+	candidates       int
+	errorCandidates  int
+	failedCandidates int
+	candidateTokens  int
+	candidateBytes   int
+	// Un-foldable bytes in eligible rounds, bucketed by reason (B6). The rail
+	// is only satisfiable if these stay small; without them a log reader
+	// cannot tell a context that folds well from one that cannot be folded.
+	skippedErrorBytes     int
+	skippedMultiPartBytes int
+	skippedNonTextBytes   int
+	driftAt               int
+	driftFromTail         int
+	parseMillis           int64
 	// gate is the rail decision taken on the request path (design §12.6).
 	gateDecision string
 	gateEst      int
@@ -310,26 +317,30 @@ func (s *Server) analyzeLiveCompact(token string, turn *liveCompactTurn, body []
 	s.mu.Unlock()
 
 	obs := liveCompactObservation{
-		mode:            cfg.Mode,
-		foldAllowed:     foldAllowed,
-		messages:        analysis.Messages,
-		rounds:          analysis.Rounds,
-		closedRounds:    analysis.ClosedRounds,
-		keepRounds:      cfg.KeepRounds,
-		epoch:           epoch,
-		estimatedInput:  estimatedInput,
-		candidates:      len(analysis.Candidates),
-		errorCandidates: analysis.ErrorCandidates,
-		candidateTokens: analysis.CandidateTokens,
-		candidateBytes:  analysis.CandidateBytes,
-		driftAt:         drift,
-		driftFromTail:   driftDistanceFromTail(previousLen, drift),
-		parseMillis:     parseMillis,
-		gateDecision:    turn.gate.decision,
-		gateEst:         turn.gate.est,
-		gateGrowth:      turn.gate.growth,
-		gateProjected:   turn.gate.projected,
-		wouldFoldTokens: turn.gate.wouldFoldTokens,
+		mode:                  cfg.Mode,
+		foldAllowed:           foldAllowed,
+		messages:              analysis.Messages,
+		rounds:                analysis.Rounds,
+		closedRounds:          analysis.ClosedRounds,
+		keepRounds:            cfg.KeepRounds,
+		epoch:                 epoch,
+		estimatedInput:        estimatedInput,
+		candidates:            len(analysis.Candidates),
+		errorCandidates:       analysis.ErrorCandidates,
+		failedCandidates:      analysis.FailedCandidates,
+		candidateTokens:       analysis.CandidateTokens,
+		candidateBytes:        analysis.CandidateBytes,
+		skippedErrorBytes:     analysis.SkippedErrorBytes,
+		skippedMultiPartBytes: analysis.SkippedMultiPartBytes,
+		skippedNonTextBytes:   analysis.SkippedNonTextBytes,
+		driftAt:               drift,
+		driftFromTail:         driftDistanceFromTail(previousLen, drift),
+		parseMillis:           parseMillis,
+		gateDecision:          turn.gate.decision,
+		gateEst:               turn.gate.est,
+		gateGrowth:            turn.gate.growth,
+		gateProjected:         turn.gate.projected,
+		wouldFoldTokens:       turn.gate.wouldFoldTokens,
 	}
 	if final, totals, ready := turn.completeAnalysis(obs); ready {
 		s.logLiveCompact(token, final, totals)
@@ -345,6 +356,9 @@ func (s *Server) recordLiveCompactUsage(token string, turn *liveCompactTurn, tot
 		return
 	}
 	s.noteActualContext(token, totals)
+	if turn.ledger != nil {
+		s.writeFoldLedger(token, turn.ledger, totals)
+	}
 	if final, usage, ready := turn.completeTurn(totals); ready {
 		s.logLiveCompact(token, final, usage)
 	}
@@ -362,10 +376,12 @@ func (s *Server) logLiveCompact(token string, obs liveCompactObservation, totals
 	if !obs.foldAllowed {
 		scope = "observe-only"
 	}
-	log.Printf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d cand_blocks=%d cand_error_blocks=%d cand_tokens=%d cand_bytes=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d would_fold_tokens=%d",
+	log.Printf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d cand_blocks=%d cand_error_blocks=%d cand_failed_blocks=%d cand_tokens=%d cand_bytes=%d skip_bytes_error=%d skip_bytes_multipart=%d skip_bytes_nontext=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d would_fold_tokens=%d",
 		obs.mode, ShortToken(token), scope, obs.messages, obs.rounds, obs.closedRounds,
 		obs.keepRounds, obs.epoch, obs.estimatedInput, actual, obs.candidates, obs.errorCandidates,
-		obs.candidateTokens, obs.candidateBytes, obs.driftAt, obs.driftFromTail, obs.parseMillis,
+		obs.failedCandidates, obs.candidateTokens, obs.candidateBytes,
+		obs.skippedErrorBytes, obs.skippedMultiPartBytes, obs.skippedNonTextBytes,
+		obs.driftAt, obs.driftFromTail, obs.parseMillis,
 		obs.gateDecision, obs.gateEst, obs.gateGrowth, obs.gateProjected, obs.wouldFoldTokens)
 }
 

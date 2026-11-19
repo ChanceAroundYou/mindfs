@@ -178,7 +178,29 @@ func TestLedgerNilStore(t *testing.T) {
 	}
 }
 
-// The request path writes one line per fold, attributed to the session key the
+// waitForLedgerRequests polls until the session's ledger shows want entries.
+//
+// The ledger line is written when the turn ends — it carries the turn's own
+// rewrite cost, which only exists after the response stream — so it lands after
+// the client may already have read the whole body (an upstream with a known
+// Content-Length lets the client finish first). Tests must wait for it instead
+// of assuming the handler is done.
+func waitForLedgerRequests(t *testing.T, s *Server, sessionKey string, want int) ContextSaving {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		summary := s.SessionContextSaving(sessionKey)
+		if summary.Requests >= want {
+			return summary
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ledger requests = %d, want %d", summary.Requests, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// The response path writes one line per fold, attributed to the session key the
 // proxy recorded — through the real handler, not by calling the store.
 func TestProxyFoldWritesLedger(t *testing.T) {
 	archiveDir := filepath.Join(t.TempDir(), "context")
@@ -197,10 +219,7 @@ func TestProxyFoldWritesLedger(t *testing.T) {
 		t.Fatal("expected a fold")
 	}
 
-	summary := s.SessionContextSaving("session-ledger-token")
-	if summary.Requests != 1 {
-		t.Fatalf("ledger requests = %d, want 1", summary.Requests)
-	}
+	summary := waitForLedgerRequests(t, s, "session-ledger-token", 1)
 	if summary.Latest.ReqBytes != len(body) || summary.Latest.FoldedBytes != len(forwarded) {
 		t.Fatalf("ledger sizes = %+v, want %d -> %d", summary.Latest, len(body), len(forwarded))
 	}

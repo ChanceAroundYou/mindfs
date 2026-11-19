@@ -30,6 +30,10 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         [t("contextSaving.badgeSent"), formatBytes(latest.folded_bytes)],
         [t("contextSaving.badgeOriginal"), formatBytes(latest.req_bytes)],
         [t("contextSaving.badgeSaved"), formatBytes(latest.saved_bytes)],
+        [
+          t("contextSaving.badgeRewrite"),
+          latest.rewrite_tokens >= 0 ? String(latest.rewrite_tokens) : t("contextSaving.unknown"),
+        ],
         [t("contextSaving.badgeTokens"), String(latest.tokens_est)],
         [t("contextSaving.badgeFoldMs"), String(latest.fold_ms)],
       ]
@@ -89,6 +93,11 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         {saving && saving.requests > 0 ? (
           <div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
             {t("contextSaving.history", { requests: saving.requests, max: formatBytes(saving.max_saved_bytes) })}
+          </div>
+        ) : null}
+        {saving && saving.total_rewrite_tokens > 0 ? (
+          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
+            {t("contextSaving.rewriteTotal", { rewrite: String(saving.total_rewrite_tokens) })}
           </div>
         ) : null}
         {error ? <div style={{ marginTop: "10px", padding: "9px 11px", borderRadius: "9px", background: "rgba(220, 38, 38, 0.09)", color: "#dc2626", fontSize: "12px", overflowWrap: "anywhere" }}>{error}</div> : null}

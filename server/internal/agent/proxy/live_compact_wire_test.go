@@ -138,7 +138,10 @@ func TestAnalyzeWireKeepsNewestRounds(t *testing.T) {
 	}
 }
 
-func TestAnalyzeWireSkipsErrorImageAndSmallResults(t *testing.T) {
+// A large is_error result is a candidate (B6); the image and the small result
+// are not, and their bytes are counted so the observation line keeps the rail
+// honest.
+func TestAnalyzeWireSkipsImageAndSmallResults(t *testing.T) {
 	large := strings.Repeat("a", 8001)
 	small := "tiny"
 	messages := []any{
@@ -158,8 +161,11 @@ func TestAnalyzeWireSkipsErrorImageAndSmallResults(t *testing.T) {
 		userToolResult("keep2", large, false),
 	}
 	analysis := analyzeWire(mustParse(t, wireBody(t, messages)), 2, 2000)
-	if len(analysis.Candidates) != 0 {
-		t.Fatalf("candidates = %+v, want none", analysis.Candidates)
+	if len(analysis.Candidates) != 1 || analysis.Candidates[0].ToolUseID != "err" || !analysis.Candidates[0].Failed {
+		t.Fatalf("candidates = %+v, want only the failed result", analysis.Candidates)
+	}
+	if analysis.SkippedNonTextBytes <= 0 {
+		t.Fatal("non-text bytes were not counted")
 	}
 }
 

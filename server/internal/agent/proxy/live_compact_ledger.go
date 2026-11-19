@@ -48,6 +48,11 @@ type LedgerEntry struct {
 	Skipped       int    `json:"skipped"`
 	ArchiveErrors int    `json:"archive_errors"`
 	FoldMS        int64  `json:"fold_ms"`
+	// RewriteTokens is what this fold cost: the fold request's own
+	// input_tokens, i.e. the part of it billed at 1x instead of the 0.1x cache
+	// read. It is only known after the response stream ends. -1 means the turn
+	// ended without a usage sample; 0 is a real full cache hit.
+	RewriteTokens int `json:"rewrite_tokens"`
 }
 
 type ledgerStore struct {
@@ -202,8 +207,11 @@ type ContextSaving struct {
 	Requests int `json:"requests"`
 	// MaxSavedBytes is the largest single-request saving seen, which is the
 	// number that answers "how much is this worth at peak".
-	MaxSavedBytes int           `json:"max_saved_bytes"`
-	Recent        []LedgerEntry `json:"recent"`
+	MaxSavedBytes int `json:"max_saved_bytes"`
+	// TotalRewriteTokens sums the known rewrite samples: what folding paid
+	// against what it saved. Unknown samples (-1) are excluded.
+	TotalRewriteTokens int           `json:"total_rewrite_tokens"`
+	Recent             []LedgerEntry `json:"recent"`
 }
 
 func summarizeLedger(entries []LedgerEntry) ContextSaving {
@@ -217,18 +225,46 @@ func summarizeLedger(entries []LedgerEntry) ContextSaving {
 		if entry.SavedBytes > summary.MaxSavedBytes {
 			summary.MaxSavedBytes = entry.SavedBytes
 		}
+		if entry.RewriteTokens >= 0 {
+			summary.TotalRewriteTokens += entry.RewriteTokens
+		}
 	}
 	return summary
 }
 
-// recordFoldLedger appends one ledger line for a folded request. It reads the
-// session key from the proxy's session state rather than taking it as a
-// parameter, so the fold path cannot accidentally log a key it does not own.
+// foldLedgerPending is one folded request whose ledger line is not written yet:
+// the rewrite cost is only known once the response stream has ended.
+type foldLedgerPending struct {
+	mode           string
+	reqBytes       int
+	forwardedBytes int
+	result         foldResult
+	elapsed        time.Duration
+}
+
+// newFoldLedgerPending captures the sizes a fold event will report. Returns nil
+// when no ledger is configured, so the request path pays nothing for it.
+func (s *Server) newFoldLedgerPending(mode string, originalBytes, forwardedBytes int, result foldResult, elapsed time.Duration) *foldLedgerPending {
+	if s.ledger == nil {
+		return nil
+	}
+	return &foldLedgerPending{
+		mode:           mode,
+		reqBytes:       originalBytes,
+		forwardedBytes: forwardedBytes,
+		result:         result,
+		elapsed:        elapsed,
+	}
+}
+
+// writeFoldLedger appends the pending line with this turn's rewrite cost. It
+// reads the session key from the proxy's session state rather than taking it as
+// a parameter, so the fold path cannot accidentally log a key it does not own.
 //
 // Observe-only sessions never reach here (they never fold), which is what the
 // design requires: isolated sessions must not inflate the user-facing saving.
-func (s *Server) recordFoldLedger(token, mode string, originalBytes, forwardedBytes int, result foldResult, elapsed time.Duration) {
-	if s.ledger == nil {
+func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, totals usageTotals) {
+	if s.ledger == nil || pending == nil {
 		return
 	}
 	s.mu.Lock()
@@ -240,17 +276,22 @@ func (s *Server) recordFoldLedger(token, mode string, originalBytes, forwardedBy
 	if sessionKey == "" {
 		return
 	}
+	rewrite := -1
+	if totals.Seen {
+		rewrite = totals.InputTokens
+	}
 	entry := LedgerEntry{
 		TS:            time.Now().Unix(),
-		Mode:          mode,
-		ReqBytes:      originalBytes,
-		FoldedBytes:   forwardedBytes,
-		SavedBytes:    originalBytes - forwardedBytes,
-		Blocks:        result.foldedBlocks,
-		TokensEst:     result.foldedTokens,
-		Skipped:       result.skipped,
-		ArchiveErrors: result.archiveFailures,
-		FoldMS:        elapsed.Milliseconds(),
+		Mode:          pending.mode,
+		ReqBytes:      pending.reqBytes,
+		FoldedBytes:   pending.forwardedBytes,
+		SavedBytes:    pending.reqBytes - pending.forwardedBytes,
+		Blocks:        pending.result.foldedBlocks,
+		TokensEst:     pending.result.foldedTokens,
+		Skipped:       pending.result.skipped,
+		ArchiveErrors: pending.result.archiveFailures,
+		FoldMS:        pending.elapsed.Milliseconds(),
+		RewriteTokens: rewrite,
 	}
 	s.ledger.append(sessionKey, entry)
 }

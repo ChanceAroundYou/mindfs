@@ -30,6 +30,11 @@ type liveCompactTurn struct {
 	totals   usageTotals
 	hasUsage bool
 
+	// ledger is the fold event this turn must account for (nil when nothing was
+	// folded). It is written when the turn ends, because the rewrite cost is
+	// this request's own input_tokens.
+	ledger *foldLedgerPending
+
 	emitted bool
 }
 

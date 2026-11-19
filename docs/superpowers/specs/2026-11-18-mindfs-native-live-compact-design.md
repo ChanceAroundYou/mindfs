@@ -896,17 +896,36 @@ DSH 自身的官方 pruner 与大摘要**不是**对照对象，只在 dshlc 显
 | 13 | 官方压缩后 | dshlc 见到新的官方压缩卡片（`source.kind=compact-checkpoint`）跳过一拍，同一张卡只跳一次（`cooldown.js`） | 压缩后历史重启，commits 自然失配，rail 重新计时 | 等价 |
 | 14 | 诊断 | dshlc 用 `spine-decisions.jsonl` 记 skip reason | 日志 `gate=` + `skipped`/`archive_errors` 计数 | 相当 |
 
-#### 需要吸收的四项（按价值排序）
+#### 需要吸收的四项（按价值排序）——B6 已全部补齐（2026-11-20）
 
 1. **账本与胶囊加 `rewrite`**：每次折叠事件记下「紧接那一请求的 `input_tokens`」（1× 重算量）与
    事件的 saved，并列显示。验收样例直接用 §12.8 的表（31–54k rewrite vs 36–96k saved）。
+   **实现**：`LedgerEntry.rewrite_tokens`（`-1` = 该回合没读到用量，`0` 是真实满命中）；折叠时只
+   暂存待写账本（`foldLedgerPending`），回合结束由 `recordLiveCompactUsage` 用本回合自己的
+   `usageTotals.InputTokens` 落行——「请求路径直接写账本」拿不到这个数，这正是它必须晚写的原因。
+   胶囊新增「本轮重算（1×）」行与累计重算行；`ContextSaving.total_rewrite_tokens` 只累加已知
+   样本。旧账本行没有该字段，读回是 `0`（显示为满命中），这是唯一的口径妥协。
 2. **存档引用保护**：`sweep` 跳过仍被某会话 `foldCommits` 引用的路径（或改成按会话分目录、随会话
    存活期回收）。否则磁盘压力下 sticky 块会因文件消失而无声展开。
+   **实现**：`sweepProtected(now, live)`；保护集 = 活会话 `foldCommits` 的存档名 ∪ 各
+   `<archive>/commits/*.jsonl` 里保留期内记录的存档名。**两段删除都跳过被保护文件**：宁可在保
+   护集撑住时让目录超出 2 GiB 上限（日志 `over_cap=true`，新块因写不进存档而保持原样），也不删
+   一个已经写进模型上下文的指针目标。超过保留期的 commit log 随扫描删除。
 3. **commits 持久化**：每会话一个 append-only 小文件（一次折叠一行：key/path/bytes），重启恢复并
    只采纳仍能在转录里匹配的 key；成本是一事件 1–2 KB 写入。
+   **实现**：`<archive>/commits/<sha256(sessionKey)[:8]>.jsonl`，一行 `{ts,name,bytes}`；`name`
+   是存档文件名（`sha256(text)` 截断），这是唯一跨进程稳定的身份——内存 key 是 maphash，种子逐
+   进程变化，无法持久化。恢复出的名字在重启后第一次 fold 里按渲染出的存档名匹配（`adopt`），匹配
+   上才回到 sticky；匹配不上的在这次 plan 结束时丢弃（已提交块在后续请求里永远是候选，匹配不上只
+   可能是转录已不含它）。shadow 不写 commit log（`add` 不持久化），否则以后开 `on` 会把从未折
+   叠的块当成已提交。日志 1 MiB 封顶、保留尾部 4000 行，temp+rename 落盘。
 4. **失败结果折叠加宽**：允许 `isError` 且足够大的结果折叠，卡片用现有 20/20 行并显式标注「该结果
    标记为失败」；同时把「因 `isError`/多块/非文本而不可折的字节数」计进观测行，rail 才有真相。
    可顺带把 `[stderr]`、`exit status` 这类结构性标记纳入 `looksLikeErrorText`。
+   **实现**：`isError` 结果过 `min_block_tokens` 即可折，卡片多一行 `status: 该结果标记为失败
+   （is_error）` 并用 20/20 摘录；渲染缓存 key 加 `is_error` 变体（同一文本成功/失败各一张卡）。
+   观测行新增 `cand_failed_blocks`、`skip_bytes_error`、`skip_bytes_multipart`、
+   `skip_bytes_nontext`；`looksLikeErrorText` 补 `[stderr]`、`exit code`（标记须在行首）。
 
 #### 明确不吸收（dshlc 的做法）
 
@@ -928,8 +947,8 @@ DSH 自身的官方 pruner 与大摘要**不是**对照对象，只在 dshlc 显
 **想法**：折叠请求返回后，代理立刻用同一份折叠 body 发一次 `max_tokens=1` 的请求把缓存写热，
 让下一轮真实请求命中 0.1×、用户下一轮的 TTFT 里不含重算。
 
-**实测（2026-11-20，同一真实会话回放，3 次折叠事件）**：预热请求全部满命中（`in=5/14/53`、
-`read=36,864/54,016/65,579`，2.7–6.3 s），共 15,721 折算 token（+1.7%）；紧随其后的真实请求
+**实测（2026-11-20，同一真实会话回放，3 次折叠事件）**：预热请求全部满命中（`in` 5–53、
+`read` 36,864–65,579，2.7–6.3 s），共 15,721 折算 token（+1.7%）；紧随其后的真实请求
 用量与不预热时逐条同构，**零收益**。
 
 **为什么必然为零**：折叠请求自己就付了 1× 重写并把重写后的前缀写进了缓存，下一次真实请求本来

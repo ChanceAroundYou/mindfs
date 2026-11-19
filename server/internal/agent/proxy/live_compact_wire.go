@@ -35,6 +35,10 @@ type wireBlock struct {
 	text      string // text block body, or the concatenated text of a tool_result
 	isError   bool   // tool_result.is_error
 	nonText   bool   // tool_result carries an image/document/unknown block
+	// parts is the number of text blocks in a tool_result (1 for the plain
+	// string form). Fold-in-place requires exactly one; anything else cannot
+	// be replaced without changing the block structure.
+	parts int
 }
 
 // wireToolRound groups one assistant tool_use message with the user message(s)
@@ -60,6 +64,9 @@ type foldCandidate struct {
 	// looks like a failure report. It is foldable, but the pointer keeps a
 	// wider head/tail excerpt so the diagnostic stays readable.
 	ErrorText bool
+	// Failed marks an is_error result. It is foldable once it clears the
+	// per-block token floor, and its pointer says the result failed.
+	Failed bool
 }
 
 type wireAnalysis struct {
@@ -68,9 +75,16 @@ type wireAnalysis struct {
 	ClosedRounds         int
 	Candidates           []foldCandidate
 	ErrorCandidates      int
+	FailedCandidates     int
 	CandidateTokens      int
 	CandidateBytes       int
 	EstimatedInputTokens int
+	// Bytes the fold could not take, bucketed by reason, counted over the
+	// eligible rounds only. Without these the rail looks satisfiable while
+	// un-foldable blocks keep the context full.
+	SkippedErrorBytes     int
+	SkippedMultiPartBytes int
+	SkippedNonTextBytes   int
 }
 
 func parseWireRequest(body []byte) (*wireRequest, error) {
@@ -162,12 +176,13 @@ func parseWireBlock(payload json.RawMessage, index int) (wireBlock, error) {
 	switch head.Type {
 	case "tool_result":
 		block.toolUseID = head.ToolUseID
-		text, nonText, err := toolResultText(head.Content)
+		text, nonText, parts, err := toolResultText(head.Content)
 		if err != nil {
 			return wireBlock{}, err
 		}
 		block.text = text
 		block.nonText = nonText
+		block.parts = parts
 	case "text":
 		// handled by head.Text
 	default:
@@ -181,16 +196,18 @@ func parseWireBlock(payload json.RawMessage, index int) (wireBlock, error) {
 
 // toolResultText flattens the two wire shapes of tool_result.content:
 // a plain string, or an array of blocks where text is the only foldable part.
-func toolResultText(raw json.RawMessage) (text string, nonText bool, err error) {
+// parts is the number of text blocks, which the planner uses to reject results
+// that cannot be replaced in place.
+func toolResultText(raw json.RawMessage) (text string, nonText bool, parts int, err error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return "", false, nil
+		return "", false, 0, nil
 	}
 	if trimmed[0] == '"' {
 		if err := json.Unmarshal(trimmed, &text); err != nil {
-			return "", false, err
+			return "", false, 0, err
 		}
-		return text, false, nil
+		return text, false, 1, nil
 	}
 	var blocks []struct {
 		Type string          `json:"type"`
@@ -198,7 +215,7 @@ func toolResultText(raw json.RawMessage) (text string, nonText bool, err error) 
 		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(trimmed, &blocks); err != nil {
-		return "", false, err
+		return "", false, 0, err
 	}
 	var builder bytes.Buffer
 	for _, block := range blocks {
@@ -206,10 +223,11 @@ func toolResultText(raw json.RawMessage) (text string, nonText bool, err error) 
 			nonText = true
 			continue
 		}
-		if builder.Len() > 0 {
+		if parts > 0 {
 			builder.WriteByte('\n')
 		}
 		builder.WriteString(block.Text)
+		parts++
 	}
-	return builder.String(), nonText, nil
+	return builder.String(), nonText, parts, nil
 }

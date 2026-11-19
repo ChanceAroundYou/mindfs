@@ -60,11 +60,17 @@ func pairToolRounds(messages []wireMessage) []*wireToolRound {
 
 // analyzeWire plans a fold without changing anything.
 //
-// Candidate rules (Phase B1):
+// Candidate rules (Phase B1 + B6):
 //   - only closed tool rounds outside the newest keepRounds rounds;
-//   - never a failed result (is_error or error-looking content);
-//   - only pure-text results (images/documents keep the block untouched);
+//   - a successful result whose text looks like a failure is foldable and
+//     keeps the wide excerpt;
+//   - an is_error result is foldable once it clears minBlockTokens;
+//   - only pure-text, single-part results (images/documents and multi-part
+//     results keep the block untouched);
 //   - only results estimated at or above minBlockTokens.
+//
+// Everything eligible but not foldable is counted by reason, in bytes, so the
+// observation line shows how much of the request the rail can never take.
 func analyzeWire(req *wireRequest, keepRounds, minBlockTokens int) wireAnalysis {
 	if keepRounds < 0 {
 		keepRounds = 0
@@ -98,16 +104,35 @@ func analyzeWire(req *wireRequest, keepRounds, minBlockTokens int) wireAnalysis 
 					continue
 				}
 				name, ok := round.toolNames[block.toolUseID]
-				if !ok || block.isError || block.nonText || block.text == "" {
+				if !ok {
+					continue
+				}
+				if block.nonText {
+					analysis.SkippedNonTextBytes += len(block.raw)
+					continue
+				}
+				if block.parts != 1 {
+					if block.parts > 1 {
+						analysis.SkippedMultiPartBytes += len(block.raw)
+					}
+					continue
+				}
+				if block.text == "" {
 					continue
 				}
 				tokens := estimateTokens(block.text)
 				if tokens < minBlockTokens {
+					if block.isError {
+						analysis.SkippedErrorBytes += len(block.raw)
+					}
 					continue
 				}
-				errorText := looksLikeErrorText(block.text)
+				errorText := !block.isError && looksLikeErrorText(block.text)
 				if errorText {
 					analysis.ErrorCandidates++
+				}
+				if block.isError {
+					analysis.FailedCandidates++
 				}
 				analysis.Candidates = append(analysis.Candidates, foldCandidate{
 					MessageIndex: messageIndex,
@@ -117,6 +142,7 @@ func analyzeWire(req *wireRequest, keepRounds, minBlockTokens int) wireAnalysis 
 					Tokens:       tokens,
 					Bytes:        len(block.text),
 					ErrorText:    errorText,
+					Failed:       block.isError,
 				})
 				analysis.CandidateTokens += tokens
 				analysis.CandidateBytes += len(block.text)

@@ -173,8 +173,11 @@ export const zhCNAgents = {
   "contextSaving.badgeSent": "本轮实际发送",
   "contextSaving.badgeOriginal": "原请求大小",
   "contextSaving.badgeSaved": "本轮节省",
+  "contextSaving.badgeRewrite": "本轮重算（1×）",
+  "contextSaving.unknown": "未知",
   "contextSaving.badgeTokens": "折叠 token（估算）",
   "contextSaving.badgeFoldMs": "折叠耗时（毫秒）",
   "contextSaving.empty": "这个会话还没有折叠过任何请求。",
   "contextSaving.history": "最近 {requests} 次折叠，单次最多节省 {max}。",
+  "contextSaving.rewriteTotal": "累计重算 {rewrite} token（只统计能读到用量的折叠）。",
 } as const;

@@ -203,15 +203,31 @@ func TestShadowObservationLogsGateAndWouldFoldTokens(t *testing.T) {
 
 	s := &Server{liveCompact: LiveCompactConfig{Mode: LiveCompactShadow}.Normalized()}
 	s.logLiveCompact("shadow-log", liveCompactObservation{
-		mode:            LiveCompactShadow,
-		foldAllowed:     true,
-		gateDecision:    gateFold,
-		gateEst:         200000,
-		wouldFoldTokens: 1234,
+		mode:                  LiveCompactShadow,
+		foldAllowed:           true,
+		gateDecision:          gateFold,
+		gateEst:               200000,
+		wouldFoldTokens:       1234,
+		failedCandidates:      2,
+		skippedErrorBytes:     111,
+		skippedMultiPartBytes: 222,
+		skippedNonTextBytes:   333,
 	}, usageTotals{})
 	line := buf.String()
 	if !strings.Contains(line, " gate=fold ") || !strings.Contains(line, " would_fold_tokens=1234") {
 		t.Fatalf("shadow log line missing gate/savings: %q", line)
+	}
+	// B6: un-foldable bytes by reason and the failed-candidate count must stay
+	// in the line; a rehearsal cannot judge the rail without them.
+	for _, part := range []string{
+		" cand_failed_blocks=2 ",
+		" skip_bytes_error=111 ",
+		" skip_bytes_multipart=222 ",
+		" skip_bytes_nontext=333 ",
+	} {
+		if !strings.Contains(line, part) {
+			t.Fatalf("observation line missing %q: %q", part, line)
+		}
 	}
 
 	buf.Reset()

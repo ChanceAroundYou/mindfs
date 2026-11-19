@@ -196,6 +196,8 @@ func looksLikeErrorText(text string) bool {
 			"fatal:",
 			"exception:",
 			"exit status",
+			"exit code",
+			"[stderr]",
 			"permission denied",
 			"no such file or directory",
 			"command not found",

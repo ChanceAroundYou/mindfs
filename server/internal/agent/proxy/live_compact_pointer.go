@@ -205,6 +205,9 @@ type pointerInput struct {
 	tokens       int
 	archivePath  string
 	errorText    bool
+	// failed marks a tool_result with is_error=true. The card says so, because
+	// a reader must not mistake a folded failure for a folded success.
+	failed bool
 }
 
 // renderFoldPointer builds the replacement text. Every line is derived from the
@@ -212,7 +215,7 @@ type pointerInput struct {
 func renderFoldPointer(p pointerInput) string {
 	head, tail := pointerHeadLines, pointerTailLines
 	note := "首尾各 8 行"
-	if p.errorText {
+	if p.errorText || p.failed {
 		head, tail = pointerErrorHeadLines, pointerErrorTailLines
 		note = "首尾各 20 行"
 	}
@@ -226,6 +229,9 @@ func renderFoldPointer(p pointerInput) string {
 	builder.WriteString("input: ")
 	builder.WriteString(p.inputSummary)
 	builder.WriteByte('\n')
+	if p.failed {
+		builder.WriteString("status: 该结果标记为失败（is_error）\n")
+	}
 	builder.WriteString("size: ")
 	builder.WriteString(formatThousands(len(p.text)))
 	builder.WriteString(" bytes (~")

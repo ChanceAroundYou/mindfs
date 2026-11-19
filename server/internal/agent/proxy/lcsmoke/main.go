@@ -125,6 +125,7 @@ server/internal/kanban/service_outbox.go`
 	// B2 path: read back the ledger exactly as the session page does. In shadow
 	// mode this stays empty on purpose (nothing is folded, nothing is recorded).
 	saving := ps.SessionContextSaving("smoke-session")
-	fmt.Fprintf(os.Stderr, "ledger: requests=%d max_saved=%d latest={saved=%d blocks=%d}\n",
-		saving.Requests, saving.MaxSavedBytes, saving.Latest.SavedBytes, saving.Latest.Blocks)
+	fmt.Fprintf(os.Stderr, "ledger: requests=%d max_saved=%d rewrite_total=%d latest={saved=%d rewrite=%d blocks=%d}\n",
+		saving.Requests, saving.MaxSavedBytes, saving.TotalRewriteTokens,
+		saving.Latest.SavedBytes, saving.Latest.RewriteTokens, saving.Latest.Blocks)
 }

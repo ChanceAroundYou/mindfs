@@ -404,6 +404,39 @@ body。3 次预热全部满命中（`in` 5–53、`read` 36,864–65,579），�
 **门禁**：`go test ./server/internal/agent/proxy/` 全绿；本次只改文档，无生产代码改动（100k/20k
 默认值已在 `9e29cdd2` 落地）。**未提交。**
 
+### Task B6 续：四个缺口全部补齐（2026-11-20，用户指令「请继续补全有价值的缺失部分」）
+
+按 spec §12.9「需要吸收的四项」逐项实现，全部先 RED 后 GREEN 并做变异验证。**未开任何节点的
+`mode=on`，未部署，未提交。**
+
+1. **账本与胶囊加 `rewrite`**：`LedgerEntry.rewrite_tokens`（`-1` = 未读到用量）、
+   `ContextSaving.total_rewrite_tokens`。折叠时只生成 `foldLedgerPending`，回合结束由
+   `recordLiveCompactUsage` 用本回合 `usageTotals.InputTokens` 落行；无观测回合（body 太小、
+   队列满）立刻以 `-1` 落行。胶囊新增「本轮重算（1×）」与累计重算两行。测试
+   `live_compact_ledger_rewrite_test.go` 3 条（真实 usage 落账、上游 502 记 `-1`、汇总只加已知
+   样本）；变异：`rewrite` 恒 `-1`、汇总不计已知样本，各自打红。
+2. **存档引用保护**：`sweepProtected(now, live)`，保护集 = 活会话 `foldCommits` 的存档名 ∪
+   保留期内 commit log 记录；时间与容量两段删除都跳过保护文件，撑住时宁可 `over_cap` 也不删；
+   保留期外的 commit log 随扫描删除。测试 `live_compact_archive_protect_test.go` 5 条；变异：
+   忽略保护集、不读 commit log、不清理过期 log、保护集恒空，各自打红。
+3. **commits 持久化**：`<archive>/commits/<sha256(session)[:8]>.jsonl`（`{ts,name,bytes}`，
+   `name` = 存档文件名 = `sha256(text)` 截断，跨进程稳定）；重启后首次 fold 按存档名 `adopt`，
+   匹配不上的在本次 plan 结束丢弃；shadow 不落盘。测试
+   `live_compact_commit_restore_test.go` 3 条（重启后同 body 折法逐字节一致且 rail 拉高也照折、
+   陈旧记录被丢弃、shadow 零写入）；变异：不读日志、`adopt` 恒 false、`commit` 不写盘、
+   `dropUnrestored` 空实现，各自打红。
+4. **失败结果折叠加宽**：`isError` 结果过 `min_block_tokens` 即可折，卡片标注
+   `status: 该结果标记为失败（is_error）` 并用 20/20 摘录，渲染缓存 key 加 `is_error` 变体；
+   观测行加 `cand_failed_blocks` / `skip_bytes_error` / `skip_bytes_multipart` /
+   `skip_bytes_nontext`；`looksLikeErrorText` 补 `[stderr]`、`exit code`。测试
+   `live_compact_error_fold_test.go` 6 条；日志字段由 `live_compact_shadow_preview_test.go` 钉住。
+
+结构：`live_compact_fold.go` 超 500 行硬线，纯移动拆成 `live_compact_fold_plan.go`（planFold /
+planFoldCommit）、`live_compact_fold_render.go`（renderPointer）、
+`live_compact_fold_request.go`（请求路径入口与会话校准）；新增
+`live_compact_commit_log.go`。门禁：`go test ./server/internal/agent/proxy/` 全绿，
+web `context-saving-chip` 9 条通过，`tsc` clean。
+
 ## 明确不在本计划内
 
 - B3 抽取卡片。

@@ -319,8 +319,16 @@ func (s *Server) handleProxied(w http.ResponseWriter, r *http.Request) {
 		// Assign, never declare: `body, _, gate := ...` here would shadow the
 		// outer body inside the if-block and forward the unfolded bytes.
 		var gate liveCompactGate
-		body, _, gate = s.foldRequest(token, body)
+		var ledger *foldLedgerPending
+		body, _, ledger, gate = s.foldRequestLedger(token, body)
 		turn = s.observeLiveCompact(token, body, gate)
+		if turn != nil {
+			turn.ledger = ledger
+		} else if ledger != nil {
+			// No observation turn (small body, full queue): the line is still
+			// written, with the rewrite cost unknown.
+			s.writeFoldLedger(token, ledger, usageTotals{})
+		}
 	}
 
 	// Forward request.
