@@ -61,6 +61,9 @@ type AppContext struct {
 	// workflowAuthoringOverride 是 Agent 提案生成的单测接缝。它只影响生成文本，
 	// 校验、diff、dry-run 仍走生产路径；生产装配恒为 nil。
 	workflowAuthoringOverride func(ctx context.Context, req workflowAuthoringRequest) (string, error)
+	// routerTools 按任务缓存注册给 CLI 的 Router 工具句柄。Router 会话长期
+	// 存活且只注册一次工具，句柄必须按名字路由到当前轮实现（见 routerToolBindings）。
+	routerTools map[string]*routerToolBindings
 }
 
 func (s *AppContext) TaskUpdated(rootID string, detail kanban.TaskDetail) {

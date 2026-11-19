@@ -9481,3 +9481,32 @@ groups:
       - 'server/internal/kanban/router_event_prune_tick_test.go:func TestCoordinatorTickPruneRunsEveryNthTick('
       - 'server/internal/kanban/router_inspect_run_test.go:func TestRouterInspectRunServesEventTurn('
       - 'server/internal/kanban/router_event_lease_tick_test.go:func TestCoordinatorTickReclaimsStaleClaims('
+
+  # ── Router 工具句柄按轮路由 + deliver 前置闸门（「已转交」假动作）─────────────
+  - id: G-MR
+    title: Router 工具句柄按轮路由 + deliver_to_active_run 前置目标闸门
+    kind: fix
+    symptom: "用户在任务里回答停住的节点，Router 回一句「（已转交，无其他动作。）」，但没有任何动作：`continue_requests` 与 `outbox_items` 零行，被投递的节点从未被唤醒。两个独立根因叠加：① Router 会话在 agent pool 里按 `router-<taskID>` 长期存活，CLI 只在 OpenSession 时注册一次进程内 MCP 工具；把本轮的 routerToolEnv（collector + brief）直接闭包进注册的 handler，第二轮起所有工具调用都写进第一轮的 collector —— 本轮 collector 永远为空，`synthesizeActions` 只能把最终文本合成一条 say，deliver 从未被校验也从未被应用；决策 seq 跨轮累加（0；1,2；3,4,5）是它的指纹，同一原因让 `router_inspect_run` 恒报 no workflow run。② 即便句柄正确，`deliver_to_active_run` 在 0 个活动节点时也无脑回 recorded，回合末尾 `validateRouterActions` 以「deliver requires exactly one active node, got 0」把整条决策 rejected → `fallbackRoute` 回落旧路径 → `PrepareNewUserTurn(supersede=true)` 冻结当前 Run（线上 `run-be0aa7f7228a67a7` 四个节点全 cancelled，用户 04:16 的整轮勘察结论连同节点一起作废），用户看到的是「回答被吞 + 任务被重开」。"
+    why: "用户 2026-11-19 直接要求修掉「转交了什么？我没有看到任何动作」。必须保留：① 注册给 CLI 的句柄只认工具名，调用时现查**本轮**实现（`routerToolBindings`，按 root+`router-<taskID>` 缓存在 AppContext，`RunRouterTurn` 每轮 `Set`，`CloseRouterSession` 摘表）；会话复用与工具注册次数都不变，只把「实现」与「句柄」分开。② deliver 的目标闸门必须在**工具里**、不能在回合结束后的校验里：`session_open.go` 把 handler 错误作为 `ErrorResult` 回给模型，模型当轮就能改口成 `router_say`/`router_ask_user`；而校验拒绝发生在回合之后，只会触发破坏性的 fallbackRoute。闸门口径与 spec 一致（「活动执行状态与可投递目标分别表达，0/多目标需明确说明」）：唯一活动节点放行；多节点明确报「不能扇出」；0 节点再分辨是停在 HumanGate（报「普通留言不能替代批准/驳回」）还是停在 blocked 的 Agent 节点（报「重试该节点才会把答复带进去」）。③ 运行期事件回合必须在闸门之前短路：那是「这类回合根本不允许执行类动作」，与「这一轮没有投递目标」是两回事，报成后者会掩盖运行期动作白名单的明确拒绝。"
+    boundary: "只修「假动作」与「破坏性回落」两处，不实现「把留言投递到 waiting_user 的 Agent 节点」（D3/D4 冻结的投递语义只覆盖活动/排队节点；让答复真正进入停住的节点需要 retry-with-message，是新的产品语义）。不改 `validateRouterActions` 的既有判据（它仍是最后一道闸），不改 coordinate 的动作白名单/预算/幂等，不动 `router_prompt.md`，不新增 HTTP 端点，不改生产 `router.mode`。"
+    files:
+      - server/internal/api/router_runtime.go
+      - server/internal/api/appcontext.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_tools_delivery.go
+    tests:
+      - server/internal/api/router_runtime_bindings_test.go
+      - server/internal/kanban/router_tools_delivery_test.go
+    anchors:
+      - 'server/internal/api/router_runtime.go:func (s *AppContext) routerToolBindings(rootID, taskID string) *routerToolBindings {'
+      - 'server/internal/api/router_runtime.go:return b.call(name, ctx, args)'
+      - 'server/internal/api/router_runtime.go:bindings.Set(req.Tools)'
+      - 'server/internal/api/router_runtime.go:s.dropRouterToolBindings(rootID, sessionKey)'
+      - 'server/internal/api/appcontext.go:routerTools map[string]*routerToolBindings'
+      - 'server/internal/kanban/router_tools.go:if err := e.deliverTargetError(); err != nil {'
+      - 'server/internal/kanban/router_tools_delivery.go:func (e *routerToolEnv) deliverTargetError() error {'
+      - 'server/internal/kanban/router_tools_delivery.go:if isRuntimeEventBrief(e.brief) {'
+      - 'server/internal/kanban/router_tools_delivery.go:return "agent_blocked"'
+      - 'server/internal/api/router_runtime_bindings_test.go:func TestRouterToolBindingsFollowCurrentTurn('
+      - 'server/internal/kanban/router_tools_delivery_test.go:func TestRouterDeliverToolRejectsWithoutSingleActiveNode('
+      - 'server/internal/kanban/router_tools_delivery_test.go:blocked_agent_node_explains_retry'

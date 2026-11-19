@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	agenttypes "mindfs/server/internal/agent/types"
@@ -22,6 +24,113 @@ const routerSessionKeyPrefix = "router-"
 
 func routerSessionKey(taskID string) string {
 	return routerSessionKeyPrefix + strings.TrimSpace(taskID)
+}
+
+// routerToolBindings 把「本轮的工具实现」和「注册给 CLI 的工具句柄」分开。
+//
+// Router 会话在 agent pool 里长期存活（key `router-<taskID>`）：CLI 只在
+// OpenSession 时注册一次进程内 MCP 工具，之后每轮复用同一个会话。如果把本轮
+// routerToolEnv（collector + brief）直接闭包进注册的 handler，第二轮起的工具
+// 调用仍然写进第一轮的 collector —— 本轮 collector 永远为空，synthesizeActions
+// 只能从最终文本合成一条 say，deliver/run_workflow 从未被校验、从未被应用。
+// 线上症状就是「转交后没有任何动作」，且决策里的 seq 跨轮累加（0；1,2；3,4,5）。
+//
+// 因此注册给 CLI 的 handler 只认工具名，调用时现查本轮的实现。
+type routerToolBindings struct {
+	mu       sync.RWMutex
+	handlers map[string]func(ctx context.Context, args json.RawMessage) (string, error)
+	specs    []kanban.RouterToolSpec
+}
+
+func newRouterToolBindings() *routerToolBindings {
+	return &routerToolBindings{handlers: make(map[string]func(ctx context.Context, args json.RawMessage) (string, error))}
+}
+
+// Set 用本轮的工具集替换绑定。只换实现，不换注册给 CLI 的句柄。
+func (b *routerToolBindings) Set(specs []kanban.RouterToolSpec) {
+	if b == nil {
+		return
+	}
+	handlers := make(map[string]func(ctx context.Context, args json.RawMessage) (string, error), len(specs))
+	current := make([]kanban.RouterToolSpec, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Handler == nil {
+			continue
+		}
+		handlers[spec.Name] = spec.Handler
+		current = append(current, spec)
+	}
+	b.mu.Lock()
+	b.handlers = handlers
+	b.specs = current
+	b.mu.Unlock()
+}
+
+// Specs 返回本轮的元数据加上按名字解析的句柄。第一次 Set 之后交给
+// OpenSession 的句柄可以一直复用：名称相同时它自动落到当前轮。
+func (b *routerToolBindings) Specs() []kanban.RouterToolSpec {
+	if b == nil {
+		return nil
+	}
+	b.mu.RLock()
+	current := b.specs
+	b.mu.RUnlock()
+	out := make([]kanban.RouterToolSpec, 0, len(current))
+	for _, spec := range current {
+		name := spec.Name
+		spec.Handler = func(ctx context.Context, args json.RawMessage) (string, error) {
+			return b.call(name, ctx, args)
+		}
+		out = append(out, spec)
+	}
+	return out
+}
+
+func (b *routerToolBindings) call(name string, ctx context.Context, args json.RawMessage) (string, error) {
+	if b == nil {
+		return "", errors.New("router tool bindings are not configured")
+	}
+	b.mu.RLock()
+	handler := b.handlers[name]
+	b.mu.RUnlock()
+	if handler == nil {
+		return "", errors.New("router tool " + name + " is not available in this turn")
+	}
+	return handler(ctx, args)
+}
+
+// routerToolBindings 按任务缓存在 AppContext 上：pool 里的 Router 会话按
+// `router-<taskID>` 复用，同一任务的句柄天然共享同一份绑定表；不同任务并行
+// 各有一份，互不影响。root 一起进 key，避免不同项目的同名任务串表。
+func (s *AppContext) routerToolBindings(rootID, taskID string) *routerToolBindings {
+	key := routerToolBindingsKey(rootID, taskID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routerTools == nil {
+		s.routerTools = make(map[string]*routerToolBindings)
+	}
+	bindings := s.routerTools[key]
+	if bindings == nil {
+		bindings = newRouterToolBindings()
+		s.routerTools[key] = bindings
+	}
+	return bindings
+}
+
+func routerToolBindingsKey(rootID, taskID string) string {
+	return strings.TrimSpace(rootID) + "::" + routerSessionKey(taskID)
+}
+
+// dropRouterToolBindings 在 Router runtime 关闭时摘掉这张表，避免按任务无限增长。
+func (s *AppContext) dropRouterToolBindings(rootID, sessionKey string) {
+	rootID = strings.TrimSpace(rootID)
+	sessionKey = strings.TrimSpace(sessionKey)
+	if rootID == "" || sessionKey == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.routerTools, rootID+"::"+sessionKey)
 }
 
 // RunRouterTurn 在一个隔离的 Router 会话里跑一轮。rompt 是 Situation Brief
@@ -44,7 +153,11 @@ func (s *AppContext) RunRouterTurn(ctx context.Context, req kanban.RouterAgentRe
 	if err != nil {
 		return kanban.RouterAgentResult{}, err
 	}
-	tools := routerAgentToolSpecs(req.Tools)
+	// Router 会话跨轮复用，工具句柄只在首次 OpenSession 注册。先把本轮实现装进
+	// 绑定表，再从中取句柄：新回合（含复用会话）的调用落到本轮 handler。
+	bindings := s.routerToolBindings(rootID, taskID)
+	bindings.Set(req.Tools)
+	tools := routerAgentToolSpecs(bindings.Specs())
 	policy := routerAgentToolPolicy(req.ToolPolicy)
 
 	var text strings.Builder
@@ -110,6 +223,8 @@ func (s *AppContext) CloseRouterSession(ctx context.Context, rootID, sessionKey 
 	}
 	uc := &usecase.Service{Registry: s}
 	_, err := uc.CloseSession(ctx, usecase.CloseSessionInput{RootID: rootID, Key: sessionKey})
+	// runtime 关了，注册给 CLI 的句柄也随之作废；下一轮会重新 Open 并重新注册。
+	s.dropRouterToolBindings(rootID, sessionKey)
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "not found") {
 		return nil
 	}

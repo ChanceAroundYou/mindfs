@@ -114,6 +114,7 @@ func (e *routerToolEnv) inspectRunTool() RouterToolSpec {
 //   - 用户留言回合：brief.LatestRun 就是这一轮要看的 Run；
 //   - 运行期事件回合：brief.LatestRun 被刻意置 nil（事件 brief 不许让模型把任务
 //     最新 Run 当成事件的 Run），目标 Run 是 brief.Event.RunID。
+//
 // 事件回合以前在这里直接报 "no workflow run"，而 spec 明确允许 inspect_run ——
 // 于是模型只能凭摘要猜事件那个 Run 里到底哪个节点失败了。
 func (e *routerToolEnv) inspectRun(ctx context.Context, runID string) (string, error) {
@@ -354,6 +355,9 @@ func (e *routerToolEnv) deliverTool() RouterToolSpec {
 			body := strings.TrimSpace(args.Body)
 			if body == "" {
 				return "", errors.New("body required")
+			}
+			if err := e.deliverTargetError(); err != nil {
+				return "", err
 			}
 			return e.record(RouterAction{
 				Kind:   RouterActionDeliver,
