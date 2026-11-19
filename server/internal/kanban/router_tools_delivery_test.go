@@ -82,8 +82,8 @@ func TestRouterDeliverToolRejectsWithoutSingleActiveNode(t *testing.T) {
 			t.Fatal("deliver against a stopped agent node was recorded instead of rejected")
 		}
 		msg := err.Error()
-		if !explainsUndeliverable(msg) || !strings.Contains(msg, "重试") {
-			t.Fatalf("rejection %q must explain why and how to deliver", msg)
+		if !explainsUndeliverable(msg) || !strings.Contains(msg, "router_answer_waiting_node") {
+			t.Fatalf("rejection %q must explain why and point at the verb that does deliver", msg)
 		}
 	})
 

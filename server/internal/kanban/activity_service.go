@@ -67,6 +67,12 @@ type ActivityRunLifecycle interface {
 	PrepareNewUserTurn(ctx context.Context, task Task, supersede bool) error
 }
 
+// ActivityNodeAnswerer 是「把用户答复交回停住的节点」的执行端口：重开一次
+// 尝试、带着答复重跑，并返回新的 NodeRun（成功回执要说出答到了哪个节点）。
+type ActivityNodeAnswerer interface {
+	AnswerWaitingWorkflowNode(ctx context.Context, rootID, taskID, nodeRunID, body, activityID string) (NodeRun, error)
+}
+
 type ActivityService struct {
 	tasks          *TaskStore
 	activities     *ActivityStore
@@ -77,6 +83,7 @@ type ActivityService struct {
 	directExecutor ActivityDirectExecutor
 	branch         ActivityBranchResolver
 	lifecycle      ActivityRunLifecycle
+	nodeAnswerer   ActivityNodeAnswerer
 	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；
 	// shadow 只读、只记账，不改变本函数的任何返回值或副作用。
 	router *RouterService
@@ -144,6 +151,14 @@ func (s *ActivityService) SetTurnTracker(wg *sync.WaitGroup) {
 func (s *ActivityService) SetRunLifecycle(l ActivityRunLifecycle) {
 	if s != nil {
 		s.lifecycle = l
+	}
+}
+
+// SetNodeAnswerer 装配「答复停住的节点」端口。装配期调用一次；nil 时该动作
+// 明确失败（而不是假装成功），占位回复会显示原因。
+func (s *ActivityService) SetNodeAnswerer(a ActivityNodeAnswerer) {
+	if s != nil {
+		s.nodeAnswerer = a
 	}
 }
 

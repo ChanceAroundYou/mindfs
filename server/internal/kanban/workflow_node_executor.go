@@ -246,6 +246,7 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 	if err != nil {
 		return WorkflowNodeExecution{}, err
 	}
+	prompt = withUserAnswerPrompt(ctx, store, nodeRun, prompt)
 	rootPath := strings.TrimSpace(runtimeRoot)
 	if rootPath == "" {
 		rootPath = strings.TrimSpace(task.WorktreePath)
@@ -275,6 +276,39 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 	}
 	exec.NodeRun.SessionKey = strings.TrimSpace(sessionKey)
 	return exec, nil
+}
+
+// withUserAnswerPrompt 把「用户答复」拼进这一次尝试的 prompt。
+//
+// 只有带答复的尝试才有这一段：AnswerWaitingWorkflowNode 把答复写进
+// NodeRun.Input["user_answer"]，普通首次执行/重试的 Input 里没有这个键，prompt
+// 与改造前逐字一致。
+//
+// 之所以拼在 prompt 里而不是另发一条留言：节点重跑走的是既有生命周期
+// （worktree → 单回合 → envelope → 终态），留言通道只在**回合结束时**被消费，
+// 停住的节点根本走不到那里。
+func withUserAnswerPrompt(ctx context.Context, store *TaskStore, nodeRun NodeRun, prompt string) string {
+	answer, _ := nodeRun.Input["user_answer"].(string)
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return prompt
+	}
+	var b strings.Builder
+	b.WriteString(prompt)
+	b.WriteString("\n\n## 用户答复\n")
+	if store != nil && strings.TrimSpace(nodeRun.PrevAttemptID) != "" {
+		if prev, err := store.WorkflowNodeRunByID(ctx, nodeRun.PrevAttemptID); err == nil {
+			if question := strings.TrimSpace(nodeRunText(prev, "question", "reason", "summary", "error")); question != "" {
+				b.WriteString("你上一次在这个节点停下来向用户提了问题：\n> ")
+				b.WriteString(strings.ReplaceAll(truncateRouterText(question, 600), "\n", "\n> "))
+				b.WriteString("\n\n")
+			}
+		}
+	}
+	b.WriteString("用户现在答复：\n")
+	b.WriteString(answer)
+	b.WriteString("\n\n请基于这个答复继续完成本节点，不要重复已经做完的部分。")
+	return b.String()
 }
 
 // RunPreparedWorkflowNode runs one prepared turn. It does not persist state;

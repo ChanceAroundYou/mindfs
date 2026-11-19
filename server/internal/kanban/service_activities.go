@@ -44,6 +44,8 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	// D3 的执行入口守卫：同一时刻只有一个活动执行；停住的旧 Run 由下一条
 	// workflow 留言整体取代。直连回合只做守卫，不冻结旧 Run。
 	svc.SetRunLifecycle(s)
+	// 「用户答复 → 停住的节点」：重开一次带答复的尝试（Scope: G-MS）。
+	svc.SetNodeAnswerer(s)
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
 	return svc, nil

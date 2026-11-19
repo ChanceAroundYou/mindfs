@@ -87,6 +87,7 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.askUserTool(),
 		e.silentTool(),
 		e.deliverTool(),
+		e.answerTool(),
 	}
 }
 
@@ -377,36 +378,6 @@ func (e *routerToolEnv) record(action RouterAction) (string, error) {
 	return string(raw), nil
 }
 
-func objectSchema(properties map[string]any, required []string) map[string]any {
-	schema := map[string]any{
-		"type":       "object",
-		"properties": properties,
-	}
-	if len(required) > 0 {
-		schema["required"] = required
-	}
-	return schema
-}
-
-func briefHasWorkflow(brief *SituationBrief, workflowID string) bool {
-	if brief == nil {
-		return false
-	}
-	for _, workflow := range brief.Workflows {
-		if workflow.ID == workflowID {
-			return true
-		}
-	}
-	return false
-}
-
-// isRuntimeEventBrief 表示这是运行期事件回合的 brief（T8 的 Event 三段已挂上）。
-// 事件回合不携带 workflow 目录，也不允许开新执行，所以「目录里没有这个 workflow」
-// 的检查对它不成立；真正该拒绝它的是运行期动作白名单。
-func isRuntimeEventBrief(brief *SituationBrief) bool {
-	return brief != nil && brief.Event != nil
-}
-
 // validateRouterActions 做跨动作校验。返回的错误会让整条决策标 rejected，
 // 而不是只丢坏动作：半套动作比没有动作更危险。
 func validateRouterActions(brief *SituationBrief, actions []RouterAction, config RouterConfig) error {
@@ -450,6 +421,13 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			if strings.TrimSpace(action.Body) == "" {
 				return fmt.Errorf("%s body required", action.Kind)
 			}
+		case RouterActionAnswerWaiting:
+			// 答复停住的节点同样会起一次执行：与 run_workflow / message_agent
+			// 互斥，模型不能在同一轮里既答复又另开一条执行。
+			executions++
+			if strings.TrimSpace(action.Body) == "" {
+				return fmt.Errorf("%s body required", action.Kind)
+			}
 		case RouterActionSuggestFinish:
 			// P2 only; accepted here so the enum remains forward-compatible.
 		default:
@@ -472,6 +450,11 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			}
 			if action.Kind == RouterActionDeliver && len(brief.ActiveExecution.CurrentNodes) != 1 {
 				return fmt.Errorf("deliver requires exactly one active node, got %d", len(brief.ActiveExecution.CurrentNodes))
+			}
+			// waiting_user 的任务同样挂着 ActiveExecution，只是 CurrentNodes 为空；
+			// 只有真的有节点在跑时答复才和「先等这一轮结束」冲突。
+			if action.Kind == RouterActionAnswerWaiting && len(brief.ActiveExecution.CurrentNodes) > 0 {
+				return fmt.Errorf("%s is not allowed while a node is still running", action.Kind)
 			}
 		}
 	}

@@ -187,26 +187,30 @@ const (
 	RouterActionAskUser       RouterActionKind = "ask_user"
 	RouterActionSilent        RouterActionKind = "silent"
 	RouterActionDeliver       RouterActionKind = "deliver_to_active_run"
+	RouterActionAnswerWaiting RouterActionKind = "answer_waiting_node"
 	RouterActionSuggestFinish RouterActionKind = "suggest_finish" // P2
 )
 
 type RouterAction struct {
 	Seq        int              `json:"seq"`
 	Kind       RouterActionKind `json:"kind"`
-	Body       string           `json:"body,omitempty"`    // say / message_agent / deliver
+	Body       string           `json:"body,omitempty"`    // say / message_agent / deliver / answer
 	Purpose    string           `json:"purpose,omitempty"` // chat|progress
 	WorkflowID string           `json:"workflow_id,omitempty"`
 	VersionID  string           `json:"version_id,omitempty"`
 	Question   string           `json:"question,omitempty"`
 	Options    []string         `json:"options,omitempty"`
 	RunID      string           `json:"run_id,omitempty"`
-	Reason     string           `json:"reason,omitempty"`
+	// NodeRunID 是 answer_waiting_node 的目标：工具在当轮就把它解析成具体行，
+	// apply 阶段不再重新判定「哪个节点在等我答复」。
+	NodeRunID string `json:"node_run_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // IsExecutionAction 报告动作是否会启动/继续一次执行。用于跨动作校验与
-// shadow 的 agreement 比较。
+// shadow 的 agreement 比较。答复停住的节点会让它重跑，也算执行类动作。
 func (a RouterAction) IsExecutionAction() bool {
-	return a.Kind == RouterActionRunWorkflow || a.Kind == RouterActionMessageAgent
+	return a.Kind == RouterActionRunWorkflow || a.Kind == RouterActionMessageAgent || a.Kind == RouterActionAnswerWaiting
 }
 
 type RouterDecisionStatus string

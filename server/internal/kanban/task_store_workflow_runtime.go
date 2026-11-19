@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -137,6 +138,46 @@ func (s *TaskStore) CreateRetryWorkflowNodeRun(ctx context.Context, run *Workflo
 		Harness:       original.Harness,
 		Model:         original.Model,
 		Input:         cloneWorkflowOutput(original.Input),
+		Status:        NodeRunQueued,
+		PrevAttemptID: original.ID,
+	}
+	claimed, _, err := s.ClaimWorkflowNodeRun(ctx, next)
+	if err != nil {
+		return NodeRun{}, err
+	}
+	return claimed, nil
+}
+
+// CreateAnsweredWorkflowNodeRun 是「带着用户答复重跑」的尝试行：在重试行基础上
+// 显式续用原会话，并把答复写进 Input。
+//
+// 答复不能只放在一条 comment/outbox 行里：那个通道只在节点回合**结束**时被消费，
+// 而停住的节点没有在跑的回合。写进 NodeRun.Input 才能保证下一次 prepare 一定能
+// 看到它（并且随行持久化，进程重启也不丢）。
+func (s *TaskStore) CreateAnsweredWorkflowNodeRun(ctx context.Context, run *WorkflowRun, original NodeRun, answer, activityID string) (NodeRun, error) {
+	if original.ID == "" || run == nil || original.RunID != run.ID {
+		return NodeRun{}, fmt.Errorf("workflow node run %q does not belong to run", original.ID)
+	}
+	input := cloneWorkflowOutput(original.Input)
+	if input == nil {
+		input = map[string]any{}
+	}
+	input["user_answer"] = strings.TrimSpace(answer)
+	if activityID = strings.TrimSpace(activityID); activityID != "" {
+		input["user_answer_activity_id"] = activityID
+	}
+	next := NodeRun{
+		ID:            workflowNodeRunID(run.ID, original.NodeID, original.LoopPath, original.Iteration, original.Attempt+1),
+		RunID:         run.ID,
+		NodeID:        original.NodeID,
+		LoopPath:      original.LoopPath,
+		Iteration:     original.Iteration,
+		Attempt:       original.Attempt + 1,
+		Agent:         original.Agent,
+		Harness:       original.Harness,
+		Model:         original.Model,
+		SessionKey:    original.SessionKey,
+		Input:         input,
 		Status:        NodeRunQueued,
 		PrevAttemptID: original.ID,
 	}

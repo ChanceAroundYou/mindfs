@@ -42,7 +42,7 @@ func (e *routerToolEnv) deliverTargetError() error {
 	case "human_gate":
 		return fmt.Errorf("无法转交：当前工作流正在等待你审批，普通留言不能替代批准/驳回（消息不会被投递）")
 	case "agent_blocked":
-		return fmt.Errorf("无法转交：当前没有正在执行的 Agent 节点，工作流停在一个阻塞节点上等你决定；重试该节点才会把你的答复带进去（消息不会被投递）")
+		return fmt.Errorf("无法转交：当前没有正在执行的 Agent 节点，工作流停在一个等你答复的节点上；请改用 router_answer_waiting_node 把答复交给它（留言不会被投递）")
 	}
 	return fmt.Errorf("无法转交：当前没有正在执行的 Agent 节点，留言没有投递目标（消息不会被投递）")
 }
