@@ -7749,7 +7749,7 @@ groups:
       - 'web/src/components/task/TaskBoardToolbar.tsx:onClick={() => openTaskCreateDialog(currentRootId)}'
       - 'web/src/components/workspace/WorkspaceQuickLaunch.tsx:onPick(group.rootId, group.nodeId)'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
-      - 'web/src/components/task/RunNodeRunRow.tsx:import { nodeRunStatusColor, nodeRunStatusLabel } from "./runTimelineModel";'
+      - 'web/src/components/task/RunNodeRunRow.tsx:nodeRunStatusColor,'
       - 'server/internal/api/http_task_templates_gone_test.go:func TestTaskTemplateRoutesAreGone('
 
   # ── Claude 子代理事件归属（WP-00）：子代理工具卡不得回落父回合 ──────────────
@@ -9481,6 +9481,36 @@ groups:
       - 'server/internal/kanban/router_event_prune_tick_test.go:func TestCoordinatorTickPruneRunsEveryNthTick('
       - 'server/internal/kanban/router_inspect_run_test.go:func TestRouterInspectRunServesEventTurn('
       - 'server/internal/kanban/router_event_lease_tick_test.go:func TestCoordinatorTickReclaimsStaleClaims('
+
+  # ── 会话工作树归属清理：给「repoint 拒绝做、又无清归属入口」那批会话收尾 ──────
+  - id: G-MQ
+    title: 会话工作树归属清理（原生端点 /api/sessions/{key}/worktree-ownership）
+    kind: fix
+    symptom: "一批会话的 `related_worktree` 指向早已删除的目录（`.worktree/task-36/37/38`、`/tmp/mindfs-recovery`、`llmux/src` 等），运行时 cwd 却早就离开了那儿。界面上它们永远挂着「目录不存在」徽标，而唯一看起来能治的 `POST /api/sessions/repoint` 在「会话已经在这个目录里」那一步直接 400 —— 那一步排在 fork 转录等**所有副作用之前**（刻意的：不该为一次无效变更造新 id），于是这批会话两头不通：repoint 拒绝做，清归属又没有入口。"
+    why: "repoint 的语义是「fork 新转录 + 换 id + 搬文件 + 清归属」，治不了这个形状的病：该动的只有 `related_worktree` 一列，搬转录只会多造一份副本（这些转录要么还在主 slug、要么压根不存在）。必须保留：① `ClearSessionWorktreeOwnership` 只摘 `related_worktree`，刻意不碰转录、binding、游标 —— 与 `RepointSession` 末尾「刻意不同任务侧归属」同一条边界，这里也只清会话侧；② 归属目录**仍然存在**时默认拒绝（那是活着的工作树，把人踢出去不该是「修一条坏行」的副作用），`force` 才是明确出口；③ 摘归属后若 `work_dir` 恰好就是那个已删目录也必须清成空串 —— `work_dir` 优先级高于 `related_worktree`，只摘归属不改 work_dir 的话运行时 cwd 还在原地，「徽标没了但还在往不存在的目录干活」；④ 复用 repoint 的两个既有判据：反查只认 `claude` binding（脚本手里只有 `CLAUDE_CODE_SESSION_ID`），正在回复（`HasActiveUse`）的会话拒绝换道；⑤ 清前 `pool.Close` 池级 key，agent 名按会话自己的绑定解析（既可能是 claude 也可能是 codex/dsh），不能硬编码；⑥ 顺带 `RemoveRelatedFilesUnder` 旧工作树前缀，否则「相关文件」面板指着一堆不存在的路径；⑦ 清完广播 `session.meta.updated`，否则前端要等下一次整表重拉才掉徽标 —— 而用户点的就是「让它消失」。"
+    boundary: "只清**会话侧**归属，不 fork/搬转录、不动 `session_agent_bindings`、不推进游标、不碰任务侧 worktree 引用（`Task.WorktreePath`），不删目录也不跑 git。无转录的会话仍然修不了 repoint 那条路 —— 本端点治的是「徽标与运行时 cwd」，不是「把转录搬走」；`force` 不宣称安全，它只是那个人明确要求的出口。"
+    files:
+      - server/internal/api/usecase/session_worktree_ownership.go
+      - server/internal/api/http_session_worktree_ownership.go
+      - server/internal/api/http_routes.go
+    tests:
+      - server/internal/api/usecase/session_worktree_ownership_test.go
+      - server/internal/api/http_session_worktree_ownership_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_worktree_ownership.go:func (s *Service) ClearSessionWorktreeOwnership('
+      - 'server/internal/api/usecase/session_worktree_ownership.go:worktree 目录仍然存在'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:manager.ClearRelatedWorktree(ctx, key)'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:manager.SetWorkDir(ctx, key, "")'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:FindAgentBindingByAgentSession(ctx, "claude", agentSessionID)'
+      - 'server/internal/api/usecase/session_worktree_ownership.go:session.InferAgentFromSession(current)'
+      - 'server/internal/api/http_session_worktree_ownership.go:handleSessionWorktreeOwnershipClear'
+      - 'server/internal/api/http_session_worktree_ownership.go:h.AppContext.BroadcastSessionMetaUpdated(rootID, out.Session)'
+      - 'server/internal/api/http_routes.go:/api/sessions/{key}/worktree-ownership'
+      - 'server/internal/api/http_routes.go:/api/sessions/worktree-ownership'
+      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipRefusesWhenDirectoryStillExists('
+      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipClearsMissingWorktree('
+      - 'server/internal/api/usecase/session_worktree_ownership_test.go:func TestClearSessionWorktreeOwnershipClearsStaleWorkDir('
+      - 'server/internal/api/http_session_worktree_ownership_test.go:func TestSessionWorktreeOwnershipRouteRegistered('
 
   # ── Router 工具句柄按轮路由 + deliver 前置闸门（「已转交」假动作）─────────────
   - id: G-MR

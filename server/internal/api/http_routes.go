@@ -90,6 +90,10 @@ func (h *HTTPHandler) Routes() http.Handler {
 	// 无 path 参数的同一操作：给 wt-finish 这类只有 CLAUDE_CODE_SESSION_ID 的脚本用，
 	// body 里带 agent_session_id，服务端反查 mindfs 会话。
 	r.Post("/api/sessions/repoint", h.handleSessionRepoint)
+	// 只摘 related_worktree，不 fork 转录。专治「归属目录已删、运行时 cwd 早已离开」
+	// 的那批会话 —— 在它们身上 repoint 会在任何副作用之前 400，于是没有任何修复入口。
+	r.Post("/api/sessions/{key}/worktree-ownership", h.handleSessionWorktreeOwnershipClear)
+	r.Post("/api/sessions/worktree-ownership", h.handleSessionWorktreeOwnershipClear)
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.handleSessionToolCallGet)
 	r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)
 	r.Post("/api/sessions/{key}/sync", h.handleSessionSync)
