@@ -254,8 +254,13 @@ func copyDir(src, dst string) error {
 	})
 }
 
-// webAssetTTL 是旧构建残留的保留期，与 Makefile 的 WEB_ASSET_TTL_DAYS 对齐。
-const webAssetTTL = 14 * 24 * time.Hour
+// webAssetTTLDays 是旧构建残留的保留天数，与 Makefile 的 WEB_ASSET_TTL_DAYS 逐字一致
+// （web/tests/deploy-web-assets.test.mjs 钉住）。每次构建都换掉全部 chunk 哈希
+// （web/vite.config.ts 的 buildStamp），保留期直接乘成磁盘占用：14 天曾堆到
+// 14,632 个文件 / 705 MB。打开着的标签页只需跨一次部署，一天够用。
+const webAssetTTLDays = 1
+
+const webAssetTTL = webAssetTTLDays * 24 * time.Hour
 
 // installWebAssets 覆盖复制 web 资源，绝不清空 dstWeb。
 //

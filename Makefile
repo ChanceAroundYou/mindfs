@@ -10,7 +10,9 @@ ROOT ?= .
 PREFIX ?= $(HOME)/.local
 # 旧构建残留的保留期（天）。哈希资源对外是 immutable，删太快会让部署前就打开的
 # 标签页在懒加载时 404（前端 staleAssetRecovery 只能兜底一次重载）。
-WEB_ASSET_TTL_DAYS ?= 14
+# 每次构建都会换掉全部 chunk 的哈希（buildStamp 随机），所以保留期直接乘成磁盘占用：
+# 14 天曾堆到 14,632 个文件 / 705 MB；打开着的标签页只需跨一次部署，一天够用。
+WEB_ASSET_TTL_DAYS ?= 1
 
 help:
 	@printf "%s\n" \
@@ -63,6 +65,8 @@ build: build-web
 
 # 覆盖复制，不先 rm -rf：哈希 chunk 对浏览器是 immutable，删掉等于让已打开的标签页
 # 在懒加载时 404。磁盘由 WEB_ASSET_TTL_DAYS 的按龄清理兜住。
+# 用 -mmin 而不是 -mtime：-mtime 向下取整，`-mtime +1` 实际要到 48 小时才删。
+# 分钟字面量必须等于 TTL_DAYS × 1440，由 web/tests/deploy-web-assets.test.mjs 钉住。
 # 注意结尾的 `/.`：web/ 已存在时 `cp -R dist web` 会变成 web/dist。
 install: build
 	install -d "$(PREFIX)/bin"
@@ -71,7 +75,7 @@ install: build
 	install -m 0644 agents.json "$(PREFIX)/share/mindfs/agents.json"
 	install -d "$(PREFIX)/share/mindfs/web"
 	cp -R "$(WEB_DIR)/dist/." "$(PREFIX)/share/mindfs/web/"
-	find "$(PREFIX)/share/mindfs/web/assets" -type f -mtime +$(WEB_ASSET_TTL_DAYS) -delete
+	find "$(PREFIX)/share/mindfs/web/assets" -type f -mmin +1440 -delete
 
 uninstall:
 	rm -f "$(PREFIX)/bin/mindfs"

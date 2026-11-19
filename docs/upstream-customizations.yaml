@@ -1014,6 +1014,11 @@ groups:
       # 前端哈希资源由 `make install` 拷进 ~/.local/share/mindfs/web/ 并按 TTL 清理过期文件；
       # 自 2026-10-07 WSL 是纯 worker（GET / 403），不再推 web/dist，所以这里钉 Makefile 而非
       # 曾经的 scripts/deploy-all.sh。
+      # 2026-11-19：TTL 14 天 → 1 天，并用 `-mmin +1440` 取代 `-mtime +1`（后者向下取整，
+      # 实际 48 小时才删）。依据是每次构建都会换掉全部 255 个哈希 chunk（buildStamp 随机），
+      # 14 天实测堆到 14,632 个文件 / 705 MB；打开着的标签页只需跨一次部署。
+      # 三处（Makefile / scripts/install.sh / server/internal/update/install.go）由
+      # web/tests/deploy-web-assets.test.mjs 钉住一致。
       - Makefile:cp -R "$(WEB_DIR)/dist/." "$(PREFIX)/share/mindfs/web/"
 
   # ── 前端：其余 ──────────────────────────────────────────────────

@@ -218,7 +218,8 @@ if [[ -d "${PKG_DIR}/web" ]]; then
   # 安装期间开着的页面在懒加载（动态 import）时 404。磁盘由按龄清理兜住。
   mkdir -p "${WEB_DEST}/assets"
   cp -r "${PKG_DIR}/web/." "$WEB_DEST/"
-  find "${WEB_DEST}/assets" -type f -mtime +14 -delete
+  # -mmin 1440 = 1 天：-mtime 向下取整，`-mtime +1` 实际要到 48 小时才删。
+  find "${WEB_DEST}/assets" -type f -mmin +1440 -delete
   echo "  Web     -> ${WEB_DEST}"
 fi
 

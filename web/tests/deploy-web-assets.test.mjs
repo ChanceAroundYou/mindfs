@@ -54,15 +54,28 @@ assert.doesNotMatch(deploy, /-C "\$ROOT\/web" dist/, "deploy-all.sh 的 tar 不�
 assert.ok(/cp -R "\$\(WEB_DIR\)\/dist\/\." /.test(makefile), "Makefile install 应覆盖复制 dist（结尾 /. 防 web/dist 嵌套）");
 assert.ok(/cp -r "\$\{PKG_DIR\}\/web\/\." /.test(installSh), "install.sh 应覆盖复制 web");
 
-// 2) TTL 两处必须一致。Makefile 是带名字的变量，install.sh 是字面量 —— 字面量正是会漂的那个。
-//    deploy-all.sh 不再参与：它不再往 WSL 装 web 资源（2026-10-07 起 WSL 是纯 worker）。
+// 2) TTL 三处必须一致：Makefile 是带名字的变量，install.sh 是字面量，install.go 是 Go 常量
+//    —— 字面量正是会漂的那个。deploy-all.sh 不再参与：它不再往 WSL 装 web 资源
+//    （2026-10-07 起 WSL 是纯 worker）。
 const ttl = makefile.match(/WEB_ASSET_TTL_DAYS \?= (\d+)/)?.[1];
 assert.ok(ttl, "Makefile 应定义 WEB_ASSET_TTL_DAYS");
+const installGo = read("server/internal/update/install.go");
+// 用 -mmin 而不是 -mtime：-mtime 向下取整，`-mtime +1` 实际要到 48 小时才删，
+// 「保留 1 天」会静默变成 2 天。两处分钟字面量都必须等于 天数 × 1440。
+const ttlMinutes = String(Number(ttl) * 1440);
 assert.deepStrictEqual(
-  [ttl, installSh.match(/-mtime \+(\d+) -delete/)?.[1]],
-  [ttl, ttl],
-  `按龄清理的 TTL 不一致（Makefile=${ttl}）`,
+  [
+    makefile.match(/-mmin \+(\d+) -delete/)?.[1],
+    installSh.match(/-mmin \+(\d+) -delete/)?.[1],
+    installGo.match(/const webAssetTTLDays = (\d+)/)?.[1],
+  ],
+  [ttlMinutes, ttlMinutes, ttl],
+  `按龄清理的 TTL 不一致（Makefile=${ttl}d 应为 ${ttlMinutes}min）`,
 );
+// 每隔一次构建都会换掉全部 255 个哈希 chunk（buildStamp 随机，见 web/vite.config.ts），
+// 所以保留期直接乘以 构建次数 × 13 MB。14 天实测堆到 14,632 个文件 / 705 MB：
+// 浏览器打开的标签页只需要跨一次部署能懒加载到旧 chunk，一天足够，再长就是纯占盘。
+assert.ok(Number(ttl) <= 2, `WEB_ASSET_TTL_DAYS=${ttl}d 过长：每次构建都换哈希，保留期直接放大成磁盘占用`);
 
 // 3) worker 只收产物，不在那边编译。
 //    deploy-all.sh 里唯一允许的 make build 是本机那次（不经 ssh）；
@@ -98,5 +111,5 @@ for (const f of ["AGENTS.md", "README.md", "README.zh.md", "release-notes.md"]) 
 }
 assert.ok(!addCmd.includes("config.json"), "config.json 不该进白名单（会被本机改 role，提交等于推本地配置）");
 
-console.log("✓ 部署脚本不变量成立：无 rm -rf web、TTL 两处一致(" + ttl + "d)、WSL 只收产物且不收 dist、add 白名单含根级文档");
+console.log("✓ 部署脚本不变量成立：无 rm -rf web、TTL 三处一致(" + ttl + "d)、WSL 只收产物且不收 dist、add 白名单含根级文档");
 });
