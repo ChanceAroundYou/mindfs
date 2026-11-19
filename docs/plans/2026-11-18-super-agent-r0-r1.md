@@ -8,7 +8,7 @@
 **Spec:** `docs/superpowers/specs/2026-11-18-super-agent-r0-r1-design.md`
 **授权:** 用户已要求文档、小任务、worktree 与实际派发；当前先执行 R0，R1 在 R0 门禁后按依赖推进。R2–R5 不执行。
 
-**状态（2026-11-19）：R0 与 R1（T1–T10）全部通过工头验收，已集成到总任务分支 `task-73`（HEAD `c6a4e629` + 登记提交）；R1 收尾（汇报折叠、直达工作流会话、事件 brief 假截断）同日完成，见下节。未 push、未部署、未合并 main、未重启任何节点；生产 `router.mode` 保持各节点现值。**
+**状态（2026-11-19）：R0 与 R1（T1–T10）全部通过工头验收，已集成到总任务分支 `task-73`（HEAD `c6a4e629` + 登记提交）；R1 收尾（汇报折叠、直达工作流会话、事件 brief 假截断）与留存缺口收口（G-MP）同日完成，见下节。已合并 main（`7f9e710c`）、`bash scripts/deploy-all.sh` 部署四端（`v0.5.5-1120-4-g7f9e710c-dirty`）、本机已由用户重启（2026-11-19 11:14:46，PID 3817171，`/proc/<pid>/exe` 指向 `~/.local/bin/mindfs` 且非 deleted）。生产 `router.mode` 在本机为 `route`：该值 2026-11-18 17:12 写入 `~/.config/mindfs/config.json`，重启前进程不读取文件变更，故重启后才生效；`GET /api/router/status` 已确认 `mode=route`，用户 2026-11-19 决定保持观察。重启后至 11:20 无新活动（`task_activities` 与 `router_events` 均 0 条），route 尚未被真实流量触发。**
 
 ## Global Constraints
 
@@ -296,7 +296,33 @@ D 仅重启隔离进程并核对 pending/claimed 与已有结果。
 `make check-upstream` 1957 delta / 316 组全绿（G-MP 18 锚点逐个核对存在，G-MG ⑥ 与
 `DeleteTaskRouterData` 锚点已同步改写）。已于 2026-11-19 合并 main（`7f9e710c`，与 main 的两条 notify 提交零冲突合并）并
 `bash scripts/deploy-all.sh` 部署四端，版本 `v0.5.5-1120-4-g7f9e710c-dirty`（`-dirty` 来自本机
-另一会话未提交的 live-compact 文档）。生产 `router.mode` 未动。
+另一会话未提交的 live-compact 文档）。本机重启后 `router.mode=route` 生效（见文首状态），
+观察结论见下节「R2 准入评估」。
+
+## R2 准入评估（2026-11-19）
+
+**spec 的进入条件是「R1 事件闭环通过真实验收」，这一点已满足**：T10 在隔离实例用真实
+claude 跑通需求→执行→主动汇报、中途留言归宿、失败/gate 说明、进程重启对账；库侧 21 条
+`router_events` 全 `done`、每任务 effect 行数 == 决策数、重启后 `pending→done` 且不重放 Run。
+
+**但还有三类证据缺口，直接开 R2 会把「验收条目/证据关联」建在沙地上**：
+
+1. `deliver`（运行中留言转交）只有单测与隔离用例，没有真实流量证据；`ask_user` / `silent` /
+   预算耗尽分支从未被真实触发。
+2. 生产 `route` 2026-11-19 11:14 才首次生效，到 11:20 决策与事件都是 0 条——线上决策成功率、
+   fallback 比例、p95 延迟尚无一条真实样本（隔离样本 p50 11.8s / p95 22.5s）。
+3. 未覆盖 kill -9、SQLite 语句中断、真实双进程（G-ML boundary 已写明，不宣称通用副作用恢复）。
+
+**结论：技术上可以推进 R2，但先过一个观察窗，且 R2 要另立 goal/brief 与授权（本计划明确
+R2–R5 不执行）。** 观察窗建议至少 24h 或 ≥10 条真实留言，判据：
+
+- 决策成功率与 fallback 原因可解释，没有连续 LLM/校验失败；
+- `router_events` 的产生数与效果数对齐，无重复可见汇报（`reply_to_id` 全部指回原留言）；
+- 每个 Router turn 的延迟分布有样本（按 spec，不沿用旧 3s 准入，也不把 90s 超时当达标）；
+- 出现 `deliver`/`gate_waiting`/`run_stalled` 任一真实场景时单独记证据。
+
+未过判据就先修观测到的问题，不进入 R2；过了再由用户批准 R2 的第一批（验收条目存储 +
+证据关联）。
 
 ## 执行门禁与依赖
 
