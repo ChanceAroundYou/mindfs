@@ -14,7 +14,7 @@ func (s *AppContext) notifySessionDone(rootID, sessionKey, requestID string, pen
 	if s == nil {
 		return
 	}
-	if strings.HasPrefix(strings.TrimSpace(requestID), "scheduled:") {
+	if !shouldNotifySessionDone(requestID, pending) {
 		return
 	}
 	rootTitle := s.rootTitle(rootID)
@@ -37,6 +37,18 @@ func (s *AppContext) notifySessionDone(rootID, sessionKey, requestID string, pen
 		EventID:      eventID,
 	})
 	s.notifyPayload(context.Background(), eventID, payload)
+}
+
+// shouldNotifySessionDone 决定这一轮结束要不要对外推「完成」。
+//
+//   - scheduled: 开头的 requestID 是定时任务自己跑的轮次，不推（定时任务有自己的通知）。
+//   - 子会话（Task 子代理 / 看板节点 attach）跑完不推：父会话那一轮还在跑，用户要的是
+//     「活干完了」，不是「其中一个子任务回来了」。子会话的 ask_user 走 apply 路径，不受影响。
+func shouldNotifySessionDone(requestID string, pending PendingSessionSnapshot) bool {
+	if strings.HasPrefix(strings.TrimSpace(requestID), "scheduled:") {
+		return false
+	}
+	return !pending.SubSession
 }
 
 func (s *AppContext) notifyAskUserIfNeeded(rootID, sessionKey string, event *StreamEvent) {

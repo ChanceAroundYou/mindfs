@@ -56,15 +56,18 @@ func (h *HTTPHandler) handleReplyingSessionsWait(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// 首帧不等待：客户端用它播种 ETag。
+	// 首帧不等待：客户端用它播种 ETag（以及完成账本游标）。
 	if strings.TrimSpace(r.Header.Get("If-None-Match")) == "" {
-		respondJSONConditional(w, r, map[string]any{"sessions": h.replyingSessionsPayload(r, h.replyingWaitItems())})
+		since, hasSince := parseCompletedSince(r.URL.Query().Get("completed_since"))
+		respondJSONConditional(w, r, h.replyingPayload(r, h.replyingWaitItems(), since, hasSince))
 		return
 	}
 
 	timeout := parseReplyingWaitTimeout(r.URL.Query().Get("timeout"))
 	start := time.Now()
 	lastRefresh := start
+	// 完成账本游标（客户端上次消费到哪一条）。缺省 = 首次播种，不补发。
+	since, hasSince := parseCompletedSince(r.URL.Query().Get("completed_since"))
 
 	// 基线取自**请求到达时**的纯内存快照。两个签名都不碰 GetRoot/GetMeta，
 	// 所以每轮比对是常数级开销。
@@ -86,6 +89,13 @@ func (h *HTTPHandler) handleReplyingSessionsWait(w http.ResponseWriter, r *http.
 		if replyingShapeSignature(items) != shapeBase {
 			break
 		}
+		// 账本里有客户端还没消费的完成：它可能完全没改变形状（例如子会话的 pending
+		// 条目本来就不在列表里），只靠形状指纹会一直等到超时，补发就晚了。
+		if hasSince && h.AppContext != nil {
+			if hub := h.AppContext.GetSessionStreamHub(); hub != nil && hub.HasCompletionsSince(since) {
+				break
+			}
+		}
 		now := time.Now()
 		if now.Sub(lastRefresh) >= replyingWaitRefreshInterval {
 			lastRefresh = now
@@ -98,7 +108,7 @@ func (h *HTTPHandler) handleReplyingSessionsWait(w http.ResponseWriter, r *http.
 		}
 	}
 
-	respondJSONConditional(w, r, map[string]any{"sessions": h.replyingSessionsPayload(r, items)})
+	respondJSONConditional(w, r, h.replyingPayload(r, items, since, hasSince))
 }
 
 // replyingWaitItems 读一次纯内存快照，并容忍未装配的 AppContext/hub。
@@ -141,6 +151,8 @@ func replyingShapeSignature(items []ReplyingSessionState) string {
 		b.WriteString(item.Status)
 		b.WriteByte('|')
 		b.WriteString(awaitingFlag(item.AwaitingAnswer))
+		b.WriteByte('|')
+		b.WriteString(boolFlag(item.SubSession))
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -162,6 +174,8 @@ func replyingPayloadSignature(items []ReplyingSessionState) string {
 		b.WriteByte('|')
 		b.WriteString(awaitingFlag(item.AwaitingAnswer))
 		b.WriteByte('|')
+		b.WriteString(boolFlag(item.SubSession))
+		b.WriteByte('|')
 		b.WriteString(item.RootID)
 		b.WriteByte('|')
 		b.WriteString(item.SessionTitle)
@@ -176,6 +190,13 @@ func replyingPayloadSignature(items []ReplyingSessionState) string {
 
 func awaitingFlag(awaiting bool) string {
 	if awaiting {
+		return "1"
+	}
+	return "0"
+}
+
+func boolFlag(value bool) string {
+	if value {
 		return "1"
 	}
 	return "0"

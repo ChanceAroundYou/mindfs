@@ -186,4 +186,21 @@ public class ReplyStateMergerTest {
         assertEquals(1, snapshot.size());
         assertEquals(2, merger.states().size());
     }
+
+    /**
+     * 子会话标记必须活到 DONE 判定那一刻：完成是靠「从快照里消失」判出来的，
+     * 服务端 push 下来的 subSession 只要在中途丢了，子任务回来就会照常弹提醒。
+     */
+    @Test
+    public void subSessionFlagSurvivesIntoCompletedEntry() {
+        ReplyStateMerger merger = new ReplyStateMerger(FRESHNESS_MILLIS);
+        ReplyStateMerger.Entry child = entry("home", "root-1", "child-1");
+        child.subSession = true;
+        merger.applyNode("home", entries(child), 1_000L);
+
+        ReplyStateMerger.Result result = merger.applyNode("home", entries(), 2_000L);
+
+        assertEquals(1, result.newlyCompleted.size());
+        assertTrue(result.newlyCompleted.get(0).subSession);
+    }
 }

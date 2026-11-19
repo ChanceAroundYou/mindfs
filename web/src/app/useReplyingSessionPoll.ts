@@ -14,7 +14,11 @@ import { protectedJSON as apiProtectedJSON, withNodeRetry } from "../services/ne
 import { appPath } from "../services/net/base";
 import { getActiveNodeId, getNodes } from "../services/net/nodeRegistry";
 import { parseSessionScopeKey, scopeSessionKey } from "../shared/scope";
-import { newlyCompletedPendingKeys } from "../shared/pendingCompletion";
+import {
+  alertableCompletedKeys,
+  carrySubSessionKeys,
+  newlyCompletedPendingKeys,
+} from "../shared/pendingCompletion";
 import { unreadCompletedAdd, unreadKey } from "../shared/unreadCompleted";
 
 /** 跨节点回复状态轮询周期（固定 5s + visible-only）。 */
@@ -93,6 +97,13 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
   });
 
   /**
+   * 当前仍标记为子会话的作用域键。判定「刚完成的是不是子会话」必须靠它而不是当前
+   * 那一帧的快照：完成是靠「从 pending 表里消失」差分出来的，那一帧里会话已经不在
+   * 列表上，它的 subSession 字段也就读不到了。跨帧保留，消失即忘。
+   */
+  const subSessionKeysRef = useRef<Set<string>>(new Set());
+
+  /**
    * 「正在回复」是独立于会话列表数据的旁路状态（SessionItem 没有 running 字段，
    * 蓝灯只由 session.pending 决定），所以必须自己按节点去问。
    *
@@ -106,6 +117,8 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     const okNodeIds = new Set<string>();
     const freshPending: Record<string, boolean> = {};
     const freshAwaiting: Record<string, boolean> = {};
+    // 本轮快照里显式标了 subSession 的键（子会话）。完成音要跳过它们。
+    const freshSubSessions = new Set<string>();
     await Promise.all(
       nodeIds.map(async (nid) => {
         try {
@@ -121,6 +134,9 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
               // sidecar 状态拆成两张表：pending=实心灯，awaiting=空心灯，绝不混。
               if (item?.status === "replying" || item?.active === true) {
                 freshPending[scoped] = true;
+              }
+              if (item?.subSession === true) {
+                freshSubSessions.add(scoped);
               }
               // 「等回答」要记**显式 false**：轮询里出现过的会话 = 我们知道它的真实
               // 状态（不在等）；缺席的会话才是不知情。徽标（问号）靠这个区分来灭 ——
@@ -150,15 +166,22 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
       okNodeIds,
       String(currentRootNodeIdRef.current || "").trim(),
     );
+    // 子会话（Claude Code Task 子代理 / 看板节点 attach）跑完不响：父会话那一轮还在跑，
+    // 用户要的是「活干完了」，不是「其中一个子任务回来了」。与 WS 路径
+    // （realtimeWsHandlers 的 parent_session_key 判断）保持同一语义。
+    const subSessions = subSessionKeysRef.current;
+    const alertable = alertableCompletedKeys(completed, subSessions);
     multiProjectPendingRef.current = nextPending;
     multiProjectAwaitingRef.current = nextAwaiting;
     setMultiProjectPendingByKey(nextPending);
     setMultiProjectAwaitingByKey(nextAwaiting);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, nextPending, nextAwaiting));
-    if (completed.length > 0) {
+    if (alertable.length > 0) {
       // 每轮最多响一次：切回标签页那一轮可能一次补出好几条「刚完成」，
       // 逐条响会连成一片噪音。未读徽标仍逐条标 —— 那是静态信息，不吵人。
       playCompletionRef.current?.();
+    }
+    if (completed.length > 0) {
       const selectedKey = String(
         selectedSessionRef?.current?.key || selectedSessionRef?.current?.session_key || "",
       );
@@ -169,6 +192,9 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
         unreadCompletedAdd(unreadKey(nodeId, rootId, sessionKey));
       }
     }
+    // 子会话标记只在「还在 replying」时才有意义：消失的键下一轮就该忘掉（会话完成后
+    // 不会再有它的 subSession 字段可读）。失败的节点由 nextPending 的增量合并保住。
+    subSessionKeysRef.current = carrySubSessionKeys(subSessions, freshSubSessions, nextPending);
   }, [applyPendingToMultiProjectGroups, currentRootNodeIdRef, selectedSessionRef]);
 
   useEffect(() => {

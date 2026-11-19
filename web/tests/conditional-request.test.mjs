@@ -58,7 +58,9 @@ for (const [needle, label] of [
   [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": \[\]map\[string\]any\{\}\}\),?/, "replying-sessions 空响应"],
   // 2026-11-18（G-MF）：载荷组装抽成 replyingSessionsPayload（普通轮询与长轮询共用一份），
   // 所以不再钉「参数是 payload」这个字面形状 —— 只钉「sessions 经 respondJSONConditional 发出」。意图不变。
-  [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": h\.replyingSessionsPayload\(r, /, "replying-sessions 正常响应"],
+  // 2026-11-19（G-MX）：完成账本把响应体再包一层（sessions + completed/completedEpoch/
+  // completedSeq），普通轮询与长轮询都改走 h.replyingPayload，仍由 respondJSONConditional 发出。
+  [/respondJSONConditional\(w, r, h\.replyingPayload\(r, /, "replying-sessions 正常响应"],
 ]) {
   assert.match(httpDomain, needle, `${label} 必须走 respondJSONConditional`);
 }
@@ -74,9 +76,9 @@ assert.ok(
 );
 // 2026-11-18（G-MF）：载荷组装抽成 replyingSessionsPayload 后，旧负例
 // `respondJSONList(... "sessions": payload)` 已经匹配不到任何东西（死守卫）。
-// 改钉当前调用形状：sessions 只能经 respondJSONConditional + replyingSessionsPayload 发出。
+// 改钉当前调用形状：sessions 只能经 respondJSONConditional + replyingPayload 发出。
 assert.ok(
-  !/respondJSONList\(w, r, map\[string\]any\{"sessions": h\.replyingSessionsPayload\(/.test(httpDomain),
+  !/respondJSONList\(w, r, h\.replyingPayload\(/.test(httpDomain),
   "replying-sessions 绝不能用 respondJSONList",
 );
 

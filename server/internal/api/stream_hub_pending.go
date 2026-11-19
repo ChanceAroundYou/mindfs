@@ -184,6 +184,10 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string, min
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
+	// 所有调用点都是 OnSubAgentAttached（子会话 attach），所以这条 pending 一定是子会话。
+	// 顶层的用户留言走 SetPendingUserAt，不会经过这里。收尾时 notifySessionDone 与
+	// 客户端提醒都靠这一位决定「静默完成」。
+	state.SubSession = true
 	// 同 setPendingUserAt：新回合开始即终结上一轮的"等回答"。
 	state.AwaitingAnswer = false
 	state.AwaitingCallID = ""
@@ -211,6 +215,7 @@ func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnap
 		SessionTitle: state.SessionTitle,
 		Summary:      state.Summary,
 		UpdatedAt:    state.UpdatedAt,
+		SubSession:   state.SubSession,
 	}
 }
 

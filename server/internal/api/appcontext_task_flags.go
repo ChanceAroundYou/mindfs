@@ -62,6 +62,9 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID
 		return
 	}
 	pending := hub.PendingSessionSnapshot(sessionKey)
+	// 完成补发账本：与「从 pending 表消失」同一时刻入账。客户端边沿检测只在它在线时
+	// 有效，这份账本负责它离线期间漏掉的完成（见 stream_hub_completions.go）。
+	hub.RecordCompletion(pending, sessionKey)
 	// 提问卡兜底收口：放在清 pending 之前，避免同一会话在「收口—清 pending」
 	// 之间起新轮又建出新的 waiting 卡后被误收。harness 取消回合时可能完全不发
 	// tool update（Codex 当前如此），这里是最后一道防线。

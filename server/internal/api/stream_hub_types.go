@@ -51,6 +51,13 @@ type SessionPendingState struct {
 	// awaiting_answer 字段表达成空心灯。
 	AwaitingAnswer bool
 	AwaitingCallID string
+	// SubSession 表示这条 pending 属于**子会话**（Claude Code Task / 看板节点 attach 出来的
+	// 子代理），不是用户正看着的那条会话。子会话的完成不该弹提醒：父会话那一轮还在跑，
+	// 用户要的是「活干完了」，不是「其中一个子任务回来了」。
+	//
+	// 由 SetPendingReply 置位 —— 目前所有调用点都是 OnSubAgentAttached，也就是子会话。
+	// 顶层的用户留言走 SetPendingUserAt，永远是 false。
+	SubSession bool
 }
 
 type ClientStreamStatus string
@@ -76,6 +83,9 @@ type ReplyingSessionState struct {
 	// 与 Status="replying"（实心灯）互斥表达：一个会话可以 awaiting 但不 replying。
 	// 随 /api/replying-sessions 一并下发，避免为这一位单独开第二条状态通道。
 	AwaitingAnswer bool `json:"awaiting_answer,omitempty"`
+	// SubSession 标记这条属于子会话（见 SessionPendingState.SubSession）。
+	// 客户端（安卓后台轮询、Web Push 消费端）据此跳过完成提醒。
+	SubSession bool `json:"subSession,omitempty"`
 }
 
 type PendingSessionSnapshot struct {
@@ -83,6 +93,8 @@ type PendingSessionSnapshot struct {
 	SessionTitle string
 	Summary      string
 	UpdatedAt    time.Time
+	// SubSession 与 SessionPendingState.SubSession 同义；Web Push 用它跳过子会话完成。
+	SubSession bool
 }
 
 type replayStep struct {

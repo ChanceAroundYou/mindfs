@@ -131,7 +131,10 @@ test("reply alerts are per-session and cross-node", async () => {
   // 只对响应成功的节点判定「消失 = 完成」：每个成功快照都走 merger.applyNode(target.id, …)，
   // 合并器只看本节点自己的条目（node.equals(state.nodeId)），其他节点仍列着同一会话也不算完成，
   // 离线节点更不能被当成任务结束。
-  assert.match(service, /merger\.applyNode\(target\.id, snapshot, now\)/);
+  // 2026-11-19（G-MX）：快照解析多了完成账本（completed/completedEpoch/completedSeq），
+  // 参数从裸 List 变成 ParsedSnapshot，条目列表因此改名 snapshotEntries —— 传进合并器的
+  // 仍只有本节点这一份快照，意图不变。
+  assert.match(service, /merger\.applyNode\(target\.id, snapshotEntries, now\)/);
   assert.match(merger, /!node\.equals\(state\.nodeId\) \|\| incoming\.containsKey\(state\.key\(\)\)/);
   // 正在看的会话不打扰；切到后台即清空（Entry 的键 = nodeId␟rootId␟sessionKey）。
   assert.match(service, /viewingKey\.equals\(stateKey\)/);

@@ -75,7 +75,7 @@ public class ReplyPollerPlugin extends Plugin {
         if (call.getData().has("e2eeTransportKey")) {
             intent.putExtra(ReplyPollerService.EXTRA_E2EE_TRANSPORT_KEY, call.getString("e2eeTransportKey", ""));
         }
-        getContext().startService(intent);
+        startServiceSafely(intent);
         call.resolve();
     }
 
@@ -91,7 +91,7 @@ public class ReplyPollerPlugin extends Plugin {
     public void pause(PluginCall call) {
         Intent intent = new Intent(getContext(), ReplyPollerService.class);
         intent.setAction(ReplyPollerService.ACTION_PAUSE);
-        getContext().startService(intent);
+        startServiceSafely(intent);
         call.resolve();
     }
 
@@ -172,16 +172,31 @@ public class ReplyPollerPlugin extends Plugin {
     public void stop(PluginCall call) {
         Intent intent = new Intent(getContext(), ReplyPollerService.class);
         intent.setAction(ReplyPollerService.ACTION_STOP);
-        getContext().startService(intent);
+        startServiceSafely(intent);
         call.resolve();
+    }
+
+    // Android 8+ 在应用已进后台时 startService 会抛 IllegalStateException，12+ 对前台
+    // 服务还会抛 ForegroundServiceStartNotAllowedException。插件方法是从 WebView 里调的，
+    // 抛出去就是一个 JS 层看不到的进程崩溃 —— 连带把常驻轮询一起带走。
+    private void startServiceSafely(Intent intent) {
+        try {
+            getContext().startService(intent);
+        } catch (RuntimeException ex) {
+            Log.w(TAG, "reply poller service start failed action=" + intent.getAction(), ex);
+        }
     }
 
     private void startForeground(Intent intent) {
         Context context = getContext();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ContextCompat.startForegroundService(context, intent);
-        } else {
-            context.startService(intent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(context, intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (RuntimeException ex) {
+            Log.w(TAG, "reply poller foreground start failed action=" + intent.getAction(), ex);
         }
     }
 

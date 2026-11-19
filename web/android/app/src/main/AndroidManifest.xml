@@ -52,6 +52,12 @@
                 android:value="session reply sync" />
         </service>
 
+        <!-- 兜底唤醒闹钟的接收端：进程被 ROM 清掉后靠它把前台轮询拉回来。
+             广播接收器可以申请前台服务，PendingIntent.getService 在后台起不来。 -->
+        <receiver
+            android:name=".ReplyPollerWatchdogReceiver"
+            android:exported="false" />
+
         <!-- 开机 / 应用更新后把常驻轮询拉起来：系统的 START_STICKY 不跨重启，
              而用户装完更新或重启手机之后如果没有手动点开 app，轮询就永远不会开始。 -->
         <receiver

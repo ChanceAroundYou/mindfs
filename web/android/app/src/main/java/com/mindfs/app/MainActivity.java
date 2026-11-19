@@ -119,7 +119,7 @@ public class MainActivity extends BridgeActivity {
         Intent intent = new Intent(this, ReplyPollerService.class);
         intent.setAction(ReplyPollerService.ACTION_CONFIGURE);
         intent.putExtra(ReplyPollerService.EXTRA_VIEWING, "");
-        startService(intent);
+        startReplyPollerService(intent);
     }
 
     @Override
@@ -289,10 +289,26 @@ public class MainActivity extends BridgeActivity {
     private void ensureReplyPollerRunning() {
         Intent resume = new Intent(this, ReplyPollerService.class);
         resume.setAction(ReplyPollerService.ACTION_RESUME);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ContextCompat.startForegroundService(this, resume);
-        } else {
-            startService(resume);
+        startReplyPollerService(resume);
+    }
+
+    /**
+     * 拉前台服务。Android 12+ 在「后台启动前台服务」上会抛
+     * ForegroundServiceStartNotAllowedException，Android 8+ 在应用已完全进后台时
+     * startService 会抛 IllegalStateException。这两个异常都发生在 onStop 这条
+     * 「刚切后台」的路径上，一旦抛出去就是进程级崩溃 —— 连带把常驻轮询一起带走，
+     * 表现正是「切后台之后再没有任何提醒」。所以统一吞掉并记日志：能起来最好，
+     * 起不来由兜底闹钟/开机广播/下次打开 App 再补。
+     */
+    private void startReplyPollerService(Intent intent) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(this, intent);
+            } else {
+                startService(intent);
+            }
+        } catch (RuntimeException ex) {
+            Log.w(TAG, "start reply poller failed action=" + intent.getAction(), ex);
         }
     }
 
@@ -317,16 +333,12 @@ public class MainActivity extends BridgeActivity {
             Intent configure = new Intent(this, ReplyPollerService.class);
             configure.setAction(ReplyPollerService.ACTION_CONFIGURE);
             configure.putExtra(ReplyPollerService.EXTRA_API_BASE_URL, apiBaseUrl);
-            startService(configure);
+            startReplyPollerService(configure);
         }
 
         Intent resume = new Intent(this, ReplyPollerService.class);
         resume.setAction(ReplyPollerService.ACTION_RESUME);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ContextCompat.startForegroundService(this, resume);
-        } else {
-            startService(resume);
-        }
+        startReplyPollerService(resume);
     }
 
     private String currentHTTPOrigin() {

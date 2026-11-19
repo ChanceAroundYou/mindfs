@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"mindfs/server/internal/api/usecase"
@@ -161,7 +162,83 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	items := h.AppContext.GetSessionStreamHub().ListReplyingSessions()
-	respondJSONConditional(w, r, map[string]any{"sessions": h.replyingSessionsPayload(r, items)})
+	since, hasSince := parseCompletedSince(r.URL.Query().Get("completed_since"))
+	resp := h.replyingPayload(r, items, since, hasSince)
+	respondJSONConditional(w, r, resp)
+}
+
+// replyingPayload 是普通轮询与长轮询**共用**的响应体，形状不许分叉。
+//
+// hasSince=false 是首次播种：只回 completedSeq/completedEpoch，**不回历史完成行** ——
+// 新装的客户端不该被账本里已有的旧完成刷屏。客户端拿到游标后，下一次请求带上
+// completed_since，之后的响应才会携带它漏掉的那些完成。
+func (h *HTTPHandler) replyingPayload(r *http.Request, items []ReplyingSessionState, since uint64, hasSince bool) map[string]any {
+	resp := map[string]any{"sessions": h.replyingSessionsPayload(r, items)}
+	if h.AppContext == nil || h.AppContext.GetSessionStreamHub() == nil {
+		return resp
+	}
+	hub := h.AppContext.GetSessionStreamHub()
+	if !hasSince {
+		seq, epoch := hub.CompletionHead()
+		resp["completedSeq"] = seq
+		resp["completedEpoch"] = epoch
+		return resp
+	}
+	completed, seq, epoch := hub.CompletionsSince(since)
+	resp["completed"] = h.replyingCompletionsPayload(r, completed)
+	resp["completedSeq"] = seq
+	resp["completedEpoch"] = epoch
+	return resp
+}
+
+// parseCompletedSince 解析客户端的消费游标。缺省/非法一律按「没有游标」处理 ——
+// 宁可少补（只播种），也不能把一次脏参数变成一屏旧提醒。
+func parseCompletedSince(raw string) (uint64, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return 0, false
+	}
+	cursor, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return cursor, true
+}
+
+// replyingCompletionsPayload 把完成账本行构造成对外载荷。只在客户端带了游标时调用：
+// 补发是低频路径，这里解析 root/session 标题的代价可以接受。
+func (h *HTTPHandler) replyingCompletionsPayload(r *http.Request, items []SessionCompletion) []map[string]any {
+	payload := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		rootTitle := item.RootID
+		sessionTitle := strings.TrimSpace(item.SessionTitle)
+		if root, err := h.AppContext.GetRoot(item.RootID); err == nil {
+			if strings.TrimSpace(root.Name) != "" {
+				rootTitle = root.Name
+			}
+			if sessionTitle == "" && strings.TrimSpace(item.SessionKey) != "" {
+				if manager, err := h.AppContext.GetSessionManager(item.RootID); err == nil {
+					if sess, err := manager.GetMeta(r.Context(), item.SessionKey); err == nil && sess != nil {
+						sessionTitle = sess.Name
+					}
+				}
+			}
+		}
+		payloadItem := map[string]any{
+			"seq":          item.Seq,
+			"rootId":       item.RootID,
+			"rootTitle":    rootTitle,
+			"sessionKey":   item.SessionKey,
+			"sessionTitle": sessionTitle,
+			"summary":      item.Summary,
+			"completedAt":  item.CompletedAt,
+		}
+		if item.SubSession {
+			payloadItem["subSession"] = true
+		}
+		payload = append(payload, payloadItem)
+	}
+	return payload
 }
 
 // replyingSessionsPayload 把 hub 内存态构造成对外的载荷。**这是昂贵的那一步**：
@@ -197,6 +274,10 @@ func (h *HTTPHandler) replyingSessionsPayload(r *http.Request, items []ReplyingS
 		}
 		if item.AwaitingAnswer {
 			payloadItem["awaiting_answer"] = true
+		}
+		if item.SubSession {
+			// 子会话标记：客户端用它跳过完成提醒（父会话那一轮还在跑）。
+			payloadItem["subSession"] = true
 		}
 		payload = append(payload, payloadItem)
 	}

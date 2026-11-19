@@ -98,6 +98,8 @@ public class ReplyPollerService extends Service {
     private static final String PREF_STARTED_AT = "started_at";
     private static final String PREF_LAST_ALERT = "last_alert";
     private static final String PREF_VIEWING = "viewing";
+    // 每节点一份「完成补发游标」（epoch␟seq）。每个节点是独立进程、独立账本，不能共用。
+    private static final String PREF_COMPLETION_CURSOR_PREFIX = "completion_cursor_";
     private static final String E2EE_HEADER = "X-MindFS-E2EE";
     private static final String CLIENT_ID_HEADER = "X-MindFS-Client-ID";
     private static final String PROOF_HEADER = "X-MindFS-Proof";
@@ -148,6 +150,8 @@ public class ReplyPollerService extends Service {
     private final Map<String, String> nodeModes = new ConcurrentHashMap<>();
     private final Map<String, String> nodeResults = new ConcurrentHashMap<>();
     private final Map<String, Long> nodeLastSuccessAt = new ConcurrentHashMap<>();
+    // 完成补发游标的内存副本（持久化在 SharedPreferences，键按节点分）。读多写少。
+    private final Map<String, ReplyCompletionFeed.Cursor> completionCursors = new ConcurrentHashMap<>();
     // 停服时主动 disconnect，别让阻塞中的等待请求拖住线程直到读超时。
     private final Set<HttpURLConnection> openConnections =
         Collections.synchronizedSet(new HashSet<HttpURLConnection>());
@@ -185,7 +189,11 @@ public class ReplyPollerService extends Service {
         String action = intent == null ? "" : intent.getAction();
         if (ACTION_CONFIGURE.equals(action)) {
             configure(intent);
-            return START_NOT_STICKY;
+            // 必须是 STICKY：切后台时最后送达的命令正是这一条（MainActivity.onStop →
+            // 清 viewing，前端 visibilitychange → 300ms 后再 configure 一次）。返回
+            // NOT_STICKY 等于在用户最需要它活着的时刻把「被杀后自动重启」关掉了 ——
+            // 进程一死，后台提醒就永久沉默，直到手动打开 App。
+            return START_STICKY;
         }
         if (ACTION_RESUME.equals(action)) {
             resumePolling();
@@ -273,10 +281,26 @@ public class ReplyPollerService extends Service {
         }
         editor.apply();
         Log.i(TAG, "configured apiBaseUrl=" + apiBaseUrl + " e2eeRequired=" + e2eeRequired + " e2eeReady=" + hasE2EESession());
+        if (!running) {
+            // 服务被系统重建 / 上一次 configure 之后循环已经死了：配置齐了就必须把循环
+            // 拉起来。早先这里只在 `running` 为真时比较节点签名 —— 于是「服务在、循环不在」
+            // 这种半死状态永远自愈不了。
+            resumePolling();
+            return;
+        }
         // 节点表/兜底地址变了才重启循环：viewing 会频繁下发，按它重启会把 ETag 和
         // 正在进行的等待全部打掉。
-        if (running && !nodesSignature().equals(activeNodesSignature)) {
-            Log.i(TAG, "node targets changed, restarting reply loops");
+        ensureNodeLoops();
+    }
+
+    // 循环该在而不在时就把它拉起来；节点签名没变时什么都不做（保住 ETag 与在途等待）。
+    private void ensureNodeLoops() {
+        if (!running || apiBaseUrl.isEmpty()) {
+            return;
+        }
+        if (nodeExecutor == null || nodeExecutor.isShutdown()
+            || !nodesSignature().equals(activeNodesSignature)) {
+            Log.i(TAG, "starting reply loops (executor missing or node targets changed)");
             startNodeLoops();
         }
     }
@@ -350,22 +374,37 @@ public class ReplyPollerService extends Service {
     private static final long WATCHDOG_INTERVAL_MS = 15 * 60_000L;
     private static final int WATCHDOG_REQUEST_CODE = 750100;
 
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // 从最近任务里划掉不等于「别提醒了」（manifest 里 stopWithTask=false）。划卡之后
+        // 进程仍可能被 ROM 顺手清掉，这里先把兜底闹钟提前到 1 分钟后 —— 真被清掉时，
+        // 15 分钟的窗口太长，用户划一下就会以为「后台提醒又没了」。
+        if (running) {
+            scheduleWatchdogAt(this, 60_000L);
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
     private void scheduleWatchdog() {
-        if (apiBaseUrl.isEmpty()) {
+        scheduleWatchdogAt(this, WATCHDOG_INTERVAL_MS);
+    }
+
+    /**
+     * 用**广播**而不是 getService 递闹钟。Android 8+ 禁止后台进程 startService，
+     * PendingIntent.getService 在「进程已经被杀」这个唯一需要它的场景下恰好起不来 ——
+     * 兜底闹钟等于没有。广播接收器里可以申请前台服务，也可以自己把下一次闹钟排上。
+     */
+    static void scheduleWatchdogAt(Context context, long delayMillis) {
+        if (context == null) {
             return;
         }
-        AlarmManager alarms = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (alarms == null) {
             return;
         }
         try {
-            PendingIntent pending = PendingIntent.getService(
-                this,
-                WATCHDOG_REQUEST_CODE,
-                new Intent(this, ReplyPollerService.class).setAction(ACTION_WATCHDOG),
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-            );
-            long at = System.currentTimeMillis() + WATCHDOG_INTERVAL_MS;
+            PendingIntent pending = watchdogPendingIntent(context);
+            long at = System.currentTimeMillis() + Math.max(0L, delayMillis);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 // setAndAllowWhileIdle 而不是 setExactAndAllowWhileIdle：后者在 Android 14+
                 // 需要 SCHEDULE_EXACT_ALARM 特殊权限，没授权会直接抛 SecurityException；
@@ -379,18 +418,27 @@ public class ReplyPollerService extends Service {
         }
     }
 
-    private void cancelWatchdog() {
-        AlarmManager alarms = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+    static void cancelWatchdog(Context context) {
+        AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (alarms == null) {
             return;
         }
-        PendingIntent pending = PendingIntent.getService(
-            this,
+        alarms.cancel(watchdogPendingIntent(context));
+    }
+
+    private static PendingIntent watchdogPendingIntent(Context context) {
+        Intent intent = new Intent(context, ReplyPollerWatchdogReceiver.class)
+            .setAction(ACTION_WATCHDOG);
+        return PendingIntent.getBroadcast(
+            context,
             WATCHDOG_REQUEST_CODE,
-            new Intent(this, ReplyPollerService.class).setAction(ACTION_WATCHDOG),
+            intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
-        alarms.cancel(pending);
+    }
+
+    private void cancelWatchdog() {
+        cancelWatchdog(this);
     }
 
     private void pausePolling() {
@@ -532,7 +580,7 @@ public class ReplyPollerService extends Service {
             if (System.currentTimeMillis() >= retryWaitAt) {
                 try {
                     // 第一次不带 If-None-Match：服务端立刻回全量快照，用来播种。
-                    WaitResult result = fetchWait(target, etag);
+                    WaitResult result = fetchWait(target, etag, completionCursor(target));
                     if (result.status == 404 || result.status == 405) {
                         // 旧服务端：这是「能力」问题而不是网络抖动，等待时间可以长；
                         // 但 10s 的普通轮询仍然照跑，所以提醒不会断。
@@ -559,7 +607,7 @@ public class ReplyPollerService extends Service {
                         etag = result.etag;
                     }
                     if (result.status == 200) {
-                        applyNodeSnapshot(target, result.entries, generation);
+                        applyNodeSnapshot(target, result.snapshot, generation);
                         setNodeMode(target, "push", "等待返回 200");
                     } else {
                         // 304：快照没变，但要刷新节点新鲜度，否则空闲节点 90s 后会被判成掉线。
@@ -669,18 +717,29 @@ public class ReplyPollerService extends Service {
     private static final class WaitResult {
         final int status;
         final String etag;
-        final Map<String, ReplyStateMerger.Entry> entries;
+        final ParsedSnapshot snapshot;
         // 503 时服务端会带 Retry-After；单位毫秒，其余状态为 0。
         final long retryAfterMillis;
-        WaitResult(int status, String etag, Map<String, ReplyStateMerger.Entry> entries) {
-            this(status, etag, entries, 0L);
+        WaitResult(int status, String etag, ParsedSnapshot snapshot) {
+            this(status, etag, snapshot, 0L);
         }
-        WaitResult(int status, String etag, Map<String, ReplyStateMerger.Entry> entries, long retryAfterMillis) {
+        WaitResult(int status, String etag, ParsedSnapshot snapshot, long retryAfterMillis) {
             this.status = status;
             this.etag = etag == null ? "" : etag;
-            this.entries = entries == null ? Collections.<String, ReplyStateMerger.Entry>emptyMap() : entries;
+            this.snapshot = snapshot == null ? new ParsedSnapshot() : snapshot;
             this.retryAfterMillis = retryAfterMillis > 0L ? retryAfterMillis : 0L;
         }
+    }
+
+    // 一次响应的全部内容：出现的会话 + 完成账本的游标与补发行。两者必须一起解析，
+    // 因为「这一轮结束」既可能表现为会话从形状里消失，也可能只表现为账本多一行。
+    private static final class ParsedSnapshot {
+        final Map<String, ReplyStateMerger.Entry> entries = new LinkedHashMap<>();
+        final List<ReplyCompletionFeed.Completion> completions = new ArrayList<>();
+        String completedEpoch = "";
+        long completedSeq = 0L;
+        // 服务端带账本时才为真：老服务端没有完成补发能力，只能退回边沿检测。
+        boolean hasFeed = false;
     }
 
     private static String resolveWaitUrl(String url, String explicit) {
@@ -701,6 +760,41 @@ public class ReplyPollerService extends Service {
             return urlString;
         }
         return urlString + (urlString.contains("?") ? "&" : "?") + "timeout=" + WAIT_TIMEOUT_SECONDS;
+    }
+
+    // 带上「我消费到哪一条完成」。没播种过就别带：服务端不带游标时只回游标不回历史，
+    // 这正是新装客户端不该被旧完成刷屏的那条契约。
+    private static String withCompletedSince(String urlString, ReplyCompletionFeed.Cursor cursor) {
+        if (cursor == null || !cursor.seeded()) {
+            return urlString;
+        }
+        if (urlString.matches(".*[?&]completed_since=.*")) {
+            return urlString;
+        }
+        return urlString + (urlString.contains("?") ? "&" : "?") + "completed_since=" + cursor.seq;
+    }
+
+    private ReplyCompletionFeed.Cursor completionCursor(NodeTarget target) {
+        String key = diagnosticKey(target);
+        ReplyCompletionFeed.Cursor cached = completionCursors.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        ReplyCompletionFeed.Cursor loaded = ReplyCompletionFeed.Cursor.decode(
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(PREF_COMPLETION_CURSOR_PREFIX + key, ""));
+        completionCursors.put(key, loaded);
+        return loaded;
+    }
+
+    private void saveCompletionCursor(NodeTarget target, ReplyCompletionFeed.Cursor cursor) {
+        if (cursor == null) {
+            return;
+        }
+        String key = diagnosticKey(target);
+        completionCursors.put(key, cursor);
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(PREF_COMPLETION_CURSOR_PREFIX + key, cursor.encode()).apply();
     }
 
     // Retry-After 只按「秒数」解析（服务端发的就是 3）。HTTP-date 形态解析不了时回落默认，
@@ -822,8 +916,9 @@ public class ReplyPollerService extends Service {
     }
 
     // 一次长轮询。返回 200（新快照）/304（未变）/404/405（端点不存在）；其他状态码抛异常走失败路径。
-    private WaitResult fetchWait(NodeTarget target, String etag) throws Exception {
-        HttpURLConnection conn = openConnection(target, withWaitTimeout(target.waitUrl));
+    private WaitResult fetchWait(NodeTarget target, String etag, ReplyCompletionFeed.Cursor cursor) throws Exception {
+        HttpURLConnection conn = openConnection(target,
+            withCompletedSince(withWaitTimeout(target.waitUrl), cursor));
         try {
             // 服务端最多等 timeout，客户端晚 10s 才判超时，避免把正常的空等当成失败。
             conn.setReadTimeout(WAIT_READ_TIMEOUT_MS);
@@ -855,15 +950,16 @@ public class ReplyPollerService extends Service {
             if (protectedResponse) {
                 body = decryptProtectedBody(body);
             }
-            return new WaitResult(status, responseEtag, parseReplyingSessions(target, body));
+            return new WaitResult(status, responseEtag, parseSnapshot(target, body));
         } finally {
             openConnections.remove(conn);
             conn.disconnect();
         }
     }
 
-    private Map<String, ReplyStateMerger.Entry> fetchReplyingSessions(NodeTarget target) throws Exception {
-        HttpURLConnection conn = openConnection(target, target.url);
+    private ParsedSnapshot fetchReplyingSessions(NodeTarget target) throws Exception {
+        ReplyCompletionFeed.Cursor cursor = completionCursor(target);
+        HttpURLConnection conn = openConnection(target, withCompletedSince(target.url, cursor));
         try {
             int status = conn.getResponseCode();
             InputStream stream = status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream();
@@ -878,42 +974,62 @@ public class ReplyPollerService extends Service {
             if (protectedResponse) {
                 body = decryptProtectedBody(body);
             }
-            return parseReplyingSessions(target, body);
+            return parseSnapshot(target, body);
         } finally {
             openConnections.remove(conn);
             conn.disconnect();
         }
     }
 
-    private Map<String, ReplyStateMerger.Entry> parseReplyingSessions(NodeTarget target, String body) throws Exception {
+    private ParsedSnapshot parseSnapshot(NodeTarget target, String body) throws Exception {
         JSONObject root = new JSONObject(body);
+        ParsedSnapshot snapshot = new ParsedSnapshot();
         JSONArray sessions = root.optJSONArray("sessions");
-        Map<String, ReplyStateMerger.Entry> next = new LinkedHashMap<>();
-        if (sessions == null) {
-            return next;
-        }
-        for (int i = 0; i < sessions.length(); i++) {
-            JSONObject item = sessions.optJSONObject(i);
-            if (item == null) {
-                continue;
+        if (sessions != null) {
+            for (int i = 0; i < sessions.length(); i++) {
+                JSONObject item = sessions.optJSONObject(i);
+                if (item == null) {
+                    continue;
+                }
+                String sessionKey = safe(item.optString("sessionKey", ""));
+                if (sessionKey.isEmpty()) {
+                    continue;
+                }
+                String rootId = safe(item.optString("rootId", ""));
+                // nodeId 必须与 applyNode(nodeId, ...) 收到的完全一致，否则这个节点的快照清不掉这些行。
+                ReplyStateMerger.Entry entry = new ReplyStateMerger.Entry(target.id, rootId, sessionKey);
+                entry.rootTitle = safe(item.optString("rootTitle", ""));
+                entry.sessionTitle = safe(item.optString("sessionTitle", ""));
+                entry.summary = safe(item.optString("summary", ""));
+                entry.updatedAt = safe(item.optString("updatedAt", ""));
+                entry.subSession = item.optBoolean("subSession", false);
+                String st = safe(item.optString("status", ""));
+                entry.replying = "replying".equalsIgnoreCase(st) || item.optBoolean("active", false);
+                entry.awaiting = item.optBoolean("awaiting_answer", false) || item.optBoolean("awaitingAnswer", false);
+                snapshot.entries.put(entry.key(), entry);
             }
-            String sessionKey = safe(item.optString("sessionKey", ""));
-            if (sessionKey.isEmpty()) {
-                continue;
-            }
-            String rootId = safe(item.optString("rootId", ""));
-            // nodeId 必须与 applyNode(nodeId, ...) 收到的完全一致，否则这个节点的快照清不掉这些行。
-            ReplyStateMerger.Entry entry = new ReplyStateMerger.Entry(target.id, rootId, sessionKey);
-            entry.rootTitle = safe(item.optString("rootTitle", ""));
-            entry.sessionTitle = safe(item.optString("sessionTitle", ""));
-            entry.summary = safe(item.optString("summary", ""));
-            entry.updatedAt = safe(item.optString("updatedAt", ""));
-            String st = safe(item.optString("status", ""));
-            entry.replying = "replying".equalsIgnoreCase(st) || item.optBoolean("active", false);
-            entry.awaiting = item.optBoolean("awaiting_answer", false) || item.optBoolean("awaitingAnswer", false);
-            next.put(entry.key(), entry);
         }
-        return next;
+        snapshot.completedEpoch = safe(root.optString("completedEpoch", ""));
+        snapshot.completedSeq = Math.max(0L, root.optLong("completedSeq", 0L));
+        snapshot.hasFeed = !snapshot.completedEpoch.isEmpty();
+        JSONArray completed = root.optJSONArray("completed");
+        if (completed != null) {
+            for (int i = 0; i < completed.length(); i++) {
+                JSONObject item = completed.optJSONObject(i);
+                if (item == null) {
+                    continue;
+                }
+                snapshot.completions.add(new ReplyCompletionFeed.Completion(
+                    Math.max(0L, item.optLong("seq", 0L)),
+                    item.optString("rootId", ""),
+                    item.optString("rootTitle", ""),
+                    item.optString("sessionKey", ""),
+                    item.optString("sessionTitle", ""),
+                    item.optString("summary", ""),
+                    item.optBoolean("subSession", false)));
+            }
+        }
+        return snapshot;
     }
 
     private boolean hasE2EESession() {
@@ -1016,13 +1132,13 @@ public class ReplyPollerService extends Service {
     // 把一个节点的权威快照应用到合并视图：DONE 判定、awaiting 提醒、常驻通知都在这里。
     // 网络请求在外层完成；applyLock 只保护「应用」这一段，绝不持锁做 I/O。
     // generation 必须匹配：旧循环在途的响应（最长 30s）不能把「已不在节点表里的节点」写回来。
-    private void applyNodeSnapshot(NodeTarget target, Map<String, ReplyStateMerger.Entry> entries, int generation) {
+    private void applyNodeSnapshot(NodeTarget target, ParsedSnapshot snapshot, int generation) {
         if (!isCurrentLoop(generation)) {
             return;
         }
-        List<ReplyStateMerger.Entry> snapshot = new ArrayList<>();
-        if (entries != null) {
-            snapshot.addAll(entries.values());
+        List<ReplyStateMerger.Entry> snapshotEntries = new ArrayList<>();
+        if (snapshot != null) {
+            snapshotEntries.addAll(snapshot.entries.values());
         }
         synchronized (applyLock) {
             if (!isCurrentLoop(generation)) {
@@ -1031,13 +1147,22 @@ public class ReplyPollerService extends Service {
             // 读取-修改-写回都在锁内：两个节点同时应用时不能互相覆盖 awaiting 集合。
             Set<String> awaitingNotified = readAwaitingNotifiedLocked();
             long now = System.currentTimeMillis();
-            ReplyStateMerger.Result result = merger.applyNode(target.id, snapshot, now);
+            ReplyStateMerger.Result result = merger.applyNode(target.id, snapshotEntries, now);
             nodeLastSuccessAt.put(diagnosticKey(target), now);
 
-            // 1. DONE 检测：merger 只对本轮成功返回的节点判定 —— 节点离线时缺席不代表任务结束。
-            for (ReplyStateMerger.Entry entry : result.newlyCompleted) {
-                postAlert("done", entry);
-                vibrateReplyCompletion();
+            // 1. 完成提醒。服务端带完成账本时以账本为准：边沿检测只在客户端恰好在线时
+            //    有效，而账本能补发「进程被杀那段时间跑完的轮次」—— 那正是后台提醒丢失的
+            //    主因。老服务端没有账本，只能退回边沿检测（在线时不漏、离线仍会丢）。
+            if (snapshot == null || !snapshot.hasFeed) {
+                for (ReplyStateMerger.Entry entry : result.newlyCompleted) {
+                    if (entry.subSession) {
+                        continue;
+                    }
+                    postAlert("done", entry);
+                    vibrateReplyCompletion();
+                }
+            } else {
+                applyCompletionFeedLocked(target, snapshot);
             }
 
             // 2. awaiting 生命周期：只看新鲜的合并视图（不可信节点的会话不提醒）。
@@ -1082,6 +1207,33 @@ public class ReplyPollerService extends Service {
             // 3. 常驻前台服务通知：只说「有几个在跑」，不点名。
             updateForegroundNotification(result.live);
             recordPollDebug(true, all.size(), "");
+        }
+    }
+
+    // 只能在 applyLock 内调用。把服务端账本里「本机还没消费的完成」变成提醒。
+    // 游标按节点持久化：每个节点是独立进程、独立账本，epoch/seq 不能混用。
+    private void applyCompletionFeedLocked(NodeTarget target, ParsedSnapshot snapshot) {
+        ReplyCompletionFeed.Cursor cursor = completionCursor(target);
+        ReplyCompletionFeed.Decision decision = ReplyCompletionFeed.decide(
+            cursor, snapshot.completedEpoch, snapshot.completedSeq, snapshot.completions);
+        if (decision.seeded || decision.reset) {
+            // 首次播种 / 服务端重启过：只推进游标，不补发（旧账本已经没了，补不出来）。
+            saveCompletionCursor(target, decision.next);
+            return;
+        }
+        for (ReplyCompletionFeed.Completion completion : decision.alerts) {
+            ReplyStateMerger.Entry entry = new ReplyStateMerger.Entry(
+                target.id, completion.rootId, completion.sessionKey);
+            entry.rootTitle = completion.rootTitle;
+            entry.sessionTitle = completion.sessionTitle;
+            entry.summary = completion.summary;
+            entry.replying = false;
+            entry.subSession = completion.subSession;
+            postAlert("done", entry);
+            vibrateReplyCompletion();
+        }
+        if (!decision.next.sameAs(cursor)) {
+            saveCompletionCursor(target, decision.next);
         }
     }
 

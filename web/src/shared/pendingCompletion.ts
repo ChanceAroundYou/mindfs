@@ -39,3 +39,53 @@ export function newlyCompletedPendingKeys(
   }
   return completed;
 }
+
+/**
+ * 从「刚完成」里挑出**该响提示音**的那些：子会话（Claude Code Task 子代理 / 看板节点
+ * attach 的会话）跑完不响。
+ *
+ * 用户要的是「活干完了」，不是「其中一个子任务回来了」——父会话那一轮往往还在跑，
+ * 子代理回来的那一下弹提示音纯属噪音。WS 路径早就这么做（`realtimeWsHandlers` 判
+ * `parent_session_key`），轮询路径补上同一语义。
+ *
+ * 只影响提示音：未读徽标照样逐条标，那是静态信息，不吵人。
+ */
+export function alertableCompletedKeys(
+  completed: Iterable<string>,
+  subSessionKeys: Iterable<string>,
+): string[] {
+  const subSessions = new Set(
+    Array.from(subSessionKeys, (v) => String(v || "").trim()).filter(Boolean),
+  );
+  const alertable: string[] = [];
+  for (const key of completed) {
+    if (!subSessions.has(key)) alertable.push(key);
+  }
+  return alertable;
+}
+
+/**
+ * 维护「哪些键是子会话」这张表。
+ *
+ * 必须是跨帧的表，不能只看当前快照：完成是靠「从 pending 表里消失」差分出来的，
+ * 判完成的那一帧里会话已经不在 `sessions` 里了，它的 `subSession` 字段也就读不到。
+ * 所以：仍在 replying 的键保留标记，消失即忘（会话结束后不会再复用同一个键）；
+ * 本轮快照新标出的键加进来。
+ *
+ * `stillPending` 要传**合并后**的 pending 表：节点请求失败的键在那里仍是 true，
+ * 标记不能因为这一轮没拉到快照就被丢掉。
+ */
+export function carrySubSessionKeys(
+  previous: Iterable<string>,
+  fresh: Iterable<string>,
+  stillPending: Record<string, boolean>,
+): Set<string> {
+  const next = new Set<string>();
+  for (const key of previous) {
+    if (stillPending[key]) next.add(key);
+  }
+  for (const key of fresh) {
+    if (key) next.add(key);
+  }
+  return next;
+}

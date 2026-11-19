@@ -35,6 +35,11 @@ final class ReplyStateMerger {
         String updatedAt = "";
         boolean replying = true;
         boolean awaiting = false;
+        /**
+         * 子会话（Claude Code Task 子代理 / 看板节点 attach）。父会话那一轮还在跑，
+         * 子任务回来的那一下不该弹提醒 —— 用户要的是「活干完了」。
+         */
+        boolean subSession = false;
 
         Entry(String nodeId, String rootId, String sessionKey) {
             this.nodeId = safe(nodeId);

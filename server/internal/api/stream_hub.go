@@ -18,6 +18,9 @@ type StreamHub struct {
 	sessionClients  map[string]map[string]struct{}
 	pendingSessions map[string]*SessionPendingState
 	replayStates    map[string]*ClientReplayState
+	// completions 是完成补发账本（见 stream_hub_completions.go）。它不参与 pending 状态，
+	// 只是「已经跑完的会话」的短历史，用来给长时间离线的客户端补提醒。
+	completions *completionRing
 }
 
 func NewStreamHub() *StreamHub {
@@ -28,6 +31,7 @@ func NewStreamHub() *StreamHub {
 		sessionClients:  make(map[string]map[string]struct{}),
 		pendingSessions: make(map[string]*SessionPendingState),
 		replayStates:    make(map[string]*ClientReplayState),
+		completions:     newCompletionRing(),
 	}
 }
 
@@ -191,6 +195,7 @@ func (h *StreamHub) ListReplyingSessions() []ReplyingSessionState {
 			Summary:        state.Summary,
 			UpdatedAt:      state.UpdatedAt,
 			AwaitingAnswer: state.AwaitingAnswer,
+			SubSession:     state.SubSession,
 		})
 	}
 	// 排序是为了让这份列表**可比较**：ETag/304 与等待循环的签名都是「把列表内容拼成
