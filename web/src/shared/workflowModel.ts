@@ -69,14 +69,15 @@ export function setWorkflowNodeUsesOwnWorktree(
 
 /**
  * 节点 Plan 模式（后端 `params.plan_mode`）：这一回合以只读的规划模式跑，
- * 先出方案、不动文件。设计类节点该打开它，实现类节点关着。
- * 后端 `WorkflowNodeAgentProfileOf` 读的就是这个布尔值，缺省即关闭。
+ * 先出方案、不动文件。它同时就是「写不写工作区」的开关（用户 2026-11-20：
+ * 「写入这个按钮被 plan 替代，开 plan 就不写入，反之也是」），所以勾选/取消
+ * 时一起改 `writes_workspace`，不再有独立的写入开关。
  */
 export function workflowNodeUsesPlanMode(node: WorkflowNodeDef): boolean {
   return node.params?.plan_mode === true;
 }
 
-/** 勾选写 plan_mode=true；取消删掉参数，回到「直接动手」。 */
+/** 勾选：plan_mode=true 且 writes_workspace=false；取消：两个都删掉（缺省即会写）。 */
 export function setWorkflowNodeUsesPlanMode(
   params: Record<string, unknown> | undefined,
   plan: boolean,
@@ -84,8 +85,10 @@ export function setWorkflowNodeUsesPlanMode(
   const next: Record<string, unknown> = { ...(params ?? {}) };
   if (plan) {
     next.plan_mode = true;
+    next.writes_workspace = false;
   } else {
     delete next.plan_mode;
+    delete next.writes_workspace;
   }
   return next;
 }

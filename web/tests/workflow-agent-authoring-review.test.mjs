@@ -145,7 +145,9 @@ test("the patch services expose subset review with server dry-run", () => {
 test("the draft editor wires generation and review without a second graph truth", () => {
   const editor = read("src/components/task/WorkflowDraftEditor.tsx");
   assert.match(editor, /useWorkflowAuthoring\(/, "the editor owns the authoring state machine");
-  assert.match(editor, /WorkflowProposalReview/, "the editor renders the review panel");
+  // 提案审阅面板随「AI 生成 / 提案」一起拆到 WorkflowAuthoringPanel（守 500 行硬线）。
+  const panel = read("src/components/task/WorkflowAuthoringPanel.tsx");
+  assert.match(panel, /WorkflowProposalReview/, "the editor renders the review panel");
   assert.match(editor, /observeRevision\(/, "editor revision changes mark the proposal stale");
   assert.match(editor, /onApplied/, "apply returns the authoritative draft to the editor");
 });

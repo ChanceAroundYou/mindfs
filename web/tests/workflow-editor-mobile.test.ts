@@ -102,8 +102,17 @@ test("手机上草稿列表是浮在画布上的左侧抽屉，可收起且收�
   assert.match(editor, /draftPanelFrame\(\{ isMobile, open: draftPanelOpen \}\)/, "抽屉框只能来自纯函数");
   assert.match(editor, /if \(isMobile\) setDraftPanelOpen\(false\)/, "选完草稿自动收起，把画布让出来");
   assert.match(editor, /authoringPanelExpanded\(\{/, "展开规则走纯函数");
-  assert.match(editor, /data-testid="workflow-authoring-toggle"/);
+  // AI 面板本体（含折叠按钮）在 WorkflowAuthoringPanel，编辑器只把展开态传下去。
+  const panel = read("../src/components/task/WorkflowAuthoringPanel.tsx");
+  assert.match(panel, /data-testid="workflow-authoring-toggle"/);
   assert.match(editor, /position: isMobile \? "relative" : undefined/, "抽屉的定位祖先必须是内容区");
+
+  // 抽屉是 absolute（top/bottom 撑满父列），所以父列必须有高度：没选工作流时
+  // 内容只有一行提示，容器塌成十几像素、抽屉会变成一条缝（390×844 实测）。
+  assert.match(editor, /minHeight: isMobile \? "min\(60vh, 520px\)" : 0/, "手机内容列要撑出抽屉的高度");
+  // 新建完也让开画布，与「选完自动收起」同一个意图。
+  const createBlank = editor.slice(editor.indexOf("const createBlank"), editor.indexOf("const cancelCreate"));
+  assert.match(createBlank, /if \(isMobile\) setDraftPanelOpen\(false\)/, "新建后同样收起抽屉");
 
   // 提案/报错/新建流程一定展开，否则「生成完了什么都没发生」。
   const base = { isMobile: true, open: false, createMode: false, hasProposal: false, hasError: false };
@@ -128,11 +137,18 @@ test("手机上藏掉主区右缘的浏览器滚动条（只在编辑器打开�
   assert.match(editor, /document\.body\.dataset\.workflowEditorMobile = "true"/, "只在编辑器挂载期间生效");
 });
 
-test("顶部描述在手机上拿到两行完整宽度，不再被挤成单行省略号", () => {
+test("顶部描述整行独占，手机上拿到两行完整宽度，不再被挤成单行省略号", () => {
   const editor = read("../src/components/task/WorkflowDraftEditor.tsx");
-  assert.match(editor, /flexDirection: isMobile \? "column" : "row", alignItems: isMobile \? "stretch" : "flex-start"/, "标题与按钮分两行");
-  assert.match(editor, /whiteSpace: isMobile \? "normal" : "nowrap"/);
-  assert.match(editor, /WebkitLineClamp: 2/, "最多两行，仍保留省略号兜底");
+  // 首行只放「名字 + 编辑/删除 … 关闭」（用户 2026-11-20 的第 8 条），描述单独一行，
+  // 所以既不会再被标题按钮挤窄，也不需要再按窄屏切 flexDirection。
+  const at = editor.indexOf('data-testid="workflow-draft-description"');
+  assert.ok(at > 0, "描述块还在");
+  const head = editor.slice(at, at + 600);
+  assert.match(head, /whiteSpace: isMobile \? "normal" : "nowrap"/);
+  assert.match(head, /WebkitLineClamp: 2/, "最多两行，仍保留省略号兜底");
+  // 描述必须在首行收口之后，不能再嵌在标题行里。
+  const rowClose = editor.lastIndexOf("<span style={{ flex: 1 }} />", at);
+  assert.ok(rowClose > 0 && rowClose < at, "描述是首行之后的一块，不是首行里的列");
 });
 
 test("手机画布有固定高度、加节点按钮只留图标、提示改成触屏手势", () => {

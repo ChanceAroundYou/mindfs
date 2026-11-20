@@ -10622,3 +10622,47 @@ groups:
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.goneRemoved":'
       - 'web/tests/task-ghost-card.test.mjs:test("task-ghost-card"'
       - 'e2e/test_task_ghost_card.py:def test_cached_ghost_is_pruned_on_first_load('
+  - id: G-NO
+    title: 工作流编辑器八条反馈：Plan 接管写入、AI 面板不再自动夺焦、保存即发布、手机抽屉与首行重排
+    kind: feature
+    symptom: "2026-11-20 用户重启后逐条提要求：「1. 文本改成 Plan / 新会话 / worktree 2. 「写入」按钮和相关功能被 Plan 替代，开 Plan 就不写入，反之也是 3. 打开工作流编辑界面会自动焦点到输入框 我不喜欢 4. Agent 配置用 AgentSelector 图标就够了 放到右上角 5. 移动端侧栏默认展开，点击其他地方会收起，展开/收起位置放到侧栏竖向居中 6. 把草稿列表改成工作流列表，列表里的删除按钮上移到名字旁边的编辑按钮边 7. 保存缩小并移到「工作流画布」那行右侧，加一个还原按钮，取消发布，保存等于发布 8. 关闭按钮保持右上角，首行为「任务名 编辑icon 删除icon（居左）…… 关闭icon（居右）」」「A 保存即发布，彻底清理掉发布流程，也不做版本的概念了」「两行结构没错 但是中间还有一个 AI 提案的模块…移动端 AI 生成 / 提案 的内圈框和底色去掉…桌面端则在输入框上面加回这一行」。"
+    why: "必须保留：(1) Plan 是写入开关的反面 —— 开 Plan 同时写 `plan_mode=true` 与 `writes_workspace=false`，取消时两键一起删；只改前端不够，`WorkflowNodeWorkspaceOf` 必须对 `plan_mode=true` 兜底按只读处理，否则 AI 生成或手写的图漏写 `writes_workspace` 时 Plan 节点照样占共享树 writer gate、照样合并产物。(2) `TokenEditor.setText` 的焦点还原：Lexical 的 `$replaceWithSerializedText` 把选区落到文末并同步成 DOM 选区，Chrome 会因此聚焦 contenteditable —— 未聚焦的灌值必须把焦点还给原元素，且要补一个 `queueMicrotask` 拍（DOM 提交可能排在微任务），否则「打开编辑器自动聚焦 AI 输入框」必复发。(3) 「保存即发布」只能做成前端把 publish 折进 save（`updateWorkflowDraft` 拿新修订后 `publishWorkflowDraft(updated.revision)`，失败保留 dirty 以便重试）；发布接口与版本表保留，因为 `ActivityService.resolveWorkflowVersion` 执行侧只认已发布版本。(4) `WorkflowCanvas` 的 `actions` 插槽是保存/还原落在「工作流画布」标题行的唯一位置，父层不再自绘工具栏。(5) 手机抽屉是 absolute 撑满父列，父列必须补 `min(60vh, 520px)`，否则没选工作流时容器塌成十几像素、抽屉变成一条缝；把手 `draftHandleFrame` 竖向居中，点外面收起走 `pointerdown` 捕获阶段（不等抬手、不和画布拖拽抢事件）。(6) 删除键跟着选中的工作流住首行，列表行只负责选，避免两处删除入口。(7) `WorkflowAuthoringPanel` 拆出来守 500 行硬线，同时承载「手机去内圈框、桌面加回标题行」的排版差异。"
+    boundary: "不改后端发布/版本存储与执行侧解析，不改草稿 CAS 语义；不覆盖真实的移动端手势（真机触摸未验），不做多个工作流批量操作，不改 AI 生成的网关与提案审阅逻辑（只换容器）。"
+    files:
+      - web/src/shared/workflowModel.ts
+      - web/src/components/task/WorkflowNodeInspector.tsx
+      - web/src/components/task/WorkflowDraftEditor.tsx
+      - web/src/components/task/WorkflowAuthoringPanel.tsx
+      - web/src/components/task/WorkflowCanvas.tsx
+      - web/src/components/task/useWorkflowDraftEditor.ts
+      - web/src/components/task/workflowEditorLayout.ts
+      - web/src/components/editor/TokenEditor.tsx
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - server/internal/kanban/service_workspace_gate.go
+      - server/internal/kanban/workflow_workspace_gate_test.go
+    tests:
+      - web/tests/workflow-inspector-placement.test.ts
+      - web/tests/workflow-editor-mobile.test.ts
+      - web/tests/workflow-agent-authoring-e2e.test.mjs
+      - web/tests/workflow-agent-authoring-review.test.mjs
+      - web/tests/task-create-panel.test.mjs
+    anchors:
+      - 'web/src/shared/workflowModel.ts:export function setWorkflowNodeUsesPlanMode('
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:testId="workflow-node-plan-mode"'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:gridTemplateColumns: "repeat(3, minmax(0, 1fr))"'
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:data-testid="workflow-draft-delete"'
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:data-testid="workflow-draft-save"'
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:data-testid="workflow-draft-revert"'
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:minHeight: isMobile ? "min(60vh, 520px)" : 0'
+      - 'web/src/components/task/WorkflowDraftEditor.tsx:document.addEventListener("pointerdown", onPointerDown, true);'
+      - 'web/src/components/task/WorkflowAuthoringPanel.tsx:data-testid="workflow-authoring-panel"'
+      - 'web/src/components/task/WorkflowCanvas.tsx:actions?: React.ReactNode;'
+      - 'web/src/components/task/useWorkflowDraftEditor.ts:publishWorkflowDraft(updated.workflow_id, { revision: updated.revision })'
+      - 'web/src/components/task/workflowEditorLayout.ts:export function draftHandleFrame('
+      - 'web/src/components/editor/TokenEditor.tsx:function restoreFocus(previous: Element | null) {'
+      - 'web/src/components/editor/TokenEditor.tsx:queueMicrotask(undo);'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.workflowCanvas.planModeShort": "Plan"'
+      - 'server/internal/kanban/service_workspace_gate.go:if plan, ok := node.Params["plan_mode"].(bool); ok && plan {'
+      - 'web/tests/workflow-inspector-placement.test.ts:三个布尔开关收成 1×3'
+      - 'web/tests/workflow-editor-mobile.test.ts:手机内容列要撑出抽屉的高度'

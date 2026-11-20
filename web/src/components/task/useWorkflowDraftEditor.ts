@@ -35,7 +35,7 @@ export type WorkflowDraftEditorState = {
   create: () => Promise<void>;
   remove: (draft: WorkflowDraft) => Promise<void>;
   save: () => Promise<void>;
-  publish: () => Promise<void>;
+  revert: () => void;
   adoptDraft: (draft: WorkflowDraft) => void;
   confirmLeave: () => Promise<boolean>;
 };
@@ -163,6 +163,11 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
     }
   }, [drafts, t]);
 
+  // 保存即发布（用户 2026-11-20 裁定）：先写草稿拿到新修订，再拿这个新修订静默
+  // 发布一次。界面上没有发布按钮、也没有版本概念，但执行侧仍只认已发布版本
+  // （ActivityService 解析 Run 的 graph），所以这一步不能省。
+  // 发布失败时草稿已经落库，保留 dirty 让「保存」还能再点一次（重试会写同一份图、
+  // 再发布一次），错误照常显示。
   const save = useCallback(async () => {
     if (!selected) return;
     setSaving(true);
@@ -175,21 +180,24 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
           : d
       )));
       setRevision(updated.revision);
-      setDirty(false);
+      try {
+        await publishWorkflowDraft(updated.workflow_id, { revision: updated.revision });
+        setDirty(false);
+      } catch (e) {
+        setDirty(true);
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   }, [selected, revision, graph]);
 
-  const publish = useCallback(async () => {
-    if (!selected || dirty) return;
-    if (!(await confirmDialog({ message: t("task.workflowEditor.publishConfirm", { revision }) }))) return;
-    setSaving(true);
+  // 还原：丢掉本地未保存改动，回到服务端那份草稿。不写库。
+  const revert = useCallback(() => {
+    if (!selected) return;
+    setGraphState(selected.graph);
+    setDirty(false);
     setError("");
-    try {
-      await publishWorkflowDraft(selected.workflow_id, { revision });
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setSaving(false); }
-  }, [selected, dirty, revision, t]);
+  }, [selected]);
 
   // 名称/描述住在 WorkflowMeta；只改元数据，不动草稿修订，所以不会把画布弄脏。
   const updateMeta = useCallback(async (draft: WorkflowDraft, input: { name: string; description: string }) => {
@@ -232,5 +240,5 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
     return confirmDialog({ message: t("task.workflowEditor.leaveConfirm"), danger: true });
   }, [dirty, t]);
 
-  return { drafts, selected, selectedId, graph, revision, dirty, loading, saving, deletingId, error, metaBusy, setGraph, updateMeta, choose, reloadSelected, create, remove, save, publish, adoptDraft, confirmLeave };
+  return { drafts, selected, selectedId, graph, revision, dirty, loading, saving, deletingId, error, metaBusy, setGraph, updateMeta, choose, reloadSelected, create, remove, save, revert, adoptDraft, confirmLeave };
 }

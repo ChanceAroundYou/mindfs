@@ -68,9 +68,23 @@ assert.match(promptEditor, /const canSend = !sending && !sendDisabled;/, "send i
 const tokenEditor = fs.readFileSync(path.join(root, "src/components/editor/TokenEditor.tsx"), "utf8");
 assert.match(
   tokenEditor,
-  /const keepFocus = !!rootRef\.current && rootRef\.current\.contains\(document\.activeElement\);/,
+  /const keepFocus = !!root && root\.contains\(document\.activeElement\);/,
   "setText must only re-focus when the editor already holds focus",
 );
+// 只是「不主动 focus」不够：Lexical 同步选区会让 Chrome 自己聚焦 contenteditable，
+// 所以未聚焦的灌值之后必须把焦点还回去（2026-11-20 用户报的自动夺焦）。
+assert.match(
+  tokenEditor,
+  /const previous = keepFocus \? null : document\.activeElement;/,
+  "setText must remember what had focus before writing",
+);
+assert.match(
+  tokenEditor,
+  /if \(root && root\.contains\(document\.activeElement\)\) restoreFocus\(previous\);/,
+  "setText must undo the focus Lexical's selection sync steals",
+);
+// Lexical 的 DOM 提交可能排到微任务，夺焦发生在 setText 返回之后，所以还要补一拍。
+assert.match(tokenEditor, /queueMicrotask\(undo\)/, "the restore must also run in a microtask");
 assert.match(
   inlinePanel,
   /taskInlineEditorRef\.current\?\.setText\([\s\S]{0,120}?taskInlineEditorRef\.current\?\.focus\(\)/,

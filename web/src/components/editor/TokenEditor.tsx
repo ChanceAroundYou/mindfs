@@ -51,6 +51,20 @@ type TokenEditorProps = {
   onCompositionEnd?: () => void;
 };
 
+/**
+ * 把焦点还给「灌值之前」的元素。Lexical 同步选区会让 Chrome 聚焦 contenteditable，
+ * 未聚焦的灌值必须撤销这次夺焦：原来焦点在别的元素上就还给它，原来在 body 上就
+ * 把 contenteditable blur 掉（焦点回到 body）。
+ */
+function restoreFocus(previous: Element | null) {
+  if (previous instanceof HTMLElement && previous !== document.body && previous.isConnected) {
+    previous.focus({ preventScroll: true });
+    return;
+  }
+  const active = document.activeElement;
+  if (active instanceof HTMLElement) active.blur();
+}
+
 function PlaceholderLayer({
   isEmpty,
   isFocused,
@@ -150,15 +164,30 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
       });
     },
     setText(value: string) {
-      // 只在焦点已经在这个编辑器里时才抢焦点：常驻挂载的编辑器（如工作台快速发起）
-      // 灌值不能把整页焦点夺走；已聚焦的调用方（改写草稿、插入候选）行为不变。
-      const keepFocus = !!rootRef.current && rootRef.current.contains(document.activeElement);
+      // 只在焦点已经在这个编辑器里时才保留焦点：常驻挂载的编辑器（如工作台快速发起、
+      // 工作流编辑器的 AI 面板）灌值不能把整页焦点夺走。
+      //
+      // 光「不主动 focus」不够：Lexical 的 update 会把内部选区同步到 DOM 选区，
+      // 而 $replaceWithSerializedText 之后选区落在文末；Chrome 一旦在 contenteditable
+      // 里落下 DOM 选区，就会把它当成用户点击并聚焦（2026-11-20 用户报「打开工作流
+      // 编辑界面自动焦点到输入框」的根因）。所以灌完值要把被夺走的焦点还回去。
+      const root = rootRef.current;
+      const keepFocus = !!root && root.contains(document.activeElement);
+      const previous = keepFocus ? null : document.activeElement;
       editorRef.current?.update(() => {
         $replaceWithSerializedText(value);
       });
       if (keepFocus) {
-        rootRef.current?.focus({ preventScroll: true });
+        root?.focus({ preventScroll: true });
+        return;
       }
+      // Lexical 的 update 可能把 DOM 提交排到微任务里，夺焦发生在 setText 返回之后，
+      // 所以同一拍里检查一次、微任务里再检查一次（两次都只在焦点真落进本编辑器时才动）。
+      const undo = () => {
+        if (root && root.contains(document.activeElement)) restoreFocus(previous);
+      };
+      undo();
+      queueMicrotask(undo);
     },
     getSerializedText() {
       const editor = editorRef.current;

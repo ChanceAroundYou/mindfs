@@ -7,13 +7,39 @@ import { PromptEditor } from "../editor/PromptEditor";
 import { PlusIcon } from "../action/composerIcons";
 import { DeleteIcon, EditPencilIcon } from "./taskIcons";
 import { WorkflowCanvas } from "./WorkflowCanvas";
+import { WorkflowAuthoringPanel } from "./WorkflowAuthoringPanel";
 import { useWorkflowAuthoring } from "./useWorkflowAuthoring";
 import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
 import { useWorkflowDraftEditor } from "./useWorkflowDraftEditor";
-import { WorkflowProposalReview } from "./workflowAuthoring/WorkflowProposalReview";
 import { workflowDraftDisplayName } from "../../shared/workflowModel";
-import { authoringPanelExpanded, draftPanelFrame } from "./workflowEditorLayout";
+import { authoringPanelExpanded, draftHandleFrame, draftPanelFrame } from "./workflowEditorLayout";
 import type { AgentStatus } from "../../shared/agentTypes";
+
+// 两个弹窗（新建 / 编辑名称描述）共用同一个遮罩，单独拎出来省版面。
+const dialogOverlayStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0, 0, 0, 0.5)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 16,
+  zIndex: 1000,
+};
+
+// 「工作流画布」那一行右侧的小按钮（保存 / 还原）：比别人小一号，不抢画布。
+const canvasActionStyle: React.CSSProperties = { height: 22, padding: "0 8px", fontSize: 11 };
+
+// 首行只放图标的小按钮：编辑名称、删除工作流。
+const headerIconButtonStyle: React.CSSProperties = {
+  padding: "2px 6px",
+  minWidth: "unset",
+  fontSize: 11,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+};
 
 export type WorkflowDraftEditorProps = {
   onClose: () => void;
@@ -37,9 +63,11 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   const [metaDialogOpen, setMetaDialogOpen] = useState(false);
   const [metaName, setMetaName] = useState("");
   const [metaDescription, setMetaDescription] = useState("");
-  // 手机草稿列表是浮在画布上的抽屉：进编辑器先展开让人选草稿，选完自动收起，
-  // 之后靠左边缘的悬浮把手再打开。桌面恒为固定竖栏，这个状态不参与。
+  // 手机上工作流列表是浮在画布上的抽屉：进编辑器先展开让人选工作流，选完自动收起，
+  // 之后靠左边缘的悬浮把手再打开；点抽屉外面也收起（用户 2026-11-20 的第 5 条）。
+  // 桌面恒为固定竖栏，这个状态不参与。
   const [draftPanelOpen, setDraftPanelOpen] = useState(true);
+  const draftPanelRef = useRef<HTMLElement | null>(null);
   const createIdRef = useRef("");
   const { observeRevision, reset } = authoring;
   const previousDraftRef = useRef("");
@@ -109,6 +137,9 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   const createBlank = () => {
     setCreateDialogOpen(false);
     setInstruction("");
+    // 新建完同样让开画布：手机抽屉默认展开只是为了让人先选，选/建完就该收起来
+    // （用户 2026-11-20 的第 5 条）。
+    if (isMobile) setDraftPanelOpen(false);
     void e.create();
   };
 
@@ -147,8 +178,6 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
     hasError: !!authoring.state.error,
   });
 
-  const save = () => void e.save();
-  const publish = () => void e.publish();
   const close = () => {
     void e.confirmLeave().then((ok) => { if (ok) onClose(); });
   };
@@ -166,6 +195,20 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
       delete document.body.dataset.workflowEditorMobile;
     };
   }, [isMobile]);
+
+  // 手机抽屉点外面就收起（用户 2026-11-20 的第 5 条）。用 pointerdown 而不是
+  // click：手指按到画布上立刻收，不用等抬手，也不会和画布的拖拽抢事件。
+  // 抽屉里的点击由 contains 判掉，选工作流那条路径自己也会收。
+  useEffect(() => {
+    if (!isMobile || !draftPanelOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const panel = draftPanelRef.current;
+      if (panel && event.target instanceof Node && panel.contains(event.target)) return;
+      setDraftPanelOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [isMobile, draftPanelOpen]);
 
   return (
     <div
@@ -188,16 +231,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
       {createDialogOpen ? (
         <div
           data-testid="workflow-create-dialog"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 1000,
-          }}
+          style={dialogOverlayStyle}
         >
           <div style={{ ...panelSurfaceStyle(), width: "min(540px, 100%)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{t("task.workflowEditor.newWorkflow")}</div>
@@ -226,16 +260,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
       {metaDialogOpen && e.selected ? (
         <div
           data-testid="workflow-meta-dialog"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 1000,
-          }}
+          style={dialogOverlayStyle}
         >
           <div style={{ ...panelSurfaceStyle(), width: "min(460px, 100%)", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{t("task.workflowEditor.editMeta")}</div>
@@ -275,110 +300,95 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
         </div>
       ) : null}
 
-      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "flex-start", gap: 8 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-            <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {createMode
-                ? t("task.workflowAuthoring.createTitle")
-                : e.selected ? workflowDraftDisplayName(e.selected) : t("task.workflowEditor.title")}
-            </strong>
-            {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)" }} /> : null}
-            {!createMode && e.selected ? (
-              <button
-                type="button"
-                data-testid="workflow-draft-edit-meta"
-                aria-label={t("task.workflowEditor.editMeta")}
-                title={t("task.workflowEditor.editMeta")}
-                onClick={openMetaDialog}
-                style={{ ...panelButtonStyle("secondary"), padding: "2px 6px", minWidth: "unset", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-              >
-                <EditPencilIcon />
-              </button>
-            ) : null}
-          </div>
-          {!createMode && e.selected?.description ? (
-            <div
-              data-testid="workflow-draft-description"
-              // 手机上描述被单行省略号截断过（用户 2026-11-20 报「描述被遮挡截断」）：
-              // 窄屏给它两行完整宽度，桌面维持单行（顶栏高度固定）。
-              style={{
-                fontSize: 11,
-                color: "var(--text-secondary)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: isMobile ? "normal" : "nowrap",
-                ...(isMobile
-                  ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }
-                  : {}),
-              }}
-            >
-              {e.selected.description}
-            </div>
-          ) : null}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
-          {createMode ? (
-            <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
-          ) : (
-            <>
-              <button type="button" style={panelButtonStyle("primary")} disabled={e.saving || !e.dirty} onClick={save}>{e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}</button>
-              <button type="button" style={panelButtonStyle("secondary")} disabled={e.saving || e.dirty || !e.selected} onClick={publish}>{t("task.workflowEditor.publish")}</button>
-            </>
-          )}
-          <button type="button" style={panelButtonStyle("secondary")} onClick={close}>{t("task.workflowEditor.close")}</button>
-        </div>
-      </div>
-      {e.error ? <div role="alert" style={{ color: "var(--danger-color,#ef4444)", fontSize: 12 }}>{e.error}</div> : null}
-      {!e.loading && (e.selected || createMode) ? (
-        <section data-testid="workflow-authoring-panel" style={{ ...panelSurfaceStyle(), display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
-          {/* 手机上这一块默认收起：输入框 + 提示会把画布挤到首屏以下，而手机上第一眼
-              要看的是图。生成出提案/报错/新建流程时自动展开，绝不把结果藏起来。 */}
-          {isMobile ? (
+      {/* 首行：任务名 + 编辑/删除（居左）…… 关闭（居右）。手机上也是这一行，
+          名字单行省略，按钮永远不换行（用户 2026-11-20 的第 8 条）。
+          删除按钮从这里删掉当前选中的工作流 —— 列表里不再重复放一份。 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+          {createMode
+            ? t("task.workflowAuthoring.createTitle")
+            : e.selected ? workflowDraftDisplayName(e.selected) : t("task.workflowEditor.title")}
+        </strong>
+        {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)", flexShrink: 0 }} /> : null}
+        {!createMode && e.selected ? (
+          <>
             <button
               type="button"
-              data-testid="workflow-authoring-toggle"
-              aria-expanded={authoringExpanded}
-              onClick={() => setAuthoringOpen((open) => !open)}
-              style={{ ...panelButtonStyle("secondary"), width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+              data-testid="workflow-draft-edit-meta"
+              aria-label={t("task.workflowEditor.editMeta")}
+              title={t("task.workflowEditor.editMeta")}
+              onClick={openMetaDialog}
+              style={{ ...panelButtonStyle("secondary"), ...headerIconButtonStyle }}
             >
-              <span>{t("task.workflowEditor.aiAssist")}</span>
-              <span aria-hidden>{authoringExpanded ? "▾" : "▸"}</span>
+              <EditPencilIcon />
             </button>
-          ) : null}
-          {authoringExpanded ? (
-            <>
-              {createMode ? <div data-testid="workflow-authoring-create-hint">{t("task.workflowAuthoring.createHint")}</div> : null}
-              <PromptEditor
-                value={instruction}
-                onChange={setInstruction}
-                resetKey={createMode ? createIdRef.current : e.selectedId}
-                placeholder={t("task.workflowAuthoring.instructionPlaceholder")}
-                onSend={generate}
-                sending={authoring.state.phase === "generating"}
-                sendDisabled={e.dirty || !instruction.trim()}
-                containerTestId="workflow-authoring-instruction"
-                sendTestId="workflow-authoring-generate"
-                sendLabel={t("task.workflowAuthoring.generate")}
-              />
-              <WorkflowProposalReview
-                authoring={authoring}
-                review={review}
-                disabled={e.dirty}
-                onApplied={(result) => {
-                  if (result.draft) {
-                    setCreateMode(false);
-                    e.adoptDraft(result.draft);
-                  }
-                }}
-              />
-            </>
-          ) : null}
-        </section>
+            <button
+              type="button"
+              data-testid="workflow-draft-delete"
+              data-workflow-id={e.selected.workflow_id}
+              aria-label={t("task.workflowEditor.delete")}
+              title={t("task.workflowEditor.delete")}
+              disabled={!!e.deletingId || e.saving}
+              onClick={() => void e.remove(e.selected!)}
+              style={{ ...panelButtonStyle("secondary"), ...headerIconButtonStyle, color: "#dc2626" }}
+            >
+              <DeleteIcon />
+            </button>
+          </>
+        ) : null}
+        <span style={{ flex: 1 }} />
+        {createMode ? (
+          <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
+        ) : null}
+        <button type="button" style={panelButtonStyle("secondary")} onClick={close}>{t("task.workflowEditor.close")}</button>
+      </div>
+      {!createMode && e.selected?.description ? (
+        <div
+          data-testid="workflow-draft-description"
+          // 手机上描述被单行省略号截断过（用户 2026-11-20 报「描述被遮挡截断」）：
+          // 窄屏给它两行完整宽度，桌面维持单行（顶栏高度固定）。
+          style={{
+            fontSize: 11,
+            color: "var(--text-secondary)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: isMobile ? "normal" : "nowrap",
+            ...(isMobile
+              ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }
+              : {}),
+          }}
+        >
+          {e.selected.description}
+        </div>
+      ) : null}
+      {e.error ? <div role="alert" style={{ color: "var(--danger-color,#ef4444)", fontSize: 12 }}>{e.error}</div> : null}
+      {!e.loading && (e.selected || createMode) ? (
+        <WorkflowAuthoringPanel
+          isMobile={isMobile}
+          expanded={authoringExpanded}
+          onToggle={() => setAuthoringOpen((open) => !open)}
+          createMode={createMode}
+          instruction={instruction}
+          onInstructionChange={setInstruction}
+          resetKey={createMode ? createIdRef.current : e.selectedId}
+          onGenerate={generate}
+          generating={authoring.state.phase === "generating"}
+          dirty={e.dirty}
+          authoring={authoring}
+          review={review}
+          onApplied={(result) => {
+            if (result.draft) {
+              setCreateMode(false);
+              e.adoptDraft(result.draft);
+            }
+          }}
+        />
       ) : null}
       {e.loading ? <div>{t("task.workflowEditor.loading")}</div> : (
-        <div style={{ position: isMobile ? "relative" : undefined, display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: 0, flex: isMobile ? "none" : 1, gap: isMobile ? 8 : 12 }}>
-          {/* 手机上草稿列表是浮在画布上方的左侧抽屉（竖向），收起后完全隐藏、
+        // 手机抽屉是 absolute 定位的（top/bottom 撑满这一列），所以这一列必须有高度：
+        // 没选工作流时内容只有一行提示，容器会塌成十几像素，抽屉跟着变成一条缝。
+        <div style={{ position: isMobile ? "relative" : undefined, display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: isMobile ? "min(60vh, 520px)" : 0, flex: isMobile ? "none" : 1, gap: isMobile ? 8 : 12 }}>
+          {/* 手机上工作流列表是浮在画布上方的左侧抽屉（竖向），收起后完全隐藏、
               只留左边缘一个悬浮把手；展开时覆盖画布但**不挤压**它的宽度。
               桌面仍是固定 190px 竖栏。 */}
           {isMobile && !draftPanelOpen ? (
@@ -389,32 +399,14 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
               aria-expanded={false}
               title={t("task.workflowEditor.drafts")}
               onClick={() => setDraftPanelOpen(true)}
-              style={{
-                ...panelButtonStyle("secondary"),
-                position: "absolute",
-                left: 0,
-                top: 8,
-                zIndex: 30,
-                width: 28,
-                height: 44,
-                padding: 0,
-                borderTopRightRadius: 10,
-                borderBottomRightRadius: 10,
-                border: "1px solid var(--border-color)",
-                borderLeft: "none",
-                background: "var(--panel-bg, var(--button-bg))",
-                color: "var(--text-secondary)",
-                boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 12,
-              }}
+              // 把手在侧栏竖向居中（用户 2026-11-20 的第 5 条），拇指不用够顶部。
+              style={{ ...panelButtonStyle("secondary"), ...draftHandleFrame() }}
             >
               ▸
             </button>
           ) : null}
           <nav
+            ref={draftPanelRef}
             aria-label={t("task.workflowEditor.drafts")}
             data-testid="workflow-draft-panel"
             data-open={isMobile ? (draftPanelOpen ? "true" : "false") : undefined}
@@ -458,7 +450,9 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
               return (
                 <div key={d.workflow_id} style={{ display: "flex", gap: 4, alignItems: "center", flexShrink: 0, maxWidth: isMobile ? 220 : undefined }}>
                   {/* 描述不进卡片：190px 宽的列表里挤两行字，名字反而被压到看不清。
-                      想读描述把鼠标停在卡上看 title；单行名字仍然省略号截断。 */}
+                      想读描述把鼠标停在卡上看 title；单行名字仍然省略号截断。
+                      删除按钮不在这里 —— 它跟着选中的工作流住在首行（用户 2026-11-20
+                      的第 6/8 条），列表只负责选。 */}
                   <button
                     type="button"
                     style={{ ...panelButtonStyle(isSelected ? "primary" : "secondary"), display: "block", textAlign: "left", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
@@ -468,18 +462,6 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
                   >
                     {displayName}
                   </button>
-                  <button
-                    type="button"
-                    data-testid="workflow-draft-delete"
-                    data-workflow-id={d.workflow_id}
-                    aria-label={t("task.workflowEditor.delete")}
-                    title={t("task.workflowEditor.delete")}
-                    disabled={!!e.deletingId || e.saving}
-                    onClick={() => void e.remove(d)}
-                    style={{ ...panelButtonStyle("secondary"), padding: "4px 6px", minWidth: "unset", fontSize: 11, color: "#dc2626", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-                  >
-                    <DeleteIcon />
-                  </button>
                 </div>
               );
             })}
@@ -487,7 +469,27 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
           </nav>
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: isMobile ? "visible" : "auto" }}>
             {createMode ? null : e.selected ? (
-              <WorkflowCanvas draftId={e.selected.workflow_id} graph={e.graph} dirty={e.dirty} onChange={e.setGraph} agents={agents} />
+              <WorkflowCanvas
+                draftId={e.selected.workflow_id}
+                graph={e.graph}
+                dirty={e.dirty}
+                onChange={e.setGraph}
+                agents={agents}
+                actions={
+                  // 保存/还原来到「工作流画布」这一行的右侧（用户 2026-11-20 的第 7 条）。
+                  // 保存即发布：没有单独的发布按钮，也没有版本概念。
+                  <>
+                    <button type="button" data-testid="workflow-draft-save" disabled={e.saving || !e.dirty}
+                      style={{ ...panelButtonStyle("primary"), ...canvasActionStyle }} onClick={() => void e.save()}>
+                      {e.saving ? t("task.workflowEditor.saving") : t("task.workflowEditor.save")}
+                    </button>
+                    <button type="button" data-testid="workflow-draft-revert" disabled={e.saving || !e.dirty}
+                      style={{ ...panelButtonStyle("secondary"), ...canvasActionStyle }} onClick={e.revert}>
+                      {t("task.workflowEditor.revert")}
+                    </button>
+                  </>
+                }
+              />
             ) : <div>{t("task.workflowEditor.selectOrCreate")}</div>}
           </div>
         </div>

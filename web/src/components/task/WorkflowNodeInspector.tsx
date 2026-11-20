@@ -15,7 +15,7 @@ import {
 } from "../../shared/workflowModel";
 import { AgentSelector } from "../agent/AgentSelector";
 import type { AgentStatus } from "../../shared/agentTypes";
-import { WorkflowNodeIcon, CloseIcon, LoopNodeIcon, PlanModeIcon, NewSessionIcon, WorktreeIcon, WriteFileIcon } from "./WorkflowNodeIcons";
+import { WorkflowNodeIcon, CloseIcon, LoopNodeIcon, PlanModeIcon, NewSessionIcon, WorktreeIcon } from "./WorkflowNodeIcons";
 import { inspectorFrame, type InspectorLayout } from "./workflowEditorLayout";
 
 // 节点属性浮动窗口。从 WorkflowCanvas 拆出来只为守住 500 行硬线，
@@ -120,6 +120,29 @@ export function WorkflowNodeInspector({
             </span>
           ) : null}
         </div>
+        {/* Agent 选择就是一个图标：放右上角，不再占一整块「Agent 配置」区域
+            （用户 2026-11-20：「agent 配置用 agentselector 图标就够了，放到右上角去」）。
+            点开是同一个菜单，选完直接写回 params.agent/model。 */}
+        {selected.kind === "agent" && agents.length > 0 ? (
+          <AgentSelector
+            agent={String(selected.params?.agent ?? "claude")}
+            model={String(selected.params?.model ?? "sonnet")}
+            mode=""
+            effort=""
+            fastService=""
+            agents={agents}
+            compact
+            onAgentChange={(agent, model) => {
+              const updates: Record<string, any> = { agent };
+              if (model) updates.model = model;
+              patchSelected({ params: { ...selected.params, ...updates } });
+            }}
+            onModeChange={() => {}}
+            onEffortChange={() => {}}
+            onFastServiceChange={() => {}}
+            onLongContextChange={() => {}}
+          />
+        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -149,30 +172,8 @@ export function WorkflowNodeInspector({
       </div>
       {selected.kind === "agent" ? (
         <>
-          {/* Agent 和 Model 选择器 */}
-          {agents.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "8px", background: "var(--button-bg)", borderRadius: "4px" }}>
-              <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-secondary)" }}>Agent 配置</div>
-              <AgentSelector
-                agent={String(selected.params?.agent ?? "claude")}
-                model={String(selected.params?.model ?? "sonnet")}
-                mode=""
-                effort=""
-                fastService=""
-                agents={agents}
-                compact
-                onAgentChange={(agent, model) => {
-                  const updates: Record<string, any> = { agent };
-                  if (model) updates.model = model;
-                  patchSelected({ params: { ...selected.params, ...updates } });
-                }}
-                onModeChange={() => {}}
-                onEffortChange={() => {}}
-                onFastServiceChange={() => {}}
-                onLongContextChange={() => {}}
-              />
-            </div>
-          ) : (
+          {/* 没有 agent 清单（旧后端 / 探测未完成）时退回手填，至少还能改。 */}
+          {agents.length === 0 ? (
             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
               <span>{t("task.workflowCanvas.agent")}</span>
               <input
@@ -187,7 +188,7 @@ export function WorkflowNodeInspector({
                 style={{ ...panelInputStyle(), flex: 1 }}
               />
             </div>
-          )}
+          ) : null}
 
           {/* Prompt 输入 */}
           <div style={{ display: "flex", gap: "6px", alignItems: "flex-start", flexDirection: "column" }}>
@@ -206,10 +207,10 @@ export function WorkflowNodeInspector({
             />
           </div>
 
-          {/* 四个布尔开关收成一行等宽的「图标 + 两个字」按钮：勾选态用主色，
-              完整说明走 hover 提示（title）。一行 4 格比原来四行「标题 + 说明」
-              省掉大半面板高度，又不至于只剩图标让人猜。 */}
-          <div data-testid="workflow-node-toggles" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "4px" }}>
+          {/* 三个布尔开关收成一行等宽的「图标 + 短标签」按钮：勾选态用主色，
+              完整说明走 hover 提示（title）。Plan 就是原来那个「写入」开关的
+              反面 —— 开 Plan 就不写工作区，取消就写（用户 2026-11-20 裁定）。 */}
+          <div data-testid="workflow-node-toggles" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "4px" }}>
             <NodeToggle
               testId="workflow-node-plan-mode"
               active={workflowNodeUsesPlanMode(selected)}
@@ -236,17 +237,6 @@ export function WorkflowNodeInspector({
               hint={t("task.workflowCanvas.independentWorktreeHint")}
               icon={<WorktreeIcon size={14} />}
               onToggle={() => patchSelected({ params: setWorkflowNodeUsesOwnWorktree(selected.params, !workflowNodeUsesOwnWorktree(selected)) })}
-            />
-            {/* 工作区写入缺省为开（后端 writes_workspace 默认 true），所以勾选态是
-                「不是 false」而不是「等于 true」。 */}
-            <NodeToggle
-              testId="workflow-node-writes-workspace"
-              active={selected.params?.writes_workspace !== false}
-              label={t("task.workflowCanvas.writesWorkspace")}
-              short={t("task.workflowCanvas.writesWorkspaceShort")}
-              hint={t("task.workflowCanvas.writesWorkspaceHint")}
-              icon={<WriteFileIcon size={14} />}
-              onToggle={() => patchSelected({ params: { ...selected.params, writes_workspace: selected.params?.writes_workspace === false } })}
             />
           </div>
         </>

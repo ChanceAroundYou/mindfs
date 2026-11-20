@@ -53,3 +53,24 @@
 
 - 未部署、未重启任何节点（本机 `sudo systemctl restart mindfs` 仅用户可执行）。
 - 线上 `workflows.json` 的两条工作流已通过 API 保存并发布，但**运行中的进程不缓存**（`WorkflowStore` 每次操作整份读写），所以下一轮任务创建即可选中新版本，无需重启。
+
+## 追加轮（2026-11-20 晚，Scope: G-NO）—— 工作流编辑器的八条反馈
+
+用户重启本机后逐条提出（`/refine`）：
+
+1. 文本改成 `Plan` / `新会话` / `worktree`：`planModeShort` / `newSessionPerNodeShort` / `independentWorktreeShort` 按这三个词写死；en 用 `Plan` / `New session` / `Worktree`。
+2. 「写入」被 Plan 取代：`setWorkflowNodeUsesPlanMode(params, true)` 同时写 `plan_mode: true` 与 `writes_workspace: false`，取消时两个键一起删；后端 `WorkflowNodeWorkspaceOf` 兜底 —— `plan_mode=true` 一律按只读处理（AI 生成或手写的图漏写 `writes_workspace` 时也不占 writer gate、不合并产物）。开关从四个变三个（1×3 等宽）。
+3. 打开编辑器会自动聚焦 AI 输入框：根因是 `PromptEditor` 挂载时 `setText("")` → Lexical `$replaceWithSerializedText` 把内部选区落到文末并同步成 DOM 选区，Chrome 因此把 contenteditable 当成被点击。修复在 `TokenEditor.setText`：未聚焦时记下原焦点，update 后（含一个 `queueMicrotask` 补拍，Lexical 的 DOM 提交可能排在微任务）若焦点被拽进本编辑器就还给原元素。
+4. Agent 配置收成右上角一个 `AgentSelector` 图标（`compact`），不再占一块「Agent 配置」区域；没有 agent 清单时才退回手填。
+5. 手机侧栏：默认展开、选完/建完自动收起、点抽屉外面收起（`pointerdown` 捕获阶段）、收起后的悬浮把手竖向居中（`draftHandleFrame`）。抽屉是 absolute 撑满父列，所以父列在手机上必须有高度（`min(60vh, 520px)`），否则没选工作流时容器塌成十几像素、抽屉变成一条缝（390×844 实测到）。
+6. 「草稿列表」→「工作流列表」（en `Workflows`）；列表行不再有删除键。
+7. 保存缩小并挪到「工作流画布」那行右侧（`WorkflowCanvas` 新增 `actions`），旁边加「还原」（`revert` 丢弃本地改动回到服务端草稿）；发布按钮与 `publishConfirm` 删除 —— 保存即发布：`save` 先 `updateWorkflowDraft` 拿新修订，再 `publishWorkflowDraft(updated.revision)`，发布失败保留 dirty 以便重试。后端表/接口原样保留（执行侧仍按已发布版本解析），只是不再是一条用户流程。
+8. 首行 = 任务名 + 编辑/删除（居左）……关闭（居右），描述退到第二行整宽（手机两行）。
+
+同时把「AI 生成 / 提案」拆成 `WorkflowAuthoringPanel.tsx`（守 500 行硬线）：手机上去掉内圈框和底色、融入外框，桌面端在输入框上方加回这一行标题。
+
+验证：
+- 前端全量 `npx vitest run` 772 通过 / 6 跳过，`tsc -b --noEmit` clean；后端 `go test ./server/internal/kanban/` 与 `go build ./server/... ./cli/...` 通过。
+- 隔离实例（临时 `XDG_CONFIG_HOME` + 新端口 + `MINDFS_STATIC_DIR=web/dist`，端口随机、不碰 7331）真实 Chromium：
+  - 桌面 1440×900 逐条 11/11 PASS —— 列表标题、首行顺序、保存/还原在画布行、无发布按钮、三个开关（`Plan`/`New session`/`Worktree`）、写入开关已删、点 Plan 出脏标记、保存后脏标记消失（服务端日志 `PUT /api/workflows/{id}` 后紧跟 `POST /api/workflows/{id}/publish`）、**重开编辑器焦点停在 BODY**；
+  - 手机 390×844（从移动壳的 Board 进入）6/6 PASS —— 抽屉默认展开、新建后自动收起、点外面收起、左缘把手可见、把手在自己那一列的竖向中点、点把手再展开。

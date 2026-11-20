@@ -122,12 +122,24 @@ test("the review hook applies once, revalidates the subset, and never publishes"
   assert.doesNotMatch(generation, /\bapplyWorkflow\w*\(|publishWorkflow\w*\(/, "generation cannot persist");
 });
 
-test("publishing stays a separate, explicitly confirmed action", () => {
+test("保存即发布：一次保存先写草稿，再用新修订静默发布，界面上没有发布按钮", () => {
+  // 用户 2026-11-20 裁定「保存即发布，彻底清理掉发布流程，也不做版本的概念了」。
+  // 执行侧仍只认已发布版本，所以 hook 内部必须补上 publish，但 UI 不暴露它。
+  const hook = read("src/components/task/useWorkflowDraftEditor.ts");
+  const save = hook.slice(hook.indexOf("const save = useCallback"), hook.indexOf("const revert = useCallback"));
+  assert.match(save, /updateWorkflowDraft\(/, "先写草稿");
+  assert.match(save, /publishWorkflowDraft\(updated\.workflow_id, \{ revision: updated\.revision \}\)/, "再用刚拿到的新修订发布，不能用旧修订");
+  assert.match(save, /setDirty\(true\)/, "发布失败时保留脏状态，让「保存」还能重试");
+  assert.doesNotMatch(hook, /confirmDialog\(\{ message: t\("task\.workflowEditor\.publishConfirm"/, "保存不再走二次确认");
+  assert.doesNotMatch(hook, /\bpublish:/, "hook 不再对外暴露 publish");
+
   const editor = read("src/components/task/WorkflowDraftEditor.tsx");
-  assert.match(editor, /disabled=\{e\.saving \|\| e\.dirty \|\| !e\.selected\}/, "dirty drafts cannot publish");
-  assert.doesNotMatch(editor, /confirmProposal/, "publish proposals are internal; there is no second user-facing confirmation path");
+  assert.doesNotMatch(editor, /e\.publish|workflow-draft-publish/, "编辑器里没有发布按钮");
+  assert.match(editor, /data-testid="workflow-draft-save"/);
+  assert.match(editor, /data-testid="workflow-draft-revert"/);
+
   const svc = read("src/services/task/workflowDraft.ts");
-  assert.match(svc, /confirmed_revision/, "publish names the exact revision");
+  assert.match(svc, /confirmed_revision/, "发布接口本身保留（执行侧仍按版本解析），只是 UI 不再让它成为一条流程");
 });
 
 test("mobile keeps editing: narrow screens no longer downgrade the canvas", () => {

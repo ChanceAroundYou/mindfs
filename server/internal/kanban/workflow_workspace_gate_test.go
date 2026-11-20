@@ -25,6 +25,11 @@ func TestWorkflowNodeWorkspaceIntent(t *testing.T) {
 		// 类型不对时 fail closed：默认为写，不能因为解析不了就把写节点当只读放行。
 		{name: "invalid writes type stays writing", params: map[string]any{"writes_workspace": "false"}, writes: true},
 		{name: "unknown worktree mode stays shared", params: map[string]any{"worktree": "per-node"}, writes: true},
+		// Plan 模式就是只读（用户 2026-11-20 的裁定）：即便图里漏写 writes_workspace，
+		// 规划节点也不许占 writer gate / 合并产物回去。
+		{name: "plan mode is read only", params: map[string]any{"plan_mode": true}, writes: false},
+		{name: "plan mode overrides explicit write", params: map[string]any{"plan_mode": true, "writes_workspace": true}, writes: false},
+		{name: "plan mode off keeps writing", params: map[string]any{"plan_mode": false}, writes: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

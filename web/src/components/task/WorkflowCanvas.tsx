@@ -57,6 +57,8 @@ export type WorkflowCanvasProps = {
   readOnly?: boolean;
   /** Agent 状态列表，用于 AgentSelector */
   agents?: AgentStatus[];
+  /** 标题行右侧的动作按钮（编辑器把「保存 / 还原」放在这里）。 */
+  actions?: React.ReactNode;
 };
 
 const MOBILE_BREAKPOINT = 720;
@@ -74,7 +76,7 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) {
   );
 }
 
-function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents = [] }: WorkflowCanvasProps) {
+function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents = [], actions }: WorkflowCanvasProps) {
   const { t } = useI18n();
   const { fitView } = useReactFlow();
   // 断点判定必须跟着 resize 走：只取一次快照的话，窄窗口打开后再放大，
@@ -346,6 +348,7 @@ function WorkflowCanvasInner({ draftId, graph, onChange, dirty, readOnly, agents
           />
         ) : null}
         <span style={{ flex: 1 }} />
+        {actions}
       </div>
 
       {openLoop ? (

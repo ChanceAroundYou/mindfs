@@ -24,10 +24,17 @@ type WorkflowNodeWorkspace struct {
 
 // WorkflowNodeWorkspaceOf 读取节点参数。未知的 worktree 值一律回落共享主树，
 // 因为共享 + gate 是更安全的一侧；拼错不能悄悄变成独立树。
+//
+// plan_mode=true 的节点一律按只读处理：Plan 模式在 agent 侧本来就是「只出方案、
+// 不改文件」，这里再兜一层，AI 生成或手写的图漏写 `writes_workspace` 时也不会
+// 占住共享树的 writer gate、更不会把规划产物合并回去。
 func WorkflowNodeWorkspaceOf(node WorkflowNode) WorkflowNodeWorkspace {
 	ws := WorkflowNodeWorkspace{WritesWorkspace: true}
 	if v, ok := node.Params["writes_workspace"].(bool); ok {
 		ws.WritesWorkspace = v
+	}
+	if plan, ok := node.Params["plan_mode"].(bool); ok && plan {
+		ws.WritesWorkspace = false
 	}
 	if v, ok := node.Params["worktree"].(string); ok && strings.TrimSpace(v) == "independent" {
 		ws.Independent = true

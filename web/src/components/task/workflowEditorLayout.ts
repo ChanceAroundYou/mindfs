@@ -91,3 +91,31 @@ export function draftPanelFrame(state: DraftPanelState): CSSProperties {
     scrollbarWidth: "none",
   };
 }
+
+/**
+ * 抽屉收起后留在左缘的悬浮把手。竖向居中（用户 2026-11-20 的第 5 条）：
+ * 手机要单手够得到，不能钉在顶部。只负责几何，配色仍由调用方给。
+ */
+export function draftHandleFrame(): CSSProperties {
+  return {
+    position: "absolute",
+    left: 0,
+    top: "50%",
+    transform: "translateY(-50%)",
+    zIndex: 30,
+    width: 28,
+    height: 44,
+    padding: 0,
+    borderTopRightRadius: 10,
+    borderBottomRightRadius: 10,
+    border: "1px solid var(--border-color)",
+    borderLeft: "none",
+    background: "var(--panel-bg, var(--button-bg))",
+    color: "var(--text-secondary)",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 12,
+  };
+}
