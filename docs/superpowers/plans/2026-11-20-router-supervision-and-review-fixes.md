@@ -154,3 +154,16 @@ already_escalated       // 本 attempt 是否已升级过
 - 门禁：`go test ./internal/kanban/ -count=1` 全绿（269.7s）；`go test ./internal/agent/claude/` 全绿；`go build ./server/... ./cli/...` OK；干净 worktree（HEAD）`make check-upstream` 绿 —— 2119 个 delta 文件被 344 组完整覆盖。
 - 安装：从干净 worktree 构建并 `make install`，本机已装 `v0.5.5-1200-72-gad4db85a`；运行中进程仍为旧版，**待用户 `sudo systemctl restart mindfs`** 后五项修复（尤其 legacy 快照结算）才在生产生效。
 - 未部署其他节点。Part B 只写设计，等用户对 B8 四个口径拍板后再拆执行计划。
+
+### B8 裁定（2026-11-20，用户回答）
+
+1. **阈值与预算**：维持现值 —— 60s 起判 + 两次观测确认；每节点最多 2 次监管重试；每 Run 每小时最多 6 个动作。
+2. **预算耗尽**：停在 `waiting_user` 等用户，Router 不自动 `cancel_run`。
+3. **直连回合**：纳入监管（S3 一起做）。
+4. **节奏**：S0→S2 一口气实现；S3 及之后等后续授权。
+
+### B9 S0–S2 执行拆分（按上述裁定）
+
+- **S0 观测**：`SupervisionObservation`（开放节点水位、空闲秒数、会话是否在回复、attempt/已用重试、失败分类、预算余额）挂到 `run_failed` / `run_stalled` 事件 payload 的 `supervision` 块；配置 `router.supervision.{mode,max_retries_per_node,max_actions_per_hour}`（默认 off）。零模型调用。
+- **S1 影子**：`mode=shadow` 时新动作只落 `router_decisions`（status=shadow），事件标 done + reason=supervision_shadow，不产生任何副作用。
+- **S2 有限执行**：`mode=on` 放开 `retry_node`（走 `Service.CreateWorkflowNodeAttempt`，reason=supervisor_retry）、`notify_user`（可见系统行）、`silent`；预算与幂等在水位哈希上做；失败分类为「不确定」的一律只 `notify_user`。
