@@ -12,6 +12,10 @@ type Adapter struct{}
 // full history in `input`.
 func New() Adapter { return Adapter{} }
 
+// A Responses adapter is a complete fold.Adapter; the compiler checks it here
+// rather than at the one call site that wires it into the engine.
+var _ fold.Adapter = Adapter{}
+
 // Name identifies this adapter in logs and in the server's engine table.
 func (Adapter) Name() string { return "responses" }
 

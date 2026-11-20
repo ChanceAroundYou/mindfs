@@ -1358,6 +1358,14 @@ git add server/internal/agent/fold/responses
 git commit -m "feat(live-compact): Responses 用量归一化与适配器守卫（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`fold/responses/usage.go` + `usage_test.go` + `guard_test.go` 落地；`adapter.go` 补一行 `var _ fold.Adapter = Adapter{}`，从此 Responses 适配器是编译期完整的 `fold.Adapter`。
+
+- 口径按 spec §9 右列：`ContextTokens = input_tokens`（Responses 的 `input_tokens` 已经**含**缓存部分，与 Messages 的三个互斥计数器相反），`RewriteTokens = input_tokens - cached_tokens` 且夹到不小于 0（防 detail 块落后于 `input_tokens` 时把重算算成负数）。`cache_write_tokens` 只在分项计费缓存写入的供应商上出现，缺失即 0。
+- `Usage` 一份解析覆盖两种形态：整包 JSON（非流式，usage 在顶层或 `response` 里）与 SSE（逐行 `data:`，取最后一个含 usage 的块，跳过 `response.created` 里的 `usage:null`）。逐行扫描用索引切分而不是 `bytes.Split`，8 MB 的响应体不会为每行分配一个切片；单行超过 1 MiB 直接跳过（usage 事件很小，超长的不是它）。
+- 无用量时显式 `Source=missing, RewriteTokens=-1` 并返回 `false`——与 Anthropic 侧返回零值不同，账本按 `UsageSourceMissing` 单独计数，不能让「没有数」被读成「省了 0」。
+- `Guard` 恒放行：前缀闸门保护的是「改写会让 preserved thinking 失效」，而 Responses 的推理是 `encrypted_content` 不透明项、折叠只换工具输出，没有可保护的对象。
+- 用例 6 条（整包归一化、SSE 末块、`response` 包一层、缺失显式、负重算夹零、守卫对三个模型名都放行）。RED 以临时移走 `usage.go` 取证（`Guard`/`Usage` undefined）。变异两处：`RewriteTokens` 改 `input + cached` → 归一化用例红（26828 ≠ 336）；缺失分支退回零值 → 缺失用例红；各自还原后全绿。
+
 ---
 
 ### Task 12: 代理路由 `/c/{provider}/v1` 与 provider 发现

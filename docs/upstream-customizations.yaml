@@ -9364,6 +9364,8 @@ groups:
       - server/internal/agent/proxy/live_compact_coverage_test.go
       - server/internal/agent/fold/responses/scan_test.go
       - server/internal/agent/fold/responses/splice_test.go
+      - server/internal/agent/fold/responses/usage_test.go
+      - server/internal/agent/fold/responses/guard_test.go
       - server/internal/agent/proxy/fold_golden_test.go
       - server/internal/agent/proxy/live_compact_testhelpers_test.go
       - server/internal/agent/fold/config_test.go
@@ -9421,6 +9423,9 @@ groups:
       - 'server/internal/agent/fold/splice.go:func SpliceReplacements(body []byte, replacements []Replacement) ([]byte, error) {'
       - 'server/internal/agent/fold/responses/splice.go:func (Adapter) Text(body []byte, result fold.Result) (string, bool) {'
       - 'server/internal/agent/fold/responses/splice.go:var responsesWindows = map[string]int{'
+      - 'server/internal/agent/fold/responses/usage.go:func (Adapter) Usage(resp []byte) (fold.Usage, bool) {'
+      - 'server/internal/agent/fold/responses/usage.go:func (Adapter) Guard(string, fold.Config) fold.GuardVerdict { return fold.GuardVerdict{} }'
+      - 'server/internal/agent/fold/responses/adapter.go:var _ fold.Adapter = Adapter{}'
       - 'server/internal/agent/fold/anthropic/equivalence_test.go:func TestAdapterScanAgreesWithReference('
       - 'server/internal/agent/proxy/usage.go:func (s *usageScanner) consumeLine('
       - 'server/internal/agent/pool_open.go:p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)'
