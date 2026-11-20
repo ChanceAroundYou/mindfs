@@ -1,7 +1,7 @@
 # #86 卡死：unknown 算已收尾 + 启动对账补投影 + Router 读会话（router-unknown-settled-and-read-session）
 
 - 日期：2026-11-20
-- 状态：已实现并通过本地门禁；未部署、未重启任何节点
+- 状态：已实现并通过本地门禁，已推送 origin main（`ea896ab2` + `ddbf7238`）；未部署、未重启任何节点
 - 上游：无（Router 与工作流运行时是本 fork 自有能力）
 - 定制登记：`Scope: G-NJ`
 - 上游计划：[Router 收尾死锁](2026-11-19-router-settled-run-livelock.md)（同一条闸门的上一轮修复）
