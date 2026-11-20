@@ -2,6 +2,9 @@ package proxy
 
 import (
 	"time"
+
+	"mindfs/server/internal/agent/fold"
+	"mindfs/server/internal/agent/fold/anthropic"
 )
 
 // The request-path entry point and the per-session calibrations it reads.
@@ -23,6 +26,11 @@ func (s *Server) foldRequest(token string, body []byte) ([]byte, foldResult, liv
 // the rail decision (which the observation line logs so shadow can preview the
 // same policy).
 //
+// The policy itself lives in the fold kernel; this function owns only what the
+// kernel cannot know: the emergency brake, the session's fold permission, the
+// per-session calibration pair, and the proxy-side session state the engine
+// reads through fold.Session.
+//
 // Any error path returns the original body (I7).
 func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResult, *foldLedgerPending, liveCompactGate) {
 	cfg := s.liveCompact
@@ -33,9 +41,9 @@ func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResul
 	// and a post-fold estimate would shrink right after every event and mask
 	// the next one.
 	est := estimateByteTokens(body)
+	previous := s.previousEstimate(token)
 	growth := s.noteRequestEstimate(token, est)
 	actual, forwardEst := s.sessionCalibration(token)
-	fc := foldContext{est: est, growth: growth, actual: actual, forwardEst: forwardEst}
 	measured := liveCompactGate{est: est, growth: growth}
 	// The brake must stop the rewrite, not just the measurement. It is the only
 	// way an operator can turn folding off without restarting the service, and
@@ -49,68 +57,130 @@ func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResul
 		return body, foldResult{}, nil, measured
 	}
 	start := time.Now()
-	req, err := scanWireRequest(body)
+	// Only mode=on with an archive may rewrite. Everything else rehearses the
+	// same policy: shadow reports the decision and the savings a fold would
+	// produce without touching a byte (design §12.6 观测).
+	allowed := cfg.Mode == LiveCompactOn && s.archive != nil
+	session := s.foldSession(token)
+	out, err := s.foldEngine().Fold(fold.Request{
+		Body:           body,
+		Session:        session,
+		Now:            start,
+		FoldAllowed:    allowed,
+		Preview:        !allowed,
+		LastEstimate:   previous,
+		LastActual:     actual,
+		LastForwardEst: forwardEst,
+	})
+	// The engine spends the PostCompact signal and may flip the alias warning;
+	// both live on the proxy's session state.
+	s.applyFoldSession(token, session)
 	if err != nil {
-		logLiveCompactSkip(token, "scan")
-		measured.decision = gateScanFailed
-		return body, foldResult{}, nil, measured
-	}
-	// A rewrite is a client-side edit. On a preserved-thinking model that
-	// invalidates every later thinking block, so the guard runs before anything
-	// is planned — shadow included, since shadow must report the same policy
-	// mode=on applies (design 2026-11-20 §4).
-	if s.prefixGuardBlocks(token, req.model, cfg) {
-		measured.decision = gatePrefixGuard
+		if out.Verdict.Reason == fold.GateScanFailed {
+			logLiveCompactSkip(token, "scan")
+		} else {
+			logLiveCompactSkipDetails(token, "fold", err)
+		}
 		s.noteForwardEstimate(token, est)
+		measured.decision = out.Verdict.Reason
 		return body, foldResult{}, nil, measured
 	}
-	// Peeked here, spent only once the planner reports it had candidates: the
-	// request that follows a compaction often has nothing foldable, and the
-	// signal describes the compaction, not this particular request (design
-	// 2026-11-20 §5).
-	fc.cold, fc.coldReason = s.peekColdFold(token, cfg, start)
-	// Shadow (and on without an archive) rehearses the policy: it reports the
-	// decision and the savings a fold would produce, but never rewrites the
-	// body or writes an archive. This is what lets a 24h shadow rehearsal on a
-	// live node gate mode=on admission (design §12.6 观测).
-	if cfg.Mode != LiveCompactOn || s.archive == nil {
-		_, gate := previewFold(body, req, cfg, s.sessionFoldCommits(token), fc)
-		s.consumeColdFold(token, gate.candidates > 0)
+	if out.GuardUnknownModel {
+		s.warnUnknownModelOnce(token, out.Model)
+	}
+	gate := gateFromOutcome(out, growth)
+	if !allowed {
 		// Shadow forwards the body untouched: its estimate is the measured one.
 		s.noteForwardEstimate(token, est)
 		return body, foldResult{}, nil, gate
 	}
-	result, gate := planFoldCommit(body, req, cfg, s.archive, s.pointerCache,
-		s.sessionFoldCommits(token), fc)
-	s.consumeColdFold(token, gate.candidates > 0)
-	gate.wouldFoldTokens = result.foldedTokens
-	gate.wouldFoldBlocks = result.foldedBlocks
-	if result.changed() {
-		// Validate the rewrite before it is allowed onto the wire. This is the
-		// one place where a scanner bug would reach the upstream, so the check
-		// is cheap and structural: same message count, same tool pairing.
-		if err := verifyFold(req, result.body); err != nil {
-			logLiveCompactSkipDetails(token, "verify", err)
-			s.noteForwardEstimate(token, est)
-			return body, foldResult{}, nil, gate
-		}
+	result := foldResultFromOutcome(out)
+	if out.Folded {
+		logLiveCompactFold(token, result, gate.decision, time.Since(start))
+		pending := s.newFoldLedgerPending(cfg.Mode, len(body), len(out.Body), result, time.Since(start))
 		// Sweep after committing, and protect what this node still points at.
 		// Without the protection set, disk pressure would delete an archive
 		// whose pointer is already inside the model's context; the block would
 		// then silently unfold and the whole folded prefix would be resent.
 		s.archive.SweepProtected(time.Now(), s.referencedArchives())
-		elapsed := time.Since(start)
-		logLiveCompactFold(token, result, gate.decision, elapsed)
-		pending := s.newFoldLedgerPending(cfg.Mode, len(body), len(result.body), result, elapsed)
 		forwarded := est - result.foldedTokens
 		if forwarded < 0 {
 			forwarded = 0
 		}
 		s.noteForwardEstimate(token, forwarded)
-		return result.body, result, pending, gate
+		return out.Body, result, pending, gate
 	}
 	s.noteForwardEstimate(token, est)
 	return body, result, nil, gate
+}
+
+// foldEngine returns the per-adapter engine, creating it on first use. The
+// configuration is fixed for the life of the server, so one snapshot is enough.
+func (s *Server) foldEngine() *fold.Engine {
+	s.engineMu.Lock()
+	defer s.engineMu.Unlock()
+	if engine, ok := s.engines["anthropic"]; ok {
+		return engine
+	}
+	engine := fold.NewEngine(s.liveCompact, anthropic.New(), s.archive, s.pointerCache)
+	if s.engines == nil {
+		s.engines = make(map[string]*fold.Engine)
+	}
+	s.engines["anthropic"] = engine
+	return engine
+}
+
+// previousEstimate returns the previous request's pre-fold size. It must be
+// read before noteRequestEstimate records this request, so the engine sees the
+// same growth the observation line reports.
+func (s *Server) previousEstimate(token string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[token]
+	if !ok {
+		return 0
+	}
+	return st.lastEstimate
+}
+
+// foldSession builds the kernel's view of this session's fold state. The
+// commitment set is shared by pointer; the cold signals are copied in and the
+// two the engine may change are written back by applyFoldSession.
+func (s *Server) foldSession(token string) *fold.Session {
+	commits := s.sessionFoldCommits(token)
+	if commits == nil {
+		commits = fold.NewCommits()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[token]
+	if !ok {
+		return &fold.Session{Commits: commits}
+	}
+	return &fold.Session{
+		Commits:         commits,
+		PendingColdFold: st.live.pendingColdFold,
+		CompactedAt:     st.live.pendingColdFoldAt,
+		LastUsageAt:     st.live.lastUsageAt,
+		NoReadStreak:    st.live.noReadStreak,
+		LastContext:     st.live.lastContext,
+		PrefixWarned:    st.live.prefixWarned,
+	}
+}
+
+// applyFoldSession writes back the state the engine owns decisions for.
+func (s *Server) applyFoldSession(token string, session *fold.Session) {
+	if session == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[token]
+	if !ok {
+		return
+	}
+	st.live.pendingColdFold = session.PendingColdFold
+	st.live.prefixWarned = session.PrefixWarned
 }
 
 // sessionFoldAllowed is the request-path read of the same flag the observation

@@ -1102,6 +1102,16 @@ git add server/internal/agent/proxy server/internal/agent/fold
 git commit -m "refactor(live-compact): proxy 改用 fold 引擎，行为逐字节不变（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：等价替换落地 —— `testdata/fold_golden.txt` 五个 body 的转发 sha256 在切换前后逐字节一致，`decision` / `new` / `sticky` / `skipped` 计数也一致。
+
+- **内核新增 `Request.Preview` + `fold/preview.go`（6 条用例）**：shadow 不能只靠 `FoldAllowed=false`，否则门禁一进内核就直接 observe-only、什么都不预演。`Preview` 让内核照常规划、报告决策与 would-fold 节省，并把「将会提交」的键记进**非持久** `Commits`（下一次预演看到同一条单调边界），但不渲染指针、不写存档、不碰渲染缓存、不改 body。`Outcome` 同时补 `Candidates`（零候选是「冷信号留给下一请求」的判据）与 `Model`（未知别名告警用）。
+- **proxy 只剩请求路径**：`live_compact_fold_request.go` 保留急停、`MinBodyBytes`、校准、seq 派发、`Fold` 调用与账本写入；`foldEngine()` 按 adapter 名懒建并缓存引擎（`mode=off`/无存档的实例永不构造适配器），`foldSession()` / `applyFoldSession()` 先取承诺集再拼 `fold.Session` 视图，避开 `s.mu` 与承诺集锁的重入。`live_compact_gate_view.go` 承接原来的日志形状与 gate 常量（日志字符串一字未改，Phase A 工具链不受影响）。
+- **删除**：生产侧 `live_compact_fold.go`、`_fold_gate.go`、`_fold_plan.go`、`_fold_render.go`、`_fold_splice.go`、`_scan_request.go`、`_cold.go`、`_prefix_guard.go` 八个文件；测试侧九个文件（`_fold_test`、`_fold_cache_test`、`_fold_gate_test`、`_fold_gate_norm_test`、`_shadow_preview_test`、`_cold_test`、`_prefix_guard_test`、`_error_fold_test`、`_scan_test`）—— 逐条核对过内核 `fold` / `fold/anthropic` 已有等价用例，行为覆盖没有减少。新增 `live_compact_testhelpers_test.go`，`live_compact_coverage_test.go` 改为从请求路径断言（不再直接调 planner）。
+- **偏差一**：`live_compact_wire.go` / `_wire_analysis.go` / `_wire_drift.go` **没有删**。它们是 Phase A 观测管线，只读 body 喂 `[live-compact]` 日志、不参与折叠决策，删掉会连带丢掉线上观测与 `wire_test`；计划里把它们列进删除清单是当时按「太长就删」写的。
+- **偏差二**：`fold_alias.go` 没有整体消失，而是缩到只留 proxy 自己命名的东西（配置/模式常量、`Server` 字段的存储类型、wire 分析用的估算助手）。其余 planner 时代的别名（scan 助手、pointer 键、冷判据常量等）随旧实现一起删除，测试改用 `fold.` 原名。
+- **变异验证**：计划里写的 `原文见`→`原文在` 在适配器里并不存在（实际页脚是「需要原文时用 Read 打开 archive」），改为 `需要原文时用`→`需要原文用`，五个 golden 哈希全红；还原后复绿，证明 golden 真的钉住了指针渲染。
+- **门禁**：`go build ./...` clean；`go test -count=1 ./server/internal/agent/...` 全绿（含 `-race` 跑 proxy / fold / fold/anthropic）；随后全仓 `go test -count=1 ./...` 结果见下方提交记录。
+
 ---
 
 ### Task 9: Responses 适配器 —— 扫描与配对

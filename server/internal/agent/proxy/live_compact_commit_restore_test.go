@@ -100,7 +100,7 @@ func TestRestartDropsCommitThatLeftTheTranscript(t *testing.T) {
 	if log == nil {
 		t.Fatal("commit log not created")
 	}
-	log.Append([]foldCommitRecord{{TS: time.Now().Unix(), Name: "deadbeefdeadbeefdeadbeef.txt", Bytes: 1}})
+	log.Append([]fold.CommitRecord{{TS: time.Now().Unix(), Name: "deadbeefdeadbeefdeadbeef.txt", Bytes: 1}})
 
 	s, forwarded := restartProxy(t, dir, "stale", -1, restartFoldBody(t))
 	if bytes.Equal(forwarded, restartFoldBody(t)) {

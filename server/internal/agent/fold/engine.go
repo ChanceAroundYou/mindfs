@@ -42,6 +42,10 @@ type Outcome struct {
 	// Skipped counts candidates that were eligible but not folded (decode
 	// failure, multi-part content, archive failure, pointer not smaller).
 	Skipped int
+	// Candidates is how many blocks the planner was willing to fold. Zero means
+	// the request had nothing to act on — which is what keeps a PostCompact cold
+	// signal alive for the next request.
+	Candidates int
 	// ArchiveFailures counts blocks left alone because the archive write
 	// failed. Non-zero means folding is degraded, not that the request is
 	// wrong.
@@ -55,6 +59,9 @@ type Outcome struct {
 	Projected  int
 	Cold       bool
 	ColdReason string
+	// Model is the model id the adapter read from the body, for log lines that
+	// need to name it (the unknown-alias warning).
+	Model string
 	// GuardUnknownModel is set when the adapter could not classify the request's
 	// model. The caller owns the per-session dedupe of the log line.
 	GuardUnknownModel bool
@@ -93,6 +100,7 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 		return out, fmt.Errorf("live-compact: scan: %w", err)
 	}
 	out.Estimated = conv.Estimated
+	out.Model = conv.Model
 	if out.Estimated <= 0 {
 		out.Estimated = EstimateByteTokens(req.Body)
 	}
@@ -102,7 +110,11 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 		out.Verdict = Verdict{Block: true, Reason: conv.Refuse}
 		return out, nil
 	}
-	if !req.FoldAllowed || req.Session == nil || e.archive == nil {
+	if req.Session == nil || (!req.FoldAllowed && !req.Preview) {
+		out.Verdict = Verdict{Block: true, Reason: GateObserveOnly}
+		return out, nil
+	}
+	if e.archive == nil && !req.Preview {
 		out.Verdict = Verdict{Block: true, Reason: GateObserveOnly}
 		return out, nil
 	}
@@ -122,6 +134,7 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 	}
 
 	candidates, skipped := PlanCandidates(req.Body, conv, e.cfg, req.Session.Commits)
+	out.Candidates = len(candidates)
 	cold, coldReason := e.coldDecision(req)
 	out.Cold, out.ColdReason = cold, coldReason
 	if len(candidates) > 0 {
@@ -136,6 +149,10 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 		growth = out.Estimated - req.LastEstimate
 	}
 	estimate := Estimate{Est: out.Estimated, Growth: growth, Actual: req.LastActual, ForwardEst: req.LastForwardEst}
+
+	if req.Preview {
+		return e.preview(req, candidates, skipped, estimate, cold, coldReason, out), nil
+	}
 
 	// Pass 1: committed blocks are folded unconditionally. This is what makes
 	// the fold boundary monotone across turns (I8).

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"mindfs/server/internal/agent/fold"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 // the client may already have read the whole body (an upstream with a known
 // Content-Length lets the client finish first). Tests must wait for it instead
 // of assuming the handler is done.
-func waitForLedgerRequests(t *testing.T, s *Server, sessionKey string, want int) ContextSaving {
+func waitForLedgerRequests(t *testing.T, s *Server, sessionKey string, want int) fold.ContextSaving {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {

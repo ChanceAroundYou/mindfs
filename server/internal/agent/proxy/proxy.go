@@ -61,6 +61,10 @@ type Server struct {
 	// ledger is the per-session fold ledger behind the context chip. Nil when
 	// no directory is configured.
 	ledger *fold.LedgerStore
+	// engines holds one fold engine per harness wire format. The policy lives
+	// in the kernel; the proxy only decides which adapter a request belongs to.
+	engineMu sync.Mutex
+	engines  map[string]*fold.Engine
 
 	// Emergency brake: the presence of DisableFile turns live-compact off for
 	// the running process. Checked at most once per second.

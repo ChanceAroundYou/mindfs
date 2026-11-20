@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"mindfs/server/internal/agent/fold"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -34,8 +35,8 @@ func TestFoldLedgerRecordsThreeUsageCounters(t *testing.T) {
 		t.Fatalf("usage counters = (%d,%d,%d), want (1234,5000,99)",
 			latest.UsageInput, latest.UsageCacheCreation, latest.UsageCacheRead)
 	}
-	if latest.UsageSource != usageSourceResponse {
-		t.Fatalf("usage source = %q, want %q", latest.UsageSource, usageSourceResponse)
+	if latest.UsageSource != fold.UsageSourceResponse {
+		t.Fatalf("usage source = %q, want %q", latest.UsageSource, fold.UsageSourceResponse)
 	}
 	// The rewrite is what was billed at full price: fresh input plus the cache
 	// write. Cache reads are the cheap path and must not be added.
@@ -69,8 +70,8 @@ func TestFoldLedgerMarksMissingUsageExplicitly(t *testing.T) {
 	postToProxy(t, s, "u2", foldBody(t, 4, 8001))
 	summary := waitForLedgerRequests(t, s, "session-u2", 1)
 
-	if summary.Latest.UsageSource != usageSourceMissing {
-		t.Fatalf("usage source = %q, want %q", summary.Latest.UsageSource, usageSourceMissing)
+	if summary.Latest.UsageSource != fold.UsageSourceMissing {
+		t.Fatalf("usage source = %q, want %q", summary.Latest.UsageSource, fold.UsageSourceMissing)
 	}
 	if summary.Latest.RewriteTokens != -1 {
 		t.Fatalf("rewrite tokens = %d, want -1", summary.Latest.RewriteTokens)

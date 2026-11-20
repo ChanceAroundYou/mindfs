@@ -76,4 +76,14 @@ type Request struct {
 	// forwarded. Zero means "not measured yet".
 	LastActual     int
 	LastForwardEst int
+	// Preview rehearses the policy instead of applying it: the engine plans,
+	// reports the decision and the savings a fold would produce, and records the
+	// keys it would commit — so a later rehearsal sees the same monotone
+	// boundary mode=on would have — but never renders a pointer, writes an
+	// archive, or changes the body. Shadow mode uses it to measure a live node
+	// before folding is turned on.
+	//
+	// Preview implies fold planning even when FoldAllowed is false: the caller
+	// says "tell me what you would do", not "do it".
+	Preview bool
 }
