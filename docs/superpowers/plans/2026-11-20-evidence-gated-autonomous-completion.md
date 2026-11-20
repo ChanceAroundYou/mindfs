@@ -334,12 +334,29 @@ api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建�
   任务不存在 → 404；无记录 → `{"completion": null}`。
 - 前端：清单紧凑行，未通过项按编号显示，复核结论带「模型判定」标签。
 
-- [ ] **Step 1: 写失败测试**（Go handler 三态 + 前端源码契约：组件读 `completion.items`、渲染编号、标注复核）。
-- [ ] **Step 2: 跑测试确认失败**。
-- [ ] **Step 3: 实现**。
-- [ ] **Step 4: 跑测试确认通过** + `tsc -b --noEmit` + `npx vitest run`。
-- [ ] **Step 5: 变异验证**：去掉 `verifier_verdict` 的「模型判定」标签 → 前端用例必须红；还原。
-- [ ] **Step 6: 提交** `feat: 任务完成证据清单接口与前端（Scope: G-NP）`。
+- [x] **Step 1: 写失败测试**（Go handler 三态 + 前端源码契约：组件读 `completion.items`、渲染编号、标注复核）。
+- [x] **Step 2: 跑测试确认失败**。
+- [x] **Step 3: 实现**。
+- [x] **Step 4: 跑测试确认通过** + `tsc -b --noEmit` + `npx vitest run`。
+- [x] **Step 5: 变异验证**：去掉 `verifier_verdict` 的「模型判定」标签 → 前端用例必须红；还原。
+- [x] **Step 6: 提交** `feat: 任务完成证据清单接口与前端（Scope: G-NP）`。
+
+**执行记录（2026-11-21）**：接口按计划落地 —— `GET /api/tasks/{id}/completion` 四态
+（无记录 `{"completion": null}` / 有记录带 `items` / 未知任务 404 / 缺 `root_id` 400），
+`TaskCompletionStatus` 只读回放落库的那份报告（不重新求值，避免清单与当初驳回理由不一致），
+`repairs_max` 先取默认 2 再按 Run 的 `completionMaxRepairs` 覆盖。`completion_blocks_last_hour`
+放在 `RouterStatusForRoot`，数的是 `router_decisions` 里 `trigger_kind='completion_blocked'`
+的最近一小时条数 —— 事件表没有 HTTP 读口，决策表才是界面能看见的同一份事实。
+前端：`useTaskCompletion`（挂载即拉、任务头更新重拉）+ `TaskCompletionChecklist`（编号行、
+只列未通过项、复核结论带「模型判定」标签）+ `TaskCompletionEntry`（无记录整行隐藏，挂在
+`SupervisionEntry` 之后）；文案键 zh/en 各 11 个。一处与计划的偏差：清单组件落在
+`web/src/components/task/` 而不是计划里写的 `web/src/components/` —— 与 `SupervisionEntry`
+同目录，符合现有布局（ledger 有 Ruling）。测试文件里 `import type` 与 TS 类型注解在 `.mjs`
+中会被 esbuild 当 JS 解析而报 `Expected ',', got '{'`，改为纯 JS 对象与 `translateNow` 取文案，
+顺带让断言不依赖运行环境语言。变异：把「模型判定」换成 `model` → 复核用例红；还原后绿。
+门禁：`go test ./server/internal/api/ -run TestTaskCompletionRoute` ok、
+`go test ./server/internal/kanban/ -run TestRouterStatusCountsCompletionBlocks` ok、
+`tsc -b --noEmit` clean、`npx vitest run` 254 文件 / 804 通过 / 6 跳过。
 
 ---
 

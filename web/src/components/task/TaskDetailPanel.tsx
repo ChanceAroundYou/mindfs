@@ -7,6 +7,7 @@ import { pencilStyle, tagStyle } from "./taskDetailStyles";
 import { ConversationView } from "./ConversationView";
 import { RunViewEntry } from "./RunViewEntry";
 import { SupervisionEntry } from "./SupervisionEntry";
+import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
 import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskReopenIcon } from "./taskIcons";
@@ -164,6 +165,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
         <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />
         {/* 监管记录是只读证据：Router 自己重试/唤醒/交给用户的记录；没有时整行隐藏。 */}
         <SupervisionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
+        <TaskCompletionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
       </div>
     </PanelShell>
     </>

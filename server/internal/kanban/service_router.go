@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"time"
 )
@@ -31,6 +32,9 @@ type RouterStatus struct {
 	SupervisionMode            RouterSupervisionMode `json:"supervision_mode"`
 	SupervisionActionsLastHour int                   `json:"supervision_actions_last_hour"`
 	SupervisionDecisionCount   int                   `json:"supervision_decision_count"`
+	// CompletionBlocksLastHour 是证据门的计量：最近一小时有多少次收尾被拦下。
+	// 它是「自动补做有没有在工作」唯一现成的数字。
+	CompletionBlocksLastHour int `json:"completion_blocks_last_hour"`
 }
 
 // RouterStatusForRoot 汇总当前节点配置与运行态。mode=off 时仍返回配置，
@@ -66,6 +70,7 @@ func (s *Service) RouterStatusForRoot(rootID string) RouterStatus {
 	if store, err := s.routerStore(rootID); err == nil {
 		status.SupervisionActionsLastHour, status.SupervisionDecisionCount =
 			supervisionDecisionStats(context.Background(), store.db, time.Now().UTC())
+		status.CompletionBlocksLastHour = completionBlockStats(context.Background(), store.db, time.Now().UTC())
 		if decision, err := store.LatestProblemDecision(context.Background(), rootID); err == nil && decision != nil {
 			status.LastError = decision.Error
 			status.LastErrorAt = decision.CreatedAt
@@ -129,4 +134,20 @@ func (s *Service) RouterSessionForTask(ctx context.Context, rootID, taskID strin
 // 不读库也能定位（库里的记录只是诊断元数据）。
 func RouterSessionKeyForTask(taskID string) string {
 	return "router-" + strings.TrimSpace(taskID)
+}
+
+// completionBlockStats 数最近一小时的 completion_blocked 决策。它和监管动作分开
+// 计：证据门被拦下不等于 Router 动过手（可能只是把清单交给用户）。
+func completionBlockStats(ctx context.Context, db *sql.DB, now time.Time) int {
+	if db == nil {
+		return 0
+	}
+	cutoff := now.UTC().Add(-time.Hour).Format(routerTimeLayout)
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM router_decisions WHERE trigger_kind = ? AND created_at >= ?`,
+		string(RouterTriggerCompletionBlocked), cutoff).Scan(&count); err != nil {
+		return 0
+	}
+	return count
 }
