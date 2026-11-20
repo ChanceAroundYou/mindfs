@@ -1985,3 +1985,21 @@ spike 证明机制可行，这一轮把它做成产品行为，四处改动，�
 - **落后 HEAD 两个提交**：部署脚本在 `6fc12ef6` 起跑，未包含 `f094ada2`（页脚「Read 或 shell 命令」，
   二进制 `grep -a` 仍是旧文案「用 Read 打开」）与并发会话的 `6e0fcecd`（G-NP）。要吃到页脚修复需重部署；
   当前共享工作区有并发会话的未提交改动，重部署前需先落盘或从干净 HEAD 构建。
+
+### 胶囊改版（2026-11-21）
+
+用户反馈「胶囊提示做得太烂：不要说废话、单位一致、展示更有价值的内容」。改动（`18245606`，Scope: G-MN）：
+
+- 行序改成先结论后明细：`本轮请求大小 474 KB → 447 KB`、`本轮节省 27 KB（5.7%）`（百分比由 saved/req 现算）、
+  `折叠结果 6 个`、`折叠内容 10,747 tokens`、`本轮重算 783 tokens`。
+- 单位统一：字节一律走 `formatBytes`（KB/MB），token 一律 `formatTokens` 加千分位并带 `tokens`，
+  计数带「个」；`token 数为估算` 收到说明区，不再每条重复。
+- 删除折叠耗时行（对读者没有可执行动作）；关闭键从「取消」改成「关闭」。
+- 说明区压缩成「旧工具输出换成本机存档指针，原文保留在本机；会话记录不变，token 数为估算。」
+- 文案键 `badgeMessages/badgeSent/badgeOriginal/badgeFoldMs` 下线，新增
+  `badgeRequest/badgeBlocks/savedValue/blocksValue/tokensValue`；`history` 改成「已折叠 N 次请求」，
+  因为 `requests` 统计的是请求数而非「最近 200 次」。
+
+验证：`context-saving-chip.test.mjs` 10 条先红后绿，两处变异（重算行退回裸数字、节省行去掉百分比）各自打红；
+`tsc -b --noEmit` clean、`npx vitest run` 254 文件 / 806 通过 / 6 跳过。bundle 从干净 worktree（`18245606`）构建，
+装入 `~/.local/share/mindfs/web/`，7331 已服务 `assets/index-4Mg96nH7.js`（刷新即生效，无需重启）。
