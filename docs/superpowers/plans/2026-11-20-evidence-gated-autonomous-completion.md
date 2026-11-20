@@ -243,16 +243,29 @@
 - 唯一键 `completion_blocked:<runID|taskID>:<reportHash>`；payload 只放
   `{task_id, run_id?, items:[{id,kind,pass}], repairs_used, repairs_max}`。
 
-- [ ] **Step 1: 写失败测试**：`TestCompletionBlockedEventDeduped`（同 reportHash 两次只落一条）、
+- [x] **Step 1: 写失败测试**：`TestCompletionBlockedEventDeduped`（同 reportHash 两次只落一条）、
   `TestCompletionBlockedAllowsEmptyRunID`（直连任务可落，其它 kind 仍拒绝）、
   `TestCompletionBlockedPayloadAvoidsForbiddenSubstrings`、
   `TestCompletionBlockedTurnCanRetryEvidenceFailedNode`、
-  `TestCompletionBlockedBudgetExhaustedStops`。
-- [ ] **Step 2: 跑测试确认失败**。
-- [ ] **Step 3: 实现**。
-- [ ] **Step 4: 跑测试确认通过** + `go test ./server/internal/kanban/ -count=1`（全包）。
-- [ ] **Step 5: 变异验证**：去掉唯一键里的 reportHash → `TestCompletionBlockedEventDeduped` 必须红；还原。
-- [ ] **Step 6: 提交** `feat(kanban): 证据缺口事件与自动补做（Scope: G-NP）`。
+  `TestCompletionBlockedBudgetExhaustedStops`、`TestCompletionBlockedBriefCarriesGaps`
+  （实现期补：brief 段的修复额度与条目）。
+- [x] **Step 2: 跑测试确认失败**（未定义符号，RED）。
+- [x] **Step 3: 实现**。
+- [x] **Step 4: 跑测试确认通过**：定向 7/7；提交后在本提交的干净 worktree 上跑全包
+  `go test ./server/internal/kanban/ -count=1` → ok 228.6s。
+- [x] **Step 5: 变异验证**：计划指定的「去掉唯一键里的 reportHash」**不会**打红
+  `TestCompletionBlockedEventDeduped`（同缺口去重照样成立，它只压掉「缺口变了」这一半）。
+  补 `TestCompletionBlockedNewGapIsNewEvent`：在变异下先红，还原后绿。
+- [x] **Step 6: 提交** `2b001410 feat(kanban): 证据缺口事件与自动补做（Scope: G-NP）`。
+
+**执行记录（2026-11-20/21）**：`completion_blocked` 落地为缺口哈希去重的事件
+（`completion_blocked:<run|task>:<hash>`，直连任务键退 taskID，RunID 为空白名单同时放行它）；
+brief 的 `completion` 段只在补做回合挂（12 条上限，最终由 `capSituationBrief` 压到 8）；
+补做预算按契约 `MaxRepairs` 计，超出后写「需要你介入」的确定行、放回 `waiting_user`、不产事件；
+`EvidenceFailedNodes` 只收最新 attempt 停在 fail/unknown/waiting_user 的节点（重试路径不接受
+success/cancelled），并对这些节点跳过每节点重试上限（预算已由契约把关）；补做回合不占每留言
+3 回合预算、仍计入每小时监管动作预算；提示词补第 16 条「证据缺口回合」与 `router_complete_task`。
+共享工作区里三个文件混着并发会话的未提交改动，提交用 `git apply --cached` 只暂存本组 hunk。
 
 ---
 
