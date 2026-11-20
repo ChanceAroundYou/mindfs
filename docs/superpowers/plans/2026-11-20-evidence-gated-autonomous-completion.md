@@ -449,7 +449,7 @@ api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建�
 - [x] **Step 1: 写探针**：断言两会话打开/关闭形状、错误事件、取消、用量字段存在性；
   harness 特有字段放例外表。
 - [x] **Step 2: 跑**：无可用 harness 时跳过并明确打印「skipped: harness unavailable」，不算通过。
-- [ ] **Step 3: 提交** `test(agent): 跨 harness 一致性探针（Scope: G-NP）`。
+- [x] **Step 3: 提交** `test(agent): 跨 harness 一致性探针（Scope: G-NP）`。
 
 **执行记录（2026-11-21）**：`server/internal/agent/conformance/` 两层 —— 判定层
 `conformance.go`（`Observation`/`Turn`/`Shape`、`Required` 共同面、`Compare`、按报出方生效的
@@ -482,10 +482,27 @@ api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建�
 - 语义：只统计该 Run 绑定会话（`TaskRelatedSessionKeys` 里属于本 Run 的键）在 Run 时间窗内的账本行；
   读不到返回 `false`，接口给 `null` —— **不写 0**（「没有数」不能读成「没花钱」）。
 
-- [ ] **Step 1: 写失败测试**：三条账本行落在窗口内 → 求和正确；窗口内无行 → `ok=false`；
+- [x] **Step 1: 写失败测试**：三条账本行落在窗口内 → 求和正确；窗口内无行 → `ok=false`；
   首条记录之前没有基线 → 仍按窗口聚合，且 `Samples` 如实计数。
-- [ ] **Step 2: 跑测试确认失败 → 实现 → 绿 → 变异验证**（把 `ok=false` 改成返回 0 值 → 用例红）。
-- [ ] **Step 3: 提交** `feat(kanban): 任务完成记录附回合用量差分（Scope: G-NP）`。
+- [x] **Step 2: 跑测试确认失败 → 实现 → 绿 → 变异验证**（把 `ok=false` 改成返回 0 值 → 用例红）。
+- [x] **Step 3: 提交** `feat(kanban): 任务完成记录附回合用量差分（Scope: G-NP）`。
+
+**执行记录（2026-11-21）**：实现分四层 —— kanban 侧 `completionUsage`（`completion_usage.go`，
+端口 `FoldUsageReader`，nil / 无会话 / 账本不可读 / 窗口内零行一律 `ok=false`，接口给 `usage: null`）；
+账本侧 `fold.LedgerEntry` 新增 `usage_output` 并由代理写入（此前只有输入三项）；读路径
+`proxy.Server.SessionFoldUsage` → `agent.Pool.SessionFoldUsage`（`FoldUsageRow`）→
+`usecase.GetSessionFoldUsage`（补 pool 会话键，与胶囊读数同一条路径）→ `api.WireFoldUsageReader`
+适配成 kanban 端口，在两个装配点挂上。**两处偏离计划**：① 计划写的「基线字段」没做 —— 账本一行
+就是一次请求的读数，本身就是增量，再加基线会重复计；② 计划只改 `http_task_completion.go`，
+实际响应是 `TaskCompletionView` 直接序列化，`usage` 字段随视图下发，HTTP 层零改动。
+窗口语义：起点取 `Run.CreatedAt`，右界按「Run 是否还有未收尾节点」分流 —— 运行中取 now，
+收尾后取 `Run.UpdatedAt`（否则运行中的 Run 会把刚花的钱整段裁掉）。**验证**：kanban 7 条
+（窗口求和 / 运行中取 now / 零行不给 0 / 跳过 missing / 账本不可读 / 无绑定会话，绑定会话用例
+断言读口从未被调用）、proxy 2 条、agent 2 条、usecase 2 条、adapter 3 条，全部先红后绿；
+7 处变异（返回 0 值、忽略 missing、去窗口起点、右界恒取 UpdatedAt、账本不写 output、忽略
+usage_source、适配层字段错位）各自打红后还原，`make mutate` killed=14 survived=0；
+`go test ./server/internal/kanban/ -count=1` 全绿（452.8s）、`./server/internal/agent/...` 与
+`./server/internal/api/...` 全绿。Scope: G-NP / 登记组 G-NS。
 
 ---
 
