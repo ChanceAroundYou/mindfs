@@ -10747,11 +10747,11 @@ groups:
       - 'web/src/components/task/TaskBoardView.tsx:onOpenProject={(rootId, nodeId) => { void openWorkspaceProject(rootId, nodeId); }}'
 
   - id: G-NQ
-    title: 2026-11-20 复审五项修复（失败回合收尾 / message_delta / legacy 快照结算 / Router 会话 last_error / 归档事件）
+    title: 2026-11-20 复审五项修复 + Router 主动监管 S0–S2（观测 / 影子 / 有限执行）
     kind: fix
-    symptom: "2026-11-20 用户重启后复审全部 Router 与任务执行，取证发现五处：① 任务 task_7280e0df4f5c8518 的直连回合失败后任务退回 `pending`，输入框按状态禁用，用户看到报错却回不了话（失败分支只 restore 不 mark waiting_user）；② 两小时 1,672 条 `[agent/claude] output.unhandled.partial`，全是 `message_delta` 正常帧，真正的未知帧警告被埋掉；③ 任务 task_ebe31569ee25f4ff 的 legacy 占位回复（2026-11-12）与 11 条 legacy NodeRun（最早 2026-09-28）永远停在 pending/running —— legacy Run 被 workflow 对账按 triggered_by 排除，回复 run_id 又不为空，直连孤儿结算同样收不到；④ 生产 `router_sessions` 每一条已关闭会话都带 `last_error='idle timeout'`，排查时全部像出过错；⑤ `task_events` 里没有任何归档记录，事后无法追卡片何时被收走。"
-    why: "必须保留：(1) 失败回合与成功回合一样以 waiting_user 收尾 —— 否则失败一轮之后任务既不能继续也不能重发，只能删卡重建；暂停/终态不复活由 markTurnTaskWaitingUser 自带守卫。(2) `message_delta` 属于已知非展示帧（携带 stop_reason/usage），但白名单不能退化成什么都放行：未知帧类型必须继续报。(3) legacy_import 快照只在**任务已终态**时结算：开放 NodeRun 冻结成 cancelled、投影里所有非终态一并冻结（revision CAS + node_cancelled 事件），绑定的 pending/running 回复结算成 cancelled 并写明「历史任务迁移时留下的执行快照」；任务非终态一律不碰，可能是用户正在继续处理的历史任务。这一步同时修掉「重开历史任务时 Router brief 看到幽灵开放节点」。(4) 空闲关闭是正常生命周期，reason 只进日志，不进 last_error。(5) 归档/取消归档只在标记真翻转时追加事件，幂等调用不刷屏。"
-    boundary: "A1 只改任务头投影，不改活动终态与失败文案；A2 只扩事件类型白名单，delta 类型不动；A3 不处理非 legacy Run（照旧走既有对账），不改变换历史任务的触发状态，也不会自动重跑任何历史节点；A4 不改 router_sessions 表结构与状态机；A5 只记事件，不广播、不推进 updated_at（归档语义不变）。Part B 的 Router 主动监管只写在计划文档里，本轮零实现。"
+    symptom: "2026-11-20 用户重启后复审全部 Router 与任务执行，取证发现五处：① 任务 task_7280e0df4f5c8518 的直连回合失败后任务退回 `pending`，输入框按状态禁用，用户看到报错却回不了话（失败分支只 restore 不 mark waiting_user）；② 两小时 1,672 条 `[agent/claude] output.unhandled.partial`，全是 `message_delta` 正常帧，真正的未知帧警告被埋掉；③ 任务 task_ebe31569ee25f4ff 的 legacy 占位回复（2026-11-12）与 11 条 legacy NodeRun（最早 2026-09-28）永远停在 pending/running —— legacy Run 被 workflow 对账按 triggered_by 排除，回复 run_id 又不为空，直连孤儿结算同样收不到；④ 生产 `router_sessions` 每一条已关闭会话都带 `last_error='idle timeout'`，排查时全部像出过错；⑤ `task_events` 里没有任何归档记录，事后无法追卡片何时被收走。Part B（用户原话：「我希望 router 能够更加主动地去把自己的任务给管理起来，派出去的 worker 执行得怎么样了？是不是卡死了？有没有需要决策的，需不需要让他继续恢复，失败了要怎么处理」）：coordinate 的运行期动作白名单原本只有 say/ask_user/silent，节点失败只会报错/refine，既不会重试也不会继续处理。本轮补齐 S0 观测 + S1 影子 + S2 有限执行（retry_node / notify_user）。"
+    why: "必须保留：(1) 失败回合与成功回合一样以 waiting_user 收尾 —— 否则失败一轮之后任务既不能继续也不能重发，只能删卡重建；暂停/终态不复活由 markTurnTaskWaitingUser 自带守卫。(2) `message_delta` 属于已知非展示帧（携带 stop_reason/usage），但白名单不能退化成什么都放行：未知帧类型必须继续报。(3) legacy_import 快照只在**任务已终态**时结算：开放 NodeRun 冻结成 cancelled、投影里所有非终态一并冻结（revision CAS + node_cancelled 事件），绑定的 pending/running 回复结算成 cancelled 并写明「历史任务迁移时留下的执行快照」；任务非终态一律不碰，可能是用户正在继续处理的历史任务。这一步同时修掉「重开历史任务时 Router brief 看到幽灵开放节点」。(4) 空闲关闭是正常生命周期，reason 只进日志，不进 last_error。(5) 归档/取消归档只在标记真翻转时追加事件，幂等调用不刷屏。Part B 必须保留：(6) 监管只能基于结构化证据 —— 观测是纯 DB + 会话水位（不读转录、不调模型），失败分级决定动作：`retryable` 才允许自动重试，`uncertain`（`worktree_error` / `unknown`）与 `non_retryable` 一律只 `notify_user`，宁可让人看一眼也不要在证据不明时重跑。(7) 监管工具只在带 `supervision` 块的事件回合暴露，普通用户留言回合看不到，避免 Router 把「和用户对话」误当成「修机器」。(8) 影子模式记录的动作必须与 on 完全同构（同一套证据与预算校验），否则对比数据没有意义；影子决策与重放都以 `done` 收尾，不能标成失败。(9) 预算用尽是 typed error（`supervisionBudgetError`），收场是 `waiting_user` + 可见系统说明，不是把事件标失败后悄悄结束 —— 用户裁定不自动 cancel_run。(10) 水位（每节点已用重试、每小时动作数）必须在决策时重算，不能复用事件生产时的快照，否则同轮连发的事件会各自看到余额。(11) 重试与通知都必须幂等：`RetryFailedWorkflowNode` 在「下一 attempt 已存在」时返回同一行，notify 的 effect ID 由决策+seq 确定并 `InsertOrIgnore`，因为运行期事件回合是「先写效果、后推游标」，崩在中间会重放。"
+    boundary: "A1 只改任务头投影，不改活动终态与失败文案；A2 只扩事件类型白名单，delta 类型不动；A3 不处理非 legacy Run（照旧走既有对账），不改变换历史任务的触发状态，也不会自动重跑任何历史节点；A4 不改 router_sessions 表结构与状态机；A5 只记事件，不广播、不推进 updated_at（归档语义不变）。Part B 只做到 S2：`retry_node`（attempt+1，沿用原会话）与 `notify_user`（可见系统行）；`resume_run` / `cancel_run` / `escalate` 与直连回合监管（S3）未实现，直连回合与用户留言回合不产生 supervision 块。配置缺省 `off`，不写 `router.supervision` 时整条链路与改动前等价；未知 mode 归一化为 `off`。不宣称覆盖 kill -9、SQLite 语句中断或跨进程预算一致性（`actions_last_hour` 是每任务库内计数）。"
     files:
       - server/internal/kanban/activity_service_turns.go
       - server/internal/kanban/activity_task_status_test.go
@@ -10766,12 +10766,39 @@ groups:
       - server/internal/kanban/router_session_close_test.go
       - server/internal/kanban/task_store_archive.go
       - server/internal/kanban/task_store_archive_event_test.go
+      - server/internal/kanban/router_supervision.go
+      - server/internal/kanban/router_supervision_test.go
+      - server/internal/kanban/router_supervision_actions.go
+      - server/internal/kanban/router_supervision_actions_test.go
+      - server/internal/kanban/router_supervision_tools.go
+      - server/internal/kanban/router_supervision_turn.go
+      - server/internal/kanban/activity_route_supervision.go
+      - server/internal/kanban/workflow_node_supervision_retry.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_event_sources.go
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/service_activities.go
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - cli/cmd/startup_config_test.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
+      - server/app/router_supervision_config_test.go
     tests:
       - server/internal/kanban/activity_task_status_test.go
       - server/internal/agent/claude/session_partial_events_test.go
       - server/internal/kanban/service_recover_legacy_leftovers_test.go
       - server/internal/kanban/router_session_close_test.go
       - server/internal/kanban/task_store_archive_event_test.go
+      - server/internal/kanban/router_supervision_test.go
+      - server/internal/kanban/router_supervision_actions_test.go
+      - cli/cmd/startup_config_test.go
+      - server/app/router_supervision_config_test.go
     anchors:
       - 'server/internal/kanban/activity_service_turns.go:失败与成功一样以「等用户」收尾'
       - 'server/internal/agent/claude/session_message_loop_helpers.go:case "content_block_start", "content_block_stop", "message_start", "message_stop", "message_delta":'
@@ -10785,6 +10812,26 @@ groups:
       - 'server/internal/kanban/router_service_sessions.go:log.Printf("[router] session.closed task=%s reason=%s", taskID, reason)'
       - 'server/internal/kanban/task_store_archive.go:Type: "archived"'
       - 'server/internal/kanban/task_store_archive.go:Type: "unarchived"'
+      - 'server/internal/kanban/router_supervision.go:func (c RouterSupervisionConfig) Normalized() RouterSupervisionConfig {'
+      - 'server/internal/kanban/router_supervision.go:func (s *Service) supervisionObservation('
+      - 'server/internal/kanban/router_supervision.go:func classifySupervisionFailure('
+      - 'server/internal/kanban/router_event_sources.go:payload["supervision"] = obs'
+      - 'server/internal/kanban/router_event_brief.go:"supervision",'
+      - 'server/internal/kanban/router_brief.go:brief.Supervision = rs.service.supervisionObservation('
+      - 'server/internal/kanban/router_supervision_actions.go:func validateSupervisionActions('
+      - 'server/internal/kanban/router_supervision_actions.go:type supervisionBudgetError struct'
+      - 'server/internal/kanban/router_supervision_actions.go:func supervisionActionSplit('
+      - 'server/internal/kanban/router_supervision_tools.go:func (e *routerToolEnv) supervisionTools() []RouterToolSpec {'
+      - 'server/internal/kanban/router_tools.go:return append(tools, e.supervisionTools()...)'
+      - 'server/internal/kanban/router_tools.go:if err := validateSupervisionActions(brief, actions, config); err != nil {'
+      - 'server/internal/kanban/router_coordinate_turn.go:applicable, shadowed := supervisionActionSplit('
+      - 'server/internal/kanban/router_coordinate_turn.go:if isSupervisionBudgetError(validationErr) {'
+      - 'server/internal/kanban/router_supervision_turn.go:func (rs *RouterService) stopSupervisionForUser('
+      - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) applyRouteRetryNode('
+      - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) applyRouteNotifyUser('
+      - 'server/internal/kanban/workflow_node_supervision_retry.go:func (s *Service) RetryFailedWorkflowNode('
+      - 'cli/cmd/startup.go:type startupRouterSupervisionConfig struct {'
+      - 'server/app/server.go:Supervision: kanban.RouterSupervisionConfig{'
 
   - id: G-NR
     title: 项目身份 = (nodeId, rootId)：不同节点的同名 / 同路径项目是不同项目
