@@ -66,6 +66,12 @@ type Server struct {
 	engineMu sync.Mutex
 	engines  map[string]*fold.Engine
 
+	// providers maps a provider name to the real base URL behind /c/{name}/...
+	// (see provider_route.go). Kept apart from sessions because it is written
+	// once at session open, not per request.
+	providerMu sync.Mutex
+	providers  map[string]string
+
 	// Emergency brake: the presence of DisableFile turns live-compact off for
 	// the running process. Checked at most once per second.
 	disableMu        sync.Mutex
@@ -145,6 +151,7 @@ func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/compact-signal", s.handleCompactSignal)
 	mux.HandleFunc("/p/", s.handleProxied)
+	mux.HandleFunc("/c/", s.handleProvider)
 	s.srv = &http.Server{Handler: mux}
 	go func() {
 		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {

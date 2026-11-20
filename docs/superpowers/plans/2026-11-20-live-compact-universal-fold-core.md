@@ -1473,6 +1473,14 @@ git add server/internal/agent/proxy server/internal/agent/pool_codex_proxy.go se
 git commit -m "feat(live-compact): 代理新增按 provider 的转发路由与 Codex provider 发现（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`proxy/provider_route.go` + `provider_route_test.go`、`pool_codex_proxy.go` + `pool_codex_proxy_test.go` 落地，`proxy.go` 注册 `/c/` 路由并加 `providerMu`/`providers` 两个字段。
+
+- 路由语义：`/c/{name}/{tail}` → `normalizeProviderBase(base) + "/" + tail`。注册时把 base 末尾的 `/` 与 `/v1` 去掉，因为路由自己已经带 `/v1/...`；不去重就会出现 `/v1/v1/responses`（变异验证的正是这一条）。未知 provider 回 404 而不是 502：这是我们的接线错误，502 会把排查引到上游。
+- 转发是透明的：方法、query、头（除 `Host`）、体、状态码、响应体原样过去，SSE 走同一个 `flushWriter` 逐块下发。上游错误不重新包装，CLI 才能读到 provider 自己的报错文本。
+- **偏离计划：`codexProxyArgs` 的签名与取值**。签名改成 `codexProxyArgs(providers map[string]string, proxyURL func(name string) string) []string`——按 provider 名分发地址，比传一个已经拼好的 URL 更贴合调用点；右值写成**带引号的 TOML 字符串**（`model_providers.llmux.base_url="http://..."`），因为 `-c` 按 TOML 解析右值，裸 URL 不是合法 TOML 值。provider 名按字典序排序，argv 可复现。
+- `codexProviderBaseURLs` 只认**裸键**名（`[A-Za-z0-9_-]`）：名字要拼进 `-c` 的 TOML 键，带点或引号的名字需要另一套转义规则，宁可跳过也不要生成 Codex 解析不了的覆盖项。缺 `config.toml` 返回空表且不报错（ChatGPT 登录的配置本来就没有 `[model_providers]`），`base_url` 为空的条目跳过（这就是 Codex 表达「该 provider 走登录」的方式）。
+- 用例 7 条（转发路径/query/头/体、未知 404、上游错误透传、`ProviderProxyURL`、TOML 读取含跳过规则、缺文件、`-c` 参数排序与引号）。变异两处：去掉 `/v1` 归一化 → 转发用例红（`/v1/v1/responses`）；不跳过空 `base_url` → TOML 用例红；各自还原后全绿。
+
 ---
 
 ### Task 13: Codex 会话注入与 thread 身份

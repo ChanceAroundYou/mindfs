@@ -9331,6 +9331,8 @@ groups:
       - server/internal/agent/proxy/lcsmoke/
       - server/internal/agent/fold/
       - server/internal/agent/proxy/fold_alias.go
+      - server/internal/agent/proxy/provider_route.go
+      - server/internal/agent/pool_codex_proxy.go
       - server/internal/agent/proxy/testdata/fold_golden.txt
       - server/internal/agent/pool.go
       - server/internal/agent/pool_open.go
@@ -9366,6 +9368,8 @@ groups:
       - server/internal/agent/fold/responses/splice_test.go
       - server/internal/agent/fold/responses/usage_test.go
       - server/internal/agent/fold/responses/guard_test.go
+      - server/internal/agent/pool_codex_proxy_test.go
+      - server/internal/agent/proxy/provider_route_test.go
       - server/internal/agent/proxy/fold_golden_test.go
       - server/internal/agent/proxy/live_compact_testhelpers_test.go
       - server/internal/agent/fold/config_test.go
@@ -9426,6 +9430,9 @@ groups:
       - 'server/internal/agent/fold/responses/usage.go:func (Adapter) Usage(resp []byte) (fold.Usage, bool) {'
       - 'server/internal/agent/fold/responses/usage.go:func (Adapter) Guard(string, fold.Config) fold.GuardVerdict { return fold.GuardVerdict{} }'
       - 'server/internal/agent/fold/responses/adapter.go:var _ fold.Adapter = Adapter{}'
+      - 'server/internal/agent/proxy/provider_route.go:func (s *Server) RegisterProvider(name, realBaseURL string) {'
+      - 'server/internal/agent/proxy/provider_route.go:return strings.TrimSuffix(base, "/v1")'
+      - 'server/internal/agent/pool_codex_proxy.go:func codexProviderBaseURLs() (map[string]string, error) {'
       - 'server/internal/agent/fold/anthropic/equivalence_test.go:func TestAdapterScanAgreesWithReference('
       - 'server/internal/agent/proxy/usage.go:func (s *usageScanner) consumeLine('
       - 'server/internal/agent/pool_open.go:p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)'
