@@ -10,7 +10,21 @@ import (
 // 运行期事件回合可用：观测（S0）给出「哪些节点失败、失败属于哪一类、预算还剩
 // 多少」，这里把观测变成动作，并守住预算与证据边界。
 
-const supervisionRetryReason = "supervisor_retry"
+const (
+	supervisionRetryReason  = "supervisor_retry"
+	supervisionResumeReason = "supervisor_resume"
+)
+
+// supervisionIsWriteAction 报这个动作是不是「监管写入」：影子模式只记录、on 才执行。
+func supervisionIsWriteAction(kind RouterActionKind) bool {
+	switch kind {
+	case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
+		RouterActionRetryDirect:
+		return true
+	default:
+		return false
+	}
+}
 
 // supervisionBudgetError 把「预算用尽」与其他校验失败分开：预算用尽不是模型
 // 犯错，而是这台机器该停手了 —— 回合要停在 waiting_user 并把情况写给用户，
@@ -53,6 +67,70 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 			if target.RetriesUsed >= cfg.MaxRetriesPerNode {
 				return &supervisionBudgetError{reason: fmt.Sprintf(
 					"supervision retry budget exhausted for node %s (%d/%d)", target.NodeID, target.RetriesUsed, cfg.MaxRetriesPerNode)}
+			}
+			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
+				return &supervisionBudgetError{reason: fmt.Sprintf(
+					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
+			}
+		case RouterActionResumeRun:
+			if obs == nil {
+				return errors.New("resume_run requires a supervision block; this turn has none")
+			}
+			// 证据不明时唤醒等于替用户赌一把：先让 notify/escalate 说清情况。
+			for _, node := range obs.FailedNodes {
+				if node.FailureKind == SupervisionFailureUncertain {
+					return fmt.Errorf("resume_run is not allowed: failure evidence for node %s is uncertain; use router_notify_user instead", node.NodeID)
+				}
+			}
+			if len(obs.OpenNodes) == 0 {
+				return errors.New("resume_run is not allowed: this run has no open nodes left")
+			}
+			idle := 0
+			for _, node := range obs.OpenNodes {
+				if !node.Replying {
+					idle++
+				}
+			}
+			if idle == 0 {
+				return errors.New("resume_run is not allowed: every open node is still replying")
+			}
+			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
+				return &supervisionBudgetError{reason: fmt.Sprintf(
+					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
+			}
+		case RouterActionRetryDirect:
+			if obs == nil || obs.Direct == nil {
+				return errors.New("retry_direct requires a direct-turn supervision block; this turn has none")
+			}
+			activityID := strings.TrimSpace(action.NodeRunID)
+			if activityID == "" || activityID != obs.Direct.ActivityID {
+				return fmt.Errorf("retry_direct targets an unknown stalled reply (activity=%q, expected %q)",
+					action.NodeRunID, obs.Direct.ActivityID)
+			}
+			if obs.Direct.Status != ActivityStatusPending && obs.Direct.Status != ActivityStatusRunning {
+				return fmt.Errorf("retry_direct is not allowed: reply %s is %s, not pending/running", activityID, obs.Direct.Status)
+			}
+			if obs.Direct.Replying {
+				return errors.New("retry_direct is not allowed: the task session is still replying")
+			}
+			if !obs.Direct.RetryAllowed || obs.Direct.RetriesUsed >= supervisionDirectMaxRetries {
+				return &supervisionBudgetError{reason: fmt.Sprintf(
+					"supervision direct retry budget exhausted for reply %s (%d/%d)",
+					activityID, obs.Direct.RetriesUsed, supervisionDirectMaxRetries)}
+			}
+			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
+				return &supervisionBudgetError{reason: fmt.Sprintf(
+					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
+			}
+		case RouterActionEscalate:
+			if obs == nil {
+				return errors.New("escalate requires a supervision block; this turn has none")
+			}
+			if strings.TrimSpace(action.Body) == "" {
+				return errors.New("escalate summary required")
+			}
+			if len(action.Body) > routerActionBodyMaxBytes {
+				return fmt.Errorf("escalate summary exceeds %d bytes", routerActionBodyMaxBytes)
 			}
 			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
 				return &supervisionBudgetError{reason: fmt.Sprintf(
@@ -106,16 +184,15 @@ func supervisionFailedNodeList(obs *SupervisionObservation) string {
 //   - 汇报类动作两种模式都执行。
 func supervisionActionSplit(mode RouterSupervisionMode, actions []RouterAction) (applicable, shadowed []RouterAction) {
 	for _, action := range actions {
-		switch action.Kind {
-		case RouterActionRetryNode, RouterActionNotifyUser:
+		if supervisionIsWriteAction(action.Kind) {
 			if mode == RouterSupervisionOn {
 				applicable = append(applicable, action)
 				continue
 			}
 			shadowed = append(shadowed, action)
-		default:
-			applicable = append(applicable, action)
+			continue
 		}
+		applicable = append(applicable, action)
 	}
 	return applicable, shadowed
 }

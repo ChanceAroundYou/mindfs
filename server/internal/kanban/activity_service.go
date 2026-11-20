@@ -86,6 +86,8 @@ type ActivityService struct {
 	nodeAnswerer   ActivityNodeAnswerer
 	// nodeRetrier 是主动监管的「重试失败节点」端口；nil 时 retry_node 明确失败。
 	nodeRetrier ActivityNodeRetrier
+	// runResumer 是主动监管的「唤醒停住的 Run」端口；nil 时 resume_run 明确失败。
+	runResumer ActivityRunResumer
 	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；
 	// shadow 只读、只记账，不改变本函数的任何返回值或副作用。
 	router *RouterService

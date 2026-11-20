@@ -148,11 +148,13 @@ type RouterTriggerKind string
 
 const (
 	RouterTriggerUserMessage RouterTriggerKind = "user_message"
-	RouterTriggerRunSettled  RouterTriggerKind = "run_settled"       // P2
-	RouterTriggerRunFailed   RouterTriggerKind = "run_failed"        // P2
-	RouterTriggerGateWaiting RouterTriggerKind = "gate_waiting"      // P2
-	RouterTriggerRunStalled  RouterTriggerKind = "run_stalled"       // P2
-	RouterTriggerStartup     RouterTriggerKind = "startup_reconcile" // P1
+	RouterTriggerRunSettled  RouterTriggerKind = "run_settled"  // P2
+	RouterTriggerRunFailed   RouterTriggerKind = "run_failed"   // P2
+	RouterTriggerGateWaiting RouterTriggerKind = "gate_waiting" // P2
+	RouterTriggerRunStalled  RouterTriggerKind = "run_stalled"  // P2
+	// S3：直连回合没有 Run，回复行停在 running 而主会话已空闲时用它。
+	RouterTriggerDirectStalled RouterTriggerKind = "direct_stalled"
+	RouterTriggerStartup       RouterTriggerKind = "startup_reconcile" // P1
 )
 
 type RouterTrigger struct {
@@ -196,6 +198,11 @@ const (
 	// 直接告诉用户。两者都只在带 supervision 块的事件回合可用。
 	RouterActionRetryNode  RouterActionKind = "retry_node"
 	RouterActionNotifyUser RouterActionKind = "notify_user"
+	// S3：唤醒一个还有 open 节点、但没有回合在跑的 Run；把机器停手交还给用户。
+	RouterActionResumeRun RouterActionKind = "resume_run"
+	RouterActionEscalate  RouterActionKind = "escalate"
+	// S3：直连回合停摆——结算卡住的回复行，再用原始留言重开一轮。
+	RouterActionRetryDirect RouterActionKind = "retry_direct"
 )
 
 // run_workflow 的会话模式（2026-11-20 用户决策）：默认新开一段会话；
@@ -215,8 +222,9 @@ type RouterAction struct {
 	Question   string           `json:"question,omitempty"`
 	Options    []string         `json:"options,omitempty"`
 	RunID      string           `json:"run_id,omitempty"`
-	// NodeRunID 是 answer_waiting_node / retry_node 的目标：工具在当轮就把它
-	// 解析成具体行，apply 阶段不再重新判定「哪个节点在等我答复 / 该重试哪一行」。
+	// NodeRunID 是 answer_waiting_node / retry_node / retry_direct 的目标：工具在
+	// 当轮就把它解析成具体行（retry_direct 带的是回复活动 ID），apply 阶段不再
+	// 重新判定「哪个节点在等我答复 / 该重试哪一行 / 哪条回复卡住了」。
 	NodeRunID string `json:"node_run_id,omitempty"`
 	// SessionMode 只对 run_workflow 有意义：new（默认）= 这一轮开一段新会话，
 	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。

@@ -27,6 +27,10 @@ type RouterStatus struct {
 	// 配置里的时长对前端不友好，另给毫秒字段；保留 Duration 供 Go 调用方。
 	TurnTimeoutMS int64 `json:"turn_timeout_ms"`
 	IdleCloseMS   int64 `json:"idle_close_ms"`
+	// 主动监管（S4）：模式与最近用量，供任务详情/诊断页判断「机器会不会自己动手」。
+	SupervisionMode            RouterSupervisionMode `json:"supervision_mode"`
+	SupervisionActionsLastHour int                   `json:"supervision_actions_last_hour"`
+	SupervisionDecisionCount   int                   `json:"supervision_decision_count"`
 }
 
 // RouterStatusForRoot 汇总当前节点配置与运行态。mode=off 时仍返回配置，
@@ -50,6 +54,8 @@ func (s *Service) RouterStatusForRoot(rootID string) RouterStatus {
 		PromptHash:    RouterPromptHash(),
 		TurnTimeoutMS: config.TurnTimeout.Milliseconds(),
 		IdleCloseMS:   config.IdleClose.Milliseconds(),
+
+		SupervisionMode: config.Supervision.Normalized().Mode,
 	}
 	s.mu.Lock()
 	router := s.routers[strings.TrimSpace(rootID)]
@@ -58,6 +64,8 @@ func (s *Service) RouterStatusForRoot(rootID string) RouterStatus {
 		status.ActiveLanes = router.activeLanes()
 	}
 	if store, err := s.routerStore(rootID); err == nil {
+		status.SupervisionActionsLastHour, status.SupervisionDecisionCount =
+			supervisionDecisionStats(context.Background(), store.db, time.Now().UTC())
 		if decision, err := store.LatestProblemDecision(context.Background(), rootID); err == nil && decision != nil {
 			status.LastError = decision.Error
 			status.LastErrorAt = decision.CreatedAt

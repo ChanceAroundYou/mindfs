@@ -64,8 +64,15 @@ func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {
 		kind = RouterTriggerRunStalled
 	case RouterEventStartupReconcile:
 		kind = RouterTriggerStartup
+	case RouterEventDirectStalled:
+		kind = RouterTriggerDirectStalled
 	default:
 		return RouterTrigger{}, ""
+	}
+	triggerRef := strings.TrimSpace(ev.RunID)
+	if triggerRef == "" {
+		// 直连事件没有 Run：指向卡住的那条回复行，便于日志/审计对齐。
+		triggerRef = routerEventPayloadString(ev.PayloadJSON, "activity_id")
 	}
 	event := ev
 	return RouterTrigger{
@@ -73,7 +80,7 @@ func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {
 		TaskID:         strings.TrimSpace(ev.TaskID),
 		RootID:         strings.TrimSpace(ev.RootID),
 		UserActivityID: strings.TrimSpace(ev.UserActivityID),
-		TriggerRef:     ev.RunID,
+		TriggerRef:     triggerRef,
 		TurnID:         strings.TrimSpace(ev.TurnID),
 		Mode:           RouterModeCoordinate,
 		Event:          &event,
@@ -355,6 +362,14 @@ ORDER BY r.created_at ASC, r.id ASC`,
 		result.Produced = append(result.Produced, produced...)
 		result.Notes = append(result.Notes, notes...)
 	}
+	// 直连回合没有 Run，不在上面的候选集里：单独扫一遍，仍共用同一张观测表，
+	// 所以必须在 prune 之前。
+	produced, notes, err := s.scanDirectStalledEvents(ctx, store, now, running)
+	if err != nil {
+		return result, err
+	}
+	result.Produced = append(result.Produced, produced...)
+	result.Notes = append(result.Notes, notes...)
 	s.pruneRouterStallObservations(running)
 	return result, nil
 }

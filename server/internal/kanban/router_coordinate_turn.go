@@ -185,6 +185,10 @@ func (rs *RouterService) beginCoordinateEventTurn(ctx context.Context, decision 
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "no longer stalled")
 		return false
 	}
+	if event.Kind == RouterEventDirectStalled && !rs.directEvidenceHolds(ctx, *event) {
+		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "no longer stalled")
+		return false
+	}
 	return true
 }
 
@@ -422,7 +426,8 @@ func validateRuntimeEventActions(brief *SituationBrief, actions []RouterAction, 
 		switch action.Kind {
 		case RouterActionSay, RouterActionAskUser, RouterActionSilent:
 			continue
-		case RouterActionRetryNode, RouterActionNotifyUser:
+		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
+			RouterActionRetryDirect:
 			// 监管动作的可用性绑定在观测块上：没有观测就不该出现这个动作。
 			if brief == nil || brief.Supervision == nil {
 				return fmt.Errorf("%s requires a supervision block", action.Kind)
@@ -433,4 +438,23 @@ func validateRuntimeEventActions(brief *SituationBrief, actions []RouterAction, 
 		}
 	}
 	return nil
+}
+
+// directEvidenceHolds 重查直连停摆的证据：payload 指向的回复行必须仍存在，
+// 且仍停在 pending/running。会话是否又在回复不在这里判 —— 那一步留给动作校验，
+// 这样「事件成立但此刻不该重试」会落成一次可解释的拒绝，而不是静默跳过。
+func (rs *RouterService) directEvidenceHolds(ctx context.Context, event RouterEvent) bool {
+	activityID := routerEventPayloadString(event.PayloadJSON, "activity_id")
+	if activityID == "" {
+		return false
+	}
+	store := rs.taskStore()
+	if store == nil {
+		return false
+	}
+	reply, err := NewActivityStore(store.db).Get(ctx, activityID)
+	if err != nil || reply == nil {
+		return false
+	}
+	return reply.Status == ActivityStatusPending || reply.Status == ActivityStatusRunning
 }

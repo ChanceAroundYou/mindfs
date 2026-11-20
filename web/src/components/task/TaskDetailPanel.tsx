@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/index";
 import { pencilStyle, tagStyle } from "./taskDetailStyles";
 import { ConversationView } from "./ConversationView";
 import { RunViewEntry } from "./RunViewEntry";
+import { SupervisionEntry } from "./SupervisionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
 import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskReopenIcon } from "./taskIcons";
@@ -161,6 +162,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
         />
         {/* 运行视图是对话流的下钻（默认收起）；human_gate 在对话卡与运行视图里都能审批。 */}
         <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />
+        {/* 监管记录是只读证据：Router 自己重试/唤醒/交给用户的记录；没有时整行隐藏。 */}
+        <SupervisionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
       </div>
     </PanelShell>
     </>

@@ -155,6 +155,12 @@ func (s *ActivityService) applyRouteAction(
 		return s.applyRouteRetryNode(ctx, decision, action)
 	case RouterActionNotifyUser:
 		return s.applyRouteNotifyUser(ctx, decision, task, action)
+	case RouterActionResumeRun:
+		return s.applyRouteResumeRun(ctx, decision, action)
+	case RouterActionEscalate:
+		return s.applyRouteEscalate(ctx, decision, task, action)
+	case RouterActionRetryDirect:
+		return s.applyRouteRetryDirect(ctx, decision, task, userAct, action)
 	default:
 		return fmt.Errorf("unsupported action %q", action.Kind)
 	}

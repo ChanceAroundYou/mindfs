@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"time"
 )
@@ -97,6 +98,8 @@ type SupervisionObservation struct {
 	RetriesLeft       int                    `json:"retries_left"`
 	ActionsLastHour   int                    `json:"actions_last_hour"`
 	ActionBudget      int                    `json:"action_budget"`
+	// Direct 只在直连回合的监管块里出现（那条事件没有 Run，节点段不适用）。
+	Direct *SupervisionDirectState `json:"direct,omitempty"`
 }
 
 // supervisionObservation 汇总一个 Run 的 open/failed 节点水位。mode=off 时返回 nil
@@ -201,8 +204,9 @@ func (s *Service) supervisionActionsLastHour(ctx context.Context, store *TaskSto
 	cutoff := now.UTC().Add(-time.Hour).Format(routerTimeLayout)
 	var n int
 	err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM router_decisions WHERE task_id=? AND created_at>=? AND trigger_kind IN (?,?)`,
-		taskID, cutoff, string(RouterTriggerRunFailed), string(RouterTriggerRunStalled)).Scan(&n)
+		`SELECT COUNT(*) FROM router_decisions WHERE task_id=? AND created_at>=? AND trigger_kind IN (?,?,?)`,
+		taskID, cutoff, string(RouterTriggerRunFailed), string(RouterTriggerRunStalled),
+		string(RouterTriggerDirectStalled)).Scan(&n)
 	if err != nil {
 		return 0
 	}
@@ -256,4 +260,27 @@ func supervisionFailureSummary(nr NodeRun) string {
 		return value
 	}
 	return "node ended " + nr.Status + " without a recorded reason"
+}
+
+// supervisionDecisionStats 统计监管用量：最近一小时的监管动作回合数，与最近
+// 24 小时的监管决策数。只读，读不到就记 0（诊断快照不能因为统计失败而报错）。
+func supervisionDecisionStats(ctx context.Context, db *sql.DB, now time.Time) (lastHour, recent int) {
+	if db == nil {
+		return 0, 0
+	}
+	now = now.UTC()
+	hourCutoff := now.Add(-time.Hour).Format(routerTimeLayout)
+	dayCutoff := now.Add(-24 * time.Hour).Format(routerTimeLayout)
+	var hour, day sql.NullInt64
+	err := db.QueryRowContext(ctx, `
+SELECT SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), COUNT(*)
+FROM router_decisions
+WHERE trigger_kind IN (?, ?, ?) AND created_at >= ?`,
+		hourCutoff,
+		string(RouterTriggerRunFailed), string(RouterTriggerRunStalled), string(RouterTriggerDirectStalled),
+		dayCutoff).Scan(&hour, &day)
+	if err != nil {
+		return 0, 0
+	}
+	return int(hour.Int64), int(day.Int64)
 }

@@ -222,3 +222,104 @@ already_escalated       // 本 attempt 是否已升级过
   worktree 装 `c9e3c76f` 会漏掉那次提交；本机继续跑已装的 Part A 版本（`v0.5.5-1200-72-gad4db85a`）。
   监管默认 `off`，这一点不影响任何现有行为。
 - **S3（直连回合监管）未实现**，按 B8 第 4 条等后续授权。
+
+### B11 S3 + S4 执行计划（2026-11-20，用户指令「请继续往后实现 S3 等所有内容，不再等待」）
+
+S3 拆成三个可独立回滚的提交，S4 一个；每步都按 TDD（RED → GREEN + 变异验证）。
+
+**S3-1 `resume_run`（唤醒停住的 Run）**
+
+- 类型：`RouterActionResumeRun = "resume_run"`；工具 `router_resume_run`（可选 `reason`）。
+- 可用性/校验（`validateSupervisionActions`）：必须有 supervision 块；不得存在
+  `failure_kind=uncertain` 的失败节点（证据不明时只许 `notify_user`）；必须至少有一个
+  `Replying=false` 的 open 节点（真有回合在跑就不该唤醒）；每小时动作预算同样生效。
+- 应用：`Service.WakeWorkflowRun(ctx, rootID, taskID, "supervisor_resume")`，走既有
+  single-flight 唤醒（driver 重算 ready 节点，没有可推进的节点时自然无事发生）。
+- shadow：归入 `supervisionActionSplit` 的监管动作集合。
+
+**S3-2 `escalate`（升级给用户）**
+
+- 类型：`RouterActionEscalate = "escalate"`；工具 `router_escalate`（`summary` 必填 ≤ 4 KiB）。
+- 应用 = `stopSupervisionForUser` 的可见部分：确定性系统行 `route-escalate:<decision>:<seq>` +
+  任务放回 `waiting_user`（`cancelled` / `success` 不复活）。**不 cancel Run**。
+- 把「写可见系统行 + 放回 waiting_user」抽成共用 helper，`stopSupervisionForUser` 复用它。
+
+**S3-3 直连回合监管（新事件 `direct_stalled`）**
+
+- 事件：`RouterEventDirectStalled = "direct_stalled"`；实例键 `activityID + ":" + unix/300`；
+  允许 `RunID=''`（仅这一种 kind），`InsertEvent` 对该 kind 放宽非空校验。
+- 扫描（`router_event_direct.go`）：`type=agent_reply`、`status IN (pending,running)`、
+  `COALESCE(run_id,'')=''`、创建 ≥ 60s、`!sessionRunning(task.MainSessionKey)`、与停摆观测表
+  同一套「两次 inactive 观测（≥30s）」确认，复用 5 分钟桶去重。
+- 触发映射：`RouterTriggerDirectStalled = "direct_stalled"`；`routerTriggerForEvent` 直连分支；
+  `supervisionActionsLastHour` 把该触发计入每小时预算。
+- brief：`SupervisionObservation` 增加 `Direct *SupervisionDirectState`（activity_id、状态、
+  起始时间、空闲秒数、`session_replying`、`retries_used`、`retry_allowed`）；`turnBrief` 对
+  direct 事件重算直连水位；event brief 在无 Run 时按 direct 分支给证据（不再报 run missing）。
+- 动作：`retry_direct`（工具 `router_retry_direct`）。校验：direct 块存在、`retry_allowed`
+  （同一轮直连最多一次，按 applied 且 `actions_json` 含 `retry_direct` 的决策计数）、小时预算。
+  应用：端口 `ActivityDirectRetrier` → `Service.RetryStalledDirectReply` —— 先
+  `SettleOrphanReply` 把旧行结算成 cancelled 并广播，再用确定性新行 ID
+  `direct-retry:<decisionID>` 建一条新的 pending 回复（正文由 `ReplyToID` / 最近用户留言解析），
+  经 `executeDirectActivity` 重跑。重放靠新行 ID 幂等。
+- `router_prompt.md`：工具清单补三个新工具，规则 8/11 改成「运行期事件回合允许汇报类动作与
+  监管动作（retry_node / notify_user / resume_run / escalate / retry_direct），仍禁止开新执行、
+  代批 gate、cancel Run」。
+
+**S4 可视化**
+
+- 后端：`RouterStatus` 增加 `supervision_mode` / `supervision_actions_last_hour` /
+  `supervision_decision_count`（本 root 最近的监管决策数），透出到 `GET /api/router/status`。
+- 前端：任务详情新增 `SupervisionEntry`（与 `RunViewEntry` 同级折叠行），消费既有
+  `GET /api/tasks/{id}/router-decisions`，只列监管类决策（trigger_kind ∈
+  run_failed / run_stalled / direct_stalled，或 action_kinds 含监管动作），按时间倒序显示
+  「触发 → 动作 → 结果」，空时整行隐藏。i18n 文案 + 源码契约测试。
+
+**不放开 `cancel_run` 的理由**：B8-2 用户裁定「预算耗尽停 waiting_user，由用户接手，Router 不
+自动 cancel_run」。原提案里 cancel_run 的唯一触发条件正是「预算耗尽 / 不可重试且已升级」，
+放开它等于和该裁定直接冲突；`escalate` 已覆盖「机器停手 + 告诉用户」的语义。
+
+**文件硬线**：本轮同时把 `router_tools.go`(512) 与 `router_event_sources.go`(509) 拆回 500 行内
+（`router_tools_inspect.go`、`router_event_payload.go`）。
+
+### B12 S3/S4 执行记录（2026-11-20）
+
+**S3-1 / S3-2 已实现**（`router_supervision_s3_test.go` 6 条：resume 唤醒、有节点在回复时拒绝、
+uncertain 失败拒绝、escalate 落系统行 + waiting_user、shadow 无副作用、resume 校验矩阵）。
+`resume_run` 走 `WakeWorkflowRun`（single-flight），`escalate` 复用
+`applyVisibleSystemRow` + `parkTaskWaitingUser`；两者都在 `supervisionActionSplit` 里算监管写动作，
+shadow 只记录。
+
+**S3-3 已实现**（`router_supervision_direct_test.go` 8 条 + 7 处变异各自打红）：
+`direct_stalled` 事件、两次空闲观测、`SupervisionDirectState`、`retry_direct` 工具与校验、
+`applyRouteRetryDirect`、`directEvidenceHolds` 证据复核、`RouterStatus` 用量字段。
+
+与 B11 计划的两处偏离（实现后回看更稳，记录下来避免下次照抄计划）：
+
+1. **重开没有走 `ActivityDirectRetrier` 端口**：实现直接在 `ActivityService` 里做（它本来就持有
+   `activities` / `directExecutor` / 广播器）。加一层 `Service.RetryStalledDirectReply` 端口只会
+   把同一段幂等逻辑（`direct-retry:<decision>` + `SettleOrphanReply` 条件更新）复制一遍。
+   `ResumeRun` 仍走端口，因为它需要 `Service` 的 lane 与 driver。
+2. **同一轮直连只自动重开一次**（`supervisionDirectMaxRetries = 1`）：B8-1 的「每节点 2 次」是
+   Run 侧水位，直连没有节点；同一轮第二次仍失败说明重开解决不了，直接由预算错误走
+   `stopSupervisionForUser`（可见系统行 + waiting_user），而不是再赌一次。
+
+变异清单（每条都先打红再还原）：去掉第二次观测确认、会话在回复时不跳过、去掉 60s 最小运行时长、
+`retry_direct` 不看 `Replying`、直连回合仍暴露 run-only 工具、去掉 `directEvidenceHolds`（补了
+`TestDirectStalledEventSkippedWhenReplyAlreadySettled` 才捕获）、重放不按确定性行 ID 幂等。
+
+**S4 已实现**：
+
+- 后端：`RouterStatus` 三字段 + `supervisionDecisionStats`（24h 内按三种监管触发统计，最近一小时
+  单独一列），`TestRouterStatusExposesSupervisionUsage` 钉住；变异（统计 SQL 去掉
+  `direct_stalled`）打红后还原。
+- 前端：`services/task/routerDecisions.ts`（`appURL` + 显式 `nodeId`）、
+  `supervisionEntryModel.ts`（过滤/排序/标签键，纯函数）、`useSupervisionEntry.ts`（挂载即拉，
+  `refreshKey` 重拉）、`SupervisionEntryList.tsx`（presenter，行 = 时刻 · 触发 → 动作 · 状态，
+  错误另起一行）、`SupervisionEntry.tsx`（折叠行，无记录时整行隐藏），挂在 `TaskDetailPanel`
+  的 `RunViewEntry` 之后；zh/en 各 18 个 `task.supervision.*` 键。
+- 测试：`web/tests/task-supervision-entry.test.mjs` 7 条（筛选、动作去重、时间倒序与同刻稳定、
+  坏时间容错、i18n 键映射、列表渲染、源码契约），六处变异各自打红后还原（去掉
+  `direct_stalled`、不过滤动作、不排序、面板不挂载、空列表仍渲染、service 丢 `nodeId`）。
+- 门禁：`npx tsc -b --noEmit` clean；`npx vitest run` 253 文件 / 799 通过 / 6 跳过；
+  `go build ./server/...` OK；`go test -count=1 ./server/internal/kanban/` 全绿。

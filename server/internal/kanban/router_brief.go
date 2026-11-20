@@ -162,10 +162,21 @@ func (rs *RouterService) turnBrief(ctx context.Context, taskID string, trigger R
 		// 主动监管：决策时重算水位，而不是复用事件生产时写下的快照 —— 预算
 		// （每节点已用重试、最近一小时动作数）必须是最新的，否则同一轮里连发的
 		// 两个事件会各自看到「还有余额」。
-		if config.Supervision.Normalized().Mode != RouterSupervisionOff && strings.TrimSpace(trigger.Event.RunID) != "" {
-			if run, runErr := store.WorkflowRunByID(ctx, trigger.Event.RunID); runErr == nil && run != nil {
+		if config.Supervision.Normalized().Mode != RouterSupervisionOff {
+			switch {
+			case trigger.Event.Kind == RouterEventDirectStalled:
+				// 直连事件没有 Run：水位按卡住的那条回复行重算。
 				if task, taskErr := store.GetTask(ctx, trigger.Event.TaskID); taskErr == nil {
-					brief.Supervision = rs.service.supervisionObservation(ctx, store, task, run, time.Now().UTC())
+					activityID := routerEventPayloadString(trigger.Event.PayloadJSON, "activity_id")
+					if reply, replyErr := NewActivityStore(store.db).Get(ctx, activityID); replyErr == nil {
+						brief.Supervision = rs.service.supervisionDirectObservation(ctx, store, task, reply, time.Now().UTC())
+					}
+				}
+			case strings.TrimSpace(trigger.Event.RunID) != "":
+				if run, runErr := store.WorkflowRunByID(ctx, trigger.Event.RunID); runErr == nil && run != nil {
+					if task, taskErr := store.GetTask(ctx, trigger.Event.TaskID); taskErr == nil {
+						brief.Supervision = rs.service.supervisionObservation(ctx, store, task, run, time.Now().UTC())
+					}
 				}
 			}
 		}

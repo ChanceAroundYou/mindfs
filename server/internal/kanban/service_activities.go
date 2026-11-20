@@ -47,6 +47,7 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	// 「用户答复 → 停住的节点」：重开一次带答复的尝试（Scope: G-MS）。
 	svc.SetNodeAnswerer(s)
 	svc.SetNodeRetrier(s)
+	svc.SetRunResumer(s.activityRunResumerPort())
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
 	return svc, nil

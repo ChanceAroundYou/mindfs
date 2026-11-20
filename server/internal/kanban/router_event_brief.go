@@ -43,7 +43,7 @@ const (
 // 丢弃并标 truncated：账本载荷可能带内部标识，brief 不是它的转储口。
 var routerEventBriefPayloadKeys = []string{
 	"run_id", "task_id", "node_id", "node_run_id", "gate_node_id",
-	"status", "reason", "error", "attempt", "since",
+	"status", "reason", "error", "attempt", "since", "activity_id",
 }
 
 // routerEventBriefProducerKeys 是生产端自己写进事件载荷、但不进 brief 的键：
@@ -150,8 +150,11 @@ func attachRouterEventBrief(ctx context.Context, store *TaskStore, brief *Situat
 		RunStatus:  routerEventRunStatus(event.Kind),
 	}
 	brief.Evidence = evidence
-	run, err := store.WorkflowRunByID(ctx, event.RunID)
-	if err != nil || run == nil {
+	if event.Kind == RouterEventDirectStalled {
+		// 直连事件没有 Run：可核对的证据只有那条卡住的回复行本身，节点段留空，
+		// 也不写「run 不存在」这种会误导模型的未验证项。
+		attachRouterEventDirectReply(ctx, store, evidence, event)
+	} else if run, err := store.WorkflowRunByID(ctx, event.RunID); err != nil || run == nil {
 		evidence.RunStatus = "missing"
 		evidence.Unverified = append(evidence.Unverified, fmt.Sprintf("run %s: not found in task store", event.RunID))
 	} else {
@@ -366,6 +369,8 @@ func routerEventRunStatus(kind RouterEventKind) string {
 		return "stalled"
 	case RouterEventStartupReconcile:
 		return "reconcile"
+	case RouterEventDirectStalled:
+		return "direct"
 	default:
 		return "unknown"
 	}

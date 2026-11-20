@@ -117,6 +117,9 @@ type Service struct {
 	// routerTranscripts 是 Router 读会话转录的端口（router_read_session）。nil 时
 	// 工具显式报错，不假装能读；装配期由 api 层用 session.Manager 注入。
 	routerTranscripts RouterTranscriptReader
+	// runResumerOverride 允许装配/测试替换「唤醒 Run」端口（S3 监管动作）。
+	// nil 时 ActivityServiceForRoot 用 Service 自身（WakeWorkflowRun）。
+	runResumerOverride ActivityRunResumer
 }
 
 // finishToken 是一次收尾的锁凭证。见 acquireTaskFinish。
@@ -252,6 +255,30 @@ func (s *Service) SetWorkflowNodeRunner(runner WorkflowNodeRunner) {
 	s.mu.Lock()
 	s.WorkflowNodeRunnerPort = runner
 	s.mu.Unlock()
+}
+
+// SetActivityRunResumer 替换「唤醒 Run」端口；nil 时回落到 Service 自身。
+// 装配期调一次（测试用它注入假实现，避免真起 driver）。
+func (s *Service) SetActivityRunResumer(r ActivityRunResumer) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.runResumerOverride = r
+	s.mu.Unlock()
+}
+
+func (s *Service) activityRunResumerPort() ActivityRunResumer {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	override := s.runResumerOverride
+	s.mu.Unlock()
+	if override != nil {
+		return override
+	}
+	return s
 }
 
 // SetWorkflowCommentSender 挂上排队留言的续聊发送端口。装配期调一次；nil 时
