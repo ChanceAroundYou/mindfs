@@ -141,6 +141,10 @@ test("canSendActivity enforces empty body, specified workflow and in-flight guar
   assert.equal(canSendActivity({ body: "hi", workflowChoice: "specified", workflowVersionId: "v1" }), true);
   assert.equal(canSendActivity({ body: "hi", workflowChoice: "disabled" }), true);
   assert.equal(canSendActivity({ body: "hi", workflowChoice: "empty", sending: true }), false);
+  // 带附件时允许空正文（与会话输入框一致：粘贴一张图不配文字也能发）。
+  assert.equal(canSendActivity({ body: "", workflowChoice: "empty", hasAttachments: true }), true);
+  assert.equal(canSendActivity({ body: "   ", workflowChoice: "empty", hasAttachments: true }), true);
+  assert.equal(canSendActivity({ body: "", workflowChoice: "specified", workflowVersionId: "", hasAttachments: true }), false);
 });
 
 test("activityDisplayText prefers the summary for terminal states", () => {

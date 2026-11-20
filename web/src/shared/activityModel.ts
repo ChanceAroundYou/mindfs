@@ -72,6 +72,8 @@ export type CanSendActivityInput = {
   workflowChoice: WorkflowChoice;
   workflowVersionId?: string;
   sending?: boolean;
+  /** 带待上传附件时允许空正文（与会话输入框一致：只发一张图也能发）。 */
+  hasAttachments?: boolean;
 };
 
 /**
@@ -81,7 +83,7 @@ export type CanSendActivityInput = {
  */
 export function canSendActivity(input: CanSendActivityInput): boolean {
   if (input.sending) return false;
-  if (!input.body.trim()) return false;
+  if (!input.body.trim() && !input.hasAttachments) return false;
   if (input.workflowChoice === "specified" && !String(input.workflowVersionId || "").trim()) {
     return false;
   }

@@ -412,7 +412,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
 
   return {
     MULTI_PROJECT_RELOAD_DEBOUNCE_MS, activeBoundSessionKey, agentConfigSwitchRequest, agentsVersion,
-    applyPinSnapshot, applyTaskDetails, applyTaskInlineCandidate, archiveLoading,
+    applyPinSnapshot, applyTaskDetails, applyTaskInlineCandidate, appendTaskInlineAttachments, archiveLoading,
     archiveOpen, archiveReloadToken, archivedGroups, attachedFileContext,
     availableAgents, bootstrapState, boundSessionByRootRef, cacheVersion,
     cancelRequestedBySessionRef, closeTaskEditDialog, codexRateLimitsRefreshToken, collapsedKanbanColumns,

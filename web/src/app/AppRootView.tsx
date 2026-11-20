@@ -68,6 +68,7 @@ export function AppRootView(props: AppRootViewProps) {
   // useAppStateLayer 返回值中本组件用到的部分
   const {
     agentConfigSwitchRequest, agentsVersion, applyTaskDetails, applyTaskInlineCandidate,
+    appendTaskInlineAttachments,
     attachedFileContext, availableAgents, bootstrapState, closeTaskEditDialog,
     codexRateLimitsRefreshToken, copiedSlashCommandKeys, currentDirectorySortMode, currentDirectorySortOverride,
     currentFileEditing, currentMainContentView, currentRootDisplayName, currentRootId,
@@ -376,6 +377,7 @@ drawer={<
 <TaskInlineEditPanel
       PanelShell={PanelShell}
       applyTaskInlineCandidate={applyTaskInlineCandidate}
+      appendTaskInlineAttachments={appendTaskInlineAttachments}
       closeTaskEditDialog={closeTaskEditDialog}
       composerInputStyle={composerInputStyle}
       currentRootId={currentRootId}

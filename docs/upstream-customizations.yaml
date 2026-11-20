@@ -10490,3 +10490,47 @@ groups:
       - 'web/tests/workflow-editor-mobile.test.ts:手机上草稿列表是浮在画布上的左侧抽屉，可收起且收起后完全隐藏'
       - 'web/tests/workflow-inspector-placement.test.ts:Plan 模式：只认布尔 true，勾选写值、取消删键'
       - 'server/internal/kanban/workflow_node_previous_output_test.go:func TestWorkflowNodePromptResolvesPreviousOutputInsideLoop(t *testing.T) {'
+
+  - id: G-NL
+    title: 任务侧输入框 @ 候选与粘贴截图（看齐会话输入框）
+    kind: feature
+    symptom: "2026-11-20 用户要求「创建任务和任务详情页的输入框需要加上 @ 和复制图片功能，看齐会话输入框」。改前新建任务面板已有候选菜单与拉取，但 PromptEditor 不向外暴露触发词/键盘/粘贴三件事，输入 `@` 候选永远不出现、粘贴截图没有任何反应；任务详情输入框连候选菜单都没挂；`canSendActivity` 要求正文非空，只贴一张图时发送键不可用（会话输入框早已放行「只有附件」）。"
+    why: "必须保留：(1) PromptEditor 的三个可选回调 `onActiveTokenChange` / `onKeyDown` / `onPaste` 是把 Lexical 编辑器的内部事件接到外部候选与附件链路的唯一通道；`onEnter` 改成「候选先消费、返回 false 才走发送」，否则按 Enter 选候选会顺手把半截 `@foo` 发出去。(2) 候选键盘契约只保留一份 `useCandidateKeyboard`（↑↓ / Tab / Esc / Enter，输入法组合回车与 Shift+Enter 不抢），三个入口共用；候选拉取只在 `useComposerCandidates` 里碰 services（视图层硬规则），类型映射 file→file / prompt→prompt / slash→skill（带 agent）/ command→command 与会话一致。(3) 图片提取只保留一份 `pasteSupport.getClipboardImageFiles`，会话输入框也改用它；任务侧两处粘贴都落到与「+」按钮同一个 `appendTaskInlineAttachments` / `onAttachFiles` 链路，共用 `buildPendingAttachment`（粘贴文件没有文件名，补 `pasted-image-*`）。(4) `canSendActivity` 的 `hasAttachments` 让「只有附件」可发送，两处调用点都传附件数量。(5) 任务详情按任务所属项目/节点拉候选：ConversationView 把 rootId/nodeId 传进 ActivityInput，避免跨节点任务拿到激活节点的候选。"
+    boundary: "不改后端：候选接口与附件上传接口复用会话侧既有实现。不改会话输入框的候选与上传语义（只把图片提取提成公共函数，行为逐字不变）。`/` 命令候选在任务侧固定用 DEFAULT_TASK_AGENT（任务本身不绑定 harness）。不实现拖拽粘贴、多图排序或附件编辑；不改 TaskInlineCandidateMenu 的展示样式。"
+    files:
+      - web/src/app/AppRootView.tsx
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useTaskComposer.ts
+      - web/src/components/action/useActionBarHandlers.ts
+      - web/src/components/app/TaskInlineEditPanel.tsx
+      - web/src/components/editor/PromptEditor.tsx
+      - web/src/components/editor/pasteSupport.ts
+      - web/src/components/editor/useCandidateKeyboard.ts
+      - web/src/components/task/ActivityInput.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/hooks/useComposerCandidates.ts
+      - web/src/shared/activityModel.ts
+      - docs/superpowers/plans/2026-11-20-task-composer-mentions-and-pasted-images.md
+      - docs/plans/README.md
+    tests:
+      - web/tests/task-composer-mention-image.test.mjs
+      - web/tests/conversation-view.test.mjs
+      - e2e/test_task_composer_mentions.py
+    anchors:
+      - 'web/src/components/task/ActivityInput.tsx:onActiveTokenChange={setActiveToken}'
+      - 'web/src/components/task/ActivityInput.tsx:agent: DEFAULT_TASK_AGENT'
+      - 'web/src/components/task/ActivityInput.tsx:hasAttachments: attachments.length > 0'
+      - 'web/src/components/task/ActivityInput.tsx:onAttachFiles(imageFiles)'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:onPaste={handleTaskInlinePaste}'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:sendDisabled={!(taskInlineEdit.text.trim() || taskInlineEdit.attachments.length > 0)}'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:appendTaskInlineAttachments(imageFiles)'
+      - 'web/src/components/editor/PromptEditor.tsx:onActiveTokenChange?.(payload.activeToken)'
+      - 'web/src/components/editor/PromptEditor.tsx:if (onEnter?.(event)) return true;'
+      - 'web/src/components/editor/pasteSupport.ts:export function getClipboardImageFiles('
+      - 'web/src/components/editor/useCandidateKeyboard.ts:event.key === "ArrowDown"'
+      - 'web/src/hooks/useComposerCandidates.ts:activeToken.type === "slash" ? agent : undefined'
+      - 'web/src/shared/activityModel.ts:if (!input.body.trim() && !input.hasAttachments) return false;'
+      - 'web/src/app/useTaskComposer.ts:files.map(buildPendingAttachment)'
+      - 'web/src/components/action/useActionBarHandlers.ts:const imageFiles = getClipboardImageFiles(event);'
+      - 'web/src/components/task/ConversationView.tsx:nodeId={nodeId}'
+      - 'web/tests/task-composer-mention-image.test.mjs:candidate keyboard contract matches the session composer'

@@ -17,6 +17,7 @@ import { uploadFiles, formatFileToken, fileTokenPath, isUploadAbortError } from 
 import { reportError } from "../services/net/error";
 import { findTaskProjectRoot, parseTaskProjectScopeKey, taskProjectScopeKey, type TaskInlineEditState } from "./appTask";
 import { loadTaskCreateWorktreePreference, saveTaskCreateWorktreePreference } from "./appStorage";
+import { buildPendingAttachment } from "../components/action/modelUtils";
 import type { CandidateItem } from "../services/candidates";
 
 export interface UseTaskComposerParams {
@@ -279,6 +280,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
   const applyTaskInlineCandidate = useCallback((candidate: CandidateItem) => {
     setTaskInlineCandidates([]);
     setTaskInlineCandidateIndex(0);
+    setTaskInlineActiveToken(null);
     taskInlineEditorRef.current?.insertCandidate(candidate.type, candidate.name);
     taskInlineEditorRef.current?.focus();
   }, []);
@@ -298,15 +300,9 @@ export function useTaskComposer(params: UseTaskComposerParams) {
       if (!prev) return prev;
       return {
         ...prev,
-        attachments: [
-          ...prev.attachments,
-          ...files.map((file) => ({
-            id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
-            file,
-            isImage: file.type.startsWith("image/"),
-            previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
-          })),
-        ],
+        // 与对话输入框共用同一份附件构造：粘贴截图没有文件名，这里补 pasted-image-*，
+        // 否则上传会拿到空名字。
+        attachments: [...prev.attachments, ...files.map(buildPendingAttachment)],
       };
     });
   }, []);

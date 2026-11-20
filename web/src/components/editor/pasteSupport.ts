@@ -18,6 +18,21 @@ export function pasteEventHasFiles(event: ClipboardEvent | InputEvent | Keyboard
   return Array.from(dataTransfer?.items || []).some((item) => item.kind === "file");
 }
 
+/**
+ * 从粘贴事件里取图片文件（截图/复制的图片）。
+ *
+ * 会话输入框、新建任务面板、任务详情输入框共用这一处：只要 `kind === "file"`
+ * 且 MIME 是 image/* 就走「附件」链路，纯文本粘贴仍交给编辑器自己处理。
+ * React 的 ClipboardEvent 与原生事件都带 `clipboardData`，所以形状按结构类型收。
+ */
+export function getClipboardImageFiles(event: { clipboardData?: DataTransfer | null }): File[] {
+  const items = Array.from(event.clipboardData?.items || []);
+  return items
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => !!file);
+}
+
 export function isKeyboardPasteInput(event: InputEvent): boolean {
   const data = event.data || "";
   return event.inputType === "insertFromPaste"

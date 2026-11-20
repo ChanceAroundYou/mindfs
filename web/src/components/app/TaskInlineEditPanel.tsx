@@ -6,6 +6,8 @@ import { WorktreeBranchSelector } from "../task/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import { PromptEditor } from "../editor/PromptEditor";
 import { ComposerAttachmentStrip } from "../editor/ComposerAttachmentStrip";
+import { getClipboardImageFiles } from "../editor/pasteSupport";
+import { useCandidateKeyboard } from "../editor/useCandidateKeyboard";
 import { Select } from "../common/Select";
 import { useI18n } from "../../i18n";
 import type { Dispatch, SetStateAction, RefObject, ChangeEvent } from "react";
@@ -21,6 +23,8 @@ import { TaskInlineCandidateMenu } from "./TaskInlineCandidateMenu";
 export interface TaskInlineEditPanelProps {
   PanelShell: any;
   applyTaskInlineCandidate: (candidate: CandidateItem) => void;
+  /** 粘贴图片与「+」按钮共用同一条附件链路。 */
+  appendTaskInlineAttachments: (files: File[]) => void;
   closeTaskEditDialog: () => void;
   composerInputStyle: any;
   currentRootId: string | null;
@@ -61,6 +65,7 @@ export interface TaskInlineEditPanelProps {
 export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
   const PanelShell = props.PanelShell;
   const applyTaskInlineCandidate = props.applyTaskInlineCandidate;
+  const appendTaskInlineAttachments = props.appendTaskInlineAttachments;
   const closeTaskEditDialog = props.closeTaskEditDialog;
   const composerInputStyle = props.composerInputStyle;
   const currentRootId = props.currentRootId;
@@ -104,6 +109,24 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskInlineOpen, taskInlineResetKey]);
+
+  // 候选键盘行为与任务详情输入框、会话输入框同一份（↑↓ / Tab / Esc / Enter）。
+  const { handleCandidateKeyDown, handleCandidateEnter } = useCandidateKeyboard({
+    candidates: taskInlineCandidates,
+    activeCandidateIndex: taskInlineCandidateIndex,
+    setActiveCandidateIndex: setTaskInlineCandidateIndex,
+    setCandidates: setTaskInlineCandidates,
+    applyCandidate: applyTaskInlineCandidate,
+  });
+
+  // 粘贴截图 = 加附件：与「+」按钮落到同一个 attachments 列表。
+  const handleTaskInlinePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if (taskInlineSaving) return;
+    const imageFiles = getClipboardImageFiles(event);
+    if (imageFiles.length === 0) return;
+    event.preventDefault();
+    appendTaskInlineAttachments(imageFiles);
+  };
 
   return (
     <>
@@ -211,15 +234,6 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
               )}
             >
                 <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
-                  <TaskInlineCandidateMenu
-                    visible={!!taskInlineActiveToken}
-                    isMobile={isMobile}
-                    candidates={taskInlineCandidates}
-                    selectedIndex={taskInlineCandidateIndex}
-                    itemRefs={taskInlineCandidateItemRefs}
-                    onSelect={applyTaskInlineCandidate}
-                    onSelectedIndexChange={setTaskInlineCandidateIndex}
-                  />
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
                     <input
                       value={taskInlineEdit.name}
@@ -263,16 +277,31 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                       {t("task.startImmediately")}
                     </label>
                   </div>
-                  <PromptEditor
-                    ref={taskInlineEditorRef}
-                    value={taskInlineEdit.text}
-                    onChange={(next) => setTaskInlineEdit((prev) => prev ? { ...prev, text: next } : prev)}
-                    onAttach={() => taskInlineAttachmentInputRef.current?.click()}
-                    onSend={(text: string) => void saveTaskInlineEdit(text)}
-                    sending={taskInlineSaving}
-                    sendDisabled={!taskInlineEdit.text.trim()}
-                    placeholder={t("task.editPlaceholder")}
-                  />
+                  <div style={{ position: "relative" }}>
+                    <TaskInlineCandidateMenu
+                      visible={!!taskInlineActiveToken}
+                      isMobile={isMobile}
+                      candidates={taskInlineCandidates}
+                      selectedIndex={taskInlineCandidateIndex}
+                      itemRefs={taskInlineCandidateItemRefs}
+                      onSelect={applyTaskInlineCandidate}
+                      onSelectedIndexChange={setTaskInlineCandidateIndex}
+                    />
+                    <PromptEditor
+                      ref={taskInlineEditorRef}
+                      value={taskInlineEdit.text}
+                      onChange={(next) => setTaskInlineEdit((prev) => prev ? { ...prev, text: next } : prev)}
+                      onActiveTokenChange={setTaskInlineActiveToken}
+                      onKeyDown={handleCandidateKeyDown}
+                      onEnter={handleCandidateEnter}
+                      onPaste={handleTaskInlinePaste}
+                      onAttach={() => taskInlineAttachmentInputRef.current?.click()}
+                      onSend={(text: string) => void saveTaskInlineEdit(text)}
+                      sending={taskInlineSaving}
+                      sendDisabled={!(taskInlineEdit.text.trim() || taskInlineEdit.attachments.length > 0)}
+                      placeholder={t("task.editPlaceholder")}
+                    />
+                  </div>
                   <ComposerAttachmentStrip
                     attachments={taskInlineEdit.attachments}
                     uploadProgress={taskInlineUploadProgress}

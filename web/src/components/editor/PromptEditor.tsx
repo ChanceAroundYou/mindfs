@@ -1,6 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { composerEditorInsets, useComposerEditorHeight } from "../action/useComposerEditorHeight";
 import TokenEditor, { type TokenEditorHandle } from "./TokenEditor";
+import type { ActiveToken } from "./tokenEditorUtils";
 import { PlusIcon, SendIcon } from "../action/composerIcons";
 import { composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n";
@@ -8,6 +9,8 @@ import { useI18n } from "../../i18n";
 export type PromptEditorProps = {
   value: string;
   onChange?: (value: string) => void;
+  /** 编辑器里的 @ / # / / 触发词变化（用于候选下拉）；清空时给 null。 */
+  onActiveTokenChange?: (token: ActiveToken | null) => void;
   /** 该值变化时把 value 灌入编辑器一次（例如切换编辑对象） */
   resetKey?: string | number;
   placeholder?: string;
@@ -15,6 +18,10 @@ export type PromptEditorProps = {
   onSend?: (text: string) => void;
   /** 回车处理，返回 true 表示已消费（交给 TokenEditor 的 Enter 命令）。 */
   onEnter?: (event: KeyboardEvent | null) => boolean;
+  /** 键盘处理（候选上下键 / Tab / Esc）；返回 true 表示已消费。 */
+  onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+  /** 粘贴：图片文件交给附件链路时由调用方 preventDefault。 */
+  onPaste?: (event: React.ClipboardEvent<HTMLDivElement>) => void;
   sending?: boolean;
   sendDisabled?: boolean;
   /** 节点主题色（hex），用于发送按钮的外框与底色 */
@@ -43,11 +50,14 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   {
     value,
     onChange,
+    onActiveTokenChange,
     resetKey,
     placeholder,
     onAttach,
     onSend,
     onEnter,
+    onKeyDown,
+    onPaste,
     sending,
     sendDisabled,
     accentColor,
@@ -107,7 +117,8 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     return !!native?.isComposing || native?.keyCode === 229;
   };
   const handleEnter = (event: KeyboardEvent | null): boolean => {
-    if (onEnter) return onEnter(event);
+    // 候选下拉优先：面板返回 true 时由它选中候选，不再触发发送。
+    if (onEnter?.(event)) return true;
     if (isComposing(event) || event?.shiftKey) return false;
     event?.preventDefault();
     if (canSend) flushAndSend();
@@ -130,8 +141,11 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         topInset={insets.topInset}
         bottomInset={insets.bottomInset}
         onEnter={handleEnter}
+        onKeyDown={onKeyDown}
+        onPaste={onPaste}
         onChange={(payload) => {
           onChange?.(payload.serializedText);
+          onActiveTokenChange?.(payload.activeToken);
           if (!payload.displayText.trim()) {
             resetEditorHeight();
             return;

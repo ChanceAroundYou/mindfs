@@ -284,6 +284,8 @@ export function ConversationView({
         <ActivityInput
           body={body}
           onBodyChange={setBody}
+          rootId={rootId}
+          nodeId={nodeId}
           choice={choice}
           versionId={versionId}
           onWorkflowChange={(nextChoice, nextVersionId) => {

@@ -10,6 +10,7 @@ import type { PendingAttachment, SessionMode, TokenEditorHandle } from "../../sh
 import { getAgentDefaults, has1MSuffix } from "./modelUtils";
 import { replaceActiveTokenText } from "./inputTransforms";
 import { agentSendText } from "../editor/tokenEditorUtils";
+import { getClipboardImageFiles } from "../editor/pasteSupport";
 import { parsePlanCommand, stripPlanCommandPrefix } from "../../shared/planCommand";
 import type { ActionBarProps } from "./actionTypes";
 
@@ -295,9 +296,7 @@ export function useActionBarHandlers(params: UseActionBarHandlersParams) {
 
   const handleEditorPaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
     if (sending || !currentRootId) return;
-    const clipboardItems = Array.from(event.clipboardData?.items || []);
-    const imageFiles = clipboardItems.filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-      .map((item) => item.getAsFile()).filter((file): file is File => !!file);
+    const imageFiles = getClipboardImageFiles(event);
     if (imageFiles.length === 0) return;
     event.preventDefault();
     appendPendingAttachments(imageFiles);
