@@ -56,6 +56,11 @@ func (s *Service) applyCompleteTask(ctx context.Context, store *TaskStore, task 
 		return err
 	}
 	if !report.Passed {
+		// 没有可机检的契约时，机检答不了「事情真的做完了吗」；交给独立复核回合，
+		// 由它看过工作区再判（Task 7）。有契约但不成立是硬证据，直接驳回。
+		if completionNeedsVerifier(run, report) {
+			return s.beginCompletionVerification(ctx, store, task, run, report, decision, summary)
+		}
 		return s.blockCompletion(ctx, store, task, run, report, decision)
 	}
 	return s.commitCompletion(ctx, store, task, run, report, summary, decision.ID)
@@ -66,15 +71,21 @@ func (s *Service) applyCompleteTask(ctx context.Context, store *TaskStore, task 
 func (s *Service) commitCompletion(ctx context.Context, store *TaskStore, task Task, run *WorkflowRun, report CompletionReport, summary, decisionID string) error {
 	// 同一条决策重放：已经收过尾就什么都不做。系统行本身也按确定 ID 插入。
 	repairsUsed := 0
+	verifierKey, verifierVerdict := "", ""
 	if existing, found, err := store.GetTaskCompletion(ctx, task.ID); err != nil {
 		return err
 	} else if found && existing.Status == CompletionStatusCompleted && existing.DecisionID == decisionID {
 		return nil
 	} else if found {
 		repairsUsed = existing.RepairsUsed
+		// 复核结论要跟着留下来：它是这一轮收尾的唯一理由，丢了就只剩一句 summary。
+		verifierKey, verifierVerdict = existing.VerifierKey, existing.VerifierVerdict
 	}
 
 	body := fmt.Sprintf("任务收尾：按完成契约核对，%d 项证据全部成立。\n%s", len(report.Items), summary)
+	if !report.Contract {
+		body = "任务收尾：" + summary
+	}
 	row := &TaskActivity{
 		ID:               "completion-evidence:" + decisionID,
 		TaskID:           task.ID,
@@ -110,13 +121,15 @@ func (s *Service) commitCompletion(ctx context.Context, store *TaskStore, task T
 		}
 	}
 	return store.UpsertTaskCompletion(ctx, TaskCompletion{
-		TaskID:      task.ID,
-		RunID:       runID,
-		Status:      CompletionStatusCompleted,
-		ReportJSON:  completionReportJSON(report),
-		DecisionID:  decisionID,
-		RepairsUsed: repairsUsed,
-		UpdatedAt:   time.Now().UTC(),
+		TaskID:          task.ID,
+		RunID:           runID,
+		Status:          CompletionStatusCompleted,
+		ReportJSON:      completionReportJSON(report),
+		VerifierKey:     verifierKey,
+		VerifierVerdict: verifierVerdict,
+		DecisionID:      decisionID,
+		RepairsUsed:     repairsUsed,
+		UpdatedAt:       time.Now().UTC(),
 	})
 }
 
@@ -134,16 +147,24 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 	}
 	repairsMax := completionRepairsMaxFor(run)
 	repairsUsed := 0
+	verifierKey, verifierVerdict := "", ""
 	if existing, found, err := store.GetTaskCompletion(ctx, task.ID); err != nil {
 		return err
-	} else if found && existing.RunID == runID {
-		// 换 Run 归零：新一轮执行有自己的补做预算。
-		repairsUsed = existing.RepairsUsed
+	} else if found {
+		if existing.RunID == runID {
+			// 换 Run 归零：新一轮执行有自己的补做预算。
+			repairsUsed = existing.RepairsUsed
+		}
+		// 复核结论跟着驳回行一起留下：它是「为什么没过」的唯一独立证据。
+		verifierKey, verifierVerdict = existing.VerifierKey, existing.VerifierVerdict
 	}
 	repairsUsed++
 	exhausted := repairsUsed > repairsMax
 
 	body := fmt.Sprintf("这一轮还不能收尾：按完成契约核对，还有 %d 项证据不成立。", len(gaps))
+	if !report.Contract {
+		body = fmt.Sprintf("这一轮还不能收尾：还有 %d 项完成条件不成立。", len(gaps))
+	}
 	if exhausted {
 		body = fmt.Sprintf("自动补做 %d 次仍未满足证据，需要你介入。还有 %d 项证据不成立。", repairsMax, len(gaps))
 	}
@@ -180,13 +201,15 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 		}
 	}
 	if err := store.UpsertTaskCompletion(ctx, TaskCompletion{
-		TaskID:      task.ID,
-		RunID:       runID,
-		Status:      CompletionStatusBlocked,
-		ReportJSON:  completionReportJSON(report),
-		DecisionID:  decision.ID,
-		RepairsUsed: repairsUsed,
-		UpdatedAt:   time.Now().UTC(),
+		TaskID:          task.ID,
+		RunID:           runID,
+		Status:          CompletionStatusBlocked,
+		ReportJSON:      completionReportJSON(report),
+		VerifierKey:     verifierKey,
+		VerifierVerdict: verifierVerdict,
+		DecisionID:      decision.ID,
+		RepairsUsed:     repairsUsed,
+		UpdatedAt:       time.Now().UTC(),
 	}); err != nil {
 		return err
 	}

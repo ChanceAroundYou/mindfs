@@ -145,7 +145,19 @@ func (s *AppContext) RunRouterTurn(ctx context.Context, req kanban.RouterAgentRe
 	if agentName == "" {
 		agentName = "claude"
 	}
-	key, err := s.ensureRouterSession(ctx, rootID, taskID, agentName, req.Model)
+	readOnly := req.ReadOnly
+	var (
+		key string
+		err error
+	)
+	if readOnly {
+		// 只读复核回合有自己的会话与工作目录：它要看任务工作区，而 Router 的
+		// cwd 刻意是一个空目录（模型绕开策略也读不到业务代码）。两者共用会话
+		// 会把 Router 的 brief 与复核的只读上下文搅在一起。
+		key, err = s.ensureVerifierSession(ctx, rootID, taskID, req.SessionKey, agentName, req.Model)
+	} else {
+		key, err = s.ensureRouterSession(ctx, rootID, taskID, agentName, req.Model)
+	}
 	if err != nil {
 		return kanban.RouterAgentResult{}, err
 	}
@@ -153,12 +165,26 @@ func (s *AppContext) RunRouterTurn(ctx context.Context, req kanban.RouterAgentRe
 	if err != nil {
 		return kanban.RouterAgentResult{}, err
 	}
-	// Router 会话跨轮复用，工具句柄只在首次 OpenSession 注册。先把本轮实现装进
-	// 绑定表，再从中取句柄：新回合（含复用会话）的调用落到本轮 handler。
-	bindings := s.routerToolBindings(rootID, taskID)
-	bindings.Set(req.Tools)
-	tools := routerAgentToolSpecs(bindings.Specs())
+	if readOnly {
+		if cwd := strings.TrimSpace(req.Cwd); cwd != "" {
+			if err := os.MkdirAll(cwd, 0o700); err != nil {
+				return kanban.RouterAgentResult{}, err
+			}
+			workDir = cwd
+		}
+	}
 	policy := routerAgentToolPolicy(req.ToolPolicy)
+	var tools []agenttypes.ToolSpec
+	if readOnly {
+		// 复核只拿 Read/Grep/Glob：它要判断「做没做完」，不能顺手改代码。
+		policy = routerVerifierToolPolicy()
+	} else {
+		// Router 会话跨轮复用，工具句柄只在首次 OpenSession 注册。先把本轮实现装进
+		// 绑定表，再从中取句柄：新回合（含复用会话）的调用落到本轮 handler。
+		bindings := s.routerToolBindings(rootID, taskID)
+		bindings.Set(req.Tools)
+		tools = routerAgentToolSpecs(bindings.Specs())
+	}
 
 	var text strings.Builder
 	var usage *agenttypes.TokenUsage
@@ -256,6 +282,46 @@ func (s *AppContext) ensureRouterSession(ctx context.Context, rootID, taskID, ag
 		return "", err
 	}
 	return key, nil
+}
+
+// ensureVerifierSession 建（或复用）只读复核会话。key 由 kanban 层给：它同时是
+// 结论复用的身份（同 Run、同缺口只复核一次），换 key 就等于换一件事。
+func (s *AppContext) ensureVerifierSession(ctx context.Context, rootID, taskID, sessionKey, agentName, model string) (string, error) {
+	key := strings.TrimSpace(sessionKey)
+	if key == "" {
+		return "", errors.New("verifier turn requires a session key")
+	}
+	uc := &usecase.Service{Registry: s}
+	if existing, _, err := uc.GetSession(ctx, usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && existing != nil {
+		return key, nil
+	}
+	_, err := uc.CreateSession(ctx, usecase.CreateSessionInput{
+		RootID: rootID,
+		Input: session.CreateInput{
+			Key:    key,
+			Type:   session.TypeRouter,
+			TaskID: taskID,
+			Agent:  agentName,
+			Model:  model,
+			Name:   "复核",
+		},
+	})
+	if err != nil {
+		if existing, _, getErr := uc.GetSession(ctx, usecase.GetSessionInput{RootID: rootID, Key: key}); getErr == nil && existing != nil {
+			return key, nil
+		}
+		return "", err
+	}
+	return key, nil
+}
+
+// routerVerifierToolPolicy 是只读复核回合的工具集：Read/Grep/Glob，其余一律拒。
+// 这一点只有 Claude 适配器能强制，所以复核回合只支持 Claude。
+func routerVerifierToolPolicy() *agenttypes.ToolPolicy {
+	return &agenttypes.ToolPolicy{
+		AllowedTools:  []string{"Read", "Grep", "Glob"},
+		DenyByDefault: true,
+	}
 }
 
 // routerDirs 给 Router 一个与用户 Claude 配置完全隔离的 config dir 和 cwd。

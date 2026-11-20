@@ -54,6 +54,33 @@ ON CONFLICT(task_id) DO UPDATE SET
 	return err
 }
 
+// ListVerifyingCompletions 列出停在 verifying 的记录：复核在后台跑，进程一死
+// 就没人收口，启动对账要按它把这些行落成 blocked。
+func (s *TaskStore) ListVerifyingCompletions(ctx context.Context) ([]TaskCompletion, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT task_id, run_id, status, report_json, verifier_key, verifier_verdict, decision_id, repairs_used, updated_at
+FROM task_completion WHERE status = ?`, CompletionStatusVerifying)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TaskCompletion
+	for rows.Next() {
+		var (
+			c       TaskCompletion
+			updated string
+		)
+		if err := rows.Scan(&c.TaskID, &c.RunID, &c.Status, &c.ReportJSON, &c.VerifierKey, &c.VerifierVerdict, &c.DecisionID, &c.RepairsUsed, &updated); err != nil {
+			return nil, err
+		}
+		if ts, parseErr := time.Parse(time.RFC3339Nano, updated); parseErr == nil {
+			c.UpdatedAt = ts
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // GetTaskCompletion 读取任务当前的完成记录；没有记录时 found=false。
 func (s *TaskStore) GetTaskCompletion(ctx context.Context, taskID string) (TaskCompletion, bool, error) {
 	var (

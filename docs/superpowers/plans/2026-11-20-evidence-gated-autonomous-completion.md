@@ -286,15 +286,36 @@ success/cancelled），并对这些节点跳过每节点重试上限（预算已
 - 会话 key：`verify:<taskID>:<runID>:<reportHash[:8]>`；只读工具 `Read` / `Grep` / `Glob`；
   结论按 `(run_id, report_hash)` 复用。
 
-- [ ] **Step 1: 写失败测试**：`TestVerifierPassCommits`、`TestVerifierFailBlocks`、
+- [x] **Step 1: 写失败测试**：`TestVerifierPassCommits`、`TestVerifierFailBlocks`、
   `TestVerifierGarbageIsUncertain`、`TestVerifierUnavailableFailsClosed`（无 Claude agent →
   `blocked` + 系统行写明「复核不可用」）、`TestVerifierRestartReconcilesBlocked`
   （启动时 `verifying` → `blocked`）、`TestVerifierReusesVerdictByReportHash`。
-- [ ] **Step 2: 跑测试确认失败**。
-- [ ] **Step 3: 实现**；apply 只落 `verifying` 并起 goroutine，不阻塞回合。
-- [ ] **Step 4: 跑测试确认通过**。
-- [ ] **Step 5: 变异验证**：把非法 JSON 的默认结论改成 `pass` → `TestVerifierGarbageIsUncertain` 必须红；还原。
-- [ ] **Step 6: 提交** `feat(kanban): 异步复核回合（Scope: G-NP）`。
+  另加 `TestVerifierApplyReturnsBeforeVerdict`：阻塞式假 agent 证明 begin 已返回、行仍是
+  `verifying`，放开后才收尾。
+- [x] **Step 2: 跑测试确认失败**（`go vet` → `verifyCompletion undefined`）。
+- [x] **Step 3: 实现**；apply 只落 `verifying` 并起 goroutine，不阻塞回合。
+- [x] **Step 4: 跑测试确认通过**（`go test ./server/internal/kanban/ -run Verifier -count=1`
+  → ok 4.1s）。
+- [x] **Step 5: 变异验证**：把非法 JSON 的默认结论改成 `pass` → `TestVerifierGarbageIsUncertain`
+  红（`garbage verdict = "pass"`）；还原后绿。
+- [x] **Step 6: 提交** `feat(kanban): 异步复核回合（Scope: G-NP）`。
+
+**执行记录（2026-11-21）**：会话 key 用 `verify-<task>-<run|direct>-<hash8>` 而不是计划里的
+`verify:<task>:<run>:<hash>` —— 会话 key 会落成文件名，`:` 在 Windows 上非法（ledger 有
+Ruling）。分流规则收敛进 `completionNeedsVerifier`：有契约而不成立是硬证据、直接驳回；只有
+无契约（直连任务 / 未声明证据的工作流）才问复核；契约可写 `verify_when_unverifiable=false`
+显式退出。复核提示不带会话转录，只带任务名、最后一条用户留言、被驳回的声明与缺口清单；
+cwd 优先任务 worktree、树没了回落项目根；`pool` 层只认 Claude（ToolPolicy 只在 Claude 适配器
+强制），没有可用 Claude agent 时写「复核不可用」行并 fail-closed。结论 `fail`/`uncertain` 与
+不可用都把任务放回 `waiting_user`（不让卡片停在「进行中」骗人），补做仍可在该状态上继续。
+api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建隐藏会话
+（`TypeRouter`、名「复核」、key 由 kanban 给）、honor `req.Cwd`、`routerVerifierToolPolicy`
+只放 Read/Grep/Glob、且不碰 Router 自己的工具绑定（否则一轮复核会把 Router 回合的 MCP 句柄
+清掉）。重启对账把 `verifying` 收口成 `blocked` + 「复核被重启打断」确定行。
+一处测试调整：`TestVerifierReusesVerdictByReportHash` 原先在 begin 之后又同步调
+`verifyCompletion`，而 begin 已经起了后台复核 —— 会跑两次模型；改成等 `blocked` 再断言调用数，
+复用语义不变。门禁：`go test ./server/internal/kanban/ -count=1` → ok 327.8s，
+`go test ./server/internal/api/ -count=1` → ok 69.0s。
 
 ---
 

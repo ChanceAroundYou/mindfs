@@ -330,6 +330,9 @@ type RouterAgentRequest struct {
 	Tools                 []RouterToolSpec
 	ToolPolicy            RouterToolPolicy
 	Timeout               time.Duration
+	// ReadOnly 表示这是一轮只读复核回合（完成度复核对）：适配层必须换成只读
+	// 工具集（Read/Grep/Glob）并且不要动 Router 自己的会话与工具绑定。
+	ReadOnly bool
 }
 
 type RouterAgentResult struct {

@@ -58,6 +58,8 @@ func (s *Service) RecoverOnStartupForRoot(ctx context.Context, rootID string, pr
 	// 第三类死角落：落在大批历史任务上的迁移审计 Run（legacy_import）。它既不在
 	// workflow 对账里，回复又不属于直连孤儿，迁移时在跑的节点会永远转圈。
 	s.settleLegacyImportLeftovers(ctx, store)
+	// 复核回合是后台 goroutine：进程一死它就没了，verifying 行不能永远挂着。
+	s.reconcileVerifyingCompletions(ctx, store)
 	if plan.NeedsUser {
 		for _, id := range plan.UnknownIDs {
 			// 可确定性地拿到 task_id 就置 waiting_user；拿不到就只保留 unknown 标记，
