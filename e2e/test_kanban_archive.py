@@ -118,6 +118,11 @@ def _group_count(page: Page, group_name: str) -> int:
     return int(match.group(1))
 
 
+def _expand_group(page: Page, group_name: str) -> None:
+    """归档子组默认收起：点一次分组头把它展开（已是展开态时点击会收起，别重复调用）。"""
+    page.get_by_role("button", name=re.compile(rf"^{group_name} \d+$")).first.click()
+
+
 # ── 夹具 ───────────────────────────────────────────────────────────────────
 
 
@@ -151,10 +156,13 @@ def test_archive_button_moves_task_and_hides_it_from_workspace(
 
     # 3. 点归档：卡片进入「已结束 → 归档」子组，操作键变成「取消归档 + 删除」。
     archive_button.click()
+    assert _group_count(page, "Archived") == 1, "归档子组计数应为 1"
+    # 归档子组默认收起：卡片不该立刻出现在 DOM 里，点开分组头才渲染。
+    assert _task_card(page).count() == 0, "归档组默认收起时不应渲染归档卡片"
+    _expand_group(page, "Archived")
     archived_card = _task_card(page)
     archived_card.locator(UNARCHIVE_BUTTON).wait_for(state="visible", timeout=20_000)
     assert archived_card.locator(ARCHIVE_BUTTON).count() == 0, "已归档的卡片不该再出现归档键"
-    assert _group_count(page, "Archived") == 1, "归档子组计数应为 1"
     assert _group_count(page, "Done") == 0, "归档后应离开「完成」子组"
 
     # 4. 工作台不再显示 —— 服务端 Overview 过滤，卡片不靠前端藏。
@@ -164,6 +172,10 @@ def test_archive_button_moves_task_and_hides_it_from_workspace(
 
     # 5. 取消归档：回到「完成」子组，归档组清零。
     _show_board(page)
+    # 折叠状态存在 App 级 hook 里，切走再回来通常仍是展开态；万一被重建也兜底点开。
+    assert _group_count(page, "Archived") == 1, "取消归档前归档子组计数应为 1"
+    if _task_card(page).count() == 0:
+        _expand_group(page, "Archived")
     card = _task_card(page)
     card.locator(UNARCHIVE_BUTTON).click()
     restored = _task_card(page)
