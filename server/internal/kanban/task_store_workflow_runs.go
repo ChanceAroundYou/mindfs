@@ -456,7 +456,8 @@ func (s *TaskStore) saveWorkflowRunTx(ctx context.Context, tx *sql.Tx, run *Work
 		return err
 	}
 	var rev int
-	if err := tx.QueryRowContext(ctx, `SELECT revision FROM workflow_runs WHERE id=?`, run.ID).Scan(&rev); err != nil {
+	var persistedGraph string
+	if err := tx.QueryRowContext(ctx, `SELECT revision,graph_json FROM workflow_runs WHERE id=?`, run.ID).Scan(&rev, &persistedGraph); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrWorkflowRunNotFound
 		}
@@ -464,6 +465,11 @@ func (s *TaskStore) saveWorkflowRunTx(ctx context.Context, tx *sql.Tx, run *Work
 	}
 	if rev != run.Revision {
 		return ErrRunConflict
+	}
+	// 所有保存路径（引擎推进、恢复、图编辑）最终都汇到这里，所以完成契约的
+	// 冻结守卫放在这一层：任何一条路径都不可能把契约改掉或悄悄抹掉。
+	if completionContractHash(completionContractOfGraphJSON(persistedGraph)) != completionContractHash(run.Graph.Completion) {
+		return errors.New("完成契约不能在中途修改：请开新一轮 Run")
 	}
 	now := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx, `UPDATE workflow_runs SET revision=revision+1,graph_json=?,node_states_json=?,node_outputs_json=?,selected_routes_json=?,loop_state_json=?,loop_exit_expr_json=?,updated_at=? WHERE id=? AND revision=?`, graph, states, outputs, routes, loops, exits, now.Format(time.RFC3339Nano), run.ID, run.Revision); err != nil {
@@ -483,6 +489,12 @@ func (s *TaskStore) EditWorkflowRunGraph(ctx context.Context, runID string, base
 	}
 	if run.Revision != baseRevision {
 		return ErrRunConflict
+	}
+	// 完成契约是 Run 创建时快照下来的核对标准。跑到一半改它，等于把「做完
+	// 的标准」挪到已经发生的事实之后 —— 之前判过的证据全部作废。要换标准就
+	// 开新一轮 Run。
+	if completionContractHash(run.Graph.Completion) != completionContractHash(graph.Completion) {
+		return errors.New("完成契约不能在中途修改：请开新一轮 Run")
 	}
 	frozen, err := s.workflowRunFrozenNodes(ctx, run)
 	if err != nil {

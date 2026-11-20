@@ -73,6 +73,10 @@ type WorkflowDefinition struct {
 	Nodes  []WorkflowNode `json:"nodes"`
 	Edges  []WorkflowEdge `json:"edges,omitempty"`
 	RootID string         `json:"root_id,omitempty"` // scope: empty=global, else project
+	// Completion 是这一版工作流的完成契约：任务能不能收尾，按它列出的证据逐条
+	// 核对，而不是按「节点都跑完了」推断。Run 创建时快照进图表，运行期不可改
+	// （见 completionContractHash 的冻结守卫）。为空 = 没有契约，求值器 fail-closed。
+	Completion *CompletionContract `json:"completion,omitempty"`
 }
 
 // Triggered reports whether the node has a persisted NodeRun (queued/started).
