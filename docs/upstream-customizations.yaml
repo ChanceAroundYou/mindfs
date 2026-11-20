@@ -9967,8 +9967,8 @@ groups:
     title: 已结算的 Run（全节点终态）不再算「活动执行」，Router 不会把用户卡在「先结算 Run」
     kind: fix
     symptom: "用户 2026-11-19 在任务 #88「收尾」上连续发留言，Router 只回「请先结算 Run / 批准或驳回」，而界面上没有「结算 Run」入口、也没有待批卡片，用户原话「这个权限的限制有点古怪 你应该先排查相关问题，我是在正常交互的 不应该被卡死」。现场：Run run-d3ef85eed889c18f 四节点全 success、末端 gate 已批准、任务行 waiting_user。"
-    why: "必须保留：`taskStatusFromRun` 把「全部节点 success」的 Run 投影成 `waiting_user`（待审核，用户点「完成」），`isActiveTaskStatus` 又把它算作活动执行，于是 Situation Brief 给已结算的 Run 挂上 `active_execution`（current_nodes 为空）。`validateRouterActions` 在 ActiveExecution 非空时硬拒 `run_workflow` 与 `message_agent`，`deliver_to_active_run` 要 1 个活动节点、`answer_waiting_node` 要有 waiting_user 节点，两者都不成立，Router 只剩 `router_say` —— 而 `PrepareNewUserTurn` 本来对 success 的 Run 显式放行下一轮，拦住用户的只有 brief。修复：`workflowRunHasOpenNodes` 只在图里还有状态不在 {success, skipped, fail, cancelled} 的节点（或 NodeStates 为空、投影还没写）时算未结算；brief 仅在 `isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run))` 时挂 ActiveExecution。暂停是操作员状态，即使节点全收齐也照旧挡新执行；gate 停在 waiting_user、agent 节点停住、节点在跑、刚建出来的 Run 全部照旧是活动执行；`unknown` 节点也算开放（需要操作员 retry/resume）。"
-    boundary: "不改活动执行与动作语义（ActiveExecution 的含义收窄为「真有可能变化的执行」，校验层一字未改）；不改 `briefRun.Status` 的任务级口径（仍是 waiting_user）；不解决历史 Run 的展示与结算入口，不做「结算 Run」这个产品动作；不覆盖 `unknown` 节点需要人工 retry 的展示引导；不改前端。"
+    why: "必须保留：`taskStatusFromRun` 把「全部节点 success」的 Run 投影成 `waiting_user`（待审核，用户点「完成」），`isActiveTaskStatus` 又把它算作活动执行，于是 Situation Brief 给已结算的 Run 挂上 `active_execution`（current_nodes 为空）。`validateRouterActions` 在 ActiveExecution 非空时硬拒 `run_workflow` 与 `message_agent`，`deliver_to_active_run` 要 1 个活动节点、`answer_waiting_node` 要有 waiting_user 节点，两者都不成立，Router 只剩 `router_say` —— 而 `PrepareNewUserTurn` 本来对 success 的 Run 显式放行下一轮，拦住用户的只有 brief。修复：`workflowRunHasOpenNodes` 只在图里还有状态不在 {success, skipped, fail, cancelled} 的节点（或 NodeStates 为空、投影还没写）时算未结算；brief 仅在 `isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run))` 时挂 ActiveExecution。暂停是操作员状态，即使节点全收齐也照旧挡新执行；gate 停在 waiting_user、agent 节点停住、节点在跑、刚建出来的 Run 全部照旧是活动执行；`unknown` 节点当时也算开放（需要操作员 retry/resume）。2026-11-20（G-NJ）按 #86 现场修正了这一条：unknown 行已经不在跑、也没有人会再推进这一轮，永久算开放只会把 Router 挡在门外，改为算已收尾，闸门同时看 NodeRun 行。"
+    boundary: "不改活动执行与动作语义（ActiveExecution 的含义收窄为「真有可能变化的执行」，校验层一字未改）；不改 `briefRun.Status` 的任务级口径（仍是 waiting_user）；不解决历史 Run 的展示与结算入口，不做「结算 Run」这个产品动作；不覆盖 `unknown` 节点需要人工 retry 的展示引导（G-NJ 起 unknown 不再挡闸门，改为由 Router 读会话判断结果）；不改前端。"
     files:
       - server/internal/kanban/router_brief.go
       - docs/plans/README.md
@@ -9976,9 +9976,9 @@ groups:
     tests:
       - server/internal/kanban/router_brief_active_execution_test.go
     anchors:
-      - 'server/internal/kanban/router_brief.go:if isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run)) {'
-      - 'server/internal/kanban/router_brief.go:func workflowRunHasOpenNodes(run *WorkflowRun) bool {'
-      - 'server/internal/kanban/router_brief.go:case NodeRunSuccess, NodeRunSkipped, NodeRunFail, NodeRunCancelled:'
+      - 'server/internal/kanban/router_brief.go:if isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run, nodeRuns)) {'
+      - 'server/internal/kanban/router_brief_open_nodes.go:func workflowRunHasOpenNodes(run *WorkflowRun, rows []NodeRun) bool {'
+      - 'server/internal/kanban/router_brief.go:暂停是操作员状态，不是「这一轮跑完了」：暂停任务照旧挡新执行。'
   - id: G-NA
     title: Router 回合失败不再丢弃已记录的动作，超时对用户可见，brief 状态跟随 Run 投影
     kind: fix
