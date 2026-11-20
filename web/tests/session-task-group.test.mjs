@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "vitest";
 
-import { orderTaskGroupedRows, taskSessionGroupLabel } from "../src/components/session/sessionTaskGroups.ts";
+import {
+  orderTaskGroupedRows,
+  taskSessionGroupHeading,
+  taskSessionGroupLabel,
+  taskSessionMemberLabel,
+} from "../src/components/session/sessionTaskGroups.ts";
 import {
   setWorkflowNodeStartsNewSession,
   workflowNodeStartsNewSession,
@@ -28,7 +33,12 @@ test("同任务的顶层会话收成一组并保留原有相对顺序", () => {
     "分组出现在第一个成员的位置，成员连续排布其余顺序不变",
   );
   assert.equal(rows[0].label, "任务 A");
-  assert.equal(rows[0].count, 2);
+  assert.equal(rows[0].count, undefined, "分组头不再带成员计数（成员本身就是计数）");
+  assert.deepEqual(
+    rows.filter((row) => row.kind === "session" && row.nested).map((row) => row.groupLabel),
+    ["任务 A", "任务 A"],
+    "成员行带上要剥掉的共享前缀",
+  );
   assert.equal(rows[3].nested, false, "单条会话的任务不成组，也不缩进");
   assert.equal(rows[4].nested, false, "非任务会话保持原样");
 });
@@ -49,6 +59,28 @@ test("分组头剥回任务称呼：共享会话名与节点会话名都认", ()
   assert.equal(taskSessionGroupLabel([session("x", {})]), "");
 });
 
+test("分组头文案 = 任务名 + 任务号，和会话名同一行字", () => {
+  assert.equal(taskSessionGroupHeading("对话命名问题", "91", "任务会话"), "对话命名问题 # 91");
+  assert.equal(taskSessionGroupHeading("", "91", "任务会话"), "任务会话 # 91");
+  assert.equal(taskSessionGroupHeading("对话命名问题", "", "任务会话"), "对话命名问题");
+
+  const header = read("components/session/TaskSessionGroupHeader.tsx");
+  assert.match(header, /taskSessionGroupHeading\(/, "分组头必须走同一套文案函数");
+  assert.match(header, /fontSize: "13px"/, "分组头与普通会话行同名号");
+  assert.match(header, /fontWeight: 500/, "字重与未选中的会话行一致");
+  assert.doesNotMatch(header, /count/, "分组头不再渲染成员计数");
+  assert.match(header, /data-task-group=/, "分组头的定位属性保持不变");
+});
+
+test("成员名剥掉分组头的共享前缀，保留区分点", () => {
+  assert.equal(taskSessionMemberLabel("对话命名问题 · 把任务改成对话式", "对话命名问题"), "把任务改成对话式");
+  assert.equal(taskSessionMemberLabel("对话命名问题 / #7 · 把任务改成对话式", "对话命名问题"), "#7 · 把任务改成对话式");
+  assert.equal(taskSessionMemberLabel("对话命名问题", "对话命名问题"), "对话命名问题", "只剩任务名时原样返回，不渲染空名");
+  assert.equal(taskSessionMemberLabel("改过名的一条", "对话命名问题"), "改过名的一条", "改过名的会话不按前缀硬切");
+  assert.equal(taskSessionMemberLabel("对话命名问题续篇 · 另一轮", "对话命名问题"), "对话命名问题续篇 · 另一轮", "前缀必须在词边界上");
+  assert.equal(taskSessionMemberLabel("任务 A · 一", ""), "任务 A · 一", "没有分组头时不做任何裁剪");
+});
+
 test("两条侧栏都渲染分组头，并把 nested 交给会话卡", () => {
   const single = read("components/session/SessionList.tsx");
   const multi = read("components/session/MultiProjectSessionList.tsx");
@@ -56,7 +88,13 @@ test("两条侧栏都渲染分组头，并把 nested 交给会话卡", () => {
     assert.match(source, /row\.type === "task-group"/, `${name} must branch on task-group rows`);
     assert.match(source, /<TaskSessionGroupHeader/, `${name} must render the group header`);
     assert.match(source, /nested=\{row\.nested\}/, `${name} must indent grouped sessions`);
+    assert.match(source, /stripNamePrefix=\{row\.stripNamePrefix\}/, `${name} must strip the shared task prefix`);
   }
+  // 前缀只在渲染时剥：名字本身（重命名草稿、落库值）一个字都不能动。
+  const card = read("components/session/SessionCard.tsx");
+  assert.match(card, /stripNamePrefix \? taskSessionMemberLabel\(displayName, stripNamePrefix\)/, "SessionCard must apply the prefix stripping");
+  assert.match(card, /title=\{shownName\}/, "hover title must show the stripped name too");
+  assert.match(card, /setDraftName\(name\)/, "rename draft must start from the stored name");
   // 搜索结果是平铺的命中列表，按任务重组会让「第 N 条命中」跳位。
   assert.match(single, /searchResultsMode\s*\?\s*sessions\.map/, "search results must stay flat");
 });

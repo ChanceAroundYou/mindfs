@@ -199,7 +199,6 @@ export function MultiProjectSessionList({
                             key={`task-group-${group.rootId}-${row.taskId}`}
                             taskId={row.taskId}
                             label={row.label}
-                            count={row.count}
                           />
                         );
                       }
@@ -240,6 +239,7 @@ export function MultiProjectSessionList({
                           nodeColor={groupColor}
                           sessionByKey={sessionByKey}
                           nested={row.nested}
+                          stripNamePrefix={row.stripNamePrefix}
                           selected={session.key === selectedKey && sessionRoot === selectedRootId && String((group as any)._nodeId || "") === String(selectedNodeId || "")}
                           parentHighlighted={false}
                           highlightQuery=""

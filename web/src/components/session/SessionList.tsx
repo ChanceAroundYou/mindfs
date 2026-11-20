@@ -300,7 +300,6 @@ export function SessionList({
                     key={`task-group-${row.taskId}`}
                     taskId={row.taskId}
                     label={row.label}
-                    count={row.count}
                   />
                 );
               }
@@ -337,6 +336,7 @@ export function SessionList({
                   session={session}
                   sessionByKey={sessionByKey}
                   nested={row.nested}
+                  stripNamePrefix={row.stripNamePrefix}
                   selected={session.key === selectedKey}
                   parentHighlighted={!!selectedParentKey && session.key === selectedParentKey}
                   highlightQuery={searchResultsMode ? searchQuery : ""}

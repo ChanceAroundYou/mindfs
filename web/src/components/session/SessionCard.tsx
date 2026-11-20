@@ -10,6 +10,7 @@ import {
 import type { SessionItem } from "./sessionListTypes";
 
 import { useSessionCard } from "./useSessionCard";
+import { taskSessionMemberLabel } from "./sessionTaskGroups";
 import { SessionCardIcon } from "./SessionCardIcon";
 import { SessionCardOverflowMenu } from "./SessionCardOverflowMenu";
 import {
@@ -28,6 +29,7 @@ function SessionCard({
   syncing = false,
   unread = false,
   nested = false,
+  stripNamePrefix = "",
   onSelect,
   onSync,
   onPin,
@@ -46,6 +48,9 @@ function SessionCard({
   // nested：被收进任务分组，只借子会话的缩进。语义上它仍是顶层会话，
   // 所以 isSubagent 不动 —— 顶部徽标、右键菜单、跳转行为都保持原样。
   nested?: boolean;
+  // stripNamePrefix：被收进任务分组时，名字里与分组头重复的共享前缀
+  // （`任务名 · ` / `任务名 / `）。只影响展示，不落库、不改重命名草稿。
+  stripNamePrefix?: string;
   onSelect?: (session: SessionItem) => void;
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
@@ -88,6 +93,10 @@ function SessionCard({
   // 徽标全隐藏时 0 —— 那种行不多占上一个会话的留白。编辑态下名字上方那排不渲染，
   // 也就不该拓出一块盖着空气的深色底。
   const liftTop = (selected || hovered) && !editing && hasSessionTopBadges(session, isSubagent, unread) ? TOP_BADGE_LIFT_PX : 0;
+
+  // 分组内的会话不再重复分组头的任务名（2026-11-20 用户决策）；改过名的会话
+  // 不以任务基名开头，taskSessionMemberLabel 会原样返回。
+  const shownName = stripNamePrefix ? taskSessionMemberLabel(displayName, stripNamePrefix) : displayName;
 
   return (
     <div
@@ -219,7 +228,7 @@ function SessionCard({
               // 名字单行截断：侧栏窄，长名字（任务名 · 节点名 · 触发留言）会被
               // 截掉后半段，而区分同一任务不同轮次的正是后半段。title 让鼠标
               // 悬停能看到全名，不用改行高。
-              title={displayName}
+              title={shownName}
               style={{
                 display: "block",
                 fontSize: "13px",
@@ -229,7 +238,7 @@ function SessionCard({
                 textOverflow: "ellipsis",
               }}
             >
-              {renderHighlightedText(displayName, highlightQuery, {
+              {renderHighlightedText(shownName, highlightQuery, {
                 color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
               })}
             </span>

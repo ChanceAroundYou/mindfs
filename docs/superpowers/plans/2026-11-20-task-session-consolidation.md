@@ -57,3 +57,16 @@
 - 存量散落会话不会被自动合并成一条；新一轮 Run 起才按 `run` 策略共用会话。
 - 未做前端「任务分组折叠」（分组常显，成员始终可见）。
 - 只装到本机，未部署 WSL/fn/pc-win；本机 system 单元重启仍只由用户执行（前端 bundle 装完刷新页面即生效，后端会话策略要重启才生效）。
+
+## 显示样式修正（2026-11-20，用户逐条确认「全部确认 按你建议」）
+
+用户现场：分组头还是「说明行 + 计数胶囊」的旧形态，成员会话名又把任务名重复了一遍。两条裁定：
+
+1. **分组头与会话行同一套字**：`taskSessionGroupHeading(label, taskId, fallback)` 产出 `任务名 # 91`（有任务号才补 `# id`），`13px / 500` 与未选中会话行一致，前面换成一个分组专用图标（三条横杠，18px 图标位与 `SessionCardIcon` 对齐）；**成员计数整条去掉**，不搬家。
+2. **成员名剥掉共享前缀**：`taskSessionMemberLabel(fullName, groupLabel)` 只剥分组头那一段 —— `任务名 · 摘要` → `摘要`，`任务名 / #7 · 摘要` → `#7 · 摘要`（节点号是组内区分点，保留）。前缀必须在词边界上（`任务 A` 不切 `任务 AB · …`），改过名的会话不以任务基名开头就原样返回。只影响展示：`title` 与高亮走剥后的名字，重命名草稿仍编辑落库原名。
+
+接线：`orderTaskGroupedRows` 的成员行带 `groupLabel` → `useSessionChildTree.append(entry.session, entry.nested, entry.groupLabel)` 落成 `stripNamePrefix` → 两条侧栏透传 → `SessionCard` 渲染时剥。真正的子会话（`parent_session_key` 命中）不带前缀，不受影响。
+
+验证：`web/tests/session-task-group.test.mjs` 9 条（新增「分组头文案 = 任务名 + 任务号，和会话名同一行字」「成员名剥掉分组头的共享前缀，保留区分点」，并补 `SessionCard` 接线与「重命名仍编辑原名」断言）；全量 `npm test` 247 文件 / 745 通过 / 6 跳过、`tsc` clean。四处变异各自打红对应用例后还原：① 去掉前缀裁剪；② 分组头改回 `任务名 91`（无 `#`）；③ `SessionList` 不透传 `stripNamePrefix`；④ `SessionCard` 直接渲染 `displayName`。
+
+安装：`make build-web` 后按 `make install` 的静态资源语义把 `web/dist` 覆盖进 `~/.local/share/mindfs/web/`（未重编二进制 —— 本次只动前端，避免把并行会话的在飞改动编进去）；线上 7331 `GET /mindfs/` 200 且 index 已指向新 bundle `assets/index-WeZGkol4.js`，刷新即生效。未部署 WSL/fn/pc-win。

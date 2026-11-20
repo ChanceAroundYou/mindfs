@@ -75,13 +75,14 @@ export function useSessionChildTree({
       }
     }
     const rows: VisibleSessionRow[] = [];
-    const append = (item: SessionItem, nested = false) => {
-      rows.push({ type: "session", session: item, nested });
+    const append = (item: SessionItem, nested = false, stripNamePrefix?: string) => {
+      rows.push({ type: "session", session: item, nested, stripNamePrefix });
       const children = childrenByParent.get(item.key) || [];
       const key = stateKey(item, scope);
       const expanded = !!expandedChildren[key];
       const active = activeParents.has(item.key);
       const visible = active ? (expanded ? children : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)) : [];
+      // 真正的子会话不带任务前缀：它们以自己的名字挂在父会话下面。
       visible.forEach((child) => append(child, nested));
       const collapsedBase = collapsedBaseCount[key] ?? children.length;
       const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
@@ -90,13 +91,14 @@ export function useSessionChildTree({
       }
     };
     // 任务分组（2026-11-20 用户决策）：同一 task_id 下的顶层会话先出分组头，
-    // 成员紧随其后并缩进一级。分组只在有多条会话时出现，单条会话的展示不变。
+    // 成员紧随其后并缩进一级，且剥掉与分组头重复的共享前缀。分组只在有多条
+    // 会话时出现，单条会话的展示不变。
     for (const entry of orderTaskGroupedRows(topLevel)) {
       if (entry.kind === "group") {
-        rows.push({ type: "task-group", taskId: entry.taskId, label: entry.label, count: entry.count });
+        rows.push({ type: "task-group", taskId: entry.taskId, label: entry.label });
         continue;
       }
-      append(entry.session, entry.nested);
+      append(entry.session, entry.nested, entry.groupLabel);
     }
     return rows;
   };

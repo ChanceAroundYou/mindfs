@@ -41,8 +41,10 @@ export function collectTaskSessionGroups(topLevel: SessionItem[]): Map<string, S
  * 没有 task_id 或只有一条会话的行原样保留在原位置。
  */
 export type TaskGroupedEntry =
-  | { kind: "group"; taskId: string; label: string; count: number }
-  | { kind: "session"; session: SessionItem; nested: boolean };
+  | { kind: "group"; taskId: string; label: string }
+  // groupLabel：成员名里那段与分组头重复的共享前缀，渲染时剥掉；
+  // 同组会话的任务基名是同一次命名调用算出来的，所以直接复用分组头的称呼。
+  | { kind: "session"; session: SessionItem; nested: boolean; groupLabel?: string };
 
 export function orderTaskGroupedRows(topLevel: SessionItem[]): TaskGroupedEntry[] {
   const groups = collectTaskSessionGroups(topLevel);
@@ -57,9 +59,10 @@ export function orderTaskGroupedRows(topLevel: SessionItem[]): TaskGroupedEntry[
     }
     if (emitted.has(taskId)) continue;
     emitted.add(taskId);
-    out.push({ kind: "group", taskId, label: taskSessionGroupLabel(members), count: members.length });
+    const label = taskSessionGroupLabel(members);
+    out.push({ kind: "group", taskId, label });
     for (const member of members) {
-      out.push({ kind: "session", session: member, nested: true });
+      out.push({ kind: "session", session: member, nested: true, groupLabel: label });
     }
   }
   return out;
@@ -80,4 +83,36 @@ export function taskSessionGroupLabel(sessions: SessionItem[]): string {
     if (bare) return bare;
   }
   return "";
+}
+
+/**
+ * 分组头文案（2026-11-20 用户决策）：和普通会话同名同字重，末尾补任务号，
+ * 不再挂成员计数 —— 组内成员本身就是计数。
+ */
+export function taskSessionGroupHeading(label: string, taskId: string, fallback: string): string {
+  const name = String(label || "").trim() || fallback;
+  const id = String(taskId || "").trim();
+  return id ? `${name} # ${id}` : name;
+}
+
+/**
+ * 剥掉组内会话名里与分组头重复的共享前缀（2026-11-20 用户决策：子会话不再
+ * 重复显示「任务名 · 」）。
+ *
+ * 只剥分组头那一段，剩下的部分原样保留：`任务名 · 摘要` → `摘要`，
+ * `任务名 / #7 · 摘要` → `#7 · 摘要`（节点号是同组会话之间的区分点，不剥）。
+ * 用户改过名的会话不再以任务基名开头，这时原样返回，绝不猜着切。
+ */
+export function taskSessionMemberLabel(fullName: string, groupLabel: string): string {
+  const name = String(fullName || "").trim();
+  const label = String(groupLabel || "").trim();
+  if (!name || !label || !name.startsWith(label)) return name;
+  const tail = name.slice(label.length);
+  // 前缀必须在词边界上：`任务 A` 不能把 `任务 AB · 摘要` 切成 `B · 摘要`。
+  if (tail && !/^[\s·/]/.test(tail)) return name;
+  const rest = tail
+    .replace(/^\s*\/\s*/, "")
+    .replace(/^\s*·\s*/, "")
+    .trim();
+  return rest || name;
 }

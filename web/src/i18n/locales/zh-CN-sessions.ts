@@ -18,7 +18,7 @@ export const zhCNSessions = {
   "sessionList.remainingChildren": "还有 {count} 个子会话",
   "sessionList.remainingSessions": "还有 {count} 个会话",
   // 同一个任务的多个会话在侧栏里收成一组（方案 A：只改展示，不动数据）。
-  "sessionList.taskGroupTitle": "任务「{name}」的 {count} 个会话",
+  "sessionList.taskGroupTitle": "任务「{name}」的会话",
   "sessionList.taskGroupFallback": "任务会话",
   "sessionList.nodeUnreachable": "节点连不上，显示的是上次拉到的内容",
   "sessionList.pinProject": "置顶项目",
