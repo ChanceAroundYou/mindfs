@@ -10385,12 +10385,13 @@ groups:
     title: unknown 算已收尾（Router 不再被幽灵执行挡住）+ 启动对账补投影结算回复 + Router 读会话工具
     kind: fix
     symptom: "2026-11-20 任务 #86「看板归档」用户报「执行的时候卡死了」。现场（生产库只读副本）：上一轮 Router 回合 90s 超时回落旧路径，建了 Run `run-61f8d92ace189e15`；进程重启把唯一 `execute` 节点的 running 行标成 `unknown`（`startup_ambiguous_side_effect`），但**没有写 `node_states_json`**（投影只在节点终态写）。于是 brief 把「空投影」当成刚建出来的一轮，挂上 `ActiveExecution` 且 `CurrentNodes=[]`；`validateRouterActions` 因此永久拒绝 `run_workflow`/`message_agent`，deliver/answer_waiting_node 也都无处可落，Router 只剩 say/ask_user，只能反复说「请先结算 Run」而界面没有这个入口。同时时间线显示 0 个节点，回复活动从 18:29 一直转到次日（永远转圈）。"
-    why: "必须保留：(1) `workflowNodeStateSettled` 把 `unknown` 也算已收尾 —— unknown 的语义是「副作用不明」，所以它不能重放（`EngineReadyNodes` 那套），也不能当终态写（`workflowNodeStateTerminal` 那套，被取代时必须冻结成 cancelled），但它确实不需要任何人再等它动。三套判断的分工写在 `router_brief_open_nodes.go` 文件头，防止下次再串。(2) 闸门不能只看投影：`workflowRunHasOpenNodes` 同时看行与投影，优先级 open 行 > 投影 > 已结行 > 两边都没有=未收尾。行优先是为了重试安全 —— attempt+1 排队时投影还写着上一次的 fail。(3) 启动对账必须把「这一轮彻底停下」补成完整投影：unknown 行写进投影（保留 NodeOutputs 证据），从没 claim 过的节点冻结成 cancelled；否则多节点图里下游节点永远被当成「还会动」。(4) 停在 running 的回复活动要结算成 cancelled 并留一句可读说明，否则前端永远转圈。(5) `router_read_session` 是用户裁定的补偿路径：节点的结果写在会话转录里，Router 唯一的读工具 `inspect_run` 只看得到投影，投影空白时它没有任何办法弄清上一轮干了什么。默认只给最后一段文本、`offset` 往前翻、单块 8KB / 整次 16KB 上限、limit ≤5，且白名单只认 `TaskRelatedSessionKeys`（本任务主会话 + 节点会话 + Run 共享会话 + 活动会话 + 子会话）。"
-    boundary: "不改 `workflowNodeStateTerminal`（unknown 仍非终态、被取代时仍冻结成 cancelled），不改 `EngineReadyNodes`（unknown 仍不重放），不给 Router 自动 cancel/retry（P2 仍排除）。补投影只在「本轮有 unknown 且没有任何行被重排、任务未暂停」时做：有重排说明这一轮还会继续动，暂停是操作员意图。`router_read_session` 是只读工具（`RouterToolRead`），不返回工具调用/推理/计划块，不放开 Bash/Read/Grep 等原生读工具。`SessionStateProbeForRoot` 永远返回 resumable=false 这一策略本轮不动（它决定「有在飞节点时重启必出 unknown」，属独立裁定）。"
+    why: "必须保留：(1) `workflowNodeStateSettled` 把 `unknown` 也算已收尾 —— unknown 的语义是「副作用不明」，所以它不能重放（`EngineReadyNodes` 那套），也不能当终态写（`workflowNodeStateTerminal` 那套，被取代时必须冻结成 cancelled），但它确实不需要任何人再等它动。三套判断的分工写在 `router_brief_open_nodes.go` 文件头，防止下次再串。(2) 闸门不能只看投影：`workflowRunHasOpenNodes` 同时看行与投影，优先级 open 行 > 投影 > 已结行 > 两边都没有=未收尾。行优先是为了重试安全 —— attempt+1 排队时投影还写着上一次的 fail。(3) 启动对账必须把「这一轮彻底停下」补成完整投影：unknown 行写进投影（保留 NodeOutputs 证据），从没 claim 过的节点冻结成 cancelled；否则多节点图里下游节点永远被当成「还会动」。(4) 停在 running 的回复活动要结算成 cancelled 并留一句可读说明，否则前端永远转圈。(5) `router_read_session` 是用户裁定的补偿路径：节点的结果写在会话转录里，Router 唯一的读工具 `inspect_run` 只看得到投影，投影空白时它没有任何办法弄清上一轮干了什么。默认只给最后一段文本、`offset` 往前翻、单块 8KB / 整次 16KB 上限、limit ≤5，且白名单只认 `TaskRelatedSessionKeys`（本任务主会话 + 节点会话 + Run 共享会话 + 活动会话 + 子会话）。(6) 2026-11-20 第二轮（用户裁定「补回填」「merge 来的 unknown 继续挡闸门」）：回填不能只挂在「本轮还有 open 行」的分支里 —— `ListOpenWorkflowNodeRuns` 只看 queued/running，任务一旦收尾就直接 continue，#86 那种历史 Run 永远扫不到。启动末尾按 unknown 行反查所有 Run（`ListWorkflowRunIDsWithUnknownNodes`），只补**缺失**的投影键（已有终态证据原样保留，真在等答复的 waiting_user 也保留），把从没跑过/已无人推进的 queued/running 节点冻结成 cancelled，再结算仍 running/pending 的回复活动；正在继续的一轮（有 open 行或本轮被重排）不碰。闸门改为按**每节点最新 attempt** 判：merge 产出的 unknown（独立树续合并失败，输出带 `worktree_error`）继续挡闸门，重启产出的 unknown（transition 把 output 整体换成 `{"reason": ...}`）算已收尾；同节点重试成功后旧 attempt 的合并不明不再挡。"
+    boundary: "不改 `workflowNodeStateTerminal`（unknown 仍非终态、被取代时仍冻结成 cancelled），不改 `EngineReadyNodes`（unknown 仍不重放），不给 Router 自动 cancel/retry（P2 仍排除）。补投影只在「本轮有 unknown 且没有任何行被重排、任务未暂停」时做：有重排说明这一轮还会继续动，暂停是操作员意图。`router_read_session` 是只读工具（`RouterToolRead`），不返回工具调用/推理/计划块，不放开 Bash/Read/Grep 等原生读工具。`SessionStateProbeForRoot` 永远返回 resumable=false 这一策略本轮不动（它决定「有在飞节点时重启必出 unknown」，属独立裁定）。历史回填不覆盖已有投影、不处理 legacy_import 的 Run、不唤醒 driver；合并不明的 unknown 没有自动解除入口（要操作员 retry 或先处理主树），这是有意的 fail-closed。"
     files:
       - server/internal/kanban/router_brief_open_nodes.go
       - server/internal/kanban/router_brief.go
       - server/internal/kanban/workflow_recovery.go
+      - server/internal/kanban/task_store_workflow_node_runs.go
       - server/internal/kanban/router_read_session.go
       - server/internal/kanban/router_tools.go
       - server/internal/kanban/router_service.go
@@ -10403,6 +10404,7 @@ groups:
     tests:
       - server/internal/kanban/router_brief_settled_test.go
       - server/internal/kanban/workflow_recovery_unknown_settled_test.go
+      - server/internal/kanban/workflow_recovery_projection_backfill_test.go
       - server/internal/kanban/router_read_session_test.go
       - server/internal/kanban/router_timeout_salvage_test.go
     anchors:
@@ -10425,6 +10427,13 @@ groups:
       - 'server/internal/kanban/router_brief_settled_test.go:func TestSituationBriefUnknownNodeRunDoesNotBlockNewExecution(t *testing.T) {'
       - 'server/internal/kanban/workflow_recovery_unknown_settled_test.go:func TestStartupRecoveryUnknownWritesProjectionAndSettlesReply(t *testing.T) {'
       - 'server/internal/kanban/router_read_session_test.go:func TestRouterReadSessionDefaultsToLatestTextBlock(t *testing.T) {'
+      - 'server/internal/kanban/router_brief_open_nodes.go:func workflowLatestTopLevelNodeRuns(rows []NodeRun) map[string]NodeRun {'
+      - 'server/internal/kanban/router_brief_open_nodes.go:func workflowUnknownBlocksRelease(row NodeRun) bool {'
+      - 'server/internal/kanban/workflow_recovery.go:func (s *Service) backfillWorkflowRunStopped(ctx context.Context, store *TaskStore, runID string) error {'
+      - 'server/internal/kanban/workflow_recovery.go:if len(open) > 0 || wake {'
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) ListWorkflowRunIDsWithUnknownNodes(ctx context.Context) ([]string, error) {'
+      - 'server/internal/kanban/router_brief_settled_test.go:func TestSituationBriefMergeUnknownNodeRunStillBlocksNewExecution(t *testing.T) {'
+      - 'server/internal/kanban/workflow_recovery_projection_backfill_test.go:func TestStartupRecoveryBackfillsHistoricalRunProjection(t *testing.T) {'
   - id: G-NK
     title: 工作流节点间传递 {previous_output} + 节点级 Plan 模式 + 手机草稿抽屉
     kind: feature

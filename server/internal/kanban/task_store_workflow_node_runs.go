@@ -316,6 +316,29 @@ func (s *TaskStore) LatestWorkflowNodeSessionKey(ctx context.Context, runID, nod
 	return key, nil
 }
 
+// ListWorkflowRunIDsWithUnknownNodes 找出「有 unknown 行、需要回填投影」的 Run。
+//
+// 启动对账原来只看 queued/running 行，所以 #86 那种已经停下、甚至任务早已收尾的
+// 历史 Run 永远不会被扫到（投影 0 个节点、回复一直转圈）。按 unknown 行反查是
+// 唯一不依赖「还有 open 行」的入口。
+func (s *TaskStore) ListWorkflowRunIDsWithUnknownNodes(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT run_id FROM workflow_node_runs WHERE status=? ORDER BY run_id`, NodeRunUnknown)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *TaskStore) ListWorkflowNodeRuns(ctx context.Context, runID string) ([]NodeRun, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+workflowNodeRunColumns+` FROM workflow_node_runs WHERE run_id=? ORDER BY created_at,node_id,loop_path,iteration,attempt`, runID)
 	if err != nil {

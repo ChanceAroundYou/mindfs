@@ -174,6 +174,9 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 	if err := rows.Err(); err != nil {
 		return plan, err
 	}
+	// 本轮真正还会动的 Run：被重排/续合并（wake）或有 open 行的。它们的回复
+	// 活动属于正在继续的一轮，历史回填绝不能结算。
+	liveRuns := map[string]bool{}
 	for _, b := range bounds {
 		if isTerminalStatus(b.status) {
 			continue
@@ -254,6 +257,9 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 				}
 			}
 		}
+		if len(open) > 0 || wake {
+			liveRuns[b.runID] = true
+		}
 		if len(open) > 0 {
 			// 这一轮已经彻底停下（没有节点被重排）：补齐半写的投影并结算回复活动，
 			// 否则时间线永远 0 个节点、回复永远转圈（#86）。
@@ -291,7 +297,98 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 			}
 		}
 	}
+	// 历史回填（用户裁定 2026-11-20）：上面那圈只看得到 queued/running 行，还要求
+	// 任务未终态。#86 那种「已经停下、任务后来还收尾/归档了」的 Run 永远扫不到，
+	// 投影停在 0 个节点、回复一直转圈。按 unknown 行反查所有 Run，补缺失的投影键
+	// 并结算陈旧的回复活动；正在继续的那一轮（liveRuns）不碰。
+	unknownRunIDs, err := store.ListWorkflowRunIDsWithUnknownNodes(ctx)
+	if err != nil {
+		return plan, err
+	}
+	for _, runID := range unknownRunIDs {
+		if liveRuns[runID] {
+			continue
+		}
+		if err := s.backfillWorkflowRunStopped(ctx, store, runID); err != nil {
+			log.Printf("[kanban/recover] projection backfill failed root=%s run=%s err=%v", rootID, runID, err)
+		}
+	}
 	return plan, nil
+}
+
+// backfillWorkflowRunStopped 给「已经停下、但投影没写完」的历史 Run 补投影。
+//
+// 与 projectWorkflowRunStopped 的分工：那个只在本次启动刚把在飞行标成 unknown
+// 时跑；这里按 unknown 行反查所有历史 Run（含任务早已收尾/归档的），只补**缺失**
+// 的键，绝不覆盖已有终态证据：
+//   - 最新尝试行是终态 / waiting_user → 用行状态（unknown 仍是 unknown，
+//     真在等答复的节点也保持 waiting_user，见「操作员完成时不冻结」）；
+//   - 行还停在 queued/running（这一轮已经没人推进）→ cancelled；
+//   - 从没跑过的节点 → cancelled（这一轮放弃了它们）；
+//   - 已有投影的节点 → 原样保留。
+//
+// 投影补完再结算还挂在 running/pending 的回复活动：那是 #86 里转了十几个小时的
+// 那一行。幂等 —— 投影齐了就不再写事件、活动已终态就不再改。
+func (s *Service) backfillWorkflowRunStopped(ctx context.Context, store *TaskStore, runID string) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		run, err := store.WorkflowRunByID(ctx, runID)
+		if err != nil {
+			return err
+		}
+		// 历史阶段任务迁移出来的 Run 不在这里补：它们的收尾走迁移语义。
+		if len(run.Graph.Nodes) == 0 || run.TriggeredBy == WorkflowTriggeredByLegacyImport {
+			return nil
+		}
+		nodeRuns, err := store.ListWorkflowNodeRuns(ctx, runID)
+		if err != nil {
+			return err
+		}
+		latest := workflowLatestTopLevelNodeRuns(nodeRuns)
+		if run.NodeStates == nil {
+			run.NodeStates = map[string]string{}
+		}
+		unknown := []string{}
+		filled := []string{}
+		frozen := []string{}
+		for _, node := range run.Graph.Nodes {
+			if row, ok := latest[node.ID]; ok && row.Status == NodeRunUnknown {
+				unknown = append(unknown, node.ID)
+			}
+			if _, ok := run.NodeStates[node.ID]; ok {
+				continue
+			}
+			status := NodeRunCancelled
+			if row, ok := latest[node.ID]; ok && (workflowNodeStateSettled(row.Status) || row.Status == NodeRunWaitingUser) {
+				status = row.Status
+			}
+			run.NodeStates[node.ID] = status
+			if status == NodeRunCancelled {
+				frozen = append(frozen, node.ID)
+			} else {
+				filled = append(filled, node.ID)
+			}
+		}
+		if len(filled)+len(frozen) > 0 {
+			err := store.SaveWorkflowRunWithEvent(ctx, run, WorkflowRunEvent{
+				Type: WorkflowEventNodeUnknown,
+				Payload: map[string]any{
+					"reason":          "startup_projection_backfill",
+					"unknown_nodes":   unknown,
+					"filled_nodes":    filled,
+					"cancelled_nodes": frozen,
+				},
+			})
+			if errors.Is(err, ErrRunConflict) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+		s.settleWorkflowReplyUnknown(ctx, store, runID)
+		return nil
+	}
+	return ErrRunConflict
 }
 
 // projectWorkflowRunStopped 把「重启后彻底停下的一轮」补成完整投影。
