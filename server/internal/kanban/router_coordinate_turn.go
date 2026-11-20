@@ -15,8 +15,10 @@ import (
 //
 // 一轮运行期事件的顺序不可换：claim → 去重/预算/证据闸门 → 模型 → 校验 →
 // 应用可见副作用 → 决策 applied → 事件 done。任何一步失败都把事件推进到
-// failed/skipped 终态并写清原因；绝不回落旧路径、绝不新开 Run、绝不自动
-// cancel/retry/审批——运行期事件只是汇报，不是新的执行指令。
+// failed/skipped 终态并写清原因；绝不回落旧路径、绝不新开 Run、绝不把事件
+// 变成新的执行指令。唯一允许的自动重试是**回合本身**：模型超时/流中断属于
+// 瞬时失败，事件交回队列重试一次（routerEventTurnMaxAttempts），否则一次
+// 慢模型就会把整条监管汇报吞掉。
 
 // runCoordinateEventTurn 是 lane 里的运行期事件回合入口。
 func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTrigger) {
@@ -39,7 +41,7 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 		UserActivityID: strings.TrimSpace(event.UserActivityID),
 		TriggerKind:    trigger.Kind,
 		TriggerRef:     trigger.TriggerRef,
-		TurnID:         trigger.TurnID,
+		TurnID:         routerEventAttemptTurnID(event),
 		Status:         RouterDecisionApplying,
 	}
 	if !rs.beginCoordinateEventTurn(ctx, decision, &event) {
@@ -110,12 +112,16 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 	})
 	latency := int(time.Since(started).Milliseconds())
 	if err != nil {
+		reason := routerTurnFailureReason(err, timeout, turnCtx.Err())
+		if rs.retryCoordinateEventTurn(ctx, decision, event, reason) {
+			return
+		}
 		rs.store.UpsertSession(ctx, &RouterSessionRecord{
 			Scope: RouterScopeTask, OwnerID: taskID, RootID: decision.RootID,
 			SessionKey: sessionKey, Agent: config.Agent, Model: config.Model, Effort: config.Effort,
-			PromptHash: promptHash, Status: RouterSessionFailed, LastError: err.Error(), LastTurnAt: time.Now().UTC(),
+			PromptHash: promptHash, Status: RouterSessionFailed, LastError: reason, LastTurnAt: time.Now().UTC(),
 		})
-		rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, err.Error())
+		rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, reason)
 		return
 	}
 	decision.RouterSessionKey = result.SessionKey
@@ -485,4 +491,64 @@ func (rs *RouterService) directEvidenceHolds(ctx context.Context, event RouterEv
 		return false
 	}
 	return reply.Status == ActivityStatusPending || reply.Status == ActivityStatusRunning
+}
+
+// routerEventTurnMaxAttempts 是一次事件回合的总尝试次数：初次 + 一次重试。
+// 模型超时/流中断是瞬时的，重试一次能把监管汇报救回来；不设上限会把慢模型
+// 变成反复烧预算的循环。
+const routerEventTurnMaxAttempts = 2
+
+// routerEventAttemptTurnID 给每次尝试一个独立的决策身份。同一事件重试时不能复用
+// 第一次的 turn id，否则重新领取会撞上 ErrRouterDecisionExists，被当成
+// 「上一轮死在应用之前」重放，模型根本不会再跑一遍。
+func routerEventAttemptTurnID(event RouterEvent) string {
+	turnID := strings.TrimSpace(event.TurnID)
+	if turnID == "" || event.Attempt <= 0 {
+		return turnID
+	}
+	return fmt.Sprintf("%s:a%d", turnID, event.Attempt+1)
+}
+
+// routerTurnFailureReason 把回合错误写成可读原因。超时是最需要看清的一类
+// （模型慢到首字就撞死线），只写 "context deadline exceeded" 看不出撞的是
+// 哪个上限；ctx 自身过期时以 ctx 为准，因为 SDK 的错误文本不一定带 DeadlineExceeded。
+func routerTurnFailureReason(err error, timeout time.Duration, ctxErr error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctxErr, context.DeadlineExceeded) {
+		return fmt.Sprintf("router turn timed out after %s: %v", timeout, err)
+	}
+	return err.Error()
+}
+
+// retryCoordinateEventTurn 把可重试的回合失败交回队列：决策落 failed 留证，
+// 事件回 pending、attempt+1，下一拍重新领取。返回 true 表示已经交回，调用方
+// 不能再把它推到终态。
+func (rs *RouterService) retryCoordinateEventTurn(ctx context.Context, decision *RouterDecision, event RouterEvent, reason string) bool {
+	if rs == nil || rs.store == nil {
+		return false
+	}
+	if supervisionFailureKindForText(reason) != SupervisionFailureRetryable {
+		return false
+	}
+	if event.Attempt+1 >= routerEventTurnMaxAttempts {
+		return false
+	}
+	requeued, err := rs.store.RetryEvent(ctx, event.ID, reason)
+	if err != nil {
+		log.Printf("[router/coordinate] turn.retry.error event=%s err=%v", event.ID, err)
+		return false
+	}
+	if !requeued {
+		return false
+	}
+	if decision != nil {
+		if err := rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionFailed, reason); err != nil {
+			log.Printf("[router/coordinate] turn.retry.decision.error id=%s err=%v", decision.ID, err)
+		}
+		rs.broadcast(decision)
+	}
+	log.Printf("[router/coordinate] turn.retry event=%s task=%s attempt=%d reason=%s", event.ID, event.TaskID, event.Attempt+1, reason)
+	return true
 }

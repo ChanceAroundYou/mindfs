@@ -11154,3 +11154,32 @@ groups:
       - 'server/internal/api/router_runtime.go:return &agenttypes.ToolPolicy{'
       - 'server/internal/api/router_runtime.go:BuiltinTools:  &builtins,'
       - 'server/internal/api/router_runtime.go:BuiltinTools:    &noBuiltins,'
+
+  - id: G-NU
+    title: Router 回合超时不再吞掉决策与转录：落盘脱离回合死线 + 事件回合有界自动重试
+    kind: fix
+    symptom: "线上 llmux 任务 task_260f5740cced704f 的 `run_settled` 汇报永久丢失。取证（journald + 决策台账 `rdec_49535b149f845f7c`）：事件回合的模型 TTFT 178,137 ms、CLI result 218,592 ms，撞上生产 `router.turn_timeout=180s`；`SendMessage` 把 `context deadline exceeded` 当成普通失败后，继续在**已经过期**的回合 ctx 上落盘，`persistTurnBlocks` 先失败，真正的原因被改写成 `persist turn blocks: context deadline exceeded`；助手行只剩元数据、没有正文，`prober.ReportRuntimeFailure` 走不到，决策落 failed、0 token、`actions_json` 为空 —— 用户既没收到监管汇报，也不会有人重试，而这在 Router 每次把 180s 花在慢模型上时都会重演。"
+    why: "必须保留：① 落盘阶段用 `turnPersistenceContext` 剥掉回合死线（`context.WithoutCancel` + 30s 独立上限，值仍保留），这样模型超时会**如实**报成 timeout、助手行与块流照常落库 —— 否则超时永远被伪装成写库错误，`prober` 学不到任何东西；② Router 自己的回合超时 / 流中断是可重试的瞬时失败，事件不能就此终结：`retryCoordinateEventTurn` 在 `supervisionFailureKindForText` 判为 retryable 且 `attempt+1 < routerEventTurnMaxAttempts(=2)` 时把事件打回 pending（`RouterStore.RetryEvent`，CAS 只从 claimed 回退）、旧决策标 failed 并带上真实原因，下一拍重跑模型；③ 重试回合的幂等键必须换（`routerEventAttemptTurnID` 追加 `:a<N>`），否则新决策会撞上失败那一轮的 `(task_id, turn_id)` 直接静默复用、模型根本不会再跑；④ 分级复用节点失败那套文本表，非瞬时失败（invalid / unauthorized / validation…）与 quota 一律不重试，避免把预算烧在必然再错的回合上。"
+    boundary: "只覆盖事件回合（run_failed / run_stalled / direct_stalled / run_settled / completion_blocked 等走 `runCoordinateEventTurn` 的回合）；用户留言回合的语义不变，失败仍按原路径回落。每个事件最多重试一次（总尝试 2 次），重试仍失败就落 failed 并在 `last_error` 留下可读原因。落盘上限是 30s 墙钟，积压极大时会返回错误而不是静默丢弃。不宣称覆盖 kill -9 / 进程退出时正在写库。也不改变配置：`turn_timeout=180s` 面对 TTFT 178s 仍然会超时 —— 本组只保证超时被如实记录并可重试一次，是否调大 `turn_timeout` 或改 `router.model` 是运维决定。"
+    files:
+      - server/internal/api/usecase/session_send.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/router_event_store.go
+      - server/internal/kanban/router_supervision.go
+    tests:
+      - server/internal/api/usecase/session_send_persist_ctx_test.go
+      - server/internal/kanban/router_coordinate_turn_retry_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_send.go:const turnPersistenceTimeout = 30 * time.Second'
+      - 'server/internal/api/usecase/session_send.go:func turnPersistenceContext('
+      - 'server/internal/api/usecase/session_send.go:return context.WithTimeout(context.WithoutCancel(ctx), turnPersistenceTimeout)'
+      - 'server/internal/api/usecase/session_send.go:persistCtx, persistCancel := turnPersistenceContext(ctx)'
+      - 'server/internal/kanban/router_coordinate_turn.go:const routerEventTurnMaxAttempts = 2'
+      - 'server/internal/kanban/router_coordinate_turn.go:func routerEventAttemptTurnID('
+      - 'server/internal/kanban/router_coordinate_turn.go:func routerTurnFailureReason('
+      - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) retryCoordinateEventTurn('
+      - 'server/internal/kanban/router_coordinate_turn.go:if rs.retryCoordinateEventTurn(ctx, decision, event, reason) {'
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RetryEvent('
+      - 'server/internal/kanban/router_event_store.go:SET status = ?, attempt = attempt + 1, claimed_by = '''', claimed_at = '''', last_error = ?, updated_at = ?'
+      - 'server/internal/kanban/router_supervision.go:func supervisionFailureKindForText('
+      - 'server/internal/kanban/router_supervision.go:return supervisionFailureKindForText(summary), summary'

@@ -251,6 +251,33 @@ WHERE id = ? AND status = ?`,
 	return fmt.Errorf("router event %s already %s", eventID, current)
 }
 
+// RetryEvent 把领取中的事件交回队列：status 回 pending、attempt+1、清掉租约。
+// 只用于可重试的瞬时失败（模型回合超时/流中断）；返回 false 表示行已不在
+// claimed 状态（别的消费者已经收尾），调用方不得再动它。
+func (s *RouterStore) RetryEvent(ctx context.Context, eventID, reason string) (bool, error) {
+	if err := s.ensureRouterEventTable(); err != nil {
+		return false, err
+	}
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return false, errors.New("router event id required")
+	}
+	now := time.Now().UTC().Format(routerTimeLayout)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE router_events
+SET status = ?, attempt = attempt + 1, claimed_by = '', claimed_at = '', last_error = ?, updated_at = ?
+WHERE id = ? AND status = ?`,
+		RouterEventPending, reason, now, eventID, RouterEventClaimed)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // ListPendingEvents 按 created_at, id 稳定返回待处理事件。
 func (s *RouterStore) ListPendingEvents(ctx context.Context, limit int) ([]RouterEvent, error) {
 	if err := s.ensureRouterEventTable(); err != nil {

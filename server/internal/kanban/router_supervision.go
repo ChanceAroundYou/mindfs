@@ -253,11 +253,18 @@ func classifySupervisionFailure(nr NodeRun) (SupervisionFailureKind, string) {
 	if nr.Status == NodeRunCancelled {
 		return SupervisionFailureNonRetryable, summary
 	}
+	return supervisionFailureKindForText(summary), summary
+}
+
+// supervisionFailureKindForText 只按错误文本分级。节点失败之外的瞬时失败
+// （Router 自己的回合超时、模型流中断）也走这一套口径：能不能重试由文本决定，
+// 而不是每个调用点各写一份关键字表。
+func supervisionFailureKindForText(summary string) SupervisionFailureKind {
 	text := strings.ToLower(summary)
 	for _, mark := range []string{"invalid", "unauthorized", "forbidden", "permission denied",
 		"validation", "merge conflict", "not found"} {
 		if strings.Contains(text, mark) {
-			return SupervisionFailureNonRetryable, summary
+			return SupervisionFailureNonRetryable
 		}
 	}
 	// 用量/速率上限先判：它们以前落在 retryable 里，结果是几百毫秒内再次 429、两次
@@ -265,20 +272,17 @@ func classifySupervisionFailure(nr NodeRun) (SupervisionFailureKind, string) {
 	for _, mark := range []string{"rate limit", "rate_limit", "ratelimit", "usage limit",
 		"quota", "too many requests", "overloaded", "429"} {
 		if strings.Contains(text, mark) {
-			return SupervisionFailureQuota, summary
+			return SupervisionFailureQuota
 		}
 	}
 	for _, mark := range []string{"timeout", "timed out", "deadline exceeded", "stream ended",
 		"unexpected eof", "connection reset", "broken pipe", "temporarily unavailable",
 		"502", "503", "504"} {
 		if strings.Contains(text, mark) {
-			return SupervisionFailureRetryable, summary
+			return SupervisionFailureRetryable
 		}
 	}
-	if strings.Contains(text, "401") || strings.Contains(text, "403") || strings.Contains(text, "400") {
-		return SupervisionFailureNonRetryable, summary
-	}
-	return SupervisionFailureNonRetryable, summary
+	return SupervisionFailureNonRetryable
 }
 
 // supervisionFailureSummary 从节点输出里取一段短摘要；优先 error，其次 message。

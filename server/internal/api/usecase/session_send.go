@@ -374,6 +374,13 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if sendErr != nil && !isCanceledTurnError(sendErr) {
 		log.Printf("[session] turn.send.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, sendErr)
 	}
+	// 落盘不能被回合死线连坐：这里的 ctx 带的是**模型调用**上限（Router 回合
+	// 生产 180s），超时后它已经过期。继续用它写库会把「回合超时」错报成
+	// "persist turn blocks: context deadline exceeded"，助手行还会只剩元数据，
+	// prober 也收不到运行时失败（线上 llmux task_260f5740cced704f 的 run_settled
+	// 事件就是这样被吞的）。落盘用自己的短上限，与模型调用解耦。
+	persistCtx, persistCancel := turnPersistenceContext(ctx)
+	defer persistCancel()
 	resolvedModel := resolveRuntimeModel(current, sess, in.Model)
 	resolvedEffort := resolveRuntimeEffort(in.Agent, current, in.Effort)
 	resolvedFastService = resolveRuntimeFastService(in.Agent, current, in.FastService)
@@ -388,7 +395,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		}
 	}
 	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel, rootAbs)
-	exchangeCtx := session.WithExchangeModelDisplayName(ctx, modelDisplayName)
+	exchangeCtx := session.WithExchangeModelDisplayName(persistCtx, modelDisplayName)
 	exchangeCtx = session.WithExchangeSource(exchangeCtx, session.ExchangeSourceLive)
 	// 助手行复用本轮 user 行 mint 的 mindfs_id（方案 §3.3「mindfs_id 落盘即定」）：
 	// 两行必须同身份，块流才能把正文挂回轮次。
@@ -403,7 +410,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	})
 	agentExchangeCtx := session.WithExchangeTokenUsage(exchangeCtx, turnTokenUsage)
 	if strings.TrimSpace(current.Model) != resolvedModel {
-		if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
+		if err := manager.UpdateModel(persistCtx, current, resolvedModel); err != nil {
 			return err
 		}
 	}
@@ -417,21 +424,21 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if agentSeq <= 0 {
 		return errors.New("agent exchange was not appended")
 	}
-	if err := manager.UpdateLastContextWindow(ctx, current, lastContextWindow); err != nil {
+	if err := manager.UpdateLastContextWindow(persistCtx, current, lastContextWindow); err != nil {
 		return err
 	}
 	persistedAux := dedupeExchangeAuxBuffer(auxBuffer)
 	for i := range persistedAux {
 		persistedAux[i].Seq = agentSeq
-		persistedAux[i] = hydratePendingToolCallAux(ctx, manager, current.Key, persistedAux[i])
-		if err := manager.AddExchangeAux(ctx, current.Key, persistedAux[i]); err != nil {
+		persistedAux[i] = hydratePendingToolCallAux(persistCtx, manager, current.Key, persistedAux[i])
+		if err := manager.AddExchangeAux(persistCtx, current.Key, persistedAux[i]); err != nil {
 			return err
 		}
 	}
 	// 块流是正文的**唯一**载体（D1，S2d-2）。顺序仍是先主日志再块：块要 mindfs_id，
 	// 而它随 AddExchangeForAgent 才定下来。失败**必须**返回 err —— 主日志那一行现在
 	// 只剩元数据，块丢了就等于这一轮没有正文，而用户看得出来。
-	if err := persistTurnBlocks(ctx, manager, current.Key, agentSeq, turnID, responseText, persistedAux); err != nil {
+	if err := persistTurnBlocks(persistCtx, manager, current.Key, agentSeq, turnID, responseText, persistedAux); err != nil {
 		return fmt.Errorf("persist turn blocks: %w", err)
 	}
 	// AgentCtxSeq 记的是「agent 已经看到多少行会话历史」，口径是**已落盘的总行数**
@@ -441,7 +448,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 早先只记 linesBeforeThisTurn，两行都漏：下一轮 prependSwitchHint 的
 	// total=linesBeforeThisTurn、last=上一轮记的值，delta 恒为 2 > 0，切 agent 提示
 	// 于是在每个正常回合都被重复注入（日志实测 12 小时 140 次），而不是只在真切换时出现。
-	if err := manager.UpdateAgentState(ctx, current, in.Agent, linesBeforeThisTurn+2, sess.SessionID()); err != nil {
+	if err := manager.UpdateAgentState(persistCtx, current, in.Agent, linesBeforeThisTurn+2, sess.SessionID()); err != nil {
 		return err
 	}
 
@@ -455,4 +462,17 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		prober.ReportSuccess(in.Agent)
 	}
 	return nil
+}
+
+// turnPersistenceTimeout 是回合结束后落盘阶段自己的上限：它只覆盖本地写库，
+// 不该跟模型调用共用一个死线。
+const turnPersistenceTimeout = 30 * time.Second
+
+// turnPersistenceContext 剥掉回合 ctx 的死线与取消，给落盘阶段一个独立上限。
+// 值（trace、exchange 元数据等）保留，所以日志与块流身份不变。
+func turnPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), turnPersistenceTimeout)
 }
