@@ -147,3 +147,10 @@ already_escalated       // 本 attempt 是否已升级过
 2. 升级去向：耗尽后停在 `waiting_user` 等用户，还是允许 Router 直接 `cancel_run`？
 3. 直连回合是否纳入监管（S3），还是只监管工作流。
 4. 是否按 S0→S4 分期落地，还是先做 S0+S1 看数据再定。
+
+### 交付记录（2026-11-20 16:40）
+
+- 提交：`f1293e7a`（主体，15 文件）+ `ad4db85a`（用例注释去掉 `''`，gofmt 会把它改写成右引号）。均已随 origin/main 推送。
+- 门禁：`go test ./internal/kanban/ -count=1` 全绿（269.7s）；`go test ./internal/agent/claude/` 全绿；`go build ./server/... ./cli/...` OK；干净 worktree（HEAD）`make check-upstream` 绿 —— 2119 个 delta 文件被 344 组完整覆盖。
+- 安装：从干净 worktree 构建并 `make install`，本机已装 `v0.5.5-1200-72-gad4db85a`；运行中进程仍为旧版，**待用户 `sudo systemctl restart mindfs`** 后五项修复（尤其 legacy 快照结算）才在生产生效。
+- 未部署其他节点。Part B 只写设计，等用户对 B8 四个口径拍板后再拆执行计划。
