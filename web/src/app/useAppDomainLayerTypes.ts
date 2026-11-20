@@ -94,7 +94,7 @@ export type UseAppDomainLayerParams = {
   optimisticDequeuedIdsRef: React.RefObject<Record<string, Set<string>>>;
   pendingBySessionRef: React.RefObject<Record<string, PendingSend>>;
   pendingDraftRef: React.RefObject<PendingSend | null>;
-  pendingPluginTrust: { rootId: string; bundle: PluginSourceBundle; } | null;
+  pendingPluginTrust: { rootId: string; nodeId?: string; bundle: PluginSourceBundle; } | null;
   pendingRequestRef: React.RefObject<Record<string, PendingSend>>;
   playNotificationSound: (event: "complete" | "intervene" | "error") => void;
   pluginBypass: boolean;
@@ -172,7 +172,7 @@ export type UseAppDomainLayerParams = {
   setMultiProjectPendingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: React.Dispatch<React.SetStateAction<MultiProjectSessionGroup[]>>;
   setMultiProjectSessionPending: (rootID: string | null | undefined, sessionKey: string | null | undefined, pending: boolean) => void;
-  setPendingPluginTrust: React.Dispatch<React.SetStateAction<{ rootId: string; bundle: PluginSourceBundle; } | null>>;
+  setPendingPluginTrust: React.Dispatch<React.SetStateAction<{ rootId: string; nodeId?: string; bundle: PluginSourceBundle; } | null>>;
   setPluginBypass: React.Dispatch<React.SetStateAction<boolean>>;
   setPluginLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setPluginQuery: React.Dispatch<React.SetStateAction<Record<string, string>>>;

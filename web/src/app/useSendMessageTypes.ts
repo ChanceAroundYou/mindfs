@@ -16,6 +16,7 @@ export type SendMessageParams = {
   boundSessionByRootRef: React.RefObject<Record<string, string | null>>;
   currentRootIdRef: React.RefObject<string | null>;
   currentSessionRef: React.RefObject<SessionItem | null>;
+  getNodeIdForRoot: (rootId: string) => string | undefined;
   drawerSessionByRootRef: React.RefObject<Record<string, SessionItem | null>>;
   fileRef: React.RefObject<FilePayload | null>;
   interactionModeRef: React.RefObject<"main" | "drawer">;

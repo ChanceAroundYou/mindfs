@@ -239,6 +239,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   const {
     getRootDisplayName,
     getDisplayNodeColor,
+    getProjectLabel,
     taskCreateProjectOptions,
   } = useAppProjectDisplay({
     currentRootId,
@@ -427,7 +428,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     expandedTaskInputIds, expandedWorktreeByRoot, file, fileCursorRef,
     fileEditStore, fileOpenRequestRef, fileRef, fileScrollPositionsRef,
     fontSizePreferences, fullUpgradeAttemptRef, getDisplayNodeColor, getNodeIdForRoot,
-    getRootDisplayName, gitDiff, gitDiffSideBySide, gitHistory,
+    getProjectLabel, getRootDisplayName, gitDiff, gitDiffSideBySide, gitHistory,
     gitHistoryByRoot, gitHistoryExpandedByRoot, gitHistoryLoading, gitHistoryLoadingByRoot,
     gitHistoryLoadingMore, gitStatus, gitStatusByRoot, gitStatusExpandedByRoot,
     gitStatusLoading, gitStatusLoadingByRoot, handleMoveKanbanTask,

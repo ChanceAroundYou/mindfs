@@ -12,6 +12,13 @@ export function useAppRootScopeState() {
   // 多节点同名项目的完整索引：nodeId::rootId → payload（byId 回退表只保留一份）
   const managedRootByKeyRef = useRef<Record<string, ManagedRootPayload>>({});
 
+  /**
+   * 裸 rootId 该发往哪台机器。
+   *
+   * 规则（与 services/net/rootNode 同源）：当前选中的项目 → 它的选中节点；
+   * 否则只有**唯一归属**才解析得出 —— `managedRootById` 现在已经不装同名项目了
+   * （`indexManagedRoots` 只在唯一归属时填那一格），查不到就是「必须显式带节点」。
+   */
   const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
     const rid = String(rootId || "").trim();
     if (!rid) return undefined;
@@ -25,6 +32,16 @@ export function useAppRootScopeState() {
     return nid || undefined;
   }, []);
 
+  /** 带显式节点的版本：跨节点列表里的条目必须走这条，别让裸 rootId 决定命运。 */
+  const getNodeIdForProject = useCallback(
+    (rootId: string, nodeId?: string | null): string | undefined => {
+      const explicit = String(nodeId || "").trim();
+      if (explicit) return explicit;
+      return getNodeIdForRoot(rootId);
+    },
+    [getNodeIdForRoot],
+  );
+
   const scopedRootKey = useCallback(
     (rootId: string): string =>
       scopeKey(getNodeIdForRoot(String(rootId || "")) ?? "", String(rootId || "")),
@@ -33,6 +50,7 @@ export function useAppRootScopeState() {
 
   return {
     currentRootId, setCurrentRootId, currentRootIdRef, currentRootNodeId, setCurrentRootNodeId,
-    currentRootNodeIdRef, managedRootByIdRef, managedRootByKeyRef, getNodeIdForRoot, scopedRootKey,
+    currentRootNodeIdRef, managedRootByIdRef, managedRootByKeyRef, getNodeIdForRoot,
+    getNodeIdForProject, scopedRootKey,
   };
 }

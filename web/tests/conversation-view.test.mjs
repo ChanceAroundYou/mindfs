@@ -479,7 +479,7 @@ test("the panel is keyed by task identity so drafts cannot leak into another tas
   // 在 A 里写了一半的留言会被发到 B。键里必须带 root_id：任务 id 只在各自项目内唯一。
   assert.match(
     gate,
-    /key=\{`\$\{selectedKanbanTask\.root_id \|\| ""\}::\$\{selectedKanbanTask\.id\}`\}/,
-    "TaskDetailPanel must remount per (root_id, task id)",
+    /key=\{`\$\{selectedKanbanTask\._nodeId \|\| ""\}::\$\{selectedKanbanTask\.root_id \|\| ""\}::\$\{selectedKanbanTask\.id\}`\}/,
+    "TaskDetailPanel must remount per (node, root_id, task id) —— 同名项目的两张卡也是两条身份",
   );
 });

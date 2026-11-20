@@ -197,7 +197,7 @@ export function MultiProjectSessionList({
                       if (row.type === "task-group") {
                         return (
                           <TaskSessionGroupHeader
-                            key={`task-group-${group.rootId}-${row.taskId}`}
+                            key={`task-group-${groupNodeId}::${group.rootId}-${row.taskId}`}
                             taskId={row.taskId}
                             label={row.label}
                             number={row.number}
@@ -228,7 +228,7 @@ export function MultiProjectSessionList({
                               : t("sessionList.expandChildren");
                         return (
                           <ToggleRowButton
-                            key={`children-toggle-${group.rootId}-${row.parent.key}`}
+                            key={`children-toggle-${groupNodeId}::${group.rootId}-${row.parent.key}`}
                             loading={loadingChild}
                             label={label}
                             showExpandIcon={!loadingChild && !row.expanded}

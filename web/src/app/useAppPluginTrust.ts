@@ -7,16 +7,17 @@ import {
   type PluginSourceBundle,
 } from "../plugins/manager";
 import { saveTrustedPluginSet } from "../plugins/trust";
+import { scopeKey } from "../shared/scope";
 
 export type UseAppPluginTrustParams = {
-  pendingPluginTrust: { rootId: string; bundle: PluginSourceBundle } | null;
+  pendingPluginTrust: { rootId: string; nodeId?: string; bundle: PluginSourceBundle } | null;
   setPluginLoading: React.Dispatch<React.SetStateAction<boolean>>;
   pluginManagerRef: React.RefObject<PluginManager>;
   pluginsLoadedByRootRef: React.RefObject<Record<string, boolean>>;
   scopedRootKey: (rootId: string) => string;
   pluginsTrustPendingByRootRef: React.RefObject<Record<string, boolean>>;
   setPendingPluginTrust: React.Dispatch<
-    React.SetStateAction<{ rootId: string; bundle: PluginSourceBundle } | null>
+    React.SetStateAction<{ rootId: string; nodeId?: string; bundle: PluginSourceBundle } | null>
   >;
   setPluginVersion: React.Dispatch<React.SetStateAction<number>>;
   pluginsLoadingByRootRef: React.RefObject<Record<string, Promise<void>>>;
@@ -49,46 +50,64 @@ export function useAppPluginTrust(params: UseAppPluginTrustParams) {
     ensurePluginsLoaded,
   } = params;
 
+  /**
+   * 四张 ref 表的桶键。
+   *
+   * 带显式节点时按项目身份 `(nodeId, rootId)` 分桶；否则沿用 `scopedRootKey`
+   * 的既有解析（当前选中项目 → 其选中节点 → 唯一归属）。fn 与 pc 各有一个
+   * `docs` 时，两条链的加载态/待信任态不能互相顶替。
+   */
+  const bucketKey = useCallback(
+    (rootId: string, nodeId?: string): string => {
+      const nid = String(nodeId || "").trim();
+      return nid ? scopeKey(nid, rootId) : scopedRootKey(rootId);
+    },
+    [scopedRootKey],
+  );
+
   const handleTrustPendingPlugins = useCallback(async () => {
     const pending = pendingPluginTrust;
     if (!pending) return;
     setPluginLoading(true);
     try {
       const snapshot = snapshotFromPluginSources(pending.bundle);
-      saveTrustedPluginSet(pending.rootId, snapshot);
+      const key = bucketKey(pending.rootId, pending.nodeId);
+      saveTrustedPluginSet(pending.rootId, snapshot, pending.nodeId);
       const plugins = await loadPluginsFromSources(pending.bundle.plugins);
-      pluginManagerRef.current.set(pending.rootId, plugins);
-      pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
-      delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
+      pluginManagerRef.current.set(pending.rootId, plugins, pending.nodeId);
+      pluginsLoadedByRootRef.current[key] = true;
+      delete pluginsTrustPendingByRootRef.current[key];
       setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
       setPluginVersion((v) => v + 1);
     } finally {
       setPluginLoading(false);
     }
-  }, [pendingPluginTrust]);
+  }, [pendingPluginTrust, bucketKey]);
 
   const handleDisablePendingPlugins = useCallback(() => {
     const pending = pendingPluginTrust;
     if (!pending) return;
-    pluginManagerRef.current.clear(pending.rootId);
-    pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
-    delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
+    const key = bucketKey(pending.rootId, pending.nodeId);
+    pluginManagerRef.current.clear(pending.rootId, pending.nodeId);
+    pluginsLoadedByRootRef.current[key] = true;
+    delete pluginsTrustPendingByRootRef.current[key];
     setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
     setPluginVersion((v) => v + 1);
-  }, [pendingPluginTrust]);
+  }, [pendingPluginTrust, bucketKey]);
 
-  const invalidatePluginsForRoot = useCallback((rootId: string) => {
+  const invalidatePluginsForRoot = useCallback((rootId: string, nodeId?: string) => {
     if (!rootId) return;
-    pluginManagerRef.current.clear(rootId);
-    delete pluginsLoadedByRootRef.current[scopedRootKey(rootId)];
-    delete pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
-    delete pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)];
+    const key = bucketKey(rootId, nodeId);
+    pluginManagerRef.current.clear(rootId, nodeId);
+    delete pluginsLoadedByRootRef.current[key];
+    delete pluginsLoadingByRootRef.current[key];
+    delete pluginsTrustPendingByRootRef.current[key];
     setPendingPluginTrust((current) => current?.rootId === rootId ? null : current);
     setPluginVersion((v) => v + 1);
     if (rootId === currentRootIdRef.current) {
       void ensurePluginsLoaded(rootId).catch(() => {});
     }
-  }, [ensurePluginsLoaded]);
+  }, [ensurePluginsLoaded, bucketKey]);
 
   return {
     handleTrustPendingPlugins,

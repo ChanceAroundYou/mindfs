@@ -49,8 +49,8 @@ assert.match(
 // 3) 任务详情面板的节点路由必须按任务自己的项目解析
 assert.match(
   app,
-  /nodeId=\{getNodeIdForRoot\(selectedKanbanTask\.root_id \|\| currentRootId \|\| ""\)\}/,
-  "TaskDetailPanel must route by the task's own project, not the currently selected one",
+  /nodeId=\{taskNodeId\(selectedKanbanTask\.root_id \|\| currentRootId\)\}/,
+  "TaskDetailPanel must route by the task's own project（自带 _nodeId 压过 rootId 反查），not the currently selected one",
 );
 assert.doesNotMatch(
   app,

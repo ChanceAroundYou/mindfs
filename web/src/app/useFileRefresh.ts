@@ -140,6 +140,8 @@ export function useFileRefresh(params: UseFileRefreshParams) {
           const plugin = pluginManagerRef.current.match(
             rootID,
             buildMatchInputFromPath(changedPath, pluginQueryRef.current),
+            // 插件表按项目身份分桶，同名项目不能互相命中
+            getNodeIdForRoot(rootID),
           );
           readMode = inferReadModeFromPlugin(plugin);
         } catch {

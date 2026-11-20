@@ -56,7 +56,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     expandProjectTreeWorktree, expandedTaskInputIds, expandedWorktreeByRoot, externalFilterBound,
     externalImportAgent, externalSelectedKey, externalSessions, externalSessionsError,
     file, fileCursorRef, fileRef, findManagedRootByPath,
-    getDisplayNodeColor, getNodeIdForRoot, getRootDisplayName, getSessionSnapshot,
+    getDisplayNodeColor, getNodeIdForRoot, getProjectLabel, getRootDisplayName, getSessionSnapshot,
     gitDiff, gitFileStatsByPath, gitHistory, gitHistoryByRoot,
     gitHistoryExpandedByRoot, gitHistoryLoading, gitHistoryLoadingByRoot, gitHistoryLoadingMore,
     gitStatus, gitStatusByRoot, gitStatusExpandedByRoot, gitStatusLoading,
@@ -303,7 +303,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     toggleWorkspaceProject, setWorkspaceBoardToken,
   } = useAppWorkspaceBoardComposition({
     workspaceOpen, workspaceBoardRefreshRef, managedRootIds, getRootDisplayName,
-    getDisplayNodeColor, getNodeIdForRoot, currentRootIdRef, taskDetailsById,
+    getDisplayNodeColor, getProjectLabel, getNodeIdForRoot, currentRootIdRef, taskDetailsById,
   });
   // 左下角四态切换器：只切面板 + 关掉悬浮框。
   // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
@@ -335,6 +335,9 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     const details = await fetchTaskDetails(rootId, { taskNumber }, item.nodeId).catch(() => [] as TaskDetail[]);
     const detail = details.find((entry) => entry.task?.id === item.task.id) || details[0];
     if (!detail) return;
+    // 打上来源节点：详情来自哪台机器只有调用方知道（服务端不返 nodeId），
+    // 少了这个标，落库/落缓存会退回「按 rootId 反查」，同名项目必串。
+    if (detail.task) (detail.task as any)._nodeId = String((detail.task as any)._nodeId || item.nodeId || "").trim() || undefined;
     applyTaskDetails(rootId, [detail]);
   }, [applyTaskDetails]);
   const { kanbanTaskPanel

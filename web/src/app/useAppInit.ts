@@ -118,7 +118,7 @@ useEffect(() => {
         const indexed = indexManagedRoots(nextDirs);
         managedRootByKeyRef.current = indexed.byKey;
         managedRootByIdRef.current = indexed.byId;
-        setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
+        setRootNodeMap(managedRootByKeyRef.current as Record<string, any>);
         managedRootIdsRef.current = new Set(ids);
         setManagedRootIds(ids);
         setRootEntries(mapManagedRootsToEntries(nextDirs));

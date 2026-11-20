@@ -8,10 +8,10 @@ import type { UseAppViewCompositionParams } from "./useAppViewCompositionTypes";
 
 export function useAppWorkspaceBoardComposition({
   workspaceOpen, workspaceBoardRefreshRef, managedRootIds, getRootDisplayName,
-  getDisplayNodeColor, getNodeIdForRoot, currentRootIdRef, taskDetailsById,
+  getDisplayNodeColor, getProjectLabel, getNodeIdForRoot, currentRootIdRef, taskDetailsById,
 }: Pick<UseAppViewCompositionParams,
   "workspaceOpen" | "workspaceBoardRefreshRef" | "managedRootIds" | "getRootDisplayName" |
-  "getDisplayNodeColor" | "getNodeIdForRoot" | "currentRootIdRef" | "taskDetailsById"
+  "getDisplayNodeColor" | "getProjectLabel" | "getNodeIdForRoot" | "currentRootIdRef" | "taskDetailsById"
 >) {
   // 跨项目工作台：按项目聚合的跨节点任务总览（扇出与建组都在 useWorkspaceBoard 内）。
   // refreshToken 由刷新按钮驱动；WS 的高频推送靠 C1 放行的 task.updated 增量更新就地生效，
@@ -50,6 +50,7 @@ export function useAppWorkspaceBoardComposition({
     refreshToken: workspaceBoardToken,
     managedRootIds,
     getRootDisplayName,
+    getProjectLabel,
     getNodeColor: getDisplayNodeColor,
     getLiveTask,
     getNodeId: getNodeIdForRoot,

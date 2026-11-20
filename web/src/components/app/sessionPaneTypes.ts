@@ -17,7 +17,7 @@ export interface SessionPaneProps {
   sessionView: React.JSX.Element;
   showSessionPane: boolean;
   actionHandlers: ActionHandlers;
-  activePendingPluginTrust: { rootId: string; bundle: PluginSourceBundle; } | null;
+  activePendingPluginTrust: { rootId: string; nodeId?: string; bundle: PluginSourceBundle; } | null;
   clearFileCacheForRoot: any;
   currentDirectorySortMode: DirectorySortMode;
   currentDirectorySortOverride: DirectorySortMode | undefined;

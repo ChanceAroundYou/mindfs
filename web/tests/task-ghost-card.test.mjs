@@ -79,7 +79,7 @@ assert.match(
 );
 assert.match(
   board,
-  /const dropKanbanTask = useCallback\(\(rootId: string, taskId: string, nodeId\?: string\) => \{[\s\S]*?pruneTaskDetails\(rootId, keep\);[\s\S]*?pruneCachedTaskDetails\(rootId, keep, nid\);/,
+  /const dropKanbanTask = useCallback\(\(rootId: string, taskId: string, nodeId\?: string\) => \{[\s\S]*?pruneTaskDetails\(rootId, keep, nodeId\);[\s\S]*?pruneCachedTaskDetails\(rootId, keep, nid\);/,
   "摘卡要同时清内存与 IndexedDB —— 只清一边，下次加载又会被缓存喂回来",
 );
 assert.match(

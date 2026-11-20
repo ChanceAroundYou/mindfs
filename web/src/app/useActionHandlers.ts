@@ -336,6 +336,8 @@ export function useActionHandlers(params: ActionHandlersParams): {
                 const plugin = pluginManagerRef.current.match(
                   root,
                   buildMatchInputFromPath(path, nextPluginQuery),
+                  // 插件表按项目身份分桶：同名项目只按 rootId 取会命中另一台机器的插件
+                  getNodeIdForRoot(String(root)),
                 );
                 readMode = inferReadModeFromPlugin(plugin);
                 requiresFull = readMode === "full";

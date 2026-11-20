@@ -406,7 +406,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
 
   const derived = useAppDomainDerived({
     activeBoundSessionKey, actionHandlers, boundSessionByRootRef, bumpCacheVersion,
-    clearSessionStale, currentFileEditing, currentRootId, currentRootIdRef, currentSession,
+    clearSessionStale, currentFileEditing, currentRootId, currentRootIdRef, currentRootNodeId, currentSession,
     currentSessionRef, drawerSessionByRootRef, file, fileCursorRef, fullUpgradeAttemptRef,
     getSessionSnapshot, handleViewerSelectionChange, interactionMode, isDrawerOpen,
     kanbanTasks, lastMainSessionSnapshotRef, lastPluginChapterRef, mainView,

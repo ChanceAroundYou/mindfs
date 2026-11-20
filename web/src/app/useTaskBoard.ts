@@ -42,6 +42,7 @@ import { firstTaskInputFromDetail, taskSessionKeysFromDetail } from "./appTask";
 import { type ManagedRootPayload } from "./appMisc";
 import type { MoveKanbanAction } from "../components/task/taskBoardTypes";
 import { useRefreshSpin } from "../hooks";
+import { useTaskDetailsPrune } from "./useTaskDetailsPrune";
 
 export interface UseTaskBoardParams {
   currentRootId: string | null;
@@ -98,12 +99,21 @@ export function useTaskBoard(params: UseTaskBoardParams) {
     t,
   } = params;
 
+  const pruneTaskDetails = useTaskDetailsPrune({
+    taskDetailsByIdRef, setTaskDetailsById, setTaskFirstInputById,
+    setTaskSessionKeysById, setKanbanTasks, setKanbanTaskCountItems,
+  });
+
   const applyTaskDetails = useCallback((rootId: string, details: TaskDetail[], persist = true) => {
     const curNid = String(currentRootNodeIdRef.current || "").trim();
     const curRoot = String(currentRootIdRef.current || "");
+    // 节点以**数据自带的**为准：工作台详情是跨节点取的，`_nodeId` 是唯一可靠的归属。
+    // 只靠 rootId 反查的话，同名项目（fn 与 pc 都有 `docs`）会查到另一台机器，
+    // 缓存也跟着写成不带节点前缀的老键 —— 两个项目从此共用一份详情。
+    const detailNid = String(details.find((d) => String((d?.task as any)?._nodeId || "").trim())?.task?._nodeId || "").trim();
     // 节点隔离：当前根的旧节点数据不污染视图（旧请求迟到或 WS 跨节点）
     // 不直接依赖 getNodeIdForRoot（前向引用），改用 ref + 回退表
-    const sid = rootId === curRoot ? curNid : String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim();
+    const sid = detailNid || (rootId === curRoot ? curNid : String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim());
     if (sid && curNid && sid !== curNid && rootId === curRoot) {
       const filteredByNode = details.filter((d) => {
         const did = String((d.task as any)?._nodeId || "").trim();
@@ -152,7 +162,9 @@ export function useTaskBoard(params: UseTaskBoardParams) {
       return Array.from(byId.values()).sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
     });
     if (persist) {
-      const persistNode = String(currentRootNodeIdRef.current || "").trim() || String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim() || undefined;
+      // 先用数据自带的 `_nodeId`，再退回当前根/回退表：没有节点就等于写老式裸键，
+      // 同名项目的另一台会读到同一份缓存。
+      const persistNode = detailNid || String(currentRootNodeIdRef.current || "").trim() || String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim() || undefined;
       void upsertCachedTaskDetails(rootId, accepted, persistNode);
     }
   }, []);
@@ -169,42 +181,6 @@ export function useTaskBoard(params: UseTaskBoardParams) {
    */
   const refreshWorkspaceBoard = useCallback(() => {
     workspaceBoardRefreshRef.current?.();
-  }, []);
-
-  /**
-   * 把「服务端全量响应里已经没有」的任务从内存里摘掉。
-   *
-   * 缓存以前只写不删，内存这边同样只有合并（applyTaskDetails）没有移除，于是
-   * 服务端删掉的任务会被一直渲染。必须真的 delete 键：kanbanTasks 和
-   * kanbanTaskCountItems 都是从 taskDetailsById 派生的，只过滤数组不改 map 的话
-   * 下一轮派生又会把它们带回来。
-   */
-  const pruneTaskDetails = useCallback((rootId: string, keepTaskIds: Iterable<string>) => {
-    const keep = new Set(Array.from(keepTaskIds, (id) => String(id || "")).filter(Boolean));
-    // taskDetailsById 是跨 root 共享的，权威集合只覆盖本次拉取的那个 root ——
-    // 不按 root_id 圈定的话，刷新 A 项目会把 B 项目的任务一起清掉。
-    const inScope = (task: KanbanTask) => task.root_id === rootId;
-    const dropped = Object.entries(taskDetailsByIdRef.current)
-      .filter(([taskId, detail]) => !keep.has(String(taskId)) && inScope((detail as TaskDetail).task))
-      .map(([taskId]) => taskId);
-    if (dropped.length === 0) return;
-    const droppedSet = new Set(dropped);
-    const kept = <V,>(entries: [string, V][]) =>
-      Object.fromEntries(entries.filter(([taskId]) => !droppedSet.has(taskId))) as Record<string, V>;
-    taskDetailsByIdRef.current = kept(Object.entries(taskDetailsByIdRef.current));
-    setTaskDetailsById((prev) => kept(Object.entries(prev)));
-    // 这两张表只有 taskId → 值，没有 root 信息可判归属，所以直接吃上面算好的
-    // 淘汰名单：跟着 taskDetailsById 一起摘掉，不自己再推导一遍。
-    setTaskFirstInputById((prev) => kept(Object.entries(prev)));
-    setTaskSessionKeysById((prev) => kept(Object.entries(prev)));
-    setKanbanTasks((prev) => {
-      const next = prev.filter((task) => !inScope(task) || keep.has(String(task.id)));
-      return next.length === prev.length ? prev : next;
-    });
-    setKanbanTaskCountItems((prev) => {
-      const next = prev.filter((task) => !inScope(task) || keep.has(String(task.id)));
-      return next.length === prev.length ? prev : next;
-    });
   }, []);
 
   /**
@@ -230,7 +206,7 @@ export function useTaskBoard(params: UseTaskBoardParams) {
    */
   const dropKanbanTask = useCallback((rootId: string, taskId: string, nodeId?: string) => {
     const keep = Object.keys(taskDetailsByIdRef.current).filter((id) => id !== taskId);
-    pruneTaskDetails(rootId, keep);
+    pruneTaskDetails(rootId, keep, nodeId);
     const nid = String(nodeId || "").trim() || undefined;
     void pruneCachedTaskDetails(rootId, keep, nid);
     refreshWorkspaceBoard();
@@ -296,7 +272,7 @@ export function useTaskBoard(params: UseTaskBoardParams) {
       // 拿它们去淘汰会把「没被这次响应覆盖到」的任务误删。
       if (authoritative) {
         const keepTaskIds = details.map((d) => d.task?.id);
-        pruneTaskDetails(targetRoot, keepTaskIds);
+        pruneTaskDetails(targetRoot, keepTaskIds, snapNode || undefined);
         void pruneCachedTaskDetails(targetRoot, keepTaskIds, snapNode || undefined);
         // 对账成功才记账：失败（含被新请求 abort）下一次仍走全量。
         reconciledRootsRef.current.add(scopeKey);

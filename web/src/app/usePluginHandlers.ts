@@ -30,6 +30,7 @@ import { useSessionStreamCache } from "./useSessionStreamCache";
 import { useI18n } from "../i18n";
 import { type PluginSourceBundle, PluginManager, loadPluginsFromSources, scanPluginSources, snapshotFromPluginSources } from "../plugins/manager";
 import { isPluginSnapshotTrusted, readTrustedPluginSet } from "../plugins/trust";
+import { scopeKey } from "../shared/scope";
 import { type FilePayload } from "../services/file";
 
 export type UsePluginHandlersParams = {
@@ -49,7 +50,7 @@ export type UsePluginHandlersParams = {
   replaceURLState: (next: URLState) => any;
   scopedRootKey: (rootId: string) => string;
   sessions: SessionItem[];
-  setPendingPluginTrust: Dispatch<SetStateAction<{ rootId: string; bundle: PluginSourceBundle; } | null>>;
+  setPendingPluginTrust: Dispatch<SetStateAction<{ rootId: string; nodeId?: string; bundle: PluginSourceBundle; } | null>>;
   setPluginLoading: Dispatch<SetStateAction<boolean>>;
   setPluginQuery: Dispatch<SetStateAction<Record<string, string>>>;
   setPluginVersion: Dispatch<SetStateAction<number>>;
@@ -80,43 +81,49 @@ export function usePluginHandlers(params: UsePluginHandlersParams) {
   } = params;
 
   const ensurePluginsLoaded = useCallback(async (rootId: string) => {
-    if (!rootId || pluginsLoadedByRootRef.current[scopedRootKey(rootId)]) {
+    // 扫描、信任记录、插件表三处都必须按**项目身份**（node + root）分桶：
+    // fn 与 pc 各有一个 `docs` 时只按 rootId 会互相顶替。
+    const scanNodeId = getNodeIdForRoot(rootId);
+    // 四张 ref 表的桶键与 `scopedRootKey` 同源：拿得到节点就按 (node, root)，
+    // 拿不到才退回旧口径（否则同名项目的加载态会串台）。
+    const bucket = scanNodeId ? scopeKey(scanNodeId, rootId) : scopedRootKey(rootId);
+    if (!rootId || pluginsLoadedByRootRef.current[bucket]) {
       return;
     }
-    if (pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)]) {
+    if (pluginsTrustPendingByRootRef.current[bucket]) {
       return;
     }
-    const inflight = pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
+    const inflight = pluginsLoadingByRootRef.current[bucket];
     if (inflight) {
       await inflight;
       return;
     }
     setPluginLoading(true);
-    const request = scanPluginSources(rootId, managedRootByIdRef.current[rootId]?.root_path || rootId, getNodeIdForRoot(rootId))
+    const request = scanPluginSources(rootId, managedRootByIdRef.current[rootId]?.root_path || rootId, scanNodeId)
       .then(async (bundle) => {
         const snapshot = snapshotFromPluginSources(bundle);
-        if (bundle.plugins.length > 0 && !isPluginSnapshotTrusted(snapshot, readTrustedPluginSet(rootId))) {
-          pluginManagerRef.current.clear(rootId);
-          pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)] = true;
-          setPendingPluginTrust({ rootId, bundle });
+        if (bundle.plugins.length > 0 && !isPluginSnapshotTrusted(snapshot, readTrustedPluginSet(rootId, scanNodeId))) {
+          pluginManagerRef.current.clear(rootId, scanNodeId);
+          pluginsTrustPendingByRootRef.current[bucket] = true;
+          setPendingPluginTrust({ rootId, nodeId: scanNodeId, bundle });
           setPluginVersion((v) => v + 1);
           return;
         }
         const plugins = await loadPluginsFromSources(bundle.plugins);
-        pluginManagerRef.current.set(rootId, plugins);
-        pluginsLoadedByRootRef.current[scopedRootKey(rootId)] = true;
+        pluginManagerRef.current.set(rootId, plugins, scanNodeId);
+        pluginsLoadedByRootRef.current[bucket] = true;
         setPluginVersion((v) => v + 1);
       })
       .catch(() => {
-        pluginManagerRef.current.clear(rootId);
-        pluginsLoadedByRootRef.current[scopedRootKey(rootId)] = true;
+        pluginManagerRef.current.clear(rootId, scanNodeId);
+        pluginsLoadedByRootRef.current[bucket] = true;
         setPluginVersion((v) => v + 1);
       })
       .finally(() => {
-        delete pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
+        delete pluginsLoadingByRootRef.current[bucket];
         setPluginLoading(false);
       });
-    pluginsLoadingByRootRef.current[scopedRootKey(rootId)] = request;
+    pluginsLoadingByRootRef.current[bucket] = request;
     await request;
   }, []);
   const pluginHandlers = useMemo(

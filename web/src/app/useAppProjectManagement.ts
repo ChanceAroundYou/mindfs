@@ -256,8 +256,8 @@ export function useAppProjectManagement(params: UseAppDomainLayerParams) {
 
   const { findManagedRootByPath, handleRemoveCurrentRoot, handleRemoveCurrentWorktree
   } = useAppProjectRemoval({
-    clearRootScopedClientState, currentRootIdRef, getNodeIdForRoot, managedRootByIdRef,
-    refreshManagedRoots, t,
+    clearRootScopedClientState, currentRootIdRef, currentRootNodeIdRef, getNodeIdForRoot,
+    managedRootByIdRef, managedRootByKeyRef, refreshManagedRoots, t,
   });
 
   const openManagedDir = useCallback(

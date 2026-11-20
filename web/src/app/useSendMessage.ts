@@ -51,6 +51,7 @@ export function useSendMessage(params: SendMessageParams): {
     boundSessionByRootRef,
     currentRootIdRef,
     currentSessionRef,
+    getNodeIdForRoot,
     drawerSessionByRootRef,
     fileRef,
     interactionModeRef,
@@ -352,7 +353,8 @@ export function useSendMessage(params: SendMessageParams): {
       if (currentFile && !pluginBypassRef.current) {
         try {
           const pluginInput = toPluginInput(currentFile, pluginQueryRef.current);
-          const plugin = pluginManagerRef.current.match(activeRoot, pluginInput);
+          // 插件表按项目身份 (node, root) 分桶：同名项目不能拿到另一台机器的插件
+          const plugin = pluginManagerRef.current.match(activeRoot, pluginInput, getNodeIdForRoot(activeRoot));
           if (plugin?.viewContext) {
             outgoingMessage = buildMessageWithViewContext(
               message,

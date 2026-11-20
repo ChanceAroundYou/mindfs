@@ -53,9 +53,11 @@ export type UseAppViewCompositionParams = {
   fileCursorRef: React.RefObject<number>;
   fileRef: React.RefObject<FilePayload | null>;
   findManagedRootByPath: (path: string) => ManagedRootPayload | null;
-  getDisplayNodeColor: (rootId: string) => string | null;
+  getDisplayNodeColor: (rootId: string, nodeId?: string | null) => string | null;
   getNodeIdForRoot: (rootId: string) => string | undefined;
-  getRootDisplayName: (rootId: string | null | undefined) => string;
+  getRootDisplayName: (rootId: string | null | undefined, nodeId?: string | null) => string;
+  /** 项目组名：同名项目额外带节点后缀（`AIS文档 · fn`）。 */
+  getProjectLabel: (rootId: string, nodeId?: string | null) => string;
   getSessionSnapshot: (rootId: string | null | undefined, session: Session | SessionItem | null | undefined) => any;
   gitDiff: GitDiffPayload | null;
   gitFileStatsByPath: Record<string, GitFileStat>;
@@ -122,7 +124,7 @@ export type UseAppViewCompositionParams = {
   openRelatedFileDiff: (rootID: string, file: RelatedFileClickTarget) => Promise<void>;
   openSessionSearch: () => void;
   openTaskCreateDialog: (targetRootId?: string, targetNodeId?: string) => void;
-  pendingPluginTrust: { rootId: string; bundle: PluginSourceBundle; } | null;
+  pendingPluginTrust: { rootId: string; nodeId?: string; bundle: PluginSourceBundle; } | null;
   pluginBypass: boolean;
   pluginBypassRef: React.RefObject<boolean>;
   pluginRender: { plugin: ViewPlugin; output: PluginOutput; error: string; } | { plugin: ViewPlugin; output: null; error: string; } | null;

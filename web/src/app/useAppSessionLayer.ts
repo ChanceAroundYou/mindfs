@@ -371,6 +371,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     boundSessionByRootRef,
     currentRootIdRef,
     currentSessionRef,
+    getNodeIdForRoot,
     drawerSessionByRootRef,
     fileRef,
     interactionModeRef,

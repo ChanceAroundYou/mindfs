@@ -25,6 +25,10 @@ export function TaskDetailPanelGate(props: TaskDetailPanelGateProps) {
   const selectedKanbanTask = props.selectedKanbanTask;
   const setSelectedKanbanTaskId = props.setSelectedKanbanTaskId;
   const taskDetailsById = props.taskDetailsById;
+  // 任务自己那台机器优先：工作台是跨节点扇出，同名项目按 rootId 只能查到首个节点。
+  const ownNodeId = String(selectedKanbanTask?._nodeId || "").trim();
+  const taskNodeId = (rootId: string | null | undefined): string | undefined =>
+    ownNodeId || getNodeIdForRoot(rootId || "");
 
   return (
     <>
@@ -33,17 +37,18 @@ export function TaskDetailPanelGate(props: TaskDetailPanelGateProps) {
               // 面板里有任务级本地状态（留言草稿、工作流选择、改名草稿、运行视图展开态）。
               // 按任务身份重挂载，避免同一实例被复用到另一张任务卡时把上一条任务的
               // 消息与草稿一起搬过去 —— 那样一按发送就发到了错的任务里。
-              key={`${selectedKanbanTask.root_id || ""}::${selectedKanbanTask.id}`}
+              key={`${selectedKanbanTask._nodeId || ""}::${selectedKanbanTask.root_id || ""}::${selectedKanbanTask.id}`}
               detail={taskDetailsById[selectedKanbanTask.id] || { task: selectedKanbanTask, events: [] }}
               // 详情面板可能从工作台的就地入口打开（任务属于别的项目/节点），
-              // 路由必须按任务自己的项目走，写死当前项目会把编辑打到错节点。
-              nodeId={getNodeIdForRoot(selectedKanbanTask.root_id || currentRootId || "")}
+              // 路由必须按**任务自己的**项目+节点走：只按 rootId 反查会把同名项目
+              // （fn/pc 都有 `docs`）的编辑打到另一台机器。
+              nodeId={taskNodeId(selectedKanbanTask.root_id || currentRootId)}
               onClose={() => setSelectedKanbanTaskId("")}
               onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
               onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
               // 任务在服务端已经被删掉（幽灵卡）：请看板把它从内存与缓存里摘掉，
               // 否则每点一次完成/删除都再失败一次。
-              onTaskGone={(rootId, taskId) => dropKanbanTask(rootId, taskId, getNodeIdForRoot(rootId || currentRootIdRef.current || ""))}
+              onTaskGone={(rootId, taskId) => dropKanbanTask(rootId, taskId, taskNodeId(rootId || currentRootIdRef.current))}
             />
           ) : null}
     </>

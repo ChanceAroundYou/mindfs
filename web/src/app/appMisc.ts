@@ -217,22 +217,51 @@ export function mapManagedRootsToEntries(dirs: ManagedRootPayload[]): FileEntry[
 export function indexManagedRoots(dirs: ManagedRootPayload[]): {
   byKey: Record<string, ManagedRootPayload>;
   byId: Record<string, ManagedRootPayload>;
+  /**
+   * rootId → 拥有它的节点 id（按注册表顺序、已去重）。
+   *
+   * `root_id` 只是一台机器内部的项目 id（常常就是目录名），同名项目在多台机器上各有一份
+   * 是常态。要判断「裸 rootId 还够不够用」，必须先知道到底有几台机器拥有它。
+   */
+  nodesById: Record<string, string[]>;
 } {
   const byKey: Record<string, ManagedRootPayload> = {};
-  const byId: Record<string, ManagedRootPayload> = {};
+  const nodesById: Record<string, string[]> = {};
   for (const dir of dirs || []) {
     const id = String(dir?.id || "");
     if (!id) continue;
     const nid = String((dir as any)._nodeId || "").trim();
     byKey[rootNodeKey(nid, id)] = dir;
-    // byId 仅作无节点上下文的回退：同名项目保留首个（本地节点优先），当前选择时再覆盖
-    if (!(id in byId)) byId[id] = dir;
+    if (!nodesById[id]) nodesById[id] = [];
+    if (!nodesById[id].includes(nid)) nodesById[id].push(nid);
   }
-  return { byKey, byId };
+  // byId 仅作无节点上下文的回退，而且**只在唯一归属时**才填：同名项目保留首个正是
+  // G-NP 之前所有错派的源头（fn 的 `docs` 卡被派给 pc，服务端回 `sql: no rows`）。
+  // 多台机器都有同一个 id 时不猜 —— 查不到就说明「必须显式带节点」。
+  // 当前选中的项目由 selectRootNode / refreshManagedRoots 单独注入这一格。
+  const byId: Record<string, ManagedRootPayload> = {};
+  for (const [id, owners] of Object.entries(nodesById)) {
+    if (owners.length === 1) byId[id] = byKey[rootNodeKey(owners[0], id)];
+  }
+  return { byKey, byId, nodesById };
 }
 
 export function hasExplicitFileContext(message: string): boolean {
   return FILE_TOKEN_PATTERN.test(message);
+}
+
+/**
+ * 按项目 id 清单取回**全部**节点上的项目条目。
+ *
+ * 不能用 `byId` 做这件事：`byId` 只在唯一归属时才有那一格（同名项目不猜），
+ * 拿它重建根列表会让另一台机器上的同名项目从文件树里消失。`byKey` 才是全量。
+ */
+export function managedRootsForIds(
+  ids: Iterable<string>,
+  byKey: Record<string, ManagedRootPayload>,
+): ManagedRootPayload[] {
+  const wanted = new Set(Array.from(ids, (id) => String(id || "")).filter(Boolean));
+  return Object.values(byKey || {}).filter((dir) => wanted.has(String((dir as any)?.id || "")));
 }
 
 export function useResponsive() {

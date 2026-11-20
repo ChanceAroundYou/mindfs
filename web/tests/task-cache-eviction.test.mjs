@@ -61,7 +61,7 @@ assert.match(
 // 不判 root_id 的话，刷新 A 项目会把 B 项目的任务整批清掉（比不修还糟）。
 assert.match(
   app,
-  /const inScope = \(task: KanbanTask\) => task\.root_id === rootId;/,
+  /if \(task\.root_id !== rootId\) return false;/,
   "in-memory prune must be scoped to the root that was actually fetched",
 );
 assert.match(

@@ -11,7 +11,7 @@ import type { UseAppDomainLayerParams } from "./useAppDomainLayer";
 import type { Session } from "../services/session";
 
 export type UseAppDomainDerivedParams = Pick<UseAppDomainLayerParams,
-  | "activeBoundSessionKey" | "currentFileEditing" | "currentRootId" | "currentSession"
+  | "activeBoundSessionKey" | "currentFileEditing" | "currentRootId" | "currentRootNodeId" | "currentSession"
   | "currentSessionRef" | "drawerSessionByRootRef" | "file" | "fileCursorRef"
   | "fullUpgradeAttemptRef" | "getSessionSnapshot" | "interactionMode" | "isDrawerOpen"
   | "lastPluginChapterRef"
@@ -32,7 +32,7 @@ export type UseAppDomainDerivedParams = Pick<UseAppDomainLayerParams,
 
 export function useAppDomainDerived({
   activeBoundSessionKey, actionHandlers, boundSessionByRootRef, bumpCacheVersion,
-  clearSessionStale, currentFileEditing, currentRootId, currentRootIdRef, currentSession,
+  clearSessionStale, currentFileEditing, currentRootId, currentRootIdRef, currentRootNodeId, currentSession,
   drawerSessionByRootRef, file, fileCursorRef, fullUpgradeAttemptRef, getSessionSnapshot,
   handleViewerSelectionChange, interactionMode, isDrawerOpen, kanbanTasks, lastMainSessionSnapshotRef,
   lastPluginChapterRef, mainView, multiProjectSessionGroups, pluginBypass, pluginContentRef,
@@ -114,8 +114,10 @@ export function useAppDomainDerived({
   const matchedPlugin = useMemo(() => {
     if (!currentRootId || !file) return null;
     const input = toPluginInput(file, pluginQuery);
-    return pluginManagerRef.current.match(currentRootId, input);
-  }, [currentRootId, file, pluginVersion, pluginQuery]);
+    // 插件表按项目身份 (node, root) 分桶：fn 与 pc 各有一个 `docs` 时，
+    // 只按 rootId 取会命中另一台机器的插件。
+    return pluginManagerRef.current.match(currentRootId, input, String(currentRootNodeId || "").trim() || undefined);
+  }, [currentRootId, currentRootNodeId, file, pluginVersion, pluginQuery]);
 
   const { pluginRender, pluginThemeVars } = useAppPluginRender({
     file, pluginBypass, matchedPlugin, pluginQuery, pluginManagerRef,

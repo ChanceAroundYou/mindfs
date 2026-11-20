@@ -146,7 +146,9 @@ export function useAppRootSelection({
         ...managedRootByIdRef.current,
         [rid]: entry,
       };
-      setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
+      // 传完整索引而不是 byId：归属表要保留「这个 id 还有几台机器有」，
+      // 否则同名项目会被误判成唯一归属。
+      setRootNodeMap(managedRootByKeyRef.current as Record<string, any>);
     }
   }, []);
 }

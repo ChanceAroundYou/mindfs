@@ -118,6 +118,7 @@ export const APP_MODULES = {
     "src/app/usePluginThemeVars.ts",
     "src/app/useAppInit.ts",
     "src/app/useTaskBoard.ts",
+    "src/app/useTaskDetailsPrune.ts",
     "src/app/useTaskComposer.ts",
     "src/app/useAttachedFileContext.ts",
     "src/app/useReplyingSessionPoll.ts",

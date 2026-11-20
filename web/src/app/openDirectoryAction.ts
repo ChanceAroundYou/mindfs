@@ -161,7 +161,9 @@ export function createOpenDirectoryAction(
           }
           try {
             const payload = await apiProtectedJSON<any>(
-              appURL("/api/tree", new URLSearchParams({ root, dir: apiDir }), getNodeIdForRoot(root)),
+              // 用上面已解析出的节点：这里回头按 rootId 反查会把同名项目（fn/pc 都有
+              // `docs`）的目录请求打到另一台机器，缓存键却还落在本节点的桶里。
+              appURL("/api/tree", new URLSearchParams({ root, dir: apiDir }), resolvedNodeId || undefined),
             );
             const parsed = normalizeTreeResponse(payload);
             invalidTreeCacheKeysRef.current.delete(cacheKey);

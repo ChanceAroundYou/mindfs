@@ -5,6 +5,7 @@ import { confirmDialog } from "../services/dialog";
 import { reportError } from "../services/net/error";
 import { removeGitWorktree } from "../services/git";
 import type { ManagedRootPayload } from "./appMisc";
+import { rootNodeKey } from "./appPath";
 import { normalizeComparableRootPath } from "./appUtils";
 import type { MessageKey, MessageParams } from "../i18n/index";
 
@@ -17,8 +18,10 @@ import type { MessageKey, MessageParams } from "../i18n/index";
 export type UseAppProjectRemovalParams = {
   clearRootScopedClientState: (rootID: string, options?: { removeLastRoot?: boolean }) => void;
   currentRootIdRef: React.RefObject<string | null>;
+  currentRootNodeIdRef: React.RefObject<string | null>;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   managedRootByIdRef: React.RefObject<Record<string, ManagedRootPayload>>;
+  managedRootByKeyRef: React.RefObject<Record<string, ManagedRootPayload>>;
   refreshManagedRoots: () => Promise<void>;
   t: (key: MessageKey, params?: MessageParams) => string;
 };
@@ -28,17 +31,41 @@ export type UseAppProjectRemovalParams = {
  * 而 worktree 永远在本机，所以两个删除函数里它出现与否不一样，不是漏写。
  */
 export function useAppProjectRemoval(params: UseAppProjectRemovalParams) {
-  const { clearRootScopedClientState, currentRootIdRef, getNodeIdForRoot, managedRootByIdRef, refreshManagedRoots, t } = params;
+  const {
+    clearRootScopedClientState, currentRootIdRef, currentRootNodeIdRef, getNodeIdForRoot,
+    managedRootByIdRef, managedRootByKeyRef, refreshManagedRoots, t,
+  } = params;
 
-  const findManagedRootByPath = useCallback((path: string): ManagedRootPayload | null => {
+  /**
+   * 按项目身份取 payload：显式节点 → 该节点的条目；否则回退唯一归属表。
+   *
+   * fn 与 pc 各有一个 `docs` 时，唯一归属表里没有它 —— 只查 byId 会拿到
+   * undefined，删项目这类操作会直接报「找不到路径」。
+   */
+  const managedRootFor = useCallback((rootId: string, nodeId?: string | null): ManagedRootPayload | undefined => {
+    const rid = String(rootId || "").trim();
+    if (!rid) return undefined;
+    const nid = String(nodeId || "").trim();
+    if (nid) {
+      const hit = (managedRootByKeyRef.current as Record<string, any>)[rootNodeKey(nid, rid)];
+      if (hit) return hit as ManagedRootPayload;
+    }
+    return (managedRootByIdRef.current as Record<string, any>)[rid] as ManagedRootPayload | undefined;
+  }, []);
+
+  const findManagedRootByPath = useCallback((path: string, nodeId?: string): ManagedRootPayload | null => {
     const target = normalizeComparableRootPath(path);
     if (!target) {
       return null;
     }
-    for (const root of Object.values(managedRootByIdRef.current)) {
-      if (normalizeComparableRootPath(root.root_path || "") === target) {
-        return root;
-      }
+    // 完整索引优先：同名/同路径项目在不同节点是不同项目，byId 里只剩唯一归属。
+    const nid = String(nodeId || "").trim();
+    const pool = Object.values(managedRootByKeyRef.current || {});
+    const entries = pool.length > 0 ? pool : Object.values(managedRootByIdRef.current || {});
+    for (const root of entries) {
+      if (normalizeComparableRootPath(root.root_path || "") !== target) continue;
+      if (nid && String((root as any)._nodeId || "").trim() !== nid) continue;
+      return root;
     }
     return null;
   }, [normalizeComparableRootPath]);
@@ -48,7 +75,8 @@ export function useAppProjectRemoval(params: UseAppProjectRemovalParams) {
     if (!rootID) {
       return;
     }
-    const rootInfo = managedRootByIdRef.current[rootID];
+    // 当前项目按「当前选中节点」取：同名项目不能用唯一归属表碰运气
+    const rootInfo = managedRootFor(rootID, currentRootNodeIdRef.current || getNodeIdForRoot(rootID));
     const rootPath = rootInfo?.root_path || "";
     if (!rootPath) {
       reportError("root.delete_failed", t("root.missingPathRemove"));
@@ -72,7 +100,7 @@ export function useAppProjectRemoval(params: UseAppProjectRemovalParams) {
         String((err as Error)?.message || t("root.removeFailed")),
       );
     }
-  }, [clearRootScopedClientState, refreshManagedRoots, t]);
+  }, [clearRootScopedClientState, getNodeIdForRoot, managedRootFor, refreshManagedRoots, t]);
 
   const handleRemoveCurrentWorktree = useCallback(async () => {
     const rootID = currentRootIdRef.current;

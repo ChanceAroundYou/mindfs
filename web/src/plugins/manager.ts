@@ -175,20 +175,33 @@ function isValidPlugin(value: unknown): value is ViewPlugin {
 export class PluginManager {
   private pluginsByRoot = new Map<string, ViewPlugin[]>();
 
-  list(rootId: string): ViewPlugin[] {
-    return this.pluginsByRoot.get(rootId) || [];
+  /**
+   * 桶键 = 项目身份 `(nodeId, rootId)`。
+   *
+   * `root_id` 是一台机器内部的 id，fn 与 pc 都有 `docs` 时只按 rootId 分桶，
+   * 两边的插件表会互相顶替（扫描完一台，另一台看到的是别人的插件）。
+   * 不传 nodeId 时键退化成裸 rootId，与历史行为逐字节一致。
+   */
+  private key(rootId: string, nodeId?: string): string {
+    const nid = String(nodeId || "").trim();
+    const rid = String(rootId || "").trim();
+    return nid ? `${nid}::${rid}` : rid;
   }
 
-  set(rootId: string, plugins: ViewPlugin[]): void {
-    this.pluginsByRoot.set(rootId, plugins);
+  list(rootId: string, nodeId?: string): ViewPlugin[] {
+    return this.pluginsByRoot.get(this.key(rootId, nodeId)) || [];
   }
 
-  clear(rootId: string): void {
-    this.pluginsByRoot.delete(rootId);
+  set(rootId: string, plugins: ViewPlugin[], nodeId?: string): void {
+    this.pluginsByRoot.set(this.key(rootId, nodeId), plugins);
   }
 
-  match(rootId: string, file: PluginInput): ViewPlugin | null {
-    const plugins = this.list(rootId);
+  clear(rootId: string, nodeId?: string): void {
+    this.pluginsByRoot.delete(this.key(rootId, nodeId));
+  }
+
+  match(rootId: string, file: PluginInput, nodeId?: string): ViewPlugin | null {
+    const plugins = this.list(rootId, nodeId);
     for (const plugin of plugins) {
       if (matchesRule(file, plugin.match)) {
         return plugin;

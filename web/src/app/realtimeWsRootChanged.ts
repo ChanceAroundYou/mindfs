@@ -10,7 +10,7 @@
 import type { RealtimeEventsContext } from "./useRealtimeEventsContext";
 import type { ManagedRootPayload } from "./appMisc";
 import { rootNodeKey } from "./appPath";
-import { mapManagedRootsToEntries } from "./appMisc";
+import { mapManagedRootsToEntries, managedRootsForIds } from "./appMisc";
 import { setRootNodeMap } from "../services/net/rootNode";
 
 export function handleRootChanged(
@@ -77,9 +77,9 @@ export function handleRootChanged(
     managedRootByIdRef.current = nextById as Record<string, ManagedRootPayload>;
     const evtNid = String((merged as any)._nodeId || "").trim();
     if (evtNid) managedRootByKeyRef.current[rootNodeKey(evtNid, rootId)] = merged;
-    setRootNodeMap(nextById as Record<string, any>);
+    setRootNodeMap(managedRootByKeyRef.current as Record<string, any>);
     const ids = Array.from(managedRootIdsRef.current);
-    setRootEntries(mapManagedRootsToEntries(ids.map((id) => nextById[id]).filter(Boolean) as ManagedRootPayload[]));
+    setRootEntries(mapManagedRootsToEntries(managedRootsForIds(ids, managedRootByKeyRef.current)));
     setMultiProjectSessionGroups((prev) =>
       prev.map((g) =>
         g.rootId === rootId

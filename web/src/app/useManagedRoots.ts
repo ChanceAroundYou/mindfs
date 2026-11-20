@@ -3,7 +3,7 @@
  * `UseManagedRootsParams` 保持 App project-management 层的共享参数契约。
  */
 import { useCallback } from "react";
-import { ManagedRootPayload, indexManagedRoots, managedDirAddErrorMessage, mapManagedRootsToEntries, useResponsive } from "./appMisc";
+import { ManagedRootPayload, indexManagedRoots, managedDirAddErrorMessage, managedRootsForIds, mapManagedRootsToEntries, useResponsive } from "./appMisc";
 import { URLState, comparableManagedRootPath, rootNodeKey } from "./appPath";
 import { MultiProjectSessionGroup, PendingSend, SessionItem, SessionQueueItem, SlashCommandResult } from "./appSession";
 import { LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, accountScopedKey, loadLastRootId, loadLastRootNodeId, persistFileScrollPositions, removeLocalStorageByPrefix } from "./appStorage";
@@ -304,12 +304,16 @@ export function useManagedRoots(params: UseManagedRootsParams) {
     }
     const nextDirs = Array.isArray(dirs) ? dirs : [];
     const nextRootIds = nextDirs.map((dir) => dir.id).filter(Boolean);
+    const nextRootIdSet = new Set(nextRootIds);
     const previousRootById = managedRootByIdRef.current;
     const indexed = indexManagedRoots(nextDirs as ManagedRootPayload[]);
     const nextRootById = indexed.byId;
     let clearedRootScopedState = false;
     for (const rootID of Object.keys(previousRootById)) {
-      if (!(rootID in nextRootById)) {
+      // 判「这个项目还在不在」要看全集：byId 只装唯一归属，同名项目（fn/pc 都有
+      // `docs`）在那里查不到，用 byId 判会把它们当成「已删除」→ 每刷新一次就清空
+      // 当前项目的选中/绑定/缓存。
+      if (!nextRootIdSet.has(rootID)) {
         clearRootScopedClientState(rootID, { removeLastRoot: true });
         clearedRootScopedState = true;
       }
@@ -322,7 +326,17 @@ export function useManagedRoots(params: UseManagedRootsParams) {
         clearedRootScopedState = true;
       }
     }
-    managedRootByKeyRef.current = { ...managedRootByKeyRef.current, ...indexed.byKey };
+    managedRootByKeyRef.current = (() => {
+      // 全量替换，但保留本轮拉取失败的节点：那些项目还在，只是这台机器暂时连不上，
+      // 把它们的条目一起删掉 = 工作台/文件树里「PC 的项目凭空消失」。
+      const failedIds = new Set(nodeLoadFailuresRef.current.map((f) => String(f.id || "")));
+      const preserved: Record<string, ManagedRootPayload> = {};
+      for (const [key, entry] of Object.entries(managedRootByKeyRef.current || {})) {
+        const nid = String((entry as any)?._nodeId || "").trim();
+        if (nid && failedIds.has(nid)) preserved[key] = entry as ManagedRootPayload;
+      }
+      return { ...preserved, ...indexed.byKey };
+    })();
     // D2: 保留当前选中根的 bare 槽位，避免同名项目被本地蓝覆盖（瞬时全蓝根因）
     {
       const rid = String(currentRootIdRef.current || "").trim();
@@ -334,7 +348,9 @@ export function useManagedRoots(params: UseManagedRootsParams) {
       }
     }
     managedRootByIdRef.current = nextRootById;
-    setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
+    // 传完整索引：归属表要知道「这个 id 到底有几台机器有」，只传 byId 会把
+    // 同名项目误判成唯一归属。
+    setRootNodeMap(managedRootByKeyRef.current as Record<string, any>);
     {
       const curRid = String(currentRootIdRef.current || "").trim();
       const curNid = String(currentRootNodeIdRef.current || "").trim();
@@ -446,9 +462,10 @@ export function useManagedRoots(params: UseManagedRootsParams) {
           managedRootByIdRef.current = nextById as Record<string, ManagedRootPayload>;
           const renameNid = String((merged as any)._nodeId || "").trim();
           if (renameNid) managedRootByKeyRef.current[rootNodeKey(renameNid, rootID)] = merged;
-          setRootNodeMap(nextById as Record<string, any>);
+          setRootNodeMap(managedRootByKeyRef.current as Record<string, any>);
           const ids = Array.from(managedRootIdsRef.current);
-          setRootEntries(mapManagedRootsToEntries(ids.map((id) => nextById[id]).filter(Boolean) as ManagedRootPayload[]));
+          // 从完整索引重建：byId 只剩唯一归属，拿它重建会把同名项目里另一台的那份弄丢
+          setRootEntries(mapManagedRootsToEntries(managedRootsForIds(ids, managedRootByKeyRef.current)));
           setMultiProjectSessionGroups((prev) =>
             prev.map((g) =>
               g.rootId === rootID

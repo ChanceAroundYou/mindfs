@@ -80,8 +80,13 @@ export function useWorkspaceBoard(params: {
   refreshToken: number;
   /** 聚合基准：没有任务的项目也必须在工作台上出现 */
   managedRootIds: string[];
-  getRootDisplayName: (rootId: string | null | undefined) => string;
-  getNodeColor: (rootId: string) => string | null;
+  getRootDisplayName: (rootId: string | null | undefined, nodeId?: string | null) => string;
+  getNodeColor: (rootId: string, nodeId?: string | null) => string | null;
+  /**
+   * 组名（含同名项目的节点后缀）。分组必须按**分组自己那台机器**取名 ——
+   * fn 与 pc 都有 `docs`，只按 rootId 查表拿到的是首个节点那份的名字/颜色。
+   */
+  getProjectLabel?: (rootId: string, nodeId?: string | null) => string;
   getNodeId: (rootId: string) => string | undefined;
   /** getNodes() 未就绪时的回退节点，与会话侧 loadMultiProjectSessionGroups 同一口径 */
   fallbackNodeId: string;
@@ -98,7 +103,7 @@ export function useWorkspaceBoard(params: {
 }): WorkspaceBoard {
   const {
     enabled, refreshToken, managedRootIds, getRootDisplayName,
-    getNodeColor, getNodeId, fallbackNodeId, filter, getLiveTask,
+    getNodeColor, getProjectLabel, getNodeId, fallbackNodeId, filter, getLiveTask,
   } = params;
   const [items, setItems] = useState<WorkspaceTaskItem[]>(EMPTY_ITEMS);
   const [loading, setLoading] = useState(false);
@@ -226,16 +231,17 @@ export function useWorkspaceBoard(params: {
         return {
           key,
           rootId,
-          rootName: getRootDisplayName(rootId) || rootId,
+          // 名字与颜色都取**分组自己那台机器**的那份；同名项目再补节点后缀
+          rootName: (getProjectLabel ? getProjectLabel(rootId, nodeId) : getRootDisplayName(rootId, nodeId)) || rootId,
           nodeId,
-          color: getNodeColor(rootId) || null,
+          color: getNodeColor(rootId, nodeId) || null,
           tasks: bucket.filter((item) => matchesFilter(item.task, filter)),
         };
       })
       // 没有任务的项目不占地方：筛选后只剩空壳的组、连「全部」下都没有任何任务的项目，
       // 都直接不渲染。空项目要建任务去项目里建，工作台只回答「现在各项目在干什么」。
       .filter((group) => group.tasks.length > 0);
-  }, [items, managedRootIds, getNodeId, getRootDisplayName, getNodeColor, filter, liveVersion]);
+  }, [items, managedRootIds, getNodeId, getRootDisplayName, getProjectLabel, getNodeColor, filter, liveVersion]);
 
   return { projects, loading, unreachableNodes, refresh };
 }

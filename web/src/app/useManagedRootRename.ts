@@ -1,10 +1,12 @@
 import { useCallback } from "react";
-import { type ManagedRootPayload, mapManagedRootsToEntries } from "./appMisc";
+import { type ManagedRootPayload, managedRootsForIds, mapManagedRootsToEntries } from "./appMisc";
 import { setRootNodeMap } from "../services/net/rootNode";
+import { rootNodeKey } from "./appPath";
 import type { UseManagedRootsParams } from "./useManagedRootsTypes";
 
 type Params = Pick<UseManagedRootsParams,
   | "managedRootByIdRef"
+  | "managedRootByKeyRef"
   | "managedRootIdsRef"
   | "setRootEntries"
   | "boundSessionByRootRef"
@@ -27,7 +29,7 @@ type Params = Pick<UseManagedRootsParams,
 
 export function useManagedRootRename(params: Params) {
   const {
-    managedRootByIdRef, managedRootIdsRef, setRootEntries,
+    managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef, setRootEntries,
     boundSessionByRootRef, suppressedAutoBindSessionByRootRef,
     drawerSessionByRootRef, selectedSessionByRootRef, drawerOpenByRootRef,
     pluginsLoadedByRootRef, pluginsLoadingByRootRef,
@@ -58,7 +60,19 @@ export function useManagedRootRename(params: Params) {
       delete nextRootById[oldID];
       nextRootById[nextID] = nextRoot;
       managedRootByIdRef.current = nextRootById;
-      setRootNodeMap(nextRootById as Record<string, any>);
+      // 完整索引也要跟着改：它是「谁拥有哪个项目」的唯一来源，留着旧 id 会让
+      // 改名后的项目在归属表里消失（随后所有裸 rootId 解析都变成「查不到」）。
+      {
+        const nid = String((nextRoot as any)._nodeId || "").trim();
+        for (const k of Object.keys(managedRootByKeyRef.current || {})) {
+          const idx = k.indexOf("::");
+          const rid = idx >= 0 ? k.slice(idx + 2) : k;
+          if (rid === oldID) delete managedRootByKeyRef.current[k];
+        }
+        if (nid) managedRootByKeyRef.current[rootNodeKey(nid, nextID)] = nextRoot;
+        else managedRootByKeyRef.current[nextID] = nextRoot;
+      }
+      setRootNodeMap(managedRootByKeyRef.current as Record<string, any>);
 
       const moveRecordKey = <T,>(record: Record<string, T>) => {
         if (oldID === nextID) {
@@ -184,13 +198,8 @@ export function useManagedRootRename(params: Params) {
         }
         const deduped = Array.from(new Set(nextIds.filter(Boolean)));
         managedRootIdsRef.current = new Set(deduped);
-        setRootEntries(
-          mapManagedRootsToEntries(
-            deduped
-              .map((id) => managedRootByIdRef.current[id])
-              .filter((dir): dir is ManagedRootPayload => !!dir),
-          ),
-        );
+        // 从完整索引重建：byId 只剩唯一归属，同名项目另一台的那份会丢
+        setRootEntries(mapManagedRootsToEntries(managedRootsForIds(deduped, managedRootByKeyRef.current)));
         return deduped;
       });
       return true;
