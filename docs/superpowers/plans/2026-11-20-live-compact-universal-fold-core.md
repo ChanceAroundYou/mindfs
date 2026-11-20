@@ -914,6 +914,43 @@ git add server/internal/agent/fold
 git commit -m "feat(live-compact): fold 内核增加 Adapter 接口与折叠引擎（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：六个内核文件落地 —— `fold/types.go`（`Result` /
+`Round` / `Conversation` / `Verdict` / `Replacement` / `Usage` / `GuardVerdict`）、
+`fold/adapter.go`（`Adapter` / `Session` / `Request`）、`fold/engine.go`（`Engine` /
+`Outcome` / `ErrVerifyFailed` / `Fold` / `verifyConversation` / `abandon` /
+`render`）、`fold/gate.go`（`DecideBudget` 与中性的 `Estimate` / `Decision` /
+`Budget`，gate 字符串与 proxy 现有日志逐字一致）、`fold/plan.go`（`PlanCandidates`
+与 `Candidate`，`FoldMinBlockSavings` / `MaxChunksPerEvent` 原值搬入）、
+`fold/error_text.go`（`LooksLikeErrorText` 自 `proxy/live_compact_wire_drift.go`
+原样迁出，proxy 通过 `fold_alias.go` 的 `looksLikeErrorText` 别名继续使用）。
+`Fold` 按计划的 13 步实现，唯一顺序调整是**承诺集只在 splice + 校验都通过后才
+`CommitAll`**（比旧 planner 在计划期提交更严：校验失败的块绝不能记成已折）。
+
+两处对计划的偏离，均为实现中暴露的必要细化：
+
+1. **`Adapter` 多一个 `Encode(text string) string`**，且 `Replacement.Literal` 是
+   **已按线格式编码好的字面量**（计划原文写的是「已解码的纯文本」）。理由：旧
+   proxy 的渲染缓存与「指针必须比原文小」的判定都在**线字节**上做 —— JSON 转义
+   能把一次折叠变成膨胀，按解码后长度比较会放过这种块。适配器负责编码后，内核
+   的节省算术与缓存语义与旧路径逐字节等价，Task 8 的等价替换才有可比性。
+2. **`fold/gate.go` 与 `fold/plan.go` 与 proxy 的 `live_compact_fold_gate.go` /
+   `live_compact_fold_plan.go` 暂时并存**（计划把「迁入」写在本任务）。内核版本
+   输入是中性类型，proxy 版本仍用 `scanRequest`；在一个提交里同时改内核与调用方
+   会让等价性无法分辨。proxy 的那几份在 Task 8 的删除清单里，本任务只保证命名
+   与判定逐条对齐（含 `roundOversized` 不施加 failed/min-block 门槛这一既有行为）。
+
+测试 `engine_test.go` 7 条（上文 5 条 + `TestEngineGuardBlocksRewrite` +
+`TestEngineObservesWithoutPermission`）、`plan_test.go` 6 条、`gate_test.go` 6 条。
+计划指定的三处变异各自打红后还原：跳过 `verifyConversation` →
+`TestEngineRejectsPairingChange` 红（`pairing change was not rejected: <nil>`）；
+pass 1 的入选条件改成无条件跳过（`if true { continue }`，等于取消「已提交集合
+无条件入选」）→ `TestEngineFoldsCommittedBlocksAfterFirstPass` 第二次断言红
+（`second fold: … StickyBlocks:0 NewBlocks:1`）；删掉 `conv.Refuse` 检查 →
+`TestEngineHonoursAdapterRefusal` 红。
+`gofmt` / `go build ./server/...` / `go vet ./server/internal/agent/...` /
+`go test ./server/internal/agent/...`（fold、proxy、claude、codex、acp、types、
+agent）全绿。
+
 ---
 
 ### Task 7: Anthropic 适配器

@@ -51,6 +51,7 @@ var (
 	estimateTokens            = fold.EstimateTokens
 	estimateByteTokens        = fold.EstimateByteTokens
 	encodeJSONStringLiteral   = fold.EncodeJSONStringLiteral
+	looksLikeErrorText        = fold.LooksLikeErrorText
 )
 
 const (
