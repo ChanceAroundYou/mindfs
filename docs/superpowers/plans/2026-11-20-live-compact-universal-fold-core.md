@@ -125,7 +125,8 @@ func TestFoldCoversBlocksBelowLegacyTokenFloor(t *testing.T) {
 	cfg := gateTestConfig(dir)
 	cfg.MinBlockTokens = 2000 // 生产默认值
 
-	body := distinctFoldBody(t, 3, 2048)
+	// 4096 B：指针本体约 1.9 KB（1600 B 摘录 + 头），净省 ~2.2 KB，可折。
+	body := distinctFoldBody(t, 3, 4096)
 	result, gate := foldWithCommits(t, body, cfg, store, newPointerCache(),
 		newFoldCommits(), foldContext{est: 1 << 20})
 	if gate.decision != gateFold {
@@ -142,11 +143,12 @@ func TestFoldSkipsBlockWhosePointerSavesTooLittle(t *testing.T) {
 	store := newArchiveStore(dir, time.Hour, archiveMaxBytes)
 	cfg := gateTestConfig(dir) // MinBlockTokens = 10：旧门槛不会挡它
 
-	body := distinctFoldBody(t, 3, 600)
+	// 2400 B：比指针本体（约 1.9 KB）只大几百字节，净省 < 1024 B，必须跳过。
+	body := distinctFoldBody(t, 3, 2400)
 	result, _ := foldWithCommits(t, body, cfg, store, newPointerCache(),
 		newFoldCommits(), foldContext{est: 1 << 20})
 	if result.newBlocks != 0 {
-		t.Fatalf("newBlocks = %d, want 0: a 600-byte result saves too little", result.newBlocks)
+		t.Fatalf("newBlocks = %d, want 0: a 2400-byte result saves too little", result.newBlocks)
 	}
 }
 
