@@ -462,7 +462,7 @@ func (s *Service) settleWorkflowReplyUnknown(ctx context.Context, store *TaskSto
 	if activity.Status != ActivityStatusRunning && activity.Status != ActivityStatusPending {
 		return
 	}
-	summary := "进程重启时这一轮还在执行，结果无法确定；可以直接发消息让我重开一轮。"
+	summary := restartInterruptedReplySummary
 	if err := activities.UpdateStatus(ctx, activity.ID, ActivityStatusCancelled, &summary); err != nil {
 		return
 	}

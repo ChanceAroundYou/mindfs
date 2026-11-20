@@ -1,7 +1,7 @@
 # #86 卡死：unknown 算已收尾 + 启动对账补投影 + Router 读会话（router-unknown-settled-and-read-session）
 
 - 日期：2026-11-20
-- 状态：两轮均已实现、门禁绿、已推送 origin main（`ea896ab2`、`ddbf7238`、`53e38632`、
+- 状态：三轮均已实现、门禁绿、已推送 origin main（`ea896ab2`、`ddbf7238`、`53e38632`、
   `7df7279a`、`191e1124`）；第二轮隔离验收（端口 7438，真实模型）全部通过；已部署四端
   `v0.5.5-1200-43-g191e1124`（本机二进制已装，待用户重启 system 单元）
 - 上游：无（Router 与工作流运行时是本 fork 自有能力）
@@ -176,6 +176,46 @@ Router 侧的「自己管理任务」现有能力：`inspect_run`（投影 + 节
 - 本机 `make build && make install` 已装（md5 `e2f7933…`），运行中的 `/proc/3222145/exe`
   仍指向已删除的旧二进制 —— **待用户 `sudo systemctl restart mindfs`**；本机静态资源对账一致
   （`assets/index-CEZQJY_u.js`）。
+
+## 第三轮（2026-11-20）：直连回复的收尾
+
+用户裁定「请动手补吧」。第一、二轮的结算只覆盖**绑定 workflow run** 的回复
+（`settleWorkflowReplyUnknown` 按 `run_id` 找行）；直连回合（Router `message_agent` /
+纯对话）的回复 `run_id` 为空，收尾写在跑回合的 goroutine 里，进程重启把它连同
+goroutine 一起带走 —— 活动永远 `running`、任务永远 `running`，卡片不落「待审核」，
+自动归档（只收终态）也永远轮不到它。
+
+现场（重启后核对）：任务 #95「fork bug」的 `act_1f1792a2c1fa2b8f` 从 04:21 转到次日
+13:07，日志显示 12:41 `response stream ended unexpectedly` → 恢复重试 3 次
+（`transport is closed`）→ `wait attempt=2/3 delay=30s` 之后再无下文；该会话不在
+`/api/replying-sessions` 里。另有一条 11-19 的 pending 占位（#86）与一条 11-12 的
+legacy pending 回复同样无人推进。
+
+修复（`Scope: G-NJ`）：
+
+- `activity_store_orphan.go`：`ListOrphanDirectReplies`（`type=agent_reply`、
+  `status IN (pending,running)`、`run_id` 为空）、`SettleOrphanReply`（条件更新，
+  只有仍是 pending/running 才改成 cancelled，返回 `changed` 供调用方决定是否广播）、
+  `LiveReplyExists`（任务上还有没有活着的回复行）。
+- `service_recover_direct_reply.go`：`settleOrphanDirectReplies` 在
+  `RecoverOnStartupForRoot` 里、workflow 侧结算之后执行。两层判据：`run_id` 为空
+  （绑定 Run 的归 Run 侧）＋任务主会话不在回复（`s.sessionRunning(task.MainSessionKey)`，
+  复用 `WireSessionRunningProbe` 的 `StreamHub` 活跃位）。结算后广播
+  `status/summary/body` 三个字段并 `ClearBody`，与 workflow 侧同一句说明
+  （`restartInterruptedReplySummary`）。
+- 任务状态：只有「任务确实停在 `running`、会话不在回复、任务上再没有别的活着的回复」
+  三条同时成立才放回 `waiting_user` —— 暂停/终态/待审核是操作员状态，workflow 侧刚被
+  唤醒的那一轮也不能被顺手拉走。
+- 幂等：`ListOrphanDirectReplies` 与 `SettleOrphanReply` 两处都挡非 pending/running，
+  第二次启动不动已结算的行（不写 `updated_at`、不覆盖 summary、不改任务状态）。
+
+验收：`service_recover_direct_reply_test.go` 6 条（陈旧 running / pending 占位 /
+活会话不碰 / Run 绑定的不碰 / 重复对账幂等且不覆盖操作员状态 / 另一条回复还活着时
+任务保持 running）。变异验证 5 处各自打红：去掉活会话判据（打红「活会话不碰」）、
+去掉 `LiveReplyExists`（打红「另一条回复还活着」）、去掉 `run_id` 过滤（打红
+「Run 绑定的不碰」）、同时去掉两处 status 守卫（打红幂等用例的 `updated_at`）、
+去掉任务放回（打红 waiting_user 断言）。`go test ./server/internal/kanban/` 与
+`go test ./...` 全绿。
 
 ## 残留与待裁定
 

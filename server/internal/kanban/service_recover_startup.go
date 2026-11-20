@@ -52,6 +52,9 @@ func (s *Service) RecoverOnStartupForRoot(ctx context.Context, rootID string, pr
 	// 升级前已结算的回复可能只有「已完成 <workflow>」：用已落库的 NodeRun 输出
 	// 重算一次可读 summary。幂等，只补空 summary 的 completed 行。
 	s.backfillWorkflowReplySummaries(ctx, store)
+	// 直连回合（run_id 为空）的收尾没有 Run 可挂：进程重启带走 goroutine 后，
+	// 活动与任务都永远停在 running。与 workflow 侧的结算同一条原则，只是另一条路。
+	s.settleOrphanDirectReplies(ctx, store)
 	if plan.NeedsUser {
 		for _, id := range plan.UnknownIDs {
 			// 可确定性地拿到 task_id 就置 waiting_user；拿不到就只保留 unknown 标记，
