@@ -82,25 +82,3 @@ func TestFoldLedgerMarksMissingUsageExplicitly(t *testing.T) {
 		t.Fatalf("total rewrite = %d, want 0 with no samples", summary.TotalRewriteTokens)
 	}
 }
-
-// Legacy rows (written before usage_source existed) must keep contributing to
-// the total when their rewrite is known, or every existing ledger would read as
-// "never measured" after the upgrade.
-func TestLedgerSummaryKeepsLegacyKnownSamples(t *testing.T) {
-	legacy := ledgerTestEntry(100)
-	legacy.RewriteTokens = 40
-	missing := ledgerTestEntry(200)
-	missing.RewriteTokens = -1
-	missing.UsageSource = usageSourceMissing
-	modern := ledgerTestEntry(300)
-	modern.RewriteTokens = 60
-	modern.UsageSource = usageSourceResponse
-
-	summary := summarizeLedger([]LedgerEntry{legacy, missing, modern})
-	if summary.TotalRewriteTokens != 100 {
-		t.Fatalf("total rewrite = %d, want 100 (legacy + modern)", summary.TotalRewriteTokens)
-	}
-	if summary.RewriteSamples != 2 || summary.UsageMissing != 1 {
-		t.Fatalf("samples=%d missing=%d, want 2/1", summary.RewriteSamples, summary.UsageMissing)
-	}
-}

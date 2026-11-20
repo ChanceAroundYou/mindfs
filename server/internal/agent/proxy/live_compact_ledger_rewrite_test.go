@@ -81,19 +81,3 @@ func TestProxyFoldLedgerRewriteUnknownWithoutUsage(t *testing.T) {
 		t.Fatalf("total rewrite tokens = %d, want 0 when every sample is unknown", summary.TotalRewriteTokens)
 	}
 }
-
-func TestLedgerSummarySumsKnownRewrite(t *testing.T) {
-	first := ledgerTestEntry(100)
-	first.RewriteTokens = 40
-	second := ledgerTestEntry(200)
-	second.RewriteTokens = 60
-	unknown := ledgerTestEntry(300)
-	unknown.RewriteTokens = -1
-	summary := summarizeLedger([]LedgerEntry{first, second, unknown})
-	if summary.TotalRewriteTokens != 100 {
-		t.Fatalf("total rewrite = %d, want 100 (known samples only)", summary.TotalRewriteTokens)
-	}
-	if summary.Latest.RewriteTokens != -1 {
-		t.Fatalf("latest rewrite = %d, want -1", summary.Latest.RewriteTokens)
-	}
-}

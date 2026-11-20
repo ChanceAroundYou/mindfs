@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"mindfs/server/internal/agent/proxy"
+	"mindfs/server/internal/agent/fold"
 	"mindfs/server/internal/session"
 )
 
@@ -24,25 +24,25 @@ type GetSessionContextSavingInput struct {
 //
 // It never fails for an unconfigured or folded-never session: that is an empty
 // summary, not an error. The only real error is an unknown session key.
-func (s *Service) GetSessionContextSaving(ctx context.Context, in GetSessionContextSavingInput) (proxy.ContextSaving, error) {
+func (s *Service) GetSessionContextSaving(ctx context.Context, in GetSessionContextSavingInput) (fold.ContextSaving, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return proxy.ContextSaving{}, err
+		return fold.ContextSaving{}, err
 	}
 	key := strings.TrimSpace(in.Key)
 	if key == "" {
-		return proxy.ContextSaving{}, errors.New("session key required")
+		return fold.ContextSaving{}, errors.New("session key required")
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return proxy.ContextSaving{}, err
+		return fold.ContextSaving{}, err
 	}
 	current, err := manager.Get(ctx, key, 0)
 	if err != nil {
-		return proxy.ContextSaving{}, err
+		return fold.ContextSaving{}, err
 	}
 	pool := s.Registry.GetAgentPool()
 	if pool == nil {
-		return proxy.ContextSaving{}, nil
+		return fold.ContextSaving{}, nil
 	}
 	agentName := strings.TrimSpace(session.InferAgentFromSession(current))
 	return pool.SessionContextSaving(agentPoolSessionKey(key, agentName)), nil

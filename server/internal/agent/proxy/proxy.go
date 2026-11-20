@@ -39,6 +39,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"mindfs/server/internal/agent/fold"
 )
 
 // Server is the proxy server. One instance is shared across all Claude sessions
@@ -58,7 +60,7 @@ type Server struct {
 	pointerCache *pointerCache
 	// ledger is the per-session fold ledger behind the context chip. Nil when
 	// no directory is configured.
-	ledger *ledgerStore
+	ledger *fold.LedgerStore
 
 	// Emergency brake: the presence of DisableFile turns live-compact off for
 	// the running process. Checked at most once per second.
@@ -124,7 +126,7 @@ func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
 		s.archive = newArchiveStore(cfg.ArchiveDir,
 			time.Duration(cfg.RetentionDays)*24*time.Hour, cfg.MaxArchiveBytes)
 		s.pointerCache = newPointerCache()
-		s.ledger = newLedgerStore(filepath.Join(cfg.ArchiveDir, ledgerDirName))
+		s.ledger = fold.NewLedgerStore(filepath.Join(cfg.ArchiveDir, fold.LedgerDirName))
 	}
 	s.initLiveCompactWorkers()
 	if cfg.Mode == LiveCompactOn && s.archive == nil {

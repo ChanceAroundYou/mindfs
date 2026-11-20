@@ -26,6 +26,8 @@ type (
 	foldCommits      = fold.Commits
 	commitLog        = fold.CommitLog
 	foldCommitRecord = fold.CommitRecord
+	ContextSaving    = fold.ContextSaving
+	LedgerEntry      = fold.LedgerEntry
 )
 
 var (
@@ -43,4 +45,6 @@ const (
 	pointerCacheLimit    = fold.PointerCacheLimit
 	archiveMaxBytes      = fold.DefaultMaxArchiveBytes
 	archiveRetention     = fold.DefaultRetention
+	usageSourceResponse  = fold.UsageSourceResponse
+	usageSourceMissing   = fold.UsageSourceMissing
 )

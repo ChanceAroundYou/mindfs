@@ -9371,6 +9371,8 @@ groups:
       - server/internal/agent/proxy/live_compact_scan_test.go
       - server/internal/agent/fold/pointer_cache_test.go
       - server/internal/agent/fold/archive_test.go
+      - server/internal/agent/fold/ledger_test.go
+      - server/internal/agent/fold/ledger_usage_test.go
       - server/internal/agent/proxy/live_compact_ledger_test.go
       - server/internal/agent/proxy/live_compact_ledger_rewrite_test.go
       - server/internal/agent/proxy/live_compact_usage_ledger_test.go
@@ -9455,8 +9457,8 @@ groups:
       - 'server/internal/agent/proxy/live_compact_fold_cache_test.go:func TestFoldCacheRewritesVanishedArchive('
       - 'server/internal/agent/proxy/live_compact_fold_proxy_test.go:func TestProxyFoldRespectsDisableFile('
       - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, totals usageTotals) {'
-      - 'server/internal/agent/proxy/live_compact_ledger.go:RewriteTokens int `json:"rewrite_tokens"`'
-      - 'server/internal/agent/proxy/live_compact_ledger.go:TotalRewriteTokens int `json:"total_rewrite_tokens"`'
+      - 'server/internal/agent/fold/ledger.go:RewriteTokens int `json:"rewrite_tokens"`'
+      - 'server/internal/agent/fold/ledger.go:TotalRewriteTokens int `json:"total_rewrite_tokens"`'
       - 'server/internal/agent/proxy/live_compact_fold_request.go:func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResult, *foldLedgerPending, liveCompactGate) {'
       - 'server/internal/agent/proxy/live_compact_fold_request.go:func (s *Server) referencedArchives() map[string]struct{} {'
       - 'server/internal/agent/proxy/live_compact_fold_request.go:return newCommitLog(s.archive.Dir(), sessionKey)'
@@ -9473,10 +9475,10 @@ groups:
       - 'server/internal/agent/proxy/live_compact_fold.go:failed bool'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.badgeRewrite'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.rewriteTotal'
-      - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) SessionContextSaving(sessionKey string) ContextSaving'
-      - 'server/internal/agent/proxy/live_compact_ledger.go:ledgerMaxBytes  = 4 << 20'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) SessionContextSaving(sessionKey string) fold.ContextSaving'
+      - 'server/internal/agent/fold/ledger.go:ledgerMaxBytes  = 4 << 20'
       - 'server/internal/agent/pool.go:ArchiveDir:       opts.LiveCompactArchiveDir'
-      - 'server/internal/agent/pool_context_saving.go:func (p *Pool) SessionContextSaving(sessionKey string) proxy.ContextSaving'
+      - 'server/internal/agent/pool_context_saving.go:func (p *Pool) SessionContextSaving(sessionKey string) fold.ContextSaving'
       - 'server/internal/api/usecase/session_context_saving.go:func (s *Service) GetSessionContextSaving('
       - 'server/internal/api/usecase/session_context_saving.go:return pool.SessionContextSaving(agentPoolSessionKey(key, agentName)), nil'
       - 'server/internal/api/http_session_context_saving.go:func (h *HTTPHandler) handleSessionContextSaving('
@@ -10247,8 +10249,8 @@ groups:
     title: 任务会话收拢（一轮 Run 一条会话 + Router session_mode + 侧栏按 task_id 分组）
     kind: feature
     symptom: "2026-11-20 用户报「一个任务有多个会话时要收拢成父子结构」，并定下策略：一轮工作流应只有一条会话，工作流内部可自行选择切不切新对话；跨轮由 Router 决定接续还是新开（默认新开）；侧栏按任务分组。改动前 `session_reuse_policy` 默认 `per_node`，一轮 workflow 每个 Agent 节点各建一条会话，同一任务在侧栏散成若干条互不相干的顶层会话。"
-    why: "必须保留：(1) `SessionReuseRun = \"run\"` 是默认策略（`workflow_node_executor.go` 的 `WorkflowNodeSessionPolicy` 空值/未知值都落 run），显式 `per_node`/`always_new`/`same_stage` 照旧；(2) `workflow_runs.session_key` 记一轮 Run 的共享会话，`SetWorkflowRunSessionKey` 先到先得（`WHERE session_key=''`）且**不推进 revision**——推进会撞 driver 的 CAS；`lockWorkflowRunSession` 按 runID 串行化「读→建→写回」，否则并行分支同时起步会各建一条；(3) `LatestTaskSessionKey` 顺序固定为「最近活动 → 最近 Run 共享会话 → 任务主会话」，Router 的 `session_mode=continue` 靠它预填；(4) `router_run_workflow` 的 `session_mode` 缺省 new、非法值当轮拒绝（工具与 `validateRouterActions` 两处），否则拼错会静默退化成 new；(5) 提示词规则 4 必须同时写「一轮共用一条会话」与「跨轮你选 new/continue」，缺一句模型就滑回每轮新会话；(6) 归档级联必须收 `workflow_runs.session_key`（只记在 Run 上，节点行反查不到），漏收会让归档会话继续留在侧栏；(7) 侧栏分组零数据改动：`sessionTaskGroups.ts` 只对 ≥2 条顶层会话成组，`nested` 只借缩进、不得改 `isSubagent`（否则顶栏徽标会被当子会话隐藏），搜索结果保持平铺；(8) 节点「本节点另起会话」写 `session_reuse_policy=always_new`，取消则删参数回到 run；(9) 分组头与会话行同一套字（13px / 500）并配分组专用图标，文案是 `任务名 # 任务号`（`taskSessionGroupHeading`），**不再带成员计数**；组内成员渲染时剥掉与分组头重复的共享前缀（`taskSessionMemberLabel`：`任务名 · 摘要` → `摘要`，`任务名 / #7 · 摘要` → `#7 · 摘要`），前缀必须在词边界上、改过名的会话原样返回，且只影响展示（`title` 与高亮用剥后名字，重命名草稿仍编辑落库原名）；任务号从会话名里的 `/#91` 取（`taskSessionGroupNumber`），**绝不显示 `task_id` 那串哈希**；成员行连任务号一起剥（`任务名 / #91 · run · 摘要` → `run · 摘要`）；分组头是展开/收起开关（`aria-expanded`），默认收起、选中项所在组自动展开（`taskGroupShowsMembers`）；(10) 分组阈值看**后端下发的 `task_session_count`**（同一任务下顶层、未归档、非 router 的会话数，`selectSessionListSQL` 的相关子查询），不看当前这一页装了几条 —— 多项目侧栏每根只取 6 条，同一任务的会话常常只有一条落在窗口里，按装载数判会让分组时有时无（用户 2026-11-20 报「刷新后分组整个消失」）；该字段只在列表查询里算，单条读取/广播为 0 时**不下发这个键**（下发 0 会让前端把「不知道」当成「确认只有一条」）。(9) 的图标跟随主题色（`var(--accent-color)`）——用户 2026-11-20 逐条确认；(11) 分组头**不画展开箭头**，那个两层卡片图标自己就是开关（外层仍是 `aria-expanded` 按钮），且图标位 20px / 图形 18px，比会话行的 18px / 16px 大一号 —— 用户 2026-11-20 第三次反馈「不要用下展开箭头 就用现在的 icon 但是大小稍微变大一点 它比普通对话的圆看起来小了一圈」；(12) `taskSessionMemberLabel` 剥完只剩空串时**不许回落到完整名字**：`任务名 / #87`（同任务的多条会话都没带摘要）要显示 `#87`，任务号是组内唯一区分点 —— 回落正是用户报的「『任务详情面板修改 / #87』的子会话还是完整的名字」；(13) 分组阈值再补一层**进程内记忆**（`rememberTaskSessions` / `taskSessionSeenCount`，作用域 `节点\\0项目`，只记顶层会话、只增不减）：后端 `task_session_count` 缺席时（旧后端的其他节点、增量广播、详情路径）按「这个标签页见过几条」判，否则刷新把成员挤出窗口后分组又会消失 —— 用户 2026-11-20 第三次反馈「展开的时候是新样式，收起或者切换到其他节点的时候又变回旧样式」。(14) 分组头带上聚合的指示灯/时间与三点菜单：`taskGroupAggregateState` 在任一成员 pending/delegating 时显示空心灯（与 `mindfs-hollow-pulse` 同动画），`ask_user_waiting` 与会话错误按条数用普通会话那套问号/感叹号徽标传递，时间取成员里最晚的 closed_at/updated_at；菜单里重命名与同步置灰（分组不知道改哪一条成员），归档/删除递归覆盖组内全部顶层会话及其子会话，`taskGroupActions` 只确认一次（写明条数）后逐条串行执行，删除走 `handleDeleteSession(session, { confirm: false })` 的批量通道。 (15) 右侧信息列必须是**分组行的直接子元素**，不能放进展开按钮内部：会话卡里这列也不在可点的那层盒子里（那层有 4px 右内边距），放进去就会整体左移 4px —— 用户 2026-11-20 报「会话组的时间没有对齐」「灯也没对齐」；几何与会话行同源（`minWidth` 24px、右对齐、`paddingLeft` 2px、10px 次级字）。(16) 分组菜单必须保留**置顶**且按整组生效（用户 2026-11-20：「置顶按钮不应该移除」）：置顶是按会话存的（`root::sessionKey`），分组没有自己的条目，所以 `TaskGroupAggregate.pinned` 取「成员全部置顶」，`pinTaskGroup` 逐条串行写同一批成员的 `onPin`，不弹确认（可逆，与单条置顶一致），菜单顺序与会话卡一致（置顶 → 同步 → 重命名 → 归档 → 删除）。"
-    boundary: "不迁移任何存量会话结构（用户选方案 A：分组纯展示，`parent_session_key`/归属/JSONL 不动）；不把存量散落会话合并成一条；分组默认收起（点分组头展开），不落任何「展开过哪一组」的偏好；不改 Router 的 `session_mode` 默认以外语义（`message_agent` 仍留在任务最近会话）；前端节点参数字符串 `always_new` 与后端 `SessionReuseAlwaysNew` 必须一致。分组菜单确认框里的条数只数组内顶层成员：子会话按需懒加载，客户端不保证持有完整子树，真正的级联由后端按 parent_session_key 完成。整组置顶同样只覆盖当前列表里的成员（未加载的成员不会被置顶），且不新增分组级的置顶存贮 —— 置顶状态仍只有会话级一份。"
+    why: "必须保留：(1) `SessionReuseRun = \"run\"` 是默认策略（`workflow_node_executor.go` 的 `WorkflowNodeSessionPolicy` 空值/未知值都落 run），显式 `per_node`/`always_new`/`same_stage` 照旧；(2) `workflow_runs.session_key` 记一轮 Run 的共享会话，`SetWorkflowRunSessionKey` 先到先得（`WHERE session_key=''`）且**不推进 revision**——推进会撞 driver 的 CAS；`lockWorkflowRunSession` 按 runID 串行化「读→建→写回」，否则并行分支同时起步会各建一条；(3) `LatestTaskSessionKey` 顺序固定为「最近活动 → 最近 Run 共享会话 → 任务主会话」，Router 的 `session_mode=continue` 靠它预填；(4) `router_run_workflow` 的 `session_mode` 缺省 new、非法值当轮拒绝（工具与 `validateRouterActions` 两处），否则拼错会静默退化成 new；(5) 提示词规则 4 必须同时写「一轮共用一条会话」与「跨轮你选 new/continue」，缺一句模型就滑回每轮新会话；(6) 归档级联必须收 `workflow_runs.session_key`（只记在 Run 上，节点行反查不到），漏收会让归档会话继续留在侧栏；(7) 侧栏分组零数据改动：`sessionTaskGroups.ts` 只对 ≥2 条顶层会话成组，`nested` 只借缩进、不得改 `isSubagent`（否则顶栏徽标会被当子会话隐藏），搜索结果保持平铺；(8) 节点「本节点另起会话」写 `session_reuse_policy=always_new`，取消则删参数回到 run；(9) 分组头与会话行同一套字（13px / 500）并配分组专用图标，文案是 `任务名 # 任务号`（`taskSessionGroupHeading`），**不再带成员计数**；组内成员渲染时剥掉与分组头重复的共享前缀（`taskSessionMemberLabel`：`任务名 · 摘要` → `摘要`，`任务名 / #7 · 摘要` → `#7 · 摘要`），前缀必须在词边界上、改过名的会话原样返回，且只影响展示（`title` 与高亮用剥后名字，重命名草稿仍编辑落库原名）；任务号从会话名里的 `/#91` 取（`taskSessionGroupNumber`），**绝不显示 `task_id` 那串哈希**；成员行连任务号一起剥（`任务名 / #91 · run · 摘要` → `run · 摘要`）；分组头是展开/收起开关（`aria-expanded`），默认收起、选中项所在组自动展开（`taskGroupShowsMembers`）；(10) 分组阈值看**后端下发的 `task_session_count`**（同一任务下顶层、未归档、非 router 的会话数，`selectSessionListSQL` 的相关子查询），不看当前这一页装了几条 —— 多项目侧栏每根只取 6 条，同一任务的会话常常只有一条落在窗口里，按装载数判会让分组时有时无（用户 2026-11-20 报「刷新后分组整个消失」）；该字段只在列表查询里算，单条读取/广播为 0 时**不下发这个键**（下发 0 会让前端把「不知道」当成「确认只有一条」）。(9) 的图标跟随主题色（`var(--accent-color)`）——用户 2026-11-20 逐条确认；(11) 分组头**不画展开箭头**，那个两层卡片图标自己就是开关（外层仍是 `aria-expanded` 按钮），且图标位 20px / 图形 18px，比会话行的 18px / 16px 大一号 —— 用户 2026-11-20 第三次反馈「不要用下展开箭头 就用现在的 icon 但是大小稍微变大一点 它比普通对话的圆看起来小了一圈」；(12) `taskSessionMemberLabel` 剥完只剩空串时**不许回落到完整名字**：`任务名 / #87`（同任务的多条会话都没带摘要）要显示 `#87`，任务号是组内唯一区分点 —— 回落正是用户报的「『任务详情面板修改 / #87』的子会话还是完整的名字」；(13) 分组阈值再补一层**进程内记忆**（`rememberTaskSessions` / `taskSessionSeenCount`，作用域 `节点\\0项目`，只记顶层会话、只增不减）：后端 `task_session_count` 缺席时（旧后端的其他节点、增量广播、详情路径）按「这个标签页见过几条」判，否则刷新把成员挤出窗口后分组又会消失 —— 用户 2026-11-20 第三次反馈「展开的时候是新样式，收起或者切换到其他节点的时候又变回旧样式」。(14) 分组头带上聚合的指示灯/时间与三点菜单：`taskGroupAggregateState` 在任一成员 pending/delegating 时显示空心灯（与 `mindfs-hollow-pulse` 同动画），`ask_user_waiting` 与会话错误按条数用普通会话那套问号/感叹号徽标传递，时间取成员里最晚的 closed_at/updated_at；菜单里重命名与同步置灰（分组不知道改哪一条成员），归档/删除递归覆盖组内全部顶层会话及其子会话，`taskGroupActions` 只确认一次（写明条数）后逐条串行执行，删除走 `handleDeleteSession(session, { confirm: false })` 的批量通道。 (15) 右侧信息列必须是**分组行的直接子元素**，不能放进展开按钮内部：会话卡里这列也不在可点的那层盒子里（那层有 4px 右内边距），放进去就会整体左移 4px —— 用户 2026-11-20 报「会话组的时间没有对齐」「灯也没对齐」；几何与会话行同源（`minWidth` 24px、右对齐、`paddingLeft` 2px、10px 次级字）。(16) 分组菜单必须保留**置顶**且按整组生效（用户 2026-11-20：「置顶按钮不应该移除」）：置顶是按会话存的（`root::sessionKey`），分组没有自己的条目，所以 `TaskGroupAggregate.pinned` 取「成员全部置顶」，`pinTaskGroup` 逐条串行写同一批成员的 `onPin`，不弹确认（可逆，与单条置顶一致），菜单顺序与会话卡一致（置顶 → 同步 → 重命名 → 归档 → 删除）。(17) 侧栏每个项目的可见预算按**行**算（`taskGroupedRowCount`：一个任务组占 1 行，组内成员与子会话不占位），无论展开还是收起都一样 —— 用户 2026-11-20：「无论展开还是收起，请把会话组作为一个会话，不要因组里有好几个对话而显示不完，出现『还有 n 个对话』」。按会话扣预算时，装了 4 条会话的任务组会吃掉 4 份预算，列表还有空位就冒出「还有 N 个会话」。行数用本页成员数判分组即可：`task_session_count` 与进程内记忆只决定「1 条会话算不算单独成组」，而一条会话无论成不成组都占 1 行。配套 `useMultiProjectSessionList` 的补拉 effect 按缺口继续翻页（一次只补一个项目、正在加载的跳过、上一次补拉没带回新的顶层会话就停，防重复请求），「还有 N 个会话」只在行数真的占满 `MULTI_PROJECT_VISIBLE_LIMIT` 时才显示。"
+    boundary: "不迁移任何存量会话结构（用户选方案 A：分组纯展示，`parent_session_key`/归属/JSONL 不动）；不把存量散落会话合并成一条；分组默认收起（点分组头展开），不落任何「展开过哪一组」的偏好；不改 Router 的 `session_mode` 默认以外语义（`message_agent` 仍留在任务最近会话）；前端节点参数字符串 `always_new` 与后端 `SessionReuseAlwaysNew` 必须一致。分组菜单确认框里的条数只数组内顶层成员：子会话按需懒加载，客户端不保证持有完整子树，真正的级联由后端按 parent_session_key 完成。整组置顶同样只覆盖当前列表里的成员（未加载的成员不会被置顶），且不新增分组级的置顶存贮 —— 置顶状态仍只有会话级一份。补拉仍按后端 `before_time` 游标翻页，不改成一次拉全量，也不改 `limit_per_root`；单项目侧栏（`SessionList` 的「加载更多」）保持原样 —— 用户说的是多项目侧栏那条「还有 N 个会话」。"
     files:
       - server/internal/kanban/types.go
       - server/internal/kanban/workflow_types.go
@@ -10288,6 +10290,7 @@ groups:
       - web/src/components/session/SessionCard.tsx
       - web/src/components/session/SessionList.tsx
       - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/components/session/useMultiProjectSessionList.ts
       - web/src/shared/workflowModel.ts
       - web/src/components/task/WorkflowNodeInspector.tsx
       - web/src/i18n/locales/zh-CN-sessions.ts
@@ -10354,6 +10357,11 @@ groups:
       - 'web/src/components/session/taskGroupActions.ts:onDelete(session, { confirm: false })'
       - 'web/src/app/useSessionArchive.ts:if (options?.confirm !== false) {'
       - 'web/src/components/session/MultiProjectSessionList.tsx:members={row.members.map((member) => ({ ...member, root_id: member.root_id || group.rootId }))}'
+      - 'web/src/components/session/sessionTaskGroups.ts:export function taskGroupedRowCount('
+      - 'web/src/components/session/useMultiProjectSessionList.ts:taskGroupedRowCount(topLevelSessionsForGroup(items));'
+      - 'web/src/components/session/useMultiProjectSessionList.ts:const shortOfBudget ='
+      - 'web/src/components/session/useMultiProjectSessionList.ts:(budgetPageRef.current[key] ?? -1) >= topLevelCount'
+      - 'web/src/components/session/MultiProjectSessionList.tsx:expanded && topLevelRows >= MULTI_PROJECT_VISIBLE_LIMIT && remaining > 0'
   - id: G-NH
     title: 工作流编辑器的四处交互修复（删除键失效 / 节点卡片错位 / 独立 worktree 开关 / 草稿卡挤）
     kind: fix

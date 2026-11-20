@@ -497,6 +497,26 @@ git add server/internal/agent/fold server/internal/agent/proxy
 git commit -m "refactor(live-compact): 承诺集与提交日志迁入 fold 内核（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20，Task 2 与 Task 3 合并执行）**：两者不能按计划顺序拆开 ——
+`ArchiveStore.sweepProtected` 的保护集来自持久化提交日志（`referencedAfter` 读的正是
+`commit_log.go` 的文件），先移存档就会让内核反向依赖 proxy，撞上 `imports_test.go` 的守卫。
+所以存档、渲染缓存、承诺集、提交日志四个文件一起 `git mv` 进 `fold/`：`ArchiveStore`
+（`NewArchiveStore` / `Write` / `RecordFailure` / `Sweep` / `SweepProtected` / `Dir`）、
+`PointerCache`（`NewPointerCache` / `Get` / `Put` / `NewPointerCacheKey` /
+`NewPointerCacheKeyVariant` / `PointerCacheLimit` / `PointerVariantFailed` / `CachedPointer`
+四字段导出）、`Commits`（`NewCommits` / `NewCommitsFor` / `Has` / `Add` / `CommitAll` /
+`Adopt` / `RestoredCount` / `DropUnrestored` / `ProtectedNames` / `Len`）、`CommitLog`
+（`NewCommitLog` / `Append` / `Load` / `CommitRecord` / `CommitLogDirName`）。会话文件名哈希
+（原 `ledgerSessionName`）抽成 `fold.SessionFileName`，账本先委托给它，Task 4 搬账本时直接复用。
+`proxy/fold_alias.go` 追加类型别名与构造函数别名，调用点只改方法名大小写（`.Get`/`.Put`/
+`.Has`/`.Add`/`.Adopt`/`.CommitAll`/`.Append`/`.Load`/`.SweepProtected`）。
+
+新增 `fold/commits_test.go` 3 条（nil 集合、Add/CommitAll、只认已恢复名字的 adopt）；
+两处变异各自打红：`ArchiveStore.Write` 的 `0600` → `0644` 被 `TestArchiveFilesArePrivate` 抓住，
+`Commits.Has` 在 nil 时返回 true 被 `TestCommitsNilSetHasNothing` 抓住，还原后 `fold` 与 `proxy`
+全绿；`go test ./server/internal/agent/...` 全绿。登记侧：G-MN 的四个文件条目改为 `fold/` 前缀、
+三个测试路径跟着搬、14 处锚点重指到新符号。
+
 ---
 
 ### Task 4: 账本与 `ContextSaving` 迁入内核
@@ -535,6 +555,30 @@ Expected: PASS
 git add server/internal/agent/fold server/internal/agent/proxy server/internal/api
 git commit -m "refactor(live-compact): 账本与上下文节省汇总迁入 fold 内核（Scope: G-MN）"
 ```
+
+**执行结果（2026-11-20）**：`fold/ledger.go` 承接 `LedgerStore` / `LedgerEntry` /
+`ContextSaving` / `SummarizeLedger` 与 `UsageSourceResponse` / `UsageSourceMissing`，常量
+`LedgerDirName` / `ledgerMaxBytes` / `ledgerKeepLines` / `ledgerReadLimit` 逐字保留；文件命名
+直接用 Task 2 抽出的 `fold.SessionFileName`。与计划的唯一偏离：`Write` 返回 `error` 而不是
+静默返回（计划 Interfaces 写的就是 `error`）——调用方 `writeFoldLedger` 显式 `_ =` 忽略并保留
+“诊断写失败不阻断请求”的注释，轮转（compaction）仍按尽力而为处理，失败只留下可读的超大文件。
+
+proxy 侧只剩 `foldLedgerPending` / `newFoldLedgerPending` / `writeFoldLedger` /
+`SessionContextSaving`（88 行），`proxy.go` 的字段改为 `*fold.LedgerStore`、构造改走
+`fold.NewLedgerStore(filepath.Join(cfg.ArchiveDir, fold.LedgerDirName))`；`fold_alias.go` 追加
+`ContextSaving` / `LedgerEntry` 类型别名与 `usageSource*` 常量别名，旧测试读法不变。
+`Pool.SessionContextSaving` 与 API usecase 直接引用 `fold.ContextSaving`（不再经 proxy 转发），
+JSON 字段名一个没动，胶囊契约不变。
+
+测试按“store 归内核、handler 归 proxy”拆开：`fold/ledger_test.go` 9 条（append/read、按会话
+隔离、哈希文件名、0600/0700、截断行、容量轮转、summary、nil store、时间戳）+
+`fold/ledger_usage_test.go` 2 条（legacy 已知样本、只加已知样本），proxy 保留 3 条真 handler
+用例（`TestProxyFoldWritesLedger` 等）。变异验证：`SummarizeLedger` 的 `UsageMissing++` 改成
+不计数，`go test ./server/internal/agent/fold/ -run LedgerSummary` 在
+`TestLedgerSummaryKeepsLegacyKnownSamples` 打红（`missing=0, want 2/1`），还原复绿。
+`go test ./server/internal/agent/... ./server/internal/api/...` 全绿。登记侧：G-MN 的两个
+`rewrite_tokens` 锚点与 `ledgerMaxBytes` 重指 `fold/ledger.go`，`SessionContextSaving` 两处
+签名跟着返回类型改，测试清单补两条 fold 用例。
 
 ---
 

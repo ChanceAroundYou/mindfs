@@ -1,6 +1,6 @@
 package agent
 
-import "mindfs/server/internal/agent/proxy"
+import "mindfs/server/internal/agent/fold"
 
 // SessionContextSaving returns the live-compact ledger summary for a session.
 //
@@ -11,9 +11,9 @@ import "mindfs/server/internal/agent/proxy"
 // A node with live-compact off has no proxy at all; a session that never
 // folded has an empty summary. Neither is an error: the chip simply shows
 // nothing.
-func (p *Pool) SessionContextSaving(sessionKey string) proxy.ContextSaving {
+func (p *Pool) SessionContextSaving(sessionKey string) fold.ContextSaving {
 	if p == nil || p.compactProxy == nil {
-		return proxy.ContextSaving{}
+		return fold.ContextSaving{}
 	}
 	return p.compactProxy.SessionContextSaving(sessionKey)
 }
