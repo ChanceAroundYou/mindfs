@@ -72,6 +72,40 @@ type LiveCompactConfig struct {
 	// values mean the defaults (7 days, 2 GiB).
 	RetentionDays   int
 	MaxArchiveBytes int64
+	// PrefixGuard refuses to fold requests whose model runs Anthropic's
+	// preserved-thinking prefix check (design 2026-11-20 §4). That check
+	// compares what the client *sent*, so a proxy-side rewrite invalidates
+	// every later thinking block on those models. Tri-state: nil means on,
+	// because a node that never configured it must still be protected.
+	PrefixGuard *bool
+	// PrefixUnsafeModels lists model ids (usually aliases such as llmux's
+	// "ok") that map to a preserved-thinking model upstream. Matching is on the
+	// normalized family, so an alias is written exactly as it appears in the
+	// request body.
+	PrefixUnsafeModels []string
+	// ColdFold allows folding below the rail when the upstream prompt cache is
+	// already cold (design 2026-11-20 §5): a fold then costs no cache rewrite
+	// because there is no warm prefix to invalidate. Tri-state: nil means on.
+	ColdFold *bool
+	// ColdRailTokens is the context size at which a cold fold is worth doing.
+	// Below it the fold buys no window headroom and only costs continuity.
+	// Zero means the default (60000).
+	ColdRailTokens int
+	// CacheTTLSeconds is how long an idle gap must be before the next request's
+	// prefix is assumed evicted upstream. Zero means the default (300, the
+	// Anthropic 5-minute cache TTL).
+	CacheTTLSeconds int
+}
+
+// PrefixGuardOn reports whether the preserved-thinking guard is enabled. The
+// zero value is on: protection must not depend on a node opting in.
+func (c LiveCompactConfig) PrefixGuardOn() bool {
+	return c.PrefixGuard == nil || *c.PrefixGuard
+}
+
+// ColdFoldOn reports whether cold-cache folding is enabled. Zero value is on.
+func (c LiveCompactConfig) ColdFoldOn() bool {
+	return c.ColdFold == nil || *c.ColdFold
 }
 
 func (c LiveCompactConfig) Normalized() LiveCompactConfig {
@@ -146,6 +180,14 @@ func (c LiveCompactConfig) Normalized() LiveCompactConfig {
 	if c.LargeBlockTokens <= 0 {
 		c.LargeBlockTokens = 32000
 	}
+	// 60k: below this there is still ~100k of room to the CLI's auto-compact
+	// threshold, so a cold fold buys no headroom and only risks continuity.
+	if c.ColdRailTokens <= 0 {
+		c.ColdRailTokens = 60000
+	}
+	if c.CacheTTLSeconds <= 0 {
+		c.CacheTTLSeconds = 300
+	}
 	if c.RetentionDays <= 0 {
 		c.RetentionDays = int(archiveRetention / (24 * time.Hour))
 	}
@@ -176,6 +218,17 @@ type liveCompactState struct {
 	lastHashes       []uint64
 	lastMessageCount int
 	compactionEpoch  int
+	// Cold-cache signals (design 2026-11-20 §5). pendingColdFold is set by the
+	// PostCompact hook and consumed exactly once, by the next fold decision:
+	// otherwise every request in that epoch would look freshly compacted.
+	pendingColdFold bool
+	lastUsageAt     time.Time
+	lastContext     int
+	// noReadStreak counts consecutive responses that neither read from nor
+	// wrote to the upstream cache (see live_compact_cold.go).
+	noReadStreak int
+	// prefixWarned keeps the unknown-model warning to one line per session.
+	prefixWarned bool
 }
 
 type liveCompactObservation struct {
@@ -205,6 +258,10 @@ type liveCompactObservation struct {
 	gateDecision string
 	gateEst      int
 	gateGrowth   int
+	// cold / coldReason say whether the fold decision was taken on an assumed
+	// cold prompt cache (design 2026-11-20 §5).
+	cold       bool
+	coldReason string
 	// gateProjected is the rail input in upstream tokens when the session has a
 	// calibration sample, estimator tokens otherwise.
 	gateProjected int
@@ -339,6 +396,8 @@ func (s *Server) analyzeLiveCompact(token string, turn *liveCompactTurn, body []
 		gateDecision:          turn.gate.decision,
 		gateEst:               turn.gate.est,
 		gateGrowth:            turn.gate.growth,
+		cold:                  turn.gate.cold,
+		coldReason:            turn.gate.coldReason,
 		gateProjected:         turn.gate.projected,
 		wouldFoldTokens:       turn.gate.wouldFoldTokens,
 	}
@@ -376,13 +435,16 @@ func (s *Server) logLiveCompact(token string, obs liveCompactObservation, totals
 	if !obs.foldAllowed {
 		scope = "observe-only"
 	}
-	log.Printf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d cand_blocks=%d cand_error_blocks=%d cand_failed_blocks=%d cand_tokens=%d cand_bytes=%d skip_bytes_error=%d skip_bytes_multipart=%d skip_bytes_nontext=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d would_fold_tokens=%d",
+	log.Printf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d usg_in=%d usg_create=%d usg_read=%d cand_blocks=%d cand_error_blocks=%d cand_failed_blocks=%d cand_tokens=%d cand_bytes=%d skip_bytes_error=%d skip_bytes_multipart=%d skip_bytes_nontext=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d cold=%t cold_reason=%s would_fold_tokens=%d",
 		obs.mode, ShortToken(token), scope, obs.messages, obs.rounds, obs.closedRounds,
-		obs.keepRounds, obs.epoch, obs.estimatedInput, actual, obs.candidates, obs.errorCandidates,
+		obs.keepRounds, obs.epoch, obs.estimatedInput, actual,
+		totals.InputTokens, totals.CacheCreationInputTokens, totals.CacheReadInputTokens,
+		obs.candidates, obs.errorCandidates,
 		obs.failedCandidates, obs.candidateTokens, obs.candidateBytes,
 		obs.skippedErrorBytes, obs.skippedMultiPartBytes, obs.skippedNonTextBytes,
 		obs.driftAt, obs.driftFromTail, obs.parseMillis,
-		obs.gateDecision, obs.gateEst, obs.gateGrowth, obs.gateProjected, obs.wouldFoldTokens)
+		obs.gateDecision, obs.gateEst, obs.gateGrowth, obs.gateProjected,
+		obs.cold, obs.coldReason, obs.wouldFoldTokens)
 }
 
 // driftDistanceFromTail reports how far before the previous request's tail the

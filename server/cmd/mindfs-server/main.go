@@ -45,6 +45,13 @@ func main() {
 	liveCompactMinFoldBytes := 0
 	liveCompactMaxFoldBytes := 0
 	liveCompactLargeBlockTokens := 0
+	// 前缀闸门与冷缓存择时没有 CLI flag：只由 config.json 的 live_compact 段填充。
+	// 初值就是默认值（都开），配置文件存在时覆盖它。
+	liveCompactPrefixGuard := true
+	var liveCompactPrefixUnsafeModels []string
+	liveCompactColdFold := true
+	liveCompactColdRailTokens := 0
+	liveCompactCacheTTLSeconds := 0
 	// 任务派发默认 Agent/模型，只走 config.json（task 段），没有 CLI flag。
 	taskAgent, taskModel := "", ""
 	flag.Parse()
@@ -55,31 +62,36 @@ func main() {
 		os.Exit(1)
 	}
 	if err := applyStartupConfig(startupCfg, explicitFlags, startupFlags{
-		Addr:                        addr,
-		WebPush:                     webPushFlag,
-		AgentConfig:                 agentConfigFlag,
-		NotifyScript:                notifyScriptFlag,
-		Role:                        roleFlag,
-		RouterMode:                  routerModeFlag,
-		RouterAgent:                 routerAgentFlag,
-		RouterModel:                 routerModelFlag,
-		RouterEffort:                routerEffortFlag,
-		RouterTurnTimeout:           routerTurnTimeoutFlag,
-		RouterIdleClose:             routerIdleCloseFlag,
-		WorkflowParallelMainTree:    workflowParallelMainTreeFlag,
-		LiveCompactMode:             liveCompactModeFlag,
-		LiveCompactKeepRounds:       liveCompactKeepRoundsFlag,
-		LiveCompactKeepTailTokens:   &liveCompactKeepTailTokens,
-		LiveCompactMinBlockTokens:   liveCompactMinBlockTokensFlag,
-		LiveCompactMinBodyBytes:     &liveCompactMinBodyBytes,
-		LiveCompactMaxDriftMessages: &liveCompactMaxDriftMessages,
-		LiveCompactRailTokens:       &liveCompactRailTokens,
-		LiveCompactTargetTokens:     &liveCompactTargetTokens,
-		LiveCompactMinFoldBytes:     &liveCompactMinFoldBytes,
-		LiveCompactMaxFoldBytes:     &liveCompactMaxFoldBytes,
-		LiveCompactLargeBlockTokens: &liveCompactLargeBlockTokens,
-		TaskAgent:                   &taskAgent,
-		TaskModel:                   &taskModel,
+		Addr:                          addr,
+		WebPush:                       webPushFlag,
+		AgentConfig:                   agentConfigFlag,
+		NotifyScript:                  notifyScriptFlag,
+		Role:                          roleFlag,
+		RouterMode:                    routerModeFlag,
+		RouterAgent:                   routerAgentFlag,
+		RouterModel:                   routerModelFlag,
+		RouterEffort:                  routerEffortFlag,
+		RouterTurnTimeout:             routerTurnTimeoutFlag,
+		RouterIdleClose:               routerIdleCloseFlag,
+		WorkflowParallelMainTree:      workflowParallelMainTreeFlag,
+		LiveCompactMode:               liveCompactModeFlag,
+		LiveCompactKeepRounds:         liveCompactKeepRoundsFlag,
+		LiveCompactKeepTailTokens:     &liveCompactKeepTailTokens,
+		LiveCompactMinBlockTokens:     liveCompactMinBlockTokensFlag,
+		LiveCompactMinBodyBytes:       &liveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages:   &liveCompactMaxDriftMessages,
+		LiveCompactRailTokens:         &liveCompactRailTokens,
+		LiveCompactTargetTokens:       &liveCompactTargetTokens,
+		LiveCompactMinFoldBytes:       &liveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:       &liveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens:   &liveCompactLargeBlockTokens,
+		LiveCompactPrefixGuard:        &liveCompactPrefixGuard,
+		LiveCompactPrefixUnsafeModels: &liveCompactPrefixUnsafeModels,
+		LiveCompactColdFold:           &liveCompactColdFold,
+		LiveCompactColdRailTokens:     &liveCompactColdRailTokens,
+		LiveCompactCacheTTLSeconds:    &liveCompactCacheTTLSeconds,
+		TaskAgent:                     &taskAgent,
+		TaskModel:                     &taskModel,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -89,33 +101,38 @@ func main() {
 	defer cancel()
 
 	if err := app.Start(ctx, *addr, app.StartOptions{
-		Version:                     version,
-		Args:                        os.Args[1:],
-		AgentConfigPath:             *agentConfigFlag,
-		WebPushEnabled:              *webPushFlag,
-		NotifyScript:                *notifyScriptFlag,
-		Role:                        *roleFlag,
-		RouterMode:                  *routerModeFlag,
-		RouterAgent:                 *routerAgentFlag,
-		RouterModel:                 *routerModelFlag,
-		RouterEffort:                *routerEffortFlag,
-		RouterTurnTimeout:           *routerTurnTimeoutFlag,
-		RouterIdleClose:             *routerIdleCloseFlag,
-		RouterRoots:                 routerRoots(startupCfg),
-		TaskAgent:                   taskAgent,
-		TaskModel:                   taskModel,
-		WorkflowParallelMainTree:    *workflowParallelMainTreeFlag,
-		LiveCompactMode:             *liveCompactModeFlag,
-		LiveCompactKeepRounds:       *liveCompactKeepRoundsFlag,
-		LiveCompactKeepTailTokens:   liveCompactKeepTailTokens,
-		LiveCompactMinBlockTokens:   *liveCompactMinBlockTokensFlag,
-		LiveCompactMinBodyBytes:     liveCompactMinBodyBytes,
-		LiveCompactMaxDriftMessages: liveCompactMaxDriftMessages,
-		LiveCompactRailTokens:       liveCompactRailTokens,
-		LiveCompactTargetTokens:     liveCompactTargetTokens,
-		LiveCompactMinFoldBytes:     liveCompactMinFoldBytes,
-		LiveCompactMaxFoldBytes:     liveCompactMaxFoldBytes,
-		LiveCompactLargeBlockTokens: liveCompactLargeBlockTokens,
+		Version:                       version,
+		Args:                          os.Args[1:],
+		AgentConfigPath:               *agentConfigFlag,
+		WebPushEnabled:                *webPushFlag,
+		NotifyScript:                  *notifyScriptFlag,
+		Role:                          *roleFlag,
+		RouterMode:                    *routerModeFlag,
+		RouterAgent:                   *routerAgentFlag,
+		RouterModel:                   *routerModelFlag,
+		RouterEffort:                  *routerEffortFlag,
+		RouterTurnTimeout:             *routerTurnTimeoutFlag,
+		RouterIdleClose:               *routerIdleCloseFlag,
+		RouterRoots:                   routerRoots(startupCfg),
+		TaskAgent:                     taskAgent,
+		TaskModel:                     taskModel,
+		WorkflowParallelMainTree:      *workflowParallelMainTreeFlag,
+		LiveCompactMode:               *liveCompactModeFlag,
+		LiveCompactKeepRounds:         *liveCompactKeepRoundsFlag,
+		LiveCompactKeepTailTokens:     liveCompactKeepTailTokens,
+		LiveCompactMinBlockTokens:     *liveCompactMinBlockTokensFlag,
+		LiveCompactMinBodyBytes:       liveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages:   liveCompactMaxDriftMessages,
+		LiveCompactRailTokens:         liveCompactRailTokens,
+		LiveCompactTargetTokens:       liveCompactTargetTokens,
+		LiveCompactMinFoldBytes:       liveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:       liveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens:   liveCompactLargeBlockTokens,
+		LiveCompactPrefixGuard:        &liveCompactPrefixGuard,
+		LiveCompactPrefixUnsafeModels: liveCompactPrefixUnsafeModels,
+		LiveCompactColdFold:           &liveCompactColdFold,
+		LiveCompactColdRailTokens:     liveCompactColdRailTokens,
+		LiveCompactCacheTTLSeconds:    liveCompactCacheTTLSeconds,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -157,6 +174,13 @@ type startupLiveCompactConfig struct {
 	MinFoldBytes     *int `json:"min_fold_bytes"`
 	MaxFoldBytes     *int `json:"max_fold_bytes"`
 	LargeBlockTokens *int `json:"large_block_tokens"`
+	// Prefix guard and cold-cache timing (design 2026-11-20 §4/§5). Pointers so
+	// "absent" keeps the default (both on) instead of reading as false.
+	PrefixGuard        *bool    `json:"prefix_guard"`
+	PrefixUnsafeModels []string `json:"prefix_unsafe_models"`
+	ColdFold           *bool    `json:"cold_fold"`
+	ColdRailTokens     *int     `json:"cold_rail_tokens"`
+	CacheTTLSeconds    *int     `json:"cache_ttl_seconds"`
 }
 
 type startupTaskConfig struct {
@@ -194,17 +218,22 @@ type startupFlags struct {
 
 	WorkflowParallelMainTree *bool
 
-	LiveCompactMode             *string
-	LiveCompactKeepRounds       *int
-	LiveCompactKeepTailTokens   *int
-	LiveCompactMinBlockTokens   *int
-	LiveCompactMinBodyBytes     *int
-	LiveCompactMaxDriftMessages *int
-	LiveCompactRailTokens       *int
-	LiveCompactTargetTokens     *int
-	LiveCompactMinFoldBytes     *int
-	LiveCompactMaxFoldBytes     *int
-	LiveCompactLargeBlockTokens *int
+	LiveCompactMode               *string
+	LiveCompactKeepRounds         *int
+	LiveCompactKeepTailTokens     *int
+	LiveCompactMinBlockTokens     *int
+	LiveCompactMinBodyBytes       *int
+	LiveCompactMaxDriftMessages   *int
+	LiveCompactRailTokens         *int
+	LiveCompactTargetTokens       *int
+	LiveCompactMinFoldBytes       *int
+	LiveCompactMaxFoldBytes       *int
+	LiveCompactLargeBlockTokens   *int
+	LiveCompactPrefixGuard        *bool
+	LiveCompactPrefixUnsafeModels *[]string
+	LiveCompactColdFold           *bool
+	LiveCompactColdRailTokens     *int
+	LiveCompactCacheTTLSeconds    *int
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -312,6 +341,21 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		}
 		if flags.LiveCompactLargeBlockTokens != nil && live.LargeBlockTokens != nil {
 			*flags.LiveCompactLargeBlockTokens = *live.LargeBlockTokens
+		}
+		if flags.LiveCompactPrefixGuard != nil && live.PrefixGuard != nil {
+			*flags.LiveCompactPrefixGuard = *live.PrefixGuard
+		}
+		if flags.LiveCompactPrefixUnsafeModels != nil && live.PrefixUnsafeModels != nil {
+			*flags.LiveCompactPrefixUnsafeModels = live.PrefixUnsafeModels
+		}
+		if flags.LiveCompactColdFold != nil && live.ColdFold != nil {
+			*flags.LiveCompactColdFold = *live.ColdFold
+		}
+		if flags.LiveCompactColdRailTokens != nil && live.ColdRailTokens != nil {
+			*flags.LiveCompactColdRailTokens = *live.ColdRailTokens
+		}
+		if flags.LiveCompactCacheTTLSeconds != nil && live.CacheTTLSeconds != nil {
+			*flags.LiveCompactCacheTTLSeconds = *live.CacheTTLSeconds
 		}
 	}
 	if task := cfg.Task; task != nil {

@@ -8,7 +8,10 @@ import (
 
 func wireBody(t *testing.T, messages []any) []byte {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{"model": "test", "messages": messages})
+	// A real, classifiable model id: the prefix guard treats anything it cannot
+	// recognise as an alias and logs a warning, which would otherwise fire in
+	// every test that folds.
+	body, err := json.Marshal(map[string]any{"model": "claude-sonnet-4-5", "messages": messages})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

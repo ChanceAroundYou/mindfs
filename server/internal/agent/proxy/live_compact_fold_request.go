@@ -55,6 +55,18 @@ func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResul
 		measured.decision = gateScanFailed
 		return body, foldResult{}, nil, measured
 	}
+	// A rewrite is a client-side edit. On a preserved-thinking model that
+	// invalidates every later thinking block, so the guard runs before anything
+	// is planned — shadow included, since shadow must report the same policy
+	// mode=on applies (design 2026-11-20 §4).
+	if s.prefixGuardBlocks(token, req.model, cfg) {
+		measured.decision = gatePrefixGuard
+		s.noteForwardEstimate(token, est)
+		return body, foldResult{}, nil, measured
+	}
+	// Consumed here, once: the PostCompact flag describes the request that
+	// follows the compaction, not the whole epoch (design 2026-11-20 §5).
+	fc.cold, fc.coldReason = s.coldFoldContext(token, cfg, start)
 	// Shadow (and on without an archive) rehearses the policy: it reports the
 	// decision and the savings a fold would produce, but never rewrites the
 	// body or writes an archive. This is what lets a 24h shadow rehearsal on a
@@ -151,17 +163,32 @@ func (s *Server) noteForwardEstimate(token string, est int) {
 }
 
 // noteActualContext records the upstream-reported context size for the request
-// that just finished. Both an unseen usage block and a seen-but-zero count mean
-// "no sample", and neither may overwrite a good one.
+// that just finished, plus the two cache observations the cold-cache detector
+// reads (design 2026-11-20 §5). Both an unseen usage block and a seen-but-zero
+// count mean "no sample", and neither may overwrite a good size.
 func (s *Server) noteActualContext(token string, totals usageTotals) {
-	actual := totals.ContextTokens()
-	if !totals.Seen || actual <= 0 {
+	if !totals.Seen {
 		return
 	}
+	actual := totals.ContextTokens()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, ok := s.sessions[token]; ok {
+	st, ok := s.sessions[token]
+	if !ok {
+		return
+	}
+	st.live.lastUsageAt = time.Now()
+	if actual > 0 {
+		st.live.lastContext = actual
 		st.lastActual = actual
+	}
+	// Neither read nor write means this response was served without touching
+	// the cache at all. One such response is an ordinary cold start; a streak is
+	// an upstream that does not cache this session.
+	if totals.CacheReadInputTokens == 0 && totals.CacheCreationInputTokens == 0 {
+		st.live.noReadStreak++
+	} else {
+		st.live.noReadStreak = 0
 	}
 }
 

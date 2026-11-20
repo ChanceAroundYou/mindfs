@@ -113,11 +113,13 @@ Anthropic 的 preserved-thinking 前缀校验带指纹，**比较的是请求里
 
 | 情况 | 行为 | 日志 |
 |---|---|---|
-| 命中内置或配置列表 | **不折**（shadow 只报 `would_fold`） | `gate=prefix-guard model=<原值>` |
+| 命中内置或配置列表 | **不折**，shadow 也不预演（预演会写进承诺集，让后续预演少折） | `gate=prefix-guard` |
 | `model` 未知（别名 / 缺失 / 解析失败） | **照常折**，每会话**一次**告警 | `[live-compact] prefix-guard: unknown model %q, folding allowed` |
 | 已知安全（如 `claude-opus-5`、`ok` 且未被列入） | 照常折 | 无额外输出 |
 
 未知放行的理由：默认拦会把现有生产（llmux `ok`）直接停掉，而 `ok` 是否映射到 preserved 模型本仓库无法判定；把它变成**运营配置**（列进 `prefix_unsafe_models`）比猜安全。告警每会话一次，避免日志洪水。
+
+"连续零命中"为什么是两次：单次 `cache_read=0` 只是冷启动，那次响应会把前缀写进缓存，下一次就是热的；连续两次既不读也不写，才说明这个上游根本没在缓存这条会话（llmux 的 `cache_creation` 恒为 0，所以必须两个计数一起看）。
 
 ### 4.4 配置
 
@@ -132,7 +134,7 @@ Anthropic 的 preserved-thinking 前缀校验带指纹，**比较的是请求里
 | `TestPrefixGuardAllowsOlderOpus` | `claude-opus-5` 不被误伤 | 前缀改 `opus-5` → 红 |
 | `TestPrefixGuardAllowsUnknownAliasWithWarn` | `ok` 放行 + 只告警一次 | 改成一见未知就拦 → 红 |
 | `TestPrefixGuardConfigListBlocksAlias` | `prefix_unsafe_models=["ok"]` → 拦 | 忽略配置 → 红 |
-| `TestPrefixGuardShadowReportsWithoutRewriting` | shadow 只报不折 | shadow 也折 → 红 |
+| `TestProxyFoldSkipsPreservedThinkingModel` | 端到端：受保护模型转发字节完全相同 | 闸门放在 preview 之后 → 红 |
 | `TestScanRequestCapturesModel` | 顶层 `model` 解析（含转义、缺失） | 写成子串搜索 → 红（`messages` 里出现 `"model"` 的用例） |
 
 ---
@@ -147,17 +149,19 @@ Anthropic 的 preserved-thinking 前缀校验带指纹，**比较的是请求里
 |---|---|---|
 | 刚压缩 | `handleCompactSignal` 置 `pendingColdFold=true`，下一次决策消费一次 | `compact` |
 | 空闲超过 TTL | `now - lastUsageAt ≥ cache_ttl`（默认 300s，Anthropic 5m） | `idle` |
-| 上一拍零命中 | 上一拍 `cache_read == 0` 且 `ContextTokens() ≥ cold_rail`；首拍也算 | `no-read` |
+| 连续零命中 | 连续两次 `cache_read == 0 && cache_creation == 0` 且 `lastContext ≥ cold_rail` | `no-read` |
 
 `hot` 时完全走今天的行为（rail 100k）。
 
 ### 5.2 冷时策略
 
 ```
-cold && est ≥ cold_rail(default 60000)  → 允许折，rail 视为满足
-cold && est <  cold_rail                → 不折（gate=below-rail，reason 保留在日志里）
-hot                                     → 现状（rail 100k）
+cold && projected ≥ cold_rail(default 60000)  → 允许折，rail 视为满足
+cold && projected <  cold_rail                → 不折（gate=below-rail，reason 保留在日志里）
+hot                                           → 现状（rail 100k）
 ```
+
+`projected` 与 rail 用的是同一个量（有校准样本时是上游 token，否则是估算 token）；用 `est` 会让冷折比 rail 折更早触发，两者口径必须一致。
 
 其余约束**一条都不放松**：`keep_rounds` / `keep_tail_tokens` 保护窗口、`min_block_tokens`、`min_fold_bytes`、`max_fold_bytes`（单块）、`foldMaxChunksPerEvent=8`、`foldCommits` 单调性、`verifyFold` 结构校验。
 
@@ -229,9 +233,11 @@ hot                                     → 现状（rail 100k）
 
 ---
 
-## 9. 待用户确认
+## 9. 确认项与决定
 
-1. **`cold_rail=60000`** 是否接受（这是唯一凭经验定的数）。
-2. **未知模型放行 + 每会话一次告警**，而不是"未知就拦"——后者会立刻停掉 llmux `ok` 上的折叠。
-3. 胶囊文案改为"重算（含缓存写入）"、缺失样本显示"—"是否接受。
-4. 是否需要把 `ok` 预置进 `prefix_unsafe_models`（取决于 llmux 后端实际模型；本仓库无法判定）。
+用户 2026-11-20 指令「全部都做 你去搞方案」，即批准 A/B/C 三组全部实施；以下四项按此执行：
+
+1. **`cold_rail=60000`** —— 采用。它是唯一凭经验定的数，配置项 `live_compact.cold_rail_tokens` 留了覆盖口。
+2. **未知模型放行 + 每会话一次告警** —— 采用，不改成"未知就拦"；后者会立刻停掉 llmux `ok` 上的折叠。
+3. **胶囊文案** —— 采用："本轮重算（含缓存写入）" / "Rewrite this turn (incl. cache write)"；缺失样本显示"—"，并加一行"N 次折叠没读到用量，未计入重算总量"。
+4. **`ok` 不预置进 `prefix_unsafe_models`** —— 决定不预置。llmux 后端映射到哪个模型本仓库无法判定；预置等于把唯一有真实流量的节点上的折叠直接关掉，而 `prefix_guard` 的未知告警会在日志里先暴露它。等 llmux 侧确认映射后再由运营写配置。

@@ -412,7 +412,7 @@ func TestLiveCompactSharesBodyWithoutRacingTheRewrite(t *testing.T) {
 	// observation actually parses.
 	big := strings.Repeat("a", 8001)
 	body, err := json.Marshal(map[string]any{
-		"model": "test",
+		"model": "claude-sonnet-4-5",
 		"messages": []any{
 			map[string]any{"role": "user", "content": []any{
 				map[string]any{"type": "text", "text": skillPreambleMarker + "\nskill body"},

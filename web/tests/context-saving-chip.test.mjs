@@ -28,6 +28,7 @@ const CONTEXT_SAVING_KEYS = [
   "empty",
   "history",
   "rewriteTotal",
+  "usageMissing",
 ];
 
 test("前后端用同一条路径：会话 context-saving", () => {
@@ -76,7 +77,12 @@ test("折叠的代价与收益并列显示：本轮重算 token 与节省同屏"
   // 只报节省会让人以为折叠免费；rewrite_tokens 是那一请求按 1x 计价的部分。
   assert.match(service, /rewrite_tokens: number;/);
   assert.match(service, /total_rewrite_tokens: number;/);
-  assert.match(indicator, /t\("contextSaving\.badgeRewrite"\),\s*latest\.rewrite_tokens >= 0 \? String\(latest\.rewrite_tokens\) : t\("contextSaving\.unknown"\)/);
+  // 2026-11-20 起「重算」含缓存写入，缺失样本用 usage_source 标明，不再靠负号猜。
+  assert.match(service, /rewrite_tokens: number;/);
+  assert.match(service, /usage_cache_creation: number;/);
+  assert.match(service, /usage_source: "response" \| "missing" \| ""/);
+  assert.match(indicator, /latest\.usage_source === "missing"[\s\S]{0,80}t\("contextSaving\.unknown"\)/);
+  assert.match(indicator, /saving\.usage_missing > 0/);
   assert.match(indicator, /t\("contextSaving\.rewriteTotal", \{ rewrite: String\(saving\.total_rewrite_tokens\) \}\)/);
   // -1 是「这一轮没读到用量」，不能显示成 0 或省略。
   assert.match(indicator, /saving\.total_rewrite_tokens > 0/);

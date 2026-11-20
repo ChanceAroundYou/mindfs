@@ -173,11 +173,12 @@ export const enUSAgents = {
   "contextSaving.badgeSent": "Sent this turn",
   "contextSaving.badgeOriginal": "Request before folding",
   "contextSaving.badgeSaved": "Saved this turn",
-  "contextSaving.badgeRewrite": "Rewrite this turn (1x)",
+  "contextSaving.badgeRewrite": "Rewrite this turn (incl. cache write)",
   "contextSaving.unknown": "unknown",
   "contextSaving.badgeTokens": "Folded tokens (estimated)",
   "contextSaving.badgeFoldMs": "Fold time (ms)",
   "contextSaving.empty": "This conversation has not folded any request yet.",
   "contextSaving.history": "{requests} recent folds, largest saving {max}.",
+  "contextSaving.usageMissing": "{count} folds had no readable usage and are excluded from the rewrite total.",
   "contextSaving.rewriteTotal": "{rewrite} tokens rewritten in total (only folds whose usage was readable).",
 } as const;

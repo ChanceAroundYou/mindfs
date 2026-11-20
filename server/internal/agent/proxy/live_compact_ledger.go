@@ -48,12 +48,30 @@ type LedgerEntry struct {
 	Skipped       int    `json:"skipped"`
 	ArchiveErrors int    `json:"archive_errors"`
 	FoldMS        int64  `json:"fold_ms"`
-	// RewriteTokens is what this fold cost: the fold request's own
-	// input_tokens, i.e. the part of it billed at 1x instead of the 0.1x cache
-	// read. It is only known after the response stream ends. -1 means the turn
-	// ended without a usage sample; 0 is a real full cache hit.
+	// RewriteTokens is what this fold cost: the part of the fold request billed
+	// at full price instead of the 0.1x cache read. That is input_tokens plus
+	// cache_creation_input_tokens — the second term was missing before
+	// 2026-11-20, so rows written earlier under-report and must not be summed
+	// with newer ones as if they measured the same thing. It is only known
+	// after the response stream ends; -1 means the turn ended without a usage
+	// sample (see usage_source, which says so explicitly).
 	RewriteTokens int `json:"rewrite_tokens"`
+	// UsageInput / UsageCacheCreation / UsageCacheRead are the raw counters the
+	// rewrite cost is derived from, kept so the number can be re-derived
+	// without re-reading the response stream.
+	UsageInput         int `json:"usage_input"`
+	UsageCacheCreation int `json:"usage_cache_creation"`
+	UsageCacheRead     int `json:"usage_cache_read"`
+	// UsageSource is "response" when the counters above came from the upstream
+	// usage block and "missing" when the turn ended without one. It replaces
+	// inferring "no sample" from a negative rewrite_tokens.
+	UsageSource string `json:"usage_source"`
 }
+
+const (
+	usageSourceResponse = "response"
+	usageSourceMissing  = "missing"
+)
 
 type ledgerStore struct {
 	dir string
@@ -210,8 +228,13 @@ type ContextSaving struct {
 	MaxSavedBytes int `json:"max_saved_bytes"`
 	// TotalRewriteTokens sums the known rewrite samples: what folding paid
 	// against what it saved. Unknown samples (-1) are excluded.
-	TotalRewriteTokens int           `json:"total_rewrite_tokens"`
-	Recent             []LedgerEntry `json:"recent"`
+	TotalRewriteTokens int `json:"total_rewrite_tokens"`
+	// RewriteSamples counts the known samples the total is made of, so "0 paid"
+	// and "nothing measured" are distinguishable.
+	RewriteSamples int `json:"rewrite_samples"`
+	// UsageMissing counts folded turns whose response carried no usage block.
+	UsageMissing int           `json:"usage_missing"`
+	Recent       []LedgerEntry `json:"recent"`
 }
 
 func summarizeLedger(entries []LedgerEntry) ContextSaving {
@@ -225,8 +248,15 @@ func summarizeLedger(entries []LedgerEntry) ContextSaving {
 		if entry.SavedBytes > summary.MaxSavedBytes {
 			summary.MaxSavedBytes = entry.SavedBytes
 		}
+		// Legacy rows (written before usage_source existed) have an empty
+		// source; they are still counted when their rewrite is known.
+		if entry.UsageSource == usageSourceMissing {
+			summary.UsageMissing++
+			continue
+		}
 		if entry.RewriteTokens >= 0 {
 			summary.TotalRewriteTokens += entry.RewriteTokens
+			summary.RewriteSamples++
 		}
 	}
 	return summary
@@ -277,21 +307,27 @@ func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, total
 		return
 	}
 	rewrite := -1
+	source := usageSourceMissing
 	if totals.Seen {
-		rewrite = totals.InputTokens
+		rewrite = totals.InputTokens + totals.CacheCreationInputTokens
+		source = usageSourceResponse
 	}
 	entry := LedgerEntry{
-		TS:            time.Now().Unix(),
-		Mode:          pending.mode,
-		ReqBytes:      pending.reqBytes,
-		FoldedBytes:   pending.forwardedBytes,
-		SavedBytes:    pending.reqBytes - pending.forwardedBytes,
-		Blocks:        pending.result.foldedBlocks,
-		TokensEst:     pending.result.foldedTokens,
-		Skipped:       pending.result.skipped,
-		ArchiveErrors: pending.result.archiveFailures,
-		FoldMS:        pending.elapsed.Milliseconds(),
-		RewriteTokens: rewrite,
+		TS:                 time.Now().Unix(),
+		Mode:               pending.mode,
+		ReqBytes:           pending.reqBytes,
+		FoldedBytes:        pending.forwardedBytes,
+		SavedBytes:         pending.reqBytes - pending.forwardedBytes,
+		Blocks:             pending.result.foldedBlocks,
+		TokensEst:          pending.result.foldedTokens,
+		Skipped:            pending.result.skipped,
+		ArchiveErrors:      pending.result.archiveFailures,
+		FoldMS:             pending.elapsed.Milliseconds(),
+		RewriteTokens:      rewrite,
+		UsageInput:         totals.InputTokens,
+		UsageCacheCreation: totals.CacheCreationInputTokens,
+		UsageCacheRead:     totals.CacheReadInputTokens,
+		UsageSource:        source,
 	}
 	s.ledger.append(sessionKey, entry)
 }

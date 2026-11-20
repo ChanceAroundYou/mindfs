@@ -491,3 +491,47 @@ latest={saved=235,546 rewrite=36,780 blocks=4}`——B6 的 `rewrite_tokens` 记
 与 §12.9 第 13 项「官方压缩后重新计时」的预期一致。工具本身的失败模式记在这里：一次性列出
 十多个路径的提示词会被子会话当成「上下文不是任务」而完全不读文件（一次读单文件或多句单行
 指令正常），这与产品无关，是 smoke 工具的提示词写法问题。
+
+## Task B7（2026-11-20）：计量口径 / preserved-thinking 前缀闸门 / 冷缓存择时
+
+用户指令「全部都做 你去搞方案」，批准 [设计 §3–§5](../specs/2026-11-20-live-compact-fold-timing-and-accounting-design.md)
+的三组改动。**只改代码与测试，未部署、未重启任何节点。**
+
+**A 计量口径（§3）**：账本行新增 `usage_input` / `usage_cache_creation` / `usage_cache_read` /
+`usage_source`（`response` | `missing`）四个字段；`rewrite_tokens = input + cache_creation`，读不到
+用量时显式写 `usage_source=missing` 而不是静默 `-1`；汇总跳过 missing 行、仍收旧的已知样本，
+并新增 `rewrite_samples` / `usage_missing` 两个计数。前端胶囊并列显示「本轮重算（含缓存写入）」，
+缺失样本显示「—」并列出未计入的折叠条数。
+
+**B preserved-thinking 前缀闸门（§4）**：新增 `live_compact_prefix_guard.go`。Anthropic 的
+preserved-thinking 模型对请求前缀带指纹，「比较的是你发的，不是 Claude 读到的」——代理侧改写
+等于客户端编辑，会让折叠边界之后所有 thinking 块失效。闸门在 planning **之前**运行（shadow
+同样拦，否则预演会写进承诺集）：内置 7 个受影响 family（fable/mythos 5.1–5.2、opus/sonnet/haiku
+5.5）；版本匹配止于短横线（`opus-5` 不匹配 `opus-5-5`）；未知别名（llmux `ok`）**放行**并每会话
+告警一次，运营可用 `prefix_unsafe_models` 显式登记；`prefix_guard=false` 是应急开关。
+
+**C 冷缓存择时（§5）**：新增 `live_compact_cold.go`。折叠唯一的硬成本是作废上游前缀缓存；缓存
+本来就不在时，改写是免费的。三个冷信号：PostCompact 钩子（消费一次）、空闲超过
+`cache_ttl_seconds`(300)、连续两次响应 `cache_read==0 && cache_creation==0` 且上下文
+≥ `cold_rail_tokens`(60000)。冷时用 `projected`（与 rail 同口径）对 `cold_rail` 判，触发后
+只放宽「何时允许提交」，`min_fold_bytes` / `max_fold_bytes` / 保护窗口 / 承诺集单调性全部不变。
+
+**配置**：5 个新键只走 `config.json` 的 `live_compact` 段（`prefix_guard`、`prefix_unsafe_models`、
+`cold_fold`、`cold_rail_tokens`、`cache_ttl_seconds`），没有 CLI flag；三个 bool 用 `*bool`
+区分「未配置=默认开」与显式 `false`。
+
+**验证（2026-11-20）**：新增 25 条用例（用量账本 3 / 前缀闸门 10 / 冷缓存 12），13 处变异各自
+打红后还原——包括「闸门放到 preview 之后」「family 匹配不去边界」「冷折用 est 而非 projected」
+「冷折丢掉 min/max 预算」「PostCompact 不消费」「no-read 一次就算」。`go test -count=1
+./server/internal/agent/proxy/` 绿；全仓 `go test -count=1 ./...` 仅
+`server/internal/api` 的 `TestQueuedMessageRunsAfterTurnEnds` 因 TempDir 清理与后台 goroutine
+竞争偶发红，单测隔离复跑通过，属既有 flaky、与本组无关（该包工作区另有并发会话改动）。
+`gofmt` clean、`go build ./...` 成功、`tsc -b --noEmit` clean、`vitest` 全量唯一红项是
+`web/tests/task-cache-eviction.test.mjs` —— 另一条会话在飞的 ghost-card 改动把
+`taskSyncFilters(meta, force)` 改成了 `authoritative`，与本组无关；本组相关用例
+`context-saving-chip` 9/9 通过。
+
+**上线计划（未执行）**：本机 `make build && make install` → 用户 `sudo systemctl restart mindfs`
+→ 观察 24h（`usage_source=missing` < 5%、`rewrite_tokens` 与 `usg_in/usg_create` 对得上、
+`cold_reason=compact` 每个 epoch 一次、`gate=prefix-guard` 为 0 且每会话一条 warn）→
+`bash scripts/deploy-all.sh` 分发其余三端。急停仍是 `<config-dir>/context/DISABLED`。

@@ -53,6 +53,13 @@ type startupLiveCompactConfig struct {
 	MinFoldBytes     *int `json:"min_fold_bytes"`
 	MaxFoldBytes     *int `json:"max_fold_bytes"`
 	LargeBlockTokens *int `json:"large_block_tokens"`
+	// Prefix guard and cold-cache timing (design 2026-11-20 §4/§5). Pointers so
+	// "absent" keeps the default (both on) instead of reading as false.
+	PrefixGuard        *bool    `json:"prefix_guard"`
+	PrefixUnsafeModels []string `json:"prefix_unsafe_models"`
+	ColdFold           *bool    `json:"cold_fold"`
+	ColdRailTokens     *int     `json:"cold_rail_tokens"`
+	CacheTTLSeconds    *int     `json:"cache_ttl_seconds"`
 }
 
 // startupWorkflowConfig 是工作流执行的节点本地开关。不配置 = 默认值（并行开启）。
@@ -108,17 +115,22 @@ type startupFlags struct {
 
 	WorkflowParallelMainTree *bool
 
-	LiveCompactMode             *string
-	LiveCompactKeepRounds       *int
-	LiveCompactKeepTailTokens   *int
-	LiveCompactMinBlockTokens   *int
-	LiveCompactMinBodyBytes     *int
-	LiveCompactMaxDriftMessages *int
-	LiveCompactRailTokens       *int
-	LiveCompactTargetTokens     *int
-	LiveCompactMinFoldBytes     *int
-	LiveCompactMaxFoldBytes     *int
-	LiveCompactLargeBlockTokens *int
+	LiveCompactMode               *string
+	LiveCompactKeepRounds         *int
+	LiveCompactKeepTailTokens     *int
+	LiveCompactMinBlockTokens     *int
+	LiveCompactMinBodyBytes       *int
+	LiveCompactMaxDriftMessages   *int
+	LiveCompactRailTokens         *int
+	LiveCompactTargetTokens       *int
+	LiveCompactMinFoldBytes       *int
+	LiveCompactMaxFoldBytes       *int
+	LiveCompactLargeBlockTokens   *int
+	LiveCompactPrefixGuard        *bool
+	LiveCompactPrefixUnsafeModels *[]string
+	LiveCompactColdFold           *bool
+	LiveCompactColdRailTokens     *int
+	LiveCompactCacheTTLSeconds    *int
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -247,6 +259,21 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		}
 		if flags.LiveCompactLargeBlockTokens != nil && live.LargeBlockTokens != nil {
 			*flags.LiveCompactLargeBlockTokens = *live.LargeBlockTokens
+		}
+		if flags.LiveCompactPrefixGuard != nil && live.PrefixGuard != nil {
+			*flags.LiveCompactPrefixGuard = *live.PrefixGuard
+		}
+		if flags.LiveCompactPrefixUnsafeModels != nil && live.PrefixUnsafeModels != nil {
+			*flags.LiveCompactPrefixUnsafeModels = live.PrefixUnsafeModels
+		}
+		if flags.LiveCompactColdFold != nil && live.ColdFold != nil {
+			*flags.LiveCompactColdFold = *live.ColdFold
+		}
+		if flags.LiveCompactColdRailTokens != nil && live.ColdRailTokens != nil {
+			*flags.LiveCompactColdRailTokens = *live.ColdRailTokens
+		}
+		if flags.LiveCompactCacheTTLSeconds != nil && live.CacheTTLSeconds != nil {
+			*flags.LiveCompactCacheTTLSeconds = *live.CacheTTLSeconds
 		}
 	}
 	router := cfg.Router

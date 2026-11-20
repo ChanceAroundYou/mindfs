@@ -67,6 +67,13 @@ type PoolOptions struct {
 	// leaves archiving off, which also means mode=on can only observe: every
 	// pointer would name a file that does not exist.
 	LiveCompactArchiveDir string
+	// PrefixGuard is tri-state (nil = on), see proxy.LiveCompactConfig.
+	LiveCompactPrefixGuard        *bool
+	LiveCompactPrefixUnsafeModels []string
+	// ColdFold is tri-state (nil = on), see proxy.LiveCompactConfig.
+	LiveCompactColdFold        *bool
+	LiveCompactColdRailTokens  int
+	LiveCompactCacheTTLSeconds int
 }
 
 // NewPool creates a new agent pool with default options.
@@ -104,6 +111,12 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 		DisableFile:      opts.LiveCompactDisableFile,
 		ArchiveDir:       opts.LiveCompactArchiveDir,
 		ArchiveEnabled:   opts.LiveCompactArchiveDir != "",
+
+		PrefixGuard:        opts.LiveCompactPrefixGuard,
+		PrefixUnsafeModels: opts.LiveCompactPrefixUnsafeModels,
+		ColdFold:           opts.LiveCompactColdFold,
+		ColdRailTokens:     opts.LiveCompactColdRailTokens,
+		CacheTTLSeconds:    opts.LiveCompactCacheTTLSeconds,
 	}); err == nil {
 		p.compactProxy = ps
 		log.Printf("[agent/pool] compact-strip proxy listening on 127.0.0.1:%d live_compact=%s", ps.Port(), ps.LiveCompactMode())

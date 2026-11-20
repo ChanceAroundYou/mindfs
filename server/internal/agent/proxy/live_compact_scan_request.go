@@ -25,6 +25,10 @@ type scanMessage struct {
 
 type scanRequest struct {
 	messages []scanMessage
+	// model is the top-level "model" member, verbatim. Empty when absent or not
+	// a string. It exists for the preserved-thinking prefix guard, which must
+	// refuse to rewrite requests aimed at those models.
+	model string
 }
 
 func scanWireRequest(body []byte) (*scanRequest, error) {
@@ -34,13 +38,25 @@ func scanWireRequest(body []byte) (*scanRequest, error) {
 	}
 	var messagesStart, messagesEnd int
 	found := false
+	model := ""
 	err := scanEachMember(body, open, func(key []byte, vs, ve int) (bool, error) {
-		if memberKeyIs(key, "messages") {
+		switch {
+		case memberKeyIs(key, "messages"):
 			messagesStart, messagesEnd = vs, ve
 			found = true
-			return true, nil
+		case memberKeyIs(key, "model"):
+			// A malformed model value must not abort the scan: the request is
+			// still foldable as long as the prefix guard can see it, and an
+			// unparseable model is handled as unknown by the guard.
+			if vs < ve && body[vs] == '"' {
+				if value, err := jsonStringAt(body, vs, ve); err == nil {
+					model = value
+				}
+			}
 		}
-		return false, nil
+		// Keep scanning until both members are seen; the body puts "model"
+		// near the top today, but nothing guarantees that.
+		return found && model != "", nil
 	})
 	if err != nil {
 		return nil, err
@@ -48,7 +64,7 @@ func scanWireRequest(body []byte) (*scanRequest, error) {
 	if !found || messagesStart >= messagesEnd || body[messagesStart] != '[' {
 		return nil, errScanMalformed
 	}
-	req := &scanRequest{}
+	req := &scanRequest{model: model}
 	err = scanEachElement(body, messagesStart, func(vs, ve int) error {
 		if body[vs] != '{' {
 			// Non-object message: keep the slot so indexes stay aligned with

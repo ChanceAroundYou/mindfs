@@ -34,6 +34,10 @@ const (
 	gateObserveOnly = "observe-only"
 	// gateScanFailed: the request body could not be scanned.
 	gateScanFailed = "scan-failed"
+	// gatePrefixGuard: the request targets a model that runs Anthropic's
+	// preserved-thinking prefix check, where a proxy-side rewrite invalidates
+	// every later thinking block (design 2026-11-20 §4).
+	gatePrefixGuard = "prefix-guard"
 )
 
 // foldContext is what the request path measured before folding.
@@ -54,6 +58,12 @@ type foldContext struct {
 	// yet" and the gate keeps its estimator-only behaviour.
 	actual     int
 	forwardEst int
+	// cold reports that the upstream prompt cache is believed to be already
+	// gone (just compacted, idle past the TTL, or the previous response read
+	// nothing from cache). A fold then costs no cache rewrite, so the rail is
+	// not the right trigger; coldReason names which signal fired.
+	cold       bool
+	coldReason string
 }
 
 // actualScale converts estimator tokens into upstream tokens. A missing or
@@ -89,6 +99,10 @@ type liveCompactGate struct {
 	// reports what was actually folded.
 	wouldFoldTokens int
 	wouldFoldBlocks int
+	// cold / coldReason describe the cache state the decision was taken on, so
+	// a later log reader can tell a rail fold from a free cold fold.
+	cold       bool
+	coldReason string
 }
 
 // foldPreview is what shadow's rehearsal of the rail policy would do.
@@ -110,7 +124,7 @@ type foldPreview struct {
 // real planner by the JSON escaping overhead; the gate decision itself depends
 // only on estimated tokens and eligibility.
 func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *foldCommits, fc foldContext) (foldPreview, liveCompactGate) {
-	gate := liveCompactGate{decision: gateBelowRail, est: fc.est, growth: fc.growth}
+	gate := liveCompactGate{decision: gateBelowRail, est: fc.est, growth: fc.growth, cold: fc.cold, coldReason: fc.coldReason}
 	if fc.est <= 0 {
 		gate.decision = gateUnmeasured
 	}
@@ -221,7 +235,7 @@ type foldBudget struct {
 // from dsh's cutLongReadRound, plan.js:519-525).
 func decideFoldBudget(cfg LiveCompactConfig, fc foldContext, current int, largeBlock bool) (foldBudget, liveCompactGate) {
 	num, den := fc.actualScale()
-	gate := liveCompactGate{est: fc.est, growth: fc.growth}
+	gate := liveCompactGate{est: fc.est, growth: fc.growth, cold: fc.cold, coldReason: fc.coldReason}
 	if fc.est <= 0 || cfg.RailTokens <= 0 {
 		gate.decision = gateUnmeasured
 		return foldBudget{commitNew: true}, gate
@@ -234,6 +248,18 @@ func decideFoldBudget(cfg LiveCompactConfig, fc foldContext, current int, largeB
 	projected := current + fc.growth*num/den
 	gate.projected = projected
 	if largeBlock || projected > cfg.RailTokens {
+		gate.decision = gateFold
+		return foldBudget{
+			commitNew:   true,
+			minNewBytes: cfg.MinFoldBytes,
+			maxNewBytes: cfg.MaxFoldBytes,
+		}, gate
+	}
+	// A cold cache makes the fold free, so the rail — which exists only to make
+	// the rewrite pay for itself — is the wrong trigger. The cold rail still
+	// requires enough context for folding to buy anything at all, and every
+	// other constraint (protected tail, block floor, chunk budget) is unchanged.
+	if cfg.ColdFoldOn() && fc.cold && projected >= cfg.ColdRailTokens {
 		gate.decision = gateFold
 		return foldBudget{
 			commitNew:   true,

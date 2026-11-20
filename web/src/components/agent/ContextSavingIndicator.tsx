@@ -32,7 +32,9 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         [t("contextSaving.badgeSaved"), formatBytes(latest.saved_bytes)],
         [
           t("contextSaving.badgeRewrite"),
-          latest.rewrite_tokens >= 0 ? String(latest.rewrite_tokens) : t("contextSaving.unknown"),
+          latest.usage_source === "missing" || latest.rewrite_tokens < 0
+            ? t("contextSaving.unknown")
+            : String(latest.rewrite_tokens),
         ],
         [t("contextSaving.badgeTokens"), String(latest.tokens_est)],
         [t("contextSaving.badgeFoldMs"), String(latest.fold_ms)],
@@ -93,6 +95,11 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         {saving && saving.requests > 0 ? (
           <div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
             {t("contextSaving.history", { requests: saving.requests, max: formatBytes(saving.max_saved_bytes) })}
+          </div>
+        ) : null}
+        {saving && saving.usage_missing > 0 ? (
+          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
+            {t("contextSaving.usageMissing", { count: String(saving.usage_missing) })}
           </div>
         ) : null}
         {saving && saving.total_rewrite_tokens > 0 ? (

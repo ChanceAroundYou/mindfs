@@ -14,10 +14,18 @@ export type ContextSavingEntry = {
   archive_errors: number;
   fold_ms: number;
   /**
-   * The fold request's own input_tokens: the part of it billed at 1x instead of
-   * the 0.1x cache read. -1 means the turn ended without a usage sample.
+   * What the fold request paid at full price instead of the 0.1x cache read:
+   * input_tokens plus cache_creation_input_tokens. Rows written before
+   * 2026-11-20 counted only input_tokens, so their numbers are smaller than the
+   * same event would report today. -1 means the turn ended without a usage
+   * sample (see usage_source).
    */
   rewrite_tokens: number;
+  usage_input: number;
+  usage_cache_creation: number;
+  usage_cache_read: number;
+  /** "response" when the counters came from the upstream usage block. */
+  usage_source: "response" | "missing" | "";
 };
 
 /**
@@ -32,6 +40,10 @@ export type SessionContextSaving = {
   max_saved_bytes: number;
   /** Sum of the known rewrite samples; unknown ones are excluded. */
   total_rewrite_tokens: number;
+  /** Number of known samples the total is made of. */
+  rewrite_samples: number;
+  /** Folded turns whose response carried no usage block. */
+  usage_missing: number;
   recent: ContextSavingEntry[] | null;
 };
 

@@ -82,6 +82,13 @@ type StartOptions struct {
 	LiveCompactDisableFile string
 	// LiveCompactArchiveDir 是折叠存档根；空值 = <config-dir>/context。
 	LiveCompactArchiveDir string
+	// LiveCompactPrefixGuard 是 preserved-thinking 前缀闸门；nil = 开。
+	LiveCompactPrefixGuard        *bool
+	LiveCompactPrefixUnsafeModels []string
+	// LiveCompactColdFold 是冷缓存择时折叠；nil = 开。
+	LiveCompactColdFold        *bool
+	LiveCompactColdRailTokens  int
+	LiveCompactCacheTTLSeconds int
 }
 
 // taskConfig 是新任务派发的默认 Agent/模型。它是节点本地配置，不进控制面：
@@ -197,19 +204,24 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		liveCompactDisableFile = filepath.Join(liveCompactArchiveDir, "DISABLED")
 	}
 	sharedPool := agent.NewPoolWithOptions(agentConfig, agent.PoolOptions{
-		LiveCompactMode:             opts.LiveCompactMode,
-		LiveCompactKeepRounds:       opts.LiveCompactKeepRounds,
-		LiveCompactKeepTailTokens:   opts.LiveCompactKeepTailTokens,
-		LiveCompactMinBlockTokens:   opts.LiveCompactMinBlockTokens,
-		LiveCompactMinBodyBytes:     opts.LiveCompactMinBodyBytes,
-		LiveCompactMaxDriftMessages: opts.LiveCompactMaxDriftMessages,
-		LiveCompactRailTokens:       opts.LiveCompactRailTokens,
-		LiveCompactTargetTokens:     opts.LiveCompactTargetTokens,
-		LiveCompactMinFoldBytes:     opts.LiveCompactMinFoldBytes,
-		LiveCompactMaxFoldBytes:     opts.LiveCompactMaxFoldBytes,
-		LiveCompactLargeBlockTokens: opts.LiveCompactLargeBlockTokens,
-		LiveCompactDisableFile:      liveCompactDisableFile,
-		LiveCompactArchiveDir:       liveCompactArchiveDir,
+		LiveCompactMode:               opts.LiveCompactMode,
+		LiveCompactKeepRounds:         opts.LiveCompactKeepRounds,
+		LiveCompactKeepTailTokens:     opts.LiveCompactKeepTailTokens,
+		LiveCompactMinBlockTokens:     opts.LiveCompactMinBlockTokens,
+		LiveCompactMinBodyBytes:       opts.LiveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages:   opts.LiveCompactMaxDriftMessages,
+		LiveCompactRailTokens:         opts.LiveCompactRailTokens,
+		LiveCompactTargetTokens:       opts.LiveCompactTargetTokens,
+		LiveCompactMinFoldBytes:       opts.LiveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:       opts.LiveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens:   opts.LiveCompactLargeBlockTokens,
+		LiveCompactDisableFile:        liveCompactDisableFile,
+		LiveCompactArchiveDir:         liveCompactArchiveDir,
+		LiveCompactPrefixGuard:        opts.LiveCompactPrefixGuard,
+		LiveCompactPrefixUnsafeModels: opts.LiveCompactPrefixUnsafeModels,
+		LiveCompactColdFold:           opts.LiveCompactColdFold,
+		LiveCompactColdRailTokens:     opts.LiveCompactColdRailTokens,
+		LiveCompactCacheTTLSeconds:    opts.LiveCompactCacheTTLSeconds,
 	})
 	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
 	sharedProber.Start(ctx)
