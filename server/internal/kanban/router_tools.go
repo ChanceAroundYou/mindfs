@@ -81,7 +81,7 @@ type routerToolEnv struct {
 }
 
 func (e *routerToolEnv) tools() []RouterToolSpec {
-	return []RouterToolSpec{
+	tools := []RouterToolSpec{
 		e.inspectRunTool(),
 		e.readSessionTool(),
 		e.sayTool(),
@@ -92,6 +92,8 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.deliverTool(),
 		e.answerTool(),
 	}
+	// 监管工具只在带 supervision 块的事件回合出现（S1/S2）。
+	return append(tools, e.supervisionTools()...)
 }
 
 func (e *routerToolEnv) inspectRunTool() RouterToolSpec {
@@ -452,6 +454,9 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			}
 		case RouterActionSuggestFinish:
 			// P2 only; accepted here so the enum remains forward-compatible.
+		case RouterActionRetryNode, RouterActionNotifyUser:
+			// 细节（可重试性、预算、节点归属）在 validateSupervisionActions 里，
+			// 它需要 config 里的预算值。
 		default:
 			return fmt.Errorf("invalid action kind %q", action.Kind)
 		}
@@ -464,6 +469,9 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 	}
 	if executions > 1 {
 		return errors.New("at most one execution action per turn")
+	}
+	if err := validateSupervisionActions(brief, actions, config); err != nil {
+		return err
 	}
 	if brief != nil && brief.ActiveExecution != nil {
 		for _, action := range actions {

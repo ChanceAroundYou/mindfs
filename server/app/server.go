@@ -55,6 +55,11 @@ type StartOptions struct {
 	RouterTurnTimeout time.Duration
 	RouterIdleClose   time.Duration
 	RouterRoots       map[string]string
+	// RouterSupervision* 是主动监管的开关与预算（config.json 的 router.supervision）。
+	// 空模式 = off；预算 <=0 由 kanban 归一化成默认值。
+	RouterSupervisionMode              string
+	RouterSupervisionMaxRetriesPerNode int
+	RouterSupervisionMaxActionsPerHour int
 	// TaskAgent / TaskModel 是新任务派发的默认 Agent 与模型（节点本地
 	// config.json 的 task 段）。空值 = 内建 claude + sonnet，见
 	// taskConfigFromOptions。
@@ -129,6 +134,11 @@ func routerConfigFromOptions(opts StartOptions) kanban.RouterConfig {
 		TurnTimeout: opts.RouterTurnTimeout,
 		IdleClose:   opts.RouterIdleClose,
 		RootModes:   roots,
+		Supervision: kanban.RouterSupervisionConfig{
+			Mode:              kanban.RouterSupervisionMode(opts.RouterSupervisionMode),
+			MaxRetriesPerNode: opts.RouterSupervisionMaxRetriesPerNode,
+			MaxActionsPerHour: opts.RouterSupervisionMaxActionsPerHour,
+		},
 	}.Normalized()
 }
 

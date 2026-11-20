@@ -54,6 +54,7 @@ func main() {
 	liveCompactCacheTTLSeconds := 0
 	// 任务派发默认 Agent/模型，只走 config.json（task 段），没有 CLI flag。
 	taskAgent, taskModel := "", ""
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions := "", 0, 0
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -96,43 +97,47 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions = routerSupervision(startupCfg)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	if err := app.Start(ctx, *addr, app.StartOptions{
-		Version:                       version,
-		Args:                          os.Args[1:],
-		AgentConfigPath:               *agentConfigFlag,
-		WebPushEnabled:                *webPushFlag,
-		NotifyScript:                  *notifyScriptFlag,
-		Role:                          *roleFlag,
-		RouterMode:                    *routerModeFlag,
-		RouterAgent:                   *routerAgentFlag,
-		RouterModel:                   *routerModelFlag,
-		RouterEffort:                  *routerEffortFlag,
-		RouterTurnTimeout:             *routerTurnTimeoutFlag,
-		RouterIdleClose:               *routerIdleCloseFlag,
-		RouterRoots:                   routerRoots(startupCfg),
-		TaskAgent:                     taskAgent,
-		TaskModel:                     taskModel,
-		WorkflowParallelMainTree:      *workflowParallelMainTreeFlag,
-		LiveCompactMode:               *liveCompactModeFlag,
-		LiveCompactKeepRounds:         *liveCompactKeepRoundsFlag,
-		LiveCompactKeepTailTokens:     liveCompactKeepTailTokens,
-		LiveCompactMinBlockTokens:     *liveCompactMinBlockTokensFlag,
-		LiveCompactMinBodyBytes:       liveCompactMinBodyBytes,
-		LiveCompactMaxDriftMessages:   liveCompactMaxDriftMessages,
-		LiveCompactRailTokens:         liveCompactRailTokens,
-		LiveCompactTargetTokens:       liveCompactTargetTokens,
-		LiveCompactMinFoldBytes:       liveCompactMinFoldBytes,
-		LiveCompactMaxFoldBytes:       liveCompactMaxFoldBytes,
-		LiveCompactLargeBlockTokens:   liveCompactLargeBlockTokens,
-		LiveCompactPrefixGuard:        &liveCompactPrefixGuard,
-		LiveCompactPrefixUnsafeModels: liveCompactPrefixUnsafeModels,
-		LiveCompactColdFold:           &liveCompactColdFold,
-		LiveCompactColdRailTokens:     liveCompactColdRailTokens,
-		LiveCompactCacheTTLSeconds:    liveCompactCacheTTLSeconds,
+		Version:                            version,
+		Args:                               os.Args[1:],
+		AgentConfigPath:                    *agentConfigFlag,
+		WebPushEnabled:                     *webPushFlag,
+		NotifyScript:                       *notifyScriptFlag,
+		Role:                               *roleFlag,
+		RouterMode:                         *routerModeFlag,
+		RouterAgent:                        *routerAgentFlag,
+		RouterModel:                        *routerModelFlag,
+		RouterEffort:                       *routerEffortFlag,
+		RouterTurnTimeout:                  *routerTurnTimeoutFlag,
+		RouterIdleClose:                    *routerIdleCloseFlag,
+		RouterRoots:                        routerRoots(startupCfg),
+		RouterSupervisionMode:              routerSupervisionMode,
+		RouterSupervisionMaxRetriesPerNode: routerSupervisionRetries,
+		RouterSupervisionMaxActionsPerHour: routerSupervisionActions,
+		TaskAgent:                          taskAgent,
+		TaskModel:                          taskModel,
+		WorkflowParallelMainTree:           *workflowParallelMainTreeFlag,
+		LiveCompactMode:                    *liveCompactModeFlag,
+		LiveCompactKeepRounds:              *liveCompactKeepRoundsFlag,
+		LiveCompactKeepTailTokens:          liveCompactKeepTailTokens,
+		LiveCompactMinBlockTokens:          *liveCompactMinBlockTokensFlag,
+		LiveCompactMinBodyBytes:            liveCompactMinBodyBytes,
+		LiveCompactMaxDriftMessages:        liveCompactMaxDriftMessages,
+		LiveCompactRailTokens:              liveCompactRailTokens,
+		LiveCompactTargetTokens:            liveCompactTargetTokens,
+		LiveCompactMinFoldBytes:            liveCompactMinFoldBytes,
+		LiveCompactMaxFoldBytes:            liveCompactMaxFoldBytes,
+		LiveCompactLargeBlockTokens:        liveCompactLargeBlockTokens,
+		LiveCompactPrefixGuard:             &liveCompactPrefixGuard,
+		LiveCompactPrefixUnsafeModels:      liveCompactPrefixUnsafeModels,
+		LiveCompactColdFold:                &liveCompactColdFold,
+		LiveCompactColdRailTokens:          liveCompactColdRailTokens,
+		LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -196,6 +201,14 @@ type startupRouterConfig struct {
 	TurnTimeout *string           `json:"turn_timeout"`
 	IdleClose   *string           `json:"idle_close"`
 	Roots       map[string]string `json:"roots"`
+	// Supervision 是主动监管（S0 观测 / S1 影子 / S2 有限执行）。只走 config.json。
+	Supervision *startupRouterSupervisionConfig `json:"supervision"`
+}
+
+type startupRouterSupervisionConfig struct {
+	Mode              *string `json:"mode"`
+	MaxRetriesPerNode *int    `json:"max_retries_per_node"`
+	MaxActionsPerHour *int    `json:"max_actions_per_hour"`
 }
 
 type startupFlags struct {
@@ -415,6 +428,24 @@ func parseStartupDuration(field string, value *string) (*time.Duration, error) {
 		return nil, fmt.Errorf("config %s=%q: %w", field, text, err)
 	}
 	return &parsed, nil
+}
+
+// routerSupervision 解出 config.json 的 router.supervision 段；缺省空值 = off。
+func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxActionsPerHour int) {
+	if cfg.Router == nil || cfg.Router.Supervision == nil {
+		return "", 0, 0
+	}
+	sup := cfg.Router.Supervision
+	if sup.Mode != nil {
+		mode = strings.TrimSpace(*sup.Mode)
+	}
+	if sup.MaxRetriesPerNode != nil {
+		maxRetriesPerNode = *sup.MaxRetriesPerNode
+	}
+	if sup.MaxActionsPerHour != nil {
+		maxActionsPerHour = *sup.MaxActionsPerHour
+	}
+	return mode, maxRetriesPerNode, maxActionsPerHour
 }
 
 func routerRoots(cfg startupConfig) map[string]string {

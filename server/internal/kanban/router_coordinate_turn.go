@@ -269,7 +269,8 @@ func (rs *RouterService) replayCoordinateEventDecision(ctx context.Context, deci
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, reason)
 		return true, false
 	case RouterDecisionShadow:
-		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "shadow decision cannot be applied")
+		// 监管影子回合的汇报类动作已应用、监管动作只记录：重放时按已完成收尾。
+		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventDone, "supervision_shadow")
 		return true, false
 	case RouterDecisionSkipped, RouterDecisionBypassed:
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "decision was "+string(decision.Status))
@@ -338,6 +339,11 @@ func (rs *RouterService) finishCoordinateEventTurn(
 			log.Printf("[router/coordinate] decision.update.error id=%s err=%v", decision.ID, updateErr)
 		}
 		rs.recordSession(ctx, config, promptHash, decision.TaskID, decision.RootID, result, RouterSessionActive, "")
+		if isSupervisionBudgetError(validationErr) {
+			// 预算用尽不是模型犯错：停手、告知用户、把任务放回待审核。
+			rs.stopSupervisionForUser(ctx, decision, event.ID, errText)
+			return
+		}
 		rs.failCoordinateEventTurn(ctx, decision, RouterDecisionRejected, event.ID, errText)
 		return
 	}
@@ -347,10 +353,28 @@ func (rs *RouterService) finishCoordinateEventTurn(
 	}
 	rs.recordSession(ctx, config, promptHash, decision.TaskID, decision.RootID, result, RouterSessionActive, "")
 	rs.broadcast(decision)
-	if err := rs.applyRoute(ctx, decision); err != nil {
+	// 影子模式：汇报类动作照常应用，监管写入只留在决策里（status=shadow）。
+	applicable, shadowed := supervisionActionSplit(config.Supervision.Normalized().Mode, actions)
+	applyDecision := decision
+	if len(shadowed) > 0 {
+		clone := *decision
+		clone.Actions = applicable
+		applyDecision = &clone
+	}
+	if err := rs.applyRoute(ctx, applyDecision); err != nil {
 		log.Printf("[router/coordinate] decision.apply.error id=%s task=%s err=%v", decision.ID, decision.TaskID, err)
 		_ = rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionFailed, err.Error())
 		rs.failCoordinateEventTurn(ctx, decision, RouterDecisionFailed, event.ID, err.Error())
+		return
+	}
+	if len(shadowed) > 0 {
+		if err := rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionShadow, "supervision actions recorded in shadow mode"); err != nil {
+			log.Printf("[router/coordinate] decision.status.error id=%s err=%v", decision.ID, err)
+		}
+		decision.Status = RouterDecisionShadow
+		decision.Error = ""
+		rs.broadcast(decision)
+		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventDone, "supervision_shadow")
 		return
 	}
 	if err := rs.store.MarkDecisionStatus(ctx, decision.ID, RouterDecisionApplied, ""); err != nil {
@@ -391,12 +415,18 @@ func (rs *RouterService) completeCoordinatedEvent(ctx context.Context, eventID, 
 	}
 }
 
-// validateRuntimeEventActions 是运行期白名单：只允许汇报类动作。只读工具（如
-// router_inspect_run）不在 actions 里，保持可用。
-func validateRuntimeEventActions(_ *SituationBrief, actions []RouterAction, _ RouterConfig) error {
+// validateRuntimeEventActions 是运行期白名单：只允许汇报类动作与监管写入。
+// 只读工具（如 router_inspect_run）不在 actions 里，保持可用。
+func validateRuntimeEventActions(brief *SituationBrief, actions []RouterAction, _ RouterConfig) error {
 	for _, action := range actions {
 		switch action.Kind {
 		case RouterActionSay, RouterActionAskUser, RouterActionSilent:
+			continue
+		case RouterActionRetryNode, RouterActionNotifyUser:
+			// 监管动作的可用性绑定在观测块上：没有观测就不该出现这个动作。
+			if brief == nil || brief.Supervision == nil {
+				return fmt.Errorf("%s requires a supervision block", action.Kind)
+			}
 			continue
 		default:
 			return fmt.Errorf("%s is not allowed for runtime event turns", action.Kind)

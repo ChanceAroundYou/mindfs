@@ -54,6 +54,8 @@ var routerEventBriefPayloadKeys = []string{
 var routerEventBriefProducerKeys = []string{
 	"nodes", "nodes_truncated", "workflow_id", "revision",
 	"started_at", "open_node_runs", "resumed", "unknown",
+	// 主动监管的水位块由生产端写进载荷，事件回合原样挂回 brief.Supervision。
+	"supervision",
 }
 
 // routerEventBriefControlledKey 判断该键是否由生产端受控写入（白名单或摘要）。

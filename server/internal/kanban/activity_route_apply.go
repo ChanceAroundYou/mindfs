@@ -151,6 +151,10 @@ func (s *ActivityService) applyRouteAction(
 		return s.applyRouteAnswerWaiting(ctx, decision, task, userAct, state, action)
 	case RouterActionSilent:
 		return s.hideRouteActivity(ctx, state, nil, "silent")
+	case RouterActionRetryNode:
+		return s.applyRouteRetryNode(ctx, decision, action)
+	case RouterActionNotifyUser:
+		return s.applyRouteNotifyUser(ctx, decision, task, action)
 	default:
 		return fmt.Errorf("unsupported action %q", action.Kind)
 	}

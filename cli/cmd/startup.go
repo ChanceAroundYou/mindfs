@@ -85,6 +85,16 @@ type startupRouterConfig struct {
 	TurnTimeout *string           `json:"turn_timeout"`
 	IdleClose   *string           `json:"idle_close"`
 	Roots       map[string]string `json:"roots"`
+	// Supervision 是主动监管（S0 观测 / S1 影子 / S2 有限执行）。只走 config.json：
+	// 预算是节点本地的部署事实，不做命令行 flag。
+	Supervision *startupRouterSupervisionConfig `json:"supervision"`
+}
+
+// startupRouterSupervisionConfig 的零值 = off + 默认预算（由 kanban 归一化兜底）。
+type startupRouterSupervisionConfig struct {
+	Mode              *string `json:"mode"`
+	MaxRetriesPerNode *int    `json:"max_retries_per_node"`
+	MaxActionsPerHour *int    `json:"max_actions_per_hour"`
 }
 
 // startupFlags 收拢 applyStartupConfig 的操作对象。之前是 11 个位置参数，
@@ -335,6 +345,25 @@ func parseStartupDuration(field string, value *string) (*time.Duration, error) {
 		return nil, fmt.Errorf("config %s=%q: %w", field, text, err)
 	}
 	return &parsed, nil
+}
+
+// routerSupervision 解出 config.json 的 router.supervision 段。缺省返回空值，
+// 由 app/kanban 归一化成 off + 默认预算（2 次重试/节点、6 个动作/小时）。
+func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxActionsPerHour int) {
+	if cfg.Router == nil || cfg.Router.Supervision == nil {
+		return "", 0, 0
+	}
+	sup := cfg.Router.Supervision
+	if sup.Mode != nil {
+		mode = strings.TrimSpace(*sup.Mode)
+	}
+	if sup.MaxRetriesPerNode != nil {
+		maxRetriesPerNode = *sup.MaxRetriesPerNode
+	}
+	if sup.MaxActionsPerHour != nil {
+		maxActionsPerHour = *sup.MaxActionsPerHour
+	}
+	return mode, maxRetriesPerNode, maxActionsPerHour
 }
 
 // routerRoots 把 config.json 的 roots 覆盖表原样交给 app 归一化。

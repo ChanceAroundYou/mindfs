@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Situation Brief 是 Router 一轮能看到的世界摘要。它是**快照**：shadow 模式必须
@@ -44,6 +45,9 @@ type SituationBrief struct {
 	Event    *RouterBriefEvent    `json:"event,omitempty"`
 	Evidence *RouterBriefEvidence `json:"evidence,omitempty"`
 	Budget   *RouterBriefBudget   `json:"budget,omitempty"`
+	// Supervision 是主动监管的水位快照（事件生产时写入 payload，事件回合
+	// 原样挂回 brief）。nil = 这个回合没有监管能力，工具也不会暴露。
+	Supervision *SupervisionObservation `json:"supervision,omitempty"`
 }
 
 type RouterBriefTask struct {
@@ -154,6 +158,16 @@ func (rs *RouterService) turnBrief(ctx context.Context, taskID string, trigger R
 	if trigger.Event != nil {
 		if err := attachRouterEventBrief(ctx, store, brief, *trigger.Event); err != nil {
 			return nil, fmt.Errorf("attach event brief: %w", err)
+		}
+		// 主动监管：决策时重算水位，而不是复用事件生产时写下的快照 —— 预算
+		// （每节点已用重试、最近一小时动作数）必须是最新的，否则同一轮里连发的
+		// 两个事件会各自看到「还有余额」。
+		if config.Supervision.Normalized().Mode != RouterSupervisionOff && strings.TrimSpace(trigger.Event.RunID) != "" {
+			if run, runErr := store.WorkflowRunByID(ctx, trigger.Event.RunID); runErr == nil && run != nil {
+				if task, taskErr := store.GetTask(ctx, trigger.Event.TaskID); taskErr == nil {
+					brief.Supervision = rs.service.supervisionObservation(ctx, store, task, run, time.Now().UTC())
+				}
+			}
 		}
 		brief = capSituationBrief(brief)
 	}

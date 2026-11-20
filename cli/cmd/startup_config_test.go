@@ -172,6 +172,30 @@ func TestRouterConfigFromFileAndFlagPrecedence(t *testing.T) {
 	}
 }
 
+// 主动监管只走 config.json（预算属于节点本地部署事实），缺省 = off + 空预算，
+// 由 app 归一化成默认值。
+func TestRouterSupervisionConfigFromFile(t *testing.T) {
+	writeConfig(t, `{"router":{"mode":"coordinate","supervision":{"mode":"shadow","max_retries_per_node":3,"max_actions_per_hour":4}}}`)
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, retries, actions := routerSupervision(cfg)
+	if mode != "shadow" || retries != 3 || actions != 4 {
+		t.Fatalf("supervision 未透传：mode=%q retries=%d actions=%d", mode, retries, actions)
+	}
+
+	writeConfig(t, `{"router":{"mode":"coordinate"}}`)
+	cfg, err = loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, retries, actions = routerSupervision(cfg)
+	if mode != "" || retries != 0 || actions != 0 {
+		t.Fatalf("未配置 supervision 应保持空值：mode=%q retries=%d actions=%d", mode, retries, actions)
+	}
+}
+
 // 共享主树并行：默认由 flag 的默认值（true）决定，config.json 可以收回串行；
 // 显式 flag 永远胜出。
 func TestWorkflowParallelMainTreeConfigPrecedence(t *testing.T) {

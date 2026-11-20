@@ -267,6 +267,15 @@ func (s *Service) insertRouterEventForRun(ctx context.Context, store *TaskStore,
 	for key, value := range extra {
 		payload[key] = value
 	}
+	// S0 主动监管：失败/停摆事件额外带一份水位观测（模式、open/failed 节点、预算余额）。
+	// off 时完全不改 payload，与既有事件逐字节一致。
+	if kind == RouterEventRunFailed || kind == RouterEventRunStalled {
+		if _, exists := payload["supervision"]; !exists {
+			if obs := s.supervisionObservation(ctx, store, task, run, now); obs != nil {
+				payload["supervision"] = obs
+			}
+		}
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return RouterEvent{}, false, fmt.Errorf("marshal router event %s payload: %w", kind, err)

@@ -48,6 +48,8 @@ type RouterConfig struct {
 	MaxBytes    int
 	// RootModes 按 root ID 覆盖全局 Mode。root ID 是项目 basename，跨节点稳定。
 	RootModes map[string]RouterMode
+	// Supervision 是主动监管开关与预算（S0 观测 / S1 影子 / S2 有限执行）。
+	Supervision RouterSupervisionConfig
 }
 
 // Normalized 把所有空串/未知值收敛成可执行语义：
@@ -92,6 +94,7 @@ func (c RouterConfig) Normalized() RouterConfig {
 	} else {
 		c.RootModes = nil
 	}
+	c.Supervision = c.Supervision.Normalized()
 	return c
 }
 
@@ -189,6 +192,10 @@ const (
 	RouterActionDeliver       RouterActionKind = "deliver_to_active_run"
 	RouterActionAnswerWaiting RouterActionKind = "answer_waiting_node"
 	RouterActionSuggestFinish RouterActionKind = "suggest_finish" // P2
+	// 主动监管（S1/S2）：重试一个已判定为「可重试」的失败节点，或把情况
+	// 直接告诉用户。两者都只在带 supervision 块的事件回合可用。
+	RouterActionRetryNode  RouterActionKind = "retry_node"
+	RouterActionNotifyUser RouterActionKind = "notify_user"
 )
 
 // run_workflow 的会话模式（2026-11-20 用户决策）：默认新开一段会话；
@@ -208,8 +215,8 @@ type RouterAction struct {
 	Question   string           `json:"question,omitempty"`
 	Options    []string         `json:"options,omitempty"`
 	RunID      string           `json:"run_id,omitempty"`
-	// NodeRunID 是 answer_waiting_node 的目标：工具在当轮就把它解析成具体行，
-	// apply 阶段不再重新判定「哪个节点在等我答复」。
+	// NodeRunID 是 answer_waiting_node / retry_node 的目标：工具在当轮就把它
+	// 解析成具体行，apply 阶段不再重新判定「哪个节点在等我答复 / 该重试哪一行」。
 	NodeRunID string `json:"node_run_id,omitempty"`
 	// SessionMode 只对 run_workflow 有意义：new（默认）= 这一轮开一段新会话，
 	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。

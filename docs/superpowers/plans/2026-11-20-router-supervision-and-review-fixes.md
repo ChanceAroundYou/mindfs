@@ -167,3 +167,49 @@ already_escalated       // 本 attempt 是否已升级过
 - **S0 观测**：`SupervisionObservation`（开放节点水位、空闲秒数、会话是否在回复、attempt/已用重试、失败分类、预算余额）挂到 `run_failed` / `run_stalled` 事件 payload 的 `supervision` 块；配置 `router.supervision.{mode,max_retries_per_node,max_actions_per_hour}`（默认 off）。零模型调用。
 - **S1 影子**：`mode=shadow` 时新动作只落 `router_decisions`（status=shadow），事件标 done + reason=supervision_shadow，不产生任何副作用。
 - **S2 有限执行**：`mode=on` 放开 `retry_node`（走 `Service.CreateWorkflowNodeAttempt`，reason=supervisor_retry）、`notify_user`（可见系统行）、`silent`；预算与幂等在水位哈希上做；失败分类为「不确定」的一律只 `notify_user`。
+
+### B10 S0–S2 执行记录（2026-11-20，已实现，默认关）
+
+**实现形态**
+
+- **配置**：`router.supervision.{mode,max_retries_per_node,max_actions_per_hour}`，只走 `config.json`
+  （`cli/cmd/startup.go`、`cli/cmd/mindfs.go`、`server/cmd/mindfs-server/main.go`、
+  `server/app/server.go`）。缺省空值归一化为 `off` + 2 次/6 个动作；未知 mode 也归一化成 `off`。
+  不写这段配置时整条链路与改动前逐字节等价。
+- **S0 观测**（`router_supervision.go`）：`supervisionObservation` 纯读任务库 + 会话活水位，
+  产出 `SupervisionObservation{mode, run_id, task_id, open_nodes, actions_last_hour,
+  failed_nodes[{node_id,node_run_id,status,attempt,failure_kind,summary,retries_used}]}`；
+  失败分级 `retryable`（超时/流断/429/5xx/overloaded）、`non_retryable`（invalid/unauthorized/
+  校验/合并冲突/not found/cancelled）、`uncertain`（`worktree_error` 或 `unknown` 状态）。
+  `router_event_sources.go` 在 `run_failed` / `run_stalled` 事件 payload 里挂 `supervision` 块
+  （已登记为 event-brief 的 producer key，不会被当成未知键截断；payload 不含 output/session/git/transcript）。
+- **S1 影子**：`router_tools.go` 只在 brief 带 `Supervision`（mode != off）的事件回合追加
+  `router_retry_node` / `router_notify_user`；`validateSupervisionActions` 与 on 同一套证据与预算校验；
+  `router_coordinate_turn.go` 用 `supervisionActionSplit` 把监管动作从 apply 集合里摘出，
+  决策标 `shadow`、事件 `done` reason `supervision_shadow`，零副作用。重放的 shadow 决策同样
+  以 `done` 收尾，不会变成 failed。
+- **S2 有限执行**：`mode=on` 时监管动作照常 apply —— `retry_node` 经端口
+  `ActivityNodeRetrier` → `Service.RetryFailedWorkflowNode`（`CreateWorkflowNodeAttempt`，
+  账本 reason 固定 `supervisor_retry`；下一次 attempt 已存在时幂等返回同一行）；
+  `notify_user` 落一条 `Role=system` 的可见活动，effect ID 为
+  `route-notify:<decision>:<seq>` + `InsertOrIgnore`，重放不会写第二条。
+  预算用尽抛 `*supervisionBudgetError`（与校验错误分开）：`stopSupervisionForUser` 把决策标
+  rejected、写一条可见系统说明、任务放回 `waiting_user`、事件 `done` reason
+  `supervision_budget_exhausted`。Router 不自动 cancel_run。
+- **水位新鲜度**：`turnBrief` 在决策时重算 `supervisionObservation`（不复用事件生产时的快照），
+  否则同一轮连发的两个事件会各自看到「还有余额」。
+
+**验证**
+
+- 新增 7 条行为用例 `router_supervision_actions_test.go`：影子零副作用且决策状态为 shadow /
+  on 重试失败节点（attempt+1、`PrevAttemptID`、账本 reason、任务回 running）/ uncertain 拒绝重试 /
+  预算耗尽停 `waiting_user` 并写系统说明 / notify_user 幂等（重放仍一条）/ 重试幂等（一行账本）/
+  监管工具只在带 supervision 的事件回合暴露。S0 另有 4 条用例在 `router_supervision_test.go`
+  （配置归一化、观测内容、payload 块、shadow 模式）。
+- 7 处变异各自打红后还原：去重试幂等检查、无条件暴露监管工具、影子模式照常 apply、
+  允许重试 uncertain、关掉两条预算判断、notify effect ID 改随机、`turnBrief` 不重算观测。
+- 门禁：`go test ./server/internal/kanban/ -count=1` 全绿（196.7s，重跑一次因既有 sqlite
+  readonly flake）。`go build ./server/...` 当前被另一条会话在飞的 `agent/fold/anthropic`
+  挡住（与本组无关），本组只依赖 kanban 包。
+- **未部署、未重启任何节点**；`router.supervision.mode` 缺省 `off`，部署了也不改变行为。
+- **S3（直连回合监管）未实现**，按 B8 第 4 条等后续授权。
