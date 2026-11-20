@@ -2,7 +2,8 @@
 
 - 日期：2026-11-20
 - 状态：两轮均已实现、门禁绿、已推送 origin main（`ea896ab2`、`ddbf7238`、`53e38632`、
-  `7df7279a`）；第二轮隔离验收（端口 7438，真实模型）全部通过；部署中
+  `7df7279a`、`191e1124`）；第二轮隔离验收（端口 7438，真实模型）全部通过；已部署四端
+  `v0.5.5-1200-43-g191e1124`（本机二进制已装，待用户重启 system 单元）
 - 上游：无（Router 与工作流运行时是本 fork 自有能力）
 - 定制登记：`Scope: G-NJ`
 - 上游计划：[Router 收尾死锁](2026-11-19-router-settled-run-livelock.md)（同一条闸门的上一轮修复）
@@ -160,6 +161,21 @@ Router 侧的「自己管理任务」现有能力：`inspect_run`（投影 + 节
 - 证据文件：`/tmp/mindfs-r2-iso/result.json`、`/tmp/mindfs-r2-iso/result-gate.json`
   （脚本 `result.json` 由 `/tmp/r2_accept.py` 产出；两个脚本都在 /tmp，不入库 ——
   它们依赖本机隔离账户与端口，而行为本身已被 20 条单测钉住）。
+
+### 部署（2026-11-20，用户裁定 ⑤「可以部署」）
+
+共享工作区里有其他会话在飞的未提交改动，所以部署从 `/tmp/mindfs-deploy-gnj`（只含已提交
+状态 `191e1124` 的克隆，origin 指 GitHub，`web/node_modules` 软链）跑
+`bash scripts/deploy-all.sh`，退出码 0：
+
+- 门禁：`go test ./...` 全绿、`tsc --noEmit` clean、Vitest 760 通过；
+- 推送 `7df7279a..191e1124` 到 origin `main`；
+- 四端 `v0.5.5-1200-43-g191e1124` 逐字一致 —— WSL / fn `systemctl --user is-active` = `active`
+  且 `/mindfs/health` 200；pc-win `mindfs.exe` PID 13236（Session 0，计划任务启动）+
+  `/mindfs/health` 200 `{"ok":true,"role":"worker"}`；
+- 本机 `make build && make install` 已装（md5 `e2f7933…`），运行中的 `/proc/3222145/exe`
+  仍指向已删除的旧二进制 —— **待用户 `sudo systemctl restart mindfs`**；本机静态资源对账一致
+  （`assets/index-CEZQJY_u.js`）。
 
 ## 残留与待裁定
 
