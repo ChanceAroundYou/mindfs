@@ -64,6 +64,7 @@ export function MultiProjectSessionList({
     groupDefaultExpanded,
     groupScopeKey,
     buildRows,
+    toggleTaskGroup,
     handleChildToggle,
     collapseChild,
     loadingChildren,
@@ -199,6 +200,9 @@ export function MultiProjectSessionList({
                             key={`task-group-${group.rootId}-${row.taskId}`}
                             taskId={row.taskId}
                             label={row.label}
+                            number={row.number}
+                            expanded={row.expanded}
+                            onToggle={() => toggleTaskGroup(row.taskId)}
                           />
                         );
                       }

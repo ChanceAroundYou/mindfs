@@ -228,3 +228,69 @@ func keysOf(items []*Session) []string {
 	}
 	return out
 }
+
+// 侧栏按任务分组靠这个计数，而不是靠「这一页恰好装了几条」：多项目侧栏每根只取
+// 6 条，同一任务的会话很容易只有一条落在窗口里，分组就会时有时无。
+// 口径与前端分组一致：顶层、未归档、非 router 会话。
+func TestListReportsTaskSessionCount(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	now := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	manager := NewManager(root, WithClock(func() time.Time { return now }))
+	ctx := context.Background()
+
+	mk := func(taskID, parentKey string) *Session {
+		t.Helper()
+		created, err := manager.Create(ctx, CreateInput{
+			Type:             TypeChat,
+			Name:             "会话",
+			TaskID:           taskID,
+			ParentSessionKey: parentKey,
+		})
+		if err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+		return created
+	}
+
+	first := mk("task_a", "")
+	second := mk("task_a", "")
+	// 子会话带同一个 task_id 也不算「一条顶层会话」——分组只收顶层。
+	mk("task_a", first.Key)
+	archived := mk("task_a", "")
+	if _, err := manager.SetArchived(ctx, archived.Key, true); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	solo := mk("task_b", "")
+	mk("", "")
+
+	items, err := manager.List(ctx, ListOptions{TopLevelOnly: true, Limit: 1})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("list len = %d, want 1", len(items))
+	}
+	if items[0].TaskSessionCount != 2 {
+		t.Fatalf("TaskSessionCount = %d, want 2（只数顶层未归档的同一任务会话）", items[0].TaskSessionCount)
+	}
+
+	all, err := manager.List(ctx, ListOptions{})
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	byKey := make(map[string]*Session, len(all))
+	for _, item := range all {
+		byKey[item.Key] = item
+	}
+	if got := byKey[second.Key].TaskSessionCount; got != 2 {
+		t.Fatalf("second member count = %d, want 2", got)
+	}
+	if got := byKey[solo.Key].TaskSessionCount; got != 1 {
+		t.Fatalf("solo task count = %d, want 1", got)
+	}
+	for _, item := range all {
+		if item.TaskID == "" && item.TaskSessionCount != 0 {
+			t.Fatalf("session without task got count %d, want 0", item.TaskSessionCount)
+		}
+	}
+}

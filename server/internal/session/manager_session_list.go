@@ -196,7 +196,7 @@ func (m *Manager) fillSessionBindingsUnsafe(items []*Session) error {
 }
 
 func (m *Manager) listSessionsUnsafe(opts ListOptions) ([]*Session, error) {
-	query := selectSessionSQL
+	query := selectSessionListSQL
 	where, args := sessionListWhere(opts)
 	if len(where) > 0 {
 		query += `
@@ -209,7 +209,47 @@ ORDER BY updated_at DESC`
 LIMIT ?`
 		args = append(args, opts.Limit)
 	}
-	return m.querySessionMetasUnsafe(query, args)
+	return m.querySessionListUnsafe(query, args)
+}
+
+// querySessionListUnsafe 与 querySessionMetasUnsafe 同源，只多读列表查询追加的
+// task_session_count 列（见 selectSessionListSQL）。
+func (m *Manager) querySessionListUnsafe(query string, args []any) ([]*Session, error) {
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*Session, 0)
+	for rows.Next() {
+		var taskSessionCount int
+		item, err := scanSessionMetaRow(rows, &taskSessionCount)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		item.TaskSessionCount = taskSessionCount
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(items) > 0 {
+		if err := m.fillSessionBindingsUnsafe(items); err != nil {
+			return nil, err
+		}
+		if err := m.applySessionNameAliasesUnsafe(items); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 func (m *Manager) countSessionsUnsafe(opts ListOptions) (int, error) {

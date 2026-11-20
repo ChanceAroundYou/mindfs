@@ -55,7 +55,7 @@
 
 - 没有迁移任何存量会话结构：分组纯展示，会话归属、`parent_session_key`、JSONL 一律不动（用户选方案 A）。
 - 存量散落会话不会被自动合并成一条；新一轮 Run 起才按 `run` 策略共用会话。
-- 未做前端「任务分组折叠」（分组常显，成员始终可见）。
+- 未做前端「任务分组折叠」的持久化：默认收起、点分组头展开（选中项所在组自动展开），但不记「展开过哪一组」的偏好。
 - 只装到本机，未部署 WSL/fn/pc-win；本机 system 单元重启仍只由用户执行（前端 bundle 装完刷新页面即生效，后端会话策略要重启才生效）。
 
 ## 显示样式修正（2026-11-20，用户逐条确认「全部确认 按你建议」）
@@ -72,3 +72,19 @@
 安装：`make build-web` 后按 `make install` 的静态资源语义把 `web/dist` 覆盖进 `~/.local/share/mindfs/web/`（未重编二进制 —— 本次只动前端，避免把并行会话的在飞改动编进去）；线上 7331 `GET /mindfs/` 200 且 index 已指向新 bundle `assets/index-WeZGkol4.js`，刷新即生效。未部署 WSL/fn/pc-win。
 
 提交与门禁：显示修正 `8974505c`（Scope: G-NG），登记锚点 `/why` 更新 `620e0806`（Scope: G-NG、G-MV）。干净 worktree（`620e0806`）`make check-upstream` 通过：2057 delta / 335 组全绿；共享工作区当前红在 G-MZ，是另一条会话在飞的 `router_brief.go` 改动，不属于本次变更。
+
+## 第二轮用户反馈（2026-11-20，五条逐项）
+
+用户原话五条：「1. 现在显示的是『对话命名问题 # task_270967ce0da8157』2. 左侧的 icon 也要更有语义感一点 且跟随主题色 3. 具体任务子会话前面的『#91 ·』也去掉吧。4. 现在两套显示在跳来跳去，一刷新就变成旧的了 5. 默认不展开会话 除非点击进去，和子会话的展开一个逻辑」。第 4 条追问后确认：刷新后「分组整个消失，会话平铺」，客户端是桌面端 PWA。
+
+1. **任务号不再拿 `task_id` 充数**：`taskSessionGroupHeading(label, number, fallback)` 只接任务号；任务号由 `taskSessionGroupNumber(sessions)` 从会话名里的 `/#(\d+)` 取（后端 `TaskSessionName(name, taskNumber)` 拼的就是看板上的数字号）。共享 Run 会话名（`任务名 · 摘要`）里没有任务号 → 宁可不显示，也不显示哈希。
+2. **分组图标跟随主题色**：`TaskSessionGroupHeader` 换成两层叠放的卡片轮廓（语义：一组会话），颜色 `var(--accent-color)`，18px 图标位与 `SessionCardIcon` 对齐。
+3. **成员名连任务号一起剥**：`taskSessionMemberLabel` 在剥掉共享前缀后再剥 `#\d+ ·` —— `任务名 / #91 · run · 摘要` → `run · 摘要`，`任务名 / #91 · 摘要` → `摘要`。任务号已经在分组头上。
+4. **分组时有时无（刷新后平铺）**：根因是阈值只看「这一页装了几条」。多项目侧栏每根只取 6 条（`multiRootSessionLimit`），实测线上任务 #91 的 4 条顶层会话在 `limit_per_root=6` 只回来 1 条、`limit_per_root=50` 回来 4 条 —— 同一份数据在单项目面板成组、在多项目面板平铺，刷新/切视图就是「两套显示跳来跳去」。修法：后端列表查询下发 `task_session_count`（`selectSessionListSQL` 的相关子查询：同一 `task_id`、顶层、未归档、非 router），前端阈值取 `Math.max(本页成员数, task_session_count)`。该列只在列表查询里算；单条读取/广播恒 0，**为 0 时不下发这个键**（下发 0 会让前端把「不知道」当成「确认只有一条」）。没有该字段（旧后端）时退回按本页成员数判，行为与改动前一致。
+5. **默认收起**：`expandedTaskGroups` 默认空（全收起），分组头是 `<button aria-expanded>`，点一下切换；选中的会话在组内时由 `taskGroupShowsMembers` 强制展开（否则点进一条会话它自己从列表里消失）。
+
+验证：`web/tests/session-task-group.test.mjs` 12 条（新增「任务还有别的会话没装进这一页时也要成组」「任务号从会话名里取，不拿 task_id 充数」「任务分组默认收起，点开才展开，选中项所在组自动展开」并更新文案/成员名断言）；`server/internal/session` 的 `TestListReportsTaskSessionCount`（task_a：2 顶层 + 1 子会话 + 1 归档 → 2；单条任务 → 1；无任务 → 0）与 `server/internal/api` 的 `TestSessionListResponseCarriesTaskSessionCount`（0 时不下发键）。变异验证：把阈值改回 `members.length`、把「0 时不下发」改成无条件下发，对应用例分别打红后还原。
+
+门禁：`go test -count=1 ./...` 全绿、`go build ./server/...` clean、gofmt 干净；web 248 文件 / 758 通过 / 6 跳过、`tsc -b --noEmit` clean。
+
+安装：前端从 **HEAD + 本次前端改动的隔离 worktree**（`/tmp/mindfs-webbuild`，`node_modules` 软链回主仓）构建，避免把其他并行会话在飞的 `WorkflowDraftEditor` / `DefaultListView` 改动编进产物；按 `make install` 的静态资源语义覆盖 `~/.local/share/mindfs/web/`。线上 7331 与 `https://home.xiaokubao.space/mindfs/` 均已指向 `assets/index-9hzYg2VF.js`（200）。**后端 `task_session_count` 要重启本机 system 单元才生效 —— 只由用户执行 `sudo systemctl restart mindfs`**；重启前前端按旧行为（本页成员数）判阈值，不会出回归。

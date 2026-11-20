@@ -171,6 +171,7 @@ export function useMultiProjectSessionList({
   const { loadingChildren, childrenHasMore } = childTree;
   const buildRows = (items: SessionItem[], rootId: string, nodeId = "") =>
     childTree.buildRows(items, { rootId, nodeId });
+  const toggleTaskGroup = (taskId: string) => childTree.toggleTaskGroup(taskId);
   const handleChildToggle = (
     row: Extract<VisibleSessionRow, { type: "child-toggle" }>,
     items: SessionItem[],
@@ -232,6 +233,7 @@ export function useMultiProjectSessionList({
     groupDefaultExpanded,
     groupScopeKey,
     buildRows,
+    toggleTaskGroup,
     handleChildToggle,
     expandedChildren,
     collapseChild,

@@ -137,7 +137,7 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
+func scanSessionMetaRow(scanner rowScanner, extra ...any) (*Session, error) {
 	var (
 		key                 string
 		typ                 string
@@ -164,7 +164,7 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		updatedAtRaw        string
 		closedAtRaw         sql.NullString
 	)
-	if err := scanner.Scan(
+	if err := scanner.Scan(append([]any{
 		&key,
 		&typ,
 		&parentSessionKey,
@@ -189,7 +189,7 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		&createdAtRaw,
 		&updatedAtRaw,
 		&closedAtRaw,
-	); err != nil {
+	}, extra...)...); err != nil {
 		return nil, err
 	}
 	session := &Session{

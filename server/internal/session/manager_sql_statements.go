@@ -13,8 +13,23 @@ const (
 	maxExchangeLineBytes = 64 << 20
 	// CUSTOM(G-X): 不再 SELECT/写入 pinned_at —— 置顶的唯一权威是主节点的 pins 表
 	// （server/internal/pins）。两处一起断：只断一半会留下「写进去但读不回」的假退役。
-	selectSessionSQL = `
-	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, work_dir, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
+	sessionMetaColumns = `key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, work_dir, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at`
+	selectSessionSQL   = `
+	SELECT ` + sessionMetaColumns + `
+	FROM sessions`
+	// selectSessionListSQL 只给列表入口用：多带一列「同一任务下还有多少条顶层会话」。
+	// 侧栏按任务分组要靠它，而不是靠**这一页恰好装了几条** —— 多项目侧栏每根只取
+	// 6 条，同一任务的会话很容易只有一条落在窗口里，分组就会时有时无
+	// （用户 2026-11-20 报「刷新后分组整个消失」）。子查询与分组口径一致：
+	// 顶层、未归档、非 router 会话。
+	selectSessionListSQL = `
+	SELECT ` + sessionMetaColumns + `,
+		(SELECT COUNT(*) FROM sessions AS siblings
+			WHERE siblings.task_id <> ''
+				AND siblings.task_id = sessions.task_id
+				AND siblings.parent_session_key = ''
+				AND siblings.archived_at IS NULL
+				AND siblings.type <> '` + TypeRouter + `') AS task_session_count
 	FROM sessions`
 	deleteSessionSQL = `
 DELETE FROM sessions

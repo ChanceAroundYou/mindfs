@@ -13,6 +13,9 @@ export type SessionItem = {
   parent_tool_call_id?: string;
   source?: string;
   task_id?: string;
+  /** 同一任务下的顶层会话数（后端列表查询下发）。分组靠它而不是靠当前这一页
+   *  恰好装了几条 —— 多项目侧栏每根只取 6 条，任务成员很容易只落在窗口外。 */
+  task_session_count?: number;
   agent?: string;
   shell?: string;
   name?: string;
@@ -76,9 +79,10 @@ export type VisibleSessionRow =
   // 不改 isSubagent —— 分组里的会话仍然是普通会话，顶部徽标照常显示。
   // stripNamePrefix：成员名里与分组头重复的共享前缀，渲染时剥掉。
   | { type: "session"; session: SessionItem; nested?: boolean; stripNamePrefix?: string }
-  // task-group：按 task_id 分组的说明行，成员紧随其后。它不是可点元素，
-  // 入口仍是下面每一张会话卡。
-  | { type: "task-group"; taskId: string; label: string }
+  // task-group：按 task_id 分组的容器行，成员紧随其后。默认折叠
+  // （2026-11-20 用户决策：和子会话的展开一个逻辑），点这一行切换；
+  // expanded 由 useSessionChildTree 决定 —— 选中的会话在组内时自动展开。
+  | { type: "task-group"; taskId: string; label: string; number: string; expanded: boolean }
   | {
       type: "child-toggle";
       parent: SessionItem;

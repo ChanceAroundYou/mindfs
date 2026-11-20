@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { pruneChildState } from "../../shared/sessionTree";
 import { COLLAPSED_CHILD_SESSION_LIMIT, parseForkSessionSource } from "./sessionListShared";
-import { orderTaskGroupedRows } from "./sessionTaskGroups";
+import { orderTaskGroupedRows, taskGroupShowsMembers } from "./sessionTaskGroups";
 import type { SessionItem, VisibleSessionRow } from "./sessionListTypes";
 
 type Scope = { rootId?: string; nodeId?: string };
@@ -27,6 +27,10 @@ export function useSessionChildTree({
   onLoadChildren?: LoadChildren;
 }) {
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>(() => initialExpandedChildren);
+  // 任务分组默认折叠（2026-11-20 用户决策：和子会话的展开一个逻辑）。
+  // 用「显式展开集合」而不是「显式收起集合」：默认态就是没有键，列表重排、
+  // 新任务出现都不会把用户的意图带偏。
+  const [expandedTaskGroups, setExpandedTaskGroups] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
   const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
@@ -93,14 +97,33 @@ export function useSessionChildTree({
     // 任务分组（2026-11-20 用户决策）：同一 task_id 下的顶层会话先出分组头，
     // 成员紧随其后并缩进一级，且剥掉与分组头重复的共享前缀。分组只在有多条
     // 会话时出现，单条会话的展示不变。
+    // 折叠（同日第二次决策）：默认收起，点分组头展开；选中的会话在组内时
+    // 强制展开 —— 否则「点进一条会话」会让它自己从列表里消失。
+    const membersByTask = new Map<string, SessionItem[]>();
+    for (const item of topLevel) {
+      const taskId = String(item.task_id || "").trim();
+      if (!taskId) continue;
+      const members = membersByTask.get(taskId) || [];
+      members.push(item);
+      membersByTask.set(taskId, members);
+    }
+    const hiddenTaskIds = new Set<string>();
     for (const entry of orderTaskGroupedRows(topLevel)) {
       if (entry.kind === "group") {
-        rows.push({ type: "task-group", taskId: entry.taskId, label: entry.label });
+        const members = membersByTask.get(entry.taskId) || [];
+        const expanded = taskGroupShowsMembers(expandedTaskGroups, entry.taskId, members, selectedKey);
+        if (!expanded) hiddenTaskIds.add(entry.taskId);
+        rows.push({ type: "task-group", taskId: entry.taskId, label: entry.label, number: entry.number, expanded });
         continue;
       }
+      if (entry.taskId && hiddenTaskIds.has(entry.taskId)) continue;
       append(entry.session, entry.nested, entry.groupLabel);
     }
     return rows;
+  };
+
+  const toggleTaskGroup = (taskId: string) => {
+    setExpandedTaskGroups((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
   };
 
   const loadChildren = async (parent: SessionItem, scope: Scope = {}, beforeTime?: string) => {
@@ -137,5 +160,5 @@ export function useSessionChildTree({
     setExpandedChildren((prev) => ({ ...prev, [key]: false }));
   };
 
-  return { buildRows, toggleChild, collapseChild, expandedChildren, loadingChildren, childrenHasMore, stateKey, setExpandedChildren };
+  return { buildRows, toggleChild, collapseChild, toggleTaskGroup, expandedChildren, expandedTaskGroups, loadingChildren, childrenHasMore, stateKey, setExpandedChildren };
 }

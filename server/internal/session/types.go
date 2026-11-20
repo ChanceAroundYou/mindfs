@@ -25,12 +25,16 @@ const (
 )
 
 type Session struct {
-	Key              string           `json:"key"`
-	Type             string           `json:"type"`
-	ParentSessionKey string           `json:"parent_session_key,omitempty"`
-	ParentToolCallID string           `json:"parent_tool_call_id,omitempty"`
-	Source           string           `json:"source,omitempty"`
-	TaskID           string           `json:"task_id,omitempty"`
+	Key              string `json:"key"`
+	Type             string `json:"type"`
+	ParentSessionKey string `json:"parent_session_key,omitempty"`
+	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+	Source           string `json:"source,omitempty"`
+	TaskID           string `json:"task_id,omitempty"`
+	// TaskSessionCount 只在列表查询里填充：同一任务下还有多少条顶层会话
+	// （顶层、未归档、非 router，与侧栏分组口径一致）。侧栏靠它决定分组，
+	// 而不是靠当前这一页恰好装了几条。不落库。
+	TaskSessionCount int              `json:"task_session_count,omitempty"`
 	AgentCtxSeq      map[string]int   `json:"agent_ctx_seq,omitempty"`
 	Model            string           `json:"model,omitempty"`
 	Shell            string           `json:"shell,omitempty"`

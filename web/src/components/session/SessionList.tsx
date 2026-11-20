@@ -300,6 +300,9 @@ export function SessionList({
                     key={`task-group-${row.taskId}`}
                     taskId={row.taskId}
                     label={row.label}
+                    number={row.number}
+                    expanded={row.expanded}
+                    onToggle={() => childTree.toggleTaskGroup(row.taskId)}
                   />
                 );
               }

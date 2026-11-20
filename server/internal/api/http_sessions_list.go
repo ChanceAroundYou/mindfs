@@ -337,7 +337,7 @@ func sessionListResponse(s *session.Session, resolvedShell string) map[string]an
 	if s == nil {
 		return map[string]any{}
 	}
-	return map[string]any{
+	item := map[string]any{
 		"key":                 s.Key,
 		"type":                s.Type,
 		"parent_session_key":  s.ParentSessionKey,
@@ -363,4 +363,12 @@ func sessionListResponse(s *session.Session, resolvedShell string) map[string]an
 		"updated_at":          s.UpdatedAt,
 		"closed_at":           s.ClosedAt,
 	}
+	// 同一任务下的顶层会话数（只有列表查询会算，单条读取恒为 0）。侧栏按任务分组
+	// 靠它而不是靠当前这一页恰好装了几条 —— 多项目侧栏每根只取 6 条，同一任务的
+	// 会话常常只落在窗口外一条。为 0 时**不下发这个键**：广播/详情路径拿不到计数，
+	// 下发 0 只会让前端把「不知道」当成「确认只有一条」。
+	if s.TaskSessionCount > 0 {
+		item["task_session_count"] = s.TaskSessionCount
+	}
+	return item
 }

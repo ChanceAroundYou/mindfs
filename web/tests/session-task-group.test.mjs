@@ -5,8 +5,10 @@ import { test } from "vitest";
 
 import {
   orderTaskGroupedRows,
+  taskGroupShowsMembers,
   taskSessionGroupHeading,
   taskSessionGroupLabel,
+  taskSessionGroupNumber,
   taskSessionMemberLabel,
 } from "../src/components/session/sessionTaskGroups.ts";
 import {
@@ -33,7 +35,13 @@ test("同任务的顶层会话收成一组并保留原有相对顺序", () => {
     "分组出现在第一个成员的位置，成员连续排布其余顺序不变",
   );
   assert.equal(rows[0].label, "任务 A");
+  assert.equal(rows[0].number, "", "这些会话名里没有任务号，就不显示任务号（不拿 task_id 充数）");
   assert.equal(rows[0].count, undefined, "分组头不再带成员计数（成员本身就是计数）");
+  const numbered = orderTaskGroupedRows([
+    session("c1", { task_id: "task-c", name: "重构看板 / #91 · run · 一" }),
+    session("c2", { task_id: "task-c", name: "重构看板 / #91 · test · 二" }),
+  ]);
+  assert.equal(numbered[0].number, "91", "任务号从会话名里取");
   assert.deepEqual(
     rows.filter((row) => row.kind === "session" && row.nested).map((row) => row.groupLabel),
     ["任务 A", "任务 A"],
@@ -52,6 +60,22 @@ test("只有一个会话的任务与空 task_id 都不分组", () => {
   assert.ok(rows.every((row) => row.kind === "session" && row.nested === false));
 });
 
+// 「这一页只有一条成员」不等于「这个任务只有一条会话」：多项目侧栏每根只取 6 条，
+// 用户 2026-11-20 报「刷新后分组整个消失」。后端下发的 task_session_count 决定分组。
+test("任务还有别的会话没装进这一页时也要成组", () => {
+  const rows = orderTaskGroupedRows([
+    session("a1", { task_id: "task-a", name: "重构看板 / #91 · run · 一", task_session_count: 4 }),
+    session("b1", { task_id: "task-b", name: "另一个任务 / #12 · run · 一", task_session_count: 1 }),
+  ]);
+  assert.deepEqual(
+    rows.map((row) => (row.kind === "group" ? `group:${row.taskId}` : `-${row.session.key}`)),
+    ["group:task-a", "-a1", "-b1"],
+    "任务 a 已知有 4 条会话，窗口里只有 1 条也成组；任务 b 只有 1 条，平铺",
+  );
+  assert.equal(rows[0].number, "91");
+  assert.equal(rows[2].nested, false);
+});
+
 test("分组头剥回任务称呼：共享会话名与节点会话名都认", () => {
   assert.equal(taskSessionGroupLabel([session("x", { name: "重构看板 · 把归档做完" })]), "重构看板");
   assert.equal(taskSessionGroupLabel([session("x", { name: "重构看板 / #7 · 把归档做完" })]), "重构看板");
@@ -59,10 +83,18 @@ test("分组头剥回任务称呼：共享会话名与节点会话名都认", ()
   assert.equal(taskSessionGroupLabel([session("x", {})]), "");
 });
 
+// 任务号取会话名里的 `/#91`（后端 TaskSessionName 拼的是看板上的数字号），
+// 绝不显示 task_id 那串哈希 —— 用户 2026-11-20 看到「# task_270967ce0da8157」。
+test("任务号从会话名里取，不拿 task_id 充数", () => {
+  assert.equal(taskSessionGroupNumber([session("x", { name: "对话命名问题 / #91 · 实现" })]), "91");
+  assert.equal(taskSessionGroupNumber([session("x", { name: "对话命名问题 · 摘要" })]), "", "run 共享会话名里没有任务号");
+  assert.equal(taskSessionGroupNumber([session("x", {}), session("y", { name: "任务 B / #12 · 实现" })]), "12");
+});
+
 test("分组头文案 = 任务名 + 任务号，和会话名同一行字", () => {
   assert.equal(taskSessionGroupHeading("对话命名问题", "91", "任务会话"), "对话命名问题 # 91");
   assert.equal(taskSessionGroupHeading("", "91", "任务会话"), "任务会话 # 91");
-  assert.equal(taskSessionGroupHeading("对话命名问题", "", "任务会话"), "对话命名问题");
+  assert.equal(taskSessionGroupHeading("对话命名问题", "", "任务会话"), "对话命名问题", "没有任务号时只显示任务名");
 
   const header = read("components/session/TaskSessionGroupHeader.tsx");
   assert.match(header, /taskSessionGroupHeading\(/, "分组头必须走同一套文案函数");
@@ -70,15 +102,32 @@ test("分组头文案 = 任务名 + 任务号，和会话名同一行字", () =>
   assert.match(header, /fontWeight: 500/, "字重与未选中的会话行一致");
   assert.doesNotMatch(header, /count/, "分组头不再渲染成员计数");
   assert.match(header, /data-task-group=/, "分组头的定位属性保持不变");
+  assert.match(header, /var\(--accent-color\)/, "分组图标跟随主题色");
+  assert.match(header, /aria-expanded=\{expanded\}/, "分组头是展开/收起的开关");
 });
 
-test("成员名剥掉分组头的共享前缀，保留区分点", () => {
+test("成员名剥掉分组头的共享前缀，连任务号一起剥", () => {
   assert.equal(taskSessionMemberLabel("对话命名问题 · 把任务改成对话式", "对话命名问题"), "把任务改成对话式");
-  assert.equal(taskSessionMemberLabel("对话命名问题 / #7 · 把任务改成对话式", "对话命名问题"), "#7 · 把任务改成对话式");
+  assert.equal(taskSessionMemberLabel("对话命名问题 / #91 · 把任务改成对话式", "对话命名问题"), "把任务改成对话式");
+  assert.equal(taskSessionMemberLabel("对话命名问题 / #91 · run · 把任务改成对话式", "对话命名问题"), "run · 把任务改成对话式", "节点名是组内区分点，保留");
   assert.equal(taskSessionMemberLabel("对话命名问题", "对话命名问题"), "对话命名问题", "只剩任务名时原样返回，不渲染空名");
   assert.equal(taskSessionMemberLabel("改过名的一条", "对话命名问题"), "改过名的一条", "改过名的会话不按前缀硬切");
   assert.equal(taskSessionMemberLabel("对话命名问题续篇 · 另一轮", "对话命名问题"), "对话命名问题续篇 · 另一轮", "前缀必须在词边界上");
   assert.equal(taskSessionMemberLabel("任务 A · 一", ""), "任务 A · 一", "没有分组头时不做任何裁剪");
+});
+
+// 2026-11-20 用户决策：默认收起，点分组头才展开；选中的会话在组内时自动展开。
+test("任务分组默认收起，点开才展开，选中项所在组自动展开", () => {
+  const members = [session("a1", { task_id: "task-a" }), session("a2", { task_id: "task-a" })];
+  assert.equal(taskGroupShowsMembers({}, "task-a", members, ""), false, "默认不展开");
+  assert.equal(taskGroupShowsMembers({ "task-a": true }, "task-a", members, ""), true, "点开后展开");
+  assert.equal(taskGroupShowsMembers({}, "task-a", members, "a2"), true, "选中的会话在组内时必须展开");
+  assert.equal(taskGroupShowsMembers({}, "task-a", members, "other"), false, "选中别的会话不影响本组");
+
+  const hook = read("components/session/useSessionChildTree.ts");
+  assert.match(hook, /taskGroupShowsMembers\(expandedTaskGroups/, "折叠判据必须走同一套纯函数");
+  assert.match(hook, /hiddenTaskIds\.add\(entry\.taskId\)/, "收起时成员行不进入行序列");
+  assert.match(hook, /const toggleTaskGroup = \(taskId: string\)/, "分组头必须能切换展开");
 });
 
 test("两条侧栏都渲染分组头，并把 nested 交给会话卡", () => {
@@ -87,6 +136,9 @@ test("两条侧栏都渲染分组头，并把 nested 交给会话卡", () => {
   for (const [name, source] of [["SessionList", single], ["MultiProjectSessionList", multi]]) {
     assert.match(source, /row\.type === "task-group"/, `${name} must branch on task-group rows`);
     assert.match(source, /<TaskSessionGroupHeader/, `${name} must render the group header`);
+    assert.match(source, /number=\{row\.number\}/, `${name} must pass the task number`);
+    assert.match(source, /expanded=\{row\.expanded\}/, `${name} must pass the collapsed state`);
+    assert.match(source, /onToggle=/, `${name} must let the header toggle`);
     assert.match(source, /nested=\{row\.nested\}/, `${name} must indent grouped sessions`);
     assert.match(source, /stripNamePrefix=\{row\.stripNamePrefix\}/, `${name} must strip the shared task prefix`);
   }

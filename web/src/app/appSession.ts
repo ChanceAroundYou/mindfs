@@ -234,15 +234,13 @@ export function toSessionItem(
     name: typeof session?.name === "string" ? session.name : "",
     type: normalizeMode(session?.type),
     parent_session_key:
-      typeof session?.parent_session_key === "string"
-        ? session.parent_session_key
-        : undefined,
+      typeof session?.parent_session_key === "string" ? session.parent_session_key : undefined,
     parent_tool_call_id:
-      typeof session?.parent_tool_call_id === "string"
-        ? session.parent_tool_call_id
-        : undefined,
+      typeof session?.parent_tool_call_id === "string" ? session.parent_tool_call_id : undefined,
     source: typeof session?.source === "string" ? session.source : undefined,
     task_id: typeof session?.task_id === "string" ? session.task_id : undefined,
+    // 后端列表查询下发：同一任务的顶层会话数，侧栏分组靠它判「是否真的只有一条」。
+    task_session_count: typeof session?.task_session_count === "number" && session.task_session_count > 0 ? session.task_session_count : undefined,
     agent:
       typeof session?.agent === "string" && session.agent.trim()
         ? session.agent
