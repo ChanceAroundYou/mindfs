@@ -87,11 +87,7 @@ func (s *Service) ForkSession(ctx context.Context, in ForkSessionInput) (ForkSes
 		if !ok {
 			return ForkSessionOutput{}, errors.New("agent does not support fork point resolution")
 		}
-		forkPoint, err = resolver.ResolveForkPointByAgentTurnIndex(ctx, agenttypes.ResolveForkPointInput{
-			RootPath:       root.RootPath,
-			AgentSessionID: binding.AgentSessionID,
-			AgentTurnIndex: agentTurnIndex,
-		})
+		forkPoint, err = resolver.ResolveForkPointByAgentTurnIndex(ctx, forkResolveInput(root.RootPath, binding.AgentSessionID, agentTurnIndex, target))
 		if err != nil {
 			return ForkSessionOutput{}, err
 		}

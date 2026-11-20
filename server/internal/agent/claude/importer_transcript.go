@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -242,4 +243,62 @@ func readClaudeImportedExchangeLocators(path string, committedOffset int64, boot
 		filtered = append(filtered, item)
 	}
 	return filtered, committed, nil
+}
+
+// errClaudeForkMessageBeforeTimestamp 表示转录里没有时间戳不晚于目标时间的助手条目。
+var errClaudeForkMessageBeforeTimestamp = errors.New("no assistant message at or before target timestamp")
+
+// findClaudeMessageUUIDAtOrBefore 返回转录里时间戳不晚于 at 的**最后一条**助手条目 uuid。
+//
+// 为什么 fork 定位不能只按 buildImportedTurns 的下标：那个切分是给「导入展示」用的，
+// 相邻助手条目会被合并（中间的用户条目如果是 CLI 注入的就会被丢掉），而同一条助手消息
+// 还可能被 CLI 重放成两个 uuid。MindFS 侧却是一轮一行，两边序号在长会话里必然漂移
+// （实测 2026-11-20 llmux 会话 seq=362：MindFS 168 轮、转录 145 turn）。
+// 时间戳两侧都有：live 行的落盘时间实测恒不早于该轮最后一条助手条目（145/145）。
+func findClaudeMessageUUIDAtOrBefore(path string, at time.Time) (string, error) {
+	if at.IsZero() {
+		return "", errClaudeForkMessageBeforeTimestamp
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", apperr.Wrap("open", path, err)
+	}
+	defer file.Close()
+
+	uuid := ""
+	err = forEachJSONLLine(file, func(_ int64, line string) error {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return nil
+		}
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			return nil
+		}
+		if strings.ToLower(strings.TrimSpace(asString(raw["type"]))) != "assistant" {
+			return nil
+		}
+		// 子代理回合是同一条链上的侧枝：fork 到它等于把子代理上下文当主会话历史。
+		if sidechain, _ := raw["isSidechain"].(bool); sidechain {
+			return nil
+		}
+		if raw["message"] == nil {
+			return nil
+		}
+		ts := parseTimeRFC3339(asString(raw["timestamp"]))
+		if ts.IsZero() || ts.After(at) {
+			return nil
+		}
+		if candidate := strings.TrimSpace(asString(raw["uuid"])); candidate != "" {
+			uuid = candidate
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if uuid == "" {
+		return "", errClaudeForkMessageBeforeTimestamp
+	}
+	return uuid, nil
 }

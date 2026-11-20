@@ -157,9 +157,6 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	if targetID == "" {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("agent session id required")
 	}
-	if in.AgentTurnIndex <= 0 {
-		return agenttypes.ResolveForkPointOutput{}, errors.New("agent turn index required")
-	}
 	file, ok := i.lookupSessionFile(targetID, rootPath)
 	if !ok {
 		files, err := i.scanSessionFiles(ctx, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
@@ -182,6 +179,25 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 		return agenttypes.ResolveForkPointOutput{}, err
 	}
 	turns := buildImportedTurns(items)
+	// 时间戳锚点：MindFS 的行序与导入器的回合切分不保证一一对应（实测 2026-11-20
+	// llmux 会话：MindFS 12 个 codex 助手行、rollout 只有 9 个 turn），按序号取会越界。
+	// 取「最后一条不晚于目标时间的助手 turn」，与 claude 侧同一口径。
+	if !in.TargetTimestamp.IsZero() {
+		for index := len(turns) - 1; index >= 0; index-- {
+			ts := turns[index].Agent.Timestamp
+			if ts.IsZero() || ts.After(in.TargetTimestamp) {
+				continue
+			}
+			return agenttypes.ResolveForkPointOutput{
+				Kind:             agenttypes.ForkPointCodexUserOrdinal,
+				AgentSessionID:   targetID,
+				CodexUserOrdinal: turns[index].Agent.CodexUserCountAfter,
+			}, nil
+		}
+	}
+	if in.AgentTurnIndex <= 0 {
+		return agenttypes.ResolveForkPointOutput{}, errors.New("agent turn index required")
+	}
 	if in.AgentTurnIndex > len(turns) {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("agent turn index out of range")
 	}

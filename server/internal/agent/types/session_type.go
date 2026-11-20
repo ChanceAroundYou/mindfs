@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"time"
 )
 
 // Session is the interface for all agent sessions.
@@ -60,6 +61,14 @@ type ResolveForkPointInput struct {
 	RootPath       string
 	AgentSessionID string
 	AgentTurnIndex int
+	// TargetTimestamp 是 fork 目标轮次在 MindFS 侧的落盘时间。
+	//
+	// 为什么不能只靠 AgentTurnIndex：那是**按 MindFS 行**数出来的序号，而转录侧的
+	// 回合切分是导入器自己的（相邻助手条目会被合并、CLI 注入的用户条目会被丢弃），
+	// 两边并不一一对应。实测 2026-11-20 llmux 会话 seq=362：MindFS 侧 168 轮，
+	// 转录侧只有 145 个 turn，按序号取必然越界。时间戳是两边都有的锚点，
+	// 非零时解析器优先按它定位。
+	TargetTimestamp time.Time
 }
 
 type ResolveForkPointOutput struct {

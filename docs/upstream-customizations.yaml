@@ -10534,3 +10534,31 @@ groups:
       - 'web/src/components/action/useActionBarHandlers.ts:const imageFiles = getClipboardImageFiles(event);'
       - 'web/src/components/task/ConversationView.tsx:nodeId={nodeId}'
       - 'web/tests/task-composer-mention-image.test.mjs:candidate keyboard contract matches the session composer'
+  - id: G-NM
+    title: fork 点按目标轮时间戳解析（行序与转录回合切分漂移时不再越界）
+    kind: fix
+    symptom: "2026-11-20 用户报「fork 会话有问题，会出现 agent turn out of range 之类的报错」。现场复现（llmux 会话 1794148427-4d472c799ce5）：claude 绑定 c98e24c8-565f-4e4a-8b14-f2b83a084866，MindFS 侧 169 个 claude 助手行、转录按导入器口径只切出 145 个 turn；codex 绑定 01a1b59a-65eb-70a0-a868-e0e0ced0d8fc，MindFS 12 个助手行 vs rollout 9 个 turn。fork 目标 seq=362 换算出 AgentTurnIndex=168，直接越过 turns 长度，fork 失败。"
+    why: "必须保留：(1) 两侧序号本来就不一一对应 —— AgentTurnIndex 是按 MindFS 行数的，而转录的回合切分是导入器自己的：相邻助手条目会被合并成一条、CLI 注入的用户条目（isMeta / 自动续跑 / 命令回显）会被丢掉，长会话里偏移只会越积越大。时间戳是两边共有的锚点：live 行的落盘时间恒不早于该轮最后一条助手条目，导入行则直接复制转录时间戳，所以「最后一条时间戳不晚于目标轮的助手条目」就是该轮在转录里的终点。(2) claude 侧新 helper 必须跳过 isSidechain —— 子代理回合是同一条链上的侧枝，fork 到它等于把子代理上下文当主会话历史；uuid 取最后一条命中，等价于导入器按 uuid 去重后的口径。(3) codex 侧取 turns[i].Agent.Timestamp 不晚于目标时间的最后一个 turn，返回它的 CodexUserCountAfter，与序号路径同一输出形状。(4) 序号路径只在「时间戳缺失或转录里没有任何早于目标的助手条目」时兜底，保留旧行为；文件打不开/解析出错一律上抛，绝不静默 fork 到错误位置。(5) 接线单独抽成 forkResolveInput，让「时间戳确实被传下去」这条契约可被用例钉住。"
+    boundary: "只改 fork 点定位，不改 fork 的其他语义（新开会话、清 native id、复制块流、命名）；不改导入/同步的回合切分。时间戳为空的旧行仍走序号路径。不覆盖 ACP（不走 ResolveForkPoint）。未处理「转录时间戳整体异常（时钟回拨）」的场景 —— 那种情况会退回序号路径并按原样报错。"
+    files:
+      - server/internal/agent/types/session_type.go
+      - server/internal/agent/claude/importer.go
+      - server/internal/agent/claude/importer_transcript.go
+      - server/internal/agent/codex/importer.go
+      - server/internal/api/usecase/session_fork.go
+      - server/internal/api/usecase/session_fork_helpers.go
+    tests:
+      - server/internal/agent/claude/importer_fork_timestamp_test.go
+      - server/internal/agent/codex/importer_fork_timestamp_test.go
+      - server/internal/api/usecase/session_fork_resolve_input_test.go
+    anchors:
+      - 'server/internal/agent/types/session_type.go:TargetTimestamp time.Time'
+      - 'server/internal/agent/claude/importer.go:if !in.TargetTimestamp.IsZero() {'
+      - 'server/internal/agent/claude/importer_transcript.go:func findClaudeMessageUUIDAtOrBefore(path string, at time.Time) (string, error) {'
+      - 'server/internal/agent/claude/importer_transcript.go:if sidechain, _ := raw["isSidechain"].(bool); sidechain {'
+      - 'server/internal/agent/codex/importer.go:if !in.TargetTimestamp.IsZero() {'
+      - 'server/internal/agent/codex/importer.go:CodexUserOrdinal: turns[index].Agent.CodexUserCountAfter,'
+      - 'server/internal/api/usecase/session_fork.go:forkResolveInput(root.RootPath, binding.AgentSessionID, agentTurnIndex, target)'
+      - 'server/internal/api/usecase/session_fork_helpers.go:TargetTimestamp: target.Timestamp,'
+      - 'server/internal/agent/claude/importer_fork_timestamp_test.go:func TestClaudeResolveForkPointPrefersTargetTimestamp('
+      - 'server/internal/agent/codex/importer_fork_timestamp_test.go:func TestCodexResolveForkPointPrefersTargetTimestamp('

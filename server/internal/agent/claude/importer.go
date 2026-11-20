@@ -190,9 +190,6 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	if targetID == "" {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("agent session id required")
 	}
-	if in.AgentTurnIndex <= 0 {
-		return agenttypes.ResolveForkPointOutput{}, errors.New("agent turn index required")
-	}
 	file, ok := i.lookupSessionFile(targetID, rootPath)
 	if !ok {
 		// 同 ImportExternalSession：worktree 会话转录目录按 spawn cwd 归档，需一并扫描
@@ -215,6 +212,25 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	}
 	if !ok {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("external session not found")
+	}
+	// 时间戳是两侧共有的锚点：MindFS 的行序与导入器的回合切分并不一一对应
+	// （相邻助手条目会合并、CLI 注入的用户条目会被丢掉），按行号取序号在长会话里
+	// 必然越界。有目标时间戳时先按它定位；找不到再退回序号路径给出明确错误。
+	if !in.TargetTimestamp.IsZero() {
+		uuid, err := findClaudeMessageUUIDAtOrBefore(file.Path, in.TargetTimestamp)
+		if err == nil {
+			return agenttypes.ResolveForkPointOutput{
+				Kind:              agenttypes.ForkPointClaudeMessageUUID,
+				AgentSessionID:    targetID,
+				ClaudeMessageUUID: uuid,
+			}, nil
+		}
+		if !errors.Is(err, errClaudeForkMessageBeforeTimestamp) {
+			return agenttypes.ResolveForkPointOutput{}, err
+		}
+	}
+	if in.AgentTurnIndex <= 0 {
+		return agenttypes.ResolveForkPointOutput{}, errors.New("agent turn index required")
 	}
 	items, _, err := readClaudeImportedExchangeLocators(file.Path, 0, time.Time{}, time.Time{})
 	if err != nil {

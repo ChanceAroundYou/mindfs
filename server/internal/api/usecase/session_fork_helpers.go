@@ -7,8 +7,25 @@ import (
 	"strings"
 
 	"mindfs/server/internal/agent"
+	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/session"
 )
+
+// forkResolveInput 把目标轮的时间戳一并交给解析器。
+//
+// 只把 AgentTurnIndex 传下去是不够的：它是按 MindFS 行数出来的序号，而转录侧的
+// 回合切分是导入器自己的（相邻助手条目合并、CLI 注入的用户条目被丢掉），长会话里
+// 必然漂移 —— 实测 2026-11-20 llmux 会话 MindFS 168 轮 / 转录 145 turn、codex 12 行
+// / rollout 9 turn，按序号取直接报 "agent turn index out of range"。
+// 时间戳是两侧共有的锚点；单独抽出来是为了让这条契约能被用例钉住。
+func forkResolveInput(rootPath, agentSessionID string, agentTurnIndex int, target session.Exchange) agenttypes.ResolveForkPointInput {
+	return agenttypes.ResolveForkPointInput{
+		RootPath:        rootPath,
+		AgentSessionID:  agentSessionID,
+		AgentTurnIndex:  agentTurnIndex,
+		TargetTimestamp: target.Timestamp,
+	}
+}
 
 func isACPAgent(pool *agent.Pool, agentName string) bool {
 	if pool == nil {
