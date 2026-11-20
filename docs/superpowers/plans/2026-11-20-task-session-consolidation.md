@@ -98,3 +98,17 @@
 3. **成员名剥完只剩任务号**：`任务详情面板修改 / #87` 剥掉共享前缀后是空串，旧代码 `return rest || name` 于是原样显示整行。改为先记住 `#N`：`rest` 为空但有任务号时显示 `#87`（组内唯一区分点），既没有 rest 也没有任务号才回落到完整名字。
 
 验证：`web/tests/session-task-group.test.mjs` 13 条（新增「成员滑出这一页窗口后分组仍然成立（进程内记忆兜底）」含作用域隔离、子会话不计数、`buildRows` 接线断言；成员名用例补 `#87` 与空格写法两条；分组头用例补「没有箭头 / 图标 20px·18px」）；三处变异各自打红后还原：① 成员名回落改回 `rest || name`；② 阈值去掉 `seenCount`；③ 分组头把箭头加回来。全量 web 248 文件 / 760 通过 / 6 跳过、`tsc -b --noEmit` clean。
+
+## 第四轮用户反馈（2026-11-20，分组头指示灯 / 时间 / 三点菜单）
+
+用户原话：「我希望在前端上 也给任务会话组加上指示灯和时间(时间按任务组内的最新时间更新)，并且也补上三点操作按钮，禁用掉重命名和同步功能，归档和删除会递归操作全部，有额外的提示」。两个追问项的选择：指示灯 = **聚合状态**（「有在跑则空心灯，有问题和报错则传递出来，按照普通会话显示问号和感叹号」）；归档/删除范围 = **全部会话含子会话**。
+
+1. **聚合状态**：新增纯函数 `taskGroupAggregateState(members)` —— `running`（任一成员 `pending` / `presence=running|delegating`）、`awaiting`、`askingUser`（`aux_flags.ask_user_waiting` 条数）、`errors`（`aux_flags.session_error` 条数）、`latestAt`（成员里最晚的 `closed_at || updated_at`）、`archived`（成员全归档）。分组头右侧列与会话行同宽同对齐（`minWidth 24px`、10px 次级字）：问号与感叹号沿用普通会话那套 `taskAuxBadgeStyle` + `renderToolIcon("ask_user")` / `TaskSessionErrorIcon`，按条数出 title；有在跑或等回答时是 8px 空心圆（`mindfs-hollow-pulse`，与 `SessionCard` 同动画），否则显示组内最新时间。刻意不聚合 plan/todo/task 内容徽标 —— 它们描述单条会话，堆到分组头只会挤掉名字。
+
+2. **三点菜单** `TaskSessionGroupMenu`：重命名、同步**保留但置灰**（分组不知道该落到哪一条成员上，title 写明原因），归档/删除可用；归档视图里归档项变「取消归档」，没有 `onDelete` 时删除项不渲染。弹层定位/裁剪判据复用会话卡那套（`clipBounds` 改为从 `SessionCardOverflowMenu` 导出）。
+
+3. **整组动作只确认一次**：`taskGroupActions.ts` 的 `archiveTaskGroup` / `deleteTaskGroup` 先弹一个 `confirmDialog`（文案写明「组内 {count} 条会话及其全部子会话」，删除用 danger），确认后逐条**串行**调用原处理器 —— 并发会让两份列表状态互相覆盖。`count` 只数组内顶层成员数：子会话按需懒加载，客户端不保证持有完整子树，真正的级联由后端按 `parent_session_key` 完成。
+
+4. **唯一删除出口加批量通道**：`handleDeleteSession(session, options?: { confirm?: boolean })`，整组删除传 `confirm: false`（外层已确认），其余调用点不传、行为不变。多项目侧栏的分组成员补 `root_id` overlay（项目号在 group 上），否则整组归档/删除会落到「当前选中项目」。
+
+验证：`web/tests/session-task-group.test.mjs` 16 条（新增聚合状态、菜单置灰与整组确认、成员下发与两条侧栏接线；补 `members` 与多项目 `root_id` overlay 断言）。五处变异各自打红后还原：① `latestAt` 改成第一个成员；② 整组删除改成逐条 `onDelete(session)`（不再带 `confirm:false`）；③ 菜单去掉重命名的 `disabled`；④ `buildRows` 不再下发 `members`；⑤ 多项目去掉 `root_id` overlay。`session-archive.test.mjs` 的「确认弹窗早于 deleteSession」守卫改为嵌套 `if` 写法后仍绿。

@@ -303,6 +303,9 @@ export function SessionList({
                     number={row.number}
                     expanded={row.expanded}
                     onToggle={() => childTree.toggleTaskGroup(row.taskId)}
+                    members={row.members}
+                    onArchive={onArchive}
+                    onDelete={onDelete}
                   />
                 );
               }

@@ -20,6 +20,17 @@ export const zhCNSessions = {
   // 同一个任务的多个会话在侧栏里收成一组（方案 A：只改展示，不动数据）。
   "sessionList.taskGroupTitle": "任务「{name}」的会话",
   "sessionList.taskGroupFallback": "任务会话",
+  // 分组头的指示灯 / 问号 / 感叹号与三点菜单（2026-11-20 用户要求）。
+  "sessionList.taskGroupMenu": "任务分组菜单",
+  "sessionList.taskGroupRunning": "任务分组内有会话在运行",
+  "sessionList.taskGroupAwaitingUser": "组内有 {count} 条会话等待你回答",
+  "sessionList.taskGroupError": "组内有 {count} 条会话出错",
+  "sessionList.taskGroupRenameUnsupported": "任务分组不支持重命名，请展开后重命名单条会话",
+  "sessionList.taskGroupSyncUnsupported": "任务分组不支持同步，请展开后同步单条会话",
+  // 分组操作覆盖全部成员及其子会话，确认框要说清影响面（用户 2026-11-20）。
+  "sessionList.confirmArchiveTaskGroup": "归档任务「{name}」下的 {count} 条会话及其全部子会话？归档后可在「已归档对话」里找回。",
+  "sessionList.confirmUnarchiveTaskGroup": "取消归档任务「{name}」下的 {count} 条会话？",
+  "sessionList.confirmDeleteTaskGroup": "删除任务「{name}」下的 {count} 条会话及其全部子会话？该操作不可撤销。",
   "sessionList.nodeUnreachable": "节点连不上，显示的是上次拉到的内容",
   "sessionList.pinProject": "置顶项目",
   "sessionList.unpinProject": "取消置顶项目",

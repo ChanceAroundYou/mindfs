@@ -30,7 +30,7 @@ export type SessionCardOverflowMenuProps = {
  * 越过它就没了。拿 `window.innerHeight` 量会**高估下方空间**（列表下方还有搜索框/按钮时
  * 尤其明显），于是该翻上去的时候判成「放得下」，弹层照样被切。
  */
-function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+export function clipBounds(el: HTMLElement): { top: number; bottom: number } {
   for (let node = el.parentElement; node; node = node.parentElement) {
     if (getComputedStyle(node).overflowY !== "visible") {
       const rect = node.getBoundingClientRect();

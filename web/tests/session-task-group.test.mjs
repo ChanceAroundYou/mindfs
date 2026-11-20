@@ -7,6 +7,7 @@ import {
   orderTaskGroupedRows,
   rememberTaskSessions,
   resetTaskSessionTally,
+  taskGroupAggregateState,
   taskGroupShowsMembers,
   taskSessionGroupHeading,
   taskSessionGroupLabel,
@@ -40,6 +41,11 @@ test("同任务的顶层会话收成一组并保留原有相对顺序", () => {
   assert.equal(rows[0].label, "任务 A");
   assert.equal(rows[0].number, "", "这些会话名里没有任务号，就不显示任务号（不拿 task_id 充数）");
   assert.equal(rows[0].count, undefined, "分组头不再带成员计数（成员本身就是计数）");
+  assert.deepEqual(
+    rows[0].members.map((member) => member.key),
+    ["a1", "a2"],
+    "分组行带上成员：指示灯/时间/菜单都要按它们聚合",
+  );
   const numbered = orderTaskGroupedRows([
     session("c1", { task_id: "task-c", name: "重构看板 / #91 · run · 一" }),
     session("c2", { task_id: "task-c", name: "重构看板 / #91 · test · 二" }),
@@ -149,7 +155,8 @@ test("分组头文案 = 任务名 + 任务号，和会话名同一行字", () =>
   assert.match(header, /taskSessionGroupHeading\(/, "分组头必须走同一套文案函数");
   assert.match(header, /fontSize: "13px"/, "分组头与普通会话行同名号");
   assert.match(header, /fontWeight: 500/, "字重与未选中的会话行一致");
-  assert.doesNotMatch(header, /count/, "分组头不再渲染成员计数");
+  assert.doesNotMatch(header, /taskGroupCount/, "分组头不再渲染成员计数胶囊");
+  assert.doesNotMatch(header, /个会话/, "分组头文案里不出现成员条数");
   assert.match(header, /data-task-group=/, "分组头的定位属性保持不变");
   assert.match(header, /var\(--accent-color\)/, "分组图标跟随主题色");
   assert.match(header, /aria-expanded=\{expanded\}/, "分组头是展开/收起的开关");
@@ -237,4 +244,113 @@ test("节点属性面板接线到同一组判据", () => {
   // 开关是图标按钮，按下态来自 workflowNodeStartsNewSession；点击翻转同一个判据。
   assert.match(inspector, /active=\{workflowNodeStartsNewSession\(selected\)\}/);
   assert.match(inspector, /setWorkflowNodeStartsNewSession\(selected\.params, !workflowNodeStartsNewSession\(selected\)\)/);
+});
+
+// 用户 2026-11-20：「也给任务会话组加上指示灯和时间(时间按任务组内的最新时间更新)，
+// 并且也补上三点操作按钮」。指示灯是聚合态：有在跑就是空心灯，问题与报错按普通
+// 会话的问号/感叹号传递，时间取组内最新。
+test("分组头聚合状态：在跑亮空心灯，问题/报错按条数传递，时间取组内最新", () => {
+  const quiet = taskGroupAggregateState([
+    session("a1", { updated_at: "2026-11-20T10:00:00Z" }),
+    session("a2", { updated_at: "2026-11-20T12:30:00Z" }),
+  ]);
+  assert.deepEqual(quiet, {
+    running: false,
+    awaiting: false,
+    askingUser: 0,
+    errors: 0,
+    latestAt: "2026-11-20T12:30:00Z",
+    archived: false,
+  });
+
+  const busy = taskGroupAggregateState([
+    session("a1", { pending: true, updated_at: "2026-11-20T10:00:00Z", aux_flags: { ask_user_waiting: true } }),
+    session("a2", { presence: "delegating", updated_at: "2026-11-20T09:00:00Z", aux_flags: { session_error: "boom" } }),
+    session("a3", { presence: "awaiting" }),
+  ]);
+  assert.equal(busy.running, true, "自己回复中与子代理运行中都算「在跑」");
+  assert.equal(busy.awaiting, true);
+  assert.equal(busy.askingUser, 1, "问号按条数传递");
+  assert.equal(busy.errors, 1, "报错按条数传递");
+  assert.equal(busy.latestAt, "2026-11-20T10:00:00Z", "时间取组内最新，不被更老的成员拉回去");
+
+  assert.equal(taskGroupAggregateState([]).archived, false, "空组不算已归档");
+  assert.equal(
+    taskGroupAggregateState([session("x", { archived_at: "2026-11-20T00:00:00Z" })]).archived,
+    true,
+    "成员全归档才算归档组（归档面板里菜单要变成「取消归档」）",
+  );
+  assert.equal(
+    taskGroupAggregateState([session("x", { archived_at: "2026-11-20T00:00:00Z" }), session("y")]).archived,
+    false,
+    "还有没归档的成员就不算归档组",
+  );
+
+  const header = read("components/session/TaskSessionGroupHeader.tsx");
+  assert.match(header, /taskGroupAggregateState\(members\)/, "分组头必须按成员聚合，不能拿单条会话充数");
+  assert.match(header, /mindfs-hollow-pulse/, "有在跑就是空心灯，和会话行同一个动画");
+  assert.match(header, /formatTime\(aggregate\.latestAt/, "时间按组内最新时间显示");
+  assert.match(header, /renderToolIcon\("ask_user"\)/, "问号沿用普通会话的徽标图标");
+  assert.match(header, /<TaskSessionErrorIcon \/>/, "感叹号沿用普通会话的徽标图标");
+  assert.match(header, /<TaskSessionGroupMenu/, "分组头挂三点菜单");
+});
+
+// 用户 2026-11-20：「禁用掉重命名和同步功能，归档和删除会递归操作全部，有额外的提示」。
+test("分组三点菜单：重命名/同步置灰，归档与删除递归全部成员且先确认一次", () => {
+  const menu = read("components/session/TaskSessionGroupMenu.tsx");
+  assert.match(
+    menu,
+    /disabled[\s\S]{0,120}?sessionList\.taskGroupRenameUnsupported/,
+    "重命名保留但置灰，并说明原因",
+  );
+  assert.match(
+    menu,
+    /disabled[\s\S]{0,120}?sessionList\.taskGroupSyncUnsupported/,
+    "同步保留但置灰，并说明原因",
+  );
+  assert.match(menu, /void archiveTaskGroup\(\{ members, name, archived, t, onArchive \}\)/, "归档走整组动作");
+  assert.match(menu, /void deleteTaskGroup\(\{ members, name, t, onDelete \}\)/, "删除走整组动作");
+  assert.match(menu, /\{onDelete \? \(/, "归档视图没有删除入口时不渲染删除项");
+  assert.match(menu, /setOpen\(false\)/, "点了任一项都先收起菜单");
+
+  const actions = read("components/session/taskGroupActions.ts");
+  assert.match(actions, /count: targets\.length/, "确认框写明影响条数（组内顶层成员数）");
+  assert.match(actions, /sessionList\.confirmArchiveTaskGroup/);
+  assert.match(actions, /sessionList\.confirmUnarchiveTaskGroup/);
+  assert.match(actions, /sessionList\.confirmDeleteTaskGroup/);
+  assert.match(actions, /danger: true/, "删除确认是危险样式");
+  assert.match(actions, /onDelete\(session, \{ confirm: false \}\)/, "整组只确认一次，逐条不再弹框");
+  assert.match(
+    actions,
+    /for \(const session of targets\) \{[\s\S]{0,120}?await /,
+    "逐条串行执行，避免 N 份列表状态并发互相覆盖",
+  );
+
+  // confirm:false 只在整组删除这一条路径上出现；单条删除仍必须自己确认。
+  const archive = read("app/useSessionArchive.ts");
+  assert.match(archive, /options\?\.confirm !== false/, "唯一删除出口要认整组确认过的标记");
+  assert.match(archive, /sessionList\.confirmDeleteSession/, "单条删除的确认不能丢");
+});
+
+test("分组行把成员带到两条侧栏，菜单动作接到会话归档/删除出口", () => {
+  const hook = read("components/session/useSessionChildTree.ts");
+  assert.match(
+    hook,
+    /rows\.push\(\{ type: "task-group"[\s\S]{0,160}?members \}\)/,
+    "分组成员必须随行下发，否则分组头无从聚合",
+  );
+  const single = read("components/session/SessionList.tsx");
+  const multi = read("components/session/MultiProjectSessionList.tsx");
+  for (const [name, source] of [["SessionList", single], ["MultiProjectSessionList", multi]]) {
+    assert.match(source, /members=\{row\.members/, `${name} must hand members to the group header`);
+    assert.match(source, /onArchive=\{onArchive\}/, `${name} must wire group archive`);
+    assert.match(source, /onDelete=\{onDelete\}/, `${name} must wire group delete`);
+  }
+  // 多项目分组的会话条目不一定带 root_id（项目号在 group 上），整组归档/删除
+  // 必须按 group.rootId 定位项目库，否则会落到「当前选中项目」。
+  assert.match(
+    multi,
+    /members=\{row\.members\.map\(\(member\) => \(\{ \.\.\.member, root_id: member\.root_id \|\| group\.rootId \}\)\)\}/,
+    "multi-project group members must carry their project id",
+  );
 });

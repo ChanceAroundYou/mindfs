@@ -203,6 +203,12 @@ export function MultiProjectSessionList({
                             number={row.number}
                             expanded={row.expanded}
                             onToggle={() => toggleTaskGroup(row.taskId)}
+                            // 多项目分组里的会话条目不一定带 root_id（项目号在 group 上），
+                            // 而归档/删除的出口用它定位项目库；不补这一层，整组操作会
+                            // 落到「当前选中项目」上。和下面会话卡同一个 overlay 口径。
+                            members={row.members.map((member) => ({ ...member, root_id: member.root_id || group.rootId }))}
+                            onArchive={onArchive}
+                            onDelete={onDelete}
                           />
                         );
                       }

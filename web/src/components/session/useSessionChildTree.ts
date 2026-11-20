@@ -118,7 +118,7 @@ export function useSessionChildTree({
         const members = membersByTask.get(entry.taskId) || [];
         const expanded = taskGroupShowsMembers(expandedTaskGroups, entry.taskId, members, selectedKey);
         if (!expanded) hiddenTaskIds.add(entry.taskId);
-        rows.push({ type: "task-group", taskId: entry.taskId, label: entry.label, number: entry.number, expanded });
+        rows.push({ type: "task-group", taskId: entry.taskId, label: entry.label, number: entry.number, expanded, members });
         continue;
       }
       if (entry.taskId && hiddenTaskIds.has(entry.taskId)) continue;

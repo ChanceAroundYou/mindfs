@@ -116,7 +116,7 @@ export function useSessionArchive(params: UseSessionArchiveParams) {
   } = params;
 
   const handleDeleteSession = useCallback(
-    async (session: SessionItem) => {
+    async (session: SessionItem, options?: { confirm?: boolean }) => {
       const sessionKey = session?.key || session?.session_key;
       const rootID =
         (session?.root_id as string | undefined) || currentRootIdRef.current;
@@ -124,14 +124,18 @@ export function useSessionArchive(params: UseSessionArchiveParams) {
 
       // 删除是不可撤销的（归档才是那条可回头的路），且后端会连带删掉整棵子树。
       // 放在唯一的删除出口而不是每个调用点，菜单/快捷键/未来入口全都覆盖到。
+      // confirm:false 只给任务分组的批量删除用 —— 那一层先确认过整组（写明条数），
+      // 逐条再弹一次就是 N 个框；除它之外任何调用点都不许传这个开关。
       const sessionName = String(session?.name || sessionKey.slice(0, 8));
-      if (
-        !(await confirmDialog({
-          message: t("sessionList.confirmDeleteSession", { name: sessionName }),
-          danger: true,
-        }))
-      ) {
-        return;
+      if (options?.confirm !== false) {
+        if (
+          !(await confirmDialog({
+            message: t("sessionList.confirmDeleteSession", { name: sessionName }),
+            danger: true,
+          }))
+        ) {
+          return;
+        }
       }
 
       const deleted = await sessionService.deleteSession(rootID, sessionKey, String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID));

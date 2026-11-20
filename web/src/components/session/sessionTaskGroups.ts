@@ -55,7 +55,9 @@ export function collectTaskSessionGroups(
  * 没有 task_id 或只有一条会话的行原样保留在原位置。
  */
 export type TaskGroupedEntry =
-  | { kind: "group"; taskId: string; label: string; number: string }
+  // members：组内顶层会话。分组头的指示灯/时间/三点菜单都要按它们聚合，
+  // 归档/删除也按它们（后端按 parent_session_key 级联整棵子树）。
+  | { kind: "group"; taskId: string; label: string; number: string; members: SessionItem[] }
   // groupLabel：成员名里那段与分组头重复的共享前缀，渲染时剥掉；
   // taskId 让折叠状态能认回自己那一组（成员行本身不带 task_id）。
   | { kind: "session"; session: SessionItem; nested: boolean; groupLabel?: string; taskId?: string };
@@ -119,7 +121,7 @@ export function orderTaskGroupedRows(
     if (emitted.has(taskId)) continue;
     emitted.add(taskId);
     const label = taskSessionGroupLabel(members);
-    out.push({ kind: "group", taskId, label, number: taskSessionGroupNumber(members) });
+    out.push({ kind: "group", taskId, label, number: taskSessionGroupNumber(members), members });
     for (const member of members) {
       out.push({ kind: "session", session: member, nested: true, groupLabel: label, taskId });
     }
@@ -167,6 +169,65 @@ export function taskSessionGroupHeading(label: string, number: string, fallback:
   const name = String(label || "").trim() || fallback;
   const id = String(number || "").trim();
   return id ? `${name} # ${id}` : name;
+}
+
+/**
+ * 任务分组的聚合状态（2026-11-20 用户决策：分组头也要有指示灯、时间和
+ * 问题/报错标识，「按照普通会话显示」）。
+ *
+ * 普通会话行只有一个 `presence`/`pending`，分组身后是一批会话，所以这里做聚合：
+ *   - running：任一成员在跑（自己回复中 pending、派生态 running/delegating）；
+ *   - awaiting：任一成员停着等你回答；
+ *   - askingUser / errors：挂 aux 问号、带 session_error 的成员条数
+ *     （用户要「有问题和报错则传递出来」，所以报条数而不是布尔）；
+ *   - latestAt：成员里最晚的活动时间（closed_at 优先、否则 updated_at，
+ *     与会话行取时间同一口径）——「时间按任务组内的最新时间更新」；
+ *   - archived：成员是否都已归档（归档面板里菜单要变成「取消归档」）。
+ *
+ * 刻意不聚合 plan/todo/task 这类内容徽标：它们描述单条会话的内容，堆到分组头
+ * 上只会挤掉名字，用户这一轮也只要求传递「问题」和「报错」。
+ */
+export type TaskGroupAggregate = {
+  running: boolean;
+  awaiting: boolean;
+  askingUser: number;
+  errors: number;
+  latestAt: string;
+  archived: boolean;
+};
+
+export function taskGroupAggregateState(members: readonly SessionItem[]): TaskGroupAggregate {
+  let running = false;
+  let awaiting = false;
+  let askingUser = 0;
+  let errors = 0;
+  let latestAt = "";
+  let latestMs = -Infinity;
+  let archived = members.length > 0;
+  for (const member of members) {
+    if (member.pending || member.presence === "running" || member.presence === "delegating") {
+      running = true;
+    }
+    if (member.presence === "awaiting") {
+      awaiting = true;
+    }
+    if (member.aux_flags?.ask_user_waiting) {
+      askingUser += 1;
+    }
+    if (String(member.aux_flags?.session_error || "").trim()) {
+      errors += 1;
+    }
+    if (!member.archived_at) {
+      archived = false;
+    }
+    const raw = String(member.closed_at || member.updated_at || "");
+    const ms = Date.parse(raw);
+    if (Number.isFinite(ms) && ms > latestMs) {
+      latestMs = ms;
+      latestAt = raw;
+    }
+  }
+  return { running, awaiting, askingUser, errors, latestAt, archived };
 }
 
 /**

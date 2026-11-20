@@ -61,7 +61,7 @@ export type SessionListProps = {
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
-  onDelete?: (session: SessionItem) => void;
+  onDelete?: (session: SessionItem, options?: { confirm?: boolean }) => Promise<void> | void;
   onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
   onLoadChildren?: (
     session: SessionItem,
@@ -82,7 +82,9 @@ export type VisibleSessionRow =
   // task-group：按 task_id 分组的容器行，成员紧随其后。默认折叠
   // （2026-11-20 用户决策：和子会话的展开一个逻辑），点这一行切换；
   // expanded 由 useSessionChildTree 决定 —— 选中的会话在组内时自动展开。
-  | { type: "task-group"; taskId: string; label: string; number: string; expanded: boolean }
+  // members：组内顶层会话，分组头的指示灯/时间/三点菜单按它们聚合，
+  // 归档与删除也按它们递归整棵子树。
+  | { type: "task-group"; taskId: string; label: string; number: string; expanded: boolean; members: SessionItem[] }
   | {
       type: "child-toggle";
       parent: SessionItem;
@@ -114,7 +116,7 @@ export type ProjectSessionListProps = {
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
-  onDelete?: (session: SessionItem) => void;
+  onDelete?: (session: SessionItem, options?: { confirm?: boolean }) => Promise<void> | void;
   onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
   onLoadMoreProject?: (group: ProjectSessionGroup) => Promise<void> | void;
   onLoadChildren?: (
