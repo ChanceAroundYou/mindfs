@@ -11,6 +11,22 @@ function formatBytes(value: number): string {
   return `${Math.round(value / 1024)} KB`;
 }
 
+// Group digits: 408625 is measurably harder to read at a glance than 408,625,
+// and token totals here routinely run into six figures.
+function formatTokens(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "0";
+  return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+// Share of the original request saved by folding. One decimal below 10% keeps
+// small savings visible ("5.7%") without the noise of false precision above it.
+function formatPercent(saved: number, original: number): string | null {
+  if (!Number.isFinite(saved) || !Number.isFinite(original) || saved < 0 || original <= 0) return null;
+  const percent = (saved * 100) / original;
+  if (!Number.isFinite(percent)) return null;
+  return `${percent.toFixed(percent < 10 ? 1 : 0)}%`;
+}
+
 /**
  * 会话页的「上下文」胶囊：这一轮实际发出的请求比 CLI 原本要发的小多少。
  *
@@ -24,20 +40,27 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   if (!visible) return null;
 
   const latest = saving?.latest;
+  const savedPercent = latest ? formatPercent(latest.saved_bytes, latest.req_bytes) : null;
   const rows: Array<[string, string]> = latest
     ? [
-        [t("contextSaving.badgeMessages"), String(latest.blocks)],
-        [t("contextSaving.badgeSent"), formatBytes(latest.folded_bytes)],
-        [t("contextSaving.badgeOriginal"), formatBytes(latest.req_bytes)],
-        [t("contextSaving.badgeSaved"), formatBytes(latest.saved_bytes)],
+        [
+          t("contextSaving.badgeRequest"),
+          `${formatBytes(latest.req_bytes)} → ${formatBytes(latest.folded_bytes)}`,
+        ],
+        [
+          t("contextSaving.badgeSaved"),
+          savedPercent
+            ? t("contextSaving.savedValue", { size: formatBytes(latest.saved_bytes), percent: savedPercent })
+            : formatBytes(latest.saved_bytes),
+        ],
+        [t("contextSaving.badgeBlocks"), t("contextSaving.blocksValue", { count: String(latest.blocks) })],
+        [t("contextSaving.badgeTokens"), t("contextSaving.tokensValue", { count: formatTokens(latest.tokens_est) })],
         [
           t("contextSaving.badgeRewrite"),
           latest.usage_source === "missing" || latest.rewrite_tokens < 0
             ? t("contextSaving.unknown")
-            : String(latest.rewrite_tokens),
+            : t("contextSaving.tokensValue", { count: formatTokens(latest.rewrite_tokens) }),
         ],
-        [t("contextSaving.badgeTokens"), String(latest.tokens_est)],
-        [t("contextSaving.badgeFoldMs"), String(latest.fold_ms)],
       ]
     : [];
 
@@ -94,7 +117,7 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         </div>
         {saving && saving.requests > 0 ? (
           <div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
-            {t("contextSaving.history", { requests: saving.requests, max: formatBytes(saving.max_saved_bytes) })}
+            {t("contextSaving.history", { requests: String(saving.requests), max: formatBytes(saving.max_saved_bytes) })}
           </div>
         ) : null}
         {saving && saving.usage_missing > 0 ? (
@@ -104,12 +127,12 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         ) : null}
         {saving && saving.total_rewrite_tokens > 0 ? (
           <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
-            {t("contextSaving.rewriteTotal", { rewrite: String(saving.total_rewrite_tokens) })}
+            {t("contextSaving.rewriteTotal", { rewrite: formatTokens(saving.total_rewrite_tokens) })}
           </div>
         ) : null}
         {error ? <div style={{ marginTop: "10px", padding: "9px 11px", borderRadius: "9px", background: "rgba(220, 38, 38, 0.09)", color: "#dc2626", fontSize: "12px", overflowWrap: "anywhere" }}>{error}</div> : null}
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "18px" }}>
-          <button type="button" onClick={() => setOpen(false)} style={{ height: "34px", padding: "0 14px", borderRadius: "9px", border: "1px solid var(--panel-border)", background: "transparent", color: "var(--text-primary)", cursor: "pointer", fontWeight: 650 }}>{t("common.cancel")}</button>
+          <button type="button" onClick={() => setOpen(false)} style={{ height: "34px", padding: "0 14px", borderRadius: "9px", border: "1px solid var(--panel-border)", background: "transparent", color: "var(--text-primary)", cursor: "pointer", fontWeight: 650 }}>{t("common.close")}</button>
         </div>
       </div>
     </div>,
