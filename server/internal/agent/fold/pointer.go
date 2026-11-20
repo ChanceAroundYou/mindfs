@@ -260,6 +260,9 @@ func RenderPointer(in PointerInput) string {
 	// The footer is the only instruction on the card, and it has to survive a
 	// model that would rather say "I cannot see it" than open a file: field
 	// evidence had a model re-run the original command after reading the card.
-	builder.WriteString("需要原文时用 Read 打开上面的 archive 路径；不要重复原命令，也不要凭猜测作答。")
+	// It names both harnesses because the card is protocol-agnostic and Codex
+	// has no Read tool — a Codex session told only "用 Read" would be told to
+	// call something that does not exist.
+	builder.WriteString("需要原文时打开上面的 archive 路径（Read 或 shell 命令）；不要重复原命令，也不要凭猜测作答。")
 	return builder.String()
 }

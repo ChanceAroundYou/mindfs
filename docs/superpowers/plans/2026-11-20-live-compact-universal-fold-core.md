@@ -1950,3 +1950,25 @@ spike 证明机制可行，这一轮把它做成产品行为，四处改动，�
 `TestCodexRoutingArgsCarryRegisteredPathShape`（真实 proxy server，先注册后取地址），
 把顺序反过来即打红。教训写进类型注释：**依赖注册表的纯函数不能在注册之前被调用** ——
 这一条单元测试在旧 API 下根本写不出来，只有真实请求会暴露。
+
+**B11 端到端验收（2026-11-21，隔离实例 7460，真实 codex-cli 0.169.1 + ChatGPT 官方登录）**。
+`CODEX_HOME` 只放 `auth.json` 软链与两行 model 配置（**无任何 `[model_providers]`**，也没有 shim），
+二进制由干净 worktree 在 `6fc12ef6` 构建。结果是注入路径第一次被真实流量跑通并折出内容：
+
+- **通路**：启动日志 `codex official-login provider injected base=https://chatgpt.com/backend-api/codex`；
+  每轮请求都落在 `[live-compact] provider=responses token=thread:…`，首轮 `est=19365`、13.9 s 完成 ——
+  路径形状（不带 `/v1`）、`requires_openai_auth` 凭据附着、上游可达三件事同时成立。
+- **一次「不折」的误判**：第二轮让模型各读 1200 行两个 ~109 KB 文件，`est` 只从 19365 涨到 21031。
+  查 Codex rollout（`$CODEX_HOME/sessions/...`）后确认是**模型自己**给 `exec_command` 传了
+  `max_output_tokens: 100/1000`，Codex 据此把工具输出截成 4 KB 左右——请求体没涨，自然没有候选。
+  这是 Codex 行为，不是折叠失效。
+- **折成**：改让模型显式传 `max_output_tokens: 30000` 后，`est` 19399 → 30996（growth 11597，gate=no-backlog，
+  首轮还在 `keep_tail` 保护里）→ 43202 时 `gate=fold blocks=1 new_blocks=1 saved_bytes=40110 fold_ms=33`；
+  账本同轮 `req_bytes=171600 folded_bytes=132484 saved_bytes=39116`（差值是指针卡自身字节）。
+- **粘住**：下一轮 `blocks=1 new_blocks=0 sticky_blocks=1`、`projected 43303 → 33376`、`fold_ms=3`（走渲染缓存）。
+- **指针可用**：要求模型只凭卡片里的 archive 路径回答 `delta-0005` 的 `field_a`（原文已被折叠），
+  它执行 `rg 'delta-0005' <archive>` 并答对 `9975`，没有重跑原命令。同轮把页脚从
+  「需要原文时用 Read 打开上面的 archive 路径…」改成「需要原文时打开上面的 archive 路径（Read 或 shell 命令）…」——
+  卡片是协议无关的，而 Codex 没有 Read 工具。`fold_golden.txt` 因页脚字节重生成，五条用例的
+  folded/new/sticky/tokens/decision 逐列不变。
+- **门禁**：`go test ./server/internal/agent/...` 全绿。
