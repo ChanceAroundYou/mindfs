@@ -7440,7 +7440,7 @@ groups:
       - 'server/internal/kanban/service_workflow_integration_branch.go:func (s *Service) snapshotRunIntegrationBranch('
       - 'server/internal/kanban/workflow_worktree_merge_test.go:func TestWorkflowNodeRestartAfterAgentDoneResumesMergeOnce('
       - 'server/internal/kanban/service_worktree_noderun.go:func shortID(id string) string'
-      - 'server/internal/kanban/service_worktree_merge.go:releaseGate, err := s.AcquireNodeWriter(ctx, plan.mainDir, plan.target)'
+      - 'server/internal/kanban/service_worktree_merge.go:releaseGate, err := s.AcquireNodeWriter(ctx, plan.targetDir(), plan.target)'
       - 'server/internal/kanban/worktree_finish.go:releaseGate, err := s.AcquireNodeWriter(ctx, mainDir, target)'
       - 'server/internal/kanban/service_workflow_integration_branch.go:worktreeDirUsable(task.WorktreePath)'
       - 'server/internal/kanban/service_workflow_workspace.go:worktree 目录已不存在'
@@ -10979,7 +10979,7 @@ groups:
     title: 证据门 + 自动补做（工作流自主收尾，Plan 2026-11-20 Task 2 起）
     kind: feature
     symptom: "2026-11-20 用户给的产品目标：「我发布个任务，就能从头做到尾，只有特殊情况需要我介入审核」，证据标准「必须有可以核对的证据」。现场四处堵点：① 任务结论由 Run 投影决定，Run success 被投影成 waiting_user，因此「做完」与「没做完」在界面上无法区分；② Router 没有任何工具能宣告任务完成，只能 say；③ 运行期事件回合的写动作白名单只有 say/ask_user/silent 与监管动作，缺「收尾」；④ 节点结论只靠一次便宜的整理调用，模型没按约定回 JSON 时直接降级成「原文当 summary + done」，一次转换器抖动就让整块看板看起来都做完了。"
-    why: "必须保留：① 完成与否只看可核对的证据（节点终态、gate 批准、全节点收尾、文件存在），不看任何模型自称；② 「格式坏了」与「没做完」必须分开 —— 节点本身只写自然语言，形成信封的是 Router 结果转换器，所以格式修复轮改在 api 的结果转换层重问一次（最多 2 次、总预算 120s），而不是把节点判 unknown；③ 修复轮可能「补一个漂亮的信封」，所以修复得到的 done 必须与事实相容（节点允许写 workspace 而本轮零写操作时降 blocked 并写明「没有观察到写操作」），核对只数已完成的写类工具调用，不读转录正文；④ 修复预算耗尽仍回落到原文摘要 + done（不是 unknown）—— 转换器故障是辅助模型基建问题，不是节点工作失败的证据，落 unknown 会让一次模型抖动把整块看板的节点全停给人工；完成与否由证据门按事实判定，不信摘要文本；⑤ 完成契约在 Run 创建时快照、运行期冻结（EditWorkflowRunGraph 与 saveWorkflowRunTx 两处守卫），跑到一半改标准会让已判过的证据全部作废；⑥ 契约只认每个节点最新 attempt，历史成功不能给重试失败兜底；file_exists 只接受工作区内相对路径、只 Lstat、不跟随符号链接；⑦ `complete_task` 只是 Router 的收尾意图，不是结论 —— 收尾是否成立由证据门判定，且它与开工动作互斥、还有节点在跑时拒绝，避免「活没干完就挂已完成」；⑧ 应用阶段重新求值而不是信任回合内的快照：证据成立才复用 `finishWorkflowRunByOperator` 收尾，不成立只写编号缺口并把任务留在原地（既不算成功也不算失败）；同一决策重放按确定性系统行 ID 与 `task_completion` 行幂等；⑨ 被驳回的缺口要能驱动下一轮，否则 Router 只会回一句「还不能收尾」—— 按缺口哈希落 `completion_blocked` 事件，缺口没变就复用那条（每次驳回都发新事件会让 Router 反复推理同一件事），缺口收窄才是新事实；直连任务没有 Run，键退到 taskID，所以 RunID 为空的白名单同时放行它与 `direct_stalled`；⑩ 补做要能被预算停住：每次驳回 +1、上限取契约 `max_repairs`，超出后写一条「需要你介入」的确定行并把任务放回 `waiting_user`、不产事件 —— 否则「模型说没做完」会变成无限重跑；补做回合不占每留言 3 回合预算（它的预算是契约的 `max_repairs`），但仍计入每小时监管动作预算；⑪ 补做只列重试路径真能接手的节点：`createWorkflowNodeAttempt` 不接受 success / cancelled 的原始行，所以 `EvidenceFailedNodes` 只收最新 attempt 停在 fail/unknown/waiting_user 的节点，文件缺失、gate 未批、节点没跑一律交给 `router_notify_user` 请用户处理，不叠每节点重试上限（口径不同）。；④ 完成契约只能证伪不能证明：没有契约的任务（直连回合、未声明证据的工作流）机检回答不了「真的做完了吗」，所以另起一个只读 Claude 复核回合（Read/Grep/Glob、90s、按 (run_id, 报告哈希) 复用），结论只当模型判定、落库并可见，复核不可用一律 fail-closed。"
+    why: "必须保留：① 完成与否只看可核对的证据（节点终态、gate 批准、全节点收尾、文件存在），不看任何模型自称；② 「格式坏了」与「没做完」必须分开 —— 节点本身只写自然语言，形成信封的是 Router 结果转换器，所以格式修复轮改在 api 的结果转换层重问一次（最多 2 次、总预算 120s），而不是把节点判 unknown；③ 修复轮可能「补一个漂亮的信封」，所以修复得到的 done 必须与事实相容（节点允许写 workspace 而本轮零写操作时降 blocked 并写明「没有观察到写操作」），核对只数已完成的写类工具调用，不读转录正文；④ 修复预算耗尽仍回落到原文摘要 + done（不是 unknown）—— 转换器故障是辅助模型基建问题，不是节点工作失败的证据，落 unknown 会让一次模型抖动把整块看板的节点全停给人工；完成与否由证据门按事实判定，不信摘要文本；⑤ 完成契约在 Run 创建时快照、运行期冻结（EditWorkflowRunGraph 与 saveWorkflowRunTx 两处守卫），跑到一半改标准会让已判过的证据全部作废；⑥ 契约只认每个节点最新 attempt，历史成功不能给重试失败兜底；file_exists 只接受工作区内相对路径、只 Lstat、不跟随符号链接；⑦ `complete_task` 只是 Router 的收尾意图，不是结论 —— 收尾是否成立由证据门判定，且它与开工动作互斥、还有节点在跑时拒绝，避免「活没干完就挂已完成」；⑧ 应用阶段重新求值而不是信任回合内的快照：证据成立才复用 `finishWorkflowRunByOperator` 收尾，不成立只写编号缺口并把任务留在原地（既不算成功也不算失败）；同一决策重放按确定性系统行 ID 与 `task_completion` 行幂等；⑨ 被驳回的缺口要能驱动下一轮，否则 Router 只会回一句「还不能收尾」—— 按缺口哈希落 `completion_blocked` 事件，缺口没变就复用那条（每次驳回都发新事件会让 Router 反复推理同一件事），缺口收窄才是新事实；直连任务没有 Run，键退到 taskID，所以 RunID 为空的白名单同时放行它与 `direct_stalled`；⑩ 补做要能被预算停住：每次驳回 +1、上限取契约 `max_repairs`，超出后写一条「需要你介入」的确定行并把任务放回 `waiting_user`、不产事件 —— 否则「模型说没做完」会变成无限重跑；补做回合不占每留言 3 回合预算（它的预算是契约的 `max_repairs`），但仍计入每小时监管动作预算；⑪ 补做只列重试路径真能接手的节点：`createWorkflowNodeAttempt` 不接受 success / cancelled 的原始行，所以 `EvidenceFailedNodes` 只收最新 attempt 停在 fail/unknown/waiting_user 的节点，文件缺失、gate 未批、节点没跑一律交给 `router_notify_user` 请用户处理，不叠每节点重试上限（口径不同）。；④ 完成契约只能证伪不能证明：没有契约的任务（直连回合、未声明证据的工作流）机检回答不了「真的做完了吗」，所以另起一个只读 Claude 复核回合（Read/Grep/Glob、90s、按 (run_id, 报告哈希) 复用），结论只当模型判定、落库并可见，复核不可用一律 fail-closed。 另（Task 13）：完成记录附带的回合用量必须来自可核对的账本读数；读不到（账本为空 / 不可读 / 会话未绑）一律给 null，绝不写 0 —— 「没有数」被读成「没花钱」会让最该被人看见的成本消失。"
     boundary: "只作用于工作流节点的结果转换：普通会话回合不经过这一层；不改节点自身的信封契约（D5 之后本就由 Router 整理）；不改 attempt、不产生新 NodeRun。修复轮不带工具（它调的是整理模型），也不改写会话历史。不宣称覆盖「节点自己谎报事实」—— 那一类由后续任务的证据门与缺口补做兜底。证据求值只读任务库 / NodeRun 行 / 磁盘，不读转录；符号链接一律判不通过（不解析目标）。`completion_blocked` 事件的 payload 只放 `task_id / run_id? / items[{id,kind,pass}] / repairs_used / repairs_max`，不含节点输出、会话、git 与转录；补做预算按「同一 Run 的 `task_completion` 行」累计，换 Run 清零。"
     files:
       - server/internal/api/http_task_completion.go
@@ -11031,6 +11031,9 @@ groups:
       - server/internal/kanban/intake_policy.go
       - server/internal/agent/conformance/conformance.go
       - server/internal/agent/conformance/probe.go
+      - server/internal/kanban/completion_usage.go
+      - server/internal/api/wire_fold_usage.go
+      - server/internal/api/usecase/session_fold_usage.go
     tests:
       - server/internal/api/http_task_completion_test.go
       - server/internal/kanban/router_status_completion_test.go
@@ -11045,6 +11048,11 @@ groups:
       - server/internal/agent/conformance/conformance_test.go
       - server/internal/agent/conformance/probe_test.go
       - server/internal/agent/conformance/probe_live_test.go
+      - server/internal/kanban/completion_usage_test.go
+      - server/internal/api/wire_fold_usage_test.go
+      - server/internal/api/usecase/session_fold_usage_test.go
+      - server/internal/agent/pool_fold_usage_test.go
+      - server/internal/agent/proxy/live_compact_fold_usage_test.go
     anchors:
       - 'server/internal/api/http_task_completion.go:func (h *HTTPHandler) handleTaskCompletionGet('
       - 'server/internal/api/http_routes.go:/api/tasks/{id}/completion'
@@ -11133,6 +11141,19 @@ groups:
       - 'server/internal/agent/conformance/probe.go:func Run(ctx context.Context, opts Options) Result {'
       - 'server/internal/agent/conformance/probe.go:func errorFrameVerdict(code, message string, sawOutput bool) (errorVerdict, string) {'
       - 'server/internal/agent/conformance/probe_live_test.go:MINDFS_CONFORMANCE_URL'
+      - 'server/internal/kanban/completion_usage.go:func (s *Service) completionUsage('
+      - 'server/internal/kanban/completion_usage.go:if usage.Samples == 0 {'
+      - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) RunSessionKeys('
+      - 'server/internal/api/wire_fold_usage.go:func (s *AppContext) WireFoldUsageReader('
+      - 'server/internal/api/usecase/session_fold_usage.go:func (s *Service) GetSessionFoldUsage('
+      - 'server/internal/agent/fold/ledger.go:UsageOutput'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) SessionFoldUsage('
+      - 'server/internal/agent/proxy/live_compact_ledger.go:UsageOutput:'
+      - 'server/internal/agent/pool_context_saving.go:func (p *Pool) SessionFoldUsage('
+      - 'server/app/workspace.go:services.WireFoldUsageReader(services.Kanban)'
+      - 'server/app/workspace_build.go:services.WireFoldUsageReader(services.Kanban)'
+      - 'scripts/mutations.txt:completion-usage-zero-instead-of-nodata'
+      - 'scripts/mutations.txt:wire-fold-usage-misplaces-output'
   - id: G-NT
     title: Router 会话关掉内置工具集，每轮省约 53k prompt tokens
     kind: perf
@@ -11191,6 +11212,7 @@ groups:
     why: "必须保留：① 勾了 worktree 就在 `CreateTask` 里当场建树（`ensureTaskWorktree`），失败就删掉刚建的任务并返回错误（fail closed）——留一张「勾了却没树」的卡比直接报错更误导；`CreateTask` 必须用 `store.CreateTask` 返回的行继续，任务号是那时分配的，建树命名（`task-<编号>`）依赖它。② Run 的快照集成分支需要任务树时用 `ensureTaskWorktreeReady` 补建，失败上抛而不是静默回落到主 checkout（回落等于在主干上跑）。③ `MergeOptions.TargetDir` + `gitview.MergeTargetDir`：目标分支被某棵 linked worktree 检出时，合并就在**那棵树里**执行（不 `checkout`、不搬树），`validateMergeTargetDir` 先确认那棵树真停在该分支上；`TargetDir` 为空时保持老行为（占用即拒绝），所以校验是被收窄而不是删掉。④ 节点独立树用 `WorktreeBaseRunner.CreateTaskWorktreeFrom` 从 `run.IntegrationBranch` 的 tip 切（`gitview.AddWorktreeFrom` 校验 ref 后 `worktree add -b <branch> <path> <base>`），适配器没实现该接口时退回 HEAD 建树，绝不静默不建树。⑤ 一轮全部结束且 `ProjectStatusFromRun(run)==StatusSuccess` 时 `autoMergeTaskWorktreeAfterRun` 把任务树并回主 checkout 当前分支；任务树自己的 registry 行保持 active（下一轮还要从它继续长），幂等靠 MergeBranch 的 `merge-base --is-ancestor` 短路，冲突转 needs_user + 可见系统错误并保留现场；失败/取消的一轮不合并。⑥ 节点分支清理由 `DeleteBranchMergedAt` 按「已并进 merged_commit」判定后 `-D` 删：`branch -d` 只认当前 HEAD，嵌套时节点分支并进的是任务树分支，主 checkout 停在 main 上会永远拒绝，等于每跑一个独立节点漏一条分支；证明不了并入关系就退回 `-d` 让 git 拒绝，绝不盲删。"
     boundary: "只覆盖「任务级 worktree + 工作流节点独立 worktree」这一套；`worktree=shared`（默认）节点仍在任务树里跑，只多了一条建树兜底。任务树自动合并只在驱动投影（`projectWorkflowTaskStatus`）看到 `StatusSuccess` 时触发：手动 pause/cancel、失败、等待用户的轮次都不合。冲突不自动解，停在主 checkout 的未完成合并里等人（Router 仍不改高优先级规则、不参与合并）。重启后不会自动补合并历史轮次（没有恰好一次投影就不会合）。`DeleteBranchMergedAt` 兼容库里既有 `log --oneline` 形状的 merged_commit。前端建卡面板未加新入口：勾选本身现在就会建树，「重建 worktree」仍是显式修复入口。"
     files:
+      - docs/superpowers/plans/2026-11-21-worktree-task-and-node-nesting.md
       - server/internal/gitview/gitview.go
       - server/internal/gitview/worktree_merge.go
       - server/internal/gitview/gitview_repo_test.go
