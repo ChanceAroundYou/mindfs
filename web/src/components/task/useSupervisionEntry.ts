@@ -29,7 +29,6 @@ export function useSupervisionEntry(
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const openRef = useRef(false);
   const identityRef = useRef("");
 
   useEffect(() => {
@@ -39,7 +38,6 @@ export function useSupervisionEntry(
       setDecisions(null);
       setLoaded(false);
       setOpen(false);
-      openRef.current = false;
       setError("");
     }
   }, [rootId, taskId, nodeId]);
@@ -69,8 +67,7 @@ export function useSupervisionEntry(
   const rows = useMemo(() => supervisionRows(decisions), [decisions]);
 
   const toggle = useCallback(() => {
-    openRef.current = !openRef.current;
-    setOpen(openRef.current);
+    setOpen((previous) => !previous);
   }, []);
 
   return { rows, loaded, open, loading, error, toggle };

@@ -2,8 +2,6 @@ import { appURL } from "../net/base";
 import { protectedJSON } from "../net/api";
 import type { RouterDecisionSummary } from "../../shared/routerDecisions";
 
-export type { RouterDecisionSummary };
-
 // 任务维度的 Router 决策列表（时间倒序）。监管记录入口与将来的诊断面板共用。
 export async function fetchRouterDecisions(
   rootId: string,
