@@ -1823,3 +1823,29 @@ Task 2/3/4/5 之间无代码依赖，可按任意顺序执行；但都在 Task 6
 - `/chat/completions` 适配器。
 - 代理 ChatGPT 登录模式（`default` profile）：无 `[model_providers]` 条目，保持直连。
 - 接管 Codex 自有 `remote_compaction_v2`：只消费其 `EventTypeCompact` 事件。
+
+## 成本 A/B 与官方登录复验（2026-11-20 深夜，隔离实例 7460）
+
+同一负载（`prompt-ab2.txt`：6 条 `sed -n` 各读 300 行、每条单独一次调用，最后答 charlie 第 0001 行），
+三臂各自全新会话：
+
+| 臂 | 请求 | input | cached | cache write | output | 墙钟 |
+|---|---|---|---|---|---|---|
+| control（自定义 provider 走代理，rail=1,000,000 即不折） | 7 | 282,082 | 228,299 | 53,762 | 974 | 38.7s |
+| fold（rail=20,000 / keep_tail=4,000 / keep_rounds=1，强制短会话也折） | 8 | 179,885 | 109,610 | 70,251 | 1,203 | 44.5s |
+| official（ChatGPT 登录，代理无法插入） | 7 | 286,061 | 232,960 | 0（记为 uncached 53k） | 373 | 34.5s |
+
+- **结构生效**：fold 臂第 3→4 请求之间首次折叠（块 6 个、末轮 `saved_bytes=120,792`），此后每轮 input 增量从
+  ~8.7k 降到 ~0.65k，cached 读钉在 13.6k；总 input **−36%**。
+- **短负载不省钱**：省下的全是 0.1× 的缓存读（−118.7k），花掉的是全价的缓存写（+16.5k）——按 OpenAI 口径
+  （读 0.1×、写 1×）折算 81.2k vs 76.6k ≈ **+6%**，按 Anthropic 口径（写 1.25×）+9.7%。原因是折叠发生在第 4 个
+  请求，只剩 4 轮摊薄。每轮成本此时已打平（折后 ~14–15k/轮且平坦；不折第 7 轮 14.8k 并随上下文线性涨），
+  交叉点就在这个长度附近，与 Claude 侧长回放 0.88–0.93× 同向。生产默认 rail=100k 时 70k 的会话根本不会触发，
+  这条测量是「强制提前折」的下限情形。
+- **官方登录拿不到折叠**：`-c model_providers.openai.base_url=…` 被 codex 拒绝（`model_providers contains
+  reserved built-in provider IDs: openai`），所以「不代理 ChatGPT 登录」是能力边界而非取舍。该臂 0 条
+  `live-compact` 日志、胶囊 `requests 0`、用量与 control 同形。本机 `agents-config-sync/active-profile` 当前是
+  `default`，即生产上 Codex 侧只有在切到 llmux profile 时才会走代理折叠。
+- **副作用已恢复**：隔离实例第一次启动时把 llmux profile 渲染进真实 `~/.codex/config.toml`（写入了
+  `model_provider` 与 `[model_providers]`），已还原为测试前 513 字节内容；之后改用独立 `CODEX_HOME` +
+  symlink `auth.json` 复验，真实文件 mtime 停在还原时刻。生产 7331 全程 200，隔离实例已停、端口已关。
