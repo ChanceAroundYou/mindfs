@@ -83,3 +83,13 @@
 **未验证 / 不覆盖**：真机双节点联调（fn 与 pc 的 `docs` 同时打开）未做；服务层单参
 `getRootNodeId` 调用点未逐个改；左侧文件树顶层仍按 root id 去重（两台的 docs 共用一行，
 展开按节点分桶）。
+
+**提交与门禁（2026-11-20）**：代码与本文档提交为 `56ee6e70`（`Scope: G-NR`，43 个路径：40 个
+web 源/测试 + 本计划 + `docs/plans/README.md`）；登记在 `docs/upstream-customizations.yaml` 的
+G-NR 组（35 文件 / 15 锚点，G-NN 的 `onTaskGone` 锚点随之改指 `taskNodeId(...)`）。
+`make check-upstream` → **2119 个 delta 文件被 344 组完整覆盖，全绿**。
+
+提交过程留下一处值得记的现场：工作区是多会话共享的，期间另一条会话先 `--amend` 后 `rebase`，
+把我已 stage 的 40 个 web 文件卷进过它的 G-NQ 提交、又在 rebase 中整批还回工作区。最终按显式
+pathspec 重新提交，并核对 `git show --name-only HEAD | grep -c '^server/'` == 0，确认没有把
+别人的在飞改动带进来。
