@@ -55,7 +55,7 @@ func main() {
 	liveCompactCacheTTLSeconds := 0
 	// 任务派发默认 Agent/模型，只走 config.json（task 段），没有 CLI flag。
 	taskAgent, taskModel := "", ""
-	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions := "", 0, 0
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions, routerSupervisionQuotaHold := "", 0, 0, 0
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -98,7 +98,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions = routerSupervision(startupCfg)
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions, routerSupervisionQuotaHold = routerSupervision(startupCfg)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -120,6 +120,7 @@ func main() {
 		RouterSupervisionMode:              routerSupervisionMode,
 		RouterSupervisionMaxRetriesPerNode: routerSupervisionRetries,
 		RouterSupervisionMaxActionsPerHour: routerSupervisionActions,
+		RouterSupervisionQuotaHoldSeconds:  routerSupervisionQuotaHold,
 		TaskAgent:                          taskAgent,
 		TaskModel:                          taskModel,
 		WorkflowParallelMainTree:           *workflowParallelMainTreeFlag,
@@ -231,6 +232,7 @@ type startupRouterSupervisionConfig struct {
 	Mode              *string `json:"mode"`
 	MaxRetriesPerNode *int    `json:"max_retries_per_node"`
 	MaxActionsPerHour *int    `json:"max_actions_per_hour"`
+	QuotaHoldSeconds  *int    `json:"quota_hold_seconds"`
 }
 
 type startupFlags struct {
@@ -453,9 +455,9 @@ func parseStartupDuration(field string, value *string) (*time.Duration, error) {
 }
 
 // routerSupervision 解出 config.json 的 router.supervision 段；缺省空值 = off。
-func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxActionsPerHour int) {
+func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxActionsPerHour, quotaHoldSeconds int) {
 	if cfg.Router == nil || cfg.Router.Supervision == nil {
-		return "", 0, 0
+		return "", 0, 0, 0
 	}
 	sup := cfg.Router.Supervision
 	if sup.Mode != nil {
@@ -467,7 +469,10 @@ func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxAc
 	if sup.MaxActionsPerHour != nil {
 		maxActionsPerHour = *sup.MaxActionsPerHour
 	}
-	return mode, maxRetriesPerNode, maxActionsPerHour
+	if sup.QuotaHoldSeconds != nil {
+		quotaHoldSeconds = *sup.QuotaHoldSeconds
+	}
+	return mode, maxRetriesPerNode, maxActionsPerHour, quotaHoldSeconds
 }
 
 func routerRoots(cfg startupConfig) map[string]string {

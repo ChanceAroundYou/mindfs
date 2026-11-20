@@ -10790,6 +10790,7 @@ groups:
       - server/internal/kanban/router_supervision_turn.go
       - server/internal/kanban/activity_route_supervision.go
       - server/internal/kanban/workflow_node_supervision_retry.go
+      - server/internal/kanban/workflow_node_holds.go
       - server/internal/kanban/router_types.go
       - server/internal/kanban/router_brief.go
       - server/internal/kanban/router_event_sources.go
@@ -10838,6 +10839,7 @@ groups:
       - server/app/router_supervision_config_test.go
       - server/internal/kanban/router_supervision_s3_test.go
       - server/internal/kanban/router_supervision_direct_test.go
+      - server/internal/kanban/workflow_node_holds_test.go
       - web/tests/task-supervision-entry.test.mjs
     anchors:
       - 'server/internal/kanban/activity_service_turns.go:失败与成功一样以「等用户」收尾'
@@ -10855,6 +10857,9 @@ groups:
       - 'server/internal/kanban/router_supervision.go:func (c RouterSupervisionConfig) Normalized() RouterSupervisionConfig {'
       - 'server/internal/kanban/router_supervision.go:func (s *Service) supervisionObservation('
       - 'server/internal/kanban/router_supervision.go:func classifySupervisionFailure('
+      - 'server/internal/kanban/workflow_node_holds.go:func nodeRunHoldUntil(nr NodeRun) (time.Time, bool) {'
+      - 'server/internal/kanban/workflow_node_holds.go:func (s *Service) releaseDueNodeHolds('
+      - 'server/internal/kanban/workflow_driver.go:if _, held := nodeRunHoldUntil(nr); held {'
       - 'server/internal/kanban/router_event_sources.go:payload["supervision"] = obs'
       - 'server/internal/kanban/router_event_brief.go:"supervision",'
       - 'server/internal/kanban/router_brief.go:brief.Supervision = rs.service.supervisionObservation('

@@ -112,7 +112,7 @@ func main() {
 	// 任务派发默认 Agent/模型，同样只走 config.json（task 段）。
 	taskAgent, taskModel := "", ""
 	// 主动监管开关与预算，只走 config.json（router.supervision 段）。
-	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions := "", 0, 0
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions, routerSupervisionQuotaHold := "", 0, 0, 0
 	remove := flag.Bool("remove", false, "remove the managed directory")
 	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
@@ -165,7 +165,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions = routerSupervision(startupCfg)
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions, routerSupervisionQuotaHold = routerSupervision(startupCfg)
 	internalAutoStart := autoStartBoot || *internalAutoStartFlag
 	if internalAutoStart {
 		*foreground = true
@@ -386,6 +386,7 @@ func main() {
 			RouterSupervisionMode:              routerSupervisionMode,
 			RouterSupervisionMaxRetriesPerNode: routerSupervisionRetries,
 			RouterSupervisionMaxActionsPerHour: routerSupervisionActions,
+			RouterSupervisionQuotaHoldSeconds:  routerSupervisionQuotaHold,
 			TaskAgent:                          taskAgent,
 			TaskModel:                          taskModel,
 			WorkflowParallelMainTree:           *workflowParallelMainTreeFlag,

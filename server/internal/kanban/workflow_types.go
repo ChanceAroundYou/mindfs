@@ -171,6 +171,9 @@ type NodeRun struct {
 	StartedAt      time.Time      `json:"started_at,omitempty"`
 	FinishedAt     time.Time      `json:"finished_at,omitempty"`
 	PrevAttemptID  string         `json:"prev_attempt_id,omitempty"`
+	// NotBefore 是配额挂起的解除时刻（RFC3339 UTC，空 = 立即可跑）。撞到上游用量
+	// 上限的节点不立刻重试，而是挂到重置时刻由扫描唤醒，避免几秒内烧光重试预算。
+	NotBefore string `json:"not_before,omitempty"`
 }
 
 // ── Template suggestion (WP-06: suggest, never auto-publish) ────────────────

@@ -339,6 +339,12 @@ func (s *Service) projectRunCancelled(ctx context.Context, store *TaskStore, run
 // It creates attempt+1 linked to the failed original and never mutates the
 // original row, its output, or a comment's frozen binding.
 func (s *Service) CreateWorkflowNodeAttempt(ctx context.Context, rootID, taskID, nodeRunID, reason string) (NodeRun, error) {
+	return s.createWorkflowNodeAttempt(ctx, rootID, taskID, nodeRunID, reason, "")
+}
+
+// createWorkflowNodeAttempt 是显式重试的唯一实现；notBefore 非空时新行一建好就带
+// 配额挂起，driver 醒来也只会跳过它，等 coordinate 到点唤醒。
+func (s *Service) createWorkflowNodeAttempt(ctx context.Context, rootID, taskID, nodeRunID, reason, notBefore string) (NodeRun, error) {
 	store, task, err := s.loadForMove(ctx, rootID, taskID)
 	if err != nil {
 		return NodeRun{}, err
@@ -376,6 +382,12 @@ func (s *Service) CreateWorkflowNodeAttempt(ctx context.Context, rootID, taskID,
 	retried, err := store.CreateRetryWorkflowNodeRun(ctx, run, original)
 	if err != nil {
 		return NodeRun{}, err
+	}
+	if notBefore != "" {
+		if err := store.SetWorkflowNodeRunNotBefore(ctx, retried.ID, notBefore); err != nil {
+			return NodeRun{}, err
+		}
+		retried.NotBefore = notBefore
 	}
 	if _, err := store.AppendWorkflowRunEvent(ctx, WorkflowRunEvent{
 		RunID: run.ID, Type: WorkflowEventNodeRetried, NodeID: original.NodeID, NodeRunID: retried.ID,

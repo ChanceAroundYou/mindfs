@@ -16,16 +16,16 @@ var ErrWorkflowNodeRunNotFound = errors.New("workflow node run not found on this
 // row is already somebody else's outcome", never as a reason to run a turn.
 var ErrWorkflowNodeRunNotQueued = errors.New("workflow node run is not queued")
 
-const workflowNodeRunColumns = `id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch`
+const workflowNodeRunColumns = `id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch,not_before`
 
 // workflowNodeRunColumnsQualified 是 join 查询用的列名变体：workflow_runs 也有
 // id，裸列名会歧义。
-const workflowNodeRunColumnsQualified = `nr.id,nr.run_id,nr.node_id,nr.loop_path,nr.iteration,nr.attempt,nr.agent,nr.harness,nr.model,nr.session_key,nr.status,nr.input_json,nr.output_json,nr.started_at,nr.finished_at,nr.prev_attempt_id,nr.worktree_id,nr.worktree_path,nr.worktree_branch`
+const workflowNodeRunColumnsQualified = `nr.id,nr.run_id,nr.node_id,nr.loop_path,nr.iteration,nr.attempt,nr.agent,nr.harness,nr.model,nr.session_key,nr.status,nr.input_json,nr.output_json,nr.started_at,nr.finished_at,nr.prev_attempt_id,nr.worktree_id,nr.worktree_path,nr.worktree_branch,nr.not_before`
 
 func scanWorkflowNodeRun(row interface{ Scan(...any) error }) (*NodeRun, error) {
 	var n NodeRun
 	var input, output, started, finished string
-	if err := row.Scan(&n.ID, &n.RunID, &n.NodeID, &n.LoopPath, &n.Iteration, &n.Attempt, &n.Agent, &n.Harness, &n.Model, &n.SessionKey, &n.Status, &input, &output, &started, &finished, &n.PrevAttemptID, &n.WorktreeID, &n.WorktreePath, &n.WorktreeBranch); err != nil {
+	if err := row.Scan(&n.ID, &n.RunID, &n.NodeID, &n.LoopPath, &n.Iteration, &n.Attempt, &n.Agent, &n.Harness, &n.Model, &n.SessionKey, &n.Status, &input, &output, &started, &finished, &n.PrevAttemptID, &n.WorktreeID, &n.WorktreePath, &n.WorktreeBranch, &n.NotBefore); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWorkflowNodeRunNotFound
 		}
@@ -56,6 +56,15 @@ func (s *TaskStore) WorkflowNodeRunByKey(ctx context.Context, runID, nodeID, loo
 		return NodeRun{}, err
 	}
 	return *node, nil
+}
+
+// SetWorkflowNodeRunNotBefore 写/清一行的配额挂起时刻（空串 = 立即可跑）。
+// 只有仍是 queued 的行会被改：已经跑起来的行不该被扫描重新拉回。
+func (s *TaskStore) SetWorkflowNodeRunNotBefore(ctx context.Context, id, notBefore string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE workflow_node_runs SET not_before=?, updated_at=? WHERE id=? AND status=?`,
+		strings.TrimSpace(notBefore), time.Now().UTC().Format(time.RFC3339Nano), id, NodeRunQueued)
+	return err
 }
 
 // WorkflowNodeRunBySessionKey 找这个任务下某会话当前绑定的活动 NodeRun。
@@ -112,8 +121,8 @@ func (s *TaskStore) ClaimWorkflowNodeRun(ctx context.Context, n NodeRun) (NodeRu
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx,
-		`INSERT INTO workflow_node_runs(id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING`,
-		n.ID, n.RunID, n.NodeID, n.LoopPath, n.Iteration, n.Attempt, n.Agent, n.Harness, n.Model, n.SessionKey, n.Status, input, output, started, finished, n.PrevAttemptID, n.WorktreeID, n.WorktreePath, n.WorktreeBranch, stamp, stamp)
+		`INSERT INTO workflow_node_runs(id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch,not_before,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING`,
+		n.ID, n.RunID, n.NodeID, n.LoopPath, n.Iteration, n.Attempt, n.Agent, n.Harness, n.Model, n.SessionKey, n.Status, input, output, started, finished, n.PrevAttemptID, n.WorktreeID, n.WorktreePath, n.WorktreeBranch, n.NotBefore, stamp, stamp)
 	if err != nil {
 		return NodeRun{}, false, err
 	}
@@ -373,6 +382,6 @@ func (s *TaskStore) UpsertWorkflowNodeRun(ctx context.Context, n NodeRun) error 
 	if !n.FinishedAt.IsZero() {
 		finished = n.FinishedAt.UTC().Format(time.RFC3339Nano)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO workflow_node_runs(id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET agent=excluded.agent,harness=excluded.harness,model=excluded.model,session_key=excluded.session_key,status=excluded.status,input_json=excluded.input_json,output_json=excluded.output_json,started_at=excluded.started_at,finished_at=excluded.finished_at,prev_attempt_id=excluded.prev_attempt_id,worktree_id=excluded.worktree_id,worktree_path=excluded.worktree_path,worktree_branch=excluded.worktree_branch,updated_at=excluded.updated_at`, n.ID, n.RunID, n.NodeID, n.LoopPath, n.Iteration, n.Attempt, n.Agent, n.Harness, n.Model, n.SessionKey, n.Status, input, output, started, finished, n.PrevAttemptID, n.WorktreeID, n.WorktreePath, n.WorktreeBranch, now, now)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO workflow_node_runs(id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch,not_before,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET agent=excluded.agent,harness=excluded.harness,model=excluded.model,session_key=excluded.session_key,status=excluded.status,input_json=excluded.input_json,output_json=excluded.output_json,started_at=excluded.started_at,finished_at=excluded.finished_at,prev_attempt_id=excluded.prev_attempt_id,worktree_id=excluded.worktree_id,worktree_path=excluded.worktree_path,worktree_branch=excluded.worktree_branch,not_before=excluded.not_before,updated_at=excluded.updated_at`, n.ID, n.RunID, n.NodeID, n.LoopPath, n.Iteration, n.Attempt, n.Agent, n.Harness, n.Model, n.SessionKey, n.Status, input, output, started, finished, n.PrevAttemptID, n.WorktreeID, n.WorktreePath, n.WorktreeBranch, n.NotBefore, now, now)
 	return err
 }

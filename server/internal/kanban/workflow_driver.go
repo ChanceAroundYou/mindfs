@@ -127,6 +127,11 @@ func (s *Service) advanceWorkflowNode(ctx context.Context, store *TaskStore, run
 		if err != nil {
 			return false, err
 		}
+		// 配额挂起中的行还不能跑：不改状态、不绑会话，下一拍再看。到期由
+		// releaseDueNodeHolds 清标记后重新唤醒本 Run。
+		if _, held := nodeRunHoldUntil(nr); held {
+			return false, nil
+		}
 		_, err = s.RunWorkflowNodeAttempt(ctx, store, run, node, nr)
 		if err != nil {
 			return false, err

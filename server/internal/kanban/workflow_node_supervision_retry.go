@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // RetryFailedWorkflowNode 是主动监管的重试端口（ActivityNodeRetrier 的实现）。
@@ -26,7 +27,16 @@ func (s *Service) RetryFailedWorkflowNode(ctx context.Context, rootID, taskID, n
 	if strings.TrimSpace(reason) == "" {
 		reason = supervisionRetryReason
 	}
-	return s.CreateWorkflowNodeAttempt(ctx, rootID, taskID, nodeRunID, reason)
+	// 撞用量上限的重试不立刻跑：挂到上游给的重置时刻，且由 supervisionRetriesUsed
+	// 把这一个 attempt 从重试预算里剔除（节点本身并没有失败第二次）。
+	notBefore := ""
+	if original, err := store.WorkflowNodeRunByID(ctx, nodeRunID); err == nil {
+		if kind, summary := classifySupervisionFailure(original); kind == SupervisionFailureQuota {
+			hold := s.RouterConfig().Supervision.QuotaHold
+			notBefore = quotaHoldUntil(summary, time.Now().UTC(), hold).Format(time.RFC3339)
+		}
+	}
+	return s.createWorkflowNodeAttempt(ctx, rootID, taskID, nodeRunID, reason, notBefore)
 }
 
 func supervisionNextAttempt(ctx context.Context, store *TaskStore, taskID, nodeRunID string) (NodeRun, bool, error) {

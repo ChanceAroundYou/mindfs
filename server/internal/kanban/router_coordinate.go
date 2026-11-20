@@ -207,12 +207,43 @@ func (rs *RouterService) coordinateTick() {
 	defer cancel()
 	now := time.Now().UTC()
 	rs.reclaimStaleEventClaims(ctx, now)
+	rs.releaseDueQuotaHolds(ctx, now)
 	rs.pruneExpiredEvents(ctx, now)
 	if _, err := rs.service.scanRouterEventSourcesBounded(ctx, rs.rootID, now, routerCoordinateScanWindow); err != nil {
 		log.Printf("[router/coordinate] scan.error root=%s err=%v", rs.rootID, err)
 	}
 	if _, err := rs.ConsumeRouterEvents(ctx, now); err != nil {
 		log.Printf("[router/coordinate] consume.error root=%s err=%v", rs.rootID, err)
+	}
+}
+
+// releaseDueQuotaHolds 唤醒到期的配额挂起。撞用量上限的节点不立刻重试，而是挂到
+// 重置时刻；这一拍把它们放回可运行并唤醒所属 Run。失败只记日志，下一拍再看。
+func (rs *RouterService) releaseDueQuotaHolds(ctx context.Context, now time.Time) {
+	if rs == nil || rs.service == nil {
+		return
+	}
+	store, err := rs.service.taskStore(rs.rootID)
+	if err != nil {
+		log.Printf("[router/coordinate] quota_hold.store root=%s err=%v", rs.rootID, err)
+		return
+	}
+	runs, err := rs.service.releaseDueNodeHolds(ctx, store, now)
+	if err != nil {
+		log.Printf("[router/coordinate] quota_hold.release_error root=%s err=%v", rs.rootID, err)
+		return
+	}
+	for _, runID := range runs {
+		run, err := store.WorkflowRunByID(ctx, runID)
+		if err != nil || run == nil {
+			log.Printf("[router/coordinate] quota_hold.run_lookup root=%s run=%s err=%v", rs.rootID, runID, err)
+			continue
+		}
+		if err := rs.service.WakeWorkflowRun(ctx, rs.rootID, run.TaskID, "quota_hold_released"); err != nil {
+			log.Printf("[router/coordinate] quota_hold.wake root=%s task=%s err=%v", rs.rootID, run.TaskID, err)
+			continue
+		}
+		log.Printf("[router/coordinate] quota_hold.released root=%s task=%s run=%s", rs.rootID, run.TaskID, runID)
 	}
 }
 

@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS workflow_node_runs (
  output_json TEXT NOT NULL DEFAULT '{}', started_at TEXT NOT NULL DEFAULT '', finished_at TEXT NOT NULL DEFAULT '',
  prev_attempt_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  worktree_id TEXT NOT NULL DEFAULT '', worktree_path TEXT NOT NULL DEFAULT '', worktree_branch TEXT NOT NULL DEFAULT '',
+ not_before TEXT NOT NULL DEFAULT '',
  UNIQUE(run_id,node_id,loop_path,iteration,attempt)
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(run_id,created_at);
@@ -57,6 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(run_
 		{"workflow_node_runs", "worktree_id", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_path", "TEXT NOT NULL DEFAULT ''"},
 		{"workflow_node_runs", "worktree_branch", "TEXT NOT NULL DEFAULT ''"},
+		{"workflow_node_runs", "not_before", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureTableColumn(col.table, col.name, col.ddl); err != nil {
 			return err

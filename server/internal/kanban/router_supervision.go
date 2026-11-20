@@ -30,6 +30,11 @@ const (
 	supervisionNodeLimit = 8
 	// supervisionSummaryLimit 限制失败摘要长度，避免把整段错误正文塞进事件。
 	supervisionSummaryLimit = 240
+	// defaultSupervisionQuotaHold 是拿不到上游重置时刻时的挂起时长。
+	defaultSupervisionQuotaHold = 15 * time.Minute
+	// supervisionQuotaHoldMin/Max 夹住挂起时长：太短等于原地重试，太长则整轮停摆。
+	supervisionQuotaHoldMin = time.Minute
+	supervisionQuotaHoldMax = 6 * time.Hour
 )
 
 // RouterSupervisionConfig 挂在 RouterConfig 上，来自 config.json 的
@@ -38,6 +43,8 @@ type RouterSupervisionConfig struct {
 	Mode              RouterSupervisionMode
 	MaxRetriesPerNode int
 	MaxActionsPerHour int
+	// QuotaHold 是撞到用量上限时挂起多久（拿不到上游重置时刻时用它）。
+	QuotaHold time.Duration
 }
 
 // Normalized 收敛未知模式与非法预算；零值保持「不采集」。
@@ -56,6 +63,15 @@ func (c RouterSupervisionConfig) Normalized() RouterSupervisionConfig {
 	if c.MaxActionsPerHour <= 0 {
 		c.MaxActionsPerHour = defaultSupervisionMaxActionsPerHour
 	}
+	if c.QuotaHold <= 0 {
+		c.QuotaHold = defaultSupervisionQuotaHold
+	}
+	if c.QuotaHold < supervisionQuotaHoldMin {
+		c.QuotaHold = supervisionQuotaHoldMin
+	}
+	if c.QuotaHold > supervisionQuotaHoldMax {
+		c.QuotaHold = supervisionQuotaHoldMax
+	}
 	return c
 }
 
@@ -67,6 +83,9 @@ const (
 	SupervisionFailureRetryable    SupervisionFailureKind = "retryable"
 	SupervisionFailureNonRetryable SupervisionFailureKind = "non_retryable"
 	SupervisionFailureUncertain    SupervisionFailureKind = "uncertain"
+	// SupervisionFailureQuota 是撞到上游用量/速率上限：不是节点的错，也不该在几秒内
+	// 连续重试，改为挂到重置时刻再跑。
+	SupervisionFailureQuota SupervisionFailureKind = "quota"
 )
 
 // SupervisionNodeState 是单个节点在观测时刻的水位。
@@ -157,8 +176,8 @@ func (s *Service) supervisionObservation(ctx context.Context, store *TaskStore, 
 			Status:    nr.Status,
 			Attempt:   nr.Attempt,
 		}
-		if nr.Attempt > 1 {
-			state.RetriesUsed = nr.Attempt - 1
+		if used := supervisionRetriesUsed(nodeRuns, nr.NodeID); used > 0 {
+			state.RetriesUsed = used
 		}
 		switch nr.Status {
 		case NodeRunQueued, NodeRunRunning, NodeRunWaitingUser:
@@ -233,9 +252,17 @@ func classifySupervisionFailure(nr NodeRun) (SupervisionFailureKind, string) {
 			return SupervisionFailureNonRetryable, summary
 		}
 	}
+	// 用量/速率上限先判：它们以前落在 retryable 里，结果是几百毫秒内再次 429、两次
+	// 重试预算烧光。现在改判 quota，由挂起路径排到重置时刻。
+	for _, mark := range []string{"rate limit", "rate_limit", "ratelimit", "usage limit",
+		"quota", "too many requests", "overloaded", "429"} {
+		if strings.Contains(text, mark) {
+			return SupervisionFailureQuota, summary
+		}
+	}
 	for _, mark := range []string{"timeout", "timed out", "deadline exceeded", "stream ended",
-		"unexpected eof", "connection reset", "temporarily unavailable", "overloaded",
-		"rate limit", "502", "503", "504", "429"} {
+		"unexpected eof", "connection reset", "temporarily unavailable",
+		"502", "503", "504"} {
 		if strings.Contains(text, mark) {
 			return SupervisionFailureRetryable, summary
 		}

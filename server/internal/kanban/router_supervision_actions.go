@@ -58,7 +58,7 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 					action.NodeRunID, supervisionFailedNodeList(obs))
 			}
 			switch target.FailureKind {
-			case SupervisionFailureRetryable:
+			case SupervisionFailureRetryable, SupervisionFailureQuota:
 			case SupervisionFailureUncertain:
 				return fmt.Errorf("retry of node %s is not allowed: failure evidence is uncertain; use router_notify_user instead", target.NodeID)
 			default:
