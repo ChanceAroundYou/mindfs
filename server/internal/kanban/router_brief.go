@@ -48,6 +48,9 @@ type SituationBrief struct {
 	// Supervision 是主动监管的水位快照（事件生产时写入 payload，事件回合
 	// 原样挂回 brief）。nil = 这个回合没有监管能力，工具也不会暴露。
 	Supervision *SupervisionObservation `json:"supervision,omitempty"`
+	// Completion 是上一次证据门判定的结果，只在 completion_blocked 事件回合
+	// 挂上：模型据此决定补做哪一项、还是交还用户。
+	Completion *RouterBriefCompletion `json:"completion,omitempty"`
 }
 
 type RouterBriefTask struct {
@@ -179,6 +182,9 @@ func (rs *RouterService) turnBrief(ctx context.Context, taskID string, trigger R
 					}
 				}
 			}
+		}
+		if trigger.Event.Kind == RouterEventCompletionBlocked {
+			rs.attachCompletionBrief(ctx, store, brief, *trigger.Event)
 		}
 		brief = capSituationBrief(brief)
 	}

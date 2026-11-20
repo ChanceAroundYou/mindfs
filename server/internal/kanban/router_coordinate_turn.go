@@ -171,15 +171,19 @@ func (rs *RouterService) beginCoordinateEventTurn(ctx context.Context, decision 
 			fmt.Sprintf("chain depth %d exceeds %d", event.ChainDepth, routerEventMaxChainDepth))
 		return false
 	}
-	turns, err := rs.countTurnsForUserActivity(ctx, decision.TaskID, userActivityID)
-	if err != nil {
-		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "count turns: "+err.Error())
-		return false
-	}
-	if turns >= RouterCoordinateMaxTurnsPerUserActivity {
-		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped,
-			fmt.Sprintf("turn budget exhausted (%d/%d)", turns, RouterCoordinateMaxTurnsPerUserActivity))
-		return false
+	// 补做回合不占每留言 3 回合预算：它的上限是契约的 MaxRepairs（超出预算时
+	// 压根不会有事件）。否则一条留言跑完一轮再补做两次，第三次就被静默跳过了。
+	if event.Kind != RouterEventCompletionBlocked {
+		turns, err := rs.countTurnsForUserActivity(ctx, decision.TaskID, userActivityID)
+		if err != nil {
+			rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "count turns: "+err.Error())
+			return false
+		}
+		if turns >= RouterCoordinateMaxTurnsPerUserActivity {
+			rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped,
+				fmt.Sprintf("turn budget exhausted (%d/%d)", turns, RouterCoordinateMaxTurnsPerUserActivity))
+			return false
+		}
 	}
 	if event.Kind == RouterEventRunStalled && !rs.stallEvidenceHolds(ctx, *event) {
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "no longer stalled")

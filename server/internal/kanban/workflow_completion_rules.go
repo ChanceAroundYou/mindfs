@@ -14,7 +14,7 @@ import (
 // 节点**最新一次 attempt** —— 历史 attempt 是证据，不是现状；用「曾经成功过」
 // 判定收尾会让重试失败的节点蒙混过关。
 func evaluateCompletionRequirement(ctx context.Context, s *Service, store *TaskStore, task Task, run *WorkflowRun, rows []NodeRun, rowsErr error, req CompletionRequirement) CompletionItemStatus {
-	item := CompletionItemStatus{ID: req.ID, Label: req.Label, Kind: req.Kind}
+	item := CompletionItemStatus{ID: req.ID, Label: req.Label, Kind: req.Kind, NodeID: strings.TrimSpace(req.NodeID)}
 	if item.Label == "" {
 		item.Label = req.ID
 	}

@@ -86,6 +86,10 @@ const (
 	// SupervisionFailureQuota 是撞到上游用量/速率上限：不是节点的错，也不该在几秒内
 	// 连续重试，改为挂到重置时刻再跑。
 	SupervisionFailureQuota SupervisionFailureKind = "quota"
+	// SupervisionFailureEvidenceFailed 只出现在 completion_blocked 事件回合：
+	// 节点本身跑完了，但完成契约在它身上不成立，补做上限由契约的 MaxRepairs
+	// 独立把关（不受每节点重试预算约束）。
+	SupervisionFailureEvidenceFailed SupervisionFailureKind = "evidence_failed"
 )
 
 // SupervisionNodeState 是单个节点在观测时刻的水位。
@@ -119,6 +123,10 @@ type SupervisionObservation struct {
 	ActionBudget      int                    `json:"action_budget"`
 	// Direct 只在直连回合的监管块里出现（那条事件没有 Run，节点段不适用）。
 	Direct *SupervisionDirectState `json:"direct,omitempty"`
+	// EvidenceFailedNodes 只出现在 completion_blocked 事件回合：这些节点的缺口
+	// 还值得补做，且补做对象是节点级重试。它不并进 FailedNodes，免得普通监管
+	// 回合把「跑了但证据不成立」误当成「跑失败了」。
+	EvidenceFailedNodes []SupervisionNodeState `json:"evidence_failed_nodes,omitempty"`
 }
 
 // supervisionObservation 汇总一个 Run 的 open/failed 节点水位。mode=off 时返回 nil
@@ -223,9 +231,9 @@ func (s *Service) supervisionActionsLastHour(ctx context.Context, store *TaskSto
 	cutoff := now.UTC().Add(-time.Hour).Format(routerTimeLayout)
 	var n int
 	err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM router_decisions WHERE task_id=? AND created_at>=? AND trigger_kind IN (?,?,?)`,
+		`SELECT COUNT(*) FROM router_decisions WHERE task_id=? AND created_at>=? AND trigger_kind IN (?,?,?,?)`,
 		taskID, cutoff, string(RouterTriggerRunFailed), string(RouterTriggerRunStalled),
-		string(RouterTriggerDirectStalled)).Scan(&n)
+		string(RouterTriggerDirectStalled), string(RouterTriggerCompletionBlocked)).Scan(&n)
 	if err != nil {
 		return 0
 	}
@@ -302,9 +310,10 @@ func supervisionDecisionStats(ctx context.Context, db *sql.DB, now time.Time) (l
 	err := db.QueryRowContext(ctx, `
 SELECT SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), COUNT(*)
 FROM router_decisions
-WHERE trigger_kind IN (?, ?, ?) AND created_at >= ?`,
+WHERE trigger_kind IN (?, ?, ?, ?) AND created_at >= ?`,
 		hourCutoff,
 		string(RouterTriggerRunFailed), string(RouterTriggerRunStalled), string(RouterTriggerDirectStalled),
+		string(RouterTriggerCompletionBlocked),
 		dayCutoff).Scan(&hour, &day)
 	if err != nil {
 		return 0, 0

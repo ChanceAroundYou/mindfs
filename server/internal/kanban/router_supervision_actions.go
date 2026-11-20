@@ -61,10 +61,13 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 			case SupervisionFailureRetryable, SupervisionFailureQuota:
 			case SupervisionFailureUncertain:
 				return fmt.Errorf("retry of node %s is not allowed: failure evidence is uncertain; use router_notify_user instead", target.NodeID)
+			case SupervisionFailureEvidenceFailed:
+				// 补做预算由契约的 MaxRepairs 把关（超出预算时压根不会有本事件），
+				// 不能再叠一层每节点重试预算 —— 那两个数字量的不是同一件事。
 			default:
 				return fmt.Errorf("retry of node %s is not allowed: failure is %s; use router_notify_user instead", target.NodeID, target.FailureKind)
 			}
-			if target.RetriesUsed >= cfg.MaxRetriesPerNode {
+			if target.FailureKind != SupervisionFailureEvidenceFailed && target.RetriesUsed >= cfg.MaxRetriesPerNode {
 				return &supervisionBudgetError{reason: fmt.Sprintf(
 					"supervision retry budget exhausted for node %s (%d/%d)", target.NodeID, target.RetriesUsed, cfg.MaxRetriesPerNode)}
 			}
@@ -156,23 +159,29 @@ func supervisionFailedNode(obs *SupervisionObservation, action RouterAction) (Su
 	}
 	nodeRunID := strings.TrimSpace(action.NodeRunID)
 	nodeID := strings.TrimSpace(action.Reason)
-	for _, node := range obs.FailedNodes {
-		if nodeRunID != "" && node.NodeRunID == nodeRunID {
-			return node, true
-		}
-		if nodeRunID == "" && nodeID != "" && node.NodeID == nodeID {
-			return node, true
+	for _, nodes := range [][]SupervisionNodeState{obs.FailedNodes, obs.EvidenceFailedNodes} {
+		for _, node := range nodes {
+			if nodeRunID != "" && node.NodeRunID == nodeRunID {
+				return node, true
+			}
+			if nodeRunID == "" && nodeID != "" && node.NodeID == nodeID {
+				return node, true
+			}
 		}
 	}
 	return SupervisionNodeState{}, false
 }
 
 func supervisionFailedNodeList(obs *SupervisionObservation) string {
-	if obs == nil || len(obs.FailedNodes) == 0 {
+	if obs == nil {
 		return "none"
 	}
-	parts := make([]string, 0, len(obs.FailedNodes))
-	for _, node := range obs.FailedNodes {
+	nodes := append(append([]SupervisionNodeState{}, obs.FailedNodes...), obs.EvidenceFailedNodes...)
+	if len(nodes) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(nodes))
+	for _, node := range nodes {
 		parts = append(parts, fmt.Sprintf("%s(%s)", node.NodeID, node.FailureKind))
 	}
 	return strings.Join(parts, ", ")

@@ -56,7 +56,7 @@ func (s *Service) applyCompleteTask(ctx context.Context, store *TaskStore, task 
 		return err
 	}
 	if !report.Passed {
-		return s.blockCompletion(ctx, store, task, run, report, decision.ID)
+		return s.blockCompletion(ctx, store, task, run, report, decision)
 	}
 	return s.commitCompletion(ctx, store, task, run, report, summary, decision.ID)
 }
@@ -65,10 +65,13 @@ func (s *Service) applyCompleteTask(ctx context.Context, store *TaskStore, task 
 // 关 open 节点、写 run_completed、按操作员终态落任务状态）；直连任务只改任务状态。
 func (s *Service) commitCompletion(ctx context.Context, store *TaskStore, task Task, run *WorkflowRun, report CompletionReport, summary, decisionID string) error {
 	// 同一条决策重放：已经收过尾就什么都不做。系统行本身也按确定 ID 插入。
+	repairsUsed := 0
 	if existing, found, err := store.GetTaskCompletion(ctx, task.ID); err != nil {
 		return err
 	} else if found && existing.Status == CompletionStatusCompleted && existing.DecisionID == decisionID {
 		return nil
+	} else if found {
+		repairsUsed = existing.RepairsUsed
 	}
 
 	body := fmt.Sprintf("任务收尾：按完成契约核对，%d 项证据全部成立。\n%s", len(report.Items), summary)
@@ -107,25 +110,52 @@ func (s *Service) commitCompletion(ctx context.Context, store *TaskStore, task T
 		}
 	}
 	return store.UpsertTaskCompletion(ctx, TaskCompletion{
-		TaskID:     task.ID,
-		RunID:      runID,
-		Status:     CompletionStatusCompleted,
-		ReportJSON: completionReportJSON(report),
-		DecisionID: decisionID,
-		UpdatedAt:  time.Now().UTC(),
+		TaskID:      task.ID,
+		RunID:       runID,
+		Status:      CompletionStatusCompleted,
+		ReportJSON:  completionReportJSON(report),
+		DecisionID:  decisionID,
+		RepairsUsed: repairsUsed,
+		UpdatedAt:   time.Now().UTC(),
 	})
 }
 
 // blockCompletion 记录证据缺口并原地保留任务状态：任务没做完，但也不是失败，
 // 下一回合（自动补做或用户介入）还要接着干。
-func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Task, run *WorkflowRun, report CompletionReport, decisionID string) error {
+//
+// 每拒绝一次算用掉一轮自动补做（repairs_used+1）。还有余额就落一条去重的
+// completion_blocked 事件让 Router 补做；余额用尽就写一条可见系统行、把任务
+// 停在 waiting_user，不再产生同缺口的事件 —— 补做不是无限循环。
+func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Task, run *WorkflowRun, report CompletionReport, decision RouterDecision) error {
 	gaps := completionGapLines(report)
+	runID := ""
+	if run != nil {
+		runID = run.ID
+	}
+	repairsMax := completionRepairsMaxFor(run)
+	repairsUsed := 0
+	if existing, found, err := store.GetTaskCompletion(ctx, task.ID); err != nil {
+		return err
+	} else if found && existing.RunID == runID {
+		// 换 Run 归零：新一轮执行有自己的补做预算。
+		repairsUsed = existing.RepairsUsed
+	}
+	repairsUsed++
+	exhausted := repairsUsed > repairsMax
+
 	body := fmt.Sprintf("这一轮还不能收尾：按完成契约核对，还有 %d 项证据不成立。", len(gaps))
+	if exhausted {
+		body = fmt.Sprintf("自动补做 %d 次仍未满足证据，需要你介入。还有 %d 项证据不成立。", repairsMax, len(gaps))
+	}
 	if len(gaps) > 0 {
 		body += "\n" + strings.Join(gaps, "\n")
 	}
+	rowID := "completion-blocked:" + decision.ID
+	if exhausted {
+		rowID = "completion-exhausted:" + decision.ID
+	}
 	row := &TaskActivity{
-		ID:               "completion-blocked:" + decisionID,
+		ID:               rowID,
 		TaskID:           task.ID,
 		RootID:           task.RootID,
 		Type:             ActivityTypeAttention,
@@ -133,7 +163,7 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 		Role:             "system",
 		Status:           ActivityStatusCompleted,
 		Body:             body,
-		RouterDecisionID: decisionID,
+		RouterDecisionID: decision.ID,
 	}
 	created, err := NewActivityStore(store.db).InsertOrIgnore(ctx, row)
 	if err != nil {
@@ -141,18 +171,29 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 	}
 	s.broadcastWorkflowActivity(ctx, store, row, created, nil)
 
-	runID := ""
-	if run != nil {
-		runID = run.ID
+	if exhausted {
+		// 任务停回待审核：补做不再自动发生，等用户回话。
+		if !isTerminalStatus(task.Status) && task.Status != StatusWaitingUser {
+			if err := store.UpdateTaskStatus(ctx, task.ID, StatusWaitingUser, false); err != nil {
+				return err
+			}
+		}
 	}
-	return store.UpsertTaskCompletion(ctx, TaskCompletion{
-		TaskID:     task.ID,
-		RunID:      runID,
-		Status:     CompletionStatusBlocked,
-		ReportJSON: completionReportJSON(report),
-		DecisionID: decisionID,
-		UpdatedAt:  time.Now().UTC(),
-	})
+	if err := store.UpsertTaskCompletion(ctx, TaskCompletion{
+		TaskID:      task.ID,
+		RunID:       runID,
+		Status:      CompletionStatusBlocked,
+		ReportJSON:  completionReportJSON(report),
+		DecisionID:  decision.ID,
+		RepairsUsed: repairsUsed,
+		UpdatedAt:   time.Now().UTC(),
+	}); err != nil {
+		return err
+	}
+	if exhausted {
+		return nil
+	}
+	return s.emitCompletionBlockedEvent(ctx, store, task, run, report, decision, repairsUsed, repairsMax)
 }
 
 // completionGapLines 把未通过的要求排成「1. 标签 — 原因」，让用户能照着补。

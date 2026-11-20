@@ -155,6 +155,8 @@ const (
 	// S3：直连回合没有 Run，回复行停在 running 而主会话已空闲时用它。
 	RouterTriggerDirectStalled RouterTriggerKind = "direct_stalled"
 	RouterTriggerStartup       RouterTriggerKind = "startup_reconcile" // P1
+	// 证据门：complete_task 被拒、缺口已落账，等 Router 补做或交还用户。
+	RouterTriggerCompletionBlocked RouterTriggerKind = "completion_blocked"
 )
 
 type RouterTrigger struct {

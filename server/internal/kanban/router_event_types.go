@@ -23,9 +23,11 @@ const (
 	RouterEventGateWaiting      RouterEventKind = "gate_waiting"
 	RouterEventRunStalled       RouterEventKind = "run_stalled"
 	RouterEventStartupReconcile RouterEventKind = "startup_reconcile"
-	// S3：直连回合没有 Run，回复行卡在 running 而主会话已空闲。这是账本里唯一
-	// 允许 RunID 为空的事件类型。
+	// S3：直连回合没有 Run，回复行卡在 running 而主会话已空闲。
 	RouterEventDirectStalled RouterEventKind = "direct_stalled"
+	// 证据门：complete_task 被拒后缺口没有变化时只落一条。直连任务没有 Run，
+	// 所以它与 direct_stalled 一样允许 RunID 为空。
+	RouterEventCompletionBlocked RouterEventKind = "completion_blocked"
 )
 
 const (
@@ -113,6 +115,9 @@ func RouterEventInstanceKey(kind RouterEventKind, runID, nodeRunID string, attem
 	case RouterEventDirectStalled:
 		// 实例键按活动 ID 而不是 Run：这条事件本来就没有 Run。
 		return "", errors.New("router event direct_stalled uses RouterEventDirectInstanceKey")
+	case RouterEventCompletionBlocked:
+		// 实例键还要带上缺口哈希，签名里没有这个维度：由生产端直接算。
+		return "", errors.New("router event completion_blocked uses RouterEventCompletionInstanceKey")
 	default:
 		return "", fmt.Errorf("unknown router event kind %q", kind)
 	}
@@ -122,7 +127,8 @@ func RouterEventInstanceKey(kind RouterEventKind, runID, nodeRunID string, attem
 func knownRouterEventKind(kind RouterEventKind) bool {
 	switch kind {
 	case RouterEventRunSettled, RouterEventRunFailed, RouterEventGateWaiting,
-		RouterEventRunStalled, RouterEventStartupReconcile, RouterEventDirectStalled:
+		RouterEventRunStalled, RouterEventStartupReconcile, RouterEventDirectStalled,
+		RouterEventCompletionBlocked:
 		return true
 	default:
 		return false

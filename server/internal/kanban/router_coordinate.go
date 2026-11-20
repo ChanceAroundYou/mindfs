@@ -66,13 +66,19 @@ func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {
 		kind = RouterTriggerStartup
 	case RouterEventDirectStalled:
 		kind = RouterTriggerDirectStalled
+	case RouterEventCompletionBlocked:
+		kind = RouterTriggerCompletionBlocked
 	default:
 		return RouterTrigger{}, ""
 	}
 	triggerRef := strings.TrimSpace(ev.RunID)
 	if triggerRef == "" {
-		// 直连事件没有 Run：指向卡住的那条回复行，便于日志/审计对齐。
+		// 直连事件没有 Run：指向卡住的那条回复行（completion_blocked 则指向任务），
+		// 便于日志/审计对齐。
 		triggerRef = routerEventPayloadString(ev.PayloadJSON, "activity_id")
+	}
+	if triggerRef == "" && kind == RouterTriggerCompletionBlocked {
+		triggerRef = strings.TrimSpace(ev.TaskID)
 	}
 	event := ev
 	return RouterTrigger{

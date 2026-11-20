@@ -45,9 +45,12 @@ type CompletionRequirement struct {
 }
 
 type CompletionItemStatus struct {
-	ID     string `json:"id"`
-	Label  string `json:"label,omitempty"`
-	Kind   string `json:"kind,omitempty"`
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	Kind  string `json:"kind,omitempty"`
+	// NodeID 是这条证据归属的节点（只有 node_done / gate_approved 有）。补做
+	// 要拿它去定位最新 attempt，所以必须进落库的报告。
+	NodeID string `json:"node_id,omitempty"`
 	Pass   bool   `json:"pass"`
 	Detail string `json:"detail,omitempty"`
 }

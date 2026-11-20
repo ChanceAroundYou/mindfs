@@ -111,9 +111,10 @@ func (s *RouterStore) InsertEvent(ctx context.Context, ev RouterEvent) (RouterEv
 	if !knownRouterEventKind(ev.Kind) {
 		return RouterEvent{}, false, fmt.Errorf("unknown router event kind %q", ev.Kind)
 	}
-	// direct_stalled 描述的是没有 Run 的直连回合；其余 kind 一律必须有 Run，
-	// 否则「哪个 Run 出了问题」在账本里就丢了。
-	if ev.RunID == "" && ev.Kind != RouterEventDirectStalled {
+	// direct_stalled 描述的是没有 Run 的直连回合，completion_blocked 可能来自
+	// 直连任务的证据门；其余 kind 一律必须有 Run，否则「哪个 Run 出了问题」
+	// 在账本里就丢了。
+	if ev.RunID == "" && ev.Kind != RouterEventDirectStalled && ev.Kind != RouterEventCompletionBlocked {
 		return RouterEvent{}, false, fmt.Errorf("router event %s requires a run id", ev.Kind)
 	}
 	if ev.InstanceKey == "" {

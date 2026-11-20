@@ -37,12 +37,24 @@ func capSituationBrief(brief *SituationBrief) *SituationBrief {
 		}
 		activity.BodyExcerpt = truncateRouterText(activity.BodyExcerpt, 200)
 	}
+	trimRouterCompletion(brief)
 	trimRouterEventExcerpts(brief)
 	if brief.Trigger.UserMessage != nil && briefSize(brief) > routerBriefMaxBytes {
 		brief.Trigger.UserMessage.Body = truncateRouterText(brief.Trigger.UserMessage.Body, routerEventBriefUserMessageLimit)
 	}
 	trimRouterEventUnverified(brief)
 	return brief
+}
+
+// trimRouterCompletion 把证据清单压到 8 条：缺口再多也不该挤掉 brief 的其它段，
+// 被裁掉的项在系统行里仍然完整可读。
+func trimRouterCompletion(brief *SituationBrief) bool {
+	if brief == nil || brief.Completion == nil || len(brief.Completion.Items) <= 8 {
+		return false
+	}
+	brief.Completion.Items = brief.Completion.Items[:8]
+	brief.Completion.Truncated = true
+	return true
 }
 
 // trimRouterEventNodes 把证据节点收缩到 keep 条并累计被省略数；返回是否有裁剪。
