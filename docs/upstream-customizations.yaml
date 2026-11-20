@@ -8056,7 +8056,7 @@ groups:
       - 'web/src/components/task/workflowAuthoring/proposalState.ts:export function adoptConflictRevision('
       - 'web/src/components/task/workflowAuthoring/proposalSelection.ts:export function canApplyWorkflowProposal('
       - 'web/src/components/task/workflowAuthoring/WorkflowProposalReview.tsx:data-testid="workflow-proposal-review"'
-      - 'web/src/components/task/WorkflowDraftEditor.tsx:sendTestId="workflow-authoring-generate"'
+      - 'web/src/components/task/WorkflowAuthoringPanel.tsx:sendTestId="workflow-authoring-generate"'
       - 'server/internal/api/http_routes.go:r.Post("/api/workflows/dry-run", h.handleWorkflowDryRun)'
       - 'server/internal/api/http_routes.go:r.Get("/api/tasks/{id}/workflow-run/suggestion", h.handleTaskWorkflowRunSuggestion)'
       - 'web/src/services/task/workflowDraft.ts:export async function applyWorkflowDraftPatch('
@@ -10402,7 +10402,7 @@ groups:
       - 'web/src/components/task/WorkflowCanvas.tsx:layout={narrow ? "sheet" : "anchored"}'
       - 'web/src/components/task/WorkflowNodeInspector.tsx:data-layout={layout}'
       - 'web/src/components/task/WorkflowDraftEditor.tsx:useBackLayer(true, close);'
-      - 'web/src/components/task/WorkflowDraftEditor.tsx:data-testid="workflow-authoring-toggle"'
+      - 'web/src/components/task/WorkflowAuthoringPanel.tsx:data-testid="workflow-authoring-toggle"'
       - 'web/tests/workflow-editor-mobile.test.ts:只有单项目看板保留编辑器标记，工作台/files/chat 一律重置'
   - id: G-NJ
     title: unknown 算已收尾（Router 不再被幽灵执行挡住）+ 启动对账补投影结算回复 + Router 读会话工具
@@ -10514,7 +10514,7 @@ groups:
       - 'web/src/components/task/WorkflowNodeIcons.tsx:export function PlanModeIcon({ size = 15 }: { size?: number }) {'
       - 'web/src/components/file/DefaultListView.tsx:className="mindfs-main-scroll"'
       - 'web/tests/workflow-editor-mobile.test.ts:手机上草稿列表是浮在画布上的左侧抽屉，可收起且收起后完全隐藏'
-      - 'web/tests/workflow-inspector-placement.test.ts:Plan 模式：只认布尔 true，勾选写值、取消删键'
+      - 'web/tests/workflow-inspector-placement.test.ts:Plan 模式：只认布尔 true，勾选连带关掉写入，取消一起还原'
       - 'server/internal/kanban/workflow_node_previous_output_test.go:func TestWorkflowNodePromptResolvesPreviousOutputInsideLoop(t *testing.T) {'
 
   - id: G-NL
