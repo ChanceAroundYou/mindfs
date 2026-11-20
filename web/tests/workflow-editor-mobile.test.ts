@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "vitest";
 import {
+  DRAFT_PANEL_WIDTH,
   SHEET_MARGIN,
   authoringPanelExpanded,
   boardKeepsWorkflowEditor,
+  draftCollapseFrame,
+  draftHandleFrame,
   draftPanelFrame,
   inspectorFrame,
 } from "../src/components/task/workflowEditorLayout.ts";
@@ -135,6 +138,41 @@ test("手机上藏掉主区右缘的浏览器滚动条（只在编辑器打开�
   assert.match(editor, /\.mindfs-main-scroll::-webkit-scrollbar\{display:none/, "Chromium 走伪元素");
   assert.match(editor, /scrollbar-width:none/, "Firefox/标准属性");
   assert.match(editor, /document\.body\.dataset\.workflowEditorMobile = "true"/, "只在编辑器挂载期间生效");
+});
+
+test("收起把手与展开把手在同一处竖向中点，关闭键是「×」图标", () => {
+  // 用户 2026-11-20：「侧板收起的按钮也放到中间对应位置，不要在顶上。关闭请用“x” icon」。
+  const handle = draftHandleFrame();
+  const collapse = draftCollapseFrame();
+  assert.equal(collapse.top, "50%", "收起键竖向居中，不钉在抽屉标题行");
+  assert.equal(collapse.transform, "translateY(-50%)");
+  assert.equal(handle.top, collapse.top, "收/放两个动作落在同一高度");
+  assert.equal(handle.transform, collapse.transform);
+  // 贴在抽屉右缘：left = 抽屉宽度 - 自身宽度；宽度只写一处，两边不许各抄一份。
+  assert.equal(collapse.left, `calc(${DRAFT_PANEL_WIDTH} - 28px)`);
+  assert.equal(draftPanelFrame({ isMobile: true, open: true }).width, DRAFT_PANEL_WIDTH);
+  // 与左缘把手镜像：靠外（右）那侧直角，靠内（左）那侧圆角。
+  assert.equal(collapse.borderTopLeftRadius, 10);
+  assert.equal(collapse.borderTopRightRadius, undefined);
+  assert.ok(
+    Number(collapse.zIndex) > Number(draftPanelFrame({ isMobile: true, open: true }).zIndex),
+    "收起键要盖在抽屉上，不能被抽屉压住",
+  );
+
+  const editor = read("../src/components/task/WorkflowDraftEditor.tsx");
+  assert.match(editor, /\.\.\.draftCollapseFrame\(\)/, "收起键的几何只能来自纯函数");
+  // 必须是抽屉的**兄弟**节点：抽屉自己 overflowY:auto，放进去的绝对定位按钮会跟列表滚走。
+  const collapseAt = editor.indexOf('data-testid="workflow-draft-panel-collapse"');
+  const navAt = editor.indexOf('data-testid="workflow-draft-panel"');
+  assert.ok(collapseAt > 0 && collapseAt < navAt, "收起键渲染在抽屉之前（兄弟节点，不在标题行里）");
+
+  // 关闭：图标按钮 + 可读名字，不再是一段文字。
+  const closeAt = editor.indexOf('data-testid="workflow-editor-close"');
+  assert.ok(closeAt > 0, "关闭键有稳定 testid");
+  const closeTag = editor.slice(closeAt, editor.indexOf("</button>", closeAt));
+  assert.match(closeTag, /aria-label=\{t\("task\.workflowEditor\.close"\)\}/, "图标键必须有无障碍名字");
+  assert.match(closeTag, /<CloseIcon/, "关闭键画的是 × 图标");
+  assert.doesNotMatch(editor, /\{t\("task\.workflowEditor\.close"\)\}<\/button>/, "文字版关闭键已删");
 });
 
 test("顶部描述整行独占，手机上拿到两行完整宽度，不再被挤成单行省略号", () => {

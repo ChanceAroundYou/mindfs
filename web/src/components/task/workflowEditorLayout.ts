@@ -67,6 +67,9 @@ export type DraftPanelState = {
  * 空间、也不再挤压画布宽度，收起时整块移出可视区（visibility 一并隐藏，
  * 避免不可见元素还能被点到）。
  */
+/** 手机抽屉的宽度：收起/展开两个把手都靠它定位，写一处免得两边各写一份。 */
+export const DRAFT_PANEL_WIDTH = "min(240px, 72vw)";
+
 export function draftPanelFrame(state: DraftPanelState): CSSProperties {
   if (!state.isMobile) {
     return { display: "flex", flexDirection: "column", width: 190, flexShrink: 0, overflowY: "auto" };
@@ -76,7 +79,7 @@ export function draftPanelFrame(state: DraftPanelState): CSSProperties {
     left: 0,
     top: 0,
     bottom: 0,
-    width: "min(240px, 72vw)",
+    width: DRAFT_PANEL_WIDTH,
     zIndex: 20,
     display: "flex",
     flexDirection: "column",
@@ -110,6 +113,39 @@ export function draftHandleFrame(): CSSProperties {
     borderBottomRightRadius: 10,
     border: "1px solid var(--border-color)",
     borderLeft: "none",
+    background: "var(--panel-bg, var(--button-bg))",
+    color: "var(--text-secondary)",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 12,
+  };
+}
+
+/**
+ * 抽屉展开时贴在它右缘的收起把手：与收起后的左缘把手**同一个竖向位置**
+ * （用户 2026-11-20：「侧板收起的按钮也放到中间对应位置，不要在顶上」）——
+ * 收放两个动作落在同一处，拇指不用在两个高度之间找按钮。
+ *
+ * 它是抽屉的兄弟节点而不是子节点：抽屉自己 overflowY:auto，绝对定位的
+ * 子元素会跟着列表一起滚走，钉不住。
+ */
+export function draftCollapseFrame(): CSSProperties {
+  return {
+    position: "absolute",
+    left: `calc(${DRAFT_PANEL_WIDTH} - 28px)`,
+    top: "50%",
+    transform: "translateY(-50%)",
+    zIndex: 30,
+    width: 28,
+    height: 44,
+    padding: 0,
+    // 与左缘把手镜像：贴着抽屉右边缘，靠外那一侧是直角。
+    borderTopLeftRadius: 10,
+    borderBottomLeftRadius: 10,
+    border: "1px solid var(--border-color)",
+    borderRight: "none",
     background: "var(--panel-bg, var(--button-bg))",
     color: "var(--text-secondary)",
     boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",

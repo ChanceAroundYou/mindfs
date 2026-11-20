@@ -12,7 +12,8 @@ import { useWorkflowAuthoring } from "./useWorkflowAuthoring";
 import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
 import { useWorkflowDraftEditor } from "./useWorkflowDraftEditor";
 import { workflowDraftDisplayName } from "../../shared/workflowModel";
-import { authoringPanelExpanded, draftHandleFrame, draftPanelFrame } from "./workflowEditorLayout";
+import { authoringPanelExpanded, draftCollapseFrame, draftHandleFrame, draftPanelFrame } from "./workflowEditorLayout";
+import { CloseIcon } from "./WorkflowNodeIcons";
 import type { AgentStatus } from "../../shared/agentTypes";
 
 // 两个弹窗（新建 / 编辑名称描述）共用同一个遮罩，单独拎出来省版面。
@@ -312,26 +313,10 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
         {e.dirty ? <span data-testid="workflow-draft-dirty" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger-color,#ef4444)", flexShrink: 0 }} /> : null}
         {!createMode && e.selected ? (
           <>
-            <button
-              type="button"
-              data-testid="workflow-draft-edit-meta"
-              aria-label={t("task.workflowEditor.editMeta")}
-              title={t("task.workflowEditor.editMeta")}
-              onClick={openMetaDialog}
-              style={{ ...panelButtonStyle("secondary"), ...headerIconButtonStyle }}
-            >
+            <button type="button" data-testid="workflow-draft-edit-meta" aria-label={t("task.workflowEditor.editMeta")} title={t("task.workflowEditor.editMeta")} onClick={openMetaDialog} style={{ ...panelButtonStyle("secondary"), ...headerIconButtonStyle }}>
               <EditPencilIcon />
             </button>
-            <button
-              type="button"
-              data-testid="workflow-draft-delete"
-              data-workflow-id={e.selected.workflow_id}
-              aria-label={t("task.workflowEditor.delete")}
-              title={t("task.workflowEditor.delete")}
-              disabled={!!e.deletingId || e.saving}
-              onClick={() => void e.remove(e.selected!)}
-              style={{ ...panelButtonStyle("secondary"), ...headerIconButtonStyle, color: "#dc2626" }}
-            >
+            <button type="button" data-testid="workflow-draft-delete" data-workflow-id={e.selected.workflow_id} aria-label={t("task.workflowEditor.delete")} title={t("task.workflowEditor.delete")} disabled={!!e.deletingId || e.saving} onClick={() => void e.remove(e.selected!)} style={{ ...panelButtonStyle("secondary"), ...headerIconButtonStyle, color: "#dc2626" }}>
               <DeleteIcon />
             </button>
           </>
@@ -340,7 +325,10 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
         {createMode ? (
           <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
         ) : null}
-        <button type="button" style={panelButtonStyle("secondary")} onClick={close}>{t("task.workflowEditor.close")}</button>
+        {/* 关闭用「×」图标（用户 2026-11-20），与编辑/删除同一种小图标按钮。 */}
+        <button type="button" data-testid="workflow-editor-close" aria-label={t("task.workflowEditor.close")} title={t("task.workflowEditor.close")} onClick={close} style={{ ...panelButtonStyle("secondary"), ...headerIconButtonStyle }}>
+          <CloseIcon size={14} />
+        </button>
       </div>
       {!createMode && e.selected?.description ? (
         <div
@@ -405,6 +393,22 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
               ▸
             </button>
           ) : null}
+          {/* 展开时的收起把手：贴在抽屉右缘、与左缘把手同一个竖向中点（不再是
+              抽屉标题行里的一个小按钮）。它是抽屉的兄弟节点 —— 抽屉自己会滚动，
+              放进去的绝对定位按钮会跟着列表滚走。 */}
+          {isMobile && draftPanelOpen ? (
+            <button
+              type="button"
+              data-testid="workflow-draft-panel-collapse"
+              aria-label={t("task.workflowEditor.collapseDrafts")}
+              aria-expanded
+              title={t("task.workflowEditor.collapseDrafts")}
+              onClick={() => setDraftPanelOpen(false)}
+              style={{ ...panelButtonStyle("secondary"), ...draftCollapseFrame() }}
+            >
+              ◂
+            </button>
+          ) : null}
           <nav
             ref={draftPanelRef}
             aria-label={t("task.workflowEditor.drafts")}
@@ -420,18 +424,6 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: isMobile ? 0 : 2, flexShrink: 0 }}>
               <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>{t("task.workflowEditor.drafts")}</span>
-              {isMobile ? (
-                <button
-                  type="button"
-                  data-testid="workflow-draft-panel-collapse"
-                  aria-label={t("task.workflowEditor.collapseDrafts")}
-                  title={t("task.workflowEditor.collapseDrafts")}
-                  onClick={() => setDraftPanelOpen(false)}
-                  style={{ ...panelButtonStyle("secondary"), height: 24, padding: "0 8px", fontSize: 12, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-                >
-                  ◂
-                </button>
-              ) : null}
               <button
                 type="button"
                 data-testid="workflow-create-open"

@@ -81,3 +81,29 @@
 - `make install`（= build-web + go build + 安装）产出 `v0.5.5-1200-55-gde5b1a79`（md5 `0043eda6…`）；本机 `~/.local/share/mindfs/web/` 已覆盖，线上 7331 首页引用的 `assets/index-BuQKueRz.js` 返回 200，刷新即生效（静态资源跟磁盘走，不用重启）。
 - 运行中的进程仍是 `v0.5.5-1200-52-gb61b81d8`（`/proc/377827/exe` 指向已删除的旧二进制）：**Plan 接管写入的后端兜底（`WorkflowNodeWorkspaceOf`）要等用户 `sudo systemctl restart mindfs` 才生效**，重启前只有前端写 `writes_workspace=false` 这一层。
 - 未部署其他节点。
+
+## 追加轮二（2026-11-20，Scope: G-NO）—— 收起键下移 + 关闭改图标
+
+用户原话：「侧板收起的按钮也放到中间对应位置，不要在顶上。关闭请用“x” icon」。
+
+- **收起键**：从抽屉标题行里的小按钮改成贴在抽屉**右缘**的把手，竖向中点与收起后左缘的
+  `workflow-draft-panel-toggle` 完全重合（新纯函数 `draftCollapseFrame`，宽度取
+  `DRAFT_PANEL_WIDTH` 单一常量，两边不各抄一份）。它是抽屉的**兄弟**节点而不是子节点：
+  抽屉自己 `overflowY: auto`，放进去的绝对定位按钮会跟着列表滚走。`zIndex 30 > 抽屉 20`，
+  与左缘把手镜像（靠外那侧直角、靠内那侧圆角）。
+- **关闭**：文字按钮换成 `CloseIcon`（`WorkflowNodeIcons.tsx`）+ `aria-label`/`title`，
+  与首行的编辑/删除同一种小图标键，带 `data-testid="workflow-editor-close"`。
+- 首行的编辑/删除键与关闭键压成同一种单行写法，`WorkflowDraftEditor.tsx` 490 行（硬线 500）。
+
+验证（2026-11-20）：
+- 源码契约 `web/tests/workflow-editor-mobile.test.ts` 新增一条：两个把手 `top`/`transform` 相同、
+  `left = calc(抽屉宽度 - 28px)`、只在靠内一侧圆角、层级高于抽屉、收起键渲染在 `nav` **之前**
+  （兄弟节点）；关闭键有 `aria-label` 且画的是 `<CloseIcon>`、文字版已删。
+- 干净 worktree（`HEAD` + 本组三个文件）：`tsc -b --noEmit` clean、`npx vitest run`
+  251 文件 / 777 通过 / 6 跳过。共享工作区的 4 处红（`useTaskBoard.ts:509` 等）属并发会话在飞改动。
+- 隔离实例真实 Chromium 390×844（`/tmp/verify_editor_tweaks.py`，日志 `/tmp/tweaks-run.log`）
+  **18/18 PASS**：关闭键是 svg、无文字、可读名字 `Close`；抽屉 box `x=16 w=240`、收起键
+  `x=228 w=28`（右缘差 **0.0px**）、竖向中点差 **0.0px**；收起后左缘把手与刚才的收起键
+  同一高度（差 **0.0px**）、贴列左缘；再展开仍在同一处；收起态不再渲染收起键；点抽屉外面
+  照旧收起（原行为未回归）。截图 `/tmp/tweak-mobile-open.png`、`/tmp/tweak-mobile-closed.png`。
+
