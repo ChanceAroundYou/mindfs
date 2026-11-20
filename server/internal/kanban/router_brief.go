@@ -227,6 +227,7 @@ func buildSituationBrief(
 			"不能批准 HumanGate，不能 merge worktree",
 			"latest_run.node_summary.unknown 表示进程重启时那一轮结果不明：节点已不在跑，可以用 router_read_session 读它的会话说清结果，再决定是否新开一轮",
 			"router_read_session 默认给最后一段文本，用 offset 往前翻；只能读本任务的会话",
+			ReviewCategoriesHint(),
 		},
 	}
 	activities := NewActivityStore(store.db)

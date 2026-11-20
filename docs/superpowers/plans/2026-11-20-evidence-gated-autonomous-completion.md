@@ -423,10 +423,20 @@ api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建�
   `func ValidateIntake(req IntakeRequest) []string` —— **一次性返回全部问题**；
   `var ReviewCategories = []string{"删除数据","停止服务","花钱","对外发消息","改产品方向","新建或轮换密钥","修改权限"}`。
 
-- [ ] **Step 1: 写失败测试**：未知字段 / 超长 / 空标题三条同时给 → 返回 3 条而非 1 条；
+- [x] **Step 1: 写失败测试**：未知字段 / 超长 / 空标题三条同时给 → 返回 3 条而非 1 条；
   分类表 7 项且顺序稳定。
-- [ ] **Step 2: 实现 → 绿 → 变异**（遇错即返 → 用例红）→ 还原。
-- [ ] **Step 3: 提交** `feat(kanban): 入站校验与默认审核分类（Scope: G-NP）`。
+- [x] **Step 2: 实现 → 绿 → 变异**（遇错即返 → 用例红）→ 还原。
+- [x] **Step 3: 提交** `feat(kanban): 入站校验与默认审核分类（Scope: G-NP）`。
+
+执行记录（2026-11-21）：一次给四处问题（空 root_id / 超长标题 / 超长正文 / 未知来源）
+返回 4 条，`ValidateIntakeFields` 的未知键与值问题一起返回且未知键按名字排序（map 遍历
+无序，问题列表顺序必须稳定）。分类表落在 `ReviewCategories` 常量；同一份清单由
+`ReviewCategoriesHint()` 写进 `brief.policy_hints`，并被 `TestRouterPromptListsReviewCategories`
+钉住与 `router_prompt.md` 第 17 条一致 —— 两份拷贝漂移时 Router 会按过时清单判断「要不要
+问人」。两条变异（校验器遇错即返、brief 那行只带第一类）各自打红对应用例后还原；全包
+`go test ./server/internal/kanban/` 两轮各 360s / 280s，唯一红项是既有 flake
+`TestCoordinatorTickReclaimsStaleClaims`（TempDir 清理竞态，隔离复跑绿）。本轮不实现、
+不注册 `TaskIntake` 端口（spec §6.11 最后一条）。
 
 ---
 

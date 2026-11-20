@@ -16,3 +16,9 @@ block-records-completed|server/internal/kanban/service_completion.go|Status:    
 
 # Task 6（事件去重键）：去重键必须随缺口身份变化，否则缺口收窄的那一轮会被当成旧事件吞掉。
 dedup-ignores-gap-identity|server/internal/kanban/service_completion_event.go|sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))|sum := sha256.Sum256(nil)|server/internal/kanban|^TestCompletionBlockedNewGapIsNewEvent$
+
+# Task 11（入站准入）：校验器遇错即返，渠道方就只会看到一条问题、改一轮再发现下一条。
+intake-returns-first-issue|server/internal/kanban/intake_policy.go|if req.Title == "" {|if len(issues) > 0 {\n\t\treturn issues\n\t}\n\tif req.Title == "" {|server/internal/kanban|^TestValidateIntakeReturnsAllProblemsAtOnce$
+
+# Task 11（审核分类）：brief 里那行只带第一类，Router 就看不见后面六类「必须问人」的事。
+categories-hint-drops-list|server/internal/kanban/intake_policy.go|return "默认审核分类（命中先问用户）：" + strings.Join(ReviewCategories, " / ")|return "默认审核分类（命中先问用户）：" + ReviewCategories[0]|server/internal/kanban|^TestReviewCategoriesHintListsAll$
