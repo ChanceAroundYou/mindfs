@@ -23,7 +23,9 @@ const workspaceBoardRefreshRef = useRef<(() => void) | null>(null);
   const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
   const [expandedTaskInputIds, setExpandedTaskInputIds] = useState<Set<string>>(() => new Set());
 const [overflowingTaskInputs, setOverflowingTaskInputs] = useState<Set<string>>(() => new Set());
-const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set());
+// 「已结束」列的分组折叠：归档默认收起（终态卡片已经收起来了，不必每次占屏），
+// 完成/取消仍默认展开。点分组头仍可单独展开。
+const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set(["archived"]));
 // 看板列折叠（移动端多列换行后空间宝贵，长列默认可收起只留表头）。
 const [collapsedKanbanColumns, setCollapsedKanbanColumns] = useState<Set<string>>(() => new Set());
 const [taskInlineEdit, setTaskInlineEdit] = useState<TaskInlineEditState | null>(null);

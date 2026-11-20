@@ -13,6 +13,7 @@ import { test } from "vitest";
 import { I18nProvider } from "../src/i18n/index.tsx";
 import { useAppKanbanColumns } from "../src/app/useAppKanbanColumns.ts";
 import { TaskCardRows } from "../src/components/task/TaskCardRows.tsx";
+import { TaskBoardView } from "../src/components/task/TaskBoardView.tsx";
 
 const terminalTask = (extra = {}) => ({
   id: "task-1",
@@ -59,6 +60,61 @@ test("ended column splits archived tasks into their own third group", () => {
   assert.deepEqual(groups.archived?.sort(), ["archived-cancelled", "archived-success"], "archived tasks get their own group");
   const grouped = (ended.groups || []).reduce((sum, group) => sum + group.tasks.length, 0);
   assert.equal(grouped, ended.tasks.length, "column header count must match the sum of its groups");
+});
+
+test("the archived group is collapsed by default", () => {
+  const tasks = [
+    terminalTask({ id: "done", name: "DONE-TASK" }),
+    terminalTask({ id: "archived", name: "ARCHIVED-TASK", archived_at: "2026-11-18T00:00:00Z" }),
+  ];
+  const { kanbanColumns } = useAppKanbanColumns({ kanbanTasks: tasks, t: (key) => key });
+  const boardProps = (collapsedTaskCompletionGroups) => ({
+    workspaceOpen: false,
+    currentRootId: "root-1",
+    currentRootIdRef: { current: "root-1" },
+    workspaceBoard: { projects: [] },
+    workspaceFilter: "all",
+    onWorkspaceFilterChange: () => {},
+    workspaceCollapsedKeys: new Set(),
+    onToggleWorkspaceProject: () => {},
+    onRefreshWorkspaceBoard: () => {},
+    managedRootIds: ["root-1"],
+    getRootDisplayName: () => "root",
+    openWorkspaceProject: async () => {},
+    openWorkspaceTaskDetail: async () => {},
+    handleWorkspaceCreateTask: () => {},
+    setSelectedKanbanTaskId: () => {},
+    kanbanTasksLoading: false,
+    kanbanColumns,
+    selectedKanbanTaskId: "",
+    expandedTaskInputIds: new Set(),
+    setExpandedTaskInputIds: () => {},
+    collapsedTaskCompletionGroups,
+    setCollapsedTaskCompletionGroups: () => {},
+    collapsedKanbanColumns: new Set(),
+    setCollapsedKanbanColumns: () => {},
+    taskFirstInputById: {},
+    taskSessionKeysById: {},
+    sessionByKey: {},
+    getDisplayNodeColor: () => null,
+    handleSelectKanbanTask: () => {},
+    handleMoveKanbanTask: async () => {},
+    openTaskCreateDialog: () => {},
+    handleTaskSessionDrawerOpen: () => {},
+    setTaskSessionErrorDialog: () => {},
+    loadKanbanTasks: async () => {},
+    onOpenWorkflowEditor: () => {},
+  });
+  const renderBoard = (collapsed) => renderToString(
+    React.createElement(I18nProvider, null, React.createElement(TaskBoardView, boardProps(collapsed))),
+  );
+
+  const defaultHtml = renderBoard(new Set(["archived"]));
+  assert.doesNotMatch(defaultHtml, /ARCHIVED-TASK/, "archived cards must be hidden by default");
+  assert.match(defaultHtml, /DONE-TASK/, "completed cards stay visible");
+
+  const expandedHtml = renderBoard(new Set());
+  assert.match(expandedHtml, /ARCHIVED-TASK/, "clicking the group header must reveal archived cards");
 });
 
 test("a terminal card offers archive next to delete", () => {

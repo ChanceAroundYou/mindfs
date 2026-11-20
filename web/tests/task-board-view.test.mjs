@@ -120,10 +120,11 @@ assert.match(
   /height: columnCollapsed \? "auto" : "100%",/,
   "collapsed columns may shrink, open ones fill their row",
 );
+// 归档组默认收起（终态卡片已经收起来了）；完成/取消两组仍默认展开，点分组头可单独切换。
 assert.match(
   app,
-  /const \[collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups\] = useState<Set<string>>\(\(\) => new Set\(\)\);/,
-  "completion groups should start expanded",
+  /const \[collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups\] = useState<Set<string>>\(\(\) => new Set\(\["archived"\]\)\);/,
+  "archived group should start collapsed while completion/cancelled groups start expanded",
 );
 
 // 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有输入区。
