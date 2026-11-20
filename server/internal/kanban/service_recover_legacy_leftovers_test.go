@@ -6,7 +6,7 @@ import (
 )
 
 // legacy 导入留下的占位行是第三种「永远转圈」：它的 run_id 不为空，所以
-// 直连对账（run_id=''）和 Run 侧结算（只有活 Run 才会被结算）都不会碰它。
+// 直连对账（run_id 为空）和 Run 侧结算（只有活 Run 才会被结算）都不会碰它。
 // 现场：act-legacy-reply-task_ebe31569ee25f4ff（2026-11-12）绑着
 // run-legacy-…，任务早已 success+归档，详情页却一直显示「正在想」。
 func TestStartupRecoverySettlesLegacyImportReply(t *testing.T) {
