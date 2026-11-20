@@ -82,12 +82,12 @@ assert.ok(branchAt > removeAt, "the branch can only be deleted after the worktre
 // 「这份活还有没有别的引用」。
 assert.match(
   gitviewFinish,
-  /if !branchExists\(ctx, opts\.MainDir, source\) \{\s*return mergeVanishedSource\(ctx, opts, source, target\)/,
+  /if !branchExists\(ctx, opts\.MainDir, source\) \{\s*return mergeVanishedSource\(ctx, opts, mergeDir, source, target\)/,
   "a vanished source branch must reach the reachability check, not be waved through as already-merged",
 );
 assert.match(
   gitviewFinish,
-  /那是它唯一的引用，拆掉就没了/,
+  /那份活唯一的引用就是/,
   "the vanished-source path must explain that the worktree is the only reference",
 );
 
@@ -151,10 +151,18 @@ assert.match(
   /"branch", "-d", branch/,
   "branch deletion must stay `branch -d`: it refuses to delete an unmerged branch instead of losing commits",
 );
-assert.doesNotMatch(
+// 2026-11-21 G-NV：嵌套树里节点分支并进的是任务树分支，主 checkout 停在 main 上，
+// `-d` 会永远拒绝。允许 `-D`，但必须先由 merge-base 证明它确实并进了那个提交；
+// 证明不了就退回会拒绝的 `-d`，绝不盲删。
+assert.match(
   gitviewFinish,
-  /"branch", "-D"/,
-  "there must be no force-delete path: silently dropping commits is the worst outcome of a worktree teardown",
+  /"merge-base", "--is-ancestor", branch, mergedCommit[\s\S]{0,400}?"branch", "-D"/,
+  "force-delete is only allowed after merge-base proves the branch is already merged",
+);
+assert.match(
+  gitviewFinish,
+  /return DeleteBranch\(ctx, rootPath, branch\)/,
+  "without proof the path must fall back to the refusing `branch -d`",
 );
 assert.match(
   gitviewFinish,
