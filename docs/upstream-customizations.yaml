@@ -1965,7 +1965,7 @@ groups:
     anchors:
       - server/internal/api/usecase/session_runtime.go:currentModelForRuntime
       - server/internal/api/usecase/session_send.go:requestedModel := strings.TrimSpace(in.Model)
-      - server/internal/api/usecase/session_send.go:manager.UpdateModel(ctx, current, resolvedModel)
+      - server/internal/api/usecase/session_send.go:manager.UpdateModel(persistCtx, current, resolvedModel)
       - server/internal/api/usecase/session_agent_open.go:currentModel := currentModelForRuntime(current, existing)
   - id: G-BL
     title: 看板新建任务的 worktree 节点路由
