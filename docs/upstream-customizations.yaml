@@ -9446,7 +9446,7 @@ groups:
       - 'server/internal/agent/proxy/usage.go:func (s *usageScanner) consumeLine('
       - 'server/internal/agent/pool_open.go:p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)'
       - 'server/app/server.go:liveCompactDisableFile = filepath.Join(liveCompactArchiveDir, "DISABLED")'
-      - 'server/internal/agent/proxy/live_compact_ledger.go:rewrite = totals.InputTokens + totals.CacheCreationInputTokens'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:RewriteTokens: totals.InputTokens + totals.CacheCreationInputTokens,'
       - 'server/internal/agent/proxy/proxy.go:st.live.pendingColdFold = true'
       - 'cli/cmd/startup.go:live_compact'
       - 'server/internal/agent/proxy/live_compact_proxy_test.go:func TestLiveCompactSharesBodyWithoutRacingTheRewrite('
