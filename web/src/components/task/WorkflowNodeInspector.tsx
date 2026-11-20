@@ -15,11 +15,46 @@ import {
 } from "../../shared/workflowModel";
 import { AgentSelector } from "../agent/AgentSelector";
 import type { AgentStatus } from "../../shared/agentTypes";
-import { WorkflowNodeIcon, CloseIcon, LoopNodeIcon } from "./WorkflowNodeIcons";
+import { WorkflowNodeIcon, CloseIcon, LoopNodeIcon, PlanModeIcon, NewSessionIcon, WorktreeIcon, WriteFileIcon } from "./WorkflowNodeIcons";
 import { inspectorFrame, type InspectorLayout } from "./workflowEditorLayout";
 
 // 节点属性浮动窗口。从 WorkflowCanvas 拆出来只为守住 500 行硬线，
 // 行为与拆前一致：位置由父层算好（画布点击处附近），点外部/Esc 关闭由父层管。
+
+/**
+ * 面板里的布尔开关：小方图标按钮，勾选态用主色，说明挂在 title（hover 提示）。
+ * 用 aria-pressed 而不是 checkbox —— 视觉上是开关按钮，读屏仍然报「按下/未按下」。
+ */
+function NodeToggle({ testId, active, label, hint, icon, onToggle }: {
+  testId: string;
+  active: boolean;
+  label: string;
+  hint: string;
+  icon: React.ReactNode;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-pressed={active}
+      aria-label={label}
+      title={hint ? `${label} — ${hint}` : label}
+      onClick={onToggle}
+      style={{
+        ...panelButtonStyle(active ? "primary" : "secondary"),
+        width: 30,
+        height: 28,
+        padding: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {icon}
+    </button>
+  );
+}
 
 export type WorkflowNodeInspectorProps = {
   node: WorkflowNodeDef;
@@ -167,69 +202,45 @@ export function WorkflowNodeInspector({
             />
           </div>
 
-          {/* Plan 模式（节点级，后端 params.plan_mode）：只读规划、先出方案。
-              设计类节点打开它，实现类节点关着；与「写不写工作区」是两个维度。 */}
-          <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", padding: "6px", background: "var(--button-bg)", borderRadius: "4px", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              data-testid="workflow-node-plan-mode"
-              checked={workflowNodeUsesPlanMode(selected)}
-              onChange={(e) => patchSelected({ params: setWorkflowNodeUsesPlanMode(selected.params, e.target.checked) })}
+          {/* 四个布尔开关收成一行图标按钮：勾选态用主色，说明走 hover 提示
+              （title）。原来每个开关各占一行「标题 + 两行说明」，把面板撑得很高，
+              而这几项都是看一眼图标就知道的辅助选项。 */}
+          <div data-testid="workflow-node-toggles" style={{ display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
+            <NodeToggle
+              testId="workflow-node-plan-mode"
+              active={workflowNodeUsesPlanMode(selected)}
+              label={t("task.workflowCanvas.planMode")}
+              hint={t("task.workflowCanvas.planModeHint")}
+              icon={<PlanModeIcon size={15} />}
+              onToggle={() => patchSelected({ params: setWorkflowNodeUsesPlanMode(selected.params, !workflowNodeUsesPlanMode(selected)) })}
             />
-            <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-              <span>{t("task.workflowCanvas.planMode")}</span>
-              <span style={{ fontSize: "10px", color: "var(--text-secondary)", lineHeight: 1.3 }}>
-                {t("task.workflowCanvas.planModeHint")}
-              </span>
-            </span>
-          </label>
-
-          {/* 工作区写入选项 */}
-          <label style={{ display: "flex", gap: "8px", alignItems: "center", padding: "6px", background: "var(--button-bg)", borderRadius: "4px", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={selected.params?.writes_workspace !== false}
-              onChange={(e) => patchSelected({ params: { ...selected.params, writes_workspace: e.target.checked } })}
+            <NodeToggle
+              testId="workflow-node-new-session"
+              active={workflowNodeStartsNewSession(selected)}
+              label={t("task.workflowCanvas.newSessionPerNode")}
+              hint={t("task.workflowCanvas.newSessionPerNodeHint")}
+              icon={<NewSessionIcon size={15} />}
+              onToggle={() => patchSelected({ params: setWorkflowNodeStartsNewSession(selected.params, !workflowNodeStartsNewSession(selected)) })}
             />
-            <span>{t("task.workflowCanvas.writesWorkspace")}</span>
-          </label>
-
-          {/* 会话归属（2026-11-20 用户决策）：一轮 Run 默认共用一条会话，节点可以
-              显式另起。存量图里的 per_node / same_stage 也是「自己一段对话」，
-              所以勾选态按「不是 run 策略」判断；用户不动它就保留原值，动过才写
-              always_new 或删掉参数回到默认。 */}
-          <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", padding: "6px", background: "var(--button-bg)", borderRadius: "4px", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              data-testid="workflow-node-new-session"
-              checked={workflowNodeStartsNewSession(selected)}
-              onChange={(e) => patchSelected({ params: setWorkflowNodeStartsNewSession(selected.params, e.target.checked) })}
+            <NodeToggle
+              testId="workflow-node-independent-worktree"
+              active={workflowNodeUsesOwnWorktree(selected)}
+              label={t("task.workflowCanvas.independentWorktree")}
+              hint={t("task.workflowCanvas.independentWorktreeHint")}
+              icon={<WorktreeIcon size={15} />}
+              onToggle={() => patchSelected({ params: setWorkflowNodeUsesOwnWorktree(selected.params, !workflowNodeUsesOwnWorktree(selected)) })}
             />
-            <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-              <span>{t("task.workflowCanvas.newSessionPerNode")}</span>
-              <span style={{ fontSize: "10px", color: "var(--text-secondary)", lineHeight: 1.3 }}>
-                {t("task.workflowCanvas.newSessionPerNodeHint")}
-              </span>
-            </span>
-          </label>
-
-          {/* 独立 worktree（后端 D10 opt-in）：与共享主树并发，结束按集成分支合并。
-              后端只认 worktree=independent，别的值一律回落共享主树；Run 没有
-              集成分支快照时这类节点会直接失败，所以提示里要点出来。 */}
-          <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", padding: "6px", background: "var(--button-bg)", borderRadius: "4px", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              data-testid="workflow-node-independent-worktree"
-              checked={workflowNodeUsesOwnWorktree(selected)}
-              onChange={(e) => patchSelected({ params: setWorkflowNodeUsesOwnWorktree(selected.params, e.target.checked) })}
+            {/* 工作区写入缺省为开（后端 writes_workspace 默认 true），所以勾选态是
+                「不是 false」而不是「等于 true」。 */}
+            <NodeToggle
+              testId="workflow-node-writes-workspace"
+              active={selected.params?.writes_workspace !== false}
+              label={t("task.workflowCanvas.writesWorkspace")}
+              hint={t("task.workflowCanvas.writesWorkspaceHint")}
+              icon={<WriteFileIcon size={15} />}
+              onToggle={() => patchSelected({ params: { ...selected.params, writes_workspace: selected.params?.writes_workspace === false } })}
             />
-            <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-              <span>{t("task.workflowCanvas.independentWorktree")}</span>
-              <span style={{ fontSize: "10px", color: "var(--text-secondary)", lineHeight: 1.3 }}>
-                {t("task.workflowCanvas.independentWorktreeHint")}
-              </span>
-            </span>
-          </label>
+          </div>
         </>
       ) : null}
       {selected.kind === "loop" ? (

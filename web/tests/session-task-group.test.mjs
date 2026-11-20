@@ -175,7 +175,8 @@ test("节点「另起会话」写 always_new，取消则回到 Run 共享会话"
 
 test("节点属性面板接线到同一组判据", () => {
   const inspector = read("components/task/WorkflowNodeInspector.tsx");
-  assert.match(inspector, /data-testid="workflow-node-new-session"/);
-  assert.match(inspector, /checked=\{workflowNodeStartsNewSession\(selected\)\}/);
-  assert.match(inspector, /setWorkflowNodeStartsNewSession\(selected\.params, e\.target\.checked\)/);
+  assert.match(inspector, /testId="workflow-node-new-session"/);
+  // 开关是图标按钮，按下态来自 workflowNodeStartsNewSession；点击翻转同一个判据。
+  assert.match(inspector, /active=\{workflowNodeStartsNewSession\(selected\)\}/);
+  assert.match(inspector, /setWorkflowNodeStartsNewSession\(selected\.params, !workflowNodeStartsNewSession\(selected\)\)/);
 });

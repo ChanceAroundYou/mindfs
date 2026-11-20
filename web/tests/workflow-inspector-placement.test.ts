@@ -105,9 +105,32 @@ test("左侧草稿卡只显示名字，描述退到 title 里", () => {
 
 test("节点属性面板给出「另起会话」与「独立 worktree」两个开关", () => {
   const src = read("../src/components/task/WorkflowNodeInspector.tsx");
-  assert.ok(src.includes('data-testid="workflow-node-new-session"'));
-  assert.ok(src.includes('data-testid="workflow-node-independent-worktree"'));
+  assert.ok(src.includes('testId="workflow-node-new-session"'));
+  assert.ok(src.includes('testId="workflow-node-independent-worktree"'));
   assert.ok(src.includes("setWorkflowNodeUsesOwnWorktree(selected.params"), "worktree 开关必须写 worktree=independent");
+});
+
+test("四个布尔开关收成一行图标按钮，说明退到 hover 提示", () => {
+  const src = read("../src/components/task/WorkflowNodeInspector.tsx");
+  assert.ok(src.includes('data-testid="workflow-node-toggles"'), "四个开关要收在同一行里");
+  assert.ok(!src.includes('type="checkbox"'), "面板里不该再留复选框，它们各占一行把面板撑高");
+  for (const id of [
+    "workflow-node-plan-mode",
+    "workflow-node-new-session",
+    "workflow-node-independent-worktree",
+    "workflow-node-writes-workspace",
+  ]) {
+    assert.ok(src.includes(`testId="${id}"`), `${id} 要以图标按钮形式存在`);
+  }
+  // 说明只能挂在 title 上：随文字一起渲染就等于没省下空间。
+  assert.ok(src.includes("title={hint ? `${label} — ${hint}` : label}"), "说明必须挂在 hover 提示里");
+  assert.ok(src.includes("aria-pressed={active}"), "图标按钮要报出按下态给读屏");
+  // writes_workspace 缺省是开，勾选态必须是「不是 false」，否则老节点显示成关。
+  assert.ok(src.includes("selected.params?.writes_workspace !== false"));
+  const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
+  const en = read("../src/i18n/locales/en-US-tasks.ts");
+  assert.match(zh, /"task\.workflowCanvas\.writesWorkspaceHint"/);
+  assert.match(en, /"task\.workflowCanvas\.writesWorkspaceHint"/);
 });
 
 // ── Plan 模式（后端 params.plan_mode，节点级）────────────────────────────────
@@ -130,7 +153,7 @@ test("Plan 模式：只认布尔 true，勾选写值、取消删键", () => {
 
 test("属性面板把 Plan 模式写进节点参数，而不是全局配置", () => {
   const src = read("../src/components/task/WorkflowNodeInspector.tsx");
-  assert.ok(src.includes('data-testid="workflow-node-plan-mode"'));
+  assert.ok(src.includes('testId="workflow-node-plan-mode"'));
   assert.ok(src.includes("setWorkflowNodeUsesPlanMode(selected.params"), "必须走节点级 params");
   // 提示里要说清这是「只出方案、不改文件」，否则用户不知道该给哪些节点开。
   const zh = read("../src/i18n/locales/zh-CN-tasks.ts");

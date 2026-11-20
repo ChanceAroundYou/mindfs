@@ -143,6 +143,7 @@ export const enUSTasks = {
   "task.workflowCanvas.agent": "Agent",
   "task.workflowCanvas.model": "Model",
   "task.workflowCanvas.writesWorkspace": "Writes workspace (serialized)",
+  "task.workflowCanvas.writesWorkspaceHint": "On: this turn may modify files, serialized with other workspace-writing nodes. Off: read-only, for pure analysis nodes.",
   "task.workflowCanvas.newSessionPerNode": "Start a new session for this node",
   "task.workflowCanvas.newSessionPerNodeHint": "By default every node shares the run's session; check this to give the node its own conversation.",
   "task.workflowCanvas.independentWorktree": "Own worktree for this node",

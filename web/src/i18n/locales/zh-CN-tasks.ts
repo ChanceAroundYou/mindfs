@@ -144,6 +144,8 @@ export const zhCNTasks = {
   "task.workflowCanvas.agent": "Agent",
   "task.workflowCanvas.model": "模型",
   "task.workflowCanvas.writesWorkspace": "写工作区（串行执行）",
+  // 四个开关现在是图标按钮，说明只在 hover 提示里出现，所以每条都要能独立读懂。
+  "task.workflowCanvas.writesWorkspaceHint": "打开时这一回合可以改文件；与其他写工作区的节点串行执行。关掉后只读，适合纯分析类节点。",
   // 2026-11-20 用户决策：一轮 Run 默认共用一条会话，节点可显式另起。
   "task.workflowCanvas.newSessionPerNode": "本节点另起会话",
   "task.workflowCanvas.newSessionPerNodeHint": "默认与其他节点共用同一轮的会话；勾选后这个节点单独开一段对话。",

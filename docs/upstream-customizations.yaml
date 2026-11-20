@@ -10315,7 +10315,7 @@ groups:
       - 'web/src/components/session/SessionCard.tsx:const shownName = stripNamePrefix ? taskSessionMemberLabel(displayName, stripNamePrefix) : displayName;'
       - 'web/src/components/session/SessionCard.tsx:paddingLeft: isSubagent || nested ? "10px" : 0,'
       - 'web/src/shared/workflowModel.ts:export const WORKFLOW_NODE_NEW_SESSION_POLICY = "always_new";'
-      - 'web/src/components/task/WorkflowNodeInspector.tsx:data-testid="workflow-node-new-session"'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:testId="workflow-node-new-session"'
   - id: G-NH
     title: 工作流编辑器的四处交互修复（删除键失效 / 节点卡片错位 / 独立 worktree 开关 / 草稿卡挤）
     kind: fix
@@ -10341,7 +10341,7 @@ groups:
       - 'web/src/components/task/WorkflowCanvas.tsx:createPortal('
       - 'web/src/components/task/WorkflowCanvas.tsx:isContentEditable'
       - 'web/src/shared/workflowModel.ts:export function workflowNodeUsesOwnWorktree(node: WorkflowNodeDef): boolean {'
-      - 'web/src/components/task/WorkflowNodeInspector.tsx:data-testid="workflow-node-independent-worktree"'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:testId="workflow-node-independent-worktree"'
       - 'web/src/components/task/WorkflowDraftEditor.tsx:title={d.description ?'
       - 'web/tests/workflow-inspector-placement.test.ts:点卡片外面只关卡片，不能清选中'
   - id: G-NI
@@ -10436,6 +10436,7 @@ groups:
       - web/src/components/task/workflowEditorLayout.ts
       - web/src/components/task/WorkflowDraftEditor.tsx
       - web/src/components/task/WorkflowNodeInspector.tsx
+      - web/src/components/task/WorkflowNodeIcons.tsx
       - web/src/components/task/useWorkflowDraftEditor.ts
       - web/src/components/file/DefaultListView.tsx
       - web/src/i18n/locales/zh-CN-tasks.ts
@@ -10460,7 +10461,9 @@ groups:
       - 'web/src/components/task/workflowEditorLayout.ts:export function draftPanelFrame(state: DraftPanelState): CSSProperties {'
       - 'web/src/components/task/WorkflowDraftEditor.tsx:data-testid="workflow-draft-panel-toggle"'
       - 'web/src/components/task/WorkflowDraftEditor.tsx:body[data-workflow-editor-mobile="true"]'
-      - 'web/src/components/task/WorkflowNodeInspector.tsx:data-testid="workflow-node-plan-mode"'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:data-testid="workflow-node-toggles"'
+      - 'web/src/components/task/WorkflowNodeInspector.tsx:title={hint ? `${label} — ${hint}` : label}'
+      - 'web/src/components/task/WorkflowNodeIcons.tsx:export function PlanModeIcon({ size = 15 }: { size?: number }) {'
       - 'web/src/components/file/DefaultListView.tsx:className="mindfs-main-scroll"'
       - 'web/tests/workflow-editor-mobile.test.ts:手机上草稿列表是浮在画布上的左侧抽屉，可收起且收起后完全隐藏'
       - 'web/tests/workflow-inspector-placement.test.ts:Plan 模式：只认布尔 true，勾选写值、取消删键'

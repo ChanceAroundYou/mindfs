@@ -69,6 +69,47 @@ export function WorkflowNodeIcon({ kind, size = 20 }: { kind: WorkflowNodeKind; 
   }
 }
 
+// 节点属性面板的开关图标：四个布尔开关收成图标按钮，说明走 hover 提示，
+// 不再各占一行文字（面板高度直接省掉三行说明）。
+
+export function PlanModeIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="3" width="16" height="18" rx="2" stroke="currentColor" strokeWidth="2" fill="none" />
+      <path d="M8 8h5M8 12h8M8 16h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function NewSessionIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M4 5h16v11H9l-5 4V5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" fill="none" />
+      <path d="M12 8v5M9.5 10.5h5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function WorktreeIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="6" cy="5" r="2.2" stroke="currentColor" strokeWidth="2" fill="none" />
+      <circle cx="6" cy="19" r="2.2" stroke="currentColor" strokeWidth="2" fill="none" />
+      <circle cx="18" cy="9" r="2.2" stroke="currentColor" strokeWidth="2" fill="none" />
+      <path d="M6 7.2v9.6M8 9h5a3 3 0 0 1 3 3v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
+export function WriteFileIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M20.5 14.5a2.1 2.1 0 0 0-3-3L12 17l-1 4 4-1 5.5-5.5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
 // 工具栏图标
 export function SearchIcon({ size = 16 }: { size?: number }) {
   return (
