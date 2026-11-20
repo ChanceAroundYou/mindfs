@@ -67,11 +67,14 @@ func (s *AppContext) callWorkflowOutputNormalizer(ctx context.Context, prompt st
 	return s.workflowOutputLLM.Call(callCtx, prompt)
 }
 
+// fallbackWorkflowNodeOutput 是「读不懂模型输出」时的兜底：节点照旧按 done 收尾
+// （不阻塞整块看板），但打上 unverified 标记 —— 完成契约据此拒绝把它当证据。
 func fallbackWorkflowNodeOutput(raw string) kanban.WorkflowNodeResult {
 	return kanban.WorkflowNodeResult{
 		Outcome: kanban.WorkflowNodeDone,
 		Output: map[string]any{
-			"summary": clipWorkflowOutput(raw),
+			"summary":    clipWorkflowOutput(raw),
+			"unverified": true,
 		},
 	}
 }

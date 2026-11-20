@@ -44,26 +44,79 @@ func (s *Service) applyCompleteTask(ctx context.Context, store *TaskStore, task 
 	if summary == "" {
 		return errors.New("complete_task summary required")
 	}
-	run, hasRun, err := s.workflowRunForTask(ctx, store, task.ID)
+	run, err := s.completionDecisionRun(ctx, store, task, decision, action)
 	if err != nil {
 		return err
-	}
-	if !hasRun {
-		run = nil
 	}
 	report, err := s.EvaluateCompletion(ctx, store, task, run)
 	if err != nil {
 		return err
 	}
+	// 没有契约时，机检答不了「事情真的做完了吗」：工作流交给独立复核回合看过
+	// 工作区再判（Task 7），直连任务没有工作区可看，但同样不能拿「对话收尾了」
+	// 当完成证据 —— 它也总是走复核（spec §6.4.2）。有契约且不成立是硬证据，
+	// 复核不能推翻，直接驳回。
+	if completionNeedsVerifier(run, report) || (run == nil && !report.Contract) {
+		return s.beginCompletionVerification(ctx, store, task, run, report, decision, summary)
+	}
 	if !report.Passed {
-		// 没有可机检的契约时，机检答不了「事情真的做完了吗」；交给独立复核回合，
-		// 由它看过工作区再判（Task 7）。有契约但不成立是硬证据，直接驳回。
-		if completionNeedsVerifier(run, report) {
-			return s.beginCompletionVerification(ctx, store, task, run, report, decision, summary)
-		}
 		return s.blockCompletion(ctx, store, task, run, report, decision)
 	}
 	return s.commitCompletion(ctx, store, task, run, report, summary, decision.ID)
+}
+
+// completionDecisionRun 认「决策发生时的那一轮 Run」，绝不回落到「最新 Run」：
+// 决策可能重放，也可能在补做之后才应用，按当前 Run 求值会让新一轮的证据替旧
+// 决策背书（Review Focus 5）。action 显式绑定优先；老决策读 brief —— 事件回合
+// 只认 brief.Event.RunID，用户回合认当轮 LatestRun。
+func (s *Service) completionDecisionRun(ctx context.Context, store *TaskStore, task Task, decision RouterDecision, action RouterAction) (*WorkflowRun, error) {
+	current, hasCurrent, err := s.workflowRunForTask(ctx, store, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !hasCurrent {
+		current = nil
+	}
+	want := strings.TrimSpace(action.RunID)
+	if want == "" {
+		want = completionBriefRunID(decision.BriefJSON)
+	}
+	if want == "" {
+		return current, nil
+	}
+	if current == nil {
+		return nil, fmt.Errorf("完成声明绑定的 Run %s 已不是任务的当前执行，不能按旧决策收尾", want)
+	}
+	if current.ID != want {
+		return nil, fmt.Errorf("完成声明绑定的 Run %s 已被新一轮 %s 取代，不能按旧决策收尾", want, current.ID)
+	}
+	return current, nil
+}
+
+// completionBriefRunID 从决策快照里取出这一轮该求值的 Run。
+func completionBriefRunID(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var brief SituationBrief
+	if err := json.Unmarshal([]byte(raw), &brief); err != nil {
+		return ""
+	}
+	return completionBriefRunIDOf(&brief)
+}
+
+// completionBriefRunIDOf 是同一口径的直读版本（工具在记录动作时用）。
+func completionBriefRunIDOf(brief *SituationBrief) string {
+	if brief == nil {
+		return ""
+	}
+	if brief.Event != nil {
+		return strings.TrimSpace(brief.Event.RunID)
+	}
+	if brief.LatestRun != nil {
+		return strings.TrimSpace(brief.LatestRun.ID)
+	}
+	return ""
 }
 
 // commitCompletion 正式收尾。工作流任务走 finishWorkflowRunByOperator（停 driver、
@@ -151,6 +204,10 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 	if existing, found, err := store.GetTaskCompletion(ctx, task.ID); err != nil {
 		return err
 	} else if found {
+		// 同一条决策重放：已经记过这一轮，不能再扣一轮补做预算、也不能再落行。
+		if existing.DecisionID == decision.ID && existing.Status == CompletionStatusBlocked {
+			return nil
+		}
 		if existing.RunID == runID {
 			// 换 Run 归零：新一轮执行有自己的补做预算。
 			repairsUsed = existing.RepairsUsed
@@ -191,6 +248,15 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 		return err
 	}
 	s.broadcastWorkflowActivity(ctx, store, row, created, nil)
+
+	// 缺口没有任何可重试的节点（缺文件、审批没批、直连回合）：Router 补不了，
+	// 不能让它空转烧预算。确定性地停下等人，并写明原因。
+	if len(supervisionEvidenceFailedNodes(ctx, store, run, report)) == 0 {
+		s.noteCompletionSystemRow(ctx, store, task, "completion-needs-user:"+decision.ID,
+			"这些缺口没有可以自动补做的节点：需要你介入确认或补齐条件后，再让 Router 继续。",
+			decision.ID)
+		s.parkForUser(ctx, store, task)
+	}
 
 	if exhausted {
 		// 任务停回待审核：补做不再自动发生，等用户回话。

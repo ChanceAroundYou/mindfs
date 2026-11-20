@@ -57,6 +57,11 @@ func evaluateNodeDone(item *CompletionItemStatus, rows []NodeRun, rowsErr error,
 		item.Detail = fmt.Sprintf("节点 %s 的结论不是 done（%s）", nodeID, strings.TrimSpace(outcome))
 		return
 	}
+	// 结果转换器读不懂模型输出时会兜底出一个 done。那是「没能核对」，不是证据。
+	if unverified, _ := latest.Output["unverified"].(bool); unverified {
+		item.Detail = fmt.Sprintf("节点 %s 的结论是转换器兜底的 done（没有核对过实际产出）", nodeID)
+		return
+	}
 	var missing []string
 	for _, key := range req.Keys {
 		key = strings.TrimSpace(key)
@@ -160,6 +165,10 @@ func evaluateFileExists(ctx context.Context, item *CompletionItemStatus, s *Serv
 		item.Detail = err.Error()
 		return
 	}
+	if err := completionGuardSymlinkEscape(root, full, req.Path); err != nil {
+		item.Detail = err.Error()
+		return
+	}
 	info, err := os.Lstat(full)
 	if errors.Is(err, fs.ErrNotExist) {
 		item.Detail = fmt.Sprintf("文件不存在：%s（在 %s）", strings.TrimSpace(req.Path), source)
@@ -232,6 +241,27 @@ func completionResolvePath(root, rel string) (string, error) {
 		return "", fmt.Errorf("路径越出工作区：%s", rel)
 	}
 	return full, nil
+}
+
+// completionGuardSymlinkEscape 逐段解析路径上的符号链接。父目录是链接时，
+// Lstat 只看最后一段会把整条越界路径当成存在 —— 这里按真实路径重新判一次。
+func completionGuardSymlinkEscape(root, full, rel string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		realRoot = filepath.Clean(root)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(full))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // 目录都不存在，Lstat 会报「文件不存在」
+		}
+		return fmt.Errorf("无法解析 %s 的上级目录：%v", strings.TrimSpace(rel), err)
+	}
+	realRoot = filepath.Clean(realRoot)
+	if parent != realRoot && !strings.HasPrefix(parent, realRoot+string(filepath.Separator)) {
+		return fmt.Errorf("%s 的上级目录链接到工作区之外，不作为证据", strings.TrimSpace(rel))
+	}
+	return nil
 }
 
 // latestTopLevelNodeRun 取某个顶层节点最新 attempt 的行。Loop 内部节点的行

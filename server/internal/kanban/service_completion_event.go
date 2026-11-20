@@ -5,22 +5,28 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
 // completion_blocked 事件的组装（Plan 2026-11-20 Task 6）。
 //
-// 一次「证据不成立」只该让 Router 补做一次：唯一键带缺口哈希，缺口没变就
-// 复用自己的那条事件；缺口变了（例如补做成功后只剩最后一项）才是新事实。
+// 一轮补做只该有一条事件：同一轮里缺口没变就复用（决策重放 / 换 ID 重试都不
+// 再落第二条）；缺口变了、或者进入下一轮补做，才是新事实 —— 否则预算的第二轮
+// 永远没有事件，补做会卡死在第一次。
 
 // RouterEventCompletionInstanceKey 是 completion_blocked 的实例键。直连任务没有
-// Run，键里退到 taskID，保证同一任务的同一缺口仍然只落一条。
-func RouterEventCompletionInstanceKey(runID, taskID, reportHash string) string {
+// Run，键里退到 taskID。round 是补做轮次（1 起）：同一轮内按缺口去重，跨轮必
+// 须各有一条事件，否则 Router 不会再被叫起来。
+func RouterEventCompletionInstanceKey(runID, taskID, reportHash string, round int) string {
 	target := strings.TrimSpace(runID)
 	if target == "" {
 		target = strings.TrimSpace(taskID)
 	}
-	return "completion_blocked:" + target + ":" + strings.TrimSpace(reportHash)
+	if round < 1 {
+		round = 1
+	}
+	return fmt.Sprintf("completion_blocked:%s:%s:r%d", target, strings.TrimSpace(reportHash), round)
 }
 
 // completionGapHash 只对未通过的项取哈希：顺序按契约，细节文本不进哈希 ——
@@ -70,7 +76,7 @@ func (s *Service) emitCompletionBlockedEvent(ctx context.Context, store *TaskSto
 	if run != nil {
 		runID = run.ID
 	}
-	instanceKey := RouterEventCompletionInstanceKey(runID, task.ID, completionGapHash(report))
+	instanceKey := RouterEventCompletionInstanceKey(runID, task.ID, completionGapHash(report), repairsUsed+1)
 	raw, err := json.Marshal(completionBlockedPayload(task.ID, runID, report, repairsUsed, repairsMax))
 	if err != nil {
 		return err

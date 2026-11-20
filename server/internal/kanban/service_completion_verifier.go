@@ -189,8 +189,18 @@ func (s *Service) verifyCompletion(ctx context.Context, taskID, runID, decisionI
 	summary := completionClaimSummary(decision)
 	key := completionVerifierKey(task.ID, runID, completionGapHash(report))
 
-	if report.Passed {
-		// 事实在复核回来之前就对上了（例如补做刚跑完）：直接收尾，不必问模型。
+	if reason, err := s.completionVerifierStaleReason(ctx, store, task, run); err != nil {
+		return err
+	} else if reason != "" {
+		// 复核还没开始，这一轮就已经不在了：不必再花一轮模型。
+		s.markVerifierVerdictStale(ctx, store, task, decision, reason)
+		return nil
+	}
+
+	if report.Passed && report.Contract {
+		// 契约在复核回来之前就对上了（例如补做刚跑完）：直接收尾，不必问模型。
+		// 没有契约 / 直连任务不在此列 —— 那时 Passed 只代表「对话收尾了」，
+		// 恰恰是复核要判的那件事。
 		return s.commitCompletion(ctx, store, task, run, report, summary, decision.ID)
 	}
 	raw, turnErr := s.runCompletionVerifierTurn(ctx, store, task, run, report, summary, key)
@@ -221,7 +231,16 @@ func (s *Service) verifyCompletion(ctx context.Context, taskID, runID, decisionI
 }
 
 // applyVerifierVerdict 把结论变成事实：pass 收尾，fail/uncertain 按未完成处理。
+//
+// 复核是后台回合，可能跑上一分钟：结论回来时任务可能已被用户取消、被重开、
+// 或已经起了新一轮执行。那时结论不再描述任何现存的执行，只能留痕、不能改状态。
 func (s *Service) applyVerifierVerdict(ctx context.Context, store *TaskStore, task Task, run *WorkflowRun, report CompletionReport, decision RouterDecision, summary, verdict string, findings []string) error {
+	if reason, err := s.completionVerifierStaleReason(ctx, store, task, run); err != nil {
+		return err
+	} else if reason != "" {
+		s.markVerifierVerdictStale(ctx, store, task, decision, reason)
+		return nil
+	}
 	switch verdict {
 	case CompletionVerdictPass:
 		return s.commitCompletion(ctx, store, task, run, report, verifierSummary(summary, findings), decision.ID)
@@ -242,6 +261,47 @@ func (s *Service) applyVerifierVerdict(ctx context.Context, store *TaskStore, ta
 	default:
 		return fmt.Errorf("复核结论 %q 不认识", verdict)
 	}
+}
+
+// completionVerifierStaleReason 判断复核结论回来时这一轮执行还在不在。
+// 返回空串表示仍然有效。
+func (s *Service) completionVerifierStaleReason(ctx context.Context, store *TaskStore, task Task, run *WorkflowRun) (string, error) {
+	fresh, err := store.GetTask(ctx, task.ID)
+	if err != nil {
+		return "", err
+	}
+	switch fresh.Status {
+	case StatusSuccess, StatusFail, StatusCancelled:
+		return "任务已经结束（" + fresh.Status + "）", nil
+	}
+	if run == nil {
+		return "", nil
+	}
+	current, hasCurrent, err := s.workflowRunForTask(ctx, store, task.ID)
+	if err != nil {
+		return "", err
+	}
+	if !hasCurrent || current == nil || current.ID != run.ID {
+		return "任务已经起了新一轮执行", nil
+	}
+	return "", nil
+}
+
+// markVerifierVerdictStale 留一条可核对的说明，并把停在 verifying 的记录收成
+// blocked —— 结论没被采用，不能让记录永远显示「复核中」。
+func (s *Service) markVerifierVerdictStale(ctx context.Context, store *TaskStore, task Task, decision RouterDecision, reason string) {
+	if existing, found, err := store.GetTaskCompletion(ctx, task.ID); err != nil {
+		log.Printf("[completion-verifier] task=%s stale read: %v", task.ID, err)
+	} else if found && existing.Status == CompletionStatusVerifying {
+		existing.Status = CompletionStatusBlocked
+		existing.UpdatedAt = time.Now().UTC()
+		if err := store.UpsertTaskCompletion(ctx, existing); err != nil {
+			log.Printf("[completion-verifier] task=%s stale settle: %v", task.ID, err)
+		}
+	}
+	s.noteCompletionSystemRow(ctx, store, task, "completion-verifier-stale:"+decision.ID,
+		"独立复核结论回来时"+reason+"，结论未采用：这一轮是否做完由当前执行自己判定。",
+		decision.ID)
 }
 
 // parkForUser 把非终态任务放回 waiting_user；终态（含已收尾）不动。

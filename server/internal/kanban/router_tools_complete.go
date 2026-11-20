@@ -38,6 +38,7 @@ func (e *routerToolEnv) completeTaskTool() RouterToolSpec {
 			}
 			return e.record(RouterAction{
 				Kind:    RouterActionComplete,
+				RunID:   completionBriefRunIDOf(e.brief),
 				Summary: truncateRouterText(summary, 500),
 				Reason:  truncateRouterText(args.Reason, 500),
 			})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // complete_task 的应用路径（Plan 2026-11-20 Task 5）：证据门通过 → 正式收尾；
@@ -160,7 +161,9 @@ func TestCompleteTaskIdempotent(t *testing.T) {
 	}
 }
 
-func TestCompleteTaskNoRunUsesSetTaskStatus(t *testing.T) {
+// 直连任务没有契约：机检只能证明「对话收尾了」。没有可用复核时必须 fail-closed
+// 停下等人，绝不能拿机检当完成证据（复审 Critical 1 的另一半）。
+func TestCompleteTaskNoRunWithoutVerifierParks(t *testing.T) {
 	ctx := context.Background()
 	f := newDirectCompletionFixture(t)
 	f.addActivity(t, TaskActivity{ID: "msg-1", Type: ActivityTypeUserMessage, Body: "看下这个问题"})
@@ -174,15 +177,19 @@ func TestCompleteTaskNoRunUsesSetTaskStatus(t *testing.T) {
 
 	task, err := f.store.GetTask(ctx, f.task.ID)
 	must(t, err, "GetTask")
-	if task.Status != StatusSuccess {
-		t.Fatalf("task status = %q, want success", task.Status)
+	if task.Status == StatusSuccess {
+		t.Fatal("没有复核时不能因为对话收尾就宣告任务成功")
 	}
-	completion, found, err := f.store.GetTaskCompletion(ctx, f.task.ID)
-	must(t, err, "GetTaskCompletion")
-	if !found || completion.Status != CompletionStatusCompleted || completion.RunID != "" {
-		t.Fatalf("completion = %+v found=%v, want completed without a run", completion, found)
+	if countTaskEvents(t, f, "completed") != 0 {
+		t.Fatal("复核不可用时不得写完成事件")
 	}
-	if countTaskEvents(t, f, "completed") != 1 {
-		t.Fatal("direct completion must finish the task exactly once")
+	// 复核是后台回合，说明行可能晚一拍才落地。
+	deadline := time.Now().Add(5 * time.Second)
+	for len(completionSystemRows(t, f, "completion-verifier-unavailable:dec-direct")) != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("unavailable rows = %d, want 1：复核不可用要留下可核对的说明",
+				len(completionSystemRows(t, f, "completion-verifier-unavailable:dec-direct")))
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

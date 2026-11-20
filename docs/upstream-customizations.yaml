@@ -11042,6 +11042,7 @@ groups:
       - server/internal/kanban/workflow_completion_test.go
       - server/internal/kanban/router_tools_complete_test.go
       - server/internal/kanban/service_completion_test.go
+      - server/internal/kanban/service_completion_review_fixes_test.go
       - server/internal/kanban/router_completion_event_test.go
       - server/internal/kanban/service_completion_verifier_test.go
       - server/internal/kanban/intake_policy_test.go
@@ -11074,6 +11075,7 @@ groups:
       - 'server/internal/kanban/workflow_completion_rules.go:func evaluateCompletionRequirement('
       - 'server/internal/kanban/workflow_completion_rules.go:func latestTopLevelNodeRun('
       - 'server/internal/kanban/workflow_completion_rules.go:func completionResolvePath('
+      - 'server/internal/kanban/workflow_completion_rules.go:func completionGuardSymlinkEscape('
       - 'server/internal/kanban/task_store_workflow_runs.go:completionContractOfGraphJSON(persistedGraph)'
       - 'server/internal/kanban/router_types.go:RouterActionComplete RouterActionKind = "complete_task"'
       - 'server/internal/kanban/router_types.go:Summary string `json:"summary,omitempty"`'
@@ -11114,10 +11116,12 @@ groups:
       - 'server/internal/kanban/router_supervision_actions.go:case SupervisionFailureEvidenceFailed:'
       - 'server/internal/kanban/router_coordinate_turn.go:if event.Kind != RouterEventCompletionBlocked {'
       - 'server/internal/kanban/service_completion.go:return s.emitCompletionBlockedEvent('
-      - 'server/internal/kanban/service_completion.go:if completionNeedsVerifier(run, report) {'
+      - 'server/internal/kanban/service_completion.go:if completionNeedsVerifier(run, report) || (run == nil && !report.Contract) {'
+      - 'server/internal/kanban/service_completion.go:func (s *Service) completionDecisionRun('
       - 'server/internal/kanban/service_completion_verifier.go:func parseVerifierVerdict('
       - 'server/internal/kanban/service_completion_verifier.go:func completionNeedsVerifier('
       - 'server/internal/kanban/service_completion_verifier.go:func (s *Service) verifyCompletion('
+      - 'server/internal/kanban/service_completion_verifier.go:func (s *Service) completionVerifierStaleReason('
       - 'server/internal/kanban/service_completion_verifier.go:func (s *Service) reconcileVerifyingCompletions('
       - 'server/internal/kanban/completion_store.go:func (s *TaskStore) ListVerifyingCompletions('
       - 'server/internal/kanban/service_recover_startup.go:s.reconcileVerifyingCompletions(ctx, store)'

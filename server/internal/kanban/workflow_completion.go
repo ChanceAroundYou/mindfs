@@ -160,22 +160,28 @@ func evaluateDirectCompletion(ctx context.Context, store *TaskStore, task Task) 
 		settled.Detail = "读取对话失败：" + err.Error()
 	default:
 		var latestReply *TaskActivity
-		hasUser := false
-		for _, a := range list {
+		latestUserIdx, latestReplyIdx := -1, -1
+		for i, a := range list {
 			switch a.Type {
 			case ActivityTypeUserMessage:
-				hasUser = true
+				latestUserIdx = i
 			case ActivityTypeAgentReply:
 				latestReply = a
+				latestReplyIdx = i
 			}
 		}
 		switch {
-		case !hasUser:
+		case latestUserIdx < 0:
 			settled.Detail = "任务还没有用户留言"
 		case latestReply == nil:
 			settled.Detail = "还没有任何回复"
+		case latestReplyIdx < latestUserIdx:
+			settled.Detail = "最新一条留言还没有回复"
 		case latestReply.Status != ActivityStatusCompleted:
 			settled.Detail = fmt.Sprintf("最新一条回复还是 %s，没有收尾", strings.TrimSpace(latestReply.Status))
+		// 老数据没有 reply_to_id，只能按顺序判：「最新的回复」必须晚于「最新的留言」。
+		case latestReply.ReplyToID != "" && latestReply.ReplyToID != list[latestUserIdx].ID:
+			settled.Detail = "最新一条回复答复的是更早的留言，最新留言还没有人接"
 		default:
 			settled.Pass = true
 			settled.Detail = "最新一条回复已收尾"

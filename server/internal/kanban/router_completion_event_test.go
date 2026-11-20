@@ -30,16 +30,19 @@ func blockCompletionOnce(t *testing.T, f *completionFixture, decisionID string) 
 	}
 }
 
+// TestCompletionBlockedEventDeduped 钉住补做事件的幂等口径：**同一决策重放**
+// 不再落新事件（应用层可重放），但同一缺口在**下一轮补做**里还要能再触发 ——
+// 只按缺口哈希去重会让预算的第二轮永远没有事件、补做卡在第一次。
 func TestCompletionBlockedEventDeduped(t *testing.T) {
 	f := newCompletionFixture(t, nodeDoneContract())
 	f.addAttempt(t, "build", NodeRunFail, map[string]any{"outcome": "blocked"}, "")
 
 	blockCompletionOnce(t, f, "dec-block-1")
-	blockCompletionOnce(t, f, "dec-block-2")
+	blockCompletionOnce(t, f, "dec-block-1") // 同一条决策重放
 
 	events := completionBlockedEvents(t, f)
 	if len(events) != 1 {
-		t.Fatalf("completion_blocked events = %d, want 1: the same gap set must dedupe", len(events))
+		t.Fatalf("completion_blocked events = %d, want 1: replaying one decision must not emit twice", len(events))
 	}
 	want := "completion_blocked:" + f.run.ID + ":"
 	if !strings.HasPrefix(events[0].InstanceKey, want) {
@@ -47,6 +50,12 @@ func TestCompletionBlockedEventDeduped(t *testing.T) {
 	}
 	if events[0].SourceDecisionID != "dec-block-1" {
 		t.Fatalf("source decision = %q, want the first decision kept", events[0].SourceDecisionID)
+	}
+
+	// 下一轮补做（新决策、同一组缺口）：预算还没用完，必须再落一条。
+	blockCompletionOnce(t, f, "dec-block-2")
+	if events := completionBlockedEvents(t, f); len(events) != 2 {
+		t.Fatalf("completion_blocked events = %d, want 2: the second repair round needs its own event", len(events))
 	}
 }
 
@@ -166,8 +175,10 @@ func TestCompletionBlockedBudgetExhaustedStops(t *testing.T) {
 		blockCompletionOnce(t, f, id)
 	}
 
-	if events := completionBlockedEvents(t, f); len(events) != 1 {
-		t.Fatalf("completion_blocked events = %d, want 1 (same gaps dedupe)", len(events))
+	// 两轮补做各有一条事件（否则 Router 在第二轮根本不会被叫起来）；第三轮
+	// 预算已尽，不再产生事件。
+	if events := completionBlockedEvents(t, f); len(events) != 2 {
+		t.Fatalf("completion_blocked events = %d, want 2 (one per repair round)", len(events))
 	}
 	if rows := completionSystemRows(t, f, "completion-blocked:"); len(rows) != 2 {
 		t.Fatalf("blocked rows = %d, want 2 before the budget runs out", len(rows))

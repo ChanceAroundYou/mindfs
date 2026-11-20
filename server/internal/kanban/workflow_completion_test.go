@@ -186,12 +186,18 @@ func TestEvaluateCompletionFileExistsGuards(t *testing.T) {
 		{ID: "escape-up", Kind: CompletionKindFileExists, Path: "../etc/passwd"},
 		{ID: "escape-abs", Kind: CompletionKindFileExists, Path: "/etc/passwd"},
 		{ID: "escape-link", Kind: CompletionKindFileExists, Path: "escape.txt"},
+		// 中间目录是符号链接时，Lstat 只看最后一段会放行整条路径。
+		{ID: "escape-dir", Kind: CompletionKindFileExists, Path: "dir-link/result.txt"},
 		{ID: "missing", Kind: CompletionKindFileExists, Path: "nope.txt"},
 	}})
 	must(t, os.WriteFile(filepath.Join(f.root.RootPath, "ok.txt"), []byte("x"), 0o600), "write ok.txt")
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	must(t, os.WriteFile(outside, []byte("x"), 0o600), "write outside.txt")
 	must(t, os.Symlink(outside, filepath.Join(f.root.RootPath, "escape.txt")), "symlink escape.txt")
+	outsideDir := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(outsideDir, "result.txt"), []byte("x"), 0o600), "write outside result.txt")
+	must(t, os.Symlink(outsideDir, filepath.Join(f.root.RootPath, "dir-link")), "symlink dir-link")
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(f.root.RootPath, "dir-link")) })
 
 	report := f.evaluate(t)
 	if report.Passed {
@@ -200,7 +206,7 @@ func TestEvaluateCompletionFileExistsGuards(t *testing.T) {
 	if item := completionItem(t, report, "ok"); !item.Pass {
 		t.Fatalf("ok item = %+v, want pass", item)
 	}
-	for _, id := range []string{"escape-up", "escape-abs", "escape-link", "missing"} {
+	for _, id := range []string{"escape-up", "escape-abs", "escape-link", "escape-dir", "missing"} {
 		item := completionItem(t, report, id)
 		if item.Pass {
 			t.Fatalf("%s item = %+v, want fail", id, item)
@@ -282,6 +288,39 @@ func TestEvaluateDirectCompletion(t *testing.T) {
 		}
 		if item := completionItem(t, report, "reply_settled"); item.Pass {
 			t.Fatalf("reply_settled = %+v, want fail while the latest reply is pending", item)
+		}
+	})
+
+	t.Run("a later message without an answer fails reply_settled", func(t *testing.T) {
+		// 复审 Important 4：只看到「有条旧回复已完成」不算答复了最新留言。
+		f := newDirectCompletionFixture(t)
+		f.addActivity(t, TaskActivity{ID: "msg-1", Type: ActivityTypeUserMessage, Body: "做一下"})
+		f.addActivity(t, TaskActivity{ID: "reply-1", Type: ActivityTypeAgentReply, Status: ActivityStatusCompleted, ReplyToID: "msg-1"})
+		f.addActivity(t, TaskActivity{ID: "msg-2", Type: ActivityTypeUserMessage, Body: "那这个呢"})
+		report, err := evaluateDirectCompletion(ctx, f.store, f.task)
+		if err != nil {
+			t.Fatalf("evaluateDirectCompletion: %v", err)
+		}
+		if report.Passed {
+			t.Fatalf("report = %+v, an unanswered latest message must block completion", report)
+		}
+		if item := completionItem(t, report, "reply_settled"); item.Pass {
+			t.Fatalf("reply_settled = %+v, want fail: 最新留言还没有回复", item)
+		}
+	})
+
+	t.Run("a reply to the newest message still passes", func(t *testing.T) {
+		f := newDirectCompletionFixture(t)
+		f.addActivity(t, TaskActivity{ID: "msg-1", Type: ActivityTypeUserMessage, Body: "做一下"})
+		f.addActivity(t, TaskActivity{ID: "reply-1", Type: ActivityTypeAgentReply, Status: ActivityStatusCompleted, ReplyToID: "msg-1"})
+		f.addActivity(t, TaskActivity{ID: "msg-2", Type: ActivityTypeUserMessage, Body: "那这个呢"})
+		f.addActivity(t, TaskActivity{ID: "reply-2", Type: ActivityTypeAgentReply, Status: ActivityStatusCompleted, ReplyToID: "msg-2"})
+		report, err := evaluateDirectCompletion(ctx, f.store, f.task)
+		if err != nil {
+			t.Fatalf("evaluateDirectCompletion: %v", err)
+		}
+		if !report.Passed {
+			t.Fatalf("report = %+v, want pass", report)
 		}
 	})
 

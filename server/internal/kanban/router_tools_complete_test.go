@@ -24,6 +24,51 @@ func completeTaskEnv(t *testing.T) (*routerToolEnv, func(summary string) (string
 	}
 }
 
+// 复审 Critical 2（工具侧）：动作必须把「决策发生时的那一轮 Run」带走。
+// 只留 summary 的话，apply 阶段只能去问「现在最新是哪个 Run」，新一轮的证据
+// 就会替旧决策背书。
+func TestCompleteTaskToolBindsDecisionRun(t *testing.T) {
+	cases := []struct {
+		name  string
+		brief *SituationBrief
+		want  string
+	}{
+		{
+			name: "event turn binds the event run",
+			brief: &SituationBrief{
+				Task:  RouterBriefTask{ID: "task-1", Status: StatusWaitingUser},
+				Event: &RouterBriefEvent{ID: "ev-1", RunID: "run-event"},
+			},
+			want: "run-event",
+		},
+		{
+			name: "user turn binds the latest run",
+			brief: &SituationBrief{
+				Task:      RouterBriefTask{ID: "task-1", Status: StatusWaitingUser},
+				LatestRun: &RouterBriefRun{ID: "run-latest"},
+			},
+			want: "run-latest",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := &routerToolEnv{brief: tc.brief, collector: newRouterTurnCollector(RouterConfig{})}
+			raw, err := json.Marshal(map[string]any{"summary": "做完了"})
+			must(t, err, "marshal args")
+			if _, err := env.completeTaskTool().Handler(context.Background(), raw); err != nil {
+				t.Fatalf("handler: %v", err)
+			}
+			actions := env.collector.snapshot()
+			if len(actions) != 1 {
+				t.Fatalf("actions = %+v, want one", actions)
+			}
+			if actions[0].RunID != tc.want {
+				t.Fatalf("action run id = %q, want %q", actions[0].RunID, tc.want)
+			}
+		})
+	}
+}
+
 func TestCompleteTaskToolRecords(t *testing.T) {
 	env, call := completeTaskEnv(t)
 	tool := env.completeTaskTool()

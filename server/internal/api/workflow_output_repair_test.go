@@ -70,6 +70,10 @@ func TestRepairEnvelopeGivesUpAfterTwo(t *testing.T) {
 	if got, _ := result.Output["summary"].(string); got != raw {
 		t.Fatalf("summary = %q, want the raw reply %q", got, raw)
 	}
+	// 兜底结论不是证据：完成契约必须能认出这是「没核对过」的 done。
+	if unverified, _ := result.Output["unverified"].(bool); !unverified {
+		t.Fatalf("output = %+v, want unverified=true：兜底出来的 done 不能被当成做完的证据", result.Output)
+	}
 }
 
 // 修复轮可能「补一个漂亮的信封」而不是补工作：声称 done、节点允许写、而本轮
