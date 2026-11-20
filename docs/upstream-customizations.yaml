@@ -11119,7 +11119,7 @@ groups:
       - 'scripts/mindfs-iso.sh:ISO_SRC="${MINDFS_ISO_SRC:-$WT_ROOT}"'
   - id: G-NT
     title: Router 会话关掉内置工具集，每轮省约 53k prompt tokens
-    kind: performance
+    kind: perf
     symptom: "Router 每轮 prompt_tokens 首轮 72.6–73.9k，长任务 116k / 145k / 218k，决策延迟 16.3–99.6s。取证：Router 的 prompt_snapshot 里 tools 有 36 个定义、195,856 字符（约 49k tokens），29 个是 Claude Code 内置工具（Artifact/ArtifactData/Monitor/DesignSync/Agent/Workflow/Bash/Read/Edit…），而 DefaultRouterToolPolicy 本来就 deny-by-default、只放行 10 个 mcp__mindfs_router__* —— 这些定义每轮都发给模型，却一个都调不了。"
     why: "必须保留：① Router 只用进程内 MCP 工具，内置工具定义纯属白付（约 190 KB / 49k tokens 每请求），routerAgentToolPolicy 传 `--tools \"\"` 整组关闭；② 只读复核回合要看文件，保留且只保留 Read,Grep,Glob（routerVerifierToolPolicy），其余内置工具同样不发给模型；③ 普通会话 BuiltinTools 为 nil、不传该参数，CLI 保持默认工具集，行为不变；④ 这是 CLI 参数而不是权限放宽：真实闸门仍是 handleCanUseTool + deny-by-default，`--tools` 只缩小发给模型的工具定义。"
     boundary: "只影响 claude 适配器构造 CLI 参数（ExtraArgs 的 tools）；其它 harness 忽略该字段。Router MCP 工具注册、策略闸门、决策校验与应用路径都不变。"
