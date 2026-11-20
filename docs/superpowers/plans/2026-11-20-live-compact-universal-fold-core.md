@@ -1972,3 +1972,16 @@ spike 证明机制可行，这一轮把它做成产品行为，四处改动，�
   卡片是协议无关的，而 Codex 没有 Read 工具。`fold_golden.txt` 因页脚字节重生成，五条用例的
   folded/new/sticky/tokens/decision 逐列不变。
 - **门禁**：`go test ./server/internal/agent/...` 全绿。
+
+### 部署核对（2026-11-21，用户部署并重启后）
+
+- **四端版本逐字一致 `v0.5.5-1200-126-g6fc12ef6`**：本机 system 单元 00:55:41 重启、PID 742549，
+  `/proc/<pid>/exe` 与 `~/.local/bin/mindfs` 同 inode（确认不是被替换后仍在跑的旧进程），
+  `/mindfs/health` 200 `role=control`；wsl / fn user 单元 `active`、health 200 `role=worker`；
+  pc-win PID 47632、`netstat -ano` 确认 `:7332` 由它 LISTENING、health 200。
+- **能力在位**：启动日志 `[agent/pool] compact-strip proxy listening … live_compact=on` 与
+  `[agent/pool] codex official-login provider injected base=https://chatgpt.com/backend-api/codex`；
+  wsl 在真实会话里也打出同一行注入日志。
+- **落后 HEAD 两个提交**：部署脚本在 `6fc12ef6` 起跑，未包含 `f094ada2`（页脚「Read 或 shell 命令」，
+  二进制 `grep -a` 仍是旧文案「用 Read 打开」）与并发会话的 `6e0fcecd`（G-NP）。要吃到页脚修复需重部署；
+  当前共享工作区有并发会话的未提交改动，重部署前需先落盘或从干净 HEAD 构建。
