@@ -18,6 +18,13 @@ import (
 )
 
 func (s *AppContext) CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (kanban.WorktreeInfo, error) {
+	return s.CreateTaskWorktreeFrom(ctx, rootID, name, branchMode, branch, "")
+}
+
+// CreateTaskWorktreeFrom 与 CreateTaskWorktree 相同，但新分支从 baseBranch 的 tip
+// 切出来（空 = 主 checkout HEAD）。工作流节点独立树用它基于 Run 集成分支建树，
+// 保证「节点树 → 任务树 → 主分支」这条链上每一段都从上一段的 tip 长出来。
+func (s *AppContext) CreateTaskWorktreeFrom(ctx context.Context, rootID, name, branchMode, branch, baseBranch string) (kanban.WorktreeInfo, error) {
 	root, err := s.GetRoot(rootID)
 	if err != nil {
 		return kanban.WorktreeInfo{}, err
@@ -40,6 +47,7 @@ func (s *AppContext) CreateTaskWorktree(ctx context.Context, rootID, name, branc
 		Name:       name,
 		BranchMode: branchMode,
 		Branch:     branch,
+		BaseBranch: strings.TrimSpace(baseBranch),
 		Register:   false,
 	})
 	if err != nil {

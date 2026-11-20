@@ -12,6 +12,18 @@ import (
 	"mindfs/server/internal/gitview"
 )
 
+// ensureTaskWorktreeReady 保证「勾了 worktree 的任务」此刻已经有一棵可用的树。
+//
+// 与 ensureTaskWorktree 的差别只在调用语义：建卡时就该把树建出来（用户勾选
+// 之后立刻能看到目录与分支），而不是等到某个节点要跑才发现没有树。路径已填时
+// 完全不动 —— 判断交给 ensureTaskWorktree（失效目录会明确报错，不自动重建）。
+func (s *Service) ensureTaskWorktreeReady(ctx context.Context, store *TaskStore, task Task) (Task, error) {
+	if !task.CreateWorktree {
+		return task, nil
+	}
+	return s.ensureTaskWorktree(ctx, store, task)
+}
+
 func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task Task) (Task, error) {
 	if !task.CreateWorktree {
 		return task, nil
@@ -130,8 +142,12 @@ func (s *Service) RebuildTaskWorktree(ctx context.Context, in MoveInput) (TaskDe
 		return store.GetDetail(ctx, task.ID)
 	}
 	// 清掉陈旧路径，让 ensureTaskWorktree 走建树分支而不是撞上「目录已不存在」那条例外。
+	// 落库也要清：重建失败时任务不能继续指着一个已删除的目录（卡片会显示「已收尾」）。
 	task.WorktreePath = ""
 	task.WorktreeRootID = ""
+	if err := store.ClearWorktreeRefs(ctx, task.ID); err != nil {
+		return TaskDetail{}, err
+	}
 	updated, err := s.ensureTaskWorktree(ctx, store, task)
 	if err != nil {
 		// 失败原因记到任务上：卡片本来就会渲染 session_error，用户不必去翻日志

@@ -126,29 +126,23 @@ func TestBuildingAnUnusableWorktreeIsNotRecordedAsBuilt(t *testing.T) {
 	svc, root := newTestService(t, runner)
 	ctx := context.Background()
 
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+	// 勾了 worktree 就当场建树：建不出来必须整张卡失败，而不是先落库再补。
+	_, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
 		Input:          "something to fix",
 		CreateWorktree: true,
 	})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
+	if err == nil {
+		t.Fatal("worktree creation with no usable path must fail the create")
 	}
-	// 建树必须当场拒绝：没产出可用目录，agent 就会在主 checkout 里跑。
 	store, err := svc.taskStore(root.ID)
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	if _, err := svc.ensureTaskWorktree(ctx, store, detail.Task); err == nil {
-		t.Fatal("worktree creation with no usable path must fail")
-	}
-
-	after := mustGetTask(t, svc, root.ID, detail.Task.ID)
-	if strings.TrimSpace(after.WorktreePath) != "" {
-		t.Fatalf("an unusable path must not be persisted as the task's worktree, got %q", after.WorktreePath)
-	}
-	if after.WorktreeBuilt {
-		t.Fatal("a worktree that was never actually created must not be recorded as built — that flag drives the \"finished\" badge")
+	if tasks, lerr := store.ListTasks(ctx, ListTasksOptions{Limit: 10}); lerr != nil {
+		t.Fatalf("ListTasks: %v", lerr)
+	} else if len(tasks) != 0 {
+		t.Fatalf("failed worktree creation left %d task(s) behind", len(tasks))
 	}
 }
 
@@ -162,27 +156,23 @@ func TestBuildingAWorktreeThatIsAFileIsNotRecordedAsBuilt(t *testing.T) {
 	svc, root := newTestService(t, runner)
 	ctx := context.Background()
 
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+	if _, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
 		Input:          "something to fix",
 		CreateWorktree: true,
-	})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	store, err := svc.taskStore(root.ID)
-	if err != nil {
-		t.Fatalf("taskStore: %v", err)
-	}
-	if _, err := svc.ensureTaskWorktree(ctx, store, detail.Task); err == nil {
+	}); err == nil {
 		t.Fatal("a path that is not a directory must not be accepted as a worktree")
 	}
 	if !runner.worktreeCreateCalled {
 		t.Fatal("the fixture must actually have reached worktree creation")
 	}
-
-	after := mustGetTask(t, svc, root.ID, detail.Task.ID)
-	if after.WorktreeBuilt {
-		t.Fatal("a path that is not a directory must not be recorded as a built worktree")
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	if tasks, lerr := store.ListTasks(ctx, ListTasksOptions{Limit: 10}); lerr != nil {
+		t.Fatalf("ListTasks: %v", lerr)
+	} else if len(tasks) != 0 {
+		t.Fatalf("failed worktree creation left %d task(s) behind", len(tasks))
 	}
 }

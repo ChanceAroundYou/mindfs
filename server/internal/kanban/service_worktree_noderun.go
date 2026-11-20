@@ -41,6 +41,8 @@ type EnsureNodeWorktreeInput struct {
 	WorktreeID string
 	// IntegrationBranch 是这棵树最终要并回的集成分支（自动合并用，见 service_worktree_merge.go）。
 	// 这里只记录意图，不合并；空 → "main"（与 gitview.MergeBranch 默认一致）。
+	// 非空且 branchMode=new 时，新分支**从它的 tip 切出来**（不是主 checkout HEAD）：
+	// 任务树存在时节点树才能接上任务树里已有的活，w2 → w1 → main 每一段都从上一段顶端长出来。
 	IntegrationBranch string
 	// CreateWorktree 显式关掉时直接返回错误（调用方声明了 worktree 但任务没开）。
 	// 空任务 CreateWorktree=false 时，本方法仍可建（节点级显式声明优先于任务级开关）。
@@ -132,7 +134,18 @@ func (s *Service) EnsureNodeWorktree(ctx context.Context, in EnsureNodeWorktreeI
 			name = name + "-" + shortID(nodeRunID)
 		}
 	}
-	wt, err := s.Runner.CreateTaskWorktree(ctx, task.RootID, name, branchMode, branch)
+	base := strings.TrimSpace(in.IntegrationBranch)
+	var wt WorktreeInfo
+	if base != "" && branchMode == "new" {
+		if from, ok := s.Runner.(WorktreeBaseRunner); ok {
+			wt, err = from.CreateTaskWorktreeFrom(ctx, task.RootID, name, branchMode, branch, base)
+		} else {
+			// 适配器没实现基线建树：退回 HEAD。宁可基线偏旧，也不要静默不建树。
+			wt, err = s.Runner.CreateTaskWorktree(ctx, task.RootID, name, branchMode, branch)
+		}
+	} else {
+		wt, err = s.Runner.CreateTaskWorktree(ctx, task.RootID, name, branchMode, branch)
+	}
 	if err != nil {
 		return WorktreeEntry{}, err
 	}
@@ -237,8 +250,8 @@ func (s *Service) removeNodeWorktreeDir(ctx context.Context, task Task, entry Wo
 		return false, nil
 	}
 	if deleteBranch && strings.TrimSpace(entry.Branch) != "" {
-		// branch -d：未合并时 git 自己拒绝，宁可留分支也不丢提交。
-		_ = gitview.DeleteBranch(ctx, mainDir, entry.Branch)
+		// 已并入合并提交才删（嵌套时并入的是任务树分支，主 checkout 上的 -d 会误拒）。
+		_ = gitview.DeleteBranchMergedAt(ctx, mainDir, entry.Branch, entry.MergedCommit)
 	}
 	return true, nil
 }

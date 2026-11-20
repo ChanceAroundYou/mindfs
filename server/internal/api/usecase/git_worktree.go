@@ -190,6 +190,9 @@ type CreateGitWorktreeInput struct {
 	Name       string
 	BranchMode string
 	Branch     string
+	// BaseBranch 是新分支的基线（空 = 主 checkout HEAD）。工作流节点的独立树用它
+	// 从 Run 的集成分支切出来 —— 见 gitview.AddWorktreeFrom。
+	BaseBranch string
 	Register   bool
 }
 
@@ -250,7 +253,7 @@ func (s *Service) CreateGitWorktree(ctx context.Context, in CreateGitWorktreeInp
 		return CreateGitWorktreeOutput{}, errors.New("branch required")
 	}
 
-	if err := gitview.AddWorktree(ctx, root.RootPath, targetPath, branchMode, branch); err != nil {
+	if err := gitview.AddWorktreeFrom(ctx, root.RootPath, targetPath, branchMode, branch, in.BaseBranch); err != nil {
 		return CreateGitWorktreeOutput{}, err
 	}
 	if !in.Register {

@@ -164,6 +164,46 @@ func AddWorktree(ctx context.Context, rootPath, targetPath, branchMode, branch s
 	return err
 }
 
+// CurrentBranch 返回 dir 当前 checkout 的分支名；detached HEAD 返回空串。
+// 合并回主分支时要拿它当目标：任务树存在时主 checkout 仍在主分支上不动，
+// 这正是「任务树 → main」最后一段的落点。
+func CurrentBranch(ctx context.Context, dir string) (string, error) {
+	out, err := runGit(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	branch := strings.TrimSpace(out)
+	if branch == "HEAD" {
+		return "", nil
+	}
+	return branch, nil
+}
+
+// AddWorktreeFrom 建一棵新分支的 worktree，**基线取 base 的 tip**（而不是主
+// checkout 的 HEAD）。
+//
+// 为什么需要：工作流节点的独立树必须从 Run 的集成分支切出来。任务级 worktree
+// 存在时集成分支就是任务树分支；按 HEAD 切会让节点树落在主 checkout 的位置上，
+// 既看不到任务树里已有的活，合回任务树时也不会冲突 —— 悄悄丢掉中间那一段。
+// base 为空或不是 new 分支时退回 AddWorktree（behavior identical）。
+func AddWorktreeFrom(ctx context.Context, rootPath, targetPath, branchMode, branch, base string) error {
+	base = strings.TrimSpace(base)
+	if base == "" || branchMode != "new" {
+		return AddWorktree(ctx, rootPath, targetPath, branchMode, branch)
+	}
+	if _, err := loadRepoContext(ctx, rootPath); err != nil {
+		return err
+	}
+	if _, err := runGit(ctx, rootPath, "check-ref-format", "--branch", branch); err != nil {
+		return fmt.Errorf("invalid branch name: %w", err)
+	}
+	if _, err := runGit(ctx, rootPath, "rev-parse", "-q", "--verify", base+"^{commit}"); err != nil {
+		return fmt.Errorf("基线分支 %s 不存在：%w", base, err)
+	}
+	_, err := runGit(ctx, rootPath, "worktree", "add", "-b", branch, targetPath, base)
+	return err
+}
+
 func RemoveWorktree(ctx context.Context, rootPath string) error {
 	isWorktree, err := IsWorktree(rootPath)
 	if err != nil {

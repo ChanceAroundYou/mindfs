@@ -298,6 +298,14 @@ type Runner interface {
 	TaskUpdated(rootID string, detail TaskDetail)
 }
 
+// WorktreeBaseRunner 是 Runner 的可选扩展：新分支不从主 checkout HEAD 切，而是
+// 从 baseBranch 的 tip 切。工作流节点的独立树靠它接上 Run 的集成分支（任务树）。
+// 单独成接口而不是并进 Runner：老适配器/测试桩不实现时仍能退回头建树，宁可基线
+// 偏旧也不静默不建树。
+type WorktreeBaseRunner interface {
+	CreateTaskWorktreeFrom(ctx context.Context, rootID, name, branchMode, branch, baseBranch string) (WorktreeInfo, error)
+}
+
 // ── WP-04 多 worktree 注册表 ─────────────────────────────────────────────
 //
 // Task→多 worktree：每个 entry 归属一个 NodeRun（node_run_id 为空表示任务主

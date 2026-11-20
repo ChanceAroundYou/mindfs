@@ -68,7 +68,7 @@ func TestValidateTargetDoesNotSelfBlockViaSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MainCheckoutPath: %v", err)
 	}
-	if err := validateTarget(context.Background(), mainDir, "", branch); err != nil {
+	if err := validateTarget(context.Background(), mainDir, "", branch, mainDir); err != nil {
 		t.Fatalf("validateTarget should not self-block via symlink: %v", err)
 	}
 }

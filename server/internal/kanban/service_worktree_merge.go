@@ -74,11 +74,15 @@ func (e *MergeConflictError) Unwrap() error { return gitview.ErrMergeConflict }
 // （另一个写者正在跑 agent 回合），如果此时还握着 NodeRun 收尾锁，操作员取消
 // 就会被一个无关的写者无限期阻塞。
 type autoMergePlan struct {
-	store           *TaskStore
-	task            Task
-	entry           WorktreeEntry
-	branch          string
-	mainDir         string
+	store   *TaskStore
+	task    Task
+	entry   WorktreeEntry
+	branch  string
+	mainDir string
+	// mergeDir 是 target 分支**被 checkout 的目录**：通常是 mainDir，任务树存在时
+	// 是任务 worktree 本身（嵌套 w2 → w1 的合并要在 w1 里发生，见 gitview.MergeTargetDir）。
+	// 空 = 与 mainDir 相同。
+	mergeDir        string
 	target          string
 	done            *AutoMergeWorktreeResult
 	closeAfterMerge bool
@@ -153,7 +157,25 @@ func (s *Service) prepareAutoMerge(ctx context.Context, in AutoMergeWorktreeInpu
 		return autoMergePlan{}, ErrWorkflowIntegrationBranchMissing
 	}
 	plan.branch, plan.mainDir, plan.target = branch, mainDir, target
+	// 目标分支可能正被任务树 checkout 着（嵌套情形）。合并必须去那棵树里做：
+	// 在主 checkout 上合并一条被占用的分支会直接失败（缺陷 A）。
+	mergeDir, err := gitview.MergeTargetDir(ctx, mainDir, target)
+	if err != nil {
+		return autoMergePlan{}, err
+	}
+	if mergeDir == "" {
+		mergeDir = mainDir
+	}
+	plan.mergeDir = mergeDir
 	return plan, nil
+}
+
+// targetDir 返回这次合并实际执行所在的目录。
+func (p autoMergePlan) targetDir() string {
+	if strings.TrimSpace(p.mergeDir) != "" {
+		return p.mergeDir
+	}
+	return p.mainDir
 }
 
 // executeAutoMerge 执行已解析的计划。调用方必须已按 needsGate 取得主
@@ -180,6 +202,7 @@ func (s *Service) executeAutoMerge(ctx context.Context, plan autoMergePlan) (Aut
 		Source:       plan.branch,
 		Target:       plan.target,
 		MainDir:      plan.mainDir,
+		TargetDir:    plan.targetDir(),
 		WorktreePath: entry.Path,
 	})
 	if err != nil {
@@ -215,7 +238,7 @@ func (s *Service) AutoMergeWorktree(ctx context.Context, in AutoMergeWorktreeInp
 		return AutoMergeWorktreeResult{}, err
 	}
 	if plan.needsGate() {
-		releaseGate, err := s.AcquireNodeWriter(ctx, plan.mainDir, plan.target)
+		releaseGate, err := s.AcquireNodeWriter(ctx, plan.targetDir(), plan.target)
 		if err != nil {
 			return AutoMergeWorktreeResult{}, err
 		}

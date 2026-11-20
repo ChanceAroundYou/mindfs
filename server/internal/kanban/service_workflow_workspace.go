@@ -56,6 +56,15 @@ func (s *Service) PrepareWorkflowNodeWorktree(ctx context.Context, store *TaskSt
 	if err != nil {
 		return nil, err
 	}
+	// 兜底：任务勾了 worktree 却没树（本功能上线前建的老任务、或建卡时建树失败
+	// 后被重建清掉了记录）时这里补建，共享节点才不会退回主 checkout 干活。
+	if task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
+		ensured, ensureErr := s.ensureTaskWorktree(ctx, store, task)
+		if ensureErr != nil {
+			return nil, fmt.Errorf("prepare task worktree: %w", ensureErr)
+		}
+		task = ensured
+	}
 	intent := WorkflowNodeWorkspaceOf(node)
 	lease := &WorkflowNodeWorkspaceLease{NodeRun: nodeRun, release: func() {}}
 
@@ -145,7 +154,7 @@ func (s *Service) MergeWorkflowNodeWorktree(ctx context.Context, store *TaskStor
 		return WorkflowNodeWorktreeResult{}, nil
 	}
 	if plan.needsGate() {
-		releaseGate, err := s.AcquireNodeWriter(ctx, plan.mainDir, plan.target)
+		releaseGate, err := s.AcquireNodeWriter(ctx, plan.targetDir(), plan.target)
 		if err != nil {
 			return WorkflowNodeWorktreeResult{}, err
 		}
@@ -184,7 +193,9 @@ func (s *Service) acquireWorkflowMergeGate(ctx context.Context, plan autoMergePl
 	if !hasMerge || !plan.needsGate() {
 		return func() {}, nil
 	}
-	release, err := s.AcquireNodeWriter(ctx, plan.mainDir, plan.target)
+	// gate 按**合并实际发生的目录**取：目标分支被任务树检出时，写者（共享节点）
+	// 拿的是任务树路径的锁，合并拿主 checkout 的锁等于没串行（缺陷 A 的第二半）。
+	release, err := s.AcquireNodeWriter(ctx, plan.targetDir(), plan.target)
 	if err != nil {
 		return func() {}, err
 	}

@@ -59,17 +59,26 @@ func TestEnsureNodeWorktreeCreatesPerNodeRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActive: %v", err)
 	}
-	if len(active) != 2 {
-		t.Fatalf("active = %d, want 2", len(active))
+	// 建卡时就建好了主树（勾了 worktree），再加两棵节点树。
+	if len(active) != 3 {
+		t.Fatalf("active = %d, want 3 (primary + two node trees)", len(active))
 	}
-	// legacy 主列未被多 worktree 路径污染：此前 ensureTaskWorktree 未跑过，
-	// 主列保持空（NodeRun 路径不抢主列）。
+	// 主列指向建卡时那棵树，且它自己的 registry 行不带 NodeRun 归属。
 	task, err := storeNow.GetTask(ctx, detail.Task.ID)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if strings.TrimSpace(task.WorktreePath) != "" {
-		t.Fatalf("legacy primary path polluted by NodeRun ensure: %q", task.WorktreePath)
+	if strings.TrimSpace(task.WorktreePath) == "" {
+		t.Fatal("task created with worktree should have its primary tree")
+	}
+	var primary *WorktreeEntry
+	for i := range active {
+		if active[i].NodeRunID == "" {
+			primary = &active[i]
+		}
+	}
+	if primary == nil || primary.Path != task.WorktreePath {
+		t.Fatalf("primary registry entry = %+v, want path %q", primary, task.WorktreePath)
 	}
 }
 

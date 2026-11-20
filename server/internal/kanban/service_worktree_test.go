@@ -10,7 +10,7 @@ import (
 
 func TestTaskCreateWorktreeOptionsAreTaskScoped(t *testing.T) {
 	ctx := context.Background()
-	svc, root := newTestService(t, nil)
+	svc, root := newTestService(t, &fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:             root.ID,
 		Input:              "one",
@@ -76,9 +76,12 @@ func TestTaskWorktreeNameUsesTaskNumber(t *testing.T) {
 
 // 建树失败的原因必须落在任务上：卡片本来就会渲染 session_error，
 // 用户不必去翻日志（典型是 branch already exists）。
+//
+// 建卡时的建树失败已经整张卡回滚（见 TestCreateTaskWorktreeFailureLeavesNoTask），
+// 这条覆盖「重建」入口：目录被删后用户点重建，失败要把原因留在任务上。
 func TestWorktreeCreateErrorStoredOnTask(t *testing.T) {
 	ctx := context.Background()
-	svc, root := newTestService(t, &fakeRunner{worktreeErr: errors.New("git worktree add failed")})
+	svc, root := newTestService(t, &fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
 		Input:          "broken save button",
@@ -87,6 +90,11 @@ func TestWorktreeCreateErrorStoredOnTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	// 目录被删（重启/手工清理的现场），换上一个必然失败的 runner 再重建。
+	if err := os.RemoveAll(detail.Task.WorktreePath); err != nil {
+		t.Fatalf("remove worktree dir: %v", err)
+	}
+	svc.SetRunner(&fakeRunner{worktreeErr: errors.New("git worktree add failed")})
 	rebuilt, err := svc.RebuildTaskWorktree(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
 	if err != nil {
 		t.Fatalf("RebuildTaskWorktree: %v", err)

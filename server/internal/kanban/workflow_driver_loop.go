@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -285,6 +286,14 @@ func (s *Service) projectWorkflowTaskStatus(ctx context.Context, store *TaskStor
 	s.settleWorkflowReply(ctx, store, run)
 	// 审批附言（若有）排在这一轮之后：成功收尾才交给下一轮。
 	s.dispatchQueuedGateNote(ctx, store, run)
+	// 一轮全部成功 = 任务树上的活做完了：把它并回主 checkout 的当前分支
+	// （w2 → w1 → main 的最后一段）。失败/取消不合；冲突留下现场并转 needs-user。
+	// 合并不了不能把已经成功的一轮说成失败，所以只记日志。
+	if ProjectStatusFromRun(run) == StatusSuccess {
+		if err := s.autoMergeTaskWorktreeAfterRun(ctx, store, run); err != nil {
+			log.Printf("[kanban/worktree] task.merge.after_run task=%s run=%s err=%v", run.TaskID, run.ID, err)
+		}
+	}
 	if detail, err := store.GetDetail(ctx, run.TaskID); err == nil && s != nil && s.Runner != nil {
 		s.Runner.TaskUpdated(detail.Task.RootID, detail)
 	}

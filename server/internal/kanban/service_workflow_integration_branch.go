@@ -18,6 +18,25 @@ import (
 func (s *Service) snapshotRunIntegrationBranch(ctx context.Context, task Task, graph WorkflowDefinition) (string, error) {
 	rootID := task.RootID
 	required := workflowGraphNeedsIntegrationBranch(graph)
+	// 任务勾了 worktree 但树还没建（老任务、或建树失败）时先补建：集成分支必须
+	// 在这之前定下来，否则 Run 会把主 checkout 分支快照成合并目标，共享节点也
+	// 不会进任务树 —— 用户勾的那个框等于没生效。
+	if task.CreateWorktree {
+		store, storeErr := s.taskStore(rootID)
+		if storeErr != nil {
+			if required {
+				return "", fmt.Errorf("resolve integration branch: %w", storeErr)
+			}
+			return "", nil
+		}
+		ensured, ensureErr := s.ensureTaskWorktreeReady(ctx, store, task)
+		if ensureErr != nil {
+			// 用户显式要了 worktree，就不静默退回主 checkout：那会让他的节点在
+			// 错误的树里干活。报错由 Router/调用方走失败路径。
+			return "", fmt.Errorf("prepare task worktree: %w", ensureErr)
+		}
+		task = ensured
+	}
 	// 共享节点默认写入任务自己的 worktree；独立节点的合并目标必须是同一条线。
 	// 只看主 checkout 当前分支会让「共享节点写 task-42、独立节点并进 main」。
 	if branch := strings.TrimSpace(task.WorktreeBranch); branch != "" && worktreeDirUsable(task.WorktreePath) {

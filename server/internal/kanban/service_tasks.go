@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -33,8 +34,22 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
-	if _, err := store.CreateTask(ctx, task, TaskEvent{ID: newID("event"), TaskID: taskID, Type: "task_created", Payload: eventPayload(map[string]any{"input": input}), CreatedAt: now}); err != nil {
+	created, err := store.CreateTask(ctx, task, TaskEvent{ID: newID("event"), TaskID: taskID, Type: "task_created", Payload: eventPayload(map[string]any{"input": input}), CreatedAt: now})
+	if err != nil {
 		return TaskDetail{}, err
+	}
+	// 用落库后的行继续：任务号是 CreateTask 里分配的，建树命名（task-<编号>）依赖它。
+	task = created
+	// 勾了 worktree 就在建卡时把树真正建出来：用户要的是「勾上就有」，而不是等到
+	// 第一个节点要跑才发现活全在主 checkout 里。失败就把刚建的任务删掉并返回错误
+	// （fail closed）—— 留一张「勾了却没树」的卡比直接报错更误导。
+	if task.CreateWorktree {
+		ensured, werr := s.ensureTaskWorktree(ctx, store, task)
+		if werr != nil {
+			_ = store.DeleteTask(ctx, taskID)
+			return TaskDetail{}, fmt.Errorf("create task worktree: %w", werr)
+		}
+		task = ensured
 	}
 	// 建任务 = 发出第一条留言。任务行先提交（ActivityService 会重新读它），
 	// 再把这条留言交给 Router：Router 自己决定这一轮跑工作流还是普通会话。
