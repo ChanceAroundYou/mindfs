@@ -140,6 +140,17 @@ CREATE TABLE IF NOT EXISTS task_events (
 CREATE INDEX IF NOT EXISTS idx_tasks_status_created ON tasks(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_stage_runs_task_stage ON stage_runs(task_id, stage_index, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, created_at);
+CREATE TABLE IF NOT EXISTS task_completion (
+	task_id TEXT PRIMARY KEY,
+	run_id TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL,
+	report_json TEXT NOT NULL DEFAULT '',
+	verifier_key TEXT NOT NULL DEFAULT '',
+	verifier_verdict TEXT NOT NULL DEFAULT '',
+	decision_id TEXT NOT NULL DEFAULT '',
+	repairs_used INTEGER NOT NULL DEFAULT 0,
+	updated_at TEXT NOT NULL
+);
 `)
 	if err != nil {
 		return err

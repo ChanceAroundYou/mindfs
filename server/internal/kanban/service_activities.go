@@ -48,6 +48,8 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetNodeAnswerer(s)
 	svc.SetNodeRetrier(s)
 	svc.SetRunResumer(s.activityRunResumerPort())
+	// complete_task 的应用端口：证据门 + 收尾都在 Service 上。
+	svc.SetCompletionApplier(s)
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
 	return svc, nil

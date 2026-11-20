@@ -145,6 +145,8 @@ func (s *ActivityService) applyRouteAction(
 		return s.applyRouteMessageAgent(ctx, decision, task, userAct, state, action)
 	case RouterActionRunWorkflow:
 		return s.applyRouteRunWorkflow(ctx, decision, task, userAct, state, action)
+	case RouterActionComplete:
+		return s.applyRouteComplete(ctx, decision, task, action)
 	case RouterActionDeliver:
 		return s.applyRouteDeliver(ctx, decision, task, userAct, state, action)
 	case RouterActionAnswerWaiting:
@@ -164,6 +166,19 @@ func (s *ActivityService) applyRouteAction(
 	default:
 		return fmt.Errorf("unsupported action %q", action.Kind)
 	}
+}
+
+// applyRouteComplete 把 Router 的收尾意图交给服务层求值：证据成立才收尾，
+// 不成立只写缺口、任务原地不动。收尾要停 driver、冻结 Run，所以走端口而不是
+// 在这里直接改库。
+func (s *ActivityService) applyRouteComplete(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {
+	if s.completion == nil {
+		return errors.New("complete_task is not available: completion applier not configured")
+	}
+	if s.tasks == nil {
+		return errors.New("complete_task: task store missing")
+	}
+	return s.completion.CompleteTaskFromRouter(ctx, s.tasks, task, *decision, action)
 }
 
 // applyRouteSay 渲染 Router 的直接回复。第一条 say 复用同步占位（用户已经
