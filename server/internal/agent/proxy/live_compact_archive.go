@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"mindfs/server/internal/agent/fold"
 )
 
 // Content-addressed archive for folded tool output.
@@ -33,11 +35,13 @@ const (
 	archiveMinHash    = 24
 	archiveSuffix     = ".txt"
 	archiveTempPrefix = ".tmp-"
-	archiveRetention  = 7 * 24 * time.Hour
+	// Retention and cap defaults live in the fold kernel, which is where
+	// Config.Normalized applies them.
+	archiveRetention = fold.DefaultRetention
 	// archiveMaxBytes caps the directory. Folding stops writing new archives
 	// when the cap is hit; already-folded pointers keep working because their
 	// files stay until the GC removes them.
-	archiveMaxBytes = int64(2 << 30)
+	archiveMaxBytes = fold.DefaultMaxArchiveBytes
 	// archiveScanInterval is the minimum gap between GC runs. The proxy may
 	// restart often; a startup scan plus one per hour is enough.
 	archiveScanInterval = time.Hour

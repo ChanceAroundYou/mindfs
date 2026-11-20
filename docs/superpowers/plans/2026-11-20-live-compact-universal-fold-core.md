@@ -398,6 +398,15 @@ git add server/internal/agent/fold/config.go server/internal/agent/fold/config_t
 git commit -m "refactor(live-compact): 抽出 fold 包并把配置迁入内核（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`fold/config.go` 承接 `Config` / `Normalized` / `Observes` /
+`PrefixGuardOn` / `ColdFoldOn` 与 `ModeOff/ModeShadow/ModeOn`，字段与注释逐字保留；archive 的两个
+默认值（7 天 / 2 GiB）随 `Normalized` 一起搬到 `fold.DefaultRetention` /
+`fold.DefaultMaxArchiveBytes`，proxy 侧的 `archiveRetention` / `archiveMaxBytes` 改为引用它们（否则
+内核无法在自己的默认值里用这两个数）。`proxy/fold_alias.go` 用类型别名 + 常量别名让既有调用点零改动；
+`fold/imports_test.go` 用 `go list -deps` 钉住「内核不得依赖任何 harness 传输」。新增 4 条配置用例
+（默认值、零值 off、三态默认开、无 archive 目录即关存档），变异（冷折 rail 60000 → 50000）打红后还原；
+`go build ./server/...` 与两个包的测试全绿。
+
 ---
 
 ### Task 2: 存档与渲染缓存迁入内核
