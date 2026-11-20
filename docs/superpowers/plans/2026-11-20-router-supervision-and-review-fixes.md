@@ -212,4 +212,13 @@ already_escalated       // 本 attempt 是否已升级过
   readonly flake）。`go build ./server/...` 当前被另一条会话在飞的 `agent/fold/anthropic`
   挡住（与本组无关），本组只依赖 kanban 包。
 - **未部署、未重启任何节点**；`router.supervision.mode` 缺省 `off`，部署了也不改变行为。
+- **提交与门禁（2026-11-20 18:0x）**：`2d1fac21`（实现 + 登记 + 计划）、`c0cb4961`（G-NF 锚点跟随
+  StartOptions 对齐）、`515fc827`（撤回误入 main 的他人暂存改动）、`c9e3c76f`（补回 G-NQ 登记）。
+  后两个是事故修复：共享工作区索引里另一条会话暂存的 `git mv` 删除被我的提交一并带走，HEAD
+  上 `server/internal/agent/proxy` 无法编译；已按 `d114eaef` 恢复 17 个文件与 G-MN 登记。
+  在干净 worktree（`c9e3c76f`）上复验：`go build ./...` 成功、`go test -count=1 ./...` 全绿、
+  `make check-upstream` 全通过（**2160 个 delta 文件被 344 组完整覆盖**）。
+- **本机未重新安装二进制**：主仓 HEAD 随后被另一条会话推进（`a009965d` fold 重构），从干净
+  worktree 装 `c9e3c76f` 会漏掉那次提交；本机继续跑已装的 Part A 版本（`v0.5.5-1200-72-gad4db85a`）。
+  监管默认 `off`，这一点不影响任何现有行为。
 - **S3（直连回合监管）未实现**，按 B8 第 4 条等后续授权。
