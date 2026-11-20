@@ -143,8 +143,13 @@ export const zhCNTasks = {
   "task.workflowCanvas.name": "名称",
   "task.workflowCanvas.agent": "Agent",
   "task.workflowCanvas.model": "模型",
+  // 四个开关现在是「图标 + 两个字」的等宽按钮，短标签只管版面，完整名称与说明
+  // 走 aria-label / hover 提示，所以短标签不必自己讲全。
+  "task.workflowCanvas.planModeShort": "规划",
+  "task.workflowCanvas.newSessionPerNodeShort": "另起",
+  "task.workflowCanvas.independentWorktreeShort": "独立",
+  "task.workflowCanvas.writesWorkspaceShort": "写入",
   "task.workflowCanvas.writesWorkspace": "写工作区（串行执行）",
-  // 四个开关现在是图标按钮，说明只在 hover 提示里出现，所以每条都要能独立读懂。
   "task.workflowCanvas.writesWorkspaceHint": "打开时这一回合可以改文件；与其他写工作区的节点串行执行。关掉后只读，适合纯分析类节点。",
   // 2026-11-20 用户决策：一轮 Run 默认共用一条会话，节点可显式另起。
   "task.workflowCanvas.newSessionPerNode": "本节点另起会话",

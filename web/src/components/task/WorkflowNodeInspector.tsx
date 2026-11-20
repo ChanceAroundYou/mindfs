@@ -22,13 +22,15 @@ import { inspectorFrame, type InspectorLayout } from "./workflowEditorLayout";
 // 行为与拆前一致：位置由父层算好（画布点击处附近），点外部/Esc 关闭由父层管。
 
 /**
- * 面板里的布尔开关：小方图标按钮，勾选态用主色，说明挂在 title（hover 提示）。
- * 用 aria-pressed 而不是 checkbox —— 视觉上是开关按钮，读屏仍然报「按下/未按下」。
+ * 面板里的布尔开关：图标 + 两个字的短标签，勾选态用主色，完整说明挂在 title
+ * （hover 提示）。用 aria-pressed 而不是 checkbox —— 视觉上是开关按钮，
+ * 读屏仍然报「按下/未按下」，并且读的是完整名称（short 只是版面缩写）。
  */
-function NodeToggle({ testId, active, label, hint, icon, onToggle }: {
+function NodeToggle({ testId, active, label, short, hint, icon, onToggle }: {
   testId: string;
   active: boolean;
   label: string;
+  short: string;
   hint: string;
   icon: React.ReactNode;
   onToggle: () => void;
@@ -43,15 +45,17 @@ function NodeToggle({ testId, active, label, hint, icon, onToggle }: {
       onClick={onToggle}
       style={{
         ...panelButtonStyle(active ? "primary" : "secondary"),
-        width: 30,
+        minWidth: 0,
         height: 28,
-        padding: 0,
+        padding: "0 4px",
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
+        gap: 3,
       }}
     >
       {icon}
+      <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{short}</span>
     </button>
   );
 }
@@ -202,32 +206,35 @@ export function WorkflowNodeInspector({
             />
           </div>
 
-          {/* 四个布尔开关收成一行图标按钮：勾选态用主色，说明走 hover 提示
-              （title）。原来每个开关各占一行「标题 + 两行说明」，把面板撑得很高，
-              而这几项都是看一眼图标就知道的辅助选项。 */}
-          <div data-testid="workflow-node-toggles" style={{ display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
+          {/* 四个布尔开关收成一行等宽的「图标 + 两个字」按钮：勾选态用主色，
+              完整说明走 hover 提示（title）。一行 4 格比原来四行「标题 + 说明」
+              省掉大半面板高度，又不至于只剩图标让人猜。 */}
+          <div data-testid="workflow-node-toggles" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "4px" }}>
             <NodeToggle
               testId="workflow-node-plan-mode"
               active={workflowNodeUsesPlanMode(selected)}
               label={t("task.workflowCanvas.planMode")}
+              short={t("task.workflowCanvas.planModeShort")}
               hint={t("task.workflowCanvas.planModeHint")}
-              icon={<PlanModeIcon size={15} />}
+              icon={<PlanModeIcon size={14} />}
               onToggle={() => patchSelected({ params: setWorkflowNodeUsesPlanMode(selected.params, !workflowNodeUsesPlanMode(selected)) })}
             />
             <NodeToggle
               testId="workflow-node-new-session"
               active={workflowNodeStartsNewSession(selected)}
               label={t("task.workflowCanvas.newSessionPerNode")}
+              short={t("task.workflowCanvas.newSessionPerNodeShort")}
               hint={t("task.workflowCanvas.newSessionPerNodeHint")}
-              icon={<NewSessionIcon size={15} />}
+              icon={<NewSessionIcon size={14} />}
               onToggle={() => patchSelected({ params: setWorkflowNodeStartsNewSession(selected.params, !workflowNodeStartsNewSession(selected)) })}
             />
             <NodeToggle
               testId="workflow-node-independent-worktree"
               active={workflowNodeUsesOwnWorktree(selected)}
               label={t("task.workflowCanvas.independentWorktree")}
+              short={t("task.workflowCanvas.independentWorktreeShort")}
               hint={t("task.workflowCanvas.independentWorktreeHint")}
-              icon={<WorktreeIcon size={15} />}
+              icon={<WorktreeIcon size={14} />}
               onToggle={() => patchSelected({ params: setWorkflowNodeUsesOwnWorktree(selected.params, !workflowNodeUsesOwnWorktree(selected)) })}
             />
             {/* 工作区写入缺省为开（后端 writes_workspace 默认 true），所以勾选态是
@@ -236,8 +243,9 @@ export function WorkflowNodeInspector({
               testId="workflow-node-writes-workspace"
               active={selected.params?.writes_workspace !== false}
               label={t("task.workflowCanvas.writesWorkspace")}
+              short={t("task.workflowCanvas.writesWorkspaceShort")}
               hint={t("task.workflowCanvas.writesWorkspaceHint")}
-              icon={<WriteFileIcon size={15} />}
+              icon={<WriteFileIcon size={14} />}
               onToggle={() => patchSelected({ params: { ...selected.params, writes_workspace: selected.params?.writes_workspace === false } })}
             />
           </div>

@@ -110,10 +110,15 @@ test("节点属性面板给出「另起会话」与「独立 worktree」两个�
   assert.ok(src.includes("setWorkflowNodeUsesOwnWorktree(selected.params"), "worktree 开关必须写 worktree=independent");
 });
 
-test("四个布尔开关收成一行图标按钮，说明退到 hover 提示", () => {
+test("四个布尔开关收成 1×4 的「图标 + 两字」按钮，说明退到 hover 提示", () => {
   const src = read("../src/components/task/WorkflowNodeInspector.tsx");
   assert.ok(src.includes('data-testid="workflow-node-toggles"'), "四个开关要收在同一行里");
   assert.ok(!src.includes('type="checkbox"'), "面板里不该再留复选框，它们各占一行把面板撑高");
+  // 一行四格等宽：只剩图标时用户得逐个 hover 才知道是什么，所以留两个字。
+  assert.ok(
+    src.includes('gridTemplateColumns: "repeat(4, minmax(0, 1fr))"'),
+    "四个开关要均匀排成 1×4（等宽四列）",
+  );
   for (const id of [
     "workflow-node-plan-mode",
     "workflow-node-new-session",
@@ -125,12 +130,24 @@ test("四个布尔开关收成一行图标按钮，说明退到 hover 提示", (
   // 说明只能挂在 title 上：随文字一起渲染就等于没省下空间。
   assert.ok(src.includes("title={hint ? `${label} — ${hint}` : label}"), "说明必须挂在 hover 提示里");
   assert.ok(src.includes("aria-pressed={active}"), "图标按钮要报出按下态给读屏");
+  // 短标签只管版面，完整名称仍走 aria-label，读屏不会只听到「规划」。
+  assert.ok(src.includes("aria-label={label}"));
+  assert.ok(src.includes("{short}"), "按钮里要渲染两字短标签");
   // writes_workspace 缺省是开，勾选态必须是「不是 false」，否则老节点显示成关。
   assert.ok(src.includes("selected.params?.writes_workspace !== false"));
+
   const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
   const en = read("../src/i18n/locales/en-US-tasks.ts");
-  assert.match(zh, /"task\.workflowCanvas\.writesWorkspaceHint"/);
-  assert.match(en, /"task\.workflowCanvas\.writesWorkspaceHint"/);
+  for (const file of [zh, en]) {
+    assert.match(file, /"task\.workflowCanvas\.writesWorkspaceHint"/);
+    assert.match(file, /"task\.workflowCanvas\.planModeShort"/);
+    assert.match(file, /"task\.workflowCanvas\.newSessionPerNodeShort"/);
+    assert.match(file, /"task\.workflowCanvas\.independentWorktreeShort"/);
+    assert.match(file, /"task\.workflowCanvas\.writesWorkspaceShort"/);
+  }
+  // 中文短标签就是两个字：长回去就又变成一行说明文字了。
+  assert.match(zh, /"task\.workflowCanvas\.planModeShort": ".."/);
+  assert.match(zh, /"task\.workflowCanvas\.newSessionPerNodeShort": ".."/);
 });
 
 // ── Plan 模式（后端 params.plan_mode，节点级）────────────────────────────────
