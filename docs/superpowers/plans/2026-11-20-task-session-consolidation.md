@@ -70,3 +70,5 @@
 验证：`web/tests/session-task-group.test.mjs` 9 条（新增「分组头文案 = 任务名 + 任务号，和会话名同一行字」「成员名剥掉分组头的共享前缀，保留区分点」，并补 `SessionCard` 接线与「重命名仍编辑原名」断言）；全量 `npm test` 247 文件 / 745 通过 / 6 跳过、`tsc` clean。四处变异各自打红对应用例后还原：① 去掉前缀裁剪；② 分组头改回 `任务名 91`（无 `#`）；③ `SessionList` 不透传 `stripNamePrefix`；④ `SessionCard` 直接渲染 `displayName`。
 
 安装：`make build-web` 后按 `make install` 的静态资源语义把 `web/dist` 覆盖进 `~/.local/share/mindfs/web/`（未重编二进制 —— 本次只动前端，避免把并行会话的在飞改动编进去）；线上 7331 `GET /mindfs/` 200 且 index 已指向新 bundle `assets/index-WeZGkol4.js`，刷新即生效。未部署 WSL/fn/pc-win。
+
+提交与门禁：显示修正 `8974505c`（Scope: G-NG），登记锚点 `/why` 更新 `620e0806`（Scope: G-NG、G-MV）。干净 worktree（`620e0806`）`make check-upstream` 通过：2057 delta / 335 组全绿；共享工作区当前红在 G-MZ，是另一条会话在飞的 `router_brief.go` 改动，不属于本次变更。
