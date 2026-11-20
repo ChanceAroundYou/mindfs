@@ -28,6 +28,8 @@ type TaskCompletionView struct {
 	RepairsMax      int                  `json:"repairs_max"`
 	VerifierVerdict string               `json:"verifier_verdict"`
 	UpdatedAt       string               `json:"updated_at"`
+	// Usage 是这一轮 Run 的用量差分（Task 13）。读不到时是 null —— 不是 0。
+	Usage *CompletionUsage `json:"usage"`
 }
 
 // TaskCompletionStatus 读任务当前的完成记录。任务不存在返回错误；没有记录时
@@ -70,6 +72,12 @@ func (s *Service) TaskCompletionStatus(ctx context.Context, rootID, taskID strin
 	if runID := strings.TrimSpace(row.RunID); runID != "" {
 		if run, err := store.WorkflowRunByID(ctx, runID); err == nil && run != nil {
 			view.RepairsMax = completionRepairsMaxFor(run)
+			task, taskErr := store.GetTask(ctx, taskID)
+			if taskErr == nil {
+				if usage, ok := s.completionUsage(ctx, task, run); ok {
+					view.Usage = &usage
+				}
+			}
 		}
 	}
 	return view, true, nil

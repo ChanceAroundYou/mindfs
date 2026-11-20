@@ -146,6 +146,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
+	services.WireFoldUsageReader(services.Kanban)
 	// Router 读会话转录（router_read_session）：只读本任务会话的文本块。
 	services.WireRouterTranscriptReader(services.Kanban)
 	// 看板任务归档的会话级联只打标记、不删后代（#86，用户裁定 A）。

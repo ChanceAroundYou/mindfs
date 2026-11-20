@@ -100,12 +100,24 @@ func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, 
 		FoldMS:             pending.elapsed.Milliseconds(),
 		RewriteTokens:      rewrite,
 		UsageInput:         fresh,
+		UsageOutput:        usage.Output,
 		UsageCacheCreation: usage.CacheWrite,
 		UsageCacheRead:     usage.CacheRead,
 		UsageSource:        source,
 	}
 	// The ledger is a diagnostic; a failed write must not fail the turn.
 	_ = rt.ledger.Write(sessionKey, entry)
+}
+
+// SessionFoldUsage returns the raw ledger rows for a session. The context chip
+// only needs the summary; the completion record (Task 13) needs each row's
+// timestamp to cut a run window, which a summary no longer carries.
+func (s *Server) SessionFoldUsage(sessionKey string) []fold.LedgerEntry {
+	rt := s.harnessRuntimeFor(harnessForPoolKey(sessionKey))
+	if rt.ledger == nil {
+		return nil
+	}
+	return rt.ledger.Read(sessionKey)
 }
 
 // SessionContextSaving returns the ledger summary for a session. It is the

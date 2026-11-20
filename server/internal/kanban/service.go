@@ -94,6 +94,9 @@ type Service struct {
 	//
 	// nil 时（单测、老装配）回落到 task.Status / 段状态那套旧判据，行为与改造前一致。
 	sessionRunningProbe func(sessionKey string) bool
+	// foldUsage 读 live-compact 折叠账本，给完成记录附上这一轮 Run 的用量差分
+	// （Task 13）。nil 表示「读不到」——完成记录的 usage 给 null，绝不写 0。
+	foldUsage FoldUsageReader
 	// activityBroadcaster 广播对话式活动流的生命周期事件（Task 7）。由 api 层在
 	// 装配时注入（per-account StreamHub 适配器）；nil 时静默，单测与老装配不变。
 	// ActivityServiceForRoot 每次新建的 ActivityService 都会带上它。

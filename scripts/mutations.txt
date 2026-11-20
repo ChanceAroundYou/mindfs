@@ -28,3 +28,18 @@ conformance-ignores-exceptions|server/internal/agent/conformance/conformance.go|
 
 # Task 12（跨 harness 探针）：把「会话没建起来」当跳过，坏掉的 harness 会伪装成「没跑」。
 conformance-create-failed-skips|server/internal/agent/conformance/probe.go|if !sawOutput {|if false {|server/internal/agent/conformance|^TestErrorFrameVerdict$
+
+# Task 13（回合用量差分）：「没有账本行」被写成 0，完成记录就会说这轮没花钱。
+completion-usage-zero-instead-of-nodata|server/internal/kanban/completion_usage.go|if usage.Samples == 0 {|if false {|server/internal/kanban|^TestCompletionUsageReportsNoDataInsteadOfZero$
+# Task 13（回合用量差分）：usage_source=missing 的行被当成真实读数，没测到的回合会被算成 0 并挤掉真读数。
+completion-usage-ignores-missing|server/internal/kanban/completion_usage.go|if sample.Missing {|if false {|server/internal/kanban|^TestCompletionUsageSkipsMissingSamples$
+# Task 13（回合用量差分）：窗口起点失效，Run 之前的回合会被算进这一轮。
+completion-usage-ignores-window-start|server/internal/kanban/completion_usage.go|if !start.IsZero() && sample.At.Before(start) {|if false {|server/internal/kanban|^TestCompletionUsageSumsRowsInsideRunWindow$
+# Task 13（回合用量差分）：右界恒取 Run.UpdatedAt，运行中的 Run 会把刚花的钱全裁掉。
+completion-usage-window-end-ignores-open-run|server/internal/kanban/completion_usage.go|if rows, err := store.ListWorkflowNodeRuns(ctx, run.ID); err == nil && !workflowRunHasOpenNodes(run, rows) {|if rows, err := store.ListWorkflowNodeRuns(ctx, run.ID); err == nil && false {|server/internal/kanban|^TestCompletionUsageOpenRunCountsRowsUpToNow$
+# Task 13（回合用量差分）：账本不记 output_tokens，整轮只能按输入读数汇报。
+fold-ledger-drops-output-tokens|server/internal/agent/proxy/live_compact_ledger.go|UsageOutput:        usage.Output,|UsageOutput:        0,|server/internal/agent/proxy|^TestFoldLedgerRecordsThreeUsageCounters$
+# Task 13（回合用量差分）：行来源不问 usage_source，缺读数的行会被当成 0 参与求和。
+pool-fold-usage-ignores-source|server/internal/agent/pool_context_saving.go|Missing: entry.UsageSource != fold.UsageSourceResponse,|Missing: false,|server/internal/api/usecase|^TestGetSessionFoldUsageResolvesPoolSessionKey$
+# Task 13（回合用量差分）：适配层字段错位，Output 报成 Input 的数字。
+wire-fold-usage-misplaces-output|server/internal/api/wire_fold_usage.go|Output:  row.Output,|Output:  row.Input,|server/internal/api|^TestFoldUsageAdapterMapsEveryCounter$

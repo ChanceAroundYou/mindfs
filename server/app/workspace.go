@@ -302,6 +302,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
+	services.WireFoldUsageReader(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err

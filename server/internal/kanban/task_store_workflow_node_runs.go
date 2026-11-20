@@ -385,3 +385,30 @@ func (s *TaskStore) UpsertWorkflowNodeRun(ctx context.Context, n NodeRun) error 
 	_, err = s.db.ExecContext(ctx, `INSERT INTO workflow_node_runs(id,run_id,node_id,loop_path,iteration,attempt,agent,harness,model,session_key,status,input_json,output_json,started_at,finished_at,prev_attempt_id,worktree_id,worktree_path,worktree_branch,not_before,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET agent=excluded.agent,harness=excluded.harness,model=excluded.model,session_key=excluded.session_key,status=excluded.status,input_json=excluded.input_json,output_json=excluded.output_json,started_at=excluded.started_at,finished_at=excluded.finished_at,prev_attempt_id=excluded.prev_attempt_id,worktree_id=excluded.worktree_id,worktree_path=excluded.worktree_path,worktree_branch=excluded.worktree_branch,not_before=excluded.not_before,updated_at=excluded.updated_at`, n.ID, n.RunID, n.NodeID, n.LoopPath, n.Iteration, n.Attempt, n.Agent, n.Harness, n.Model, n.SessionKey, n.Status, input, output, started, finished, n.PrevAttemptID, n.WorktreeID, n.WorktreePath, n.WorktreeBranch, n.NotBefore, now, now)
 	return err
 }
+
+// RunSessionKeys 列出这一轮 Run 绑定过的会话：Run 自己那条共享会话，加上各
+// NodeRun 上绑定的会话（去重、丢弃空串）。用量差分只统计这些会话的账本行。
+func (s *TaskStore) RunSessionKeys(ctx context.Context, runID string) ([]string, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT session_key FROM workflow_runs WHERE id = ? AND session_key != ''
+		UNION
+		SELECT session_key FROM workflow_node_runs WHERE run_id = ? AND session_key != ''`,
+		runID, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}

@@ -58,7 +58,11 @@ type LedgerEntry struct {
 	// UsageInput / UsageCacheCreation / UsageCacheRead are the raw counters the
 	// rewrite cost is derived from, kept so the number can be re-derived
 	// without re-reading the response stream.
-	UsageInput         int `json:"usage_input"`
+	UsageInput int `json:"usage_input"`
+	// UsageOutput is the upstream output_tokens counter. It is what the
+	// completion record reports as "this run's output"; without it the run
+	// reads as pure input.
+	UsageOutput        int `json:"usage_output"`
 	UsageCacheCreation int `json:"usage_cache_creation"`
 	UsageCacheRead     int `json:"usage_cache_read"`
 	// UsageSource is "response" when the counters above came from the upstream

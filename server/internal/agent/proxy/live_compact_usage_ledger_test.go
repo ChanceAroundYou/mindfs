@@ -35,6 +35,10 @@ func TestFoldLedgerRecordsThreeUsageCounters(t *testing.T) {
 		t.Fatalf("usage counters = (%d,%d,%d), want (1234,5000,99)",
 			latest.UsageInput, latest.UsageCacheCreation, latest.UsageCacheRead)
 	}
+	// 完成记录要报「这一轮输出了多少」（Task 13）；只记输入会把整轮说成纯读。
+	if latest.UsageOutput != 7 {
+		t.Fatalf("usage output = %d, want 7", latest.UsageOutput)
+	}
 	if latest.UsageSource != fold.UsageSourceResponse {
 		t.Fatalf("usage source = %q, want %q", latest.UsageSource, fold.UsageSourceResponse)
 	}

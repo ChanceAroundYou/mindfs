@@ -1,0 +1,41 @@
+package proxy
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+// 完成记录要按 Run 的时间窗求和（Task 13），所以读口必须交出账本整行 ——
+// 胶囊只需要汇总，汇总里没有时间戳，用它裁窗口只能裁出「全部」或「全无」。
+func TestSessionFoldUsageReturnsLedgerRows(t *testing.T) {
+	archiveDir := filepath.Join(t.TempDir(), "context")
+	s, err := NewServerWithLiveCompact(LiveCompactConfig{
+		Mode: LiveCompactOn, KeepRounds: 1, MinBlockTokens: 100, RailTokens: -1,
+		MinBodyBytes: 1, ArchiveDir: archiveDir, ArchiveEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	upstream := upstreamWithUsage(t, `{"usage":{"input_tokens":1234,"cache_creation_input_tokens":5000,"cache_read_input_tokens":99,"output_tokens":7}}`)
+	s.RegisterSessionWithKey("u4", upstream.URL, "session-u4")
+
+	postToProxy(t, s, "u4", foldBody(t, 4, 8001))
+	waitForLedgerRequests(t, s, "session-u4", 1)
+
+	rows := s.SessionFoldUsage("session-u4")
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	row := rows[0]
+	if row.UsageInput != 1234 || row.UsageOutput != 7 || row.UsageCacheRead != 99 || row.UsageCacheCreation != 5000 {
+		t.Fatalf("row counters = %+v, want input 1234 / output 7 / read 99 / write 5000", row)
+	}
+	if row.TS == 0 {
+		t.Fatal("row lost its timestamp — the run window cannot be cut without it")
+	}
+	if got := s.SessionFoldUsage("never-seen"); len(got) != 0 {
+		t.Fatalf("unknown session rows = %d, want 0", len(got))
+	}
+}
