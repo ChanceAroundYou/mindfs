@@ -470,3 +470,30 @@ SIGTERM —— 是重启打断了在飞回合。新进程自 02:55:26 起**无�
 内完成」。**待更长窗口**：验收点 ④（fallback 率低于 48%）以及 G-NF 的 claude+sonnet 派发
 （重启后只恢复了既有数字会话，均 `agent=claude`，尚未有新建任务样本）。R2 仍未启动，需新
 授权与独立 goal/brief。
+
+## Router 上下文瘦身：关掉内置工具集（2026-11-21，Scope: G-NT）
+
+**取证（生产库只读）**：Router 每轮 prompt_tokens 首轮 72.6–73.9k，长任务依次
+116k / 145k / 218k，决策延迟 16.3–99.6s。翻 Router 会话的 `prompt_snapshot` 看到
+`tools` 有 **36 个定义、195,856 字符（约 49k tokens）**，其中 29 个是 Claude Code
+内置工具（Artifact/ArtifactData/Monitor/DesignSync/Agent/Workflow/Bash/Read/Edit…），
+而 `DefaultRouterToolPolicy` 本来就 deny-by-default、只放行 10 个
+`mcp__mindfs_router__*` —— 这些定义每轮都发给模型，但一个都调不了。
+
+**修复**：`ToolPolicy` 新增 `BuiltinTools *string`（CLI `--tools` 的值；nil = 不发该参数）。
+- `routerAgentToolPolicy` → `""`：Router 回合整组关闭内置工具；
+- `routerVerifierToolPolicy` → `"Read,Grep,Glob"`：只读复核回合只留这三个；
+- 普通会话 `BuiltinTools` 为 nil，CLI 保持默认工具集，行为不变。
+只在 claude 适配器的 `appendClaudeExtraArgs` 落到 `--tools`；权限判定仍由
+`handleCanUseTool` + deny-by-default 策略兜底，`--tools` 只缩小发给模型的工具定义。
+
+**验证**：
+- 单测 3 条（claude：空串 / 子集 / 未设置不发参）+ 2 条（api：两种策略的值），
+  三处变异（去掉 `extraArgs["tools"]`、策略写回 nil、值改成 `Bash` / `Read,Grep`）
+  各自打红后还原；
+- 隔离实例（`/tmp/mindfs-iso-rt`，端口 7461，真实 claude `ok`，`router.mode=route`）：
+  首轮决策 `applied`、latency 29.6s、**prompt_tokens 19,625**；第二轮 `applied`、
+  latency 6.3s、prompt_tokens 16,660。同一会话的 `prompt_snapshot.tools` 只剩
+  10 个 router MCP 工具，零内置工具。
+- 对照生产首轮 72.6–73.9k：每轮少约 53k tokens（≈72%），且 Router 动作与回复正常
+  （首轮回答、第二轮补充都落成 `agent_reply completed`）。

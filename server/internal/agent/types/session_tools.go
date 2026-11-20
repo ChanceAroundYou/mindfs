@@ -31,6 +31,12 @@ type ToolPolicy struct {
 	AllowedTools    []string
 	DisallowedTools []string
 	DenyByDefault   bool
+	// BuiltinTools 是 Claude CLI `--tools` 的值（claude 适配器专用）：
+	// nil 表示不传、保留 CLI 默认内置工具集；"" 关闭全部内置工具（Router
+	// 回合只留进程内 MCP 工具）；"Read,Grep,Glob" 之类只保留列出的内置工具
+	// （只读复核回合）。内置工具定义本身就有 ~190 KB，全部发送等于每次请求
+	// 白付约 49k prompt tokens。
+	BuiltinTools *string
 }
 
 // Allows 判断一个工具名是否放行。规则：

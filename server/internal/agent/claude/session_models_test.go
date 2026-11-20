@@ -47,7 +47,7 @@ func TestClaudeTokenUsageIncludesCacheReadAndCreationInLogicalInput(t *testing.T
 
 func TestAppendClaudeDeveloperInstructionsUsesCLIAppendSystemPrompt(t *testing.T) {
 	options := claudeagent.DefaultOptions()
-	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", "") {
+	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", "", nil) {
 		apply(&options)
 	}
 	if options.SystemPrompt != "" {
@@ -187,7 +187,7 @@ func TestClaudeThinkingTokensMessageUpdatesSessionIDOnly(t *testing.T) {
 func TestAppendClaudeExtraArgsKeepsSettingsAndDeveloperInstructions(t *testing.T) {
 	options := claudeagent.DefaultOptions()
 	settingsJSON := `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:1/p/tok"}}`
-	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", settingsJSON) {
+	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", settingsJSON, nil) {
 		apply(&options)
 	}
 	if got := options.ExtraArgs["settings"]; got == nil || *got != settingsJSON {
@@ -200,7 +200,7 @@ func TestAppendClaudeExtraArgsKeepsSettingsAndDeveloperInstructions(t *testing.T
 
 func TestAppendClaudeExtraArgsWithoutSettingsOnlyAddsInstructions(t *testing.T) {
 	options := claudeagent.DefaultOptions()
-	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", "") {
+	for _, apply := range appendClaudeExtraArgs(nil, "render markdown", "", nil) {
 		apply(&options)
 	}
 	if _, ok := options.ExtraArgs["settings"]; ok {

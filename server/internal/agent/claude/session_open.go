@@ -70,7 +70,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		claudeagent.WithForwardSubagentText(true),
 		claudeagent.WithCanUseTool(s.handleCanUseTool),
 	}
-	optionList = appendClaudeExtraArgs(optionList, opts.DeveloperInstructions, opts.SettingsJSON)
+	optionList = appendClaudeExtraArgs(optionList, opts.DeveloperInstructions, opts.SettingsJSON, builtinToolsOf(opts.ToolPolicy))
 	if strings.TrimSpace(opts.ConfigDir) != "" {
 		// Router 会话必须看不见用户的 ~/.claude（hooks/settings/会话转录）。
 		// 没有 SettingSources 时，ConfigDir 决定 CLI 的配置根。
@@ -162,17 +162,29 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 	return s, nil
 }
 
+// builtinToolsOf 取出策略里的 `--tools` 值；nil 表示调用方没限制，保持 CLI 默认。
+func builtinToolsOf(policy *types.ToolPolicy) *string {
+	if policy == nil {
+		return nil
+	}
+	return policy.BuiltinTools
+}
+
 // appendClaudeExtraArgs 汇总所有 `--flag value` 形态的参数。
 //
 // SDK 的 WithExtraArgs 是**赋值**不是合并，两处各自调用会互相覆盖；
 // 所以这里一次建好 map 再交给 SDK。
-func appendClaudeExtraArgs(options []claudeagent.Option, developerInstructions, settingsJSON string) []claudeagent.Option {
+func appendClaudeExtraArgs(options []claudeagent.Option, developerInstructions, settingsJSON string, builtinTools *string) []claudeagent.Option {
 	extraArgs := map[string]*string{}
 	if instructions := strings.TrimSpace(developerInstructions); instructions != "" {
 		extraArgs["append-system-prompt"] = &instructions
 	}
 	if settings := strings.TrimSpace(settingsJSON); settings != "" {
 		extraArgs["settings"] = &settings
+	}
+	if builtinTools != nil {
+		// 空串是 CLI 约定的「关闭全部内置工具」。
+		extraArgs["tools"] = builtinTools
 	}
 	if len(extraArgs) == 0 {
 		return options

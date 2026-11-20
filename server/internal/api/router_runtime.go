@@ -318,9 +318,13 @@ func (s *AppContext) ensureVerifierSession(ctx context.Context, rootID, taskID, 
 // routerVerifierToolPolicy 是只读复核回合的工具集：Read/Grep/Glob，其余一律拒。
 // 这一点只有 Claude 适配器能强制，所以复核回合只支持 Claude。
 func routerVerifierToolPolicy() *agenttypes.ToolPolicy {
+	// 只把这三个内置工具的定义发给模型；其余内置工具（Bash/Agent/Workflow…）
+	// 既不允许也白占 prompt。
+	builtins := "Read,Grep,Glob"
 	return &agenttypes.ToolPolicy{
 		AllowedTools:  []string{"Read", "Grep", "Glob"},
 		DenyByDefault: true,
+		BuiltinTools:  &builtins,
 	}
 }
 
@@ -362,9 +366,13 @@ func routerAgentToolSpecs(specs []kanban.RouterToolSpec) []agenttypes.ToolSpec {
 }
 
 func routerAgentToolPolicy(policy kanban.RouterToolPolicy) *agenttypes.ToolPolicy {
+	// Router 只用进程内 MCP 工具，内置工具一个都不需要：整组关掉，省下约
+	// 190 KB 的工具定义（~49k tokens/请求）。
+	noBuiltins := ""
 	return &agenttypes.ToolPolicy{
 		AllowedTools:    append([]string(nil), policy.AllowedTools...),
 		DisallowedTools: append([]string(nil), policy.DisallowedTools...),
 		DenyByDefault:   policy.DenyByDefault,
+		BuiltinTools:    &noBuiltins,
 	}
 }
