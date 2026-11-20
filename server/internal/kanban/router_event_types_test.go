@@ -19,6 +19,9 @@ func TestRouterEventInstanceKeyRules(t *testing.T) {
 	}{
 		{"run_settled", RouterEventRunSettled, "run-1", "", 0, "run-1"},
 		{"run_failed", RouterEventRunFailed, "run-1", "", 0, "run-1"},
+		// 监管重试后同一 Run 的第二次失败必须换键，否则被永久去重。
+		{"run_failed wave 1", RouterEventRunFailed, "run-1", "", 1, "run-1"},
+		{"run_failed wave 2", RouterEventRunFailed, "run-1", "", 2, "run-1:a2"},
 		{"startup_reconcile", RouterEventStartupReconcile, "run-1", "", 0, "run-1"},
 		{"gate attempt 0", RouterEventGateWaiting, "run-1", "node-1", 0, "node-1:0"},
 		{"gate attempt 3", RouterEventGateWaiting, "run-1", "node-1", 3, "node-1:3"},

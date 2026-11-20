@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,7 +84,8 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 	promptHash := RouterPromptHash()
 	sessionKey := rs.prepareSessionKey(ctx, agent, decision.RootID, taskID, config, promptHash)
 	collector := newRouterTurnCollector(config)
-	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader()}
+	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader(),
+		supervisionMode: rs.service.RouterConfig().Supervision.Normalized().Mode}
 	timeout := config.TurnTimeout
 	if timeout <= 0 {
 		timeout = defaultRouterTurnTimeout
@@ -199,15 +201,35 @@ func (rs *RouterService) beginCoordinateEventTurn(ctx context.Context, decision 
 // countTurnsForUserActivity 数这条原始留言已经消耗的 Router 回合。预算按
 // 留言而不是按任务：一个任务可以有多个用户回合，各自独立计数。
 func (rs *RouterService) countTurnsForUserActivity(ctx context.Context, taskID, userActivityID string) (int, error) {
-	taskID = strings.TrimSpace(taskID)
-	userActivityID = strings.TrimSpace(userActivityID)
-	if rs == nil || rs.store == nil || taskID == "" || userActivityID == "" {
+	if rs == nil {
+		return 0, nil
+	}
+	return countUserTurnDecisions(ctx, rs.store.db, taskID, userActivityID)
+}
+
+// countUserTurnDecisions 是「这条原始留言花了几个 Router 回合」的唯一口径：
+// 预算闸门与事件 brief 的 TurnsUsed 必须同源，否则模型看到的剩余额度与实际
+// 闸门不一致。两类决策不计入：
+//   - completion_blocked：补做有自己的契约预算（MaxRepairs）。
+//   - run_failed / run_stalled / direct_stalled：监管回合。它们自己的上限是
+//     每节点重试次数、每 Run 每小时动作预算与链深度；算进留言预算的话，
+//     「入口 1 轮 + 2 次重试」正好把 3 轮用满，第 3 次失败被静默 skipped，
+//     用户永远拿不到收尾说明（隔离实例 2026-11-20 实测：任务停在
+//     waiting_user、零系统说明行）。
+func countUserTurnDecisions(ctx context.Context, db *sql.DB, taskID, userActivityID string) (int, error) {
+	taskID, userActivityID = strings.TrimSpace(taskID), strings.TrimSpace(userActivityID)
+	if db == nil || taskID == "" || userActivityID == "" {
 		return 0, nil
 	}
 	var turns int
-	err := rs.store.db.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM router_decisions WHERE task_id = ? AND user_activity_id = ?`,
-		taskID, userActivityID).Scan(&turns)
+	err := db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM router_decisions
+WHERE task_id = ? AND user_activity_id = ?
+  AND trigger_kind NOT IN (?, ?, ?, ?)`,
+		taskID, userActivityID,
+		string(RouterTriggerCompletionBlocked),
+		string(RouterTriggerRunFailed), string(RouterTriggerRunStalled), string(RouterTriggerDirectStalled),
+	).Scan(&turns)
 	return turns, err
 }
 

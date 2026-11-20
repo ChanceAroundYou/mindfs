@@ -367,3 +367,48 @@ worker 上仍是 `off`，监管不会触发；本轮把 Router 一并打开：
 - **空载证据（开闸前）**：WSL 各项目 `task-kanban.db` 合计 `router_events=0`、未终态 Run=0；
   fn 同为 0；pc-win 只有 `C:\Users\10178\.mindfs\tasks\task-kanban.db`，`router_events=0` 且无任务。
   所以开闸当下不会立刻对旧任务动手。
+
+### B14 真实触发验收暴露的两处缺陷（2026-11-21）
+
+用户指令「你去做吧 1用ok」：在隔离实例（端口 7452、`scripts/mindfs-iso.sh` 起的副本、真实
+claude `ok` 模型、`router.mode=coordinate` + `supervision.mode=on`）跑真实触发的监管验收。一次
+「必然失败的节点」工作流就把两条缺陷打了出来。
+
+**缺陷 1：同一 Run 的第二次失败被永久去重（不产事件）。** `run_failed` 的实例键是裸 `RunID`，
+而 `router_events` 用 `(task_id, run_id, kind, instance_key)` 唯一。监管重试把节点重开成
+attempt 2 后再失败，事件键不变 → `INSERT OR IGNORE` 静默丢弃，Router 收不到第二波，每节点
+重试预算与后续升级全部失效（首轮实测：只有 1 条 `run_failed`，attempt 2 的失败无声无息）。
+修复：`RouterEventInstanceKey` 对 `run_failed` 在 attempt>1 时返回 `<runID>:a<N>`，N 由
+`routerEventInstanceAttempt` 取「本 Run 已落库的最大节点 attempt」——即失败波次；第一波仍是
+裸 `runID`，升级前既有事件不会被重放。测试 `TestRouterEventTypes`（三行表驱动）+
+`TestRouterEventSourcesRunFailedAgainAfterRetry`（第一波裸键、第二波 `:a2`、再扫一次不重复
+插入），两处变异（去掉 wave 后缀 / wave 恒为 1）各自打红后还原。
+
+**缺陷 2：监管回合吃掉了用户留言的 3 回合预算，第二次重试后的升级永远走不到。** 修完缺陷 1
+后实测：`run_failed` 三波依次 `done` → `done` → **`skipped: turn budget exhausted (3/3)`**，
+任务停在 `waiting_user`、**零系统说明行** —— 用户只看到节点失败，看不到「重试都用完了，需要你」。
+根因是 `RouterCoordinateMaxTurnsPerUserActivity=3` 把「入口 1 轮 + 2 次监管重试」正好用满；
+监管自己的上限（每节点重试次数、每 Run 每小时动作预算、链深度 3）已经把风险兜住了。
+修复：新增唯一口径 `countUserTurnDecisions`（预算闸门与事件 brief 的 `TurnsUsed` 同源，此前
+两处 SQL 一个排除 `completion_blocked`、一个不排除），排除 `completion_blocked`（补做有自己的
+契约预算）与监管三类触发（`run_failed` / `run_stalled` / `direct_stalled`）。测试
+`TestCoordinatorTurnBudgetExcludesSupervisionTurns` 先红后绿；两处变异（监管重新计入、去掉
+`completion_blocked` 排除）各自打红后还原。
+
+**验收 A5b（修复后，真实模型）**：三波 `run_failed` 全部 `done` → 两次 `retry_node` applied
+（attempt 2、attempt 3）→ 第三波 `notify_user` → 可见系统说明「run 节点第 3 次尝试仍在初始化
+时报 broken pipe……每节点 2 次重试额度已全部用完，我不能再自动重试；这一轮以失败结束」，
+任务 `waiting_user`。
+
+**验收 B（直连停摆 → retry_direct）**：先跑一轮真实直连回合拿到会话，再补一条用户留言 + 一条
+2 分钟前创建、仍 `running` 的直连回复行（模拟回合被重启带走的现场；该合成行的 `created_at`
+没带时区，事件载荷里的 `since` 因此显示 `0001-01-01`，属注入数据不规范，不是产品行为）。30s
+会话探针连续两拍确认停摆 → `direct_stalled` done → 决策 `retry_direct` + `say` applied → 旧回复
+结算成 `cancelled`、`direct-retry:<decision>` 真回合跑完并回答了用户的问题，任务回
+`waiting_user`。
+
+**验收 C（真实浏览器）**：Chromium（zh-CN，1440×900）打开 A5b 任务详情，「监管记录」折叠行
+默认收起、`aria-expanded=false`，展开后 3 行：`执行失败 → 重试节点 已执行` ×2、
+`执行失败 → 告知用户 已执行`；8/8 断言 PASS。
+
+门禁：`go test -count=1 ./server/internal/kanban/` 全绿（233.7s），全仓 `go test ./...` 见提交记录。

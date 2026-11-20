@@ -78,6 +78,9 @@ type routerToolEnv struct {
 	collector *routerTurnCollector
 	// transcripts 是 router_read_session 的读端口；nil 时该工具显式报错。
 	transcripts RouterTranscriptReader
+	// supervisionMode 决定监管工具名是否暴露。名字必须在每一轮都相同（会话只
+	// 注册一次工具），off 时整组不暴露。
+	supervisionMode RouterSupervisionMode
 }
 
 func (e *routerToolEnv) tools() []RouterToolSpec {
@@ -93,7 +96,7 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.answerTool(),
 		e.completeTaskTool(),
 	}
-	// 监管工具只在带 supervision 块的事件回合出现（S1/S2）。
+	// 监管工具只要实例开着监管就出现，与本轮有没有观测块无关（S1/S2）。
 	return append(tools, e.supervisionTools()...)
 }
 

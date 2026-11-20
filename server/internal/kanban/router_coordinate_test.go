@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -389,6 +390,39 @@ func TestCoordinatorTurnBudgetExhausted(t *testing.T) {
 	}
 	if calls := len(f.agent.sessions); calls != 0 {
 		t.Fatalf("model calls = %d, want 0", calls)
+	}
+}
+
+// 行为 5b：监管回合不占用户留言的 3 回合预算。真实链路里「入口 1 轮 + 2 次监管
+// 重试」正好把它用满，第 3 次失败若也被 skipped，用户永远看不到收尾说明（隔离实例
+// 实测 2026-11-20：第 3 个 run_failed 事件 skipped，任务停在 waiting_user、零解释）。
+// 监管自己的上限是每节点重试次数 + 每小时动作预算 + 链深度，不靠这个预算兜底。
+func TestCoordinatorTurnBudgetExcludesSupervisionTurns(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	f := newCoordinateFixture(t, RouterModeCoordinate)
+	f.stopLoop(t)
+	f.addUserActivity(t, "uact-sup-budget")
+	routerStore := NewRouterStore(f.store.db)
+	for i, kind := range []RouterTriggerKind{RouterTriggerUserMessage, RouterTriggerRunFailed, RouterTriggerRunFailed} {
+		turnID := fmt.Sprintf("sup-budget-t%d", i)
+		must(t, routerStore.InsertDecision(ctx, &RouterDecision{
+			ID: "dec-" + turnID, TaskID: "task-1", RootID: f.root.ID, UserActivityID: "uact-sup-budget",
+			TriggerKind: kind, TurnID: turnID, Status: RouterDecisionApplied,
+		}), "InsertDecision(%s)", turnID)
+	}
+	f.agent.calls = []scriptedRouterCall{{tool: "router_say", args: map[string]any{"body": "重试预算已用尽，需要你确认下一步"}}}
+	ev := f.addEvent(t, RouterEvent{Kind: RouterEventRunFailed, RunID: "run-1", TurnID: "sup-budget-t3",
+		UserActivityID: "uact-sup-budget"})
+	if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
+		t.Fatalf("ConsumeRouterEvents: %v", err)
+	}
+	got := f.waitEvent(t, ev.ID, RouterEventDone)
+	if strings.Contains(got.LastError, "turn budget exhausted") {
+		t.Fatalf("supervision turn was skipped by the user-message budget: %q", got.LastError)
+	}
+	if calls := len(f.agent.sessions); calls != 1 {
+		t.Fatalf("model calls = %d, want 1", calls)
 	}
 }
 

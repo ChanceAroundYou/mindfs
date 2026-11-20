@@ -233,23 +233,57 @@ func TestSupervisionRetryIsIdempotent(t *testing.T) {
 	}
 }
 
-// 行为：监管工具只在带 supervision 块的事件回合暴露；普通留言回合看不到。
-func TestSupervisionToolsOnlyOnSupervisedEventTurns(t *testing.T) {
-	plain := &routerToolEnv{brief: &SituationBrief{Task: RouterBriefTask{ID: "task-1"}}}
-	for _, tool := range plain.tools() {
-		if tool.Name == "router_retry_node" || tool.Name == "router_notify_user" {
-			t.Fatalf("plain turn exposes %s", tool.Name)
-		}
+// 行为：监管工具的名字在**每一轮**都要暴露，且不管这一轮有没有监管块。
+// 原因是会话级的：Router 会话只在 OpenSession 时把工具注册给 CLI，之后回合再
+// 追加的工具模型根本看不到（隔离实例实测 2026-11-20：用户留言回合开出来的会话，
+// 失败事件回合里模型直接说「没有可用的重试工具」）。所以没有观测的回合由 handler
+// 拒绝，而不是让工具整个不存在。
+func TestSupervisionToolsExposeStableNamesEveryTurn(t *testing.T) {
+	plain := &routerToolEnv{
+		brief:           &SituationBrief{Task: RouterBriefTask{ID: "task-1"}},
+		supervisionMode: RouterSupervisionOn,
 	}
-	supervised := &routerToolEnv{brief: &SituationBrief{
-		Task:        RouterBriefTask{ID: "task-1"},
-		Supervision: &SupervisionObservation{Mode: RouterSupervisionOn, RunID: "run-1"},
-	}}
 	names := map[string]bool{}
-	for _, tool := range supervised.tools() {
+	for _, tool := range plain.tools() {
 		names[tool.Name] = true
 	}
-	if !names["router_retry_node"] || !names["router_notify_user"] {
-		t.Fatalf("supervised turn tools = %v", names)
+	for _, want := range []string{"router_retry_node", "router_retry_direct", "router_resume_run",
+		"router_notify_user", "router_escalate"} {
+		if !names[want] {
+			t.Fatalf("turn without observation is missing %s; tools = %v", want, names)
+		}
+	}
+	for _, tool := range plain.tools() {
+		if tool.Name != "router_retry_node" {
+			continue
+		}
+		if _, err := tool.Handler(context.Background(), []byte(`{"node_id":"run"}`)); err == nil {
+			t.Fatal("retry_node recorded an action without a supervision observation")
+		}
+	}
+
+	// mode=off 时整组工具都不暴露：没有监管就没有这些动作。
+	off := &routerToolEnv{brief: &SituationBrief{Task: RouterBriefTask{ID: "task-1"}}}
+	for _, tool := range off.tools() {
+		switch tool.Name {
+		case "router_retry_node", "router_retry_direct", "router_resume_run",
+			"router_notify_user", "router_escalate":
+			t.Fatalf("off mode exposes %s", tool.Name)
+		}
+	}
+
+	supervised := &routerToolEnv{
+		brief: &SituationBrief{
+			Task:        RouterBriefTask{ID: "task-1"},
+			Supervision: &SupervisionObservation{Mode: RouterSupervisionOn, RunID: "run-1"},
+		},
+		supervisionMode: RouterSupervisionOn,
+	}
+	supervisedNames := map[string]bool{}
+	for _, tool := range supervised.tools() {
+		supervisedNames[tool.Name] = true
+	}
+	if !supervisedNames["router_retry_node"] || !supervisedNames["router_notify_user"] {
+		t.Fatalf("supervised turn tools = %v", supervisedNames)
 	}
 }

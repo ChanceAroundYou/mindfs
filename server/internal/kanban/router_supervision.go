@@ -269,7 +269,7 @@ func classifySupervisionFailure(nr NodeRun) (SupervisionFailureKind, string) {
 		}
 	}
 	for _, mark := range []string{"timeout", "timed out", "deadline exceeded", "stream ended",
-		"unexpected eof", "connection reset", "temporarily unavailable",
+		"unexpected eof", "connection reset", "broken pipe", "temporarily unavailable",
 		"502", "503", "504"} {
 		if strings.Contains(text, mark) {
 			return SupervisionFailureRetryable, summary

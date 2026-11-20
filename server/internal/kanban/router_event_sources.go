@@ -142,7 +142,7 @@ func (s *Service) scanRouterEventsForRun(ctx context.Context, store *TaskStore, 
 	projected := ProjectStatusFromRun(run)
 	kind := s.routerEventTerminalKind(ctx, store, task, run)
 	if kind != "" {
-		instanceKey, err := RouterEventInstanceKey(kind, run.ID, "", 0, now)
+		instanceKey, err := RouterEventInstanceKey(kind, run.ID, "", routerEventInstanceAttempt(ctx, store, run.ID, kind, 0), now)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -239,6 +239,22 @@ func (s *Service) routerEventTerminalKind(ctx context.Context, store *TaskStore,
 		return RouterEventRunFailed
 	}
 	return ""
+}
+
+// routerEventInstanceAttempt 决定实例键里的 attempt 参数。run_failed 用「第几波
+// 失败」= 本 Run 已落库的最大节点 attempt：每次监管重试都会把某个节点推到
+// attempt N+1，所以第二波失败得到不同的实例键；第一波（或读不到行）仍是裸
+// runID，升级前的既有事件不会被重放。其它事件沿用调用方给的 attempt。
+func routerEventInstanceAttempt(ctx context.Context, store *TaskStore, runID string, kind RouterEventKind, attempt int) int {
+	if kind != RouterEventRunFailed || store == nil {
+		return attempt
+	}
+	var wave int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(attempt),0) FROM workflow_node_runs WHERE run_id=?`, runID).Scan(&wave); err != nil {
+		return attempt
+	}
+	return wave
 }
 
 // routerEventOriginForRun 是 Router-owned 判据的唯一口径：非 legacy_import，
@@ -353,7 +369,7 @@ func (s *Service) emitRouterEvent(ctx context.Context, store *TaskStore, runID s
 	now := time.Now().UTC()
 	instanceKey = strings.TrimSpace(instanceKey)
 	if instanceKey == "" {
-		instanceKey, err = RouterEventInstanceKey(kind, run.ID, "", attempt, now)
+		instanceKey, err = RouterEventInstanceKey(kind, run.ID, "", routerEventInstanceAttempt(ctx, store, run.ID, kind, attempt), now)
 		if err != nil {
 			return err
 		}

@@ -83,15 +83,27 @@ func RouterEventUniqueKey(taskID, runID string, kind RouterEventKind, instanceKe
 // RouterEventInstanceKey 按事件类型计算实例键。T6 的事件生产端直接复用这里，
 // 保证「生产者算出来的实例」与「账本去重用的实例」是同一套规则：
 //
-//   - run_settled / run_failed / startup_reconcile: RunID
+//   - run_settled / startup_reconcile: RunID
+//   - run_failed: RunID；attempt > 1 时是 RunID + ":a<attempt>"。attempt 在这里
+//     是「第几波失败」（本 Run 已落库的最大节点 attempt）：监管重试把节点重开成
+//     attempt N 之后，第二次失败必须是新实例，否则同一 Run 的后续失败被永久去重，
+//     Router 收不到、每节点重试预算也用不上。
 //   - gate_waiting: nodeRunID + ":" + attempt
 //   - run_stalled: RunID + ":" + UTC unix/300（5 分钟桶）
 func RouterEventInstanceKey(kind RouterEventKind, runID, nodeRunID string, attempt int, at time.Time) (string, error) {
 	runID = strings.TrimSpace(runID)
 	switch kind {
-	case RouterEventRunSettled, RouterEventRunFailed, RouterEventStartupReconcile:
+	case RouterEventRunSettled, RouterEventStartupReconcile:
 		if runID == "" {
 			return "", fmt.Errorf("router event %s requires a run id", kind)
+		}
+		return runID, nil
+	case RouterEventRunFailed:
+		if runID == "" {
+			return "", fmt.Errorf("router event %s requires a run id", kind)
+		}
+		if attempt > 1 {
+			return runID + ":a" + strconv.Itoa(attempt), nil
 		}
 		return runID, nil
 	case RouterEventGateWaiting:

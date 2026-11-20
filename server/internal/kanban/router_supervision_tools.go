@@ -7,22 +7,31 @@ import (
 	"strings"
 )
 
-// 监管写入工具的暴露条件：本轮 brief 挂着一份 mode != off 的 supervision 观测。
-// 普通用户留言回合、shadow 之外没有观测的事件回合都看不到这两个工具。
+// 监管写入工具的暴露条件：实例开着监管（mode != off）时，五个工具名在**每一轮**
+// 都暴露，不管这一轮有没有观测块。
+//
+// 原因是会话级的：Router 会话只在 OpenSession 时把工具注册给 CLI，之后的回合只能
+// 按名字换 handler（api/router_runtime.go 的 routerToolBindings）。事件回合再追加
+// 的工具模型根本看不到 —— 隔离实例实测 2026-11-20：用户留言回合开出来的会话，到
+// run_failed 回合里模型直接回「当前会话里没有可用的重试工具」。所以名字固定，
+// 形状与可执行性由 handler 在调用时按本轮观测判断。
 
 func (e *routerToolEnv) supervisionTools() []RouterToolSpec {
-	obs := e.supervisionObservation()
-	if obs == nil {
+	if e == nil || (e.supervisionMode != RouterSupervisionOn && e.supervisionMode != RouterSupervisionShadow) {
 		return nil
 	}
-	// 直连回合没有 Run：retry_node / resume_run 指向的东西不存在，只给直连
-	// 专用的重开工具，外加两条「说清楚」的工具。
-	if obs.Direct != nil {
-		return []RouterToolSpec{e.retryDirectTool(obs), e.notifyUserTool(), e.escalateTool()}
+	obs := e.supervisionObservation()
+	return []RouterToolSpec{
+		e.retryNodeTool(obs),
+		e.retryDirectTool(obs),
+		e.resumeRunTool(obs),
+		e.notifyUserTool(obs),
+		e.escalateTool(obs),
 	}
-	return []RouterToolSpec{e.retryNodeTool(obs), e.notifyUserTool(), e.resumeRunTool(obs), e.escalateTool()}
 }
 
+// supervisionObservation 返回本轮的观测块；没有观测（普通留言回合、mode=off）
+// 时返回 nil，各 handler 据此拒绝调用。
 func (e *routerToolEnv) supervisionObservation() *SupervisionObservation {
 	if e == nil || e.brief == nil || e.brief.Supervision == nil {
 		return nil
@@ -31,6 +40,11 @@ func (e *routerToolEnv) supervisionObservation() *SupervisionObservation {
 		return nil
 	}
 	return e.brief.Supervision
+}
+
+// errNoSupervisionTurn 是「这一轮没有监管观测」的统一拒绝文案。
+func errNoSupervisionTurn(name string) error {
+	return fmt.Errorf("%s is only usable on a failed/stalled event turn; this turn has no supervision observation", name)
 }
 
 func (e *routerToolEnv) retryNodeTool(obs *SupervisionObservation) RouterToolSpec {
@@ -50,6 +64,9 @@ func (e *routerToolEnv) retryNodeTool(obs *SupervisionObservation) RouterToolSpe
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_retry_node")
 			}
 			nodeID := strings.TrimSpace(args.NodeID)
 			if nodeID == "" {
@@ -91,6 +108,9 @@ func (e *routerToolEnv) retryDirectTool(obs *SupervisionObservation) RouterToolS
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
 			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_retry_direct")
+			}
 			if obs.Direct == nil || strings.TrimSpace(obs.Direct.ActivityID) == "" {
 				return "", fmt.Errorf("retry_direct needs a direct-turn supervision block")
 			}
@@ -119,6 +139,9 @@ func (e *routerToolEnv) resumeRunTool(obs *SupervisionObservation) RouterToolSpe
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
 			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_resume_run")
+			}
 			idle := 0
 			for _, node := range obs.OpenNodes {
 				if !node.Replying {
@@ -136,7 +159,7 @@ func (e *routerToolEnv) resumeRunTool(obs *SupervisionObservation) RouterToolSpe
 	}
 }
 
-func (e *routerToolEnv) escalateTool() RouterToolSpec {
+func (e *routerToolEnv) escalateTool(obs *SupervisionObservation) RouterToolSpec {
 	return RouterToolSpec{
 		Name: "router_escalate",
 		Description: "把决定权交还给用户：留一条可见说明并把任务放回待审核。用于重试已用尽或需要用户拍板的场景；" +
@@ -152,6 +175,9 @@ func (e *routerToolEnv) escalateTool() RouterToolSpec {
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
 			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_escalate")
+			}
 			summary := strings.TrimSpace(args.Summary)
 			if summary == "" {
 				return "", fmt.Errorf("summary required")
@@ -164,7 +190,7 @@ func (e *routerToolEnv) escalateTool() RouterToolSpec {
 	}
 }
 
-func (e *routerToolEnv) notifyUserTool() RouterToolSpec {
+func (e *routerToolEnv) notifyUserTool(obs *SupervisionObservation) RouterToolSpec {
 	return RouterToolSpec{
 		Name:        "router_notify_user",
 		Description: "在任务里留一条可见的系统说明（用户会看到）。用于证据不确定、失败不可重试、或已经替用户重试过需要告知的场景。",
@@ -178,6 +204,9 @@ func (e *routerToolEnv) notifyUserTool() RouterToolSpec {
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_notify_user")
 			}
 			body := strings.TrimSpace(args.Body)
 			if body == "" {

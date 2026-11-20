@@ -124,6 +124,11 @@ func TestSupervisionFailureClassification(t *testing.T) {
 			Output: map[string]any{"error": "502 Bad Gateway"}}, kind: SupervisionFailureRetryable},
 		{name: "stream interrupted", node: NodeRun{Status: NodeRunFail,
 			Output: map[string]any{"error": "response stream ended unexpectedly"}}, kind: SupervisionFailureRetryable},
+		// 隔离实例实测（2026-11-20）：子进程在握手前死掉时错误是 broken pipe，
+		// 归类成不可重试会让监管一次都不重试就放弃。
+		{name: "child died before handshake", node: NodeRun{Status: NodeRunFail,
+			Output: map[string]any{"error": "failed to initialize: failed to send initialize request: write |1: broken pipe"}},
+			kind: SupervisionFailureRetryable},
 		{name: "validation error", node: NodeRun{Status: NodeRunFail,
 			Output: map[string]any{"error": "invalid workflow graph: missing agent"}}, kind: SupervisionFailureNonRetryable},
 		{name: "auth error", node: NodeRun{Status: NodeRunFail,

@@ -245,8 +245,9 @@ func TestSupervisionRetryDirectBudgetExhaustedStopsAtWaitingUser(t *testing.T) {
 	}
 }
 
-// 行为：工具按观测块的形状分组 —— 直连回合只给 retry_direct，Run 回合只给
-// retry_node；两者都有 notify/escalate。retry_direct 记下的是回复行 ID。
+// 行为：五个监管工具名在每一轮都暴露（见 TestSupervisionToolsExposeStableNamesEveryTurn
+// 的会话级原因）；「只给本形状的动作」由 handler 与动作校验承担 —— 直连回合调
+// retry_node、Run 回合调 retry_direct 都必须被拒绝。retry_direct 记下的是回复行 ID。
 func TestSupervisionDirectToolsOnlyWithDirectBlock(t *testing.T) {
 	names := func(env *routerToolEnv) map[string]bool {
 		out := map[string]bool{}
@@ -255,15 +256,32 @@ func TestSupervisionDirectToolsOnlyWithDirectBlock(t *testing.T) {
 		}
 		return out
 	}
-	runTurn := names(&routerToolEnv{brief: &SituationBrief{
-		Task:        RouterBriefTask{ID: "task-1"},
-		Supervision: &SupervisionObservation{Mode: RouterSupervisionOn, RunID: "run-1"},
-	}})
-	if runTurn["router_retry_direct"] {
-		t.Fatalf("run turn exposes router_retry_direct: %v", runTurn)
+	allNames := []string{"router_retry_node", "router_retry_direct", "router_resume_run",
+		"router_notify_user", "router_escalate"}
+	runEnv := &routerToolEnv{
+		brief: &SituationBrief{
+			Task:        RouterBriefTask{ID: "task-1"},
+			Supervision: &SupervisionObservation{Mode: RouterSupervisionOn, RunID: "run-1"},
+		},
+		collector:       newRouterTurnCollector(RouterConfig{MaxActions: 6}),
+		supervisionMode: RouterSupervisionOn,
 	}
-	if !runTurn["router_retry_node"] || !runTurn["router_notify_user"] || !runTurn["router_escalate"] {
-		t.Fatalf("run turn tools = %v", runTurn)
+	runTurn := names(runEnv)
+	for _, want := range allNames {
+		if !runTurn[want] {
+			t.Fatalf("run turn is missing %s: %v", want, runTurn)
+		}
+	}
+	for _, tool := range runEnv.tools() {
+		if tool.Name != "router_retry_direct" {
+			continue
+		}
+		if _, err := tool.Handler(context.Background(), []byte(`{"reason":"空闲"}`)); err == nil {
+			t.Fatal("run turn recorded router_retry_direct")
+		}
+	}
+	if actions := runEnv.collector.snapshot(); len(actions) != 0 {
+		t.Fatalf("run turn recorded actions = %+v", actions)
 	}
 
 	direct := &routerToolEnv{
@@ -273,17 +291,24 @@ func TestSupervisionDirectToolsOnlyWithDirectBlock(t *testing.T) {
 				ActivityID: "act-stalled", Status: ActivityStatusRunning, RetryAllowed: true,
 			}},
 		},
-		collector: newRouterTurnCollector(RouterConfig{MaxActions: 6}),
+		collector:       newRouterTurnCollector(RouterConfig{MaxActions: 6}),
+		supervisionMode: RouterSupervisionOn,
 	}
 	directNames := names(direct)
-	if !directNames["router_retry_direct"] || !directNames["router_notify_user"] || !directNames["router_escalate"] {
-		t.Fatalf("direct turn tools = %v", directNames)
-	}
-	if directNames["router_retry_node"] || directNames["router_resume_run"] {
-		t.Fatalf("direct turn exposes run-only tools: %v", directNames)
+	for _, want := range allNames {
+		if !directNames[want] {
+			t.Fatalf("direct turn is missing %s: %v", want, directNames)
+		}
 	}
 	for _, tool := range direct.tools() {
-		if tool.Name != "router_retry_direct" {
+		switch tool.Name {
+		case "router_retry_node", "router_resume_run":
+			if _, err := tool.Handler(context.Background(), []byte(`{"node_id":"run"}`)); err == nil {
+				t.Fatalf("direct turn recorded %s", tool.Name)
+			}
+			continue
+		case "router_retry_direct":
+		default:
 			continue
 		}
 		if _, err := tool.Handler(context.Background(), []byte(`{"reason":"空闲"}`)); err != nil {

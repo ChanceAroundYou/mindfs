@@ -291,7 +291,8 @@ func (rs *RouterService) runRouterTurn(taskID string, trigger RouterTrigger) {
 	sessionKey := rs.prepareSessionKey(ctx, agent, decision.RootID, taskID, config, promptHash)
 
 	collector := newRouterTurnCollector(config)
-	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader()}
+	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader(),
+		supervisionMode: rs.service.RouterConfig().Supervision.Normalized().Mode}
 	timeout := config.TurnTimeout
 	if timeout <= 0 {
 		timeout = defaultRouterTurnTimeout

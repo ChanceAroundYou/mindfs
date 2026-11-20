@@ -205,6 +205,50 @@ func TestRouterEventSourcesFailedRunKeepsOwnRow(t *testing.T) {
 	}
 }
 
+// 行为 2b：监管重试把那次失败重开成 attempt 2 之后，同一 Run 的第二次失败必须是
+// 一条新事件。instance key 只认裸 runID 时，第二次失败被永久去重 —— Router 收不
+// 到，每节点 2 次的重试预算也用不上（隔离实例实测 2026-11-20：retry_node 之后
+// attempt 2 再失败，事件与决策都没有第二条）。第一波保持裸 runID，升级前的行不
+// 会因为键变了而重放。
+func TestRouterEventSourcesRunFailedAgainAfterRetry(t *testing.T) {
+	f := newRouterEventFixture(t)
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	f.addRun(t, "task-1", "run-1", WorkflowTriggeredByUser, map[string]string{"agent-1": NodeRunFail})
+	f.markOwned(t, "task-1", "run-1", "decision-1")
+	f.setTaskStatus(t, "task-1", StatusFail)
+	f.addNodeRun(t, NodeRun{ID: "run-1:agent-1::0:1", RunID: "run-1", NodeID: "agent-1",
+		Attempt: 1, Status: NodeRunFail})
+
+	first := f.scan(t, now)
+	if len(first.Produced) != 1 || first.Produced[0].Kind != RouterEventRunFailed {
+		t.Fatalf("first scan produced %+v, want one run_failed", first.Produced)
+	}
+	if got := first.Produced[0].InstanceKey; got != "run-1" {
+		t.Fatalf("first instance key = %q, want run-1 (upgrade-compatible)", got)
+	}
+
+	// 监管重试开了 attempt 2，又失败：任务与投影重新落回 fail。
+	f.addNodeRun(t, NodeRun{ID: "run-1:agent-1::0:2", RunID: "run-1", NodeID: "agent-1",
+		Attempt: 2, PrevAttemptID: "run-1:agent-1::0:1", Status: NodeRunFail})
+	second := f.scan(t, now.Add(time.Minute))
+	if len(second.Produced) != 1 || second.Produced[0].Kind != RouterEventRunFailed {
+		t.Fatalf("second scan produced %+v, want a second run_failed", second.Produced)
+	}
+	if got := second.Produced[0].InstanceKey; got != "run-1:a2" {
+		t.Fatalf("second instance key = %q, want run-1:a2", got)
+	}
+	if first.Produced[0].TurnID == second.Produced[0].TurnID {
+		t.Fatalf("both failure waves share turn id %q", first.Produced[0].TurnID)
+	}
+
+	// 状态没再变：扫描不重复产事件，两条行稳定。
+	f.scan(t, now.Add(2*time.Minute))
+	rows := f.list(t, "task-1")
+	if got := countKind(rows, RouterEventRunFailed); got != 2 {
+		t.Fatalf("run_failed rows = %d, want 2 (%+v)", got, rows)
+	}
+}
+
 // 行为 3：gate waiting 每条 attempt 恰一条，重复物化不重复。
 func TestRouterEventSourcesGateWaitingPerAttempt(t *testing.T) {
 	f := newRouterEventFixture(t)

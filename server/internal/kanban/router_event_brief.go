@@ -167,7 +167,7 @@ func attachRouterEventBrief(ctx context.Context, store *TaskStore, brief *Situat
 	evidence.Unverified = capRouterEventUnverified(evidence.Unverified)
 
 	used := 1
-	if turns, countErr := countRouterEventDecisions(ctx, store, event.TaskID, event.UserActivityID); countErr != nil {
+	if turns, countErr := countUserTurnDecisions(ctx, store.db, event.TaskID, event.UserActivityID); countErr != nil {
 		return fmt.Errorf("count decisions: %w", countErr)
 	} else {
 		used += turns
@@ -343,18 +343,6 @@ func capRouterEventUnverified(items []string) []string {
 	out := make([]string, 0, routerEventBriefUnverifiedLimit+1)
 	out = append(out, items[:routerEventBriefUnverifiedLimit]...)
 	return append(out, fmt.Sprintf("… and %d more unverified items", omitted))
-}
-
-func countRouterEventDecisions(ctx context.Context, store *TaskStore, taskID, userActivityID string) (int, error) {
-	taskID, userActivityID = strings.TrimSpace(taskID), strings.TrimSpace(userActivityID)
-	if taskID == "" || userActivityID == "" {
-		return 0, nil
-	}
-	var count int
-	err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM router_decisions WHERE task_id = ? AND user_activity_id = ?`,
-		taskID, userActivityID).Scan(&count)
-	return count, err
 }
 
 func routerEventRunStatus(kind RouterEventKind) string {
