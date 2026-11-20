@@ -11029,6 +11029,8 @@ groups:
       - scripts/crash-sim.sh
       - scripts/mindfs-iso.sh
       - server/internal/kanban/intake_policy.go
+      - server/internal/agent/conformance/conformance.go
+      - server/internal/agent/conformance/probe.go
     tests:
       - server/internal/api/http_task_completion_test.go
       - server/internal/kanban/router_status_completion_test.go
@@ -11040,6 +11042,9 @@ groups:
       - server/internal/kanban/router_completion_event_test.go
       - server/internal/kanban/service_completion_verifier_test.go
       - server/internal/kanban/intake_policy_test.go
+      - server/internal/agent/conformance/conformance_test.go
+      - server/internal/agent/conformance/probe_test.go
+      - server/internal/agent/conformance/probe_live_test.go
     anchors:
       - 'server/internal/api/http_task_completion.go:func (h *HTTPHandler) handleTaskCompletionGet('
       - 'server/internal/api/http_routes.go:/api/tasks/{id}/completion'
@@ -11123,6 +11128,11 @@ groups:
       - 'server/internal/kanban/intake_policy.go:var ReviewCategories = []string{'
       - 'server/internal/kanban/intake_policy.go:func ReviewCategoriesHint() string {'
       - 'server/internal/kanban/router_prompt.md:默认审核分类（`brief.policy_hints` 里也有同样一行）'
+      - 'server/internal/agent/conformance/conformance.go:var Exceptions = map[string][]string{'
+      - 'server/internal/agent/conformance/conformance.go:var Required = map[string]TurnContract{'
+      - 'server/internal/agent/conformance/probe.go:func Run(ctx context.Context, opts Options) Result {'
+      - 'server/internal/agent/conformance/probe.go:func errorFrameVerdict(code, message string, sawOutput bool) (errorVerdict, string) {'
+      - 'server/internal/agent/conformance/probe_live_test.go:MINDFS_CONFORMANCE_URL'
   - id: G-NT
     title: Router 会话关掉内置工具集，每轮省约 53k prompt tokens
     kind: perf

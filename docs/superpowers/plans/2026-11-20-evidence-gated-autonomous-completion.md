@@ -446,10 +446,25 @@ api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建�
 - Create: `server/internal/agent/conformance/conformance.go`、`conformance_test.go`
 - Test: 隔离实例上跑 claude 与 codex 各一组探针。
 
-- [ ] **Step 1: 写探针**：断言两会话打开/关闭形状、错误事件、取消、用量字段存在性；
+- [x] **Step 1: 写探针**：断言两会话打开/关闭形状、错误事件、取消、用量字段存在性；
   harness 特有字段放例外表。
-- [ ] **Step 2: 跑**：无可用 harness 时跳过并明确打印「skipped: harness unavailable」，不算通过。
+- [x] **Step 2: 跑**：无可用 harness 时跳过并明确打印「skipped: harness unavailable」，不算通过。
 - [ ] **Step 3: 提交** `test(agent): 跨 harness 一致性探针（Scope: G-NP）`。
+
+**执行记录（2026-11-21）**：`server/internal/agent/conformance/` 两层 —— 判定层
+`conformance.go`（`Observation`/`Turn`/`Shape`、`Required` 共同面、`Compare`、按报出方生效的
+`Exceptions` 例外表）与采集层 `probe.go`（真实 WS：`session.message` → `session.accepted` /
+`session.stream` / `session.done`，中途 `session.cancel`，收尾 `DELETE /api/sessions/{key}`）。
+9 条判定用例 + 5 条采集/分类用例先红后绿。**真机验收（隔离实例 7437，真实 claude + codex，
+`proj` 项目，`-count=1` 104.0s PASS）**：两个 harness 的 `basic` 回合都收到
+`session.accepted → message_chunk → message_done(contextWindow + tokenUsage.inputTokens/outputTokens)
+→ session.done`；`cancel` 回合都在首条输出后取消并收到 `session.done` 收尾。真机差异只有例外表
+登记的两项：claude 多 `data.tokenUsage.cacheWriteTokens`，codex 多 `data.threadId`。**同轮修掉一处
+把失败伪装成跳过**：`session.create_failed` 原先一律算「harness unavailable」→ 跳过，实际
+`create_failed: root not found` 是探针配置问题；现在只有实例明说 `unavailable / not installed /
+未安装 / 不可用` 才跳过，其余建会话失败一律报失败（`errorFrameVerdict` 三个判定 + 用例）。
+两处变异（例外表被无视、建会话失败降级成跳过）各自打红后还原。`go test ./server/internal/agent/...`
+全绿。Scope: G-NP。
 
 ---
 

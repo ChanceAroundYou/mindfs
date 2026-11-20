@@ -22,3 +22,9 @@ intake-returns-first-issue|server/internal/kanban/intake_policy.go|if req.Title 
 
 # Task 11（审核分类）：brief 里那行只带第一类，Router 就看不见后面六类「必须问人」的事。
 categories-hint-drops-list|server/internal/kanban/intake_policy.go|return "默认审核分类（命中先问用户）：" + strings.Join(ReviewCategories, " / ")|return "默认审核分类（命中先问用户）：" + ReviewCategories[0]|server/internal/kanban|^TestReviewCategoriesHintListsAll$
+
+# Task 12（跨 harness 探针）：例外表被无视，Claude 独有的缓存遥测就会被当成 Codex 的缺陷。
+conformance-ignores-exceptions|server/internal/agent/conformance/conformance.go|for _, entry := range Exceptions[harness] {|for _, entry := range []string(nil) {|server/internal/agent/conformance|^TestCompareHonorsExceptionTable$
+
+# Task 12（跨 harness 探针）：把「会话没建起来」当跳过，坏掉的 harness 会伪装成「没跑」。
+conformance-create-failed-skips|server/internal/agent/conformance/probe.go|if !sawOutput {|if false {|server/internal/agent/conformance|^TestErrorFrameVerdict$
