@@ -91,6 +91,11 @@ type renderedFold struct {
 	replacement foldReplacement
 	tokens      int
 	textBytes   int
+	// savedBytes is how much smaller the pointer is than the JSON span it
+	// replaces. A block that saves a trivial amount is not worth an archive
+	// file and a pointer line, so this — not a token floor — decides whether a
+	// candidate is committed.
+	savedBytes int
 	// path is the archive file backing this pointer. Its base name is the
 	// block's stable identity across restarts (see foldCommitRecord).
 	path string

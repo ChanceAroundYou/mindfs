@@ -37,10 +37,15 @@ const (
 // count as "this upstream does not cache it".
 const coldNoReadStreak = 2
 
-// coldFoldContext consumes this request's cold signals. The PostCompact flag is
-// cleared here, on the first fold decision after it was set, so one compaction
-// yields one cold decision rather than marking the whole epoch cold.
-func (s *Server) coldFoldContext(token string, cfg LiveCompactConfig, now time.Time) (bool, string) {
+// peekColdFold reads this request's cold signals without spending the
+// PostCompact flag. Whether the flag is spent is decided by consumeColdFold
+// once the planner knows it had candidates: the request right after a
+// compaction frequently has nothing foldable, and consuming the flag there
+// loses the one moment a fold is free.
+//
+// A flag older than the cache TTL is dropped: by then the cache is cold anyway
+// and the idle rule reports it.
+func (s *Server) peekColdFold(token string, cfg LiveCompactConfig, now time.Time) (bool, string) {
 	s.mu.Lock()
 	st, ok := s.sessions[token]
 	if !ok {
@@ -48,7 +53,11 @@ func (s *Server) coldFoldContext(token string, cfg LiveCompactConfig, now time.T
 		return false, ""
 	}
 	compacted := st.live.pendingColdFold
-	st.live.pendingColdFold = false
+	compactedAt := st.live.pendingColdFoldAt
+	if compacted && !compactedAt.IsZero() && now.Sub(compactedAt) >= time.Duration(cfg.CacheTTLSeconds)*time.Second {
+		st.live.pendingColdFold = false
+		compacted = false
+	}
 	lastUsageAt := st.live.lastUsageAt
 	noReadStreak := st.live.noReadStreak
 	lastContext := st.live.lastContext
@@ -67,4 +76,18 @@ func (s *Server) coldFoldContext(token string, cfg LiveCompactConfig, now time.T
 		return true, coldReasonNoRead
 	}
 	return false, ""
+}
+
+// consumeColdFold spends the PostCompact flag when a decision actually had
+// material to act on. One compaction then yields one cold decision without
+// being lost to an empty request in between.
+func (s *Server) consumeColdFold(token string, used bool) {
+	if !used {
+		return
+	}
+	s.mu.Lock()
+	if st, ok := s.sessions[token]; ok {
+		st.live.pendingColdFold = false
+	}
+	s.mu.Unlock()
 }

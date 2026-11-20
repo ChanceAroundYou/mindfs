@@ -100,19 +100,38 @@ func TestColdFoldKeepsCandidateEligibility(t *testing.T) {
 	}
 }
 
-// The PostCompact signal marks exactly one decision cold: consuming it once is
-// what keeps an entire epoch from being treated as freshly compacted.
-func TestColdFoldSignalConsumedOnce(t *testing.T) {
+// The PostCompact signal marks exactly one decision cold. Peeking is what a
+// request does before it knows whether it has material to fold; consuming is
+// what makes the signal one-shot.
+func TestColdFoldSignalPeekThenConsume(t *testing.T) {
 	cfg := coldTestConfig()
 	s := &Server{sessions: map[string]*sessionState{"tok": {foldAllowed: true}}}
 	now := time.Now()
 	s.sessions["tok"].live.pendingColdFold = true
+	s.sessions["tok"].live.pendingColdFoldAt = now
 
-	if cold, reason := s.coldFoldContext("tok", cfg, now); !cold || reason != coldReasonCompact {
-		t.Fatalf("first decision cold=%v reason=%q, want true/compact", cold, reason)
+	for i := 0; i < 2; i++ {
+		if cold, reason := s.peekColdFold("tok", cfg, now); !cold || reason != coldReasonCompact {
+			t.Fatalf("peek %d cold=%v reason=%q, want true/compact", i, cold, reason)
+		}
 	}
-	if cold, reason := s.coldFoldContext("tok", cfg, now); cold {
-		t.Fatalf("second decision cold=%v reason=%q, want hot", cold, reason)
+	s.consumeColdFold("tok", true)
+	if cold, _ := s.peekColdFold("tok", cfg, now); cold {
+		t.Fatal("a consumed signal must not mark a second decision cold")
+	}
+}
+
+// The signal is not valid forever: past the cache TTL the cache is cold anyway
+// and the idle rule takes over.
+func TestColdFoldSignalExpiresAfterCacheTTL(t *testing.T) {
+	cfg := coldTestConfig()
+	s := &Server{sessions: map[string]*sessionState{"tok": {foldAllowed: true}}}
+	now := time.Now()
+	s.sessions["tok"].live.pendingColdFold = true
+	s.sessions["tok"].live.pendingColdFoldAt = now.Add(-301 * time.Second)
+
+	if cold, _ := s.peekColdFold("tok", cfg, now); cold {
+		t.Fatal("a 301s-old compact signal must be expired")
 	}
 }
 
@@ -121,7 +140,7 @@ func TestColdFoldIdleBeyondTTL(t *testing.T) {
 	s := &Server{sessions: map[string]*sessionState{"tok": {foldAllowed: true}}}
 	s.sessions["tok"].live.lastUsageAt = time.Now().Add(-301 * time.Second)
 
-	cold, reason := s.coldFoldContext("tok", cfg, time.Now())
+	cold, reason := s.peekColdFold("tok", cfg, time.Now())
 	if !cold || reason != coldReasonIdle {
 		t.Fatalf("cold=%v reason=%q, want true/idle", cold, reason)
 	}
@@ -134,7 +153,7 @@ func TestColdFoldNoReadStreak(t *testing.T) {
 	s.sessions["tok"].live.lastContext = 80000
 	s.sessions["tok"].live.noReadStreak = coldNoReadStreak
 
-	cold, reason := s.coldFoldContext("tok", cfg, time.Now())
+	cold, reason := s.peekColdFold("tok", cfg, time.Now())
 	if !cold || reason != coldReasonNoRead {
 		t.Fatalf("cold=%v reason=%q, want true/no-read", cold, reason)
 	}
@@ -149,7 +168,7 @@ func TestColdFoldSingleNoReadIsNotEnough(t *testing.T) {
 	s.sessions["tok"].live.lastContext = 80000
 	s.sessions["tok"].live.noReadStreak = 1
 
-	if cold, _ := s.coldFoldContext("tok", cfg, time.Now()); cold {
+	if cold, _ := s.peekColdFold("tok", cfg, time.Now()); cold {
 		t.Fatal("a single cache-less response must not count as cold")
 	}
 }

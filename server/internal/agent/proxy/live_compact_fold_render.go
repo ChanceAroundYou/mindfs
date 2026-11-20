@@ -20,6 +20,7 @@ func renderPointer(body []byte, candidate scanFoldCandidate, store *archiveStore
 				replacement: foldReplacement{start: candidate.part.start, end: candidate.part.end, literal: entry.literal},
 				tokens:      entry.tokens,
 				textBytes:   entry.bytes,
+				savedBytes:  spanLen - len(entry.literal),
 				path:        entry.path,
 			}, foldOK
 		}
@@ -59,6 +60,7 @@ func renderPointer(body []byte, candidate scanFoldCandidate, store *archiveStore
 		replacement: foldReplacement{start: candidate.part.start, end: candidate.part.end, literal: literal},
 		tokens:      tokens,
 		textBytes:   len(text),
+		savedBytes:  spanLen - len(literal),
 		path:        archivePath,
 	}, foldOK
 }

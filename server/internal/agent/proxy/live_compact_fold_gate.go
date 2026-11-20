@@ -103,6 +103,10 @@ type liveCompactGate struct {
 	// a later log reader can tell a rail fold from a free cold fold.
 	cold       bool
 	coldReason string
+	// candidates is how many foldable blocks this request had. Zero means the
+	// decision had nothing to act on, which is also what keeps a PostCompact
+	// cold signal alive for the next request instead of spending it here.
+	candidates int
 }
 
 // foldPreview is what shadow's rehearsal of the rail policy would do.
@@ -129,8 +133,20 @@ func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *
 		gate.decision = gateUnmeasured
 	}
 	candidates, _ := collectFoldCandidates(body, req, cfg)
+	gate.candidates = len(candidates)
 	if len(candidates) == 0 {
-		return foldPreview{}, gate
+		// Mirror planFoldCommit: report the rail arithmetic even with nothing to
+		// fold, so a rehearsal's gate_projected is the real projection.
+		current := fc.est
+		if fc.actual > 0 {
+			current = fc.actual
+		}
+		_, decided := decideFoldBudget(cfg, fc, current, false)
+		if decided.decision == gateFold {
+			decided.decision = gateNoBacklog
+		}
+		decided.candidates = 0
+		return foldPreview{}, decided
 	}
 
 	used := make([]bool, len(candidates))
@@ -165,6 +181,7 @@ func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *
 	}
 	budget, decided := decideFoldBudget(cfg, fc, current, largeBlock)
 	gate = decided
+	gate.candidates = len(candidates)
 
 	if budget.commitNew {
 		newBytes, newTokens, newBlocks := 0, 0, 0
@@ -184,7 +201,10 @@ func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *
 				chunks++
 				chunkBytes = 0
 			}
-			if candidate.approxTokens < cfg.MinBlockTokens {
+			// Mirror planFoldCommit's per-block savings floor. The span width is
+			// the un-decoded upper bound on what a pointer can save, so this is
+			// the same decision made before rendering.
+			if width < foldMinBlockSavings {
 				continue
 			}
 			chunkBytes += width

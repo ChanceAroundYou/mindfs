@@ -64,21 +64,25 @@ func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResul
 		s.noteForwardEstimate(token, est)
 		return body, foldResult{}, nil, measured
 	}
-	// Consumed here, once: the PostCompact flag describes the request that
-	// follows the compaction, not the whole epoch (design 2026-11-20 §5).
-	fc.cold, fc.coldReason = s.coldFoldContext(token, cfg, start)
+	// Peeked here, spent only once the planner reports it had candidates: the
+	// request that follows a compaction often has nothing foldable, and the
+	// signal describes the compaction, not this particular request (design
+	// 2026-11-20 §5).
+	fc.cold, fc.coldReason = s.peekColdFold(token, cfg, start)
 	// Shadow (and on without an archive) rehearses the policy: it reports the
 	// decision and the savings a fold would produce, but never rewrites the
 	// body or writes an archive. This is what lets a 24h shadow rehearsal on a
 	// live node gate mode=on admission (design §12.6 观测).
 	if cfg.Mode != LiveCompactOn || s.archive == nil {
 		_, gate := previewFold(body, req, cfg, s.sessionFoldCommits(token), fc)
+		s.consumeColdFold(token, gate.candidates > 0)
 		// Shadow forwards the body untouched: its estimate is the measured one.
 		s.noteForwardEstimate(token, est)
 		return body, foldResult{}, nil, gate
 	}
 	result, gate := planFoldCommit(body, req, cfg, s.archive, s.pointerCache,
 		s.sessionFoldCommits(token), fc)
+	s.consumeColdFold(token, gate.candidates > 0)
 	gate.wouldFoldTokens = result.foldedTokens
 	gate.wouldFoldBlocks = result.foldedBlocks
 	if result.changed() {

@@ -27,7 +27,11 @@ type LiveCompactConfig struct {
 	// as more expensive than not folding. The newest round always stays.
 	// Zero means the default.
 	KeepTailTokens int
-	// MinBlockTokens is the per-tool-result size needed to become a candidate.
+	// MinBlockTokens is the size a *failed* (is_error) tool result needs to
+	// become a candidate. Ordinary results are judged per block by how many
+	// bytes the pointer actually saves (foldMinBlockSavings), because a token
+	// floor of this size rejected most real sessions' 1-7 KB results and left
+	// rail-triggered events with nothing to fold.
 	MinBlockTokens int
 	// MinBodyBytes skips JSON parsing for requests too small to contain a
 	// foldable result. This keeps ordinary short turns on the cheap path.
@@ -219,11 +223,15 @@ type liveCompactState struct {
 	lastMessageCount int
 	compactionEpoch  int
 	// Cold-cache signals (design 2026-11-20 §5). pendingColdFold is set by the
-	// PostCompact hook and consumed exactly once, by the next fold decision:
-	// otherwise every request in that epoch would look freshly compacted.
-	pendingColdFold bool
-	lastUsageAt     time.Time
-	lastContext     int
+	// PostCompact hook and cleared once by a fold decision that actually had
+	// material to consider: a request with no candidates must not spend it,
+	// because the request right after a compaction often has nothing foldable.
+	// pendingColdFoldAt bounds its life; past the cache TTL the idle rule takes
+	// over anyway.
+	pendingColdFold   bool
+	pendingColdFoldAt time.Time
+	lastUsageAt       time.Time
+	lastContext       int
 	// noReadStreak counts consecutive responses that neither read from nor
 	// wrote to the upstream cache (see live_compact_cold.go).
 	noReadStreak int

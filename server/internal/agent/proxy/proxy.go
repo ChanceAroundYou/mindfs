@@ -227,8 +227,10 @@ func (s *Server) handleCompactSignal(w http.ResponseWriter, r *http.Request) {
 		st.live.compactionEpoch++
 		// The request that follows a compaction carries the whole transcript
 		// again, so the upstream prefix cache is cold for it: the one moment a
-		// fold is free (design 2026-11-20 §5). Consumed by the next decision.
+		// fold is free (design 2026-11-20 §5). Consumed by the next decision
+		// that has something to fold.
 		st.live.pendingColdFold = true
+		st.live.pendingColdFoldAt = time.Now()
 	}
 	s.mu.Unlock()
 	log.Printf("[proxy] post-compact signal token=%s", ShortToken(body.Token))

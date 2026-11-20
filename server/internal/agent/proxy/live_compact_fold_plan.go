@@ -9,6 +9,15 @@ import (
 // Split out of live_compact_fold.go when that file crossed the 500-line hard
 // limit; pure move, no behaviour change.
 
+// foldMinBlockSavings is how many bytes a pointer must save for its block to be
+// worth committing. The event-level floor (min_fold_bytes) cannot do this job:
+// it guards the cache break, while this guards the per-block decision to write
+// an archive file and permanently replace a result with a pointer. A token
+// floor used to sit here instead (min_block_tokens, 2000 ≈ 8 KB), and on real
+// traffic it rejected most 1-7 KB tool results, so rail-triggered events found
+// nothing to fold and the context kept growing into the CLI's own compaction.
+const foldMinBlockSavings = 1024
+
 // planFold is the Phase B1 planner: commit every eligible block. It is kept
 // for tests and for callers that have no request-size measurement; foldRequest
 // uses planFoldCommit with the rail gate.
@@ -26,12 +35,24 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 	var result foldResult
 	candidates, multiPart := collectFoldCandidates(body, req, cfg)
 	result.skipped += multiPart
-	gate := liveCompactGate{decision: gateBelowRail, est: fc.est, growth: fc.growth}
+	gate := liveCompactGate{decision: gateBelowRail, est: fc.est, growth: fc.growth, candidates: len(candidates)}
 	if fc.est <= 0 {
 		gate.decision = gateUnmeasured
 	}
 	if len(candidates) == 0 {
-		return result, gate
+		// Still run the rail arithmetic. A 240k request with nothing left to
+		// fold used to report gate_projected=0, which reads as a broken gate
+		// rather than an empty candidate set.
+		current := fc.est
+		if fc.actual > 0 {
+			current = fc.actual
+		}
+		_, decided := decideFoldBudget(cfg, fc, current, false)
+		if decided.decision == gateFold {
+			decided.decision = gateNoBacklog
+		}
+		decided.candidates = 0
+		return result, decided
 	}
 
 	var replacements []foldReplacement
@@ -103,6 +124,7 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 	}
 	budget, decided := decideFoldBudget(cfg, fc, current, largeBlock)
 	gate = decided
+	gate.candidates = len(candidates)
 
 	if budget.commitNew {
 		var newReplacements []foldReplacement
@@ -137,7 +159,7 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 				}
 				continue
 			}
-			if rendered.tokens < cfg.MinBlockTokens {
+			if rendered.savedBytes < foldMinBlockSavings {
 				continue
 			}
 			newReplacements = append(newReplacements, rendered.replacement)
