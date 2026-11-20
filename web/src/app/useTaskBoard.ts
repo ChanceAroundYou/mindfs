@@ -11,7 +11,7 @@
  * 在 App.tsx 中后置初始化）。通过 refreshTaskWorktreeRef 传入，调用点用可选链，
  * 保持原 lazy 语义（回调在渲染后执行，ref 已赋值）。
  */
-import { useCallback, useEffect, type MutableRefObject, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, type MutableRefObject, type Dispatch, type SetStateAction } from "react";
 import { useI18n } from "../i18n";
 import { getRootNodeId } from "../services/net/rootNode";
 import { shouldApplyTaskDetail } from "../services/taskDetailOrder";
@@ -22,6 +22,7 @@ import {
   fetchTaskDetails,
   getCachedTaskDetails,
   getCachedTaskMeta,
+  isTaskGoneError,
   moveTask,
   pruneCachedTaskDetails,
   rebuildTaskWorktree,
@@ -205,6 +206,35 @@ export function useTaskBoard(params: UseTaskBoardParams) {
     });
   }, []);
 
+  /**
+   * 本页会话里已经做过「全量对账」的 root（键含节点）。
+   *
+   * 没有记录的第一次拉取必须走全量：增量响应在结构上就看不见「少了谁」，而
+   * 缓存里可能躺着一张服务端早就删掉的卡 —— 删它的是别的设备、或者当时本页
+   * 断线没收到 task.deleted。只按增量走，这张幽灵卡每次打开页面都活着，用户
+   * 点「完成 / 删除」只会拿到 no rows（实测：llmux #16 10:24 服务端已删，
+   * 12:29 浏览器刷新后仍渲染，完成回 400、删除回 404）。
+   *
+   * 之后同一 root 的重复加载仍走增量（省流量），手动刷新按钮照样强制全量。
+   */
+  const reconciledRootsRef = useRef<Set<string>>(new Set());
+
+  /**
+   * 把一张「服务端已经没有」的任务从看板上摘掉（内存 + IndexedDB + 工作台结构）。
+   *
+   * 与 WS `task.deleted` 走同一条收尾路径，区别只在触发源：那张卡是幽灵 ——
+   * 删它的是另一台设备，或者当时本页断线没收到广播，于是它只活在缓存里。
+   * 用户点「完成 / 删除」时服务端回 `sql: no rows in result set`，不摘掉的话
+   * 这张卡每点一次失败一次，永远粘在板上。
+   */
+  const dropKanbanTask = useCallback((rootId: string, taskId: string, nodeId?: string) => {
+    const keep = Object.keys(taskDetailsByIdRef.current).filter((id) => id !== taskId);
+    pruneTaskDetails(rootId, keep);
+    const nid = String(nodeId || "").trim() || undefined;
+    void pruneCachedTaskDetails(rootId, keep, nid);
+    refreshWorkspaceBoard();
+  }, [pruneTaskDetails, refreshWorkspaceBoard]);
+
   const loadKanbanTasks = useCallback(async (rootId?: string | null, force = false) => {
     if (!protectedAPIReady()) {
       return;
@@ -232,6 +262,9 @@ export function useTaskBoard(params: UseTaskBoardParams) {
       return String(getRootNodeId(r) || "").trim() || undefined;
     };
     const snapNode = resolveNodeId(targetRoot) || null;
+    // 权威集合只能来自全量响应：force 是对账请求，本页第一次拉这个 root 也是。
+    const scopeKey = `${snapNode || ""}::${targetRoot}`;
+    const authoritative = force || !reconciledRootsRef.current.has(scopeKey);
     const seq = ++kanbanLoadSeqRef.current;
     kanbanAbortRef.current?.abort();
     const controller = new AbortController();
@@ -246,10 +279,10 @@ export function useTaskBoard(params: UseTaskBoardParams) {
       const meta = await getCachedTaskMeta(targetRoot, snapNode || undefined);
       // 增量同步带两条水位（任务更新 / 归档状态）：自动归档既不推 task.updated、
       // 也不推动 updated_at，少带 archived_after 的话缓存里的卡片永远停在「完成」列。
-      const syncFilters = taskSyncFilters(meta, force);
+      const syncFilters = taskSyncFilters(meta, authoritative);
       const [details, recent] = await Promise.all([
         fetchTaskDetails(targetRoot, syncFilters, resolveNodeId(targetRoot)),
-        !force && meta?.newestUpdatedAt
+        !authoritative && meta?.newestUpdatedAt
           ? fetchTaskDetails(targetRoot, { limit: 20 }, resolveNodeId(targetRoot))
           : Promise.resolve([] as TaskDetail[]),
       ]);
@@ -260,10 +293,12 @@ export function useTaskBoard(params: UseTaskBoardParams) {
       if (recent.length > 0) { tagDetails(recent); applyTaskDetails(targetRoot, recent); }
       // 只有全量响应才是权威集合：增量只含更新的行、限流只含前 20 条，
       // 拿它们去淘汰会把「没被这次响应覆盖到」的任务误删。
-      if (force) {
+      if (authoritative) {
         const keepTaskIds = details.map((d) => d.task?.id);
         pruneTaskDetails(targetRoot, keepTaskIds);
         void pruneCachedTaskDetails(targetRoot, keepTaskIds, snapNode || undefined);
+        // 对账成功才记账：失败（含被新请求 abort）下一次仍走全量。
+        reconciledRootsRef.current.add(scopeKey);
       }
     } catch (err) {
       if ((err as any)?.name === "AbortError") return;
@@ -400,6 +435,13 @@ export function useTaskBoard(params: UseTaskBoardParams) {
         refreshWorkspaceBoard();
       }
     } catch (err) {
+      // 幽灵卡：服务端已经没有这条任务，卡片只是还活在缓存里。留着它，用户
+      // 每点一次「完成 / 删除」都会再拿到一次 no rows —— 就地摘掉并说清楚。
+      if (isTaskGoneError(err)) {
+        dropKanbanTask(rootId, task.id, nodeId || String((task as any)._nodeId || ""));
+        reportError("task.action_failed", t("task.goneRemoved"), { severity: "info", recoverable: false });
+        return;
+      }
       // 冲突要列出文件清单，不能只 toast 一句：仓库现在停在 MERGE_HEAD，
       // 用户得知道具体是哪些文件、然后自己去解。taskSessionErrorDialog 已经是
       // 「标题 + 详情列表」这个形状，直接复用而不是再造一个弹窗。
@@ -433,11 +475,12 @@ export function useTaskBoard(params: UseTaskBoardParams) {
       }
       reportError("task.action_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
-  }, [applyTaskDetails, refreshWorkspaceBoard, t, getNodeIdForRoot, refreshTaskWorktreeRef]);
+  }, [applyTaskDetails, refreshWorkspaceBoard, t, getNodeIdForRoot, refreshTaskWorktreeRef, dropKanbanTask]);
 
   return {
     applyTaskDetails,
     pruneTaskDetails,
+    dropKanbanTask,
     refreshWorkspaceBoard,
     loadKanbanTasks,
     handleMoveKanbanTask,

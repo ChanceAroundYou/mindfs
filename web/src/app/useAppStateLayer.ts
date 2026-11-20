@@ -112,6 +112,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   const {
     applyTaskDetails,
     pruneTaskDetails,
+    dropKanbanTask,
     refreshWorkspaceBoard,
     loadKanbanTasks,
     handleMoveKanbanTask,
@@ -447,7 +448,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     pluginBypass, pluginBypassRef, pluginContentRef, pluginLoading,
     pluginManagerRef, pluginQuery, pluginQueryRef, pluginVersion,
     pluginsLoadedByRootRef, pluginsLoadingByRootRef, pluginsTrustPendingByRootRef, projectTreeTab,
-    pruneTaskDetails, queueFrozenBySessionRef, queueVersion,
+    pruneTaskDetails, dropKanbanTask, queueFrozenBySessionRef, queueVersion,
     queuedMessagesBySessionRef, refreshGitHistory, refreshGitStatus, refreshProjectTreeWorktrees,
     refreshTaskWorktree, refreshWorkspaceBoard, relatedSelectedFileKey, removeTaskInlineAttachment,
     replaceURLState, resetLocksForRootTransition, resetSessionLockForRoot, rootEntries,

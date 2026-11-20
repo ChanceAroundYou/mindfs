@@ -16,12 +16,14 @@ export type TaskDetailPanelProps = {
   onClose: () => void;
   onOpenSession: (sessionKey: string) => void;
   onMoved?: (detail: TaskDetail) => void;
+  /** 任务已在服务端删除：交给看板摘卡（内存 + 缓存）。 */
+  onTaskGone?: (rootId: string, taskId: string) => void;
   nodeId?: string;
 };
 
-export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, nodeId }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTaskGone, nodeId }: TaskDetailPanelProps) {
   const { t } = useI18n();
-  const panel = useTaskDetailPanel({ detail, nodeId, onClose, onMoved, t: t as (key: any, fallback?: any) => string });
+  const panel = useTaskDetailPanel({ detail, nodeId, onClose, onMoved, onTaskGone, t: t as (key: any, fallback?: any) => string });
   if (!panel || !detail) return null;
   const {
     task,

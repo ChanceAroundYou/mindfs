@@ -4,6 +4,7 @@ import {
   beginTaskFinishWorktree,
   deleteTask,
   fetchTaskDetails,
+  isTaskGoneError,
   moveTask,
   renameTask,
   type TaskDetail,
@@ -23,12 +24,15 @@ export function useTaskDetailPanel({
   nodeId,
   onClose,
   onMoved,
+  onTaskGone,
   t,
 }: {
   detail: TaskDetail | null;
   nodeId?: string;
   onClose: () => void;
   onMoved?: (detail: TaskDetail) => void;
+  /** 任务在服务端已不存在：让看板把那卡片摘掉（缓存 + 内存）。 */
+  onTaskGone?: (rootId: string, taskId: string) => void;
   t: (key: any, fallback?: any) => string;
 }) {
   const task = detail?.task || null;
@@ -94,7 +98,18 @@ export function useTaskDetailPanel({
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   const apply = (next: TaskDetail) => onMoved?.(next);
-  const fail = (err: unknown) => reportError("file.write_failed", String((err as Error)?.message || ""));
+  const fail = (err: unknown) => {
+    // 幽灵卡：服务端已经没有这条任务（别的设备删掉了 / 本页断线时漏了广播）。
+    // 面板留着它，只会让改名、完成、删除每个动作再失败一次 —— 摘卡 + 关面板，
+    // 并把「为什么」说清楚，而不是甩一句 sql: no rows in result set。
+    if (isTaskGoneError(err)) {
+      onTaskGone?.(task.root_id || "", task.id);
+      reportError("file.write_failed", t("task.goneRemoved"), { severity: "info", recoverable: false });
+      onClose();
+      return;
+    }
+    reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
+  };
 
   // 活动流每次看到 Agent 回复状态变化时调用；只做点查并交给父层合并。
   const refreshTask = async () => {
@@ -150,9 +165,7 @@ export function useTaskDetailPanel({
         ? t("task.finishWorktreeSessionRunning")
         : (planLine ? `${t("task.finishWorktreeStarted")} — ${planLine}` : t("task.finishWorktreeStarted"));
       reportError("file.write_failed", message, { severity: "info", recoverable: false });
-    } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
-    } finally { setSaving(false); }
+    } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
   const completeTask = async () => {
@@ -160,9 +173,7 @@ export function useTaskDetailPanel({
     try {
       setSaving(true);
       apply(await moveTask(task.root_id, task.id, "complete", "", nodeId));
-    } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
-    } finally { setSaving(false); }
+    } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
   const setPaused = async (next: "pause" | "resume") => {
@@ -170,9 +181,7 @@ export function useTaskDetailPanel({
     try {
       setSaving(true);
       apply(await moveTask(task.root_id, task.id, next, "", nodeId));
-    } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
-    } finally { setSaving(false); }
+    } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
   // 回到待审核：会话输入框会随状态重新打开，旧轮次的 Run / 回复原样保留。
@@ -181,9 +190,7 @@ export function useTaskDetailPanel({
     try {
       setSaving(true);
       apply(await moveTask(task.root_id, task.id, "reopen", "", nodeId));
-    } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
-    } finally { setSaving(false); }
+    } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
   const deleteTaskCard = async () => {
@@ -195,9 +202,7 @@ export function useTaskDetailPanel({
       setSaving(true);
       await deleteTask(task.root_id, task.id, nodeId);
       onClose();
-    } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
-    } finally { setSaving(false); }
+    } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
   return {

@@ -74,6 +74,7 @@ export function AppRootView(props: AppRootViewProps) {
     currentFileEditing, currentMainContentView, currentRootDisplayName, currentRootId,
     currentRootIdRef, currentRootNodeId, currentSession, directoryUploadAbortRef,
     directoryUploadProgress, drawerLoadingSessionByRoot, drawerOpenByRootRef, drawerScrollRef,
+    dropKanbanTask,
     editDraftRequest, entriesByPath, expanded, file,
     fileEditStore, fileRef, fileScrollPositionsRef, fontSizePreferences,
     getDisplayNodeColor, getNodeIdForRoot, getRootDisplayName, gitDiff,
@@ -423,6 +424,7 @@ drawer={<
       applyTaskDetails={applyTaskDetails}
       currentRootId={currentRootId}
       currentRootIdRef={currentRootIdRef}
+      dropKanbanTask={dropKanbanTask}
       getNodeIdForRoot={getNodeIdForRoot}
       handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
       selectedKanbanTask={selectedKanbanTask}

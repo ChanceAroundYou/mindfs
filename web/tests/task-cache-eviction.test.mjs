@@ -77,25 +77,31 @@ assert.match(
 
 // —— 权威集合只能来自全量拉取 ——
 // 增量响应（after=…）和限流响应（limit=20）都不是全集，拿它们去淘汰会误删。
-// force 路径本来就是拉全量（filters 传 undefined），淘汰挂在这条路上即可，
-// 不必再发一次请求。
+// 全量有两条来源：用户点刷新（force），以及本页第一次拉这个 root —— 后者见
+// tests/task-ghost-card.test.mjs（增量在结构上看不见「少了谁」，不先全量对账
+// 一次，缓存里的幽灵卡每次开页面都活着）。
 //
 // 过滤条件现在由 taskSyncFilters 统一给（两条水位：任务更新 + 归档状态，见
-// tests/task-archive-incremental-sync.test.mjs）；「force = 不带任何过滤」这条
+// tests/task-archive-incremental-sync.test.mjs）；「全量 = 不带任何过滤」这条
 // 行为在那里直接用返回值钉住了，这里只钉调用点没绕开它。
 assert.match(
   app,
-  /const syncFilters = taskSyncFilters\(meta, force\);/,
-  "incremental filters must come from taskSyncFilters so force really means a full fetch",
+  /const authoritative = force \|\| !reconciledRootsRef\.current\.has\(scopeKey\);/,
+  "a full fetch happens on refresh and on the first load of a root in this page session",
 );
 assert.match(
   app,
-  /if \(force\) \{[\s\S]{0,240}?pruneTaskDetails\(/,
-  "prune must hang off the force branch, where the response really is the full set",
+  /const syncFilters = taskSyncFilters\(meta, authoritative\);/,
+  "incremental filters must follow the same authority flag, so a full fetch really is full",
 );
 assert.match(
   app,
-  /if \(force\) \{[\s\S]{0,320}?pruneCachedTaskDetails\(/,
+  /if \(authoritative\) \{[\s\S]{0,240}?pruneTaskDetails\(/,
+  "prune must hang off the authoritative branch, where the response really is the full set",
+);
+assert.match(
+  app,
+  /if \(authoritative\) \{[\s\S]{0,320}?pruneCachedTaskDetails\(/,
   "the IndexedDB cache must be pruned on the same authoritative fetch",
 );
 

@@ -10088,7 +10088,7 @@ groups:
       - 'web/src/services/task/cache.ts:TASK_ARCHIVE_BACKFILL_WATERMARK = "1970-01-01T00:00:00Z"'
       - 'web/src/services/task/cache.ts:export function taskSyncFilters('
       - 'web/src/services/task/crud.ts:params.set("archived_after", filters.archivedAfter)'
-      - 'web/src/app/useTaskBoard.ts:const syncFilters = taskSyncFilters(meta, force);'
+      - 'web/src/app/useTaskBoard.ts:const syncFilters = taskSyncFilters(meta, authoritative);'
       - 'web/src/app/realtimeWsTaskHandlers.ts:if (archivedBefore !== archivedAfter) {'
       - 'server/internal/kanban/service_archive.go:func (s *Service) ArchiveTask('
       - 'server/internal/kanban/service_archive.go:func (s *Service) SweepAutoArchivedTasks('
@@ -10574,3 +10574,37 @@ groups:
       - 'server/internal/api/usecase/session_fork_helpers.go:TargetTimestamp: target.Timestamp,'
       - 'server/internal/agent/claude/importer_fork_timestamp_test.go:func TestClaudeResolveForkPointPrefersTargetTimestamp('
       - 'server/internal/agent/codex/importer_fork_timestamp_test.go:func TestCodexResolveForkPointPrefersTargetTimestamp('
+  - id: G-NN
+    title: 幽灵任务卡（服务端已删、界面还画着）自愈：首次加载全量对账 + no rows 时摘卡
+    kind: fix
+    symptom: "2026-11-20 用户报「任务卡片卡死，既不能完成也不能删除」，截图里报错正文是 sql: no rows in result set。现场证据：llmux 项目 #16（task_6c2b5e2430af72eb）10:24:36 删除成功（HTTP 200），12:29 浏览器里还画着那张卡；点完成回 400、点删除回 404，正文都是 ErrNoRows。"
+    why: "必须保留：(1) 客户端任务缓存只增不删的旧假设不成立 —— 拉取走增量（after=updatedAt 水位），增量响应结构上看不见「少了谁」，于是服务端已删的任务每次开页面都被 IndexedDB 喂回看板；因此本页第一次拉某个 root 必须是全量对账（authoritative = force || 本页没对账过），只有权威响应才允许淘汰内存与 IndexedDB。(2) 只对账还不够：用户手上那张卡可能在两次加载之间就已经是幽灵 —— 任务级动作（完成/暂停/恢复/回到待审核/删除/改名/finish worktree）拿到 ErrNoRows 时必须把那张卡从内存与缓存里摘掉并说明原因，而不是弹一条红字让用户点一次失败一次。(3) 判据必须窄：只有 name=APIError 且 message 命中 no rows in result set 才算幽灵卡，root not found / 参数错误 / 普通 Error 一律不算。(4) 摘卡按 root + node 圈定，不能误伤别的项目或别的节点上的同名任务。(5) 六个任务级动作的 catch 统一走 fail()，新加动作不会悄悄漏掉幽灵处理。"
+    boundary: "只改前端缓存对账与错误收尾；不动服务端任务存储与删除语义，不动 WS 广播，不改 task.updated 增量协议。不覆盖：服务端「任务还在、但状态机拒绝动作」的其他卡死形态；不做浏览器 IndexedDB 的版本迁移；otherdevices（另一台设备的缓存）照旧只能靠各自刷新自愈。"
+    files:
+      - web/src/services/task/gone.ts
+      - web/src/services/task/index.ts
+      - web/src/app/useTaskBoard.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/AppRootView.tsx
+      - web/src/components/app/TaskDetailPanelGate.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/useTaskDetailPanel.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+    tests:
+      - web/tests/task-ghost-card.test.mjs
+      - web/tests/task-cache-eviction.test.mjs
+      - e2e/test_task_ghost_card.py
+    anchors:
+      - 'web/src/services/task/gone.ts:export function isTaskGoneError(error: unknown): boolean {'
+      - 'web/src/app/useTaskBoard.ts:const authoritative = force || !reconciledRootsRef.current.has(scopeKey);'
+      - 'web/src/app/useTaskBoard.ts:const syncFilters = taskSyncFilters(meta, authoritative);'
+      - 'web/src/app/useTaskBoard.ts:if (authoritative) {'
+      - 'web/src/app/useTaskBoard.ts:if (isTaskGoneError(err)) {'
+      - 'web/src/app/useTaskBoard.ts:const dropKanbanTask = useCallback((rootId: string, taskId: string, nodeId?: string) => {'
+      - 'web/src/components/task/useTaskDetailPanel.ts:if (isTaskGoneError(err)) {'
+      - 'web/src/components/task/useTaskDetailPanel.ts:catch (error) { fail(error); } finally { setSaving(false); }'
+      - 'web/src/components/app/TaskDetailPanelGate.tsx:onTaskGone={(rootId, taskId) => dropKanbanTask(rootId, taskId, getNodeIdForRoot(rootId || currentRootIdRef.current || ""))}'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.goneRemoved":'
+      - 'web/tests/task-ghost-card.test.mjs:test("task-ghost-card"'
+      - 'e2e/test_task_ghost_card.py:def test_cached_ghost_is_pruned_on_first_load('

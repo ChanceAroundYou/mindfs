@@ -16,6 +16,7 @@ export const zhCNTasks = {
   "task.actionResume": "恢复任务",
   "task.reasonPrompt": "{action}原因（可留空）",
   "task.actionFailed": "任务操作失败",
+  "task.goneRemoved": "该任务已在服务器上删除，已从看板移除",
   "task.saveFailed": "任务保存失败",
   "task.startHint": "点击蓝点或发消息开始",
   "task.createDialogTitle": "创建任务",

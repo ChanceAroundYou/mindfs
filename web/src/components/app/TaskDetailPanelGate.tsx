@@ -8,6 +8,7 @@ export interface TaskDetailPanelGateProps {
   currentRootId: string | null;
   currentRootIdRef: RefObject<string | null>;
   getNodeIdForRoot: (rootId: string) => string | undefined;
+  dropKanbanTask: (rootId: string, taskId: string, nodeId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null | undefined, taskId?: string | undefined) => void;
   selectedKanbanTask: KanbanTask | null;
   setSelectedKanbanTaskId: Dispatch<SetStateAction<string>>;
@@ -18,6 +19,7 @@ export function TaskDetailPanelGate(props: TaskDetailPanelGateProps) {
   const applyTaskDetails = props.applyTaskDetails;
   const currentRootId = props.currentRootId;
   const currentRootIdRef = props.currentRootIdRef;
+  const dropKanbanTask = props.dropKanbanTask;
   const getNodeIdForRoot = props.getNodeIdForRoot;
   const handleTaskSessionDrawerOpen = props.handleTaskSessionDrawerOpen;
   const selectedKanbanTask = props.selectedKanbanTask;
@@ -39,6 +41,9 @@ export function TaskDetailPanelGate(props: TaskDetailPanelGateProps) {
               onClose={() => setSelectedKanbanTaskId("")}
               onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
               onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
+              // 任务在服务端已经被删掉（幽灵卡）：请看板把它从内存与缓存里摘掉，
+              // 否则每点一次完成/删除都再失败一次。
+              onTaskGone={(rootId, taskId) => dropKanbanTask(rootId, taskId, getNodeIdForRoot(rootId || currentRootIdRef.current || ""))}
             />
           ) : null}
     </>

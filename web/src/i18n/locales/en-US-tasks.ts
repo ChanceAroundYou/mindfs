@@ -16,6 +16,7 @@ export const enUSTasks = {
   "task.actionResume": "Resume task",
   "task.reasonPrompt": "{action} reason (optional)",
   "task.actionFailed": "Task action failed",
+  "task.goneRemoved": "This task no longer exists on the server; removed from the board",
   "task.saveFailed": "Failed to save task",
   "task.startHint": "Click the blue dot or send a message to start",
   // The task name already shows in the title slot; don't repeat it.
