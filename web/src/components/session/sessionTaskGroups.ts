@@ -194,6 +194,7 @@ export type TaskGroupAggregate = {
   errors: number;
   latestAt: string;
   archived: boolean;
+  pinned: boolean;
 };
 
 export function taskGroupAggregateState(members: readonly SessionItem[]): TaskGroupAggregate {
@@ -204,6 +205,10 @@ export function taskGroupAggregateState(members: readonly SessionItem[]): TaskGr
   let latestAt = "";
   let latestMs = -Infinity;
   let archived = members.length > 0;
+  // 置顶是按会话存的（services/pins 的 root::key 表），分组没有自己的条目。
+  // 整组口径取「成员全部置顶」：置顶动作一次把全部成员写上，取消一次全部清掉，
+  // 所以正常不会停在半置顶；真停在混合态时按「未置顶」显示，再点一下是把剩下的补齐。
+  let pinned = members.length > 0;
   for (const member of members) {
     if (member.pending || member.presence === "running" || member.presence === "delegating") {
       running = true;
@@ -220,6 +225,9 @@ export function taskGroupAggregateState(members: readonly SessionItem[]): TaskGr
     if (!member.archived_at) {
       archived = false;
     }
+    if (!String(member.pinned_at || "").trim()) {
+      pinned = false;
+    }
     const raw = String(member.closed_at || member.updated_at || "");
     const ms = Date.parse(raw);
     if (Number.isFinite(ms) && ms > latestMs) {
@@ -227,7 +235,7 @@ export function taskGroupAggregateState(members: readonly SessionItem[]): TaskGr
       latestAt = raw;
     }
   }
-  return { running, awaiting, askingUser, errors, latestAt, archived };
+  return { running, awaiting, askingUser, errors, latestAt, archived, pinned };
 }
 
 /**

@@ -261,6 +261,7 @@ test("分组头聚合状态：在跑亮空心灯，问题/报错按条数传递�
     errors: 0,
     latestAt: "2026-11-20T12:30:00Z",
     archived: false,
+    pinned: false,
   });
 
   const busy = taskGroupAggregateState([
@@ -293,6 +294,65 @@ test("分组头聚合状态：在跑亮空心灯，问题/报错按条数传递�
   assert.match(header, /renderToolIcon\("ask_user"\)/, "问号沿用普通会话的徽标图标");
   assert.match(header, /<TaskSessionErrorIcon \/>/, "感叹号沿用普通会话的徽标图标");
   assert.match(header, /<TaskSessionGroupMenu/, "分组头挂三点菜单");
+});
+
+// 用户 2026-11-20：「会话组的时间没有对齐」「灯也没对齐」。根因是右侧信息列被放进了
+// 展开按钮内部，而按钮有 4px 右内边距；会话卡里这一列是**行的直接子元素**。
+test("分组头的指示灯/时间与会话行逐像素对齐（信息列在按钮之外）", () => {
+  const header = read("components/session/TaskSessionGroupHeader.tsx");
+  const card = read("components/session/SessionCard.tsx");
+  const buttonBlock = header.slice(header.indexOf("<button"), header.indexOf("</button>"));
+  assert.doesNotMatch(buttonBlock, /formatTime|mindfs-hollow-pulse/, "时间与指示灯不能落在可点的盒子里（会整体左移 4px）");
+  const afterButton = header.slice(header.indexOf("</button>"));
+  assert.match(afterButton, /formatTime\(aggregate\.latestAt/, "信息列是行的直接子元素，排在按钮之后");
+  // 右侧列的几何与会话行同一份：minWidth 24px + 右对齐 + 10px 次级字。
+  for (const [name, source] of [["SessionCard", card], ["TaskSessionGroupHeader", header]]) {
+    assert.match(source, /minWidth: "24px"/, `${name} must keep the 24px info column`);
+    assert.match(source, /justifyContent: "flex-end"/, `${name} must right-align the info column`);
+    assert.match(source, /paddingLeft: "2px"/, `${name} must keep the same left padding`);
+    assert.match(source, /fontSize: "10px"/, `${name} must use the same time font size`);
+  }
+});
+
+// 用户 2026-11-20：「置顶按钮不应该移除」。分组没有自己的置顶条目，置顶是按会话
+// 存的，所以整组口径 = 成员全部置顶；动作把全部成员写上/清掉，不弹确认。
+test("分组菜单保留置顶，整组生效", () => {
+  const pinnedAll = taskGroupAggregateState([
+    session("a1", { pinned_at: "2026-11-20T10:00:00Z" }),
+    session("a2", { pinned_at: "2026-11-20T11:00:00Z" }),
+  ]);
+  assert.equal(pinnedAll.pinned, true, "成员全部置顶才算整组置顶");
+  assert.equal(
+    taskGroupAggregateState([session("a1", { pinned_at: "2026-11-20T10:00:00Z" }), session("a2")]).pinned,
+    false,
+    "半置顶按未置顶显示，再点一下把剩下的补齐",
+  );
+  assert.equal(taskGroupAggregateState([]).pinned, false, "空组不算置顶");
+
+  const menu = read("components/session/TaskSessionGroupMenu.tsx");
+  assert.match(menu, /<PinIcon pinned=\{pinned\} \/>/, "置顶项沿用会话卡同一颗图钉");
+  assert.match(menu, /void pinTaskGroup\(\{ members, pinned: !pinned, onPin \}\)/, "置顶走整组动作");
+  assert.match(menu, /\{pinned \? t\("sessionList\.unpin"\) : t\("sessionList\.pin"\)\}/, "菜单文案随整组状态切换");
+  assert.ok(
+    menu.indexOf("pinTaskGroup") < menu.indexOf("taskGroupSyncUnsupported"),
+    "置顶排在置灰项之前，与会话卡菜单同序",
+  );
+
+  const actions = read("components/session/taskGroupActions.ts");
+  assert.match(actions, /export async function pinTaskGroup/, "整组置顶是一个显式动作");
+  assert.match(actions, /if \(!onPin \|\| targets\.length === 0\) return;/, "没有置顶出口或没有成员时不发请求");
+  const pinStart = actions.indexOf("export async function pinTaskGroup");
+  const pinBlock = actions.slice(pinStart, actions.indexOf("export async function", pinStart + 1));
+  assert.doesNotMatch(pinBlock, /confirmDialog/, "置顶可逆，不弹确认（与单条置顶一致）");
+  assert.match(pinBlock, /for \(const session of targets\)[\s\S]{0,80}?await onPin\(session, pinned\)/, "逐条串行写，避免整表覆盖互相打架");
+
+  const header = read("components/session/TaskSessionGroupHeader.tsx");
+  assert.match(header, /pinned=\{aggregate\.pinned\}/, "分组头把整组置顶状态交给菜单");
+  const single = read("components/session/SessionList.tsx");
+  const multi = read("components/session/MultiProjectSessionList.tsx");
+  for (const [name, source] of [["SessionList", single], ["MultiProjectSessionList", multi]]) {
+    assert.match(source, /onPin=\{onPin\}/, `${name} must wire group pin`);
+  }
 });
 
 // 用户 2026-11-20：「禁用掉重命名和同步功能，归档和删除会递归操作全部，有额外的提示」。

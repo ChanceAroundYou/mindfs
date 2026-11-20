@@ -33,6 +33,7 @@ export function TaskSessionGroupHeader({
   expanded,
   onToggle,
   members,
+  onPin,
   onArchive,
   onDelete,
 }: {
@@ -42,6 +43,7 @@ export function TaskSessionGroupHeader({
   expanded: boolean;
   onToggle: () => void;
   members: SessionItem[];
+  onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem, options?: { confirm?: boolean }) => Promise<void> | void;
 }) {
@@ -139,76 +141,81 @@ export function TaskSessionGroupHeader({
         >
           {heading}
         </span>
-        {/* 右侧信息列：布局与 SessionCard 的时间列同宽同对齐（minWidth 24px、
-            右对齐、10px 次级字），切换分组/会话行时这一列不会左右跳。 */}
-        <span
-          style={{
-            flexShrink: 0,
-            minWidth: "24px",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: "3px",
-            paddingLeft: "2px",
-          }}
-        >
-          {/* 问题与报错按普通会话的徽标传递出来（用户 2026-11-20：「有问题和报错
-              则传递出来，按照普通会话显示问号和感叹号」）。分组是一行布局，徽标
-              放右侧列而不是会话卡那排「名字上方」—— 位置不同，图标/配色/含义一致。 */}
-          {aggregate.askingUser > 0 ? (
-            <span
-              aria-label={t("sessionList.taskGroupAwaitingUser", { count: aggregate.askingUser })}
-              title={t("sessionList.taskGroupAwaitingUser", { count: aggregate.askingUser })}
-              style={{ ...taskAuxBadgeStyle(true), pointerEvents: "auto", flexShrink: 0 }}
-            >
-              <span style={taskAuxIconScaleStyle()}>{renderToolIcon("ask_user")}</span>
-            </span>
-          ) : null}
-          {aggregate.errors > 0 ? (
-            <span
-              aria-label={t("sessionList.taskGroupError", { count: aggregate.errors })}
-              title={t("sessionList.taskGroupError", { count: aggregate.errors })}
-              style={{ ...taskAuxBadgeStyle(true), pointerEvents: "auto", flexShrink: 0 }}
-            >
-              <span style={taskAuxIconScaleStyle()}>
-                <TaskSessionErrorIcon />
-              </span>
-            </span>
-          ) : null}
-          {activeLabel ? (
-            <span
-              aria-label={activeLabel}
-              title={activeLabel}
-              style={{
-                width: "8px",
-                height: "8px",
-                borderRadius: "999px",
-                flexShrink: 0,
-                boxSizing: "border-box",
-                border: "1.5px solid var(--accent-color)",
-                background: "transparent",
-                animation: "mindfs-hollow-pulse 2.2s ease-in-out infinite",
-              }}
-            />
-          ) : (
-            <span
-              style={{
-                fontSize: "10px",
-                color: "var(--text-secondary)",
-                opacity: 0.8,
-                whiteSpace: "nowrap",
-                textAlign: "right",
-              }}
-            >
-              {formatTime(aggregate.latestAt, locale, t("time.justNow"))}
-            </span>
-          )}
-        </span>
       </button>
+      {/* 右侧信息列：位置与 SessionCard 的时间列逐像素一致（用户 2026-11-20：
+          「会话组的时间没有对齐」「灯也没对齐」）。关键是它必须是**行的直接子
+          元素** —— 会话卡里这列也不在可点的那层盒子里，那层有 4px 右内边距；
+          放进按钮内部就会整体左移 4px，时间和灯都跟会话行错开。
+          minWidth 24px、右对齐、10px 次级字同会话行。 */}
+      <span
+        style={{
+          flexShrink: 0,
+          minWidth: "24px",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: "3px",
+          paddingLeft: "2px",
+        }}
+      >
+        {/* 问题与报错按普通会话的徽标传递出来（用户 2026-11-20：「有问题和报错
+            则传递出来，按照普通会话显示问号和感叹号」）。分组是一行布局，徽标
+            放右侧列而不是会话卡那排「名字上方」—— 位置不同，图标/配色/含义一致。 */}
+        {aggregate.askingUser > 0 ? (
+          <span
+            aria-label={t("sessionList.taskGroupAwaitingUser", { count: aggregate.askingUser })}
+            title={t("sessionList.taskGroupAwaitingUser", { count: aggregate.askingUser })}
+            style={{ ...taskAuxBadgeStyle(true), pointerEvents: "auto", flexShrink: 0 }}
+          >
+            <span style={taskAuxIconScaleStyle()}>{renderToolIcon("ask_user")}</span>
+          </span>
+        ) : null}
+        {aggregate.errors > 0 ? (
+          <span
+            aria-label={t("sessionList.taskGroupError", { count: aggregate.errors })}
+            title={t("sessionList.taskGroupError", { count: aggregate.errors })}
+            style={{ ...taskAuxBadgeStyle(true), pointerEvents: "auto", flexShrink: 0 }}
+          >
+            <span style={taskAuxIconScaleStyle()}>
+              <TaskSessionErrorIcon />
+            </span>
+          </span>
+        ) : null}
+        {activeLabel ? (
+          <span
+            aria-label={activeLabel}
+            title={activeLabel}
+            style={{
+              width: "8px",
+              height: "8px",
+              borderRadius: "999px",
+              flexShrink: 0,
+              boxSizing: "border-box",
+              border: "1.5px solid var(--accent-color)",
+              background: "transparent",
+              animation: "mindfs-hollow-pulse 2.2s ease-in-out infinite",
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              fontSize: "10px",
+              color: "var(--text-secondary)",
+              opacity: 0.8,
+              whiteSpace: "nowrap",
+              textAlign: "right",
+            }}
+          >
+            {formatTime(aggregate.latestAt, locale, t("time.justNow"))}
+          </span>
+        )}
+      </span>
       <TaskSessionGroupMenu
         name={heading}
         members={members}
         archived={aggregate.archived}
+        pinned={aggregate.pinned}
+        onPin={onPin}
         onArchive={onArchive}
         onDelete={onDelete}
       />

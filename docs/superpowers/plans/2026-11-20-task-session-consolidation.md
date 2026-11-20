@@ -112,3 +112,13 @@
 4. **唯一删除出口加批量通道**：`handleDeleteSession(session, options?: { confirm?: boolean })`，整组删除传 `confirm: false`（外层已确认），其余调用点不传、行为不变。多项目侧栏的分组成员补 `root_id` overlay（项目号在 group 上），否则整组归档/删除会落到「当前选中项目」。
 
 验证：`web/tests/session-task-group.test.mjs` 16 条（新增聚合状态、菜单置灰与整组确认、成员下发与两条侧栏接线；补 `members` 与多项目 `root_id` overlay 断言）。五处变异各自打红后还原：① `latestAt` 改成第一个成员；② 整组删除改成逐条 `onDelete(session)`（不再带 `confirm:false`）；③ 菜单去掉重命名的 `disabled`；④ `buildRows` 不再下发 `members`；⑤ 多项目去掉 `root_id` overlay。`session-archive.test.mjs` 的「确认弹窗早于 deleteSession」守卫改为嵌套 `if` 写法后仍绿。
+
+## 第五轮用户反馈（2026-11-20，整组置顶 + 右侧信息列对齐）
+
+用户原话：「1.置顶按钮不应该移除 2. 会话组的时间没有对齐」「灯也没对齐」。两条都是第四轮引入的回归。
+
+1. **置顶落了**：第四轮的菜单只搬了重命名/同步/归档/删除，把会话卡菜单第一项「置顶」丢掉了。置顶是按会话存的（`services/pins` 的 `root::sessionKey` 表），分组没有自己的条目 —— 所以 `TaskGroupAggregate` 新增 `pinned`（成员**全部**置顶才算整组置顶，半置顶按未置顶显示，再点一下把剩下的补齐），新增 `pinTaskGroup` 逐条串行写同一批成员的 `onPin`。置顶可逆、与单条置顶一致，**不弹确认**。菜单顺序恢复成与会话卡一致：置顶 → 同步 → 重命名 → 归档 → 删除。两条侧栏把 `onPin` 透传给分组头；多项目那层 `root_id` overlay 同时服务置顶（`handlePinSession` 用 `session.root_id || currentRootIdRef`，缺了会写到当前选中项目的表里）。
+
+2. **对齐**：根因不是列宽而是**层级** —— 会话卡里右侧信息列（灯/时间）是行的**直接子元素**，不在可点的那层盒子里；分组头把它放进了展开按钮内部，而那个按钮有 `padding: 7px 4px 7px 2px` 的 4px 右内边距，于是灯和时间整体左移 4px。修法是把信息列移到 `</button>` 之后、`TaskSessionGroupMenu` 之前，几何直接与会话行同源（`minWidth 24px`、`justifyContent flex-end`、`paddingLeft 2px`、10px 次级字）。副作用：点时间/灯不再切换展开 —— 与会话行一致。
+
+验证：`session-task-group.test.mjs` 18 条（新增「信息列在按钮之外」结构断言、与会话行四个几何属性逐项比对、整组置顶聚合与动作断言）；三处变异各自打红后还原 —— ① 把信息列挪回按钮内部（对齐用例红）；② 聚合里删掉 `pinned_at` 判定（置顶与聚合两条红）；③ 多项目侧栏去掉 `onPin`（置顶用例红）。

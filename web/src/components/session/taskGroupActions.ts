@@ -22,6 +22,27 @@ function groupTargets(members: readonly SessionItem[]): SessionItem[] {
   return members.filter((member) => Boolean(member.key || member.session_key));
 }
 
+/**
+ * 整组置顶 / 取消置顶（2026-11-20 用户要求：「置顶按钮不应该移除」）。
+ *
+ * 置顶是按会话存的（root::sessionKey → 时间戳），分组本身没有条目，所以整组就是
+ * 逐条写同一批成员 —— 与归档/删除同一个范围口径。这里**不弹确认**：置顶不像
+ * 删除那样不可逆，会话卡的置顶也是一击生效，多一个框只会让常用操作变慢。
+ * 逐条串行同理（每次写入都会整表覆盖 pins store，并发写谁最后落谁赢）。
+ */
+export async function pinTaskGroup(params: {
+  members: readonly SessionItem[];
+  pinned: boolean;
+  onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
+}): Promise<void> {
+  const { members, pinned, onPin } = params;
+  const targets = groupTargets(members);
+  if (!onPin || targets.length === 0) return;
+  for (const session of targets) {
+    await onPin(session, pinned);
+  }
+}
+
 export async function archiveTaskGroup(params: {
   members: readonly SessionItem[];
   name: string;

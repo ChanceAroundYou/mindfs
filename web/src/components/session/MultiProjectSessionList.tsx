@@ -207,6 +207,7 @@ export function MultiProjectSessionList({
                             // 而归档/删除的出口用它定位项目库；不补这一层，整组操作会
                             // 落到「当前选中项目」上。和下面会话卡同一个 overlay 口径。
                             members={row.members.map((member) => ({ ...member, root_id: member.root_id || group.rootId }))}
+                            onPin={onPin}
                             onArchive={onArchive}
                             onDelete={onDelete}
                           />
