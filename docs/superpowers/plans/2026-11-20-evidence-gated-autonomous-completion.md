@@ -513,3 +513,30 @@ usage_source、适配层字段错位）各自打红后还原，`make mutate` kil
 - [ ] 干净 worktree 上 `make check-upstream` 全绿。
 - [ ] `bash scripts/deploy-all.sh`（用户批准后）；本机重启命令打印给用户。
 - [ ] `docs/plans/README.md` 写 Active 条目与执行结果。
+
+---
+
+## 执行记录（2026-11-21）
+
+Task 1–13 全部完成，逐任务 RED→GREEN→变异验证→提交（`Scope: G-NP`，登记组 G-NS）。
+
+**整分支复审**（fresh reviewer）8 条 Critical/Important，一次性修复轮全部先红后绿
+（提交 `1b6462eb`）：直连任务没有契约也走独立复核；`complete_task` 动作携带决策期 Run
+并在应用阶段拒绝被新一轮取代的旧决策；转换器兜底 `done`（`unverified`）不算证据；
+复核结论迟到不再覆盖已取消 / 已换轮的任务；`file_exists` 拒绝中间目录符号链接越界；
+`reply_settled` 要求最新用户留言确实被答复；没有任何可补做节点的缺口确定性停
+`waiting_user`；同一决策重放不重复扣补做预算、每轮补做各产一条事件。1 条 Minor 记入
+SDD 账本（`complete_task` 宽松 JSON 解码）。修复轮的守卫测试同步提交为 `4244f89d`
+（G-NV 任务树重构后 `worktree-finish` 守卫跟进，非本组实现）。
+
+**门禁**：`go test -count=1 ./...` 全绿（kanban 232.4s）；`tsc -b --noEmit` clean；
+`npx vitest run` 254 文件 / 806 通过 / 6 跳过；干净工作区 `make check-upstream`
+2247 delta / 348 组全绿。
+
+**部署**：`bash scripts/deploy-all.sh` 退出 0，四端 `v0.5.5-1200-150-g4244f89d` 逐字
+一致（WSL / fn `is-active` + `/mindfs/health` 200；pc-win PID 48632、Session 0、
+health 200）。本机二进制已安装、bundle `assets/index-i0BOKYX_.js` 已生效，**运行进程仍是
+旧二进制，待用户执行 `sudo systemctl restart mindfs`**。首跑 Go 门禁红在既有 flake
+（`TestRouterRouteEmptyFinalTextFallsBackInsteadOfSilent` 的 TempDir 清理竞态），单测
+`-count=5` 全过后重跑全流程通过。
+
