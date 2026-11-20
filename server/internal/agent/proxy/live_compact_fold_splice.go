@@ -9,7 +9,7 @@ package proxy
 func applyFold(body []byte, replacements []foldReplacement) ([]byte, bool) {
 	delta := 0
 	for _, replacement := range replacements {
-		delta += len(replacement.literal) - (replacement.end - replacement.start)
+		delta += len(replacement.literal) - (replacement.End - replacement.Start)
 	}
 	if delta >= 0 && delta > len(body) {
 		// A rewrite that more than doubles the body is not a fold; it is a
@@ -23,12 +23,12 @@ func applyFold(body []byte, replacements []foldReplacement) ([]byte, bool) {
 	out := make([]byte, 0, total)
 	cursor := 0
 	for _, replacement := range replacements {
-		if replacement.start < cursor || replacement.end > len(body) || replacement.start >= replacement.end {
+		if replacement.Start < cursor || replacement.End > len(body) || replacement.Start >= replacement.End {
 			return nil, false
 		}
-		out = append(out, body[cursor:replacement.start]...)
+		out = append(out, body[cursor:replacement.Start]...)
 		out = append(out, replacement.literal...)
-		cursor = replacement.end
+		cursor = replacement.End
 	}
 	out = append(out, body[cursor:]...)
 	return out, true

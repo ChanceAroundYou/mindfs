@@ -1,8 +1,8 @@
-package proxy
+package fold
 
 import "unicode/utf8"
 
-// estimateTokens approximates the token count of a text block without a
+// EstimateTokens approximates the token count of a text block without a
 // tokenizer. ASCII runs at roughly 4 bytes per token; every non-ASCII rune
 // counts as one token, which is conservative for CJK (about 1 token per
 // character) and for code.
@@ -10,7 +10,7 @@ import "unicode/utf8"
 // The fold thresholds are coarse (2k per block, 20k/32k per chunk), so a
 // ±30% error is acceptable. Phase A compares this estimate against the real
 // usage reported by the upstream so the constants can be calibrated.
-func estimateTokens(s string) int {
+func EstimateTokens(s string) int {
 	if s == "" {
 		return 0
 	}
@@ -32,10 +32,10 @@ func estimateTokens(s string) int {
 	return (ascii+3)/4 + nonASCII
 }
 
-// estimateByteTokens is estimateTokens without the string copy. Request
+// EstimateByteTokens is EstimateTokens without the string copy. Request
 // bodies can be tens of megabytes; Phase A estimates them on every large
 // request.
-func estimateByteTokens(b []byte) int {
+func EstimateByteTokens(b []byte) int {
 	if len(b) == 0 {
 		return 0
 	}

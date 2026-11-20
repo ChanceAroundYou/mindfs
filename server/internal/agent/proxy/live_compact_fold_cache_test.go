@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mindfs/server/internal/agent/fold"
 )
 
 // Cache and prefix-stability tests. These pin the two properties that decide
@@ -26,12 +28,11 @@ func TestFoldPointerIgnoresToolInputKeyOrder(t *testing.T) {
 	ordered := []byte(`{"file_path":"/tmp/a","offset":1,"limit":20}`)
 	reordered := []byte(`{"limit":20,"file_path":"/tmp/a","offset":1}`)
 	render := func(input []byte) string {
-		return renderFoldPointer(pointerInput{
-			toolName:     "Read",
-			inputSummary: summarizeToolInput(input, span{0, len(input)}),
-			text:         text,
-			tokens:       estimateTokens(text),
-			archivePath:  "/tmp/ctx/abc.txt",
+		return fold.RenderPointer(fold.PointerInput{
+			ToolName:     "Read",
+			InputSummary: summarizeToolInput(input, span{Start: 0, End: len(input)}),
+			Text:         text,
+			ArchivePath:  "/tmp/ctx/abc.txt",
 		})
 	}
 	if first, second := render(ordered), render(reordered); first != second {
@@ -147,7 +148,7 @@ func foldedResultText(t *testing.T, body []byte, id string) string {
 				continue
 			}
 			part := block.textParts[0]
-			text, err := jsonStringAt(body, part.start, part.end)
+			text, err := jsonStringAt(body, part.Start, part.End)
 			if err != nil {
 				t.Fatalf("decode result text: %v", err)
 			}

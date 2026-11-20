@@ -1,4 +1,4 @@
-package proxy
+package fold
 
 import "testing"
 
@@ -19,8 +19,8 @@ func TestEstimateTokens(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := estimateTokens(tc.text); got != tc.want {
-				t.Fatalf("estimateTokens(%q) = %d, want %d", tc.text, got, tc.want)
+			if got := EstimateTokens(tc.text); got != tc.want {
+				t.Fatalf("EstimateTokens(%q) = %d, want %d", tc.text, got, tc.want)
 			}
 		})
 	}

@@ -682,6 +682,34 @@ git add server/internal/agent/fold server/internal/agent/proxy
 git commit -m "refactor(live-compact): 估算、指针渲染与冷缓存判据迁入 fold 内核（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：四个内核文件落地。`fold/walker.go` 承接字节遍历并把
+`span` 导出成 `fold.Span{Start,End}`（带 `Valid()` / `Raw()`）；`fold/estimate.go` 承接
+`EstimateTokens` / `EstimateByteTokens`；`fold/pointer.go` 承接 `PointerInput`（计划里的六个
+字段，`Tokens` 改为渲染时用 `EstimateTokens(Text)` 现算）、`RenderPointer`、
+`SummarizeToolInput` 与摘要/截断辅助函数；`fold/cold.go` 承接
+`ColdDecision(ColdSnapshot, Config, time.Time)` 与
+`ColdReasonCompact/Idle/NoRead`、`ColdNoReadStreak`。
+
+两处计划外但必要的偏差：① `ColdSnapshot` 多一个 `CompactedAt` 字段 —— 现有语义要求
+「PostCompact 旗标超过缓存 TTL 即作废」，计划里的四字段快照无法表达；`ColdDecision` 仍是纯
+函数，作废与「只在有候选时才花掉旗标」都留在 proxy 的同一次加锁内。②
+`encodeJSONStringLiteral` 抽成 `fold/EncodeJSONStringLiteral`（`fold/json_literal.go`）：
+它是拼接改写用的通用 JSON 工具，Task 10 的 Responses `Splice` 也要用，留在 proxy 会让内核
+反向依赖。
+
+proxy 侧删除 `estimate.go`、`live_compact_scan.go`、`live_compact_pointer.go`，`fold_alias.go`
+补 `span` / `pointerInput` 类型别名、walker/估算/指针函数别名与 `coldReason*` 常量别名；
+`span` 变成外部类型后字段改为 `Start`/`End`（`foldReplacement` 的字段同步改成大写以保持
+`sort.Slice` 比较可读）。新增内核测试：`fold/cold_test.go` 5 条、`fold/walker_test.go` 7 条、
+`fold/pointer_test.go` 4 条，`estimate_test.go` 随源文件搬入内核。
+
+变异验证两处（计划给的两条都按实际代码校正过）：`ColdDecision` 的空闲阈值改成 `>= 4*ttl`
+→ `TestColdDecisionIdleBeyondTTL` 红；`RenderPointer` 去掉整行指针头（只删「这不是当前指令」
+不会红 —— proxy 用例只数 `[MindFS live-compact]` 前缀）→ proxy 的 fold 用例与
+`TestRenderPointerStates` 同时红，各自还原复绿。`go build ./server/...`、`go test
+./server/internal/agent/... ./server/internal/api/...` 全绿（`kanban` 包编译失败来自同工作区
+另一条会话未跟踪的 `router_supervision_test.go`，不属本组）。
+
 ---
 
 ### Task 6: 中性类型、`Adapter` 接口与 `Engine` 骨架

@@ -111,7 +111,7 @@ func scanMessagePayload(b []byte, open int) (scanMessage, error) {
 	switch b[contentStart] {
 	case '"':
 		// Plain string content: one implicit text block, no tool structures.
-		msg.blocks = []scanBlock{{typ: "text", textParts: []span{{contentStart, contentEnd}}}}
+		msg.blocks = []scanBlock{{typ: "text", textParts: []span{{Start: contentStart, End: contentEnd}}}}
 	case '[':
 		err := scanEachElement(b, contentStart, func(vs, ve int) error {
 			if b[vs] != '{' {
@@ -165,7 +165,7 @@ func scanBlockPayload(b []byte, open int) (scanBlock, error) {
 		case memberKeyIs(key, "is_error"):
 			block.isError = bytes.Equal(b[vs:ve], []byte("true"))
 		case memberKeyIs(key, "input"):
-			block.input = span{vs, ve}
+			block.input = span{Start: vs, End: ve}
 		case memberKeyIs(key, "content"):
 			contentStart, contentEnd, hasContent = vs, ve, true
 		}
@@ -189,7 +189,7 @@ func scanToolResultContent(b []byte, start, end int, ok bool, block *scanBlock) 
 	}
 	switch b[start] {
 	case '"':
-		block.textParts = []span{{start, end}}
+		block.textParts = []span{{Start: start, End: end}}
 		return
 	case '[':
 	default:
@@ -216,7 +216,7 @@ func scanToolResultContent(b []byte, start, end int, ok bool, block *scanBlock) 
 				typ = value
 			case memberKeyIs(key, "text"):
 				if b[ks] == '"' {
-					textSpan = span{ks, ke}
+					textSpan = span{Start: ks, End: ke}
 					hasText = true
 				}
 			}

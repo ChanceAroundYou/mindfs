@@ -193,7 +193,7 @@ func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *
 			if used[index] {
 				continue
 			}
-			width := candidate.part.end - candidate.part.start
+			width := candidate.part.End - candidate.part.Start
 			if budget.maxNewBytes > 0 && chunkBytes > 0 && chunkBytes+width > budget.maxNewBytes {
 				if chunks >= foldMaxChunksPerEvent {
 					break

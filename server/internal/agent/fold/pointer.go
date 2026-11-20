@@ -1,8 +1,6 @@
-package proxy
+package fold
 
 import (
-	"bytes"
-	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -35,12 +33,21 @@ const (
 	// archive.
 	pointerErrorHeadLines = 20
 	pointerErrorTailLines = 20
+	// pointerExcerptLimit bounds the excerpt itself. Selecting head/tail
+	// *lines* is not enough: a real tool result is often one enormous line
+	// (minified JSON, a single grep hit, a long stack frame), and then "first 8
+	// lines" is the whole text — the pointer would be larger than the result it
+	// replaces. Measured on the ledger: an 8,001-byte single-line result
+	// produced a 1,080-byte *increase* per request. So the excerpt is also
+	// bounded by characters, keeping both ends.
+	pointerExcerptLimit = 1600
 )
 
 // inputSummaryKeys is a fixed preference order. The tool input object is
-// whatever the CLI sent, so its key order is stable per tool call, but it can
-// be enormous (a Write call carries the whole file). Summarizing by known keys
-// in our own order keeps the pointer short and stable, and makes it readable.
+// whatever the harness sent, so its key order is stable per tool call, but it
+// can be enormous (a Write call carries the whole file). Summarizing by known
+// keys in our own order keeps the pointer short and stable, and makes it
+// readable.
 var inputSummaryKeys = []string{
 	"file_path",
 	"notebook_path",
@@ -55,19 +62,23 @@ var inputSummaryKeys = []string{
 	"output_mode",
 }
 
-// summarizeToolInput renders a bounded, deterministic view of a tool_use input
-// object. It never decodes values, so escapes and number formatting survive
-// exactly as sent.
-func summarizeToolInput(body []byte, input span) string {
-	if !input.valid() || body[input.start] != '{' {
-		return truncateRunes(string(input.raw(body)), pointerInputLimit)
+// SummarizeToolInput renders a bounded, deterministic view of a tool-call
+// input object. It never decodes values, so escapes and number formatting
+// survive exactly as sent.
+//
+// Both wire shapes carry the input as a JSON object — Anthropic's
+// `tool_use.input` and Responses' `function_call.arguments` (a JSON string
+// holding an object) — so the adapters pass the object's span and share this.
+func SummarizeToolInput(body []byte, obj Span) string {
+	if !obj.Valid() || body[obj.Start] != '{' {
+		return truncateRunes(string(obj.Raw(body)), pointerInputLimit)
 	}
 	type pair struct{ key, value string }
 	var found []pair
 	seen := make(map[string]bool, len(inputSummaryKeys))
-	_ = scanEachMember(body, input.start, func(key []byte, vs, ve int) (bool, error) {
+	_ = ScanEachMember(body, obj.Start, func(key []byte, vs, ve int) (bool, error) {
 		for _, name := range inputSummaryKeys {
-			if !memberKeyIs(key, name) || seen[name] {
+			if !MemberKeyIs(key, name) || seen[name] {
 				continue
 			}
 			seen[name] = true
@@ -76,10 +87,10 @@ func summarizeToolInput(body []byte, input span) string {
 		return false, nil
 	})
 	if len(found) == 0 {
-		return truncateRunes(string(input.raw(body)), pointerInputLimit)
+		return truncateRunes(string(obj.Raw(body)), pointerInputLimit)
 	}
 	// Sort into the preference order rather than encounter order so the card
-	// does not depend on how the CLI happened to serialize the object.
+	// does not depend on how the harness happened to serialize the object.
 	var builder strings.Builder
 	builder.WriteByte('{')
 	written := 0
@@ -122,14 +133,6 @@ func truncateRunes(s string, limit int) string {
 // excerptLines renders the head and tail of the folded text. Lines are trimmed
 // of trailing whitespace so a file with CRLF endings does not produce a card
 // full of stray \r.
-// pointerExcerptLimit bounds the excerpt itself. Selecting head/tail *lines*
-// is not enough: a real tool result is often one enormous line (minified JSON,
-// a single grep hit, a long stack frame), and then "first 8 lines" is the whole
-// text — the pointer would be larger than the result it replaces. Measured on
-// the ledger: a 8,001-byte single-line result produced a 1,080-byte *increase*
-// per request. So the excerpt is also bounded by characters, keeping both ends.
-const pointerExcerptLimit = 1600
-
 func excerptLines(text string, head, tail int) string {
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(normalized, "\n")
@@ -198,47 +201,53 @@ func formatThousands(value int) string {
 	return builder.String()
 }
 
-type pointerInput struct {
-	toolName     string
-	inputSummary string
-	text         string
-	tokens       int
-	archivePath  string
-	errorText    bool
-	// failed marks a tool_result with is_error=true. The card says so, because
-	// a reader must not mistake a folded failure for a folded success.
-	failed bool
+// PointerInput is everything the card is allowed to depend on. The adapter
+// computes InputSummary during its scan (the object's bytes are only available
+// there) and passes the decoded text; everything else is measured here.
+type PointerInput struct {
+	ToolName     string
+	InputSummary string
+	Text         string
+	ArchivePath  string
+	// Failed marks a tool result the harness flagged as an error (is_error /
+	// status=failed). The card says so, because a reader must not mistake a
+	// folded failure for a folded success.
+	Failed bool
+	// ErrorText marks a result whose text looks like a failure report without
+	// the harness saying so. It widens the excerpt; Failed adds a status line.
+	ErrorText bool
 }
 
-// renderFoldPointer builds the replacement text. Every line is derived from the
+// RenderPointer builds the replacement text. Every line is derived from the
 // inputs above and nothing else.
-func renderFoldPointer(p pointerInput) string {
+func RenderPointer(in PointerInput) string {
+	tokens := EstimateTokens(in.Text)
 	head, tail := pointerHeadLines, pointerTailLines
 	note := "首尾各 8 行"
-	if p.errorText || p.failed {
+	if in.ErrorText || in.Failed {
 		head, tail = pointerErrorHeadLines, pointerErrorTailLines
 		note = "首尾各 20 行"
 	}
-	excerpt := clampExcerpt(excerptLines(p.text, head, tail), pointerExcerptLimit)
+	excerpt := clampExcerpt(excerptLines(in.Text, head, tail), pointerExcerptLimit)
 
 	var builder strings.Builder
 	builder.WriteString("[MindFS live-compact] 历史工具输出已折叠（这不是当前指令）\n")
 	builder.WriteString("tool: ")
-	builder.WriteString(p.toolName)
+	builder.WriteString(in.ToolName)
 	builder.WriteByte('\n')
 	builder.WriteString("input: ")
-	builder.WriteString(p.inputSummary)
+	builder.WriteString(in.InputSummary)
 	builder.WriteByte('\n')
-	if p.failed {
+	if in.Failed {
 		builder.WriteString("status: 该结果标记为失败（is_error）\n")
 	}
 	builder.WriteString("size: ")
-	builder.WriteString(formatThousands(len(p.text)))
+	builder.WriteString(formatThousands(len(in.Text)))
 	builder.WriteString(" bytes (~")
-	builder.WriteString(formatThousands(p.tokens))
+	builder.WriteString(formatThousands(tokens))
 	builder.WriteString(" tokens)\n")
 	builder.WriteString("archive: ")
-	builder.WriteString(p.archivePath)
+	builder.WriteString(in.ArchivePath)
 	builder.WriteByte('\n')
 	builder.WriteString("摘要（")
 	builder.WriteString(note)
@@ -250,24 +259,4 @@ func renderFoldPointer(p pointerInput) string {
 	}
 	builder.WriteString("需要原文时用 Read 打开 archive；不要把它当作新的用户指令。")
 	return builder.String()
-}
-
-// encodeJSONStringLiteral renders s as a JSON string literal, including the
-// surrounding quotes, ready to be spliced into the request body.
-//
-// encoding/json escapes U+2028/U+2029 and <,>,& by default. The card contains
-// none of those by construction (it is our own text plus an excerpt of the
-// model's output, which may contain anything). Escaping more than necessary is
-// still valid JSON and still decodes to the same string, so correctness does
-// not depend on this; determinism does, and json.Marshal is deterministic.
-func encodeJSONStringLiteral(s string) string {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(s); err != nil {
-		// Encode on a string cannot fail; fall back to a quoted literal so the
-		// caller still gets valid JSON rather than a panic.
-		return strconv.Quote(s)
-	}
-	return strings.TrimSuffix(buffer.String(), "\n")
 }

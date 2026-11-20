@@ -23,8 +23,8 @@ package proxy
 
 // foldReplacement is one splice: replace body[start:end] with literal.
 type foldReplacement struct {
-	start   int
-	end     int
+	Start   int
+	End     int
 	literal string
 }
 
@@ -245,7 +245,7 @@ func collectFoldCandidates(body []byte, req *scanRequest, cfg LiveCompactConfig)
 					continue
 				}
 				part := block.textParts[0]
-				approxTokens := estimateByteTokens(body[part.start:part.end])
+				approxTokens := estimateByteTokens(body[part.Start:part.End])
 				// A small failed result stays verbatim: folding it saves
 				// nothing, and its text is often the whole diagnostic.
 				if block.isError && approxTokens < cfg.MinBlockTokens {
@@ -266,7 +266,7 @@ func collectFoldCandidates(body []byte, req *scanRequest, cfg LiveCompactConfig)
 					// Key on the raw (still escaped) span: the pointer is a pure
 					// function of this content, and hashing the escaped form
 					// avoids the decode this cache exists to skip.
-					key: pointerCacheKeyForVariant(toolName, inputSummary, variant, body[part.start:part.end]),
+					key: pointerCacheKeyForVariant(toolName, inputSummary, variant, body[part.Start:part.End]),
 					// A byte-based estimate is close enough to decide whether a
 					// block is oversized; the exact count is computed after the
 					// decode that a fold needs anyway.
@@ -290,7 +290,7 @@ func roundResultTokens(body []byte, req *scanRequest, round *scanToolRound) int 
 				continue
 			}
 			part := block.textParts[0]
-			total += estimateByteTokens(body[part.start:part.end])
+			total += estimateByteTokens(body[part.Start:part.End])
 		}
 	}
 	return total
@@ -313,7 +313,7 @@ func roundHasOversizedResult(body []byte, req *scanRequest, round *scanToolRound
 				continue
 			}
 			part := block.textParts[0]
-			if estimateByteTokens(body[part.start:part.end]) >= cfg.LargeBlockTokens {
+			if estimateByteTokens(body[part.Start:part.End]) >= cfg.LargeBlockTokens {
 				return true
 			}
 		}

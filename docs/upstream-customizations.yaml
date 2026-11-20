@@ -9324,7 +9324,6 @@ groups:
       - server/internal/agent/proxy/live_compact_wire_analysis.go
       - server/internal/agent/proxy/live_compact_wire_drift.go
       - server/internal/agent/proxy/live_compact_log.go
-      - server/internal/agent/proxy/live_compact_scan.go
       - server/internal/agent/proxy/live_compact_scan_request.go
       - server/internal/agent/proxy/live_compact_fold.go
       - server/internal/agent/proxy/live_compact_fold_plan.go
@@ -9332,11 +9331,9 @@ groups:
       - server/internal/agent/proxy/live_compact_fold_request.go
       - server/internal/agent/proxy/live_compact_fold_splice.go
       - server/internal/agent/proxy/live_compact_fold_gate.go
-      - server/internal/agent/proxy/live_compact_pointer.go
       - server/internal/agent/proxy/live_compact_ledger.go
       - server/internal/agent/proxy/live_compact_cold.go
       - server/internal/agent/proxy/live_compact_prefix_guard.go
-      - server/internal/agent/proxy/estimate.go
       - server/internal/agent/proxy/usage.go
       - server/internal/agent/proxy/lcsmoke/
       - server/internal/agent/fold/
@@ -9390,7 +9387,10 @@ groups:
       - server/internal/api/http_session_context_saving_test.go
       - server/internal/api/usecase/session_context_saving_test.go
       - web/tests/context-saving-chip.test.mjs
-      - server/internal/agent/proxy/estimate_test.go
+      - server/internal/agent/fold/estimate_test.go
+      - server/internal/agent/fold/walker_test.go
+      - server/internal/agent/fold/pointer_test.go
+      - server/internal/agent/fold/cold_test.go
       - server/internal/agent/proxy/usage_test.go
       - server/internal/agent/pool_compact_proxy_test.go
       - cli/cmd/startup_config_test.go
@@ -9448,7 +9448,7 @@ groups:
       - 'server/internal/agent/proxy/live_compact_fold_request.go:if s.liveCompactDisabled() {'
       - 'server/internal/agent/proxy/live_compact_fold_render.go:if info, err := os.Stat(entry.Path); err == nil && info.Size() == int64(entry.Bytes) && len(entry.Literal) < spanLen {'
       - 'server/internal/agent/proxy/live_compact_fold_splice.go:func verifyFold(before *scanRequest, folded []byte) error'
-      - 'server/internal/agent/proxy/live_compact_pointer.go:func renderFoldPointer(p pointerInput) string'
+      - 'server/internal/agent/fold/pointer.go:func RenderPointer(in PointerInput) string {'
       - 'server/internal/agent/fold/pointer_cache.go:func NewPointerCacheKey(toolName, inputSummary string, textSpan []byte) PointerCacheKey'
       - 'server/internal/agent/fold/archive.go:func (a *ArchiveStore) Write(text string) (string, error)'
       - 'server/internal/agent/fold/config.go:DefaultRetention = 7 * 24 * time.Hour'
@@ -9470,13 +9470,16 @@ groups:
       - 'server/internal/agent/fold/archive.go:func (a *ArchiveStore) SweepProtected(now time.Time, live map[string]struct{}) {'
       - 'server/internal/agent/fold/archive.go:if _, ok := protected[item.name]; ok {'
       - 'server/internal/agent/proxy/live_compact_wire_analysis.go:analysis.SkippedErrorBytes += len(block.raw)'
-      - 'server/internal/agent/proxy/live_compact_pointer.go:status: 该结果标记为失败（is_error）'
+      - 'server/internal/agent/fold/pointer.go:status: 该结果标记为失败（is_error）'
       - 'server/internal/agent/fold/pointer_cache.go:const PointerVariantFailed = "is_error"'
       - 'server/internal/agent/proxy/live_compact_fold.go:failed bool'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.badgeRewrite'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.rewriteTotal'
       - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) SessionContextSaving(sessionKey string) fold.ContextSaving'
       - 'server/internal/agent/fold/ledger.go:ledgerMaxBytes  = 4 << 20'
+      - 'server/internal/agent/fold/cold.go:func ColdDecision(s ColdSnapshot, cfg Config, now time.Time) (bool, string) {'
+      - 'server/internal/agent/fold/walker.go:func ScanEachMember(b []byte, open int, visit func(memberKey []byte, valueStart, valueEnd int) (stop bool, err error)) error {'
+      - 'server/internal/agent/fold/estimate.go:func EstimateTokens(s string) int {'
       - 'server/internal/agent/pool.go:ArchiveDir:       opts.LiveCompactArchiveDir'
       - 'server/internal/agent/pool_context_saving.go:func (p *Pool) SessionContextSaving(sessionKey string) fold.ContextSaving'
       - 'server/internal/api/usecase/session_context_saving.go:func (s *Service) GetSessionContextSaving('

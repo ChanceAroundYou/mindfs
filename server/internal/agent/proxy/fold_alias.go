@@ -28,6 +28,8 @@ type (
 	foldCommitRecord = fold.CommitRecord
 	ContextSaving    = fold.ContextSaving
 	LedgerEntry      = fold.LedgerEntry
+	span             = fold.Span
+	pointerInput     = fold.PointerInput
 )
 
 var (
@@ -38,6 +40,17 @@ var (
 	newFoldCommits            = fold.NewCommits
 	newFoldCommitsFor         = fold.NewCommitsFor
 	newCommitLog              = fold.NewCommitLog
+	errScanMalformed          = fold.ErrScanMalformed
+	scanSkipSpace             = fold.ScanSkipSpace
+	scanValueEnd              = fold.ScanValueEnd
+	scanEachMember            = fold.ScanEachMember
+	scanEachElement           = fold.ScanEachElement
+	memberKeyIs               = fold.MemberKeyIs
+	jsonStringAt              = fold.JSONStringAt
+	summarizeToolInput        = fold.SummarizeToolInput
+	estimateTokens            = fold.EstimateTokens
+	estimateByteTokens        = fold.EstimateByteTokens
+	encodeJSONStringLiteral   = fold.EncodeJSONStringLiteral
 )
 
 const (
@@ -47,4 +60,8 @@ const (
 	archiveRetention     = fold.DefaultRetention
 	usageSourceResponse  = fold.UsageSourceResponse
 	usageSourceMissing   = fold.UsageSourceMissing
+	coldReasonCompact    = fold.ColdReasonCompact
+	coldReasonIdle       = fold.ColdReasonIdle
+	coldReasonNoRead     = fold.ColdReasonNoRead
+	coldNoReadStreak     = fold.ColdNoReadStreak
 )

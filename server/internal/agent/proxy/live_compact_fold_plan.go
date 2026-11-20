@@ -143,7 +143,7 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 			if used[index] {
 				continue
 			}
-			width := candidate.part.end - candidate.part.start
+			width := candidate.part.End - candidate.part.Start
 			if budget.maxNewBytes > 0 && chunkBytes > 0 && chunkBytes+width > budget.maxNewBytes {
 				if chunks >= foldMaxChunksPerEvent {
 					break
@@ -190,7 +190,7 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 	if len(replacements) == 0 {
 		return result, gate
 	}
-	sort.Slice(replacements, func(i, j int) bool { return replacements[i].start < replacements[j].start })
+	sort.Slice(replacements, func(i, j int) bool { return replacements[i].Start < replacements[j].Start })
 	rewritten, ok := applyFold(body, replacements)
 	if !ok {
 		// Overlapping or out-of-range spans mean the scan disagreed with
