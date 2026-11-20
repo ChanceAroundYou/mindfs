@@ -349,3 +349,21 @@ shadow 只记录。
   驱动，要真跑监管必须先给该节点配 `router.mode`（并配 `router.model`）。本机是唯一 Router
   在跑的节点。
 - 本机运行进程自 20:04 起已是同一次提交的构建，deploy-all 重装的是同一份代码，不需要再次重启。
+
+### B13-2 三端 Router 开闸（2026-11-20 20:35）
+
+用户指令「请把其他设备的 router on」。B13 只是把 `supervision.mode` 配到三端，而 Router 本身在
+worker 上仍是 `off`，监管不会触发；本轮把 Router 一并打开：
+
+- **配置**（镜像本机）：WSL / fn / pc-win 的 `config.json` 加
+  `router = {mode: coordinate, agent: claude, model: ok, effort: low, turn_timeout: 180s,
+  idle_close: 30m, supervision: {mode: on}}`。备份 `config.json.bak-router-<ts>`；pc-win 仍走
+  无 BOM 写入。三端的 `~/.claude/settings.json` 与本机同一套 llmux 别名（`ok`/`op`/`of`/`os`），
+  `claude` CLI 均在 PATH 上（pc-win 是 npm shim）。
+- **重启**：WSL PID 2752574（20:35:52）、fn PID 2198928（20:35:56）、pc-win PID 34348
+  （20:36:11，Session 0，`schtasks /end` + `/run`）。
+- **核对**：三端 `GET /mindfs/api/router/status` 均 `enabled=true` / `mode=coordinate` /
+  `model=ok` / `effort=low` / `turn_timeout_ms=180000` / `supervision_mode=on`，health 200。
+- **空载证据（开闸前）**：WSL 各项目 `task-kanban.db` 合计 `router_events=0`、未终态 Run=0；
+  fn 同为 0；pc-win 只有 `C:\Users\10178\.mindfs\tasks\task-kanban.db`，`router_events=0` 且无任务。
+  所以开闸当下不会立刻对旧任务动手。
