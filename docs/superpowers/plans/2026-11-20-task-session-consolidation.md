@@ -87,4 +87,4 @@
 
 门禁：`go test -count=1 ./...` 全绿、`go build ./server/...` clean、gofmt 干净；web 248 文件 / 758 通过 / 6 跳过、`tsc -b --noEmit` clean。
 
-安装：前端从 **HEAD + 本次前端改动的隔离 worktree**（`/tmp/mindfs-webbuild`，`node_modules` 软链回主仓）构建，避免把其他并行会话在飞的 `WorkflowDraftEditor` / `DefaultListView` 改动编进产物；按 `make install` 的静态资源语义覆盖 `~/.local/share/mindfs/web/`。线上 7331 与 `https://home.xiaokubao.space/mindfs/` 均已指向 `assets/index-9hzYg2VF.js`（200）。**后端 `task_session_count` 要重启本机 system 单元才生效 —— 只由用户执行 `sudo systemctl restart mindfs`**；重启前前端按旧行为（本页成员数）判阈值，不会出回归。
+安装：先在本机隔离 worktree 里单独验证（只带本次前端改动的 bundle 为 `assets/index-9hzYg2VF.js`）；提交（`e44b11f9`）后从干净 worktree 的 `HEAD`（已含并行会话刚提交的 `0423671e`/`7cbec181`）整体重建，按 `make install` 的静态资源语义覆盖 `~/.local/share/mindfs/web/`。线上 7331 与 `https://home.xiaokubao.space/mindfs/` 均已指向 `assets/index-C83JjzLE.js`（200）。`make check-upstream` 2071 delta / 337 组全绿。**后端 `task_session_count` 要重启本机 system 单元才生效 —— 只由用户执行 `sudo systemctl restart mindfs`**；重启前前端按旧行为（本页成员数）判阈值，不会出回归。
