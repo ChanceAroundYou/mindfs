@@ -78,3 +78,4 @@ Plan 2026-11-20，用户直接提出：「创建任务和任务详情页的输�
 - 源码契约：`web/tests/task-inline-candidate-menu.test.mjs` 新增「必须 portal 到 body / fixed / 读 visualViewport /
   两处调用点传锚点」一组断言。
 - `npx tsc -b --noEmit` clean；`VITE_MIND_FS_BASE=/mindfs npm run build` 成功。
+- 已提交 `f6167641`（Scope: G-NL）并推 origin main；`make check-upstream` 2097 delta / 342 组全绿。未部署、未重启任何节点（前端静态资源安装会把同分支其他人的提交一起带上线，需用户点头）。
