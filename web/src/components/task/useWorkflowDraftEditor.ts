@@ -119,7 +119,9 @@ export function useWorkflowDraftEditor(onDirtyChange?: (dirty: boolean) => void)
   const create = useCallback(async () => {
     const id = `workflow-${Date.now().toString(36)}`;
     const initial: WorkflowGraph = {
-      nodes: [{ id: "start", name: t("task.workflowEditor.firstNode"), kind: "agent", params: { writes_workspace: true } }],
+      // 空白工作流也要能直接跑：没有 prompt 的 agent 节点在后端是配置错误
+      // （requires params.prompt），用户点了发布才发现跑不起来。
+      nodes: [{ id: "start", name: t("task.workflowEditor.firstNode"), kind: "agent", params: { prompt: "{previous_input}", writes_workspace: true } }],
       edges: [],
     };
     setSaving(true);

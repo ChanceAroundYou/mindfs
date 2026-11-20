@@ -4,6 +4,8 @@ import { test } from "vitest";
 import {
   setWorkflowNodeUsesOwnWorktree,
   workflowNodeUsesOwnWorktree,
+  setWorkflowNodeUsesPlanMode,
+  workflowNodeUsesPlanMode,
 } from "../src/shared/workflowModel.ts";
 import {
   INSPECTOR_MAX_WIDTH,
@@ -106,4 +108,41 @@ test("节点属性面板给出「另起会话」与「独立 worktree」两个�
   assert.ok(src.includes('data-testid="workflow-node-new-session"'));
   assert.ok(src.includes('data-testid="workflow-node-independent-worktree"'));
   assert.ok(src.includes("setWorkflowNodeUsesOwnWorktree(selected.params"), "worktree 开关必须写 worktree=independent");
+});
+
+// ── Plan 模式（后端 params.plan_mode，节点级）────────────────────────────────
+
+test("Plan 模式：只认布尔 true，勾选写值、取消删键", () => {
+  assert.equal(workflowNodeUsesPlanMode({ params: { plan_mode: true } }), true);
+  // 后端 `Params["plan_mode"].(bool)` 只认布尔；字符串 "true" 在那里是 false，
+  // UI 不能显示成勾选态骗人。
+  assert.equal(workflowNodeUsesPlanMode({ params: { plan_mode: "true" } }), false);
+  assert.equal(workflowNodeUsesPlanMode({ params: {} }), false);
+  assert.equal(workflowNodeUsesPlanMode({}), false);
+
+  const on = setWorkflowNodeUsesPlanMode({ prompt: "设计方案" }, true);
+  assert.equal(on.plan_mode, true);
+  assert.equal(on.prompt, "设计方案", "不能顺手丢掉别的参数");
+  const off = setWorkflowNodeUsesPlanMode(on, false);
+  assert.equal("plan_mode" in off, false);
+  assert.equal(off.prompt, "设计方案");
+});
+
+test("属性面板把 Plan 模式写进节点参数，而不是全局配置", () => {
+  const src = read("../src/components/task/WorkflowNodeInspector.tsx");
+  assert.ok(src.includes('data-testid="workflow-node-plan-mode"'));
+  assert.ok(src.includes("setWorkflowNodeUsesPlanMode(selected.params"), "必须走节点级 params");
+  // 提示里要说清这是「只出方案、不改文件」，否则用户不知道该给哪些节点开。
+  const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
+  const en = read("../src/i18n/locales/en-US-tasks.ts");
+  assert.match(zh, /"task\.workflowCanvas\.planModeHint"/);
+  assert.match(en, /"task\.workflowCanvas\.planModeHint"/);
+});
+
+test("提示词占位符说明里列出 {previous_output}", () => {
+  const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
+  const en = read("../src/i18n/locales/en-US-tasks.ts");
+  for (const locale of [zh, en]) {
+    assert.match(locale, /"task\.promptInfo": "[^"]*\{previous_output\}/, "面板提示必须告诉用户这个占位符存在");
+  }
 });

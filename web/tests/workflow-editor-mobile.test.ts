@@ -5,6 +5,7 @@ import {
   SHEET_MARGIN,
   authoringPanelExpanded,
   boardKeepsWorkflowEditor,
+  draftPanelFrame,
   inspectorFrame,
 } from "../src/components/task/workflowEditorLayout.ts";
 
@@ -74,13 +75,35 @@ test("手机可以保存/发布/生成：isMobile 不再出现在禁用条件里
   assert.doesNotMatch(editor, /readOnly=\{isMobile\}/);
 });
 
-test("手机上草稿列表变成横向一条，AI 面板可收起且出结果必展开", () => {
+test("手机上草稿列表是浮在画布上的左侧抽屉，可收起且收起后完全隐藏", () => {
+  // 用户 2026-11-20：「把工作流列表做成浮动的左侧栏，可以展开收起、竖向排列」，
+  // 收起形态选定「完全隐藏 + 悬浮把手」，展开时覆盖画布但不挤压画布宽度。
+  const desktop = draftPanelFrame({ isMobile: false, open: true });
+  assert.equal(desktop.width, 190, "桌面维持固定竖栏");
+  assert.equal(desktop.position, undefined, "桌面在文档流里，不浮动");
+
+  const open = draftPanelFrame({ isMobile: true, open: true });
+  assert.equal(open.position, "absolute", "抽屉浮在画布上，不占画布宽度");
+  assert.equal(open.left, 0);
+  assert.equal(open.top, 0);
+  assert.equal(open.bottom, 0);
+  assert.equal(open.flexDirection, "column", "竖向排列，不再横着滚");
+  assert.equal(open.transform, "translateX(0)");
+  assert.equal(open.visibility, "visible");
+  assert.equal(open.scrollbarWidth, "none", "抽屉自己的滚动条也不露出来");
+
+  const closed = draftPanelFrame({ isMobile: true, open: false });
+  assert.equal(closed.visibility, "hidden", "收起后整块不可见，且点不到");
+  assert.match(String(closed.transform), /translateX\(-1/, "靠左移出可视区");
+
   const editor = read("../src/components/task/WorkflowDraftEditor.tsx");
-  assert.match(editor, /flexDirection: isMobile \? "column" : "row"/, "窄屏改成上下排");
-  assert.match(editor, /flexDirection: isMobile \? "row" : "column"/, "草稿列表改成横向条");
-  assert.match(editor, /width: isMobile \? "100%" : 190/, "190px 竖栏在手机上会吃掉半屏");
+  assert.match(editor, /data-testid="workflow-draft-panel-toggle"/, "收起后要有左边缘悬浮把手");
+  assert.match(editor, /data-testid="workflow-draft-panel-collapse"/, "展开时要有收起按钮");
+  assert.match(editor, /draftPanelFrame\(\{ isMobile, open: draftPanelOpen \}\)/, "抽屉框只能来自纯函数");
+  assert.match(editor, /if \(isMobile\) setDraftPanelOpen\(false\)/, "选完草稿自动收起，把画布让出来");
   assert.match(editor, /authoringPanelExpanded\(\{/, "展开规则走纯函数");
   assert.match(editor, /data-testid="workflow-authoring-toggle"/);
+  assert.match(editor, /position: isMobile \? "relative" : undefined/, "抽屉的定位祖先必须是内容区");
 
   // 提案/报错/新建流程一定展开，否则「生成完了什么都没发生」。
   const base = { isMobile: true, open: false, createMode: false, hasProposal: false, hasError: false };
@@ -91,6 +114,25 @@ test("手机上草稿列表变成横向一条，AI 面板可收起且出结果�
   assert.equal(authoringPanelExpanded({ ...base, hasError: true }), true);
   // 桌面恒展开，与手机开关无关。
   assert.equal(authoringPanelExpanded({ ...base, isMobile: false }), true);
+});
+
+test("手机上藏掉主区右缘的浏览器滚动条（只在编辑器打开期间）", () => {
+  assert.match(
+    read("../src/components/file/DefaultListView.tsx"),
+    /className="mindfs-main-scroll"/,
+    "滚动容器要有稳定类名",
+  );
+  const editor = read("../src/components/task/WorkflowDraftEditor.tsx");
+  assert.match(editor, /\.mindfs-main-scroll::-webkit-scrollbar\{display:none/, "Chromium 走伪元素");
+  assert.match(editor, /scrollbar-width:none/, "Firefox/标准属性");
+  assert.match(editor, /document\.body\.dataset\.workflowEditorMobile = "true"/, "只在编辑器挂载期间生效");
+});
+
+test("顶部描述在手机上拿到两行完整宽度，不再被挤成单行省略号", () => {
+  const editor = read("../src/components/task/WorkflowDraftEditor.tsx");
+  assert.match(editor, /flexDirection: isMobile \? "column" : "row", alignItems: isMobile \? "stretch" : "flex-start"/, "标题与按钮分两行");
+  assert.match(editor, /whiteSpace: isMobile \? "normal" : "nowrap"/);
+  assert.match(editor, /WebkitLineClamp: 2/, "最多两行，仍保留省略号兜底");
 });
 
 test("手机画布有固定高度、加节点按钮只留图标、提示改成触屏手势", () => {

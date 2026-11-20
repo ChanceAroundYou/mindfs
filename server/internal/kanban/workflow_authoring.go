@@ -126,13 +126,16 @@ func missingAuthoringField(op WorkflowPatchOperation) string {
 // create-scope proposal is reviewed against. Apply rebuilds this exact graph,
 // so the reviewed operations and the persisted Draft share one base and
 // creation stays a single CAS write (revision r1).
+//
+// 起始节点带 {previous_input}：没有 prompt 的 agent 节点在执行期是硬错误
+// （WorkflowNodePrompt 要求 params.prompt），基线图必须自己就能跑起来。
 func NewWorkflowAuthoringBaseGraph() WorkflowDefinition {
 	return WorkflowDefinition{
 		Nodes: []WorkflowNode{{
 			ID:     "start",
 			Name:   "Start",
 			Kind:   NodeKindAgent,
-			Params: map[string]any{"writes_workspace": true},
+			Params: map[string]any{"prompt": "{previous_input}", "writes_workspace": true},
 		}},
 		Edges: []WorkflowEdge{},
 	}

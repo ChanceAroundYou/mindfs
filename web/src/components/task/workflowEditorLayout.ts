@@ -52,3 +52,42 @@ export function authoringPanelExpanded(gate: AuthoringPanelGate): boolean {
   if (!gate.isMobile) return true;
   return gate.open || gate.createMode || gate.hasProposal || gate.hasError;
 }
+
+export type DraftPanelState = {
+  isMobile: boolean;
+  /** 只有手机上看这个值：抽屉展开了没有。 */
+  open: boolean;
+};
+
+/**
+ * 草稿列表的框：桌面是固定宽度的竖栏，手机是浮在画布上方的左侧抽屉。
+ *
+ * 用户 2026-11-20 的原话是「把工作流列表做成浮动的左侧栏，可以展开收起、
+ * 竖向排列」，并选定「收起后完全隐藏 + 悬浮把手」：所以窄屏不再占用纵向
+ * 空间、也不再挤压画布宽度，收起时整块移出可视区（visibility 一并隐藏，
+ * 避免不可见元素还能被点到）。
+ */
+export function draftPanelFrame(state: DraftPanelState): CSSProperties {
+  if (!state.isMobile) {
+    return { display: "flex", flexDirection: "column", width: 190, flexShrink: 0, overflowY: "auto" };
+  }
+  return {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: "min(240px, 72vw)",
+    zIndex: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    overflowY: "auto",
+    overflowX: "hidden",
+    transform: state.open ? "translateX(0)" : "translateX(-110%)",
+    visibility: state.open ? "visible" : "hidden",
+    transition: "transform 160ms ease",
+    boxShadow: "0 8px 24px rgba(0, 0, 0, 0.25)",
+    // 抽屉自己的滚动条同样不该露出来（用户同时要求「隐藏右侧滚动条」）。
+    scrollbarWidth: "none",
+  };
+}

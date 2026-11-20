@@ -9,6 +9,8 @@ import {
   workflowNodeStartsNewSession,
   setWorkflowNodeUsesOwnWorktree,
   workflowNodeUsesOwnWorktree,
+  setWorkflowNodeUsesPlanMode,
+  workflowNodeUsesPlanMode,
   type WorkflowNodeDef,
 } from "../../shared/workflowModel";
 import { AgentSelector } from "../agent/AgentSelector";
@@ -164,6 +166,23 @@ export function WorkflowNodeInspector({
               style={{ ...panelInputStyle(), width: "100%", resize: "vertical", lineHeight: 1.5, fontFamily: "monospace" }}
             />
           </div>
+
+          {/* Plan 模式（节点级，后端 params.plan_mode）：只读规划、先出方案。
+              设计类节点打开它，实现类节点关着；与「写不写工作区」是两个维度。 */}
+          <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", padding: "6px", background: "var(--button-bg)", borderRadius: "4px", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              data-testid="workflow-node-plan-mode"
+              checked={workflowNodeUsesPlanMode(selected)}
+              onChange={(e) => patchSelected({ params: setWorkflowNodeUsesPlanMode(selected.params, e.target.checked) })}
+            />
+            <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+              <span>{t("task.workflowCanvas.planMode")}</span>
+              <span style={{ fontSize: "10px", color: "var(--text-secondary)", lineHeight: 1.3 }}>
+                {t("task.workflowCanvas.planModeHint")}
+              </span>
+            </span>
+          </label>
 
           {/* 工作区写入选项 */}
           <label style={{ display: "flex", gap: "8px", alignItems: "center", padding: "6px", background: "var(--button-bg)", borderRadius: "4px", cursor: "pointer" }}>

@@ -338,6 +338,11 @@ func buildWorkflowAuthoringPrompt(scope, revision string, graph kanban.WorkflowD
 		"Operation ids must be unique. Keep the graph valid: every edge endpoint must exist.",
 		"Loop nodes use params.max_iterations (1-20), params.exit_expression, and params.graph.",
 		"Nested Loop nodes and human_gate nodes inside a Loop are not supported.",
+		// 让生成的图真的能把上游结果交给下游：{previous_output} 在运行时替换成
+		// 直接上游节点的产出；{previous_input} 才是触发这一轮的用户留言。
+		"Agent prompts may use {previous_input}, {previous_output}, {task_initial_input}, {task_number}.",
+		"{previous_output} is replaced with the upstream nodes' output from this run; the first node has none, so never use it there.",
+		"Design/planning nodes should set params.plan_mode=true (read-only planning); implementation nodes leave it off.",
 		fmt.Sprintf("Patch limits: %d operations, %d nodes, %d bytes per node.", kanban.WorkflowPatchMaxOperations, kanban.WorkflowPatchMaxNodes, kanban.WorkflowPatchMaxNodeBytes),
 		fmt.Sprintf("Scope: %s. Current revision: %s.", scope, revision),
 	}

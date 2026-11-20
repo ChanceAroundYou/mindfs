@@ -67,6 +67,29 @@ export function setWorkflowNodeUsesOwnWorktree(
   return next;
 }
 
+/**
+ * 节点 Plan 模式（后端 `params.plan_mode`）：这一回合以只读的规划模式跑，
+ * 先出方案、不动文件。设计类节点该打开它，实现类节点关着。
+ * 后端 `WorkflowNodeAgentProfileOf` 读的就是这个布尔值，缺省即关闭。
+ */
+export function workflowNodeUsesPlanMode(node: WorkflowNodeDef): boolean {
+  return node.params?.plan_mode === true;
+}
+
+/** 勾选写 plan_mode=true；取消删掉参数，回到「直接动手」。 */
+export function setWorkflowNodeUsesPlanMode(
+  params: Record<string, unknown> | undefined,
+  plan: boolean,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...(params ?? {}) };
+  if (plan) {
+    next.plan_mode = true;
+  } else {
+    delete next.plan_mode;
+  }
+  return next;
+}
+
 export type WorkflowGraph = {
   nodes: WorkflowNodeDef[];
   edges?: WorkflowEdgeDef[];

@@ -129,7 +129,16 @@ func WorkflowNodePrompt(node WorkflowNode) (string, error) {
 // params.prompt. They deliberately reuse the legacy stage template names: the
 // built-in workflows ship `{"prompt":"{previous_input}"}`, and one placeholder
 // must never mean two things depending on which execution path ran it.
-var WorkflowPromptPlaceholders = []string{"previous_input", "task_initial_input", "task_number"}
+// previous_output 读上游节点在本轮 Run 的产出（见 workflow_node_previous_output.go）。
+var WorkflowPromptPlaceholders = []string{"previous_input", "previous_output", "task_initial_input", "task_number"}
+
+// workflowPromptPlaceholderReason 说明某个占位符为什么解析不出来。
+func workflowPromptPlaceholderReason(key string) string {
+	if key == "previous_output" {
+		return "上游节点还没有可用的产出"
+	}
+	return "该任务没有可用的用户输入"
+}
 
 // resolveWorkflowNodePrompt substitutes the placeholders in one agent node's
 // prompt. Without this the built-in workflows sent the literal string
@@ -143,13 +152,13 @@ func resolveWorkflowNodePrompt(node WorkflowNode, prompt string, values map[stri
 	// prompt。所以先按空值判定失败，再替换。
 	for _, key := range WorkflowPromptPlaceholders {
 		if strings.Contains(prompt, "{"+key+"}") && strings.TrimSpace(values[key]) == "" {
-			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：该任务没有可用的用户输入", node.ID, key)
+			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：%s", node.ID, key, workflowPromptPlaceholderReason(key))
 		}
 	}
 	resolved := RenderPrompt(prompt, values)
 	for _, key := range WorkflowPromptPlaceholders {
 		if strings.Contains(resolved, "{"+key+"}") {
-			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：该任务没有可用的用户输入", node.ID, key)
+			return "", fmt.Errorf("workflow agent node %q 的 {%s} 无法解析：%s", node.ID, key, workflowPromptPlaceholderReason(key))
 		}
 	}
 	return resolved, nil
@@ -250,6 +259,15 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 		return WorkflowNodeExecution{}, err
 	}
 	values := WorkflowPromptValues(ctx, store, run, task)
+	// {previous_output} 依赖图与上游 NodeRun，只有这里拿得到 node/nodeRun。
+	// 只有 prompt 真的用了它才解析：老工作流不为一个没写的占位符多查一次库。
+	if strings.Contains(rawPrompt, "{previous_output}") {
+		output, err := workflowPreviousOutputPrompt(ctx, store, run, node, nodeRun)
+		if err != nil {
+			return WorkflowNodeExecution{}, err
+		}
+		values["previous_output"] = output
+	}
 	prompt, err := resolveWorkflowNodePrompt(node, rawPrompt, values)
 	if err != nil {
 		return WorkflowNodeExecution{}, err

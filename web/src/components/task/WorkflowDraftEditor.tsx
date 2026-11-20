@@ -12,7 +12,7 @@ import { useWorkflowAuthoringReview } from "./useWorkflowAuthoringReview";
 import { useWorkflowDraftEditor } from "./useWorkflowDraftEditor";
 import { WorkflowProposalReview } from "./workflowAuthoring/WorkflowProposalReview";
 import { workflowDraftDisplayName } from "../../shared/workflowModel";
-import { authoringPanelExpanded } from "./workflowEditorLayout";
+import { authoringPanelExpanded, draftPanelFrame } from "./workflowEditorLayout";
 import type { AgentStatus } from "../../shared/agentTypes";
 
 export type WorkflowDraftEditorProps = {
@@ -37,6 +37,9 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   const [metaDialogOpen, setMetaDialogOpen] = useState(false);
   const [metaName, setMetaName] = useState("");
   const [metaDescription, setMetaDescription] = useState("");
+  // 手机草稿列表是浮在画布上的抽屉：进编辑器先展开让人选草稿，选完自动收起，
+  // 之后靠左边缘的悬浮把手再打开。桌面恒为固定竖栏，这个状态不参与。
+  const [draftPanelOpen, setDraftPanelOpen] = useState(true);
   const createIdRef = useRef("");
   const { observeRevision, reset } = authoring;
   const previousDraftRef = useRef("");
@@ -153,6 +156,17 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
   // 所以 open 恒为 true；关闭路径复用上面那条（脏改动先确认）。
   useBackLayer(true, close);
 
+  // 手机上把主区（DefaultListView 的滚动容器）右侧滚动条藏起来：编辑器自己
+  // 的窄屏滚动发生在那一层，浏览器滚动条会贴着屏幕右缘吃掉几个像素，而这块
+  // 界面没有「滚动位置」语义（画布自带固定高）。只在编辑器挂载期间生效。
+  useEffect(() => {
+    if (!isMobile) return;
+    document.body.dataset.workflowEditorMobile = "true";
+    return () => {
+      delete document.body.dataset.workflowEditorMobile;
+    };
+  }, [isMobile]);
+
   return (
     <div
       data-testid="workflow-draft-editor"
@@ -167,6 +181,9 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
         padding: isMobile ? 8 : 12,
       }}
     >
+      {isMobile ? (
+        <style>{`body[data-workflow-editor-mobile="true"] .mindfs-main-scroll{scrollbar-width:none;-ms-overflow-style:none}body[data-workflow-editor-mobile="true"] .mindfs-main-scroll::-webkit-scrollbar{display:none;width:0;height:0}`}</style>
+      ) : null}
       {/* 新建工作流：唯一的创建入口，输入框与任务面板同源（PromptEditor）。 */}
       {createDialogOpen ? (
         <div
@@ -258,7 +275,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
         </div>
       ) : null}
 
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "flex-start", gap: 8 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
             <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -283,13 +300,24 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
           {!createMode && e.selected?.description ? (
             <div
               data-testid="workflow-draft-description"
-              style={{ fontSize: 11, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              // 手机上描述被单行省略号截断过（用户 2026-11-20 报「描述被遮挡截断」）：
+              // 窄屏给它两行完整宽度，桌面维持单行（顶栏高度固定）。
+              style={{
+                fontSize: 11,
+                color: "var(--text-secondary)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: isMobile ? "normal" : "nowrap",
+                ...(isMobile
+                  ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }
+                  : {}),
+              }}
             >
               {e.selected.description}
             </div>
           ) : null}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
           {createMode ? (
             <button type="button" style={panelButtonStyle("secondary")} onClick={cancelCreate}>{t("task.workflowAuthoring.cancelCreate")}</button>
           ) : (
@@ -349,26 +377,69 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
         </section>
       ) : null}
       {e.loading ? <div>{t("task.workflowEditor.loading")}</div> : (
-        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: 0, flex: isMobile ? "none" : 1, gap: isMobile ? 8 : 12 }}>
-          {/* 手机上草稿列表变成横向一条：固定 190px 的竖栏在 390px 屏上会吃掉一半宽度，
-              画布只剩巴掌大。横向条只留「当前草稿 + 切走 + 新建/删除」。 */}
+        <div style={{ position: isMobile ? "relative" : undefined, display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: 0, flex: isMobile ? "none" : 1, gap: isMobile ? 8 : 12 }}>
+          {/* 手机上草稿列表是浮在画布上方的左侧抽屉（竖向），收起后完全隐藏、
+              只留左边缘一个悬浮把手；展开时覆盖画布但**不挤压**它的宽度。
+              桌面仍是固定 190px 竖栏。 */}
+          {isMobile && !draftPanelOpen ? (
+            <button
+              type="button"
+              data-testid="workflow-draft-panel-toggle"
+              aria-label={t("task.workflowEditor.drafts")}
+              aria-expanded={false}
+              title={t("task.workflowEditor.drafts")}
+              onClick={() => setDraftPanelOpen(true)}
+              style={{
+                ...panelButtonStyle("secondary"),
+                position: "absolute",
+                left: 0,
+                top: 8,
+                zIndex: 30,
+                width: 28,
+                height: 44,
+                padding: 0,
+                borderTopRightRadius: 10,
+                borderBottomRightRadius: 10,
+                border: "1px solid var(--border-color)",
+                borderLeft: "none",
+                background: "var(--panel-bg, var(--button-bg))",
+                color: "var(--text-secondary)",
+                boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 12,
+              }}
+            >
+              ▸
+            </button>
+          ) : null}
           <nav
             aria-label={t("task.workflowEditor.drafts")}
+            data-testid="workflow-draft-panel"
+            data-open={isMobile ? (draftPanelOpen ? "true" : "false") : undefined}
             style={{
               ...panelSurfaceStyle(),
+              ...draftPanelFrame({ isMobile, open: draftPanelOpen }),
               padding: 8,
-              display: "flex",
-              flexDirection: isMobile ? "row" : "column",
-              alignItems: isMobile ? "center" : "stretch",
+              alignItems: "stretch",
               gap: isMobile ? 6 : 4,
-              width: isMobile ? "100%" : 190,
-              overflowX: isMobile ? "auto" : undefined,
-              overflowY: isMobile ? undefined : "auto",
-              flexShrink: 0,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: isMobile ? 0 : 2, flexShrink: 0 }}>
-              <span style={{ flex: isMobile ? "none" : 1, display: isMobile ? "none" : "block", fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>{t("task.workflowEditor.drafts")}</span>
+              <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>{t("task.workflowEditor.drafts")}</span>
+              {isMobile ? (
+                <button
+                  type="button"
+                  data-testid="workflow-draft-panel-collapse"
+                  aria-label={t("task.workflowEditor.collapseDrafts")}
+                  title={t("task.workflowEditor.collapseDrafts")}
+                  onClick={() => setDraftPanelOpen(false)}
+                  style={{ ...panelButtonStyle("secondary"), height: 24, padding: "0 8px", fontSize: 12, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  ◂
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-testid="workflow-create-open"
@@ -392,7 +463,7 @@ export function WorkflowDraftEditor({ onClose, onDirtyChange, agents = [] }: Wor
                     type="button"
                     style={{ ...panelButtonStyle(isSelected ? "primary" : "secondary"), display: "block", textAlign: "left", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                     aria-current={isSelected}
-                    onClick={() => { setCreateMode(false); void e.choose(d); }}
+                    onClick={() => { setCreateMode(false); if (isMobile) setDraftPanelOpen(false); void e.choose(d); }}
                     title={d.description ? `${displayName} (${d.revision}) — ${d.description}` : `${displayName} (${d.revision})`}
                   >
                     {displayName}

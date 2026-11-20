@@ -336,7 +336,7 @@ export function DefaultListView({
         </div>
       </ViewHeader>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      <div className="mindfs-main-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {showTaskKanban && topContent ? (
           /* 看板/工作台靠 flex 链铺满主区，这一层是链子的起点。
              必须是**确定高度**（height）而不是 minHeight：子级是 grid，
