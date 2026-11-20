@@ -9329,6 +9329,7 @@ groups:
       - server/internal/agent/proxy/live_compact_fold_plan.go
       - server/internal/agent/proxy/live_compact_fold_render.go
       - server/internal/agent/proxy/live_compact_fold_request.go
+      - server/internal/agent/proxy/live_compact_gate_view.go
       - server/internal/agent/proxy/live_compact_fold_splice.go
       - server/internal/agent/proxy/live_compact_fold_gate.go
       - server/internal/agent/proxy/live_compact_ledger.go
@@ -9338,6 +9339,7 @@ groups:
       - server/internal/agent/proxy/lcsmoke/
       - server/internal/agent/fold/
       - server/internal/agent/proxy/fold_alias.go
+      - server/internal/agent/proxy/testdata/fold_golden.txt
       - server/internal/agent/pool.go
       - server/internal/agent/pool_open.go
       - server/internal/agent/pool_context_saving.go
@@ -9376,6 +9378,8 @@ groups:
       - server/internal/agent/proxy/live_compact_prefix_guard_test.go
       - server/internal/agent/proxy/live_compact_cold_test.go
       - server/internal/agent/proxy/live_compact_coverage_test.go
+      - server/internal/agent/proxy/fold_golden_test.go
+      - server/internal/agent/proxy/live_compact_testhelpers_test.go
       - server/internal/agent/fold/config_test.go
       - server/internal/agent/fold/imports_test.go
       - server/internal/agent/proxy/live_compact_commit_restore_test.go
@@ -9409,6 +9413,11 @@ groups:
       - 'server/internal/agent/proxy/live_compact_wire_drift.go:func normalizeMessageHash(msg wireMessage) []byte'
       - 'server/internal/agent/fold/error_text.go:func LooksLikeErrorText(text string) bool'
       - 'server/internal/agent/fold/adapter.go:type Adapter interface {'
+      - 'server/internal/agent/fold/adapter.go:Preview bool'
+      - 'server/internal/agent/fold/preview.go:func (e *Engine) preview('
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:Preview:        !allowed,'
+      - 'server/internal/agent/proxy/live_compact_gate_view.go:func gateFromOutcome(out fold.Outcome, growth int) liveCompactGate {'
+      - 'server/internal/agent/proxy/fold_golden_test.go:const foldGoldenDir = "/tmp/mindfs-fold-golden"'
       - 'server/internal/agent/fold/engine.go:var ErrVerifyFailed = errors.New("live-compact: fold verification failed")'
       - 'server/internal/agent/fold/engine.go:func (e *Engine) Fold(req Request) (Outcome, error) {'
       - 'server/internal/agent/fold/engine.go:func verifyConversation(before *Conversation, folded []byte, adapter Adapter) error {'
