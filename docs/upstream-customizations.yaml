@@ -10671,3 +10671,27 @@ groups:
       - 'server/internal/kanban/service_workspace_gate.go:if plan, ok := node.Params["plan_mode"].(bool); ok && plan {'
       - 'web/tests/workflow-inspector-placement.test.ts:三个布尔开关收成 1×3'
       - 'web/tests/workflow-editor-mobile.test.ts:手机内容列要撑出抽屉的高度'
+
+  - id: G-NP
+    title: 工作台卡片动作按「卡片自己那台机器」派发（同名项目多节点）
+    kind: fix
+    symptom: "2026-11-20 用户报「卡片既不能完成也不能删除」，随后又说「但是它还在工作台里」。现场：fn 与 pc 各有一个 id 为 `docs` 的项目（显示名「AIS文档」），fn 那份有 #1 `docs`（task_b44cc59c6a5f38d0，waiting_user），pc 那份一条任务都没有（tasks 表 0 行）。工作台扇出两台都拉，卡片正常显示；点完成/删除却拿到 `sql: no rows in result set` —— 动作被派给了 pc。"
+    why: "必须保留：工作台是**跨节点扇出**，同名项目在多台机器上各有一份是常态；而按 rootId 反查节点的那张表（indexManagedRoots 的 byId）每个 id 只留得下第一个（本地优先，其余按 nodes.json 顺序）。只按 rootId 反查，第二名机器上的卡片动作必然打给第一名机器 —— 那边没有这条任务，服务端 ErrNoRows，用户看到的是「完成/删除都失败」「删了还在」。修法是三处：(1) 扇出时给每条任务打 `_nodeId`（与 item.nodeId 同一来源）；(2) 任务级动作统一走 taskActionNodeId —— 任务自带的 `_nodeId` 优先，其次才反查；(3) 就地更新（taskDetailsById 覆盖卡片）与「点项目进看板」两条路径也不能把节点弄丢。判据必须留：`_nodeId` 为空白时退回旧行为，纯本地单节点场景行为不变。"
+    boundary: "只改前端节点路由，不动服务端任务存储/接口语义，不动 WS 广播。不覆盖：taskDetailsById 仍按 task id 全局共享、pruneTaskDetails 只按 root_id 圈定 —— 同名项目在两个节点同时打开看板时，后加载的那个仍可能把前一个的详情挤出内存（卡片本身不丢，工作台 item 是独立快照）。也不覆盖「同名 root 的显示名取的是第一个节点那份」这一显示层口径。"
+    files:
+      - web/src/services/task/routing.ts
+      - web/src/shared/taskTypes.ts
+      - web/src/app/useTaskBoard.ts
+      - web/src/app/useWorkspaceBoard.ts
+      - web/src/app/useAppWorkspaceActions.ts
+      - web/src/app/useAppKanbanTaskPanel.tsx
+      - web/src/components/task/TaskBoardView.tsx
+    tests:
+      - web/tests/workspace-duplicate-root-routing.test.mjs
+    anchors:
+      - 'web/src/services/task/routing.ts:export function taskActionNodeId('
+      - 'web/src/app/useTaskBoard.ts:const nodeId = taskActionNodeId(task, rootId, getNodeIdForRoot);'
+      - 'web/src/app/useWorkspaceBoard.ts:task: nid ? { ...item.task, _nodeId: (item.task as any)?._nodeId || nid } : item.task,'
+      - 'web/src/app/useWorkspaceBoard.ts:task: nodeId ? { ...live, _nodeId: nodeId } : live'
+      - 'web/src/app/useAppWorkspaceActions.ts:const targetNodeId = String(nodeId || "").trim() || getNodeIdForRoot(rootId) || undefined;'
+      - 'web/src/components/task/TaskBoardView.tsx:onOpenProject={(rootId, nodeId) => { void openWorkspaceProject(rootId, nodeId); }}'

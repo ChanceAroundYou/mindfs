@@ -72,7 +72,7 @@ export function TaskBoardView({
   onRefreshWorkspaceBoard: () => void;
   managedRootIds: string[];
   getRootDisplayName: (rootId: string | null | undefined) => string;
-  openWorkspaceProject: (rootId: string) => Promise<void>;
+  openWorkspaceProject: (rootId: string, nodeId?: string) => Promise<void>;
   openWorkspaceTaskDetail: (item: { root_id: string; nodeId: string; task: KanbanTask }) => Promise<void>;
   handleWorkspaceCreateTask: (rootId: string, nodeId: string) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
@@ -108,7 +108,7 @@ export function TaskBoardView({
       collapsedKeys={workspaceCollapsedKeys}
       onToggleProject={onToggleWorkspaceProject}
       getNodeColor={getDisplayNodeColor}
-      onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
+      onOpenProject={(rootId, nodeId) => { void openWorkspaceProject(rootId, nodeId); }}
       onOpenTask={(item) => { void openWorkspaceTaskDetail(item); }}
       onMoveTask={(item, action) => { void handleMoveKanbanTask(item.task, action); }}
       onOpenSession={(sessionKey, rootId, taskId) => {

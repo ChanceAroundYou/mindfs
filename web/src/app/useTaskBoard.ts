@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, type MutableRefObject, type Dispatch, t
 import { useI18n } from "../i18n";
 import { getRootNodeId } from "../services/net/rootNode";
 import { shouldApplyTaskDetail } from "../services/taskDetailOrder";
+import { taskActionNodeId } from "../services/task/routing";
 import {
   archiveTask,
   beginTaskFinishWorktree,
@@ -357,7 +358,11 @@ export function useTaskBoard(params: UseTaskBoardParams) {
       }
       reason = input.trim();
     }
-    const nodeId = getNodeIdForRoot(rootId);
+    // 卡片自带 _nodeId 时以它为准：工作台是**跨节点扇出**，同名项目（fn 与 pc
+    // 都有 `docs`）在 managedRootById 里只留得下第一个，按 rootId 反查会把 fn 的
+    // 卡派给 pc —— pc 那边没有这条任务，服务端回 `sql: no rows in result set`，
+    // 用户看到的就是「既不能完成也不能删除」「删了还在工作台里」。
+    const nodeId = taskActionNodeId(task, rootId, getNodeIdForRoot);
     try {
       // 删除任务卡：只删卡片，worktree / 分支 / 会话都不动 —— 所以它跟「取消」
       // 不是一回事（那个只改状态，卡片还在）。不可逆，先弹窗确认。

@@ -42,18 +42,21 @@ export function useAppWorkspaceActions(params: UseAppWorkspaceActionsParams) {
     [],
   );
 
-  const openWorkspaceProject = useCallback(async (rootId: string) => {
+  const openWorkspaceProject = useCallback(async (rootId: string, nodeId?: string) => {
     if (!rootId) return;
+    // nodeId 由调用方从分组上带来：同名项目会在多台机器上各有一份（fn 与 pc 都有
+    // `docs`），getNodeIdForRoot 只留得下第一个，按它兜底会把人送进另一台机器的空看板。
+    const targetNodeId = String(nodeId || "").trim() || getNodeIdForRoot(rootId) || undefined;
     // R6：工作台里点项目 = 切到该项目并落到「项目看板」，而不是回到文件列表
     await actionHandlersRef.current.open_dir({
       path: rootId,
       root: rootId,
       isRoot: true,
-      nodeId: getNodeIdForRoot(rootId) || undefined,
+      nodeId: targetNodeId,
       preservePluginQuery: true,
     });
     switchMainView("board");
-  }, [switchMainView]);
+  }, [switchMainView, getNodeIdForRoot]);
 
   return {
     handleAskUserAnswer,

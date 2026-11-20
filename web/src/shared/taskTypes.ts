@@ -48,6 +48,15 @@ export type KanbanTask = {
    * 留在看板「已结束 → 归档」子组；相关会话同样只被打上归档标记，没有被删除。
    */
   archived_at?: string;
+  /**
+   * 前端**传输级**标记：这条任务是从哪台机器取回来的（后端不返）。
+   *
+   * 同名项目在多台机器上各有一份是常态（fn 与 pc 都有 `docs`），而按 rootId
+   * 反查节点的那张表每个 id 只留得下一条。卡片动作（完成/删除/暂停/重开）必须
+   * 认这个标记，否则会把 A 机器的卡派给 B 机器，服务端回 `sql: no rows`。
+   * 见 services/task/routing.ts 与 useWorkspaceBoard 的扇出打标。
+   */
+  _nodeId?: string;
   aux_flags?: {
     ask_user_waiting?: boolean;
     has_plan?: boolean;

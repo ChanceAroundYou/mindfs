@@ -26,7 +26,7 @@ export type UseAppKanbanTaskPanelParams = {
   setWorkspaceBoardToken: React.Dispatch<React.SetStateAction<number>>;
   managedRootIds: string[];
   getRootDisplayName: (rootId: string | null | undefined) => string;
-  openWorkspaceProject: (rootId: string) => Promise<void>;
+  openWorkspaceProject: (rootId: string, nodeId?: string) => Promise<void>;
   openWorkspaceTaskDetail: (item: { root_id: string; nodeId: string; task: KanbanTask; }) => Promise<void>;
   handleWorkspaceCreateTask: (rootId: string, nodeId: string) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;

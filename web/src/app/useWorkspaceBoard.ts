@@ -151,7 +151,15 @@ export function useWorkspaceBoard(params: {
         targets.map(async (nid) => {
           try {
             const list = await fetchTasksOverview(nid || undefined);
-            return list.map((item) => ({ ...item, nodeId: nid })) as WorkspaceTaskItem[];
+            // 打两个标：nodeId 给分组用，_nodeId 给**卡片动作**用（完成/删除/暂停都按
+            // 它选节点）。只打 nodeId 的话，动作层拿到的是一个不认识节点的 task，
+            // 只能按 rootId 反查 —— 同名项目在多节点上时必错派（fn 的 `docs` 卡被派到
+            // pc，回 no rows，卡永远消不掉）。
+            return list.map((item) => ({
+              ...item,
+              nodeId: nid,
+              task: nid ? { ...item.task, _nodeId: (item.task as any)?._nodeId || nid } : item.task,
+            })) as WorkspaceTaskItem[];
           } catch {
             failedNodeIds.push(nid);
             return [] as WorkspaceTaskItem[];
@@ -191,9 +199,13 @@ export function useWorkspaceBoard(params: {
     (item: WorkspaceTaskItem): WorkspaceTaskItem => {
       const live = getLiveTask(String(item?.task?.id || ""));
       if (!live) return item;
-      return String(live.updated_at || "") > String(item.task.updated_at || "")
-        ? { ...item, task: live }
-        : item;
+      if (!(String(live.updated_at || "") > String(item.task.updated_at || ""))) return item;
+      // 换上的这份来自 taskDetailsById，未必带 _nodeId（详情面板灌进来的就没打标）。
+      // 卡片动作按它选节点，丢了就等于退回「按 rootId 反查」那条错派路径。
+      const nodeId = String((live as any)?._nodeId || "").trim()
+        || String((item.task as any)?._nodeId || "").trim()
+        || String(item.nodeId || "").trim();
+      return { ...item, task: nodeId ? { ...live, _nodeId: nodeId } : live };
     },
     [getLiveTask],
   );
