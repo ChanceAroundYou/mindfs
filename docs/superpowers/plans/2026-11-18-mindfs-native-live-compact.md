@@ -462,7 +462,7 @@ web `context-saving-chip` 9 条通过，`tsc` clean。
 
 | 节点 | 配置文件 | 备份 | 状态 |
 |---|---|---|---|
-| 本机 | `~/.config/mindfs/config.json` | `config.json.bak-lc-20261120-103837` | 已写 `on`；**运行进程仍是 02:55 的旧二进制 + `shadow`，待用户 `sudo systemctl restart mindfs`** |
+| 本机 | `~/.config/mindfs/config.json` | `config.json.bak-lc-20261120-103837` | 已写 `on`；**运行进程是 08:56:42 启动的旧二进制（`/proc/<pid>/exe` 已 deleted），启动时读到的还是 `shadow`，待用户 `sudo systemctl restart mindfs`** |
 | wsl | `~/.config/mindfs/config.json` | `config.json.bak-lc-20261120-103844` | 已重启，`live_compact=on`（日志已确认） |
 | fn | `~/.config/mindfs/config.json` | `config.json.bak-lc-20261120-103845` | 已重启，`live_compact=on`（10:39:46 日志） |
 | pc-win | `C:\Users\10178\AppData\Roaming\mindfs\config.json` | `config.json.bak-lc-20261120-103941` | 已 `schtasks /end` + `/run`，`live_compact=on`（10:40:40 日志），health 200 |
@@ -477,3 +477,14 @@ web `context-saving-chip` 9 条通过，`tsc` clean。
 **观察项（上线后）**：`[live-compact] on` 日志的 `gate=` / `would_fold_tokens=`；账本
 `rewrite_tokens` / `saved_bytes` / `requests`；上游 4xx；CLI 自动压缩次数；`context/` 目录大小与
 `over_cap` 日志。首轮真实折叠后核对：存档可读回原文、`verifyFold` 零回退、指针在下一轮保持。
+
+**真实 CLI 端到端复验（2026-11-20，B6 之后）**：`lcsmoke -mode on`（真实 `claude -p`，`sonnet`，
+`keep_rounds=3`）连读两个大文件，7 个请求里 5 次提交折叠（`[live-compact] fold` 行：
+`new_blocks=3/4/2/4/4`，`archive_errors=0`，单次 `fold_ms=1–14`），末次 `gate=no-backlog` 说明
+backlog 已排空；首次折叠在 `tokens_est=43,461` 触发，正是 `large_block_tokens=32000` 的
+巨型块豁免在 rail 之下生效。账本读回 `requests=7 max_saved=528,285 rewrite_total=196,347
+latest={saved=235,546 rewrite=36,780 blocks=4}`——B6 的 `rewrite_tokens` 记账在真实链路上有值。
+另有一次 CLI 自动压缩把历史重置后，折叠从新转录重新累积（`blocks=4 tokens_est=66,323`），
+与 §12.9 第 13 项「官方压缩后重新计时」的预期一致。工具本身的失败模式记在这里：一次性列出
+十多个路径的提示词会被子会话当成「上下文不是任务」而完全不读文件（一次读单文件或多句单行
+指令正常），这与产品无关，是 smoke 工具的提示词写法问题。
