@@ -39,3 +39,42 @@ Plan 2026-11-20，用户直接提出：「创建任务和任务详情页的输�
 - 不改会话输入框的候选与上传语义（仅把图片提取提成公共函数）。
 - 不改后端：候选接口与附件上传接口都复用会话侧既有实现。
 - `/` 命令候选在任务侧固定用 `DEFAULT_TASK_AGENT`；任务本身不绑定 harness。
+
+## 追加轮：候选菜单被面板裁掉（2026-11-20，Scope: G-NL）
+
+用户报「@ 候选菜单在「新建任务」面板里会被验证层/其他元素遮挡，移动端（窄屏）几乎看不见」，
+要求先复现定位根因、再修，桌面与移动视口都要重跑复现路径。
+
+**取证（隔离实例 + 真浏览器，两次视口各一次，均为修复前现场）**
+
+| 视口 | 菜单矩形 | `.mindfs-panel-body` 顶端 | 4 条候选的命中测试 |
+|---|---|---|---|
+| 1440×900 | `top 319 / bottom 456 / h 137` | `top 416`（`overflow:auto`） | 仅最后一条命中菜单；其余落在 `.mindfs-panel-overlay`、面板 `HEADER` |
+| 375×667 | `top -16 → 121`（越过视口顶端） | `top 81` | 两条命中 header、一条命中 overlay、仅一条命中菜单 |
+
+**根因**：菜单是 `position:absolute; bottom:calc(100% + 6px); z-index:2` 挂在包住编辑器的
+`position:relative` 容器里。祖先是 `.mindfs-panel-body`（`overflow:auto`）与
+`.mindfs-panel-dialog`（`overflow:hidden`），而面板正文顶端到编辑器顶端只剩约 40px，
+`z-index:2` 还被困在面板遮罩（`z-index:90`）的层叠上下文里。被裁掉的部分既不可见、
+`document.elementFromPoint` 也接不到 —— 「看不见」与「点不到」是同一个原因。
+
+**修法**：`TaskInlineCandidateMenu` 改为 `createPortal(..., document.body)` + `position:fixed`，
+按锚点矩形定位：优先上方，上方不足 `MENU_PREFERRED_SPACE=200` 就翻到下方，两侧都不够取更宽裕的一侧；
+高度夹在 `[96,260]`，`z-index:200`；`window.resize`、祖先任意层滚动（捕获阶段）、
+`window.visualViewport` 的 `resize`/`scroll` 都重算（软键盘只改视觉视口，不改布局视口）。
+两处调用点（新建面板、任务详情）各自在编辑器外层挂 `composerAnchorRef` 并作为 `anchorRef` 传入，
+`isMobile` 属性随之删除。
+
+**验证**
+
+- 修复后同一探针：桌面 `top 319 / bottom 456`、4 行全部 `hit: menu`；移动端 `top 179 / bottom 316`、
+  `data-placement=below`、4 行全部 `hit: menu`，整体在 375×667 内。
+- `e2e/test_task_composer_mentions.py` 新增 `_assert_menu_visible`（菜单矩形必须整体落在
+  `visualViewport` 内、`position` 必须是 `fixed`、未被压进内部滚动、每行 `elementFromPoint` 命中菜单），
+  并接进 `_type_mention`；新增 375×667 用例覆盖新建面板与任务详情两处，结束恢复 1440×900。
+  三条用例全 PASS（54.5 s）。
+- 变异验证（均已还原）：`position: "fixed"` → `"absolute"` → vitest 契约用例与 e2e 同时打红；
+  给菜单加 `pointerEvents: "none"` → 命中测试断言打红（`hit: INPUT.`）。
+- 源码契约：`web/tests/task-inline-candidate-menu.test.mjs` 新增「必须 portal 到 body / fixed / 读 visualViewport /
+  两处调用点传锚点」一组断言。
+- `npx tsc -b --noEmit` clean；`VITE_MIND_FS_BASE=/mindfs npm run build` 成功。

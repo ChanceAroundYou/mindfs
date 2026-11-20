@@ -134,10 +134,87 @@ def _type_mention(page: Page, editor_scope: str, query: str, expected: str) -> N
     page.keyboard.type(f"@{query}")
     item = page.get_by_role("button", name=re.compile(rf"@[^\n]*{re.escape(expected)}")).first
     item.wait_for(state="visible", timeout=20_000)
+    _assert_menu_visible(page)
     page.keyboard.press("Tab")
     token = page.locator(f"{editor_scope} {TOKEN}").first
     token.wait_for(state="visible", timeout=10_000)
     assert expected in (token.inner_text() or ""), f"token 文本不对：{token.inner_text()!r}"
+
+
+# 菜单必须整体落在可视区内，且每一条候选都真的能被点到。
+#
+# 2026-11-20 用户报「@ 候选菜单在新建任务面板被遮挡，移动端几乎看不见」：菜单当时是
+# `position:absolute; bottom:calc(100% + 6px)` 挂在编辑器外层，被 PanelShell 的
+# `.mindfs-panel-body`（overflow:auto）与 `.mindfs-panel-dialog`（overflow:hidden）
+# 裁掉 —— 桌面 4 条里只有最后一条可点，移动端菜单顶端是 -16px。box 断言挡位置，
+# elementFromPoint 断言挡「看得见但点不到」。
+MENU_GEOMETRY_JS = """
+() => {
+  const menu = document.querySelector('[data-testid="task-candidate-menu"]');
+  if (!menu) return { error: "menu missing" };
+  const vv = window.visualViewport;
+  const view = vv
+    ? { left: vv.offsetLeft, top: vv.offsetTop, right: vv.offsetLeft + vv.width, bottom: vv.offsetTop + vv.height }
+    : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  const r = menu.getBoundingClientRect();
+  const rows = [...menu.children].map((row) => {
+    const b = row.getBoundingClientRect();
+    const x = b.left + Math.min(b.width / 2, 20);
+    const y = (b.top + b.bottom) / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {
+      text: (row.textContent || "").trim().slice(0, 24),
+      top: +b.top.toFixed(1),
+      bottom: +b.bottom.toFixed(1),
+      hittable: !!hit && menu.contains(hit),
+      hit: hit ? hit.tagName + "." + String(hit.className || "").slice(0, 32) : null,
+    };
+  });
+  return {
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+    view: {
+      top: +view.top.toFixed(1),
+      bottom: +view.bottom.toFixed(1),
+      left: +view.left.toFixed(1),
+      right: +view.right.toFixed(1),
+    },
+    menu: {
+      placement: menu.dataset.placement,
+      top: +r.top.toFixed(1),
+      bottom: +r.bottom.toFixed(1),
+      left: +r.left.toFixed(1),
+      right: +r.right.toFixed(1),
+      height: +r.height.toFixed(1),
+      position: getComputedStyle(menu).position,
+      zIndex: getComputedStyle(menu).zIndex,
+      scrollHeight: menu.scrollHeight,
+      clientHeight: menu.clientHeight,
+    },
+    rows,
+  };
+}
+"""
+
+
+def _assert_menu_visible(page: Page) -> None:
+    geo = page.evaluate(MENU_GEOMETRY_JS)
+    assert "error" not in geo, f"候选菜单没渲染出来：{geo}"
+    menu, view, rows = geo["menu"], geo["view"], geo["rows"]
+    assert rows, f"候选菜单是空的：{geo}"
+    # 两层裁剪 / 层叠上下文都逃掉了：fixed + portal 之后 position 必须是 fixed。
+    assert menu["position"] == "fixed", f"候选菜单没 portal 到 body：{menu}"
+    slack = 0.5
+    assert menu["top"] >= view["top"] - slack, f"菜单顶端超出可视区：{menu} vs {view}"
+    assert menu["bottom"] <= view["bottom"] + slack, f"菜单底端超出可视区：{menu} vs {view}"
+    assert menu["left"] >= view["left"] - slack, f"菜单左边超出可视区：{menu} vs {view}"
+    assert menu["right"] <= view["right"] + slack, f"菜单右边超出可视区：{menu} vs {view}"
+    # 没被内部滚动压成「只剩一条」：4 条候选应一次看全。
+    assert menu["scrollHeight"] <= menu["clientHeight"] + 1, f"菜单内容被压进滚动区：{menu}"
+    for row in rows:
+        assert row["top"] >= view["top"] - slack, f"候选行超出可视区：{row}"
+        assert row["bottom"] <= view["bottom"] + slack, f"候选行超出可视区：{row}"
+        assert row["hittable"], f"候选行点不到（被别的元素挡住）：{row}"
+
 
 
 def _paste_image(page: Page, editor_scope: str) -> None:
@@ -185,3 +262,39 @@ def test_create_task_panel_mentions_and_pasted_image(
 
     _type_mention(page, f"{PANEL}:visible", "util", "util.ts")
     _paste_image(page, f"{PANEL}:visible")
+
+
+def test_mobile_viewport_menu_is_fully_visible(
+    authed_page: Page, pending_task: dict
+) -> None:
+    """窄屏（375×667）：候选菜单既不出视口，也不被面板裁成「只剩最后一条」。
+
+    这是 2026-11-20 用户报障的原始场景：手机上面板正文顶端到输入框只有几十像素，
+    向上展开的绝对定位菜单整块跑到面板 header 后面，用户只看到一条残影。
+    """
+    page = authed_page
+    page.set_viewport_size({"width": 375, "height": 667})
+    try:
+        _reload_for_loaded_board(page)
+        try:
+            _show_board(page)
+        except PWTimeout:
+            # 窄屏下看板页签可能是折叠的；reload 后默认就在看板，直接用。
+            pass
+
+        # 1) 新建任务面板
+        page.locator(f"{CREATE_BUTTON}:visible").first.click()
+        dialog = page.locator(f"{PANEL}:visible").first
+        dialog.wait_for(state="visible", timeout=20_000)
+        dialog.locator(EDITOR).first.wait_for(state="visible", timeout=20_000)
+        _type_mention(page, f"{PANEL}:visible", "util", "util.ts")
+        _paste_image(page, f"{PANEL}:visible")
+
+        # 2) 任务详情输入框（reload 顺便关掉面板）
+        _reload_for_loaded_board(page)
+        _open_task(page)
+        _type_mention(page, ACTIVITY_INPUT, "main", "main.ts")
+        _paste_image(page, ACTIVITY_INPUT)
+    finally:
+        # authed_page 是会话级夹具，别把 375 宽留给后面的用例。
+        page.set_viewport_size({"width": 1440, "height": 900})

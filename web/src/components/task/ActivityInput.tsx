@@ -74,6 +74,8 @@ export function ActivityInput({
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<TokenEditorHandle | null>(null);
+  // 候选菜单 portal 到 body，按这层容器的矩形定位（见 TaskInlineCandidateMenu）。
+  const composerAnchorRef = useRef<HTMLDivElement | null>(null);
   const [activeToken, setActiveToken] = useState<ActiveToken | null>(null);
   const {
     candidates,
@@ -143,10 +145,10 @@ export function ActivityInput({
         gap: 8,
       }}
     >
-      <div style={{ position: "relative" }}>
+      <div ref={composerAnchorRef} style={{ position: "relative" }}>
         <TaskInlineCandidateMenu
           visible={!!activeToken}
-          isMobile={false}
+          anchorRef={composerAnchorRef}
           candidates={candidates}
           selectedIndex={activeCandidateIndex}
           itemRefs={candidateItemRefs}

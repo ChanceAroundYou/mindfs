@@ -10525,15 +10525,17 @@ groups:
   - id: G-NL
     title: 任务侧输入框 @ 候选与粘贴截图（看齐会话输入框）
     kind: feature
-    symptom: "2026-11-20 用户要求「创建任务和任务详情页的输入框需要加上 @ 和复制图片功能，看齐会话输入框」。改前新建任务面板已有候选菜单与拉取，但 PromptEditor 不向外暴露触发词/键盘/粘贴三件事，输入 `@` 候选永远不出现、粘贴截图没有任何反应；任务详情输入框连候选菜单都没挂；`canSendActivity` 要求正文非空，只贴一张图时发送键不可用（会话输入框早已放行「只有附件」）。"
-    why: "必须保留：(1) PromptEditor 的三个可选回调 `onActiveTokenChange` / `onKeyDown` / `onPaste` 是把 Lexical 编辑器的内部事件接到外部候选与附件链路的唯一通道；`onEnter` 改成「候选先消费、返回 false 才走发送」，否则按 Enter 选候选会顺手把半截 `@foo` 发出去。(2) 候选键盘契约只保留一份 `useCandidateKeyboard`（↑↓ / Tab / Esc / Enter，输入法组合回车与 Shift+Enter 不抢），三个入口共用；候选拉取只在 `useComposerCandidates` 里碰 services（视图层硬规则），类型映射 file→file / prompt→prompt / slash→skill（带 agent）/ command→command 与会话一致。(3) 图片提取只保留一份 `pasteSupport.getClipboardImageFiles`，会话输入框也改用它；任务侧两处粘贴都落到与「+」按钮同一个 `appendTaskInlineAttachments` / `onAttachFiles` 链路，共用 `buildPendingAttachment`（粘贴文件没有文件名，补 `pasted-image-*`）。(4) `canSendActivity` 的 `hasAttachments` 让「只有附件」可发送，两处调用点都传附件数量。(5) 任务详情按任务所属项目/节点拉候选：ConversationView 把 rootId/nodeId 传进 ActivityInput，避免跨节点任务拿到激活节点的候选。"
-    boundary: "不改后端：候选接口与附件上传接口复用会话侧既有实现。不改会话输入框的候选与上传语义（只把图片提取提成公共函数，行为逐字不变）。`/` 命令候选在任务侧固定用 DEFAULT_TASK_AGENT（任务本身不绑定 harness）。不实现拖拽粘贴、多图排序或附件编辑；不改 TaskInlineCandidateMenu 的展示样式。"
+    symptom: "2026-11-20 用户要求「创建任务和任务详情页的输入框需要加上 @ 和复制图片功能，看齐会话输入框」。改前新建任务面板已有候选菜单与拉取，但 PromptEditor 不向外暴露触发词/键盘/粘贴三件事，输入 `@` 候选永远不出现、粘贴截图没有任何反应；任务详情输入框连候选菜单都没挂；`canSendActivity` 要求正文非空，只贴一张图时发送键不可用（会话输入框早已放行「只有附件」）。
+      追加（同日第二轮，遮挡事故）：用户报「@ 候选菜单在「新建任务」面板里会被验证层/其他元素遮挡，移动端（窄屏）几乎看不见」。实测两处调用点的菜单都是 `position:absolute; bottom:calc(100% + 6px); z-index:2`，挂在包住编辑器的 relative 容器里；祖先是 PanelShell 的 `.mindfs-panel-body`（`overflow:auto`）与 `.mindfs-panel-dialog`（`overflow:hidden`），面板正文顶端到编辑器顶端只有约 40px。桌面 1440×900 下 4 条候选只有最后一条命中菜单，前三条的 `document.elementFromPoint` 落在 `.mindfs-panel-overlay` / 面板 header 上；移动端 375×667 下菜单矩形是 `top -16 → 121`，整块越过视口顶端。「看得见」和「点得到」在这里是同一件事 —— 被裁掉的部分既不可见也接不到指针。"
+    why: "必须保留：(1) PromptEditor 的三个可选回调 `onActiveTokenChange` / `onKeyDown` / `onPaste` 是把 Lexical 编辑器的内部事件接到外部候选与附件链路的唯一通道；`onEnter` 改成「候选先消费、返回 false 才走发送」，否则按 Enter 选候选会顺手把半截 `@foo` 发出去。(2) 候选键盘契约只保留一份 `useCandidateKeyboard`（↑↓ / Tab / Esc / Enter，输入法组合回车与 Shift+Enter 不抢），三个入口共用；候选拉取只在 `useComposerCandidates` 里碰 services（视图层硬规则），类型映射 file→file / prompt→prompt / slash→skill（带 agent）/ command→command 与会话一致。(3) 图片提取只保留一份 `pasteSupport.getClipboardImageFiles`，会话输入框也改用它；任务侧两处粘贴都落到与「+」按钮同一个 `appendTaskInlineAttachments` / `onAttachFiles` 链路，共用 `buildPendingAttachment`（粘贴文件没有文件名，补 `pasted-image-*`）。(4) `canSendActivity` 的 `hasAttachments` 让「只有附件」可发送，两处调用点都传附件数量。(5) 任务详情按任务所属项目/节点拉候选：ConversationView 把 rootId/nodeId 传进 ActivityInput，避免跨节点任务拿到激活节点的候选。(6) 候选菜单必须 portal 到 `document.body` 并按锚点矩形 `position:fixed` 定位，不能再用「父级 relative + absolute」：PanelShell 的两层 overflow 会把向上展开的菜单整块裁掉，而面板遮罩 `z-index:90` 又给它建了层叠上下文。定位按 `window.visualViewport`（软键盘只改视觉视口）算可用空间，上方不足 `MENU_PREFERRED_SPACE=200` 就翻到下方，两侧都不够才取更宽裕的一侧；高度夹在 [96,260]，`z-index:200` 高于面板遮罩、低于全局对话框（1000+）。窗口 resize、祖先任意层滚动、visualViewport 变化都要重算。"
+    boundary: "不改后端：候选接口与附件上传接口复用会话侧既有实现。不改会话输入框的候选与上传语义（只把图片提取提成公共函数，行为逐字不变）。`/` 命令候选在任务侧固定用 DEFAULT_TASK_AGENT（任务本身不绑定 harness）。不实现拖拽粘贴、多图排序或附件编辑。候选菜单只改定位方式（portal + fixed + 上下翻转 + 视口夹取），行高、配色、字号、选中样式、键盘契约一律不动；不做动画，不做虚拟滚动（候选上限本来就在拉取侧）。仍不解决「输入框贴着视口底边且软键盘弹起」之外的极端场景 —— 那时按更宽裕的一侧展开，可能覆盖输入框本身。"
     files:
       - web/src/app/AppRootView.tsx
       - web/src/app/useAppStateLayer.ts
       - web/src/app/useTaskComposer.ts
       - web/src/components/action/useActionBarHandlers.ts
       - web/src/components/app/TaskInlineEditPanel.tsx
+      - web/src/components/app/TaskInlineCandidateMenu.tsx
       - web/src/components/editor/PromptEditor.tsx
       - web/src/components/editor/pasteSupport.ts
       - web/src/components/editor/useCandidateKeyboard.ts
@@ -10545,6 +10547,7 @@ groups:
       - docs/plans/README.md
     tests:
       - web/tests/task-composer-mention-image.test.mjs
+      - web/tests/task-inline-candidate-menu.test.mjs
       - web/tests/conversation-view.test.mjs
       - e2e/test_task_composer_mentions.py
     anchors:
@@ -10565,6 +10568,14 @@ groups:
       - 'web/src/components/action/useActionBarHandlers.ts:const imageFiles = getClipboardImageFiles(event);'
       - 'web/src/components/task/ConversationView.tsx:nodeId={nodeId}'
       - 'web/tests/task-composer-mention-image.test.mjs:candidate keyboard contract matches the session composer'
+      - 'web/src/components/app/TaskInlineCandidateMenu.tsx:createPortal('
+      - 'web/src/components/app/TaskInlineCandidateMenu.tsx:position: "fixed"'
+      - 'web/src/components/app/TaskInlineCandidateMenu.tsx:const view = window.visualViewport;'
+      - 'web/src/components/app/TaskInlineCandidateMenu.tsx:const MENU_PREFERRED_SPACE = 200;'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:anchorRef={composerAnchorRef}'
+      - 'web/src/components/task/ActivityInput.tsx:anchorRef={composerAnchorRef}'
+      - 'web/tests/task-inline-candidate-menu.test.mjs:candidate menu escapes the panel scroll and clip layers'
+      - 'e2e/test_task_composer_mentions.py:def test_mobile_viewport_menu_is_fully_visible('
   - id: G-NM
     title: fork 点按目标轮时间戳解析（行序与转录回合切分漂移时不再越界）
     kind: fix

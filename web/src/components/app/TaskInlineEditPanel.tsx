@@ -11,7 +11,7 @@ import { useCandidateKeyboard } from "../editor/useCandidateKeyboard";
 import { Select } from "../common/Select";
 import { useI18n } from "../../i18n";
 import type { Dispatch, SetStateAction, RefObject, ChangeEvent } from "react";
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import type { TokenEditorHandle } from "../editor/TokenEditor";
 import type { CandidateItem } from "../../shared/candidateTypes";
 import type { GitBranchesPayload } from "../../shared/gitTypes";
@@ -100,6 +100,8 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
   // 「是否打开 + 目标项目」当重置键。
   const taskInlineOpen = taskInlineEdit !== null;
   const taskInlineResetKey = `${taskInlineEdit?.targetRootId || ""}|${taskInlineEdit?.targetNodeId || ""}`;
+  // 候选菜单 portal 到 body，按这层容器的矩形定位（见 TaskInlineCandidateMenu）。
+  const composerAnchorRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!taskInlineEdit) return;
     const timer = window.setTimeout(() => {
@@ -277,10 +279,10 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                       {t("task.startImmediately")}
                     </label>
                   </div>
-                  <div style={{ position: "relative" }}>
+                  <div ref={composerAnchorRef} style={{ position: "relative" }}>
                     <TaskInlineCandidateMenu
                       visible={!!taskInlineActiveToken}
-                      isMobile={isMobile}
+                      anchorRef={composerAnchorRef}
                       candidates={taskInlineCandidates}
                       selectedIndex={taskInlineCandidateIndex}
                       itemRefs={taskInlineCandidateItemRefs}
