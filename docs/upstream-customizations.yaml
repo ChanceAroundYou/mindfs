@@ -9363,6 +9363,7 @@ groups:
       - server/internal/agent/proxy/live_compact_usage_ledger_test.go
       - server/internal/agent/proxy/live_compact_coverage_test.go
       - server/internal/agent/fold/responses/scan_test.go
+      - server/internal/agent/fold/responses/splice_test.go
       - server/internal/agent/proxy/fold_golden_test.go
       - server/internal/agent/proxy/live_compact_testhelpers_test.go
       - server/internal/agent/fold/config_test.go
@@ -9417,6 +9418,9 @@ groups:
       - 'server/internal/agent/fold/anthropic/pair.go:func conversation(body []byte, req *scanRequest) *fold.Conversation {'
       - 'server/internal/agent/fold/anthropic/guard.go:var preservedThinkingFamilies = []string{'
       - 'server/internal/agent/fold/anthropic/usage.go:func (t UsageTotals) FoldUsage() fold.Usage {'
+      - 'server/internal/agent/fold/splice.go:func SpliceReplacements(body []byte, replacements []Replacement) ([]byte, error) {'
+      - 'server/internal/agent/fold/responses/splice.go:func (Adapter) Text(body []byte, result fold.Result) (string, bool) {'
+      - 'server/internal/agent/fold/responses/splice.go:var responsesWindows = map[string]int{'
       - 'server/internal/agent/fold/anthropic/equivalence_test.go:func TestAdapterScanAgreesWithReference('
       - 'server/internal/agent/proxy/usage.go:func (s *usageScanner) consumeLine('
       - 'server/internal/agent/pool_open.go:p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)'

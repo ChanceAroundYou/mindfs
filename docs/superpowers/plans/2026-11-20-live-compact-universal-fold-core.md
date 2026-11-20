@@ -1287,6 +1287,14 @@ git add server/internal/agent/fold/responses
 git commit -m "feat(live-compact): Responses 适配器按字节区间改写工具输出（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`fold/responses/splice.go` + `splice_test.go` 落地，提交 `0dbd6216`。
+
+- **偏离计划：拼接抽到内核**。`Splice` 只是「按 span 写 literal、其余字节逐字拷贝」的字节手术，与协议无关；Responses 版会与 Anthropic 版逐字重复，所以新增 `fold/splice.go::SpliceReplacements`，两个适配器的 `Splice` 都退化成一行转发。Anthropic 侧零行为变化由 proxy 的五个 golden 哈希钉住（提交后仍在 `proxy` 包全绿）。
+- **偏离计划：没有改 `adapter.go`**。`Text`/`Encode`/`Splice`/`Window` 单独放 `splice.go`，`adapter.go` 保持只有 `Name`/`Scan`——一个文件一件事，也避免 Task 11 补 `Usage`/`Guard` 时把两个职责塞回同一个文件。
+- 用例 6 条：前缀/后缀逐字不变 + `encrypted_content` 未动 + 折叠后体积真的变小、坏 span 三种（零长 / 反向 / 越界）、空替换是 no-op、`Text` 拒绝多 part 与 NonText、`Encode` → `Splice` → `Scan` → `Text` 往返、`Window` 已知与未知（未知返回 0，由引擎回落到配置值）。
+- 两处测试侧修正：往返用例最初的 body 只有 `function_call_output` 没有配对 call，`Scan` 不产轮次直接 panic——补上配对的 `function_call`（也顺带覆盖了「arguments 是字符串」的真实形状）；`TestSpliceOnlyReplacesOutputText` 最初断言「原文 A 一个不剩」不成立，因为夹具第二轮本身也有 30,000 个 A，改为断言折叠后体积至少少 20 KB。
+- 变异：`Splice` 顺手 `json.Marshal` 整包 → `TestSpliceOnlyReplacesOutputText` 在 `prefix changed` 处红，还原后全绿。
+
 ---
 
 ### Task 11: Responses 用量归一化与适配器守卫
