@@ -114,6 +114,9 @@ type Service struct {
 	routers map[string]*RouterService
 	// routerBroadcaster 广播决策落库/状态变化；nil 时静默（单测/老装配）。
 	routerBroadcaster RouterDecisionBroadcaster
+	// routerTranscripts 是 Router 读会话转录的端口（router_read_session）。nil 时
+	// 工具显式报错，不假装能读；装配期由 api 层用 session.Manager 注入。
+	routerTranscripts RouterTranscriptReader
 }
 
 // finishToken 是一次收尾的锁凭证。见 acquireTaskFinish。

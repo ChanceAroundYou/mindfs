@@ -233,7 +233,7 @@ func TestBriefTaskStatusFollowsRunProjection(t *testing.T) {
 	if got := briefTaskStatus(run, stale); got != StatusRunning {
 		t.Fatalf("briefTaskStatus = %q, want %q", got, StatusRunning)
 	}
-	if got := briefRun(context.Background(), nil, run, stale); got.Status != StatusRunning {
+	if got := briefRun(context.Background(), nil, run, stale, nil); got.Status != StatusRunning {
 		t.Fatalf("briefRun.Status = %q, want %q", got.Status, StatusRunning)
 	}
 	if got := briefActiveExecution(context.Background(), nil, run, stale); got.Status != StatusRunning {

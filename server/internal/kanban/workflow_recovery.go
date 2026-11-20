@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -254,6 +255,16 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 			}
 		}
 		if len(open) > 0 {
+			// 这一轮已经彻底停下（没有节点被重排）：补齐半写的投影并结算回复活动，
+			// 否则时间线永远 0 个节点、回复永远转圈（#86）。
+			if len(plan.UnknownIDs) > unknownBefore && !wake && !paused {
+				if err := s.projectWorkflowRunStopped(ctx, store, b.runID); err != nil {
+					return plan, err
+				}
+			}
+			if len(plan.UnknownIDs) > unknownBefore && !wake {
+				s.settleWorkflowReplyUnknown(ctx, store, b.runID)
+			}
 			// 启动对账也是一次权威状态落库：把「这个 Run 重启后被怎么处理」记成
 			// 一条 startup_reconcile，供 Router 在下一个回合看到。InstanceKey 是
 			// RunID，重复启动不会重复产事件。
@@ -281,4 +292,87 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 		}
 	}
 	return plan, nil
+}
+
+// projectWorkflowRunStopped 把「重启后彻底停下的一轮」补成完整投影。
+//
+// 投影只在节点终态时写，重启把 running 行标成 unknown 时投影还是空的（#86：
+// 时间线 0 个节点），而下游从没 claim 过的节点会被当成「还会动」，Router 于是
+// 永远被挡在「有活动执行」外面。unknown 行已经不在跑、也没人会再推进这一轮，
+// 所以：
+//   - unknown 行 → 投影 unknown（保留证据，不删 NodeOutputs）；
+//   - 其余还没收尾的节点 → cancelled（这一轮放弃了它们；与取代时的冻结一致，
+//     但 unknown 保持 unknown，不覆盖「副作用不明」这个事实）。
+func (s *Service) projectWorkflowRunStopped(ctx context.Context, store *TaskStore, runID string) error {
+	for attempt := 0; attempt < 5; attempt++ {
+		run, err := store.WorkflowRunByID(ctx, runID)
+		if err != nil {
+			return err
+		}
+		if run.NodeStates == nil {
+			run.NodeStates = map[string]string{}
+		}
+		nodeRuns, err := store.ListWorkflowNodeRuns(ctx, runID)
+		if err != nil {
+			return err
+		}
+		unknown := make([]string, 0, len(nodeRuns))
+		for _, nr := range nodeRuns {
+			if nr.Status != NodeRunUnknown {
+				continue
+			}
+			run.NodeStates[nr.NodeID] = NodeRunUnknown
+			unknown = append(unknown, nr.NodeID)
+		}
+		if len(unknown) == 0 {
+			return nil
+		}
+		frozen := make([]string, 0, len(run.Graph.Nodes))
+		for _, node := range run.Graph.Nodes {
+			if workflowNodeStateSettled(run.NodeStates[node.ID]) {
+				continue
+			}
+			run.NodeStates[node.ID] = NodeRunCancelled
+			frozen = append(frozen, node.ID)
+		}
+		err = store.SaveWorkflowRunWithEvent(ctx, run, WorkflowRunEvent{
+			Type: WorkflowEventNodeUnknown,
+			Payload: map[string]any{
+				"reason":          "startup_ambiguous_side_effect",
+				"unknown_nodes":   unknown,
+				"cancelled_nodes": frozen,
+			},
+		})
+		if errors.Is(err, ErrRunConflict) {
+			continue
+		}
+		return err
+	}
+	return ErrRunConflict
+}
+
+// settleWorkflowReplyUnknown 结算挂在已停下那一轮上的回复活动。
+//
+// 回合的收尾写在 agent 那一侧，进程重启把它带走了：活动停在 running，前端一直
+// 转圈（#86 实测 `act_bde1960c77dbe52e` 从 18:29 转到次日）。结果不明不等于成功，
+// 所以结算成 cancelled 并留一句可读说明，让用户知道可以继续发消息重开一轮。
+func (s *Service) settleWorkflowReplyUnknown(ctx context.Context, store *TaskStore, runID string) {
+	activities := NewActivityStore(store.db)
+	activity, err := activities.ActivityByRunID(ctx, runID)
+	if err != nil || activity == nil {
+		return
+	}
+	if activity.Status != ActivityStatusRunning && activity.Status != ActivityStatusPending {
+		return
+	}
+	summary := "进程重启时这一轮还在执行，结果无法确定；可以直接发消息让我重开一轮。"
+	if err := activities.UpdateStatus(ctx, activity.ID, ActivityStatusCancelled, &summary); err != nil {
+		return
+	}
+	activity.Status = ActivityStatusCancelled
+	activity.Summary = summary
+	s.broadcastActivityUpdated(activity, map[string]any{"status": ActivityStatusCancelled, "summary": summary})
+	// 进度正文（"步骤 i/n"）属于运行中提示，这一轮已经结束，留着会被当成终态文案。
+	_ = activities.ClearBody(ctx, activity.ID)
+	activity.Body = ""
 }

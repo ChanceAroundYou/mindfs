@@ -76,11 +76,14 @@ type routerToolEnv struct {
 	store     *TaskStore
 	brief     *SituationBrief
 	collector *routerTurnCollector
+	// transcripts 是 router_read_session 的读端口；nil 时该工具显式报错。
+	transcripts RouterTranscriptReader
 }
 
 func (e *routerToolEnv) tools() []RouterToolSpec {
 	return []RouterToolSpec{
 		e.inspectRunTool(),
+		e.readSessionTool(),
 		e.sayTool(),
 		e.runWorkflowTool(),
 		e.messageAgentTool(),
@@ -150,7 +153,7 @@ func (e *routerToolEnv) inspectRun(ctx context.Context, runID string) (string, e
 		if taskErr != nil {
 			return "", fmt.Errorf("load task %s: %w", run.TaskID, taskErr)
 		}
-		payload["run"] = briefRun(ctx, e.store, run, task)
+		payload["run"] = briefRun(ctx, e.store, run, task, nil)
 	}
 	if e.store != nil {
 		if nodes, err := e.store.ListWorkflowNodeRuns(ctx, targetRunID); err == nil {

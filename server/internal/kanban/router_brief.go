@@ -27,7 +27,7 @@ const (
 	// 第 189 个字符，Router 转头去问用户第 5 条要什么）。仍设上限，避免一条超大
 	// 粘贴把 brief 预算撑破；整体 24KB 的硬上限由 capSituationBrief 兜底。
 	routerBriefTriggerBodyLimit = 8000
-	routerBriefMaxWorkflows    = 20
+	routerBriefMaxWorkflows     = 20
 )
 
 type SituationBrief struct {
@@ -194,6 +194,8 @@ func buildSituationBrief(
 			"有活动执行时不要新开 Run 或 direct",
 			"不确定时用 router_ask_user，不要猜",
 			"不能批准 HumanGate，不能 merge worktree",
+			"latest_run.node_summary.unknown 表示进程重启时那一轮结果不明：节点已不在跑，可以用 router_read_session 读它的会话说清结果，再决定是否新开一轮",
+			"router_read_session 默认给最后一段文本，用 offset 往前翻；只能读本任务的会话",
 		},
 	}
 	activities := NewActivityStore(store.db)
@@ -212,7 +214,10 @@ func buildSituationBrief(
 		}
 	}
 	if run, err := store.WorkflowRunForTask(ctx, task.ID); err == nil && run != nil {
-		brief.LatestRun = briefRun(ctx, store, run, task)
+		// NodeRun 行是活动执行的另一半证据：投影只在节点终态写，重启把 running
+		// 标成 unknown 时投影还是空的（#86）。一次取出，闸门与摘要共用。
+		nodeRuns, _ := store.ListWorkflowNodeRuns(ctx, run.ID)
+		brief.LatestRun = briefRun(ctx, store, run, task, nodeRuns)
 		// 闸门按「Run 投影后的状态」判，而不是可能滞后的任务行：任务行写着
 		// waiting_user、节点其实还在跑时，Router 会被告知「没有活动执行」，于是
 		// 把一条本该转交的留言判成新开一轮。
@@ -223,7 +228,7 @@ func buildSituationBrief(
 		// 「先结算 Run」——而界面上根本没有这个入口（#88 现场）。
 		// 暂停是操作员状态，不是「这一轮跑完了」：暂停任务照旧挡新执行。
 		status := briefTaskStatus(run, task)
-		if isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run)) {
+		if isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run, nodeRuns)) {
 			brief.ActiveExecution = briefActiveExecution(ctx, store, run, task)
 		}
 	}
@@ -294,37 +299,39 @@ func briefTaskStatus(run *WorkflowRun, task Task) string {
 	return task.Status
 }
 
-func briefRun(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task) *RouterBriefRun {
+// briefRun 汇总 Run 的节点状态。nodeRuns 是调用方一次取出的行（可传 nil，只
+// 看投影）。
+//
+// 投影只在节点终态时写，所以「空投影 + unknown 行」（#86）必须由行补上：否则
+// 摘要永远是 0 个节点，Router 看不到这一轮到底做过什么。
+func briefRun(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task, nodeRuns []NodeRun) *RouterBriefRun {
 	if run == nil {
 		return nil
 	}
-	summary := map[string]int{"total": 0, "success": 0, "running": 0, "pending": 0, "failed": 0, "waiting_user": 0, "cancelled": 0}
+	summary := map[string]int{"total": 0, "success": 0, "running": 0, "pending": 0, "failed": 0, "waiting_user": 0, "cancelled": 0, "unknown": 0}
 	waiting := make([]string, 0)
 	for _, status := range run.NodeStates {
 		summary["total"]++
-		switch status {
-		case NodeRunSuccess:
-			summary["success"]++
-		case NodeRunRunning:
-			summary["running"]++
-		case NodeRunPending, NodeRunQueued:
-			summary["pending"]++
-		case NodeRunFail:
-			summary["failed"]++
-		case NodeRunWaitingUser:
-			summary["waiting_user"]++
-		case NodeRunCancelled:
-			summary["cancelled"]++
+		if bucket := briefRunBucket(status); bucket != "" {
+			summary[bucket]++
 		}
 	}
-	// NodeStates 不保留节点名；用 NodeRun 行补 waiting_user 的节点 ID。
-	if store != nil {
-		if runs, err := store.ListWorkflowNodeRuns(ctx, run.ID); err == nil {
-			for _, nodeRun := range runs {
-				if nodeRun.Status == NodeRunWaitingUser {
-					waiting = append(waiting, nodeRun.NodeID)
-				}
-			}
+	// NodeStates 不保留节点名，也不保留还没写进投影的节点；用行补齐。
+	if nodeRuns == nil && store != nil {
+		nodeRuns, _ = store.ListWorkflowNodeRuns(ctx, run.ID)
+	}
+	for _, nodeRun := range nodeRuns {
+		if nodeRun.Status == NodeRunWaitingUser {
+			waiting = append(waiting, nodeRun.NodeID)
+		}
+	}
+	for nodeID, status := range latestNodeRunStatus(nodeRuns) {
+		if _, ok := run.NodeStates[nodeID]; ok {
+			continue
+		}
+		if bucket := briefRunBucket(status); bucket != "" {
+			summary["total"]++
+			summary[bucket]++
 		}
 	}
 	return &RouterBriefRun{
@@ -334,6 +341,47 @@ func briefRun(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task
 		NodeSummary:      summary,
 		WaitingUserNodes: waiting,
 	}
+}
+
+// briefRunBucket 把节点状态映射到 node_summary 的桶；未知状态返回空串，
+// 宁可少报一个桶也不要把状态名拼进 map 里造出没人认识的新桶。
+func briefRunBucket(status string) string {
+	switch status {
+	case NodeRunSuccess:
+		return "success"
+	case NodeRunRunning:
+		return "running"
+	case NodeRunPending, NodeRunQueued:
+		return "pending"
+	case NodeRunFail:
+		return "failed"
+	case NodeRunWaitingUser:
+		return "waiting_user"
+	case NodeRunCancelled:
+		return "cancelled"
+	case NodeRunUnknown:
+		return "unknown"
+	default:
+		return ""
+	}
+}
+
+// latestNodeRunStatus 取每个节点最新一次尝试的状态。行只是投影的补充证据：
+// 投影里有的节点以投影为准，这里只用来补投影还没写到的节点。
+func latestNodeRunStatus(nodeRuns []NodeRun) map[string]string {
+	out := make(map[string]string, len(nodeRuns))
+	attempts := make(map[string]int, len(nodeRuns))
+	for _, nodeRun := range nodeRuns {
+		if nodeRun.LoopPath != "" {
+			continue
+		}
+		if prev, ok := attempts[nodeRun.NodeID]; ok && prev > nodeRun.Attempt {
+			continue
+		}
+		attempts[nodeRun.NodeID] = nodeRun.Attempt
+		out[nodeRun.NodeID] = nodeRun.Status
+	}
+	return out
 }
 
 func briefActiveExecution(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task) *RouterBriefExecution {
@@ -413,24 +461,6 @@ func isActiveTaskStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-// workflowRunHasOpenNodes 报告 Run 里是否还有「不需要新操作也可能变化」的节点。
-// 全部终态（success/skipped/fail/cancelled）的 Run 已经收尾，即使它投影成
-// waiting_user（待审核）也不再是活动执行。NodeStates 为空表示节点还没写投影
-// （刚建的 Run），按未收尾处理。
-func workflowRunHasOpenNodes(run *WorkflowRun) bool {
-	if run == nil || len(run.Graph.Nodes) == 0 {
-		return false
-	}
-	for _, node := range run.Graph.Nodes {
-		switch run.NodeStates[node.ID] {
-		case NodeRunSuccess, NodeRunSkipped, NodeRunFail, NodeRunCancelled:
-		default:
-			return true
-		}
-	}
-	return false
 }
 
 func truncateRouterText(text string, limit int) string {
