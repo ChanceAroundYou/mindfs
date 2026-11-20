@@ -14,12 +14,16 @@ export const TASK_GROUP_MIN_SESSIONS = 2;
  * 阈值看「这个任务一共有几条顶层会话」而不是「这一页装了几条」：后端列表查询
  * 下发 task_session_count，多项目侧栏每根只取 6 条时，同一任务的会话常常只有
  * 一条落在窗口里 —— 按装了几条判会让分组时有时无（用户 2026-11-20 报「刷新后
- * 分组整个消失」）。没有这个字段（旧后端）时退回按本页成员数判。
+ * 分组整个消失」）。没有这个字段（旧后端 / 增量广播）时按 seenCount 给的进程内
+ * 记忆判，再没有才退回本页成员数。
  *
  * 返回值按传入顺序保留成员顺序（列表本身按最近活动排序），只保留达到
  * TASK_GROUP_MIN_SESSIONS 的任务。
  */
-export function collectTaskSessionGroups(topLevel: SessionItem[]): Map<string, SessionItem[]> {
+export function collectTaskSessionGroups(
+  topLevel: SessionItem[],
+  seenCount?: (taskId: string) => number,
+): Map<string, SessionItem[]> {
   const groups = new Map<string, SessionItem[]>();
   for (const item of topLevel) {
     const taskId = String(item.task_id || "").trim();
@@ -35,6 +39,7 @@ export function collectTaskSessionGroups(topLevel: SessionItem[]): Map<string, S
     const total = Math.max(
       members.length,
       ...members.map((item) => Number(item.task_session_count) || 0),
+      seenCount ? seenCount(taskId) : 0,
     );
     if (total < TASK_GROUP_MIN_SESSIONS) {
       groups.delete(taskId);
@@ -55,8 +60,53 @@ export type TaskGroupedEntry =
   // taskId 让折叠状态能认回自己那一组（成员行本身不带 task_id）。
   | { kind: "session"; session: SessionItem; nested: boolean; groupLabel?: string; taskId?: string };
 
-export function orderTaskGroupedRows(topLevel: SessionItem[]): TaskGroupedEntry[] {
-  const groups = collectTaskSessionGroups(topLevel);
+/**
+ * 已见过的任务会话（进程内、只增不减）。
+ *
+ * 侧栏每次刷新拿到的都是一个窗口：多项目侧栏每根只取 6 条，同一任务的会话一旦
+ * 滑出窗口，只按当页成员数判阈值就会让分组凭空消失 —— 用户 2026-11-20 报的
+ * 「展开的时候是新样式，收起或者切换到其他节点的时候又变回旧样式」。后端下发的
+ * task_session_count 是跨刷新的权威，这里兜住它缺席的路径（旧后端的节点、
+ * 增量广播、详情路径），这个标签页见过几条就记几条。
+ *
+ * 作用域按「节点 + 项目」分开：不同节点/项目里的同名 task_id 不互相充数。
+ * 只在内存里，页面重新加载后从零开始（那时后端计数已经在）。
+ */
+const seenTaskSessions = new Map<string, Set<string>>();
+
+const TALLY_SEPARATOR = "\u0000";
+
+export function rememberTaskSessions(scope: string, items: readonly SessionItem[]): void {
+  for (const item of items) {
+    const taskId = String(item.task_id || "").trim();
+    const key = String(item.key || item.session_key || "");
+    if (!taskId || !key) continue;
+    // 只认顶层会话：子会话本来就不参与分组，记进来会把阈值虚高。
+    if (String(item.parent_session_key || "").trim()) continue;
+    const tallyKey = `${scope}${TALLY_SEPARATOR}${taskId}`;
+    const seen = seenTaskSessions.get(tallyKey);
+    if (seen) {
+      seen.add(key);
+      continue;
+    }
+    seenTaskSessions.set(tallyKey, new Set([key]));
+  }
+}
+
+export function taskSessionSeenCount(scope: string, taskId: string): number {
+  return seenTaskSessions.get(`${scope}${TALLY_SEPARATOR}${taskId}`)?.size || 0;
+}
+
+/** 用例之间必须能清干净：这份记忆是模块级的，会跨用例累积。 */
+export function resetTaskSessionTally(): void {
+  seenTaskSessions.clear();
+}
+
+export function orderTaskGroupedRows(
+  topLevel: SessionItem[],
+  seenCount?: (taskId: string) => number,
+): TaskGroupedEntry[] {
+  const groups = collectTaskSessionGroups(topLevel, seenCount);
   const emitted = new Set<string>();
   const out: TaskGroupedEntry[] = [];
   for (const item of topLevel) {
@@ -142,6 +192,11 @@ export function taskGroupShowsMembers(
  * `任务名 / #91 · 节点名 · 摘要` → `节点名 · 摘要`。任务号已经在分组头上，
  * 成员行再挂一次只是噪音（用户 2026-11-20 第二次反馈）。
  * 用户改过名的会话不再以任务基名开头，这时原样返回，绝不猜着切。
+ *
+ * 唯一的例外是「名字里只剩任务号」：`任务名 / #87`（同一任务的多条会话都没带
+ * 摘要）剥完是空串，回落到完整名字就等于一点没剥 —— 用户 2026-11-20 第三次
+ * 反馈「『任务详情面板修改 / #87』的子会话还是完整的名字」。这时留 `#87`：
+ * 任务号是组内唯一的区分点，也比整行重复一遍任务名有用。
  */
 export function taskSessionMemberLabel(fullName: string, groupLabel: string): string {
   const name = String(fullName || "").trim();
@@ -150,10 +205,13 @@ export function taskSessionMemberLabel(fullName: string, groupLabel: string): st
   const tail = name.slice(label.length);
   // 前缀必须在词边界上：`任务 A` 不能把 `任务 AB · 摘要` 切成 `B · 摘要`。
   if (tail && !/^[\s·/]/.test(tail)) return name;
+  const number = /#(\d+)/.exec(tail);
   const rest = tail
     .replace(/^\s*\/\s*/, "")
     .replace(/^#\d+\s*·?\s*/, "")
     .replace(/^\s*·\s*/, "")
     .trim();
-  return rest || name;
+  if (rest) return rest;
+  if (number) return `#${number[1]}`;
+  return name;
 }

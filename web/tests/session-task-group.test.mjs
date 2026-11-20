@@ -5,11 +5,14 @@ import { test } from "vitest";
 
 import {
   orderTaskGroupedRows,
+  rememberTaskSessions,
+  resetTaskSessionTally,
   taskGroupShowsMembers,
   taskSessionGroupHeading,
   taskSessionGroupLabel,
   taskSessionGroupNumber,
   taskSessionMemberLabel,
+  taskSessionSeenCount,
 } from "../src/components/session/sessionTaskGroups.ts";
 import {
   setWorkflowNodeStartsNewSession,
@@ -76,6 +79,52 @@ test("任务还有别的会话没装进这一页时也要成组", () => {
   assert.equal(rows[2].nested, false);
 });
 
+// 用户 2026-11-20：「mindfs 会话很多，当展开的时候是新样式，收起或者切换到其他
+// 节点的时候又变回旧样式」。根因是判据只看当前这一页：刷新/翻页把成员挤出窗口，
+// 分组当场消失。后端 task_session_count 是跨刷新的权威，进程内记忆兜住它缺席的路径。
+test("成员滑出这一页窗口后分组仍然成立（进程内记忆兜底）", () => {
+  resetTaskSessionTally();
+  const scope = "node-a\u0000root-a";
+  rememberTaskSessions(scope, [
+    session("a1", { task_id: "task-a", name: "重构看板 / #91 · run · 一" }),
+    session("a2", { task_id: "task-a", name: "重构看板 / #91 · test · 二" }),
+  ]);
+  assert.equal(taskSessionSeenCount(scope, "task-a"), 2);
+  assert.equal(taskSessionSeenCount(scope, "task-b"), 0, "没见过的任务不充数");
+
+  // 下一次刷新只回来一条（其余滑出窗口），旧后端也不会下发 task_session_count。
+  const rows = orderTaskGroupedRows(
+    [session("a1", { task_id: "task-a", name: "重构看板 / #91 · run · 一" })],
+    (taskId) => taskSessionSeenCount(scope, taskId),
+  );
+  assert.deepEqual(
+    rows.map((row) => (row.kind === "group" ? `group:${row.taskId}` : `-${row.session.key}`)),
+    ["group:task-a", "-a1"],
+    "窗口里只剩一条成员，分组头必须还在",
+  );
+
+  // 作用域隔离：换节点/换项目后同名 task_id 不能借别人的记忆充数。
+  const otherNode = "node-b\u0000root-a";
+  assert.equal(taskSessionSeenCount(otherNode, "task-a"), 0);
+  assert.equal(
+    orderTaskGroupedRows(
+      [session("a1", { task_id: "task-a", name: "重构看板 / #91 · run · 一" })],
+      (taskId) => taskSessionSeenCount(otherNode, taskId),
+    )[0].kind,
+    "session",
+    "另一个节点上的同名任务照常平铺",
+  );
+  // 子会话不参与分组，记进来会把阈值虚高。
+  rememberTaskSessions(otherNode, [session("c1", { task_id: "task-c", parent_session_key: "a1" })]);
+  assert.equal(taskSessionSeenCount(otherNode, "task-c"), 0, "子会话不计入任务会话数");
+
+  // 接线：行序列必须走这份记忆，否则上面那条兜底在生产里不生效。
+  const hook = read("components/session/useSessionChildTree.ts");
+  assert.match(hook, /rememberTaskSessions\(tallyScope, topLevel\)/);
+  assert.match(hook, /orderTaskGroupedRows\(topLevel, \(taskId\) => taskSessionSeenCount\(tallyScope, taskId\)\)/);
+  resetTaskSessionTally();
+});
+
 test("分组头剥回任务称呼：共享会话名与节点会话名都认", () => {
   assert.equal(taskSessionGroupLabel([session("x", { name: "重构看板 · 把归档做完" })]), "重构看板");
   assert.equal(taskSessionGroupLabel([session("x", { name: "重构看板 / #7 · 把归档做完" })]), "重构看板");
@@ -104,6 +153,11 @@ test("分组头文案 = 任务名 + 任务号，和会话名同一行字", () =>
   assert.match(header, /data-task-group=/, "分组头的定位属性保持不变");
   assert.match(header, /var\(--accent-color\)/, "分组图标跟随主题色");
   assert.match(header, /aria-expanded=\{expanded\}/, "分组头是展开/收起的开关");
+  // 用户 2026-11-20：不要下展开箭头，图标自己就是开关，且比会话行的圆大一号。
+  assert.doesNotMatch(header, /rotate\(90deg\)/, "不再单独画展开箭头");
+  assert.doesNotMatch(header, /M9 5l7 7-7 7/, "箭头图形整条去掉");
+  assert.match(header, /width: "20px"/, "图标位比会话行的 18px 大一号");
+  assert.match(header, /width="18" height="18"/, "图标图形比会话行的 16px 大一号");
 });
 
 test("成员名剥掉分组头的共享前缀，连任务号一起剥", () => {
@@ -111,6 +165,10 @@ test("成员名剥掉分组头的共享前缀，连任务号一起剥", () => {
   assert.equal(taskSessionMemberLabel("对话命名问题 / #91 · 把任务改成对话式", "对话命名问题"), "把任务改成对话式");
   assert.equal(taskSessionMemberLabel("对话命名问题 / #91 · run · 把任务改成对话式", "对话命名问题"), "run · 把任务改成对话式", "节点名是组内区分点，保留");
   assert.equal(taskSessionMemberLabel("对话命名问题", "对话命名问题"), "对话命名问题", "只剩任务名时原样返回，不渲染空名");
+  // 用户 2026-11-20 第三次反馈：「『任务详情面板修改 / #87』的子会话还是完整的名字」。
+  // 一组会话都没带摘要时，剥完只剩任务号 —— 那是组内唯一的区分点，留着它。
+  assert.equal(taskSessionMemberLabel("任务详情面板修改 / #87", "任务详情面板修改"), "#87", "剥完只剩任务号时显示任务号，不回落到完整名字");
+  assert.equal(taskSessionMemberLabel("任务详情面板修改  /  #87", "任务详情面板修改"), "#87", "空格写法不敏感");
   assert.equal(taskSessionMemberLabel("改过名的一条", "对话命名问题"), "改过名的一条", "改过名的会话不按前缀硬切");
   assert.equal(taskSessionMemberLabel("对话命名问题续篇 · 另一轮", "对话命名问题"), "对话命名问题续篇 · 另一轮", "前缀必须在词边界上");
   assert.equal(taskSessionMemberLabel("任务 A · 一", ""), "任务 A · 一", "没有分组头时不做任何裁剪");

@@ -9,7 +9,10 @@ import { taskSessionGroupHeading } from "./sessionTaskGroups";
  *   1. 与普通会话行同名同字重（13px / 500），前置分组专属图标；
  *   2. 文案「任务名 # 任务号」，不再显示成员计数；
  *   3. 默认折叠，点这一行展开/收起 —— 和子会话的展开同一个心智模型（用户
- *      2026-11-20：「默认不展开会话 除非点击进去」）。
+ *      2026-11-20：「默认不展开会话 除非点击进去」）；
+ *   4. 不再单独画展开箭头，**图标自己就是开关**，且比会话行的圆略大一号（用户
+ *      2026-11-20：「不要用下展开箭头 就用现在的icon 但是大小稍微变大一点
+ *      它比普通对话的圆看起来小了一圈」）。
  *
  * 折叠状态由 useSessionChildTree 持有：默认收起，选中的会话在组内时自动展开，
  * 否则用户点进一条会话、刷新后它却藏起来，等于把选区弄丢。
@@ -71,26 +74,10 @@ export function TaskSessionGroupHeader({
       >
         <span
           style={{
-            width: "12px",
-            height: "18px",
-            flexShrink: 0,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "var(--text-secondary)",
-            // 收起时箭头朝右、展开时朝下 —— 与子会话折叠行同一个方向语义。
-            transform: expanded ? "rotate(90deg)" : "none",
-            transition: "transform 0.15s ease",
-          }}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
-            <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-        <span
-          style={{
-            width: "18px",
-            height: "18px",
+            // 20px 图标位 / 18px 图形：会话行是 18px 位 / 16px 图形（外加 10px 的
+            // agent 角标），分组图标略大一号才不会看着「比普通对话的圆小一圈」。
+            width: "20px",
+            height: "20px",
             flexShrink: 0,
             display: "inline-flex",
             alignItems: "center",
@@ -98,11 +85,16 @@ export function TaskSessionGroupHeader({
             // 分组图标跟随主题色（用户 2026-11-20）：它是容器不是会话，
             // 但也不该灰到看不见 —— 主题色一眼能把「一个任务」从会话堆里分出来。
             color: "var(--accent-color)",
+            // 没有箭头了，图标自己是可点的开关：悬停时提亮并轻微放大，
+            // 让「这一行能点开」有直接反馈。
+            opacity: hovered ? 1 : 0.9,
+            transform: hovered ? "scale(1.08)" : "none",
+            transition: "opacity 0.15s ease, transform 0.15s ease",
           }}
         >
           {/* 语义图标：两层堆叠的卡片 = 同一任务下叠着多条会话。与会话类型图标
               （气泡/终端/任务卡）刻意不同，扫一眼就知道这一行是容器不是会话。 */}
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
             <path d="M0 0h24v24H0z" fill="none" />
             <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <rect x="4" y="4" width="13" height="9" rx="2" />

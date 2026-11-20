@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { pruneChildState } from "../../shared/sessionTree";
 import { COLLAPSED_CHILD_SESSION_LIMIT, parseForkSessionSource } from "./sessionListShared";
-import { orderTaskGroupedRows, taskGroupShowsMembers } from "./sessionTaskGroups";
+import { orderTaskGroupedRows, rememberTaskSessions, taskGroupShowsMembers, taskSessionSeenCount } from "./sessionTaskGroups";
 import type { SessionItem, VisibleSessionRow } from "./sessionListTypes";
 
 type Scope = { rootId?: string; nodeId?: string };
@@ -108,7 +108,12 @@ export function useSessionChildTree({
       membersByTask.set(taskId, members);
     }
     const hiddenTaskIds = new Set<string>();
-    for (const entry of orderTaskGroupedRows(topLevel)) {
+    // 分组判据里的「这个任务一共几条会话」要跨刷新活着：列表每次重建都只是一个
+    // 窗口（多项目侧栏每根 6 条），成员滑出去分组就凭空消失。后端
+    // task_session_count 缺席时用这份进程内记忆兜底，作用域按 节点::项目 分开。
+    const tallyScope = `${String(scope.nodeId || (topLevel[0] as any)?._nodeId || "").trim()}\u0000${String(scope.rootId || topLevel[0]?.root_id || "").trim()}`;
+    rememberTaskSessions(tallyScope, topLevel);
+    for (const entry of orderTaskGroupedRows(topLevel, (taskId) => taskSessionSeenCount(tallyScope, taskId))) {
       if (entry.kind === "group") {
         const members = membersByTask.get(entry.taskId) || [];
         const expanded = taskGroupShowsMembers(expandedTaskGroups, entry.taskId, members, selectedKey);

@@ -88,3 +88,13 @@
 门禁：`go test -count=1 ./...` 全绿、`go build ./server/...` clean、gofmt 干净；web 248 文件 / 758 通过 / 6 跳过、`tsc -b --noEmit` clean。
 
 安装：先在本机隔离 worktree 里单独验证（只带本次前端改动的 bundle 为 `assets/index-9hzYg2VF.js`）；提交（`e44b11f9`）后从干净 worktree 的 `HEAD`（已含并行会话刚提交的 `0423671e`/`7cbec181`）整体重建，按 `make install` 的静态资源语义覆盖 `~/.local/share/mindfs/web/`。线上 7331 与 `https://home.xiaokubao.space/mindfs/` 均已指向 `assets/index-C83JjzLE.js`（200）。`make check-upstream` 2071 delta / 337 组全绿。**后端 `task_session_count` 要重启本机 system 单元才生效 —— 只由用户执行 `sudo systemctl restart mindfs`**；重启前前端按旧行为（本页成员数）判阈值，不会出回归。
+
+## 第三轮用户反馈（2026-11-20，三条）
+
+用户原话：「问题还是存在，mindfs 会话很多，当展开的时候是新样式，收起或者切换到其他节点的时候又变回旧样式。而且不要用下展开箭头，就用现在的 icon，但是大小稍微变大一点，它比普通对话的圆看起来小了一圈。并且『任务详情面板修改 / #87』的子会话还是完整的名字。」
+
+1. **分组时有时无（第 4 条的第二现场）**：折叠本身溶解不了分组（`hiddenTaskIds` 只藏成员、分组头还在），真正的驱动是**数据窗口** —— 每次全量刷新都从「每根 6 条」的一页重建分组，成员滑出窗口就掉组；本轮实测本机在跑的进程（PID 2853550，12:05 启动）**根本没下发 `task_session_count`**，所以后端兜底也没生效；切到别的节点更直接 —— WSL/fn/pc-win 跑的还是旧二进制（无该字段）+ 旧的展示逻辑。三层修法：① 前端加**进程内记忆** `rememberTaskSessions` / `taskSessionSeenCount`（作用域 `节点\0项目`，只记顶层会话、只增不减），阈值取 `Math.max(本页成员数, task_session_count, 见过的条数)` —— 这一层让「这个标签页见过」的分组不再随刷新/切视图消失；② 本机后端 `task_session_count` 需要用户 `sudo systemctl restart mindfs`（重启前不回归，只是仍按窗口判）；③ binary + bundle 随本组部署到 WSL/fn/pc-win，节点间才真正同构。
+2. **不要下展开箭头**：`TaskSessionGroupHeader` 删掉 12px 箭头那一格（连同它的 6px 间隙），那个两层卡片图标自己就是开关（外层仍是 `<button aria-expanded>`），悬停提亮 + 轻微放大；图标位 18px → 20px、图形 16px → 18px，比会话行的 18px / 16px（还带 10px agent 角标）大一号。文案左边缘因此从 ~44px 移到 ~28px，正好落在缩进成员（~31px）左侧一级。
+3. **成员名剥完只剩任务号**：`任务详情面板修改 / #87` 剥掉共享前缀后是空串，旧代码 `return rest || name` 于是原样显示整行。改为先记住 `#N`：`rest` 为空但有任务号时显示 `#87`（组内唯一区分点），既没有 rest 也没有任务号才回落到完整名字。
+
+验证：`web/tests/session-task-group.test.mjs` 13 条（新增「成员滑出这一页窗口后分组仍然成立（进程内记忆兜底）」含作用域隔离、子会话不计数、`buildRows` 接线断言；成员名用例补 `#87` 与空格写法两条；分组头用例补「没有箭头 / 图标 20px·18px」）；三处变异各自打红后还原：① 成员名回落改回 `rest || name`；② 阈值去掉 `seenCount`；③ 分组头把箭头加回来。全量 web 248 文件 / 760 通过 / 6 跳过、`tsc -b --noEmit` clean。
