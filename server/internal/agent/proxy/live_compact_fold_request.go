@@ -5,6 +5,7 @@ import (
 
 	"mindfs/server/internal/agent/fold"
 	"mindfs/server/internal/agent/fold/anthropic"
+	"mindfs/server/internal/agent/fold/responses"
 )
 
 // The request-path entry point and the per-session calibrations it reads.
@@ -33,6 +34,12 @@ func (s *Server) foldRequest(token string, body []byte) ([]byte, foldResult, liv
 //
 // Any error path returns the original body (I7).
 func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResult, *foldLedgerPending, liveCompactGate) {
+	return s.foldRequestLedgerFor(token, "anthropic", body)
+}
+
+// foldRequestLedgerFor is foldRequestLedger for one wire format: the policy is
+// the same for every harness, only the adapter that parses and splices differs.
+func (s *Server) foldRequestLedgerFor(token, adapter string, body []byte) ([]byte, foldResult, *foldLedgerPending, liveCompactGate) {
 	cfg := s.liveCompact
 	if !cfg.Observes() {
 		return body, foldResult{}, nil, liveCompactGate{}
@@ -62,7 +69,7 @@ func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResul
 	// produce without touching a byte (design §12.6 观测).
 	allowed := cfg.Mode == LiveCompactOn && s.archive != nil
 	session := s.foldSession(token)
-	out, err := s.foldEngine().Fold(fold.Request{
+	out, err := s.foldEngineFor(adapter).Fold(fold.Request{
 		Body:           body,
 		Session:        session,
 		Now:            start,
@@ -116,17 +123,29 @@ func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResul
 
 // foldEngine returns the per-adapter engine, creating it on first use. The
 // configuration is fixed for the life of the server, so one snapshot is enough.
-func (s *Server) foldEngine() *fold.Engine {
+//
+// One engine per wire format, because an engine holds its adapter and the
+// adapter is the only protocol-aware part. The two transports reach it through
+// different routes: Claude Code's `/p/{token}/...` (Messages) and Codex's
+// `/c/{provider}/...` (Responses).
+func (s *Server) foldEngineFor(adapter string) *fold.Engine {
 	s.engineMu.Lock()
 	defer s.engineMu.Unlock()
-	if engine, ok := s.engines["anthropic"]; ok {
+	if engine, ok := s.engines[adapter]; ok {
 		return engine
 	}
-	engine := fold.NewEngine(s.liveCompact, anthropic.New(), s.archive, s.pointerCache)
+	var impl fold.Adapter
+	switch adapter {
+	case "responses":
+		impl = responses.New()
+	default:
+		impl = anthropic.New()
+	}
+	engine := fold.NewEngine(s.liveCompact, impl, s.archive, s.pointerCache)
 	if s.engines == nil {
 		s.engines = make(map[string]*fold.Engine)
 	}
-	s.engines["anthropic"] = engine
+	s.engines[adapter] = engine
 	return engine
 }
 

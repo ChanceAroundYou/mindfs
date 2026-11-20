@@ -195,6 +195,25 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			value := in.ForkPoint.CodexUserOrdinal
 			codexUserOrdinal = &value
 		}
+		args := append([]string{}, def.Args...)
+		if p.compactProxy != nil {
+			// Codex reads its providers from config.toml. Point each of them at
+			// the proxy with a command-line override rather than editing that
+			// file: the user's configuration stays untouched, and a profile
+			// without [model_providers] (ChatGPT login) is left exactly as it is.
+			providers, err := codexProviderBaseURLs()
+			if err != nil {
+				// A malformed config is Codex's problem to report, not a reason
+				// to refuse the session.
+				log.Printf("[agent/pool] codex providers: %v", err)
+			}
+			if len(providers) > 0 {
+				for name, base := range providers {
+					p.compactProxy.RegisterProvider(name, base)
+				}
+				args = append(args, codexProxyArgs(providers, p.compactProxy.ProviderProxyURL)...)
+			}
+		}
 		return p.codex.OpenSession(ctx, codex.OpenOptions{
 			AgentName:             in.AgentName,
 			SessionKey:            in.SessionKey,
@@ -205,7 +224,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			Probe:                 in.Probe,
 			RootPath:              in.RootPath,
 			Command:               def.Command,
-			Args:                  append([]string{}, def.Args...),
+			Args:                  args,
 			Env:                   codexChildEnv(def),
 			DeveloperInstructions: in.DeveloperInstructions,
 			ResumeSessionID:       in.AgentSessionID,

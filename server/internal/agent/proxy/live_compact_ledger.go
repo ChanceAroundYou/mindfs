@@ -38,6 +38,25 @@ func (s *Server) newFoldLedgerPending(mode string, originalBytes, forwardedBytes
 // Observe-only sessions never reach here (they never fold), which is what the
 // design requires: isolated sessions must not inflate the user-facing saving.
 func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, totals usageTotals) {
+	usage := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}
+	if totals.Seen {
+		// Messages reports three disjoint counters; a rewrite costs the fresh
+		// input plus whatever was written to cache.
+		usage = fold.Usage{
+			ContextTokens: totals.ContextTokens(),
+			CacheRead:     totals.CacheReadInputTokens,
+			CacheWrite:    totals.CacheCreationInputTokens,
+			Output:        totals.OutputTokens,
+			RewriteTokens: totals.InputTokens + totals.CacheCreationInputTokens,
+			Source:        fold.UsageSourceResponse,
+		}
+	}
+	s.writeFoldLedgerUsage(token, pending, usage)
+}
+
+// writeFoldLedgerUsage appends the pending line from a normalized usage block,
+// which is what lets both wire formats share one ledger shape.
+func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, usage fold.Usage) {
 	if s.ledger == nil || pending == nil {
 		return
 	}
@@ -50,11 +69,17 @@ func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, total
 	if sessionKey == "" {
 		return
 	}
-	rewrite := -1
-	source := fold.UsageSourceMissing
-	if totals.Seen {
-		rewrite = totals.InputTokens + totals.CacheCreationInputTokens
-		source = fold.UsageSourceResponse
+	rewrite := usage.RewriteTokens
+	source := usage.Source
+	if source == "" {
+		source = fold.UsageSourceMissing
+		rewrite = -1
+	}
+	// The three stored counters are disjoint (fresh input, cache write, cache
+	// read), so the fresh part is what is left after both cache paths.
+	fresh := usage.ContextTokens - usage.CacheRead - usage.CacheWrite
+	if fresh < 0 {
+		fresh = 0
 	}
 	entry := fold.LedgerEntry{
 		TS:                 time.Now().Unix(),
@@ -68,9 +93,9 @@ func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, total
 		ArchiveErrors:      pending.result.archiveFailures,
 		FoldMS:             pending.elapsed.Milliseconds(),
 		RewriteTokens:      rewrite,
-		UsageInput:         totals.InputTokens,
-		UsageCacheCreation: totals.CacheCreationInputTokens,
-		UsageCacheRead:     totals.CacheReadInputTokens,
+		UsageInput:         fresh,
+		UsageCacheCreation: usage.CacheWrite,
+		UsageCacheRead:     usage.CacheRead,
 		UsageSource:        source,
 	}
 	// The ledger is a diagnostic; a failed write must not fail the turn.

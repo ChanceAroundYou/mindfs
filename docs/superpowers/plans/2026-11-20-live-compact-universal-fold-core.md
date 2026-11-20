@@ -1560,6 +1560,15 @@ git add server/internal/agent/proxy server/internal/agent/pool_open.go server/in
 git commit -m "feat(live-compact): Codex 会话注入代理并登记 thread 身份（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`proxy/thread.go` + `thread_test.go` 落地；`provider_route.go` 接上折叠与账本；`pool_open.go` 注入 provider 覆盖；`pool.go` 登记/清理 thread。
+
+- **thread 身份以真实抓包为准**：三条请求都带 `session-id` / `thread-id` / `x-client-request-id`（三者同值），**没有** `prompt_cache_key` 头。取值顺序改为 `session-id` → `thread-id` → `x-client-request-id`，全缺才不回退（计划里写的 `prompt_cache_key` 作废）。
+- thread 状态**复用 `sessions` 表**，键是 `thread:{id}`：父进程所有「按 key 取会话状态」的辅助函数（校准对、承诺集、冷信号、账本落盘）因此一行不改就能服务两种传输；前缀键也保证 thread id 不会撞上生成的 token。未登记的 thread 只转发不改字节，并对每个 thread 打**一行** `unknown codex thread`。
+- `foldEngine()` 变成 `foldEngineFor(adapter)`（每个线格式一个引擎），`foldRequestLedger` 变成 `foldRequestLedgerFor(key, adapter, body)`；`/c/` 固定用 `responses`。账本落盘改为接收归一化后的 `fold.Usage`（`writeFoldLedgerUsage`），Anthropic 侧由 `usageTotals` 转过去，写出的字段与数值跟改前一致（既有账本用例全绿）。
+- Responses 流式用量：新增 `responses.UsageScanner`（逐行、跨 chunk 边界、单行 1 MiB 上限），`/c/` 在折叠当轮用 `io.TeeReader` 旁路扫描，流结束后把 `RewriteTokens` 写进账本；带 `Content-Encoding` 的响应不扫，记 `missing` 而不是编一个 0。
+- **偏离计划：注册点在 `GetOrCreate` 而不是 `openSession`**。只有赢下建会话竞争的 entry 才登记，输掉的那份不会留下映射；`closeSessions` 按 entry 上新增的 `threadID` 注销。provider 覆盖仍在 `openSession` 的 Codex 分支里加（`codexProviderBaseURLs` 失败只记日志，不阻断会话；`[model_providers]` 为空时完全不加参数，ChatGPT 登录配置行为不变）。
+- 用例 5 条（注册线程后真实折叠 + 账本含 500000 重算 token + 最新轮逐字保留、未登记线程逐字转发、三个头名回退、注销即失效）；`responses` 侧另加 2 条扫描器用例（跨 chunk 分片、无 usage 事件报 missing）。变异三处：`/c/` 不解析 thread → 未折叠用例红；`RegisterThread` 的 `foldAllowed` 改 false → 同一用例红；流式用量不读 → 账本 `UsageSource=missing` 断言红。各自还原后全绿。
+
 ---
 
 ### Task 14: 压缩信号接入冷折叠

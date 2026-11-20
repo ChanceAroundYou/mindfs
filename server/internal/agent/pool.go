@@ -46,6 +46,7 @@ type sessionEntry struct {
 	closing    bool
 	closeDone  chan struct{}
 	proxyToken string // set when session routes through compactProxy
+	threadID   string // set for Codex sessions routed through compactProxy
 }
 
 // PoolOptions carries node-local feature configuration that is not part of the
@@ -223,6 +224,14 @@ retryExisting:
 		}
 		return existing, nil
 	}
+	// Codex names its conversation by a thread id; registering it is what lets
+	// the proxy attribute (and fold) requests that arrive on /c/{provider}/.
+	// Registration happens after the entry is kept, so a session that lost the
+	// create race never leaves a mapping behind.
+	threadID := ""
+	if protocol == ProtocolCodexSDK && p.compactProxy != nil {
+		threadID = strings.TrimSpace(sess.SessionID())
+	}
 	p.sessions[in.SessionKey] = &sessionEntry{
 		agentName:  in.AgentName,
 		sessionKey: in.SessionKey,
@@ -230,9 +239,13 @@ retryExisting:
 		session:    sess,
 		lastUsedAt: time.Now(),
 		proxyToken: p.pendingProxyTokens[in.SessionKey],
+		threadID:   threadID,
 	}
 	delete(p.pendingProxyTokens, in.SessionKey)
 	p.mu.Unlock()
+	if threadID != "" {
+		p.compactProxy.RegisterThread(threadID, in.SessionKey)
+	}
 	return sess, nil
 }
 
@@ -365,6 +378,9 @@ func (p *Pool) closeSessions(entries []*sessionEntry) {
 		_ = entry.session.Close()
 		if entry.proxyToken != "" && p.compactProxy != nil {
 			p.compactProxy.UnregisterSession(entry.proxyToken)
+		}
+		if entry.threadID != "" && p.compactProxy != nil {
+			p.compactProxy.UnregisterThread(entry.threadID)
 		}
 	}
 }

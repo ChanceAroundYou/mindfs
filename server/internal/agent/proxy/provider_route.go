@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"mindfs/server/internal/agent/fold"
+	"mindfs/server/internal/agent/fold/responses"
 )
 
 // Provider routing lets a harness that reads its endpoints from its own config
@@ -76,6 +79,22 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A registered thread is folded as the MindFS session that opened it; an
+	// unregistered one is forwarded untouched with one log line (see
+	// thread.go). The adapter is fixed: everything on this route is Responses.
+	key := ""
+	if threadID := providerThreadID(r); threadID != "" {
+		if _, known := s.ThreadSessionKey(threadID); known {
+			key = threadStateKey(threadID)
+		} else {
+			s.warnUnknownThreadOnce(threadID)
+		}
+	}
+	var pending *foldLedgerPending
+	if key != "" && r.Method == http.MethodPost {
+		body, _, pending, _ = s.foldRequestLedgerFor(key, "responses", body)
+	}
+
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "build request", http.StatusInternalServerError)
@@ -99,5 +118,23 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	// Status and body pass through untouched: a provider error must stay
 	// readable by the CLI instead of being re-wrapped here.
-	_, _ = io.Copy(&flushWriter{w: w}, resp.Body)
+	//
+	// The usage scanner only runs for a folded turn: it is the rewrite cost of
+	// that turn, which the ledger pairs with the fold. A compressed body is not
+	// scanned (the bytes are not readable text); the line is then written with
+	// the source marked missing rather than a fabricated zero.
+	var scanner *responses.UsageScanner
+	reader := io.Reader(resp.Body)
+	if pending != nil && resp.Header.Get("Content-Encoding") == "" {
+		scanner = responses.NewUsageScanner()
+		reader = io.TeeReader(resp.Body, scanner)
+	}
+	_, _ = io.Copy(&flushWriter{w: w}, reader)
+	if pending != nil {
+		usage := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}
+		if scanner != nil {
+			usage, _ = scanner.Totals().Usage()
+		}
+		s.writeFoldLedgerUsage(key, pending, usage)
+	}
 }

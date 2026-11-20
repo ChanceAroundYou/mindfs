@@ -85,3 +85,34 @@ func TestUsageClampsRewriteAtZero(t *testing.T) {
 		t.Fatalf("rewrite = %d, want 0", got.RewriteTokens)
 	}
 }
+
+// The proxy feeds the scanner arbitrary chunk boundaries, so an event split
+// across two writes must still be read exactly once.
+func TestUsageScannerHandlesChunkBoundaries(t *testing.T) {
+	stream := []byte("event: response.completed\n" +
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":5000,"input_tokens_details":{"cached_tokens":4000},"output_tokens":7}}}` + "\n\n")
+	scanner := NewUsageScanner()
+	// Split in the middle of the JSON line.
+	for _, chunk := range [][]byte{stream[:40], stream[40:91], stream[91:]} {
+		if _, err := scanner.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, ok := scanner.Totals().Usage()
+	if !ok {
+		t.Fatal("usage missing")
+	}
+	if got.ContextTokens != 5000 || got.Output != 7 || got.RewriteTokens != 1000 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// A stream that ends without a usage event reports missing, not zero.
+func TestUsageScannerWithoutUsageEvent(t *testing.T) {
+	scanner := NewUsageScanner()
+	_, _ = scanner.Write([]byte("event: response.output_text.delta\ndata: {\"delta\":\"hi\"}\n\n"))
+	got, ok := scanner.Totals().Usage()
+	if ok || got.Source != fold.UsageSourceMissing || got.RewriteTokens != -1 {
+		t.Fatalf("got %+v ok=%v", got, ok)
+	}
+}

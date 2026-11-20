@@ -71,6 +71,9 @@ type Server struct {
 	// once at session open, not per request.
 	providerMu sync.Mutex
 	providers  map[string]string
+	// unknownThreads remembers Codex threads nobody registered, so the log says
+	// so once instead of on every turn. Guarded by mu.
+	unknownThreads map[string]struct{}
 
 	// Emergency brake: the presence of DisableFile turns live-compact off for
 	// the running process. Checked at most once per second.

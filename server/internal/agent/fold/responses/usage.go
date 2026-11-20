@@ -70,6 +70,75 @@ func (e usageEnvelope) payload() *usagePayload {
 // this is not one.
 const maxUsageLine = 1 << 20
 
+// UsageTotals is the counters a stream has reported so far.
+type UsageTotals struct {
+	payload usagePayload
+	seen    bool
+}
+
+// Usage normalizes what the stream reported. A stream that ended without a
+// usage event reports Source=missing rather than a zero-cost turn.
+func (t UsageTotals) Usage() (fold.Usage, bool) {
+	if !t.seen {
+		return fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}, false
+	}
+	return t.payload.normalize(), true
+}
+
+// UsageScanner reads an SSE stream as a side effect of proxying it: the caller
+// wraps the upstream body in io.TeeReader, so bytes reach the client while this
+// observes a copy. It never delays or buffers the response.
+type UsageScanner struct {
+	pending []byte
+	maxLine int
+	totals  UsageTotals
+}
+
+// NewUsageScanner returns a scanner ready for Write.
+func NewUsageScanner() *UsageScanner {
+	return &UsageScanner{maxLine: maxUsageLine}
+}
+
+func (s *UsageScanner) Write(p []byte) (int, error) {
+	s.pending = append(s.pending, p...)
+	for {
+		index := bytes.IndexByte(s.pending, '\n')
+		if index < 0 {
+			break
+		}
+		s.consumeLine(s.pending[:index])
+		s.pending = s.pending[index+1:]
+	}
+	// A line past the cap is not a usage event; drop it instead of growing the
+	// buffer without bound.
+	if len(s.pending) > s.maxLine {
+		s.pending = nil
+	}
+	return len(p), nil
+}
+
+func (s *UsageScanner) consumeLine(line []byte) {
+	line = bytes.TrimRight(line, "\r")
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return
+	}
+	data := bytes.TrimSpace(line[len("data:"):])
+	if len(data) == 0 || !bytes.Contains(data, []byte(`"usage"`)) {
+		return
+	}
+	var envelope usageEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return
+	}
+	if payload := envelope.payload(); payload != nil {
+		s.totals.payload = *payload
+		s.totals.seen = true
+	}
+}
+
+// Totals returns what the stream has reported so far.
+func (s *UsageScanner) Totals() UsageTotals { return s.totals }
+
 // Usage reads a complete response body: a plain JSON object, or an SSE stream
 // replayed in one piece (the last usage block wins). No usage block reports
 // Source=missing explicitly — a turn that ended without counters must not be
@@ -84,35 +153,9 @@ func (Adapter) Usage(resp []byte) (fold.Usage, bool) {
 			}
 		}
 	}
-	var last *usagePayload
-	for start := 0; start < len(resp); {
-		end := bytes.IndexByte(resp[start:], '\n')
-		var line []byte
-		if end < 0 {
-			line, start = resp[start:], len(resp)
-		} else {
-			line, start = resp[start:start+end], start+end+1
-		}
-		line = bytes.TrimRight(line, "\r")
-		if !bytes.HasPrefix(line, []byte("data:")) || len(line) > maxUsageLine {
-			continue
-		}
-		data := bytes.TrimSpace(line[len("data:"):])
-		if len(data) == 0 || !bytes.Contains(data, []byte(`"usage"`)) {
-			continue
-		}
-		var envelope usageEnvelope
-		if err := json.Unmarshal(data, &envelope); err != nil {
-			continue
-		}
-		if payload := envelope.payload(); payload != nil {
-			last = payload
-		}
-	}
-	if last == nil {
-		return fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}, false
-	}
-	return last.normalize(), true
+	scanner := NewUsageScanner()
+	_, _ = scanner.Write(resp)
+	return scanner.Totals().Usage()
 }
 
 // Guard never blocks. The prefix guard exists to protect preserved-thinking
