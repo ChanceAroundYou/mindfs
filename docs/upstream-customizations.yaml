@@ -9335,6 +9335,9 @@ groups:
       - server/internal/agent/proxy/thread.go
       - server/internal/agent/pool_codex_proxy.go
       - server/internal/agent/proxy/testdata/fold_golden.txt
+      - server/internal/agent/codex/session.go
+      - server/internal/agent/codex/session_open.go
+      - server/internal/agent/codex/session_events.go
       - server/internal/agent/pool.go
       - server/internal/agent/pool_open.go
       - server/internal/agent/pool_context_saving.go
@@ -9372,6 +9375,8 @@ groups:
       - server/internal/agent/pool_codex_proxy_test.go
       - server/internal/agent/proxy/provider_route_test.go
       - server/internal/agent/proxy/thread_test.go
+      - server/internal/agent/proxy/compact_signal_test.go
+      - server/internal/agent/codex/session_compact_signal_test.go
       - server/internal/agent/proxy/fold_golden_test.go
       - server/internal/agent/proxy/live_compact_testhelpers_test.go
       - server/internal/agent/fold/config_test.go
@@ -9442,6 +9447,11 @@ groups:
       - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, usage fold.Usage) {'
       - 'server/internal/agent/pool.go:threadID = strings.TrimSpace(sess.SessionID())'
       - 'server/internal/agent/pool_open.go:args = append(args, codexProxyArgs(providers, p.compactProxy.ProviderProxyURL)...)'
+      - 'server/internal/agent/pool_open.go:onCompact = p.compactProxy.SignalCompact'
+      - 'server/internal/agent/proxy/thread.go:func (s *Server) SignalCompact(threadID string) {'
+      - 'server/internal/agent/codex/session.go:onCompact     func(threadID string)'
+      - 'server/internal/agent/codex/session_open.go:OnCompact func(threadID string)'
+      - 'server/internal/agent/codex/session_events.go:func (s *session) emitCompact(notice types.CompactNotice) {'
       - 'server/internal/agent/fold/anthropic/equivalence_test.go:func TestAdapterScanAgreesWithReference('
       - 'server/internal/agent/proxy/usage.go:func (s *usageScanner) consumeLine('
       - 'server/internal/agent/pool_open.go:p.compactProxy.RegisterSessionObserveOnly(tok, realBaseURL, sessionKey)'

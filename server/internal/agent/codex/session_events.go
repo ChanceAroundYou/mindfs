@@ -116,6 +116,16 @@ func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) (bool
 	return sawTurnCompleted, nil
 }
 
+// emitCompact reports a compaction to the UI and to the pool's cold-fold hook.
+// The three event shapes that carry one all go through here so none of them can
+// forget the hook; a session opened without it still emits its normal event.
+func (s *session) emitCompact(notice types.CompactNotice) {
+	s.emit(types.Event{Type: types.EventTypeCompact, SessionID: s.SessionID(), Data: notice})
+	if s.onCompact != nil {
+		s.onCompact(s.SessionID())
+	}
+}
+
 func (s *session) handleNonToolItem(item codexsdk.ThreadItem, started bool) bool {
 	switch v := item.(type) {
 	case *codexsdk.ReasoningItem:
@@ -147,7 +157,7 @@ func (s *session) handleNonToolItem(item codexsdk.ThreadItem, started bool) bool
 		if started {
 			status = "running"
 		}
-		s.emit(types.Event{Type: types.EventTypeCompact, SessionID: s.SessionID(), Data: types.CompactNotice{ID: v.ID, Status: status, Summary: v.Summary}})
+		s.emitCompact(types.CompactNotice{ID: v.ID, Status: status, Summary: v.Summary})
 		return true
 	case *codextypes.UnknownItem:
 		switch v.GetType() {
@@ -158,8 +168,7 @@ func (s *session) handleNonToolItem(item codexsdk.ThreadItem, started bool) bool
 			}
 			return true
 		case "contextCompaction":
-			compact := parseUnknownContextCompaction(v.Raw)
-			s.emit(types.Event{Type: types.EventTypeCompact, SessionID: s.SessionID(), Data: compact})
+			s.emitCompact(parseUnknownContextCompaction(v.Raw))
 			return true
 		}
 		return false
@@ -168,7 +177,7 @@ func (s *session) handleNonToolItem(item codexsdk.ThreadItem, started bool) bool
 		case "plan":
 			return true
 		case "contextCompaction":
-			s.emit(types.Event{Type: types.EventTypeCompact, SessionID: s.SessionID(), Data: types.CompactNotice{Status: "complete"}})
+			s.emitCompact(types.CompactNotice{Status: "complete"})
 			return true
 		}
 		return false

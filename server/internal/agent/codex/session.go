@@ -27,6 +27,7 @@ type session struct {
 
 	mu            sync.RWMutex
 	onUpdate      func(types.Event)
+	onCompact     func(threadID string)
 	turn          types.TurnCanceler
 	contextWindow types.ContextWindow
 	planTextByID  map[string]string

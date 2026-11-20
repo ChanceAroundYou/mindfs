@@ -196,7 +196,11 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			codexUserOrdinal = &value
 		}
 		args := append([]string{}, def.Args...)
+		var onCompact func(string)
 		if p.compactProxy != nil {
+			// Codex compacts by itself; tell the proxy the next request's cache
+			// is cold so that fold is free.
+			onCompact = p.compactProxy.SignalCompact
 			// Codex reads its providers from config.toml. Point each of them at
 			// the proxy with a command-line override rather than editing that
 			// file: the user's configuration stays untouched, and a profile
@@ -230,6 +234,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			ResumeSessionID:       in.AgentSessionID,
 			ForkSessionID:         in.ForkPoint.AgentSessionID,
 			CodexUserOrdinal:      codexUserOrdinal,
+			OnCompact:             onCompact,
 		})
 	case ProtocolACP:
 		fallthrough

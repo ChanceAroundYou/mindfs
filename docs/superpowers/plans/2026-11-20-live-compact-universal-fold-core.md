@@ -1628,6 +1628,10 @@ git add server/internal/agent/proxy server/internal/agent/codex
 git commit -m "feat(live-compact): Codex 压缩事件接入冷折叠信号（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`SignalCompact` 落在 `proxy/thread.go`（与本任务新增的 thread 状态同文件），在锁内给 `thread:{id}` 的 `live.pendingColdFold` 置位并记时间；空 id 与未登记 thread 直接返回、不建状态（压缩事件可能早于第一条请求到达，这不是错误）。`codex` 侧 `OpenOptions.OnCompact` → `session.onCompact`，三处 `EventTypeCompact`（`CompactedItem`、`UnknownItem` 的 `contextCompaction`、按 `GetType()` 兜底的 `contextCompaction`）全部改走 `emitCompact`，先发 UI 事件再调 hook，nil 安全；`pool_open.go` 在 `compactProxy != nil` 时把 `SignalCompact` 接上。
+
+用例：proxy 两条 —— 冷决策命中 `Cold==true / ColdReason=="compact"`，第二次决策必须不再冷（消费一次），以及未知/空 thread 不产生状态；codex 三条 —— 三种事件形态各触发一次且携带真实 thread id、未装 hook 时照常发事件不 panic。变异两处：`applyFoldSession` 不写回 `PendingColdFold` → 「第二次仍冷」红；`emitCompact` 去掉 hook 调用 → 三个子用例全红。各自还原后 `go build ./server/...` 与 `go test -count=1 ./server/internal/agent/...` 全绿。
+
 ---
 
 ### Task 15: 配置覆盖、端到端验收与登记

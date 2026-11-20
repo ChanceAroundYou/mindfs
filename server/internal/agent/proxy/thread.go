@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Codex identifies its conversation by a thread id, sent on every request as
@@ -32,6 +33,27 @@ func (s *Server) RegisterThread(threadID, sessionKey string) {
 	s.sessions[threadStateKey(threadID)] = &sessionState{
 		sessionKey:  sessionKey,
 		foldAllowed: true,
+	}
+	s.mu.Unlock()
+}
+
+// SignalCompact marks the thread's next fold decision as cache-cold. Codex
+// compacts its own context and then resends the whole transcript, so the
+// upstream prefix cache is gone and a fold costs nothing extra — the one
+// moment worth folding below the rail. The flag is spent by the next decision
+// that has something to fold (see live_compactState.pendingColdFold).
+//
+// An unknown thread is not an error: the compaction can be reported before the
+// proxy has seen a request for it, and there would be nowhere to put the flag.
+func (s *Server) SignalCompact(threadID string) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return
+	}
+	s.mu.Lock()
+	if st, ok := s.sessions[threadStateKey(threadID)]; ok {
+		st.live.pendingColdFold = true
+		st.live.pendingColdFoldAt = time.Now()
 	}
 	s.mu.Unlock()
 }

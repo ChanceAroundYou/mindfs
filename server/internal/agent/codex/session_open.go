@@ -28,6 +28,10 @@ type OpenOptions struct {
 	ResumeSessionID       string
 	ForkSessionID         string
 	CodexUserOrdinal      *int
+	// OnCompact is called with the thread id whenever Codex reports that it
+	// compacted its own context. The pool uses it to tell the proxy that the
+	// next request's prefix cache is cold.
+	OnCompact func(threadID string)
 }
 
 type Runtime struct {
@@ -105,6 +109,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		threadID:      threadID,
 		sessionKey:    opts.SessionKey,
 		planMode:      opts.PlanMode,
+		onCompact:     opts.OnCompact,
 		questionWaits: make(map[string]chan codexAskUserAnswerResult),
 		agentDebugLog: logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
 	}
