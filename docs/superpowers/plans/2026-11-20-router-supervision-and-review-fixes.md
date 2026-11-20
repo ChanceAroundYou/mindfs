@@ -322,4 +322,9 @@ shadow 只记录。
   坏时间容错、i18n 键映射、列表渲染、源码契约），六处变异各自打红后还原（去掉
   `direct_stalled`、不过滤动作、不排序、面板不挂载、空列表仍渲染、service 丢 `nodeId`）。
 - 门禁：`npx tsc -b --noEmit` clean；`npx vitest run` 253 文件 / 799 通过 / 6 跳过；
-  `go build ./server/...` OK；`go test -count=1 ./server/internal/kanban/` 全绿。
+  `go build ./server/...` OK；`go test -count=1 ./server/internal/kanban/` 全绿（193.2s）。
+- **已提交并推送 origin main**：`7373d8fc`（S3-1/S3-2/S3-3 + S4）、`9019fa5f`（拆分后
+  G-MH/G-MP 锚点跟随：`router_event_payload.go`、`router_tools_inspect.go`）、`68678fdc`
+  （监管记录 hook 收尾）。干净 detached worktree 上 `go build ./...` + `go test -count=1 ./...`
+  全绿、`make check-upstream` 2182 delta / 344 组全过。未部署、未重启任何节点；
+  `router.supervision.mode` 仍缺省 `off`，要开启由用户改 `~/.config/mindfs/config.json` 并重启本机。
