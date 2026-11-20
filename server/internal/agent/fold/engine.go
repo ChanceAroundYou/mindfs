@@ -55,6 +55,9 @@ type Outcome struct {
 	Projected  int
 	Cold       bool
 	ColdReason string
+	// GuardUnknownModel is set when the adapter could not classify the request's
+	// model. The caller owns the per-session dedupe of the log line.
+	GuardUnknownModel bool
 }
 
 // Engine folds one harness's requests. It is safe for concurrent use as long as
@@ -107,7 +110,9 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 	// A rewrite is a client-side edit. On a preserved-thinking model it
 	// invalidates every later thinking block, so the guard runs before
 	// anything is planned.
-	if guard := e.adapter.Guard(conv.Model, e.cfg); guard.Block {
+	guard := e.adapter.Guard(conv.Model, e.cfg)
+	out.GuardUnknownModel = guard.UnknownModel
+	if guard.Block {
 		reason := guard.Reason
 		if reason == "" {
 			reason = GatePrefixGuard

@@ -1021,6 +1021,44 @@ git add server/internal/agent/fold/anthropic
 git commit -m "feat(live-compact): 新增 Anthropic Messages 适配器（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`fold/anthropic` 落地，`anthropic.New()` 返回
+`fold.Adapter`。`scan.go` 承接 `live_compact_scan_request.go` 的字节扫描（全部
+walk 函数改为 `fold.Scan*`），`pair.go` 把 assistant 消息的 `tool_use` 组配成
+`fold.Round`（开放轮次输出零 `Results`），`adapter.go` 实现 `Scan` / `Text` /
+`Encode` / `Window`，`splice.go` 只替换 span 内字节，`usage.go` 承接 SSE 扫描
+（导出 `UsageScanner` / `UsageTotals`，新增 `Adapter.Usage` 读整段 JSON 或整段
+SSE），`guard.go` 承接前缀守卫。
+
+三处对计划的偏离：
+
+1. **没有单独的 `wire.go`**：字节扫描器（`scanRequest`/`scanMessage`/
+   `scanBlock`）留在 `scan.go`，`pair.go` 只做配对。拆一个纯类型文件不会减少
+   任何一处的理解成本。
+2. **`Guard` 需要把「未知别名」带回调用方**：`warnUnknownModelOnce` 的每会话
+   去重住在 proxy 的 session 表里，适配器拿不到。`fold.GuardVerdict` 新增
+   `UnknownModel`、`fold.Outcome` 新增 `GuardUnknownModel`，由 Task 8 的调用方
+   打日志；守卫本身仍不拦截别名。
+3. **`Adapter.Usage` 的归一化口径与账本一致**：`ContextTokens = input +
+   cache_creation + cache_read`、`RewriteTokens = input + cache_creation`、
+   `Source = response`，与 `writeFoldLedger` 现有算法逐项相同，Task 8 切换后账本
+   数字不变。
+
+测试：`equivalence_test.go`（5 个 `testdata/*.json` 夹具：单结果、多轮多调用、
+`is_error`、图片块、开放轮次）钉住空 splice 逐字节不变、span 扫描与
+`encoding/json` 参考解析器逐轮逐结果一致、开放轮次零结果、`Text` 拒绝非文本、
+`Encode` 合法 JSON 且不转义 HTML、单 span splice 前后字节不变、真引擎折叠
+2 × 20 KB 结果并重扫通过、未知别名从 `Outcome.GuardUnknownModel` 浮出；
+`usage_test.go` 5 条（SSE 合并 message_start/message_delta、整段 JSON、回放
+SSE、缺失、超大行丢弃）；`guard_test.go` 4 条；`imports_test.go` 钉住适配器不
+import proxy。两处变异各自打红后还原：`Text` 去掉 `NonText` 判断 →
+`TestAdapterTextRejectsNonText` 红；`Encode` 换成 `strconv.Quote` →
+`TestAdapterEncodeRoundTripsAndKeepsAngles` 红（`\x01` 不是合法 JSON 转义；
+注意 `<` 在两条路径下都不转义，因为 `EncodeJSONStringLiteral` 设了
+`SetEscapeHTML(false)`，所以鉴别点是控制字符而不是尖括号）。
+`go vet ./server/internal/agent/...` 与 `go test ./server/internal/agent/...`
+全绿。proxy 侧的 `usage.go` 与 `live_compact_prefix_guard.go` 暂时保留，与内核
+副本在 Task 8 一起删除。
+
 ---
 
 ### Task 8: proxy 切到 `Engine`（等价替换）

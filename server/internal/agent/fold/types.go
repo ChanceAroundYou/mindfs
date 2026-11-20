@@ -92,4 +92,9 @@ type Usage struct {
 type GuardVerdict struct {
 	Block  bool
 	Reason string
+	// UnknownModel reports a model id the adapter cannot classify. The guard
+	// does not block on it — an alias has to keep folding — but the caller logs
+	// one line per session so an operator can register the alias in
+	// prefix_unsafe_models when it turns out to map to a guarded model.
+	UnknownModel bool
 }
