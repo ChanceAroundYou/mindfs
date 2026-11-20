@@ -371,11 +371,19 @@ api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建�
 `before`/`after` 用 `\t` 表示制表、`\n` 表示换行。脚本逐条在 `git worktree` 临时副本上注入、
 跑 `go test <package> -run '<run>' -count=1`，期望非零退出。
 
-- [ ] **Step 1: 写脚本**，先收 3 条已知变异点（Task 1 的 hold 判断、Task 5 的 block 状态、
+- [x] **Step 1: 写脚本**，先收 3 条已知变异点（Task 1 的 hold 判断、Task 5 的 block 状态、
   Task 6 的去重键）。
-- [ ] **Step 2: 自检**：`bash scripts/mutate.sh` 输出 `killed=3 survived=0`；手工把一条 `after`
+- [x] **Step 2: 自检**：`bash scripts/mutate.sh` 输出 `killed=3 survived=0`；手工把一条 `after`
   改成原样（等值替换）→ 输出 `invalid` 而非 `survived`。
-- [ ] **Step 3: 提交** `chore: 变异账本工具（Scope: G-NP）`。
+- [x] **Step 3: 提交** `chore: 变异账本工具（Scope: G-NP）`。
+
+**执行记录（2026-11-21）：** 三条变异全部 killed（`killed=3 survived=0 invalid=0`），等值
+`after` 的临时账本输出 `invalid`、退出码 1。两处计划缺陷按裁定修正：① 格式里的 `|` 分隔符
+与 Go 的 `||` 冲突（`if err != nil || !at.After(...)` 被切成三个字段），账本新增 `\p` 转义
+表示字面竖线；② Step 1 写的「Task 6 的去重键」变异（把 `item.ID` 换成 `""`）是**等价变异** ——
+缺口数仍由 `Join` 的分隔符编码，测试照样绿；改为把整条哈希换成常量 `sha256.Sum256(nil)`，
+才真正打红 `TestCompletionBlockedNewGapIsNewEvent`。脚本从 `HEAD` 切临时 worktree（不带共享
+工作区里其他会话的未提交改动），每条跑完 `git checkout -- <file>` 还原，退出时删 worktree。
 
 ---
 

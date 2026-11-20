@@ -1,4 +1,4 @@
-.PHONY: help dev dev-backend dev-web build-web build build-android build-ios install uninstall build-all start start-server test test-web check-upstream dist-clean publish-release-notes verify-release release tag
+.PHONY: help dev dev-backend dev-web build-web build build-android build-ios install uninstall build-all start start-server test test-web check-upstream mutate dist-clean publish-release-notes verify-release release tag
 
 GO ?= go
 NPM ?= npm
@@ -33,6 +33,7 @@ help:
 		"  make test         # run Go tests" \
 		"  make test-web     # run web source-guard tests" \
 		"  make check-upstream  # fork 定制覆盖率门禁（需 upstream ref）" \
+		"  make mutate       # 变异账本：注入已知错误改法，确认有测试守得住" \
 		"  make tag TAG=v1.2.3  # create and push a git tag" \
 		"  make publish-release-notes TAG=v1.2.3  # commit and push release-notes.md if changed" \
 		"  make verify-release TAG=v1.2.3  # verify signed release manifest and artifacts in $(DIST_DIR)" \
@@ -110,6 +111,11 @@ test-android:
 # 且合上游前后才是它真正要跑的时刻（见 .claude/skills/upstream-merge）。
 check-upstream:
 	$(GO) run ./scripts/check-upstream
+
+# 变异账本（Plan 2026-11-20 Task 9）：逐条把 scripts/mutations.txt 里的已知错误改法
+# 注入临时 worktree 并跑指定测试，测试必须变红。survived = 那行没有任何测试守着。
+mutate:
+	@bash scripts/mutate.sh
 
 # ── Cross-platform distribution ──────────────────────────────────────────
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")

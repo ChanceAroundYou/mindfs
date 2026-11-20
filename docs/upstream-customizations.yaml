@@ -11023,6 +11023,9 @@ groups:
       - server/internal/kanban/service_recover_startup.go
       - server/internal/api/router_runtime.go
       - server/internal/kanban/router_prompt.md
+      - scripts/mutate.sh
+      - scripts/mutations.txt
+      - Makefile
     tests:
       - server/internal/api/http_task_completion_test.go
       - server/internal/kanban/router_status_completion_test.go
@@ -11105,3 +11108,7 @@ groups:
       - 'server/internal/api/router_runtime.go:func (s *AppContext) ensureVerifierSession('
       - 'server/internal/api/router_runtime.go:policy = routerVerifierToolPolicy()'
       - 'server/internal/api/router_runtime.go:func routerVerifierToolPolicy('
+      - 'scripts/mutate.sh:mutate: killed=$killed survived=$survived invalid=$invalid'
+      - 'scripts/mutations.txt:hold-ignores-future-not-before'
+      - 'scripts/mutations.txt:dedup-ignores-gap-identity'
+      - 'Makefile:@bash scripts/mutate.sh'
