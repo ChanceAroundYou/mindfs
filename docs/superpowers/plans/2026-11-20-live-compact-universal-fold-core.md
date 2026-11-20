@@ -1753,6 +1753,23 @@ archive / ledger / engine），Codex 的存档与账本落在 `<config-dir>/cont
 **门禁**：`go test ./server/internal/agent/...`（fold / fold/anthropic / fold/responses / proxy）全绿、
 `go build ./server/...` 成功；全仓 `go test -count=1 ./...`、干净 worktree 的 `make check-upstream` 见提交记录。
 
+**HEAD 复验（2026-11-20 22:20–22:55，用户指令「执行隔离测试，用 luna」）**：在干净 HEAD `e27f8a84`
+上重建隔离实例（端口 7460、`/tmp/lc-run`、真实 `codex-cli` + `gpt-6-luna` 经 llmux、独立
+`XDG_CONFIG_HOME`/`CODEX_HOME`），先确认二进制含 B10 单行页脚。重负载会话
+`1795185602-1c03d6fe9fc5`（两次完整 `cat` + 分段 `sed`，116 次工具调用）：日志 19 次块提交
+（合计 `tokens_est=68147 bytes=271438`），此后每请求 `sticky_blocks=19 new_blocks=0
+gate=no-backlog`，`skipped=0 archive_errors=0`；胶囊 `requests=46`、`max_saved_bytes=244126`、
+`total_rewrite_tokens=892482`、`usage_missing=0`，末轮 `req_bytes 1263754 → folded 1019628`；
+模型自己在回复里说明「补读区间也有少数响应被工具再次折叠」，按指针改用更小 `sed` 区间。
+**指针可读回（强版）**：三个 fixture 全部移走后追问 `charlie.txt` 第 0050 行，模型只发起 1 次
+工具调用、按指针打开 `context/codex/330c823e….txt`，答案 `0050 charlie-0050-tgxywg …` 与文件
+一致；该存档逐字节等于当时 Codex 截断后的工具输出（前 250 行 + `…18000 tokens truncated…` +
+后 250 行）、权限 0600；commit log 反查 19 个已提交存档 `missing=0`（盘上未被引用的新存档由
+7 天/容量清扫处理，不是丢失）。**反向验收**：`harness.codex.enabled=false` 重启后同负载新会话
+`1795186395-6acd0add0a96`，日志 `gate=fold candidates=2 folded=false blocks=0`、存档数不变、
+胶囊 `requests=0`，证明「观测照常、改写关闭」。生产 7331 全程未碰（PID 2769042、health 200、
+`exe` 仍是已删除的旧二进制）；本轮只改本记录，无代码改动。
+
 ---
 
 ## B10 指针瘦身、保护尾部收紧与「多块一起折」取证（2026-11-20）
