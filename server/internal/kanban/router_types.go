@@ -193,7 +193,9 @@ const (
 	RouterActionSilent        RouterActionKind = "silent"
 	RouterActionDeliver       RouterActionKind = "deliver_to_active_run"
 	RouterActionAnswerWaiting RouterActionKind = "answer_waiting_node"
-	RouterActionSuggestFinish RouterActionKind = "suggest_finish" // P2
+	// RouterActionComplete 是 Router 宣告「这一轮做完了」的唯一动作。它只是
+	// 意图：能不能收尾由完成契约的证据门判定，不由动作本身成立。
+	RouterActionComplete RouterActionKind = "complete_task"
 	// 主动监管（S1/S2）：重试一个已判定为「可重试」的失败节点，或把情况
 	// 直接告诉用户。两者都只在带 supervision 块的事件回合可用。
 	RouterActionRetryNode  RouterActionKind = "retry_node"
@@ -230,6 +232,8 @@ type RouterAction struct {
 	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。
 	SessionMode string `json:"session_mode,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+	// Summary 是 complete_task 写给用户看的结果一句话（≤500 字节）。
+	Summary string `json:"summary,omitempty"`
 }
 
 // IsExecutionAction 报告动作是否会启动/继续一次执行。用于跨动作校验与

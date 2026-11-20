@@ -91,6 +91,7 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.silentTool(),
 		e.deliverTool(),
 		e.answerTool(),
+		e.completeTaskTool(),
 	}
 	// 监管工具只在带 supervision 块的事件回合出现（S1/S2）。
 	return append(tools, e.supervisionTools()...)
@@ -323,12 +324,13 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 	}
 	says := 0
 	executions := 0
+	completions := 0
 	totalBytes := 0
 	for index, action := range actions {
 		if action.Seq != index {
 			return fmt.Errorf("action seq %d is not contiguous at index %d", action.Seq, index)
 		}
-		totalBytes += len(action.Body) + len(action.Question)
+		totalBytes += len(action.Body) + len(action.Question) + len(action.Summary)
 		switch action.Kind {
 		case RouterActionSay:
 			says++
@@ -367,8 +369,16 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			if strings.TrimSpace(action.Body) == "" {
 				return fmt.Errorf("%s body required", action.Kind)
 			}
-		case RouterActionSuggestFinish:
-			// P2 only; accepted here so the enum remains forward-compatible.
+		case RouterActionComplete:
+			completions++
+			if strings.TrimSpace(action.Summary) == "" {
+				return errors.New("complete_task summary required")
+			}
+			// 已经收过尾的任务没有「再做一轮」的余地；再补一次只会覆盖原结论。
+			switch brief.Task.Status {
+			case StatusSuccess, StatusFail, StatusCancelled:
+				return fmt.Errorf("complete_task is not allowed on a %s task", brief.Task.Status)
+			}
 		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
 			RouterActionRetryDirect:
 			// 细节（可重试性、预算、节点归属）在 validateSupervisionActions 里，
@@ -386,6 +396,14 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 	if executions > 1 {
 		return errors.New("at most one execution action per turn")
 	}
+	if completions > 1 {
+		return errors.New("at most one complete_task per turn")
+	}
+	// 收尾与开工互斥：同一轮既开新执行又宣告完成，等于把没跑完的部分留在了
+	// 已收尾的任务后面。
+	if completions > 0 && executions > 0 {
+		return errors.New("complete_task cannot be combined with an execution action")
+	}
 	if err := validateSupervisionActions(brief, actions, config); err != nil {
 		return err
 	}
@@ -400,6 +418,10 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			// waiting_user 的任务同样挂着 ActiveExecution，只是 CurrentNodes 为空；
 			// 只有真的有节点在跑时答复才和「先等这一轮结束」冲突。
 			if action.Kind == RouterActionAnswerWaiting && len(brief.ActiveExecution.CurrentNodes) > 0 {
+				return fmt.Errorf("%s is not allowed while a node is still running", action.Kind)
+			}
+			// 还有节点在跑就不许收尾：没跑完的活不能挂在已完成的结论后面。
+			if action.Kind == RouterActionComplete && len(brief.ActiveExecution.CurrentNodes) > 0 {
 				return fmt.Errorf("%s is not allowed while a node is still running", action.Kind)
 			}
 		}

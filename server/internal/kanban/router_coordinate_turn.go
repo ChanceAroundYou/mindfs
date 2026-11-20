@@ -424,7 +424,9 @@ func (rs *RouterService) completeCoordinatedEvent(ctx context.Context, eventID, 
 func validateRuntimeEventActions(brief *SituationBrief, actions []RouterAction, _ RouterConfig) error {
 	for _, action := range actions {
 		switch action.Kind {
-		case RouterActionSay, RouterActionAskUser, RouterActionSilent:
+		case RouterActionSay, RouterActionAskUser, RouterActionSilent, RouterActionComplete:
+			// complete_task 不属于监管动作：事件回合（例如 run_settled）本来就是
+			// 收尾时机，不该要求 supervision 观测块。
 			continue
 		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
 			RouterActionRetryDirect:
