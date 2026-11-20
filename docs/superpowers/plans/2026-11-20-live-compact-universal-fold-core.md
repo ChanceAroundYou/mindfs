@@ -1211,6 +1211,15 @@ git add server/internal/agent/fold/responses
 git commit -m "feat(live-compact): Responses 适配器扫描与工具轮次配对（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：`fold/responses` 落地（`adapter.go` / `scan.go` / `pair.go`），提交 `45ef4bb2`。
+
+- 抓包现场（`/tmp/codex-probe/requests/00{1,2,3}.json`）三个真实 Codex 请求都是 `store:false`、无 `previous_response_id`，且工具只用 `custom_tool_call`（Codex 把一切工具收在一个 `exec` 里）—— 所以 `function_call` 那半是按 Responses 公开形状**构造**进夹具的，并在 `testdata/README.md` 里写明。
+- 实际输出比计划里假设的更宽：`custom_tool_call_output.output` 是**多个** `input_text` 块（真实抓包是两个）。适配器照实记录全部 text span，`Parts` 多于一块时引擎本来就不折（`Text` 只接受单 part），这保持了「一次只换一个字符串字面量」的不变量。
+- 计划里写「`function_call.arguments` 是对象」不准确：线上是**编码成字符串的**对象。摘要因此先解字符串再复用 `fold.SummarizeToolInput` 的 key 偏好表；解不成对象就截 300 字符。
+- 用例 7 条（计划 4 条 + 多块输出 / NonText 输出 / 非工具项三条），两处变异各自打红后还原。Step 2/3 的 RED 没有单独留证：实现与测试同一轮写出，红色证据来自 Step 6 的变异。
+
+**并发事故（同一工作区另一条会话）**：Task 8 的 17 个删除在提交前被 `515fc827`「恢复 G-MN 二十个 proxy 文件」还原，`a009965d` 只带走了修改没带走删除，推送出去的 HEAD 因此 `go build ./...` 直接失败（`gateDisabled` 等重复声明）。`a525caf5` 重新删除并复验 `go build`，随后 `docs(custom)` 提交清掉 G-MN 里已删文件与锚点。教训：**删除类提交要先 `git show --stat HEAD` 确认删除真的进了提交，再从干净 worktree 跑 `go build`**（`check-upstream` 不编译，过了也不代表能构建）。
+
 ---
 
 ### Task 10: Responses 适配器 —— `Text`、`Splice` 与改写校验
