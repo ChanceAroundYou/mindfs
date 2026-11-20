@@ -328,3 +328,24 @@ shadow 只记录。
   （监管记录 hook 收尾）。干净 detached worktree 上 `go build ./...` + `go test -count=1 ./...`
   全绿、`make check-upstream` 2182 delta / 344 组全过。未部署、未重启任何节点；
   `router.supervision.mode` 仍缺省 `off`，要开启由用户改 `~/.config/mindfs/config.json` 并重启本机。
+
+### B13 上线记录（2026-11-20）
+
+用户指令「你可以 ship 了 全部改成 on」，四端开闸并分发：
+
+- **配置**：本机 `~/.config/mindfs/config.json` 写入 `router.supervision.mode="on"`（改前备份
+  `config.json.bak-20261120-200026`，`mode=coordinate` / `model=ok` / `turn_timeout=180s` 原样保留）；
+  WSL / fn 的 `~/.config/mindfs/config.json` 新增 `router.supervision`（备份同名 `.bak-<ts>`）；
+  pc-win `C:\Users\10178\AppData\Roaming\mindfs\config.json` 同样新增（备份 `.bak-<ts>`，并重写成
+  无 BOM 的 UTF-8 —— Windows PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会写 BOM，Go 解不出来）。
+  预算字段未写，走缺省（每节点 2 次重试 / 每 Run 每小时 6 个动作）。
+- **分发**：`bash scripts/deploy-all.sh` 退出 0，四端 `v0.5.5-1200-105-g58aa653e` 逐字一致；
+  门禁 `go test` / `tsc` / Vitest 799 通过。
+- **核对**：本机 20:04 重启后 `/mindfs/api/router/status` 报 `supervision_mode=on`、
+  `prompt_hash=39ff22741b3e`（换过新二进制）；WSL / fn `systemctl --user is-active` = active、
+  health 200、`supervision_mode=on`；pc-win PID 11700（Session 0）、health 200、`supervision_mode=on`。
+- **边界（重要）**：WSL / fn / pc-win 的 `router.enabled=false`（`router.mode` 仍未配置，走缺省
+  `off`），所以那里的 `supervision_mode=on` 目前只是「配置就绪、不会触发」——监管由 Router 回合
+  驱动，要真跑监管必须先给该节点配 `router.mode`（并配 `router.model`）。本机是唯一 Router
+  在跑的节点。
+- 本机运行进程自 20:04 起已是同一次提交的构建，deploy-all 重装的是同一份代码，不需要再次重启。
