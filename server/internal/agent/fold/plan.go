@@ -46,17 +46,20 @@ type Candidate struct {
 //     recent defeats the point. Every such round is carved out, not just the
 //     newest — a committed block must stay a candidate on every later request
 //     or its pointer would silently unfold.
-//   - A result with anything but exactly one text part is skipped: replacing
-//     several literals with one pointer would change the structure the model
-//     sees. Non-text results are skipped whole (I3).
+//   - A result carrying an image, a file, or an unknown block is skipped whole
+//     (I3), even if it also holds text.
+//   - A result with several text blocks is foldable, but only its largest block
+//     is: a pointer replaces exactly one literal, so the rest stay verbatim.
+//     This is not a corner case — Codex sends every tool result as two
+//     `input_text` blocks (a "Script completed / Wall time" header and the
+//     payload), and a one-part-only rule folded nothing at all on real traffic:
+//     a captured 347 KB request had 7/7 outputs with two parts, so every
+//     request reported `no-backlog` while the context kept growing.
 //   - A failed result below min_block_tokens is left verbatim: folding it saves
 //     nothing and its text is often the whole diagnostic.
-//
-// The second return counts multi-part results that were skipped, which the
-// caller reports as `skipped`.
-func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commits) ([]Candidate, int) {
+func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commits) []Candidate {
 	if conv == nil {
-		return nil, 0
+		return nil
 	}
 	closed := make([]Round, 0, len(conv.Rounds))
 	for _, round := range conv.Rounds {
@@ -90,23 +93,20 @@ func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commit
 		}
 	}
 	if len(eligible) == 0 {
-		return nil, 0
+		return nil
 	}
 
-	skippedMultiPart := 0
 	var candidates []Candidate
 	for _, round := range eligible {
 		for _, result := range round.Results {
 			// A result that carries an image/document/unknown block keeps its
 			// bytes (I3), even if it also has text.
-			if result.NonText {
+			if result.NonText || len(result.Parts) == 0 {
 				continue
 			}
-			if len(result.Parts) != 1 {
-				if len(result.Parts) > 1 {
-					skippedMultiPart++
-				}
-				continue
+			// Narrow a multi-block result to the one block a pointer can replace.
+			if len(result.Parts) > 1 {
+				result.Parts = []Span{largestPart(result.Parts)}
 			}
 			if result.Failed && result.Tokens < cfg.MinBlockTokens {
 				continue
@@ -124,7 +124,20 @@ func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commit
 			})
 		}
 	}
-	return candidates, skippedMultiPart
+	return candidates
+}
+
+// largestPart returns the text block a pointer should replace. Widths are
+// measured on the wire spans, so JSON escaping is accounted for exactly as the
+// splice and the savings floor will see it.
+func largestPart(parts []Span) Span {
+	largest := parts[0]
+	for _, part := range parts[1:] {
+		if part.End-part.Start > largest.End-largest.Start {
+			largest = part
+		}
+	}
+	return largest
 }
 
 // roundTokens sums the estimated tokens of a round's foldable results. It
@@ -133,7 +146,7 @@ func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commit
 func roundTokens(round Round) int {
 	total := 0
 	for _, result := range round.Results {
-		if result.NonText || len(result.Parts) != 1 {
+		if result.NonText || len(result.Parts) == 0 {
 			continue
 		}
 		total += result.Tokens
@@ -154,7 +167,7 @@ func roundOversized(round Round, cfg Config) bool {
 		return false
 	}
 	for _, result := range round.Results {
-		if result.NonText || len(result.Parts) != 1 {
+		if result.NonText || len(result.Parts) == 0 {
 			continue
 		}
 		if result.Tokens >= cfg.LargeBlockTokens {

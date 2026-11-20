@@ -1717,6 +1717,42 @@ git add server/internal/agent server/cmd/mindfs-server/main.go cli/cmd/startup.g
 git commit -m "feat(live-compact): Codex 按 harness 覆盖配置并完成端到端验收（Scope: G-MN）"
 ```
 
+**执行结果（2026-11-20）**：配置贯通落地 —— `fold.Config` 新增 `Harnesses map[string]HarnessOverride`
+与 `ForHarness(name)`（覆盖为 0 的字段回落节点值，`enabled=false` 把 `mode=on` 降为 `shadow`）；两处启动解析
+（`cli/cmd/startup.go`、`server/cmd/mindfs-server/main.go`）把 `live_compact.harness.<name>.*` 原样透传到
+`PoolOptions.LiveCompactHarnesses`；`proxy.Server` 按 harness 缓存运行时（`harnessRuntime`：各自的 config /
+archive / ledger / engine），Codex 的存档与账本落在 `<config-dir>/context/codex/` 与 `.../codex/ledger/`。
+
+**端到端验收第一次就把真缺陷打出来了**：隔离实例（端口 7460、真实 `codex-cli` 0.169.1 + `gpt-6-luna` 经 llmux、
+独立 `XDG_CONFIG_HOME`/`CODEX_HOME`）连读 4 个 49 KB 文件，日志里**一条 fold 都没有**，每条请求都是
+`candidates=0 gate=no-backlog`。抓下真实请求体（347,093 B）用内核回放才看清：Codex 的每个
+`custom_tool_call_output` 都是**两个** `input_text` 块（`Script completed / Wall time` 头 ≈47 B + 载荷 ≈40 KB，
+7/7 个输出全如此），而 `PlanCandidates` 当时要求 `len(result.Parts) == 1`，于是所有 Codex 结果都被跳过 ——
+上下文照涨，折叠永远不触发，正是用户报告的「只省了很少的 token」。修复（`fold/plan.go`）：
+多块结果改为「只折最大的那一块」（`largestPart`），候选资格不再看块数；`Text`/`Splice` 的「一次只换一个字面量」
+不变量不变。同时补两处守卫：① `fold/engine.go` 遇到渲染结果以 `PointerMarker` 开头直接跳过
+（`renderSkipFolded`）——否则「头 + 指针」这类多块结果的最大块就是上一轮的指针，会一轮包一层；
+② provider 路由此前**没有任何每请求观测行**（诊断时只能靠抓包），新增
+`[live-compact] provider=responses token=… gate=… candidates=… folded=… blocks=… saved_bytes=…`；
+`ShortToken` 对 `thread:<uuid>` 保留尾 8 位（此前每个 Codex 会话都打成 `token=thread:0`）。
+
+**验收数值（修复后，同一隔离实例）**：
+
+- 重负载会话 `1795174185-992e5137eb18`：`[live-compact] fold token=…# blocks=1 new_blocks=1 … gate=fold` 起，
+  随后 sticky/`no-backlog`；胶囊 `GET /api/sessions/<key>/context-saving?root=proj`：`requests: 9`、
+  `max_saved_bytes: 48746`、`blocks: 3`，末轮 `req_bytes=242653 → folded_bytes=193907`。回放同一 347 KB 真实
+  body：`candidates=6 blocks=6 tokens_est=45070 bytes=180257 outlen=172225`。
+- 追问「第一次读到的文件前 3 行是什么」，答案 `alpha-1-0x01 / beta-1-0x007 / gamma-1-0x00d` 与文件一致（指针可读回）。
+- 短负载复跑（`1795174712-c6c48c0d4ce2`，4 个文件各读首行）：`requests: 7`、`saved_bytes: 5889`、`blocks: 2`；
+  每轮新增的 Python 小输出进候选后 `skipped` 递增（指针比原文大），是预期行为；四条回复全部命中文件首行。
+- 反向验收：`live_compact.harness.codex.enabled=false` 重启后换新会话（`1795174335-20d0ef5dfa6c`）重跑同样负载，
+  日志零 fold 行、胶囊 `requests: 0`；改回后立刻恢复折叠。
+- 变异验证：多块收窄改回「块数必须为 1」→ 3 条用例 RED；去掉指针守卫 → 内核用例 RED；`ShortToken` 退回前缀 →
+  日志用例 RED（重现 `token=thread:0`）；`provider=responses` 字段缺失 → 观测行用例 RED。各自还原后复绿。
+
+**门禁**：`go test ./server/internal/agent/...`（fold / fold/anthropic / fold/responses / proxy）全绿、
+`go build ./server/...` 成功；全仓 `go test -count=1 ./...`、干净 worktree 的 `make check-upstream` 见提交记录。
+
 ---
 
 ## 执行顺序与依赖

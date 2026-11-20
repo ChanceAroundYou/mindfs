@@ -92,7 +92,12 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	var pending *foldLedgerPending
 	if key != "" && r.Method == http.MethodPost {
-		body, _, pending, _ = s.foldRequestLedgerFor(key, "responses", body)
+		var result foldResult
+		var gate liveCompactGate
+		body, result, pending, gate = s.foldRequestLedgerFor(key, "responses", body)
+		if gate.decision != "" {
+			logLiveCompactProvider(key, gate, result)
+		}
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(body))

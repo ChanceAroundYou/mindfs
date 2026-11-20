@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"mindfs/server/app"
 )
 
 type startupConfig struct {
@@ -60,6 +62,25 @@ type startupLiveCompactConfig struct {
 	ColdFold           *bool    `json:"cold_fold"`
 	ColdRailTokens     *int     `json:"cold_rail_tokens"`
 	CacheTTLSeconds    *int     `json:"cache_ttl_seconds"`
+	// Harness 按 harness 覆盖上面的策略（`live_compact.harness.codex.*`）。
+	Harness map[string]startupLiveCompactHarnessConfig `json:"harness"`
+}
+
+// startupLiveCompactHarnessConfig 只写与节点值不同的字段；缺省字段沿用全局值。
+type startupLiveCompactHarnessConfig struct {
+	Enabled          *bool `json:"enabled"`
+	KeepRounds       *int  `json:"keep_rounds"`
+	KeepTailTokens   *int  `json:"keep_tail_tokens"`
+	MinBlockTokens   *int  `json:"min_block_tokens"`
+	MinBodyBytes     *int  `json:"min_body_bytes"`
+	RailTokens       *int  `json:"rail_tokens"`
+	TargetTokens     *int  `json:"target_tokens"`
+	MinFoldBytes     *int  `json:"min_fold_bytes"`
+	MaxFoldBytes     *int  `json:"max_fold_bytes"`
+	LargeBlockTokens *int  `json:"large_block_tokens"`
+	ColdFold         *bool `json:"cold_fold"`
+	ColdRailTokens   *int  `json:"cold_rail_tokens"`
+	CacheTTLSeconds  *int  `json:"cache_ttl_seconds"`
 }
 
 // startupWorkflowConfig 是工作流执行的节点本地开关。不配置 = 默认值（并行开启）。
@@ -382,6 +403,49 @@ func firstBool(values ...*bool) *bool {
 		}
 	}
 	return nil
+}
+
+// liveCompactHarnessOverrides 把 `live_compact.harness.<name>` 转成 fold 内核的
+// 覆盖表。`make build` 装的是本命令（不是 server/cmd/mindfs-server），所以这条
+// 转换必须落在这里：少了它，harness 段会被解析后静默丢掉，Codex 只会按节点值折叠
+// （实测症状是 codex 请求一路 gate=below-rail，胶囊永远 0 条）。
+func liveCompactHarnessOverrides(cfg startupConfig) map[string]app.LiveCompactHarnessOverride {
+	if cfg.LiveCompact == nil || len(cfg.LiveCompact.Harness) == 0 {
+		return nil
+	}
+	out := make(map[string]app.LiveCompactHarnessOverride, len(cfg.LiveCompact.Harness))
+	for name, h := range cfg.LiveCompact.Harness {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		out[key] = app.LiveCompactHarnessOverride{
+			Enabled:          h.Enabled,
+			KeepRounds:       intValue(h.KeepRounds),
+			KeepTailTokens:   intValue(h.KeepTailTokens),
+			MinBlockTokens:   intValue(h.MinBlockTokens),
+			MinBodyBytes:     intValue(h.MinBodyBytes),
+			RailTokens:       intValue(h.RailTokens),
+			TargetTokens:     intValue(h.TargetTokens),
+			MinFoldBytes:     intValue(h.MinFoldBytes),
+			MaxFoldBytes:     intValue(h.MaxFoldBytes),
+			LargeBlockTokens: intValue(h.LargeBlockTokens),
+			ColdFold:         h.ColdFold,
+			ColdRailTokens:   intValue(h.ColdRailTokens),
+			CacheTTLSeconds:  intValue(h.CacheTTLSeconds),
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func intValue(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func startBackgroundProcess(logPath string) error {

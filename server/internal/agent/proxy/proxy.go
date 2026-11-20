@@ -61,10 +61,11 @@ type Server struct {
 	// ledger is the per-session fold ledger behind the context chip. Nil when
 	// no directory is configured.
 	ledger *fold.LedgerStore
-	// engines holds one fold engine per harness wire format. The policy lives
-	// in the kernel; the proxy only decides which adapter a request belongs to.
-	engineMu sync.Mutex
-	engines  map[string]*fold.Engine
+	// harnessRuntimes holds one runtime per agent harness: its config (node
+	// values with the harness override applied), its archive and ledger, and
+	// its engine. Guarded by harnessMu; built on first use.
+	harnessMu       sync.Mutex
+	harnessRuntimes map[string]*harnessRuntime
 
 	// providers maps a provider name to the real base URL behind /c/{name}/...
 	// (see provider_route.go). Kept apart from sessions because it is written
@@ -96,6 +97,10 @@ type Server struct {
 }
 
 type sessionState struct {
+	// harness is the agent runtime this session belongs to. It selects the
+	// config override, the archive and the ledger. Empty means the default
+	// harness (Claude Code).
+	harness     string
 	realBaseURL string // e.g. "https://openwrt.xiaokubao.space/llmux/v1"
 	compactions int    // PostCompact signals seen (observability only)
 	requests    int    // proxied requests (first one is logged as evidence)
@@ -130,10 +135,11 @@ func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
 		return nil, fmt.Errorf("proxy: listen: %w", err)
 	}
 	s := &Server{
-		sessions:    make(map[string]*sessionState),
-		liveCompact: cfg,
-		listener:    ln,
-		workQueues:  make(map[string][]liveCompactJob),
+		sessions:        make(map[string]*sessionState),
+		liveCompact:     cfg,
+		harnessRuntimes: make(map[string]*harnessRuntime),
+		listener:        ln,
+		workQueues:      make(map[string][]liveCompactJob),
 	}
 	if cfg.ArchiveEnabled && cfg.ArchiveDir != "" {
 		s.archive = newArchiveStore(cfg.ArchiveDir,
@@ -141,6 +147,17 @@ func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
 		s.pointerCache = newPointerCache()
 		s.ledger = fold.NewLedgerStore(filepath.Join(cfg.ArchiveDir, fold.LedgerDirName))
 	}
+	// The default harness runs on the node configuration and the server's own
+	// stores; registering it here means no later request opens them twice.
+	s.harnessMu.Lock()
+	s.harnessRuntimes[harnessClaude] = &harnessRuntime{
+		cfg:          cfg,
+		archive:      s.archive,
+		pointerCache: s.pointerCache,
+		ledger:       s.ledger,
+		engine:       fold.NewEngine(cfg, adapterForHarness(harnessClaude), s.archive, s.pointerCache),
+	}
+	s.harnessMu.Unlock()
 	s.initLiveCompactWorkers()
 	if cfg.Mode == LiveCompactOn && s.archive == nil {
 		// mode=on without an archive directory cannot fold: every pointer would
@@ -179,7 +196,7 @@ func (s *Server) RegisterSession(token, realBaseURL string) {
 // observations can be attributed without exposing the key in logs.
 func (s *Server) RegisterSessionWithKey(token, realBaseURL, sessionKey string) {
 	s.mu.Lock()
-	s.sessions[token] = &sessionState{realBaseURL: realBaseURL, sessionKey: sessionKey, foldAllowed: true}
+	s.sessions[token] = &sessionState{harness: harnessClaude, realBaseURL: realBaseURL, sessionKey: sessionKey, foldAllowed: true}
 	s.mu.Unlock()
 }
 
@@ -190,7 +207,7 @@ func (s *Server) RegisterSessionWithKey(token, realBaseURL, sessionKey string) {
 // silently become lossy.
 func (s *Server) RegisterSessionObserveOnly(token, realBaseURL, sessionKey string) {
 	s.mu.Lock()
-	s.sessions[token] = &sessionState{realBaseURL: realBaseURL, sessionKey: sessionKey, foldAllowed: false}
+	s.sessions[token] = &sessionState{harness: harnessClaude, realBaseURL: realBaseURL, sessionKey: sessionKey, foldAllowed: false}
 	s.mu.Unlock()
 }
 
@@ -416,9 +433,17 @@ func (f *flushWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// ShortToken is the log identity of a fold token. The first eight bytes are
+// enough for a Claude session key, but not for the provider route's
+// "thread:<uuid>": every Codex request would log as "thread:0". For those the
+// prefix is kept and the distinguishing tail is added.
 func ShortToken(token string) string {
-	if len(token) <= 8 {
+	const keep = 8
+	if len(token) <= keep {
 		return token
 	}
-	return token[:8]
+	if index := strings.LastIndexByte(token, ':'); index >= 0 && len(token)-index-1 > keep {
+		return token[:index+1] + token[len(token)-keep:]
+	}
+	return token[:keep]
 }

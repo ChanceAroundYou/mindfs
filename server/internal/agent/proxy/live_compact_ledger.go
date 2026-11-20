@@ -9,6 +9,7 @@ import (
 // foldLedgerPending is one folded request whose ledger line is not written yet:
 // the rewrite cost is only known once the response stream has ended.
 type foldLedgerPending struct {
+	harness        string
 	mode           string
 	reqBytes       int
 	forwardedBytes int
@@ -18,11 +19,12 @@ type foldLedgerPending struct {
 
 // newFoldLedgerPending captures the sizes a fold event will report. Returns nil
 // when no ledger is configured, so the request path pays nothing for it.
-func (s *Server) newFoldLedgerPending(mode string, originalBytes, forwardedBytes int, result foldResult, elapsed time.Duration) *foldLedgerPending {
-	if s.ledger == nil {
+func (s *Server) newFoldLedgerPending(harness, mode string, originalBytes, forwardedBytes int, result foldResult, elapsed time.Duration) *foldLedgerPending {
+	if s.harnessRuntimeFor(harness).ledger == nil {
 		return nil
 	}
 	return &foldLedgerPending{
+		harness:        harness,
 		mode:           mode,
 		reqBytes:       originalBytes,
 		forwardedBytes: forwardedBytes,
@@ -57,7 +59,11 @@ func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, total
 // writeFoldLedgerUsage appends the pending line from a normalized usage block,
 // which is what lets both wire formats share one ledger shape.
 func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, usage fold.Usage) {
-	if s.ledger == nil || pending == nil {
+	if pending == nil {
+		return
+	}
+	rt := s.harnessRuntimeFor(pending.harness)
+	if rt.ledger == nil {
 		return
 	}
 	s.mu.Lock()
@@ -99,15 +105,16 @@ func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, 
 		UsageSource:        source,
 	}
 	// The ledger is a diagnostic; a failed write must not fail the turn.
-	_ = s.ledger.Write(sessionKey, entry)
+	_ = rt.ledger.Write(sessionKey, entry)
 }
 
 // SessionContextSaving returns the ledger summary for a session. It is the
 // read path behind the "context" chip, and it is safe to call for a session
 // that has never folded (returns a zero summary).
 func (s *Server) SessionContextSaving(sessionKey string) fold.ContextSaving {
-	if s.ledger == nil {
+	rt := s.harnessRuntimeFor(harnessForPoolKey(sessionKey))
+	if rt.ledger == nil {
 		return fold.ContextSaving{}
 	}
-	return fold.SummarizeLedger(s.ledger.Read(sessionKey))
+	return fold.SummarizeLedger(rt.ledger.Read(sessionKey))
 }

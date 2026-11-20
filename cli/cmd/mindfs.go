@@ -390,6 +390,7 @@ func main() {
 			TaskModel:                          taskModel,
 			WorkflowParallelMainTree:           *workflowParallelMainTreeFlag,
 			LiveCompactMode:                    *liveCompactModeFlag,
+			LiveCompactHarnesses:               liveCompactHarnessOverrides(startupCfg),
 			LiveCompactKeepRounds:              *liveCompactKeepRoundsFlag,
 			LiveCompactKeepTailTokens:          liveCompactKeepTailTokens,
 			LiveCompactMinBlockTokens:          *liveCompactMinBlockTokensFlag,

@@ -4,8 +4,6 @@ import (
 	"time"
 
 	"mindfs/server/internal/agent/fold"
-	"mindfs/server/internal/agent/fold/anthropic"
-	"mindfs/server/internal/agent/fold/responses"
 )
 
 // The request-path entry point and the per-session calibrations it reads.
@@ -34,13 +32,15 @@ func (s *Server) foldRequest(token string, body []byte) ([]byte, foldResult, liv
 //
 // Any error path returns the original body (I7).
 func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResult, *foldLedgerPending, liveCompactGate) {
-	return s.foldRequestLedgerFor(token, "anthropic", body)
+	return s.foldRequestLedgerFor(token, adapterAnthropic, body)
 }
 
 // foldRequestLedgerFor is foldRequestLedger for one wire format: the policy is
 // the same for every harness, only the adapter that parses and splices differs.
 func (s *Server) foldRequestLedgerFor(token, adapter string, body []byte) ([]byte, foldResult, *foldLedgerPending, liveCompactGate) {
-	cfg := s.liveCompact
+	harness := harnessForAdapter(adapter)
+	rt := s.harnessRuntimeFor(harness)
+	cfg := rt.cfg
 	if !cfg.Observes() {
 		return body, foldResult{}, nil, liveCompactGate{}
 	}
@@ -67,9 +67,9 @@ func (s *Server) foldRequestLedgerFor(token, adapter string, body []byte) ([]byt
 	// Only mode=on with an archive may rewrite. Everything else rehearses the
 	// same policy: shadow reports the decision and the savings a fold would
 	// produce without touching a byte (design §12.6 观测).
-	allowed := cfg.Mode == LiveCompactOn && s.archive != nil
+	allowed := cfg.Mode == LiveCompactOn && rt.archive != nil
 	session := s.foldSession(token)
-	out, err := s.foldEngineFor(adapter).Fold(fold.Request{
+	out, err := rt.engine.Fold(fold.Request{
 		Body:           body,
 		Session:        session,
 		Now:            start,
@@ -104,12 +104,12 @@ func (s *Server) foldRequestLedgerFor(token, adapter string, body []byte) ([]byt
 	result := foldResultFromOutcome(out)
 	if out.Folded {
 		logLiveCompactFold(token, result, gate.decision, time.Since(start))
-		pending := s.newFoldLedgerPending(cfg.Mode, len(body), len(out.Body), result, time.Since(start))
+		pending := s.newFoldLedgerPending(harness, cfg.Mode, len(body), len(out.Body), result, time.Since(start))
 		// Sweep after committing, and protect what this node still points at.
 		// Without the protection set, disk pressure would delete an archive
 		// whose pointer is already inside the model's context; the block would
 		// then silently unfold and the whole folded prefix would be resent.
-		s.archive.SweepProtected(time.Now(), s.referencedArchives())
+		rt.archive.SweepProtected(time.Now(), s.referencedArchives())
 		forwarded := est - result.foldedTokens
 		if forwarded < 0 {
 			forwarded = 0
@@ -121,32 +121,12 @@ func (s *Server) foldRequestLedgerFor(token, adapter string, body []byte) ([]byt
 	return body, result, nil, gate
 }
 
-// foldEngine returns the per-adapter engine, creating it on first use. The
-// configuration is fixed for the life of the server, so one snapshot is enough.
-//
-// One engine per wire format, because an engine holds its adapter and the
-// adapter is the only protocol-aware part. The two transports reach it through
-// different routes: Claude Code's `/p/{token}/...` (Messages) and Codex's
-// `/c/{provider}/...` (Responses).
-func (s *Server) foldEngineFor(adapter string) *fold.Engine {
-	s.engineMu.Lock()
-	defer s.engineMu.Unlock()
-	if engine, ok := s.engines[adapter]; ok {
-		return engine
-	}
-	var impl fold.Adapter
-	switch adapter {
-	case "responses":
-		impl = responses.New()
-	default:
-		impl = anthropic.New()
-	}
-	engine := fold.NewEngine(s.liveCompact, impl, s.archive, s.pointerCache)
-	if s.engines == nil {
-		s.engines = make(map[string]*fold.Engine)
-	}
-	s.engines[adapter] = engine
-	return engine
+// foldEngineFor returns one harness's engine. An engine holds its adapter and
+// its configuration, and the adapter is the only protocol-aware part; the two
+// transports reach it through different routes — Claude Code's
+// `/p/{token}/...` (Messages) and Codex's `/c/{provider}/...` (Responses).
+func (s *Server) foldEngineFor(harness string) *fold.Engine {
+	return s.harnessRuntimeFor(harness).engine
 }
 
 // previousEstimate returns the previous request's pre-fold size. It must be
@@ -304,9 +284,10 @@ func (s *Server) sessionFoldCommits(token string) *foldCommits {
 		return commits
 	}
 	sessionKey := st.sessionKey
+	harness := st.harness
 	s.mu.Unlock()
 
-	commits := newFoldCommitsFor(s.commitLogFor(sessionKey))
+	commits := newFoldCommitsFor(s.commitLogFor(harness, sessionKey))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -324,11 +305,12 @@ func (s *Server) sessionFoldCommits(token string) *foldCommits {
 // when they must not be. Shadow rehearses the policy without folding, so it
 // must not write commitments; and without an archive there is nothing for a
 // pointer to reference.
-func (s *Server) commitLogFor(sessionKey string) *commitLog {
-	if s.liveCompact.Mode != LiveCompactOn || s.archive == nil {
+func (s *Server) commitLogFor(harness, sessionKey string) *commitLog {
+	rt := s.harnessRuntimeFor(harness)
+	if rt.cfg.Mode != LiveCompactOn || rt.archive == nil {
 		return nil
 	}
-	return newCommitLog(s.archive.Dir(), sessionKey)
+	return newCommitLog(rt.archive.Dir(), sessionKey)
 }
 
 // referencedArchives is the sweep protection set: every archive named by a

@@ -129,6 +129,77 @@ type Config struct {
 	// prefix is assumed evicted upstream. Zero means the default (300, the
 	// Anthropic 5-minute cache TTL).
 	CacheTTLSeconds int
+	// Harnesses adjusts the policy for one agent harness without changing the
+	// node-wide values. It exists because the harnesses differ in window size
+	// and in how eagerly they compact their own context; a Codex session can
+	// wait for a higher rail and still fold in time, while a Claude Code
+	// session cannot. Keyed by harness name ("claude", "codex"); an unlisted
+	// harness runs with the node configuration unchanged. Never read by the
+	// engine itself — callers apply it with ForHarness.
+	Harnesses map[string]HarnessOverride
+}
+
+// HarnessOverride replaces individual fields of a Config for one harness. A
+// zero (or nil) field keeps the node-wide value, so an override says only what
+// differs.
+type HarnessOverride struct {
+	// Enabled=false keeps the harness observing but never rewriting: the chip
+	// and the logs still work, which is what makes it safe to ship one harness
+	// ahead of the other.
+	Enabled          *bool
+	KeepRounds       int
+	KeepTailTokens   int
+	MinBlockTokens   int
+	MinBodyBytes     int
+	RailTokens       int
+	TargetTokens     int
+	MinFoldBytes     int
+	MaxFoldBytes     int
+	LargeBlockTokens int
+	ColdFold         *bool
+	ColdRailTokens   int
+	CacheTTLSeconds  int
+}
+
+// Folds reports whether this configuration may rewrite a request.
+func (c Config) Folds() bool {
+	return c.Mode == ModeOn
+}
+
+// ForHarness returns the configuration one harness runs with: the node-wide
+// configuration with that harness's override applied. The result is normalized
+// again so an override that zeroes nothing still gets the defaults.
+func (c Config) ForHarness(name string) Config {
+	override, ok := c.Harnesses[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return c
+	}
+	out := c
+	pick := func(dst *int, value int) {
+		if value != 0 {
+			*dst = value
+		}
+	}
+	pick(&out.KeepRounds, override.KeepRounds)
+	pick(&out.KeepTailTokens, override.KeepTailTokens)
+	pick(&out.MinBlockTokens, override.MinBlockTokens)
+	pick(&out.MinBodyBytes, override.MinBodyBytes)
+	pick(&out.RailTokens, override.RailTokens)
+	pick(&out.TargetTokens, override.TargetTokens)
+	pick(&out.MinFoldBytes, override.MinFoldBytes)
+	pick(&out.MaxFoldBytes, override.MaxFoldBytes)
+	pick(&out.LargeBlockTokens, override.LargeBlockTokens)
+	pick(&out.ColdRailTokens, override.ColdRailTokens)
+	pick(&out.CacheTTLSeconds, override.CacheTTLSeconds)
+	if override.ColdFold != nil {
+		out.ColdFold = override.ColdFold
+	}
+	if override.Enabled != nil && !*override.Enabled && out.Mode == ModeOn {
+		// Observe-only, not off: a disabled harness still reports what it would
+		// have saved, and the emergency brake stays independent.
+		out.Mode = ModeShadow
+	}
+	return out.Normalized()
 }
 
 // PrefixGuardOn reports whether the preserved-thinking guard is enabled. The

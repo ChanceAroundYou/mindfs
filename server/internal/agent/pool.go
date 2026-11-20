@@ -11,6 +11,7 @@ import (
 	"mindfs/server/internal/agent/acp"
 	"mindfs/server/internal/agent/claude"
 	"mindfs/server/internal/agent/codex"
+	"mindfs/server/internal/agent/fold"
 	"mindfs/server/internal/agent/proxy"
 	agenttypes "mindfs/server/internal/agent/types"
 )
@@ -75,6 +76,8 @@ type PoolOptions struct {
 	LiveCompactColdFold        *bool
 	LiveCompactColdRailTokens  int
 	LiveCompactCacheTTLSeconds int
+	// LiveCompactHarnesses 按 harness 覆盖节点策略（`live_compact.harness.*`）。
+	LiveCompactHarnesses map[string]fold.HarnessOverride
 }
 
 // NewPool creates a new agent pool with default options.
@@ -118,6 +121,7 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 		ColdFold:           opts.LiveCompactColdFold,
 		ColdRailTokens:     opts.LiveCompactColdRailTokens,
 		CacheTTLSeconds:    opts.LiveCompactCacheTTLSeconds,
+		Harnesses:          opts.LiveCompactHarnesses,
 	}); err == nil {
 		p.compactProxy = ps
 		log.Printf("[agent/pool] compact-strip proxy listening on 127.0.0.1:%d live_compact=%s", ps.Port(), ps.LiveCompactMode())
@@ -368,6 +372,28 @@ func (p *Pool) takeSessions(match func(*sessionEntry) bool) []*sessionEntry {
 		delete(p.sessions, key)
 	}
 	return entries
+}
+
+// RegisterThread records the thread id the adapter finally learned and makes
+// the proxy fold that thread as this session's traffic. Called once per thread
+// from the codex event loop; a resumed session registers at open instead. The
+// entry is only updated while it still belongs to this thread's session, so a
+// late callback from a closed session cannot resurrect its mapping.
+func (p *Pool) RegisterThread(sessionKey, threadID string) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	threadID = strings.TrimSpace(threadID)
+	if sessionKey == "" || threadID == "" || p.compactProxy == nil {
+		return
+	}
+	p.mu.Lock()
+	entry := p.sessions[sessionKey]
+	if entry == nil || entry.closing {
+		p.mu.Unlock()
+		return
+	}
+	entry.threadID = threadID
+	p.mu.Unlock()
+	p.compactProxy.RegisterThread(threadID, sessionKey)
 }
 
 func (p *Pool) closeSessions(entries []*sessionEntry) {

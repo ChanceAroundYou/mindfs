@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"mindfs/server/app"
+	"mindfs/server/internal/agent/fold"
 	"mindfs/server/internal/config"
 )
 
@@ -138,6 +139,7 @@ func main() {
 		LiveCompactColdFold:                &liveCompactColdFold,
 		LiveCompactColdRailTokens:          liveCompactColdRailTokens,
 		LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
+		LiveCompactHarnesses:               liveCompactHarnessOverrides(&startupCfg),
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -186,6 +188,26 @@ type startupLiveCompactConfig struct {
 	ColdFold           *bool    `json:"cold_fold"`
 	ColdRailTokens     *int     `json:"cold_rail_tokens"`
 	CacheTTLSeconds    *int     `json:"cache_ttl_seconds"`
+	// Harness 按 harness 覆盖上面的策略（`live_compact.harness.codex.*`）。
+	// 只走 config.json：这是节点调参，不是每条命令都要带的东西。
+	Harness map[string]startupLiveCompactHarnessConfig `json:"harness"`
+}
+
+// startupLiveCompactHarnessConfig 只写与节点值不同的字段；缺省字段沿用全局值。
+type startupLiveCompactHarnessConfig struct {
+	Enabled          *bool `json:"enabled"`
+	KeepRounds       *int  `json:"keep_rounds"`
+	KeepTailTokens   *int  `json:"keep_tail_tokens"`
+	MinBlockTokens   *int  `json:"min_block_tokens"`
+	MinBodyBytes     *int  `json:"min_body_bytes"`
+	RailTokens       *int  `json:"rail_tokens"`
+	TargetTokens     *int  `json:"target_tokens"`
+	MinFoldBytes     *int  `json:"min_fold_bytes"`
+	MaxFoldBytes     *int  `json:"max_fold_bytes"`
+	LargeBlockTokens *int  `json:"large_block_tokens"`
+	ColdFold         *bool `json:"cold_fold"`
+	ColdRailTokens   *int  `json:"cold_rail_tokens"`
+	CacheTTLSeconds  *int  `json:"cache_ttl_seconds"`
 }
 
 type startupTaskConfig struct {
@@ -462,4 +484,45 @@ func firstBool(values ...*bool) *bool {
 		}
 	}
 	return nil
+}
+
+// liveCompactHarnessOverrides reads live_compact.harness.<name> from config.json.
+// Absent section means every harness runs the node configuration unchanged.
+func liveCompactHarnessOverrides(cfg *startupConfig) map[string]fold.HarnessOverride {
+	if cfg == nil || cfg.LiveCompact == nil || len(cfg.LiveCompact.Harness) == 0 {
+		return nil
+	}
+	out := make(map[string]fold.HarnessOverride, len(cfg.LiveCompact.Harness))
+	for name, h := range cfg.LiveCompact.Harness {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		out[key] = fold.HarnessOverride{
+			Enabled:          h.Enabled,
+			KeepRounds:       intValue(h.KeepRounds),
+			KeepTailTokens:   intValue(h.KeepTailTokens),
+			MinBlockTokens:   intValue(h.MinBlockTokens),
+			MinBodyBytes:     intValue(h.MinBodyBytes),
+			RailTokens:       intValue(h.RailTokens),
+			TargetTokens:     intValue(h.TargetTokens),
+			MinFoldBytes:     intValue(h.MinFoldBytes),
+			MaxFoldBytes:     intValue(h.MaxFoldBytes),
+			LargeBlockTokens: intValue(h.LargeBlockTokens),
+			ColdFold:         h.ColdFold,
+			ColdRailTokens:   intValue(h.ColdRailTokens),
+			CacheTTLSeconds:  intValue(h.CacheTTLSeconds),
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func intValue(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }

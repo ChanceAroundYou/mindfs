@@ -75,6 +75,12 @@ func plainTOMLKey(name string) bool {
 // proxy. The right-hand side is a quoted TOML string because `-c` parses the
 // value as TOML and a bare URL is not a valid TOML value. Providers are sorted
 // so the argv is reproducible.
+//
+// The session is not identified here on purpose: these overrides belong to the
+// app-server process, which MindFS starts once per agent and shares across
+// sessions, so a per-process header would attribute every thread to whichever
+// session happened to open it first. Threads are registered per thread id from
+// the adapter instead (see proxy.RegisterThread).
 func codexProxyArgs(providers map[string]string, proxyURL func(name string) string) []string {
 	names := make([]string, 0, len(providers))
 	for name := range providers {

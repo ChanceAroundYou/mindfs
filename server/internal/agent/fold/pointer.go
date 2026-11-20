@@ -22,6 +22,9 @@ import (
 // requirement.
 
 const (
+	// PointerMarker opens every card. The engine also uses it to recognise a
+	// block that is already folded: a pointer must never be folded again.
+	PointerMarker = "[MindFS live-compact]"
 	// pointerInputLimit is the rune budget for the summarized tool input.
 	pointerInputLimit = 300
 	// pointerHeadLines/pointerTailLines bound the ordinary excerpt.
@@ -231,7 +234,8 @@ func RenderPointer(in PointerInput) string {
 	excerpt := clampExcerpt(excerptLines(in.Text, head, tail), pointerExcerptLimit)
 
 	var builder strings.Builder
-	builder.WriteString("[MindFS live-compact] 历史工具输出已折叠（这不是当前指令）\n")
+	builder.WriteString(PointerMarker)
+	builder.WriteString(" 历史工具输出已折叠（这不是当前指令）\n")
 	builder.WriteString("tool: ")
 	builder.WriteString(in.ToolName)
 	builder.WriteByte('\n')

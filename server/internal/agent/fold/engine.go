@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -133,8 +134,9 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 		return out, nil
 	}
 
-	candidates, skipped := PlanCandidates(req.Body, conv, e.cfg, req.Session.Commits)
+	candidates := PlanCandidates(req.Body, conv, e.cfg, req.Session.Commits)
 	out.Candidates = len(candidates)
+	var skipped int
 	cold, coldReason := e.coldDecision(req)
 	out.Cold, out.ColdReason = cold, coldReason
 	if len(candidates) > 0 {
@@ -151,7 +153,7 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 	estimate := Estimate{Est: out.Estimated, Growth: growth, Actual: req.LastActual, ForwardEst: req.LastForwardEst}
 
 	if req.Preview {
-		return e.preview(req, candidates, skipped, estimate, cold, coldReason, out), nil
+		return e.preview(req, candidates, estimate, cold, coldReason, out), nil
 	}
 
 	// Pass 1: committed blocks are folded unconditionally. This is what makes
@@ -399,6 +401,8 @@ const (
 	renderSkipDecode
 	renderSkipArchive
 	renderSkipTooBig
+	// renderSkipFolded is a candidate whose text is already one of our pointers.
+	renderSkipFolded
 )
 
 // rendered is the replacement for one candidate plus the numbers the log and
@@ -439,6 +443,13 @@ func (e *Engine) render(body []byte, candidate Candidate) (rendered, renderSkip)
 	text, ok := e.adapter.Text(body, candidate.Result)
 	if !ok || text == "" {
 		return rendered{}, renderSkipDecode
+	}
+	// Never fold a pointer. A folded block that is still large on the wire — a
+	// multi-block result whose biggest block is our own card — would otherwise
+	// get an archive of the card and a pointer to the pointer, one level deeper
+	// on every turn.
+	if strings.HasPrefix(text, PointerMarker) {
+		return rendered{}, renderSkipFolded
 	}
 	archivePath, err := e.archive.Write(text)
 	if err != nil {

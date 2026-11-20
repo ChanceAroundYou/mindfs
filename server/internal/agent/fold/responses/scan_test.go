@@ -87,9 +87,10 @@ func TestScanAllowsStatelessRequest(t *testing.T) {
 	}
 }
 
-// An output with more than one text block cannot be replaced by a single
-// pointer without changing the block structure, so it must never be a
-// candidate — the engine folds only single-part results.
+// Every text block keeps its own span: the planner needs all of them to pick
+// the one a pointer may replace (see PlanCandidates — it folds the largest
+// block only). Codex sends every tool result this way, header block plus
+// payload, which is why the planner may not require a single part.
 func TestScanKeepsEveryTextBlockOfMultiPartOutput(t *testing.T) {
 	body := []byte(`{"model":"m","input":[
 		{"type":"custom_tool_call","call_id":"c1","name":"exec","input":"x"},

@@ -197,10 +197,17 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 		}
 		args := append([]string{}, def.Args...)
 		var onCompact func(string)
+		var onThreadStarted func(string)
 		if p.compactProxy != nil {
 			// Codex compacts by itself; tell the proxy the next request's cache
 			// is cold so that fold is free.
 			onCompact = p.compactProxy.SignalCompact
+			// A new thread has no id at open time; the adapter reports it once
+			// the app server assigns one, and that is when the proxy can start
+			// attributing this session's provider traffic.
+			onThreadStarted = func(threadID string) {
+				p.RegisterThread(in.SessionKey, threadID)
+			}
 			// Codex reads its providers from config.toml. Point each of them at
 			// the proxy with a command-line override rather than editing that
 			// file: the user's configuration stays untouched, and a profile
@@ -235,6 +242,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			ForkSessionID:         in.ForkPoint.AgentSessionID,
 			CodexUserOrdinal:      codexUserOrdinal,
 			OnCompact:             onCompact,
+			OnThreadStarted:       onThreadStarted,
 		})
 	case ProtocolACP:
 		fallthrough

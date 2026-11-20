@@ -22,6 +22,9 @@ const threadKeyPrefix = "thread:"
 func threadStateKey(threadID string) string { return threadKeyPrefix + threadID }
 
 // RegisterThread makes a Codex thread foldable as the given MindFS session.
+// The thread id is only known once the first turn starts (`thread/started`),
+// so the codex adapter reports it through OpenOptions.OnThreadStarted and the
+// pool registers it here; a resumed session already has the id at open time.
 // Registering the same thread again (a resumed session) replaces the mapping,
 // keeping the session key current.
 func (s *Server) RegisterThread(threadID, sessionKey string) {
@@ -31,6 +34,7 @@ func (s *Server) RegisterThread(threadID, sessionKey string) {
 	}
 	s.mu.Lock()
 	s.sessions[threadStateKey(threadID)] = &sessionState{
+		harness:     harnessCodex,
 		sessionKey:  sessionKey,
 		foldAllowed: true,
 	}

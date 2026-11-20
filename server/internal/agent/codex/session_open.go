@@ -32,6 +32,11 @@ type OpenOptions struct {
 	// compacted its own context. The pool uses it to tell the proxy that the
 	// next request's prefix cache is cold.
 	OnCompact func(threadID string)
+	// OnThreadStarted reports the thread id once the app server assigns it.
+	// A brand-new thread has no id at open time (StartThread returns before
+	// `thread/start` runs), so this is how the pool learns which MindFS
+	// session the proxy traffic belongs to.
+	OnThreadStarted func(threadID string)
 }
 
 type Runtime struct {
@@ -110,6 +115,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		sessionKey:    opts.SessionKey,
 		planMode:      opts.PlanMode,
 		onCompact:     opts.OnCompact,
+		onThreadStart: opts.OnThreadStarted,
 		questionWaits: make(map[string]chan codexAskUserAnswerResult),
 		agentDebugLog: logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
 	}

@@ -158,6 +158,27 @@ func TestEngineFoldsCommittedBlocksAfterFirstPass(t *testing.T) {
 	}
 }
 
+// A block that is already a pointer must never be folded again. The case is
+// real: a multi-block result whose largest block is our own card (the header
+// block stays next to it) would otherwise get an archive of the card and a
+// pointer to the pointer, one level deeper each turn.
+func TestEngineNeverFoldsAnExistingPointer(t *testing.T) {
+	e := newTestEngine(t, &fakeAdapter{})
+	session := newTestSession()
+	card := PointerMarker + " 历史工具输出已折叠（这不是当前指令）\n" + strings.Repeat("y", 20000)
+	body := []byte(`{"items":["` + card + `"]}`)
+	out, err := e.Fold(Request{Body: body, Session: session, Now: time.Now(), FoldAllowed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Folded || out.NewBlocks != 0 || string(out.Body) != string(body) {
+		t.Fatalf("pointer re-folded: %+v", out)
+	}
+	if out.Candidates != 1 || out.Skipped != 1 {
+		t.Fatalf("candidate must be planned and skipped: %+v", out)
+	}
+}
+
 func TestEngineFallsBackOnSpliceError(t *testing.T) {
 	e := newTestEngine(t, &fakeAdapter{spliceErr: true})
 	body := []byte(`{"items":["` + bigItem() + `"]}`)

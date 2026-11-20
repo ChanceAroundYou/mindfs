@@ -24,7 +24,7 @@ func TestSignalCompactMarksNextDecisionCold(t *testing.T) {
 	decide := func() fold.Outcome {
 		t.Helper()
 		session := s.foldSession(key)
-		out, err := s.foldEngineFor("responses").Fold(fold.Request{
+		out, err := s.foldEngineFor(harnessCodex).Fold(fold.Request{
 			Body:        codexTestBody(),
 			Session:     session,
 			Now:         time.Now(),

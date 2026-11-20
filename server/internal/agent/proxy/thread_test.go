@@ -86,7 +86,7 @@ func TestCodexRequestUsesRegisteredThreadSession(t *testing.T) {
 	}
 	defer s.Close()
 	s.RegisterProvider("llmux", upstream.URL+"/v1")
-	s.RegisterThread("thread-1", "mindfs-session-key")
+	s.RegisterThread("thread-1", "codex-mindfs-session-key")
 
 	body := codexTestBody()
 	postCodexThread(t, s, "session-id", "thread-1", body)
@@ -99,7 +99,7 @@ func TestCodexRequestUsesRegisteredThreadSession(t *testing.T) {
 	var saving fold.ContextSaving
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		saving = s.SessionContextSaving("mindfs-session-key")
+		saving = s.SessionContextSaving("codex-mindfs-session-key")
 		if saving.Requests > 0 || time.Now().After(deadline) {
 			break
 		}

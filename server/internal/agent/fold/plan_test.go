@@ -9,7 +9,8 @@ import (
 // resultSpec describes one result in the neutral conversation the planner sees.
 type resultSpec struct {
 	bytes   int
-	parts   int // 0 means one part
+	parts   int   // 0 means one part
+	sizes   []int // per-part payload sizes; overrides parts/bytes when set
 	nonText bool
 	failed  bool
 }
@@ -32,16 +33,23 @@ func buildConv(specs [][]resultSpec) (*Conversation, []byte) {
 			}
 			call++
 			if !spec.nonText {
-				parts := spec.parts
-				if parts == 0 {
-					parts = 1
+				sizes := spec.sizes
+				if len(sizes) == 0 {
+					count := spec.parts
+					if count == 0 {
+						count = 1
+					}
+					sizes = make([]int, count)
+					for part := range sizes {
+						sizes[part] = spec.bytes
+					}
 				}
-				for part := 0; part < parts; part++ {
+				for _, size := range sizes {
 					if len(body) > 0 {
 						body = append(body, ',')
 					}
 					start := len(body)
-					body = append(body, EncodeJSONStringLiteral(strings.Repeat("x", spec.bytes))...)
+					body = append(body, EncodeJSONStringLiteral(strings.Repeat("x", size))...)
 					result.Parts = append(result.Parts, Span{Start: start, End: len(body)})
 					result.Bytes += len(body) - start
 					result.Tokens += EstimateByteTokens(body[start:])
@@ -79,7 +87,7 @@ func TestPlanCandidatesProtectsNewestRounds(t *testing.T) {
 	})
 	cfg := planTestConfig()
 	cfg.KeepRounds = 1
-	candidates, _ := PlanCandidates(body, conv, cfg, nil)
+	candidates := PlanCandidates(body, conv, cfg, nil)
 	if got := strings.Join(candidateIDs(candidates), ","); got != "call-0,call-1" {
 		t.Fatalf("candidates = %s, want call-0,call-1", got)
 	}
@@ -93,7 +101,7 @@ func TestPlanCandidatesCarvesOutOversizedRound(t *testing.T) {
 	cfg := planTestConfig()
 	cfg.KeepRounds = 5 // every round inside the keep window
 	cfg.LargeBlockTokens = 1000
-	candidates, _ := PlanCandidates(body, conv, cfg, nil)
+	candidates := PlanCandidates(body, conv, cfg, nil)
 	if got := strings.Join(candidateIDs(candidates), ","); got != "call-1" {
 		t.Fatalf("candidates = %s, want the oversized round only", got)
 	}
@@ -107,24 +115,34 @@ func TestPlanCandidatesHonoursKeepTailTokens(t *testing.T) {
 	cfg := planTestConfig()
 	cfg.KeepRounds = 3
 	cfg.KeepTailTokens = 1500
-	candidates, _ := PlanCandidates(body, conv, cfg, nil)
+	candidates := PlanCandidates(body, conv, cfg, nil)
 	if got := strings.Join(candidateIDs(candidates), ","); got != "call-0,call-1" {
 		t.Fatalf("candidates = %s", got)
 	}
 }
 
-func TestPlanCandidatesSkipsNonTextAndMultiPart(t *testing.T) {
+// A result with several text blocks is foldable, but only through its largest
+// block: a pointer replaces one literal. Codex sends every tool result as a
+// header block plus the payload, so skipping multi-part results skipped the
+// entire harness (measured on a real 347 KB request, 2026-11-20).
+func TestPlanCandidatesFoldsLargestBlockOfMultiPartResult(t *testing.T) {
 	conv, body := buildConv([][]resultSpec{{
 		{bytes: 4000, nonText: true},
-		{bytes: 4000, parts: 2},
+		{parts: 2, sizes: []int{20, 4000}},
 		{bytes: 4000},
 	}})
-	candidates, multiPart := PlanCandidates(body, conv, planTestConfig(), nil)
-	if got := strings.Join(candidateIDs(candidates), ","); got != "call-2" {
+	candidates := PlanCandidates(body, conv, planTestConfig(), nil)
+	if got := strings.Join(candidateIDs(candidates), ","); got != "call-1,call-2" {
 		t.Fatalf("candidates = %s", got)
 	}
-	if multiPart != 1 {
-		t.Fatalf("multi-part count = %d, want 1", multiPart)
+	// call-1 must point at the payload literal (4000 bytes + two quotes), not at
+	// the 20-byte header.
+	parts := candidates[0].Result.Parts
+	if len(parts) != 1 {
+		t.Fatalf("parts = %d, want the largest block only", len(parts))
+	}
+	if got := parts[0].End - parts[0].Start; got != 4002 {
+		t.Fatalf("span width = %d, want 4002", got)
 	}
 }
 
@@ -134,7 +152,7 @@ func TestPlanCandidatesSkipsSmallFailedResult(t *testing.T) {
 		{bytes: 4000, failed: true}, // above it
 	}})
 	cfg := planTestConfig()
-	candidates, _ := PlanCandidates(body, conv, cfg, nil)
+	candidates := PlanCandidates(body, conv, cfg, nil)
 	if got := strings.Join(candidateIDs(candidates), ","); got != "call-1" {
 		t.Fatalf("candidates = %s", got)
 	}
@@ -143,13 +161,13 @@ func TestPlanCandidatesSkipsSmallFailedResult(t *testing.T) {
 func TestPlanCandidatesMarksCommitted(t *testing.T) {
 	conv, body := buildConv([][]resultSpec{{{bytes: 4000}}, {{bytes: 4000}}})
 	cfg := planTestConfig()
-	first, _ := PlanCandidates(body, conv, cfg, nil)
+	first := PlanCandidates(body, conv, cfg, nil)
 	if len(first) != 2 {
 		t.Fatalf("first pass candidates = %d", len(first))
 	}
 	commits := NewCommits()
 	commits.CommitAll([]PointerCacheKey{first[0].Key}, nil, nil)
-	second, _ := PlanCandidates(body, conv, cfg, commits)
+	second := PlanCandidates(body, conv, cfg, commits)
 	if len(second) != 2 {
 		t.Fatalf("second pass candidates = %d", len(second))
 	}

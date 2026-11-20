@@ -114,7 +114,7 @@ func (s *Server) liveCompactDisabled() bool {
 // the upstream call failed) so the log line can pair this request's estimate
 // with this request's usage.
 func (s *Server) observeLiveCompact(token string, body []byte, gate liveCompactGate) *liveCompactTurn {
-	cfg := s.liveCompact
+	cfg := s.harnessRuntimeFor(harnessClaude).cfg
 	if !cfg.Observes() || len(body) < cfg.MinBodyBytes {
 		return nil
 	}
@@ -146,7 +146,7 @@ func (s *Server) analyzeLiveCompactSafe(token string, turn *liveCompactTurn, bod
 }
 
 func (s *Server) analyzeLiveCompact(token string, turn *liveCompactTurn, body []byte) {
-	cfg := s.liveCompact
+	cfg := s.harnessRuntimeFor(harnessClaude).cfg
 	if !cfg.Observes() {
 		return
 	}

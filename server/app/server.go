@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"mindfs/server/internal/agent/fold"
 	"net"
 	"net/http"
 	"os"
@@ -94,7 +95,15 @@ type StartOptions struct {
 	LiveCompactColdFold        *bool
 	LiveCompactColdRailTokens  int
 	LiveCompactCacheTTLSeconds int
+	// LiveCompactHarnesses 按 harness 覆盖上面的策略（`live_compact.harness.*`）。
+	// nil = 所有 harness 都用节点配置。
+	LiveCompactHarnesses map[string]LiveCompactHarnessOverride
 }
+
+// LiveCompactHarnessOverride 是 fold.HarnessOverride 的可导入别名。
+// `cli/cmd` 不在 server/ 下，不能直接引用 internal 包，但它正是 `make build`
+// 安装的那个命令，所以这条配置只能经由本别名交到它手里。
+type LiveCompactHarnessOverride = fold.HarnessOverride
 
 // taskConfig 是新任务派发的默认 Agent/模型。它是节点本地配置，不进控制面：
 // 每台机器装了什么 Agent 各不相同。
@@ -232,6 +241,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		LiveCompactColdFold:           opts.LiveCompactColdFold,
 		LiveCompactColdRailTokens:     opts.LiveCompactColdRailTokens,
 		LiveCompactCacheTTLSeconds:    opts.LiveCompactCacheTTLSeconds,
+		LiveCompactHarnesses:          opts.LiveCompactHarnesses,
 	})
 	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
 	sharedProber.Start(ctx)

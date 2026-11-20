@@ -28,6 +28,7 @@ type session struct {
 	mu            sync.RWMutex
 	onUpdate      func(types.Event)
 	onCompact     func(threadID string)
+	onThreadStart func(threadID string)
 	turn          types.TurnCanceler
 	contextWindow types.ContextWindow
 	planTextByID  map[string]string
@@ -239,13 +240,22 @@ func (s *session) updateThreadIDFromThread() {
 	s.setThreadID(*id)
 }
 
+// setThreadID records the thread id and, the first time it becomes known,
+// tells the pool. A new thread has no id until `thread/started` arrives, so
+// this callback is what binds the thread to its MindFS session on the proxy.
 func (s *session) setThreadID(id string) {
-	if strings.TrimSpace(id) == "" {
+	id = strings.TrimSpace(id)
+	if id == "" {
 		return
 	}
 	s.mu.Lock()
+	changed := s.threadID != id
 	s.threadID = id
+	notify := s.onThreadStart
 	s.mu.Unlock()
+	if changed && notify != nil {
+		notify(id)
+	}
 }
 
 func (s *session) logRawToolItem(item codexsdk.ThreadItem) {

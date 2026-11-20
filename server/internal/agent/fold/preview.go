@@ -18,7 +18,7 @@ package fold
 // decision itself depends only on estimated tokens and eligibility.
 
 // preview applies the rail rules and reports what a fold would have done.
-func (e *Engine) preview(req Request, candidates []Candidate, skipped int, estimate Estimate, cold bool, coldReason string, out Outcome) Outcome {
+func (e *Engine) preview(req Request, candidates []Candidate, estimate Estimate, cold bool, coldReason string, out Outcome) Outcome {
 	if len(candidates) == 0 {
 		// Mirror the real path: report the rail arithmetic even with nothing to
 		// fold, so a rehearsal's projection is the real projection.
@@ -32,7 +32,6 @@ func (e *Engine) preview(req Request, candidates []Candidate, skipped int, estim
 		}
 		decided.Candidates = 0
 		out.Projected = decided.Projected
-		out.Skipped = skipped
 		out.Verdict = Verdict{Block: true, Reason: decided.Decision}
 		return out
 	}
@@ -118,7 +117,6 @@ func (e *Engine) preview(req Request, candidates []Candidate, skipped int, estim
 		}
 	}
 
-	out.Skipped = skipped
 	decided.WouldFoldTokens = out.FoldedTokens
 	decided.WouldFoldBlocks = out.FoldedBlocks
 	out.Verdict = Verdict{Block: true, Reason: decided.Decision}
