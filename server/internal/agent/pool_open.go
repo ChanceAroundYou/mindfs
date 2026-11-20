@@ -210,19 +210,31 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			}
 			// Codex reads its providers from config.toml. Point each of them at
 			// the proxy with a command-line override rather than editing that
-			// file: the user's configuration stays untouched, and a profile
-			// without [model_providers] (ChatGPT login) is left exactly as it is.
-			providers, err := codexProviderBaseURLs()
+			// file: the user's configuration stays untouched. A ChatGPT-login
+			// install has no provider to redirect, so one is synthesized and
+			// selected for it; an API-key install is left alone.
+			cfg, err := readCodexProviderConfig()
 			if err != nil {
 				// A malformed config is Codex's problem to report, not a reason
 				// to refuse the session.
 				log.Printf("[agent/pool] codex providers: %v", err)
 			}
-			if len(providers) > 0 {
-				for name, base := range providers {
-					p.compactProxy.RegisterProvider(name, base)
+			routing := planCodexRouting(cfg, codexChatGPTLogin(), p.compactProxy.ProviderProxyURL)
+			if len(routing.Providers) > 0 {
+				if proxyListening(fmt.Sprintf("http://127.0.0.1:%d", p.compactProxy.Port())) {
+					for name, base := range routing.Providers {
+						p.compactProxy.RegisterProvider(name, base)
+					}
+					args = append(args, routing.Args...)
+					if routing.Injected {
+						log.Printf("[agent/pool] codex official-login provider injected base=%s proxy=127.0.0.1:%d",
+							codexChatGPTBaseURL, p.compactProxy.Port())
+					}
+				} else {
+					// Fail open: without a reachable proxy the overrides would
+					// break every request, so Codex talks to its upstream directly.
+					log.Printf("[agent/pool] codex routing skipped: compact proxy not reachable")
 				}
-				args = append(args, codexProxyArgs(providers, p.compactProxy.ProviderProxyURL)...)
 			}
 		}
 		return p.codex.OpenSession(ctx, codex.OpenOptions{

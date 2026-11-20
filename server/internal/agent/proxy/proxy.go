@@ -67,11 +67,11 @@ type Server struct {
 	harnessMu       sync.Mutex
 	harnessRuntimes map[string]*harnessRuntime
 
-	// providers maps a provider name to the real base URL behind /c/{name}/...
+	// providers maps a provider name to the real upstream behind /c/{name}/...
 	// (see provider_route.go). Kept apart from sessions because it is written
 	// once at session open, not per request.
 	providerMu sync.Mutex
-	providers  map[string]string
+	providers  map[string]providerTarget
 	// unknownThreads remembers Codex threads nobody registered, so the log says
 	// so once instead of on every turn. Guarded by mu.
 	unknownThreads map[string]struct{}

@@ -1893,3 +1893,48 @@ Task 2/3/4/5 之间无代码依赖，可按任意顺序执行；但都在 Task 6
 - 折叠臂多出的 4 次工具调用是 3 次重复 `sed bravo 901-1200` 加 1 次读归档，属模型绕路，不影响结论。
 - 生产形态下 24 次读不折也只到 84% 窗口，说明 258k 窗口的 Codex 自动压缩来得更晚；折叠的价值体现在
   窗口余量（216k → 110k）与后续轮次的增长斜率，而不是「避免立刻压缩」。
+
+### B11 官方登录反代产品化（2026-11-21，`Scope: G-MN`）
+
+spike 证明机制可行，这一轮把它做成产品行为，四处改动，全部先 RED 后 GREEN，并逐项做变异验证。
+
+**1. ChatGPT 登录自动注入 provider**（`server/internal/agent/pool_codex_proxy.go`、`server/internal/agent/pool_open.go`）。
+`codex login` 的账号走内置 `openai` provider，config.toml 里**没有**任何 `[model_providers]` 条目可重定向，
+原先 `codexProviderBaseURLs()` 返回空 → 不加任何 `-c` → 官方登录完全没有折叠。现在：
+`readCodexProviderConfig()` 同时读出 `model_provider` 与各 provider 的 `base_url`，交给纯函数
+`planCodexRouting(cfg, chatGPTLogin, proxyURL)` 决策：
+
+- 用户配置了 provider → 照旧逐个重定向 `base_url`（行为不变）；
+- 选中项是内置 `openai`（未写或显式写 `openai`）**且** `codexChatGPTLogin()` 为真 → 合成
+  `mindfs-chatgpt` 并改选：`-c model_provider=…` / `.name` / `.base_url` / `.wire_api=responses` /
+  `.requires_openai_auth=true`；
+- 选中项是别人 → 只重定向，绝不改选。
+
+`codexChatGPTLogin()` 只看 `auth.json` 的形状（`tokens.access_token` 非空且 `OPENAI_API_KEY` 为空），
+凭据值不出函数、不落日志。API key 登录因此完全不受影响（它需要 `/v1` 形状与 bearer key）。
+
+**2. 路径形状跟随上游**（`server/internal/agent/proxy/provider_route.go`）。原先代理地址恒为
+`/c/{name}/v1`，而 ChatGPT 后端是 `/backend-api/codex`、没有版本段 —— spike 里靠一次性 shim 改写路径绕过，
+产品化必须自己解决。`RegisterProvider` 现在记录“配置的 base_url 是否以 `/v1` 结尾”，
+`ProviderProxyURL` 据此给出带或不带 `/v1` 的地址；转发仍是 `base + "/" + tail`，路由代码零改动。
+`/v1` 结尾的上游行为逐字不变（既有 `TestProviderProxyURLPointsAtThisServer` 仍绿）。
+
+**3. 失败开放**。注入是唯一可能让用户彻底失去 Codex 的一步，所以真正下发覆盖前做一次 250ms TCP 探活
+（`proxyListening`）；探不通就整体放弃覆盖、打一行日志，Codex 直连上游。此前“代理没起来”只意味着没有折叠，
+注入之后它会意味着会话全挂，这道闸门是那次风险变化的对价。
+
+**4. 指针页脚写硬**（`server/internal/agent/fold/pointer.go`）。3 轮验收里模型读完卡片先答
+「无法从当前可见内容确认」并重跑了原命令，被明确要求后才去读归档。页脚从「原文用 Read 打开 archive。」
+改为「需要原文时用 Read 打开上面的 archive 路径；不要重复原命令，也不要凭猜测作答。」。
+只降低概率、不保证；代价是每张卡多几十字节，与 B10 省下的框架字节对冲。
+
+**验证**：新增 11 条用例（配置解析 2 / 登录判定 6 个子例 / 路由决策 3 / 探活 1 / 路径形状 2 / 页脚 1），
+五处变异各自打红后还原 —— `v1Suffix` 恒真、允许覆盖用户显式选中的 provider、无视 `OPENAI_API_KEY`、
+探活恒真、页脚退回旧文案。`fold_golden.txt` 因页脚字节变化重生成，五条用例的 folded/new/sticky/tokens/decision
+逐列不变，只有 body sha 变。`go test ./server/internal/agent/...` 全绿（`TestCodexHarnessOverrideSelectsItsOwnRail`
+首轮出现一次 `TempDir RemoveAll ... directory not empty` 的清理竞态，随后两棵树各连跑 3 轮全绿，属既有 flake）。
+`go build ./server/...`、`go vet ./server/internal/agent/...` 干净。
+
+**未验证**：真实 ChatGPT 登录 + 新代码的端到端（spike 用的是手写 config.toml 等价形态，注入路径本身没有在
+真机跑过）；`requires_openai_auth` 在 0.169.1 之外的版本行为。上线顺序建议：本机先跑一条官方登录会话，
+日志出现 `codex official-login provider injected` 且胶囊有数字，再分发其他节点。

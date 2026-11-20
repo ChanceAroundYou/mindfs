@@ -19,32 +19,45 @@ import (
 // here.
 //
 // Route shape: /c/{provider}/v1/... — the same `/v1/...` suffix the provider
-// itself would have received.
+// itself would have received. A base URL that carries no version segment (the
+// ChatGPT backend, `https://chatgpt.com/backend-api/codex`) keeps that shape
+// too: Codex appends the API path to whatever base it is handed, so inserting
+// a `/v1` the upstream does not have would 404 every request.
 func (s *Server) RegisterProvider(name, realBaseURL string) {
 	name = strings.TrimSpace(name)
-	base := normalizeProviderBase(realBaseURL)
+	trimmed := strings.TrimRight(strings.TrimSpace(realBaseURL), "/")
+	base := strings.TrimSuffix(trimmed, "/v1")
 	if name == "" || base == "" {
 		return
 	}
 	s.providerMu.Lock()
 	if s.providers == nil {
-		s.providers = make(map[string]string)
+		s.providers = make(map[string]providerTarget)
 	}
-	s.providers[name] = base
+	s.providers[name] = providerTarget{base: base, v1Suffix: trimmed != base}
 	s.providerMu.Unlock()
 }
 
 // ProviderProxyURL is the base URL a provider should be configured with so its
 // traffic reaches this proxy.
 func (s *Server) ProviderProxyURL(name string) string {
+	s.providerMu.Lock()
+	target, found := s.providers[name]
+	s.providerMu.Unlock()
+	// An unregistered name keeps the historical /v1 shape; it is only used for
+	// the override, and forwarding will answer 404 for it anyway.
+	if found && !target.v1Suffix {
+		return fmt.Sprintf("http://127.0.0.1:%d/c/%s", s.Port(), name)
+	}
 	return fmt.Sprintf("http://127.0.0.1:%d/c/%s/v1", s.Port(), name)
 }
 
-// normalizeProviderBase drops a trailing `/v1`: the route carries the full
-// `/v1/...` path, so keeping it would duplicate the segment.
-func normalizeProviderBase(base string) string {
-	base = strings.TrimRight(strings.TrimSpace(base), "/")
-	return strings.TrimSuffix(base, "/v1")
+// providerTarget is one registered upstream. v1Suffix records whether the
+// configured base URL ended in `/v1`, which decides the shape of the proxy
+// address Codex is pointed at.
+type providerTarget struct {
+	base     string
+	v1Suffix bool
 }
 
 // handleProvider forwards /c/{name}/... to the registered real base URL.
@@ -55,7 +68,7 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.providerMu.Lock()
-	base, found := s.providers[name]
+	target, found := s.providers[name]
 	s.providerMu.Unlock()
 	if !found {
 		// 404, not 502: an unregistered name is a wiring mistake on our side,
@@ -64,13 +77,13 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := url.Parse(base + "/" + tail)
+	targetURL, err := url.Parse(target.base + "/" + tail)
 	if err != nil {
 		http.Error(w, "bad upstream url", http.StatusInternalServerError)
 		return
 	}
 	if r.URL.RawQuery != "" {
-		target.RawQuery = r.URL.RawQuery
+		targetURL.RawQuery = r.URL.RawQuery
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 32*1024*1024))
@@ -100,7 +113,7 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "build request", http.StatusInternalServerError)
 		return

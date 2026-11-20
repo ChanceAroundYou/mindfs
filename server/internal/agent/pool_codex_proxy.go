@@ -1,60 +1,78 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
 
-// codexConfigPath is where Codex keeps its configuration: <CODEX_HOME>/config.toml
-// when the environment names a home, ~/.codex/config.toml otherwise. Read-only;
-// mindfs never writes this file.
+// codexConfigPath is where Codex keeps its configuration. Read-only; mindfs
+// never writes this file. Empty when no home can be resolved, which reads as
+// "no config" rather than as a relative path.
 func codexConfigPath() string {
-	home := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	home := codexHomeDir()
 	if home == "" {
-		userHome, _ := os.UserHomeDir()
-		home = filepath.Join(strings.TrimSpace(userHome), ".codex")
+		return ""
 	}
 	return filepath.Join(home, "config.toml")
 }
 
-// codexProviderBaseURLs reads the providers Codex is configured with, keyed by
-// provider name. A missing config file is not an error — the ChatGPT-login
-// setup has no `[model_providers]` at all — and a provider without a `base_url`
-// is skipped, which is how Codex spells "this one logs in instead".
+// codexProviderConfig is the part of config.toml that decides where Codex sends
+// requests. Providers maps a provider name to its base_url; ModelProvider is
+// the selected one, and empty means the built-in `openai`.
+type codexProviderConfig struct {
+	Providers     map[string]string
+	ModelProvider string
+}
+
+// readCodexProviderConfig reads the provider routing Codex is configured with.
+// A missing config file is not an error — the ChatGPT-login setup has no
+// `[model_providers]` at all — and a provider without a `base_url` is skipped,
+// which is how Codex spells "this one logs in instead".
 //
 // Only plain provider names are returned: the name ends up as a TOML key in a
 // `-c` override, and a quoted key there would need escaping rules of its own.
-func codexProviderBaseURLs() (map[string]string, error) {
+func readCodexProviderConfig() (codexProviderConfig, error) {
 	path := codexConfigPath()
+	if path == "" {
+		return codexProviderConfig{}, nil
+	}
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return codexProviderConfig{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return codexProviderConfig{}, err
 	}
 	var cfg struct {
+		ModelProvider  string `toml:"model_provider"`
 		ModelProviders map[string]struct {
 			BaseURL string `toml:"base_url"`
 		} `toml:"model_providers"`
 	}
 	if err := toml.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return codexProviderConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	providers := make(map[string]string, len(cfg.ModelProviders))
+	out := codexProviderConfig{
+		ModelProvider: strings.TrimSpace(cfg.ModelProvider),
+		Providers:     make(map[string]string, len(cfg.ModelProviders)),
+	}
 	for name, provider := range cfg.ModelProviders {
 		base := strings.TrimSpace(provider.BaseURL)
 		if base == "" || !plainTOMLKey(name) {
 			continue
 		}
-		providers[name] = base
+		out.Providers[name] = base
 	}
-	return providers, nil
+	return out, nil
 }
 
 func plainTOMLKey(name string) bool {
@@ -69,6 +87,88 @@ func plainTOMLKey(name string) bool {
 		}
 	}
 	return true
+}
+
+// The synthetic provider used when Codex runs on a ChatGPT login. That setup
+// has no config.toml provider to redirect, so folding needs one introduced
+// entirely by `-c` overrides. `requires_openai_auth` is what makes Codex attach
+// the ChatGPT account credentials; the base URL is the endpoint those
+// credentials are valid against.
+const (
+	codexOfficialProviderName = "mindfs-chatgpt"
+	codexChatGPTBaseURL       = "https://chatgpt.com/backend-api/codex"
+)
+
+// codexChatGPTLogin reports whether Codex authenticates with a ChatGPT account
+// rather than an API key. Only the shape of auth.json is inspected: no
+// credential value leaves this function and nothing here is logged.
+func codexChatGPTLogin() bool {
+	home := codexHomeDir()
+	if home == "" {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "auth.json"))
+	if err != nil {
+		return false
+	}
+	var auth struct {
+		APIKey string `json:"OPENAI_API_KEY"`
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(raw, &auth); err != nil {
+		return false
+	}
+	return strings.TrimSpace(auth.APIKey) == "" && strings.TrimSpace(auth.Tokens.AccessToken) != ""
+}
+
+// codexRouting is what the pool must do to route one Codex process: which
+// upstreams to register with the proxy, and the `-c` overrides that point Codex
+// at them.
+type codexRouting struct {
+	Providers map[string]string
+	Args      []string
+	// Injected marks the synthetic ChatGPT-login provider, which also overrides
+	// model_provider. It is the one step that can break a session outright, so
+	// callers gate it on the proxy being reachable.
+	Injected bool
+}
+
+// planCodexRouting decides the overrides for one Codex process.
+//
+// Two independent steps. A provider the user configured is redirected to the
+// proxy and keeps whatever name and credentials it already had. Separately, a
+// ChatGPT-login install runs on the built-in provider, which has no base URL
+// anyone can redirect — so a synthetic provider is injected and selected. An
+// API-key install is never touched: its endpoint needs the /v1 shape and the
+// bearer key, which the ChatGPT provider would not supply.
+func planCodexRouting(cfg codexProviderConfig, chatGPTLogin bool, proxyURL func(string) string) codexRouting {
+	routing := codexRouting{Providers: make(map[string]string, len(cfg.Providers)+1)}
+	for name, base := range cfg.Providers {
+		routing.Providers[name] = base
+	}
+	if len(cfg.Providers) > 0 {
+		routing.Args = codexProxyArgs(cfg.Providers, proxyURL)
+	}
+	effective := cfg.ModelProvider
+	if effective != "" && effective != "openai" {
+		return routing
+	}
+	if _, taken := cfg.Providers[codexOfficialProviderName]; taken || !chatGPTLogin {
+		return routing
+	}
+	name := codexOfficialProviderName
+	routing.Providers[name] = codexChatGPTBaseURL
+	routing.Args = append(routing.Args,
+		"-c", `model_provider="`+name+`"`,
+		"-c", "model_providers."+name+`.name="`+name+`"`,
+		"-c", "model_providers."+name+`.base_url="`+proxyURL(name)+`"`,
+		"-c", "model_providers."+name+`.wire_api="responses"`,
+		"-c", "model_providers."+name+`.requires_openai_auth=true`,
+	)
+	routing.Injected = true
+	return routing
 }
 
 // codexProxyArgs builds the `-c` overrides that point every provider at the
@@ -92,4 +192,21 @@ func codexProxyArgs(providers map[string]string, proxyURL func(name string) stri
 		args = append(args, "-c", "model_providers."+name+".base_url=\""+proxyURL(name)+"\"")
 	}
 	return args
+}
+
+// proxyListening reports whether anything accepts TCP connections at the
+// proxy's address. The route overrides are only safe while it does: a dead
+// proxy would turn one broken optimization into a broken session, so callers
+// skip injection and let Codex talk to its upstream directly.
+func proxyListening(proxyURL string) bool {
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", parsed.Host, 250*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

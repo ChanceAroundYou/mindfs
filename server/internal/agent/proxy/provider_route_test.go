@@ -121,3 +121,40 @@ func TestProviderProxyURLPointsAtThisServer(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+// ProviderProxyURL is what gets written into the Codex override, so it has to
+// mirror the shape of the configured base URL: Codex appends the API path to
+// whatever base it is handed, and the ChatGPT backend (`.../backend-api/codex`)
+// has no version segment to reproduce.
+func TestProviderProxyURLKeepsConfiguredPathShape(t *testing.T) {
+	s := newProviderTestServer(t)
+	s.RegisterProvider("llmux", "https://up.example/llmux/v1/")
+	s.RegisterProvider("chatgpt", "https://chatgpt.com/backend-api/codex")
+	if got, want := s.ProviderProxyURL("llmux"), fmt.Sprintf("http://127.0.0.1:%d/c/llmux/v1", s.Port()); got != want {
+		t.Fatalf("llmux = %q want %q", got, want)
+	}
+	if got, want := s.ProviderProxyURL("chatgpt"), fmt.Sprintf("http://127.0.0.1:%d/c/chatgpt", s.Port()); got != want {
+		t.Fatalf("chatgpt = %q want %q", got, want)
+	}
+}
+
+// The same shape must survive a real request: a provider registered without
+// /v1 receives exactly the path Codex built, with no segment inserted.
+func TestProviderRouteForwardsBaseWithoutVersionSegment(t *testing.T) {
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	s := newProviderTestServer(t)
+	s.RegisterProvider("chatgpt", upstream.URL+"/backend-api/codex")
+	resp, body := postToProvider(t, s, "/c/chatgpt/responses", `{}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	if gotPath != "/backend-api/codex/responses" {
+		t.Fatalf("upstream path = %q", gotPath)
+	}
+}

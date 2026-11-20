@@ -100,3 +100,25 @@ func TestRenderPointerStates(t *testing.T) {
 		t.Fatal("two renders of the same input differ")
 	}
 }
+
+// The card has to say what to do with itself. Field evidence (plan, official
+// login acceptance 2026-11-20): a model read a folded card, answered "cannot
+// confirm from the visible content", and re-ran the original command instead of
+// opening the archive the card names. One imperative line, still one line.
+func TestRenderPointerTellsTheModelToOpenTheArchive(t *testing.T) {
+	card := RenderPointer(PointerInput{
+		ToolName:     "Read",
+		InputSummary: `{"file_path":"/tmp/a"}`,
+		Text:         "L1 alpha\nL2 bravo",
+		ArchivePath:  "/tmp/ctx/abc.txt",
+	})
+	if !strings.Contains(card, "/tmp/ctx/abc.txt") {
+		t.Fatalf("card lost the archive path: %q", card)
+	}
+	footer := card[strings.LastIndex(card, "\n")+1:]
+	for _, want := range []string{"Read", "archive", "不要"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("footer %q missing %q", footer, want)
+		}
+	}
+}
