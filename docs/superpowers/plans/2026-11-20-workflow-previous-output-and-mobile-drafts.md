@@ -74,3 +74,10 @@
 - 隔离实例（临时 `XDG_CONFIG_HOME` + 新端口 + `MINDFS_STATIC_DIR=web/dist`，端口随机、不碰 7331）真实 Chromium：
   - 桌面 1440×900 逐条 11/11 PASS —— 列表标题、首行顺序、保存/还原在画布行、无发布按钮、三个开关（`Plan`/`New session`/`Worktree`）、写入开关已删、点 Plan 出脏标记、保存后脏标记消失（服务端日志 `PUT /api/workflows/{id}` 后紧跟 `POST /api/workflows/{id}/publish`）、**重开编辑器焦点停在 BODY**；
   - 手机 390×844（从移动壳的 Board 进入）6/6 PASS —— 抽屉默认展开、新建后自动收起、点外面收起、左缘把手可见、把手在自己那一列的竖向中点、点把手再展开。
+
+交付（2026-11-20）：
+- 提交 `925d910d`（实现 + 登记 G-NO）与 `de5b1a79`（G-NO 拆出 AI 面板后重指 G-LG/G-NI/G-NK 的三处锚点），已 push origin main。
+- `make check-upstream`：2095 个 delta 文件 / 341 组全绿。
+- `make install`（= build-web + go build + 安装）产出 `v0.5.5-1200-55-gde5b1a79`（md5 `0043eda6…`）；本机 `~/.local/share/mindfs/web/` 已覆盖，线上 7331 首页引用的 `assets/index-BuQKueRz.js` 返回 200，刷新即生效（静态资源跟磁盘走，不用重启）。
+- 运行中的进程仍是 `v0.5.5-1200-52-gb61b81d8`（`/proc/377827/exe` 指向已删除的旧二进制）：**Plan 接管写入的后端兜底（`WorkflowNodeWorkspaceOf`）要等用户 `sudo systemctl restart mindfs` 才生效**，重启前只有前端写 `writes_workspace=false` 这一层。
+- 未部署其他节点。
