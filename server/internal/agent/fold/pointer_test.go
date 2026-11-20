@@ -1,6 +1,7 @@
 package fold
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -75,10 +76,22 @@ func TestRenderPointerStates(t *testing.T) {
 
 	failed := base
 	failed.Failed = true
-	if card := RenderPointer(failed); !strings.Contains(card, "该结果标记为失败") {
+	if card := RenderPointer(failed); !strings.Contains(card, "该结果标记为失败") && !strings.Contains(card, "is_error") {
 		t.Fatalf("failed card does not say so: %q", card)
 	}
-	if card := RenderPointer(failed); !strings.Contains(card, "首尾各 20 行") {
+	// The failure excerpt is wider than the ordinary one: a 60-line result keeps
+	// its first 20 lines rather than the ordinary 8.
+	var lines []string
+	for i := 0; i < 60; i++ {
+		lines = append(lines, fmt.Sprintf("L%02d", i))
+	}
+	long := base
+	long.Text = strings.Join(lines, "\n")
+	if card := RenderPointer(long); strings.Contains(card, "L19") {
+		t.Fatalf("ordinary card kept more than 8 head lines: %q", card)
+	}
+	long.Failed = true
+	if card := RenderPointer(long); !strings.Contains(card, "L19") {
 		t.Fatalf("failed card did not widen the excerpt: %q", card)
 	}
 

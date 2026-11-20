@@ -9,7 +9,7 @@ func TestConfigNormalizedDefaults(t *testing.T) {
 	if got.Mode != ModeOn {
 		t.Fatalf("mode = %q, want %q", got.Mode, ModeOn)
 	}
-	if got.KeepRounds != 3 || got.KeepTailTokens != 32000 || got.MinBlockTokens != 2000 {
+	if got.KeepRounds != 3 || got.KeepTailTokens != 20000 || got.MinBlockTokens != 2000 {
 		t.Fatalf("keep defaults: %+v", got)
 	}
 	if got.RailTokens != 100000 || got.TargetTokens != 20000 {

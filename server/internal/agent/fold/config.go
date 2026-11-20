@@ -227,7 +227,7 @@ func (c Config) Normalized() Config {
 		c.KeepRounds = 3
 	}
 	if c.KeepTailTokens <= 0 {
-		c.KeepTailTokens = 32000
+		c.KeepTailTokens = 20000
 	}
 	if c.MinBlockTokens <= 0 {
 		c.MinBlockTokens = 2000
@@ -242,7 +242,7 @@ func (c Config) Normalized() Config {
 	//
 	// The defaults are the "fold deep, fold rarely" shape measured in design
 	// §12.7: cut all the way down (target 20k; the protected tail — keep_rounds
-	// plus keep_tail_tokens ≈ 32k — is what actually stops the cut) so one event
+	// plus keep_tail_tokens, 20k by default — is what actually stops the cut) so one event
 	// repays its cache rewrite in a round or two. The rail is 100k, not the
 	// CLI's ~167k auto-compact threshold: the seven-arm uniform-read bench put
 	// 100k within noise of 160k on cost (339,933–380,111 vs 340,190–367,914) but
