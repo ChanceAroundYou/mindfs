@@ -1849,3 +1849,27 @@ Task 2/3/4/5 之间无代码依赖，可按任意顺序执行；但都在 Task 6
 - **副作用已恢复**：隔离实例第一次启动时把 llmux profile 渲染进真实 `~/.codex/config.toml`（写入了
   `model_provider` 与 `[model_providers]`），已还原为测试前 513 字节内容；之后改用独立 `CODEX_HOME` +
   symlink `auth.json` 复验，真实文件 mtime 停在还原时刻。生产 7331 全程 200，隔离实例已停、端口已关。
+
+### 官方登录取道反代 spike（2026-11-20 23:30–23:45，隔离实例 7460，真实 ChatGPT 登录，产品代码零改动）
+
+做法：在隔离 `CODEX_HOME` 的本地覆盖段（`# >>> sync-codex local` 之间）声明
+`[model_providers.chatgpt]`（`base_url` 指向本地 shim、`wire_api="responses"`、`requires_openai_auth=true`）
+并设 `model_provider='chatgpt'`。MindFS 的 provider 发现照旧把 `base_url` 换成自己的 `/c/chatgpt/v1`，
+`Authorization` / `chatgpt-account-id` 由 `req.Header.Clone()` 逐字透传。
+
+- **探针**：自定义 provider + `requires_openai_auth=true` 时，codex 会把 ChatGPT Bearer（JWT，非 API key）
+  与 `chatgpt-account-id` 打到自定义 `base_url`，body 带 `store:false`、无 `previous_response_id`——即
+  Responses 适配器的可折条件成立。裸反代（`/v1/responses` → `chatgpt.com/backend-api/codex/responses`）
+  跑通一次真实对话（14,688 tok，回答正确）。
+- **12 次单命令 `sed`（3400 行）A/B**：控制臂（rail=1,000,000 不折）input 857,842 / 缓存读 739,840 /
+  末轮上下文 115,920 / 99.7s；折叠臂（rail=20,000）input **357,557（−58%）** / 缓存读 190,464 /
+  末轮上下文 **33,211** / 11 块、`saved_bytes=241,000`、`archive_errors=0` / 104.9s。两次都是 12 次工具
+  调用、答案逐字正确、零错误。订阅制下省的是窗口与自动压缩次数，不是账单。
+- **产品化缺口两个**：① `codexsync` 拒绝共享 profile 里的 `[model_providers]`
+  （`unsupported shared default key "model_providers"`），provider 只能来自本地覆盖段或 MindFS 自己注入；
+  ② provider 路由固定插 `/v1` 段，而 ChatGPT 后端是 `/backend-api/codex/responses`（无 `/v1`），spike 用
+  一次性 shim 改写路径，产品化需要路径形状例外（或把上游拆成 base + 固定后缀）。
+- **风险**：`requires_openai_auth` / `-c model_providers.*` 是 codex 内部契约（0.169.1 实测），升级要回归；
+  认证头与工作区头必须逐字透传，401 要原样回给 codex 让它自己刷新；代理不可达必须 fail-open 直连。
+- 真实 `~/.codex/config.toml` 与 `auth.json` 全程未被修改（隔离用独立 `CODEX_HOME` + `auth.json` 软链）；
+  隔离实例与 shim 已停，生产 7331 全程 200。
