@@ -11,17 +11,17 @@ import (
 // the rendered literal when they are still valid.
 func renderPointer(body []byte, candidate scanFoldCandidate, store *archiveStore, cache *pointerCache) (renderedFold, foldSkip) {
 	spanLen := candidate.part.end - candidate.part.start
-	if entry, hit := cache.get(candidate.key); hit {
+	if entry, hit := cache.Get(candidate.key); hit {
 		// The sweep can have removed the archive since the entry was written. A
 		// pointer to a missing file is worse than a full-size result, so verify
 		// before reusing it.
-		if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < spanLen {
+		if info, err := os.Stat(entry.Path); err == nil && info.Size() == int64(entry.Bytes) && len(entry.Literal) < spanLen {
 			return renderedFold{
-				replacement: foldReplacement{start: candidate.part.start, end: candidate.part.end, literal: entry.literal},
-				tokens:      entry.tokens,
-				textBytes:   entry.bytes,
-				savedBytes:  spanLen - len(entry.literal),
-				path:        entry.path,
+				replacement: foldReplacement{start: candidate.part.start, end: candidate.part.end, literal: entry.Literal},
+				tokens:      entry.Tokens,
+				textBytes:   entry.Bytes,
+				savedBytes:  spanLen - len(entry.Literal),
+				path:        entry.Path,
 			}, foldOK
 		}
 	}
@@ -30,7 +30,7 @@ func renderPointer(body []byte, candidate scanFoldCandidate, store *archiveStore
 		return renderedFold{}, foldSkipDecode
 	}
 	tokens := estimateTokens(text)
-	archivePath, err := store.write(text)
+	archivePath, err := store.Write(text)
 	if err != nil {
 		return renderedFold{}, foldSkipArchive
 	}
@@ -50,11 +50,11 @@ func renderPointer(body []byte, candidate scanFoldCandidate, store *archiveStore
 	if len(literal) >= spanLen {
 		return renderedFold{}, foldSkipTooBig
 	}
-	cache.put(candidate.key, cachedPointer{
-		literal: literal,
-		path:    archivePath,
-		tokens:  tokens,
-		bytes:   len(text),
+	cache.Put(candidate.key, cachedPointer{
+		Literal: literal,
+		Path:    archivePath,
+		Tokens:  tokens,
+		Bytes:   len(text),
 	})
 	return renderedFold{
 		replacement: foldReplacement{start: candidate.part.start, end: candidate.part.end, literal: literal},

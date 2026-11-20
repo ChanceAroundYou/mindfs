@@ -153,7 +153,7 @@ func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *
 	preview := foldPreview{}
 	stickyTokens := 0
 	for index, candidate := range candidates {
-		if !commits.has(candidate.key) {
+		if !commits.Has(candidate.key) {
 			continue
 		}
 		used[index] = true
@@ -222,7 +222,7 @@ func previewFold(body []byte, req *scanRequest, cfg LiveCompactConfig, commits *
 			gate.decision = gateNoBacklog
 		} else {
 			for _, key := range committed {
-				commits.add(key)
+				commits.Add(key)
 			}
 			preview.tokens += newTokens
 			preview.blocks += newBlocks

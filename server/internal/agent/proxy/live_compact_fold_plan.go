@@ -66,9 +66,9 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 	// maphash values and cannot be persisted, so they are matched here by
 	// archive name, which costs one render (cached from then on). Only the first
 	// fold after a restart pays for it.
-	restoring := commits.restoredCount() > 0
+	restoring := commits.RestoredCount() > 0
 	for index, candidate := range candidates {
-		committed := commits.has(candidate.key)
+		committed := commits.Has(candidate.key)
 		if !committed && !restoring {
 			continue
 		}
@@ -83,7 +83,7 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 			}
 			continue
 		}
-		if !committed && !commits.adopt(candidate.key, filepath.Base(rendered.path)) {
+		if !committed && !commits.Adopt(candidate.key, filepath.Base(rendered.path)) {
 			// A restored name that does not match: leave it to pass 2 like any
 			// other uncommitted candidate.
 			continue
@@ -100,7 +100,7 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 		// Drop whatever could not be matched: those blocks are no longer in this
 		// session's transcript. Keeping them would make every later request pay
 		// for renders that can never match.
-		commits.dropUnrestored()
+		commits.DropUnrestored()
 	}
 
 	// Pass 2: decide whether this request may commit new blocks. Upstream
@@ -178,7 +178,7 @@ func planFoldCommit(body []byte, req *scanRequest, cfg LiveCompactConfig, store 
 		if budget.minNewBytes > 0 && newBytes < budget.minNewBytes {
 			gate.decision = gateNoBacklog
 		} else {
-			commits.commitAll(newKeys, newPaths, newSizes)
+			commits.CommitAll(newKeys, newPaths, newSizes)
 			replacements = append(replacements, newReplacements...)
 			result.newBlocks += len(newReplacements)
 			result.foldedBlocks += len(newReplacements)

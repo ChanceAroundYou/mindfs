@@ -98,7 +98,7 @@ func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResul
 		// Without the protection set, disk pressure would delete an archive
 		// whose pointer is already inside the model's context; the block would
 		// then silently unfold and the whole folded prefix would be resent.
-		s.archive.sweepProtected(time.Now(), s.referencedArchives())
+		s.archive.SweepProtected(time.Now(), s.referencedArchives())
 		elapsed := time.Since(start)
 		logLiveCompactFold(token, result, gate.decision, elapsed)
 		pending := s.newFoldLedgerPending(cfg.Mode, len(body), len(result.body), result, elapsed)
@@ -239,7 +239,7 @@ func (s *Server) commitLogFor(sessionKey string) *commitLog {
 	if s.liveCompact.Mode != LiveCompactOn || s.archive == nil {
 		return nil
 	}
-	return newCommitLog(s.archive.dir, sessionKey)
+	return newCommitLog(s.archive.Dir(), sessionKey)
 }
 
 // referencedArchives is the sweep protection set: every archive named by a
@@ -257,7 +257,7 @@ func (s *Server) referencedArchives() map[string]struct{} {
 
 	out := make(map[string]struct{})
 	for _, commits := range sets {
-		for _, name := range commits.protectedNames() {
+		for _, name := range commits.ProtectedNames() {
 			out[name] = struct{}{}
 		}
 	}

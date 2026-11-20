@@ -290,7 +290,7 @@ func TestFoldNeverGrowsTheBody(t *testing.T) {
 
 func assertArchiveEmpty(t *testing.T, store *archiveStore) {
 	t.Helper()
-	entries, err := os.ReadDir(store.dir)
+	entries, err := os.ReadDir(store.Dir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return

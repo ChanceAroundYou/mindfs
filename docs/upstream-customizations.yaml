@@ -9330,13 +9330,9 @@ groups:
       - server/internal/agent/proxy/live_compact_fold_plan.go
       - server/internal/agent/proxy/live_compact_fold_render.go
       - server/internal/agent/proxy/live_compact_fold_request.go
-      - server/internal/agent/proxy/live_compact_commit_log.go
       - server/internal/agent/proxy/live_compact_fold_splice.go
       - server/internal/agent/proxy/live_compact_fold_gate.go
-      - server/internal/agent/proxy/live_compact_commits.go
       - server/internal/agent/proxy/live_compact_pointer.go
-      - server/internal/agent/proxy/live_compact_pointer_cache.go
-      - server/internal/agent/proxy/live_compact_archive.go
       - server/internal/agent/proxy/live_compact_ledger.go
       - server/internal/agent/proxy/live_compact_cold.go
       - server/internal/agent/proxy/live_compact_prefix_guard.go
@@ -9373,8 +9369,8 @@ groups:
       - server/internal/agent/proxy/live_compact_fold_gate_norm_test.go
       - server/internal/agent/proxy/live_compact_shadow_preview_test.go
       - server/internal/agent/proxy/live_compact_scan_test.go
-      - server/internal/agent/proxy/live_compact_pointer_cache_test.go
-      - server/internal/agent/proxy/live_compact_archive_test.go
+      - server/internal/agent/fold/pointer_cache_test.go
+      - server/internal/agent/fold/archive_test.go
       - server/internal/agent/proxy/live_compact_ledger_test.go
       - server/internal/agent/proxy/live_compact_ledger_rewrite_test.go
       - server/internal/agent/proxy/live_compact_usage_ledger_test.go
@@ -9384,7 +9380,9 @@ groups:
       - server/internal/agent/fold/config_test.go
       - server/internal/agent/fold/imports_test.go
       - server/internal/agent/proxy/live_compact_commit_restore_test.go
-      - server/internal/agent/proxy/live_compact_archive_protect_test.go
+      - server/internal/agent/proxy/live_compact_archive_live_test.go
+      - server/internal/agent/fold/archive_protect_test.go
+      - server/internal/agent/fold/commits_test.go
       - server/internal/agent/proxy/live_compact_error_fold_test.go
       - server/internal/agent/pool_context_saving_test.go
       - server/internal/api/http_session_context_saving_test.go
@@ -9430,7 +9428,7 @@ groups:
       - 'server/internal/agent/proxy/live_compact_log.go:gate=%s fold_ms=%d'
       - 'server/internal/agent/proxy/live_compact.go:would_fold_tokens=%d'
       - 'server/cmd/mindfs-server/main.go:liveCompactRailTokens := 0'
-      - 'server/internal/agent/proxy/live_compact_commits.go:type foldCommits struct {'
+      - 'server/internal/agent/fold/commits.go:type Commits struct {'
       - 'server/internal/agent/proxy/live_compact_fold.go:func roundHasOversizedResult('
       - 'server/internal/agent/proxy/live_compact_fold.go:if index < protectedFrom || roundHasOversizedResult('
       - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestCarvedOutCommitSurvivesNewerOversizedRound('
@@ -9441,16 +9439,16 @@ groups:
       - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestRailUsesUpstreamTokenScale('
       - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestFoldStopsAtTargetInUpstreamUnits('
       - 'server/internal/agent/proxy/live_compact_fold_gate_test.go:func TestSessionCalibrationRoundTrip('
-      - 'server/internal/agent/proxy/live_compact_commits.go:keys map[pointerCacheKey]struct{}'
+      - 'server/internal/agent/fold/commits.go:keys map[PointerCacheKey]struct{}'
       - 'server/internal/agent/fold/config.go:c.RailTokens = 100000'
       - 'server/internal/agent/proxy/live_compact_fold_gate_norm_test.go:func TestProxyFoldKeepsCommittedPrefixAcrossTurns('
       - 'server/internal/agent/proxy/live_compact_fold_gate_norm_test.go:func TestLiveCompactNormalizesRailDefaults('
       - 'server/internal/agent/proxy/live_compact_fold_request.go:if s.liveCompactDisabled() {'
-      - 'server/internal/agent/proxy/live_compact_fold_render.go:if info, err := os.Stat(entry.path); err == nil && info.Size() == int64(entry.bytes) && len(entry.literal) < spanLen {'
+      - 'server/internal/agent/proxy/live_compact_fold_render.go:if info, err := os.Stat(entry.Path); err == nil && info.Size() == int64(entry.Bytes) && len(entry.Literal) < spanLen {'
       - 'server/internal/agent/proxy/live_compact_fold_splice.go:func verifyFold(before *scanRequest, folded []byte) error'
       - 'server/internal/agent/proxy/live_compact_pointer.go:func renderFoldPointer(p pointerInput) string'
-      - 'server/internal/agent/proxy/live_compact_pointer_cache.go:func pointerCacheKeyFor(toolName, inputSummary string, textSpan []byte) pointerCacheKey'
-      - 'server/internal/agent/proxy/live_compact_archive.go:func (a *archiveStore) write(text string) (string, error)'
+      - 'server/internal/agent/fold/pointer_cache.go:func NewPointerCacheKey(toolName, inputSummary string, textSpan []byte) PointerCacheKey'
+      - 'server/internal/agent/fold/archive.go:func (a *ArchiveStore) Write(text string) (string, error)'
       - 'server/internal/agent/fold/config.go:DefaultRetention = 7 * 24 * time.Hour'
       - 'server/internal/agent/proxy/live_compact_scan_test.go:func TestFoldScannerAgreesWithReferenceAnalysis('
       - 'server/internal/agent/proxy/live_compact_fold_cache_test.go:func TestFoldKeepsOldPointersStableAcrossTurns('
@@ -9461,17 +9459,17 @@ groups:
       - 'server/internal/agent/proxy/live_compact_ledger.go:TotalRewriteTokens int `json:"total_rewrite_tokens"`'
       - 'server/internal/agent/proxy/live_compact_fold_request.go:func (s *Server) foldRequestLedger(token string, body []byte) ([]byte, foldResult, *foldLedgerPending, liveCompactGate) {'
       - 'server/internal/agent/proxy/live_compact_fold_request.go:func (s *Server) referencedArchives() map[string]struct{} {'
-      - 'server/internal/agent/proxy/live_compact_fold_request.go:return newCommitLog(s.archive.dir, sessionKey)'
-      - 'server/internal/agent/proxy/live_compact_commit_log.go:func newCommitLog(archiveDir, sessionKey string) *commitLog {'
-      - 'server/internal/agent/proxy/live_compact_commit_log.go:func (a *archiveStore) referencedAfter(cutoff time.Time) map[string]struct{} {'
-      - 'server/internal/agent/proxy/live_compact_commits.go:func newFoldCommitsFor(log *commitLog) *foldCommits {'
-      - 'server/internal/agent/proxy/live_compact_commits.go:func (c *foldCommits) adopt(key pointerCacheKey, name string) bool {'
-      - 'server/internal/agent/proxy/live_compact_commits.go:func (c *foldCommits) dropUnrestored() {'
-      - 'server/internal/agent/proxy/live_compact_archive.go:func (a *archiveStore) sweepProtected(now time.Time, live map[string]struct{}) {'
-      - 'server/internal/agent/proxy/live_compact_archive.go:if _, ok := protected[item.name]; ok {'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:return newCommitLog(s.archive.Dir(), sessionKey)'
+      - 'server/internal/agent/fold/commit_log.go:func NewCommitLog(archiveDir, sessionKey string) *CommitLog {'
+      - 'server/internal/agent/fold/commit_log.go:func (a *ArchiveStore) referencedAfter(cutoff time.Time) map[string]struct{} {'
+      - 'server/internal/agent/fold/commits.go:func NewCommitsFor(log *CommitLog) *Commits {'
+      - 'server/internal/agent/fold/commits.go:func (c *Commits) Adopt(key PointerCacheKey, name string) bool {'
+      - 'server/internal/agent/fold/commits.go:func (c *Commits) DropUnrestored() {'
+      - 'server/internal/agent/fold/archive.go:func (a *ArchiveStore) SweepProtected(now time.Time, live map[string]struct{}) {'
+      - 'server/internal/agent/fold/archive.go:if _, ok := protected[item.name]; ok {'
       - 'server/internal/agent/proxy/live_compact_wire_analysis.go:analysis.SkippedErrorBytes += len(block.raw)'
       - 'server/internal/agent/proxy/live_compact_pointer.go:status: 该结果标记为失败（is_error）'
-      - 'server/internal/agent/proxy/live_compact_pointer_cache.go:const pointerVariantFailed = "is_error"'
+      - 'server/internal/agent/fold/pointer_cache.go:const PointerVariantFailed = "is_error"'
       - 'server/internal/agent/proxy/live_compact_fold.go:failed bool'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.badgeRewrite'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.rewriteTotal'
@@ -10642,7 +10640,7 @@ groups:
       - 'web/src/app/useTaskBoard.ts:const dropKanbanTask = useCallback((rootId: string, taskId: string, nodeId?: string) => {'
       - 'web/src/components/task/useTaskDetailPanel.ts:if (isTaskGoneError(err)) {'
       - 'web/src/components/task/useTaskDetailPanel.ts:catch (error) { fail(error); } finally { setSaving(false); }'
-      - 'web/src/components/app/TaskDetailPanelGate.tsx:onTaskGone={(rootId, taskId) => dropKanbanTask(rootId, taskId, getNodeIdForRoot(rootId || currentRootIdRef.current || ""))}'
+      - 'web/src/components/app/TaskDetailPanelGate.tsx:onTaskGone={(rootId, taskId) => dropKanbanTask(rootId, taskId, taskNodeId(rootId || currentRootIdRef.current))}'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.goneRemoved":'
       - 'web/tests/task-ghost-card.test.mjs:test("task-ghost-card"'
       - 'e2e/test_task_ghost_card.py:def test_cached_ghost_is_pruned_on_first_load('
@@ -10756,3 +10754,66 @@ groups:
       - 'server/internal/kanban/router_service_sessions.go:log.Printf("[router] session.closed task=%s reason=%s", taskID, reason)'
       - 'server/internal/kanban/task_store_archive.go:Type: "archived"'
       - 'server/internal/kanban/task_store_archive.go:Type: "unarchived"'
+
+  - id: G-NR
+    title: 项目身份 = (nodeId, rootId)：不同节点的同名 / 同路径项目是不同项目
+    kind: fix
+    symptom: "2026-11-20 用户裁定「不同节点的同名项目、同路径项目应该被识别为不同的项目，不应该出错」。G-NP 只修了工作台卡片的动作派发，身份本身仍然是「首个获胜」：`indexManagedRoots` 的 byId 每个 rootId 只装第一个节点的那份（本地优先，其余按 nodes.json 顺序），裸 rootId 的所有反查 —— 删除/改名项目、文件树与 /api/tree、任务详情面板路由、taskDetailsById 淘汰、插件表与信任记录、同名项目的显示名/颜色、会话侧栏的 React key —— 都跟着落到那一台机器上。实测 fn 与 pc 各有一个 `docs`（pc 0 条任务、fn 1 条），动作打到空库就是 `sql: no rows in result set`。"
+    why: "必须保留：(1) 裸 rootId 只在两种情况下足以定位项目 —— 它就是当前选中的项目（currentRootId + currentRootNodeId），或全表只有一台机器拥有它；其余必须由调用方带显式 nodeId，解析不出来时返回 undefined 交给 active node 兜底，绝不按注册表顺序猜。规则唯一实现在 shared/projectIdentity.ts，rootNode.ts 的 getRootNodeId 直接调它。(2) byId 只装唯一归属，完整索引 byKey（node::root）才是权威；所有按 id 重建根条目（改名 / ws root_changed / 全量刷新）必须走 managedRootsForIds(ids, byKey)，否则同名项目的另一份会从文件树里消失。(3) refreshManagedRoots 判「项目还在不在」要看 id 全集，用 byId 判会把同名项目每刷新一次就当成已删除，清空选中/绑定/缓存。(4) taskDetailsById 的淘汰必须带节点，否则刷新 pc 的 docs 会把 fn 的 docs 详情一起清掉（卡片退化成冻结快照）；详情自带的 `_nodeId` 才是缓存落键依据。(5) 插件表、插件信任记录、同名项目的显示名与颜色、会话侧栏分组 key 都按项目身份分桶；旧裸键只读兼容（一行回退，老数据零迁移）。"
+    boundary: "只改前端身份解析与数据通路，不动服务端存储/接口/WS 广播语义。不覆盖：服务层里仍有一批 `getRootNodeId(rootId)` 单参调用（blob/下载/git/会话接口）—— 它们按「当前选中 → 唯一归属」解析，同名项目在**非当前**语境下依旧要由调用方显式传 nodeId；taskDetailsById 仍以裸 task id 为键（task id 是 64 位随机，跨节点碰撞可忽略）；左侧文件树的 top-level 项目列表仍按 root id 去重（两台的 docs 共用一行，展开后按节点分桶），要拆成两行属于另一轮 UI 改造。"
+    files:
+      - web/src/shared/projectIdentity.ts
+      - web/src/services/net/rootNode.ts
+      - web/src/app/appMisc.ts
+      - web/src/app/useAppRootScopeState.ts
+      - web/src/app/useManagedRoots.ts
+      - web/src/app/useAppInit.ts
+      - web/src/app/useAppRootSelection.ts
+      - web/src/app/realtimeWsRootChanged.ts
+      - web/src/app/useManagedRootRename.ts
+      - web/src/app/useAppProjectDisplay.ts
+      - web/src/app/useWorkspaceBoard.ts
+      - web/src/app/useAppWorkspaceBoardComposition.ts
+      - web/src/app/useAppViewComposition.ts
+      - web/src/app/useAppViewCompositionTypes.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useTaskBoard.ts
+      - web/src/app/useTaskDetailsPrune.ts
+      - web/src/app/useAppProjectManagement.ts
+      - web/src/app/useAppProjectRemoval.ts
+      - web/src/app/openDirectoryAction.ts
+      - web/src/app/useActionHandlers.ts
+      - web/src/app/useFileRefresh.ts
+      - web/src/app/useSendMessage.ts
+      - web/src/app/useSendMessageTypes.ts
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/useAppDomainLayer.ts
+      - web/src/app/useAppDomainDerived.ts
+      - web/src/app/useAppDomainLayerTypes.ts
+      - web/src/app/useAppPluginTrust.ts
+      - web/src/app/usePluginHandlers.ts
+      - web/src/components/app/TaskDetailPanelGate.tsx
+      - web/src/components/app/sessionPaneTypes.ts
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/plugins/manager.ts
+      - web/src/plugins/trust.ts
+    tests:
+      - web/tests/project-identity.test.mjs
+      - web/tests/workspace-duplicate-root-routing.test.mjs
+      - web/tests/source-map-modules-app.mjs
+    anchors:
+      - 'web/src/shared/projectIdentity.ts:export function resolveProjectNodeId('
+      - 'web/src/services/net/rootNode.ts:return resolveProjectNodeId({'
+      - 'web/src/app/appMisc.ts:if (owners.length === 1) byId[id] = byKey[rootNodeKey(owners[0], id)];'
+      - 'web/src/app/appMisc.ts:export function managedRootsForIds('
+      - 'web/src/app/useAppRootScopeState.ts:const getNodeIdForProject = useCallback('
+      - 'web/src/app/useManagedRoots.ts:const nextRootIdSet = new Set(nextRootIds);'
+      - 'web/src/app/useTaskDetailsPrune.ts:const inScope = (task: KanbanTask) => {'
+      - 'web/src/app/useTaskBoard.ts:const detailNid = String(details.find((d) => String((d?.task as any)?._nodeId || "").trim())?.task?._nodeId || "").trim();'
+      - 'web/src/components/app/TaskDetailPanelGate.tsx:nodeId={taskNodeId(selectedKanbanTask.root_id || currentRootId)}'
+      - 'web/src/app/openDirectoryAction.ts:resolvedNodeId || undefined),'
+      - 'web/src/app/useWorkspaceBoard.ts:rootName: (getProjectLabel ? getProjectLabel(rootId, nodeId) : getRootDisplayName(rootId, nodeId)) || rootId,'
+      - 'web/src/plugins/manager.ts:private key(rootId: string, nodeId?: string): string {'
+      - 'web/src/plugins/trust.ts:export function pluginTrustStorageKey(rootId: string, nodeId?: string): string {'
+      - 'web/src/app/useAppProjectRemoval.ts:const rootInfo = managedRootFor(rootID, currentRootNodeIdRef.current || getNodeIdForRoot(rootID));'
+      - 'web/src/components/session/MultiProjectSessionList.tsx:key={`task-group-${groupNodeId}::${group.rootId}-${row.taskId}`}'

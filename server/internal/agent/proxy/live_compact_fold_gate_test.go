@@ -146,8 +146,8 @@ func TestFoldEventBelowMinBytesIsDropped(t *testing.T) {
 	if result.newBlocks != 0 || result.changed() {
 		t.Fatalf("small event was applied: %+v", result)
 	}
-	if commits.len() != 0 {
-		t.Fatalf("small event recorded %d commitments", commits.len())
+	if commits.Len() != 0 {
+		t.Fatalf("small event recorded %d commitments", commits.Len())
 	}
 }
 

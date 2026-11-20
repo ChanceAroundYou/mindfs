@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"mindfs/server/internal/agent/fold"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -69,7 +70,7 @@ func TestRestartRestoresCommitsAndFoldsOnlySticky(t *testing.T) {
 	if bytes.Equal(forwardedFirst, body) {
 		t.Fatal("the first instance did not fold anything")
 	}
-	if commits := first.sessions["restart1"].commits; commits == nil || commits.len() != 2 {
+	if commits := first.sessions["restart1"].commits; commits == nil || commits.Len() != 2 {
 		t.Fatalf("commits after the first fold = %v, want 2", commits)
 	}
 
@@ -81,11 +82,11 @@ func TestRestartRestoresCommitsAndFoldsOnlySticky(t *testing.T) {
 		t.Fatal("after restart the same request was not folded the same way")
 	}
 	commits := second.sessions["restart1"].commits
-	if commits == nil || commits.len() != 2 {
+	if commits == nil || commits.Len() != 2 {
 		t.Fatalf("restored commits = %v, want 2", commits)
 	}
-	if commits.restoredCount() != 0 {
-		t.Fatalf("restored names left unmatched = %d, want 0", commits.restoredCount())
+	if commits.RestoredCount() != 0 {
+		t.Fatalf("restored names left unmatched = %d, want 0", commits.RestoredCount())
 	}
 }
 
@@ -99,7 +100,7 @@ func TestRestartDropsCommitThatLeftTheTranscript(t *testing.T) {
 	if log == nil {
 		t.Fatal("commit log not created")
 	}
-	log.append([]foldCommitRecord{{TS: time.Now().Unix(), Name: "deadbeefdeadbeefdeadbeef.txt", Bytes: 1}})
+	log.Append([]foldCommitRecord{{TS: time.Now().Unix(), Name: "deadbeefdeadbeefdeadbeef.txt", Bytes: 1}})
 
 	s, forwarded := restartProxy(t, dir, "stale", -1, restartFoldBody(t))
 	if bytes.Equal(forwarded, restartFoldBody(t)) {
@@ -109,8 +110,8 @@ func TestRestartDropsCommitThatLeftTheTranscript(t *testing.T) {
 	if commits == nil {
 		t.Fatal("no commitment set")
 	}
-	if commits.restoredCount() != 0 {
-		t.Fatalf("unmatched restored names = %d, want 0 after the first plan", commits.restoredCount())
+	if commits.RestoredCount() != 0 {
+		t.Fatalf("unmatched restored names = %d, want 0 after the first plan", commits.RestoredCount())
 	}
 }
 
@@ -138,7 +139,7 @@ func TestShadowDoesNotPersistCommits(t *testing.T) {
 
 	postToProxy(t, s, "shadow1", restartFoldBody(t))
 
-	entries, err := os.ReadDir(filepath.Join(dir, commitLogDirName))
+	entries, err := os.ReadDir(filepath.Join(dir, fold.CommitLogDirName))
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}

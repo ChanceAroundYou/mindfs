@@ -2,13 +2,13 @@ package proxy
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"mindfs/server/internal/agent/fold"
 )
 
 // Per-session fold ledger.
@@ -85,12 +85,12 @@ func newLedgerStore(dir string) *ledgerStore {
 	return &ledgerStore{dir: dir}
 }
 
-// ledgerSessionName hashes the session key. Session keys are slugs today, but
-// hashing makes the file name independent of whatever the key becomes and
-// removes any path-traversal surface in one step.
+// ledgerSessionName is the kernel's session file naming. The ledger and the
+// commit log both key files by session, so they must agree; the hash lives in
+// fold.SessionFileName and this wrapper keeps the local call sites reading as
+// they did.
 func ledgerSessionName(sessionKey string) string {
-	sum := sha256.Sum256([]byte(sessionKey))
-	return hex.EncodeToString(sum[:8]) + ".jsonl"
+	return fold.SessionFileName(sessionKey)
 }
 
 func (l *ledgerStore) path(sessionKey string) string {

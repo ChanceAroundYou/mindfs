@@ -87,7 +87,7 @@ func TestShadowPreviewKeepsCommittedBlocksBelowRail(t *testing.T) {
 	if _, _, gate := s.foldRequest("shadow2", first); gate.decision != gateFold {
 		t.Fatalf("first gate = %s, want %s", gate.decision, gateFold)
 	}
-	if got := s.sessionFoldCommits("shadow2").len(); got == 0 {
+	if got := s.sessionFoldCommits("shadow2").Len(); got == 0 {
 		t.Fatal("shadow rehearsal committed no blocks")
 	}
 
@@ -153,7 +153,7 @@ func TestShadowPreviewSubtractsStickyInUpstreamUnits(t *testing.T) {
 	}
 	stickyEst := 0
 	for _, candidate := range mustCandidates(t, body, req, cfg) {
-		if commits.has(candidate.key) {
+		if commits.Has(candidate.key) {
 			stickyEst += candidate.approxTokens
 		}
 	}
