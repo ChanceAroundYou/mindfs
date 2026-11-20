@@ -29,6 +29,9 @@ type workflowTurnRequest struct {
 	FastService     string
 	PlanMode        bool
 	Prompt          string
+	// OnToolCall 让调用方观察本轮流式上报的工具调用（含状态变化）。结果转换
+	// 用它数写操作，核对「声称完成」是否有事实支撑；可为 nil。
+	OnToolCall func(agenttypes.ToolCall)
 }
 
 // EnsureWorkflowNodeSession resolves D2 session reuse for one workflow node.
@@ -159,6 +162,10 @@ func (s *AppContext) RunWorkflowNode(ctx context.Context, exec kanban.WorkflowNo
 		PlanMode:        profile.PlanMode,
 		Prompt:          exec.Prompt,
 	}
+	// 写操作证据只从本轮流式工具事件里数（不看转录正文）：修复轮产出的 done
+	// 要靠它核对「说做完了」与「真写过」是否一致。
+	var writes workflowWriteCounter
+	req.OnToolCall = writes.observe
 	text, err := s.runWorkflowTurn(ctx, req)
 	finished := time.Now().UTC()
 	if err != nil {
@@ -170,7 +177,7 @@ func (s *AppContext) RunWorkflowNode(ctx context.Context, exec kanban.WorkflowNo
 			FinishedAt: finished,
 		}, err
 	}
-	result := s.normalizeWorkflowNodeOutput(ctx, exec, text)
+	result := s.normalizeWorkflowNodeOutput(ctx, exec, text, writes.writes())
 	result.SessionKey = req.SessionKey
 	result.StartedAt = started
 	result.FinishedAt = finished
@@ -294,6 +301,12 @@ func (s *AppContext) executeWorkflowTurn(ctx context.Context, req workflowTurnRe
 				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok &&
 					strings.TrimSpace(chunk.ParentToolUseID) == "" && strings.TrimSpace(chunk.TaskID) == "" {
 					assistantText.WriteString(chunk.Content)
+				}
+			}
+			if req.OnToolCall != nil &&
+				(update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate) {
+				if call, ok := update.Data.(agenttypes.ToolCall); ok {
+					req.OnToolCall(call)
 				}
 			}
 			s.BroadcastSessionUpdate(req.RootID, sessionKey, update)

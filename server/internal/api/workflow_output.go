@@ -31,10 +31,14 @@ func (s *AppContext) SetWorkflowOutputLLM(client kanban.LLMClient) {
 // outcome/summary。执行节点不再被要求输出 JSON 契约；结构化字段由这一层
 // 按需补充，worker 只负责把活干完并说清楚结果。
 //
-// 空回复是 silent（引擎会停在 waiting_user，而不是假装成功）；转换器不可用
-// 或返回非法 JSON 时，用原文作为 summary 并标记 done，保证工作成果不会因为
-// 一次便宜的整理调用失败而丢掉。
-func (s *AppContext) normalizeWorkflowNodeOutput(ctx context.Context, exec kanban.WorkflowNodeExecution, raw string) kanban.WorkflowNodeResult {
+// 空回复是 silent（引擎会停在 waiting_user，而不是假装成功）；转换器这一次
+// 没给出可用信封时先走格式修复轮（workflow_output_repair.go），修复轮也读不懂
+// 才用原文作为 summary 并标记 done，保证工作成果不会因为一次便宜的整理调用
+// 失败而丢掉。
+//
+// toolWrites 是本轮已完成的写操作数，只用于核对修复轮产出的 done 是否与事实
+// 相容；普通路径的结论不受它影响。
+func (s *AppContext) normalizeWorkflowNodeOutput(ctx context.Context, exec kanban.WorkflowNodeExecution, raw string, toolWrites int) kanban.WorkflowNodeResult {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return kanban.WorkflowNodeResult{
@@ -43,24 +47,15 @@ func (s *AppContext) normalizeWorkflowNodeOutput(ctx context.Context, exec kanba
 		}
 	}
 	response, err := s.callWorkflowOutputNormalizer(ctx, buildWorkflowOutputNormalizePrompt(exec, raw))
-	if err != nil {
-		return fallbackWorkflowNodeOutput(raw)
-	}
-	parsed, err := kanban.ParseWorkflowNodeEnvelope(response)
-	if err != nil {
-		return fallbackWorkflowNodeOutput(raw)
-	}
-	if parsed.Output == nil {
-		parsed.Output = map[string]any{}
-	}
 	// done 必须有给用户看的 summary；blocked/silent 的正文来自 reason，
 	// 不强迫转换器再编一句 summary。
-	if parsed.Outcome == kanban.WorkflowNodeDone {
-		if summary, _ := parsed.Output["summary"].(string); strings.TrimSpace(summary) == "" {
-			return fallbackWorkflowNodeOutput(raw)
-		}
+	if parsed, ok := usableWorkflowNodeEnvelope(response, err); ok {
+		return parsed
 	}
-	return parsed
+	if repaired, ok := s.repairWorkflowNodeOutput(ctx, exec, raw, response, err, toolWrites); ok {
+		return repaired
+	}
+	return fallbackWorkflowNodeOutput(raw)
 }
 
 func (s *AppContext) callWorkflowOutputNormalizer(ctx context.Context, prompt string) (string, error) {

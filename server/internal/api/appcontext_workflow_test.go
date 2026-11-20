@@ -17,13 +17,20 @@ import (
 type fakeWorkflowOutputLLM struct {
 	prompts  []string
 	response string
-	err      error
+	// responses 逐次消费；用完后回落到 response。修复轮用例靠它排「先坏后好」。
+	responses []string
+	err       error
 }
 
 func (f *fakeWorkflowOutputLLM) Call(_ context.Context, prompt string) (string, error) {
 	f.prompts = append(f.prompts, prompt)
 	if f.err != nil {
 		return "", f.err
+	}
+	if len(f.responses) > 0 {
+		next := f.responses[0]
+		f.responses = f.responses[1:]
+		return next, nil
 	}
 	return f.response, nil
 }
