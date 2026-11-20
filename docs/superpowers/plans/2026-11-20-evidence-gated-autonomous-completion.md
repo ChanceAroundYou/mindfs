@@ -393,11 +393,21 @@ api 层 `RunRouterTurn` 新增 `ReadOnly` 分支：`ensureVerifierSession` 建�
 - Create: `scripts/crash-sim.sh`
 - Test: 用隔离实例跑 1 轮自检。
 
-- [ ] **Step 1: 写脚本**：复用 `scripts/mindfs-iso.sh` 的隔离根与端口约定，起实例 → 建任务 →
+- [x] **Step 1: 写脚本**：复用 `scripts/mindfs-iso.sh` 的隔离根与端口约定，起实例 → 建任务 →
   随机延迟后 `kill -9` → 重启 → 跑四条断言（无 running 回复残留 / 无「任务非终态 + Run 已结算 +
   投影已终态」悬挂 / 二次重启不新增事件 / `PRAGMA integrity_check` 为 ok）。
-- [ ] **Step 2: 自检 1 轮**：`CRASH_SIM_ROUNDS=1 bash scripts/crash-sim.sh` 输出 PASS 与 kill 点。
-- [ ] **Step 3: 提交** `chore: 崩溃注入脚本（Scope: G-NP）`。
+- [x] **Step 2: 自检 1 轮**：`CRASH_SIM_ROUNDS=1 bash scripts/crash-sim.sh` 输出 PASS 与 kill 点。
+- [x] **Step 3: 提交** `chore: 崩溃注入脚本（Scope: G-NP）`。
+
+**执行记录（2026-11-21）：** `CRASH_SIM_ROUNDS=3` 全过（`rounds=3 fails=0`）。每轮都先证明
+这一刀砍在回合中间：kill 后立刻只读打开库，`2 条回复停在 pending/running`；重启后同一断言
+为 0，说明启动对账确实结算了孤儿回复；② 在直连回合上必然空过（直连不建 Run），保留它是给
+工作流崩溃回归用；③ 用真实计数比对（`{"router_events":0,"task_activities":3,"task_events":2}`
+两轮完全相同）。三处计划缺陷按裁定修正：① `mindfs-iso.sh` 原来只从**工作区**编译，共享工作区
+随时有别的会话在飞改动（本轮就撞上一次 `session_open.go` 编译不过），新增 `MINDFS_ISO_SRC`
+让它可以从干净 HEAD worktree 编译，crash-sim 每条轮次都从 `HEAD` 切临时源码树（`web/dist` 与
+`agents.json` 软链回工作区，因为两者都不进 git）；② 活动列表的字段是 `activities` 不是
+`items`；③ 建任务返回 `{"task":{...}}`，`id` 在 `.task.id`。
 
 ---
 

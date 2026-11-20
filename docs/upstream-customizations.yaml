@@ -11026,6 +11026,8 @@ groups:
       - scripts/mutate.sh
       - scripts/mutations.txt
       - Makefile
+      - scripts/crash-sim.sh
+      - scripts/mindfs-iso.sh
     tests:
       - server/internal/api/http_task_completion_test.go
       - server/internal/kanban/router_status_completion_test.go
@@ -11112,3 +11114,6 @@ groups:
       - 'scripts/mutations.txt:hold-ignores-future-not-before'
       - 'scripts/mutations.txt:dedup-ignores-gap-identity'
       - 'Makefile:@bash scripts/mutate.sh'
+      - 'scripts/crash-sim.sh:crash-sim: rounds=$ROUNDS fails=$fails'
+      - 'scripts/crash-sim.sh:崩溃时没有活着的回复'
+      - 'scripts/mindfs-iso.sh:ISO_SRC="${MINDFS_ISO_SRC:-$WT_ROOT}"'

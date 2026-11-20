@@ -10,7 +10,8 @@
 #     ⇒ 一个 `XDG_CONFIG_HOME` 搬走账户表、项目注册表、偏好、看板模板、pending 旁的 meta。
 #   · **不隔离 HOME**：agent 发现逻辑要读 `~/.local/bin`、`~/.claude`
 #     （`server/internal/agent/discovery.go:61,168`），搬走 HOME 会让真实回合跑不起来。
-#   · 静态资源用 `MINDFS_STATIC_DIR` 指向**工作区**的 `web/dist` ⇒ E2E 验的是我改的那版前端。
+#   · 静态资源用 `MINDFS_STATIC_DIR` 指向**源码树**的 `web/dist` ⇒ E2E 验的是我改的那版前端
+#     （`MINDFS_ISO_SRC` 可把源码树换成一个干净的 HEAD worktree，见 crash-sim.sh）。
 #
 # 已知且接受的副作用（写在这里以免下次又踩）：
 #   · 在隔离实例里**新建**会话会产生新的转录目录 `~/.claude/projects/-tmp-mindfs-iso-...`
@@ -26,6 +27,8 @@
 set -euo pipefail
 
 WT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 源码树：默认就是工作区；crash-sim 这类要可复现的脚本指向从 HEAD 切出的干净 worktree。
+ISO_SRC="${MINDFS_ISO_SRC:-$WT_ROOT}"
 ISO_ROOT="${MINDFS_ISO_ROOT:-/tmp/mindfs-iso}"
 ISO_PORT="${MINDFS_ISO_PORT:-7431}"
 ONLINE_PORT="${MINDFS_ONLINE_PORT:-7331}"
@@ -85,9 +88,9 @@ cmd_start() {
   fi
 
   say "编译隔离二进制（工作区源码）"
-  ( cd "$WT_ROOT" && go build -ldflags "-X mindfs/internal/deploy.Prefix=$ISO_BASE" -o "$ISO_BIN" ./cli/cmd )
+  ( cd "$ISO_SRC" && go build -ldflags "-X mindfs/internal/deploy.Prefix=$ISO_BASE" -o "$ISO_BIN" ./cli/cmd )
 
-  [ -d "$WT_ROOT/web/dist/assets" ] || die "web/dist 不存在 —— 先跑 make build-web（E2E 必须验工作区那版前端）"
+  [ -d "$ISO_SRC/web/dist/assets" ] || die "web/dist 不存在 —— 先跑 make build-web（E2E 必须验工作区那版前端）"
 
   if [ ! -f "$ISO_PROJ/notes.md" ]; then
     printf '# 隔离项目\n\nE2E 用的合成项目，与线上任何项目无关。\n' > "$ISO_PROJ/notes.md"
@@ -103,9 +106,9 @@ cmd_start() {
   (
     cd "$ISO_ROOT"
     XDG_CONFIG_HOME="$ISO_CFG" \
-    MINDFS_STATIC_DIR="$WT_ROOT/web/dist" \
+    MINDFS_STATIC_DIR="$ISO_SRC/web/dist" \
     nohup "$ISO_BIN" -addr "127.0.0.1:$ISO_PORT" -web-push=false -foreground \
-      -agent-config "$WT_ROOT/agents.json" >"$ISO_LOG" 2>&1 &
+      -agent-config "$ISO_SRC/agents.json" >"$ISO_LOG" 2>&1 &
     echo $! > "$ISO_PID"
   )
 
