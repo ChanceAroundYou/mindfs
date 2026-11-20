@@ -49,6 +49,26 @@ export function collectTaskSessionGroups(
 }
 
 /**
+ * 顶层会话分成任务组之后占几行：一个组算一行，成员不占位（2026-11-20 用户决策：
+ * 「无论展开还是收起，请把会话组作为一个会话」）。
+ *
+ * 侧栏每个项目只给固定条数的预算，判「还能装几条」「还有几条没显示」必须按**行**
+ * 算。按会话算的话，一个装了 4 条会话的任务组会吃掉 4 份预算，列表明明还有空位
+ * 却冒出「还有 N 个会话」—— 收起时只显示 1 行，那个数字就更没道理了。
+ *
+ * 展开与否不影响结果：成员行是 `nested` 的，收起时只是不渲染，顶层行数不变。
+ */
+export function taskGroupedRowCount(
+  topLevel: SessionItem[],
+  seenCount?: (taskId: string) => number,
+): number {
+  const groups = collectTaskSessionGroups(topLevel, seenCount);
+  let grouped = 0;
+  for (const members of groups.values()) grouped += members.length;
+  return topLevel.length - grouped + groups.size;
+}
+
+/**
  * 把顶层会话排成「分组头 + 成员」的行序列：只有成员数达到
  * TASK_GROUP_MIN_SESSIONS 的任务才成组，组出现在它第一个成员原来的位置上，
  * 其余成员紧随其后（列表本身按最近活动排序，组内相对顺序保持不变）。

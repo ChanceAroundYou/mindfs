@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type DirectorySortMode, sortDirectoryEntries } from "../../services/prefs/directorySort";
 import { getNodes, PALETTE } from "../../services/net/nodeRegistry";
 import { resolveGroupColor } from "../../shared/sessionGroupDisplay";
@@ -18,6 +18,8 @@ import type {
   SessionItem,
   VisibleSessionRow,
 } from "./sessionListTypes";
+import { MULTI_PROJECT_VISIBLE_LIMIT } from "./sessionListShared";
+import { taskGroupedRowCount } from "./sessionTaskGroups";
 import { useSessionChildTree } from "./useSessionChildTree";
 
 type UseMultiProjectSessionListOptions = {
@@ -184,6 +186,19 @@ export function useMultiProjectSessionList({
   const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
     sessions.filter((session) => !String(session.parent_session_key || "").trim());
 
+  /**
+   * 这个项目在侧栏里占了几行：任务组算 1 行、组内成员与子会话不占位。
+   *
+   * 不需要 `task_session_count` / 进程内记忆那套阈值：它们只决定「1 条会话算不算
+   * 单独成组」，而一条会话无论成不成组都占 1 行，行数不变。所以按本页成员数判
+   * 分组就与渲染出来的行数一致。
+   */
+  const topLevelRowCount = (items: SessionItem[]) =>
+    taskGroupedRowCount(topLevelSessionsForGroup(items));
+
+  // 每个项目上一次补拉时的顶层会话条数：用来识别「这一页没有带回新会话」。
+  const budgetPageRef = useRef<Record<string, number>>({});
+
   const groupDefaultExpanded = (_group: ProjectSessionGroup) => true;
 
   const loadMoreProject = async (group: ProjectSessionGroup) => {
@@ -198,6 +213,44 @@ export function useMultiProjectSessionList({
       setLoadingProjects((prev) => ({ ...prev, [groupKey]: false }));
     }
   };
+
+  /**
+   * 按行补满项目预算（2026-11-20 用户决策：「把会话组作为一个会话，不要因组里有
+   * 好几个对话而显示不完」）。
+   *
+   * 项目预算 MULTI_PROJECT_VISIBLE_LIMIT 按行算，而每页拉回来的是「会话」：一个
+   * 装了 4 条会话的任务组只占 1 行，项目里可显示的行数就短了 3 行，末尾于是冒出
+   * 「还有 N 个会话」，可列表其实还有空位。这里按缺口继续往后翻页，直到补满预算
+   * 或后端没有更多。
+   *
+   * 三条闸门缺一不可：
+   *   - 一次只补一个项目（`break`），避免一圈项目同时打请求；
+   *   - 正在加载的项目跳过，等这一页回来再判；
+   *   - 记住上一次补拉时的顶层会话条数，没有增长就停 —— 一页回来全是已加载会话
+   *     的子会话或已有分组的成员时，`remaining` 仍然大于 0，再拉只是重复请求。
+   */
+  useEffect(() => {
+    if (!onLoadMoreProject) return;
+    for (const group of orderedGroups) {
+      const key = groupScopeKey(group);
+      const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
+      const shortOfBudget =
+        !!(expandedProjects[key] ?? groupDefaultExpanded(group)) &&
+        group.totalCount > topLevelCount &&
+        topLevelRowCount(group.sessions) < MULTI_PROJECT_VISIBLE_LIMIT;
+      if (!shortOfBudget) {
+        // 不需要补了（补满 / 后端没有更多 / 项目收起）：清掉记录，下次重新缺行
+        // 时还能再补 —— 否则换账户、刷新换了一批会话也会被旧记录挡住。
+        delete budgetPageRef.current[key];
+        continue;
+      }
+      if (loadingProjects[key]) continue;
+      if ((budgetPageRef.current[key] ?? -1) >= topLevelCount) continue;
+      budgetPageRef.current[key] = topLevelCount;
+      void loadMoreProject(group);
+      break;
+    }
+  });
 
   const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
@@ -241,5 +294,6 @@ export function useMultiProjectSessionList({
     childrenHasMore,
     childStateKey,
     topLevelSessionsForGroup,
+    topLevelRowCount,
   };
 }

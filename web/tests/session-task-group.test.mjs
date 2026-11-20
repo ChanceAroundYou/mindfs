@@ -8,6 +8,7 @@ import {
   rememberTaskSessions,
   resetTaskSessionTally,
   taskGroupAggregateState,
+  taskGroupedRowCount,
   taskGroupShowsMembers,
   taskSessionGroupHeading,
   taskSessionGroupLabel,
@@ -412,5 +413,73 @@ test("分组行把成员带到两条侧栏，菜单动作接到会话归档/删�
     multi,
     /members=\{row\.members\.map\(\(member\) => \(\{ \.\.\.member, root_id: member\.root_id \|\| group\.rootId \}\)\)\}/,
     "multi-project group members must carry their project id",
+  );
+});
+
+// 用户 2026-11-20：「无论展开还是收起，请把会话组作为一个会话，不要因组里有好几个
+// 对话而显示不完，出现『还有 n 个对话』」。侧栏的项目预算按**行**算：一个任务组只
+// 占 1 行。按会话算的话，组里 4 条会话会吃掉 4 份预算，列表还空着就冒出那句话。
+test("任务组按一个会话计入项目预算（行数），成员与子会话不占位", () => {
+  const members = [
+    session("a1", { task_id: "task-a" }),
+    session("a2", { task_id: "task-a" }),
+    session("a3", { task_id: "task-a" }),
+    session("a4", { task_id: "task-a" }),
+  ];
+  assert.equal(taskGroupedRowCount(members), 1, "4 条同任务会话只占 1 行");
+  assert.equal(taskGroupedRowCount([...members, session("loose")]), 2, "没有 task_id 的会话各占 1 行");
+  assert.equal(taskGroupedRowCount([]), 0);
+  assert.equal(
+    taskGroupedRowCount([session("only", { task_id: "task-solo" })]),
+    1,
+    "单条会话的任务不成组，照样 1 行",
+  );
+  // `task_session_count` / 进程内记忆只决定「一条会话算不算单独成组」，
+  // 而一条会话无论成不成组都占 1 行 —— 所以预算不必等它们。
+  assert.equal(
+    taskGroupedRowCount([session("only", { task_id: "task-solo", task_session_count: 4 })]),
+    1,
+    "后端说这个任务还有 3 条没装进这一页，行数仍是 1",
+  );
+  // 入参是顶层会话（调用方用 topLevelSessionsForGroup 先滤掉子会话）：子会话挂在
+  // 父行下面，不占项目预算。
+  assert.equal(
+    taskGroupedRowCount([
+      session("a1", { task_id: "task-a" }),
+      session("a2", { task_id: "task-a" }),
+    ]),
+    1,
+    "子会话不进这个函数，两条成员的组仍是 1 行",
+  );
+
+  const hook = read("components/session/useMultiProjectSessionList.ts");
+  assert.match(
+    hook,
+    /taskGroupedRowCount\(topLevelSessionsForGroup\(items\)\)/,
+    "预算用的行数必须与渲染同一套分组判据",
+  );
+  assert.match(
+    hook,
+    /topLevelRowCount\(group\.sessions\) < MULTI_PROJECT_VISIBLE_LIMIT/,
+    "行数没占满项目预算就继续补拉，否则组内成员等于白吃预算",
+  );
+  assert.match(
+    hook,
+    /\(budgetPageRef\.current\[key\] \?\? -1\) >= topLevelCount/,
+    "上一页没带回新的顶层会话就停，别对着同一页重复请求",
+  );
+  assert.match(hook, /void loadMoreProject\(group\);\s*break;/, "一次只补一个项目，不让一圈项目同时打请求");
+
+  const multi = read("components/session/MultiProjectSessionList.tsx");
+  assert.match(multi, /const topLevelRows = topLevelRowCount\(group\.sessions\);/, "列表按行数判预算");
+  assert.match(
+    multi,
+    /expanded && topLevelRows >= MULTI_PROJECT_VISIBLE_LIMIT && remaining > 0/,
+    "只有行数真的占满预算才显示「还有 N 个会话」",
+  );
+  assert.match(
+    multi,
+    /t\("sessionList\.remainingSessions", \{ count: remaining \}\)/,
+    "确实显示时按未加载的会话数如实报数",
   );
 });

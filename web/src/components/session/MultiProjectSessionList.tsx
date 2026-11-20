@@ -71,6 +71,7 @@ export function MultiProjectSessionList({
     childrenHasMore,
     childStateKey,
     topLevelSessionsForGroup,
+    topLevelRowCount,
   } = useMultiProjectSessionList({
     groups,
     selectedKey,
@@ -141,6 +142,10 @@ export function MultiProjectSessionList({
               const sessions = expanded ? group.sessions : [];
               const rows = buildRows(sessions, group.rootId, groupNodeId);
               const remaining = Math.max(0, group.totalCount - topLevelSessions.length);
+              // 预算按行算：任务组只占 1 行（用户 2026-11-20「无论展开还是收起，
+              // 把会话组作为一个会话」）。按会话算的话，组里 4 条会话会吃掉 4 份
+              // 预算，列表还空着就冒出「还有 N 个会话」。
+              const topLevelRows = topLevelRowCount(group.sessions);
               const projectLoading = !!loadingProjects[groupKey];
               const groupUnreachable = (group as any)._unreachable === true;
               return (
@@ -265,10 +270,10 @@ export function MultiProjectSessionList({
                         />
                       );
                     })}
-                    {expanded && group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT && Math.max(0, group.totalCount - topLevelSessions.length) > 0 ? (
+                    {expanded && topLevelRows >= MULTI_PROJECT_VISIBLE_LIMIT && remaining > 0 ? (
                       <ToggleRowButton
                         loading={projectLoading}
-                        label={projectLoading ? t("sessionList.loading") : t("sessionList.remainingSessions", { count: Math.max(0, group.totalCount - topLevelSessions.length) })}
+                        label={projectLoading ? t("sessionList.loading") : t("sessionList.remainingSessions", { count: remaining })}
                         showExpandIcon={!projectLoading}
                         marginLeft={MAIN_SESSION_ICON_OFFSET}
                         onClick={() => void loadMoreProject(group)}
