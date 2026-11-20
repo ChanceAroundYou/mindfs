@@ -10967,7 +10967,7 @@ groups:
     title: 证据门 + 自动补做（工作流自主收尾，Plan 2026-11-20 Task 2 起）
     kind: feature
     symptom: "2026-11-20 用户给的产品目标：「我发布个任务，就能从头做到尾，只有特殊情况需要我介入审核」，证据标准「必须有可以核对的证据」。现场四处堵点：① 任务结论由 Run 投影决定，Run success 被投影成 waiting_user，因此「做完」与「没做完」在界面上无法区分；② Router 没有任何工具能宣告任务完成，只能 say；③ 运行期事件回合的写动作白名单只有 say/ask_user/silent 与监管动作，缺「收尾」；④ 节点结论只靠一次便宜的整理调用，模型没按约定回 JSON 时直接降级成「原文当 summary + done」，一次转换器抖动就让整块看板看起来都做完了。"
-    why: "必须保留：① 完成与否只看可核对的证据（节点终态、gate 批准、全节点收尾、文件存在），不看任何模型自称；② 「格式坏了」与「没做完」必须分开 —— 节点本身只写自然语言，形成信封的是 Router 结果转换器，所以格式修复轮改在 api 的结果转换层重问一次（最多 2 次、总预算 120s），而不是把节点判 unknown；③ 修复轮可能「补一个漂亮的信封」，所以修复得到的 done 必须与事实相容（节点允许写 workspace 而本轮零写操作时降 blocked 并写明「没有观察到写操作」），核对只数已完成的写类工具调用，不读转录正文；④ 修复预算耗尽仍回落到原文摘要 + done（不是 unknown）—— 转换器故障是辅助模型基建问题，不是节点工作失败的证据，落 unknown 会让一次模型抖动把整块看板的节点全停给人工；完成与否由证据门按事实判定，不信摘要文本；⑤ 完成契约在 Run 创建时快照、运行期冻结（EditWorkflowRunGraph 与 saveWorkflowRunTx 两处守卫），跑到一半改标准会让已判过的证据全部作废；⑥ 契约只认每个节点最新 attempt，历史成功不能给重试失败兜底；file_exists 只接受工作区内相对路径、只 Lstat、不跟随符号链接；⑦ `complete_task` 只是 Router 的收尾意图，不是结论 —— 收尾是否成立由证据门判定，且它与开工动作互斥、还有节点在跑时拒绝，避免「活没干完就挂已完成」。"
+    why: "必须保留：① 完成与否只看可核对的证据（节点终态、gate 批准、全节点收尾、文件存在），不看任何模型自称；② 「格式坏了」与「没做完」必须分开 —— 节点本身只写自然语言，形成信封的是 Router 结果转换器，所以格式修复轮改在 api 的结果转换层重问一次（最多 2 次、总预算 120s），而不是把节点判 unknown；③ 修复轮可能「补一个漂亮的信封」，所以修复得到的 done 必须与事实相容（节点允许写 workspace 而本轮零写操作时降 blocked 并写明「没有观察到写操作」），核对只数已完成的写类工具调用，不读转录正文；④ 修复预算耗尽仍回落到原文摘要 + done（不是 unknown）—— 转换器故障是辅助模型基建问题，不是节点工作失败的证据，落 unknown 会让一次模型抖动把整块看板的节点全停给人工；完成与否由证据门按事实判定，不信摘要文本；⑤ 完成契约在 Run 创建时快照、运行期冻结（EditWorkflowRunGraph 与 saveWorkflowRunTx 两处守卫），跑到一半改标准会让已判过的证据全部作废；⑥ 契约只认每个节点最新 attempt，历史成功不能给重试失败兜底；file_exists 只接受工作区内相对路径、只 Lstat、不跟随符号链接；⑦ `complete_task` 只是 Router 的收尾意图，不是结论 —— 收尾是否成立由证据门判定，且它与开工动作互斥、还有节点在跑时拒绝，避免「活没干完就挂已完成」；⑧ 应用阶段重新求值而不是信任回合内的快照：证据成立才复用 `finishWorkflowRunByOperator` 收尾，不成立只写编号缺口并把任务留在原地（既不算成功也不算失败）；同一决策重放按确定性系统行 ID 与 `task_completion` 行幂等。"
     boundary: "只作用于工作流节点的结果转换：普通会话回合不经过这一层；不改节点自身的信封契约（D5 之后本就由 Router 整理）；不改 attempt、不产生新 NodeRun。修复轮不带工具（它调的是整理模型），也不改写会话历史。不宣称覆盖「节点自己谎报事实」—— 那一类由后续任务的证据门与缺口补做兜底。证据求值只读任务库 / NodeRun 行 / 磁盘，不读转录；符号链接一律判不通过（不解析目标）。"
     files:
       - server/internal/api/workflow_output.go
@@ -10981,10 +10981,17 @@ groups:
       - server/internal/kanban/router_tools.go
       - server/internal/kanban/router_tools_complete.go
       - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/completion_store.go
+      - server/internal/kanban/service_completion.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/service_activities.go
     tests:
       - server/internal/api/workflow_output_repair_test.go
       - server/internal/kanban/workflow_completion_test.go
       - server/internal/kanban/router_tools_complete_test.go
+      - server/internal/kanban/service_completion_test.go
     anchors:
       - 'server/internal/api/workflow_output_repair.go:const ('
       - 'server/internal/api/workflow_output_repair.go:func (s *AppContext) repairWorkflowNodeOutput('
@@ -11007,3 +11014,15 @@ groups:
       - 'server/internal/kanban/router_tools.go:return fmt.Errorf("%s is not allowed while a node is still running", action.Kind)'
       - 'server/internal/kanban/router_tools.go:complete_task is not allowed on a %s task'
       - 'server/internal/kanban/router_coordinate_turn.go:case RouterActionSay, RouterActionAskUser, RouterActionSilent, RouterActionComplete:'
+      - 'server/internal/kanban/completion_store.go:type TaskCompletion struct'
+      - 'server/internal/kanban/completion_store.go:func (s *TaskStore) UpsertTaskCompletion('
+      - 'server/internal/kanban/completion_store.go:func (s *TaskStore) GetTaskCompletion('
+      - 'server/internal/kanban/service_completion.go:func (s *ActivityService) SetCompletionApplier('
+      - 'server/internal/kanban/service_completion.go:func (s *Service) applyCompleteTask('
+      - 'server/internal/kanban/service_completion.go:func (s *Service) commitCompletion('
+      - 'server/internal/kanban/service_completion.go:func (s *Service) blockCompletion('
+      - 'server/internal/kanban/service_completion.go:func completionGapLines('
+      - 'server/internal/kanban/task_store_migrate.go:CREATE TABLE IF NOT EXISTS task_completion ('
+      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) applyRouteComplete('
+      - 'server/internal/kanban/service_activities.go:svc.SetCompletionApplier(s)'
+      - 'server/internal/kanban/activity_service.go:completion CompletionApplier'
