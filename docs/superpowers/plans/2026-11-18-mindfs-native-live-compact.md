@@ -169,7 +169,7 @@
 - [x] **Step 4：** 不变量 I1–I7、两套解析器一致性、门禁与急停全部有测试；关键守卫做过变异验证（恒定缓存键、跳过存档存在性/大小检查、放开急停，均能把测试钉红）。
 - [x] **Step 5：** 修掉本轮暴露的真缺陷：`foldRequest` 原先只停观测不停改写，急停文件对折叠无效。
 - [x] **Step 6：** 门禁：`go test -count=1 ./...` 全绿、`go test -race ./server/internal/agent/proxy/` 绿、`go vet` 干净、`make build` 成功。
-- [ ] **Step 7（未做）：** 真实流量灰度 —— 先 WSL 或 fn 开 `on` 观察 24h，再本机（需用户重启），pc-win 最后。
+- [x] **Step 7（2026-11-20 上线启用）：** 用户指令「把 on 打开」后四节点同时开 `on`（本机仍待用户重启），跳过 24h 先行观察窗；见文末「上线启用」。
 
 ### Task B2: 账本 + 只读 API + 前端上下文 capsule（用户指令「把 B 全部做完」；已完成，未开 `on`）
 
@@ -190,7 +190,7 @@
 - [x] **Step 6b（2026-11-19 收尾）：** 补 `usecase/session_context_saving_test.go`（真实池 + 真实代理写账本，钉住「先解析 agent 再查池级 key」；变异验证过），`lcsmoke -mode/账本读回`；真实 CLI `-mode on` 冒烟 8 次折叠、`latest={saved=72227,blocks=5}`；记录 `on` 模式 `drift` 自噪声（spec §12.4）。全量门禁与 `make check-upstream`（1915 delta / 307 组）复跑通过。
 - [x] **Step 6c（2026-11-19 隔离实例 A/B 对比）：** 同一工作负载（**一条会话**、6 次顺序大文件 Read、每次 93,755 B）、两个隔离实例（7441 `shadow` / 7442 `on`，`XDG_CONFIG_HOME=${root}/config`，线上 7331 未碰），经 MindFS 真实 WS 回环（`session.message` → CLI → 代理 → 上游）跑完。结果：`on` 侧第 2/3/4/5 轮 `est_in` 相对 `shadow` 缓降 0.1% → 26.0% → 41.1% → 51.5%，第 1 轮完全一致（42632 vs 42585，+0.1% 是请求里的随机 uuid）；账本 `requests=5`、`max_saved_bytes=378,240`、折叠 4 块 / 93,756 tokens_est；末轮 `req_bytes=651,731 → folded_bytes=273,491`（-58%）；存档 4 个 93,755 B 文件（0700/0600，内容可读回原文）。正确性：两侧模型都完成了任务；**`shadow` 在 7 轮时撞上 200k 窗口并自动压缩失败（`Prompt is too long`），`on` 未触发压缩**，墙钟 521.4 s vs 301.8 s。未开 `on` 的线上节点、未提交。
 - [x] **Step 6d（2026-11-19 缓存代价复测）：** 增加第三臂 `control`（7443，`mode=on` + `keep_rounds=20`，6 轮内零可折块），把「`on` 代码路径」与「实际改写」分开。结论：`on` 自第 4 个请求起 `cache_read` 钉死 ~17.86k，`input_tokens` 37.3k → 75.5k，每轮全价重算折叠后历史；第 2–5 请求按 1x/0.1x 折算 shadow ≈179.2k、control ≈179.0k、on ≈237.4k —— **原始 token −24.7%、成本 +32.5%**；control 与 shadow 逐轮重合，证明是改写而非代码路径导致。**这违反 §9 优先级 2，`mode=on` 开闸前必须解决**；实测与方法见 spec §12.5（含补 `cache_control` 断点等候选方向，需另一次评审）。
-- [ ] **Step 7（未做，且被 Step 6d 阻塞）：** 与 B1 Step 7 合并 —— 灰度顺序仍是 WSL/fn → 本机（用户重启）→ pc-win，但先要解决缓存代价。
+- [x] **Step 7（2026-11-20 上线启用）：** 缓存代价已由 B4（低频大折 + `keep_tail_tokens`）解决（三臂 PASS、真实会话回放 0.88–0.93×）；灰度按用户指令四节点同时开，见文末「上线启用」。
 
 ### Task B4: 低频大折 + 单调边界（2026-11-19 用户批准；Phase A 先做）
 
@@ -216,7 +216,7 @@
 - [x] **Step 7：** 门禁：`go test -count=1 ./...`、`go test -race ./server/internal/agent/proxy/`、`make build`。
 - [x] **Step 8（隔离实例三臂）：** 复用 `/tmp/lcbench` 的 Read 负载（本轮 8×93,755 B），验收 §12.6 四条。**第一次 FAIL**（2.26×），见下方「Step 8 结果」。
 - [x] **Step 8b（2026-11-19，追加）：** 按 §12.7 复盘（缓存语义 + 折深定律）改默认值，再补 `keep_tail_tokens`；**第二次三臂 PASS**，见下方「Step 8 复测第二次」。
-- [ ] **Step 9（未做，单独授权）：** WSL/fn `shadow` 24h 预演；准入 ≥3 次 `gate=fold` 且平均 `est_after/est_before < 0.8`。
+- [x] **Step 9（2026-11-20 由用户指令替代）：** `shadow` 24h 预演被「直接开 `on`」替代；准入数据改由 §12.8 真实会话回放给出（92 个请求体、0.88–0.93×、峰值 97–100k），上线后按同一组 `gate=` / `est_after/est_before` 持续观察。
 
 **B4 实施结果（2026-11-19，Step 1–8 完成，Step 8 验收 FAIL；Step 9 未做）：**
 
@@ -439,6 +439,41 @@ web `context-saving-chip` 9 条通过，`tsc` clean。
 
 ## 明确不在本计划内
 
-- B3 抽取卡片。
-- 任何 `mode=on` 的线上启用（B1 代码已就绪，灰度顺序见 spec §6）。
+- B3 抽取卡片（会改变消息结构，需另一次设计评审）。
 - （B1 折叠实现原不在本计划内，2026-11-18 由用户指令「把 B 全部做完」追加为 Task B1。）
+- （`mode=on` 的线上启用原不在本计划内；2026-11-20 用户指令「把 on 打开」后执行，见文末。）
+
+## 上线启用（2026-11-20，用户指令「现在我们的 live compact 可以上线了对不对？请你把 on 打开」）
+
+**部署**：当前 main（`1937d04d`）走 `scripts/deploy-all.sh`，四端逐字一致
+`v0.5.5-1200-22-g1937d04d`；门禁 go / tsc / Vitest 全绿（脚本内置），本机 bundle 对账一致。
+
+**配置**（四个节点都写显式值，避免将来改代码默认值时线上行为静默漂移）：
+
+```json
+"live_compact": {
+  "mode": "on",
+  "rail_tokens": 100000, "target_tokens": 20000,
+  "keep_rounds": 3, "keep_tail_tokens": 32000,
+  "min_block_tokens": 2000, "min_fold_bytes": 4096,
+  "max_fold_bytes": 262144, "large_block_tokens": 32000
+}
+```
+
+| 节点 | 配置文件 | 备份 | 状态 |
+|---|---|---|---|
+| 本机 | `~/.config/mindfs/config.json` | `config.json.bak-lc-20261120-103837` | 已写 `on`；**运行进程仍是 02:55 的旧二进制 + `shadow`，待用户 `sudo systemctl restart mindfs`** |
+| wsl | `~/.config/mindfs/config.json` | `config.json.bak-lc-20261120-103844` | 已重启，`live_compact=on`（日志已确认） |
+| fn | `~/.config/mindfs/config.json` | `config.json.bak-lc-20261120-103845` | 已重启，`live_compact=on`（10:39:46 日志） |
+| pc-win | `C:\Users\10178\AppData\Roaming\mindfs\config.json` | `config.json.bak-lc-20261120-103941` | 已 `schtasks /end` + `/run`，`live_compact=on`（10:40:40 日志），health 200 |
+
+**跳过 24h 先行观察窗**：spec §6 的灰度顺序是「先 WSL/fn 观察 24h → 本机 → pc-win」，本次按用户指令
+四节点同时开。依据改为 §12.8 的真实会话回放（92 个真实请求体，100k/20k 0.88–0.93× 成本、峰值
+97–100k 在 CLI ~167k 压缩阈值下）与 §12.7 三臂 PASS；观察改为上线后持续进行。
+
+**急停与回退**：任一节点在 `<config-dir>/context/DISABLED` 落任意文件即 1 秒内停折（不重启）；
+回退把该节点 `live_compact.mode` 改回 `off` 后重启（三台 worker Agent 可自行重启，本机需用户执行）。
+
+**观察项（上线后）**：`[live-compact] on` 日志的 `gate=` / `would_fold_tokens=`；账本
+`rewrite_tokens` / `saved_bytes` / `requests`；上游 4xx；CLI 自动压缩次数；`context/` 目录大小与
+`over_cap` 日志。首轮真实折叠后核对：存档可读回原文、`verifyFold` 零回退、指针在下一轮保持。

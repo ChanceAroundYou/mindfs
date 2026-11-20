@@ -238,11 +238,25 @@ archive: /home/xiaokubao/.config/mindfs/context/a1b2c3d4e5f60718293a4b5c.txt
 **2026-11-19 追加阻塞项**：隔离实测显示折叠让前缀缓存整体失效、折算成本反而 +32.5%（§12.5），
 这一项不解决就不进灰度。
 
+**2026-11-20 上线启用（用户指令「把 on 打开」）**：四个节点全部 `live_compact.mode=on`，配置显式固定
+rail 100k / target 20k / keep_rounds 3 / keep_tail 32k / min_block 2k / min_fold 4 KiB /
+max_fold 256 KiB / large_block 32k，随 `v0.5.5-1200-22-g1937d04d` 部署。WSL / fn / pc-win 已重启并
+在启动日志确认为 `live_compact=on`；本机二进制已装、配置已写，**待用户 `sudo systemctl restart mindfs`
+生效**（运行中进程仍是 02:55 的旧二进制 + `shadow`）。依据：§12.8 真实会话回放（92 个真实请求体，
+100k/20k 折算 0.88–0.93× 成本、峰值 97–100k 在 CLI ~167k 自动压缩阈值下、同配置三次方差 ~3%）与
+§12.7 三臂 PASS；§12.5 的缓存代价已由「低频大折 + keep_tail_tokens」消除到打平以下。
+**§6 的「先 WSL/fn 观察 24h」窗口被用户指令直接跳过**——记录在案，观察改为上线后持续进行：
+`[live-compact] on` 日志的 `gate=` / `would_fold_tokens=`、账本 `rewrite_tokens` 与 `saved_bytes`、
+上游 4xx 与 CLI 自动压缩次数。急停：在节点存档目录 `<config-dir>/context/DISABLED` 落任意文件，
+1 秒内停止改写与观测（不重启）；恢复即删文件。回退：把该节点 `live_compact.mode` 改回 `off`/`shadow`
+后重启（worker 可直接重启，本机需用户执行）。
+
 - 工具输出 → 指针 + 存档；不变量、失败开放、确定性、GC；单测 + 代理集成测试。
 - **开闸证据**（必须来自 Phase A 真实数据，不能凭预测）：候选块在长会话里持续出现；单请求预计节省达到
   可观察量级（阈值在 A 结束时按分布定，不低于 total 的 20%）；parse 失败率为 0；prefix drift 不频繁。
 - **灰度顺序**：先 WSL 或 fn（Agent 可自行重启 user 单元）开 `on` 观察 24h → 本机切 `on`（需用户重启
-  system 单元）观察 24–48h。pc-win 最后。
+  system 单元）观察 24–48h。pc-win 最后。（2026-11-20 用户指令改为四节点同时开 `on`，本机仍受
+  「用户重启」约束，实际生效晚于三台 worker。）
 - 验收：无归因于 fold 的上游 4xx；工具对/角色不变量全部成立；代理自测的 `est_in` 与 body 字节数下降；
   `cache_read/cache_write` 只作同节点前后趋势参考（llmux 数值不可信）；auto-compact 次数不上升；无新增压缩异常。
 
