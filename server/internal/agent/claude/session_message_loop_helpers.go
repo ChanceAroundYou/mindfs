@@ -263,7 +263,9 @@ func isKnownNonDisplayPartialEvent(raw json.RawMessage) bool {
 		return true
 	}
 	switch strings.TrimSpace(event.Type) {
-	case "content_block_start", "content_block_stop", "message_start", "message_stop":
+	// message_delta 携带 stop_reason / usage，是每段回合都会出现的正常帧；
+	// 漏掉它会让每个回合都打一条 output.unhandled.partial，把真正的未知帧埋掉。
+	case "content_block_start", "content_block_stop", "message_start", "message_stop", "message_delta":
 		return true
 	default:
 		return false

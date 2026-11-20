@@ -57,15 +57,26 @@ func (s *TaskStore) SetTaskArchived(ctx context.Context, taskID string, archived
 			return Task{}, err
 		}
 		task.ArchivedAt = stamp
+		// 归档刻意不动 updated_at、也不经过状态机，不留事件的话事后无法追「这张卡
+		// 什么时候被收走的」。只在标记真翻转时记，幂等调用不刷屏。
+		_ = s.AddEvent(ctx, TaskEvent{
+			ID: newID("event"), TaskID: task.ID, Type: "archived",
+			Payload: eventPayload(map[string]any{"archived_at": stamp}), CreatedAt: s.nowTime().UTC(),
+		})
 		return task, nil
 	}
 	if task.ArchivedAt == "" {
 		return task, nil
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE tasks SET archived_at = '', archive_dismissed_at = ? WHERE id = ?`, s.nowUTC(), task.ID); err != nil {
+	dismissed := s.nowUTC()
+	if _, err := s.db.ExecContext(ctx, `UPDATE tasks SET archived_at = '', archive_dismissed_at = ? WHERE id = ?`, dismissed, task.ID); err != nil {
 		return Task{}, err
 	}
 	task.ArchivedAt = ""
+	_ = s.AddEvent(ctx, TaskEvent{
+		ID: newID("event"), TaskID: task.ID, Type: "unarchived",
+		Payload: eventPayload(map[string]any{"archive_dismissed_at": dismissed}), CreatedAt: s.nowTime().UTC(),
+	})
 	return task, nil
 }
 

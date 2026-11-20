@@ -127,6 +127,9 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 		// 先恢复任务状态再广播终态：前端收到 activity.updated 会立刻点查任务头，
 		// 晚于广播的恢复会让界面停在「执行中」。
 		restore()
+		// 失败与成功一样以「等用户」收尾：退回 pending 会让输入框按状态禁用、
+		// 卡片停在「未开始」，用户明明看到一条报错却回不了话。暂停/终态不复活。
+		s.markTurnTaskWaitingUser(ctx, task.ID)
 		s.recordTurnResultSummary(ctx, task.ID, failure)
 		_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusFailed, failure)
 		return

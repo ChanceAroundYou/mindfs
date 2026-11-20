@@ -35,6 +35,29 @@ func (s *ActivityStore) ListOrphanDirectReplies(ctx context.Context) ([]*TaskAct
 	return items, rows.Err()
 }
 
+// ListLiveRepliesByRun 返回绑在某条 Run 上、仍停在 pending/running 的回复行。
+// 用于 legacy 审计 Run 的收尾：那类回复 run_id 不为空，直连孤儿查询按设计收不到。
+func (s *ActivityStore) ListLiveRepliesByRun(ctx context.Context, runID string) ([]*TaskActivity, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities
+		 WHERE type = ? AND status IN (?, ?) AND run_id = ?
+		 ORDER BY created_at ASC, rowid ASC`,
+		ActivityTypeAgentReply, ActivityStatusPending, ActivityStatusRunning, strings.TrimSpace(runID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []*TaskActivity{}
+	for rows.Next() {
+		activity, err := scanActivityRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, activity)
+	}
+	return items, rows.Err()
+}
+
 // LiveReplyExists 报这个任务上还有没有停在 pending/running 的回复行。用于判断
 // 「结算掉一条陈旧直连回复之后，任务是不是真的空闲了」。
 func (s *ActivityStore) LiveReplyExists(ctx context.Context, taskID string) (bool, error) {

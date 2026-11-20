@@ -10716,3 +10716,43 @@ groups:
       - 'web/src/app/useWorkspaceBoard.ts:task: nodeId ? { ...live, _nodeId: nodeId } : live'
       - 'web/src/app/useAppWorkspaceActions.ts:const targetNodeId = String(nodeId || "").trim() || getNodeIdForRoot(rootId) || undefined;'
       - 'web/src/components/task/TaskBoardView.tsx:onOpenProject={(rootId, nodeId) => { void openWorkspaceProject(rootId, nodeId); }}'
+
+  - id: G-NQ
+    title: 2026-11-20 复审五项修复（失败回合收尾 / message_delta / legacy 快照结算 / Router 会话 last_error / 归档事件）
+    kind: fix
+    symptom: "2026-11-20 用户重启后复审全部 Router 与任务执行，取证发现五处：① 任务 task_7280e0df4f5c8518 的直连回合失败后任务退回 `pending`，输入框按状态禁用，用户看到报错却回不了话（失败分支只 restore 不 mark waiting_user）；② 两小时 1,672 条 `[agent/claude] output.unhandled.partial`，全是 `message_delta` 正常帧，真正的未知帧警告被埋掉；③ 任务 task_ebe31569ee25f4ff 的 legacy 占位回复（2026-11-12）与 11 条 legacy NodeRun（最早 2026-09-28）永远停在 pending/running —— legacy Run 被 workflow 对账按 triggered_by 排除，回复 run_id 又不为空，直连孤儿结算同样收不到；④ 生产 `router_sessions` 每一条已关闭会话都带 `last_error='idle timeout'`，排查时全部像出过错；⑤ `task_events` 里没有任何归档记录，事后无法追卡片何时被收走。"
+    why: "必须保留：(1) 失败回合与成功回合一样以 waiting_user 收尾 —— 否则失败一轮之后任务既不能继续也不能重发，只能删卡重建；暂停/终态不复活由 markTurnTaskWaitingUser 自带守卫。(2) `message_delta` 属于已知非展示帧（携带 stop_reason/usage），但白名单不能退化成什么都放行：未知帧类型必须继续报。(3) legacy_import 快照只在**任务已终态**时结算：开放 NodeRun 冻结成 cancelled、投影里所有非终态一并冻结（revision CAS + node_cancelled 事件），绑定的 pending/running 回复结算成 cancelled 并写明「历史任务迁移时留下的执行快照」；任务非终态一律不碰，可能是用户正在继续处理的历史任务。这一步同时修掉「重开历史任务时 Router brief 看到幽灵开放节点」。(4) 空闲关闭是正常生命周期，reason 只进日志，不进 last_error。(5) 归档/取消归档只在标记真翻转时追加事件，幂等调用不刷屏。"
+    boundary: "A1 只改任务头投影，不改活动终态与失败文案；A2 只扩事件类型白名单，delta 类型不动；A3 不处理非 legacy Run（照旧走既有对账），不改变换历史任务的触发状态，也不会自动重跑任何历史节点；A4 不改 router_sessions 表结构与状态机；A5 只记事件，不广播、不推进 updated_at（归档语义不变）。Part B 的 Router 主动监管只写在计划文档里，本轮零实现。"
+    files:
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/activity_task_status_test.go
+      - server/internal/agent/claude/session_message_loop_helpers.go
+      - server/internal/agent/claude/session_partial_events_test.go
+      - server/internal/kanban/task_store_legacy_cleanup.go
+      - server/internal/kanban/service_recover_legacy_leftovers.go
+      - server/internal/kanban/service_recover_legacy_leftovers_test.go
+      - server/internal/kanban/service_recover_startup.go
+      - server/internal/kanban/activity_store_orphan.go
+      - server/internal/kanban/router_service_sessions.go
+      - server/internal/kanban/router_session_close_test.go
+      - server/internal/kanban/task_store_archive.go
+      - server/internal/kanban/task_store_archive_event_test.go
+    tests:
+      - server/internal/kanban/activity_task_status_test.go
+      - server/internal/agent/claude/session_partial_events_test.go
+      - server/internal/kanban/service_recover_legacy_leftovers_test.go
+      - server/internal/kanban/router_session_close_test.go
+      - server/internal/kanban/task_store_archive_event_test.go
+    anchors:
+      - 'server/internal/kanban/activity_service_turns.go:失败与成功一样以「等用户」收尾'
+      - 'server/internal/agent/claude/session_message_loop_helpers.go:case "content_block_start", "content_block_stop", "message_start", "message_stop", "message_delta":'
+      - 'server/internal/kanban/task_store_legacy_cleanup.go:func (s *TaskStore) ListLegacyImportRunsOnTerminalTasks('
+      - 'server/internal/kanban/task_store_legacy_cleanup.go:func (s *TaskStore) SettleLegacyImportRun('
+      - 'server/internal/kanban/task_store_legacy_cleanup.go:"reason":              "legacy_import_leftover",'
+      - 'server/internal/kanban/service_recover_legacy_leftovers.go:const legacyImportLeftoverSummary = '
+      - 'server/internal/kanban/service_recover_legacy_leftovers.go:func (s *Service) settleLegacyImportLeftovers('
+      - 'server/internal/kanban/service_recover_startup.go:s.settleLegacyImportLeftovers(ctx, store)'
+      - 'server/internal/kanban/activity_store_orphan.go:func (s *ActivityStore) ListLiveRepliesByRun('
+      - 'server/internal/kanban/router_service_sessions.go:log.Printf("[router] session.closed task=%s reason=%s", taskID, reason)'
+      - 'server/internal/kanban/task_store_archive.go:Type: "archived"'
+      - 'server/internal/kanban/task_store_archive.go:Type: "unarchived"'

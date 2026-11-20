@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -138,4 +139,40 @@ func TestService_ProjectWorkflowTaskStatusKeepsRunningTaskRunning(t *testing.T) 
 		t.Fatalf("projectWorkflowTaskStatus: %v", err)
 	}
 	waitTaskStatus(t, f.tasks, "task-1", StatusRunning)
+}
+
+// failingDirectExecutor 让直连回合以错误收尾，用来钉住失败路径的任务状态。
+type failingDirectExecutor struct {
+	called chan struct{}
+}
+
+func (f *failingDirectExecutor) RunDirectActivity(context.Context, Task, string) (string, error) {
+	if f.called != nil {
+		close(f.called)
+	}
+	return "", errors.New("response stream ended unexpectedly")
+}
+
+// 失败的一轮同样要停在待审核。以前失败路径只把任务「恢复原状」，于是回了
+// 一条失败原因的卡片落在「待处理」列（现场：任务 #97 的「任务卡卡死」，
+// 唯一回复 failed，任务 status=pending，用户以为它从没跑过）。
+func TestActivityService_FailedDirectTurnLandsInWaitingUser(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	f.service.SetDirectExecutor(&failingDirectExecutor{called: make(chan struct{})})
+
+	_, agentAct, err := f.service.CreateUserActivity(ctx, "task-1", "查一下", CommentWorkflowChoiceDisabled, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	waitActivityStatus(t, f.service.activities, agentAct.ID, ActivityStatusFailed)
+	waitTaskStatus(t, f.tasks, "task-1", StatusWaitingUser)
+
+	activity, err := f.service.activities.Get(ctx, agentAct.ID)
+	if err != nil {
+		t.Fatalf("Get activity: %v", err)
+	}
+	if activity.Body != "response stream ended unexpectedly" {
+		t.Fatalf("失败原因必须留在回复上，got body %q", activity.Body)
+	}
 }

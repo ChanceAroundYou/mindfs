@@ -63,9 +63,13 @@ func (rs *RouterService) closeSession(ctx context.Context, taskID, reason string
 			log.Printf("[router] session.close.error task=%s err=%v", taskID, err)
 		}
 	}
-	if err := rs.store.UpdateSessionStatus(ctx, RouterScopeTask, taskID, RouterSessionClosed, reason); err != nil {
+	if err := rs.store.UpdateSessionStatus(ctx, RouterScopeTask, taskID, RouterSessionClosed, ""); err != nil {
 		log.Printf("[router] session.status.error task=%s err=%v", taskID, err)
+		return
 	}
+	// reason 只进日志：关闭是正常生命周期（空闲超时、任务删除），把 "idle timeout"
+	// 写进 last_error 会让每一条已关闭的会话在排查时都像出过错。
+	log.Printf("[router] session.closed task=%s reason=%s", taskID, reason)
 }
 
 // sweepIdleSessions 关闭长时间没有回合的 Router runtime。只关进程内 runtime，
