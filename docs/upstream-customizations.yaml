@@ -9464,7 +9464,7 @@ groups:
       - 'server/internal/agent/proxy/live_compact_fold_request.go:func (s *Server) foldEngineFor(harness string) *fold.Engine {'
       - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, usage fold.Usage) {'
       - 'server/internal/agent/pool.go:threadID = strings.TrimSpace(sess.SessionID())'
-      - 'server/internal/agent/pool_open.go:routing := planCodexRouting(cfg, codexChatGPTLogin(), p.compactProxy.ProviderProxyURL)'
+      - 'server/internal/agent/pool_open.go:routing := planCodexRouting(cfg, codexChatGPTLogin())'
       - 'server/internal/agent/pool_open.go:args = append(args, codexRoutingArgs(routing, p.compactProxy.ProviderProxyURL)...)'
       - 'server/internal/agent/pool_open.go:onCompact = p.compactProxy.SignalCompact'
       - 'server/internal/agent/proxy/thread.go:func (s *Server) SignalCompact(threadID string) {'
