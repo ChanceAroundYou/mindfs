@@ -495,7 +495,9 @@ latest={saved=235,546 rewrite=36,780 blocks=4}`——B6 的 `rewrite_tokens` 记
 ## Task B7（2026-11-20）：计量口径 / preserved-thinking 前缀闸门 / 冷缓存择时
 
 用户指令「全部都做 你去搞方案」，批准 [设计 §3–§5](../specs/2026-11-20-live-compact-fold-timing-and-accounting-design.md)
-的三组改动。**只改代码与测试，未部署、未重启任何节点。**
+的三组改动。**只改代码与测试 + 本机安装，不部署其他节点、不重启任何节点。** 本机已从干净 HEAD
+worktree 构建并 `make install`（`v0.5.5-1200-46-g087a93a7`，同时换掉 `web/dist`）；运行进程仍指向
+已删除的旧二进制，待用户 `sudo systemctl restart mindfs`。
 
 **A 计量口径（§3）**：账本行新增 `usage_input` / `usage_cache_creation` / `usage_cache_read` /
 `usage_source`（`response` | `missing`）四个字段；`rewrite_tokens = input + cache_creation`，读不到
