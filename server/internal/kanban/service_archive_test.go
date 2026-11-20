@@ -396,3 +396,39 @@ func TestArchiveDismissalLifetime(t *testing.T) {
 		t.Fatalf("dismissal = %q after reopen, want empty", got)
 	}
 }
+
+// 自动归档是唯一一条不在用户请求路径上的状态变化：不广播，已经打开的看板就永远
+// 不知道卡片该挪进「归档」列。用户看到的是「卡片还在完成列里」—— 也就是「陈旧
+// 任务自动归档没实现」。手动归档走 HTTP 响应 + task.updated，这条路没有那些。
+func TestSweepAutoArchivedTasksBroadcastsTaskUpdated(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	svc, root := newTestService(t, runner)
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	now := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	old := now.Add(-8 * 24 * time.Hour)
+	seedArchiveTask(t, store, "old-success", StatusSuccess, now, old.Format(time.RFC3339Nano))
+	seedArchiveTask(t, store, "fresh-success", StatusSuccess, now, now.Add(-24*time.Hour).Format(time.RFC3339Nano))
+
+	if n := svc.SweepAutoArchivedTasks(ctx); n != 1 {
+		t.Fatalf("sweep archived %d, want 1", n)
+	}
+	runner.mu.Lock()
+	updates := append([]string(nil), runner.taskUpdates...)
+	runner.mu.Unlock()
+	if len(updates) != 1 || updates[0] != "old-success" {
+		t.Fatalf("broadcasts = %v, want [old-success] (an open board never learns about a silent archive)", updates)
+	}
+
+	// 下一拍没有可归档的：不能再播一遍，否则每小时白推一轮全量卡片。
+	if n := svc.SweepAutoArchivedTasks(ctx); n != 0 {
+		t.Fatalf("second sweep archived %d, want 0", n)
+	}
+	if got := runner.updateCount(); got != 1 {
+		t.Fatalf("broadcasts after second sweep = %d, want 1", got)
+	}
+}

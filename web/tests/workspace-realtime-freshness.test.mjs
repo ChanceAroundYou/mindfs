@@ -95,16 +95,31 @@ assert.match(
   "teardown clears worktree_path, so the board structure needs re-fetching too",
 );
 
-// 7) 重拉只能挂在「结构真变了」的用户动作与后台收尾上，绝不能挂到 task.updated：
-//    那是每条推送扇出一次，多节点下会被事件风暴打爆（与 App.tsx 既有注释同一条纪律）。
+// 7) 重拉只能挂在「结构真变了」的用户动作与后台收尾上，绝不能每条 task.updated
+//    都扇出一次（多节点下会被事件风暴打爆，与 App.tsx 既有注释同一条纪律）。
+//
+//    唯一的例外是**归档标记翻转**：工作台按 archived_at 在 SQL 层过滤，卡片内容
+//    换了它也不会自己消失；而自动归档那一拍没有任何 HTTP 响应，这条推送是界面
+//    唯一的通知源。闸门必须是「标记真的变了」，否则就退回成每条推送扇出一次。
 const updatedHandler = rt.slice(
   rt.indexOf('"task.updated":'),
   rt.indexOf('"task.finish_teardown":'),
 );
-assert.doesNotMatch(
+assert.match(
   updatedHandler,
-  /refreshWorkspaceBoard\(\)/,
-  "task.updated is high-frequency; it must update cards in place, never re-fetch the fan-out",
+  /const archivedBefore = String\(taskDetailsByIdRef\.current\[nextTask\.id\]\?\.task\?\.archived_at/,
+  "the workbench re-fetch must be gated on the archive flag actually flipping",
+);
+assert.match(
+  updatedHandler,
+  /if \(archivedBefore !== archivedAfter\) \{\s*refreshWorkspaceBoard\(\);\s*\}/,
+  "archive flip is the only structure change task.updated may re-fetch for",
+);
+const refreshCalls = updatedHandler.match(/refreshWorkspaceBoard\(\);/g) || [];
+assert.equal(
+  refreshCalls.length,
+  1,
+  "task.updated may re-fetch exactly once — through the archive-flip gate — never on every update",
 );
 // 而卡片「就地更新」这条路径本身必须真的接上了 taskDetailsById，否则点了按钮纹丝不动。
 assert.match(

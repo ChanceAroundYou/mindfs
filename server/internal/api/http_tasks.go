@@ -25,6 +25,9 @@ func (h *HTTPHandler) handleKanbanTasksList(w http.ResponseWriter, r *http.Reque
 		Status: r.URL.Query().Get("status"),
 		After:  r.URL.Query().Get("after"),
 		Before: r.URL.Query().Get("before"),
+		// 归档状态有自己的水位：归档不推动 updated_at（看板排序键 + 自动归档
+		// 起算兜底），只按 after 取增量，归档过的行永远不会回到客户端。
+		ArchivedAfter: r.URL.Query().Get("archived_after"),
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		limit, err := strconv.Atoi(raw)

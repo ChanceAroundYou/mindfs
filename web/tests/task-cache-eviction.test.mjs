@@ -77,12 +77,16 @@ assert.match(
 
 // —— 权威集合只能来自全量拉取 ——
 // 增量响应（after=…）和限流响应（limit=20）都不是全集，拿它们去淘汰会误删。
-// force 路径本来就是拉全量（filters 传 undefined，详见上面那条断言），
-// 淘汰挂在这条路上即可，不必再发一次请求。
+// force 路径本来就是拉全量（filters 传 undefined），淘汰挂在这条路上即可，
+// 不必再发一次请求。
+//
+// 过滤条件现在由 taskSyncFilters 统一给（两条水位：任务更新 + 归档状态，见
+// tests/task-archive-incremental-sync.test.mjs）；「force = 不带任何过滤」这条
+// 行为在那里直接用返回值钉住了，这里只钉调用点没绕开它。
 assert.match(
   app,
-  /force \? undefined : \{ after:/,
-  "full fetch must drop the after filter so the response is the authoritative set",
+  /const syncFilters = taskSyncFilters\(meta, force\);/,
+  "incremental filters must come from taskSyncFilters so force really means a full fetch",
 );
 assert.match(
   app,

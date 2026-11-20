@@ -234,3 +234,53 @@ system 单元仍是旧进程，待用户 `sudo systemctl restart mindfs`。
 **未生效部分**：本机 system 单元仍在跑 02:55 启动的旧进程（PID 990089，`/proc/990089/exe`
 指向 `(deleted)`），要看到侧栏真的消失，需用户执行 `sudo systemctl restart mindfs`。
 WSL / fn / pc-win 未分发（下次 `deploy-all` 自然带上这个提交）。
+
+## 追加轮（2026-11-20）：自动归档「没实现」的错觉 —— 扫描在写库，结果到不了界面
+
+**用户现场**：「现在似乎还是没有实现陈旧任务自动归档啊。」
+
+**先取证，再改**：扫描器一直在跑，也在写库 —— 日志
+`[kanban/archive] root=mindfs auto-archived=63` / `root=llmux auto-archived=15` /
+`startup sweep archived=78`；`GET /api/tasks?root=mindfs` 里 94 条中 87 条 `archived_at` 非空，
+剩下未归档的终态任务全部年轻于 7 天（`TaskArchiveAfter = 7 * 24h`）。库是对的，**界面收不到**。
+
+**两个真实缺陷**：
+
+1. **自动归档不广播**：`archiveSweepOnce` 写库完什么都没发。手动归档有 HTTP 响应让前端重拉，
+   自动归档那一拍没有任何请求，`task.updated` 是唯一可能的通知源 —— 不发，已打开的看板就一直
+   把卡片留在「完成」列。
+2. **增量同步看不见归档**：归档刻意不推动 `updated_at`（它既是看板排序键，也是自动归档的兜底
+   起算点），而客户端增量拉取只带 `after=updated_at 水位`，配合 IndexedDB 缓存，那张卡就永远
+   停在「完成」列，连重开页面都救不回来（缓存先渲染，增量又够不着）。淘汰只在手动刷新
+   （`force` 全量）那条路上发生。
+
+**修法**：
+
+- 服务端：`archiveSweepOnce` 归档 + 级联会话后调 `broadcastArchive` → `Runner.TaskUpdated(rootID, detail)`，
+  与手动归档同一条事件（`task.updated` + 完整 detail），前端不用为「谁触发的归档」分叉。
+- 服务端增量：`ListTasksOptions` 新增独立水位 `ArchivedAfter`；与 `After` 同给时取 **OR**
+  （`(updated_at > ? OR archived_at > ?)`），`Before` 仍 AND。合成一个 max 水位会漏掉
+  「先归档、之后别处又更新」的行。`GET /api/tasks` 解析 `archived_after`。
+- 客户端：缓存 meta 新增 `newestArchivedAt`（与 `newestUpdatedAt` 分开记）；`taskSyncFilters`
+  统一给出两条水位，`force`/无缓存 = 全量；老 meta 缺 `newestArchivedAt` 时用
+  `TASK_ARCHIVE_BACKFILL_WATERMARK = 1970-01-01T00:00:00Z` 补拉一次（这批行的 `updated_at`
+  不会再动，增量永远够不着）。`fetchTaskDetails` 映射成 `archived_after`。
+- 工作台：`task.updated` 里比较归档标记前后值，**只有真的翻转**才 `refreshWorkspaceBoard()`
+  （工作台按 `archived_at` 在 SQL 层过滤，换卡片内容换不掉「还在不在」；不设闸门就退回成
+  每条推送扇出一次，违反既有纪律）。
+
+**测试（都做了变异验证）**：
+
+- `server/internal/kanban/task_store_incremental_sync_test.go`：单给 `ArchivedAfter` 能取到行；
+  与 `After` 同给时 OR（变异：删 OR 分支 → `combined rows = []` 红）。
+- `service_archive_test.go` `TestSweepAutoArchivedTasksBroadcastsTaskUpdated`：到期任务归档后
+  广播恰一条、年轻任务不广播、第二拍不重复广播（变异：删 `broadcastArchive` 调用 → 红）。
+- `web/tests/task-archive-incremental-sync.test.mjs`：归档水位独立于更新水位（变异：水位里去掉
+  `archived_at` → 红）；`taskSyncFilters` 两条都带、`force` 为全量（变异：只回 `{ after }` → 红）；
+  老 meta 补纪元（变异：去掉补拉 → 红）；`archivedAfter` → `archived_after`（变异：去掉参数 → 红）；
+  `task.updated` 归档翻转才重拉、普通更新不重拉（变异：去掉闸门 → 红）。
+
+**门禁（2026-11-20）**：`go build ./...`、`go test ./server/internal/kanban/ ./server/internal/api/ -count=1`
+全绿；`tsc -b --noEmit` clean；web 全量里三处红（`session-task-group`、`workflow-editor-mobile`、
+`workflow-ui-style`）经干净 HEAD worktree 复跑 **全绿**，确认来自同工作区另一条会话在飞的
+会话列表 / 工作流编辑器改动，与本轮无关。登记并入 G-NB。

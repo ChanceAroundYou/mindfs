@@ -6,6 +6,8 @@ import { protectedJSON } from "../net/api";
 export async function fetchTaskDetails(rootId: string, filters?: {
   status?: string;
   after?: string;
+  /** 归档状态水位（archived_at > 它）。归档不推动 updated_at，必须单独带一条。 */
+  archivedAfter?: string;
   before?: string;
   limit?: number;
   /** 项目内的任务号（每项目自增）。命中即一条 —— 工作台就地开详情就走这条 */
@@ -14,6 +16,7 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   const params = new URLSearchParams({ root: rootId });
   if (filters?.status) params.set("status", filters.status);
   if (filters?.after) params.set("after", filters.after);
+  if (filters?.archivedAfter) params.set("archived_after", filters.archivedAfter);
   if (filters?.before) params.set("before", filters.before);
   if (typeof filters?.limit === "number" && filters.limit > 0) params.set("limit", String(filters.limit));
   if (typeof filters?.taskNumber === "number" && filters.taskNumber > 0) params.set("task_number", String(filters.taskNumber));

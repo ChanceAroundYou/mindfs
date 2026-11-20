@@ -25,6 +25,7 @@ import {
   moveTask,
   pruneCachedTaskDetails,
   rebuildTaskWorktree,
+  taskSyncFilters,
   upsertCachedTaskDetails,
   FinishWorktreeConflict,
   FinishWorktreeDirty,
@@ -243,8 +244,11 @@ export function useTaskBoard(params: UseTaskBoardParams) {
         if (seq === kanbanLoadSeqRef.current) setKanbanTasksLoading(false);
       }
       const meta = await getCachedTaskMeta(targetRoot, snapNode || undefined);
+      // 增量同步带两条水位（任务更新 / 归档状态）：自动归档既不推 task.updated、
+      // 也不推动 updated_at，少带 archived_after 的话缓存里的卡片永远停在「完成」列。
+      const syncFilters = taskSyncFilters(meta, force);
       const [details, recent] = await Promise.all([
-        fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }, resolveNodeId(targetRoot)),
+        fetchTaskDetails(targetRoot, syncFilters, resolveNodeId(targetRoot)),
         !force && meta?.newestUpdatedAt
           ? fetchTaskDetails(targetRoot, { limit: 20 }, resolveNodeId(targetRoot))
           : Promise.resolve([] as TaskDetail[]),

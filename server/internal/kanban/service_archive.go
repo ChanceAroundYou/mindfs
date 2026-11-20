@@ -121,6 +121,7 @@ func (s *Service) SweepAutoArchivedTasks(ctx context.Context) int {
 				continue
 			}
 			s.archiveRelatedSessions(ctx, store, root.ID, task.ID)
+			s.broadcastArchive(ctx, store, root.ID, task.ID)
 			archived++
 		}
 		if archived > 0 {
@@ -129,6 +130,24 @@ func (s *Service) SweepAutoArchivedTasks(ctx context.Context) int {
 		total += archived
 	}
 	return total
+}
+
+// broadcastArchive 把自动归档的结果推给已打开的看板。
+//
+// 手动归档走 HTTP 响应 + 前端那一侧的重拉，自动归档没有这两样：不推的话，卡片
+// 会一直留在「完成」列直到用户手动刷新页面 —— 用户看到的就是「陈旧任务自动归档
+// 没实现」。与手动归档同一条事件（task.updated + 完整 detail），前端不用为
+// 「谁触发的归档」分叉。
+func (s *Service) broadcastArchive(ctx context.Context, store *TaskStore, rootID, taskID string) {
+	if s.Runner == nil {
+		return
+	}
+	detail, err := store.GetDetail(ctx, taskID)
+	if err != nil {
+		log.Printf("[kanban/archive] task=%s detail error=%v", taskID, err)
+		return
+	}
+	s.Runner.TaskUpdated(rootID, detail)
 }
 
 // StartArchiveSweeper 起一个低频后台扫描（启动即跑一次，之后每小时）。

@@ -13,8 +13,59 @@ type CachedTaskMeta = {
   rootId: string;
   newestUpdatedAt: string;
   oldestUpdatedAt: string;
+  /**
+   * 归档状态的水位（max archived_at）。必须与 updated_at 分开记：归档刻意不推动
+   * updated_at（它是看板排序键 + 自动归档的兜底起算点），只按 updated_at 取增量，
+   * 服务端归档过的行永远不会再发回来，缓存里那张卡就一直停在「完成」列。
+   */
+  newestArchivedAt: string;
   lastSyncedAt: string;
 };
+
+/**
+ * 一次响应里两种变化的各自最新值。
+ *
+ * 不能合成一个 max：归档之后任务又更新过的话，行的 updated_at 会盖过 archived_at，
+ * 落后的客户端就再也收不到这条归档变化了。
+ */
+export function taskChangeWatermarks(details: TaskDetail[]): { newestUpdatedAt: string; newestArchivedAt: string } {
+  let newestUpdatedAt = "";
+  let newestArchivedAt = "";
+  for (const detail of details) {
+    const updatedAt = String(detail?.task?.updated_at || "");
+    if (updatedAt > newestUpdatedAt) newestUpdatedAt = updatedAt;
+    const archivedAt = String(detail?.task?.archived_at || "");
+    if (archivedAt > newestArchivedAt) newestArchivedAt = archivedAt;
+  }
+  return { newestUpdatedAt, newestArchivedAt };
+}
+
+/**
+ * 老缓存 meta 缺 `newestArchivedAt`（本字段是后加的）时的一次性补齐水位。
+ *
+ * 不补的话，升级前写下的缓存永远不会去问「哪些行被归档过」：服务端早就归档、
+ * 客户端还把它们当活动卡 —— 而且这批行的 updated_at 也不会再动，增量永远够不着。
+ */
+export const TASK_ARCHIVE_BACKFILL_WATERMARK = "1970-01-01T00:00:00Z";
+
+/**
+ * 增量同步的过滤条件（不含状态/分页）。force / 无缓存 = 全量。
+ *
+ * 两个水位一起给：看板要的是「任务更新过、或被归档过」的行 —— 归档是唯一一种
+ * 不推动 updated_at 的变化（自动归档那一拍更是没有任何 HTTP 响应能让界面知道）。
+ */
+export function taskSyncFilters(
+  meta: { newestUpdatedAt?: string; newestArchivedAt?: string } | null,
+  force: boolean,
+): { after?: string; archivedAfter?: string } | undefined {
+  if (force || !meta) return undefined;
+  const after = String(meta.newestUpdatedAt || "");
+  const archivedAfter = meta.newestArchivedAt === undefined
+    ? TASK_ARCHIVE_BACKFILL_WATERMARK
+    : String(meta.newestArchivedAt || "");
+  if (!after && !archivedAfter) return undefined;
+  return { after, archivedAfter };
+}
 
 const TASK_CACHE_DB = "mindfs-task-cache";
 const TASK_CACHE_VERSION = 1;
@@ -156,13 +207,20 @@ export async function upsertCachedTaskDetails(rootId: string, details: TaskDetai
           detail,
         } satisfies CachedTaskRecord));
       }
-      const newest = updatedValues.reduce((max, value) => value > max ? value : max, currentMeta?.newestUpdatedAt || "");
+      const changed = taskChangeWatermarks(valid);
+      const newest = changed.newestUpdatedAt > (currentMeta?.newestUpdatedAt || "")
+        ? changed.newestUpdatedAt
+        : (currentMeta?.newestUpdatedAt || "");
+      const newestArchivedAt = changed.newestArchivedAt > (currentMeta?.newestArchivedAt || "")
+        ? changed.newestArchivedAt
+        : (currentMeta?.newestArchivedAt || "");
       const oldest = updatedValues.reduce((min, value) => !min || value < min ? value : min, currentMeta?.oldestUpdatedAt || "");
       currentMeta = {
         key: metaKey,
         rootId,
         newestUpdatedAt: newest,
         oldestUpdatedAt: oldest,
+        newestArchivedAt,
         lastSyncedAt: new Date().toISOString(),
       };
       await taskRequest(meta.put(currentMeta));

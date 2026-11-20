@@ -27,6 +27,12 @@ export function createRealtimeWsTaskHandlers(ctx: RealtimeEventsContext) {
             if (payloadNid && curNid && payloadNid !== curNid) { return; }
             const nextTask = payload.task as KanbanTask;
             const detail = payload.detail as TaskDetail | undefined;
+            // 归档/取消归档是结构变化：卡片在「完成/取消」与「归档」两组之间挪位置，
+            // 工作台更是按 archived_at 在 SQL 层过滤。applyTaskDetails 只换卡片内容，
+            // 换不掉它落在哪一组、也换不掉工作台上还该不该有它 —— 必须重拉一次扇出。
+            // 自动归档那一拍没有任何 HTTP 响应，这条推送是界面唯一的通知源。
+            const archivedBefore = String(taskDetailsByIdRef.current[nextTask.id]?.task?.archived_at || "");
+            const archivedAfter = String(nextTask.archived_at || "");
             if (detail?.task?.id) {
               applyTaskDetails(payload.root_id, [detail]);
             } else {
@@ -35,6 +41,9 @@ export function createRealtimeWsTaskHandlers(ctx: RealtimeEventsContext) {
                 task: nextTask,
                 events: current?.events || [],
               }]);
+            }
+            if (archivedBefore !== archivedAfter) {
+              refreshWorkspaceBoard();
             }
             if (nextTask.worktree_path) {
               void refreshTaskWorktree(payload.root_id, nextTask.worktree_path, false);

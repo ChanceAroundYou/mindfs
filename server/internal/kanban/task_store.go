@@ -23,7 +23,14 @@ type ListTasksOptions struct {
 	TaskNumber int
 	After      string
 	Before     string
-	Limit      int
+	// ArchivedAfter 是「归档状态」的独立水位：只看 archived_at > 它。
+	//
+	// 必须与 After 分开：归档刻意不推动 updated_at（它既是看板排序键，也是
+	// 自动归档的兜底起算点），所以归档变化只能靠这一条到达增量客户端。混成一个
+	// max 水位会漏掉「先归档、之后别处又更新」的行 —— 客户端的旧副本就永远停在
+	// 「完成」列。
+	ArchivedAfter string
+	Limit         int
 	// ExcludeArchived 给工作台用：归档的任务不在工作台显示（也应该让位给
 	// 未归档任务，而不是先占掉 LIMIT 的名额再被滤掉）。
 	ExcludeArchived bool
@@ -65,9 +72,20 @@ func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Tas
 		where = append(where, "task_number = ?")
 		args = append(args, opts.TaskNumber)
 	}
-	if strings.TrimSpace(opts.After) != "" {
+	// 变化水位两条：任务自身更新与归档状态。同时给定时必须取 OR —— 客户端要的是
+	// 「这两件里任一发生于水位之后」的行；AND 起来几乎永远为空。
+	after := strings.TrimSpace(opts.After)
+	archivedAfter := strings.TrimSpace(opts.ArchivedAfter)
+	switch {
+	case after != "" && archivedAfter != "":
+		where = append(where, "(updated_at > ? OR archived_at > ?)")
+		args = append(args, after, archivedAfter)
+	case after != "":
 		where = append(where, "updated_at > ?")
-		args = append(args, strings.TrimSpace(opts.After))
+		args = append(args, after)
+	case archivedAfter != "":
+		where = append(where, "archived_at > ?")
+		args = append(args, archivedAfter)
 	}
 	if strings.TrimSpace(opts.Before) != "" {
 		where = append(where, "updated_at < ?")

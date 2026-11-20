@@ -10021,14 +10021,17 @@ groups:
       - server/internal/kanban/service_tasks.go
       - server/internal/kanban/service_archive.go
       - server/internal/api/http_tasks_archive.go
+      - server/internal/api/http_tasks.go
       - server/internal/api/ws_broadcast.go
       - server/internal/api/http_routes.go
       - server/app/workspace_build.go
       - web/src/app/realtimeWsSessionMeta.ts
+      - web/src/app/realtimeWsTaskHandlers.ts
       - web/src/app/useAppKanbanColumns.ts
       - web/src/app/useTaskBoard.ts
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/taskBoardTypes.ts
+      - web/src/services/task/cache.ts
       - web/src/services/task/crud.ts
       - web/src/shared/taskTypes.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
@@ -10038,10 +10041,16 @@ groups:
     tests:
       - server/internal/kanban/service_archive_test.go
       - server/internal/kanban/task_archive_dismissal_test.go
+      # 归档状态是独立于 updated_at 的变化水位：单给 / 与 updated_at 同时给都要能取到
+      # 行（两个水位是 OR；合成一个 max 会漏掉「先归档、之后别处又更新」的行）。
+      - server/internal/kanban/task_store_incremental_sync_test.go
       # 会话级联的范围与落库：task_id 命中 / 种子 / 父子链递归 / 无关任务不误伤，
       # 外加广播载荷必须带 archived_at（前端靠它摘侧栏）。
       - server/internal/api/http_tasks_archive_test.go
       - web/tests/task-archive.test.mjs
+      # 客户端这一半：两条水位各自独立、请求真的带 archived_after、老缓存补拉一次、
+      # 归档标记翻转才重拉工作台（普通更新不扇出）。
+      - web/tests/task-archive-incremental-sync.test.mjs
       # 真 handler 行为：archived_at 命中 → 从缓存与主列表摘除并提前 return；
       # 未归档帧照常合并并触发增量刷新（取消归档后会话回得来）。
       - web/tests/task-archive-prunes-sessions.test.mjs
@@ -10061,6 +10070,17 @@ groups:
       - 'server/internal/kanban/task_store_archive.go:func (s *TaskStore) TaskRelatedSessionKeys('
       - 'server/internal/kanban/task_store.go:, "archive_dismissed_at = '''''
       - 'server/internal/kanban/task_store.go:archived_at = '''', archive_dismissed_at = '''', updated_at'
+      - 'server/internal/kanban/task_store.go:ArchivedAfter string'
+      - 'server/internal/kanban/task_store.go:(updated_at > ? OR archived_at > ?)'
+      - 'server/internal/api/http_tasks.go:ArchivedAfter: r.URL.Query().Get("archived_after"),'
+      - 'server/internal/kanban/service_archive.go:s.broadcastArchive(ctx, store, root.ID, task.ID)'
+      - 'server/internal/kanban/service_archive.go:func (s *Service) broadcastArchive('
+      - 'web/src/services/task/cache.ts:export function taskChangeWatermarks('
+      - 'web/src/services/task/cache.ts:TASK_ARCHIVE_BACKFILL_WATERMARK = "1970-01-01T00:00:00Z"'
+      - 'web/src/services/task/cache.ts:export function taskSyncFilters('
+      - 'web/src/services/task/crud.ts:params.set("archived_after", filters.archivedAfter)'
+      - 'web/src/app/useTaskBoard.ts:const syncFilters = taskSyncFilters(meta, force);'
+      - 'web/src/app/realtimeWsTaskHandlers.ts:if (archivedBefore !== archivedAfter) {'
       - 'server/internal/kanban/service_archive.go:func (s *Service) ArchiveTask('
       - 'server/internal/kanban/service_archive.go:func (s *Service) SweepAutoArchivedTasks('
       - 'server/internal/kanban/service_archive.go:func (s *Service) StartArchiveSweeper('
@@ -10082,6 +10102,8 @@ groups:
       - 'web/src/shared/taskTypes.ts:archived_at?: string;'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.group.archived": "归档",'
       - 'server/internal/kanban/service_archive_test.go:func TestSweepAutoArchivedTasksOnlyTouchesExpiredTerminalTasks(t *testing.T) {'
+      - 'server/internal/kanban/service_archive_test.go:func TestSweepAutoArchivedTasksBroadcastsTaskUpdated(t *testing.T) {'
+      - 'server/internal/kanban/task_store_incremental_sync_test.go:func TestListTasksArchivedAfterSeesArchiveChanges(t *testing.T) {'
       - 'server/internal/kanban/service_archive_test.go:func TestArchiveDismissalLifetime(t *testing.T) {'
       - 'server/internal/kanban/task_archive_dismissal_test.go:func TestUnarchivedTaskIsNotAutoArchivedAgain(t *testing.T) {'
       - 'web/tests/task-archive.test.mjs:test("an archived card is reduced to unarchive + delete", () => {'
