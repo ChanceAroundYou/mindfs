@@ -2,8 +2,8 @@
 
 - 日期：2026-11-20
 - 状态：三轮均已实现、门禁绿、已推送 origin main（`ea896ab2`、`ddbf7238`、`53e38632`、
-  `7df7279a`、`191e1124`）；第二轮隔离验收（端口 7438，真实模型）全部通过；已部署四端
-  `v0.5.5-1200-43-g191e1124`（本机二进制已装，待用户重启 system 单元）
+  `7df7279a`、`191e1124`，第三轮 `a0060a80`）；第二轮隔离验收（端口 7438，真实模型）全部通过；
+  已部署四端 `v0.5.5-1200-52-gb61b81d8`（2026-11-20 14:14，本机二进制已装，待用户重启 system 单元）
 - 上游：无（Router 与工作流运行时是本 fork 自有能力）
 - 定制登记：`Scope: G-NJ`
 - 上游计划：[Router 收尾死锁](2026-11-19-router-settled-run-livelock.md)（同一条闸门的上一轮修复）
@@ -230,3 +230,36 @@ legacy pending 回复同样无人推进。
 3. Router 自动 cancel/retry 仍不做（P2 排除）。
 4. 合并不明的 unknown 没有自动解除入口：要操作员 retry 该节点，或先人工处理主树。
    这是有意的 fail-closed —— 主树可能只合了一半，自动放行会让新节点接着写。
+
+## 第三轮部署（2026-11-20 14:14）
+
+`bash scripts/deploy-all.sh` 从干净 clone（`/tmp/mindfs-deploy-gnj3`，origin 指
+`ChanceAroundYou/mindfs`）构建部署，四端逐字一致 `v0.5.5-1200-52-gb61b81d8`：
+
+- 门禁：`go test ./...` 全绿、`tsc` clean、Vitest 772 项通过。
+- WSL / fn：`systemctl --user is-active` = `active`，`/mindfs/health` 200，`mindfs --version` 与部署版逐字相同。
+- pc-win：装完由计划任务拉起，PID 48720（Session 0），`:7332` ESTABLISHED + `/mindfs/health` 200。
+- 本机：`~/.local/bin/mindfs` 已装 `v0.5.5-1200-52-gb61b81d8`（md5 `47210c47…`），
+  **运行中仍是 13:05 起的旧进程（`/proc/3572932/exe` 指向已删除的旧二进制），待用户
+  `sudo systemctl restart mindfs`** —— 重启后本轮的启动对账才会对生产库生效。
+
+部署期间撞到两次门禁红，都不是本轮改动：
+
+1. 第一次 `go test ./...` 里 `server/internal/kanban` 的
+   `TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch` 报
+   `attempt to write a readonly database (1032)` —— 已知的负载相关 sqlite 偶发（见
+   memory `kanban-gate-flaky-sqlite-io`），单跑通过。
+2. 同一次 `server/app` 的 `TestWorkspaceWorkerDerivesAccountID` 报
+   `TempDir RemoveAll cleanup: ... directory not empty`。在**改动前**的提交 `6cf945ef`
+   上复现（8 次 1 红），属既有 flake：测试用 `context.Background()` 建 workspace，
+   账户 build 留下的后台对账会在测试结束后 `ListRoots` → `removeMissingRoot`
+   （日志 `[registry] remove.missing_root root=proj-worker`，因为测试只往注册表里写了
+   一个从未创建的目录）重写 `registry.json`，与 `t.TempDir` 清理赛跑。低负载下 15/15 不复现。
+   本轮不改别人的测试，记录在此。
+
+第二次重跑时 origin/main 已被并发会话推进到 `b61b81d8`（`a0060a80` 是它的祖先），
+fast-forward 后按 `b61b81d8` 构建部署，所以版本号后缀是 `gb61b81d8`。
+
+重启后待核对的生产事实（重启前只读扫描所得）：mindfs root 共有 3 条直连孤儿回复 ——
+`act_f4eb2482fbe9750a`（任务已 `success`，只结算活动）、`act_1f1792a2c1fa2b8f`（#95）、
+`act_942fa611ee63df0a`（#97），后两条应连同任务一起回到 `waiting_user`；llmux root 为 0 条。
