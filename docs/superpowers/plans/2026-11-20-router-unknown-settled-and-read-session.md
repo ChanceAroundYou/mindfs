@@ -1,8 +1,8 @@
 # #86 卡死：unknown 算已收尾 + 启动对账补投影 + Router 读会话（router-unknown-settled-and-read-session）
 
 - 日期：2026-11-20
-- 状态：已实现并通过本地门禁；第一轮已推送 origin main（`ea896ab2` + `ddbf7238`），第二轮
-  待提交、待部署、未重启任何节点
+- 状态：两轮均已实现、门禁绿、已推送 origin main（`ea896ab2`、`ddbf7238`、`53e38632`、
+  `7df7279a`）；第二轮隔离验收（端口 7438，真实模型）全部通过；部署中
 - 上游：无（Router 与工作流运行时是本 fork 自有能力）
 - 定制登记：`Scope: G-NJ`
 - 上游计划：[Router 收尾死锁](2026-11-19-router-settled-run-livelock.md)（同一条闸门的上一轮修复）
@@ -135,6 +135,31 @@ Router 侧的「自己管理任务」现有能力：`inspect_run`（投影 + 节
 - `go test ./server/internal/kanban/` 全绿；`go test ./...` 全绿（一次 `TestCoordinatorTickReclaimsStaleClaims`
   的 TempDir 清理偶发失败，属仓库既有 flake，复跑零失败）。
 - `go build ./server/...` 成功。
+
+### 隔离实例验收（2026-11-20，端口 7438，用户裁定 ⑥「可以测试」）
+
+隔离根 `/tmp/mindfs-r2-iso`，二进制从干净 worktree `/tmp/mindfs-cu-gnj2`（= `7df7279a`）
+构建，`router.mode=route` / `claude` / `sonnet` / `turn_timeout=180s`；生产 7331 全程未碰
+（隔离脚本前后自证：端口独立、配置目录零句柄、线上仍在线）。
+
+- **场景 A（真实数据，14/14 PASS 的一部分）**：建任务 → `workflow_choice=specified` 起一个
+  长回合 agent 节点（提示词要求写 1200 字）→ 节点 `running` 且 `node_states_json` 仍为 `{}`
+  时 `kill -9` → 重启。启动对账结果：投影 `{"execute":"unknown"}`、回复活动
+  `running → cancelled` 且带「进程重启时这一轮还在执行，结果无法确定…」、账本
+  `node_unknown` 两条（行转移 + 投影回填）。
+- **场景 B（复刻 #86 的历史落库状态）**：任务已终态 + `node_states_json='{}'` + `execute`
+  的 `unknown` 行 + `running` 回复活动（这种状态只有上一版二进制会生产，所以用 SQL 复刻）。
+  重启后：投影 `{"execute":"unknown","verify":"cancelled"}`、活动结算 cancelled 带说明、
+  账本落 `{"reason":"startup_projection_backfill","filled_nodes":["execute"],
+  "cancelled_nodes":["verify"]}`；**再重启一次不新增事件**（幂等）。
+- **Router 闸门（#86 的死锁点）**：重启后先发一条普通留言，决策 `applied`（`say`，
+  24.8 s，正文自己说明「上次在飞的节点因为进程重启结果不明…现在没有节点在运行」）；
+  再发一条「请直接开一轮新的工作流执行」，决策 `applied` / `run_workflow` / 8.4 s，
+  真的落下新 Run `run-2af873c5ab3d238d`（随后取消任务收掉那个长回合）。
+  #86 的卡死状态里 `say` 也是允许的，所以只看 `applied` 不够 —— 必须看到执行类动作。
+- 证据文件：`/tmp/mindfs-r2-iso/result.json`、`/tmp/mindfs-r2-iso/result-gate.json`
+  （脚本 `result.json` 由 `/tmp/r2_accept.py` 产出；两个脚本都在 /tmp，不入库 ——
+  它们依赖本机隔离账户与端口，而行为本身已被 20 条单测钉住）。
 
 ## 残留与待裁定
 
