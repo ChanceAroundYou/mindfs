@@ -124,18 +124,26 @@ func codexChatGPTLogin() bool {
 }
 
 // codexRouting is what the pool must do to route one Codex process: which
-// upstreams to register with the proxy, and the `-c` overrides that point Codex
-// at them.
+// upstreams to register with the proxy, which configured providers to redirect,
+// and whether a synthetic provider has to be added.
+//
+// It stops short of the `-c` overrides on purpose. A provider's proxy address
+// depends on how that provider is registered (see proxy.ProviderProxyURL), so
+// the caller must register first and build the argv second; building both here
+// produced a `/v1` address for the ChatGPT backend before the registration that
+// said otherwise, and the first real request answered 404.
 type codexRouting struct {
 	Providers map[string]string
-	Args      []string
+	// Redirect lists the configured provider names, sorted, that must be
+	// pointed at the proxy.
+	Redirect []string
 	// Injected marks the synthetic ChatGPT-login provider, which also overrides
 	// model_provider. It is the one step that can break a session outright, so
 	// callers gate it on the proxy being reachable.
 	Injected bool
 }
 
-// planCodexRouting decides the overrides for one Codex process.
+// planCodexRouting decides the routing for one Codex process.
 //
 // Two independent steps. A provider the user configured is redirected to the
 // proxy and keeps whatever name and credentials it already had. Separately, a
@@ -143,14 +151,13 @@ type codexRouting struct {
 // anyone can redirect — so a synthetic provider is injected and selected. An
 // API-key install is never touched: its endpoint needs the /v1 shape and the
 // bearer key, which the ChatGPT provider would not supply.
-func planCodexRouting(cfg codexProviderConfig, chatGPTLogin bool, proxyURL func(string) string) codexRouting {
+func planCodexRouting(cfg codexProviderConfig, chatGPTLogin bool) codexRouting {
 	routing := codexRouting{Providers: make(map[string]string, len(cfg.Providers)+1)}
 	for name, base := range cfg.Providers {
 		routing.Providers[name] = base
+		routing.Redirect = append(routing.Redirect, name)
 	}
-	if len(cfg.Providers) > 0 {
-		routing.Args = codexProxyArgs(cfg.Providers, proxyURL)
-	}
+	sort.Strings(routing.Redirect)
 	effective := cfg.ModelProvider
 	if effective != "" && effective != "openai" {
 		return routing
@@ -158,17 +165,34 @@ func planCodexRouting(cfg codexProviderConfig, chatGPTLogin bool, proxyURL func(
 	if _, taken := cfg.Providers[codexOfficialProviderName]; taken || !chatGPTLogin {
 		return routing
 	}
+	routing.Providers[codexOfficialProviderName] = codexChatGPTBaseURL
+	routing.Injected = true
+	return routing
+}
+
+// codexRoutingArgs builds the `-c` overrides for a planned routing. Call it
+// after the providers in the routing are registered: the proxy address it
+// reads carries the same path shape as the upstream it stands for.
+func codexRoutingArgs(routing codexRouting, proxyURL func(string) string) []string {
+	args := make([]string, 0, len(routing.Redirect)*2+10)
+	if len(routing.Redirect) > 0 {
+		redirected := make(map[string]string, len(routing.Redirect))
+		for _, name := range routing.Redirect {
+			redirected[name] = routing.Providers[name]
+		}
+		args = append(args, codexProxyArgs(redirected, proxyURL)...)
+	}
+	if !routing.Injected {
+		return args
+	}
 	name := codexOfficialProviderName
-	routing.Providers[name] = codexChatGPTBaseURL
-	routing.Args = append(routing.Args,
+	return append(args,
 		"-c", `model_provider="`+name+`"`,
 		"-c", "model_providers."+name+`.name="`+name+`"`,
 		"-c", "model_providers."+name+`.base_url="`+proxyURL(name)+`"`,
 		"-c", "model_providers."+name+`.wire_api="responses"`,
 		"-c", "model_providers."+name+`.requires_openai_auth=true`,
 	)
-	routing.Injected = true
-	return routing
 }
 
 // codexProxyArgs builds the `-c` overrides that point every provider at the

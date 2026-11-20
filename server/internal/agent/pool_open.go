@@ -219,13 +219,15 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 				// to refuse the session.
 				log.Printf("[agent/pool] codex providers: %v", err)
 			}
-			routing := planCodexRouting(cfg, codexChatGPTLogin(), p.compactProxy.ProviderProxyURL)
+			routing := planCodexRouting(cfg, codexChatGPTLogin())
 			if len(routing.Providers) > 0 {
 				if proxyListening(fmt.Sprintf("http://127.0.0.1:%d", p.compactProxy.Port())) {
 					for name, base := range routing.Providers {
 						p.compactProxy.RegisterProvider(name, base)
 					}
-					args = append(args, routing.Args...)
+					// Built after registration: the proxy address carries the path
+					// shape of the upstream it stands for.
+					args = append(args, codexRoutingArgs(routing, p.compactProxy.ProviderProxyURL)...)
 					if routing.Injected {
 						log.Printf("[agent/pool] codex official-login provider injected base=%s proxy=127.0.0.1:%d",
 							codexChatGPTBaseURL, p.compactProxy.Port())

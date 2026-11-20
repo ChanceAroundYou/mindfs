@@ -1938,3 +1938,15 @@ spike 证明机制可行，这一轮把它做成产品行为，四处改动，�
 **未验证**：真实 ChatGPT 登录 + 新代码的端到端（spike 用的是手写 config.toml 等价形态，注入路径本身没有在
 真机跑过）；`requires_openai_auth` 在 0.169.1 之外的版本行为。上线顺序建议：本机先跑一条官方登录会话，
 日志出现 `codex official-login provider injected` 且胶囊有数字，再分发其他节点。
+
+**B11 修一：真实会话第一跳就 404（2026-11-21）**。按上面写完先跑了隔离实例的真实官方登录会话
+（`CODEX_HOME` 只放 `auth.json` 软链与两行 model 配置，无任何 provider 表），日志正确打出
+`codex official-login provider injected base=https://chatgpt.com/backend-api/codex`，但第一条请求回来
+`unexpected status 404 Not Found ... url: http://127.0.0.1:44197/c/mindfs-chatgpt/v1/responses` ——
+**注入的地址还是带 `/v1`**。根因：`planCodexRouting` 在生成 `-c` 参数时调用 `ProviderProxyURL`，
+而那一刻 provider 还没 `RegisterProvider`，查不到注册形状就退回历史的 `/v1` 默认值。
+修法是把「决策」与「生成参数」拆开：`planCodexRouting(cfg, login)` 只产出 `Providers` / `Redirect` /
+`Injected`，`codexRoutingArgs(routing, proxyURL)` 在注册之后才生成 argv。新增回归用例
+`TestCodexRoutingArgsCarryRegisteredPathShape`（真实 proxy server，先注册后取地址），
+把顺序反过来即打红。教训写进类型注释：**依赖注册表的纯函数不能在注册之前被调用** ——
+这一条单元测试在旧 API 下根本写不出来，只有真实请求会暴露。

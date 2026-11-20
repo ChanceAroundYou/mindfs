@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"mindfs/server/internal/agent/proxy"
 )
 
 func TestCodexProviderConfigReadsProvidersAndModelProvider(t *testing.T) {
@@ -123,13 +126,14 @@ func TestCodexChatGPTLoginDetection(t *testing.T) {
 // the proxy address handed to Codex for it must not grow one.
 func TestPlanCodexRoutingInjectsOfficialProviderForChatGPTLogin(t *testing.T) {
 	proxyURL := func(name string) string { return "http://127.0.0.1:9999/c/" + name }
-	got := planCodexRouting(codexProviderConfig{}, true, proxyURL)
-	if !got.Injected {
-		t.Fatalf("expected the official provider to be injected: %+v", got)
+	routing := planCodexRouting(codexProviderConfig{}, true)
+	if !routing.Injected {
+		t.Fatalf("expected the official provider to be injected: %+v", routing)
 	}
-	if got.Providers[codexOfficialProviderName] != codexChatGPTBaseURL {
-		t.Fatalf("providers = %+v", got.Providers)
+	if routing.Providers[codexOfficialProviderName] != codexChatGPTBaseURL {
+		t.Fatalf("providers = %+v", routing.Providers)
 	}
+	got := codexRoutingArgs(routing, proxyURL)
 	want := []string{
 		"-c", `model_provider="mindfs-chatgpt"`,
 		"-c", `model_providers.mindfs-chatgpt.name="mindfs-chatgpt"`,
@@ -137,12 +141,12 @@ func TestPlanCodexRoutingInjectsOfficialProviderForChatGPTLogin(t *testing.T) {
 		"-c", `model_providers.mindfs-chatgpt.wire_api="responses"`,
 		"-c", `model_providers.mindfs-chatgpt.requires_openai_auth=true`,
 	}
-	if len(got.Args) != len(want) {
-		t.Fatalf("args = %v", got.Args)
+	if len(got) != len(want) {
+		t.Fatalf("args = %v", got)
 	}
 	for i := range want {
-		if got.Args[i] != want[i] {
-			t.Fatalf("args[%d] = %q want %q", i, got.Args[i], want[i])
+		if got[i] != want[i] {
+			t.Fatalf("args[%d] = %q want %q", i, got[i], want[i])
 		}
 	}
 }
@@ -151,11 +155,12 @@ func TestPlanCodexRoutingInjectsOfficialProviderForChatGPTLogin(t *testing.T) {
 // shape and the bearer key; routing it through the ChatGPT provider would
 // break authentication, so it is never touched.
 func TestPlanCodexRoutingLeavesAPIKeySessionUntouched(t *testing.T) {
-	got := planCodexRouting(codexProviderConfig{}, false, func(name string) string {
+	routing := planCodexRouting(codexProviderConfig{}, false)
+	args := codexRoutingArgs(routing, func(name string) string {
 		return "http://127.0.0.1:9999/c/" + name + "/v1"
 	})
-	if got.Injected || len(got.Args) != 0 || len(got.Providers) != 0 {
-		t.Fatalf("got %+v", got)
+	if routing.Injected || len(args) != 0 || len(routing.Providers) != 0 {
+		t.Fatalf("routing = %+v args = %v", routing, args)
 	}
 }
 
@@ -166,15 +171,16 @@ func TestPlanCodexRoutingRedirectsConfiguredProviderOnly(t *testing.T) {
 		ModelProvider: "llmux",
 		Providers:     map[string]string{"llmux": "https://up.example/llmux/v1"},
 	}
-	got := planCodexRouting(cfg, true, func(name string) string {
+	routing := planCodexRouting(cfg, true)
+	if routing.Injected {
+		t.Fatalf("must not inject while model_provider names a configured provider: %+v", routing)
+	}
+	got := codexRoutingArgs(routing, func(name string) string {
 		return "http://127.0.0.1:9999/c/" + name + "/v1"
 	})
-	if got.Injected {
-		t.Fatalf("must not inject while model_provider names a configured provider: %+v", got)
-	}
 	want := []string{"-c", `model_providers.llmux.base_url="http://127.0.0.1:9999/c/llmux/v1"`}
-	if len(got.Args) != len(want) || got.Args[0] != want[0] || got.Args[1] != want[1] {
-		t.Fatalf("args = %v", got.Args)
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("args = %v", got)
 	}
 }
 
@@ -182,7 +188,14 @@ func TestPlanCodexRoutingRedirectsConfiguredProviderOnly(t *testing.T) {
 // openai is in use); then both steps apply.
 func TestPlanCodexRoutingRedirectsAndInjectsWhenModelProviderUnset(t *testing.T) {
 	cfg := codexProviderConfig{Providers: map[string]string{"llmux": "https://up.example/llmux/v1"}}
-	got := planCodexRouting(cfg, true, func(name string) string {
+	routing := planCodexRouting(cfg, true)
+	if !routing.Injected {
+		t.Fatalf("expected injection: %+v", routing)
+	}
+	if routing.Providers["llmux"] != "https://up.example/llmux/v1" {
+		t.Fatalf("providers = %+v", routing.Providers)
+	}
+	got := codexRoutingArgs(routing, func(name string) string {
 		// Mirrors ProviderProxyURL: the shape follows the registered base URL,
 		// and the ChatGPT backend has no /v1.
 		if name == codexOfficialProviderName {
@@ -190,12 +203,6 @@ func TestPlanCodexRoutingRedirectsAndInjectsWhenModelProviderUnset(t *testing.T)
 		}
 		return "http://127.0.0.1:9999/c/" + name + "/v1"
 	})
-	if !got.Injected {
-		t.Fatalf("expected injection: %+v", got)
-	}
-	if got.Providers["llmux"] != "https://up.example/llmux/v1" {
-		t.Fatalf("providers = %+v", got.Providers)
-	}
 	want := []string{
 		"-c", `model_providers.llmux.base_url="http://127.0.0.1:9999/c/llmux/v1"`,
 		"-c", `model_provider="mindfs-chatgpt"`,
@@ -204,12 +211,12 @@ func TestPlanCodexRoutingRedirectsAndInjectsWhenModelProviderUnset(t *testing.T)
 		"-c", `model_providers.mindfs-chatgpt.wire_api="responses"`,
 		"-c", `model_providers.mindfs-chatgpt.requires_openai_auth=true`,
 	}
-	if len(got.Args) != len(want) {
-		t.Fatalf("args = %v", got.Args)
+	if len(got) != len(want) {
+		t.Fatalf("args = %v", got)
 	}
 	for i := range want {
-		if got.Args[i] != want[i] {
-			t.Fatalf("args[%d] = %q want %q", i, got.Args[i], want[i])
+		if got[i] != want[i] {
+			t.Fatalf("args[%d] = %q want %q", i, got[i], want[i])
 		}
 	}
 }
@@ -232,10 +239,34 @@ func TestProxyListeningDetectsClosedPort(t *testing.T) {
 // model_provider may spell the built-in provider out explicitly; that is still
 // a ChatGPT login, and folding must not depend on the key being omitted.
 func TestPlanCodexRoutingInjectsWhenModelProviderIsBuiltinOpenAI(t *testing.T) {
-	got := planCodexRouting(codexProviderConfig{ModelProvider: "openai"}, true, func(name string) string {
-		return "http://127.0.0.1:9999/c/" + name
-	})
-	if !got.Injected {
-		t.Fatalf("expected injection for an explicit built-in provider: %+v", got)
+	routing := planCodexRouting(codexProviderConfig{ModelProvider: "openai"}, true)
+	if !routing.Injected {
+		t.Fatalf("expected injection for an explicit built-in provider: %+v", routing)
 	}
+}
+
+// The argv must be built after the providers are registered: ProviderProxyURL
+// reads the path shape from the registry, and building it first handed Codex a
+// `/c/mindfs-chatgpt/v1` address for a backend that has no version segment —
+// the first real request answered 404. This pins the order.
+func TestCodexRoutingArgsCarryRegisteredPathShape(t *testing.T) {
+	s, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	routing := planCodexRouting(codexProviderConfig{}, true)
+	for name, base := range routing.Providers {
+		s.RegisterProvider(name, base)
+	}
+	args := codexRoutingArgs(routing, s.ProviderProxyURL)
+	want := fmt.Sprintf(`model_providers.%s.base_url="http://127.0.0.1:%d/c/%s"`,
+		codexOfficialProviderName, s.Port(), codexOfficialProviderName)
+	for _, arg := range args {
+		if arg == want {
+			return
+		}
+	}
+	t.Fatalf("args = %v\nwant base_url %q", args, want)
 }
