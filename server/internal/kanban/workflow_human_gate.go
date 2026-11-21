@@ -78,6 +78,13 @@ func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, 
 		if err := store.UpdateTaskStatus(ctx, run.TaskID, StatusCancelled, true); err != nil {
 			return updated, err
 		}
+		// 这条路不走 setTaskStatus，卡片得在这里补：驳回的人不该只看到
+		// 卡片变成「已处理」，却不知道任务已经停了。
+		s.notifyCard(ctx, CardNotice{
+			ID: "notice-" + run.TaskID + "-cancelled-gate", Kind: CardKindNotice,
+			RootID: task.RootID, TaskID: task.ID, TaskTitle: taskTitle(task), TaskNumber: task.TaskNumber,
+			Status: StatusCancelled, Summary: strings.TrimSpace(note),
+		})
 		s.settleWorkflowReply(ctx, store, run)
 		if err := store.BlockWorkflowCommentQueue(ctx, run.TaskID); err != nil {
 			return updated, err

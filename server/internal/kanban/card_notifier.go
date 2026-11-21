@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strconv"
+	"strings"
 )
 
 // Card kinds a task can push to an external channel. They mirror the message
@@ -59,6 +60,16 @@ func (s *Service) notifyCard(ctx context.Context, n CardNotice) {
 	if err := s.cardNotifier.NotifyCard(ctx, n); err != nil {
 		log.Printf("[kanban/cards] %s %s: %v", n.Kind, n.ID, err)
 	}
+}
+
+// notifyCancelledCard 通知「这次跑动被叫停了」。取消绕开 setTaskStatus，
+// 所以由取消路径自己发；ID 固定到任务，重复取消被卡片去重吞掉。
+func (s *Service) notifyCancelledCard(ctx context.Context, task Task, reason string) {
+	s.notifyCard(ctx, CardNotice{
+		ID: "notice-" + task.ID + "-cancelled-run", Kind: CardKindNotice,
+		RootID: task.RootID, TaskID: task.ID, TaskTitle: taskTitle(task), TaskNumber: task.TaskNumber,
+		Status: StatusCancelled, Summary: strings.TrimSpace(reason),
+	})
 }
 
 // taskTitle is the name a person recognizes the task by. Tasks created from a

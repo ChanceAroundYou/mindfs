@@ -214,6 +214,7 @@ func (s *Service) CancelWorkflowRun(ctx context.Context, rootID, taskID, reason 
 		if err := store.UpdateTaskStatus(ctx, task.ID, StatusCancelled, true); err != nil {
 			return err
 		}
+		s.notifyCancelledCard(ctx, task, reason)
 		_ = store.BlockWorkflowCommentQueue(ctx, task.ID)
 		s.broadcastTask(ctx, store, task.ID)
 		return nil
@@ -235,6 +236,7 @@ func (s *Service) CancelWorkflowRun(ctx context.Context, rootID, taskID, reason 
 	if err := store.UpdateTaskStatus(ctx, task.ID, StatusCancelled, true); err != nil {
 		return err
 	}
+	s.notifyCancelledCard(ctx, task, reason)
 	// projectRunCancelled 在另一次加载里写回新的 NodeStates，这里的 run 仍是
 	// 取消前的快照。settleWorkflowReply 用 run 判断「节点是否全部终态」，过期
 	// 快照会让它以为还有 running 节点而直接返回，绑定回复就永远停在 running。

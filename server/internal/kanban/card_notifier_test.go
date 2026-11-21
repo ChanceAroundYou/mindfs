@@ -163,3 +163,59 @@ func TestCardNotifierFailureDoesNotFailTaskMove(t *testing.T) {
 		t.Fatalf("notifier failure leaked into task move: %v", err)
 	}
 }
+
+// 驳回 gate 会直接把任务判成取消，这条路不走 setTaskStatus —— 少了这里的通知，
+// 在飞书上点「驳回」的人只会看到卡片变成「已处理」，然后什么也不会再收到。
+func TestGateRejectNotifiesCancelledNotice(t *testing.T) {
+	ctx := context.Background()
+	graph := WorkflowDefinition{
+		Nodes: []WorkflowNode{
+			{ID: "gate", Kind: NodeKindHumanGate, Params: map[string]any{"prompt": "确认可以上线"}},
+			{ID: "build", Kind: NodeKindAgent, Params: map[string]any{"prompt": "执行上线"}},
+		},
+		Edges: []WorkflowEdge{{From: "gate", To: "build"}},
+	}
+	store, svc, run, root := newWorkflowCommentFixture(t, "wf-card-reject-task", "wf-card-reject-run", graph)
+	notifier := &fakeCardNotifier{}
+	svc.SetCardNotifier(notifier)
+	svc.SetWorkflowNodeRunner(newRuntimeRunner(0))
+	if err := svc.AdvanceWorkflowRun(ctx, store, run.TaskID); err != nil {
+		t.Fatalf("AdvanceWorkflowRun: %v", err)
+	}
+	if _, err := svc.ResolveWorkflowHumanGate(ctx, root.ID, run.TaskID, "gate", "reject", "", ""); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	got := notifier.byKind(CardKindNotice)
+	if len(got) != 1 {
+		t.Fatalf("reject notices = %+v", got)
+	}
+	if got[0].TaskID != run.TaskID || got[0].Status != StatusCancelled || !strings.Contains(got[0].ID, run.TaskID) {
+		t.Fatalf("notice = %+v", got[0])
+	}
+}
+
+// 取消同样绕开 setTaskStatus：任务在飞书里被叫停之后，发起人必须收到一条
+// 明确的「已取消」，而不是自己回页面里找。
+func TestCancelWorkflowRunNotifiesCancelledNotice(t *testing.T) {
+	ctx := context.Background()
+	_, svc, run, root := newWorkflowCommentFixture(t, "wf-card-cancel-task", "wf-card-cancel-run", workflowCommentTestGraph)
+	notifier := &fakeCardNotifier{}
+	svc.SetCardNotifier(notifier)
+	if err := svc.CancelWorkflowRun(ctx, root.ID, run.TaskID, "用户取消"); err != nil {
+		t.Fatalf("CancelWorkflowRun: %v", err)
+	}
+	got := notifier.byKind(CardKindNotice)
+	if len(got) != 1 {
+		t.Fatalf("cancel notices = %+v", got)
+	}
+	if got[0].TaskID != run.TaskID || got[0].Status != StatusCancelled || !strings.Contains(got[0].ID, run.TaskID) {
+		t.Fatalf("notice = %+v", got[0])
+	}
+	// 已终态再取消一次不是新闻，也就不该再发一张卡。
+	if err := svc.CancelWorkflowRun(ctx, root.ID, run.TaskID, "用户取消"); err != nil {
+		t.Fatalf("second CancelWorkflowRun: %v", err)
+	}
+	if got := notifier.byKind(CardKindNotice); len(got) != 1 {
+		t.Fatalf("cancel notified twice: %+v", got)
+	}
+}
