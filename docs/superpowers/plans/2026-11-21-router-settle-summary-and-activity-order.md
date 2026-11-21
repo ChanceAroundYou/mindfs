@@ -88,7 +88,21 @@ Plan 2026-11-21。用户报告三件事（`/refine`）：
 | llmux #20 `task_f3de197705b988a7` | `result_summary` 由 2214 字原文改成 201 字（结论 + 当前卡在 Q1 等你回答）；提问卡排序由 S3 生效 |
 | llmux #19 `task_260f5740cced704f` | 已有 434 字压缩总结，保留；它的 failed `run_settled` 由 S5 在部署后的下一拍自动补偿 |
 
+### 补记：只改 `result_summary` 用户看不到（2026-11-21）
+
+用户回报「我没有看到你的补发总结」。查明两处原因，都不是部署问题：
+
+1. 第一次补齐只写了 `tasks.result_summary`（卡片摘要），**没有往对话里插总结行** —— 详情页末尾仍是节点原文，用户看的地方没有变化。
+2. 直接改库没有推进 `updated_at`，也没有广播 `task.updated`；前端按 `updated_at` 水位做增量同步 + IndexedDB 缓存，卡片也不会自己刷新。
+
+修复（在线写库，服务无需重启）：
+
+- 给三条任务各补一条 `type=agent_reply, role=agent, purpose=summary, status=completed` 的回复（正文即上面那段摘要，`payload_json={"backfilled":true}` 标明来历），`reply_to_id` 指回最后一条用户留言；
+- 把 `tasks.updated_at` 推到当前库内最大值之后，增量同步下一次就能取到；
+- 用线上 `/api/tasks` 与 `/api/tasks/{id}/activities` 回读核对：三条任务各 1 条 summary 行、位于对话末尾、`updated_at` 已更新。
+
 剩余：
 - 本机需要用户 `sudo systemctl restart mindfs` 才生效；worker 由 `scripts/deploy-all.sh` 分发。
-- 历史对话末尾不会补插 Router 总结行（只改了卡片摘要），新回合起由 Router 写。
+- 本机安装目录里的二进制（`v0.5.5-1200-172-gc9b8fe8c`，11:26 装入）已包含本组提交，但运行中的进程是 09:06 起的旧二进制 —— 重启后才会有「每轮自动总结 + 失败结算补偿」。
+- 新回合起由 Router 自己写 summary；上面的三条只是历史修补。
 
