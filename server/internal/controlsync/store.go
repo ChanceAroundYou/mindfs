@@ -267,6 +267,99 @@ func (s *Store) RecordStates(ctx context.Context, domain string) (map[string]Rec
 	return out, nil
 }
 
+// BaseRev 返回边缘副本的水位（主节点上已追到哪一条 change）。没有 state 行时为 0。
+func (s *Store) BaseRev(ctx context.Context) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("controlsync: store closed")
+	}
+	var rev int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE((SELECT base_rev FROM state WHERE id = 1), 0)`).Scan(&rev); err != nil {
+		return 0, fmt.Errorf("controlsync: read base_rev: %w", err)
+	}
+	return rev, nil
+}
+
+// ApplyRemoteChanges 在一个事务里把一页主节点变更写进本地副本并推进 base_rev。
+//
+// 三条约束，都是为了让「失败不丢变更」成立：
+//   - rev 沿用主节点序号，不在本地重分配 —— 它是水位，不是本地自增；
+//   - rev <= 当前水位的记录跳过，重放同一页不会写第二遍（幂等）；
+//   - records 与 base_rev 同生共死：半个事务提交出去，边缘就会跳过没落地的记录。
+func (s *Store) ApplyRemoteChanges(ctx context.Context, changes []RemoteChange) error {
+	if s == nil || s.db == nil {
+		return errors.New("controlsync: store closed")
+	}
+	for _, ch := range changes {
+		if err := ValidateRecord(Record{Domain: ch.Domain, Key: ch.Key, Payload: ch.Payload}); err != nil {
+			return err
+		}
+		if ch.Rev <= 0 {
+			return fmt.Errorf("controlsync: invalid change rev %d for %s/%s", ch.Rev, ch.Domain, ch.Key)
+		}
+		if strings.TrimSpace(ch.Hash) == "" {
+			return fmt.Errorf("controlsync: change hash required for %s/%s", ch.Domain, ch.Key)
+		}
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("controlsync: begin: %w", err)
+	}
+	var baseRev int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE((SELECT base_rev FROM state WHERE id = 1), 0)`).Scan(&baseRev); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("controlsync: read base_rev: %w", err)
+	}
+	newRev := baseRev
+	for _, ch := range changes {
+		if ch.Rev <= baseRev {
+			continue
+		}
+		updatedAt := ch.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = s.now()
+		}
+		var payload any
+		if len(ch.Payload) > 0 {
+			payload = []byte(ch.Payload)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO records(domain, key, rev, hash, payload, deleted, updated_at, origin)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(domain, key) DO UPDATE SET
+	rev = excluded.rev,
+	hash = excluded.hash,
+	payload = excluded.payload,
+	deleted = excluded.deleted,
+	updated_at = excluded.updated_at,
+	origin = excluded.origin`,
+			ch.Domain, ch.Key, ch.Rev, ch.Hash, payload, boolInt(ch.Deleted),
+			updatedAt.UTC().Format(time.RFC3339Nano), ch.Origin); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("controlsync: upsert replica record: %w", err)
+		}
+		if ch.Rev > newRev {
+			newRev = ch.Rev
+		}
+	}
+	if newRev > baseRev {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO state(id, base_rev) VALUES(1, ?)
+ON CONFLICT(id) DO UPDATE SET base_rev = excluded.base_rev`, newRev); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("controlsync: advance base_rev: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("controlsync: commit: %w", err)
+	}
+	return nil
+}
+
 // writeRecordTx 是 WriteRecord 的事务内核，单独拎出来是为了能用外层事务驱动，
 // 测试也靠它验证「回滚不留半条 change」。
 func writeRecordTx(ctx context.Context, tx *sql.Tx, rec Record, now func() time.Time) (int64, error) {
