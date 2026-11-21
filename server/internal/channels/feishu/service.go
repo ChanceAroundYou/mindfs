@@ -116,9 +116,10 @@ type Service struct {
 	ttl   time.Duration
 	tick  time.Duration
 
-	mu      sync.Mutex
-	handler func(context.Context, Answer) error
-	started bool
+	mu             sync.Mutex
+	handler        func(context.Context, Answer) error
+	messageHandler func(context.Context, []byte) error
+	started        bool
 
 	// loops counts the goroutines Start launched. Both write to disk (card
 	// store, lark-cli), so shutdown must be able to see them finish; Wait is
@@ -162,6 +163,25 @@ func (s *Service) SetAnswerHandler(fn func(context.Context, Answer) error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handler = fn
+}
+
+// SetMessageHandler installs what an inbound chat message does. It receives
+// the raw event line so intake owns parsing, dedupe and policy. A nil handler
+// is a no-op: the listener still runs but drops the messages.
+func (s *Service) SetMessageHandler(fn func(context.Context, []byte) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messageHandler = fn
+}
+
+func (s *Service) handleRawMessage(ctx context.Context, line []byte) error {
+	s.mu.Lock()
+	fn := s.messageHandler
+	s.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(ctx, line)
 }
 
 func (s *Service) answerHandler() func(context.Context, Answer) error {
@@ -229,8 +249,8 @@ func choicesFor(n Notice) []Choice {
 	}
 }
 
-// Start runs delivery and the click listener until ctx ends. It returns at
-// once; both loops are goroutines so a broken lark-cli never delays startup.
+// Start runs delivery and both event listeners until ctx ends. It returns at
+// once; the loops are goroutines so a broken lark-cli never delays startup.
 func (s *Service) Start(ctx context.Context) {
 	s.mu.Lock()
 	if s.started {
@@ -240,7 +260,7 @@ func (s *Service) Start(ctx context.Context) {
 	s.started = true
 	s.mu.Unlock()
 
-	s.loops.Add(2)
+	s.loops.Add(3)
 	go func() {
 		defer s.loops.Done()
 		s.deliverLoop(ctx)
@@ -250,12 +270,21 @@ func (s *Service) Start(ctx context.Context) {
 		defer s.loops.Done()
 		sup.Run(ctx)
 	}()
+	// Feishu needs a separate long connection per event type. The two
+	// supervisors keep separate stdin pipes and never hand a chat message to
+	// the click handler.
+	messages := &Supervisor{Path: s.cli.Path, EventType: "im.message.receive_v1",
+		HandleRaw: s.handleRawMessage, Logf: s.logf}
+	go func() {
+		defer s.loops.Done()
+		messages.Run(ctx)
+	}()
 }
 
 // Wait blocks until every loop Start launched has returned. Callers cancel the
-// ctx they passed to Start first; Wait then guarantees no delivery, no patch
-// and no click handling is still in flight — needed before shutdown, and by
-// tests whose temp dirs must not be written behind their back.
+// ctx they passed to Start first; Wait then guarantees no delivery, no patch,
+// no click handling and no chat handling is still in flight — needed before
+// shutdown, and by tests whose temp dirs must not be written behind their back.
 func (s *Service) Wait() {
 	s.loops.Wait()
 }

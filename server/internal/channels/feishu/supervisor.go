@@ -13,13 +13,22 @@ import (
 	"time"
 )
 
-// Supervisor keeps `lark-cli event consume card.action.trigger` running and
-// hands every click to Handle. Feishu allows one listener per app, so a
-// refused connection means another process still holds it — that is worth a
-// minute between tries, and worth saying once rather than every minute.
+// Supervisor keeps one `lark-cli event consume` long connection running: by
+// default card.action.trigger, or a configured type with HandleRaw for chat
+// messages. Feishu allows one listener per app per event type, so a refused
+// connection means another process still holds it — that is worth a minute
+// between tries, and worth saying once rather than every minute.
 type Supervisor struct {
-	Path          string
-	Handle        func(context.Context, Action) error
+	Path string
+	// EventType is the lark-cli event to subscribe to. Empty means the
+	// card.action.trigger listener M1 shipped; the intake listener asks for
+	// im.message.receive_v1 instead. Never share a subscription between the two.
+	EventType string
+	Handle    func(context.Context, Action) error
+	// HandleRaw gets every raw stdout line when set. It bypasses ParseEvent
+	// and Handle: chat messages are not card clicks, even if one looks like
+	// a click on the wire.
+	HandleRaw     func(context.Context, []byte) error
 	Logf          func(string, ...any)
 	RestartDelay  time.Duration
 	ConflictDelay time.Duration
@@ -79,7 +88,11 @@ func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) boo
 	// 仍握着管道，cmd.Wait() 会一直等下去，监听就静默死掉了。
 	childCtx, stopChild := context.WithCancel(ctx)
 	defer stopChild()
-	cmd := exec.CommandContext(childCtx, s.Path, "event", "consume", "card.action.trigger", "--as", "bot")
+	eventType := s.EventType
+	if eventType == "" {
+		eventType = "card.action.trigger"
+	}
+	cmd := exec.CommandContext(childCtx, s.Path, "event", "consume", eventType, "--as", "bot")
 	// lark-cli 把 stdin EOF 当停机信号；exec 默认给子进程 /dev/null，
 	// 监听会在一秒多就自己退掉。留一根一直开着的管道给它。
 	stdinR, stdinW, err := os.Pipe()
@@ -140,6 +153,21 @@ func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) boo
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
 		line := sc.Bytes()
+		if s.HandleRaw != nil {
+			// Scanner reuses its buffer; the handler runs in a goroutine and
+			// must own its bytes.
+			raw := append([]byte(nil), line...)
+			handlers.Add(1)
+			go func() {
+				defer handlers.Done()
+				hctx, cancel := context.WithTimeout(ctx, timeout)
+				defer cancel()
+				if err := s.HandleRaw(hctx, raw); err != nil {
+					logf("飞书私聊事件没处理成：%v", err)
+				}
+			}()
+			continue
+		}
 		ev, ok := ParseEvent(line)
 		if !ok {
 			continue
