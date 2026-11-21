@@ -7922,7 +7922,7 @@ groups:
       - 'server/internal/kanban/workflow_runtime_cancel.go:func (s *Service) cancelOpenWorkflowNodeRuns('
       - 'server/internal/kanban/workflow_runtime.go:if fresh, ok, err := s.workflowRunForTask(ctx, store, task.ID); err == nil && ok {'
       - 'server/internal/kanban/workflow_runtime_test.go:func TestWorkflowCancelSettlesBoundReplyActivity('
-      - 'server/internal/api/appcontext_workflow.go:profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)'
+      - 'server/internal/api/appcontext_workflow.go:profile := workflowNodeProfile(exec)'
       - 'server/internal/api/appcontext_workflow_test.go:func TestSendWorkflowCommentCarriesNodeAgentProfile('
       - 'server/internal/kanban/task_store_workflow_runtime.go:func (s *TaskStore) RequeueWorkflowNodeRun('
       - 'server/internal/kanban/task_store_workflow_events.go:WorkflowEventRunCompleted = "run_completed"'
