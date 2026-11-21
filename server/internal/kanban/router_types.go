@@ -214,8 +214,8 @@ const (
 	// NodeRun 行），因为改档与跳过都发生在「下一 attempt」而不是某一行上。
 	RouterActionSetNodeModel RouterActionKind = "set_node_model"
 	RouterActionSkipNode     RouterActionKind = "skip_node"
-	RouterActionCancelRun  RouterActionKind = "cancel_run"
-	RouterActionCancelTask RouterActionKind = "cancel_task"
+	RouterActionCancelRun    RouterActionKind = "cancel_run"
+	RouterActionCancelTask   RouterActionKind = "cancel_task"
 	// W1 T3：登记这一轮的验收项。它不是收尾动作，只是把「做完的样子」写下来，
 	// 供 complete_task 的证据门逐条核对。
 	RouterActionRecordAcceptance RouterActionKind = "record_acceptance"

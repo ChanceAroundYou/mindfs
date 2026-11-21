@@ -57,7 +57,7 @@ func latestNodeRunOf(nodes []NodeRun, nodeID string) (NodeRun, bool) {
 
 func (e *routerToolEnv) inspectRunTool() RouterToolSpec {
 	return RouterToolSpec{
-		Name:        "router_inspect_run",
+		Name: "router_inspect_run",
 		Description: "只读：查看最近一次 WorkflowRun 的节点终态与输出摘要。不修改任何状态。" +
 			"带 node_id 时只返回该节点的详情（最近一次 attempt 的产出），不重复整份节点清单，也不读转录。",
 		Class: RouterToolRead,
