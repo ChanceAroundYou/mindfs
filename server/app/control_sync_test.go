@@ -98,6 +98,33 @@ func TestStartControlSyncPrimaryRequiresToken(t *testing.T) {
 	}
 }
 
+// 主节点启动就要把整份控制面写进变更流。兜底扫描 15 秒才有第一拍，而边缘完全可能
+// 在这之前完成首次追平然后掉线 —— 那一版副本会缺记录（首次启动生成的管理员账户
+// 就在其中），恢复时把主节点早就有的记录当成「两侧都改」报冲突。
+func TestStartControlSyncPrimaryPublishesBaselineAtStartup(t *testing.T) {
+	cfgDir, stores := controlSyncFixture(t)
+	w, err := startControlSync(t.Context(), &ControlSyncOptions{
+		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home", Token: "t0ken",
+	}, nodeinfo.RoleControl, cfgDir, stores)
+	if err != nil || w == nil {
+		t.Fatalf("startControlSync: %v", err)
+	}
+	recs, err := w.runtime.Store().ListRecords(t.Context(), controlsync.DomainUsers)
+	if err != nil {
+		t.Fatalf("ListRecords: %v", err)
+	}
+	if len(recs) == 0 {
+		t.Fatalf("启动后 users 域一条记录都没有：变更流是空的，边缘只能靠 15 秒后的兜底扫描")
+	}
+	changes, err := w.runtime.Store().ListChangesSince(t.Context(), 0, 100)
+	if err != nil {
+		t.Fatalf("ListChangesSince: %v", err)
+	}
+	if len(changes) == 0 {
+		t.Fatalf("启动后变更流为空")
+	}
+}
+
 func TestStartControlSyncPrimaryExposesPushAndFeed(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	w, err := startControlSync(t.Context(), &ControlSyncOptions{

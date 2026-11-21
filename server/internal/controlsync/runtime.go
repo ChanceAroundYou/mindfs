@@ -186,6 +186,7 @@ func NewRuntime(ctx context.Context, cfg Config, deps Deps) (*Runtime, error) {
 		// 主节点：本地改动进变更流，不做任何「待回传」判断。
 		deps.Capturer.PendingWhen = nil
 		deps.Capturer.CaptureWhen = nil
+		deps.Capturer.SweepWhen = nil
 		return rt, nil
 	}
 
@@ -248,6 +249,11 @@ func NewRuntime(ctx context.Context, cfg Config, deps Deps) (*Runtime, error) {
 	// 本来就不该变；真变了（后台任务直写）也不是现在能安全回传的东西。
 	deps.Capturer.PendingWhen = func() bool { return rt.mode.Mode() != ModeOnline }
 	deps.Capturer.CaptureWhen = func() bool { return rt.mode.Mode() != ModeOnline }
+	// 刚进 offline-local、这一轮交接还没跑完时先别扫：那时的本地存储里还混着
+	// 本机自己生成的默认记录，扫一遍就会把它们当成待回传（见 SweepWhen 注释）。
+	deps.Capturer.SweepWhen = func() bool {
+		return rt.mode.Mode() != ModeOfflineLocal || rt.handed.Load()
+	}
 	return rt, nil
 }
 

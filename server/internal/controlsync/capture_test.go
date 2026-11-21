@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -289,6 +290,61 @@ func TestDomainForPath(t *testing.T) {
 		if got != tc.want || ok != tc.ok {
 			t.Errorf("DomainForPath(%q) = %q, %v；期望 %q, %v", tc.path, got, ok, tc.want, tc.ok)
 		}
+	}
+}
+
+// 交接后的基线要包含「副本还不认识的本地记录」：边缘首次启动会自己生成默认账户、
+// 内置工作流，它们不是用户改动。只按副本建基线的话，交接收尾的 RefreshBaseline
+// 会把这些记录留在基线外，兜底扫描随即把它们当成待回传，恢复时与主节点逐条撞冲突。
+func TestRefreshBaselineKeepsLocalOnlyRecords(t *testing.T) {
+	store, domain, capturer := newCaptureFixture(t)
+	ctx := context.Background()
+	// 副本里有主节点给的 a；本地存储里还有一个副本从不认识的 b。
+	if _, err := store.WriteRecord(ctx, mustRecord(t, DomainPreferences, "a", `{"v":1}`)); err != nil {
+		t.Fatalf("WriteRecord: %v", err)
+	}
+	domain.set("a", `{"v":1}`)
+	domain.set("b", `{"v":2}`)
+	if err := capturer.RefreshBaseline(ctx); err != nil {
+		t.Fatalf("RefreshBaseline: %v", err)
+	}
+	if n, err := capturer.CaptureDomain(ctx, DomainPreferences); err != nil || n != 0 {
+		t.Fatalf("交接后采集 = %d, %v；本地既有记录不该被当成待回传", n, err)
+	}
+	// 交接之后新出现的记录仍然要能扫出来 —— 兜底采集不能被整体废掉。
+	domain.set("c", `{"v":3}`)
+	if n, err := capturer.CaptureDomain(ctx, DomainPreferences); err != nil || n != 1 {
+		t.Fatalf("交接后新写入采集 = %d, %v，应为 1", n, err)
+	}
+}
+
+// 兜底扫描要等这一轮离线交接跑完：交接前本地存储里还混着本机自己生成的默认记录。
+func TestFallbackScanWaitsForSweepWhen(t *testing.T) {
+	store, domain, capturer := newCaptureFixture(t)
+	var allowed atomic.Bool
+	capturer.SweepWhen = allowed.Load
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		capturer.Run(ctx, 10*time.Millisecond)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	domain.set("a", `{"v":1}`)
+	time.Sleep(120 * time.Millisecond)
+	if got := countChanges(t, store); got != 0 {
+		t.Fatalf("交接未完成时兜底扫描采到了 %d 条，应为 0", got)
+	}
+	allowed.Store(true)
+	deadline := time.Now().Add(5 * time.Second)
+	for countChanges(t, store) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("放行后兜底扫描仍没采集到写入")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

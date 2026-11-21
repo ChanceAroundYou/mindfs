@@ -52,6 +52,13 @@ type Capturer struct {
 	// 交接与合并都会拿错祖先。
 	CaptureWhen func() bool
 
+	// SweepWhen 只挡兜底扫描（Run 的定时 CaptureAll），不挡 HTTP 写入的采集（nil = 总是扫）。
+	//
+	// 边缘刚进入 offline-local、这一轮交接还没跑完时，本地权威存储里还混着两份东西：
+	// 副本还没覆盖到的过时值，以及本机首次启动自己生成的默认记录（默认账户、内置
+	// 工作流）。这个时候扫一遍，会把这些当成用户改动发出去，恢复后撞成一场冲突。
+	SweepWhen func() bool
+
 	mu         sync.Mutex
 	suppressed int
 	last       map[string]map[string]recordState
@@ -206,6 +213,9 @@ func (c *Capturer) Run(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if c.SweepWhen != nil && !c.SweepWhen() {
+				continue
+			}
 			if _, err := c.CaptureAll(ctx); err != nil {
 				c.reportError(err)
 			}
@@ -339,12 +349,21 @@ func (c *Capturer) adoptCapturedLocked(domain string, current []Record, prev map
 // 边缘从在线切到本地模式时必须调它：在线期间控制面写都转发给主节点，本机这份
 // 权威存储与采集基线都不前进，只有副本在追。带着过期基线算出来的 base_hash
 // 会指向一个早已被主节点改掉的祖先，恢复后把「用户基于最新值做的改动」误判成冲突。
+//
+// 副本不认识的记录也要进基线：本机首次启动会自己生成默认账户、内置工作流这类
+// 「主节点从来没有过」的记录，它们不是用户改动。只按副本建基线的话，交接之后的
+// 兜底扫描会把它们整批当成待回传，恢复时逐条撞成冲突（实测：边缘自己的默认账户
+// 和主节点的管理员账户对着干，users 域直接被冻结）。
+//
+// 基线只影响「交接那一刻已经存在的记录」：之后新出现的记录仍然会被扫出来，
+// 兜底采集照旧能补上非 HTTP 的写入。
 func (c *Capturer) RefreshBaseline(ctx context.Context) error {
 	if c == nil {
 		return errors.New("controlsync: nil capturer")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var errs error
 	for _, domain := range c.registry.Names() {
 		stored, err := c.store.RecordStates(ctx, domain)
 		if err != nil {
@@ -355,9 +374,28 @@ func (c *Capturer) RefreshBaseline(ctx context.Context) error {
 		for key, state := range stored {
 			states[key] = recordState{hash: state.Hash, deleted: state.Deleted}
 		}
+		d, err := c.registry.Get(domain)
+		if err != nil {
+			errs = errors.Join(errs, err)
+			c.last[domain] = states
+			continue
+		}
+		current, err := d.Snapshot(ctx)
+		if err != nil {
+			// 快照读不出来就别猜：保留副本基线（与改造前一致），下一次交接或
+			// 兜底扫描还有机会补上。
+			errs = errors.Join(errs, fmt.Errorf("controlsync: refresh baseline %s: %w", domain, err))
+			c.last[domain] = states
+			continue
+		}
+		for _, rec := range current {
+			if _, ok := states[rec.Key]; !ok {
+				states[rec.Key] = recordState{hash: rec.Hash, deleted: rec.Deleted}
+			}
+		}
 		c.last[domain] = states
 	}
-	return nil
+	return errs
 }
 
 // baselineLocked 返回某域的基线（必须有 c.mu）。

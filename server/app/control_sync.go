@@ -136,6 +136,7 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		_ = store.Close()
 		return nil, err
 	}
+	capturer.OnCaptureError = func(err error) { log.Printf("[control-sync] capture.error err=%v", err) }
 	cfg.OnError = func(err error) { log.Printf("[control-sync] error err=%v", err) }
 	rt, err := controlsync.NewRuntime(ctx, cfg, controlsync.Deps{
 		Store:    store,
@@ -145,6 +146,17 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 	if err != nil {
 		_ = store.Close()
 		return nil, err
+	}
+	if cfg.Role == controlsync.RolePrimary {
+		// 启动即把整份控制面写进变更流。兜底扫描要 15 秒才有第一拍，而边缘完全
+		// 可能在这之前完成首次追平然后掉线 —— 那一版副本会缺一批记录（首次启动
+		// 生成的管理员账户就在其中），恢复时把主节点早就有的记录当成「两侧都改」
+		// 报冲突。写失败只记日志，兜底扫描会补。
+		if n, err := capturer.CaptureAll(ctx); err != nil {
+			log.Printf("[control-sync] baseline.capture.error err=%v", err)
+		} else {
+			log.Printf("[control-sync] baseline published records=%d", n)
+		}
 	}
 
 	w := &controlSyncWiring{
