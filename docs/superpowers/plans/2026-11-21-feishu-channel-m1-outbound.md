@@ -739,3 +739,26 @@ Expected: `✓ 全部通过`.
 **边界（与 spec §2 一致，M1 不做）**：群聊与非 owner 点击、图片/语音/文件入站、跨节点中继（M4）、项目选择器与入口绑定（M2）、完整规则引擎。凭据不落 MindFS 库：`lark-cli` 自己持有登录态，MindFS 只记 owner_open_id 与 CLI 路径。
 
 **未部署**：本机二进制未重编安装，四节点均未部署、未重启。上线需在 `config.json` 填 `channels.feishu.enabled=true` + `owner_open_id`，并确认 `lark-cli` 已登录。
+
+### 整分支复审（2026-11-21，`7837b1fd`）
+
+整条 M1 分支（`f8704727..90f528e3`）过一遍全新上下文的复审，8 条 Critical/Important 一次性修完，每条先写出会红的测试：
+
+| 发现 | 后果 | 修法 | 钉住它的用例 |
+|---|---|---|---|
+| `newFeishuChannel` 读不出卡片库时当成空库继续启动 | 重启后已答过的 gate 卡被当成新点击，再答一次 | 读失败即不建通道（文件原样留着，修好再启动） | `TestNewFeishuChannelRefusesToStartOnCorruptState` |
+| 进程死在「已回执、未应用」之间，卡片永久停在 `applying` | 之后的每次点击只补一次「正在处理…」，人再也答不了 | `Store.Load` 把 `applying` 放回 `open`（版本 +1）并落盘；两条写回路径本身幂等 | `TestLoadRecoversApplyingCardsToOpen` |
+| 事件流中途断掉时监听 goroutine 静默退出 | 飞书点击从此再也收不到，进程看着还活着 | 扫描结束且 ctx 未取消时收掉子进程，交给 supervisor 重连 | `TestSupervisorReconnectsWhenAStdoutLineIsTooLong` |
+| 单次点击处理没有超时 | 一次卡住的写回拖死整个监听循环 | 每次点击一个带超时的 ctx（默认 2 分钟） | `TestSupervisorHandlerTimeoutDoesNotBlockReconnect` |
+| `Put`/`Update`/`MarkDelivered`/`RecordDeliveryError` 落盘失败后内存已改 | 内存与磁盘长期分叉，重启后状态回退 | 失败时把内存回滚到改前 | `TestPutRollsBackMemoryWhenSaveFails` |
+| `lark-cli` 在 JSON 前打警告行时整段解析失败 | 一次成功发送被记成失败并被反复重发 | 先整段解析，失败再取最后一个完整 JSON 对象 | `TestCLIIgnoresLinesBeforeTheJSONReply` |
+| `cards.json` 只增不减 | 文件随任务数无限增长，每拍在锁里重写整份 | 按 TTL 清理（`Load` 与每拍投递各一次，`applying` 保留） | `TestPruneExpiredDropsOldCardsButKeepsLiveOnes`、`TestDeliverOnceDropsExpiredCards` |
+| 取消 ctx 不等于循环真的停了 | 测试 TempDir 清理与在飞的写盘互抢（`-race` 下 3/40 复现） | `Service.Wait()` 等两个循环退出，integration 测试 defer 里用 | 复跑 40/40 绿（变异：`Wait` 空实现 → 7/40 红） |
+
+变异验证：事件流中断与点击超时两处各自打红后还原；`Wait` 空实现 7/40 复现清理失败。门禁：`go test -count=1 ./...` 全绿（`kanban` 一条 `TestRouterRouteTimeoutWithoutActionsNotifiesAndFallsBack` 在全量并发下因 sqlite readonly 偶发红，单跑即绿，属既有 flake）；`go test -race ./server/internal/channels/feishu/` 绿；干净 worktree `make check-upstream` 全绿。
+
+**复审后仍未处理（Minor，记录在案）**：
+
+- `activity_route_apply.go` 的 ask 通知内联了一段与 `Service.notifyCard` 行为等价的调用（`ActivityService` 与 `Service` 是两个接收者，共用需要抽包级函数；日志格式与失败隔离语义已一致），纯重复无行为差异。
+- `feishu.StateSuperseded` 有渲染分支但从无赋值点；`Card.NodeID` 会随点击回传到 `Answer`，但 M1 没有创建点填它（`CardNotice` 没有该字段）。两者都是预留给后续里程碑的字段，删除会丢语义，保留。
+- `sendCard` 成功后 `message_id` 为空串的匹配、`ExpiresAt` 为零值的卡片（新卡不从这条路径产生）、notice 卡挂在 `GetDetail` 之后 —— 均无可达路径。

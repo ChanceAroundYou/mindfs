@@ -11395,6 +11395,7 @@ groups:
       - cli/cmd/startup_feishu.go
       - cli/cmd/mindfs.go
     tests:
+      - server/app/feishu_test.go
       - server/internal/channels/feishu/store_test.go
       - server/internal/channels/feishu/render_test.go
       - server/internal/channels/feishu/cli_test.go
