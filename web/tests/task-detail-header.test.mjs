@@ -32,7 +32,7 @@ test("header 结构：名字旁边是编辑键，操作控件与删除在右侧�
 
   // headerRight 只剩两块：操作控件菜单 + 删除（删除按用户要求不进菜单）。
   const rightAt = panel.indexOf("headerRight={editingName");
-  const right = panel.slice(rightAt, rightAt + 1600);
+  const right = panel.slice(rightAt, rightAt + 2600);
   assert.match(right, /<TaskDetailActionsMenu actions=\{actions\} disabled=\{saving\} \/>/);
   assert.match(right, /\{terminal \? \([\s\S]{0,400}?<DeleteIcon \/>/);
   assert.equal(
@@ -48,17 +48,25 @@ test("header 结构：名字旁边是编辑键，操作控件与删除在右侧�
   assert.ok(shell.indexOf("{headerRight}") < closeAt, "关闭键排在操作控件/删除右边");
 });
 
-test("操作控件菜单：只有可执行的动作、删除不进菜单、弹层挂到 body", () => {
+test("操作控件菜单：动作与卡片同源、图标竖排、删除不进菜单、弹层挂到 body", () => {
   const menu = read("../src/components/task/TaskDetailActionsMenu.tsx");
   const panel = read("../src/components/task/TaskDetailPanel.tsx");
 
-  // 三个来源动作都在 panel 侧按 can* 判据组装，菜单只负责渲染。
-  assert.match(panel, /if \(canFinishWorktree\)[\s\S]{0,300}?key: "finish-worktree"/);
-  assert.match(panel, /if \(canCompleteTask\)[\s\S]{0,300}?key: "complete"/);
-  assert.match(panel, /if \(canReopenTask\)[\s\S]{0,400}?key: "reopen"/);
+  // 动作集合来自卡片同一个纯函数：卡片上有几个，菜单就有几个，不再手写互斥条件。
+  assert.match(panel, /taskCardActions\(task\)\.map/);
+  assert.match(panel, /TASK_CARD_ACTION_META\[key\]\.labelKey/);
+  // 八种动作都有图标与回调；漏一个会在 tsc 的 Record 上直接报错，这里再钉一次。
+  for (const key of ["finish-worktree", "pause", "resume", "complete", "cancel", "reopen", "archive-task", "unarchive-task"]) {
+    assert.match(panel, new RegExp(`"?${key}"?: `), `panel must wire the ${key} action`);
+  }
   // 删除不进菜单：菜单里没有任何 deleteTaskCard / DeleteIcon。
   assert.doesNotMatch(menu, /deleteTaskCard|DeleteIcon|task\.deleteTask/);
   assert.doesNotMatch(panel, /key: "delete"/);
+  // 菜单项只有图标：竖排一列，动作名只做 title / aria-label，不再渲染文字 span。
+  assert.match(menu, /flexDirection: "column"/);
+  assert.match(menu, /title=\{action\.label\}/);
+  assert.match(menu, /aria-label=\{action\.label\}/);
+  assert.doesNotMatch(menu, /<span[^>]*>\s*\{action\.label\}/, "菜单项里不再有文字标签");
 
   // 面板卡 overflow:hidden，弹层必须 portal 到 body 且 fixed 定位。
   assert.match(menu, /createPortal\(/);

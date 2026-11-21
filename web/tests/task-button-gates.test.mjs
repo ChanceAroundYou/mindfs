@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { taskCardActions } from "../src/components/task/taskCardActions.ts";
 
 // 看板/工作台任务卡上操作键的**给法**（2026-11 会话模型）。
 //
@@ -45,20 +46,22 @@ const gateSrc = card
   // 这一段里只有一处类型标注，去掉它 new Function 才吃得下。
   .replace(": WorktreeTagState", "");
 assert.ok(gateSrc.length > 0, "the card's button gates must be reachable");
-assert.match(gateSrc, /const canComplete =/, "the complete gate must be inside the lifted slice");
-assert.match(gateSrc, /const canFinishWorktree =/, "the finish gate must be inside the lifted slice");
+assert.match(gateSrc, /const actions = taskCardActions\(task\);/, "the card gates must come from the shared action list");
+assert.match(gateSrc, /const canComplete = actions\.includes\("complete"\)/, "the complete gate must be inside the lifted slice");
+assert.match(gateSrc, /const canFinishWorktree = actions\.includes\("finish-worktree"\)/, "the finish gate must be inside the lifted slice");
 
 // gateSrc 里用到 t() 取标题文案，不是按钮本身，但同在一段里，一起喂进去。
 const cardGates = new Function(
   "t",
   "isTerminalKanbanTask",
   "taskStatusLabel",
+  "taskCardActions",
   `return ((task) => {
 ${gateSrc}
 return { canComplete, canPause, canResume, canReopen, canFinishWorktree, worktreeTagState };
 });`,
 );
-const gatesWithDeps = cardGates((key) => key, isTerminalKanbanTask, (status) => status);
+const gatesWithDeps = cardGates((key) => key, isTerminalKanbanTask, (status) => status, taskCardActions);
 
 const gatesOf = (task) => gatesWithDeps(task);
 
@@ -133,9 +136,13 @@ test("回到待审核 is offered exactly for terminal tasks, on card and panel",
     assert.equal(gatesOf(worktreeTask({ status })).canReopen, false, `${status}: nothing closed to reopen`);
   }
 
+  // 详情面板不再自己抄条件：菜单项直接来自 taskCardActions(task)，与卡片同源。
+  const panel = fs.readFileSync(path.join(root, "src/components/task/TaskDetailPanel.tsx"), "utf8");
+  assert.match(panel, /taskCardActions\(task\)\.map/, "the detail menu must read the shared action list");
   const hooks = fs.readFileSync(path.join(root, "src/components/task/useTaskDetailPanel.ts"), "utf8");
-  assert.match(hooks, /const canReopenTask = terminal;/, "the panel gate must follow the terminal status");
   assert.match(hooks, /moveTask\(task\.root_id, task\.id, "reopen"/, "the panel must call the reopen route");
+  assert.match(hooks, /moveTask\(task\.root_id, task\.id, "cancel"/, "the panel must call the cancel route");
+  assert.match(hooks, /archiveTask\(task\.root_id, task\.id, archived, nodeId\)/, "the panel must call the archive route");
 
   const crud = fs.readFileSync(path.join(root, "src/services/task/crud.ts"), "utf8");
   assert.match(crud, /"complete" \| "cancel" \| "fail" \| "reopen"/, "moveTask must expose the reopen action");

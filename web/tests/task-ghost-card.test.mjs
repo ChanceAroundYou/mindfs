@@ -100,12 +100,12 @@ assert.match(
   /onTaskGone\?\.\([\s\S]*?reportError\("file\.write_failed", t\("task\.goneRemoved"\)[\s\S]*?onClose\(\);/,
   "识别到幽灵卡后要摘卡、说清楚、关面板",
 );
-// 五个任务级动作的 catch 必须都经过 fail()，不能各写一份 reportError ——
-// 否则新加的动作会悄悄漏掉幽灵卡处理。
+// 七个任务级动作的 catch 必须都经过 fail()，不能各写一份 reportError ——
+// 否则新加的动作会悄悄漏掉幽灵卡处理（取消与归档 2026-11-22 加入详情菜单）。
 assert.equal(
   (panel.match(/catch \(error\) \{ fail\(error\); \}/g) || []).length,
-  5,
-  "finishWorktree / complete / pause-resume / reopen / delete 五个 catch 统一走 fail()",
+  7,
+  "finishWorktree / complete / pause-resume / reopen / delete / cancel / archive 七个 catch 统一走 fail()",
 );
 
 // —— 接线：面板 → 看板 ——

@@ -1251,13 +1251,10 @@ groups:
       - web/src/i18n/locales/en-US.ts
     tests:
       - server/internal/kanban/task_delete_test.go
-      - web/tests/task-card-actions.test.mjs
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-create-panel.test.mjs
-      - web/tests/task-detail-header.test.mjs
-      - web/tests/task-ghost-card.test.mjs
     anchors:
       - server/internal/kanban/service_run_moves.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
@@ -1283,8 +1280,6 @@ groups:
       - server/internal/gitview/worktree_finish.go
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/TaskDetailActionsMenu.tsx
-      - web/src/components/task/taskCardActions.ts
       - web/src/components/workspace/WorkspaceTaskRow.tsx
       - web/src/components/shell/ToastContainer.tsx
       - web/src/services/task/worktree.ts
@@ -1322,9 +1317,8 @@ groups:
       - server/internal/api/http_tasks_finish_teardown.go:UserChanges []string
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - web/src/components/task/TaskCardFinishButton.tsx:function TaskCardFinishButton
-      - web/src/components/task/TaskCardRows.tsx:const canComplete = actions.includes("complete");
-      - 'web/src/components/task/taskCardActions.ts:export function taskCardActions(task: KanbanTask): TaskCardActionKey[] {'
-      - 'web/src/components/task/useTaskDetailPanel.ts:const setArchived = async (archived: boolean) => {'
+      - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;
+      - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
       - web/src/services/net/error.ts:"task.action_failed"
@@ -8294,7 +8288,7 @@ groups:
       - 'server/internal/kanban/workflow_recovery.go:WorkflowTriggeredByLegacyImport)'
       - 'server/internal/kanban/workflow_types.go:WorkflowTriggeredByLegacyImport = "legacy_import"'
       - 'web/src/components/task/TaskDetailPanel.tsx:<ConversationView'
-      - 'web/src/components/task/useTaskDetailPanel.ts:moveTask(task.root_id, task.id, "cancel", "", nodeId)'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;'
 
   # ── 任务 Router（super agent 总控）+ 直连执行器；阶段概念彻底移除 ──────────
   - id: G-LN
@@ -8356,7 +8350,7 @@ groups:
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) runFinishTurn('
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) acquireTaskFinish(rootID, taskID string) (func(), error)'
       - 'web/src/app/useAppKanbanColumns.ts:const kanbanColumns: KanbanColumn[] = ['
-      - 'web/src/components/task/TaskCardRows.tsx:const canComplete = actions.includes("complete");'
+      - 'web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;'
       - 'web/tests/upstream-removals.test.mjs:阶段模型不得复活'
 
   # ── Task Router P0（shadow）：隐藏 CC 调度会话 + 决策账本 ───────────────────
@@ -10300,9 +10294,9 @@ groups:
       - 'server/internal/kanban/service_run_moves.go:func (s *Service) Reopen(ctx context.Context, in MoveInput) (TaskDetail, error) {'
       - 'server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskReopen(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/reopen", h.handleKanbanTaskReopen)'
-      - 'web/src/components/task/taskCardActions.ts:actions.push("reopen", "archive-task");'
-      - 'web/src/components/task/useTaskDetailPanel.ts:const reopenTask = async () => {'
-      - 'web/src/components/task/TaskDetailPanel.tsx:reopen: () => void reopenTask(),'
+      - 'web/src/components/task/TaskCardRows.tsx:const canReopen = terminal;'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const canReopenTask = terminal;'
+      - 'web/src/components/task/TaskDetailPanel.tsx:if (canReopenTask) {'
       - 'web/src/app/useTaskBoard.ts:if (action === "cancel" || action === "reopen" || action === "rebuild-worktree") {'
   - id: G-ND
     title: 工作台项目头的折叠箭头移到项目名之前

@@ -1,7 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n/index";
-import { menuItemStyle } from "../../shared/styles";
 
 export type TaskDetailAction = {
   key: string;
@@ -22,7 +21,11 @@ const toneColor = (tone: TaskDetailAction["tone"]): string =>
   tone === "primary" ? "var(--status-ok)" : tone === "warn" ? "var(--status-warn)" : "var(--text-color)";
 
 /**
- * 任务详情 header 的「操作控件」菜单：收尾 worktree / 完成任务 / 重新打开。
+ * 任务详情 header 的「操作控件」菜单：展开后是**图标竖排**的动作列。
+ *
+ * 内容是 `taskCardActions(task)` 的结果 —— 与看板卡片逐个对齐：卡片上此刻有几个
+ * 动作，这里就有几个（含暂停/恢复/取消/归档/取消归档）。菜单项不写字，动作名只做
+ * `title` / `aria-label`；竖排是因为 header 外侧贴右边缘，横排会挤到标题。
  *
  * 删除**不在**这里：它是终态任务的破坏性动作，仍然单独摆在 header 上（用户明确要求）。
  *
@@ -82,7 +85,7 @@ export function TaskDetailActionsMenu({ actions, disabled = false }: TaskDetailA
     };
   }, [open]);
 
-  // 动作条件变了（比如任务跑完、canCompleteTask 翻转）就把菜单收起，不留一张过期清单。
+  // 动作集合变了（比如任务跑完，动作从「完成」翻成「重新打开」）就把菜单收起，不留一张过期清单。
   const actionKeys = actions.map((action) => action.key).join("|");
   useEffect(() => {
     setOpen(false);
@@ -133,8 +136,10 @@ export function TaskDetailActionsMenu({ actions, disabled = false }: TaskDetailA
                 position: "fixed",
                 top: `${pos.top}px`,
                 right: `${pos.right}px`,
-                minWidth: "168px",
-                padding: "6px",
+                padding: "4px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "2px",
                 borderRadius: "10px",
                 border: "1px solid var(--border-color)",
                 background: "var(--menu-bg)",
@@ -143,7 +148,7 @@ export function TaskDetailActionsMenu({ actions, disabled = false }: TaskDetailA
               }}
             >
               {empty ? (
-                <div style={{ ...menuItemStyle, color: "var(--text-secondary)", cursor: "default" }}>
+                <div style={{ padding: "6px 8px", fontSize: "12px", whiteSpace: "nowrap", color: "var(--text-secondary)", cursor: "default" }}>
                   {t("task.actionsEmpty")}
                 </div>
               ) : (
@@ -152,17 +157,29 @@ export function TaskDetailActionsMenu({ actions, disabled = false }: TaskDetailA
                     key={action.key}
                     type="button"
                     role="menuitem"
+                    title={action.label}
+                    aria-label={action.label}
                     disabled={disabled}
                     onClick={() => {
                       setOpen(false);
                       action.onSelect();
                     }}
-                    style={{ ...menuItemStyle, color: toneColor(action.tone), opacity: disabled ? 0.4 : 1 }}
+                    style={{
+                      width: "32px",
+                      height: "30px",
+                      padding: 0,
+                      border: "none",
+                      borderRadius: "8px",
+                      background: "transparent",
+                      color: toneColor(action.tone),
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: disabled ? "not-allowed" : "pointer",
+                      opacity: disabled ? 0.4 : 1,
+                    }}
                   >
                     {action.icon}
-                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {action.label}
-                    </span>
                   </button>
                 ))
               )}

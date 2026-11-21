@@ -300,19 +300,22 @@ assert.doesNotMatch(
 // 跑完却卡住时，再点一次让服务端直接做机械清场（后端按「分支是否已合进主干」分流，
 // 见 handleKanbanTaskBeginFinish）；换成转圈等于把唯一的出路藏起来，任务就此永远
 // 转下去 —— 用户实测的「收尾一直转、点不动、也结束不了」就是这个形状。
+// 2026-11-22 起这项判据只写在 taskCardActions.ts（卡片与详情菜单同源），
+// 收尾动作本身仍由 hook 的 beginTaskFinishWorktree 发出。
+const cardActions = read("src/components/task/taskCardActions.ts");
 assert.match(
-  panelHook,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true;/,
+  cardActions,
+  /task[.]create_worktree === true && !!task[.]worktree_path && task[.]worktree_missing !== true;/,
   "the finish button requires a live worktree; terminal and finishing tasks are NOT withheld",
 );
-assert.doesNotMatch(
-  panelHook,
-  /const canFinishWorktree[^;]*isTerminalKanbanTask/,
+assert.match(
+  cardActions,
+  /if \(canFinishWorktree\(task\)\) actions[.]push\("finish-worktree"\);\s*actions[.]push\("reopen", "archive-task"\);/,
   "the finish button must not be gated on terminal status — a finished task holding an unfinished worktree is exactly the case worth finishing",
 );
 assert.doesNotMatch(
   panelHook,
-  /const canFinishWorktree[^;]*!finishActive/,
+  /const canFinishWorktree[^;]*(isTerminalKanbanTask|!finishActive)/,
   "the finish button must stay clickable while the finish stage runs — that is the moment the mechanical cleanup is needed",
 );
 assert.doesNotMatch(
@@ -325,19 +328,14 @@ assert.doesNotMatch(
 // 只能服务端直接机械清场）。服务端已同步：begin-finish 的 ③.5 分支无 agent 段时
 // 直接清场，不再 409。两侧必须一起改 —— 只改一侧就是「给一个必然 409 的按钮」。
 assert.doesNotMatch(
-  panelHook,
-  /const canFinishWorktree[^;]*hasAgentStage/,
-  "the panel's finish gate must not require an agent stage — the server tears down mechanically when there is none",
-);
-assert.doesNotMatch(
-  card,
-  /const canFinishWorktree[^;]*hasAgentStage/,
-  "the card's finish gate must not require an agent stage either — both sides must agree",
+  cardActions,
+  /hasAgentStage/,
+  "the shared finish gate must not require an agent stage — the server tears down mechanically when there is none",
 );
 assert.match(
   card,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
-  "the card button must match the panel exactly: same gates, same terminal and finishing exemptions",
+  /const canFinishWorktree = actions[.]includes[(]"finish-worktree"[)];/,
+  "the card button must read the same shared gate as the detail menu: same terminal and finishing exemptions",
 );
 assert.doesNotMatch(card, /TaskQueuedSpinnerIcon/, "the card must not swap the finish button for a spinner either");
 assert.match(card, /onMove\(task, "finish-worktree"\)/, "the card button must dispatch finish-worktree");

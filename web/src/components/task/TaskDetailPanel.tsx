@@ -9,8 +9,18 @@ import { TaskInspectEntries } from "./TaskInspectEntries";
 import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
-import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskReopenIcon } from "./taskIcons";
+import {
+  DeleteIcon,
+  TaskCancelIcon,
+  TaskCompleteIcon,
+  TaskFinishWorktreeIcon,
+  TaskPauseIcon,
+  TaskReopenIcon,
+  TaskResumeIcon,
+} from "./taskIcons";
+import { ArchiveIcon } from "../session/sessionListShared";
 import { TaskDetailActionsMenu, type TaskDetailAction } from "./TaskDetailActionsMenu";
+import { TASK_CARD_ACTION_META, taskCardActions, type TaskCardActionKey } from "./taskCardActions";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
 
 export type TaskDetailPanelProps = {
@@ -34,50 +44,50 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
     nameDraft,
     setNameDraft,
     saving,
-    canFinishWorktree,
     terminal,
-    canCompleteTask,
-    canReopenTask,
     numberLabel,
     saveName,
     finishWorktree,
     completeTask,
     reopenTask,
+    cancelTask,
+    archiveTaskCard,
+    unarchiveTaskCard,
     deleteTaskCard,
   } = panel;
 
-  // header 右上角「操作控件」菜单的内容：只有当前真的可做的动作才出现。
+  // 图标与回调按动作键登记；**哪些键出现**只由 taskCardActions 决定，与看板卡片
+  // 同源。以前这里手写 finish/complete/reopen 三段条件，三者互斥，任何时刻都只剩
+  // 一个键 —— 卡片上有几个动作，菜单里就该有几个。
+  const actionIcons: Record<TaskCardActionKey, React.ReactNode> = {
+    "finish-worktree": <TaskFinishWorktreeIcon />,
+    pause: <TaskPauseIcon />,
+    resume: <TaskResumeIcon />,
+    complete: <TaskCompleteIcon />,
+    cancel: <TaskCancelIcon />,
+    reopen: <TaskReopenIcon />,
+    "archive-task": <ArchiveIcon />,
+    "unarchive-task": <ArchiveIcon />,
+  };
+  const actionHandlers: Record<TaskCardActionKey, () => void> = {
+    "finish-worktree": () => void finishWorktree(),
+    pause: () => void panel.pauseTask(),
+    resume: () => void panel.resumeTask(),
+    complete: () => void completeTask(),
+    cancel: () => void cancelTask(),
+    reopen: () => void reopenTask(),
+    "archive-task": () => void archiveTaskCard(),
+    "unarchive-task": () => void unarchiveTaskCard(),
+  };
+  // header 右上角「操作控件」菜单：当前卡片真正可用的动作，一项不少。
   // 删除不进来 —— 它是终态任务的破坏性动作，仍单独摆在 header 上。
-  const actions: TaskDetailAction[] = [];
-  if (canFinishWorktree) {
-    actions.push({
-      key: "finish-worktree",
-      label: t("task.finishWorktree"),
-      icon: <TaskFinishWorktreeIcon />,
-      tone: "primary",
-      onSelect: () => void finishWorktree(),
-    });
-  }
-  if (canCompleteTask) {
-    actions.push({
-      key: "complete",
-      label: t("task.completeShort"),
-      icon: <TaskCompleteIcon />,
-      tone: "primary",
-      onSelect: () => void completeTask(),
-    });
-  }
-  if (canReopenTask) {
-    // 终态任务（完成 / 失败 / 取消）回到待审核：输入框随之重新打开，
-    // 上一轮的 Run 与回复都原样留着，直接继续写下一轮。
-    actions.push({
-      key: "reopen",
-      label: t("task.reopen"),
-      icon: <TaskReopenIcon />,
-      tone: "warn",
-      onSelect: () => void reopenTask(),
-    });
-  }
+  const actions: TaskDetailAction[] = taskCardActions(task).map((key) => ({
+    key,
+    label: t(TASK_CARD_ACTION_META[key].labelKey),
+    icon: actionIcons[key],
+    tone: TASK_CARD_ACTION_META[key].tone,
+    onSelect: actionHandlers[key],
+  }));
 
   return (
     <>

@@ -10,6 +10,7 @@ import type { SessionPresentationSummary } from "../../shared/sessionPresentatio
 import type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 export type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { TaskCardFinishButton } from "./TaskCardFinishButton";
+import { taskCardActions } from "./taskCardActions";
 import { ArchiveIcon } from "../session/sessionListShared";
 import {
   DeleteIcon,
@@ -102,10 +103,6 @@ export function TaskCardRows({
     auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
   ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
   const terminal = isTerminalKanbanTask(task);
-  // 暂停只在一轮真的在跑时给；等待/未开始没有「暂停」可言。恢复同理。
-  const taskRunning = task.status === "running";
-  const canPause = taskRunning;
-  const canResume = task.status === "paused";
   const statusText = taskStatusLabel(task.status || "", t);
   // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」。create_worktree
   // 是创建时的配置，永久为 true；收尾之后它一点没变，于是徽标照样显示绿色 worktree，
@@ -145,12 +142,15 @@ export function TaskCardRows({
   // 那正是收尾唯一有意义的场景；服务端会把它复活成 running 再起收尾回合。
   // 收尾进行中照样可点，且必须幂等 —— 收尾回合卡住时，用户能再点一次走机械清场
   // （后端按「分支是否已合进主干」分流，见 handleKanbanTaskBeginFinish）。
-  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;
-  // 完成只要求「不在跑」：活还在动时先暂停；终态没有后续可完成。
-  const canComplete = !terminal && !taskRunning;
-  // 终态卡片可以「回到待审核」继续对话：完成点早了、一次偶发失败、取消后改主意，
-  // 以前只能删卡重建。
-  const canReopen = terminal;
+  // 卡片与任务详情 header 的「操作控件」菜单读同一份动作判定（taskCardActions）：
+  // 两边各抄一遍条件，就是「菜单只显示一个、卡片却有好几个」的来源。暂停只在一轮
+  // 真的在跑时给；等待/未开始没有「暂停」可言，恢复同理。
+  const actions = taskCardActions(task);
+  const canFinishWorktree = actions.includes("finish-worktree");
+  const canPause = actions.includes("pause");
+  const canResume = actions.includes("resume");
+  const canComplete = actions.includes("complete");
+  const canReopen = actions.includes("reopen");
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || taskNameFallback || t("task.unnamed");
   const title = task.task_template_name || taskNameFallback || t("task.defaultTitle");

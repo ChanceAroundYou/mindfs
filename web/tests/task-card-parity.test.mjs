@@ -22,6 +22,7 @@ const finishButton = readFileSync(new URL("../src/components/task/TaskCardFinish
 const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
 const taskRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskRow.tsx", import.meta.url), "utf8");
 const types = readFileSync(new URL("../src/shared/taskTypes.ts", import.meta.url), "utf8");
+const cardActions = readFileSync(new URL("../src/components/task/taskCardActions.ts", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 
 // ── 1. 两侧必须引用同一个卡片组件 ────────────────────────────────────────────
@@ -53,11 +54,16 @@ assert.match(
 );
 
 // ── 3. 收尾键的判据两侧一致 ──────────────────────────────────────────────────
-// 判据只剩 worktree 三态。「有 agent 段」那条 2026-10-07 去掉了：它会让「有
-// worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它。
+// 判据只剩 worktree 三态，并且只写在 taskCardActions.ts 一处：卡片与详情菜单
+// 都读它，任何一侧再抄一遍条件就是「菜单只显示一个、卡片却有好几个」的来源。
 assert.match(
   cardRows,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
+  /const canFinishWorktree = actions\.includes\("finish-worktree"\);/,
+  "the card must derive the finish gate from the shared action list",
+);
+assert.match(
+  cardActions,
+  /return task\.create_worktree === true && !!task\.worktree_path && task\.worktree_missing !== true;/,
   "the finish gate is worktree-liveness only",
 );
 assert.doesNotMatch(
@@ -70,7 +76,12 @@ assert.doesNotMatch(
 // 会话模型下没有「推进」可言：任务不在跑、也不是终态，就允许收口。
 assert.match(
   cardRows,
-  /const canComplete = !terminal && !taskRunning;/,
+  /const canComplete = actions\.includes\("complete"\);/,
+  "完成 must be derived from the shared action list",
+);
+assert.match(
+  cardActions,
+  /if \(task\.status !== "running"\) actions\.push\("complete"\);/,
   "完成 must be withheld only while running or after the task reached a terminal state",
 );
 

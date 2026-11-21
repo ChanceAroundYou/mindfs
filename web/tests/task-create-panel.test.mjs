@@ -157,18 +157,21 @@ for (const name of ["removeTaskStage", "appendTaskStage", "saveStage"]) {
 // 详情面板只读对话流；「完成 / 删除」仍住在头部（完成收进「操作控件」菜单），判据与卡片同一口径。
 assert.doesNotMatch(panel, /<StageEditor\b/, "the detail panel no longer renders a stage editor");
 assert.doesNotMatch(panelHook, /appendStage|setEditingStage|startEditStage|saveStage|removeTaskStage/, "the detail hook must not keep stage editing state");
-assert.match(panelHook, /const canCompleteTask = !terminal && !taskRunningNow;/, "完成 is available to every non-terminal, non-running task");
+// 2026-11-22 起动作集合只有一份（taskCardActions.ts）：卡片与详情菜单同源。
+const cardActions = fs.readFileSync(path.join(root, "src/components/task/taskCardActions.ts"), "utf8");
 assert.match(
-  panelHook,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true;/,
-  "the panel must still read the server-derived worktree_missing flag for 收尾",
+  cardActions,
+  /if \(task\.status !== "running"\) actions\.push\("complete"\);/,
+  "完成 is available to every non-terminal, non-running task",
+);
+assert.match(
+  cardActions,
+  /task\.create_worktree === true && !!task\.worktree_path && task\.worktree_missing !== true;/,
+  "收尾 must still read the server-derived worktree_missing flag",
 );
 // 完成 / 收尾 / 重新打开由「操作控件」菜单承载；菜单挂在 headerRight 里。
-assert.match(
-  panel,
-  /if \(canCompleteTask\)[\s\S]{0,400}?key: "complete"[\s\S]{0,300}?onSelect: \(\) => void completeTask\(\)/,
-  "完成 must be one of the panel header actions",
-);
+assert.match(panel, /taskCardActions\(task\)\.map/, "完成 must be one of the panel header actions");
+assert.match(panel, /complete: \(\) => void completeTask\(\)/, "the panel must wire the complete handler");
 const headerRightAt = panel.indexOf("headerRight={editingName");
 assert.ok(headerRightAt > 0, "TaskDetailPanel must pass a headerRight block");
 const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 1600);

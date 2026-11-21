@@ -329,20 +329,27 @@ assert.doesNotMatch(
 // 与推进门反相兜底。
 assert.match(
   cardRows,
-  /const canComplete = !terminal && !taskRunning;/,
+  /const canComplete = actions[.]includes[(]"complete"[)];/,
   "「完成」只被「正在跑」和终态挡住",
 );
 assert.match(
   cardRows,
-  /const worktreeMissing = worktreeEnabled && task\.worktree_missing === true;/,
-  "worktreeMissing 仍是 canFinishWorktree / 徽标档位的判据",
+  /const worktreeMissing = worktreeEnabled && task[.]worktree_missing === true;/,
+  "worktreeMissing 仍是徽标档位的判据",
 );
 // 收尾键的判据只剩「worktree 还在」（2026-10-07）：去掉了 has_agent_stage ——
 // 它会让「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最
 // 需要它（没有 agent 去 commit，只能服务端直接机械清场）。服务端已同步。
+// 2026-11-22 起这份判据只写在 taskCardActions.ts，卡片与详情菜单同源。
+const cardActions = readFileSync(new URL("../src/components/task/taskCardActions.ts", import.meta.url), "utf8");
 assert.match(
   cardRows,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
+  /const canFinishWorktree = actions[.]includes[(]"finish-worktree"[)];/,
+  "canFinishWorktree 从共享动作表派生",
+);
+assert.match(
+  cardActions,
+  /task[.]create_worktree === true && !!task[.]worktree_path && task[.]worktree_missing !== true;/,
   "canFinishWorktree 只剩 worktree 三态，不再要求有 agent 段",
 );
 assert.doesNotMatch(

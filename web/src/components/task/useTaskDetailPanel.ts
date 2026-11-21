@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { confirmDialog } from "../../services/dialog";
 import {
+  archiveTask,
   beginTaskFinishWorktree,
   deleteTask,
   fetchTaskDetails,
@@ -86,15 +87,8 @@ export function useTaskDetailPanel({
 
   if (!task || !detail) return null;
 
-  const canFinishWorktree = task?.create_worktree === true
-    && !!task?.worktree_path
-    && task?.worktree_missing !== true;
   const terminal = isTerminalKanbanTask(task);
   const paused = task.status === "paused";
-  const taskRunningNow = task.status === "running";
-  const canCompleteTask = !terminal && !taskRunningNow;
-  // 终态是封板，封错了得有出路：完成 / 失败 / 取消都能放回「待审核」继续对话。
-  const canReopenTask = terminal;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   const apply = (next: TaskDetail) => onMoved?.(next);
@@ -176,6 +170,23 @@ export function useTaskDetailPanel({
     } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
+  // 取消与归档都只改状态/标记，卡片不会被删掉 —— 删除是独立的破坏性动作。
+  const cancelTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "cancel", "", nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
+
+  const setArchived = async (archived: boolean) => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await archiveTask(task.root_id, task.id, archived, nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
+
   const setPaused = async (next: "pause" | "resume") => {
     if (!task) return;
     try {
@@ -212,13 +223,13 @@ export function useTaskDetailPanel({
     nameDraft,
     setNameDraft,
     saving,
-    canFinishWorktree,
     terminal,
     paused,
     pauseTask: () => setPaused("pause"),
     resumeTask: () => setPaused("resume"),
-    canCompleteTask,
-    canReopenTask,
+    cancelTask,
+    archiveTaskCard: () => setArchived(true),
+    unarchiveTaskCard: () => setArchived(false),
     numberLabel,
     refreshTask,
     saveName,
