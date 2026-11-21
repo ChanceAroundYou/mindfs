@@ -54,6 +54,28 @@ export type ContextSavingEntry = {
   usage_provenance: "upstream" | "relay" | "";
 };
 
+/** 「超长会话」三档结论，由服务端的 EvaluateHygiene 纯函数给出。 */
+export type SessionHygieneState = "normal" | "notice" | "hint" | "disabled";
+
+/**
+ * 会话卫生（session hygiene）：又久又大的会话提示一次，并在若干轮之后由
+ * 服务端自动补一个 harness 自己的压缩命令。`disabled` = 节点关掉了这个特性。
+ */
+export type SessionHygiene = {
+  state: SessionHygieneState;
+  enabled: boolean;
+  /** 累计活跃时长（秒）：空闲超过 idle gap 的时间段已被丢弃。 */
+  active_seconds: number;
+  context_tokens: number;
+  hint_turns: number;
+  turns_since_hint: number;
+  /** < 0 表示没有倒计时（notice / normal 档）。 */
+  turns_until_auto_compact: number;
+  auto_compact_due: boolean;
+  /** 上一次自动压缩没生效，已停止重试；只能手动压缩。 */
+  auto_failed: boolean;
+};
+
 /**
  * The saving reported for one conversation. `latest` describes the newest
  * folded request (a snapshot, not a running total); `requests` counts folded
@@ -80,6 +102,8 @@ export type SessionContextSaving = {
   rewrite_samples: number;
   /** Folded turns whose response carried no usage block. */
   usage_missing: number;
+  /** 超长会话提示的状态；折叠省了多少与它无关。 */
+  hygiene: SessionHygiene;
 };
 
 export async function fetchSessionContextSaving(
@@ -91,5 +115,24 @@ export async function fetchSessionContextSaving(
   if (rootId) params.set("root", rootId);
   return protectedJSON<SessionContextSaving>(
     appURL(`/api/sessions/${encodeURIComponent(sessionKey)}/context-saving`, params, nodeId),
+  );
+}
+
+/**
+ * 让服务端立刻补一个 harness 自己的压缩回合（胶囊上的「立即压缩」）。
+ *
+ * 请求只负责把回合排出去，压缩结果通过正常的会话事件流回到界面 —— 所以这里
+ * 拿到 202 就够了，界面靠刷新胶囊看新状态。
+ */
+export async function compactSession(
+  sessionKey: string,
+  rootId?: string,
+  nodeId?: string,
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (rootId) params.set("root", rootId);
+  await protectedJSON<{ status: string }>(
+    appURL(`/api/sessions/${encodeURIComponent(sessionKey)}/compact`, params, nodeId),
+    { method: "POST" },
   );
 }

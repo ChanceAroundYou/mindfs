@@ -62,7 +62,7 @@ function formatPercent(saved: number, original: number): string | null {
  */
 export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   const { t } = useI18n();
-  const { saving, open, loading, error, savedBytes, visible, setOpen, handleOpen } = useContextSaving(props);
+  const { saving, open, loading, error, savedBytes, hygiene, visible, compacting, setOpen, handleOpen, compact } = useContextSaving(props);
 
   if (!visible) return null;
 
@@ -147,11 +147,45 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
       t("contextSaving.tokensValue", { count: formatTokens(saving.total_rewrite_tokens) }),
     ]);
   }
+  // 超长会话提示：只大 + 只久 + 又久又大三种情况里，胶囊只在后两种出现。
+  // 这几行与折叠省了多少无关，所以即使在完全没折叠过的会话里也要能读到。
+  const hygieneBand = hygiene?.state === "hint" || hygiene?.state === "notice";
+  const activeMinutes = Math.floor((hygiene?.active_seconds || 0) / 60);
+  const hygieneTokens = formatTokensEstimate(hygiene?.context_tokens || 0);
+  const turnsUntilAuto = hygiene?.turns_until_auto_compact ?? -1;
+  if (hygieneBand && hygiene) {
+    rows.push(
+      [
+        t("contextSaving.hygieneActive"),
+        t("contextSaving.hygieneDuration", {
+          hours: String(Math.floor(activeMinutes / 60)),
+          minutes: String(activeMinutes % 60),
+        }),
+      ],
+      [t("contextSaving.hygieneContext"), t("contextSaving.tokensValue", { count: hygieneTokens })],
+    );
+    if (hygiene.state === "hint" && turnsUntilAuto >= 0) {
+      rows.push([t("contextSaving.hygieneAutoIn"), t("contextSaving.hygieneAutoInValue", { count: String(turnsUntilAuto) })]);
+    }
+  }
   // The chip has one line at 9px; the unit lives in the tooltip and the rows.
   const savedLabel = tokenSized ? formatTokensCompact(savedTokens) : formatBytes(savedBytes);
   const savedTitle = tokenSized
     ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })
     : formatBytes(savedBytes);
+  // 没折叠过但会话又大又久时，胶囊只承担提示：显示上下文规模，不再报 -0。
+  const hasSaving = savedBytes > 0 || !!saving?.requests;
+  const chipLabel = hasSaving
+    ? t("contextSaving.badge", { saved: savedLabel })
+    : t("contextSaving.badgeContext", { tokens: hygieneTokens });
+  const chipTitle = hasSaving
+    ? savedTitle
+    : hygiene?.state === "hint"
+      ? t("contextSaving.hygieneHintTitle", {
+          tokens: hygieneTokens,
+          count: String(Math.max(turnsUntilAuto, 0)),
+        })
+      : t("contextSaving.hygieneNoticeTitle", { tokens: hygieneTokens });
 
   const modal = open && typeof document !== "undefined" ? createPortal(
     <div
@@ -206,8 +240,30 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
             {t("contextSaving.usageMissing", { count: String(saving.usage_missing) })}
           </div>
         ) : null}
+        {hygieneBand && hygiene ? (
+          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "rgba(180, 83, 9, 0.08)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
+            {hygiene.state === "hint"
+              ? t("contextSaving.hygieneHintNotice", { count: String(Math.max(turnsUntilAuto, 0)) })
+              : t("contextSaving.hygieneNoticeNotice")}
+          </div>
+        ) : null}
+        {hygiene?.auto_failed ? (
+          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "rgba(220, 38, 38, 0.08)", color: "#b91c1c", fontSize: "12px", lineHeight: 1.6 }}>
+            {t("contextSaving.hygieneAutoFailed")}
+          </div>
+        ) : null}
         {error ? <div style={{ marginTop: "10px", padding: "9px 11px", borderRadius: "9px", background: "rgba(220, 38, 38, 0.09)", color: "#dc2626", fontSize: "12px", overflowWrap: "anywhere" }}>{error}</div> : null}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "18px" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px" }}>
+          {hygieneBand ? (
+            <button
+              type="button"
+              onClick={() => void compact()}
+              disabled={compacting}
+              style={{ height: "34px", padding: "0 14px", borderRadius: "9px", border: "1px solid rgba(180, 83, 9, 0.32)", background: "rgba(180, 83, 9, 0.1)", color: "#b45309", cursor: compacting ? "default" : "pointer", fontWeight: 650, opacity: compacting ? 0.6 : 1 }}
+            >
+              {compacting ? t("contextSaving.compacting") : t("contextSaving.compactNow")}
+            </button>
+          ) : null}
           <button type="button" onClick={() => setOpen(false)} style={{ height: "34px", padding: "0 14px", borderRadius: "9px", border: "1px solid var(--panel-border)", background: "transparent", color: "var(--text-primary)", cursor: "pointer", fontWeight: 650 }}>{t("common.close")}</button>
         </div>
       </div>
@@ -220,11 +276,11 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
       <button
         type="button"
         onClick={handleOpen}
-        title={t("contextSaving.badgeTitle", { saved: savedTitle })}
-        aria-label={t("contextSaving.badgeTitle", { saved: savedTitle })}
-        style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: "1px solid rgba(15, 118, 110, 0.24)", background: "linear-gradient(rgba(15, 118, 110, 0.09), rgba(15, 118, 110, 0.09)), var(--mobile-overlay-bg)", color: "#0f766e", fontSize: COMPOSER_CHIP_FONT_SIZE, fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap", cursor: "pointer" }}
+        title={chipTitle}
+        aria-label={chipTitle}
+        style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: hygieneBand ? "1px solid rgba(180, 83, 9, 0.32)" : "1px solid rgba(15, 118, 110, 0.24)", background: hygieneBand ? "linear-gradient(rgba(180, 83, 9, 0.1), rgba(180, 83, 9, 0.1)), var(--mobile-overlay-bg)" : "linear-gradient(rgba(15, 118, 110, 0.09), rgba(15, 118, 110, 0.09)), var(--mobile-overlay-bg)", color: hygieneBand ? "#b45309" : "#0f766e", fontSize: COMPOSER_CHIP_FONT_SIZE, fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap", cursor: "pointer" }}
       >
-        {t("contextSaving.badge", { saved: savedLabel })}
+        {chipLabel}
       </button>
       {modal}
     </>

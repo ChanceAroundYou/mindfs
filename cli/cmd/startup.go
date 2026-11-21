@@ -37,8 +37,29 @@ type startupConfig struct {
 	Workflow *startupWorkflowConfig `json:"workflow"`
 	// LiveCompact 是节点本地的上下文活压缩配置。不配置 = off。
 	LiveCompact *startupLiveCompactConfig `json:"live_compact"`
+	// SessionHygiene 是超长会话提示与自动压缩的节点本地策略。不配置 = 开启（默认值）。
+	SessionHygiene *startupSessionHygieneConfig `json:"session_hygiene"`
 	// Channels 是外部通道（飞书等）的本机配置。不配置 = 全关。
 	Channels *startupChannelsConfig `json:"channels"`
+}
+
+// startupSessionHygieneConfig 只影响本机。它是少数「不配置也生效」的特性：
+// 用户裁定默认开、配置可关，所以 Enabled 用指针区分「没写」与「显式关闭」。
+type startupSessionHygieneConfig struct {
+	Enabled        *bool                                  `json:"enabled"`
+	ActiveHours    *float64                               `json:"active_hours"`
+	ContextTokens  *int                                   `json:"context_tokens"`
+	HintTurns      *int                                   `json:"hint_turns"`
+	IdleGapMinutes *int                                   `json:"idle_gap_minutes"`
+	Harness        map[string]startupSessionHygieneHarness `json:"harness"`
+}
+
+// startupSessionHygieneHarness 只写与全局值不同的字段。
+type startupSessionHygieneHarness struct {
+	ActiveHours    *float64 `json:"active_hours"`
+	ContextTokens  *int     `json:"context_tokens"`
+	HintTurns      *int     `json:"hint_turns"`
+	IdleGapMinutes *int     `json:"idle_gap_minutes"`
 }
 
 // startupLiveCompactConfig 只影响本机，不走控制面共享。mode 默认 off；
@@ -464,6 +485,53 @@ func intValue(p *int) int {
 		return 0
 	}
 	return *p
+}
+
+// sessionHygieneOptions 把 `session_hygiene` 段转成 app 的可导入结构。
+// 不写这一段 = 全默认（特性开启）；写 enabled=false 才关。
+func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {
+	hygiene := cfg.SessionHygiene
+	if hygiene == nil {
+		return app.SessionHygieneOptions{}
+	}
+	opts := app.SessionHygieneOptions{
+		Enabled:        hygiene.Enabled,
+		ActiveSeconds:  hoursToSeconds(hygiene.ActiveHours),
+		ContextTokens:  intValue(hygiene.ContextTokens),
+		HintTurns:      intValue(hygiene.HintTurns),
+		IdleGapSeconds: minutesToSeconds(hygiene.IdleGapMinutes),
+	}
+	if len(hygiene.Harness) > 0 {
+		opts.Harnesses = make(map[string]app.SessionHygieneHarnessOverride, len(hygiene.Harness))
+		for name, h := range hygiene.Harness {
+			key := strings.ToLower(strings.TrimSpace(name))
+			if key == "" {
+				continue
+			}
+			opts.Harnesses[key] = app.SessionHygieneHarnessOverride{
+				ActiveSeconds:  hoursToSeconds(h.ActiveHours),
+				ContextTokens:  intValue(h.ContextTokens),
+				HintTurns:      intValue(h.HintTurns),
+				IdleGapSeconds: minutesToSeconds(h.IdleGapMinutes),
+			}
+		}
+	}
+	return opts
+}
+
+// hoursToSeconds 把可带小数的时长折成秒；<=0 视为未配置。
+func hoursToSeconds(hours *float64) int {
+	if hours == nil || *hours <= 0 {
+		return 0
+	}
+	return int(*hours * 3600)
+}
+
+func minutesToSeconds(minutes *int) int {
+	if minutes == nil || *minutes <= 0 {
+		return 0
+	}
+	return *minutes * 60
 }
 
 func startBackgroundProcess(logPath string) error {

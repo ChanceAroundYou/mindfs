@@ -101,6 +101,30 @@ type StartOptions struct {
 	// LiveCompactHarnesses 按 harness 覆盖上面的策略（`live_compact.harness.*`）。
 	// nil = 所有 harness 都用节点配置。
 	LiveCompactHarnesses map[string]LiveCompactHarnessOverride
+	// SessionHygiene 是会话卫生策略（config.json 的 session_hygiene）。零值 =
+	// 默认策略（开启），见 sessionHygieneConfigFromOptions。
+	SessionHygiene SessionHygieneOptions
+}
+
+// SessionHygieneOptions 是节点本地的超长会话提示策略。它只影响本机，不走控制面。
+//
+// 零值不是「关闭」而是「默认值」：这个特性按用户裁定默认开启，要关必须显式写
+// enabled=false。时长上限等以秒为单位，0 = 用默认值。
+type SessionHygieneOptions struct {
+	Enabled        *bool
+	ActiveSeconds  int
+	ContextTokens  int
+	HintTurns      int
+	IdleGapSeconds int
+	Harnesses      map[string]SessionHygieneHarnessOverride
+}
+
+// SessionHygieneHarnessOverride 按 harness 覆盖全局阈值；0 = 沿用全局值。
+type SessionHygieneHarnessOverride struct {
+	ActiveSeconds  int
+	ContextTokens  int
+	HintTurns      int
+	IdleGapSeconds int
 }
 
 // LiveCompactHarnessOverride 是 fold.HarnessOverride 的可导入别名。
@@ -276,6 +300,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		writerGate:       kanban.NewWriterGate(),
 		routerConfig:     routerConfigFromOptions(opts),
 		taskConfig:       taskConfigFromOptions(opts),
+		hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),
 		parallelMainTree: &opts.WorkflowParallelMainTree,
 		feishu:           feishuChannel,
 	})

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { protectedAPIReady } from "../../services/net/api";
 import { bootstrapService } from "../../services/net/bootstrap";
-import { fetchSessionContextSaving, type SessionContextSaving } from "../../services/agent/contextSaving";
+import { compactSession, fetchSessionContextSaving, type SessionContextSaving } from "../../services/agent/contextSaving";
 
 export type ContextSavingIndicatorProps = {
   sessionKey: string;
@@ -27,8 +27,10 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [apiReady, setAPIReady] = useState(protectedAPIReady);
+  const [compacting, setCompacting] = useState(false);
   const requestRef = useRef(0);
   const wasPendingRef = useRef(pending);
+  const compactTimerRef = useRef<number | null>(null);
 
   const refresh = async () => {
     if (!sessionKey) return;
@@ -60,6 +62,16 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiReady, sessionKey, rootId, nodeId]);
 
+  // 卸载或换会话时把「等压缩回合跑完」的补偿刷新取消掉，别让它打旧会话。
+  useEffect(() => {
+    return () => {
+      if (compactTimerRef.current !== null) {
+        window.clearTimeout(compactTimerRef.current);
+        compactTimerRef.current = null;
+      }
+    };
+  }, [sessionKey]);
+
   // 回合结束刷新一次；这一轮到底折没折叠只有服务端知道。
   useEffect(() => {
     const wasPending = wasPendingRef.current;
@@ -70,7 +82,31 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
   }, [pending, apiReady, sessionKey]);
 
   const savedBytes = contextSavingBytes(saving);
-  const visible = savedBytes > 0 || !!saving?.requests;
+  // 又久又大 / 又大不久：即使一次都没折叠过，胶囊也要出现 —— 它就是这两个
+  // 档位的提示载体。normal 与 disabled 不占位置。
+  const hygiene = saving?.hygiene ?? null;
+  const hygieneBand = hygiene?.state === "notice" || hygiene?.state === "hint";
+  const visible = savedBytes > 0 || !!saving?.requests || hygieneBand;
+
+  const compact = async () => {
+    if (!sessionKey || compacting) return;
+    setCompacting(true);
+    setError("");
+    try {
+      await compactSession(sessionKey, rootId, nodeId);
+      // 压缩是一个真实回合，服务端立刻返回 202：先刷一次，再等它跑完补一次。
+      void refresh();
+      if (compactTimerRef.current !== null) window.clearTimeout(compactTimerRef.current);
+      compactTimerRef.current = window.setTimeout(() => {
+        compactTimerRef.current = null;
+        setCompacting(false);
+        void refresh();
+      }, 8000);
+    } catch (err) {
+      setCompacting(false);
+      setError(String((err as Error)?.message || ""));
+    }
+  };
 
   return {
     saving,
@@ -78,12 +114,15 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
     loading,
     error,
     savedBytes,
+    hygiene,
     visible,
+    compacting,
     setOpen,
     handleOpen: () => {
       setOpen(true);
       void refresh();
     },
+    compact,
     refresh,
   };
 }

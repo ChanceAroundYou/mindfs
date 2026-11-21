@@ -96,6 +96,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/sessions/worktree-ownership", h.handleSessionWorktreeOwnershipClear)
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.handleSessionToolCallGet)
 	r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)
+	r.Post("/api/sessions/{key}/compact", h.handleSessionCompact)
 	r.Post("/api/sessions/{key}/sync", h.handleSessionSync)
 	r.Get("/api/sessions/{key}", h.handleSessionGet)
 	r.Post("/api/sessions/{key}/messages", h.handleSessionUserMessage)

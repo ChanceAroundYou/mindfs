@@ -36,6 +36,19 @@ const CONTEXT_SAVING_KEYS = [
   "unknown",
   "empty",
   "usageMissing",
+  "badgeContext",
+  "hygieneActive",
+  "hygieneDuration",
+  "hygieneContext",
+  "hygieneAutoIn",
+  "hygieneAutoInValue",
+  "hygieneHintTitle",
+  "hygieneNoticeTitle",
+  "hygieneHintNotice",
+  "hygieneNoticeNotice",
+  "hygieneAutoFailed",
+  "compactNow",
+  "compacting",
 ];
 
 test("前后端用同一条路径：会话 context-saving", () => {
@@ -50,9 +63,11 @@ test("数据面必须带节点与 root，不能静默打激活节点", () => {
   assert.match(chips, /<ContextSavingIndicator[\s\S]*?rootId=\{currentRootId \|\| undefined\}[\s\S]*?nodeId=\{rootNodeId\}/);
 });
 
-test("只在有节省或折叠过时才显示胶囊", () => {
+test("只在有节省、折叠过、或超长会话需要提示时才显示胶囊", () => {
   assert.match(hook, /const savedBytes = contextSavingBytes\(saving\);/);
-  assert.match(hook, /const visible = savedBytes > 0 \|\| !!saving\?\.requests;/);
+  assert.match(hook, /const hygiene = saving\?\.hygiene \?\? null;/);
+  assert.match(hook, /const hygieneBand = hygiene\?\.state === "notice" \|\| hygiene\?\.state === "hint";/);
+  assert.match(hook, /const visible = savedBytes > 0 \|\| !!saving\?\.requests \|\| hygieneBand;/);
   assert.match(indicator, /if \(!visible\) return null;/);
 });
 
@@ -213,6 +228,53 @@ test("用量来源只记在账本里，胶囊不再挂说明", () => {
   assert.match(service, /total_saved_bytes: number;/);
   assert.match(service, /total_saved_tokens: number;/);
   assert.match(service, /saved_token_samples: number;/);
+});
+
+test("胶囊带回超长会话状态，字段与服务端 HygieneView 同名", () => {
+  assert.match(service, /hygiene: SessionHygiene;/);
+  for (const key of [
+    "state",
+    "enabled",
+    "active_seconds",
+    "context_tokens",
+    "hint_turns",
+    "turns_since_hint",
+    "turns_until_auto_compact",
+    "auto_compact_due",
+    "auto_failed",
+  ]) {
+    assert.match(service, new RegExp(`${key}:`), `SessionHygiene missing ${key}`);
+  }
+});
+
+test("又大不久只提示：不显示倒计时，也不提供自动触发", () => {
+  // 倒计时只在 hint 档出现；notice 档只有「上下文多大、活跃多久」两行。
+  assert.match(indicator, /if \(hygiene\.state === "hint" && turnsUntilAuto >= 0\) \{/);
+  assert.match(indicator, /t\("contextSaving\.hygieneNoticeNotice"\)/);
+  assert.match(indicator, /t\("contextSaving\.hygieneAutoInValue", \{ count: String\(turnsUntilAuto\) \}\)/);
+});
+
+test("又久又大：胶囊显示倒计时，并给一个「立即压缩」入口", () => {
+  assert.match(indicator, /t\("contextSaving\.hygieneActive"\)/);
+  assert.match(indicator, /t\("contextSaving\.hygieneContext"\)/);
+  assert.match(indicator, /onClick=\{\(\) => void compact\(\)\}/);
+  assert.match(indicator, /compacting \? t\("contextSaving\.compacting"\) : t\("contextSaving\.compactNow"\)/);
+  // 手动压缩走一条独立的 POST：它只要把回合排出去，结果通过会话事件流回来。
+  assert.match(hook, /await compactSession\(sessionKey, rootId, nodeId\);/);
+  assert.match(service, /\/api\/sessions\/\$\{encodeURIComponent\(sessionKey\)\}\/compact/);
+  assert.match(service, /\{ method: "POST" \}/);
+  assert.match(routes, /r\.Post\("\/api\/sessions\/\{key\}\/compact", h\.handleSessionCompact\)/);
+});
+
+test("自动压缩失败后停手，并在胶囊里写明只能手动", () => {
+  assert.match(indicator, /hygiene\?\.auto_failed/);
+  assert.match(indicator, /t\("contextSaving\.hygieneAutoFailed"\)/);
+});
+
+test("没折叠过的会话也显示胶囊：它只报上下文规模，不报 -0", () => {
+  assert.match(indicator, /const hasSaving = savedBytes > 0 \|\| !!saving\?\.requests;/);
+  assert.match(indicator, /t\("contextSaving\.badgeContext", \{ tokens: hygieneTokens \}\)/);
+  assert.match(indicator, /const chipLabel = hasSaving/);
 });
 
 test("文案在两种语言里成对存在", () => {

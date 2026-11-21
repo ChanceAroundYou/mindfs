@@ -33,6 +33,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err != nil {
 		return err
 	}
+	s.observeHygieneTurnStart(in, current)
 	if in.PlanMode != nil && current.PlanMode != *in.PlanMode {
 		if err := manager.UpdatePlanMode(ctx, current, *in.PlanMode); err != nil {
 			return err
@@ -290,6 +291,11 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 						Compact: &compactCopy,
 					})
 				}
+				// 任何一次压缩（harness 自己的或我们自动触发的）都清掉提示与计数。
+				s.markHygieneCompacted(in)
+				if in.onCompactSeen != nil {
+					in.onCompactSeen()
+				}
 			}
 			if update.Type == agenttypes.EventTypeMessageChunk {
 				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok {
@@ -460,6 +466,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		return sendErr
 	} else if prober != nil {
 		prober.ReportSuccess(in.Agent)
+	}
+	// 回合正常结束才推进会话卫生：取消的回合不算「用户又聊了一轮」。
+	if sendErr == nil && s.finishHygieneTurn(in, current, lastContextWindow.TotalTokens) {
+		s.scheduleHygieneAutoCompact(in, hygieneHarnessForSession(current))
 	}
 	return nil
 }

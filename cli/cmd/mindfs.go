@@ -414,6 +414,7 @@ func main() {
 			LiveCompactColdFold:                &liveCompactColdFold,
 			LiveCompactColdRailTokens:          liveCompactColdRailTokens,
 			LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
+			SessionHygiene:                     sessionHygieneOptions(startupCfg),
 			Feishu: feishuOptions(startupFlags{
 				FeishuEnabled:      &feishuEnabled,
 				FeishuOwnerOpenID:  &feishuOwnerOpenID,
