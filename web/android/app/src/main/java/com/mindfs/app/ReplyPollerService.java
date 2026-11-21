@@ -1477,7 +1477,7 @@ public class ReplyPollerService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
             && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
-            return "通知权限未授予：请在系统设置里允许 MindFS 发送通知";
+            return "通知权限未授予：请在系统设置里允许本应用发送通知";
         }
         ensureChannels(context);
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -1490,7 +1490,7 @@ public class ReplyPollerService extends Service {
                 return "提醒渠道创建失败，请重启应用后重试";
             }
             if (channel.getImportance() == NotificationManager.IMPORTANCE_NONE) {
-                return "「MindFS 任务提醒」渠道被关闭，请在系统设置里重新打开";
+                return "「任务提醒」渠道被关闭，请在系统设置里重新打开";
             }
         }
         String error = showTestNotification(context, 799999, "测试提醒", "通知链路正常。");
