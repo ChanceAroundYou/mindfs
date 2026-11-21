@@ -2,6 +2,7 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { rawReadFileSync } from "./source-map.mjs";
 import { translateWithLocale } from "../src/i18n/index.tsx";
+import { pickTightestLimit } from "../src/components/agent/useCodexRateLimit.ts";
 
 const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -25,11 +26,58 @@ test("前端类型与限额视图都包含 5 小时窗口", () => {
   assert.match(hook, /push\("weekly", t\("codexLimit\.weekly"\), status\?\.weekly\)/);
 });
 
-test("每个限额合并展示剩余与重置时间", () => {
+test("两个限额合并成一个胶囊，胶囊跟随剩余更少的窗口", () => {
   assert.match(hook, /remaining: remainingPercent\(window\)/);
-  assert.match(indicator, /t\("codexLimit\.limitValueWithReset", \{ name: limit\.label, percent, time: limit\.resetText \}\)/);
-  assert.match(indicator, /limits\.map\(\(limit\)/);
+  assert.match(hook, /pickTightestLimit\(limits\)/);
+  assert.match(indicator, /tightestLimit\.resetText/);
+  assert.match(indicator, /t\("codexLimit\.limitValueWithReset", \{ name: tightestLimit\.label, percent: chipPercent, time: tightestLimit\.resetText \}\)/);
+  // 胶囊只渲染一个（不再 limits.map 并排），完整数据留在详情弹层里。
+  assert.doesNotMatch(indicator, /limits\.map\(\(limit\) => \{/);
   assert.doesNotMatch(indicator, /codexLimit\.weeklyTitle/);
+});
+
+test("pickTightestLimit 取剩余最少者，缺值时稳定退回", () => {
+  const view = (id, remaining) => ({ id, label: id, remaining, resetText: "" });
+  assert.equal(pickTightestLimit([view("five_hour", 79), view("weekly", 31)]).id, "weekly");
+  assert.equal(pickTightestLimit([view("five_hour", 12), view("weekly", 31)]).id, "five_hour");
+  // 并列保留窗口顺序，避免两次渲染换标签。
+  assert.equal(pickTightestLimit([view("five_hour", 31), view("weekly", 31)]).id, "five_hour");
+  // 首帧某一条还没数值时，用有数值的那条；都没有才退回第一条。
+  assert.equal(pickTightestLimit([view("five_hour", null), view("weekly", 31)]).id, "weekly");
+  assert.equal(pickTightestLimit([view("five_hour", null), view("weekly", null)]).id, "five_hour");
+  assert.equal(pickTightestLimit([view("weekly", 8)]).id, "weekly");
+  assert.equal(pickTightestLimit([]), null);
+});
+
+test("点击胶囊打开完整详情，里面同时列出两条窗口", () => {
+  assert.match(indicator, /onClick=\{\(\) => setDetailsOpen\(true\)\}/);
+  assert.match(indicator, /aria-haspopup="dialog"/);
+  assert.match(indicator, /\{details\}/);
+  assert.match(indicator, /limits\.map\(\(limit, index\)/);
+  assert.match(indicator, /t\("codexLimit\.detailsRemaining", \{ percent \}\)/);
+  assert.match(indicator, /t\("codexLimit\.detailsResetAt", \{ time: limit\.resetText \}\)/);
+  assert.match(indicator, /t\("codexLimit\.detailsResetIn", \{ time: limit\.resetText \}\)/);
+  assert.match(indicator, /t\("codexLimit\.detailsResetCredits", \{ count: resetCount \}\)/);
+  for (const [src, name] of [
+    [zh, "codexLimit.badgeTitle"],
+    [en, "codexLimit.badgeTitle"],
+    [zh, "codexLimit.detailsTitle"],
+    [en, "codexLimit.detailsTitle"],
+    [zh, "codexLimit.detailsDescription"],
+    [en, "codexLimit.detailsDescription"],
+    [zh, "codexLimit.detailsRemaining"],
+    [en, "codexLimit.detailsRemaining"],
+    [zh, "codexLimit.detailsResetAt"],
+    [en, "codexLimit.detailsResetAt"],
+    [zh, "codexLimit.detailsResetIn"],
+    [en, "codexLimit.detailsResetIn"],
+    [zh, "codexLimit.detailsResetCredits"],
+    [en, "codexLimit.detailsResetCredits"],
+    [zh, "codexLimit.detailsEmpty"],
+    [en, "codexLimit.detailsEmpty"],
+  ]) {
+    assert.ok(src.includes(`"${name}":`), `missing ${name}`);
+  }
 });
 
 test("5 小时限额显示准确时刻，周限显示剩余天数与小时", () => {

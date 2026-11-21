@@ -25,6 +25,21 @@ export type CodexLimitView = {
   resetText: string;
 };
 
+/**
+ * 胶囊只显示一个窗口：剩余最少的那一个，否则两条限额并排时用户要点两下才知道先撞哪条。
+ * 没有数值时（首帧加载）退回第一条，保证胶囊位置不跳；空的返回 null。
+ * 并列时保留窗口顺序（5h 在前），避免同一份数据在两次渲染里换标签。
+ */
+export function pickTightestLimit(limits: CodexLimitView[]): CodexLimitView | null {
+  let best: CodexLimitView | null = null;
+  for (const limit of limits) {
+    const remaining = limit.remaining;
+    if (remaining === null) continue;
+    if (best === null || (best.remaining !== null && remaining < best.remaining)) best = limit;
+  }
+  return best ?? limits[0] ?? null;
+}
+
 function remainingPercent(window?: CodexRateLimitWindow): number | null {
   const used = window?.used_percent;
   if (typeof used !== "number" || !Number.isFinite(used)) return null;
@@ -54,6 +69,7 @@ export function useCodexRateLimit({
   const [status, setStatus] = useState<CodexRateLimitStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetOutcome, setResetOutcome] = useState("");
   const [error, setError] = useState("");
@@ -94,6 +110,7 @@ export function useCodexRateLimit({
       setStatus(null);
       setError("");
       setConfirmOpen(false);
+      setDetailsOpen(false);
       onStatusChange?.(null);
       return;
     }
@@ -116,13 +133,15 @@ export function useCodexRateLimit({
   }, [agent]);
 
   useEffect(() => {
-    if (!confirmOpen) return;
+    if (!confirmOpen && !detailsOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !resetting) setConfirmOpen(false);
+      if (event.key !== "Escape" || resetting) return;
+      if (confirmOpen) setConfirmOpen(false);
+      else setDetailsOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmOpen, resetting]);
+  }, [confirmOpen, detailsOpen, resetting]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -153,6 +172,8 @@ export function useCodexRateLimit({
     push("weekly", t("codexLimit.weekly"), status?.weekly);
     return views;
   }, [status, t, nowMs]);
+
+  const tightestLimit = useMemo(() => pickTightestLimit(limits), [limits]);
 
   const resetCount = Math.max(0, status?.reset_credits?.available_count ?? 0);
   const canReset = resetCount > 0 && !loading;
@@ -192,14 +213,17 @@ export function useCodexRateLimit({
     status,
     loading,
     confirmOpen,
+    detailsOpen,
     resetting,
     resetOutcome,
     error,
     limits,
+    tightestLimit,
     resetCount,
     canReset,
     firstCredit,
     setConfirmOpen,
+    setDetailsOpen,
     setResetOutcome,
     setError,
     handleReset,

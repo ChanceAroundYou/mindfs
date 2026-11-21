@@ -116,7 +116,27 @@
   （字号必须 < INPUT_FONT_SIZE；三处文件不许再写死胶囊字号）；G-JQ 的
   boundary/files/anchors 同步登记。
 
+## 复测与修正（2026-11-21 第五次：合并为单胶囊 + 详情弹层）
+
+用户要求把「周 / 5h」两个胶囊合并成一个：自动显示剩余较少的那个，点击打开完整详情。
+
+- `useCodexRateLimit.ts` 新增纯函数 `pickTightestLimit(limits)`：跳过尚无数值的窗口，
+  全部无值时退回第一条，剩余并列时保留 5h 在前（首帧与刷新之间标签不跳）。
+  组件只渲染这一个胶囊，文案仍用 `limitValue` / `limitValueWithReset`。
+- 胶囊由 `<div>` 改为 `<button aria-haspopup="dialog">`；点击打开 portal 到 body 的
+  详情弹层，列出两条窗口的剩余百分比、各自语义的重置时间（5h 用「{time} 重置」、
+  周限用「{time} 后重置」）以及 Limit Reset 可用次数；Escape / 点遮罩 / 「关闭」都可收起，
+  agent 切走时随其它状态一起重置。
+- 新增 i18n 键 8 个（`codexLimit.badgeTitle` / `detailsTitle` / `detailsDescription` /
+  `detailsRemaining` / `detailsResetAt` / `detailsResetIn` / `detailsResetCredits` /
+  `detailsEmpty`），中英各一份。
+- 验证：`pickTightestLimit` 行为用例 7 条 + 胶囊/详情源码契约；两处变异
+  （取最大、去掉 `{details}` 渲染）各自打红后还原。另用 esbuild 打包真实组件 +
+  Playwright Chromium 跑真实 DOM：79/31 显示「周 31% · 4d 21h」，12/88 显示
+  「5h 12% · 16:56」，详情弹层同时出现「剩余 79%」「剩余 31%」「2 次可用」，
+  Escape 与关闭键均可收起。全量 `vitest run` 254 文件 / 816 通过 / 6 跳过，
+  `tsc -b --noEmit` clean，`npm run build` 成功。
+
 ## 遗留
 
-- 窄屏下两个限额胶囊较长，需要靠 `white-space: nowrap` + 容器压缩处理，暂未做专门适配。
 - 「释放空闲会话」现在作用于当前项目所在节点（此前是当前激活节点），多节点下语义更一致。
