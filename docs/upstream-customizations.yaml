@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12120,20 +12120,39 @@ groups:
       ④ `node-unreachable-baseline.test.mjs` 把节点不可达的现状分成两半：单节点失败
       **已经**是「弹提示 + 保留条目」，钉成不许回退；节点表同步失败被静默吞掉、零项目
       分支不区分「真空」与「拉不到」仍是缺口，P6 改写时先红后绿。
+      ⑤ P2 起新增 `server/internal/controlsync` 包（新目录，上游没有对应实现）：记录模型与
+      sqlite 索引库。三条必须保留的语义 —— hash 只覆盖 `Payload`（墓碑保留最后内容 hash）、
+      `CanonicalJSON` 走 `UseNumber` 否则大整数被舍入成不同 hash、`rev` 在 `_txlock=immediate`
+      事务里用 `MAX(rev)+1` 分配（延迟事务会并发撞 `changes.rev` 主键）。
     boundary: |
-      P0 只新增测试，不改任何产品代码、不改配置、不部署。后续波次（P1–P8）在同组继续登记
-      files / tests / anchors。控制面之外的数据（项目/会话/任务/文件）不在同步范围内。
+      P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
+      （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
+      后续波次（P1、P3–P8）在同组继续登记 files / tests / anchors。控制面之外的数据
+      （项目/会话/任务/文件）不在同步范围内。
     files:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
+      - server/internal/controlsync/record.go
+      - server/internal/controlsync/record_test.go
+      - server/internal/controlsync/store.go
+      - server/internal/controlsync/store_test.go
     tests:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
+      - server/internal/controlsync/record_test.go
+      - server/internal/controlsync/store_test.go
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationNodeStores(t *testing.T) {'
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationWorkflowStores(t *testing.T) {'
       - 'server/app/control_plane_isolation_test.go:	// 先写后建：共享目录时 B 会看到 alice，Create 直接撞 ErrUsernameTaken。'
+      - 'server/internal/controlsync/record.go:	dec.UseNumber()'
+      - 'server/internal/controlsync/record_test.go:func TestCanonicalJSONPreservesBigIntegers(t *testing.T) {'
+      - 'server/internal/controlsync/record_test.go:func TestHashPayloadIgnoresTombstoneFlag(t *testing.T) {'
+      - 'server/internal/controlsync/store.go:&_txlock=immediate'
+      - 'server/internal/controlsync/store_test.go:func TestMigrateIsIdempotent(t *testing.T) {'
+      - 'server/internal/controlsync/store_test.go:func TestConcurrentOpenMigratesAndAllocatesDistinctRevs(t *testing.T) {'
+      - 'server/internal/controlsync/store_test.go:// 事务回滚不留半条 change：records 与 changes 必须同生共死。'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'

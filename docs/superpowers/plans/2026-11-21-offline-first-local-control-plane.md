@@ -115,6 +115,11 @@ Scope: G-PF。
     非法 key 拒绝。
 - 变异：`CanonicalJSON` 不排序 → 用例红。
 - 验收：`go test ./server/internal/controlsync/ -count=1`。
+- 执行记录（2026-11-21）：6 条用例先红后绿（`record.go` + `record_test.go`）。变异「去掉
+  重排与 `UseNumber`、直接返回 `json.Marshal` 的字节」让「键序无关」与「struct/map 同 hash」
+  两条同时红后还原。两处实测结论写进代码注释：hash 只覆盖 `Payload`（墓碑保留最后内容 hash），
+  `CanonicalJSON` 必须走 `UseNumber`，否则 2^53 以上的整数会被 float64 舍入、同一份数据在
+  不同机器上算出不同 hash。
 
 ### T7 SQLite schema 与迁移
 
@@ -124,6 +129,21 @@ Scope: G-PF。
 - 用例：空库迁移两次幂等；并发 Open 同一路径只有一个成功（SQLite busy 处理）；
   事务回滚不留半条 change。
 - 变异：迁移去掉 `IF NOT EXISTS` → 二次迁移红。
+- 执行记录（2026-11-21）：`store.go` + `store_test.go`，4 条用例先红后绿，`-race` 绿，
+  `-v` 下 T6/T7 共 10 条全过。
+  - **一处与计划不符（按证据改口径）**：「并发 Open 同一路径只有一个成功」在当前实现下
+    不可能成立 —— `sql.Open` 是惰性的，同一进程内多个句柄指向同一文件本来就都能打开，
+    要「只有一个成功」得引入跨平台文件锁（`flock` / `LockFileEx`），而 Windows 无 `flock`、
+    崩溃残留的锁文件又会让服务起不来。改为钉住真正要保的性质：**8 个 goroutine 并发
+    `Open` + `Migrate` + 写记录全部成功，且分配到的 `rev` 互不重复**。单实例由部署层保证
+    （每台机器一个 configDir、一个 systemd 单元）；**残留风险**：同机起两个实例会交错分配
+    `rev`，不报错也不隔离，需要 P4 的 `state.instance_id` 上线后补一道显式检测。
+  - 为了这条性质，DSN 带 `_txlock=immediate`：`rev` 用 `MAX(rev)+1` 分配，延迟事务会让两个
+    并发事务读到同一个 `MAX`，随后在 `changes.rev` 上撞车。三处变异各自打红后还原 ——
+    去掉 `IF NOT EXISTS`（二次迁移红）、去掉 `_txlock=immediate`（并发迁移 `SQLITE_BUSY`）、
+    `rev` 改成常量 1（并发与单调两条用例同时红）。
+  - **表名合并**：spec §4.3 的 edge 表 `replica` 与 §4.2 的 `records` 列完全相同，这里只用
+    `records` 一张，避免两份逐字重复的 DDL 各自漂移；角色差异只体现在用哪几张表。
 
 ### T8 域适配器接口与六个实现
 
