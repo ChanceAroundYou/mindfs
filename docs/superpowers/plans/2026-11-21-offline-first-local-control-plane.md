@@ -144,6 +144,14 @@ Scope: G-PF。
     `rev` 改成常量 1（并发与单调两条用例同时红）。
   - **表名合并**：spec §4.3 的 edge 表 `replica` 与 §4.2 的 `records` 列完全相同，这里只用
     `records` 一张，避免两份逐字重复的 DDL 各自漂移；角色差异只体现在用哪几张表。
+  - **追加（2026-11-21）**：全量门禁并发跑 `controlsync` 与 `kanban` 时，8 路并发迁移里有
+    worker 直接拿到 `database is locked (5) (SQLITE_BUSY)`（40 次压测稳定复现）。根因是
+    **SQLite 不为 `journal_mode` 切换调用 busy handler**，而它写在 DSN 的 pragma 里、在连接
+    建立时执行，没有第二次机会。改为 DSN 只留 `busy_timeout(5000)` 与 `_txlock=immediate`，
+    `PRAGMA journal_mode=WAL` 挪进 `Migrate` 首次执行，并对 BUSY 做 60×25 ms 退避重试
+    （上限 1.5 s；WAL 落在库头里，之后每次打开仍是 WAL）。新增
+    `TestMigrateWaitsForAnotherWriter`：另一连接持写锁时迁移必须等待、释放后 150 ms 内完成；
+    把 `migrateAttempts` 改成 1 后该用例变红，还原后复绿。提交 `65baf743`。
 
 ### T8 域适配器接口与六个实现
 
@@ -171,6 +179,31 @@ type Domain interface {
 - 变异：`nodes` key 改用 id → 「两台机器同一 URL」用例红；`preferences` 整文件一个 key →
   字段级合并用例红。
 - 验收：`go test ./server/internal/controlsync/ -count=1` 全绿。
+- 执行记录（2026-11-21）：六个域适配器 + `Registry`，六组共 34 条用例，13 处变异各自打红后
+  还原（hash 不入载荷、key 与载荷 id 不符、主账户标记不排最后、主账户墓碑、孤儿 meta 导出、
+  版本可覆盖、旧草稿回退、`NextSeq` 不推进等）。提交 `66810078`。
+  - **四处在计划基础上按证据收紧**（理由都写进了代码注释）：① `Domain` 接口去掉 `Keys` ——
+    对账的 key 集合由 `Snapshot` 直接得出，多一个方法就多一条会漂移的实现路径；② `pins` 不是
+    纯文件投影，既有 `RestoreProjectPin` / `RestoreSessionPin` 才有「按时间戳覆写 + 写盘失败
+    回滚内存」，适配器只做 key 与载荷编解码；③ `prompts` 的 `PromptStore.SetItem` 在满 50 条
+    时**报错**而不是挤掉最旧一条 —— 远端记录不该悄悄顶掉本地数据；④ `users` 的主账户标记记录
+    必须排在最后，`SetPrimary` 要求账户已存在，标记先到会失败。
+  - **两处 key 规则来自既有教训**：`prompts` / `pins` 的存储按账户分目录，key 必须带账户
+    （`<account>/<...>`），否则不同账户下同名提示词、同一个 pin 作用域会互相覆盖（与 G-NR
+    「项目身份 = (节点, rootId)」同源）；`nodes` 的 key 是归一化 URL 而非 id —— 两台机器同一个
+    URL 是两条记录，同一台机器换 id 仍是同一条。
+  - **workflows 的三条不变量**：版本只追加（同 id 同内容幂等，内容不同即
+    `ErrWorkflowVersionImmutable`）；草稿不回退（只接受更高 revision）；`NextSeq` 由草稿 revision
+    与版本 seq 推上去，否则目标机下一次编辑会退版号或与已有版本撞号。为此补了
+    `TestWorkflowsDomainSeqFollowsDraftWithoutVersions`：只有草稿、没有版本的 workflow 也必须推进
+    seq（第一版变异只靠版本记录推进，被这条用例打红）。
+  - **store 侧新增五个入口**（提交 `f1e4c85d`）：`auth.ExportUsers/ApplyUser/RemoveUserByName`、
+    `pins.RestoreProjectPin/RestoreSessionPin`、`preferences.Fields/SetField`（磁盘上本版本不认识
+    的字段原样保留并参与同步）、`usecase.PromptStore.SetItem`、`kanban.WorkflowStore` 的五个同步
+    方法。理由是不绕开既有 store 的锁与缓存直接写 JSON —— 否则内存缓存与磁盘不一致，下一次读取
+    就回退。auth 3 条 + kanban 3 条用例，3 处变异各自打红。
+  - **未覆盖**：六个适配器的 `Apply` 尚未接变更抑制（T9）、未接 HTTP 转发（T10）；`users` 域只
+    按用户名对齐，账户改名不在本轮范围。
 
 ### T9 变更采集
 

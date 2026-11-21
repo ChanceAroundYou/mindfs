@@ -12124,6 +12124,20 @@ groups:
       sqlite 索引库。三条必须保留的语义 —— hash 只覆盖 `Payload`（墓碑保留最后内容 hash）、
       `CanonicalJSON` 走 `UseNumber` 否则大整数被舍入成不同 hash、`rev` 在 `_txlock=immediate`
       事务里用 `MAX(rev)+1` 分配（延迟事务会并发撞 `changes.rev` 主键）。
+      ⑥ 域适配器把六份权威存储投影成记录流，四条必须保留的判定：
+      · **key 必须带账户**：prompts / pins 是「每账户一套」的存储，同一句提示词、同一个 pin
+        作用域在不同账户下是不同记录；key 不带账户会互相覆盖（与 G-NR 的
+        「项目身份 = (节点, rootId)」同源）。
+      · **users 载荷含 bcrypt hash、id 必须是用户名派生值**：离线要能直接登录；id 漂移等于
+        两台机器对不上同一个账户。主账户标记是单独一条 `@primary`，它自身的墓碑一律拒绝。
+      · **preferences 按顶层字段合并**、磁盘上本版本不认识的字段原样保留并参与同步：
+        整文件覆盖会让「A 改 agents」冲掉「B 刚改的 session_naming」，滚动升级时老版本
+        还会静默删掉新版本写的字段。
+      · **工作流版本只追加、草稿不回退、seq 游标按记录推上去**：seq 推不上去，目标机下一次
+        编辑会退回 r1 或与已有 `<id>:v<n>` 撞号。
+      ⑦ `Migrate` 必须对 SQLITE_BUSY 退避重试，`journal_mode` 不能写在 DSN 里：SQLite 不为
+      journal_mode 切换调用 busy handler，撞上并发迁移会**立即**返回 BUSY，而 DSN pragma 在
+      连接建立时执行、没有第二次机会。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
       （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
@@ -12136,11 +12150,40 @@ groups:
       - server/internal/controlsync/record_test.go
       - server/internal/controlsync/store.go
       - server/internal/controlsync/store_test.go
+      - server/internal/controlsync/domain.go
+      - server/internal/controlsync/domain_nodes.go
+      - server/internal/controlsync/domain_nodes_test.go
+      - server/internal/controlsync/domain_preferences.go
+      - server/internal/controlsync/domain_preferences_test.go
+      - server/internal/controlsync/domain_prompts.go
+      - server/internal/controlsync/domain_prompts_test.go
+      - server/internal/controlsync/domain_pins.go
+      - server/internal/controlsync/domain_pins_test.go
+      - server/internal/controlsync/domain_users.go
+      - server/internal/controlsync/domain_users_test.go
+      - server/internal/controlsync/domain_workflows.go
+      - server/internal/controlsync/domain_workflows_test.go
+      - server/internal/auth/store_sync.go
+      - server/internal/auth/store_sync_test.go
+      - server/internal/pins/store_restore.go
+      - server/internal/preferences/store_fields.go
+      - server/internal/preferences/store.go
+      - server/internal/kanban/workflow_store_sync.go
+      - server/internal/kanban/workflow_store_sync_test.go
+      - server/internal/api/usecase/prompts.go
     tests:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
       - server/internal/controlsync/record_test.go
       - server/internal/controlsync/store_test.go
+      - server/internal/controlsync/domain_nodes_test.go
+      - server/internal/controlsync/domain_preferences_test.go
+      - server/internal/controlsync/domain_prompts_test.go
+      - server/internal/controlsync/domain_pins_test.go
+      - server/internal/controlsync/domain_users_test.go
+      - server/internal/controlsync/domain_workflows_test.go
+      - server/internal/auth/store_sync_test.go
+      - server/internal/kanban/workflow_store_sync_test.go
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationNodeStores(t *testing.T) {'
@@ -12153,6 +12196,18 @@ groups:
       - 'server/internal/controlsync/store_test.go:func TestMigrateIsIdempotent(t *testing.T) {'
       - 'server/internal/controlsync/store_test.go:func TestConcurrentOpenMigratesAndAllocatesDistinctRevs(t *testing.T) {'
       - 'server/internal/controlsync/store_test.go:// 事务回滚不留半条 change：records 与 changes 必须同生共死。'
+      - 'server/internal/controlsync/store_test.go:func TestMigrateWaitsForAnotherWriter(t *testing.T) {'
+      - 'server/internal/controlsync/store.go:	migrateAttempts = 60'
+      - 'server/internal/controlsync/domain.go:const mainAccountKey = "main"'
+      - 'server/internal/controlsync/domain_prompts.go:func PromptRecordKey(account, text string) string {'
+      - 'server/internal/controlsync/domain_pins.go:func PinRecordKey(account, kind, scope string) string {'
+      - 'server/internal/controlsync/domain_users.go:const usersPrimaryKey = "@primary"'
+      - 'server/internal/controlsync/domain_users_test.go:func TestUsersDomainApplyCopiesHashAndPrimary(t *testing.T) {'
+      - 'server/internal/controlsync/domain_workflows.go:	workflowVersionMarker = ":version:"'
+      - 'server/internal/auth/store_sync.go:var ErrDerivedIDMismatch = errors.New("account_id_not_derived")'
+      - 'server/internal/preferences/store_fields.go:var knownPreferenceFields = func() map[string]bool {'
+      - 'server/internal/kanban/workflow_store_sync.go:var ErrWorkflowVersionImmutable = errors.New("workflow version immutable")'
+      - 'server/internal/kanban/workflow_store_sync_test.go:func TestExportForSyncSkipsOrphanMeta(t *testing.T) {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
