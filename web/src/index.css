@@ -1492,11 +1492,16 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
 }
 
 /*
- * 移动端任务详情：执行详情入口置顶。
+ * 任务详情里的执行详情 / 监管记录胶囊行。
  *
- * 面板正文是 flex column，对话流（含输入框）往往两千多像素高，
- * 执行详情排在它后面就只能滚到最底部才看得见 —— 手机上等于「没有」。
- * 桌面仍保持「对话流 → 执行详情」的下钻顺序。
+ * 两端只有一种顺序：对话流（含输入框）→ 胶囊行 → 收尾区，也就是纯 DOM 流。
+ * 2026-11-21 曾在 `max-width: 640px` 下用 `order: -1` 把它提到正文最前面，
+ * 理由是要让手机也看得见；结果它在手机上成了一条贴在面板标题下沿的横条：
+ * 虽然随内容滚动，但位置永远在正文顶端（用户复测两次报「吸顶」），而长对话里
+ * 它离面板落地处两万多像素，反而更够不着。胶囊真正可见靠的是两条既有机制：
+ * 面板首屏滚到真正的底部（`useConversationJumpToLatest`）、输入框长高时贴底
+ * 对齐（`useComposerBottomPin`）。所以这里只保留 `min-width`，任何断点都不许
+ * 再改 `order` / `position` —— 改了就会回到「吸顶」。
  */
 .task-detail-execution {
   min-width: 0;
@@ -1516,11 +1521,5 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
 @media (max-width: 640px) {
   .task-detail-content {
     padding: 10px 8px;
-  }
-}
-
-@media (max-width: 640px) {
-  .task-detail-execution {
-    order: -1;
   }
 }

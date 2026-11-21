@@ -9611,7 +9611,7 @@ groups:
     title: 任务详情展示收口 —— 运行汇报先折叠后平铺（2026-11-19 用户裁定改平铺）+ 直达工作流会话
     kind: fix
     symptom: "R1 T10 复核登记的 UX 残留：同一轮任务结算后用户会看到同一句结果被说两遍 —— 引擎结算回填的 reply 行（status+summary）与 Router 运行期事件 say 出来的 purpose=progress 汇报行；后者另带失败节点/未验证项等增量信息，两条都不能删。另一处：工作流节点在各自的 agent 会话里干活，任务对话只放汇报，用户想看节点实际做了什么、或接管那个会话，必须先展开运行视图、再逐节点点「打开会话」。"
-    why: "必须保留：① 运行视图仍是对话流的下钻（桌面排在 ConversationView 之后；mobile 下 `.task-detail-execution` `order:-1` 置顶，见 G-NY）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。直连对话任务没有 WorkflowRun，入口回落为「打开任务主会话」，不再整条消失（G-NY）。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只靠页脚的类型胶囊标成「进度」做区分（`activityTypeTagKey` + `activity-type-tag`，见 G-NY）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
+    why: "必须保留：① 运行视图仍是对话流的下钻（两端都排在 ConversationView 之后，即输入框下方的胶囊行里；2026-11-21 删掉了移动端 `order:-1` 置顶，见 G-NY）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。直连对话任务没有 WorkflowRun，入口回落为「打开任务主会话」，不再整条消失（G-NY）。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只靠页脚的类型胶囊标成「进度」做区分（`activityTypeTagKey` + `activity-type-tag`，见 G-NY）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
     boundary: "只改前端展示层；不动活动/事件/决策/结果摘要的数据路径，不新增 HTTP 端点，不改路由与权限。平铺不改变任何活动的可见性判定 —— 唯一例外是等待审批时隐藏同一 Run 的占位回复（见 G-MY 的 `visibleConversationActivities`），那是「一张审批卡」的可读性要求，不是折叠。"
     files:
       - web/src/shared/activityModel.ts
@@ -11520,8 +11520,12 @@ groups:
       多像素才看到最新一条；⑧ 只有 `purpose=progress` 的行有标记，用户分不清一条消息是
       留言、回复、结果还是系统事件；上翻历史后也没有「回到底部」，只能自己一路滑回去。
     why: |
-      必须保留：① 移动端（`max-width:640px`）用 `order:-1` 把 `.task-detail-execution` 提到
-      对话流之前，桌面仍保持「对话流 → 执行详情」的下钻顺序。② 表格最小宽度退化为
+      必须保留：① 胶囊行（`.task-detail-execution`）在两端只有一种顺序 —— 对话流（含输入框）
+      → 胶囊行 → 收尾区。2026-11-21 曾用 `order:-1` 把它提到移动端最前面，用户两次复测报
+      「吸顶」：它恒在正文顶端、贴着面板标题下沿；长对话里又离面板落地处两万多像素，
+      反而够不着。可见性由「首屏滚到真正的底部」与「输入框长高时贴底对齐」两条机制保证，
+      与流内顺序无关，所以 `.task-detail-execution` 只剩 `min-width:0`，任何断点都不许再改
+      `order` / `position`。② 表格最小宽度退化为
       `min(520px, 100%)`、表头允许折行、单元格 `overflow-wrap:anywhere`，`.markdown-viewer`
       与 `#conversation-view` 加 `min-width:0; max-width:100%`，让宽内容在卡片内收住而不是
       把面板撑出横向滚动。③ 消息页脚删掉状态 span 与 `STATUS_LABEL_KEYS`/`STATUS_COLORS`，
@@ -11582,8 +11586,10 @@ groups:
       100%；会话图标角标在嵌套节点行仍有 2px 级 scrollWidth 差（不产生面板级横向滚动），
       本组未处理。「进度」标记仍只按 `purpose=progress` 判定，不动 Router 的 purpose 语义。
       自动滚动只发生在首屏到齐那一刻：用户随后手动上翻不会被拉回，重复的任务增量不会二次
-      滚动；移动端胶囊行仍由 `order:-1` 置顶，落到真正的底部时它在视口之外（位置与折叠状态
-      都没变，需要向上滚才看到），本组未改它的定位，只让间距与滚动目标和桌面同一套规则。
+      滚动；胶囊行在两端都是流内内容，落到真正的底部时它与收尾区一起在视口内，往上翻历史时
+      跟着内容一起走（2026-11-21 删掉了移动端 `order:-1` 置顶，两轮「吸顶」反馈的根因）。
+      真实几何由 `e2e/test_task_detail_pills_flow.py` 在 390×844 下实测：长对话打开即见、
+      中途位移与 scrollTop 一一对应、滚到顶时不在视口内；短对话连敲 8 行位置不漂移。
       header 的关闭键是 opt-in（`showCloseButton` 默认 false）：其它面板（新建任务对话框等）
       仍然只有遮罩一条关闭路径，不要给 `PanelShell` 改成默认带 ×。操作控件菜单只承载
       「收尾 / 完成 / 重新打开」三类现有动作，本组不新增归档、返回、取消任务能力 —— 这些
@@ -11645,6 +11651,7 @@ groups:
       - web/tests/shared-send-shortcut.test.mjs
       - web/tests/task-composer-mention-image.test.mjs
       - e2e/test_task_composer_enter_and_layout.py
+      - e2e/test_task_detail_pills_flow.py
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
@@ -11676,6 +11683,7 @@ groups:
       - 'web/src/hooks/useMarkdownViewer.tsx:minWidth: "min(520px, 100%)",'
       - 'web/src/hooks/useMarkdownViewer.tsx:overflowWrap: "anywhere",'
       - 'web/src/index.css:.task-detail-execution {'
+      - 'web/tests/composer-bottom-pin.test.mjs:assert.doesNotMatch(styles, /\.task-detail-execution\s*\{[^}]*\border\s*:/);'
       - 'web/src/index.css:.task-detail-content {'
       - 'web/src/index.css:padding: 10px 8px;'
       - 'web/src/components/task/TaskDetailPanel.tsx:<TaskDetailActionsMenu actions={actions} disabled={saving} />'

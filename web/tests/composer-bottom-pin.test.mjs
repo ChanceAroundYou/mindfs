@@ -48,9 +48,13 @@ test("详情面板把输入区与滚动锚点接进这个 hook", () => {
 
 test("输入区与胶囊的层级：胶囊排在对话之后，不被输入区盖住", () => {
   const styles = read("../src/index.css");
-  // 桌面端胶囊在对话与输入框下方（移动端 order:-1 提到顶部，是既有布局，不在本次范围）。
-  assert.match(styles, /\.task-detail-execution\s*\{/);
-  assert.match(styles, /@media \(max-width: 640px\)[\s\S]{0,600}?\.task-detail-execution\s*\{\s*order:\s*-1;/);
+  // 两端只有一种顺序：对话流（含输入框）→ 胶囊行 → 收尾区。
+  // 2026-11-21 曾在移动端用 `order:-1` 把它提到正文最前面，用户复测两次报「吸顶」
+  // （它恒在正文顶端、贴着面板标题下沿），那次改动已删除；任何断点都不许再加
+  // order / position 覆盖，否则又会变回一条钉在顶上的横条。
+  assert.match(styles, /\.task-detail-execution\s*\{\s*min-width: 0;\s*\}/);
+  assert.doesNotMatch(styles, /\.task-detail-execution\s*\{[^}]*\border\s*:/);
+  assert.doesNotMatch(styles, /\.task-detail-execution\s*\{[^}]*\bposition\s*:/);
 });
 
 test("对话面板贴底锚定：卡片向上长，底部胶囊与输入区底边不动", () => {
