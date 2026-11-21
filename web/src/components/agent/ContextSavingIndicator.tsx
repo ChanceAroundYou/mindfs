@@ -235,11 +235,6 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
             </div>
           ))}
         </div>
-        {saving && saving.usage_missing > 0 ? (
-          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
-            {t("contextSaving.usageMissing", { count: String(saving.usage_missing) })}
-          </div>
-        ) : null}
         {hygieneBand && hygiene ? (
           <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "rgba(180, 83, 9, 0.08)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
             {hygiene.state === "hint"

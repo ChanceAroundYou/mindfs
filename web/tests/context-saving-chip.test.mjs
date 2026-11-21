@@ -35,7 +35,6 @@ const CONTEXT_SAVING_KEYS = [
   "tokensValue",
   "unknown",
   "empty",
-  "usageMissing",
   "badgeContext",
   "hygieneActive",
   "hygieneDuration",
@@ -198,7 +197,7 @@ test("折叠的代价与收益并列显示：本轮重算 token 与节省同屏"
   assert.match(service, /usage_cache_creation: number;/);
   assert.match(service, /usage_source: "response" \| "missing" \| ""/);
   assert.match(indicator, /latest\.usage_source === "missing"[\s\S]{0,80}t\("contextSaving\.unknown"\)/);
-  assert.match(indicator, /saving\.usage_missing > 0/);
+  // 缺失样本数只进账本，不再单独占一行提示；命中率那行仍标「未知」。
   // 2026-11-21 起合计是普通数据行，不再是脚注句子。
   assert.match(
     indicator,
@@ -315,4 +314,10 @@ test("文案在两种语言里成对存在", () => {
   assert.match(zh, /"contextSaving\.cacheHitValue": "\{percent\}（\{tokens\} tokens）"/);
   assert.match(zh, /"contextSaving\.badgeRewriteTotal": "重算合计"/);
   assert.match(en, /"contextSaving\.badgeRewriteTotal": "Rewritten in total"/);
+});
+
+test("没读到用量的样本只留在账本里，不再在胶囊里提示", () => {
+  assert.doesNotMatch(indicator, /contextSaving\.usageMissing/);
+  assert.doesNotMatch(zh, /"contextSaving\.usageMissing":/);
+  assert.doesNotMatch(en, /"contextSaving\.usageMissing":/);
 });

@@ -196,7 +196,6 @@ export const zhCNAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "未知",
   "contextSaving.empty": "这个会话还没有折叠过请求。",
-  "contextSaving.usageMissing": "{count} 次请求没读到用量，未计入重算合计。",
   "contextSaving.badgeContext": "上下文 {tokens}",
   "contextSaving.hygieneActive": "已持续活跃",
   "contextSaving.hygieneDuration": "{hours} 小时 {minutes} 分",

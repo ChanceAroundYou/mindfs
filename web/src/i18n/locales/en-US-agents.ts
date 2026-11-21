@@ -196,7 +196,6 @@ export const enUSAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "unknown",
   "contextSaving.empty": "No request in this conversation has been folded yet.",
-  "contextSaving.usageMissing": "{count} requests had no readable usage and are excluded from the rewrite total.",
   "contextSaving.badgeContext": "Context {tokens}",
   "contextSaving.hygieneActive": "Active for",
   "contextSaving.hygieneDuration": "{hours}h {minutes}m",
