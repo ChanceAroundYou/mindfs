@@ -14,6 +14,8 @@ import (
 type routeApplyState struct {
 	placeholder *TaskActivity
 	used        bool
+	// settleSummarySeq 是结算回合里承担总结的那条 say（-1 = 不适用）。
+	settleSummarySeq int
 }
 
 func (st *routeApplyState) take() *TaskActivity {
@@ -38,7 +40,7 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 	if decision == nil {
 		return errors.New("router decision required")
 	}
-	state := &routeApplyState{}
+	state := &routeApplyState{settleSummarySeq: -1}
 	if id := strings.TrimSpace(decision.PlaceholderActivityID); id != "" {
 		if act, loadErr := s.activities.Get(ctx, id); loadErr == nil {
 			state.placeholder = act
@@ -51,6 +53,9 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 			}
 		}
 	}()
+	if s.settledRunSucceeded(ctx, decision) {
+		state.settleSummarySeq = settleSummaryActionSeq(decision)
+	}
 	userAct, err := s.activities.Get(ctx, strings.TrimSpace(decision.UserActivityID))
 	if err != nil {
 		return err
@@ -198,6 +203,12 @@ func (s *ActivityService) applyRouteSay(
 	body := strings.TrimSpace(action.Body)
 	if body == "" {
 		return errors.New("say body required")
+	}
+	// 结算回合的最后一条 say 承担总结：模型显式写 summary 时用它的 seq，只写了
+	// progress/chat 时退到最后一条。线上补偿回合（llmux #19）就是后者 —— 汇报
+	// 看着像总结，任务摘要却停在节点原文。
+	if state != nil && state.settleSummarySeq == action.Seq && action.Purpose != "summary" {
+		action.Purpose = "summary"
 	}
 	act := state.take()
 	if act == nil {
@@ -504,6 +515,44 @@ func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivit
 		return err
 	}
 	return s.activities.UpdateStatus(ctx, act.ID, act.Status, nil)
+}
+
+// settledRunSucceeded 判定这条 run_settled 决策背后是不是一轮真的成功结算的
+// Run。运行期事件里也有 kind=run_settled 但任务根本没有 Run 的合成回合（T8
+// 的运行时汇报），那些只是进度说明，不能顶掉任务结果摘要。
+func (s *ActivityService) settledRunSucceeded(ctx context.Context, decision *RouterDecision) bool {
+	if s.tasks == nil || decision == nil || decision.TriggerKind != RouterTriggerRunSettled {
+		return false
+	}
+	runID := strings.TrimSpace(decision.TriggerRef)
+	if runID == "" {
+		return false
+	}
+	run, err := s.tasks.WorkflowRunByID(ctx, runID)
+	if err != nil || run == nil {
+		return false
+	}
+	return ProjectStatusFromRun(run) == StatusSuccess
+}
+
+// settleSummaryActionSeq 决定结算回合里哪一条 say 承担总结：模型显式写了
+// purpose=summary 就用它；只写了 progress/chat（线上补偿回合的实测形态）时
+// 取最后一条 say。没有 say 返回 -1。
+func settleSummaryActionSeq(decision *RouterDecision) int {
+	if decision == nil {
+		return -1
+	}
+	last := -1
+	for _, action := range decision.Actions {
+		if action.Kind != RouterActionSay {
+			continue
+		}
+		if strings.TrimSpace(action.Purpose) == "summary" {
+			return action.Seq
+		}
+		last = action.Seq
+	}
+	return last
 }
 
 // markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。运行期事件的
