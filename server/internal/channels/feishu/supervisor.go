@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -78,20 +80,39 @@ func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) boo
 	childCtx, stopChild := context.WithCancel(ctx)
 	defer stopChild()
 	cmd := exec.CommandContext(childCtx, s.Path, "event", "consume", "card.action.trigger", "--as", "bot")
+	// lark-cli 把 stdin EOF 当停机信号；exec 默认给子进程 /dev/null，
+	// 监听会在一秒多就自己退掉。留一根一直开着的管道给它。
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		logf("飞书卡片监听起不来：%v", err)
+		return false
+	}
+	cmd.Stdin = stdinR
+	// lark-cli 明确要求 SIGTERM：kill -9 会跳过清理、泄漏服务端的订阅，
+	// 重启后几小时内都连不上（就是上面那段 60 秒退避在等的冲突）。
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
 		logf("飞书卡片监听起不来：%v", err)
 		return false
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
 		logf("飞书卡片监听起不来：%v", err)
 		return false
 	}
 	if err := cmd.Start(); err != nil {
+		stdinR.Close()
+		stdinW.Close()
 		logf("飞书卡片监听起不来（%s）：%v", s.Path, err)
 		return false
 	}
+	stdinR.Close()
 
 	var conflict bool
 	var mu sync.Mutex
@@ -144,6 +165,7 @@ func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) boo
 	}
 
 	waitErr := cmd.Wait()
+	stdinW.Close()
 	handlers.Wait()
 	if waitErr != nil && !errors.Is(waitErr, context.Canceled) && ctx.Err() == nil {
 		logf("飞书卡片监听退出：%v", waitErr)

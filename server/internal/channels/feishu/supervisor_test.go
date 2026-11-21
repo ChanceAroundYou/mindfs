@@ -143,6 +143,63 @@ func TestSupervisorReconnectsWhenAStdoutLineIsTooLong(t *testing.T) {
 	waitFor(t, 10*time.Second, func() bool { return runCount(counterPath) >= 2 })
 }
 
+// lark-cli 把 stdin 的 EOF 当停机信号（`consume treats stdin EOF as exit
+// signal`）。exec 默认给子进程 /dev/null，监听会在一秒多就自己退出，
+// supervisor 于是永远在「起 → 退 → 重连」里空转，点击一条都收不到。
+func TestSupervisorKeepsListenerStdinOpen(t *testing.T) {
+	dir := t.TempDir()
+	counterPath := filepath.Join(dir, "runs.txt")
+	bin := filepath.Join(dir, "lark-cli")
+	// 和真 lark-cli 一样：stdin 一 EOF 就退出；stdin 开着就一直挂住。
+	script := "#!/bin/sh\n" +
+		"echo run >> " + counterPath + "\n" +
+		"cat >/dev/null\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sup := &Supervisor{Path: bin, Handle: func(context.Context, Action) error { return nil },
+		Logf: noLog, RestartDelay: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sup.Run(ctx)
+	waitFor(t, 2*time.Second, func() bool { return runCount(counterPath) >= 1 })
+	time.Sleep(300 * time.Millisecond)
+	if runs := runCount(counterPath); runs != 1 {
+		t.Fatalf("监听被重启了 %d 次：子进程的 stdin 立刻 EOF，lark-cli 会自己退出", runs)
+	}
+}
+
+// 收子进程必须走 SIGTERM：lark-cli 警告 kill -9 会跳过清理、泄漏飞书
+// 服务端的订阅，重启后几小时内都报「another event bus is already
+// connected」（supervisor 里那段 60 秒退避就是为它写的）。
+func TestSupervisorStopsListenerWithSIGTERM(t *testing.T) {
+	dir := t.TempDir()
+	startedPath := filepath.Join(dir, "started.txt")
+	termPath := filepath.Join(dir, "term.txt")
+	bin := filepath.Join(dir, "lark-cli")
+	script := "#!/bin/sh\n" +
+		"trap 'echo term > " + termPath + "; exit 0' TERM\n" +
+		"echo started > " + startedPath + "\n" +
+		"while :; do sleep 0.02; done\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sup := &Supervisor{Path: bin, Handle: func(context.Context, Action) error { return nil },
+		Logf: noLog, RestartDelay: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sup.Run(ctx)
+	waitFor(t, 2*time.Second, func() bool {
+		_, err := os.Stat(startedPath)
+		return err == nil
+	})
+	cancel()
+	waitFor(t, 3*time.Second, func() bool {
+		_, err := os.Stat(termPath)
+		return err == nil
+	})
+}
+
 // 一个卡住的处理器不能把重连一起拖死：lark-cli 退出后 consume 要等
 // handlers.Wait()，没有超时的话监听就再也不回来了。
 func TestSupervisorHandlerTimeoutDoesNotBlockReconnect(t *testing.T) {
