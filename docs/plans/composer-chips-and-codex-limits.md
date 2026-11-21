@@ -137,6 +137,32 @@
   Escape 与关闭键均可收起。全量 `vitest run` 254 文件 / 816 通过 / 6 跳过，
   `tsc -b --noEmit` clean，`npm run build` 成功。
 
+## 复测与修正（2026-11-21 第六次：详情收口）
+
+用户在单胶囊版本上继续提四点，全部落在详情弹层：
+
+1. **Limit Reset 收进详情**：删掉独立的重置胶囊（原来只在 `loading || resetCount > 0` 时渲染，
+   只负责点开确认框），详情里改成一行「Limit Reset / {count} 次可用 / 重置」；按钮沿用
+   `canReset` 与既有确认框，点击时先收起详情再打开确认，重置成功后回到详情看刷新后的数字。
+2. **删掉说明行**：`codexLimit.detailsDescription` 中英两键一起删除，弹层直接从两条窗口开始。
+3. **两条窗口都给两种时间**：`CodexLimitView` 新增 `resetAtText` 与 `resetInText`。
+   - `resetAtText` 由 `formatResetMoment` 生成：当天只写 `HH:MM`，跨天补日期（周限常见），
+     保证「精确到分钟」且不会只写一个 `15:04` 让人猜是哪天。
+   - `resetInText` 由新增的 `formatRemainingDetailed` 生成：天/时/分，按 `Math.ceil` 到分钟
+     （`4d 20h 5m`；不足一天写 `3h 12m`），与胶囊里的粗粒度 `4d 20h` 分开。
+   - 胶囊文案完全不变：5h 仍是 `16:56`，周限仍是 `4d 20h`，`resetText` 的构造没有改。
+4. **详情字号统一**：新增 `DETAILS_FONT_SIZE = "13px"` 与 `DETAILS_LINE_HEIGHT = 1.55`，
+   标题、窗口名、剩余百分比、两行时间、Limit Reset 行、错误条与关闭键全部同号，只靠字重
+   区分层级；原先的 16/13/12/11px 混排（关闭键还继承 16px）不再出现。
+
+验证：`codex-rate-limit-windows.test.mjs` 新增 `formatRemainingDetailed` 行为用例、详情两种
+时间/说明行删除/重置入口在详情内/字号统一四组契约；三处变异（详情倒计时退回粗粒度
+`formatRemaining`、恢复独立重置胶囊、详情里写死 11px）各自打红后还原。真实 Chromium
+（esbuild 打包真实组件 + stub 限额接口，zh-CN）两场景 PASS：79/31 时胶囊仍是
+「周 31% · 4d 20h」，详情显示「16:57 重置 / 3h 12m 后重置」与
+「11月26日 09:50 重置 / 4d 20h 5m 后重置」，无说明行；点详情里的「重置」收起详情并打开
+「使用 Limit Reset？」确认框；详情内所有叶子文本 `getComputedStyle` 均为 13px。
+
 ## 遗留
 
 - 「释放空闲会话」现在作用于当前项目所在节点（此前是当前激活节点），多节点下语义更一致。

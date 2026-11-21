@@ -23,6 +23,10 @@ export type CodexLimitView = {
   remaining: number | null;
   /** 胶囊里的重置提示：5 小时窗是「HH:MM」，周限是「Ad Bh」。胶囊里不写「重置」二字。 */
   resetText: string;
+  /** 详情里的精确重置时刻（到分钟；跨天时带日期）。 */
+  resetAtText: string;
+  /** 详情里距现在还有多久（到分钟）。 */
+  resetInText: string;
 };
 
 /**
@@ -50,13 +54,40 @@ function formatClockTime(unixSeconds: number): string {
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(unixSeconds * 1000));
 }
 
-/** 距离重置还剩多少天多少小时。 */
+/** 距离重置还剩多少天多少小时。胶囊里的周限文案沿用这个粗粒度，保持不变。 */
 function formatRemaining(resetsAt: number, nowMs: number): { days: number; hours: number } {
   const ms = Math.max(0, resetsAt * 1000 - nowMs);
   return {
     days: Math.floor(ms / 86_400_000),
     hours: Math.floor((ms % 86_400_000) / 3_600_000),
   };
+}
+
+/** 详情里的倒计时精确到分钟：胶囊只写「4d 21h」，详情写「4d 21h 7m」。 */
+export function formatRemainingDetailed(resetsAt: number, nowMs: number): { days: number; hours: number; minutes: number } {
+  const totalMinutes = Math.max(0, Math.ceil((resetsAt * 1000 - nowMs) / 60_000));
+  return {
+    days: Math.floor(totalMinutes / 1440),
+    hours: Math.floor((totalMinutes % 1440) / 60),
+    minutes: totalMinutes % 60,
+  };
+}
+
+/** 详情里的精确重置时刻：当天只写 HH:MM，跨天补上日期，保证「精确到分钟」又不丢日。 */
+function formatResetMoment(resetsAt: number, nowMs: number): string {
+  const target = new Date(resetsAt * 1000);
+  const now = new Date(nowMs);
+  const sameDay =
+    target.getFullYear() === now.getFullYear() &&
+    target.getMonth() === now.getMonth() &&
+    target.getDate() === now.getDate();
+  if (sameDay) return formatClockTime(resetsAt);
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(target);
 }
 
 export function useCodexRateLimit({
@@ -153,6 +184,8 @@ export function useCodexRateLimit({
     const push = (id: CodexLimitView["id"], label: string, window?: CodexRateLimitWindow) => {
       if (!window) return;
       let resetText = "";
+      let resetAtText = "";
+      let resetInText = "";
       if (window.resets_at) {
         if (id === "five_hour") {
           resetText = t("codexLimit.resetAtTime", { time: formatClockTime(window.resets_at) });
@@ -160,12 +193,21 @@ export function useCodexRateLimit({
           const { days, hours } = formatRemaining(window.resets_at, nowMs);
           resetText = t("codexLimit.resetInRemaining", { days, hours });
         }
+        // 详情对两条窗口都给两种时间：精确到分钟的时刻 + 距现在还有多久。
+        resetAtText = t("codexLimit.resetAtTime", { time: formatResetMoment(window.resets_at, nowMs) });
+        const { days, hours, minutes } = formatRemainingDetailed(window.resets_at, nowMs);
+        resetInText =
+          days > 0
+            ? t("codexLimit.resetInDetailedDays", { days, hours, minutes })
+            : t("codexLimit.resetInDetailedHours", { hours, minutes });
       }
       views.push({
         id,
         label,
         remaining: remainingPercent(window),
         resetText,
+        resetAtText,
+        resetInText,
       });
     };
     push("five_hour", t("codexLimit.fiveHour"), status?.five_hour);
@@ -200,7 +242,9 @@ export function useCodexRateLimit({
       setResetOutcome(result.outcome);
       idempotencyKeyRef.current = "";
       if (result.outcome === "reset" || result.outcome === "alreadyRedeemed") {
+        // 重置成功后回到详情，让用户直接看到刷新后的剩余与可用次数。
         setConfirmOpen(false);
+        setDetailsOpen(true);
       }
     } catch (err) {
       setError(String((err as Error)?.message || t("codexLimit.resetFailed")));
