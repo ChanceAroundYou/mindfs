@@ -153,3 +153,33 @@ func TestCapSituationBriefTrimsNodeCards(t *testing.T) {
 		}
 	}
 }
+
+// 卡片要带「这个节点现在用的什么模型档」：Router 要决定改不改档，先得看见现值 ——
+// 否则只能盲改，或者在用户问「为什么慢」时答不上来。未设模型档的节点留空。
+func TestBriefNodeCardCarriesModel(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, _ := newWorkflowCommentFixture(t, "task-cards-model", "run-cards-model", WorkflowDefinition{
+		Nodes: []WorkflowNode{
+			{ID: "execute", Kind: NodeKindAgent, Params: map[string]any{"prompt": "改代码", "model": "sonnet"}},
+			{ID: "verify", Kind: NodeKindAgent, Params: map[string]any{"prompt": "验证"}},
+		},
+		Edges: []WorkflowEdge{{From: "execute", To: "verify"}},
+	})
+	task, err := store.GetTask(ctx, "task-cards-model")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	brief, err := buildSituationBrief(ctx, store, nil, RouterConfig{}.Normalized(), task, RouterTriggerUserMessage, "")
+	if err != nil {
+		t.Fatalf("buildSituationBrief: %v", err)
+	}
+	if brief.LatestRun == nil || len(brief.LatestRun.Nodes) != 2 {
+		t.Fatalf("node cards = %+v", brief.LatestRun)
+	}
+	if got := brief.LatestRun.Nodes[0].Model; got != "sonnet" {
+		t.Fatalf("execute card model = %q, want sonnet", got)
+	}
+	if got := brief.LatestRun.Nodes[1].Model; got != "" {
+		t.Fatalf("verify card model = %q, want empty (no override)", got)
+	}
+}

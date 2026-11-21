@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -320,5 +321,49 @@ func TestApplyNodeAdminActionsCallPortAndLeaveNote(t *testing.T) {
 	bare := &ActivityService{activities: NewActivityStore(store.db)}
 	if err := bare.applyRouteAction(ctx, decision, task, nil, nil, RouterAction{Seq: 0, Kind: RouterActionSkipNode, NodeID: "verify"}); err == nil {
 		t.Fatal("skip_node without port accepted")
+	}
+}
+
+// 「改 workflow」（改这一轮 Run 的图）与改档同一条规矩：运行中不切换。节点已经有
+// attempt 行、投影还停在 pending 时也必须挡住 —— 证据在行上，不在投影上。
+func TestEditWorkflowRunGraphRejectsRunningNodeModel(t *testing.T) {
+	ctx := context.Background()
+	store, _, run, _ := newWorkflowCommentFixture(t, "task-graph-edit", "run-graph-edit", twoAgentGraph())
+	startWorkflowAgentNode(t, store, run.ID, "execute", "sess-execute")
+	fresh, err := store.WorkflowRunByID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("WorkflowRunByID: %v", err)
+	}
+	edited := fresh.Graph
+	edited.Nodes = append([]WorkflowNode(nil), edited.Nodes...)
+	for i := range edited.Nodes {
+		if edited.Nodes[i].ID == "execute" {
+			params := make(map[string]any, len(edited.Nodes[i].Params)+1)
+			for k, v := range edited.Nodes[i].Params {
+				params[k] = v
+			}
+			params["model"] = "sonnet"
+			edited.Nodes[i].Params = params
+		}
+	}
+	err = store.EditWorkflowRunGraph(ctx, fresh.ID, fresh.Revision, edited)
+	if !errors.Is(err, ErrFrozenNodeEdit) {
+		t.Fatalf("err = %v, want ErrFrozenNodeEdit（运行中不切换）", err)
+	}
+	// 还没跑过的节点不受影响：运行中只冻结已经开始的那部分。
+	pending := fresh.Graph
+	pending.Nodes = append([]WorkflowNode(nil), pending.Nodes...)
+	for i := range pending.Nodes {
+		if pending.Nodes[i].ID == "verify" {
+			params := make(map[string]any, len(pending.Nodes[i].Params)+1)
+			for k, v := range pending.Nodes[i].Params {
+				params[k] = v
+			}
+			params["model"] = "haiku"
+			pending.Nodes[i].Params = params
+		}
+	}
+	if err := store.EditWorkflowRunGraph(ctx, fresh.ID, fresh.Revision, pending); err != nil {
+		t.Fatalf("待跑节点被误挡：%v", err)
 	}
 }

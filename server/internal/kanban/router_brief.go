@@ -112,6 +112,7 @@ type RouterBriefNode struct {
 	Status         string   `json:"status"`
 	SessionPresent bool     `json:"session_present,omitempty"`
 	Attempt        int      `json:"attempt,omitempty"`
+	Model          string   `json:"model,omitempty"`
 	Summary        string   `json:"summary,omitempty"`
 	Actions        []string `json:"actions,omitempty"`
 }
@@ -400,6 +401,16 @@ func briefRun(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task
 	}
 }
 
+// graphNodeModel 读节点当前的模型档（params.model）。空 = 跟随 harness 默认，
+// 卡片留空而不是编一个名字：Router 只能报告它真的知道的东西。
+func graphNodeModel(node WorkflowNode) string {
+	if node.Params == nil {
+		return ""
+	}
+	model, _ := node.Params["model"].(string)
+	return strings.TrimSpace(model)
+}
+
 // briefNodeCards 按图顺序给每个顶层节点出一张卡。状态以投影为准、行做补充
 // （投影可能落后一行）；动作表由状态唯一决定 —— 运行中只能取消，改档与跳过
 // 只在节点不在跑时出现（用户裁定「运行中不切换」）。
@@ -447,6 +458,7 @@ func briefNodeCards(run *WorkflowRun, nodeRuns []NodeRun) ([]RouterBriefNode, in
 			Name:    node.Name,
 			Status:  status,
 			Attempt: row.attempt,
+			Model:   graphNodeModel(node),
 			Summary: truncateRouterText(row.summary, routerBriefNodeExcerpt),
 			Actions: briefNodeActions(node, status),
 		})

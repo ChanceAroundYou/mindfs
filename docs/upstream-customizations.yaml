@@ -11912,7 +11912,7 @@ groups:
       - 'server/internal/agent/workdir.go:func isPathWithin(path, root string) bool {'
 
   - id: G-PD
-    title: Super agent 节点级管理员 W2：Router brief 逐节点卡片（状态 / attempt / 摘要 / 可用动作）
+    title: Super agent 节点级管理员 W2：逐节点卡片（状态 / attempt / 模型档 / 摘要 / 可用动作）+ 节点级改档与跳过
     kind: feature
     symptom: |
       W1 给 Router 配了取消三档、预算与验收项，但它看世界仍然只有一段 node_summary 计数与
@@ -11943,12 +11943,15 @@ groups:
       （改档不改变这一轮已发生的事实，下一次 attempt 才生效）。
       ⑦ `inspect_run` 用可选 `node_id` 做节点级细化，而**不新增第 19 个工具** —— 工具定义本身
       吃 token（同轮另有一组把 36 个内置工具整体关掉，省 ~49k/回合），加参数比加工具便宜。
-      ⑧ 两个动作 apply 后各落一条确定性系统行（`route-model:<decision>:<seq>` /
+      ⑧ 卡片带 `model`（`params.model`，空 = 跟随默认）：改档前先看见现值；「改 workflow」
+      （`EditWorkflowRunGraph`）与改档同一条规矩，运行中的节点图编辑被 `ErrFrozenNodeEdit`
+      拒绝，仍未跑过的节点照常可改。
+      ⑨ 两个动作 apply 后各落一条确定性系统行（`route-model:<decision>:<seq>` /
       `route-skip:<decision>:<seq>`，`ActivityTypeAttention`），用户在任务详情里看得见谁动了
       哪个节点；端口未装配时明确报错，不静默成功。
     boundary: |
-      W2 T1 做读侧卡片，T2 做写侧动作与 `inspect_run(node_id)`；T3 的「运行中切换」守卫
-      （工作流图编辑）随实现补进 files/tests/anchors。卡片摘要只是给人/模型一眼看的摘录，
+      W2 T1 读侧卡片、T2 写侧动作与 `inspect_run(node_id)`、T3 卡片模型档与「改 workflow
+      运行中不生效」的回归钉子，W2 到此收口。卡片摘要只是给人/模型一眼看的摘录，
       细节仍走 inspect_run；不做跨轮历史卡片。节点级动作只认顶层 agent 节点（Loop 内部节点、
       human_gate 拒绝），`set_node_model` 不校验模型档是否在 harness 的可用列表里（与既有
       「按任务选模型」同口径）。
@@ -11975,6 +11978,7 @@ groups:
       - 'server/internal/kanban/router_brief.go:const briefNodeCardLimit = 16'
       - 'server/internal/kanban/router_brief.go:func briefNodeCards(run *WorkflowRun, nodeRuns []NodeRun) ([]RouterBriefNode, int) {'
       - 'server/internal/kanban/router_brief.go:func briefNodeActions(node WorkflowNode, status string) []string {'
+      - 'server/internal/kanban/router_brief.go:func graphNodeModel(node WorkflowNode) string {'
       - 'server/internal/kanban/router_brief.go:Nodes              []RouterBriefNode `json:"nodes,omitempty"`'
       - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCards(brief *SituationBrief) bool {'
       - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCardCount(brief *SituationBrief, keep int) bool {'

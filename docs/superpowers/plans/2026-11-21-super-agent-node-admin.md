@@ -300,3 +300,21 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
 - 边界：节点级动作只认**顶层 agent 节点**（Loop 内部节点、human_gate 拒绝）；`set_node_model`
   不校验模型档是否存在于当前 harness 的可用列表（与既有按任务选模型同口径，配错时由 agent
   层报错并落 unknown）。
+
+### T3 完成（2026-11-21）— W2 收尾
+
+- **卡片带模型档**：`RouterBriefNode.model`（`params.model`，空 = 跟随 harness 默认，
+  `graphNodeModel`）。改档前先看见现值，才谈得上「判」—— 不然 Router 只能盲改，用户问
+  「为什么这个节点慢」时也答不上来。同时提示词规则 20 要求「别改成一样的」。
+- **「改 workflow」与改档同一条规矩**（用户裁定「运行中不要切换」）：
+  `EditWorkflowRunGraph` 早已按「已触发节点」冻结图编辑，本轮把它与 W2 打通并留回归钉子 ——
+  `TestEditWorkflowRunGraphRejectsRunningNodeModel` 用**只有行、投影还停在 pending** 的
+  运行中节点验证：改 `params.model` 被 `ErrFrozenNodeEdit` 拒绝；同一张图里**还没跑过**的
+  节点仍可改（不过度封锁）。
+- 交叉轮切换（已结算的 Run 之后换一条 workflow 重开）在 `router_brief_active_execution_test.go`
+  已有契约，本轮不重复造。
+- 验证：`TestBriefNodeCardCarriesModel` 先红（字段不存在）后绿；两处变异各自打红后还原
+  （卡片不带 model / `workflowRunFrozenNodes` 不看行只认投影）。`go build ./...` 与
+  `go test ./server/internal/kanban/` 全绿（264.3s）。
+- W2 边界（不再扩）：节点级动作只认顶层 agent 节点；模型档不校验 harness 可用列表；
+  跨轮历史卡片不做。
