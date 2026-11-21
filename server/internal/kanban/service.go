@@ -433,6 +433,11 @@ type CreateTaskInput struct {
 	// 的「建完就开跑」行为保持不变）；false 时留言以 queued 状态落库，
 	// 任务停在「待开始」，由 RunNow（立即执行）再派发。
 	StartImmediately *bool
+	// WorkflowChoice / WorkflowVersionID 是首条留言的工作流选择，语义与
+	// POST /api/tasks/{id}/activities 的同名字段一致（空串 = 交给 Router 自动挑）。
+	// 排队时一并落在留言行上，RunNow 派发按原选择执行。
+	WorkflowChoice    string
+	WorkflowVersionID string
 }
 
 type MoveInput struct {

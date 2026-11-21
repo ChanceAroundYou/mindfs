@@ -34,7 +34,7 @@ func answerDecisionFixture(t *testing.T, taskID, runID, decisionID string) (*Tas
 	if err != nil {
 		t.Fatalf("activity service: %v", err)
 	}
-	user, err := activity.QueueUserActivity(ctx, taskID, "我希望是A")
+	user, err := activity.QueueUserActivity(ctx, taskID, "我希望是A", CommentWorkflowChoiceEmpty, nil)
 	if err != nil {
 		t.Fatalf("QueueUserActivity: %v", err)
 	}

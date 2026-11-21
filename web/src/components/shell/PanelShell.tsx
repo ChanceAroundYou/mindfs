@@ -104,6 +104,14 @@ export type PanelShellProps = {
   width?: number;
   /** 卡片最小高度，默认不设 */
   minHeight?: number;
+  /**
+   * 卡片的竖直锚点，默认 `center`（居中）。
+   *
+   * 对话类面板（任务详情）用 `end`：输入区多打一行时卡片向上长，卡片底边、
+   * 底部的「执行详情」胶囊都定在原处。居中锚点会让新增的高度上下各分一半，
+   * 胶囊被顶下去甚至掉出视口 —— 用户报的就是这个。
+   */
+  align?: "center" | "end";
   onClose?: () => void;
   /**
    * header 右上角是否显示关闭（×）按钮，默认不显示。
@@ -132,6 +140,7 @@ export function PanelShell({
   footer,
   width = 720,
   minHeight,
+  align = "center",
   onClose,
   showCloseButton = false,
   belowHeader,
@@ -164,6 +173,7 @@ export function PanelShell({
   return (
     <div
       className="mindfs-panel-overlay"
+      data-align={align}
       style={{
         position: "fixed",
         // inset:0 会把遮罩钉在 layout 视口，键盘弹出后它和卡片一起被压在键盘下面。
@@ -175,7 +185,7 @@ export function PanelShell({
         zIndex: 90,
         background: "rgba(15, 23, 42, 0.36)",
         display: "flex",
-        alignItems: "center",
+        alignItems: align === "end" ? "flex-end" : "center",
         justifyContent: "center",
         padding: "24px",
         // 供上面的 max-height 表达式取值；0 高度时 CSS 回退到 100dvh。
@@ -212,6 +222,13 @@ export function PanelShell({
               top: 36px !important;
               align-items: flex-start !important;
               padding: 8px 12px 12px !important;
+            }
+            /* 底部锚点的对话面板：默认的 top:36px 会让遮罩底边比可见区多出 36px，
+               再按 flex-end 排卡片就把卡片推出屏幕。这里改回贴满可视视口，
+               底部留 12px 呼吸位，卡片继续贴底、向上长。 */
+            .mindfs-panel-overlay[data-align="end"] {
+              top: 0 !important;
+              align-items: flex-end !important;
             }
             .mindfs-panel-dialog {
               width: 100% !important;

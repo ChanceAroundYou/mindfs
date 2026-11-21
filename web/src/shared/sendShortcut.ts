@@ -64,6 +64,38 @@ function displayKey(key: string): string {
   return labels[key] || (key.length === 1 ? key.toUpperCase() : key);
 }
 
+/**
+ * 回车键的语义：`send` 发送，`newline` 换行（交回编辑器默认行为）。
+ *
+ * 会话输入框与任务输入框（新建 / 详情）共用这一处判断，避免两套键盘行为各改各的：
+ *
+ * - 桌面：Enter 换行，Ctrl/Cmd+Enter 发送；Shift+Enter 也换行。
+ * - 移动端软键盘没有 Ctrl：按「回车键发送」设置决定，默认回车换行、右下角发送键发送
+ *   （聊天软键盘的惯例），所以发送永远可用。
+ * - 用户自己录的发送快捷键（`sendShortcut`）在两端都优先，与内置的 Ctrl/Cmd+Enter 并存。
+ */
+export type EnterIntent = "send" | "newline";
+
+export type EnterIntentOptions = {
+  /** 手机 / 窄屏布局（软键盘没有修饰键）。 */
+  isMobile: boolean;
+  /** 移动端设置项「回车键发送」；桌面端不看它。 */
+  mobileEnterKeySends: boolean;
+  /** 用户自选的发送快捷键。 */
+  sendShortcut?: SendShortcut | null;
+};
+
+export function resolveEnterIntent(event: KeyboardEvent | null, options: EnterIntentOptions): EnterIntent {
+  if (!event) return "newline";
+  if (event.key !== "Enter" && event.key !== "NumpadEnter") return "newline";
+  if (matchesSendShortcut(event, options.sendShortcut ?? null)) return "send";
+  // 内置发送键：Ctrl/Cmd+Enter（移动端接外接键盘同样可用）。
+  if (event.ctrlKey || event.metaKey) return "send";
+  if (event.shiftKey || event.altKey) return "newline";
+  if (!options.isMobile) return "newline";
+  return options.mobileEnterKeySends ? "send" : "newline";
+}
+
 export function formatSendShortcut(shortcut: SendShortcut): string {
   const parts: string[] = [];
   if (shortcut.ctrl) parts.push("Ctrl");

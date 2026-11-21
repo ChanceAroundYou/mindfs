@@ -8797,7 +8797,7 @@ groups:
     title: 新建任务可勾掉「立即执行」，首条留言先排队再手动派发
     kind: feature
     symptom: "新建任务面板少了「立即执行」开关：勾掉后任务只落卡，首条留言停在「待执行」，等用户点对话里的「立即执行」再交给 Router。默认勾选时与改造前一致——建完立刻派发首条留言。"
-    why: "用户 2026-11-17 明确要求把立即执行加回来且默认选中、勾掉可不立刻执行。必须保留：① `start_immediately` 缺省（nil）按 true 处理，老调用方/老客户端不传字段行为不变；② 勾掉时首条留言以 `queued` 状态落库且**不触发** Router（不建 Run、不发 agent 回合），任务停在待开始，`queued` 只属于用户留言，agent 回复不会使用；③ 派发入口唯一：`DispatchQueuedUserActivity` 由 RunNow 与 Resume（暂停中的排队任务）调用，先原子 claim 最早一条（`UPDATE ... WHERE status='queued'` + RowsAffected）再走 `dispatchUserActivity`，双击/重复 RunNow 幂等，绝不重复开一轮；④ 不复制分发逻辑：`CreateUserActivity` 与排队派发共用 `insertUserActivity`/`dispatchUserActivity`，Router shadow 快照仍严格早于 legacy 分发；⑤ 前端「立即执行」收在输入框右下角的控件行（`RunImmediatelyControl` 的 action 形态），只在真的存在 queued 用户留言时出现（终态任务不给入口）；排队留言气泡只留「待执行」徽标，点完乐观清 queued 并刷新任务头。"
+    why: "用户 2026-11-17 明确要求把立即执行加回来且默认选中、勾掉可不立刻执行。必须保留：① `start_immediately` 缺省（nil）按 true 处理，老调用方/老客户端不传字段行为不变；② 勾掉时首条留言以 `queued` 状态落库且**不触发** Router（不建 Run、不发 agent 回合），任务停在待开始，`queued` 只属于用户留言，agent 回复不会使用；③ 派发入口唯一：`DispatchQueuedUserActivity` 由 RunNow 与 Resume（暂停中的排队任务）调用，先原子 claim 最早一条（`UPDATE ... WHERE status='queued'` + RowsAffected）再走 `dispatchUserActivity`，双击/重复 RunNow 幂等，绝不重复开一轮；④ 不复制分发逻辑：`CreateUserActivity` 与排队派发共用 `insertUserActivity`/`dispatchUserActivity`，Router shadow 快照仍严格早于 legacy 分发；⑤ 前端「立即执行」只在**新建任务面板**的控件行里，且只留图标（28×28、8px 圆角，与发送键同款；文案走 `aria-label`/`title`）；任务详情输入框**没有**这个开关——留言一律立刻发出，派发入口搬到排队留言气泡的页脚（`data-testid` 为 `activity-run-queued`），只在真的存在 queued 用户留言时出现（终态任务不给入口）；排队留言气泡只留「待执行」徽标，点完乐观清 queued 并刷新任务头；⑥ 工作流选择随首条留言一起落库（`workflow_choice` / `workflow_version_id`，语义与 `POST /api/tasks/{id}/activities` 同名字段一致），排队路径在 `DispatchQueuedUserActivity` 里从留言行恢复版本再派发；`specified` 不带版本在建卡时就 400（`normalizeCreateTaskWorkflow`），不留一张每次点「立即执行」都报同一句错、用户无从修起的卡。"
     boundary: "只改新建任务的立即执行开关、用户留言的 queued 状态与派发路径；不改 Router 决策语义（G-LP）、不改一轮结束后的任务状态投影与结果摘要（G-LX）、不改 workflow 引擎/DAG，也不引入后台定时派发——排队留言只能由 RunNow/Resume 显式派发。"
     files:
       - server/internal/kanban/types.go
@@ -8808,6 +8808,7 @@ groups:
       - server/internal/kanban/service_run_moves.go
       - server/internal/kanban/service_create_test.go
       - server/internal/api/http_tasks.go
+      - server/internal/api/http_task_create_workflow_test.go
       - web/src/app/appTask.ts
       - web/src/app/useTaskComposer.ts
       - web/src/components/app/TaskInlineEditPanel.tsx
@@ -8822,20 +8823,27 @@ groups:
       - web/tests/task-panel-unification.test.mjs
     tests:
       - server/internal/kanban/service_create_test.go
+      - server/internal/api/http_task_create_workflow_test.go
       - web/tests/task-create-panel.test.mjs
       - web/tests/task-panel-unification.test.mjs
     anchors:
       - 'server/internal/kanban/types.go:ActivityStatusQueued = "queued"'
       - 'server/internal/kanban/service.go:StartImmediately *bool'
-      - 'server/internal/kanban/service_tasks.go:activitySvc.QueueUserActivity(ctx, taskID, input)'
-      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body string) (*TaskActivity, error) {'
+      - 'server/internal/kanban/service_tasks.go:normalizeCreateTaskWorkflow(in.WorkflowChoice, in.WorkflowVersionID)'
+      - 'server/internal/kanban/service_tasks.go:if version == "" {'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body, choice string, versionID *string) (*TaskActivity, error) {'
+      - 'server/internal/kanban/activity_service.go:func workflowVersionOf(choice string, versionID *string) string {'
       - 'server/internal/kanban/activity_service.go:func (s *ActivityService) DispatchQueuedUserActivity(ctx context.Context, taskID string) (*TaskActivity, *TaskActivity, error) {'
       - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) ClaimFirstQueuedUserMessage(ctx context.Context, taskID string) (*TaskActivity, error) {'
       - 'server/internal/kanban/service_run_moves.go:activitySvc.DispatchQueuedUserActivity(ctx, task.ID)'
       - 'server/internal/api/http_tasks.go:StartImmediately *bool `json:"start_immediately"`'
+      - 'server/internal/api/http_tasks.go:WorkflowVersionID string `json:"workflow_version_id"`'
+      - 'server/internal/kanban/service.go:// 排队时一并落在留言行上，RunNow 派发按原选择执行。'
       - 'web/src/components/app/TaskInlineEditPanel.tsx:active={taskInlineEdit.startImmediately}'
-      - 'web/src/components/task/RunImmediatelyControl.tsx:running ? t("task.startingNow") : label'
+      - 'web/src/components/task/RunImmediatelyControl.tsx:const hint = t("task.startImmediatelyHint");'
       - 'web/src/hooks/useTaskActivities.ts:runQueued: () => Promise<void>;'
+      - 'web/src/app/useTaskComposer.ts:workflowChoice: edit.workflowChoice,'
+      - 'web/src/services/task/crud.ts:workflow_choice: options.workflowChoice'
       - 'web/src/services/task/crud.ts:start_immediately: options?.startImmediately ?? true'
 
   # ── 拖选复制只认聊天正文 ─────────────────────────────────────────────
@@ -10073,7 +10081,7 @@ groups:
       - 'server/internal/kanban/workflow_human_gate_payload.go:func gateActivityPayload(run *WorkflowRun, node WorkflowNode, nr NodeRun) (string, error) {'
       - 'server/internal/kanban/workflow_human_gate_payload.go:payload["upstream"] = upstream'
       - 'server/internal/kanban/workflow_human_gate.go:func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, nodeID, decision, commentID, note string) (NodeRun, error) {'
-      - 'server/internal/kanban/workflow_human_gate.go:} else if _, err := activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed); err != nil {'
+      - 'server/internal/kanban/workflow_human_gate.go:activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed, CommentWorkflowChoiceEmpty, nil)'
       - 'server/internal/kanban/service_gate_note.go:func (s *Service) dispatchQueuedGateNote(ctx context.Context, store *TaskStore, run *WorkflowRun) {'
       - 'server/internal/api/http_task_human_gate.go:Note string `json:"note"`'
       - 'web/src/shared/activityModel.ts:export function visibleConversationActivities(activities: TaskActivity[]): TaskActivity[] {'
@@ -11546,13 +11554,24 @@ groups:
       未保存改名照样先确认。最终布局：左「状态 #编号 任务名 [编辑]」，中间留白，右「[操作控件] [删除] [关闭]」。
       ⑩ 移动端正文左右留白从 14px 收到 8px（`@media (max-width:640px)` 的 `.task-detail-content`），
       上下仍 12px；子项一律 `min-width:0`，收窄不产生横向溢出。
-      ⑪ 「立即执行」两处统一成同一颗胶囊、同一个落点 —— `PromptEditor` 右下角的控件行
-      （`extraControls`）：新建任务面板是开关（`mode="toggle"`，真实 checkbox，默认开，决定建完
-      是否马上派发首条留言），任务详情面板是动作（`mode="action"`，只在真的存在一条 `queued`
-      用户留言时出现，点它仍走既有 `POST /api/tasks/{id}/run-now`）。排队留言的气泡页脚只留
-      「待执行」状态胶囊，不再自带按钮。控件比一颗 28px 图标宽，`PromptEditor` 因此新增
-      `extraControlsExtraInset`，单行正文多让 84px（`composerEditorInsets` 的 132 → 216），
-      否则字会压在胶囊上。
+      ⑪ 「立即执行」收成控件行里的一颗图标键（2026-11-21 第三轮）：新建任务面板保留它，
+      但只留图标（`RunNowIcon`，`title`/`aria-label` 给完整文案），外观与发送键同款 ——
+      28×28、`borderRadius: 8px`、可用时同一套强调色；同一排还有新增的「选择工作流」
+      （`WorkflowSelector`，可选「自动」或某个 workflow 版本）。任务详情输入框**不再有**
+      「立即执行」：派发入口搬到排队留言的气泡页脚（`data-testid="activity-run-queued"`，
+      只在真的存在一条 `queued` 用户留言且视图传了 `onRunQueued` 时出现），点它仍走既有
+      `POST /api/tasks/{id}/run-now`。控件行比原来宽，`PromptEditor` 的
+      `extraControlsExtraInset` 新建侧 128px、详情侧 0。
+      ⑫ 回车语义统一（2026-11-21）：`shared/sendShortcut.ts` 的 `resolveEnterIntent` 是唯一
+      口径（`matchesSendShortcut` → `Ctrl/Cmd` → `Shift/Alt` → 桌面换行 → 移动端偏好），
+      新建任务面板、任务详情输入框与**会话输入框**共用它 —— 桌面 `Enter` 换行、
+      `Ctrl/Cmd+Enter` 发送；移动端（`useMobileKeyboard`：`pointer: coarse`，768px 兜底）
+      默认回车换行、尊重「回车发送」偏好，发送键始终可点，不出现只能靠回车的死角。
+      ⑬ 输入区长高不再把胶囊顶走（2026-11-21）：任务详情面板的 `PanelShell` 传 `align="end"`，
+      卡片贴可视视口底部、向上生长，底边与「执行详情 / 监管记录」胶囊原地不动；移动端遮罩
+      默认 `top:36px`（顶栏之下）会让贴底卡片出屏，`[data-align="end"]` 单独改回贴满可视视口。
+      `useComposerBottomPin` 兜住另一条路径：卡片到 `maxHeight` 后正文才开始滚动，ResizeObserver
+      在输入区长高且视口仍贴底（`COMPOSER_PIN_PX=48`）时把 `.mindfs-panel-body` 重新滚到底。
     boundary: |
       只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
@@ -11568,7 +11587,10 @@ groups:
       移动端只收窄正文左右留白，header 的内边距与面板圆角不动。
       「立即执行」只换落点，不改语义：新建侧仍是建卡时的一个布尔（`start_immediately` 默认 true），
       详情侧仍只在有排队留言时出现、点它仍是同一个 `run-now` 接口；不新增自动派发、不在面板
-      其它位置再开一个入口，也不给已经跑起来的任务加「重新执行」。
+      其它位置再开一个入口，也不给已经跑起来的任务加「重新执行」。回车语义只动「按键怎么触发
+      发送」，不改发送链路与草稿重放；移动端默认仍然是回车换行，偏好不改。贴底锚点只给任务
+      详情这一种面板：新建任务面板、工作流编辑器等仍居中，`PanelShell` 的 `align` 默认 `center`。
+      输入区向上生长时只有 `.mindfs-panel-body` 滚动，不滚 window、不改首屏落底逻辑。
     files:
       - web/src/components/task/ActivityMessage.tsx
       - web/src/components/task/ActivityInput.tsx
@@ -11584,6 +11606,9 @@ groups:
       - web/src/components/shell/PanelShell.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/useSupervisionEntry.ts
+      - web/src/components/task/useComposerBottomPin.ts
+      - web/src/shared/sendShortcut.ts
+      - web/src/hooks/useMobileKeyboard.ts
       - web/src/components/task/conversationScroll.ts
       - web/src/components/task/useConversationJumpToLatest.ts
       - web/src/components/task/ActivityTypeTag.tsx
@@ -11612,6 +11637,10 @@ groups:
       - web/tests/task-create-panel.test.mjs
       - web/tests/task-run-immediately.test.mjs
       - web/tests/session-viewer-scroll-split.test.mjs
+      - web/tests/composer-bottom-pin.test.mjs
+      - web/tests/shared-send-shortcut.test.mjs
+      - web/tests/task-composer-mention-image.test.mjs
+      - e2e/test_task_composer_enter_and_layout.py
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
@@ -11652,10 +11681,23 @@ groups:
       - 'web/src/components/task/TaskDetailActionsMenu.tsx:role="menuitem"'
       - 'web/src/components/task/RunImmediatelyControl.tsx:export function RunImmediatelyControl({'
       - 'web/src/components/task/RunImmediatelyControl.tsx:data-testid="run-immediately-toggle"'
-      - 'web/src/components/task/ActivityInput.tsx:<RunImmediatelyControl mode="action" running={runningQueued} onClick={onRunQueued} />'
+      - 'web/src/components/task/RunImmediatelyControl.tsx:...composerSendButtonStyle({ enabled: active && !disabled, variant: "panel" }),'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-run-queued"'
       - 'web/src/components/task/ConversationView.tsx:const queuedActivity = queuedUserActivity(activities);'
       - 'web/src/components/editor/PromptEditor.tsx:extraControlsExtraInset = 0,'
-      - 'web/src/components/app/TaskInlineEditPanel.tsx:mode="toggle"'
+      - 'web/src/components/editor/PromptEditor.tsx:const intent = resolveEnterIntent(event, {'
+      - 'web/src/shared/sendShortcut.ts:export function resolveEnterIntent('
+      - 'web/src/hooks/useMobileKeyboard.ts:export function useMobileKeyboard(): boolean {'
+      - 'web/src/components/task/useComposerBottomPin.ts:export const COMPOSER_PIN_PX = 48;'
+      - 'web/src/components/task/useComposerBottomPin.ts:if (!delta || !pinned) return;'
+      - 'web/src/components/task/ConversationView.tsx:useComposerBottomPin(composerRef, scrollAnchorRef);'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:<RunImmediatelyControl'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:<WorkflowSelector'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:extraControlsExtraInset={128}'
+      - 'web/src/components/shell/PanelShell.tsx:align = "center",'
+      - 'web/src/components/shell/PanelShell.tsx:alignItems: align === "end" ? "flex-end" : "center",'
+      - 'web/src/components/shell/PanelShell.tsx:.mindfs-panel-overlay[data-align="end"] {'
+      - 'web/src/components/task/TaskDetailPanel.tsx:align="end"'
       - 'web/src/shared/activityModel.ts:export function queuedUserActivity(activities: TaskActivity[]): TaskActivity | null {'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.startImmediatelyHint": "建完任务就立刻派发首条留言",'
       - 'web/src/components/shell/PanelShell.tsx:showCloseButton = false,'

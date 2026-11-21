@@ -204,11 +204,19 @@ func (s *ActivityService) CreateUserActivity(
 	if err != nil {
 		return nil, nil, err
 	}
-	userAct, err := s.insertUserActivity(ctx, task, body, choice, "")
+	userAct, err := s.insertUserActivity(ctx, task, body, choice, workflowVersionOf(choice, workflowVersionID), "")
 	if err != nil {
 		return nil, nil, err
 	}
 	return s.dispatchUserActivity(ctx, task, userAct, workflowVersionID)
+}
+
+// workflowVersionOf 只在 specified 时把版本写到留言行上；其余选择带版本没有意义。
+func workflowVersionOf(choice string, versionID *string) string {
+	if choice != CommentWorkflowChoiceSpecified || versionID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*versionID)
 }
 
 // CreateUserReply 把外部通道（飞书卡片等）上的回答写成一条绑定的用户留言，
@@ -251,7 +259,7 @@ func (s *ActivityService) CreateUserReply(
 	} else if !errors.Is(err, ErrActivityNotFound) {
 		return nil, nil, err
 	}
-	userAct, err := s.insertUserActivity(ctx, task, body, CommentWorkflowChoiceEmpty, "")
+	userAct, err := s.insertUserActivity(ctx, task, body, CommentWorkflowChoiceEmpty, "", "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -267,7 +275,7 @@ func (s *ActivityService) CreateUserReply(
 //
 // 与 CreateUserActivity 的区别只在**不派发**：留言以 queued 状态进入对话流，
 // 任务停在「待开始」；之后 RunNow 调 DispatchQueuedUserActivity 再交给 Router。
-func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body string) (*TaskActivity, error) {
+func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body, choice string, versionID *string) (*TaskActivity, error) {
 	if s == nil || s.tasks == nil || s.activities == nil {
 		return nil, errors.New("activity service not configured")
 	}
@@ -278,7 +286,11 @@ func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body st
 	if err != nil {
 		return nil, err
 	}
-	return s.insertUserActivity(ctx, task, body, CommentWorkflowChoiceEmpty, ActivityStatusQueued)
+	normalized, err := normalizeWorkflowChoice(choice)
+	if err != nil {
+		return nil, err
+	}
+	return s.insertUserActivity(ctx, task, body, normalized, workflowVersionOf(normalized, versionID), ActivityStatusQueued)
 }
 
 // DispatchQueuedUserActivity 把最早一条排队留言交给 Router（RunNow 的实现）。
@@ -300,7 +312,14 @@ func (s *ActivityService) DispatchQueuedUserActivity(ctx context.Context, taskID
 		return nil, nil, err
 	}
 	s.broadcastUpdated(userAct, map[string]any{"status": ""})
-	return s.dispatchUserActivity(ctx, task, userAct, nil)
+	// 排队时记下的工作流选择原样生效：specified 必须把版本一起带回去，
+	// 否则 dispatch 会按「specified 但没版本」直接失败。
+	var versionID *string
+	if strings.TrimSpace(userAct.WorkflowVersionID) != "" {
+		version := userAct.WorkflowVersionID
+		versionID = &version
+	}
+	return s.dispatchUserActivity(ctx, task, userAct, versionID)
 }
 
 // insertUserActivity 校验并落一条用户留言，统一负责广播。
@@ -310,6 +329,7 @@ func (s *ActivityService) insertUserActivity(
 	task Task,
 	body string,
 	choice string,
+	versionID string,
 	status string,
 ) (*TaskActivity, error) {
 	body = strings.TrimSpace(body)
@@ -317,14 +337,15 @@ func (s *ActivityService) insertUserActivity(
 		return nil, ErrEmptyActivityBody
 	}
 	userAct := &TaskActivity{
-		ID:             newID("act"),
-		TaskID:         task.ID,
-		RootID:         task.RootID,
-		Type:           ActivityTypeUserMessage,
-		Role:           RoleUser,
-		Body:           body,
-		WorkflowChoice: choice,
-		Status:         status,
+		ID:                newID("act"),
+		TaskID:            task.ID,
+		RootID:            task.RootID,
+		Type:              ActivityTypeUserMessage,
+		Role:              RoleUser,
+		Body:              body,
+		WorkflowChoice:    choice,
+		WorkflowVersionID: versionID,
+		Status:            status,
 	}
 	if err := s.activities.Insert(ctx, userAct); err != nil {
 		return nil, err

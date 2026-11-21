@@ -6,6 +6,7 @@ import type { CandidateItem } from "../../services/candidates";
 import { reportError } from "../../services/net/error";
 import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "../../services/upload";
 import { matchesSendShortcut } from "../../services/prefs/sendShortcut";
+import { resolveEnterIntent } from "../../shared/sendShortcut";
 import type { PendingAttachment, SessionMode, TokenEditorHandle } from "../../shared/actionBarTypes";
 import { getAgentDefaults, has1MSuffix } from "./modelUtils";
 import { replaceActiveTokenText } from "./inputTransforms";
@@ -290,7 +291,18 @@ export function useActionBarHandlers(params: UseActionBarHandlersParams) {
       if (activeCandidateIndex >= 0) { event?.preventDefault(); event?.stopPropagation(); applyCandidate(candidates[activeCandidateIndex]); return true; }
       if (mode !== "command") { event?.preventDefault(); event?.stopPropagation(); applyCandidate(candidates[0]); return true; }
     }
-    if (!isMobile || (mobileEnterKeySends && mode === "chat")) { event?.preventDefault(); event?.stopPropagation(); void handleSend(); return true; }
+    const intent = resolveEnterIntent(event, {
+      isMobile,
+      // 命令模式下移动端回车永远换行：命令按 Enter 直接送出去太危险。
+      mobileEnterKeySends: Boolean(mobileEnterKeySends) && mode === "chat",
+      sendShortcut: normalizedSendShortcut,
+    });
+    if (intent === "send") {
+      event?.preventDefault();
+      event?.stopPropagation();
+      void handleSend();
+      return true;
+    }
     return false;
   }, [activeCandidateIndex, applyCandidate, candidates, handleSend, isCompositionActive, isMobile, mobileEnterKeySends, mode, normalizedSendShortcut]);
 

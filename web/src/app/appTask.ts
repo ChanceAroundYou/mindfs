@@ -6,6 +6,7 @@
 // 类型依赖使用 import type，避免在运行时引入 i18n 与 task service 模块。
 import type { MessageKey, MessageParams } from "../i18n";
 import type { KanbanTask, TaskDetail } from "../services/tasks";
+import type { WorkflowChoice } from "../shared/taskComments";
 import { scopeKey } from "../shared/scope";
 
 /**
@@ -169,6 +170,12 @@ export type TaskInlineEditState = {
    * 勾掉时任务只落卡、留言以 queued 进对话流，等用户在对话里点「立即执行」。
    */
   startImmediately: boolean;
+  /**
+   * 首条留言的工作流选择。与任务详情输入框同一套取值：`empty` 交给 Router 自动挑，
+   * `specified` 用 `workflowVersionId` 指定的版本，`disabled` 直接对话不跑工作流。
+   */
+  workflowChoice: WorkflowChoice;
+  workflowVersionId: string;
   createWorktree: boolean;
   worktreeBranchMode: "new" | "existing";
   worktreeBranch: string;

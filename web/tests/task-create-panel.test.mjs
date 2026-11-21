@@ -57,12 +57,17 @@ assert.doesNotMatch(
 // 禁用态灰底：不能用未定义的 CSS 变量。
 assert.doesNotMatch(composer, /var\(--button-bg\)/, "composerStyles must not reference the undefined button-bg variable");
 
-// 回车 = 发送（复用 PromptEditor 的输入框都得有）。
+// 回车语义：桌面端 Enter 换行、Ctrl/Cmd+Enter 发送；移动端沿用「回车发送」偏好。
+// 判定收敛在 shared/sendShortcut 的 resolveEnterIntent，会话输入框与两个任务输入框共用。
+const sendShortcut = fs.readFileSync(path.join(root, "src/shared/sendShortcut.ts"), "utf8");
 assert.match(promptEditor, /onEnter\?: \(event: KeyboardEvent \| null\) => boolean;/, "PromptEditor must accept an onEnter override");
 assert.match(promptEditor, /onEnter=\{handleEnter\}/, "PromptEditor must forward Enter handling to TokenEditor");
-assert.match(promptEditor, /if \(isComposing\(event\) \|\| event\?\.shiftKey\) return false;/, "Enter must pass through while composing and on Shift+Enter");
+assert.match(promptEditor, /resolveEnterIntent\(event, \{/, "PromptEditor must defer Enter semantics to the shared resolver");
+assert.match(promptEditor, /if \(intent !== "send"\) return false;/, "a newline intent must fall through to Lexical");
 assert.match(promptEditor, /if \(canSend\) flushAndSend\(\);/, "Enter must send when the editor has text and is not sending");
 assert.match(promptEditor, /const canSend = !sending && !sendDisabled;/, "send is gated by the sending state and the caller's send gate");
+assert.match(sendShortcut, /if \(!options\.isMobile\) return "newline";/, "desktop Enter must insert a newline");
+assert.match(sendShortcut, /if \(event\.ctrlKey \|\| event\.metaKey\) return "send";/, "Ctrl/Cmd+Enter must send");
 
 // setText 不得无条件抢焦点。
 const tokenEditor = fs.readFileSync(path.join(root, "src/components/editor/TokenEditor.tsx"), "utf8");
@@ -97,16 +102,29 @@ assert.doesNotMatch(inlinePanel, /<StageEditor\b/, "the create panel must not re
 assert.doesNotMatch(inlinePanel, /<AgentSelector\b/, "agent choice belongs to the router, not the create panel");
 assert.doesNotMatch(inlinePanel, /DEFAULT_TASK_MODEL|inheritAgentStage|<StageOptionsBar\b/, "stage options must be gone from the create panel");
 // 「立即执行」在对话模型里只剩一个含义：建完立刻派发首条留言（默认勾上）。
-// 位置已收进输入框右下角的控件行，与任务详情面板共用同一颗胶囊。
+// 位置在输入框右下角的控件行，与「选择工作流」并排；详情面板的发送框里没有它。
 assert.match(inlinePanel, /active=\{taskInlineEdit\.startImmediately\}/, "the create panel must expose the immediate-run toggle");
 assert.match(
   inlinePanel,
-  /<RunImmediatelyControl[\s\S]{0,200}?mode="toggle"[\s\S]{0,200}?active=\{taskInlineEdit\.startImmediately\}/,
+  /<RunImmediatelyControl[\s\S]{0,200}?active=\{taskInlineEdit\.startImmediately\}/,
   "the toggle must be the shared run-immediately control",
 );
-assert.match(inlinePanel, /extraControlsExtraInset=\{84\}/, "单行正文要让出胶囊的宽度");
+assert.doesNotMatch(inlinePanel, /mode="toggle"|mode="action"/, "the toggle has a single icon-only form");
+assert.match(
+  inlinePanel,
+  /<WorkflowSelector[\s\S]{0,320}?choice=\{taskInlineEdit\.workflowChoice\}/,
+  "the create panel must let the first message pick a workflow",
+);
+assert.match(inlinePanel, /extraControlsExtraInset=\{128\}/, "两个控件都比单颗胶囊宽，正文要让出位置");
 assert.doesNotMatch(inlinePanel, /type="checkbox"/, "面板自己不再手搓一个勾选框");
 assert.match(tasks, /start_immediately: options\?\.startImmediately \?\? true/, "createTask must send start_immediately and default it to true");
+assert.match(tasks, /workflow_choice: options\.workflowChoice/, "createTask must forward the picked workflow_choice");
+assert.match(tasks, /workflow_version_id: options\.workflowVersionId/, "createTask must forward the picked workflow version");
+assert.match(
+  fs.readFileSync(path.join(root, "src/app/useTaskComposer.ts"), "utf8"),
+  /workflowChoice: edit\.workflowChoice/,
+  "the create dialog must pass its workflow choice into createTask",
+);
 assert.match(tasks, /export async function runTaskNow\(/, "the queued message needs a run-now service call");
 assert.match(
   inlinePanel,

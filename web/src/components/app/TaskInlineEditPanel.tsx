@@ -20,6 +20,7 @@ import { ManagedRootPayload } from "../../app/appMisc";
 import { TaskInlineEditState } from "../../app/appTask";
 import { TaskInlineCandidateMenu } from "./TaskInlineCandidateMenu";
 import { RunImmediatelyControl } from "../task/RunImmediatelyControl";
+import { WorkflowSelector } from "../task/WorkflowSelector";
 
 export interface TaskInlineEditPanelProps {
   PanelShell: any;
@@ -271,14 +272,24 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                       sendDisabled={!(taskInlineEdit.text.trim() || taskInlineEdit.attachments.length > 0)}
                       placeholder={t("task.editPlaceholder")}
                       extraControls={(
-                        <RunImmediatelyControl
-                          mode="toggle"
-                          active={taskInlineEdit.startImmediately}
-                          disabled={taskInlineSaving}
-                          onToggle={(next) => setTaskInlineEdit((prev) => prev ? { ...prev, startImmediately: next } : prev)}
-                        />
+                        <>
+                          <RunImmediatelyControl
+                            active={taskInlineEdit.startImmediately}
+                            disabled={taskInlineSaving}
+                            onToggle={(next) => setTaskInlineEdit((prev) => prev ? { ...prev, startImmediately: next } : prev)}
+                          />
+                          <WorkflowSelector
+                            choice={taskInlineEdit.workflowChoice}
+                            versionId={taskInlineEdit.workflowVersionId}
+                            onChange={(choice, versionId) => setTaskInlineEdit((prev) => prev ? {
+                              ...prev,
+                              workflowChoice: choice,
+                              workflowVersionId: versionId,
+                            } : prev)}
+                          />
+                        </>
                       )}
-                      extraControlsExtraInset={84}
+                      extraControlsExtraInset={128}
                     />
                   </div>
                   <ComposerAttachmentStrip

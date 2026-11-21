@@ -83,6 +83,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
     <>
     <PanelShell
       width={720}
+      // 对话面板贴底：输入区多打一行时卡片向上长，底部的「执行详情」胶囊原地不动。
+      align="end"
       onClose={onClose}
       hasUnsavedChanges={() => editingName && nameDraft.trim() !== (task.name || "").trim()}
       title={editingName ? (

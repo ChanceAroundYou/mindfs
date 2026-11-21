@@ -69,10 +69,26 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		WorktreeBranch     string `json:"worktree_branch"`
 		// 缺省（nil）按 true 处理：老客户端不传这个字段时行为不变。
 		StartImmediately *bool `json:"start_immediately"`
+		// 首条留言的工作流选择，语义与 POST /api/tasks/{id}/activities 一致。
+		WorkflowChoice    string `json:"workflow_choice"`
+		WorkflowVersionID string `json:"workflow_version_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
+	}
+	if choice := strings.TrimSpace(req.WorkflowChoice); choice != "" {
+		valid := false
+		for _, candidate := range activityWorkflowChoices {
+			if choice == candidate {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			respondError(w, http.StatusBadRequest, errInvalidRequest("invalid workflow_choice"))
+			return
+		}
 	}
 	create := kanban.CreateTaskInput{
 		RootID:             req.RootID,
@@ -82,6 +98,8 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		WorktreeBranchMode: req.WorktreeBranchMode,
 		WorktreeBranch:     req.WorktreeBranch,
 		StartImmediately:   req.StartImmediately,
+		WorkflowChoice:     req.WorkflowChoice,
+		WorkflowVersionID:  req.WorkflowVersionID,
 	}
 	detail, err := svc.CreateTask(r.Context(), create)
 	if err != nil {

@@ -60,10 +60,15 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 	if input != "" {
 		activitySvc, actErr := s.ActivityServiceForRoot(rootID)
 		if actErr == nil {
-			if in.StartImmediately != nil && !*in.StartImmediately {
-				_, actErr = activitySvc.QueueUserActivity(ctx, taskID, input)
-			} else {
-				_, _, actErr = activitySvc.CreateUserActivity(ctx, taskID, input, CommentWorkflowChoiceEmpty, nil)
+			var choice string
+			var versionID *string
+			choice, versionID, actErr = normalizeCreateTaskWorkflow(in.WorkflowChoice, in.WorkflowVersionID)
+			if actErr == nil {
+				if in.StartImmediately != nil && !*in.StartImmediately {
+					_, actErr = activitySvc.QueueUserActivity(ctx, taskID, input, choice, versionID)
+				} else {
+					_, _, actErr = activitySvc.CreateUserActivity(ctx, taskID, input, choice, versionID)
+				}
 			}
 		}
 		if actErr != nil {
@@ -72,6 +77,29 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		}
 	}
 	return store.GetDetail(ctx, taskID)
+}
+
+// normalizeCreateTaskWorkflow 规整建任务时带的工作流选择。
+//
+// 空串按 `empty`（交给 Router 自动挑）处理；版本只在 specified 时下发。
+// 非法选择不在这里吞掉 —— 交给 ActivityService 的 normalizeWorkflowChoice 报错，
+// 让用户在建卡这一步就看见问题，而不是任务建好、留言却派发失败。
+//
+// specified 但没版本在这里就拒：排队路径要等用户点「立即执行」才派发，如果放到
+// 派发时才失败，卡片会一直停在待开始、每次点都报同一句错，用户无从修起。
+func normalizeCreateTaskWorkflow(choice, versionID string) (string, *string, error) {
+	normalized := strings.TrimSpace(choice)
+	if normalized == "" {
+		normalized = CommentWorkflowChoiceEmpty
+	}
+	if normalized != CommentWorkflowChoiceSpecified {
+		return normalized, nil, nil
+	}
+	version := strings.TrimSpace(versionID)
+	if version == "" {
+		return normalized, nil, errors.New("workflow_version_id required when workflow_choice=specified")
+	}
+	return normalized, &version, nil
 }
 
 func (s *Service) ListTasks(ctx context.Context, rootID string, opts ListTasksOptions) ([]Task, error) {

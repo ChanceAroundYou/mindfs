@@ -325,7 +325,7 @@ func TestRouterRouteRefreshesQueuedBrief(t *testing.T) {
 		t.Fatalf("ActivityServiceForRoot: %v", err)
 	}
 	const body = "继续实现登录页"
-	userAct, err := activity.QueueUserActivity(ctx, run.TaskID, body)
+	userAct, err := activity.QueueUserActivity(ctx, run.TaskID, body, CommentWorkflowChoiceEmpty, nil)
 	if err != nil {
 		t.Fatalf("QueueUserActivity: %v", err)
 	}

@@ -15,7 +15,6 @@ import { useCandidateKeyboard } from "../editor/useCandidateKeyboard";
 import { PromptEditor } from "../editor/PromptEditor";
 import { ComposerAttachmentStrip } from "../editor/ComposerAttachmentStrip";
 import { WorkflowSelector } from "./WorkflowSelector";
-import { RunImmediatelyControl } from "./RunImmediatelyControl";
 
 export type ActivityInputProps = {
   body: string;
@@ -35,9 +34,6 @@ export type ActivityInputProps = {
   sending?: boolean;
   error?: string | null;
   placeholder?: string;
-  /** 排队中的首条留言：有值时输入框右下角出现「立即执行」。 */
-  onRunQueued?: () => void;
-  runningQueued?: boolean;
   /** 每次发送成功后由父层递增，把编辑器清空。 */
   resetKey?: number;
   onSend: (text: string) => void;
@@ -72,8 +68,6 @@ export function ActivityInput({
   sending = false,
   error,
   placeholder,
-  onRunQueued,
-  runningQueued = false,
   resetKey,
   onSend,
 }: ActivityInputProps) {
@@ -178,20 +172,13 @@ export function ActivityInput({
           sendTestId="activity-send"
           sendLabel={sending ? t("task.activity.sending") : t("task.activity.send")}
           extraControls={(
-            <>
-              {/* 「立即执行」与新建任务面板同一颗胶囊、同一个落点（输入框右下角
-                  控件行）。只有真的有一条排队留言时才出现，派发在飞时置灰。 */}
-              {onRunQueued ? (
-                <RunImmediatelyControl mode="action" running={runningQueued} onClick={onRunQueued} />
-              ) : null}
-              <WorkflowSelector
-                choice={choice}
-                versionId={versionId}
-                onChange={onWorkflowChange}
-              />
-            </>
+            <WorkflowSelector
+              choice={choice}
+              versionId={versionId}
+              onChange={onWorkflowChange}
+            />
           )}
-          extraControlsExtraInset={onRunQueued ? 84 : 0}
+          extraControlsExtraInset={0}
         />
       </div>
 
