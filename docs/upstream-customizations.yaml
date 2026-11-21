@@ -11498,3 +11498,31 @@ groups:
       - 'web/src/index.css:.task-detail-execution {'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.expand": "查看执行详情",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directHint": "本轮是直连对话，执行过程在任务会话里",'
+
+  - id: G-NZ
+    title: 自动发现不再把 /tmp 下的隔离实例目录注册成项目
+    kind: fix
+    symptom: "会话/项目列表里反复凭空冒出 `proj` 或 `tmp` 项目。取证：生产 systemd 单元为大文件上传设了 `TMPDIR=/var/tmp`，而 `IsTemporaryWorkDir` 只比较 `os.TempDir()`，于是 `/tmp/**` 不再被当成临时目录；每 60 秒一次的 `autoAddExternalProjectRoots`（导入 `~/.claude/projects` 里每个会话的 cwd）把 `/tmp` 下隔离实例、探针、崩溃注入目录注册成正式项目。现场：`~/.config/mindfs/registry.json` 里 `proj → /tmp/mindfs-crash-sim/proj`，与日志 `[startup/projects] auto added external project roots count=1` 同一秒（2026-11-21 01:41:42）。"
+    why: |
+      必须保留：系统的临时根不止 `os.TempDir()` 一个。生产把 `TMPDIR` 指到
+      `/var/tmp`（`/tmp` 是 7.8G tmpfs，10G 上传放不下），此时 `/tmp/**` 仍是草稿
+      空间；旧的单根比较会把它当成正式项目。现在同时比对 `os.TempDir()`、`/tmp`、
+      `/var/tmp`，以及设置了的 `XDG_RUNTIME_DIR`；子目录判定走 `filepath.Rel`，
+      避免 `/tmpfoo` 被误判成 `/tmp`；Windows 不加固定的 Unix 根。
+    boundary: |
+      只影响自动发现的排除条件：不改注册表结构、不删已有条目、不影响手动添加项目、
+      任务 worktree 与 git worktree 两道既有判据，也不改 agent 的运行目录。已误注册
+      的 `proj` 条目仍要用户自己删（本组不做数据迁移）。隔离实例与崩溃注入的 `/tmp`
+      目录从下次扫描起不再被注册；`/tmp` 上已存在的 `.mindfs` 标记原样保留。
+    files:
+      - server/internal/agent/workdir.go
+      - server/internal/agent/workdir_test.go
+      - server/app/server_test.go
+    tests:
+      - server/internal/agent/workdir_test.go
+      - server/app/server_test.go
+    anchors:
+      - 'server/internal/agent/workdir.go:func temporaryRootDirs() []string {'
+      - 'server/internal/agent/workdir.go:roots = append(roots, "/tmp", "/var/tmp")'
+      - 'server/internal/agent/workdir.go:func isPathWithin(path, root string) bool {'
+      - 'server/app/server_test.go:func TestAutoAddExternalProjectRootsSkipsOtherSystemTempRoots(t *testing.T) {'
