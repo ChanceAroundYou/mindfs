@@ -49,6 +49,8 @@ Scope: G-PF。
   3. `workflow.Store` 两份目录的 `workflows.json` 互不影响。
 - 验收：`go test ./server/app/ -run ControlPlaneIsolation -count=1`。
 - 变异：把测试里的两份 store 改成共享一份目录，用例必须红。
+- 执行记录（2026-11-21）：3 条用例绿；三处变异（auth / nodes / workflows 各把两份 store
+  指向同一目录）各自打红后还原。构造顺序是契约：B 必须在 A 写完后再建，否则内存缓存会假绿。
 
 ### T2 钉住控制面路由表
 
@@ -57,6 +59,8 @@ Scope: G-PF。
   断言 `ControlPlanePrefixes()` 的集合等于当前 11 条（显式列出）。
 - 用例：新增前缀必须让用例红，迫使同步计划同步更新。
 - 验收：`go test ./server/internal/nodeinfo/ -count=1`。
+- 执行记录（2026-11-21）：`TestControlPlanePrefixesSnapshot` 已存在于 `role_test.go`（显式
+  列出 11 条），复核通过，本轮不重复新增。
 
 ### T3 记录「失败不等于空」的基线
 
@@ -65,6 +69,10 @@ Scope: G-PF。
   会话列表的源码契约做断言：**当前**失败路径仍是返回空/部分结果（记录缺陷）。
 - 验收：`npx vitest run web/tests/node-unreachable-baseline.test.mjs`。
 - 说明：本用例在 P6 会被改写成「必须显式不可达」，届时红→绿即证明修好了。
+- 执行记录（2026-11-21）：取证纠正了本任务的假设 —— 单节点失败**已经**是「弹提示 +
+  保留失败节点的条目」（`useManagedRoots.ts` 的失败分支与 `preserved` 判据），不是缺陷。
+  用例改为钉住这两条已做对的锚点，另加两条仍缺的：节点表同步失败被 `catch(() => {})`
+  吞掉、零项目分支不区分「真空」与「拉不到」。4 条用例绿。
 
 ---
 

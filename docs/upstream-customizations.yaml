@@ -12098,3 +12098,43 @@ groups:
       - 'server/internal/api/http_routes.go:	r.Post("/api/tasks/{id}/workflow-publish", h.handleKanbanTaskWorkflowPublish)'
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
+  - id: G-PF
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线）
+    kind: feature
+    symptom: |
+      控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
+      全局只有主节点一份。主节点不可达时，连页面都打不开，整个系统不可用；第二台机器即便
+      配成 control，也只是「另一份互不相干的控制面」——两份 users.json / nodes.json /
+      workflows.json 各写各的，谁也看不见谁。
+    why: |
+      必须保留（P0 只钉基线，不改产品行为）：
+      ① `control_plane_isolation_test.go` 把「两份 configDir 各自为政」写成可执行事实。
+      离线优先方案（见 docs/superpowers/specs/2026-11-21-offline-first-local-control-plane-design.md）
+      之后仍然成立：同步是显式通道，不是把两份状态合成同一份文件。若哪天用例红了，说明
+      有人把主节点/边缘的存储合并了，那会直接破坏边界。
+      ② 构造顺序是契约：B 必须在 A 写完**之后**再构造。auth / nodes 的 Store 有内存缓存，
+      先构造的 B 看不见后来的写入 —— 那样即使共享目录也会假绿。三处变异（共享目录）
+      已逐一验证会红。
+      ③ 控制面前缀表已有快照用例（`TestControlPlanePrefixesSnapshot`，11 条），新增前缀
+      会强制同步更新同步计划，不另写第二份清单。
+      ④ `node-unreachable-baseline.test.mjs` 把节点不可达的现状分成两半：单节点失败
+      **已经**是「弹提示 + 保留条目」，钉成不许回退；节点表同步失败被静默吞掉、零项目
+      分支不区分「真空」与「拉不到」仍是缺口，P6 改写时先红后绿。
+    boundary: |
+      P0 只新增测试，不改任何产品代码、不改配置、不部署。后续波次（P1–P8）在同组继续登记
+      files / tests / anchors。控制面之外的数据（项目/会话/任务/文件）不在同步范围内。
+    files:
+      - server/app/control_plane_isolation_test.go
+      - web/tests/node-unreachable-baseline.test.mjs
+    tests:
+      - server/app/control_plane_isolation_test.go
+      - web/tests/node-unreachable-baseline.test.mjs
+    anchors:
+      - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
+      - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationNodeStores(t *testing.T) {'
+      - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationWorkflowStores(t *testing.T) {'
+      - 'server/app/control_plane_isolation_test.go:	// 先写后建：共享目录时 B 会看到 alice，Create 直接撞 ErrUsernameTaken。'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：没有任何项目时直接清空会话与主区，不区分「真空」与「拉不到」", () => {'
