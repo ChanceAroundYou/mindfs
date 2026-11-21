@@ -65,6 +65,13 @@ type Card struct {
 	ChatID    string `json:"chat_id,omitempty"`
 	LastError string `json:"last_error,omitempty"`
 
+	// DeliveryAttempts counts consecutive failed sends/patches since the last
+	// success; NextAttemptAt holds the card back until its backoff ends;
+	// DeliveryStopped means an unsent card burned its attempts and was given up.
+	DeliveryAttempts int       `json:"delivery_attempts,omitempty"`
+	NextAttemptAt    time.Time `json:"next_attempt_at,omitempty"`
+	DeliveryStopped  bool      `json:"delivery_stopped,omitempty"`
+
 	Version         int `json:"version"`
 	RenderedVersion int `json:"rendered_version"`
 

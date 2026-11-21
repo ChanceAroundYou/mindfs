@@ -790,6 +790,15 @@ Expected: `✓ 全部通过`.
 3. 用户在飞书点「批准」（延迟约 19 分钟，仍远在 TTL 内）。核对结果：卡片 `state=done`、`selected=0`、`rendered_version` 1→3（回执与终态各一次补丁）；`human_waiting` 活动 `status=completed`、`decision=approve`；Run 投影 `gate=success`、`done=success`；任务摘要写明审批结果与 `feishu e2e done`。任务停在 `waiting_user` 是设计语义（Run 成功只回到待审核，成功/失败由显式动作写），不是缺陷。
 4. 清理：删除临时任务与 workflow（`GET /api/workflows/published` 已不含该条目，`proj` 板面为空）。
 
-**未覆盖**：群聊与非 owner 点击、多账户并发、跨节点中继（M4）、入口与项目选择卡（M2）。「先回执后执行」的顺序由单测钉住，运行时证据是 `rendered_version` 的两次递增与 `done` 落定。
+**未覆盖（M1 自身边界）**：群聊与非 owner 点击、多账户并发、跨节点中继（M4）、入口与项目选择卡（M2）。「先回执后执行」的顺序由单测钉住，运行时证据是 `rendered_version` 的两次递增与 `done` 落定。
 
-**范围裁定（2026-11-21，用户）**：「现在这个出入口就够了」——M1 的出卡 + 点击闭环即最终范围；M2（飞书消息建任务 / 项目选择卡）、M4（跨节点中继）不做，群聊与非 owner 点击、多账户并发也不补验收。飞书配置因此只保留在本机（单事件连接约束不再是待解问题）。
+**范围变更（2026-11-21，用户后续裁定）**：先前「现在这个出入口就够了」的裁定已被用户新四条覆盖：**不做群聊、暂不做多账户；做飞书发消息建任务与项目选择卡（M2）；跨节点卡片与回答全走主控节点中转（M4）**。M1 的实现与上线事实不变；飞书配置当前仍只在主节点，待 M4 落地后再按新计划分发 worker 侧 relay 配置。详见 [M2 + M4 实施计划](../2026-11-21-feishu-m2-intake-and-m4-relay.md)。
+
+### 投递有界修复（2026-11-21，上线后日志检查）
+
+重启 65 分钟后从 journalctl 发现：`notice-task_8187f1159220980f-success-<纳秒>` 卡片从 22:38 起每 2 秒失败一次（累计 383 次），报错 `--idempotency-key exceeds the maximum of 50 characters (got 68)`。两条根因：
+
+1. `sendCard` 的幂等键是 `"mindfs-card-" + 卡片ID`，而终态与定时卡片的 ID 本身就有 55+ 字符（`notice-<task>-<status>-<19 位纳秒>`、`scheduled-…`），键长 68–70，结构性超过飞书 50 字符上限 —— 这类卡片永远发不出去。gate 卡 ID 短，所以此前的端到端验收看不见。
+2. `DeliverOnce` 对 `MessageID == ""` 的卡片每拍（2s）重发，失败只记录错误，无退避、无上限；卡片 TTL 168h ≈ 30 万次无效外呼。
+
+修复：幂等键改为 `"mindfs-" + sha256(cardID)[:32]`（39 字符、逐卡片确定，重试仍能在飞书侧去重）；失败按 5s 起倍增、封顶 10 分钟逐卡退避；从未发出过的卡片连续 12 次失败即停止重试并保留 `last_error`（它背后没有消息，不存在用户点不到的损失），已发出卡片的补丁失败只退避不放弃。新增 `delivery_retry_test.go` 6 条用例，5 处变异（键退回 ID 拼接 / 去退避 / 永不放弃 / 忽略退避与停发标记 / 成功不清状态）各自打红后还原；`go build ./...`、`go vet`、`go test ./server/internal/channels/feishu/` 全绿。未部署、未重启任何节点。

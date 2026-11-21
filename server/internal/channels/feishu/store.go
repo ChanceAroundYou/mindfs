@@ -172,6 +172,9 @@ func (s *Store) MarkDelivered(id, messageID string, renderedVersion int) (Card, 
 	}
 	c.RenderedVersion = renderedVersion
 	c.LastError = ""
+	c.DeliveryAttempts = 0
+	c.NextAttemptAt = time.Time{}
+	c.DeliveryStopped = false
 	c.UpdatedAt = s.now()
 	before := s.cards[id]
 	s.cards[id] = c
@@ -182,9 +185,10 @@ func (s *Store) MarkDelivered(id, messageID string, renderedVersion int) (Card, 
 	return c, true, nil
 }
 
-// RecordDeliveryError stores why the last send or patch failed, without
-// pretending the card's content changed.
-func (s *Store) RecordDeliveryError(id, message string) (Card, bool, error) {
+// RecordDeliveryFailure stores why the last send or patch failed, counts the
+// attempt and schedules the next one. Delivery is bookkeeping, not a content
+// change, so Version is left alone.
+func (s *Store) RecordDeliveryFailure(id, message string, attempts int, nextAt time.Time, stopped bool) (Card, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.cards[id]
@@ -192,6 +196,9 @@ func (s *Store) RecordDeliveryError(id, message string) (Card, bool, error) {
 		return Card{}, false, nil
 	}
 	c.LastError = message
+	c.DeliveryAttempts = attempts
+	c.NextAttemptAt = nextAt
+	c.DeliveryStopped = stopped
 	c.UpdatedAt = s.now()
 	before := s.cards[id]
 	s.cards[id] = c

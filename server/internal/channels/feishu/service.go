@@ -2,11 +2,46 @@ package feishu
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 )
+
+// Delivery retries: a failed card waits out an exponential backoff instead of
+// being re-sent on every tick, and an unsent card stops after a bounded number
+// of attempts (nothing is behind it that a reader could click).
+const (
+	deliveryAttemptCap  = 12
+	deliveryBackoffBase = 5 * time.Second
+	deliveryBackoffCap  = 10 * time.Minute
+)
+
+// idempotencyKey dedupes retries of one card upstream. Feishu caps the key at
+// 50 characters and terminal/scheduled card ids are longer than that on their
+// own, so the key is a digest: deterministic per card, never over the cap.
+func idempotencyKey(cardID string) string {
+	sum := sha256.Sum256([]byte(cardID))
+	return "mindfs-" + hex.EncodeToString(sum[:])[:32]
+}
+
+// deliveryBackoff is exponential from deliveryBackoffBase, capped so a long
+// outage still retries a few times an hour instead of never.
+func deliveryBackoff(attempts int) time.Duration {
+	d := deliveryBackoffBase
+	for i := 1; i < attempts; i++ {
+		if d >= deliveryBackoffCap {
+			return deliveryBackoffCap
+		}
+		d *= 2
+	}
+	if d > deliveryBackoffCap {
+		return deliveryBackoffCap
+	}
+	return d
+}
 
 // Config is what the channel needs from MindFS configuration. Nothing here
 // is a credential: lark-cli owns those.
@@ -241,8 +276,9 @@ func (s *Service) deliverLoop(ctx context.Context) {
 }
 
 // DeliverOnce sends every card that has never reached Feishu, and patches
-// every card whose state moved since the message was last rendered. Failures
-// are recorded on the card and retried on the next tick.
+// every card whose state moved since the message was last rendered. A failed
+// card is held back until its backoff ends; one that keeps failing to send is
+// given up on rather than retried forever.
 func (s *Service) DeliverOnce(ctx context.Context) error {
 	// 过期卡片在这里顺手清掉：没人清的话状态文件随任务数一直长，而每一拍
 	// 都要在锁里重写整个文件。
@@ -250,6 +286,9 @@ func (s *Service) DeliverOnce(ctx context.Context) error {
 	for _, c := range s.store.List() {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if c.DeliveryStopped || s.now().Before(c.NextAttemptAt) {
+			continue
 		}
 		if c.MessageID == "" {
 			s.sendCard(ctx, c)
@@ -268,7 +307,7 @@ func (s *Service) sendCard(ctx context.Context, c Card) {
 		s.recordError(c.ID, err)
 		return
 	}
-	id, err := s.cli.SendInteractive(ctx, s.cfg.OwnerOpenID, content, "mindfs-card-"+c.ID)
+	id, err := s.cli.SendInteractive(ctx, s.cfg.OwnerOpenID, content, idempotencyKey(c.ID))
 	if err != nil {
 		s.recordError(c.ID, err)
 		return
@@ -300,10 +339,23 @@ func (s *Service) patchCard(ctx context.Context, id string) error {
 	return nil
 }
 
+// recordError books a failed send or patch: it counts the attempt, schedules
+// the retry, and gives up on a card that never reached Feishu — there is no
+// message behind it, so nothing a reader could have clicked is lost.
 func (s *Service) recordError(id string, err error) {
 	msg := oneLine(err.Error())
 	s.logf("飞书卡片 %s：%s", id, msg)
-	if _, _, uerr := s.store.RecordDeliveryError(id, msg); uerr != nil {
+	c, ok := s.store.Get(id)
+	if !ok {
+		return
+	}
+	attempts := c.DeliveryAttempts + 1
+	stopped := c.MessageID == "" && attempts >= deliveryAttemptCap
+	if stopped {
+		s.logf("飞书卡片 %s 连续 %d 次发送失败，停止重试（卡片保留到过期）", id, attempts)
+	}
+	next := s.now().Add(deliveryBackoff(attempts))
+	if _, _, uerr := s.store.RecordDeliveryFailure(id, msg, attempts, next, stopped); uerr != nil {
 		s.logf("飞书记下卡片 %s 的错误失败：%v", id, uerr)
 	}
 }
