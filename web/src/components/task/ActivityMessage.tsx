@@ -3,13 +3,13 @@ import { useI18n } from "../../i18n/index";
 import type { HumanGateDecision, TaskActivity } from "../../shared/taskComments";
 import {
   activityDisplayText,
-  isRunReport,
   normalizeActivityStatus,
 } from "../../shared/activityModel";
 import { workflowDisplayName } from "../../shared/workflowDisplay";
 import { formatFullTime } from "../../shared/datetime";
 import { formatTime } from "../session/sessionViewerFormat";
 import { InlineTokenText } from "../common/InlineTokenText";
+import { ActivityTypeTag } from "./ActivityTypeTag";
 import { MarkdownViewer } from "../common/MarkdownViewer";
 import { TaskHumanGateCard } from "./TaskHumanGateCard";
 import { TaskQuestionCard, type TaskQuestionAnswers } from "./TaskQuestionCard";
@@ -138,13 +138,16 @@ export function ActivityMessage({
       >
         <div style={systemTextStyle}>{displayText}</div>
         {created !== null && (
-          <time
-            dateTime={activity.created_at}
-            title={fullTime}
-            style={systemTimeStyle}
-          >
-            {timeLabel}
-          </time>
+          <div style={systemMetaRowStyle}>
+            <ActivityTypeTag activity={activity} />
+            <time
+              dateTime={activity.created_at}
+              title={fullTime}
+              style={systemTimeStyle}
+            >
+              {timeLabel}
+            </time>
+          </div>
         )}
       </div>
     );
@@ -179,6 +182,7 @@ export function ActivityMessage({
                 ) : null}
               </>
             ) : null}
+            <ActivityTypeTag activity={activity} />
             <time
               dateTime={activity.created_at}
               title={fullTime}
@@ -203,11 +207,7 @@ export function ActivityMessage({
       ) : null}
 
       <div data-testid="activity-footer" style={footerStyle}>
-        {isRunReport(activity) && (
-          <span data-testid="activity-report-tag" style={reportTagStyle}>
-            {t("task.activity.reportTag")}
-          </span>
-        )}
+        <ActivityTypeTag activity={activity} />
         {workflowName && <span style={footerItemStyle}>{workflowName}</span>}
         {timeLabel && (
           <time dateTime={activity.created_at} title={fullTime} style={footerItemStyle}>
@@ -316,25 +316,6 @@ const footerItemStyle: React.CSSProperties = {
   fontVariantNumeric: "tabular-nums",
 };
 
-/**
- * 进度标记：浅色描边胶囊，只打在 Router 运行期 `purpose=progress` 的回复上
- * （不是消息类型），用来和同一轮的最终结果区分。
- *
- * 页脚整体 opacity 0.5，这里单独恢复不透明度，否则标记几乎看不见，
- * 用户又分不清这条是结算结果还是过程上报。
- */
-const reportTagStyle: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  padding: "0 6px",
-  borderRadius: 999,
-  border: "1px solid var(--border-color)",
-  fontSize: 9,
-  fontWeight: 700,
-  lineHeight: "14px",
-  color: "var(--text-secondary)",
-  opacity: 1,
-};
 
 const footerButtonStyle: React.CSSProperties = {
   border: "none",
@@ -358,6 +339,12 @@ const systemTextStyle: React.CSSProperties = {
   fontSize: 12,
   color: "var(--text-secondary)",
   textAlign: "center",
+};
+
+const systemMetaRowStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
 };
 
 const systemTimeStyle: React.CSSProperties = {

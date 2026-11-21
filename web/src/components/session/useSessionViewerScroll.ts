@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject, MutableRefObject, Dispatch, SetStateAction } from "react";
+import { convergeScrollToBottom, STICK_REARM_PX } from "../common/scrollToBottom";
 
 export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivElement | null>) {
   const shouldStickToBottomRef = useRef(true);
@@ -9,7 +10,7 @@ export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivEl
   const targetSeqTimerRefs = useRef<number[]>([]);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const viewportStickFrameRef = useRef<number | null>(null);
-  const bottomConvergeFrameRef = useRef<number | null>(null);
+  const bottomConvergeCancelRef = useRef<(() => void) | null>(null);
 
   const cancelTargetSeqScroll = () => {
     if (targetSeqFrameRef.current !== null) {
@@ -20,12 +21,8 @@ export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivEl
     targetSeqTimerRefs.current = [];
   };
 
-  // 逐帧收敛到底（G-KB 回归修复）。
-  //
-  // 曾经是一次 `scrollTo({ behavior: "smooth" })`。虚拟化会话里每帧都可能有新行挂载
-  // 把 scrollHeight 撑大，而虚拟库在「向下」方向的测量修正会**即时**写 scrollTop ——
-  // 一次即时写入就取消浏览器进行中的 smooth 动画，于是按钮经常停在半路。
-  // 改成每帧写 maxTop，直到连续几帧没有任何位移：新撑出来的高度下一帧自动补上。
+  // 逐帧收敛到底（G-KB 回归修复）。收敛算法已抽到 components/common/scrollToBottom.ts，
+  // 任务详情面板的「回到底部」用的是同一份，不许在这里另写一套阈值/帧数。
   //
   // 参数 behavior 仅为调用方签名兼容保留，实际一律即时写（精准到底优先于动画）。
   const stickSessionToBottom = (_behavior: ScrollBehavior = "auto") => {
@@ -33,43 +30,17 @@ export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivEl
     if (!container) {
       return;
     }
-    if (bottomConvergeFrameRef.current !== null) {
-      window.cancelAnimationFrame(bottomConvergeFrameRef.current);
-      bottomConvergeFrameRef.current = null;
-    }
-    let stableFrames = 0;
-    let frames = 0;
-    const MAX_FRAMES = 120;
-    // 最少跑 8 帧：新挂载行的实测（ResizeObserver）往往比写 scrollTop 晚一两帧落地，
-    // 只按「连续稳定」判定会在测量到达之前就收工，停在估算高度算出来的位置。
-    const MIN_FRAMES = 8;
-    const step = () => {
-      bottomConvergeFrameRef.current = null;
-      const el = activeScrollRef?.current;
-      if (!el) return;
+    bottomConvergeCancelRef.current?.();
+    bottomConvergeCancelRef.current = convergeScrollToBottom(container, {
       // 收敛期间用户上滚 → 立刻让位，绝不和手势抢位置。
-      if (!shouldStickToBottomRef.current) return;
-      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
-      const gap = maxTop - el.scrollTop;
-      if (gap > 1) {
-        el.scrollTop = maxTop;
-        stableFrames = 0;
-      } else {
-        stableFrames += 1;
-      }
-      frames += 1;
-      if ((frames >= MIN_FRAMES && stableFrames >= 3) || frames >= MAX_FRAMES) return;
-      bottomConvergeFrameRef.current = window.requestAnimationFrame(step);
-    };
-    bottomConvergeFrameRef.current = window.requestAnimationFrame(step);
+      shouldContinue: () => shouldStickToBottomRef.current,
+    });
   };
 
   useEffect(() => {
     return () => {
-      if (bottomConvergeFrameRef.current !== null) {
-        window.cancelAnimationFrame(bottomConvergeFrameRef.current);
-        bottomConvergeFrameRef.current = null;
-      }
+      bottomConvergeCancelRef.current?.();
+      bottomConvergeCancelRef.current = null;
     };
   }, []);
 
@@ -204,7 +175,6 @@ export function useSessionViewerStickinessEffect({
         const distanceFromBottom = Math.max(0, rawDistanceFromBottom - viewportGap);
         // 2px 以内才认为"在底部"：小幅上滚不应被重新判定为跟随。
         // movedDown 也不再重新吸底 —— 只有回到底部（<=2px）才恢复跟随。
-        const STICK_REARM_PX = 2;
         const isNearBottom = distanceFromBottom <= STICK_REARM_PX;
         const movedUp = el.scrollTop < lastScrollTop;
         if (isNearBottom) {

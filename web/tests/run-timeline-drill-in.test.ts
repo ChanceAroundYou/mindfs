@@ -162,12 +162,12 @@ test("任务详情面板只挂一条对话流，且保留运行视图入口", ()
   assert.match(entry, /data-testid="direct-node-run"/);
   assert.match(entry, /data-testid="direct-node-open-session"/);
   assert.doesNotMatch(entry, /directHint/, "直连不再写提示文案");
-  // 两个胶囊同排、始终存在、互斥展开，且各自带 ▸/▾ 记号。
+  // 两个胶囊同排、始终存在、互斥展开，且各自带人字箭头 icon（展开时旋转）。
   const inspect = read("../src/components/task/TaskInspectEntries.tsx");
   assert.match(inspect, /testId="run-view-toggle"/);
   assert.match(inspect, /testId="supervision-toggle"/);
   assert.match(inspect, /aria-expanded=\{open\}/);
-  assert.match(inspect, /\{open \? "▾" : "▸"\}/);
+  assert.match(inspect, /<ChevronIcon open=\{open\} \/>/);
   assert.match(
     inspect,
     /setOpenSection\(\(current\) => \(current === section \? null : section\)\)/,

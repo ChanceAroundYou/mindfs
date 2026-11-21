@@ -11524,10 +11524,12 @@ groups:
       id」作为这一轮的身份只滚一次，之后的新留言与流式回复不再抢滚动位置（用户可能正在
       上翻历史）；布局稳定前最多重试 24 帧、连续 3 帧高度不变即停。⑧ 上翻历史后输入框上方
       出现「回到底部」圆钮：与会话页**同一颗组件**（`ScrollToBottomButton`）、同一套收敛
-      （`components/common/scrollToBottom.ts`：离底 >2px 显示、逐帧写 maxTop、最少 8 帧、
-      连续 3 帧稳定或 120 帧封顶），点击后用户自己上滚/上翻键立刻让位；滚动容器从锚点向上
-      找到 `.mindfs-panel-body`，不另开滚动区、不滚 window。移动端与桌面是同一颗按钮、
-      同一个位置（面板正文底部居中）。
+      （`components/common/scrollToBottom.ts`：逐帧写 maxTop、最少 8 帧、连续 3 帧稳定或
+      120 帧封顶），点击后用户自己上滚/上翻键立刻让位；滚动容器从锚点向上找到
+      `.mindfs-panel-body`，不另开滚动区、不滚 window。显隐阈值任务侧单独一档
+      `JUMP_VISIBLE_PX=200`（会话页仍是 `STICK_REARM_PX=2`）：任务详情的输入框在滚动流里、
+      就在对话末尾，面板底部还有 12–46px 收尾区，2px 会让按钮在刚打开、刚自动落底时就亮着，
+      紧贴输入框时两个控件还会重叠。移动端与桌面是同一颗按钮、同一个位置（面板正文底部居中）。
     boundary: |
       只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
@@ -11584,7 +11586,8 @@ groups:
       - 'web/src/components/common/ChevronIcon.tsx:transform: open ? "rotate(90deg)" : "rotate(0deg)",'
       - 'web/src/components/common/ScrollToBottomButton.tsx:export function ScrollToBottomButton({'
       - 'web/src/components/common/scrollToBottom.ts:export function convergeScrollToBottom('
-      - 'web/src/components/task/useConversationJumpToLatest.ts:distanceFromBottom(scroller) > STICK_REARM_PX'
+      - 'web/src/components/task/useConversationJumpToLatest.ts:export const JUMP_VISIBLE_PX = 200;'
+      - 'web/src/components/task/useConversationJumpToLatest.ts:distanceFromBottom(scroller) > JUMP_VISIBLE_PX'
       - 'web/src/components/task/ConversationView.tsx:testId="conversation-jump-latest"'
       - 'web/src/shared/activityModel.ts:export function activityTypeTagKey(activity: TaskActivity): MessageKey | null {'
       - 'web/src/components/task/ActivityTypeTag.tsx:data-testid="activity-type-tag"'

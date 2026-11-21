@@ -125,7 +125,7 @@ test("列表渲染：触发 → 动作 → 结果，错误单独一行", () => {
   assert.match(html, /reply act-1 is gone/, "error text is shown verbatim");
 });
 
-test("两个胶囊同排渲染：始终存在、默认收起、带 ▸ 记号", () => {
+test("两个胶囊同排渲染：始终存在、默认收起、带人字箭头 icon", () => {
   const html = renderToString(
     React.createElement(
       I18nProvider,
@@ -146,7 +146,9 @@ test("两个胶囊同排渲染：始终存在、默认收起、带 ▸ 记号", 
     "两个胶囊默认都收起，且不依赖有没有监管记录",
   );
   assert.equal((html.match(/aria-expanded="false"/g) || []).length, 2);
-  assert.ok(html.includes("▸"), "收起状态有展开记号");
+  // 展开/收起是同一枚 SVG 箭头旋转 90°，不再是 ▸/▾ 字符。
+  assert.equal((html.match(/viewBox="0 0 24 24"/g) || []).length, 2, "两个胶囊各带一枚箭头");
+  assert.ok(html.includes("rotate(0deg)"), "收起状态箭头指向右");
   assert.ok(html.includes(translateNow("task.runTimeline.label")));
   assert.ok(html.includes(translateNow("task.supervision.label")));
   assert.doesNotMatch(html, /data-testid="run-view-entry"/, "收起时不渲染面板内容");

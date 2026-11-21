@@ -29,6 +29,22 @@ export function bottomAlignedScrollTop(input: BottomAlignInput): number {
 }
 
 /**
+ * 从锚点向上找最近的滚动容器（overflowY auto/scroll），**不看内容高度**。
+ *
+ * 「回到底部」按钮要在内容还没撑满时就把滚动监听挂上：这时容器不可滚、按钮该隐藏，
+ * 但之后来一条长回复就会变成可滚，监听必须已经在。
+ */
+export function findScrollContainer(start: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = start.parentElement;
+  while (node) {
+    const style = window.getComputedStyle(node);
+    if (style.overflowY === "auto" || style.overflowY === "scroll") return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
  * 从锚点向上找最近的可滚动祖先（overflowY auto/scroll 且内容高于可视区）。
  * 找不到返回 null —— 调用方什么都不做，绝不去滚 window。
  */

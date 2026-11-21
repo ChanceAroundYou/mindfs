@@ -2,6 +2,7 @@
 //
 // 放在 shared 而不是 hook 里：这些函数没有副作用，组件与 hook 共用，也便于
 // 在 node 环境直接测试（仓库没有 jsdom / testing-library）。
+import type { MessageKey } from "../i18n/index";
 import type { ActivityStatus, TaskActivity, WorkflowChoice } from "./taskComments";
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -166,13 +167,47 @@ export function pendingTaskPrompt(activities: TaskActivity[]): TaskActivity | nu
 }
 
 /**
- * 运行汇报行：`purpose=progress` 的 Agent 回复。
+ * 消息类型胶囊的文案 key（页脚时间前面的那一枚）。
  *
- * 这类行不再折叠（2026-11-19 用户裁定），但需要一个可见标记，让用户能分清
- * 「这一轮的结算结果」与「运行过程中 Router 的上报」。
+ * 取值全部来自后端已有的枚举，不在前端猜：
+ * - `TaskActivity.type`：user_message / user_comment / agent_reply / system_event /
+ *   attention / question / human_gate / merge_conflict（见 server/internal/kanban/types.go）；
+ * - Agent 回复再按 `purpose` 细分：result / reply / progress / summary / chat
+ *   （后端缺省写 reply，见 activity_route_apply.go 与 activity_store.go 的迁移）。
+ *
+ * 未知类型返回 null —— 宁可这次不显示，也不要编一个「其它」。
  */
-export function isRunReport(activity: TaskActivity): boolean {
-  return activity.type === "agent_reply" && activity.role === "agent" && activity.purpose === "progress";
+export function activityTypeTagKey(activity: TaskActivity): MessageKey | null {
+  switch (activity.type) {
+    case "user_message":
+    case "user_comment":
+      return "task.activity.type.userMessage";
+    case "agent_reply":
+      switch (activity.purpose) {
+        case "progress":
+          return "task.activity.type.progress";
+        case "summary":
+          return "task.activity.type.summary";
+        case "result":
+          return "task.activity.type.result";
+        case "chat":
+          return "task.activity.type.chat";
+        default:
+          return "task.activity.type.reply";
+      }
+    case "system_event":
+      return "task.activity.type.system";
+    case "attention":
+      return "task.activity.type.attention";
+    case "merge_conflict":
+      return "task.activity.type.mergeConflict";
+    case "question":
+      return "task.activity.type.question";
+    case "human_gate":
+      return "task.activity.type.humanGate";
+    default:
+      return null;
+  }
 }
 
 /**

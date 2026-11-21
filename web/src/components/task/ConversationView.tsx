@@ -6,7 +6,9 @@ import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
 import { pendingTaskPrompt, visibleConversationActivities } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
+import { ScrollToBottomButton } from "../common/ScrollToBottomButton";
 import { alignConversationToBottom, findScrollableAncestor } from "./conversationScroll";
+import { useConversationJumpToLatest } from "./useConversationJumpToLatest";
 import { useWorkflowNames } from "./useWorkflowNames";
 
 export type ConversationMessagesProps = {
@@ -191,6 +193,8 @@ export function ConversationView({
   const lastAgentReplyRef = useRef("");
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
   const initialScrollKeyRef = useRef("");
+  // 用户上翻后才出现的「回到底部」：显隐与收敛复用会话时间线那一份。
+  const { visible: jumpVisible, jumpToLatest } = useConversationJumpToLatest(scrollAnchorRef, taskId);
 
   // Agent 回复从 pending → running → completed 时，任务头也要跟着变。
   // 活动流有独立的 WS 增量，任务头依赖 task.updated；两者丢一个就会出现
@@ -290,6 +294,38 @@ export function ConversationView({
         }}
         runningQueued={runningQueued}
       />
+
+      {/*
+        「回到底部」浮在输入框上方。外层始终存在（零高度 + sticky），所以按钮显隐
+        不会改变对话流的间距；内层用 absolute 定位，和会话浮层同一套位置与尺寸。
+      */}
+      <div
+        style={{
+          position: "sticky",
+          bottom: 0,
+          height: 0,
+          zIndex: 5,
+          pointerEvents: "none",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            transform: "translateX(-50%)",
+            bottom: 12,
+            display: jumpVisible ? "flex" : "none",
+            alignItems: "center",
+            pointerEvents: "auto",
+          }}
+        >
+          <ScrollToBottomButton
+            label={t("session.jumpLatest")}
+            onClick={jumpToLatest}
+            testId="conversation-jump-latest"
+          />
+        </div>
+      </div>
 
       {disabled ? (
         <div

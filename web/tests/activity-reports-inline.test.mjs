@@ -94,13 +94,16 @@ test("progress 行按到达顺序排列在结算行之前", () => {
   assert.ok(startedAt < settledAt, "rendering follows activity order, not a regrouped order");
 });
 
-test("只有 purpose=progress 的行带「进度」标记", () => {
+test("每条消息都有类型胶囊，但只有 purpose=progress 的行标成「进度」", () => {
   const html = render([userMessage, settledReply, progressStarted]);
-  assert.match(html, /data-testid="activity-report-tag"/, "progress row carries the tag");
-  assert.match(html, /进度|Progress/, "tag is localised");
+  // 类型标签是每条消息都有的（留言 / 回复 / 进度），不是状态。
+  const typeTags = (html.match(/data-testid="activity-type-tag"/g) || []).length;
+  assert.equal(typeTags, 3, "user message, settled reply and progress row all carry a type tag");
+  assert.match(html, /data-activity-purpose="progress"[^>]*>(进度|Progress)/, "progress tag is localised");
+  assert.match(html, /data-activity-type="user_message"[^>]*>(留言|Message)/, "user message is labelled as a message");
   // 结算回复与用户留言都不该被标记成进度。
-  const tagCount = (html.match(/data-testid="activity-report-tag"/g) || []).length;
-  assert.equal(tagCount, 1, "exactly one progress row is tagged");
+  const progressTags = (html.match(/data-activity-purpose="progress"[^>]*>/g) || []).length;
+  assert.equal(progressTags, 1, "exactly one progress row is tagged");
 });
 
 test("用户留言与其他角色不受影响", () => {
@@ -120,12 +123,13 @@ test("折叠组件与行重组函数已删除", () => {
   assert.doesNotMatch(model, /isSettledReply/, "no settled-reply detection for folding");
 });
 
-test("折叠专用 i18n 键已删除，标记键已就位", () => {
+test("折叠专用 i18n 键已删除，类型胶囊键已就位", () => {
   const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
   const en = read("../src/i18n/locales/en-US-tasks.ts");
   for (const source of [zh, en]) {
     assert.doesNotMatch(source, /"task\.activity\.reports"/, "folded-group count key is gone");
     assert.doesNotMatch(source, /"task\.activity\.reportsHide"/, "folded-group toggle key is gone");
-    assert.match(source, /"task\.activity\.reportTag"/, "inline tag key is defined");
+    assert.match(source, /"task\.activity\.type\.progress"/, "message-type tag keys are defined");
+    assert.match(source, /"task\.activity\.type\.userMessage"/, "user message type key is defined");
   }
 });

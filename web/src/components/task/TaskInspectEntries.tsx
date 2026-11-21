@@ -1,12 +1,13 @@
 import React, { useCallback, useState } from "react";
 import { useI18n } from "../../i18n/index";
+import { ChevronIcon } from "../common/ChevronIcon";
 import { RunViewEntry } from "./RunViewEntry";
 import { SupervisionEntry } from "./SupervisionEntry";
 
 // 任务详情里的两个只读入口：执行详情 + 监管记录。
 //
 // 用户要求（2026-11-21）：两个小胶囊始终存在于同一行；展开互斥——点开一个就
-// 收起另一个；每个胶囊自己带 ▸/▾ 记号，一眼能看出当前展开的是哪个。
+// 收起另一个；每个胶囊自己带人字箭头（展开时转 90°），一眼能看出当前展开的是哪个。
 //
 // 互斥靠这里唯一的一份 openSection 状态，不靠两个子组件各自记 open：两个独立
 // 布尔值一旦都能为 true，就会同时展开。子组件只负责面板内容，按钮不在里面。
@@ -100,9 +101,7 @@ function InspectCapsule({ testId, controls, label, open, onClick }: InspectCapsu
       data-open={open ? "true" : "false"}
       style={{ ...capsuleStyle, ...(open ? capsuleOpenStyle : null) }}
     >
-      <span aria-hidden style={chevronStyle}>
-        {open ? "▾" : "▸"}
-      </span>
+      <ChevronIcon open={open} />
       <span>{label}</span>
     </button>
   );
@@ -142,7 +141,3 @@ const capsuleOpenStyle: React.CSSProperties = {
   fontWeight: 600,
 };
 
-const chevronStyle: React.CSSProperties = {
-  fontSize: "10px",
-  lineHeight: 1,
-};

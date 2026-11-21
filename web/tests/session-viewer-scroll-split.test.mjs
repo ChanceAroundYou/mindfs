@@ -16,6 +16,7 @@ const timelineView = readPhysical("src/components/session/SessionViewerTimeline.
 const meta = readPhysical("src/components/session/buildTimelineItemMeta.ts");
 const styles = readPhysical("src/components/session/sessionViewerStyles.ts");
 const loadingState = readPhysical("src/components/session/SessionViewerLoadingState.tsx");
+const sharedScroll = readPhysical("src/components/common/scrollToBottom.ts");
 
 assert.ok(viewer.split("\n").length - 1 < 500, "the physical viewer stays below the hard line");
 assert.match(viewer, /useSessionViewerScrollState\(activeScrollRef\)/);
@@ -55,8 +56,11 @@ assert.match(
 
 // ── 2026-10-27 回归：到底按钮逐帧收敛 ─────────────────────────────────
 // 一次 smooth 会被虚拟库的即时 scrollTop 写入打断，停在半路。
-assert.match(scroll, /requestAnimationFrame\(step\)/, "到底必须逐帧收敛");
-assert.match(scroll, /MAX_FRAMES/, "收敛必须有帧数上限");
+// 收敛算法已抽到 components/common/scrollToBottom.ts，会话与任务详情共用；
+// 这里钉住「会话仍走同一份实现」，而那份实现本身必须逐帧收敛且有帧数上限。
+assert.match(scroll, /convergeScrollToBottom\(container/, "会话到底必须复用共享收敛");
+assert.match(sharedScroll, /requestAnimationFrame\(step\)/, "到底必须逐帧收敛");
+assert.match(sharedScroll, /SCROLL_CONVERGE_MAX_FRAMES/, "收敛必须有帧数上限");
 
 // ── 2026-10-27 回归：前插按元素矩形锚定 ───────────────────────────────
 // 虚拟化下 scrollHeight 是估算高度，前插后测量修正不会在后退方向补偿，
