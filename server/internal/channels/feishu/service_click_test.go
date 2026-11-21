@@ -224,3 +224,56 @@ func TestPickerClickRejectsOutOfRangeSelection(t *testing.T) {
 		t.Fatalf("settled card was clobbered: %+v", c)
 	}
 }
+
+// A restart turns a persisted "applying" card back into "open" so the owner can
+// click again, but a remote Create may already have committed before the process
+// died. The intake record is the durable evidence: once it is claimed or created,
+// replaying the click must never call the creator a second time.
+func TestPickerClickRejectsReplayAfterRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+	}{
+		{name: "claimed", status: "creating"},
+		{name: "created", status: "created"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newPickerTestHarness(t)
+			h.sendCard(t)
+
+			// A fresh store loads the persisted record: this is what a restart sees.
+			replayed, err := NewIntakeStore(h.intakePath, fixedNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := replayed.SetStatus("om_src", "task_already_created", tc.status); err != nil {
+				t.Fatal(err)
+			}
+
+			calls := 0
+			h.svc.SetPickerTaskDeps(replayed, pickerCreatorFunc(func(context.Context, string, string, string) (string, error) {
+				calls++
+				return "task_duplicate", nil
+			}))
+			if err := h.svc.HandleAction(context.Background(), Action{
+				CardID: "pick-1", Choice: 0, OperatorID: "ou_owner", MessageID: "om_1",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			if calls != 0 {
+				t.Fatalf("replayed click invoked creator %d times (want 0)", calls)
+			}
+			c, ok := h.cards.Get("pick-1")
+			if !ok || (c.State != StateFailed && c.State != StateDone) {
+				t.Fatalf("replayed click did not fail closed: card=%+v ok=%v", c, ok)
+			}
+			if !strings.Contains(c.Summary, "重复") && !strings.Contains(c.Summary, "已处理") {
+				t.Fatalf("owner-facing receipt is not readable: %q", c.Summary)
+			}
+			if rec := pickerRecord(t, h.intakePath, "om_src"); rec.TaskID != "task_already_created" || rec.Status != tc.status {
+				t.Fatalf("replay changed durable intake record: %+v", rec)
+			}
+		})
+	}
+}

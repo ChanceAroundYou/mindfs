@@ -2,9 +2,61 @@ package feishu
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 )
+
+// errIntakeNotClaimable means the same source message is already being handled
+// (or was handled before a restart): creating another task would duplicate it.
+var errIntakeNotClaimable = errors.New("intake record is not in picker state")
+
+// claimPickerIntake atomically turns a fresh "picker" record into "creating".
+// The lock is held only for the in-memory check and the persisted write; the
+// caller must invoke the remote creator after this returns. A missing record,
+// an already claimed/created record, or an unexpected status all fail closed.
+func claimPickerIntake(store *IntakeStore, messageID string) error {
+	if store == nil || messageID == "" {
+		return errIntakeNotClaimable
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.pruneLocked()
+	rec, ok := store.records[messageID]
+	if !ok || rec.Status != "picker" {
+		return errIntakeNotClaimable
+	}
+	before := rec
+	rec.TaskID, rec.Status = "", "creating"
+	store.records[messageID] = rec
+	if err := store.saveLocked(); err != nil {
+		store.records[messageID] = before
+		return err
+	}
+	return nil
+}
+
+// rollbackPickerClaim returns a claimed record to the picker state when the
+// click cannot complete. It never touches a record that another handler has
+// already advanced past the claim.
+func (s *Service) rollbackPickerClaim(store *IntakeStore, messageID string) {
+	if store == nil || messageID == "" {
+		return
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	rec, ok := store.records[messageID]
+	if !ok || rec.Status != "creating" {
+		return
+	}
+	before := rec
+	rec.TaskID, rec.Status = "", "picker"
+	store.records[messageID] = rec
+	if err := store.saveLocked(); err != nil {
+		store.records[messageID] = before
+		s.logf("飞书入站记录 %s 回滚 claim 失败：%v", messageID, err)
+	}
+}
 
 // pickerTaskDeps are installed at assembly time by SetPickerTaskDeps. They
 // live beside the click path instead of on the M1 Service struct so adding M2
@@ -196,8 +248,17 @@ func (s *Service) applyPickerChoice(ctx context.Context, c Card, selected int) e
 		s.fail(ctx, c.ID, "项目选择暂不可用，请稍后重试。")
 		return nil
 	}
+	// Claim before the (slow, possibly fatal) remote call. On restart the card
+	// goes back to "open", but this record survives: if it is already claimed or
+	// created, a redelivered click must not create a second task.
+	if err := claimPickerIntake(deps.store, c.SourceMessageID); err != nil {
+		s.logf("飞书选择卡 %s 入站记录不可重复认领：%v", c.ID, err)
+		s.fail(ctx, c.ID, "该需求已在处理或已建任务，请勿重复点击。")
+		return nil
+	}
 	project := c.Projects[selected]
 	if project.NodeID == "" || project.RootID == "" {
+		s.rollbackPickerClaim(deps.store, c.SourceMessageID)
 		s.fail(ctx, c.ID, "所选项目信息不完整，请重新发送需求。")
 		return nil
 	}
@@ -205,6 +266,7 @@ func (s *Service) applyPickerChoice(ctx context.Context, c Card, selected int) e
 	taskID, err := deps.creator.Create(ctx, project.NodeID, project.RootID, c.IntakeText)
 	if err != nil {
 		s.logf("飞书选择卡 %s 建任务失败：%v", c.ID, err)
+		s.rollbackPickerClaim(deps.store, c.SourceMessageID)
 		s.fail(ctx, c.ID, "建任务失败，请稍后重试。")
 		return nil
 	}
