@@ -11217,7 +11217,7 @@ groups:
     title: 任务级 worktree 真建真合 + 节点树从任务树切、按 w2 → w1 → main 嵌套合并
     kind: fix
     symptom: "三条互相咬住的缺陷。① 建卡面板的「worktree」勾选只落库不建树：`CreateTask` 从不建树，唯一入口是显式 `POST /api/tasks/{id}/rebuild-worktree`（UI 走不到），活库任务 #97 勾了标记却 `worktree_path` 为空、共享节点全在主 checkout 里改主干；一轮跑完也没有任何自动合并，只能靠手工「收尾」。② 任务树 + 节点树共存时结构上根本走不通：`gitview.MergeBranch` 一律在主 checkout 里执行合并并先 `git checkout Target`，而 `validateTarget` 把「目标分支被另一个 linked worktree 占用」当错误 —— 节点树的目标分支（任务树分支）正被任务树检出，于是每个独立节点都在合并那一步直接报「task-1 正被另一个 worktree 占用（…），先把它移开」，且必须有人手工把任务树移开。③ 节点分支的基线错了：`AddWorktree` 在 rootPath 里 `git worktree add -b <branch>`，新分支从**主 checkout HEAD** 切，不是从任务树 tip 切 —— 节点看不到任务树里已经做好的活，两个分支各长各的。"
-    why: "必须保留：① 勾了 worktree 就在 `CreateTask` 里当场建树（`ensureTaskWorktree`），失败就删掉刚建的任务并返回错误（fail closed）——留一张「勾了却没树」的卡比直接报错更误导；`CreateTask` 必须用 `store.CreateTask` 返回的行继续，任务号是那时分配的，建树命名（`task-<编号>`）依赖它。② Run 的快照集成分支需要任务树时用 `ensureTaskWorktreeReady` 补建，失败上抛而不是静默回落到主 checkout（回落等于在主干上跑）。③ `MergeOptions.TargetDir` + `gitview.MergeTargetDir`：目标分支被某棵 linked worktree 检出时，合并就在**那棵树里**执行（不 `checkout`、不搬树），`validateMergeTargetDir` 先确认那棵树真停在该分支上；`TargetDir` 为空时保持老行为（占用即拒绝），所以校验是被收窄而不是删掉。④ 节点独立树用 `WorktreeBaseRunner.CreateTaskWorktreeFrom` 从 `run.IntegrationBranch` 的 tip 切（`gitview.AddWorktreeFrom` 校验 ref 后 `worktree add -b <branch> <path> <base>`），适配器没实现该接口时退回 HEAD 建树，绝不静默不建树。⑤ 一轮全部结束且 `ProjectStatusFromRun(run)==StatusSuccess` 时 `autoMergeTaskWorktreeAfterRun` 把任务树并回主 checkout 当前分支；任务树自己的 registry 行保持 active（下一轮还要从它继续长），幂等靠 MergeBranch 的 `merge-base --is-ancestor` 短路，冲突转 needs_user + 可见系统错误并保留现场；失败/取消的一轮不合并。⑥ 节点分支清理由 `DeleteBranchMergedAt` 按「已并进 merged_commit」判定后 `-D` 删：`branch -d` 只认当前 HEAD，嵌套时节点分支并进的是任务树分支，主 checkout 停在 main 上会永远拒绝，等于每跑一个独立节点漏一条分支；证明不了并入关系就退回 `-d` 让 git 拒绝，绝不盲删。"
+    why: "必须保留：① 勾了 worktree 就在 `CreateTask` 里当场建树（`ensureTaskWorktree`），失败就删掉刚建的任务并返回错误（fail closed）——留一张「勾了却没树」的卡比直接报错更误导；`CreateTask` 必须用 `store.CreateTask` 返回的行继续，任务号是那时分配的，建树命名（`task-<编号>`）依赖它。② Run 的快照集成分支需要任务树时用 `ensureTaskWorktreeReady` 补建，失败上抛而不是静默回落到主 checkout（回落等于在主干上跑）。③ `MergeOptions.TargetDir` + `gitview.MergeTargetDir`：目标分支被某棵 linked worktree 检出时，合并就在**那棵树里**执行（不 `checkout`、不搬树），`validateMergeTargetDir` 先确认那棵树真停在该分支上；`TargetDir` 为空时保持老行为（占用即拒绝），所以校验是被收窄而不是删掉。④ 节点独立树用 `WorktreeBaseRunner.CreateTaskWorktreeFrom` 从 `run.IntegrationBranch` 的 tip 切（`gitview.AddWorktreeFrom` 校验 ref 后 `worktree add -b <branch> <path> <base>`），适配器没实现该接口时退回 HEAD 建树，绝不静默不建树。⑤ 一轮全部结束且 `ProjectStatusFromRun(run)==StatusSuccess` 时 `autoMergeTaskWorktreeAfterRun` 把任务树并回主 checkout 当前分支；任务树自己的 registry 行保持 active（下一轮还要从它继续长），幂等靠 MergeBranch 的 `merge-base --is-ancestor` 短路，冲突转 needs_user + 可见系统错误并保留现场；失败/取消的一轮不合并。⑥ 节点分支清理由 `DeleteBranchMergedAt` 按「已并进 merged_commit」判定后 `-D` 删：`branch -d` 只认当前 HEAD，嵌套时节点分支并进的是任务树分支，主 checkout 停在 main 上会永远拒绝，等于每跑一个独立节点漏一条分支；证明不了并入关系就退回 `-d` 让 git 拒绝，绝不盲删。⑦ 隔离实测（7434）补的三处：集成分支快照改走 `taskWorktreeBranchOf`（「新建分支」模式不写 `WorktreeBranch` 列，只读列会把合并目标落成主 checkout 当前分支）；独立树节点一律 `SessionReuseAlwaysNew`（agent 池的 CLI cwd 在会话打开时固定，复用 Run 会话会让独立节点仍在任务树里干活）；`CloseNodeWorktreeInput.BranchProofDir` 传「合并实际发生」的目录（无提交节点没有合并提交，`branch -d` 拿主 checkout 当证明目录会在任务树领先时误拒、分支永久残留）。"
     boundary: "只覆盖「任务级 worktree + 工作流节点独立 worktree」这一套；`worktree=shared`（默认）节点仍在任务树里跑，只多了一条建树兜底。任务树自动合并只在驱动投影（`projectWorkflowTaskStatus`）看到 `StatusSuccess` 时触发：手动 pause/cancel、失败、等待用户的轮次都不合。冲突不自动解，停在主 checkout 的未完成合并里等人（Router 仍不改高优先级规则、不参与合并）。重启后不会自动补合并历史轮次（没有恰好一次投影就不会合）。`DeleteBranchMergedAt` 兼容库里既有 `log --oneline` 形状的 merged_commit。前端建卡面板未加新入口：勾选本身现在就会建树，「重建 worktree」仍是显式修复入口。"
     files:
       - docs/superpowers/plans/2026-11-21-worktree-task-and-node-nesting.md
@@ -11233,11 +11233,13 @@ groups:
       - server/internal/kanban/service_worktree_merge.go
       - server/internal/kanban/service_workflow_integration_branch.go
       - server/internal/kanban/service_workflow_workspace.go
+      - server/internal/kanban/workflow_node_executor.go
       - server/internal/kanban/workflow_driver_loop.go
       - server/internal/kanban/service_task_worktree_merge.go
     tests:
       - server/internal/gitview/worktree_merge_target_test.go
       - server/internal/kanban/workflow_task_worktree_test.go
+      - server/internal/kanban/workflow_node_executor_test.go
       - server/internal/kanban/service_worktree_test.go
       - server/internal/kanban/service_worktree_state_test.go
       - server/internal/kanban/service_worktree_multi_test.go
@@ -11254,7 +11256,10 @@ groups:
       - 'server/internal/kanban/service_tasks.go:ensured, werr := s.ensureTaskWorktree(ctx, store, task)'
       - 'server/internal/kanban/service_worktree.go:func (s *Service) ensureTaskWorktreeReady(ctx context.Context, store *TaskStore, task Task) (Task, error) {'
       - 'server/internal/kanban/service_worktree_noderun.go:wt, err = from.CreateTaskWorktreeFrom(ctx, task.RootID, name, branchMode, branch, base)'
-      - 'server/internal/kanban/service_worktree_noderun.go:gitview.DeleteBranchMergedAt(ctx, mainDir, entry.Branch, entry.MergedCommit)'
+      - 'server/internal/kanban/service_worktree_noderun.go:BranchProofDir string'
+      - 'server/internal/kanban/service_worktree_noderun.go:gitview.DeleteBranchMergedAt(ctx, proofDir, entry.Branch, entry.MergedCommit)'
+      - 'server/internal/kanban/service_workflow_integration_branch.go:if branch := taskWorktreeBranchOf(task); branch != "" && worktreeDirUsable(task.WorktreePath) {'
+      - 'server/internal/kanban/workflow_node_executor.go:if WorkflowNodeWorkspaceOf(node).Independent {'
       - 'server/internal/kanban/service_worktree_merge.go:mergeDir, err := gitview.MergeTargetDir(ctx, mainDir, target)'
       - 'server/internal/kanban/service_worktree_merge.go:TargetDir:    plan.targetDir(),'
       - 'server/internal/kanban/service_workflow_integration_branch.go:ensured, ensureErr := s.ensureTaskWorktreeReady(ctx, store, task)'

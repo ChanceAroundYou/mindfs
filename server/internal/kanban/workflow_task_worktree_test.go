@@ -281,3 +281,71 @@ func gitviewBranchExists(dir, branch string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
+
+// 集成分支快照必须取**任务树自己的分支**。
+//
+// 隔离实例 7434 的现场：建卡勾了 worktree、树也真的建在 task-1 上，但
+// WorktreeBranch 这一列是空的（分支名在「新建分支」模式下由目录名派生、从没
+// 回写），快照于是落到主 checkout 的当前分支 master 上。后果有两层：独立节点
+// 把活并进 master 而不是任务树（w2 → w1 断掉），且 autoMergeTaskWorktreeAfterRun
+// 因为 run.IntegrationBranch ≠ 任务树分支而静默不动 —— 任务树永远回不了主分支。
+//
+// 这条用例走的是真实接缝（建卡 → 快照），不是手搓 IntegrationBranch；上一版
+// 嵌套用例正是手搓的，所以漏掉了这个缺陷。
+func TestSnapshotRunIntegrationBranchUsesTaskWorktreeBranch(t *testing.T) {
+	ctx := context.Background()
+	mainDir := newGitRoot(t)
+	svc, root, _ := newTaskWorktreeService(t, mainDir)
+	task, branch := createTaskWithWorktree(t, svc, root.ID)
+	if strings.TrimSpace(task.WorktreeBranch) != "" {
+		t.Fatalf("precondition: 建卡在新建分支模式下不该写 WorktreeBranch，实际 %q", task.WorktreeBranch)
+	}
+	graph := WorkflowDefinition{Nodes: []WorkflowNode{{
+		ID: "build", Kind: NodeKindAgent,
+		Params: map[string]any{"prompt": "干活", "worktree": "independent"},
+	}}}
+	got, err := svc.snapshotRunIntegrationBranch(ctx, task, graph)
+	if err != nil {
+		t.Fatalf("snapshotRunIntegrationBranch: %v", err)
+	}
+	if got != branch {
+		t.Fatalf("集成分支 = %q，期望任务树分支 %q（落到主 checkout 会让节点绕过任务树、任务树也永不回主分支）", got, branch)
+	}
+}
+
+// 独立节点没产出提交时也要把分支清掉。
+//
+// 隔离实例 7434 的现场（真实 codex）：第二次 Run 的独立节点发现 node.txt 内容
+// 没变化、`git add -A` 无事可做，合并因此没有产生提交；收尾去删分支时走的是主
+// checkout 的 `branch -d`，而那一刻任务树的新提交还没并回主分支，git 判定「未
+// 合并」直接拒绝，分支就永远留在仓库里（活库留下了 task-1-9a8fd007）。
+// 判据应当用**合并实际发生的目录**：没有合并提交就说明分支相对该目录 HEAD 是祖先。
+func TestIndependentNodeWithoutCommitsStillDeletesBranch(t *testing.T) {
+	ctx := context.Background()
+	mainDir := newGitRoot(t)
+	svc, root, store := newTaskWorktreeService(t, mainDir)
+	task, branch := createTaskWithWorktree(t, svc, root.ID)
+	commitInDir(t, task.WorktreePath, "shared.txt", "shared work\n", "shared work")
+	// 主线还没并回 master：这正是现场里 -d 误拒的时间窗。
+	node := WorkflowNode{ID: "build", Kind: NodeKindAgent, Params: map[string]any{
+		"prompt": "看一眼就好", "worktree": "independent",
+	}}
+	run := &WorkflowRun{
+		ID: "run-no-commit", TaskID: task.ID, Revision: 1, IntegrationBranch: branch,
+		Graph: WorkflowDefinition{Nodes: []WorkflowNode{node}},
+	}
+	if err := store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		t.Fatalf("CreateWorkflowRunAndSetEngine: %v", err)
+	}
+	svc.SetWorkflowNodeRunner(&scriptedWorkflowNodeRunner{})
+	nr, err := svc.RunWorkflowNodeAttempt(ctx, store, run, node, NodeRun{
+		ID: "nr-no-commit", RunID: run.ID, NodeID: "build", Attempt: 1, Status: NodeRunQueued,
+	})
+	if err != nil || nr.Status != NodeRunSuccess {
+		t.Fatalf("node = %#v err=%v, want success", nr, err)
+	}
+	nodeBranch := renderWorktreeName("", task) + "-" + shortID("nr-no-commit")
+	if out, err := gitviewBranchExists(mainDir, nodeBranch); err == nil {
+		t.Fatalf("empty node branch %q left behind: %s", nodeBranch, out)
+	}
+}

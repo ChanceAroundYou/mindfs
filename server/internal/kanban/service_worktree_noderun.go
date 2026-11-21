@@ -174,6 +174,14 @@ type CloseNodeWorktreeInput struct {
 	RemoveDir bool
 	// DeleteBranch 为 true 时连分支一起删（只用 branch -d，见 gitview.DeleteBranch）。
 	DeleteBranch bool
+	// BranchProofDir 是删分支时用来证明「已合并」的目录 —— 合并实际发生的那个
+	// checkout（嵌套时是任务树，不是主 checkout）。空则退回主 checkout。
+	//
+	// 为什么需要它：节点没有任何提交时合并不产生合并提交，此时 `branch -d` 的
+	// 判据只能是「相对合并目标的 HEAD 是祖先」。拿主 checkout 当证明目录会在
+	// 「任务树已有新提交、但还没并回主分支」的时间窗里误拒，分支永远留在仓库里
+	// （隔离实例 7434 实测留下了 task-1-9a8fd007）。
+	BranchProofDir string
 }
 
 // CloseNodeWorktree 按 NodeRun 归属（或 worktree_id）把 registry 行翻到 closed，
@@ -203,7 +211,7 @@ func (s *Service) CloseNodeWorktree(ctx context.Context, in CloseNodeWorktreeInp
 		return entry, nil
 	}
 	if in.RemoveDir {
-		if removed, err := s.removeNodeWorktreeDir(ctx, task, entry, in.DeleteBranch); err != nil {
+		if removed, err := s.removeNodeWorktreeDir(ctx, task, entry, in.DeleteBranch, in.BranchProofDir); err != nil {
 			return entry, err
 		} else {
 			_ = removed
@@ -214,7 +222,7 @@ func (s *Service) CloseNodeWorktree(ctx context.Context, in CloseNodeWorktreeInp
 
 // removeNodeWorktreeDir 拆一棵 registry worktree 的目录（+ 可选删分支）。
 // 不用 --force、不 stash、不覆盖：有用户改动时拒绝（ClassifyWorktreeRemoveBlockers）。
-func (s *Service) removeNodeWorktreeDir(ctx context.Context, task Task, entry WorktreeEntry, deleteBranch bool) (bool, error) {
+func (s *Service) removeNodeWorktreeDir(ctx context.Context, task Task, entry WorktreeEntry, deleteBranch bool, branchProofDir string) (bool, error) {
 	// 引用计数：还有别的 active 引用钉着同一目录时只解绑（状态翻转），不拆目录。
 	refs, err := store_worktreePathRefs(ctx, s, task, entry)
 	if err != nil {
@@ -250,8 +258,19 @@ func (s *Service) removeNodeWorktreeDir(ctx context.Context, task Task, entry Wo
 		return false, nil
 	}
 	if deleteBranch && strings.TrimSpace(entry.Branch) != "" {
-		// 已并入合并提交才删（嵌套时并入的是任务树分支，主 checkout 上的 -d 会误拒）。
-		_ = gitview.DeleteBranchMergedAt(ctx, mainDir, entry.Branch, entry.MergedCommit)
+		proofDir := strings.TrimSpace(branchProofDir)
+		if proofDir == "" {
+			proofDir = mainDir
+		}
+		if strings.TrimSpace(entry.MergedCommit) == "" {
+			// 没有合并提交 = 分支相对合并目标没有带来任何提交（git 判「已经是最新」）。
+			// 这时只能拿合并目标的 HEAD 当判据：主 checkout 上 -d 会在「任务树还没
+			// 并回主分支」的时间窗里误拒，分支就永久残留。
+			_ = gitview.DeleteBranch(ctx, proofDir, entry.Branch)
+		} else {
+			// 已并入合并提交才删（嵌套时并入的是任务树分支，主 checkout 上的 -d 会误拒）。
+			_ = gitview.DeleteBranchMergedAt(ctx, proofDir, entry.Branch, entry.MergedCommit)
+		}
 	}
 	return true, nil
 }

@@ -189,6 +189,7 @@ func (s *Service) executeAutoMerge(ctx context.Context, plan autoMergePlan) (Aut
 			if _, err := s.CloseNodeWorktree(ctx, CloseNodeWorktreeInput{
 				RootID: task.RootID, TaskID: task.ID, WorktreeID: entry.WorktreeID,
 				RemoveDir: true, DeleteBranch: plan.deleteBranch,
+				BranchProofDir: plan.targetDir(),
 			}); err != nil {
 				return result, fmt.Errorf("合并已成功，但关闭 worktree 失败：%w", err)
 			}
@@ -218,6 +219,7 @@ func (s *Service) executeAutoMerge(ctx context.Context, plan autoMergePlan) (Aut
 		if _, err := s.CloseNodeWorktree(ctx, CloseNodeWorktreeInput{
 			RootID: task.RootID, TaskID: task.ID, WorktreeID: entry.WorktreeID,
 			RemoveDir: true, DeleteBranch: plan.deleteBranch,
+			BranchProofDir: plan.targetDir(),
 		}); err != nil {
 			// 合并已成、关闭失败：如实返回（state 已是 merged，不会误报未合并）。
 			result.Entry = updated

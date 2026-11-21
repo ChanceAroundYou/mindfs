@@ -196,3 +196,26 @@ func TestParseWorkflowNodeEnvelopeToleratesSurroundingText(t *testing.T) {
 		t.Fatal("invalid envelope candidates must fail")
 	}
 }
+
+// 独立树节点的会话**绝不能**跨 workspace 复用。
+//
+// 隔离实例 7434 的现场（worktree=independent、其余全默认）：Run 会话先为共享
+// 节点在任务树里打开，CLI 进程的 cwd 在那一刻就固定了；独立节点沿用同一个会话，
+// 于是它的 agent 回合仍在任务树里跑 —— node.txt 写进任务树、独立树空转、合并时
+// 无可合并，`w2 → w1` 名存实亡。每棵独立树都是一次新 attempt 的新目录，跨 attempt
+// 复用同样会落在旧树上，所以一律开新会话。
+func TestWorkflowNodeSessionPolicyIndependentWorktreeAlwaysNew(t *testing.T) {
+	for _, param := range []string{"", "run", "task_main", "per_node", "same_stage", "always_new"} {
+		node := WorkflowNode{ID: "n", Kind: NodeKindAgent, Params: map[string]any{
+			"session_reuse_policy": param, "worktree": "independent",
+		}}
+		if got := WorkflowNodeSessionPolicy(node); got != SessionReuseAlwaysNew {
+			t.Fatalf("independent node policy(%q) = %q, want %q", param, got, SessionReuseAlwaysNew)
+		}
+	}
+	// 共享节点不受影响：缺省仍是一轮 Run 一条会话。
+	shared := WorkflowNode{ID: "n", Kind: NodeKindAgent, Params: map[string]any{}}
+	if got := WorkflowNodeSessionPolicy(shared); got != SessionReuseRun {
+		t.Fatalf("shared node default policy = %q, want %q", got, SessionReuseRun)
+	}
+}

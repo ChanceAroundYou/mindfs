@@ -104,6 +104,13 @@ type WorkflowNodeRunner interface {
 // 决策）：一轮 Run 的所有节点共用一条会话，一次工作流就是一段对话；节点显式
 // 写 always_new / per_node 才单独开会话，task_main 则并入任务主会话。
 func WorkflowNodeSessionPolicy(node WorkflowNode) string {
+	// 独立树节点的会话绝不能跨 workspace 复用：agent 池里的 CLI 进程在会话打开
+	// 那一刻就固定了 cwd（隔离实例 7434 实测），沿用一个在任务树里打开的 Run 会话
+	// 会让独立节点照样在任务树里干活 —— 独立树空转、合并无可合并。每棵独立树还是
+	// 一次新 attempt 的新目录，跨 attempt 复用同样落在旧树上，所以一律开新会话。
+	if WorkflowNodeWorkspaceOf(node).Independent {
+		return SessionReuseAlwaysNew
+	}
 	raw, _ := node.Params["session_reuse_policy"].(string)
 	switch p := strings.TrimSpace(raw); p {
 	case SessionReuseTaskMain, SessionReuseSameStage, SessionReuseAlwaysNew, SessionReusePerNode, SessionReuseRun:

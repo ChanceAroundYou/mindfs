@@ -39,7 +39,11 @@ func (s *Service) snapshotRunIntegrationBranch(ctx context.Context, task Task, g
 	}
 	// 共享节点默认写入任务自己的 worktree；独立节点的合并目标必须是同一条线。
 	// 只看主 checkout 当前分支会让「共享节点写 task-42、独立节点并进 main」。
-	if branch := strings.TrimSpace(task.WorktreeBranch); branch != "" && worktreeDirUsable(task.WorktreePath) {
+	//
+	// 分支名必须走 taskWorktreeBranchOf：建卡在「新建分支」模式下不写 WorktreeBranch
+	// 这一列（分支名由目录名派生），只读列会让快照落回主 checkout 的当前分支 ——
+	// 独立节点绕过任务树、autoMergeTaskWorktreeAfterRun 也因对不上而永不触发。
+	if branch := taskWorktreeBranchOf(task); branch != "" && worktreeDirUsable(task.WorktreePath) {
 		return branch, nil
 	}
 	mainDir, err := s.taskWorktreeMainDir(ctx, rootID)

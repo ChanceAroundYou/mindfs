@@ -48,6 +48,41 @@ Plan 2026-11-21，用户直接下令：「按你上一轮分析里『需要做�
   `TestCoordinatorCrashReplayCompletesWithoutModelCall` 是既有负载 flake，单跑通过）。并行会话在飞的
   4 个未完成测试文件用 `go test -overlay` 排除，未改动它们。
 
+## 隔离实测（2026-11-21，端口 7434 / 真实 CLI）
+
+单元测试手搭的 `run.IntegrationBranch` 掩盖了三处真缺陷，隔离实例（`scripts/mindfs-iso.sh`，
+源 = 干净 worktree）一跑就全部暴露，各自按「先红后绿」修复：
+
+1. **集成分支快照落到主 checkout 分支**：活库迁移回 `integration_branch: "master"`（用例环境是
+   `"main"`），任务树 `task-1` 被绕过。根因是建卡在「新建分支」模式下不写 `WorktreeBranch` 列，
+   `snapshotRunIntegrationBranch` 只读列。改为 `taskWorktreeBranchOf(task)`（目录名派生）后实测
+   `integration_branch: "task-1"`。用例 `TestSnapshotRunIntegrationBranchUsesTaskWorktreeBranch`。
+2. **独立节点仍在任务树里干活**：日志里 CLI 的 cwd 是任务树，节点树空转、合并无可合并。根因是
+   Run 级会话复用，而 agent 池的 CLI cwd 在会话打开那一刻就固定。改为独立树节点一律
+   `SessionReuseAlwaysNew`（跨 attempt 复用同样落在旧树，所以不看节点参数）。用例
+   `TestWorkflowNodeSessionPolicyIndependentWorktreeAlwaysNew`。
+3. **空节点分支永久残留**：节点没有提交时合并不产生合并提交，`branch -d` 拿主 checkout 当证明目录，
+   在「任务树已前进、还没并回主分支」的时间窗里误拒（实测留下 `task-1-9a8fd007`）。新增
+   `CloseNodeWorktreeInput.BranchProofDir`，调用方传合并实际发生的目录（`plan.targetDir()`）；
+   无合并提交时按该目录 HEAD 判祖先。用例 `TestIndependentNodeWithoutCommitsStillDeletesBranch`；
+   变异（`plan.targetDir()` → `plan.mainDir`）打红后还原。
+
+终轮验收（隔离实例 7434，codex，默认会话策略，`create_worktree: true` + 显式 migrate）：
+
+- 迁移回 `integration_branch: "task-1"`；共享节点提交落在任务树。
+- 独立节点：`node_worktree_bound` 指向 `.worktree/task-1-43131b71`，会话 key 与共享节点不同；
+  成功后并进任务树（`7b43a88 Merge branch 'task-1-43131b71'`），目录拆除、分支删除
+  （仓库只剩 `master` / `task-1`），registry 行 `state=closed` 且记 `merged_commit`。
+- 一轮 `node_states_json` 全 success 后，任务树自动并回 master（`95a7bfb Merge task worktree
+  'task-1' into 'master'`，`task_events.type=task_worktree_merged`），master 同时含
+  `shared.txt` + `node.txt`，registry 主行 `task-1` 保持 `active`。
+- 同任务随后由既有 workflow-recommender 自动再起一轮（不在本计划范围），共享节点因「工作区干净」
+  落 `waiting_user`，属正常拒绝空提交，不是挂起。
+
+限制：claude 账户额度 429（`usage_limit_reached`），实测改用 codex；隔离实例不触碰线上 7331。
+门禁：`go build ./...`、`go vet`、kanban 定向用例、`go test ./server/internal/kanban/ -count=1`
+（401s）全绿。
+
 ## 未做 / 边界
 
 - 前端建卡面板未加新入口（勾选本身已生效）；「重建 worktree」仍是显式修复入口。
