@@ -7,7 +7,7 @@ import { pendingTaskPrompt, visibleConversationActivities } from "../../shared/a
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
 import { ScrollToBottomButton } from "../common/ScrollToBottomButton";
-import { alignConversationToBottom, findScrollableAncestor } from "./conversationScroll";
+import { alignPanelToBottom, findScrollableAncestor } from "./conversationScroll";
 import { useConversationJumpToLatest } from "./useConversationJumpToLatest";
 import { useWorkflowNames } from "./useWorkflowNames";
 
@@ -215,7 +215,8 @@ export function ConversationView({
     onAgentActivityChange?.();
   }, [activities, onAgentActivityChange]);
 
-  // 打开详情时直接落到最新消息：用户不必每次下滑一大段历史。
+  // 打开详情时直接落到面板真正的底部：最新一条回复 + 输入框，以及桌面端位于
+  // 对话下方的两个胶囊与收尾区（只对齐对话末尾会把它们留在视口外）。
   //
   // 只在「这个任务的内容第一次到齐」时滚一次：以首条活动 id 作为这一轮的身份，
   // 任务切换或首拉完成会换 key；之后的新留言/流式回复不抢滚动位置（用户可能正在
@@ -239,7 +240,7 @@ export function ConversationView({
       const scroller = findScrollableAncestor(anchor);
       if (scroller) {
         if (lastApplied >= 0 && Math.abs(scroller.scrollTop - lastApplied) > 2) return;
-        alignConversationToBottom(anchor);
+        alignPanelToBottom(anchor);
         lastApplied = scroller.scrollTop;
         stable = scroller.scrollHeight === lastHeight ? stable + 1 : 0;
         lastHeight = scroller.scrollHeight;
@@ -267,9 +268,12 @@ export function ConversationView({
   };
 
   return (
+    // 内部间距一律用显式 margin，不用 flex 的 gap：这里的「回到底部」浮层与滚动锚点
+    // 都是零高度元素，flex gap 会照样在它们两侧各加一份，实测把「对话 → 输入框」从
+    // 16px 撑成 32px、「输入框 → 面板下方胶囊」多出 16px 死区。
     <div
       data-testid="conversation-view"
-      style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, maxWidth: "100%" }}
+      style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%" }}
     >
       <ConversationMessages
         activities={activities}
@@ -296,8 +300,9 @@ export function ConversationView({
       />
 
       {/*
-        「回到底部」浮在输入框上方。外层始终存在（零高度 + sticky），所以按钮显隐
-        不会改变对话流的间距；内层用 absolute 定位，和会话浮层同一套位置与尺寸。
+        「回到底部」浮在输入框上方。外层始终存在（零高度 + sticky），零高度又不带
+        margin，所以按钮显隐不改变对话流的间距；内层用 absolute 定位，和会话浮层
+        同一套位置与尺寸。
       */}
       <div
         style={{
@@ -327,60 +332,63 @@ export function ConversationView({
         </div>
       </div>
 
-      {disabled ? (
-        <div
-          data-testid="conversation-disabled"
-          style={{
-            fontSize: 12,
-            color: "var(--text-secondary)",
-            textAlign: "center",
-            padding: "12px 0",
-            borderTop: "1px solid var(--border-color)",
-          }}
-        >
-          {t("task.activity.disabled")}
-        </div>
-      ) : pendingPrompt ? (
-        // 有待回答的问题/审批时普通留言不能代替这个决定（D4），输入框整体换成提示。
-        <div
-          data-testid="conversation-prompt-pending"
-          style={{
-            fontSize: 12,
-            color: "var(--status-warn, #d97706)",
-            textAlign: "center",
-            padding: "12px 0",
-            borderTop: "1px solid var(--border-color)",
-          }}
-        >
-          {pendingPrompt.type === "question"
-            ? t("task.activity.questionPending")
-            : t("task.activity.gatePending")}
-        </div>
-      ) : (
-        <ActivityInput
-          body={body}
-          onBodyChange={setBody}
-          rootId={rootId}
-          nodeId={nodeId}
-          choice={choice}
-          versionId={versionId}
-          onWorkflowChange={(nextChoice, nextVersionId) => {
-            setChoice(nextChoice);
-            setVersionId(nextVersionId);
-          }}
-          sending={sending}
-          error={sendError}
-          resetKey={composerResetKey}
-          attachments={pendingAttachments}
-          onAttachFiles={appendPendingAttachments}
-          onRemoveAttachment={removePendingAttachment}
-          uploadProgress={uploadProgress}
-          onCancelUpload={cancelUpload}
-          onSend={(text) => void handleSend(text)}
-        />
-      )}
+      {/* 输入框与对话流之间固定 16px；用 margin 而不是父层 gap，见容器上的注释。 */}
+      <div style={{ marginTop: 16, minWidth: 0 }}>
+        {disabled ? (
+          <div
+            data-testid="conversation-disabled"
+            style={{
+              fontSize: 12,
+              color: "var(--text-secondary)",
+              textAlign: "center",
+              padding: "12px 0",
+              borderTop: "1px solid var(--border-color)",
+            }}
+          >
+            {t("task.activity.disabled")}
+          </div>
+        ) : pendingPrompt ? (
+          // 有待回答的问题/审批时普通留言不能代替这个决定（D4），输入框整体换成提示。
+          <div
+            data-testid="conversation-prompt-pending"
+            style={{
+              fontSize: 12,
+              color: "var(--status-warn, #d97706)",
+              textAlign: "center",
+              padding: "12px 0",
+              borderTop: "1px solid var(--border-color)",
+            }}
+          >
+            {pendingPrompt.type === "question"
+              ? t("task.activity.questionPending")
+              : t("task.activity.gatePending")}
+          </div>
+        ) : (
+          <ActivityInput
+            body={body}
+            onBodyChange={setBody}
+            rootId={rootId}
+            nodeId={nodeId}
+            choice={choice}
+            versionId={versionId}
+            onWorkflowChange={(nextChoice, nextVersionId) => {
+              setChoice(nextChoice);
+              setVersionId(nextVersionId);
+            }}
+            sending={sending}
+            error={sendError}
+            resetKey={composerResetKey}
+            attachments={pendingAttachments}
+            onAttachFiles={appendPendingAttachments}
+            onRemoveAttachment={removePendingAttachment}
+            uploadProgress={uploadProgress}
+            onCancelUpload={cancelUpload}
+            onSend={(text) => void handleSend(text)}
+          />
+        )}
+      </div>
 
-      {/* 滚动锚点：任务详情打开时把这里对齐到面板可视底部（见 conversationScroll.ts）。 */}
+      {/* 滚动锚点：零高度、零 margin，只用来向上找滚动容器（见 conversationScroll.ts）。 */}
       <div ref={scrollAnchorRef} data-testid="conversation-scroll-anchor" aria-hidden style={{ height: 0 }} />
     </div>
   );

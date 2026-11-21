@@ -1,31 +1,26 @@
-// 打开任务详情时把对话滚到最新消息。
+// 打开任务详情时把面板滚到真正的底部。
 //
 // 任务详情不是独立滚动区：`.mindfs-panel-body` 是唯一滚动容器（对话、执行详情
-// 胶囊、完成证据都在里面）。所以这里从对话末尾的锚点往上找最近的可滚动祖先，
-// 再把「锚点底部」对齐到该容器的可视底部。
+// 胶囊、完成证据都在里面）。**目标必须是容器自己的底部，不能只对齐对话末尾**：
+// 桌面端对话下方还有「执行详情 / 监管记录」两个胶囊和收尾区，锚点对齐会把它们
+// 留在视口之外（实测打开后胶囊顶边 855 > 可视底 845，「回到底部」也就不到底）。
 //
 // 只负责几何计算与一次对齐，不关心何时调用（视图层在首屏数据到达后调用）。
 
-export type BottomAlignInput = {
-  /** 容器当前滚动位置。 */
-  scrollTop: number;
+export type PanelBottomInput = {
   scrollHeight: number;
   clientHeight: number;
-  /** 锚点与容器的视口坐标（getBoundingClientRect 的 bottom）。 */
-  anchorBottom: number;
-  scrollerBottom: number;
 };
 
 /**
- * 把锚点底部对齐到容器底部所需的 scrollTop，并夹在 [0, 最大滚动] 之间。
+ * 面板真正底部对应的 scrollTop（已夹到 ≥0）。
  *
- * 纯函数：内容还没铺满（最大滚动为 0）时返回 0；锚点已经在可视区底部时
- * 返回当前值，不会把用户往下多滚一截。
+ * 纯函数：内容还没铺满（最大滚动为 0）时返回 0。目标与「回到底部」按钮的收敛
+ * 终点是同一个值（`scrollHeight - clientHeight`），所以打开时落到哪里、点按钮
+ * 之后停在哪里不会出现两种口径。
  */
-export function bottomAlignedScrollTop(input: BottomAlignInput): number {
-  const max = Math.max(0, input.scrollHeight - input.clientHeight);
-  const target = input.scrollTop + (input.anchorBottom - input.scrollerBottom);
-  return Math.max(0, Math.min(target, max));
+export function panelBottomScrollTop(input: PanelBottomInput): number {
+  return Math.max(0, input.scrollHeight - input.clientHeight);
 }
 
 /**
@@ -60,20 +55,16 @@ export function findScrollableAncestor(start: HTMLElement): HTMLElement | null {
 }
 
 /**
- * 把对话末尾对齐到最近的可滚动祖先底部；返回该容器（找不到时为 null）。
- * 对齐后再次调用是幂等的，视图层可以在布局稳定的头几帧里重复调用。
+ * 把整个面板（对话 + 下方的胶囊与收尾区）滚到真正的底部；返回该容器
+ * （找不到时为 null）。对齐后再次调用是幂等的，视图层可以在布局稳定的头几帧里
+ * 重复调用（异步展开的执行详情会把 scrollHeight 继续撑大）。
  */
-export function alignConversationToBottom(anchor: HTMLElement): HTMLElement | null {
+export function alignPanelToBottom(anchor: HTMLElement): HTMLElement | null {
   const scroller = findScrollableAncestor(anchor);
   if (!scroller) return null;
-  const anchorRect = anchor.getBoundingClientRect();
-  const scrollerRect = scroller.getBoundingClientRect();
-  scroller.scrollTop = bottomAlignedScrollTop({
-    scrollTop: scroller.scrollTop,
+  scroller.scrollTop = panelBottomScrollTop({
     scrollHeight: scroller.scrollHeight,
     clientHeight: scroller.clientHeight,
-    anchorBottom: anchorRect.bottom,
-    scrollerBottom: scrollerRect.bottom,
   });
   return scroller;
 }

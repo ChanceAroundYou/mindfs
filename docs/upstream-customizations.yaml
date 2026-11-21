@@ -11522,9 +11522,13 @@ groups:
       胶囊（`ActivityTypeTag`）：留言 / 回复 / 结果 / 进度 / 总结 / 对话 / 系统 / 提醒 /
       合并冲突，取值由 `activityTypeTagKey` 从后端 `TaskActivity.type` 与回复 `purpose`
       推导，未知类型不显示；它只说明「这是什么消息」，与已删除的消息级状态无关。⑦ 首屏数据
-      到齐后把对话末尾锚点对齐到 `.mindfs-panel-body` 的可视底部：以「任务 id + 首条活动
-      id」作为这一轮的身份只滚一次，之后的新留言与流式回复不再抢滚动位置（用户可能正在
-      上翻历史）；布局稳定前最多重试 24 帧、连续 3 帧高度不变即停。⑧ 上翻历史后输入框上方
+      到齐后把 `.mindfs-panel-body` 滚到**真正的底部**（`scrollHeight - clientHeight`，与会话
+      侧收敛同一口径），桌面端对话下方的两个胶囊与收尾区因此一起进入视口——只对齐对话末尾
+      锚点会把它们留在视口外；以「任务 id + 首条活动 id」作为这一轮的身份只滚一次，之后的
+      新留言与流式回复不再抢滚动位置（用户可能正在上翻历史）；布局稳定前最多重试 24 帧、
+      连续 3 帧高度不变即停。对话流内部间距改用显式 margin（容器不设 flex gap）：零高度的
+      浮层与滚动锚点本来会各吃一份 gap，实测把「对话 → 输入框」撑成 32px，并在输入框与胶
+      囊之间多出 16px 死区；面板内容间距同步收到 6px。⑧ 上翻历史后输入框上方
       出现「回到底部」圆钮：与会话页**同一颗组件**（`ScrollToBottomButton`）、同一套收敛
       （`components/common/scrollToBottom.ts`：逐帧写 maxTop、最少 8 帧、连续 3 帧稳定或
       120 帧封顶），点击后用户自己上滚/上翻键立刻让位；滚动容器从锚点向上找到
@@ -11538,8 +11542,8 @@ groups:
       100%；会话图标角标在嵌套节点行仍有 2px 级 scrollWidth 差（不产生面板级横向滚动），
       本组未处理。「进度」标记仍只按 `purpose=progress` 判定，不动 Router 的 purpose 语义。
       自动滚动只发生在首屏到齐那一刻：用户随后手动上翻不会被拉回，重复的任务增量不会二次
-      滚动；移动端胶囊行在对话上方，落到最新消息时它在视口之外（位置与折叠状态都没变，
-      需要向上滚才看到），本组未改它的定位。
+      滚动；移动端胶囊行仍由 `order:-1` 置顶，落到真正的底部时它在视口之外（位置与折叠状态
+      都没变，需要向上滚才看到），本组未改它的定位，只让间距与滚动目标和桌面同一套规则。
     files:
       - web/src/components/task/ActivityMessage.tsx
       - web/src/components/task/ConversationView.tsx
@@ -11576,10 +11580,12 @@ groups:
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
-      - 'web/src/components/task/ConversationView.tsx:style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, maxWidth: "100%" }}'
+      - 'web/src/components/task/ConversationView.tsx:style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%" }}'
       - 'web/src/components/task/ConversationView.tsx:if (initialScrollKeyRef.current === key) return;'
       - 'web/src/components/task/ConversationView.tsx:data-testid="conversation-scroll-anchor"'
-      - 'web/src/components/task/conversationScroll.ts:export function alignConversationToBottom(anchor: HTMLElement): HTMLElement | null {'
+      - 'web/src/components/task/conversationScroll.ts:export function alignPanelToBottom(anchor: HTMLElement): HTMLElement | null {'
+      - 'web/src/components/task/conversationScroll.ts:return Math.max(0, input.scrollHeight - input.clientHeight);'
+      - 'web/src/components/task/TaskDetailPanel.tsx:flexDirection: "column", gap: "6px", minWidth: 0'
       - 'web/src/components/task/TaskDetailPanel.tsx:<div className="task-detail-execution">'
       - 'web/src/components/task/TaskDetailPanel.tsx:fallbackSessionKey={task.main_session_key}'
       - 'web/src/components/task/TaskDetailPanel.tsx:taskStatus={task.status}'

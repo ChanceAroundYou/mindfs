@@ -146,7 +146,9 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
         </>
       )}
     >
-      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px", minWidth: 0 }}>
+      {/* 对话流与下方内容之间留 6px：输入框本身已带 16px 上边距，这里再大就会在
+          「输入框 ↔ 执行详情/监管记录胶囊」之间堆出一道死区（用户要求收紧）。 */}
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }}>
         {/* 详情面板只有一条对话流（ConversationView）。旧的 CommentThread 读的是同一份
             /api/tasks/{id}/activities，再挂一份列表 + 输入框就是「同一段对话出现两套」。 */}
         <ConversationView
