@@ -12138,6 +12138,11 @@ groups:
       ⑦ `Migrate` 必须对 SQLITE_BUSY 退避重试，`journal_mode` 不能写在 DSN 里：SQLite 不为
       journal_mode 切换调用 busy handler，撞上并发迁移会**立即**返回 BUSY，而 DSN pragma 在
       连接建立时执行、没有第二次机会。
+      ⑧ 变更采集（`capture.go`）的三条必须保留的语义：**应用远端记录必须包在 `Suppress` 里
+      且成功后采纳基线** —— 只是跳过当下采集不够，下一次兜底扫描仍会把远端内容当本地改动
+      回传，两侧互相回传即成死循环；**删除墓碑携带最后一次内容 hash**，否则「我删的」和
+      「远端改完再删」无法区分；**一次 diff 用 `WriteRecords` 单事务整批落库**，半批落地会
+      让基线已推进、变更只写一半，剩余部分永久丢失。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
       （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
@@ -12171,6 +12176,8 @@ groups:
       - server/internal/kanban/workflow_store_sync.go
       - server/internal/kanban/workflow_store_sync_test.go
       - server/internal/api/usecase/prompts.go
+      - server/internal/controlsync/capture.go
+      - server/internal/controlsync/capture_test.go
     tests:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
@@ -12182,6 +12189,7 @@ groups:
       - server/internal/controlsync/domain_pins_test.go
       - server/internal/controlsync/domain_users_test.go
       - server/internal/controlsync/domain_workflows_test.go
+      - server/internal/controlsync/capture_test.go
       - server/internal/auth/store_sync_test.go
       - server/internal/kanban/workflow_store_sync_test.go
     anchors:
@@ -12208,6 +12216,12 @@ groups:
       - 'server/internal/preferences/store_fields.go:var knownPreferenceFields = func() map[string]bool {'
       - 'server/internal/kanban/workflow_store_sync.go:var ErrWorkflowVersionImmutable = errors.New("workflow version immutable")'
       - 'server/internal/kanban/workflow_store_sync_test.go:func TestExportForSyncSkipsOrphanMeta(t *testing.T) {'
+      - 'server/internal/controlsync/capture.go:const FallbackInterval = 15 * time.Second'
+      - 'server/internal/controlsync/capture.go:func (c *Capturer) Suppress(ctx context.Context, domains []string, fn func() error) error {'
+      - 'server/internal/controlsync/capture.go:func DomainForPath(path string) (string, bool) {'
+      - 'server/internal/controlsync/capture_test.go:func TestSuppressKeepsRemoteApplyOutOfChangeLog(t *testing.T) {'
+      - 'server/internal/controlsync/capture_test.go:func TestFallbackScanCatchesNonHTTPWrites(t *testing.T) {'
+      - 'server/internal/controlsync/store.go:func (s *Store) WriteRecords(ctx context.Context, recs []Record) ([]int64, error) {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
