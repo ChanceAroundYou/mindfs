@@ -178,7 +178,6 @@ export const enUSAgents = {
   "contextSaving.badge": "Context -{saved}",
   "contextSaving.badgeTitle": "This turn sent {saved} less",
   "contextSaving.title": "Context folding",
-  "contextSaving.description": "Old tool output becomes a pointer to a local archive; the original stays on this machine. The transcript is unchanged; token counts are estimates.",
   "contextSaving.badgeRequest": "Request this turn",
   "contextSaving.requestTokensValue": "{req} → {forwarded} tokens",
   "contextSaving.badgeSaved": "Saved this turn",
@@ -187,6 +186,7 @@ export const enUSAgents = {
   "contextSaving.badgeBlocks": "Folded results",
   "contextSaving.badgeTokens": "Folded source",
   "contextSaving.badgeRewrite": "Rewritten this turn",
+  "contextSaving.badgeRewriteTotal": "Rewritten in total",
   "contextSaving.badgeCacheHit": "Cache hit this turn",
   "contextSaving.savedValue": "{size} ({percent})",
   "contextSaving.blocksValue": "{count}",
@@ -196,7 +196,5 @@ export const enUSAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "unknown",
   "contextSaving.empty": "No request in this conversation has been folded yet.",
-  "contextSaving.estimateNote": "This turn's usage came from a relay (llmux): the rewrite cost and hit rate may be synthesized estimates.",
   "contextSaving.usageMissing": "{count} requests had no readable usage and are excluded from the rewrite total.",
-  "contextSaving.rewriteTotal": "{rewrite} tokens rewritten in total.",
 } as const;

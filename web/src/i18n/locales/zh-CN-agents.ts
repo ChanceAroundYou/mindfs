@@ -178,7 +178,6 @@ export const zhCNAgents = {
   "contextSaving.badge": "上下文 -{saved}",
   "contextSaving.badgeTitle": "本轮少发 {saved}",
   "contextSaving.title": "上下文折叠",
-  "contextSaving.description": "旧工具输出换成本机存档指针，原文保留在本机；会话记录不变，token 数为估算。",
   "contextSaving.badgeRequest": "本轮请求大小",
   "contextSaving.requestTokensValue": "{req} → {forwarded} tokens",
   "contextSaving.badgeSaved": "本轮节省",
@@ -187,6 +186,7 @@ export const zhCNAgents = {
   "contextSaving.badgeBlocks": "折叠结果",
   "contextSaving.badgeTokens": "折叠原文",
   "contextSaving.badgeRewrite": "本轮重算",
+  "contextSaving.badgeRewriteTotal": "重算合计",
   "contextSaving.badgeCacheHit": "本轮缓存命中",
   "contextSaving.savedValue": "{size}（{percent}）",
   "contextSaving.blocksValue": "{count} 个",
@@ -196,7 +196,5 @@ export const zhCNAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "未知",
   "contextSaving.empty": "这个会话还没有折叠过请求。",
-  "contextSaving.estimateNote": "本轮用量由中转（如 llmux）上报：重算与缓存命中可能是它合成的估算。",
   "contextSaving.usageMissing": "{count} 次请求没读到用量，未计入重算合计。",
-  "contextSaving.rewriteTotal": "重算合计 {rewrite} tokens。",
 } as const;

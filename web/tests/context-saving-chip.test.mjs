@@ -17,13 +17,13 @@ const CONTEXT_SAVING_KEYS = [
   "badge",
   "badgeTitle",
   "title",
-  "description",
   "badgeRequest",
   "badgeSaved",
   "badgeSavedTotal",
   "badgeBlocks",
   "badgeTokens",
   "badgeRewrite",
+  "badgeRewriteTotal",
   "badgeCacheHit",
   "requestTokensValue",
   "savedValue",
@@ -35,8 +35,6 @@ const CONTEXT_SAVING_KEYS = [
   "tokensValue",
   "unknown",
   "empty",
-  "estimateNote",
-  "rewriteTotal",
   "usageMissing",
 ];
 
@@ -103,7 +101,7 @@ test("单位统一成 token：请求、节省、折叠内容、重算都用同�
   assert.match(indicator, /\.replace\(\/\\B\(\?=\(\\d\{3\}\)\+\(\?!\\d\)\)\/g, ","\)/);
   assert.match(indicator, /t\("contextSaving\.tokensValue", \{ count: formatTokensEstimate\(latest\.tokens_est\) \}\)/);
   assert.match(indicator, /t\("contextSaving\.tokensValue", \{ count: formatTokens\(latest\.rewrite_tokens\) \}\)/);
-  assert.match(indicator, /rewrite: formatTokens\(saving\.total_rewrite_tokens\)/);
+  assert.match(indicator, /count: formatTokens\(saving\.total_rewrite_tokens\)/);
   // 胶囊只说数：单位在 tooltip 与明细里，9px 的芯片能省一个词就省。
   assert.match(indicator, /const savedLabel = tokenSized\s*\?\s*formatTokensCompact\(savedTokens\)\s*:\s*formatBytes\(savedBytes\)/);
   assert.match(
@@ -174,7 +172,11 @@ test("折叠的代价与收益并列显示：本轮重算 token 与节省同屏"
   assert.match(service, /usage_source: "response" \| "missing" \| ""/);
   assert.match(indicator, /latest\.usage_source === "missing"[\s\S]{0,80}t\("contextSaving\.unknown"\)/);
   assert.match(indicator, /saving\.usage_missing > 0/);
-  assert.match(indicator, /t\("contextSaving\.rewriteTotal", \{ rewrite: formatTokens\(saving\.total_rewrite_tokens\) \}\)/);
+  // 2026-11-21 起合计是普通数据行，不再是脚注句子。
+  assert.match(
+    indicator,
+    /t\("contextSaving\.badgeRewriteTotal"\),\s*t\("contextSaving\.tokensValue", \{ count: formatTokens\(saving\.total_rewrite_tokens\) \}\)/,
+  );
   // -1 是「这一轮没读到用量」，不能显示成 0 或省略。
   assert.match(indicator, /saving\.total_rewrite_tokens > 0/);
 });
@@ -199,14 +201,14 @@ test("本轮新折报的是原文大小，不只是块数", () => {
   );
 });
 
-test("中转报告的用量要标明是估算，直连上游的不能误标", () => {
-  // 判据曾经是「有缓存读、没有缓存写」，它把每一次 Codex 回合一律标成中转
-  // 估算——官方 API 的冷前缀本来就零缓存写入。现在由代理按转发主机记来源，
-  // 前端只读 usage_provenance，不许再从计数反推。
-  assert.match(indicator, /const usageEstimated = !!latest && latest\.usage_provenance === "relay";/);
-  assert.doesNotMatch(indicator, /latest\.usage_cache_creation === 0/);
-  assert.match(indicator, /saving && usageEstimated[\s\S]{0,400}t\("contextSaving\.estimateNote"\)/);
+test("用量来源只记在账本里，胶囊不再挂说明", () => {
+  // 来源由代理按转发主机写进账本（B16）：官方 API 的冷前缀本来就零缓存写入，
+  // 从计数器反推必然把 Codex 回合误标成中转。2026-11-21 起胶囊不显示任何说明
+  // 文字——标题、数据行、合计行之外不再有整段提示。
   assert.match(service, /usage_provenance: "upstream" \| "relay" \| ""/);
+  assert.doesNotMatch(indicator, /usage_provenance|estimateNote|contextSaving\.description|contextSaving\.rewriteTotal/);
+  assert.doesNotMatch(zh, /contextSaving\.(description|estimateNote|rewriteTotal)/);
+  assert.doesNotMatch(en, /contextSaving\.(description|estimateNote|rewriteTotal)/);
   assert.match(service, /new_tokens_est: number;/);
   assert.match(service, /total_saved_bytes: number;/);
   assert.match(service, /total_saved_tokens: number;/);
@@ -230,4 +232,6 @@ test("文案在两种语言里成对存在", () => {
   assert.match(zh, /"contextSaving\.blocksSplitTokensValue": "本轮新折 \{new\} 块（\{tokens\} tokens）· 共 \{total\} 块"/);
   assert.match(zh, /"contextSaving\.savedTotalValue": "\{size\}（最近 \{count\} 次折叠）"/);
   assert.match(zh, /"contextSaving\.cacheHitValue": "\{percent\}（\{tokens\} tokens）"/);
+  assert.match(zh, /"contextSaving\.badgeRewriteTotal": "重算合计"/);
+  assert.match(en, /"contextSaving\.badgeRewriteTotal": "Rewritten in total"/);
 });

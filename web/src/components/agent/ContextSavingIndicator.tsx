@@ -82,13 +82,6 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   // is all three disjoint counters; missing usage must not read as 0% hit.
   const cacheTotal = (latest?.usage_input || 0) + (latest?.usage_cache_creation || 0) + (latest?.usage_cache_read || 0);
   const cachePercent = latest && cacheTotal > 0 ? Math.round((latest.usage_cache_read * 100) / cacheTotal) : null;
-  // A relay (llmux) may synthesize usage, so its hit rate and rewrite cost are
-  // estimates; a reader judging "was folding worth it" would otherwise trust
-  // numbers nobody measured. Provenance is recorded by the proxy from the host
-  // the request was forwarded to — the counters themselves cannot tell the two
-  // apart (a relay can report cache writes, and the provider's own API reports
-  // none on a cold prefix). Rows written before the field existed say nothing.
-  const usageEstimated = !!latest && latest.usage_provenance === "relay";
   if (latest) {
     const savedText = tokenSized
       ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })
@@ -146,6 +139,14 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
       ]);
     }
   }
+  // The session total is a number, not a footnote: give it the same row shape
+  // as every other figure so the panel stays a table, not prose.
+  if (saving && saving.total_rewrite_tokens > 0) {
+    rows.push([
+      t("contextSaving.badgeRewriteTotal"),
+      t("contextSaving.tokensValue", { count: formatTokens(saving.total_rewrite_tokens) }),
+    ]);
+  }
   // The chip has one line at 9px; the unit lives in the tooltip and the rows.
   const savedLabel = tokenSized ? formatTokensCompact(savedTokens) : formatBytes(savedBytes);
   const savedTitle = tokenSized
@@ -188,9 +189,6 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         <h2 id="context-saving-title" style={{ margin: 0, fontSize: "16px", lineHeight: 1.35, color: "var(--text-primary)" }}>
           {t("contextSaving.title")}
         </h2>
-        <p style={{ margin: "7px 0 0", fontSize: "12px", lineHeight: 1.6, color: "var(--text-secondary)" }}>
-          {t("contextSaving.description")}
-        </p>
         <div style={{ marginTop: "14px", border: "1px solid var(--border-color)", borderRadius: "10px", overflow: "hidden" }}>
           {loading && !latest ? (
             <div style={{ padding: "18px 10px", textAlign: "center", color: "var(--text-secondary)", fontSize: "12px" }}>{t("common.loading")}</div>
@@ -203,19 +201,9 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
             </div>
           ))}
         </div>
-        {saving && usageEstimated ? (
-          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
-            {t("contextSaving.estimateNote")}
-          </div>
-        ) : null}
         {saving && saving.usage_missing > 0 ? (
           <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
             {t("contextSaving.usageMissing", { count: String(saving.usage_missing) })}
-          </div>
-        ) : null}
-        {saving && saving.total_rewrite_tokens > 0 ? (
-          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
-            {t("contextSaving.rewriteTotal", { rewrite: formatTokens(saving.total_rewrite_tokens) })}
           </div>
         ) : null}
         {error ? <div style={{ marginTop: "10px", padding: "9px 11px", borderRadius: "9px", background: "rgba(220, 38, 38, 0.09)", color: "#dc2626", fontSize: "12px", overflowWrap: "anywhere" }}>{error}</div> : null}
