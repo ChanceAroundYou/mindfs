@@ -38,6 +38,13 @@ type Capturer struct {
 	// 下一次兜底扫描会把这次变化补上。
 	OnCaptureError func(error)
 
+	// PendingWhen 决定本地改动落「变更流」还是「待回传」。
+	//
+	// 主节点（唯一写者）为 nil/false：改动写 records + changes，供给边缘拉取。
+	// 边缘在主节点不可达时必须为 true：改动只能记 pending，恢复后再推上去 ——
+	// 边缘自己没有 changes 的读者，写进去等于伪造一段没人追的变更流。
+	PendingWhen func() bool
+
 	mu         sync.Mutex
 	suppressed int
 	last       map[string]map[string]recordState
@@ -248,22 +255,99 @@ func (c *Capturer) captureDomainLocked(ctx context.Context, domain string) (int,
 	}
 	// 同一次采集里的顺序固定下来，日志与测试才好读；rev 由事务按序分配。
 	sort.Slice(changed, func(i, j int) bool { return changed[i].Key < changed[j].Key })
+	if c.pendingMode() {
+		if err := c.writePendingLocked(ctx, domain, changed, prev); err != nil {
+			return 0, err
+		}
+		c.adoptCapturedLocked(domain, current, prev)
+		return len(changed), nil
+	}
 	if _, err := c.store.WriteRecords(ctx, changed); err != nil {
 		return 0, err
 	}
+	c.adoptCapturedLocked(domain, current, prev)
+	return len(changed), nil
+}
+
+// pendingMode 判断这一刻该不该把改动记成待回传。
+func (c *Capturer) pendingMode() bool {
+	return c.PendingWhen != nil && c.PendingWhen()
+}
+
+// writePendingLocked 把这次采集到的本地改动记进 pending（必须有 c.mu）。
+//
+// base_hash 取prev（上一次基线）——它是「本机最后一次从主节点看到的值」，也就是
+// 三方比对的共同祖先，而不是本地改了几版之后的中间值。同一条记录反复改，
+// PutPending 会保留第一次的 base_hash、只换载荷与身份。
+func (c *Capturer) writePendingLocked(ctx context.Context, domain string, changed []Record, prev map[string]recordState) error {
+	origin := c.origin
+	if origin == "" {
+		// 没有 origin 就没有跨机唯一性；退化成固定前缀，至少单机内身份稳定，
+		// 真正上线时 Runtime 一定会传入实例 id。
+		origin = "edge"
+	}
+	for _, rec := range changed {
+		seq, err := c.store.NextPendingSeq(ctx)
+		if err != nil {
+			return err
+		}
+		base := ""
+		if old, ok := prev[rec.Key]; ok {
+			base = old.hash
+		}
+		if err := c.store.PutPending(ctx, PendingChange{
+			ChangeID: PendingChangeID(origin, rec.Domain, rec.Key, seq),
+			Domain:   rec.Domain,
+			Key:      rec.Key,
+			BaseHash: base,
+			Payload:  rec.Payload,
+			Deleted:  rec.Deleted,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// adoptCapturedLocked 采集成功后把当前快照记为基线，并为权威存储里已不存在的 key
+// 记下删除态（保留最后一次 hash），否则下一次采集会为同一个删除再发一条墓碑。
+func (c *Capturer) adoptCapturedLocked(domain string, current []Record, prev map[string]recordState) {
 	next := make(map[string]recordState, len(current))
 	for _, rec := range current {
 		next[rec.Key] = recordState{hash: rec.Hash}
 	}
-	// 权威存储里已经没有的 key：基线记成删除态（保留最后一次 hash），
-	// 否则下一次采集会为同一个删除再发一条墓碑。
 	for key, old := range prev {
 		if _, ok := next[key]; !ok {
 			next[key] = recordState{hash: old.hash, deleted: true}
 		}
 	}
 	c.last[domain] = next
-	return len(changed), nil
+}
+
+// RefreshBaseline 丢掉内存基线，从索引库（副本）重新加载。
+//
+// 边缘从在线切到本地模式时必须调它：在线期间控制面写都转发给主节点，本机这份
+// 权威存储与采集基线都不前进，只有副本在追。带着过期基线算出来的 base_hash
+// 会指向一个早已被主节点改掉的祖先，恢复后把「用户基于最新值做的改动」误判成冲突。
+func (c *Capturer) RefreshBaseline(ctx context.Context) error {
+	if c == nil {
+		return errors.New("controlsync: nil capturer")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, domain := range c.registry.Names() {
+		stored, err := c.store.RecordStates(ctx, domain)
+		if err != nil {
+			delete(c.last, domain)
+			return err
+		}
+		states := make(map[string]recordState, len(stored))
+		for key, state := range stored {
+			states[key] = recordState{hash: state.Hash, deleted: state.Deleted}
+		}
+		c.last[domain] = states
+	}
+	return nil
 }
 
 // baselineLocked 返回某域的基线（必须有 c.mu）。
