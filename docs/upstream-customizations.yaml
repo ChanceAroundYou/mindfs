@@ -9580,7 +9580,7 @@ groups:
       - 'server/internal/agent/pool.go:ArchiveDir:       opts.LiveCompactArchiveDir'
       - 'server/internal/agent/pool_context_saving.go:func (p *Pool) SessionContextSaving(sessionKey string) fold.ContextSaving'
       - 'server/internal/api/usecase/session_context_saving.go:func (s *Service) GetSessionContextSaving('
-      - 'server/internal/api/usecase/session_context_saving.go:return pool.SessionContextSaving(agentPoolSessionKey(key, agentName)), nil'
+      - 'server/internal/api/usecase/session_context_saving.go:view.ContextSaving = pool.SessionContextSaving(agentPoolSessionKey(key, agentName))'
       - 'server/internal/api/http_session_context_saving.go:func (h *HTTPHandler) handleSessionContextSaving('
       - 'server/internal/api/http_routes.go:r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)'
       - 'server/app/server.go:liveCompactArchiveDir = filepath.Join(configDir, "context")'
