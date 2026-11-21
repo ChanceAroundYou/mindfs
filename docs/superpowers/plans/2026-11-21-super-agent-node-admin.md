@@ -127,4 +127,28 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
 
 ## 状态
 
-**W1 进行中。** 计划文档提交后开始 T1。
+**W1 进行中。** 组号 **G-PB**（计划首次提交时记作 G-NY，与同日的移动端任务详情面板组撞号，
+以本文件与 `docs/upstream-customizations.yaml` 的 G-PB 为准）。
+
+### T1 完成（2026-11-21）
+
+- 动作与工具：`router_cancel_node(node_id, reason)` / `router_cancel_run(reason)` /
+  `router_cancel_task(reason)`；进 `supervisionIsWriteAction`、运行期事件白名单、
+  `validateRouterActions` 与 `validateSupervisionActions`。
+- 校验：`cancel_node` 必须命中本轮 open 节点；`NodeKindHumanGate` 或 `NodeRunWaitingUser`
+  一律拒绝（用户裁定「不自动取消等待审批的节点」）；`cancel_run` 要求还有 open 节点；
+  `cancel_task` 要求 reason。一轮最多一个取消，且不能与重试 / 唤醒 / 回复 / 开工同轮，
+  只可搭 `say` / `notify_user`。
+- 落地：`workflow_runtime_router_cancel.go` —— 节点级 `CancelWorkflowNodeRun` + 唤醒 driver；
+  Run 级先取消 open 行、停 driver、再扫一遍、写投影、任务落 `waiting_user` 并结算回复；
+  任务级先显式拒绝终态任务（`Service.Cancel` 本身对终态幂等，静默成功会误导 Router），
+  再走人工取消同一条路径。三者都不删 worktree / 会话 / 尝试记录。
+- 可见性：`node_cancelled_by_router` 任务事件；系统行 `route-cancel:<decisionID>:<seq>`；
+  前端监管记录认这三档动作并给了 zh/en 标签。
+- 验证：`router_supervision_cancel_test.go` 6 条（节点级取消、Run 级停轮且任务回
+  `waiting_user`、gate 等待拒绝、组合拒绝、终态任务拒绝、取消保留节点行与会话绑定）。
+  四处变异各自打红后还原：gate 保护、组合规则、Run 级落 `cancelled` 而非 `waiting_user`、
+  终态任务保护。`go build ./server/...`、kanban 定向全绿；全量 kanban 唯一红项
+  `TestCoordinatorTickReclaimsStaleClaims` 是既有 sqlite 并发 flake，单跑通过。
+- 提示词：新增三档工具说明；删掉「禁止 cancel Run」的总禁令，改为「只能走监管取消工具，
+  最小够用、收口动作不与开工同轮、不许绕预算」。

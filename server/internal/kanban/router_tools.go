@@ -385,7 +385,7 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 				return fmt.Errorf("complete_task is not allowed on a %s task", brief.Task.Status)
 			}
 		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
-			RouterActionRetryDirect:
+			RouterActionRetryDirect, RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask:
 			// 细节（可重试性、预算、节点归属）在 validateSupervisionActions 里，
 			// 它需要 config 里的预算值。
 		default:

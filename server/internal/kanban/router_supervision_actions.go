@@ -19,7 +19,7 @@ const (
 func supervisionIsWriteAction(kind RouterActionKind) bool {
 	switch kind {
 	case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
-		RouterActionRetryDirect:
+		RouterActionRetryDirect, RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask:
 		return true
 	default:
 		return false
@@ -70,6 +70,17 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 			if target.FailureKind != SupervisionFailureEvidenceFailed && target.RetriesUsed >= cfg.MaxRetriesPerNode {
 				return &supervisionBudgetError{reason: fmt.Sprintf(
 					"supervision retry budget exhausted for node %s (%d/%d)", target.NodeID, target.RetriesUsed, cfg.MaxRetriesPerNode)}
+			}
+			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
+				return &supervisionBudgetError{reason: fmt.Sprintf(
+					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
+			}
+		case RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask:
+			if obs == nil {
+				return fmt.Errorf("%s requires a supervision block; this turn has none", action.Kind)
+			}
+			if err := validateCancelAction(obs, action); err != nil {
+				return err
 			}
 			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
 				return &supervisionBudgetError{reason: fmt.Sprintf(
@@ -148,6 +159,23 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 			}
 		}
 	}
+	// 取消是收口动作：可以与 say / notify_user 同轮（先说明再收），但不能和
+	// 重试 / 唤醒 / 答复 / 开工混在一起 —— 那等于把没解释清楚的现场留给下一条执行。
+	cancels := 0
+	for _, action := range actions {
+		switch action.Kind {
+		case RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask:
+			cancels++
+		case RouterActionSay, RouterActionNotifyUser:
+		default:
+			if cancels > 0 {
+				return fmt.Errorf("%s cannot be combined with a cancel action", action.Kind)
+			}
+		}
+	}
+	if cancels > 1 {
+		return errors.New("at most one cancel action per turn")
+	}
 	return nil
 }
 
@@ -170,6 +198,54 @@ func supervisionFailedNode(obs *SupervisionObservation, action RouterAction) (Su
 		}
 	}
 	return SupervisionNodeState{}, false
+}
+
+// validateCancelAction 校验取消三档的参数与保护边界。最小够用原则在参数层
+// 也成立：cancel_node 必须指向本轮还开着的节点，cancel_task 必须给出原因。
+func validateCancelAction(obs *SupervisionObservation, action RouterAction) error {
+	switch action.Kind {
+	case RouterActionCancelNode:
+		nodeRunID := strings.TrimSpace(action.NodeRunID)
+		if nodeRunID == "" {
+			return fmt.Errorf("cancel_node requires node_run_id; open nodes: %s", supervisionOpenNodeList(obs))
+		}
+		var target *SupervisionNodeState
+		for i := range obs.OpenNodes {
+			if obs.OpenNodes[i].NodeRunID == nodeRunID {
+				target = &obs.OpenNodes[i]
+				break
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("cancel_node targets a node that is not open in this run (node_run_id=%q): %s",
+				nodeRunID, supervisionOpenNodeList(obs))
+		}
+		// 用户裁定：等待审批的节点不自动取消 —— 审批只能由人批准或驳回。
+		if target.NodeKind == NodeKindHumanGate || target.Status == NodeRunWaitingUser {
+			return fmt.Errorf("cancel_node is not allowed on %s (%s): a node waiting for approval can only be approved or rejected by the user",
+				target.NodeID, target.NodeKind)
+		}
+	case RouterActionCancelRun:
+		if len(obs.OpenNodes) == 0 {
+			return errors.New("cancel_run is not allowed: this run has no open nodes left")
+		}
+	case RouterActionCancelTask:
+		if strings.TrimSpace(action.Body) == "" {
+			return errors.New("cancel_task reason required")
+		}
+	}
+	return nil
+}
+
+func supervisionOpenNodeList(obs *SupervisionObservation) string {
+	if obs == nil || len(obs.OpenNodes) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(obs.OpenNodes))
+	for _, node := range obs.OpenNodes {
+		parts = append(parts, fmt.Sprintf("%s(%s)", node.NodeID, node.Status))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func supervisionFailedNodeList(obs *SupervisionObservation) string {

@@ -23,6 +23,9 @@ func (e *routerToolEnv) supervisionTools() []RouterToolSpec {
 	obs := e.supervisionObservation()
 	return []RouterToolSpec{
 		e.retryNodeTool(obs),
+		e.cancelNodeTool(obs),
+		e.cancelRunTool(obs),
+		e.cancelTaskTool(obs),
 		e.retryDirectTool(obs),
 		e.resumeRunTool(obs),
 		e.notifyUserTool(obs),
@@ -87,6 +90,109 @@ func (e *routerToolEnv) retryNodeTool(obs *SupervisionObservation) RouterToolSpe
 				NodeRunID: target.NodeRunID,
 				Reason:    target.NodeID,
 				Body:      truncateRouterText(strings.TrimSpace(args.Reason), supervisionSummaryLimit),
+			})
+		},
+	}
+}
+
+func (e *routerToolEnv) cancelNodeTool(obs *SupervisionObservation) RouterToolSpec {
+	return RouterToolSpec{
+		Name: "router_cancel_node",
+		Description: "取消本轮 Run 里一个卡住或不该继续的节点。最小够用原则：能停一个节点就别停整轮。" +
+			"等待审批的 human_gate 节点不能取消（审批只能由人批准或驳回）；取消会保留 worktree 与会话，下游按跳过语义收敛。",
+		Class: RouterToolWrite,
+		InputSchema: objectSchema(map[string]any{
+			"node_id": map[string]any{"type": "string", "minLength": 1, "description": "supervision.open_nodes[].node_id"},
+			"reason":  map[string]any{"type": "string", "description": "可选；写进取消账本的原因"},
+		}, []string{"node_id"}),
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var args struct {
+				NodeID string `json:"node_id"`
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_cancel_node")
+			}
+			nodeID := strings.TrimSpace(args.NodeID)
+			if nodeID == "" {
+				return "", fmt.Errorf("node_id required; open nodes: %s", supervisionOpenNodeList(obs))
+			}
+			var target *SupervisionNodeState
+			for i := range obs.OpenNodes {
+				if obs.OpenNodes[i].NodeID == nodeID {
+					target = &obs.OpenNodes[i]
+					break
+				}
+			}
+			if target == nil {
+				return "", fmt.Errorf("node %s is not an open node of this run; open nodes: %s", nodeID, supervisionOpenNodeList(obs))
+			}
+			return e.record(RouterAction{
+				Kind:      RouterActionCancelNode,
+				NodeRunID: target.NodeRunID,
+				Reason:    target.NodeID,
+				Body:      truncateRouterText(strings.TrimSpace(args.Reason), supervisionSummaryLimit),
+			})
+		},
+	}
+}
+
+func (e *routerToolEnv) cancelRunTool(obs *SupervisionObservation) RouterToolSpec {
+	return RouterToolSpec{
+		Name: "router_cancel_run",
+		Description: "停掉这一轮 Run：开着的节点全部取消、运行器停止，任务回到 waiting_user 交给用户决定。" +
+			"任务本身不会被取消（那要用 router_cancel_task）。只在节点级取消解决不了问题时使用。",
+		Class: RouterToolWrite,
+		InputSchema: objectSchema(map[string]any{
+			"reason": map[string]any{"type": "string", "description": "可选；写进取消账本的原因"},
+		}, nil),
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var args struct {
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_cancel_run")
+			}
+			return e.record(RouterAction{
+				Kind: RouterActionCancelRun,
+				Body: truncateRouterText(strings.TrimSpace(args.Reason), supervisionSummaryLimit),
+			})
+		},
+	}
+}
+
+func (e *routerToolEnv) cancelTaskTool(obs *SupervisionObservation) RouterToolSpec {
+	return RouterToolSpec{
+		Name: "router_cancel_task",
+		Description: "取消整个任务（终态）。只在用户明确不要这个任务、或任务已无法继续时使用；" +
+			"普通失败/卡住请用节点级或 Run 级取消，把现场留给用户。",
+		Class: RouterToolWrite,
+		InputSchema: objectSchema(map[string]any{
+			"reason": map[string]any{"type": "string", "minLength": 1, "description": "必填；会写进任务时间线"},
+		}, []string{"reason"}),
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var args struct {
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			if obs == nil {
+				return "", errNoSupervisionTurn("router_cancel_task")
+			}
+			reason := strings.TrimSpace(args.Reason)
+			if reason == "" {
+				return "", fmt.Errorf("reason required: cancelling a task needs a user-visible explanation")
+			}
+			return e.record(RouterAction{
+				Kind: RouterActionCancelTask,
+				Body: truncateRouterText(reason, supervisionSummaryLimit),
 			})
 		},
 	}

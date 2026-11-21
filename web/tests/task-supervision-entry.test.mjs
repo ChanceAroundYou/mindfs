@@ -92,6 +92,11 @@ test("已知触发/动作/状态映射到 i18n 键，未知的回落 null 由视
   assert.equal(supervisionTriggerKey("user_message"), null);
   assert.equal(supervisionActionKey("retry_direct"), "task.supervision.action.retry_direct");
   assert.equal(supervisionActionKey("escalate"), "task.supervision.action.escalate");
+  // W1 取消三档：取消同样是 Router 自己动的手，必须进监管记录并有标签。
+  for (const kind of ["cancel_node", "cancel_run", "cancel_task"]) {
+    assert.equal(isSupervisionDecision(decision(`c-${kind}`, "user_message", { action_kinds: [kind] })), true, kind);
+    assert.equal(supervisionActionKey(kind), `task.supervision.action.${kind}`);
+  }
   assert.equal(supervisionActionKey("say"), null);
   assert.equal(supervisionStatusKey("applied"), "task.supervision.status.applied");
   assert.equal(supervisionStatusKey("shadow"), "task.supervision.status.shadow");

@@ -7,7 +7,16 @@ import type { RouterDecisionSummary } from "../../shared/routerDecisions";
 // 端点顺序（同一时刻的决策保持后端顺序，不因两次排序抖动）。
 
 const SUPERVISION_TRIGGERS = new Set(["run_failed", "run_stalled", "direct_stalled"]);
-const SUPERVISION_ACTIONS = new Set(["retry_node", "retry_direct", "resume_run", "notify_user", "escalate"]);
+const SUPERVISION_ACTIONS = new Set([
+  "retry_node",
+  "retry_direct",
+  "resume_run",
+  "notify_user",
+  "escalate",
+  "cancel_node",
+  "cancel_run",
+  "cancel_task",
+]);
 
 const TRIGGER_KEYS: Record<string, MessageKey> = {
   run_failed: "task.supervision.trigger.run_failed",
@@ -21,6 +30,9 @@ const ACTION_KEYS: Record<string, MessageKey> = {
   resume_run: "task.supervision.action.resume_run",
   notify_user: "task.supervision.action.notify_user",
   escalate: "task.supervision.action.escalate",
+  cancel_node: "task.supervision.action.cancel_node",
+  cancel_run: "task.supervision.action.cancel_run",
+  cancel_task: "task.supervision.action.cancel_task",
 };
 
 const STATUS_KEYS: Record<string, MessageKey> = {

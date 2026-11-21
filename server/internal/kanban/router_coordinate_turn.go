@@ -464,6 +464,7 @@ func validateRuntimeEventActions(brief *SituationBrief, actions []RouterAction, 
 			// 收尾时机，不该要求 supervision 观测块。
 			continue
 		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
+			RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask,
 			RouterActionRetryDirect:
 			// 监管动作的可用性绑定在观测块上：没有观测就不该出现这个动作。
 			if brief == nil || brief.Supervision == nil {

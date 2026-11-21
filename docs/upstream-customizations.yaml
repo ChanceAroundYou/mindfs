@@ -11632,3 +11632,57 @@ groups:
       - 'web/vite.config.ts:const title = payload.title || "提醒";'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyCompletionFeed.java:if (completion.subSession || completion.silent) {'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:if (entry.subSession || entry.silent) {'
+
+  - id: G-PB
+    title: Super agent 节点级管理员 W1 底座（取消三档 cancel_node/cancel_run/cancel_task）
+    kind: feature
+    symptom: |
+      Router 在主动监管里只能重试、唤醒与汇报，遇到真正卡死的现场没有收口手段：节点卡在
+      `running` 永远不收敛，`run_stalled` 只能一遍遍 `router_notify_user`，用户必须自己
+      找到入口停掉。用户裁定「解禁 cancel」，并要求按最小够用原则分三档 —— 能停一个节点
+      就不停整轮，能停一轮就不取消任务。
+    why: |
+      必须保留：① 三档是**监管动作**，只在 brief 带 `supervision` 块的运行期事件回合可用，
+      走 `router_cancel_node(node_id, reason)` / `router_cancel_run(reason)` /
+      `router_cancel_task(reason)` 三个工具；普通会话与用户留言回合不出现。
+      ② 保护边界：`cancel_node` 必须命中本轮 open 节点，`human_gate` 或 `waiting_user`
+      节点一律拒绝（用户裁定「不自动取消等待审批的节点」）；终态任务拒绝 `cancel_task`
+      —— `Service.Cancel` 对终态本身是幂等的，静默成功会让 Router 误以为收了尾。
+      ③ 一轮最多一个取消，且不能与重试 / 唤醒 / 答复 / 开工同轮（取消是收口，不是开工）；
+      可搭配 `router_say` / `router_notify_user` 先说明。
+      ④ 语义分档：节点级落 `cancelled` 并唤醒 driver 让下游按 skip 收敛；Run 级取消 open 行、
+      停 driver、写投影后任务回 `waiting_user`（不是终态）；任务级才走人工取消同一条路径。
+      ⑤ 三者都保留现场：worktree、会话绑定、尝试记录与输出一律不删。
+      前端监管记录把三档算作监管动作并给 zh/en 标签。
+    boundary: |
+      只做取消动作与可见性，不做预算（W1 T2）、不做验收项（W1 T3）、不做跨进程副作用恢复
+      （沿用 G-KV 边界）。`cancel_run` 之后的重启对账由 W1 T4 补口。不使用 `Service.Cancel`
+      绕开 `complete_task` 的证据门：`cancel_task` 只用于「这一轮已经停了、任务还挂着执行态」。
+    files:
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/router_supervision_tools.go
+      - server/internal/kanban/router_supervision_actions.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_route_supervision.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/workflow_runtime_router_cancel.go
+      - server/internal/kanban/router_prompt.md
+      - web/src/components/task/supervisionEntryModel.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - docs/superpowers/plans/2026-11-21-super-agent-node-admin.md
+    tests:
+      - server/internal/kanban/router_supervision_cancel_test.go
+      - web/tests/task-supervision-entry.test.mjs
+    anchors:
+      - 'server/internal/kanban/router_types.go:RouterActionCancelNode RouterActionKind = "cancel_node"'
+      - 'server/internal/kanban/router_supervision_actions.go:func validateCancelAction(obs *SupervisionObservation, action RouterAction) error {'
+      - 'server/internal/kanban/router_supervision_actions.go:cannot be combined with a cancel action'
+      - 'server/internal/kanban/router_supervision_tools.go:Name: "router_cancel_node",'
+      - 'server/internal/kanban/workflow_runtime_router_cancel.go:func (s *Service) CancelWorkflowRunForRouter(ctx context.Context, rootID, taskID, reason string) error {'
+      - 'server/internal/kanban/workflow_runtime_router_cancel.go:s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, "run_cancelled_by_router", reason, false)'
+      - 'server/internal/kanban/router_prompt.md:router_cancel_node(node_id, reason)'
+      - 'web/src/components/task/supervisionEntryModel.ts:cancel_task: "task.supervision.action.cancel_task",'

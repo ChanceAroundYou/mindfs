@@ -30,6 +30,19 @@ type ActivityRunResumer interface {
 	WakeWorkflowRun(ctx context.Context, rootID, taskID, cause string) error
 }
 
+// ActivityRunCanceller 是取消三档端口。取消会停 driver、结算回复行、清工作区
+// 归属，都在 Service 上，ActivityService 只表达「该取消什么」。
+type ActivityRunCanceller interface {
+	CancelWorkflowNodeForRouter(ctx context.Context, rootID, taskID, nodeRunID, reason string) error
+	CancelWorkflowRunForRouter(ctx context.Context, rootID, taskID, reason string) error
+	CancelTaskForRouter(ctx context.Context, rootID, taskID, reason string) error
+}
+
+// SetRunCanceller 装配取消端口。装配期调用一次。
+func (s *ActivityService) SetRunCanceller(c ActivityRunCanceller) {
+	s.runCanceller = c
+}
+
 // SetRunResumer 装配监管唤醒端口。装配期调用一次。
 func (s *ActivityService) SetRunResumer(r ActivityRunResumer) {
 	if s != nil {
@@ -66,6 +79,69 @@ func (s *ActivityService) applyRouteEscalate(ctx context.Context, decision *Rout
 		return err
 	}
 	return s.parkTaskWaitingUser(ctx, decision.TaskID)
+}
+
+// applyRouteCancelNode 取消一个节点。取消保留 worktree 与会话，下游按跳过语义
+// 收敛；任务不因此进入终态。
+func (s *ActivityService) applyRouteCancelNode(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {
+	if s.runCanceller == nil {
+		return errors.New("cancel_node is not available: run canceller not configured")
+	}
+	nodeRunID := strings.TrimSpace(action.NodeRunID)
+	if nodeRunID == "" {
+		return errors.New("cancel_node: node_run_id required")
+	}
+	nodeID := strings.TrimSpace(action.Reason)
+	if err := s.runCanceller.CancelWorkflowNodeForRouter(ctx, decision.RootID, decision.TaskID, nodeRunID, cancelReasonOf(action)); err != nil {
+		return fmt.Errorf("cancel node %s: %w", nodeRunID, err)
+	}
+	return s.noteCancel(ctx, decision, task, action, "节点 "+nodeID)
+}
+
+// applyRouteCancelRun 停掉这一轮：端口负责取消开着的行、停 driver、把任务放回
+// waiting_user；这里只补一条可见说明。
+func (s *ActivityService) applyRouteCancelRun(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {
+	if s.runCanceller == nil {
+		return errors.New("cancel_run is not available: run canceller not configured")
+	}
+	if err := s.runCanceller.CancelWorkflowRunForRouter(ctx, decision.RootID, decision.TaskID, cancelReasonOf(action)); err != nil {
+		return fmt.Errorf("cancel run: %w", err)
+	}
+	return s.noteCancel(ctx, decision, task, action, "本轮执行")
+}
+
+// applyRouteCancelTask 把任务收成 cancelled（终态）。
+func (s *ActivityService) applyRouteCancelTask(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {
+	if s.runCanceller == nil {
+		return errors.New("cancel_task is not available: run canceller not configured")
+	}
+	if err := s.runCanceller.CancelTaskForRouter(ctx, decision.RootID, decision.TaskID, cancelReasonOf(action)); err != nil {
+		return fmt.Errorf("cancel task: %w", err)
+	}
+	return s.noteCancel(ctx, decision, task, action, "任务")
+}
+
+// noteCancel 把取消原因落成一条用户可见的系统行。effect ID 由决策 + seq 确定，
+// 重放只会命中同一行。
+func (s *ActivityService) noteCancel(ctx context.Context, decision *RouterDecision, task Task, action RouterAction, target string) error {
+	body := "已取消" + target
+	if reason := cancelReasonOf(action); reason != "" {
+		body += "：" + reason
+	}
+	activity := &TaskActivity{
+		ID:     "route-cancel:" + decision.ID + ":" + strconv.Itoa(action.Seq),
+		TaskID: decision.TaskID, RootID: task.RootID,
+		Type: ActivityTypeAttention, Author: "system", Role: "system",
+		Status: ActivityStatusCompleted,
+		Body:   body,
+	}
+	_, err := s.applyVisibleSystemRow(ctx, activity)
+	return err
+}
+
+// cancelReasonOf 取模型给的取消原因（工具把它放在 body，节点 id 放在 reason）。
+func cancelReasonOf(action RouterAction) string {
+	return truncateRouterText(strings.TrimSpace(action.Body), supervisionSummaryLimit)
 }
 
 // applyVisibleSystemRow 落一条用户可见的系统行；返回是否真的新建。运行期动作

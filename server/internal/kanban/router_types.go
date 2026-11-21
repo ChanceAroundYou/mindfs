@@ -207,6 +207,11 @@ const (
 	RouterActionEscalate  RouterActionKind = "escalate"
 	// S3：直连回合停摆——结算卡住的回复行，再用原始留言重开一轮。
 	RouterActionRetryDirect RouterActionKind = "retry_direct"
+	// W1 取消三档（2026-11-21 用户裁定「解禁 cancel」）：最小够用原则 ——
+	// 能停一个节点就不要停整轮，能停一轮就不要取消任务。
+	RouterActionCancelNode RouterActionKind = "cancel_node"
+	RouterActionCancelRun  RouterActionKind = "cancel_run"
+	RouterActionCancelTask RouterActionKind = "cancel_task"
 )
 
 // run_workflow 的会话模式（2026-11-20 用户决策）：默认新开一段会话；

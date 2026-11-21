@@ -88,6 +88,8 @@ type ActivityService struct {
 	nodeRetrier ActivityNodeRetrier
 	// runResumer 是主动监管的「唤醒停住的 Run」端口；nil 时 resume_run 明确失败。
 	runResumer ActivityRunResumer
+	// runCanceller 是取消三档的端口；nil 时 cancel_node/run/task 明确失败。
+	runCanceller ActivityRunCanceller
 	// completion 是 complete_task 的应用端口（证据门 + 收尾）；nil 时明确失败。
 	completion CompletionApplier
 	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；
