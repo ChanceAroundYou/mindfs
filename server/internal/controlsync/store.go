@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS changes (
 	domain TEXT NOT NULL,
 	key TEXT NOT NULL,
 	hash TEXT NOT NULL,
+	payload BLOB,
 	deleted INTEGER NOT NULL DEFAULT 0,
 	origin TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL
@@ -160,7 +161,57 @@ func (s *Store) migrateOnce(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaDDL); err != nil {
 		return err
 	}
-	return s.ensureConflictDeleteColumns(ctx)
+	if err := s.ensureConflictDeleteColumns(ctx); err != nil {
+		return err
+	}
+	return s.ensureChangePayloadColumn(ctx)
+}
+
+// ensureChangePayloadColumn 给早期建的库补 changes.payload。
+//
+// 变更流要能独立供给拉取方：只存 hash 的话，handler 得回头 join records 取载荷，
+// 而 records 只有「当前值」—— 一条旧 change 会读到后来被覆盖的载荷，追出来的副本
+// 与主节点不一致。所以载荷在写变更时复制一份。
+//
+// 旧库补列之后逐行回填：能用 (domain,key,hash) 在当前 records 里对上的行可以补齐；
+// 对不上的（记录已被再次修改）留空，由 ListChangesSince 跳过 —— 它们后面必有更新的
+// 一条 change 带着正确载荷，副本照样能追平。
+func (s *Store) ensureChangePayloadColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(changes)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	have := false
+	for rows.Next() {
+		var (
+			cid, notNull, pk int
+			name, typ        string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "payload" {
+			have = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !have {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE changes ADD COLUMN payload BLOB`); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `
+UPDATE changes SET payload = (
+	SELECT r.payload FROM records r
+	WHERE r.domain = changes.domain AND r.key = changes.key AND r.hash = changes.hash
+) WHERE payload IS NULL AND deleted = 0`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureConflictDeleteColumns 给早期建的库补两列。
@@ -433,9 +484,9 @@ ON CONFLICT(domain, key) DO UPDATE SET
 		return 0, fmt.Errorf("controlsync: upsert record: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO changes(rev, domain, key, hash, deleted, origin, created_at)
-VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		rev, rec.Domain, rec.Key, rec.Hash, boolInt(rec.Deleted), rec.Origin,
+INSERT INTO changes(rev, domain, key, hash, payload, deleted, origin, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		rev, rec.Domain, rec.Key, rec.Hash, payload, boolInt(rec.Deleted), rec.Origin,
 		now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return 0, fmt.Errorf("controlsync: append change: %w", err)
 	}

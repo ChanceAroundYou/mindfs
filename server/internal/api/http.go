@@ -38,6 +38,11 @@ type HTTPHandler struct {
 	ControlSync ControlSyncService
 	// ControlSyncPush 只在主节点侧存在：接收边缘推送。nil = 未启用。
 	ControlSyncPush ControlSyncPusher
+	// ControlSyncFeed 只在主节点侧存在：供边缘拉变更流（head / changes）。
+	ControlSyncFeed ControlSyncFeed
+	// ControlSyncToken 是同步通道的 bearer token。空 = 不注册 /head /changes /push，
+	// 因为这些端点能整包读出或改写控制面（含口令 hash），不能沿用「API 不鉴权」。
+	ControlSyncToken string
 	// ControlSyncConflicts 是冲突卡的查询与裁决。nil = 未启用。
 	ControlSyncConflicts ControlSyncConflicts
 }

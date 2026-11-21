@@ -188,13 +188,21 @@ func TestModeControllerStatusExposesState(t *testing.T) {
 }
 
 // 探活打的是带部署前缀的 /api/control-sync/head，且同时受 https 约束。
+// 主节点的 /head 要鉴权：不带 token 会拿到 401，那会被读成「主节点挂了」。
 func TestHTTPProberHitsHeadEndpoint(t *testing.T) {
+	const token = "probe-token-0123456789"
 	var mu sync.Mutex
 	status := http.StatusOK
 	var paths []string
+	var auths []string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !AuthorizeSyncRequest(token, r.Header.Get("Authorization")) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
+		auths = append(auths, r.Header.Get("Authorization"))
 		code := status
 		mu.Unlock()
 		w.WriteHeader(code)
@@ -202,7 +210,7 @@ func TestHTTPProberHitsHeadEndpoint(t *testing.T) {
 	t.Cleanup(srv.Close)
 	ca := writeTempCA(t, srv.Certificate())
 
-	prober, err := NewHTTPProber(srv.URL+"/mindfs", ca)
+	prober, err := NewHTTPProber(srv.URL+"/mindfs", ca, token)
 	if err != nil {
 		t.Fatalf("NewHTTPProber: %v", err)
 	}
@@ -221,8 +229,19 @@ func TestHTTPProberHitsHeadEndpoint(t *testing.T) {
 	if len(got) != 2 || got[0] != "/mindfs/api/control-sync/head" {
 		t.Fatalf("探活路径 = %v，应带部署前缀", got)
 	}
+	if len(auths) != 2 || auths[0] != "Bearer "+token {
+		t.Fatalf("探活没带 token：%v", auths)
+	}
 
-	if _, err := NewHTTPProber("http://home:7331", ""); err == nil {
+	wrong, err := NewHTTPProber(srv.URL, ca, "ffffffffffffffffffff")
+	if err != nil {
+		t.Fatalf("NewHTTPProber(wrong): %v", err)
+	}
+	if err := wrong.Probe(t.Context()); err == nil {
+		t.Fatalf("token 不对时 Probe 居然成功（401 会被读成主节点可用）")
+	}
+
+	if _, err := NewHTTPProber("http://home:7331", "", token); err == nil {
 		t.Fatalf("探活接受明文 primary_url")
 	}
 }

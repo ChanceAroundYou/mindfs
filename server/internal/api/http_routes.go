@@ -189,8 +189,16 @@ func (h *HTTPHandler) Routes() http.Handler {
 		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
 		r.Post("/api/control-sync/mode", h.handleControlSyncMode)
 	}
-	if h.ControlSyncPush != nil {
-		r.Post("/api/control-sync/push", h.handleControlSyncPush)
+	// 控制面同步：主节点侧的 /head /changes /push 一次能读出或改写整个控制面
+	// （含口令 hash），所以只有配了 token 才注册，且一律走 bearer 校验。
+	if h.ControlSyncToken != "" {
+		if h.ControlSyncPush != nil {
+			r.Post("/api/control-sync/push", h.requireSyncToken(h.handleControlSyncPush))
+		}
+		if h.ControlSyncFeed != nil {
+			r.Get("/api/control-sync/head", h.requireSyncToken(h.handleControlSyncHead))
+			r.Get("/api/control-sync/changes", h.requireSyncToken(h.handleControlSyncChanges))
+		}
 	}
 	if h.ControlSyncConflicts != nil {
 		r.Get("/api/control-sync/conflicts", h.handleControlSyncConflicts)

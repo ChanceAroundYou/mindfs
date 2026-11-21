@@ -47,9 +47,12 @@ type RemoteChange struct {
 type ReplicatorOptions struct {
 	PrimaryURL string
 	CAFile     string
-	Limit      int
-	Interval   time.Duration
-	OnError    func(error)
+	// Token 是同步通道的 bearer token。主节点的 /changes 一次能吐出整个控制面
+	// （含口令 hash），没 token 的服务端根本不会注册这条路由。
+	Token    string
+	Limit    int
+	Interval time.Duration
+	OnError  func(error)
 }
 
 // Replicator 在转发期间把主节点的变更流追到本地副本（records 表）。
@@ -60,6 +63,7 @@ type Replicator struct {
 	store    *Store
 	base     *url.URL
 	client   *http.Client
+	token    string
 	limit    int
 	interval time.Duration
 	onError  func(error)
@@ -104,6 +108,7 @@ func NewReplicator(store *Store, opts ReplicatorOptions) (*Replicator, error) {
 		store:    store,
 		base:     base,
 		client:   client,
+		token:    strings.TrimSpace(opts.Token),
 		limit:    limit,
 		interval: interval,
 		onError:  opts.OnError,
@@ -205,6 +210,9 @@ func (r *Replicator) fetchPage(ctx context.Context, since int64) (*changePage, e
 		return nil, fmt.Errorf("controlsync: build changes request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	if r.token != "" {
+		req.Header.Set("Authorization", "Bearer "+r.token)
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("controlsync: fetch changes: %w", err)

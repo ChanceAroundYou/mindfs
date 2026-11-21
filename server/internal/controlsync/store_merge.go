@@ -134,8 +134,9 @@ ON CONFLICT(domain, key) DO UPDATE SET
 		return 0, fmt.Errorf("controlsync: upsert record: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO changes(rev, domain, key, hash, deleted, origin, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		rev, rec.Domain, rec.Key, rec.Hash, boolInt(rec.Deleted), rec.Origin, now); err != nil {
+INSERT INTO changes(rev, domain, key, hash, payload, deleted, origin, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		rev, rec.Domain, rec.Key, rec.Hash, rec.Payload, boolInt(rec.Deleted), rec.Origin, now); err != nil {
 		_ = tx.Rollback()
 		return 0, fmt.Errorf("controlsync: append change: %w", err)
 	}

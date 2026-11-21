@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -26,6 +27,89 @@ type ControlSyncService interface {
 // 与 ControlSyncService 分开：边缘没有 Pusher，主节点也不一定有模式控制器。
 type ControlSyncPusher interface {
 	Push(ctx context.Context, req controlsync.PushRequest) (controlsync.PushBatch, error)
+}
+
+// ControlSyncFeed 是主节点侧的只读同步端点：head 与 changes。
+// 与 Pusher 同理，边缘没有它。
+type ControlSyncFeed interface {
+	Head(ctx context.Context) (int64, error)
+	Page(ctx context.Context, since int64, limit int) ([]controlsync.RemoteChange, int64, error)
+}
+
+// errControlSyncUnauthorized 是同步通道鉴权失败的唯一响应体。
+// 不回显「token 错了还是没带」，两者对调用方是同一件事。
+var errControlSyncUnauthorized = errors.New("control_sync: unauthorized")
+
+// requireSyncToken 给同步通道端点套上 bearer token 校验。
+//
+// 这些端点能一次读出（或改写）整个控制面，包括用户口令 hash —— 主节点是公网可达的，
+// 不能沿用应用里「API 层不鉴权」的约定。只有配了 token 才注册这些路由；
+// token 形状在启动时校验，这里只做常量时间比对。
+func (h *HTTPHandler) requireSyncToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !controlsync.AuthorizeSyncRequest(h.ControlSyncToken, r.Header.Get("Authorization")) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="control-sync"`)
+			respondError(w, http.StatusUnauthorized, errControlSyncUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// handleControlSyncHead 返回变更流水位。探活也打这条：只判状态码、不看内容。
+func (h *HTTPHandler) handleControlSyncHead(w http.ResponseWriter, r *http.Request) {
+	if h.ControlSyncFeed == nil {
+		respondError(w, http.StatusNotFound, errInvalidRequest("control sync feed not configured"))
+		return
+	}
+	head, err := h.ControlSyncFeed.Head(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]int64{"head_rev": head})
+}
+
+// handleControlSyncChanges 返回 since 之后的一页变更。
+//
+// since 缺省 0（从头拉）；limit 缺省 ChangePageDefault、超上限夹住。
+// 参数不合法一律 400：静默改写成默认值会让「空页」被读成「已追平」。
+func (h *HTTPHandler) handleControlSyncChanges(w http.ResponseWriter, r *http.Request) {
+	if h.ControlSyncFeed == nil {
+		respondError(w, http.StatusNotFound, errInvalidRequest("control sync feed not configured"))
+		return
+	}
+	q := r.URL.Query()
+	since := int64(0)
+	if raw := strings.TrimSpace(q.Get("since")); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 0 {
+			respondError(w, http.StatusBadRequest, errInvalidRequest("since must be a non-negative integer"))
+			return
+		}
+		since = v
+	}
+	limit := 0
+	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			respondError(w, http.StatusBadRequest, errInvalidRequest("limit must be a positive integer"))
+			return
+		}
+		limit = v
+	}
+	changes, head, err := h.ControlSyncFeed.Page(r.Context(), since, limit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if changes == nil {
+		changes = []controlsync.RemoteChange{}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"changes":  changes,
+		"head_rev": head,
+	})
 }
 
 // handleControlSyncStatus 返回四态模式、水位与最后一次探测信息。

@@ -48,9 +48,12 @@ type Prober interface {
 type HTTPProber struct {
 	base   *url.URL
 	client *http.Client
+	token  string
 }
 
-func NewHTTPProber(primaryURL, caFile string) (*HTTPProber, error) {
+// NewHTTPProber 构造探活器。token 必须与服务端一致：主节点的 /head 是要鉴权的，
+// 不带 token 会得到 401，那会被当成「主节点不可用」而误判降级。
+func NewHTTPProber(primaryURL, caFile, token string) (*HTTPProber, error) {
 	base, err := parsePrimaryURL(primaryURL)
 	if err != nil {
 		return nil, err
@@ -59,7 +62,7 @@ func NewHTTPProber(primaryURL, caFile string) (*HTTPProber, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &HTTPProber{base: base, client: client}, nil
+	return &HTTPProber{base: base, client: client, token: strings.TrimSpace(token)}, nil
 }
 
 func (p *HTTPProber) Probe(ctx context.Context) error {
@@ -68,6 +71,9 @@ func (p *HTTPProber) Probe(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return fmt.Errorf("controlsync: build probe: %w", err)
+	}
+	if p.token != "" {
+		req.Header.Set("Authorization", "Bearer "+p.token)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {

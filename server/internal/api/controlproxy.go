@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/server/internal/controlsync"
 	"mindfs/server/internal/nodeinfo"
 )
 
@@ -54,7 +55,18 @@ type ControlProxy struct {
 	primary     *url.URL
 	client      *http.Client
 	forwardedBy string
+
+	// Mode 报告当前同步模式；nil 视为 online（未启用同步时保持旧行为）。
+	// 只有 online 才转发：offline-local 落本地副本，reconciling / conflict-review
+	// 期间控制面写入被冻结（spec §3.3 / §7）。
+	Mode func() controlsync.Mode
+	// BlockedDomain 报告某个同步域是否因未裁决冲突而冻结。nil 表示不按域冻结
+	// （conflict-review 下所有控制面写入一律 409）。
+	BlockedDomain func(domain string) bool
 }
+
+// errSyncConflictPending 是冻结期的统一响应：前端据此显示冲突面板而不是普通错误。
+var errSyncConflictPending = errors.New("sync_conflict_pending")
 
 // NewControlProxy 校验并组装转发器。http:// 一律拒绝：复制的是账户口令哈希，
 // 明文通道等于把凭据摆在链路上。
@@ -103,14 +115,64 @@ func NewControlProxy(opts ControlProxyOptions) (*ControlProxy, error) {
 }
 
 // Handler 返回转发处理器：命中控制面且不在本机域白名单里时转发，其余交给 next。
+//
+// 转发只发生在 online：其余模式下控制面请求由本地副本处理，其中
+// reconciling / conflict-review 的写请求按域冻结成 409。
 func (p *ControlProxy) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p == nil || !p.ShouldForward(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		p.forward(w, r)
+		switch p.mode() {
+		case controlsync.ModeOnline:
+			p.forward(w, r)
+		case controlsync.ModeReconciling, controlsync.ModeConflictReview:
+			if p.writeFrozen(r) {
+				respondError(w, http.StatusConflict, errSyncConflictPending)
+				return
+			}
+			next.ServeHTTP(w, r)
+		default:
+			next.ServeHTTP(w, r)
+		}
 	})
+}
+
+// mode 读当前模式；没接状态机（同步未启用）时按 online 处理。
+func (p *ControlProxy) mode() controlsync.Mode {
+	if p == nil || p.Mode == nil {
+		return controlsync.ModeOnline
+	}
+	if m := p.Mode(); m != "" {
+		return m
+	}
+	return controlsync.ModeOnline
+}
+
+// writeFrozen 判断这条请求是不是「恢复合并期间不许落」的控制面写。
+//
+// 规则刻意窄而保守：
+//   - 只有非幂等方法算写（GET/HEAD/OPTIONS 照常读本地副本）；
+//   - 鉴权路径永不禁（否则拿不到冲突面板，等于锁死自己）；
+//   - reconciling 全冻结（合并途中每一次本地写都会和合并结果分叉）；
+//   - conflict-review 只冻结真有未裁决冲突的域，其它域照常写本地、等恢复后推送。
+func (p *ControlProxy) writeFrozen(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/auth/") {
+		return false
+	}
+	if p.mode() == controlsync.ModeReconciling {
+		return true
+	}
+	domain, ok := controlsync.DomainOfControlPath(r.URL.Path)
+	if !ok {
+		return false
+	}
+	return p.BlockedDomain != nil && p.BlockedDomain(domain)
 }
 
 // ShouldForward 判断一条（已剥掉部署前缀的）请求路径是否要转发给主节点。
