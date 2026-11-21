@@ -31,6 +31,7 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	s.mu.Unlock()
 	svc.SetBroadcaster(broadcaster)
 	svc.SetTurnTracker(&s.activityTurns)
+	svc.SetCardNotifier(s.cardNotifier)
 	// 装配 WorkflowRun 执行端口：通过 Service.WakeWorkflowRun 触发实际执行
 	svc.SetWorkflowExecutor(s)
 	s.mu.Lock()

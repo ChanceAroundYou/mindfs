@@ -93,10 +93,15 @@ type ActivityService struct {
 	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；
 	// shadow 只读、只记账，不改变本函数的任何返回值或副作用。
 	router *RouterService
+	// cardNotifier 把等待回答的提问推到外部通道（飞书等）。nil = 通道关闭。
+	cardNotifier CardNotifier
 	// turnWG 跟踪本服务派发的异步回合，供测试/停机收尾等待。nil 时不跟踪。
 	// 每轮的 Add 都在启动 goroutine 之前同步完成，Wait 不会与 Add 抢跑。
 	turnWG *sync.WaitGroup
 }
+
+// SetCardNotifier installs the outbound card channel for waiting questions.
+func (s *ActivityService) SetCardNotifier(n CardNotifier) { s.cardNotifier = n }
 
 // NewActivityService builds the service for one task node. workflows/recommender
 // may be nil for workflow_choice=disabled; other choices then fail visibly.

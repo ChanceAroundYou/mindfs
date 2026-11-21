@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -305,6 +306,16 @@ func (s *ActivityService) applyRouteAskUser(
 	if decision.TriggerKind == RouterTriggerUserMessage && act.RunID == "" {
 		s.markTurnTaskWaitingUser(ctx, task.ID)
 	}
+	if s.cardNotifier != nil {
+		notice := CardNotice{
+			ID: "ask-" + act.ID, Kind: CardKindAsk,
+			RootID: task.RootID, TaskID: task.ID, TaskTitle: taskTitle(task), TaskNumber: task.TaskNumber,
+			QuestionID: act.ID, Prompt: question, Options: routeOptionLabels(action.Options),
+		}
+		if err := s.cardNotifier.NotifyCard(ctx, notice); err != nil {
+			log.Printf("[kanban/cards] ask %s: %v", notice.ID, err)
+		}
+	}
 	return nil
 }
 
@@ -567,6 +578,18 @@ func cleanRouteOptions(options []string) []string {
 	for _, option := range options {
 		if trimmed := strings.TrimSpace(option); trimmed != "" {
 			out = append(out, "· "+trimmed)
+		}
+	}
+	return out
+}
+
+// routeOptionLabels 是卡片用的选项标签：与正文同源（同样去空、同样顺序），
+// 但不带正文里的项目符号 —— 卡片按钮自己就是图形，再叠一个「· 」只是噪声。
+func routeOptionLabels(options []string) []string {
+	out := make([]string, 0, len(options))
+	for _, option := range options {
+		if trimmed := strings.TrimSpace(option); trimmed != "" {
+			out = append(out, trimmed)
 		}
 	}
 	return out

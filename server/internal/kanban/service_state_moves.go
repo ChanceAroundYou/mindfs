@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -86,6 +87,19 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 	// 补，于是任何非 HTTP 调用方推不出去，别的客户端看到的还是暂停前的状态。
 	if err == nil && s.Runner != nil {
 		s.Runner.TaskUpdated(rootID, detail)
+	}
+	// 终态是「人不在电脑前也需要知道」的那一类消息；waiting_user 是正常轮次，
+	// 每轮都推等于每轮都吵人。已经在终态的任务在上面的守卫处就返回了，
+	// 所以这里每个任务每个终态只推一次。
+	if terminal && err == nil {
+		s.notifyCard(ctx, CardNotice{
+			ID:        "notice-" + detail.Task.ID + "-" + status + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+			Kind:      CardKindNotice,
+			RootID:    detail.Task.RootID,
+			TaskID:    detail.Task.ID,
+			TaskTitle: taskTitle(detail.Task), TaskNumber: detail.Task.TaskNumber,
+			Status: status, Summary: strings.TrimSpace(reason),
+		})
 	}
 	return detail, err
 }

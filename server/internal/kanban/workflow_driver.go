@@ -255,6 +255,7 @@ func (s *Service) advanceWorkflowHumanGate(ctx context.Context, store *TaskStore
 			map[string]any{"node_id": node.ID, "node_run_id": nr.ID, "attempt": nr.Attempt}); err != nil {
 			log.Printf("[kanban/router-events] gate hook run=%s node_run=%s err=%v", run.ID, nr.ID, err)
 		}
+		s.notifyGateCard(ctx, store, run, node, nr, prompt)
 	}
 	return false, s.projectWorkflowTaskStatus(ctx, store, run)
 }

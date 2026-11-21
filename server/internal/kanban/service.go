@@ -68,6 +68,9 @@ type Service struct {
 	// sessionArchiver 是任务归档级联用的「只打标记」端口（#86）。nil 时只改
 	// 任务自己的 archived_at，不动会话。
 	sessionArchiver SessionArchiver
+	// cardNotifier 是「把任务卡片推到外部通道」的端口（飞书等）。nil = 通道关闭，
+	// 所有通知静默丢弃；通道失败只记日志，绝不改任务状态。
+	cardNotifier CardNotifier
 	// archiveSweepOnce 保证低频归档扫描在同一实例里只起一个 goroutine。
 	archiveSweepOnce sync.Once
 	// compressedReplies 记录「哪条回复的 summary 已经是压缩结果」，键为活动 id。
