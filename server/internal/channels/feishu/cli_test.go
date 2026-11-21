@@ -85,3 +85,24 @@ func TestCLIRejectsNonJSONAndMissingBinary(t *testing.T) {
 		t.Fatal("missing binary accepted")
 	}
 }
+
+// lark-cli 在 JSON 之前打一行提示（版本提醒、登录态警告）是常态；只认整段
+// stdout 会让每张卡片都被当成「不是 JSON」而永久重试。取最后一个 JSON 对象。
+func TestCLIIgnoresLinesBeforeTheJSONReply(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "lark-cli")
+	script := "#!/bin/sh\n" +
+		"echo 'warning: a newer lark-cli is available'\n" +
+		"cat <<'JSON'\n{\"ok\":true,\"data\":{\"message_id\":\"om_777\"}}\nJSON\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cli := &CLI{Path: bin, Timeout: 5 * time.Second}
+	id, err := cli.SendInteractive(context.Background(), "ou_owner", "{}", "key")
+	if err != nil {
+		t.Fatalf("SendInteractive: %v", err)
+	}
+	if id != "om_777" {
+		t.Fatalf("message id = %q", id)
+	}
+}

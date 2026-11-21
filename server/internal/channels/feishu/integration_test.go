@@ -12,6 +12,9 @@ import (
 // fakeLarkWithEvent 是一个能扮演两种角色的 lark-cli：普通调用（send / patch）
 // 返回发送成功；`event consume` 打出一行真实的卡片点击事件后挂住不退出 ——
 // 与线上长连接的行为一致，也让监听循环不必靠反复重启来喂事件。
+//
+// 挂住的写法必须是 `exec sleep 30`：裸 `sleep 30` 是 sh 的子进程，会继承 stdout，
+// 杀掉 sh 之后它仍握着管道写端，监听侧 scanner 读不到 EOF，取消要等满 30 秒。
 func fakeLarkWithEvent(t *testing.T, logPath, readyPath, eventJSON string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "lark-cli")
@@ -21,8 +24,7 @@ func fakeLarkWithEvent(t *testing.T, logPath, readyPath, eventJSON string) strin
 		"  i=0\n" +
 		"  while [ ! -f " + readyPath + " ]; do i=$((i+1)); [ $i -ge 400 ] && exit 0; sleep 0.05; done\n" +
 		"  printf '%s\\n' '" + eventJSON + "'\n" +
-		"  sleep 30\n" +
-		"  exit 0\n" +
+		"  exec sleep 30\n" +
 		"fi\n" +
 		"printf '%s\\n' '{\"ok\":true,\"data\":{\"message_id\":\"om_1\"}}'\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -59,7 +61,12 @@ func TestClickFromEventStreamReachesAnswerHandler(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	defer func() {
+		// 取消之后必须等循环真的退出：投递与点击回执都在写 cards.json，
+		// 测试结束时 TempDir 的清理会与这些写入抢同一个目录。
+		cancel()
+		svc.Wait()
+	}()
 	if err := svc.Notify(ctx, gateNotice("gate-nr-1")); err != nil {
 		t.Fatal(err)
 	}

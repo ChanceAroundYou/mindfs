@@ -84,6 +84,11 @@ type Service struct {
 	mu      sync.Mutex
 	handler func(context.Context, Answer) error
 	started bool
+
+	// loops counts the goroutines Start launched. Both write to disk (card
+	// store, lark-cli), so shutdown must be able to see them finish; Wait is
+	// what makes "ctx is done" mean "nothing is still writing".
+	loops sync.WaitGroup
 }
 
 // New builds a service over an already-loaded store.
@@ -200,9 +205,24 @@ func (s *Service) Start(ctx context.Context) {
 	s.started = true
 	s.mu.Unlock()
 
-	go s.deliverLoop(ctx)
+	s.loops.Add(2)
+	go func() {
+		defer s.loops.Done()
+		s.deliverLoop(ctx)
+	}()
 	sup := &Supervisor{Path: s.cli.Path, Handle: s.HandleAction, Logf: s.logf}
-	go sup.Run(ctx)
+	go func() {
+		defer s.loops.Done()
+		sup.Run(ctx)
+	}()
+}
+
+// Wait blocks until every loop Start launched has returned. Callers cancel the
+// ctx they passed to Start first; Wait then guarantees no delivery, no patch
+// and no click handling is still in flight — needed before shutdown, and by
+// tests whose temp dirs must not be written behind their back.
+func (s *Service) Wait() {
+	s.loops.Wait()
 }
 
 func (s *Service) deliverLoop(ctx context.Context) {
@@ -224,6 +244,9 @@ func (s *Service) deliverLoop(ctx context.Context) {
 // every card whose state moved since the message was last rendered. Failures
 // are recorded on the card and retried on the next tick.
 func (s *Service) DeliverOnce(ctx context.Context) error {
+	// 过期卡片在这里顺手清掉：没人清的话状态文件随任务数一直长，而每一拍
+	// 都要在锁里重写整个文件。
+	s.store.PruneExpired(s.now())
 	for _, c := range s.store.List() {
 		if err := ctx.Err(); err != nil {
 			return err

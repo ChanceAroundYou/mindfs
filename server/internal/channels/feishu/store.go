@@ -54,10 +54,52 @@ func (s *Store) Load() error {
 		if c.ID == "" {
 			continue
 		}
+		// 进程死在「已回执、还没交给 MindFS」之间会留下 applying。没人能再
+		// 推进它：之后的点击只会反复补一次「正在处理…」。写回路径本身幂等
+		// （gate 重复决定是 no-op，提问重复回答是 ErrQuestionAlreadyAnswered），
+		// 所以放回 open 让人再点一次，比永久卡住安全。
+		if c.State == StateApplying {
+			c.State = StateOpen
+			c.Version++
+			c.UpdatedAt = s.now()
+		}
 		next[c.ID] = c
 	}
 	s.cards = next
-	return nil
+	s.pruneExpiredLocked(s.now())
+	return s.saveLocked()
+}
+
+// PruneExpired drops cards whose TTL has passed, so cards.json does not grow
+// with every finished task. A card with a click in flight is kept: the click
+// is mid-apply and its acknowledgement still has to be written back.
+func (s *Store) PruneExpired(now time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	before := len(s.cards)
+	if n := s.pruneExpiredLocked(now); n == 0 {
+		return 0
+	}
+	if err := s.saveLocked(); err != nil {
+		return 0
+	}
+	return before - len(s.cards)
+}
+
+// pruneExpiredLocked deletes expired cards in memory and reports how many it
+// removed; the caller decides whether to persist.
+func (s *Store) pruneExpiredLocked(now time.Time) int {
+	removed := 0
+	for id, c := range s.cards {
+		if c.State == StateApplying {
+			continue
+		}
+		if c.Expired(now) {
+			delete(s.cards, id)
+			removed++
+		}
+	}
+	return removed
 }
 
 // Put inserts or replaces a card. An existing card keeps its CreatedAt and
@@ -84,8 +126,10 @@ func (s *Store) Put(c Card) (Card, error) {
 		c.CreatedAt = now
 	}
 	c.UpdatedAt = now
+	prev, had := s.cards[c.ID]
 	s.cards[c.ID] = c
 	if err := s.saveLocked(); err != nil {
+		s.restoreLocked(c.ID, prev, had)
 		return Card{}, err
 	}
 	return c, nil
@@ -108,6 +152,7 @@ func (s *Store) Update(id string, fn func(*Card) bool) (Card, bool, error) {
 	c.Version = before.Version + 1
 	s.cards[id] = c
 	if err := s.saveLocked(); err != nil {
+		s.restoreLocked(id, before, true)
 		return Card{}, true, err
 	}
 	return c, true, nil
@@ -128,8 +173,10 @@ func (s *Store) MarkDelivered(id, messageID string, renderedVersion int) (Card, 
 	c.RenderedVersion = renderedVersion
 	c.LastError = ""
 	c.UpdatedAt = s.now()
+	before := s.cards[id]
 	s.cards[id] = c
 	if err := s.saveLocked(); err != nil {
+		s.restoreLocked(id, before, true)
 		return Card{}, false, err
 	}
 	return c, true, nil
@@ -146,11 +193,24 @@ func (s *Store) RecordDeliveryError(id, message string) (Card, bool, error) {
 	}
 	c.LastError = message
 	c.UpdatedAt = s.now()
+	before := s.cards[id]
 	s.cards[id] = c
 	if err := s.saveLocked(); err != nil {
+		s.restoreLocked(id, before, true)
 		return Card{}, false, err
 	}
 	return c, true, nil
+}
+
+// restoreLocked puts memory back the way it was when a save failed. Keeping a
+// mutation the disk rejected makes the process believe a card was delivered
+// (so it never retries) while the file still says otherwise.
+func (s *Store) restoreLocked(id string, prev Card, had bool) {
+	if had {
+		s.cards[id] = prev
+		return
+	}
+	delete(s.cards, id)
 }
 
 // Get returns a copy of one card.

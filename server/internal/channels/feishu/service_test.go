@@ -252,3 +252,21 @@ func TestServiceNotifyIsIdempotentForSameCardID(t *testing.T) {
 		t.Fatalf("existing card was rewritten: %+v", c)
 	}
 }
+
+// 过期卡片要有人清：没人清的话 cards.json 随任务数一直长，而每次投递都在锁里
+// 重写整个文件。投递一拍顺手清掉是最省事的位置。
+func TestDeliverOnceDropsExpiredCards(t *testing.T) {
+	svc, st, _ := newTestService(t, Config{OwnerOpenID: "ou_owner"})
+	if _, err := st.Put(Card{
+		ID: "notice-old", Kind: KindNotice, State: StateDone,
+		ExpiresAt: fixedNow().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Get("notice-old"); ok {
+		t.Fatal("expired card survived a delivery tick")
+	}
+}

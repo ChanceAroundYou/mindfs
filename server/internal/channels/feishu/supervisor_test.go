@@ -119,3 +119,42 @@ func TestSupervisorStopsWhenContextIsCanceled(t *testing.T) {
 		t.Fatal("Run did not return after cancel")
 	}
 }
+
+// 一行超过扫描上限（1 MiB）会让 scanner 停下来，但子进程还活着、管道还开着：
+// 不主动收掉它，cmd.Wait() 就永远不返回 —— 监听就此静默死亡，点击再也收不到。
+// 正确行为是记一笔并重建连接。
+func TestSupervisorReconnectsWhenAStdoutLineIsTooLong(t *testing.T) {
+	dir := t.TempDir()
+	counterPath := filepath.Join(dir, "runs.txt")
+	bin := filepath.Join(dir, "lark-cli")
+	script := "#!/bin/sh\n" +
+		"echo run >> " + counterPath + "\n" +
+		"head -c 1100000 /dev/zero | tr '\\0' 'x'\n" +
+		"echo\n" +
+		"exec sleep 30\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sup := &Supervisor{Path: bin, Handle: func(context.Context, Action) error { return nil },
+		Logf: noLog, RestartDelay: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sup.Run(ctx)
+	waitFor(t, 10*time.Second, func() bool { return runCount(counterPath) >= 2 })
+}
+
+// 一个卡住的处理器不能把重连一起拖死：lark-cli 退出后 consume 要等
+// handlers.Wait()，没有超时的话监听就再也不回来了。
+func TestSupervisorHandlerTimeoutDoesNotBlockReconnect(t *testing.T) {
+	event := `{"type":"card.action.trigger","event_id":"e1","operator_id":"ou_owner","message_id":"om_1","action_value":"{\"card\":\"gate-nr-1\",\"choice\":0}"}`
+	bin, counterPath := fakeEventCLI(t, event, false)
+	sup := &Supervisor{Path: bin,
+		// 处理器等的是自己的 ctx：没有每次点击的超时，它拿到的是监听进程那条
+		// 长寿 ctx，能一直把 handlers.Wait() 拖住。
+		Handle: func(ctx context.Context, _ Action) error { <-ctx.Done(); return ctx.Err() },
+		Logf:   noLog, RestartDelay: 10 * time.Millisecond, HandlerTimeout: 50 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sup.Run(ctx)
+	waitFor(t, 10*time.Second, func() bool { return runCount(counterPath) >= 3 })
+}

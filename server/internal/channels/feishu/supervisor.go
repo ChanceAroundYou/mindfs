@@ -21,6 +21,10 @@ type Supervisor struct {
 	Logf          func(string, ...any)
 	RestartDelay  time.Duration
 	ConflictDelay time.Duration
+	// HandlerTimeout bounds one click's handling. Without it a handler stuck
+	// on a slow store call holds handlers.Wait() — and therefore the whole
+	// reconnect loop — open for as long as it likes.
+	HandlerTimeout time.Duration
 }
 
 const conflictMarker = "another event bus is already connected"
@@ -69,7 +73,11 @@ func (s *Supervisor) Run(ctx context.Context) {
 // consume runs one listener process and reports whether it hit the
 // single-listener conflict. It returns when the process exits.
 func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) bool {
-	cmd := exec.CommandContext(ctx, s.Path, "event", "consume", "card.action.trigger", "--as", "bot")
+	// 子进程要能在读端放弃时被收掉：scanner 停下来（比如一行超过 1 MiB）之后
+	// 仍握着管道，cmd.Wait() 会一直等下去，监听就静默死掉了。
+	childCtx, stopChild := context.WithCancel(ctx)
+	defer stopChild()
+	cmd := exec.CommandContext(childCtx, s.Path, "event", "consume", "card.action.trigger", "--as", "bot")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		logf("飞书卡片监听起不来：%v", err)
@@ -88,6 +96,10 @@ func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) boo
 	var conflict bool
 	var mu sync.Mutex
 	var handlers sync.WaitGroup
+	timeout := s.HandlerTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
 
 	go func() {
 		sc := bufio.NewScanner(stderr)
@@ -118,10 +130,17 @@ func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) boo
 		handlers.Add(1)
 		go func() {
 			defer handlers.Done()
-			if err := s.Handle(ctx, action); err != nil {
+			hctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			if err := s.Handle(hctx, action); err != nil {
 				logf("卡片点击没处理成（%s）：%v", action.CardID, err)
 			}
 		}()
+	}
+	if err := sc.Err(); err != nil && ctx.Err() == nil {
+		// 读不到更多事件了，进程却还在：主动收掉，让外层重建连接。
+		logf("飞书事件流读取中断：%v", err)
+		stopChild()
 	}
 
 	waitErr := cmd.Wait()

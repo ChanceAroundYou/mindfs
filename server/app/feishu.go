@@ -35,8 +35,10 @@ func newFeishuChannel(opts FeishuOptions, configDir string) *feishu.Service {
 	statePath := filepath.Join(configDir, "feishu", "cards.json")
 	store := feishu.NewStore(statePath)
 	if err := store.Load(); err != nil {
-		// 读不回来不等于不能用：旧卡片丢了，新卡片照发。写失败才要人管。
-		log.Printf("[feishu] 读取卡片状态失败 path=%s err=%v", statePath, err)
+		// 读不回来就不启动：空仓库会忘掉哪些卡片已经答过，同一张 gate 卡重启后
+		// 再点一次会被当成新的点击。文件原样留着，修好再重启即可。
+		log.Printf("[feishu] 读取卡片状态失败，通道不启动 path=%s err=%v", statePath, err)
+		return nil
 	}
 	nodeID, _ := os.Hostname()
 	svc := feishu.New(feishu.Config{

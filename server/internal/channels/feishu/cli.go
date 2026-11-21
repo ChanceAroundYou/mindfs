@@ -91,7 +91,7 @@ func (c *CLI) run(ctx context.Context, args []string, stdin string) (cliReply, e
 		printed = stderr.String()
 	}
 	var out cliReply
-	parsed := json.Unmarshal([]byte(strings.TrimSpace(printed)), &out) == nil
+	parsed := decodeLastJSONObject(printed, &out)
 	if parsed && (out.Error != nil || !out.OK) {
 		if out.Error != nil {
 			said := strings.TrimSpace(out.Error.Type)
@@ -112,6 +112,33 @@ func (c *CLI) run(ctx context.Context, args []string, stdin string) (cliReply, e
 		return out, fmt.Errorf("%s 失败：返回的不是 JSON（%s）", where, oneLine(strings.TrimSpace(printed)))
 	}
 	return out, nil
+}
+
+// decodeLastJSONObject parses the reply out of what lark-cli printed. The
+// whole output is tried first (a pretty-printed object spans lines); failing
+// that, the last line that parses on its own wins, so a version warning or a
+// login hint printed before the reply does not make every send look broken.
+func decodeLastJSONObject(printed string, out *cliReply) bool {
+	trimmed := strings.TrimSpace(printed)
+	if trimmed == "" {
+		return false
+	}
+	if json.Unmarshal([]byte(trimmed), out) == nil {
+		return true
+	}
+	lines := strings.Split(trimmed, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(line, "{") || !strings.HasSuffix(line, "}") {
+			continue
+		}
+		var candidate cliReply
+		if json.Unmarshal([]byte(line), &candidate) == nil {
+			*out = candidate
+			return true
+		}
+	}
+	return false
 }
 
 // oneLine collapses whitespace and cuts to 300 runes without splitting a
