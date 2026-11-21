@@ -173,6 +173,7 @@ export function ConversationView({
     cancelUpload,
     answerQuestion,
     decideGate,
+    decideWorkflowPublish,
     runQueued,
     runningQueued,
     promptDeciding,
