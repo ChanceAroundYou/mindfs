@@ -24,7 +24,7 @@ const en = fs.readFileSync(path.join(root, "src/i18n/locales/en-US.ts"), "utf8")
 // 这些数字以前在 ActionBar 与 PromptEditor 各抄一份，现在统一由 useComposerEditorHeight 给出。
 assert.match(
   promptEditor,
-  /composerEditorInsets\(isMultiLine, extraControls \? 132 : 96\)/,
+  /composerEditorInsets\(isMultiLine, \(extraControls \? 132 : 96\) \+ extraControlsExtraInset\)/,
   "PromptEditor must take its insets from the shared composerEditorInsets helper (wider when extra controls are present)",
 );
 assert.match(
@@ -97,8 +97,15 @@ assert.doesNotMatch(inlinePanel, /<StageEditor\b/, "the create panel must not re
 assert.doesNotMatch(inlinePanel, /<AgentSelector\b/, "agent choice belongs to the router, not the create panel");
 assert.doesNotMatch(inlinePanel, /DEFAULT_TASK_MODEL|inheritAgentStage|<StageOptionsBar\b/, "stage options must be gone from the create panel");
 // 「立即执行」在对话模型里只剩一个含义：建完立刻派发首条留言（默认勾上）。
-assert.match(inlinePanel, /taskInlineEdit\.startImmediately/, "the create panel must expose the immediate-run toggle");
-assert.match(inlinePanel, /checked=\{taskInlineEdit\.startImmediately\}/, "the toggle must be a real checkbox that renders the current value");
+// 位置已收进输入框右下角的控件行，与任务详情面板共用同一颗胶囊。
+assert.match(inlinePanel, /active=\{taskInlineEdit\.startImmediately\}/, "the create panel must expose the immediate-run toggle");
+assert.match(
+  inlinePanel,
+  /<RunImmediatelyControl[\s\S]{0,200}?mode="toggle"[\s\S]{0,200}?active=\{taskInlineEdit\.startImmediately\}/,
+  "the toggle must be the shared run-immediately control",
+);
+assert.match(inlinePanel, /extraControlsExtraInset=\{84\}/, "单行正文要让出胶囊的宽度");
+assert.doesNotMatch(inlinePanel, /type="checkbox"/, "面板自己不再手搓一个勾选框");
 assert.match(tasks, /start_immediately: options\?\.startImmediately \?\? true/, "createTask must send start_immediately and default it to true");
 assert.match(tasks, /export async function runTaskNow\(/, "the queued message needs a run-now service call");
 assert.match(

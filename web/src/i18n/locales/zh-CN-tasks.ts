@@ -21,6 +21,7 @@ export const zhCNTasks = {
   "task.startHint": "点击蓝点或发消息开始",
   "task.createDialogTitle": "创建任务",
   "task.startImmediately": "立即执行",
+  "task.startImmediatelyHint": "建完任务就立刻派发首条留言",
   "task.queued": "待执行",
   "task.startingNow": "执行中…",
   "task.addAttachment": "添加附件",

@@ -22,6 +22,7 @@ export const enUSTasks = {
   // The task name already shows in the title slot; don't repeat it.
   "task.createDialogTitle": "Create task",
   "task.startImmediately": "Run now",
+  "task.startImmediatelyHint": "Dispatch the first message as soon as the task is created",
   "task.queued": "Queued",
   "task.startingNow": "Starting…",
   "task.addAttachment": "Add attachment",

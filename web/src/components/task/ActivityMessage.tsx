@@ -36,10 +36,6 @@ export type ActivityMessageProps = {
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
-  /** 排队留言上的「立即执行」：把这条留言交给 Router。 */
-  onRunQueued?: (activity: TaskActivity) => void | Promise<void>;
-  /** 正在派发排队留言：按钮禁用，避免双击。 */
-  runningQueued?: boolean;
 };
 
 /**
@@ -73,8 +69,6 @@ export function ActivityMessage({
   onGateDecision,
   onPauseTask,
   onResumeTask,
-  onRunQueued,
-  runningQueued = false,
 }: ActivityMessageProps) {
   const { t, locale } = useI18n();
 
@@ -168,19 +162,9 @@ export function ActivityMessage({
         {created !== null && (
           <div style={userMetaRowStyle}>
             {activity.status === "queued" ? (
-              <>
-                <span style={queuedBadgeStyle}>{t("task.queued")}</span>
-                {onRunQueued ? (
-                  <button
-                    type="button"
-                    onClick={() => void onRunQueued(activity)}
-                    disabled={runningQueued}
-                    style={runQueuedButtonStyle(runningQueued)}
-                  >
-                    {runningQueued ? t("task.startingNow") : t("task.startImmediately")}
-                  </button>
-                ) : null}
-              </>
+              // 只留「待执行」状态胶囊：派发入口已经收进输入框右下角的控件行
+              // （RunImmediatelyControl），不再挂在气泡页脚上。
+              <span style={queuedBadgeStyle}>{t("task.queued")}</span>
             ) : null}
             <ActivityTypeTag activity={activity} />
             <time
@@ -273,21 +257,6 @@ const queuedBadgeStyle: React.CSSProperties = {
   borderRadius: 999,
   padding: "1px 6px",
 };
-
-/** 排队留言上的「立即执行」：小胶囊，和页脚的其它元信息同一档字号。 */
-function runQueuedButtonStyle(disabled: boolean): React.CSSProperties {
-  return {
-    fontSize: 11,
-    fontWeight: 700,
-    padding: "2px 8px",
-    borderRadius: 999,
-    border: "1px solid var(--accent-color)",
-    background: "rgba(37, 99, 235, 0.10)",
-    color: "var(--accent-color)",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.6 : 1,
-  };
-}
 
 const agentMessageStyle: React.CSSProperties = {
   display: "flex",

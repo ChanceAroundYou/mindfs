@@ -19,6 +19,7 @@ import type { UploadProgress } from "../../shared/uploadTypes";
 import { ManagedRootPayload } from "../../app/appMisc";
 import { TaskInlineEditState } from "../../app/appTask";
 import { TaskInlineCandidateMenu } from "./TaskInlineCandidateMenu";
+import { RunImmediatelyControl } from "../task/RunImmediatelyControl";
 
 export interface TaskInlineEditPanelProps {
   PanelShell: any;
@@ -243,41 +244,8 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                       placeholder={t("task.namePlaceholder")}
                       style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
                     />
-                    {/* 「立即执行」默认勾上：勾掉时任务只落卡，首条留言排队等后
-                        面的「立即执行」。与 worktree 的标题行开关分开摆，是因为它
-                        属于「创建后怎么跑」，不是项目/树配置。 */}
-                    <label
-                      style={{
-                        marginLeft: "auto",
-                        height: "26px",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "5px",
-                        padding: "0 8px",
-                        borderRadius: "6px",
-                        border: `1px solid ${taskInlineEdit.startImmediately ? "var(--accent-color)" : "var(--border-color)"}`,
-                        background: taskInlineEdit.startImmediately ? "rgba(37, 99, 235, 0.10)" : "transparent",
-                        color: taskInlineEdit.startImmediately ? "var(--accent-color)" : "var(--text-secondary)",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        cursor: taskInlineSaving ? "not-allowed" : "pointer",
-                        userSelect: "none",
-                        whiteSpace: "nowrap",
-                        opacity: taskInlineSaving ? 0.6 : 1,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={taskInlineEdit.startImmediately}
-                        disabled={taskInlineSaving}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setTaskInlineEdit((prev) => prev ? { ...prev, startImmediately: checked } : prev);
-                        }}
-                        style={{ accentColor: "var(--accent-color)", cursor: taskInlineSaving ? "not-allowed" : "pointer", margin: 0 }}
-                      />
-                      {t("task.startImmediately")}
-                    </label>
+                    {/* 「立即执行」不再单独占这一行：它和详情面板用同一颗胶囊、
+                        同一个落点（输入框右下角的控件行），见下面的 extraControls。 */}
                   </div>
                   <div ref={composerAnchorRef} style={{ position: "relative" }}>
                     <TaskInlineCandidateMenu
@@ -302,6 +270,15 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                       sending={taskInlineSaving}
                       sendDisabled={!(taskInlineEdit.text.trim() || taskInlineEdit.attachments.length > 0)}
                       placeholder={t("task.editPlaceholder")}
+                      extraControls={(
+                        <RunImmediatelyControl
+                          mode="toggle"
+                          active={taskInlineEdit.startImmediately}
+                          disabled={taskInlineSaving}
+                          onToggle={(next) => setTaskInlineEdit((prev) => prev ? { ...prev, startImmediately: next } : prev)}
+                        />
+                      )}
+                      extraControlsExtraInset={84}
                     />
                   </div>
                   <ComposerAttachmentStrip

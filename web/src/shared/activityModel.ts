@@ -167,6 +167,22 @@ export function pendingTaskPrompt(activities: TaskActivity[]): TaskActivity | nu
 }
 
 /**
+ * 排队中的首条用户留言（新建任务时勾掉了「立即执行」）。
+ *
+ * 它决定详情面板输入框右下角要不要出现「立即执行」控件：只有真的有一条
+ * 还没派发的留言时才有意义。与新建面板是同一颗胶囊、同一个落点。
+ */
+export function queuedUserActivity(activities: TaskActivity[]): TaskActivity | null {
+  for (const activity of activities) {
+    // 「待执行」是后端活动行上的原样状态（不在 ActivityStatus 的展示枚举里，
+    // normalize 会把它折成 pending），所以这里比原值。
+    if (String(activity.status || "").trim() !== "queued") continue;
+    if (activity.type === "user_message" || activity.type === "user_comment") return activity;
+  }
+  return null;
+}
+
+/**
  * 消息类型胶囊的文案 key（页脚时间前面的那一枚）。
  *
  * 取值全部来自后端已有的枚举，不在前端猜：

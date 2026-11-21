@@ -31,6 +31,11 @@ export type PromptEditorProps = {
    * 放在编辑器右下角控件行里，与输入框同源，不再另起一行。
    */
   extraControls?: React.ReactNode;
+  /**
+   * `extraControls` 比一颗 28px 图标键更宽时补的右侧留位（px）。
+   * 单行状态下正文要把这块让出来，否则字会压在控件上；多行本来就走整宽。
+   */
+  extraControlsExtraInset?: number;
   /** 测试/定位用：挂在最外层容器上。 */
   containerTestId?: string;
   /** 测试/定位用：挂在发送按钮上。 */
@@ -62,6 +67,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     sendDisabled,
     accentColor,
     extraControls,
+    extraControlsExtraInset = 0,
     containerTestId,
     sendTestId,
     sendLabel,
@@ -101,7 +107,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
 
   const canSend = !sending && !sendDisabled;
   // 右侧控件行多一个按钮时把单行留位加宽，否则文字会压在控件上。
-  const insets = composerEditorInsets(isMultiLine, extraControls ? 132 : 96);
+  const insets = composerEditorInsets(isMultiLine, (extraControls ? 132 : 96) + extraControlsExtraInset);
 
   // 发送入口同步从编辑器读最新文本：内容经 onChange 异步进父 state，
   // 快打后立刻发送时父 value 还是旧值。按钮点击与回车共用这一条。

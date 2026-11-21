@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n/index";
 import { useTaskActivities } from "../../hooks/useTaskActivities";
 import { usePendingAttachments } from "../action/usePendingAttachments";
 import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
-import { pendingTaskPrompt, visibleConversationActivities } from "../../shared/activityModel";
+import { pendingTaskPrompt, queuedUserActivity, visibleConversationActivities } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
 import { ScrollToBottomButton } from "../common/ScrollToBottomButton";
@@ -34,9 +34,6 @@ export type ConversationMessagesProps = {
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
-  /** 排队留言上的「立即执行」。 */
-  onRunQueued?: (activity: TaskActivity) => void | Promise<void>;
-  runningQueued?: boolean;
 };
 
 /**
@@ -58,8 +55,6 @@ export function ConversationMessages({
   onGateDecision,
   onPauseTask,
   onResumeTask,
-  onRunQueued,
-  runningQueued = false,
 }: ConversationMessagesProps) {
   const { t } = useI18n();
 
@@ -112,8 +107,6 @@ export function ConversationMessages({
     onGateDecision,
     onPauseTask,
     onResumeTask,
-    onRunQueued,
-    runningQueued,
   };
 
   return (
@@ -190,6 +183,7 @@ export function ConversationView({
   } = usePendingAttachments();
   const workflowNames = useWorkflowNames();
   const pendingPrompt = pendingTaskPrompt(activities);
+  const queuedActivity = queuedUserActivity(activities);
   const lastAgentReplyRef = useRef("");
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
   const initialScrollKeyRef = useRef("");
@@ -291,12 +285,6 @@ export function ConversationView({
         onGateDecision={decideGate}
         onPauseTask={onPauseTask}
         onResumeTask={onResumeTask}
-        onRunQueued={disabled ? undefined : async () => {
-          await runQueued();
-          // 任务头（待开始）与 Agent 回复都变了，让详情面板重新点查一次。
-          onAgentActivityChange?.();
-        }}
-        runningQueued={runningQueued}
       />
 
       {/*
@@ -376,6 +364,16 @@ export function ConversationView({
               setVersionId(nextVersionId);
             }}
             sending={sending}
+            // 排队中的首条留言 → 输入框右下角出现「立即执行」（与新建任务面板同一颗
+            // 胶囊、同一个落点）。终态任务不再给入口。
+            onRunQueued={queuedActivity && !disabled ? () => {
+              void (async () => {
+                await runQueued();
+                // 任务头（待开始）与 Agent 回复都变了，让详情面板重新点查一次。
+                onAgentActivityChange?.();
+              })();
+            } : undefined}
+            runningQueued={runningQueued}
             error={sendError}
             resetKey={composerResetKey}
             attachments={pendingAttachments}
