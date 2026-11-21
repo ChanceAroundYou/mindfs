@@ -177,6 +177,10 @@ func (s *ActivityService) applyRouteAction(
 		return s.applyRouteCancelRun(ctx, decision, task, action)
 	case RouterActionCancelTask:
 		return s.applyRouteCancelTask(ctx, decision, task, action)
+	case RouterActionSetNodeModel:
+		return s.applyRouteSetNodeModel(ctx, decision, task, action)
+	case RouterActionSkipNode:
+		return s.applyRouteSkipNode(ctx, decision, task, action)
 	default:
 		return fmt.Errorf("unsupported action %q", action.Kind)
 	}

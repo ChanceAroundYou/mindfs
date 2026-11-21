@@ -259,3 +259,44 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   去掉上限 / 失败卡不给改档 / 裁剪不缩摘要）。`go test ./server/internal/kanban/` 全绿（230.5s）。
 - 边界：本任务只做读侧；`inspect_node` / `set_node_model` / `skip_node` 的动作与校验在 T2，
   卡片里先给出动作名，T2 落地后才会被 `validateRouterActions` 接受。
+
+### T2 完成（2026-11-21）
+
+- **两个写动作 + 一个读侧细化**，全部走既有「工具只记录、apply 统一执行」的通道：
+  - `router_set_node_model(node_id, model, reason?)`：把 `params.model` 写进本轮 Run 的图
+    （`setGraphNodeParam` 写时复制），下一次 attempt 生效；改档本身不触发重跑。
+  - `router_skip_node(node_id, reason?)`：复用驱动既有的 `commitSkippedWorkflowNode`
+    （补一个 `reason` 参数写进 `output.reason`），写完 `WakeWorkflowRun` 让下游继续。
+  - `router_inspect_run` 加可选 `node_id`：只回该节点的 `{node_id, attempt, status, summary
+    (≤4000), output, session_key}`，不再重复整轮节点清单；从未跑过的节点按图状态返回
+    pending，不在图里则报错。**不新增第 19 个工具** —— 工具定义本身要吃 token（上一轮刚把
+    36 个内置工具关掉省了 ~49k/回合）。
+- **「运行中不切换」三层各自拦一次**（不是重复，而是三份不同的证据）：
+  - 工具层 `requireNodeAction` 按当轮卡片的 `actions` 判，拒绝时说的是人话（「节点 X 正在
+    运行（running），运行中不切换；先 router_cancel_node，或等这一回合结束」）。
+  - `validateRouterActions` 拿**同一份 brief 快照**再判一次 —— 动作收集完到 apply 之间
+    模型可能又调了别的工具，卡片口径不变但动作集合可能已经越界。
+  - 服务层 `SetWorkflowNodeModelForRouter` / `SkipWorkflowNodeForRouter` 按**行**判
+    （`nodeRunInFlight` 看最新一次 attempt 是 queued/running），补上「卡片生成后节点刚好
+    被驱动派发出去」的窗口。
+- **跳过的语义边界**：只接受**从未有过 attempt** 的节点（`nodeRunStarted` 为假）。失败过的
+  节点跳过不会让下游动（下游停的是它的失败而不是它的缺失），所以直接拒绝并指路「用重试或
+  改档」；投影里已是非 pending 状态的同样拒绝。改档则相反 —— 失败 / 已收尾节点都允许改，
+  因为改档不改变这一轮已发生的事实。
+- **动作落地**：新增端口 `ActivityNodeAdmin`（与 `ActivityNodeRetrier` / `ActivityRunCanceller`
+  同形，装配在 `service_activities.go`），apply 后各落一条确定性系统行
+  （`route-model:<decision>:<seq>` / `route-skip:<decision>:<seq>`，`ActivityTypeAttention`），
+  用户在任务详情里看得见「谁把哪个节点改成了什么」。
+- **提示词**：`router_prompt.md` 增规则 20（先看卡片 `actions`、运行中不切换、反复失败先改档
+  再重试、跳过前确认下游不依赖其产物、两个动作都要写 reason），并在「你能看到的」里说明
+  `latest_run.nodes` 的字段口径、在工具清单里补两个新工具与 `inspect_run(node_id=...)`。
+- 验证：`router_node_admin_test.go` 9 条（工具记录与校验、运行中拒绝、改档写进图且 revision
+  前进、服务层运行中拒绝、跳过解锁下游（scripted runner 真跑一轮、`runCalls==1`、下游投影
+  success）、跳过拒绝运行中、跳过拒绝已跑过、校验层按卡片拒绝、`inspect_run` 只回单节点、
+  apply 走端口并留系统行 + 端口未装配时明确报错）。五处变异各自打红后还原（工具层不看卡片
+  动作 / 服务层去掉 in-flight 守卫 / 跳过不唤醒 driver / `inspect_run` 忽略 node_id /
+  校验层跳过节点动作检查）。`go build ./...` 与 `go test ./server/internal/kanban/` 全绿
+  （279.8s）。
+- 边界：节点级动作只认**顶层 agent 节点**（Loop 内部节点、human_gate 拒绝）；`set_node_model`
+  不校验模型档是否存在于当前 harness 的可用列表（与既有按任务选模型同口径，配错时由 agent
+  层报错并落 unknown）。

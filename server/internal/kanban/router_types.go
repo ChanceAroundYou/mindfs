@@ -210,6 +210,10 @@ const (
 	// W1 取消三档（2026-11-21 用户裁定「解禁 cancel」）：最小够用原则 ——
 	// 能停一个节点就不要停整轮，能停一轮就不要取消任务。
 	RouterActionCancelNode RouterActionKind = "cancel_node"
+	// set_node_model / skip_node 是 W2 的节点级管理动作：目标是节点 ID（不是
+	// NodeRun 行），因为改档与跳过都发生在「下一 attempt」而不是某一行上。
+	RouterActionSetNodeModel RouterActionKind = "set_node_model"
+	RouterActionSkipNode     RouterActionKind = "skip_node"
 	RouterActionCancelRun  RouterActionKind = "cancel_run"
 	RouterActionCancelTask RouterActionKind = "cancel_task"
 	// W1 T3：登记这一轮的验收项。它不是收尾动作，只是把「做完的样子」写下来，
@@ -238,6 +242,10 @@ type RouterAction struct {
 	// 当轮就把它解析成具体行（retry_direct 带的是回复活动 ID），apply 阶段不再
 	// 重新判定「哪个节点在等我答复 / 该重试哪一行 / 哪条回复卡住了」。
 	NodeRunID string `json:"node_run_id,omitempty"`
+	// NodeID 是 set_node_model / skip_node 的目标节点（图里的节点 ID）。
+	NodeID string `json:"node_id,omitempty"`
+	// Model 只对 set_node_model 有意义：写进节点 params.model 的模型档。
+	Model string `json:"model,omitempty"`
 	// SessionMode 只对 run_workflow 有意义：new（默认）= 这一轮开一段新会话，
 	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。
 	SessionMode string `json:"session_mode,omitempty"`

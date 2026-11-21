@@ -8,23 +8,70 @@ import (
 	"strings"
 )
 
+// inspectNodeExcerpt 是单节点详情的产出上限：比卡片摘要宽，仍不接近转录。
+const inspectNodeExcerpt = 4000
+
+// inspectNodeGraphStatus 在还没有运行行时回答「这个节点在图里吗、现在是什么状态」。
+func inspectNodeGraphStatus(ctx context.Context, store *TaskStore, target *RouterBriefRun, runID, nodeID string) (string, bool) {
+	if target != nil {
+		for _, card := range target.Nodes {
+			if card.NodeID == nodeID {
+				return card.Status, true
+			}
+		}
+		return "", false
+	}
+	if store == nil {
+		return "", false
+	}
+	run, err := store.WorkflowRunByID(ctx, runID)
+	if err != nil {
+		return "", false
+	}
+	if _, ok := run.Graph.node(nodeID); !ok {
+		return "", false
+	}
+	if status := run.NodeStates[nodeID]; status != "" {
+		return status, true
+	}
+	return NodeRunPending, true
+}
+
+// latestNodeRunOf 取某节点最近一次（attempt 最大）的顶层行。
+func latestNodeRunOf(nodes []NodeRun, nodeID string) (NodeRun, bool) {
+	var latest NodeRun
+	found := false
+	for _, node := range nodes {
+		if node.NodeID != nodeID || node.LoopPath != "" {
+			continue
+		}
+		if !found || node.Attempt >= latest.Attempt {
+			latest, found = node, true
+		}
+	}
+	return latest, found
+}
+
 // router_inspect_run 的只读实现。独立成文件是为了守住 500 行硬线：工具定义与
 // 守卫校验在 router_tools.go，这里只放「读一个 Run 的节点证据」。
 
 func (e *routerToolEnv) inspectRunTool() RouterToolSpec {
 	return RouterToolSpec{
 		Name:        "router_inspect_run",
-		Description: "只读：查看最近一次 WorkflowRun 的节点终态与输出摘要。不修改任何状态。",
-		Class:       RouterToolRead,
+		Description: "只读：查看最近一次 WorkflowRun 的节点终态与输出摘要。不修改任何状态。" +
+			"带 node_id 时只返回该节点的详情（最近一次 attempt 的产出），不重复整份节点清单，也不读转录。",
+		Class: RouterToolRead,
 		InputSchema: objectSchema(map[string]any{
-			"run_id": map[string]any{"type": "string", "description": "可选；必须是 brief.latest_run.id"},
+			"run_id":  map[string]any{"type": "string", "description": "可选；必须是 brief.latest_run.id"},
+			"node_id": map[string]any{"type": "string", "description": "可选；只看这一个节点"},
 		}, nil),
 		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var args struct {
-				RunID string `json:"run_id"`
+				RunID  string `json:"run_id"`
+				NodeID string `json:"node_id"`
 			}
 			_ = json.Unmarshal(raw, &args)
-			return e.inspectRun(ctx, strings.TrimSpace(args.RunID))
+			return e.inspectRun(ctx, strings.TrimSpace(args.RunID), strings.TrimSpace(args.NodeID))
 		},
 	}
 }
@@ -38,7 +85,7 @@ func (e *routerToolEnv) inspectRunTool() RouterToolSpec {
 //
 // 事件回合以前在这里直接报 "no workflow run"，而 spec 明确允许 inspect_run ——
 // 于是模型只能凭摘要猜事件那个 Run 里到底哪个节点失败了。
-func (e *routerToolEnv) inspectRun(ctx context.Context, runID string) (string, error) {
+func (e *routerToolEnv) inspectRun(ctx context.Context, runID, nodeID string) (string, error) {
 	targetRunID, target := "", (*RouterBriefRun)(nil)
 	switch {
 	case e.brief == nil:
@@ -73,7 +120,28 @@ func (e *routerToolEnv) inspectRun(ctx context.Context, runID string) (string, e
 		payload["run"] = briefRun(ctx, e.store, run, task, nil)
 	}
 	if e.store != nil {
-		if nodes, err := e.store.ListWorkflowNodeRuns(ctx, targetRunID); err == nil {
+		if nodes, err := e.store.ListWorkflowNodeRuns(ctx, targetRunID); err == nil && nodeID != "" {
+			// 单节点详情：最近一次 attempt 的产出，够回答「它上次到底说了什么」，
+			// 又不把整份节点清单再发一遍。
+			latest, ok := latestNodeRunOf(nodes, nodeID)
+			if !ok {
+				// 还没跑过的节点也允许看：报它在图里的状态，而不是「不存在」。
+				status, inGraph := inspectNodeGraphStatus(ctx, e.store, target, targetRunID, nodeID)
+				if !inGraph {
+					return "", fmt.Errorf("节点 %q 不在本轮 Run 里", nodeID)
+				}
+				payload["node"] = map[string]any{"node_id": nodeID, "status": status, "attempt": 0}
+			} else {
+				payload["node"] = map[string]any{
+					"node_id":     latest.NodeID,
+					"attempt":     latest.Attempt,
+					"status":      latest.Status,
+					"summary":     truncateRouterText(nodeRunText(latest, "summary", "reason", "error"), inspectNodeExcerpt),
+					"output":      latest.Output,
+					"session_key": latest.SessionKey,
+				}
+			}
+		} else if nodes, err := e.store.ListWorkflowNodeRuns(ctx, targetRunID); err == nil {
 			items := make([]map[string]any, 0, len(nodes))
 			for _, node := range nodes {
 				items = append(items, map[string]any{

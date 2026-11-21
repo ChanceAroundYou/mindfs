@@ -17,7 +17,7 @@ import (
 
 func inspectRunPayload(t *testing.T, env *routerToolEnv, runID string) (map[string]any, error) {
 	t.Helper()
-	raw, err := env.inspectRun(context.Background(), runID)
+	raw, err := env.inspectRun(context.Background(), runID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -106,10 +106,10 @@ func TestRouterInspectRunRejectsForeignRunInEventTurn(t *testing.T) {
 	must(t, err, "turnBrief")
 	env := &routerToolEnv{store: f.store, brief: brief}
 
-	if _, err := env.inspectRun(ctx, "run-new"); err == nil {
+	if _, err := env.inspectRun(ctx, "run-new", ""); err == nil {
 		t.Fatal("事件回合索要任务最新 Run 必须被拒绝")
 	}
-	if _, err := env.inspectRun(ctx, "run-old"); err != nil {
+	if _, err := env.inspectRun(ctx, "run-old", ""); err != nil {
 		t.Fatalf("事件自己的 run_id 应当可用：%v", err)
 	}
 }
@@ -144,7 +144,7 @@ func TestRouterInspectRunKeepsUserTurnSemantics(t *testing.T) {
 	if ids := payloadNodeIDs(payload); len(ids) != 1 || ids[0] != "agent-1" {
 		t.Fatalf("节点 = %v，应当是 run-user 的 agent-1", ids)
 	}
-	if _, err := env.inspectRun(ctx, "run-other"); err == nil {
+	if _, err := env.inspectRun(ctx, "run-other", ""); err == nil {
 		t.Fatal("用户回合索要别的 Run 必须被拒绝")
 	}
 }

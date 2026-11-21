@@ -11904,16 +11904,43 @@ groups:
       （保留前 4 张并把省略数加进同一个字段），任何情况下不静默丢卡片。
       ④ 卡片与 `active_execution.current_nodes` 共用同一个 `RouterBriefNode` 类型，避免
       「节点长什么样」出现两套结构。
+      ⑤ 写侧两个动作 `set_node_model` / `skip_node` 走既有「工具只记录、apply 统一执行」通道，
+      并且**三层各拦一次越界**：工具层按当轮卡片的 `actions` 判、`validateRouterActions` 按
+      同一份 brief 快照再判、服务层按**行**（最新 attempt 是否 queued/running）判 —— 补上
+      「卡片生成后节点刚好被驱动派发出去」的窗口。「运行中不切换」是用户裁定，任何一层被
+      上游删掉都会让运行中改档重新变得可能。
+      ⑥ `skip_node` 只接受**从未有过 attempt** 的节点（`nodeRunStarted` 为假）：失败过的节点
+      跳过不会让下游动起来，它需要的是重试或改档；改档则相反，失败 / 已收尾节点都允许改
+      （改档不改变这一轮已发生的事实，下一次 attempt 才生效）。
+      ⑦ `inspect_run` 用可选 `node_id` 做节点级细化，而**不新增第 19 个工具** —— 工具定义本身
+      吃 token（同轮另有一组把 36 个内置工具整体关掉，省 ~49k/回合），加参数比加工具便宜。
+      ⑧ 两个动作 apply 后各落一条确定性系统行（`route-model:<decision>:<seq>` /
+      `route-skip:<decision>:<seq>`，`ActivityTypeAttention`），用户在任务详情里看得见谁动了
+      哪个节点；端口未装配时明确报错，不静默成功。
     boundary: |
-      本组只做读侧卡片（W2 T1）。T2 的动作工具（`inspect_node` / `set_node_model` /
-      `skip_node`）与 T3 的「运行中切换」守卫落在同一组，随实现补进 files/tests/anchors。
-      卡片摘要只是给人/模型一眼看的摘录，细节仍走 inspect_node；不做跨轮历史卡片。
+      W2 T1 做读侧卡片，T2 做写侧动作与 `inspect_run(node_id)`；T3 的「运行中切换」守卫
+      （工作流图编辑）随实现补进 files/tests/anchors。卡片摘要只是给人/模型一眼看的摘录，
+      细节仍走 inspect_run；不做跨轮历史卡片。节点级动作只认顶层 agent 节点（Loop 内部节点、
+      human_gate 拒绝），`set_node_model` 不校验模型档是否在 harness 的可用列表里（与既有
+      「按任务选模型」同口径）。
     files:
       - server/internal/kanban/router_brief.go
       - server/internal/kanban/router_brief_cap.go
+      - server/internal/kanban/router_node_admin.go
+      - server/internal/kanban/workflow_runtime_node_admin.go
+      - server/internal/kanban/activity_route_node_admin.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_tools_inspect.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/workflow_driver.go
+      - server/internal/kanban/router_prompt.md
       - docs/superpowers/plans/2026-11-21-super-agent-node-admin.md
     tests:
       - server/internal/kanban/router_brief_nodes_test.go
+      - server/internal/kanban/router_node_admin_test.go
     anchors:
       - 'server/internal/kanban/router_brief.go:type RouterBriefNode struct {'
       - 'server/internal/kanban/router_brief.go:const briefNodeCardLimit = 16'
@@ -11922,3 +11949,15 @@ groups:
       - 'server/internal/kanban/router_brief.go:Nodes              []RouterBriefNode `json:"nodes,omitempty"`'
       - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCards(brief *SituationBrief) bool {'
       - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCardCount(brief *SituationBrief, keep int) bool {'
+      - 'server/internal/kanban/router_node_admin.go:func (e *routerToolEnv) setNodeModelTool() RouterToolSpec {'
+      - 'server/internal/kanban/router_node_admin.go:func (e *routerToolEnv) skipNodeTool() RouterToolSpec {'
+      - 'server/internal/kanban/router_node_admin.go:func requireNodeAction(card RouterBriefNode, action string) error {'
+      - 'server/internal/kanban/workflow_runtime_node_admin.go:func (s *Service) SetWorkflowNodeModelForRouter(ctx context.Context, rootID, taskID, nodeID, model, reason string) error {'
+      - 'server/internal/kanban/workflow_runtime_node_admin.go:func (s *Service) SkipWorkflowNodeForRouter(ctx context.Context, rootID, taskID, nodeID, reason string) error {'
+      - 'server/internal/kanban/workflow_runtime_node_admin.go:func nodeRunInFlight(rows []NodeRun, nodeID string) bool {'
+      - 'server/internal/kanban/activity_route_node_admin.go:type ActivityNodeAdmin interface {'
+      - 'server/internal/kanban/router_tools.go:func validateNodeAdminAction(brief *SituationBrief, action RouterAction) error {'
+      - 'server/internal/kanban/router_tools_inspect.go:func (e *routerToolEnv) inspectRun(ctx context.Context, runID, nodeID string) (string, error) {'
+      - 'server/internal/kanban/router_types.go:RouterActionSetNodeModel RouterActionKind = "set_node_model"'
+      - 'server/internal/kanban/router_types.go:RouterActionSkipNode     RouterActionKind = "skip_node"'
+      - 'server/internal/kanban/router_prompt.md:20. **节点级管理（`router_set_node_model` / `router_skip_node`）**'

@@ -69,7 +69,7 @@ func (s *Service) AdvanceWorkflowRun(ctx context.Context, store *TaskStore, task
 			if !ok {
 				return fmt.Errorf("engine returned unknown skipped node %q", skipped[0])
 			}
-			if _, err := s.commitSkippedWorkflowNode(ctx, store, run, node); err != nil {
+			if _, err := s.commitSkippedWorkflowNode(ctx, store, run, node, ""); err != nil {
 				return err
 			}
 			continue
@@ -260,10 +260,14 @@ func (s *Service) advanceWorkflowHumanGate(ctx context.Context, store *TaskStore
 	return false, s.projectWorkflowTaskStatus(ctx, store, run)
 }
 
-func (s *Service) commitSkippedWorkflowNode(ctx context.Context, store *TaskStore, run *WorkflowRun, node WorkflowNode) (NodeRun, error) {
+// reason 非空时写进 output：条件未选中是 ""，Router 手动跳过带一句来由。
+func (s *Service) commitSkippedWorkflowNode(ctx context.Context, store *TaskStore, run *WorkflowRun, node WorkflowNode, reason string) (NodeRun, error) {
 	nr := workflowAttemptNodeRun(run, node)
 	nr.Status = NodeRunSkipped
 	nr.Output = map[string]any{"skipped": true}
+	if strings.TrimSpace(reason) != "" {
+		nr.Output["reason"] = strings.TrimSpace(reason)
+	}
 	committed, _, err := store.CommitWorkflowNodeTransition(ctx, run, WorkflowNodeTransition{
 		NodeRun: nr, EventType: WorkflowEventNodeSkipped,
 	})

@@ -90,6 +90,8 @@ type ActivityService struct {
 	runResumer ActivityRunResumer
 	// runCanceller 是取消三档的端口；nil 时 cancel_node/run/task 明确失败。
 	runCanceller ActivityRunCanceller
+	// nodeAdmin 是节点级管理（改档 / 跳过）的端口；nil 时两个动作明确失败。
+	nodeAdmin ActivityNodeAdmin
 	// completion 是 complete_task 的应用端口（证据门 + 收尾）；nil 时明确失败。
 	completion CompletionApplier
 	// router 是 shadow 观察端口。nil（单测/老装配）时行为与改造前完全一致；

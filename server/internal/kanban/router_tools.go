@@ -96,6 +96,8 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.answerTool(),
 		e.completeTaskTool(),
 		e.recordAcceptanceTool(),
+		e.setNodeModelTool(),
+		e.skipNodeTool(),
 	}
 	// 监管工具只要实例开着监管就出现，与本轮有没有观测块无关（S1/S2）。
 	return append(tools, e.supervisionTools()...)
@@ -393,6 +395,20 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			case StatusSuccess, StatusFail, StatusCancelled:
 				return fmt.Errorf("record_acceptance is not allowed on a %s task", brief.Task.Status)
 			}
+		case RouterActionSetNodeModel:
+			if err := validateNodeAdminAction(brief, action); err != nil {
+				return err
+			}
+			if strings.TrimSpace(action.Model) == "" {
+				return errors.New("set_node_model model required")
+			}
+			if len(action.Model) > 64 {
+				return errors.New("set_node_model model name too long")
+			}
+		case RouterActionSkipNode:
+			if err := validateNodeAdminAction(brief, action); err != nil {
+				return err
+			}
 		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
 			RouterActionRetryDirect, RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask:
 			// 细节（可重试性、预算、节点归属）在 validateSupervisionActions 里，
@@ -441,6 +457,26 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 		}
 	}
 	return nil
+}
+
+// validateNodeAdminAction 在 apply 前再判一次节点级动作：卡片是当轮快照，
+// 工具到 apply 之间状态可能已经变了（节点跑起来了 / 已经被取消），所以这里按
+// brief 重新取卡片、重新要求同一个动作仍然可用。
+func validateNodeAdminAction(brief *SituationBrief, action RouterAction) error {
+	if brief == nil || brief.LatestRun == nil || len(brief.LatestRun.Nodes) == 0 {
+		return fmt.Errorf("%s needs node cards: 这一轮没有进行中的 Run", action.Kind)
+	}
+	nodeID := strings.TrimSpace(action.NodeID)
+	if nodeID == "" {
+		return fmt.Errorf("%s: node_id required", action.Kind)
+	}
+	for _, card := range brief.LatestRun.Nodes {
+		if card.NodeID != nodeID {
+			continue
+		}
+		return requireNodeAction(card, string(action.Kind))
+	}
+	return fmt.Errorf("%s: unknown node %q", action.Kind, nodeID)
 }
 
 // errRouterEmptyDecision marks a model turn that produced no decision at all:
