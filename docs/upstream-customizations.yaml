@@ -9610,8 +9610,8 @@ groups:
     tests:
       - web/tests/activity-reports-inline.test.mjs
     anchors:
-      - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
-      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-type-tag"'
+      - 'web/src/shared/activityModel.ts:export function activityTypeTagKey(activity: TaskActivity): MessageKey | null {'
+      - 'web/src/components/task/ActivityTypeTag.tsx:data-testid="activity-type-tag"'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
       - 'web/src/components/task/RunViewEntry.tsx:if (!runId) {'
       - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns(rootId, taskId, nodeId)'
@@ -10074,10 +10074,10 @@ groups:
       - 'server/internal/kanban/service_gate_note.go:func (s *Service) dispatchQueuedGateNote(ctx context.Context, store *TaskStore, run *WorkflowRun) {'
       - 'server/internal/api/http_task_human_gate.go:Note string `json:"note"`'
       - 'web/src/shared/activityModel.ts:export function visibleConversationActivities(activities: TaskActivity[]): TaskActivity[] {'
-      - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
+      - 'web/src/shared/activityModel.ts:export function activityTypeTagKey(activity: TaskActivity): MessageKey | null {'
       - 'web/src/components/task/TaskHumanGateCard.tsx:const upstream = gateUpstream(payload.upstream);'
       - 'web/src/components/task/TaskHumanGateCard.tsx:data-testid="task-human-gate-note"'
-      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-type-tag"'
+      - 'web/src/components/task/ActivityTypeTag.tsx:data-testid="activity-type-tag"'
       - 'web/src/services/task/humanGate.ts:...(trimmedNote ? { note: trimmedNote } : {}),'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.activity.gateWaiting": "待你审批",'
       - 'web/src/shared/workflowModel.ts:人工确认（human_gate）节点 ${n.id} 不能是最后一个节点'
