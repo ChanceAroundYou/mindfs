@@ -1,0 +1,22 @@
+{
+  "appId": "com.mindfs.app",
+  "appName": "MindFS",
+  "webDir": "dist-shell",
+  "server": {
+    "url": "https://home.xiaokubao.space/mindfs/",
+    "androidScheme": "https",
+    "allowNavigation": [
+      "*"
+    ]
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "disable"
+    },
+    "StatusBar": {
+      "overlaysWebView": true,
+      "backgroundColor": "#0f172a",
+      "style": "DARK"
+    }
+  }
+}
