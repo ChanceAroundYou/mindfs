@@ -51,7 +51,18 @@ type Config struct {
 	// LarkCLIPath defaults to "lark-cli" on PATH.
 	LarkCLIPath string
 	// NodeID names the machine that sent the card, so a click can be traced.
+	// It comes from the root-level feishu_node_id and also labels local
+	// projects in the intake catalog.
 	NodeID string
+	// RelayToken is shared with workers; the relay HTTP layer owns its checks.
+	RelayToken string
+	// Bindings pin a chat to a project; the first matching binding wins.
+	Bindings []Binding
+	// DefaultRootID is only a fallback when text names no unique project.
+	DefaultRootID string
+	// PickerTTL / PickerMax bound the project choice card.
+	PickerTTL time.Duration
+	PickerMax int
 	// CardTTL is how long a card may still act. Zero means 168h.
 	CardTTL time.Duration
 	// DeliverInterval is how often unsent or stale cards are re-sent.
@@ -83,6 +94,14 @@ type Notice struct {
 	Summary string
 	Text    string
 	Options []string
+
+	// Intake fields travel with a project choice card so the click can create
+	// the task for the original message even after a restart.
+	SourceMessageID string
+	ChatID          string
+	IntakeText      string
+	Projects        []PickerProject
+	PickerTTL       time.Duration
 }
 
 // Answer is what a click meant, in MindFS terms rather than Feishu ones.
@@ -119,6 +138,7 @@ type Service struct {
 	mu             sync.Mutex
 	handler        func(context.Context, Answer) error
 	messageHandler func(context.Context, []byte) error
+	intake         *IntakeService
 	started        bool
 
 	// loops counts the goroutines Start launched. Both write to disk (card
@@ -174,14 +194,30 @@ func (s *Service) SetMessageHandler(fn func(context.Context, []byte) error) {
 	s.messageHandler = fn
 }
 
+// SetIntake installs the owner-p2p inbound service on the message supervisor
+// callback. An explicitly installed raw message handler still wins, so an
+// embedding app can replace the whole pipeline (tests and future transports).
+func (s *Service) SetIntake(service *IntakeService) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.intake = service
+}
+
 func (s *Service) handleRawMessage(ctx context.Context, line []byte) error {
 	s.mu.Lock()
-	fn := s.messageHandler
+	fn, intake := s.messageHandler, s.intake
 	s.mu.Unlock()
-	if fn == nil {
+	if fn != nil {
+		return fn(ctx, line)
+	}
+	if intake == nil {
 		return nil
 	}
-	return fn(ctx, line)
+	msg, ok := ParseMessage(line)
+	if !ok {
+		return nil
+	}
+	return intake.Handle(ctx, msg)
 }
 
 func (s *Service) answerHandler() func(context.Context, Answer) error {
@@ -200,29 +236,37 @@ func (s *Service) Notify(_ context.Context, n Notice) error {
 		return nil
 	}
 	now := s.now()
+	expires := now.Add(s.ttl)
+	if n.Kind == KindPicker && n.PickerTTL > 0 {
+		expires = now.Add(n.PickerTTL)
+	}
 	c := Card{
-		ID:             n.CardID,
-		Kind:           n.Kind,
-		State:          StateOpen,
-		AccountID:      n.AccountID,
-		RootID:         n.RootID,
-		NodeID:         n.NodeID,
-		TaskID:         n.TaskID,
-		TaskTitle:      n.TaskTitle,
-		TaskNumber:     n.TaskNumber,
-		WorkflowNodeID: n.WorkflowNodeID,
-		NodeName:       n.NodeName,
-		QuestionID:     n.QuestionID,
-		Prompt:         n.Prompt,
-		Status:         n.Status,
-		Summary:        n.Summary,
-		Text:           n.Text,
-		Choices:        choicesFor(n),
-		Selected:       -1,
-		Version:        1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		ExpiresAt:      now.Add(s.ttl),
+		ID:              n.CardID,
+		Kind:            n.Kind,
+		State:           StateOpen,
+		AccountID:       n.AccountID,
+		RootID:          n.RootID,
+		NodeID:          n.NodeID,
+		TaskID:          n.TaskID,
+		TaskTitle:       n.TaskTitle,
+		TaskNumber:      n.TaskNumber,
+		WorkflowNodeID:  n.WorkflowNodeID,
+		NodeName:        n.NodeName,
+		QuestionID:      n.QuestionID,
+		Prompt:          n.Prompt,
+		Status:          n.Status,
+		Summary:         n.Summary,
+		Text:            n.Text,
+		Choices:         choicesFor(n),
+		Selected:        -1,
+		Version:         1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ExpiresAt:       expires,
+		SourceMessageID: n.SourceMessageID,
+		ChatID:          n.ChatID,
+		IntakeText:      n.IntakeText,
+		Projects:        n.Projects,
 	}
 	_, err := s.store.Put(c)
 	return err
