@@ -47,14 +47,20 @@ type LedgerEntry struct {
 	// estimator can turn one into the other (bytes/4 is wrong for CJK).
 	// Rows written before 2026-11-21 carry zero here; the reader must fall
 	// back to bytes rather than infer a token count.
-	ReqTokensEst     int   `json:"req_tokens_est"`
-	ForwardTokensEst int   `json:"forward_tokens_est"`
-	SavedBytes       int   `json:"saved_bytes"`
-	Blocks           int   `json:"blocks"`
-	TokensEst        int   `json:"tokens_est"`
-	Skipped          int   `json:"skipped"`
-	ArchiveErrors    int   `json:"archive_errors"`
-	FoldMS           int64 `json:"fold_ms"`
+	ReqTokensEst     int `json:"req_tokens_est"`
+	ForwardTokensEst int `json:"forward_tokens_est"`
+	SavedBytes       int `json:"saved_bytes"`
+	// Blocks is the total number of folded blocks in this request, including
+	// the sticky ones committed by earlier turns. NewBlocks is how many of
+	// them this request committed, so the UI can tell "folded something now"
+	// apart from "still carrying old folds". Rows written before 2026-11-21
+	// carry zero here; the reader must fall back to the total.
+	Blocks        int   `json:"blocks"`
+	NewBlocks     int   `json:"new_blocks"`
+	TokensEst     int   `json:"tokens_est"`
+	Skipped       int   `json:"skipped"`
+	ArchiveErrors int   `json:"archive_errors"`
+	FoldMS        int64 `json:"fold_ms"`
 	// RewriteTokens is what this fold cost: the part of the fold request billed
 	// at full price instead of the 0.1x cache read. That is input_tokens plus
 	// cache_creation_input_tokens — the second term was missing before
@@ -257,13 +263,17 @@ type ContextSaving struct {
 	// and "nothing measured" are distinguishable.
 	RewriteSamples int `json:"rewrite_samples"`
 	// UsageMissing counts folded turns whose response carried no usage block.
-	UsageMissing int           `json:"usage_missing"`
-	Recent       []LedgerEntry `json:"recent"`
+	UsageMissing int `json:"usage_missing"`
 }
 
 // SummarizeLedger folds the retained history into the chip's numbers.
+//
+// It deliberately does not return the rows: the chip only renders the latest
+// snapshot plus these counts, and shipping the retained history (up to
+// ledgerReadLimit rows) made the response tens of kilobytes for data no
+// caller read.
 func SummarizeLedger(entries []LedgerEntry) ContextSaving {
-	summary := ContextSaving{Recent: entries}
+	summary := ContextSaving{}
 	if len(entries) == 0 {
 		return summary
 	}

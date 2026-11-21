@@ -15,7 +15,13 @@ export type ContextSavingEntry = {
    */
   req_tokens_est: number;
   forward_tokens_est: number;
+  /** Total folded blocks in this request, sticky ones included. */
   blocks: number;
+  /**
+   * Blocks this request committed. 0 on rows written before 2026-11-21 —
+   * fall back to `blocks` there rather than claiming the request did nothing.
+   */
+  new_blocks: number;
   tokens_est: number;
   skipped: number;
   archive_errors: number;
@@ -36,10 +42,11 @@ export type ContextSavingEntry = {
 };
 
 /**
- * The saving reported for one conversation. `latest` describes the most recent
+ * The saving reported for one conversation. `latest` describes the newest
  * folded request (a snapshot, not a running total); `requests` counts folded
  * requests in the retained history and `max_saved_bytes` is the largest single
- * request saving seen.
+ * request saving seen. The retained rows themselves are not shipped: the chip
+ * only renders this snapshot plus the counts.
  */
 export type SessionContextSaving = {
   latest: ContextSavingEntry;
@@ -51,7 +58,6 @@ export type SessionContextSaving = {
   rewrite_samples: number;
   /** Folded turns whose response carried no usage block. */
   usage_missing: number;
-  recent: ContextSavingEntry[] | null;
 };
 
 export async function fetchSessionContextSaving(

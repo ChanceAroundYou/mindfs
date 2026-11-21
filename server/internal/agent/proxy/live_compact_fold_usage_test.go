@@ -43,6 +43,11 @@ func TestSessionFoldUsageReturnsLedgerRows(t *testing.T) {
 	if row.ReqTokensEst <= row.ForwardTokensEst {
 		t.Fatalf("token estimates = req %d / forward %d, want req > forward", row.ReqTokensEst, row.ForwardTokensEst)
 	}
+	// 「折叠结果 N 个」把 sticky 与本轮新折混在一起；新列让 UI 说清这一轮到底
+	// 折了没有，而 sticky 只会让总数变大、不能证明本轮干过活。
+	if row.NewBlocks <= 0 || row.NewBlocks > row.Blocks {
+		t.Fatalf("new blocks = %d / total %d, want 0 < new <= total", row.NewBlocks, row.Blocks)
+	}
 	if got := s.SessionFoldUsage("never-seen"); len(got) != 0 {
 		t.Fatalf("unknown session rows = %d, want 0", len(got))
 	}

@@ -50,6 +50,7 @@ func TestLedgerKeepsTokenEstimates(t *testing.T) {
 	entry := ledgerTestEntry(500)
 	entry.ReqTokensEst = 11800
 	entry.ForwardTokensEst = 11200
+	entry.NewBlocks = 2
 	if err := store.Write("session-a", entry); err != nil {
 		t.Fatal(err)
 	}
@@ -63,6 +64,9 @@ func TestLedgerKeepsTokenEstimates(t *testing.T) {
 	if entries[0].ReqTokensEst != 11800 || entries[0].ForwardTokensEst != 11200 {
 		t.Fatalf("token estimates = req %d / forward %d, want 11800 / 11200",
 			entries[0].ReqTokensEst, entries[0].ForwardTokensEst)
+	}
+	if entries[0].NewBlocks != 2 {
+		t.Fatalf("new blocks = %d, want 2", entries[0].NewBlocks)
 	}
 }
 
@@ -87,6 +91,9 @@ func TestLedgerReadsLegacyRowsWithoutTokenEstimates(t *testing.T) {
 	}
 	if entries[0].ReqTokensEst != 0 || entries[0].ForwardTokensEst != 0 {
 		t.Fatalf("legacy row grew token estimates: %+v", entries[0])
+	}
+	if entries[0].NewBlocks != 0 {
+		t.Fatalf("legacy row grew new_blocks: %+v", entries[0])
 	}
 }
 
@@ -223,7 +230,7 @@ func TestLedgerSummary(t *testing.T) {
 	if summary.Latest.SavedBytes != 400 {
 		t.Fatalf("latest = %+v", summary.Latest)
 	}
-	if got := SummarizeLedger(nil); got.Requests != 0 || len(got.Recent) != 0 {
+	if got := SummarizeLedger(nil); got.Requests != 0 {
 		t.Fatalf("empty summary = %+v", got)
 	}
 }

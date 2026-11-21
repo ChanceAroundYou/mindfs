@@ -28,6 +28,23 @@ function formatTokensCompact(value: number): string {
   return thousands >= 100 ? `${Math.round(thousands)}k` : `${thousands.toFixed(1)}k`;
 }
 
+// Estimated token counts carry ±30%, so six digits is false precision: 118,460
+// has no more information than 118k. Three significant digits, no trailing .0.
+// Real usage numbers (rewrite, cache read) stay exact via formatTokens.
+function formatTokensEstimate(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "0";
+  const rounded = Math.round(value);
+  if (rounded < 1000) return String(rounded);
+  const thousands = rounded / 1000;
+  const text = thousands >= 100
+    ? String(Math.round(thousands))
+    : thousands >= 10
+      ? thousands.toFixed(1)
+      : thousands.toFixed(2);
+  const trimmed = text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
+  return `${trimmed}k`;
+}
+
 // Share of the original request saved by folding. One decimal below 10% keeps
 // small savings visible ("5.7%") without the noise of false precision above it.
 function formatPercent(saved: number, original: number): string | null {
@@ -60,6 +77,11 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
     ? formatPercent(tokenSized ? savedTokens : latest.saved_bytes, tokenSized ? latest.req_tokens_est : latest.req_bytes)
     : null;
   const rows: Array<[string, string]> = [];
+  // Folding breaks the prefix cache, so the rewrite cost only reads as worth
+  // it next to the hit rate. usage_input is the fresh part, so the denominator
+  // is all three disjoint counters; missing usage must not read as 0% hit.
+  const cacheTotal = (latest?.usage_input || 0) + (latest?.usage_cache_creation || 0) + (latest?.usage_cache_read || 0);
+  const cachePercent = latest && cacheTotal > 0 ? Math.round((latest.usage_cache_read * 100) / cacheTotal) : null;
   if (latest) {
     const savedText = tokenSized
       ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })
@@ -69,8 +91,8 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         t("contextSaving.badgeRequest"),
         tokenSized
           ? t("contextSaving.requestTokensValue", {
-              req: formatTokens(latest.req_tokens_est),
-              forwarded: formatTokens(latest.forward_tokens_est),
+              req: formatTokensEstimate(latest.req_tokens_est),
+              forwarded: formatTokensEstimate(latest.forward_tokens_est),
             })
           : `${formatBytes(latest.req_bytes)} → ${formatBytes(latest.folded_bytes)}`,
       ],
@@ -78,8 +100,13 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         t("contextSaving.badgeSaved"),
         savedPercent ? t("contextSaving.savedValue", { size: savedText, percent: savedPercent }) : savedText,
       ],
-      [t("contextSaving.badgeBlocks"), t("contextSaving.blocksValue", { count: String(latest.blocks) })],
-      [t("contextSaving.badgeTokens"), t("contextSaving.tokensValue", { count: formatTokens(latest.tokens_est) })],
+      [
+        t("contextSaving.badgeBlocks"),
+        latest.new_blocks > 0
+          ? t("contextSaving.blocksSplitValue", { new: String(latest.new_blocks), total: String(latest.blocks) })
+          : t("contextSaving.blocksValue", { count: String(latest.blocks) }),
+      ],
+      [t("contextSaving.badgeTokens"), t("contextSaving.tokensValue", { count: formatTokensEstimate(latest.tokens_est) })],
       [
         t("contextSaving.badgeRewrite"),
         latest.usage_source === "missing" || latest.rewrite_tokens < 0
@@ -87,10 +114,17 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
           : t("contextSaving.tokensValue", { count: formatTokens(latest.rewrite_tokens) }),
       ],
     );
+    if (cachePercent !== null || latest.usage_source === "missing") {
+      rows.push([
+        t("contextSaving.badgeCacheHit"),
+        cachePercent === null
+          ? t("contextSaving.unknown")
+          : t("contextSaving.cacheHitValue", { percent: `${cachePercent}%`, tokens: formatTokens(latest.usage_cache_read) }),
+      ]);
+    }
   }
-  const savedLabel = tokenSized
-    ? t("contextSaving.tokensValue", { count: formatTokensCompact(savedTokens) })
-    : formatBytes(savedBytes);
+  // The chip has one line at 9px; the unit lives in the tooltip and the rows.
+  const savedLabel = tokenSized ? formatTokensCompact(savedTokens) : formatBytes(savedBytes);
   const savedTitle = tokenSized
     ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })
     : formatBytes(savedBytes);
