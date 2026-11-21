@@ -261,6 +261,21 @@ type Domain interface {
   本地域请求不转发；`http://` 的 `primary_url` 被拒绝。
 - 变异：把转发改成「失败回落本地」→ 双写用例红。
 - 验收：`go test ./server/internal/api/ -run ControlProxy -count=1`。
+- 执行记录（2026-11-21）：`controlproxy.go` + `controlproxy_test.go`，5 条用例全绿（api 包
+  全量 60.4 s 绿）。提交 `189b1e6b`。
+  - **实现取舍**：没用 `httputil.ReverseProxy` —— 它默认复制全部请求头（本机头会外泄）、
+    自己改写 `X-Forwarded-For`，而这里要的是「只带 Cookie / Authorization / Content-Type、
+    补一个 `X-MindFS-Forwarded-By`」的白名单语义，手写 30 行比配置 ReverseProxy 更直白。
+  - **两段超时**：`ControlProxyTimeout`（10 s）只覆盖「等到响应头」；拿到响应后停掉定时器，
+    body 按 `ControlProxyStreamTimeout`（10 min）逐块 `Flush` 透传。把总时长压在一个 ctx 上
+    会把正常的长响应半路掐断。
+  - **3xx 原样回传**（`CheckRedirect` 返回 `ErrUseLastResponse`）：主节点的路由决策不该被
+    边缘改写。
+  - **变异三处**（各自打红后还原）：转发成功后仍调用本地 next（模拟失败回落本地）→
+    双写用例红；`ShouldForward` 去掉本机域排除 → web-push / app update / node-info 三处红；
+    头白名单改成复制全部 → 本机头外泄断言红。
+  - **未覆盖**：转发器还没挂进 `server/app` 的 mux（P3 接线时按模式包装）；`primary_url`
+    的配置解析落在 T12 的状态机与配置结构里，本任务只保证构造级校验。
 
 ### T11 边缘副本追平
 

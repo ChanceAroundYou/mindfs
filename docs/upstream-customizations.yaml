@@ -12143,6 +12143,10 @@ groups:
       回传，两侧互相回传即成死循环；**删除墓碑携带最后一次内容 hash**，否则「我删的」和
       「远端改完再删」无法区分；**一次 diff 用 `WriteRecords` 单事务整批落库**，半批落地会
       让基线已推进、变更只写一半，剩余部分永久丢失。
+      ⑨ 控制面转发（`controlproxy.go`）的两条必须保留：**转发失败只回 503
+      `primary_unreachable`、绝不回落本地执行**（在线时本地写控制面会与主节点分叉，双写
+      之后没有哪一侧能自动收敛）；**本机域白名单不可删**（web-push / app update /
+      node-info / control-sync 属设备本地状态，转发给自己等于回环）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
       （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
@@ -12178,6 +12182,8 @@ groups:
       - server/internal/api/usecase/prompts.go
       - server/internal/controlsync/capture.go
       - server/internal/controlsync/capture_test.go
+      - server/internal/api/controlproxy.go
+      - server/internal/api/controlproxy_test.go
     tests:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
@@ -12190,6 +12196,7 @@ groups:
       - server/internal/controlsync/domain_users_test.go
       - server/internal/controlsync/domain_workflows_test.go
       - server/internal/controlsync/capture_test.go
+      - server/internal/api/controlproxy_test.go
       - server/internal/auth/store_sync_test.go
       - server/internal/kanban/workflow_store_sync_test.go
     anchors:
@@ -12222,6 +12229,10 @@ groups:
       - 'server/internal/controlsync/capture_test.go:func TestSuppressKeepsRemoteApplyOutOfChangeLog(t *testing.T) {'
       - 'server/internal/controlsync/capture_test.go:func TestFallbackScanCatchesNonHTTPWrites(t *testing.T) {'
       - 'server/internal/controlsync/store.go:func (s *Store) WriteRecords(ctx context.Context, recs []Record) ([]int64, error) {'
+      - 'server/internal/api/controlproxy.go:var ErrInsecurePrimaryURL = errors.New("control_sync: primary_url must be https")'
+      - 'server/internal/api/controlproxy.go:	ControlProxyTimeout = 10 * time.Second'
+      - 'server/internal/api/controlproxy.go:func (p *ControlProxy) ShouldForward(path string) bool {'
+      - 'server/internal/api/controlproxy_test.go:func TestControlProxyReturns503WithoutLocalFallback(t *testing.T) {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
