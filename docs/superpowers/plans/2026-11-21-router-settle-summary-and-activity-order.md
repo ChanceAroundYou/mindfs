@@ -70,8 +70,25 @@ Plan 2026-11-21。用户报告三件事（`/refine`）：
 
 ## 状态
 
-**已实现，门禁见提交记录；未部署、未重启任何节点。** Scope: G-NX。
+**已实现并提交（`8c71f0d8` + 编译修复 `f21bfaf1` + 锚点 `58706470`），未部署、未重启任何节点。** Scope: G-NX。
+
+门禁（干净 worktree `/tmp/mindfs-gnx`）：
+
+- `go build ./...` OK；`go test -count=1 ./...` 全量一轮绿（首个 worktree 轮 `TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch` 撞既有 sqlite readonly flake，单跑 `-count=3` 与随后 kanban / api / api/usecase 全包复跑均绿）。
+- `tsc -b --noEmit` clean；`npx vitest run` 254 文件 / 811 通过 / 6 跳过。
+- `make check-upstream`：G-NX / G-MS / G-NU 三组锚点全中；剩余红项是并发会话在飞的 `server/internal/channels/feishu/*` 14 个 delta 文件未登记（属该会话的 G-NW），与本组无关。
+
+提交时踩到一次共享工作区的坑：`git commit -- <path>` 提交的是文件的工作区全文，`activity_route_apply.go` 里并发会话在飞的卡片通知调用点被一起带进 `8c71f0d8`，而 `card_notifier.go` 尚未入库 → HEAD 编译不过。`f21bfaf1` 只保留本组两处 summary 改动、把并发会话的 hunks 原样留在工作区。
+
+## 历史补齐（只读查库 + 受控写入）
+
+| 任务 | 处理 |
+|---|---|
+| mindfs #99 `task_37edf6984579253e` | `result_summary` 由 2870 字原文改成 249 字的结论/证据/未做三段（依据节点输出与 Run 投影） |
+| llmux #20 `task_f3de197705b988a7` | `result_summary` 由 2214 字原文改成 201 字（结论 + 当前卡在 Q1 等你回答）；提问卡排序由 S3 生效 |
+| llmux #19 `task_260f5740cced704f` | 已有 434 字压缩总结，保留；它的 failed `run_settled` 由 S5 在部署后的下一拍自动补偿 |
 
 剩余：
-- 历史补齐（#99 结果摘要、llmux #19 的 failed `run_settled` 由 S5 下一拍自动补、llmux #20 的排序靠前端重拉即可）。
 - 本机需要用户 `sudo systemctl restart mindfs` 才生效；worker 由 `scripts/deploy-all.sh` 分发。
+- 历史对话末尾不会补插 Router 总结行（只改了卡片摘要），新回合起由 Router 写。
+
