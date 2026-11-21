@@ -182,7 +182,7 @@ export const enUSAgents = {
   "contextSaving.requestTokensValue": "{req} → {forwarded} tokens",
   "contextSaving.badgeSaved": "Saved this turn",
   "contextSaving.badgeSavedTotal": "Saved in total",
-  "contextSaving.savedTotalValue": "{size} over the last {count} folds",
+  "contextSaving.savedTotalValue": "{size}",
   "contextSaving.badgeBlocks": "Folded results",
   "contextSaving.badgeTokens": "Folded source",
   "contextSaving.badgeRewrite": "Rewritten this turn",

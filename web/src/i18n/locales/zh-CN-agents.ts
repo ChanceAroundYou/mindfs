@@ -182,7 +182,7 @@ export const zhCNAgents = {
   "contextSaving.requestTokensValue": "{req} → {forwarded} tokens",
   "contextSaving.badgeSaved": "本轮节省",
   "contextSaving.badgeSavedTotal": "累计节省",
-  "contextSaving.savedTotalValue": "{size}（最近 {count} 次折叠）",
+  "contextSaving.savedTotalValue": "{size}",
   "contextSaving.badgeBlocks": "折叠结果",
   "contextSaving.badgeTokens": "折叠原文",
   "contextSaving.badgeRewrite": "本轮重算",

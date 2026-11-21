@@ -295,3 +295,23 @@ func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {
 		t.Fatalf("a new compact must clear the previous error: %+v", view)
 	}
 }
+
+// 压缩回合没有新的 message_delta，持久化的上下文大小可能还是压缩前的旧值。
+// 在新 token_count 到达之前，不能再拿旧值触发第二第三次压缩。
+func TestHygieneStaleContextBlocksAutoCompactUntilCleared(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	seedActive(tracker, "root", "s1", 3)
+	tracker.Observe("root", "s1", "claude", 200000, true) // hint
+	for i := 0; i < 2; i++ {
+		tracker.Observe("root", "s1", "claude", 200000, true)
+	}
+
+	tracker.MarkContextStale("root", "s1")
+	if view := tracker.Observe("root", "s1", "claude", 200000, true); view.AutoCompactDue {
+		t.Fatal("stale context must not trigger another compaction")
+	}
+	tracker.ClearContextStale("root", "s1")
+	if view := tracker.Observe("root", "s1", "claude", 200000, true); !view.AutoCompactDue {
+		t.Fatalf("fresh context must release the gate: %+v", view)
+	}
+}

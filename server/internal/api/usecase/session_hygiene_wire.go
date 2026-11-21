@@ -126,6 +126,16 @@ func (s *Service) markHygieneCompacted(in SendMessageInput) {
 	s.hygieneTracker().MarkCompacted(in.RootID, in.Key)
 }
 
+// markHygieneContextStale / clearHygieneContextStale 把「压缩事件已到但新 token
+// 数未到」这段窗口告诉状态机，避免用旧 context_tokens 再触发一次压缩。
+func (s *Service) markHygieneContextStale(in SendMessageInput) {
+	s.hygieneTracker().MarkContextStale(in.RootID, in.Key)
+}
+
+func (s *Service) clearHygieneContextStale(in SendMessageInput) {
+	s.hygieneTracker().ClearContextStale(in.RootID, in.Key)
+}
+
 // scheduleHygieneAutoCompact 异步补一个 /compact 回合。
 //
 // 为什么不在当前回合里同步发：本回合的 defer 还握着发送锁，同步重入会自锁；

@@ -12220,6 +12220,8 @@ groups:
       ⑩ **按钮禁用到真压缩结束**：线上 Claude 一次 `/compact` 要 3–9 分钟，固定 8 秒前端计时会让
       用户以为「点了没反应」；`compact_pending` 由服务端在排程时置位、在收尾时清除，`compact_error`
       把 Codex token 过期等具体原因写进胶囊。`compacting` 仍用于 POST 在途，二者合并成 `compactBusy`。
+      ⑪ **压缩后大小不靠猜**：Claude 的 compact boundary 原始 JSONL 带 `postTokens`，但 SDK typed message 不带；适配器按 UUID 从转录补读并塞进 `CompactNotice.PostTokens`，`contextWindowAfterCompact` 用它覆盖 MessageDone 仍带着的压缩前旧值。Codex 没有这个数，保留后续 `token_count`。
+      ⑫ **stale 窗口不重复压缩**：压缩事件先到、`token_count` 未到时 `contextStale` 闸住 `Observe`，既不推进轮数也不发 `AutoCompactDue`；新 token 到来后清掉。胶囊累计行只显示总量（当前会话 + agent 的账本，不是全局，也不写「最近 200 次折叠」），所有 token 数字 <10k 原值、>=10k 用 k；不新增「压缩后上下文」展示行，也不改本轮请求 / 本轮节省两行。
     boundary: |
       状态在进程内、按 `root + session` 保存：重启后「久」从零重新累计，「已提示过」也一并清空。
       不自动新建会话、不归档、不删转录；不改 live-compact 的任何阈值；「只久」永不自动压缩；
@@ -12229,6 +12231,7 @@ groups:
       自动触发；状态不持久化，重启后「已提示 / 已失败」都会重来。Codex 的 access token 过期由
       设备本地重新登录解决，本项目不复制或自动刷新设备凭据；胶囊只负责把错误显示出来。
       手动压缩按钮按服务端 pending 状态禁用；旧节点不回该字段时只用 80 秒兜底，不声称能感知结果。
+      Claude postTokens 只在转录可读时补到；读不到就退回原值，不拿估算冒充真实值。Codex 压缩事件后若迟迟没有新 token_count，stale 闸会一直挡住自动压缩，直到下一次 token_count 或重启（状态不持久化）。胶囊累计数来自当前会话 + agent 的 retained ledger，不是全局；账本仍保留最近 200 行供计算，但 UI 不再显示这个窗口数。
     files:
       - server/internal/api/usecase/session_hygiene.go
       - server/internal/api/usecase/session_hygiene_wire.go
@@ -12254,11 +12257,21 @@ groups:
       - e2e/test_session_hygiene.py
       - docs/plans/README.md
       - docs/superpowers/plans/2026-11-21-session-hygiene-long-session-hint.md
+      - server/internal/agent/types/event.go
+      - server/internal/agent/claude/session_compact_tokens.go
+      - server/internal/agent/claude/session_compact_tokens_test.go
+      - server/internal/api/usecase/session_compact_context.go
+      - server/internal/api/usecase/session_compact_context_test.go
+      - web/src/components/agent/tokenAmount.ts
+      - web/tests/token-amount.test.mjs
     tests:
       - server/internal/api/usecase/session_hygiene_test.go
       - server/internal/api/usecase/session_hygiene_wire_test.go
       - web/tests/context-saving-chip.test.mjs
       - e2e/test_session_hygiene.py
+      - server/internal/agent/claude/session_compact_tokens_test.go
+      - server/internal/api/usecase/session_compact_context_test.go
+      - web/tests/token-amount.test.mjs
     anchors:
       - 'server/internal/api/usecase/session_hygiene.go:HygieneStateHint = "hint"'
       - 'server/internal/api/usecase/session_hygiene.go:func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {'
@@ -12300,3 +12313,19 @@ groups:
       - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.compactFailedDetail"'
       - 'web/tests/context-saving-chip.test.mjs:test("没读到用量的样本只留在账本里，不再在胶囊里提示"'
       - 'e2e/test_session_hygiene.py:def test_manual_compact_button_follows_server_pending(page: Page) -> None:'
+      - 'server/internal/agent/types/event.go:PostTokens int'
+      - 'server/internal/agent/claude/session_compact_tokens.go:func (s *session) compactBoundaryPostTokens('
+      - 'server/internal/agent/claude/session_messages_tasks.go:PostTokens: s.compactBoundaryPostTokens(msg),'
+      - 'server/internal/api/usecase/session_compact_context.go:func contextWindowAfterCompact('
+      - 'server/internal/api/usecase/session_hygiene.go:contextStale bool'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkContextStale('
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) ClearContextStale('
+      - 'server/internal/api/usecase/session_hygiene_wire.go:s.hygieneTracker().MarkContextStale('
+      - 'server/internal/api/usecase/session_send.go:compactPostTokens = compact.PostTokens'
+      - 'server/internal/api/usecase/session_send.go:lastContextWindow = contextWindowAfterCompact('
+      - 'web/src/components/agent/tokenAmount.ts:export function formatTokenAmount('
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:import { formatTokenAmount } from "./tokenAmount";'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:t("contextSaving.savedTotalValue", { size: totalText })'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.savedTotalValue": "{size}",'
+      - 'web/tests/token-amount.test.mjs:test("token amounts use k from 10k up, without false precision"'
+      - 'web/tests/context-saving-chip.test.mjs:import { formatTokenAmount } from "../src/components/agent/tokenAmount";'

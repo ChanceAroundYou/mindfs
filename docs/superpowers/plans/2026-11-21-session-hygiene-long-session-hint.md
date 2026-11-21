@@ -253,7 +253,7 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 - Codex 凭据过期不在代码里自动修复（refresh token 是设备本地凭据，不跨设备复制）；
   修复后用户能从胶囊直接看到具体原因并重新登录。
 
-## 2026-11-22 再修：压缩后上下文 stale + 胶囊累计口径简化（待执行）
+## 2026-11-22 再修：压缩后上下文 stale + 胶囊累计口径简化
 
 用户看完诊断后收窄了范围：
 
@@ -314,6 +314,15 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 - 门禁：`go test -count=1 ./...`、`npx tsc -b --noEmit`、`npx vitest run`、
   隔离实例真 harness E2E、`make check-upstream`；提交标 `Scope: G-PG`，并同步 G-PG 定制登记。
 
+### 实施结果（2026-11-22）
+
+- **Claude 压缩后大小**：`CompactNotice` 增加 `PostTokens`；`session_compact_tokens.go` 按 compact boundary 的 UUID 从 CLI transcript JSONL 补读 `compactMetadata.postTokens`（同时兼容 snake_case），`handleCompactBoundaryMessage` 写进事件；`session_send.go` 把它写回 `lastContextWindow`，`contextWindowAfterCompact` 保证随后到达的旧 `MessageDone` 不覆盖。转录读不到时退回原值，不拿估算冒充真实值。
+- **Codex / 无 postTokens**：压缩事件先到时 `HygieneTracker.MarkContextStale`，`Observe` 在该窗口内返回带旧 context 的视图但强制 `AutoCompactDue=false`、不推进轮数；Claude 拿到 postTokens 或 Codex 后续 `token_count` 到达时清 stale。状态只在进程内，重启后清空。
+- **胶囊**：新增 `formatTokenAmount`，所有 token 数字 <10k 原值（千分位）、>=10k 用 k；累计行只用 `savedTotalValue` 传一个总量，不写「估算」「最近 200 次折叠」；「本轮请求大小 / 本轮节省」保持原样；没有新增「压缩后上下文」展示行。
+- **RED→GREEN**：2 条 Claude 转录读取、1 条 stale 闸、2 条上下文合并、2 条 formatter、26 条胶囊契约；先看见 `PostTokens undefined` / `MarkContextStale undefined` / `contextWindowAfterCompact undefined` / 模块缺失与旧文案断言失败，再实现到全绿。
+- **变异验证（6 处各自打红后还原）**：去 transcript postTokens、去 stale 闸、context 合并不覆盖、累计行恢复 count、formatter 阈值退回 1k、请求行改回精确整数。
+- **门禁（干净 worktree，只叠本组改动）**：`go test -count=1 ./...` 全包绿；`tsc -b --noEmit` clean；`npx vitest run` 261 文件 / 865 通过 / 6 跳过；`gofmt -l` 无输出；`make check-upstream` 2358 delta / 358 组全绿（含 G-PG 新锚点）。隔离 E2E 本轮未重跑，真实 harness 压缩仍由上一轮证据覆盖。
+
 ## 状态
 
 **前一轮已实现、门禁绿、隔离实例端到端跑通真实 harness 压缩；未部署、未重启任何节点。**
@@ -322,4 +331,4 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 （旧节点下前端走 80 秒兜底）。前端刷新生效。本机 `sudo systemctl restart mindfs` 仅用户可执行。
 端到端证据与变异账本见上；`e2e/test_session_hygiene.py` 刻意不进常规门禁（会真调模型）。
 
-**2026-11-22 再修（stale context + 胶囊累计简化）按上面的新章节执行；该章节尚未开始实现。**
+**2026-11-22 再修（stale context + 胶囊累计简化）已实现并完成上述门禁；未部署、未重启任何节点。**

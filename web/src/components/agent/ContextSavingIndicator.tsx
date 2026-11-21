@@ -3,46 +3,13 @@ import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n/index";
 import { useContextSaving, type ContextSavingIndicatorProps } from "./useContextSaving";
 import { COMPOSER_CHIP_FONT_SIZE } from "../action/composerStyles";
+import { formatTokenAmount } from "./tokenAmount";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
   const mib = value / (1024 ** 2);
   if (mib >= 1) return `${mib.toFixed(mib >= 10 ? 0 : 1)} MB`;
   return `${Math.round(value / 1024)} KB`;
-}
-
-// Group digits: 408625 is measurably harder to read at a glance than 408,625,
-// and token totals here routinely run into six figures.
-function formatTokens(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "0";
-  return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-// The chip header has room for a token count, not six digits plus separators.
-// Raw values stay in the detail rows, where there is space to be exact.
-function formatTokensCompact(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "0";
-  const rounded = Math.round(value);
-  if (rounded < 1000) return String(rounded);
-  const thousands = rounded / 1000;
-  return thousands >= 100 ? `${Math.round(thousands)}k` : `${thousands.toFixed(1)}k`;
-}
-
-// Estimated token counts carry ±30%, so six digits is false precision: 118,460
-// has no more information than 118k. Three significant digits, no trailing .0.
-// Real usage numbers (rewrite, cache read) stay exact via formatTokens.
-function formatTokensEstimate(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "0";
-  const rounded = Math.round(value);
-  if (rounded < 1000) return String(rounded);
-  const thousands = rounded / 1000;
-  const text = thousands >= 100
-    ? String(Math.round(thousands))
-    : thousands >= 10
-      ? thousands.toFixed(1)
-      : thousands.toFixed(2);
-  const trimmed = text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
-  return `${trimmed}k`;
 }
 
 // Share of the original request saved by folding. One decimal below 10% keeps
@@ -84,15 +51,15 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   const cachePercent = latest && cacheTotal > 0 ? Math.round((latest.usage_cache_read * 100) / cacheTotal) : null;
   if (latest) {
     const savedText = tokenSized
-      ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })
+      ? t("contextSaving.tokensValue", { count: formatTokenAmount(savedTokens) })
       : formatBytes(latest.saved_bytes);
     rows.push(
       [
         t("contextSaving.badgeRequest"),
         tokenSized
           ? t("contextSaving.requestTokensValue", {
-              req: formatTokensEstimate(latest.req_tokens_est),
-              forwarded: formatTokensEstimate(latest.forward_tokens_est),
+              req: formatTokenAmount(latest.req_tokens_est),
+              forwarded: formatTokenAmount(latest.forward_tokens_est),
             })
           : `${formatBytes(latest.req_bytes)} → ${formatBytes(latest.folded_bytes)}`,
       ],
@@ -106,11 +73,11 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
     // single row the total equals this turn and a second line adds nothing.
     if (saving && saving.requests > 1) {
       const totalText = saving.saved_token_samples > 0
-        ? t("contextSaving.tokensValue", { count: formatTokens(saving.total_saved_tokens) })
+        ? t("contextSaving.tokensValue", { count: formatTokenAmount(saving.total_saved_tokens) })
         : formatBytes(saving.total_saved_bytes);
       rows.push([
         t("contextSaving.badgeSavedTotal"),
-        t("contextSaving.savedTotalValue", { size: totalText, count: String(saving.requests) }),
+        t("contextSaving.savedTotalValue", { size: totalText }),
       ]);
     }
     rows.push(
@@ -118,16 +85,16 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         t("contextSaving.badgeBlocks"),
         latest.new_blocks > 0
           ? latest.new_tokens_est > 0
-            ? t("contextSaving.blocksSplitTokensValue", { new: String(latest.new_blocks), tokens: formatTokensEstimate(latest.new_tokens_est), total: String(latest.blocks) })
+            ? t("contextSaving.blocksSplitTokensValue", { new: String(latest.new_blocks), tokens: formatTokenAmount(latest.new_tokens_est), total: String(latest.blocks) })
             : t("contextSaving.blocksSplitValue", { new: String(latest.new_blocks), total: String(latest.blocks) })
           : t("contextSaving.blocksValue", { count: String(latest.blocks) }),
       ],
-      [t("contextSaving.badgeTokens"), t("contextSaving.tokensValue", { count: formatTokensEstimate(latest.tokens_est) })],
+      [t("contextSaving.badgeTokens"), t("contextSaving.tokensValue", { count: formatTokenAmount(latest.tokens_est) })],
       [
         t("contextSaving.badgeRewrite"),
         latest.usage_source === "missing" || latest.rewrite_tokens < 0
           ? t("contextSaving.unknown")
-          : t("contextSaving.tokensValue", { count: formatTokens(latest.rewrite_tokens) }),
+          : t("contextSaving.tokensValue", { count: formatTokenAmount(latest.rewrite_tokens) }),
       ],
     );
     if (cachePercent !== null || latest.usage_source === "missing") {
@@ -135,7 +102,7 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         t("contextSaving.badgeCacheHit"),
         cachePercent === null
           ? t("contextSaving.unknown")
-          : t("contextSaving.cacheHitValue", { percent: `${cachePercent}%`, tokens: formatTokens(latest.usage_cache_read) }),
+          : t("contextSaving.cacheHitValue", { percent: `${cachePercent}%`, tokens: formatTokenAmount(latest.usage_cache_read) }),
       ]);
     }
   }
@@ -144,14 +111,14 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   if (saving && saving.total_rewrite_tokens > 0) {
     rows.push([
       t("contextSaving.badgeRewriteTotal"),
-      t("contextSaving.tokensValue", { count: formatTokens(saving.total_rewrite_tokens) }),
+      t("contextSaving.tokensValue", { count: formatTokenAmount(saving.total_rewrite_tokens) }),
     ]);
   }
   // 超长会话提示：只大 + 只久 + 又久又大三种情况里，胶囊只在后两种出现。
   // 这几行与折叠省了多少无关，所以即使在完全没折叠过的会话里也要能读到。
   const hygieneBand = hygiene?.state === "hint" || hygiene?.state === "notice";
   const activeMinutes = Math.floor((hygiene?.active_seconds || 0) / 60);
-  const hygieneTokens = formatTokensEstimate(hygiene?.context_tokens || 0);
+  const hygieneTokens = formatTokenAmount(hygiene?.context_tokens || 0);
   const turnsUntilAuto = hygiene?.turns_until_auto_compact ?? -1;
   if (hygieneBand && hygiene) {
     rows.push(
@@ -169,9 +136,9 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
     }
   }
   // The chip has one line at 9px; the unit lives in the tooltip and the rows.
-  const savedLabel = tokenSized ? formatTokensCompact(savedTokens) : formatBytes(savedBytes);
+  const savedLabel = tokenSized ? formatTokenAmount(savedTokens) : formatBytes(savedBytes);
   const savedTitle = tokenSized
-    ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })
+    ? t("contextSaving.tokensValue", { count: formatTokenAmount(savedTokens) })
     : formatBytes(savedBytes);
   // 没折叠过但会话又大又久时，胶囊只承担提示：显示上下文规模，不再报 -0。
   const hasSaving = savedBytes > 0 || !!saving?.requests;

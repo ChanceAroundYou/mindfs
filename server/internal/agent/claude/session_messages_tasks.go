@@ -29,9 +29,10 @@ func (s *session) handleCompactBoundaryMessage(msg claudeagent.CompactBoundaryMe
 		Type:      types.EventTypeCompact,
 		SessionID: s.SessionID(),
 		Data: types.CompactNotice{
-			ID:      firstNonEmpty(msg.UUID, msg.SessionID),
-			Status:  strings.TrimSpace(msg.CompactMetadata.Trigger),
-			Summary: compactBoundarySummary(msg),
+			ID:         firstNonEmpty(msg.UUID, msg.SessionID),
+			Status:     strings.TrimSpace(msg.CompactMetadata.Trigger),
+			Summary:    compactBoundarySummary(msg),
+			PostTokens: s.compactBoundaryPostTokens(msg),
 		},
 	})
 }

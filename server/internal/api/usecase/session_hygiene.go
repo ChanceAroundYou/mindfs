@@ -105,6 +105,9 @@ type hygieneRecord struct {
 	autoFailed     bool
 	compactPending bool
 	compactError   string
+	// contextStale 表示压缩事件已到、但新的 token_count 还没到。此时持久化的
+	// context_tokens 仍是压缩前的旧值，不能拿它再判一次自动压缩。
+	contextStale bool
 	// autoAttempted 保证同一段提示期只派发一次自动压缩：派发是异步的，
 	// 派发后、压缩完成前的每一轮都会继续算出「已到期」，不拦就会连环开火。
 	autoAttempted bool
@@ -191,6 +194,19 @@ func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextToke
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	rec := t.recordLocked(key)
+	if rec.contextStale {
+		// stale 期间不推进轮数、不开新压缩；读口仍报告当前档位，用户看得见。
+		snap := HygieneSnapshot{
+			ActiveSeconds:  int(rec.activeSeconds),
+			ContextTokens:  contextTokens,
+			Hinted:         rec.hinted,
+			TurnsSinceHint: rec.turnsSinceHint,
+			AutoFailed:     rec.autoFailed,
+		}
+		view := EvaluateHygiene(cfg, snap)
+		view.AutoCompactDue = false
+		return view
+	}
 	snap := HygieneSnapshot{
 		ActiveSeconds:  int(rec.activeSeconds),
 		ContextTokens:  contextTokens,
@@ -270,6 +286,37 @@ func (t *HygieneTracker) MarkCompacted(rootID, sessionKey string) {
 	rec.turnsSinceHint = 0
 	rec.autoFailed = false
 	rec.autoAttempted = false
+}
+
+// MarkContextStale 在压缩事件已到但新 token_count 未到时调用。
+// 旧值还挂在 session.LastContextWindow 上，此时任何自动压缩判定都会重复开火。
+func (t *HygieneTracker) MarkContextStale(rootID, sessionKey string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.recordLocked(hygieneScope(rootID, sessionKey)).contextStale = true
+}
+
+// ClearContextStale 在新 token_count 写入后调用，恢复正常的轮次判定。
+func (t *HygieneTracker) ClearContextStale(rootID, sessionKey string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.recordLocked(hygieneScope(rootID, sessionKey)).contextStale = false
+}
+
+// ContextStale 给发送路径用：只有确认拿到新上下文后才推进 hygiene。
+func (t *HygieneTracker) ContextStale(rootID, sessionKey string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.recordLocked(hygieneScope(rootID, sessionKey)).contextStale
 }
 
 // MarkAutoFailed 记录一次自动压缩失败；在压缩成功或会话离开提示带之前不再重试。

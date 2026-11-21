@@ -158,6 +158,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	var responseText string
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
+	var compactPostTokens int
 	var turnTokenUsage *agenttypes.TokenUsage
 	// turnAgentMessageID 是本轮最后一个 agent 原生消息 id（ACP `messageId`，
 	// claude 是转录 uuid），回合结束时写进助手行的 `agent_id`。没有它，导入器重放
@@ -290,6 +291,16 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 						Line:    currentAssistantLine(responseText),
 						Compact: &compactCopy,
 					})
+					compactPostTokens = compact.PostTokens
+					if compactPostTokens > 0 {
+						// Claude 从转录补到了 postTokens：这就是新的上下文大小。
+						lastContextWindow.TotalTokens = compactPostTokens
+						s.clearHygieneContextStale(in)
+					} else {
+						// Codex 的 compact item 没有 token 数；等 token_count，
+						// 在此之前不许拿旧值再触发一次自动压缩。
+						s.markHygieneContextStale(in)
+					}
 				}
 				// 任何一次压缩（harness 自己的或我们自动触发的）都清掉提示与计数。
 				s.markHygieneCompacted(in)
@@ -312,7 +323,11 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 				}
 			} else if update.Type == agenttypes.EventTypeMessageDone {
 				if done, ok := update.Data.(agenttypes.MessageDone); ok {
-					lastContextWindow = done.ContextWindow
+					if compactPostTokens == 0 && done.ContextWindow.TotalTokens > 0 {
+						// Codex 在压缩后靠 token_count 拿到新的上下文大小。
+						s.clearHygieneContextStale(in)
+					}
+					lastContextWindow = contextWindowAfterCompact(done.ContextWindow, compactPostTokens)
 					turnTokenUsage = done.TokenUsage
 				}
 			} else if update.Type == agenttypes.EventTypeThoughtChunk ||
