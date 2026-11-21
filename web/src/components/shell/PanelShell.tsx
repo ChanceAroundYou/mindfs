@@ -9,8 +9,10 @@ import { useI18n } from "../../i18n/index";
  * 任务面板（任务详情 / 新建任务）以前各手搓一遍同样的
  * 遮罩、圆角、阴影，zIndex 还各不同。这里收敛成一处。
  *
- * 关闭只有「点空白（遮罩）」一条路：面板里不放取消键、也不放右上角 ×。
- * 改到一半点出去会先问一句「是否放弃修改」，见 hasUnsavedChanges。
+ * 默认关闭只有「点空白（遮罩）」一条路：面板里不放取消键、也不放右上角 ×。
+ * 需要显式关闭控件的面板传 showCloseButton，右上角多出一颗 ×；它和遮罩走同一个
+ * requestClose，改到一半点出去（或点 ×）都会先问一句「是否放弃修改」，见
+ * hasUnsavedChanges。
  */
 
 export function panelButtonStyle(kind: "primary" | "secondary" | "danger"): React.CSSProperties {
@@ -92,7 +94,7 @@ export function panelIconButtonStyle(danger = false, disabled = false): React.CS
 
 export type PanelShellProps = {
   title: React.ReactNode;
-  /** header 右侧（保存等）。关闭一律走遮罩，这里不摆关闭控件。 */
+  /** header 右侧（保存等）。默认关闭只走遮罩；要 × 请开 showCloseButton。 */
   headerRight?: React.ReactNode;
   /** header 标题左侧的额外内容（状态徽章等） */
   headerLeft?: React.ReactNode;
@@ -103,6 +105,13 @@ export type PanelShellProps = {
   /** 卡片最小高度，默认不设 */
   minHeight?: number;
   onClose?: () => void;
+  /**
+   * header 右上角是否显示关闭（×）按钮，默认不显示。
+   *
+   * 打开它不会绕开关闭守卫：按钮复用 requestClose，有未保存内容时同样先确认；
+   * 遮罩那条路也照旧可用。
+   */
+  showCloseButton?: boolean;
   /** 遮罩下方额外内容（错误条等） */
   belowHeader?: React.ReactNode;
   /**
@@ -124,6 +133,7 @@ export function PanelShell({
   width = 720,
   minHeight,
   onClose,
+  showCloseButton = false,
   belowHeader,
   hasUnsavedChanges,
 }: PanelShellProps) {
@@ -239,6 +249,33 @@ export function PanelShell({
             {title}
           </div>
           {headerRight}
+          {showCloseButton ? (
+            // 显式关闭入口：和遮罩同一条 requestClose，未保存修改照样先确认。
+            <button
+              type="button"
+              aria-label={t("common.close")}
+              title={t("common.close")}
+              onClick={() => requestClose()}
+              style={{
+                width: "28px",
+                height: "28px",
+                flexShrink: 0,
+                padding: 0,
+                border: "none",
+                borderRadius: "8px",
+                background: "transparent",
+                color: "var(--text-secondary)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          ) : null}
         </header>
         {belowHeader}
         <div ref={bodyRef} className="mindfs-panel-body" style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column", userSelect: "text" }}>

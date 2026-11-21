@@ -1502,6 +1502,23 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
   min-width: 0;
 }
 
+/*
+ * 任务详情正文的左右留白。
+ *
+ * 桌面 14px 与其它面板一致；手机屏幕窄，14px × 2 加上消息卡自身的内边距后正文
+ * 只剩一小条，用户要求再收窄一点。只动左右（上下仍 12px）：折行与滚动都在
+ * 正文容器内部，收窄不会产生横向溢出（子项一律 min-width: 0）。
+ */
+.task-detail-content {
+  padding: 12px 14px;
+}
+
+@media (max-width: 640px) {
+  .task-detail-content {
+    padding: 10px 8px;
+  }
+}
+
 @media (max-width: 640px) {
   .task-detail-execution {
     order: -1;

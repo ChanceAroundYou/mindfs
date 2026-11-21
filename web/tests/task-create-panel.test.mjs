@@ -129,7 +129,7 @@ for (const name of ["removeTaskStage", "appendTaskStage", "saveStage"]) {
   assert.doesNotMatch(tasks, new RegExp(`\\b${name}\\b`), `tasks service must not expose ${name}`);
 }
 
-// 详情面板只读对话流；「完成 / 删除」仍住在头部，判据与卡片同一口径。
+// 详情面板只读对话流；「完成 / 删除」仍住在头部（完成收进「操作控件」菜单），判据与卡片同一口径。
 assert.doesNotMatch(panel, /<StageEditor\b/, "the detail panel no longer renders a stage editor");
 assert.doesNotMatch(panelHook, /appendStage|setEditingStage|startEditStage|saveStage|removeTaskStage/, "the detail hook must not keep stage editing state");
 assert.match(panelHook, /const canCompleteTask = !terminal && !taskRunningNow;/, "完成 is available to every non-terminal, non-running task");
@@ -138,19 +138,22 @@ assert.match(
   /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true;/,
   "the panel must still read the server-derived worktree_missing flag for 收尾",
 );
+// 完成 / 收尾 / 重新打开由「操作控件」菜单承载；菜单挂在 headerRight 里。
+assert.match(
+  panel,
+  /if \(canCompleteTask\)[\s\S]{0,400}?key: "complete"[\s\S]{0,300}?onSelect: \(\) => void completeTask\(\)/,
+  "完成 must be one of the panel header actions",
+);
 const headerRightAt = panel.indexOf("headerRight={editingName");
 assert.ok(headerRightAt > 0, "TaskDetailPanel must pass a headerRight block");
-const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 2600);
-assert.match(
-  headerRightSlice,
-  /\{canCompleteTask \? \([\s\S]{0,700}?onClick=\{\(\) => void completeTask\(\)\}[\s\S]{0,400}?<TaskCompleteIcon \/>/,
-  "完成 must sit in the panel header",
-);
+const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 1600);
+assert.match(headerRightSlice, /<TaskDetailActionsMenu actions=\{actions\} disabled=\{saving\} \/>/, "the header actions menu is the only place for secondary actions");
 assert.match(
   headerRightSlice,
   /\{terminal \? \([\s\S]{0,500}?onClick=\{\(\) => void deleteTaskCard\(\)\}[\s\S]{0,300}?<DeleteIcon \/>/,
-  "删除 is only for terminal tasks and must live in the panel header",
+  "删除 is only for terminal tasks and must live in the panel header (not inside the actions menu)",
 );
+assert.doesNotMatch(headerRightSlice, /finishWorktree|completeTask\(\)|reopenTask\(\)/, "secondary actions must not stay as loose header icons");
 assert.doesNotMatch(panel, /rebuildTaskWorktree|TaskRebuildWorktreeIcon|task\.rebuildWorktree/, "the panel must not offer a rebuild-worktree entry");
 assert.match(composerIcons, /export function TrashIcon/);
 assert.match(panel, /\{terminal \? \([\s\S]*?<DeleteIcon \/>/, "terminal tasks get the trash can");

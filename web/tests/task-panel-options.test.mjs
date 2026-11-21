@@ -48,7 +48,7 @@ assert.match(
   "a dirty close must confirm before discarding",
 );
 assert.match(panelCloseHook, /if \(ok\) onClose\(\);/, "the panel may only close after the user confirms discarding");
-assert.match(panelShell, /if \(event\.target === event\.currentTarget\) requestClose\(\);/, "the overlay must be the one close path, going through the guard");
+assert.match(panelShell, /if \(event\.target === event\.currentTarget\) requestClose\(\);/, "the overlay must close through the guard");
 assert.doesNotMatch(panelShell, /closeOnOverlayClick/, "closeOnOverlayClick is dead — the overlay always closes");
 assert.doesNotMatch(panelShell, /CloseGlyph/, "the shared × must be gone entirely");
 assert.doesNotMatch(panelShell, /onKeyDown|"Escape"|keydown/, "Esc must no longer close the panel");
@@ -57,9 +57,16 @@ for (const [name, src] of [
   ["TaskDetailPanel", panel],
   ["App create dialog", appRootView],
 ]) {
-  assert.doesNotMatch(src, /onClick=\{onClose\}|onClick=\{requestClose\}/, `${name} must not close via a click handler — with no explicit close control, the overlay is the only route`);
-  assert.doesNotMatch(src, /aria-label=\{t\("common\.close"\)\}/, `${name} must not render an explicit close affordance`);
+  assert.doesNotMatch(src, /onClick=\{onClose\}/, `${name} must not close by calling onClose directly — every route goes through the guard`);
 }
+// 显式关闭键是 opt-in：只有任务详情要右上角 ×；它仍走 requestClose，
+// 未保存修改照样先确认，遮罩那条路也不变。
+assert.match(panelShell, /showCloseButton = false,/, "the × must be opt-in — panels without it keep overlay-only closing");
+assert.match(panelShell, /showCloseButton \? \(/, "PanelShell must render the × only when asked");
+assert.match(panelShell, /onClick=\{\(\) => requestClose\(\)\}/, "the × must reuse requestClose so the unsaved-changes guard still runs");
+assert.doesNotMatch(panel, /aria-label=\{t\("common\.close"\)\}/, "the task panel gets its × from PanelShell, not a second copy");
+assert.doesNotMatch(appRootView, /aria-label=\{t\("common\.close"\)\}/, "the create-task dialog must stay overlay-only");
+assert.match(panel, /showCloseButton/, "the task detail panel asks for the explicit close button");
 assert.doesNotMatch(createPanel, /t\("common\.cancel"\)/, "the create-task panel must not keep a cancel button");
 assert.match(panelShell, /headerRight\?: React\.ReactNode;/, "headerRight is a plain node again");
 assert.match(panelShell, /\{headerRight\}/, "PanelShell must render headerRight directly");
