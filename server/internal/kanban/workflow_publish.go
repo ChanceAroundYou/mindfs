@@ -119,7 +119,13 @@ func commitWorkflowPublish(ctx context.Context, store *WorkflowStore, req Workfl
 	draft, err := store.GetDraft(ctx, req.WorkflowID)
 	switch {
 	case err == nil:
-		if req.BaseDraftRevision != "" && draft.Revision != req.BaseDraftRevision {
+		// BaseDraftRevision 为空 = 提出请求时目录里没有这个 id（新条目）。现在有了，
+		// 说明等待批准期间别人刚建过，人眼看过的那一版已不存在：按 stale 处理，
+		// 绝不静默覆盖别人的草稿。
+		if req.BaseDraftRevision == "" {
+			return WorkflowVersion{}, ErrWorkflowPublishStale
+		}
+		if draft.Revision != req.BaseDraftRevision {
 			return WorkflowVersion{}, ErrWorkflowPublishStale
 		}
 		updated, err := store.UpdateDraft(ctx, req.WorkflowID, draft.Revision, publishedBy, graph)

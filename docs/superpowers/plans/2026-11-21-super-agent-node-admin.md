@@ -153,6 +153,12 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   `TestCoordinatorTickReclaimsStaleClaims` 是既有 sqlite 并发 flake，单跑通过。
 - 提示词：新增三档工具说明；删掉「禁止 cancel Run」的总禁令，改为「只能走监管取消工具，
   最小够用、收口动作不与开工同轮、不许绕预算」。
+- **验收边界（2026-11-22，隔离实例 7465 真实模型取证）**：三档取消只在监管回合可用 ——
+  `router_brief.go` 仅在 `trigger.Event != nil` 时挂 `supervision` 块，提示词规则 8 / 11 也
+  明写「只在 brief 带 `supervision` 块时可用」。因此「用户发一条『把 n2 取消掉』」的回合
+  结构上不可能调 `cancel_node`：实测 Router 选了 `deliver_to_active_run + say`（把要求投递
+  给运行中的节点），这是设计行为，不是缺陷。真实模型 e2e 只能走事件回合，故 W1 取消三档的
+  验收由 `router_supervision_cancel_test.go` 的注入决策用例承担（见上），不再写用户回合版脚本。
 
 ### T2 完成（2026-11-21）
 
@@ -358,7 +364,10 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   普通留言端点不能批准 —— 与 HumanGate 同一条规矩。重复决定返回 409，不重复发布。
 - **批准的是看过的这一版**：请求钉住提出时的草稿 `revision`，批准时按它 CAS；期间草稿被改过
   就 `ErrWorkflowPublishStale`（HTTP 409），卡片转 failed 并写明「需要重新起草」，绝不把旧
-  内容盖到新草稿上。
+  内容盖到新草稿上。**「当时没有、现在有了」同样算 stale**（2026-11-22 补）：请求时的
+  `base_draft_revision` 为空意味着人看到的是「新建」，等待期间别人把同 id 条目建出来后，
+  commit 现在按 stale 失败而不是拿 `UpdateDraft` 覆盖别人的草稿；直接发布路径撞上同一竞态
+  也一样失败（Router 重试时会看到已有条目、转而落卡）。
 - **动作与工具**：`RouterActionSaveWorkflow`（`save_workflow`），`graph` 与
   `base_workflow_id` **互斥且必须给一个**（工具层 + 校验层各拒一次）；只给
   `base_workflow_id` 时从该条目最新版本复制一份图，并在 meta 上记 `derived:<id>` 标签

@@ -12192,7 +12192,7 @@ groups:
       - 'server/internal/kanban/workflow_publish.go:var ErrWorkflowPublishStale = errors.New("workflow draft changed since the request; ask again")'
       - 'server/internal/kanban/workflow_publish.go:func workflowPublishNeedsApproval(ctx context.Context, store *WorkflowStore, req WorkflowPublishRequest) (bool, error) {'
       - 'server/internal/kanban/workflow_publish.go:func commitWorkflowPublish(ctx context.Context, store *WorkflowStore, req WorkflowPublishRequest, taskRootID, publishedBy string) (WorkflowVersion, error) {'
-      - 'server/internal/kanban/workflow_publish.go:	if req.BaseDraftRevision != "" && draft.Revision != req.BaseDraftRevision {'
+      - 'server/internal/kanban/workflow_publish.go:			return WorkflowVersion{}, ErrWorkflowPublishStale'
       - 'server/internal/kanban/workflow_publish.go:func RootIDForScope(taskRootID, scope string) string {'
       - 'server/internal/kanban/activity_route_workflow_publish.go:const ActivityTypeWorkflowPublish = "workflow_publish"'
       - 'server/internal/kanban/activity_route_workflow_publish.go:func (s *ActivityService) applyRouteSaveWorkflow(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {'

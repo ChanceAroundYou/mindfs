@@ -336,6 +336,36 @@ func TestResolveWorkflowPublishStaleDraftFails(t *testing.T) {
 	}
 }
 
+// 提出请求时目录里还没有这个 id，等待批准期间别人把它建了出来：批准看的
+// 「新条目」已经不存在了，必须按 stale 失败，绝不静默覆盖别人刚建的草稿。
+func TestCommitWorkflowPublishStaleWhenEntryAppearedAfterRequest(t *testing.T) {
+	_, _, task, workflows := newPublishFixture(t)
+	ctx := context.Background()
+	other := publishGraph()
+	other.Nodes = append(other.Nodes, WorkflowNode{ID: "check", Name: "复核", Kind: NodeKindAgent, Params: map[string]any{"prompt": "复核"}})
+	other.Edges = append(other.Edges, WorkflowEdge{From: "fix", To: "check"})
+	if _, err := workflows.CreateDraft(ctx, "wf-review", task.RootID, "someone", other); err != nil {
+		t.Fatalf("CreateDraft: %v", err)
+	}
+
+	_, err := commitWorkflowPublish(ctx, workflows, WorkflowPublishRequest{
+		WorkflowID: "wf-review", Name: "代码复查", Scope: WorkflowScopeProject, Graph: publishGraph(),
+	}, task.RootID, "user")
+	if !errors.Is(err, ErrWorkflowPublishStale) {
+		t.Fatalf("commit err = %v, want ErrWorkflowPublishStale", err)
+	}
+	draft, err := workflows.GetDraft(ctx, "wf-review")
+	if err != nil {
+		t.Fatalf("GetDraft: %v", err)
+	}
+	if len(draft.Graph.Nodes) != len(other.Nodes) {
+		t.Fatalf("别人的草稿被覆盖了：%+v", draft.Graph.Nodes)
+	}
+	if versions := versionsOf(t, workflows, "wf-review"); len(versions) != 0 {
+		t.Fatalf("stale 提交不得发布版本，got %d", len(versions))
+	}
+}
+
 // 派生：只给 base_workflow_id 时从已发布最高版本复制图，并记下来源。
 func TestSaveWorkflowDerivesGraphFromBase(t *testing.T) {
 	store, svc, task, workflows := newPublishFixture(t)
