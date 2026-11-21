@@ -192,6 +192,10 @@ func (h *HTTPHandler) Routes() http.Handler {
 	if h.ControlSyncPush != nil {
 		r.Post("/api/control-sync/push", h.handleControlSyncPush)
 	}
+	if h.ControlSyncConflicts != nil {
+		r.Get("/api/control-sync/conflicts", h.handleControlSyncConflicts)
+		r.Post("/api/control-sync/conflicts/{id}/resolve", h.handleControlSyncConflictResolve)
+	}
 	r.Post("/api/imports/github", h.handleGitHubImportStart)
 	r.Get("/api/web-push/status", h.handleWebPushStatus)
 	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)

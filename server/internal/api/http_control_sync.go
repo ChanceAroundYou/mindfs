@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"mindfs/server/internal/controlsync"
 )
@@ -103,4 +106,61 @@ func (h *HTTPHandler) handleControlSyncPush(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	respondJSON(w, http.StatusOK, batch)
+}
+
+// ControlSyncConflicts 是冲突卡的查询与裁决端口。冲突只在「两侧都改过」时产生，
+// 裁决永远由人做出 —— 这里不提供自动合并。
+type ControlSyncConflicts interface {
+	List(ctx context.Context) ([]controlsync.ConflictView, error)
+	Resolve(ctx context.Context, id, choice string, payload []byte) error
+}
+
+type controlSyncConflictList struct {
+	Conflicts []controlsync.ConflictView `json:"conflicts"`
+}
+
+func (h *HTTPHandler) handleControlSyncConflicts(w http.ResponseWriter, r *http.Request) {
+	views, err := h.ControlSyncConflicts.List(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if views == nil {
+		views = []controlsync.ConflictView{}
+	}
+	respondJSON(w, http.StatusOK, controlSyncConflictList{Conflicts: views})
+}
+
+type controlSyncResolveRequest struct {
+	Choice  string          `json:"choice"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// 冲突卡裁决：`{"choice":"local"|"primary"|"payload","payload":{...}}`。
+// 404 / 409 / 400 分别对应「没有这张卡」「已经裁决过」「选择或载荷不合法」。
+func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if strings.TrimSpace(id) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("conflict id required"))
+		return
+	}
+	var req controlSyncResolveRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	err := h.ControlSyncConflicts.Resolve(r.Context(), id, req.Choice, req.Payload)
+	switch {
+	case err == nil:
+		respondJSON(w, http.StatusOK, map[string]any{"id": id, "choice": req.Choice})
+	case errors.Is(err, controlsync.ErrConflictNotFound):
+		respondError(w, http.StatusNotFound, err)
+	case errors.Is(err, controlsync.ErrConflictResolved):
+		respondError(w, http.StatusConflict, err)
+	case errors.Is(err, controlsync.ErrConflictChoice):
+		respondError(w, http.StatusBadRequest, err)
+	default:
+		respondError(w, http.StatusInternalServerError, err)
+	}
 }

@@ -38,6 +38,8 @@ type HTTPHandler struct {
 	ControlSync ControlSyncService
 	// ControlSyncPush 只在主节点侧存在：接收边缘推送。nil = 未启用。
 	ControlSyncPush ControlSyncPusher
+	// ControlSyncConflicts 是冲突卡的查询与裁决。nil = 未启用。
+	ControlSyncConflicts ControlSyncConflicts
 }
 
 const (

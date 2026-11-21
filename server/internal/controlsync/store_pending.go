@@ -104,3 +104,24 @@ func (s *Store) CountPending(ctx context.Context) (int, error) {
 	}
 	return n, nil
 }
+
+// RebasePending 把一条待推送变更的共同祖先重定到主节点当前值（冲突裁决后的
+// `local` / `payload` 选择走这里）。change_id 保留：幂等身份是「这次本地改动」，
+// 裁决不会产生新的改动。返回是否存在这条 pending —— 期间被别的路径清掉时
+// 返回 false，不算错误。
+func (s *Store) RebasePending(ctx context.Context, domain, key, baseHash string, payload []byte, deleted bool) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("controlsync: store closed")
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE pending SET base_hash = ?, payload = ?, deleted = ? WHERE domain = ? AND key = ?`,
+		baseHash, payload, boolInt(deleted), domain, key)
+	if err != nil {
+		return false, fmt.Errorf("controlsync: rebase pending: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("controlsync: rebase pending: %w", err)
+	}
+	return n > 0, nil
+}

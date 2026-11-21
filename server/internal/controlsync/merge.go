@@ -238,6 +238,8 @@ func (p *Pusher) pushConflict(ctx context.Context, _ string, ch PushChange,
 		RemotePayload: ch.Payload,
 		LocalHash:     local.Hash,
 		RemoteHash:    remoteHash,
+		LocalDeleted:  !exists || local.Deleted,
+		RemoteDeleted: ch.Deleted,
 	})
 	if err != nil {
 		return reject(err.Error())

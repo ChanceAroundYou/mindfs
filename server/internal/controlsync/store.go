@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS conflicts (
 	remote_payload BLOB,
 	local_hash TEXT NOT NULL DEFAULT '',
 	remote_hash TEXT NOT NULL DEFAULT '',
+	local_deleted INTEGER NOT NULL DEFAULT 0,
+	remote_deleted INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	resolved_at TEXT NOT NULL DEFAULT '',
 	resolution TEXT NOT NULL DEFAULT ''
@@ -155,8 +157,48 @@ func (s *Store) migrateOnce(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, schemaDDL)
-	return err
+	if _, err := s.db.ExecContext(ctx, schemaDDL); err != nil {
+		return err
+	}
+	return s.ensureConflictDeleteColumns(ctx)
+}
+
+// ensureConflictDeleteColumns 给早期建的库补两列。
+//
+// conflict 现场必须能区分「这一侧把记录删了」与「这一侧载荷是空的」：裁决时前者要落
+// 墓碑，后者要写空对象。`CREATE TABLE IF NOT EXISTS` 对已存在的表什么都不做，
+// 所以旧库靠这里补 —— 幂等，加过的列跳过。
+func (s *Store) ensureConflictDeleteColumns(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(conflicts)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid, notNull, pk int
+			name, typ        string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, col := range []string{"local_deleted", "remote_deleted"} {
+		if have[col] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE conflicts ADD COLUMN `+col+` INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isSQLiteBusy(err error) bool {

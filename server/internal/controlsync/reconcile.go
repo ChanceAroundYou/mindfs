@@ -179,6 +179,8 @@ func (r *Reconciler) decide(ctx context.Context, ch RemoteChange) (reconcileDeci
 		RemotePayload: ch.Payload,
 		LocalHash:     localHash,
 		RemoteHash:    ch.Hash,
+		LocalDeleted:  pending.Deleted,
+		RemoteDeleted: ch.Deleted,
 	}}, nil
 }
 
