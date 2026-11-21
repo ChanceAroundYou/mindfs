@@ -12153,6 +12153,11 @@ groups:
       的记录一律跳过**（重放旧页不得把副本倒回旧内容）；**一页一个事务、records 与
       `base_rev` 同生共死**（半个 diff 提交出去，边缘会永久跳过没落地的记录）。
       同步通道的 TLS 与转发侧同源：https 强制、TLS 1.2 起步、系统根 + 可选 `ca_file`。
+      ⑪ 四态模式（`mode.go`）的四条必须保留：**模式落 `state` 表**（只存内存会让边缘重启后
+      以 online 身份启动、把写请求全转给不可达的主节点）；**`conflict-review` 不受探测结果
+      影响**（主节点掉线不会让冲突消失，只能由裁决清掉）；**`RecordProbe` 失败不覆盖
+      `last_primary_at`**（断线排查最需要的数字）；**`retry` 探不通仍回 200 + status**
+      （5xx 会让前端把「按钮动作失败」和「页面请求失败」混成一件事）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
       （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
@@ -12192,6 +12197,13 @@ groups:
       - server/internal/api/controlproxy_test.go
       - server/internal/controlsync/replicator.go
       - server/internal/controlsync/replicator_test.go
+      - server/internal/controlsync/mode.go
+      - server/internal/controlsync/mode_test.go
+      - server/internal/controlsync/store_state.go
+      - server/internal/api/http_control_sync.go
+      - server/internal/api/http_control_sync_test.go
+      - server/internal/api/http.go
+      - server/internal/api/http_routes.go
     tests:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
@@ -12206,6 +12218,8 @@ groups:
       - server/internal/controlsync/capture_test.go
       - server/internal/api/controlproxy_test.go
       - server/internal/controlsync/replicator_test.go
+      - server/internal/controlsync/mode_test.go
+      - server/internal/api/http_control_sync_test.go
       - server/internal/auth/store_sync_test.go
       - server/internal/kanban/workflow_store_sync_test.go
     anchors:
@@ -12248,6 +12262,15 @@ groups:
       - 'server/internal/controlsync/store.go:		if ch.Rev <= baseRev {'
       - 'server/internal/controlsync/replicator_test.go:func TestApplyRemoteChangesIgnoresReplayedOldPage(t *testing.T) {'
       - 'server/internal/controlsync/replicator_test.go:func TestReplicatorPaginatesUntilEmptyPage(t *testing.T) {'
+      - 'server/internal/controlsync/mode.go:	ProbeInterval       = 10 * time.Second'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) Observe(success bool) Mode {'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) Retry(ctx context.Context) (Mode, error) {'
+      - 'server/internal/controlsync/mode.go:func parsePrimaryURL(raw string) (*url.URL, error) {'
+      - 'server/internal/controlsync/store_state.go:func (s *Store) RecordProbe(ctx context.Context, at time.Time, errText string) error {'
+      - 'server/internal/controlsync/mode_test.go:func TestModeControllerDegradesAfterThreeProbeFailures(t *testing.T) {'
+      - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncMode(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:	if h.ControlSync != nil {'
+      - 'server/internal/api/http_control_sync_test.go:func TestControlSyncModeRetryFailureStillReturnsStatus(t *testing.T) {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'

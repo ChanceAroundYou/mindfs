@@ -329,6 +329,43 @@ type Domain interface {
 - 变异：降级后仍转发 → 离线用例红；模式只存内存 → 重启用例红。
 - 验收：`go test ./server/internal/controlsync/ ./server/internal/api/ -run ControlSync -count=1`。
 
+执行记录（2026-11-21）：
+
+- `ModeController` 持有四态（`online` / `offline-local` / `reconciling` / `conflict-review`），
+  阈值按 spec §7 落成常量：探测 10 s、超时 3 s、连续 3 次失败降级、连续 2 次成功升级 ——
+  3 × 10 s 正压在「断开后 ≤30 s 进本地模式」的预算内。`reconciling` 期间再连续失败 3 次
+  退回 `offline-local`；**`conflict-review` 不受探测影响**（主节点掉线不会让冲突消失，
+  它只能由裁决清掉）。
+- 持久化走 `state` 表（`SetMode` / `RecordProbe` / `LoadState`，新 `store_state.go`）：
+  重启后必须读回仍在 `offline-local`，否则会以 online 身份启动、把控制面写请求全转给一台
+  仍不可达的主节点。`RecordProbe` 失败时**不覆盖 `last_primary_at`** —— 断线排查最需要的
+  正是「上次成功连上是什么时候」。持久化里出现未知模式值时构造器直接报错（fail closed），
+  不猜一个默认值糊过去。
+- 探活用 `GET <primary>/api/control-sync/head`，**只判 2xx、不解析响应体**：把 head 解析
+  压进探活，会让一次字段变更表现成「主节点挂了」。`NewHTTPProber` 与 `NewReplicator`
+  共用 `parsePrimaryURL` + `newSyncHTTPClient`（https 强制、TLS 1.2、系统根 + `ca_file`）。
+- 用户动作走 `POST /api/control-sync/mode {action}`：`local` 立即切本地模式不等计数；
+  `retry` 当场探一次，通就直接进 `reconciling`、不通留在本地模式。**retry 探不通仍回
+  200 + 最新 status**（`last_error` 写明原因）—— 用 5xx 表达「主节点不通」会让前端把
+  「按钮动作失败」和「页面请求失败」混成一件事。
+- `GET /api/control-sync/status` 两种模式都可用（转发器已把 `/api/control-sync` 列为本机域），
+  载荷 `{mode, base_rev, last_primary_at, last_error}`。端点只在 `HTTPHandler.ControlSync`
+  非空时注册，且 handler 内部再判一次 nil —— 两层**故意冗余**（验证过：单改任一层仍是
+  404/正常，两层同时去掉才 panic）；未启用机器保持改造前行为（两条路径 404）。
+- 模式翻转回调 `OnModeChange(from,to)` 已就位，供接线方落「可见系统事件」与前端横幅；
+  本任务不接通知通道。
+- 用例：`controlsync` 9 条（降级阈值、升级阈值、冲突态收尾、手动切本地、retry 成功/失败、
+  reconciling 掉线回退、status 字段、Run 循环、HTTP 探活含部署前缀与 https 拒绝）、
+  `api` 6 条（status 载荷、两种动作分发、retry 失败 200、非法动作 400、未配置 404、
+  读库失败 500）；`controlsync` 另跑 `-race` 绿。
+- 变异 4 处：去掉模式持久化（重启读回用例红）、retry 不看探活结果（失败用例红）、
+  去掉 nil 守卫与条件注册（panic 红）、`Observe` 忘写回 `m.mode`（开发期即被 Run/回退
+  用例打红，属真实缺陷而非变异）。
+- **未接通**：`control_sync` 配置段（`enabled` / `primary_url` / `ca_file` / `token`）与
+  `server/app` 装配尚未落地 —— 因此**转发器还不会按模式停转**（在线判定要等装配时把
+  `ModeController.Mode()` 接进 `ControlProxy`），`OnModeChange` 也还没接到系统事件通道。
+  这两项与 T10/T11 的接线一起在 P5 收尾前后完成；本轮未改配置、未部署、未重启任何节点。
+
 ---
 
 ## P5 恢复合并与冲突
