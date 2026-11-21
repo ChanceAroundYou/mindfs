@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -77,6 +78,27 @@ type WorkflowDefinition struct {
 	// 核对，而不是按「节点都跑完了」推断。Run 创建时快照进图表，运行期不可改
 	// （见 completionContractHash 的冻结守卫）。为空 = 没有契约，求值器 fail-closed。
 	Completion *CompletionContract `json:"completion,omitempty"`
+	// Defaults 是这一版工作流的默认档（W3 T4）：目前只有模型。它承担「按任务选
+	// 模型」这一层 —— 任务选哪个 workflow 就继承它的默认模型，节点 params.model
+	// 仍可单独覆盖。为空 = 不设档，交给 harness 自己的默认（全局档）。
+	Defaults *WorkflowDefaults `json:"defaults,omitempty"`
+}
+
+// WorkflowDefaults 是 workflow 级的默认档。刻意只有模型一档：agent / harness
+// 绑在节点上（换 harness 是结构性选择），而模型是逐任务最容易变的那一档。
+type WorkflowDefaults struct {
+	Model string `json:"model,omitempty"`
+}
+
+// AgentProfileFor 解析一个节点的实际执行档：节点 params 优先，缺省时继承
+// workflow 的 defaults.model，两处都没有就留空（harness 全局默认）。
+// 只在落 exec 时算一次，运行期不再重新解释。
+func (d WorkflowDefinition) AgentProfileFor(node WorkflowNode) WorkflowNodeAgentProfile {
+	profile := WorkflowNodeAgentProfileOf(node)
+	if strings.TrimSpace(profile.Model) == "" && d.Defaults != nil {
+		profile.Model = strings.TrimSpace(d.Defaults.Model)
+	}
+	return profile
 }
 
 // Triggered reports whether the node has a persisted NodeRun (queued/started).

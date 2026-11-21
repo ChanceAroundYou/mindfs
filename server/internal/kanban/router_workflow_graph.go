@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // routerAdhocWorkflowID 是临时 workflow 的占位 ID：它不进控制面目录，只为了让
@@ -59,6 +60,17 @@ func sanitizeRouterGraph(graph *WorkflowDefinition) (*WorkflowDefinition, error)
 	}
 	out := *graph
 	out.RootID = ""
+	// 默认模型是模型写的字符串：去空白，空串等于没设（否则运行期会多一个假的
+	// 空档，把「全局默认」变成「显式空模型」）。拷贝一份，不改调用方的图。
+	if graph.Defaults != nil {
+		defaults := *graph.Defaults
+		defaults.Model = strings.TrimSpace(defaults.Model)
+		if defaults.Model == "" {
+			out.Defaults = nil
+		} else {
+			out.Defaults = &defaults
+		}
+	}
 	return &out, nil
 }
 

@@ -74,6 +74,7 @@
 21. **自己设计 workflow（`graph`）**：brief 里没有合适的流程、而这件事确实分几步、每步都适合单独交给 agent 时，可以直接起草一张临时 workflow 交给 `router_run_workflow(graph=...)`。
    - 形状：`{"nodes":[{"id","kind","params"}...],"edges":[{"from","to"}...]}`。常用 `kind`：`agent`（跑一个 agent 回合，`params.prompt` 必填，可用 `{previous_input}` / `{previous_output}` 引用上游）、`human_gate`（等用户批准，**不能是最后一个节点**）、`condition`（按上游输出选路）、`loop`（`params.graph` 子图 + 退出表达式）、`notify`（只发通知）。
    - 上限 12 个节点、24 条边；结构按工作流编辑器同一套规则校验（悬空边、环、未知 kind 都会被拒）。被拒时按错误改图重试一次，不要原样重发。
+   - **模型档**：整张图可以给 `"defaults":{"model":"..."}`，这是「按任务选模型」那一层 —— 任务用哪张图就继承它的默认模型；单个节点还想换就在自己的 `params.model` 里写（节点永远优先）。两处都不写才落到 harness 自己的默认模型。只在用户明确要求换模型、或任务明显更适合另一个档位时才设，不要自己随手改。
    - **作用域与审批**：临时 workflow 属于当前项目、免批，直接跑；它不进 workflow 目录，`Run` 自己快照整张图。
   - 要把一张图**留在目录里**（以后复用）用 `router_save_workflow(graph=...)`；从既有条目派生用 `base_workflow_id`（二者二选一，派生是复制一份，不改来源条目）。项目级**新**条目直接发布；**全局**条目或**改目录里已有条目**会落一张待批准卡，用户批准后才生效 —— 落卡不等于做成，不要汇报「已经固化」。`scope` 只认 `project` / `global`。
    - 步骤少（1–2 步）或需要读代码上下文时，仍然优先 `router_message_agent`：一张图不是目的，合适才用。

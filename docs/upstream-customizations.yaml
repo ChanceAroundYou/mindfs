@@ -12020,7 +12020,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:20. **节点级管理（`router_set_node_model` / `router_skip_node`）**'
 
   - id: G-PE
-    title: Super agent 自设计 workflow W3：临时图直接跑（不进目录）+ 固化分两档（项目级新条目免批、全局/改已有需人批准）
+    title: Super agent 自设计 workflow W3：临时图直接跑（不进目录）+ 固化分两档（项目级新条目免批、全局/改已有需人批准）+ 模型档并入 workflow（节点 > workflow 默认 > harness 全局）
     kind: feature
     symptom: |
       brief 里的 workflow 目录是人工维护的固定流程。任务需要的形状（先定位再修、分头排查再汇总）
@@ -12053,10 +12053,18 @@ groups:
       旧内容盖到新草稿上。同一张卡重复决定返回 409，不会重复发布。
       ⑧ 免批路径与批准路径走同一个 `commitWorkflowPublish`，避免「批准后的写入」与「免批写入」
       出现两套语义；作用域翻译也只有一处（`RootIDForScope`：global → 空 root）。
+      ⑨ **模型档并入 workflow（T4）**：用户裁定「按任务选模型可以融入到 workflow 里」，所以没有
+      独立的 `Task.Model` 列，中间那一档由 `WorkflowDefinition.Defaults.Model` 表达 —— 任务用哪张
+      图就继承它的默认模型。层级 `AgentProfileFor`（节点 `params.model` > `defaults.model` > 留空交给
+      harness 全局）**只解释一次**：`prepareWorkflowNodeAt` 写进 `WorkflowNodeExecution.Profile`，
+      `RunWorkflowNodeAttempt` 用它落 `NodeRun` 行（运行视图与 `inspect_run` 读这张行，写裸 params 会
+      让继承默认的节点显示成没设模型），适配层经 `workflowNodeProfile` 读同一个结果。模型写的图在
+      `sanitizeRouterGraph` 去空白、空串归一成 `nil`，不留「显式空模型」的假档位。
     boundary: |
-      W3 T1（临时图直接跑）与 T2（固化两档 + 待批准卡）已实现。派生目前只做「复制一份并记
-      `derived:wf-x` 标签」，不做版本链追溯；模型档并入 workflow 的层级（节点 > 任务 > 全局）
-      仍是 W3 后续任务。临时图与固化都不受特殊待遇：Run 照常走证据门、监管、worktree 生命周期。
+      W3 T1（临时图直接跑）、T2（固化两档 + 待批准卡）、T4（模型档层级）已实现，W3 收口。
+      派生目前只做「复制一份并记 `derived:wf-x` 标签」，不做版本链追溯。`defaults` 只有模型
+      一项，不承载 effort / harness；模型档不做 harness 可用列表校验。临时图与固化都不受特殊
+      待遇：Run 照常走证据门、监管、worktree 生命周期。
     files:
       - server/internal/kanban/router_workflow_graph.go
       - server/internal/kanban/router_types.go
@@ -12068,10 +12076,16 @@ groups:
       - server/internal/api/http_task_workflow_publish.go
       - server/internal/api/http_routes.go
       - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/workflow_types.go
+      - server/internal/kanban/workflow_node_executor.go
+      - server/internal/kanban/workflow_executor.go
+      - server/internal/api/appcontext_workflow.go
     tests:
       - server/internal/kanban/router_inline_workflow_test.go
       - server/internal/kanban/router_workflow_publish_test.go
+      - server/internal/kanban/workflow_default_model_test.go
       - server/internal/api/http_task_workflow_publish_test.go
+      - server/internal/api/workflow_node_profile_test.go
     anchors:
       - 'server/internal/kanban/router_workflow_graph.go:const routerAdhocWorkflowID = "adhoc"'
       - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxNodes = 12'
@@ -12098,3 +12112,11 @@ groups:
       - 'server/internal/api/http_routes.go:	r.Post("/api/tasks/{id}/workflow-publish", h.handleKanbanTaskWorkflowPublish)'
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
+      - 'server/internal/kanban/router_prompt.md:   - **模型档**：整张图可以给 `"defaults":{"model":"..."}`'
+      - 'server/internal/kanban/workflow_types.go:type WorkflowDefaults struct {'
+      - 'server/internal/kanban/workflow_types.go:func (d WorkflowDefinition) AgentProfileFor(node WorkflowNode) WorkflowNodeAgentProfile {'
+      - 'server/internal/kanban/workflow_types.go:	profile.Model = strings.TrimSpace(d.Defaults.Model)'
+      - 'server/internal/kanban/workflow_node_executor.go:	Profile WorkflowNodeAgentProfile'
+      - 'server/internal/kanban/workflow_node_executor.go:		Profile: run.Graph.AgentProfileFor(node),'
+      - 'server/internal/kanban/workflow_executor.go:	profile := run.Graph.AgentProfileFor(node)'
+      - 'server/internal/api/appcontext_workflow.go:func workflowNodeProfile(exec kanban.WorkflowNodeExecution) kanban.WorkflowNodeAgentProfile {'

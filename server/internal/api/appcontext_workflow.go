@@ -40,6 +40,18 @@ type workflowTurnRequest struct {
 	OnToolCall func(agenttypes.ToolCall)
 }
 
+// workflowNodeProfile returns the node's resolved agent selection. prepare
+// already applied the tiers (node params.model > workflow defaults.model >
+// harness default) and stored the result on exec.Profile; callers that build a
+// WorkflowNodeExecution by hand never ran prepare, so fall back to the node
+// params alone rather than silently dropping the node's own model.
+func workflowNodeProfile(exec kanban.WorkflowNodeExecution) kanban.WorkflowNodeAgentProfile {
+	if exec.Profile != (kanban.WorkflowNodeAgentProfile{}) {
+		return exec.Profile
+	}
+	return kanban.WorkflowNodeAgentProfileOf(exec.Node)
+}
+
 // EnsureWorkflowNodeSession resolves D2 session reuse for one workflow node.
 // It never synthesizes a StageRun; the session is the execution medium only.
 func (s *AppContext) EnsureWorkflowNodeSession(ctx context.Context, exec kanban.WorkflowNodeExecution) (string, error) {
@@ -95,7 +107,7 @@ func (s *AppContext) EnsureWorkflowNodeSession(ctx context.Context, exec kanban.
 			return strings.TrimSpace(exec.NodeRun.SessionKey), nil
 		}
 	}
-	profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)
+	profile := workflowNodeProfile(exec)
 	base := kanban.TaskSessionName(strings.TrimSpace(exec.Task.Name), exec.Task.TaskNumber)
 	if base == "" {
 		base = strings.TrimSpace(exec.Task.TaskTemplateName)
@@ -153,20 +165,20 @@ func (s *AppContext) RunWorkflowNode(ctx context.Context, exec kanban.WorkflowNo
 	if strings.TrimSpace(exec.Prompt) == "" {
 		return kanban.WorkflowNodeResult{}, errors.New("agent prompt required")
 	}
-	profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)
+	profile := workflowNodeProfile(exec)
 	started := time.Now().UTC()
 	req := workflowTurnRequest{
-		RootID:          exec.RootID,
-		RuntimeRootPath: exec.RuntimeRootPath,
-		SessionKey:      strings.TrimSpace(exec.NodeRun.SessionKey),
-		SessionName:     s.sessionTitle(exec.RootID, exec.NodeRun.SessionKey),
-		Agent:           profile.Agent,
-		Model:           profile.Model,
-		Mode:            profile.Mode,
-		Effort:          profile.Effort,
-		FastService:     normalizeFastServiceValue(profile.FastService),
-		PlanMode:        profile.PlanMode,
-		Prompt:          exec.Prompt,
+		RootID:           exec.RootID,
+		RuntimeRootPath:  exec.RuntimeRootPath,
+		SessionKey:       strings.TrimSpace(exec.NodeRun.SessionKey),
+		SessionName:      s.sessionTitle(exec.RootID, exec.NodeRun.SessionKey),
+		Agent:            profile.Agent,
+		Model:            profile.Model,
+		Mode:             profile.Mode,
+		Effort:           profile.Effort,
+		FastService:      normalizeFastServiceValue(profile.FastService),
+		PlanMode:         profile.PlanMode,
+		Prompt:           exec.Prompt,
 		SilentCompletion: true,
 	}
 	// 写操作证据只从本轮流式工具事件里数（不看转录正文）：修复轮产出的 done
@@ -210,7 +222,7 @@ func (s *AppContext) SendWorkflowComment(ctx context.Context, exec kanban.Workfl
 	// with the same agent profile as the node. Omitting it makes the turn layer
 	// reject the send as "agent required" and the comment silently degrades into
 	// a delivery-failed line.
-	profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)
+	profile := workflowNodeProfile(exec)
 	req := workflowTurnRequest{
 		RootID:          exec.RootID,
 		RuntimeRootPath: exec.RuntimeRootPath,

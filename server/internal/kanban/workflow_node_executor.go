@@ -45,6 +45,9 @@ type WorkflowNodeExecution struct {
 	// 它只用于给这条节点会话起一个能区分轮次的名字 —— 同一条任务每开一轮
 	// 就是一个新会话，名字全一样时用户在会话列表里分不出谁是谁。
 	UserInput string
+	// Profile 是 prepare 解析好的执行档（节点 params > workflow defaults.model >
+	// harness 全局默认）。适配层直接用它，避免运行期再各自解释一遍层级。
+	Profile WorkflowNodeAgentProfile
 }
 
 // WorkflowNodeAgentProfile is the per-node agent selection. Workflow nodes pick
@@ -294,6 +297,9 @@ func (s *Service) prepareWorkflowNodeAt(ctx context.Context, store *TaskStore, r
 		SessionPolicy:   WorkflowNodeSessionPolicy(node),
 		Prompt:          prompt,
 		UserInput:       values["previous_input"],
+		// 层级只在这里解释一次：节点 params.model > workflow defaults.model >
+		// harness 全局默认（留空）。
+		Profile: run.Graph.AgentProfileFor(node),
 	}
 	// D2 same_stage：同一 node + loop_path 的历次 iteration/attempt 复用同一个
 	// session。NodeRun 自己是新行，所以往前找最近一个已绑定 session 的行。

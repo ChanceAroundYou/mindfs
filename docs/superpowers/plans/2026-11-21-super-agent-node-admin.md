@@ -319,7 +319,7 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
 - W2 边界（不再扩）：节点级动作只认顶层 agent 节点；模型档不校验 harness 可用列表；
   跨轮历史卡片不做。
 
-## W3 — 自设计 workflow（进行中）
+## W3 — 自设计 workflow（已完成）
 
 用户裁定：「Router 应该要会自己设计生产或者派生总结需要的 workflow」，「发新的 / 改已有的
 workflow 需要显式批准，项目级别、临时使用的可以自由生成，但固化、提升到全局的 workflow
@@ -374,3 +374,32 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   一次驳回悄悄发布。
 - 边界：派生只记标签，不做版本链追溯；模型档并入 workflow 的层级（节点 > 任务 > 全局）
   仍是 W3 后续任务（T4）。
+
+### T4 完成（2026-11-21）— 模型档并入 workflow（节点 > workflow 默认 > harness 全局）
+
+用户裁定「按任务选模型是需要的，但是可以融入到 workflow 里」——所以没有独立的 `Task.Model`
+列：中间那一档由任务所跑的 workflow 表达，任务用哪张图就继承它的默认模型。
+
+- **数据形状**：`WorkflowDefinition.Defaults *WorkflowDefaults{Model}`（刻意只有模型一档：
+  agent / harness 绑在节点上是结构性选择，模型才是逐任务最容易变的那一档）。为空 = 不设档。
+- **层级只解释一次**：`WorkflowDefinition.AgentProfileFor(node)`（节点 `params.model` >
+  `defaults.model` > 留空交给 harness 全局）。三处消费同一个结果，运行期不再各自解释：
+  ① `prepareWorkflowNodeAt` 写进 `WorkflowNodeExecution.Profile`，适配层
+  `workflowNodeProfile(exec)` 读它（手搓 exec 未跑 prepare 时退回节点 params，保持既有行为）；
+  ② `RunWorkflowNodeAttempt` 落 `NodeRun` 行时用它 —— 行是运行视图与 Router `inspect_run`
+  的事实来源，写裸 params 会让「继承默认」的节点显示成没设模型；③ Shadow/单测构造的路径
+  不受影响。
+- **模型写的图要规整**：`sanitizeRouterGraph` 去空白，空串归一成 `nil`（否则运行期会多一个
+  「显式空模型」的假档位），拷贝一份不改调用方的图。
+- **提示词与工具**：规则 21 说明三档与「只在用户明确要求换模型时才设」；`router_run_workflow`
+  与 `router_save_workflow` 的 `graph` 描述都写明可给 `defaults.model`、节点 `params.model` 优先。
+- **前端零改动**：编辑器只在 `{...graph, nodes: …}` 上改节点，`defaults` 随图往返；画布不做
+  模型档 UI（这一档由 Router 起草、由图本身承载）。
+- 验证：`workflow_default_model_test.go` 10 条（档位解析 / 去空白 / 空串归一 / prepare 落档 /
+  节点优先 / `NodeRun` 行记实际档）+ `workflow_node_profile_test.go` 2 条（适配层优先读
+  prepared profile、未 prepare 时退回节点 params）；7 处变异各自打红后还原（默认档不参与
+  解析 / 空白不去 / 空串不归一 / prepare 不落 `Profile` / 适配层退回只看节点 / 落行用裸
+  params / 节点档被默认档覆盖）。`go build ./...` OK；`go test ./server/internal/kanban/
+  ./server/internal/api/ -count=1` 全绿（335.0s / 57.2s）。
+- 边界：`defaults` 目前只有模型一项，不承载 effort / harness；固化的 workflow 保留它自己的
+  `defaults`，任务用它的版本就继承那一版的默认 —— 换版本即换档，不再有第二处开关。
