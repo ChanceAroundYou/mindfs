@@ -11783,7 +11783,6 @@ groups:
       - server/internal/agent/pool_codex_proxy.go
       - server/internal/agent/workdir.go
       - server/internal/agent/discovery.go
-      - server/app/task_worktree_root_test.go
     tests:
       - server/app/server_test.go
       - server/internal/agent/workdir_test.go
