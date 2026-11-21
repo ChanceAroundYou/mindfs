@@ -738,7 +738,7 @@ Expected: `✓ 全部通过`.
 
 **边界（与 spec §2 一致，M1 不做）**：群聊与非 owner 点击、图片/语音/文件入站、跨节点中继（M4）、项目选择器与入口绑定（M2）、完整规则引擎。凭据不落 MindFS 库：`lark-cli` 自己持有登录态，MindFS 只记 owner_open_id 与 CLI 路径。
 
-**未部署**：本机二进制未重编安装，四节点均未部署、未重启。上线需在 `config.json` 填 `channels.feishu.enabled=true` + `owner_open_id`，并确认 `lark-cli` 已登录。
+**未部署**（截至复审轮）：本机二进制未重编安装，四节点均未部署、未重启。上线需在 `config.json` 填 `channels.feishu.enabled=true` + `owner_open_id`，并确认 `lark-cli` 已登录。部署与随后查出的监听缺陷见下一节。
 
 ### 整分支复审（2026-11-21，`7837b1fd`）
 
@@ -762,3 +762,13 @@ Expected: `✓ 全部通过`.
 - `activity_route_apply.go` 的 ask 通知内联了一段与 `Service.notifyCard` 行为等价的调用（`ActivityService` 与 `Service` 是两个接收者，共用需要抽包级函数；日志格式与失败隔离语义已一致），纯重复无行为差异。
 - `feishu.StateSuperseded` 有渲染分支但从无赋值点；`Card.NodeID` 会随点击回传到 `Answer`，但 M1 没有创建点填它（`CardNotice` 没有该字段）。两者都是预留给后续里程碑的字段，删除会丢语义，保留。
 - `sendCard` 成功后 `message_id` 为空串的匹配、`ExpiresAt` 为零值的卡片（新卡不从这条路径产生）、notice 卡挂在 `GetDetail` 之后 —— 均无可达路径。
+
+### 部署核对与监听 stdin 缺陷（2026-11-21）
+
+四端已 ship 并重启：本机 / wsl / fn / pc-win 均 `v0.5.5-1200-185-gd91f03e3`（逐字一致，无 `-dirty`，HEAD == origin/main，M1 提交在 HEAD 内）。本机 PID 740558 于 13:16:35 启动，`/proc/<pid>/exe` 与 `~/.local/bin/mindfs` 同一 inode；wsl / fn `is-active` + health 200 `worker`；pc-win `:7332` LISTENING + health 200 `worker`。服务单元 `User=xiaokubao`、`HOME` 与 `PATH`（含 nvm 的 `lark-cli`）均正确。
+
+核对飞书运行时状态时查出一个会让 M1 完全失效的缺陷：`Supervisor.consume` 用 `exec.CommandContext` 起 `lark-cli event consume` 却没设 `Stdin`，子进程拿到 `/dev/null`；而 lark-cli 1.0.100 把 stdin EOF 当停机信号，实测 1.5 秒即自行退出（`stdin closed — shutting down` → `exited — received 0 event(s)`）。后果是开 `channels.feishu.enabled=true` 后 supervisor 只会「起 1.5 秒 → 退 → 10 秒后重连」空转，点击一条都收不到。`integration_test.go` 的假 CLI 不读 stdin，所以原套件看不见。同轮修掉同一函数里的收尾方式：`CommandContext` 默认 SIGKILL，而 lark-cli 警告 SIGKILL 会泄漏服务端订阅、重启后数小时报 `another event bus is already connected`（正是 supervisor 60 秒退避在等的冲突），改为 `cmd.Cancel` 发 SIGTERM + `WaitDelay` 5s。
+
+修法：`os.Pipe()` 给子进程一根活到退出才关的 stdin（父进程 `Start` 后关读端、`Wait` 后关写端）。用例先红后绿：`TestSupervisorKeepsListenerStdinOpen`（修前 300ms 内重启 13 次）、`TestSupervisorStopsListenerWithSIGTERM`（修前等不到 TERM）。真 `lark-cli` 复核：同样的 exec 形状下 `feishu-websocket: connected`、8 秒仍在跑、SIGTERM 正常收尾。`go test -race ./server/internal/channels/feishu/` 绿、`go build ./...` 成功。
+
+**尚未验证**：真卡片端到端（`config.json` 目前没有 `channels` 段，通道处于关闭状态）。下一步是填 `channels.feishu`（`enabled` / `owner_open_id` / `lark_cli`）→ 用户重启本机 → 发一张 HumanGate 卡走通「先回执后执行」。
