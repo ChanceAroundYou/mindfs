@@ -255,7 +255,7 @@ func (s *AppContext) executeWorkflowTurn(ctx context.Context, req workflowTurnRe
 	userTimestamp := time.Now().UTC()
 	planMode := req.PlanMode
 
-	var assistantText strings.Builder
+	var assistantText, assistantTextLastType string
 	var subSessionKeys []string
 	var subMu sync.Mutex
 	var turnMu sync.Mutex
@@ -300,8 +300,10 @@ func (s *AppContext) executeWorkflowTurn(ctx context.Context, req workflowTurnRe
 			if update.Type == agenttypes.EventTypeMessageChunk {
 				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok &&
 					strings.TrimSpace(chunk.ParentToolUseID) == "" && strings.TrimSpace(chunk.TaskID) == "" {
-					assistantText.WriteString(chunk.Content)
+					assistantText, assistantTextLastType = appendTurnTextBlock(assistantText, assistantTextLastType, update.Type, chunk.Content)
 				}
+			} else {
+				assistantText, assistantTextLastType = appendTurnTextBlock(assistantText, assistantTextLastType, update.Type, "")
 			}
 			if req.OnToolCall != nil &&
 				(update.Type == agenttypes.EventTypeToolCall || update.Type == agenttypes.EventTypeToolUpdate) {
@@ -356,5 +358,5 @@ func (s *AppContext) executeWorkflowTurn(ctx context.Context, req workflowTurnRe
 	if err != nil {
 		return "", err
 	}
-	return assistantText.String(), nil
+	return assistantText, nil
 }

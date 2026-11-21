@@ -103,11 +103,11 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 func (e *routerToolEnv) sayTool() RouterToolSpec {
 	return RouterToolSpec{
 		Name:        "router_say",
-		Description: "向用户回复一句话（不执行任务）。purpose=chat 是正常对话，progress 是进度说明。",
+		Description: "向用户回复一句话（不执行任务）。purpose=chat 是正常对话，progress 是进度说明，summary 是 Run 成功结算这一轮的结果总结（同时写入任务结果摘要）。",
 		Class:       RouterToolWrite,
 		InputSchema: objectSchema(map[string]any{
 			"body":    map[string]any{"type": "string", "minLength": 1},
-			"purpose": map[string]any{"type": "string", "enum": []string{"chat", "progress"}},
+			"purpose": map[string]any{"type": "string", "enum": []string{"chat", "progress", "summary"}},
 		}, []string{"body"}),
 		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var args struct {
@@ -129,7 +129,9 @@ func (e *routerToolEnv) sayTool() RouterToolSpec {
 					purpose = "progress"
 				}
 			}
-			if purpose != "chat" && purpose != "progress" {
+			switch purpose {
+			case "chat", "progress", "summary":
+			default:
 				return "", fmt.Errorf("invalid purpose %q", purpose)
 			}
 			return e.record(RouterAction{Kind: RouterActionSay, Body: body, Purpose: purpose})

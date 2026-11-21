@@ -136,8 +136,11 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 	}
 	// 模型只说话没调工具时合成出的 say 默认 purpose=chat（那是用户对话的语义）。
 	// 事件回合这句是进度汇报，统一改写成 progress，再交给同一个应用层。
+	// 例外是结算回合自己写的总结：purpose=summary 已经过工具层校验（只有 Run 成功
+	// 结算才允许），改写它会让「本轮总结」退化成一条进度说明、也不再写结果摘要。
 	for i := range actions {
-		if actions[i].Kind == RouterActionSay && strings.TrimSpace(actions[i].Purpose) != "progress" {
+		purpose := strings.TrimSpace(actions[i].Purpose)
+		if actions[i].Kind == RouterActionSay && purpose != "progress" && purpose != "summary" {
 			actions[i].Purpose = "progress"
 		}
 	}
@@ -493,10 +496,10 @@ func (rs *RouterService) directEvidenceHolds(ctx context.Context, event RouterEv
 	return reply.Status == ActivityStatusPending || reply.Status == ActivityStatusRunning
 }
 
-// routerEventTurnMaxAttempts 是一次事件回合的总尝试次数：初次 + 一次重试。
-// 模型超时/流中断是瞬时的，重试一次能把监管汇报救回来；不设上限会把慢模型
-// 变成反复烧预算的循环。
-const routerEventTurnMaxAttempts = 2
+// routerEventTurnMaxAttempts 是一次事件回合的总尝试次数：初次 + 两次重试。
+// 模型超时/流中断是瞬时的，重试能把监管汇报救回来；上限仍保留，避免把慢模型
+// 变成无限烧预算的循环。用户裁定「不要太吝啬次数」，故从 2 放宽到 3。
+const routerEventTurnMaxAttempts = 3
 
 // routerEventAttemptTurnID 给每次尝试一个独立的决策身份。同一事件重试时不能复用
 // 第一次的 turn id，否则重新领取会撞上 ErrRouterDecisionExists，被当成

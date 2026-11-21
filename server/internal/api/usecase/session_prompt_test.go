@@ -269,8 +269,8 @@ func TestAppendResponseChunk(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := appendResponseChunk(tc.current, tc.lastType, tc.chunk); got != tc.want {
-				t.Fatalf("appendResponseChunk(%q, %q, %q) = %q, want %q", tc.current, tc.lastType, tc.chunk, got, tc.want)
+			if got := AppendResponseChunk(tc.current, tc.lastType, tc.chunk); got != tc.want {
+				t.Fatalf("AppendResponseChunk(%q, %q, %q) = %q, want %q", tc.current, tc.lastType, tc.chunk, got, tc.want)
 			}
 		})
 	}
@@ -568,7 +568,7 @@ func TestAssistantAuxLineBeforeFollowingText(t *testing.T) {
 			if line != tc.line {
 				t.Fatalf("aux line = %d, want %d", line, tc.line)
 			}
-			content := appendResponseChunk(before, string(agenttypes.EventTypeToolCall), "工具后的回复\n后续内容")
+			content := AppendResponseChunk(before, string(agenttypes.EventTypeToolCall), "工具后的回复\n后续内容")
 			if before == "" || strings.HasSuffix(before, "\n") {
 				if content != before+"工具后的回复\n后续内容" {
 					t.Fatalf("response whitespace changed: %q", content)

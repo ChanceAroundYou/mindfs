@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -230,6 +231,14 @@ func (s *ActivityService) applyRouteSay(
 		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
 	}
 	s.broadcastUpdated(act, changes)
+	// purpose=summary 是 Router 对这一轮结果写下的总结：它同时成为任务结果摘要，
+	// 看板卡片/任务列表读的就是这一栏。线上 #99 的卡片上那段「changes.Now update…」
+	// 是节点回复原文的直接截断，只有结算回合的总结能覆盖它。
+	// 与下面「用户回合正文即摘要」的兜底不同，这条走无条件写入：任务可能已经
+	// 是 success/waiting_user，recordReplySummaryIfActive 在终态上不写。
+	if act.Purpose == "summary" {
+		return s.tasks.UpdateTaskResultSummary(ctx, task.ID, body)
+	}
 	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。运行期事件的
 	// 汇报（trigger != user_message）不得覆盖用户回合留下的任务结果摘要。
 	if act.RunID == "" && decision.TriggerKind == RouterTriggerUserMessage {
@@ -296,6 +305,16 @@ func (s *ActivityService) applyRouteAskUser(
 	// 提问就是「等人回话」：任务头与活动状态一致，停在待审核。
 	if decision.TriggerKind == RouterTriggerUserMessage && act.RunID == "" {
 		s.markTurnTaskWaitingUser(ctx, task.ID)
+	}
+	if s.cardNotifier != nil {
+		notice := CardNotice{
+			ID: "ask-" + act.ID, Kind: CardKindAsk,
+			RootID: task.RootID, TaskID: task.ID, TaskTitle: taskTitle(task), TaskNumber: task.TaskNumber,
+			QuestionID: act.ID, Prompt: question, Options: routeOptionLabels(action.Options),
+		}
+		if err := s.cardNotifier.NotifyCard(ctx, notice); err != nil {
+			log.Printf("[kanban/cards] ask %s: %v", notice.ID, err)
+		}
 	}
 	return nil
 }
@@ -503,6 +522,12 @@ func (s *ActivityService) markRouteReply(
 			purpose = "progress"
 		}
 	}
+	// purpose=summary 只对「Run 成功结算」这一轮成立。模型在别的回合写了 summary
+	// 也不该让整轮失败（那会把一条汇报连同回合一起丢掉）：降级成 progress，正文
+	// 照常发给用户，只是不写任务结果摘要。
+	if purpose == "summary" && decision.TriggerKind != RouterTriggerRunSettled {
+		purpose = "progress"
+	}
 	if err := s.activities.SetRouteFields(ctx, act.ID, decision.ID, userAct.ID, purpose, action.Seq); err != nil {
 		return nil, err
 	}
@@ -553,6 +578,18 @@ func cleanRouteOptions(options []string) []string {
 	for _, option := range options {
 		if trimmed := strings.TrimSpace(option); trimmed != "" {
 			out = append(out, "· "+trimmed)
+		}
+	}
+	return out
+}
+
+// routeOptionLabels 是卡片用的选项标签：与正文同源（同样去空、同样顺序），
+// 但不带正文里的项目符号 —— 卡片按钮自己就是图形，再叠一个「· 」只是噪声。
+func routeOptionLabels(options []string) []string {
+	out := make([]string, 0, len(options))
+	for _, option := range options {
+		if trimmed := strings.TrimSpace(option); trimmed != "" {
+			out = append(out, trimmed)
 		}
 	}
 	return out

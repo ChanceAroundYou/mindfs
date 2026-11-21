@@ -30,11 +30,17 @@ type SummaryCompressor interface {
 
 // runSummaryCompressTimeout 是单次压缩的上限。压缩是锦上添花，绝不能拖住
 // 已经结算完成的任务；超时就保持原文。
-const runSummaryCompressTimeout = 25 * time.Second
+//
+// 25s 在生产上过于乐观：本机 Router 用的 `ok` 别名首字节能到 178s，线上
+// #99 与 llmux #20 的卡片因此一直停在节点回复原文（那段黏连长文就是压缩被
+// 超时放弃的结果）。90s 与「一段总结最长 800 字」的生成量匹配，同时对慢模型
+// 仍留有余量；仍然失败就保持原文，不做无界等待。
+const runSummaryCompressTimeout = 90 * time.Second
 
 // runSummaryCompressMaxRunes 是压缩结果的接受上限。超过它说明模型不是在压缩
-// 而是在抄写（或跑题），这时保持原文更诚实。
-const runSummaryCompressMaxRunes = 600
+// 而是在抄写（或跑题），这时保持原文更诚实。800 与 Router 结算总结的字数上限
+// 同源：两条路径写出的「一段总结」遵守同一个长度契约。
+const runSummaryCompressMaxRunes = 800
 
 // runSummaryCompressNodeLimit 是喂给压缩器的节点条数上限（只取最近这些）。
 const runSummaryCompressNodeLimit = 12

@@ -11266,3 +11266,73 @@ groups:
       - 'server/internal/kanban/service_workflow_workspace.go:s.AcquireNodeWriter(ctx, plan.targetDir(), plan.target)'
       - 'server/internal/kanban/workflow_driver_loop.go:if err := s.autoMergeTaskWorktreeAfterRun(ctx, store, run); err != nil {'
       - 'server/internal/kanban/service_task_worktree_merge.go:func (s *Service) autoMergeTaskWorktreeAfterRun(ctx context.Context, store *TaskStore, run *WorkflowRun) error {'
+
+  - id: G-NX
+    title: Router 结算总结（purpose=summary）+ 提问卡排序 + 结算失败补偿
+    kind: fix
+    symptom: |
+      三个线上症状。① mindfs 任务 #99 与 llmux #20 的 `tasks.result_summary` 是节点回复原文：
+      #99 甚至是六段助手文本直接相接（正文逐块 `WriteString`，中间的工具调用没有留下段落
+      分隔），而结算后的异步压缩只有 25s 窗口，对首字节 178s 的慢模型必然超时，于是永远
+      停在原文。② llmux #20 的提问卡沉在回复下面：回复占位在回合开始就落库，中途产生的
+      提问卡创建时间更晚，而活动列表只按 `created_at` 升序。③ llmux #19 的任务最终成功跑完，
+      对话最后一行却是「出错重试」提示：`run_settled` 的汇报回合撞死线落 failed 后永不重放。
+    why: |
+      必须保留：① 总结由 Router 统一写 —— `router_say` 的 `purpose` 允许 `summary`，且只有
+      `brief.trigger.kind=run_settled` 的回合保留它；别的回合模型误写 `summary` 时在
+      `markRouteReply` 降级成 `progress`，汇报照发、只是不写任务结果摘要（一条措辞错误不能
+      毁掉整轮汇报）。`applyRouteSay` 遇到 `purpose=summary` 时无条件写
+      `tasks.result_summary` —— 任务这时可能已是 success/waiting_user，`recordReplySummaryIfActive`
+      在终态上不写，走那条兜底就永远写不进去。② 已完成的回复按完成时间（`updated_at`）排，
+      未完成的留在创建位置：否则回合中途产生的提问卡/审批卡会沉到回复下面，而让未完成回复
+      也跟着跳会破坏时间线稳定性。③ 结算补偿只补「Run 成功结算 + 可重试原因 + 窗口内」的
+      failed 事件，`turn_id` 加 `c:` 前缀既是新幂等键（否则命中旧回合的 decision 行、模型不会
+      再被调用）也是「只补一次」的闸；列表侧与 UPDATE 侧各判一次（前者避免它每拍占名额，
+      后者防竞态）。④ 助手文本块之间按工具/思考事件补空行，复用 `usecase.AppendResponseChunk`
+      的同一套前缀规则，不另立第二种拼接口径。
+    boundary: |
+      只覆盖 Router 自己拥有的 Run（`routerEventOriginForRun` 判定不变）：直连纯对话回合不写
+      任务结果摘要，也不产生 `run_settled`。结算补偿不改 `router_events` 的状态机语义，只是把
+      failed 行放回 pending 并换 turn_id；同一事件最多补一次，补完仍失败就停在 failed。压缩
+      窗口/字数上限只影响异步压缩这条锦上添花路径，超时仍保持原文。`purpose=summary` 不改变
+      活动行的可见性、ordinal 或 reply_to_id。
+    files:
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/activity_store_test.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/router_coordinate_turn_retry_test.go
+      - server/internal/kanban/router_event_store.go
+      - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/router_settle_compensation.go
+      - server/internal/kanban/router_settle_summary_test.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/service_activities_summary.go
+      - server/internal/api/appcontext_workflow.go
+      - server/internal/api/turn_text_blocks.go
+      - server/internal/api/turn_text_blocks_test.go
+      - server/internal/api/usecase/session_prompt_test.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_stream_events.go
+      - server/internal/api/usecase/session_subagent_stream.go
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-21-router-settle-summary-and-activity-order.md
+    tests:
+      - server/internal/kanban/router_settle_summary_test.go
+      - server/internal/kanban/activity_store_test.go
+      - server/internal/api/turn_text_blocks_test.go
+    anchors:
+      - 'server/internal/kanban/activity_route_apply.go:if purpose == "summary" && decision.TriggerKind != RouterTriggerRunSettled {'
+      - 'server/internal/kanban/activity_route_apply.go:if act.Purpose == "summary" {'
+      - 'server/internal/kanban/activity_store.go:const activityOrderBy = ` ORDER BY CASE WHEN type = ''agent_reply'' AND status = ''completed'' AND updated_at <> '''''
+      - 'server/internal/kanban/router_tools.go:case "chat", "progress", "summary":'
+      - 'server/internal/kanban/router_coordinate_turn.go:const routerEventTurnMaxAttempts = 3'
+      - 'server/internal/kanban/router_coordinate_turn.go:purpose != "progress" && purpose != "summary"'
+      - 'server/internal/kanban/router_coordinate.go:rs.requeueFailedSettleEvents(ctx, now)'
+      - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RequeueFailedEventForCompensation(ctx context.Context, eventID, reason string) (bool, error) {'
+      - 'server/internal/kanban/router_settle_compensation.go:func (rs *RouterService) requeueFailedSettleEvents(ctx context.Context, now time.Time) {'
+      - 'server/internal/kanban/router_prompt.md:18. **结算总结（`brief.trigger.kind=run_settled`）**'
+      - 'server/internal/kanban/service_activities_summary.go:const runSummaryCompressTimeout = 90 * time.Second'
+      - 'server/internal/api/turn_text_blocks.go:func appendTurnTextBlock(text, lastType string, updateType types.EventType, chunk string) (string, string) {'
+      - 'server/internal/api/usecase/session_subagent_stream.go:responseText = AppendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)'

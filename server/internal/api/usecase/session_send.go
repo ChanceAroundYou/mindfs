@@ -301,7 +301,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 					if strings.TrimSpace(chunk.MessageID) != "" {
 						turnAgentMessageID = strings.TrimSpace(chunk.MessageID)
 					}
-					responseText = appendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)
+					responseText = AppendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)
 					lastResponseUpdateType = string(update.Type)
 				}
 			} else if update.Type == agenttypes.EventTypeMessageDone {

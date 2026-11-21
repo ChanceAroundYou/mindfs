@@ -235,12 +235,20 @@ func (s *ActivityStore) ListIncludingHidden(ctx context.Context, taskID string) 
 	return s.list(ctx, taskID, true)
 }
 
+// 排序口径分两档：已完成的回复按**完成时间**排，其余行按创建时间排。
+// 回复占位在回合开始就落库，回合中途产生的提问卡/审批卡创建时间更晚，只看
+// 创建时间会让卡片沉到回复下面（线上 llmux 任务 #20）。未完成的回复没有可依
+// 的完成时间，仍留在创建位置，避免回合进行中的时间线跳动。时间列是 RFC3339Nano
+// 文本，字典序即时间序；updated_at 为空的历史行回落到 created_at。
+const activityOrderBy = ` ORDER BY CASE WHEN type = 'agent_reply' AND status = 'completed' AND updated_at <> ''
+		THEN updated_at ELSE created_at END ASC, rowid ASC`
+
 func (s *ActivityStore) list(ctx context.Context, taskID string, includeHidden bool) ([]*TaskActivity, error) {
 	query := `SELECT ` + activitySelectColumns + ` FROM task_activities WHERE task_id = ?`
 	if !includeHidden {
 		query += ` AND hidden = 0`
 	}
-	query += ` ORDER BY created_at ASC, rowid ASC`
+	query += activityOrderBy
 	rows, err := s.db.QueryContext(ctx, query, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err

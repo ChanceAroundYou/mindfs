@@ -86,7 +86,8 @@ func TestCoordinateEventTurnRetriesOnceAfterTimeout(t *testing.T) {
 	}
 }
 
-// 行为：重试有上限。连续超时两次后事件落 failed，不无限重跑烧模型预算。
+// 行为：重试有上限。连续超时三次后事件落 failed，不无限重跑烧模型预算。
+// 预算是 3 次回合（首轮 + 两次重试）——用户裁定「不要太吝啬次数」。
 func TestCoordinateEventTurnTimeoutRetryIsBounded(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
@@ -100,22 +101,24 @@ func TestCoordinateEventTurnTimeoutRetryIsBounded(t *testing.T) {
 	f.addUserActivity(t, "uact-retry-bound")
 	ev := f.addEvent(t, RouterEvent{Kind: RouterEventRunSettled, TurnID: "retry-bound", UserActivityID: "uact-retry-bound"})
 
-	if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
-		t.Fatalf("first consume: %v", err)
+	for want := 1; want <= 2; want++ {
+		if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
+			t.Fatalf("consume %d: %v", want, err)
+		}
+		waitForCondition(t, func() bool {
+			current := f.eventByID(t, "task-1", ev.ID)
+			return current.Status == RouterEventPending && current.Attempt == want
+		})
 	}
-	waitForCondition(t, func() bool {
-		current := f.eventByID(t, "task-1", ev.ID)
-		return current.Status == RouterEventPending && current.Attempt == 1
-	})
 	if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
-		t.Fatalf("second consume: %v", err)
+		t.Fatalf("final consume: %v", err)
 	}
 	failed := f.waitEvent(t, ev.ID, RouterEventFailed)
-	if failed.Attempt != 1 {
-		t.Fatalf("attempt = %d, want 1 (one retry only)", failed.Attempt)
+	if failed.Attempt != 2 {
+		t.Fatalf("attempt = %d, want 2 (two retries)", failed.Attempt)
 	}
-	if got := agent.callCount(); got != 2 {
-		t.Fatalf("agent calls = %d, want 2 (no third attempt)", got)
+	if got := agent.callCount(); got != 3 {
+		t.Fatalf("agent calls = %d, want 3 (no fourth attempt)", got)
 	}
 	if !strings.Contains(failed.LastError, "timed out") {
 		t.Fatalf("last_error = %q, want a readable timeout reason", failed.LastError)

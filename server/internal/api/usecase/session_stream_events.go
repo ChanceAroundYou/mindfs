@@ -201,7 +201,7 @@ func mergeBufferedToolCall(base, next agenttypes.ToolCall) agenttypes.ToolCall {
 	return merged
 }
 
-func appendResponseChunk(responseText, lastResponseUpdateType, chunk string) string {
+func AppendResponseChunk(responseText, lastResponseUpdateType, chunk string) string {
 	if responseText != "" &&
 		(lastResponseUpdateType == string(agenttypes.EventTypeThoughtChunk) ||
 			lastResponseUpdateType == string(agenttypes.EventTypeToolCall) ||

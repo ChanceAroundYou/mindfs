@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -178,6 +179,77 @@ func TestActivityStore_ListOrdersByCreatedAt(t *testing.T) {
 	}
 	if empty == nil || len(empty) != 0 {
 		t.Fatalf("List empty = %#v, want non-nil empty slice", empty)
+	}
+}
+
+// 线上 llmux 任务 #20：回复占位在回合开始就落库，用户中途被 ask_user 提问，
+// 提问卡却在时间线里沉到回复下面。卡片的位置应该按「这一轮什么时候真正说完」
+// 算：已完成的回复按完成时间（updated_at）排，其余行仍按创建时间排。
+func TestActivityStore_ListOrdersCompletedRepliesByCompletion(t *testing.T) {
+	store := setupActivityStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 21, 18, 0, 0, 0, time.UTC)
+
+	// 回复占位先创建，回合中途提问，回合结束时回复才完成。
+	if err := store.Insert(ctx, &TaskActivity{
+		ID: "reply-1", TaskID: "task-1", Type: ActivityTypeAgentReply, Role: RoleAgent,
+		Status: ActivityStatusCompleted, Body: "做完了", CreatedAt: base, UpdatedAt: base.Add(12 * time.Minute),
+	}); err != nil {
+		t.Fatalf("Insert reply-1: %v", err)
+	}
+	if err := store.Insert(ctx, &TaskActivity{
+		ID: "question-1", TaskID: "task-1", Type: ActivityTypeQuestion, Role: RoleAgent,
+		Status: ActivityStatusCompleted, PayloadJSON: "{}", CreatedAt: base.Add(8 * time.Minute),
+	}); err != nil {
+		t.Fatalf("Insert question-1: %v", err)
+	}
+	if err := store.Insert(ctx, &TaskActivity{
+		ID: "user-1", TaskID: "task-1", Type: ActivityTypeUserMessage, Role: RoleUser,
+		Body: "开始", CreatedAt: base.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("Insert user-1: %v", err)
+	}
+
+	list, err := store.List(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := make([]string, 0, len(list))
+	for _, item := range list {
+		got = append(got, item.ID)
+	}
+	want := []string{"user-1", "question-1", "reply-1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("List order = %v, want %v", got, want)
+	}
+}
+
+// 未完成的回复还是占位：它没有「完成时间」可依，必须留在创建位置，否则回合
+// 进行中的时间线会在每次更新时跳动。
+func TestActivityStore_ListKeepsPendingRepliesAtCreation(t *testing.T) {
+	store := setupActivityStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 21, 18, 0, 0, 0, time.UTC)
+
+	if err := store.Insert(ctx, &TaskActivity{
+		ID: "reply-1", TaskID: "task-1", Type: ActivityTypeAgentReply, Role: RoleAgent,
+		Status: ActivityStatusPending, CreatedAt: base, UpdatedAt: base.Add(30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("Insert reply-1: %v", err)
+	}
+	if err := store.Insert(ctx, &TaskActivity{
+		ID: "question-1", TaskID: "task-1", Type: ActivityTypeQuestion, Role: RoleAgent,
+		PayloadJSON: "{}", CreatedAt: base.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("Insert question-1: %v", err)
+	}
+
+	list, err := store.List(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 || list[0].ID != "reply-1" || list[1].ID != "question-1" {
+		t.Fatalf("List = %+v, want [reply-1, question-1]", list)
 	}
 }
 

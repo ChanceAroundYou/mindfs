@@ -467,3 +467,67 @@ func scanRouterEvent(row scanner) (RouterEvent, error) {
 	ev.UpdatedAt = parseRouterTime(updatedRaw)
 	return ev, nil
 }
+
+// routerSettleCompensationTurnPrefix 标记「已经做过一次结算补偿」的事件回合。
+// 它同时是补偿闸：带这个前缀的 turn_id 不会再被重排，所以同一个失败事件最多
+// 补一次，补偿再失败也不会每拍重烧模型预算。
+const routerSettleCompensationTurnPrefix = "c:"
+
+// ListFailedSettleEvents 返回 since 之后落 failed、还没有补偿过的结算事件。
+//
+// 只取 run_settled：其它事件（失败/停滞/审批）的说明是进度汇报，丢了不影响
+// 「任务成功跑完要有总结」这条契约，而结算事件丢了会让用户看不到这一轮的结果。
+func (s *RouterStore) ListFailedSettleEvents(ctx context.Context, since time.Time, limit int) ([]RouterEvent, error) {
+	if err := s.ensureRouterEventTable(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	// 与 PruneEvents 同一口径：created_at 的小数位长度不定，截到整秒再比。
+	cut := since.UTC().Format(routerCoordinateSQLTimeLayout)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+routerEventColumns+`
+FROM router_events
+WHERE status = ? AND kind = ? AND substr(turn_id, 1, 2) <> ? AND substr(created_at, 1, 19) >= ?
+ORDER BY created_at ASC, id ASC LIMIT ?`,
+		RouterEventFailed, RouterEventRunSettled, routerSettleCompensationTurnPrefix, cut, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRouterEvents(rows)
+}
+
+// RequeueFailedEventForCompensation 把已经落 failed 的结算事件重新放回队列。
+//
+// 与 RetryEvent 的区别：RetryEvent 服务同一回合内的瞬时失败（attempt+1，受
+// routerEventTurnMaxAttempts 约束）；这里面对的是几小时前就失败、重试预算早已
+// 用尽的事件，所以 attempt 归零重新计，turn_id 换成补偿专用键 —— 否则会命中旧
+// 回合 (task_id, turn_id) 的幂等行，模型根本不会再被调用一次。
+//
+// 返回 false 表示事件不在 failed 状态或已经补偿过，调用方不得再动它。
+func (s *RouterStore) RequeueFailedEventForCompensation(ctx context.Context, eventID, reason string) (bool, error) {
+	if err := s.ensureRouterEventTable(); err != nil {
+		return false, err
+	}
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return false, errors.New("router event id required")
+	}
+	now := time.Now().UTC().Format(routerTimeLayout)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE router_events
+SET status = ?, attempt = 0, turn_id = ? || turn_id, claimed_by = '', claimed_at = '',
+    completed_at = '', last_error = ?, updated_at = ?
+WHERE id = ? AND status = ? AND turn_id <> '' AND substr(turn_id, 1, 2) <> ?`,
+		RouterEventPending, routerSettleCompensationTurnPrefix, reason, now,
+		eventID, RouterEventFailed, routerSettleCompensationTurnPrefix)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}

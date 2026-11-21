@@ -242,7 +242,7 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		}
 		if update.Type == agenttypes.EventTypeMessageChunk {
 			if chunk, ok := update.Data.(agenttypes.MessageChunk); ok {
-				responseText = appendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)
+				responseText = AppendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)
 				lastResponseUpdateType = string(update.Type)
 			}
 		} else if update.Type == agenttypes.EventTypeThoughtChunk ||

@@ -213,6 +213,7 @@ func (rs *RouterService) coordinateTick() {
 	defer cancel()
 	now := time.Now().UTC()
 	rs.reclaimStaleEventClaims(ctx, now)
+	rs.requeueFailedSettleEvents(ctx, now)
 	rs.releaseDueQuotaHolds(ctx, now)
 	rs.pruneExpiredEvents(ctx, now)
 	if _, err := rs.service.scanRouterEventSourcesBounded(ctx, rs.rootID, now, routerCoordinateScanWindow); err != nil {
