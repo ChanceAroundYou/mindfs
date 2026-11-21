@@ -102,6 +102,9 @@ type ActivityService struct {
 	// turnWG 跟踪本服务派发的异步回合，供测试/停机收尾等待。nil 时不跟踪。
 	// 每轮的 Add 都在启动 goroutine 之前同步完成，Wait 不会与 Add 抢跑。
 	turnWG *sync.WaitGroup
+	// replySummarizer 是「直连回复落库后补一条压缩总结」的端口。工作流回复在
+	// settleWorkflowReply 里做同一件事；nil = 不压缩，界面显示原文。
+	replySummarizer func(ctx context.Context, store *TaskStore, activity *TaskActivity, raw string)
 }
 
 // SetCardNotifier installs the outbound card channel for waiting questions.

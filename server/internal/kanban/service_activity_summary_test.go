@@ -297,7 +297,7 @@ func TestBuildReplySummaryCompressPromptCarriesEvidence(t *testing.T) {
 	// 拿到，而不是读回复自己的 body（结算后那是空的）。
 	svc := NewService(testRoots{root: f.root})
 	userMessage := svc.resolveCompressUserMessage(ctx, f.tasks, act)
-	prompt, ok := buildReplySummaryCompressPrompt(ctx, f.tasks, loaded, userMessage, raw)
+	prompt, ok := buildSummaryCompressPrompt(ctx, f.tasks, loaded.TaskID, loaded, userMessage, raw)
 	if !ok {
 		t.Fatal("prompt build rejected a healthy run")
 	}

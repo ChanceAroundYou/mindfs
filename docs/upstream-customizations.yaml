@@ -9747,6 +9747,7 @@ groups:
       - server/internal/kanban/service_activities_summary.go
       - server/internal/kanban/service_activities.go
       - server/internal/kanban/service.go
+      - server/internal/kanban/activity_service.go
       - server/internal/kanban/activity_store.go
       - server/internal/kanban/task_store.go
       - server/internal/kanban/activity_route_apply.go
@@ -9763,6 +9764,7 @@ groups:
       - web/src/i18n/locales/en-US-tasks.ts
     tests:
       - server/internal/kanban/service_activity_summary_test.go
+      - server/internal/kanban/activity_direct_summary_test.go
       - server/internal/kanban/activity_task_status_test.go
       - server/internal/kanban/router_route_test.go
       - web/tests/run-timeline-readable.test.mjs
@@ -9772,8 +9774,12 @@ groups:
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) scheduleReplySummaryCompression('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) applyCompressedReplySummary('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) resolveCompressUserMessage('
-      - 'server/internal/kanban/service_activities_summary.go:activities.ReplaceSummaryIfUnchanged(ctx, activityID, raw, text)'
-      - 'server/internal/kanban/service_activities_summary.go:store.ReplaceTaskResultSummaryIfUnchanged(ctx, taskID, raw, text)'
+      - 'server/internal/kanban/service_activities_summary.go:func (s *Service) scheduleDirectReplySummaryCompression('
+      - 'server/internal/kanban/service_activities_summary.go:const directSummaryCompressMinRunes = 240'
+      - 'server/internal/kanban/service_activities_summary.go:activities.ReplaceSummaryIfUnchanged(ctx, target.activityID, target.wantSummary, text)'
+      - 'server/internal/kanban/service_activities_summary.go:store.ReplaceTaskResultSummaryIfUnchanged(ctx, target.taskID, target.wantTaskResult, text)'
+      - 'server/internal/kanban/activity_service.go:replySummarizer func(ctx context.Context, store *TaskStore, activity *TaskActivity, raw string)'
+      - 'server/internal/kanban/activity_service_turns.go:s.replySummarizer(ctx, s.tasks, agentAct, text)'
       - 'server/internal/kanban/service_activities_summary.go:const runSummaryCompressMaxRunes = 800'
       - 'server/internal/kanban/service_activities_summary.go:_, width := utf8.DecodeRuneInString(text[idx:])'
       - 'server/internal/kanban/service_activities.go:s.scheduleReplySummaryCompression(ctx, store, run, activity, raw)'

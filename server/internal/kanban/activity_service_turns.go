@@ -140,6 +140,20 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 	s.markTurnTaskWaitingUser(ctx, task.ID)
 	s.recordTurnResultSummary(ctx, task.ID, text)
 	_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCompleted, "")
+	// 正文已落库，再异步补短总结：直连回合没有 WorkflowRun，不在这条补，
+	// 任务详情就会把 Agent 原始输出整段摊开（工作流回复一直有压缩，直连没有）。
+	if s.replySummarizer != nil {
+		s.replySummarizer(ctx, s.tasks, agentAct, text)
+	}
+}
+
+// SetReplySummarizer 装配「直连回复落库后补短总结」的端口。装配期调用一次。
+func (s *ActivityService) SetReplySummarizer(
+	fn func(ctx context.Context, store *TaskStore, activity *TaskActivity, raw string),
+) {
+	if s != nil {
+		s.replySummarizer = fn
+	}
 }
 
 // recordTurnResultSummary 把这一轮的结果写回任务行，供看板卡片展示。直连回合

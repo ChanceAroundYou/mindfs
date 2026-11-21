@@ -53,6 +53,8 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetNodeAdmin(s)
 	// complete_task 的应用端口：证据门 + 收尾都在 Service 上。
 	svc.SetCompletionApplier(s)
+	// 直连回复落库后补短总结：与工作流结算压走同一套端口、同一套 CAS。
+	svc.SetReplySummarizer(s.scheduleDirectReplySummaryCompression)
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
 	return svc, nil
