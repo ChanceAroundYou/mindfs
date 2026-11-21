@@ -12306,9 +12306,8 @@ groups:
       - server/internal/controlsync/capture_pending_test.go
       - server/internal/api/controlproxy_mode_test.go
       - server/internal/api/http_control_sync_feed_test.go
-      - server/app/control_sync_test.go:func TestStartControlSyncPrimaryRequiresToken(t *testing.T) {
-      - server/app/control_sync_test.go:func TestStartControlSyncWrapRootForwardsOnlyOnEdge(t *testing.T) {
-      - cli/cmd/control_sync_test.go:func TestControlSyncOptionsReadsTokenFile(t *testing.T) {
+      - server/app/control_sync_test.go
+      - cli/cmd/control_sync_test.go
 
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
