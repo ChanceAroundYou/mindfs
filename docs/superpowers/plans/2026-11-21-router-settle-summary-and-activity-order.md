@@ -106,3 +106,27 @@ Plan 2026-11-21。用户报告三件事（`/refine`）：
 - 本机安装目录里的二进制（`v0.5.5-1200-172-gc9b8fe8c`，11:26 装入）已包含本组提交，但运行中的进程是 09:06 起的旧二进制 —— 重启后才会有「每轮自动总结 + 失败结算补偿」。
 - 新回合起由 Router 自己写 summary；上面的三条只是历史修补。
 
+
+### 补记：补偿回合只补回了汇报，没补回总结（2026-11-21，`d7ff17f2`）
+
+重启后第一拍按预期工作：llmux #19 的 failed `run_settled` 被打上 `c:` 前缀重放，
+模型重新回合成功、对话里落了可见汇报、事件 `done`、任务摘要也写进去了 —— 但写进去
+的是**模型选择的 purpose=progress 那条**，不是结算总结。也就是补偿只保证「有汇报」，
+不保证「有总结」；线上这条任务当时 `result_summary` 仍是节点原文拼接。
+
+规则收紧为「结算回合的最后一条 say 就是总结，除非模型显式标了 summary」：
+
+- `settledRunSucceeded`：只对**背后有真实成功结算 Run** 的 `run_settled` 决策生效
+  （`TriggerRef` 能查到 Run 且投影为 success）。运行期合成的 `run_settled` 汇报
+  （任务根本没有 Run）继续只算进度说明，不顶掉任务摘要 —— T8 行为 12 的契约不变。
+- `settleSummaryActionSeq`：有显式 `purpose=summary` 用它，否则取最后一条 say；
+  应用时把这条提升成 summary，其余汇报保持模型自己的分档。
+- 失败/停摆回合不进入这条路径，`markRouteReply` 的「非结算回合 summary 降级 progress」
+  也原样保留（两层各自有测试钉住）。
+
+测试：`router_settle_summary_test.go` 新增 `TestRunSettledProgressSayIsPromotedToSummary`、
+`TestExplicitSettleSummaryWinsOverLastSay`（含「显式 summary 之前的进度汇报保持
+progress」断言）、`TestFailedEventProgressSayDoesNotBecomeSummary`。三处变异各自打红后
+还原：禁用提升 → A 红；去掉「Run 真的存在且成功」这道闸 → 行为 12 红；兜底忽略显式
+summary → B 红。`go test ./server/internal/kanban/` 全绿（`TestRouterShadow…` 的 sqlite
+readonly 单跑即过，属既有 flake）。**未部署、未重启任何节点。**
