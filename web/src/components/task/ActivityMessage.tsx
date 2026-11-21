@@ -12,6 +12,7 @@ import { InlineTokenText } from "../common/InlineTokenText";
 import { ActivityTypeTag } from "./ActivityTypeTag";
 import { MarkdownViewer } from "../common/MarkdownViewer";
 import { TaskHumanGateCard } from "./TaskHumanGateCard";
+import { TaskWorkflowPublishCard } from "./TaskWorkflowPublishCard";
 import { TaskQuestionCard, type TaskQuestionAnswers } from "./TaskQuestionCard";
 
 export type ActivityMessageProps = {
@@ -32,6 +33,11 @@ export type ActivityMessageProps = {
   onGateDecision?: (
     activity: TaskActivity,
     decision: HumanGateDecision,
+    note?: string,
+  ) => void | Promise<void>;
+  onWorkflowPublishDecision?: (
+    activity: TaskActivity,
+    decision: "approve" | "reject",
     note?: string,
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
@@ -67,6 +73,7 @@ export function ActivityMessage({
   onOpenSession,
   onAnswerQuestion,
   onGateDecision,
+  onWorkflowPublishDecision,
   onPauseTask,
   onResumeTask,
 }: ActivityMessageProps) {
@@ -94,6 +101,20 @@ export function ActivityMessage({
         onDecision={onGateDecision}
         onPause={onPauseTask}
         onResume={onResumeTask}
+      />
+    );
+  }
+
+  // workflow_publish 是「把这张图固化进目录」的待批准卡（W3 T2）：批准才会写
+  // 控制面，所以和 human_gate 一样必须在 role 分支之前拦下。
+  if (activity.type === "workflow_publish") {
+    const waiting = normalizeActivityStatus(activity.status) === "waiting_user";
+    return (
+      <TaskWorkflowPublishCard
+        activity={activity}
+        deciding={promptDeciding}
+        error={waiting ? promptError : null}
+        onDecision={onWorkflowPublishDecision}
       />
     );
   }

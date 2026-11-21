@@ -32,6 +32,11 @@ export type ConversationMessagesProps = {
     decision: "approve" | "reject",
     note?: string,
   ) => void | Promise<void>;
+  onWorkflowPublishDecision?: (
+    activity: TaskActivity,
+    decision: "approve" | "reject",
+    note?: string,
+  ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
 };
@@ -53,6 +58,7 @@ export function ConversationMessages({
   onOpenSession,
   onAnswerQuestion,
   onGateDecision,
+  onWorkflowPublishDecision,
   onPauseTask,
   onResumeTask,
 }: ConversationMessagesProps) {
@@ -105,6 +111,7 @@ export function ConversationMessages({
     onOpenSession,
     onAnswerQuestion,
     onGateDecision,
+    onWorkflowPublishDecision,
     onPauseTask,
     onResumeTask,
   };
@@ -283,6 +290,7 @@ export function ConversationView({
         onOpenSession={onOpenSession}
         onAnswerQuestion={answerQuestion}
         onGateDecision={decideGate}
+        onWorkflowPublishDecision={decideWorkflowPublish}
         onPauseTask={onPauseTask}
         onResumeTask={onResumeTask}
       />
