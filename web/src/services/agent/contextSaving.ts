@@ -22,6 +22,12 @@ export type ContextSavingEntry = {
    * fall back to `blocks` there rather than claiming the request did nothing.
    */
   new_blocks: number;
+  /**
+   * Estimated size of the blocks this request committed, sticky excluded.
+   * 0 on rows written before 2026-11-21 — the block count is all those rows
+   * know.
+   */
+  new_tokens_est: number;
   tokens_est: number;
   skipped: number;
   archive_errors: number;
@@ -52,6 +58,15 @@ export type SessionContextSaving = {
   latest: ContextSavingEntry;
   requests: number;
   max_saved_bytes: number;
+  /**
+   * Running totals over the same retained window as `requests`: one turn's fold
+   * is small, a session's is what the user is paying to keep. Bytes are exact;
+   * the token total only covers `saved_token_samples` rows that carry the
+   * kernel's estimate (older rows have none, and bytes/4 is not a substitute).
+   */
+  total_saved_bytes: number;
+  total_saved_tokens: number;
+  saved_token_samples: number;
   /** Sum of the known rewrite samples; unknown ones are excluded. */
   total_rewrite_tokens: number;
   /** Number of known samples the total is made of. */

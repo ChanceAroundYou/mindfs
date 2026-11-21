@@ -179,6 +179,38 @@ func TestEngineNeverFoldsAnExistingPointer(t *testing.T) {
 	}
 }
 
+// The ledger has to answer two questions the block count cannot: how big the
+// block this turn committed was, and what the rest of the body was made of.
+func TestEngineReportsPlanCompositionAndNewTokens(t *testing.T) {
+	e := newTestEngine(t, &fakeAdapter{})
+	session := newTestSession()
+	body := []byte(`{"items":["` + bigItem() + `"]}`)
+	first, err := e.Fold(Request{Body: body, Session: session, Now: time.Now(), FoldAllowed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Plan.BodyBytes != len(body) {
+		t.Fatalf("plan body bytes = %d, want %d", first.Plan.BodyBytes, len(body))
+	}
+	if first.Plan.ResultBytes == 0 || first.Plan.CandidateBytes != first.Plan.ResultBytes {
+		t.Fatalf("plan = %+v, want the whole result to be a candidate", first.Plan)
+	}
+	if first.NewTokens == 0 || first.NewTokens != first.FoldedTokens {
+		t.Fatalf("new tokens = %d, folded tokens = %d; first fold is all new", first.NewTokens, first.FoldedTokens)
+	}
+
+	second, err := e.Fold(Request{Body: body, Session: session, Now: time.Now(), FoldAllowed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.NewTokens != 0 {
+		t.Fatalf("sticky-only fold reported %d new tokens", second.NewTokens)
+	}
+	if second.FoldedTokens == 0 || second.Plan.CandidateBytes == 0 {
+		t.Fatalf("sticky fold lost its composition: %+v", second)
+	}
+}
+
 func TestEngineFallsBackOnSpliceError(t *testing.T) {
 	e := newTestEngine(t, &fakeAdapter{spliceErr: true})
 	body := []byte(`{"items":["` + bigItem() + `"]}`)

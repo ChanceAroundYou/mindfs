@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"mindfs/server/internal/agent/fold"
 )
 
 // Log lines for the fold path. Kept apart from the Phase A observation logging
@@ -26,8 +28,8 @@ func logLiveCompactFold(token string, result foldResult, gate string, elapsed ti
 }
 
 func liveCompactFoldLine(token string, result foldResult, gate string, elapsed time.Duration) string {
-	return fmt.Sprintf("[live-compact] fold token=%s blocks=%d new_blocks=%d sticky_blocks=%d tokens_est=%d bytes=%d skipped=%d archive_errors=%d gate=%s fold_ms=%d",
-		ShortToken(token), result.foldedBlocks, result.newBlocks, result.stickyBlocks,
+	return fmt.Sprintf("[live-compact] fold token=%s blocks=%d new_blocks=%d new_tokens=%d sticky_blocks=%d tokens_est=%d bytes=%d skipped=%d archive_errors=%d gate=%s fold_ms=%d",
+		ShortToken(token), result.foldedBlocks, result.newBlocks, result.newTokens, result.stickyBlocks,
 		result.foldedTokens, result.foldedBytes, result.skipped, result.archiveFailures,
 		gate, elapsed.Milliseconds())
 }
@@ -43,8 +45,19 @@ func logLiveCompactProvider(token string, gate liveCompactGate, result foldResul
 }
 
 func liveCompactProviderLine(token string, gate liveCompactGate, result foldResult) string {
-	return fmt.Sprintf("[live-compact] provider=responses token=%s gate=%s est=%d growth=%d projected=%d candidates=%d cold=%t cold_reason=%s folded=%t blocks=%d new_blocks=%d sticky_blocks=%d saved_bytes=%d skipped=%d archive_errors=%d",
+	return fmt.Sprintf("[live-compact] provider=responses token=%s gate=%s est=%d growth=%d projected=%d candidates=%d cold=%t cold_reason=%s folded=%t blocks=%d new_blocks=%d new_tokens=%d sticky_blocks=%d saved_bytes=%d skipped=%d archive_errors=%d %s",
 		ShortToken(token), gate.decision, gate.est, gate.growth, gate.projected, gate.candidates,
-		gate.cold, gate.coldReason, result.changed(), result.foldedBlocks, result.newBlocks,
-		result.stickyBlocks, result.foldedBytes, result.skipped, result.archiveFailures)
+		gate.cold, gate.coldReason, result.changed(), result.foldedBlocks, result.newBlocks, result.newTokens,
+		result.stickyBlocks, result.foldedBytes, result.skipped, result.archiveFailures,
+		planStatsFields(gate.plan))
+}
+
+// planStatsFields renders the kernel planner's composition of a request body.
+// Both provider paths print it: for Codex this line is the only trace of what a
+// request was made of, and "candidates=0" alone cannot say whether the
+// protected tail or the content itself was the reason.
+func planStatsFields(stats fold.PlanStats) string {
+	return fmt.Sprintf("plan_body_bytes=%d plan_result_bytes=%d plan_protected_bytes=%d plan_nontext_bytes=%d plan_multipart_kept_bytes=%d plan_failed_small_bytes=%d plan_candidate_bytes=%d",
+		stats.BodyBytes, stats.ResultBytes, stats.ProtectedBytes, stats.NonTextBytes,
+		stats.MultiPartKeptBytes, stats.FailedSmallBytes, stats.CandidateBytes)
 }

@@ -51,6 +51,7 @@ func TestLedgerKeepsTokenEstimates(t *testing.T) {
 	entry.ReqTokensEst = 11800
 	entry.ForwardTokensEst = 11200
 	entry.NewBlocks = 2
+	entry.NewTokensEst = 3400
 	if err := store.Write("session-a", entry); err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +68,9 @@ func TestLedgerKeepsTokenEstimates(t *testing.T) {
 	}
 	if entries[0].NewBlocks != 2 {
 		t.Fatalf("new blocks = %d, want 2", entries[0].NewBlocks)
+	}
+	if entries[0].NewTokensEst != 3400 {
+		t.Fatalf("new tokens = %d, want 3400", entries[0].NewTokensEst)
 	}
 }
 
@@ -94,6 +98,9 @@ func TestLedgerReadsLegacyRowsWithoutTokenEstimates(t *testing.T) {
 	}
 	if entries[0].NewBlocks != 0 {
 		t.Fatalf("legacy row grew new_blocks: %+v", entries[0])
+	}
+	if entries[0].NewTokensEst != 0 {
+		t.Fatalf("legacy row grew new_tokens_est: %+v", entries[0])
 	}
 }
 
@@ -232,6 +239,36 @@ func TestLedgerSummary(t *testing.T) {
 	}
 	if got := SummarizeLedger(nil); got.Requests != 0 {
 		t.Fatalf("empty summary = %+v", got)
+	}
+}
+
+// The chip's headline is a running total over the retained window, not one
+// request: a session that folds a little every turn looks like nothing when
+// only the latest snapshot is visible. Rows written before the token estimates
+// existed contribute bytes but no tokens, and the sample count says how many
+// rows the token total is made of.
+func TestLedgerSummaryTotalsSavingsOverTheRetainedWindow(t *testing.T) {
+	first := ledgerTestEntry(100)
+	first.ReqTokensEst, first.ForwardTokensEst, first.NewTokensEst = 10000, 9600, 800
+	second := ledgerTestEntry(900)
+	second.ReqTokensEst, second.ForwardTokensEst, second.NewTokensEst = 11800, 11200, 3400
+	legacy := ledgerTestEntry(400)
+
+	summary := SummarizeLedger([]LedgerEntry{first, second, legacy})
+	if summary.TotalSavedBytes != 1400 {
+		t.Fatalf("total saved bytes = %d, want 1400", summary.TotalSavedBytes)
+	}
+	if summary.TotalSavedTokens != 1000 {
+		t.Fatalf("total saved tokens = %d, want 1000", summary.TotalSavedTokens)
+	}
+	if summary.SavedTokenSamples != 2 {
+		t.Fatalf("saved token samples = %d, want 2", summary.SavedTokenSamples)
+	}
+	if summary.Requests != 3 {
+		t.Fatalf("requests = %d, want 3 (the window the totals cover)", summary.Requests)
+	}
+	if summary.Latest.SavedBytes != 400 {
+		t.Fatalf("latest = %+v", summary.Latest)
 	}
 }
 

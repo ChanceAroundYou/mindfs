@@ -49,6 +49,11 @@ type liveCompactGate struct {
 	// decision had nothing to act on, which is also what keeps a PostCompact
 	// cold signal alive for the next request instead of spending it here.
 	candidates int
+	// plan is the kernel planner's composition of this body: how much tool
+	// output it could never fold and how much it was willing to. The analyzer's
+	// cand_* counters predate the current policy; these come from the planner
+	// that actually decided.
+	plan fold.PlanStats
 }
 
 // gateFromOutcome is the kernel outcome in the log's shape.
@@ -63,6 +68,7 @@ func gateFromOutcome(out fold.Outcome, growth int) liveCompactGate {
 		cold:            out.Cold,
 		coldReason:      out.ColdReason,
 		candidates:      out.Candidates,
+		plan:            out.Plan,
 	}
 	return gate
 }
@@ -78,6 +84,9 @@ type foldResult struct {
 	// them; newBlocks were committed by this request.
 	stickyBlocks int
 	newBlocks    int
+	// newTokens is the estimated size of the blocks this request committed,
+	// sticky ones excluded.
+	newTokens int
 	// skipped counts candidates that were eligible but not folded.
 	skipped int
 	// archiveFailures counts blocks left alone because the archive write
@@ -95,6 +104,7 @@ func foldResultFromOutcome(out fold.Outcome) foldResult {
 		foldedBytes:     out.FoldedBytes,
 		stickyBlocks:    out.StickyBlocks,
 		newBlocks:       out.NewBlocks,
+		newTokens:       out.NewTokens,
 		skipped:         out.Skipped,
 		archiveFailures: out.ArchiveFailures,
 	}

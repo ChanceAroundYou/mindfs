@@ -55,9 +55,14 @@ type LedgerEntry struct {
 	// them this request committed, so the UI can tell "folded something now"
 	// apart from "still carrying old folds". Rows written before 2026-11-21
 	// carry zero here; the reader must fall back to the total.
-	Blocks        int   `json:"blocks"`
-	NewBlocks     int   `json:"new_blocks"`
-	TokensEst     int   `json:"tokens_est"`
+	Blocks    int `json:"blocks"`
+	NewBlocks int `json:"new_blocks"`
+	TokensEst int `json:"tokens_est"`
+	// NewTokensEst is the estimated size of the blocks this request committed
+	// (sticky blocks excluded), so the chip can say "this turn folded 8.3k
+	// tokens" instead of only how many blocks moved. Rows written before
+	// 2026-11-21 carry zero here.
+	NewTokensEst  int   `json:"new_tokens_est"`
 	Skipped       int   `json:"skipped"`
 	ArchiveErrors int   `json:"archive_errors"`
 	FoldMS        int64 `json:"fold_ms"`
@@ -256,6 +261,15 @@ type ContextSaving struct {
 	// MaxSavedBytes is the largest single-request saving seen, which is the
 	// number that answers "how much is this worth at peak".
 	MaxSavedBytes int `json:"max_saved_bytes"`
+	// TotalSavedBytes and TotalSavedTokens are the running totals over the same
+	// retained window as Requests: one turn's fold is small, a session's is
+	// what the user is actually paying to keep. Bytes are exact; tokens are the
+	// kernel's estimate and only cover rows that carry one (SavedTokenSamples).
+	TotalSavedBytes  int `json:"total_saved_bytes"`
+	TotalSavedTokens int `json:"total_saved_tokens"`
+	// SavedTokenSamples counts the rows the token total is made of, so "0 saved"
+	// and "nothing measured" stay distinguishable.
+	SavedTokenSamples int `json:"saved_token_samples"`
 	// TotalRewriteTokens sums the known rewrite samples: what folding paid
 	// against what it saved. Unknown samples (-1) are excluded.
 	TotalRewriteTokens int `json:"total_rewrite_tokens"`
@@ -282,6 +296,13 @@ func SummarizeLedger(entries []LedgerEntry) ContextSaving {
 	for _, entry := range entries {
 		if entry.SavedBytes > summary.MaxSavedBytes {
 			summary.MaxSavedBytes = entry.SavedBytes
+		}
+		summary.TotalSavedBytes += entry.SavedBytes
+		// A row without the token estimates contributes nothing to the token
+		// total rather than an inferred count: bytes/4 is off by ~2x on CJK.
+		if entry.ReqTokensEst > 0 && entry.ForwardTokensEst > 0 {
+			summary.TotalSavedTokens += entry.ReqTokensEst - entry.ForwardTokensEst
+			summary.SavedTokenSamples++
 		}
 		// Legacy rows (written before usage_source existed) have an empty
 		// source; they are still counted when their rewrite is known.

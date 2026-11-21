@@ -32,7 +32,10 @@ func buildConv(specs [][]resultSpec) (*Conversation, []byte) {
 				NonText:      spec.nonText,
 			}
 			call++
-			if !spec.nonText {
+			// A non-text result may still carry text blocks (an image plus a
+			// caption); spec.bytes > 0 models that, and the planner keeps all of
+			// it because one pointer cannot replace the whole result.
+			if !spec.nonText || spec.bytes > 0 {
 				sizes := spec.sizes
 				if len(sizes) == 0 {
 					count := spec.parts

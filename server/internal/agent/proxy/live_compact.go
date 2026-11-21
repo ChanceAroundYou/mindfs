@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
 	"time"
+
+	"mindfs/server/internal/agent/fold"
 )
 
 // LiveCompactMode returns the effective mode for startup logging.
@@ -73,6 +76,11 @@ type liveCompactObservation struct {
 	// wouldFoldTokens is what this request's fold replaces (sticky plus new).
 	// In shadow it is the rehearsal's answer, not a rewrite.
 	wouldFoldTokens int
+	// plan is the kernel planner's composition of this body: how much tool
+	// output it could never fold and how much it was willing to. The cand_*
+	// counters above come from the older reference analyzer and do not model
+	// the current policy; these come from the planner that actually decided.
+	plan fold.PlanStats
 }
 
 // isMessagesPath reports whether a proxied path is the main Messages endpoint.
@@ -205,6 +213,7 @@ func (s *Server) analyzeLiveCompact(token string, turn *liveCompactTurn, body []
 		coldReason:            turn.gate.coldReason,
 		gateProjected:         turn.gate.projected,
 		wouldFoldTokens:       turn.gate.wouldFoldTokens,
+		plan:                  turn.gate.plan,
 	}
 	if final, totals, ready := turn.completeAnalysis(obs); ready {
 		s.logLiveCompact(token, final, totals)
@@ -236,20 +245,27 @@ func (s *Server) logLiveCompact(token string, obs liveCompactObservation, totals
 	if totals.Seen {
 		actual = totals.ContextTokens()
 	}
+	log.Print(liveCompactObservationLine(token, obs, totals, actual))
+}
+
+// liveCompactObservationLine is the line's text, split out so the format can be
+// pinned by a test without capturing the process log.
+func liveCompactObservationLine(token string, obs liveCompactObservation, totals usageTotals, actual int) string {
 	scope := "fold"
 	if !obs.foldAllowed {
 		scope = "observe-only"
 	}
-	log.Printf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d usg_in=%d usg_create=%d usg_read=%d cand_blocks=%d cand_error_blocks=%d cand_failed_blocks=%d cand_tokens=%d cand_bytes=%d skip_bytes_error=%d skip_bytes_multipart=%d skip_bytes_nontext=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d cold=%t cold_reason=%s would_fold_tokens=%d",
+	return fmt.Sprintf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d usg_in=%d usg_create=%d usg_read=%d cand_blocks=%d cand_error_blocks=%d cand_failed_blocks=%d cand_tokens=%d cand_bytes=%d skip_bytes_error=%d skip_bytes_multipart=%d skip_bytes_nontext=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d cold=%t cold_reason=%s would_fold_tokens=%d plan_body_bytes=%d plan_result_bytes=%d plan_protected_bytes=%d plan_nontext_bytes=%d plan_multipart_kept_bytes=%d plan_failed_small_bytes=%d plan_candidate_bytes=%d",
 		obs.mode, ShortToken(token), scope, obs.messages, obs.rounds, obs.closedRounds,
 		obs.keepRounds, obs.epoch, obs.estimatedInput, actual,
-		totals.InputTokens, totals.CacheCreationInputTokens, totals.CacheReadInputTokens,
-		obs.candidates, obs.errorCandidates,
+		totals.InputTokens, totals.CacheCreationInputTokens, totals.CacheReadInputTokens, obs.candidates, obs.errorCandidates,
 		obs.failedCandidates, obs.candidateTokens, obs.candidateBytes,
 		obs.skippedErrorBytes, obs.skippedMultiPartBytes, obs.skippedNonTextBytes,
 		obs.driftAt, obs.driftFromTail, obs.parseMillis,
 		obs.gateDecision, obs.gateEst, obs.gateGrowth, obs.gateProjected,
-		obs.cold, obs.coldReason, obs.wouldFoldTokens)
+		obs.cold, obs.coldReason, obs.wouldFoldTokens,
+		obs.plan.BodyBytes, obs.plan.ResultBytes, obs.plan.ProtectedBytes, obs.plan.NonTextBytes,
+		obs.plan.MultiPartKeptBytes, obs.plan.FailedSmallBytes, obs.plan.CandidateBytes)
 }
 
 // driftDistanceFromTail reports how far before the previous request's tail the

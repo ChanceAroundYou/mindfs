@@ -82,6 +82,10 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   // is all three disjoint counters; missing usage must not read as 0% hit.
   const cacheTotal = (latest?.usage_input || 0) + (latest?.usage_cache_creation || 0) + (latest?.usage_cache_read || 0);
   const cachePercent = latest && cacheTotal > 0 ? Math.round((latest.usage_cache_read * 100) / cacheTotal) : null;
+  // A relay (llmux) synthesizes usage and never reports cache writes. The hit
+  // rate and rewrite cost are then its estimates; a reader judging "was folding
+  // worth it" would otherwise trust numbers nobody measured.
+  const usageEstimated = !!latest && latest.usage_cache_read > 0 && latest.usage_cache_creation === 0;
   if (latest) {
     const savedText = tokenSized
       ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })
@@ -100,10 +104,26 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         t("contextSaving.badgeSaved"),
         savedPercent ? t("contextSaving.savedValue", { size: savedText, percent: savedPercent }) : savedText,
       ],
+    );
+    // One turn's 5% is invisible; the session total is what the user is paying
+    // to keep. The window is the retained ledger (summary.requests); with a
+    // single row the total equals this turn and a second line adds nothing.
+    if (saving && saving.requests > 1) {
+      const totalText = saving.saved_token_samples > 0
+        ? t("contextSaving.tokensValue", { count: formatTokens(saving.total_saved_tokens) })
+        : formatBytes(saving.total_saved_bytes);
+      rows.push([
+        t("contextSaving.badgeSavedTotal"),
+        t("contextSaving.savedTotalValue", { size: totalText, count: String(saving.requests) }),
+      ]);
+    }
+    rows.push(
       [
         t("contextSaving.badgeBlocks"),
         latest.new_blocks > 0
-          ? t("contextSaving.blocksSplitValue", { new: String(latest.new_blocks), total: String(latest.blocks) })
+          ? latest.new_tokens_est > 0
+            ? t("contextSaving.blocksSplitTokensValue", { new: String(latest.new_blocks), tokens: formatTokensEstimate(latest.new_tokens_est), total: String(latest.blocks) })
+            : t("contextSaving.blocksSplitValue", { new: String(latest.new_blocks), total: String(latest.blocks) })
           : t("contextSaving.blocksValue", { count: String(latest.blocks) }),
       ],
       [t("contextSaving.badgeTokens"), t("contextSaving.tokensValue", { count: formatTokensEstimate(latest.tokens_est) })],
@@ -180,6 +200,11 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
             </div>
           ))}
         </div>
+        {saving && usageEstimated ? (
+          <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
+            {t("contextSaving.estimateNote")}
+          </div>
+        ) : null}
         {saving && saving.usage_missing > 0 ? (
           <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "color-mix(in srgb, var(--accent-color) 8%, transparent)", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.6 }}>
             {t("contextSaving.usageMissing", { count: String(saving.usage_missing) })}

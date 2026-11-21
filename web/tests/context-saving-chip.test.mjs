@@ -20,18 +20,22 @@ const CONTEXT_SAVING_KEYS = [
   "description",
   "badgeRequest",
   "badgeSaved",
+  "badgeSavedTotal",
   "badgeBlocks",
   "badgeTokens",
   "badgeRewrite",
   "badgeCacheHit",
   "requestTokensValue",
   "savedValue",
+  "savedTotalValue",
   "blocksValue",
   "blocksSplitValue",
+  "blocksSplitTokensValue",
   "cacheHitValue",
   "tokensValue",
   "unknown",
   "empty",
+  "estimateNote",
   "rewriteTotal",
   "usageMissing",
 ];
@@ -87,7 +91,7 @@ test("详情面板先给结论：本轮请求从多大变成多大、省了百�
   assert.match(indicator, /t\("contextSaving\.savedValue", \{ size: savedText, percent: savedPercent \}\)/);
   assert.match(
     indicator,
-    /latest\.new_blocks > 0\s*\?\s*t\("contextSaving\.blocksSplitValue", \{ new: String\(latest\.new_blocks\), total: String\(latest\.blocks\) \}\)\s*:\s*t\("contextSaving\.blocksValue", \{ count: String\(latest\.blocks\) \}\)/,
+    /latest\.new_blocks > 0\s*\?\s*latest\.new_tokens_est > 0\s*\?\s*t\("contextSaving\.blocksSplitTokensValue", \{ new: String\(latest\.new_blocks\), tokens: formatTokensEstimate\(latest\.new_tokens_est\), total: String\(latest\.blocks\) \}\)\s*:\s*t\("contextSaving\.blocksSplitValue", \{ new: String\(latest\.new_blocks\), total: String\(latest\.blocks\) \}\)\s*:\s*t\("contextSaving\.blocksValue", \{ count: String\(latest\.blocks\) \}\)/,
   );
 });
 
@@ -175,6 +179,40 @@ test("折叠的代价与收益并列显示：本轮重算 token 与节省同屏"
   assert.match(indicator, /saving\.total_rewrite_tokens > 0/);
 });
 
+test("累计节省覆盖整个保留窗口，一次折叠时不多写一行", () => {
+  // 一轮折 5% 不起眼，整个会话累计起来才是用户在付的账。窗口就是汇总里的
+  // requests（最近 200 行）；只有一条记录时合计等于本轮，重复一行没有信息。
+  assert.match(indicator, /if \(saving && saving\.requests > 1\) \{/);
+  assert.match(
+    indicator,
+    /const totalText = saving\.saved_token_samples > 0\s*\?\s*t\("contextSaving\.tokensValue", \{ count: formatTokens\(saving\.total_saved_tokens\) \}\)\s*:\s*formatBytes\(saving\.total_saved_bytes\);/,
+  );
+  assert.match(indicator, /t\("contextSaving\.savedTotalValue", \{ size: totalText, count: String\(saving\.requests\) \}\)/);
+  assert.match(indicator, /saved_token_samples > 0/);
+});
+
+test("本轮新折报的是原文大小，不只是块数", () => {
+  // 「新折 2 块」可以是一千 token，也可以是十万；同一行必须给出大小。
+  assert.match(
+    indicator,
+    /latest\.new_tokens_est > 0\s*\?\s*t\("contextSaving\.blocksSplitTokensValue", \{ new: String\(latest\.new_blocks\), tokens: formatTokensEstimate\(latest\.new_tokens_est\), total: String\(latest\.blocks\) \}\)/,
+  );
+});
+
+test("中转合成的用量要标明是估算，不能当成上游真实计数", () => {
+  // llmux 中转永远不回报 cache_creation；命中率与重算都是它按上下文估算的，
+  // 读者据此判断「折叠值不值」时会得出错误结论。
+  assert.match(
+    indicator,
+    /const usageEstimated = !!latest && latest\.usage_cache_read > 0 && latest\.usage_cache_creation === 0;/,
+  );
+  assert.match(indicator, /saving && usageEstimated[\s\S]{0,400}t\("contextSaving\.estimateNote"\)/);
+  assert.match(service, /new_tokens_est: number;/);
+  assert.match(service, /total_saved_bytes: number;/);
+  assert.match(service, /total_saved_tokens: number;/);
+  assert.match(service, /saved_token_samples: number;/);
+});
+
 test("文案在两种语言里成对存在", () => {
   for (const key of CONTEXT_SAVING_KEYS) {
     assert.ok(zh.includes(`"contextSaving.${key}":`), `zh-CN missing contextSaving.${key}`);
@@ -189,5 +227,7 @@ test("文案在两种语言里成对存在", () => {
   assert.match(zh, /"contextSaving\.badgeTokens": "折叠原文"/);
   assert.match(en, /"contextSaving\.badgeTokens": "Folded source"/);
   assert.match(zh, /"contextSaving\.blocksSplitValue": "本轮新折 \{new\} 块 · 共 \{total\} 块"/);
+  assert.match(zh, /"contextSaving\.blocksSplitTokensValue": "本轮新折 \{new\} 块（\{tokens\} tokens）· 共 \{total\} 块"/);
+  assert.match(zh, /"contextSaving\.savedTotalValue": "\{size\}（最近 \{count\} 次折叠）"/);
   assert.match(zh, /"contextSaving\.cacheHitValue": "\{percent\}（\{tokens\} tokens）"/);
 });

@@ -40,6 +40,13 @@ type Outcome struct {
 	// them; NewBlocks were committed by this request.
 	StickyBlocks int
 	NewBlocks    int
+	// NewTokens is the estimated size of the blocks this request committed, so
+	// the ledger can report "this turn folded 8.3k tokens" instead of only how
+	// many blocks moved. Sticky blocks are not counted here.
+	NewTokens int
+	// Plan is the body composition the planner saw: which bytes could never be
+	// folded, and which it was willing to fold. Diagnostic only.
+	Plan PlanStats
 	// Skipped counts candidates that were eligible but not folded (decode
 	// failure, multi-part content, archive failure, pointer not smaller).
 	Skipped int
@@ -134,8 +141,9 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 		return out, nil
 	}
 
-	candidates := PlanCandidates(req.Body, conv, e.cfg, req.Session.Commits)
+	candidates, planStats := Plan(req.Body, conv, e.cfg, req.Session.Commits)
 	out.Candidates = len(candidates)
+	out.Plan = planStats
 	var skipped int
 	cold, coldReason := e.coldDecision(req)
 	out.Cold, out.ColdReason = cold, coldReason
@@ -273,6 +281,7 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 		} else {
 			replacements = append(replacements, newReplacements...)
 			out.NewBlocks += len(newReplacements)
+			out.NewTokens += newTokens
 			out.FoldedBlocks += len(newReplacements)
 			out.FoldedTokens += newTokens
 			out.FoldedBytes += newBytes

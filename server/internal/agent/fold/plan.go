@@ -57,14 +57,49 @@ type Candidate struct {
 //     request reported `no-backlog` while the context kept growing.
 //   - A failed result below min_block_tokens is left verbatim: folding it saves
 //     nothing and its text is often the whole diagnostic.
-func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commits) []Candidate {
+// PlanStats explains what a request body is made of, in wire bytes.
+//
+// The rail fires on total size, but the planner can only act on tool output
+// outside the protected tail. Without this split, "a 130 KB request folded
+// 15 KB" cannot be told apart from "the request had nothing foldable", and the
+// only lever anyone can reach for is a config guess.
+type PlanStats struct {
+	// BodyBytes is the whole request body.
+	BodyBytes int
+	// ResultBytes is the tool-output text the planner can see. It is smaller
+	// than BodyBytes by the system prompt, tool definitions, conversation text
+	// and JSON structure. Results that carry an image under-count: the image
+	// bytes belong to no text span.
+	ResultBytes int
+	// ProtectedBytes is tool output kept verbatim because its round is inside
+	// the keep window or the protected tail.
+	ProtectedBytes int
+	// NonTextBytes is tool output skipped whole for carrying an image, a
+	// document, or an unknown block.
+	NonTextBytes int
+	// MultiPartKeptBytes is the part of a multi-part result a pointer cannot
+	// replace: only the largest block is foldable.
+	MultiPartKeptBytes int
+	// FailedSmallBytes is failed output left verbatim below min_block_tokens.
+	FailedSmallBytes int
+	// CandidateBytes is what the planner is willing to fold, before the
+	// per-block savings floor and the event budget cut it further.
+	CandidateBytes int
+}
+
+// Plan returns the candidates and the composition of the body they were chosen
+// from. The statistics come from the same walk as eligibility, so they cannot
+// drift from the policy the way a second analyzer does.
+func Plan(body []byte, conv *Conversation, cfg Config, commits *Commits) ([]Candidate, PlanStats) {
+	stats := PlanStats{BodyBytes: len(body)}
 	if conv == nil {
-		return nil
+		return nil, stats
 	}
 	closed := make([]Round, 0, len(conv.Rounds))
 	for _, round := range conv.Rounds {
 		if len(round.Results) > 0 {
 			closed = append(closed, round)
+			stats.ResultBytes += roundBytes(round)
 		}
 	}
 	protectedFrom := len(closed) - cfg.KeepRounds
@@ -90,10 +125,12 @@ func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commit
 	for index, round := range closed {
 		if index < protectedFrom || roundOversized(round, cfg) {
 			eligible = append(eligible, round)
+			continue
 		}
+		stats.ProtectedBytes += roundBytes(round)
 	}
 	if len(eligible) == 0 {
-		return nil
+		return nil, stats
 	}
 
 	var candidates []Candidate
@@ -102,20 +139,28 @@ func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commit
 			// A result that carries an image/document/unknown block keeps its
 			// bytes (I3), even if it also has text.
 			if result.NonText || len(result.Parts) == 0 {
+				stats.NonTextBytes += result.Bytes
 				continue
 			}
 			// Narrow a multi-block result to the one block a pointer can replace.
+			part := result.Parts[0]
 			if len(result.Parts) > 1 {
-				result.Parts = []Span{largestPart(result.Parts)}
+				part = largestPart(result.Parts)
 			}
 			if result.Failed && result.Tokens < cfg.MinBlockTokens {
+				stats.FailedSmallBytes += result.Bytes
 				continue
 			}
+			width := part.End - part.Start
+			stats.CandidateBytes += width
+			if len(result.Parts) > 1 {
+				stats.MultiPartKeptBytes += result.Bytes - width
+			}
+			result.Parts = []Span{part}
 			variant := ""
 			if result.Failed {
 				variant = PointerVariantFailed
 			}
-			part := result.Parts[0]
 			key := NewPointerCacheKeyVariant(result.ToolName, result.InputSummary, variant, body[part.Start:part.End])
 			candidates = append(candidates, Candidate{
 				Result:    result,
@@ -124,7 +169,22 @@ func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commit
 			})
 		}
 	}
+	return candidates, stats
+}
+
+// PlanCandidates is Plan without the composition breakdown.
+func PlanCandidates(body []byte, conv *Conversation, cfg Config, commits *Commits) []Candidate {
+	candidates, _ := Plan(body, conv, cfg, commits)
 	return candidates
+}
+
+// roundBytes is the wire size of a round's tool output.
+func roundBytes(round Round) int {
+	total := 0
+	for _, result := range round.Results {
+		total += result.Bytes
+	}
+	return total
 }
 
 // largestPart returns the text block a pointer should replace. Widths are

@@ -48,6 +48,10 @@ func TestSessionFoldUsageReturnsLedgerRows(t *testing.T) {
 	if row.NewBlocks <= 0 || row.NewBlocks > row.Blocks {
 		t.Fatalf("new blocks = %d / total %d, want 0 < new <= total", row.NewBlocks, row.Blocks)
 	}
+	// 「本轮新折 N 块」说不清这一轮值多少；同一处要记下这些块合起来多大。
+	if row.NewTokensEst <= 0 || row.NewTokensEst > row.TokensEst {
+		t.Fatalf("new tokens = %d / total %d, want 0 < new <= total", row.NewTokensEst, row.TokensEst)
+	}
 	if got := s.SessionFoldUsage("never-seen"); len(got) != 0 {
 		t.Fatalf("unknown session rows = %d, want 0", len(got))
 	}
