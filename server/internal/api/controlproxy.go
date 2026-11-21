@@ -168,7 +168,9 @@ func (p *ControlProxy) writeFrozen(r *http.Request) bool {
 	if p.mode() == controlsync.ModeReconciling {
 		return true
 	}
-	domain, ok := controlsync.DomainOfControlPath(r.URL.Path)
+	// 与采集器共用同一张路径表：两边各维护一份，迟早出现「采集到了但冻结不认」
+	// 或反之的漂移。同步域之外的路径 ok=false，不按域冻结。
+	domain, ok := controlsync.DomainForPath(strings.TrimSpace(r.URL.Path))
 	if !ok {
 		return false
 	}

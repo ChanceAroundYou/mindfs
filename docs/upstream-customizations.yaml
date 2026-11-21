@@ -12171,6 +12171,16 @@ groups:
       把本地改动扔了）；**整页一个事务**（records / pending 清理 / 冲突 / 水位同生共死，
       中途断线从 `base_rev` 续传）；**整页都是旧 rev 时停下不再拉**（服务端不守 `since`
       契约时不能原地空转）。
+      ⑮ 同步运行时（`runtime.go` / `store_runtime.go` / `pending_pusher.go`）的六条必须保留：
+      **边缘在线时一律不采集**（`CaptureWhen`；在线写都转发给主节点，采了就是拿本机过期值去改副本，
+      之后交接与合并都会拿错祖先）；**交接跳过已有 pending 的 key**（否则拿副本旧值盖掉用户离线编辑，
+      应用过程包在 `Suppress` 里并刷新采集基线）；**交接失败不标记完成**（下一拍重试）且每次
+      模式翻转都允许重新交接；**settle 顺序不可换**（先算冻结域 → 再推 → 最后才判能不能回 online）；
+      **恢复闸门是「没有未裁决的卡」且「没有待回传」两条同时成立**（被拒的改动留在 pending 里重试，不宣布恢复）；
+      **冻结域过滤下推到取页**（`ListPendingExcept`；冻结域的 pending 会一直留在库里，取回来再筛会把
+      整页占满、别的域饿死，按域冻结就退化成整条通道停摆）。另：**判「没人动过」必须排除墓碑**
+      （`merge.go` 的 base_hash 分支要限 `!cur.Deleted`；删除也保留最后一次内容 hash，只看 hash 相等会把
+      「主节点删了、边缘改了」当成「没人动过」，把记录静默复活）。
       ⑭ 冲突查询与裁决（`conflicts.go` / `store_merge.go` / `store_pending.go`）的四条必须保留：
       **裁决先 CAS 占坑再写副作用**（`UPDATE ... WHERE resolved_at=''` 返回 0 行即「已裁决」，
       反过来两个并发选择会各写一遍，最终状态取决于谁后落盘）；**选 `local` / `payload` 后
@@ -12180,8 +12190,10 @@ groups:
       表达**，旧库靠 `ALTER TABLE ADD COLUMN` 迁移补齐 —— `CREATE TABLE IF NOT EXISTS`
       不会给已存在的表补列，升级后第一次读冲突卡就会 `no such column`。
     boundary: |
-      P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
-      （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
+      P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是**尚未接进启动链的内核与运行时**
+      （`Runtime` 已能自成一套，但 `server/app` 还没装配它，`control_sync.enabled` 缺省 false），
+      同样不部署、不重启任何节点。一处有意偏离 spec §6.1 规则 2 的字面措辞：hash 相等不再单独算「没人动过」，
+      墓碑被排除在外（见 ⑮）。
       后续波次（P1、P3–P8）在同组继续登记 files / tests / anchors。控制面之外的数据
       （项目/会话/任务/文件）不在同步范围内。
     files:
@@ -12238,6 +12250,15 @@ groups:
       - server/internal/api/http_control_sync_conflicts_test.go
       - server/internal/api/http.go
       - server/internal/api/http_routes.go
+      - server/internal/controlsync/feed.go
+      - server/internal/controlsync/pending_pusher.go
+      - server/internal/controlsync/push_client.go
+      - server/internal/controlsync/runtime.go
+      - server/internal/controlsync/store_changes.go
+      - server/internal/controlsync/store_migrate.go
+      - server/internal/controlsync/store_runtime.go
+      - server/internal/controlsync/token.go
+
     tests:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
@@ -12259,6 +12280,20 @@ groups:
       - server/internal/api/http_control_sync_push_test.go
       - server/internal/auth/store_sync_test.go
       - server/internal/kanban/workflow_store_sync_test.go
+      - server/internal/controlsync/feed_test.go
+      - server/internal/controlsync/pending_pusher_test.go
+      - server/internal/controlsync/push_client_test.go
+      - server/internal/controlsync/replicator_token_test.go
+      - server/internal/controlsync/runtime_test.go
+      - server/internal/controlsync/runtime_handover_test.go
+      - server/internal/controlsync/store_changes_test.go
+      - server/internal/controlsync/store_pending_test.go
+      - server/internal/controlsync/store_runtime_test.go
+      - server/internal/controlsync/token_test.go
+      - server/internal/controlsync/capture_pending_test.go
+      - server/internal/api/controlproxy_mode_test.go
+      - server/internal/api/http_control_sync_feed_test.go
+
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationNodeStores(t *testing.T) {'
@@ -12272,7 +12307,7 @@ groups:
       - 'server/internal/controlsync/store_test.go:func TestConcurrentOpenMigratesAndAllocatesDistinctRevs(t *testing.T) {'
       - 'server/internal/controlsync/store_test.go:// 事务回滚不留半条 change：records 与 changes 必须同生共死。'
       - 'server/internal/controlsync/store_test.go:func TestMigrateWaitsForAnotherWriter(t *testing.T) {'
-      - 'server/internal/controlsync/store.go:	migrateAttempts = 60'
+      - 'server/internal/controlsync/store_migrate.go:	migrateAttempts = 60'
       - 'server/internal/controlsync/domain.go:const mainAccountKey = "main"'
       - 'server/internal/controlsync/domain_prompts.go:func PromptRecordKey(account, text string) string {'
       - 'server/internal/controlsync/domain_pins.go:func PinRecordKey(account, kind, scope string) string {'
@@ -12310,7 +12345,7 @@ groups:
       - 'server/internal/api/http_control_sync_test.go:func TestControlSyncModeRetryFailureStillReturnsStatus(t *testing.T) {'
       - 'server/internal/controlsync/merge.go:	PushApplied  = "applied"'
       - 'server/internal/controlsync/merge.go:	applied, err := p.store.ChangeApplied(ctx, ch.ChangeID)'
-      - 'server/internal/controlsync/merge.go:	case exists && cur.Hash == ch.BaseHash:'
+      - 'server/internal/controlsync/merge.go:	case exists && !cur.Deleted && cur.Hash == ch.BaseHash:'
       - 'server/internal/controlsync/merge.go:func (p *Pusher) applyToDomain(ctx context.Context, domain Domain, rec Record) error {'
       - 'server/internal/controlsync/store_merge.go:func (s *Store) ApplyPushedChange(ctx context.Context, rec PushedRecord) (int64, error) {'
       - 'server/internal/controlsync/store_merge.go:ON CONFLICT(id) DO NOTHING`,'
@@ -12330,14 +12365,24 @@ groups:
       - 'server/internal/controlsync/reconcile_test.go:func TestReconcileResumesFromWatermarkAfterFailure(t *testing.T) {'
       - 'server/internal/controlsync/conflicts.go:func (r *Resolver) Resolve(ctx context.Context, id, choice string, payload []byte) error {'
       - 'server/internal/controlsync/conflicts.go:	if c.Domain == domainUsers {'
-      - 'server/internal/controlsync/conflicts.go:	if _, err := r.store.RebasePending(ctx, c.Domain, c.Key, c.RemoteHash,'
+      - 'server/internal/controlsync/conflicts.go:	if _, err := r.store.RebasePendingWithID(ctx, c.Domain, c.Key, c.RemoteHash,'
       - 'server/internal/controlsync/store_merge.go:func (s *Store) ClaimConflict(ctx context.Context, id, choice string) error {'
       - "server/internal/controlsync/store_merge.go:UPDATE conflicts SET resolved_at = ?, resolution = ? WHERE id = ? AND resolved_at = ''`,"
       - 'server/internal/controlsync/store_merge.go:func (s *Store) ListOpenConflicts(ctx context.Context) ([]Conflict, error) {'
-      - 'server/internal/controlsync/store.go:func (s *Store) ensureConflictDeleteColumns(ctx context.Context) error {'
+      - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureConflictDeleteColumns(ctx context.Context) error {'
       - 'server/internal/controlsync/store_pending.go:func (s *Store) RebasePending(ctx context.Context, domain, key, baseHash string, payload []byte, deleted bool) (bool, error) {'
       - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:	if h.ControlSyncConflicts != nil {'
+      - 'server/internal/controlsync/runtime.go:func (r *Runtime) Handover(ctx context.Context) error {'
+      - 'server/internal/controlsync/runtime.go:				if pending[rec.Key] {'
+      - 'server/internal/controlsync/runtime.go:	if err := r.Handover(ctx); err != nil {'
+      - 'server/internal/controlsync/runtime.go:	r.pending.SetFrozenDomains(frozen)'
+      - 'server/internal/controlsync/runtime.go:	if pending > 0 {'
+      - 'server/internal/controlsync/runtime.go:	deps.Capturer.CaptureWhen = func() bool { return rt.mode.Mode() != ModeOnline }'
+      - 'server/internal/controlsync/runtime.go:	rt.resolver.WithPendingIDs(cfg.InstanceID)'
+      - 'server/internal/controlsync/capture.go:	if c.CaptureWhen != nil && !c.CaptureWhen() {'
+      - 'server/internal/controlsync/store_pending.go:func (s *Store) ListPendingExcept(ctx context.Context, limit int, exclude map[string]bool) ([]PendingChange, error) {'
+      - 'server/internal/controlsync/pending_pusher.go:	pending, err := p.store.ListPendingExcept(ctx, p.batchSize, p.frozen)'
       - 'server/internal/controlsync/conflicts_test.go:func TestResolverListRedactsUsersPasswordHashes(t *testing.T) {'
       - 'server/internal/controlsync/conflicts_test.go:func TestResolveLocalRebasesPendingThenPushConverges(t *testing.T) {'
       - 'server/internal/controlsync/conflicts_test.go:func TestResolveConcurrentSingleWinner(t *testing.T) {'
