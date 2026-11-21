@@ -755,7 +755,7 @@ Expected: `✓ 全部通过`.
 | `cards.json` 只增不减 | 文件随任务数无限增长，每拍在锁里重写整份 | 按 TTL 清理（`Load` 与每拍投递各一次，`applying` 保留） | `TestPruneExpiredDropsOldCardsButKeepsLiveOnes`、`TestDeliverOnceDropsExpiredCards` |
 | 取消 ctx 不等于循环真的停了 | 测试 TempDir 清理与在飞的写盘互抢（`-race` 下 3/40 复现） | `Service.Wait()` 等两个循环退出，integration 测试 defer 里用 | 复跑 40/40 绿（变异：`Wait` 空实现 → 7/40 红） |
 
-变异验证：事件流中断与点击超时两处各自打红后还原；`Wait` 空实现 7/40 复现清理失败。门禁：`go test -count=1 ./...` 全绿（`kanban` 一条 `TestRouterRouteTimeoutWithoutActionsNotifiesAndFallsBack` 在全量并发下因 sqlite readonly 偶发红，单跑即绿，属既有 flake）；`go test -race ./server/internal/channels/feishu/` 绿；干净 worktree `make check-upstream` 全绿。
+变异验证：事件流中断与点击超时两处各自打红后还原；`Wait` 空实现 7/40 复现清理失败。门禁：干净 worktree（`86aeee6b`）`go build ./...` 成功、`go test -count=1 ./...` 34 个包全绿（0 FAIL）、`make check-upstream` 2279 delta / 350 组全绿；`go test -race ./server/internal/channels/feishu/` 绿。全量套件前三轮各红一条互不相同、且都不在本组改动范围内的用例（`kanban` 的 `TestRouterRouteTimeoutWithoutActionsNotifiesAndFallsBack` 撞 sqlite readonly、`agent/proxy` 的 `TestCodexHarnessOverrideSelectsItsOwnRail` 撞 TempDir 清理、`api` 的 `TestWorkflowTaskPauseResumeCancelMapToRunLifecycle` 撞异步状态未落定），每条单跑与 `-count=3..5` 重复均绿，属既有资源竞争型 flake。
 
 **复审后仍未处理（Minor，记录在案）**：
 
