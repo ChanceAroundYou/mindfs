@@ -142,14 +142,17 @@ func TestHygieneCompactionClearsHint(t *testing.T) {
 	seedActive(tracker, "root", "s1", 3)
 	tracker.Observe("root", "s1", "claude", 200000, true)
 	tracker.Observe("root", "s1", "claude", 200000, true)
-	view := tracker.Observe("root", "s1", "claude", 40000, true)
-	if view.State != HygieneStateNormal {
-		t.Fatalf("state after compaction = %q, want normal", view.State)
-	}
-	if view.TurnsSinceHint != 0 {
-		t.Fatalf("turns since hint = %d after compaction, want 0", view.TurnsSinceHint)
+	// 压缩之后上下文仍然很大（真实压缩只是把历史摘要掉）：清提示不能靠
+	// 「掉出大档」这条分支顺带完成，MarkCompacted 必须自己把状态清干净。
+	tracker.MarkCompacted("root", "s1")
+	view := tracker.Snapshot("root", "s1", "claude", 200000)
+	if view.TurnsSinceHint != 0 || view.TurnsUntilAutoCompact != 3 {
+		t.Fatalf("snapshot after compaction = %+v, want a fresh %d-turn window", view, hygieneConfig().HintTurns)
 	}
 	first := tracker.Observe("root", "s1", "claude", 200000, true)
+	if first.State != HygieneStateHint {
+		t.Fatalf("state after compaction = %q, want hint", first.State)
+	}
 	if first.TurnsSinceHint != 0 {
 		t.Fatalf("re-hinted session counted the arrival turn: %d", first.TurnsSinceHint)
 	}
