@@ -2,9 +2,11 @@ package feishu
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +302,36 @@ func TestServiceRoutesSupervisorMessageToIntake(t *testing.T) {
 	}
 	if h.creator.calls != 1 || h.creator.node != "fn" {
 		t.Fatalf("supervisor 回调没有接到入站服务：%+v", h.creator)
+	}
+}
+
+func TestRemoteTaskBodyMatchesTaskCreationContract(t *testing.T) {
+	body, err := RemoteTaskBody("root-1", "请处理", "飞书任务")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"root_id":           "root-1",
+		"input":             "请处理",
+		"name":              "飞书任务",
+		"workflow_choice":   "empty",
+		"start_immediately": true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("远端建任务载荷形状错误：got %#v want %#v", got, want)
+	}
+}
+
+func TestRemoteTaskCreationUsesSharedBody(t *testing.T) {
+	src, err := os.ReadFile("../../../app/feishu_intake.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "feishu.RemoteTaskBody(") {
+		t.Fatal("远端建任务必须走 RemoteTaskBody，避免载荷形状漂移")
 	}
 }

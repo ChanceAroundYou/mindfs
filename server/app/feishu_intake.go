@@ -140,9 +140,7 @@ func (c *feishuTaskCreator) Create(ctx context.Context, nodeID, rootID, input st
 	if target == "" {
 		return "", fmt.Errorf("feishu intake: unknown node %q", nodeID)
 	}
-	body, err := json.Marshal(map[string]any{
-		"root_id": rootID, "input": input, "name": feishuTaskName(input),
-	})
+	body, err := feishu.RemoteTaskBody(rootID, input, feishuTaskName(input))
 	if err != nil {
 		return "", err
 	}

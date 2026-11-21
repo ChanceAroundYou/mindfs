@@ -3,6 +3,7 @@ package feishu
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,6 +66,58 @@ func TestIntakeStorePersistsAndPrunesAtomically(t *testing.T) {
 	}
 	if again.Seen("om_1") || !again.Seen("om_2") {
 		t.Fatal("清理结果没有落盘")
+	}
+}
+
+func TestIntakeStoreEnforcesSevenDayRetentionOnProductionPaths(t *testing.T) {
+	base := t.TempDir()
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+
+	// Construction must drop records that were already stale on disk.
+	path := filepath.Join(base, "loaded", "intake.json")
+	seed, err := NewIntakeStore(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Record("om_stale", "task_stale", "created"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := NewIntakeStore(path, func() time.Time { return now.Add(8 * 24 * time.Hour) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Seen("om_stale") {
+		t.Fatal("加载时超过 7 天的消息仍算已见")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "om_stale") {
+		t.Fatal("加载时的清理没有落盘")
+	}
+
+	// A long-running process must expire records without a restart.
+	livePath := filepath.Join(base, "live", "intake.json")
+	live, err := NewIntakeStore(livePath, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := live.Record("om_old", "task_old", "created"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(8 * 24 * time.Hour)
+	if live.Seen("om_old") {
+		t.Fatal("生产 Seen 路径没有按 7 天保留期过期")
+	}
+	if err := live.Record("om_old", "task_replayed", "created"); err != nil {
+		t.Fatal(err)
+	}
+	if got := live.records["om_old"].TaskID; got != "task_replayed" {
+		t.Fatalf("过期 ID 重放应可重新建任务，TaskID=%q", got)
+	}
+	if !live.Seen("om_old") {
+		t.Fatal("重放后的消息应算已见")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,6 +22,27 @@ const intakeMaxInputBytes = 32 * 1024
 // layer only needs the resulting task id for the owner's receipt.
 type TaskCreator interface {
 	Create(ctx context.Context, nodeID, rootID, input string) (taskID string, err error)
+}
+
+// RemoteTaskBody is the JSON body for POST /api/tasks used by the Feishu
+// inbound creator. workflow_choice=empty routes the first user message through
+// the router instead of pinning a workflow; start_immediately=true makes the
+// task start in the same request. Keeping the shape here lets the channel tests
+// pin the wire contract without starting an HTTP server.
+func RemoteTaskBody(rootID, input, name string) ([]byte, error) {
+	return json.Marshal(struct {
+		RootID           string `json:"root_id"`
+		Input            string `json:"input"`
+		Name             string `json:"name"`
+		WorkflowChoice   string `json:"workflow_choice"`
+		StartImmediately bool   `json:"start_immediately"`
+	}{
+		RootID:           rootID,
+		Input:            input,
+		Name:             name,
+		WorkflowChoice:   "empty",
+		StartImmediately: true,
+	})
 }
 
 // IntakeService handles owner p2p text: dedup, rate limit, deterministic

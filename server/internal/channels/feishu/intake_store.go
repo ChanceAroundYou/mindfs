@@ -64,16 +64,25 @@ func NewIntakeStore(path string, now func() time.Time) (*IntakeStore, error) {
 			s.records[rec.MessageID] = rec
 		}
 	}
+	if s.pruneLocked() {
+		if err := s.saveLocked(); err != nil {
+			return nil, fmt.Errorf("feishu intake store %s: %w", path, err)
+		}
+	}
 	return s, nil
 }
 
-// Seen reports whether a message id has been recorded.
+// Seen reports whether a message id has been recorded within the dedup window.
 func (s *IntakeStore) Seen(messageID string) bool {
 	if messageID == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A process can stay up for weeks: expire lazily here so a replayed id
+	// older than the window is treated as new. Disk cleanup happens on the next
+	// Record/SetStatus (or the next startup), both of which save the pruned map.
+	s.pruneLocked()
 	_, ok := s.records[messageID]
 	return ok
 }
@@ -86,6 +95,7 @@ func (s *IntakeStore) Record(messageID, taskID, status string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked()
 	if _, ok := s.records[messageID]; ok {
 		return nil
 	}
@@ -106,6 +116,7 @@ func (s *IntakeStore) SetStatus(messageID, taskID, status string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked()
 	rec, ok := s.records[messageID]
 	if !ok {
 		rec = intakeRecord{MessageID: messageID, CreatedAt: s.now()}
@@ -124,10 +135,21 @@ func (s *IntakeStore) SetStatus(messageID, taskID, status string) error {
 	return nil
 }
 
-// Prune drops records older than the dedup window.
+// Prune drops records older than the dedup window and persists the result.
+// Production paths expire lazily inside Seen/Record/SetStatus; this explicit
+// entry point remains for callers that want to force a disk rewrite.
 func (s *IntakeStore) Prune() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.pruneLocked() {
+		return nil
+	}
+	return s.saveLocked()
+}
+
+// pruneLocked removes expired records from memory and reports whether anything
+// changed. Callers must hold s.mu.
+func (s *IntakeStore) pruneLocked() bool {
 	cutoff := s.now().Add(-intakeDedupTTL)
 	changed := false
 	for id, rec := range s.records {
@@ -136,10 +158,7 @@ func (s *IntakeStore) Prune() error {
 			changed = true
 		}
 	}
-	if changed {
-		return s.saveLocked()
-	}
-	return nil
+	return changed
 }
 
 func (s *IntakeStore) saveLocked() error {
