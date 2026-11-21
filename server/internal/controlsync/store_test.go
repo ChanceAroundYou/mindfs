@@ -227,6 +227,37 @@ func TestWriteRecordRollsBackWholeChange(t *testing.T) {
 	}
 }
 
+// 一次采集的 diff 必须整批落地：批里有一条不合法就一条都不写，
+// 否则边缘会拉到「部分变更」，而采集器的基线已经按全部写完推进。
+func TestWriteRecordsIsAllOrNothing(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	good := testRecord(t, "preferences", "a", `{"value":1}`)
+	bad := testRecord(t, "preferences", "", `{"value":2}`) // 空 key 不合法
+	if _, err := store.WriteRecords(ctx, []Record{good, bad}); err == nil {
+		t.Fatalf("批里带非法记录居然写成功了")
+	}
+	for _, table := range []string{"records", "changes"} {
+		var n int
+		if err := store.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Fatalf("%s = %d 行，整批失败后不该留下半条", table, n)
+		}
+	}
+	revs, err := store.WriteRecords(ctx, []Record{
+		testRecord(t, "preferences", "a", `{"value":1}`),
+		testRecord(t, "preferences", "b", `{"value":2}`),
+	})
+	if err != nil {
+		t.Fatalf("合法批次: %v", err)
+	}
+	if len(revs) != 2 || revs[1] != revs[0]+1 {
+		t.Fatalf("revs = %v，应为连续两条", revs)
+	}
+}
+
 func testRecord(t *testing.T, domain, key, payload string) Record {
 	t.Helper()
 	rec := Record{

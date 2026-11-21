@@ -184,28 +184,87 @@ func (s *Store) Close() error {
 // 两条写必须同生共死：只有 change 没有 record，边缘拉到的增量无处落地；
 // 只有 record 没有 change，边缘永远收不到这次改动。
 func (s *Store) WriteRecord(ctx context.Context, rec Record) (int64, error) {
-	if s == nil || s.db == nil {
-		return 0, errors.New("controlsync: store closed")
-	}
-	if err := ValidateRecord(rec); err != nil {
+	revs, err := s.WriteRecords(ctx, []Record{rec})
+	if err != nil {
 		return 0, err
 	}
-	if strings.TrimSpace(rec.Hash) == "" {
-		return 0, errors.New("controlsync: record hash required")
+	return revs[0], nil
+}
+
+// WriteRecords 在一个事务里写入一批记录，逐条分配 rev。
+//
+// 一次采集的 diff 必须整批落地：只写一半时，边缘会拉到「部分变更」，
+// 而采集器的基线已经按「全部写完」推进，剩下那半被跳过。
+func (s *Store) WriteRecords(ctx context.Context, recs []Record) ([]int64, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("controlsync: store closed")
+	}
+	for _, rec := range recs {
+		if err := ValidateRecord(rec); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(rec.Hash) == "" {
+			return nil, errors.New("controlsync: record hash required")
+		}
+	}
+	if len(recs) == 0 {
+		return nil, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("controlsync: begin: %w", err)
+		return nil, fmt.Errorf("controlsync: begin: %w", err)
 	}
-	rev, err := writeRecordTx(ctx, tx, rec, s.now)
-	if err != nil {
-		_ = tx.Rollback()
-		return 0, err
+	revs := make([]int64, 0, len(recs))
+	for _, rec := range recs {
+		rev, err := writeRecordTx(ctx, tx, rec, s.now)
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		revs = append(revs, rev)
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("controlsync: commit: %w", err)
+		return nil, fmt.Errorf("controlsync: commit: %w", err)
 	}
-	return rev, nil
+	return revs, nil
+}
+
+// RecordState 是一条记录在索引库里的当前状态（不含载荷）。
+type RecordState struct {
+	Hash    string
+	Deleted bool
+	Rev     int64
+}
+
+// RecordStates 读出某域全部记录的当前状态。采集器用它恢复基线：进程重启后
+// 不该把整库当成新数据重新发一遍。调用方只按 key 查表，所以返回 map。
+func (s *Store) RecordStates(ctx context.Context, domain string) (map[string]RecordState, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("controlsync: store closed")
+	}
+	if !domainPattern.MatchString(domain) {
+		return nil, fmt.Errorf("controlsync: invalid domain %q", domain)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT key, hash, deleted, rev FROM records WHERE domain = ?`, domain)
+	if err != nil {
+		return nil, fmt.Errorf("controlsync: read records: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]RecordState{}
+	for rows.Next() {
+		var key string
+		var state RecordState
+		var deleted int
+		if err := rows.Scan(&key, &state.Hash, &deleted, &state.Rev); err != nil {
+			return nil, fmt.Errorf("controlsync: scan record: %w", err)
+		}
+		state.Deleted = deleted != 0
+		out[key] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("controlsync: read records: %w", err)
+	}
+	return out, nil
 }
 
 // writeRecordTx 是 WriteRecord 的事务内核，单独拎出来是为了能用外层事务驱动，
