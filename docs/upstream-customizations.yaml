@@ -9593,7 +9593,7 @@ groups:
       - 'server/internal/api/http_routes.go:r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)'
       - 'server/app/server.go:liveCompactArchiveDir = filepath.Join(configDir, "context")'
       - 'web/src/services/agent/contextSaving.ts:/context-saving`, params, nodeId)'
-      - 'web/src/components/agent/useContextSaving.ts:if (wasPending && !pending) void refresh()'
+      - 'web/src/components/agent/useContextSaving.ts:if (!wasPending || pending) return;'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:if (!visible) return null;'
       - 'web/src/components/action/ComposerTopChips.tsx:{hasBoundSession && mode !== "command" ? ('
       - 'server/internal/agent/pool_context_saving_test.go:func TestNewPoolWithOptionsWiresArchiveDir('
