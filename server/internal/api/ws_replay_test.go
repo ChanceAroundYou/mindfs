@@ -6,6 +6,7 @@ import (
 	"time"
 
 	agenttypes "mindfs/server/internal/agent/types"
+	"mindfs/server/internal/notify"
 )
 
 func TestAppendReplyEventPrefixesTruncatedSummary(t *testing.T) {
@@ -13,7 +14,7 @@ func TestAppendReplyEventPrefixesTruncatedSummary(t *testing.T) {
 
 	hub.AppendReplyEvent("sess-1", StreamEvent{
 		Type: "message_chunk",
-		Data: agenttypes.MessageChunk{Content: strings.Repeat("前", 601) + "后"},
+		Data: agenttypes.MessageChunk{Content: strings.Repeat("前", notify.BodyMaxRunes+1) + "后"},
 	})
 
 	snapshot := hub.PendingSessionSnapshot("sess-1")
@@ -200,7 +201,7 @@ func TestReplayDrainStepIsNotAReset(t *testing.T) {
 // 也在收件人里；而「挂上来时这一轮早就结束了」的客户端，其「在回复」状态来自 pending
 // 列表（该会话已不在其中），不需要一条 done 来纠正。
 func TestDoneCarriesNoReplayReceipt(t *testing.T) {
-	resp := buildSessionDoneResponse("root", "sess-1", "req-1")
+	resp := buildSessionDoneResponse("root", "sess-1", "req-1", false)
 	if _, has := resp.Payload["replay"]; has {
 		t.Fatalf("done 载荷不得带 replay 标记（会重启 done→ready 自持环）: %#v", resp.Payload)
 	}

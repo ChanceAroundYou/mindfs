@@ -60,4 +60,26 @@ assert.deepEqual([...nodeFailedFrame], ["pc::go::child2"]);
 
 // 空键不许进表：空字符串会被当成「所有空键都是子会话」。
 assert.deepEqual([...carrySubSessionKeys([], [""], {})], []);
+
+// silent（工作流节点回合）与子会话同路：轮询侧必须把它记进同一张「完成不响」表。
+const pollSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "..", "src/app/useReplyingSessionPoll.ts"),
+  "utf8",
+);
+assert.match(
+  pollSource,
+  /item\?\.subSession === true \|\| item\?\.silent === true/,
+  "轮询把 silent 回合当普通完成 → 任务子步骤跑完仍会响提示音",
+);
+
+// WS 的 session.done 也必须认这个标记（后台推送被静默了，但前台页面的音效是另一条路径）。
+const wsSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "..", "src/app/realtimeWsHandlers.ts"),
+  "utf8",
+);
+assert.match(
+  wsSource,
+  /const isSilentTurn = \(payload as any\)\?\.silent === true;[\s\S]{0,120}playNotificationSound\("complete"\)/,
+  "session.done 路径必须跳过 silent 回合的提示音",
+);
 });

@@ -8,6 +8,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
+
+	"mindfs/server/internal/notify"
 )
 
 type StreamHub struct {
@@ -192,10 +194,11 @@ func (h *StreamHub) ListReplyingSessions() []ReplyingSessionState {
 			SessionKey:     sessionKey,
 			SessionTitle:   state.SessionTitle,
 			Status:         status,
-			Summary:        state.Summary,
+			Summary:        notify.PlainText(state.Summary, notify.BodyMaxRunes),
 			UpdatedAt:      state.UpdatedAt,
 			AwaitingAnswer: state.AwaitingAnswer,
 			SubSession:     state.SubSession,
+			Silent:         state.SilentCompletion,
 		})
 	}
 	// 排序是为了让这份列表**可比较**：ETag/304 与等待循环的签名都是「把列表内容拼成
@@ -358,8 +361,8 @@ func (h *StreamHub) BroadcastSessionStream(rootID, sessionKey string, event *Str
 // 「挂上来时这一轮早就结束了」的客户端不需要补偿：它的「在回复」状态取自 pending 列表，
 // 而那时该会话早已不在列表里。**注意 `notifySessionDone` 不是这条路径** —— 它是 Web Push
 // 推送，与 WS 的 pending 状态无关，别拿它当理由（写这段时错过一次）。
-func (h *StreamHub) broadcastSessionDone(rootID, sessionKey, requestID string) {
-	resp := buildSessionDoneResponse(rootID, sessionKey, requestID)
+func (h *StreamHub) broadcastSessionDone(rootID, sessionKey, requestID string, silent bool) {
+	resp := buildSessionDoneResponse(rootID, sessionKey, requestID, silent)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		h.SendToClient(clientID, resp)
 	}

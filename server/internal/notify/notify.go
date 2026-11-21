@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-const BodyMaxRunes = 600
-
 type Payload struct {
 	Type               string         `json:"type"`
 	Title              string         `json:"title"`
@@ -52,10 +50,11 @@ func BuildSessionPayload(in SessionNotification) Payload {
 	if kind == "session.ask_user" {
 		status = "需要输入"
 	}
-	root := firstNonEmpty(in.RootTitle, in.RootID, "MindFS")
+	// 标题不再带项目（root）前缀：用户要的是「哪条会话 · 什么状态」，
+	// 项目名在通知栏里只是重复的标识，还会混进 mindfs 之类的字样。
 	sessionTitle := firstNonEmpty(in.SessionTitle, "会话")
-	title := fmt.Sprintf("%s · %s · %s", root, sessionTitle, status)
-	body := truncateRunes(strings.TrimSpace(in.Summary), BodyMaxRunes)
+	title := fmt.Sprintf("%s · %s", sessionTitle, status)
+	body := PlainText(in.Summary, BodyMaxRunes)
 	tag := fmt.Sprintf("mindfs:%s:%s:%s", kind, in.RootID, in.SessionKey)
 	eventID := firstNonEmpty(in.EventID, tag)
 	if kind == "session.done" {
@@ -81,7 +80,6 @@ func BuildSessionPayload(in SessionNotification) Payload {
 }
 
 func BuildScheduledPayload(in ScheduledNotification) Payload {
-	root := firstNonEmpty(in.RootTitle, in.RootID, "MindFS")
 	status := "定时任务完成"
 	kind := "scheduled.done"
 	body := strings.TrimSpace(in.Summary)
@@ -101,8 +99,8 @@ func BuildScheduledPayload(in ScheduledNotification) Payload {
 	tag := fmt.Sprintf("mindfs:%s:%s:%s", kind, in.RootID, in.TaskID)
 	return Payload{
 		Type:               kind,
-		Title:              fmt.Sprintf("%s · %s", root, status),
-		Body:               truncateRunes(body, BodyMaxRunes),
+		Title:              status,
+		Body:               PlainText(body, BodyMaxRunes),
 		Tag:                tag,
 		URL:                sessionURL(in.RootID, in.SessionKey),
 		Icon:               "./pwa-192.png",

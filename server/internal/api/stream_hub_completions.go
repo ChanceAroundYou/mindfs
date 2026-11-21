@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"mindfs/server/internal/notify"
 )
 
 // SessionCompletion 是一条「这一轮已经跑完」的账本行。
@@ -23,6 +25,9 @@ type SessionCompletion struct {
 	CompletedAt  time.Time `json:"completedAt"`
 	// SubSession 为真时客户端只推进游标、不弹提醒（子任务完成不该打扰）。
 	SubSession bool `json:"subSession,omitempty"`
+	// Silent 为真时同样只推进游标、不弹提醒：这一轮是任务内部的一步（工作流节点回合
+	// / 看板里的内部续轮），对用户不是「我的对话有答复了」。
+	Silent bool `json:"silent,omitempty"`
 }
 
 const (
@@ -133,9 +138,12 @@ func (h *StreamHub) RecordCompletion(snapshot PendingSessionSnapshot, sessionKey
 		RootID:       snapshot.RootID,
 		SessionKey:   key,
 		SessionTitle: snapshot.SessionTitle,
-		Summary:      snapshot.Summary,
-		CompletedAt:  time.Now().UTC(),
-		SubSession:   snapshot.SubSession,
+		// 补发的正文与实时推送同规则：去 Markdown、留尾部 —— 否则同一条会话在
+		// 「当时在线」和「稍后补发」两条路上读起来完全不一样。
+		Summary:     notify.PlainText(snapshot.Summary, notify.BodyMaxRunes),
+		CompletedAt: time.Now().UTC(),
+		SubSession:  snapshot.SubSession,
+		Silent:      snapshot.SilentCompletion,
 	}, time.Now())
 }
 

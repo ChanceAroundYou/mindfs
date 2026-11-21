@@ -23,8 +23,8 @@ func testPayload() Payload {
 	eventID := "test:" + time.Now().UTC().Format(time.RFC3339Nano)
 	return Payload{
 		Type:  "test",
-		Title: "MindFS",
-		Body:  "通知已开启",
+		Title: "通知已开启",
+		Body:  "推送链路正常",
 		URL:   "./",
 		Data:  map[string]any{"type": "test", "eventId": eventID},
 	}

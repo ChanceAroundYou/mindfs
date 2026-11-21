@@ -40,6 +40,11 @@ final class ReplyStateMerger {
          * 子任务回来的那一下不该弹提醒 —— 用户要的是「活干完了」。
          */
         boolean subSession = false;
+        /**
+         * 任务内部的一步（工作流节点回合 / 看板内部续轮）。与 subSession 一样只跳过
+         * **完成提醒**，不影响「正在回复」指示灯与 awaiting 提醒。
+         */
+        boolean silent = false;
 
         Entry(String nodeId, String rootId, String sessionKey) {
             this.nodeId = safe(nodeId);

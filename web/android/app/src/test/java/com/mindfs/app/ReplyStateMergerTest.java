@@ -203,4 +203,18 @@ public class ReplyStateMergerTest {
         assertEquals(1, result.newlyCompleted.size());
         assertTrue(result.newlyCompleted.get(0).subSession);
     }
+
+    /** 工作流节点回合（silent）与子会话同理：完成边沿必须带着标记出来，服务层据此静默。 */
+    @Test
+    public void silentFlagSurvivesIntoCompletedEntry() {
+        ReplyStateMerger merger = new ReplyStateMerger(FRESHNESS_MILLIS);
+        ReplyStateMerger.Entry node = entry("home", "root-1", "node-1");
+        node.silent = true;
+        merger.applyNode("home", entries(node), 1_000L);
+
+        ReplyStateMerger.Result result = merger.applyNode("home", entries(), 2_000L);
+
+        assertEquals(1, result.newlyCompleted.size());
+        assertTrue(result.newlyCompleted.get(0).silent);
+    }
 }

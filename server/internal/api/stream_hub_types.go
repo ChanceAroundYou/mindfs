@@ -58,6 +58,12 @@ type SessionPendingState struct {
 	// 由 SetPendingReply 置位 —— 目前所有调用点都是 OnSubAgentAttached，也就是子会话。
 	// 顶层的用户留言走 SetPendingUserAt，永远是 false。
 	SubSession bool
+	// SilentCompletion 表示这一轮的完成**不对外提醒**（看板工作流节点等任务子步骤）。
+	// 与 SubSession 的区别：子会话是「父回合里派生出来的会话」，这里是一条正常会话，
+	// 只是这一轮属于任务的中间步骤，用户要的是任务收尾那一条提醒。
+	//
+	// 由 executeWorkflowTurn 在节点回合开始时显式置位；顶层对话与直连回合保持 false。
+	SilentCompletion bool
 }
 
 type ClientStreamStatus string
@@ -86,6 +92,9 @@ type ReplyingSessionState struct {
 	// SubSession 标记这条属于子会话（见 SessionPendingState.SubSession）。
 	// 客户端（安卓后台轮询、Web Push 消费端）据此跳过完成提醒。
 	SubSession bool `json:"subSession,omitempty"`
+	// Silent 标记这一轮属于任务子步骤（见 SessionPendingState.SilentCompletion）。
+	// 消费端同样只跳过完成提醒，不影响「正在回复」指示灯。
+	Silent bool `json:"silent,omitempty"`
 }
 
 type PendingSessionSnapshot struct {
@@ -95,6 +104,9 @@ type PendingSessionSnapshot struct {
 	UpdatedAt    time.Time
 	// SubSession 与 SessionPendingState.SubSession 同义；Web Push 用它跳过子会话完成。
 	SubSession bool
+	// SilentCompletion 与 SessionPendingState.SilentCompletion 同义；Web Push 用它跳过
+	// 任务子步骤（工作流节点）的完成提醒。
+	SilentCompletion bool
 }
 
 type replayStep struct {

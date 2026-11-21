@@ -183,6 +183,13 @@ func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionTy
 	return s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, userTurnID, "", false)
 }
 
+// MarkPendingCompletionSilent 把当前这一轮标成「完成不提醒」（见 StreamHub 同名方法）。
+// turnID 必须是 BroadcastSessionUserMessageAt / SetSessionPendingReply 的返回值 ——
+// 带身份才能保证标记落在本轮，不会把下一轮的提醒也关掉。
+func (s *AppContext) MarkPendingCompletionSilent(rootID, sessionKey, turnID string) {
+	s.GetSessionStreamHub().MarkPendingCompletionSilent(sessionKey, turnID)
+}
+
 func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event) {
 	event := updateToEvent(update)
 	if event == nil {

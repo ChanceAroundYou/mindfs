@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"mindfs/server/internal/api/usecase"
+	"mindfs/server/internal/notify"
 	"mindfs/server/internal/session"
 )
 
@@ -236,6 +237,10 @@ func (h *HTTPHandler) replyingCompletionsPayload(r *http.Request, items []Sessio
 		if item.SubSession {
 			payloadItem["subSession"] = true
 		}
+		if item.Silent {
+			// 任务内部步骤的回合（工作流节点）：客户端只推进状态，不弹完成提醒。
+			payloadItem["silent"] = true
+		}
 		payload = append(payload, payloadItem)
 	}
 	return payload
@@ -269,8 +274,10 @@ func (h *HTTPHandler) replyingSessionsPayload(r *http.Request, items []ReplyingS
 			"sessionKey":   item.SessionKey,
 			"sessionTitle": sessionTitle,
 			"status":       item.Status,
-			"summary":      item.Summary,
-			"updatedAt":    item.UpdatedAt,
+			// 客户端（安卓壳 / Web 轮询）直接拿这个字段当提醒正文显示，
+			// 与 Web Push、完成补发账本同规则：去 Markdown、过长留尾部。
+			"summary":   notify.PlainText(item.Summary, notify.BodyMaxRunes),
+			"updatedAt": item.UpdatedAt,
 		}
 		if item.AwaitingAnswer {
 			payloadItem["awaiting_answer"] = true
@@ -278,6 +285,10 @@ func (h *HTTPHandler) replyingSessionsPayload(r *http.Request, items []ReplyingS
 		if item.SubSession {
 			// 子会话标记：客户端用它跳过完成提醒（父会话那一轮还在跑）。
 			payloadItem["subSession"] = true
+		}
+		if item.Silent {
+			// 同上，但语义是「任务内部的一步」（工作流节点回合）。
+			payloadItem["silent"] = true
 		}
 		payload = append(payload, payloadItem)
 	}

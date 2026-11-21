@@ -113,7 +113,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
     const payload = readPushPayload(event);
-    const title = payload.title || "MindFS";
+    const title = payload.title || "提醒";
     const options = {
       body: payload.body || "",
       tag: payload.tag || undefined,
@@ -155,7 +155,7 @@ function readPushPayload(event) {
   try {
     return event.data.json() || {};
   } catch {
-    return { title: "MindFS", body: event.data.text() };
+    return { title: "提醒", body: event.data.text() };
   }
 }
 

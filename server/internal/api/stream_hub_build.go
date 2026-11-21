@@ -54,14 +54,20 @@ func buildSessionStreamBatchResponse(rootID, sessionKey string, events []StreamE
 	}
 }
 
-func buildSessionDoneResponse(rootID, sessionKey, requestID string) WSResponse {
+func buildSessionDoneResponse(rootID, sessionKey, requestID string, silent bool) WSResponse {
+	payload := map[string]any{
+		"root_id":     rootID,
+		"session_key": sessionKey,
+	}
+	// silent 只在为真时下发：这类回合是任务的内部步骤（工作流节点），前端据此不响提示音。
+	// 不写成恒 false 是为了保持老载荷形状（既有客户端与本包的载荷用例都只认两个键）。
+	if silent {
+		payload["silent"] = true
+	}
 	return WSResponse{
-		ID:   requestID,
-		Type: "session.done",
-		Payload: map[string]any{
-			"root_id":     rootID,
-			"session_key": sessionKey,
-		},
+		ID:      requestID,
+		Type:    "session.done",
+		Payload: payload,
 	}
 }
 

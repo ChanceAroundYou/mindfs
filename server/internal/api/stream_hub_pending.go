@@ -91,6 +91,8 @@ func (h *StreamHub) setPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 	state.NextEventSeq = 0
 	state.Summary = ""
 	state.UpdatedAt = state.User.Timestamp
+	// 顶层用户留言默认要提醒；工作流节点回合会在 OnStart 之后立刻改成 true。
+	state.SilentCompletion = false
 	h.clearReplayStatesForSessionLocked(sessionKey)
 	return &PendingUserMessage{
 		Agent:            state.User.Agent,
@@ -211,12 +213,34 @@ func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnap
 		return PendingSessionSnapshot{}
 	}
 	return PendingSessionSnapshot{
-		RootID:       state.RootID,
-		SessionTitle: state.SessionTitle,
-		Summary:      state.Summary,
-		UpdatedAt:    state.UpdatedAt,
-		SubSession:   state.SubSession,
+		RootID:           state.RootID,
+		SessionTitle:     state.SessionTitle,
+		Summary:          state.Summary,
+		UpdatedAt:        state.UpdatedAt,
+		SubSession:       state.SubSession,
+		SilentCompletion: state.SilentCompletion,
 	}
+}
+
+// MarkPendingCompletionSilent 把**当前这一轮**标记成「完成不提醒」。
+//
+// 身份由 turnID 把关：回合已经被新的一轮取代时直接忽略，避免把下一轮的提醒也关掉。
+// 用于看板工作流节点这类「任务的中间步骤」——它们跑完只该更新指示灯，
+// 不该在桌面/安卓上各弹一条「完成」。
+func (h *StreamHub) MarkPendingCompletionSilent(sessionKey, turnID string) {
+	if blank(sessionKey) {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state := h.pendingSessions[sessionKey]
+	if state == nil {
+		return
+	}
+	if id := strings.TrimSpace(turnID); id != "" && state.MindFSID != id {
+		return
+	}
+	state.SilentCompletion = true
 }
 
 // PendingTurnIDMatches 报告「带 turnID 的终结请求是否属于当前 pending 条目」。

@@ -18,11 +18,15 @@ public class ReplyCompletionFeedTest {
     }
 
     private static ReplyCompletionFeed.Completion done(long seq, String sessionKey) {
-        return new ReplyCompletionFeed.Completion(seq, "root-1", "Proj", sessionKey, sessionKey, "summary", false);
+        return new ReplyCompletionFeed.Completion(seq, "root-1", "Proj", sessionKey, sessionKey, "summary", false, false);
     }
 
     private static ReplyCompletionFeed.Completion sub(long seq, String sessionKey) {
-        return new ReplyCompletionFeed.Completion(seq, "root-1", "Proj", sessionKey, sessionKey, "summary", true);
+        return new ReplyCompletionFeed.Completion(seq, "root-1", "Proj", sessionKey, sessionKey, "summary", true, false);
+    }
+
+    private static ReplyCompletionFeed.Completion silent(long seq, String sessionKey) {
+        return new ReplyCompletionFeed.Completion(seq, "root-1", "Proj", sessionKey, sessionKey, "summary", false, true);
     }
 
     private static List<ReplyCompletionFeed.Completion> list(ReplyCompletionFeed.Completion... items) {
@@ -59,6 +63,15 @@ public class ReplyCompletionFeedTest {
     public void subSessionsAdvanceCursorWithoutAlerting() {
         ReplyCompletionFeed.Decision decision = ReplyCompletionFeed.decide(
             cursor("ep-1", 2L), "ep-1", 4L, list(done(3, "s-main"), sub(4, "s-child")));
+        assertEquals(1, decision.alerts.size());
+        assertEquals("s-main", decision.alerts.get(0).sessionKey);
+        assertEquals(4L, decision.next.seq);
+    }
+
+    @Test
+    public void silentCompletionsAdvanceCursorWithoutAlerting() {
+        ReplyCompletionFeed.Decision decision = ReplyCompletionFeed.decide(
+            cursor("ep-1", 2L), "ep-1", 4L, list(silent(3, "s-node"), done(4, "s-main")));
         assertEquals(1, decision.alerts.size());
         assertEquals("s-main", decision.alerts.get(0).sessionKey);
         assertEquals(4L, decision.next.seq);

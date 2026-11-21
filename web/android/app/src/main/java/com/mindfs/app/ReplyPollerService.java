@@ -1030,6 +1030,7 @@ public class ReplyPollerService extends Service {
                 entry.summary = safe(item.optString("summary", ""));
                 entry.updatedAt = safe(item.optString("updatedAt", ""));
                 entry.subSession = item.optBoolean("subSession", false);
+                entry.silent = item.optBoolean("silent", false);
                 String st = safe(item.optString("status", ""));
                 entry.replying = "replying".equalsIgnoreCase(st) || item.optBoolean("active", false);
                 entry.awaiting = item.optBoolean("awaiting_answer", false) || item.optBoolean("awaitingAnswer", false);
@@ -1053,7 +1054,8 @@ public class ReplyPollerService extends Service {
                     item.optString("sessionKey", ""),
                     item.optString("sessionTitle", ""),
                     item.optString("summary", ""),
-                    item.optBoolean("subSession", false)));
+                    item.optBoolean("subSession", false),
+                    item.optBoolean("silent", false)));
             }
         }
         return snapshot;
@@ -1182,7 +1184,7 @@ public class ReplyPollerService extends Service {
             //    主因。老服务端没有账本，只能退回边沿检测（在线时不漏、离线仍会丢）。
             if (snapshot == null || !snapshot.hasFeed) {
                 for (ReplyStateMerger.Entry entry : result.newlyCompleted) {
-                    if (entry.subSession) {
+                    if (entry.subSession || entry.silent) {
                         continue;
                     }
                     postAlert("done", entry);
@@ -1256,6 +1258,7 @@ public class ReplyPollerService extends Service {
             entry.summary = completion.summary;
             entry.replying = false;
             entry.subSession = completion.subSession;
+            entry.silent = completion.silent;
             postAlert("done", entry);
             vibrateReplyCompletion();
         }
@@ -1490,7 +1493,7 @@ public class ReplyPollerService extends Service {
                 return "「MindFS 任务提醒」渠道被关闭，请在系统设置里重新打开";
             }
         }
-        String error = showTestNotification(context, 799999, "MindFS 测试提醒", "通知链路正常。");
+        String error = showTestNotification(context, 799999, "测试提醒", "通知链路正常。");
         if (!error.isEmpty()) {
             return error;
         }
@@ -1500,7 +1503,7 @@ public class ReplyPollerService extends Service {
         final Context appContext = context.getApplicationContext();
         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
             ensureChannels(appContext);
-            showTestNotification(appContext, 799998, "MindFS 后台提醒测试", "这条是在你切到后台之后发出的。");
+            showTestNotification(appContext, 799998, "后台提醒测试", "这条是在你切到后台之后发出的。");
         }, 10000);
         return "";
     }
@@ -1542,7 +1545,7 @@ public class ReplyPollerService extends Service {
         if (!viewingKey.isEmpty() && viewingKey.equals(stateKey)) {
             return;
         }
-        String title = buildReplyTitlePrefix(state) + " · " + ("awaiting".equals(kind) ? "需要你回答" : "完成");
+        String title = buildReplyTitle(state, "awaiting".equals(kind) ? "需要你回答" : "完成");
         String text = state.summary;
         Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (launchIntent == null) launchIntent = new Intent(this, MainActivity.class);
@@ -1590,7 +1593,7 @@ public class ReplyPollerService extends Service {
         catch (RuntimeException ex) { notificationManager.notify(FOREGROUND_ID, n); }
     }
 
-    private Notification buildIdleNotification() { return buildIdleNotification("MindFS", null); }
+    private Notification buildIdleNotification() { return buildIdleNotification("后台同步", null); }
 
     // 常驻通知始终可点。恰好一个 live 会话时带上该会话的 extras，点一下直达；
     // 零个或多个时不替用户选，只把 App 拉起来。extras 只在 target 非空时写，
@@ -1613,7 +1616,7 @@ public class ReplyPollerService extends Service {
                 ? new Notification.Builder(this, SERVICE_CHANNEL_ID)
                 : new Notification.Builder(this);
         b.setSmallIcon(R.drawable.ic_stat_mindfs_notification)
-         .setContentTitle(text == null || text.isEmpty() ? "MindFS" : text)
+         .setContentTitle(text == null || text.isEmpty() ? "后台同步" : text)
          .setContentText("")
          .setContentIntent(contentIntent)
          .setOngoing(true)
@@ -1768,7 +1771,7 @@ public class ReplyPollerService extends Service {
 
         boolean hasReplying = hasReplyingState(states);
         String status = hasReplying ? "回复中" : "回复完成";
-        String title = "MindFS";
+        String title = "后台同步";
         // 回复中的汇总常驻通知不点名；回复完成的那次保留明细。
         String text = hasReplying
             ? (states.size() == 1 ? "有会话正在回复" : states.size() + " 个会话回复中")
@@ -1834,7 +1837,7 @@ public class ReplyPollerService extends Service {
             : new Notification.Builder(this);
         builder
             .setSmallIcon(R.drawable.ic_stat_mindfs_notification)
-            .setContentTitle("MindFS")
+            .setContentTitle("后台同步")
             .setContentText("正在检查后台回复")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -1866,7 +1869,7 @@ public class ReplyPollerService extends Service {
 
         // 回复中 = 常驻（会被抬成前台服务通知）：只写状态，不写项目/会话名。
         // 完成那次是一次性提醒，保留名称便于辨认。
-        String title = replying ? "MindFS" : buildReplyTitle(state, "完成");
+        String title = replying ? "回复中" : buildReplyTitle(state, "完成");
         String text = replying ? "有会话正在回复" : state.summary;
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             ? new Notification.Builder(this, replying ? VISIBLE_PROGRESS_CHANNEL_ID : ALERT_CHANNEL_ID)
@@ -1936,26 +1939,14 @@ public class ReplyPollerService extends Service {
         return builder.build();
     }
 
+    // 提醒标题不再带项目名 / MindFS 前缀：那只是重复的标识，还会把「mindfs」字样带进文案。
     private String buildReplyTitle(ReplyState state, String status) {
-        return buildReplyTitlePrefix(state) + " · " + status;
+        return buildReplyItemTitle(state, status);
     }
 
-    private String buildReplyTitlePrefix(ReplyState state) {
-        String root = state.rootTitle.isEmpty() ? state.rootId : state.rootTitle;
-        if (root.isEmpty()) {
-            root = "MindFS";
-        }
+    private String buildReplyTitle(ReplyStateMerger.Entry state, String status) {
         String title = state.sessionTitle.isEmpty() ? "会话" : state.sessionTitle;
-        return root + " · " + title;
-    }
-
-    private String buildReplyTitlePrefix(ReplyStateMerger.Entry state) {
-        String root = state.rootTitle.isEmpty() ? state.rootId : state.rootTitle;
-        if (root.isEmpty()) {
-            root = "MindFS";
-        }
-        String title = state.sessionTitle.isEmpty() ? "会话" : state.sessionTitle;
-        return root + " · " + title;
+        return title + " · " + status;
     }
 
     private String buildReplyItemTitle(ReplyState state, String status) {
@@ -1981,10 +1972,10 @@ public class ReplyPollerService extends Service {
         }
         NotificationChannel service = new NotificationChannel(
             SERVICE_CHANNEL_ID,
-            "MindFS 后台同步",
+            "后台同步",
             NotificationManager.IMPORTANCE_MIN
         );
-        service.setDescription("MindFS 后台回复检查");
+        service.setDescription("后台回复检查");
         service.setSound(null, null);
         service.enableVibration(false);
         service.setShowBadge(false);
@@ -1993,10 +1984,10 @@ public class ReplyPollerService extends Service {
 
         NotificationChannel alert = new NotificationChannel(
             ALERT_CHANNEL_ID,
-            "MindFS 任务提醒",
+            "任务提醒",
             NotificationManager.IMPORTANCE_HIGH
         );
-        alert.setDescription("MindFS 任务完成 / 需要回答提醒");
+        alert.setDescription("任务完成 / 需要回答提醒");
         alert.enableVibration(true);
         alert.setVibrationPattern(ALERT_VIBRATION_PATTERN);
         alert.setSound(

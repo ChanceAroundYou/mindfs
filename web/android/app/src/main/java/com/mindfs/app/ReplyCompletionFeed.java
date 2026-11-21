@@ -83,9 +83,11 @@ final class ReplyCompletionFeed {
         final String sessionTitle;
         final String summary;
         final boolean subSession;
+        /** 任务内部步骤（工作流节点回合）：与 subSession 一样静默，只跳过完成提醒。 */
+        final boolean silent;
 
         Completion(long seq, String rootId, String rootTitle, String sessionKey, String sessionTitle,
-                   String summary, boolean subSession) {
+                   String summary, boolean subSession, boolean silent) {
             this.seq = seq;
             this.rootId = safe(rootId);
             this.rootTitle = safe(rootTitle);
@@ -93,6 +95,7 @@ final class ReplyCompletionFeed {
             this.sessionTitle = safe(sessionTitle);
             this.summary = safe(summary);
             this.subSession = subSession;
+            this.silent = silent;
         }
     }
 
@@ -137,8 +140,8 @@ final class ReplyCompletionFeed {
                 if (completion == null || completion.seq <= base.seq || completion.seq > head) {
                     continue;
                 }
-                if (completion.subSession) {
-                    // 子任务跑完不提醒：父会话那一轮还在跑，用户要的是「活干完了」。
+                if (completion.subSession || completion.silent) {
+                    // 子任务 / 任务内部步骤跑完不提醒：用户要的是「活干完了」。
                     continue;
                 }
                 fresh.add(completion);

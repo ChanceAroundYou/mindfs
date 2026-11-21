@@ -12,6 +12,7 @@ import (
 	"time"
 
 	webpushgo "github.com/SherClockHolmes/webpush-go"
+	"mindfs/server/internal/notify"
 )
 
 func (s *Service) sendAsync(ctx context.Context, eventID string, payload Payload) {
@@ -69,7 +70,8 @@ func (s *Service) sendToItems(ctx context.Context, payload Payload, items []Subs
 		return err
 	}
 	if len(body) > maxPayloadBytes {
-		payload.Body = truncateRunes(payload.Body, 80)
+		// 超限时只收紧正文，且仍走同一套纯文本规则（去格式、留尾部）。
+		payload.Body = notify.PlainText(payload.Body, notify.FallbackBodyMaxRunes)
 		body, err = json.Marshal(payload)
 		if err != nil {
 			return err
@@ -160,16 +162,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func truncateRunes(value string, max int) string {
-	value = strings.TrimSpace(value)
-	if max <= 0 || value == "" {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= max {
-		return value
-	}
-	return "..." + string(runes[len(runes)-max:])
 }

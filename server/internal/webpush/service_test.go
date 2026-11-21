@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"mindfs/server/internal/notify"
 	"mindfs/server/internal/testutil"
 )
 
@@ -19,8 +20,8 @@ func TestBuildSessionPayloadMatchesNativeReplyShape(t *testing.T) {
 		EventID:      "event-1",
 	})
 
-	if payload.Title != "MindFS Repo · 实现通知 · 完成" {
-		t.Fatalf("title = %q", payload.Title)
+	if payload.Title != "实现通知 · 完成" {
+		t.Fatalf("title = %q（提醒不带项目/mindfs 前缀）", payload.Title)
 	}
 	if payload.Body != "已经完成 Web Push 接入" {
 		t.Fatalf("body = %q", payload.Body)
@@ -48,8 +49,8 @@ func TestBuildAskUserPayloadRequiresInteraction(t *testing.T) {
 		Summary:      "请选择实现方式",
 	})
 
-	if payload.Title != "root 1 · 计划 · 需要输入" {
-		t.Fatalf("title = %q", payload.Title)
+	if payload.Title != "计划 · 需要输入" {
+		t.Fatalf("title = %q（提醒不带项目/mindfs 前缀）", payload.Title)
 	}
 	if !payload.RequireInteraction || !payload.Renotify {
 		t.Fatalf("ask user payload should require interaction and renotify: %#v", payload)
@@ -61,7 +62,7 @@ func TestBuildAskUserPayloadRequiresInteraction(t *testing.T) {
 
 func TestBuildSessionPayloadPrefixesTruncatedBody(t *testing.T) {
 	payload := BuildSessionPayload(SessionNotification{
-		Summary: strings.Repeat("前", 601) + "后",
+		Summary: strings.Repeat("前", notify.BodyMaxRunes+1) + "后",
 	})
 
 	if !strings.HasPrefix(payload.Body, "...") {
@@ -81,7 +82,7 @@ func TestBuildScheduledPayload(t *testing.T) {
 		Summary:    "运行完成",
 		Success:    true,
 	})
-	if done.Title != "MindFS · 定时任务完成" || done.Body != "每日总结: 运行完成" {
+	if done.Title != "定时任务完成" || done.Body != "每日总结: 运行完成" {
 		t.Fatalf("done payload = %#v", done)
 	}
 
@@ -92,7 +93,7 @@ func TestBuildScheduledPayload(t *testing.T) {
 		Error:     "agent unavailable",
 		Success:   false,
 	})
-	if failed.Title != "MindFS · 定时任务失败" || failed.Body != "每日总结: agent unavailable" {
+	if failed.Title != "定时任务失败" || failed.Body != "每日总结: agent unavailable" {
 		t.Fatalf("failed payload = %#v", failed)
 	}
 	if !failed.RequireInteraction || !failed.Renotify {
@@ -102,7 +103,7 @@ func TestBuildScheduledPayload(t *testing.T) {
 
 func TestTestPayloadDoesNotUseFixedNotificationTag(t *testing.T) {
 	payload := testPayload()
-	if payload.Type != "test" || payload.Title != "MindFS" {
+	if payload.Type != "test" || payload.Title != "通知已开启" {
 		t.Fatalf("payload = %#v", payload)
 	}
 	if payload.Tag != "" {

@@ -117,7 +117,8 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     const okNodeIds = new Set<string>();
     const freshPending: Record<string, boolean> = {};
     const freshAwaiting: Record<string, boolean> = {};
-    // 本轮快照里显式标了 subSession 的键（子会话）。完成音要跳过它们。
+    // 本轮快照里显式标了 subSession（子会话）或 silent（任务内部步骤）的键。
+    // 两者的完成音都要跳过，所以合在一张「静默表」里。
     const freshSubSessions = new Set<string>();
     await Promise.all(
       nodeIds.map(async (nid) => {
@@ -135,7 +136,7 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
               if (item?.status === "replying" || item?.active === true) {
                 freshPending[scoped] = true;
               }
-              if (item?.subSession === true) {
+              if (item?.subSession === true || item?.silent === true) {
                 freshSubSessions.add(scoped);
               }
               // 「等回答」要记**显式 false**：轮询里出现过的会话 = 我们知道它的真实

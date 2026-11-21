@@ -29,6 +29,12 @@ type workflowTurnRequest struct {
 	FastService     string
 	PlanMode        bool
 	Prompt          string
+	// SilentCompletion 表示这一轮是任务的内部步骤：跑完只更新指示灯，不对外推
+	// 「完成」提醒（桌面 Web Push、安卓后台提醒、Web 提示音都不响）。
+	//
+	// 只有 RunWorkflowNode 置位。用户在这条会话里留言后的问答（SendWorkflowComment）
+	// 是给人看的答复，仍然提醒。
+	SilentCompletion bool
 	// OnToolCall 让调用方观察本轮流式上报的工具调用（含状态变化）。结果转换
 	// 用它数写操作，核对「声称完成」是否有事实支撑；可为 nil。
 	OnToolCall func(agenttypes.ToolCall)
@@ -161,6 +167,7 @@ func (s *AppContext) RunWorkflowNode(ctx context.Context, exec kanban.WorkflowNo
 		FastService:     normalizeFastServiceValue(profile.FastService),
 		PlanMode:        profile.PlanMode,
 		Prompt:          exec.Prompt,
+		SilentCompletion: true,
 	}
 	// 写操作证据只从本轮流式工具事件里数（不看转录正文）：修复轮产出的 done
 	// 要靠它核对「说做完了」与「真写过」是否一致。
@@ -293,6 +300,10 @@ func (s *AppContext) executeWorkflowTurn(ctx context.Context, req workflowTurnRe
 			turnMu.Lock()
 			turnIDs[sessionKey] = id
 			turnMu.Unlock()
+			if req.SilentCompletion {
+				// 必须在置入 pending 之后立刻标：收尾时 notifySessionDone / 完成账本都读这一位。
+				s.MarkPendingCompletionSilent(req.RootID, sessionKey, id)
+			}
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()

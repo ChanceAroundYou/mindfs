@@ -102,6 +102,44 @@ func TestShouldNotifySessionDoneSkipsSubSessions(t *testing.T) {
 	}
 }
 
+func TestShouldNotifySessionDoneSkipsSilentCompletions(t *testing.T) {
+	if shouldNotifySessionDone("req-1", PendingSessionSnapshot{SilentCompletion: true}) {
+		t.Fatal("工作流节点回合（silent）完成不该推通知")
+	}
+	if !shouldNotifySessionDone("req-1", PendingSessionSnapshot{SilentCompletion: false}) {
+		t.Fatal("普通回合完成必须推通知")
+	}
+}
+
+func TestMarkPendingCompletionSilentBindsToCurrentTurn(t *testing.T) {
+	hub := NewStreamHub()
+	_, turnID := hub.SetPendingUserAt("root-1", "sess-1", "S", "claude", "m", "M", "mode", "effort", "fast", false, "hi", time.Now().UTC())
+
+	hub.MarkPendingCompletionSilent("sess-1", "another-turn")
+	if snapshot := hub.PendingSessionSnapshot("sess-1"); snapshot.SilentCompletion {
+		t.Fatal("不是当前回合的 silent 标记必须被拒绝")
+	}
+
+	hub.MarkPendingCompletionSilent("sess-1", turnID)
+	if snapshot := hub.PendingSessionSnapshot("sess-1"); !snapshot.SilentCompletion {
+		t.Fatal("当前回合的 silent 标记必须落到 pending 上")
+	}
+	if items := hub.ListReplyingSessions(); len(items) != 1 || !items[0].Silent {
+		t.Fatalf("ListReplyingSessions 必须把 silent 带出去（长轮询客户端靠它静默），得到 %+v", items)
+	}
+}
+
+func TestBuildSessionDoneResponseCarriesSilentFlag(t *testing.T) {
+	silent := buildSessionDoneResponse("root-1", "sess-1", "req-1", true)
+	if silent.Payload["silent"] != true {
+		t.Fatalf("silent 回合的 done 帧必须带 silent=true，得到 %#v", silent.Payload)
+	}
+	loud := buildSessionDoneResponse("root-1", "sess-1", "req-1", false)
+	if _, ok := loud.Payload["silent"]; ok {
+		t.Fatalf("普通回合的 done 帧不应带 silent 键，得到 %#v", loud.Payload)
+	}
+}
+
 func TestReplyingSessionsPayloadExposesSubSessionFlag(t *testing.T) {
 	h, hub := newReplyingWaitTestHandler(t)
 	hub.SetPendingReply("root-1", "child-1", "Child")
