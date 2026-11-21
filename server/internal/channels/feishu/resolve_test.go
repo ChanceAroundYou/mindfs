@@ -212,6 +212,52 @@ func TestResolveReturnsCatalogError(t *testing.T) {
 	}
 }
 
+func TestResolveUniqueNameBeatsDefaultRoot(t *testing.T) {
+	cat := &fakeProjectCatalog{refs: []ProjectRef{
+		{NodeID: "home", RootID: "default", Name: "default"},
+		{NodeID: "fn", RootID: "docs", Name: "docs · fn"},
+	}}
+	got, err := ResolveProject("请修 docs 的脚本", "oc_11", nil, cat, "default", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ProjectRef{NodeID: "fn", RootID: "docs", Name: "docs · fn"}
+	if got.Kind != "project" || got.Project != want {
+		t.Fatalf("named project must beat default root: %+v, want %+v", got, want)
+	}
+}
+
+func TestResolveDefaultRootWinsWhenNoNameMatches(t *testing.T) {
+	cat := &fakeProjectCatalog{refs: []ProjectRef{
+		{NodeID: "home", RootID: "default", Name: "default"},
+		{NodeID: "fn", RootID: "docs", Name: "docs · fn"},
+	}}
+	got, err := ResolveProject("现在几点", "oc_12", nil, cat, "default", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ProjectRef{NodeID: "home", RootID: "default", Name: "default"}
+	if got.Kind != "project" || got.Project != want {
+		t.Fatalf("existing default must win when no name matches: %+v, want %+v", got, want)
+	}
+}
+
+func TestResolveDefaultRootWinsWhenNameIsAmbiguous(t *testing.T) {
+	cat := &fakeProjectCatalog{refs: []ProjectRef{
+		{NodeID: "home", RootID: "default", Name: "default"},
+		{NodeID: "fn", RootID: "docs", Name: "docs · fn"},
+		{NodeID: "pc", RootID: "docs", Name: "docs · pc"},
+	}}
+	got, err := ResolveProject("看看 docs", "oc_13", nil, cat, "default", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ProjectRef{NodeID: "home", RootID: "default", Name: "default"}
+	if got.Kind != "project" || got.Project != want {
+		t.Fatalf("existing default must beat an ambiguous picker: %+v, want %+v", got, want)
+	}
+}
+
 func TestResolveBindingDoesNotNeedCatalog(t *testing.T) {
 	got, err := ResolveProject("现在几点", "oc_10",
 		[]Binding{{ChatID: "oc_10", NodeID: "fn", RootID: "docs"}}, nil, "", 5)
