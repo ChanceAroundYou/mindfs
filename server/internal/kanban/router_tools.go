@@ -95,6 +95,7 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.deliverTool(),
 		e.answerTool(),
 		e.completeTaskTool(),
+		e.recordAcceptanceTool(),
 	}
 	// 监管工具只要实例开着监管就出现，与本轮有没有观测块无关（S1/S2）。
 	return append(tools, e.supervisionTools()...)
@@ -383,6 +384,14 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			switch brief.Task.Status {
 			case StatusSuccess, StatusFail, StatusCancelled:
 				return fmt.Errorf("complete_task is not allowed on a %s task", brief.Task.Status)
+			}
+		case RouterActionRecordAcceptance:
+			if _, err := normalizeAcceptanceItems(action.Items); err != nil {
+				return err
+			}
+			switch brief.Task.Status {
+			case StatusSuccess, StatusFail, StatusCancelled:
+				return fmt.Errorf("record_acceptance is not allowed on a %s task", brief.Task.Status)
 			}
 		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
 			RouterActionRetryDirect, RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask:

@@ -57,6 +57,7 @@ var taskOwnedTables = []struct {
 	{"workflow_runs", `SELECT COUNT(*) FROM workflow_runs WHERE task_id = 'task-gone'`, `SELECT COUNT(*) FROM workflow_runs WHERE task_id = 'task-kept'`},
 	{"workflow_node_runs", `SELECT COUNT(*) FROM workflow_node_runs WHERE run_id LIKE 'run-gone%'`, `SELECT COUNT(*) FROM workflow_node_runs WHERE run_id LIKE 'run-kept%'`},
 	{"workflow_run_events", `SELECT COUNT(*) FROM workflow_run_events WHERE run_id LIKE 'run-gone%'`, `SELECT COUNT(*) FROM workflow_run_events WHERE run_id LIKE 'run-kept%'`},
+	{"task_acceptance_items", `SELECT COUNT(*) FROM task_acceptance_items WHERE task_id = 'task-gone'`, `SELECT COUNT(*) FROM task_acceptance_items WHERE task_id = 'task-kept'`},
 }
 
 func seedTaskOwnedRows(t *testing.T, store *TaskStore, taskID string) {
@@ -73,6 +74,7 @@ func seedTaskOwnedRows(t *testing.T, store *TaskStore, taskID string) {
 		`INSERT INTO workflow_runs (id, task_id, graph_json, created_at, updated_at) VALUES ('` + runID + `', '` + taskID + `', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO workflow_node_runs (id, run_id, node_id, status, created_at, updated_at) VALUES ('nr-` + suffix + `', '` + runID + `', 'agent1', 'success', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO workflow_run_events (run_id, seq, type, created_at) VALUES ('` + runID + `', 1, 'node_agent_done', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO task_acceptance_items (id, task_id, run_id, seq, text, evidence_class, status, created_at, updated_at) VALUES ('acc-` + suffix + `', '` + taskID + `', '` + runID + `', 1, '改好了', 'artifact', 'open', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := store.db.Exec(stmt); err != nil {

@@ -212,6 +212,9 @@ const (
 	RouterActionCancelNode RouterActionKind = "cancel_node"
 	RouterActionCancelRun  RouterActionKind = "cancel_run"
 	RouterActionCancelTask RouterActionKind = "cancel_task"
+	// W1 T3：登记这一轮的验收项。它不是收尾动作，只是把「做完的样子」写下来，
+	// 供 complete_task 的证据门逐条核对。
+	RouterActionRecordAcceptance RouterActionKind = "record_acceptance"
 )
 
 // run_workflow 的会话模式（2026-11-20 用户决策）：默认新开一段会话；
@@ -241,6 +244,8 @@ type RouterAction struct {
 	Reason      string `json:"reason,omitempty"`
 	// Summary 是 complete_task 写给用户看的结果一句话（≤500 字节）。
 	Summary string `json:"summary,omitempty"`
+	// Items 只对 record_acceptance 有意义：这一轮的验收项（≤8 条）。
+	Items []AcceptanceItemInput `json:"items,omitempty"`
 }
 
 // IsExecutionAction 报告动作是否会启动/继续一次执行。用于跨动作校验与

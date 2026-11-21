@@ -153,6 +153,8 @@ func (s *ActivityService) applyRouteAction(
 		return s.applyRouteRunWorkflow(ctx, decision, task, userAct, state, action)
 	case RouterActionComplete:
 		return s.applyRouteComplete(ctx, decision, task, action)
+	case RouterActionRecordAcceptance:
+		return s.applyRouteRecordAcceptance(ctx, decision, task, action)
 	case RouterActionDeliver:
 		return s.applyRouteDeliver(ctx, decision, task, userAct, state, action)
 	case RouterActionAnswerWaiting:

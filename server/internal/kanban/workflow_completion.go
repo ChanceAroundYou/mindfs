@@ -53,6 +53,10 @@ type CompletionItemStatus struct {
 	NodeID string `json:"node_id,omitempty"`
 	Pass   bool   `json:"pass"`
 	Detail string `json:"detail,omitempty"`
+	// Source / EvidenceClass 只对验收项（W1 T3）有值：Source="acceptance"，
+	// EvidenceClass 取 self_report / artifact / independent_verification。
+	Source        string `json:"source,omitempty"`
+	EvidenceClass string `json:"evidence_class,omitempty"`
 }
 
 type CompletionReport struct {
@@ -61,6 +65,9 @@ type CompletionReport struct {
 	Items    []CompletionItemStatus `json:"items"`
 	Passed   bool                   `json:"passed"`
 	Hash     string                 `json:"hash,omitempty"`
+	// AcceptanceNeedsVerification 表示还有验收项在等独立复核结论：这时就算
+	// 契约项全过，也要先起复核，不能直接收尾。
+	AcceptanceNeedsVerification bool `json:"acceptance_needs_verification,omitempty"`
 }
 
 // completionMaxRepairs 把契约里的自动补做轮数归一化：没写按 2，写了夹到 [0,3]。
@@ -113,7 +120,12 @@ func (s *Service) EvaluateCompletion(ctx context.Context, store *TaskStore, task
 		return CompletionReport{}, errors.New("task store required")
 	}
 	if run == nil {
-		return evaluateDirectCompletion(ctx, store, task)
+		report, err := evaluateDirectCompletion(ctx, store, task)
+		if err != nil {
+			return report, err
+		}
+		items, needsVerification := evaluateAcceptanceItems(ctx, s, store, task, nil, nil, nil)
+		return appendAcceptanceItems(report, items, needsVerification), nil
 	}
 	contract := run.Graph.Completion
 	report := CompletionReport{RunID: run.ID, Hash: completionContractHash(contract)}
@@ -126,7 +138,8 @@ func (s *Service) EvaluateCompletion(ctx context.Context, store *TaskStore, task
 			Detail: "这个工作流没有声明完成契约，没有证据可以核对；" +
 				"请先在工作流里列出「做到什么算做完」",
 		}}
-		return report, nil
+		items, needsVerification := evaluateAcceptanceItems(ctx, s, store, task, run, nil, nil)
+		return appendAcceptanceItems(report, items, needsVerification), nil
 	}
 	rows, rowsErr := store.ListWorkflowNodeRuns(ctx, run.ID)
 	report.Contract = true
@@ -140,7 +153,8 @@ func (s *Service) EvaluateCompletion(ctx context.Context, store *TaskStore, task
 		report.Items = append(report.Items, item)
 	}
 	report.Passed = passed
-	return report, nil
+	items, needsVerification := evaluateAcceptanceItems(ctx, s, store, task, run, rows, rowsErr)
+	return appendAcceptanceItems(report, items, needsVerification), nil
 }
 
 // evaluateDirectCompletion 是直连任务（没有 Run）的机检项：三条固定规则，

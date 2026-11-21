@@ -151,6 +151,21 @@ CREATE TABLE IF NOT EXISTS task_completion (
 	repairs_used INTEGER NOT NULL DEFAULT 0,
 	updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_acceptance_items (
+	id TEXT PRIMARY KEY,
+	task_id TEXT NOT NULL,
+	run_id TEXT NOT NULL DEFAULT '',
+	node_id TEXT NOT NULL DEFAULT '',
+	seq INTEGER NOT NULL,
+	text TEXT NOT NULL,
+	evidence_class TEXT NOT NULL,
+	status TEXT NOT NULL,
+	evidence_ref TEXT NOT NULL DEFAULT '',
+	rework_round INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_acceptance_task_run ON task_acceptance_items(task_id, run_id, seq);
 `)
 	if err != nil {
 		return err

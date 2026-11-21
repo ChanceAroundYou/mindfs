@@ -358,6 +358,7 @@ func (s *TaskStore) DeleteTask(ctx context.Context, id string) error {
 	// 6 条 task_activities 仍在库里被页面查出来）。
 	for _, table := range []string{
 		"task_activities",
+		"task_acceptance_items",
 		"continue_requests",
 		"outbox_items",
 		"node_runs",

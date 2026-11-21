@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -173,6 +174,10 @@ func (s *Service) commitCompletion(ctx context.Context, store *TaskStore, task T
 			return err
 		}
 	}
+	// 验收项标 met 是审计水位：收尾已经成立，标记失败不该把收尾退回去。
+	if err := store.MarkAcceptanceMet(ctx, task.ID, runID); err != nil {
+		log.Printf("[completion] acceptance.mark_met.error task=%s run=%s err=%v", task.ID, runID, err)
+	}
 	return store.UpsertTaskCompletion(ctx, TaskCompletion{
 		TaskID:          task.ID,
 		RunID:           runID,
@@ -214,6 +219,11 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 		}
 		// 复核结论跟着驳回行一起留下：它是「为什么没过」的唯一独立证据。
 		verifierKey, verifierVerdict = existing.VerifierKey, existing.VerifierVerdict
+	}
+	// 被驳回一次 = 验收项返工一轮，写进审计水位（判定仍以当次机检为准）。
+	// 放在重放早退之后：同一条决策重放不能重复计数。
+	if err := store.BumpAcceptanceRework(ctx, task.ID, runID); err != nil {
+		log.Printf("[completion] acceptance.bump_rework.error task=%s run=%s err=%v", task.ID, runID, err)
 	}
 	repairsUsed++
 	exhausted := repairsUsed > repairsMax

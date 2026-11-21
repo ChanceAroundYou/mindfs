@@ -94,7 +94,9 @@ func completionNeedsVerifier(run *WorkflowRun, report CompletionReport) bool {
 	if report.Passed {
 		return false
 	}
-	if report.Contract {
+	// 有契约且契约项硬性不过 → 不问模型。但验收项点名要「独立复核结论」时
+	// 是例外：那正是复核存在的意义（W1 T3）。
+	if report.Contract && !report.AcceptanceNeedsVerification {
 		return false
 	}
 	if run != nil && run.Graph.Completion != nil {
@@ -243,7 +245,8 @@ func (s *Service) applyVerifierVerdict(ctx context.Context, store *TaskStore, ta
 	}
 	switch verdict {
 	case CompletionVerdictPass:
-		return s.commitCompletion(ctx, store, task, run, report, verifierSummary(summary, findings), decision.ID)
+		// 等复核的验收项以这条结论为准（W1 T3）：复核说做完了，它们就算达成。
+		return s.commitCompletion(ctx, store, task, run, markAcceptanceVerified(report), verifierSummary(summary, findings), decision.ID)
 	case CompletionVerdictFail, CompletionVerdictUncertain:
 		label := "未完成"
 		if verdict == CompletionVerdictUncertain {
@@ -525,7 +528,7 @@ func completionVerifierPrompt(task Task, run *WorkflowRun, report CompletionRepo
 	if summary != "" {
 		fmt.Fprintf(&b, "被驳回的完成声明：%s\n", truncateRouterText(summary, completionVerifierPromptLimit))
 	}
-	if run != nil && len(report.Items) > 0 {
+	if len(report.Items) > 0 {
 		b.WriteString("\n机检没能确认的项：\n")
 		for _, line := range completionGapLines(report) {
 			fmt.Fprintf(&b, "- %s\n", line)
