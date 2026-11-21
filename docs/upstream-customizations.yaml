@@ -9518,7 +9518,7 @@ groups:
       - 'server/internal/agent/fold/pointer_cache.go:const PointerVariantFailed = "is_error"'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.badgeRewrite'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.requestTokensValue'
-      - 'server/internal/agent/fold/ledger.go:ForwardTokensEst int `json:"forward_tokens_est"`'
+      - 'server/internal/agent/fold/ledger.go:json:"forward_tokens_est"'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:contextSaving.rewriteTotal'
       - 'server/internal/agent/proxy/live_compact_ledger.go:func (s *Server) SessionContextSaving(sessionKey string) fold.ContextSaving'
       - 'server/internal/agent/fold/ledger.go:ledgerMaxBytes  = 4 << 20'
