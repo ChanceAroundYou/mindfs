@@ -74,16 +74,21 @@ jobs:
       - name: 打包前端并同步进 iOS 工程
         run: make build-ios
 
-      - name: xcodebuild（-target，无签名）
+      - name: 验证 scheme 可见（共享 scheme 才在 CI 上存在）
+        working-directory: web/ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -list
+
+      - name: xcodebuild（-scheme，无签名）
         working-directory: web/ios/App
         run: |
           set -euo pipefail
           xcodebuild \
             -project App.xcodeproj \
-            -target App \
+            -scheme App \
             -configuration Release \
             -sdk iphoneos \
-            CONFIGURATION_BUILD_DIR="$PWD/build/Release-iphoneos" \
+            -derivedDataPath "$PWD/build/derived" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             MARKETING_VERSION="${{ steps.ver.outputs.marketing }}" \
             CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
@@ -93,7 +98,7 @@ jobs:
         working-directory: web/ios/App
         run: |
           set -euo pipefail
-          APP="$(find build/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)"
+          APP="$(find build/derived/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)"
           [ -n "$APP" ] || { echo "没找到 .app"; exit 1; }
           echo "app = $APP"
           plutil -p "$APP/Info.plist" | grep -E 'CFBundle(Short)?Version|CFBundleIdentifier' || true
