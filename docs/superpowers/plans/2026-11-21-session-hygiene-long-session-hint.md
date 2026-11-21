@@ -46,7 +46,11 @@ EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView
   30 分钟的那一段不算「持续久」。`ObserveAt` 收显式时间，测试不睡真时钟。
 - `Observe(..., turnEnded bool)`：`turnEnded=true` 表示一个用户回合刚结束。**提示刚出现的那一轮
   不计数**（`hinted` 从 false 翻 true 时 `turnsSinceHint` 仍为 0），用户看到提示时还剩完整的 N 轮。
-- `Snapshot` = `Observe(..., false)`：读口（胶囊轮询）不能推进计数。
+- `Snapshot` 是完全无副作用的读取：**不推进计数、不置 `hinted`、不置 `autoAttempted`、也不建记录**。
+  （2026-11-21 修正：原先它复用 `Observe(..., false)`，在「提示刚成立」的那一格顺手把 `hinted`
+  记成 true，紧接着的回合结束就被算成「提示之后第 1 轮」—— 用户看到的 N 轮窗口整体少一轮，
+  隔离实例实测出现「提示与自动压缩同一刻发生」。读口在回合中途随时可能被前端刷新触发，
+  它一旦改状态，触发点就不再只由回合结束决定。）
 - `MarkCompacted`：清 `hinted / turnsSinceHint / autoFailed / autoAttempted`，保留 `activeSeconds`
   —— 压缩解决的是「大」，改不了「久」。
 - `MarkAutoFailed`：置 `autoFailed`，之后 `auto_compact_due` 恒 false。
@@ -151,8 +155,59 @@ hint 档倒计时 + 「立即压缩」+ POST 路由、`auto_failed` 说明、没
 `go build ./...`、`go test -count=1 ./...`、`npx tsc -b --noEmit`、`npx vitest run`（全量）、
 `make check-upstream`（本组登记 G-PG）。
 
+### 变异账本
+
+逐条改坏 → 跑定向测试确认打红 → 还原（改坏期间不提交，还原后 `git status` 干净）。
+
+| 编号 | 改坏什么 | 打红的用例 |
+|---|---|---|
+| M1 | `Snapshot` 退回 `Observe(..., false)`（旧实现） | `TestHygieneSnapshotDoesNotConsumeTheArrivalTurn` |
+| M2 | 提示当轮也计数（去掉 `!newlyHinted`） | 7 条 hygiene 用例（含当轮不计数、N 轮到期、压缩清状态） |
+| M3 | 三档退化成「只大就提示」（`case big:`） | `TestEvaluateHygieneBands`、`TestHygieneSessionsAreIsolated` |
+| M4 | 到期不再「只报一次」（去掉 `autoAttempted` 判定） | `TestHygieneAutoCompactIsReportedOnlyOnce` |
+| M5 | 活跃时长不再丢弃空闲间隔 | `TestHygieneActiveTimeIgnoresIdleGaps` |
+| M6 | `MarkAutoFailed` 不置位 | `TestHygieneAutoFailureStopsRetries` 等 3 条 |
+| M7 | `MarkCompacted` 不清提示（只清轮数） | `TestHygieneCompactionClearsHint` 等 3 条 |
+| M8 | 前端去掉回合结束后的延迟刷新 | `context-saving-chip` 的「回合结束才刷新一次」契约 |
+| M9 | 胶囊去掉 `data-hygiene` | `context-saving-chip` 的稳定标识契约 |
+
+M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走到 `normal` 分支顺带清了状态，钉不住
+`MarkCompacted` 本身。改成「压缩后上下文仍然很大、直接调用 `MarkCompacted`」后才红。
+
+### 隔离实例端到端验收（2026-11-21）
+
+隔离实例（`scripts/mindfs-iso.sh`，端口 7431、独立配置/账户/项目，线上 7331 全程未碰）里
+把阈值压到两轮可见：`session_hygiene = {enabled, active_hours 0.0005, context_tokens 1, hint_turns 1}`，
+真实 Claude（`haiku` → 本机别名 `ok`），`e2e/test_session_hygiene.py` 三条断言全过：
+
+- 第二轮结束：`GET /api/sessions/{key}/context-saving` 的 `hygiene.state == "hint"`、
+  `turns_until_auto_compact == 1`，且胶囊在 DOM 里（`[data-testid="context-saving-chip"]` 的
+  `data-hygiene="hint"`，aria-label 带「自动压缩」）。
+- 第三轮结束：服务端日志 `auto_compact.due` → `auto_compact.start` → `auto_compact.done`，
+  周期里出现 CLI 自己的 `{"type":"system","status":null,"compact_result":"success"}` ——
+  **这是 harness 真的压了，不是我们把状态改成已压缩**；整段只压一次（修读口之前同一段压了两次）。
+- 压缩后 `turns_since_hint == 0`、`auto_failed == false`、`turns_until_auto_compact == hint_turns`。
+
+这轮验收还挖出两个真实缺陷，均已先 RED 后修：
+
+1. **读口改状态**（上面 §2 的 `Snapshot`）。修复前实测「第二轮结束就 due、随即压缩」，
+   用户等于没有提示窗口；修复后压缩落在第三轮结束。
+2. **胶囊不刷新**：界面看到的「回合回落空闲」来自回合内广播，而卫生结论在 `SendMessage`
+   收尾时才写，只刷一次实测读到旧值（长时间停在 `normal`，胶囊永不出现）。`useContextSaving`
+   在回合结束后补一次 2 s 延迟刷新，用独立定时器（不能和「立即压缩」的补偿刷新共用）。
+
+### 测试实现里踩到的坑（写给下次）
+
+- 无头 Chromium 的 `navigator.language` 是 `en-US`：拿中文 aria-label 找胶囊会永远等不到。
+  胶囊补了语言无关的 `data-testid` + `data-hygiene`，e2e 用 `locale="zh-CN"`（与用户环境一致）。
+- 主区切换器与引导浮层没有语言无关的选择器：切换器按位置点第 4 格（聊天），引导浮层在
+  `add_init_script` 里把 `mindfs-onboarding-state` 标成已看过。
+- 「久」是从第一次观测起算的：首轮只有起点没有间隔，所以 `active_seconds` 首轮必为 0，
+  hint 最早出现在第二轮结束、自动压缩在第三轮结束（`hint_turns=1` 时）。
+
 ## 状态
 
-**已实现并完成门禁；未部署、未重启任何节点。** 线上行为不变：`config.json` 里没有
-`session_hygiene` 段时用默认值（默认开），但要**重启进程**才会加载这段新代码；前端刷新生效。
-本机 `sudo systemctl restart mindfs` 仅用户可执行。
+**已实现、门禁绿、隔离实例端到端跑通真实 harness 压缩；未部署、未重启任何节点。**
+线上行为不变：`config.json` 里没有 `session_hygiene` 段时用默认值（默认开），但要**重启进程**
+才会加载这段新代码；前端刷新生效。本机 `sudo systemctl restart mindfs` 仅用户可执行。
+端到端证据与变异账本见上；`e2e/test_session_hygiene.py` 刻意不进常规门禁（会真调模型）。

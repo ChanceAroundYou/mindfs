@@ -12175,8 +12175,10 @@ groups:
       触发」只算这一次，测试直接打这张表；UI、自动触发、读口看到的结论天然一致。
       ② **「久」是累计活跃时长，不是创建时间**：`Observe` 只把 `0 < gap <= idle_gap` 的间隔计入，
       挂机一夜再回来不会一夜之间变成「又久又大」。
-      ③ **提示当轮不计数**：`hinted` 从 false 翻 true 的那一轮 `turnsSinceHint` 仍是 0 —— 用户看到
-      「还有 3 轮」时确实还剩 3 轮。
+      ③ **提示当轮不计数，且只有回合结束能推进**：`hinted` 从 false 翻 true 的那一轮
+      `turnsSinceHint` 仍是 0 —— 用户看到「还有 3 轮」时确实还剩 3 轮。读口 `Snapshot` 因此必须
+      完全无副作用（不置 `hinted`、不置 `autoAttempted`、不建记录）：它在回合中途随时会被胶囊
+      刷新触发，一旦改状态，提示窗口就整体少一轮（2026-11-21 实测「提示与自动压缩同一刻发生」）。
       ④ **只有正常结束的用户回合推进计数**：`session_send.go` 只在 `sendErr == nil` 时调
       `finishHygieneTurn`；取消/失败的回合、以 `/` 开头的命令回合、自动压缩自己那一轮都不算。
       ⑤ **自动触发不打断在途回合**：`runHygieneAutoCompact` 先按 2s 轮询 `SessionTurnActive` 等会话
@@ -12193,7 +12195,10 @@ groups:
     boundary: |
       状态在进程内、按 `root + session` 保存：重启后「久」从零重新累计，「已提示过」也一并清空。
       不自动新建会话、不归档、不删转录；不改 live-compact 的任何阈值；「只久」永不自动压缩；
-      不做跨会话面板。自动压缩失败后只能手动，用户需自己判断是否要新开会话。未做真机端到端验收。
+      不做跨会话面板。自动压缩失败后只能手动，用户需自己判断是否要新开会话。
+      端到端只在隔离实例验证过（`e2e/test_session_hygiene.py`，真实 Claude + 真实 `/compact`，
+      CLI 回 `compact_result=success`）：线上四端尚未部署这段代码，也没有在用户真实会话里观察过
+      自动触发；状态不持久化，重启后「已提示 / 已失败」都会重来。
     files:
       - server/internal/api/usecase/session_hygiene.go
       - server/internal/api/usecase/session_hygiene_wire.go
@@ -12216,16 +12221,19 @@ groups:
       - web/src/i18n/locales/zh-CN-agents.ts
       - web/src/i18n/locales/en-US-agents.ts
       - web/tests/context-saving-chip.test.mjs
+      - e2e/test_session_hygiene.py
       - docs/plans/README.md
       - docs/superpowers/plans/2026-11-21-session-hygiene-long-session-hint.md
     tests:
       - server/internal/api/usecase/session_hygiene_test.go
       - server/internal/api/usecase/session_hygiene_wire_test.go
       - web/tests/context-saving-chip.test.mjs
+      - e2e/test_session_hygiene.py
     anchors:
       - 'server/internal/api/usecase/session_hygiene.go:HygieneStateHint = "hint"'
       - 'server/internal/api/usecase/session_hygiene.go:func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens int, turnEnded bool) HygieneView {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens int) HygieneView {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompacted(rootID, sessionKey string) {'
       - 'server/internal/api/usecase/session_hygiene_wire.go:const hygieneCompactCommand = "/compact"'
       - 'server/internal/api/usecase/session_hygiene_wire.go:func hygieneAutoCompactSupported(harness string) bool {'
@@ -12245,4 +12253,5 @@ groups:
       - 'web/src/services/agent/contextSaving.ts:export async function compactSession('
       - 'web/src/components/agent/useContextSaving.ts:const hygieneBand = hygiene?.state === "notice" || hygiene?.state === "hint";'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:t("contextSaving.compactNow")'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:data-hygiene={hygiene?.state || "none"}'
       - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.hygieneHintTitle"'
