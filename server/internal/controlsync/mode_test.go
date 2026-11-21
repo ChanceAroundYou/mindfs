@@ -103,6 +103,37 @@ func TestModeControllerCompleteReconcileWithConflicts(t *testing.T) {
 	}
 }
 
+// 追平收尾不能把已经降级的边缘拉回 online：主节点在合并途中再次断开时，
+// 探测会把模式降到 offline-local，而一拍迟到的 settle 仍会调 CompleteReconcile。
+// 现场症状是状态接口报 online、state 表却停在 offline-local，之后再也降不下来
+// （两个写方的落库顺序被打乱）。
+func TestCompleteReconcileDoesNotOverrideProbeDegrade(t *testing.T) {
+	prober := &fakeProber{}
+	store, mc := newModeFixture(t, prober)
+	ctx := t.Context()
+	mc.Observe(false)
+	mc.Observe(false)
+	if got := mc.Observe(false); got != ModeOfflineLocal {
+		t.Fatalf("3 次失败后模式 = %s，应为 offline-local", got)
+	}
+	for _, hasConflicts := range []bool{false, true} {
+		got, err := mc.CompleteReconcile(ctx, hasConflicts)
+		if err != nil || got != ModeOfflineLocal {
+			t.Fatalf("CompleteReconcile(%v) = %s, %v，应保持 offline-local", hasConflicts, got, err)
+		}
+		if mc.Mode() != ModeOfflineLocal {
+			t.Fatalf("CompleteReconcile(%v) 后模式 = %s，应仍是 offline-local", hasConflicts, mc.Mode())
+		}
+		state, err := store.LoadState(ctx)
+		if err != nil {
+			t.Fatalf("LoadState: %v", err)
+		}
+		if state.Mode != string(ModeOfflineLocal) {
+			t.Fatalf("CompleteReconcile(%v) 后 state.mode = %q，应仍是 offline-local", hasConflicts, state.Mode)
+		}
+	}
+}
+
 // 用户点「切换本地模式」立即生效，不等探测计数。
 func TestModeControllerSwitchLocalIsImmediate(t *testing.T) {
 	prober := &fakeProber{}

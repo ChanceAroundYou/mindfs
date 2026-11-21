@@ -110,6 +110,14 @@ type ModeController struct {
 	// OnModeChange 在模式真翻转时被调用（前端横幅与系统事件由接线方落）。
 	OnModeChange func(from, to Mode)
 
+	// applyMu 串行化「判定 + 改内存 + 落库 + 通知」整段迁移。
+	//
+	// 模式有两个驱动方：探测循环（Observe）与追平收尾（CompleteReconcile）。只靠
+	// m.mu 保护单个字段会让两边的落库顺序颠倒（内存 online、库里 offline-local，
+	// 重启后回到错误状态），所以迁移必须整段排队。Mode() 不取它，转发中间件
+	// 不会被一次库写阻塞。
+	applyMu sync.Mutex
+
 	mu        sync.Mutex
 	mode      Mode
 	failures  int
@@ -174,6 +182,7 @@ func (m *ModeController) Status(ctx context.Context) (Status, error) {
 //
 // conflict-review 不受探测结果影响：冲突要人裁决，主节点掉线不会让冲突消失。
 func (m *ModeController) Observe(success bool) Mode {
+	m.applyMu.Lock()
 	m.mu.Lock()
 	if success {
 		m.successes++
@@ -209,6 +218,7 @@ func (m *ModeController) Observe(success bool) Mode {
 	if from != next {
 		_ = m.store.SetMode(context.Background(), next)
 	}
+	m.applyMu.Unlock()
 	m.transition(from, next)
 	return next
 }
@@ -240,12 +250,15 @@ func (m *ModeController) Run(ctx context.Context) {
 
 // SwitchLocal 是用户显式动作：立刻切本地模式，不等探测计数。
 func (m *ModeController) SwitchLocal(ctx context.Context) error {
+	m.applyMu.Lock()
 	m.mu.Lock()
 	from := m.mode
 	m.mode = ModeOfflineLocal
 	m.failures, m.successes = 0, 0
 	m.mu.Unlock()
-	if err := m.store.SetMode(ctx, ModeOfflineLocal); err != nil {
+	err := m.store.SetMode(ctx, ModeOfflineLocal)
+	m.applyMu.Unlock()
+	if err != nil {
 		return err
 	}
 	m.transition(from, ModeOfflineLocal)
@@ -264,12 +277,15 @@ func (m *ModeController) Retry(ctx context.Context) (Mode, error) {
 	if err == nil {
 		next = ModeReconciling
 	}
+	m.applyMu.Lock()
 	m.mu.Lock()
 	from := m.mode
 	m.mode = next
 	m.failures, m.successes = 0, 0
 	m.mu.Unlock()
-	if saveErr := m.store.SetMode(ctx, next); saveErr != nil {
+	saveErr := m.store.SetMode(ctx, next)
+	m.applyMu.Unlock()
+	if saveErr != nil {
 		return next, saveErr
 	}
 	m.transition(from, next)
@@ -284,17 +300,29 @@ func (m *ModeController) Retry(ctx context.Context) (Mode, error) {
 }
 
 // CompleteReconcile 由合并方在追平结束时调用：有冲突停 conflict-review，否则回 online。
+//
+// 只在同步回合内生效（reconciling / conflict-review）。追平可能跑在主节点再次断开的
+// 同一时刻：探测已经把模式降到 offline-local，这时一拍迟到的收尾不能被当成
+// 「追平成功」把整段离线期伪装回 online。判定与写入在同一把锁里，两个写方不会交错。
 func (m *ModeController) CompleteReconcile(ctx context.Context, hasConflicts bool) (Mode, error) {
 	next := ModeOnline
 	if hasConflicts {
 		next = ModeConflictReview
 	}
+	m.applyMu.Lock()
 	m.mu.Lock()
 	from := m.mode
+	if from != ModeReconciling && from != ModeConflictReview {
+		m.mu.Unlock()
+		m.applyMu.Unlock()
+		return from, nil
+	}
 	m.mode = next
 	m.failures, m.successes = 0, 0
 	m.mu.Unlock()
-	if err := m.store.SetMode(ctx, next); err != nil {
+	err := m.store.SetMode(ctx, next)
+	m.applyMu.Unlock()
+	if err != nil {
 		return next, err
 	}
 	m.transition(from, next)
