@@ -189,6 +189,9 @@ func (h *HTTPHandler) Routes() http.Handler {
 		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
 		r.Post("/api/control-sync/mode", h.handleControlSyncMode)
 	}
+	if h.ControlSyncPush != nil {
+		r.Post("/api/control-sync/push", h.handleControlSyncPush)
+	}
 	r.Post("/api/imports/github", h.handleGitHubImportStart)
 	r.Get("/api/web-push/status", h.handleWebPushStatus)
 	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)

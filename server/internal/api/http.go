@@ -36,6 +36,8 @@ type HTTPHandler struct {
 	WorkflowLLM kanban.LLMClient
 	// ControlSync 是控制面同步的模式开关。nil = 没启用（端点不注册，保持改造前行为）。
 	ControlSync ControlSyncService
+	// ControlSyncPush 只在主节点侧存在：接收边缘推送。nil = 未启用。
+	ControlSyncPush ControlSyncPusher
 }
 
 const (

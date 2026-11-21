@@ -19,6 +19,12 @@ type ControlSyncService interface {
 	Retry(ctx context.Context) (controlsync.Mode, error)
 }
 
+// ControlSyncPusher 是主节点侧接收边缘推送的入口（spec §6.1）。
+// 与 ControlSyncService 分开：边缘没有 Pusher，主节点也不一定有模式控制器。
+type ControlSyncPusher interface {
+	Push(ctx context.Context, req controlsync.PushRequest) (controlsync.PushBatch, error)
+}
+
 // handleControlSyncStatus 返回四态模式、水位与最后一次探测信息。
 // 两种模式（online / offline-local）都要能读到它，否则断线时前端连横幅都点不出来。
 func (h *HTTPHandler) handleControlSyncStatus(w http.ResponseWriter, r *http.Request) {
@@ -74,4 +80,27 @@ func (h *HTTPHandler) handleControlSyncMode(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	respondJSON(w, http.StatusOK, status)
+}
+
+// handleControlSyncPush 接收边缘的待同步变更，逐条回结论。
+//
+// 请求体上限按一整批 tombstone/小对象估算给 8 MiB：超限直接 413，
+// 而不是让解码器在超大 JSON 上慢慢吃内存。
+func (h *HTTPHandler) handleControlSyncPush(w http.ResponseWriter, r *http.Request) {
+	if h.ControlSyncPush == nil {
+		respondError(w, http.StatusNotFound, errInvalidRequest("control sync push not configured"))
+		return
+	}
+	var req controlsync.PushRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
+	if err := dec.Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid push body"))
+		return
+	}
+	batch, err := h.ControlSyncPush.Push(r.Context(), req)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, batch)
 }
