@@ -34,6 +34,8 @@ type HTTPHandler struct {
 	// WorkflowLLM 是 workflow 推荐使用的语言模型客户端。nil 表示没有模型可用，
 	// 推荐器退化为「第一个可自动选择的 workflow」；测试与后续接入点通过它注入。
 	WorkflowLLM kanban.LLMClient
+	// ControlSync 是控制面同步的模式开关。nil = 没启用（端点不注册，保持改造前行为）。
+	ControlSync ControlSyncService
 }
 
 const (

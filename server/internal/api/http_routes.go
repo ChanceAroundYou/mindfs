@@ -183,6 +183,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/local_dirs", h.handleLocalDirs)
 	r.Get("/api/app/update", h.handleAppUpdateGet)
 	r.Post("/api/app/update", h.handleAppUpdatePost)
+	// 控制面同步：只在启用时注册。nil 时保持改造前行为（两条路径 404），
+	// 免得未配置的机器暴露一个永远报错的端点。
+	if h.ControlSync != nil {
+		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
+		r.Post("/api/control-sync/mode", h.handleControlSyncMode)
+	}
 	r.Post("/api/imports/github", h.handleGitHubImportStart)
 	r.Get("/api/web-push/status", h.handleWebPushStatus)
 	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)
