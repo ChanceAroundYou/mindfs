@@ -286,6 +286,30 @@ type Domain interface {
 - 用例：远端新增/删除/修改各追平；中途失败不推进水位；重复拉取幂等。
 - 验收：`go test ./server/internal/controlsync/ -count=1`。
 
+执行记录（2026-11-21）：
+
+- 新增 `Replicator` 与线上类型 `RemoteChange`（`GET /api/control-sync/changes` 的响应形状；
+  主节点 handler 在 T13 落地时复用同一个类型，避免两端各写一份 JSON 结构）。
+  水位语义按设计 §6.2 落成 `since=base_rev+1`，不是 `since=base_rev` —— 服务端按
+  `rev >= since` 取页，两者必须成对，否则每次都会重复取到已追平的那一条。
+- `Store.ApplyRemoteChanges` 一页一个事务：`rev` 沿用主节点序号（它是水位不是本地自增）、
+  `rev <= base_rev` 的记录跳过（重放旧页不得把副本倒回旧内容）、`records` 与 `state.base_rev`
+  同生共死。**一个事务而不是逐条写**：半个 diff 提交出去，边缘就会永久跳过没落地的记录。
+- 墓碑带最后一次内容的 hash 并在副本里保留（`payload` 为 NULL），这样合并阶段能区分
+  「主节点删了」与「主节点改完又删」；`ApplyRemoteChanges` 因此要求每条都有 hash。
+- 逐页提交 + 空页即停：进程死在两页之间，重启从已提交水位续拉，不重放整段。
+  失败只经 `OnError` 上报（`Run` 里），`SyncOnce` 返回错误但不动水位。
+- TLS 与 `api.ControlProxy` 刻意同源：https 强制、TLS 1.2 起步、系统根 + 可选 `ca_file`、
+  禁重定向；任何一边松掉等于两边一起松。`newSyncHTTPClient` 留在 controlsync 供 T13 的
+  push 侧复用。
+- 用例 6 条：新增/修改/删除各追平（含墓碑 hash 断言）、失败不推水位且恢复后从 `since=1` 续传、
+  重复拉取只问一次 `since=base+1`、分页序列 `1,3,5,6`、重放旧页不倒退、明文 primary_url 被拒。
+  变异 4 处各自打红后还原：去掉 stale-rev 守卫（重放用例红）、不推 `base_rev`（追平用例
+  超时红）、`since` 退回 `base_rev`（分页序列变成 `0,2,4,5` 红）、去掉 https 校验（明文用例红）。
+- **未接通**：`Replicator` 尚未接进 `server/app`（与 T9/T10 一致，P3 统一接线）；把远端记录
+  应用到权威存储、以及 pending/冲突判定属于 T14 的三方合并 —— 在线阶段按 D5 不在本地写，
+  pending 恒为空，本阶段只维护副本。
+
 ---
 
 ## P4 离线本地模式
