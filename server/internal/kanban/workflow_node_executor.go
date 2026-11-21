@@ -40,7 +40,7 @@ type WorkflowNodeExecution struct {
 	// RunSessionKey 是这一轮 Run 已经绑定的共享会话（session_reuse_policy=run）。
 	// 为空表示还没建：适配器建好之后由 prepare 写回 Run，后续节点直接复用。
 	RunSessionKey string
-	Prompt          string
+	Prompt        string
 	// UserInput 是触发本次 Run 的用户留言（{previous_input} 的解析结果）。
 	// 它只用于给这条节点会话起一个能区分轮次的名字 —— 同一条任务每开一轮
 	// 就是一个新会话，名字全一样时用户在会话列表里分不出谁是谁。

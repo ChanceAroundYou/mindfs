@@ -117,9 +117,9 @@ func TestCompletionBlockedPayloadAvoidsForbiddenSubstrings(t *testing.T) {
 		t.Fatalf("completion_blocked events = %d, want 1", len(events))
 	}
 	var payload struct {
-		TaskID      string `json:"task_id"`
-		RunID       string `json:"run_id"`
-		Items       []struct {
+		TaskID string `json:"task_id"`
+		RunID  string `json:"run_id"`
+		Items  []struct {
 			ID   string `json:"id"`
 			Kind string `json:"kind"`
 			Pass bool   `json:"pass"`

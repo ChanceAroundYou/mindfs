@@ -45,7 +45,7 @@ func TestDeleteTask_RemovesTaskOwnedRows(t *testing.T) {
 // taskOwnedTables 是 DeleteTask 必须覆盖的表。count 绑定 task-gone，kept 绑定
 // task-kept —— 后者钉住「只删该任务的数据」，防止按表清空这种过度删除。
 var taskOwnedTables = []struct {
-	name string
+	name        string
 	count, kept string
 }{
 	{"task_activities", `SELECT COUNT(*) FROM task_activities WHERE task_id = 'task-gone'`, `SELECT COUNT(*) FROM task_activities WHERE task_id = 'task-kept'`},

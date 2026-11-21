@@ -69,11 +69,11 @@ type Task struct {
 	//
 	// 清归属时**不**清这一列（见 TaskStore.ClearWorktreeRefs）：拆掉目录不等于
 	// 没建过。存量数据默认 false —— 判据宁保守，也不要把没证据的任务说成收过尾。
-	WorktreeBuilt bool         `json:"worktree_built"`
-	Labels        []string     `json:"labels"`
-	CreatedAt     time.Time    `json:"created_at"`
-	UpdatedAt     time.Time    `json:"updated_at"`
-	CompletedAt   string       `json:"completed_at,omitempty"`
+	WorktreeBuilt bool      `json:"worktree_built"`
+	Labels        []string  `json:"labels"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	CompletedAt   string    `json:"completed_at,omitempty"`
 	// ArchivedAt 非空 = 已归档。归档只是任务自己的标记：卡片从工作台隐藏、留在
 	// 看板「已结束 → 归档」子组；级联到相关会话时同样只打标记，绝不删后代会话。
 	// 取消归档只清这一列，不会反过来解开会话的归档标记。

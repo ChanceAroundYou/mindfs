@@ -235,9 +235,9 @@ func TestReopenedCancelledTaskAcceptsNewMessage(t *testing.T) {
 // 终态 Run 不能继续把任务报成已结束 —— 否则 apply 闸门会拿旧结论拒掉新留言。
 func TestBriefTaskStatusHonoursReopenedTaskRow(t *testing.T) {
 	run := &WorkflowRun{
-		ID:     "run-reopened",
-		TaskID: "task-1",
-		Graph:  WorkflowDefinition{Nodes: []WorkflowNode{{ID: "execute", Kind: NodeKindAgent}}},
+		ID:         "run-reopened",
+		TaskID:     "task-1",
+		Graph:      WorkflowDefinition{Nodes: []WorkflowNode{{ID: "execute", Kind: NodeKindAgent}}},
 		NodeStates: map[string]string{"execute": NodeRunCancelled},
 	}
 	task := Task{ID: "task-1", Status: StatusWaitingUser}

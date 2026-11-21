@@ -141,4 +141,3 @@ func TestSituationBriefPausedTaskKeepsActiveExecution(t *testing.T) {
 		t.Fatal("run_workflow accepted on a paused task")
 	}
 }
-

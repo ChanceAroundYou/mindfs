@@ -129,14 +129,14 @@ func (s *Service) beginCompletionVerification(ctx context.Context, store *TaskSt
 		}
 	}
 	if err := store.UpsertTaskCompletion(ctx, TaskCompletion{
-		TaskID:     task.ID,
-		RunID:      runID,
-		Status:     CompletionStatusVerifying,
-		ReportJSON: completionReportJSON(report),
+		TaskID:      task.ID,
+		RunID:       runID,
+		Status:      CompletionStatusVerifying,
+		ReportJSON:  completionReportJSON(report),
 		VerifierKey: key,
-		DecisionID: decision.ID,
+		DecisionID:  decision.ID,
 		RepairsUsed: repairsUsed,
-		UpdatedAt:  time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
 	}); err != nil {
 		return err
 	}
