@@ -13,6 +13,7 @@ import (
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
 	"mindfs/server/internal/auth"
+	"mindfs/server/internal/channels/feishu"
 	"mindfs/server/internal/config"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
@@ -60,6 +61,9 @@ type sharedServices struct {
 	// parallelMainTree 是共享主树并行开关（nil = 默认开启）。每账户的 Kanban
 	// 实例必须拿到同一个值。
 	parallelMainTree *bool
+	// feishu 是外部通道（nil = 未配置）。整个进程一份：卡片状态与点击监听都只有
+	// 一份，账户靠卡片里的 AccountID 区分。
+	feishu *feishu.Service
 }
 
 func (s sharedServices) parallelMainTreeEnabled() bool {

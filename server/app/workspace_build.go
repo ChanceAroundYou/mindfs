@@ -118,6 +118,11 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 并在执行时用本账户的 session manager 跑（scheduled/tasks.go 用 registry.GetSessionManager）。
 	// 共享实例会让同一个任务被两边各跑一次。
 	services.Kanban = kanban.NewService(services)
+	// 外部通道（飞书）是进程级一份；本账户的看板把卡片交给它，账户身份由适配器固定。
+	services.Feishu = m.shared.feishu
+	if m.shared.feishu != nil {
+		services.Kanban.SetCardNotifier(feishuCardNotifier{svc: m.shared.feishu, accountID: userID})
+	}
 	// 工作流库属共享控制面数据（主节点一份），每账户的 Kanban 实例共用同一份；
 	// 不接的话 /api/workflows 一律 503，迁移入口也就无从谈起。
 	services.Kanban.Workflows = m.shared.workflows

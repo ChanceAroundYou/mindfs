@@ -37,6 +37,8 @@ type startupConfig struct {
 	Workflow *startupWorkflowConfig `json:"workflow"`
 	// LiveCompact 是节点本地的上下文活压缩配置。不配置 = off。
 	LiveCompact *startupLiveCompactConfig `json:"live_compact"`
+	// Channels 是外部通道（飞书等）的本机配置。不配置 = 全关。
+	Channels *startupChannelsConfig `json:"channels"`
 }
 
 // startupLiveCompactConfig 只影响本机，不走控制面共享。mode 默认 off；
@@ -163,6 +165,12 @@ type startupFlags struct {
 	LiveCompactColdFold           *bool
 	LiveCompactColdRailTokens     *int
 	LiveCompactCacheTTLSeconds    *int
+
+	// 飞书通道没有 CLI flag：只由 config.json 的 channels.feishu 段填充。
+	FeishuEnabled      *bool
+	FeishuOwnerOpenID  *string
+	FeishuLarkCLI      *string
+	FeishuCardTTLHours *int
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -308,6 +316,8 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 			*flags.LiveCompactCacheTTLSeconds = *live.CacheTTLSeconds
 		}
 	}
+	// Channels 与 router 无关，必须在那条提前 return 之前落地。
+	applyFeishuConfig(cfg, explicit, flags)
 	router := cfg.Router
 	if task := cfg.Task; task != nil {
 		if flags.TaskAgent != nil && task.Agent != nil {

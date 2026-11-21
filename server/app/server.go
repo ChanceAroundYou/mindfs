@@ -47,6 +47,8 @@ type StartOptions struct {
 	// import 不到 server/internal/nodeinfo（Go internal 规则），
 	// 而它是唯一需要设置这个字段的地方。值在使用点统一 Normalize。
 	Role string
+	// Feishu 是外部通道（飞书）的本机配置。Enabled=false（缺省）时通道不创建。
+	Feishu FeishuOptions
 	// Task Router 是节点本地配置；cli/cmd 不能 import server/internal/kanban，
 	// 所以入口只传字符串/时长，在 Start 里归一化成 kanban.RouterConfig。
 	RouterMode        string
@@ -255,6 +257,10 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		return time.Duration(hours) * time.Hour
 	})
 
+	// 外部通道先于工作区创建：每账户的 Kanban 实例在构建时就要拿到适配器，
+	// 否则启动期建好的主账户永远发不出卡片。
+	feishuChannel := newFeishuChannel(opts.Feishu, configDir)
+
 	workspaces := newWorkspaceManager(ctx, sharedServices{
 		agentConfig:      agentConfig,
 		update:           updateSvc,
@@ -270,8 +276,13 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		routerConfig:     routerConfigFromOptions(opts),
 		taskConfig:       taskConfigFromOptions(opts),
 		parallelMainTree: &opts.WorkflowParallelMainTree,
+		feishu:           feishuChannel,
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
+	if feishuChannel != nil {
+		feishuChannel.SetAnswerHandler(workspaces.ApplyFeishuAnswer)
+		feishuChannel.Start(ctx)
+	}
 
 	// 主账户先建一次：启动期就把配置问题暴露出来，而不是等第一个请求 500
 	primary, err := workspaces.Workspace("")

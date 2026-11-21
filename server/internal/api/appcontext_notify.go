@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	agenttypes "mindfs/server/internal/agent/types"
+	"mindfs/server/internal/channels/feishu"
 	"mindfs/server/internal/notify"
 	"mindfs/server/internal/session"
 )
@@ -141,6 +144,35 @@ func (s *AppContext) notifyScheduled(rootID, taskID, taskName, sessionKey, summa
 		EventID:    eventID,
 	})
 	s.notifyPayload(context.Background(), eventID, payload)
+	s.notifyFeishuScheduled(rootID, taskID, taskName, summary, message, success)
+}
+
+// notifyFeishuScheduled 把定时任务的一次结果推成一张飞书 notice 卡片。
+//
+// 与看板卡片前缀（notice-）刻意不同：同一个任务既可能因定时任务发出结果，
+// 也可能因状态翻转发出通知，ID 撞上会被卡片去重静默吞掉一张。
+func (s *AppContext) notifyFeishuScheduled(rootID, taskID, taskName, summary, message string, success bool) {
+	if s == nil || s.Feishu == nil {
+		return
+	}
+	status := "failed"
+	body := strings.TrimSpace(message)
+	if success {
+		status = "succeeded"
+		body = strings.TrimSpace(summary)
+	}
+	cardID := "scheduled-" + taskID + "-" + status + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if err := s.Feishu.Notify(context.Background(), feishu.Notice{
+		CardID:    cardID,
+		Kind:      feishu.KindNotice,
+		RootID:    rootID,
+		TaskID:    taskID,
+		TaskTitle: taskName,
+		Status:    status,
+		Summary:   body,
+	}); err != nil {
+		log.Printf("[feishu] 定时任务卡片入队失败 task=%s err=%v", taskID, err)
+	}
 }
 
 func (s *AppContext) notifyPayload(ctx context.Context, eventID string, payload notify.Payload) {

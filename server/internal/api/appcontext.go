@@ -8,6 +8,7 @@ import (
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/auth"
+	"mindfs/server/internal/channels/feishu"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
@@ -42,6 +43,9 @@ type AppContext struct {
 	Pins      *pins.Store
 	Scheduled *scheduled.Service
 	Kanban    *kanban.Service
+	// Feishu 是外部通道。nil = 本机没配（缺省），所有外发一律跳过；
+	// 卡片属于哪个账户由实例装配时固定，不在这里再分账户。
+	Feishu *feishu.Service
 	// TaskAgent / TaskModel 是新任务派发默认落到的 Agent 与模型（节点本地
 	// 配置 task.agent / task.model，由 server/app 归一化出 claude + sonnet）。
 	// 空值 = 没配置：选 Agent 退回「探针顺序里第一个可用」的老启发式。

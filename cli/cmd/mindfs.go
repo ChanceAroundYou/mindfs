@@ -113,6 +113,8 @@ func main() {
 	taskAgent, taskModel := "", ""
 	// 主动监管开关与预算，只走 config.json（router.supervision 段）。
 	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions, routerSupervisionQuotaHold := "", 0, 0, 0
+	// 飞书通道，只走 config.json（channels.feishu 段）。缺省全关。
+	feishuEnabled, feishuOwnerOpenID, feishuLarkCLI, feishuCardTTLHours := false, "", "", 0
 	remove := flag.Bool("remove", false, "remove the managed directory")
 	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
@@ -161,6 +163,10 @@ func main() {
 		WebPushRelayURL:               &webPushRelayURL,
 		TaskAgent:                     &taskAgent,
 		TaskModel:                     &taskModel,
+		FeishuEnabled:                 &feishuEnabled,
+		FeishuOwnerOpenID:             &feishuOwnerOpenID,
+		FeishuLarkCLI:                 &feishuLarkCLI,
+		FeishuCardTTLHours:            &feishuCardTTLHours,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -407,6 +413,12 @@ func main() {
 			LiveCompactColdFold:                &liveCompactColdFold,
 			LiveCompactColdRailTokens:          liveCompactColdRailTokens,
 			LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
+			Feishu: feishuOptions(startupFlags{
+				FeishuEnabled:      &feishuEnabled,
+				FeishuOwnerOpenID:  &feishuOwnerOpenID,
+				FeishuLarkCLI:      &feishuLarkCLI,
+				FeishuCardTTLHours: &feishuCardTTLHours,
+			}),
 		})
 	}()
 	if err := waitForServer(*addr, *tlsFlag, 8*time.Second); err != nil {
