@@ -12,6 +12,7 @@ import (
 
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
+	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/auth"
 	"mindfs/server/internal/channels/feishu"
 	"mindfs/server/internal/config"
@@ -64,6 +65,9 @@ type sharedServices struct {
 	// feishu 是外部通道（nil = 未配置）。整个进程一份：卡片状态与点击监听都只有
 	// 一份，账户靠卡片里的 AccountID 区分。
 	feishu *feishu.Service
+	// hygiene 是补全默认值后的会话卫生策略；每账户用自己的 tracker 实例
+	// （作用域键含 session key，账户之间不共享状态）。
+	hygiene usecase.HygieneConfig
 }
 
 func (s sharedServices) parallelMainTreeEnabled() bool {

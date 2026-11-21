@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"mindfs/server/internal/api"
+	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/config"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
@@ -105,6 +106,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 
 		TaskAgent: m.shared.taskConfig.Agent,
 		TaskModel: m.shared.taskConfig.Model,
+		Hygiene:   usecase.NewHygieneTracker(m.shared.hygiene),
 	}
 	services.Scheduled = scheduled.NewService(services, services)
 	if err := normalizeRegisteredForkSessions(m.ctx, services); err != nil {
