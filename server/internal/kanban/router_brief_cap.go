@@ -37,6 +37,14 @@ func capSituationBrief(brief *SituationBrief) *SituationBrief {
 		}
 		activity.BodyExcerpt = truncateRouterText(activity.BodyExcerpt, 200)
 	}
+	// 节点卡片在活动之后、用人话的其它段之前压：先缩摘要，再缩条数（省略数
+	// 记进 node_cards_truncated，读的人要知道有几张没看见）。
+	if trimRouterBriefNodeCards(brief) && briefSize(brief) <= routerBriefMaxBytes {
+		return brief
+	}
+	if trimRouterBriefNodeCardCount(brief, routerBriefNodeTrimmedLimit) && briefSize(brief) <= routerBriefMaxBytes {
+		return brief
+	}
 	trimRouterCompletion(brief)
 	trimRouterEventExcerpts(brief)
 	if brief.Trigger.UserMessage != nil && briefSize(brief) > routerBriefMaxBytes {
@@ -44,6 +52,32 @@ func capSituationBrief(brief *SituationBrief) *SituationBrief {
 	}
 	trimRouterEventUnverified(brief)
 	return brief
+}
+
+// trimRouterBriefNodeCards 把节点卡片摘要压到短档；返回是否有裁剪。
+func trimRouterBriefNodeCards(brief *SituationBrief) bool {
+	if brief == nil || brief.LatestRun == nil {
+		return false
+	}
+	trimmed := false
+	for i := range brief.LatestRun.Nodes {
+		card := &brief.LatestRun.Nodes[i]
+		if len(card.Summary) > routerBriefNodeShortExcerpt {
+			card.Summary = truncateRouterText(card.Summary, routerBriefNodeShortExcerpt)
+			trimmed = true
+		}
+	}
+	return trimmed
+}
+
+// trimRouterBriefNodeCardCount 只保留前 keep 张卡片，其余计入省略数。
+func trimRouterBriefNodeCardCount(brief *SituationBrief, keep int) bool {
+	if brief == nil || brief.LatestRun == nil || len(brief.LatestRun.Nodes) <= keep {
+		return false
+	}
+	brief.LatestRun.NodeCardsTruncated += len(brief.LatestRun.Nodes) - keep
+	brief.LatestRun.Nodes = brief.LatestRun.Nodes[:keep]
+	return true
 }
 
 // trimRouterCompletion 把证据清单压到 8 条：缺口再多也不该挤掉 brief 的其它段，

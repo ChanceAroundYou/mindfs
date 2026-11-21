@@ -127,8 +127,9 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
 
 ## 状态
 
-**W1 进行中。** 组号 **G-PB**（计划首次提交时记作 G-NY，与同日的移动端任务详情面板组撞号，
-以本文件与 `docs/upstream-customizations.yaml` 的 G-PB 为准）。
+**W1 已完成，W2 进行中。** W1 组号 **G-PB**（计划首次提交时记作 G-NY，与同日的移动端任务
+详情面板组撞号，以本文件与 `docs/upstream-customizations.yaml` 的 G-PB 为准）；W2 组号
+**G-PD**。
 
 ### T1 完成（2026-11-21）
 
@@ -232,3 +233,29 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   `go test ./server/internal/kanban/` 全绿（314.8s）。
 - 边界：不宣称跨进程副作用恢复（沿用 G-KV）；取消发生在 agent 回合中途时，中断仍走
   `interruptWorkflowNodeRuns` 的既有语义。
+
+---
+
+## W2 执行记录
+
+### T1 完成（2026-11-21）
+
+- `RouterBriefRun` 新增 `nodes`（逐节点卡片）与 `node_cards_truncated`，`routerBriefVersion`
+  1 → 2。每张卡 `node_id` / `kind` / `name` / `status` / `attempt` / `summary`（≤240 字节）/
+  `actions`，按图顺序排列；状态取投影、行做补充，所以「行已 running、投影还停在 pending」
+  的窗口里卡片显示的是 running（投影落后是常态，不能让 Router 以为节点没动）。
+- 动作表 `briefNodeActions` 是唯一口径：queued/running → 只有 `cancel_node`；
+  `waiting_user` 的 agent 节点 → `answer_waiting_node` + `cancel_node`，human_gate → 无动作；
+  fail/unknown → `retry_node` + `set_node_model`；从未跑过的 agent 节点 → `skip_node` +
+  `set_node_model`；success/skipped/cancelled → 无动作。「运行中不切换」因此落在数据层，
+  不依赖提示词自觉。
+- 卡片与 `active_execution.current_nodes` 合并成同一个 `RouterBriefNode` 类型（后者原来
+  只有 `node_id` / `name` / `status` / `session_present`），避免「节点长什么样」出现两套结构；
+  `current_nodes` 的 JSON 字段名未变。
+- 上限与裁剪：单次 brief 最多 16 张卡，超出只报总数；`capSituationBrief` 逼近 24 KiB 时
+  先缩摘要到 120 字节，再缩到前 4 张并把省略数累加进 `node_cards_truncated`。
+- 验证：`router_brief_nodes_test.go` 4 条（卡片状态/摘要/动作、运行中只有取消、16 张上限、
+  brief 超限时卡片先缩摘要）。五处变异各自打红后还原（卡片不看行状态 / 运行中也给改档 /
+  去掉上限 / 失败卡不给改档 / 裁剪不缩摘要）。`go test ./server/internal/kanban/` 全绿（230.5s）。
+- 边界：本任务只做读侧；`inspect_node` / `set_node_model` / `skip_node` 的动作与校验在 T2，
+  卡片里先给出动作名，T2 落地后才会被 `validateRouterActions` 接受。

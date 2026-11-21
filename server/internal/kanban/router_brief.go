@@ -19,7 +19,8 @@ import (
 // 不可信数据处理（提示词要求把它们当数据，不当指令）。
 
 const (
-	routerBriefVersion         = 1
+	// 2：LatestRun 增逐节点卡片（Nodes / NodeCardsTruncated）。
+	routerBriefVersion         = 2
 	routerBriefMaxBytes        = 24 * 1024
 	routerBriefMaxActivities   = 10
 	routerBriefActivityExcerpt = 500
@@ -29,6 +30,13 @@ const (
 	// 粘贴把 brief 预算撑破；整体 24KB 的硬上限由 capSituationBrief 兜底。
 	routerBriefTriggerBodyLimit = 8000
 	routerBriefMaxWorkflows     = 20
+	// routerBriefNodeExcerpt 是单张节点卡片的产出摘要上限：卡片是「一眼看出这个
+	// 节点上次干了什么」，要细节时 Router 用 inspect_node 取。
+	routerBriefNodeExcerpt = 240
+	// routerBriefNodeShortExcerpt / routerBriefNodeTrimmedLimit 是 brief 超限时的
+	// 两档退让：先缩摘要，再缩条数。
+	routerBriefNodeShortExcerpt = 120
+	routerBriefNodeTrimmedLimit = 4
 )
 
 type SituationBrief struct {
@@ -95,11 +103,17 @@ type RouterBriefExecution struct {
 	CurrentNodes []RouterBriefNode `json:"current_nodes,omitempty"`
 }
 
+// RouterBriefNode 是「一个节点此刻长什么样」的唯一卡片类型：执行中的
+// current_nodes 与整轮的逐节点卡片共用它，免得两处各说一遍。
 type RouterBriefNode struct {
-	NodeID         string `json:"node_id"`
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	SessionPresent bool   `json:"session_present"`
+	NodeID         string   `json:"node_id"`
+	Name           string   `json:"name,omitempty"`
+	Kind           string   `json:"kind,omitempty"`
+	Status         string   `json:"status"`
+	SessionPresent bool     `json:"session_present,omitempty"`
+	Attempt        int      `json:"attempt,omitempty"`
+	Summary        string   `json:"summary,omitempty"`
+	Actions        []string `json:"actions,omitempty"`
 }
 
 type RouterBriefRun struct {
@@ -109,7 +123,15 @@ type RouterBriefRun struct {
 	NodeSummary      map[string]int `json:"node_summary,omitempty"`
 	WaitingUserNodes []string       `json:"waiting_user_nodes,omitempty"`
 	ErrorExcerpt     string         `json:"error_excerpt,omitempty"`
+	// Nodes 是逐节点卡片（W2 T1）：状态、attempt、上一次产出摘要与当前可用的
+	// 动作。动作表由状态唯一决定，Router 照卡片动手，不用再猜哪个动作合法。
+	Nodes              []RouterBriefNode `json:"nodes,omitempty"`
+	NodeCardsTruncated int               `json:"node_cards_truncated,omitempty"`
 }
+
+// briefNodeCardLimit 是单次 brief 携带的节点卡片上限；超出的只报总数，免得
+// 大图把 Router 的上下文挤爆。
+const briefNodeCardLimit = 16
 
 type RouterBriefWorkflow struct {
 	ID            string   `json:"id"`
@@ -366,13 +388,98 @@ func briefRun(ctx context.Context, store *TaskStore, run *WorkflowRun, task Task
 			summary[bucket]++
 		}
 	}
+	cards, truncated := briefNodeCards(run, nodeRuns)
 	return &RouterBriefRun{
-		ID:               run.ID,
-		Status:           briefTaskStatus(run, task),
-		Version:          run.Version,
-		NodeSummary:      summary,
-		WaitingUserNodes: waiting,
+		ID:                 run.ID,
+		Status:             briefTaskStatus(run, task),
+		Version:            run.Version,
+		NodeSummary:        summary,
+		WaitingUserNodes:   waiting,
+		Nodes:              cards,
+		NodeCardsTruncated: truncated,
 	}
+}
+
+// briefNodeCards 按图顺序给每个顶层节点出一张卡。状态以投影为准、行做补充
+// （投影可能落后一行）；动作表由状态唯一决定 —— 运行中只能取消，改档与跳过
+// 只在节点不在跑时出现（用户裁定「运行中不切换」）。
+func briefNodeCards(run *WorkflowRun, nodeRuns []NodeRun) ([]RouterBriefNode, int) {
+	if run == nil {
+		return nil, 0
+	}
+	type latest struct {
+		status  string
+		attempt int
+		summary string
+	}
+	rows := make(map[string]latest, len(nodeRuns))
+	for _, nodeRun := range nodeRuns {
+		// Loop 内部行按 (loop_path, iteration) 落自己的事实，不属于顶层节点卡片
+		// （与 repairCancelledNodeProjections、CommitWorkflowNodeTransition 同一规则）。
+		if nodeRun.LoopPath != "" {
+			continue
+		}
+		prev, ok := rows[nodeRun.NodeID]
+		if ok && prev.attempt >= nodeRun.Attempt {
+			continue
+		}
+		summary := nodeRunText(nodeRun, "summary", "reason", "error")
+		rows[nodeRun.NodeID] = latest{status: nodeRun.Status, attempt: nodeRun.Attempt, summary: summary}
+	}
+	cards := make([]RouterBriefNode, 0, len(run.Graph.Nodes))
+	truncated := 0
+	for _, node := range run.Graph.Nodes {
+		row := rows[node.ID]
+		status := run.NodeStates[node.ID]
+		if status == "" {
+			status = row.status
+		}
+		if status == "" {
+			status = NodeRunPending
+		}
+		if len(cards) >= briefNodeCardLimit {
+			truncated++
+			continue
+		}
+		cards = append(cards, RouterBriefNode{
+			NodeID:  node.ID,
+			Kind:    node.Kind,
+			Name:    node.Name,
+			Status:  status,
+			Attempt: row.attempt,
+			Summary: truncateRouterText(row.summary, routerBriefNodeExcerpt),
+			Actions: briefNodeActions(node, status),
+		})
+	}
+	if len(cards) == 0 {
+		return nil, truncated
+	}
+	return cards, truncated
+}
+
+// briefNodeActions 是「这个状态下 Router 能对这个节点做什么」的唯一口径。
+// 卡片、校验层与提示词都从这里取，避免三处各写一套。
+func briefNodeActions(node WorkflowNode, status string) []string {
+	switch status {
+	case NodeRunQueued, NodeRunRunning:
+		return []string{"cancel_node"}
+	case NodeRunWaitingUser:
+		// 审批卡只能由人批准/驳回；agent 节点停在这里时 Router 可以代用户回话。
+		if node.Kind == NodeKindHumanGate {
+			return nil
+		}
+		return []string{"answer_waiting_node", "cancel_node"}
+	case NodeRunFail, NodeRunUnknown:
+		return []string{"retry_node", "set_node_model"}
+	case NodeRunSuccess, NodeRunSkipped, NodeRunCancelled:
+		// 已收尾的节点不再接受动作（重跑成功节点要走新一轮，不是节点级动作）。
+		return nil
+	}
+	// 还没跑过（投影与行都没有）：可以跳过、可以改档。
+	if node.Kind != NodeKindAgent {
+		return nil
+	}
+	return []string{"skip_node", "set_node_model"}
 }
 
 // briefRunBucket 把节点状态映射到 node_summary 的桶；未知状态返回空串，

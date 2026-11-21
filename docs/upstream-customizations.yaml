@@ -11881,3 +11881,44 @@ groups:
       - 'server/internal/agent/pool_codex_proxy.go:func codexHomeDir() string {'
       - 'server/internal/agent/workdir.go:func IsTemporaryWorkDir(path string) bool {'
       - 'server/internal/agent/workdir.go:func isPathWithin(path, root string) bool {'
+
+  - id: G-PD
+    title: Super agent 节点级管理员 W2：Router brief 逐节点卡片（状态 / attempt / 摘要 / 可用动作）
+    kind: feature
+    symptom: |
+      W1 给 Router 配了取消三档、预算与验收项，但它看世界仍然只有一段 node_summary 计数与
+      「哪些节点在等用户」：要判断该重试、该取消还是该改档，只能猜或者反复调 inspect_run。
+      写侧动作（set_node_model / skip_node）也没有对应的读侧结构，动作与状态对不上号。
+    why: |
+      必须保留：① `RouterBriefRun.nodes` 是逐节点卡片，按图顺序给出 `node_id` / `kind` /
+      `name` / `status` / `attempt` / `summary`（≤240 字节）/ `actions`；状态取投影、行做补充
+      （投影可能落后于行，运行中的节点不能显示成 pending）。
+      ② `actions` 由状态唯一决定（`briefNodeActions`），卡片、校验层与提示词共用这一份：
+      queued/running 只有 `cancel_node`；`waiting_user` 的 agent 节点给
+      `answer_waiting_node` + `cancel_node`，human_gate 不给动作（只能由人批准/驳回）；
+      fail/unknown 给 `retry_node` + `set_node_model`；从没跑过的 agent 节点给
+      `skip_node` + `set_node_model`；已收尾（success/skipped/cancelled）不给动作。
+      「运行中不切换」因此是**数据层**的硬约束，不靠提示词自觉。
+      ③ 卡片有上限：单次 brief 最多 `briefNodeCardLimit`（16）张，超出只报
+      `node_cards_truncated` 总数；brief 逼近 24 KiB 时先缩摘要（120 字节）再缩条数
+      （保留前 4 张并把省略数加进同一个字段），任何情况下不静默丢卡片。
+      ④ 卡片与 `active_execution.current_nodes` 共用同一个 `RouterBriefNode` 类型，避免
+      「节点长什么样」出现两套结构。
+    boundary: |
+      本组只做读侧卡片（W2 T1）。T2 的动作工具（`inspect_node` / `set_node_model` /
+      `skip_node`）与 T3 的「运行中切换」守卫落在同一组，随实现补进 files/tests/anchors。
+      卡片摘要只是给人/模型一眼看的摘录，细节仍走 inspect_node；不做跨轮历史卡片。
+    files:
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_brief_cap.go
+      - docs/superpowers/plans/2026-11-21-super-agent-node-admin.md
+    tests:
+      - server/internal/kanban/router_brief_nodes_test.go
+    anchors:
+      - 'server/internal/kanban/router_brief.go:type RouterBriefNode struct {'
+      - 'server/internal/kanban/router_brief.go:const briefNodeCardLimit = 16'
+      - 'server/internal/kanban/router_brief.go:func briefNodeCards(run *WorkflowRun, nodeRuns []NodeRun) ([]RouterBriefNode, int) {'
+      - 'server/internal/kanban/router_brief.go:func briefNodeActions(node WorkflowNode, status string) []string {'
+      - 'server/internal/kanban/router_brief.go:Nodes              []RouterBriefNode `json:"nodes,omitempty"`'
+      - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCards(brief *SituationBrief) bool {'
+      - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCardCount(brief *SituationBrief, keep int) bool {'
