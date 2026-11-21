@@ -420,6 +420,36 @@ type Domain interface {
 - 变异：冲突时清 pending → 数据丢失用例红；拉取先推进水位再应用 → 断点用例红。
 - 验收：`go test ./server/internal/controlsync/ -run Reconcile -count=1`、`-race`。
 
+执行记录（2026-11-21）：
+
+- `Reconciler.Reconcile` 循环 `base := BaseRev()` → `FetchPage(since=base+1)` → 判页 →
+  整页提交；`*Replicator` 实现 `PageSource`（同一套 https 客户端与分页大小），测试用
+  内存分页源。
+- 判定（spec §6.2 + 两条边界）：无 pending → `apply`；`pending.Deleted && remote.Deleted`
+  → `converged`；载荷 hash 相同 → `converged`；`remote.Hash == pending.BaseHash` →
+  `kept`（主节点离线期间没动过这条，本地改动仍是相对祖先的唯一改动，等推送）；
+  否则 `conflict`。`rev <= base_rev` 的旧 rev 一律 `skipped`。
+- **顺序**：先 `Apply` 权威存储，再提交 `records` + 清 pending + 冲突 + 水位。反过来
+  一旦在两步之间死掉，会留下「水位已过、JSON 还是旧值」且那条变更再也不会被拉到 ——
+  `TestReconcileKeepsWatermarkWhenApplyFails` 钉住这条。
+- 冲突 id 用 `pull:<domain>:<key>`（`PullConflictID`），重复拉取只刷新「主节点现在
+  是什么」那一侧；按 rev 生成 id 会让一次断网重连堆出一串指向同一对值的冲突卡。
+- pending 表访问器（`store_pending.go`）：同一 `(domain,key)` 离线期间改多次只保留
+  最后一份载荷，但 `base_hash` 与 `change_id` 保持第一次的值；删除的 pending 没有载荷，
+  三角比对里它的「本地 hash」用祖先值（与墓碑口径一致）。
+- 无进展守卫：整页都是旧 rev 时停下。第一版没有这条，`ignoreSince` 的测试直接把
+  `Reconcile` 卡成死循环（122s 被超时杀掉）—— 这是写测试时暴露的真缺陷，不是构造出来的。
+- 用例 9 条：四分支各一条、删除三分支、分页 `since` 序列 `1,3,5,6`、断线续传（第 3 页
+  失败后从 `since=3` 补第 3 条）、应用失败不推进水位、旧 rev 跳过且不死循环、
+  删除冲突带祖先 hash。
+- 变异 4 处：① 冲突时也清 pending → 冲突与删除两条用例红（数据丢失）；② 应用失败
+  仍继续并提交（等价于「先推进水位再应用」）→ 断点用例红；③ 去掉「远端 == 祖先」
+  分支 → `kept` 与删除「远端还是祖先」两条红；④ 去掉无进展守卫 → 用例不结束
+  （25s 超时被杀）。各自还原后复绿；`-race` 全绿。
+- **未接通**：`Reconciler` 尚未接进 `server/app`；离线写入落到 `pending` 的那一段
+  （采集器按模式分流）还没做，本轮的 pending 由测试直接写入。未改配置、未部署、
+  未重启任何节点。
+
 ### T15 冲突查询与裁决
 
 - 目标：`GET /conflicts`、`POST /conflicts/{id}/resolve`；裁决后写回并追平。

@@ -12165,6 +12165,12 @@ groups:
       （冲突不是「先写再回滚」，用户还没裁决）；**records / changes / applied_changes 一个
       事务**（少写 applied_changes 会让边缘重连后重复推进 rev）；**写权威存储必须包在
       `Suppress` 里**（否则这次远端应用会回声成一条新的本地变更）。
+      ⑬ 合并阶段（`reconcile.go` / `store_reconcile.go` / `store_pending.go`）的四条必须
+      保留：**先应用权威存储、后提交记录与水位**（反过来在两步之间崩溃会留下「水位已过、
+      JSON 还是旧值」且那条变更永远拉不到）；**冲突与 kept 都不清 pending**（清掉就是
+      把本地改动扔了）；**整页一个事务**（records / pending 清理 / 冲突 / 水位同生共死，
+      中途断线从 `base_rev` 续传）；**整页都是旧 rev 时停下不再拉**（服务端不守 `since`
+      契约时不能原地空转）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
       （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
@@ -12210,6 +12216,10 @@ groups:
       - server/internal/controlsync/merge.go
       - server/internal/controlsync/merge_test.go
       - server/internal/controlsync/store_merge.go
+      - server/internal/controlsync/reconcile.go
+      - server/internal/controlsync/reconcile_test.go
+      - server/internal/controlsync/store_pending.go
+      - server/internal/controlsync/store_reconcile.go
       - server/internal/api/http_control_sync.go
       - server/internal/api/http_control_sync_test.go
       - server/internal/api/http_control_sync_push_test.go
@@ -12232,6 +12242,7 @@ groups:
       - server/internal/controlsync/mode_test.go
       - server/internal/api/http_control_sync_test.go
       - server/internal/controlsync/merge_test.go
+      - server/internal/controlsync/reconcile_test.go
       - server/internal/api/http_control_sync_push_test.go
       - server/internal/auth/store_sync_test.go
       - server/internal/kanban/workflow_store_sync_test.go
@@ -12295,6 +12306,15 @@ groups:
       - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncPush(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:	if h.ControlSyncPush != nil {'
       - 'server/internal/api/http_control_sync_push_test.go:func TestControlSyncPushEndpointAbsentWhenNotConfigured(t *testing.T) {'
+      - 'server/internal/controlsync/reconcile.go:func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {'
+      - 'server/internal/controlsync/reconcile.go:	if ch.Hash == pending.BaseHash {'
+      - 'server/internal/controlsync/reconcile.go:	if !progressed {'
+      - 'server/internal/controlsync/store_reconcile.go:func (s *Store) ApplyReconcilePage(ctx context.Context, page ReconcilePage) error {'
+      - 'server/internal/controlsync/store_reconcile.go:func PullConflictID(domain, key string) string {'
+      - 'server/internal/controlsync/store_pending.go:ON CONFLICT(domain, key) DO UPDATE SET'
+      - 'server/internal/controlsync/reconcile_test.go:func TestReconcileRecordsConflictAndKeepsPending(t *testing.T) {'
+      - 'server/internal/controlsync/reconcile_test.go:func TestReconcileKeepsWatermarkWhenApplyFails(t *testing.T) {'
+      - 'server/internal/controlsync/reconcile_test.go:func TestReconcileResumesFromWatermarkAfterFailure(t *testing.T) {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
