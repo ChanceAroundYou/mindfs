@@ -772,3 +772,22 @@ Expected: `✓ 全部通过`.
 修法：`os.Pipe()` 给子进程一根活到退出才关的 stdin（父进程 `Start` 后关读端、`Wait` 后关写端）。用例先红后绿：`TestSupervisorKeepsListenerStdinOpen`（修前 300ms 内重启 13 次）、`TestSupervisorStopsListenerWithSIGTERM`（修前等不到 TERM）。真 `lark-cli` 复核：同样的 exec 形状下 `feishu-websocket: connected`、8 秒仍在跑、SIGTERM 正常收尾。`go test -race ./server/internal/channels/feishu/` 绿、`go build ./...` 成功。
 
 **尚未验证**：真卡片端到端（`config.json` 目前没有 `channels` 段，通道处于关闭状态）。下一步是填 `channels.feishu`（`enabled` / `owner_open_id` / `lark_cli`）→ 用户重启本机 → 发一张 HumanGate 卡走通「先回执后执行」。
+
+### 上线与真卡片端到端（2026-11-21，本机）
+
+重部署一轮后四端为 `v0.5.5-1201-39-g6159f483`（构建自 origin/main `6159f483`，含 `93125ed6` 的 stdin/SIGTERM 修复；本机、wsl、fn `is-active`/health 200，pc-win PID 50752 + `:7332` LISTENING + health 200）。`config.json` 新增 `channels.feishu = {enabled: true, owner_open_id: ou_…674f, card_ttl_hours: 168}`（只写本机：飞书一个应用只允许一条事件连接，跨节点要等 M4 中继），备份 `config.json.bak-20261121-feishu`。自检卡经真服务发出成功（`message_id om_x100b7f2e33d0a0a0ce81abfb8ce680f`）。
+
+用户重启本机后的运行时核对：
+
+- system 单元 22:38:24 重启，PID 1223682；`/proc/1223682/exe` 与 `~/.local/bin/mindfs` 同一 inode（262346），`mindfs --version` = `v0.5.5-1201-39-g6159f483`，`/mindfs/health` → `{"ok":true,"role":"control"}`。
+- 日志 `[feishu] 通道已启用 owner=…96774f node=ubuntu state=…/feishu/cards.json` → `lark-cli: [event] ready event_key=card.action.trigger` → `[source] feishu-websocket: connected`；监听进程连续存活 ≥9 分钟，`飞书卡片监听退出了` 与 `another event bus is already connected` 各 0 行（修复前是 1.5 秒自退、每 10 秒一行重连）——stdin/SIGTERM 修复在真实通道上生效。
+- `~/.config/mindfs/feishu/cards.json` 以 0600 落盘、目录 0700。
+
+真卡片端到端（走服务自己的创建点，不是直接调 `lark-cli`）：
+
+1. 临时发布 workflow `feishu-gate-e2e:v1`：`gate(human_gate) → done(notify)`，无 agent 节点、不调模型、不碰 worktree。
+2. 在 `proj` 根建任务 `task_667fa660ccceed70`（`workflow_choice=specified`），任务停在 `waiting_user`，卡片 `gate-run-deb14034340d96d8:gate::0:1` 发出到 owner：`message_id om_x100b7f2ea1ffcca0cd1c726a3801856`，选项「批准 / 驳回」。
+3. 用户在飞书点「批准」（延迟约 19 分钟，仍远在 TTL 内）。核对结果：卡片 `state=done`、`selected=0`、`rendered_version` 1→3（回执与终态各一次补丁）；`human_waiting` 活动 `status=completed`、`decision=approve`；Run 投影 `gate=success`、`done=success`；任务摘要写明审批结果与 `feishu e2e done`。任务停在 `waiting_user` 是设计语义（Run 成功只回到待审核，成功/失败由显式动作写），不是缺陷。
+4. 清理：删除临时任务与 workflow（`GET /api/workflows/published` 已不含该条目，`proj` 板面为空）。
+
+**未覆盖**：群聊与非 owner 点击、多账户并发、跨节点中继（M4）、入口与项目选择卡（M2）。「先回执后执行」的顺序由单测钉住，运行时证据是 `rendered_version` 的两次递增与 `done` 落定。
