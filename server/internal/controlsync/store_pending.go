@@ -22,11 +22,49 @@ type PendingChange struct {
 	CreatedAt time.Time
 }
 
+// NextPendingSeq 领一个本机单调递增的改动序号。
+//
+// 单条 SQL 里「先读后写」会漏掉并发窗口，这里用显式事务；DSN 带 _txlock=immediate，
+// 事务一开就持有写锁，两个并发调用不会拿到同一个号。序号跨重启延续（落 local_seq 表），
+// 否则重启后新改动会复用旧 change_id 被主节点当成重复而丢掉。
+func (s *Store) NextPendingSeq(ctx context.Context) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("controlsync: store closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("controlsync: next pending seq: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO local_seq(id, seq) VALUES(1, 0) ON CONFLICT(id) DO NOTHING`); err != nil {
+		return 0, fmt.Errorf("controlsync: next pending seq: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE local_seq SET seq = seq + 1 WHERE id = 1`); err != nil {
+		return 0, fmt.Errorf("controlsync: next pending seq: %w", err)
+	}
+	var seq int64
+	if err := tx.QueryRowContext(ctx, `SELECT seq FROM local_seq WHERE id = 1`).Scan(&seq); err != nil {
+		return 0, fmt.Errorf("controlsync: next pending seq: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("controlsync: next pending seq: %w", err)
+	}
+	return seq, nil
+}
+
+// PendingChangeID 拼出一个本地改动的身份。origin 是边缘实例 id：两台边缘同时改
+// 同一条记录时，序号各自从 1 起，带 origin 才不会撞。
+func PendingChangeID(origin, domain, key string, seq int64) string {
+	return fmt.Sprintf("%s:%s:%s:%d", origin, domain, key, seq)
+}
+
 // PutPending 记下一条待推送变更。
 //
-// 同一 (domain,key) 离线期间改多次只保留最后一份载荷 —— 中间值没有意义，
-// 也没人等着推送它。但 BaseHash 与 ChangeID 保持**第一次**那次的值：
-// 祖先值不会因为用户又改了一版而变，ChangeID 变了则主节点会把同一批改动当新变更。
+// 同一 (domain,key) 离线期间改多次只保留最后一份载荷，BaseHash 保持**第一次**那次
+// 的值（祖先值是「我最后在主节点上见到的值」，再改几版也不会变）。ChangeID 却必须
+// 换成最后一次的值：主节点按 change_id 去重，若沿用旧 id，「推上去了但回执丢了、
+// 本地又改了一版」这版会被当成重复应用而永远上不去 —— 两端静默分叉。
 func (s *Store) PutPending(ctx context.Context, p PendingChange) error {
 	if s == nil || s.db == nil {
 		return errors.New("controlsync: store closed")
@@ -41,6 +79,7 @@ func (s *Store) PutPending(ctx context.Context, p PendingChange) error {
 INSERT INTO pending(domain, key, change_id, base_hash, payload, deleted, created_at)
 VALUES(?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(domain, key) DO UPDATE SET
+	change_id = excluded.change_id,
 	payload = excluded.payload,
 	deleted = excluded.deleted`,
 		p.Domain, p.Key, p.ChangeID, p.BaseHash, p.Payload, boolInt(p.Deleted),
@@ -93,6 +132,50 @@ func (s *Store) DeletePending(ctx context.Context, domain, key string) error {
 	return nil
 }
 
+// DeletePendingIfChange 只在 pending 仍是 changeID 那条时才删。
+//
+// 推送期间用户又改了一版会让 pending 换上新身份；这时旧回执到了也不能删，
+// 否则那次改动永远推不上去。返回是否真的删掉了。
+func (s *Store) DeletePendingIfChange(ctx context.Context, domain, key, changeID string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("controlsync: store closed")
+	}
+	if changeID == "" {
+		return false, errors.New("controlsync: pending change_id required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM pending WHERE domain = ? AND key = ? AND change_id = ?`, domain, key, changeID)
+	if err != nil {
+		return false, fmt.Errorf("controlsync: delete pending: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("controlsync: delete pending: %w", err)
+	}
+	return n > 0, nil
+}
+
+// RebasePendingAfterApplied 在主节点接受了 changeID 之后，把「之后又改的那一版」
+// 的共同祖先往前挪到刚被接受的值。
+//
+// 这里只动 base_hash：载荷已是用户最新意图，身份也已是新的（PutPending 换的），
+// 再改任何一个都会把幂等身份和内容搞错位。
+func (s *Store) RebasePendingAfterApplied(ctx context.Context, domain, key, appliedHash string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("controlsync: store closed")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE pending SET base_hash = ? WHERE domain = ? AND key = ?`, appliedHash, domain, key)
+	if err != nil {
+		return false, fmt.Errorf("controlsync: rebase pending: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("controlsync: rebase pending: %w", err)
+	}
+	return n > 0, nil
+}
+
 // CountPending 返回待推送变更条数（状态接口与测试用）。
 func (s *Store) CountPending(ctx context.Context) (int, error) {
 	if s == nil || s.db == nil {
@@ -105,17 +188,30 @@ func (s *Store) CountPending(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// RebasePending 把一条待推送变更的共同祖先重定到主节点当前值（冲突裁决后的
-// `local` / `payload` 选择走这里）。change_id 保留：幂等身份是「这次本地改动」，
-// 裁决不会产生新的改动。返回是否存在这条 pending —— 期间被别的路径清掉时
-// 返回 false，不算错误。
+// RebasePending 把一条待推送变更的共同祖先重定到主节点当前值，载荷换成裁决结果，
+// 身份保持不变（`local` 选择：推的还是原样那一版）。
+//
+// `payload` 选择（用户填了合并值）必须改用 RebasePendingWithID 领一个新身份：
+// 载荷变了却沿用旧 change_id，会被主节点的 applied_changes 当成「早已应用过的
+// 变更」而静默丢掉。返回是否存在这条 pending —— 期间被别的路径清掉时返回 false，
+// 不算错误。
 func (s *Store) RebasePending(ctx context.Context, domain, key, baseHash string, payload []byte, deleted bool) (bool, error) {
+	return s.RebasePendingWithID(ctx, domain, key, baseHash, "", payload, deleted)
+}
+
+// RebasePendingWithID 同 RebasePending，但 changeID 非空时替换幂等身份。
+func (s *Store) RebasePendingWithID(ctx context.Context, domain, key, baseHash, changeID string, payload []byte, deleted bool) (bool, error) {
 	if s == nil || s.db == nil {
 		return false, errors.New("controlsync: store closed")
 	}
 	res, err := s.db.ExecContext(ctx, `
-UPDATE pending SET base_hash = ?, payload = ?, deleted = ? WHERE domain = ? AND key = ?`,
-		baseHash, payload, boolInt(deleted), domain, key)
+UPDATE pending
+SET base_hash = ?,
+    change_id = COALESCE(NULLIF(?, ''), change_id),
+    payload = ?,
+    deleted = ?
+WHERE domain = ? AND key = ?`,
+		baseHash, changeID, payload, boolInt(deleted), domain, key)
 	if err != nil {
 		return false, fmt.Errorf("controlsync: rebase pending: %w", err)
 	}

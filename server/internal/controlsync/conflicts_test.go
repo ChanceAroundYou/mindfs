@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -469,5 +470,74 @@ func TestMigrateAddsConflictDeleteColumnsToExistingDB(t *testing.T) {
 	}
 	if _, ok := prefs.items["agents"]; ok {
 		t.Fatalf("选 local 删除后权威存储仍留着记录")
+	}
+}
+
+// 选了合并值就是「内容变了」：change_id 必须换。主节点按 applied_changes 去重，
+// 沿用旧 id 会让这份合并值被当成已经应用过的变更而静默丢掉。
+func TestResolvePayloadFromEdgeMintsNewChangeID(t *testing.T) {
+	store, prefs, _, resolver := newResolverFixture(t)
+	resolver.WithPendingIDs("edge-pc")
+	ctx := t.Context()
+	prefs.set("agents", `{"v":"local"}`)
+	if err := store.PutPending(ctx, PendingChange{
+		ChangeID: "edge-pc:preferences:agents:41", Domain: DomainPreferences, Key: "agents",
+		BaseHash: recordHash(t, DomainPreferences, "agents", `{"v":"ancestor"}`),
+		Payload:  json.RawMessage(`{"v":"local"}`),
+	}); err != nil {
+		t.Fatalf("PutPending: %v", err)
+	}
+	id := seedConflict(t, store, Conflict{
+		ID:            "pull:preferences:agents",
+		Domain:        DomainPreferences,
+		Key:           "agents",
+		LocalPayload:  json.RawMessage(`{"v":"local"}`),
+		RemotePayload: json.RawMessage(`{"v":"remote"}`),
+	})
+	if err := resolver.Resolve(ctx, id, ConflictChoicePayload, []byte(`{"v":"merged"}`)); err != nil {
+		t.Fatalf("Resolve(payload): %v", err)
+	}
+	pending, ok, err := store.PendingChange(ctx, DomainPreferences, "agents")
+	if err != nil || !ok {
+		t.Fatalf("pending 应保留：ok=%v err=%v", ok, err)
+	}
+	if pending.ChangeID == "edge-pc:preferences:agents:41" || pending.ChangeID == "" {
+		t.Fatalf("change_id = %q，合并值必须换新身份", pending.ChangeID)
+	}
+	if !strings.HasPrefix(pending.ChangeID, "edge-pc:preferences:agents:") {
+		t.Fatalf("change_id = %q，应带本机身份前缀", pending.ChangeID)
+	}
+}
+
+// 选 local 推的还是本地那一版，身份不该动 —— 换了号等于告诉主节点这是新变更，
+// 幂等保护就失效了。
+func TestResolveLocalFromEdgeKeepsChangeID(t *testing.T) {
+	store, prefs, _, resolver := newResolverFixture(t)
+	resolver.WithPendingIDs("edge-pc")
+	ctx := t.Context()
+	prefs.set("agents", `{"v":"local"}`)
+	if err := store.PutPending(ctx, PendingChange{
+		ChangeID: "edge-pc:preferences:agents:41", Domain: DomainPreferences, Key: "agents",
+		BaseHash: recordHash(t, DomainPreferences, "agents", `{"v":"ancestor"}`),
+		Payload:  json.RawMessage(`{"v":"local"}`),
+	}); err != nil {
+		t.Fatalf("PutPending: %v", err)
+	}
+	id := seedConflict(t, store, Conflict{
+		ID:            "pull:preferences:agents",
+		Domain:        DomainPreferences,
+		Key:           "agents",
+		LocalPayload:  json.RawMessage(`{"v":"local"}`),
+		RemotePayload: json.RawMessage(`{"v":"remote"}`),
+	})
+	if err := resolver.Resolve(ctx, id, ConflictChoiceLocal, nil); err != nil {
+		t.Fatalf("Resolve(local): %v", err)
+	}
+	pending, ok, err := store.PendingChange(ctx, DomainPreferences, "agents")
+	if err != nil || !ok {
+		t.Fatalf("pending 应保留：ok=%v err=%v", ok, err)
+	}
+	if pending.ChangeID != "edge-pc:preferences:agents:41" {
+		t.Fatalf("change_id = %q，选 local 时不该换号", pending.ChangeID)
 	}
 }

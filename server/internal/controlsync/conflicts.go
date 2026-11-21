@@ -55,6 +55,18 @@ type Resolver struct {
 	store    *Store
 	registry *Registry
 	capturer *Capturer
+	// origin 是本机在 change_id 里的身份前缀。设了它，`payload` 裁决（载荷变了）
+	// 会重新领号；主节点自己裁决时可以留空 —— 它没有 applied_changes 去重，
+	// 沿用旧 id 也不会丢更新。
+	origin string
+}
+
+// WithPendingIDs 让 Resolver 在载荷被改写时换一个新的 change_id。
+func (r *Resolver) WithPendingIDs(origin string) *Resolver {
+	if r != nil {
+		r.origin = origin
+	}
+	return r
 }
 
 func NewResolver(store *Store, registry *Registry, capturer *Capturer) (*Resolver, error) {
@@ -134,7 +146,12 @@ func (r *Resolver) Resolve(ctx context.Context, id, choice string, payload []byt
 	if err := r.store.ClaimConflict(ctx, id, choice); err != nil {
 		return err
 	}
-	if err := r.applyResolved(ctx, c, target, keepPending); err != nil {
+	newChangeID, err := r.pendingIDFor(ctx, c, choice)
+	if err != nil {
+		r.store.ReleaseConflict(ctx, id)
+		return err
+	}
+	if err := r.applyResolved(ctx, c, target, keepPending, newChangeID); err != nil {
 		// 副作用没落成，把坑退回让用户重试；冲突卡本身仍然有效。
 		r.store.ReleaseConflict(ctx, id)
 		return err
@@ -198,7 +215,7 @@ func verifySideHash(rec Record, deleted bool) error {
 // 反过来的话，pending 已经重定到新 base_hash 而权威存储还是旧值：这时推送会把
 // 旧值推上去，冲突现场就此丢失。现在这个顺序最坏是「值对了、pending 没改」，
 // 下次推送再撞一次同样的冲突，用户重新裁决即可。
-func (r *Resolver) applyResolved(ctx context.Context, c Conflict, target Record, keepPending bool) error {
+func (r *Resolver) applyResolved(ctx context.Context, c Conflict, target Record, keepPending bool, newChangeID string) error {
 	domainImpl, err := r.registry.Get(c.Domain)
 	if err != nil {
 		return err
@@ -217,9 +234,24 @@ func (r *Resolver) applyResolved(ctx context.Context, c Conflict, target Record,
 	}
 	// 本地这一侧还要推上去：把共同祖先重定到主节点当前值，这样推送方
 	// （Pusher）看到的是「基于最新值的改动」，不会再判一次冲突。
-	if _, err := r.store.RebasePending(ctx, c.Domain, c.Key, c.RemoteHash,
-		target.Payload, target.Deleted); err != nil {
+	if _, err := r.store.RebasePendingWithID(ctx, c.Domain, c.Key, c.RemoteHash,
+		newChangeID, target.Payload, target.Deleted); err != nil {
 		return err
 	}
 	return nil
+}
+
+// pendingIDFor 决定重定之后 pending 用哪个身份。
+//
+// 只有 `payload`（用户填了合并值）会换号：内容变了沿用旧 change_id 会被主节点的
+// applied_changes 当成重复而丢掉。`local` 推的就是本地原来那一版，身份不动。
+func (r *Resolver) pendingIDFor(ctx context.Context, c Conflict, choice string) (string, error) {
+	if r.origin == "" || choice != ConflictChoicePayload {
+		return "", nil
+	}
+	seq, err := r.store.NextPendingSeq(ctx)
+	if err != nil {
+		return "", err
+	}
+	return PendingChangeID(r.origin, c.Domain, c.Key, seq), nil
 }

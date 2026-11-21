@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS state (
 	last_primary_at TEXT NOT NULL DEFAULT '',
 	last_error TEXT NOT NULL DEFAULT ''
 );
+-- local_seq 给「本地这次改动」发号：change_id 必须随内容前进（见 PutPending），
+-- 而主节点按它去重，所以序号只能一条道递增、不能复用。
+CREATE TABLE IF NOT EXISTS local_seq (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	seq INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS conflicts (
 	id TEXT PRIMARY KEY,
 	domain TEXT NOT NULL,
