@@ -26,10 +26,10 @@ const (
 )
 
 // ResolveProject follows the documented order: explicit chat binding, an
-// explicit #/@ prefix, a unique project name in the text, a configured and
-// existing default root when the text or prefix is ambiguous or silent, a
-// bounded picker, then a plain answer. Too many candidates become a plain
-// answer; it never guesses a project unrelated to text.
+// explicit #/@ prefix (a failed prefix keeps looking), a unique project name
+// in the text, a configured and existing default root when both are silent or
+// ambiguous, a bounded picker, then a plain answer. Too many candidates become
+// a plain answer; it never guesses a project unrelated to text.
 func ResolveProject(text, chatID string, bindings []Binding, catalog ProjectCatalog,
 	defaultRoot string, max int) (Resolution, error) {
 	refs, catalogErr := listRefs(catalog)
@@ -41,17 +41,12 @@ func ResolveProject(text, chatID string, bindings []Binding, catalog ProjectCata
 	}
 
 	if prefix := prefixToken(text); prefix != "" {
-		matches := matchPrefix(refs, prefix)
-		if len(matches) == 1 {
+		// Only an unambiguous prefix resolves here. A miss or an ambiguous
+		// prefix falls through to the unique name in the rest of the message;
+		// default root is consulted only after that also fails.
+		if matches := matchPrefix(refs, prefix); len(matches) == 1 {
 			return Resolution{Kind: ResolutionProject, Project: matches[0]}, nil
 		}
-		if defaults := defaultMatches(refs, defaultRoot); len(defaults) != 0 {
-			return finishMatches(defaults, max), nil
-		}
-		if len(matches) == 0 {
-			return Resolution{Kind: ResolutionAnswer}, nil
-		}
-		return finishMatches(matches, max), nil
 	}
 
 	matches := make([]ProjectRef, 0, len(refs))

@@ -204,6 +204,21 @@ func TestResolveDefaultRootOnlyWhenKnown(t *testing.T) {
 	}
 }
 
+func TestResolveUniqueNameAfterFailedPrefixBeatsDefaultRoot(t *testing.T) {
+	cat := &fakeProjectCatalog{refs: []ProjectRef{
+		{NodeID: "home", RootID: "proj", Name: "proj"},
+		{NodeID: "fn", RootID: "docs", Name: "docs · fn"},
+	}}
+	got, err := ResolveProject("#unknown docs 修一下", "oc_16", nil, cat, "proj", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ProjectRef{NodeID: "fn", RootID: "docs", Name: "docs · fn"}
+	if got.Kind != "project" || got.Project != want {
+		t.Fatalf("a unique name after a failed prefix must beat the default: %+v, want %+v", got, want)
+	}
+}
+
 func TestResolveDefaultRootWinsWhenPrefixMisses(t *testing.T) {
 	cat := &fakeProjectCatalog{refs: []ProjectRef{
 		{NodeID: "home", RootID: "proj", Name: "proj"},
