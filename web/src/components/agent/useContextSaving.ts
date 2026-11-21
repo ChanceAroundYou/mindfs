@@ -31,6 +31,7 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
   const requestRef = useRef(0);
   const wasPendingRef = useRef(pending);
   const compactTimerRef = useRef<number | null>(null);
+  const settleTimerRef = useRef<number | null>(null);
 
   const refresh = async () => {
     if (!sessionKey) return;
@@ -62,22 +63,37 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiReady, sessionKey, rootId, nodeId]);
 
-  // 卸载或换会话时把「等压缩回合跑完」的补偿刷新取消掉，别让它打旧会话。
+  // 卸载或换会话时把两个补偿刷新都取消掉，别让它们打旧会话。
   useEffect(() => {
     return () => {
       if (compactTimerRef.current !== null) {
         window.clearTimeout(compactTimerRef.current);
         compactTimerRef.current = null;
       }
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
     };
   }, [sessionKey]);
 
   // 回合结束刷新一次；这一轮到底折没折叠只有服务端知道。
+  //
+  // 再补一次延迟刷新：会话卫生的结论是在 `SendMessage` 收尾时算的，而界面看到的
+  // 「回落空闲」信号来自回合内的广播 —— 两者可能差几毫秒到几百毫秒，只刷一次时
+  // 实测会读到还没更新的 `normal`，胶囊（也就是「超长会话」提示的唯一载体）就此
+  // 一直不出现，直到用户手动换会话。
   useEffect(() => {
     const wasPending = wasPendingRef.current;
     wasPendingRef.current = pending;
     if (!apiReady || !sessionKey) return;
-    if (wasPending && !pending) void refresh();
+    if (!wasPending || pending) return;
+    void refresh();
+    if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = window.setTimeout(() => {
+      settleTimerRef.current = null;
+      void refresh();
+    }, 2000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending, apiReady, sessionKey]);
 

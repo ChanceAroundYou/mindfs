@@ -81,6 +81,29 @@ func TestHygieneHintTurnIsNotCountedOnArrival(t *testing.T) {
 	}
 }
 
+// 胶囊的读口在回合中间就会刷新：它先看到「又久又大」时绝不能把提示算作已经
+// 出现过，否则紧接着的回合结束会把它当成「提示之后的第 1 轮」，用户的 N 轮
+// 窗口整体少一轮 —— 线上实测出现过「提示和自动压缩同一刻发生」。
+func TestHygieneSnapshotDoesNotConsumeTheArrivalTurn(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	seedActive(tracker, "root", "s1", 3)
+	for i := 0; i < 3; i++ {
+		if view := tracker.Snapshot("root", "s1", "claude", 200000); view.State != HygieneStateHint {
+			t.Fatalf("snapshot %d state = %q, want hint", i, view.State)
+		}
+	}
+	view := tracker.Observe("root", "s1", "claude", 200000, true)
+	if view.TurnsSinceHint != 0 {
+		t.Fatalf("turns since hint = %d, want 0: a read consumed the arrival turn", view.TurnsSinceHint)
+	}
+	if view.TurnsUntilAutoCompact != 3 {
+		t.Fatalf("turns until auto = %d, want 3", view.TurnsUntilAutoCompact)
+	}
+	if view.AutoCompactDue {
+		t.Fatal("the hint arrival turn must not be due")
+	}
+}
+
 func TestHygieneAutoCompactBecomesDueAfterHintTurns(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)

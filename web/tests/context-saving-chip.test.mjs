@@ -81,8 +81,20 @@ test("胶囊只挂在已绑定会话上，命令模式不显示", () => {
 
 test("回合结束才刷新一次，不按秒轮询", () => {
   // 一次折叠只发生在回合结束时，轮询既浪费又看不出变化。
-  assert.match(hook, /if \(wasPending && !pending\) void refresh\(\);/);
+  assert.match(hook, /if \(!wasPending \|\| pending\) return;/);
+  assert.match(hook, /void refresh\(\);[\s\S]*?settleTimerRef\.current = window\.setTimeout\(\(\) => \{/);
+  assert.match(hook, /\}, 2000\);/);
   assert.doesNotMatch(hook, /setInterval/);
+});
+
+test("延迟刷新用独立定时器，别把「立即压缩」的补偿刷新一起清掉", () => {
+  // 压缩回合结束也会走 pending 回落；共用 compactTimerRef 会让按钮永远停在
+  // 「压缩中」。两个补偿刷新必须各有一条定时器。
+  assert.match(hook, /const compactTimerRef = useRef<number \| null>\(null\);/);
+  assert.match(hook, /const settleTimerRef = useRef<number \| null>\(null\);/);
+  const compactBlock = hook.slice(hook.indexOf("const compact = async"));
+  assert.match(compactBlock, /compactTimerRef\.current = window\.setTimeout/);
+  assert.doesNotMatch(compactBlock, /settleTimerRef/);
 });
 
 test("会话切换时先清空旧数据，避免上一条会话的数字留在新会话上", () => {
@@ -269,6 +281,13 @@ test("又久又大：胶囊显示倒计时，并给一个「立即压缩」入�
 test("自动压缩失败后停手，并在胶囊里写明只能手动", () => {
   assert.match(indicator, /hygiene\?\.auto_failed/);
   assert.match(indicator, /t\("contextSaving\.hygieneAutoFailed"\)/);
+});
+
+test("胶囊带语言无关的稳定标识：端到端不靠中文文案认它", () => {
+  // 无头 Chromium 的 navigator.language 是 en-US，aria-label 会变成英文；拿中文
+  // 子串找胶囊的测试会一直等不到（2026-11-21 实测）。档位也要能从 DOM 上读。
+  assert.match(indicator, /data-testid="context-saving-chip"/);
+  assert.match(indicator, /data-hygiene=\{hygiene\?\.state \|\| "none"\}/);
 });
 
 test("没折叠过的会话也显示胶囊：它只报上下文规模，不报 -0", () => {

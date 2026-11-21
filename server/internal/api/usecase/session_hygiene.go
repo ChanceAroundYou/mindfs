@@ -223,9 +223,27 @@ func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextToke
 	return view
 }
 
-// Snapshot 是不推进轮数的读取，给胶囊这类只读路径用。
+// Snapshot 是不推进任何状态的读取，给胶囊这类只读路径用。
+//
+// 读路径必须完全无副作用：前端每次刷新胶囊都会调它，而它一旦把「提示刚到」
+// 的那一格记成 hinted，紧接着的回合结束就会被算成「提示之后的第 1 轮」——
+// 用户看到的提示窗口整体少一轮，实测会出现「提示和自动压缩同一刻发生」。
+// 它也不建记录：没活动过的会话不该因为有人点开看一眼就多一条内存状态。
 func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens int) HygieneView {
-	return t.Observe(rootID, sessionKey, harness, contextTokens, false)
+	if t == nil {
+		return EvaluateHygiene(HygieneConfig{}, HygieneSnapshot{ContextTokens: contextTokens})
+	}
+	cfg := t.ConfigFor(harness)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	snap := HygieneSnapshot{ContextTokens: contextTokens}
+	if rec := t.records[hygieneScope(rootID, sessionKey)]; rec != nil {
+		snap.ActiveSeconds = int(rec.activeSeconds)
+		snap.Hinted = rec.hinted
+		snap.TurnsSinceHint = rec.turnsSinceHint
+		snap.AutoFailed = rec.autoFailed
+	}
+	return EvaluateHygiene(cfg, snap)
 }
 
 // MarkCompacted 在任意一次压缩之后调用（harness 自己的或我们触发的）：

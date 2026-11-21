@@ -278,6 +278,9 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
         onClick={handleOpen}
         title={chipTitle}
         aria-label={chipTitle}
+        // 稳定契约：提示文字随语言变，端到端与无障碍都靠这两个属性认这个胶囊。
+        data-testid="context-saving-chip"
+        data-hygiene={hygiene?.state || "none"}
         style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: hygieneBand ? "1px solid rgba(180, 83, 9, 0.32)" : "1px solid rgba(15, 118, 110, 0.24)", background: hygieneBand ? "linear-gradient(rgba(180, 83, 9, 0.1), rgba(180, 83, 9, 0.1)), var(--mobile-overlay-bg)" : "linear-gradient(rgba(15, 118, 110, 0.09), rgba(15, 118, 110, 0.09)), var(--mobile-overlay-bg)", color: hygieneBand ? "#b45309" : "#0f766e", fontSize: COMPOSER_CHIP_FONT_SIZE, fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap", cursor: "pointer" }}
       >
         {chipLabel}

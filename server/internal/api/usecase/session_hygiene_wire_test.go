@@ -69,8 +69,8 @@ func TestFinishHygieneTurnIgnoresSlashCommands(t *testing.T) {
 	service := newHygieneTestService(tracker)
 	current := &session.Session{Type: session.TypeChat, AgentCtxSeq: map[string]int{"claude": 0}}
 	seedActive(tracker, "root", "s1", 3)
-	// 先把提示臂好（只读快照也走同一套状态机），这样后续每一轮都会计数。
-	if view := tracker.Snapshot("root", "s1", "claude", 200000); view.State != HygieneStateHint || view.TurnsSinceHint != 0 {
+	// 先把提示臂好：提示只在回合结束的那一刻成立，只读快照不改状态。
+	if view := tracker.Observe("root", "s1", "claude", 200000, true); view.State != HygieneStateHint || view.TurnsSinceHint != 0 {
 		t.Fatalf("precondition: %+v", view)
 	}
 
