@@ -459,6 +459,37 @@ type Domain interface {
 - 变异：裁决写错方向 → 两端一致性用例红；响应带 hash → 安全用例红。
 - 验收：`go test ./server/internal/controlsync/ -run Conflict -count=1`。
 
+**执行记录（2026-11-21，已提交 `936ade82`，未部署、未重启任何节点）**
+
+落地：`controlsync/conflicts.go`（`Resolver.List/Resolve`、`ConflictView`、
+`ErrConflictNotFound/Resolved/Choice`）、`store_merge.go`（`Conflict` 增
+`LocalDeleted/RemoteDeleted/CreatedAt`，新增 `LoadConflict` / `ListOpenConflicts` /
+`ClaimConflict` / `ReleaseConflict`）、`store_pending.go`（`RebasePending`）、
+`store.go`（`conflicts` 增两列 + `ensureConflictDeleteColumns` 幂等迁移，旧库
+`ALTER TABLE ADD COLUMN` 补齐）、`api/http_control_sync.go`（`ControlSyncConflicts`
+端口 + 两个 handler，404/409/400/500 映射）、`api/http_routes.go`（两条路由，
+nil 时不注册）、`api/http.go`（字段）。
+
+三种选择的后续状态：`local` → 保留 pending 并把 `base_hash` 重定到 `remote_hash`；
+`primary` → 落远端值、清 pending；`payload` → 规范化用户合并值、pending 换成它并
+同样重定祖先。裁决顺序是「先 CAS 占坑（`resolved_at` 由空改时间，0 行即已裁决）→
+再写权威存储 → 最后改 pending」，副作用失败时退坑让用户重试。
+
+用例 9 条（`conflicts_test.go`）：三种选择各 1 条（含「选 local 后真的推得上去、
+主节点零新增冲突」的两端一致性）、本地删除落墓碑、非法请求矩阵（未知 id / 非法
+选择 / payload 缺失 / null / 非 json）+ 重复裁决 409、并发裁决唯一赢家、
+reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTTP 4 条
+（列表脱敏、裁决透传 id/choice/payload、四种状态码、未配置 404）。
+
+变异 5 处各自打红：① 裁决方向对调 → 一致性/主节点/payload/删除/并发 5 条红；
+② 去掉 `users` 脱敏 → 安全用例红；③ `ClaimConflict` 去掉 `AND resolved_at=''`
+→ 并发用例红；④ `RebasePending` 不写 `base_hash` → 三条选择用例红；
+⑤ 迁移不补列 → 旧库用例 `no such column` 红。
+
+说明两处：① 「水位推进」在 T14 已经落定（冲突也把 `base_rev` 推过该 rev），
+本轮不再重复断言；② 选择 `payload` 不接受表达删除（删除走 `local`/`primary`
+两侧），这是刻意的 —— 让「用户合并值」只有一个形状。
+
 ---
 
 ## P6 前端模式、冲突与节点可达性

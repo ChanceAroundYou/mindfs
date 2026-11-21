@@ -12171,6 +12171,14 @@ groups:
       把本地改动扔了）；**整页一个事务**（records / pending 清理 / 冲突 / 水位同生共死，
       中途断线从 `base_rev` 续传）；**整页都是旧 rev 时停下不再拉**（服务端不守 `since`
       契约时不能原地空转）。
+      ⑭ 冲突查询与裁决（`conflicts.go` / `store_merge.go` / `store_pending.go`）的四条必须保留：
+      **裁决先 CAS 占坑再写副作用**（`UPDATE ... WHERE resolved_at=''` 返回 0 行即「已裁决」，
+      反过来两个并发选择会各写一遍，最终状态取决于谁后落盘）；**选 `local` / `payload` 后
+      pending 的 `base_hash` 重定到 `remote_hash`**（不重定的话下次推送又判一次冲突，用户
+      永远推不上去）；**`users` 域一律不回载荷**（bcrypt hash 属敏感数据，只回 hash 与
+      删除标记，不吃进冲突 UI 与前端缓存）；**每侧删除用 `local_deleted` / `remote_deleted`
+      表达**，旧库靠 `ALTER TABLE ADD COLUMN` 迁移补齐 —— `CREATE TABLE IF NOT EXISTS`
+      不会给已存在的表补列，升级后第一次读冲突卡就会 `no such column`。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
       （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
@@ -12223,6 +12231,11 @@ groups:
       - server/internal/api/http_control_sync.go
       - server/internal/api/http_control_sync_test.go
       - server/internal/api/http_control_sync_push_test.go
+      - server/internal/controlsync/conflicts_test.go
+      - server/internal/api/http_control_sync_conflicts_test.go
+      - server/internal/controlsync/conflicts.go
+      - server/internal/controlsync/conflicts_test.go
+      - server/internal/api/http_control_sync_conflicts_test.go
       - server/internal/api/http.go
       - server/internal/api/http_routes.go
     tests:
@@ -12315,6 +12328,21 @@ groups:
       - 'server/internal/controlsync/reconcile_test.go:func TestReconcileRecordsConflictAndKeepsPending(t *testing.T) {'
       - 'server/internal/controlsync/reconcile_test.go:func TestReconcileKeepsWatermarkWhenApplyFails(t *testing.T) {'
       - 'server/internal/controlsync/reconcile_test.go:func TestReconcileResumesFromWatermarkAfterFailure(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts.go:func (r *Resolver) Resolve(ctx context.Context, id, choice string, payload []byte) error {'
+      - 'server/internal/controlsync/conflicts.go:	if c.Domain == domainUsers {'
+      - 'server/internal/controlsync/conflicts.go:	if _, err := r.store.RebasePending(ctx, c.Domain, c.Key, c.RemoteHash,'
+      - 'server/internal/controlsync/store_merge.go:func (s *Store) ClaimConflict(ctx context.Context, id, choice string) error {'
+      - "server/internal/controlsync/store_merge.go:UPDATE conflicts SET resolved_at = ?, resolution = ? WHERE id = ? AND resolved_at = ''`,"
+      - 'server/internal/controlsync/store_merge.go:func (s *Store) ListOpenConflicts(ctx context.Context) ([]Conflict, error) {'
+      - 'server/internal/controlsync/store.go:func (s *Store) ensureConflictDeleteColumns(ctx context.Context) error {'
+      - 'server/internal/controlsync/store_pending.go:func (s *Store) RebasePending(ctx context.Context, domain, key, baseHash string, payload []byte, deleted bool) (bool, error) {'
+      - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:	if h.ControlSyncConflicts != nil {'
+      - 'server/internal/controlsync/conflicts_test.go:func TestResolverListRedactsUsersPasswordHashes(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts_test.go:func TestResolveLocalRebasesPendingThenPushConverges(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts_test.go:func TestResolveConcurrentSingleWinner(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts_test.go:func TestMigrateAddsConflictDeleteColumnsToExistingDB(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_conflicts_test.go:func TestControlSyncConflictResolveEndpoint(t *testing.T) {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
