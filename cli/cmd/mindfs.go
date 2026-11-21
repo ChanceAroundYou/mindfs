@@ -109,6 +109,9 @@ func main() {
 	liveCompactCacheTTLSeconds := 0
 	// 只由 config.json 填充；没有对应 flag（见 startupFlags.WebPushRelayURL）。
 	webPushRelayURL := ""
+	var feishuBindings []app.FeishuBinding
+	feishuRootID, feishuToken, feishuRelayURL, feishuNodeID := "", "", "", ""
+	feishuTTLHours, feishuPickerMax, feishuPerMinute, feishuBurst := 0, 0, 0, 0
 	// 任务派发默认 Agent/模型，同样只走 config.json（task 段）。
 	taskAgent, taskModel := "", ""
 	// 主动监管开关与预算，只走 config.json（router.supervision 段）。
@@ -161,6 +164,15 @@ func main() {
 		LiveCompactColdRailTokens:     &liveCompactColdRailTokens,
 		LiveCompactCacheTTLSeconds:    &liveCompactCacheTTLSeconds,
 		WebPushRelayURL:               &webPushRelayURL,
+		FeishuBindings:                &feishuBindings,
+		FeishuDefaultRootID:           &feishuRootID,
+		FeishuPickerTTLHours:          &feishuTTLHours,
+		FeishuPickerMax:               &feishuPickerMax,
+		FeishuInboundPerMinute:        &feishuPerMinute,
+		FeishuInboundBurst:            &feishuBurst,
+		FeishuRelayToken:              &feishuToken,
+		FeishuRelayURL:                &feishuRelayURL,
+		FeishuNodeID:                  &feishuNodeID,
 		TaskAgent:                     &taskAgent,
 		TaskModel:                     &taskModel,
 		FeishuEnabled:                 &feishuEnabled,
@@ -377,6 +389,8 @@ func main() {
 			AgentConfigPath:                    *agentConfigFlag,
 			WebPushEnabled:                     *webPushFlag,
 			WebPushRelayURL:                    webPushRelayURL,
+			FeishuRelayURL:                     feishuRelayURL,
+			FeishuNodeID:                       feishuNodeID,
 			NotifyScript:                       *notifyScriptFlag,
 			UseTLS:                             *tlsFlag,
 			CertFile:                           resolvedCert,
@@ -416,10 +430,17 @@ func main() {
 			LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
 			SessionHygiene:                     sessionHygieneOptions(startupCfg),
 			Feishu: feishuOptions(startupFlags{
-				FeishuEnabled:      &feishuEnabled,
-				FeishuOwnerOpenID:  &feishuOwnerOpenID,
-				FeishuLarkCLI:      &feishuLarkCLI,
-				FeishuCardTTLHours: &feishuCardTTLHours,
+				FeishuEnabled:          &feishuEnabled,
+				FeishuOwnerOpenID:      &feishuOwnerOpenID,
+				FeishuLarkCLI:          &feishuLarkCLI,
+				FeishuCardTTLHours:     &feishuCardTTLHours,
+				FeishuBindings:         &feishuBindings,
+				FeishuDefaultRootID:    &feishuRootID,
+				FeishuPickerTTLHours:   &feishuTTLHours,
+				FeishuPickerMax:        &feishuPickerMax,
+				FeishuInboundPerMinute: &feishuPerMinute,
+				FeishuInboundBurst:     &feishuBurst,
+				FeishuRelayToken:       &feishuToken,
 			}),
 		})
 	}()
