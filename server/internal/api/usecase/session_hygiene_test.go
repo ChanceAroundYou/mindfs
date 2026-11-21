@@ -271,3 +271,27 @@ func TestHygieneConfigHarnessOverride(t *testing.T) {
 		t.Fatalf("claude inherited codex override: %+v", claude)
 	}
 }
+
+func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	tracker.MarkCompactPending("root", "s1")
+	view := tracker.Snapshot("root", "s1", "claude", 200000)
+	if !view.CompactPending || view.CompactError != "" {
+		t.Fatalf("pending compact was not surfaced: %+v", view)
+	}
+
+	tracker.FinishCompact("root", "s1", "codex thread error: token expired\nplease sign in again")
+	view = tracker.Snapshot("root", "s1", "claude", 200000)
+	if view.CompactPending {
+		t.Fatalf("finished compact still pending: %+v", view)
+	}
+	if want := "codex thread error: token expired please sign in again"; view.CompactError != want {
+		t.Fatalf("compact error = %q, want %q", view.CompactError, want)
+	}
+
+	tracker.MarkCompactPending("root", "s1")
+	view = tracker.Snapshot("root", "s1", "claude", 200000)
+	if !view.CompactPending || view.CompactError != "" {
+		t.Fatalf("a new compact must clear the previous error: %+v", view)
+	}
+}

@@ -48,6 +48,7 @@ const CONTEXT_SAVING_KEYS = [
   "hygieneAutoFailed",
   "compactNow",
   "compacting",
+  "compactFailedDetail",
 ];
 
 test("前后端用同一条路径：会话 context-saving", () => {
@@ -78,21 +79,22 @@ test("胶囊只挂在已绑定会话上，命令模式不显示", () => {
   assert.match(chips, /const currentSessionKey = String\(boundSession\?\.key \|\| boundSession\?\.session_key \|\| ""\);/);
 });
 
-test("回合结束才刷新一次，不按秒轮询", () => {
-  // 一次折叠只发生在回合结束时，轮询既浪费又看不出变化。
+test("普通回合结束才刷新一次；只有压缩中才按秒轮询", () => {
+  // 一次折叠只发生在回合结束时，普通回合轮询既浪费又看不出变化。压缩回合
+  // 真实耗时以分钟计，服务端 pending 为真时才需要补拉。
   assert.match(hook, /if \(!wasPending \|\| pending\) return;/);
   assert.match(hook, /void refresh\(\);[\s\S]*?settleTimerRef\.current = window\.setTimeout\(\(\) => \{/);
   assert.match(hook, /\}, 2000\);/);
-  assert.doesNotMatch(hook, /setInterval/);
+  assert.match(hook, /if \(!hygiene\?\.compact_pending\) \{[\s\S]*?return;\s*\}/);
+  assert.match(hook, /compactPollRef\.current = true;\s*const timer = window\.setInterval/);
 });
 
-test("延迟刷新用独立定时器，别把「立即压缩」的补偿刷新一起清掉", () => {
-  // 压缩回合结束也会走 pending 回落；共用 compactTimerRef 会让按钮永远停在
-  // 「压缩中」。两个补偿刷新必须各有一条定时器。
-  assert.match(hook, /const compactTimerRef = useRef<number \| null>\(null\);/);
+test("延迟刷新与压缩兜底各用独立定时器", () => {
+  // 压缩回合结束也会走 pending 回落；共用定时器会让按钮永远停在「压缩中」。
+  assert.match(hook, /const compactFallbackRef = useRef<number \| null>\(null\);/);
   assert.match(hook, /const settleTimerRef = useRef<number \| null>\(null\);/);
   const compactBlock = hook.slice(hook.indexOf("const compact = async"));
-  assert.match(compactBlock, /compactTimerRef\.current = window\.setTimeout/);
+  assert.match(compactBlock, /compactFallbackRef\.current = window\.setTimeout/);
   assert.doesNotMatch(compactBlock, /settleTimerRef/);
 });
 
@@ -269,17 +271,24 @@ test("又久又大：胶囊显示倒计时，并给一个「立即压缩」入�
   assert.match(indicator, /t\("contextSaving\.hygieneActive"\)/);
   assert.match(indicator, /t\("contextSaving\.hygieneContext"\)/);
   assert.match(indicator, /onClick=\{\(\) => void compact\(\)\}/);
-  assert.match(indicator, /compacting \? t\("contextSaving\.compacting"\) : t\("contextSaving\.compactNow"\)/);
-  // 手动压缩走一条独立的 POST：它只要把回合排出去，结果通过会话事件流回来。
+  assert.match(indicator, /compactBusy \? t\("contextSaving\.compacting"\) : t\("contextSaving\.compactNow"\)/);
+  assert.match(indicator, /disabled=\{compactBusy\}/);
+  // 手动压缩走一条独立的 POST：它只要把回合排出去，结果通过读口的 pending 回传。
   assert.match(hook, /await compactSession\(sessionKey, rootId, nodeId\);/);
+  assert.match(hook, /const compactBusy = compacting \|\| !!hygiene\?\.compact_pending;/);
+  assert.doesNotMatch(hook, /\}, 8000\);/);
+  assert.match(hook, /window\.setInterval\(\(\) => void refresh\(\), 2000\)/);
+  assert.match(service, /compact_pending: boolean;/);
+  assert.match(service, /compact_error: string;/);
   assert.match(service, /\/api\/sessions\/\$\{encodeURIComponent\(sessionKey\)\}\/compact/);
   assert.match(service, /\{ method: "POST" \}/);
   assert.match(routes, /r\.Post\("\/api\/sessions\/\{key\}\/compact", h\.handleSessionCompact\)/);
 });
 
-test("自动压缩失败后停手，并在胶囊里写明只能手动", () => {
+test("自动压缩失败后停手，并把失败原因写在胶囊里", () => {
   assert.match(indicator, /hygiene\?\.auto_failed/);
   assert.match(indicator, /t\("contextSaving\.hygieneAutoFailed"\)/);
+  assert.match(indicator, /compact_error \? t\("contextSaving\.compactFailedDetail", \{ error: hygiene\.compact_error \}\)/);
 });
 
 test("胶囊带语言无关的稳定标识：端到端不靠中文文案认它", () => {

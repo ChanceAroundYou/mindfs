@@ -72,8 +72,12 @@ export type SessionHygiene = {
   /** < 0 表示没有倒计时（notice / normal 档）。 */
   turns_until_auto_compact: number;
   auto_compact_due: boolean;
-  /** 上一次自动压缩没生效，已停止重试；只能手动压缩。 */
+  /** 上一次压缩没生效，已停止自动重试；只能手动压缩。 */
   auto_failed: boolean;
+  /** /compact 回合已排上但还没收到 harness 的压缩事件。 */
+  compact_pending: boolean;
+  /** 上一次压缩收尾时记下的可读原因，成功为空。 */
+  compact_error: string;
 };
 
 /**

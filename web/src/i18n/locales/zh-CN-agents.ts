@@ -206,7 +206,8 @@ export const zhCNAgents = {
   "contextSaving.hygieneNoticeTitle": "上下文已经很大：{tokens}，可以压缩一次",
   "contextSaving.hygieneHintNotice": "这个会话又久又大：再聊 {count} 轮会自动触发一次压缩。想现在就压就点下面。",
   "contextSaving.hygieneNoticeNotice": "上下文已经很大。可以手动压缩一次，避免撞上 harness 的硬上限。",
-  "contextSaving.hygieneAutoFailed": "上次自动压缩没有生效，已停止重试；需要时请手动压缩。",
+  "contextSaving.hygieneAutoFailed": "上次压缩没有生效，自动重试已停止；可点「立即压缩」重试。",
   "contextSaving.compactNow": "立即压缩",
   "contextSaving.compacting": "正在压缩…",
+  "contextSaving.compactFailedDetail": "原因：{error}",
 } as const;

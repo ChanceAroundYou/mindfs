@@ -30,7 +30,8 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
   const [compacting, setCompacting] = useState(false);
   const requestRef = useRef(0);
   const wasPendingRef = useRef(pending);
-  const compactTimerRef = useRef<number | null>(null);
+  const compactPollRef = useRef(false);
+  const compactFallbackRef = useRef<number | null>(null);
   const settleTimerRef = useRef<number | null>(null);
 
   const refresh = async () => {
@@ -63,12 +64,13 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiReady, sessionKey, rootId, nodeId]);
 
-  // 卸载或换会话时把两个补偿刷新都取消掉，别让它们打旧会话。
+  // 卸载或换会话时取消补偿刷新，别让它们打旧会话。
   useEffect(() => {
+    compactPollRef.current = false;
     return () => {
-      if (compactTimerRef.current !== null) {
-        window.clearTimeout(compactTimerRef.current);
-        compactTimerRef.current = null;
+      if (compactFallbackRef.current !== null) {
+        window.clearTimeout(compactFallbackRef.current);
+        compactFallbackRef.current = null;
       }
       if (settleTimerRef.current !== null) {
         window.clearTimeout(settleTimerRef.current);
@@ -104,20 +106,42 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
   const hygieneBand = hygiene?.state === "notice" || hygiene?.state === "hint";
   const visible = savedBytes > 0 || !!saving?.requests || hygieneBand;
 
+  const compactBusy = compacting || !!hygiene?.compact_pending;
+
+  // 真实压缩要几分钟（线上实测 claude 3–9 分钟），所以按钮不能按前端猜的秒数
+  // 复原：只要读口说还在 pending 就每 2 秒补拉一次，收到结果后再解禁。
+  useEffect(() => {
+    if (compactFallbackRef.current !== null) {
+      window.clearTimeout(compactFallbackRef.current);
+      compactFallbackRef.current = null;
+    }
+    if (!hygiene?.compact_pending) {
+      if (compactPollRef.current) {
+        compactPollRef.current = false;
+        setCompacting(false);
+        void refresh();
+      }
+      return;
+    }
+    compactPollRef.current = true;
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hygiene?.compact_pending, apiReady, sessionKey]);
+
   const compact = async () => {
-    if (!sessionKey || compacting) return;
+    if (!sessionKey || compactBusy) return;
     setCompacting(true);
     setError("");
     try {
       await compactSession(sessionKey, rootId, nodeId);
-      // 压缩是一个真实回合，服务端立刻返回 202：先刷一次，再等它跑完补一次。
+      // 202 只表示回合已排上；上面的轮询负责等它真正结束。旧节点不回 pending
+      // 字段时留一个兜底，避免按钮永远停在「正在压缩」。
       void refresh();
-      if (compactTimerRef.current !== null) window.clearTimeout(compactTimerRef.current);
-      compactTimerRef.current = window.setTimeout(() => {
-        compactTimerRef.current = null;
-        setCompacting(false);
-        void refresh();
-      }, 8000);
+      compactFallbackRef.current = window.setTimeout(() => {
+        compactFallbackRef.current = null;
+        if (!compactPollRef.current) setCompacting(false);
+      }, 80_000);
     } catch (err) {
       setCompacting(false);
       setError(String((err as Error)?.message || ""));
@@ -132,7 +156,7 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
     savedBytes,
     hygiene,
     visible,
-    compacting,
+    compacting: compactBusy,
     setOpen,
     handleOpen: () => {
       setOpen(true);

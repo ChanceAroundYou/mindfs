@@ -245,3 +245,66 @@ func TestCompactSessionSchedulesAutoCompactTurn(t *testing.T) {
 		t.Fatal("auto compact turn was never sent")
 	}
 }
+
+func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sendErr error
+		wantErr bool
+	}{
+		{name: "success"},
+		{name: "failure", sendErr: errors.New("codex thread error: access token expired"), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rootDir := t.TempDir()
+			root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
+			manager := session.NewManager(root)
+			tracker := NewHygieneTracker(hygieneConfig())
+			service := &Service{Registry: &hygieneTestRegistry{
+				commandTestRegistry: commandTestRegistry{root: root, manager: manager},
+				tracker:             tracker,
+			}}
+			started := make(chan struct{})
+			service.hygieneSend = func(_ context.Context, in SendMessageInput) error {
+				if in.onCompactSeen == nil {
+					t.Fatal("compact turn must install onCompactSeen")
+				}
+				if tc.sendErr == nil {
+					in.onCompactSeen()
+				}
+				close(started)
+				return tc.sendErr
+			}
+			created, err := manager.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Agent: "claude", Name: "chat"})
+			if err != nil {
+				t.Fatalf("create chat session: %v", err)
+			}
+			if err := service.CompactSession(context.Background(), GetSessionContextSavingInput{RootID: root.ID, Key: created.Key}); err != nil {
+				t.Fatalf("CompactSession: %v", err)
+			}
+			if !tracker.Snapshot(root.ID, created.Key, "claude", 200000).CompactPending {
+				t.Fatal("manual compact was accepted but never shown as pending")
+			}
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("compact turn was never sent")
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			view := tracker.Snapshot(root.ID, created.Key, "claude", 200000)
+			for view.CompactPending && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+				view = tracker.Snapshot(root.ID, created.Key, "claude", 200000)
+			}
+			if view.CompactPending {
+				t.Fatal("compact stayed pending after the turn finished")
+			}
+			if tc.wantErr && (view.CompactError == "" || !view.AutoFailed) {
+				t.Fatalf("failed compact was not reported: %+v", view)
+			}
+			if !tc.wantErr && (view.CompactError != "" || view.AutoFailed) {
+				t.Fatalf("successful compact was reported as failure: %+v", view)
+			}
+		})
+	}
+}

@@ -50,6 +50,10 @@ type HygieneView struct {
 	TurnsUntilAutoCompact int    `json:"turns_until_auto_compact"`
 	AutoCompactDue        bool   `json:"auto_compact_due"`
 	AutoFailed            bool   `json:"auto_failed"`
+	// CompactPending 表示已经排了一个 /compact 回合但还没收到 harness 的压缩事件。
+	// 手动按钮按它保持禁用，避免真实压缩要几分钟时界面提前恢复成「立即压缩」。
+	CompactPending bool   `json:"compact_pending"`
+	CompactError   string `json:"compact_error"`
 }
 
 // EvaluateHygiene 是纯函数：同样的输入永远给出同样的三档结论。
@@ -99,6 +103,8 @@ type hygieneRecord struct {
 	hinted         bool
 	turnsSinceHint int
 	autoFailed     bool
+	compactPending bool
+	compactError   string
 	// autoAttempted 保证同一段提示期只派发一次自动压缩：派发是异步的，
 	// 派发后、压缩完成前的每一轮都会继续算出「已到期」，不拦就会连环开火。
 	autoAttempted bool
@@ -243,7 +249,12 @@ func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTok
 		snap.TurnsSinceHint = rec.turnsSinceHint
 		snap.AutoFailed = rec.autoFailed
 	}
-	return EvaluateHygiene(cfg, snap)
+	view := EvaluateHygiene(cfg, snap)
+	if rec := t.records[hygieneScope(rootID, sessionKey)]; rec != nil {
+		view.CompactPending = rec.compactPending
+		view.CompactError = rec.compactError
+	}
+	return view
 }
 
 // MarkCompacted 在任意一次压缩之后调用（harness 自己的或我们触发的）：
@@ -269,6 +280,40 @@ func (t *HygieneTracker) MarkAutoFailed(rootID, sessionKey string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.recordLocked(hygieneScope(rootID, sessionKey)).autoFailed = true
+}
+
+// MarkCompactPending 记录一次压缩回合已经排上：读口据此让「立即压缩」按钮
+// 一直禁用到收到 harness 的压缩事件，而不是按前端猜的 8 秒就恢复。
+func (t *HygieneTracker) MarkCompactPending(rootID, sessionKey string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rec := t.recordLocked(hygieneScope(rootID, sessionKey))
+	rec.compactPending = true
+	rec.compactError = ""
+}
+
+// FinishCompact 结束这一轮压缩；errText 非空时留一份可读的原因给胶囊。
+func (t *HygieneTracker) FinishCompact(rootID, sessionKey, errText string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rec := t.recordLocked(hygieneScope(rootID, sessionKey))
+	rec.compactPending = false
+	rec.compactError = compactErrorText(errText)
+}
+
+func compactErrorText(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	const maxRunes = 240
+	if runes := []rune(text); len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "…"
+	}
+	return text
 }
 
 func (t *HygieneTracker) recordLocked(key string) *hygieneRecord {

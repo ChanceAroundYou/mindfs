@@ -12215,15 +12215,20 @@ groups:
       会话（命令、router、文件查看）一律跳过，手动入口直接 400 说明原因。
       ⑧ **零值是默认而不是关闭**：`session_hygiene.enabled` 用 `*bool` 区分「没写」与「显式 false」，
       数值 0 一律沿用默认；`harness.<name>` 只覆盖写出来的字段。配置只走 `config.json`，不进控制面。
-      ⑨ **读口与手动入口共用一套字段**：`HygieneView` 的九个字段既是胶囊入参也是档位结论来源，
+      ⑨ **读口与手动入口共用一套字段**：`HygieneView` 的字段既是胶囊入参也是档位结论来源，
       前端不重算；`POST .../compact` 只把回合排出去（202），结果走正常会话事件流。
+      ⑩ **按钮禁用到真压缩结束**：线上 Claude 一次 `/compact` 要 3–9 分钟，固定 8 秒前端计时会让
+      用户以为「点了没反应」；`compact_pending` 由服务端在排程时置位、在收尾时清除，`compact_error`
+      把 Codex token 过期等具体原因写进胶囊。`compacting` 仍用于 POST 在途，二者合并成 `compactBusy`。
     boundary: |
       状态在进程内、按 `root + session` 保存：重启后「久」从零重新累计，「已提示过」也一并清空。
       不自动新建会话、不归档、不删转录；不改 live-compact 的任何阈值；「只久」永不自动压缩；
       不做跨会话面板。自动压缩失败后只能手动，用户需自己判断是否要新开会话。
       端到端只在隔离实例验证过（`e2e/test_session_hygiene.py`，真实 Claude + 真实 `/compact`，
       CLI 回 `compact_result=success`）：线上四端尚未部署这段代码，也没有在用户真实会话里观察过
-      自动触发；状态不持久化，重启后「已提示 / 已失败」都会重来。
+      自动触发；状态不持久化，重启后「已提示 / 已失败」都会重来。Codex 的 access token 过期由
+      设备本地重新登录解决，本项目不复制或自动刷新设备凭据；胶囊只负责把错误显示出来。
+      手动压缩按钮按服务端 pending 状态禁用；旧节点不回该字段时只用 80 秒兜底，不声称能感知结果。
     files:
       - server/internal/api/usecase/session_hygiene.go
       - server/internal/api/usecase/session_hygiene_wire.go
@@ -12260,10 +12265,16 @@ groups:
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens int, turnEnded bool) HygieneView {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens int) HygieneView {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompacted(rootID, sessionKey string) {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompactPending(rootID, sessionKey string) {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) FinishCompact(rootID, sessionKey, errText string) {'
+      - 'server/internal/api/usecase/session_hygiene.go:CompactPending bool   `json:"compact_pending"`'
       - 'server/internal/api/usecase/session_hygiene_wire.go:const hygieneCompactCommand = "/compact"'
       - 'server/internal/api/usecase/session_hygiene_wire.go:func hygieneAutoCompactSupported(harness string) bool {'
       - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) scheduleHygieneAutoCompact(in SendMessageInput, harness string) {'
       - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) runHygieneAutoCompact(in SendMessageInput) {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) finishHygieneCompact(in SendMessageInput, errText string) {'
+      - 'server/internal/api/usecase/session_hygiene_test.go:func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {'
       - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) CompactSession(ctx context.Context, in GetSessionContextSavingInput) error {'
       - 'server/internal/api/usecase/root.go:hygieneSend func(context.Context, SendMessageInput) error'
       - 'server/internal/api/usecase/session_send.go:s.scheduleHygieneAutoCompact(in, hygieneHarnessForSession(current))'
@@ -12276,7 +12287,16 @@ groups:
       - 'cli/cmd/startup.go:func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {'
       - 'web/src/services/agent/contextSaving.ts:export type SessionHygiene = {'
       - 'web/src/services/agent/contextSaving.ts:export async function compactSession('
+      - 'web/src/services/agent/contextSaving.ts:  compact_pending: boolean;'
+      - 'web/src/services/agent/contextSaving.ts:  compact_error: string;'
+      - 'web/src/components/agent/useContextSaving.ts:const compactBusy = compacting || !!hygiene?.compact_pending;'
+      - 'web/src/components/agent/useContextSaving.ts:const timer = window.setInterval(() => void refresh(), 2000);'
       - 'web/src/components/agent/useContextSaving.ts:const hygieneBand = hygiene?.state === "notice" || hygiene?.state === "hint";'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:disabled={compactBusy}'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:compact_error ? t("contextSaving.compactFailedDetail", { error: hygiene.compact_error }) : null'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:t("contextSaving.compactNow")'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:data-hygiene={hygiene?.state || "none"}'
       - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.hygieneHintTitle"'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.compactFailedDetail"'
+      - 'web/tests/context-saving-chip.test.mjs:test("没读到用量的样本只留在账本里，不再在胶囊里提示"'
+      - 'e2e/test_session_hygiene.py:def test_manual_compact_button_follows_server_pending(page: Page) -> None:'

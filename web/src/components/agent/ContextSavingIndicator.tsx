@@ -62,7 +62,7 @@ function formatPercent(saved: number, original: number): string | null {
  */
 export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   const { t } = useI18n();
-  const { saving, open, loading, error, savedBytes, hygiene, visible, compacting, setOpen, handleOpen, compact } = useContextSaving(props);
+  const { saving, open, loading, error, savedBytes, hygiene, visible, compacting: compactBusy, setOpen, handleOpen, compact } = useContextSaving(props);
 
   if (!visible) return null;
 
@@ -242,9 +242,10 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
               : t("contextSaving.hygieneNoticeNotice")}
           </div>
         ) : null}
-        {hygiene?.auto_failed ? (
+        {hygiene?.compact_error || hygiene?.auto_failed ? (
           <div style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "rgba(220, 38, 38, 0.08)", color: "#b91c1c", fontSize: "12px", lineHeight: 1.6 }}>
             {t("contextSaving.hygieneAutoFailed")}
+            {hygiene.compact_error ? t("contextSaving.compactFailedDetail", { error: hygiene.compact_error }) : null}
           </div>
         ) : null}
         {error ? <div style={{ marginTop: "10px", padding: "9px 11px", borderRadius: "9px", background: "rgba(220, 38, 38, 0.09)", color: "#dc2626", fontSize: "12px", overflowWrap: "anywhere" }}>{error}</div> : null}
@@ -253,10 +254,10 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
             <button
               type="button"
               onClick={() => void compact()}
-              disabled={compacting}
-              style={{ height: "34px", padding: "0 14px", borderRadius: "9px", border: "1px solid rgba(180, 83, 9, 0.32)", background: "rgba(180, 83, 9, 0.1)", color: "#b45309", cursor: compacting ? "default" : "pointer", fontWeight: 650, opacity: compacting ? 0.6 : 1 }}
+              disabled={compactBusy}
+              style={{ height: "34px", padding: "0 14px", borderRadius: "9px", border: "1px solid rgba(180, 83, 9, 0.32)", background: "rgba(180, 83, 9, 0.1)", color: "#b45309", cursor: compactBusy ? "default" : "pointer", fontWeight: 650, opacity: compactBusy ? 0.6 : 1 }}
             >
-              {compacting ? t("contextSaving.compacting") : t("contextSaving.compactNow")}
+              {compactBusy ? t("contextSaving.compacting") : t("contextSaving.compactNow")}
             </button>
           ) : null}
           <button type="button" onClick={() => setOpen(false)} style={{ height: "34px", padding: "0 14px", borderRadius: "9px", border: "1px solid var(--panel-border)", background: "transparent", color: "var(--text-primary)", cursor: "pointer", fontWeight: 650 }}>{t("common.close")}</button>

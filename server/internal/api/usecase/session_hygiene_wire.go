@@ -141,6 +141,7 @@ func (s *Service) scheduleHygieneAutoCompact(in SendMessageInput, harness string
 		Content:         hygieneCompactCommand,
 		hygieneCompact:  true,
 	}
+	s.hygieneTracker().MarkCompactPending(in.RootID, in.Key)
 	go s.runHygieneAutoCompact(compactIn)
 }
 
@@ -164,23 +165,33 @@ func (s *Service) runHygieneAutoCompact(in SendMessageInput) {
 	ctx, cancel := context.WithTimeout(context.Background(), hygieneCompactTimeout)
 	defer cancel()
 	if !s.waitSessionIdle(ctx, in.RootID, in.Key) {
-		s.hygieneTracker().MarkAutoFailed(in.RootID, in.Key)
+		s.finishHygieneCompact(in, "等待会话空闲超时，压缩没有发出")
 		log.Printf("[session-hygiene] auto_compact.give_up root=%s session=%s reason=session_still_busy", in.RootID, in.Key)
 		return
 	}
 	log.Printf("[session-hygiene] auto_compact.start root=%s session=%s agent=%s", in.RootID, in.Key, in.Agent)
 	if err := s.sendHygieneCompact(ctx, in); err != nil {
-		s.hygieneTracker().MarkAutoFailed(in.RootID, in.Key)
+		s.finishHygieneCompact(in, err.Error())
 		log.Printf("[session-hygiene] auto_compact.error root=%s session=%s err=%v", in.RootID, in.Key, err)
 		return
 	}
 	if !compacted {
 		// 命令被当普通消息发了出去：上下文没变，按失败处理，胶囊里给出可见提示。
-		s.hygieneTracker().MarkAutoFailed(in.RootID, in.Key)
+		s.finishHygieneCompact(in, "harness 没有报告压缩事件，这次压缩没有生效")
 		log.Printf("[session-hygiene] auto_compact.no_notice root=%s session=%s agent=%s", in.RootID, in.Key, in.Agent)
 		return
 	}
+	s.finishHygieneCompact(in, "")
 	log.Printf("[session-hygiene] auto_compact.done root=%s session=%s agent=%s", in.RootID, in.Key, in.Agent)
+}
+
+// finishHygieneCompact 是压缩回合唯一的收尾闸：失败分支同时停掉自动重试，
+// 成功分支只清 pending。读口拿到的 CompactError 就是这里的 errText。
+func (s *Service) finishHygieneCompact(in SendMessageInput, errText string) {
+	if errText != "" {
+		s.hygieneTracker().MarkAutoFailed(in.RootID, in.Key)
+	}
+	s.hygieneTracker().FinishCompact(in.RootID, in.Key, errText)
 }
 
 // waitSessionIdle 等到这个会话没有在跑的回合为止。

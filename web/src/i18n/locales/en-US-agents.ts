@@ -206,7 +206,8 @@ export const enUSAgents = {
   "contextSaving.hygieneNoticeTitle": "Context is large: {tokens}, consider compacting",
   "contextSaving.hygieneHintNotice": "This conversation is both long and large: it will be compacted automatically in {count} turns. Compact now if you would rather not wait.",
   "contextSaving.hygieneNoticeNotice": "The context is already large. Compacting once now keeps it away from the harness limit.",
-  "contextSaving.hygieneAutoFailed": "The last automatic compaction did not take effect, so retries stopped. Compact manually when needed.",
+  "contextSaving.hygieneAutoFailed": "The last compaction did not take effect, so automatic retries stopped. Use Compact now to retry.",
   "contextSaving.compactNow": "Compact now",
   "contextSaving.compacting": "Compacting…",
+  "contextSaving.compactFailedDetail": "Reason: {error}",
 } as const;

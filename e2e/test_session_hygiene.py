@@ -20,6 +20,8 @@
   `[session-hygiene] auto_compact.due` → `auto_compact.start` → `auto_compact.done`。
   只有 harness 真的发出压缩事件才会打 `done` —— 这就是「真压缩」的证据。
 - 压缩后状态被清（`turns_since_hint` 归零、`auto_failed=false`）。
+- 手动点「立即压缩」后，按钮按服务端的 `compact_pending` 保持禁用，直到真压缩完成；
+  不再用前端固定 8 秒猜结果。
 
 隔离：只连 `scripts/mindfs-iso.sh` 起的实例（默认 7431、独立 XDG 配置目录、
 独立账户、隔离项目目录）。不碰 7331 线上服务，也不碰真实会话转录。
@@ -316,3 +318,51 @@ def test_hint_then_real_harness_compaction(page: Page) -> None:
         lambda h: h.get("turns_since_hint") == 0 and h.get("auto_failed") is False,
     )
     assert after["turns_until_auto_compact"] == after["hint_turns"], after
+
+
+def test_manual_compact_button_follows_server_pending(page: Page) -> None:
+    """点一次就真压，且按钮一直禁用到 harness 报告完成。"""
+    mark = _log_mark()
+    root_id = _current_root_id(page)
+    user_id = _current_user_id(page)
+    session_key = _chat_session_key(page, root_id, user_id)
+
+    chip = page.locator('[data-testid="context-saving-chip"]')
+    chip.wait_for(timeout=60_000)
+    assert chip.get_attribute("data-hygiene") in ("hint", "notice"), "胶囊不在可压缩档位"
+    chip.click()
+    compact = page.get_by_role("button", name="立即压缩")
+    compact.wait_for(timeout=10_000)
+    assert compact.is_enabled(), "点之前按钮就不可用了"
+
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and "/compact" in r.url,
+        timeout=30_000,
+    ) as response:
+        compact.click()
+    assert response.value.status == 202, response.value.status
+
+    # 202 只表示回合排上；这段用 UI + 读口双证「按钮没有提前恢复」。
+    page.get_by_role("button", name="正在压缩…").wait_for(timeout=10_000)
+    assert page.get_by_role("button", name="正在压缩…").is_disabled()
+    pending = _wait_hygiene(
+        page, session_key, root_id, user_id,
+        lambda h: h.get("compact_pending") is True, timeout_ms=15_000,
+    )
+    assert pending["compact_pending"] is True, pending
+    while _hygiene(page, session_key, root_id, user_id).get("compact_pending"):
+        assert page.get_by_role("button", name="正在压缩…").is_disabled()
+        page.wait_for_timeout(2500)
+
+    settled = _wait_hygiene(
+        page, session_key, root_id, user_id,
+        lambda h: h.get("compact_pending") is False, timeout_ms=AUTO_COMPACT_TIMEOUT_MS,
+    )
+    assert settled["auto_failed"] is False, settled
+    assert not settled.get("compact_error"), settled
+    page.get_by_role("button", name="立即压缩").wait_for(timeout=10_000)
+
+    seen = _log_since(mark)
+    assert "auto_compact.start" in seen, f"没有开始手动压缩：\n{seen[-4000:]}"
+    assert "auto_compact.done" in seen, f"手动压缩没有完成：\n{seen[-4000:]}"
+    assert "auto_compact.error" not in seen, f"手动压缩报错：\n{seen[-4000:]}"

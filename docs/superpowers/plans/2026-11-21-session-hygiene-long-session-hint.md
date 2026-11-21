@@ -205,9 +205,58 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 - 「久」是从第一次观测起算的：首轮只有起点没有间隔，所以 `active_seconds` 首轮必为 0，
   hint 最早出现在第二轮结束、自动压缩在第三轮结束（`hint_turns=1` 时）。
 
+## 2026-11-22 追加：胶囊提示瘦身 + 「立即压缩」按钮状态不可信
+
+用户两条新反馈：① 胶囊里的「10 次请求没读到用量，未计入重算合计。」不要再显示；
+② 「压缩按钮点击了以后无法生效，codex cc 都不行」。
+
+### 取证（先复现，不改代码）
+
+- 生产 7331 在反馈时段无 `[session-hygiene]` 日志；wsl worker 上有真实点击：
+  `23:27:48 POST /compact status=202` → `auto_compact.start` → `23:36:34 auto_compact.done`，
+  下一次 `23:36:36 start` → `23:39:56 done`。Claude 真压缩成功，但耗时 3–9 分钟；
+  前端原先固定 8 秒就把按钮恢复成「立即压缩」，用户据此判断「没生效」。
+- Codex 同节点 `23:33:16 POST /compact status=202` → `auto_compact.error`：
+  `codex thread error: Your access token could not be refreshed. Please log out and sign in again.`
+  是设备本地凭据过期；旧 UI 只在日志里记原因，胶囊没有具体错误。
+- 隔离实例 7432 真浏览器复现同一条链路：POST 202 → `[agent/claude] input content="/compact"` →
+  `compact_result=success` → `auto_compact.done`，整段约 34 秒。按钮链路本身能发出请求；
+  缺陷是**前端按固定秒数猜结果、服务端又不把真实状态回传**。
+
+### 修复
+
+- 删除 `contextSaving.usageMissing` 组件渲染、zh/en 文案与旧断言；缺失样本数仍只进账本，
+  命中率那行继续显示「未知」（提交 `2e41ca10`，Scope: G-MN）。
+- `HygieneView` 新增 `compact_pending` / `compact_error`：排程时 `MarkCompactPending`，
+  收尾时 `FinishCompact`（成功清空错误，失败写规范化后的原因并停自动重试）；
+  手动与自动压缩走同一个收尾闸。`Snapshot` 保持无副作用。
+- 前端按服务端 `compact_pending` 控制按钮：点击后只发 POST 并立即刷新一次，
+  pending 期间每 2 秒补拉，pending 真变 false 时解除禁用并补刷；
+  旧节点没有该字段时留 80 秒兜底，不再用 8 秒猜。
+  胶囊在失败时显示 `compact_error`，`hygieneAutoFailed` 文案改为覆盖手动失败。
+
+### 验证
+
+- RED→GREEN：Go 两条用例（snapshot 字段与手动回合生命周期）、web 契约 26 条先写断言后实现；
+  全量 `go test -count=1 ./...`（28 包全绿）、`npx tsc -b --noEmit` clean、
+  `npx vitest run`（260 文件 / 863 通过 / 6 跳过）全绿。
+- 变异账本（每次改坏生产代码 → 跑定向测试 → 必须红 → 还原复绿）：
+  后端「pending 不置位 / pending 不清 / 不写 error / 排程不标记」四条各自打红；
+  前端「按钮不读 pending / 文案不看 pending / 删错误详情 / 恢复 usageMissing /
+  改回 8 秒计时 / 去掉 pending 轮询」六条各自打红。
+- 真实复现路径复跑：隔离实例 7432 从工作区重建二进制与前端后，
+  `e2e/test_session_hygiene.py` 两条全 PASS（123.21 s）。新增的
+  `test_manual_compact_button_follows_server_pending` 用真 Chromium 点击「立即压缩」，
+  断言 POST 202、按钮变「正在压缩…」并禁用、读口 `compact_pending` 真→假期间一直禁用、
+  `auto_compact.start → done`、无 error。日志对应
+  `00:17:46 start` / `00:17:46 POST 202` / `00:18:29 done`。
+- Codex 凭据过期不在代码里自动修复（refresh token 是设备本地凭据，不跨设备复制）；
+  修复后用户能从胶囊直接看到具体原因并重新登录。
+
 ## 状态
 
 **已实现、门禁绿、隔离实例端到端跑通真实 harness 压缩；未部署、未重启任何节点。**
 线上行为不变：`config.json` 里没有 `session_hygiene` 段时用默认值（默认开），但要**重启进程**
-才会加载这段新代码；前端刷新生效。本机 `sudo systemctl restart mindfs` 仅用户可执行。
+才会加载这段新代码；新增 `compact_pending` / `compact_error` 的后端字段同样要重启才下发
+（旧节点下前端走 80 秒兜底）。前端刷新生效。本机 `sudo systemctl restart mindfs` 仅用户可执行。
 端到端证据与变异账本见上；`e2e/test_session_hygiene.py` 刻意不进常规门禁（会真调模型）。
