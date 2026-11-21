@@ -96,8 +96,8 @@ export function ConversationMessages({
     );
   }
 
-  // 运行汇报（purpose=progress）按时间顺序原样平铺：用户需要看到流程跑到了哪一步，
-  // 折叠只会把它藏起来。区分靠每行上的浅色「运行汇报」标记。
+  // 进度汇报（purpose=progress）按时间顺序原样平铺：用户需要看到流程跑到了哪一步，
+  // 折叠只会把它藏起来。区分靠每行上的浅色「进度」标记。
   const messageProps = {
     rootId,
     workflowNames,

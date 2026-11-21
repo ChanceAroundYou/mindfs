@@ -19,7 +19,8 @@
 
 任务通过 REST API 创建。Agent 回复统一用 ``workflow_choice=disabled``：
 不创建 WorkflowRun、不依赖外部 workflow 或真实 Agent，回复停在 ``pending``。
-**查看执行详情**按钮只在存在 ``run_id`` 时出现，所以这里做条件断言。
+**执行详情与监管记录**是两个始终存在的小胶囊（同一行、展开互斥），默认收起；
+所以这里断言的是胶囊可见，而不是展开后的面板。
 
 对话式新任务在数据模型里的判据是 ``task_stages_json`` 为空（见
 ``web/src/components/task/TaskDetailPanel.tsx`` 的 ``hasLegacyStages``）。当前创建
@@ -216,11 +217,12 @@ def test_conversation_task_full_flow(authed_page: Page, conversation_task: dict)
     assert footer.count() == 1
     assert page.locator('[data-testid="activity-status"]').count() == 0
 
-    # 6. 执行详情入口必须可见：workflow 任务是「查看执行详情」开关，
-    #    直连对话任务则是通往任务主会话的入口。
-    run_entry = page.locator('[data-testid="run-view-entry"]')
-    if run_entry.count() > 0:
-        assert run_entry.first.is_visible()
+    # 6. 执行详情与监管记录是两个始终存在的胶囊（同一行、默认收起）。
+    row = page.wait_for_selector('[data-testid="task-inspect-row"]', timeout=10_000)
+    assert row.is_visible()
+    assert row.locator('[data-testid="run-view-toggle"]').is_visible()
+    assert row.locator('[data-testid="supervision-toggle"]').is_visible()
+    assert page.locator('[data-testid="run-view-entry"]').count() == 0
 
     _close_task_panel(page)
 

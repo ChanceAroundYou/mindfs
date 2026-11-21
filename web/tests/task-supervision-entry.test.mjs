@@ -5,6 +5,7 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { I18nProvider, translateNow } from "../src/i18n/index.tsx";
 import { SupervisionEntryList } from "../src/components/task/SupervisionEntryList.tsx";
+import { TaskInspectEntries } from "../src/components/task/TaskInspectEntries.tsx";
 import {
   isSupervisionDecision,
   supervisionActionKey,
@@ -119,20 +120,58 @@ test("列表渲染：触发 → 动作 → 结果，错误单独一行", () => {
   assert.match(html, /reply act-1 is gone/, "error text is shown verbatim");
 });
 
-test("源码契约：入口挂在运行视图之后、空时隐藏、取数走 appURL + nodeId", () => {
+test("两个胶囊同排渲染：始终存在、默认收起、带 ▸ 记号", () => {
+  const html = renderToString(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(TaskInspectEntries, {
+        rootId: "root-1",
+        taskId: "task-1",
+        onOpenSession: () => {},
+      }),
+    ),
+  );
+  assert.match(html, /data-testid="task-inspect-row"/);
+  assert.equal((html.match(/data-testid="run-view-toggle"/g) || []).length, 1);
+  assert.equal((html.match(/data-testid="supervision-toggle"/g) || []).length, 1);
+  assert.equal(
+    (html.match(/data-open="false"/g) || []).length,
+    2,
+    "两个胶囊默认都收起，且不依赖有没有监管记录",
+  );
+  assert.equal((html.match(/aria-expanded="false"/g) || []).length, 2);
+  assert.ok(html.includes("▸"), "收起状态有展开记号");
+  assert.ok(html.includes(translateNow("task.runTimeline.label")));
+  assert.ok(html.includes(translateNow("task.supervision.label")));
+  assert.doesNotMatch(html, /data-testid="run-view-entry"/, "收起时不渲染面板内容");
+  assert.doesNotMatch(html, /data-testid="supervision-entry"/);
+});
+
+test("源码契约：与执行详情同排的胶囊、始终存在、空态说明，取数走 appURL + nodeId", () => {
   const panel = read("../src/components/task/TaskDetailPanel.tsx");
-  const runEntryAt = panel.indexOf("<RunViewEntry");
-  const supervisionAt = panel.indexOf("<SupervisionEntry");
-  assert.ok(runEntryAt >= 0 && supervisionAt > runEntryAt, "SupervisionEntry follows RunViewEntry in the detail panel");
+  assert.match(panel, /<TaskInspectEntries/, "两个入口由同一个胶囊组挂载");
   assert.match(
     panel,
-    /^[ \t]*<SupervisionEntry rootId=\{task\.root_id\} taskId=\{task\.id\} nodeId=\{nodeId\} refreshKey=\{task\.updated_at\} \/>$/m,
-    "the entry is mounted unconditionally with the same task identity props as the run view",
+    /^[ \t]*<TaskInspectEntries$/m,
+    "the entries are mounted unconditionally with the task identity props",
   );
 
+  const inspect = read("../src/components/task/TaskInspectEntries.tsx");
+  assert.match(inspect, /data-testid="task-inspect-row"/, "两个胶囊在同一行");
+  assert.match(inspect, /task\.supervision\.label/);
+  assert.ok(
+    inspect.indexOf('testId="run-view-toggle"') < inspect.indexOf('testId="supervision-toggle"'),
+    "执行详情在左、监管记录在右",
+  );
+  assert.match(inspect, /task\.supervision\.label/, "监管胶囊始终渲染，不由 rows 决定");
+  assert.match(inspect, /current === section \? null : section/, "展开互斥");
+
   const entry = read("../src/components/task/SupervisionEntry.tsx");
-  assert.match(entry, /rows\.length === 0/, "an empty supervision history hides the whole row");
+  assert.doesNotMatch(entry, /rows\.length === 0\)\s*\{\s*return null/, "空记录不再隐藏整行");
+  assert.match(entry, /task\.supervision\.empty/, "空态给一句说明");
   assert.match(entry, /data-testid="supervision-entry"/);
+  assert.match(entry, /if \(!open\) return null/, "折叠由父层单一状态控制");
 
   const service = read("../src/services/task/routerDecisions.ts");
   assert.match(service, /appURL\(/, "requests must go through appURL so node routing stays explicit");

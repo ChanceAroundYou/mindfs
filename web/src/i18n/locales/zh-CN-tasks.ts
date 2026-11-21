@@ -101,11 +101,11 @@ export const zhCNTasks = {
   "task.complete": "完成任务",
   "task.completeShort": "完成",
   "task.reopen": "回到待审核，继续对话",
-  "task.runTimeline.expand": "查看执行详情",
-  "task.runTimeline.collapse": "收起执行详情",
-  // 直连对话任务没有 WorkflowRun，入口改为打开任务主会话看执行过程。
-  "task.runTimeline.directHint": "本轮是直连对话，执行过程在任务会话里",
+  // 两个入口是同一行的小胶囊，展开/收起靠箭头记号；文案只说明内容，不随状态变化。
+  "task.runTimeline.label": "执行详情",
   "task.runTimeline.loading": "加载运行…",
+  // 直连对话本身就是一个节点：没有 WorkflowRun 时按节点行展示，不给提示文案。
+  "task.runTimeline.directNode": "直连对话",
   "task.runTimeline.empty": "该运行尚无节点执行记录",
   // 一个任务可能跑过多轮运行；多轮时按轮次分块展示，这是块标题。
   "task.runTimeline.roundLabel": "第 {n} 轮",
@@ -122,8 +122,8 @@ export const zhCNTasks = {
   "task.runTimeline.deciding": "提交中…",
   "task.runTimeline.gateFailed": "审批失败",
   // 监管记录（S4）：Router 自己动过手的记录，触发 → 动作 → 结果。
-  "task.supervision.expand": "查看监管记录",
-  "task.supervision.collapse": "收起监管记录",
+  "task.supervision.label": "监管记录",
+  "task.supervision.empty": "该任务还没有监管记录",
   "task.supervision.loading": "刷新中…",
   "task.supervision.trigger.run_failed": "执行失败",
   "task.supervision.trigger.run_stalled": "执行停摆",
@@ -297,7 +297,8 @@ export const zhCNTasks = {
   "task.activity.send": "发送",
   "task.activity.sending": "发送中…",
   "task.activity.openSession": "打开会话",
-  "task.activity.reportTag": "运行汇报",
+  // 只打在 Router 运行期的 progress 回复上（不是消息类型），与最终结果区分。
+  "task.activity.reportTag": "进度",
   "task.activity.disabled": "任务已结束，无法继续留言。想接着聊就点上方「回到待审核」。",
   "task.activity.status.completed": "已完成",
   "task.activity.replyPending": "等待回复…",

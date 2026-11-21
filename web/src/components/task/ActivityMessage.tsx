@@ -317,9 +317,10 @@ const footerItemStyle: React.CSSProperties = {
 };
 
 /**
- * 运行汇报标记：浅色描边胶囊。
+ * 进度标记：浅色描边胶囊，只打在 Router 运行期 `purpose=progress` 的回复上
+ * （不是消息类型），用来和同一轮的最终结果区分。
  *
- * 页脚整体 opacity 0.5，这里单独恢复不透明度，否则「运行汇报」四个字几乎看不见，
+ * 页脚整体 opacity 0.5，这里单独恢复不透明度，否则标记几乎看不见，
  * 用户又分不清这条是结算结果还是过程上报。
  */
 const reportTagStyle: React.CSSProperties = {

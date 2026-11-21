@@ -15,16 +15,14 @@ import { legacyRunsFromNodeRuns } from "./runTimelineModel";
 // 与后端权威结果一致；错误只展示，不重试、不改写决定。
 export type RunViewState = {
   runId: string;
-  /** 引擎探测是否已有结论：false 时入口不该抢先渲染「直连会话」兜底。 */
+  /** 引擎探测是否已有结论：false 时入口不该抢先渲染「直连节点」。 */
   engineReady: boolean;
-  open: boolean;
   /** 按轮次分组的运行历史（旧的在前）；未取到为 null，空数组是「取到了但一条都没有」。 */
   runs: WorkflowRunNodeRuns[] | null;
   loading: boolean;
   error: string;
   gateError: string;
   decidingNodeRunId: string;
-  toggle: () => void;
   decideGate: (nodeRun: NodeRunSnapshot, decision: HumanGateDecision) => Promise<void>;
 };
 
@@ -33,19 +31,18 @@ export function useRunViewEntry(
   taskId: string,
   nodeId?: string,
   refreshKey?: string,
+  /** 由同一行的胶囊组控制：折叠时不取节点行，但保留已取到的状态。 */
+  open = false,
 ): RunViewState {
   const [runId, setRunId] = useState("");
   const [engineReady, setEngineReady] = useState(false);
-  const [open, setOpen] = useState(false);
   const [runs, setRuns] = useState<WorkflowRunNodeRuns[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [gateError, setGateError] = useState("");
   const [decidingNodeRunId, setDecidingNodeRunId] = useState("");
   const busyRef = useRef(false);
-  const openRef = useRef(false);
-  const identityRef = useRef("");
-  const loadedRunIdRef = useRef("");
+  const identityRef = useRef("");  const loadedRunIdRef = useRef("");
 
   // 任务身份变化（切换卡片/节点）时整体重置；refreshKey 变化只重新探测引擎。
   // 引擎绑定在对话回合开始时才从 legacy 变成 workflow，只在挂载时探测一次会让
@@ -56,8 +53,6 @@ export function useRunViewEntry(
       identityRef.current = identity;
       setRunId("");
       setEngineReady(false);
-      setOpen(false);
-      openRef.current = false;
       setRuns(null);
       setLoading(false);
       setError("");
@@ -132,11 +127,6 @@ export function useRunViewEntry(
     };
   }, [open, runId, rootId, taskId, nodeId, refreshKey]);
 
-  const toggle = useCallback(() => {
-    openRef.current = !openRef.current;
-    setOpen(openRef.current);
-  }, []);
-
   const decideGate = useCallback(
     async (nodeRun: NodeRunSnapshot, decision: HumanGateDecision) => {
       if (busyRef.current) return;
@@ -165,13 +155,11 @@ export function useRunViewEntry(
   return {
     runId,
     engineReady,
-    open,
     runs,
     loading,
     error,
     gateError,
     decidingNodeRunId,
-    toggle,
     decideGate,
   };
 }

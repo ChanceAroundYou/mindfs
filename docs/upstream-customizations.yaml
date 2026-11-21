@@ -8709,7 +8709,7 @@ groups:
       - 'web/src/components/task/WorkflowSelector.tsx:const triggerLabel ='
       - 'web/src/components/task/RunTimeline.tsx:if (list.length === 0) {'
       - 'web/src/components/task/RunNodeRunRow.tsx:data-testid={`node-run-output-${nodeRun.id}`}'
-      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<TaskInspectEntries'
       - 'web/src/components/task/TaskDetailPanel.tsx:refreshKey={task.updated_at}'
 
   # ── 任务收尾停在待审核 + 结果摘要进入任务卡 ──────────────────────────────
@@ -9592,7 +9592,7 @@ groups:
       - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
       - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-report-tag"'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
-      - 'web/src/components/task/RunViewEntry.tsx:if (!engineReady || !fallbackSessionKey) return null;'
+      - 'web/src/components/task/RunViewEntry.tsx:if (!runId) {'
       - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns(rootId, taskId, nodeId)'
       - 'web/tests/activity-reports-inline.test.mjs:test("运行汇报按时间顺序原样渲染，不折叠也不隐藏"'
 
@@ -9957,9 +9957,9 @@ groups:
       - 'web/src/shared/pendingCompletion.ts:export function alertableCompletedKeys('
       - 'web/src/shared/pendingCompletion.ts:export function carrySubSessionKeys('
       - 'web/src/app/useReplyingSessionPoll.ts:const alertable = alertableCompletedKeys(completed, subSessions);'
-      - 'web/src/app/useReplyingSessionPoll.ts:if (item?.subSession === true) {'
+      - 'web/src/app/useReplyingSessionPoll.ts:if (item?.subSession === true || item?.silent === true) {'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyCompletionFeed.java:static Decision decide(Cursor current, String headEpoch, long headSeq, List<Completion> backlog) {'
-      - 'web/android/app/src/main/java/com/mindfs/app/ReplyCompletionFeed.java:if (completion.subSession) {'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyCompletionFeed.java:if (completion.subSession || completion.silent) {'
       - 'web/android/app/src/test/java/com/mindfs/app/ReplyCompletionFeedTest.java:class ReplyCompletionFeedTest'
       - 'web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java:public void subSessionFlagSurvivesIntoCompletedEntry()'
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyStateMerger.java:boolean subSession = false;'
@@ -10934,8 +10934,8 @@ groups:
       - 'web/src/services/task/routerDecisions.ts:/router-decisions`, params, nodeId)'
       - 'web/src/components/task/useSupervisionEntry.ts:fetchRouterDecisions(rootId, taskId, nodeId)'
       - 'web/src/components/task/supervisionEntryModel.ts:const SUPERVISION_TRIGGERS = new Set(["run_failed", "run_stalled", "direct_stalled"]);'
-      - 'web/src/components/task/SupervisionEntry.tsx:if (!loaded || rows.length === 0) return null;'
-      - 'web/src/components/task/TaskDetailPanel.tsx:<SupervisionEntry rootId={task.root_id}'
+      - 'web/src/components/task/SupervisionEntry.tsx:if (!open) return null;'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<TaskInspectEntries'
 
   - id: G-NR
     title: 项目身份 = (nodeId, rootId)：不同节点的同名 / 同路径项目是不同项目
@@ -11443,7 +11443,7 @@ groups:
       - 'cli/cmd/startup_feishu.go:func feishuOptions(flags startupFlags) app.FeishuOptions {'
 
   - id: G-NY
-    title: 任务详情面板移动端：执行详情置顶可见、长内容不再横向滚动、消息级状态收敛到任务级
+    title: 任务详情面板移动端：执行详情与监管记录同排胶囊、直连按节点展示、长内容不横向滚动、消息级状态收敛到任务级
     kind: fix
     symptom: |
       三个移动端症状。① 执行详情看不见：`RunViewEntry` 挂在整段对话流（两千多像素）之后，
@@ -11452,27 +11452,37 @@ groups:
       表格被写死 `minWidth: 520px`，390px 视口下比卡片宽 186px，每张表都自带左右滑动；
       `.markdown-viewer` 与对话容器也没有 `minWidth:0`，长 URL / 长 token 会把卡片顶宽。
       ③ 每条消息页脚都重复显示 pending / running / completed / failed 状态，和面板头部的
-      任务状态重复，长列表里噪音很大。
+      任务状态重复，长列表里噪音很大。后续反馈（同日）又暴露三处：④ 执行详情与监管记录
+      一上一下、监管没有记录时整条按钮消失，形状不固定；⑤ 直连任务只有一句「本轮是直连
+      对话，执行过程在任务会话里」+ 打开会话，不像正常的执行详情；⑥ 页脚「运行汇报」
+      标签看不出是进度还是最终结果。
     why: |
       必须保留：① 移动端（`max-width:640px`）用 `order:-1` 把 `.task-detail-execution` 提到
-      对话流之前，桌面仍保持「对话流 → 执行详情」的下钻顺序；直连任务没有 Run 时入口改为
-      「查看执行详情 + 打开任务主会话」，引擎探测完成（`engineReady`）后才渲染，避免
-      workflow 任务先闪一下直连文案。② 表格最小宽度退化为 `min(520px, 100%)`、表头允许折行、
-      单元格 `overflow-wrap:anywhere`，`.markdown-viewer` 与 `#conversation-view` 加
-      `min-width:0; max-width:100%`，让宽内容在卡片内收住而不是把面板撑出横向滚动。
-      ③ 消息页脚删掉状态 span 与 `STATUS_LABEL_KEYS`/`STATUS_COLORS`，任务级状态只保留在
-      标题栏 `task-detail-status`；排队留言的 `queued` 徽标与「立即执行」是投递动作，不在此列；
-      底层 `activity.status` 数据不删，只停止展示。
+      对话流之前，桌面仍保持「对话流 → 执行详情」的下钻顺序。② 表格最小宽度退化为
+      `min(520px, 100%)`、表头允许折行、单元格 `overflow-wrap:anywhere`，`.markdown-viewer`
+      与 `#conversation-view` 加 `min-width:0; max-width:100%`，让宽内容在卡片内收住而不是
+      把面板撑出横向滚动。③ 消息页脚删掉状态 span 与 `STATUS_LABEL_KEYS`/`STATUS_COLORS`，
+      任务级状态只保留在标题栏 `task-detail-status`；排队留言的 `queued` 徽标与「立即执行」
+      是投递动作，不在此列；底层 `activity.status` 数据不删，只停止展示。④ 两个入口收成
+      `TaskInspectEntries` 同一行的小胶囊，始终存在、共用唯一 `openSection` 状态保证互斥，
+      胶囊自带 `▸/▾` 与 `aria-expanded`，一眼看出展开的是哪个；监管没有记录时给空态说明。
+      ⑤ 直连本身就是一种节点：没有 WorkflowRun 时按节点行展示「直连对话」+ 任务状态，
+      右侧会话图标跳任务主会话，删掉提示文案。⑥ 页脚标签本就是 `purpose=progress` 的
+      运行期进度回复（不是消息类型），改名「进度」并保留与最终结果的区分。
     boundary: |
-      只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情入口打开的是任务主会话，
+      只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
-      100%；嵌套的 run 节点行仍有 2px 级 scrollWidth 差（不产生面板级横向滚动），本组未处理。
+      100%；会话图标角标在嵌套节点行仍有 2px 级 scrollWidth 差（不产生面板级横向滚动），
+      本组未处理。「进度」标记仍只按 `purpose=progress` 判定，不动 Router 的 purpose 语义。
     files:
       - web/src/components/task/ActivityMessage.tsx
       - web/src/components/task/ConversationView.tsx
       - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/SupervisionEntry.tsx
+      - web/src/components/task/TaskInspectEntries.tsx
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/components/task/useRunViewEntry.ts
+      - web/src/components/task/useSupervisionEntry.ts
       - web/src/hooks/useMarkdownViewer.tsx
       - web/src/index.css
       - web/src/i18n/locales/en-US-tasks.ts
@@ -11482,20 +11492,32 @@ groups:
     tests:
       - web/tests/conversation-view.test.mjs
       - web/tests/run-timeline-drill-in.test.ts
+      - web/tests/task-supervision-entry.test.mjs
+      - web/tests/activity-reports-inline.test.mjs
+      - web/tests/task-completion-checklist.test.mjs
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
       - 'web/src/components/task/ConversationView.tsx:style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, maxWidth: "100%" }}'
       - 'web/src/components/task/TaskDetailPanel.tsx:<div className="task-detail-execution">'
       - 'web/src/components/task/TaskDetailPanel.tsx:fallbackSessionKey={task.main_session_key}'
-      - 'web/src/components/task/RunViewEntry.tsx:if (!engineReady || !fallbackSessionKey) return null;'
-      - 'web/src/components/task/RunViewEntry.tsx:data-testid="run-view-open-session"'
+      - 'web/src/components/task/TaskDetailPanel.tsx:taskStatus={task.status}'
+      - 'web/src/components/task/TaskInspectEntries.tsx:data-testid="task-inspect-row"'
+      - 'web/src/components/task/TaskInspectEntries.tsx:setOpenSection((current) => (current === section ? null : section));'
+      - 'web/src/components/task/TaskInspectEntries.tsx:{open ? "▾" : "▸"}'
+      - 'web/src/components/task/RunViewEntry.tsx:if (!runId) {'
+      - 'web/src/components/task/RunViewEntry.tsx:data-testid="direct-node-run"'
+      - 'web/src/components/task/RunViewEntry.tsx:data-testid="direct-node-open-session"'
+      - 'web/src/components/task/SupervisionEntry.tsx:task.supervision.empty'
       - 'web/src/components/task/useRunViewEntry.ts:const [engineReady, setEngineReady] = useState(false);'
+      - 'web/src/components/task/useRunViewEntry.ts:open = false,'
       - 'web/src/hooks/useMarkdownViewer.tsx:minWidth: "min(520px, 100%)",'
       - 'web/src/hooks/useMarkdownViewer.tsx:overflowWrap: "anywhere",'
       - 'web/src/index.css:.task-detail-execution {'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.expand": "查看执行详情",'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directHint": "本轮是直连对话，执行过程在任务会话里",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.label": "执行详情",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directNode": "直连对话",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.supervision.empty": "该任务还没有监管记录",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.activity.reportTag": "进度",'
 
   - id: G-NZ
     title: 自动发现不再把 /tmp 下的隔离实例目录注册成项目
@@ -11524,3 +11546,89 @@ groups:
       - 'server/internal/agent/workdir.go:roots = append(roots, "/tmp", "/var/tmp")'
       - 'server/internal/agent/workdir.go:func isPathWithin(path, root string) bool {'
       - 'server/app/server_test.go:func TestAutoAddExternalProjectRootsSkipsOtherSystemTempRoots(t *testing.T) {'
+
+  - id: G-PA
+    title: 提醒三改：关闭任务内部步骤的完成提醒、去掉提醒文案的 mindfs 前缀、正文统一纯文本并按尾部截断
+    kind: fix
+    symptom: |
+      三个线上症状。① 桌面 PWA 仍在推「子任务完成」：工作流节点回合跑在**正常会话**里，
+      只有 `SetPendingReply` 才会打 `SubSession` 标记，而节点回合走的是
+      `BroadcastSessionUserMessageAt`，于是 Web Push、完成补发账本、安卓轮询三条出口全都
+      把它当成用户可见的完成。② 提醒标题带项目名/`MindFS` 前缀，安卓通知渠道名也是
+      「MindFS 任务提醒」。③ 正文是 Markdown 原文：``` 代码围栏、`**粗体**`、列表符号与
+      表格竖线原样出现在系统通知里；内容一长，用户看到的还是开头那段（对「跑完了，结论是
+      什么」毫无用处）。
+    why: |
+      必须保留：① 「这一轮完成要不要提醒」是**服务端**的判定，不是各端各写一套。
+      `workflowTurnRequest.SilentCompletion=true` 在建 pending 的同一回调里立刻调
+      `MarkPendingCompletionSilent(root, session, turnID)`（带回合身份，迟到 done 不会
+      误标新轮），此后 Web Push（`shouldNotifySessionDone`）、完成补发账本
+      （`RecordCompletion`）、`/api/replying-sessions` 载荷（`silent` 字段）、WS
+      `session.done`（`payload.silent`）、Web 前台轮询与提示音、安卓
+      `ReplyStateMerger`/`ReplyCompletionFeed`/`ReplyPollerService` 全部读这一位。
+      子会话（fork）与任务内部步骤是两回事，两条判据并存，不许合并成一条。
+      ② 提醒文案不带项目标识：标题就是 `会话名 · 完成` / `会话名 · 需要输入`，
+      安卓渠道名是「后台同步」「任务提醒」，Service Worker 兜底标题是「提醒」。
+      ③ 正文统一过 `notify.PlainText`：先 `stripMarkdown`（围栏/行内代码/标题/引用/列表/
+      强调/链接/表格；只去掉标记保留内容），再**从尾部**截断到 `BodyMaxRunes=1000`
+      （`FallbackBodyMaxRunes=300` 给外发脚本类载荷），截断结果以 `...` 开头。
+      调阈值只改这两个常量，所有端一起变。
+    boundary: |
+      只改提醒面（文案、正文、是否提醒），不动会话/任务/工作流的任何状态与落库，也不动
+      会话内 Markdown 渲染。`silent` 只压「完成」这一类提醒：提问（ask_user）与出错提醒
+      照发，`ReplyStateMerger.silent` 因此在「回复中 / 等你回答」分支被显式忽略。飞书卡片
+      走结构化渲染，仍是原文，不在本组范围。通知 `tag` 仍是 `mindfs:<...>` 内部去重键，
+      系统不展示。
+    files:
+      - server/internal/notify/plaintext.go
+      - server/internal/notify/plaintext_test.go
+      - server/internal/notify/notify.go
+      - server/internal/webpush/notify_payload.go
+      - server/internal/webpush/send.go
+      - server/internal/webpush/service_test.go
+      - server/internal/api/appcontext_broadcast.go
+      - server/internal/api/appcontext_notify.go
+      - server/internal/api/appcontext_task_flags.go
+      - server/internal/api/appcontext_workflow.go
+      - server/internal/api/http_sessions_list.go
+      - server/internal/api/stream_hub.go
+      - server/internal/api/stream_hub_build.go
+      - server/internal/api/stream_hub_completions.go
+      - server/internal/api/stream_hub_pending.go
+      - server/internal/api/stream_hub_types.go
+      - server/internal/api/notification_reminders_test.go
+      - server/internal/api/ws_session_slash.go
+      - server/internal/api/ws_replay_test.go
+      - server/internal/api/stream_hub_completions_test.go
+      - web/src/app/realtimeWsHandlers.ts
+      - web/src/app/useReplyingSessionPoll.ts
+      - web/vite.config.ts
+      - web/tests/pending-completion-sub-session.test.mjs
+      - web/android/app/src/main/java/com/mindfs/app/ReplyStateMerger.java
+      - web/android/app/src/main/java/com/mindfs/app/ReplyCompletionFeed.java
+      - web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java
+      - web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java
+      - web/android/app/src/test/java/com/mindfs/app/ReplyCompletionFeedTest.java
+    tests:
+      - server/internal/api/notification_reminders_test.go
+      - server/internal/api/stream_hub_completions_test.go
+      - server/internal/notify/plaintext_test.go
+      - server/internal/webpush/service_test.go
+      - web/tests/pending-completion-sub-session.test.mjs
+      - web/android/app/src/test/java/com/mindfs/app/ReplyCompletionFeedTest.java
+      - web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java
+    anchors:
+      - 'server/internal/notify/plaintext.go:const BodyMaxRunes = 1000'
+      - 'server/internal/notify/plaintext.go:func PlainText(value string, maxRunes int) string {'
+      - 'server/internal/notify/notify.go:body := PlainText(in.Summary, BodyMaxRunes)'
+      - 'server/internal/api/appcontext_notify.go:return !pending.SubSession && !pending.SilentCompletion'
+      - 'server/internal/api/appcontext_workflow.go:SilentCompletion: true,'
+      - 'server/internal/api/appcontext_workflow.go:s.MarkPendingCompletionSilent(req.RootID, sessionKey, id)'
+      - 'server/internal/api/stream_hub_completions.go:Silent:      snapshot.SilentCompletion,'
+      - 'server/internal/api/http_sessions_list.go:"summary":   notify.PlainText(item.Summary, notify.BodyMaxRunes),'
+      - 'server/internal/api/stream_hub_build.go:func buildSessionDoneResponse(rootID, sessionKey, requestID string, silent bool) WSResponse {'
+      - 'web/src/app/realtimeWsHandlers.ts:const isSilentTurn = (payload as any)?.silent === true;'
+      - 'web/src/app/useReplyingSessionPoll.ts:if (item?.subSession === true || item?.silent === true) {'
+      - 'web/vite.config.ts:const title = payload.title || "提醒";'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyCompletionFeed.java:if (completion.subSession || completion.silent) {'
+      - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:if (entry.subSession || entry.silent) {'

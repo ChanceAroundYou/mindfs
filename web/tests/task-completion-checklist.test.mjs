@@ -87,7 +87,7 @@ test("the entry fetches through services with the node id and stays out of the v
   assert.match(panel, /<TaskCompletionEntry/, "the checklist entry must be mounted in the task detail panel");
   assert.match(
     panel,
-    /<SupervisionEntry[\s\S]*<TaskCompletionEntry/,
-    "the evidence checklist sits after the supervision log (both are read-only evidence rows)",
+    /<TaskInspectEntries[\s\S]*<TaskCompletionEntry/,
+    "the evidence checklist sits after the execution/supervision capsules (all read-only evidence)",
   );
 });

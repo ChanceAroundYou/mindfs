@@ -11,7 +11,7 @@ import { ConversationMessages } from "../src/components/task/ConversationView.ts
 // 之前的实现把同一留言下 purpose=progress 的汇报折进结算回复后面的一个默认
 // 收起的分组里，理由是结果句重复。代价是用户看不到流程到底跑到哪一步，
 // 还得先点开才知道有没有上报。现在每行按时间顺序直接展示，只加一个浅色
-// 「运行汇报」标记，让汇报与结算回复在视觉上仍能区分。
+// 标记，让运行中的进度与结算回复在视觉上仍能区分。
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 
@@ -94,11 +94,11 @@ test("progress 行按到达顺序排列在结算行之前", () => {
   assert.ok(startedAt < settledAt, "rendering follows activity order, not a regrouped order");
 });
 
-test("只有 purpose=progress 的行带「运行汇报」标记", () => {
+test("只有 purpose=progress 的行带「进度」标记", () => {
   const html = render([userMessage, settledReply, progressStarted]);
   assert.match(html, /data-testid="activity-report-tag"/, "progress row carries the tag");
-  assert.match(html, /运行汇报|Run report/, "tag is localised");
-  // 结算回复与用户留言都不该被标记成运行汇报。
+  assert.match(html, /进度|Progress/, "tag is localised");
+  // 结算回复与用户留言都不该被标记成进度。
   const tagCount = (html.match(/data-testid="activity-report-tag"/g) || []).length;
   assert.equal(tagCount, 1, "exactly one progress row is tagged");
 });

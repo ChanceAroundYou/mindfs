@@ -5,8 +5,7 @@ import { composerInputStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n/index";
 import { pencilStyle, tagStyle } from "./taskDetailStyles";
 import { ConversationView } from "./ConversationView";
-import { RunViewEntry } from "./RunViewEntry";
-import { SupervisionEntry } from "./SupervisionEntry";
+import { TaskInspectEntries } from "./TaskInspectEntries";
 import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
@@ -161,20 +160,20 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           onAgentActivityChange={() => void panel.refreshTask()}
           onOpenSession={onOpenSession}
         />
-        {/* 运行视图是对话流的下钻（默认收起）；human_gate 在对话卡与运行视图里都能审批。
-            mobile 下由 CSS `order:-1` 置顶，否则会被整段对话 + 输入框顶到面板最底部。 */}
+        {/* 执行详情 + 监管记录：同一行的两个胶囊，始终存在、展开互斥。
+            human_gate 在对话卡与执行详情里都能审批。mobile 下由 CSS `order:-1`
+            置顶，否则会被整段对话 + 输入框顶到面板最底部。 */}
         <div className="task-detail-execution">
-          <RunViewEntry
+          <TaskInspectEntries
             rootId={task.root_id}
             taskId={task.id}
             nodeId={nodeId}
             refreshKey={task.updated_at}
             fallbackSessionKey={task.main_session_key}
+            taskStatus={task.status}
             onOpenSession={onOpenSession}
           />
         </div>
-        {/* 监管记录是只读证据：Router 自己重试/唤醒/交给用户的记录；没有时整行隐藏。 */}
-        <SupervisionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
         <TaskCompletionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
       </div>
     </PanelShell>

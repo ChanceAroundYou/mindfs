@@ -1,21 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchRouterDecisions } from "../../services/task/routerDecisions";
 import type { RouterDecisionSummary } from "../../shared/routerDecisions";
 import { supervisionRows, type SupervisionRow } from "./supervisionEntryModel";
 
-// 监管记录入口的取数逻辑（.ts，允许 import services）。
+// 监管记录面板的取数逻辑（.ts，允许 import services）。
 //
-// 挂载即拉一次：入口本身要不要显示取决于「有没有监管决策」，光靠展开时拉就
-// 永远显示不出来。任务头每次更新（refreshKey）重拉，跟运行视图同一套节奏。
-// 请求失败不打扰用户：入口按「没有记录」处理，错误只在已展开且已有行时展示。
+// 挂载即拉一次：面板与执行详情共用一行胶囊，按钮始终存在，数据要提前就位，
+// 光靠展开时拉会让每次展开都空一拍。任务头每次更新（refreshKey）重拉，跟
+// 运行视图同一套节奏。请求失败不打扰用户：面板只展示错误，不影响胶囊。
 export type SupervisionEntryState = {
   rows: SupervisionRow[];
-  /** 至少成功拉到过一次（失败与「还没拉」都不会让入口冒出来）。 */
+  /** 至少成功拉到过一次。 */
   loaded: boolean;
-  open: boolean;
   loading: boolean;
   error: string;
-  toggle: () => void;
 };
 
 export function useSupervisionEntry(
@@ -26,7 +24,6 @@ export function useSupervisionEntry(
 ): SupervisionEntryState {
   const [decisions, setDecisions] = useState<RouterDecisionSummary[] | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const identityRef = useRef("");
@@ -37,7 +34,6 @@ export function useSupervisionEntry(
       identityRef.current = identity;
       setDecisions(null);
       setLoaded(false);
-      setOpen(false);
       setError("");
     }
   }, [rootId, taskId, nodeId]);
@@ -66,9 +62,5 @@ export function useSupervisionEntry(
 
   const rows = useMemo(() => supervisionRows(decisions), [decisions]);
 
-  const toggle = useCallback(() => {
-    setOpen((previous) => !previous);
-  }, []);
-
-  return { rows, loaded, open, loading, error, toggle };
+  return { rows, loaded, loading, error };
 }

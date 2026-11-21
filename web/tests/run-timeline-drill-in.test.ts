@@ -146,20 +146,33 @@ test("任务详情面板只挂一条对话流，且保留运行视图入口", ()
   assert.match(panel, /<ConversationView/, "TaskDetailPanel must mount the single conversation stream");
   assert.doesNotMatch(panel, /<CommentThread/, "CommentThread duplicates ConversationView and must not be mounted");
   assert.doesNotMatch(panel, /from "\.\/CommentThread"/, "no CommentThread import either");
-  assert.match(panel, /<RunViewEntry/, "RunViewEntry is the only mount point of the human gate UI");
+  assert.match(panel, /<TaskInspectEntries/, "the inspect entries are the only mount point of the human gate UI");
   assert.ok(
-    panel.indexOf("<ConversationView") < panel.indexOf("<RunViewEntry"),
+    panel.indexOf("<ConversationView") < panel.indexOf("<TaskInspectEntries"),
     "运行视图是对话流的下钻，必须排在它之后",
   );
 
   // 迁移到 workflow 引擎的任务有运行视图；直连对话任务没有 WorkflowRun，
-  // 入口改为打开任务主会话（执行过程在那里），不能整条消失。
+  // 但直连本身就是一种节点：按节点行展示并打开任务主会话，不写提示文案。
   // 引擎门槛在取数 hook（.ts）里：视图层不 import services。
   assert.match(hook, /engine\?\.engine === "workflow"/);
   assert.match(hook, /workflow_run_id/);
   assert.match(entry, /if \(!runId\) \{/);
   assert.match(entry, /fallbackSessionKey/);
-  assert.match(entry, /data-testid="run-view-open-session"/);
+  assert.match(entry, /data-testid="direct-node-run"/);
+  assert.match(entry, /data-testid="direct-node-open-session"/);
+  assert.doesNotMatch(entry, /directHint/, "直连不再写提示文案");
+  // 两个胶囊同排、始终存在、互斥展开，且各自带 ▸/▾ 记号。
+  const inspect = read("../src/components/task/TaskInspectEntries.tsx");
+  assert.match(inspect, /testId="run-view-toggle"/);
+  assert.match(inspect, /testId="supervision-toggle"/);
+  assert.match(inspect, /aria-expanded=\{open\}/);
+  assert.match(inspect, /\{open \? "▾" : "▸"\}/);
+  assert.match(
+    inspect,
+    /setOpenSection\(\(current\) => \(current === section \? null : section\)\)/,
+    "一个 openSection 状态保证两个面板互斥",
+  );
   // mobile 下执行详情入口必须置顶，否则会被整段对话顶到面板最底部。
   assert.match(panel, /className="task-detail-execution"/);
   const css = read("../src/index.css");
