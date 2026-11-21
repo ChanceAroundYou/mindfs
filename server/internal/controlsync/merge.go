@@ -150,8 +150,11 @@ func (p *Pusher) pushOne(ctx context.Context, origin string, ch PushChange) Push
 	switch {
 	case !exists && ch.BaseHash == "":
 		// 边缘新建、主节点也没有 —— 直接落地。
-	case exists && cur.Hash == ch.BaseHash:
+	case exists && !cur.Deleted && cur.Hash == ch.BaseHash:
 		// 没人动过这条记录 —— 边缘的改动可以应用。
+		//
+		// 墓碑必须排除：删除也保留了最后一次内容 hash，只看 hash 相等会把
+		// 「主节点删了、边缘改了」当成「没人动过」，把记录静默复活。
 	case exists && !cur.Deleted && cur.Hash == payloadHash:
 		// 已经收敛：主节点当前值恰好等于推送值，不重复写变更流。
 		if err := p.store.MarkChangeApplied(ctx, ch.ChangeID, cur.Rev); err != nil {

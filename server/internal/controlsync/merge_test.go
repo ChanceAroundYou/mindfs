@@ -428,6 +428,40 @@ func TestPushSupersedesStaleConflictWhenRecordSettles(t *testing.T) {
 	}
 }
 
+// 主节点删了、边缘离线改了同一条：两侧都动过，必须出冲突卡让人选，
+// 不能因为墓碑保留了最后一次内容 hash 就当成「没人动过」把记录静默复活。
+func TestPushConflictsWhenPrimaryDeletedWhileEdgeEdited(t *testing.T) {
+	store, domain, capturer, pusher := newPushFixture(t)
+	ctx := t.Context()
+	domain.set("agents", `{"v":1}`)
+	if _, err := captureOnce(t, capturer, domain); err != nil {
+		t.Fatalf("seed capture: %v", err)
+	}
+	baseHash := recordHash(t, DomainPreferences, "agents", `{"v":1}`)
+	// 主节点删掉这条记录（墓碑保留最后一次内容 hash）。
+	if _, err := pusher.Push(ctx, PushRequest{InstanceID: "home", Changes: []PushChange{
+		pushChange("ch-primary-del", DomainPreferences, "agents", baseHash, "", true),
+	}}); err != nil {
+		t.Fatalf("主节点删除: %v", err)
+	}
+	// 边缘基于它最后看到的值改了一版再推上来。
+	batch, err := pusher.Push(ctx, PushRequest{InstanceID: "hasee", Changes: []PushChange{
+		pushChange("ch-edge-edit", DomainPreferences, "agents", baseHash, `{"v":2}`, false),
+	}})
+	if err != nil {
+		t.Fatalf("边缘推送: %v", err)
+	}
+	if batch.Results[0].Status != PushConflict {
+		t.Fatalf("状态 = %s，主节点已删、边缘又改，应判冲突", batch.Results[0].Status)
+	}
+	if _, ok := domain.items["agents"]; ok {
+		t.Fatalf("冲突时主节点记录被静默复活：%s", domain.items["agents"])
+	}
+	if n := countRows(t, store, "conflicts"); n != 1 {
+		t.Fatalf("conflicts 行数 = %d，应为 1", n)
+	}
+}
+
 // captureOnce 用一次快照 diff 把主节点当前值写进索引（模拟本地写入后的采集）。
 func captureOnce(t *testing.T, capturer *Capturer, domain *memDomain) (int, error) {
 	t.Helper()
