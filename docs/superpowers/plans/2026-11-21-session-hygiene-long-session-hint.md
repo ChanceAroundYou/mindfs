@@ -253,10 +253,73 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 - Codex 凭据过期不在代码里自动修复（refresh token 是设备本地凭据，不跨设备复制）；
   修复后用户能从胶囊直接看到具体原因并重新登录。
 
+## 2026-11-22 再修：压缩后上下文 stale + 胶囊累计口径简化（待执行）
+
+用户看完诊断后收窄了范围：
+
+- 不新增「压缩后上下文 ≈ X tokens」这一行，也不需要把 `本轮请求大小 / 本轮节省` 改叫「上次折叠」。
+- 累计行只保留一个总量：**不要「估算」二字，不要「最近 200 次折叠」**。
+- token 数字不要六位精度：**>= 10k 一律用 `k`，全胶囊所有 token 数字共用同一个格式化函数**。
+
+### 取证结论（只读，已核对）
+
+- 累计节省来自 live-compact 账本最近 200 行，是 `req_tokens_est - forward_tokens_est` 的滚动合计；
+  当前会话 API 从 6,129,539 涨到 6,694,018，口径是会话 + agent，不是全局。
+- 胶囊的 `latest` 来自最后一次 proxy fold，harness `/compact` 不写账本；所以压缩后
+  `本轮请求大小 / 本轮节省` 不变是既有口径，本轮**不动**。
+- 真 bug 是 hygiene 的 `context_tokens` stale：Claude compact boundary 原始 JSON 有 `postTokens`
+  （当前会话最近一次 manual compact 是 `37,062`，而读口仍是 `142,760`），SDK 结构体没暴露，
+  `handleCompactBoundaryMessage` 也没读 raw；`/compact` 回合没有 assistant `message_delta`，
+  `UpdateLastContextWindow` 因 `TotalTokens=0` 直接返回，旧值留着，隔离实例复现了压缩后立刻再压一次。
+- Codex compact item 没有 post token，只能靠后续 `token_count`；压缩事件后必须先把旧值标 stale，
+  不能再拿它判 hygiene，直到新 `token_count` 到达。
+
+### 要做
+
+1. **后端：压缩后 context token 不再 stale**
+   - Claude：消息循环把 compact boundary 的 raw JSON 传进 `handleCompactBoundaryMessage`，
+     解析 `compactMetadata.postTokens`；`CompactNotice` 增加可选 `post_tokens`；
+     `session_send.go` 收到 `EventTypeCompact` 时若 `post_tokens > 0`，用它更新本回合的
+     `lastContextWindow.TotalTokens` 并落库。
+   - 原始 `pre_tokens` / `post_tokens` 只作为内部状态用，**不在胶囊新增展示行**。
+   - Codex：收到任意 compact 事件后把该会话的 context token 标为 stale；stale 期间 `Snapshot`
+     不把旧值喂给 hygiene，也不允许再排自动压缩；后续 `token_count` 到达即清 stale 并更新。
+   - 目的只有两个：不再重复 `/compact`；成功压缩后不再因 stale 反复进 hint / 失败红块。
+2. **前端：统一 token 数字格式**
+   - 用一个 `formatTokenAmount` 替换胶囊里现有的 `formatTokens` / `formatTokensEstimate` /
+     `formatTokensCompact`：`< 10_000` 原值（保留千分位）；`>= 10_000` 一律换算成 `k`
+     （`< 100k` 一位小数并去尾随 `.0`，`>= 100k` 整数 k，例如 `6,129,539 → 6130k`）。
+   - 「本轮请求大小 / 本轮节省 / 折叠原文 / 本轮重算 / 本轮缓存命中 / 累计重算 / hygiene 上下文」
+     等所有 token 数字都走它；`formatBytes` 仍只用于旧账本缺 token 字段的字节兜底。
+3. **前端：累计行只显示总量**
+   - `ContextSavingIndicator.tsx` 的累计行不再传 `count`，文案不出现「估算」「最近 200 次折叠」。
+   - zh-CN / en-US 的 `contextSaving.savedTotalValue` 改成只接 `{size}`；label 保留「累计节省」。
+   - 数据仍取 `total_saved_tokens`（缺样本才退 `total_saved_bytes`），但不再解释估算属性与窗口长度。
+
+### 不做
+
+- 不新增压缩后大小展示行。
+- 不改「本轮请求大小 / 本轮节省」两行的语义与文案。
+- 不改账本保留 200 行的策略，不改 API 字段。
+- 不在本轮处理用户未复现到的红色胶囊瞬时状态；修 stale context 后若仍能复现，另开一轮取证。
+
+### 测试与变异
+
+- Go：`postTokens` 原始 JSON 解析、compact 事件更新 `lastContextWindow`、Codex stale 闸各一条 RED→GREEN；
+  E2E `e2e/test_session_hygiene.py` 增加「压缩后 `context_tokens` 下降且只压一次」断言。
+- Web：`web/tests/context-saving-chip.test.mjs` 钉住三件事——统一格式阈值（9,999 原值 / 10,000 → 10k /
+  6,129,539 → 6130k）、所有 token 数字共用同一个 formatter、累计行不含 `估算` / `200` / `count`。
+- 变异各自打红后还原：去掉 `postTokens` 解析、去掉 Codex stale 闸、累计行恢复 `count`、
+  阈值退回 1k、任一 token 行改回旧精确格式化。
+- 门禁：`go test -count=1 ./...`、`npx tsc -b --noEmit`、`npx vitest run`、
+  隔离实例真 harness E2E、`make check-upstream`；提交标 `Scope: G-PG`，并同步 G-PG 定制登记。
+
 ## 状态
 
-**已实现、门禁绿、隔离实例端到端跑通真实 harness 压缩；未部署、未重启任何节点。**
+**前一轮已实现、门禁绿、隔离实例端到端跑通真实 harness 压缩；未部署、未重启任何节点。**
 线上行为不变：`config.json` 里没有 `session_hygiene` 段时用默认值（默认开），但要**重启进程**
 才会加载这段新代码；新增 `compact_pending` / `compact_error` 的后端字段同样要重启才下发
 （旧节点下前端走 80 秒兜底）。前端刷新生效。本机 `sudo systemctl restart mindfs` 仅用户可执行。
 端到端证据与变异账本见上；`e2e/test_session_hygiene.py` 刻意不进常规门禁（会真调模型）。
+
+**2026-11-22 再修（stale context + 胶囊累计简化）按上面的新章节执行；该章节尚未开始实现。**
