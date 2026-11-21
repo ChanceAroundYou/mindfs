@@ -57,12 +57,14 @@ func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, total
 			Source:        fold.UsageSourceResponse,
 		}
 	}
-	s.writeFoldLedgerUsage(token, pending, usage)
+	s.writeFoldLedgerUsage(token, pending, usage, s.sessionUpstreamBase(token))
 }
 
 // writeFoldLedgerUsage appends the pending line from a normalized usage block,
-// which is what lets both wire formats share one ledger shape.
-func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, usage fold.Usage) {
+// which is what lets both wire formats share one ledger shape. upstreamBase is
+// the URL the request was actually forwarded to; it is what decides whether the
+// counters are the provider's own or a relay's (see usageProvenance).
+func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, usage fold.Usage, upstreamBase string) {
 	if pending == nil {
 		return
 	}
@@ -112,6 +114,7 @@ func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, 
 		UsageCacheCreation: usage.CacheWrite,
 		UsageCacheRead:     usage.CacheRead,
 		UsageSource:        source,
+		UsageProvenance:    usageProvenance(source, upstreamBase),
 	}
 	// The ledger is a diagnostic; a failed write must not fail the turn.
 	_ = rt.ledger.Write(sessionKey, entry)

@@ -45,6 +45,13 @@ export type ContextSavingEntry = {
   usage_cache_read: number;
   /** "response" when the counters came from the upstream usage block. */
   usage_source: "response" | "missing" | "";
+  /**
+   * Whose counters these are: "upstream" when the request went to the
+   * provider's own API, "relay" when it went through a relay (llmux) that may
+   * synthesize them, "" for rows written before the field existed or turns
+   * without a sample. Only "relay" justifies the estimate note.
+   */
+  usage_provenance: "upstream" | "relay" | "";
 };
 
 /**

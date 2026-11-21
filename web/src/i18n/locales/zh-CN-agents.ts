@@ -194,7 +194,7 @@ export const zhCNAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "未知",
   "contextSaving.empty": "这个会话还没有折叠过请求。",
-  "contextSaving.estimateNote": "上游没有回报缓存写入量：本轮重算与缓存命中来自中转的估算。",
+  "contextSaving.estimateNote": "本轮用量由中转（如 llmux）上报：重算与缓存命中可能是它合成的估算。",
   "contextSaving.usageMissing": "{count} 次请求没读到用量，未计入重算合计。",
   "contextSaving.rewriteTotal": "重算合计 {rewrite} tokens。",
 } as const;

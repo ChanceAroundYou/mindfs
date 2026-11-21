@@ -194,7 +194,7 @@ export const enUSAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "unknown",
   "contextSaving.empty": "No request in this conversation has been folded yet.",
-  "contextSaving.estimateNote": "The upstream reported no cache writes; this turn's rewrite cost and hit rate are relay estimates.",
+  "contextSaving.estimateNote": "This turn's usage came from a relay (llmux): the rewrite cost and hit rate may be synthesized estimates.",
   "contextSaving.usageMissing": "{count} requests had no readable usage and are excluded from the rewrite total.",
   "contextSaving.rewriteTotal": "{rewrite} tokens rewritten in total.",
 } as const;

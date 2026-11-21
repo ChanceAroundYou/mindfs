@@ -199,14 +199,14 @@ test("本轮新折报的是原文大小，不只是块数", () => {
   );
 });
 
-test("中转合成的用量要标明是估算，不能当成上游真实计数", () => {
-  // llmux 中转永远不回报 cache_creation；命中率与重算都是它按上下文估算的，
-  // 读者据此判断「折叠值不值」时会得出错误结论。
-  assert.match(
-    indicator,
-    /const usageEstimated = !!latest && latest\.usage_cache_read > 0 && latest\.usage_cache_creation === 0;/,
-  );
+test("中转报告的用量要标明是估算，直连上游的不能误标", () => {
+  // 判据曾经是「有缓存读、没有缓存写」，它把每一次 Codex 回合一律标成中转
+  // 估算——官方 API 的冷前缀本来就零缓存写入。现在由代理按转发主机记来源，
+  // 前端只读 usage_provenance，不许再从计数反推。
+  assert.match(indicator, /const usageEstimated = !!latest && latest\.usage_provenance === "relay";/);
+  assert.doesNotMatch(indicator, /latest\.usage_cache_creation === 0/);
   assert.match(indicator, /saving && usageEstimated[\s\S]{0,400}t\("contextSaving\.estimateNote"\)/);
+  assert.match(service, /usage_provenance: "upstream" \| "relay" \| ""/);
   assert.match(service, /new_tokens_est: number;/);
   assert.match(service, /total_saved_bytes: number;/);
   assert.match(service, /total_saved_tokens: number;/);

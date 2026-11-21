@@ -3,9 +3,54 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
+	"strings"
 
 	"mindfs/server/internal/agent/fold"
 )
+
+// directUsageHosts are the endpoints whose usage counters are the provider's
+// own. Anything else — llmux, another gateway, anything self-hosted — may
+// synthesize them, so the chip labels those rows as estimates.
+var directUsageHosts = map[string]struct{}{
+	"api.anthropic.com": {},
+	"chatgpt.com":       {},
+	"api.openai.com":    {},
+}
+
+// usageProvenance says whether a row's counters were measured by the provider
+// or reported through a relay. It cannot be inferred from the counters: a relay
+// can report cache writes, and the provider's own API reports none on a cold
+// prefix. The host the request was forwarded to is the only honest signal.
+func usageProvenance(source, upstreamBaseURL string) string {
+	if source != fold.UsageSourceResponse {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(upstreamBaseURL))
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return ""
+	}
+	if _, direct := directUsageHosts[host]; direct {
+		return fold.UsageProvenanceUpstream
+	}
+	return fold.UsageProvenanceRelay
+}
+
+// sessionUpstreamBase is the base URL the session's requests are forwarded to,
+// for the Messages path (the /c/ route knows its own target). Empty when the
+// session is unknown, which leaves provenance unset rather than guessed.
+func (s *Server) sessionUpstreamBase(token string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, ok := s.sessions[token]; ok {
+		return st.realBaseURL
+	}
+	return ""
+}
 
 // usageScanner reads an SSE stream as a side effect of proxying it and keeps
 // the last usage block it saw. It never delays or buffers the response: the

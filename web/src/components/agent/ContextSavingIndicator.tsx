@@ -82,10 +82,13 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   // is all three disjoint counters; missing usage must not read as 0% hit.
   const cacheTotal = (latest?.usage_input || 0) + (latest?.usage_cache_creation || 0) + (latest?.usage_cache_read || 0);
   const cachePercent = latest && cacheTotal > 0 ? Math.round((latest.usage_cache_read * 100) / cacheTotal) : null;
-  // A relay (llmux) synthesizes usage and never reports cache writes. The hit
-  // rate and rewrite cost are then its estimates; a reader judging "was folding
-  // worth it" would otherwise trust numbers nobody measured.
-  const usageEstimated = !!latest && latest.usage_cache_read > 0 && latest.usage_cache_creation === 0;
+  // A relay (llmux) may synthesize usage, so its hit rate and rewrite cost are
+  // estimates; a reader judging "was folding worth it" would otherwise trust
+  // numbers nobody measured. Provenance is recorded by the proxy from the host
+  // the request was forwarded to — the counters themselves cannot tell the two
+  // apart (a relay can report cache writes, and the provider's own API reports
+  // none on a cold prefix). Rows written before the field existed say nothing.
+  const usageEstimated = !!latest && latest.usage_provenance === "relay";
   if (latest) {
     const savedText = tokenSized
       ? t("contextSaving.tokensValue", { count: formatTokens(savedTokens) })

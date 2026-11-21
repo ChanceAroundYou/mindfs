@@ -74,6 +74,37 @@ func TestLedgerKeepsTokenEstimates(t *testing.T) {
 	}
 }
 
+// Provenance is what lets the chip say "these numbers are relay estimates"
+// without guessing from the counters. It has to survive the round trip, and a
+// row written before the field existed must read back as "unknown" rather than
+// as a real answer.
+func TestLedgerKeepsUsageProvenance(t *testing.T) {
+	store := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	entry := ledgerTestEntry(500)
+	entry.UsageSource = UsageSourceResponse
+	entry.UsageProvenance = UsageProvenanceRelay
+	if err := store.Write("session-a", entry); err != nil {
+		t.Fatal(err)
+	}
+	legacy := ledgerTestEntry(100)
+	if err := store.Write("session-a", legacy); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.read("session-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("read %d entries, want 2", len(entries))
+	}
+	if entries[0].UsageProvenance != UsageProvenanceRelay {
+		t.Fatalf("provenance = %q, want %q", entries[0].UsageProvenance, UsageProvenanceRelay)
+	}
+	if entries[1].UsageProvenance != "" {
+		t.Fatalf("row without provenance = %q, want empty", entries[1].UsageProvenance)
+	}
+}
+
 // 2026-11-21 之前写的账本行没有这两个键。缺字段只能读成 0（前端据此回退字节），
 // 不能让整份历史解析失败。
 func TestLedgerReadsLegacyRowsWithoutTokenEstimates(t *testing.T) {

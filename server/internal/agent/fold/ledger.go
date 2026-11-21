@@ -88,6 +88,12 @@ type LedgerEntry struct {
 	// usage block and "missing" when the turn ended without one. It replaces
 	// inferring "no sample" from a negative rewrite_tokens.
 	UsageSource string `json:"usage_source"`
+	// UsageProvenance says whose counters these are: UsageProvenanceUpstream
+	// when the request went to the provider's own API, UsageProvenanceRelay when
+	// it went through a relay that may synthesize them. Empty means the row
+	// predates the field or carried no sample, and the UI must then stay silent
+	// instead of guessing.
+	UsageProvenance string `json:"usage_provenance"`
 }
 
 const (
@@ -97,6 +103,11 @@ const (
 	// UsageSourceMissing marks a ledger row whose turn ended without a usage
 	// sample; its rewrite cost is unknown, not zero.
 	UsageSourceMissing = "missing"
+	// UsageProvenanceUpstream marks counters reported by the provider's own API.
+	UsageProvenanceUpstream = "upstream"
+	// UsageProvenanceRelay marks counters reported through a relay (llmux and
+	// the like), which may be estimates rather than metered usage.
+	UsageProvenanceRelay = "relay"
 )
 
 // LedgerStore appends one line per folded request under dir.

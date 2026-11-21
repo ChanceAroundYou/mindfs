@@ -166,7 +166,7 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 	// rewrite. The calibration pair belongs to the session and is updated by
 	// every response that carried a usage block.
 	if pending != nil {
-		s.writeFoldLedgerUsage(key, pending, usage)
+		s.writeFoldLedgerUsage(key, pending, usage, target.base)
 	}
 	if seen {
 		s.noteActualContext(key, foldUsageTotals(usage))
