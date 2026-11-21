@@ -11348,7 +11348,7 @@ groups:
 
   - id: G-NW
     title: 飞书通道 M1：任务卡片出站 + 点击回执 + 回答写回
-    kind: feat
+    kind: feature
     symptom: "用户不在电脑前时，gate 审批、Router 提问、任务结束/取消都只有网页一个出口：飞书里收不到任何信号，也没法在飞书上拍板。人在手机上时任务只能停在 waiting_user 等回到电脑前。"
     why: |
       必须保留：① 卡片只经 `lark-cli` 出入，MindFS 不持有 app secret，配置里没有凭据字段；
@@ -11413,7 +11413,7 @@ groups:
       - 'server/internal/channels/feishu/store.go:func NewStore(path string) *Store {'
       - 'server/internal/kanban/card_notifier.go:type CardNotice struct {'
       - 'server/internal/kanban/card_notifier.go:func (s *Service) notifyCancelledCard(ctx context.Context, task Task, reason string) {'
-      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) CreateUserReply(ctx context.Context, taskID, body, replyToID string) (*TaskActivity, *TaskActivity, error) {'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) CreateUserReply('
       - 'server/internal/kanban/activity_store.go:ErrQuestionAlreadyAnswered = errors.New("question already answered")'
       - 'server/internal/kanban/service_state_moves.go:if terminal && err == nil {'
       - 'server/internal/kanban/workflow_human_gate.go:ID: "notice-" + run.TaskID + "-cancelled-gate", Kind: CardKindNotice,'
