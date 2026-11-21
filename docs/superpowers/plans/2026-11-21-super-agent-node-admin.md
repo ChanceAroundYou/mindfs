@@ -421,3 +421,15 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   版本带 agent、旧待批准卡在批准时补 agent）+ 1 条提示词/工具描述内容守卫；5 处变异各自打红
   后还原（sanitize 不补 / 覆盖显式 agent / 固化请求不补 / commit 不补 / 提示词删掉默认说明）。
   `go test ./server/internal/kanban/ -count=1` 全绿（303.1s）。
+- **真实模型复验（2026-11-22，隔离实例 7465 / claude sonnet）**：
+  - `e2e/test_task_router_w2_node_admin.py` PASS：n1 运行中改它被 409 frozen；未触发的 n2 改
+    prompt 成功、NodeRun 的 `input.prompt` 确认执行时用的是新 prompt；Router 在 n1 仍 `running`
+    时跳过 n3（决策 `skip_node(node_id=n3)` 落 `applied`），最终 `n1 success / n2 success /
+    n3 skipped`。
+  - `e2e/test_task_router_w3_publish.py --scenario ABC` PASS：A 全局条目只落待批准卡 → 批准后
+    发布，`defaults.model=sonnet` 与节点 `agent=claude` 都带过去；B 项目级新条目直接发布、无卡，
+    节点同样带 `agent`；C Router 用 `router_run_workflow(graph)` 起一轮临时图（图里刻意不写
+    `params.agent`），两个节点都 `success`、输出含 A-OK / B-OK，控制面目录没有多出条目。
+  - 脚本自身修掉两处观测错误（不是产品缺陷）：`/workflow-run` 的 `node_states` 投影只在节点
+    收尾时写，运行中的真相在 `/workflow-run/nodes` 的 NodeRun 行；节点 prompt 只写「只回复
+    OK」这类裸 token 会被 envelope 判成 blocked，夹具改成 `echo` + token。
