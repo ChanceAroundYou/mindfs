@@ -40,13 +40,22 @@ func liveCompactFoldLine(token string, result foldResult, gate string, elapsed t
 // some line is mandatory: without it a shadow — or an `enabled=false` harness —
 // is invisible in the log, and "why does Codex never fold" can only be answered
 // by capturing a request body.
-func logLiveCompactProvider(token string, gate liveCompactGate, result foldResult) {
-	log.Printf("%s", liveCompactProviderLine(token, gate, result))
+//
+// The line is written after the response so `actual` sits next to `est`: the
+// estimator reads 1.4-2.6x high on Responses bodies, and a reader who sees only
+// `est` cannot tell a rail that fired on a real 40k context from one that fired
+// at 100k.
+func logLiveCompactProvider(token string, gate liveCompactGate, result foldResult, usage fold.Usage) {
+	log.Printf("%s", liveCompactProviderLine(token, gate, result, usage))
 }
 
-func liveCompactProviderLine(token string, gate liveCompactGate, result foldResult) string {
-	return fmt.Sprintf("[live-compact] provider=responses token=%s gate=%s est=%d growth=%d projected=%d candidates=%d cold=%t cold_reason=%s folded=%t blocks=%d new_blocks=%d new_tokens=%d sticky_blocks=%d saved_bytes=%d skipped=%d archive_errors=%d %s",
-		ShortToken(token), gate.decision, gate.est, gate.growth, gate.projected, gate.candidates,
+func liveCompactProviderLine(token string, gate liveCompactGate, result foldResult, usage fold.Usage) string {
+	actual, cached := -1, 0
+	if usage.Source == fold.UsageSourceResponse {
+		actual, cached = usage.ContextTokens, usage.CacheRead
+	}
+	return fmt.Sprintf("[live-compact] provider=responses token=%s gate=%s est=%d actual=%d cached=%d growth=%d projected=%d candidates=%d cold=%t cold_reason=%s folded=%t blocks=%d new_blocks=%d new_tokens=%d sticky_blocks=%d saved_bytes=%d skipped=%d archive_errors=%d %s",
+		ShortToken(token), gate.decision, gate.est, actual, cached, gate.growth, gate.projected, gate.candidates,
 		gate.cold, gate.coldReason, result.changed(), result.foldedBlocks, result.newBlocks, result.newTokens,
 		result.stickyBlocks, result.foldedBytes, result.skipped, result.archiveFailures,
 		planStatsFields(gate.plan))

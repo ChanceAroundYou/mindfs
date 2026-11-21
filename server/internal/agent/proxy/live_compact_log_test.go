@@ -31,9 +31,13 @@ func TestLiveCompactProviderLine(t *testing.T) {
 		plan: fold.PlanStats{BodyBytes: 97000, ResultBytes: 88000, ProtectedBytes: 20000, CandidateBytes: 64000},
 	}
 	result := foldResult{body: []byte("x"), foldedBlocks: 6, newBlocks: 6, newTokens: 12000, foldedBytes: 180257}
-	line := liveCompactProviderLine("thread:01a1f8ad-925f-72a2-963a-d9f854b95cf3", gate, result)
+	usage := fold.Usage{Source: fold.UsageSourceResponse, ContextTokens: 128072, CacheRead: 53248, RewriteTokens: 74824}
+	line := liveCompactProviderLine("thread:01a1f8ad-925f-72a2-963a-d9f854b95cf3", gate, result, usage)
 	for _, want := range []string{
 		"provider=responses", "token=thread:54b95cf3", "gate=fold", "est=87056",
+		// est and actual side by side: the estimate is 1.4-2.6x high on a
+		// Responses body, so a rail line without the real count cannot be read.
+		"actual=128072", "cached=53248",
 		"candidates=6", "folded=true", "blocks=6", "new_blocks=6", "new_tokens=12000",
 		"saved_bytes=180257", "plan_body_bytes=97000", "plan_protected_bytes=20000",
 		"plan_candidate_bytes=64000",
@@ -42,8 +46,8 @@ func TestLiveCompactProviderLine(t *testing.T) {
 			t.Fatalf("line %q missing %q", line, want)
 		}
 	}
-	empty := liveCompactProviderLine("thread:x", liveCompactGate{}, foldResult{})
-	if !strings.Contains(empty, "folded=false") {
+	empty := liveCompactProviderLine("thread:x", liveCompactGate{}, foldResult{}, fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1})
+	if !strings.Contains(empty, "folded=false") || !strings.Contains(empty, "actual=-1") {
 		t.Fatalf("unfolded line = %q", empty)
 	}
 }

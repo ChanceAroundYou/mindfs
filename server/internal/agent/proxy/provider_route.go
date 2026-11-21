@@ -103,14 +103,15 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 			s.warnUnknownThreadOnce(threadID)
 		}
 	}
+	scanned := key != "" && r.Method == http.MethodPost
+	// Usage scanning is part of the observation pipeline: with live compact off
+	// this route stays a byte-for-byte pass-through and pays nothing.
+	observed := scanned && s.harnessRuntimeFor(harnessForAdapter(adapterResponses)).cfg.Observes()
 	var pending *foldLedgerPending
-	if key != "" && r.Method == http.MethodPost {
-		var result foldResult
-		var gate liveCompactGate
+	var gate liveCompactGate
+	var result foldResult
+	if scanned {
 		body, result, pending, gate = s.foldRequestLedgerFor(key, "responses", body)
-		if gate.decision != "" {
-			logLiveCompactProvider(key, gate, result)
-		}
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), bytes.NewReader(body))
@@ -123,6 +124,11 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
+		// A turn that never reached the upstream still leaves its fold decision
+		// in the log; only the usage half is missing.
+		if scanned && gate.decision != "" {
+			logLiveCompactProvider(key, gate, result, fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1})
+		}
 		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -137,22 +143,35 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 	// Status and body pass through untouched: a provider error must stay
 	// readable by the CLI instead of being re-wrapped here.
 	//
-	// The usage scanner only runs for a folded turn: it is the rewrite cost of
-	// that turn, which the ledger pairs with the fold. A compressed body is not
-	// scanned (the bytes are not readable text); the line is then written with
-	// the source marked missing rather than a fabricated zero.
+	// The usage scanner runs on every registered POST, not only on a folded
+	// turn. The usage block is the only place a Codex session reports its real
+	// context size (the body is largely base64 reasoning, so the byte estimator
+	// reads 1.4-2.6x high), and both the rail and the cold-cache rule need it on
+	// every turn — a session that spends several turns below the rail would
+	// otherwise reach its first fold with no calibration sample at all. A
+	// compressed body is not scanned (the bytes are not readable text) and the
+	// sample stays missing rather than becoming a fabricated zero.
 	var scanner *responses.UsageScanner
 	reader := io.Reader(resp.Body)
-	if pending != nil && resp.Header.Get("Content-Encoding") == "" {
+	if observed && resp.Header.Get("Content-Encoding") == "" {
 		scanner = responses.NewUsageScanner()
 		reader = io.TeeReader(resp.Body, scanner)
 	}
 	_, _ = io.Copy(&flushWriter{w: w}, reader)
+	usage, seen := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}, false
+	if scanner != nil {
+		usage, seen = scanner.Totals().Usage()
+	}
+	// The ledger line belongs to a folded turn only: its bytes describe a
+	// rewrite. The calibration pair belongs to the session and is updated by
+	// every response that carried a usage block.
 	if pending != nil {
-		usage := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}
-		if scanner != nil {
-			usage, _ = scanner.Totals().Usage()
-		}
 		s.writeFoldLedgerUsage(key, pending, usage)
+	}
+	if seen {
+		s.noteActualContext(key, foldUsageTotals(usage))
+	}
+	if scanned && gate.decision != "" {
+		logLiveCompactProvider(key, gate, result, usage)
 	}
 }

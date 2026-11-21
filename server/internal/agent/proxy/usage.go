@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+
+	"mindfs/server/internal/agent/fold"
 )
 
 // usageScanner reads an SSE stream as a side effect of proxying it and keeps
@@ -111,4 +113,36 @@ func (s *usageScanner) Totals() usageTotals {
 // both cache paths.
 func (t usageTotals) ContextTokens() int {
 	return t.InputTokens + t.CacheCreationInputTokens + t.CacheReadInputTokens
+}
+
+// foldUsageTotals maps the kernel's neutral accounting onto the
+// Messages-shaped counters the calibration pair stores.
+//
+// Messages reports three disjoint counters; Responses reports one input total
+// that already includes the cache. Splitting it back out (fresh = total −
+// cached − cache write) keeps ContextTokens() — the number the rail and the
+// cold-cache rule read — equal to the upstream's input_tokens. A missing
+// sample stays missing instead of arriving as a real zero.
+func foldUsageTotals(usage fold.Usage) usageTotals {
+	if usage.Source != fold.UsageSourceResponse {
+		return usageTotals{}
+	}
+	cached, written := usage.CacheRead, usage.CacheWrite
+	if cached < 0 {
+		cached = 0
+	}
+	if written < 0 {
+		written = 0
+	}
+	fresh := usage.ContextTokens - cached - written
+	if fresh < 0 {
+		fresh = 0
+	}
+	return usageTotals{
+		InputTokens:              fresh,
+		CacheCreationInputTokens: written,
+		CacheReadInputTokens:     cached,
+		OutputTokens:             usage.Output,
+		Seen:                     true,
+	}
 }
