@@ -52,7 +52,7 @@ func (h *HTTPHandler) handleAgentRestart(w http.ResponseWriter, r *http.Request)
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{
+	respondJSON(w, http.StatusAccepted, map[string]any{
 		"restarting": true,
 		"agent":      strings.TrimSpace(req.Agent),
 	})
@@ -171,6 +171,30 @@ func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConf
 	return entry, false, nil
 }
 
+// agentRestartHooks 把「关会话」和「重新探测」拆成可注入的两段，便于钉住
+// 重启请求不等慢速的 KillAgentProcess。
+type agentRestartHooks struct {
+	kill  func(string)
+	probe func(string)
+}
+
+// scheduleAgentRestart 让重启在后台串行执行：先关旧会话，再探测新进程。
+//
+// KillAgentProcess 要拿 agent 的运行锁；Windows 上 CLI 启动要 20s 以上，
+// 连续点两次重启时第二次会一直等这把锁。前端跨节点请求只有 10s deadline
+// （见 web/src/services/net/api.ts），同步等就会出现「重启提示超时」。
+// 端点已经返回 restarting:true，真实动作异步完成正好符合这个语义。
+func scheduleAgentRestart(agentName string, hooks agentRestartHooks) {
+	go func() {
+		if hooks.kill != nil {
+			hooks.kill(agentName)
+		}
+		if hooks.probe != nil {
+			hooks.probe(agentName)
+		}
+	}()
+}
+
 func restartAgent(agentName string, app *AppContext) error {
 	agentName = strings.TrimSpace(agentName)
 	if agentName == "" {
@@ -182,8 +206,14 @@ func restartAgent(agentName string, app *AppContext) error {
 	if _, ok := app.GetAgentPool().Config().GetAgent(agentName); !ok {
 		return fmt.Errorf("agent not configured: %s", agentName)
 	}
-	app.GetAgentPool().KillAgentProcess(agentName, 0)
-	triggerAgentConfigSwitchProbe(app, agentName)
+	scheduleAgentRestart(agentName, agentRestartHooks{
+		kill: func(name string) {
+			app.GetAgentPool().KillAgentProcess(name, 0)
+		},
+		probe: func(name string) {
+			triggerAgentConfigSwitchProbe(app, name)
+		},
+	})
 	return nil
 }
 
