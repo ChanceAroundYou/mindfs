@@ -1,0 +1,115 @@
+name: iOS unsigned build
+
+# 只做一件事：在标准 macOS runner 上编出 **未签名** 的 .ipa（A1）。
+# 装机方式：把 ipa 拿到 Windows，用 Sideloadly + 自己的 Apple ID 签名装进 iPad（7 天有效）。
+#
+# 为什么不用 scripts/build-ipa.sh：
+#   那个脚本走 `xcodebuild -scheme App` + 自动签名，需要 (a) 本地已有 Xcode 生成的 scheme，
+#   (b) DEVELOPMENT_TEAM。CI 上两样都没有，所以这里直接用 `-target App` + 关掉签名。
+#
+# 触发：手动（workflow_dispatch）。runner 用**标准** macos-26；*不要*换成 macos-*-large
+#       （larger runner 即使在公有仓库也计费）。
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: 'CURRENT_PROJECT_VERSION（留空=从 git describe 取构建号，无则 1）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      # 无签名构建：整条链都不需要证书/描述文件
+      CODE_SIGNING_ALLOWED: 'NO'
+      CODE_SIGNING_REQUIRED: 'NO'
+      CODE_SIGN_IDENTITY: ''
+    steps:
+      - name: 检出（要 tag，git describe 需要）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 工具链信息
+        run: |
+          sw_vers
+          xcodebuild -version
+          echo "--- 可用 SDK ---"
+          xcodebuild -showsdks | grep -i ios || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装 web 依赖
+        working-directory: web
+        run: npm ci
+
+      - name: 版本号（与 scripts/build-ipa.sh 同一读法）
+        id: ver
+        run: |
+          set -euo pipefail
+          RAW="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+          CORE="${RAW#v}"; CORE="${CORE%-dirty}"
+          CORE="$(printf '%s' "$CORE" | sed -E 's/-[0-9]+-g[0-9a-fA-F]+$//')"
+          read -r MA MI PA BU <<<"$(printf '%s' "$CORE" | tr '.-' '  ' | awk '{out="";for(i=1;i<=NF;i++){if($i !~ /^[0-9]+$/)break;out=out" "$i};print out}')" || true
+          [ -n "${MA:-}" ] && [ -n "${MI:-}" ] && [ -n "${PA:-}" ] || { MA=1; MI=0; PA=0; }
+          BN="${BU:-1}"
+          if [ -n "${{ inputs.build_number }}" ]; then BN="${{ inputs.build_number }}"; fi
+          echo "raw=$RAW"
+          echo "marketing=$MA.$MI.$PA" >> "$GITHUB_OUTPUT"
+          echo "build=$BN"          >> "$GITHUB_OUTPUT"
+          echo "slug=${RAW//\//_}"  >> "$GITHUB_OUTPUT"
+          echo "MARKETING_VERSION=$MA.$MI.$PA  CURRENT_PROJECT_VERSION=$BN"
+
+      - name: 打包前端并同步进 iOS 工程
+        run: make build-ios
+
+      - name: xcodebuild（-target，无签名）
+        working-directory: web/ios/App
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project App.xcodeproj \
+            -target App \
+            -configuration Release \
+            -sdk iphoneos \
+            CONFIGURATION_BUILD_DIR="$PWD/build/Release-iphoneos" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="${{ steps.ver.outputs.marketing }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
+            build
+
+      - name: 组装未签名 .ipa
+        working-directory: web/ios/App
+        run: |
+          set -euo pipefail
+          APP="$(find build/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)"
+          [ -n "$APP" ] || { echo "没找到 .app"; exit 1; }
+          echo "app = $APP"
+          plutil -p "$APP/Info.plist" | grep -E 'CFBundle(Short)?Version|CFBundleIdentifier' || true
+          # App Store 结构与 Sideloadly 都认的标准未签名 ipa：Payload/<X>.app
+          rm -rf pkg && mkdir -p pkg/Payload
+          cp -R "$APP" pkg/Payload/
+          ( cd pkg && zip -qry "../mindfs_unsigned_${{ steps.ver.outputs.slug }}.ipa" Payload )
+          ls -lh mindfs_unsigned_*.ipa
+          shasum -a 256 mindfs_unsigned_*.ipa | tee ipa.sha256
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mindfs-ios-unsigned-${{ steps.ver.outputs.slug }}
+          path: |
+            web/ios/App/mindfs_unsigned_*.ipa
+            web/ios/App/ipa.sha256
+          if-no-files-found: error
+          retention-days: 14
