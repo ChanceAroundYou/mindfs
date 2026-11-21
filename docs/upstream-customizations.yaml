@@ -10125,7 +10125,7 @@ groups:
       - 'server/internal/kanban/router_service_recovery.go:func (rs *RouterService) notifyRouterTurnTimeout('
       - 'server/internal/kanban/router_service_recovery.go:func isRouterTurnTimeout(err error) bool {'
       - 'server/internal/kanban/router_brief.go:func briefTaskStatus(run *WorkflowRun, task Task) string {'
-      - 'server/internal/kanban/router_brief.go:Status:           briefTaskStatus(run, task),'
+      - 'server/internal/kanban/router_brief.go:Status:             briefTaskStatus(run, task),'
       - 'server/internal/kanban/router_brief_cap.go:func capSituationBrief(brief *SituationBrief) *SituationBrief {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteTimeoutKeepsRecordedActions(t *testing.T) {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteNonTimeoutSalvageKeepsActionsWithoutTimeoutNotice(t *testing.T) {'
