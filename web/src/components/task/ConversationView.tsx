@@ -6,6 +6,7 @@ import type { TaskActivity, WorkflowChoice } from "../../shared/taskComments";
 import { pendingTaskPrompt, visibleConversationActivities } from "../../shared/activityModel";
 import { ActivityInput } from "./ActivityInput";
 import { ActivityMessage } from "./ActivityMessage";
+import { alignConversationToBottom, findScrollableAncestor } from "./conversationScroll";
 import { useWorkflowNames } from "./useWorkflowNames";
 
 export type ConversationMessagesProps = {
@@ -188,6 +189,8 @@ export function ConversationView({
   const workflowNames = useWorkflowNames();
   const pendingPrompt = pendingTaskPrompt(activities);
   const lastAgentReplyRef = useRef("");
+  const scrollAnchorRef = useRef<HTMLDivElement>(null);
+  const initialScrollKeyRef = useRef("");
 
   // Agent 回复从 pending → running → completed 时，任务头也要跟着变。
   // 活动流有独立的 WS 增量，任务头依赖 task.updated；两者丢一个就会出现
@@ -207,6 +210,43 @@ export function ConversationView({
     lastAgentReplyRef.current = key;
     onAgentActivityChange?.();
   }, [activities, onAgentActivityChange]);
+
+  // 打开详情时直接落到最新消息：用户不必每次下滑一大段历史。
+  //
+  // 只在「这个任务的内容第一次到齐」时滚一次：以首条活动 id 作为这一轮的身份，
+  // 任务切换或首拉完成会换 key；之后的新留言/流式回复不抢滚动位置（用户可能正在
+  // 上翻历史）。布局稳定前重复对齐几帧，避免 Markdown/表格铺开后又差一截；一旦发现
+  // 滚动位置不是上一次自己写下的值，说明用户已经手动滚动，立即让位。
+  useEffect(() => {
+    if (loading && activities.length === 0) return;
+    const key = `${taskId}:${activities[0]?.id || "empty"}`;
+    if (initialScrollKeyRef.current === key) return;
+    initialScrollKeyRef.current = key;
+    const anchor = scrollAnchorRef.current;
+    if (!anchor) return;
+    let cancelled = false;
+    let frame = 0;
+    let stable = 0;
+    let lastHeight = -1;
+    let lastApplied = -1;
+    const step = () => {
+      if (cancelled) return;
+      frame += 1;
+      const scroller = findScrollableAncestor(anchor);
+      if (scroller) {
+        if (lastApplied >= 0 && Math.abs(scroller.scrollTop - lastApplied) > 2) return;
+        alignConversationToBottom(anchor);
+        lastApplied = scroller.scrollTop;
+        stable = scroller.scrollHeight === lastHeight ? stable + 1 : 0;
+        lastHeight = scroller.scrollHeight;
+      }
+      if (frame < 24 && stable < 3) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId, loading, activities]);
 
   const handleSend = async (text: string) => {
     try {
@@ -303,6 +343,9 @@ export function ConversationView({
           onSend={(text) => void handleSend(text)}
         />
       )}
+
+      {/* 滚动锚点：任务详情打开时把这里对齐到面板可视底部（见 conversationScroll.ts）。 */}
+      <div ref={scrollAnchorRef} data-testid="conversation-scroll-anchor" aria-hidden style={{ height: 0 }} />
     </div>
   );
 }
