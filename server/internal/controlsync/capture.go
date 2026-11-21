@@ -45,6 +45,13 @@ type Capturer struct {
 	// 边缘自己没有 changes 的读者，写进去等于伪造一段没人追的变更流。
 	PendingWhen func() bool
 
+	// CaptureWhen 决定这一刻要不要采集（nil = 总是采集）。
+	//
+	// 边缘在线时为 false：在线写都转发给主节点，本机权威存储不变。真变了也不能采 ——
+	// 采集会把这份「本机过期值」写进 records，把副本改成主节点没有的版本，之后
+	// 交接与合并都会拿错祖先。
+	CaptureWhen func() bool
+
 	mu         sync.Mutex
 	suppressed int
 	last       map[string]map[string]recordState
@@ -214,6 +221,9 @@ func (c *Capturer) reportError(err error) {
 
 func (c *Capturer) captureDomainLocked(ctx context.Context, domain string) (int, error) {
 	if c.suppressed > 0 {
+		return 0, nil
+	}
+	if c.CaptureWhen != nil && !c.CaptureWhen() {
 		return 0, nil
 	}
 	d, err := c.registry.Get(domain)

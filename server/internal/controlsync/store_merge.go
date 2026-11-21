@@ -288,6 +288,10 @@ WHERE domain = ? AND key = ? AND resolved_at = ''`,
 
 // ListOpenConflicts 返回未裁决的冲突，先来的在前（同一毫秒内按 id 稳定排序，
 // 免得列表在两次轮询之间跳位）。
+//
+// 「未裁决」= `resolved_at` 还是空，即用户还没点裁决按钮。点了就从此消失，但那不等于
+// 已经落定：副作用与回传还要跑完，所以运行期用它决定「能不能回 online」时，必须
+// 同时看 pending 是否清空（见 Runtime.settle）。
 func (s *Store) ListOpenConflicts(ctx context.Context) ([]Conflict, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("controlsync: store closed")

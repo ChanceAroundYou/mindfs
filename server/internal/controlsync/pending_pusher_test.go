@@ -27,6 +27,13 @@ func (f *fakePushSender) Push(ctx context.Context, req PushRequest) (PushBatch, 
 	return handler(req)
 }
 
+// setHandler 换掉回执行为（用例里模拟「主节点恢复后开始接受」）。
+func (f *fakePushSender) setHandler(handler func(PushRequest) (PushBatch, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.handler = handler
+}
+
 func (f *fakePushSender) lastRequest(t *testing.T) PushRequest {
 	t.Helper()
 	f.mu.Lock()
@@ -280,6 +287,39 @@ func TestPushOnceFailsWhenResultMissing(t *testing.T) {
 	}
 	if n, _ := store.CountPending(ctx); n != 2 {
 		t.Fatalf("pending = %d，回执不全时不该删任何一条", n)
+	}
+}
+
+// 冲突按域冻结：冻结域里的 pending 一律不推，其他域照常推。冻结不是「整条通道停摆」，
+// 否则一个 pin 的冲突会把所有账户偏好一起卡住。
+func TestPushOnceSkipsFrozenDomains(t *testing.T) {
+	var pushed []PushChange
+	store := pendingFixture(t)
+	sender := &fakePushSender{handler: func(req PushRequest) (PushBatch, error) {
+		pushed = append(pushed, req.Changes...)
+		return appliedResult(req, "sha256:applied"), nil
+	}}
+	pusher, err := NewPendingPusher(store, sender, PendingPusherOptions{InstanceID: "edge-pc"})
+	if err != nil {
+		t.Fatalf("NewPendingPusher: %v", err)
+	}
+	ctx := t.Context()
+	seedPending(t, store, "edge-pc:pins:s1:1", DomainPins, "s1", `{"pinned":true}`)
+	seedPending(t, store, "edge-pc:preferences:agents:2", DomainPreferences, "agents", `{"v":1}`)
+	pusher.SetFrozenDomains(map[string]bool{DomainPins: true})
+
+	stats, err := pusher.PushOnce(ctx)
+	if err != nil {
+		t.Fatalf("PushOnce: %v", err)
+	}
+	if len(pushed) != 1 || pushed[0].Domain != DomainPreferences {
+		t.Fatalf("上行 = %+v，冻结域的 pending 不该被推", pushed)
+	}
+	if stats.Applied != 1 || stats.Pushed != 1 {
+		t.Fatalf("统计 = %+v", stats)
+	}
+	if p, ok, _ := store.PendingChange(ctx, DomainPins, "s1"); !ok || string(p.Payload) != `{"pinned":true}` {
+		t.Fatalf("冻结域的 pending 应原样保留：ok=%v %+v", ok, p)
 	}
 }
 

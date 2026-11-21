@@ -82,6 +82,44 @@ func TestNextPendingSeqIsMonotonicAndDurable(t *testing.T) {
 	}
 }
 
+// 冻结域必须在一取页的时候就跳过，不能「取回来再筛」：冻结域的 pending 会一直留在
+// 库里，一旦它们占满整页，别的域就一条也推不出去 —— 按域冻结就退化成整条通道停摆。
+func TestListPendingExceptSkipsFrozenDomainsBeforeLimit(t *testing.T) {
+	store := pendingFixture(t)
+	ctx := t.Context()
+	for _, key := range []string{"s1", "s2", "s3"} {
+		if err := store.PutPending(ctx, PendingChange{
+			ChangeID: "edge:pins:" + key, Domain: DomainPins, Key: key,
+			Payload: json.RawMessage(`{"pinned":true}`),
+		}); err != nil {
+			t.Fatalf("PutPending(%s): %v", key, err)
+		}
+	}
+	if err := store.PutPending(ctx, PendingChange{
+		ChangeID: "edge:preferences:agents", Domain: DomainPreferences, Key: "agents",
+		Payload: json.RawMessage(`{"v":1}`),
+	}); err != nil {
+		t.Fatalf("PutPending(preferences): %v", err)
+	}
+
+	// 页只有一条：被冻结的三条如果不参与取页，这一条就该是 preferences。
+	got, err := store.ListPendingExcept(ctx, 1, map[string]bool{DomainPins: true})
+	if err != nil {
+		t.Fatalf("ListPendingExcept: %v", err)
+	}
+	if len(got) != 1 || got[0].Domain != DomainPreferences {
+		t.Fatalf("取页 = %+v，应为一条 preferences", got)
+	}
+	// 解冻后照常按创建顺序返回。
+	all, err := store.ListPending(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("pending = %d，应为 4", len(all))
+	}
+}
+
 // 推送回执说 applied 时，必须先确认 pending 还是推上去的那一条：期间本地又改了，
 // 就不能删，否则新版内容永远上不去。
 func TestDeletePendingIfChangeOnlyDropsThePushedIntent(t *testing.T) {

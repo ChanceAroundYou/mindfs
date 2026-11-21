@@ -71,20 +71,3 @@ func (s *Store) PendingKeys(ctx context.Context, domain string) (map[string]bool
 	}
 	return out, nil
 }
-
-// CountOpenConflicts 数还没被认领的冲突卡。
-//
-// 「认领」= 用户点了裁决按钮、`resolved_at` 从空变成时间。它不等于「已经落定」：
-// 副作用与回传还要跑完，所以运行期用它决定「要不要停在 conflict-review」时
-// 必须同时看 pending 是否清空（见 Runtime.resumeFromConflictReview）。
-func (s *Store) CountOpenConflicts(ctx context.Context) (int, error) {
-	if s == nil || s.db == nil {
-		return 0, errors.New("controlsync: store closed")
-	}
-	var n int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM conflicts WHERE resolved_at = ''`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("controlsync: count open conflicts: %w", err)
-	}
-	return n, nil
-}

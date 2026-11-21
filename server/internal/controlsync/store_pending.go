@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -134,15 +136,37 @@ func (s *Store) DeletePending(ctx context.Context, domain, key string) error {
 
 // ListPending 按创建顺序取一批待推送变更（推送方每拍只推一页）。
 func (s *Store) ListPending(ctx context.Context, limit int) ([]PendingChange, error) {
+	return s.listPending(ctx, limit, nil)
+}
+
+// ListPendingExcept 取一批待推送变更，但跳过 exclude 里的域（按域冻结，Q4）。
+//
+// 过滤必须发生在取页之前：冻结域的 pending 会一直留在库里，如果它们排在前面，
+// 整页都被它们占满，别的域一条也推不出去 —— 「按域冻结」要的正是「其他域照常」。
+func (s *Store) ListPendingExcept(ctx context.Context, limit int, exclude map[string]bool) ([]PendingChange, error) {
+	return s.listPending(ctx, limit, exclude)
+}
+
+func (s *Store) listPending(ctx context.Context, limit int, exclude map[string]bool) ([]PendingChange, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("controlsync: store closed")
 	}
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	query := `
 SELECT change_id, domain, key, base_hash, payload, deleted, created_at
-FROM pending ORDER BY created_at, domain, key LIMIT ?`, limit)
+FROM pending`
+	var args []any
+	if domains := sortedTrueKeys(exclude); len(domains) > 0 {
+		query += ` WHERE domain NOT IN (` + strings.TrimSuffix(strings.Repeat("?,", len(domains)), ",") + `)`
+		for _, domain := range domains {
+			args = append(args, domain)
+		}
+	}
+	query += ` ORDER BY created_at, domain, key LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("controlsync: list pending: %w", err)
 	}
@@ -171,6 +195,22 @@ FROM pending ORDER BY created_at, domain, key LIMIT ?`, limit)
 		return nil, fmt.Errorf("controlsync: list pending: %w", err)
 	}
 	return out, nil
+}
+
+// sortedTrueKeys 取出 map 里为 true 的键并排序：SQL 的 NOT IN 参数顺序必须稳定，
+// 否则同样的冻结集合会生成不同的语句，预编译缓存白建。
+func sortedTrueKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for key, on := range m {
+		if on && key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // DeletePendingIfChange 只在 pending 仍是 changeID 那条时才删。

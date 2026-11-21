@@ -31,6 +31,9 @@ type PendingPusher struct {
 	batchSize  int
 	interval   time.Duration
 	onError    func(error)
+	// frozen 是「按域冻结」的集合（Q4）：这些域还有未裁决的冲突，pending 一律不推。
+	// 与 PushOnce 同一条线读写（Runtime 的 tick 先 SetFrozenDomains 再推），不必加锁。
+	frozen map[string]bool
 }
 
 // PushStats 是一拍的统计，供日志与状态接口使用。
@@ -69,6 +72,25 @@ func NewPendingPusher(store *Store, sender PushSender, opts PendingPusherOptions
 	}, nil
 }
 
+// SetFrozenDomains 设置「按域冻结」的集合（Q4）。传 nil / 空集合即全部解冻。
+//
+// 冻结的粒度是域而不是整条通道：一个 pin 的冲突不该把账户偏好、工作流一起卡住。
+// 只有 Runtime 的 tick 会调用它 —— 与 PushOnce 同一条 goroutine，顺序是「先定冻结
+// 集合、再推」。
+func (p *PendingPusher) SetFrozenDomains(frozen map[string]bool) {
+	if len(frozen) == 0 {
+		p.frozen = nil
+		return
+	}
+	next := make(map[string]bool, len(frozen))
+	for domain, on := range frozen {
+		if on && domain != "" {
+			next[domain] = true
+		}
+	}
+	p.frozen = next
+}
+
 // Run 每 interval 推一拍，直到 ctx 结束。第一拍立即执行（恢复后不必再等一个间隔）。
 func (p *PendingPusher) Run(ctx context.Context) {
 	ticker := time.NewTicker(p.interval)
@@ -87,11 +109,15 @@ func (p *PendingPusher) Run(ctx context.Context) {
 
 // PushOnce 推一拍：取一批 pending、上行、按逐条回执改本地。
 //
+// 冻结域（有未裁决冲突）的 pending 连取都不取：它们会一直留在库里，排进批次只会
+// 占满整页、把别的域挤出去。过滤放在取页里（ListPendingExcept）而不是取完再筛，
+// 正是为了这一点。
+//
 // 网络或解码失败整拍返回 error 且**不动任何 pending**：下一拍原样重试。
 // 单条结果缺失也当整拍失败 —— 猜「大概成功」会删掉没落地的改动。
 func (p *PendingPusher) PushOnce(ctx context.Context) (PushStats, error) {
 	var stats PushStats
-	pending, err := p.store.ListPending(ctx, p.batchSize)
+	pending, err := p.store.ListPendingExcept(ctx, p.batchSize, p.frozen)
 	if err != nil {
 		return stats, err
 	}

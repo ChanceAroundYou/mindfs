@@ -57,8 +57,8 @@ func TestListRecordsIsScopedToDomain(t *testing.T) {
 	}
 }
 
-// 恢复条件用的是「还有没有未裁决的卡」：已裁决（含被取代）的不算。
-func TestCountOpenConflictsCountsOnlyUnresolved(t *testing.T) {
+// 恢复条件用的是「还有没有未裁决的卡」：已裁决（含被取代）的不算，占坑的也不算。
+func TestListOpenConflictsCountsOnlyUnresolved(t *testing.T) {
 	store := openTestStore(t)
 	ctx := t.Context()
 	for _, key := range []string{"a", "b", "c"} {
@@ -72,14 +72,22 @@ func TestCountOpenConflictsCountsOnlyUnresolved(t *testing.T) {
 			t.Fatalf("InsertConflict %s: %v", key, err)
 		}
 	}
-	if n, err := store.CountOpenConflicts(ctx); err != nil || n != 3 {
-		t.Fatalf("未裁决 = %d, %v，应为 3", n, err)
+	open := func() int {
+		t.Helper()
+		cards, err := store.ListOpenConflicts(ctx)
+		if err != nil {
+			t.Fatalf("ListOpenConflicts: %v", err)
+		}
+		return len(cards)
+	}
+	if n := open(); n != 3 {
+		t.Fatalf("未裁决 = %d，应为 3", n)
 	}
 	if _, err := store.SupersedeConflicts(ctx, DomainPins, "a", "superseded"); err != nil {
 		t.Fatalf("SupersedeConflicts: %v", err)
 	}
-	if n, err := store.CountOpenConflicts(ctx); err != nil || n != 2 {
-		t.Fatalf("被取代后未裁决 = %d, %v，应为 2", n, err)
+	if n := open(); n != 2 {
+		t.Fatalf("被取代后未裁决 = %d，应为 2", n)
 	}
 	if err := store.ClaimConflict(ctx, PullConflictID(DomainPins, "b"), ConflictChoicePrimary); err != nil {
 		t.Fatalf("ClaimConflict: %v", err)
@@ -87,8 +95,8 @@ func TestCountOpenConflictsCountsOnlyUnresolved(t *testing.T) {
 	// 占坑即从待裁决列表消失（用户点了按钮，前端不该再让他点一次）。
 	// 裁决的副作用与回传还没落定时靠 pending 兜住：Runtime 的恢复闸门是
 	// 「没有未裁决的卡」且「没有待回传」两条同时成立。
-	if n, err := store.CountOpenConflicts(ctx); err != nil || n != 1 {
-		t.Fatalf("裁决进行中未裁决 = %d, %v，应为 1", n, err)
+	if n := open(); n != 1 {
+		t.Fatalf("裁决进行中未裁决 = %d，应为 1", n)
 	}
 }
 

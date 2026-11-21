@@ -17,6 +17,8 @@ type memDomain struct {
 	name  string
 	mu    sync.Mutex
 	items map[string]json.RawMessage
+	// applyErr 让用例模拟「写权威存储失败」（磁盘满、权限、落盘一半）。
+	applyErr error
 }
 
 func newMemDomain(name string) *memDomain {
@@ -47,6 +49,9 @@ func (d *memDomain) Snapshot(ctx context.Context) ([]Record, error) {
 func (d *memDomain) Apply(ctx context.Context, rec Record) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.applyErr != nil {
+		return d.applyErr
+	}
 	if rec.Deleted {
 		delete(d.items, rec.Key)
 		return nil
