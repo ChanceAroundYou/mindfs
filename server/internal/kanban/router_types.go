@@ -249,7 +249,11 @@ type RouterAction struct {
 	// SessionMode 只对 run_workflow 有意义：new（默认）= 这一轮开一段新会话，
 	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。
 	SessionMode string `json:"session_mode,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+	// Graph 只对 run_workflow 有意义：Router 当场起草的临时 workflow（项目级
+	// 免批）。与 WorkflowID / VersionID 互斥 —— 给了图就是这一次 Run 自己的
+	// 快照，不进控制面目录。scope 由 apply 阶段按任务所在 root 填上。
+	Graph  *WorkflowDefinition `json:"graph,omitempty"`
+	Reason string              `json:"reason,omitempty"`
 	// Summary 是 complete_task 写给用户看的结果一句话（≤500 字节）。
 	Summary string `json:"summary,omitempty"`
 	// Items 只对 record_acceptance 有意义：这一轮的验收项（≤8 条）。

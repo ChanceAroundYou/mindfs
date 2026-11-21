@@ -12018,3 +12018,55 @@ groups:
       - 'server/internal/kanban/router_types.go:RouterActionSetNodeModel RouterActionKind = "set_node_model"'
       - 'server/internal/kanban/router_types.go:RouterActionSkipNode     RouterActionKind = "skip_node"'
       - 'server/internal/kanban/router_prompt.md:20. **节点级管理（`router_set_node_model` / `router_skip_node`）**'
+
+  - id: G-PE
+    title: Super agent 自设计 workflow W3：Router 当场起草临时图（项目内免批、不进目录）+ 全局固化仍需显式批准
+    kind: feature
+    symptom: |
+      brief 里的 workflow 目录是人工维护的固定流程。任务需要的形状（先定位再修、分头排查再汇总）
+      目录里没有时，Router 只能在「直连一轮」和「硬套一个不合适的 workflow」之间二选一 —— 用户
+      要的能力是「让 Router 自己设计、生产或派生 workflow」，同时不放弃「固化 / 提升到全局要
+      人批准」这条边界。
+    why: |
+      必须保留：① `router_run_workflow` 的 `graph` 参数让 Router 在这一次决策里直接给出整张图；
+      它与 `workflow_id` / `version_id` **互斥**，工具层与校验层各拒一次（决策落库后可能被重放，
+      校验层不能只信工具层做过的事）。
+      ② 临时图**不进控制面目录**：`resolveRouteWorkflowVersion` 合成一个只属于这次 Run 的
+      `WorkflowVersion`（`adhoc:<sha256 前 8 字节>`，按图内容寻址，重放同图得同 ID），
+      `beginWorkflowRunVersion` 照常把图快照进 Run。所以控制面里不会出现谁都批准过的条目，
+      历史 Run 也不依赖目录。
+      ③ 作用域只能落在任务所在项目：`sanitizeRouterGraph` 一律清空 `RootID`，apply 阶段填
+      `task.RootID`。图里 `root_id` 为空在 MindFS 语义里等于**全局** —— 那正是需要显式批准
+      的那一档，绝不能让模型一句话跨过去。
+      ④ 图是模型写的，三道闸都在 Router 侧：节点 ≤ 12、边（含 Loop 子图）≤ 24、整图 JSON
+      ≤ 64 KiB；结构走 `ValidateWorkflowDefinitionForAuthoring`，与工作流编辑器同一套规则
+      （悬空边、环、未知 kind、末端 human_gate 都拒）。
+      ⑤ 提示词规则 21 说明形状与边界，并明确「要固化 / 覆盖目录版本现在没有这个权限，交用户在
+      编辑器里做」—— 免批只放开「这一轮临时用」，不放开「写进目录给所有人用」。
+    boundary: |
+      W3 T1 只做「临时图直接跑」；把图固化成项目级/全局 workflow（带待批准卡与人在任务详情里
+      批准）、从既有 workflow 派生（`derived_from`）、以及模型档并入 workflow 的层级（节点 >
+      任务 > 全局）属于 W3 后续任务，未实现前 Router 没有写控制面的任何工具。临时图不受
+      `session_mode` 之外的特殊待遇：仍是普通 Run，照常走证据门、监管、worktree 生命周期。
+    files:
+      - server/internal/kanban/router_workflow_graph.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/router_inline_workflow_test.go
+    anchors:
+      - 'server/internal/kanban/router_workflow_graph.go:const routerAdhocWorkflowID = "adhoc"'
+      - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxNodes = 12'
+      - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxEdges = 24'
+      - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxBytes = 64 * 1024'
+      - 'server/internal/kanban/router_workflow_graph.go:func sanitizeRouterGraph(graph *WorkflowDefinition) (*WorkflowDefinition, error) {'
+      - 'server/internal/kanban/router_workflow_graph.go:func adhocVersionID(graph WorkflowDefinition) string {'
+      - 'server/internal/kanban/router_workflow_graph.go:func inlineGraphEdgeCount(graph WorkflowDefinition) int {'
+      - 'server/internal/kanban/router_types.go:	Graph *WorkflowDefinition `json:"graph,omitempty"`'
+      - 'server/internal/kanban/router_tools.go:func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {'
+      - 'server/internal/kanban/router_tools.go:				if _, err := sanitizeRouterGraph(action.Graph); err != nil {'
+      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) resolveRouteWorkflowVersion(ctx context.Context, task Task, action RouterAction) (WorkflowVersion, error) {'
+      - 'server/internal/kanban/activity_route_apply.go:		graph.RootID = task.RootID'
+      - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'

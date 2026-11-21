@@ -380,7 +380,7 @@ func (s *ActivityService) applyRouteRunWorkflow(
 	state *routeApplyState,
 	action RouterAction,
 ) error {
-	version, err := s.resolveRouteWorkflowVersion(ctx, action)
+	version, err := s.resolveRouteWorkflowVersion(ctx, task, action)
 	if err != nil {
 		return err
 	}
@@ -601,7 +601,20 @@ func (s *ActivityService) markRouteReply(
 
 // resolveRouteWorkflowVersion 解析 Router 给的版本：显式 version_id 优先，
 // 否则取该 workflow 的最新发布版本。两者都不存在是决策失败，不是回落。
-func (s *ActivityService) resolveRouteWorkflowVersion(ctx context.Context, action RouterAction) (WorkflowVersion, error) {
+func (s *ActivityService) resolveRouteWorkflowVersion(ctx context.Context, task Task, action RouterAction) (WorkflowVersion, error) {
+	// 临时图（Router 当场起草）不进控制面目录，也不需要控制面可用：合成一个
+	// 只属于这一次 Run 的版本，作用域取任务所在的 root —— 项目级、免批。
+	if action.Graph != nil {
+		graph := *action.Graph
+		graph.RootID = task.RootID
+		return WorkflowVersion{
+			WorkflowID: routerAdhocWorkflowID,
+			Version:    adhocVersionID(graph),
+			Revision:   "1",
+			Graph:      graph,
+			Author:     "router",
+		}, nil
+	}
 	if s.workflows == nil {
 		return WorkflowVersion{}, errors.New("workflow control-plane store unavailable")
 	}

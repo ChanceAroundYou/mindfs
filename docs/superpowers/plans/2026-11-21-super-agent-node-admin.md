@@ -318,3 +318,29 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   `go test ./server/internal/kanban/` 全绿（264.3s）。
 - W2 边界（不再扩）：节点级动作只认顶层 agent 节点；模型档不校验 harness 可用列表；
   跨轮历史卡片不做。
+
+## W3 — 自设计 workflow（进行中）
+
+用户裁定：「Router 应该要会自己设计生产或者派生总结需要的 workflow」，「发新的 / 改已有的
+workflow 需要显式批准，项目级别、临时使用的可以自由生成，但固化、提升到全局的 workflow
+需要批准」。落成三档，本轮先做第一档。
+
+### T1 完成（2026-11-21）— 临时图直接跑（项目内免批）
+
+- **动作**：`router_run_workflow` 新增 `graph` 参数；与 `workflow_id` / `version_id`
+  **互斥**（工具层 + 校验层各拒一次 —— 决策落库后可能被重放，校验层不能只信工具层）。
+- **起 Run**：`resolveRouteWorkflowVersion` 合成只属于这次 Run 的
+  `WorkflowVersion{WorkflowID:"adhoc", Version:"adhoc:<sha256[:8]>", Graph:...}`，
+  走既有 `beginWorkflowRunVersion`。控制面目录一个字都不写，Run 自己快照整张图 ——
+  所以不存在「目录里出现一张没人批准过的 workflow」。
+- **作用域**：`sanitizeRouterGraph` 一律清空 `RootID`，apply 阶段填 `task.RootID`。
+  图里 `root_id` 为空在 MindFS 语义里等于**全局**，那正是需要显式批准的一档。
+- **闸门**：节点 ≤ 12、边（含 Loop 子图）≤ 24、整图 JSON ≤ 64 KiB；结构走
+  `ValidateWorkflowDefinitionForAuthoring`（悬空边、环、未知 kind、末端 gate 都拒）。
+- **提示词**：规则 21 写清形状、上限与「固化 / 覆盖目录版本现在没有这个权限」。
+- 验证：3 条用例先红（`Graph` 字段不存在）后绿 —— 端到端起 Run（含 `RootID` 落在任务
+  项目上、目录版本数不变）、来源互斥、12/13 节点边界与悬空边、校验层复查落库动作；
+  5 处变异各自打红后还原（工具不记录图 / 两层互斥都去掉 / 节点上限放开 / 不填作用域 /
+  校验层不复查）。`go test -run 'Router|Workflow|Brief' ./server/internal/kanban/` 全绿。
+- 边界：T1 只放开「这一轮临时用」；固化、派生、模型档层级见 T2–T4（未实现前 Router 没有
+  写控制面的工具）。
