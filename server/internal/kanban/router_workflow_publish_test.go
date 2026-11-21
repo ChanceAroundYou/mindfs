@@ -104,6 +104,12 @@ func TestApplySaveWorkflowProjectScopePublishesImmediately(t *testing.T) {
 	if got := len(versions[0].Graph.Nodes); got != 2 {
 		t.Fatalf("published graph nodes = %d, want 2", got)
 	}
+	// 发布出去的版本必须能直接跑：Router 只写了 prompt，agent 要在固化时补上。
+	for _, n := range versions[0].Graph.Nodes {
+		if got, _ := n.Params["agent"].(string); strings.TrimSpace(got) != defaultRouterAgent {
+			t.Fatalf("published node %q agent = %q, want %q", n.ID, got, defaultRouterAgent)
+		}
+	}
 	if cards := publishCards(t, store, task.ID); len(cards) != 0 {
 		t.Fatalf("project-scope new workflow must not ask for approval, got %d cards", len(cards))
 	}
@@ -151,6 +157,12 @@ func TestApplySaveWorkflowGlobalScopeRequiresApproval(t *testing.T) {
 	if card.Request.Scope != WorkflowScopeGlobal || len(card.Request.Graph.Nodes) != 2 {
 		t.Fatalf("card payload lost the request: %+v", card.Request)
 	}
+	// 卡片里的图就是批准后要发布的图：批准之前就得是能跑的。
+	for _, n := range card.Request.Graph.Nodes {
+		if got, _ := n.Params["agent"].(string); strings.TrimSpace(got) == "" {
+			t.Fatalf("card node %q has no agent: %+v", n.ID, n.Params)
+		}
+	}
 	if card.Request.BaseDraftRevision != "" {
 		t.Fatalf("a brand-new workflow has no base revision, got %q", card.Request.BaseDraftRevision)
 	}
@@ -184,6 +196,44 @@ func TestApplySaveWorkflowExistingIDRequiresApproval(t *testing.T) {
 	}
 	if card.Request.BaseDraftRevision == "" {
 		t.Fatal("modify request must pin the draft revision it was written against")
+	}
+}
+
+// 升级前落下的待批准卡，图里没有 agent。批准时不补，旧卡批出来的版本仍然
+// 一执行就 "agent required" —— 卡片可能已经在队列里躺了几天。
+func TestResolveWorkflowPublishFillsAgentOnLegacyCard(t *testing.T) {
+	store, svc, task, workflows := newPublishFixture(t)
+	ctx := context.Background()
+	req, err := WorkflowPublishRequest{
+		WorkflowID: "wf-legacy-card",
+		Name:       "旧卡",
+		Scope:      WorkflowScopeGlobal,
+		Graph:      publishGraph(),
+		Reason:     "升级前落下的待批准卡",
+	}.Normalize()
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	activity := publishActivityService(t, svc, task.RootID)
+	decision := &RouterDecision{ID: "dec-legacy-card", TaskID: task.ID, RootID: task.RootID}
+	if err := activity.recordWorkflowPublishRequest(ctx, decision, task, req); err != nil {
+		t.Fatalf("recordWorkflowPublishRequest: %v", err)
+	}
+	cards := publishCards(t, store, task.ID)
+	if len(cards) != 1 {
+		t.Fatalf("want 1 card, got %d", len(cards))
+	}
+	if _, err := svc.ResolveWorkflowPublish(ctx, task.RootID, task.ID, cards[0].ID, "approve", ""); err != nil {
+		t.Fatalf("ResolveWorkflowPublish(approve): %v", err)
+	}
+	versions := versionsOf(t, workflows, "wf-legacy-card")
+	if len(versions) != 1 {
+		t.Fatalf("want 1 published version, got %d", len(versions))
+	}
+	for _, n := range versions[0].Graph.Nodes {
+		if got, _ := n.Params["agent"].(string); strings.TrimSpace(got) == "" {
+			t.Fatalf("legacy card published node %q without agent: %+v", n.ID, n.Params)
+		}
 	}
 }
 

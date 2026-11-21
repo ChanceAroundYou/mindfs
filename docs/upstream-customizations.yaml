@@ -1251,10 +1251,13 @@ groups:
       - web/src/i18n/locales/en-US.ts
     tests:
       - server/internal/kanban/task_delete_test.go
+      - web/tests/task-card-actions.test.mjs
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-create-panel.test.mjs
+      - web/tests/task-detail-header.test.mjs
+      - web/tests/task-ghost-card.test.mjs
     anchors:
       - server/internal/kanban/service_run_moves.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
@@ -1280,6 +1283,8 @@ groups:
       - server/internal/gitview/worktree_finish.go
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/TaskDetailActionsMenu.tsx
+      - web/src/components/task/taskCardActions.ts
       - web/src/components/workspace/WorkspaceTaskRow.tsx
       - web/src/components/shell/ToastContainer.tsx
       - web/src/services/task/worktree.ts
@@ -1317,8 +1322,9 @@ groups:
       - server/internal/api/http_tasks_finish_teardown.go:UserChanges []string
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - web/src/components/task/TaskCardFinishButton.tsx:function TaskCardFinishButton
-      - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;
-      - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;
+      - web/src/components/task/TaskCardRows.tsx:const canComplete = actions.includes("complete");
+      - 'web/src/components/task/taskCardActions.ts:export function taskCardActions(task: KanbanTask): TaskCardActionKey[] {'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const setArchived = async (archived: boolean) => {'
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
       - web/src/services/net/error.ts:"task.action_failed"
@@ -8288,7 +8294,7 @@ groups:
       - 'server/internal/kanban/workflow_recovery.go:WorkflowTriggeredByLegacyImport)'
       - 'server/internal/kanban/workflow_types.go:WorkflowTriggeredByLegacyImport = "legacy_import"'
       - 'web/src/components/task/TaskDetailPanel.tsx:<ConversationView'
-      - 'web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;'
+      - 'web/src/components/task/useTaskDetailPanel.ts:moveTask(task.root_id, task.id, "cancel", "", nodeId)'
 
   # ── 任务 Router（super agent 总控）+ 直连执行器；阶段概念彻底移除 ──────────
   - id: G-LN
@@ -8350,7 +8356,7 @@ groups:
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) runFinishTurn('
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) acquireTaskFinish(rootID, taskID string) (func(), error)'
       - 'web/src/app/useAppKanbanColumns.ts:const kanbanColumns: KanbanColumn[] = ['
-      - 'web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;'
+      - 'web/src/components/task/TaskCardRows.tsx:const canComplete = actions.includes("complete");'
       - 'web/tests/upstream-removals.test.mjs:阶段模型不得复活'
 
   # ── Task Router P0（shadow）：隐藏 CC 调度会话 + 决策账本 ───────────────────
@@ -10294,9 +10300,9 @@ groups:
       - 'server/internal/kanban/service_run_moves.go:func (s *Service) Reopen(ctx context.Context, in MoveInput) (TaskDetail, error) {'
       - 'server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskReopen(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/reopen", h.handleKanbanTaskReopen)'
-      - 'web/src/components/task/TaskCardRows.tsx:const canReopen = terminal;'
-      - 'web/src/components/task/useTaskDetailPanel.ts:const canReopenTask = terminal;'
-      - 'web/src/components/task/TaskDetailPanel.tsx:if (canReopenTask) {'
+      - 'web/src/components/task/taskCardActions.ts:actions.push("reopen", "archive-task");'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const reopenTask = async () => {'
+      - 'web/src/components/task/TaskDetailPanel.tsx:reopen: () => void reopenTask(),'
       - 'web/src/app/useTaskBoard.ts:if (action === "cancel" || action === "reopen" || action === "rebuild-worktree") {'
   - id: G-ND
     title: 工作台项目头的折叠箭头移到项目名之前
@@ -12127,6 +12133,13 @@ groups:
       `RunWorkflowNodeAttempt` 用它落 `NodeRun` 行（运行视图与 `inspect_run` 读这张行，写裸 params 会
       让继承默认的节点显示成没设模型），适配层经 `workflowNodeProfile` 读同一个结果。模型写的图在
       `sanitizeRouterGraph` 去空白、空串归一成 `nil`，不留「显式空模型」的假档位。
+      ⑩ **节点 harness 在起草/固化时就落成具体值**：`params.agent` 是结构字段，缺了它图能过校验、
+      能固化、能发布，节点却在执行时以 "agent required" 立刻失败 —— 而 Router 只写 `prompt` 是
+      常态（2026-11-21 隔离验收里起草与固化出的两个版本都跑不起来）。`fillDefaultNodeAgent` 在
+      `sanitizeRouterGraph`（临时图）、`workflowPublishRequest`（卡片载荷）与 `commitWorkflowPublish`
+      （写目录的最后一道门，覆盖升级前落下的旧待批准卡）三处补默认 harness（`defaultRouterAgent`
+      = claude）；显式写了 agent 的节点一律不动，补写只落在深拷贝上，决策里存的图原样保留。提示词
+      规则 21 与两个工具的 `graph` 描述写明「可省略、默认 claude」，不让模型以为这是必填项。
     boundary: |
       W3 T1（临时图直接跑）、T2（固化两档 + 待批准卡）、T4（模型档层级）已实现，W3 收口。
       派生目前只做「复制一份并记 `derived:wf-x` 标签」，不做版本链追溯。`defaults` 只有模型
@@ -12150,6 +12163,7 @@ groups:
     tests:
       - server/internal/kanban/router_inline_workflow_test.go
       - server/internal/kanban/router_workflow_publish_test.go
+      - server/internal/kanban/router_prompt_guidance_test.go
       - server/internal/kanban/workflow_default_model_test.go
       - server/internal/api/http_task_workflow_publish_test.go
       - server/internal/api/workflow_node_profile_test.go
@@ -12160,6 +12174,10 @@ groups:
       - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxBytes = 64 * 1024'
       - 'server/internal/kanban/router_workflow_graph.go:func sanitizeRouterGraph(graph *WorkflowDefinition) (*WorkflowDefinition, error) {'
       - 'server/internal/kanban/router_workflow_graph.go:func adhocVersionID(graph WorkflowDefinition) string {'
+      - 'server/internal/kanban/router_workflow_graph.go:func fillDefaultNodeAgent(nodes []WorkflowNode) {'
+      - 'server/internal/kanban/router_workflow_graph.go:			n.Params["agent"] = defaultRouterAgent'
+      - 'server/internal/kanban/workflow_publish.go:	fillDefaultNodeAgent(graph.Nodes)'
+      - 'server/internal/kanban/activity_route_workflow_publish.go:		fillDefaultNodeAgent(req.Graph.Nodes)'
       - 'server/internal/kanban/router_workflow_graph.go:func inlineGraphEdgeCount(graph WorkflowDefinition) int {'
       - 'server/internal/kanban/router_types.go:	Graph  *WorkflowDefinition `json:"graph,omitempty"`'
       - 'server/internal/kanban/router_tools.go:func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {'
@@ -12180,6 +12198,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
       - 'server/internal/kanban/router_prompt.md:   - **模型档**：整张图可以给 `"defaults":{"model":"..."}`'
+      - 'server/internal/kanban/router_prompt.md:`params.agent` 可省略 —— 默认 claude'
       - 'server/internal/kanban/workflow_types.go:type WorkflowDefaults struct {'
       - 'server/internal/kanban/workflow_types.go:func (d WorkflowDefinition) AgentProfileFor(node WorkflowNode) WorkflowNodeAgentProfile {'
       - 'server/internal/kanban/workflow_types.go:	profile.Model = strings.TrimSpace(d.Defaults.Model)'

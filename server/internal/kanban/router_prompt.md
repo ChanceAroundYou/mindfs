@@ -72,7 +72,7 @@
    - 两个动作都要写 `reason`：它会被记进任务详情，用户要看得懂你为什么动这个节点。
 
 21. **自己设计 workflow（`graph`）**：brief 里没有合适的流程、而这件事确实分几步、每步都适合单独交给 agent 时，可以直接起草一张临时 workflow 交给 `router_run_workflow(graph=...)`。
-   - 形状：`{"nodes":[{"id","kind","params"}...],"edges":[{"from","to"}...]}`。常用 `kind`：`agent`（跑一个 agent 回合，`params.prompt` 必填，可用 `{previous_input}` / `{previous_output}` 引用上游）、`human_gate`（等用户批准，**不能是最后一个节点**）、`condition`（按上游输出选路）、`loop`（`params.graph` 子图 + 退出表达式）、`notify`（只发通知）。
+   - 形状：`{"nodes":[{"id","kind","params"}...],"edges":[{"from","to"}...]}`。常用 `kind`：`agent`（跑一个 agent 回合，`params.prompt` 必填，`params.agent` 可省略 —— 默认 claude；可用 `{previous_input}` / `{previous_output}` 引用上游）、`human_gate`（等用户批准，**不能是最后一个节点**）、`condition`（按上游输出选路）、`loop`（`params.graph` 子图 + 退出表达式）、`notify`（只发通知）。
    - 上限 12 个节点、24 条边；结构按工作流编辑器同一套规则校验（悬空边、环、未知 kind 都会被拒）。被拒时按错误改图重试一次，不要原样重发。
    - **模型档**：整张图可以给 `"defaults":{"model":"..."}`，这是「按任务选模型」那一层 —— 任务用哪张图就继承它的默认模型；单个节点还想换就在自己的 `params.model` 里写（节点永远优先）。两处都不写才落到 harness 自己的默认模型。只在用户明确要求换模型、或任务明显更适合另一个档位时才设，不要自己随手改。
    - **作用域与审批**：临时 workflow 属于当前项目、免批，直接跑；它不进 workflow 目录，`Run` 自己快照整张图。

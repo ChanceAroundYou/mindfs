@@ -403,3 +403,21 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   ./server/internal/api/ -count=1` 全绿（335.0s / 57.2s）。
 - 边界：`defaults` 目前只有模型一项，不承载 effort / harness；固化的 workflow 保留它自己的
   `defaults`，任务用它的版本就继承那一版的默认 —— 换版本即换档，不再有第二处开关。
+
+### 补口（2026-11-21）— 起草/固化的图必须带可执行的节点 harness
+
+隔离实例真实验收（W2 节点管理脚本）撞出来的缺陷：Router 起草的图只写 `prompt`，`params.agent`
+为空 —— 图能通过校验、能固化、能发布，节点却在执行时以 `agent required` 立刻失败；W3 固化的
+`wf-iso-w3g-*` / `wf-iso-w3p-*` 两个已发布版本同样跑不起来。
+
+- `fillDefaultNodeAgent`：缺 `params.agent` 的 agent 节点补 `defaultRouterAgent`（claude），显式写
+  了的一律不动；`loop` 内层图（原始 JSON 存在 `params.graph`）就地递归补。
+- 三处调用：`sanitizeRouterGraph`（临时图，深拷贝后补，不改调用方原图）、
+  `workflowPublishRequest`（待批准卡载荷）、`commitWorkflowPublish`（写目录的最后一道门 ——
+  覆盖升级前落下的旧卡，旧卡图里同样没有 agent）。
+- 提示词规则 21 与两个工具的 `graph` 描述写明「`params.agent` 可省略，默认 claude」，不让模型
+  以为这是必填项。
+- 验证：4 条用例先红后绿（临时图带 agent、显式 agent 不被覆盖 + 循环内层 + 不污染原图、固化
+  版本带 agent、旧待批准卡在批准时补 agent）+ 1 条提示词/工具描述内容守卫；5 处变异各自打红
+  后还原（sanitize 不补 / 覆盖显式 agent / 固化请求不补 / commit 不补 / 提示词删掉默认说明）。
+  `go test ./server/internal/kanban/ -count=1` 全绿（303.1s）。

@@ -72,6 +72,14 @@ func TestRouterRouteRunsInlineGraph(t *testing.T) {
 	if got := len(runs[0].Graph.Nodes); got != 2 {
 		t.Fatalf("run graph nodes = %d, want the two the router wrote", got)
 	}
+	// Router 起草时只写 prompt 是常态。params.agent 必须在这一步就补成具体
+	// harness：图能起 Run、节点却在执行时以 "agent required" 立刻失败，验收
+	// 实测过两次（起草的图固化以后同样跑不起来）。
+	for _, n := range runs[0].Graph.Nodes {
+		if got, _ := n.Params["agent"].(string); strings.TrimSpace(got) != defaultRouterAgent {
+			t.Fatalf("node %q agent = %q, want %q", n.ID, got, defaultRouterAgent)
+		}
+	}
 	if !strings.HasPrefix(runs[0].Version, "adhoc:") {
 		t.Fatalf("run version = %q, want an adhoc run", runs[0].Version)
 	}
@@ -174,4 +182,47 @@ func TestRouterInlineGraphRejectsOversizedAndInvalidGraphs(t *testing.T) {
 
 func nodeIDForInlineTest(i int) string {
 	return fmt.Sprintf("n%d", i)
+}
+
+// 补默认 agent 的三条边界：显式写的 harness 不动、循环内层节点也补、
+// 不改调用方传进来的原图（sanitize 的返回值才是起 Run 用的那份）。
+func TestSanitizeRouterGraphFillsMissingNodeAgent(t *testing.T) {
+	graph := WorkflowDefinition{
+		Nodes: []WorkflowNode{
+			{ID: "a", Kind: NodeKindAgent, Params: map[string]any{"prompt": "x"}},
+			{ID: "b", Kind: NodeKindAgent, Params: map[string]any{"prompt": "y", "agent": "codex"}},
+			{ID: "loop", Kind: NodeKindLoop, Params: map[string]any{
+				"max_iterations":  float64(2),
+				"exit_expression": "n1.output.done == true",
+				"graph": map[string]any{
+					"nodes": []any{
+						map[string]any{"id": "n1", "kind": NodeKindAgent, "params": map[string]any{"prompt": "inner"}},
+					},
+					"edges": []any{},
+				},
+			}},
+		},
+	}
+	out, err := sanitizeRouterGraph(&graph)
+	if err != nil {
+		t.Fatalf("sanitizeRouterGraph: %v", err)
+	}
+	if got, _ := out.Nodes[0].Params["agent"].(string); got != defaultRouterAgent {
+		t.Fatalf("missing agent filled with %q, want %q", got, defaultRouterAgent)
+	}
+	if got, _ := out.Nodes[1].Params["agent"].(string); got != "codex" {
+		t.Fatalf("explicit agent was overwritten: %q", got)
+	}
+	innerGraph, _ := out.Nodes[2].Params["graph"].(map[string]any)
+	innerNodes, _ := innerGraph["nodes"].([]any)
+	if len(innerNodes) != 1 {
+		t.Fatalf("loop inner nodes = %d, want 1", len(innerNodes))
+	}
+	innerParams, _ := innerNodes[0].(map[string]any)["params"].(map[string]any)
+	if got, _ := innerParams["agent"].(string); got != defaultRouterAgent {
+		t.Fatalf("loop inner node agent = %q, want %q", got, defaultRouterAgent)
+	}
+	if _, ok := graph.Nodes[0].Params["agent"]; ok {
+		t.Fatal("sanitizeRouterGraph mutated the caller's graph")
+	}
 }
