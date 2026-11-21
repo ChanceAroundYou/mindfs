@@ -11720,7 +11720,7 @@ groups:
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:if (entry.subSession || entry.silent) {'
 
   - id: G-PB
-    title: Super agent 节点级管理员 W1 底座（取消三档 + 每 Run/每小时监管预算 + 验收项与证据等级）
+    title: Super agent 节点级管理员 W1 底座（取消三档 + 每 Run/每小时监管预算 + 验收项与证据等级 + 取消类故障恢复）
     kind: feature
     symptom: |
       Router 在主动监管里只能重试、唤醒与汇报，遇到真正卡死的现场没有收口手段：节点卡在
@@ -11752,9 +11752,18 @@ groups:
       在有契约时也启动复核，pass 之后才把项改成通过并收尾。返工轮数复用既有的补做预算
       （默认 2 轮，第 3 次停 `waiting_user` 并列缺口编号），`rework_round` 只是审计水位；
       同一条决策重放不重复计数。
+      ⑧ 故障恢复（W1 T4）与 ④ 的「节点级取消让下游按 skip 收敛」是一体两面：节点行改成
+      `cancelled` 必须**同一事务**写进 run 投影（`CancelWorkflowNodeRunProjected`），
+      `EngineReadyNodes` 也要把「前驱已取消」当「已满足」放行 —— 只改行不改投影时 driver
+      会把已取消的行反复当待跑节点派发（实测空转到 1000 步上限），下游一次都不跑。
+      整轮取消按 `run_cancelled` 账本幂等重放（`reason=startup_cancel_replay`）：冻结未收尾
+      的投影节点、结算仍 running 的回复活动、任务从 `running` 放回 `waiting_user`；没有该
+      账本的一轮只补投影并在任务仍 `running` 时唤醒 driver，不当成「整轮不要了」。
+      预算用量的唯一来源是 `router_decisions`，任何进程内缓存都不允许参与判定。
     boundary: |
-      取消三档与预算（W1 T1/T2）与验收项（W1 T3）都在本组；不做跨进程副作用恢复（沿用
-      G-KV 边界），`cancel_run` 之后的重启对账由 W1 T4 补口。不使用 `Service.Cancel`
+      取消三档与预算（W1 T1/T2）、验收项（W1 T3）与取消类故障恢复（W1 T4）都在本组；
+      不做跨进程副作用恢复（沿用 G-KV 边界）—— T4 只补「取消逻辑自己写到一半」的窗口，
+      取消发生在 agent 回合中途时仍走 `interruptWorkflowNodeRuns` 的既有语义。不使用 `Service.Cancel`
       绕开 `complete_task` 的证据门：`cancel_task` 只用于「这一轮已经停了、任务还挂着执行态」。
       验收项是**本轮 Run 的**登记，不是跨轮模板：换 Run 重新登记，旧的随任务级联删除。
     files:
@@ -11768,6 +11777,11 @@ groups:
       - server/internal/kanban/activity_service.go
       - server/internal/kanban/service_activities.go
       - server/internal/kanban/workflow_runtime_router_cancel.go
+      - server/internal/kanban/workflow_recovery.go
+      - server/internal/kanban/workflow_recovery_router_cancel.go
+      - server/internal/kanban/workflow_engine.go
+      - server/internal/kanban/task_store_workflow_cancel.go
+      - server/internal/kanban/task_store_workflow_events.go
       - server/internal/kanban/router_prompt.md
       - cli/cmd/startup.go
       - cli/cmd/mindfs.go
@@ -11781,6 +11795,7 @@ groups:
       - server/internal/kanban/router_supervision_cancel_test.go
       - server/internal/kanban/router_supervision_budget_test.go
       - server/internal/kanban/acceptance_items_test.go
+      - server/internal/kanban/workflow_recovery_router_cancel_test.go
       - server/internal/kanban/task_store_delete_cascade_test.go
       - cli/cmd/startup_config_test.go
       - server/app/router_supervision_config_test.go
@@ -11807,6 +11822,12 @@ groups:
       - 'server/internal/kanban/service_completion.go:acceptance.bump_rework.error'
       - 'server/internal/kanban/service_completion_verifier.go:report.Contract && !report.AcceptanceNeedsVerification'
       - 'server/internal/kanban/router_prompt.md:router_record_acceptance(items)'
+      - 'server/internal/kanban/task_store_workflow_cancel.go:func (s *TaskStore) CancelWorkflowNodeRunProjected('
+      - 'server/internal/kanban/workflow_engine.go:if run.NodeStates[p.from] == NodeRunCancelled {'
+      - 'server/internal/kanban/workflow_recovery_router_cancel.go:func (s *Service) reconcileRouterCancelledRun('
+      - 'server/internal/kanban/workflow_recovery_router_cancel.go:func (s *Service) repairCancelledNodeProjections('
+      - 'server/internal/kanban/workflow_recovery.go:s.reconcileRouterCancelledRun(ctx, store, b.taskID, b.runID, b.status)'
+      - 'server/internal/kanban/task_store_workflow_events.go:func (s *TaskStore) WorkflowRunHasEvent('
 
   - id: G-PC
     title: 移除自动发现（外部项目不再自动注册，项目只能手动添加）

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -131,6 +132,20 @@ func (s *TaskStore) AppendWorkflowRunEvent(ctx context.Context, ev WorkflowRunEv
 		return WorkflowRunEvent{}, err
 	}
 	return out, nil
+}
+
+// WorkflowRunHasEvent 判断这一轮是否已经落过某类事件（取消收尾的幂等依据）。
+func (s *TaskStore) WorkflowRunHasEvent(ctx context.Context, runID, eventType string) (bool, error) {
+	runID, eventType = strings.TrimSpace(runID), strings.TrimSpace(eventType)
+	if runID == "" || eventType == "" {
+		return false, nil
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM workflow_run_events WHERE run_id=? AND type=?`, runID, eventType).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (s *TaskStore) ListWorkflowRunEvents(ctx context.Context, runID string) ([]WorkflowRunEvent, error) {

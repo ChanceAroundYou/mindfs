@@ -257,6 +257,16 @@ func (s *Service) recoverWorkflowRunsOnStartup(ctx context.Context, rootID strin
 				}
 			}
 		}
+		// 取消类补口（W1 T4）：整轮取消写到一半 → 按账本重放收尾；只取消了一个
+		// 节点 → 唤醒 driver 让下游继续。见 workflow_recovery_router_cancel.go。
+		if !wake && !paused && len(open) == 0 {
+			cancelWake, err := s.reconcileRouterCancelledRun(ctx, store, b.taskID, b.runID, b.status)
+			if err != nil {
+				log.Printf("[kanban/recover] router cancel reconcile failed root=%s task=%s err=%v", rootID, b.taskID, err)
+			} else if cancelWake {
+				wake = true
+			}
+		}
 		if len(open) > 0 || wake {
 			liveRuns[b.runID] = true
 		}

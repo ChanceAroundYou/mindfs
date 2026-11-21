@@ -285,6 +285,12 @@ func EngineReadyNodes(run *WorkflowRun) (ready []string, skipped []string, err e
 			if run.NodeStates[p.from] == NodeRunSkipped || skippedSet[p.from] {
 				continue
 			}
+			// 被取消的节点同样不再产出，但这一轮还要继续：把它当成「已满足」，
+			// 否则下游全部永远 ready 不了，整轮挂在一个用户主动砍掉的步骤上
+			// （W1 T4 实测：cancel_node 之后驱动空转 1000 步）。
+			if run.NodeStates[p.from] == NodeRunCancelled {
+				continue
+			}
 			if run.NodeStates[p.from] != NodeRunSuccess {
 				allDone = false
 				break

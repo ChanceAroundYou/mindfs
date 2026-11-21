@@ -44,7 +44,7 @@ func (s *Service) CancelWorkflowNodeForRouter(ctx context.Context, rootID, taskI
 	s.interruptWorkflowNodeRuns(ctx, rootID, []NodeRun{nr})
 	// 与合并收尾共用锁：agent 已返回、正在 merge 的行不能被改成 cancelled。
 	unlock := s.lockWorkflowNodeFinish(nr.ID)
-	changed, cerr := store.CancelWorkflowNodeRun(ctx, nr, reason)
+	changed, cerr := s.cancelWorkflowNodeRunProjected(ctx, store, run, nr, reason)
 	unlock()
 	if cerr != nil {
 		return cerr
@@ -66,6 +66,23 @@ func (s *Service) CancelWorkflowNodeForRouter(ctx context.Context, rootID, taskI
 	}
 	s.broadcastTask(ctx, store, task.ID)
 	return nil
+}
+
+// cancelWorkflowNodeRunProjected 把节点取消写成「行 + 投影」一笔事务。投影可能
+// 正被其它节点的推进改写，冲突时重载这一轮再试。
+func (s *Service) cancelWorkflowNodeRunProjected(ctx context.Context, store *TaskStore, run *WorkflowRun, nr NodeRun, reason string) (bool, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		changed, err := store.CancelWorkflowNodeRunProjected(ctx, run, nr, reason)
+		if !errors.Is(err, ErrRunConflict) {
+			return changed, err
+		}
+		fresh, err := store.WorkflowRunByID(ctx, run.ID)
+		if err != nil {
+			return false, err
+		}
+		run = fresh
+	}
+	return false, ErrRunConflict
 }
 
 // CancelWorkflowRunForRouter 停掉这一轮 Run，但把任务放回 waiting_user 交给用户；

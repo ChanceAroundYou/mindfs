@@ -201,3 +201,34 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   复核 pass 收尾并标 met、驳回按决策计一轮返工），六处变异各自打红后还原（有契约就不问
   复核 / pass 不标记项 / 跳过符号链接守卫 / 自述算通过 / 不重算整体 Passed / 重放也记返工）。
   `go test ./server/internal/kanban/` 全绿（274s，首跑一条既有 sqlite 并发 flake，复跑全绿）。
+
+### T4 完成（2026-11-21）
+
+三个窗口的落地，其中两个在写测试时直接暴露了 W1 T1 的真实缺陷 —— 不是「崩溃才出现」，
+而是**正常在线也会发生**：
+
+- **节点级取消后整轮停摆**（根因，在线路径）：`CancelWorkflowNodeForRouter` 只把行改成
+  `cancelled`，从没写 run 投影；driver 醒来按投影重算时这个节点仍是「没跑过」，于是它
+  反复派发一个已取消的行，实测空转到 `workflowAdvanceStepLimit`（1000 步）报错，下游
+  节点一次都没被派发。修复两处：新增 `TaskStore.CancelWorkflowNodeRunProjected`，在同一
+  事务里「行 → cancelled + `node_cancelled` 事件 → run 投影 + revision CAS」；`EngineReadyNodes`
+  把「前驱已被取消」按「已满足」处理（原先只有 success / skipped 放行，取消会让所有下游
+  永远 ready 不了）。Loop 内部行沿用既有规则不写 run 级投影。
+- **`cancel_run` 写到一半崩**：`run_cancelled` 事件是幂等依据。启动对账发现该事件存在时，
+  按账本把还没收尾的投影节点冻结成 `cancelled` 并补一条 `reason=startup_cancel_replay` 的
+  事件、结算仍 running 的回复活动、任务从 `running` 放回 `waiting_user`；第二次启动
+  `workflowRunHasOpenNodes` 为 false，不写任何事件。
+- **只取消了节点、driver 没被唤醒**：没有 `run_cancelled` 账本的一轮不按整轮取消处理 ——
+  先把「行已 cancelled、投影没写」的节点补进投影（每节点只看最新一次尝试，重试成功的
+  不会被旧取消覆盖），任务仍在 `running` 时才唤醒 driver 继续跑下游；`waiting_user` /
+  暂停的任务不替操作员继续。
+- **预算不从内存重建**：`supervisionActionUsage` 本来就是按 `router_decisions` 现算，本轮
+  补一条用例把它钉住（新 `Service` 读到的用量必须与重启前一致），防止以后有人加进程内
+  缓存。
+- 验证：`workflow_recovery_router_cancel_test.go` 4 条（整轮取消重放 + 幂等、只取消节点
+  的启动唤醒、在线 `CancelWorkflowNodeForRouter` 写投影并推进下游、预算重启口径），六处
+  变异各自打红后还原（忽略 `run_cancelled` 账本 / 不把任务放回 `waiting_user` / 去掉两处
+  幂等守卫 / 不补投影 / 引擎仍把取消当前驱阻塞 / 取消只写行不写投影）。
+  `go test ./server/internal/kanban/` 全绿（314.8s）。
+- 边界：不宣称跨进程副作用恢复（沿用 G-KV）；取消发生在 agent 回合中途时，中断仍走
+  `interruptWorkflowNodeRuns` 的既有语义。
