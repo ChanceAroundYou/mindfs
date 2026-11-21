@@ -132,6 +132,47 @@ func (s *Store) DeletePending(ctx context.Context, domain, key string) error {
 	return nil
 }
 
+// ListPending 按创建顺序取一批待推送变更（推送方每拍只推一页）。
+func (s *Store) ListPending(ctx context.Context, limit int) ([]PendingChange, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("controlsync: store closed")
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT change_id, domain, key, base_hash, payload, deleted, created_at
+FROM pending ORDER BY created_at, domain, key LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("controlsync: list pending: %w", err)
+	}
+	defer rows.Close()
+	var out []PendingChange
+	for rows.Next() {
+		var (
+			p         PendingChange
+			payload   []byte
+			deleted   int
+			createdAt string
+		)
+		if err := rows.Scan(&p.ChangeID, &p.Domain, &p.Key, &p.BaseHash, &payload, &deleted, &createdAt); err != nil {
+			return nil, fmt.Errorf("controlsync: scan pending: %w", err)
+		}
+		p.Deleted = deleted != 0
+		if len(payload) > 0 {
+			p.Payload = payload
+		}
+		if ts, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			p.CreatedAt = ts
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("controlsync: list pending: %w", err)
+	}
+	return out, nil
+}
+
 // DeletePendingIfChange 只在 pending 仍是 changeID 那条时才删。
 //
 // 推送期间用户又改了一版会让 pending 换上新身份；这时旧回执到了也不能删，

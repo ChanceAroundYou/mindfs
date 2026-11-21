@@ -37,6 +37,15 @@ type PushResult struct {
 	Reason     string `json:"reason,omitempty"`
 	ConflictID string `json:"conflict_id,omitempty"`
 	Rev        int64  `json:"rev,omitempty"`
+	// 以下四项是主节点处理完之后这条记录的当前状态。
+	//
+	// 边缘靠它们做两件事：conflict 时在本地建一张冲突卡（边缘视角 local = 自己
+	// 那一版、remote = 主节点这一版），applied 时给「推送期间又改了一版」的 pending
+	// 重定共同祖先。只回 hash 不够 —— 冲突卡要显示两侧内容。
+	Exists  bool            `json:"exists"`
+	Hash    string          `json:"hash,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	Deleted bool            `json:"deleted,omitempty"`
 }
 
 // PushBatch 是整批响应：逐条结论 + 处理后的 head_rev。
@@ -68,7 +77,15 @@ func NewPusher(store *Store, registry *Registry, capturer *Capturer) (*Pusher, e
 func (p *Pusher) Push(ctx context.Context, req PushRequest) (PushBatch, error) {
 	batch := PushBatch{Results: make([]PushResult, 0, len(req.Changes))}
 	for _, ch := range req.Changes {
-		batch.Results = append(batch.Results, p.pushOne(ctx, req.InstanceID, ch))
+		result := p.pushOne(ctx, req.InstanceID, ch)
+		batch.Results = append(batch.Results, result)
+		// 这条记录已经在主节点落定，之前因它产生的冲突卡就是旧现场：
+		// 不关掉会永远挂在列表里，用户还得手动点一次「已解决」。
+		if result.Status == PushApplied {
+			if _, err := p.store.SupersedeConflicts(ctx, ch.Domain, ch.Key, "superseded"); err != nil {
+				return batch, err
+			}
+		}
 	}
 	head, err := p.store.HeadRev(ctx)
 	if err != nil {
@@ -95,6 +112,17 @@ func (p *Pusher) pushOne(ctx context.Context, origin string, ch PushChange) Push
 	if err := ValidateRecordKey(ch.Key); err != nil {
 		return reject(err.Error())
 	}
+	// 先读当前记录再判幂等：重复的 change_id 也要回带主节点现值，
+	// 否则边缘拿不到「推上去之后主节点又改过」的那个值去重定祖先。
+	cur, exists, err := p.store.GetRecord(ctx, ch.Domain, ch.Key)
+	if err != nil {
+		return reject(err.Error())
+	}
+	result.Exists = exists
+	if exists {
+		result.Hash = cur.Hash
+		result.Deleted = cur.Deleted
+	}
 	applied, err := p.store.ChangeApplied(ctx, ch.ChangeID)
 	if err != nil {
 		return reject(err.Error())
@@ -103,11 +131,6 @@ func (p *Pusher) pushOne(ctx context.Context, origin string, ch PushChange) Push
 		result.Status = PushApplied
 		result.Reason = "duplicate change_id"
 		return result
-	}
-
-	cur, exists, err := p.store.GetRecord(ctx, ch.Domain, ch.Key)
-	if err != nil {
-		return reject(err.Error())
 	}
 
 	// 删除是最简单的一支，先单独处理，免得把「空 payload 的 hash」混进正常比对。
@@ -165,6 +188,9 @@ func (p *Pusher) pushOne(ctx context.Context, origin string, ch PushChange) Push
 	}
 	result.Status = PushApplied
 	result.Rev = rev
+	result.Exists = true
+	result.Hash = payloadHash
+	result.Deleted = false
 	return result
 }
 
@@ -213,6 +239,10 @@ func (p *Pusher) pushDelete(ctx context.Context, origin string, ch PushChange,
 		}
 		result.Status = PushApplied
 		result.Rev = rev
+		// 墓碑保留了最后一次内容 hash（cur.Hash 已随当前记录带出），删除标记要改过来：
+		// 边缘拿它当「主节点这一侧」渲染，删了还显示旧载荷就错了。
+		result.Exists = true
+		result.Deleted = true
 		return result
 	default:
 		// 主节点在边缘离线期间改过这条记录，边缘又要删 —— 交给人裁决。
@@ -247,6 +277,9 @@ func (p *Pusher) pushConflict(ctx context.Context, _ string, ch PushChange,
 	result.Status = PushConflict
 	result.ConflictID = id
 	result.Reason = "both sides changed"
+	// 载荷只在冲突时回：边缘要用它显示「主节点这一侧」，而 users 域里
+	// 这份载荷含口令 hash —— 能用 hash 说清的场合就不多传一份内容。
+	result.Payload = local.Payload
 	return result
 }
 

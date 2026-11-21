@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -257,6 +258,32 @@ ON CONFLICT(id) DO NOTHING`,
 		return "", fmt.Errorf("controlsync: insert conflict: %w", err)
 	}
 	return c.ID, nil
+}
+
+// SupersedeConflicts 把某条记录上所有未裁决的冲突标成「已被后续写入取代」，
+// 返回关闭条数。
+//
+// 主节点用：边缘裁决完重新推上来并真的落地之后，之前那张冲突卡描述的是旧现场。
+// 关掉它不改变任何数据 —— 权威存储已经被这次推送写过了。
+func (s *Store) SupersedeConflicts(ctx context.Context, domain, key, note string) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("controlsync: store closed")
+	}
+	if strings.TrimSpace(note) == "" {
+		note = "superseded"
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE conflicts SET resolved_at = ?, resolution = ?
+WHERE domain = ? AND key = ? AND resolved_at = ''`,
+		s.now().UTC().Format(time.RFC3339Nano), note, domain, key)
+	if err != nil {
+		return 0, fmt.Errorf("controlsync: supersede conflicts: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("controlsync: supersede conflicts: %w", err)
+	}
+	return int(n), nil
 }
 
 // ListOpenConflicts 返回未裁决的冲突，先来的在前（同一毫秒内按 id 稳定排序，

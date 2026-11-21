@@ -303,6 +303,131 @@ func TestPushRejectsUnknownDomain(t *testing.T) {
 	}
 }
 
+// 回执必须带上主节点处理完之后的记录：边缘要拿它建冲突卡（冲突卡要显示两侧内容，
+// 只回 hash 不够）与给「推送期间又改过」的 pending 重定祖先。
+func TestPushResultsCarryPrimaryRecord(t *testing.T) {
+	_, domain, capturer, pusher := newPushFixture(t)
+	ctx := t.Context()
+	domain.set("agents", `{"v":1}`)
+	if _, err := captureOnce(t, capturer, domain); err != nil {
+		t.Fatalf("seed capture: %v", err)
+	}
+	domain.set("agents", `{"v":2}`)
+	if _, err := captureOnce(t, capturer, domain); err != nil {
+		t.Fatalf("second capture: %v", err)
+	}
+
+	batch, err := pusher.Push(ctx, PushRequest{InstanceID: "hasee", Changes: []PushChange{
+		pushChange("ch-c", DomainPreferences, "agents",
+			recordHash(t, DomainPreferences, "agents", `{"v":1}`), `{"v":3}`, false),
+	}})
+	if err != nil {
+		t.Fatalf("冲突 Push: %v", err)
+	}
+	conflict := batch.Results[0]
+	if conflict.Status != PushConflict {
+		t.Fatalf("状态 = %s，应为 conflict", conflict.Status)
+	}
+	if !conflict.Exists || conflict.Deleted {
+		t.Fatalf("冲突回执的记录状态 = exists:%v deleted:%v，主节点明明有一条未删的值",
+			conflict.Exists, conflict.Deleted)
+	}
+	if conflict.Hash != recordHash(t, DomainPreferences, "agents", `{"v":2}`) {
+		t.Fatalf("冲突回执 hash = %q，应为主节点当前值", conflict.Hash)
+	}
+	if string(conflict.Payload) != `{"v":2}` {
+		t.Fatalf("冲突回执载荷 = %s，冲突卡要靠它显示主节点那一侧", conflict.Payload)
+	}
+
+	applied, err := pusher.Push(ctx, PushRequest{InstanceID: "hasee", Changes: []PushChange{
+		pushChange("ch-ok", DomainPreferences, "agents",
+			recordHash(t, DomainPreferences, "agents", `{"v":2}`), `{"v":4}`, false),
+	}})
+	if err != nil {
+		t.Fatalf("应用 Push: %v", err)
+	}
+	done := applied.Results[0]
+	if done.Status != PushApplied {
+		t.Fatalf("状态 = %s，应已应用", done.Status)
+	}
+	if !done.Exists || done.Hash != recordHash(t, DomainPreferences, "agents", `{"v":4}`) {
+		t.Fatalf("应用回执 = %+v，应带落地后的记录", done)
+	}
+	if len(done.Payload) != 0 {
+		t.Fatalf("应用回执不该回传载荷（users 域里那是口令 hash）：%s", done.Payload)
+	}
+}
+
+// 删除落地后回执要说清「主节点现在是墓碑」，hash 保留最后一次内容 ——
+// 边缘靠它区分「主节点删了」与「主节点改过又删」。
+func TestPushDeleteResultCarriesTombstone(t *testing.T) {
+	_, domain, capturer, pusher := newPushFixture(t)
+	ctx := t.Context()
+	domain.set("agents", `{"v":1}`)
+	if _, err := captureOnce(t, capturer, domain); err != nil {
+		t.Fatalf("seed capture: %v", err)
+	}
+	baseHash := recordHash(t, DomainPreferences, "agents", `{"v":1}`)
+	batch, err := pusher.Push(ctx, PushRequest{InstanceID: "hasee", Changes: []PushChange{
+		pushChange("ch-del", DomainPreferences, "agents", baseHash, "", true),
+	}})
+	if err != nil {
+		t.Fatalf("Push delete: %v", err)
+	}
+	res := batch.Results[0]
+	if res.Status != PushApplied || !res.Exists || !res.Deleted {
+		t.Fatalf("回执 = %+v，应为 applied 的墓碑", res)
+	}
+	if res.Hash != baseHash {
+		t.Fatalf("墓碑 hash = %q，应保留最后一次内容 %q", res.Hash, baseHash)
+	}
+}
+
+// 记录在主节点落定之后，之前那张冲突卡就是旧现场：不关掉会永远挂在列表里。
+func TestPushSupersedesStaleConflictWhenRecordSettles(t *testing.T) {
+	store, domain, capturer, pusher := newPushFixture(t)
+	ctx := t.Context()
+	domain.set("agents", `{"v":1}`)
+	if _, err := captureOnce(t, capturer, domain); err != nil {
+		t.Fatalf("seed capture: %v", err)
+	}
+	domain.set("agents", `{"v":2}`)
+	if _, err := captureOnce(t, capturer, domain); err != nil {
+		t.Fatalf("second capture: %v", err)
+	}
+	if _, err := pusher.Push(ctx, PushRequest{InstanceID: "hasee", Changes: []PushChange{
+		pushChange("ch-c", DomainPreferences, "agents",
+			recordHash(t, DomainPreferences, "agents", `{"v":1}`), `{"v":3}`, false),
+	}}); err != nil {
+		t.Fatalf("冲突 Push: %v", err)
+	}
+	open, err := store.ListOpenConflicts(ctx)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("裁决前未裁决冲突 = %d, %v，应为 1", len(open), err)
+	}
+
+	// 边缘裁决后基于主节点现值重新推上来并落地。
+	if _, err := pusher.Push(ctx, PushRequest{InstanceID: "hasee", Changes: []PushChange{
+		pushChange("ch-merged", DomainPreferences, "agents",
+			recordHash(t, DomainPreferences, "agents", `{"v":2}`), `{"v":"merged"}`, false),
+	}}); err != nil {
+		t.Fatalf("裁决后 Push: %v", err)
+	}
+	open, err = store.ListOpenConflicts(ctx)
+	if err != nil || len(open) != 0 {
+		t.Fatalf("落定后未裁决冲突 = %d, %v，应全部关掉", len(open), err)
+	}
+	var resolution string
+	if err := store.db.QueryRow(
+		`SELECT resolution FROM conflicts WHERE domain = ? AND key = ?`,
+		DomainPreferences, "agents").Scan(&resolution); err != nil {
+		t.Fatalf("读裁决记录: %v", err)
+	}
+	if resolution != "superseded" {
+		t.Fatalf("resolution = %q，应记录为被取代", resolution)
+	}
+}
+
 // captureOnce 用一次快照 diff 把主节点当前值写进索引（模拟本地写入后的采集）。
 func captureOnce(t *testing.T, capturer *Capturer, domain *memDomain) (int, error) {
 	t.Helper()
