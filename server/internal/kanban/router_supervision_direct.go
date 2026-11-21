@@ -56,6 +56,7 @@ func (s *Service) supervisionDirectObservation(ctx context.Context, store *TaskS
 		MaxRetriesPerNode: supervisionDirectMaxRetries,
 		RetriesLeft:       retriesLeft,
 		ActionBudget:      cfg.MaxActionsPerHour,
+		RunActionBudget:   cfg.MaxActionsPerRun,
 		Direct:            state,
 	}
 	if !reply.CreatedAt.IsZero() {
@@ -65,7 +66,8 @@ func (s *Service) supervisionDirectObservation(ctx context.Context, store *TaskS
 			state.IdleSeconds = idle
 		}
 	}
-	obs.ActionsLastHour = s.supervisionActionsLastHour(ctx, store, task.ID, now)
+	// 直连回合没有 Run，只受滚动一小时额度约束。
+	_, obs.ActionsLastHour = s.supervisionActionUsage(ctx, store, task.ID, "", now)
 	return obs
 }
 

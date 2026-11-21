@@ -175,14 +175,14 @@ func TestRouterConfigFromFileAndFlagPrecedence(t *testing.T) {
 // 主动监管只走 config.json（预算属于节点本地部署事实），缺省 = off + 空预算，
 // 由 app 归一化成默认值。
 func TestRouterSupervisionConfigFromFile(t *testing.T) {
-	writeConfig(t, `{"router":{"mode":"coordinate","supervision":{"mode":"shadow","max_retries_per_node":3,"max_actions_per_hour":4,"quota_hold_seconds":600}}}`)
+	writeConfig(t, `{"router":{"mode":"coordinate","supervision":{"mode":"shadow","max_retries_per_node":3,"max_actions_per_run":9,"max_actions_per_hour":4,"quota_hold_seconds":600}}}`)
 	cfg, err := loadStartupConfig("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	mode, retries, actions, quotaHold := routerSupervision(cfg)
-	if mode != "shadow" || retries != 3 || actions != 4 || quotaHold != 600 {
-		t.Fatalf("supervision 未透传：mode=%q retries=%d actions=%d quota_hold=%d", mode, retries, actions, quotaHold)
+	mode, retries, runActions, actions, quotaHold := routerSupervision(cfg)
+	if mode != "shadow" || retries != 3 || runActions != 9 || actions != 4 || quotaHold != 600 {
+		t.Fatalf("supervision 未透传：mode=%q retries=%d run=%d hour=%d quota_hold=%d", mode, retries, runActions, actions, quotaHold)
 	}
 
 	writeConfig(t, `{"router":{"mode":"coordinate"}}`)
@@ -190,9 +190,9 @@ func TestRouterSupervisionConfigFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mode, retries, actions, quotaHold = routerSupervision(cfg)
-	if mode != "" || retries != 0 || actions != 0 || quotaHold != 0 {
-		t.Fatalf("未配置 supervision 应保持空值：mode=%q retries=%d actions=%d quota_hold=%d", mode, retries, actions, quotaHold)
+	mode, retries, runActions, actions, quotaHold = routerSupervision(cfg)
+	if mode != "" || retries != 0 || runActions != 0 || actions != 0 || quotaHold != 0 {
+		t.Fatalf("未配置 supervision 应保持空值：mode=%q retries=%d run=%d hour=%d quota_hold=%d", mode, retries, runActions, actions, quotaHold)
 	}
 }
 

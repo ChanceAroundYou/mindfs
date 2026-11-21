@@ -3,6 +3,7 @@ package kanban
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -24,8 +25,13 @@ const (
 const (
 	// defaultSupervisionMaxRetriesPerNode 是每节点最多几次监管重试（用户裁定 B8-1）。
 	defaultSupervisionMaxRetriesPerNode = 2
-	// defaultSupervisionMaxActionsPerHour 是每 Run 每小时最多几个监管动作。
-	defaultSupervisionMaxActionsPerHour = 6
+	// defaultSupervisionMaxActionsPerRun 是每 Run 最多几个监管动作（用户裁定 W1 T2：
+	// 12 个）。只算有副作用的动作（重试 / 唤醒 / 重开 / 通知 / 升级 / 取消），
+	// say / ask_user / silent 不计。
+	defaultSupervisionMaxActionsPerRun = 12
+	// defaultSupervisionMaxActionsPerHour 是同一任务最近一小时最多几个监管动作
+	// （用户裁定 W1 T2：20 个）。与 Run 额度独立判，任一用尽即停。
+	defaultSupervisionMaxActionsPerHour = 20
 	// supervisionNodeLimit 限制观测里每类节点的条数，保证 payload 有界（事件总上限 8 KiB）。
 	supervisionNodeLimit = 8
 	// supervisionSummaryLimit 限制失败摘要长度，避免把整段错误正文塞进事件。
@@ -42,6 +48,9 @@ const (
 type RouterSupervisionConfig struct {
 	Mode              RouterSupervisionMode
 	MaxRetriesPerNode int
+	// MaxActionsPerRun 是每 Run 的监管动作额度；MaxActionsPerHour 是同一任务滚动
+	// 一小时的额度。两者独立判，任一用尽就停手交给用户。
+	MaxActionsPerRun  int
 	MaxActionsPerHour int
 	// QuotaHold 是撞到用量上限时挂起多久（拿不到上游重置时刻时用它）。
 	QuotaHold time.Duration
@@ -59,6 +68,9 @@ func (c RouterSupervisionConfig) Normalized() RouterSupervisionConfig {
 	}
 	if c.MaxRetriesPerNode <= 0 {
 		c.MaxRetriesPerNode = defaultSupervisionMaxRetriesPerNode
+	}
+	if c.MaxActionsPerRun <= 0 {
+		c.MaxActionsPerRun = defaultSupervisionMaxActionsPerRun
 	}
 	if c.MaxActionsPerHour <= 0 {
 		c.MaxActionsPerHour = defaultSupervisionMaxActionsPerHour
@@ -121,6 +133,10 @@ type SupervisionObservation struct {
 	RetriesLeft       int                    `json:"retries_left"`
 	ActionsLastHour   int                    `json:"actions_last_hour"`
 	ActionBudget      int                    `json:"action_budget"`
+	// ActionsThisRun / RunActionBudget 是每 Run 的额度水位（W1 T2）；ActionsLastHour /
+	// ActionBudget 是同一任务滚动一小时的额度。两个窗口独立判。
+	ActionsThisRun  int `json:"actions_this_run"`
+	RunActionBudget int `json:"run_action_budget"`
 	// Direct 只在直连回合的监管块里出现（那条事件没有 Run，节点段不适用）。
 	Direct *SupervisionDirectState `json:"direct,omitempty"`
 	// EvidenceFailedNodes 只出现在 completion_blocked 事件回合：这些节点的缺口
@@ -152,6 +168,7 @@ func (s *Service) supervisionObservation(ctx context.Context, store *TaskStore, 
 		TaskStatus:        task.Status,
 		MaxRetriesPerNode: cfg.MaxRetriesPerNode,
 		ActionBudget:      cfg.MaxActionsPerHour,
+		RunActionBudget:   cfg.MaxActionsPerRun,
 	}
 	// 同一节点可能有多次 attempt：水位只认最新一条，重试次数 = 最新 attempt - 1。
 	latest := map[string]NodeRun{}
@@ -218,24 +235,69 @@ func (s *Service) supervisionObservation(ctx context.Context, store *TaskStore, 
 	if obs.RetriesLeft < 0 {
 		obs.RetriesLeft = 0
 	}
-	obs.ActionsLastHour = s.supervisionActionsLastHour(ctx, store, run.TaskID, now)
+	obs.ActionsThisRun, obs.ActionsLastHour = s.supervisionActionUsage(ctx, store, run.TaskID, run.ID, now)
 	return obs
 }
 
-// supervisionActionsLastHour 数本任务最近一小时里由运行期事件触发的决策行，
-// 即监管动作的真实用量（失败/停摆各算一个动作回合）。读不到就记 0，不影响事件本身。
-func (s *Service) supervisionActionsLastHour(ctx context.Context, store *TaskStore, taskID string, now time.Time) int {
+// supervisionActionUsage 数监管动作的真实用量：本 Run 一个数、同任务滚动一小时一个数。
+// 口径是「有副作用的动作」而不是「决策回合」—— 一个回合里两个动作算两个（W1 T2）。
+// 只数已应用与正在应用的决策（applied / applying）：被校验拒绝的回合没产生副作用。
+// 读不到就全记 0，不影响事件本身。
+func (s *Service) supervisionActionUsage(ctx context.Context, store *TaskStore, taskID, runID string, now time.Time) (thisRun, lastHour int) {
 	if store == nil || strings.TrimSpace(taskID) == "" {
-		return 0
+		return 0, 0
 	}
 	cutoff := now.UTC().Add(-time.Hour).Format(routerTimeLayout)
-	var n int
-	err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM router_decisions WHERE task_id=? AND created_at>=? AND trigger_kind IN (?,?,?,?)`,
-		taskID, cutoff, string(RouterTriggerRunFailed), string(RouterTriggerRunStalled),
-		string(RouterTriggerDirectStalled), string(RouterTriggerCompletionBlocked)).Scan(&n)
+	rows, err := store.db.QueryContext(ctx,
+		`SELECT actions_json, trigger_ref, created_at FROM router_decisions
+		 WHERE task_id=? AND status IN (?,?) AND (created_at>=? OR trigger_ref=? OR trigger_ref LIKE ?)`,
+		taskID, string(RouterDecisionApplied), string(RouterDecisionApplying), cutoff,
+		runID, runID+":a%")
 	if err != nil {
-		return 0
+		return 0, 0
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw, triggerRef, createdAt string
+		if err := rows.Scan(&raw, &triggerRef, &createdAt); err != nil {
+			continue
+		}
+		var actions []RouterAction
+		if err := json.Unmarshal([]byte(raw), &actions); err != nil {
+			continue
+		}
+		count := supervisionSideEffectActionCount(actions)
+		if count == 0 {
+			continue
+		}
+		if strings.TrimSpace(runID) != "" && supervisionTriggerRefMatchesRun(triggerRef, runID) {
+			thisRun += count
+		}
+		if createdAt >= cutoff {
+			lastHour += count
+		}
+	}
+	return thisRun, lastHour
+}
+
+// supervisionTriggerRefMatchesRun 认两种实例键：裸 runID（第一波失败/停摆）与
+// `<runID>:a<N>`（同一 Run 的第 N 波，见 run_failed 唯一键的处理）。
+func supervisionTriggerRefMatchesRun(ref, runID string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	return ref == runID || strings.HasPrefix(ref, runID+":a")
+}
+
+// supervisionSideEffectActionCount 数一个决策里真正消耗预算的动作。say / ask_user /
+// silent 不是副作用，不计入。
+func supervisionSideEffectActionCount(actions []RouterAction) int {
+	n := 0
+	for _, action := range actions {
+		if supervisionIsWriteAction(action.Kind) {
+			n++
+		}
 	}
 	return n
 }

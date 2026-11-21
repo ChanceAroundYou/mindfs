@@ -214,7 +214,6 @@ groups:
       - server/app/server.go
       - server/app/unknown_user_test.go
       - server/app/ws_unknown_test.go
-      - server/app/task_worktree_root_test.go
       - server/internal/api/workspace.go
       - server/internal/api/workspace_test.go
       - server/internal/api/appcontext.go
@@ -8360,6 +8359,10 @@ groups:
       - server/internal/kanban/router_brief.go
       - server/internal/kanban/router_prompt.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - server/internal/kanban/router_service.go
       - server/internal/kanban/router_store.go
       - server/internal/kanban/router_session_store.go
@@ -9181,6 +9184,10 @@ groups:
       - server/internal/kanban/router_service.go
       - server/internal/kanban/router_types.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - server/internal/kanban/activity_service_dispatch.go
       - server/internal/kanban/activity_route_apply.go
       - server/app/workspace_build.go
@@ -9221,6 +9228,10 @@ groups:
       - server/internal/kanban/router_coordinate_turn.go
       - server/internal/kanban/router_tools.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
     tests:
       - server/internal/kanban/router_event_brief_test.go
       - server/internal/kanban/router_event_effect_test.go
@@ -9770,6 +9781,10 @@ groups:
       - server/internal/kanban/router_tools_schema.go
       - server/internal/kanban/router_tools_delivery.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - server/internal/kanban/workflow_node_answer.go
       - server/internal/kanban/task_store_workflow_runtime.go
       - server/internal/kanban/workflow_node_executor.go
@@ -9905,6 +9920,10 @@ groups:
     boundary: "只改提示词文本与其内容守卫：不改 Router 的动作集合、校验、幂等键与 coordinate 白名单，不动 `router.mode`，不新增 HTTP 端点。提示词哈希变化会让 Router 运行时重建/重开会话，这是 `RouterPromptHash` 的既定语义。"
     files:
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
     tests:
       - server/internal/kanban/router_prompt_guidance_test.go
     anchors:
@@ -10342,6 +10361,10 @@ groups:
       - server/internal/kanban/router_types.go
       - server/internal/kanban/router_tools.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - server/internal/kanban/router_prompt_guidance_test.go
       - server/internal/kanban/router_session_mode_test.go
       - server/internal/kanban/router_route_test.go
@@ -10855,6 +10878,10 @@ groups:
       - server/internal/kanban/router_event_types.go
       - server/internal/kanban/router_coordinate.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - server/internal/kanban/service_router.go
       - web/src/services/task/routerDecisions.ts
       - web/src/shared/routerDecisions.ts
@@ -11053,6 +11080,10 @@ groups:
       - server/internal/kanban/service_recover_startup.go
       - server/internal/api/router_runtime.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - scripts/mutate.sh
       - scripts/mutations.txt
       - Makefile
@@ -11331,6 +11362,10 @@ groups:
       - server/internal/kanban/router_coordinate_turn_retry_test.go
       - server/internal/kanban/router_event_store.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - server/internal/kanban/router_settle_compensation.go
       - server/internal/kanban/router_settle_summary_test.go
       - server/internal/kanban/router_tools.go
@@ -11443,7 +11478,7 @@ groups:
       - 'cli/cmd/startup_feishu.go:func feishuOptions(flags startupFlags) app.FeishuOptions {'
 
   - id: G-NY
-    title: 任务详情面板移动端：执行详情与监管记录同排胶囊、直连按节点展示、长内容不横向滚动、消息级状态收敛到任务级
+    title: 任务详情面板移动端：执行详情与监管记录同排胶囊、直连按节点展示、长内容不横向滚动、消息级状态收敛到任务级、打开即落在最新消息
     kind: fix
     symptom: |
       三个移动端症状。① 执行详情看不见：`RunViewEntry` 挂在整段对话流（两千多像素）之后，
@@ -11455,7 +11490,8 @@ groups:
       任务状态重复，长列表里噪音很大。后续反馈（同日）又暴露三处：④ 执行详情与监管记录
       一上一下、监管没有记录时整条按钮消失，形状不固定；⑤ 直连任务只有一句「本轮是直连
       对话，执行过程在任务会话里」+ 打开会话，不像正常的执行详情；⑥ 页脚「运行汇报」
-      标签看不出是进度还是最终结果。
+      标签看不出是进度还是最终结果；⑦ 每次打开详情都停在对话顶部，手机上要往下滑两千
+      多像素才看到最新一条。
     why: |
       必须保留：① 移动端（`max-width:640px`）用 `order:-1` 把 `.task-detail-execution` 提到
       对话流之前，桌面仍保持「对话流 → 执行详情」的下钻顺序。② 表格最小宽度退化为
@@ -11468,12 +11504,18 @@ groups:
       胶囊自带 `▸/▾` 与 `aria-expanded`，一眼看出展开的是哪个；监管没有记录时给空态说明。
       ⑤ 直连本身就是一种节点：没有 WorkflowRun 时按节点行展示「直连对话」+ 任务状态，
       右侧会话图标跳任务主会话，删掉提示文案。⑥ 页脚标签本就是 `purpose=progress` 的
-      运行期进度回复（不是消息类型），改名「进度」并保留与最终结果的区分。
+      运行期进度回复（不是消息类型），改名「进度」并保留与最终结果的区分。⑦ 首屏数据
+      到齐后把对话末尾锚点对齐到 `.mindfs-panel-body` 的可视底部：以「任务 id + 首条活动
+      id」作为这一轮的身份只滚一次，之后的新留言与流式回复不再抢滚动位置（用户可能正在
+      上翻历史）；布局稳定前最多重试 12 帧、连续 2 帧高度不变即停。
     boundary: |
       只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
       100%；会话图标角标在嵌套节点行仍有 2px 级 scrollWidth 差（不产生面板级横向滚动），
       本组未处理。「进度」标记仍只按 `purpose=progress` 判定，不动 Router 的 purpose 语义。
+      自动滚动只发生在首屏到齐那一刻：用户随后手动上翻不会被拉回，重复的任务增量不会二次
+      滚动；移动端胶囊行在对话上方，落到最新消息时它在视口之外（位置与折叠状态都没变，
+      需要向上滚才看到），本组未改它的定位。
     files:
       - web/src/components/task/ActivityMessage.tsx
       - web/src/components/task/ConversationView.tsx
@@ -11483,6 +11525,7 @@ groups:
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/useSupervisionEntry.ts
+      - web/src/components/task/conversationScroll.ts
       - web/src/hooks/useMarkdownViewer.tsx
       - web/src/index.css
       - web/src/i18n/locales/en-US-tasks.ts
@@ -11495,10 +11538,14 @@ groups:
       - web/tests/task-supervision-entry.test.mjs
       - web/tests/activity-reports-inline.test.mjs
       - web/tests/task-completion-checklist.test.mjs
+      - web/tests/conversation-auto-scroll.test.mjs
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
       - 'web/src/components/task/ConversationView.tsx:style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, maxWidth: "100%" }}'
+      - 'web/src/components/task/ConversationView.tsx:if (initialScrollKeyRef.current === key) return;'
+      - 'web/src/components/task/ConversationView.tsx:data-testid="conversation-scroll-anchor"'
+      - 'web/src/components/task/conversationScroll.ts:export function alignConversationToBottom(anchor: HTMLElement): HTMLElement | null {'
       - 'web/src/components/task/TaskDetailPanel.tsx:<div className="task-detail-execution">'
       - 'web/src/components/task/TaskDetailPanel.tsx:fallbackSessionKey={task.main_session_key}'
       - 'web/src/components/task/TaskDetailPanel.tsx:taskStatus={task.status}'
@@ -11545,7 +11592,6 @@ groups:
       - 'server/internal/agent/workdir.go:func temporaryRootDirs() []string {'
       - 'server/internal/agent/workdir.go:roots = append(roots, "/tmp", "/var/tmp")'
       - 'server/internal/agent/workdir.go:func isPathWithin(path, root string) bool {'
-      - 'server/app/server_test.go:func TestAutoAddExternalProjectRootsSkipsOtherSystemTempRoots(t *testing.T) {'
 
   - id: G-PA
     title: 提醒三改：关闭任务内部步骤的完成提醒、去掉提醒文案的 mindfs 前缀、正文统一纯文本并按尾部截断
@@ -11634,7 +11680,7 @@ groups:
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:if (entry.subSession || entry.silent) {'
 
   - id: G-PB
-    title: Super agent 节点级管理员 W1 底座（取消三档 cancel_node/cancel_run/cancel_task）
+    title: Super agent 节点级管理员 W1 底座（取消三档 + 每 Run/每小时监管预算）
     kind: feature
     symptom: |
       Router 在主动监管里只能重试、唤醒与汇报，遇到真正卡死的现场没有收口手段：节点卡在
@@ -11654,6 +11700,10 @@ groups:
       停 driver、写投影后任务回 `waiting_user`（不是终态）；任务级才走人工取消同一条路径。
       ⑤ 三者都保留现场：worktree、会话绑定、尝试记录与输出一律不删。
       前端监管记录把三档算作监管动作并给 zh/en 标签。
+      ⑥ 预算两个窗口独立：`router.supervision.max_actions_per_run`（默认 12）与
+      `max_actions_per_hour`（默认 20，原 6）。计数口径是「一个有副作用的监管动作算 1」，
+      不按决策回合算；say / ask_user / silent 不计。用尽时事件 reason
+      `supervision_budget_exhausted`、任务停 `waiting_user` 并留可见说明，**绝不自动取消**。
     boundary: |
       只做取消动作与可见性，不做预算（W1 T2）、不做验收项（W1 T3）、不做跨进程副作用恢复
       （沿用 G-KV 边界）。`cancel_run` 之后的重启对账由 W1 T4 补口。不使用 `Service.Cancel`
@@ -11670,12 +11720,19 @@ groups:
       - server/internal/kanban/service_activities.go
       - server/internal/kanban/workflow_runtime_router_cancel.go
       - server/internal/kanban/router_prompt.md
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/app/server.go
       - web/src/components/task/supervisionEntryModel.ts
       - web/src/i18n/locales/zh-CN-tasks.ts
       - web/src/i18n/locales/en-US-tasks.ts
       - docs/superpowers/plans/2026-11-21-super-agent-node-admin.md
     tests:
       - server/internal/kanban/router_supervision_cancel_test.go
+      - server/internal/kanban/router_supervision_budget_test.go
+      - cli/cmd/startup_config_test.go
+      - server/app/router_supervision_config_test.go
       - web/tests/task-supervision-entry.test.mjs
     anchors:
       - 'server/internal/kanban/router_types.go:RouterActionCancelNode RouterActionKind = "cancel_node"'
@@ -11684,5 +11741,55 @@ groups:
       - 'server/internal/kanban/router_supervision_tools.go:Name: "router_cancel_node",'
       - 'server/internal/kanban/workflow_runtime_router_cancel.go:func (s *Service) CancelWorkflowRunForRouter(ctx context.Context, rootID, taskID, reason string) error {'
       - 'server/internal/kanban/workflow_runtime_router_cancel.go:s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, "run_cancelled_by_router", reason, false)'
+      - 'server/internal/kanban/router_supervision.go:defaultSupervisionMaxActionsPerRun = 12'
+      - 'server/internal/kanban/router_supervision_actions.go:supervision action budget exhausted for this run'
+      - 'cli/cmd/startup.go:MaxActionsPerRun  *int    `json:"max_actions_per_run"`'
+      - 'server/app/server.go:RouterSupervisionMaxActionsPerRun  int'
       - 'server/internal/kanban/router_prompt.md:router_cancel_node(node_id, reason)'
       - 'web/src/components/task/supervisionEntryModel.ts:cancel_task: "task.supervision.action.cancel_task",'
+
+  - id: G-PC
+    title: 移除自动发现（外部项目不再自动注册，项目只能手动添加）
+    kind: trim
+    symptom: |
+      项目列表里凭空冒出 `proj`、`tmp` 乃至 `task-9` 这类从没人手动加过的条目，
+      而且删掉还会回来。取证：启动时 `workspace_build.go` 直接调
+      `autoAddExternalProjectRoots` + `startExternalProjectDiscoveryLoop`，后者每
+      `externalProjectDiscoveryInterval`（60 秒）扫一遍 `~/.claude/projects` 里每个
+      会话 jsonl 的 `cwd` 与 Codex 的会话目录，把命中的路径写进注册表。凡是「在某个
+      临时目录/隔离实例里跑过 agent」都会变成一个项目：现场
+      `~/.config/mindfs/registry.json` 里 `proj → /tmp/mindfs-crash-sim/proj`，
+      与日志 `[startup/projects] auto added external project roots count=1`
+      同一秒（2026-11-21 01:41:42）。
+    why: |
+      必须保留：用户明确「不需要自动发现」，过滤器再收紧也只是减少误报，唯有移除入口
+      才能保证列表里只剩用户自己加的项目。移除面：`workspace_build.go` 的两行调用、
+      `server_helpers.go` 里五个只服务于它的函数（`autoAddExternalProjectRoots`、
+      `isTaskWorktreeOfRegisteredProject`、`pruneTaskWorktreeRoots`、
+      `hasMindFSMetadataDir`、`startExternalProjectDiscoveryLoop`）、
+      `server.go` 的 60 秒间隔常量、`agent/discovery.go` 整份扫描器（Claude/Codex
+      两条读取链），以及只为它们存在的工作树路径助手 `TaskWorktreeParentRoot` /
+      `TaskWorktreeDirName` 与两组专属测试。`codexHomeDir` 仍有生产消费者
+      （`codexConfigPath`），迁到 `pool_codex_proxy.go` 保留。
+    boundary: |
+      只删自动注册：注册表结构、手动添加/删除项目、已存在的项目条目、磁盘目录与 agent
+      运行目录一律不动；G-NZ 的多临时根判据按用户要求原样保留（现已无生产调用方，
+      仅测试钉住）。启动后项目列表只反映用户操作与既有注册表内容，不会再自行增长。
+    files:
+      - server/app/workspace_build.go
+      - server/app/server.go
+      - server/app/server_helpers.go
+      - server/app/server_test.go
+      - server/internal/agent/pool_codex_proxy.go
+      - server/internal/agent/workdir.go
+      - server/internal/agent/discovery.go
+      - server/app/task_worktree_root_test.go
+    tests:
+      - server/app/server_test.go
+      - server/internal/agent/workdir_test.go
+    anchors:
+      - 'server/app/workspace_build.go:prefs := m.shared.prefs'
+      - 'server/app/server_helpers.go:func normalizeRegisteredForkSessions(ctx context.Context, services *api.AppContext) error {'
+      - 'server/internal/agent/pool_codex_proxy.go:func codexHomeDir() string {'
+      - 'server/internal/agent/workdir.go:func IsTemporaryWorkDir(path string) bool {'
+      - 'server/internal/agent/workdir.go:func isPathWithin(path, root string) bool {'

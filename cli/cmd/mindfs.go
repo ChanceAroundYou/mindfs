@@ -112,7 +112,7 @@ func main() {
 	// 任务派发默认 Agent/模型，同样只走 config.json（task 段）。
 	taskAgent, taskModel := "", ""
 	// 主动监管开关与预算，只走 config.json（router.supervision 段）。
-	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions, routerSupervisionQuotaHold := "", 0, 0, 0
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionRunActions, routerSupervisionActions, routerSupervisionQuotaHold := "", 0, 0, 0, 0
 	// 飞书通道，只走 config.json（channels.feishu 段）。缺省全关。
 	feishuEnabled, feishuOwnerOpenID, feishuLarkCLI, feishuCardTTLHours := false, "", "", 0
 	remove := flag.Bool("remove", false, "remove the managed directory")
@@ -171,7 +171,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	routerSupervisionMode, routerSupervisionRetries, routerSupervisionActions, routerSupervisionQuotaHold = routerSupervision(startupCfg)
+	routerSupervisionMode, routerSupervisionRetries, routerSupervisionRunActions, routerSupervisionActions, routerSupervisionQuotaHold = routerSupervision(startupCfg)
 	internalAutoStart := autoStartBoot || *internalAutoStartFlag
 	if internalAutoStart {
 		*foreground = true
@@ -391,6 +391,7 @@ func main() {
 			RouterRoots:                        routerRoots(startupCfg),
 			RouterSupervisionMode:              routerSupervisionMode,
 			RouterSupervisionMaxRetriesPerNode: routerSupervisionRetries,
+			RouterSupervisionMaxActionsPerRun:  routerSupervisionRunActions,
 			RouterSupervisionMaxActionsPerHour: routerSupervisionActions,
 			RouterSupervisionQuotaHoldSeconds:  routerSupervisionQuotaHold,
 			TaskAgent:                          taskAgent,

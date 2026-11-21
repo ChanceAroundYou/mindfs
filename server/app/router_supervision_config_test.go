@@ -14,11 +14,13 @@ func TestRouterConfigFromOptionsCarriesSupervision(t *testing.T) {
 		RouterMode:                         "coordinate",
 		RouterSupervisionMode:              "shadow",
 		RouterSupervisionMaxRetriesPerNode: 3,
+		RouterSupervisionMaxActionsPerRun:  9,
 		RouterSupervisionMaxActionsPerHour: 4,
 		RouterSupervisionQuotaHoldSeconds:  600,
 	})
 	if cfg.Supervision.Mode != kanban.RouterSupervisionShadow ||
-		cfg.Supervision.MaxRetriesPerNode != 3 || cfg.Supervision.MaxActionsPerHour != 4 ||
+		cfg.Supervision.MaxRetriesPerNode != 3 || cfg.Supervision.MaxActionsPerRun != 9 ||
+		cfg.Supervision.MaxActionsPerHour != 4 ||
 		cfg.Supervision.QuotaHold != 10*time.Minute {
 		t.Fatalf("supervision = %+v", cfg.Supervision)
 	}
@@ -28,7 +30,8 @@ func TestRouterConfigFromOptionsCarriesSupervision(t *testing.T) {
 	if off.Supervision.Mode != kanban.RouterSupervisionOff {
 		t.Fatalf("default supervision mode = %q, want off", off.Supervision.Mode)
 	}
-	if off.Supervision.MaxRetriesPerNode != 2 || off.Supervision.MaxActionsPerHour != 6 ||
+	if off.Supervision.MaxRetriesPerNode != 2 || off.Supervision.MaxActionsPerRun != 12 ||
+		off.Supervision.MaxActionsPerHour != 20 ||
 		off.Supervision.QuotaHold != 15*time.Minute {
 		t.Fatalf("default supervision budget = %+v", off.Supervision)
 	}

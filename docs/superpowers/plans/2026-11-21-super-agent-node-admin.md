@@ -152,3 +152,22 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   `TestCoordinatorTickReclaimsStaleClaims` 是既有 sqlite 并发 flake，单跑通过。
 - 提示词：新增三档工具说明；删掉「禁止 cancel Run」的总禁令，改为「只能走监管取消工具，
   最小够用、收口动作不与开工同轮、不许绕预算」。
+
+### T2 完成（2026-11-21）
+
+- 配置：`router.supervision.max_actions_per_run`（默认 12）与 `max_actions_per_hour`
+  （默认从 6 改为 20，用户裁定），只走 `config.json`；`cli/cmd` 与 `server/cmd/mindfs-server`
+  两条启动路径都透传，`app.routerConfigFromOptions` 落到 `kanban.RouterSupervisionConfig`。
+- 计数口径：一个决策里每个**有副作用**的监管动作计 1（`retry_node` / `resume_run` /
+  `retry_direct` / `notify_user` / `escalate` / 三档 cancel），`say` / `ask_user` / `silent`
+  不计。只数 `applied` / `applying` 的决策 —— 被校验拒绝的回合没有副作用。
+- 两个窗口独立：本 Run（`trigger_ref` 认裸 `runID` 与 `<runID>:a<N>` 两种实例键）与同任务
+  滚动一小时；`SupervisionObservation` 新增 `actions_this_run` / `run_action_budget`。
+  直连回合没有 Run，只受小时额度约束。
+- 用尽：当前动作不执行，`supervisionBudgetError` → 事件 reason
+  `supervision_budget_exhausted`（写明是哪个窗口）+ 可见系统说明 + 任务 `waiting_user`；
+  **绝不自动取消**，也不允许用取消绕过预算。
+- 验证：`router_supervision_budget_test.go` 4 条（默认值 12/20、Run 额度用尽停
+  `waiting_user` 且节点仍 `running`、小时额度按动作而非回合计数、say/ask 不计且有正对照），
+  `cli/cmd` 与 `server/app` 配置透传用例按新字段更新。四处变异各自打红后还原：按决策回合
+  计数、去掉 Run 窗口、把 say 也计入、预算用尽改成终态任务。

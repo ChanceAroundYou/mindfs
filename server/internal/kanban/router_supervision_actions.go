@@ -71,20 +71,12 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 				return &supervisionBudgetError{reason: fmt.Sprintf(
 					"supervision retry budget exhausted for node %s (%d/%d)", target.NodeID, target.RetriesUsed, cfg.MaxRetriesPerNode)}
 			}
-			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
-				return &supervisionBudgetError{reason: fmt.Sprintf(
-					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
-			}
 		case RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask:
 			if obs == nil {
 				return fmt.Errorf("%s requires a supervision block; this turn has none", action.Kind)
 			}
 			if err := validateCancelAction(obs, action); err != nil {
 				return err
-			}
-			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
-				return &supervisionBudgetError{reason: fmt.Sprintf(
-					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
 			}
 		case RouterActionResumeRun:
 			if obs == nil {
@@ -108,10 +100,6 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 			if idle == 0 {
 				return errors.New("resume_run is not allowed: every open node is still replying")
 			}
-			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
-				return &supervisionBudgetError{reason: fmt.Sprintf(
-					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
-			}
 		case RouterActionRetryDirect:
 			if obs == nil || obs.Direct == nil {
 				return errors.New("retry_direct requires a direct-turn supervision block; this turn has none")
@@ -132,10 +120,6 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 					"supervision direct retry budget exhausted for reply %s (%d/%d)",
 					activityID, obs.Direct.RetriesUsed, supervisionDirectMaxRetries)}
 			}
-			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
-				return &supervisionBudgetError{reason: fmt.Sprintf(
-					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
-			}
 		case RouterActionEscalate:
 			if obs == nil {
 				return errors.New("escalate requires a supervision block; this turn has none")
@@ -145,10 +129,6 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 			}
 			if len(action.Body) > routerActionBodyMaxBytes {
 				return fmt.Errorf("escalate summary exceeds %d bytes", routerActionBodyMaxBytes)
-			}
-			if obs.ActionsLastHour >= cfg.MaxActionsPerHour {
-				return &supervisionBudgetError{reason: fmt.Sprintf(
-					"supervision action budget exhausted (%d/%d actions in the last hour)", obs.ActionsLastHour, cfg.MaxActionsPerHour)}
 			}
 		case RouterActionNotifyUser:
 			if strings.TrimSpace(action.Body) == "" {
@@ -175,6 +155,21 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 	}
 	if cancels > 1 {
 		return errors.New("at most one cancel action per turn")
+	}
+	// 预算按「这一轮实际要花几个副作用动作」判，两个窗口独立：本 Run 12 个、同任务
+	// 滚动一小时 20 个（用户裁定 W1 T2）。用尽时返回 typed error，回合停在
+	// waiting_user 并留可见说明 —— 绝不自动取消（预算不是收口的理由）。
+	if spend := supervisionSideEffectActionCount(actions); spend > 0 && obs != nil {
+		if obs.ActionsThisRun+spend > cfg.MaxActionsPerRun {
+			return &supervisionBudgetError{reason: fmt.Sprintf(
+				"supervision action budget exhausted for this run (%d/%d actions; this turn asks for %d)",
+				obs.ActionsThisRun, cfg.MaxActionsPerRun, spend)}
+		}
+		if obs.ActionsLastHour+spend > cfg.MaxActionsPerHour {
+			return &supervisionBudgetError{reason: fmt.Sprintf(
+				"supervision action budget exhausted (%d/%d actions in the last hour; this turn asks for %d)",
+				obs.ActionsLastHour, cfg.MaxActionsPerHour, spend)}
+		}
 	}
 	return nil
 }

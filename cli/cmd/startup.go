@@ -117,6 +117,7 @@ type startupRouterConfig struct {
 type startupRouterSupervisionConfig struct {
 	Mode              *string `json:"mode"`
 	MaxRetriesPerNode *int    `json:"max_retries_per_node"`
+	MaxActionsPerRun  *int    `json:"max_actions_per_run"`
 	MaxActionsPerHour *int    `json:"max_actions_per_hour"`
 	QuotaHoldSeconds  *int    `json:"quota_hold_seconds"`
 }
@@ -381,9 +382,9 @@ func parseStartupDuration(field string, value *string) (*time.Duration, error) {
 
 // routerSupervision 解出 config.json 的 router.supervision 段。缺省返回空值，
 // 由 app/kanban 归一化成 off + 默认预算（2 次重试/节点、6 个动作/小时）。
-func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxActionsPerHour, quotaHoldSeconds int) {
+func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxActionsPerRun, maxActionsPerHour, quotaHoldSeconds int) {
 	if cfg.Router == nil || cfg.Router.Supervision == nil {
-		return "", 0, 0, 0
+		return "", 0, 0, 0, 0
 	}
 	sup := cfg.Router.Supervision
 	if sup.Mode != nil {
@@ -392,13 +393,16 @@ func routerSupervision(cfg startupConfig) (mode string, maxRetriesPerNode, maxAc
 	if sup.MaxRetriesPerNode != nil {
 		maxRetriesPerNode = *sup.MaxRetriesPerNode
 	}
+	if sup.MaxActionsPerRun != nil {
+		maxActionsPerRun = *sup.MaxActionsPerRun
+	}
 	if sup.MaxActionsPerHour != nil {
 		maxActionsPerHour = *sup.MaxActionsPerHour
 	}
 	if sup.QuotaHoldSeconds != nil {
 		quotaHoldSeconds = *sup.QuotaHoldSeconds
 	}
-	return mode, maxRetriesPerNode, maxActionsPerHour, quotaHoldSeconds
+	return mode, maxRetriesPerNode, maxActionsPerRun, maxActionsPerHour, quotaHoldSeconds
 }
 
 // routerRoots 把 config.json 的 roots 覆盖表原样交给 app 归一化。

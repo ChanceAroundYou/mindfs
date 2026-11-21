@@ -62,6 +62,7 @@ type StartOptions struct {
 	// 空模式 = off；预算 <=0 由 kanban 归一化成默认值。
 	RouterSupervisionMode              string
 	RouterSupervisionMaxRetriesPerNode int
+	RouterSupervisionMaxActionsPerRun  int
 	RouterSupervisionMaxActionsPerHour int
 	RouterSupervisionQuotaHoldSeconds  int
 	// TaskAgent / TaskModel 是新任务派发的默认 Agent 与模型（节点本地
@@ -149,6 +150,7 @@ func routerConfigFromOptions(opts StartOptions) kanban.RouterConfig {
 		Supervision: kanban.RouterSupervisionConfig{
 			Mode:              kanban.RouterSupervisionMode(opts.RouterSupervisionMode),
 			MaxRetriesPerNode: opts.RouterSupervisionMaxRetriesPerNode,
+			MaxActionsPerRun:  opts.RouterSupervisionMaxActionsPerRun,
 			MaxActionsPerHour: opts.RouterSupervisionMaxActionsPerHour,
 			QuotaHold:         time.Duration(opts.RouterSupervisionQuotaHoldSeconds) * time.Second,
 		},
