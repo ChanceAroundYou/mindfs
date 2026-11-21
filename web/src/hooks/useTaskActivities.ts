@@ -22,6 +22,10 @@ import {
 import type { ComposerAttachment, UploadProgress } from "../shared/uploadTypes";
 import { runTaskNow } from "../services/task/crud";
 import { postTaskHumanGate } from "../services/task/humanGate";
+import {
+  postTaskWorkflowPublish,
+  type WorkflowPublishDecision,
+} from "../services/task/workflowPublish";
 import { sessionService } from "../services/session";
 
 export type UseTaskActivitiesResult = {
@@ -46,6 +50,11 @@ export type UseTaskActivitiesResult = {
   cancelUpload: () => void;
   answerQuestion: (activity: TaskActivity, answers: Record<string, string>) => Promise<void>;
   decideGate: (activity: TaskActivity, decision: HumanGateDecision, note?: string) => Promise<void>;
+  decideWorkflowPublish: (
+    activity: TaskActivity,
+    decision: WorkflowPublishDecision,
+    note?: string,
+  ) => Promise<void>;
   /** 派发排队中的首条留言（新建任务时勾掉了「立即执行」）。 */
   runQueued: () => Promise<void>;
   runningQueued: boolean;
@@ -267,6 +276,29 @@ export function useTaskActivities(
     [rootId, taskId, nodeId],
   );
 
+  // 与 decideGate 同一套乐观更新：回包带回落库后的行，直接替换掉本地那一条。
+  const decideWorkflowPublish = useCallback(
+    async (activity: TaskActivity, decision: WorkflowPublishDecision, note?: string) => {
+      setPromptDeciding(true);
+      setPromptError(null);
+      try {
+        const updated = await postTaskWorkflowPublish(
+          activity.root_id || rootId,
+          taskId,
+          { activityId: activity.id, decision, note },
+          nodeId,
+        );
+        setActivities((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
+      } catch (err) {
+        setPromptError(errorMessage(err));
+        throw err;
+      } finally {
+        setPromptDeciding(false);
+      }
+    },
+    [rootId, taskId, nodeId],
+  );
+
   const runQueued = useCallback(async () => {
     setRunningQueued(true);
     setSendError(null);
@@ -296,6 +328,7 @@ export function useTaskActivities(
     cancelUpload,
     answerQuestion,
     decideGate,
+    decideWorkflowPublish,
     runQueued,
     runningQueued,
     promptDeciding,

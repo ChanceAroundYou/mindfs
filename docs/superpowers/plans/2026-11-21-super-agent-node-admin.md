@@ -344,3 +344,33 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   校验层不复查）。`go test -run 'Router|Workflow|Brief' ./server/internal/kanban/` 全绿。
 - 边界：T1 只放开「这一轮临时用」；固化、派生、模型档层级见 T2–T4（未实现前 Router 没有
   写控制面的工具）。
+
+### T2 完成（2026-11-21）— 固化分两档 + 待批准卡
+
+用户裁定「固化、提升到全局需要批准」的具体形状：**判据只有一处实现**，两条路径共用同一个
+写入函数，避免「批准后的写入」与「免批写入」出现两套语义。
+
+- **两档**（`workflowPublishNeedsApproval`）：项目级**新**条目 → 直接
+  `commitWorkflowPublish`（写草稿 → 发布 → 落一行可核对的系统行凭据）；**全局**（`scope:
+  global`，控制面语义里 `RootID == ""`）或**目录里已有 id**（改已有）→ 只落一张
+  `workflow_publish` 卡（`status=waiting_user`），控制面一个字节都不写。
+- **批准必须显式**：专用端点 `POST /api/tasks/{id}/workflow-publish`（`Service.ResolveWorkflowPublish`），
+  普通留言端点不能批准 —— 与 HumanGate 同一条规矩。重复决定返回 409，不重复发布。
+- **批准的是看过的这一版**：请求钉住提出时的草稿 `revision`，批准时按它 CAS；期间草稿被改过
+  就 `ErrWorkflowPublishStale`（HTTP 409），卡片转 failed 并写明「需要重新起草」，绝不把旧
+  内容盖到新草稿上。
+- **动作与工具**：`RouterActionSaveWorkflow`（`save_workflow`），`graph` 与
+  `base_workflow_id` **互斥且必须给一个**（工具层 + 校验层各拒一次）；只给
+  `base_workflow_id` 时从该条目最新版本复制一份图，并在 meta 上记 `derived:<id>` 标签
+  （复制而非引用：改副本不会动来源条目）。
+- **前端**：任务详情里渲染待批准卡（名字 + 作用域 + 正文 + 附言 + 批准/驳回），附言随决定提交，
+  不变成任务留言；已决定的卡只留结论，草稿过期时显示「需要重新起草」。
+- **提示词**：规则 11 把 `router_save_workflow` 加进「运行期事件回合不可用」；规则 21 写明
+  两档与「落卡不等于做成，不要汇报已经固化」。
+- 验证：`router_workflow_publish_test.go` 9 条 + `http_task_workflow_publish_test.go` 1 条 +
+  `task-workflow-publish-card.test.mjs` 6 条；7 处变异各自打红后还原（去掉两档判据 / 批准不
+  真正写入 / 去掉草稿 CAS / 作用域塌成项目 / 派生不复制 / 工具去掉互斥 / 驳回也写入）。
+  其中「派生不复制」与「驳回也写入」两条反例是安全面：前者会让改副本污染来源，后者会让
+  一次驳回悄悄发布。
+- 边界：派生只记标签，不做版本链追溯；模型档并入 workflow 的层级（节点 > 任务 > 全局）
+  仍是 W3 后续任务（T4）。

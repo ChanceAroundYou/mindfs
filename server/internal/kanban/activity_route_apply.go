@@ -181,6 +181,8 @@ func (s *ActivityService) applyRouteAction(
 		return s.applyRouteSetNodeModel(ctx, decision, task, action)
 	case RouterActionSkipNode:
 		return s.applyRouteSkipNode(ctx, decision, task, action)
+	case RouterActionSaveWorkflow:
+		return s.applyRouteSaveWorkflow(ctx, decision, task, action)
 	default:
 		return fmt.Errorf("unsupported action %q", action.Kind)
 	}

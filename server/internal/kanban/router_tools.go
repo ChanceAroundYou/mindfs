@@ -98,6 +98,7 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.recordAcceptanceTool(),
 		e.setNodeModelTool(),
 		e.skipNodeTool(),
+		e.saveWorkflowTool(),
 	}
 	// 监管工具只要实例开着监管就出现，与本轮有没有观测块无关（S1/S2）。
 	return append(tools, e.supervisionTools()...)
@@ -207,6 +208,76 @@ func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {
 			// workflow」而不是「运行期不许跑 workflow」；统一交给运行期白名单。
 			if !isRuntimeEventBrief(e.brief) && !briefHasWorkflow(e.brief, workflowID) {
 				return "", fmt.Errorf("workflow %q is not available for this task", workflowID)
+			}
+			return e.record(action)
+		},
+	}
+}
+
+func (e *routerToolEnv) saveWorkflowTool() RouterToolSpec {
+	return RouterToolSpec{
+		Name: "router_save_workflow",
+		Description: "把一张 workflow 固化进目录。项目级新条目直接生效；全局条目或修改已有条目会先落一张待批准卡，" +
+			"由用户在任务详情里批准后生效。graph 与 base_workflow_id 二选一（后者从既有条目派生一份副本，不改来源条目）。",
+		Class: RouterToolWrite,
+		InputSchema: objectSchema(map[string]any{
+			"workflow_id": map[string]any{"type": "string", "minLength": 1, "description": "目录里的条目 id（小写短横线）"},
+			"name":        map[string]any{"type": "string", "description": "展示名"},
+			"scope":       map[string]any{"type": "string", "enum": []string{WorkflowScopeProject, WorkflowScopeGlobal}},
+			"graph":       map[string]any{"type": "object", "description": "要固化的图（与 base_workflow_id 二选一）"},
+			"base_workflow_id": map[string]any{
+				"type": "string", "description": "从目录里这一版派生（复制它的图；可再用 graph 覆盖）",
+			},
+			"reason": map[string]any{"type": "string"},
+		}, []string{"workflow_id"}),
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var args struct {
+				WorkflowID     string              `json:"workflow_id"`
+				Name           string              `json:"name"`
+				Scope          string              `json:"scope"`
+				Graph          *WorkflowDefinition `json:"graph"`
+				BaseWorkflowID string              `json:"base_workflow_id"`
+				Reason         string              `json:"reason"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			workflowID := strings.TrimSpace(args.WorkflowID)
+			if workflowID == "" {
+				return "", errors.New("workflow_id required")
+			}
+			baseID := strings.TrimSpace(args.BaseWorkflowID)
+			if args.Graph != nil && baseID != "" {
+				return "", errors.New("give either graph or base_workflow_id, not both")
+			}
+			if args.Graph == nil && baseID == "" {
+				return "", errors.New("save_workflow requires graph or base_workflow_id")
+			}
+			scope := strings.TrimSpace(args.Scope)
+			switch scope {
+			case "":
+				scope = WorkflowScopeProject
+			case WorkflowScopeProject, WorkflowScopeGlobal:
+			default:
+				return "", fmt.Errorf("scope must be %q or %q", WorkflowScopeProject, WorkflowScopeGlobal)
+			}
+			if baseID != "" && !briefHasWorkflow(e.brief, baseID) {
+				return "", fmt.Errorf("workflow %q is not available to derive from", baseID)
+			}
+			action := RouterAction{
+				Kind:         RouterActionSaveWorkflow,
+				WorkflowID:   workflowID,
+				WorkflowName: strings.TrimSpace(args.Name),
+				Scope:        scope,
+				DerivedFrom:  baseID,
+				Reason:       truncateRouterText(args.Reason, 500),
+			}
+			if args.Graph != nil {
+				graph, err := sanitizeRouterGraph(args.Graph)
+				if err != nil {
+					return "", err
+				}
+				action.Graph = graph
 			}
 			return e.record(action)
 		},
@@ -395,6 +466,32 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			if !isRuntimeEventBrief(brief) && briefHasWorkflow(brief, action.WorkflowID) == false {
 				return fmt.Errorf("workflow %q is not available", action.WorkflowID)
 			}
+		case RouterActionSaveWorkflow:
+			// 固化不是执行：不动当前 Run，也不与执行类动作互斥。但它写控制面，
+			// 所以图必须自己站得住（决策落库后可能被重放）。
+			scope := strings.TrimSpace(action.Scope)
+			switch scope {
+			case "":
+				scope = WorkflowScopeProject
+			case WorkflowScopeProject, WorkflowScopeGlobal:
+			default:
+				return fmt.Errorf("invalid scope %q", action.Scope)
+			}
+			if strings.TrimSpace(action.WorkflowID) == "" {
+				return errors.New("save_workflow requires workflow_id")
+			}
+			if action.Graph != nil && action.DerivedFrom != "" {
+				return errors.New("save_workflow takes either graph or base_workflow_id, not both")
+			}
+			if action.Graph == nil && action.DerivedFrom == "" {
+				return errors.New("save_workflow requires graph or base_workflow_id")
+			}
+			if action.Graph != nil {
+				if _, err := sanitizeRouterGraph(action.Graph); err != nil {
+					return err
+				}
+			}
+			action.Scope = scope
 		case RouterActionMessageAgent, RouterActionDeliver:
 			executions++
 			if strings.TrimSpace(action.Body) == "" {

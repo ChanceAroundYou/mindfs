@@ -12020,7 +12020,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:20. **节点级管理（`router_set_node_model` / `router_skip_node`）**'
 
   - id: G-PE
-    title: Super agent 自设计 workflow W3：Router 当场起草临时图（项目内免批、不进目录）+ 全局固化仍需显式批准
+    title: Super agent 自设计 workflow W3：临时图直接跑（不进目录）+ 固化分两档（项目级新条目免批、全局/改已有需人批准）
     kind: feature
     symptom: |
       brief 里的 workflow 目录是人工维护的固定流程。任务需要的形状（先定位再修、分头排查再汇总）
@@ -12041,21 +12041,37 @@ groups:
       ④ 图是模型写的，三道闸都在 Router 侧：节点 ≤ 12、边（含 Loop 子图）≤ 24、整图 JSON
       ≤ 64 KiB；结构走 `ValidateWorkflowDefinitionForAuthoring`，与工作流编辑器同一套规则
       （悬空边、环、未知 kind、末端 human_gate 都拒）。
-      ⑤ 提示词规则 21 说明形状与边界，并明确「要固化 / 覆盖目录版本现在没有这个权限，交用户在
-      编辑器里做」—— 免批只放开「这一轮临时用」，不放开「写进目录给所有人用」。
+      ⑤ 提示词规则 21 说明形状、`save_workflow` 的两档与边界：落卡不等于做成，不许汇报「已经
+      固化」—— 免批只放开「项目级新条目」。
+      ⑥ **固化（T2）分两档，判据只有一处实现**（`workflowPublishNeedsApproval`）：项目级**新**
+      条目直接 `commitWorkflowPublish`（写草稿 → 发布 → 落一行可核对的时间线凭据）；**全局**条目
+      或**目录里已有 id**（改已有）只落一张 `workflow_publish` 待批准卡（`status=waiting_user`），
+      控制面一个字节都不写。人通过专用端点 `POST /api/tasks/{id}/workflow-publish` 批准才真正写入 ——
+      普通留言端点不能批准，和 HumanGate 同一条规矩。
+      ⑦ 批准的是「看过的这一版」：请求里钉住提出时的草稿 `revision`，批准时按它做 CAS；期间有人
+      改过草稿就 `ErrWorkflowPublishStale`（HTTP 409），卡片转 failed 并说明「需要重新起草」，绝不把
+      旧内容盖到新草稿上。同一张卡重复决定返回 409，不会重复发布。
+      ⑧ 免批路径与批准路径走同一个 `commitWorkflowPublish`，避免「批准后的写入」与「免批写入」
+      出现两套语义；作用域翻译也只有一处（`RootIDForScope`：global → 空 root）。
     boundary: |
-      W3 T1 只做「临时图直接跑」；把图固化成项目级/全局 workflow（带待批准卡与人在任务详情里
-      批准）、从既有 workflow 派生（`derived_from`）、以及模型档并入 workflow 的层级（节点 >
-      任务 > 全局）属于 W3 后续任务，未实现前 Router 没有写控制面的任何工具。临时图不受
-      `session_mode` 之外的特殊待遇：仍是普通 Run，照常走证据门、监管、worktree 生命周期。
+      W3 T1（临时图直接跑）与 T2（固化两档 + 待批准卡）已实现。派生目前只做「复制一份并记
+      `derived:wf-x` 标签」，不做版本链追溯；模型档并入 workflow 的层级（节点 > 任务 > 全局）
+      仍是 W3 后续任务。临时图与固化都不受特殊待遇：Run 照常走证据门、监管、worktree 生命周期。
     files:
       - server/internal/kanban/router_workflow_graph.go
       - server/internal/kanban/router_types.go
       - server/internal/kanban/router_tools.go
       - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/workflow_publish.go
+      - server/internal/kanban/activity_route_workflow_publish.go
+      - server/internal/kanban/service_workflow_publish.go
+      - server/internal/api/http_task_workflow_publish.go
+      - server/internal/api/http_routes.go
       - server/internal/kanban/router_prompt.md
     tests:
       - server/internal/kanban/router_inline_workflow_test.go
+      - server/internal/kanban/router_workflow_publish_test.go
+      - server/internal/api/http_task_workflow_publish_test.go
     anchors:
       - 'server/internal/kanban/router_workflow_graph.go:const routerAdhocWorkflowID = "adhoc"'
       - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxNodes = 12'
@@ -12064,9 +12080,21 @@ groups:
       - 'server/internal/kanban/router_workflow_graph.go:func sanitizeRouterGraph(graph *WorkflowDefinition) (*WorkflowDefinition, error) {'
       - 'server/internal/kanban/router_workflow_graph.go:func adhocVersionID(graph WorkflowDefinition) string {'
       - 'server/internal/kanban/router_workflow_graph.go:func inlineGraphEdgeCount(graph WorkflowDefinition) int {'
-      - 'server/internal/kanban/router_types.go:	Graph *WorkflowDefinition `json:"graph,omitempty"`'
+      - 'server/internal/kanban/router_types.go:	Graph  *WorkflowDefinition `json:"graph,omitempty"`'
       - 'server/internal/kanban/router_tools.go:func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {'
       - 'server/internal/kanban/router_tools.go:				if _, err := sanitizeRouterGraph(action.Graph); err != nil {'
       - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) resolveRouteWorkflowVersion(ctx context.Context, task Task, action RouterAction) (WorkflowVersion, error) {'
       - 'server/internal/kanban/activity_route_apply.go:		graph.RootID = task.RootID'
+      - 'server/internal/kanban/router_types.go:	RouterActionSaveWorkflow RouterActionKind = "save_workflow"'
+      - 'server/internal/kanban/workflow_publish.go:var ErrWorkflowPublishStale = errors.New("workflow draft changed since the request; ask again")'
+      - 'server/internal/kanban/workflow_publish.go:func workflowPublishNeedsApproval(ctx context.Context, store *WorkflowStore, req WorkflowPublishRequest) (bool, error) {'
+      - 'server/internal/kanban/workflow_publish.go:func commitWorkflowPublish(ctx context.Context, store *WorkflowStore, req WorkflowPublishRequest, taskRootID, publishedBy string) (WorkflowVersion, error) {'
+      - 'server/internal/kanban/workflow_publish.go:	if req.BaseDraftRevision != "" && draft.Revision != req.BaseDraftRevision {'
+      - 'server/internal/kanban/workflow_publish.go:func RootIDForScope(taskRootID, scope string) string {'
+      - 'server/internal/kanban/activity_route_workflow_publish.go:const ActivityTypeWorkflowPublish = "workflow_publish"'
+      - 'server/internal/kanban/activity_route_workflow_publish.go:func (s *ActivityService) applyRouteSaveWorkflow(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {'
+      - 'server/internal/kanban/service_workflow_publish.go:func (s *Service) ResolveWorkflowPublish(ctx context.Context, rootID, taskID, activityID, decision, note string) (TaskActivity, error) {'
+      - 'server/internal/kanban/service_workflow_publish.go:commitWorkflowPublish(ctx, s.activityServiceForRoot(store.root.ID), req, task.RootID, "user")'
+      - 'server/internal/api/http_routes.go:	r.Post("/api/tasks/{id}/workflow-publish", h.handleKanbanTaskWorkflowPublish)'
+      - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'

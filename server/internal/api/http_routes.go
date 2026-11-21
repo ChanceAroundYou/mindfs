@@ -170,6 +170,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/tasks/{id}/finish-worktree", h.handleKanbanTaskFinishWorktree)
 	r.Post("/api/tasks/{id}/begin-finish", h.handleKanbanTaskBeginFinish)
 	r.Post("/api/tasks/{id}/human-gate", h.handleKanbanTaskHumanGate)
+	r.Post("/api/tasks/{id}/workflow-publish", h.handleKanbanTaskWorkflowPublish)
 	r.Get("/api/dirs", h.handleDirs)
 	r.Post("/api/dirs", h.handleAddDir)
 	r.Post("/api/dirs/{id}/rename", h.handleRenameDir)

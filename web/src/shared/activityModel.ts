@@ -221,6 +221,8 @@ export function activityTypeTagKey(activity: TaskActivity): MessageKey | null {
       return "task.activity.type.question";
     case "human_gate":
       return "task.activity.type.humanGate";
+    case "workflow_publish":
+      return "task.activity.type.workflowPublish";
     default:
       return null;
   }

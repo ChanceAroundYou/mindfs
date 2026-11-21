@@ -214,6 +214,9 @@ const (
 	// NodeRun 行），因为改档与跳过都发生在「下一 attempt」而不是某一行上。
 	RouterActionSetNodeModel RouterActionKind = "set_node_model"
 	RouterActionSkipNode     RouterActionKind = "skip_node"
+	// W3：把 Router 起草的 workflow 固化进目录。项目级新条目直接发布；全局条目
+	// 与「改已有」落一张待批准卡，人在任务详情里批准后才写控制面。
+	RouterActionSaveWorkflow RouterActionKind = "save_workflow"
 	RouterActionCancelRun    RouterActionKind = "cancel_run"
 	RouterActionCancelTask   RouterActionKind = "cancel_task"
 	// W1 T3：登记这一轮的验收项。它不是收尾动作，只是把「做完的样子」写下来，
@@ -249,7 +252,12 @@ type RouterAction struct {
 	// SessionMode 只对 run_workflow 有意义：new（默认）= 这一轮开一段新会话，
 	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。
 	SessionMode string `json:"session_mode,omitempty"`
-	// Graph 只对 run_workflow 有意义：Router 当场起草的临时 workflow（项目级
+	// Scope / WorkflowName / DerivedFrom 只对 save_workflow 有意义：目标是哪个
+	// 目录条目、叫什么、从哪一版派生（派生只记录来源，不复制版本链）。
+	Scope        string `json:"scope,omitempty"`
+	WorkflowName string `json:"workflow_name,omitempty"`
+	DerivedFrom  string `json:"derived_from,omitempty"`
+	// Graph 只对 run_workflow / save_workflow 有意义：Router 当场起草的临时 workflow（项目级
 	// 免批）。与 WorkflowID / VersionID 互斥 —— 给了图就是这一次 Run 自己的
 	// 快照，不进控制面目录。scope 由 apply 阶段按任务所在 root 填上。
 	Graph  *WorkflowDefinition `json:"graph,omitempty"`
