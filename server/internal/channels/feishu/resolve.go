@@ -27,8 +27,9 @@ const (
 
 // ResolveProject follows the documented order: explicit chat binding, an
 // explicit #/@ prefix, a unique project name in the text, a configured and
-// existing default root when the text is ambiguous or silent, a bounded
-// picker, then a plain answer. It never guesses a project unrelated to text.
+// existing default root when the text or prefix is ambiguous or silent, a
+// bounded picker, then a plain answer. Too many candidates become a plain
+// answer; it never guesses a project unrelated to text.
 func ResolveProject(text, chatID string, bindings []Binding, catalog ProjectCatalog,
 	defaultRoot string, max int) (Resolution, error) {
 	refs, catalogErr := listRefs(catalog)
@@ -41,6 +42,12 @@ func ResolveProject(text, chatID string, bindings []Binding, catalog ProjectCata
 
 	if prefix := prefixToken(text); prefix != "" {
 		matches := matchPrefix(refs, prefix)
+		if len(matches) == 1 {
+			return Resolution{Kind: ResolutionProject, Project: matches[0]}, nil
+		}
+		if defaults := defaultMatches(refs, defaultRoot); len(defaults) != 0 {
+			return finishMatches(defaults, max), nil
+		}
 		if len(matches) == 0 {
 			return Resolution{Kind: ResolutionAnswer}, nil
 		}
@@ -59,21 +66,26 @@ func ResolveProject(text, chatID string, bindings []Binding, catalog ProjectCata
 	// default_root_id is only a fallback: an explicit name in the text wins,
 	// but for zero or several matches a configured, existing root beats a
 	// picker or a plain answer.
-	if defaultRoot != "" {
-		defaults := make([]ProjectRef, 0, 1)
-		for _, ref := range refs {
-			if ref.RootID == defaultRoot {
-				defaults = append(defaults, ref)
-			}
-		}
-		if len(defaults) != 0 {
-			return finishMatches(defaults, max), nil
-		}
+	if defaults := defaultMatches(refs, defaultRoot); len(defaults) != 0 {
+		return finishMatches(defaults, max), nil
 	}
 	if len(matches) == 0 {
 		return Resolution{Kind: ResolutionAnswer}, nil
 	}
 	return finishMatches(matches, max), nil
+}
+
+func defaultMatches(refs []ProjectRef, defaultRoot string) []ProjectRef {
+	if defaultRoot == "" {
+		return nil
+	}
+	out := make([]ProjectRef, 0, 1)
+	for _, ref := range refs {
+		if ref.RootID == defaultRoot {
+			out = append(out, ref)
+		}
+	}
+	return out
 }
 
 func listRefs(catalog ProjectCatalog) ([]ProjectRef, error) {
@@ -187,7 +199,7 @@ func finishMatches(matches []ProjectRef, max int) Resolution {
 		limit = max
 	}
 	if len(sorted) > limit {
-		sorted = sorted[:limit]
+		return Resolution{Kind: ResolutionAnswer}
 	}
 	return Resolution{Kind: ResolutionPicker, Candidates: sorted}
 }

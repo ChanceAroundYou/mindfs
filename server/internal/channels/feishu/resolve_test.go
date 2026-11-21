@@ -137,17 +137,27 @@ func TestResolveNoGuess(t *testing.T) {
 	}
 
 	all := "p0 p1 p2 p3 p4 p5 p6"
-	capped, err := ResolveProject(all, "oc_5", nil, cat, "", 10)
+	overCap, err := ResolveProject(all, "oc_5", nil, cat, "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capped.Kind != "picker" || len(capped.Candidates) != 5 {
-		t.Fatalf("picker must never offer more than five: %+v", capped)
+	if overCap.Kind != "answer" || len(overCap.Candidates) != 0 {
+		t.Fatalf("more candidates than the cap must be a plain answer, not a truncated picker: %+v", overCap)
 	}
-	for i, c := range capped.Candidates {
-		if want := "p" + string(rune('0'+i)); c.RootID != want {
-			t.Fatalf("candidate %d = %q, want %q", i, c.RootID, want)
-		}
+}
+
+func TestResolvePickerAllowsAtMostFiveCandidates(t *testing.T) {
+	refs := make([]ProjectRef, 0, 5)
+	for i := 0; i < 5; i++ {
+		name := "p" + string(rune('0'+i))
+		refs = append(refs, ProjectRef{NodeID: "fn", RootID: name, Name: name})
+	}
+	got, err := ResolveProject("all p0 p1 p2 p3 p4", "oc_5b", nil, &fakeProjectCatalog{refs: refs}, "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != "picker" || len(got.Candidates) != 5 {
+		t.Fatalf("five candidates within the cap must render a five-button picker: %+v", got)
 	}
 }
 
@@ -191,6 +201,37 @@ func TestResolveDefaultRootOnlyWhenKnown(t *testing.T) {
 				t.Fatalf("project = %+v, want %+v", got.Project, tc.want)
 			}
 		})
+	}
+}
+
+func TestResolveDefaultRootWinsWhenPrefixMisses(t *testing.T) {
+	cat := &fakeProjectCatalog{refs: []ProjectRef{
+		{NodeID: "home", RootID: "proj", Name: "proj"},
+		{NodeID: "fn", RootID: "docs", Name: "docs · fn"},
+	}}
+	got, err := ResolveProject("#unknown 修一下", "oc_14", nil, cat, "proj", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ProjectRef{NodeID: "home", RootID: "proj", Name: "proj"}
+	if got.Kind != "project" || got.Project != want {
+		t.Fatalf("default root must win over answer when the prefix misses: %+v, want %+v", got, want)
+	}
+}
+
+func TestResolveDefaultRootWinsWhenPrefixIsAmbiguous(t *testing.T) {
+	cat := &fakeProjectCatalog{refs: []ProjectRef{
+		{NodeID: "home", RootID: "proj", Name: "proj"},
+		{NodeID: "fn", RootID: "docs", Name: "docs · fn"},
+		{NodeID: "pc", RootID: "docs", Name: "docs · pc"},
+	}}
+	got, err := ResolveProject("#docs 修一下", "oc_15", nil, cat, "proj", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ProjectRef{NodeID: "home", RootID: "proj", Name: "proj"}
+	if got.Kind != "project" || got.Project != want {
+		t.Fatalf("default root must win over picker when the prefix is ambiguous: %+v, want %+v", got, want)
 	}
 }
 
