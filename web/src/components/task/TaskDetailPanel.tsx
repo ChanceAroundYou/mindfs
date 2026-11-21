@@ -172,8 +172,10 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           onOpenSession={onOpenSession}
         />
         {/* 执行详情 + 监管记录：同一行的两个胶囊，始终存在、展开互斥。
-            human_gate 在对话卡与执行详情里都能审批。mobile 下由 CSS `order:-1`
-            置顶，否则会被整段对话 + 输入框顶到面板最底部。 */}
+            human_gate 在对话卡与执行详情里都能审批。两端同一 DOM 顺序（对话流 →
+            胶囊行 → 收尾区），不许用 `order` / `position` 改排位：移动端曾把它
+            提到正文最前面，用户读成「吸顶横条」。可见性靠首屏滚到底 + 输入区贴底
+            对齐保证（conversationScroll.ts / useComposerBottomPin.ts）。 */}
         <div className="task-detail-execution">
           <TaskInspectEntries
             rootId={task.root_id}
