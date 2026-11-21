@@ -8359,6 +8359,15 @@ groups:
       - server/internal/kanban/router_brief.go
       - server/internal/kanban/router_prompt.go
       - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/workflow_acceptance.go
+      - server/internal/kanban/acceptance_store.go
+      - server/internal/kanban/activity_route_acceptance.go
+      - server/internal/kanban/router_tools_acceptance.go
+      - server/internal/kanban/workflow_completion.go
+      - server/internal/kanban/service_completion.go
+      - server/internal/kanban/service_completion_verifier.go
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/task_store_migrate.go
       - cli/cmd/startup.go
       - cli/cmd/mindfs.go
       - server/cmd/mindfs-server/main.go
@@ -11680,7 +11689,7 @@ groups:
       - 'web/android/app/src/main/java/com/mindfs/app/ReplyPollerService.java:if (entry.subSession || entry.silent) {'
 
   - id: G-PB
-    title: Super agent 节点级管理员 W1 底座（取消三档 + 每 Run/每小时监管预算）
+    title: Super agent 节点级管理员 W1 底座（取消三档 + 每 Run/每小时监管预算 + 验收项与证据等级）
     kind: feature
     symptom: |
       Router 在主动监管里只能重试、唤醒与汇报，遇到真正卡死的现场没有收口手段：节点卡在
@@ -11704,10 +11713,19 @@ groups:
       `max_actions_per_hour`（默认 20，原 6）。计数口径是「一个有副作用的监管动作算 1」，
       不按决策回合算；say / ask_user / silent 不计。用尽时事件 reason
       `supervision_budget_exhausted`、任务停 `waiting_user` 并留可见说明，**绝不自动取消**。
+      ⑦ 验收项（W1 T3）挂在同一个证据门上，不另起一套限流：Router 用
+      `router_record_acceptance` 登记 1–8 条（`self_report` / `artifact` /
+      `independent_verification`），按 `(task_id, run_id)` 整体替换；`self_report` 永远不算
+      证据（只是逼出更好的证据），`artifact` 复用 `file_exists` 的工作区根取值与符号链接守卫
+      （含父目录是链接的情形），`independent_verification` 让 `completionNeedsVerifier`
+      在有契约时也启动复核，pass 之后才把项改成通过并收尾。返工轮数复用既有的补做预算
+      （默认 2 轮，第 3 次停 `waiting_user` 并列缺口编号），`rework_round` 只是审计水位；
+      同一条决策重放不重复计数。
     boundary: |
-      只做取消动作与可见性，不做预算（W1 T2）、不做验收项（W1 T3）、不做跨进程副作用恢复
-      （沿用 G-KV 边界）。`cancel_run` 之后的重启对账由 W1 T4 补口。不使用 `Service.Cancel`
+      取消三档与预算（W1 T1/T2）与验收项（W1 T3）都在本组；不做跨进程副作用恢复（沿用
+      G-KV 边界），`cancel_run` 之后的重启对账由 W1 T4 补口。不使用 `Service.Cancel`
       绕开 `complete_task` 的证据门：`cancel_task` 只用于「这一轮已经停了、任务还挂着执行态」。
+      验收项是**本轮 Run 的**登记，不是跨轮模板：换 Run 重新登记，旧的随任务级联删除。
     files:
       - server/internal/kanban/router_types.go
       - server/internal/kanban/router_tools.go
@@ -11731,6 +11749,8 @@ groups:
     tests:
       - server/internal/kanban/router_supervision_cancel_test.go
       - server/internal/kanban/router_supervision_budget_test.go
+      - server/internal/kanban/acceptance_items_test.go
+      - server/internal/kanban/task_store_delete_cascade_test.go
       - cli/cmd/startup_config_test.go
       - server/app/router_supervision_config_test.go
       - web/tests/task-supervision-entry.test.mjs
@@ -11747,6 +11767,15 @@ groups:
       - 'server/app/server.go:RouterSupervisionMaxActionsPerRun  int'
       - 'server/internal/kanban/router_prompt.md:router_cancel_node(node_id, reason)'
       - 'web/src/components/task/supervisionEntryModel.ts:cancel_task: "task.supervision.action.cancel_task",'
+      - 'server/internal/kanban/router_types.go:RouterActionRecordAcceptance RouterActionKind = "record_acceptance"'
+      - 'server/internal/kanban/router_tools_acceptance.go:Name: "router_record_acceptance",'
+      - 'server/internal/kanban/workflow_acceptance.go:func evaluateAcceptanceItems('
+      - 'server/internal/kanban/workflow_acceptance.go:func markAcceptanceVerified(report CompletionReport) CompletionReport {'
+      - 'server/internal/kanban/acceptance_store.go:func (s *TaskStore) ReplaceAcceptanceItems('
+      - 'server/internal/kanban/task_store_migrate.go:CREATE TABLE IF NOT EXISTS task_acceptance_items ('
+      - 'server/internal/kanban/service_completion.go:acceptance.bump_rework.error'
+      - 'server/internal/kanban/service_completion_verifier.go:report.Contract && !report.AcceptanceNeedsVerification'
+      - 'server/internal/kanban/router_prompt.md:router_record_acceptance(items)'
 
   - id: G-PC
     title: 移除自动发现（外部项目不再自动注册，项目只能手动添加）

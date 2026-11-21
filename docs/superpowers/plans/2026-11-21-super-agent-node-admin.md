@@ -171,3 +171,33 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   `waiting_user` 且节点仍 `running`、小时额度按动作而非回合计数、say/ask 不计且有正对照），
   `cli/cmd` 与 `server/app` 配置透传用例按新字段更新。四处变异各自打红后还原：按决策回合
   计数、去掉 Run 窗口、把 say 也计入、预算用尽改成终态任务。
+
+### T3 完成（2026-11-21）
+
+- 新表 `task_acceptance_items(id, task_id, run_id, node_id, seq, text, evidence_class, status,
+  evidence_ref, rework_round, created_at, updated_at)` + `idx_acceptance_task_run`，删任务时
+  级联清理。ID 确定（`acc-<task+run 哈希6>-<seq>`），同一轮重复登记按 `(task, run)` **整体
+  替换**，不追加。
+- Router 新工具 `router_record_acceptance(items)`：1–8 条，每条 `text` + `evidence_class`
+  （`self_report` / `artifact` / `independent_verification`）+ 可选 `evidence_ref` /
+  `node_id`；归一化时拒绝空文本、未知等级、`artifact` 缺路径。动作在 `run_settled` 与
+  `completion_blocked` 两类运行期事件回合里同样允许（与 `complete_task` 同轮）。
+- `record_acceptance` 的应用路径只写验收项、不动任务状态；没带 `run_id` 时绑任务当前这一轮
+  （直连任务保持空 run 命名空间）。
+- 证据门扩展：`EvaluateCompletion` 在契约核对之后附加验收项并**重算整体 `Passed`**。
+  `self_report` 永远不过（Detail 说明「只是自述」，逼出更好的证据）；`artifact` 复用
+  `file_exists` 的工作区根取值、相对路径校验与符号链接守卫（含父目录是链接的逃逸），
+  `Lstat` 再拒最后一段是链接的情况；`independent_verification` 让
+  `CompletionReport.AcceptanceNeedsVerification` 置位，`completionNeedsVerifier` 在**有契约**
+  时也照常起独立复核，结论 pass 时 `markAcceptanceVerified` 把项改成通过再 `commitCompletion`
+  （落库报告同步是 passed，不留自相矛盾的记录）；`commitCompletion` 顺手把项标 `met`。
+- 返工轮数复用既有补做预算（默认 2 轮，第 3 次停 `waiting_user` 并列缺口编号），
+  `rework_round` 只是审计水位；`blockCompletion` 的 bump 放在「同一决策重放」早退之后，
+  重放不会重复计数。
+- 提示词：工具清单与规则 16/19 写明三类证据、整体替换、`self_report` 不算证据、补做回合
+  按等级处理缺口；运行期事件回合的白名单一行补上 `router_record_acceptance`。
+- 验证：`acceptance_items_test.go` 10 条（自述只是声称、产物必须真实存在、链接逃逸两例、
+  独立复核等待与 pass 收尾、动作校验矩阵、工具记录、运行期白名单、存储替换与返工水位、
+  复核 pass 收尾并标 met、驳回按决策计一轮返工），六处变异各自打红后还原（有契约就不问
+  复核 / pass 不标记项 / 跳过符号链接守卫 / 自述算通过 / 不重算整体 Passed / 重放也记返工）。
+  `go test ./server/internal/kanban/` 全绿（274s，首跑一条既有 sqlite 并发 flake，复跑全绿）。
