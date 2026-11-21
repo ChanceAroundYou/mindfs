@@ -105,10 +105,13 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("controlsync: create db dir: %w", err)
 	}
 	// busy_timeout：并发写排队而不是立刻报 "database is locked"。
-	// journal_mode=WAL：读写不互相阻塞。
 	// _txlock=immediate：事务一开始就拿写锁 —— rev 用 MAX(rev)+1 分配，
 	// 延迟事务会让两个并发事务读到同一个 MAX，随后在 changes 主键上撞车。
-	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+	//
+	// journal_mode 不放 DSN：SQLite 不为 journal_mode 切换调用 busy handler，
+	// 撞上并发迁移会**立即**返回 SQLITE_BUSY，而 DSN 里的 pragma 在连接建立时执行、
+	// 没有第二次机会。改为在 Migrate 里带重试地设一次（模式写在库头里，之后一直有效）。
+	dsn := path + "?_pragma=busy_timeout(5000)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("controlsync: open db: %w", err)
@@ -116,15 +119,54 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db, path: path, now: time.Now}, nil
 }
 
+// 迁移重试参数：单次等待远小于 busy_timeout，靠「多试几次」把 journal_mode
+// 那种不排队的情形也覆盖掉。
+const (
+	migrateAttempts = 60
+	migrateBackoff  = 25 * time.Millisecond
+)
+
 // Migrate 建表。幂等：所有语句都是 IF NOT EXISTS，可以每次启动都跑。
+//
+// 碰到 SQLITE_BUSY 会退避重试：这台库里同时只有一个同步实例在写，但开发/测试、
+// 以及误起两个进程时会出现并发迁移，一次 BUSY 就让启动失败太脆。
 func (s *Store) Migrate(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("controlsync: store closed")
 	}
-	if _, err := s.db.ExecContext(ctx, schemaDDL); err != nil {
-		return fmt.Errorf("controlsync: migrate: %w", err)
+	var err error
+	for attempt := 0; attempt < migrateAttempts; attempt++ {
+		if err = s.migrateOnce(ctx); err == nil {
+			return nil
+		}
+		if !isSQLiteBusy(err) {
+			return fmt.Errorf("controlsync: migrate: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("controlsync: migrate: %w", ctx.Err())
+		case <-time.After(migrateBackoff):
+		}
 	}
-	return nil
+	return fmt.Errorf("controlsync: migrate: %w", err)
+}
+
+func (s *Store) migrateOnce(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, schemaDDL)
+	return err
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") ||
+		strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked")
 }
 
 // Close 关闭句柄。可重复调用。

@@ -11,6 +11,50 @@ import (
 	"time"
 )
 
+// 迁移必须等锁，而不是撞上 BUSY 就让启动失败：
+// journal_mode 切换不经过 busy handler，SQLite 会立即返回 SQLITE_BUSY。
+func TestMigrateWaitsForAnotherWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control_sync.db")
+	holder, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(holder): %v", err)
+	}
+	defer holder.Close()
+	ctx := context.Background()
+	// _txlock=immediate：这条事务一开就持有写锁。
+	tx, err := holder.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	other, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(other): %v", err)
+	}
+	defer other.Close()
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- other.Migrate(ctx) }()
+	select {
+	case err := <-done:
+		t.Fatalf("持锁期间迁移就返回了（%v）：没有等锁，只是碰巧没撞上", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("释放锁后迁移仍失败: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed < 150*time.Millisecond {
+			t.Fatalf("迁移 %v 就完成了，没有真的等待锁", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("释放锁后迁移一直没完成")
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(filepath.Join(t.TempDir(), "control_sync.db"))
