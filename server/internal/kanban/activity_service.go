@@ -207,6 +207,58 @@ func (s *ActivityService) CreateUserActivity(
 	return s.dispatchUserActivity(ctx, task, userAct, workflowVersionID)
 }
 
+// CreateUserReply 把外部通道（飞书卡片等）上的回答写成一条绑定的用户留言，
+// 再走与手打留言完全相同的派发路径。
+//
+// 为什么不是「直接改提问卡」：提问卡只是一轮对话里的一句 Agent 回话，真正
+// 让任务继续的是下一条用户留言。把它写成普通留言，Router、会话、活动流看到的
+// 与用户在网页上打字完全一样，不需要第二条执行链路。
+//
+// 幂等与陈旧：同一张卡重复投递命中已有留言（返回同一条）；提问已经收口
+// （网页上答过、或另一张卡先答了）时返回 ErrQuestionAlreadyAnswered，
+// 不留下任何痕迹。
+func (s *ActivityService) CreateUserReply(
+	ctx context.Context,
+	taskID, body, replyToID string,
+) (*TaskActivity, *TaskActivity, error) {
+	if s == nil || s.tasks == nil || s.activities == nil {
+		return nil, nil, errors.New("activity service not configured")
+	}
+	replyToID = strings.TrimSpace(replyToID)
+	if replyToID == "" {
+		return nil, nil, ErrActivityNotFound
+	}
+	task, err := s.tasks.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	question, err := s.activities.Get(ctx, replyToID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if question.TaskID != task.ID {
+		return nil, nil, ErrActivityNotFound
+	}
+	if question.Status != ActivityStatusWaitingUser {
+		return nil, nil, ErrQuestionAlreadyAnswered
+	}
+	if existing, err := s.activities.UserReplyForQuestion(ctx, replyToID); err == nil {
+		return existing, nil, nil
+	} else if !errors.Is(err, ErrActivityNotFound) {
+		return nil, nil, err
+	}
+	userAct, err := s.insertUserActivity(ctx, task, body, CommentWorkflowChoiceEmpty, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.activities.SetReplyTo(ctx, userAct.ID, replyToID); err != nil {
+		return nil, nil, err
+	}
+	userAct.ReplyToID = replyToID
+	s.broadcastUpdated(userAct, map[string]any{"reply_to_id": replyToID})
+	return s.dispatchUserActivity(ctx, task, userAct, nil)
+}
+
 // QueueUserActivity 落一条「先不执行」的用户留言（新建任务勾掉「立即执行」）。
 //
 // 与 CreateUserActivity 的区别只在**不派发**：留言以 queued 状态进入对话流，

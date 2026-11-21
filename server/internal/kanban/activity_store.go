@@ -28,6 +28,9 @@ const activitySelectColumns = "id, task_id, root_id, type, author, role, body, w
 var (
 	// ErrActivityNotFound 表示按 id 找不到活动。
 	ErrActivityNotFound = errors.New("task activity not found")
+	// ErrQuestionAlreadyAnswered 表示提问已经收口（网页上答过、或已被另一张卡答过），
+	// 迟到的点击不得再写一条留言进去。
+	ErrQuestionAlreadyAnswered = errors.New("question already answered")
 	// ErrInvalidActivityStatus 表示 status 不在对话模型的枚举内。
 	ErrInvalidActivityStatus = errors.New("invalid task activity status")
 )
@@ -173,6 +176,33 @@ func (s *ActivityStore) insert(ctx context.Context, activity *TaskActivity, igno
 		return false, err
 	}
 	return affected == 1, nil
+}
+
+// UserReplyForQuestion 找「已经回答过这张提问卡」的那条用户留言。
+// 卡片重投/连点必须命中同一行，所以按 reply_to_id 找第一条用户留言即可 ——
+// 一张提问只收一个答案。
+func (s *ActivityStore) UserReplyForQuestion(ctx context.Context, questionID string) (*TaskActivity, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities
+		 WHERE reply_to_id = ? AND type = ?
+		 ORDER BY created_at ASC, rowid ASC LIMIT 1`,
+		strings.TrimSpace(questionID), ActivityTypeUserMessage)
+	activity, err := scanActivityRecord(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrActivityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return activity, nil
+}
+
+// SetReplyTo 把一条活动绑定到触发它的留言（卡片答案绑定到提问卡）。
+func (s *ActivityStore) SetReplyTo(ctx context.Context, id, replyToID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE task_activities SET reply_to_id = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(replyToID), time.Now().UTC().Format(time.RFC3339Nano), strings.TrimSpace(id))
+	return err
 }
 
 // ClaimFirstQueuedUserMessage 领走任务里最早一条排队留言（status=queued），
