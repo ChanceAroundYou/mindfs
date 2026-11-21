@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T21 双实例验收）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12153,11 +12153,16 @@ groups:
       的记录一律跳过**（重放旧页不得把副本倒回旧内容）；**一页一个事务、records 与
       `base_rev` 同生共死**（半个 diff 提交出去，边缘会永久跳过没落地的记录）。
       同步通道的 TLS 与转发侧同源：https 强制、TLS 1.2 起步、系统根 + 可选 `ca_file`。
-      ⑪ 四态模式（`mode.go`）的四条必须保留：**模式落 `state` 表**（只存内存会让边缘重启后
+      ⑪ 四态模式（`mode.go`）的六条必须保留：**模式落 `state` 表**（只存内存会让边缘重启后
       以 online 身份启动、把写请求全转给不可达的主节点）；**`conflict-review` 不受探测结果
       影响**（主节点掉线不会让冲突消失，只能由裁决清掉）；**`RecordProbe` 失败不覆盖
       `last_primary_at`**（断线排查最需要的数字）；**`retry` 探不通仍回 200 + status**
-      （5xx 会让前端把「按钮动作失败」和「页面请求失败」混成一件事）。
+      （5xx 会让前端把「按钮动作失败」和「页面请求失败」混成一件事）；**追平收尾只在同步回合
+      内生效**（`CompleteReconcile` 只接受 `reconciling` / `conflict-review`；探测刚把模式降到
+      `offline-local` 时，一拍迟到的 settle 不得把它拉回 `online` —— T21 双实例验收实测到过：
+      主节点在合并途中再次断开，状态接口报 `online`、库里停在 `offline-local`，之后 75 秒再也
+      降不下来）；**迁移与落库整段串行**（`applyMu`：探测与追平收尾是两个写方，只锁模式字段会让
+      两边落库顺序颠倒，最终内存与 `state` 表各说各话）。
       ⑫ 推送合并（`merge.go` / `store_merge.go`）的五条必须保留：**先查 `applied_changes`
       再比 hash**（只靠 hash 判定会把「已应用过的变更」在主节点后续改动后误判成冲突）；
       **判定顺序固定为 幂等 → base_hash 命中 → 收敛 → 冲突**（顺序一乱，收敛分支就会把
@@ -12199,6 +12204,13 @@ groups:
       **缺任意一份权威存储同样拒绝**（缺域的副本「看起来能用」，直到主节点恢复才发现一半控制面没跟上）；
       **`BlockedDomain` 查库失败按冻结处理**（恢复期宁可让用户重试一次写入，也不能放一条会和主节点分叉的写）。
       默认关闭时零行为变化：不建库、不起 goroutine、端点 404、请求直通。
+      ⑰ 交接基线与兜底扫描（`capture.go` / `server/app/control_sync.go`）的三条必须保留：
+      **`SweepWhen` 只挡 `Run` 的定时全量扫描、不挡 HTTP 采集**，且边缘要在「本轮交接完成之後」才允许扫
+      （交接前的权威存储混着本机首次启动生成的默认记录 —— 默认管理员、内置工作流 —— 扫一遍就把它们当成
+      用户改动记进 `pending`，恢复后与主节点同名记录撞成冲突；而 HTTP 采集发生在交接之后，挡它只会丢真实改动）；
+      **`RefreshBaseline` 把「副本不认识但权威存储里有」的记录并进基线**（只采纳副本会让本地既有记录
+      在下一次采集被当成新增发出去）；**primary 启动即 `CaptureAll` 发布基线**（兜底扫描 15 秒才有第一拍，
+      边缘完全可能在这之前追平后掉线 —— 那一版副本缺一批记录，恢复时同样撞冲突）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12271,6 +12283,7 @@ groups:
       - cli/cmd/control_sync_test.go
       - server/app/control_sync.go
       - server/app/control_sync_test.go
+      - e2e/test_control_sync_offline.py
 
     tests:
       - server/app/control_plane_isolation_test.go
@@ -12308,6 +12321,7 @@ groups:
       - server/internal/api/http_control_sync_feed_test.go
       - server/app/control_sync_test.go
       - cli/cmd/control_sync_test.go
+      - e2e/test_control_sync_offline.py
 
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
@@ -12355,6 +12369,17 @@ groups:
       - 'server/internal/controlsync/mode.go:func parsePrimaryURL(raw string) (*url.URL, error) {'
       - 'server/internal/controlsync/store_state.go:func (s *Store) RecordProbe(ctx context.Context, at time.Time, errText string) error {'
       - 'server/internal/controlsync/mode_test.go:func TestModeControllerDegradesAfterThreeProbeFailures(t *testing.T) {'
+      - 'server/internal/controlsync/mode.go:	applyMu sync.Mutex'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) CompleteReconcile(ctx context.Context, hasConflicts bool) (Mode, error) {'
+      - 'server/internal/controlsync/mode.go:	if from != ModeReconciling && from != ModeConflictReview {'
+      - 'server/internal/controlsync/mode_test.go:func TestCompleteReconcileDoesNotOverrideProbeDegrade(t *testing.T) {'
+      - 'server/internal/controlsync/capture.go:	SweepWhen func() bool'
+      - 'server/internal/controlsync/capture.go:			if c.SweepWhen != nil && !c.SweepWhen() {'
+      - 'server/internal/controlsync/capture.go:		for _, rec := range current {'
+      - 'server/internal/controlsync/capture_test.go:func TestFallbackScanWaitsForSweepWhen(t *testing.T) {'
+      - 'server/internal/controlsync/capture_test.go:func TestRefreshBaselineKeepsLocalOnlyRecords(t *testing.T) {'
+      - 'server/app/control_sync.go:		if n, err := capturer.CaptureAll(ctx); err != nil {'
+      - 'server/app/control_sync_test.go:func TestStartControlSyncPrimaryPublishesBaselineAtStartup(t *testing.T) {'
       - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncMode(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:	if h.ControlSync != nil {'
       - 'server/internal/api/http_control_sync_test.go:func TestControlSyncModeRetryFailureStillReturnsStatus(t *testing.T) {'

@@ -646,3 +646,48 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 - `server/cmd/mindfs-server` 这份备用入口不解析 `control_sync`（`make build` 装的是
   `cli/cmd`，与项目约定一致）。
 - 未改任何节点配置、未部署、未重启。
+
+### T21 双实例隔离验收 + 两处修复（2026-11-22）
+
+用户选「T21 双实例验收先行（推荐）」后执行。**未部署、未重启任何节点，`control_sync.enabled`
+仍为 `false`。**
+
+验收脚本 `e2e/test_control_sync_offline.py`：两个独立 `XDG_CONFIG_HOME`（`/tmp/t21-e2e-*`）与
+端口 7470/7471、真实二进制，不碰 7331。六场景：在线转发（副本里能拿到 `users` 基线）、断网降级、
+离线写、重启保持（重启 16 秒后仍是 `offline-local`，`pending` 不含 `users`）、恢复无冲突、
+恢复有冲突（冲突卡 + 仅 `preferences` 域冻结 + `local` 裁决两端收敛）。**修复后连续 6 次全 PASS**；
+场景 2 / 6 在到达目标模式后再盯 5 秒（任何一拍离开都失败），并核对 `state` 表与状态接口一致。
+
+**修复一：交接基线与兜底扫描**
+
+- 症状：边缘首次启动时权威存储里已有一份本机生成的默认记录（默认管理员、内置工作流）；
+  进入 `offline-local` 时兜底扫描把它们当成用户改动记进 `pending`，恢复后与主节点同名记录
+  撞成冲突。另一个窗口：主节点刚启动、基线还没发布，15 秒内掉线的边缘副本缺一批记录，
+  恢复时同样撞冲突。
+- 修复：`Capturer.SweepWhen`（`offline-local` 且本轮交接完成才扫；只挡 `Run` 的定时分支，
+  HTTP 采集不受影响）；`RefreshBaseline` 把「副本不认识但权威存储里有」的记录并入基线；
+  主节点启动即 `CaptureAll` 发布基线；采集错误走独立日志。
+- 验证：`capture_test` 2 条 + `app` 1 条；三条用例各自把守卫改坏打红后还原。
+
+**修复二：追平收尾把刚降级的边缘拉回在线**
+
+- 症状：约 1/3 概率在「恢复后第二轮断网」失败 —— 等待 `offline-local` 超时、状态接口一直
+  `online`，而 `state` 表停在 `offline-local`；同期 tick 每 5 秒报
+  `fetch changes: connection refused`。
+- 取证：边缘日志逐拍记录探测结果，02:58:21 `from=online next=offline-local failures=3`，
+  下一次探测 02:58:31 却 `from=online`；SIGQUIT goroutine 栈证明探测循环与运行时 tick
+  都活着（不是死锁）。
+- 根因：`settle` 在 online tick 末尾无条件调 `CompleteReconcile`，它只判 `mode != online` ——
+  探测刚把模式降到 `offline-local`，一拍迟到的追平收尾就把它拉回 `online`；更糟的是内存迁移
+  与落库分属两个写方、没有排队，落库顺序颠倒后内存与 `state` 表各说各话（重启会按错的模式启动）。
+- 修复：`CompleteReconcile` 只接受 `reconciling` / `conflict-review`（判定与写入同锁，迟到的
+  收尾直接放弃）；新增 `applyMu` 串行化「判定 + 内存 + 落库 + 通知」，`Mode()` 不取这把锁，
+  转发中间件不被库写阻塞。
+- 验证：`TestCompleteReconcileDoesNotOverrideProbeDegrade` 先红
+  （`CompleteReconcile(false) = online`）后绿；删掉守卫（变异）重新打红；e2e 增加
+  「到达模式后 5 秒内不得离开 + `state` 表一致」断言，并用「offline-local 分支也跑 settle
+  + 删守卫」的缺陷二进制确定性打红（`模式 (主节点已停) 到达 offline-local 后 5s 内又变成 online`）。
+
+**未做 / 未覆盖**：`OnModeChange` 仍未接系统事件与前端横幅（T16）；前端镜像打包（T19–T20）；
+`pc-win` 的 `role=control` 仍待 P1 单独授权；e2e 未覆盖转发失败的 503 分支与浏览器侧降级。
+`control_sync.enabled` 保持 `false`，未改配置、未部署、未重启任何节点。
