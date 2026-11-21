@@ -379,6 +379,38 @@ type Domain interface {
 - 变异：冲突时仍然写 → 覆盖用例红；不查 `applied_changes` → 重放用例红。
 - 验收：`go test ./server/internal/controlsync/ -run Push -count=1`。
 
+执行记录（2026-11-21）：
+
+- `Pusher.Push` 逐条 `pushOne`，判定顺序按 spec §6.1 固定为 **幂等 → `base_hash` 命中
+  → 收敛 → 冲突**。**先查 `applied_changes` 再比 hash** 是这一节最容易写错的地方：主节点在
+  两次推送之间又改过同一条记录时，只比 hash 会把一条早已应用过的变更误判成冲突，边缘就会
+  弹一张没有冲突的冲突卡。这条专门补了 `TestPushReplayAfterPrimaryEditStaysApplied`。
+- 应用路径 `ApplyPushedChange` 一个事务四步：分配 rev（`MAX(rev)+1`）→ upsert `records`
+  → append `changes` → 记 `applied_changes`。少写 `changes` 其他节点永远看不到这次变更；
+  少写 `applied_changes` 边缘重连后重复推进 rev。
+- 写权威存储走 `applyToDomain`，有 `Capturer` 时包在 `Suppress` 里 —— 否则这次远端应用
+  会被采集器当成一条新的本地改动回声进变更流。
+- 删除单独一支：目标不存在 → 幂等成功且**不造墓碑**（凭空造墓碑会让其他节点以为这条记录
+  曾经存在）；已删 → `already deleted`；命中 `base_hash` → 落墓碑并**保留最后一次内容
+  hash**；否则冲突。空 payload 的删除不进正常 hash 比对。
+- 冲突落 `conflicts` 表（id 取推送方 `change_id`，`ON CONFLICT DO NOTHING` 保证重放不
+  多出行）；**权威存储与 `changes` 一字不动** —— 冲突不是「先写再回滚」，用户还没裁决。
+- HTTP 侧 `POST /api/control-sync/push`（8 MiB 上限、坏体 400、Pusher 失败 500），
+  与 status/mode 同样只在字段非空时注册路由。
+- 用例：`controlsync` 8 条（base_hash 命中并分配新 rev、`change_id` 幂等不推 rev、
+  两侧都改报冲突且记录不变、同 hash 收敛且记 `applied_changes`、删除三种幂等分支、
+  重放不覆盖主节点后续改动、混合批逐条结论、未知域 rejected）、
+  `api` 4 条（载荷逐字透传、坏体 400、Pusher 失败 500、未配置 404）。
+- 变异 4 处：① 冲突后仍写权威存储 → 冲突用例红；② 不查 `applied_changes` → 重放用例红
+  （第一版变异被收敛分支掩盖，这正是补 `TestPushReplayAfterPrimaryEditStaysApplied` 的原因）；
+  ③ 路由条件与 handler nil 守卫**同时**去掉 → 未配置用例 panic 红；单去任一层仍绿（实测两次），
+  两层是有意的冗余，只有同时缺失才违反契约；④ `pushDelete` 给不存在的记录造墓碑 →
+  第一版**没红**：用例只断言状态是 applied，没查副本行；补上「不存在的记录不能留下副本行」
+  断言后转红，还原复绿。
+- **未接通**：`Pusher` 尚未接进 `server/app`；边缘侧从 `pending` 生成 `PushRequest`、
+  推送后按结论清 pending、以及失败重试节奏属于 T14；`control_sync` 配置段与 token 校验
+  仍未落地（HTTP 层目前没有认证，随装配一并补）。未改配置、未部署、未重启任何节点。
+
 ### T14 边缘合并与冲突落库
 
 - 目标：拉取时按 `pending` 三方比对，冲突两边都保留。

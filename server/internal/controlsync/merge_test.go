@@ -221,6 +221,11 @@ func TestPushDeleteIsIdempotent(t *testing.T) {
 	if err != nil || third.Results[0].Status != PushApplied {
 		t.Fatalf("删除不存在记录：%+v（err=%v）", third, err)
 	}
+	// 也不能凭空给它造一条墓碑：其他节点从没听过这条记录，凭空广播一次删除
+	// 会让它们的副本凭空多出一条「已删除」。
+	if _, ok, err := store.GetRecord(ctx, DomainPreferences, "ghost"); err != nil || ok {
+		t.Fatalf("删除不存在的记录留下了副本行：ok=%v err=%v", ok, err)
+	}
 }
 
 // 重放的判定必须先看 applied_changes：主节点在两次推送之间又改过这条记录时，

@@ -12158,6 +12158,13 @@ groups:
       影响**（主节点掉线不会让冲突消失，只能由裁决清掉）；**`RecordProbe` 失败不覆盖
       `last_primary_at`**（断线排查最需要的数字）；**`retry` 探不通仍回 200 + status**
       （5xx 会让前端把「按钮动作失败」和「页面请求失败」混成一件事）。
+      ⑫ 推送合并（`merge.go` / `store_merge.go`）的五条必须保留：**先查 `applied_changes`
+      再比 hash**（只靠 hash 判定会把「已应用过的变更」在主节点后续改动后误判成冲突）；
+      **判定顺序固定为 幂等 → base_hash 命中 → 收敛 → 冲突**（顺序一乱，收敛分支就会把
+      重放掩盖掉，或把该报冲突的写成 applied）；**冲突时权威存储与 `changes` 一字不动**
+      （冲突不是「先写再回滚」，用户还没裁决）；**records / changes / applied_changes 一个
+      事务**（少写 applied_changes 会让边缘重连后重复推进 rev）；**写权威存储必须包在
+      `Suppress` 里**（否则这次远端应用会回声成一条新的本地变更）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2 新增的是**未接线的纯内核**
       （默认没人调用，`control_sync.enabled` 缺省 false），同样不部署、不重启任何节点。
@@ -12200,8 +12207,12 @@ groups:
       - server/internal/controlsync/mode.go
       - server/internal/controlsync/mode_test.go
       - server/internal/controlsync/store_state.go
+      - server/internal/controlsync/merge.go
+      - server/internal/controlsync/merge_test.go
+      - server/internal/controlsync/store_merge.go
       - server/internal/api/http_control_sync.go
       - server/internal/api/http_control_sync_test.go
+      - server/internal/api/http_control_sync_push_test.go
       - server/internal/api/http.go
       - server/internal/api/http_routes.go
     tests:
@@ -12220,6 +12231,8 @@ groups:
       - server/internal/controlsync/replicator_test.go
       - server/internal/controlsync/mode_test.go
       - server/internal/api/http_control_sync_test.go
+      - server/internal/controlsync/merge_test.go
+      - server/internal/api/http_control_sync_push_test.go
       - server/internal/auth/store_sync_test.go
       - server/internal/kanban/workflow_store_sync_test.go
     anchors:
@@ -12271,6 +12284,17 @@ groups:
       - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncMode(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:	if h.ControlSync != nil {'
       - 'server/internal/api/http_control_sync_test.go:func TestControlSyncModeRetryFailureStillReturnsStatus(t *testing.T) {'
+      - 'server/internal/controlsync/merge.go:	PushApplied  = "applied"'
+      - 'server/internal/controlsync/merge.go:	applied, err := p.store.ChangeApplied(ctx, ch.ChangeID)'
+      - 'server/internal/controlsync/merge.go:	case exists && cur.Hash == ch.BaseHash:'
+      - 'server/internal/controlsync/merge.go:func (p *Pusher) applyToDomain(ctx context.Context, domain Domain, rec Record) error {'
+      - 'server/internal/controlsync/store_merge.go:func (s *Store) ApplyPushedChange(ctx context.Context, rec PushedRecord) (int64, error) {'
+      - 'server/internal/controlsync/store_merge.go:ON CONFLICT(id) DO NOTHING`,'
+      - 'server/internal/controlsync/merge_test.go:func TestPushReportsConflictWhenBothSidesChanged(t *testing.T) {'
+      - 'server/internal/controlsync/merge_test.go:func TestPushReplayAfterPrimaryEditStaysApplied(t *testing.T) {'
+      - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncPush(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:	if h.ControlSyncPush != nil {'
+      - 'server/internal/api/http_control_sync_push_test.go:func TestControlSyncPushEndpointAbsentWhenNotConfigured(t *testing.T) {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
