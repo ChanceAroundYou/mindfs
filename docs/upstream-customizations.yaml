@@ -9213,7 +9213,8 @@ groups:
       - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) beginCoordinateEventTurn('
       - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) replayCoordinateEventDecision('
       - 'server/internal/kanban/router_coordinate_turn.go:func (rs *RouterService) finishCoordinateEventTurn('
-      - 'server/internal/kanban/router_coordinate_turn.go:case RouterActionSay, RouterActionAskUser, RouterActionSilent, RouterActionComplete:'
+      - 'server/internal/kanban/router_coordinate_turn.go:case RouterActionSay, RouterActionAskUser, RouterActionSilent, RouterActionComplete,'
+      - 'server/internal/kanban/router_coordinate_turn.go:RouterActionRecordAcceptance:'
       - 'server/internal/kanban/router_service.go:if trigger.Event != nil {'
       - 'server/internal/kanban/router_service.go:recover = rs.store.recoverInterruptedUserMessageDecisions'
       - 'server/internal/kanban/router_service.go:rs.waitCoordinateLoop(routerCoordinateRecoverTimeout)'
@@ -9595,7 +9596,7 @@ groups:
     title: 任务详情展示收口 —— 运行汇报先折叠后平铺（2026-11-19 用户裁定改平铺）+ 直达工作流会话
     kind: fix
     symptom: "R1 T10 复核登记的 UX 残留：同一轮任务结算后用户会看到同一句结果被说两遍 —— 引擎结算回填的 reply 行（status+summary）与 Router 运行期事件 say 出来的 purpose=progress 汇报行；后者另带失败节点/未验证项等增量信息，两条都不能删。另一处：工作流节点在各自的 agent 会话里干活，任务对话只放汇报，用户想看节点实际做了什么、或接管那个会话，必须先展开运行视图、再逐节点点「打开会话」。"
-    why: "必须保留：① 运行视图仍是对话流的下钻（桌面排在 ConversationView 之后；mobile 下 `.task-detail-execution` `order:-1` 置顶，见 G-NY）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。直连对话任务没有 WorkflowRun，入口回落为「打开任务主会话」，不再整条消失（G-NY）。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只在页脚加一个浅色「运行汇报」标记做区分（`isRunReport` + `activity-report-tag`）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
+    why: "必须保留：① 运行视图仍是对话流的下钻（桌面排在 ConversationView 之后；mobile 下 `.task-detail-execution` `order:-1` 置顶，见 G-NY）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。直连对话任务没有 WorkflowRun，入口回落为「打开任务主会话」，不再整条消失（G-NY）。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只靠页脚的类型胶囊标成「进度」做区分（`activityTypeTagKey` + `activity-type-tag`，见 G-NY）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
     boundary: "只改前端展示层；不动活动/事件/决策/结果摘要的数据路径，不新增 HTTP 端点，不改路由与权限。平铺不改变任何活动的可见性判定 —— 唯一例外是等待审批时隐藏同一 Run 的占位回复（见 G-MY 的 `visibleConversationActivities`），那是「一张审批卡」的可读性要求，不是折叠。"
     files:
       - web/src/shared/activityModel.ts
@@ -9610,7 +9611,7 @@ groups:
       - web/tests/activity-reports-inline.test.mjs
     anchors:
       - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
-      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-report-tag"'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-type-tag"'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
       - 'web/src/components/task/RunViewEntry.tsx:if (!runId) {'
       - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns(rootId, taskId, nodeId)'
@@ -10076,7 +10077,7 @@ groups:
       - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
       - 'web/src/components/task/TaskHumanGateCard.tsx:const upstream = gateUpstream(payload.upstream);'
       - 'web/src/components/task/TaskHumanGateCard.tsx:data-testid="task-human-gate-note"'
-      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-report-tag"'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-type-tag"'
       - 'web/src/services/task/humanGate.ts:...(trimmedNote ? { note: trimmedNote } : {}),'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.activity.gateWaiting": "待你审批",'
       - 'web/src/shared/workflowModel.ts:人工确认（human_gate）节点 ${n.id} 不能是最后一个节点'
@@ -11154,7 +11155,8 @@ groups:
       - 'server/internal/kanban/router_tools.go:complete_task cannot be combined with an execution action'
       - 'server/internal/kanban/router_tools.go:return fmt.Errorf("%s is not allowed while a node is still running", action.Kind)'
       - 'server/internal/kanban/router_tools.go:complete_task is not allowed on a %s task'
-      - 'server/internal/kanban/router_coordinate_turn.go:case RouterActionSay, RouterActionAskUser, RouterActionSilent, RouterActionComplete:'
+      - 'server/internal/kanban/router_coordinate_turn.go:case RouterActionSay, RouterActionAskUser, RouterActionSilent, RouterActionComplete,'
+      - 'server/internal/kanban/router_coordinate_turn.go:RouterActionRecordAcceptance:'
       - 'server/internal/kanban/completion_store.go:type TaskCompletion struct'
       - 'server/internal/kanban/completion_store.go:func (s *TaskStore) UpsertTaskCompletion('
       - 'server/internal/kanban/completion_store.go:func (s *TaskStore) GetTaskCompletion('
@@ -11487,7 +11489,7 @@ groups:
       - 'cli/cmd/startup_feishu.go:func feishuOptions(flags startupFlags) app.FeishuOptions {'
 
   - id: G-NY
-    title: 任务详情面板移动端：执行详情与监管记录同排胶囊、直连按节点展示、长内容不横向滚动、消息级状态收敛到任务级、打开即落在最新消息
+    title: 任务详情面板移动端：执行详情与监管记录同排胶囊、直连按节点展示、长内容不横向滚动、消息级状态收敛到任务级、打开即落在最新消息、消息类型胶囊与回到底部
     kind: fix
     symptom: |
       三个移动端症状。① 执行详情看不见：`RunViewEntry` 挂在整段对话流（两千多像素）之后，
@@ -11500,7 +11502,8 @@ groups:
       一上一下、监管没有记录时整条按钮消失，形状不固定；⑤ 直连任务只有一句「本轮是直连
       对话，执行过程在任务会话里」+ 打开会话，不像正常的执行详情；⑥ 页脚「运行汇报」
       标签看不出是进度还是最终结果；⑦ 每次打开详情都停在对话顶部，手机上要往下滑两千
-      多像素才看到最新一条。
+      多像素才看到最新一条；⑧ 只有 `purpose=progress` 的行有标记，用户分不清一条消息是
+      留言、回复、结果还是系统事件；上翻历史后也没有「回到底部」，只能自己一路滑回去。
     why: |
       必须保留：① 移动端（`max-width:640px`）用 `order:-1` 把 `.task-detail-execution` 提到
       对话流之前，桌面仍保持「对话流 → 执行详情」的下钻顺序。② 表格最小宽度退化为
@@ -11510,13 +11513,21 @@ groups:
       任务级状态只保留在标题栏 `task-detail-status`；排队留言的 `queued` 徽标与「立即执行」
       是投递动作，不在此列；底层 `activity.status` 数据不删，只停止展示。④ 两个入口收成
       `TaskInspectEntries` 同一行的小胶囊，始终存在、共用唯一 `openSection` 状态保证互斥，
-      胶囊自带 `▸/▾` 与 `aria-expanded`，一眼看出展开的是哪个；监管没有记录时给空态说明。
+      胶囊自带人字箭头 icon（`ChevronIcon`，展开时旋转 90°）与 `aria-expanded`，一眼看出展开的是哪个；
+      监管没有记录时给空态说明。
       ⑤ 直连本身就是一种节点：没有 WorkflowRun 时按节点行展示「直连对话」+ 任务状态，
-      右侧会话图标跳任务主会话，删掉提示文案。⑥ 页脚标签本就是 `purpose=progress` 的
-      运行期进度回复（不是消息类型），改名「进度」并保留与最终结果的区分。⑦ 首屏数据
+      右侧会话图标跳任务主会话，删掉提示文案。⑥ 每条消息的页脚时间前面都有一枚**类型**
+      胶囊（`ActivityTypeTag`）：留言 / 回复 / 结果 / 进度 / 总结 / 对话 / 系统 / 提醒 /
+      合并冲突，取值由 `activityTypeTagKey` 从后端 `TaskActivity.type` 与回复 `purpose`
+      推导，未知类型不显示；它只说明「这是什么消息」，与已删除的消息级状态无关。⑦ 首屏数据
       到齐后把对话末尾锚点对齐到 `.mindfs-panel-body` 的可视底部：以「任务 id + 首条活动
       id」作为这一轮的身份只滚一次，之后的新留言与流式回复不再抢滚动位置（用户可能正在
-      上翻历史）；布局稳定前最多重试 12 帧、连续 2 帧高度不变即停。
+      上翻历史）；布局稳定前最多重试 24 帧、连续 3 帧高度不变即停。⑧ 上翻历史后输入框上方
+      出现「回到底部」圆钮：与会话页**同一颗组件**（`ScrollToBottomButton`）、同一套收敛
+      （`components/common/scrollToBottom.ts`：离底 >2px 显示、逐帧写 maxTop、最少 8 帧、
+      连续 3 帧稳定或 120 帧封顶），点击后用户自己上滚/上翻键立刻让位；滚动容器从锚点向上
+      找到 `.mindfs-panel-body`，不另开滚动区、不滚 window。移动端与桌面是同一颗按钮、
+      同一个位置（面板正文底部居中）。
     boundary: |
       只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
@@ -11535,6 +11546,14 @@ groups:
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/useSupervisionEntry.ts
       - web/src/components/task/conversationScroll.ts
+      - web/src/components/task/useConversationJumpToLatest.ts
+      - web/src/components/task/ActivityTypeTag.tsx
+      - web/src/components/common/scrollToBottom.ts
+      - web/src/components/common/ScrollToBottomButton.tsx
+      - web/src/components/common/ChevronIcon.tsx
+      - web/src/components/session/SessionViewerFloatingControls.tsx
+      - web/src/components/session/useSessionViewerScroll.ts
+      - web/src/shared/activityModel.ts
       - web/src/hooks/useMarkdownViewer.tsx
       - web/src/index.css
       - web/src/i18n/locales/en-US-tasks.ts
@@ -11548,6 +11567,8 @@ groups:
       - web/tests/activity-reports-inline.test.mjs
       - web/tests/task-completion-checklist.test.mjs
       - web/tests/conversation-auto-scroll.test.mjs
+      - web/tests/task-detail-scroll-and-tags.test.mjs
+      - web/tests/session-viewer-scroll-split.test.mjs
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
@@ -11560,7 +11581,13 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:taskStatus={task.status}'
       - 'web/src/components/task/TaskInspectEntries.tsx:data-testid="task-inspect-row"'
       - 'web/src/components/task/TaskInspectEntries.tsx:setOpenSection((current) => (current === section ? null : section));'
-      - 'web/src/components/task/TaskInspectEntries.tsx:{open ? "▾" : "▸"}'
+      - 'web/src/components/common/ChevronIcon.tsx:transform: open ? "rotate(90deg)" : "rotate(0deg)",'
+      - 'web/src/components/common/ScrollToBottomButton.tsx:export function ScrollToBottomButton({'
+      - 'web/src/components/common/scrollToBottom.ts:export function convergeScrollToBottom('
+      - 'web/src/components/task/useConversationJumpToLatest.ts:distanceFromBottom(scroller) > STICK_REARM_PX'
+      - 'web/src/components/task/ConversationView.tsx:testId="conversation-jump-latest"'
+      - 'web/src/shared/activityModel.ts:export function activityTypeTagKey(activity: TaskActivity): MessageKey | null {'
+      - 'web/src/components/task/ActivityTypeTag.tsx:data-testid="activity-type-tag"'
       - 'web/src/components/task/RunViewEntry.tsx:if (!runId) {'
       - 'web/src/components/task/RunViewEntry.tsx:data-testid="direct-node-run"'
       - 'web/src/components/task/RunViewEntry.tsx:data-testid="direct-node-open-session"'
@@ -11573,7 +11600,8 @@ groups:
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.label": "执行详情",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directNode": "直连对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.supervision.empty": "该任务还没有监管记录",'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.activity.reportTag": "进度",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.activity.type.progress": "进度",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.activity.type.userMessage": "留言",'
 
   - id: G-NZ
     title: 自动发现不再把 /tmp 下的隔离实例目录注册成项目
