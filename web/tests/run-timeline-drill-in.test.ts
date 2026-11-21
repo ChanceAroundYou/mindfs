@@ -152,11 +152,18 @@ test("任务详情面板只挂一条对话流，且保留运行视图入口", ()
     "运行视图是对话流的下钻，必须排在它之后",
   );
 
-  // 只有迁移到 workflow 引擎的任务才有运行视图；legacy 不渲染入口。
+  // 迁移到 workflow 引擎的任务有运行视图；直连对话任务没有 WorkflowRun，
+  // 入口改为打开任务主会话（执行过程在那里），不能整条消失。
   // 引擎门槛在取数 hook（.ts）里：视图层不 import services。
   assert.match(hook, /engine\?\.engine === "workflow"/);
   assert.match(hook, /workflow_run_id/);
-  assert.match(entry, /if \(!runId\) return null;/);
+  assert.match(entry, /if \(!runId\) \{/);
+  assert.match(entry, /fallbackSessionKey/);
+  assert.match(entry, /data-testid="run-view-open-session"/);
+  // mobile 下执行详情入口必须置顶，否则会被整段对话顶到面板最底部。
+  assert.match(panel, /className="task-detail-execution"/);
+  const css = read("../src/index.css");
+  assert.match(css, /@media \(max-width: 640px\) \{[\s\S]*?\.task-detail-execution \{\s*order: -1;/);
   // 运行视图就在对话流里，不再提供「返回留言板」的折叠入口。
   assert.doesNotMatch(entry, /onBackToComments/, "the back-to-comments wiring is gone");
   // 取数必须显式传 nodeId（跨节点铁律：不传会静默打激活节点）。

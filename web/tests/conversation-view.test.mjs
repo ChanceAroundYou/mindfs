@@ -186,7 +186,7 @@ test("ActivityMessage renders a user message on the user side", () => {
   assert.doesNotMatch(html, />用户<|>User</);
 });
 
-test("ActivityMessage shows the running status in the footer without role chrome", () => {
+test("ActivityMessage keeps the reply footer but drops the message-level status", () => {
   const html = render(
     React.createElement(ActivityMessage, {
       activity: { ...baseActivity, status: "running", body: "步骤 2/4: 写测试", run_id: "run-1" },
@@ -196,12 +196,13 @@ test("ActivityMessage shows the running status in the footer without role chrome
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /步骤 2\/4: 写测试/);
   assert.match(html, /data-testid="activity-footer"/);
-  assert.match(html, /执行中|Running/);
+  // 状态只保留在任务详情头部，消息页脚不再重复渲染。
+  assert.doesNotMatch(html, /执行中|Running/);
   assert.doesNotMatch(html, /🤖|⚡/);
   assert.doesNotMatch(html, />Agent</);
 });
 
-test("ActivityMessage renders the summary for completed replies", () => {
+test("ActivityMessage renders the summary for completed replies without a status chip", () => {
   const html = render(
     React.createElement(ActivityMessage, {
       activity: { ...baseActivity, status: "completed", body: "步骤 4/4: 收尾", summary: "已修复登录并补了测试", run_id: "run-1" },
@@ -211,11 +212,11 @@ test("ActivityMessage renders the summary for completed replies", () => {
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /已修复登录并补了测试/);
   assert.match(html, /data-testid="activity-footer"/);
-  assert.match(html, /已完成|Completed/);
+  assert.doesNotMatch(html, /已完成|Completed/);
   assert.doesNotMatch(html, /✓/);
 });
 
-test("ActivityMessage renders failed replies as errors", () => {
+test("ActivityMessage renders failed replies as errors without a status chip", () => {
   const html = render(
     React.createElement(ActivityMessage, {
       activity: { ...baseActivity, status: "failed", summary: "工作流校验失败", run_id: "run-1" },
@@ -224,8 +225,7 @@ test("ActivityMessage renders failed replies as errors", () => {
   assert.match(html, /data-testid="activity-agent"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /工作流校验失败/);
-  assert.match(html, /var\(--status-bad\)/);
-  assert.match(html, /失败|Failed/);
+  assert.doesNotMatch(html, /var\(--status-bad\)/);
   assert.doesNotMatch(html, /✗/);
 });
 
@@ -238,7 +238,7 @@ test("ActivityMessage keeps cancelled replies visible without pretending success
   assert.match(html, /data-testid="activity-agent"/);
   assert.match(html, /data-activity-id="a1"/);
   assert.match(html, /用户取消/);
-  assert.match(html, /已取消|Cancelled/);
+  assert.doesNotMatch(html, /已取消|Cancelled/);
   assert.doesNotMatch(html, /○/);
 });
 
@@ -303,13 +303,15 @@ test("ActivityMessage localizes the placeholder when the backend sends no body",
   assert.match(running, /正在回复|Replying/);
 });
 
-test("ActivityMessage leaves terminal replies to the status badge", () => {
+test("ActivityMessage leaves terminal replies quiet instead of inventing a status", () => {
   const html = render(
     React.createElement(ActivityMessage, {
       activity: { ...baseActivity, status: "completed", body: "", summary: "" },
     }),
   );
-  assert.match(html, /已完成|Completed/);
+  assert.match(html, /data-testid="activity-footer"/);
+  // 消息级状态已收敛到任务头部：终态空正文既不补占位、也不亮状态。
+  assert.doesNotMatch(html, /已完成|Completed|已取消|Cancelled|失败|Failed/);
   assert.doesNotMatch(html, /正在回复|等待回复|Replying|Waiting for a reply/);
 });
 
@@ -414,12 +416,7 @@ test("the activity i18n keys exist for both locales", () => {
     "task.activity.send",
     "task.activity.sending",
     "task.activity.openSession",
-    "task.activity.status.pending",
-    "task.activity.status.running",
     "task.activity.status.completed",
-    "task.activity.status.failed",
-    "task.activity.status.cancelled",
-    "task.activity.status.waiting_user",
     "task.activity.replyPending",
     "task.activity.replyRunning",
     "task.activity.loadFailed",
@@ -482,4 +479,15 @@ test("the panel is keyed by task identity so drafts cannot leak into another tas
     /key=\{`\$\{selectedKanbanTask\._nodeId \|\| ""\}::\$\{selectedKanbanTask\.root_id \|\| ""\}::\$\{selectedKanbanTask\.id\}`\}/,
     "TaskDetailPanel must remount per (node, root_id, task id) —— 同名项目的两张卡也是两条身份",
   );
+});
+
+test("Markdown content shrinks inside the mobile task panel instead of forcing horizontal scroll", () => {
+  const hook = read("hooks/useMarkdownViewer.tsx");
+  // 宽表是移动端横向滚动的主因：520px 硬下限会把表格顶出卡片。
+  assert.match(hook, /minWidth: "min\(520px, 100%\)"/);
+  assert.doesNotMatch(hook, /minWidth: "520px"/);
+  assert.doesNotMatch(hook, /whiteSpace: "nowrap"/);
+  assert.match(hook, /overflowWrap: "anywhere"/);
+  const view = read("components/task/ConversationView.tsx");
+  assert.match(view, /minWidth: 0, maxWidth: "100%"/);
 });

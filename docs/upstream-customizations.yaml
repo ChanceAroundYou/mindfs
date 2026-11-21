@@ -7487,7 +7487,7 @@ groups:
   - id: G-LL
     title: 任务详情面板只有一条对话流：删除重复的 CommentThread
     kind: feature
-    symptom: "打开任务详情只看到一段对话（用户右对齐气泡 / Agent 左对齐气泡，带相对时间与状态图标），底部只有一个输入框 —— 与系统其它输入同源的 PromptEditor（Enter 发送、Shift+Enter 换行、发送后清空），不再是一个原生 textarea 加按钮；此前 CommentThread 与 ConversationView 读的是同一份活动，面板里会出现两套一模一样的消息列表和两个输入框。运行视图入口仍在对话流下方，human_gate 的批准/驳回按钮照旧可达。"
+    symptom: "打开任务详情只看到一段对话（用户右对齐气泡 / Agent 左对齐气泡，带相对时间与状态图标），底部只有一个输入框 —— 与系统其它输入同源的 PromptEditor（Enter 发送、Shift+Enter 换行、发送后清空），不再是一个原生 textarea 加按钮；此前 CommentThread 与 ConversationView 读的是同一份活动，面板里会出现两套一模一样的消息列表和两个输入框。运行视图入口仍在面板里（桌面在对话流下方，移动端置顶，见 G-NY），human_gate 的批准/驳回按钮照旧可达。"
     why: "必须保留：① TaskDetailPanel 只挂 ConversationView，不得再挂 CommentThread（两者都渲染 /api/tasks/{id}/activities 的同一份活动）；② 运行视图入口 RunViewEntry 必须留在面板里 —— 它是 RunTimeline 与 human_gate 批准/驳回的唯一挂载点，删掉等于人工闸门无法通过；③ 消息分类只认 role（attention / merge_conflict 这类系统活动也带 role=system），按 type 白名单会把它们画成 Agent 回复；④ created_at 缺失或非法时整块时间不渲染，直接 new Date(x).toISOString() 会抛 RangeError 打崩面板；⑤ 底部输入框必须是 PromptEditor（与任务编辑/新建工作流同源），发送文本以编辑器 flush 出的内容为准（受控 value 不是真相），发送成功后清空并由 resetKey 复位编辑器，不得退回原生 textarea/input。"
     boundary: "只改任务详情面板的展示层（去重 + 气泡样式 + 时间显示）。不动活动数据源、不动发送链路（ConversationView 走 POST /api/tasks/{id}/activities，会触发 workflow）。"
     files:
@@ -7502,7 +7502,7 @@ groups:
       - web/tests/run-timeline-drill-in.test.ts
       - web/tests/conversation-view.test.mjs
     anchors:
-      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<div className="task-detail-execution">'
       - 'web/src/components/task/ActivityMessage.tsx:const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";'
       - 'web/src/components/task/ActivityMessage.tsx:function parseActivityTime(value: string | undefined): number | null'
       - 'web/src/shared/datetime.ts:export function formatRelativeTime(timestamp: number, locale: string = "zh-CN"): string'
@@ -7623,7 +7623,7 @@ groups:
       - web/tests/run-timeline-drill-in.test.ts
       - server/internal/kanban/task_store_workflow_runs_test.go
     anchors:
-      - 'web/src/components/task/TaskDetailPanel.tsx:<RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<div className="task-detail-execution">'
       - 'web/src/components/task/useRunViewEntry.ts:engine?.engine === "workflow"'
       - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns('
       - 'server/internal/api/http_workflows.go:func (h *HTTPHandler) handleTaskWorkflowRunGet('
@@ -9567,7 +9567,7 @@ groups:
     title: 任务详情展示收口 —— 运行汇报先折叠后平铺（2026-11-19 用户裁定改平铺）+ 直达工作流会话
     kind: fix
     symptom: "R1 T10 复核登记的 UX 残留：同一轮任务结算后用户会看到同一句结果被说两遍 —— 引擎结算回填的 reply 行（status+summary）与 Router 运行期事件 say 出来的 purpose=progress 汇报行；后者另带失败节点/未验证项等增量信息，两条都不能删。另一处：工作流节点在各自的 agent 会话里干活，任务对话只放汇报，用户想看节点实际做了什么、或接管那个会话，必须先展开运行视图、再逐节点点「打开会话」。"
-    why: "必须保留：① 运行视图仍是对话流的下钻（`if (!runId) return null`，排在 ConversationView 之后）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只在页脚加一个浅色「运行汇报」标记做区分（`isRunReport` + `activity-report-tag`）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
+    why: "必须保留：① 运行视图仍是对话流的下钻（桌面排在 ConversationView 之后；mobile 下 `.task-detail-execution` `order:-1` 置顶，见 G-NY）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。直连对话任务没有 WorkflowRun，入口回落为「打开任务主会话」，不再整条消失（G-NY）。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只在页脚加一个浅色「运行汇报」标记做区分（`isRunReport` + `activity-report-tag`）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
     boundary: "只改前端展示层；不动活动/事件/决策/结果摘要的数据路径，不新增 HTTP 端点，不改路由与权限。平铺不改变任何活动的可见性判定 —— 唯一例外是等待审批时隐藏同一 Run 的占位回复（见 G-MY 的 `visibleConversationActivities`），那是「一张审批卡」的可读性要求，不是折叠。"
     files:
       - web/src/shared/activityModel.ts
@@ -9584,7 +9584,7 @@ groups:
       - 'web/src/shared/activityModel.ts:export function isRunReport(activity: TaskActivity): boolean {'
       - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-report-tag"'
       - 'web/src/components/task/runTimelineModel.ts:export function nodeRunStatusColor(status: string): string'
-      - 'web/src/components/task/RunViewEntry.tsx:if (!runId) return null;'
+      - 'web/src/components/task/RunViewEntry.tsx:if (!engineReady || !fallbackSessionKey) return null;'
       - 'web/src/components/task/useRunViewEntry.ts:fetchWorkflowNodeRuns(rootId, taskId, nodeId)'
       - 'web/tests/activity-reports-inline.test.mjs:test("运行汇报按时间顺序原样渲染，不折叠也不隐藏"'
 
@@ -11433,3 +11433,58 @@ groups:
       - 'server/internal/api/appcontext_notify.go:func (s *AppContext) notifyFeishuScheduled(rootID, taskID, taskName, summary, message string, success bool) {'
       - 'cli/cmd/startup_feishu.go:func applyFeishuConfig(cfg startupConfig, explicit map[string]bool, flags startupFlags) {'
       - 'cli/cmd/startup_feishu.go:func feishuOptions(flags startupFlags) app.FeishuOptions {'
+
+  - id: G-NY
+    title: 任务详情面板移动端：执行详情置顶可见、长内容不再横向滚动、消息级状态收敛到任务级
+    kind: fix
+    symptom: |
+      三个移动端症状。① 执行详情看不见：`RunViewEntry` 挂在整段对话流（两千多像素）之后，
+      手机上必须把面板滚到最底部才出现；直连对话任务（`engine=conversation`、没有
+      WorkflowRun）更是整条入口 `return null`，用户以为功能被删了。② 横向滚动：Markdown
+      表格被写死 `minWidth: 520px`，390px 视口下比卡片宽 186px，每张表都自带左右滑动；
+      `.markdown-viewer` 与对话容器也没有 `minWidth:0`，长 URL / 长 token 会把卡片顶宽。
+      ③ 每条消息页脚都重复显示 pending / running / completed / failed 状态，和面板头部的
+      任务状态重复，长列表里噪音很大。
+    why: |
+      必须保留：① 移动端（`max-width:640px`）用 `order:-1` 把 `.task-detail-execution` 提到
+      对话流之前，桌面仍保持「对话流 → 执行详情」的下钻顺序；直连任务没有 Run 时入口改为
+      「查看执行详情 + 打开任务主会话」，引擎探测完成（`engineReady`）后才渲染，避免
+      workflow 任务先闪一下直连文案。② 表格最小宽度退化为 `min(520px, 100%)`、表头允许折行、
+      单元格 `overflow-wrap:anywhere`，`.markdown-viewer` 与 `#conversation-view` 加
+      `min-width:0; max-width:100%`，让宽内容在卡片内收住而不是把面板撑出横向滚动。
+      ③ 消息页脚删掉状态 span 与 `STATUS_LABEL_KEYS`/`STATUS_COLORS`，任务级状态只保留在
+      标题栏 `task-detail-status`；排队留言的 `queued` 徽标与「立即执行」是投递动作，不在此列；
+      底层 `activity.status` 数据不删，只停止展示。
+    boundary: |
+      只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情入口打开的是任务主会话，
+      不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
+      100%；嵌套的 run 节点行仍有 2px 级 scrollWidth 差（不产生面板级横向滚动），本组未处理。
+    files:
+      - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/task/ConversationView.tsx
+      - web/src/components/task/RunViewEntry.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/useRunViewEntry.ts
+      - web/src/hooks/useMarkdownViewer.tsx
+      - web/src/index.css
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - docs/features/conversation-driven-tasks.md
+      - e2e/test_conversation_task.py
+    tests:
+      - web/tests/conversation-view.test.mjs
+      - web/tests/run-timeline-drill-in.test.ts
+    anchors:
+      - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
+      - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
+      - 'web/src/components/task/ConversationView.tsx:style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, maxWidth: "100%" }}'
+      - 'web/src/components/task/TaskDetailPanel.tsx:<div className="task-detail-execution">'
+      - 'web/src/components/task/TaskDetailPanel.tsx:fallbackSessionKey={task.main_session_key}'
+      - 'web/src/components/task/RunViewEntry.tsx:if (!engineReady || !fallbackSessionKey) return null;'
+      - 'web/src/components/task/RunViewEntry.tsx:data-testid="run-view-open-session"'
+      - 'web/src/components/task/useRunViewEntry.ts:const [engineReady, setEngineReady] = useState(false);'
+      - 'web/src/hooks/useMarkdownViewer.tsx:minWidth: "min(520px, 100%)",'
+      - 'web/src/hooks/useMarkdownViewer.tsx:overflowWrap: "anywhere",'
+      - 'web/src/index.css:.task-detail-execution {'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.expand": "查看执行详情",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directHint": "本轮是直连对话，执行过程在任务会话里",'

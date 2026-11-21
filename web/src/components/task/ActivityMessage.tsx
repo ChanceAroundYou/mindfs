@@ -42,25 +42,6 @@ export type ActivityMessageProps = {
   runningQueued?: boolean;
 };
 
-// i18n key 必须是字面量，模板字符串会丢失 MessageKey 的类型约束。
-const STATUS_LABEL_KEYS = {
-  pending: "task.activity.status.pending",
-  running: "task.activity.status.running",
-  completed: "task.activity.status.completed",
-  failed: "task.activity.status.failed",
-  cancelled: "task.activity.status.cancelled",
-  waiting_user: "task.activity.status.waiting_user",
-} as const;
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: "var(--text-secondary)",
-  running: "var(--accent-color)",
-  completed: "var(--status-ok)",
-  failed: "var(--status-bad)",
-  cancelled: "var(--text-secondary)",
-  waiting_user: "var(--status-warn)",
-};
-
 /**
  * created_at 在历史活动里可能缺失或非法；非法时返回 null，整块时间不渲染。
  * 直接 new Date(x).toISOString() 会在 Invalid Date 上抛 RangeError 打崩整个面板。
@@ -132,8 +113,8 @@ export function ActivityMessage({
 
   const displayText = activityDisplayText(activity);
   const status = activity.status ? normalizeActivityStatus(activity.status) : null;
-  // 后端不写中文占位：进行中的提示由前端本地化，终态空正文交给页脚状态，
-  // 否则英文界面会混进「正在思考...」这种硬编码中文。
+  // 状态不再逐条展示：任务级状态在详情面板头部，消息页脚只留工作流/时间/会话入口。
+  // 这里保留 status 仅用于两件事：给进行中的空回复补本地化占位，以及让终态空正文保持安静。
   const bodyText =
     displayText ||
     (!isUser && status === "pending"
@@ -225,11 +206,6 @@ export function ActivityMessage({
         {isRunReport(activity) && (
           <span data-testid="activity-report-tag" style={reportTagStyle}>
             {t("task.activity.reportTag")}
-          </span>
-        )}
-        {status && (
-          <span style={{ ...footerItemStyle, color: STATUS_COLORS[status] }}>
-            {t(STATUS_LABEL_KEYS[status])}
           </span>
         )}
         {workflowName && <span style={footerItemStyle}>{workflowName}</span>}

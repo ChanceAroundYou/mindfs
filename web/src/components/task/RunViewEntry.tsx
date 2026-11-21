@@ -20,14 +20,52 @@ export type RunViewEntryProps = {
   /** 任务头每次更新递增（父层传 task.updated_at）：引擎绑定可能在对话回合里变。 */
   refreshKey?: string;
   onOpenSession: (sessionKey: string) => void;
+  /**
+   * 直连对话任务（`engine=conversation`）没有 WorkflowRun，但执行过程都落在
+   * 任务主会话里。带上它，入口就不会整条消失 —— 点开直达执行会话。
+   */
+  fallbackSessionKey?: string;
 };
 
-export function RunViewEntry({ rootId, taskId, nodeId, refreshKey, onOpenSession }: RunViewEntryProps) {
+const toggleStyle: React.CSSProperties = {
+  alignSelf: "flex-start",
+  border: "1px solid var(--border-color)",
+  background: "transparent",
+  color: "var(--text-secondary)",
+  borderRadius: "6px",
+  padding: "3px 8px",
+  fontSize: "12px",
+  cursor: "pointer",
+};
+
+export function RunViewEntry({ rootId, taskId, nodeId, refreshKey, onOpenSession, fallbackSessionKey }: RunViewEntryProps) {
   const { t } = useI18n();
-  const { runId, open, runs, loading, error, gateError, decidingNodeRunId, toggle, decideGate } =
+  const { runId, engineReady, open, runs, loading, error, gateError, decidingNodeRunId, toggle, decideGate } =
     useRunViewEntry(rootId, taskId, nodeId, refreshKey);
 
-  if (!runId) return null;
+  if (!runId) {
+    // 引擎探测未完成时先不渲染：否则 workflow 任务会先闪一下「直连对话」再换成运行视图。
+    if (!engineReady || !fallbackSessionKey) return null;
+    return (
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "8px" }}
+        data-testid="run-view-entry"
+        data-run-view-mode="direct"
+      >
+        <button
+          type="button"
+          onClick={() => onOpenSession(fallbackSessionKey)}
+          data-testid="run-view-open-session"
+          style={toggleStyle}
+        >
+          {t("task.runTimeline.expand")}
+        </button>
+        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+          {t("task.runTimeline.directHint")}
+        </span>
+      </div>
+    );
+  }
 
   const groups = runHistoryGroups(runs);
 
@@ -38,16 +76,7 @@ export function RunViewEntry({ rootId, taskId, nodeId, refreshKey, onOpenSession
           type="button"
           onClick={toggle}
           data-testid="run-view-toggle"
-          style={{
-            alignSelf: "flex-start",
-            border: "1px solid var(--border-color)",
-            background: "transparent",
-            color: "var(--text-secondary)",
-            borderRadius: "6px",
-            padding: "3px 8px",
-            fontSize: "12px",
-            cursor: "pointer",
-          }}
+          style={toggleStyle}
         >
           {open ? t("task.runTimeline.collapse") : t("task.runTimeline.expand")}
         </button>

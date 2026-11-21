@@ -294,6 +294,8 @@ export function useMarkdownViewer({
         {...getSourceLineProps(node)}
         style={{
           width: "100%",
+          maxWidth: "100%",
+          minWidth: 0,
           overflowX: "auto",
           margin: "1.25em 0",
           border: "1px solid var(--border-color)",
@@ -307,7 +309,9 @@ export function useMarkdownViewer({
             borderCollapse: "collapse",
             fontSize: "14px",
             lineHeight: 1.6,
-            minWidth: "520px",
+            // 桌面保留 520px 的阅读下限；窄容器（手机详情面板）退化成 100%，
+            // 否则表格必然撑出卡片，整段对话就出现横向滚动。
+            minWidth: "min(520px, 100%)",
           }}
           {...props}
         />
@@ -335,7 +339,9 @@ export function useMarkdownViewer({
           padding: "10px 12px",
           textAlign: "left",
           fontWeight: 600,
-          whiteSpace: "nowrap",
+          // 窄屏上 nowrap 会让每列都按最长内容定宽，表格再宽也放不进卡片。
+          whiteSpace: "normal",
+          overflowWrap: "anywhere",
           verticalAlign: "top",
         }}
         {...props}
@@ -347,6 +353,8 @@ export function useMarkdownViewer({
           padding: "10px 12px",
           verticalAlign: "top",
           borderTop: "1px solid rgba(0,0,0,0.03)",
+          overflowWrap: "anywhere",
+          wordBreak: "break-word",
         }}
         {...props}
       />
@@ -427,6 +435,12 @@ export function useMarkdownViewer({
         color: "var(--text-primary)",
         lineHeight: 1.75,
         fontSize: "15px",
+        // 作为 flex 子项必须能收缩；长 URL / 长 token / 宽表格在这里就地折行，
+        // 不能把外层任务详情面板顶出横向滚动。
+        minWidth: 0,
+        maxWidth: "100%",
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
       }}
     >
       {renderedMarkdown}

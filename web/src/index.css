@@ -1490,3 +1490,20 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
     padding: 4px !important;
   }
 }
+
+/*
+ * 移动端任务详情：执行详情入口置顶。
+ *
+ * 面板正文是 flex column，对话流（含输入框）往往两千多像素高，
+ * 执行详情排在它后面就只能滚到最底部才看得见 —— 手机上等于「没有」。
+ * 桌面仍保持「对话流 → 执行详情」的下钻顺序。
+ */
+.task-detail-execution {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .task-detail-execution {
+    order: -1;
+  }
+}

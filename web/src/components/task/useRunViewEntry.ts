@@ -15,6 +15,8 @@ import { legacyRunsFromNodeRuns } from "./runTimelineModel";
 // 与后端权威结果一致；错误只展示，不重试、不改写决定。
 export type RunViewState = {
   runId: string;
+  /** 引擎探测是否已有结论：false 时入口不该抢先渲染「直连会话」兜底。 */
+  engineReady: boolean;
   open: boolean;
   /** 按轮次分组的运行历史（旧的在前）；未取到为 null，空数组是「取到了但一条都没有」。 */
   runs: WorkflowRunNodeRuns[] | null;
@@ -33,6 +35,7 @@ export function useRunViewEntry(
   refreshKey?: string,
 ): RunViewState {
   const [runId, setRunId] = useState("");
+  const [engineReady, setEngineReady] = useState(false);
   const [open, setOpen] = useState(false);
   const [runs, setRuns] = useState<WorkflowRunNodeRuns[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -52,6 +55,7 @@ export function useRunViewEntry(
     if (identityRef.current !== identity) {
       identityRef.current = identity;
       setRunId("");
+      setEngineReady(false);
       setOpen(false);
       openRef.current = false;
       setRuns(null);
@@ -68,9 +72,12 @@ export function useRunViewEntry(
         if (cancelled) return;
         const next = engine?.engine === "workflow" ? engine.workflow_run_id || "" : "";
         setRunId(next);
+        setEngineReady(true);
       })
       .catch(() => {
-        // 探测失败只意味着「没迁移过/节点不可达」，不在留言板上打扰用户。
+        // 探测失败只意味着「没迁移过/节点不可达」，不在留言板上打扰用户；
+        // 但仍然要标记「探测结束」，否则直连任务的执行详情入口永远不出现。
+        if (!cancelled) setEngineReady(true);
       });
     return () => {
       cancelled = true;
@@ -157,6 +164,7 @@ export function useRunViewEntry(
 
   return {
     runId,
+    engineReady,
     open,
     runs,
     loading,

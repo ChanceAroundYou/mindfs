@@ -225,7 +225,7 @@ export function ConversationView({
   return (
     <div
       data-testid="conversation-view"
-      style={{ display: "flex", flexDirection: "column", gap: 16 }}
+      style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, maxWidth: "100%" }}
     >
       <ConversationMessages
         activities={activities}

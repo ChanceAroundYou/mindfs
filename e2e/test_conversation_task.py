@@ -205,23 +205,22 @@ def test_conversation_task_full_flow(authed_page: Page, conversation_task: dict)
 
     # 4. 用户留言出现。
     user_msg = page.wait_for_selector(
-        f'[data-testid="activity-message"][data-role="user"]:has-text("{message}")',
+        f'[data-testid="activity-user"]:has-text("{message}")',
         timeout=10_000,
     )
     assert message in user_msg.inner_text()
 
-    # 5. Agent 回复出现，状态徽标只允许合法值。
-    agent_msg = page.wait_for_selector(
-        '[data-testid="activity-message"][data-role="agent"]', timeout=10_000
-    )
-    status = agent_msg.get_attribute("data-status")
-    assert status in {"pending", "running", "completed"}, f"非法状态徽标：{status}"
-    assert page.locator('[data-testid="activity-status"]').count() >= 1
+    # 5. Agent 回复出现；状态只留在任务头部，消息页脚不再渲染消息级状态。
+    agent_msg = page.wait_for_selector('[data-testid="activity-agent"]', timeout=10_000)
+    footer = agent_msg.locator('[data-testid="activity-footer"]')
+    assert footer.count() == 1
+    assert page.locator('[data-testid="activity-status"]').count() == 0
 
-    # 6. 只有存在 workflow_run（run_id）时才出现「查看执行详情」。
-    view_run = page.locator('[data-testid="activity-view-run"]')
-    if view_run.count() > 0:
-        assert view_run.first.is_visible()
+    # 6. 执行详情入口必须可见：workflow 任务是「查看执行详情」开关，
+    #    直连对话任务则是通往任务主会话的入口。
+    run_entry = page.locator('[data-testid="run-view-entry"]')
+    if run_entry.count() > 0:
+        assert run_entry.first.is_visible()
 
     _close_task_panel(page)
 

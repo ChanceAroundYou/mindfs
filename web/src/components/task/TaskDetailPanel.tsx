@@ -147,7 +147,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
         </>
       )}
     >
-      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px", minWidth: 0 }}>
         {/* 详情面板只有一条对话流（ConversationView）。旧的 CommentThread 读的是同一份
             /api/tasks/{id}/activities，再挂一份列表 + 输入框就是「同一段对话出现两套」。 */}
         <ConversationView
@@ -161,8 +161,18 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           onAgentActivityChange={() => void panel.refreshTask()}
           onOpenSession={onOpenSession}
         />
-        {/* 运行视图是对话流的下钻（默认收起）；human_gate 在对话卡与运行视图里都能审批。 */}
-        <RunViewEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} onOpenSession={onOpenSession} />
+        {/* 运行视图是对话流的下钻（默认收起）；human_gate 在对话卡与运行视图里都能审批。
+            mobile 下由 CSS `order:-1` 置顶，否则会被整段对话 + 输入框顶到面板最底部。 */}
+        <div className="task-detail-execution">
+          <RunViewEntry
+            rootId={task.root_id}
+            taskId={task.id}
+            nodeId={nodeId}
+            refreshKey={task.updated_at}
+            fallbackSessionKey={task.main_session_key}
+            onOpenSession={onOpenSession}
+          />
+        </div>
         {/* 监管记录是只读证据：Router 自己重试/唤醒/交给用户的记录；没有时整行隐藏。 */}
         <SupervisionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
         <TaskCompletionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
