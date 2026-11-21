@@ -64,8 +64,6 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		return nil, err
 	}
 	prefs := m.shared.prefs
-	autoAddExternalProjectRoots(registry, prefs)
-	startExternalProjectDiscoveryLoop(m.ctx, registry, prefs)
 
 	// 置顶表**每账户一份**（与偏好的共享相反）：置顶是「这个账户顶哪些会话/项目」，
 	// 跨账户共享会让你的置顶出现在别人的会话栏里。

@@ -25,6 +25,18 @@ func codexConfigPath() string {
 	return filepath.Join(home, "config.toml")
 }
 
+// codexHomeDir 是 Codex 的配置根目录：优先 CODEX_HOME，否则 <user home>/.codex。
+func codexHomeDir() string {
+	if value := strings.TrimSpace(os.Getenv("CODEX_HOME")); value != "" {
+		return value
+	}
+	home := UserHomeDir()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codex")
+}
+
 // codexProviderConfig is the part of config.toml that decides where Codex sends
 // requests. Providers maps a provider name to its base_url; ModelProvider is
 // the selected one, and empty means the built-in `openai`.

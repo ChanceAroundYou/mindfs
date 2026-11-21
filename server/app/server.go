@@ -27,7 +27,6 @@ import (
 )
 
 const staticDirEnvKey = "MINDFS_STATIC_DIR"
-const externalProjectDiscoveryInterval = time.Minute
 
 type StartOptions struct {
 	Version         string
