@@ -13,13 +13,15 @@ type foldLedgerPending struct {
 	mode           string
 	reqBytes       int
 	forwardedBytes int
+	reqTokens      int
+	forwardTokens  int
 	result         foldResult
 	elapsed        time.Duration
 }
 
 // newFoldLedgerPending captures the sizes a fold event will report. Returns nil
 // when no ledger is configured, so the request path pays nothing for it.
-func (s *Server) newFoldLedgerPending(harness, mode string, originalBytes, forwardedBytes int, result foldResult, elapsed time.Duration) *foldLedgerPending {
+func (s *Server) newFoldLedgerPending(harness, mode string, originalBytes, forwardedBytes, reqTokens, forwardTokens int, result foldResult, elapsed time.Duration) *foldLedgerPending {
 	if s.harnessRuntimeFor(harness).ledger == nil {
 		return nil
 	}
@@ -28,6 +30,8 @@ func (s *Server) newFoldLedgerPending(harness, mode string, originalBytes, forwa
 		mode:           mode,
 		reqBytes:       originalBytes,
 		forwardedBytes: forwardedBytes,
+		reqTokens:      reqTokens,
+		forwardTokens:  forwardTokens,
 		result:         result,
 		elapsed:        elapsed,
 	}
@@ -93,6 +97,8 @@ func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, 
 		ReqBytes:           pending.reqBytes,
 		FoldedBytes:        pending.forwardedBytes,
 		SavedBytes:         pending.reqBytes - pending.forwardedBytes,
+		ReqTokensEst:       pending.reqTokens,
+		ForwardTokensEst:   pending.forwardTokens,
 		Blocks:             pending.result.foldedBlocks,
 		TokensEst:          pending.result.foldedTokens,
 		Skipped:            pending.result.skipped,

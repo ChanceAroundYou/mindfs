@@ -35,6 +35,14 @@ func TestSessionFoldUsageReturnsLedgerRows(t *testing.T) {
 	if row.TS == 0 {
 		t.Fatal("row lost its timestamp — the run window cannot be cut without it")
 	}
+	// 胶囊的每一行都按 token 显示，所以这一行必须记下两个端点：折叠前的原请求
+	// 与真正发出去的 body。只记字节会让前端拿字节除 4 反推，CJK 内容会失真。
+	if row.ReqTokensEst <= 0 || row.ForwardTokensEst <= 0 {
+		t.Fatalf("token estimates = req %d / forward %d, want both > 0", row.ReqTokensEst, row.ForwardTokensEst)
+	}
+	if row.ReqTokensEst <= row.ForwardTokensEst {
+		t.Fatalf("token estimates = req %d / forward %d, want req > forward", row.ReqTokensEst, row.ForwardTokensEst)
+	}
 	if got := s.SessionFoldUsage("never-seen"); len(got) != 0 {
 		t.Fatalf("unknown session rows = %d, want 0", len(got))
 	}

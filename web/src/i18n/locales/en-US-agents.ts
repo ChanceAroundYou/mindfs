@@ -170,6 +170,7 @@ export const enUSAgents = {
   "contextSaving.title": "Context folding",
   "contextSaving.description": "Old tool output becomes a pointer to a local archive; the original stays on this machine. The transcript is unchanged; token counts are estimates.",
   "contextSaving.badgeRequest": "Request this turn",
+  "contextSaving.requestTokensValue": "{req} → {forwarded} tokens",
   "contextSaving.badgeSaved": "Saved this turn",
   "contextSaving.badgeBlocks": "Folded results",
   "contextSaving.badgeTokens": "Folded content",
@@ -179,7 +180,6 @@ export const enUSAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "unknown",
   "contextSaving.empty": "No request in this conversation has been folded yet.",
-  "contextSaving.history": "{requests} requests folded; largest saving {max}.",
   "contextSaving.usageMissing": "{count} requests had no readable usage and are excluded from the rewrite total.",
   "contextSaving.rewriteTotal": "{rewrite} tokens rewritten in total.",
 } as const;

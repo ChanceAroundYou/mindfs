@@ -170,6 +170,7 @@ export const zhCNAgents = {
   "contextSaving.title": "上下文折叠",
   "contextSaving.description": "旧工具输出换成本机存档指针，原文保留在本机；会话记录不变，token 数为估算。",
   "contextSaving.badgeRequest": "本轮请求大小",
+  "contextSaving.requestTokensValue": "{req} → {forwarded} tokens",
   "contextSaving.badgeSaved": "本轮节省",
   "contextSaving.badgeBlocks": "折叠结果",
   "contextSaving.badgeTokens": "折叠内容",
@@ -179,7 +180,6 @@ export const zhCNAgents = {
   "contextSaving.tokensValue": "{count} tokens",
   "contextSaving.unknown": "未知",
   "contextSaving.empty": "这个会话还没有折叠过请求。",
-  "contextSaving.history": "已折叠 {requests} 次请求，单次最多节省 {max}。",
   "contextSaving.usageMissing": "{count} 次请求没读到用量，未计入重算合计。",
   "contextSaving.rewriteTotal": "重算合计 {rewrite} tokens。",
 } as const;

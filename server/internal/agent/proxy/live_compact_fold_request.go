@@ -104,7 +104,7 @@ func (s *Server) foldRequestLedgerFor(token, adapter string, body []byte) ([]byt
 	result := foldResultFromOutcome(out)
 	if out.Folded {
 		logLiveCompactFold(token, result, gate.decision, time.Since(start))
-		pending := s.newFoldLedgerPending(harness, cfg.Mode, len(body), len(out.Body), result, time.Since(start))
+		pending := s.newFoldLedgerPending(harness, cfg.Mode, len(body), len(out.Body), est, estimateByteTokens(out.Body), result, time.Since(start))
 		// Sweep after committing, and protect what this node still points at.
 		// Without the protection set, disk pressure would delete an archive
 		// whose pointer is already inside the model's context; the block would

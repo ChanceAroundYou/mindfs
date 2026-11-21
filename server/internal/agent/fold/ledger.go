@@ -37,16 +37,24 @@ const (
 // what would have been sent and what was sent, for this request only; it is a
 // snapshot, not something to sum across turns of the same fold.
 type LedgerEntry struct {
-	TS            int64  `json:"ts"`
-	Mode          string `json:"mode"`
-	ReqBytes      int    `json:"req_bytes"`
-	FoldedBytes   int    `json:"folded_bytes"`
-	SavedBytes    int    `json:"saved_bytes"`
-	Blocks        int    `json:"blocks"`
-	TokensEst     int    `json:"tokens_est"`
-	Skipped       int    `json:"skipped"`
-	ArchiveErrors int    `json:"archive_errors"`
-	FoldMS        int64  `json:"fold_ms"`
+	TS          int64  `json:"ts"`
+	Mode        string `json:"mode"`
+	ReqBytes    int    `json:"req_bytes"`
+	FoldedBytes int    `json:"folded_bytes"`
+	// ReqTokensEst and ForwardTokensEst measure the same two bodies in
+	// estimated tokens (EstimateByteTokens), so the UI can show one unit
+	// throughout: bytes are exact, tokens are ±30%, and only the kernel's
+	// estimator can turn one into the other (bytes/4 is wrong for CJK).
+	// Rows written before 2026-11-21 carry zero here; the reader must fall
+	// back to bytes rather than infer a token count.
+	ReqTokensEst     int   `json:"req_tokens_est"`
+	ForwardTokensEst int   `json:"forward_tokens_est"`
+	SavedBytes       int   `json:"saved_bytes"`
+	Blocks           int   `json:"blocks"`
+	TokensEst        int   `json:"tokens_est"`
+	Skipped          int   `json:"skipped"`
+	ArchiveErrors    int   `json:"archive_errors"`
+	FoldMS           int64 `json:"fold_ms"`
 	// RewriteTokens is what this fold cost: the part of the fold request billed
 	// at full price instead of the 0.1x cache read. That is input_tokens plus
 	// cache_creation_input_tokens — the second term was missing before

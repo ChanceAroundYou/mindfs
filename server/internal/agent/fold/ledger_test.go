@@ -43,6 +43,53 @@ func TestLedgerAppendAndRead(t *testing.T) {
 	}
 }
 
+// 胶囊统一按 token 显示，账本行必须自带这次折叠的两端估算值：字节与 token 是
+// 同一份 body 的两次测量，读口拿字节除 4 反推在 CJK 内容上会差一倍。
+func TestLedgerKeepsTokenEstimates(t *testing.T) {
+	store := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	entry := ledgerTestEntry(500)
+	entry.ReqTokensEst = 11800
+	entry.ForwardTokensEst = 11200
+	if err := store.Write("session-a", entry); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.read("session-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("read %d entries, want 1", len(entries))
+	}
+	if entries[0].ReqTokensEst != 11800 || entries[0].ForwardTokensEst != 11200 {
+		t.Fatalf("token estimates = req %d / forward %d, want 11800 / 11200",
+			entries[0].ReqTokensEst, entries[0].ForwardTokensEst)
+	}
+}
+
+// 2026-11-21 之前写的账本行没有这两个键。缺字段只能读成 0（前端据此回退字节），
+// 不能让整份历史解析失败。
+func TestLedgerReadsLegacyRowsWithoutTokenEstimates(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ledger")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := NewLedgerStore(dir)
+	line := `{"ts":1700000000,"mode":"on","req_bytes":1000,"folded_bytes":500,"saved_bytes":500,"blocks":2,"tokens_est":200,"fold_ms":3}` + "\n"
+	if err := os.WriteFile(store.path("session-a"), []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.read("session-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].SavedBytes != 500 {
+		t.Fatalf("legacy row = %+v, want one row with saved_bytes 500", entries)
+	}
+	if entries[0].ReqTokensEst != 0 || entries[0].ForwardTokensEst != 0 {
+		t.Fatalf("legacy row grew token estimates: %+v", entries[0])
+	}
+}
+
 // Ledgers are per session: one session's folds must never show up as another's.
 func TestLedgerIsPerSession(t *testing.T) {
 	store := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))

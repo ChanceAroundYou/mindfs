@@ -8,6 +8,13 @@ export type ContextSavingEntry = {
   req_bytes: number;
   folded_bytes: number;
   saved_bytes: number;
+  /**
+   * The same two bodies in estimated tokens (the kernel's estimator, same one
+   * behind tokens_est). 0 on rows written before 2026-11-21 — fall back to the
+   * byte fields there instead of dividing bytes by four.
+   */
+  req_tokens_est: number;
+  forward_tokens_est: number;
   blocks: number;
   tokens_est: number;
   skipped: number;
