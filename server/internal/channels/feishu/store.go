@@ -113,6 +113,46 @@ func (s *Store) Update(id string, fn func(*Card) bool) (Card, bool, error) {
 	return c, true, nil
 }
 
+// MarkDelivered records that the given version is what Feishu now shows.
+// It does not bump Version: delivery is bookkeeping, not a content change.
+func (s *Store) MarkDelivered(id, messageID string, renderedVersion int) (Card, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.cards[id]
+	if !ok {
+		return Card{}, false, nil
+	}
+	if messageID != "" {
+		c.MessageID = messageID
+	}
+	c.RenderedVersion = renderedVersion
+	c.LastError = ""
+	c.UpdatedAt = s.now()
+	s.cards[id] = c
+	if err := s.saveLocked(); err != nil {
+		return Card{}, false, err
+	}
+	return c, true, nil
+}
+
+// RecordDeliveryError stores why the last send or patch failed, without
+// pretending the card's content changed.
+func (s *Store) RecordDeliveryError(id, message string) (Card, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.cards[id]
+	if !ok {
+		return Card{}, false, nil
+	}
+	c.LastError = message
+	c.UpdatedAt = s.now()
+	s.cards[id] = c
+	if err := s.saveLocked(); err != nil {
+		return Card{}, false, err
+	}
+	return c, true, nil
+}
+
 // Get returns a copy of one card.
 func (s *Store) Get(id string) (Card, bool) {
 	s.mu.Lock()
