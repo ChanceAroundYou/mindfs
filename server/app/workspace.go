@@ -99,6 +99,8 @@ type workspaceManager struct {
 	shared sharedServices
 
 	cliToken func() string
+	// controlSync 是进程级的控制面同步能力；nil = 未启用（handler 不注册端点）。
+	controlSync *controlSyncWiring
 
 	mu      sync.Mutex
 	entries map[string]*workspaceEntry
@@ -132,6 +134,20 @@ func (m *workspaceManager) SetRole(role nodeinfo.Role) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.role = role
+}
+
+// SetControlSync 挂上控制面同步能力（nil = 未启用）。必须在处理请求前调。
+func (m *workspaceManager) SetControlSync(w *controlSyncWiring) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.controlSync = w
+}
+
+// controlSyncWiringOf 读取当前同步能力，返回副本（wiring 建好后不再变动）。
+func (m *workspaceManager) controlSyncWiringOf() *controlSyncWiring {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.controlSync
 }
 
 // Role 返回节点角色；零值归一成 control，默认等于改造前的行为。
@@ -322,7 +338,7 @@ func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *
 	if cliToken != nil {
 		token = cliToken()
 	}
-	return &api.HTTPHandler{
+	handler := &api.HTTPHandler{
 		AppContext:    ctx,
 		StaticDir:     staticDir,
 		Version:       version,
@@ -330,4 +346,6 @@ func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *
 		NodeRole:      role,
 		WorkflowLLM:   api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
 	}
+	m.controlSyncWiringOf().applyTo(handler)
+	return handler
 }

@@ -595,3 +595,54 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 ## 执行记录
 
 （随任务逐条追加：任务号、提交、门禁命令与输出、变异验证结果、未覆盖项。）
+
+### P3/P4/P5 装配：配置段 + server/app 接线（2026-11-22）
+
+用户裁定「P3/P4 接线（推荐）」后完成。**默认关闭、未部署、未重启任何节点。**
+
+落地：
+
+- `cli/cmd` 新增 `control_sync` 段：`enabled` / `role`（primary 默认 | edge）/ `instance_id` /
+  `primary_url` / `ca_file` / `token_file`。**token 只走 `token_file`**，没有内联字段、没有 flag
+  —— 同步通道搬的是含口令 hash 的整份控制面。关闭时不读文件；打开而读不到 / 读到空文件
+  一律拒绝启动（`cli/cmd/control_sync.go`）。
+- `server/app/control_sync.go`：`startControlSync` 组装 Store（`<config-dir>/control_sync.db`
+  + `Migrate`）、六域 Registry（users / preferences / nodes / workflows / prompts / pins）、
+  `Capturer`、`NewRuntime`；缺任何一份权威存储直接启动失败，不做「半份副本」。
+  - `nodeinfo.RoleWorker` 上启用同步直接拒绝：边缘要出页面、要转发，worker 不是那个角色。
+  - **primary 缺 token 也拒绝启动**：没有 token 的 primary 不注册 `/push /head /changes`，
+    边缘永远同步不了 —— 这不是可选配置缺失，是通道根本没通。
+  - 角色分工：primary 取 `Pusher`/`Feed`/token；edge 取 `ModeController`（`/status` `/mode`）
+    与 `Resolver`（冲突查询/裁决），并构造 `ControlProxy`，`Mode` 指向状态机、
+    `BlockedDomain` 查未裁决冲突（查库失败按冻结处理，fail closed）。
+- `server/app/server.go`：`Start` 在建完四个共享 store 之后装配同步；`workspaces.SetControlSync`
+  把能力装进每个按账户构建的 `HTTPHandler`；`controlSync.runtime.Run(ctx)` 起后台循环
+  （primary 只有兜底采集，edge 另有探活/追平/交接/推送）。
+- 中间件顺序 **采集在内、转发在外**（`controlSyncWiring.wrapRoot`）：转发出去的控制面请求
+  不在本机留下记录；edge 在线时采集器本身也被 `CaptureWhen` 关掉，两道防线互补。
+- 默认关闭时零行为变化：不建库、不起 goroutine、端点 404、请求直通。
+
+验证：
+
+- `cli/cmd` 6 条（关闭不碰文件、未配置为 nil、token 去空白、缺文件/空文件报错、无
+  token_file 留空交给运行时判定）。
+- `server/app` 9 条（关闭是 no-op 且不建库、worker 拒绝、primary 缺 token 拒绝、
+  primary 暴露 push/feed/token、edge 接上 mode/resolver/proxy 且不暴露主节点端点、
+  转发范围白名单、edge 坏配置三种、六域齐全与缺存储失败、按域冻结只挡冲突域且查库失败
+  fail closed、wrapRoot 采集本机写进变更流且数据面不推进水位、wrapRoot 在线转发控制面 /
+  数据面留本机 / 离线写落本机）。
+- 变异 11 处各自打红后还原：去掉 `BlockedDomain` 接线、去掉 primary token 闸门、去掉
+  worker 闸门、`applyTo` 不写 token、去掉 `enabled` 判定、去掉缺存储闸门、查库失败改成
+  fail open、CLI 不读 token、`boolValue` 恒假、`wrapRoot` 去掉采集、去掉转发包装。
+- 门禁：`go test -count=1 ./cli/... ./server/app/... ./server/internal/api/...
+  ./server/internal/controlsync/...` 全绿（api 60.1 s）、`go vet` 与 `gofmt -l` 干净、
+  `go build ./...` 成功。
+
+未做 / 未覆盖：
+
+- 真双进程端到端仍是 T21（两条独立 `XDG_CONFIG_HOME` + 端口 7441/7442）；本轮只用
+  `httptest` 的自签 CA 验证了转发路径，没有跑真实二进制。
+- `OnModeChange` 仍未接系统事件 / 前端横幅（T16）。
+- `server/cmd/mindfs-server` 这份备用入口不解析 `control_sync`（`make build` 装的是
+  `cli/cmd`，与项目约定一致）。
+- 未改任何节点配置、未部署、未重启。

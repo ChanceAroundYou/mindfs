@@ -101,6 +101,9 @@ type StartOptions struct {
 	// LiveCompactHarnesses 按 harness 覆盖上面的策略（`live_compact.harness.*`）。
 	// nil = 所有 harness 都用节点配置。
 	LiveCompactHarnesses map[string]LiveCompactHarnessOverride
+	// ControlSync 是控制面同步（离线优先本地控制面）。nil / Enabled=false 时
+	// 一切保持改造前的行为：不建库、不采集、不转发、端点 404。
+	ControlSync *ControlSyncOptions
 }
 
 // LiveCompactHarnessOverride 是 fold.HarnessOverride 的可导入别名。
@@ -219,6 +222,17 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if err != nil {
 		return err
 	}
+	// 控制面同步：默认关闭（opts.ControlSync == nil / Enabled=false）。
+	// 开启后 store 建不出来、配置不完整一律启动失败 —— 半份副本比没有副本更危险。
+	controlSync, err := startControlSync(ctx, opts.ControlSync, nodeinfo.Normalize(opts.Role), configDir, controlSyncStores{
+		auth:      authStore,
+		prefs:     sharedPrefs,
+		nodes:     sharedNodes,
+		workflows: sharedWorkflows,
+	})
+	if err != nil {
+		return err
+	}
 	liveCompactDisableFile := opts.LiveCompactDisableFile
 	liveCompactArchiveDir := opts.LiveCompactArchiveDir
 	if liveCompactArchiveDir == "" {
@@ -304,6 +318,11 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	}
 	workspaces.SetRole(nodeinfo.Normalize(opts.Role))
 	workspaces.SetHandlerDefaults(staticDir, func() string { return localCLIToken })
+	workspaces.SetControlSync(controlSync)
+	if controlSync != nil {
+		// 后台循环：主节点兜底采集；边缘另有探活、追平、交接与推送。
+		go controlSync.runtime.Run(ctx)
+	}
 
 	httpRoutes := api.NewScopedRouter(workspaces, func(appCtx *api.AppContext) http.Handler {
 		return workspaces.NewHTTPHandler(appCtx, opts.Version).Routes()
@@ -317,7 +336,11 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	// WithRawAccountPath 必须在 ScopedRouter 之前：账户段要在派发时就定下来。
 	inner.Handle("/", api.WithRawAccountPath(httpRoutes))
 	inner.Handle("/ws", wsRoutes)
-	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), inner))
+	var root http.Handler = inner
+	if controlSync != nil {
+		root = controlSync.wrapRoot(inner)
+	}
+	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), root))
 
 	handler := api.LoggingMiddleware(mux)
 

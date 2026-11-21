@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12189,11 +12189,20 @@ groups:
       删除标记，不吃进冲突 UI 与前端缓存）；**每侧删除用 `local_deleted` / `remote_deleted`
       表达**，旧库靠 `ALTER TABLE ADD COLUMN` 迁移补齐 —— `CREATE TABLE IF NOT EXISTS`
       不会给已存在的表补列，升级后第一次读冲突卡就会 `no such column`。
+      ⑯ 启动装配（`cli/cmd/control_sync.go` / `server/app/control_sync.go`）的五条必须保留：
+      **token 只认 `token_file`**（同步通道搬的是含口令 hash 的整份控制面；没有内联字段、没有 flag，
+      不读文件就读不出 token，关闭模式也绝不碰它）；**中间件采集在内、转发在外**
+      （`wrapRoot` 先包 `WriteCapture`、再包代理：转发出去的控制面请求不能在本机留下记录，
+      否则边缘在线时的本地副本会被自己写脏）；**启用而行角色是 worker 直接拒绝启动**
+      （边缘要出页面、要转发，worker 不是那个角色），**primary 缺 token 也拒绝**
+      （没有 token 就不注册 `/push /head /changes`，边缘永远同步不了，那是通道根本没通而不是可选配置缺失），
+      **缺任意一份权威存储同样拒绝**（缺域的副本「看起来能用」，直到主节点恢复才发现一半控制面没跟上）；
+      **`BlockedDomain` 查库失败按冻结处理**（恢复期宁可让用户重试一次写入，也不能放一条会和主节点分叉的写）。
+      默认关闭时零行为变化：不建库、不起 goroutine、端点 404、请求直通。
     boundary: |
-      P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是**尚未接进启动链的内核与运行时**
-      （`Runtime` 已能自成一套，但 `server/app` 还没装配它，`control_sync.enabled` 缺省 false），
-      同样不部署、不重启任何节点。一处有意偏离 spec §6.1 规则 2 的字面措辞：hash 相等不再单独算「没人动过」，
-      墓碑被排除在外（见 ⑮）。
+      P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
+      `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
+      `server/app` 启动链（⑯），但默认仍是关闭，边缘探活与追平只在显式开启后运行。
       后续波次（P1、P3–P8）在同组继续登记 files / tests / anchors。控制面之外的数据
       （项目/会话/任务/文件）不在同步范围内。
     files:
@@ -12258,6 +12267,10 @@ groups:
       - server/internal/controlsync/store_migrate.go
       - server/internal/controlsync/store_runtime.go
       - server/internal/controlsync/token.go
+      - cli/cmd/control_sync.go
+      - cli/cmd/control_sync_test.go
+      - server/app/control_sync.go
+      - server/app/control_sync_test.go
 
     tests:
       - server/app/control_plane_isolation_test.go
@@ -12293,6 +12306,9 @@ groups:
       - server/internal/controlsync/capture_pending_test.go
       - server/internal/api/controlproxy_mode_test.go
       - server/internal/api/http_control_sync_feed_test.go
+      - server/app/control_sync_test.go:func TestStartControlSyncPrimaryRequiresToken(t *testing.T) {
+      - server/app/control_sync_test.go:func TestStartControlSyncWrapRootForwardsOnlyOnEdge(t *testing.T) {
+      - cli/cmd/control_sync_test.go:func TestControlSyncOptionsReadsTokenFile(t *testing.T) {
 
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
@@ -12392,3 +12408,15 @@ groups:
       - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
       - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：没有任何项目时直接清空会话与主区，不区分「真空」与「拉不到」", () => {'
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:token, err := readSyncToken(stringValue(cs.TokenFile))'
+      - 'cli/cmd/startup.go:ControlSync *startupControlSyncConfig `json:"control_sync"`'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg)'
+      - 'server/app/control_sync.go:if nodeRole == nodeinfo.RoleWorker {'
+      - 'server/app/control_sync.go:if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {'
+      - 'server/app/control_sync.go:root := w.capturer.WriteCapture(next)'
+      - 'server/app/control_sync.go:proxy.BlockedDomain = blockedDomainChecker(store)'
+      - 'server/app/control_sync.go:cards, err := store.ListOpenConflicts(ctx)'
+      - 'server/app/server.go:controlSync, err := startControlSync(ctx, opts.ControlSync, nodeinfo.Normalize(opts.Role), configDir, controlSyncStores{'
+      - 'server/app/server.go:root = controlSync.wrapRoot(inner)'
+      - 'server/app/workspace.go:m.controlSyncWiringOf().applyTo(handler)'
