@@ -717,3 +717,33 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   全量 `npx vitest run` 261 文件 / 859 通过 / 6 跳过。
 - 未做：真浏览器点验（留给 T22）、冲突面板（T17）、在线态手动切本地的入口（spec §8 在线不出横幅，
   切换入口只在同步中 / 冲突态出现）。未部署、未重启、未改配置。
+
+### T17 冲突面板（2026-11-22）
+
+- 目标：按域分组、逐条裁决、批量裁决（一次确认一次提交）、裁决后刷新；users 域不展示 hash。
+- 分层（同 T16，受仓库架构红线约束）：`web/src/shared/syncConflicts.ts`（类型、域顺序、
+  分组、可选裁决、两侧摘要）、`web/src/services/net/controlSync.ts`（`fetchSyncConflicts` /
+  `resolveSyncConflict` / `resolveSyncConflicts`）、`web/src/hooks/useSyncConflicts.ts`
+  （事件打开、读取、裁决、刷新）、`web/src/components/app/SyncConflictPanel.tsx`
+  （portal + `PanelShell`）。
+- **途中打出并修掉一个后端缺陷**：conflict id 里可能带 `/` —— prompts 的 key 是
+  `<账户>/sha256:<hash>`、nodes 的 key 是 URL。chi 按 `RawPath` 匹配、`URLParam` 原样返回
+  转义后的段，原 handler 拿它直接查库，于是这两个最常冲突的域点了也裁决不了。现在前端
+  `encodeURIComponent(id)`、服务端 `url.PathUnescape(chi.URLParam(r, "id"))`；
+  `TestControlSyncConflictResolveDecodesEscapedID` 先红（拿到 `pull%3Aprompts%3Aalice%2F...`）
+  后绿。spec §7 的端点形状不变。
+- 关键语义：① 分组顺序固定为 spec §5 的域表、未知域排最后；② users 域**按域判断**
+  （不依赖服务端 `redacted` 标记）只给「保留本地 / 采用主节点」，摘要固定「密码已变更」，
+  即使载荷里混入口令 hash 也不渲染；③ 删除 / 脱敏 / 载荷三种摘要分开，载荷预览截断 600 字符；
+  ④ 批量是「一次确认一次提交」—— 服务端只有逐条 CAS 端点，视图不循环发请求，确认条写明条数，
+  在途由 `busy` 去重；404 / 409 视为目标已达成；⑤ 读失败保留旧列表（清空等于告诉用户
+  「没有冲突了」）；⑥ 读口 404 与状态端点同一条规矩：静默关闭面板，不当故障。
+- 用例：`web/tests/sync-conflict-panel.test.mjs` 8 条（分组顺序与条数、users 域两种裁决且
+  摘要无 hash、摘要三分支与截断、读口 404 折叠、id 转义与请求体、批量单次提交、事件打开与
+  确认条数、App 挂载、zh/en 25 键）；Go 新增 1 条（转义 id）。
+- 变异：users 域判断退回只看 `redacted`、摘要去掉脱敏、去掉 `encodeURIComponent`、
+  确认文案去掉 `count`、未知域 rank 改 0、取消键误触批量提交 —— 六处各自打红对应用例后还原。
+- 门禁：`npx vitest run` 262 文件 / 867 通过 / 6 跳过、`tsc -b --noEmit` 干净、
+  `go test ./server/internal/api ./server/internal/controlsync` 全绿、`go build ./...` 成功。
+- 未做：真浏览器点验（T22）、节点可达性（T18）、批量里的「手动合并」（只在逐条里提供）；
+  未部署、未重启、未改配置。

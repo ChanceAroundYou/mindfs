@@ -11,8 +11,10 @@
 import { APIError, protectedJSON } from "./api";
 import { controlPath } from "./controlPlane";
 import { isControlMode, type ControlSyncAction, type ControlSyncStatus } from "../../shared/controlMode";
+import type { SyncConflictChoice, SyncConflictView } from "../../shared/syncConflicts";
 
 export type { ControlMode, ControlSyncAction, ControlSyncStatus } from "../../shared/controlMode";
+export type { SyncConflictChoice, SyncConflictView } from "../../shared/syncConflicts";
 
 function toStatus(payload: unknown): ControlSyncStatus | null {
   if (!payload || typeof payload !== "object") return null;
@@ -64,4 +66,106 @@ export async function switchControlSyncMode(
     if (endpointMissing(err)) return null;
     throw err;
   }
+}
+
+function toConflict(value: unknown): SyncConflictView | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    typeof record.domain !== "string" ||
+    typeof record.key !== "string"
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    domain: record.domain,
+    key: record.key,
+    local_hash: typeof record.local_hash === "string" ? record.local_hash : undefined,
+    remote_hash: typeof record.remote_hash === "string" ? record.remote_hash : undefined,
+    local_deleted: record.local_deleted === true,
+    remote_deleted: record.remote_deleted === true,
+    redacted: record.redacted === true,
+    local: record.local,
+    remote: record.remote,
+    created_at: typeof record.created_at === "string" ? record.created_at : undefined,
+  };
+}
+
+/**
+ * 读冲突卡。返回 null = 本机没有注册冲突端点（与状态端点同一套判定）。
+ * 载荷形状不对时抛错而不是回空列表：空列表在界面上等于「没有冲突」，
+ * 会把服务端的形状错误伪装成好消息。
+ */
+export async function fetchSyncConflicts(): Promise<SyncConflictView[] | null> {
+  try {
+    const payload = await protectedJSON<unknown>(controlPath("/api/control-sync/conflicts"));
+    const list =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>).conflicts
+        : undefined;
+    if (!Array.isArray(list)) {
+      throw new Error("invalid conflicts payload");
+    }
+    return list
+      .map(toConflict)
+      .filter((conflict): conflict is SyncConflictView => conflict !== null);
+  } catch (err) {
+    if (endpointMissing(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * 裁决一条冲突。id 必须整体转义：prompts 的 key 是 `<账户>/sha256:<hash>`、
+ * nodes 的 key 是 URL，两者都自带 `/`，不转义会多出一段路径。
+ */
+export async function resolveSyncConflict(
+  id: string,
+  choice: SyncConflictChoice,
+  payload?: unknown,
+): Promise<void> {
+  const body: Record<string, unknown> = { choice };
+  if (choice === "payload") {
+    body.payload = payload;
+  }
+  await protectedJSON<unknown>(
+    controlPath(`/api/control-sync/conflicts/${encodeURIComponent(id)}/resolve`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export type SyncConflictBatchResult = { resolved: number; failed: number };
+
+/**
+ * 批量裁决：逐条发送，一次确认触发一次提交。
+ *
+ * 服务端只有逐条端点（每条各自 CAS），没有批量接口 —— 这里不发明一个 spec 之外的
+ * 批量 API，而是把「一次提交」留在视图层：确认一次、串行发完、逐条汇报结果。
+ * 404 / 409 表示这张卡已被另一端裁决或已不存在，目标已达成，按成功计。
+ */
+export async function resolveSyncConflicts(
+  conflicts: readonly SyncConflictView[],
+  choice: Exclude<SyncConflictChoice, "payload">,
+): Promise<SyncConflictBatchResult> {
+  let resolved = 0;
+  let failed = 0;
+  for (const conflict of conflicts) {
+    try {
+      await resolveSyncConflict(conflict.id, choice);
+      resolved += 1;
+    } catch (err) {
+      if (err instanceof APIError && (err.status === 404 || err.status === 409)) {
+        resolved += 1;
+      } else {
+        failed += 1;
+      }
+    }
+  }
+  return { resolved, failed };
 }

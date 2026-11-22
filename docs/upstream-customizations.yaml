@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T21 双实例验收）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12218,6 +12218,17 @@ groups:
       永久关掉，两者必须能区分）；**四态到动作是纯函数**（本地模式→立即重试、同步中→切换到本地、
       冲突→查看冲突，渲染层不再自己 if/else 一遍）；**视图层只经 hook 访问网络**（components 直接
       import services 会踩仓库的 view→service 架构红线，轮询与请求一律留在 hook）。
+      ⑲ 冲突面板与裁决端点转义（`shared/syncConflicts.ts` / `hooks/useSyncConflicts.ts` /
+      `components/app/SyncConflictPanel.tsx` / `services/net/controlSync.ts` /
+      `api/http_control_sync.go`）的五条必须保留：**conflict id 在路径两处都要按整体处理**
+      （前端 `encodeURIComponent(id)`、服务端 `url.PathUnescape(chi.URLParam(...))`）——
+      prompts 的 key 是 `<账户>/sha256:<hash>`、nodes 的 key 是 URL，两者都带 `/`，
+      少了任一侧这些域的冲突卡永远点不动，而它们正是最常冲突的两个域；**users 域只给
+      「保留本地 / 采用主节点」**（判断按域做、不依赖服务端 redacted 标记，载荷里是口令
+      hash，不能让人当普通 JSON 编辑，摘要也只显示「密码已变更」）；**分组顺序固定为
+      spec §5 的域表、未知域排最后**（新域不能插队让分组位置随数据漂移）；**批量裁决是
+      「一次确认一次提交」**（服务端只有逐条 CAS 端点，视图不循环发请求、确认文案必须写明
+      条数，在途由 busy 去重）；**读失败不清空已有列表**（清空等于告诉用户「没有冲突了」）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12292,9 +12303,12 @@ groups:
       - server/app/control_sync_test.go
       - e2e/test_control_sync_offline.py
       - web/src/shared/controlMode.ts
+      - web/src/shared/syncConflicts.ts
       - web/src/services/net/controlSync.ts
       - web/src/hooks/useControlSyncStatus.ts
+      - web/src/hooks/useSyncConflicts.ts
       - web/src/components/app/ControlModeBanner.tsx
+      - web/src/components/app/SyncConflictPanel.tsx
       - web/src/app/AppRootView.tsx
       - web/src/i18n/locales/zh-CN-workspace.ts
       - web/src/i18n/locales/en-US-workspace.ts
@@ -12337,6 +12351,8 @@ groups:
       - cli/cmd/control_sync_test.go
       - e2e/test_control_sync_offline.py
       - web/tests/control-mode-banner.test.mjs
+      - web/tests/sync-conflict-panel.test.mjs
+      - server/internal/api/http_control_sync_conflicts_test.go
 
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
@@ -12470,3 +12486,18 @@ groups:
       - 'web/src/i18n/locales/zh-CN-workspace.ts:"controlMode.local": "本地模式",'
       - 'web/src/i18n/locales/en-US-workspace.ts:"controlMode.local": "Local mode",'
       - 'web/tests/control-mode-banner.test.mjs:test("三种降级状态各自给出唯一动作", () => {'
+      - 'server/internal/api/http_control_sync.go:id, err := url.PathUnescape(chi.URLParam(r, "id"))'
+      - 'server/internal/api/http_control_sync_conflicts_test.go:func TestControlSyncConflictResolveDecodesEscapedID(t *testing.T) {'
+      - 'web/src/shared/syncConflicts.ts:export function groupSyncConflicts(conflicts: readonly SyncConflictView[]): SyncConflictGroup[] {'
+      - 'web/src/shared/syncConflicts.ts:if (view.domain === "users" || view.redacted) return ["local", "primary"];'
+      - 'web/src/shared/syncConflicts.ts:if (view.domain === "users" || view.redacted) return { kind: "redacted", text: "" };'
+      - 'web/src/services/net/controlSync.ts:export async function fetchSyncConflicts(): Promise<SyncConflictView[] | null> {'
+      - 'web/src/services/net/controlSync.ts:${encodeURIComponent(id)}/resolve'
+      - 'web/src/services/net/controlSync.ts:await resolveSyncConflict(conflict.id, choice);'
+      - 'web/src/hooks/useSyncConflicts.ts:window.addEventListener(CONTROL_CONFLICTS_EVENT, onOpen);'
+      - 'web/src/components/app/SyncConflictPanel.tsx:void resolveMany(group.conflicts, batch.choice);'
+      - 'web/src/components/app/SyncConflictPanel.tsx:t("syncConflict.batchConfirm", { count: group.conflicts.length })'
+      - 'web/src/app/AppRootView.tsx:<SyncConflictPanel />'
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:"syncConflict.title": "同步冲突",'
+      - 'web/src/i18n/locales/en-US-workspace.ts:"syncConflict.title": "Sync conflicts",'
+      - 'web/tests/sync-conflict-panel.test.mjs:test("按域分组并固定顺序，未知域排最后", () => {'

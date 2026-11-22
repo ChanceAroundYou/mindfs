@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -223,7 +224,14 @@ type controlSyncResolveRequest struct {
 // 冲突卡裁决：`{"choice":"local"|"primary"|"payload","payload":{...}}`。
 // 404 / 409 / 400 分别对应「没有这张卡」「已经裁决过」「选择或载荷不合法」。
 func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	// 冲突 id 里可能带 `/`（prompts 的 key 是 `<账户>/sha256:<hash>`，nodes 是 URL），
+	// 前端只能整体 encodeURIComponent。chi 按 RawPath 匹配、URLParam 原样返回转义后的
+	// 段，这里必须还原一次，否则这些域的冲突卡点不动。
+	id, err := url.PathUnescape(chi.URLParam(r, "id"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid conflict id"))
+		return
+	}
 	if strings.TrimSpace(id) == "" {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("conflict id required"))
 		return
@@ -234,7 +242,7 @@ func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r 
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
 	}
-	err := h.ControlSyncConflicts.Resolve(r.Context(), id, req.Choice, req.Payload)
+	err = h.ControlSyncConflicts.Resolve(r.Context(), id, req.Choice, req.Payload)
 	switch {
 	case err == nil:
 		respondJSON(w, http.StatusOK, map[string]any{"id": id, "choice": req.Choice})

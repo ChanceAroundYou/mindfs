@@ -91,6 +91,24 @@ func TestControlSyncConflictResolveEndpoint(t *testing.T) {
 	}
 }
 
+// 冲突 id 里可能带 `/`（prompts 的 key 是 `<账户>/sha256:<hash>`，nodes 是 URL）。
+// 前端按 URL 规则把 id 整体转义后再拼进路径，服务端必须还原，否则这些域的冲突卡
+// 永远裁决不了 —— 而 prompts 与 nodes 正是最常见的两个同步域。
+func TestControlSyncConflictResolveDecodesEscapedID(t *testing.T) {
+	f := &fakeConflicts{}
+	srv := newConflictTestServer(t, f)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		"/api/control-sync/conflicts/pull%3Aprompts%3Aalice%2Fsha256%3Aabc/resolve",
+		strings.NewReader(`{"choice":"local"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	if f.gotID != "pull:prompts:alice/sha256:abc" {
+		t.Fatalf("转给 Resolver 的 id = %q，未还原转义", f.gotID)
+	}
+}
+
 func TestControlSyncConflictResolveStatusCodes(t *testing.T) {
 	cases := []struct {
 		name string
