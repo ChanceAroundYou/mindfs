@@ -8656,7 +8656,7 @@ groups:
       - 'server/internal/api/workflow_llm.go:func NewWorkflowLLMClient('
       - 'server/internal/api/usecase/session_authoring.go:func RunOneShotPrompt('
       - 'server/app/workspace_build.go:services.Kanban.SetWorkflowLLM('
-      - 'server/app/workspace.go:WorkflowLLM:   api.NewWorkflowLLMClient('
+      - 'server/app/workspace.go:WorkflowLLM:       api.NewWorkflowLLMClient('
 
   - id: G-LW
     title: 任务对话界面按会话样式重做与运行状态投影修正
