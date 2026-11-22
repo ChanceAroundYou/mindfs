@@ -190,6 +190,12 @@ func (s *Service) recoverInterruptedLiveTurn(
 	if err != nil || lastUser == nil || tailFinished {
 		return err
 	}
+	// 流式 provisional 块是本进程被 kill 前就已经落盘的正文。它能恢复就不需要
+	// importer：开放 tool_use 尾在转录里没有最终回复，捞只会得到重复的用户 prompt。
+	handled, err := s.recoverProvisionalTurnBlocks(ctx, manager, current, agentName, binding.AgentSessionID, lastUser)
+	if err != nil || handled {
+		return err
+	}
 	attemptKey := interruptedLiveTailAttemptKey(rootID, current.Key, lastUser.Seq)
 	if !force {
 		if _, seen := interruptedLiveTailAttempts.LoadOrStore(attemptKey, struct{}{}); seen {
