@@ -192,6 +192,10 @@ const (
 	// PayloadJSON 存 questions/agent；ToolUseID 关联会话里的同一条 tool call，
 	// 回答时两处必须同步。
 	ActivityTypeQuestion = "question"
+	// ActivityTypeUserAnswer 是用户回答提问卡后落在任务对话里的用户行（W4）。
+	// 它让 Router 看得见「用户答了什么、会话因此继续」；不占用户留言的 3 回合预算
+	// 之外的任何配额 —— 预算按留言活动各自计算，这条只是新的一条用户活动。
+	ActivityTypeUserAnswer = "user_answer"
 	// ActivityTypeHumanGate 是 HumanGate 的审批卡。PayloadJSON 存
 	// prompt/node_id/node_run_id；卡片本身就是审批入口，普通留言不能批准。
 	ActivityTypeHumanGate = "human_gate"

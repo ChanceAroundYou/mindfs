@@ -256,3 +256,94 @@ func TestCloseOpenTaskQuestionsClosesOnlyWaitingCardsForSession(t *testing.T) {
 		t.Fatalf("second close = %d/%v, want idempotent 0", again, err)
 	}
 }
+
+// W4-1：用户真的回答了提问卡时，任务对话里要留下一条 user_answer 用户活动。
+// Router 的 brief 只读任务对话；没有这条，它只能看到「提问卡 completion」，
+// 看不见用户答了什么、会话又继续了。
+func TestMarkTaskQuestionAnsweredRecordsUserAnswerActivity(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+	if _, _, err := f.service.RecordTaskQuestion(ctx, TaskQuestionInput{
+		TaskID: "task-1", SessionKey: "sess-1", ToolUseID: "tool-1",
+		Body: "需要确认", PayloadJSON: `{"questions":[{"question":"继续吗？"}]}`,
+	}); err != nil {
+		t.Fatalf("RecordTaskQuestion: %v", err)
+	}
+	if _, changed, err := f.service.MarkTaskQuestionAnswered(ctx, "sess-1", "tool-1",
+		map[string]string{"继续吗？": "继续，按方案二改"}); err != nil {
+		t.Fatalf("MarkTaskQuestionAnswered: %v", err)
+	} else if !changed {
+		t.Fatal("first answer did not change the question card")
+	}
+
+	list, err := NewActivityStore(f.tasks.db).List(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var answers []*TaskActivity
+	for _, item := range list {
+		if item.Type == ActivityTypeUserAnswer {
+			answers = append(answers, item)
+		}
+	}
+	if len(answers) != 1 {
+		t.Fatalf("user_answer activities = %d, want 1", len(answers))
+	}
+	got := answers[0]
+	if got.Role != RoleUser {
+		t.Fatalf("user_answer role = %q, want %q", got.Role, RoleUser)
+	}
+	if got.SessionKey != "sess-1" {
+		t.Fatalf("user_answer session = %q, want sess-1", got.SessionKey)
+	}
+	if !strings.Contains(got.Body, "继续，按方案二改") {
+		t.Fatalf("user_answer body = %q, want the answer text", got.Body)
+	}
+
+	// 重放同一个答案不能长出第二条：活动 id 由提问卡确定性派生。
+	if _, changed, err := f.service.MarkTaskQuestionAnswered(ctx, "sess-1", "tool-1",
+		map[string]string{"继续吗？": "继续，按方案二改"}); err != nil {
+		t.Fatalf("replay: %v", err)
+	} else if changed {
+		t.Fatal("replayed answer reported a change")
+	}
+	list, err = NewActivityStore(f.tasks.db).List(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("List after replay: %v", err)
+	}
+	replayed := 0
+	for _, item := range list {
+		if item.Type == ActivityTypeUserAnswer {
+			replayed++
+		}
+	}
+	if replayed != 1 {
+		t.Fatalf("user_answer activities after replay = %d, want 1", replayed)
+	}
+
+	// 只收口（空答案）不是「用户答了」，不该留下 user_answer。
+	if _, _, err := f.service.RecordTaskQuestion(ctx, TaskQuestionInput{
+		TaskID: "task-1", SessionKey: "sess-1", ToolUseID: "tool-2",
+		Body: "再确认", PayloadJSON: `{"questions":[{"question":"还好吗？"}]}`,
+	}); err != nil {
+		t.Fatalf("RecordTaskQuestion(2): %v", err)
+	}
+	if _, changed, err := f.service.MarkTaskQuestionAnswered(ctx, "sess-1", "tool-2", nil); err != nil {
+		t.Fatalf("MarkTaskQuestionAnswered(empty): %v", err)
+	} else if !changed {
+		t.Fatal("empty answers did not close the card")
+	}
+	list, err = NewActivityStore(f.tasks.db).List(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("List after empty answer: %v", err)
+	}
+	empty := 0
+	for _, item := range list {
+		if item.Type == ActivityTypeUserAnswer {
+			empty++
+		}
+	}
+	if empty != 1 {
+		t.Fatalf("user_answer activities after empty close = %d, want 1", empty)
+	}
+}

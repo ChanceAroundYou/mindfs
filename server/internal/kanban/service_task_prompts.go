@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
+	"sort"
 	"strings"
 )
 
@@ -140,6 +142,9 @@ func (s *ActivityService) MarkTaskQuestionAnswered(ctx context.Context, sessionK
 				"payload_json": string(encoded),
 			})
 		}
+		if changed && len(answers) > 0 {
+			s.recordUserAnswerActivity(ctx, store, question, answers)
+		}
 		return updated, changed, nil
 	}
 	if question.Status != ActivityStatusWaitingUser {
@@ -155,7 +160,82 @@ func (s *ActivityService) MarkTaskQuestionAnswered(ctx context.Context, sessionK
 			"payload_json": string(encoded),
 		})
 	}
+	if changed && len(answers) > 0 {
+		s.recordUserAnswerActivity(ctx, store, question, answers)
+	}
 	return updated, changed, nil
+}
+
+// recordUserAnswerActivity 在任务对话里补一条 user_answer 用户行。
+//
+// 活动 id 由提问卡确定性派生：同一次答题的重放（浏览器重试、两条路径都到）
+// 走 InsertOrIgnore，不会长出第二行。答案为空 map 时调用方根本不进来 ——
+// 「只收口、没作答」不是用户的答复。
+//
+// 这是**镜像行**，失败只记日志：答案本身已经写进提问卡 payload 并广播，
+// 为了一行展示把整次作答报成失败，用户看到的是「答了但页面报错」。
+func (s *ActivityService) recordUserAnswerActivity(
+	ctx context.Context,
+	store *ActivityStore,
+	question *TaskActivity,
+	answers map[string]string,
+) {
+	if question == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"question_id": question.ID,
+		"answers":     answers,
+	})
+	if err != nil {
+		log.Printf("[kanban/prompts] answer activity marshal %s: %v", question.ID, err)
+		return
+	}
+	activity := &TaskActivity{
+		ID:          "answer-" + taskPromptHash(question.SessionKey, question.ToolUseID),
+		TaskID:      question.TaskID,
+		RootID:      question.RootID,
+		Type:        ActivityTypeUserAnswer,
+		Author:      "user",
+		Role:        RoleUser,
+		Body:        userAnswerBody(answers),
+		SessionKey:  question.SessionKey,
+		PayloadJSON: string(payload),
+	}
+	inserted, err := store.InsertOrIgnore(ctx, activity)
+	if err != nil {
+		log.Printf("[kanban/prompts] answer activity insert %s: %v", activity.ID, err)
+		return
+	}
+	if inserted {
+		s.broadcastCreated(activity)
+	}
+}
+
+// userAnswerBody 把答案渲染成一行人话。答案 key 通常就是问题原文；没有 key 时
+// 退回裸答案。排序只为稳定，与提交顺序无关。
+func userAnswerBody(answers map[string]string) string {
+	keys := make([]string, 0, len(answers))
+	for key := range answers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.TrimSpace(answers[key])
+		if value == "" {
+			continue
+		}
+		if label := strings.TrimSpace(key); label != "" {
+			parts = append(parts, label+"："+value)
+		} else {
+			parts = append(parts, value)
+		}
+	}
+	if len(parts) == 0 {
+		return "已回答提问"
+	}
+	return "已回答提问：" + strings.Join(parts, "；")
 }
 
 // CloseOpenTaskQuestions 收口某会话里所有仍等待回答的提问卡（cancelled）。

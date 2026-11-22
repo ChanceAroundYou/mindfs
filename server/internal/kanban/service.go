@@ -85,6 +85,11 @@ type Service struct {
 	// 吐出内容帧的时刻。只在内存里，重启后一律「未知」。
 	turnWatermarkMu sync.Mutex
 	turnWatermarks  map[string]*turnWatermarkEntry
+	// sessionFollowMu 保护下面两张逐会话标记（见 service_session_follow.go）：
+	// answered = 本轮真的答过提问卡；outOfBand = 这一轮是用户在会话里自己推的。
+	sessionFollowMu  sync.Mutex
+	sessionAnswered  map[string]bool
+	sessionOutOfBand map[string]bool
 	// workflowRunSessionLocks 串行化「同一轮 Run 首次绑定共享会话」：并行分支
 	// 同时起步时只能有一条会话被记成 Run 的会话，否则另一条立刻变成孤儿。
 	workflowRunSessionLocks map[string]*workflowFinishLock

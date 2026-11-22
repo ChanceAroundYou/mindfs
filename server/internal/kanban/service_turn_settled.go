@@ -111,6 +111,14 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 	if isTerminalStatus(task.Status) || strings.TrimSpace(task.ArchivedAt) != "" {
 		return false, nil
 	}
+	// 会话推进跟随（W4）：两个标记都在回合结束时取走，一次性生效。
+	if s.takeSessionAnsweredQuestion(rootID, sessionKey) {
+		in.AnsweredQuestion = true
+	}
+	outOfBand := s.takeSessionOutOfBandTurn(rootID, sessionKey)
+	if outOfBand {
+		in.OutOfBand = true
+	}
 	now := time.Now().UTC()
 	activities := NewActivityStore(store.db)
 	// 结算回合尽量挂在「这一轮之前最近的用户留言」上：brief 会把它作为「用户这一轮
@@ -150,6 +158,11 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 		PayloadJSON:    string(raw),
 		CreatedAt:      now,
 	})
+	// out-of-band 回合结束了：任务头放回 waiting_user（只动仍停在 running 的）。
+	// 放在错误返回之前：事件落库失败不代表这一轮没结束，任务头不能永远 running。
+	if outOfBand {
+		s.restoreOutOfBandTask(ctx, store, taskID)
+	}
 	if err != nil {
 		return false, err
 	}

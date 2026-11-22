@@ -121,6 +121,7 @@ func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Tas
 		return nil, err
 	}
 	s.attachRouterAlerts(ctx, items)
+	s.attachCurrentSessionKeys(ctx, items)
 	return items, nil
 }
 
@@ -148,6 +149,7 @@ func (s *TaskStore) GetTask(ctx context.Context, id string) (Task, error) {
 	}
 	tasks := []Task{task}
 	s.attachRouterAlerts(ctx, tasks)
+	s.attachCurrentSessionKeys(ctx, tasks)
 	return tasks[0], nil
 }
 

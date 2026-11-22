@@ -307,6 +307,11 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		ClientCtx:       job.ClientCtx,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
+			// W4-2：这一轮是用户在任务绑定的会话里自己推的。任务头 waiting_user →
+			// running，回合结算时再放回 waiting_user 并带 out_of_band=true。
+			if h.AppContext != nil && h.AppContext.Kanban != nil {
+				h.AppContext.Kanban.BeginOutOfBandSessionTurn(msgCtx, rootID, key)
+			}
 			turnID = streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, start.MindFSID, job.ExcludeClientID, job.Queued)
 		},
 		OnUpdate: func(update agenttypes.Event) {
@@ -387,4 +392,3 @@ func (h *WSHandler) handleSessionReady(clientID string, req WSRequest) {
 	// 客户端不需要、也不该告诉服务端它见过多少 —— 见 ReplayPending。
 	streamHub.ReplayPending(rootID, clientID, key)
 }
-
