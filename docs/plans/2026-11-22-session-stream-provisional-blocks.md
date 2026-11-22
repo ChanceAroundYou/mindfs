@@ -90,3 +90,42 @@ Full 通用导入的 floor 在恢复后按最新 exchange 行重算，避免把�
 4. 前端中断态。
 5. 全量门禁 + 真实隔离 kill e2e。
 6. 按逻辑单元本地提交；更新 G-MD 定制登记；不 push、不部署、不重启生产。
+
+## 执行记录（2026-11-22）
+
+### 实现与提交
+
+分支 `fix/session-stream-journal`（从 `a2f82597` 切出的独立 worktree `/tmp/mindfs-stream-journal-src`），六个逻辑单元均已本地提交、未 push：
+
+- `4d457724` 计划文档
+- `8dc3aa16` session 层 provisional block API（先 RED 后 GREEN）
+- `ea3a2460` 流式写入 + 崩溃恢复 + Full floor 重算 + 源码守卫
+- `b01f56f6` 前端 interrupted 失败态
+- `efd2f0ac` / `5f9498fa` G-MD 定制登记与计划路径补登
+- `bac00966` 中断工具卡显示「服务端重启，工具未返回」
+
+### 真实隔离 kill A/B（非生产）
+
+控制组用基线提交 `a2f82597` 的独立 worktree，实验组用本分支；两个实例都通过 `scripts/mindfs-iso.sh` 起在独立端口/目录/DB（`7437` / `7438`，均 ≠ 7331），`verify` 的句柄断言确认隔离进程零句柄落在线上配置目录。生产 7331 未被 kill/restart；隔离脚本报告线上配置指纹变化是生产服务自身写入，句柄检查才是硬证据。
+
+两条真实 claude 回合都先收到 `message_chunk` 锚点 `ANCHOR_A_PLUS_7F3C9D2B`，再收到 `status=running` 的 `tool_call`（`sleep 25`）；随即在工具仍运行时 `kill -9` 隔离服务端，并只清理由该服务端直接 spawn 的 agent 子进程：
+
+| | 控制组（基线 `a2f82597`） | 实验组（A+） |
+|---|---|---|
+| 会话 key | `1795342333-347658540eb8` | `1795342177-12f01e60bf12` |
+| kill 前块文件 | 1 块，仅用户 prompt | 3 块：用户 prompt + `step=-1` 锚点文本 + `step=-1` running tool call |
+| 重启 + Full 后 exchange | 2 行，第二行仍是 **user**（重复 prompt） | 2 行：user + `agent(partial=true)` |
+| 恢复正文 | 只有重复的用户 prompt | `ANCHOR_A_PLUS_7F3C9D2B` 原文命中 |
+| 工具卡 | 无 | 唯一一张，`status=interrupted`，标题带「服务端重启，工具未返回」 |
+| 连续 3 次 Full + GET | — | 行数/块数/载荷 sha256 三次完全一致（2 行 / 3 块 / `7c702723…`） |
+
+恢复日志：`[session/recovery] provisional_recover session=1795342177-12f01e60bf12 agent=claude user_seq=1 blocks=2`。隔离证据留在 `/tmp/mindfs-a-plus-e2e/` 与 `/tmp/mindfs-a-plus-control/`，清理时只删这两个临时目录。
+
+### 门禁
+
+- `go build ./...` 通过；`go test -count=1 ./server/internal/session ./server/internal/api/usecase` 通过。
+- `npx tsc -b --noEmit` 通过；`npx vitest run`：265 文件 / 885 通过 / 6 跳过。
+- `make check-upstream`：2398 delta 文件被 363 组完整覆盖，通过。
+- 全量 `go test -count=1 ./...` 有三条红，均与本组改动无关：`TestOverviewProjectionCoversEveryFieldTheSharedCardReads` 在基线 `a2f82597` 的干净 worktree 上同样失败（投影多 `archived_at` 的既有 parity 漂移）；`TestWorkspaceWorkerDerivesAccountID` 与 `TestCoordinatorTickReclaimsStaleClaims` 都是单独重跑也能复现的 `TempDir RemoveAll cleanup: directory not empty` 竞态。本组涉及的 `session` / `usecase` 包全绿。
+
+未 push、未部署、未重启任何节点；本机生产 7331 全程未碰。
