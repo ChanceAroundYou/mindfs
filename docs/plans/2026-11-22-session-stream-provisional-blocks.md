@@ -62,7 +62,7 @@ Full 通用导入的 floor 在恢复后按最新 exchange 行重算，避免把�
 
 ### 4. 中断态
 
-工具卡状态用 `interrupted`；前端把 `interrupted` 归到失败态展示，标题写明「服务端重启，工具未返回」。文本块保持原样，不追加「这是部分内容」以外的伪正文。
+工具卡状态用 `interrupted`；前端把 `interrupted` 归到失败态展示，标题写明「服务端重启，工具未返回」。文本块保持内容原样，不追加「这是部分内容」以外的伪正文；封口时把相邻的流式文本片段拼回一条（中间夹工具卡的不合并），否则同一段回复会被界面拆成多个独立气泡。
 
 ## 测试与验收
 
@@ -120,6 +120,29 @@ Full 通用导入的 floor 在恢复后按最新 exchange 行重算，避免把�
 | 连续 3 次 Full + GET | — | 行数/块数/载荷 sha256 三次完全一致（2 行 / 3 块 / `7c702723…`） |
 
 恢复日志：`[session/recovery] provisional_recover session=1795342177-12f01e60bf12 agent=claude user_seq=1 blocks=2`。隔离证据留在 `/tmp/mindfs-a-plus-e2e/` 与 `/tmp/mindfs-a-plus-control/`，清理时只删这两个临时目录。
+
+### 第二轮 fresh 隔离复验（2026-11-22）
+
+第一轮 fresh 复验发现：封口时按 provisional 块逐条追加，会把同一段流式正文拆成多个可见文本块（`ANCHOR_A_PLUS_VERIFY_202` + `61122`），界面上会显示成两个独立气泡，与计划 §3「拼接文本」不符。已改为封口时合并相邻文本片段（工具卡前后不合并），并加 `TestSealProvisionalTurnBlocksMergesAdjacentTextChunks`；把合并条件临时改成恒假，测试报 `sealed window blocks = 4, want 3`，还原后通过。
+
+重新从零起两个隔离实例复跑：
+
+| | 基线（`a2f82597`，端口 7441） | A+（端口 7440） |
+|---|---|---|
+| kill 前 | 块文件无 `step=-1`，屏幕上已有锚点全文与 running 工具卡 | 块文件 776 B：用户 prompt + 两个 `step=-1` 文本 chunk + 一个 `step=-1` running 工具卡 |
+| 重启后首次 GET | 1 块，只有用户 prompt；无助手正文/工具卡 | 3 块：用户 prompt、合并后的锚点全文 `ANCHOR_A_PLUS_VERIFY_20261122`、`interrupted` 工具卡；exchange 为 user + `agent(partial=true)` |
+| 重启后 Full | 2 行 exchange，第二行仍是 **user**（同一 prompt 重复导入），仍无助手正文 | 2 行；连续 3 次 Full + GET 增量语义 sha256 均为 `3282b73f0f4a889d0065e5ad`，行数 2 / 块数 3 不变 |
+| 第二次重启 + Full | — | 语义 sha256 仍是 `3282b73f0f4a889d0065e5ad`，没有二次封口或重复行 |
+| 正常完成回合 | — | 屏幕流式正文只落一条可见 text 块；隐藏 `step=-1` 块不出现在 GET/Full 载荷；重启前后 GET/Full×2 语义 sha256 均为 `34d3c46132426197a6a5063b…`，5 块 / 4 exchange 不变 |
+
+A+ 侧两次恢复的临时实例分别是 `/tmp/mindfs-a-plus-verify-run`（合并修复前）与 `/tmp/mindfs-a-plus-verify-run2`（合并修复后），基线在 `/tmp/mindfs-a-plus-baseline-run`；生产 7331 全程未碰，隔离脚本自证每次均通过（独立端口/配置目录/项目、零句柄落在线上配置目录）。
+
+### 边界
+
+- 工具**没有续跑**：恢复出来的是中断时已经流出的正文和一张 `interrupted` 工具卡，`sleep 25` 不会接着执行，助手行固定 `Partial=true`。
+- 只记录正文与工具调用，不记录 reasoning chunk；被杀时已流出的 thinking 不会补回。
+- 正常完成的回合也会留下隐藏 provisional 行（按设计只被读窗口忽略，不在界面/载荷出现），块文件会多一份流式文本；这是当前 A+ 的已知存储代价，不是同步重复。
+- 未做真实浏览器点验「两个中断工具卡/合并正文」的视觉断言；前端只有 `interrupted` 归失败态的源码契约测试。
 
 ### 门禁
 
