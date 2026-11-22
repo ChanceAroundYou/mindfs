@@ -1173,3 +1173,50 @@ Chromium 验收 **最小 T4 + T5 + 身份不符采纳**，只改这台机器，�
 - 门禁：定向 vitest 14 条全绿、`tsc -b --noEmit` clean、`make check-upstream` 2444 delta /
   358 组全绿；全量 `npx vitest run` 另有 10 个文件因该 worktree 落后主线、缺少
   `diagramZoom` / `sessionExchangeMerge` 等新文件而红，与本组改动无关。
+
+### T29 pc-win 离线全链路真机验收（2026-11-23）
+
+T28 只验到「在线横幅 + 身份不符采纳」。本轮补 T4/T5 里真正的主线：**pc-win 上真跑
+agent 回合，断主节点进 `offline-local` 再跑一轮，恢复后追平**。仍然只改 pc-win、
+隔离主节点在 7470、生产 7331 与 WSL / fn 全程未碰。
+
+- 隔离主节点：`XDG_CONFIG_HOME=/tmp/mindfs-pcwin-e2e/primary`、`-addr 0.0.0.0:7470`、
+  自签 TLS（`SAN IP:192.168.1.6`）+ `token_file`；pc-win 的 `control_sync` 指向
+  `https://192.168.1.6:7470/mindfs`，`role=control` + `role=edge`。
+- **第一次跑发现发送键恒灰，根因不在产品而在测试账号**：`useActionBar.ts:329` 的
+  `canSend` 需要 `isConnected`，而 `useAppBootstrapEffects.ts:43-46` 只在
+  `currentRootId` 非空时连会话 WS。`pcwin_e2e` 账户名下 `/api/dirs?user=…` 返回 `[]`
+  （账户是 T28 新建的，没有项目）→ `currentRootId` 空 → **一条 WS 都没建** →
+  发送键永远 disabled。诊断脚本记录到 `sockets: []`，而 `/api/agents` 明确返回
+  codex / claude 都 available、agent-selector 的 `title` 是 `codex · gpt-6-luna`，
+  所以「没选 agent」「后端不可用」两个猜测都不成立。
+- 修法：给测试账号加一个项目（`POST /api/dirs`，`create:true`），并顺手确认
+  `/api/dirs` **不在**控制面前缀表（`capture.go:468-472`）—— 由 pc-win 本机回答，
+  新目录确实落在 `C:\Users\10178\pcwin-e2e-proj`，是「数据面在边缘本机」的实证。
+  加完项目后新手引导弹窗会挡点击，验收脚本补「跳过导览」。
+- 在线态真回合 PASS（`local-agent-turn.py online`）：banner「控制面在线 / 页面请求转发给主节点 /
+  最近同步 00:53」，WS 建成，`send-state=send` 且 enabled，点发送后
+  `footers=1`、`reply-seen=true`、正文含 `PCWIN-LOCAL-OK`。
+- 停主节点：`kill -TERM`，轮询 `/api/control-sync/status` —— **9 秒**进
+  `offline-local`（`primary_reachable=false`、`last_error=primary unreachable`），
+  比标称的「10s 探测 × 3 次失败」更快是因为已有失败计数在手。
+- 离线态真回合 PASS（`local-agent-turn.py offline`）：banner 变「本地模式 / 主节点不可达，
+  正在使用本机副本 / 立即重试」，WS 照常，回合跑通、正文含标记。
+- 离线写入落本地副本已取证：边缘 `control_sync.db` 的 `pending` 表有 1 条
+  `preferences/agents`，带 `base_hash=sha256:9027cc…`（祖先 hash），`state.mode=offline-local`、
+  `base_rev` 停在 7 —— 不猜主节点 rev、记录级三方合并的依据齐全。
+- 恢复主节点：`/status` 回到 `online`、`base_rev` 7→8、`pending 0`、`conflicts 0`。
+  3 秒轮询没采到中间态，改读边缘 `mode_events` 拿到完整四态链：
+  `online→offline-local` 16:57:05、`offline-local→reconciling` 16:58:43、
+  `reconciling→online` 16:58:44（reconciling 只停 1.0 秒）。
+- 主节点侧真收到推送：`changes` rev 8 = `preferences/agents`（origin `pc-win`）、
+  `records.preferences/agents` rev=8、`applied_changes` 有
+  `pc-win:preferences:agents:1 → rev 8`、`conflicts=0`；`preferences.json` 里
+  `codex.model=gpt-6-luna` 与边缘一致。
+- 收尾：pc-win 恢复 `role=worker`（PID 8880、Session 0、health 200、`/` 403、
+  `/api/node-info` 403、`/api/control-sync/status` 404），二进制与 `config.json`
+  逐字节等于测试前备份，测试账号目录下本轮的 `meta/`、`registry.json` 与
+  `C:\Users\10178\pcwin-e2e-proj` 已删，token / CA / 前端目录 / 十来个 probe 脚本 /
+  `control_sync.db` 全部清掉；隔离主节点已停。本机 / WSL / fn 与生产 7331 全程未碰，未 push。
+- 未做：`origin-mismatch` 采纳（T28 已验）、真冲突裁决（T22 隔离实例已验）、
+  pc-win 的 `role=control` 长期上线（`control_sync.enabled` 仍 `false`）。
