@@ -12650,6 +12650,8 @@ groups:
       - 'web/src/i18n/locales/en-US-workspace.ts:"controlMode.local": "Local mode",'
       - 'web/tests/control-mode-banner.test.mjs:test("三种降级状态各自给出动作，攒了冲突才多出查看入口", () => {'
       - 'web/tests/control-mode-banner.test.mjs:test("冲突提醒按事件 id 只提醒一次", () => {'
+      - 'web/tests/control-mode-banner.test.mjs:test("状态端点带回的锁码与事件不能在服务层被丢掉", () => {'
+      - 'web/src/services/net/controlSync.ts:export function toControlSyncStatus(payload: unknown): ControlSyncStatus | null {'
       - 'server/internal/controlsync/store_mode_events.go:func ModeEventID(from, to Mode, at time.Time) string {'
       - 'server/internal/controlsync/store_mode_events.go:func (s *Store) RecordModeEvent(ctx context.Context, ev ModeEvent) (bool, error) {'
       - 'server/internal/controlsync/mode.go:	m.recordModeEvent(from, to)'

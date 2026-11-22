@@ -1,7 +1,15 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { rawReadFileSync } from "./source-map.mjs";
-import { controlModeBanner, controlModeLabel, conflictReminder, controlSyncActionFor, isControlMode, newestModeEventTo } from "../src/shared/controlMode.ts";
+import {
+  controlModeBanner,
+  controlModeLabel,
+  conflictReminder,
+  controlSyncActionFor,
+  isControlMode,
+  newestModeEventTo,
+} from "../src/shared/controlMode.ts";
+import { toControlSyncStatus } from "../src/services/net/controlSync.ts";
 
 const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -228,4 +236,48 @@ test("接受新主节点是两步确认，且写明会丢什么", () => {
   assert.match(confirmBlock, /controlMode\.cancel/);
   // 模式一变就收回确认态，免得「确认接受」在下一轮横幅里还挂着。
   assert.match(banner, /useEffect\(\(\) => \{[\s\S]{0,60}setConfirmAdopt\(false\)/);
+});
+
+test("状态端点带回的锁码与事件不能在服务层被丢掉", () => {
+  // 真机教训：后端 /status 已经给了 blocked_code 与 recent_events，但服务层
+  // 只挑了四个字段，页面上「接受新主节点」和事件历史永远出不来。这里直接钉
+  // 解析后的完整对象，不再只靠源码字符串断言。
+  const at = "2026-11-22T11:21:58Z";
+  const parsed = toControlSyncStatus({
+    mode: "offline-local",
+    base_rev: 7,
+    primary_reachable: true,
+    pending_count: 2,
+    conflict_count: 3,
+    blocked_reason: "controlsync: primary instance changed",
+    blocked_code: "origin-mismatch",
+    last_primary_at: at,
+    last_error: "boom",
+    recent_events: [
+      { id: "e1", from: "reconciling", to: "offline-local", reason: "changed", at },
+      { id: "bad", from: "online", to: "bogus", at },
+    ],
+  });
+  assert.deepEqual(parsed, {
+    mode: "offline-local",
+    base_rev: 7,
+    primary_reachable: true,
+    pending_count: 2,
+    conflict_count: 3,
+    blocked_reason: "controlsync: primary instance changed",
+    blocked_code: "origin-mismatch",
+    last_primary_at: at,
+    last_error: "boom",
+    recent_events: [
+      { id: "e1", from: "reconciling", to: "offline-local", reason: "changed", at },
+    ],
+  });
+  // 少了 blocked_code，纯映射再正确也不会给采纳入口；把解析结果接上映射验证。
+  assert.ok(
+    controlModeBanner(parsed?.mode, {
+      blockedCode: parsed?.blocked_code,
+      conflictCount: parsed?.conflict_count,
+    }).actions.includes("adopt-primary"),
+  );
+  assert.equal(toControlSyncStatus({ mode: "bogus" }), null);
 });

@@ -1138,3 +1138,31 @@ T25/T26 记录里留的「`adopt_primary` 端点已就绪、按钮未接」在�
   全 PASS（在线 / 本地 / 冲突三种横幅与冲突面板、裁决后回在线都照旧）。
 - 未做：真浏览器点验这条新路径（T22 脚本不覆盖「主节点被换掉」这一档）；
   未部署、未重启、未改配置。
+
+### T28 pc-win 真机验证与状态解析修复（2026-11-22）
+
+用户授权「请你测试吧 去 pc win 测」后，在 pc-win（192.168.1.10:7332）用真实
+Chromium 验收 **最小 T4 + T5 + 身份不符采纳**，只改这台机器，不碰本机 / WSL / fn
+与生产 7331；测试前后保留原配置与二进制备份。
+
+- 隔离主节点：本机 `XDG_CONFIG_HOME=/tmp/mindfs-pcwin-e2e/primary`、端口 7470、
+  显式 `-X main.version=v0.5.5-1122-pcwin-test`，自签证书带 `SAN IP:192.168.1.6`，
+  token 只走 `token_file`；随后用第二份配置把 `instance_id` 从 `home-A` 换成
+  `home-B` 制造「主节点被换机」。
+- pc-win：从 worktree 构建同版本 Windows 二进制与前端（`ui-manifest files=287`），
+  安装前端到 `share\mindfs\web`，改 `role=control` 并配 `control_sync` edge；
+  计划任务结果显示 PID 33444、health 200、`/api/node-info` 为
+  `role=control static=true version=v0.5.5-1122-pcwin-test`，首页 200 且含页面根节点。
+- 在线路径真浏览器 PASS：登录后横幅显示「Control plane online / 转发到主节点」；
+  经边缘创建的用户确实落在隔离主节点。
+- 身份不符路径：停 A 起 B 后手动 `retry`，边缘稳定落到
+  `offline-local` + `blocked_code=origin-mismatch`，`/status` 给出
+  `recorded=home-A primary=home-B` 与去重后的模式事件。
+- **抓到并修掉一个真缺陷**：后端 `/status` 已带 `blocked_code`/`recent_events`/
+  冲突计数，但 `web/src/services/net/controlSync.ts` 的 `toStatus` 只映射四个字段，
+  于是真浏览器里只有「Retry now」，采纳按钮与事件历史永远出不来 —— 单测只断言源码
+  字符串「hook 透传 blocked_code」，没钉服务层解析，漏了这个洞。修成导出的
+  `toControlSyncStatus` 完整投影并校验事件形状；新增一条直接断言解析结果的 RED 用例，
+  变异「去掉 blocked_code 映射」打红后还原；`tsc -b --noEmit` clean、目标 vitest 14 条全绿。
+- 未做：修完前端后尚未重新构建/覆盖 pc-win 的 bundle，因此**第二次真浏览器点验
+  「接受新主节点」按钮仍待复跑**；测试机仍是测试配置，收尾要恢复原 worker 配置与二进制。

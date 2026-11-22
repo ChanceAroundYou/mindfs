@@ -10,22 +10,61 @@
 // 模式词汇与纯映射在 shared/controlMode.ts（视图层也要用），这里只管网络。
 import { APIError, protectedJSON } from "./api";
 import { controlPath } from "./controlPlane";
-import { isControlMode, type ControlSyncAction, type ControlSyncStatus } from "../../shared/controlMode";
+import {
+  isControlMode,
+  type ControlModeEvent,
+  type ControlSyncAction,
+  type ControlSyncStatus,
+} from "../../shared/controlMode";
 import type { SyncConflictChoice, SyncConflictView } from "../../shared/syncConflicts";
 
 export type { ControlMode, ControlSyncAction, ControlSyncStatus } from "../../shared/controlMode";
 export type { SyncConflictChoice, SyncConflictView } from "../../shared/syncConflicts";
 
-function toStatus(payload: unknown): ControlSyncStatus | null {
+function toEvents(value: unknown): ControlModeEvent[] {
+  if (!Array.isArray(value)) return [];
+  const events: ControlModeEvent[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (
+      typeof record.id !== "string" ||
+      typeof record.at !== "string" ||
+      !isControlMode(record.from) ||
+      !isControlMode(record.to)
+    ) {
+      continue;
+    }
+    events.push({
+      id: record.id,
+      from: record.from,
+      to: record.to,
+      at: record.at,
+      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+    });
+  }
+  return events;
+}
+
+/** 后端 /status 的完整投影；少带一个字段，横幅就会少一种能力。 */
+export function toControlSyncStatus(payload: unknown): ControlSyncStatus | null {
   if (!payload || typeof payload !== "object") return null;
   const record = payload as Record<string, unknown>;
   if (!isControlMode(record.mode)) return null;
   return {
     mode: record.mode,
     base_rev: typeof record.base_rev === "number" ? record.base_rev : undefined,
+    primary_reachable:
+      typeof record.primary_reachable === "boolean" ? record.primary_reachable : undefined,
+    pending_count: typeof record.pending_count === "number" ? record.pending_count : undefined,
+    conflict_count: typeof record.conflict_count === "number" ? record.conflict_count : undefined,
+    blocked_reason:
+      typeof record.blocked_reason === "string" ? record.blocked_reason : undefined,
+    blocked_code: typeof record.blocked_code === "string" ? record.blocked_code : undefined,
     last_primary_at:
       typeof record.last_primary_at === "string" ? record.last_primary_at : undefined,
     last_error: typeof record.last_error === "string" ? record.last_error : undefined,
+    recent_events: toEvents(record.recent_events),
   };
 }
 
@@ -41,7 +80,7 @@ function endpointMissing(err: unknown): boolean {
 export async function fetchControlSyncStatus(): Promise<ControlSyncStatus | null> {
   try {
     const payload = await protectedJSON<unknown>(controlPath("/api/control-sync/status"));
-    return toStatus(payload);
+    return toControlSyncStatus(payload);
   } catch (err) {
     if (endpointMissing(err)) return null;
     throw err;
@@ -61,7 +100,7 @@ export async function switchControlSyncMode(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action }),
     });
-    return toStatus(payload);
+    return toControlSyncStatus(payload);
   } catch (err) {
     if (endpointMissing(err)) return null;
     throw err;
