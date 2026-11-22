@@ -11003,7 +11003,7 @@ groups:
       - 'server/internal/kanban/service_router.go:SupervisionActionsLastHour int'
       - 'server/internal/kanban/router_supervision_direct.go:const supervisionDirectMaxRetries = 1'
       - 'server/internal/kanban/router_supervision_actions.go:case RouterActionRetryDirect:'
-      - 'server/internal/kanban/router_supervision_actions.go:if obs.Direct.Replying {'
+      - 'server/internal/kanban/router_supervision_actions.go:if obs.Direct.Replying && !obs.Direct.StalledByWatermark {'
       - 'server/internal/kanban/router_supervision_tools.go:e.supervisionMode != RouterSupervisionOn && e.supervisionMode != RouterSupervisionShadow'
       - 'server/internal/kanban/router_event_direct.go:func (s *Service) scanDirectStalledEvents('
       - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && !routerEventAllowsEmptyRun(ev.Kind) {'
