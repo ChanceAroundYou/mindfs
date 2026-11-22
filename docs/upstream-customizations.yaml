@@ -8676,7 +8676,7 @@ groups:
       - 'server/internal/api/workflow_llm.go:func NewWorkflowLLMClient('
       - 'server/internal/api/usecase/session_authoring.go:func RunOneShotPrompt('
       - 'server/app/workspace_build.go:services.Kanban.SetWorkflowLLM('
-      - 'server/app/workspace.go:WorkflowLLM:      api.NewWorkflowLLMClient('
+      - 'server/app/workspace.go:WorkflowLLM:       api.NewWorkflowLLMClient('
 
   - id: G-LW
     title: 任务对话界面按会话样式重做与运行状态投影修正
@@ -13521,3 +13521,686 @@ groups:
       - 'server/internal/api/appcontext_router_transcript.go:blocks, err := manager.ReadResolvedBlocks(ctx, sessionKey)'
       - 'server/internal/api/appcontext_router_transcript_test.go:func TestRouterTranscriptReaderSkipsProvisionalAndStaleRevisions(t *testing.T) {'
       - 'server/internal/session/search_blocks_test.go:func TestSearchableBlockTextsIgnoresProvisionalFragments(t *testing.T) {'
+  - id: G-PF
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生 + P1 安装包前端自检 + T18 节点可达性 + T19 前端清单与打包 + T20 边缘镜像与切换）
+    kind: feature
+    symptom: |
+      控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
+      全局只有主节点一份。主节点不可达时，连页面都打不开，整个系统不可用；第二台机器即便
+      配成 control，也只是「另一份互不相干的控制面」——两份 users.json / nodes.json /
+      workflows.json 各写各的，谁也看不见谁。
+    why: |
+      必须保留（P0 只钉基线，不改产品行为）：
+      ① `control_plane_isolation_test.go` 把「两份 configDir 各自为政」写成可执行事实。
+      离线优先方案（见 docs/superpowers/specs/2026-11-21-offline-first-local-control-plane-design.md）
+      之后仍然成立：同步是显式通道，不是把两份状态合成同一份文件。若哪天用例红了，说明
+      有人把主节点/边缘的存储合并了，那会直接破坏边界。
+      ② 构造顺序是契约：B 必须在 A 写完**之后**再构造。auth / nodes 的 Store 有内存缓存，
+      先构造的 B 看不见后来的写入 —— 那样即使共享目录也会假绿。三处变异（共享目录）
+      已逐一验证会红。
+      ③ 控制面前缀表已有快照用例（`TestControlPlanePrefixesSnapshot`，11 条），新增前缀
+      会强制同步更新同步计划，不另写第二份清单。
+      ④ 节点可达性（T18）只有一份答案：`services/net/nodeHealth` 记录「最近一次真实请求
+      打在谁身上、成没成」，`shared/nodeAvailability` 把它翻成三态。四条必须保留的判定 ——
+      **节点表拉取失败不再 `catch(() => {})` 静默吞掉**（那份清单在主节点上，拉不到意味着
+      屏幕上的节点列表可能不是最新，继续当事实渲染就是把「不知道」说成「没有」）；
+      **未观测 ≠ 离线**（还没探过的节点不能报「全都连不上」）；**节点表失败优先于
+      「每台都失败」**；**空列表 ≠ 没有项目**（逐节点失败返回空列表，同时保留旧条目并记
+      健康状态，界面上区分「真空 / 全都连不上 / 清单不可信」三种空状态）。文件树此前完全
+      没有可达性概念：现在分组带 `unreachable` 标记、没有缓存条目的不可达节点单独列出、
+      行内点击与 hover 直接收口（点了只会再失败一次）。**发出请求与记录健康必须成对**，
+      所以抽成 `app/managedRootNodeHealth.ts` 一个函数（也顺带把协调器压回 500 行硬线内）。
+      节点面板的探活结果同样并进这张表（面板自己的 checking 三态保留）。
+      ⑤ P2 起新增 `server/internal/controlsync` 包（新目录，上游没有对应实现）：记录模型与
+      sqlite 索引库。三条必须保留的语义 —— hash 只覆盖 `Payload`（墓碑保留最后内容 hash）、
+      `CanonicalJSON` 走 `UseNumber` 否则大整数被舍入成不同 hash、`rev` 在 `_txlock=immediate`
+      事务里用 `MAX(rev)+1` 分配（延迟事务会并发撞 `changes.rev` 主键）。
+      ⑥ 域适配器把六份权威存储投影成记录流，四条必须保留的判定：
+      · **key 必须带账户**：prompts / pins 是「每账户一套」的存储，同一句提示词、同一个 pin
+        作用域在不同账户下是不同记录；key 不带账户会互相覆盖（与 G-NR 的
+        「项目身份 = (节点, rootId)」同源）。
+      · **users 载荷含 bcrypt hash、id 必须是用户名派生值**：离线要能直接登录；id 漂移等于
+        两台机器对不上同一个账户。主账户标记是单独一条 `@primary`，它自身的墓碑一律拒绝。
+      · **preferences 按顶层字段合并**、磁盘上本版本不认识的字段原样保留并参与同步：
+        整文件覆盖会让「A 改 agents」冲掉「B 刚改的 session_naming」，滚动升级时老版本
+        还会静默删掉新版本写的字段。
+      · **工作流版本只追加、草稿不回退、seq 游标按记录推上去**：seq 推不上去，目标机下一次
+        编辑会退回 r1 或与已有 `<id>:v<n>` 撞号。
+      ⑦ `Migrate` 必须对 SQLITE_BUSY 退避重试，`journal_mode` 不能写在 DSN 里：SQLite 不为
+      journal_mode 切换调用 busy handler，撞上并发迁移会**立即**返回 BUSY，而 DSN pragma 在
+      连接建立时执行、没有第二次机会。
+      ⑧ 变更采集（`capture.go`）的三条必须保留的语义：**应用远端记录必须包在 `Suppress` 里
+      且成功后采纳基线** —— 只是跳过当下采集不够，下一次兜底扫描仍会把远端内容当本地改动
+      回传，两侧互相回传即成死循环；**删除墓碑携带最后一次内容 hash**，否则「我删的」和
+      「远端改完再删」无法区分；**一次 diff 用 `WriteRecords` 单事务整批落库**，半批落地会
+      让基线已推进、变更只写一半，剩余部分永久丢失。
+      ⑨ 控制面转发（`controlproxy.go`）的两条必须保留：**转发失败只回 503
+      `primary_unreachable`、绝不回落本地执行**（在线时本地写控制面会与主节点分叉，双写
+      之后没有哪一侧能自动收敛）；**本机域白名单不可删**（web-push / app update /
+      node-info / control-sync 属设备本地状态，转发给自己等于回环）。
+      ⑩ 边缘副本追平（`replicator.go`）的四条必须保留：**`since=base_rev+1` 与服务端
+      `rev >= since` 成对**（任一侧退回 `base_rev` 都会重复取到已追平的记录）；
+      **`rev` 沿用主节点序号、不在本地重分配**（它是水位不是本地自增）；**`rev <= base_rev`
+      的记录一律跳过**（重放旧页不得把副本倒回旧内容）；**一页一个事务、records 与
+      `base_rev` 同生共死**（半个 diff 提交出去，边缘会永久跳过没落地的记录）。
+      同步通道的 TLS 与转发侧同源：https 强制、TLS 1.2 起步、系统根 + 可选 `ca_file`。
+      ⑪ 四态模式（`mode.go`）的六条必须保留：**模式落 `state` 表**（只存内存会让边缘重启后
+      以 online 身份启动、把写请求全转给不可达的主节点）；**`conflict-review` 不受探测结果
+      影响**（主节点掉线不会让冲突消失，只能由裁决清掉）；**`RecordProbe` 失败不覆盖
+      `last_primary_at`**（断线排查最需要的数字）；**`retry` 探不通仍回 200 + status**
+      （5xx 会让前端把「按钮动作失败」和「页面请求失败」混成一件事）；**追平收尾只在同步回合
+      内生效**（`CompleteReconcile` 只接受 `reconciling` / `conflict-review`；探测刚把模式降到
+      `offline-local` 时，一拍迟到的 settle 不得把它拉回 `online` —— T21 双实例验收实测到过：
+      主节点在合并途中再次断开，状态接口报 `online`、库里停在 `offline-local`，之后 75 秒再也
+      降不下来）；**迁移与落库整段串行**（`applyMu`：探测与追平收尾是两个写方，只锁模式字段会让
+      两边落库顺序颠倒，最终内存与 `state` 表各说各话）。
+      ⑫ 推送合并（`merge.go` / `store_merge.go`）的五条必须保留：**先查 `applied_changes`
+      再比 hash**（只靠 hash 判定会把「已应用过的变更」在主节点后续改动后误判成冲突）；
+      **判定顺序固定为 幂等 → base_hash 命中 → 收敛 → 冲突**（顺序一乱，收敛分支就会把
+      重放掩盖掉，或把该报冲突的写成 applied）；**冲突时权威存储与 `changes` 一字不动**
+      （冲突不是「先写再回滚」，用户还没裁决）；**records / changes / applied_changes 一个
+      事务**（少写 applied_changes 会让边缘重连后重复推进 rev）；**写权威存储必须包在
+      `Suppress` 里**（否则这次远端应用会回声成一条新的本地变更）。
+      ⑬ 合并阶段（`reconcile.go` / `store_reconcile.go` / `store_pending.go`）的四条必须
+      保留：**先应用权威存储、后提交记录与水位**（反过来在两步之间崩溃会留下「水位已过、
+      JSON 还是旧值」且那条变更永远拉不到）；**冲突与 kept 都不清 pending**（清掉就是
+      把本地改动扔了）；**整页一个事务**（records / pending 清理 / 冲突 / 水位同生共死，
+      中途断线从 `base_rev` 续传）；**整页都是旧 rev 时停下不再拉**（服务端不守 `since`
+      契约时不能原地空转）。
+      ⑮ 同步运行时（`runtime.go` / `store_runtime.go` / `pending_pusher.go`）的六条必须保留：
+      **边缘在线时一律不采集**（`CaptureWhen`；在线写都转发给主节点，采了就是拿本机过期值去改副本，
+      之后交接与合并都会拿错祖先）；**交接跳过已有 pending 的 key**（否则拿副本旧值盖掉用户离线编辑，
+      应用过程包在 `Suppress` 里并刷新采集基线）；**交接失败不标记完成**（下一拍重试）且每次
+      模式翻转都允许重新交接；**settle 顺序不可换**（先算冻结域 → 再推 → 最后才判能不能回 online）；
+      **恢复闸门是「没有未裁决的卡」且「没有待回传」两条同时成立**（被拒的改动留在 pending 里重试，不宣布恢复）；
+      **冻结域过滤下推到取页**（`ListPendingExcept`；冻结域的 pending 会一直留在库里，取回来再筛会把
+      整页占满、别的域饿死，按域冻结就退化成整条通道停摆）。另：**判「没人动过」必须排除墓碑**
+      （`merge.go` 的 base_hash 分支要限 `!cur.Deleted`；删除也保留最后一次内容 hash，只看 hash 相等会把
+      「主节点删了、边缘改了」当成「没人动过」，把记录静默复活）。
+      ⑭ 冲突查询与裁决（`conflicts.go` / `store_merge.go` / `store_pending.go`）的四条必须保留：
+      **裁决先 CAS 占坑再写副作用**（`UPDATE ... WHERE resolved_at=''` 返回 0 行即「已裁决」，
+      反过来两个并发选择会各写一遍，最终状态取决于谁后落盘）；**选 `local` / `payload` 后
+      pending 的 `base_hash` 重定到 `remote_hash`**（不重定的话下次推送又判一次冲突，用户
+      永远推不上去）；**`users` 域一律不回载荷**（bcrypt hash 属敏感数据，只回 hash 与
+      删除标记，不吃进冲突 UI 与前端缓存）；**每侧删除用 `local_deleted` / `remote_deleted`
+      表达**，旧库靠 `ALTER TABLE ADD COLUMN` 迁移补齐 —— `CREATE TABLE IF NOT EXISTS`
+      不会给已存在的表补列，升级后第一次读冲突卡就会 `no such column`。
+      ⑯ 启动装配（`cli/cmd/control_sync.go` / `server/app/control_sync.go`）的五条必须保留：
+      **token 只认 `token_file`**（同步通道搬的是含口令 hash 的整份控制面；没有内联字段、没有 flag，
+      不读文件就读不出 token，关闭模式也绝不碰它）；**中间件采集在内、转发在外**
+      （`wrapRoot` 先包 `WriteCapture`、再包代理：转发出去的控制面请求不能在本机留下记录，
+      否则边缘在线时的本地副本会被自己写脏）；**启用而行角色是 worker 直接拒绝启动**
+      （边缘要出页面、要转发，worker 不是那个角色），**primary 缺 token 也拒绝**
+      （没有 token 就不注册 `/push /head /changes`，边缘永远同步不了，那是通道根本没通而不是可选配置缺失），
+      **缺任意一份权威存储同样拒绝**（缺域的副本「看起来能用」，直到主节点恢复才发现一半控制面没跟上）；
+      **`BlockedDomain` 查库失败按冻结处理**（恢复期宁可让用户重试一次写入，也不能放一条会和主节点分叉的写）。
+      默认关闭时零行为变化：不建库、不起 goroutine、端点 404、请求直通。
+      ⑰ 交接基线与兜底扫描（`capture.go` / `server/app/control_sync.go`）的三条必须保留：
+      **`SweepWhen` 只挡 `Run` 的定时全量扫描、不挡 HTTP 采集**，且边缘要在「本轮交接完成之後」才允许扫
+      （交接前的权威存储混着本机首次启动生成的默认记录 —— 默认管理员、内置工作流 —— 扫一遍就把它们当成
+      用户改动记进 `pending`，恢复后与主节点同名记录撞成冲突；而 HTTP 采集发生在交接之后，挡它只会丢真实改动）；
+      **`RefreshBaseline` 把「副本不认识但权威存储里有」的记录并进基线**（只采纳副本会让本地既有记录
+      在下一次采集被当成新增发出去）；**primary 启动即 `CaptureAll` 发布基线**（兜底扫描 15 秒才有第一拍，
+      边缘完全可能在这之前追平后掉线 —— 那一版副本缺一批记录，恢复时同样撞冲突）。
+      ⑱ 前端模式横幅（`shared/controlMode.ts` / `services/net/controlSync.ts` / `hooks/useControlSyncStatus.ts` /
+      `components/app/ControlModeBanner.tsx`）的六条必须保留：**404 不出横幅**（主节点和未启用
+      control_sync 的机器不注册 `/api/control-sync/status`，把它当请求失败会在每台普通节点上弹一条永远
+      报错的横幅；在线仍然出横幅，但弱化显示 —— 用户需要一个随时能主动切到本地模式的入口，这跟
+      「404 静默」是两件事）；**404 只静默关闭轮询、其他错误保留上一份状态继续轮询**（一次超时不能把边缘的横幅
+      永久关掉，两者必须能区分）；**四态到动作是纯函数、且返回动作列表**（在线→切换到本地、本地模式→立即重试、
+      同步中→切换到本地、冲突→查看冲突；本地模式下确实攒了冲突才多出「查看冲突」，渲染层不再自己 if/else 一遍）；
+      **冲突提醒按事件 id 幂等**（服务端每次模式迁移写一条 `mode_events`，id 由 from/to/at 决定、`INSERT OR IGNORE`
+      去重；前端 `conflictReminder` 按事件 id 记住「已关闭」，按模式记会让下一拍轮询又弹回来 —— 那等于没有关闭）；
+      **视图层只经 hook 访问网络**（components 直接 import services 会踩仓库的 view→service 架构红线，
+      轮询与请求一律留在 hook）；**事件历史来自服务端**（`/status` 的 `recent_events`，换台浏览器看到的是同一份
+      「什么时候变的」，前端不自己攒本地记忆）。
+      ⑲ 冲突面板与裁决端点转义（`shared/syncConflicts.ts` / `hooks/useSyncConflicts.ts` /
+      `components/app/SyncConflictPanel.tsx` / `services/net/controlSync.ts` /
+      `api/http_control_sync.go`）的五条必须保留：**conflict id 在路径两处都要按整体处理**
+      （前端 `encodeURIComponent(id)`、服务端 `url.PathUnescape(chi.URLParam(...))`）——
+      prompts 的 key 是 `<账户>/sha256:<hash>`、nodes 的 key 是 URL，两者都带 `/`，
+      少了任一侧这些域的冲突卡永远点不动，而它们正是最常冲突的两个域；**users 域只给
+      「保留本地 / 采用主节点」**（判断按域做、不依赖服务端 redacted 标记，载荷里是口令
+      hash，不能让人当普通 JSON 编辑，摘要也只显示「密码已变更」）；**分组顺序固定为
+      spec §5 的域表、未知域排最后**（新域不能插队让分组位置随数据漂移）；**批量裁决是
+      「一次确认一次提交」**（服务端只有逐条 CAS 端点，视图不循环发请求、确认文案必须写明
+      条数，在途由 busy 去重）；**读失败不清空已有列表**（清空等于告诉用户「没有冲突了」）。
+      ⑳ 主节点身份与追平锁（`feed.go` / `replicator.go` / `mode.go` / `runtime.go` /
+      `store_state.go` / `store_migrate.go`）的四条必须保留：**每一页追平之前都核对主节点
+      身份**（`verifyOrigin`：schema 不符 → `ErrReplicaSchemaMismatch`、`primary_instance_id`
+      变了 → `ErrReplicaOriginMismatch`，两种情况都**不动水位、不写副本**）—— 主节点被重装/
+      换机后它的 rev 序列从头开始，不核对就会把一台空库当成「主节点把记录全删了」照单全收；
+      **身份不符必须停机并加持久化锁**（`BlockLocal` 落 `offline-local` + `blocked_reason`，
+      `Observe` 锁着时不许自动升级、构造时读到锁一律落回本地）—— 只返回错误不停机的话，
+      探活 2 次成功就把边缘拉回 `reconciling` 再撞同一个不符，模式每 20 秒来回跳；
+      **追平真的跑通才解锁**（`ClearBlock`，用户点「重试」仍可给一次真追平机会，身份核对在
+      追平开头重做）；**采纳新主节点只能人工触发**（`AdoptPrimary` 丢掉按旧主节点建的
+      records / base_rev / 冲突卡但**保留 pending**）—— 自动采纳等于把「主节点被换掉了」
+      静默吞掉，而删掉 pending 就是扔用户的离线改动，两者都不能做。
+      ㉑ 模式迁移的可见事件（`store_mode_events.go` / `mode.go` / `store.go`）的三条必须保留：
+      **每次真翻转写一条 `mode_events`**（spec §7：降级/升级都要留痕；事件同时是横幅的数据源，
+      换台浏览器看到的还是同一份「什么时候变的」）；**事件 id 由 from/to/at 决定、写入 `INSERT OR IGNORE`**
+      （崩溃重启或并发收尾把同一次迁移再报一遍时，界面上不能变成两条「又断线了」；随机 id 会让去重失效）；
+      **事件写失败不阻断状态机**（内存与 `state` 表已经正确，少一条历史不值得让同步停下来 ——
+      与 `RecordProbe` 同一取舍）。
+      ㉒ 变更流清理与库文件权限（`store_prune.go` / `store.go` / `store_merge.go` /
+      `store_migrate.go` / `feed.go` / `runtime.go` / `token.go`）的五条必须保留：
+      **rev 分配与 `HeadRev` 都与 `state.pruned_through_rev` 取大**（change 行删光后
+      `MAX(rev)` 归零，照着它发号会从 1 重来、`HeadRev` 也会倒退 —— 水位停在旧值的边缘
+      会把新变更当成「已应用过」整段跳过，而两侧都没有任何异常信号）；**下限取「仍存在的
+      最小 rev 减一」、删空时取清理前的 head**（删的是最旧一批，所以它以下都已不在；表空时
+      退回 head 才不至于把「曾经发出去过的最大序号」忘掉）；**保留窗口缺口显式报
+      `ErrRetentionGap`**（`Page` 里 `since <= floor` 直接失败 → HTTP 409 → 边缘
+      `BlockLocal`）—— 返回一页「看起来正常」的变更等于让副本永久缺一段控制面，而主节点
+      本身没坏、重试也不会好，折成 5xx 只会让它一直重试注定的失败；**单次清理有行数上限**
+      （`PruneBatchSize`，按 rev 子查询 + LIMIT；一次删几十万行会把写锁攥住，期间采集与
+      边缘拉取全停摆）；**库与 `-wal`/`-shm` 每次启动都收紧到 0600、目录 0700**（旧库可能
+      是 0644 建的，而库里是含口令 hash 的整份控制面；token 同理只认 `token_file`，
+      装配处用 `ValidateSyncToken` 拒绝短于 16 字节的凭据，内联字段与环境变量那套已删除）。
+      ㉓ 安装包必须自带可用的前端（`scripts/build-all.sh` / `scripts/install.ps1`）：
+      **打包前检查 `web/dist/index.html`，缺了直接在编译之前失败**（先跑 `make build-web`；
+      先编七个平台再报错等于白等十分钟）；**包内写 `web/BUILD_VERSION`**（值取构建版本，
+      供 T20 对账「装进去的这一版是谁」，不要靠文件名或首页内容猜）；**安装器把前端当必需项
+      ——包里没有 `web/` 直接失败，拷完再逐项核对 `index.html` 与 `favicon.svg` 真的落地，
+      缺一个就整体失败**（`role=worker` 的节点 `GET /` 是 403、control 节点装完却打不开页面，
+      用户看到的是「这台机器坏了」，而实际只是半套安装；安装器自己还会打印 Done，没有任何线索）；
+      **install.ps1 保持不含 CJK 字符**（Windows 按本地代码页 GBK 解码，中文注释会吃掉后面的
+      换行、把下一条语句并进注释，不报错也不生效）。Linux 上没有 pwsh、也跑不了七平台交叉编译，
+      所以 `internal/deploy/install_script_test.go` 用两种手段守：真实执行 build-all.sh 的缺前端
+      分支，其余以源码契约钉住顺序与结构（先定位 → 再拷贝 → 再校验 → 最后才打印 Done）。
+      ㉔ 前端资源镜像：主节点出清单与包（`uibundle.go` / `http_control_sync_ui.go` /
+      `server/cmd/ui-manifest`）的三条必须保留：**清单与包只由 Go 生成，哈希/路径校验只此一份**
+      （`ui-manifest` 是 `make build-web` 的一部分；放进 vite 就得抄第二份规则，两份一漂移的表现是
+      边缘把每一版都判成坏包、永远停在随包旧前端，而日志里一切正常）；**两条端点与 `/head`
+      `/changes` 同一档鉴权**（它们能一次吐出整套静态资源，而「API 不鉴权」是本项目对数据面
+      的决策，不是对这条通道的）；**包必须与清单逐文件一致**（`WriteUIBundle` 按清单取值，
+      中途文件被换掉就整体失败 —— 半份资源绝不能看起来像一份）。
+      ㉕ 边缘镜像与切换（`ui_mirror.go` / `http_frontend.go` / `workspace.go` / `server.go` /
+      `control_sync.go`）的四条必须保留：**先校验后切换**（`<version>.tmp` → 逐文件 sha256 →
+      rename → `.complete` → 才写指针；校验失败保留旧版并清掉半成品）；**指针是普通文件而不是
+      符号链接**（Windows 上建符号链接要特权，而边缘就是 Windows 那台；`writePointer` 在 rename
+      不能覆盖时退化为「先删后改名」—— 极短空窗的后果是回落安装目录，不是白屏）；**`min_server_build`
+      不满足不激活**（判定复用 `update.IsNewerVersion`，不另抄一份版本解析：本仓的 tag 带构建号，
+      两套算法迟早对不上）；**静态目录每请求重新求值**（`servingStaticDir` 走 `StaticDirProvider`，
+      镜像切换不需要重启进程 —— 「重启才生效」不叫无感更新；`StaticDir` 仍是安装目录，
+      `/api/control-sync/ui/*` 只认它，否则边缘会把自己的镜像当成「本机构建」再发出去）。
+      ㉖ 冲突手动合并的三个必须保留：**编辑初值取完整载荷而不是 600 字符摘要**（`conflictEditPayload`
+      与 `conflictSideSummary` 分开 —— 拿预览当草稿会把截断内容提交回权威存储）；**删除/脱敏/缺失
+      一侧不给假 JSON**（远端删除时从本地载荷起步，users 域一律不开放编辑）；**批量合并逐卡带自己的
+      payload**（`resolveConflictPayloadEdits` 串行发，404/409 算已达成，部分失败在刷新后再报错，
+      草稿留在面板里供重试）。
+      ㉗ 节点表「拉到了没有」是两个答案，不能只看有没有抛异常：`syncNodesFromServer` 失败时会退回
+      缓存或本地兜底并**照常返回一份列表**，早先 `syncNodeTableHealth` 等它不抛就当成功，于是主节点
+      整个不可达时界面拿到的是「拉到了」，转头拿陈旧清单宣布「所有节点都连不上」。现在返回值多带
+      `source: server | cache | local-fallback`（`syncNodesFromServerWithOutcome`，两个入口共用同一个
+      在途 promise），只有 `server` 才 `markNodeTableReachable`；`force` 不再跳过一次 —— 强制刷新
+      恰恰最需要知道成败。远端提示**有分组时也要出**：陈旧缓存意味着列表还在（还显示着已删除的节点、
+      或少了刚加的），只在空列表时提示等于最该提醒的时刻一声不响。
+    boundary: |
+      P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
+      `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
+      `server/app` 启动链（⑯），但默认仍是关闭，边缘探活与追平只在显式开启后运行。
+      前端镜像同样只在「同步已启用 + 边缘角色」时启动，没有独立开关；镜像目录在
+      `<config-dir>/control_sync/ui/`，删掉 `current` 指针即回落到安装目录那份。
+      后续波次（P1、P3–P8）在同组继续登记 files / tests / anchors。控制面之外的数据
+      （项目/会话/任务/文件）不在同步范围内。
+    files:
+      - server/app/control_plane_isolation_test.go
+      - web/tests/node-unreachable-baseline.test.mjs
+      - internal/deploy/install_script_test.go
+      - scripts/install.ps1
+      - scripts/build-all.sh
+      - docs/multi-node-control-plane.md
+      - server/internal/controlsync/record.go
+      - server/internal/controlsync/record_test.go
+      - server/internal/controlsync/store.go
+      - server/internal/controlsync/store_test.go
+      - server/internal/controlsync/domain.go
+      - server/internal/controlsync/domain_nodes.go
+      - server/internal/controlsync/domain_nodes_test.go
+      - server/internal/controlsync/domain_preferences.go
+      - server/internal/controlsync/domain_preferences_test.go
+      - server/internal/controlsync/domain_prompts.go
+      - server/internal/controlsync/domain_prompts_test.go
+      - server/internal/controlsync/domain_pins.go
+      - server/internal/controlsync/domain_pins_test.go
+      - server/internal/controlsync/domain_users.go
+      - server/internal/controlsync/domain_users_test.go
+      - server/internal/controlsync/domain_workflows.go
+      - server/internal/controlsync/domain_workflows_test.go
+      - server/internal/auth/store_sync.go
+      - server/internal/auth/store_sync_test.go
+      - server/internal/pins/store_restore.go
+      - server/internal/preferences/store_fields.go
+      - server/internal/preferences/store.go
+      - server/internal/kanban/workflow_store_sync.go
+      - server/internal/kanban/workflow_store_sync_test.go
+      - server/internal/api/usecase/prompts.go
+      - server/internal/controlsync/capture.go
+      - server/internal/controlsync/capture_test.go
+      - server/internal/api/controlproxy.go
+      - server/internal/api/controlproxy_test.go
+      - server/internal/controlsync/replicator.go
+      - server/internal/controlsync/replicator_test.go
+      - server/internal/controlsync/mode.go
+      - server/internal/controlsync/mode_test.go
+      - server/internal/controlsync/mode_events_test.go
+      - server/internal/controlsync/store_mode_events.go
+      - server/internal/controlsync/store_state.go
+      - server/internal/controlsync/merge.go
+      - server/internal/controlsync/merge_test.go
+      - server/internal/controlsync/store_merge.go
+      - server/internal/controlsync/reconcile.go
+      - server/internal/controlsync/reconcile_test.go
+      - server/internal/controlsync/store_pending.go
+      - server/internal/controlsync/store_reconcile.go
+      - server/internal/api/http_control_sync.go
+      - server/internal/api/http_control_sync_auth_test.go
+      - server/internal/api/http_control_sync_test.go
+      - server/internal/api/http_control_sync_push_test.go
+      - server/internal/controlsync/conflicts_test.go
+      - server/internal/api/http_control_sync_conflicts_test.go
+      - server/internal/controlsync/conflicts.go
+      - server/internal/controlsync/conflicts_test.go
+      - server/internal/api/http_control_sync_conflicts_test.go
+      - server/internal/api/http.go
+      - server/internal/api/http_routes.go
+      - server/internal/controlsync/auth.go
+      - server/internal/controlsync/auth_test.go
+      - server/internal/controlsync/feed.go
+      - server/internal/controlsync/feed_test.go
+      - server/internal/controlsync/origin_test.go
+      - server/internal/controlsync/mode_block_test.go
+      - server/internal/controlsync/mode_status_test.go
+      - server/internal/controlsync/runtime_test.go
+      - server/internal/controlsync/pending_pusher.go
+      - server/internal/controlsync/push_client.go
+      - server/internal/controlsync/runtime.go
+      - server/internal/controlsync/store_changes.go
+      - server/internal/controlsync/store_prune.go
+      - server/internal/controlsync/store_prune_test.go
+      - server/internal/controlsync/runtime_retention_test.go
+      - server/internal/controlsync/store_migrate.go
+      - server/internal/controlsync/store_runtime.go
+      - server/internal/controlsync/token.go
+      - server/internal/controlsync/blocked.go
+      - cli/cmd/control_sync.go
+      - cli/cmd/control_sync_test.go
+      - server/app/control_sync.go
+      - server/app/control_sync_test.go
+      - e2e/test_control_sync_offline.py
+      - e2e/test_control_sync_ui_and_auth.py
+      - web/src/shared/controlMode.ts
+      - web/src/shared/syncConflicts.ts
+      - web/src/services/net/controlSync.ts
+      - web/src/hooks/useControlSyncStatus.ts
+      - web/src/hooks/useSyncConflicts.ts
+      - web/src/components/app/ControlModeBanner.tsx
+      - web/src/components/app/SyncConflictPanel.tsx
+      - web/src/app/AppRootView.tsx
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/src/services/net/nodeHealth.ts
+      - web/src/shared/nodeAvailability.ts
+      - web/src/hooks/useNodeHealth.ts
+      - web/src/app/managedRootNodeHealth.ts
+      - web/src/app/useManagedRoots.ts
+      - web/src/components/file/FileTreeEntryFilters.ts
+      - web/src/components/file/useFileTreeNodeGroups.ts
+      - web/src/components/file/FileTreeProjectContent.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/fileTreeEntries.tsx
+      - web/src/components/account/useNodeManagerPanel.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - server/internal/controlsync/uibundle.go
+      - server/internal/controlsync/uibundle_test.go
+      - server/internal/controlsync/ui_mirror.go
+      - server/internal/controlsync/ui_mirror_test.go
+      - server/cmd/ui-manifest/main.go
+      - server/internal/api/http_control_sync_ui.go
+      - server/internal/api/http_control_sync_ui_test.go
+      - server/internal/api/http_frontend.go
+      - server/internal/api/http_frontend_serve_test.go
+      - server/internal/api/http_nodes.go
+      - server/app/workspace.go
+      - server/app/workspace_static_dir_test.go
+      - server/app/server.go
+      - server/internal/update/compare.go
+      - scripts/build-all.sh
+      - Makefile
+
+    tests:
+      - server/app/control_plane_isolation_test.go
+      - internal/deploy/install_script_test.go
+      - web/tests/node-unreachable-baseline.test.mjs
+      - web/tests/node-health.test.mjs
+      - web/tests/node-table-unreachable.test.mjs
+      - server/internal/controlsync/record_test.go
+      - server/internal/controlsync/store_test.go
+      - server/internal/controlsync/domain_nodes_test.go
+      - server/internal/controlsync/domain_preferences_test.go
+      - server/internal/controlsync/domain_prompts_test.go
+      - server/internal/controlsync/domain_pins_test.go
+      - server/internal/controlsync/domain_users_test.go
+      - server/internal/controlsync/domain_workflows_test.go
+      - server/internal/controlsync/capture_test.go
+      - server/internal/api/controlproxy_test.go
+      - server/internal/controlsync/replicator_test.go
+      - server/internal/controlsync/mode_test.go
+      - server/internal/api/http_control_sync_test.go
+      - server/internal/controlsync/merge_test.go
+      - server/internal/controlsync/reconcile_test.go
+      - server/internal/api/http_control_sync_push_test.go
+      - server/internal/auth/store_sync_test.go
+      - server/internal/kanban/workflow_store_sync_test.go
+      - server/internal/controlsync/feed_test.go
+      - server/internal/controlsync/pending_pusher_test.go
+      - server/internal/controlsync/push_client_test.go
+      - server/internal/controlsync/replicator_token_test.go
+      - server/internal/controlsync/runtime_test.go
+      - server/internal/controlsync/runtime_handover_test.go
+      - server/internal/controlsync/store_changes_test.go
+      - server/internal/controlsync/store_prune_test.go
+      - server/internal/controlsync/runtime_retention_test.go
+      - server/internal/controlsync/store_pending_test.go
+      - server/internal/controlsync/store_runtime_test.go
+      - server/internal/controlsync/token_test.go
+      - server/internal/controlsync/mode_block_test.go
+      - server/internal/controlsync/capture_pending_test.go
+      - server/internal/api/controlproxy_mode_test.go
+      - server/internal/api/http_control_sync_feed_test.go
+      - server/app/control_sync_test.go
+      - cli/cmd/control_sync_test.go
+      - e2e/test_control_sync_offline.py
+      - e2e/test_control_sync_ui_and_auth.py
+      - web/tests/control-mode-banner.test.mjs
+      - web/tests/sync-conflict-panel.test.mjs
+      - server/internal/api/http_control_sync_conflicts_test.go
+      - server/internal/controlsync/uibundle_test.go
+      - server/internal/controlsync/ui_mirror_test.go
+      - server/internal/api/http_control_sync_ui_test.go
+      - server/internal/api/http_frontend_serve_test.go
+      - server/app/workspace_static_dir_test.go
+
+    anchors:
+      - 'internal/deploy/install_script_test.go:func TestBuildAllRefusesPackageWithoutWebAssets(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestBuildAllStampsFrontendBuildVersion(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestWindowsInstallerVerifiesWebAssets(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestWindowsInstallerStaysASCIISafe(t *testing.T) {'
+      - 'scripts/build-all.sh:if [[ ! -f "${ROOT}/web/dist/index.html" ]]; then'
+      - 'scripts/build-all.sh:${ROOT}/${OUT_DIR}/web/BUILD_VERSION'
+      - 'scripts/install.ps1:    $WebSrc = Join-Path $PkgDir "web"'
+      - 'scripts/install.ps1:        Write-Error "Web assets missing from archive: $WebSrc"'
+      - 'scripts/install.ps1:    foreach ($Rel in @("index.html", "favicon.svg")) {'
+      - 'scripts/install.ps1:            Write-Error "Web asset missing after install: $Probe"'
+      - 'docs/multi-node-control-plane.md:## 离线 control 安装（Windows）'
+      - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
+      - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationNodeStores(t *testing.T) {'
+      - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationWorkflowStores(t *testing.T) {'
+      - 'server/app/control_plane_isolation_test.go:	// 先写后建：共享目录时 B 会看到 alice，Create 直接撞 ErrUsernameTaken。'
+      - 'server/internal/controlsync/record.go:	dec.UseNumber()'
+      - 'server/internal/controlsync/record_test.go:func TestCanonicalJSONPreservesBigIntegers(t *testing.T) {'
+      - 'server/internal/controlsync/record_test.go:func TestHashPayloadIgnoresTombstoneFlag(t *testing.T) {'
+      - 'server/internal/controlsync/store.go:&_txlock=immediate'
+      - 'server/internal/controlsync/store_test.go:func TestMigrateIsIdempotent(t *testing.T) {'
+      - 'server/internal/controlsync/store_test.go:func TestConcurrentOpenMigratesAndAllocatesDistinctRevs(t *testing.T) {'
+      - 'server/internal/controlsync/store_test.go:// 事务回滚不留半条 change：records 与 changes 必须同生共死。'
+      - 'server/internal/controlsync/store_test.go:func TestMigrateWaitsForAnotherWriter(t *testing.T) {'
+      - 'server/internal/controlsync/store_migrate.go:	migrateAttempts = 60'
+      - 'server/internal/controlsync/domain.go:const mainAccountKey = "main"'
+      - 'server/internal/controlsync/domain_prompts.go:func PromptRecordKey(account, text string) string {'
+      - 'server/internal/controlsync/domain_pins.go:func PinRecordKey(account, kind, scope string) string {'
+      - 'server/internal/controlsync/domain_users.go:const usersPrimaryKey = "@primary"'
+      - 'server/internal/controlsync/domain_users_test.go:func TestUsersDomainApplyCopiesHashAndPrimary(t *testing.T) {'
+      - 'server/internal/controlsync/domain_workflows.go:	workflowVersionMarker = ":version:"'
+      - 'server/internal/auth/store_sync.go:var ErrDerivedIDMismatch = errors.New("account_id_not_derived")'
+      - 'server/internal/preferences/store_fields.go:var knownPreferenceFields = func() map[string]bool {'
+      - 'server/internal/kanban/workflow_store_sync.go:var ErrWorkflowVersionImmutable = errors.New("workflow version immutable")'
+      - 'server/internal/kanban/workflow_store_sync_test.go:func TestExportForSyncSkipsOrphanMeta(t *testing.T) {'
+      - 'server/internal/controlsync/capture.go:const FallbackInterval = 15 * time.Second'
+      - 'server/internal/controlsync/capture.go:func (c *Capturer) Suppress(ctx context.Context, domains []string, fn func() error) error {'
+      - 'server/internal/controlsync/capture.go:func DomainForPath(path string) (string, bool) {'
+      - 'server/internal/controlsync/capture_test.go:func TestSuppressKeepsRemoteApplyOutOfChangeLog(t *testing.T) {'
+      - 'server/internal/controlsync/capture_test.go:func TestFallbackScanCatchesNonHTTPWrites(t *testing.T) {'
+      - 'server/internal/controlsync/store.go:func (s *Store) WriteRecords(ctx context.Context, recs []Record) ([]int64, error) {'
+      - 'server/internal/api/controlproxy.go:var ErrInsecurePrimaryURL = errors.New("control_sync: primary_url must be https")'
+      - 'server/internal/api/controlproxy.go:	ControlProxyTimeout = 10 * time.Second'
+      - 'server/internal/api/controlproxy.go:func (p *ControlProxy) ShouldForward(path string) bool {'
+      - 'server/internal/api/controlproxy_test.go:func TestControlProxyReturns503WithoutLocalFallback(t *testing.T) {'
+      - 'server/internal/controlsync/replicator.go:func (r *Replicator) SyncOnce(ctx context.Context) (int, error) {'
+      - 'server/internal/controlsync/replicator.go:	if base.Scheme != "https" {'
+      - 'server/internal/controlsync/store.go:func (s *Store) ApplyRemoteChanges(ctx context.Context, changes []RemoteChange) error {'
+      - 'server/internal/controlsync/store.go:		if ch.Rev <= baseRev {'
+      - 'server/internal/controlsync/replicator_test.go:func TestApplyRemoteChangesIgnoresReplayedOldPage(t *testing.T) {'
+      - 'server/internal/controlsync/replicator_test.go:func TestReplicatorPaginatesUntilEmptyPage(t *testing.T) {'
+      - 'server/internal/controlsync/mode.go:	ProbeInterval       = 10 * time.Second'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) Observe(success bool) Mode {'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) Retry(ctx context.Context) (Mode, error) {'
+      - 'server/internal/controlsync/mode.go:func parsePrimaryURL(raw string) (*url.URL, error) {'
+      - 'server/internal/controlsync/store_state.go:func (s *Store) RecordProbe(ctx context.Context, at time.Time, errText string) error {'
+      - 'server/internal/controlsync/mode_test.go:func TestModeControllerDegradesAfterThreeProbeFailures(t *testing.T) {'
+      - 'server/internal/controlsync/mode.go:	applyMu sync.Mutex'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) CompleteReconcile(ctx context.Context, hasConflicts bool) (Mode, error) {'
+      - 'server/internal/controlsync/mode.go:	if from != ModeReconciling && from != ModeConflictReview {'
+      - 'server/internal/controlsync/mode_test.go:func TestCompleteReconcileDoesNotOverrideProbeDegrade(t *testing.T) {'
+      - 'server/internal/controlsync/capture.go:	SweepWhen func() bool'
+      - 'server/internal/controlsync/capture.go:			if c.SweepWhen != nil && !c.SweepWhen() {'
+      - 'server/internal/controlsync/capture.go:		for _, rec := range current {'
+      - 'server/internal/controlsync/capture_test.go:func TestFallbackScanWaitsForSweepWhen(t *testing.T) {'
+      - 'server/internal/controlsync/capture_test.go:func TestRefreshBaselineKeepsLocalOnlyRecords(t *testing.T) {'
+      - 'server/app/control_sync.go:		if n, err := capturer.CaptureAll(ctx); err != nil {'
+      - 'server/app/control_sync_test.go:func TestStartControlSyncPrimaryPublishesBaselineAtStartup(t *testing.T) {'
+      - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncMode(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:	if h.ControlSync != nil {'
+      - 'server/internal/api/http_control_sync_test.go:func TestControlSyncModeRetryFailureStillReturnsStatus(t *testing.T) {'
+      - 'server/internal/controlsync/merge.go:	PushApplied  = "applied"'
+      - 'server/internal/controlsync/merge.go:	applied, err := p.store.ChangeApplied(ctx, ch.ChangeID)'
+      - 'server/internal/controlsync/merge.go:	case exists && !cur.Deleted && cur.Hash == ch.BaseHash:'
+      - 'server/internal/controlsync/merge.go:func (p *Pusher) applyToDomain(ctx context.Context, domain Domain, rec Record) error {'
+      - 'server/internal/controlsync/store_merge.go:func (s *Store) ApplyPushedChange(ctx context.Context, rec PushedRecord) (int64, error) {'
+      - 'server/internal/controlsync/store_merge.go:ON CONFLICT(id) DO NOTHING`,'
+      - 'server/internal/controlsync/merge_test.go:func TestPushReportsConflictWhenBothSidesChanged(t *testing.T) {'
+      - 'server/internal/controlsync/merge_test.go:func TestPushReplayAfterPrimaryEditStaysApplied(t *testing.T) {'
+      - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncPush(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:	if h.ControlSyncPush != nil {'
+      - 'server/internal/api/http_control_sync_push_test.go:func TestControlSyncPushEndpointAbsentWhenNotConfigured(t *testing.T) {'
+      - 'server/internal/controlsync/reconcile.go:func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {'
+      - 'server/internal/controlsync/reconcile.go:	if ch.Hash == pending.BaseHash {'
+      - 'server/internal/controlsync/reconcile.go:	if !progressed {'
+      - 'server/internal/controlsync/store_reconcile.go:func (s *Store) ApplyReconcilePage(ctx context.Context, page ReconcilePage) error {'
+      - 'server/internal/controlsync/store_reconcile.go:func PullConflictID(domain, key string) string {'
+      - 'server/internal/controlsync/store_pending.go:ON CONFLICT(domain, key) DO UPDATE SET'
+      - 'server/internal/controlsync/reconcile_test.go:func TestReconcileRecordsConflictAndKeepsPending(t *testing.T) {'
+      - 'server/internal/controlsync/reconcile_test.go:func TestReconcileKeepsWatermarkWhenApplyFails(t *testing.T) {'
+      - 'server/internal/controlsync/reconcile_test.go:func TestReconcileResumesFromWatermarkAfterFailure(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts.go:func (r *Resolver) Resolve(ctx context.Context, id, choice string, payload []byte) error {'
+      - 'server/internal/controlsync/conflicts.go:	if c.Domain == domainUsers {'
+      - 'server/internal/controlsync/conflicts.go:	if _, err := r.store.RebasePendingWithID(ctx, c.Domain, c.Key, c.RemoteHash,'
+      - 'server/internal/controlsync/store_merge.go:func (s *Store) ClaimConflict(ctx context.Context, id, choice string) error {'
+      - "server/internal/controlsync/store_merge.go:UPDATE conflicts SET resolved_at = ?, resolution = ? WHERE id = ? AND resolved_at = ''`,"
+      - 'server/internal/controlsync/store_merge.go:func (s *Store) ListOpenConflicts(ctx context.Context) ([]Conflict, error) {'
+      - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {'
+      - 'server/internal/controlsync/store_migrate.go:func (s *Store) addColumn(ctx context.Context, table, ddl string) error {'
+      - 'server/internal/controlsync/store_migrate.go:func isDuplicateColumn(err error) bool {'
+      - 'server/internal/controlsync/store_migrate.go:		if !isDuplicateColumn(err) {'
+      - 'server/internal/controlsync/store_test.go:func TestAddColumnTreatsColumnAddedByAnotherMigratorAsSuccess(t *testing.T) {'
+      - 'server/internal/controlsync/store_pending.go:func (s *Store) RebasePending(ctx context.Context, domain, key, baseHash string, payload []byte, deleted bool) (bool, error) {'
+      - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:	if h.ControlSyncConflicts != nil {'
+      - 'server/internal/controlsync/runtime.go:func (r *Runtime) Handover(ctx context.Context) error {'
+      - 'server/internal/controlsync/runtime.go:				if pending[rec.Key] {'
+      - 'server/internal/controlsync/runtime.go:	if err := r.Handover(ctx); err != nil {'
+      - 'server/internal/controlsync/runtime.go:	r.pending.SetFrozenDomains(frozen)'
+      - 'server/internal/controlsync/runtime.go:	if pending > 0 {'
+      - 'server/internal/controlsync/runtime.go:	deps.Capturer.CaptureWhen = func() bool { return rt.mode.Mode() != ModeOnline }'
+      - 'server/internal/controlsync/runtime.go:	rt.resolver.WithPendingIDs(cfg.InstanceID)'
+      - 'server/internal/controlsync/capture.go:	if c.CaptureWhen != nil && !c.CaptureWhen() {'
+      - 'server/internal/controlsync/store_pending.go:func (s *Store) ListPendingExcept(ctx context.Context, limit int, exclude map[string]bool) ([]PendingChange, error) {'
+      - 'server/internal/controlsync/pending_pusher.go:	pending, err := p.store.ListPendingExcept(ctx, p.batchSize, p.frozen)'
+      - 'server/internal/controlsync/conflicts_test.go:func TestResolverListRedactsUsersPasswordHashes(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts_test.go:func TestResolveLocalRebasesPendingThenPushConverges(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts_test.go:func TestResolveConcurrentSingleWinner(t *testing.T) {'
+      - 'server/internal/controlsync/conflicts_test.go:func TestMigrateAddsConflictDeleteColumnsToExistingDB(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_conflicts_test.go:func TestControlSyncConflictResolveEndpoint(t *testing.T) {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("单节点失败：提示照旧，且同时记进节点健康表", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("失败节点的项目条目会被保留，不能整表替换", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("节点表拉取失败：记录并提示「可能不是最新」，不再静默吞掉", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("零项目不再无条件说「添加一个项目」：三种空状态分开", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("文件树逐节点标记不可达：分组带标记、无缓存条目时单独列出来", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("不可达节点的行不给点：光标与点击都收口在同一处判断", () => {'
+      - 'web/tests/node-health.test.mjs:test("可用性判定：节点表失败最优先，其次是「每台都离线」", () => {'
+      - 'web/tests/node-health.test.mjs:test("可用性判定：未观测不算离线，一台通就算 ok", () => {'
+      - 'web/tests/node-health.test.mjs:test("节点健康表：状态没变就不 bump 版本，快照引用保持不变", () => {'
+      - 'web/tests/node-health.test.mjs:test("分组：只标记连不上的那台，其它组不受影响", () => {'
+      - 'web/src/services/net/nodeHealth.ts:export function markNodeUnreachable(nodeId: unknown, detail: unknown = "", at: number = Date.now()): void {'
+      - 'web/src/shared/nodeAvailability.ts:export function classifyNodesAvailability(input: NodesAvailabilityInput): NodesAvailability {'
+      - 'web/src/app/managedRootNodeHealth.ts:export async function syncNodeTableHealth(_force?: boolean): Promise<void> {'
+      - 'web/src/services/net/nodeRegistry.ts:export type NodesSyncOutcome = {'
+      - 'web/src/services/net/nodeRegistry.ts:export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome> {'
+      - 'web/src/components/file/FileTreeProjectContent.tsx:      {nodesAvailability === "table-unreachable" ? ('
+      - 'web/tests/node-table-unreachable.test.mjs:test("节点表拉不到：记成 offline，不能说「拉到了」", async () => {'
+      - 'web/tests/node-table-unreachable.test.mjs:test("屏幕上有分组时，清单不可信仍然要提示 —— 陈旧缓存恰恰意味着列表还在", async () => {'
+      - 'web/src/app/managedRootNodeHealth.ts:    markNodeUnreachable(node.id, (err as Error)?.message || String(err));'
+      - 'web/src/components/file/FileTreeEntryFilters.ts:unreachable: !!nid && !!isUnreachable?.(nid)'
+      - 'web/src/components/file/FileTreeProjectContent.tsx:const emptyKey: MessageKey = nodesAvailability === "table-unreachable"'
+      - 'web/src/components/file/fileTreeEntries.tsx:        if (nodeDead) return;'
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:token, err := readSyncToken(stringValue(cs.TokenFile))'
+      - 'cli/cmd/startup.go:ControlSync *startupControlSyncConfig `json:"control_sync"`'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg)'
+      - 'server/app/control_sync.go:if nodeRole == nodeinfo.RoleWorker {'
+      - 'server/app/control_sync.go:if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {'
+      - 'server/app/control_sync.go:root := w.capturer.WriteCapture(next)'
+      - 'server/app/control_sync.go:proxy.BlockedDomain = blockedDomainChecker(store)'
+      - 'server/app/control_sync.go:cards, err := store.ListOpenConflicts(ctx)'
+      - 'server/app/server.go:controlSync, err := startControlSync(ctx, opts.ControlSync, nodeinfo.Normalize(opts.Role), configDir, controlSyncStores{'
+      - 'server/app/server.go:root = controlSync.wrapRoot(inner)'
+      - 'server/app/workspace.go:m.controlSyncWiringOf().applyTo(handler)'
+      - 'web/src/shared/controlMode.ts:export function controlModeBanner('
+      - 'web/src/shared/controlMode.ts:const actions: ControlBannerAction[] = ["retry"];'
+      - 'web/src/shared/controlMode.ts:export function conflictReminder('
+      - 'web/src/shared/controlMode.ts:if (!event || dismissed.has(event.id)) return null;'
+      - 'web/src/services/net/controlSync.ts:export async function fetchControlSyncStatus(): Promise<ControlSyncStatus | null> {'
+      - 'web/src/services/net/controlSync.ts:if (endpointMissing(err)) return null;'
+      - 'web/src/hooks/useControlSyncStatus.ts:if (!enabled) return;'
+      - 'web/src/hooks/useControlSyncStatus.ts:window.clearInterval(timer);'
+      - 'web/src/components/app/ControlModeBanner.tsx:export function ControlModeBanner() {'
+      - 'web/src/app/AppRootView.tsx:<ControlModeBanner />'
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:"controlMode.local": "本地模式",'
+      - 'web/src/i18n/locales/en-US-workspace.ts:"controlMode.local": "Local mode",'
+      - 'web/tests/control-mode-banner.test.mjs:test("三种降级状态各自给出动作，攒了冲突才多出查看入口", () => {'
+      - 'web/tests/control-mode-banner.test.mjs:test("冲突提醒按事件 id 只提醒一次", () => {'
+      - 'web/tests/control-mode-banner.test.mjs:test("状态端点带回的锁码与事件不能在服务层被丢掉", () => {'
+      - 'web/src/services/net/controlSync.ts:export function toControlSyncStatus(payload: unknown): ControlSyncStatus | null {'
+      - 'server/internal/controlsync/store_mode_events.go:func ModeEventID(from, to Mode, at time.Time) string {'
+      - 'server/internal/controlsync/store_mode_events.go:func (s *Store) RecordModeEvent(ctx context.Context, ev ModeEvent) (bool, error) {'
+      - 'server/internal/controlsync/mode.go:	m.recordModeEvent(from, to)'
+      - 'server/internal/controlsync/store.go:CREATE TABLE IF NOT EXISTS mode_events ('
+      - 'server/internal/controlsync/mode_events_test.go:func TestModeControllerConflictReviewEventOnce(t *testing.T) {'
+      - 'server/internal/api/http_control_sync.go:id, err := url.PathUnescape(chi.URLParam(r, "id"))'
+      - 'server/internal/api/http_control_sync_conflicts_test.go:func TestControlSyncConflictResolveDecodesEscapedID(t *testing.T) {'
+      - 'web/src/shared/syncConflicts.ts:export function groupSyncConflicts(conflicts: readonly SyncConflictView[]): SyncConflictGroup[] {'
+      - 'web/src/shared/syncConflicts.ts:if (view.domain === "users" || view.redacted) return ["local", "primary"];'
+      - 'web/src/shared/syncConflicts.ts:if (view.domain === "users" || view.redacted) return { kind: "redacted", text: "" };'
+      - 'web/src/services/net/controlSync.ts:export async function fetchSyncConflicts(): Promise<SyncConflictView[] | null> {'
+      - 'web/src/services/net/controlSync.ts:${encodeURIComponent(id)}/resolve'
+      - 'web/src/services/net/controlSync.ts:await resolveSyncConflict(conflict.id, choice);'
+      - 'web/src/hooks/useSyncConflicts.ts:window.addEventListener(CONTROL_CONFLICTS_EVENT, onOpen);'
+      - 'web/src/components/app/SyncConflictPanel.tsx:void resolveMany(group.conflicts, batch.choice);'
+      - 'web/src/components/app/SyncConflictPanel.tsx:t("syncConflict.batchConfirm", { count: group.conflicts.length })'
+      - 'web/src/app/AppRootView.tsx:<SyncConflictPanel />'
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:"syncConflict.title": "同步冲突",'
+      - 'web/src/i18n/locales/en-US-workspace.ts:"syncConflict.title": "Sync conflicts",'
+      - 'web/tests/sync-conflict-panel.test.mjs:test("按域分组并固定顺序，未知域排最后", () => {'
+      - 'server/internal/controlsync/auth.go:func VerifySyncRequest(r *http.Request, body []byte, opts SyncVerifyOptions) error {'
+      - 'server/internal/controlsync/auth.go:	if opts.Nonces != nil && !opts.Nonces.Accept(nonce, now) {'
+      - 'server/internal/controlsync/auth.go:mac.Write(body)'
+      - 'server/internal/controlsync/auth.go:	if skew := now.Sub(at); skew > SyncClockSkew || skew < -SyncClockSkew {'
+      - 'server/internal/api/http_control_sync.go:	if err := controlsync.VerifySyncRequest(r, body, controlsync.SyncVerifyOptions{'
+      - 'server/internal/api/http_control_sync.go:	r.Body = io.NopCloser(bytes.NewReader(body))'
+      - 'server/internal/controlsync/push_client.go:	if err := SignSyncRequest(httpReq, c.token, c.instanceID, body, time.Now()); err != nil {'
+      - 'server/internal/controlsync/replicator.go:	if err := SignSyncRequest(req, r.token, r.instanceID, nil, time.Now()); err != nil {'
+      - 'server/internal/controlsync/mode.go:	if err := SignSyncRequest(req, p.token, p.instanceID, nil, time.Now()); err != nil {'
+      - 'server/internal/controlsync/auth_test.go:func TestVerifySyncRequestRejectsReplay(t *testing.T) {'
+      - 'server/internal/controlsync/auth_test.go:func TestVerifySyncRequestDoesNotConsumeNonceOnBadSignature(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_auth_test.go:func TestControlSyncEndpointsRequireSignedRequest(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_auth_test.go:func TestControlSyncPushRoutesPreserveSignedBody(t *testing.T) {'
+      - 'server/internal/controlsync/feed.go:	SyncSchemaVersion = 1'
+      - 'server/internal/controlsync/feed.go:type HeadInfo struct {'
+      - 'server/internal/controlsync/replicator.go:var ErrReplicaOriginMismatch = errors.New("controlsync: primary instance changed")'
+      - 'server/internal/controlsync/replicator.go:func (r *Replicator) verifyOrigin(ctx context.Context) error {'
+      - 'server/internal/controlsync/replicator.go:		return fmt.Errorf("%w: recorded=%s primary=%s", ErrReplicaOriginMismatch, st.PrimaryInstanceID, head.InstanceID)'
+      - 'server/internal/controlsync/mode.go:	BlockedReason string `json:"blocked_reason,omitempty"`'
+      - 'server/internal/controlsync/mode.go:		if m.successes >= UpgradeAfterSuccess && m.blocked == "" {'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) BlockLocal(ctx context.Context, reason string) (Mode, error) {'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) AdoptPrimary(ctx context.Context) (Mode, error) {'
+      - 'server/internal/controlsync/runtime.go:			if errors.Is(err, ErrReplicaOriginMismatch) || errors.Is(err, ErrReplicaSchemaMismatch) ||'
+      - 'server/internal/controlsync/store_state.go:func (s *Store) ResetReplicaForAdopt(ctx context.Context) error {'
+      - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {'
+      - 'server/internal/api/http_control_sync.go:	case "adopt_primary":'
+      - 'server/internal/controlsync/blocked.go:func BlockedCode(reason string) string {'
+      - 'server/internal/controlsync/blocked.go:	case strings.Contains(reason, ErrReplicaOriginMismatch.Error()):'
+      - 'server/internal/controlsync/mode_block_test.go:func TestModeStatusReportsBlockedCode(t *testing.T) {'
+      - 'server/internal/controlsync/mode.go:		BlockedCode:      BlockedCode(blocked),'
+      - 'web/src/shared/controlMode.ts:export function controlSyncActionFor(action: ControlBannerAction): ControlSyncAction {'
+      - 'web/src/components/app/ControlModeBanner.tsx:  const [confirmAdopt, setConfirmAdopt] = useState(false);'
+      - 'server/internal/controlsync/mode_block_test.go:func TestModeControllerBlockedStaysLocalAcrossProbeSuccess(t *testing.T) {'
+      - 'server/internal/controlsync/origin_test.go:func TestAdoptPrimaryRebasesReplicaOntoNewPrimary(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune.go:	ChangeRetention = 90 * 24 * time.Hour'
+      - 'server/internal/controlsync/store_prune.go:	PruneBatchSize = 5000'
+      - 'server/internal/controlsync/store_prune.go:var ErrRetentionGap = errors.New("controlsync: change log retention gap")'
+      - 'server/internal/controlsync/store_prune.go:		if v := minRemaining.Int64 - 1; v > newFloor {'
+      - 'server/internal/controlsync/store_prune.go:		newFloor = headBefore'
+      - 'server/internal/controlsync/store_prune.go:ON CONFLICT(id) DO UPDATE SET pruned_through_rev = MAX(pruned_through_rev, excluded.pruned_through_rev)'
+      - 'server/internal/controlsync/store_prune.go:	q := `DELETE FROM changes WHERE rev IN ('
+      - 'server/internal/controlsync/store.go:	COALESCE((SELECT pruned_through_rev FROM state WHERE id = 1), 0)'
+      - 'server/internal/controlsync/store.go:os.MkdirAll(filepath.Dir(path), 0o700)'
+      - 'server/internal/controlsync/store_merge.go:	COALESCE((SELECT pruned_through_rev FROM state WHERE id = 1), 0)'
+      - 'server/internal/controlsync/store_migrate.go:		"pruned_through_rev": "pruned_through_rev INTEGER NOT NULL DEFAULT 0",'
+      - 'server/internal/controlsync/store_migrate.go:	return s.hardenStoreFiles()'
+      - 'server/internal/controlsync/store_migrate.go:			return fmt.Errorf("controlsync: harden %s: %w", filepath.Base(path), err)'
+      - 'server/internal/controlsync/store_prune_test.go:func TestPruneChangesDeletesOnlyExpired(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestPruneChangesHonorsBatchBudget(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestPruneKeepsRevMonotonicAfterEverythingDeleted(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestChangeFeedRejectsRetentionGap(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestMigrateHardensStoredFilePermissions(t *testing.T) {'
+      - 'server/internal/controlsync/feed.go:	if floor > 0 && since <= floor {'
+      - 'server/internal/controlsync/runtime.go:				errors.Is(err, ErrRetentionGap) {'
+      - 'server/internal/controlsync/runtime.go:		go r.pruneLoop(ctx)'
+      - 'server/internal/controlsync/runtime.go:const PruneInterval = time.Hour'
+      - 'server/internal/controlsync/runtime_retention_test.go:func TestRuntimeBlocksReconcileOnRetentionGap(t *testing.T) {'
+      - 'server/internal/controlsync/runtime_retention_test.go:func TestRuntimePrimaryPrunesExpiredChangesAtStartup(t *testing.T) {'
+      - 'server/internal/controlsync/token.go:const MinSyncTokenLen = 16'
+      - 'server/app/control_sync.go:	if err := controlsync.ValidateSyncToken(cfg.Token); err != nil {'
+      - 'server/app/control_sync_test.go:func TestStartControlSyncRejectsWeakToken(t *testing.T) {'
+      - 'server/internal/api/http_control_sync.go:		if errors.Is(err, controlsync.ErrRetentionGap) {'
+      - 'server/internal/api/http_control_sync_feed_test.go:func TestControlSyncChangesEndpointReportsRetentionGap(t *testing.T) {'
+      - 'server/internal/controlsync/uibundle.go:func ValidUIFilePath(p string) bool {'
+      - 'server/internal/controlsync/uibundle.go:func BuildUIManifest(dir, buildVersion, minServerBuild string) (*UIManifest, error) {'
+      - 'server/internal/controlsync/uibundle.go:func WriteUIBundle(w io.Writer, dir string, m *UIManifest) error {'
+      - 'server/internal/api/http_routes.go:		r.Get("/api/control-sync/ui/manifest", h.requireSyncToken(h.handleControlSyncUIManifest))'
+      - 'server/internal/api/http_routes.go:		r.Get("/api/control-sync/ui/bundle", h.requireSyncToken(h.handleControlSyncUIBundle))'
+      - 'server/internal/controlsync/ui_mirror.go:func (m *UIMirror) SyncOnce(ctx context.Context) error {'
+      - 'server/internal/controlsync/ui_mirror.go:	if strings.TrimSpace(m.serverBuild) != "" && update.IsNewerVersion(manifest.MinServerBuild, m.serverBuild) {'
+      - 'server/internal/controlsync/ui_mirror.go:func (m *UIMirror) writePointer(version string) error {'
+      - 'server/internal/controlsync/ui_mirror.go:func validUIVersionName(v string) bool {'
+      - 'server/internal/api/http_frontend.go:func (h *HTTPHandler) servingStaticDir() string {'
+      - 'server/app/control_sync.go:func applyUIMirrorStaticDir(workspaces *workspaceManager, w *controlSyncWiring) {'
+      - 'server/app/server.go:	applyUIMirrorStaticDir(workspaces, controlSync)'
+      - 'server/app/workspace.go:		StaticDirProvider: staticDirProvider,'
+      - 'server/internal/controlsync/uibundle_test.go:func TestValidUIFilePathBoundaries(t *testing.T) {'
+      - 'server/internal/controlsync/ui_mirror_test.go:func TestUIMirrorRejectsHashMismatchEvenWhenLengthMatches(t *testing.T) {'
+      - 'server/internal/controlsync/ui_mirror_test.go:func TestUIMirrorDoesNotActivateWhenServerTooOld(t *testing.T) {'
+      - 'server/internal/controlsync/ui_mirror_test.go:func TestUIMirrorConcurrentSyncHasSingleWinner(t *testing.T) {'
+      - 'server/internal/api/http_frontend_serve_test.go:func TestServingStaticDirFollowsProviderAtRequestTime(t *testing.T) {'
+      - 'server/app/control_sync_test.go:func TestControlSyncAppliesMirrorStaticDirOnlyOnEdge(t *testing.T) {'
+      - 'server/app/workspace_static_dir_test.go:func TestHandlerDefaultsCarryStaticDirProvider(t *testing.T) {'
+      - 'web/src/shared/syncConflicts.ts:export function conflictEditPayload('
+      - 'web/src/shared/syncConflicts.ts:export function parseConflictEdit('
+      - 'web/src/services/net/controlSync.ts:export async function resolveConflictPayloadEdits('
+      - 'web/src/hooks/useSyncConflicts.ts:  const resolveManyPayloads = useCallback('
+      - 'web/src/components/app/SyncConflictPanel.tsx:  const startManualBatch = ('
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:  "syncConflict.batchMerge": "批量手动合并",'
+      - 'web/tests/sync-conflict-panel.test.mjs:test("手动合并初值取完整载荷，删除/脱敏/缺失都不拿提示文字当 JSON", () => {'
+      - 'web/tests/sync-conflict-panel.test.mjs:test("批量自定义合并逐条带各自 payload，部分失败在刷新后仍可见", () => {'

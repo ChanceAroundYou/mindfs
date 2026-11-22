@@ -41,9 +41,24 @@ type startupConfig struct {
 	SessionHygiene *startupSessionHygieneConfig `json:"session_hygiene"`
 	// Channels 是外部通道（飞书等）的本机配置。不配置 = 全关。
 	Channels *startupChannelsConfig `json:"channels"`
+	// ControlSync 是控制面同步（离线优先本地控制面）。不配置 = 关闭。
+	ControlSync *startupControlSyncConfig `json:"control_sync"`
 	// 根级飞书中继配置：只在 config.json，没有对应 flag。
 	FeishuRelayURL *string `json:"feishu_relay_url"`
 	FeishuNodeID   *string `json:"feishu_node_id"`
+}
+
+// startupControlSyncConfig 是 control_sync 段。
+//
+// 同步通道搬运的整份控制面里有口令 hash，所以 token 只认 token_file：不提供内联
+// token 字段，也不做 flag —— 密钥不该出现在 config.json 或进程参数里。
+type startupControlSyncConfig struct {
+	Enabled    *bool   `json:"enabled"`
+	Role       *string `json:"role"` // primary（默认）| edge
+	InstanceID *string `json:"instance_id"`
+	PrimaryURL *string `json:"primary_url"`
+	CAFile     *string `json:"ca_file"`
+	TokenFile  *string `json:"token_file"`
 }
 
 // startupSessionHygieneConfig 只影响本机。它是少数「不配置也生效」的特性：

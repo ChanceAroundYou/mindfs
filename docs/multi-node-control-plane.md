@@ -146,3 +146,39 @@ control 上陌生 `user=` 仍回空工作区（`emptyWorkspace`），因为 cont
 - 新节点上第一次加项目能成功（按需建目录）。
 - 主节点登录 / 账户管理不变。
 - worker 上反复解析同一个用户名结果一致（确定性 id）。
+
+## 离线 control 安装（Windows）
+
+第二台 control（`pc-win`，`:7332`）要能在主节点不可达时自己出页面，所以安装包**必须**
+带前端。这条不是约定而是硬约束：
+
+- `scripts/build-all.sh` 在打包前检查 `web/dist/index.html`，缺了直接失败（先跑 `make build-web`），
+  并把构建版本写进包内的 `web/BUILD_VERSION`；
+- `scripts/install.ps1` 把前端当必需项：包里没有 `web/` 直接失败，拷完再逐项核对
+  `share\mindfs\web\index.html` 与 `favicon.svg` 真的落地，缺一个就整体失败 ——
+  不允许留下「二进制在、页面 404」的半套安装。
+
+安装后配置（`config.json`）：
+
+```json
+{
+  "role": "control",
+  "control_sync": {
+    "enabled": true,
+    "role": "edge",
+    "instance_id": "pc-win",
+    "primary_url": "https://home.xiaokubao.space/mindfs",
+    "ca_file": "",
+    "token_file": "C:\\Users\\<user>\\AppData\\Roaming\\mindfs\\control-sync.token"
+  }
+}
+```
+
+自检三条：
+
+1. `GET http://127.0.0.1:7332/` 返回 200 且是页面（不是 403）—— `role=worker` 的节点这里就是 403；
+2. `GET /api/node-info` 报 `role=control`；
+3. `GET /api/control-sync/status` 返回四态之一（未启用同步时该端点 404，属正常）。
+
+token 只从 `token_file` 读（≥16 字节），不进 `config.json`、不进命令行参数 ——
+这条通道搬的是含口令 hash 的整份控制面，密钥落进配置文件等于把它交给每个能读该文件的人。

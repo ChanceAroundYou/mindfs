@@ -50,8 +50,24 @@ func (h *HTTPHandler) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	h.handleFrontend(w, r)
 }
 
+// servingStaticDir 是本请求该用的静态目录。
+//
+// 顺序是「镜像优先、安装目录兜底」：边缘把主节点的构建产物镜像到本机后，
+// 出页面用的是镜像里那一版（新版本随主节点发布自动生效，不需要重启）；
+// 还没镜像过（或指针指向一份不完整的资源）就退回随安装包来的那份。
+// 这个函数每次请求都调一次 —— 切换只改一个内存字段加一个指针文件，读一次代价可以忽略，
+// 而缓存住的结果会让「切了但不生效」变成一个只能靠重启解决的问题。
+func (h *HTTPHandler) servingStaticDir() string {
+	if h.StaticDirProvider != nil {
+		if dir := strings.TrimSpace(h.StaticDirProvider()); dir != "" {
+			return dir
+		}
+	}
+	return strings.TrimSpace(h.StaticDir)
+}
+
 func (h *HTTPHandler) serveStaticAsset(w http.ResponseWriter, r *http.Request) bool {
-	staticDir := strings.TrimSpace(h.StaticDir)
+	staticDir := h.servingStaticDir()
 	if staticDir == "" {
 		return false
 	}

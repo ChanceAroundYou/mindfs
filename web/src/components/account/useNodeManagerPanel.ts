@@ -13,6 +13,7 @@ import {
   updateNode,
   type NodeConnection,
 } from "../../services/net/nodeRegistry";
+import { markNodeReachable, markNodeUnreachable } from "../../services/net/nodeHealth";
 
 type ProbeStatus = "checking" | "online" | "offline";
 
@@ -28,8 +29,12 @@ async function probeNode(nodeId: string, timeoutMs = 4000): Promise<ProbeStatus>
         timer = window.setTimeout(() => reject(new Error("node_probe_timeout")), timeoutMs);
       }),
     ]);
+    // 探活本身也是一次真实请求，结果并进统一的节点健康表：
+    // 面板的 probeStatus 保留（它有 checking 这一态），但「谁连不上」只在一个地方有答案。
+    markNodeReachable(nodeId);
     return "online";
   } catch {
+    markNodeUnreachable(nodeId, "probe");
     return "offline";
   } finally {
     if (timer) window.clearTimeout(timer);

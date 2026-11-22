@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,47 @@ func (s *PromptStore) Delete(text string) ([]string, error) {
 		return nil, err
 	}
 	return append([]string(nil), next...), nil
+}
+
+// SetItem 按「在 / 不在」收敛一条提示词：present=true 时缺则追加，present=false 时删除。
+//
+// 与 Append 的差别只有一处，但很关键：满 50 条时**报错**而不是悄悄挤掉最旧的一条。
+// 同步内核要的是「要么落下去，要么明确失败」—— 静默丢弃会让远端那条记录在下一轮比对
+// 里重新出现，来回刷成永动机。
+func (s *PromptStore) SetItem(text string, present bool) error {
+	normalized := strings.TrimSpace(text)
+	if normalized == "" {
+		return errors.New("prompt text required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	next := make([]string, 0, len(items)+1)
+	found := false
+	for _, item := range items {
+		if item == normalized {
+			found = true
+			continue
+		}
+		next = append(next, item)
+	}
+	if !present {
+		if !found {
+			return nil
+		}
+		return s.saveLocked(next)
+	}
+	if found {
+		return nil
+	}
+	if len(next) >= maxPromptItems {
+		return fmt.Errorf("prompt store full: %d items", maxPromptItems)
+	}
+	next = append(next, normalized)
+	return s.saveLocked(next)
 }
 
 func (s *PromptStore) loadLocked() ([]string, error) {

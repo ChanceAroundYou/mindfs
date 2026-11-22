@@ -93,6 +93,7 @@ export const APP_MODULES = {
     "src/app/useUiPreferences.ts",
     "src/app/useSessionArchive.ts",
     "src/app/useManagedRoots.ts",
+    "src/app/managedRootNodeHealth.ts",
     "src/app/useManagedRootRename.ts",
     "src/app/useManagedRootsTypes.ts",
     "src/app/usePluginHandlers.ts",

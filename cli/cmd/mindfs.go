@@ -330,6 +330,14 @@ func main() {
 		return
 	}
 
+	// 控制面同步配置在起服务之前解析：token 读不到就别起，而不是等健康检查
+	// 超时后只留一句「服务没起来」。
+	controlSyncCfg, err := controlSyncOptions(startupCfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+
 	// Resolve TLS certificate/key paths when TLS is enabled.
 	resolvedCert, resolvedKey := *certFlag, *keyFlag
 	if *tlsFlag && (resolvedCert == "" || resolvedKey == "") {
@@ -428,6 +436,7 @@ func main() {
 			LiveCompactColdFold:                &liveCompactColdFold,
 			LiveCompactColdRailTokens:          liveCompactColdRailTokens,
 			LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
+			ControlSync:                        controlSyncCfg,
 			SessionHygiene:                     sessionHygieneOptions(startupCfg),
 			Feishu: feishuOptions(startupFlags{
 				FeishuEnabled:          &feishuEnabled,

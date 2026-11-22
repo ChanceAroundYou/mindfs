@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/channels/feishu"
+	"mindfs/server/internal/controlsync"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/nodeinfo"
@@ -22,10 +24,14 @@ import (
 
 // HTTPHandler provides REST endpoints for health, tree, file, and action.
 type HTTPHandler struct {
-	AppContext    *AppContext
-	StaticDir     string
-	Version       string
-	LocalCLIToken string
+	AppContext *AppContext
+	StaticDir  string
+	// StaticDirProvider 让「当前该用哪一版前端」在运行期可变：边缘把主节点的
+	// 构建产物镜像到本机后切换指针，不需要重启进程。返回空 = 用 StaticDir。
+	// StaticDir 仍是**安装目录**（本机自己那份构建），/api/control-sync/ui/* 只认它。
+	StaticDirProvider func() string
+	Version           string
+	LocalCLIToken     string
 	// NodeRole 决定这台机器提不提供控制面。零值 "" 视为 RoleControl
 	// —— 默认必须等于改造前的行为，否则升级不改配置就坏。
 	NodeRole nodeinfo.Role
@@ -36,6 +42,24 @@ type HTTPHandler struct {
 	// WorkflowLLM 是 workflow 推荐使用的语言模型客户端。nil 表示没有模型可用，
 	// 推荐器退化为「第一个可自动选择的 workflow」；测试与后续接入点通过它注入。
 	WorkflowLLM kanban.LLMClient
+	// ControlSync 是控制面同步的模式开关。nil = 没启用（端点不注册，保持改造前行为）。
+	ControlSync ControlSyncService
+	// ControlSyncPush 只在主节点侧存在：接收边缘推送。nil = 未启用。
+	ControlSyncPush ControlSyncPusher
+	// ControlSyncFeed 只在主节点侧存在：供边缘拉变更流（head / changes）。
+	ControlSyncFeed ControlSyncFeed
+	// ControlSyncToken 是同步通道的 bearer token。空 = 不注册 /head /changes /push，
+	// 因为这些端点能整包读出或改写控制面（含口令 hash），不能沿用「API 不鉴权」。
+	ControlSyncToken string
+	// ControlSyncConflicts 是冲突卡的查询与裁决。nil = 未启用。
+	ControlSyncConflicts ControlSyncConflicts
+
+	// 同步通道的 nonce 缓存：懒初始化，只有配了 token 的节点才会用到。
+	// 单次初始化是为了让 Routes 之外构造的 handler（测试、装配）也共享同一份缓存，
+	// 不需要在每个构造点都记得传。
+	controlSyncNoncesOnce sync.Once
+	controlSyncNonces     *controlsync.NonceCache
+
 	// FeishuRelayToken 是主控代发卡片的共享口令，由 FeishuOptions.RelayToken
 	// 注入。刻意不放 AppContext：那会让它按账户复制一份。
 	FeishuRelayToken string

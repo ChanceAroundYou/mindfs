@@ -17,7 +17,6 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
-
 func (s *Store) IsCORSOriginAllowed(origin string) bool {
 	if s == nil {
 		return false
@@ -40,7 +39,6 @@ func (s *Store) IsCORSOriginAllowed(origin string) bool {
 	return false
 }
 
-
 func (s *Store) CORSPreferences() CORSPreferences {
 	if s == nil {
 		return CORSPreferences{}
@@ -53,7 +51,6 @@ func (s *Store) CORSPreferences() CORSPreferences {
 	cp.AllowOrigins = out
 	return cp
 }
-
 
 func (s *Store) UpdateCORSPreferences(mode string, allowOrigins []string) error {
 	if s == nil {
@@ -106,7 +103,6 @@ func (s *Store) UpdateCORSPreferences(mode string, allowOrigins []string) error 
 	return s.saveLocked()
 }
 
-
 func (s *Store) SessionProjectPins() map[string]int64 {
 	if s == nil {
 		return nil
@@ -119,7 +115,6 @@ func (s *Store) SessionProjectPins() map[string]int64 {
 	}
 	return out
 }
-
 
 func (s *Store) UpdateSessionProjectPins(pins map[string]int64) error {
 	if s == nil {
@@ -154,7 +149,6 @@ func (s *Store) UpdateSessionProjectPins(pins map[string]int64) error {
 	return s.saveLocked()
 }
 
-
 func (s *Store) CORSMode() string {
 	if s == nil {
 		return ""
@@ -163,7 +157,6 @@ func (s *Store) CORSMode() string {
 	defer s.mu.RUnlock()
 	return strings.TrimSpace(s.data.CORS.Mode)
 }
-
 
 func (s *Store) CORSAllowOrigins() []string {
 	if s == nil {
@@ -175,4 +168,3 @@ func (s *Store) CORSAllowOrigins() []string {
 	copy(out, s.data.CORS.AllowOrigins)
 	return out
 }
-

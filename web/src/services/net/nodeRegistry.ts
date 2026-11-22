@@ -71,8 +71,22 @@ function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
 
 // ---- in-memory only, server is source of truth (no localStorage cache for nodes) ----
 let cache: NodeConnection[] | null = null;
-let cachePromise: Promise<NodeConnection[]> | null = null;
+let cachePromise: Promise<NodesSyncOutcome> | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
+
+/**
+ * 一次节点表同步「到底拉到了没有」。
+ *
+ * 不能只看返回值：拉不到时这里会退回缓存、再退回本地兜底，而**返回值长得一模一样**。
+ * 调用方拿这个数组去判断成败就会把「失败」读成「成功」—— 界面于是拿一份可能已过时的
+ * 清单，理直气壮地宣布「所有节点都连不上」，而不是说「这份清单本身不可信」。
+ */
+export type NodesSyncOutcome = {
+  nodes: NodeConnection[];
+  /** `server` = 真的从主节点拉到了；另两种都是失败后的兜底。 */
+  source: "server" | "cache" | "local-fallback";
+  error?: unknown;
+};
 
 function normalizeRecord(item: any): NodeConnection | null {
   if (!item || typeof item !== "object") return null;
@@ -162,8 +176,18 @@ function clearLegacyLocalNodes() {
 }
 
 export async function syncNodesFromServer(): Promise<NodeConnection[]> {
+  return (await syncNodesFromServerWithOutcome()).nodes;
+}
+
+/**
+ * 和 `syncNodesFromServer` 同一条请求，但把「拉到了没有」一并带回来。
+ *
+ * 两个入口共用同一个在途 promise：健康状态需要知道成败，而绝大多数调用方只想要列表，
+ * 让它们各发一次请求是没必要的。调用方拿到 `source` 之后再决定记什么。
+ */
+export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome> {
   if (cachePromise) return cachePromise;
-  cachePromise = (async () => {
+  cachePromise = (async (): Promise<NodesSyncOutcome> => {
     const cacheAtStart = cache;
     try {
       const res = await fetch(nodesApiPath(), { cache: "no-store" });
@@ -175,7 +199,7 @@ export async function syncNodesFromServer(): Promise<NodeConnection[]> {
         return rawURL !== repairDuplicateDeployPrefix(rawURL, DEPLOY_PREFIX);
       });
       let nodes = normalizeAndDedup(list);
-      if (cache !== cacheAtStart) return cache || nodes;
+      if (cache !== cacheAtStart) return { nodes: cache || nodes, source: "server" };
       // one-time migration: server empty but old localStorage has nodes -> push once then clear legacy
       if (!list.length) {
         const legacy = readLegacyLocalNodes();
@@ -197,15 +221,15 @@ export async function syncNodesFromServer(): Promise<NodeConnection[]> {
         // server has data -> legacy cache is stale, drop it
         clearLegacyLocalNodes();
       }
-      if (cache !== cacheAtStart) return cache || nodes;
+      if (cache !== cacheAtStart) return { nodes: cache || nodes, source: "server" };
       writeCache(nodes);
-      return nodes;
+      return { nodes, source: "server" };
     } catch (error) {
       console.warn("[nodes] failed to sync server nodes", error);
-      if (cache) return cache;
+      if (cache) return { nodes: cache, source: "cache", error };
       const local = [makeLocalNode()];
       writeCache(local);
-      return local;
+      return { nodes: local, source: "local-fallback", error };
     } finally {
       cachePromise = null;
     }

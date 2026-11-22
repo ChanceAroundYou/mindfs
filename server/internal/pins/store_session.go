@@ -8,9 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
-
 )
-
 
 func (s *Store) SessionKeys() []string {
 	if s == nil {

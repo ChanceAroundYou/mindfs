@@ -38,7 +38,7 @@ const nodeManager = fs.readFileSync(path.join(root, "src/components/account/Node
 assert.match(nodeManager, /fetch\(`\$\{normalizedUrl\}\/api\/agents`/, "node probe must use the explicit remote base");
 assert.doesNotMatch(nodeManager, /normalizeBaseURLWithPrefix\(/, "node probe must not inherit the local prefix");
 assert.match(registry, /const cacheAtStart = cache;/, "initial sync must detect a concurrent local write");
-assert.match(registry, /if \(cache !== cacheAtStart\) return cache \|\| nodes;/, "initial sync must not overwrite a concurrent local write");
+assert.match(registry, /if \(cache !== cacheAtStart\) return \{ nodes: cache \|\| nodes, source: "server" \};/, "initial sync must not overwrite a concurrent local write");
 assert.match(registry, /await enqueueServerWrite\(merged\);\s*nodes = merged;\s*clearLegacyLocalNodes\(\);/s, "legacy nodes must only be cleared after a successful server write");
 assert.doesNotMatch(registry, /if \(syncing\) return/, "overlapping node writes must not be dropped");
 assert.match(registry, /const write = writeQueue\.then\(\(\) => pushToServer\(snapshot\)\);/, "node writes must be serialized");

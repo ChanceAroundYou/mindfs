@@ -199,15 +199,28 @@ try {
         Write-Host "  Agents  -> $(Join-Path $ShareDir 'agents.json')"
     }
 
-    # ── Install web assets (optional) ───────────────────────────────────────
+    # -- Install web assets (required) ---------------------------------------
+    # The page IS the product for a control node: an install without it looks
+    # like a broken machine, not an incomplete package. So verify the landing
+    # page really landed and fail the whole install otherwise -- no "binary is
+    # there, page is 404" half-install.
     $WebSrc = Join-Path $PkgDir "web"
-    if (Test-Path $WebSrc -PathType Container) {
-        $WebDest = Join-Path $Prefix "share\mindfs\web"
-        if (Test-Path $WebDest) { Remove-Item -Recurse -Force $WebDest }
-        New-Item -ItemType Directory -Force -Path (Split-Path $WebDest) | Out-Null
-        Copy-Item -Recurse $WebSrc $WebDest
-        Write-Host "  Web     -> $WebDest"
+    if (-not (Test-Path $WebSrc -PathType Container)) {
+        Write-Error "Web assets missing from archive: $WebSrc"
+        exit 1
     }
+    $WebDest = Join-Path $Prefix "share\mindfs\web"
+    if (Test-Path $WebDest) { Remove-Item -Recurse -Force $WebDest }
+    New-Item -ItemType Directory -Force -Path (Split-Path $WebDest) | Out-Null
+    Copy-Item -Recurse $WebSrc $WebDest
+    foreach ($Rel in @("index.html", "favicon.svg")) {
+        $Probe = Join-Path $WebDest $Rel
+        if (-not (Test-Path $Probe -PathType Leaf)) {
+            Write-Error "Web asset missing after install: $Probe"
+            exit 1
+        }
+    }
+    Write-Host "  Web     -> $WebDest"
 
     # ── Add to user PATH (if not already present) ────────────────────────────
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")

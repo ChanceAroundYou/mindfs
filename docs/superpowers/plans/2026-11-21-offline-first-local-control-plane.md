@@ -49,6 +49,8 @@ Scope: G-PF。
   3. `workflow.Store` 两份目录的 `workflows.json` 互不影响。
 - 验收：`go test ./server/app/ -run ControlPlaneIsolation -count=1`。
 - 变异：把测试里的两份 store 改成共享一份目录，用例必须红。
+- 执行记录（2026-11-21）：3 条用例绿；三处变异（auth / nodes / workflows 各把两份 store
+  指向同一目录）各自打红后还原。构造顺序是契约：B 必须在 A 写完后再建，否则内存缓存会假绿。
 
 ### T2 钉住控制面路由表
 
@@ -57,6 +59,8 @@ Scope: G-PF。
   断言 `ControlPlanePrefixes()` 的集合等于当前 11 条（显式列出）。
 - 用例：新增前缀必须让用例红，迫使同步计划同步更新。
 - 验收：`go test ./server/internal/nodeinfo/ -count=1`。
+- 执行记录（2026-11-21）：`TestControlPlanePrefixesSnapshot` 已存在于 `role_test.go`（显式
+  列出 11 条），复核通过，本轮不重复新增。
 
 ### T3 记录「失败不等于空」的基线
 
@@ -65,6 +69,10 @@ Scope: G-PF。
   会话列表的源码契约做断言：**当前**失败路径仍是返回空/部分结果（记录缺陷）。
 - 验收：`npx vitest run web/tests/node-unreachable-baseline.test.mjs`。
 - 说明：本用例在 P6 会被改写成「必须显式不可达」，届时红→绿即证明修好了。
+- 执行记录（2026-11-21）：取证纠正了本任务的假设 —— 单节点失败**已经**是「弹提示 +
+  保留失败节点的条目」（`useManagedRoots.ts` 的失败分支与 `preserved` 判据），不是缺陷。
+  用例改为钉住这两条已做对的锚点，另加两条仍缺的：节点表同步失败被 `catch(() => {})`
+  吞掉、零项目分支不区分「真空」与「拉不到」。4 条用例绿。
 
 ---
 
@@ -107,6 +115,11 @@ Scope: G-PF。
     非法 key 拒绝。
 - 变异：`CanonicalJSON` 不排序 → 用例红。
 - 验收：`go test ./server/internal/controlsync/ -count=1`。
+- 执行记录（2026-11-21）：6 条用例先红后绿（`record.go` + `record_test.go`）。变异「去掉
+  重排与 `UseNumber`、直接返回 `json.Marshal` 的字节」让「键序无关」与「struct/map 同 hash」
+  两条同时红后还原。两处实测结论写进代码注释：hash 只覆盖 `Payload`（墓碑保留最后内容 hash），
+  `CanonicalJSON` 必须走 `UseNumber`，否则 2^53 以上的整数会被 float64 舍入、同一份数据在
+  不同机器上算出不同 hash。
 
 ### T7 SQLite schema 与迁移
 
@@ -116,6 +129,29 @@ Scope: G-PF。
 - 用例：空库迁移两次幂等；并发 Open 同一路径只有一个成功（SQLite busy 处理）；
   事务回滚不留半条 change。
 - 变异：迁移去掉 `IF NOT EXISTS` → 二次迁移红。
+- 执行记录（2026-11-21）：`store.go` + `store_test.go`，4 条用例先红后绿，`-race` 绿，
+  `-v` 下 T6/T7 共 10 条全过。
+  - **一处与计划不符（按证据改口径）**：「并发 Open 同一路径只有一个成功」在当前实现下
+    不可能成立 —— `sql.Open` 是惰性的，同一进程内多个句柄指向同一文件本来就都能打开，
+    要「只有一个成功」得引入跨平台文件锁（`flock` / `LockFileEx`），而 Windows 无 `flock`、
+    崩溃残留的锁文件又会让服务起不来。改为钉住真正要保的性质：**8 个 goroutine 并发
+    `Open` + `Migrate` + 写记录全部成功，且分配到的 `rev` 互不重复**。单实例由部署层保证
+    （每台机器一个 configDir、一个 systemd 单元）；**残留风险**：同机起两个实例会交错分配
+    `rev`，不报错也不隔离，需要 P4 的 `state.instance_id` 上线后补一道显式检测。
+  - 为了这条性质，DSN 带 `_txlock=immediate`：`rev` 用 `MAX(rev)+1` 分配，延迟事务会让两个
+    并发事务读到同一个 `MAX`，随后在 `changes.rev` 上撞车。三处变异各自打红后还原 ——
+    去掉 `IF NOT EXISTS`（二次迁移红）、去掉 `_txlock=immediate`（并发迁移 `SQLITE_BUSY`）、
+    `rev` 改成常量 1（并发与单调两条用例同时红）。
+  - **表名合并**：spec §4.3 的 edge 表 `replica` 与 §4.2 的 `records` 列完全相同，这里只用
+    `records` 一张，避免两份逐字重复的 DDL 各自漂移；角色差异只体现在用哪几张表。
+  - **追加（2026-11-21）**：全量门禁并发跑 `controlsync` 与 `kanban` 时，8 路并发迁移里有
+    worker 直接拿到 `database is locked (5) (SQLITE_BUSY)`（40 次压测稳定复现）。根因是
+    **SQLite 不为 `journal_mode` 切换调用 busy handler**，而它写在 DSN 的 pragma 里、在连接
+    建立时执行，没有第二次机会。改为 DSN 只留 `busy_timeout(5000)` 与 `_txlock=immediate`，
+    `PRAGMA journal_mode=WAL` 挪进 `Migrate` 首次执行，并对 BUSY 做 60×25 ms 退避重试
+    （上限 1.5 s；WAL 落在库头里，之后每次打开仍是 WAL）。新增
+    `TestMigrateWaitsForAnotherWriter`：另一连接持写锁时迁移必须等待、释放后 150 ms 内完成；
+    把 `migrateAttempts` 改成 1 后该用例变红，还原后复绿。提交 `65baf743`。
 
 ### T8 域适配器接口与六个实现
 
@@ -143,6 +179,31 @@ type Domain interface {
 - 变异：`nodes` key 改用 id → 「两台机器同一 URL」用例红；`preferences` 整文件一个 key →
   字段级合并用例红。
 - 验收：`go test ./server/internal/controlsync/ -count=1` 全绿。
+- 执行记录（2026-11-21）：六个域适配器 + `Registry`，六组共 34 条用例，13 处变异各自打红后
+  还原（hash 不入载荷、key 与载荷 id 不符、主账户标记不排最后、主账户墓碑、孤儿 meta 导出、
+  版本可覆盖、旧草稿回退、`NextSeq` 不推进等）。提交 `66810078`。
+  - **四处在计划基础上按证据收紧**（理由都写进了代码注释）：① `Domain` 接口去掉 `Keys` ——
+    对账的 key 集合由 `Snapshot` 直接得出，多一个方法就多一条会漂移的实现路径；② `pins` 不是
+    纯文件投影，既有 `RestoreProjectPin` / `RestoreSessionPin` 才有「按时间戳覆写 + 写盘失败
+    回滚内存」，适配器只做 key 与载荷编解码；③ `prompts` 的 `PromptStore.SetItem` 在满 50 条
+    时**报错**而不是挤掉最旧一条 —— 远端记录不该悄悄顶掉本地数据；④ `users` 的主账户标记记录
+    必须排在最后，`SetPrimary` 要求账户已存在，标记先到会失败。
+  - **两处 key 规则来自既有教训**：`prompts` / `pins` 的存储按账户分目录，key 必须带账户
+    （`<account>/<...>`），否则不同账户下同名提示词、同一个 pin 作用域会互相覆盖（与 G-NR
+    「项目身份 = (节点, rootId)」同源）；`nodes` 的 key 是归一化 URL 而非 id —— 两台机器同一个
+    URL 是两条记录，同一台机器换 id 仍是同一条。
+  - **workflows 的三条不变量**：版本只追加（同 id 同内容幂等，内容不同即
+    `ErrWorkflowVersionImmutable`）；草稿不回退（只接受更高 revision）；`NextSeq` 由草稿 revision
+    与版本 seq 推上去，否则目标机下一次编辑会退版号或与已有版本撞号。为此补了
+    `TestWorkflowsDomainSeqFollowsDraftWithoutVersions`：只有草稿、没有版本的 workflow 也必须推进
+    seq（第一版变异只靠版本记录推进，被这条用例打红）。
+  - **store 侧新增五个入口**（提交 `f1e4c85d`）：`auth.ExportUsers/ApplyUser/RemoveUserByName`、
+    `pins.RestoreProjectPin/RestoreSessionPin`、`preferences.Fields/SetField`（磁盘上本版本不认识
+    的字段原样保留并参与同步）、`usecase.PromptStore.SetItem`、`kanban.WorkflowStore` 的五个同步
+    方法。理由是不绕开既有 store 的锁与缓存直接写 JSON —— 否则内存缓存与磁盘不一致，下一次读取
+    就回退。auth 3 条 + kanban 3 条用例，3 处变异各自打红。
+  - **未覆盖**：六个适配器的 `Apply` 尚未接变更抑制（T9）、未接 HTTP 转发（T10）；`users` 域只
+    按用户名对齐，账户改名不在本轮范围。
 
 ### T9 变更采集
 
@@ -157,6 +218,27 @@ type Domain interface {
   应用远端记录时不产生 change（抑制）；同一个 rev 不重复分配。
 - 变异：去掉抑制 → 「apply 后自激」用例红；去掉兜底扫描 → 非 HTTP 写入漏采用例红。
 - 验收：`go test ./server/internal/controlsync/ -count=1`；`-race`。
+- 执行记录（2026-11-21）：`capture.go` + `capture_test.go`，7 条用例 + `-race` 全绿。提交
+  `f619c97d`。
+  - **四条机制各自的落点**：基线存在内存 + `records` 表（启动从索引恢复，不重发整库）；
+    `WriteCapture` 中间件只在非 GET 成功（2xx）后按路径白名单映射域并采集，失败不改写响应、
+    留给 `Run(ctx, 15s)` 兜底；一次 diff 走新增的 `Store.WriteRecords` **单事务整批**落库；
+    `Suppress` 在应用远端记录期间暂停采集，并在成功后**采纳基线**。
+  - **「采纳基线」是抑制的关键**：只跳过当下采集不够 —— 远端 Apply 改的是同一份权威存储，
+    快照上看不出是谁写的，下一次兜底扫描仍会把它当本地改动回传，两侧互相回传即成死循环。
+    用例先按「只跳过」写，去掉采纳后立刻红（采集出 2 条自激变更）。
+  - **两条语义细节**：墓碑携带**最后一次内容 hash**（否则「我删的」与「远端改完再删」无法
+    区分）；`Suppress` 的 `fn` 失败时**不**采纳基线 —— 远端记录可能只落一半，宁可多一次
+    同 hash 的幂等回声，也不能吞掉真实的本地改动。
+  - **路径映射的取舍**：只映射 `/api/{users,preferences,nodes,prompts,pins,workflows}`；
+    `/api/auth/login` 会动 users.json 的登录时间，但它是「登录」不是「账户变更」，算进 users
+    域会让每次登录都产生同步记录，故不映射。`/api/node-info`、`/api/web-push`、
+    `/api/app/update` 属本机状态，不参与同步。
+  - **变异四处**（各自打红后还原）：去掉基线采纳 → 自激用例红；去掉兜底扫描 →
+    非 HTTP 写入漏采用例红（5 s 超时）；删除不写墓碑 → 墓碑断言红；
+    GET 也算写 → 中间件 GET 子用例红。实现前把 `capture.go` 移走确认三条用例因缺符号编译失败。
+  - **未覆盖**：中间件与 `Run` 都还没接进 `server/app`（P3 接线时再挂）；`Suppress` 的使用方
+    （T14 边缘合并）尚未实现，本任务只保证语义与用例。
 
 ---
 
@@ -179,6 +261,21 @@ type Domain interface {
   本地域请求不转发；`http://` 的 `primary_url` 被拒绝。
 - 变异：把转发改成「失败回落本地」→ 双写用例红。
 - 验收：`go test ./server/internal/api/ -run ControlProxy -count=1`。
+- 执行记录（2026-11-21）：`controlproxy.go` + `controlproxy_test.go`，5 条用例全绿（api 包
+  全量 60.4 s 绿）。提交 `189b1e6b`。
+  - **实现取舍**：没用 `httputil.ReverseProxy` —— 它默认复制全部请求头（本机头会外泄）、
+    自己改写 `X-Forwarded-For`，而这里要的是「只带 Cookie / Authorization / Content-Type、
+    补一个 `X-MindFS-Forwarded-By`」的白名单语义，手写 30 行比配置 ReverseProxy 更直白。
+  - **两段超时**：`ControlProxyTimeout`（10 s）只覆盖「等到响应头」；拿到响应后停掉定时器，
+    body 按 `ControlProxyStreamTimeout`（10 min）逐块 `Flush` 透传。把总时长压在一个 ctx 上
+    会把正常的长响应半路掐断。
+  - **3xx 原样回传**（`CheckRedirect` 返回 `ErrUseLastResponse`）：主节点的路由决策不该被
+    边缘改写。
+  - **变异三处**（各自打红后还原）：转发成功后仍调用本地 next（模拟失败回落本地）→
+    双写用例红；`ShouldForward` 去掉本机域排除 → web-push / app update / node-info 三处红；
+    头白名单改成复制全部 → 本机头外泄断言红。
+  - **未覆盖**：转发器还没挂进 `server/app` 的 mux（P3 接线时按模式包装）；`primary_url`
+    的配置解析落在 T12 的状态机与配置结构里，本任务只保证构造级校验。
 
 ### T11 边缘副本追平
 
@@ -188,6 +285,30 @@ type Domain interface {
   成功后推进 `base_rev`；失败只记日志并保留水位。
 - 用例：远端新增/删除/修改各追平；中途失败不推进水位；重复拉取幂等。
 - 验收：`go test ./server/internal/controlsync/ -count=1`。
+
+执行记录（2026-11-21）：
+
+- 新增 `Replicator` 与线上类型 `RemoteChange`（`GET /api/control-sync/changes` 的响应形状；
+  主节点 handler 在 T13 落地时复用同一个类型，避免两端各写一份 JSON 结构）。
+  水位语义按设计 §6.2 落成 `since=base_rev+1`，不是 `since=base_rev` —— 服务端按
+  `rev >= since` 取页，两者必须成对，否则每次都会重复取到已追平的那一条。
+- `Store.ApplyRemoteChanges` 一页一个事务：`rev` 沿用主节点序号（它是水位不是本地自增）、
+  `rev <= base_rev` 的记录跳过（重放旧页不得把副本倒回旧内容）、`records` 与 `state.base_rev`
+  同生共死。**一个事务而不是逐条写**：半个 diff 提交出去，边缘就会永久跳过没落地的记录。
+- 墓碑带最后一次内容的 hash 并在副本里保留（`payload` 为 NULL），这样合并阶段能区分
+  「主节点删了」与「主节点改完又删」；`ApplyRemoteChanges` 因此要求每条都有 hash。
+- 逐页提交 + 空页即停：进程死在两页之间，重启从已提交水位续拉，不重放整段。
+  失败只经 `OnError` 上报（`Run` 里），`SyncOnce` 返回错误但不动水位。
+- TLS 与 `api.ControlProxy` 刻意同源：https 强制、TLS 1.2 起步、系统根 + 可选 `ca_file`、
+  禁重定向；任何一边松掉等于两边一起松。`newSyncHTTPClient` 留在 controlsync 供 T13 的
+  push 侧复用。
+- 用例 6 条：新增/修改/删除各追平（含墓碑 hash 断言）、失败不推水位且恢复后从 `since=1` 续传、
+  重复拉取只问一次 `since=base+1`、分页序列 `1,3,5,6`、重放旧页不倒退、明文 primary_url 被拒。
+  变异 4 处各自打红后还原：去掉 stale-rev 守卫（重放用例红）、不推 `base_rev`（追平用例
+  超时红）、`since` 退回 `base_rev`（分页序列变成 `0,2,4,5` 红）、去掉 https 校验（明文用例红）。
+- **未接通**：`Replicator` 尚未接进 `server/app`（与 T9/T10 一致，P3 统一接线）；把远端记录
+  应用到权威存储、以及 pending/冲突判定属于 T14 的三方合并 —— 在线阶段按 D5 不在本地写，
+  pending 恒为空，本阶段只维护副本。
 
 ---
 
@@ -208,6 +329,43 @@ type Domain interface {
 - 变异：降级后仍转发 → 离线用例红；模式只存内存 → 重启用例红。
 - 验收：`go test ./server/internal/controlsync/ ./server/internal/api/ -run ControlSync -count=1`。
 
+执行记录（2026-11-21）：
+
+- `ModeController` 持有四态（`online` / `offline-local` / `reconciling` / `conflict-review`），
+  阈值按 spec §7 落成常量：探测 10 s、超时 3 s、连续 3 次失败降级、连续 2 次成功升级 ——
+  3 × 10 s 正压在「断开后 ≤30 s 进本地模式」的预算内。`reconciling` 期间再连续失败 3 次
+  退回 `offline-local`；**`conflict-review` 不受探测影响**（主节点掉线不会让冲突消失，
+  它只能由裁决清掉）。
+- 持久化走 `state` 表（`SetMode` / `RecordProbe` / `LoadState`，新 `store_state.go`）：
+  重启后必须读回仍在 `offline-local`，否则会以 online 身份启动、把控制面写请求全转给一台
+  仍不可达的主节点。`RecordProbe` 失败时**不覆盖 `last_primary_at`** —— 断线排查最需要的
+  正是「上次成功连上是什么时候」。持久化里出现未知模式值时构造器直接报错（fail closed），
+  不猜一个默认值糊过去。
+- 探活用 `GET <primary>/api/control-sync/head`，**只判 2xx、不解析响应体**：把 head 解析
+  压进探活，会让一次字段变更表现成「主节点挂了」。`NewHTTPProber` 与 `NewReplicator`
+  共用 `parsePrimaryURL` + `newSyncHTTPClient`（https 强制、TLS 1.2、系统根 + `ca_file`）。
+- 用户动作走 `POST /api/control-sync/mode {action}`：`local` 立即切本地模式不等计数；
+  `retry` 当场探一次，通就直接进 `reconciling`、不通留在本地模式。**retry 探不通仍回
+  200 + 最新 status**（`last_error` 写明原因）—— 用 5xx 表达「主节点不通」会让前端把
+  「按钮动作失败」和「页面请求失败」混成一件事。
+- `GET /api/control-sync/status` 两种模式都可用（转发器已把 `/api/control-sync` 列为本机域），
+  载荷 `{mode, base_rev, last_primary_at, last_error}`。端点只在 `HTTPHandler.ControlSync`
+  非空时注册，且 handler 内部再判一次 nil —— 两层**故意冗余**（验证过：单改任一层仍是
+  404/正常，两层同时去掉才 panic）；未启用机器保持改造前行为（两条路径 404）。
+- 模式翻转回调 `OnModeChange(from,to)` 已就位，供接线方落「可见系统事件」与前端横幅；
+  本任务不接通知通道。
+- 用例：`controlsync` 9 条（降级阈值、升级阈值、冲突态收尾、手动切本地、retry 成功/失败、
+  reconciling 掉线回退、status 字段、Run 循环、HTTP 探活含部署前缀与 https 拒绝）、
+  `api` 6 条（status 载荷、两种动作分发、retry 失败 200、非法动作 400、未配置 404、
+  读库失败 500）；`controlsync` 另跑 `-race` 绿。
+- 变异 4 处：去掉模式持久化（重启读回用例红）、retry 不看探活结果（失败用例红）、
+  去掉 nil 守卫与条件注册（panic 红）、`Observe` 忘写回 `m.mode`（开发期即被 Run/回退
+  用例打红，属真实缺陷而非变异）。
+- **未接通**：`control_sync` 配置段（`enabled` / `primary_url` / `ca_file` / `token`）与
+  `server/app` 装配尚未落地 —— 因此**转发器还不会按模式停转**（在线判定要等装配时把
+  `ModeController.Mode()` 接进 `ControlProxy`），`OnModeChange` 也还没接到系统事件通道。
+  这两项与 T10/T11 的接线一起在 P5 收尾前后完成；本轮未改配置、未部署、未重启任何节点。
+
 ---
 
 ## P5 恢复合并与冲突
@@ -221,6 +379,38 @@ type Domain interface {
 - 变异：冲突时仍然写 → 覆盖用例红；不查 `applied_changes` → 重放用例红。
 - 验收：`go test ./server/internal/controlsync/ -run Push -count=1`。
 
+执行记录（2026-11-21）：
+
+- `Pusher.Push` 逐条 `pushOne`，判定顺序按 spec §6.1 固定为 **幂等 → `base_hash` 命中
+  → 收敛 → 冲突**。**先查 `applied_changes` 再比 hash** 是这一节最容易写错的地方：主节点在
+  两次推送之间又改过同一条记录时，只比 hash 会把一条早已应用过的变更误判成冲突，边缘就会
+  弹一张没有冲突的冲突卡。这条专门补了 `TestPushReplayAfterPrimaryEditStaysApplied`。
+- 应用路径 `ApplyPushedChange` 一个事务四步：分配 rev（`MAX(rev)+1`）→ upsert `records`
+  → append `changes` → 记 `applied_changes`。少写 `changes` 其他节点永远看不到这次变更；
+  少写 `applied_changes` 边缘重连后重复推进 rev。
+- 写权威存储走 `applyToDomain`，有 `Capturer` 时包在 `Suppress` 里 —— 否则这次远端应用
+  会被采集器当成一条新的本地改动回声进变更流。
+- 删除单独一支：目标不存在 → 幂等成功且**不造墓碑**（凭空造墓碑会让其他节点以为这条记录
+  曾经存在）；已删 → `already deleted`；命中 `base_hash` → 落墓碑并**保留最后一次内容
+  hash**；否则冲突。空 payload 的删除不进正常 hash 比对。
+- 冲突落 `conflicts` 表（id 取推送方 `change_id`，`ON CONFLICT DO NOTHING` 保证重放不
+  多出行）；**权威存储与 `changes` 一字不动** —— 冲突不是「先写再回滚」，用户还没裁决。
+- HTTP 侧 `POST /api/control-sync/push`（8 MiB 上限、坏体 400、Pusher 失败 500），
+  与 status/mode 同样只在字段非空时注册路由。
+- 用例：`controlsync` 8 条（base_hash 命中并分配新 rev、`change_id` 幂等不推 rev、
+  两侧都改报冲突且记录不变、同 hash 收敛且记 `applied_changes`、删除三种幂等分支、
+  重放不覆盖主节点后续改动、混合批逐条结论、未知域 rejected）、
+  `api` 4 条（载荷逐字透传、坏体 400、Pusher 失败 500、未配置 404）。
+- 变异 4 处：① 冲突后仍写权威存储 → 冲突用例红；② 不查 `applied_changes` → 重放用例红
+  （第一版变异被收敛分支掩盖，这正是补 `TestPushReplayAfterPrimaryEditStaysApplied` 的原因）；
+  ③ 路由条件与 handler nil 守卫**同时**去掉 → 未配置用例 panic 红；单去任一层仍绿（实测两次），
+  两层是有意的冗余，只有同时缺失才违反契约；④ `pushDelete` 给不存在的记录造墓碑 →
+  第一版**没红**：用例只断言状态是 applied，没查副本行；补上「不存在的记录不能留下副本行」
+  断言后转红，还原复绿。
+- **未接通**：`Pusher` 尚未接进 `server/app`；边缘侧从 `pending` 生成 `PushRequest`、
+  推送后按结论清 pending、以及失败重试节奏属于 T14；`control_sync` 配置段与 token 校验
+  仍未落地（HTTP 层目前没有认证，随装配一并补）。未改配置、未部署、未重启任何节点。
+
 ### T14 边缘合并与冲突落库
 
 - 目标：拉取时按 `pending` 三方比对，冲突两边都保留。
@@ -230,6 +420,36 @@ type Domain interface {
 - 变异：冲突时清 pending → 数据丢失用例红；拉取先推进水位再应用 → 断点用例红。
 - 验收：`go test ./server/internal/controlsync/ -run Reconcile -count=1`、`-race`。
 
+执行记录（2026-11-21）：
+
+- `Reconciler.Reconcile` 循环 `base := BaseRev()` → `FetchPage(since=base+1)` → 判页 →
+  整页提交；`*Replicator` 实现 `PageSource`（同一套 https 客户端与分页大小），测试用
+  内存分页源。
+- 判定（spec §6.2 + 两条边界）：无 pending → `apply`；`pending.Deleted && remote.Deleted`
+  → `converged`；载荷 hash 相同 → `converged`；`remote.Hash == pending.BaseHash` →
+  `kept`（主节点离线期间没动过这条，本地改动仍是相对祖先的唯一改动，等推送）；
+  否则 `conflict`。`rev <= base_rev` 的旧 rev 一律 `skipped`。
+- **顺序**：先 `Apply` 权威存储，再提交 `records` + 清 pending + 冲突 + 水位。反过来
+  一旦在两步之间死掉，会留下「水位已过、JSON 还是旧值」且那条变更再也不会被拉到 ——
+  `TestReconcileKeepsWatermarkWhenApplyFails` 钉住这条。
+- 冲突 id 用 `pull:<domain>:<key>`（`PullConflictID`），重复拉取只刷新「主节点现在
+  是什么」那一侧；按 rev 生成 id 会让一次断网重连堆出一串指向同一对值的冲突卡。
+- pending 表访问器（`store_pending.go`）：同一 `(domain,key)` 离线期间改多次只保留
+  最后一份载荷，但 `base_hash` 与 `change_id` 保持第一次的值；删除的 pending 没有载荷，
+  三角比对里它的「本地 hash」用祖先值（与墓碑口径一致）。
+- 无进展守卫：整页都是旧 rev 时停下。第一版没有这条，`ignoreSince` 的测试直接把
+  `Reconcile` 卡成死循环（122s 被超时杀掉）—— 这是写测试时暴露的真缺陷，不是构造出来的。
+- 用例 9 条：四分支各一条、删除三分支、分页 `since` 序列 `1,3,5,6`、断线续传（第 3 页
+  失败后从 `since=3` 补第 3 条）、应用失败不推进水位、旧 rev 跳过且不死循环、
+  删除冲突带祖先 hash。
+- 变异 4 处：① 冲突时也清 pending → 冲突与删除两条用例红（数据丢失）；② 应用失败
+  仍继续并提交（等价于「先推进水位再应用」）→ 断点用例红；③ 去掉「远端 == 祖先」
+  分支 → `kept` 与删除「远端还是祖先」两条红；④ 去掉无进展守卫 → 用例不结束
+  （25s 超时被杀）。各自还原后复绿；`-race` 全绿。
+- **未接通**：`Reconciler` 尚未接进 `server/app`；离线写入落到 `pending` 的那一段
+  （采集器按模式分流）还没做，本轮的 pending 由测试直接写入。未改配置、未部署、
+  未重启任何节点。
+
 ### T15 冲突查询与裁决
 
 - 目标：`GET /conflicts`、`POST /conflicts/{id}/resolve`；裁决后写回并追平。
@@ -238,6 +458,37 @@ type Domain interface {
   裁决后 `pending` 清空、水位推进；`users` 域响应不含 password hash。
 - 变异：裁决写错方向 → 两端一致性用例红；响应带 hash → 安全用例红。
 - 验收：`go test ./server/internal/controlsync/ -run Conflict -count=1`。
+
+**执行记录（2026-11-21，已提交 `936ade82`，未部署、未重启任何节点）**
+
+落地：`controlsync/conflicts.go`（`Resolver.List/Resolve`、`ConflictView`、
+`ErrConflictNotFound/Resolved/Choice`）、`store_merge.go`（`Conflict` 增
+`LocalDeleted/RemoteDeleted/CreatedAt`，新增 `LoadConflict` / `ListOpenConflicts` /
+`ClaimConflict` / `ReleaseConflict`）、`store_pending.go`（`RebasePending`）、
+`store.go`（`conflicts` 增两列 + `ensureConflictDeleteColumns` 幂等迁移，旧库
+`ALTER TABLE ADD COLUMN` 补齐）、`api/http_control_sync.go`（`ControlSyncConflicts`
+端口 + 两个 handler，404/409/400/500 映射）、`api/http_routes.go`（两条路由，
+nil 时不注册）、`api/http.go`（字段）。
+
+三种选择的后续状态：`local` → 保留 pending 并把 `base_hash` 重定到 `remote_hash`；
+`primary` → 落远端值、清 pending；`payload` → 规范化用户合并值、pending 换成它并
+同样重定祖先。裁决顺序是「先 CAS 占坑（`resolved_at` 由空改时间，0 行即已裁决）→
+再写权威存储 → 最后改 pending」，副作用失败时退坑让用户重试。
+
+用例 9 条（`conflicts_test.go`）：三种选择各 1 条（含「选 local 后真的推得上去、
+主节点零新增冲突」的两端一致性）、本地删除落墓碑、非法请求矩阵（未知 id / 非法
+选择 / payload 缺失 / null / 非 json）+ 重复裁决 409、并发裁决唯一赢家、
+reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTTP 4 条
+（列表脱敏、裁决透传 id/choice/payload、四种状态码、未配置 404）。
+
+变异 5 处各自打红：① 裁决方向对调 → 一致性/主节点/payload/删除/并发 5 条红；
+② 去掉 `users` 脱敏 → 安全用例红；③ `ClaimConflict` 去掉 `AND resolved_at=''`
+→ 并发用例红；④ `RebasePending` 不写 `base_hash` → 三条选择用例红；
+⑤ 迁移不补列 → 旧库用例 `no such column` 红。
+
+说明两处：① 「水位推进」在 T14 已经落定（冲突也把 `base_rev` 推过该 rev），
+本轮不再重复断言；② 选择 `payload` 不接受表达删除（删除走 `local`/`primary`
+两侧），这是刻意的 —— 让「用户合并值」只有一个形状。
 
 ---
 
@@ -327,6 +578,56 @@ type Domain interface {
 
 ---
 
+## P9 复核补漏（2026-11-22）
+
+2026-11-22 复核发现四处 spec 要求没有任务承接，按用户「全部授权」补入。T24–T27
+都只在内核与接口层，不改变已有的转发 / 追平 / 合并语义。
+
+### T24 同步通道认证与重放
+
+- 目标：对齐 spec §6.3 / D4 —— bearer + 时间戳 + nonce + HMAC-SHA256。
+- 做法：新增 `controlsync/auth.go`（签名、校验、nonce 缓存）；主节点三个同步端点
+  改走完整验签；边缘的 push / changes / 探活三处客户端统一签名；`X-MindFS-Instance`
+  随请求上行（审计用，不进签名）。
+- 验收：正确签名 200；错签 401；超 ±5 分钟 401；同 nonce 重放 401；无 token 端点
+  仍是 404；坏签名不占用 nonce；认证层读过的 body 必须原样放回。
+- 变异：不校验 nonce / 放宽时间窗 / 签名漏 body / 先记账后验签 / 不放回 body，
+  各自打红对应用例。
+
+### T25 恢复对账与状态口径
+
+- 目标：对齐 spec §6 / §7 —— `/head` 带 `instance_id`、`build_version`、
+  `schema_version`；边缘记住主节点身份，主节点被重建/替换时拒绝合并并留在本地模式。
+- 做法：`HeadInfo` 类型 + `ChangeFeed.Head` 改返回结构体；`state` 表新增
+  `primary_instance_id`（旧库 `ALTER TABLE` 幂等补列）；`Replicator` 每轮追平前先
+  取 head，身份不符返回 `ErrReplicaOriginMismatch` 且不动水位；`/status` 增
+  `primary_reachable`、`pending_count`、`conflict_count`。
+- 验收：head 载荷四个字段齐全；首次接触记录身份；身份相同继续；主节点换身份
+  409/`replica_origin_mismatch` 语义（内核错误 + 模式停 `offline-local`）；
+  schema 版本高于本机拒绝；status 三个新字段读数正确。
+- 变异：不记身份 / 不比对身份 / 比对了但继续应用 / 计数接口写死 0，各自打红。
+
+### T26 模式可见性
+
+- 目标：spec §7 要求模式变化留下可见系统事件；conflict-review 只提醒一次；
+  online 也提供「切到本地」入口。
+- 做法：`Runtime` 已有 `OnModeChange` 钩子，接到任务库系统事件（幂等 ID）；
+  横幅补三种动作（切本地 / 重试 / 查看冲突），online 时也可见但弱化。
+- 验收：模式迁移写一条可见事件且重放不重复；conflict-review 只提醒一次；
+  横幅三动作都能触发对应请求。
+- 变异：不写事件 / 事件 ID 随机 / 去掉 online 入口 / 提醒不幂等，各自打红。
+
+### T27 存储卫生
+
+- 目标：spec §4.2 的 90 天 / 50 万行清理，以及含口令 hash 的库文件权限。
+- 做法：`changes`/墓碑按批清理（只删终态、按 id 子查询 + LIMIT），启动与每小时
+  各跑一次；`control_sync.db` 落盘 0600；配置文档写明 token 只认 `token_file`。
+- 验收：过期记录被删、未过期与墓碑保留期内不动；批量上限生效；新库文件权限
+  0600；旧库不改权限但启动时收紧。
+- 变异：不删 / 删未过期 / 无批量上限 / 不收紧权限，各自打红。
+
+---
+
 ## 风险与回滚
 
 | 风险 | 表现 | 处置 |
@@ -344,3 +645,578 @@ type Domain interface {
 ## 执行记录
 
 （随任务逐条追加：任务号、提交、门禁命令与输出、变异验证结果、未覆盖项。）
+
+### P3/P4/P5 装配：配置段 + server/app 接线（2026-11-22）
+
+用户裁定「P3/P4 接线（推荐）」后完成。**默认关闭、未部署、未重启任何节点。**
+
+落地：
+
+- `cli/cmd` 新增 `control_sync` 段：`enabled` / `role`（primary 默认 | edge）/ `instance_id` /
+  `primary_url` / `ca_file` / `token_file`。**token 只走 `token_file`**，没有内联字段、没有 flag
+  —— 同步通道搬的是含口令 hash 的整份控制面。关闭时不读文件；打开而读不到 / 读到空文件
+  一律拒绝启动（`cli/cmd/control_sync.go`）。
+- `server/app/control_sync.go`：`startControlSync` 组装 Store（`<config-dir>/control_sync.db`
+  + `Migrate`）、六域 Registry（users / preferences / nodes / workflows / prompts / pins）、
+  `Capturer`、`NewRuntime`；缺任何一份权威存储直接启动失败，不做「半份副本」。
+  - `nodeinfo.RoleWorker` 上启用同步直接拒绝：边缘要出页面、要转发，worker 不是那个角色。
+  - **primary 缺 token 也拒绝启动**：没有 token 的 primary 不注册 `/push /head /changes`，
+    边缘永远同步不了 —— 这不是可选配置缺失，是通道根本没通。
+  - 角色分工：primary 取 `Pusher`/`Feed`/token；edge 取 `ModeController`（`/status` `/mode`）
+    与 `Resolver`（冲突查询/裁决），并构造 `ControlProxy`，`Mode` 指向状态机、
+    `BlockedDomain` 查未裁决冲突（查库失败按冻结处理，fail closed）。
+- `server/app/server.go`：`Start` 在建完四个共享 store 之后装配同步；`workspaces.SetControlSync`
+  把能力装进每个按账户构建的 `HTTPHandler`；`controlSync.runtime.Run(ctx)` 起后台循环
+  （primary 只有兜底采集，edge 另有探活/追平/交接/推送）。
+- 中间件顺序 **采集在内、转发在外**（`controlSyncWiring.wrapRoot`）：转发出去的控制面请求
+  不在本机留下记录；edge 在线时采集器本身也被 `CaptureWhen` 关掉，两道防线互补。
+- 默认关闭时零行为变化：不建库、不起 goroutine、端点 404、请求直通。
+
+验证：
+
+- `cli/cmd` 6 条（关闭不碰文件、未配置为 nil、token 去空白、缺文件/空文件报错、无
+  token_file 留空交给运行时判定）。
+- `server/app` 9 条（关闭是 no-op 且不建库、worker 拒绝、primary 缺 token 拒绝、
+  primary 暴露 push/feed/token、edge 接上 mode/resolver/proxy 且不暴露主节点端点、
+  转发范围白名单、edge 坏配置三种、六域齐全与缺存储失败、按域冻结只挡冲突域且查库失败
+  fail closed、wrapRoot 采集本机写进变更流且数据面不推进水位、wrapRoot 在线转发控制面 /
+  数据面留本机 / 离线写落本机）。
+- 变异 11 处各自打红后还原：去掉 `BlockedDomain` 接线、去掉 primary token 闸门、去掉
+  worker 闸门、`applyTo` 不写 token、去掉 `enabled` 判定、去掉缺存储闸门、查库失败改成
+  fail open、CLI 不读 token、`boolValue` 恒假、`wrapRoot` 去掉采集、去掉转发包装。
+- 门禁：`go test -count=1 ./cli/... ./server/app/... ./server/internal/api/...
+  ./server/internal/controlsync/...` 全绿（api 60.1 s）、`go vet` 与 `gofmt -l` 干净、
+  `go build ./...` 成功。
+
+未做 / 未覆盖：
+
+- 真双进程端到端仍是 T21（两条独立 `XDG_CONFIG_HOME` + 端口 7441/7442）；本轮只用
+  `httptest` 的自签 CA 验证了转发路径，没有跑真实二进制。
+- `OnModeChange` 仍未接系统事件 / 前端横幅（T16）。
+- `server/cmd/mindfs-server` 这份备用入口不解析 `control_sync`（`make build` 装的是
+  `cli/cmd`，与项目约定一致）。
+- 未改任何节点配置、未部署、未重启。
+
+### T21 双实例隔离验收 + 两处修复（2026-11-22）
+
+用户选「T21 双实例验收先行（推荐）」后执行。**未部署、未重启任何节点，`control_sync.enabled`
+仍为 `false`。**
+
+验收脚本 `e2e/test_control_sync_offline.py`：两个独立 `XDG_CONFIG_HOME`（`/tmp/t21-e2e-*`）与
+端口 7470/7471、真实二进制，不碰 7331。六场景：在线转发（副本里能拿到 `users` 基线）、断网降级、
+离线写、重启保持（重启 16 秒后仍是 `offline-local`，`pending` 不含 `users`）、恢复无冲突、
+恢复有冲突（冲突卡 + 仅 `preferences` 域冻结 + `local` 裁决两端收敛）。**修复后连续 6 次全 PASS**；
+场景 2 / 6 在到达目标模式后再盯 5 秒（任何一拍离开都失败），并核对 `state` 表与状态接口一致。
+
+**修复一：交接基线与兜底扫描**
+
+- 症状：边缘首次启动时权威存储里已有一份本机生成的默认记录（默认管理员、内置工作流）；
+  进入 `offline-local` 时兜底扫描把它们当成用户改动记进 `pending`，恢复后与主节点同名记录
+  撞成冲突。另一个窗口：主节点刚启动、基线还没发布，15 秒内掉线的边缘副本缺一批记录，
+  恢复时同样撞冲突。
+- 修复：`Capturer.SweepWhen`（`offline-local` 且本轮交接完成才扫；只挡 `Run` 的定时分支，
+  HTTP 采集不受影响）；`RefreshBaseline` 把「副本不认识但权威存储里有」的记录并入基线；
+  主节点启动即 `CaptureAll` 发布基线；采集错误走独立日志。
+- 验证：`capture_test` 2 条 + `app` 1 条；三条用例各自把守卫改坏打红后还原。
+
+**修复二：追平收尾把刚降级的边缘拉回在线**
+
+- 症状：约 1/3 概率在「恢复后第二轮断网」失败 —— 等待 `offline-local` 超时、状态接口一直
+  `online`，而 `state` 表停在 `offline-local`；同期 tick 每 5 秒报
+  `fetch changes: connection refused`。
+- 取证：边缘日志逐拍记录探测结果，02:58:21 `from=online next=offline-local failures=3`，
+  下一次探测 02:58:31 却 `from=online`；SIGQUIT goroutine 栈证明探测循环与运行时 tick
+  都活着（不是死锁）。
+- 根因：`settle` 在 online tick 末尾无条件调 `CompleteReconcile`，它只判 `mode != online` ——
+  探测刚把模式降到 `offline-local`，一拍迟到的追平收尾就把它拉回 `online`；更糟的是内存迁移
+  与落库分属两个写方、没有排队，落库顺序颠倒后内存与 `state` 表各说各话（重启会按错的模式启动）。
+- 修复：`CompleteReconcile` 只接受 `reconciling` / `conflict-review`（判定与写入同锁，迟到的
+  收尾直接放弃）；新增 `applyMu` 串行化「判定 + 内存 + 落库 + 通知」，`Mode()` 不取这把锁，
+  转发中间件不被库写阻塞。
+- 验证：`TestCompleteReconcileDoesNotOverrideProbeDegrade` 先红
+  （`CompleteReconcile(false) = online`）后绿；删掉守卫（变异）重新打红；e2e 增加
+  「到达模式后 5 秒内不得离开 + `state` 表一致」断言，并用「offline-local 分支也跑 settle
+  + 删守卫」的缺陷二进制确定性打红（`模式 (主节点已停) 到达 offline-local 后 5s 内又变成 online`）。
+
+**未做 / 未覆盖**：`OnModeChange` 仍未接系统事件（横幅改走状态轮询，见 T16）；
+前端镜像打包（T19–T20）；`pc-win` 的 `role=control` 仍待 P1 单独授权；e2e 未覆盖转发失败的
+503 分支与浏览器侧降级。`control_sync.enabled` 保持 `false`，未改配置、未部署、未重启任何节点。
+
+### T16 模式横幅（2026-11-22）
+
+- 目标：四态横幅 + 手动切换 + 状态轮询；在线与「本机没有这个能力」都不出横幅。
+- 分层（被仓库架构红线逼出来的）：`web/src/shared/controlMode.ts`（纯词汇与四态→动作映射）、
+  `web/src/services/net/controlSync.ts`（读状态 / 切换）、`web/src/hooks/useControlSyncStatus.ts`
+  （10 s 轮询 + 停表 + 动作）、`web/src/components/app/ControlModeBanner.tsx`（portal 横幅）。
+  组件**不能**直接 import `services/`（`reviewer-architecture-rules.test.mjs` 会红），
+  所以映射落 shared、请求落 service、视图只经 hook。
+- 关键语义：① `/api/control-sync/status` 走 `controlPath`（页面服务器），**404 折成 null**
+  并停表 —— 主节点与未启用 `control_sync` 的机器每台都会问到它，当成故障会满屏红条；
+  ② 其它错误（网络抖动、bootstrap 未就绪）保留上一份状态继续轮询；③ 切换只发 `local` / `retry`
+  两种动作；④ `conflict-review` 的「查看冲突」只派发 `mindfs:control-conflicts` 事件，
+  面板是 T17，事件名是两层之间唯一的接口。
+- 用例：`web/tests/control-mode-banner.test.mjs` 7 条 —— 纯函数（在线/空不出横幅、三种降级
+  状态各自唯一动作且有标题说明）+ 源码契约（状态端点走 `controlPath`、404 在
+  `fetchControlSyncStatus` 函数体内折成 `null`、停表、只发两种动作、App 只挂一处、
+  zh/en 10 个键齐全）。
+- 变异：动作映射对调、`fetchControlSyncStatus` 的 404 不折成 null、未启用不停表，
+  各自打红对应用例后还原。第一版 404 断言用整文件正则，会一路吃到 `switchControlSyncMode`
+  的同款分支上（等于没钉），已改为按函数边界切开。
+- 门禁：`npx vitest run web/tests/control-mode-banner.test.mjs` 7/7 绿、
+  `reviewer-architecture-rules.test.mjs` 绿、`tsc -b --noEmit` 干净、
+  全量 `npx vitest run` 261 文件 / 859 通过 / 6 跳过。
+- 未做：真浏览器点验（留给 T22）、冲突面板（T17）、在线态手动切本地的入口（spec §8 在线不出横幅，
+  切换入口只在同步中 / 冲突态出现）。未部署、未重启、未改配置。
+
+### T17 冲突面板（2026-11-22）
+
+- 目标：按域分组、逐条裁决、批量裁决（一次确认一次提交）、裁决后刷新；users 域不展示 hash。
+- 分层（同 T16，受仓库架构红线约束）：`web/src/shared/syncConflicts.ts`（类型、域顺序、
+  分组、可选裁决、两侧摘要）、`web/src/services/net/controlSync.ts`（`fetchSyncConflicts` /
+  `resolveSyncConflict` / `resolveSyncConflicts`）、`web/src/hooks/useSyncConflicts.ts`
+  （事件打开、读取、裁决、刷新）、`web/src/components/app/SyncConflictPanel.tsx`
+  （portal + `PanelShell`）。
+- **途中打出并修掉一个后端缺陷**：conflict id 里可能带 `/` —— prompts 的 key 是
+  `<账户>/sha256:<hash>`、nodes 的 key 是 URL。chi 按 `RawPath` 匹配、`URLParam` 原样返回
+  转义后的段，原 handler 拿它直接查库，于是这两个最常冲突的域点了也裁决不了。现在前端
+  `encodeURIComponent(id)`、服务端 `url.PathUnescape(chi.URLParam(r, "id"))`；
+  `TestControlSyncConflictResolveDecodesEscapedID` 先红（拿到 `pull%3Aprompts%3Aalice%2F...`）
+  后绿。spec §7 的端点形状不变。
+- 关键语义：① 分组顺序固定为 spec §5 的域表、未知域排最后；② users 域**按域判断**
+  （不依赖服务端 `redacted` 标记）只给「保留本地 / 采用主节点」，摘要固定「密码已变更」，
+  即使载荷里混入口令 hash 也不渲染；③ 删除 / 脱敏 / 载荷三种摘要分开，载荷预览截断 600 字符；
+  ④ 批量是「一次确认一次提交」—— 服务端只有逐条 CAS 端点，视图不循环发请求，确认条写明条数，
+  在途由 `busy` 去重；404 / 409 视为目标已达成；⑤ 读失败保留旧列表（清空等于告诉用户
+  「没有冲突了」）；⑥ 读口 404 与状态端点同一条规矩：静默关闭面板，不当故障。
+- 用例：`web/tests/sync-conflict-panel.test.mjs` 8 条（分组顺序与条数、users 域两种裁决且
+  摘要无 hash、摘要三分支与截断、读口 404 折叠、id 转义与请求体、批量单次提交、事件打开与
+  确认条数、App 挂载、zh/en 25 键）；Go 新增 1 条（转义 id）。
+- 变异：users 域判断退回只看 `redacted`、摘要去掉脱敏、去掉 `encodeURIComponent`、
+  确认文案去掉 `count`、未知域 rank 改 0、取消键误触批量提交 —— 六处各自打红对应用例后还原。
+- 门禁：`npx vitest run` 262 文件 / 867 通过 / 6 跳过、`tsc -b --noEmit` 干净、
+  `go test ./server/internal/api ./server/internal/controlsync` 全绿、`go build ./...` 成功。
+- 未做：真浏览器点验（T22）、节点可达性（T18）、批量里的「手动合并」（只在逐条里提供）；
+  未部署、未重启、未改配置。
+
+### T24 同步通道认证与重放（2026-11-22）
+
+- 新增 `server/internal/controlsync/auth.go`：`SyncSignature`（HMAC-SHA256 over
+  `timestamp + "\n" + nonce + "\n" + body`）、`SignSyncRequest`、`VerifySyncRequest`、
+  `NonceCache`（TTL 10 分钟、上限 65536、按到期时间淘汰）；`SyncClockSkew = 5m`、
+  `SyncMaxBodyBytes = 8 MiB`。
+- 校验顺序固定：bearer → 时间戳窗口 → nonce 形状 → 签名 → 记账。nonce **只在签名
+  通过后**才写入缓存，否则一个坏签名就能烧掉合法请求的重放位（有专门用例钉住）。
+- 主节点：`api/http_control_sync.go` 的 `requireSyncToken` 改为读全 body（上限
+  8 MiB + 1，超限 413、读失败 400）→ 验签 → 原样放回 `r.Body`。没配 token 时三条
+  路由仍然完全不注册（404 不变）。
+- 边缘：`push_client.go`、`replicator.go`（含 `/changes`）、`mode.go` 的探活全部签名，
+  `InstanceID` 从 `Runtime` 配置透传到三处客户端并写进 `X-MindFS-Instance`。
+  没有 token 时客户端直接失败，不会发出未签名请求。
+- 用例：`controlsync/auth_test.go` 9 条（往返、缺头矩阵、错签、body 不进签名、时间窗
+  四个边界、重放、坏签名不占 nonce、TTL 与上限）；`api/http_control_sync_auth_test.go`
+  7 条（只有 bearer、bearer 对但签名错、漏签 body、过期、重放、413、路由级 body 放回）。
+  `replicator_token_test.go`、`push_client_test.go`、`mode_test.go` 的假主节点改成
+  真验签并断言 instance 头。
+- 变异：关掉 nonce 校验、关掉时间窗、签名漏 body、先记账后验签、不放回 body —— 各自
+  打红后还原；其中「先记账后验签」第一次没红，原因是用例把错误 token 也写进了
+  Authorization，被 bearer 先挡掉，改成「bearer 正确、签名用另一个 token」后转红。
+- 门禁：`go test ./server/internal/controlsync ./server/internal/api ./server/app` 全绿、
+  `go build ./...` 成功、`go vet` 干净（`HTTPHandler` 新增 `sync.Once` 没有值拷贝）。
+- 端到端：`python3 e2e/test_control_sync_offline.py --root /tmp/mindfs-control-sync-t24`
+  六个场景全 PASS（在线转发 / 断网降级 / 离线写 / 重启保持 / 恢复无冲突 / 恢复有冲突），
+  真实双进程、边缘所有出站请求都带签名。
+- 未做：T22 的 curl 安全断言脚本（放入 T22 一起做）；未部署、未重启、未改配置。
+
+### T25 恢复对账与状态口径（2026-11-22）
+
+- `feed.go`：`HeadInfo{head_rev, instance_id, build_version, schema_version}` 与
+  `SyncSchemaVersion = 1`、`SyncIdentity` / `ChangeFeed.SetIdentity`；`Runtime` 装配时
+  把 `instance_id`、`build_version`（`opts.Version`）灌进去，`/head` 直接回结构体。
+- `replicator.go`：`fetchHead`（签名 GET、64 KiB 上限）与 `verifyOrigin`，**每一页
+  之前**都核对：schema 非 0 且不等 → `ErrReplicaSchemaMismatch`；本地没记过身份 →
+  记下（首次接触即采纳）；与记下的不一致 → `ErrReplicaOriginMismatch`。三种情况下
+  水位都不动，副本一行不写。
+- `state` 表补两列：`primary_instance_id`、`blocked_reason`。迁移抽成
+  `ensureColumns(ctx, table, want map[string]string)`（原来三个各自 PRAGMA 的函数
+  收成一个），旧库幂等补列。
+- **偏离计划的一处（必要）**：光「拒绝合并」停不住 —— 探活 2 次成功就会把边缘从
+  `offline-local` 拉回 `reconciling`，再撞同一个不符，模式每 20 秒来回跳。所以加了
+  一把持久化的追平锁：`Runtime` 在追平时认出身份/schema 不符 → `BlockLocal`（模式落
+  `offline-local`、`blocked_reason` 落库、`OnModeChange` 照常通知）；`Observe` 在锁着
+  时不许自动升级；构造函数读到 `blocked_reason` 一律落回 `offline-local`（重启不得
+  自动重来）；追平真的跑通 → `ClearBlock`。用户点「重试」可以给一次真正的追平机会
+  （身份核对在追平开头重做，不符会立刻重新锁上）。
+- **补的一条出路**：主节点被有意重装/换机时，锁会永久停住边缘。`AdoptPrimary`
+  （`POST /api/control-sync/mode {"action":"adopt_primary"}`）丢掉按旧主节点建的
+  副本（`records` / `base_rev` / 冲突卡），**保留 `pending`** 本地改动，清掉身份与锁
+  后重新追平 —— 新人机会把待回传变成冲突卡交人裁决，不静默丢。不自动采纳：那等于
+  把「主节点被换掉了」这件事吞掉。
+- `/status` 增 `primary_reachable`（上一次探测通不通，与模式不是一回事）、
+  `pending_count`、`conflict_count`（实时查库，读失败报错而不是显示 0）、
+  `blocked_reason`。
+- 用例：`origin_test.go` 7 条（head 带身份 / 首次采纳 / 换身份拒绝且零 changes 请求
+  且副本一字不动 / schema 不符 / 老主节点无身份照常同步 / 旧库补列幂等后可写 /
+  adopt 后重挂新主节点且保留 pending）、`mode_block_test.go` 3 条（锁着探测成功不升级、
+  重启落回本地、Retry 给一次机会、解锁幂等）、`mode_status_test.go` 3 条、
+  `runtime_test.go` 1 条（身份不符 → 停机 + 锁 + 探活不升级 → 核对通过后自动解锁回
+  online）、`api` 1 条（adopt 动作与失败 500）。既有 `feed_test` / `replicator_test` /
+  `app` 用例跟着改成结构体形态。
+- 变异：schema 检查去掉 / 身份比较去掉 / 首次不记身份 / head 不带身份 / 锁不挡自动
+  升级 / 重启不理会锁 / 身份不符不停机 / 追平通过不解锁 / 旧库不补列 / 状态不报锁原因
+  / pending 计数写死 0 / 可达性不更新 / 采纳时连 pending 一起删 —— 13 处各自打红后
+  还原（「状态不报锁原因」「旧库不补列」两条首版靠编译错误变红，改成真断言后重验）。
+- 门禁：`go test -count=1 ./server/internal/controlsync/ ./server/internal/api/ ./server/app/`
+  全绿、`go build ./...` 成功、`go vet` 干净、gofmt 干净。
+- 未做：T26 横幅的「接受新主节点」按钮（端点已就绪）；未部署、未重启、未改配置。
+
+### T26 模式可见性（2026-11-22）
+
+- 事件落点**偏离计划文本的一处**：计划写「接到任务库系统事件」，但仓库里能落「系统事件」
+  的两处都不合适 —— kanban 的 `ActivityTypeSystemEvent` 是**每任务**的（模式迁移是整台
+  节点的事），`router_events` 是**每 root** 的（root 是项目维度）。硬塞进任一处都会给
+  某个任务/项目编一条与它无关的历史。改为 `controlsync.db` 自己的 `mode_events` 表
+  （`store_mode_events.go`）+ `/status.recent_events` + 横幅展示：spec §7 要的是
+  「可见」，横幅本来就是那条可见面，且 `/status` 每 10 秒已经在轮询。
+- `ModeEvent{ID, From, To, Reason, At}`；`ModeEventID(from, to, at)` =
+  `mode:<from>-><to>:<UnixMilli>`，写入用 `INSERT OR IGNORE`。理由：崩溃重启、并发收尾
+  都可能把同一次迁移再报一遍，界面上「又断线了」重复弹比漏报更伤信任。时间截到毫秒 ——
+  每次迁移都要经过一次探测循环，同毫秒内重复同一对不现实。
+- `ModeController.transition` 在真翻转时 `recordModeEvent`（带上当时的 `blocked`，于是
+  追平锁那次降级能说清「为什么明明能连上却是本地模式」）；写失败不阻断状态机（与
+  `RecordProbe` 同一取舍）。`Status()` 读最近 5 条，**读失败返回错误**而不是空列表 ——
+  空列表在界面上等于「从没变过模式」。
+- 前端：`controlModeBanner(mode, {conflictCount})` 从「单一 action」改成**动作列表**，
+  四态都出横幅（在线弱化：低对比度、无阴影），覆盖三种动作 —— 在线→切换到本地、
+  本地模式→立即重试（攒了冲突才多出「查看冲突」）、同步中→切换到本地、冲突→查看冲突。
+  展开区显示 `blocked_reason` / `last_error` 与最近 3 条事件（`HH:MM · 模式名`，模式名
+  复用标题键，见 `controlModeLabel`）。
+- 「conflict-review 只提醒一次」落在 `conflictReminder(status, dismissed)`：按**事件 id**
+  记「已关闭」。按模式记的话，用户关掉后下一拍轮询又会弹回来，等于没有关闭；真走完一轮
+  又撞上新冲突时服务端会留新事件，新 id 自然会再提醒一次。「查看冲突」等于「去处理了」，
+  点它也顺手关掉提醒（常驻横幅还在）。
+- 用例：`mode_events_test.go` 4 条（同一次迁移重放只留一条且 id 由 from/to/at 决定、
+  降级/升级各写一条且状态接口能读到、锁降级带原因、停在 conflict-review 反复收尾不追加
+  事件而真的进出才追加）、`api` 的 status 用例补 `recent_events` 断言、web 4 条（在线弱化
+  横幅与切本地入口、四态动作列表与「三种动作齐全」、冲突提醒按事件 id 幂等、模式标签）。
+- 变异：不写事件 / 事件 ID 改成时间戳（去重失效）/ 在线不出横幅 / 提醒忽略已关闭集合 ——
+  4 处各自打红后还原。
+- 门禁：`go test ./server/internal/controlsync/ ./server/internal/api/` 全绿、`gofmt` 干净、
+  `tsc -b --noEmit` clean、`npx vitest run` 262 文件 / 870 通过 / 6 跳过。
+- 未做：横幅的「接受新主节点」按钮（`adopt_primary` 端点已就绪，留给真机验收时按需接）；
+  未部署、未重启、未改配置。
+
+### T27 存储卫生（2026-11-22）
+
+- 清理口径落在 `store_prune.go`：`PruneChanges` 先按 `created_at < now-90d` 删最旧的一批，
+  再在行数超过 50 万时从最旧删起，两条路径共用 `PruneBatchSize = 5000` 的单次删除预算
+  （按 rev 子查询 + LIMIT —— SQLite 默认构建不支持 `DELETE ... LIMIT`）。主节点
+  `Runtime.Run` 起 `pruneLoop`（启动一拍 + 每小时），边缘不跑：变更流只在主节点增长。
+- **一个新增的状态列承担三件事**：`state.pruned_through_rev`。① rev 分配与 `HeadRev`
+  都改成与它取大 —— 不然 change 行删空后 `MAX(rev)` 归零，新 rev 从 1 重发，水位停在旧值
+  的边缘被 `rev <= base_rev` 的幂等守卫整段跳过，而两侧都没有异常信号；② 下限取「仍然
+  存在的最小 rev 减一」（删的是最旧一批，以下都已不在），表被删空时取清理前的 head；
+  ③ 保留窗口缺口判据。
+- 缺口处理与身份/schema 不符同一档：`ChangeFeed.Page` 在 `since <= floor` 时返回
+  `ErrRetentionGap` → `GET /api/control-sync/changes` 折 409（不是 500：主节点没坏，
+  是这份副本落得太远）→ 边缘 `Runtime.tick` 的 reconciling 分支 `BlockLocal`。出路仍是
+  已有的 `adopt_primary`：重试不会把删掉的历史变回来。
+- 文件权限：`Open` 建目录改 0700；`Migrate` 末尾 `hardenStoreFiles()` 把库与
+  `-wal` / `-shm` 一律收紧到 0600（旧库可能是 0644 建的；SQLite 之后重建 WAL 会照抄库
+  文件模式，一次收紧即可）。
+- token 口径收口：删掉从未被生产调用的 `ResolveSyncToken` / `TokenEnvVar`（env → 文件 →
+  内联那套与「只认 token_file」的决策相反，留着就是一条没人走但看起来能走的路），
+  `ValidateSyncToken`（≥16 字节、无空白）接到 `server/app` 的装配处 —— 两个角色都在那里
+  过一遍，而 CLI 侧受 Go internal 规则限制无法直接引用该包。spec §6 的 token 段落、
+  §4.2 的清理段落同步改写。既有用例里的短 token fixture（`"t0ken"` / `"t"` /
+  `"s3cret-token"`）随之换成 ≥16 字节的真实形状。
+- 用例：`store_prune_test.go` 5 条（只删过期且墓碑同规则、批量上限逐拍收敛、删空后 rev
+  不复用且 HeadRev 不倒退、`Page` 对 `since <= floor` 报缺口而窗口内照常供给、新旧库都收
+  到 0600 且新目录 0700）、`runtime_retention_test.go` 2 条（缺口锁进 offline-local 且探测
+  成功也不解锁、主节点启动即清理）、`http_control_sync_feed_test.go` 409 一条、
+  `app` 弱 token 一条。
+- 变异 9 处各自打红后还原：默认保留期改成 100 年（不删过期）/ 时间条件反向（删未过期）/
+  预算改 2^30（无批量上限）/ 不写下限（rev 复用）/ 不收紧权限 / 去掉缺口判定 /
+  runtime 不拦缺口 / 409 折回 500 / 不校验 token。第一轮 M1 没红 —— 用例把保留期当参数
+  传了进去，等于替生产默认值打了保票；改为用例只给 `Now`、保留期与行数走零值后才红。
+- 门禁：`go test ./server/internal/controlsync/ ./server/internal/api/ ./server/app/ ./cli/...`
+  全绿、`gofmt` 无新增待格式化文件。
+- 未做：`applied_changes` 不随清理回收（幂等凭据，行很小，删掉会把「已应用过」的推送重新
+  判成冲突）；未部署、未重启、未改配置，`control_sync.enabled` 仍为 `false`。
+
+### T18 节点可达性（2026-11-22）
+
+- 一份答案：新增 `web/src/services/net/nodeHealth.ts`（服务层可变单例，与 `nodeRegistry`
+  同形）记录「最近一次真实请求打在谁身上、成没成」——`markNodeReachable` /
+  `markNodeUnreachable` / `markNodeTableReachable` / `markNodeTableUnreachable`，
+  快照 `version` 只在内容真变时自增（一轮刷新里每台都会成功一次，每次广播会让文件树和
+  会话列表无谓重渲染），订阅者异常各自隔离。空 nodeId 一律忽略：聚合请求不代表任何一台机器。
+- 判定抽成纯函数 `web/src/shared/nodeAvailability.ts`：`classifyNodesAvailability`
+  返回 `ok / all-unreachable / table-unreachable`，顺序上**节点表失败优先于「每台都失败」**，
+  **未观测 ≠ 离线**（还没探过的节点不能把「全都连不上」报出来）。
+- 接线：`app/managedRootNodeHealth.ts` 把「发一次请求」和「记一次健康」绑成一个函数
+  （`syncNodeTableHealth` / `loadNodeManagedRoots`）—— 原来的
+  `syncNodesFromServer().catch(() => {})` 删掉，节点表拉不到时记 offline，界面据此提示
+  「可能不是最新」；逐节点失败仍返回空列表、仍保留旧条目与可见提示，但同时记 offline。
+  抽成独立文件还有个副作用是必要的：协调器本来已经贴着 500 行硬线。
+- 文件树：`groupEntriesByNode` 接受注入的 `isUnreachable`，分组带 `unreachable`；
+  `useFileTreeNodeGroups` 额外返回 `unreachableNodes`（**没有缓存条目的不可达节点**，
+  不列出来它就彻底消失了）与 `nodesAvailability`；`FileTreeProjectContent` 的空状态
+  分三种（真空 / 全都连不上 / 清单不可信），组头挂 `NodeBadgeHeader` 既有的 `notice`；
+  `fileTreeEntries` 对不可达节点的行收口点击、hover 与光标（点了只会再失败一次）。
+  会话列表与工作台的不可达提示此前已存在，本轮不重复造。
+- 用例：`web/tests/node-health.test.mjs` 13 条（记录去重与快照引用稳定、订阅互不拖垮、
+  reset、三态判定两个方向、单台判定六个边界、分组标记三情形）+ 改写
+  `web/tests/node-unreachable-baseline.test.mjs` 6 条为**正向断言**（失败分支形状、
+  条目保留、节点表失败不再被吞、三种空状态、分组与行内收口）。
+- 变异 7 处各自打红后还原：节点表失败退回 `.catch(() => {})`、空状态退回无条件「添加项目」、
+  未观测当成离线、分组不标记、逐节点失败不记健康、行内不拦点击、协调器不再调用健康模块。
+- 门禁：`npx tsc -b --noEmit` 干净、`npx vitest run` 263 文件 / 885 通过 / 6 跳过。
+  `tests/source-map-modules-app.mjs` 的 `src/App.tsx` 逻辑组补上新文件（拆分的既定做法），
+  `node-manager-panel.test.mjs` 的 dirs 抓取锚点跟随到新模块。
+- 未做：聚合请求路径（`getNodes()` 为空时打裸 `/api/dirs`）失败时没有可归因的节点，
+  只由外层 `catch` 返回 `null`，不写健康状态 —— 此时也没有任何节点被声称在线，不会说谎；
+  真浏览器点验留给 T22。未部署、未重启、未改配置。
+
+### T5 安装包自带前端（2026-11-22）
+
+- 硬约束（不是约定）：第二台 control 的全部价值就是「主节点不可达时还能出页面」，
+  包里没有 `web/` 的安装等于装了一台坏机器。
+- `scripts/build-all.sh`：**打包前**检查 `web/dist/index.html`，缺了在编译**之前**失败
+  （先编七个平台再报错等于白等十分钟），失败信息直接指路 `make build-web`；
+  包内写 `web/BUILD_VERSION`（值取构建版本），供 T20 对账「装进去的是哪一版」，
+  不靠文件名或首页内容去猜。
+- `scripts/install.ps1`：前端从「可选」改成必需 —— 包里没有 `web/` 直接 `exit 1`；
+  拷完再逐项核对 `index.html` 与 `favicon.svg` 真的落地，缺一个整体失败。不允许留下
+  「二进制在、页面 404」的半套安装（安装器自己还会打印 Done，没有任何线索）。
+  新写的注释一律 ASCII：Windows 按本地代码页解码，中文注释会吃掉后面的换行、
+  把下一条语句并进注释，不报错也不生效。
+- 用例：`internal/deploy/install_script_test.go` 4 条 —— 真实执行 build-all.sh 的缺前端
+  分支（退出非 0、提示 `build-web`、且没有打印过 `==> Building mindfs`）、BUILD_VERSION
+  写入形状、install.ps1 的「先定位 → 再拷贝 → 再校验 → 最后 Done」顺序与两处 `exit 1`、
+  `.ps1` 不含 CJK（U+2E80–U+9FFF / U+FF00–U+FFEF）。Linux 上没有 pwsh、也跑不了七平台
+  交叉编译，所以只有缺前端那条能真跑，其余用源码契约守。
+- 文档：`docs/multi-node-control-plane.md` 增「离线 control 安装（Windows）」——
+  `config.json` 示例（`role: control` + edge 同步段）、三条自检请求（`GET /` 200 且是页面、
+  `/api/node-info` 报 control、`/api/control-sync/status` 四态或未启用时 404），
+  以及 token 只走 `token_file` 的理由。
+- 未做：T4（pc-win 真以 `role=control` 起来并核对首页）—— 需要改那台机器的
+  `config.json` 并重启它的计划任务，属「不部署、不重启任何节点」的边界，留待用户执行。
+
+### T19 主节点清单与打包（2026-11-22）
+
+- 清单与包都由 Go 生成，不放进 vite：哈希与路径校验是安全相关规则，边缘判「能不能激活」
+  必须和服务端产清单用同一份实现（`server/internal/controlsync/uibundle.go`）。`make build-web`
+  末尾跑 `go run ./server/cmd/ui-manifest -dist web/dist -build-version "$(VERSION)"
+  -min-server-build "$(MIN_SERVER_BUILD)"`，`MIN_SERVER_BUILD ?= $(VERSION)`：同一提交编出来的
+  前后端永远配套，灰度时显式放宽。
+- `ui-manifest.json` 记 `build_version` / `min_server_build` / 每文件 `sha256`+`size`；
+  路径白名单拒绝对路径、`..`、`.`、空段、`\`、`:`、NUL，且要求 `path.Clean(p) == p`
+  （放宽分段规则的警报线）。清单自身不列入清单。
+- `GET /api/control-sync/ui/manifest` 与 `/ui/bundle` 与 `/head` `/changes` 同一档鉴权
+  （无 token 的节点不注册这两条，端点 404）；包是按清单现场读盘打的 tar.gz，中途文件被换掉
+  整体失败并保留旧版本 —— 半份资源不能看起来像一份。
+- 偏离计划一处：T19 原文把清单生成写在 `web/vite.config.ts`，实际落在 Go 命令，理由就是
+  上面那条「规则只能有一份」。
+- 用例：`uibundle_test.go` 9 条（路径边界、清单校验拒不安全/不一致条目、打包与清单一致、
+  生成后漂移被拒、拒不安全清单、加载错误、清单不列自身），`http_control_sync_ui_test.go` 6 条
+  （无 token 端点不存在、缺签名 401、清单形状、包是 gzip tar 且与清单逐文件一致、没有构建时
+  404、恶意清单被拒）。变异验证覆盖路径白名单、逐文件校验、端点鉴权与「打包即读盘」四处。
+
+### T20 边缘镜像与切换（2026-11-22）
+
+- `UIMirror`（`ui_mirror.go`）每 5 分钟同步一次：取清单 → 版本名白名单（拒 `../escape`
+  这类）→ 已是当前版且有 `.complete` 就跳过 → `min_server_build` 判定 → 下载包 →
+  `<version>.tmp` 逐文件 sha256 校验 → rename → `.complete` → 写指针 → 保留两版。
+  任何一步失败都保留旧版并清掉半成品。指针是**普通文件** `current`（Windows 建符号链接要
+  特权），`writePointer` 在 rename 不能覆盖时退化为「先删后改名」——空窗的后果是回落安装目录，
+  不是白屏。启动时读回指针，重启不会退回旧版。
+- 运行期切换：`HTTPHandler.StaticDirProvider` + `servingStaticDir()` 每请求求值；
+  `StaticDir` 仍是安装目录，`/api/control-sync/ui/*` 只认它（否则边缘把自己的镜像当本机构建再发）。
+  `/api/node-info` 的 `static` 也走同一判据，只用镜像出页面的边缘同样显示「打开网页」。
+- 装配：边缘启动时 `newUIMirror` 起 goroutine；`applyUIMirrorStaticDir` 把
+  `mirror.CurrentDir()` 接进 handler（单独抽出来的原因见下）。没有独立开关 ——
+  `control_sync.enabled` 且角色是边缘才跑。
+- 用例：`ui_mirror_test.go` 14 条（校验通过才切换、坏包保留旧版、同长度哈希不符也拒、
+  `min_server_build` 不满足不下载包、已是当前版跳过、启动读指针、指针指向不完整目录不认、
+  切换后旧版仍在、超过两版被清、8 路并发只下载一次包、恶意清单、`unpack` 拒意外内容、
+  构造要求 https、版本名白名单），`http_frontend_serve_test.go` 3 条（每请求求值、
+  无 provider 回落安装目录、node-info 的 static 跟随镜像），`workspace_static_dir_test.go`
+  1 条（`SetStaticDirProvider` 到 `handlerDefaults` 的一跳），`control_sync_test.go` 新增
+  `TestControlSyncWiresUIMirrorOnlyOnEdge` 与 `TestControlSyncAppliesMirrorStaticDirOnlyOnEdge`
+  （边缘有镜像、主节点没有；provider 落到按账户构建的 handler 上）。
+- 变异验证：`controlsync` 层 10 处（去逐文件校验、去版本名白名单、去 `min_server_build` 判定、
+  指针写成符号链接、失败不清半成品、只留一版、`.complete` 不检查、清单/包不一致放行、
+  并发不加锁、启动不读指针）各自打红；装配层 5 处（`servingStaticDir` 忽略 provider、
+  `handlerDefaults` 不传 provider、`applyUIMirrorStaticDir` 空转、`newUIMirror` 恒 nil、
+  `NewHTTPHandler` 不传 provider）各自打红后还原。
+- 未做：真机（Windows 边缘）点验留给 T22；未部署、未重启、未改配置，
+  `control_sync.enabled` 仍为 `false`。
+
+### 并发迁移误判（2026-11-22，T26 遗留缺陷）
+
+- 全量门禁跑出 `TestConcurrentOpenMigratesAndAllocatesDistinctRevs` 偶发红：8 个连接同时
+  `Open`+`Migrate`，其中一个报 `SQL logic error: duplicate column name: blocked_reason`。
+  根因不是锁：`ensureColumns` 是「先读 `PRAGMA table_info`、再 `ALTER`」，另一个进程在
+  这个窗口里把列加上了，后手的 ALTER 必然撞重复列 —— 而此刻我们要的后置条件（列存在）
+  已经成立。线上表现会是「两台机器同时启动时边缘随机起不来」，日志只有那一句。
+- 修法：抽出 `addColumn`，只把 `duplicate column name` 认作成功（`isDuplicateColumn`），
+  其余 ALTER 错误照旧上抛；`ensureChangePayloadColumn` 走同一条路径（补列被别人抢先时
+  仍然执行回填，回填本身幂等）。
+- 用例：`TestAddColumnTreatsColumnAddedByAnotherMigratorAsSuccess` —— 重复列返回 nil、
+  坏 DDL 必须报错（只放过这一种）。变异两处（吞掉所有 ALTER 错误、重复列也上抛）各自打红；
+  原并发用例 `-count=30` 全绿、全量 `go test ./...` 全绿。
+
+### T22 前端镜像与安全验收（2026-11-22）
+
+- 脚本：`e2e/test_control_sync_ui_and_auth.py`（524 行，真进程 + 真 Chromium，端口
+  7470/7471/7472，两个独立 `XDG_CONFIG_HOME`，绝不碰 7331）。自己 `go build`（不带部署
+  前缀）并用 `VITE_MIND_FS_BASE=/` 现编一份前端 —— 随包的 `web/dist` 是 `/mindfs` 前缀，
+  与无前缀后端配不上；边缘另配 `MINDFS_STATIC_DIR`，这样「移走安装副本仍出页面」才能
+  证明出的是镜像那一版。
+- 安全六条：不带签名 `/head` 401、签名错 401（`00`×32）、签名对 200 且带 `instance_id`、
+  同一 nonce 重放 401、`/ui/manifest` 无签名 401 / 有签名 200 且 `build_version=e2e-1`
+  （287 个文件）、未启用同步的普通实例上 `head`/`push`/`ui/manifest` 全部 404（端点没注册，
+  不是 401 —— 「装了但没开 = 看不见」）。
+- 页面五条：在线横幅 → 主节点加死节点后工作台出「Can't reach node(s)」→ 停主节点后
+  「Primary is unreachable」→ 恢复后两侧都改偏好 → 「Sync conflict」横幅 → 点「View
+  conflicts」出冲突面板（Preferences 分组）→ 点「Keep local」裁决 → 回到在线且主节点
+  的值确实变成 24。
+- 顺带把三条**产品事实**钉成断言（写脚本时踩出来的，不是猜的）：① 在线时边缘不写本地
+  权威存储（D5），节点表是转发来的 —— 所以「页面看到死节点」要读 `/api/nodes` 而不是翻
+  `nodes.json`；② `nodes.json` 只在进入 `offline-local` 的交接里由副本落盘，断言必须等
+  交接之后；③ 副本追平是 5 s 一拍、落后于转发，**断网前必须等副本真的拿到那两条记录**
+  （偏好祖先值与死节点），否则交接出来的节点表会少一条、`base_hash` 指向更老的版本，
+  测的就不是「两侧从同一祖先各改各的」。
+- 连续三次完整复跑全 PASS（`--keep` 现场留在 `/tmp/t22-scene` 供复核）；二进制以
+  `-X main.version=v0.1.0-e2e` 构建 —— 裸 `go build` 的 `dev` 会让
+  `min_server_build` 判定永远不满足，镜像装不上。
+- 未做：pc-win 真机（Windows 边缘）点验；未部署、未重启、未改配置，
+  `control_sync.enabled` 仍为 `false`。
+
+### T23 全量门禁与上线（2026-11-22，只做到门禁）
+
+- 门禁五条全绿（worktree `offline-control`，提交 `6c41cf55`）：
+  - `go test -count=1 ./...` → EXIT=0，36 个包 `ok`、零 FAIL（前一次全量红在
+    `TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch`，日志是
+    `disk I/O error` / `attempt to write a readonly database`，同机另有 3–4 个
+    并发会话在跑 `kanban.test`；等它们退出后单跑 `./server/internal/kanban/`
+    得 `ok 323.991s`，再跑全量即绿 —— 属既有 flake，未改任何测试）。
+  - `go build ./...` → EXIT=0。
+  - `npx tsc -b --noEmit` → 0 错；`npx vitest run` → 263 文件通过 / 5 跳过，
+    885 用例通过 / 6 跳过。
+  - `make build` → EXIT=0（`ui-manifest files=287 build=v0.5.5-1201-75-gc3a2c096-dirty`）。
+  - `make check-upstream` → 2443 个 delta 文件被 358 组完整覆盖，全绿。
+- **上线一律未做**：四端（hasee / 主节点 / WSL / fn）都没有部署、没有重启，
+  `control_sync.enabled` 在所有 `config.json` 里仍是 `false`；按 T23 的既定顺序，
+  首次上线也要先由用户安装并重启 hasee 与主节点。
+
+### T26 补：横幅的「接受新主节点」（2026-11-22）
+
+T25/T26 记录里留的「`adopt_primary` 端点已就绪、按钮未接」在这里收口 —— 不接它，
+主节点被有意重装或换机之后边缘会永远锁在 `offline-local`（探活一直通、追平一直撞
+同一处身份不符），界面上没有任何出路，只能去命令行敲 curl。
+
+- 后端：新增 `controlsync/blocked.go` —— `BlockedCode(reason)` 把持久化的
+  `blocked_reason`（`err.Error()` 拼出来的诊断串）归一成 `origin-mismatch` /
+  `schema-mismatch` / 空。跨语言猜英文措辞是最脆的耦合，所以由产生原因的一侧归一；
+  `/status` 增 `blocked_code`（`mode.go` 只多一个字段与一行赋值，文件仍在 500 行内）。
+- 前端：`shared/controlMode.ts` 的 `ControlBannerAction` 加 `adopt-primary`，
+  只在 `mode=offline-local && blockedCode=origin-mismatch` 时出现 —— schema 不兼容
+  采纳也没用（换台机器还是同一个版本），认不出来的原因一律不给这个会丢副本的入口；
+  `controlSyncActionFor` 是「横幅动作 → 服务端动作」的唯一对照表；hook 透传
+  `blocked_code`；横幅里它是**两步确认**（第一下只展开警告条「会丢掉旧副本与冲突卡，
+  没推送出去的本地改动会变成新的冲突卡」，第二下才发请求），模式一变确认态即收回。
+- 用例：Go 2 条（`BlockedCode` 分类表、锁着时 `/status` 报代码 / 解锁后为空）；
+  web 4 条（只有身份不符才给采纳、动作映射唯一、两步确认与警告文案、`blocked_code`
+  必须透传）＋ i18n 四键补进既有清单。变异五处各自打红后还原：去掉采纳动作、
+  放宽成任意 `blockedCode`、映射退回 `retry`、去掉第一步确认（一键即发）、
+  hook 不传 `blocked_code`。
+- 门禁：`go test ./server/internal/controlsync/ ./server/internal/api/` 全绿、
+  `tsc -b --noEmit` clean、`npx vitest run` 263 文件 / 888 通过 / 6 跳过；
+  `make check-upstream` 在提交后转绿（锚点同步更新了 `mode.go` 那行结构体）
+- 回归：改完横幅渲染后重跑 `e2e/test_control_sync_ui_and_auth.py` 六条安全 + 五条页面断言
+  全 PASS（在线 / 本地 / 冲突三种横幅与冲突面板、裁决后回在线都照旧）。
+- 未做：真浏览器点验这条新路径（T22 脚本不覆盖「主节点被换掉」这一档）；
+  未部署、未重启、未改配置。
+
+### T28 pc-win 真机验证与状态解析修复（2026-11-22）
+
+用户授权「请你测试吧 去 pc win 测」后，在 pc-win（192.168.1.10:7332）用真实
+Chromium 验收 **最小 T4 + T5 + 身份不符采纳**，只改这台机器，不碰本机 / WSL / fn
+与生产 7331；测试前后保留原配置与二进制备份。
+
+- 隔离主节点：本机 `XDG_CONFIG_HOME=/tmp/mindfs-pcwin-e2e/primary`、端口 7470、
+  显式 `-X main.version=v0.5.5-1122-pcwin-test`，自签证书带 `SAN IP:192.168.1.6`，
+  token 只走 `token_file`；随后用第二份配置把 `instance_id` 从 `home-A` 换成
+  `home-B` 制造「主节点被换机」。
+- pc-win：从 worktree 构建同版本 Windows 二进制与前端（`ui-manifest files=287`），
+  安装前端到 `share\mindfs\web`，改 `role=control` 并配 `control_sync` edge；
+  计划任务结果显示 PID 33444、health 200、`/api/node-info` 为
+  `role=control static=true version=v0.5.5-1122-pcwin-test`，首页 200 且含页面根节点。
+- 在线路径真浏览器 PASS：登录后横幅显示「Control plane online / 转发到主节点」；
+  经边缘创建的用户确实落在隔离主节点。
+- 身份不符路径：停 A 起 B 后手动 `retry`，边缘稳定落到
+  `offline-local` + `blocked_code=origin-mismatch`，`/status` 给出
+  `recorded=home-A primary=home-B` 与去重后的模式事件。
+- **抓到并修掉一个真缺陷**：后端 `/status` 已带 `blocked_code`/`recent_events`/
+  冲突计数，但 `web/src/services/net/controlSync.ts` 的 `toStatus` 只映射四个字段，
+  于是真浏览器里只有「Retry now」，采纳按钮与事件历史永远出不来 —— 单测只断言源码
+  字符串「hook 透传 blocked_code」，没钉服务层解析，漏了这个洞。修成导出的
+  `toControlSyncStatus` 完整投影并校验事件形状；新增一条直接断言解析结果的 RED 用例，
+  变异「去掉 blocked_code 映射」打红后还原；`tsc -b --noEmit` clean、目标 vitest 14 条全绿。
+- 修完后重建前端并覆盖 pc-win，真浏览器重跑：先看到确认警告与「Accept」/「Cancel」，
+  点确认后 `/status` 从 `offline-local origin-mismatch` 变成 `online`、锁原因清空，
+  页面横幅回到「Control plane online」。截图留在 `/tmp/mindfs-pcwin-e2e/`。
+- 收尾：pc-win 的配置与二进制已恢复成测试前的 `role=worker`（PID 36660、Session 0、
+  health 200、`/api/control-sync/status` 404），两份隔离主节点已停，token/证书/脚本/
+  备份/前端目录等测试产物已删；本机 / WSL / fn 与生产 7331 全程未碰，未 push。
+- 门禁：定向 vitest 14 条全绿、`tsc -b --noEmit` clean、`make check-upstream` 2444 delta /
+  358 组全绿；全量 `npx vitest run` 另有 10 个文件因该 worktree 落后主线、缺少
+  `diagramZoom` / `sessionExchangeMerge` 等新文件而红，与本组改动无关。
+
+### T29 pc-win 离线全链路真机验收（2026-11-23）
+
+T28 只验到「在线横幅 + 身份不符采纳」。本轮补 T4/T5 里真正的主线：**pc-win 上真跑
+agent 回合，断主节点进 `offline-local` 再跑一轮，恢复后追平**。仍然只改 pc-win、
+隔离主节点在 7470、生产 7331 与 WSL / fn 全程未碰。
+
+- 隔离主节点：`XDG_CONFIG_HOME=/tmp/mindfs-pcwin-e2e/primary`、`-addr 0.0.0.0:7470`、
+  自签 TLS（`SAN IP:192.168.1.6`）+ `token_file`；pc-win 的 `control_sync` 指向
+  `https://192.168.1.6:7470/mindfs`，`role=control` + `role=edge`。
+- **第一次跑发现发送键恒灰，根因不在产品而在测试账号**：`useActionBar.ts:329` 的
+  `canSend` 需要 `isConnected`，而 `useAppBootstrapEffects.ts:43-46` 只在
+  `currentRootId` 非空时连会话 WS。`pcwin_e2e` 账户名下 `/api/dirs?user=…` 返回 `[]`
+  （账户是 T28 新建的，没有项目）→ `currentRootId` 空 → **一条 WS 都没建** →
+  发送键永远 disabled。诊断脚本记录到 `sockets: []`，而 `/api/agents` 明确返回
+  codex / claude 都 available、agent-selector 的 `title` 是 `codex · gpt-6-luna`，
+  所以「没选 agent」「后端不可用」两个猜测都不成立。
+- 修法：给测试账号加一个项目（`POST /api/dirs`，`create:true`），并顺手确认
+  `/api/dirs` **不在**控制面前缀表（`capture.go:468-472`）—— 由 pc-win 本机回答，
+  新目录确实落在 `C:\Users\10178\pcwin-e2e-proj`，是「数据面在边缘本机」的实证。
+  加完项目后新手引导弹窗会挡点击，验收脚本补「跳过导览」。
+- 在线态真回合 PASS（`local-agent-turn.py online`）：banner「控制面在线 / 页面请求转发给主节点 /
+  最近同步 00:53」，WS 建成，`send-state=send` 且 enabled，点发送后
+  `footers=1`、`reply-seen=true`、正文含 `PCWIN-LOCAL-OK`。
+- 停主节点：`kill -TERM`，轮询 `/api/control-sync/status` —— **9 秒**进
+  `offline-local`（`primary_reachable=false`、`last_error=primary unreachable`），
+  比标称的「10s 探测 × 3 次失败」更快是因为已有失败计数在手。
+- 离线态真回合 PASS（`local-agent-turn.py offline`）：banner 变「本地模式 / 主节点不可达，
+  正在使用本机副本 / 立即重试」，WS 照常，回合跑通、正文含标记。
+- 离线写入落本地副本已取证：边缘 `control_sync.db` 的 `pending` 表有 1 条
+  `preferences/agents`，带 `base_hash=sha256:9027cc…`（祖先 hash），`state.mode=offline-local`、
+  `base_rev` 停在 7 —— 不猜主节点 rev、记录级三方合并的依据齐全。
+- 恢复主节点：`/status` 回到 `online`、`base_rev` 7→8、`pending 0`、`conflicts 0`。
+  3 秒轮询没采到中间态，改读边缘 `mode_events` 拿到完整四态链：
+  `online→offline-local` 16:57:05、`offline-local→reconciling` 16:58:43、
+  `reconciling→online` 16:58:44（reconciling 只停 1.0 秒）。
+- 主节点侧真收到推送：`changes` rev 8 = `preferences/agents`（origin `pc-win`）、
+  `records.preferences/agents` rev=8、`applied_changes` 有
+  `pc-win:preferences:agents:1 → rev 8`、`conflicts=0`；`preferences.json` 里
+  `codex.model=gpt-6-luna` 与边缘一致。
+- 收尾：pc-win 恢复 `role=worker`（PID 8880、Session 0、health 200、`/` 403、
+  `/api/node-info` 403、`/api/control-sync/status` 404），二进制与 `config.json`
+  逐字节等于测试前备份，测试账号目录下本轮的 `meta/`、`registry.json` 与
+  `C:\Users\10178\pcwin-e2e-proj` 已删，token / CA / 前端目录 / 十来个 probe 脚本 /
+  `control_sync.db` 全部清掉；隔离主节点已停。本机 / WSL / fn 与生产 7331 全程未碰，未 push。
+- 未做：`origin-mismatch` 采纳（T28 已验）、真冲突裁决（T22 隔离实例已验）、
+  pc-win 的 `role=control` 长期上线（`control_sync.enabled` 仍 `false`）。

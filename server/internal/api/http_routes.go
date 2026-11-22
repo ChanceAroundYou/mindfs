@@ -186,6 +186,31 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/local_dirs", h.handleLocalDirs)
 	r.Get("/api/app/update", h.handleAppUpdateGet)
 	r.Post("/api/app/update", h.handleAppUpdatePost)
+	// 控制面同步：只在启用时注册。nil 时保持改造前行为（两条路径 404），
+	// 免得未配置的机器暴露一个永远报错的端点。
+	if h.ControlSync != nil {
+		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
+		r.Post("/api/control-sync/mode", h.handleControlSyncMode)
+	}
+	// 控制面同步：主节点侧的 /head /changes /push 一次能读出或改写整个控制面
+	// （含口令 hash），所以只有配了 token 才注册，且一律走 bearer 校验。
+	if h.ControlSyncToken != "" {
+		if h.ControlSyncPush != nil {
+			r.Post("/api/control-sync/push", h.requireSyncToken(h.handleControlSyncPush))
+		}
+		if h.ControlSyncFeed != nil {
+			r.Get("/api/control-sync/head", h.requireSyncToken(h.handleControlSyncHead))
+			r.Get("/api/control-sync/changes", h.requireSyncToken(h.handleControlSyncChanges))
+		}
+		// 前端资源镜像：边缘把主节点的构建产物搬到本机，之后主节点不可达也能出页面。
+		// 与 /head /changes 同一档鉴权 —— 它同样能一次吐出整套静态资源。
+		r.Get("/api/control-sync/ui/manifest", h.requireSyncToken(h.handleControlSyncUIManifest))
+		r.Get("/api/control-sync/ui/bundle", h.requireSyncToken(h.handleControlSyncUIBundle))
+	}
+	if h.ControlSyncConflicts != nil {
+		r.Get("/api/control-sync/conflicts", h.handleControlSyncConflicts)
+		r.Post("/api/control-sync/conflicts/{id}/resolve", h.handleControlSyncConflictResolve)
+	}
 	r.Post("/api/imports/github", h.handleGitHubImportStart)
 	r.Get("/api/web-push/status", h.handleWebPushStatus)
 	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)

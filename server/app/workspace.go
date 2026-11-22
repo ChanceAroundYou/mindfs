@@ -116,12 +116,16 @@ type workspaceManager struct {
 	ctx       context.Context
 	baseDir   string // <cfg>/users
 	staticDir string
+	// staticDirProvider 让边缘在运行期换前端版本（镜像切换），nil = 只认 staticDir。
+	staticDirProvider func() string
 	// role 决定这台机器提不提供控制面（见 internal/nodeinfo）。零值 "" 视为 control。
 	role nodeinfo.Role
 
 	shared sharedServices
 
 	cliToken func() string
+	// controlSync 是进程级的控制面同步能力；nil = 未启用（handler 不注册端点）。
+	controlSync *controlSyncWiring
 
 	mu      sync.Mutex
 	entries map[string]*workspaceEntry
@@ -150,11 +154,35 @@ func (m *workspaceManager) SetHandlerDefaults(staticDir string, cliToken func() 
 	m.cliToken = cliToken
 }
 
+// SetStaticDirProvider 设定「当前该用哪一版前端」。返回空时回落到 staticDir。
+//
+// 单独一个 setter 而不是塞进 SetHandlerDefaults：前端镜像只有边缘才有，
+// 主节点与未启用同步的机器不该被迫知道这个概念。
+func (m *workspaceManager) SetStaticDirProvider(provider func() string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.staticDirProvider = provider
+}
+
 // SetRole 设定节点角色。必须在 StartHandlerDefaults 之前调。
 func (m *workspaceManager) SetRole(role nodeinfo.Role) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.role = role
+}
+
+// SetControlSync 挂上控制面同步能力（nil = 未启用）。必须在处理请求前调。
+func (m *workspaceManager) SetControlSync(w *controlSyncWiring) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.controlSync = w
+}
+
+// controlSyncWiringOf 读取当前同步能力，返回副本（wiring 建好后不再变动）。
+func (m *workspaceManager) controlSyncWiringOf() *controlSyncWiring {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.controlSync
 }
 
 // Role 返回节点角色；零值归一成 control，默认等于改造前的行为。
@@ -167,10 +195,10 @@ func (m *workspaceManager) Role() nodeinfo.Role {
 	return nodeinfo.Normalize(string(m.role))
 }
 
-func (m *workspaceManager) handlerDefaults() (string, func() string, nodeinfo.Role) {
+func (m *workspaceManager) handlerDefaults() (string, func() string, func() string, nodeinfo.Role) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.staticDir, m.cliToken, nodeinfo.Normalize(string(m.role))
+	return m.staticDir, m.staticDirProvider, m.cliToken, nodeinfo.Normalize(string(m.role))
 }
 
 // PrimaryUserID 是存量数据的归属账户。
@@ -340,19 +368,22 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 
 // NewHTTPHandler 为账户构建 HTTP handler（供 api.ScopedRouter 使用）。
 func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *api.HTTPHandler {
-	staticDir, cliToken, role := m.handlerDefaults()
+	staticDir, staticDirProvider, cliToken, role := m.handlerDefaults()
 	token := ""
 	if cliToken != nil {
 		token = cliToken()
 	}
-	return &api.HTTPHandler{
-		AppContext:       ctx,
-		StaticDir:        staticDir,
-		Version:          version,
-		LocalCLIToken:    token,
-		NodeRole:         role,
-		FeishuRelayToken: m.shared.feishuRelay.Token,
-		FeishuNodeID:     m.shared.feishuRelay.NodeID,
-		WorkflowLLM:      api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
+	handler := &api.HTTPHandler{
+		AppContext:        ctx,
+		StaticDir:         staticDir,
+		StaticDirProvider: staticDirProvider,
+		Version:           version,
+		LocalCLIToken:     token,
+		NodeRole:          role,
+		FeishuRelayToken:  m.shared.feishuRelay.Token,
+		FeishuNodeID:      m.shared.feishuRelay.NodeID,
+		WorkflowLLM:       api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
 	}
+	m.controlSyncWiringOf().applyTo(handler)
+	return handler
 }

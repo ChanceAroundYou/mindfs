@@ -60,6 +60,7 @@ dev-web:
 
 build-web:
 	cd $(WEB_DIR) && VITE_MIND_FS_BASE="$(MIND_FS_BASE)" $(NPM) run build
+	$(GO) run ./server/cmd/ui-manifest -dist $(WEB_DIR)/dist -build-version "$(VERSION)" -min-server-build "$(MIN_SERVER_BUILD)"
 
 build: build-web
 	$(GO) build -ldflags "-X main.version=$(VERSION) -X mindfs/internal/deploy.Prefix=$(MIND_FS_BASE)" -o mindfs ./cli/cmd
@@ -119,6 +120,10 @@ mutate:
 
 # ── Cross-platform distribution ──────────────────────────────────────────
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+# 前端清单里的「能服务这一版前端的后端最低版本」。缺省与构建版本相同：
+# 同一提交编出来的前后端永远配套；要灰度（先发前端、后发后端）时用
+# `make build-web MIN_SERVER_BUILD=v0.5.5-1200` 放宽。
+MIN_SERVER_BUILD ?= $(VERSION)
 DIST_DIR ?= dist
 RELEASE_NOTES_FILE ?= release-notes.md
 RELEASE_NOTES_LATEST_FILE ?= $(DIST_DIR)/release-notes-$(TAG).md

@@ -22,6 +22,9 @@ type Store struct {
 	mu   sync.RWMutex
 	path string
 	data UserPreferences
+	// unknown 保存磁盘上有、本版本结构体里没有的顶层字段，写回时原样带上。
+	// 滚动升级期间新版本写的字段不能因为老版本改了一次 agents 就被抹掉。
+	unknown map[string]json.RawMessage
 }
 
 type UserPreferences struct {
@@ -159,6 +162,18 @@ func (s *Store) load() error {
 		data.Agents = map[string]AgentDefaults{}
 	}
 	s.data = data
+	// 记下结构体认不出的顶层字段（滚动升级期间新版本写的），写回时不能丢。
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return err
+	}
+	unknown := map[string]json.RawMessage{}
+	for name, raw := range doc {
+		if !knownPreferenceFields[name] {
+			unknown[name] = raw
+		}
+	}
+	s.unknown = unknown
 	return nil
 }
 
@@ -394,7 +409,7 @@ func (s *Store) saveLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(s.data, "", "  ")
+	b, err := json.MarshalIndent(s.documentLocked(), "", "  ")
 	if err != nil {
 		return err
 	}

@@ -8,7 +8,8 @@ export function createRenderEntries(ctx: any) {
     creatingRootName, creatingRootSubmitOnBlur, expandedSet, fileMetas, hexToRgbaApp, onCreateRootCancel,
     onCreateRootNameChange, onCreateRootSubmit, onSelectDir, onSelectFile, onSelectRoot, onToggleDir, projectTreeTab,
     renderRootExtraContent, renderRootRelatedContent, renderRootWorktreeContent, rootBadgeStyle, rootId, rootNodeId,
-    rootSessionIndicators, scopeKey, selectedDirKey, selectedPath, sortDirectoryEntries, sortMode, t, treeKey, visibleEntries } = ctx;
+    rootSessionIndicators, scopeKey, selectedDirKey, selectedPath, sortDirectoryEntries, sortMode, t, treeKey, visibleEntries,
+    unreachableNodeIds } = ctx;
 const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, groupColor?: string, sectionNodeId?: string) => (
   <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
     {depth === 0 && creatingRootName !== null ? (
@@ -150,7 +151,10 @@ const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, gr
         : null;
       const showRootIndicator = !!rootIndicator?.bound;
       const isRootPending = !!rootIndicator?.pending;
+      // 节点连不上时，条目是上次拉到的：点进去只会再失败一次，别让用户以为是自己点错了。
+      const nodeDead = !!(unreachableNodeIds as Set<string> | undefined)?.has(entryNodeId);
       const handleEntryClick = () => {
+        if (nodeDead) return;
         if (entry.is_dir) {
           if (isManagedRootNode) {
             (onSelectRoot || onToggleDir)?.(entry, entryRoot);
@@ -186,10 +190,12 @@ const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, gr
           <button
             type="button"
             onClick={handleEntryClick}
+            title={nodeDead ? t("fileTree.nodeUnreachable") : undefined}
             style={{
               border: "none",
               background: isSelected ? "var(--node-row-selected-bg)" : "transparent",
-              cursor: "pointer",
+              cursor: nodeDead ? "not-allowed" : "pointer",
+              opacity: nodeDead ? 0.6 : 1,
               padding: "6px 8px",
               paddingLeft: PROJECT_TREE_ROOT_PADDING_LEFT + depth * PROJECT_TREE_INDENT,
               display: "flex",
@@ -204,7 +210,7 @@ const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, gr
               fontWeight: isManagedRootNode ? 600 : 400,
               outline: "none",
             }}
-            onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
+            onMouseEnter={(e) => { if (!isSelected && !nodeDead) e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
             onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
           >
             <span

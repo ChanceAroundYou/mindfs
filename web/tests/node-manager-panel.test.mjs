@@ -28,7 +28,7 @@ assert.match(api, /NODE_RETRY_DELAYS_MS/, "重试之间必须有退避间隔");
 
 assert.match(
   app,
-  /withNodeRetry\(\(\) => apiProtectedJSON<ManagedRootPayload\[\]>\(appPath\("\/api\/dirs", n\.id\)\)\)/,
+  /withNodeRetry\(\(\) => protectedJSON<ManagedRootPayload\[\]>\(appPath\("\/api\/dirs", node\.id\)\)\)/,
   "逐节点 dirs 抓取必须走 withNodeRetry",
 );
 assert.match(app, /reportError\("node\.load_failed"/, "节点加载失败必须发可见提示");
