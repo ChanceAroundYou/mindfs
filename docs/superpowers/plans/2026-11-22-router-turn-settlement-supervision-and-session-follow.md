@@ -146,7 +146,50 @@ Plan 2026-11-22。用户要求「审阅任务运行和 Router，至少找出三�
 | 摘要硬上限 | 600 字（正文不变） |
 | 结算回合 | 每任务每小时 ≤20；不计入 3 回合用户预算 |
 | 停滞阈值 | 输出水位 10 min 不动 → `turn_stalled`；会话探针空闲不再是必要条件 |
-| 中断恢复 | 非暂停/非终态 → 自动重试/恢复一次；再失败只通知不重试 |
+| 中断恢复 | 非暂停/非终态 → 自动重试/恢复，**同一条链最多 3 次**（2026-11-22 用户裁定，原文为「一次」）；用完只通知不再重试 |
 | 转交口信 | 默认不发（`message_agent` 成功不再自动 progress） |
 | 空产出 | 记 `failed` + 可见说明 + 事件 |
 | 角标 | 只在 `turn_stalled` / `turn_interrupted` 未处理时显示 |
+
+## 9. 执行记录
+
+### W1 · Scope: G-PL（2026-11-22，已提交）
+
+- **总结归属**：`router_say` 新增 `purpose=summary`，只在 `run_settled` 回合保留（其它回合降级
+  progress）；`tasks.result_summary` 只由结算回合写；`router_prompt.md` 规则 18 规定四段式
+  （做了什么 / 结果 / 验证了什么 / 还差什么），硬上限 600 字，超长按句界截断。
+- **转交口信默认不发**：同一轮已调 `message_agent` / `run_workflow` / `deliver_to_active_run`
+  后补的 `progress` 直接丢弃。
+- **兜底摘要结构化**：直连回合不再把 Agent 逐字叙述当摘要落库，改落 digest；空产出记
+  `failed` 并写明原因；harness 错误行翻成可读文案，原文不进正文。
+- 登记 `G-PL`；测试 `turn_summary_test.go` 等 6 条钉住上述契约。
+
+### W2 · Scope: G-PM（2026-11-22，已提交）
+
+- **生产端唯一接缝**：`EndSessionTurn`（`appcontext_task_flags.go`，回合唯一终结器，成功 /
+  出错 / 取消 / panic 都经过它）在会话属于某个任务时调 `Service.SettleSessionTurn` 落一条
+  `turn_settled`。参数 `TurnSettledInput{SessionKey, TurnID, Excerpt, OutOfBand, AnsweredQuestion}`。
+- **会话归属反查**：新增 `TaskStore.TaskIDForSession`，四条绑定依次查
+  （`tasks.main_session_key` → `workflow_runs.session_key` → `workflow_node_runs.session_key`
+  → `task_activities.session_key`）。只认主会话会漏掉节点会话与委派会话。
+- **幂等**：实例键 `turn:<turnID>`，`RouterEventUniqueKey` + `ON CONFLICT DO NOTHING`，重放不重复唤醒。
+- **空 Run 形态**：`routerEventAllowsEmptyRun` 放行 `turn_settled`；brief 走独立分支（节点段留空、
+  不写「run not found」），`run_status="turn"`（`routerEventRunStatus`）；产出摘要单独走
+  `RouterBriefEvent.Excerpt`（brief 1200 rune、账本载荷尾巴 400 rune），载荷白名单新增
+  `session_key / turn_id / duration_ms / has_output / out_of_band / answered_question`。
+- **预算**：结算回合不计入「每条用户留言 3 回合」（`countUserTurnDecisions` 的 `NOT IN` 增一档），
+  改按每任务每小时 20 次自管（`settlementTurnBudget` / `countSettlementTurnsSince`）；
+  超出落 `skipped` 并写明原因。
+- **闸门**：`turn_settled` 豁免「必须有原始留言」（系统发起的回合没有留言）；运行期动作只放开
+  `notify_user`，执行类动作仍拒绝。任务终态或已归档不发。
+- **事件循环**：`routerTriggerForEvent` 映射到 `RouterTriggerTurnSettled`，trigger ref 回落
+  TurnID；`knownRouterEventKind` 收编。账本写入与 `ModeForRoot` 无关，消费由 coordinate 拍扫描。
+- 验证：`router_turn_settled_test.go` 9 条 + `appcontext_task_turn_settled_test.go` 2 条；
+  8 处变异各自打红后还原（预算排除 / 预算闸门 / 空 Run 放行 / 触发映射 / brief 分支 /
+  notify_user 放行 / 实例键幂等 / api 钩子摘除）。干净 worktree 上
+  `go test ./server/internal/kanban/ ./server/internal/api/ -count=1`：定向 3 条 Router 用例
+  单跑通过；整包仅有既有 flake（sqlite `readonly database` 与 `database is closed`，
+  见 memory `kanban-gate-flaky-sqlite-io`）与 `TestOverviewProjectionCoversEveryFieldTheSharedCardReads`
+  （`archived_at` 投影多带，删掉本组文件后同样红，属 HEAD 既有）。
+- 登记 `G-PM`（14 个锚点）。注意：该登记块在提交前被并发会话的整文件提交 `4c2bc6c3` 一并带走，
+  所以 `docs/upstream-customizations.yaml` 里 G-PM 的登记提交号与代码提交号不同。

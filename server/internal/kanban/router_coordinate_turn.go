@@ -173,7 +173,9 @@ func (rs *RouterService) beginCoordinateEventTurn(ctx context.Context, decision 
 		return false
 	}
 	userActivityID := strings.TrimSpace(event.UserActivityID)
-	if userActivityID == "" {
+	// turn_settled 允许没有来源留言：系统发起的回合（巡检补做、自动续跑）本来就
+	// 没有用户留言，汇总这一轮的证据是事件载荷里的产出摘要，不是留言。
+	if userActivityID == "" && event.Kind != RouterEventTurnSettled {
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "missing originating user activity")
 		return false
 	}
@@ -182,19 +184,14 @@ func (rs *RouterService) beginCoordinateEventTurn(ctx context.Context, decision 
 			fmt.Sprintf("chain depth %d exceeds %d", event.ChainDepth, routerEventMaxChainDepth))
 		return false
 	}
-	// 补做回合不占每留言 3 回合预算：它的上限是契约的 MaxRepairs（超出预算时
-	// 压根不会有事件）。否则一条留言跑完一轮再补做两次，第三次就被静默跳过了。
-	if event.Kind != RouterEventCompletionBlocked {
-		turns, err := rs.countTurnsForUserActivity(ctx, decision.TaskID, userActivityID)
-		if err != nil {
-			rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "count turns: "+err.Error())
-			return false
-		}
-		if turns >= RouterCoordinateMaxTurnsPerUserActivity {
-			rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped,
-				fmt.Sprintf("turn budget exhausted (%d/%d)", turns, RouterCoordinateMaxTurnsPerUserActivity))
-			return false
-		}
+	skipReason, budgetErr := eventTurnBudgetSkip(ctx, rs.taskStore(), *event, userActivityID)
+	if budgetErr != nil {
+		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventFailed, "turn budget: "+budgetErr.Error())
+		return false
+	}
+	if skipReason != "" {
+		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, skipReason)
+		return false
 	}
 	if event.Kind == RouterEventRunStalled && !rs.stallEvidenceHolds(ctx, *event) {
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "no longer stalled")
@@ -220,6 +217,8 @@ func (rs *RouterService) countTurnsForUserActivity(ctx context.Context, taskID, 
 // 预算闸门与事件 brief 的 TurnsUsed 必须同源，否则模型看到的剩余额度与实际
 // 闸门不一致。两类决策不计入：
 //   - completion_blocked：补做有自己的契约预算（MaxRepairs）。
+//   - turn_settled：会话回合结算。它自己的上限是每任务每小时 20 次
+//     （routerSettlementTurnsPerHour），不该挤掉用户留言的额度。
 //   - run_failed / run_stalled / direct_stalled：监管回合。它们自己的上限是
 //     每节点重试次数、每 Run 每小时动作预算与链深度；算进留言预算的话，
 //     「入口 1 轮 + 2 次重试」正好把 3 轮用满，第 3 次失败被静默 skipped，
@@ -234,10 +233,11 @@ func countUserTurnDecisions(ctx context.Context, db *sql.DB, taskID, userActivit
 	err := db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM router_decisions
 WHERE task_id = ? AND user_activity_id = ?
-  AND trigger_kind NOT IN (?, ?, ?, ?)`,
+  AND trigger_kind NOT IN (?, ?, ?, ?, ?)`,
 		taskID, userActivityID,
 		string(RouterTriggerCompletionBlocked),
 		string(RouterTriggerRunFailed), string(RouterTriggerRunStalled), string(RouterTriggerDirectStalled),
+		string(RouterTriggerTurnSettled),
 	).Scan(&turns)
 	return turns, err
 }
@@ -465,7 +465,18 @@ func validateRuntimeEventActions(brief *SituationBrief, actions []RouterAction, 
 			// run_settled / completion_blocked）本来就是收尾时机，不该要求
 			// supervision 观测块。
 			continue
-		case RouterActionRetryNode, RouterActionNotifyUser, RouterActionResumeRun, RouterActionEscalate,
+		case RouterActionNotifyUser:
+			// 通知是唯一不依赖观测块的监管动作：会话回合（turn_settled）没有任何
+			// 监管水位，但「这一轮停在一个失败上」正是最该告诉用户的一句话。
+			// 其它事件仍要求观测块，免得 Router 用无证据的通知代替汇报。
+			if brief != nil && brief.Event != nil && brief.Event.Kind == string(RouterEventTurnSettled) {
+				continue
+			}
+			if brief == nil || brief.Supervision == nil {
+				return fmt.Errorf("%s requires a supervision block", action.Kind)
+			}
+			continue
+		case RouterActionRetryNode, RouterActionResumeRun, RouterActionEscalate,
 			RouterActionCancelNode, RouterActionCancelRun, RouterActionCancelTask,
 			RouterActionRetryDirect:
 			// 监管动作的可用性绑定在观测块上：没有观测就不该出现这个动作。

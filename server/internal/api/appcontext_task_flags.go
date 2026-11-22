@@ -70,6 +70,9 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID
 		// 完成补发账本：与「从 pending 表消失」同一时刻入账。客户端边沿检测只在它在线时
 		// 有效，这份账本负责它离线期间漏掉的完成（见 stream_hub_completions.go）。
 		hub.RecordCompletion(pending, sessionKey)
+		// 会话回合结算：让 Router 知道「任务绑定的某个会话刚走完一轮」。没有这一步，
+		// 用户在任务详情里推进的会话在 Router 眼里根本不存在（线上 #68）。
+		s.settleSessionTurnForRouter(rootID, sessionKey, turnID, pending)
 	}
 	// 提问卡兜底收口：放在清 pending 之前，避免同一会话在「收口—清 pending」
 	// 之间起新轮又建出新的 waiting 卡后被误收。harness 取消回合时可能完全不发
@@ -87,6 +90,36 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID
 	// 回合结束时把 updated_at 推进到当前时刻并落库，避免刷新后回落到上一条消息的时间。
 	if manager, err := s.GetSessionManager(rootID); err == nil && manager != nil {
 		_ = manager.TouchUpdatedAt(context.Background(), sessionKey, time.Now())
+	}
+}
+
+// settleSessionTurnForRouter 把一次会话回合写进 Router 账本（turn_settled）。
+//
+// 只由 EndSessionTurn（回合的唯一终结器）调用：成功 / 出错 / 取消 / panic 各条边
+// 都会经过它，所以「三种回合各产一条」是结构性保证，而不是靠调用方自觉。
+// 不是任务会话时 SettleSessionTurn 自己返回 false；本条链路只记日志，绝不因为
+// Router 账本写不进去而拖住回合收尾。
+func (s *AppContext) settleSessionTurnForRouter(rootID, sessionKey, turnID string, pending PendingSessionSnapshot) {
+	if s == nil {
+		return
+	}
+	svc, err := s.GetKanbanService()
+	if err != nil || svc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	inserted, err := svc.SettleSessionTurn(ctx, rootID, kanban.TurnSettledInput{
+		SessionKey: sessionKey,
+		TurnID:     turnID,
+		Excerpt:    pending.Summary,
+	})
+	if err != nil {
+		log.Printf("[kanban] router.turn_settled.error root=%s session=%s turn=%s err=%v", rootID, sessionKey, turnID, err)
+		return
+	}
+	if inserted {
+		log.Printf("[kanban] router.turn_settled root=%s session=%s turn=%s", rootID, sessionKey, turnID)
 	}
 }
 

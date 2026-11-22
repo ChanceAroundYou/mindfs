@@ -28,6 +28,9 @@ const (
 	// 证据门：complete_task 被拒后缺口没有变化时只落一条。直连任务没有 Run，
 	// 所以它与 direct_stalled 一样允许 RunID 为空。
 	RouterEventCompletionBlocked RouterEventKind = "completion_blocked"
+	// 会话回合结算：任务绑定的任何会话（主会话 / 节点会话 / 委派会话）走完一轮
+	// 就落一条，由 EndSessionTurn 这个唯一终结器发出。它同样没有 Run。
+	RouterEventTurnSettled RouterEventKind = "turn_settled"
 )
 
 const (
@@ -130,6 +133,9 @@ func RouterEventInstanceKey(kind RouterEventKind, runID, nodeRunID string, attem
 	case RouterEventCompletionBlocked:
 		// 实例键还要带上缺口哈希，签名里没有这个维度：由生产端直接算。
 		return "", errors.New("router event completion_blocked uses RouterEventCompletionInstanceKey")
+	case RouterEventTurnSettled:
+		// 实例键是会话回合 id，签名里没有这个维度。
+		return "", errors.New("router event turn_settled uses RouterEventTurnInstanceKey")
 	default:
 		return "", fmt.Errorf("unknown router event kind %q", kind)
 	}
@@ -140,7 +146,7 @@ func knownRouterEventKind(kind RouterEventKind) bool {
 	switch kind {
 	case RouterEventRunSettled, RouterEventRunFailed, RouterEventGateWaiting,
 		RouterEventRunStalled, RouterEventStartupReconcile, RouterEventDirectStalled,
-		RouterEventCompletionBlocked:
+		RouterEventCompletionBlocked, RouterEventTurnSettled:
 		return true
 	default:
 		return false

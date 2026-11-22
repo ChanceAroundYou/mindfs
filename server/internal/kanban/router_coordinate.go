@@ -68,6 +68,8 @@ func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {
 		kind = RouterTriggerDirectStalled
 	case RouterEventCompletionBlocked:
 		kind = RouterTriggerCompletionBlocked
+	case RouterEventTurnSettled:
+		kind = RouterTriggerTurnSettled
 	default:
 		return RouterTrigger{}, ""
 	}
@@ -79,6 +81,10 @@ func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {
 	}
 	if triggerRef == "" && kind == RouterTriggerCompletionBlocked {
 		triggerRef = strings.TrimSpace(ev.TaskID)
+	}
+	if triggerRef == "" && kind == RouterTriggerTurnSettled {
+		// 会话回合没有 Run、也没有卡住的回复行：指向回合 id，便于日志对齐。
+		triggerRef = strings.TrimSpace(ev.TurnID)
 	}
 	event := ev
 	return RouterTrigger{
