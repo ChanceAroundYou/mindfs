@@ -11006,7 +11006,7 @@ groups:
       - 'server/internal/kanban/router_supervision_actions.go:if obs.Direct.Replying {'
       - 'server/internal/kanban/router_supervision_tools.go:e.supervisionMode != RouterSupervisionOn && e.supervisionMode != RouterSupervisionShadow'
       - 'server/internal/kanban/router_event_direct.go:func (s *Service) scanDirectStalledEvents('
-      - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && ev.Kind != RouterEventDirectStalled && ev.Kind != RouterEventCompletionBlocked {'
+      - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && !routerEventAllowsEmptyRun(ev.Kind) {'
       - 'server/internal/kanban/router_coordinate.go:case RouterEventDirectStalled:'
       - 'server/internal/kanban/router_coordinate_turn.go:if event.Kind == RouterEventDirectStalled && !rs.directEvidenceHolds(ctx, *event) {'
       - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) applyRouteRetryDirect('
@@ -11213,7 +11213,7 @@ groups:
       - 'server/internal/kanban/activity_service.go:completion CompletionApplier'
       - 'server/internal/kanban/router_event_types.go:RouterEventCompletionBlocked RouterEventKind = "completion_blocked"'
       - 'server/internal/kanban/router_event_types.go:router event completion_blocked uses RouterEventCompletionInstanceKey'
-      - 'server/internal/kanban/router_event_store.go:ev.Kind != RouterEventDirectStalled && ev.Kind != RouterEventCompletionBlocked'
+      - 'server/internal/kanban/router_event_store.go:!routerEventAllowsEmptyRun(ev.Kind)'
       - 'server/internal/kanban/router_types.go:RouterTriggerCompletionBlocked RouterTriggerKind = "completion_blocked"'
       - 'server/internal/kanban/router_coordinate.go:kind = RouterTriggerCompletionBlocked'
       - 'server/internal/kanban/router_coordinate.go:kind == RouterTriggerCompletionBlocked'
@@ -11228,7 +11228,7 @@ groups:
       - 'server/internal/kanban/router_supervision.go:SupervisionFailureEvidenceFailed SupervisionFailureKind = "evidence_failed"'
       - 'server/internal/kanban/router_supervision.go:EvidenceFailedNodes []SupervisionNodeState'
       - 'server/internal/kanban/router_supervision_actions.go:case SupervisionFailureEvidenceFailed:'
-      - 'server/internal/kanban/router_coordinate_turn.go:if event.Kind != RouterEventCompletionBlocked {'
+      - 'server/internal/kanban/router_coordinate_turn.go:skipReason, budgetErr := eventTurnBudgetSkip('
       - 'server/internal/kanban/service_completion.go:return s.emitCompletionBlockedEvent('
       - 'server/internal/kanban/service_completion.go:if completionNeedsVerifier(run, report) || (run == nil && !report.Contract) {'
       - 'server/internal/kanban/service_completion.go:func (s *Service) completionDecisionRun('
@@ -12673,3 +12673,79 @@ groups:
       - 'server/internal/kanban/router_types.go:RouterTriggerTurnSettled RouterTriggerKind = "turn_settled"'
       - 'server/internal/kanban/router_prompt.md:中文，200–400 字；**硬上限 600 字**（超过会被截断，截断后卡片上读起来就是半句话）。'
       - 'server/internal/kanban/router_prompt.md:交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。'
+  - id: G-PM
+    title: 会话回合结算事件：任务绑定的任何会话走完一轮都进 Router 账本（turn_settled）
+    kind: feat
+    symptom: |
+      用户在任务详情里推进一次会话（追问、改口、让节点接着干），那一轮走完系统里
+      没有任何事件 —— Router 既不总结也不跟进，只有下一轮 Run 结算才想起这条任务。
+      线上 mindfs #68 的进度就是这样整段漂出视野的。合并上游时把挂在
+      `EndSessionTurn` 上的那一处生产丢掉，或者事件种类白名单/实例键换成上游版本，
+      症状会原样回来（会话里干了一堆活，看板摘要停在上一轮）。
+    why: |
+      ① 生产端只挂在 `EndSessionTurn` 上：它是回合的唯一终结器，成功 / 出错 / 取消 /
+      panic 四条路径都经过它，另加钩子必然漏掉其中几条。
+      ② 会话归属反查必须走全四条绑定（`tasks.main_session_key` /
+      `workflow_runs.session_key` / `workflow_node_runs.session_key` /
+      `task_activities.session_key`）。只认主会话会漏掉节点会话与委派会话 —— 而那
+      正是任务真正干活的地方。
+      ③ 实例键是 `turn:<turnID>`，重放 / 重连 / 重复调度都变成一次 `ON CONFLICT
+      DO NOTHING`，不会重复唤醒 Router。
+      ④ 结算回合不计入「每条用户留言 3 回合」那把尺，改按每任务每小时 20 次自管：
+      否则一个高频委派会话会把 Router 的额度全花在收尾上；反过来共用用户预算会让
+      收尾回合被用户自己的多轮追问挤掉。
+      ⑤ 系统发起的回合（巡检补做、自动续跑）没有前置用户留言，事件照样要落，所以
+      coordinate 闸门对 `turn_settled` 豁免「必须有原始留言」这一条。
+      ⑥ 没有 Run 是正常形态而不是坏数据：事件存储按种类放行空 RunID，brief 走独立
+      分支（不写「run 不存在」这种会让模型以为执行失败的话），`run_status` 用独立
+      取值 `turn`，产出摘要单独走 `RouterBriefEvent.Excerpt`（brief 1200 rune、载荷
+      400 rune 尾巴），不当成越界载荷。
+      ⑦ 运行期动作只放开 `notify_user`；交出去的执行动作（run_workflow /
+      message_agent / deliver）与会话回合语义冲突，一律拒绝。
+      ⑧ 任务已终态或已归档时不发：这些回合不需要 Router 收尾，发了只是噪音。
+      ⑨ 账本写入与 Router 是否开 coordinate 无关 —— 账本记事实，消费由 coordinate
+      循环按拍扫描；把生产也塞进 `ModeForRoot == coordinate` 会让事件白白丢一段。
+
+      测试 → 钉住什么：
+      · TestEndSessionTurnEmitsTurnSettledEvent —— 任务会话走完一轮，EndSessionTurn
+        落且只落一条 turn_settled，载荷带 session_key。
+      · TestEndSessionTurnIgnoresNonTaskSession —— 非任务会话一条都不发。
+      · TestSettleSessionTurnEmitsOneEventPerTurn / TestSettleSessionTurnSkipsNonTaskSession
+        —— 同一 turnID 重放只写一次；非任务会话与终态/归档任务不发。
+      · TestTaskIDForSessionFindsEveryBinding —— 四条绑定任意一条命中都能反查到任务。
+      · TestTurnSettledExcludedFromUserTurnBudget —— 结算回合不占用户留言 3 回合预算。
+      · TestSettlementTurnBudgetCapsPerHour —— 每任务每小时 20 次上限，超出落 skipped。
+      · TestSettlementTurnIgnoresExhaustedUserTurnBudget —— 用户预算用尽不影响结算回合。
+      · TestTurnSettledBriefCarriesExcerptWithoutRunNoise —— brief 带摘要、run_status
+        为 turn、且不出现「run not found」未验证项。
+      · TestTurnSettledAllowsNotifyUserButRejectsHandoff —— 运行期动作只放开
+        notify_user，执行类动作被拒。
+      · TestTurnSettledEventMapsToSettlementTrigger —— 事件映射到
+        RouterTriggerTurnSettled，trigger ref 回落到 TurnID。
+    files:
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/task_store_session_lookup.go
+      - server/internal/kanban/router_event_types.go
+      - server/internal/kanban/router_event_store.go
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/api/appcontext_task_flags.go
+    tests:
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/api/appcontext_task_turn_settled_test.go
+    anchors:
+      - 'server/internal/kanban/service_turn_settled.go:func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnSettledInput) (bool, error) {'
+      - 'server/internal/kanban/service_turn_settled.go:func RouterEventTurnInstanceKey(turnID string) string {'
+      - 'server/internal/kanban/service_turn_settled.go:const routerSettlementTurnsPerHour = 20'
+      - 'server/internal/kanban/service_turn_settled.go:func routerEventAllowsEmptyRun(kind RouterEventKind) bool {'
+      - 'server/internal/kanban/service_turn_settled.go:func eventTurnBudgetSkip(ctx context.Context, store *TaskStore, event RouterEvent, userActivityID string) (string, error) {'
+      - 'server/internal/kanban/service_turn_settled.go:func routerEventBriefExcerpt(payloadJSON string) string {'
+      - 'server/internal/kanban/task_store_session_lookup.go:func (s *TaskStore) TaskIDForSession(ctx context.Context, sessionKey string) (string, error) {'
+      - 'server/internal/kanban/router_event_types.go:RouterEventTurnSettled RouterEventKind = "turn_settled"'
+      - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && !routerEventAllowsEmptyRun(ev.Kind) {'
+      - 'server/internal/kanban/router_event_brief.go:Excerpt string `json:"excerpt,omitempty"`'
+      - 'server/internal/kanban/router_event_brief.go:} else if event.Kind == RouterEventTurnSettled {'
+      - 'server/internal/kanban/router_coordinate.go:kind = RouterTriggerTurnSettled'
+      - 'server/internal/kanban/router_coordinate.go:triggerRef = strings.TrimSpace(ev.TurnID)'
+      - 'server/internal/api/appcontext_task_flags.go:s.settleSessionTurnForRouter(rootID, sessionKey, turnID, pending)'
