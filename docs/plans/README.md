@@ -21,10 +21,16 @@ to resume their old TODOs or baselines.
 100%、全屏灯箱打开且 Escape 收起；文件树菜单 →「Agent 配置」浮层列出 claude / codex。另用 CDP
 合成双指手势在移动视口实测缩放 100% → 200%。
 
-**仍未部署**（都在 main 上，等下一轮 ship）：`045680dc`（G-PG 流尾异常不再误报压缩失败）、
-`bc508be4`（G-PI Windows 上 Codex 优先用桌面端内置 CLI）、`48d2074a`（G-NY 任务详情面板固定尺寸
-居中）。另：本机静态资源在本次发布之后又被后续前端改动覆盖安装过一次（G-NY，12:13），所以线上
-served bundle 比本次发布新；后端二进制仍是本批。
+**2026-11-22 追加四端发布 `v0.5.5-1201-67-ga48e3684`**（origin/main `a48e3684`，含
+`0cc70c6e..a48e3684` 全部提交；上一批记为「仍未部署」的 `045680dc`（G-PG 流尾异常）、
+`bc508be4`（G-PI Windows Codex 桌面端 CLI）、`48d2074a`（G-NY 详情面板固定尺寸）一并上线）。
+四端版本逐字一致：wsl / fn user 单元 `is-active` + health 200（`role=worker`）；pc-win 计划任务
+PID 56792、`:7332` LISTENING、health 200；本机已安装同一二进制（`/mindfs/health` 200
+`role=control` 暂由旧进程应答，待用户 `sudo systemctl restart mindfs`），静态资源
+`assets/index-ChCKKhIO.js` 已由 7331 服务。本批内容：`0dd1abb5`（线上 bundle / 面板几何探针）、
+`b32cd5c3`（按 500 行硬线拆四个超长文件，纯移动无行为改动）、`a48e3684`（拆分文件的上游定制
+锚点跟随）。门禁在干净 worktree 上跑：`go test ./...` 全绿、`tsc --noEmit` clean、
+Vitest 263 文件 / 877 通过 / 6 跳过。
 
 ## Active
 
