@@ -218,3 +218,33 @@ func TestIntakeStoreRecordIsIdempotentAndSetStatusOverwrites(t *testing.T) {
 		t.Fatalf("SetStatus 应更新已有的去重记录：%+v", got)
 	}
 }
+
+func TestIntakeReleaseOnlyDropsUnfinishedClaim(t *testing.T) {
+	store, err := NewIntakeStore(filepath.Join(t.TempDir(), "intake.json"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.Claim("om-release")
+	if err != nil || !claimed {
+		t.Fatalf("Claim = %v, %v; want true, nil", claimed, err)
+	}
+	if err := store.Release("om-release"); err != nil {
+		t.Fatal(err)
+	}
+	if store.Seen("om-release") {
+		t.Fatal("释放后同一条消息必须能重新占坑")
+	}
+	if claimed, err := store.Claim("om-release"); err != nil || !claimed {
+		t.Fatalf("释放后重新 Claim = %v, %v; want true, nil", claimed, err)
+	}
+
+	if err := store.SetStatus("om-release", "", "picker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Release("om-release"); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Seen("om-release") {
+		t.Fatal("已经发出卡片的记录不能被释放")
+	}
+}

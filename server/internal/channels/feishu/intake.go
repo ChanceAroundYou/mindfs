@@ -170,6 +170,11 @@ func (s *IntakeService) Handle(ctx context.Context, msg InboundMessage) error {
 		notice.Projects = projects
 		notice.PickerTTL = s.pickerTTL()
 		if err := s.notifyWithCardID(ctx, id, notice); err != nil {
+			// 卡片没发出去，owner 什么都没看到：放开占坑，让同一条消息的
+			// 重投还能再试一次，而不是被去重记录静默吞掉。
+			if relErr := s.store.Release(id); relErr != nil {
+				return fmt.Errorf("%w（且未能释放去重占坑：%v）", err, relErr)
+			}
 			return err
 		}
 		return s.store.SetStatus(id, "", "picker")

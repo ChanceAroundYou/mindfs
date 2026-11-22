@@ -37,12 +37,13 @@ func (c *intakeCreator) Create(_ context.Context, nodeID, rootID, input string) 
 }
 
 type intakeHarness struct {
-	service  *IntakeService
-	store    *IntakeStore
-	creator  *intakeCreator
-	notices  []Notice
-	limiter  func(string) bool
-	findOpen func(string, time.Time) (Card, bool)
+	service   *IntakeService
+	store     *IntakeStore
+	creator   *intakeCreator
+	notices   []Notice
+	notifyErr error
+	limiter   func(string) bool
+	findOpen  func(string, time.Time) (Card, bool)
 }
 
 func newIntakeHarness(t *testing.T, cfg Config, catalog ProjectCatalog) *intakeHarness {
@@ -54,6 +55,9 @@ func newIntakeHarness(t *testing.T, cfg Config, catalog ProjectCatalog) *intakeH
 	h := &intakeHarness{store: store, creator: &intakeCreator{}}
 	clock := time.Now
 	h.service = NewIntakeService(cfg, catalog, store, h.creator, func(_ context.Context, n Notice) error {
+		if h.notifyErr != nil {
+			return h.notifyErr
+		}
 		h.notices = append(h.notices, n)
 		return nil
 	}, clock, func(key string) bool {
@@ -393,5 +397,34 @@ func TestIntakePickerStatusSurvivesClickClaim(t *testing.T) {
 	}
 	if got := store.records["om-pick"].Status; got != "creating" {
 		t.Fatalf("picker claim status = %q, want creating", got)
+	}
+}
+
+// 选择卡发送失败时消息还没有任何可见结果，占坑必须放开：同一条消息重投
+// 要能补发一次，否则用户永远收不到卡片，去重记录却显示它已被处理。
+func TestIntakePickerNotifyFailureReleasesClaim(t *testing.T) {
+	h := newIntakeHarness(t, Config{OwnerOpenID: "ou_owner"}, intakeCatalog{refs: []ProjectRef{
+		{NodeID: "fn", RootID: "r_docs", Name: "docs"},
+		{NodeID: "fn", RootID: "r_notes", Name: "notes"},
+	}})
+	msg := inbound("om_picker_retry", "p2p", "ou_owner", "在 docs 和 notes 里挑一个")
+
+	h.notifyErr = errors.New("lark send failed")
+	if err := h.service.Handle(context.Background(), msg); err == nil {
+		t.Fatal("选择卡发送失败必须把错误交回 supervisor")
+	}
+	if len(h.notices) != 0 {
+		t.Fatalf("发送失败时不该记下卡片：%+v", h.notices)
+	}
+
+	h.notifyErr = nil
+	if err := h.service.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("同一条消息重投必须能补发选择卡：%v", err)
+	}
+	if len(h.notices) != 1 || h.notices[0].Kind != KindPicker {
+		t.Fatalf("重投后应补发一张选择卡，got %+v", h.notices)
+	}
+	if got := h.store.records[msg.MessageID].Status; got != "picker" {
+		t.Fatalf("补发成功后状态 = %q, want picker", got)
 	}
 }

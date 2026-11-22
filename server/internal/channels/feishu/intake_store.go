@@ -110,6 +110,28 @@ func (s *IntakeStore) Claim(messageID string) (bool, error) {
 	return true, nil
 }
 
+// Release drops a claim whose side effect never became visible to the owner
+// (for example the picker card could not be sent). Only a record still in the
+// "creating" state may be released: anything that advanced to picker/created
+// belongs to a real card or task and must keep deduplicating.
+func (s *IntakeStore) Release(messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[messageID]
+	if !ok || rec.Status != "creating" {
+		return nil
+	}
+	delete(s.records, messageID)
+	if err := s.saveLocked(); err != nil {
+		s.records[messageID] = rec
+		return err
+	}
+	return nil
+}
+
 // Record remembers a handled message once. The first status wins: a later
 // picker click must use SetStatus to turn a recorded picker into created.
 func (s *IntakeStore) Record(messageID, taskID, status string) error {
