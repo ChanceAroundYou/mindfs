@@ -646,3 +646,11 @@ RED/GREEN：两个测试先跑 RED（`重投后应补发一张选择卡，got []
 - 全量 `go test -count=1 ./...` 曾在机器同时跑 3–4 份全量套件时出现两处既有 flake：`TestProxyFoldRespectsDisableFile`（TempDir 清理竞态，单跑通过）与 `server/internal/kanban` 600s 超时；kanban 单跑复现的 `TestCoordinatorTickReclaimsStaleClaims` 失败信息为 `TempDir RemoveAll cleanup: directory not empty`，单独 `-count=3` 三次全 PASS，与本组改动无关。
 
 提交：`329694ea`（`Scope: G-PH`）。未部署、未重启任何节点，未改配置。
+
+### 合并与合并后复验（2026-11-22，Scope: G-PH）
+
+`feishu-m2-m4-gph` 已本地合入 `main`（`895ab5ea`，父 `f673fa93` + `29bd84e9`），**未 push、未部署、未重启任何节点**。唯一冲突在 `docs/upstream-customizations.yaml` 文件尾：main 追加了 G-PO 锚点、本分支在末尾追加 G-PH 条目，按并集保留（G-PO 锚点在前、G-PH 组在后），YAML 解析 369 组、G-PH 26 锚点 17 测试。
+
+合并后复验发现本分支自带一条**时间炸弹**用例（与合入无关：未合入的 `29bd84e9` 上同样稳定复现，`-count=3` 三次全红）：`TestServiceNotifyCarriesPickerFieldsToCard` 把服务时钟冻结在 2026-11-21 12:00，按 24h TTL 盖出 `ExpiresAt=2026-11-22 12:00`，而卡片库 `Store.now` 仍是真实时钟；真实时间越过 TTL 后 `FindOpenPickerByChat` 查不到这张未答卡，单测凭空变红。修复只在用例内：`store.now` 与 `Config.Now` 共用同一只冻结时钟（生产构造点 `server/app/feishu.go` 两处都用真实时间，无产品缺陷）。提交 `61223348`，修复后该包 `-count=2` 全绿。
+
+合并结果门禁：`go build ./...` OK；全量 `go test -count=1 ./...` 仅 `TestCoordinatorCrashReplayCompletesWithoutModelCall` 在并发负载下偶发红，单跑 `-count=3` 三次全 PASS，且本分支对 `server/internal/kanban` 零改动；`make check-upstream` → 2448 个 delta 文件被 369 组完整覆盖；web 目录相对合并前 `main` 零改动，故未重跑前端门禁。
