@@ -61,17 +61,25 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID
 	if !hub.PendingTurnIDMatches(sessionKey, turnID) {
 		return
 	}
-	pending := hub.PendingSessionSnapshot(sessionKey)
-	// 完成补发账本：与「从 pending 表消失」同一时刻入账。客户端边沿检测只在它在线时
-	// 有效，这份账本负责它离线期间漏掉的完成（见 stream_hub_completions.go）。
-	hub.RecordCompletion(pending, sessionKey)
+	pending, hasPending := hub.PendingSessionSnapshotFound(sessionKey)
+	// 完成账本与对外提醒只认**还在的** pending：ClearSessionPending 会把条目整条删掉，
+	// 同一轮的第二次收尾（子代理先由 OnSubAgentTurnFinished 收尾，回合 defer 再收一次）
+	// 拿到的是零值快照 —— SubSession / SilentCompletion 全变成 false，闸门放行。
+	// 账本自己还有 RootID 守卫，Web Push 没有，所以这里必须显式分流。
+	if hasPending {
+		// 完成补发账本：与「从 pending 表消失」同一时刻入账。客户端边沿检测只在它在线时
+		// 有效，这份账本负责它离线期间漏掉的完成（见 stream_hub_completions.go）。
+		hub.RecordCompletion(pending, sessionKey)
+	}
 	// 提问卡兜底收口：放在清 pending 之前，避免同一会话在「收口—清 pending」
 	// 之间起新轮又建出新的 waiting 卡后被误收。harness 取消回合时可能完全不发
 	// tool update（Codex 当前如此），这里是最后一道防线。
 	closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	s.closeTaskQuestions(closeCtx, rootID, sessionKey, "回合已结束，提问未回答")
 	cancel()
-	s.notifySessionDone(rootID, sessionKey, requestID, pending)
+	if hasPending {
+		s.notifySessionDone(rootID, sessionKey, requestID, pending)
+	}
 	// 广播必须在清之前：ClearSessionPending 有超时兜底，但广播是前端唯一的
 	// session.done 来源。如果先清再广播，清卡住时广播永远发不出去。
 	hub.broadcastSessionDone(rootID, sessionKey, requestID, pending.SilentCompletion)

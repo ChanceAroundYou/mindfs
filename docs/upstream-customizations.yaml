@@ -11797,6 +11797,17 @@ groups:
       「MindFS 任务提醒」。③ 正文是 Markdown 原文：``` 代码围栏、`**粗体**`、列表符号与
       表格竖线原样出现在系统通知里；内容一长，用户看到的还是开头那段（对「跑完了，结论是
       什么」毫无用处）。
+
+      **2026-11-22 追加（同一个症状的第二条出口）**：修完之后桌面 PWA 仍在推「子任务完成」，
+      标题是子会话名（截图 `Implement shared prompt expansion core · 完成`）。取证在 wsl 的
+      llm-deploy 一轮：`11:53:53` 一秒内 5 条 `[webpush] send.error`，其中 4 条的 tag 结尾是
+      `0001-01-01T00:00:00Z`（`pending.UpdatedAt` 零值），对应 4 个 `parent_session_key`
+      指向本轮主会话的子会话。链条是：子代理先由 `OnSubAgentTurnFinished` 收尾（`SubSession`
+      闸门拦下、`ClearSessionPending` **删掉** pending 条目），回合结束时
+      `executeWorkflowTurn` 的 defer 又逐个再收一次 —— 第二次读到的是**零值快照**，
+      `SubSession` / `SilentCompletion` 都变回 false，`shouldNotifySessionDone` 放行，
+      标题回落到会话库里的子会话名。完成账本因 `RecordCompletion` 的 `RootID == ""` 守卫
+      躲过了这一条（所以轮询/安卓侧看起来是干净的），只有 Web Push 没有守卫。
     why: |
       必须保留：① 「这一轮完成要不要提醒」是**服务端**的判定，不是各端各写一套。
       `workflowTurnRequest.SilentCompletion=true` 在建 pending 的同一回调里立刻调
@@ -11812,6 +11823,12 @@ groups:
       强调/链接/表格；只去掉标记保留内容），再**从尾部**截断到 `BodyMaxRunes=1000`
       （`FallbackBodyMaxRunes=300` 给外发脚本类载荷），截断结果以 `...` 开头。
       调阈值只改这两个常量，所有端一起变。
+      ④ 收尾侧只认**还在的** pending：`EndSessionTurn` 用
+      `PendingSessionSnapshotFound` 的 `(snapshot, ok)` 分流，`ok=false`（条目已被
+      `ClearSessionPending` 删掉、或这一轮压根没置过 pending）时既不入完成账本也不发提醒，
+      但 `session.done` 广播与清 pending 照旧 —— 前端的灯依赖那条广播，重复 done 的灯语义
+      本来就该是 no-op。只判「快照是否为零值」不够：`AwaitingAnswer` 路径会保留条目、
+      零值快照也可能是合法的第一轮，所以判据必须是「条目在不在」这个显式布尔。
     boundary: |
       只改提醒面（文案、正文、是否提醒），不动会话/任务/工作流的任何状态与落库，也不动
       会话内 Markdown 渲染。`silent` 只压「完成」这一类提醒：提问（ask_user）与出错提醒
@@ -11861,6 +11878,8 @@ groups:
       - 'server/internal/notify/plaintext.go:func PlainText(value string, maxRunes int) string {'
       - 'server/internal/notify/notify.go:body := PlainText(in.Summary, BodyMaxRunes)'
       - 'server/internal/api/appcontext_notify.go:return !pending.SubSession && !pending.SilentCompletion'
+      - 'server/internal/api/appcontext_task_flags.go:pending, hasPending := hub.PendingSessionSnapshotFound(sessionKey)'
+      - 'server/internal/api/stream_hub_pending.go:func (h *StreamHub) PendingSessionSnapshotFound(sessionKey string) (PendingSessionSnapshot, bool) {'
       - 'server/internal/api/appcontext_workflow.go:SilentCompletion: true,'
       - 'server/internal/api/appcontext_workflow.go:s.MarkPendingCompletionSilent(req.RootID, sessionKey, id)'
       - 'server/internal/api/stream_hub_completions.go:Silent:      snapshot.SilentCompletion,'
