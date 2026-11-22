@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api/usecase"
+	"mindfs/server/internal/channels/feishu"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/nodeinfo"
@@ -37,6 +39,12 @@ type HTTPHandler struct {
 	// FeishuRelayToken 是主控代发卡片的共享口令，由 FeishuOptions.RelayToken
 	// 注入。刻意不放 AppContext：那会让它按账户复制一份。
 	FeishuRelayToken string
+	// FeishuNodeID 是本节点的飞书节点名，worker 的 answer 端点用它确认点击
+	// 不是把别家的卡片塞到本地任务库。同样只注入一次，不入 AppContext。
+	FeishuNodeID string
+	// applyFeishuAnswer 是本地动作入口。生产恒走 AppContext.ApplyFeishuAnswer；
+	// 测试替换它来断言「同一个 Answer 被原样交付」。
+	applyFeishuAnswer func(context.Context, feishu.Answer) error
 }
 
 const (

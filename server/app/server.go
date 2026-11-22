@@ -307,6 +307,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),
 		parallelMainTree: &opts.WorkflowParallelMainTree,
 		feishu:           feishuChannel,
+		feishuRelay:      feishuRelayConfigFromOptions(opts),
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 	if feishuChannel != nil {

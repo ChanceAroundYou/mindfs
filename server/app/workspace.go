@@ -65,6 +65,9 @@ type sharedServices struct {
 	// feishu 是外部通道（nil = 未配置）。整个进程一份：卡片状态与点击监听都只有
 	// 一份，账户靠卡片里的 AccountID 区分。
 	feishu *feishu.Service
+	// feishuRelay 是根级中继配置：worker 用它把卡片交给主控，也用它校验主控
+	// 转来的点击。进程级一份，不能放进按账户构建的 AppContext。
+	feishuRelay feishuRelayConfig
 	// hygiene 是补全默认值后的会话卫生策略；每账户用自己的 tracker 实例
 	// （作用域键含 session key，账户之间不共享状态）。
 	hygiene usecase.HygieneConfig
@@ -72,6 +75,22 @@ type sharedServices struct {
 
 func (s sharedServices) parallelMainTreeEnabled() bool {
 	return s.parallelMainTree == nil || *s.parallelMainTree
+}
+
+// feishuRelayConfig 是从 StartOptions 收敛出的进程级飞书中继身份。
+// Token/URL/NodeID 都是配置值；trim 在这里做一次，后面各处只比较与透传。
+type feishuRelayConfig struct {
+	Token  string
+	URL    string
+	NodeID string
+}
+
+func feishuRelayConfigFromOptions(opts StartOptions) feishuRelayConfig {
+	return feishuRelayConfig{
+		Token:  strings.TrimSpace(opts.Feishu.RelayToken),
+		URL:    strings.TrimSpace(opts.FeishuRelayURL),
+		NodeID: strings.TrimSpace(opts.FeishuNodeID),
+	}
 }
 
 type workspaceEntry struct {
@@ -327,11 +346,13 @@ func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *
 		token = cliToken()
 	}
 	return &api.HTTPHandler{
-		AppContext:    ctx,
-		StaticDir:     staticDir,
-		Version:       version,
-		LocalCLIToken: token,
-		NodeRole:      role,
-		WorkflowLLM:   api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
+		AppContext:       ctx,
+		StaticDir:        staticDir,
+		Version:          version,
+		LocalCLIToken:    token,
+		NodeRole:         role,
+		FeishuRelayToken: m.shared.feishuRelay.Token,
+		FeishuNodeID:     m.shared.feishuRelay.NodeID,
+		WorkflowLLM:      api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
 	}
 }

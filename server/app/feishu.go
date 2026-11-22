@@ -83,6 +83,23 @@ func shortOpenID(id string) string {
 	return "…" + id[len(id)-6:]
 }
 
+// feishuCardNotifierFor 只按根级 feishu_relay_url 选出口：非空就把卡片交给
+// 主控代发（worker 的 channels.feishu.enabled=false 时也一样装配）；为空才
+// 退回 M1 的本地 lark-cli 出口。绝不因为通道禁用而静默丢卡片。
+func feishuCardNotifierFor(shared sharedServices, accountID string) kanban.CardNotifier {
+	if shared.feishuRelay.URL != "" {
+		return &feishu.RelayNotifier{
+			URL:    shared.feishuRelay.URL,
+			Token:  shared.feishuRelay.Token,
+			NodeID: shared.feishuRelay.NodeID,
+		}
+	}
+	if shared.feishu == nil {
+		return nil
+	}
+	return feishuCardNotifier{svc: shared.feishu, accountID: accountID}
+}
+
 // feishuCardNotifier 把一个账户的任务卡片交给飞书通道。账户是装配时固定的 ——
 // 同一个通道服务所有账户的卡片，靠 AccountID 把点击路由回正确的 AppContext。
 type feishuCardNotifier struct {
