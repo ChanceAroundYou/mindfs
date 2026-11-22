@@ -75,6 +75,21 @@ func (m *Manager) ReadBlocks(ctx context.Context, key string) ([]Block, error) {
 	return m.readBlocksAll(key)
 }
 
+// ReadResolvedBlocks 返回「用户可见」的块序列：丢掉步序未定的 provisional
+// 片段（Step<0），同一 (seq,pos) 只保留最高 revision。规则与渲染窗口
+// （GetBlocksWindow）同源，都是 resolveBlocks。
+//
+// 给需要正文的读者用（Router 转录、内容搜索）：它们要的是收口后的最终文本，
+// 不是盘上的每一条记录。复制（fork）与封口本身仍走 ReadBlocks —— 那些场景
+// 必须看到全部 revision。
+func (m *Manager) ReadResolvedBlocks(ctx context.Context, key string) ([]Block, error) {
+	raw, err := m.ReadBlocks(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return resolveBlocks(raw, nil), nil
+}
+
 func (m *Manager) readBlocksAll(key string) ([]Block, error) {
 	path, err := m.blocksPath(key)
 	if err != nil {

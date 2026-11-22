@@ -160,3 +160,12 @@ A+ 侧两次恢复的临时实例分别是 `/tmp/mindfs-a-plus-verify-run`（合
 - pc-win：计划任务 PID `43136`，`:7332` LISTENING，health 正常。
 - 本机：已安装同一二进制（`~/.local/bin/mindfs --version` 一致，安装 mtime 20:41:42）；用户于 21:01:37 重启后，PID `3316496` 的 `/proc/3316496/exe` 指向 `~/.local/bin/mindfs`，两者 md5 同为 `5ab087de057ae5bc79b6c3f00e852bc2`，health 200 `role=control`，旧进程已不在运行。四端重启后逐节点复核：本机 / wsl / fn / pc-win 版本均为 `v0.5.5-1201-112-g4a039bdb`，health 分别 200（`control` / `worker` / `worker` / `worker`），pc-win PID `4276` 且 `:7332` LISTENING。
 - 发布时把另一个并发会话留下的未跟踪重复文件 `server/internal/kanban/router_event_turn.go` 移到 `/tmp/mindfs-wip-preserve/`（与已跟踪的 `router_coordinate_turn.go` 逐字节相同，留在工作区会让 `go build` 因重复声明失败）；未提交另一会话新生成的 `e2e/test_router_turn_settle_follow.py`。
+
+### 补充（2026-11-22）：正文读者的解析口径
+
+A+ 上线后，正常完成的回合也会在块流里同时留下流式片段（`Step=-1`）与收尾正式块，崩溃恢复还会追加同 `(seq,pos)` 的更高 revision。渲染窗口 `GetBlocksWindow` 一直按 `resolveBlocks` 解析，但两个「要正文」的读者仍在读原始 `Manager.ReadBlocks`：
+
+- `server/internal/api/appcontext_router_transcript.go` → Router 的 `router_read_session`：同一段回复被数两遍，`offset=1` 翻到半句片段而不是上一条真实消息（隔离实例 852 秒回合：7 条片段 + 3 条正式块，文本条数 3 → 10）。
+- `server/internal/session/manager_search.go` 的块内容搜索：重复计数，片段可能被当成命中正文。
+
+修复：新增 `Manager.ReadResolvedBlocks`（`ReadBlocks` 后 `resolveBlocks(raw, nil)`），上述两处改用它；封口、fork 复制、清理判空仍读原始块（需要每条落盘记录或全部 revision）。用例：`TestRouterTranscriptReaderSkipsProvisionalAndStaleRevisions`（api，先 RED：读到 6 条含片段与旧 revision）与 `TestSearchableBlockTextsIgnoresProvisionalFragments`（session），四处变异（两处退回 `ReadBlocks`、只丢 Step<0、只去重 revision）各自打红。登记 G-PV。

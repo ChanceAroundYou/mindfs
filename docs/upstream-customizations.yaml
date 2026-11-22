@@ -13362,3 +13362,35 @@ groups:
       - 'server/internal/agent/processguard/guard_windows_test.go:func TestGuardCloseKillsAttachedProcess(t *testing.T) {'
       - 'server/internal/agent/pool_process_guard_test.go:func TestAttachSessionProcessIDRegistersSubprocess(t *testing.T) {'
       - 'cli/cmd/autostart_unix_test.go:"KillMode=control-group"'
+
+  - id: G-PV
+    title: Router 转录与内容搜索只读解析后的块流（A+ provisional 片段与旧 revision 不可见）
+    kind: fix
+    symptom: |
+      A+ 流式记录上线后，正常完成的回合也会在块流里留下每条流式片段（Step=-1）
+      与收尾正式块两份内容。Router 的 `router_read_session` 直接转发原始
+      `Manager.ReadBlocks`，于是同一段回复被数两遍、`offset=1` 翻到的是半句片段而
+      不是上一条真实消息（隔离实例实测：852 秒回合留下 7 条片段 + 3 条正式块，文本
+      条数 3 → 10）。内容搜索同样会重复计数，并且可能把片段当成命中正文。
+      合上游时若把 `ReadResolvedBlocks` 丢掉、调用方退回 `ReadBlocks`，症状原样回来。
+    why: |
+      「用户可见正文」的唯一解析规则是 `resolveBlocks`：丢弃 `Step<0` 的未收口
+      片段、同一 `(seq,pos)` 只保留最高 `Revision`、按 seq/pos 排序。渲染窗口
+      `GetBlocksWindow` 早就在用它，A+ 之后这条规则必须在所有正文读者上一致。
+      新增 `Manager.ReadResolvedBlocks` 作为正文读口，Router 转录适配器与块内容
+      搜索改用它；封口（`SealProvisionalTurnBlocks`）、fork 复制、清理判空仍走原始
+      `ReadBlocks` —— 它们需要看到每一条落盘记录或保留全部 revision。
+    files:
+      - server/internal/session/blocks_store.go
+      - server/internal/session/manager_search.go
+      - server/internal/api/appcontext_router_transcript.go
+    tests:
+      - server/internal/api/appcontext_router_transcript_test.go
+      - server/internal/session/search_blocks_test.go
+    anchors:
+      - 'server/internal/session/blocks_store.go:func (m *Manager) ReadResolvedBlocks(ctx context.Context, key string) ([]Block, error) {'
+      - 'server/internal/session/blocks_store.go:return resolveBlocks(raw, nil), nil'
+      - 'server/internal/session/manager_search.go:blocks, err := m.ReadResolvedBlocks(context.Background(), s.Key)'
+      - 'server/internal/api/appcontext_router_transcript.go:blocks, err := manager.ReadResolvedBlocks(ctx, sessionKey)'
+      - 'server/internal/api/appcontext_router_transcript_test.go:func TestRouterTranscriptReaderSkipsProvisionalAndStaleRevisions(t *testing.T) {'
+      - 'server/internal/session/search_blocks_test.go:func TestSearchableBlockTextsIgnoresProvisionalFragments(t *testing.T) {'
