@@ -38,7 +38,13 @@ type Supervisor struct {
 	HandlerTimeout time.Duration
 }
 
-const conflictMarker = "another event bus is already connected"
+const (
+	conflictMarker = "another event bus is already connected"
+	// defaultClickTimeout covers the answer relay's four sends: 10s + 30s + 2m
+	// backoffs plus the requests themselves. A 2m default cut the fourth send
+	// off and left the owner staring at "applying" until the handler timed out.
+	defaultClickTimeout = 3 * time.Minute
+)
 
 // Run blocks until ctx is canceled, restarting the listener whenever it exits.
 func (s *Supervisor) Run(ctx context.Context) {
@@ -132,7 +138,7 @@ func (s *Supervisor) consume(ctx context.Context, logf func(string, ...any)) boo
 	var handlers sync.WaitGroup
 	timeout := s.HandlerTimeout
 	if timeout <= 0 {
-		timeout = 2 * time.Minute
+		timeout = defaultClickTimeout
 	}
 
 	go func() {

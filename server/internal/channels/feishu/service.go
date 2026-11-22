@@ -124,6 +124,14 @@ type Answer struct {
 	Note string
 }
 
+// RetryableAnswerError marks a temporary answer-delivery failure. The relay
+// wraps network/5xx/deadline failures in this type so the Service can keep the
+// card open for another click; deterministic local errors stay plain errors.
+type RetryableAnswerError interface {
+	error
+	RetryableAnswer() bool
+}
+
 // Service owns the cards: it sends them, keeps them current, and turns clicks
 // into answers. It never blocks MindFS on Feishu being reachable.
 type Service struct {

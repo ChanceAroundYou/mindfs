@@ -85,8 +85,9 @@ func TestFeishuAnswerRelayRoutesByCardNode(t *testing.T) {
 			return nil
 		},
 		Client: remote.Client(),
-		Sleep: func(time.Duration) {
+		Sleep: func(context.Context, time.Duration) error {
 			t.Error("local and first-try remote routing must not sleep")
+			return nil
 		},
 	}
 
@@ -196,7 +197,10 @@ func TestFeishuAnswerRelayRetriesTransientFailuresOnly(t *testing.T) {
 				LocalNodeID: "home",
 				Token:       feishuAnswerTestToken,
 				Client:      client,
-				Sleep:       func(d time.Duration) { sleeps = append(sleeps, d) },
+				Sleep: func(_ context.Context, d time.Duration) error {
+					sleeps = append(sleeps, d)
+					return nil
+				},
 			}
 			err := relay.Relay(context.Background(), answer)
 			if tries != tc.wantTries {
@@ -218,6 +222,103 @@ func TestFeishuAnswerRelayRetriesTransientFailuresOnly(t *testing.T) {
 			}
 			if err != nil && (strings.Contains(err.Error(), feishuAnswerTestToken) || strings.Contains(err.Error(), answer.Text)) {
 				t.Fatalf("error leaks secret or answer body: %v", err)
+			}
+		})
+	}
+}
+
+func assertRetryableFeishuAnswerError(t *testing.T, err error, want bool) {
+	t.Helper()
+	var marker interface{ RetryableAnswer() bool }
+	got := errors.As(err, &marker) && marker.RetryableAnswer()
+	if got != want {
+		t.Fatalf("retryable answer error = %v, want %v (err=%v)", got, want, err)
+	}
+}
+
+func TestFeishuAnswerRelayShortDeadlineCancelsBackoff(t *testing.T) {
+	store := feishuAnswerNodeStore(t, nodes.NodeConnection{ID: "fn", Name: "fn", URL: "http://fn.invalid"})
+	answer := feishu.Answer{CardID: "om_3", NodeID: "fn", Text: "secret-answer"}
+	tries := 0
+	client := &http.Client{Transport: feishuAnswerRoundTrip(func(*http.Request) (*http.Response, error) {
+		tries++
+		return feishuAnswerResponse(http.StatusInternalServerError), nil
+	})}
+	relay := &feishuAnswerRelay{
+		Nodes:       store,
+		LocalNodeID: "home",
+		Token:       feishuAnswerTestToken,
+		Client:      client,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := relay.Relay(ctx, answer)
+	elapsed := time.Since(start)
+	if tries != 1 {
+		t.Fatalf("attempts = %d, want 1 (err=%v)", tries, err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("cancellation took %s; backoff must wait on the context, not sleep 10s", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context deadline exceeded", err)
+	}
+	assertRetryableFeishuAnswerError(t, err, true)
+}
+
+func TestFeishuAnswerRelayDeadlinePermitsFourSends(t *testing.T) {
+	answer := feishu.Answer{CardID: "om_4", NodeID: "fn", Text: "secret-answer"}
+	// The approved backoffs total 160s. With the old 2m handler deadline the
+	// fourth send was unreachable; with 3m it must really happen.
+	for _, tc := range []struct {
+		name        string
+		deadline    time.Duration
+		wantTries   int
+		wantErr     bool
+		wantElapsed time.Duration
+	}{
+		{name: "old 2m deadline", deadline: 2 * time.Minute, wantTries: 3, wantErr: true, wantElapsed: 160 * time.Second},
+		{name: "approved 3m deadline", deadline: 3 * time.Minute, wantTries: 4, wantElapsed: 160 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := feishuAnswerNodeStore(t, nodes.NodeConnection{ID: "fn", Name: "fn", URL: "http://fn.invalid"})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var elapsed time.Duration
+			tries := 0
+			client := &http.Client{Transport: feishuAnswerRoundTrip(func(*http.Request) (*http.Response, error) {
+				tries++
+				if tries < 4 {
+					return feishuAnswerResponse(http.StatusInternalServerError), nil
+				}
+				return feishuAnswerResponse(http.StatusOK), nil
+			})}
+			relay := &feishuAnswerRelay{
+				Nodes:       store,
+				LocalNodeID: "home",
+				Token:       feishuAnswerTestToken,
+				Client:      client,
+				Sleep: func(ctx context.Context, d time.Duration) error {
+					elapsed += d
+					if elapsed >= tc.deadline {
+						cancel()
+					}
+					return ctx.Err()
+				},
+			}
+			err := relay.Relay(ctx, answer)
+			if tries != tc.wantTries {
+				t.Fatalf("attempts = %d, want %d (err=%v)", tries, tc.wantTries, err)
+			}
+			if elapsed != tc.wantElapsed {
+				t.Fatalf("simulated backoff = %s, want %s", elapsed, tc.wantElapsed)
+			}
+			if tc.wantErr {
+				assertRetryableFeishuAnswerError(t, err, true)
+			} else if err != nil {
+				t.Fatalf("fourth send under 3m deadline failed: %v", err)
 			}
 		})
 	}

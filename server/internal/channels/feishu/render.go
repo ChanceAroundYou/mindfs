@@ -80,6 +80,11 @@ func elements(c Card) []any {
 	if c.Text != "" {
 		out = append(out, markdown(c.Text))
 	}
+	if c.State == StateOpen && c.LastError != "" {
+		// An open card stays tappable; the owner must see why the last answer
+		// did not reach the worker before clicking again.
+		out = append(out, plainDiv("回传失败："+c.LastError))
+	}
 	if c.State == StateOpen {
 		if c.Kind == KindGate {
 			return append(out, optionBlocks(c)...)

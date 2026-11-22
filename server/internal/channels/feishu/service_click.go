@@ -5,7 +5,12 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 )
+
+// answerRetryPatchTimeout lets a retryable delivery failure reach the owner
+// even when the click handler's own deadline was the thing that expired.
+const answerRetryPatchTimeout = 5 * time.Second
 
 // errIntakeNotClaimable means the same source message is already being handled
 // (or was handled before a restart): creating another task would duplicate it.
@@ -180,6 +185,11 @@ func (s *Service) HandleAction(ctx context.Context, a Action) error {
 	handler := s.answerHandler()
 	if handler != nil {
 		if applyErr := handler(ctx, answer); applyErr != nil {
+			var retryable RetryableAnswerError
+			if errors.As(applyErr, &retryable) && retryable.RetryableAnswer() {
+				s.reopenForRetry(ctx, c.ID, oneLine(applyErr.Error())+"。回答已保留，请稍后重新点击。")
+				return nil
+			}
 			s.fail(ctx, c.ID, "没能执行："+oneLine(applyErr.Error()))
 			return nil
 		}
@@ -311,6 +321,33 @@ func (s *Service) finish(ctx context.Context, id, summary string) {
 	}
 	if err := s.patchCard(ctx, id); err != nil {
 		s.logf("飞书卡片 %s 结果回写失败：%v", id, err)
+	}
+}
+
+// reopenForRetry keeps the card clickable after a remote delivery failure.
+// Selected/note were already saved when the click was acknowledged; returning
+// to open (instead of failed) lets the owner retry without losing the answer.
+func (s *Service) reopenForRetry(ctx context.Context, id, message string) {
+	reopened, _, err := s.store.Update(id, func(x *Card) bool {
+		x.State = StateOpen
+		x.LastError = message
+		return true
+	})
+	if err != nil {
+		s.logf("飞书卡片 %s 记下重试提示失败：%v", id, err)
+		return
+	}
+	// The handler context may have expired while waiting for the worker. The
+	// error must still become visible on the card.
+	patchCtx, cancel := context.WithTimeout(context.Background(), answerRetryPatchTimeout)
+	defer cancel()
+	if err := s.patchCard(patchCtx, id); err != nil {
+		s.logf("飞书卡片 %s 重试提示回写失败：%v", id, err)
+	}
+	// patchCard's MarkDelivered clears LastError. Restore it without a version
+	// bump so the card keeps showing the reason while its buttons stay live.
+	if _, _, err := s.store.RestoreOpenError(id, reopened.Version, message); err != nil {
+		s.logf("飞书卡片 %s 保留重试提示失败：%v", id, err)
 	}
 }
 

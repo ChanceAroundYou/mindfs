@@ -40,7 +40,31 @@ type feishuAnswerRelay struct {
 	Token       string
 	Apply       answerRelay
 	Client      *http.Client
-	Sleep       func(time.Duration)
+	Sleep       func(context.Context, time.Duration) error
+}
+
+// retryableAnswerDeliveryError marks a temporary remote-delivery failure. It
+// implements feishu.RetryableAnswerError so a click handler knows the card
+// should stay open; deterministic local errors stay plain errors.
+type retryableAnswerDeliveryError struct{ err error }
+
+func (e *retryableAnswerDeliveryError) Error() string         { return e.err.Error() }
+func (e *retryableAnswerDeliveryError) Unwrap() error         { return e.err }
+func (e *retryableAnswerDeliveryError) RetryableAnswer() bool { return true }
+
+func retryableAnswerError(err error) error {
+	return &retryableAnswerDeliveryError{err: err}
+}
+
+func sleepWithAnswerContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // newFeishuAnswerRelay 把进程级中继身份与节点表收成一个点击处理器。
@@ -56,7 +80,7 @@ func newFeishuAnswerRelay(workspaces *workspaceManager) answerRelay {
 		Token:       workspaces.shared.feishuRelay.Token,
 		Apply:       workspaces.ApplyFeishuAnswer,
 		Client:      &http.Client{Timeout: feishuAnswerTimeout},
-		Sleep:       time.Sleep,
+		Sleep:       sleepWithAnswerContext,
 	}
 	return relay.Relay
 }
@@ -92,22 +116,28 @@ func (r *feishuAnswerRelay) Relay(ctx context.Context, answer feishu.Answer) err
 	}
 	sleep := r.Sleep
 	if sleep == nil {
-		sleep = time.Sleep
+		sleep = sleepWithAnswerContext
 	}
 
 	var lastErr error
 	for attempt := 0; attempt < feishuAnswerMaxTries; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return retryableAnswerError(fmt.Errorf("feishu answer: 回传节点 %s 已中断：%w", nodeID, err))
 		}
 		if attempt > 0 {
-			sleep(feishuAnswerBackoffs[attempt-1])
+			wait := feishuAnswerBackoffs[attempt-1]
+			if err := sleep(ctx, wait); err != nil {
+				return retryableAnswerError(fmt.Errorf("feishu answer: 回传节点 %s 退避中断：%w", nodeID, err))
+			}
 			if err := ctx.Err(); err != nil {
-				return err
+				return retryableAnswerError(fmt.Errorf("feishu answer: 回传节点 %s 已中断：%w", nodeID, err))
 			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return retryableAnswerError(fmt.Errorf("feishu answer: 回传节点 %s 已中断：%w", nodeID, ctxErr))
+			}
 			return fmt.Errorf("feishu answer: build request for node %s: %w", nodeID, err)
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -115,7 +145,10 @@ func (r *feishuAnswerRelay) Relay(ctx context.Context, answer feishu.Answer) err
 
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("feishu answer: node %s attempt %d/%d network error: %w", nodeID, attempt+1, feishuAnswerMaxTries, err)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return retryableAnswerError(fmt.Errorf("feishu answer: 回传节点 %s 已中断：%w", nodeID, ctxErr))
+			}
+			lastErr = retryableAnswerError(fmt.Errorf("feishu answer: node %s attempt %d/%d network error: %w", nodeID, attempt+1, feishuAnswerMaxTries, err))
 			continue
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, feishuAnswerDrainMax))
@@ -123,10 +156,10 @@ func (r *feishuAnswerRelay) Relay(ctx context.Context, answer feishu.Answer) err
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil
 		}
-		lastErr = fmt.Errorf("feishu answer: node %s attempt %d/%d HTTP %d", nodeID, attempt+1, feishuAnswerMaxTries, resp.StatusCode)
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			return lastErr
+			return fmt.Errorf("feishu answer: node %s rejected answer with HTTP %d", nodeID, resp.StatusCode)
 		}
+		lastErr = retryableAnswerError(fmt.Errorf("feishu answer: node %s attempt %d/%d HTTP %d", nodeID, attempt+1, feishuAnswerMaxTries, resp.StatusCode))
 	}
 	return lastErr
 }
