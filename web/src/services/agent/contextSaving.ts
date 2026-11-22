@@ -106,6 +106,15 @@ export type SessionContextSaving = {
   rewrite_samples: number;
   /** Folded turns whose response carried no usage block. */
   usage_missing: number;
+  /**
+   * 计费上下文口径的累计：上游 counters（input + cache creation + cache read）
+   * 与同一批请求携带的折叠内容。两者的比例才是没有被正文里的非文本字节稀释
+   * 的节省率（Codex 的 reasoning 密文会让字节口径把 39% 读成 3%）。
+   * 只统计既有 usage 样本、又有 token 估算的行；`context_token_samples` 是行数。
+   */
+  total_context_tokens: number;
+  total_folded_tokens: number;
+  context_token_samples: number;
   /** 超长会话提示的状态；折叠省了多少与它无关。 */
   hygiene: SessionHygiene;
 };

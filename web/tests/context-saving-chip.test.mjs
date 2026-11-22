@@ -113,7 +113,11 @@ test("详情面板先给结论：本轮请求从多大变成多大、省了百�
   );
   assert.match(
     indicator,
-    /formatPercent\(tokenSized \? savedTokens : latest\.saved_bytes, tokenSized \? latest\.req_tokens_est : latest\.req_bytes\)/,
+    /const billingSized = !!latest && latest\.usage_source !== "missing" && billingContext > 0 && foldedTokens > 0;/,
+  );
+  assert.match(
+    indicator,
+    /formatPercent\(\s*billingSized \? foldedTokens : tokenSized \? savedTokens : latest\.saved_bytes,\s*billingSized \? billingContext \+ foldedTokens : tokenSized \? latest\.req_tokens_est : latest\.req_bytes,\s*\)/,
   );
   assert.match(indicator, /t\("contextSaving\.savedValue", \{ size: savedText, percent: savedPercent \}\)/);
   assert.match(
@@ -161,10 +165,7 @@ test("估算值只给三位有效数字，真实用量保持精确", () => {
 
 test("缓存命中行：折叠的代价是前缀缓存失效，命中率必须看得到", () => {
   // 只报「重算 783」看不出折叠值不值；cache_read 占比才是那一轮的缓存代价。
-  assert.match(
-    indicator,
-    /const cacheTotal = \(latest\?\.usage_input \|\| 0\) \+ \(latest\?\.usage_cache_creation \|\| 0\) \+ \(latest\?\.usage_cache_read \|\| 0\);/,
-  );
+  assert.match(indicator, /const cacheTotal = billingContext;/);
   assert.match(
     indicator,
     /const cachePercent = latest && cacheTotal > 0 \? Math\.round\(\(latest\.usage_cache_read \* 100\) \/ cacheTotal\) : null;/,
@@ -213,6 +214,12 @@ test("折叠的代价与收益并列显示：本轮重算 token 与节省同屏"
 test("累计节省只显示总量，不解释估算也不报窗口长度", () => {
   // 一轮折 5% 不起眼，整个会话累计起来才是用户在付的账；200 行窗口与
   // token 估算属性都是口径说明，不是用户要的数字，不进胶囊。
+  assert.match(indicator, /if \(saving && saving\.context_token_samples > 0 && saving\.total_folded_tokens > 0\) \{/);
+  assert.match(
+    indicator,
+    /const totalPercent = formatPercent\(saving\.total_folded_tokens, saving\.total_context_tokens \+ saving\.total_folded_tokens\);/,
+  );
+  assert.match(indicator, /t\("contextSaving\.savedValue", \{ size: totalText, percent: totalPercent \}\)/);
   assert.match(indicator, /if \(saving && saving\.requests > 1\) \{/);
   assert.match(
     indicator,
@@ -221,6 +228,10 @@ test("累计节省只显示总量，不解释估算也不报窗口长度", () =>
   assert.match(indicator, /t\("contextSaving\.savedTotalValue", \{ size: totalText \}\)/);
   assert.doesNotMatch(indicator, /savedTotalValue[^\n]*count/);
   assert.match(indicator, /saved_token_samples > 0/);
+  // 计费口径的累计来自账本字段，不是前端拿字节除出来的。
+  assert.match(service, /total_context_tokens: number;/);
+  assert.match(service, /total_folded_tokens: number;/);
+  assert.match(service, /context_token_samples: number;/);
 });
 
 test("本轮新折报的是原文大小，不只是块数", () => {

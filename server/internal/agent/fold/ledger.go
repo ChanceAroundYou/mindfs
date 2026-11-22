@@ -88,6 +88,10 @@ type LedgerEntry struct {
 	// usage block and "missing" when the turn ended without one. It replaces
 	// inferring "no sample" from a negative rewrite_tokens.
 	UsageSource string `json:"usage_source"`
+	// UsageMissingReason says why a missing sample is missing (see
+	// fold.UsageMissing*). Empty on every row with a sample and on rows written
+	// before the field existed, so "unknown" never reads as a diagnosis.
+	UsageMissingReason string `json:"usage_missing_reason"`
 	// UsageProvenance says whose counters these are: UsageProvenanceUpstream
 	// when the request went to the provider's own API, UsageProvenanceRelay when
 	// it went through a relay that may synthesize them. Empty means the row
@@ -289,6 +293,16 @@ type ContextSaving struct {
 	RewriteSamples int `json:"rewrite_samples"`
 	// UsageMissing counts folded turns whose response carried no usage block.
 	UsageMissing int `json:"usage_missing"`
+	// TotalContextTokens and TotalFoldedTokens are the billing-context view of
+	// the same rows: the upstream counters (input + cache creation + cache read)
+	// plus the folded content those requests carried. Their ratio is the only
+	// saving percentage that is not diluted by non-text body bytes — a Codex
+	// body is mostly encrypted reasoning, so req_bytes says 3% while the billed
+	// context says 39%. Rows without a usage sample or a token estimate are
+	// excluded, and ContextTokenSamples says how many rows the totals cover.
+	TotalContextTokens  int `json:"total_context_tokens"`
+	TotalFoldedTokens   int `json:"total_folded_tokens"`
+	ContextTokenSamples int `json:"context_token_samples"`
 }
 
 // SummarizeLedger folds the retained history into the chip's numbers.
@@ -314,6 +328,17 @@ func SummarizeLedger(entries []LedgerEntry) ContextSaving {
 		if entry.ReqTokensEst > 0 && entry.ForwardTokensEst > 0 {
 			summary.TotalSavedTokens += entry.ReqTokensEst - entry.ForwardTokensEst
 			summary.SavedTokenSamples++
+		}
+		// Billing-context totals: only rows that reported both a usage sample
+		// and the folded-token estimate can contribute. Mixing a measured
+		// context with an estimated one would make the percentage meaningless.
+		if entry.UsageSource != UsageSourceMissing && entry.TokensEst > 0 {
+			contextTokens := entry.UsageInput + entry.UsageCacheCreation + entry.UsageCacheRead
+			if contextTokens > 0 {
+				summary.TotalContextTokens += contextTokens
+				summary.TotalFoldedTokens += entry.TokensEst
+				summary.ContextTokenSamples++
+			}
 		}
 		// Legacy rows (written before usage_source existed) have an empty
 		// source; they are still counted when their rewrite is known.

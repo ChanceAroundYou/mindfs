@@ -40,19 +40,31 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   // to bytes — bytes/4 is not a substitute (it is off by ~2x on CJK).
   const tokenSized = !!latest && latest.req_tokens_est > 0 && latest.forward_tokens_est > 0;
   const savedTokens = tokenSized ? latest.req_tokens_est - latest.forward_tokens_est : 0;
+  // 计费上下文口径：usage 的三个计数器是互斥的真实输入，tokens_est 是这些
+  // 请求携带的折叠内容。Codex 的 reasoning 密文让 req_tokens_est 比真实上下文
+  // 大 3-5 倍，拿它当分母会把 39% 的节省读成 3%；有 usage 样本时改用这个口径，
+  // 没有样本（usage_source=missing）时才退回原来的估算口径。
+  const billingContext = (latest?.usage_input || 0) + (latest?.usage_cache_creation || 0) + (latest?.usage_cache_read || 0);
+  const foldedTokens = latest && latest.tokens_est > 0 ? latest.tokens_est : savedTokens;
+  const billingSized = !!latest && latest.usage_source !== "missing" && billingContext > 0 && foldedTokens > 0;
   const savedPercent = latest
-    ? formatPercent(tokenSized ? savedTokens : latest.saved_bytes, tokenSized ? latest.req_tokens_est : latest.req_bytes)
+    ? formatPercent(
+        billingSized ? foldedTokens : tokenSized ? savedTokens : latest.saved_bytes,
+        billingSized ? billingContext + foldedTokens : tokenSized ? latest.req_tokens_est : latest.req_bytes,
+      )
     : null;
   const rows: Array<[string, string]> = [];
   // Folding breaks the prefix cache, so the rewrite cost only reads as worth
   // it next to the hit rate. usage_input is the fresh part, so the denominator
   // is all three disjoint counters; missing usage must not read as 0% hit.
-  const cacheTotal = (latest?.usage_input || 0) + (latest?.usage_cache_creation || 0) + (latest?.usage_cache_read || 0);
+  const cacheTotal = billingContext;
   const cachePercent = latest && cacheTotal > 0 ? Math.round((latest.usage_cache_read * 100) / cacheTotal) : null;
   if (latest) {
-    const savedText = tokenSized
-      ? t("contextSaving.tokensValue", { count: formatTokenAmount(savedTokens) })
-      : formatBytes(latest.saved_bytes);
+    const savedText = billingSized
+      ? t("contextSaving.tokensValue", { count: formatTokenAmount(foldedTokens) })
+      : tokenSized
+        ? t("contextSaving.tokensValue", { count: formatTokenAmount(savedTokens) })
+        : formatBytes(latest.saved_bytes);
     rows.push(
       [
         t("contextSaving.badgeRequest"),
@@ -71,7 +83,14 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
     // One turn's 5% is invisible; the session total is what the user is paying
     // to keep. The window is the retained ledger (summary.requests); with a
     // single row the total equals this turn and a second line adds nothing.
-    if (saving && saving.requests > 1) {
+    if (saving && saving.context_token_samples > 0 && saving.total_folded_tokens > 0) {
+      const totalPercent = formatPercent(saving.total_folded_tokens, saving.total_context_tokens + saving.total_folded_tokens);
+      const totalText = t("contextSaving.tokensValue", { count: formatTokenAmount(saving.total_folded_tokens) });
+      rows.push([
+        t("contextSaving.badgeSavedTotal"),
+        totalPercent ? t("contextSaving.savedValue", { size: totalText, percent: totalPercent }) : totalText,
+      ]);
+    } else if (saving && saving.requests > 1) {
       const totalText = saving.saved_token_samples > 0
         ? t("contextSaving.tokensValue", { count: formatTokenAmount(saving.total_saved_tokens) })
         : formatBytes(saving.total_saved_bytes);
