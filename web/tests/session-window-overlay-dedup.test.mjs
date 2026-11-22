@@ -17,11 +17,13 @@ const projection = readFileSync(
 );
 
 // ── 1. 组合出口必须按对象同一性去重（两来源共用同一个 exchange 对象时只渲染一次）──
+// 只取 composedExchanges 这一个 useMemo，别把后面的 overlay 补块语句一起吞进来。
 const composeStart = viewer.indexOf("const composedExchanges = useMemo(");
-const composeEnd = viewer.indexOf("const { timeline, isStreaming", composeStart);
+const composeTail = "}, [visibleExchanges, tailOverlay]);";
+const composeEnd = viewer.indexOf(composeTail, composeStart);
 assert.ok(composeStart >= 0 && composeEnd > composeStart, "composedExchanges block should be found");
 const composeSrc = viewer
-  .slice(composeStart, composeEnd)
+  .slice(composeStart, composeEnd + composeTail.length)
   // 把 TS 类型断言剥掉，只留可求值的 JS
   .replace(/\bas\s+[A-Za-z_$][\w$.]*(?:\[\])?/g, "");
 

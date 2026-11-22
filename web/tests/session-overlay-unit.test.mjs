@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-const { computeTailOverlay } = await import("../src/shared/sessionOverlay.ts");
+const { computeTailOverlay, supplementOverlayMap } = await import("../src/shared/sessionOverlay.ts");
 const row = (seq, role, content, mindfs_id) => ({ seq, role, content, mindfs_id });
 
-test("persisted rows are excluded only when the visible window contains their seq", () => {
+test("persisted rows newer than the window's newest seq surface as live tail", () => {
   const visible = [row(1, "user", "ask", "turn-1"), row(2, "agent", "reply", "turn-1")];
   const cache = [
     ...visible,
@@ -215,4 +215,42 @@ test("rows without mindfs_id and tool cards stay in the overlay", () => {
     }),
     [noIdentity, tool],
   );
+});
+
+// 2026-11-22 现场：点 ⋯「同步」后回包是 afterSeq 之后的整段历史（缓存缺失时是**整个**
+// 会话），App 缓存于是装着窗口以下的几百条行；旧判据「不在窗口里 = 新尾巴」把她们全部
+// 追加到窗口之后，又因为不在 visibleBlocks 里而各自退化成 turn_meta 纯页脚 —— 用户看到
+// 底部刷出一大堆控件（复制 / 模型 / 用量 / 时间 / 上下文胶囊）。
+test("persisted rows below the window's newest seq are history, not live tail", () => {
+  const history = [1, 2, 3, 4, 5].map((seq) =>
+    row(seq, seq % 2 ? "user" : "agent", `t${seq}`, `turn-${seq}`),
+  );
+  const visible = [history[3], history[4]];
+  assert.deepEqual(
+    computeTailOverlay({ exchanges: history, visibleExchanges: visible }),
+    [],
+    "同步灌回来的历史行不该追加到窗口之后",
+  );
+  // 真正的新行（seq 比窗口最新一条还大）仍要出现 —— 自己发的消息、外部转录刚导入的回合。
+  const fresh = row(6, "agent", "reply", "turn-6");
+  assert.deepEqual(
+    computeTailOverlay({ exchanges: [...history, fresh], visibleExchanges: visible }),
+    [fresh],
+  );
+});
+
+test("overlay rows borrow blocks and aux from the session map without overriding the window", () => {
+  const windowBlocks = { "10": [{ type: "text", text: "window revision" }] };
+  const sessionBlocks = {
+    "10": [{ type: "text", text: "cache revision" }],
+    "11": [{ type: "text", text: "new row" }],
+  };
+  const merged = supplementOverlayMap(windowBlocks, sessionBlocks, [10, 11, 0]);
+  assert.deepEqual(merged, { "10": windowBlocks["10"], "11": sessionBlocks["11"] });
+  assert.equal(merged["10"], windowBlocks["10"], "同 seq 不允许出现两个 revision");
+
+  // 没有可补的键时返回窗口那份原引用，避免无意义的重渲染。
+  assert.equal(supplementOverlayMap(windowBlocks, sessionBlocks, []), windowBlocks);
+  assert.equal(supplementOverlayMap(windowBlocks, { "11": [] }, [11]), windowBlocks);
+  assert.equal(supplementOverlayMap(windowBlocks, undefined, [11]), windowBlocks);
 });
