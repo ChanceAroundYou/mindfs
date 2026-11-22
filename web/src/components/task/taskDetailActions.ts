@@ -13,8 +13,12 @@ import type { KanbanTask } from "../../shared/taskTypes";
  *   - 执行中只给「中断」：对应后端的 pause，不再同时摆「取消」；
  *   - 已暂停未在用户清单里，给「恢复」，否则中断后无处可去；
  *   - 卡片上的「收尾 worktree」不在详情里，worktree 清场仍从卡片发起。
+ *
+ * 外观（盒子尺寸、圆角、间距、颜色）与看板卡片的图标键统一（用户 2026-11-22 要求）：
+ * 盒子 22×22 / 圆角 6px / 间距 0，完成用卡片那支绿色（success），删除用红色。
+ * 动作集合本身仍是上面这份详情口径 —— 两边是否也要统一，等用户裁定。
  */
-export type TaskDetailActionTone = "default" | "primary" | "warn";
+export type TaskDetailActionTone = "default" | "primary" | "success" | "warn";
 
 export type TaskDetailActionMeta = {
   labelKey: MessageKey;
@@ -36,7 +40,7 @@ export const TASK_DETAIL_ACTION_META: Record<TaskDetailActionKey, TaskDetailActi
   start: { labelKey: "task.actionStart", tone: "primary" },
   interrupt: { labelKey: "task.actionInterrupt", tone: "default" },
   resume: { labelKey: "task.actionResume", tone: "primary" },
-  complete: { labelKey: "task.complete", tone: "primary" },
+  complete: { labelKey: "task.complete", tone: "success" },
   cancel: { labelKey: "task.cancelTask", tone: "default" },
   reopen: { labelKey: "task.reopen", tone: "primary" },
   "archive-task": { labelKey: "task.actionArchive", tone: "default" },

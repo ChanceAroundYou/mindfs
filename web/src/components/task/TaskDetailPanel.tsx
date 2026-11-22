@@ -145,8 +145,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
         </>
       ) : (
         // 动作全部平铺：有几项画几项，删除也在同一排里（不再做独立特例，也不再收进菜单）。
-        // 图标键沿用看板卡片的形状与配色档位，标题 / 读屏文案取动作名。
-        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: "2px" }}>
+        // 图标键与看板卡片的图标键完全同形同色：22×22 / 圆角 6 / 间距 0 / 同一套档位配色。
+        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 }}>
           {actions.map((action) => (
             <button
               key={action.key}
@@ -156,10 +156,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
               disabled={saving}
               onClick={action.onSelect}
               style={{
-                ...taskCardIconButtonStyle(action.tone === "primary" ? "accent" : action.tone === "warn" ? "danger" : "default"),
-                width: "28px",
-                height: "28px",
-                borderRadius: "8px",
+                ...taskCardIconButtonStyle(action.tone === "primary" ? "accent" : action.tone === "success" ? "success" : action.tone === "warn" ? "danger" : "default"),
                 flexShrink: 0,
                 opacity: saving ? 0.4 : 1,
                 cursor: saving ? "not-allowed" : "pointer",

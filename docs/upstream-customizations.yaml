@@ -11629,6 +11629,17 @@ groups:
       所以会话页拿到的参数完整（`?root=…&node=…&session=…&view=chat`），`preserveTaskSelection`
       不变、看板卡片仍保持选中。看板卡片上的两个同名调用点（`TaskBoardView`）只使用返回值前
       的副作用，忽略布尔，行为不变。
+      ⑮ 详情右上角动作键与卡片同形同色（2026-11-22）：以前详情把图标键放到 28×28 / 圆角 8 /
+      间距 2px，完成任务用 accent 蓝；看板卡片是 22×22 / 圆角 6 / 间距 0、完成用 success 绿。
+      现在详情删掉三处覆写，盒子、圆角、间距与三档配色全部回到 `taskCardIconButtonStyle` 一份
+      来源（`TaskDetailActionTone` 增 `success`，`complete` 改 `success`，删除仍走 `warn → danger`
+      红），hover 文案仍是动作名（title = aria-label = 动作名）。线上实测（2026-11-22，1440×900，
+      bundle `index-XXY6kfFW.js`）：完成键两边都是 22×22 / 6px / `rgb(22,163,74)`；取消键都是
+      `rgb(71,85,105)`；已归档的取消归档键都是 `rgb(59,130,246)`、删除键都是 `rgb(220,38,38)`。
+      **仍未统一、等用户裁定的三处**：动作集合（执行中卡片给「暂停 + 取消」、详情只给「中断」；
+      已暂停卡片多「完成 / 取消」；待开始详情多「开始」；已归档详情多「返回」；收尾 worktree
+      只在卡片）、以及卡片上「完成 / 暂停」的 hover 标题用的是短词（Complete / Paused），与详情
+      的完整动作名不一致。
     boundary: |
       只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
@@ -11783,6 +11794,11 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:fixedHeight'
       - 'web/src/components/task/ConversationView.tsx:flex: "1 0 auto"'
       - 'web/src/components/task/ConversationView.tsx:aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }}'
+      - 'web/src/components/task/taskDetailActions.ts:export type TaskDetailActionTone = "default" | "primary" | "success" | "warn";'
+      - 'web/src/components/task/taskDetailActions.ts:complete: { labelKey: "task.complete", tone: "success" },'
+      - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 }}'
+      - 'web/src/components/task/TaskDetailPanel.tsx:action.tone === "success" ? "success"'
+      - 'web/tests/task-detail-header.test.mjs:assert.match(detail, /complete: \{ labelKey: "task\.complete", tone: "success" \}/);'
       - 'e2e/live/panel_geometry.py:def check(result: dict, mobile: bool) -> list[str]:'
       - 'e2e/live/detail_to_session.py:def find_open_button(page):'
       - 'web/src/components/app/TaskDetailPanelGate.tsx:const navigated = handleTaskSessionDrawerOpen('

@@ -74,11 +74,17 @@ test("平铺动作：动作表单一来源、九种动作都有图标与回调�
   assert.match(panel, /"delete-task": \(\) => void deleteTaskCard\(\)/);
   // 不再有菜单弹层：没有 portal、没有 role=menu、没有竖排弹层。
   assert.doesNotMatch(panel, /createPortal|role="menu"|role="menuitem"/);
-  // 平铺键沿用看板卡片的图标键形状与配色档位。
+  // 平铺键与看板卡片的图标键同形同色：形状取 taskCardIconButtonStyle（不再覆写宽高/圆角），
+  // 三种语义档位按卡片的配色映射，间距也回到卡片的 0。
   assert.match(panel, /taskCardIconButtonStyle\(action\.tone === "primary"/);
+  assert.match(panel, /action\.tone === "success" \? "success"/);
+  assert.doesNotMatch(panel, /width: "28px"|height: "28px"|borderRadius: "8px"/, "盒子尺寸交给卡片同一份样式");
+  assert.match(panel, /data-testid="task-detail-actions" style=\{\{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 \}\}/);
 
   // 动作集合只有一份定义，且与看板卡片的 taskCardActions 分开（口径不同）。
   const detail = read("../src/components/task/taskDetailActions.ts");
+  // 完成的颜色与卡片一致（卡片按钮用 success 绿），不是详情原来的 accent 蓝。
+  assert.match(detail, /complete: \{ labelKey: "task\.complete", tone: "success" \}/);
   assert.match(detail, /export function taskDetailActions\(task: KanbanTask\): TaskDetailActionKey\[\] \{/);
   assert.doesNotMatch(detail, /from "\.\/taskCardActions"/, "详情口径不反过来 import 卡片口径，避免两边一起漂");
 });
