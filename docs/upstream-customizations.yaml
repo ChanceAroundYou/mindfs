@@ -9791,7 +9791,7 @@ groups:
       - web/tests/run-timeline-readable.test.mjs
       - web/tests/task-panel-options.test.mjs
     anchors:
-      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 20000'
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 600'
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) scheduleReplySummaryCompression('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) applyCompressedReplySummary('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) resolveCompressUserMessage('
@@ -11437,7 +11437,7 @@ groups:
       - server/internal/kanban/activity_store_test.go
       - server/internal/api/turn_text_blocks_test.go
     anchors:
-      - 'server/internal/kanban/activity_route_reply.go:if purpose == "summary" && decision.TriggerKind != RouterTriggerRunSettled {'
+      - 'server/internal/kanban/activity_route_reply.go:if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {'
       - 'server/internal/kanban/activity_route_apply.go:if act.Purpose == "summary" {'
       - 'server/internal/kanban/activity_store.go:const activityOrderBy = ` ORDER BY CASE WHEN type = ''agent_reply'' AND status = ''completed'' AND updated_at <> '''''
       - 'server/internal/kanban/router_tools.go:case "chat", "progress", "summary":'
@@ -11446,7 +11446,7 @@ groups:
       - 'server/internal/kanban/router_coordinate.go:rs.requeueFailedSettleEvents(ctx, now)'
       - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RequeueFailedEventForCompensation(ctx context.Context, eventID, reason string) (bool, error) {'
       - 'server/internal/kanban/router_settle_compensation.go:func (rs *RouterService) requeueFailedSettleEvents(ctx context.Context, now time.Time) {'
-      - 'server/internal/kanban/router_prompt.md:18. **结算总结（`brief.trigger.kind=run_settled`）**'
+      - 'server/internal/kanban/router_prompt.md:18. **结算总结（`brief.trigger.kind=run_settled` 或 `turn_settled`）**'
       - 'server/internal/kanban/service_activities_summary.go:const runSummaryCompressTimeout = 90 * time.Second'
       - 'server/internal/api/turn_text_blocks.go:func appendTurnTextBlock(text, lastType string, updateType types.EventType, chunk string) (string, string) {'
       - 'server/internal/api/usecase/session_subagent_stream.go:responseText = AppendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)'
@@ -12578,3 +12578,78 @@ groups:
       - 'server/internal/agent/proxy/provider_route.go:	if scanned && s.providerSwitchedThread(threadID) {'
       - 'server/internal/agent/proxy/provider_route.go:		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)'
       - 'server/internal/agent/pool.go:		if codexThreadRethreaded(in.AgentSessionID, threadID) {'
+  - id: G-PL
+    title: 总结归属收口：progress 口信不再抢摘要、兜底摘要结构化、600 字句界截断
+    kind: fix
+    symptom: |
+      任务 #100 的卡片摘要是一屏读不完的 agent 原文，且被「已交给执行会话，
+      完成后我会汇总。」这类 progress 口信反复覆盖。「总结」到底归谁写没有判据：
+      任何 router_say 都能写 tasks.result_summary，直连回合干脆把 Agent 的逐字
+      叙述当摘要落库；0 字节输出被记成 completed，用户看到一条空回复；harness
+      的错误行（Prompt is too long）被原样贴成回复正文；摘要按 rune 硬切，卡片上
+      停在半句话。合并上游时把我们加的归属判据与提示词契约一起换掉，症状会原样
+      回来。
+    why: |
+      ① `summary` 只在收尾回合有所有权（`run_settled` / `turn_settled`），其它触发
+      一律降级成 progress；带执行动作的 user_message 回合里，progress 口信既不写
+      活动也不写任务摘要。反过来 chat 回复仍然算这一轮的答复，归属不能收得过窄。
+      ② 直连回合与无 Run 的结算回合写结构化兜底摘要（用户诉求 / 最后进展 / 状态），
+      不写 agent 逐字叙述；异步压缩总结随后用 CAS 覆盖它。CAS 的期望值只能现读任务
+      行——兜底摘要的字数由截断规则决定，猜不出来。
+      ③ 0 字节输出与已知 harness 错误行都按失败收尾，错误文案翻成用户能读的一句话，
+      原文不进回复正文。
+      ④ 写入 task_activities.summary / tasks.result_summary 的文本硬上限 600 rune，
+      并在句子边界截断；正文一个字不动。
+      ⑤ `router_prompt.md` 规则 18 写明 600 字硬上限、收尾回合清单与「交出去就不要再
+      复述」——这三句与代码判据同源，删掉任何一句模型就会滑回原来的行为。
+
+      测试 → 钉住什么：
+      · TestProgressSayDoesNotOwnTaskSummary —— 带执行动作的 user_message 回合里
+        progress 口信不写 tasks.result_summary。
+      · TestChatSayOwnsTaskSummaryWithoutExecution —— 没有执行动作的 chat 回复仍然
+        写任务摘要。
+      · TestTruncateSummaryStopsAtSentenceBoundary —— 600 rune 硬上限 + 句界截断 +
+        结果是原文前缀。
+      · TestDirectTurnSummaryIsDigestNotRawNarration —— 直连回合落结构化兜底摘要，
+        不是 agent 原文。
+      · TestEmptyDirectTurnIsRecordedAsFailure —— 0 字节输出记 failed 并写明原因。
+      · TestHarnessErrorTextIsScrubbed —— harness 错误行翻成可读文案，原文不进正文。
+      · TestRouterPromptStatesSummaryContract —— 提示词里的 turn_settled / 600 字硬
+        上限 / 丢弃 progress 三句。
+      · TestSettleWorkflowReplyKeepsLongSummary —— 结算原文再长，落库摘要仍在 600
+        rune 内且停在句界。
+      · TestActivityService_CreateUserActivity_Disabled_WithExecutor —— 直连回合的
+        任务摘要形状是结构化 digest。
+    files:
+      - server/internal/kanban/turn_summary.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_route_reply.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service_activities_summary.go
+      - server/internal/kanban/service_activity_output_text.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/turn_summary_ownership_test.go
+      - server/internal/kanban/service_activity_summary_test.go
+      - server/internal/kanban/activity_service_direct_test.go
+    anchors:
+      - 'server/internal/kanban/turn_summary.go:func (s *ActivityService) deterministicTurnSummary(ctx context.Context, taskID, text, statusLine string) string {'
+      - 'server/internal/kanban/turn_summary.go:func cutAtSentence(text string, limit int) string {'
+      - 'server/internal/kanban/turn_summary.go:func directOutputFailure(text string) string {'
+      - 'server/internal/kanban/turn_summary.go:func harnessFailureText(text string) string {'
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 600'
+      - 'server/internal/kanban/service_activity_output_text.go:return cutAtSentence(text, maxStoredSummaryRunes)'
+      - 'server/internal/kanban/activity_route_apply.go:if action.Purpose == "progress" && decision.TriggerKind == RouterTriggerUserMessage && decisionHasHandoff(decision) {'
+      - 'server/internal/kanban/activity_route_apply.go:if act.Purpose == "chat" && !decisionHasHandoff(decision) {'
+      - 'server/internal/kanban/activity_route_reply.go:func decisionHasHandoff(decision *RouterDecision) bool {'
+      - 'server/internal/kanban/activity_route_reply.go:func summaryTriggerAllowed(kind RouterTriggerKind) bool {'
+      - 'server/internal/kanban/activity_route_reply.go:if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {'
+      - 'server/internal/kanban/activity_service_turns.go:if reason := directOutputFailure(text); reason != "" {'
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, text, statusLine string) {'
+      - 'server/internal/kanban/service_activities.go:summary = truncateSummary(strings.TrimSpace(summary))'
+      - 'server/internal/kanban/service_activities_summary.go:func currentTaskResultSummary(ctx context.Context, store *TaskStore, taskID string) string {'
+      - 'server/internal/kanban/router_types.go:RouterTriggerTurnSettled RouterTriggerKind = "turn_settled"'
+      - 'server/internal/kanban/router_prompt.md:中文，200–400 字；**硬上限 600 字**（超过会被截断，截断后卡片上读起来就是半句话）。'
+      - 'server/internal/kanban/router_prompt.md:交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。'

@@ -157,6 +157,15 @@ const (
 	RouterTriggerStartup       RouterTriggerKind = "startup_reconcile" // P1
 	// 证据门：complete_task 被拒、缺口已落账，等 Router 补做或交还用户。
 	RouterTriggerCompletionBlocked RouterTriggerKind = "completion_blocked"
+	// W2：一段任务绑定会话的回合结束（不只是 Run 结算）。它让 Router 有机会给
+	// 直连回合、节点回合、带外回合写一段可读总结并跟进。
+	RouterTriggerTurnSettled RouterTriggerKind = "turn_settled"
+	// W3：重启把在飞回合带走；回复已被结算成 cancelled，但任务还停在 running。
+	RouterTriggerTurnInterrupted RouterTriggerKind = "turn_interrupted"
+	// W3：输出水位 10 分钟没动、又没有活着的回合在回复。
+	RouterTriggerTurnStalled RouterTriggerKind = "turn_stalled"
+	// W3：任务说自己 running，但既没有 open 节点也没有在回复的会话。
+	RouterTriggerTaskOrphaned RouterTriggerKind = "task_orphaned"
 )
 
 type RouterTrigger struct {

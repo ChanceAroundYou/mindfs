@@ -224,6 +224,12 @@ func (s *ActivityService) applyRouteSay(
 	if state != nil && state.settleSummarySeq == action.Seq && action.Purpose != "summary" {
 		action.Purpose = "summary"
 	}
+	// 转交口信默认不发（Plan 2026-11-22，W1-5）：同一决策里已经有执行动作时，
+	// 「已交给执行会话，完成后我会汇总」这类 progress 只是把占位重复一遍，
+	// 线上 #100 的对话流里 19/45 条就是它。占位留给执行会话自己的回复。
+	if action.Purpose == "progress" && decision.TriggerKind == RouterTriggerUserMessage && decisionHasHandoff(decision) {
+		return nil
+	}
 	act := state.take()
 	if act == nil {
 		effectID := routeEffectActivityID(decision, action)
@@ -264,13 +270,16 @@ func (s *ActivityService) applyRouteSay(
 	if act.Purpose == "summary" {
 		return s.tasks.UpdateTaskResultSummary(ctx, task.ID, body)
 	}
-	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。运行期事件的
-	// 汇报（trigger != user_message）不得覆盖用户回合留下的任务结果摘要。
+	// 纯回复没有 Run 可投影任务结果。只有这一轮**没有执行动作**的 chat 回答才算
+	// 结果摘要：progress 是过程口信，带执行动作的 chat 是开场白，两者都没有总结
+	// 所有权（W1-1）。任务头仍然要停到「待审核」。
 	if act.RunID == "" && decision.TriggerKind == RouterTriggerUserMessage {
 		// 这一轮已经回了话、又没有 Run 可投影任务头：任务必须停在「待审核」，
 		// 不能退回「未开始」（用户实测：#87 回复完成后卡片仍是未开始）。
 		s.markTurnTaskWaitingUser(ctx, task.ID)
-		return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
+		if act.Purpose == "chat" && !decisionHasHandoff(decision) {
+			return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
+		}
 	}
 	return nil
 }

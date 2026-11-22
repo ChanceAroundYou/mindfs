@@ -179,11 +179,25 @@ func (s *Service) scheduleDirectReplySummaryCompression(
 		activityID: activity.ID,
 		taskID:     activity.TaskID,
 		raw:        raw,
-		// 直连结算把 summary 写成空串、任务行写 truncateSummary(原文)：
-		// 两处 CAS 的期望值必须各自对上，否则压缩结果永远落不了地。
+		// 直连结算把 summary 写成空串、任务行写结构化兜底摘要（不是原文）：
+		// 两处 CAS 的期望值必须各自对上，否则压缩结果永远落不了地。任务行的
+		// 期望值只能现读——兜底摘要的字数由截断规则决定，猜不出来。
 		wantSummary:    strings.TrimSpace(activity.Summary),
-		wantTaskResult: truncateSummary(raw),
+		wantTaskResult: currentTaskResultSummary(ctx, store, activity.TaskID),
 	})
+}
+
+// currentTaskResultSummary 读任务行当前的结果摘要，作为压缩落地的 CAS 期望值。
+// 读不到就当空串：CAS 自然不会命中，宁可保留兜底摘要也不误覆盖。
+func currentTaskResultSummary(ctx context.Context, store *TaskStore, taskID string) string {
+	if store == nil || strings.TrimSpace(taskID) == "" {
+		return ""
+	}
+	task, err := store.GetTask(ctx, taskID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(task.ResultSummary)
 }
 
 // replySummaryTarget 是压缩落地的坐标：活动行与任务行各自的「读到的旧值」。

@@ -53,12 +53,15 @@ func TestActivityService_CreateUserActivity_Disabled_WithExecutor(t *testing.T) 
 		t.Fatalf("stored activity = %#v, want completed with the reply as body", stored)
 	}
 	// 直连回合的回复也要落到任务行上，否则看板卡片只能看到用户原始需求。
+	// 写的是结构化摘要（W1-3），不是回复原文：卡片上那句「本轮未生成总结」+
+	// 用户诉求/最后进展才读得懂；后续压缩总结会覆盖它。
 	task, err := f.tasks.GetTask(ctx, "task-1")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if task.ResultSummary != "好的，已处理" {
-		t.Fatalf("task result summary = %q, want the direct reply", task.ResultSummary)
+	if !strings.Contains(task.ResultSummary, "本轮未生成总结") ||
+		!strings.Contains(task.ResultSummary, "好的，已处理") {
+		t.Fatalf("task result summary = %q, want the structured digest", task.ResultSummary)
 	}
 }
 

@@ -97,6 +97,34 @@ func settleSummaryActionSeq(decision *RouterDecision) int {
 	return last
 }
 
+// decisionHasHandoff 报告这一轮是否把活交给了别的执行者。带执行动作时同一轮里
+// 的 chat / progress 都只是过程口信：它们既不写任务摘要，progress 也不渲染。
+func decisionHasHandoff(decision *RouterDecision) bool {
+	if decision == nil {
+		return false
+	}
+	for _, action := range decision.Actions {
+		switch action.Kind {
+		case RouterActionMessageAgent, RouterActionDeliver, RouterActionRunWorkflow,
+			RouterActionAnswerWaiting, RouterActionRetryNode, RouterActionResumeRun,
+			RouterActionRetryDirect:
+			return true
+		}
+	}
+	return false
+}
+
+// summaryTriggerAllowed 报告这个触发的回合是否允许写任务结果摘要。总结只属于
+// 「一轮真的结算了」的回合：Run 成功结算，或一段任务绑定会话的回合结算。
+func summaryTriggerAllowed(kind RouterTriggerKind) bool {
+	switch kind {
+	case RouterTriggerRunSettled, RouterTriggerTurnSettled:
+		return true
+	default:
+		return false
+	}
+}
+
 // markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。运行期事件的
 // 汇报默认 purpose=progress；用户留言仍是 reply 或调用方指定值。
 func (s *ActivityService) markRouteReply(
@@ -113,10 +141,10 @@ func (s *ActivityService) markRouteReply(
 			purpose = "progress"
 		}
 	}
-	// purpose=summary 只对「Run 成功结算」这一轮成立。模型在别的回合写了 summary
-	// 也不该让整轮失败（那会把一条汇报连同回合一起丢掉）：降级成 progress，正文
-	// 照常发给用户，只是不写任务结果摘要。
-	if purpose == "summary" && decision.TriggerKind != RouterTriggerRunSettled {
+	// purpose=summary 只对「一轮真的结算了」成立（Run 成功结算 / 会话回合结算）。
+	// 模型在别的回合写了 summary 也不该让整轮失败（那会把一条汇报连同回合一起
+	// 丢掉）：降级成 progress，正文照常发给用户，只是不写任务结果摘要。
+	if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {
 		purpose = "progress"
 	}
 	if err := s.activities.SetRouteFields(ctx, act.ID, decision.ID, userAct.ID, purpose, action.Seq); err != nil {
