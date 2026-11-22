@@ -14266,7 +14266,10 @@ groups:
       - server/internal/kanban/
     tests:
       - server/internal/kanban/summary_truncation_test.go
+      - server/internal/kanban/turn_summary_fallback_test.go
     anchors:
       - 'server/internal/kanban/task_store.go:截断在这里做，而不是只靠调用方'
       - 'server/internal/kanban/activity_store.go:truncateSummary(activity.Summary)'
       - 'server/internal/kanban/summary_truncation_test.go:func TestUpdateTaskResultSummaryTruncatesOversizeBody(t *testing.T) {'
+      - 'server/internal/kanban/activity_service_turns.go:不写 result_summary：那是卡片上「这一轮做到了什么」的位置'
+      - 'server/internal/kanban/turn_summary_fallback_test.go:func TestFailedDirectTurnDoesNotWriteFallbackSummary(t *testing.T) {'

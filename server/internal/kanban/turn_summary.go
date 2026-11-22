@@ -10,13 +10,15 @@ import (
 // 直连回合与没有 Run 的结算回合都需要一段「没有 Router 总结时」的兜底摘要。
 // 兜底不是把 Agent 的逐字叙述塞进卡片（那正是 #100 不可读的原因），而是从
 // 用户诉求、最后一段可见进展与终态拼出固定三段。
+//
+// 只用于成功回合：失败回合的结论就是「没跑成」，兜底写进 result_summary 会把
+// 系统提示当成任务结论（见 executeDirectActivity 的失败分支）。
 const (
 	turnSummaryFallbackHeader  = "本轮未生成总结（Router 未在收尾回合给出）"
 	turnSummaryUserLimit       = 100
 	turnSummaryProgressLimit   = 160
 	turnSummaryReasonLimit     = 120
 	turnSummaryFallbackStatus  = "已完成，等待你审核"
-	turnSummaryFailedPrefix    = "本轮失败："
 	turnSummaryProgressMissing = "本轮没有可见产出"
 )
 

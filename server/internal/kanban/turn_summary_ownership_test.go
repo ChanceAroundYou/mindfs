@@ -142,8 +142,13 @@ func TestEmptyDirectTurnIsRecordedAsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if !strings.Contains(updated.ResultSummary, "失败") {
-		t.Fatalf("task summary does not mention the failure: %q", updated.ResultSummary)
+	// 失败可见性归活动行（status=failed + 正文说明），不是卡片摘要：
+	// 卡片摘要写兜底文案会把系统提示当成任务结论（M3，2026-11-23 裁定）。
+	if strings.TrimSpace(updated.ResultSummary) != "" {
+		t.Fatalf("失败回合不该写 result_summary: %q", updated.ResultSummary)
+	}
+	if updated.Status != StatusWaitingUser {
+		t.Fatalf("失败回合应停在待审核，实际 %q", updated.Status)
 	}
 }
 

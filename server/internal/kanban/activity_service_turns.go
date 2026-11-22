@@ -146,7 +146,10 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 		// 失败与成功一样以「等用户」收尾：退回 pending 会让输入框按状态禁用、
 		// 卡片停在「未开始」，用户明明看到一条报错却回不了话。暂停/终态不复活。
 		s.markTurnTaskWaitingUser(ctx, task.ID)
-		s.recordTurnResultSummary(ctx, task.ID, failure, turnSummaryFailedPrefix+failure)
+		// 不写 result_summary：那是卡片上「这一轮做到了什么」的位置，而失败回合
+		// 的唯一结论就是「没跑成」。兜底摘要写进去等于把系统提示当成任务结论
+		// （实测 task_7280e0df4f5c8518 的卡片摘要就是「本轮未生成总结…本轮失败：」）。
+		// 故障说明已经在活动正文里，卡片状态也已经是待审核。
 		_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusFailed, failure)
 		return
 	}
