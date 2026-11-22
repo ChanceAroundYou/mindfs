@@ -249,8 +249,26 @@ retryExisting:
 	p.mu.Unlock()
 	if threadID != "" {
 		p.compactProxy.RegisterThread(threadID, in.SessionKey)
+		// The only resume path that hands back a different thread id is the
+		// model-provider mismatch fork (rethreadCodexResumeOnProviderMismatch):
+		// the fork copies history, including reasoning encrypted by the old
+		// provider, which the new one cannot decrypt. Tell the proxy so it can
+		// drop those items from every request on this thread.
+		if codexThreadRethreaded(in.AgentSessionID, threadID) {
+			p.compactProxy.MarkProviderSwitch(threadID)
+		}
 	}
 	return sess, nil
+}
+
+// codexThreadRethreaded reports whether opening a Codex session replaced the
+// persisted thread id. An explicit user fork arrives with an empty persisted id
+// and never reaches this check, so a true result means the provider-mismatch
+// fork ran.
+func codexThreadRethreaded(persisted, current string) bool {
+	persisted = strings.TrimSpace(persisted)
+	current = strings.TrimSpace(current)
+	return persisted != "" && current != "" && persisted != current
 }
 
 // BeginSessionUse prevents idle cleanup while a turn is using the session.

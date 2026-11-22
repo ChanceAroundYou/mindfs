@@ -75,6 +75,14 @@ type Server struct {
 	// unknownThreads remembers Codex threads nobody registered, so the log says
 	// so once instead of on every turn. Guarded by mu.
 	unknownThreads map[string]struct{}
+	// providerSwitched remembers Codex threads whose history crossed a model
+	// provider switch. Their old `reasoning.encrypted_content` was produced by
+	// the previous provider and cannot be decrypted by the new one, so the
+	// request path drops those items (see provider_switch.go). One marker file
+	// per thread under providerSwitchDir keeps the decision across restarts.
+	// Guarded by mu.
+	providerSwitched  map[string]struct{}
+	providerSwitchDir string
 
 	// Emergency brake: the presence of DisableFile turns live-compact off for
 	// the running process. Checked at most once per second.
@@ -135,11 +143,15 @@ func NewServerWithLiveCompact(liveCompact LiveCompactConfig) (*Server, error) {
 		return nil, fmt.Errorf("proxy: listen: %w", err)
 	}
 	s := &Server{
-		sessions:        make(map[string]*sessionState),
-		liveCompact:     cfg,
-		harnessRuntimes: make(map[string]*harnessRuntime),
-		listener:        ln,
-		workQueues:      make(map[string][]liveCompactJob),
+		sessions:         make(map[string]*sessionState),
+		liveCompact:      cfg,
+		harnessRuntimes:  make(map[string]*harnessRuntime),
+		providerSwitched: make(map[string]struct{}),
+		listener:         ln,
+		workQueues:       make(map[string][]liveCompactJob),
+	}
+	if cfg.ArchiveDir != "" {
+		s.providerSwitchDir = filepath.Join(cfg.ArchiveDir, providerSwitchDirName)
 	}
 	if cfg.ArchiveEnabled && cfg.ArchiveDir != "" {
 		s.archive = newArchiveStore(cfg.ArchiveDir,
