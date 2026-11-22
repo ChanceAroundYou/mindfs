@@ -232,22 +232,26 @@ func (s *TaskStore) ReopenTask(ctx context.Context, taskID string) error {
 
 // UpdateTaskResultSummary 记录最近一轮结算后的可读结果，供看板卡/任务列表展示。
 // 与状态写入一样推进 updated_at：结果变了就是任务变了，列表排序也该跟着动。
+//
+// 截断在这里做，而不是只靠调用方：摘要的四个写入点里有两个曾经直接透传，
+// 线上因此长出 9001 字的卡片摘要。落库层自己兜底，新调用方漏了也越不过去。
 func (s *TaskStore) UpdateTaskResultSummary(ctx context.Context, taskID, summary string) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tasks SET result_summary = ?, updated_at = ? WHERE id = ?`,
-		strings.TrimSpace(summary), now, strings.TrimSpace(taskID))
+		truncateSummary(strings.TrimSpace(summary)), now, strings.TrimSpace(taskID))
 	return err
 }
 
 // ReplaceTaskResultSummaryIfUnchanged 与 ActivityStore.ReplaceSummaryIfUnchanged
 // 同一条口径：异步压缩落地时只改写「还是它读到的那个值」，否则放弃。
 // 操作员改写、下一轮结算、暂停完成都必须赢过迟到的压缩结果。
+// 与 UpdateTaskResultSummary 同样在这里兜底截断：压缩器回吐的长度不受我们控制。
 func (s *TaskStore) ReplaceTaskResultSummaryIfUnchanged(ctx context.Context, taskID, want, summary string) (bool, error) {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE tasks SET result_summary = ?, updated_at = ? WHERE id = ? AND result_summary = ?`,
-		summary, now, strings.TrimSpace(taskID), want)
+		truncateSummary(summary), now, strings.TrimSpace(taskID), want)
 	if err != nil {
 		return false, err
 	}

@@ -168,7 +168,7 @@ func (s *ActivityStore) insert(ctx context.Context, activity *TaskActivity, igno
 	res, err := s.db.ExecContext(ctx, query,
 		activity.ID, activity.TaskID, activity.RootID, activity.Type, activity.Author, activity.Role,
 		activity.Body, activity.WorkflowChoice, activity.WorkflowVersionID, activity.Status,
-		activity.Summary, activity.RunID, activity.NodeRunID, activity.SessionKey,
+		truncateSummary(activity.Summary), activity.RunID, activity.NodeRunID, activity.SessionKey,
 		activity.PayloadJSON, activity.ToolUseID,
 		activity.ReplyToID, activity.RouterDecisionID, activity.Purpose, activity.Ordinal, boolToInt(activity.Hidden),
 		activity.CreatedAt.Format(time.RFC3339Nano), activity.UpdatedAt.Format(time.RFC3339Nano))
@@ -435,7 +435,7 @@ func (s *ActivityStore) ResolvePrompt(ctx context.Context, id, status, payloadJS
 	if summary != nil {
 		res, err = s.db.ExecContext(ctx,
 			`UPDATE task_activities SET status=?, summary=?, payload_json=?, updated_at=? WHERE id=? AND status=?`,
-			status, *summary, payloadJSON, now, id, ActivityStatusWaitingUser)
+			status, truncateSummary(*summary), payloadJSON, now, id, ActivityStatusWaitingUser)
 	} else {
 		res, err = s.db.ExecContext(ctx,
 			`UPDATE task_activities SET status=?, payload_json=?, updated_at=? WHERE id=? AND status=?`,
@@ -496,7 +496,7 @@ func (s *ActivityStore) UpdateStatus(ctx context.Context, id string, status stri
 	if summary != nil {
 		res, err = s.db.ExecContext(ctx,
 			`UPDATE task_activities SET status = ?, summary = ?, updated_at = ? WHERE id = ?`,
-			status, *summary, nowStr, id)
+			status, truncateSummary(*summary), nowStr, id)
 	} else {
 		res, err = s.db.ExecContext(ctx,
 			`UPDATE task_activities SET status = ?, updated_at = ? WHERE id = ?`,
@@ -583,7 +583,7 @@ func (s *ActivityStore) ReplaceSummaryIfUnchanged(ctx context.Context, id, want,
 	}
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE task_activities SET summary = ?, updated_at = ? WHERE id = ? AND summary = ?`,
-		summary, time.Now().UTC().Format(time.RFC3339Nano), id, want)
+		truncateSummary(summary), time.Now().UTC().Format(time.RFC3339Nano), id, want)
 	if err != nil {
 		return false, err
 	}

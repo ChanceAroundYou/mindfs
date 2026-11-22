@@ -14236,3 +14236,37 @@ groups:
       - 'cli/cmd/autostart.go:if errors.Is(err, os.ErrNotExist) {'
       - 'cli/cmd/autostart_test.go:func TestPrepareAutoStartEnvironmentWithoutSnapshotIsNotAnError(t *testing.T) {'
       - 'cli/cmd/autostart_test.go:t.Fatal("corrupt snapshot must still fail")'
+
+  - id: G-PX
+    title: Router 收尾可信化第二轮：摘要落库兜底、失败轮不再算结论、巡检回合可用
+    kind: fix
+    symptom: |
+      线上三组症状同源 —— 任务卡片与侧栏展示的「结论」不可信：
+      ① 20 个任务摘要超过 600 字（最大 9001 字），29 条活动 summary 超限（最大 3527），
+         卡片上是整段 Agent 叙述而不是一屏能读完的摘要。四个写入点里
+         `commitCompletion` 与 Router 的 summary 分支直接透传，落库层不设防。
+      ② `Prompt is too long` 之类的 harness 报错回合被记成 `has_output=true` 的正常回复，
+         任务以 success 收尾，用户看不到失败。失败信号只存在于
+         `TaskAuxFlags.SessionError`，没有进 `turn_settled` 事件。
+      ③ 巡检事件（`task_stalled` / `task_orphaned` / `turn_interrupted`）全部 skipped，
+         `last_error='missing originating user activity'` —— 巡检回合没有任何用户留言，
+         两道闸门都要求它，于是发现问题也只会在账本里留一条跳过。
+    why: |
+      这三项都是「Router 说了什么」到「用户看到什么」之间的失真，修在消费端而不是
+      生产端，因为生产端（Router 模型）本来就不可靠：
+      - 摘要上限收口到 `truncateSummary`，并在 `TaskStore` / `ActivityStore` 的
+        六条写口各自兜底。只靠调用方截断时漏了两个，历史已经证明靠不住；
+        历史数据不回填（截断不可逆，可能毁掉还要回看的原文）。
+      - 失败判定从「文本长度 > 400 字就返回空」改为「首行/首 200 字命中已知签名
+        即判失败」。原判据让最需要报错的回合（错误行 + 大段正文）恰好漏过。
+      - 巡检回合豁免「必须有原始用户留言」的闸门，但只放开 `say` / `ask_user`
+        两个无绑定动作；`complete_task` 维持原限制 —— 巡检不该在用户没说话时
+        自行闭合任务。
+    files:
+      - server/internal/kanban/
+    tests:
+      - server/internal/kanban/summary_truncation_test.go
+    anchors:
+      - 'server/internal/kanban/task_store.go:截断在这里做，而不是只靠调用方'
+      - 'server/internal/kanban/activity_store.go:truncateSummary(activity.Summary)'
+      - 'server/internal/kanban/summary_truncation_test.go:func TestUpdateTaskResultSummaryTruncatesOversizeBody(t *testing.T) {'
