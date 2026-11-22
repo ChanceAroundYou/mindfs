@@ -23,6 +23,7 @@ import {
 import { copyText } from "../platform/clipboard";
 import { AppShell } from "../layout/AppShell";
 import { ApkUpdatePrompt } from "../components/app/ApkUpdatePrompt";
+import { ControlModeBanner } from "../components/app/ControlModeBanner";
 import { ToastContainer } from "../components/shell/ToastContainer";
 import { DialogHost } from "../components/shell/DialogHost";
 import { BottomSheet } from "../components/shell/BottomSheet";
@@ -432,6 +433,7 @@ drawer={<
       taskDetailsById={taskDetailsById}
       />
       <ApkUpdatePrompt />
+      <ControlModeBanner />
       <ToastContainer />
       <DialogHost />
     </>

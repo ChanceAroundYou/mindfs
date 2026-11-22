@@ -688,6 +688,32 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   「到达模式后 5 秒内不得离开 + `state` 表一致」断言，并用「offline-local 分支也跑 settle
   + 删守卫」的缺陷二进制确定性打红（`模式 (主节点已停) 到达 offline-local 后 5s 内又变成 online`）。
 
-**未做 / 未覆盖**：`OnModeChange` 仍未接系统事件与前端横幅（T16）；前端镜像打包（T19–T20）；
-`pc-win` 的 `role=control` 仍待 P1 单独授权；e2e 未覆盖转发失败的 503 分支与浏览器侧降级。
-`control_sync.enabled` 保持 `false`，未改配置、未部署、未重启任何节点。
+**未做 / 未覆盖**：`OnModeChange` 仍未接系统事件（横幅改走状态轮询，见 T16）；
+前端镜像打包（T19–T20）；`pc-win` 的 `role=control` 仍待 P1 单独授权；e2e 未覆盖转发失败的
+503 分支与浏览器侧降级。`control_sync.enabled` 保持 `false`，未改配置、未部署、未重启任何节点。
+
+### T16 模式横幅（2026-11-22）
+
+- 目标：四态横幅 + 手动切换 + 状态轮询；在线与「本机没有这个能力」都不出横幅。
+- 分层（被仓库架构红线逼出来的）：`web/src/shared/controlMode.ts`（纯词汇与四态→动作映射）、
+  `web/src/services/net/controlSync.ts`（读状态 / 切换）、`web/src/hooks/useControlSyncStatus.ts`
+  （10 s 轮询 + 停表 + 动作）、`web/src/components/app/ControlModeBanner.tsx`（portal 横幅）。
+  组件**不能**直接 import `services/`（`reviewer-architecture-rules.test.mjs` 会红），
+  所以映射落 shared、请求落 service、视图只经 hook。
+- 关键语义：① `/api/control-sync/status` 走 `controlPath`（页面服务器），**404 折成 null**
+  并停表 —— 主节点与未启用 `control_sync` 的机器每台都会问到它，当成故障会满屏红条；
+  ② 其它错误（网络抖动、bootstrap 未就绪）保留上一份状态继续轮询；③ 切换只发 `local` / `retry`
+  两种动作；④ `conflict-review` 的「查看冲突」只派发 `mindfs:control-conflicts` 事件，
+  面板是 T17，事件名是两层之间唯一的接口。
+- 用例：`web/tests/control-mode-banner.test.mjs` 7 条 —— 纯函数（在线/空不出横幅、三种降级
+  状态各自唯一动作且有标题说明）+ 源码契约（状态端点走 `controlPath`、404 在
+  `fetchControlSyncStatus` 函数体内折成 `null`、停表、只发两种动作、App 只挂一处、
+  zh/en 10 个键齐全）。
+- 变异：动作映射对调、`fetchControlSyncStatus` 的 404 不折成 null、未启用不停表，
+  各自打红对应用例后还原。第一版 404 断言用整文件正则，会一路吃到 `switchControlSyncMode`
+  的同款分支上（等于没钉），已改为按函数边界切开。
+- 门禁：`npx vitest run web/tests/control-mode-banner.test.mjs` 7/7 绿、
+  `reviewer-architecture-rules.test.mjs` 绿、`tsc -b --noEmit` 干净、
+  全量 `npx vitest run` 261 文件 / 859 通过 / 6 跳过。
+- 未做：真浏览器点验（留给 T22）、冲突面板（T17）、在线态手动切本地的入口（spec §8 在线不出横幅，
+  切换入口只在同步中 / 冲突态出现）。未部署、未重启、未改配置。

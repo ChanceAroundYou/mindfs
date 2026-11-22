@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T21 双实例验收）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T21 双实例验收）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12211,6 +12211,13 @@ groups:
       **`RefreshBaseline` 把「副本不认识但权威存储里有」的记录并进基线**（只采纳副本会让本地既有记录
       在下一次采集被当成新增发出去）；**primary 启动即 `CaptureAll` 发布基线**（兜底扫描 15 秒才有第一拍，
       边缘完全可能在这之前追平后掉线 —— 那一版副本缺一批记录，恢复时同样撞冲突）。
+      ⑱ 前端模式横幅（`shared/controlMode.ts` / `services/net/controlSync.ts` / `hooks/useControlSyncStatus.ts` /
+      `components/app/ControlModeBanner.tsx`）的四条必须保留：**在线与 404 都不出横幅**（主节点和未启用
+      control_sync 的机器不注册 `/api/control-sync/status`，把它当请求失败会在每台普通节点上弹一条永远
+      报错的横幅）；**404 只静默关闭轮询、其他错误保留上一份状态继续轮询**（一次超时不能把边缘的横幅
+      永久关掉，两者必须能区分）；**四态到动作是纯函数**（本地模式→立即重试、同步中→切换到本地、
+      冲突→查看冲突，渲染层不再自己 if/else 一遍）；**视图层只经 hook 访问网络**（components 直接
+      import services 会踩仓库的 view→service 架构红线，轮询与请求一律留在 hook）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12284,6 +12291,13 @@ groups:
       - server/app/control_sync.go
       - server/app/control_sync_test.go
       - e2e/test_control_sync_offline.py
+      - web/src/shared/controlMode.ts
+      - web/src/services/net/controlSync.ts
+      - web/src/hooks/useControlSyncStatus.ts
+      - web/src/components/app/ControlModeBanner.tsx
+      - web/src/app/AppRootView.tsx
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
 
     tests:
       - server/app/control_plane_isolation_test.go
@@ -12322,6 +12336,7 @@ groups:
       - server/app/control_sync_test.go
       - cli/cmd/control_sync_test.go
       - e2e/test_control_sync_offline.py
+      - web/tests/control-mode-banner.test.mjs
 
     anchors:
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
@@ -12444,3 +12459,14 @@ groups:
       - 'server/app/server.go:controlSync, err := startControlSync(ctx, opts.ControlSync, nodeinfo.Normalize(opts.Role), configDir, controlSyncStores{'
       - 'server/app/server.go:root = controlSync.wrapRoot(inner)'
       - 'server/app/workspace.go:m.controlSyncWiringOf().applyTo(handler)'
+      - 'web/src/shared/controlMode.ts:export function controlModeBanner(mode: ControlMode | null | undefined): ControlModeBannerState | null {'
+      - 'web/src/shared/controlMode.ts:action: "retry",'
+      - 'web/src/services/net/controlSync.ts:export async function fetchControlSyncStatus(): Promise<ControlSyncStatus | null> {'
+      - 'web/src/services/net/controlSync.ts:if (endpointMissing(err)) return null;'
+      - 'web/src/hooks/useControlSyncStatus.ts:if (!enabled) return;'
+      - 'web/src/hooks/useControlSyncStatus.ts:window.clearInterval(timer);'
+      - 'web/src/components/app/ControlModeBanner.tsx:export function ControlModeBanner() {'
+      - 'web/src/app/AppRootView.tsx:<ControlModeBanner />'
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:"controlMode.local": "本地模式",'
+      - 'web/src/i18n/locales/en-US-workspace.ts:"controlMode.local": "Local mode",'
+      - 'web/tests/control-mode-banner.test.mjs:test("三种降级状态各自给出唯一动作", () => {'
