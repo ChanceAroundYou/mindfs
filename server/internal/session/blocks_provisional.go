@@ -41,39 +41,46 @@ func (m *Manager) AppendProvisionalToolCall(ctx context.Context, key string, seq
 }
 
 func (m *Manager) ReadProvisionalTurnBlocks(ctx context.Context, key string, seq int, turnID string) ([]Block, error) {
-	all, err := m.ReadBlocks(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Block, 0)
-	for _, block := range all {
-		if block.Seq == seq && block.MindFSID == turnID && block.Step < 0 {
-			out = append(out, block)
+	provisional, _, err := m.readProvisionalTurnState(key, seq, turnID)
+	return provisional, err
+}
+
+// readProvisionalTurnState 一次流式扫描拿到两样东西：本轮未封口块，以及同一 seq
+// 已可见块各 pos 的最大 revision。原先封口要跑两遍全量读（ReadProvisionalTurnBlocks
+// 一遍、ReadBlocks 再一遍），长会话 70 MB 时等于白读 140 MB。
+func (m *Manager) readProvisionalTurnState(key string, seq int, turnID string) ([]Block, map[int]int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	provisional := make([]Block, 0)
+	maxRevision := make(map[int]int)
+	if err := m.forEachBlock(key, func(block Block) bool {
+		if block.Seq != seq {
+			return true
 		}
+		if block.MindFSID == turnID && block.Step < 0 {
+			provisional = append(provisional, block)
+			return true
+		}
+		if block.Step >= 0 && block.Revision > maxRevision[block.Pos] {
+			maxRevision[block.Pos] = block.Revision
+		}
+		return true
+	}); err != nil {
+		return nil, nil, err
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Pos < out[j].Pos })
-	return out, nil
+	sort.SliceStable(provisional, func(i, j int) bool { return provisional[i].Pos < provisional[j].Pos })
+	return provisional, maxRevision, nil
 }
 
 // SealProvisionalTurnBlocks 把未封口块追加上高 revision 的可见版本。重复调用安全：
 // 每次 revision+1，读取侧同 (seq,pos) 只取最高版本，界面仍只看到一份。
 func (m *Manager) SealProvisionalTurnBlocks(ctx context.Context, key string, seq int, turnID string) error {
-	provisional, err := m.ReadProvisionalTurnBlocks(ctx, key, seq, turnID)
+	provisional, maxRevision, err := m.readProvisionalTurnState(key, seq, turnID)
 	if err != nil {
 		return err
 	}
 	if len(provisional) == 0 {
 		return nil
-	}
-	all, err := m.ReadBlocks(ctx, key)
-	if err != nil {
-		return err
-	}
-	maxRevision := make(map[int]int)
-	for _, block := range all {
-		if block.Seq == seq && block.Step >= 0 && block.Revision > maxRevision[block.Pos] {
-			maxRevision[block.Pos] = block.Revision
-		}
 	}
 	sealed := make([]Block, 0, len(provisional))
 	for i := 0; i < len(provisional); i++ {

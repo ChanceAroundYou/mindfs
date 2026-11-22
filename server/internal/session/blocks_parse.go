@@ -46,8 +46,18 @@ func resolveBlocks(blocks []Block, seqSet map[int]bool) []Block {
 	return out
 }
 
-// parseBlocks 逐行解析。**坏行跳过不报错** —— 块流是 append-only 的，一行写坏了
-// 不能让整个会话的正文读不出来（与主日志 parseExchangeLine 的既有取舍一致）。
+// parseBlockLine 解一行块。坏行与缺 seq 的历史行都返回 false —— 块流是
+// append-only 的，一行写坏了不能让整个会话的正文读不出来（与主日志
+// parseExchangeLine 的既有取舍一致）。
+func parseBlockLine(line []byte) (Block, bool) {
+	var block Block
+	if err := json.Unmarshal(line, &block); err != nil || block.Seq <= 0 {
+		return Block{}, false
+	}
+	return block, true
+}
+
+// parseBlocks 逐行解析已整份读入的块流（窗口读的尾部路径用）。
 func parseBlocks(payload []byte) []Block {
 	blocks := make([]Block, 0, 16)
 	if len(payload) == 0 {
@@ -63,18 +73,9 @@ func parseBlocks(payload []byte) []Block {
 			line = payload[:idx]
 			payload = payload[idx+1:]
 		}
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
+		if block, ok := parseBlockLine(bytes.TrimSpace(line)); ok {
+			blocks = append(blocks, block)
 		}
-		var block Block
-		if err := json.Unmarshal(line, &block); err != nil {
-			continue
-		}
-		if block.Seq <= 0 {
-			continue
-		}
-		blocks = append(blocks, block)
 	}
 	return blocks
 }

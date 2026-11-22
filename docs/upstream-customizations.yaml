@@ -14317,3 +14317,37 @@ groups:
       - 'server/internal/kanban/service_recover_out_of_band.go:先写事件、后改状态'
       - 'server/internal/kanban/router_out_of_band_recovery_test.go:func TestRecoverStaleOutOfBandTaskWritesInterruptedTurn(t *testing.T) {'
       - 'server/app/workspace_build.go:services.Kanban.StartOutOfBandRecovery(m.ctx)'
+
+  - id: G-PY
+    title: 块流读取流式化：超长会话的发送与封口不再整份读入
+    kind: perf
+    symptom: |
+      线上块流单文件已到 70 MB / 4.5 万行（`.mindfs/sessions/<key>.blocks.jsonl`，
+      最大单行 289 KB）。读路径全是「`ReadMetaFile` 整份进内存 → `strings.Split` →
+      逐行 `json.Unmarshal`」：发送路径每轮 `CountBlocksAfterSeq` 实测 685.6 ms /
+      157 MB 分配；`SealProvisionalTurnBlocks` 崩溃恢复时还要跑两遍全量读
+      （`ReadProvisionalTurnBlocks` 一遍、`ReadBlocks` 再一遍），等于白读 140 MB。
+      会话越长越慢，且慢在「发送」这条用户直接感知的路径上。
+    why: |
+      换成「复用行缓冲、逐行回调 + 行首 seq 前缀解析」后实测 59.0 ms / 75 MB
+      （约 11.6×），峰值内存只跟最长一行走；封口合并成一次扫描同时拿到未封口块与
+      各 pos 的最大 revision。行为必须与旧实现逐项等价，因此两处显式判坏行：
+      ① 没有换行结尾的末行不回调 —— `AppendBlocks` 每块都写 `payload + '\n'`，
+         读到 EOF 却不是换行收尾只能是崩溃留下的半行；不丢的话半行里的
+         `{"seq":4,` 会被前缀解析认成合法 seq，计数虚高。
+      ② 前缀快路径要求行尾是 `}` —— 块行是 `json.Marshal` 出的紧凑对象，真实
+         4.5 万行全部以 `}` 收尾（实测 0 例外）。旧实现靠整行解码失败顺带跳过坏行，
+         流式路径没有这个副作用，必须显式补上，否则终止符齐全的坏行也会被计数。
+    files:
+      - server/internal/session/
+    tests:
+      - server/internal/session/blocks_stream_test.go
+    anchors:
+      - 'server/internal/session/blocks_stream.go:const blockLineBuffer = 256 << 10'
+      - 'server/internal/session/blocks_stream.go:没有换行结尾的末行不回调'
+      - "server/internal/session/blocks_stream.go:line[len(line)-1] == '}'"
+      - 'server/internal/session/blocks_store.go:func (m *Manager) forEachBlock(key string, fn func(Block) bool) error {'
+      - 'server/internal/session/blocks_store.go:blockSeqFromLine(line)'
+      - 'server/internal/session/blocks_parse.go:func parseBlockLine(line []byte) (Block, bool) {'
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) readProvisionalTurnState('
+      - 'server/internal/session/blocks_stream_test.go:func TestCountBlocksAfterSeqStreamsLongLines(t *testing.T) {'

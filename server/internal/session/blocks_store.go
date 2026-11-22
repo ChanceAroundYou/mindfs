@@ -91,19 +91,37 @@ func (m *Manager) ReadResolvedBlocks(ctx context.Context, key string) ([]Block, 
 }
 
 func (m *Manager) readBlocksAll(key string) ([]Block, error) {
+	m.fullBlockReads++
+	blocks := make([]Block, 0, 64)
+	if err := m.forEachBlock(key, func(block Block) bool {
+		blocks = append(blocks, block)
+		return true
+	}); err != nil {
+		return nil, err
+	}
+	return blocks, nil
+}
+
+// forEachBlock 逐块流式回调块流（调用方负责 m.mu）。文件缺失等价于「没有块」。
+func (m *Manager) forEachBlock(key string, fn func(Block) bool) error {
 	path, err := m.blocksPath(key)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	m.fullBlockReads++
-	payload, err := m.root.ReadMetaFile(path)
+	file, err := m.root.OpenMetaFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return []Block{}, nil
+			return nil
 		}
-		return nil, err
+		return err
 	}
-	return parseBlocks(payload), nil
+	defer file.Close()
+	return forEachBlockLine(file, func(line []byte) bool {
+		if block, ok := parseBlockLine(line); ok {
+			return fn(block)
+		}
+		return true
+	})
 }
 
 // BlocksLogAbsolutePath 返回块流的绝对路径（解析器与 AppendBlocks 一致）。
@@ -134,28 +152,24 @@ func (m *Manager) CountBlocksAfterSeq(key string, afterSeq int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	payload, err := m.root.ReadMetaFile(path)
+	file, err := m.root.OpenMetaFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	// 块行可达 700KB，不能用默认 64KB token 的 bufio.Scanner；整份读入再按行切。
+	defer file.Close()
+	// 块行可达 700KB，不能用默认 64KB token 的 bufio.Scanner；这里逐行流式读，
+	// 且只取行首的 seq —— 长会话的正文与工具输出不必解码（见 blocks_stream.go）。
 	count := 0
-	for _, line := range strings.Split(string(payload), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		var head struct {
-			Seq int `json:"seq"`
-		}
-		if err := json.Unmarshal([]byte(line), &head); err != nil {
-			continue // 坏行跳过，与 parseBlocks 一致
-		}
-		if head.Seq > afterSeq {
+	if err := forEachBlockLine(file, func(line []byte) bool {
+		if seq, ok := blockSeqFromLine(line); ok && seq > afterSeq {
 			count++
 		}
+		return true
+	}); err != nil {
+		return 0, err
 	}
 	return count, nil
 }
