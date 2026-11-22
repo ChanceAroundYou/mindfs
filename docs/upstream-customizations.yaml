@@ -12300,3 +12300,110 @@ groups:
       - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.compactFailedDetail"'
       - 'web/tests/context-saving-chip.test.mjs:test("没读到用量的样本只留在账本里，不再在胶囊里提示"'
       - 'e2e/test_session_hygiene.py:def test_manual_compact_button_follows_server_pending(page: Page) -> None:'
+
+  - id: G-PH
+    title: 飞书通道 M2 + M4：owner 私聊建任务 / 项目选择卡 / 主控代发卡片 / 按卡片节点回传点击
+    kind: feature
+    symptom: |
+      用户不在电脑前时只能等网页：飞书里既不能发一句「在 fn 的 docs 建个任务」让对应节点真的建卡，
+      重名项目也没有选择卡；worker 上跑出来的 gate/ask 卡因为只有主节点持有 lark-cli 而送不到飞书，
+      即使送到，点击也无处可去。不能把 worker 的卡片内容当作路由地址，否则任何任务都能借卡片把
+      主控的点击引到别的机器。
+    why: |
+      ① **入站只认 owner 的 p2p 文本**：`im.message.receive_v1` 与 `card.action.trigger` 是两条独立的
+      lark-cli 长连接，消息先过 dedupe / 限速再解析；群聊、非 owner、非文本一律不产生任务。
+      ② **项目身份是 (node, root)**：`bindings` → `#`/`@` 前缀 → 唯一文本命中 → ≤5 个项目选择卡；
+      24h 过期与每聊天只留一张 pending 卡由 store 保证，点击时重新按卡里的节点/RootID 建任务。
+      ③ **远程建任务不碰主库**：`feishuTaskCreator` 只按节点表找到 worker 的 `/api/tasks`，载荷固定为
+      `root_id`/`input`/`name`/`workflow_choice=empty`/`start_immediately=true`。
+      ④ **卡片只由主控发**：worker 的 `RelayNotifier` 只 POST 固定 control URL；主控 `/api/channels/feishu/relay`
+      校验共享 token、节点存在于节点表、信封 `node_id` 与卡片 `node_id` 一致，才写 card store。
+      ⑤ **点击只按卡片 node_id 回传**：`feishuAnswerRelay` 的地址只来自节点表，载荷里没有 URL 字段；
+      4xx 立即失败，5xx/网络错才按 10s/30s/2m 退避；本地节点直接 apply。worker `/api/channels/feishu/answer`
+      再校验 token 与 `FeishuNodeID`，错误 token 连 apply 都到不了。
+      ⑥ **控制面只开一条精确路径**：`nodeinfo` 只把 `/api/channels/feishu/relay` 列为控制面，
+      `/api/channels` 整段仍是数据面，不能让 worker 失去自己的任务 API。
+    boundary: |
+      不做群聊、不做多账户、不在 worker 上放 lark-cli 或凭据；模型端点不进同步范围。
+      `channels.feishu` 缺省关闭，relay token 只走 `config.json`，日志不写 token 与消息全文。
+      notice 卡点击在本地结案，gate/ask 的 NodeRun 级真实推进仍需部署后在真实 worker 上验收；
+      本轮只做到真实 HTTP 往返 + 卡片状态机 + 节点路由的隔离端到端，未部署、未重启任何节点。
+    files:
+      - cli/cmd/mindfs.go
+      - cli/cmd/startup.go
+      - cli/cmd/startup_config_test.go
+      - cli/cmd/startup_feishu.go
+      - server/app/feishu.go
+      - server/app/feishu_answer_relay.go
+      - server/app/feishu_answer_relay_test.go
+      - server/app/feishu_intake.go
+      - server/app/feishu_test.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+      - server/app/feishu_intake_relay_integration_test.go
+      - server/app/feishu_click_relay_integration_test.go
+      - server/internal/api/http.go
+      - server/internal/api/http_feishu_answer.go
+      - server/internal/api/http_feishu_answer_test.go
+      - server/internal/api/http_feishu_relay.go
+      - server/internal/api/http_feishu_relay_test.go
+      - server/internal/api/http_routes.go
+      - server/internal/channels/feishu/catalog.go
+      - server/internal/channels/feishu/catalog_test.go
+      - server/internal/channels/feishu/event_message.go
+      - server/internal/channels/feishu/event_message_test.go
+      - server/internal/channels/feishu/intake.go
+      - server/internal/channels/feishu/intake_store.go
+      - server/internal/channels/feishu/intake_store_test.go
+      - server/internal/channels/feishu/intake_test.go
+      - server/internal/channels/feishu/relay.go
+      - server/internal/channels/feishu/relay_notifier.go
+      - server/internal/channels/feishu/relay_notifier_test.go
+      - server/internal/channels/feishu/relay_test.go
+      - server/internal/channels/feishu/render.go
+      - server/internal/channels/feishu/render_test.go
+      - server/internal/channels/feishu/resolve.go
+      - server/internal/channels/feishu/resolve_test.go
+      - server/internal/channels/feishu/service.go
+      - server/internal/channels/feishu/service_click.go
+      - server/internal/channels/feishu/service_click_retry_test.go
+      - server/internal/channels/feishu/service_click_test.go
+      - server/internal/channels/feishu/store.go
+      - server/internal/channels/feishu/store_test.go
+      - server/internal/channels/feishu/supervisor.go
+      - server/internal/channels/feishu/supervisor_deadline_test.go
+      - server/internal/channels/feishu/supervisor_test.go
+      - server/internal/channels/feishu/testdata/message_p2p.json
+      - server/internal/channels/feishu/types.go
+      - server/internal/nodeinfo/role.go
+      - server/internal/nodeinfo/role_test.go
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-21-feishu-m2-intake-and-m4-relay.md
+    tests:
+      - server/app/feishu_intake_relay_integration_test.go
+      - server/app/feishu_click_relay_integration_test.go
+      - server/app/feishu_answer_relay_test.go
+      - server/internal/channels/feishu/intake_test.go
+      - server/internal/channels/feishu/intake_store_test.go
+      - server/internal/channels/feishu/resolve_test.go
+      - server/internal/channels/feishu/catalog_test.go
+      - server/internal/channels/feishu/relay_test.go
+      - server/internal/channels/feishu/relay_notifier_test.go
+      - server/internal/channels/feishu/service_click_test.go
+      - server/internal/channels/feishu/event_message_test.go
+      - server/internal/channels/feishu/render_test.go
+      - server/internal/api/http_feishu_relay_test.go
+      - server/internal/api/http_feishu_answer_test.go
+      - server/internal/nodeinfo/role_test.go
+      - cli/cmd/startup_config_test.go
+    anchors:
+      - 'server/app/feishu_intake_relay_integration_test.go:func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {'
+      - 'server/app/feishu_click_relay_integration_test.go:func TestFeishuRelayEndToEndCardAndAnswer(t *testing.T) {'
+      - 'server/app/feishu_answer_relay.go:func (r *feishuAnswerRelay) Relay(ctx context.Context, answer feishu.Answer) error {'
+      - 'server/internal/channels/feishu/intake.go:func NewIntakeService(cfg Config, catalog ProjectCatalog, store *IntakeStore, creator TaskCreator,'
+      - 'server/internal/channels/feishu/relay.go:func AddRelayNotice(ctx context.Context, svc *Service, nodeID string, notice Notice, lister NodeLister) error {'
+      - 'server/internal/api/http_feishu_relay.go:func (h *HTTPHandler) handleFeishuRelay(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_feishu_answer.go:func (h *HTTPHandler) handleFeishuAnswer(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/nodeinfo/role.go:"/api/channels/feishu/relay",'
+      - 'server/internal/channels/feishu/types.go:const PickerTTL = 24 * time.Hour'

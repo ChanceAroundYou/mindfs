@@ -571,3 +571,39 @@ git commit -- \
 - worker 节点任务产生 gate → 主节点飞书收到卡；用户点击 → 对应 worker 的 NodeRun 推进，主节点任务库不误写。
 - 错误 token / 伪造 node_id 的 relay 与 answer 请求分别被 401/400/403 拒绝，日志无 token、无消息全文。
 - 本机 `sudo systemctl restart mindfs` 只能由用户执行；WSL / fn / pc-win 的重启按节点表执行，版本逐字一致。
+
+## Task 9 执行结果（2026-11-22）
+
+### 端到端接线
+
+- 新增 `server/app/feishu_intake_relay_integration_test.go`（171 行）与 `server/app/feishu_click_relay_integration_test.go`（240 行），均位于 `package app`：能同时触达 `feishuAnswerRelay`、`feishuTaskCreator` 与 `api.HTTPHandler.Routes()`，不需要导出任何包私有符号。
+- `TestFeishuIntakeEndToEndRoutesToRemoteTask`：用真实 `im.message.receive_v1` 事件驱动真实 Service/supervisor、真实 intake 策略、真实项目解析和真实 `feishuTaskCreator`，断言 owner 私聊「在 fn 的 docs 建个任务」只向 fn 的 `/api/tasks` 发一次 POST，载荷 `root_id=root-docs`、`input` 原文、`name=feishuTaskName(input)`、`workflow_choice=empty`、`start_immediately=true`；同时钉住 `PickerTTL=24h`。
+- `TestFeishuRelayEndToEndCardAndAnswer`：worker 卡片经真实 `RelayNotifier` → 主控 `/api/channels/feishu/relay` → 真实 card store + lark-cli 假脚本；断言卡片落在主控、`NodeID=fn`，且点击后 `state=done`。再把 `Answer` 经生产 `feishuAnswerRelay` 发到 worker 的 `/api/channels/feishu/answer`，断言口令头、路径和整个 `Answer` 原样到达，`AppContext{}` 下 `KindNotice` 直接返回 200；载荷里塞了 decoy URL，decoy 服务器零命中。
+- `TestFeishuRelayEndToEndRejectsWrongToken`：两端 401，错误口令不建卡、不到 apply。
+- RED/GREEN：临时注释掉 `http_routes.go` 中 answer 路由，定向测试报 `answer relay: feishu answer: node fn rejected answer with HTTP 404` 与 `answer wrong token = 404`；恢复后 3 条全部 PASS。
+
+### 变异账本
+
+| # | 变异 | 定向命令 | RED 证据 | 恢复后 |
+|---|---|---|---|---|
+| M1 | 去掉 `s.store.Seen(id)` 去重 | `go test ./server/internal/channels/feishu -run TestIntakeDedupAndRateLimit -count=1` | `同一 message_id 只能处理一次：calls=2 notices=2` | PASS |
+| M2 | 去掉 owner 检查 | `go test ./server/internal/channels/feishu -run TestIntakeIgnoresNonOwnerGroupAndNonText -count=1` | `非 owner / 群聊 / 非文本必须忽略：calls=0 notices=1` | PASS |
+| M3 | `PickerTTL` 改为 1h | `go test ./server/app -run TestFeishuIntakeEndToEndRoutesToRemoteTask -count=1` | `feishu.PickerTTL = 1h0m0s, want 24h` | PASS |
+| M4 | relay token 改成明文比较 | `go test ./server/internal/api -run TestFeishuRelayUsesConstantTimeTokenCompare -count=1` | `relay token must not be compared with plain string equality` | PASS |
+| M5 | 控制面前缀放宽到 `/api/channels` | `go test ./server/internal/nodeinfo -run TestFeishuRelayIsExactControlPlanePath -count=1` | `/api/channels must stay data-plane` 等 4 行 | PASS |
+| M6 | 去掉节点表校验 | `go test ./server/internal/channels/feishu -run TestValidateRelayRequestRejectsUnconfiguredNode -count=1` | 第一次因 `known` 未使用编译失败，不构成行为证据；改为 `_ = known` 后真实 RED：`ValidateRelayRequest(...NodeID:attacker...) accepted an unconfigured node` | PASS |
+| M7 | answer 按载荷 URL 路由 | `go test ./server/app -run TestFeishuRelayEndToEndCardAndAnswer -count=1` | `answer 没有被回传到 fn 节点`（decoy 收到请求） | PASS |
+| M8 | notifier 重试 4xx | `go test ./server/internal/channels/feishu -run TestRelayNotifierFailsImmediatelyOnClientError -count=1` | `4xx must fail immediately` | PASS |
+
+### 门禁
+
+- `go test -count=1 ./...`：全绿（28 包，`server/internal/kanban` 271.6s）。
+- `(cd web && npx tsc -b --noEmit)`：clean（只有 npm 的 `allow-scripts` 警告）。
+- `(cd web && npx vitest run)`：260 passed / 5 skipped 文件，863 passed / 6 skipped 用例，77.93s。
+- `git worktree add --detach /tmp/mindfs-gph-check HEAD && (cd /tmp/mindfs-gph-check && make check-upstream)`：结果见提交后复跑记录；本轮没有基线 flake 出现。
+
+### 已知边界
+
+- notice 卡点击在 `service_click.go` 里走 `settleNotice` 本地结案，不经过 answer handler；因此「卡片点击 → 主控 answer handler → worker」这一段由直接调用生产 `feishuAnswerRelay` 覆盖，卡片状态机另由真实 click 事件覆盖。gate/ask 的 NodeRun 级推进由 T7/T8 单测覆盖，未在本轮隔离端到端里跑真实 kanban。
+- 未部署、未重启任何节点；本机 system 单元仍只能由用户重启。
+
