@@ -12850,3 +12850,101 @@ groups:
       - 'server/internal/api/usecase/external_sessions_live_tail.go:func (s *Service) recoverLiveContinuationTail('
       - 'server/internal/api/usecase/external_sessions_live_tail.go:items := recoveryAgentExchanges(imported.Exchanges)'
       - 'server/internal/api/usecase/external_sessions_live_tail.go:if imported.Cursor.CommittedOffset < imported.Cursor.Offset {'
+
+  - id: G-PR
+    title: live compact 收尾：压缩事件宽限 · 计费口径 · 校准对护栏 · 诊断字段
+    kind: fix
+    symptom: |
+      ① 自动压缩明明生效，胶囊却记「harness 没有报告压缩事件」并停止自动重试 ——
+      Codex 的 compacted 事件比流结束晚到一点就触发，而压缩其实已经写回。
+      ② 胶囊的节省率读成 3%，实际是 39%：Codex 请求体里 89–95% 是推理密文，按字节
+      或按整包估算 token 算，分母里塞满了不计费的密文。合上游时若只留字节口径，
+      症状原样回来。
+      ③ rail 的校准对 (lastActual, lastForwardEst) 会被小体积旁路请求或没有 usage 的
+      请求写坏一半，之后所有投影都按一个从未成立过的比例折算，rail 要么永不触发、
+      要么每轮都触发。
+      ④ `[live-compact]` 行只有「折了几块」，答不了「请求很大为什么没得折」；
+      `actual=-1` 也分不清压缩响应与流提前结束。
+    why: |
+      ① 压缩事件与流结束是两个独立回调，顺序不确定。压缩回合结束后给 3s 宽限
+      （hygieneCompactGrace），事件已到即记成功（reason=stream_error_after_compact），
+      真没压仍记失败 —— 宽限只在收尾判定上用，不改变「必须看到压缩事件」的语义。
+      ② 计费上下文 = usage_input + cache_creation + cache_read，与同一批请求的折叠
+      tokens 同量纲，比例才没有被非文本字节稀释。账本汇总只累加「既有 usage 样本、
+      又有折叠估算」的行，两种量纲不混算；没有样本时前端退回原估算口径。
+      ③ 估算只在请求路径写、真实值在响应路径写，两半此前分别落库。改成估算先写
+      pendingForwardEst、接受样本时成对提交；本请求估算不足已校准估算 1/4 的旁路
+      请求不接受（它测的不是这段对话）；两条压缩信号路径（PostCompact hook 与 Codex
+      SignalCompact）置 calibrationReset，压缩后本来就会小，必须放行。
+      ④ PlanStats.UnaccountedBytes = BodyBytes - ResultBytes，是任何折叠策略都触不到
+      的字节；Usage.MissingReason 区分 upstream_unreachable / content_encoding /
+      not_observed / no_usage_block。两者只进日志与账本，没有策略读它们。
+    # 针对性测试：
+    #   session_hygiene_wire_test.go —— 流报错但压缩事件已在宽限内到达 → 记成功；
+    #     grace 改 0 时同一用例变红。
+    #   fold/ledger_test.go —— 计费口径累计只覆盖有样本的行；缺样本行不进分母；
+    #     usage_missing_reason 往返。plan_stats_test.go —— unaccounted 覆盖全部非工具
+    #     输出，有会话与无会话两路都对。
+    #   proxy/live_compact_calibration_test.go —— 未采样请求不留估算；旁路样本不动
+    #     校准对；压缩信号放行小样本；首个样本正常校准。三处变异各自打红。
+    #   proxy/live_compact_log_test.go —— provider 行带 usage_missing 原因、
+    #     plan_unaccounted_bytes。live_compact_usage_ledger_test.go —— 缺样本账本行
+    #     带 no_usage_block。
+    #   web/tests/context-saving-chip.test.mjs —— 有样本时按计费口径算节省率与累计。
+    files:
+      - server/internal/api/usecase/session_hygiene_wire.go
+      - server/internal/agent/fold/ledger.go
+      - server/internal/agent/fold/types.go
+      - server/internal/agent/fold/plan.go
+      - server/internal/agent/proxy/proxy.go
+      - server/internal/agent/proxy/thread.go
+      - server/internal/agent/proxy/live_compact_fold_request.go
+      - server/internal/agent/proxy/provider_route.go
+      - server/internal/agent/proxy/live_compact_ledger.go
+      - server/internal/agent/proxy/live_compact_log.go
+      - server/internal/agent/proxy/live_compact.go
+      - server/internal/agent/proxy/lcsmoke/main.go
+      - web/src/components/agent/ContextSavingIndicator.tsx
+      - web/src/services/agent/contextSaving.ts
+    tests:
+      - server/internal/api/usecase/session_hygiene_wire_test.go
+      - server/internal/agent/fold/ledger_test.go
+      - server/internal/agent/fold/plan_stats_test.go
+      - server/internal/agent/proxy/live_compact_calibration_test.go
+      - server/internal/agent/proxy/live_compact_log_test.go
+      - server/internal/agent/proxy/live_compact_usage_ledger_test.go
+      - web/tests/context-saving-chip.test.mjs
+    anchors:
+      - 'server/internal/api/usecase/session_hygiene_wire.go:var hygieneCompactGrace = 3 * time.Second'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func waitHygieneCompactSeen(ctx context.Context, seen <-chan struct{}, grace time.Duration) bool {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:if waitHygieneCompactSeen(ctx, seen, hygieneCompactGrace) {'
+      - 'server/internal/agent/fold/ledger.go:json:"total_context_tokens"'
+      - 'server/internal/agent/fold/ledger.go:json:"total_folded_tokens"'
+      - 'server/internal/agent/fold/ledger.go:json:"context_token_samples"'
+      - 'server/internal/agent/fold/ledger.go:if entry.UsageSource != UsageSourceMissing && entry.TokensEst > 0 {'
+      - 'server/internal/agent/fold/ledger.go:json:"usage_missing_reason"'
+      - 'server/internal/agent/fold/types.go:MissingReason string'
+      - 'server/internal/agent/fold/types.go:UsageMissingUpstreamUnreachable = "upstream_unreachable"'
+      - 'server/internal/agent/fold/types.go:UsageMissingContentEncoding = "content_encoding"'
+      - 'server/internal/agent/fold/types.go:UsageMissingNotObserved = "not_observed"'
+      - 'server/internal/agent/fold/types.go:UsageMissingNoUsageBlock = "no_usage_block"'
+      - 'server/internal/agent/fold/plan.go:UnaccountedBytes int'
+      - 'server/internal/agent/fold/plan.go:stats.UnaccountedBytes = stats.BodyBytes - stats.ResultBytes'
+      - 'server/internal/agent/proxy/proxy.go:pendingForwardEst int'
+      - 'server/internal/agent/proxy/proxy.go:calibrationReset bool'
+      - 'server/internal/agent/proxy/thread.go:st.calibrationReset = true'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:st.pendingForwardEst = est'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:func (st *sessionState) auxiliarySample() bool {'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:if !st.auxiliarySample() {'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:st.calibrationReset = false'
+      - 'server/internal/agent/proxy/provider_route.go:fold.UsageMissingUpstreamUnreachable,'
+      - 'server/internal/agent/proxy/provider_route.go:usage.MissingReason = missingReason'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:UsageMissingReason: usage.MissingReason,'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:MissingReason: fold.UsageMissingNoUsageBlock,'
+      - 'server/internal/agent/proxy/live_compact_log.go:usage_missing=%s'
+      - 'server/internal/agent/proxy/live_compact_log.go:plan_unaccounted_bytes=%d'
+      - 'server/internal/agent/proxy/live_compact.go:obs.cold, obs.coldReason, obs.wouldFoldTokens, planStatsFields(obs.plan))'
+      - 'server/internal/agent/proxy/lcsmoke/main.go:flag.Int("min-fold-bytes"'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:const billingSized = !!latest && latest.usage_source !== "missing" && billingContext > 0 && foldedTokens > 0;'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:const totalPercent = formatPercent(saving.total_folded_tokens, saving.total_context_tokens + saving.total_folded_tokens);'
+      - 'web/src/services/agent/contextSaving.ts:total_context_tokens: number;'
