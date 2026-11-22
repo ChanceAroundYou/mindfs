@@ -121,12 +121,34 @@ func (s *Store) ensureColumns(ctx context.Context, table string, want map[string
 		if have[name] {
 			continue
 		}
-		if _, err := s.db.ExecContext(ctx,
-			`ALTER TABLE `+table+` ADD COLUMN `+ddl); err != nil {
+		if err := s.addColumn(ctx, table, ddl); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// addColumn 执行一条 ADD COLUMN。
+//
+// 这里认「别人已经加过这一列」为成功：`ensureColumns` 是「先读后加」，两个连接
+// 同时迁移时，后手在读完表结构之后必然撞上 duplicate column name —— 而那一刻
+// 我们要的后置条件（列存在）已经成立。不认它，Migrate 的幂等就只对单进程成立：
+// 两个进程同时启动，其中一个直接启动失败。
+func (s *Store) addColumn(ctx context.Context, table, ddl string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`ALTER TABLE `+table+` ADD COLUMN `+ddl); err != nil {
+		if !isDuplicateColumn(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// isDuplicateColumn 认「这一列已经存在」。只在补列处使用：那里的目标就是「列存在」，
+// 而 DDL 定义与库里已有定义不一致属于 schema 漂移，本仓没有处理它的能力，也不该
+// 在这里顺手改表。
+func isDuplicateColumn(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }
 
 // ensureChangePayloadColumn 给早期建的库补 changes.payload。
@@ -162,7 +184,7 @@ func (s *Store) ensureChangePayloadColumn(ctx context.Context) error {
 		return err
 	}
 	if !have {
-		if _, err := s.db.ExecContext(ctx, `ALTER TABLE changes ADD COLUMN payload BLOB`); err != nil {
+		if err := s.addColumn(ctx, "changes", "payload BLOB"); err != nil {
 			return err
 		}
 		if _, err := s.db.ExecContext(ctx, `

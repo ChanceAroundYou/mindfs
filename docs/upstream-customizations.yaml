@@ -12581,6 +12581,10 @@ groups:
       - "server/internal/controlsync/store_merge.go:UPDATE conflicts SET resolved_at = ?, resolution = ? WHERE id = ? AND resolved_at = ''`,"
       - 'server/internal/controlsync/store_merge.go:func (s *Store) ListOpenConflicts(ctx context.Context) ([]Conflict, error) {'
       - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {'
+      - 'server/internal/controlsync/store_migrate.go:func (s *Store) addColumn(ctx context.Context, table, ddl string) error {'
+      - 'server/internal/controlsync/store_migrate.go:func isDuplicateColumn(err error) bool {'
+      - 'server/internal/controlsync/store_migrate.go:		if !isDuplicateColumn(err) {'
+      - 'server/internal/controlsync/store_test.go:func TestAddColumnTreatsColumnAddedByAnotherMigratorAsSuccess(t *testing.T) {'
       - 'server/internal/controlsync/store_pending.go:func (s *Store) RebasePending(ctx context.Context, domain, key, baseHash string, payload []byte, deleted bool) (bool, error) {'
       - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:	if h.ControlSyncConflicts != nil {'

@@ -161,6 +161,20 @@ func TestConcurrentOpenMigratesAndAllocatesDistinctRevs(t *testing.T) {
 	}
 }
 
+// 迁移的「先读表结构、再补列」天然有窗口：另一个进程可能刚好在这个窗口里把列加上。
+// 那一刻后置条件已经成立，Migrate 必须当成成功 —— 否则两台机器同时启动时，其中一台
+// 直接起不来（线上表现是「边缘随机起不来」，日志只有一句 duplicate column name）。
+func TestAddColumnTreatsColumnAddedByAnotherMigratorAsSuccess(t *testing.T) {
+	store := openTestStore(t)
+	if err := store.addColumn(context.Background(), "state", "blocked_reason TEXT NOT NULL DEFAULT ''"); err != nil {
+		t.Fatalf("补一列已经存在的列应该成功：%v", err)
+	}
+	// 只放过「重复列」这一种：真写坏的 DDL 必须照旧报错，否则迁移会把半套 schema 当成功。
+	if err := store.addColumn(context.Background(), "state", "("); err == nil {
+		t.Fatal("坏的 ADD COLUMN 被吞掉了：迁移会在半套 schema 上继续跑")
+	}
+}
+
 func TestWriteRecordAllocatesMonotonicRevAndUpserts(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

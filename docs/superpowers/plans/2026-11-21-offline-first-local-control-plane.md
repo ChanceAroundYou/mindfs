@@ -1051,3 +1051,17 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   `NewHTTPHandler` 不传 provider）各自打红后还原。
 - 未做：真机（Windows 边缘）点验留给 T22；未部署、未重启、未改配置，
   `control_sync.enabled` 仍为 `false`。
+
+### 并发迁移误判（2026-11-22，T26 遗留缺陷）
+
+- 全量门禁跑出 `TestConcurrentOpenMigratesAndAllocatesDistinctRevs` 偶发红：8 个连接同时
+  `Open`+`Migrate`，其中一个报 `SQL logic error: duplicate column name: blocked_reason`。
+  根因不是锁：`ensureColumns` 是「先读 `PRAGMA table_info`、再 `ALTER`」，另一个进程在
+  这个窗口里把列加上了，后手的 ALTER 必然撞重复列 —— 而此刻我们要的后置条件（列存在）
+  已经成立。线上表现会是「两台机器同时启动时边缘随机起不来」，日志只有那一句。
+- 修法：抽出 `addColumn`，只把 `duplicate column name` 认作成功（`isDuplicateColumn`），
+  其余 ALTER 错误照旧上抛；`ensureChangePayloadColumn` 走同一条路径（补列被别人抢先时
+  仍然执行回填，回填本身幂等）。
+- 用例：`TestAddColumnTreatsColumnAddedByAnotherMigratorAsSuccess` —— 重复列返回 nil、
+  坏 DDL 必须报错（只放过这一种）。变异两处（吞掉所有 ALTER 错误、重复列也上抛）各自打红；
+  原并发用例 `-count=30` 全绿、全量 `go test ./...` 全绿。
