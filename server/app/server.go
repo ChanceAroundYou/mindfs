@@ -311,7 +311,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 	if feishuChannel != nil {
-		feishuChannel.SetAnswerHandler(workspaces.ApplyFeishuAnswer)
+		feishuChannel.SetAnswerHandler(newFeishuAnswerRelay(workspaces))
 		feishuChannel.Start(ctx)
 	}
 
