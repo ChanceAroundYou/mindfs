@@ -20,6 +20,8 @@ type fakeControlSync struct {
 	retryCalls  int
 	retryMode   controlsync.Mode
 	retryErr    error
+	adoptCalls  int
+	adoptErr    error
 	lastErrText string
 }
 
@@ -42,6 +44,15 @@ func (f *fakeControlSync) Retry(context.Context) (controlsync.Mode, error) {
 	}
 	f.status.Mode = f.retryMode
 	return f.retryMode, nil
+}
+
+func (f *fakeControlSync) AdoptPrimary(context.Context) (controlsync.Mode, error) {
+	f.adoptCalls++
+	if f.adoptErr != nil {
+		return controlsync.ModeOfflineLocal, f.adoptErr
+	}
+	f.status.Mode = controlsync.ModeReconciling
+	return controlsync.ModeReconciling, nil
 }
 
 func decodeStatus(t *testing.T, rec *httptest.ResponseRecorder) controlsync.Status {
@@ -110,6 +121,29 @@ func TestControlSyncModeRetryFailureStillReturnsStatus(t *testing.T) {
 	got := decodeStatus(t, rec)
 	if got.Mode != controlsync.ModeOfflineLocal || got.LastError == "" {
 		t.Fatalf("retry 失败后 status = %+v，应停在 offline-local 并带原因", got)
+	}
+}
+
+// 主节点被换掉之后总得有一条有记录的出路：采纳当前主节点，丢掉旧副本重来。
+func TestControlSyncModeAdoptPrimaryAction(t *testing.T) {
+	svc := &fakeControlSync{}
+	h := &HTTPHandler{ControlSync: svc}
+	rec := httptest.NewRecorder()
+	h.handleControlSyncMode(rec, httptest.NewRequest(http.MethodPost, "/api/control-sync/mode", strings.NewReader(`{"action":"adopt_primary"}`)))
+	if rec.Code != http.StatusOK || svc.adoptCalls != 1 {
+		t.Fatalf("adopt_primary：code=%d calls=%d", rec.Code, svc.adoptCalls)
+	}
+	if got := decodeStatus(t, rec); got.Mode != controlsync.ModeReconciling {
+		t.Fatalf("采纳后 status.mode = %s，应为 reconciling", got.Mode)
+	}
+
+	// 重置副本失败是真错误（用户以为采纳了，其实没成），不能照 200 回。
+	svc = &fakeControlSync{adoptErr: errors.New("disk full")}
+	h = &HTTPHandler{ControlSync: svc}
+	rec = httptest.NewRecorder()
+	h.handleControlSyncMode(rec, httptest.NewRequest(http.MethodPost, "/api/control-sync/mode", strings.NewReader(`{"action":"adopt_primary"}`)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("采纳失败 code = %d，应为 500", rec.Code)
 	}
 }
 

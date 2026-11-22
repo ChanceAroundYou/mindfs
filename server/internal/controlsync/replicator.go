@@ -197,12 +197,81 @@ func (r *Replicator) SyncOnce(ctx context.Context) (int, error) {
 	}
 }
 
+// ErrReplicaOriginMismatch：主节点自报的 instance_id 与本机记下的不一致。
+//
+// 对面已经不是原来那台主节点（重装/换机/换了数据目录）。此时变更流的 rev 从头开始，
+// 照着追平会把一台空库当成「主节点把记录全删了」，所以必须停下、留在本地模式。
+var ErrReplicaOriginMismatch = errors.New("controlsync: primary instance changed")
+
+// ErrReplicaSchemaMismatch：两端同步 schema 版本不同，载荷形状已经对不上。
+var ErrReplicaSchemaMismatch = errors.New("controlsync: primary schema version incompatible")
+
 type changePage struct {
 	Changes []RemoteChange `json:"changes"`
 	HeadRev int64          `json:"head_rev"`
 }
 
+// verifyOrigin 在拉任何一页之前先取 head 核对身份与 schema，必要时记下主节点身份。
+//
+// 放在每一页之前而不是每个 SyncOnce 之前：追平可能跨很多页，主节点在中间被换掉
+// 时后面的页同样不能落。主节点没配 instance_id（老版本/未配置）时如实跳过比对 ——
+// 无法验证不等于验证失败，否则升级前后会永久卡在本地模式。
+func (r *Replicator) verifyOrigin(ctx context.Context) error {
+	head, err := r.fetchHead(ctx)
+	if err != nil {
+		return err
+	}
+	if head.SchemaVersion != 0 && head.SchemaVersion != SyncSchemaVersion {
+		return fmt.Errorf("%w: primary=%d local=%d", ErrReplicaSchemaMismatch, head.SchemaVersion, SyncSchemaVersion)
+	}
+	if head.InstanceID == "" {
+		return nil
+	}
+	st, err := r.store.LoadState(ctx)
+	if err != nil {
+		return err
+	}
+	switch {
+	case st.PrimaryInstanceID == "":
+		return r.store.SetPrimaryInstanceID(ctx, head.InstanceID)
+	case st.PrimaryInstanceID != head.InstanceID:
+		return fmt.Errorf("%w: recorded=%s primary=%s", ErrReplicaOriginMismatch, st.PrimaryInstanceID, head.InstanceID)
+	}
+	return nil
+}
+
+func (r *Replicator) fetchHead(ctx context.Context) (HeadInfo, error) {
+	u := *r.base
+	u.Path = joinSyncPath(r.base.Path, "/api/control-sync/head")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return HeadInfo{}, fmt.Errorf("controlsync: build head request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if err := SignSyncRequest(req, r.token, r.instanceID, nil, time.Now()); err != nil {
+		return HeadInfo{}, fmt.Errorf("controlsync: sign head request: %w", err)
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return HeadInfo{}, fmt.Errorf("controlsync: fetch head: %w", err)
+	}
+	defer resp.Body.Close()
+	body := io.LimitReader(resp.Body, 64<<10)
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(body, 512))
+		return HeadInfo{}, fmt.Errorf("controlsync: fetch head: status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var head HeadInfo
+	if err := json.NewDecoder(body).Decode(&head); err != nil {
+		return HeadInfo{}, fmt.Errorf("controlsync: decode head: %w", err)
+	}
+	return head, nil
+}
+
 func (r *Replicator) fetchPage(ctx context.Context, since int64) (*changePage, error) {
+	if err := r.verifyOrigin(ctx); err != nil {
+		return nil, err
+	}
 	u := *r.base
 	u.Path = joinSyncPath(r.base.Path, "/api/control-sync/changes")
 	q := u.Query()

@@ -26,24 +26,49 @@ func writeTempCA(t *testing.T, cert *x509.Certificate) string {
 	return path
 }
 
-// fakePrimary 提供 GET /api/control-sync/changes 的最小实现：按 since 切片返回。
+// fakePrimary 提供 head 与 changes 的最小实现：按 since 切片返回。
+// 默认 instanceID/buildVersion 为空、schemaVersion 为 0，等价于老版本主节点；
+// 需要身份比对的用例显式填。
 type fakePrimary struct {
-	mu       sync.Mutex
-	changes  []RemoteChange
-	fail     bool
-	requests []string
+	mu            sync.Mutex
+	changes       []RemoteChange
+	instanceID    string
+	buildVersion  string
+	schemaVersion int
+	fail          bool
+	requests      []string
 }
 
 func (f *fakePrimary) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/control-sync/changes" {
+		f.mu.Lock()
+		instanceID, buildVersion, schemaVersion := f.instanceID, f.buildVersion, f.schemaVersion
+		changes := append([]RemoteChange(nil), f.changes...)
+		f.mu.Unlock()
+		switch r.URL.Path {
+		case "/api/control-sync/head":
+			var head int64
+			for _, ch := range changes {
+				if ch.Rev > head {
+					head = ch.Rev
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(HeadInfo{
+				HeadRev:       head,
+				InstanceID:    instanceID,
+				BuildVersion:  buildVersion,
+				SchemaVersion: schemaVersion,
+			})
+			return
+		case "/api/control-sync/changes":
+		default:
 			http.NotFound(w, r)
 			return
 		}
 		f.mu.Lock()
 		f.requests = append(f.requests, r.URL.Query().Get("since"))
 		fail := f.fail
-		changes := append([]RemoteChange(nil), f.changes...)
 		f.mu.Unlock()
 		if fail {
 			http.Error(w, "boom", http.StatusInternalServerError)

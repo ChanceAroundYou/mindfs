@@ -273,14 +273,15 @@ func TestControlSyncWrapRootCapturesLocalWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Head: %v", err)
 	}
-	if head == 0 {
+	if head.HeadRev == 0 {
 		t.Fatalf("控制面写入没进变更流：head = 0")
 	}
 	// 数据面写入不归同步管：同样的 POST 落在 /api/tasks 上不该推进水位。
-	before := head
+	before := head.HeadRev
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/tasks", nil))
-	if head, _ = w.feed.Head(t.Context()); head != before {
-		t.Fatalf("数据面写入推进了变更流：%d → %d", before, head)
+	head, _ = w.feed.Head(t.Context())
+	if head.HeadRev != before {
+		t.Fatalf("数据面写入推进了变更流：%d → %d", before, head.HeadRev)
 	}
 }
 

@@ -35,8 +35,11 @@ type Config struct {
 	Enabled    bool
 	Role       string
 	InstanceID string
-	PrimaryURL string
-	CAFile     string
+	// BuildVersion 随 head 下发，仅用于诊断：边缘不据此拒绝合并（版本不同但
+	// schema 相同是正常升级过程），拒绝只看 instance_id 与 schema 版本。
+	BuildVersion string
+	PrimaryURL   string
+	CAFile       string
 	// Token 是同步通道的 bearer token。密钥只走文件/环境变量，不进 config.json。
 	Token string
 
@@ -166,6 +169,8 @@ func NewRuntime(ctx context.Context, cfg Config, deps Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 主节点身份随 head 一起下发：边缘靠它判断对面有没有被重建。
+	feed.SetIdentity(SyncIdentity{InstanceID: cfg.InstanceID, BuildVersion: cfg.BuildVersion})
 	resolver, err := NewResolver(deps.Store, deps.Registry, deps.Capturer)
 	if err != nil {
 		return nil, err
@@ -313,8 +318,19 @@ func (r *Runtime) tick(ctx context.Context) {
 		}
 	case ModeReconciling:
 		if _, err := r.reconciler.Reconcile(ctx); err != nil {
+			// 身份/schema 不符不会因为重试而变好：锁住并停在本地模式，否则探活
+			// 20 秒后会把边缘拉回 reconciling，再撞同一个不符，来回跳。
+			if errors.Is(err, ErrReplicaOriginMismatch) || errors.Is(err, ErrReplicaSchemaMismatch) {
+				if _, blockErr := r.mode.BlockLocal(ctx, err.Error()); blockErr != nil {
+					r.report(blockErr)
+				}
+			}
 			r.report(err)
 			return
+		}
+		// 追平真的跑通了，说明身份核对也过了：上一次锁的原因已经消失。
+		if err := r.mode.ClearBlock(ctx); err != nil {
+			r.report(err)
 		}
 		r.settle(ctx)
 	case ModeConflictReview:

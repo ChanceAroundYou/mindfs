@@ -224,6 +224,9 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	}
 	// 控制面同步：默认关闭（opts.ControlSync == nil / Enabled=false）。
 	// 开启后 store 建不出来、配置不完整一律启动失败 —— 半份副本比没有副本更危险。
+	if opts.ControlSync != nil {
+		opts.ControlSync.BuildVersion = opts.Version
+	}
 	controlSync, err := startControlSync(ctx, opts.ControlSync, nodeinfo.Normalize(opts.Role), configDir, controlSyncStores{
 		auth:      authStore,
 		prefs:     sharedPrefs,

@@ -2,6 +2,7 @@ package controlsync
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -347,6 +348,70 @@ func TestRuntimeStaysReconcilingWhilePendingRemains(t *testing.T) {
 	}
 	if n, _ := store.CountPending(ctx); n != 0 {
 		t.Fatalf("pending = %d，应清空", n)
+	}
+}
+
+// 主节点换了身份：追平要当场停下并锁在本地模式。锁住之后探活再成功也不许自动升级
+// （否则 20 秒后又被拉回 reconciling，再撞同一个不符，模式来回跳）；
+// 身份核对重新通过才解锁。
+func TestRuntimeBlocksReconcileWhenPrimaryIdentityChanged(t *testing.T) {
+	rt, store, _, source, _ := newRuntimeFixture(t, edgeConfig())
+	ctx := t.Context()
+	prober := &fakeProber{}
+	mc, err := NewModeController(ctx, store, prober)
+	if err != nil {
+		t.Fatalf("NewModeController: %v", err)
+	}
+	mc.OnModeChange = rt.modeChanged
+	rt.mode = mc
+
+	for i := 0; i < DegradeAfterFailure; i++ {
+		mc.Observe(false)
+	}
+	rt.tick(ctx) // 离线拍：完成交接
+
+	source.mu.Lock()
+	source.err = fmt.Errorf("%w: recorded=home primary=hasee2", ErrReplicaOriginMismatch)
+	source.mu.Unlock()
+	prober.errs = []error{nil}
+	if _, err := mc.Retry(ctx); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	if got := mc.Mode(); got != ModeReconciling {
+		t.Fatalf("模式 = %s，应为 reconciling", got)
+	}
+	rt.tick(ctx)
+	if got := mc.Mode(); got != ModeOfflineLocal {
+		t.Fatalf("身份不符后模式 = %s，应停在 offline-local", got)
+	}
+	st, err := store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if !strings.Contains(st.BlockedReason, "primary instance changed") {
+		t.Fatalf("blocked_reason = %q，应记下原因", st.BlockedReason)
+	}
+
+	for i := 0; i < UpgradeAfterSuccess+2; i++ {
+		if got := mc.Observe(true); got != ModeOfflineLocal {
+			t.Fatalf("第 %d 次探测成功后模式 = %s，锁着不该自动升级", i+1, got)
+		}
+	}
+
+	// 身份核对重新通过：重试进 reconciling，追平跑通即解锁并回到 online。
+	source.mu.Lock()
+	source.err = nil
+	source.mu.Unlock()
+	prober.errs = append(prober.errs, nil)
+	if _, err := mc.Retry(ctx); err != nil {
+		t.Fatalf("第二次 Retry: %v", err)
+	}
+	rt.tick(ctx)
+	if got := mc.Mode(); got != ModeOnline {
+		t.Fatalf("模式 = %s，追平通过后应回 online", got)
+	}
+	if st, _ := store.LoadState(ctx); st.BlockedReason != "" {
+		t.Fatalf("追平通过后仍锁着：%q", st.BlockedReason)
 	}
 }
 

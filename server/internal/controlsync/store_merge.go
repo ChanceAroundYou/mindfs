@@ -286,6 +286,19 @@ WHERE domain = ? AND key = ? AND resolved_at = ''`,
 	return int(n), nil
 }
 
+// CountOpenConflicts 返回未裁决冲突条数（状态接口用）。
+func (s *Store) CountOpenConflicts(ctx context.Context) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("controlsync: store closed")
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM conflicts WHERE resolved_at = ''`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("controlsync: count conflicts: %w", err)
+	}
+	return n, nil
+}
+
 // ListOpenConflicts 返回未裁决的冲突，先来的在前（同一毫秒内按 id 稳定排序，
 // 免得列表在两次轮询之间跳位）。
 //

@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS pending (
 CREATE TABLE IF NOT EXISTS state (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	instance_id TEXT NOT NULL DEFAULT '',
+	primary_instance_id TEXT NOT NULL DEFAULT '',
+	blocked_reason TEXT NOT NULL DEFAULT '',
 	mode TEXT NOT NULL DEFAULT '',
 	base_rev INTEGER NOT NULL DEFAULT 0,
 	last_primary_at TEXT NOT NULL DEFAULT '',

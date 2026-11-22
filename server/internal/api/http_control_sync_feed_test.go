@@ -15,6 +15,8 @@ import (
 
 type fakeFeed struct {
 	head       int64
+	instanceID string
+	build      string
 	changes    []controlsync.RemoteChange
 	err        error
 	gotSince   int64
@@ -22,7 +24,14 @@ type fakeFeed struct {
 	pageCalled int
 }
 
-func (f *fakeFeed) Head(context.Context) (int64, error) { return f.head, f.err }
+func (f *fakeFeed) Head(context.Context) (controlsync.HeadInfo, error) {
+	return controlsync.HeadInfo{
+		HeadRev:       f.head,
+		InstanceID:    f.instanceID,
+		BuildVersion:  f.build,
+		SchemaVersion: controlsync.SyncSchemaVersion,
+	}, f.err
+}
 
 func (f *fakeFeed) Page(_ context.Context, since int64, limit int) ([]controlsync.RemoteChange, int64, error) {
 	f.pageCalled++
@@ -112,16 +121,29 @@ func TestControlSyncEndpointsRequireBearerToken(t *testing.T) {
 }
 
 func TestControlSyncHeadEndpoint(t *testing.T) {
-	rec := serve(newFeedTestServer(&fakeFeed{head: 42}), http.MethodGet, "/api/control-sync/head", feedTestToken)
+	rec := serve(newFeedTestServer(&fakeFeed{head: 42, instanceID: "home", build: "v1.2.3"}),
+		http.MethodGet, "/api/control-sync/head", feedTestToken)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d（body=%s）", rec.Code, rec.Body.String())
 	}
-	var got map[string]int64
+	// 身份字段是边缘识别「主节点被重建」的唯一依据，形状属于线上契约。
+	var got struct {
+		HeadRev       int64  `json:"head_rev"`
+		InstanceID    string `json:"instance_id"`
+		BuildVersion  string `json:"build_version"`
+		SchemaVersion int    `json:"schema_version"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("解响应: %v", err)
 	}
-	if got["head_rev"] != 42 {
-		t.Fatalf("head_rev = %d，应为 42", got["head_rev"])
+	if got.HeadRev != 42 {
+		t.Fatalf("head_rev = %d，应为 42", got.HeadRev)
+	}
+	if got.InstanceID != "home" || got.BuildVersion != "v1.2.3" {
+		t.Fatalf("身份 = %q/%q", got.InstanceID, got.BuildVersion)
+	}
+	if got.SchemaVersion != controlsync.SyncSchemaVersion {
+		t.Fatalf("schema_version = %d", got.SchemaVersion)
 	}
 }
 

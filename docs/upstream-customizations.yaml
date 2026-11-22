@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12229,6 +12229,18 @@ groups:
       spec §5 的域表、未知域排最后**（新域不能插队让分组位置随数据漂移）；**批量裁决是
       「一次确认一次提交」**（服务端只有逐条 CAS 端点，视图不循环发请求、确认文案必须写明
       条数，在途由 busy 去重）；**读失败不清空已有列表**（清空等于告诉用户「没有冲突了」）。
+      ⑳ 主节点身份与追平锁（`feed.go` / `replicator.go` / `mode.go` / `runtime.go` /
+      `store_state.go` / `store_migrate.go`）的四条必须保留：**每一页追平之前都核对主节点
+      身份**（`verifyOrigin`：schema 不符 → `ErrReplicaSchemaMismatch`、`primary_instance_id`
+      变了 → `ErrReplicaOriginMismatch`，两种情况都**不动水位、不写副本**）—— 主节点被重装/
+      换机后它的 rev 序列从头开始，不核对就会把一台空库当成「主节点把记录全删了」照单全收；
+      **身份不符必须停机并加持久化锁**（`BlockLocal` 落 `offline-local` + `blocked_reason`，
+      `Observe` 锁着时不许自动升级、构造时读到锁一律落回本地）—— 只返回错误不停机的话，
+      探活 2 次成功就把边缘拉回 `reconciling` 再撞同一个不符，模式每 20 秒来回跳；
+      **追平真的跑通才解锁**（`ClearBlock`，用户点「重试」仍可给一次真追平机会，身份核对在
+      追平开头重做）；**采纳新主节点只能人工触发**（`AdoptPrimary` 丢掉按旧主节点建的
+      records / base_rev / 冲突卡但**保留 pending**）—— 自动采纳等于把「主节点被换掉了」
+      静默吞掉，而删掉 pending 就是扔用户的离线改动，两者都不能做。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12293,6 +12305,11 @@ groups:
       - server/internal/controlsync/auth.go
       - server/internal/controlsync/auth_test.go
       - server/internal/controlsync/feed.go
+      - server/internal/controlsync/feed_test.go
+      - server/internal/controlsync/origin_test.go
+      - server/internal/controlsync/mode_block_test.go
+      - server/internal/controlsync/mode_status_test.go
+      - server/internal/controlsync/runtime_test.go
       - server/internal/controlsync/pending_pusher.go
       - server/internal/controlsync/push_client.go
       - server/internal/controlsync/runtime.go
@@ -12443,7 +12460,7 @@ groups:
       - 'server/internal/controlsync/store_merge.go:func (s *Store) ClaimConflict(ctx context.Context, id, choice string) error {'
       - "server/internal/controlsync/store_merge.go:UPDATE conflicts SET resolved_at = ?, resolution = ? WHERE id = ? AND resolved_at = ''`,"
       - 'server/internal/controlsync/store_merge.go:func (s *Store) ListOpenConflicts(ctx context.Context) ([]Conflict, error) {'
-      - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureConflictDeleteColumns(ctx context.Context) error {'
+      - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {'
       - 'server/internal/controlsync/store_pending.go:func (s *Store) RebasePending(ctx context.Context, domain, key, baseHash string, payload []byte, deleted bool) (bool, error) {'
       - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:	if h.ControlSyncConflicts != nil {'
@@ -12517,3 +12534,18 @@ groups:
       - 'server/internal/controlsync/auth_test.go:func TestVerifySyncRequestDoesNotConsumeNonceOnBadSignature(t *testing.T) {'
       - 'server/internal/api/http_control_sync_auth_test.go:func TestControlSyncEndpointsRequireSignedRequest(t *testing.T) {'
       - 'server/internal/api/http_control_sync_auth_test.go:func TestControlSyncPushRoutesPreserveSignedBody(t *testing.T) {'
+      - 'server/internal/controlsync/feed.go:	SyncSchemaVersion = 1'
+      - 'server/internal/controlsync/feed.go:type HeadInfo struct {'
+      - 'server/internal/controlsync/replicator.go:var ErrReplicaOriginMismatch = errors.New("controlsync: primary instance changed")'
+      - 'server/internal/controlsync/replicator.go:func (r *Replicator) verifyOrigin(ctx context.Context) error {'
+      - 'server/internal/controlsync/replicator.go:		return fmt.Errorf("%w: recorded=%s primary=%s", ErrReplicaOriginMismatch, st.PrimaryInstanceID, head.InstanceID)'
+      - 'server/internal/controlsync/mode.go:	BlockedReason string    `json:"blocked_reason,omitempty"`'
+      - 'server/internal/controlsync/mode.go:		if m.successes >= UpgradeAfterSuccess && m.blocked == "" {'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) BlockLocal(ctx context.Context, reason string) (Mode, error) {'
+      - 'server/internal/controlsync/mode.go:func (m *ModeController) AdoptPrimary(ctx context.Context) (Mode, error) {'
+      - 'server/internal/controlsync/runtime.go:			if errors.Is(err, ErrReplicaOriginMismatch) || errors.Is(err, ErrReplicaSchemaMismatch) {'
+      - 'server/internal/controlsync/store_state.go:func (s *Store) ResetReplicaForAdopt(ctx context.Context) error {'
+      - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {'
+      - 'server/internal/api/http_control_sync.go:	case "adopt_primary":'
+      - 'server/internal/controlsync/mode_block_test.go:func TestModeControllerBlockedStaysLocalAcrossProbeSuccess(t *testing.T) {'
+      - 'server/internal/controlsync/origin_test.go:func TestAdoptPrimaryRebasesReplicaOntoNewPrimary(t *testing.T) {'

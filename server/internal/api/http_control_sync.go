@@ -24,6 +24,8 @@ type ControlSyncService interface {
 	Status(ctx context.Context) (controlsync.Status, error)
 	SwitchLocal(ctx context.Context) error
 	Retry(ctx context.Context) (controlsync.Mode, error)
+	// AdoptPrimary 接受当前主节点：丢掉旧副本与记下的身份，随后重新追平。
+	AdoptPrimary(ctx context.Context) (controlsync.Mode, error)
 }
 
 // ControlSyncPusher 是主节点侧接收边缘推送的入口（spec §6.1）。
@@ -34,8 +36,10 @@ type ControlSyncPusher interface {
 
 // ControlSyncFeed 是主节点侧的只读同步端点：head 与 changes。
 // 与 Pusher 同理，边缘没有它。
+//
+// Head 带的不只是水位，还有主节点身份与 schema 版本：边缘靠它识别「对面被重建了」。
 type ControlSyncFeed interface {
-	Head(ctx context.Context) (int64, error)
+	Head(ctx context.Context) (controlsync.HeadInfo, error)
 	Page(ctx context.Context, since int64, limit int) ([]controlsync.RemoteChange, int64, error)
 }
 
@@ -104,7 +108,7 @@ func readSyncBody(r *http.Request) ([]byte, error) {
 	return body, nil
 }
 
-// handleControlSyncHead 返回变更流水位。探活也打这条：只判状态码、不看内容。
+// handleControlSyncHead 返回变更流水位与主节点身份。探活也打这条：只判状态码、不看内容。
 func (h *HTTPHandler) handleControlSyncHead(w http.ResponseWriter, r *http.Request) {
 	if h.ControlSyncFeed == nil {
 		respondError(w, http.StatusNotFound, errInvalidRequest("control sync feed not configured"))
@@ -115,7 +119,7 @@ func (h *HTTPHandler) handleControlSyncHead(w http.ResponseWriter, r *http.Reque
 		respondError(w, http.StatusInternalServerError, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]int64{"head_rev": head})
+	respondJSON(w, http.StatusOK, head)
 }
 
 // handleControlSyncChanges 返回 since 之后的一页变更。
@@ -205,8 +209,15 @@ func (h *HTTPHandler) handleControlSyncMode(w http.ResponseWriter, r *http.Reque
 			// 探不通不是接口错误：状态里已经写明 reason，照常回 status。
 			_ = err
 		}
+	case "adopt_primary":
+		// 人工确认「对面这台就是新的主节点」：丢掉按旧主节点建的副本后重新追平。
+		// 只由人触发 —— 自动采纳等于把「主节点被换掉了」这件事静默吞掉。
+		if _, err := h.ControlSync.AdoptPrimary(r.Context()); err != nil {
+			respondError(w, http.StatusInternalServerError, err)
+			return
+		}
 	default:
-		respondError(w, http.StatusBadRequest, errInvalidRequest("action must be local or retry"))
+		respondError(w, http.StatusBadRequest, errInvalidRequest("action must be local, retry or adopt_primary"))
 		return
 	}
 	status, err := h.ControlSync.Status(r.Context())

@@ -31,8 +31,8 @@ func TestChangeFeedHeadAndPageLimits(t *testing.T) {
 	head := seedChanges(t, store, 5)
 
 	got, err := feed.Head(t.Context())
-	if err != nil || got != head {
-		t.Fatalf("Head = %d, %v，应为 %d", got, err, head)
+	if err != nil || got.HeadRev != head {
+		t.Fatalf("Head = %+v, %v，head_rev 应为 %d", got, err, head)
 	}
 
 	// 不传 limit 用默认值，传超上限夹到硬上限。

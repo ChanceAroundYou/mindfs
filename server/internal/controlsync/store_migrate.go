@@ -48,10 +48,58 @@ func (s *Store) migrateOnce(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaDDL); err != nil {
 		return err
 	}
-	if err := s.ensureConflictDeleteColumns(ctx); err != nil {
+	if err := s.ensureColumns(ctx, "conflicts", map[string]string{
+		"local_deleted":  "local_deleted INTEGER NOT NULL DEFAULT 0",
+		"remote_deleted": "remote_deleted INTEGER NOT NULL DEFAULT 0",
+	}); err != nil {
+		return err
+	}
+	if err := s.ensureColumns(ctx, "state", map[string]string{
+		// 对面主节点是谁：没有它，主节点被重装/换机后边缘会把一台空库当成
+		// 「主节点把记录全删了」照单全收。旧库补齐后为空串，下次追平自动记上。
+		"primary_instance_id": "primary_instance_id TEXT NOT NULL DEFAULT ''",
+		// 追平被拒的原因（非空 = 锁住）。重启后必须读回来：全量重拉一遍再撞上
+		// 同一个身份不符，只会重复失败。
+		"blocked_reason": "blocked_reason TEXT NOT NULL DEFAULT ''",
+	}); err != nil {
 		return err
 	}
 	return s.ensureChangePayloadColumn(ctx)
+}
+
+// ensureColumns 给已存在的表补列：`CREATE TABLE IF NOT EXISTS` 对旧表什么都不做，
+// 新增列只能在这里 ALTER。幂等，已存在的列跳过。
+func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid, notNull, pk int
+			name, typ        string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for name, ddl := range want {
+		if have[name] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE `+table+` ADD COLUMN `+ddl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureChangePayloadColumn 给早期建的库补 changes.payload。
@@ -95,44 +143,6 @@ UPDATE changes SET payload = (
 	SELECT r.payload FROM records r
 	WHERE r.domain = changes.domain AND r.key = changes.key AND r.hash = changes.hash
 ) WHERE payload IS NULL AND deleted = 0`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ensureConflictDeleteColumns 给早期建的库补两列。
-//
-// conflict 现场必须能区分「这一侧把记录删了」与「这一侧载荷是空的」：裁决时前者要落
-// 墓碑，后者要写空对象。`CREATE TABLE IF NOT EXISTS` 对已存在的表什么都不做，
-// 所以旧库靠这里补 —— 幂等，加过的列跳过。
-func (s *Store) ensureConflictDeleteColumns(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(conflicts)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	have := map[string]bool{}
-	for rows.Next() {
-		var (
-			cid, notNull, pk int
-			name, typ        string
-			dflt             sql.NullString
-		)
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
-			return err
-		}
-		have[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, col := range []string{"local_deleted", "remote_deleted"} {
-		if have[col] {
-			continue
-		}
-		if _, err := s.db.ExecContext(ctx,
-			`ALTER TABLE conflicts ADD COLUMN `+col+` INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
 		}
 	}

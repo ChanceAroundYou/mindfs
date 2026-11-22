@@ -29,6 +29,8 @@ type ControlSyncOptions struct {
 	PrimaryURL string
 	CAFile     string
 	Token      string
+	// BuildVersion 是本进程的版本号，随 head 下发供对端诊断（不参与拒绝判定）。
+	BuildVersion string
 }
 
 // controlSyncStores 是同步域赖以读写的既有权威存储。nil 表示那份存储没建起来。
@@ -93,12 +95,13 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		return nil, fmt.Errorf("control_sync: node role is worker, control sync needs role=control")
 	}
 	cfg := controlsync.Config{
-		Enabled:    true,
-		Role:       opts.Role,
-		InstanceID: opts.InstanceID,
-		PrimaryURL: opts.PrimaryURL,
-		CAFile:     opts.CAFile,
-		Token:      opts.Token,
+		Enabled:      true,
+		Role:         opts.Role,
+		InstanceID:   opts.InstanceID,
+		BuildVersion: opts.BuildVersion,
+		PrimaryURL:   opts.PrimaryURL,
+		CAFile:       opts.CAFile,
+		Token:        opts.Token,
 	}
 	normalized, err := cfg.Normalize()
 	if err != nil {

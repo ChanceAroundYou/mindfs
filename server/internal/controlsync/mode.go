@@ -96,8 +96,18 @@ func (p *HTTPProber) Probe(ctx context.Context) error {
 
 // Status 是 GET /api/control-sync/status 的载荷。
 type Status struct {
-	Mode          Mode      `json:"mode"`
-	BaseRev       int64     `json:"base_rev"`
+	Mode    Mode  `json:"mode"`
+	BaseRev int64 `json:"base_rev"`
+	// PrimaryReachable 是最近一次探活的结果。它比 mode 更及时：降级要连续 3 次
+	// 失败，而「主节点现在通不通」一次探测就能回答。
+	PrimaryReachable bool `json:"primary_reachable"`
+	// PendingCount 是本机待推送的本地改动条数；ConflictCount 是未裁决冲突条数。
+	// 两个数字都实时查库：缓存值会让用户看到早就不存在的冲突卡。
+	PendingCount  int `json:"pending_count"`
+	ConflictCount int `json:"conflict_count"`
+	// BlockedReason 非空表示追平被锁住（主节点身份或 schema 不符）。此时探测可能
+	// 一直是通的、模式却是 offline-local —— 横幅要照这个字段解释原因。
+	BlockedReason string    `json:"blocked_reason,omitempty"`
 	LastPrimaryAt time.Time `json:"last_primary_at,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
 }
@@ -128,6 +138,11 @@ type ModeController struct {
 
 	mu        sync.Mutex
 	mode      Mode
+	reachable bool
+	// blocked 是追平锁：主节点身份/schema 不符时由 Runtime 置上，探测成功也不许
+	// 自动升级。没有它，降级到 offline-local 后 20 秒就会被探活拉回 reconciling，
+	// 然后又撞上同一个不符 —— 模式在两种之间来回跳，等于没停下来。
+	blocked   string
 	failures  int
 	successes int
 }
@@ -147,6 +162,12 @@ func NewModeController(ctx context.Context, store *Store, probe Prober) (*ModeCo
 	if !validMode(mode) {
 		return nil, fmt.Errorf("controlsync: unknown persisted mode %q", state.Mode)
 	}
+	// 锁着就必须是本地模式：库里写着 online/reconciling 但上次是被拒着停下来的，
+	// 直接信库会让重启后的第一拍就去合并一台已经换掉的主节点。
+	blocked := strings.TrimSpace(state.BlockedReason)
+	if blocked != "" {
+		mode = ModeOfflineLocal
+	}
 	return &ModeController{
 		store:    store,
 		probe:    probe,
@@ -154,6 +175,7 @@ func NewModeController(ctx context.Context, store *Store, probe Prober) (*ModeCo
 		Interval: ProbeInterval,
 		Timeout:  ProbeTimeout,
 		mode:     mode,
+		blocked:  blocked,
 	}, nil
 }
 
@@ -172,17 +194,35 @@ func (m *ModeController) Mode() Mode {
 	return m.mode
 }
 
-// Status 读库里的水位/时间/错误，拼上内存里的当前模式。
+// Status 读库里的水位/时间/错误，拼上内存里的当前模式与最近一次探测结果。
+//
+// 计数一律实时查库：它们是用户判断「还有多少要处理」的唯一来源，读失败就报错，
+// 不能把读不出来的东西显示成 0。
 func (m *ModeController) Status(ctx context.Context) (Status, error) {
 	state, err := m.store.LoadState(ctx)
 	if err != nil {
 		return Status{}, err
 	}
+	pending, err := m.store.CountPending(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	conflicts, err := m.store.CountOpenConflicts(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	m.mu.Lock()
+	mode, reachable, blocked := m.mode, m.reachable, m.blocked
+	m.mu.Unlock()
 	return Status{
-		Mode:          m.Mode(),
-		BaseRev:       state.BaseRev,
-		LastPrimaryAt: state.LastPrimaryAt,
-		LastError:     state.LastError,
+		Mode:             mode,
+		BaseRev:          state.BaseRev,
+		PrimaryReachable: reachable,
+		PendingCount:     pending,
+		ConflictCount:    conflicts,
+		BlockedReason:    blocked,
+		LastPrimaryAt:    state.LastPrimaryAt,
+		LastError:        state.LastError,
 	}, nil
 }
 
@@ -199,6 +239,9 @@ func (m *ModeController) Observe(success bool) Mode {
 		m.failures++
 		m.successes = 0
 	}
+	// reachable 是「上一次探测通不通」，与模式不是一回事：降级要连续 3 次失败，
+	// 而横幅在第一失败时就该改口说主节点不通了。
+	m.reachable = success
 	next := m.mode
 	switch m.mode {
 	case ModeOnline, ModeReconciling:
@@ -206,7 +249,9 @@ func (m *ModeController) Observe(success bool) Mode {
 			next = ModeOfflineLocal
 		}
 	case ModeOfflineLocal:
-		if m.successes >= UpgradeAfterSuccess {
+		// 锁着就不许自动升级：探活只说明「对面有台主节点在应答」，不说明它还是
+		// 我们记下的那一台。升级与否由 AdoptPrimary（人工确认）或 Runtime 解锁。
+		if m.successes >= UpgradeAfterSuccess && m.blocked == "" {
 			next = ModeReconciling
 		}
 	}
@@ -276,7 +321,9 @@ func (m *ModeController) SwitchLocal(ctx context.Context) error {
 // Retry 是用户显式动作：当场探主节点，通就进 reconciling，不通留在本地模式。
 //
 // 这里刻意不走 Observe 的阈值：用户已经明确要求「现在试一次」，
-// 再攒两次成功才动会让按钮看起来没反应。
+// 再攒两次成功才动会让按钮看起来没反应。它也是**唯一**能绕过追平锁的自动路径以外
+// 的入口：锁着时用户点重试，就给一次真正的追平机会（身份核对会在追平开头重做，
+// 不符会立刻重新锁上并刷新原因），而不是让按钮看着点了没动静。
 func (m *ModeController) Retry(ctx context.Context) (Mode, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, m.Timeout)
 	defer cancel()
@@ -305,6 +352,58 @@ func (m *ModeController) Retry(ctx context.Context) (Mode, error) {
 		return next, recordErr
 	}
 	return next, err
+}
+
+// BlockLocal 锁住追平并停在本地模式：主节点身份或 schema 不符时由 Runtime 调用。
+//
+// 锁会持久化，重启后不得回到 online/reconciling —— 那只会再撞一次同一个不符。
+func (m *ModeController) BlockLocal(ctx context.Context, reason string) (Mode, error) {
+	m.applyMu.Lock()
+	m.mu.Lock()
+	from := m.mode
+	m.blocked = reason
+	m.mode = ModeOfflineLocal
+	m.failures, m.successes = 0, 0
+	m.mu.Unlock()
+	modeErr := m.store.SetMode(ctx, ModeOfflineLocal)
+	reasonErr := m.store.SetBlockedReason(ctx, reason)
+	m.applyMu.Unlock()
+	if modeErr != nil {
+		return ModeOfflineLocal, modeErr
+	}
+	if reasonErr != nil {
+		return ModeOfflineLocal, reasonErr
+	}
+	m.transition(from, ModeOfflineLocal)
+	return ModeOfflineLocal, nil
+}
+
+// ClearBlock 在身份核对通过后解锁（幂等：本来没锁就不写库）。
+func (m *ModeController) ClearBlock(ctx context.Context) error {
+	m.mu.Lock()
+	blocked := m.blocked
+	m.blocked = ""
+	m.mu.Unlock()
+	if blocked == "" {
+		return nil
+	}
+	return m.store.SetBlockedReason(ctx, "")
+}
+
+// AdoptPrimary 是人工确认「对面这台就是新的主节点」：丢掉按旧主节点建的整份副本
+// （records / base_rev / 冲突卡，保留 pending 本地改动），清掉记下的身份与锁，
+// 然后当场探一次。
+//
+// 没有它，主节点被重装/换机之后边缘会永久停在本地模式 —— 拒绝合并是对的，
+// 但总得有一条有记录的出路，而不是让人去删库。
+func (m *ModeController) AdoptPrimary(ctx context.Context) (Mode, error) {
+	if err := m.store.ResetReplicaForAdopt(ctx); err != nil {
+		return m.Mode(), err
+	}
+	m.mu.Lock()
+	m.blocked = ""
+	m.mu.Unlock()
+	return m.Retry(ctx)
 }
 
 // CompleteReconcile 由合并方在追平结束时调用：有冲突停 conflict-review，否则回 online。

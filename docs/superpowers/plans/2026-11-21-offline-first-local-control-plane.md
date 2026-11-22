@@ -826,3 +826,45 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   六个场景全 PASS（在线转发 / 断网降级 / 离线写 / 重启保持 / 恢复无冲突 / 恢复有冲突），
   真实双进程、边缘所有出站请求都带签名。
 - 未做：T22 的 curl 安全断言脚本（放入 T22 一起做）；未部署、未重启、未改配置。
+
+### T25 恢复对账与状态口径（2026-11-22）
+
+- `feed.go`：`HeadInfo{head_rev, instance_id, build_version, schema_version}` 与
+  `SyncSchemaVersion = 1`、`SyncIdentity` / `ChangeFeed.SetIdentity`；`Runtime` 装配时
+  把 `instance_id`、`build_version`（`opts.Version`）灌进去，`/head` 直接回结构体。
+- `replicator.go`：`fetchHead`（签名 GET、64 KiB 上限）与 `verifyOrigin`，**每一页
+  之前**都核对：schema 非 0 且不等 → `ErrReplicaSchemaMismatch`；本地没记过身份 →
+  记下（首次接触即采纳）；与记下的不一致 → `ErrReplicaOriginMismatch`。三种情况下
+  水位都不动，副本一行不写。
+- `state` 表补两列：`primary_instance_id`、`blocked_reason`。迁移抽成
+  `ensureColumns(ctx, table, want map[string]string)`（原来三个各自 PRAGMA 的函数
+  收成一个），旧库幂等补列。
+- **偏离计划的一处（必要）**：光「拒绝合并」停不住 —— 探活 2 次成功就会把边缘从
+  `offline-local` 拉回 `reconciling`，再撞同一个不符，模式每 20 秒来回跳。所以加了
+  一把持久化的追平锁：`Runtime` 在追平时认出身份/schema 不符 → `BlockLocal`（模式落
+  `offline-local`、`blocked_reason` 落库、`OnModeChange` 照常通知）；`Observe` 在锁着
+  时不许自动升级；构造函数读到 `blocked_reason` 一律落回 `offline-local`（重启不得
+  自动重来）；追平真的跑通 → `ClearBlock`。用户点「重试」可以给一次真正的追平机会
+  （身份核对在追平开头重做，不符会立刻重新锁上）。
+- **补的一条出路**：主节点被有意重装/换机时，锁会永久停住边缘。`AdoptPrimary`
+  （`POST /api/control-sync/mode {"action":"adopt_primary"}`）丢掉按旧主节点建的
+  副本（`records` / `base_rev` / 冲突卡），**保留 `pending`** 本地改动，清掉身份与锁
+  后重新追平 —— 新人机会把待回传变成冲突卡交人裁决，不静默丢。不自动采纳：那等于
+  把「主节点被换掉了」这件事吞掉。
+- `/status` 增 `primary_reachable`（上一次探测通不通，与模式不是一回事）、
+  `pending_count`、`conflict_count`（实时查库，读失败报错而不是显示 0）、
+  `blocked_reason`。
+- 用例：`origin_test.go` 7 条（head 带身份 / 首次采纳 / 换身份拒绝且零 changes 请求
+  且副本一字不动 / schema 不符 / 老主节点无身份照常同步 / 旧库补列幂等后可写 /
+  adopt 后重挂新主节点且保留 pending）、`mode_block_test.go` 3 条（锁着探测成功不升级、
+  重启落回本地、Retry 给一次机会、解锁幂等）、`mode_status_test.go` 3 条、
+  `runtime_test.go` 1 条（身份不符 → 停机 + 锁 + 探活不升级 → 核对通过后自动解锁回
+  online）、`api` 1 条（adopt 动作与失败 500）。既有 `feed_test` / `replicator_test` /
+  `app` 用例跟着改成结构体形态。
+- 变异：schema 检查去掉 / 身份比较去掉 / 首次不记身份 / head 不带身份 / 锁不挡自动
+  升级 / 重启不理会锁 / 身份不符不停机 / 追平通过不解锁 / 旧库不补列 / 状态不报锁原因
+  / pending 计数写死 0 / 可达性不更新 / 采纳时连 pending 一起删 —— 13 处各自打红后
+  还原（「状态不报锁原因」「旧库不补列」两条首版靠编译错误变红，改成真断言后重验）。
+- 门禁：`go test -count=1 ./server/internal/controlsync/ ./server/internal/api/ ./server/app/`
+  全绿、`go build ./...` 成功、`go vet` 干净、gofmt 干净。
+- 未做：T26 横幅的「接受新主节点」按钮（端点已就绪）；未部署、未重启、未改配置。
