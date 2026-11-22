@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生 + P1 安装包前端自检）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生 + P1 安装包前端自检 + T18 节点可达性）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12117,9 +12117,17 @@ groups:
       已逐一验证会红。
       ③ 控制面前缀表已有快照用例（`TestControlPlanePrefixesSnapshot`，11 条），新增前缀
       会强制同步更新同步计划，不另写第二份清单。
-      ④ `node-unreachable-baseline.test.mjs` 把节点不可达的现状分成两半：单节点失败
-      **已经**是「弹提示 + 保留条目」，钉成不许回退；节点表同步失败被静默吞掉、零项目
-      分支不区分「真空」与「拉不到」仍是缺口，P6 改写时先红后绿。
+      ④ 节点可达性（T18）只有一份答案：`services/net/nodeHealth` 记录「最近一次真实请求
+      打在谁身上、成没成」，`shared/nodeAvailability` 把它翻成三态。四条必须保留的判定 ——
+      **节点表拉取失败不再 `catch(() => {})` 静默吞掉**（那份清单在主节点上，拉不到意味着
+      屏幕上的节点列表可能不是最新，继续当事实渲染就是把「不知道」说成「没有」）；
+      **未观测 ≠ 离线**（还没探过的节点不能报「全都连不上」）；**节点表失败优先于
+      「每台都失败」**；**空列表 ≠ 没有项目**（逐节点失败返回空列表，同时保留旧条目并记
+      健康状态，界面上区分「真空 / 全都连不上 / 清单不可信」三种空状态）。文件树此前完全
+      没有可达性概念：现在分组带 `unreachable` 标记、没有缓存条目的不可达节点单独列出、
+      行内点击与 hover 直接收口（点了只会再失败一次）。**发出请求与记录健康必须成对**，
+      所以抽成 `app/managedRootNodeHealth.ts` 一个函数（也顺带把协调器压回 500 行硬线内）。
+      节点面板的探活结果同样并进这张表（面板自己的 checking 三态保留）。
       ⑤ P2 起新增 `server/internal/controlsync` 包（新目录，上游没有对应实现）：记录模型与
       sqlite 索引库。三条必须保留的语义 —— hash 只覆盖 `Payload`（墓碑保留最后内容 hash）、
       `CanonicalJSON` 走 `UseNumber` 否则大整数被舍入成不同 hash、`rev` 在 `_txlock=immediate`
@@ -12377,11 +12385,25 @@ groups:
       - web/src/app/AppRootView.tsx
       - web/src/i18n/locales/zh-CN-workspace.ts
       - web/src/i18n/locales/en-US-workspace.ts
+      - web/src/services/net/nodeHealth.ts
+      - web/src/shared/nodeAvailability.ts
+      - web/src/hooks/useNodeHealth.ts
+      - web/src/app/managedRootNodeHealth.ts
+      - web/src/app/useManagedRoots.ts
+      - web/src/components/file/FileTreeEntryFilters.ts
+      - web/src/components/file/useFileTreeNodeGroups.ts
+      - web/src/components/file/FileTreeProjectContent.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/fileTreeEntries.tsx
+      - web/src/components/account/useNodeManagerPanel.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/en-US-projects.ts
 
     tests:
       - server/app/control_plane_isolation_test.go
       - internal/deploy/install_script_test.go
       - web/tests/node-unreachable-baseline.test.mjs
+      - web/tests/node-health.test.mjs
       - server/internal/controlsync/record_test.go
       - server/internal/controlsync/store_test.go
       - server/internal/controlsync/domain_nodes_test.go
@@ -12538,10 +12560,23 @@ groups:
       - 'server/internal/controlsync/conflicts_test.go:func TestResolveConcurrentSingleWinner(t *testing.T) {'
       - 'server/internal/controlsync/conflicts_test.go:func TestMigrateAddsConflictDeleteColumnsToExistingDB(t *testing.T) {'
       - 'server/internal/api/http_control_sync_conflicts_test.go:func TestControlSyncConflictResolveEndpoint(t *testing.T) {'
-      - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：单节点失败会显式提示，不是静默空数组", () => {'
-      - 'web/tests/node-unreachable-baseline.test.mjs:test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {'
-      - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {'
-      - 'web/tests/node-unreachable-baseline.test.mjs:test("仍缺：没有任何项目时直接清空会话与主区，不区分「真空」与「拉不到」", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("单节点失败：提示照旧，且同时记进节点健康表", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("失败节点的项目条目会被保留，不能整表替换", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("节点表拉取失败：记录并提示「可能不是最新」，不再静默吞掉", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("零项目不再无条件说「添加一个项目」：三种空状态分开", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("文件树逐节点标记不可达：分组带标记、无缓存条目时单独列出来", () => {'
+      - 'web/tests/node-unreachable-baseline.test.mjs:test("不可达节点的行不给点：光标与点击都收口在同一处判断", () => {'
+      - 'web/tests/node-health.test.mjs:test("可用性判定：节点表失败最优先，其次是「每台都离线」", () => {'
+      - 'web/tests/node-health.test.mjs:test("可用性判定：未观测不算离线，一台通就算 ok", () => {'
+      - 'web/tests/node-health.test.mjs:test("节点健康表：状态没变就不 bump 版本，快照引用保持不变", () => {'
+      - 'web/tests/node-health.test.mjs:test("分组：只标记连不上的那台，其它组不受影响", () => {'
+      - 'web/src/services/net/nodeHealth.ts:export function markNodeUnreachable(nodeId: unknown, detail: unknown = "", at: number = Date.now()): void {'
+      - 'web/src/shared/nodeAvailability.ts:export function classifyNodesAvailability(input: NodesAvailabilityInput): NodesAvailability {'
+      - 'web/src/app/managedRootNodeHealth.ts:export async function syncNodeTableHealth(force?: boolean): Promise<void> {'
+      - 'web/src/app/managedRootNodeHealth.ts:    markNodeUnreachable(node.id, (err as Error)?.message || String(err));'
+      - 'web/src/components/file/FileTreeEntryFilters.ts:unreachable: !!nid && !!isUnreachable?.(nid)'
+      - 'web/src/components/file/FileTreeProjectContent.tsx:const emptyKey: MessageKey = nodesAvailability === "table-unreachable"'
+      - 'web/src/components/file/fileTreeEntries.tsx:        if (nodeDead) return;'
       - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig) (*app.ControlSyncOptions, error) {'
       - 'cli/cmd/control_sync.go:token, err := readSyncToken(stringValue(cs.TokenFile))'
       - 'cli/cmd/startup.go:ControlSync *startupControlSyncConfig `json:"control_sync"`'

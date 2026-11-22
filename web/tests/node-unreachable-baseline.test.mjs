@@ -1,13 +1,12 @@
-// 节点不可达的基线：把「已经做对的」和「仍然缺的」分开钉住。
+// 节点不可达：界面必须说「连不上」，不能把项目从列表里静默抹掉。
 //
-// 2026-11-21 离线优先方案（Scope: G-PF）要求：主节点或某个 worker 不可达时，
-// 界面必须显式说「不可达」，而不是把该项目/会话从列表里静默抹掉。
+// 2026-11-21 离线优先方案（Scope: G-PF）的 P0 基线把「已经做对的」与「仍然缺的」
+// 分开钉住；2026-11-22 T18 把「仍然缺的」补齐后，本文件改成**正向断言** ——
+// 缺的那两条现在必须成立，改坏就红：
+//   ① 节点表拉取失败不再被 `catch(() => {})` 吞掉，而是记进 nodeHealth 并提示可能不是最新；
+//   ② 零项目分支区分「真空」与「全都连不上」，不再无条件显示「添加一个项目开始 vibe」。
 //
-// 取证结论（2026-11-21）：**单节点失败**这一半已经做对了 —— 失败会弹提示，
-// 且失败节点的项目条目会被保留（见 `useManagedRoots.ts:297-338` 的注释，
-// 那是「PC 的项目凭空消失」修出来的）。本文件把它们钉成不许回退的锚点。
-// 仍然缺的是另外两处：节点表同步失败被静默吞掉、零项目分支不区分
-// 「真的空」与「拉不到」。P6 会改写这两条，届时先红后绿。
+// 记录语义本身的行为用例在 `node-health.test.mjs`；这里钉的是「这条通路真的接上了」。
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -16,13 +15,17 @@ import { test } from "vitest";
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 const managedRoots = read("src/app/useManagedRoots.ts");
+const nodeHealthIo = read("src/app/managedRootNodeHealth.ts");
+const projectContent = read("src/components/file/FileTreeProjectContent.tsx");
+const nodeGroups = read("src/components/file/useFileTreeNodeGroups.ts");
+const treeEntries = read("src/components/file/fileTreeEntries.tsx");
+const fileTree = read("src/components/file/FileTree.tsx");
 
-test("已做对：单节点失败会显式提示，不是静默空数组", () => {
-  // 失败分支仍先记一笔（内层），真正的可见性在 refreshManagedRoots 里。
+test("单节点失败：提示照旧，且同时记进节点健康表", () => {
   assert.match(
-    managedRoots,
-    /catch \(err\) \{\s*nodeFailures\.push\(\{ id: String\(n\.id\), name: String\(n\.name \|\| n\.id\) \}\);\s*return \[\] as ManagedRootPayload\[\];/,
-    "单节点失败分支的形状变了：先红再改本断言之前，确认提示链路还在",
+    nodeHealthIo,
+    /catch \(err\) \{[\s\S]{0,200}?markNodeUnreachable\(node\.id,[\s\S]{0,200}?failures\.push\(\{ id: String\(node\.id\), name: String\(node\.name \|\| node\.id\) \}\);\s*return \[\] as ManagedRootPayload\[\];/,
+    "失败分支的形状变了：健康记录与可见提示必须都还在",
   );
   assert.match(
     managedRoots,
@@ -31,7 +34,7 @@ test("已做对：单节点失败会显式提示，不是静默空数组", () =>
   );
 });
 
-test("已做对：失败节点的项目条目会被保留，不能整表替换", () => {
+test("失败节点的项目条目会被保留，不能整表替换", () => {
   assert.match(
     managedRoots,
     /const failedIds = new Set\(nodeLoadFailuresRef\.current\.map\(\(f\) => String\(f\.id \|\| ""\)\)\);/,
@@ -44,18 +47,32 @@ test("已做对：失败节点的项目条目会被保留，不能整表替换",
   );
 });
 
-test("仍缺：节点表同步失败被静默吞掉，首屏只剩本机节点", () => {
+test("节点表拉取失败：记录并提示「可能不是最新」，不再静默吞掉", () => {
+  assert.doesNotMatch(nodeHealthIo, /syncNodesFromServer\(\)\.catch\(\(\) => \{\}\)/, "又被吞回去了");
+  assert.match(nodeHealthIo, /markNodeTableUnreachable\(/, "节点表失败必须落到 nodeHealth");
   assert.match(
-    managedRoots,
-    /await syncNodesFromServer\(\)\.catch\(\(\) => \{\}\);/,
-    "节点表同步失败分支变了：P6 要记录并展示「节点表不可达」",
+    projectContent,
+    /nodesAvailability === "table-unreachable"[\s\S]{0,120}?fileTree\.nodesTableUnreachable/,
+    "记了却没人显示，等于没记",
   );
 });
 
-test("仍缺：没有任何项目时直接清空会话与主区，不区分「真空」与「拉不到」", () => {
-  assert.match(
-    managedRoots,
-    /if \(nextRootIds\.length === 0\) \{[\s\S]*?setMainEntries\(\[\]\);[\s\S]*?setSessions\(\[\]\);/,
-    "空项目分支被改写了：P6 需要在这里先判断「是真空还是不可达」",
-  );
+test("零项目不再无条件说「添加一个项目」：三种空状态分开", () => {
+  assert.match(managedRoots, /if \(nextRootIds\.length === 0\) \{[\s\S]*?setMainEntries\(\[\]\);/, "零项目仍要清空主区（行为不变）");
+  assert.match(projectContent, /fileTree\.nodesUnreachable/, "所有节点都连不上时要说「读不到」，不能说「你没有项目」");
+  assert.match(projectContent, /fileTree\.emptyProjectHint/, "真的空的时候原提示还在");
+});
+
+test("文件树逐节点标记不可达：分组带标记、无缓存条目时单独列出来", () => {
+  assert.match(nodeGroups, /isNodeUnreachable\(nodeId, health\.nodes\)/, "分组标记没接健康表");
+  assert.match(nodeGroups, /unreachableNodes/, "没有缓存条目的不可达节点会从界面上彻底消失");
+  assert.match(nodeGroups, /classifyNodesAvailability/, "空状态判定没接");
+  assert.match(fileTree, /unreachableNodeIds: new Set\(nodeGroups\.groups\.filter\(\(group\) => group\.unreachable\)/, "行内禁用没接分组标记");
+  assert.match(fileTree, /unreachableNodes=\{nodeGroups\.unreachableNodes\}/);
+});
+
+test("不可达节点的行不给点：光标与点击都收口在同一处判断", () => {
+  assert.match(treeEntries, /const nodeDead = !!\(unreachableNodeIds as Set<string> \| undefined\)\?\.has\(entryNodeId\);/);
+  assert.match(treeEntries, /const handleEntryClick = \(\) => \{\s*if \(nodeDead\) return;/, "点了只会再失败一次");
+  assert.match(treeEntries, /cursor: nodeDead \? "not-allowed" : "pointer"/);
 });

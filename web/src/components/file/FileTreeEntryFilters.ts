@@ -7,11 +7,27 @@ export function filterVisibleEntries(items: FileEntry[], depth: number, tab: str
   return tab !== "related" || depth !== 0 ? filtered : filtered.filter((entry) => !!rootId && entry.path === rootId);
 }
 
-export function groupEntriesByNode(entries: FileEntry[], getNodes: () => any[]) {
-  const m = new Map<string, { color: string; name: string; nid: string; items: FileEntry[] }>();
+export type FileTreeNodeGroup = {
+  color: string;
+  name: string;
+  nid: string;
+  items: FileEntry[];
+  /** 这台机器最近一次请求失败：条目是上次拉到的，别当成现状。 */
+  unreachable: boolean;
+};
+
+/**
+ * `isUnreachable` 由调用方注入（真值来自 services/net/nodeHealth），
+ * 这一层只做分组与标记，不自己去探活 —— 纯函数才好测。
+ */
+export function groupEntriesByNode(entries: FileEntry[], getNodes: () => any[], isUnreachable?: (nodeId: string) => boolean): FileTreeNodeGroup[] {
+  const m = new Map<string, FileTreeNodeGroup>();
   for (const entry of entries) {
     const ex = entry as any; const key = String(ex._nodeName || ex._nodeId || "local");
-    if (!m.has(key)) m.set(key, { color: String(ex._nodeColor || "#6d5bcf"), name: String(ex._nodeName || key), nid: String(ex._nodeId || "").trim(), items: [] });
+    if (!m.has(key)) {
+      const nid = String(ex._nodeId || "").trim();
+      m.set(key, { color: String(ex._nodeColor || "#6d5bcf"), name: String(ex._nodeName || key), nid, items: [], unreachable: !!nid && !!isUnreachable?.(nid) });
+    }
     m.get(key)!.items.push(entry);
   }
   try { const order = new Map(getNodes().map((n: any, i: number) => [String(n.name), i] as const)); return Array.from(m.entries()).sort((a,b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99)).map(([,v]) => v); } catch { return Array.from(m.values()); }

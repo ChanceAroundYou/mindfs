@@ -942,3 +942,37 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   全绿、`gofmt` 无新增待格式化文件。
 - 未做：`applied_changes` 不随清理回收（幂等凭据，行很小，删掉会把「已应用过」的推送重新
   判成冲突）；未部署、未重启、未改配置，`control_sync.enabled` 仍为 `false`。
+
+### T18 节点可达性（2026-11-22）
+
+- 一份答案：新增 `web/src/services/net/nodeHealth.ts`（服务层可变单例，与 `nodeRegistry`
+  同形）记录「最近一次真实请求打在谁身上、成没成」——`markNodeReachable` /
+  `markNodeUnreachable` / `markNodeTableReachable` / `markNodeTableUnreachable`，
+  快照 `version` 只在内容真变时自增（一轮刷新里每台都会成功一次，每次广播会让文件树和
+  会话列表无谓重渲染），订阅者异常各自隔离。空 nodeId 一律忽略：聚合请求不代表任何一台机器。
+- 判定抽成纯函数 `web/src/shared/nodeAvailability.ts`：`classifyNodesAvailability`
+  返回 `ok / all-unreachable / table-unreachable`，顺序上**节点表失败优先于「每台都失败」**，
+  **未观测 ≠ 离线**（还没探过的节点不能把「全都连不上」报出来）。
+- 接线：`app/managedRootNodeHealth.ts` 把「发一次请求」和「记一次健康」绑成一个函数
+  （`syncNodeTableHealth` / `loadNodeManagedRoots`）—— 原来的
+  `syncNodesFromServer().catch(() => {})` 删掉，节点表拉不到时记 offline，界面据此提示
+  「可能不是最新」；逐节点失败仍返回空列表、仍保留旧条目与可见提示，但同时记 offline。
+  抽成独立文件还有个副作用是必要的：协调器本来已经贴着 500 行硬线。
+- 文件树：`groupEntriesByNode` 接受注入的 `isUnreachable`，分组带 `unreachable`；
+  `useFileTreeNodeGroups` 额外返回 `unreachableNodes`（**没有缓存条目的不可达节点**，
+  不列出来它就彻底消失了）与 `nodesAvailability`；`FileTreeProjectContent` 的空状态
+  分三种（真空 / 全都连不上 / 清单不可信），组头挂 `NodeBadgeHeader` 既有的 `notice`；
+  `fileTreeEntries` 对不可达节点的行收口点击、hover 与光标（点了只会再失败一次）。
+  会话列表与工作台的不可达提示此前已存在，本轮不重复造。
+- 用例：`web/tests/node-health.test.mjs` 13 条（记录去重与快照引用稳定、订阅互不拖垮、
+  reset、三态判定两个方向、单台判定六个边界、分组标记三情形）+ 改写
+  `web/tests/node-unreachable-baseline.test.mjs` 6 条为**正向断言**（失败分支形状、
+  条目保留、节点表失败不再被吞、三种空状态、分组与行内收口）。
+- 变异 7 处各自打红后还原：节点表失败退回 `.catch(() => {})`、空状态退回无条件「添加项目」、
+  未观测当成离线、分组不标记、逐节点失败不记健康、行内不拦点击、协调器不再调用健康模块。
+- 门禁：`npx tsc -b --noEmit` 干净、`npx vitest run` 263 文件 / 885 通过 / 6 跳过。
+  `tests/source-map-modules-app.mjs` 的 `src/App.tsx` 逻辑组补上新文件（拆分的既定做法），
+  `node-manager-panel.test.mjs` 的 dirs 抓取锚点跟随到新模块。
+- 未做：聚合请求路径（`getNodes()` 为空时打裸 `/api/dirs`）失败时没有可归因的节点，
+  只由外层 `catch` 返回 `null`，不写健康状态 —— 此时也没有任何节点被声称在线，不会说谎；
+  真浏览器点验留给 T22。未部署、未重启、未改配置。

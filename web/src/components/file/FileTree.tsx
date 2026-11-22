@@ -315,6 +315,7 @@ function FileTreeInner({
     onCreateRootNameChange, onCreateRootSubmit, onSelectDir, onSelectFile, onSelectRoot, onToggleDir, projectTreeTab,
     renderRootExtraContent, renderRootRelatedContent, renderRootWorktreeContent, rootBadgeStyle, rootId, rootNodeId,
     rootSessionIndicators, scopeKey, selectedDirKey, selectedPath, sortDirectoryEntries, sortMode, t, treeKey, visibleEntries,
+    unreachableNodeIds: new Set(nodeGroups.groups.filter((group) => group.unreachable).map((group) => group.nid)),
   });
 
   return (
@@ -475,7 +476,7 @@ function FileTreeInner({
         />
       </ViewHeader>
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        <FileTreeProjectContent groups={nodeGroups} creatingRootName={creatingRootName} t={t} renderEntries={renderEntries} rootId={rootId} />
+        <FileTreeProjectContent groups={nodeGroups.groups} unreachableNodes={nodeGroups.unreachableNodes} nodesAvailability={nodeGroups.nodesAvailability} creatingRootName={creatingRootName} t={t} renderEntries={renderEntries} rootId={rootId} />
       </div>
 <FileTreeFooter
         {...{ hasFooterContent, updateNotesRef, updateActionLabel, updateActionSummary, updateActionDisabled, updateActionBusy, updateActionHelp, isUpdateNotesOpen, setIsUpdateNotesOpen, onUpdateAction, footerTopContent, isNativeApp, onGoHome, shouldShowInstallButton, handleInstall, installLabel, shouldShowInstallHelp, installHelp, t }}

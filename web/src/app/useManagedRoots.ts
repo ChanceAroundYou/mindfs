@@ -16,6 +16,7 @@ import { useMultiProjectSessions } from "./useMultiProjectSessions";
 import { useProjectLifecycle } from "./useProjectLifecycle";
 import { useProjectTreeWorktrees } from "./useProjectTreeWorktrees";
 import { useSendMessage } from "./useSendMessage";
+import { loadNodeManagedRoots, syncNodeTableHealth, type NodeLoadFailure } from "./managedRootNodeHealth";
 import { useSessionArchive } from "./useSessionArchive";
 import { useSessionCache } from "./useSessionCache";
 import { useSessionLifecycle } from "./useSessionLifecycle";
@@ -25,11 +26,11 @@ import { useSessionStreamCache } from "./useSessionStreamCache";
 import { useI18n } from "../i18n";
 import { clearFileCacheForRoot } from "../services/file";
 import { clearGitHistoryCache } from "../services/git";
-import { protectedJSON as apiProtectedJSON, withNodeRetry } from "../services/net/api";
+import { protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { appPath } from "../services/net/base";
 import { type BootstrapState, bootstrapService } from "../services/net/bootstrap";
 import { reportError } from "../services/net/error";
-import { getNodes, migrateLegacySingleBase, syncNodesFromServer } from "../services/net/nodeRegistry";
+import { getNodes, migrateLegacySingleBase } from "../services/net/nodeRegistry";
 import { setRootNodeMap } from "../services/net/rootNode";
 import { type FileEntry } from "../services/prefs/directorySort";
 import { clearCachedSessionsForRoot } from "../services/session";
@@ -248,32 +249,20 @@ export function useManagedRoots(params: UseManagedRootsParams) {
       nodeLoadFailuresRef.current = [];
       try {
         try { migrateLegacySingleBase(); } catch {}
-        // 冷启动时 getNodes() 首屏只有 local，需等待服务端节点同步后再取全量
-        try {
-          if (!opts?.force) {
-            await syncNodesFromServer().catch(() => {});
-          }
-        } catch {}
+        // 冷启动时 getNodes() 首屏只有 local，需等待服务端节点同步后再取全量。
+        await syncNodeTableHealth(opts?.force);
         const nodes = getNodes();
         const targets = nodes;
         if (!targets.length) {
           const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
           return Array.isArray(dirs) ? dirs : [];
         }
-        const nodeFailures: Array<{ id: string; name: string }> = [];
+        const nodeFailures: NodeLoadFailure[] = [];
         // 跨机器也带 user=（用户名，见 base.ts）：对方按用户名解析到它本地的账户，
         // 取到的确实是「我的」数据，不再是它主账户的回落。
         // 对方没有这个账户时服务端回 **200 空列表**（不是 404）——所以这里没有
         // 缺账户的特殊分支：空就是空，节点照常显示，只是没有项目。
-        const results = await Promise.all(targets.map(async (n) => {
-          try {
-            const dirs = await withNodeRetry(() => apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id)));
-            return (Array.isArray(dirs) ? dirs : []).map((d: any) => ({ ...d, _nodeId: (d as any)._nodeId || n.id, _nodeColor: n.color, _nodeName: n.name }));
-          } catch (err) {
-            nodeFailures.push({ id: String(n.id), name: String(n.name || n.id) });
-            return [] as ManagedRootPayload[];
-          }
-        }));
+        const results = await Promise.all(targets.map((n) => loadNodeManagedRoots(n, nodeFailures)));
         nodeLoadFailuresRef.current = nodeFailures;
         const flat = results.flat() as ManagedRootPayload[];
         const seen = new Set<string>();
