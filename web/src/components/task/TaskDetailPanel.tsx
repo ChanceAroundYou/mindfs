@@ -52,6 +52,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
   // 这里只负责把动作键翻译成回调；图标取 taskActionIcons，文案与配色取 META。
   const actionHandlers: Record<TaskActionButtonKey, () => void> = {
     "finish-worktree": () => void panel.finishWorktree(),
+    start: () => void panel.startTask(),
+    terminate: () => void panel.terminateTask(),
     pause: () => void panel.pauseTask(),
     resume: () => void panel.resumeTask(),
     complete: () => void completeTask(),

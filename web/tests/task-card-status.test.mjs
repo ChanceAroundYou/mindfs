@@ -75,8 +75,13 @@ assert.match(
 const cardActionsSource = read("src/components/task/taskCardActions.ts");
 assert.match(
   cardActionsSource,
-  /if \(task\.status === "running"\) actions\.push\("pause"\);\n\s*if \(task\.status === "paused"\) actions\.push\("resume"\);\n\s*\/\/[^\n]*\n\s*if \(task\.status !== "running"\) actions\.push\("complete"\);\n\s*actions\.push\("cancel"\);/,
-  "the non-terminal branch gets 暂停/完成/取消",
+  /if \(task\.status === "running"\) return \["terminate"\];/,
+  "运行中只有一个动作：终止（暂停/完成/取消都会让「活还在跑」与界面不一致）",
+);
+assert.match(
+  cardActionsSource,
+  /if \(task\.status === "pending"\) \{[\s\S]*?actions\.push\("start"\);[\s\S]*?\} else \{[\s\S]*?actions\.push\("complete"\);[\s\S]*?\}[\s\S]*?actions\.push\("cancel"\);/,
+  "未开始给「开始」、待处理给「完成」，两者都有「取消」",
 );
 assert.match(
   cardActionsSource,

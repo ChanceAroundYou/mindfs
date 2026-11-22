@@ -20,6 +20,8 @@ export type TaskActionButtonKey = TaskCardActionKey | "delete-task";
 /** 动作的展示元数据。卡片与详情读同一份：文案、配色不再各写一套。 */
 export const TASK_ACTION_BUTTON_META: Record<TaskActionButtonKey, TaskCardActionMeta> = {
   "finish-worktree": { labelKey: "task.finishWorktree", tone: "success" },
+  start: { labelKey: "task.actionStart", tone: "primary" },
+  terminate: { labelKey: "task.actionTerminate", tone: "warn" },
   pause: { labelKey: "task.actionPause", tone: "default" },
   resume: { labelKey: "task.actionResume", tone: "primary" },
   complete: { labelKey: "task.complete", tone: "success" },
@@ -47,11 +49,18 @@ export function taskCardActions(task: KanbanTask): TaskCardActionKey[] {
   const terminal = isTerminalKanbanTask(task);
   const actions: TaskCardActionKey[] = [];
   if (!terminal) {
+    // 运行中只有一个动作：终止。暂停在这里会变成「活还在后台跑、界面却说停了」，
+    // 完成 / 取消也不打断会话；终止是唯一既叫停又保留现场的动作。
+    if (task.status === "running") return ["terminate"];
     if (canFinishWorktree(task)) actions.push("finish-worktree");
-    if (task.status === "running") actions.push("pause");
     if (task.status === "paused") actions.push("resume");
-    // 完成只要求「不在跑」：活还在动时先暂停；终态没有后续可完成。
-    if (task.status !== "running") actions.push("complete");
+    if (task.status === "pending") {
+      // 未开始还没有任何产出可交付，所以不给「完成」，给「开始」：发出排队留言，
+      // 任务随之进入运行中。
+      actions.push("start");
+    } else {
+      actions.push("complete");
+    }
     actions.push("cancel");
     return actions;
   }

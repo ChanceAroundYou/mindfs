@@ -103,7 +103,9 @@ test("平铺动作与看板卡片同源：一份键序、一份图形、一份�
 });
 
 test("详情侧不再保留自己的一套动作口径", () => {
-  // 旧文件删除后不许有人再 import 它；开始/中断两条旧动作与文案一起下线。
+  // 旧文件删除后不许有人再 import 它；中断这条旧动作与文案一起下线。
+  // （task.actionStart 在 2026-11-22 复活：「未开始」的卡片与详情要「开始」，
+  //  不再是死键，所以从这里移出。）
   for (const src of [
     read("../src/components/task/taskCardActions.ts"),
     read("../src/components/task/TaskDetailPanel.tsx"),
@@ -114,9 +116,11 @@ test("详情侧不再保留自己的一套动作口径", () => {
   const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
   const en = read("../src/i18n/locales/en-US-tasks.ts");
   for (const src of [zh, en]) {
-    for (const dead of ["task.actionStart", "task.actionInterrupt", "task.actionsMenu", "task.actionsEmpty"]) {
+    for (const dead of ["task.actionInterrupt", "task.actionsMenu", "task.actionsEmpty"]) {
       assert.doesNotMatch(src, new RegExp(`"${dead.replace(/\./g, "\\.")}":`), `${dead} 不许留成死键`);
     }
+    assert.match(src, /"task\.actionStart":/, "「开始」是有效按钮，文案键必须在");
+    assert.match(src, /"task\.actionTerminate":/, "「终止」是有效按钮，文案键必须在");
   }
 });
 

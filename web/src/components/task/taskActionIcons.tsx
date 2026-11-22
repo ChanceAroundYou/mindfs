@@ -8,6 +8,8 @@ import {
   TaskPauseIcon,
   TaskReopenIcon,
   TaskResumeIcon,
+  TaskStartIcon,
+  TaskTerminateIcon,
 } from "./taskIcons";
 import type { TaskActionButtonKey } from "./taskCardActions";
 
@@ -21,6 +23,8 @@ import type { TaskActionButtonKey } from "./taskCardActions";
  */
 export const taskActionIcons: Record<TaskActionButtonKey, React.ReactNode> = {
   "finish-worktree": <TaskFinishWorktreeIcon />,
+  start: <TaskStartIcon />,
+  terminate: <TaskTerminateIcon />,
   pause: <TaskPauseIcon />,
   resume: <TaskResumeIcon />,
   complete: <TaskCompleteIcon />,

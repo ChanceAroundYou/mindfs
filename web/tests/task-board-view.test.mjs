@@ -56,7 +56,7 @@ assert.doesNotMatch(
   "the template-less createTask path must be gone",
 );
 
-// 项目看板四块布局（未开始/执行中/待审核/已结束）—— 末列是「已结束」，失败并入取消。
+// 项目看板四块布局（未开始/执行中/待处理/已结束）—— 末列是「已结束」，失败并入取消。
 // 这段曾被别的改动悄悄拆回 done+failed 两列，加断言钉住。
 assert.match(
   kanbanColumns,
@@ -235,11 +235,11 @@ assert.match(
   "the plugin-rendered file preview must use the shared header so mobile users can open either sidebar",
 );
 
-// 四块的文案是定死的：未开始 / 执行中 / 待审核 / 已结束，已结束内分 完成 / 取消
+// 四块的文案是定死的：未开始 / 执行中 / 待处理 / 已结束，已结束内分 完成 / 取消
 for (const [key, label] of [
   ["task.column.pending", "未开始"],
   ["task.column.running", "执行中"],
-  ["task.column.waitingUser", "待审核"],
+  ["task.column.waitingUser", "待处理"],
   ["task.column.ended", "已结束"],
   ["task.group.completed", "完成"],
   ["task.group.cancelled", "取消"],
@@ -325,8 +325,8 @@ assert.doesNotMatch(
   /TaskRebuildWorktreeIcon/,
   "已收尾的卡片不该再出现重建 worktree 的黄色循环键",
 );
-// 完成 = 「不在跑、也不是终态」。会话模型下没有「推进」键，「完成」不再需要
-// 与推进门反相兜底。2026-11-22 起判据只写在 taskCardActions.ts，卡片与详情共读。
+// 完成只给「待处理 / 暂停」：未开始没有产出可交付（给「开始」），运行中要先「终止」。
+// 2026-11-22 起判据只写在 taskCardActions.ts，卡片与详情共读。
 const cardActions = readFileSync(new URL("../src/components/task/taskCardActions.ts", import.meta.url), "utf8");
 assert.match(
   cardRows,
@@ -335,8 +335,13 @@ assert.match(
 );
 assert.match(
   cardActions,
-  /if \(task[.]status !== "running"\) actions[.]push[(]"complete"[)];/,
-  "「完成」只被「正在跑」和终态挡住",
+  /actions[.]push[(]"complete"[)];/,
+  "「完成」仍由共享动作表给出",
+);
+assert.doesNotMatch(
+  cardActions,
+  /status !== "running"[^\n]*"complete"/,
+  "运行中不该再有「完成」：那个位置只剩「终止」",
 );
 assert.match(
   cardRows,
@@ -403,12 +408,12 @@ assert.match(
   "列头灰底必须圆角，且与下方任务卡留 6px 空隙",
 );
 
-// 1) 「待审核」列必须显示状态文字（用户实测：该列卡片只有名字 + worktree 标签，
+// 1) 「待处理」列必须显示状态文字（用户实测：该列卡片只有名字 + worktree 标签，
 //    没有任何状态指示）。走 TaskCardRows 现有 showStatus 路径，与工作台卡同一渲染。
 assert.match(
   board,
   /const showTaskStatus = column\.name === t\("task\.column\.ended"\)\s*\|\|\s*column\.name === t\("task\.column\.waitingUser"\);/,
-  "「待审核」列必须显示状态文字，与「已结束」列同一判据",
+  "「待处理」列必须显示状态文字，与「已结束」列同一判据",
 );
 
 // 2) 列框已移除：border/圆角/浅灰底/overflow 四件必须成组消失。

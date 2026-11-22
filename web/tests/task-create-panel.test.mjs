@@ -161,7 +161,7 @@ assert.doesNotMatch(panelHook, /appendStage|setEditingStage|startEditStage|saveS
 const cardActions = fs.readFileSync(path.join(root, "src/components/task/taskCardActions.ts"), "utf8");
 assert.match(
   cardActions,
-  /if \(task\.status !== "running"\) actions\.push\("complete"\);/,
+  /actions\.push\("complete"\);/,
   "完成 is available to every non-terminal, non-running card",
 );
 assert.match(

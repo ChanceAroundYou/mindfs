@@ -27,23 +27,28 @@ const withWorktree = (extra = {}) => task({
   ...extra,
 });
 
-test("未结束、没有 worktree：完成 + 取消", () => {
-  for (const status of ["pending", "waiting_user"]) {
-    assert.deepEqual(taskCardActions(task({ status })), ["complete", "cancel"], status);
-  }
+test("未开始：开始 + 取消（还没有产出可交付，所以没有「完成」）", () => {
+  assert.deepEqual(taskCardActions(task({ status: "pending" })), ["start", "cancel"]);
+});
+
+test("待处理：完成 + 取消", () => {
+  assert.deepEqual(taskCardActions(task({ status: "waiting_user" })), ["complete", "cancel"]);
 });
 
 test("暂停后：恢复 + 完成 + 取消", () => {
   assert.deepEqual(taskCardActions(task({ status: "paused" })), ["resume", "complete", "cancel"]);
 });
 
-test("正在跑：暂停 + 取消，但没有「完成」（活还在动）", () => {
-  assert.deepEqual(taskCardActions(task({ status: "running" })), ["pause", "cancel"]);
+test("运行中：只有终止（它会真停会话与工作流，落回待处理）", () => {
+  // 暂停会让「活还在后台跑、界面却说停了」，完成/取消也不打断会话；2026-11-22
+  // 用户裁定运行中只留终止。
+  assert.deepEqual(taskCardActions(task({ status: "running" })), ["terminate"]);
 });
 
 test("有活着的 worktree 时，未结束的任务先给「收尾」", () => {
   assert.deepEqual(taskCardActions(withWorktree({ status: "waiting_user" })), ["finish-worktree", "complete", "cancel"]);
-  assert.deepEqual(taskCardActions(withWorktree({ status: "running" })), ["finish-worktree", "pause", "cancel"]);
+  // 运行中不摆收尾：树是这一轮正在写的工作区，唯一动作是终止。
+  assert.deepEqual(taskCardActions(withWorktree({ status: "running" })), ["terminate"]);
 });
 
 test("终态：重新打开 + 归档；worktree 还在就再给收尾", () => {
@@ -98,7 +103,8 @@ test("删除不进共享动作表，只由 taskActionButtons 给终态追加在�
     assert.ok(!taskCardActions(sample).includes("delete-task"), JSON.stringify(sample));
   }
   // 非终态没有删除入口；三种终态形状都在末尾补一个删除。
-  assert.deepEqual(taskActionButtons(task({ status: "running" })), ["pause", "cancel"]);
+  assert.deepEqual(taskActionButtons(task({ status: "running" })), ["terminate"]);
+  assert.deepEqual(taskActionButtons(task({ status: "pending" })), ["start", "cancel"]);
   assert.deepEqual(taskActionButtons(task({ status: "success" })), ["reopen", "archive-task", "delete-task"]);
   assert.deepEqual(
     taskActionButtons(withWorktree({ status: "success" })),
@@ -114,7 +120,7 @@ test("每个动作都有文案键与档位，且两种语言都写了", () => {
   const zh = readFileSync(new URL("../src/i18n/locales/zh-CN-tasks.ts", import.meta.url), "utf8");
   const en = readFileSync(new URL("../src/i18n/locales/en-US-tasks.ts", import.meta.url), "utf8");
   const keys = Object.keys(TASK_ACTION_BUTTON_META);
-  assert.equal(keys.length, 9, "the shared table covers every button, delete included");
+  assert.equal(keys.length, 11, "the shared table covers every button, delete included");
   for (const [action, meta] of Object.entries(TASK_ACTION_BUTTON_META)) {
     assert.match(meta.labelKey, /^task\./, `${action}: labels come from the task namespace`);
     assert.ok(["default", "primary", "success", "warn"].includes(meta.tone), `${action}: known tone`);

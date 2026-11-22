@@ -87,8 +87,8 @@ assert.doesNotMatch(
   /WorkspaceAttentionBar/,
   "the attention bar is gone — the task cards below already cover its information",
 );
-// 项目头的「需要你 N」角标同样移除（2026-10-07）：它和总数角标在「组内任务全部待审核」
-// 时显示同一个数字（用户实测「需要你3 3」）。待审核的信息没丢 —— 卡标题行有状态文字。
+// 项目头的「需要你 N」角标同样移除（2026-10-07）：它和总数角标在「组内任务全部待处理」
+// 时显示同一个数字（用户实测「需要你3 3」）。待处理的信息没丢 —— 卡标题行有状态文字。
 assert.doesNotMatch(
   projectRow,
   /workspaceAttention|blockedCount/,
@@ -131,7 +131,7 @@ assert.match(hook, /\.filter\(\(group\) => group\.tasks\.length > 0\);/, "task-l
 assert.doesNotMatch(projectRow, /task\.workspaceEmptyProject/, "the empty-project placeholder is gone with the empty-project rows");
 assert.doesNotMatch(board, /task\.workspaceEmptyProject/, "and the board must not render it either");
 
-// 6) 「进行中」= 执行中 + 待审核，仅此两态。非终态还含 pending / paused（没在跑也没人等），
+// 6) 「进行中」= 执行中 + 待处理，仅此两态。非终态还含 pending / paused（没在跑也没人等），
 //    混进来之后筛选名不副实；而一旦选了「进行中」，行里就只能有这两类 —— 渲染层
 //    不再补已完成的任务（那属于「全部」）。这正是「进行时里面全都是已完成」的病根。
 assert.match(
@@ -318,12 +318,15 @@ assert.match(
   "the live version must win only when it is strictly newer, so a late fan-out response cannot revert a fresh card",
 );
 // 卡片动作与收尾要能触发结构重拉（卡片还在不在、worktree 徽标），转发 ref 为空即跳过。
-// 回到待审核同样要重拉：它把卡片从「完成/失败」列搬回「待审核」列，只改详情搬不动卡。
-assert.match(
-  app,
-  /if \(action === "cancel" \|\| action === "reopen" \|\| action === "rebuild-worktree"\) \{\s*refreshWorkspaceBoard\(\);/,
-  "cancel moves a card out of the current filter and rebuild changes the worktree badge — both need a re-fetch",
-);
+// 回到待处理同样要重拉：它把卡片从「完成/失败」列搬回「待处理」列，只改详情搬不动卡。
+for (const key of ["start", "terminate", "cancel", "reopen", "rebuild-worktree"]) {
+  assert.match(
+    app,
+    new RegExp(`action === "${key}"`),
+    `${key} moves the card between columns (or changes the worktree badge) — it needs a re-fetch`,
+  );
+}
+assert.match(app, /if \([\s\S]{0,200}?\) \{\s*refreshWorkspaceBoard\(\);/, "the cross-column actions share one refresh call");
 assert.match(
   app,
   /workspaceBoardRefreshRef\.current = workspaceBoard\.refresh;/,
@@ -372,15 +375,15 @@ for (const key of [
 
 // 11b) 文案本身：键名可以不变，值必须跟着变。
 //      「快速发起」→「新建任务」（点开就是新建任务面板，名字得说清楚是哪件事）；
-//      「待处理」→「待审核」—— task.status.waitingUser / task.column.waitingUser
-//      早就是「待审核」，工作台这个筛选键是唯一的异类。
+//      「待处理」→「待处理」—— task.status.waitingUser / task.column.waitingUser
+//      早就是「待处理」，工作台这个筛选键是唯一的异类。
 assert.match(zh, /"task\.workspaceQuickLaunch": "新建任务"/, "the launch button says 新建任务, not 快速发起");
 assert.match(en, /"task\.workspaceQuickLaunch": "New task"/, "en-US launch label follows");
-assert.match(zh, /"task\.workspaceFilterBlocked": "待审核"/, "the blocked filter must read 待审核, matching the status and column labels");
-assert.match(en, /"task\.workspaceFilterBlocked": "Awaiting review"/, "en-US blocked filter matches the column label");
-assert.doesNotMatch(zh, /"task\.workspaceFilterBlocked": "待处理"/, "待处理 was the odd one out");
-assert.match(zh, /"task\.status\.waitingUser": "待审核"/, "status label stays 待审核");
-assert.match(zh, /"task\.column\.waitingUser": "待审核"/, "column label stays 待审核");
+assert.match(zh, /"task\.workspaceFilterBlocked": "待处理"/, "the blocked filter must read 待处理, matching the status and column labels");
+assert.match(en, /"task\.workspaceFilterBlocked": "Awaiting action"/, "en-US blocked filter matches the column label");
+assert.doesNotMatch(zh, /待审核/, "「待审核」已被「待处理」取代，文案里不该再有旧词");
+assert.match(zh, /"task\.status\.waitingUser": "待处理"/, "status label stays 待处理");
+assert.match(zh, /"task\.column\.waitingUser": "待处理"/, "column label stays 待处理");
 
 // 11c) 面板标题：工作台不属于任何项目，顶部不能继续显示当前选中的项目名面包屑。
 //       换成视图名 + 项目数，和 MainViewSwitcher 的「工作台/看板/文件/对话」对齐。

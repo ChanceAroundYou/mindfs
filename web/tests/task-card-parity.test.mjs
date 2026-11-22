@@ -81,8 +81,8 @@ assert.match(
 );
 assert.match(
   cardActions,
-  /if \(task\.status !== "running"\) actions\.push\("complete"\);/,
-  "完成 must be withheld only while running or after the task reached a terminal state",
+  /actions\.push\("complete"\);/,
+  "完成 must come from the shared non-terminal branch (running returns terminate earlier)",
 );
 
 // ── 5. 终态任务只要 worktree 还在就必须有收尾键 ──────────────────────────────

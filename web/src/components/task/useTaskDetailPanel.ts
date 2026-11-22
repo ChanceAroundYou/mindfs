@@ -187,9 +187,26 @@ export function useTaskDetailPanel({
     } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
-  // 「开始」不再有 header 入口：待开始的任务由对话流里那条排队留言的「立即执行」
-  // 触发（ConversationView 的 runQueued → runTaskNow）。卡片本来就没有开始键，
-  // 2026-11-22 两处统一后详情也一并撤掉，避免同一个动作两套入口。
+  // 「开始」：未开始的任务由 header 的开始键发起（发出排队留言，任务进入运行中）。
+  // 对话流里那条排队留言的「立即执行」仍走 runQueued → runTaskNow，两条入口落到
+  // 同一个后端 RunNow，不会各跑一遍。
+  const startTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "start", "", nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
+
+  // 「终止」：停掉在跑的会话 / 工作流，任务回到待处理。落点不是取消 ——
+  // 用户还可以接着说话，旧现场（Run 投影、回复行、转录）原样保留。
+  const terminateTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "terminate", "", nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
 
   const setPaused = async (next: "pause" | "resume") => {
     if (!task) return;
@@ -199,7 +216,7 @@ export function useTaskDetailPanel({
     } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
-  // 回到待审核：会话输入框会随状态重新打开，旧轮次的 Run / 回复原样保留。
+  // 回到待处理：会话输入框会随状态重新打开，旧轮次的 Run / 回复原样保留。
   const reopenTask = async () => {
     if (!task) return;
     try {
@@ -231,6 +248,8 @@ export function useTaskDetailPanel({
     paused,
     pauseTask: () => setPaused("pause"),
     resumeTask: () => setPaused("resume"),
+    startTask,
+    terminateTask,
     cancelTask,
     archiveTaskCard: () => setArchived(true),
     unarchiveTaskCard: () => setArchived(false),

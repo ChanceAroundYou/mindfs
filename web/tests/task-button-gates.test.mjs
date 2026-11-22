@@ -6,9 +6,10 @@ import { taskActionButtons, taskCardActions } from "../src/components/task/taskC
 
 // 看板/工作台任务卡上操作键的**给法**（2026-11 会话模型）。
 //
-//   正在跑       → 只给「暂停」，不给「完成」（活还在动）
+//   正在跑       → 只给「终止」（真停会话与工作流，落回待处理）
 //   暂停         → 给「继续」
-//   等待你/未开始 → 给「完成」
+//   未开始       → 给「开始」+「取消」（还没有产出可交付）
+//   待处理        → 给「完成」+「取消」
 //   终态          → 完成/暂停/继续都不给；worktree 还在就只给「收尾」
 //
 // 判据一律跑 `taskCardActions` 这个**真实**纯函数，不是抄一份：抄一份的话，
@@ -57,6 +58,8 @@ const gatesOf = (task) => {
   const actions = taskCardActions(task);
   return {
     canComplete: actions.includes("complete"),
+    canStart: actions.includes("start"),
+    canTerminate: actions.includes("terminate"),
     canPause: actions.includes("pause"),
     canResume: actions.includes("resume"),
     canReopen: actions.includes("reopen"),
@@ -80,11 +83,21 @@ test("终态判定覆盖完成 / 失败 / 取消", () => {
   }
 });
 
-test("正在跑只给暂停，不给完成", () => {
+test("正在跑只给终止，不给暂停 / 完成", () => {
   const gates = gatesOf(plainTask({ status: "running" }));
-  assert.equal(gates.canPause, true);
-  assert.equal(gates.canComplete, false, "a running task first has to pause");
+  assert.equal(gates.canTerminate, true);
+  assert.equal(gates.canPause, false, "暂停不会停掉会话：界面说停了、活还在跑");
+  assert.equal(gates.canComplete, false, "a running task first has to terminate");
   assert.equal(gates.canResume, false);
+});
+
+test("未开始给开始 + 取消，不给完成", () => {
+  const gates = gatesOf(plainTask({ status: "pending" }));
+  assert.equal(gates.canStart, true);
+  assert.equal(gates.canComplete, false, "还没有任何产出可交付");
+  assert.equal(gates.canTerminate, false, "没在跑，没有可终止的东西");
+  const actions = taskCardActions(plainTask({ status: "pending" }));
+  assert.deepEqual(actions, ["start", "cancel"]);
 });
 
 test("暂停给继续，恢复之后又回到完成", () => {
@@ -147,20 +160,23 @@ test("卡片与详情都不自己抄条件：两处都读 taskActionButtons", ()
 test("这四个动作都在面板里接到了真实处理函数", () => {
   const panel = fs.readFileSync(path.join(root, "src/components/task/TaskDetailPanel.tsx"), "utf8");
   const hook = fs.readFileSync(path.join(root, "src/components/task/useTaskDetailPanel.ts"), "utf8");
-  for (const fn of ["reopenTask", "cancelTask", "archiveTaskCard", "unarchiveTaskCard", "finishWorktree", "pauseTask"]) {
+  for (const fn of ["reopenTask", "cancelTask", "archiveTaskCard", "unarchiveTaskCard", "finishWorktree", "pauseTask", "startTask", "terminateTask"]) {
     assert.ok(hook.includes(`${fn}`), `the panel hook must expose ${fn}`);
   }
-  // 开始动作已下线：待开始的任务由对话流里那条排队留言的「立即执行」触发。
-  assert.doesNotMatch(panel, /startTask|"start":/, "the start key is gone from the header");
+  // 卡片与详情读同一份动作列表，所以每个键都得在 header 上接到真实处理函数。
+  assert.match(panel, /start: \(\) => void panel\.startTask\(\)/, "the start key is wired to the hook");
+  assert.match(panel, /terminate: \(\) => void panel\.terminateTask\(\)/, "the terminate key is wired to the hook");
 });
 
-test("看板把 reopen 当作跨列移动，动作后必须重取", () => {
+test("看板把跨列动作当作重取信号", () => {
   const board = fs.readFileSync(path.join(root, "src/app/useTaskBoard.ts"), "utf8");
-  assert.match(
-    board,
-    /action === "cancel" \|\| action === "reopen" \|\| action === "rebuild-worktree"/,
-    "reopen moves a card between columns, so the board must refetch",
-  );
+  for (const key of ["start", "terminate", "cancel", "reopen", "rebuild-worktree"]) {
+    assert.match(
+      board,
+      new RegExp(`action === "${key}"`),
+      `${key} moves a card between columns or changes worktree state, so the board must refetch`,
+    );
+  }
 });
 
 console.log("task-button-gates.test.mjs: OK");
