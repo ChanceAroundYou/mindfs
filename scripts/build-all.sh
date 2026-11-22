@@ -23,6 +23,12 @@ if [[ ! -f "${ROOT}/web/dist/index.html" ]]; then
   echo "missing web/dist/index.html: run 'make build-web' first" >&2
   exit 1
 fi
+# 清单是边缘镜像的唯一索引：没有它，装上的前端只能自己用，别的 control 节点
+# 拉不到、也就永远没法在主节点不可达时出页面。build-web 会顺带生成它。
+if [[ ! -f "${ROOT}/web/dist/ui-manifest.json" ]]; then
+  echo "missing web/dist/ui-manifest.json: run 'make build-web' (it generates the manifest)" >&2
+  exit 1
+fi
 
 echo "==> Building mindfs ${VERSION}"
 echo "    Output: ${DIST_DIR}/"

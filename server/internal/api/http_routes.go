@@ -199,6 +199,10 @@ func (h *HTTPHandler) Routes() http.Handler {
 			r.Get("/api/control-sync/head", h.requireSyncToken(h.handleControlSyncHead))
 			r.Get("/api/control-sync/changes", h.requireSyncToken(h.handleControlSyncChanges))
 		}
+		// 前端资源镜像：边缘把主节点的构建产物搬到本机，之后主节点不可达也能出页面。
+		// 与 /head /changes 同一档鉴权 —— 它同样能一次吐出整套静态资源。
+		r.Get("/api/control-sync/ui/manifest", h.requireSyncToken(h.handleControlSyncUIManifest))
+		r.Get("/api/control-sync/ui/bundle", h.requireSyncToken(h.handleControlSyncUIBundle))
 	}
 	if h.ControlSyncConflicts != nil {
 		r.Get("/api/control-sync/conflicts", h.handleControlSyncConflicts)
