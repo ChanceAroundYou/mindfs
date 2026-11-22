@@ -12798,3 +12798,55 @@ groups:
       - 'server/internal/api/usecase/session_agent_open.go:reopen := decideSessionReopen('
       - 'server/internal/api/usecase/session_agent_open.go:if reopen == sessionReopenLongContext {'
       - 'server/internal/api/usecase/session_send.go:defaultModel := defaultModelForAgent(in.Agent, resolvedModel)'
+
+  - id: G-PQ
+    title: 回合收尾之后 CLI 自动续写的补录（触发边沿 + 条目级时间地板）
+    kind: fix
+    symptom: |
+      会话刷新之后，助手最后一段输出不见了：「回合 result 之后 CLI 因后台任务回注
+      （task-notification）自己再跑的一整段循环」，实时看得见、库里一行都没有 ——
+      2026-11-22 实测 llm-deploy 会话 seq=196 之后的思考卡与工具行全在转录里、库里没有。
+      合上游时若丢掉任一处（触发标记 / 同步里的补录调用 / 条目级地板），症状原样回来。
+    why: |
+      ① 实时落盘只在 SendMessage 返回时做一次（挂在 OnUpdate 的闭包上），而那一次返回
+      就是人类回合的 result；之后的续写不产生新的回合边界（origin.kind=task-notification，
+      `isTurnBoundaryResult` 直接忽略），于是这些事件只广播、不落盘。
+      ② live-owned 会话的自动增量同步是关着的（2026-09-16 重导事故的守卫），所以没有
+      第二个写入者；刷新触发的 delta 同步也补不到。
+      ③ 补录只能走导入器，而 live-owned 的字节游标是冻结的，每拍读转录太贵 —— 用进程内
+      标记做触发边沿：只有「回合已结束却还有事件进来」才读一次（session_send.go 判
+      SessionTurnActive，取即清除，失败或尾部未收尾就放回去）。
+      ④ 时间地板必须能切开一条 item：导入器把相邻同角色条目合并成一条，时间戳与 native id
+      都取最后一条。回合收尾的助手条目与续写之间只隔着一个被过滤掉的 task-notification
+      用户条目，两者并成一条 —— 只按 item 级地板过滤时，「已落库那一轮 + 续写」会带着
+      续写的 uuid 整条重导一遍（正文重复）。所以在地板处按**条目**自己的时间戳拦截。
+      ⑤ 只补助手侧条目（recoveryAgentExchanges）：用户行由实时路径在发消息前就写好，
+      再导一次只会多出一个合并出来的巨型用户气泡（2026-11-17 手动同步实测）。
+      ⑥ 尾部没收尾（committed < offset，续写还在跑）时不提交、标记放回去下一拍再试；
+      补录成功才推进游标，重复补录因此退化成一次 stat。
+    # 针对性测试：
+    #   importer_transcript_continuation_test.go —— 条目级地板把「已落库那一轮 + 续写」
+    #     切成一条只含续写的 item（NativeID 取续写条目、committed 到文件尾），
+    #     且没有地板时合并行为不变（日常 import-owned 增量不受影响）。
+    #   external_sessions_live_continuation_test.go —— 无标记不读转录；有标记才补、只补
+    #     助手侧一条；地板取最后一行时刻；游标推进后不再读；尾部未收尾时标记保留并重试；
+    #     同 native id 重放不落第二行；回合进行中不补。
+    files:
+      - server/internal/agent/claude/importer_transcript.go
+      - server/internal/api/usecase/external_sessions_live_tail.go
+      - server/internal/api/usecase/external_sessions_sync.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_turn_registry.go
+    tests:
+      - server/internal/agent/claude/importer_transcript_continuation_test.go
+      - server/internal/api/usecase/external_sessions_live_continuation_test.go
+    anchors:
+      - 'server/internal/agent/claude/importer_transcript.go:if !floor.IsZero() && (ts.IsZero() || !ts.After(floor)) {'
+      - 'server/internal/api/usecase/session_turn_registry.go:continuationTails = make(map[string]bool)'
+      - 'server/internal/api/usecase/session_turn_registry.go:func markSessionContinuationTail(rootID, sessionKey string) {'
+      - 'server/internal/api/usecase/session_turn_registry.go:func takeSessionContinuationTail(rootID, sessionKey string) bool {'
+      - 'server/internal/api/usecase/session_send.go:markSessionContinuationTail(in.RootID, in.Key)'
+      - 'server/internal/api/usecase/external_sessions_sync.go:s.recoverLiveContinuationTail(ctx, root, in.RootID, manager, current, agentName, binding)'
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:func (s *Service) recoverLiveContinuationTail('
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:items := recoveryAgentExchanges(imported.Exchanges)'
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:if imported.Cursor.CommittedOffset < imported.Cursor.Offset {'
