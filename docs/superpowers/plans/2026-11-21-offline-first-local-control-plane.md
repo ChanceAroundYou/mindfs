@@ -1134,5 +1134,7 @@ T25/T26 记录里留的「`adopt_primary` 端点已就绪、按钮未接」在�
 - 门禁：`go test ./server/internal/controlsync/ ./server/internal/api/` 全绿、
   `tsc -b --noEmit` clean、`npx vitest run` 263 文件 / 888 通过 / 6 跳过；
   `make check-upstream` 在提交后转绿（锚点同步更新了 `mode.go` 那行结构体）
+- 回归：改完横幅渲染后重跑 `e2e/test_control_sync_ui_and_auth.py` 六条安全 + 五条页面断言
+  全 PASS（在线 / 本地 / 冲突三种横幅与冲突面板、裁决后回在线都照旧）。
 - 未做：真浏览器点验这条新路径（T22 脚本不覆盖「主节点被换掉」这一档）；
   未部署、未重启、未改配置。
