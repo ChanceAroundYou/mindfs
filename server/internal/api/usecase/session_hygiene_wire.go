@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"mindfs/server/internal/session"
@@ -27,6 +28,15 @@ const hygieneCompactTimeout = 30 * time.Minute
 
 // hygieneIdlePollInterval 是等待会话空闲的轮询间隔。
 var hygieneIdlePollInterval = 2 * time.Second
+
+// hygieneCompactGrace 是「压缩回合已经结束、harness 的压缩事件还没到」时的
+// 宽限窗口。
+//
+// Codex 的 compacted 事件与流结束是两个独立回调，先后没有保证：线上实测两次
+// 压缩事件都在流错误之后几十毫秒才落盘（00:35:20.826、10:51:57.686）。没有这个
+// 窗口时，成功压缩会被记成失败并 MarkAutoFailed，胶囊永远显示错误、后续也不再
+// 自动重试。窗口只影响收尾判定，不影响压缩本身。
+var hygieneCompactGrace = 3 * time.Second
 
 // hygieneProvider 是 Registry 的可选能力：AppContext 提供它，测试替身可以不提供。
 type hygieneProvider interface {
@@ -170,8 +180,9 @@ func (s *Service) runHygieneAutoCompact(in SendMessageInput) {
 	// 压缩命令，且不参与观测、不再触发下一次压缩。
 	in.Content = hygieneCompactCommand
 	in.hygieneCompact = true
-	compacted := false
-	in.onCompactSeen = func() { compacted = true }
+	seen := make(chan struct{})
+	var seenOnce sync.Once
+	in.onCompactSeen = func() { seenOnce.Do(func() { close(seen) }) }
 	ctx, cancel := context.WithTimeout(context.Background(), hygieneCompactTimeout)
 	defer cancel()
 	if !s.waitSessionIdle(ctx, in.RootID, in.Key) {
@@ -181,9 +192,9 @@ func (s *Service) runHygieneAutoCompact(in SendMessageInput) {
 	}
 	log.Printf("[session-hygiene] auto_compact.start root=%s session=%s agent=%s", in.RootID, in.Key, in.Agent)
 	if err := s.sendHygieneCompact(ctx, in); err != nil {
-		if compacted {
+		if waitHygieneCompactSeen(ctx, seen, hygieneCompactGrace) {
 			// Codex 的 /compact 回合会在压缩落盘后才关流，关流异常不等于压缩失败。
-			// 既然 harness 已经报告过压缩事件，就按成功收尾；流错误只留诊断日志。
+			// 事件与流结束的先后没有保证，所以错误分支也要等一个宽限窗口。
 			log.Printf("[session-hygiene] auto_compact.done root=%s session=%s agent=%s reason=stream_error_after_compact err=%v", in.RootID, in.Key, in.Agent, err)
 			s.finishHygieneCompact(in, "")
 			return
@@ -192,7 +203,7 @@ func (s *Service) runHygieneAutoCompact(in SendMessageInput) {
 		log.Printf("[session-hygiene] auto_compact.error root=%s session=%s err=%v", in.RootID, in.Key, err)
 		return
 	}
-	if !compacted {
+	if !waitHygieneCompactSeen(ctx, seen, hygieneCompactGrace) {
 		// 命令被当普通消息发了出去：上下文没变，按失败处理，胶囊里给出可见提示。
 		s.finishHygieneCompact(in, "harness 没有报告压缩事件，这次压缩没有生效")
 		log.Printf("[session-hygiene] auto_compact.no_notice root=%s session=%s agent=%s", in.RootID, in.Key, in.Agent)
@@ -200,6 +211,28 @@ func (s *Service) runHygieneAutoCompact(in SendMessageInput) {
 	}
 	s.finishHygieneCompact(in, "")
 	log.Printf("[session-hygiene] auto_compact.done root=%s session=%s agent=%s", in.RootID, in.Key, in.Agent)
+}
+
+// waitHygieneCompactSeen 等压缩事件；事件已经到时立即返回，不会为空等。
+func waitHygieneCompactSeen(ctx context.Context, seen <-chan struct{}, grace time.Duration) bool {
+	select {
+	case <-seen:
+		return true
+	default:
+	}
+	if grace <= 0 {
+		return false
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-seen:
+		return true
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // finishHygieneCompact 是压缩回合唯一的收尾闸：失败分支同时停掉自动重试，

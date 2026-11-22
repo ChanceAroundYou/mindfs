@@ -276,6 +276,9 @@ func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {
 		{name: "failure", sendErr: errors.New("codex thread error: access token expired"), wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			oldGrace := hygieneCompactGrace
+			hygieneCompactGrace = 20 * time.Millisecond
+			t.Cleanup(func() { hygieneCompactGrace = oldGrace })
 			rootDir := t.TempDir()
 			root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
 			manager := session.NewManager(root)
@@ -326,5 +329,48 @@ func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {
 				t.Fatalf("successful compact was reported as failure: %+v", view)
 			}
 		})
+	}
+}
+
+// Codex 的 compacted 事件会晚于流结束到达。事件晚到不等于压缩失败：错误分支
+// 必须等一个宽限窗口，否则成功的压缩会被记成 error 并停掉后续自动重试。
+func TestCompactEventArrivingAfterStreamErrorIsSuccess(t *testing.T) {
+	oldGrace := hygieneCompactGrace
+	hygieneCompactGrace = 300 * time.Millisecond
+	t.Cleanup(func() { hygieneCompactGrace = oldGrace })
+
+	rootDir := t.TempDir()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
+	manager := session.NewManager(root)
+	tracker := NewHygieneTracker(hygieneConfig())
+	service := &Service{Registry: &hygieneTestRegistry{
+		commandTestRegistry: commandTestRegistry{root: root, manager: manager},
+		tracker:             tracker,
+	}}
+	service.hygieneSend = func(_ context.Context, in SendMessageInput) error {
+		if in.onCompactSeen == nil {
+			t.Fatal("compact turn must install onCompactSeen")
+		}
+		time.AfterFunc(40*time.Millisecond, in.onCompactSeen)
+		return errors.New("stream ended unexpectedly")
+	}
+	created, err := manager.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Agent: "codex", Name: "chat"})
+	if err != nil {
+		t.Fatalf("create chat session: %v", err)
+	}
+	if err := service.CompactSession(context.Background(), GetSessionContextSavingInput{RootID: root.ID, Key: created.Key}); err != nil {
+		t.Fatalf("CompactSession: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	view := tracker.Snapshot(root.ID, created.Key, "codex", 200000)
+	for view.CompactPending && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		view = tracker.Snapshot(root.ID, created.Key, "codex", 200000)
+	}
+	if view.CompactPending {
+		t.Fatal("compact stayed pending after the late event")
+	}
+	if view.CompactError != "" || view.AutoFailed {
+		t.Fatalf("late compact event was reported as failure: %+v", view)
 	}
 }
