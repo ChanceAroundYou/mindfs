@@ -8660,7 +8660,7 @@ groups:
       - 'server/internal/api/workflow_llm.go:func NewWorkflowLLMClient('
       - 'server/internal/api/usecase/session_authoring.go:func RunOneShotPrompt('
       - 'server/app/workspace_build.go:services.Kanban.SetWorkflowLLM('
-      - 'server/app/workspace.go:WorkflowLLM:   api.NewWorkflowLLMClient('
+      - 'server/app/workspace.go:WorkflowLLM:      api.NewWorkflowLLMClient('
 
   - id: G-LW
     title: 任务对话界面按会话样式重做与运行状态投影修正
@@ -11513,7 +11513,7 @@ groups:
       - 'server/app/feishu.go:func newFeishuChannel(opts FeishuOptions, configDir string) *feishu.Service {'
       - 'server/internal/api/appcontext_feishu.go:func (s *AppContext) ApplyFeishuAnswer(ctx context.Context, a feishu.Answer) error {'
       - 'server/internal/api/appcontext_notify.go:func (s *AppContext) notifyFeishuScheduled(rootID, taskID, taskName, summary, message string, success bool) {'
-      - 'cli/cmd/startup_feishu.go:func applyFeishuConfig(cfg startupConfig, explicit map[string]bool, flags startupFlags) {'
+      - 'cli/cmd/startup_feishu.go:func applyFeishuConfig(cfg startupConfig, explicit map[string]bool, flags startupFlags) error {'
       - 'cli/cmd/startup_feishu.go:func feishuOptions(flags startupFlags) app.FeishuOptions {'
 
   - id: G-NY
