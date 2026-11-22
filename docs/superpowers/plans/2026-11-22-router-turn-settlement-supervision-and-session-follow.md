@@ -232,3 +232,45 @@ Plan 2026-11-22。用户要求「审阅任务运行和 Router，至少找出三�
   （`archived_at` 投影多带，在未含本组改动的干净 HEAD worktree 上同样红，属 HEAD 既有）；web
   `tsc -b --noEmit` clean、`npx vitest run` 265 文件 / 888 通过 / 6 跳过。
 - 登记 `G-PN`（24 个锚点）。
+
+### W4 执行记录（2026-11-22，Scope: G-PO）
+
+- **W4-1 作答即事实**：`MarkTaskQuestionAnswered` 两个 changed 分支（首答 / 追加答）都调
+  `recordUserAnswerActivity`，落一条 `user_answer` 活动（`Author=user`、`Role=user`、
+  正文 `问题：答案；…` 按问题 id 排序、ID 由 `taskPromptHash(sessionKey, toolUseID)` 决定所以重放幂等）；
+  API 侧 `appcontext_task_prompt.go` 在 `changed && len(answers) > 0` 时调
+  `Kanban.NoteSessionAnsweredQuestion(rootID, sessionKey)`，这是一次性内存标记，由随后的
+  `SettleSessionTurn` 取走并写进事件载荷 `answered_question=true`。活动流里的这行让用户自己的
+  答复成为可见记录；预算口径不变（结算回合走 `turn_settled` 的每小时 20 次，不占用户留言 3 回合）。
+- **W4-2 out-of-band 回合**（落点与计划表略有偏差，理由写在代码注释里）：真正能覆盖「任务绑定
+  会话被推进」的唯一入口是 `ws_session_message.go` 的 `OnStart`（所有用户发起的会话回合都从这里
+  进），而不是任务自己发起的 `beginTurnTaskStatus`。`BeginOutOfBandSessionTurn` 只在任务
+  `waiting_user` 时把任务推进到 `running` 并打标记（`TaskIDForSession` 跟进；主会话与节点会话同一
+  判据），`SettleSessionTurn` 结束时取走标记、写 `out_of_band=true`，再把仍停在 `running` 的任务
+  放回 `waiting_user`（`restoreOutOfBandTask`，放在事件落库错误返回之前 —— 事件写失败不代表这一轮
+  没结束，任务头不能永远 running）。标记逐 `root + session` 一次性，不落库。
+- **W4-3 当前会话回退**：新增 `task_store_session_fallback.go::attachCurrentSessionKeys`，对
+  `main_session_key` 为空的任务用一条 UNION 查询（`task_activities` ∪ `workflow_runs` ∪
+  `workflow_node_runs` 按 `updated_at` 倒序）取最近活跃的相关会话，**只填内存、不落库** ——
+  回退不该把一个节点会话悄悄钉成主会话。挂在 `GetTask` 与 `ListTasks` 上，任务详情 API 因此无需
+  改动就拿到会话视图入口与轮询目标。
+- **W4-4** 未新增读工具；`router_read_session` 照旧。
+- **测试**：`service_task_prompts_test.go` 1 条（活动存在 / 重放幂等 / 空答复不记）、
+  `session_follow_test.go` 3 条（作答标记进结算载荷且只生效一次；主会话与节点会话都触发
+  out-of-band 且结算后回 waiting_user，无关会话不触发；无会话返回空 + 回退取最新 + 显式主会话优先）、
+  `appcontext_task_prompt_test.go` 端到端 1 条（作答 → 活动行 → `turn_settled.answered_question=true`）
+  与源码守卫 1 条（`ws_session_message.go` 必须调 `BeginOutOfBandSessionTurn`）。
+- **变异验证（各自打红后还原）**：不作答记录 → `TestMarkTaskQuestionAnsweredRecordsUserAnswerActivity`
+  红（`user_answer activities = 0, want 1`）；只处理主会话 → `TestOutOfBandTurnBumpsWaitingTaskAndSettlesBack`
+  红（`node-session turn was not recognized as out-of-band`）；回退到只看 main →
+  `TestTaskCurrentSessionFallsBackToLatestRelatedSession` 红（`current session = "", want sess-new`）；
+  结算不取标记 → 作答与 out-of-band 两条用例同时红（`answered_question = false` / `out_of_band = false`）。
+- **门禁**：`go test -overlay ... ./server/internal/kanban/ ./server/internal/api/` 全绿
+  （294 s / 55 s；overlay 用来排除并发会话未跟踪的 `router_event_turn.go`）、
+  `go build` 全仓绿；web `tsc -b --noEmit` clean、`npx vitest run` 265 文件 / 888 通过 / 6 跳过
+  （`user_answer` 是未知活动类型，会话渲染按用户气泡处理，没有类型穷举需要跟改）。
+- **修正 W3 记录**：上一轮把 `TestOverviewProjectionCoversEveryFieldTheSharedCardReads` 记成
+  「HEAD 既有」有误 —— 实测是 W3 自己把 `taskActionButtons` 从 `appTask.ts` 拆进
+  `taskCardActions.ts` 后，守卫的扫描清单没跟着扩，`archived_at` 失去认领。守卫已补扫该文件，
+  并把「引号里的 `task.xxx`」一律当文案键排除（`labelKey` 字面量不是字段读取）；变异「把
+  `taskCardActions.ts` 从扫描清单删掉」打红同一条断言。

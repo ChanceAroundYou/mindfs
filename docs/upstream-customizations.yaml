@@ -13015,6 +13015,7 @@ groups:
       - server/internal/kanban/router_turn_recovery_test.go
       - server/internal/kanban/router_task_alert_test.go
       - server/internal/api/appcontext_task_watermark_test.go
+      - server/internal/api/http_tasks_overview_card_parity_test.go
       - web/tests/task-router-alert.test.mjs
     anchors:
       - 'server/internal/kanban/turn_watermark.go:func (s *Service) NoteSessionTurnOutput(ctx context.Context, rootID, sessionKey string, now time.Time) {'
@@ -13041,3 +13042,60 @@ groups:
       - 'web/src/components/task/taskIcons.tsx:export function TaskRouterAlertIcon('
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.routerAlertInterrupted":'
       - 'web/src/i18n/locales/en-US-tasks.ts:"task.routerAlertStalled":'
+
+  - id: G-PO
+    title: 会话推进跟随：作答落 user_answer · out-of-band 回合进出 running · 无主会话时回退最近活跃会话
+    kind: feature
+    symptom: |
+      任务卡停在 waiting_user、底下却没有任何可见的推进：用户在提问卡上作答，任务对话里
+      看不到自己答了什么；用户直接进会话继续聊，任务头一直不动，Router 也收不到「这一轮
+      结束了」；任务没有 main_session_key 时（历史任务、纯节点会话）详情面板与轮询拿不到
+      会话入口，看起来像「任务空着」—— 线上 #68 四天 11 次提问作答、0 决策 0 事件、卡片
+      摘要为空就是这个形状。合并上游时若去掉 user_answer 活动、把 out-of-band 判据改回只看
+      主会话、或删掉当前会话回退，症状原样回来。
+    why: |
+      ① 作答是事实，不只是标记：`MarkTaskQuestionAnswered` 两个 changed 分支都落一条
+      `user_answer` 活动（role=user，正文「问题：答案；…」按问题排序，ID 由
+      `taskPromptHash(sessionKey, toolUseID)` 决定所以重放幂等），用户能在对话里看见自己的
+      答复；「这一轮答复了提问」用一次性内存标记交给随后的 `SettleSessionTurn`，事件载荷
+      才带 `answered_question=true`，不依赖活动行反查。
+      ② out-of-band 回合的唯一入口是 `ws_session_message.go` 的 `OnStart` —— 用户从会话
+      面板发出的每一轮都从这里进；`BeginOutOfBandSessionTurn` 只在任务 `waiting_user` 时
+      推进到 `running`（主会话与节点会话同一判据，`TaskIDForSession` 跟进），结算时取走标记
+      写 `out_of_band=true`，再把仍停在 running 的任务放回 `waiting_user`。恢复放在事件落库
+      错误返回之前：事件写失败不代表这一轮没结束，任务头不能永远 running。
+      ③ 当前会话回退只填内存、不落库（`attachCurrentSessionKeys`，一条 UNION 查询按
+      `updated_at` 倒序取最近活跃的相关会话）：回退不该把一个节点会话悄悄钉成主会话；挂在
+      `GetTask` 与 `ListTasks` 上，任务详情 API 无需改动就拿到会话视图入口与轮询目标。
+      ④ 不新增读工具：结算回合用既有 `router_read_session` 读会话尾部，权限边界不变。
+    files:
+      - server/internal/kanban/service_session_follow.go
+      - server/internal/kanban/task_store_session_fallback.go
+      - server/internal/kanban/service_task_prompts.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/task_store.go
+      - server/internal/api/appcontext_task_prompt.go
+      - server/internal/api/ws_session_message.go
+    tests:
+      - server/internal/kanban/service_task_prompts_test.go
+      - server/internal/kanban/session_follow_test.go
+      - server/internal/api/appcontext_task_prompt_test.go
+    anchors:
+      - 'server/internal/kanban/types.go:ActivityTypeUserAnswer = "user_answer"'
+      - 'server/internal/kanban/service_task_prompts.go:func (s *ActivityService) recordUserAnswerActivity('
+      - 'server/internal/kanban/service_task_prompts.go:func userAnswerBody(answers map[string]string) string {'
+      - 'server/internal/kanban/service.go:sessionFollowMu  sync.Mutex'
+      - 'server/internal/kanban/service_session_follow.go:func sessionFollowKey(rootID, sessionKey string) string {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) NoteSessionAnsweredQuestion(rootID, sessionKey string) {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) BeginOutOfBandSessionTurn(ctx context.Context, rootID, sessionKey string) bool {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID string) {'
+      - 'server/internal/kanban/service_turn_settled.go:if s.takeSessionAnsweredQuestion(rootID, sessionKey) {'
+      - 'server/internal/kanban/service_turn_settled.go:outOfBand := s.takeSessionOutOfBandTurn(rootID, sessionKey)'
+      - 'server/internal/kanban/service_turn_settled.go:s.restoreOutOfBandTask(ctx, store, taskID)'
+      - 'server/internal/kanban/task_store_session_fallback.go:func (s *TaskStore) attachCurrentSessionKeys(ctx context.Context, tasks []Task) {'
+      - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, items)'
+      - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, tasks)'
+      - 'server/internal/api/appcontext_task_prompt.go:s.Kanban.NoteSessionAnsweredQuestion(rootID, sessionKey)'
+      - 'server/internal/api/ws_session_message.go:h.AppContext.Kanban.BeginOutOfBandSessionTurn(msgCtx, rootID, key)'
