@@ -6,6 +6,20 @@ to resume their old TODOs or baselines.
 
 ## 部署状态（权威，覆盖下方条目里的「未部署」）
 
+**2026-11-23 四端发布 `v0.5.5-1201-220-gf79a0e5a`**（origin/main `f79a0e5a`，含
+`0b060ede..f79a0e5a` 全部提交，本批只有 G-PW）。四端版本逐字一致：wsl `is-active` + health 200、
+fn `user` 单元 `is-active` + health 200（`/proc/<pid>/exe` 与安装文件 md5 同为 `f4ad9194…`）、
+pc-win 计划任务 PID 4504（02:15:55 起、Session 0）、`:7332` LISTENING、health 200、
+日志 `checker.start current=v0.5.5-1201-220-gf79a0e5a`；本机已安装同一二进制（`--version`
+`v0.5.5-1201-220-gf79a0e5a`，`/mindfs/health` 200 `role=control`，bundle
+`assets/index-BOTUDlWQ.js` 与安装目录一致），**运行进程仍是旧二进制，待用户
+`sudo systemctl restart mindfs`**。本批内容只有 G-PW：`prepareAutoStartEnvironment()` 把
+「快照文件不存在」从错误降级成 no-op（只放行 `os.ErrNotExist`，坏 JSON / 版本不符仍报错），
+消除 pc-win 每次启动必失败的那条环境恢复路径；隔离实例实测 `--internal-autostart` 在无快照的
+空 config 目录里起服务、health 200 且 stderr 无 `[mindfs/autostart]` 警告。门禁：
+`go test -count=1 ./...` 全绿、`tsc` clean、Vitest 943 通过、`make check-upstream`
+2577 delta / 375 组全绿。
+
 **2026-11-22 四端发布 `v0.5.5-1201-156-g9f62b54b`**（origin/main `9f62b54b`，含
 `28266b98..9f62b54b` 全部提交）。四端版本逐字一致：wsl / fn 的 user 单元 `is-active` + health 200
 （`role=worker`）；pc-win 计划任务 PID 8128、`:7332` LISTENING、health 200（`role=worker`）；
