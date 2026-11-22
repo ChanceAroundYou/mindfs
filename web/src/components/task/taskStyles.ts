@@ -42,13 +42,27 @@ export function taskCardIconButtonStyle(tone: "default" | "accent" | "success" |
 
 
 /**
+ * 动作图标行里相邻两键的间距。卡片与详情 header 共用这一条 ——
+ * 距上一轮统一后两处都是 gap 0，22px 的透明底盒子挨在一起时，
+ * 图标之间只剩盒子内边距，视觉上挤成一坨；取 4px 与卡片左侧会话键那排
+ * 保持同一节奏，换行时行距也跟着它走。
+ */
+export const TASK_ACTION_ROW_GAP = 4;
+
+/**
  * 动作语义档位 → 图标键外观。卡片与详情 header 都走这一条，
  * 免得「完成」在一处是绿、另一处是蓝。
+ *
+ * flexShrink: 0 是给间距让路的：行容器加了 gap 之后，窄卡上按钮原本会被
+ * 压窄（22px 是图标盒子的尺寸，不该随容器收缩），这里禁掉压缩。
  */
 export function taskActionIconStyle(tone: "default" | "primary" | "success" | "warn"): React.CSSProperties {
-  return taskCardIconButtonStyle(
-    tone === "primary" ? "accent" : tone === "success" ? "success" : tone === "warn" ? "danger" : "default",
-  );
+  return {
+    ...taskCardIconButtonStyle(
+      tone === "primary" ? "accent" : tone === "success" ? "success" : tone === "warn" ? "danger" : "default",
+    ),
+    flexShrink: 0,
+  };
 }
 
 

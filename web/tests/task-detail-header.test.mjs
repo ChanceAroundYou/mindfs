@@ -89,7 +89,8 @@ test("平铺动作与看板卡片同源：一份键序、一份图形、一份�
   assert.match(panel, /taskActionIconStyle\(action\.tone\)/);
   assert.doesNotMatch(panel, /taskCardIconButtonStyle\(/, "详情不再手搓档位映射");
   assert.doesNotMatch(panel, /width: "28px"|height: "28px"|borderRadius: "8px"/, "盒子尺寸交给卡片同一份样式");
-  assert.match(panel, /data-testid="task-detail-actions" style=\{\{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 \}\}/);
+  // 键间距与卡片同一条常量（不再各自写死 0）：容器本身仍只负责排列与换行。
+  assert.match(panel, /data-testid="task-detail-actions" style=\{\{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_ACTION_ROW_GAP \}\}/);
 });
 
 test("详情侧不再保留自己的一套动作口径", () => {

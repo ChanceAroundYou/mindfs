@@ -13,6 +13,7 @@ import { TaskCardFinishButton } from "./TaskCardFinishButton";
 import { TASK_ACTION_BUTTON_META, taskActionButtons } from "./taskCardActions";
 import { taskActionIcons } from "./taskActionIcons";
 import {
+  TASK_ACTION_ROW_GAP,
   TaskPlanAuxIcon,
   TaskSessionErrorIcon,
   taskActionIconStyle,
@@ -334,7 +335,9 @@ export function TaskCardRows({
             TASK_ACTION_BUTTON_META。未结束 → 收尾/暂停/恢复/完成/取消；
             终态 → 收尾/返回/归档/删除；归档 → 返回/取消归档/删除。 */}
         {/* 换行后靠 marginLeft:auto 仍贴右（space-between 在单行时本来也等效） */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, marginLeft: "auto" }}>
+        {/* 键间距与详情 header 同一条 TASK_ACTION_ROW_GAP；按钮自身 flexShrink:0
+            （见 taskActionIconStyle），窄卡上也保持 22×22。 */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: TASK_ACTION_ROW_GAP, marginLeft: "auto" }}>
           {buttons.map((key) => {
             if (key === "finish-worktree") {
               return <TaskCardFinishButton key={key} task={task} onMove={onMove} />;

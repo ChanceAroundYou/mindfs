@@ -256,4 +256,24 @@ assert.match(
   /export async function beginTaskFinishWorktree[\s\S]{0,1400}?throw new FinishWorktreeUserChanges/,
   "beginTaskFinishWorktree must convert its 409 into typed errors too — otherwise the file list is lost",
 );
+
+// ── 9. 图标键间距只有一条（卡片与详情 header 同源） ─────────────────────────
+// 上一轮把两处按钮统一成同一套外观时，间距写的是 gap 0；22px 的透明底盒子挨在
+// 一起时图标只剩盒内留白，视觉上挤成一坨。间距收成一条常量，两处各写一个数字
+// 就是下一次漂移的起点。
+const detailPanel = readFileSync(new URL("../src/components/task/TaskDetailPanel.tsx", import.meta.url), "utf8");
+const taskStyles = readFileSync(new URL("../src/components/task/taskStyles.ts", import.meta.url), "utf8");
+assert.match(taskStyles, /export const TASK_ACTION_ROW_GAP = 4;/, "键间距只有一份定义");
+assert.match(detailPanel, /gap: TASK_ACTION_ROW_GAP/, "详情 header 用共享间距");
+assert.match(cardRows, /gap: TASK_ACTION_ROW_GAP/, "卡片动作行用同一条间距（工作台卡同源）");
+assert.match(taskStyles, /flexShrink: 0/, "22px 盒子不随容器收缩：加间距后窄卡上也不许被压窄");
+assert.match(
+  finishButton,
+  /taskActionIconStyle\("success"\)/,
+  "收尾键与其它动作键同一套外观（含 flexShrink），不再走裸的卡片图标样式",
+);
+// 间距变化不许碰到标题行与 hover 文案：前者是另一条 8px 的容器，后者仍是动作全称。
+assert.match(detailPanel, /display: "inline-flex", alignItems: "center", gap: "8px"/, "标题行间距不受影响");
+assert.match(detailPanel, /title=\{action\.label\}/);
+assert.match(detailPanel, /aria-label=\{action\.label\}/);
 });

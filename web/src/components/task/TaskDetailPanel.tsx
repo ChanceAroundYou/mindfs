@@ -9,7 +9,7 @@ import { TaskInspectEntries } from "./TaskInspectEntries";
 import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
-import { taskActionIconStyle } from "./taskStyles";
+import { TASK_ACTION_ROW_GAP, taskActionIconStyle } from "./taskStyles";
 import { TASK_ACTION_BUTTON_META, taskActionButtons, type TaskActionButtonKey } from "./taskCardActions";
 import { taskActionIcons } from "./taskActionIcons";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
@@ -127,8 +127,9 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
       ) : (
         // 动作全部平铺：有几项画几项，删除也在同一排里（不再做独立特例，也不再收进菜单）。
         // 与看板卡片的图标键完全同形同色：同一份键序（taskActionButtons）、同一套图形
-        // （taskActionIcons）、同一档配色（taskActionIconStyle）→ 22×22 / 圆角 6 / 间距 0。
-        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 }}>
+        // （taskActionIcons）、同一档配色（taskActionIconStyle）→ 22×22 / 圆角 6；
+        // 键间距也取同一条 TASK_ACTION_ROW_GAP（移动端换行时行距一并跟随）。
+        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_ACTION_ROW_GAP }}>
           {actions.map((action) => (
             <button
               key={action.key}
@@ -139,7 +140,6 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
               onClick={action.onSelect}
               style={{
                 ...taskActionIconStyle(action.tone),
-                flexShrink: 0,
                 opacity: saving ? 0.4 : 1,
                 cursor: saving ? "not-allowed" : "pointer",
               }}
