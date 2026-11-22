@@ -12250,6 +12250,7 @@ groups:
       把 Codex token 过期等具体原因写进胶囊。`compacting` 仍用于 POST 在途，二者合并成 `compactBusy`。
       ⑪ **压缩后大小不靠猜**：Claude 的 compact boundary 原始 JSONL 带 `postTokens`，但 SDK typed message 不带；适配器按 UUID 从转录补读并塞进 `CompactNotice.PostTokens`，`contextWindowAfterCompact` 用它覆盖 MessageDone 仍带着的压缩前旧值。Codex 没有这个数，保留后续 `token_count`。
       ⑫ **stale 窗口不重复压缩**：压缩事件先到、`token_count` 未到时 `contextStale` 闸住 `Observe`，既不推进轮数也不发 `AutoCompactDue`；新 token 到来后清掉。胶囊累计行只显示总量（当前会话 + agent 的账本，不是全局，也不写「最近 200 次折叠」），所有 token 数字 <10k 原值、>=10k 用 k；不新增「压缩后上下文」展示行，也不改本轮请求 / 本轮节省两行。
+      ⑬ **压缩事件优先于流尾部异常**：Codex 的 `/compact` 回合可能在 `compacted` 落盘之后才因流关闭返回 `codex response stream ended unexpectedly`。`runHygieneAutoCompact` 先检查 `onCompactSeen`：已经报告过压缩就按成功收尾，只把流异常写进诊断日志，绝不写 `compact_error` / `auto_failed`；没有压缩事件时才保留原来的失败提示。
     boundary: |
       状态在进程内、按 `root + session` 保存：重启后「久」从零重新累计，「已提示过」也一并清空。
       不自动新建会话、不归档、不删转录；不改 live-compact 的任何阈值；「只久」永不自动压缩；
@@ -12260,6 +12261,7 @@ groups:
       设备本地重新登录解决，本项目不复制或自动刷新设备凭据；胶囊只负责把错误显示出来。
       手动压缩按钮按服务端 pending 状态禁用；旧节点不回该字段时只用 80 秒兜底，不声称能感知结果。
       Claude postTokens 只在转录可读时补到；读不到就退回原值，不拿估算冒充真实值。Codex 压缩事件后若迟迟没有新 token_count，stale 闸会一直挡住自动压缩，直到下一次 token_count 或重启（状态不持久化）。胶囊累计数来自当前会话 + agent 的 retained ledger，不是全局；账本仍保留最近 200 行供计算，但 UI 不再显示这个窗口数。
+      ⑬ 只修「压缩已发生但流尾部报错」的状态归类：不尝试从 Codex rollout 回填 token；如果 post-compact `token_count` 没进入事件流，`context_tokens` 仍可能是压缩前的值，stale 闸只保证不重复自动压缩。
     files:
       - server/internal/api/usecase/session_hygiene.go
       - server/internal/api/usecase/session_hygiene_wire.go
@@ -12316,6 +12318,8 @@ groups:
       - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) finishHygieneCompact(in SendMessageInput, errText string) {'
       - 'server/internal/api/usecase/session_hygiene_test.go:func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {'
       - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestHygieneAutoCompactTreatsStreamErrorAfterCompactEventAsSuccess(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:reason=stream_error_after_compact'
       - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) CompactSession(ctx context.Context, in GetSessionContextSavingInput) error {'
       - 'server/internal/api/usecase/root.go:hygieneSend func(context.Context, SendMessageInput) error'
       - 'server/internal/api/usecase/session_send.go:s.scheduleHygieneAutoCompact(in, hygieneHarnessForSession(current))'
@@ -12357,3 +12361,31 @@ groups:
       - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.savedTotalValue": "{size}",'
       - 'web/tests/token-amount.test.mjs:test("token amounts use k from 10k up, without false precision"'
       - 'web/tests/context-saving-chip.test.mjs:import { formatTokenAmount } from "../src/components/agent/tokenAmount";'
+  - id: G-PI
+    title: Windows 上 Codex 优先用桌面端内置 CLI，不再用 0.166 插件版
+    kind: feature
+    symptom: |
+      pc-win 的用户级 agents.json 把 codex.command 指向
+      ~/.codex/plugins/.plugin-appserver/codex.exe（实测 0.166.0-alpha.5.1），
+      而同一台机器的 Codex 桌面端与 PATH CLI 都是 0.171；旧 app-server 会和桌面端
+      争同一份 CODEX_HOME 的 thread writer，切 provider 后也容易拿到旧线程记录。
+    why: |
+      ① 只在配置合并完成后做平台特化：`LoadConfig` / `LoadConfigWithExtra` 都过
+      `finalizeAgentConfig`，所以用户层写死旧插件路径也不会在合并后把默认值重新盖回去。
+      ② 桌面端装在 WindowsApps 的带版本号目录里，`filepath.Glob` 取
+      `OpenAI.Codex_*/app/resources/codex.exe` 中字典序最大的那个；桌面端升级换目录后
+      下次启动自动跟随，不需要手改 agents.json。
+      ③ 找不到桌面端时，旧插件路径也降级成 PATH 写法 `codex`，确保 0.166 不再被用；
+      用户显式指定的其它 codex 路径保持不动，避免覆盖自定义 harness。
+    files:
+      - server/internal/agent/config_codex_desktop.go
+      - server/internal/agent/config_codex_desktop_test.go
+      - server/internal/agent/config.go
+    tests:
+      - server/internal/agent/config_codex_desktop_test.go
+    anchors:
+      - 'server/internal/agent/config_codex_desktop.go:func preferWindowsDesktopCodex(cfg *Config, goos, programFiles string) {'
+      - 'server/internal/agent/config_codex_desktop.go:func finalizeAgentConfig(cfg Config) Config {'
+      - 'server/internal/agent/config.go:return finalizeAgentConfig(mergeConfigs(baseCfg, userCfg)), nil'
+      - 'server/internal/agent/config.go:return finalizeAgentConfig(mergeConfigs(cfg, extraCfg)), nil'
+      - 'server/internal/agent/config_codex_desktop_test.go:func TestPreferWindowsDesktopCodexReplacesStalePluginBinary(t *testing.T) {'
