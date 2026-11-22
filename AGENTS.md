@@ -21,13 +21,14 @@ Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
 | **本机** | Proxmox VM Ubuntu 26.04 | `home.xiaokubao.space` (192.168.1.6) / `xiaokubao` | `home` | system `/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**仅用户执行** |
 | **wsl** | WSL Ubuntu 24.04 | `pc.xiaokubao.space` / `nnb` | `pc` | user `~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，Agent 可执行 |
 | **fn** | fnOS | `fn.xiaokubao.space` / `xiaokubao` | `fn` | user `~/.config/systemd/user/mindfs.service` | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，Agent 可执行 |
-| **pc-win** | 同台物理 PC 的 Windows | `ssh pc` → 宿主 / `小哭包` (`C:\Users\10178`) | 走 `/mindfs-win` 前缀；本机 `nodes.json` 无此条目 | 计划任务 `\mindfs`（S4U + BootTrigger，Session 0） | `0.0.0.0:7332` | `ssh pc "schtasks /run /tn mindfs"`；详见 memory `windows-worker-on-pc` |
+| **pc-win** | 同台物理 PC 的 Windows | `ssh pc` → 宿主 / `小哭包` (`C:\Users\10178`) | `pc-win`（`nodes.json` 有 `remote: true` 条目，前端前缀 `/mindfs-win`） | 计划任务 `\mindfs`（S4U + BootTrigger，Session 0） | `0.0.0.0:7332` | `ssh pc "schtasks /run /tn mindfs"`；详见 memory `windows-worker-on-pc` |
 
 - **本机不叫 PC**。「PC」= WSL 所在的 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → WSL）。
 - 本机没有 user bus：`systemctl --user ...` 报错不代表服务不存在，查 `/proc/$(pgrep -x mindfs)/cgroup`。
 - `/home/nnb/...` 是 WSL 家目录，本机是 `/home/xiaokubao`。
 - **WSL 与 fn 没有源码库**，永远别在 worker 上编译。唯一分发路径是 `bash scripts/deploy-all.sh`（tar + ssh 安装），**不推 `web/dist`**（worker 是 `role=worker`，`GET /` 403）。
 - pc-win「装上了」与「在跑」是两件事，`deploy-pcwin.sh` 取不到 PID 就明写「未确认」；自己核对：`ssh pc "netstat -ano | findstr :7332"`。
+- 判断**本机**是否真的跑着刚装的二进制：`/proc/$(pgrep -x mindfs)/exe` 与 `~/.local/bin/mindfs` 同 inode，且 `GET /mindfs/api/app/update` 的 `current_version` 等于安装版本。只比 `--version` 不够（那是磁盘上的文件）。
 
 ## 构建与部署
 
@@ -81,6 +82,7 @@ Go 工具链在 `$HOME/.local/share/go`（1.26.5），裸跑 `go` / `make test` 
 1. **登记 `docs/upstream-customizations.yaml`**：写清「哪个文件、改了什么、为什么必须保留、可见症状」。
 2. **留针对性测试**，并在该组「针对性测试」表里列出「测试 → 钉住什么」。
 3. **提交信息标 `Scope: G-X`**，与清单组号对应。
-4. **跑 `make check-upstream`**（只看已提交文件；提交前红 = 清单没写全；提交后红 = 定制被覆盖）。
+
+三件齐了再跑 `make check-upstream`（只看已提交文件；提交前红 = 清单没写全；提交后红 = 定制被覆盖）。
 
 合上游后跑全量门禁；测试红了按清单「为什么保留」逐条恢复，不按上游重写。

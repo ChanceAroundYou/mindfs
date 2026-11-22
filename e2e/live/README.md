@@ -69,6 +69,20 @@ MINDFS_LIVE_PASS=<口令>
 用仓库根的 `.venv/bin/python`（依赖见 `e2e/requirements.txt`）。
 **不要用 `npx playwright` / 系统 python** —— 那是另外两套缓存，浏览器版本对不上。
 
+| 脚本 | 用途 |
+|---|---|
+| `panel_geometry.py` | 线上到底跑哪份 bundle + 面板矩形（桌面 / `--mobile`） |
+| `scroll_repro.py` | 一次滚到顶后数自发产生的 `?before_seq=` 请求 |
+| `prepend_visible_jump.py` | 滚动中逐帧核对锚行屏幕位移与探针记账 |
+| `prepend_flicker.py` | 前插期间视口被已挂载行覆盖的比例（结构性空白） |
+| `prepend_motion.py` | 同一行屏幕 y 的逐帧序列（内容抖不抖） |
+| `prepend_screencast.py` | 前插前后合成帧逐帧比对（像素级闪屏） |
+| `prepend_seq_probe.py` | 摊开 scroll / wheel / 结构提交 / rAF 的有序日志，定位「谁把 scrollTop 写多了」 |
+| `prepend_settle_probe.py` | 加载完成后那一下位移：回补写多了，还是内容高度又变了 |
+| `selection_scope.py` | 长会话拖选正文时选区是否扩到标题栏 / 上方正文 |
+
+各脚本文件头写明用法与判据；下面只展开两条最常用的。
+
 ## 判断口径（为什么不是「看它跳不跳」）
 
 `scroll_repro.py` 只滚一次到顶，然后**完全不再操作**，数这之后自发产生了几次

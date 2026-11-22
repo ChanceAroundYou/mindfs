@@ -9,7 +9,7 @@ server/
 ├── internal/session/   Session 生命周期（manager.go，SQLite WAL）。核心热路径
 ├── internal/agent/     Agent 运行时抽象：types/（接口）+ pool.go（池）+ protocol.go（发现）
 │                       + claude/ + codex/ + acp/（各后端实现）
-├── internal/kanban/    看板任务（自带流水快照，预设解耦，无并发调度）
+├── internal/kanban/    看板任务：对话 + Router 决策 + 工作流引擎/执行器/驱动（SQLite WAL）
 ├── internal/<domain>/  fs / gitview / scheduled / preferences / auth / notify /
 │                       config / update / pins / nodes / webpush …各守一域
 └── cmd/mindfs-server/  后端入口（仅 make dev-backend 用；发布二进制是 cli/cmd）
