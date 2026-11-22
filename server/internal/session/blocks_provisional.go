@@ -76,7 +76,19 @@ func (m *Manager) SealProvisionalTurnBlocks(ctx context.Context, key string, seq
 		}
 	}
 	sealed := make([]Block, 0, len(provisional))
-	for _, block := range provisional {
+	for i := 0; i < len(provisional); i++ {
+		block := provisional[i]
+		if block.Type == BlockTypeText {
+			// 流式正文是一段一段写进来的；封口时把连续的文本片段拼回一条，
+			// 否则恢复出来的同一段回复会被界面拆成多个独立气泡。
+			var text strings.Builder
+			text.WriteString(block.Text)
+			for i+1 < len(provisional) && provisional[i+1].Type == BlockTypeText {
+				i++
+				text.WriteString(provisional[i].Text)
+			}
+			block.Text = text.String()
+		}
 		next := block
 		next.Revision = maxRevision[block.Pos] + 1
 		next.Step = 1
