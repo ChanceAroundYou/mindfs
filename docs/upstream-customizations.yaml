@@ -9497,7 +9497,7 @@ groups:
       - 'server/internal/agent/fold/pointer.go:PointerMarker = "[MindFS live-compact]"'
       - 'server/internal/agent/fold/config.go:func (c Config) ForHarness(name string) Config {'
       - 'server/internal/agent/proxy/live_compact_log.go:func liveCompactProviderLine(token string, gate liveCompactGate, result foldResult, usage fold.Usage) string {'
-      - 'server/internal/agent/proxy/live_compact_log.go:actual=%d cached=%d growth=%d projected=%d candidates=%d'
+      - 'server/internal/agent/proxy/live_compact_log.go:actual=%d cached=%d usage_missing=%s growth=%d projected=%d candidates=%d'
       - 'server/internal/agent/proxy/provider_route.go:scanned := key != "" && r.Method == http.MethodPost'
       - 'server/internal/agent/proxy/provider_route.go:observed := scanned && s.harnessRuntimeFor(harnessForAdapter(adapterResponses)).cfg.Observes()'
       - 'server/internal/agent/proxy/provider_route.go:if observed && resp.Header.Get("Content-Encoding") == "" {'
