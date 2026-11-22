@@ -7,7 +7,7 @@ Plan 2026-11-22。用户要求「审阅任务运行和 Router，至少找出三�
 > 2. router 没有管理好任务，没有定时检查，系统重启或其他原因中断时不会主动恢复。
 > 3. 会话被推进时也完全没有跟进，比如 mindfs 的任务 #68。
 
-本计划先给只读取证与根因，再给 W1–W5 波次。**尚未写代码、未改配置、未部署、未重启任何节点。**
+本计划先给只读取证与根因，再给 W1–W5 波次。**W1–W4 已实现并提交；W5 验收脚本已入库，真实隔离运行与线上 24h 只读审计待做；未部署、未重启任何节点。**
 
 ## 0. 只读取证（2026-11-22，`/home/xiaokubao/projects/*/.mindfs/tasks/task-kanban.db`）
 
@@ -104,6 +104,8 @@ Plan 2026-11-22。用户要求「审阅任务运行和 Router，至少找出三�
    - `turn_settled` 数 ≈ 任务会话回合数（允许非任务会话不计）；
    - 中断/停滞事件都能在 1 个 tick 内被消费（`status=done`）。
 3. 门禁：`go test -count=1 ./...`、`tsc -b --noEmit`、`npx vitest run`、干净 worktree `make check-upstream`。
+
+**执行记录（2026-11-22）**：验收脚本已入库 `e2e/test_router_turn_settle_follow.py`（A/B 场景与 C 的共用取证工具）与 `e2e/test_router_turn_settle_follow_restart.py`（C 重启场景）；本次只做 `py_compile` 语法检查，尚未在隔离实例执行，也未完成线上 24h 只读审计，因此 **W5 不标记 PASS**。
 
 ## 4. 指标（进/出）
 
