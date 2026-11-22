@@ -12422,3 +12422,23 @@ groups:
       - 'server/internal/agent/config.go:return finalizeAgentConfig(mergeConfigs(baseCfg, userCfg)), nil'
       - 'server/internal/agent/config.go:return finalizeAgentConfig(mergeConfigs(cfg, extraCfg)), nil'
       - 'server/internal/agent/config_codex_desktop_test.go:func TestPreferWindowsDesktopCodexReplacesStalePluginBinary(t *testing.T) {'
+
+  - id: G-PJ
+    title: 后台会话跑完后列表时间停在开跑前（完成差分只喂提示音、没人重拉列表）
+    kind: fix
+    symptom: "右侧多项目会话列表里，没在打开的会话（别的项目的、看板任务的）跑完后时间不再更新：本机 llmux 项目『修复』会话 11:47 已结束，11:52 列表仍显示开跑前的『49m』，等多久都不动。改动会话本身（发送/打开）后时间立刻正常，所以用户看到的是『有时更新有时不更新』。"
+    why: "必须保留：`session.stream` / `session.done` 只发给**挂载了该会话**的客户端（StreamHub 按 sessionKey 绑客户端，见 `GetSessionClientIDs`），右侧列表里的后台会话根本没订阅，收不到 done；那时唯一的完成信号是 5s `/api/replying-sessions` 轮询的 pending true→false 差分，而 `newlyCompletedPendingKeys` **刻意排除激活节点**（激活节点假定 WS 已处理，避免提示音连响两遍），于是本地节点上的后台会话完成对列表完全不可见：只有『灭灯』触发一次重渲染，`updated_at` 仍是开跑前那条。修法是分出第二份差分 `completedPendingKeys`（不排除节点，仅驱动列表重拉，走调用方的 300ms 合并窗口），提示音/未读继续用排除激活节点的那份，语义互不污染。合上游时如果只留一份差分，要么静音远端会话的提示音，要么列表时间重新卡死；两者都是用户明确报过的缺陷。"
+    boundary: "纯前端：不新增通道、不改后端、不动 SQLite；`updated_at` 仍由 `EndSessionTurn` 在服务端触摸，前端只负责在完成时重拉。e2e/test_session_list_time_refresh.py 用路由拦截造出『列表 + 旁路状态』两份真相，不依赖真实 agent，也不碰线上 7331。"
+    files:
+      - web/src/app/useReplyingSessionPoll.ts
+      - web/src/app/useAppMultiProjectReload.ts
+      - web/src/shared/pendingCompletion.ts
+      - web/tests/session-list-time-refresh.test.mjs
+    tests:
+      - web/tests/session-list-time-refresh.test.mjs
+    anchors:
+      - 'web/src/shared/pendingCompletion.ts:export function completedPendingKeys('
+      - 'web/src/app/useReplyingSessionPoll.ts:  const reloadListRef = useRef(scheduleMultiProjectSessionReload);'
+      - 'web/src/app/useReplyingSessionPoll.ts:    const completedAnyNode = completedPendingKeys(previousPending, nextPending, okNodeIds);'
+      - 'web/src/app/useReplyingSessionPoll.ts:      reloadListRef.current?.();'
+      - 'web/src/app/useAppMultiProjectReload.ts:    scheduleMultiProjectSessionReload,'

@@ -17,6 +17,7 @@ import { parseSessionScopeKey, scopeSessionKey } from "../shared/scope";
 import {
   alertableCompletedKeys,
   carrySubSessionKeys,
+  completedPendingKeys,
   newlyCompletedPendingKeys,
 } from "../shared/pendingCompletion";
 import { unreadCompletedAdd, unreadKey } from "../shared/unreadCompleted";
@@ -36,6 +37,8 @@ export interface UseReplyingSessionPollParams {
   playCompletionSound?: () => void;
   /** 「正在看的会话」—— 与 WS 侧同一判据，正在看的完成后不标未读。 */
   selectedSessionRef?: MutableRefObject<{ key?: string; session_key?: string } | null>;
+  /** 会话列表数据的重拉入口（带合并窗口）。只在「有会话刚跑完」时调用。 */
+  scheduleMultiProjectSessionReload?: () => void;
   setMultiProjectPendingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
   setMultiProjectAwaitingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: Dispatch<SetStateAction<MultiProjectSessionGroup[]>>;
@@ -51,6 +54,7 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
     playCompletionSound,
+    scheduleMultiProjectSessionReload,
     selectedSessionRef,
     setMultiProjectPendingByKey,
     setMultiProjectAwaitingByKey,
@@ -66,6 +70,16 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
   useEffect(() => {
     playCompletionRef.current = playCompletionSound;
   }, [playCompletionSound]);
+
+  /**
+   * 列表重拉同样走 ref：调用方是 `useAppMultiProjectReload` 里的 useCallback，
+   * 它的依赖链（loadMultiProjectSessionGroups）一变身份就会连带重建 refresh，
+   * 5s 轮询 effect 跟着重启 —— 与上面声音回调同一个坑，别把参数直接放进依赖。
+   */
+  const reloadListRef = useRef(scheduleMultiProjectSessionReload);
+  useEffect(() => {
+    reloadListRef.current = scheduleMultiProjectSessionReload;
+  }, [scheduleMultiProjectSessionReload]);
 
   /**
    * 本轮要问的节点集合：与 loadMultiProjectSessionGroups 同源（getNodes() ∪
@@ -172,11 +186,19 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     // （realtimeWsHandlers 的 parent_session_key 判断）保持同一语义。
     const subSessions = subSessionKeysRef.current;
     const alertable = alertableCompletedKeys(completed, subSessions);
+    // **列表时间**用的是不排除激活节点的差分：`session.done` 只推给挂载了该会话的
+    // 客户端，后台会话（别的项目、看板任务）跑完收不到，只有这里能看到；不重拉，
+    // 卡片就一直停在开跑前那条 updated_at 上（2026-11-22 用户报的就是这个：完成后
+    // 仍显示 49m）。重拉走调用方的 300ms 合并窗口，与 WS 路径撞上也不会多拉一次。
+    const completedAnyNode = completedPendingKeys(previousPending, nextPending, okNodeIds);
     multiProjectPendingRef.current = nextPending;
     multiProjectAwaitingRef.current = nextAwaiting;
     setMultiProjectPendingByKey(nextPending);
     setMultiProjectAwaitingByKey(nextAwaiting);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, nextPending, nextAwaiting));
+    if (completedAnyNode.length > 0) {
+      reloadListRef.current?.();
+    }
     if (alertable.length > 0) {
       // 每轮最多响一次：切回标签页那一轮可能一次补出好几条「刚完成」，
       // 逐条响会连成一片噪音。未读徽标仍逐条标 —— 那是静态信息，不吵人。
