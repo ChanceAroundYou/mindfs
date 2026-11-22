@@ -126,6 +126,25 @@ function preferIncomingText(next?: string, prev?: string) {
   return prev;
 }
 
+/**
+ * 按 seq 合并两份块流映射：**同 seq 后到的整组覆盖**，其余保序。
+ *
+ * 与 exchange_aux 的拼接语义相反，两者不能互换：aux 是增量追加（同一 seq 会陆续来新的
+ * thought / tool 项），块流是整段重写（block 行自带 revision，拼在一组里会出现两个 revision）。
+ *
+ * 为什么必须合并而不是让 `...incoming` 整份替换：增量同步（`seq=maxSeq`）的回包只带
+ * **增量那几段**的 blocks。整份替换会让缓存里窗口以下的块全部消失，而 `saveCachedSession`
+ * 照旧落盘；加载路径在内存里补过这条规则（`useSessionLifecycle`），写入路径此前没补。
+ */
+function mergeSessionBlockMaps(
+  base: Record<string, SessionBlock[]> | undefined,
+  incoming: Record<string, SessionBlock[]> | undefined,
+): Record<string, SessionBlock[]> | undefined {
+  if (!base) return incoming;
+  if (!incoming) return base;
+  return { ...base, ...incoming };
+}
+
 export function withSessionMeta(
   base: Session | null | undefined,
   incoming: Session | null | undefined,
@@ -169,6 +188,7 @@ export function withSessionMeta(
     name: preferIncomingText(incoming.name, base.name) || "",
     exchanges: Array.isArray(incoming.exchanges) ? [...incoming.exchanges] : [],
     exchange_aux: cloneExchangeAux(incoming.exchange_aux || base.exchange_aux),
+    blocks: mergeSessionBlockMaps(base.blocks, incoming.blocks),
   };
 }
 
