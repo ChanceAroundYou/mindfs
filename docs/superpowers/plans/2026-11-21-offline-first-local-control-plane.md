@@ -1164,5 +1164,12 @@ Chromium 验收 **最小 T4 + T5 + 身份不符采纳**，只改这台机器，�
   字符串「hook 透传 blocked_code」，没钉服务层解析，漏了这个洞。修成导出的
   `toControlSyncStatus` 完整投影并校验事件形状；新增一条直接断言解析结果的 RED 用例，
   变异「去掉 blocked_code 映射」打红后还原；`tsc -b --noEmit` clean、目标 vitest 14 条全绿。
-- 未做：修完前端后尚未重新构建/覆盖 pc-win 的 bundle，因此**第二次真浏览器点验
-  「接受新主节点」按钮仍待复跑**；测试机仍是测试配置，收尾要恢复原 worker 配置与二进制。
+- 修完后重建前端并覆盖 pc-win，真浏览器重跑：先看到确认警告与「Accept」/「Cancel」，
+  点确认后 `/status` 从 `offline-local origin-mismatch` 变成 `online`、锁原因清空，
+  页面横幅回到「Control plane online」。截图留在 `/tmp/mindfs-pcwin-e2e/`。
+- 收尾：pc-win 的配置与二进制已恢复成测试前的 `role=worker`（PID 36660、Session 0、
+  health 200、`/api/control-sync/status` 404），两份隔离主节点已停，token/证书/脚本/
+  备份/前端目录等测试产物已删；本机 / WSL / fn 与生产 7331 全程未碰，未 push。
+- 门禁：定向 vitest 14 条全绿、`tsc -b --noEmit` clean、`make check-upstream` 2444 delta /
+  358 组全绿；全量 `npx vitest run` 另有 10 个文件因该 worktree 落后主线、缺少
+  `diagramZoom` / `sessionExchangeMerge` 等新文件而红，与本组改动无关。
