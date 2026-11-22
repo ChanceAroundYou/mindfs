@@ -8997,9 +8997,9 @@ groups:
   - id: G-MD
     title: 进程在回合中途重启后，从 agent 转录补回被掐断的最后一轮
     kind: fix
-    symptom: "长任务回合中 systemctl restart / 崩溃后，用户屏幕上流式看过的回复在库里一个字都没有：只剩用户行和一条空助手行，刷新/重开都不回来。根因是实时路径只在回合收尾时写块流，而 live-owned 会话的常规增量同步被所有权守卫故意关掉。另有同源缺口：转录 id 只在收尾时写回绑定，死在第一轮中途时绑定为空，重启后既不能 resume 也找不到转录。"
-    why: "2026-11-17 实测 codex 会话 1794875218-883d38d3f760 长回合中被重启复现。必须保留：① 只补**最后一轮**且必须先证明它没收尾（尾部没有块/正文）；已收尾回合一个字节都不碰，避免重演 2026-09-16 整会话重导事故；② 时间地板取该轮**用户行**时间戳而不是最后一行——中断时补写的助手行时间比转录里的回复还晚，用它当起点会永远挡住要补的内容；③ 本进程内该会话回合仍在跑时绝不补（那是进行中的流，不是被掐断的尾巴）；④ 每个 `(root, session, 用户行 seq)` 每进程只尝试一次，provider 403 这类无回复回合不能每次轮询都重读转录；⑤ 尾部已有空助手行就挂到它上面，否则按用户行身份新建助手行，形态与正常收尾一致；⑥ 转录 id 一出现就写回空绑定，只补空绑定，绝不覆盖已有 resume 绑定——claude 的 CLI session id 要到第一条流消息才可见，打开时绑定必然是空的，所以学习必须发生在回合**进行中**（persistLearnedAgentSessionID 在 OnUpdate 里反复尝试），不能等收尾；⑦ 手点「同步」（Full）也必须先走同一套补录，且必须能跳过「每进程一次」的去重（force）——自动增量首拍转录可能还没 flush，用户有权重试；Full 补录后仍继续通用导入补子代理等尾部之外的内容，靠时间地板避免重复；⑧ 空绑定 + 尾部未收尾时，按「首条用户正文（是转录首条的前缀/子串）+ cwd」认领**唯一**匹配的转录，0 个或多个匹配一律放弃（绝不猜），认领后写回绑定再补录。"
-    boundary: "只修「被中断的最后一轮」的可恢复性与首轮绑定落库；不改所有权守卫本身、不改常规增量同步语义、不改通用导入的子代理导入语义、不改回合收尾写块流的路径，也不做每会话启动兜底补齐（该方案已被事故证伪并撤掉）。"
+    symptom: "长任务回合中 systemctl restart / 崩溃后，用户屏幕上流式看过的回复在库里一个字都没有：只剩用户行和一条空助手行，刷新/重开都不回来。根因是实时路径原本只在回合收尾时写块流，而 live-owned 会话的常规增量同步被所有权守卫故意关掉；kill -9 撞在工具调用中时，助手正文可能还没结束，但已经流到屏幕的文字/工具卡本来就应留下。A+ 把流式内容即时写成隐藏 provisional 块，重启后封口成可见记录，并把中断工具卡标成失败态。另有同源缺口：转录 id 只在收尾时写回绑定，死在第一轮中途时绑定为空，重启后既不能 resume 也找不到转录。"
+    why: "2026-11-17 实测 codex 会话 1794875218-883d38d3f760 长回合中被重启复现。必须保留：① 只补**最后一轮**且必须先证明它没收尾（尾部没有块/正文）；已收尾回合一个字节都不碰，避免重演 2026-09-16 整会话重导事故；② 时间地板取该轮**用户行**时间戳而不是最后一行——中断时补写的助手行时间比转录里的回复还晚，用它当起点会永远挡住要补的内容；③ 本进程内该会话回合仍在跑时绝不补（那是进行中的流，不是被掐断的尾巴）；④ 每个 `(root, session, 用户行 seq)` 每进程只尝试一次，provider 403 这类无回复回合不能每次轮询都重读转录；⑤ 尾部已有空助手行就挂到它上面，否则按用户行身份新建助手行，形态与正常收尾一致；⑥ 转录 id 一出现就写回空绑定，只补空绑定，绝不覆盖已有 resume 绑定——claude 的 CLI session id 要到第一条流消息才可见，打开时绑定必然是空的，所以学习必须发生在回合**进行中**（persistLearnedAgentSessionID 在 OnUpdate 里反复尝试），不能等收尾；⑦ 手点「同步」（Full）也必须先走同一套补录，且必须能跳过「每进程一次」的去重（force）——自动增量首拍转录可能还没 flush，用户有权重试；Full 补录后仍继续通用导入补子代理等尾部之外的内容，靠时间地板避免重复；⑧ 空绑定 + 尾部未收尾时，按「首条用户正文（是转录首条的前缀/子串）+ cwd」认领**唯一**匹配的转录，0 个或多个匹配一律放弃（绝不猜），认领后写回绑定再补录；⑨ 已流到屏幕的文字与 tool_call 在收到流事件时立刻写成 `Step=-1` 的 provisional 块，读窗口按 Step 忽略它们，所以正常回合不会重复渲染；写失败只记日志，不能打断模型回合。⑩ 恢复时按 `(seq, turnID)` 读 provisional 块，追加高 revision 的可见副本封口；工具状态改 `interrupted`，界面必须按失败态渲染；重复封口/重复 Full/delta 不能增减行数。⑪ provisional 恢复后必须重算 Full 的时间地板，否则新写的助手行会让同一轮用户 prompt 再导一遍。"
+    boundary: "只修「被中断的最后一轮」的可恢复性与首轮绑定落库；流式路径只新增隐藏 provisional 块，不改正常收尾块的内容与时序。不改所有权守卫本身、不改常规增量同步语义、不改通用导入的子代理导入语义、不改 importer 只认闭合尾的规则，也不做每会话启动兜底补齐、进程级回合续跑或代理接管（后者依赖随服务端死亡的进程内代理，且该兜底方案已被事故证伪并撤掉）。"
     files:
       - server/internal/api/usecase/external_sessions_live_tail.go
       - server/internal/api/usecase/external_sessions_live_tail_test.go
@@ -9010,10 +9010,24 @@ groups:
       - server/internal/api/usecase/external_sessions_live_tail_full_test.go
       - server/internal/api/usecase/session_agent_open.go
       - server/internal/api/usecase/session_send.go
+      - server/internal/session/blocks_provisional.go
+      - server/internal/session/blocks_provisional_test.go
+      - server/internal/api/usecase/session_stream_provisional.go
+      - server/internal/api/usecase/session_stream_provisional_test.go
+      - server/internal/api/usecase/session_provisional_recovery.go
+      - server/internal/api/usecase/external_sessions_provisional_test.go
+      - web/src/components/stream/ToolCallGroupCard.tsx
+      - web/src/components/stream/useToolCallCard.ts
+      - web/src/components/stream/toolCallRender.tsx
+      - web/tests/tool-card-interrupted.test.mjs
     tests:
       - server/internal/api/usecase/external_sessions_live_tail_test.go
       - server/internal/api/usecase/external_sessions_live_tail_full_test.go
       - server/internal/api/usecase/external_sessions_ownership_test.go
+      - server/internal/session/blocks_provisional_test.go
+      - server/internal/api/usecase/session_stream_provisional_test.go
+      - server/internal/api/usecase/external_sessions_provisional_test.go
+      - web/tests/tool-card-interrupted.test.mjs
     anchors:
       - 'server/internal/api/usecase/external_sessions_sync.go:recoverInterruptedLiveTurn('
       - 'server/internal/api/usecase/external_sessions_live_tail.go:func (s *Service) recoverInterruptedLiveTurn('
@@ -9028,6 +9042,21 @@ groups:
       - 'server/internal/api/usecase/external_sessions_live_tail.go:func (s *Service) adoptOrphanedLiveTailBinding('
       - 'server/internal/api/usecase/external_sessions_sync.go:s.adoptOrphanedLiveTailBinding(ctx, root, in.RootID, manager, current, agentName, binding)'
       - 'server/internal/api/usecase/external_sessions_sync.go:current, agentName, binding, in.Full); rerr != nil {'
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) AppendProvisionalText('
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) AppendProvisionalToolCall('
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) ReadProvisionalTurnBlocks('
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) SealProvisionalTurnBlocks('
+      - 'server/internal/session/blocks_provisional.go:call.Status = "interrupted"'
+      - 'server/internal/api/usecase/session_stream_provisional.go:type provisionalStreamWriter struct {'
+      - 'server/internal/api/usecase/session_send.go:provisional := newProvisionalStreamWriter('
+      - 'server/internal/api/usecase/session_send.go:provisional.text(chunk.Content)'
+      - 'server/internal/api/usecase/session_send.go:provisional.toolCall(toolCall)'
+      - 'server/internal/api/usecase/session_provisional_recovery.go:func (s *Service) recoverProvisionalTurnBlocks('
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:s.recoverProvisionalTurnBlocks(ctx, manager, current, agentName, binding.AgentSessionID, lastUser)'
+      - 'server/internal/api/usecase/external_sessions_sync.go:if refreshed := lastExternalSyncTimestamp(current.Exchanges); !refreshed.IsZero() {'
+      - 'web/src/components/stream/ToolCallGroupCard.tsx:status === "interrupted"'
+      - 'web/src/components/stream/useToolCallCard.ts:normalizedStatus === "interrupted"'
+      - 'web/src/components/stream/toolCallRender.tsx:interrupted: "#ef4444"'
 
   # ── 任务详情对话输入框：与新建任务面板同源 composer + 图标式工作流选择器 ──
   - id: G-ME
