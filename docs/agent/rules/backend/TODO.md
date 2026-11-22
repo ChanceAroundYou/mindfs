@@ -113,6 +113,7 @@
 > 动到它们时按上面同款格式补一行「已看过的边界」。
 
 - [ ] `server/internal/api/http_workflows_test.go`（499）
+- [ ] `server/internal/channels/feishu/intake_store.go`（341）— 去重账本与活跃目标共用一个 JSON 文件与同一把锁；下次动它时按「去重」（Seen/Claim/Record/SetStatus）与「活跃目标」（Set/Active/Clear ActiveTarget）两组拆，`saveLocked`/`pruneLocked` 留其中一处由另一文件调用。
 - [ ] `server/internal/agent/fold/engine.go`（496）
 - [ ] `server/internal/kanban/router_coordinate_recovery_test.go`（491）
 - [ ] `server/internal/kanban/workflow_recovery.go`（485）
