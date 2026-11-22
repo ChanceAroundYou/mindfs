@@ -1065,3 +1065,30 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 - 用例：`TestAddColumnTreatsColumnAddedByAnotherMigratorAsSuccess` —— 重复列返回 nil、
   坏 DDL 必须报错（只放过这一种）。变异两处（吞掉所有 ALTER 错误、重复列也上抛）各自打红；
   原并发用例 `-count=30` 全绿、全量 `go test ./...` 全绿。
+
+### T22 前端镜像与安全验收（2026-11-22）
+
+- 脚本：`e2e/test_control_sync_ui_and_auth.py`（434 行，真进程 + 真 Chromium，端口
+  7470/7471/7472，两个独立 `XDG_CONFIG_HOME`，绝不碰 7331）。自己 `go build`（不带部署
+  前缀）并用 `VITE_MIND_FS_BASE=/` 现编一份前端 —— 随包的 `web/dist` 是 `/mindfs` 前缀，
+  与无前缀后端配不上；边缘另配 `MINDFS_STATIC_DIR`，这样「移走安装副本仍出页面」才能
+  证明出的是镜像那一版。
+- 安全六条：不带签名 `/head` 401、签名错 401（`00`×32）、签名对 200 且带 `instance_id`、
+  同一 nonce 重放 401、`/ui/manifest` 无签名 401 / 有签名 200 且 `build_version=e2e-1`
+  （287 个文件）、未启用同步的普通实例上 `head`/`push`/`ui/manifest` 全部 404（端点没注册，
+  不是 401 —— 「装了但没开 = 看不见」）。
+- 页面五条：在线横幅 → 主节点加死节点后工作台出「Can't reach node(s)」→ 停主节点后
+  「Primary is unreachable」→ 恢复后两侧都改偏好 → 「Sync conflict」横幅 → 点「View
+  conflicts」出冲突面板（Preferences 分组）→ 点「Keep local」裁决 → 回到在线且主节点
+  的值确实变成 24。
+- 顺带把三条**产品事实**钉成断言（写脚本时踩出来的，不是猜的）：① 在线时边缘不写本地
+  权威存储（D5），节点表是转发来的 —— 所以「页面看到死节点」要读 `/api/nodes` 而不是翻
+  `nodes.json`；② `nodes.json` 只在进入 `offline-local` 的交接里由副本落盘，断言必须等
+  交接之后；③ 副本追平是 5 s 一拍、落后于转发，**断网前必须等副本真的拿到那两条记录**
+  （偏好祖先值与死节点），否则交接出来的节点表会少一条、`base_hash` 指向更老的版本，
+  测的就不是「两侧从同一祖先各改各的」。
+- 连续三次完整复跑全 PASS（`--keep` 现场留在 `/tmp/t22-scene` 供复核）；二进制以
+  `-X main.version=v0.1.0-e2e` 构建 —— 裸 `go build` 的 `dev` 会让
+  `min_server_build` 判定永远不满足，镜像装不上。
+- 未做：pc-win 真机（Windows 边缘）点验；未部署、未重启、未改配置，
+  `control_sync.enabled` 仍为 `false`。

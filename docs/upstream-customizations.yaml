@@ -12393,6 +12393,7 @@ groups:
       - server/app/control_sync.go
       - server/app/control_sync_test.go
       - e2e/test_control_sync_offline.py
+      - e2e/test_control_sync_ui_and_auth.py
       - web/src/shared/controlMode.ts
       - web/src/shared/syncConflicts.ts
       - web/src/services/net/controlSync.ts
@@ -12474,6 +12475,7 @@ groups:
       - server/app/control_sync_test.go
       - cli/cmd/control_sync_test.go
       - e2e/test_control_sync_offline.py
+      - e2e/test_control_sync_ui_and_auth.py
       - web/tests/control-mode-banner.test.mjs
       - web/tests/sync-conflict-panel.test.mjs
       - server/internal/api/http_control_sync_conflicts_test.go
