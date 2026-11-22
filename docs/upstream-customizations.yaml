@@ -14204,3 +14204,35 @@ groups:
       - 'web/src/i18n/locales/zh-CN-workspace.ts:  "syncConflict.batchMerge": "批量手动合并",'
       - 'web/tests/sync-conflict-panel.test.mjs:test("手动合并初值取完整载荷，删除/脱敏/缺失都不拿提示文字当 JSON", () => {'
       - 'web/tests/sync-conflict-panel.test.mjs:test("批量自定义合并逐条带各自 payload，部分失败在刷新后仍可见", () => {'
+  - id: G-PW
+    title: 自动启动环境快照缺失不再报错（没有快照 = 没有要恢复的环境）
+    kind: fix
+    symptom: |
+      pc-win 2026-11-23 用 `mindfs -autostart=false` 摘掉 HKCU Run 键与
+      `%APPDATA%\mindfs\autostart-environment.json` 之后，计划任务每次启动仍在
+      `prepareAutoStartEnvironment()` 里读到 `open …\autostart-environment.json: no such
+      file or directory`，打一行 `[mindfs/autostart] environment restore warning`。
+      这行本身看不到（环境恢复发生在 `redirectBackgroundLogs()` 之前，任务无控制台时
+      继承句柄被丢弃，`mindfs.log` 里 `[mindfs/autostart]` 命中数恒为 0），但它意味着
+      一条每个启动都失败的代码路径：谁去查「启动有没有异常」都会先撞上它，而它其实
+      什么也没坏 —— 快照当年带的值现在各有来源（`LLMUX_API_KEY` 在 `HKCU\Environment`
+      与 `~/.codex/llmux.env`、claude 走 `agents.json` 绝对路径、codex 在用户 PATH、
+      SessionStart 钩子已改用 python3 不依赖 bash）。
+    why: |
+      「没有快照」是合法状态，不是故障：快照只有 `configureAutoStart()` 会写，而
+      fork 现在只保留计划任务一条启动路径（`--internal-autostart`），不再装 HKCU Run 键。
+      把它当错误留在代码里有两个代价：一是误导排查（见上，日志还看不到）；二是诱使
+      后来者用「把计划任务动作里的 `--internal-autostart` 删掉」来绕过 —— 那条路会触发
+      `mindfs.go:286` 的自愈块（条件 `!internalAutoStart`，而 `autoStartConfigured()` 此刻
+      恒为 false、`*autoStart` 默认 true），把 Run 键和快照原样装回去，整改全部作废。
+      只放行 `os.ErrNotExist`：快照存在但 JSON 坏了、`Version` 不符仍然要报，那是真故障。
+    files:
+      - cli/cmd/autostart.go
+      - cli/cmd/autostart_test.go
+    tests:
+      - cli/cmd/autostart_test.go
+    anchors:
+      - 'cli/cmd/autostart.go:自动启动项没有快照 = 没有需要从交互式 shell 继承的环境'
+      - 'cli/cmd/autostart.go:if errors.Is(err, os.ErrNotExist) {'
+      - 'cli/cmd/autostart_test.go:func TestPrepareAutoStartEnvironmentWithoutSnapshotIsNotAnError(t *testing.T) {'
+      - 'cli/cmd/autostart_test.go:t.Fatal("corrupt snapshot must still fail")'

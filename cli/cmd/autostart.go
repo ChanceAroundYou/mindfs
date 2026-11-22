@@ -45,6 +45,12 @@ func prepareAutoStartEnvironment() error {
 		return err
 	}
 	snapshot, err := readAutoStartSnapshot(filepath.Join(configDir, autoStartSnapshotName))
+	if errors.Is(err, os.ErrNotExist) {
+		// 自动启动项没有快照 = 没有需要从交互式 shell 继承的环境（例如用户已
+		// `-autostart=false` 摘掉自启动项、只靠计划任务拉起）。坏 JSON 或版本不符
+		// 仍然要报错，那是真故障。
+		return nil
+	}
 	if err != nil {
 		return err
 	}

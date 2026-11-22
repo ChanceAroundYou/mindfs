@@ -91,6 +91,34 @@ func TestReadShellEnvironmentIgnoresRCOutputBeforeMarker(t *testing.T) {
 	}
 }
 
+func TestPrepareAutoStartEnvironmentWithoutSnapshotIsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Setenv("AppData", dir)
+	} else {
+		t.Setenv("XDG_CONFIG_HOME", dir)
+	}
+	// 自动启动项没有快照 = 没有需要从交互式 shell 继承的环境：必须是 no-op。
+	if err := prepareAutoStartEnvironment(); err != nil {
+		t.Fatalf("missing snapshot should be a no-op, got %v", err)
+	}
+	// 快照存在但内容坏了仍然是真故障：不能被同一条放行规则吞掉。
+	configDir, err := autoStartConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(configDir, autoStartSnapshotName)
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareAutoStartEnvironment(); err == nil {
+		t.Fatal("corrupt snapshot must still fail")
+	}
+}
+
 func TestAutoStartArgumentsContainOnlyPersistentServerOptions(t *testing.T) {
 	got := autoStartArguments("127.0.0.1:9000", false, true, "/cert.pem", "/key.pem", "/agents.json", "/notify")
 	joined := strings.Join(got, " ")
