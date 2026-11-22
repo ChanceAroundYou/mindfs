@@ -61,6 +61,8 @@ type IntakeService struct {
 
 	mu           sync.Mutex
 	pickerFinder func(string, time.Time) (Card, bool)
+	appender     TaskAppender
+	tasks        TaskCatalog
 }
 
 // NewIntakeService builds the inbound service. A nil limiter means the
@@ -135,24 +137,9 @@ func (s *IntakeService) Handle(ctx context.Context, msg InboundMessage) error {
 	notice := Notice{SourceMessageID: id, ChatID: msg.ChatID, NodeID: s.cfg.NodeID, IntakeText: text}
 	switch res.Kind {
 	case ResolutionProject:
-		project := res.Project
-		nodeID := project.NodeID
-		if nodeID == "" {
-			nodeID = s.cfg.NodeID
-		}
-		taskID, err := s.creator.Create(ctx, nodeID, project.RootID, text)
-		if err != nil {
-			return s.fail(ctx, msg, "", "failed", "建任务失败，请稍后重试。", err)
-		}
-		if err := s.store.SetStatus(id, taskID, "created"); err != nil {
-			return s.fail(ctx, msg, taskID, "failed", "任务已建，但没能记下去重记录，请到网页确认。", err)
-		}
-		notice.Kind = KindNotice
-		notice.Text = fmt.Sprintf("已建任务 %s（项目：%s）。", taskID, project.Name)
-		if truncated {
-			notice.Text += "消息超过 32 KiB，后续内容已截断。"
-		}
-		return s.notifyWithCardID(ctx, id, notice)
+		// A uniquely resolved project is not yet permission to write: append to
+		// the chat's confirmed target, or ask the owner to confirm on a card.
+		return s.resolveUniquelyNamedTarget(ctx, msg, id, res.Project, text, truncated)
 	case ResolutionPicker:
 		if _, ok := s.openPicker(msg.ChatID); ok {
 			return s.reject(ctx, msg, "", "picker_pending", "你还有一张未回复的项目选择卡，请先完成选择。")

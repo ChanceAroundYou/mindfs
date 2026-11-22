@@ -67,8 +67,10 @@ func (s *Service) rollbackPickerClaim(store *IntakeStore, messageID string) {
 // live beside the click path instead of on the M1 Service struct so adding M2
 // does not change the constructor every M1 caller uses.
 type pickerTaskDeps struct {
-	store   *IntakeStore
-	creator TaskCreator
+	store    *IntakeStore
+	creator  TaskCreator
+	appender TaskAppender
+	tasks    TaskCatalog
 }
 
 var pickerDepsByService sync.Map // map[*Service]pickerTaskDeps
@@ -81,6 +83,18 @@ func (s *Service) SetPickerTaskDeps(store *IntakeStore, creator TaskCreator) {
 		return
 	}
 	pickerDepsByService.Store(s, pickerTaskDeps{store: store, creator: creator})
+}
+
+// SetTargetTaskDeps adds the appender and task catalog the confirmation card
+// needs. It keeps whatever SetPickerTaskDeps already installed, so the two
+// setters can be called in either order (or one of them not at all).
+func (s *Service) SetTargetTaskDeps(appender TaskAppender, tasks TaskCatalog) {
+	if s == nil {
+		return
+	}
+	deps := s.pickerTaskDeps()
+	deps.appender, deps.tasks = appender, tasks
+	pickerDepsByService.Store(s, deps)
 }
 
 func (s *Service) pickerTaskDeps() pickerTaskDeps {
@@ -162,6 +176,10 @@ func (s *Service) HandleAction(ctx context.Context, a Action) error {
 		return s.applyPickerChoice(ctx, c, selected)
 	}
 
+	if c.Kind == KindTarget {
+		return s.applyTargetChoice(ctx, c, selected, a)
+	}
+
 	if c.Kind == KindNotice {
 		return s.settleNotice(ctx, c.ID, text)
 	}
@@ -226,6 +244,15 @@ func interpret(c Card, a Action) (selected int, text string, ok bool) {
 			return 0, "", false
 		}
 		return a.Choice, "", true
+	case KindTarget:
+		// An out-of-range choice means the card the owner see is not the one
+		// stored here; returning false leaves zero side effects and lets the
+		// caller patch the real state back. A form submit names no choice but
+		// is exactly 「确认」 with a task number.
+		if a.Choice >= 0 && a.Choice < len(c.Choices) {
+			return a.Choice, "", true
+		}
+		return 0, "", false
 	default:
 		return 0, "", false
 	}

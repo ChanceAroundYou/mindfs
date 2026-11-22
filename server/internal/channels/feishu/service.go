@@ -102,6 +102,15 @@ type Notice struct {
 	IntakeText      string
 	Projects        []PickerProject
 	PickerTTL       time.Duration
+
+	// Explicit target confirmation: Target is where the message would go,
+	// Candidates are the other tasks it could join, ReviewHits are review
+	// categories the project matched, and TargetMode is what 「确认」 will do
+	// ("append" to Target.TaskID or "create" a new task).
+	Target     *TargetRef
+	Candidates []TargetRef
+	ReviewHits []string
+	TargetMode string
 }
 
 // Answer is what a click meant, in MindFS terms rather than Feishu ones.
@@ -245,7 +254,7 @@ func (s *Service) Notify(_ context.Context, n Notice) error {
 	}
 	now := s.now()
 	expires := now.Add(s.ttl)
-	if n.Kind == KindPicker && n.PickerTTL > 0 {
+	if (n.Kind == KindPicker || n.Kind == KindTarget) && n.PickerTTL > 0 {
 		expires = now.Add(n.PickerTTL)
 	}
 	c := Card{
@@ -275,6 +284,10 @@ func (s *Service) Notify(_ context.Context, n Notice) error {
 		ChatID:          n.ChatID,
 		IntakeText:      n.IntakeText,
 		Projects:        n.Projects,
+		Target:          n.Target,
+		Candidates:      n.Candidates,
+		ReviewHits:      n.ReviewHits,
+		TargetMode:      n.TargetMode,
 	}
 	_, err := s.store.Put(c)
 	return err
@@ -296,6 +309,15 @@ func choicesFor(n Notice) []Choice {
 		return out
 	case KindNotice:
 		return []Choice{{Label: "知道了", Value: "ack"}}
+	case KindTarget:
+		// 「确认」 honours the card's prefilled task (or creates one); the other
+		// three force a path so a stale prefill cannot trap the owner.
+		return []Choice{
+			{Label: "确认", Value: "confirm"},
+			{Label: "新建任务", Value: "create"},
+			{Label: "切换目标", Value: "switch"},
+			{Label: "取消", Value: "cancel"},
+		}
 	default:
 		return nil
 	}

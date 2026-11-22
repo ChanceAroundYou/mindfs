@@ -3,6 +3,7 @@ package feishu
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Render builds the card as Feishu sees it (schema 2.0). A card changes only
@@ -31,6 +32,15 @@ func RenderJSON(c Card) (string, error) {
 
 func (c Card) title() string {
 	switch {
+	case c.Kind == KindTarget:
+		label := ""
+		if c.Target != nil {
+			label = c.Target.ProjectLabel
+		}
+		if label == "" {
+			return "确认目标"
+		}
+		return "确认目标：" + label
 	case c.Kind == KindPicker:
 		question := c.IntakeText
 		if question == "" {
@@ -85,19 +95,29 @@ func elements(c Card) []any {
 		// did not reach the worker before clicking again.
 		out = append(out, plainDiv("回传失败："+c.LastError))
 	}
-	if c.State == StateOpen {
-		if c.Kind == KindGate {
-			return append(out, optionBlocks(c)...)
-		}
-		if c.Kind == KindNotice {
-			out = append(out, textForm(c))
+	if c.State == StateOpen && c.Kind == KindTarget && len(c.ReviewHits) > 0 {
+		// Confirming here means the project will run an approval workflow; say
+		// so before the owner clicks, not after.
+		out = append(out, plainDiv("该项目需要审核："+strings.Join(c.ReviewHits, "、")))
+	}
+		if c.State == StateOpen {
+			if c.Kind == KindGate {
+				return append(out, optionBlocks(c)...)
+			}
+			if c.Kind == KindNotice {
+				out = append(out, textForm(c))
+				out = append(out, optionBlocks(c)...)
+				return out
+			}
+			if c.Kind == KindTarget {
+				out = append(out, optionBlocks(c)...)
+				out = append(out, targetTaskForm(c))
+				return out
+			}
 			out = append(out, optionBlocks(c)...)
+			out = append(out, textForm(c))
 			return out
 		}
-		out = append(out, optionBlocks(c)...)
-		out = append(out, textForm(c))
-		return out
-	}
 	out = append(out, markdown("**"+outcome(c)+"**"))
 	if c.Note != "" {
 		out = append(out, plainDiv("处理说明："+c.Note))
@@ -180,6 +200,42 @@ func textForm(c Card) any {
 				"form_action_type": "submit",
 				"type":             style,
 				"text":             plainText(submit),
+			},
+		},
+	}
+}
+
+// targetTaskForm is the editable task number on a confirmation card. Submitting
+// it means the same as 「确认」 with that task: a number the card knows switches
+// the target, an empty input keeps whatever was prefilled.
+func targetTaskForm(c Card) any {
+	value := ""
+	if c.Target != nil && c.Target.TaskNumber > 0 {
+		value = fmt.Sprintf("#%d", c.Target.TaskNumber)
+	}
+	input := map[string]any{
+		"tag":            "input",
+		"name":           "task_no",
+		"input_type":     "text",
+		"max_length":     16,
+		"label":          plainText("任务号（可选，填了就追加到该任务）"),
+		"label_position": "top",
+		"placeholder":    plainText("#42"),
+	}
+	if value != "" {
+		input["default_value"] = value
+	}
+	return map[string]any{
+		"tag":  "form",
+		"name": "target_form_" + c.ID,
+		"elements": []any{
+			input,
+			map[string]any{
+				"tag":              "button",
+				"name":             "target_form_submit_" + c.ID,
+				"form_action_type": "submit",
+				"type":             "primary",
+				"text":             plainText("按任务号确认"),
 			},
 		},
 	}

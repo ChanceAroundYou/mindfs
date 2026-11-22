@@ -109,18 +109,19 @@ func TestIntakeDedupAndRateLimit(t *testing.T) {
 	if err := h.service.Handle(context.Background(), msg); err != nil {
 		t.Fatal(err)
 	}
-	if h.creator.calls != 1 || len(h.notices) != 1 {
-		t.Fatalf("同一 message_id 只能处理一次：calls=%d notices=%d", h.creator.calls, len(h.notices))
+	// 新语义：唯一识别只发一张确认卡，确认前不建任务。
+	if h.creator.calls != 0 || len(h.notices) != 1 || h.notices[0].Kind != KindTarget {
+		t.Fatalf("同一 message_id 只能处理一次：calls=%d notices=%+v", h.creator.calls, h.notices)
 	}
 	if h.notices[0].SourceMessageID != "om_1" {
-		t.Errorf("成功回执必须带原消息 id：%+v", h.notices[0])
+		t.Errorf("确认卡必须带原消息 id：%+v", h.notices[0])
 	}
 
 	h.limiter = func(string) bool { return false }
 	if err := h.service.Handle(context.Background(), inbound("om_2", "p2p", "ou_owner", "fix")); err != nil {
 		t.Fatalf("限流是已处理的拒绝，不应让 supervisor 记错：%v", err)
 	}
-	if h.creator.calls != 1 || len(h.notices) != 2 {
+	if h.creator.calls != 0 || len(h.notices) != 2 {
 		t.Fatalf("限流后不能建任务，但必须给 owner 回执：calls=%d notices=%d", h.creator.calls, len(h.notices))
 	}
 	if !strings.Contains(h.notices[1].Text, "稍后") {
@@ -128,7 +129,7 @@ func TestIntakeDedupAndRateLimit(t *testing.T) {
 	}
 }
 
-func TestIntakeCreatesTaskFromBindingAndCapsInput(t *testing.T) {
+func TestIntakeConfirmCardFromBindingAndCapsInput(t *testing.T) {
 	h := newIntakeHarness(t, Config{
 		OwnerOpenID: "ou_owner", Bindings: []Binding{{ChatID: "oc_chat", NodeID: "fn", RootID: "r1"}},
 	}, intakeCatalog{refs: []ProjectRef{{NodeID: "fn", RootID: "r1", Name: "docs · fn"}}})
@@ -136,15 +137,21 @@ func TestIntakeCreatesTaskFromBindingAndCapsInput(t *testing.T) {
 	if err := h.service.Handle(context.Background(), inbound("om_1", "p2p", "ou_owner", long)); err != nil {
 		t.Fatal(err)
 	}
-	if h.creator.calls != 1 || h.creator.node != "fn" || h.creator.root != "r1" {
-		t.Fatalf("绑定没有落到建任务参数：%+v", h.creator)
+	// 绑定仍决定目标，只是现在要 owner 点「确认」才建任务。
+	if h.creator.calls != 0 {
+		t.Fatalf("确认前不得建任务：%+v", h.creator)
 	}
-	if !strings.HasPrefix(h.creator.input, strings.Repeat("a", intakeMaxInputBytes)) ||
-		!strings.Contains(h.creator.input, "截断") {
-		t.Fatalf("超长输入应截到 32 KiB 并明说被截断，实际长度 %d", len(h.creator.input))
+	if len(h.notices) != 1 || h.notices[0].Kind != KindTarget || h.notices[0].Target == nil ||
+		h.notices[0].Target.NodeID != "fn" || h.notices[0].Target.RootID != "r1" {
+		t.Fatalf("绑定没有落到确认卡目标：%+v", h.notices)
+	}
+	got := h.notices[0].IntakeText
+	if !strings.HasPrefix(got, strings.Repeat("a", intakeMaxInputBytes)) ||
+		!strings.Contains(got, "截断") {
+		t.Fatalf("超长输入应截到 32 KiB 并明说被截断，实际长度 %d", len(got))
 	}
 	if !h.store.Seen("om_1") {
-		t.Fatal("建任务后必须记去重")
+		t.Fatal("确认卡发出后必须记去重，重投不能再发一张")
 	}
 }
 
@@ -206,8 +213,9 @@ func TestIntakeLocalProjectUsesConfiguredNodeID(t *testing.T) {
 	if err := h.service.Handle(context.Background(), inbound("om_1", "p2p", "ou_owner", "do it")); err != nil {
 		t.Fatal(err)
 	}
-	if h.creator.node != "home" || h.creator.root != "r_local" {
-		t.Fatalf("本地项目的 node_id 必须对齐 feishu_node_id：%+v", h.creator)
+	if len(h.notices) != 1 || h.notices[0].Kind != KindTarget || h.notices[0].Target == nil ||
+		h.notices[0].Target.NodeID != "home" || h.notices[0].Target.RootID != "r_local" {
+		t.Fatalf("本地项目的 target 必须对齐 feishu_node_id：%+v", h.notices)
 	}
 
 	// PickerMax is a hard ceiling, not a truncation of the choice list.
@@ -225,19 +233,21 @@ func TestIntakeLocalProjectUsesConfiguredNodeID(t *testing.T) {
 }
 
 func TestIntakeErrorsAreVisibleAndReturned(t *testing.T) {
-	t.Run("creation", func(t *testing.T) {
+	// 唯一识别不再立即建任务，所以「建任务失败」的可见性现在属于确认卡点击
+	// （见 target_confirm_test.go 的 TestTargetCreateFailureFailsCard）。
+	t.Run("confirm_card_send", func(t *testing.T) {
 		h := newIntakeHarness(t, Config{
 			OwnerOpenID: "ou_owner", Bindings: []Binding{{ChatID: "oc_chat", NodeID: "fn", RootID: "r1"}},
 		}, intakeCatalog{refs: []ProjectRef{{NodeID: "fn", RootID: "r1", Name: "docs"}}})
-		h.creator.err = errors.New("boom")
+		h.notifyErr = errors.New("boom")
 		if err := h.service.Handle(context.Background(), inbound("om_1", "p2p", "ou_owner", "do it")); err == nil {
-			t.Fatal("建任务失败必须返回 error 供 supervisor 记日志")
+			t.Fatal("确认卡发不出去必须返回 error 供 supervisor 记日志")
 		}
-		if len(h.notices) != 1 || !strings.Contains(h.notices[0].Text, "失败") {
-			t.Fatalf("建任务失败必须让 owner 看见：%+v", h.notices)
+		if h.creator.calls != 0 {
+			t.Fatalf("卡片没发出去就建了任务：%+v", h.creator)
 		}
-		if !h.store.Seen("om_1") {
-			t.Fatal("失败消息也应记去重，避免重放造成重复回执")
+		if h.store.Seen("om_1") {
+			t.Fatal("卡片没发出去应释放占坑，让重投还能再试")
 		}
 	})
 	t.Run("catalog", func(t *testing.T) {
@@ -309,8 +319,10 @@ func TestServiceRoutesSupervisorMessageToIntake(t *testing.T) {
 	if err := svc.handleRawMessage(context.Background(), line); err != nil {
 		t.Fatal(err)
 	}
-	if h.creator.calls != 1 || h.creator.node != "fn" {
-		t.Fatalf("supervisor 回调没有接到入站服务：%+v", h.creator)
+	// 入站服务认出了绑定的项目并发出确认卡（确认前不建任务）。
+	if len(h.notices) != 1 || h.notices[0].Kind != KindTarget || h.notices[0].Target == nil ||
+		h.notices[0].Target.NodeID != "fn" {
+		t.Fatalf("supervisor 回调没有接到入站服务：%+v", h.notices)
 	}
 }
 
@@ -352,16 +364,17 @@ func (c *countingCreator) Create(context.Context, string, string, string) (strin
 	return "task-once", nil
 }
 
-func TestIntakeConcurrentRedeliveryCreatesOneTask(t *testing.T) {
+func TestIntakeConcurrentRedeliverySendsOneConfirmCard(t *testing.T) {
 	store, err := NewIntakeStore(filepath.Join(t.TempDir(), "intake.json"), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	creator := &countingCreator{}
+	var notices atomic.Int64
 	svc := NewIntakeService(
 		Config{OwnerOpenID: "ou_owner"},
 		intakeCatalog{refs: []ProjectRef{{NodeID: "fn", RootID: "r1", Name: "docs"}}}, store, creator,
-		func(context.Context, Notice) error { return nil }, time.Now, nil,
+		func(context.Context, Notice) error { notices.Add(1); return nil }, time.Now, nil,
 	)
 	msg := inbound("om-dup", "p2p", "ou_owner", "fix docs")
 	start := make(chan struct{})
@@ -378,12 +391,16 @@ func TestIntakeConcurrentRedeliveryCreatesOneTask(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	if got := creator.calls.Load(); got != 1 {
-		t.Fatalf("并发重投建任务次数 = %d, want 1", got)
+	// 确认前不建任务；并发重投只能发一张确认卡。
+	if got := creator.calls.Load(); got != 0 {
+		t.Fatalf("确认前不得建任务，got %d", got)
+	}
+	if got := notices.Load(); got != 1 {
+		t.Fatalf("并发重投只应发一张确认卡，got %d", got)
 	}
 	rec := store.records["om-dup"]
-	if rec.Status != "created" || rec.TaskID != "task-once" {
-		t.Fatalf("去重记录 = %+v, want created/task-once", rec)
+	if rec.Status != "confirming" || rec.TaskID != "" {
+		t.Fatalf("去重记录 = %+v, want confirming", rec)
 	}
 }
 

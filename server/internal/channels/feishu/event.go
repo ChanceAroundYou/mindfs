@@ -37,6 +37,7 @@ type Action struct {
 const (
 	askFormPrefix    = "ask_text_submit_"
 	noticeFormPrefix = "handling_note_submit_"
+	targetFormPrefix = "target_form_submit_"
 )
 
 // ParseEvent accepts only card clicks; everything else on the bus is
@@ -73,6 +74,14 @@ func (e Event) ParseAction() (Action, bool) {
 	}
 	if id, ok := strings.CutPrefix(e.ActionName, noticeFormPrefix); ok {
 		act.CardID, act.Text, act.Choice = id, formNote(e.FormValue), 0
+		act.Fields = formFields(e.FormValue)
+		return act, true
+	}
+	if id, ok := strings.CutPrefix(e.ActionName, targetFormPrefix); ok {
+		// The task-number form is the editable half of 「确认」: submitting it
+		// with no number means "confirm what the card prefilled", so empty text
+		// must still count as an answer.
+		act.CardID, act.Text, act.Choice = id, formNote(e.FormValue), targetConfirmChoice
 		act.Fields = formFields(e.FormValue)
 		return act, true
 	}
