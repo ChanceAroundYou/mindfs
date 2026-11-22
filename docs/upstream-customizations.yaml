@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生 + P1 安装包前端自检 + T18 节点可达性）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生 + P1 安装包前端自检 + T18 节点可达性 + T19 前端清单与打包 + T20 边缘镜像与切换）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12285,10 +12285,28 @@ groups:
       换行、把下一条语句并进注释，不报错也不生效）。Linux 上没有 pwsh、也跑不了七平台交叉编译，
       所以 `internal/deploy/install_script_test.go` 用两种手段守：真实执行 build-all.sh 的缺前端
       分支，其余以源码契约钉住顺序与结构（先定位 → 再拷贝 → 再校验 → 最后才打印 Done）。
+      ㉔ 前端资源镜像：主节点出清单与包（`uibundle.go` / `http_control_sync_ui.go` /
+      `server/cmd/ui-manifest`）的三条必须保留：**清单与包只由 Go 生成，哈希/路径校验只此一份**
+      （`ui-manifest` 是 `make build-web` 的一部分；放进 vite 就得抄第二份规则，两份一漂移的表现是
+      边缘把每一版都判成坏包、永远停在随包旧前端，而日志里一切正常）；**两条端点与 `/head`
+      `/changes` 同一档鉴权**（它们能一次吐出整套静态资源，而「API 不鉴权」是本项目对数据面
+      的决策，不是对这条通道的）；**包必须与清单逐文件一致**（`WriteUIBundle` 按清单取值，
+      中途文件被换掉就整体失败 —— 半份资源绝不能看起来像一份）。
+      ㉕ 边缘镜像与切换（`ui_mirror.go` / `http_frontend.go` / `workspace.go` / `server.go` /
+      `control_sync.go`）的四条必须保留：**先校验后切换**（`<version>.tmp` → 逐文件 sha256 →
+      rename → `.complete` → 才写指针；校验失败保留旧版并清掉半成品）；**指针是普通文件而不是
+      符号链接**（Windows 上建符号链接要特权，而边缘就是 Windows 那台；`writePointer` 在 rename
+      不能覆盖时退化为「先删后改名」—— 极短空窗的后果是回落安装目录，不是白屏）；**`min_server_build`
+      不满足不激活**（判定复用 `update.IsNewerVersion`，不另抄一份版本解析：本仓的 tag 带构建号，
+      两套算法迟早对不上）；**静态目录每请求重新求值**（`servingStaticDir` 走 `StaticDirProvider`，
+      镜像切换不需要重启进程 —— 「重启才生效」不叫无感更新；`StaticDir` 仍是安装目录，
+      `/api/control-sync/ui/*` 只认它，否则边缘会把自己的镜像当成「本机构建」再发出去）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
       `server/app` 启动链（⑯），但默认仍是关闭，边缘探活与追平只在显式开启后运行。
+      前端镜像同样只在「同步已启用 + 边缘角色」时启动，没有独立开关；镜像目录在
+      `<config-dir>/control_sync/ui/`，删掉 `current` 指针即回落到安装目录那份。
       后续波次（P1、P3–P8）在同组继续登记 files / tests / anchors。控制面之外的数据
       （项目/会话/任务/文件）不在同步范围内。
     files:
@@ -12398,6 +12416,22 @@ groups:
       - web/src/components/account/useNodeManagerPanel.ts
       - web/src/i18n/locales/zh-CN-projects.ts
       - web/src/i18n/locales/en-US-projects.ts
+      - server/internal/controlsync/uibundle.go
+      - server/internal/controlsync/uibundle_test.go
+      - server/internal/controlsync/ui_mirror.go
+      - server/internal/controlsync/ui_mirror_test.go
+      - server/cmd/ui-manifest/main.go
+      - server/internal/api/http_control_sync_ui.go
+      - server/internal/api/http_control_sync_ui_test.go
+      - server/internal/api/http_frontend.go
+      - server/internal/api/http_frontend_serve_test.go
+      - server/internal/api/http_nodes.go
+      - server/app/workspace.go
+      - server/app/workspace_static_dir_test.go
+      - server/app/server.go
+      - server/internal/update/compare.go
+      - scripts/build-all.sh
+      - Makefile
 
     tests:
       - server/app/control_plane_isolation_test.go
@@ -12443,6 +12477,11 @@ groups:
       - web/tests/control-mode-banner.test.mjs
       - web/tests/sync-conflict-panel.test.mjs
       - server/internal/api/http_control_sync_conflicts_test.go
+      - server/internal/controlsync/uibundle_test.go
+      - server/internal/controlsync/ui_mirror_test.go
+      - server/internal/api/http_control_sync_ui_test.go
+      - server/internal/api/http_frontend_serve_test.go
+      - server/app/workspace_static_dir_test.go
 
     anchors:
       - 'internal/deploy/install_script_test.go:func TestBuildAllRefusesPackageWithoutWebAssets(t *testing.T) {'
@@ -12680,3 +12719,23 @@ groups:
       - 'server/app/control_sync_test.go:func TestStartControlSyncRejectsWeakToken(t *testing.T) {'
       - 'server/internal/api/http_control_sync.go:		if errors.Is(err, controlsync.ErrRetentionGap) {'
       - 'server/internal/api/http_control_sync_feed_test.go:func TestControlSyncChangesEndpointReportsRetentionGap(t *testing.T) {'
+      - 'server/internal/controlsync/uibundle.go:func ValidUIFilePath(p string) bool {'
+      - 'server/internal/controlsync/uibundle.go:func BuildUIManifest(dir, buildVersion, minServerBuild string) (*UIManifest, error) {'
+      - 'server/internal/controlsync/uibundle.go:func WriteUIBundle(w io.Writer, dir string, m *UIManifest) error {'
+      - 'server/internal/api/http_routes.go:		r.Get("/api/control-sync/ui/manifest", h.requireSyncToken(h.handleControlSyncUIManifest))'
+      - 'server/internal/api/http_routes.go:		r.Get("/api/control-sync/ui/bundle", h.requireSyncToken(h.handleControlSyncUIBundle))'
+      - 'server/internal/controlsync/ui_mirror.go:func (m *UIMirror) SyncOnce(ctx context.Context) error {'
+      - 'server/internal/controlsync/ui_mirror.go:	if strings.TrimSpace(m.serverBuild) != "" && update.IsNewerVersion(manifest.MinServerBuild, m.serverBuild) {'
+      - 'server/internal/controlsync/ui_mirror.go:func (m *UIMirror) writePointer(version string) error {'
+      - 'server/internal/controlsync/ui_mirror.go:func validUIVersionName(v string) bool {'
+      - 'server/internal/api/http_frontend.go:func (h *HTTPHandler) servingStaticDir() string {'
+      - 'server/app/control_sync.go:func applyUIMirrorStaticDir(workspaces *workspaceManager, w *controlSyncWiring) {'
+      - 'server/app/server.go:	applyUIMirrorStaticDir(workspaces, controlSync)'
+      - 'server/app/workspace.go:		StaticDirProvider: staticDirProvider,'
+      - 'server/internal/controlsync/uibundle_test.go:func TestValidUIFilePathBoundaries(t *testing.T) {'
+      - 'server/internal/controlsync/ui_mirror_test.go:func TestUIMirrorRejectsHashMismatchEvenWhenLengthMatches(t *testing.T) {'
+      - 'server/internal/controlsync/ui_mirror_test.go:func TestUIMirrorDoesNotActivateWhenServerTooOld(t *testing.T) {'
+      - 'server/internal/controlsync/ui_mirror_test.go:func TestUIMirrorConcurrentSyncHasSingleWinner(t *testing.T) {'
+      - 'server/internal/api/http_frontend_serve_test.go:func TestServingStaticDirFollowsProviderAtRequestTime(t *testing.T) {'
+      - 'server/app/control_sync_test.go:func TestControlSyncAppliesMirrorStaticDirOnlyOnEdge(t *testing.T) {'
+      - 'server/app/workspace_static_dir_test.go:func TestHandlerDefaultsCarryStaticDirProvider(t *testing.T) {'

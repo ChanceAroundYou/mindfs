@@ -976,3 +976,78 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 - 未做：聚合请求路径（`getNodes()` 为空时打裸 `/api/dirs`）失败时没有可归因的节点，
   只由外层 `catch` 返回 `null`，不写健康状态 —— 此时也没有任何节点被声称在线，不会说谎；
   真浏览器点验留给 T22。未部署、未重启、未改配置。
+
+### T5 安装包自带前端（2026-11-22）
+
+- 硬约束（不是约定）：第二台 control 的全部价值就是「主节点不可达时还能出页面」，
+  包里没有 `web/` 的安装等于装了一台坏机器。
+- `scripts/build-all.sh`：**打包前**检查 `web/dist/index.html`，缺了在编译**之前**失败
+  （先编七个平台再报错等于白等十分钟），失败信息直接指路 `make build-web`；
+  包内写 `web/BUILD_VERSION`（值取构建版本），供 T20 对账「装进去的是哪一版」，
+  不靠文件名或首页内容去猜。
+- `scripts/install.ps1`：前端从「可选」改成必需 —— 包里没有 `web/` 直接 `exit 1`；
+  拷完再逐项核对 `index.html` 与 `favicon.svg` 真的落地，缺一个整体失败。不允许留下
+  「二进制在、页面 404」的半套安装（安装器自己还会打印 Done，没有任何线索）。
+  新写的注释一律 ASCII：Windows 按本地代码页解码，中文注释会吃掉后面的换行、
+  把下一条语句并进注释，不报错也不生效。
+- 用例：`internal/deploy/install_script_test.go` 4 条 —— 真实执行 build-all.sh 的缺前端
+  分支（退出非 0、提示 `build-web`、且没有打印过 `==> Building mindfs`）、BUILD_VERSION
+  写入形状、install.ps1 的「先定位 → 再拷贝 → 再校验 → 最后 Done」顺序与两处 `exit 1`、
+  `.ps1` 不含 CJK（U+2E80–U+9FFF / U+FF00–U+FFEF）。Linux 上没有 pwsh、也跑不了七平台
+  交叉编译，所以只有缺前端那条能真跑，其余用源码契约守。
+- 文档：`docs/multi-node-control-plane.md` 增「离线 control 安装（Windows）」——
+  `config.json` 示例（`role: control` + edge 同步段）、三条自检请求（`GET /` 200 且是页面、
+  `/api/node-info` 报 control、`/api/control-sync/status` 四态或未启用时 404），
+  以及 token 只走 `token_file` 的理由。
+- 未做：T4（pc-win 真以 `role=control` 起来并核对首页）—— 需要改那台机器的
+  `config.json` 并重启它的计划任务，属「不部署、不重启任何节点」的边界，留待用户执行。
+
+### T19 主节点清单与打包（2026-11-22）
+
+- 清单与包都由 Go 生成，不放进 vite：哈希与路径校验是安全相关规则，边缘判「能不能激活」
+  必须和服务端产清单用同一份实现（`server/internal/controlsync/uibundle.go`）。`make build-web`
+  末尾跑 `go run ./server/cmd/ui-manifest -dist web/dist -build-version "$(VERSION)"
+  -min-server-build "$(MIN_SERVER_BUILD)"`，`MIN_SERVER_BUILD ?= $(VERSION)`：同一提交编出来的
+  前后端永远配套，灰度时显式放宽。
+- `ui-manifest.json` 记 `build_version` / `min_server_build` / 每文件 `sha256`+`size`；
+  路径白名单拒绝对路径、`..`、`.`、空段、`\`、`:`、NUL，且要求 `path.Clean(p) == p`
+  （放宽分段规则的警报线）。清单自身不列入清单。
+- `GET /api/control-sync/ui/manifest` 与 `/ui/bundle` 与 `/head` `/changes` 同一档鉴权
+  （无 token 的节点不注册这两条，端点 404）；包是按清单现场读盘打的 tar.gz，中途文件被换掉
+  整体失败并保留旧版本 —— 半份资源不能看起来像一份。
+- 偏离计划一处：T19 原文把清单生成写在 `web/vite.config.ts`，实际落在 Go 命令，理由就是
+  上面那条「规则只能有一份」。
+- 用例：`uibundle_test.go` 9 条（路径边界、清单校验拒不安全/不一致条目、打包与清单一致、
+  生成后漂移被拒、拒不安全清单、加载错误、清单不列自身），`http_control_sync_ui_test.go` 6 条
+  （无 token 端点不存在、缺签名 401、清单形状、包是 gzip tar 且与清单逐文件一致、没有构建时
+  404、恶意清单被拒）。变异验证覆盖路径白名单、逐文件校验、端点鉴权与「打包即读盘」四处。
+
+### T20 边缘镜像与切换（2026-11-22）
+
+- `UIMirror`（`ui_mirror.go`）每 5 分钟同步一次：取清单 → 版本名白名单（拒 `../escape`
+  这类）→ 已是当前版且有 `.complete` 就跳过 → `min_server_build` 判定 → 下载包 →
+  `<version>.tmp` 逐文件 sha256 校验 → rename → `.complete` → 写指针 → 保留两版。
+  任何一步失败都保留旧版并清掉半成品。指针是**普通文件** `current`（Windows 建符号链接要
+  特权），`writePointer` 在 rename 不能覆盖时退化为「先删后改名」——空窗的后果是回落安装目录，
+  不是白屏。启动时读回指针，重启不会退回旧版。
+- 运行期切换：`HTTPHandler.StaticDirProvider` + `servingStaticDir()` 每请求求值；
+  `StaticDir` 仍是安装目录，`/api/control-sync/ui/*` 只认它（否则边缘把自己的镜像当本机构建再发）。
+  `/api/node-info` 的 `static` 也走同一判据，只用镜像出页面的边缘同样显示「打开网页」。
+- 装配：边缘启动时 `newUIMirror` 起 goroutine；`applyUIMirrorStaticDir` 把
+  `mirror.CurrentDir()` 接进 handler（单独抽出来的原因见下）。没有独立开关 ——
+  `control_sync.enabled` 且角色是边缘才跑。
+- 用例：`ui_mirror_test.go` 14 条（校验通过才切换、坏包保留旧版、同长度哈希不符也拒、
+  `min_server_build` 不满足不下载包、已是当前版跳过、启动读指针、指针指向不完整目录不认、
+  切换后旧版仍在、超过两版被清、8 路并发只下载一次包、恶意清单、`unpack` 拒意外内容、
+  构造要求 https、版本名白名单），`http_frontend_serve_test.go` 3 条（每请求求值、
+  无 provider 回落安装目录、node-info 的 static 跟随镜像），`workspace_static_dir_test.go`
+  1 条（`SetStaticDirProvider` 到 `handlerDefaults` 的一跳），`control_sync_test.go` 新增
+  `TestControlSyncWiresUIMirrorOnlyOnEdge` 与 `TestControlSyncAppliesMirrorStaticDirOnlyOnEdge`
+  （边缘有镜像、主节点没有；provider 落到按账户构建的 handler 上）。
+- 变异验证：`controlsync` 层 10 处（去逐文件校验、去版本名白名单、去 `min_server_build` 判定、
+  指针写成符号链接、失败不清半成品、只留一版、`.complete` 不检查、清单/包不一致放行、
+  并发不加锁、启动不读指针）各自打红；装配层 5 处（`servingStaticDir` 忽略 provider、
+  `handlerDefaults` 不传 provider、`applyUIMirrorStaticDir` 空转、`newUIMirror` 恒 nil、
+  `NewHTTPHandler` 不传 provider）各自打红后还原。
+- 未做：真机（Windows 边缘）点验留给 T22；未部署、未重启、未改配置，
+  `control_sync.enabled` 仍为 `false`。
