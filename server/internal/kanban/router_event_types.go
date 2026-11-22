@@ -31,6 +31,13 @@ const (
 	// 会话回合结算：任务绑定的任何会话（主会话 / 节点会话 / 委派会话）走完一轮
 	// 就落一条，由 EndSessionTurn 这个唯一终结器发出。它同样没有 Run。
 	RouterEventTurnSettled RouterEventKind = "turn_settled"
+	// 任务级巡检（W3）：会话回合在飞却没有产出，或任务写着 running 而底下什么都
+	// 没了。两者都没有 Run，由 taskHealthSweep 按 5 分钟桶去重后写入。
+	RouterEventTurnStalled  RouterEventKind = "turn_stalled"
+	RouterEventTaskOrphaned RouterEventKind = "task_orphaned"
+	// 重启恢复（W3）：重启把在飞回合带走之后补发的事件，W3-3 由
+	// settleOrphanDirectReplies 写入，Router 据此决定重试或告知用户。
+	RouterEventTurnInterrupted RouterEventKind = "turn_interrupted"
 )
 
 const (
@@ -136,6 +143,12 @@ func RouterEventInstanceKey(kind RouterEventKind, runID, nodeRunID string, attem
 	case RouterEventTurnSettled:
 		// 实例键是会话回合 id，签名里没有这个维度。
 		return "", errors.New("router event turn_settled uses RouterEventTurnInstanceKey")
+	case RouterEventTurnStalled, RouterEventTaskOrphaned:
+		// 实例键按任务/回复 + 5 分钟桶，签名里没有这个维度。
+		return "", errors.New("router event health kinds use routerEventHealthInstanceKey")
+	case RouterEventTurnInterrupted:
+		// 实例键按回复行，签名里没有这个维度。
+		return "", errors.New("router event turn_interrupted uses routerEventInterruptInstanceKey")
 	default:
 		return "", fmt.Errorf("unknown router event kind %q", kind)
 	}
@@ -146,7 +159,8 @@ func knownRouterEventKind(kind RouterEventKind) bool {
 	switch kind {
 	case RouterEventRunSettled, RouterEventRunFailed, RouterEventGateWaiting,
 		RouterEventRunStalled, RouterEventStartupReconcile, RouterEventDirectStalled,
-		RouterEventCompletionBlocked, RouterEventTurnSettled:
+		RouterEventCompletionBlocked, RouterEventTurnSettled,
+		RouterEventTurnStalled, RouterEventTaskOrphaned, RouterEventTurnInterrupted:
 		return true
 	default:
 		return false

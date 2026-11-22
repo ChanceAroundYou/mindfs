@@ -139,6 +139,9 @@ export const enUSTasks = {
   "task.supervision.status.failed": "Failed",
   "task.supervision.status.skipped": "Skipped",
   "task.supervision.status.shadow": "Recorded only",
+  // Router badge (W3-4): shown on the card until the Router picks the event up.
+  "task.routerAlertInterrupted": "A restart cut this turn short; the Router has not picked it up yet ({count})",
+  "task.routerAlertStalled": "This turn has made no progress for a while; the Router has not handled it yet ({count})",
   "task.completion.title": "Completion evidence",
   "task.completion.repairs": "Repairs {used} / {max}",
   "task.completion.allPassed": "Every completion condition holds.",

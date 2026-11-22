@@ -12,9 +12,11 @@ export type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { TaskCardFinishButton } from "./TaskCardFinishButton";
 import { TASK_ACTION_BUTTON_META, taskActionButtons } from "./taskCardActions";
 import { taskActionIcons } from "./taskActionIcons";
+import { taskRouterAlertBadge } from "./routerAlertModel";
 import {
   TASK_CONTROL_GAP,
   TaskPlanAuxIcon,
+  TaskRouterAlertIcon,
   TaskSessionErrorIcon,
   taskActionIconStyle,
   taskAuxBadgeStyle,
@@ -92,8 +94,19 @@ export function TaskCardRows({
   const auxFlags = task.aux_flags || {};
   const sessionError = parseTaskSessionErrorMessage(auxFlags.session_error);
   const sessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
+  // Router 角标（W3-4）：健康事件还没被 Router 处理时点亮，处理完服务端就
+  // 不再下发 router_alert，卡片随之恢复干净 —— 语义在服务端，这里只负责画。
+  const routerAlert = taskRouterAlertBadge(task);
   const auxBadges = [
     auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
+    routerAlert
+      ? {
+          key: routerAlert.key,
+          label: t(routerAlert.labelKey, { count: String(routerAlert.count) }),
+          icon: <TaskRouterAlertIcon color={routerAlert.key === "router_interrupted" ? "#ef4444" : undefined} />,
+          attention: routerAlert.attention,
+        }
+      : null,
     auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon color={nodeColor || undefined} />, attention: false } : null,
     auxFlags.has_todos ? { key: "todos", label: t("task.hasTodos"), icon: renderToolIcon("todo"), attention: false } : null,
     auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,

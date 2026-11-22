@@ -74,6 +74,8 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID
 		// 用户在任务详情里推进的会话在 Router 眼里根本不存在（线上 #68）。
 		s.settleSessionTurnForRouter(rootID, sessionKey, turnID, pending)
 	}
+	// 输出水位随回合结束清零：下一轮从零算起，别拿上一轮的产出时刻当这一轮的进展。
+	s.clearSessionTurnWatermark(rootID, sessionKey)
 	// 提问卡兜底收口：放在清 pending 之前，避免同一会话在「收口—清 pending」
 	// 之间起新轮又建出新的 waiting 卡后被误收。harness 取消回合时可能完全不发
 	// tool update（Codex 当前如此），这里是最后一道防线。
@@ -121,6 +123,32 @@ func (s *AppContext) settleSessionTurnForRouter(rootID, sessionKey, turnID strin
 	if inserted {
 		log.Printf("[kanban] router.turn_settled root=%s session=%s turn=%s", rootID, sessionKey, turnID)
 	}
+}
+
+// noteSessionTurnOutput 记一帧输出到会话回合的输出水位（W3-1，见
+// kanban/turn_watermark.go）。水位只在内存里，写库是节流的诊断副本；这条链路
+// 任何失败都不能影响帧的广播。
+func (s *AppContext) noteSessionTurnOutput(rootID, sessionKey string) {
+	if s == nil {
+		return
+	}
+	svc, err := s.GetKanbanService()
+	if err != nil || svc == nil {
+		return
+	}
+	svc.NoteSessionTurnOutput(context.Background(), rootID, sessionKey, time.Now().UTC())
+}
+
+// clearSessionTurnWatermark 在回合结束时丢掉水位。
+func (s *AppContext) clearSessionTurnWatermark(rootID, sessionKey string) {
+	if s == nil {
+		return
+	}
+	svc, err := s.GetKanbanService()
+	if err != nil || svc == nil {
+		return
+	}
+	svc.ClearSessionTurnWatermark(rootID, sessionKey)
 }
 
 // updateSessionAwaitingFromEvent 把 ask_user 的生命周期镜像进 StreamHub（会话级的

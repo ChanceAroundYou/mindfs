@@ -64,6 +64,15 @@ export type KanbanTask = {
     has_task?: boolean;
     session_error?: string;
   };
+  /**
+   * Router 还没处理完的巡检/恢复事件（后端派生字段，不落库）。
+   * `kind` 只会是 `turn_interrupted` / `turn_stalled`；处理后服务端不再下发。
+   */
+  router_alert?: {
+    kind: string;
+    count?: number;
+    since?: string;
+  };
 };
 
 export type TaskEvent = {

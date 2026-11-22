@@ -193,3 +193,42 @@ Plan 2026-11-22。用户要求「审阅任务运行和 Router，至少找出三�
   （`archived_at` 投影多带，删掉本组文件后同样红，属 HEAD 既有）。
 - 登记 `G-PM`（14 个锚点）。注意：该登记块在提交前被并发会话的整文件提交 `4c2bc6c3` 一并带走，
   所以 `docs/upstream-customizations.yaml` 里 G-PM 的登记提交号与代码提交号不同。
+
+### W3 · Scope: G-PN（2026-11-22，已实现，门禁绿，未提交）
+
+- **W3-1 输出水位**：新增 `turn_watermark.go`。只信 harness 帧 —— `AppContext.BroadcastSessionUpdate`
+  是所有 harness 帧的必经之路，也是唯一能证明「这一轮真的还在产出」的地方（会话探针只能证明
+  进程还在回包），在它末尾调 `noteSessionTurnOutput`。水位在内存里，每 30 s 或每 20 帧落一次
+  `last_output_at`（回复行 + 运行中的 NodeRun 行，`activity_store.go` 加列、`task_store_workflow_runs.go`
+  跟写）；落库只为诊断与跨进程可见。回合结算时 `clearSessionTurnWatermark` 清零。进程重启后
+  水位是「未知」（`SessionTurnWatermark` 返回 false）而不是「0 分钟没动」——未知不能当停滞。
+- **W3-2 任务级巡检**：新增 `router_task_health.go`。`taskHealthSweep` 每拍只读非终态任务，按
+  纯函数 `classifyTaskHealth` 分 `healthy` / `stalled_turn`（在飞但水位 ≥10 min 不动）/
+  `orphaned`（任务 running 且无活会话、无 open 节点、无在飞回复）/ `waiting_busy`（waiting_user
+  但会话正在回复），产 `turn_stalled` / `task_orphaned` 事件；实例键
+  `routerEventHealthInstanceKey` = 任务/回复 + 5 分钟桶，同一现场每桶只一条，健康任务零事件。
+  接进 `coordinateTick`（在既有事件扫描之后、预算与模型调用之前）。
+- **W3-3 重启恢复升级**：`settleOrphanDirectReplies` 结算孤儿直连回复时先写 `turn_interrupted`
+  事件（带可见系统行说明来由），再按任务状态走 `healthEventSupervision` 决策。按用户裁定
+  「重启后可以重试至多 3 次」：`supervisionInterruptedMaxRetries = 3`，另有 24 小时时效
+  `routerInterruptedRetryMaxAge`；用完只 `notify_user` 不再重开。巡检/恢复三类事件沿用 G-PM 的
+  预算豁免（不占用户留言 3 回合）、空 Run 形态与监管块（`SupervisionObservation` 含
+  `Interrupted` / `Stalled` / `Orphaned` 现场），运行期动作按事件种类放行
+  `retry_direct` / `resume_run` / `retry_node` / `notify_user` / `escalate`，仍受每 Run 12 +
+  每小时 20 的预算约束；`mode=off` 下只落库不执行。
+- **W3-4 卡片角标**：`router_alert` 是服务端派生字段（`task_router_alert.go`，不落库）：判据是
+  事件账本里还是 `pending` / `claimed`（= Router 还没处理），处理完自然消失；挂到 `ListTasks`
+  与 `GetTask` 两处，保证 `broadcastTask → GetDetail → GetTask` 推送的详情与列表同形，不会把角标
+  擦掉；中断优先于停滞、条数按事件条数。前端 `routerAlertModel.ts` 纯函数翻成角标，
+  `TaskCardRows` 的 `auxBadges` 画出（中断红 / 停滞琥珀，`TaskRouterAlertIcon`），zh/en 各 2 键。
+- **验证**：`turn_watermark_test.go` 4 条、`router_task_health_test.go` 3 条、
+  `router_turn_recovery_test.go` 7 条、`router_task_alert_test.go` 3 条、
+  `appcontext_task_watermark_test.go` 1 条、`web/tests/task-router-alert.test.mjs` 4 条。
+  变异各自打红后还原：水位不推进 / 重启后未知当停滞 / 去 5 分钟桶去重 / 中断重试不限次 /
+  角标常显 / 卡片不画角标（最后两条在前端用例上打红）。
+- **门禁**：干净验证 worktree 上 `go build ./...` 成功、`go test ./server/internal/kanban/` 绿
+  （332.5 s；中途一次 FAIL 是既有 flake，见 memory `kanban-gate-flaky-sqlite-io`，复跑全绿）；
+  `go test ./server/internal/api/` 仅既有红项 `TestOverviewProjectionCoversEveryFieldTheSharedCardReads`
+  （`archived_at` 投影多带，在未含本组改动的干净 HEAD worktree 上同样红，属 HEAD 既有）；web
+  `tsc -b --noEmit` clean、`npx vitest run` 265 文件 / 888 通过 / 6 跳过。
+- 登记 `G-PN`（24 个锚点）。

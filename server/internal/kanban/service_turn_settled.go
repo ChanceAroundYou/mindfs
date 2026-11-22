@@ -31,7 +31,8 @@ func RouterEventTurnInstanceKey(turnID string) string {
 // 证据缺口一样，本来就不属于任何 Run。
 func routerEventAllowsEmptyRun(kind RouterEventKind) bool {
 	switch kind {
-	case RouterEventDirectStalled, RouterEventCompletionBlocked, RouterEventTurnSettled:
+	case RouterEventDirectStalled, RouterEventCompletionBlocked, RouterEventTurnSettled,
+		RouterEventTurnStalled, RouterEventTaskOrphaned, RouterEventTurnInterrupted:
 		return true
 	default:
 		return false
@@ -183,7 +184,9 @@ func tailExcerpt(text string, limit int) string {
 // 三类事件各有自己的预算口径，不能共用「每条留言 3 回合」那把尺：
 //   - completion_blocked：补做额度由契约的 MaxRepairs 管；
 //   - turn_settled：会话回合结算，按每任务每小时 20 次；
-//   - 其余（含监管回合）：按原始留言的 3 回合。
+//   - turn_interrupted / turn_stalled / task_orphaned：巡检与重启恢复回合，
+//     额度是「每档重开次数 + 每 Run 12 + 每小时 20 个动作」；
+//   - 其余（含其余监管回合）：按原始留言的 3 回合。
 func eventTurnBudgetSkip(ctx context.Context, store *TaskStore, event RouterEvent, userActivityID string) (string, error) {
 	if store == nil {
 		return "", nil
@@ -199,6 +202,11 @@ func eventTurnBudgetSkip(ctx context.Context, store *TaskStore, event RouterEven
 		if !allowed {
 			return reason, nil
 		}
+		return "", nil
+	case RouterEventTurnInterrupted, RouterEventTurnStalled, RouterEventTaskOrphaned:
+		// 恢复回合不挤占用户留言的 3 回合额度：重启/停滞本来就是用户留言之外
+		// 的事故，算进去会让「入口 1 轮 + 自动重开 3 次」的第 3 次被静默跳过，
+		// 用户看到的仍是「跑了一半就没了」且没有任何解释。
 		return "", nil
 	}
 	turns, err := countUserTurnDecisions(ctx, store.db, event.TaskID, userActivityID)

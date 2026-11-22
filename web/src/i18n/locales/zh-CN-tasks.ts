@@ -143,6 +143,9 @@ export const zhCNTasks = {
   "task.supervision.status.failed": "执行失败",
   "task.supervision.status.skipped": "已跳过",
   "task.supervision.status.shadow": "仅记录",
+  // Router 角标（W3-4）：健康事件还没被 Router 处理时挂在卡片上，处理完即消失。
+  "task.routerAlertInterrupted": "进程重启打断了这一轮，Router 还没接管（{count} 条）",
+  "task.routerAlertStalled": "这一轮长时间没有新进展，Router 还没处理（{count} 条）",
   "task.completion.title": "完成证据",
   "task.completion.repairs": "补做 {used} / {max}",
   "task.completion.allPassed": "全部完成条件成立。",

@@ -198,6 +198,12 @@ func (rs *RouterService) turnBrief(ctx context.Context, taskID string, trigger R
 						brief.Supervision = rs.service.supervisionDirectObservation(ctx, store, task, reply, time.Now().UTC())
 					}
 				}
+			case routerEventHealthKind(trigger.Event.Kind):
+				// 巡检与重启恢复事件没有 Run：现场全在载荷与回复行里，观测按它们重算
+				// （turn_stalled 的水位要取实时内存值，不能信事件里的快照）。
+				if task, taskErr := store.GetTask(ctx, trigger.Event.TaskID); taskErr == nil {
+					brief.Supervision = rs.service.healthEventSupervision(ctx, store, task, *trigger.Event, time.Now().UTC())
+				}
 			case strings.TrimSpace(trigger.Event.RunID) != "":
 				if run, runErr := store.WorkflowRunByID(ctx, trigger.Event.RunID); runErr == nil && run != nil {
 					if task, taskErr := store.GetTask(ctx, trigger.Event.TaskID); taskErr == nil {

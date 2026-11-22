@@ -56,8 +56,12 @@ type Task struct {
 	// ResultSummary 是最近一轮结算后的可读结果（成功摘要是节点汇报，失败/等待
 	// 是原因）。看板卡片用它回答「这个任务最后做到了什么」；没有它，卡片只剩
 	// 第一条用户留言，任务列表看起来和对话开头毫无区别。
-	ResultSummary  string `json:"result_summary,omitempty"`
-	WorktreeRootID string `json:"worktree_root_id,omitempty"`
+	ResultSummary string `json:"result_summary,omitempty"`
+	// RouterAlert 是任务卡角标（W3-4）：Router 还没处理完的巡检/恢复事件。
+	// 派生值，不落库 —— 由事件账本状态现算（见 task_router_alert.go），
+	// 处理完自然消失。
+	RouterAlert    *TaskRouterAlert `json:"router_alert,omitempty"`
+	WorktreeRootID string           `json:"worktree_root_id,omitempty"`
 	WorktreePath   string `json:"worktree_path,omitempty"`
 	// WorktreeBuilt 报告这个任务**曾经建出过一个 worktree**。
 	//

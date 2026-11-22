@@ -23,6 +23,17 @@ type SupervisionDirectState struct {
 	Replying     bool   `json:"replying"`
 	RetriesUsed  int    `json:"retries_used"`
 	RetryAllowed bool   `json:"retry_allowed"`
+	// Interrupted 表示这一轮是被进程重启带走的（W3-3）：旧回复已按设计结算成
+	// cancelled，不会再有人推进它，所以重开不需要「仍停在 pending/running」这个
+	// 前提，也不受「会话还在回复」阻挡。
+	Interrupted bool `json:"interrupted,omitempty"`
+	// StalledByWatermark 表示停滞证据来自输出水位（这一轮最后一次真的吐内容的
+	// 时刻），而不是会话探针。探针仍报 replying 时正是靠它把「活着」与「有进展」
+	// 分开。
+	StalledByWatermark bool `json:"stalled_by_watermark,omitempty"`
+	// MaxRetries 是这一档允许的自动重开次数（停滞 1 次，重启恢复 3 次）。零值按
+	// supervisionDirectMaxRetries 处理。
+	MaxRetries int `json:"max_retries,omitempty"`
 }
 
 // supervisionDirectMaxRetries 是同一轮直连允许的自动重开次数。

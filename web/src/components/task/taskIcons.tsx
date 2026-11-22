@@ -7,7 +7,7 @@
  * TaskResumeIcon, TaskRebuildWorktreeIcon, TaskFinishWorktreeIcon,
  * TaskSessionErrorIcon, TaskCancelIcon, TaskReopenIcon, DeleteIcon, TaskPlanAuxIcon,
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
- * ChevronDownSmallIcon, WorkflowIcon.
+ * ChevronDownSmallIcon, WorkflowIcon, TaskRouterAlertIcon.
  * Task styles: taskCardSurfaceStyle,
  * taskCardIconButtonStyle, taskActionIconStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
  * WorktreeTagState, taskWorktreeTagStyle, taskReplyPulseStyle.
@@ -292,6 +292,18 @@ export function TaskPlanAuxIcon({ color }: { color?: string } = {}) {
     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M7 6h10M7 12h10M7 18h6" stroke={c} strokeWidth="2" strokeLinecap="round" />
       <path d="M4 6h.01M4 12h.01M4 18h.01" stroke={c} strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TaskRouterAlertIcon({ color }: { color?: string } = {}) {
+  // 三角警告：中断用红、停滞用琥珀。颜色由调用方给，图标本身不带语义。
+  const c = String(color || "#f59e0b").trim() || "#f59e0b";
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 3.6 2.6 20h18.8L12 3.6Z" stroke={c} strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M12 9.6v4.6" stroke={c} strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="17.2" r="1" fill={c} />
     </svg>
   );
 }

@@ -109,16 +109,27 @@ func validateSupervisionActions(brief *SituationBrief, actions []RouterAction, c
 				return fmt.Errorf("retry_direct targets an unknown stalled reply (activity=%q, expected %q)",
 					action.NodeRunID, obs.Direct.ActivityID)
 			}
-			if obs.Direct.Status != ActivityStatusPending && obs.Direct.Status != ActivityStatusRunning {
-				return fmt.Errorf("retry_direct is not allowed: reply %s is %s, not pending/running", activityID, obs.Direct.Status)
+			if obs.Direct.Interrupted {
+				// 重启带走的回合：旧回复已由启动对账结算成 cancelled，不会再有人
+				// 推进它。所以「仍停在 pending/running」与「会话还在回复」这两个
+				// 前提都不成立，只看重开次数（用户裁定至多 3 次）。
+			} else {
+				if obs.Direct.Status != ActivityStatusPending && obs.Direct.Status != ActivityStatusRunning {
+					return fmt.Errorf("retry_direct is not allowed: reply %s is %s, not pending/running", activityID, obs.Direct.Status)
+				}
+				// 水位停滞时探针可能仍报 replying —— 那正是这一档存在的理由。
+				if obs.Direct.Replying && !obs.Direct.StalledByWatermark {
+					return errors.New("retry_direct is not allowed: the task session is still replying")
+				}
 			}
-			if obs.Direct.Replying {
-				return errors.New("retry_direct is not allowed: the task session is still replying")
+			limit := obs.Direct.MaxRetries
+			if limit <= 0 {
+				limit = supervisionDirectMaxRetries
 			}
-			if !obs.Direct.RetryAllowed || obs.Direct.RetriesUsed >= supervisionDirectMaxRetries {
+			if !obs.Direct.RetryAllowed || obs.Direct.RetriesUsed >= limit {
 				return &supervisionBudgetError{reason: fmt.Sprintf(
 					"supervision direct retry budget exhausted for reply %s (%d/%d)",
-					activityID, obs.Direct.RetriesUsed, supervisionDirectMaxRetries)}
+					activityID, obs.Direct.RetriesUsed, limit)}
 			}
 		case RouterActionEscalate:
 			if obs == nil {

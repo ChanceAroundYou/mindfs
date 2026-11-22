@@ -81,6 +81,10 @@ type Service struct {
 	// 赢下状态，就会得到「树已合并删除、行记 cancelled」的矛盾。锁只在进程内
 	// 有效，跨进程语义本来就未宣称 durable。
 	workflowFinishLocks map[string]*workflowFinishLock
+	// turnWatermarks 是会话回合的输出水位（见 turn_watermark.go）：最后一次真的
+	// 吐出内容帧的时刻。只在内存里，重启后一律「未知」。
+	turnWatermarkMu sync.Mutex
+	turnWatermarks  map[string]*turnWatermarkEntry
 	// workflowRunSessionLocks 串行化「同一轮 Run 首次绑定共享会话」：并行分支
 	// 同时起步时只能有一条会话被记成 Run 的会话，否则另一条立刻变成孤儿。
 	workflowRunSessionLocks map[string]*workflowFinishLock

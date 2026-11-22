@@ -12948,3 +12948,96 @@ groups:
       - 'web/src/components/agent/ContextSavingIndicator.tsx:const billingSized = !!latest && latest.usage_source !== "missing" && billingContext > 0 && foldedTokens > 0;'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:const totalPercent = formatPercent(saving.total_folded_tokens, saving.total_context_tokens + saving.total_folded_tokens);'
       - 'web/src/services/agent/contextSaving.ts:total_context_tokens: number;'
+  - id: G-PN
+    title: 任务级巡检与中断恢复：输出水位 · turn_stalled / task_orphaned / turn_interrupted · 卡片角标
+    kind: feature
+    symptom: |
+      任务行写着 running、底下却什么都没有（重启把在飞回合带走、会话僵住不再出帧、
+      直连回复无人结算），Router 既不巡检也不发事件，卡片也不给提示 —— 用户只能自己
+      发现「卡住了」。健康任务反而会被误判：只看「进程还在回包」会把已经静默十分钟的
+      回合当成正常。合并上游时若把 coordinateTick 里的 taskHealthSweep 摘掉、把水位
+      判据换成会话探针空闲、或把中断重试白名单改回只认 startup_reconcile，症状原样回来。
+    why: |
+      ① 输出水位单独成文件（`turn_watermark.go`），只信 harness 帧：
+      `BroadcastSessionUpdate` 是所有 harness 帧的必经之路，也是唯一能证明「这一轮
+      真的还在产出」的地方（会话探针只能证明进程还在回包）。内存为主，每 30 s 或每
+      20 帧落一次 `last_output_at`（回复行 + 运行中的节点行），只为诊断与跨进程可见；
+      进程重启后水位是「未知」而不是「0 分钟没动」—— 未知不能当停滞。
+      ② 水位只在回合结算时清零（`clearSessionTurnWatermark`），成功 / 失败 / 取消都清，
+      免得把上一轮的产出时刻算到下一轮头上。
+      ③ 巡检只看任务级事实（非终态任务的活会话 / open 节点 / 在飞回复 / 水位），与
+      workflow 引擎解耦；分类是纯函数 `classifyTaskHealth`，healthy / stalled_turn /
+      orphaned / waiting_busy 四类先红。
+      ④ 事件去重按任务或回复 + 5 分钟时间桶（`routerEventHealthInstanceKey`），同一
+      现场每桶只一条；健康任务零事件。
+      ⑤ 重启恢复在 `settleOrphanDirectReplies` 里先写 `turn_interrupted`（可见系统行写
+      清来由），再按任务状态决策；自动重开上限 3 次（用户裁定：
+      `supervisionInterruptedMaxRetries = 3`），24 小时时效
+      （`routerInterruptedRetryMaxAge`），用完只通知用户。
+      ⑥ 巡检/恢复事件没有 Run 是正常形态：事件存储按种类放行空 RunID，brief 的监管块
+      按载荷 + 实时水位重算（不复用事件快照），不写「run 不存在」这种会让模型以为
+      执行失败的话。
+      ⑦ 事件回合预算豁免沿用 G-PM：`turn_interrupted` / `turn_stalled` /
+      `task_orphaned` 不占用户留言的 3 回合预算，否则巡检自己会把用户额度花光。
+      ⑧ 卡片角标是派生值而不落库：判据是事件账本里还是 pending / claimed（= Router
+      还没处理），处理完自然消失；同时挂到 `ListTasks` 与 `GetTask` 两处，
+      保证 `broadcastTask → GetDetail → GetTask` 推给前端的详情与列表同形，不会把
+      角标擦掉。中断优先于停滞，条数按事件条数给。
+    files:
+      - server/internal/kanban/turn_watermark.go
+      - server/internal/kanban/router_task_health.go
+      - server/internal/kanban/router_turn_recovery.go
+      - server/internal/kanban/task_router_alert.go
+      - server/internal/kanban/router_event_types.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_supervision_actions.go
+      - server/internal/kanban/router_supervision_direct.go
+      - server/internal/kanban/service_recover_direct_reply.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/types.go
+      - server/internal/api/appcontext_task_flags.go
+      - server/internal/api/appcontext_broadcast.go
+      - web/src/components/task/routerAlertModel.ts
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/shared/taskTypes.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - server/internal/kanban/turn_watermark_test.go
+      - server/internal/kanban/router_task_health_test.go
+      - server/internal/kanban/router_turn_recovery_test.go
+      - server/internal/kanban/router_task_alert_test.go
+      - server/internal/api/appcontext_task_watermark_test.go
+      - web/tests/task-router-alert.test.mjs
+    anchors:
+      - 'server/internal/kanban/turn_watermark.go:func (s *Service) NoteSessionTurnOutput(ctx context.Context, rootID, sessionKey string, now time.Time) {'
+      - 'server/internal/kanban/turn_watermark.go:func (s *Service) ClearSessionTurnWatermark(rootID, sessionKey string) {'
+      - 'server/internal/kanban/turn_watermark.go:turnWatermarkFlushInterval = 30 * time.Second'
+      - 'server/internal/api/appcontext_broadcast.go:s.noteSessionTurnOutput(rootID, sessionKey)'
+      - 'server/internal/api/appcontext_task_flags.go:s.clearSessionTurnWatermark(rootID, sessionKey)'
+      - 'server/internal/kanban/router_task_health.go:func classifyTaskHealth(in taskHealthInput) taskHealth {'
+      - 'server/internal/kanban/router_task_health.go:func (s *Service) taskHealthSweep(ctx context.Context, rootID string, now time.Time) ([]RouterEvent, error) {'
+      - 'server/internal/kanban/router_task_health.go:func routerEventHealthInstanceKey(kind RouterEventKind, ref string, at time.Time) string {'
+      - 'server/internal/kanban/router_coordinate.go:rs.service.taskHealthSweep(ctx, rs.rootID, now)'
+      - 'server/internal/kanban/router_turn_recovery.go:supervisionInterruptedMaxRetries = 3'
+      - 'server/internal/kanban/router_turn_recovery.go:func (s *Service) recordTurnInterruptedEvent(ctx context.Context, store *TaskStore, activities *ActivityStore, reply *TaskActivity) {'
+      - 'server/internal/kanban/service_recover_direct_reply.go:s.recordTurnInterruptedEvent(ctx, store, activities, updated)'
+      - 'server/internal/kanban/router_event_types.go:RouterEventTurnStalled  RouterEventKind = "turn_stalled"'
+      - 'server/internal/kanban/router_event_types.go:RouterEventTurnInterrupted RouterEventKind = "turn_interrupted"'
+      - 'server/internal/kanban/router_supervision_actions.go:if obs.Direct.Interrupted {'
+      - 'server/internal/kanban/activity_store.go:ALTER TABLE task_activities ADD COLUMN last_output_at'
+      - 'server/internal/kanban/task_router_alert.go:func (s *TaskStore) attachRouterAlerts(ctx context.Context, tasks []Task) {'
+      - 'server/internal/kanban/task_store.go:s.attachRouterAlerts(ctx, items)'
+      - 'server/internal/kanban/types.go:RouterAlert    *TaskRouterAlert `json:"router_alert,omitempty"`'
+      - 'web/src/components/task/routerAlertModel.ts:export function taskRouterAlertBadge('
+      - 'web/src/components/task/TaskCardRows.tsx:const routerAlert = taskRouterAlertBadge(task);'
+      - 'web/src/components/task/taskIcons.tsx:export function TaskRouterAlertIcon('
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.routerAlertInterrupted":'
+      - 'web/src/i18n/locales/en-US-tasks.ts:"task.routerAlertStalled":'
