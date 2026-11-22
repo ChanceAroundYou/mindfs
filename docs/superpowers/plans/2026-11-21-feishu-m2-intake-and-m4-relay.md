@@ -629,3 +629,20 @@ RED/GREEN 证据：`prepareFeishuChannel`/`Claim`/`NewRelayClient` 未实现时�
 
 提交：`f57e4115`（wiring+intake）、`62597b8f`（dedupe）、`fbaaeed4`（retry）、`a25cb331`（redirect helper）、`ff8a1612`（生产回答中继 client 补口），均带 `Scope: G-PH`。未部署、未重启任何节点，未改配置。
 
+
+### 收尾复审（2026-11-22，Scope: G-PH）
+
+fix wave 的定向复审判定 F1–F5 全部 ADDRESSED（每条都给出行号与测试证据），同时在**本轮修复触及的代码**里新发现一条 Important 回归，不修不放行：
+
+| 发现 | 根因 | 修复 | 钉住的测试 |
+|---|---|---|---|
+| 选择卡发送失败后消息永久被吞 | F3 的 `Claim` 把去重记录提前写成 `creating`，选择卡分支失败时只 `return err`，记录停在 `creating`；同一条消息重投被 `Claim` 静默吞掉，owner 永远收不到卡，去重账本却显示已处理 | 新增 `IntakeStore.Release`（只释放仍为 `creating` 的占坑；已到 picker/created 的属于真实卡片或任务，必须继续去重，落盘失败回滚内存）；选择卡分支发送失败时先 `Release` 再返回错误 | `TestIntakeReleaseOnlyDropsUnfinishedClaim`、`TestIntakePickerNotifyFailureReleasesClaim` |
+
+RED/GREEN：两个测试先跑 RED（`重投后应补发一张选择卡，got []`、`已经发出卡片的记录不能被释放`），实现后 GREEN。变异两处各自打红后还原：把 `Release` 改成无条件删除 → 第二条用例红；去掉选择卡分支的 `Release` 调用 → 第一条用例红。
+
+门禁（worktree HEAD `329694ea`）：
+- `go build ./...` OK、`gofmt -l` 无输出。
+- `go test ./server/internal/channels/feishu -count=1` 全绿。
+- 全量 `go test -count=1 ./...` 曾在机器同时跑 3–4 份全量套件时出现两处既有 flake：`TestProxyFoldRespectsDisableFile`（TempDir 清理竞态，单跑通过）与 `server/internal/kanban` 600s 超时；kanban 单跑复现的 `TestCoordinatorTickReclaimsStaleClaims` 失败信息为 `TempDir RemoveAll cleanup: directory not empty`，单独 `-count=3` 三次全 PASS，与本组改动无关。
+
+提交：`329694ea`（`Scope: G-PH`）。未部署、未重启任何节点，未改配置。
