@@ -11646,13 +11646,17 @@ groups:
       红），hover 文案仍是动作名（title = aria-label = 动作名）。线上实测（2026-11-22，1440×900，
       bundle `index-XXY6kfFW.js`）：完成键两边都是 22×22 / 6px / `rgb(22,163,74)`；取消键都是
       `rgb(71,85,105)`；已归档的取消归档键都是 `rgb(59,130,246)`、删除键都是 `rgb(220,38,38)`。
-      ⑯ 动作键间距收成一条常量（2026-11-22）：间距 0 时 22px 的透明底盒子挨在一起，图标之间
-      只剩盒内留白，视觉上挤成一排。现在卡片动作行与详情 header 都取
-      `TASK_ACTION_ROW_GAP = 4`（定义在 `taskStyles.ts`，唯一来源），按钮尺寸（22×22）、圆角 6、
+      ⑯ 相邻控件间距收成一条常量（2026-11-22）：原先动作键之间 gap 0、动作键与关闭键 8px、
+      编辑键与任务名 8px，同一行里三种节奏。现在统一取 `TASK_CONTROL_GAP = 4`
+      （定义在 `taskStyles.ts`，唯一来源），覆盖三处：卡片动作行、详情 header 的动作键内部、
+      动作键与关闭键之间、编辑键与任务名之间。按钮尺寸（22×22 / 圆角 6 / 关闭键 28×28）、
       颜色与 hover 文案（title = aria-label = 动作名）一律不变；`taskActionIconStyle` 补
-      `flexShrink: 0`，窄卡上按钮不会被压窄，收尾键也改走同一函数。详情 header 的换行沿用
-      `flexWrap`，所以窄屏换行后的行距同样跟随这条常量。桌面 1440×900 与移动端 390×844
-      线上实测：两处 gap 都是 4px、相邻键屏幕间距 4.0px、盒子仍是 22×22 / r6。
+      `flexShrink: 0`，窄卡上按钮不会被压窄，收尾键也改走同一函数。关闭键在 `PanelShell`
+      里与 `headerRight` 编成一组，间距由新 prop `headerRightGap` 控制（默认 8，其它面板
+      不传即原样；任务详情传 `TASK_CONTROL_GAP`）。详情 header 的换行沿用 `flexWrap`，
+      窄屏换行后的行距同样跟随这条常量。桌面 1440×900 与移动端 390×844 线上实测：
+      动作键之间 gap 4px、相邻键屏幕间距 4.0px、动作键→关闭键 4px、编辑键→任务名 4px，
+      盒子仍是 22×22 / r6。
       **本轮范围之外**：动作集合（执行中 / 已暂停 / 待开始三档以哪边为准）用户尚未裁定，
       本轮只调间距、不动集合；卡片上「完成 / 暂停」hover 用短词还是完整动作名，也留待那次
       裁定一并处理。
@@ -11819,11 +11823,15 @@ groups:
       - 'web/src/components/task/ConversationView.tsx:flex: "1 0 auto"'
       - 'web/src/components/task/ConversationView.tsx:aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }}'
       - 'web/src/components/task/taskCardActions.ts:complete: { labelKey: "task.complete", tone: "success" },'
-      - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_ACTION_ROW_GAP }}'
-      - 'web/src/components/task/taskStyles.ts:export const TASK_ACTION_ROW_GAP = 4;'
-      - 'web/src/components/task/TaskCardRows.tsx:justifyContent: "flex-end", gap: TASK_ACTION_ROW_GAP, marginLeft: "auto"'
+      - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_CONTROL_GAP }}'
+      - 'web/src/components/task/taskStyles.ts:export const TASK_CONTROL_GAP = 4;'
+      - 'web/src/components/task/TaskCardRows.tsx:justifyContent: "flex-end", gap: TASK_CONTROL_GAP, marginLeft: "auto"'
+      - 'web/src/components/task/TaskDetailPanel.tsx:headerRightGap={TASK_CONTROL_GAP}'
+      - 'web/src/components/task/TaskDetailPanel.tsx:gap: TASK_CONTROL_GAP, minWidth: 0, maxWidth: "100%", flexWrap: "nowrap"'
+      - 'web/src/components/shell/PanelShell.tsx:headerRightGap = 8,'
+      - 'web/src/components/shell/PanelShell.tsx:gap: `${headerRightGap}px`'
       - 'web/src/components/task/TaskCardFinishButton.tsx:taskActionIconStyle("success")'
-      - 'web/tests/task-card-parity.test.mjs:TASK_ACTION_ROW_GAP = 4;'
+      - 'web/tests/task-card-parity.test.mjs:TASK_CONTROL_GAP = 4;'
       - 'web/src/components/task/TaskDetailPanel.tsx:const actions = taskActionButtons(task).map((key) => ({'
       - 'web/src/components/task/TaskDetailPanel.tsx:...taskActionIconStyle(action.tone),'
       - 'web/tests/task-detail-header.test.mjs:assert.match(right, /title=\{action\.label\}/);'

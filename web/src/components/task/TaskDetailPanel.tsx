@@ -9,7 +9,7 @@ import { TaskInspectEntries } from "./TaskInspectEntries";
 import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
-import { TASK_ACTION_ROW_GAP, taskActionIconStyle } from "./taskStyles";
+import { TASK_CONTROL_GAP, taskActionIconStyle } from "./taskStyles";
 import { TASK_ACTION_BUTTON_META, taskActionButtons, type TaskActionButtonKey } from "./taskCardActions";
 import { taskActionIcons } from "./taskActionIcons";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
@@ -76,6 +76,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
       // 固定高度 + 居中：异步内容补进来时外框不再从底部往上长，打开第一帧就是最终尺寸。
       fixedHeight
       onClose={onClose}
+      // 动作键与关闭键之间也取 TASK_CONTROL_GAP；其它面板不传，仍是原来的 8px。
+      headerRightGap={TASK_CONTROL_GAP}
       hasUnsavedChanges={() => editingName && nameDraft.trim() !== (task.name || "").trim()}
       title={editingName ? (
         <input
@@ -94,7 +96,9 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           {/* 任务名 + 编辑键是一个整体，标题槽允许换行（PanelShell 的 flexWrap），
               所以必须自己 nowrap：否则长名字会把编辑键挤到第二行、header 变成两行高。
               组内名字 flex 0 1 auto + minWidth 0 按需省略，按钮始终紧跟其后。 */}
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "8px", minWidth: 0, maxWidth: "100%", flexWrap: "nowrap" }}>
+          {/* 编辑键与任务名之间取统一间距 TASK_CONTROL_GAP（原先是 8px，同一行里
+              动作键 4 / 关闭键 8 / 编辑键 8 三种节奏）。 */}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: TASK_CONTROL_GAP, minWidth: 0, maxWidth: "100%", flexWrap: "nowrap" }}>
             <span style={{ flex: "0 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {task.name || t("task.namePlaceholder")}
             </span>
@@ -128,8 +132,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
         // 动作全部平铺：有几项画几项，删除也在同一排里（不再做独立特例，也不再收进菜单）。
         // 与看板卡片的图标键完全同形同色：同一份键序（taskActionButtons）、同一套图形
         // （taskActionIcons）、同一档配色（taskActionIconStyle）→ 22×22 / 圆角 6；
-        // 键间距也取同一条 TASK_ACTION_ROW_GAP（移动端换行时行距一并跟随）。
-        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_ACTION_ROW_GAP }}>
+        // 键间距也取同一条 TASK_CONTROL_GAP（移动端换行时行距一并跟随）。
+        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_CONTROL_GAP }}>
           {actions.map((action) => (
             <button
               key={action.key}

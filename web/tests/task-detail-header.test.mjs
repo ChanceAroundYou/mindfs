@@ -28,11 +28,12 @@ test("header 结构：名字旁边是编辑键，动作平铺在右侧，关闭�
     "任务名要能收缩，剩余空间才算「中间留白」",
   );
   // 标题槽允许换行，名字 + 编辑键必须自己 nowrap：长名字只把名字压出省略号，
-  // 不能把编辑键挤到第二行（header 会变成两行高）。
+  // 不能把编辑键挤到第二行（header 会变成两行高）。编辑键与名字的间距取统一常量
+  // TASK_CONTROL_GAP（原先 8px），与动作键之间、动作键与关闭键同一条节奏。
   assert.match(
     panel,
-    /display: "inline-flex", alignItems: "center", gap: "8px", minWidth: 0, maxWidth: "100%", flexWrap: "nowrap"/,
-    "名字与编辑键要锁在同一行",
+    /display: "inline-flex", alignItems: "center", gap: TASK_CONTROL_GAP, minWidth: 0, maxWidth: "100%", flexWrap: "nowrap"/,
+    "名字与编辑键要锁在同一行，且间距与动作键同源",
   );
 
   // headerRight 只有一排平铺的动作键：既没有菜单触发键，也没有「删除」特例。
@@ -45,10 +46,18 @@ test("header 结构：名字旁边是编辑键，动作平铺在右侧，关闭�
   assert.doesNotMatch(right, /\{terminal \? \([\s\S]{0,300}?deleteTaskCard/, "删除不再走 terminal 特例分支");
   assert.match(panel, /^\s*showCloseButton$/m, "任务详情要右上角关闭键");
 
-  // 关闭键放在 headerRight 之后、由 PanelShell opt-in 渲染。
-  const closeAt = shell.indexOf("showCloseButton ? (");
+  // 关闭键放在 headerRight 之后、由 PanelShell opt-in 渲染；两者编成一组，
+  // 间距由 headerRightGap 决定（任务详情传 TASK_CONTROL_GAP，与动作键内部同一条）。
+  const closeAt = shell.indexOf('aria-label={t("common.close")}');
   assert.ok(closeAt > 0);
   assert.ok(shell.indexOf("{headerRight}") < closeAt, "关闭键排在动作行右边");
+  assert.match(panel, /headerRightGap=\{TASK_CONTROL_GAP\}/, "详情要把关闭键间距接到统一常量上");
+  assert.match(shell, /headerRightGap = 8,/, "其它面板不传时保持原来的 8px");
+  assert.match(
+    shell,
+    /gap: `\$\{headerRightGap\}px`/,
+    "headerRight 与关闭键必须同组渲染，间距才是可配的那一条",
+  );
 });
 
 test("平铺动作与看板卡片同源：一份键序、一份图形、一份配色", () => {
@@ -90,7 +99,7 @@ test("平铺动作与看板卡片同源：一份键序、一份图形、一份�
   assert.doesNotMatch(panel, /taskCardIconButtonStyle\(/, "详情不再手搓档位映射");
   assert.doesNotMatch(panel, /width: "28px"|height: "28px"|borderRadius: "8px"/, "盒子尺寸交给卡片同一份样式");
   // 键间距与卡片同一条常量（不再各自写死 0）：容器本身仍只负责排列与换行。
-  assert.match(panel, /data-testid="task-detail-actions" style=\{\{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_ACTION_ROW_GAP \}\}/);
+  assert.match(panel, /data-testid="task-detail-actions" style=\{\{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_CONTROL_GAP \}\}/);
 });
 
 test("详情侧不再保留自己的一套动作口径", () => {

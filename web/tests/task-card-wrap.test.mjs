@@ -63,7 +63,7 @@ assert.ok(
 assert.match(cardRows, /justifyContent: "space-between", gap: "4px", flexWrap: "wrap"/, "操作行应允许换行");
 assert.match(
   cardRows,
-  /justifyContent: "flex-end", gap: TASK_ACTION_ROW_GAP, marginLeft: "auto"/,
+  /justifyContent: "flex-end", gap: TASK_CONTROL_GAP, marginLeft: "auto"/,
   "按钮组靠 marginLeft:auto 换行后仍贴右；键间距取共享常量",
 );
 

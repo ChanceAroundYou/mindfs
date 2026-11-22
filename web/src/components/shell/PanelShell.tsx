@@ -96,6 +96,13 @@ export type PanelShellProps = {
   title: React.ReactNode;
   /** header 右侧（保存等）。默认关闭只走遮罩；要 × 请开 showCloseButton。 */
   headerRight?: React.ReactNode;
+  /**
+   * headerRight 与关闭键之间的间距（px），默认 8（与 header 本身的 gap 一致）。
+   *
+   * 任务详情传 4：那一行是图标键，键与键、键与 × 要同一条节奏
+   * （`TASK_CONTROL_GAP`）；其它面板不传，保持原样。
+   */
+  headerRightGap?: number;
   /** header 标题左侧的额外内容（状态徽章等） */
   headerLeft?: React.ReactNode;
   children: React.ReactNode;
@@ -144,6 +151,7 @@ export const PANEL_OPEN_CLICK_GUARD_MS = 350;
 export function PanelShell({
   title,
   headerRight,
+  headerRightGap = 8,
   headerLeft,
   children,
   footer,
@@ -278,33 +286,39 @@ export function PanelShell({
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", userSelect: "text" }}>
             {title}
           </div>
-          {headerRight}
-          {showCloseButton ? (
-            // 显式关闭入口：和遮罩同一条 requestClose，未保存修改照样先确认。
-            <button
-              type="button"
-              aria-label={t("common.close")}
-              title={t("common.close")}
-              onClick={() => requestClose()}
-              style={{
-                width: "28px",
-                height: "28px",
-                flexShrink: 0,
-                padding: 0,
-                border: "none",
-                borderRadius: "8px",
-                background: "transparent",
-                color: "var(--text-secondary)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>
+          {/* headerRight 与关闭键编成一组：两者之间的间距由 headerRightGap 决定
+              （任务详情传 4，与动作键内部同一条），组与标题之间仍是 header 的 8px。 */}
+          {headerRight || showCloseButton ? (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: `${headerRightGap}px`, flexShrink: 0 }}>
+              {headerRight}
+              {showCloseButton ? (
+                // 显式关闭入口：和遮罩同一条 requestClose，未保存修改照样先确认。
+                <button
+                  type="button"
+                  aria-label={t("common.close")}
+                  title={t("common.close")}
+                  onClick={() => requestClose()}
+                  style={{
+                    width: "28px",
+                    height: "28px",
+                    flexShrink: 0,
+                    padding: 0,
+                    border: "none",
+                    borderRadius: "8px",
+                    background: "transparent",
+                    color: "var(--text-secondary)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </header>
         {belowHeader}

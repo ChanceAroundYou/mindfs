@@ -263,17 +263,20 @@ assert.match(
 // 就是下一次漂移的起点。
 const detailPanel = readFileSync(new URL("../src/components/task/TaskDetailPanel.tsx", import.meta.url), "utf8");
 const taskStyles = readFileSync(new URL("../src/components/task/taskStyles.ts", import.meta.url), "utf8");
-assert.match(taskStyles, /export const TASK_ACTION_ROW_GAP = 4;/, "键间距只有一份定义");
-assert.match(detailPanel, /gap: TASK_ACTION_ROW_GAP/, "详情 header 用共享间距");
-assert.match(cardRows, /gap: TASK_ACTION_ROW_GAP/, "卡片动作行用同一条间距（工作台卡同源）");
+assert.match(taskStyles, /export const TASK_CONTROL_GAP = 4;/, "键间距只有一份定义");
+assert.match(detailPanel, /gap: TASK_CONTROL_GAP/, "详情 header 用共享间距");
+assert.match(cardRows, /gap: TASK_CONTROL_GAP/, "卡片动作行用同一条间距（工作台卡同源）");
 assert.match(taskStyles, /flexShrink: 0/, "22px 盒子不随容器收缩：加间距后窄卡上也不许被压窄");
 assert.match(
   finishButton,
   /taskActionIconStyle\("success"\)/,
   "收尾键与其它动作键同一套外观（含 flexShrink），不再走裸的卡片图标样式",
 );
-// 间距变化不许碰到标题行与 hover 文案：前者是另一条 8px 的容器，后者仍是动作全称。
-assert.match(detailPanel, /display: "inline-flex", alignItems: "center", gap: "8px"/, "标题行间距不受影响");
+// 三处间距（动作键之间 / 动作键与关闭键 / 编辑键与任务名）走同一条常量；
+// 标题槽里除了名字与编辑键没有别的控件，所以整槽取它不会波及别处。
+assert.match(detailPanel, /gap: TASK_CONTROL_GAP, minWidth: 0, maxWidth: "100%", flexWrap: "nowrap"/, "名字与编辑键同源");
+assert.match(detailPanel, /headerRightGap=\{TASK_CONTROL_GAP\}/, "动作键与关闭键同源");
+assert.doesNotMatch(detailPanel, /gap: "8px"/, "详情 header 里不再有第二种图标间距");
 assert.match(detailPanel, /title=\{action\.label\}/);
 assert.match(detailPanel, /aria-label=\{action\.label\}/);
 });

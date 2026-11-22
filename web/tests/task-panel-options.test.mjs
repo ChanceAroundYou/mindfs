@@ -82,7 +82,7 @@ assert.match(
 assert.match(panel, /title=\{editingName \? \(\s*<input/, "the rename input must take over the title slot, not sit beside it");
 assert.doesNotMatch(panel, /headerLeft=\{editingName \? \(\s*<input/, "the rename input must not live in headerLeft — that is what left the stale name on screen");
 assert.doesNotMatch(panel, /headerLeft=\{editingName \?[\s\S]{0,400}?taskStatusColor\(task\.status\)/, "the status/#number badges are not the cell being edited — keep them out of the editing ternary");
-assert.match(panel, /title=\{editingName \?[\s\S]{0,1200}?task\.name \|\| t\("task\.namePlaceholder"\)/, "the read-only name must stay in the title slot, shown only when not editing");
+assert.match(panel, /title=\{editingName \?[\s\S]{0,1500}?task\.name \|\| t\("task\.namePlaceholder"\)/, "the read-only name must stay in the title slot, shown only when not editing");
 assert.match(
   inlinePanel,
   /hasUnsavedChanges=\{\(\) => String\(taskInlineEdit\?\.text \|\| ""\)\.trim\(\) !== ""\}/,
