@@ -249,6 +249,26 @@ func eventTurnBudgetSkip(ctx context.Context, store *TaskStore, event RouterEven
 	return "", nil
 }
 
+// routerEventAllowsNoUserActivity 判断这类事件是否允许在没有来源用户留言时
+// 起一个 Router 回合（闸门在 router_coordinate_turn.go）。允许的都是「系统
+// 自己发现的现场」：用户没说话，但确实有事情要处理 —— 回合结算、停滞、孤儿、
+// 重启打断。它们也只能回话，不能借机收尾（见 applyRouteAction）。
+func routerEventAllowsNoUserActivity(kind RouterEventKind) bool {
+	return routerTurnAllowsNoUserActivity(string(kind))
+}
+
+// routerTurnAllowsNoUserActivity 是同一口径的字符串版本：决策的 TriggerKind
+// 就是事件 kind，应用侧按它判断「这一轮本来就没有来源留言」。
+func routerTurnAllowsNoUserActivity(kind string) bool {
+	switch kind {
+	case string(RouterEventTurnSettled), string(RouterEventTurnStalled),
+		string(RouterEventTaskOrphaned), string(RouterEventTurnInterrupted):
+		return true
+	default:
+		return false
+	}
+}
+
 // settlementTurnBudget 回答「这个任务此刻还能不能再开一个结算回合」。
 // 返回 allowed=false 时 reason 是一句可直接落到 skip 上的说明。
 func settlementTurnBudget(ctx context.Context, store *TaskStore, taskID string, now time.Time) (bool, string, error) {

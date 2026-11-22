@@ -173,9 +173,10 @@ func (rs *RouterService) beginCoordinateEventTurn(ctx context.Context, decision 
 		return false
 	}
 	userActivityID := strings.TrimSpace(event.UserActivityID)
-	// turn_settled 允许没有来源留言：系统发起的回合（巡检补做、自动续跑）本来就
-	// 没有用户留言，汇总这一轮的证据是事件载荷里的产出摘要，不是留言。
-	if userActivityID == "" && event.Kind != RouterEventTurnSettled {
+	// 巡检类事件允许没有来源留言：系统发起的回合（回合结算、停滞巡检、任务
+	// 孤儿、重启打断）本来就没有用户留言，证据在事件载荷里，不在留言里。
+	// 这类回合只能回话（say / ask_user，见 applyRouteAction），不能借机收尾。
+	if userActivityID == "" && !routerEventAllowsNoUserActivity(event.Kind) {
 		rs.completeCoordinatedEvent(ctx, event.ID, RouterEventSkipped, "missing originating user activity")
 		return false
 	}

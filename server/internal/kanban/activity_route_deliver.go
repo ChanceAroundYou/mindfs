@@ -86,7 +86,7 @@ func (s *ActivityService) applyRouteAnswerWaiting(
 	s.broadcastUpdated(act, map[string]any{
 		"body": notice, "status": ActivityStatusCompleted,
 		"purpose": fields["purpose"], "ordinal": action.Seq,
-		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
+		"reply_to_id": routeUserActivityID(userAct), "router_decision_id": decision.ID,
 	})
 	return nil
 }

@@ -23,6 +23,11 @@ type coordinateFixture struct {
 func newCoordinateFixture(t *testing.T, mode RouterMode) *coordinateFixture {
 	t.Helper()
 	f := newRouterEventFixture(t)
+	// 先让任务停在 waiting_user 再起 Router：fixture 建的是 running 空壳任务，
+	// 后台第一拍巡检会把它判成孤儿并真的跑一轮（巡检回合现在允许没有来源留言），
+	// 那轮会多消耗一次模型调用、多写一条决策，与用例要测的事件抢断言。需要
+	// running 的用例在起完 fixture 后自己 setTaskStatus。
+	f.setTaskStatus(t, "task-1", StatusWaitingUser)
 	f.svc.SetRouterConfig(RouterConfig{Mode: mode, IdleClose: time.Hour})
 	agent := &scriptedRouterAgent{}
 	direct := &fakeDirectExecutor{reply: "直连回复", done: make(chan struct{})}
@@ -465,7 +470,6 @@ func TestCoordinatorChainDepthAndMissingOrigin(t *testing.T) {
 
 	t.Run("missing origin skipped", func(t *testing.T) {
 		f := newCoordinateFixture(t, RouterModeCoordinate)
-		f.stopLoop(t)
 		ev := f.addEvent(t, RouterEvent{Kind: RouterEventRunSettled, TurnID: "no-origin"})
 		if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
 			t.Fatalf("ConsumeRouterEvents: %v", err)

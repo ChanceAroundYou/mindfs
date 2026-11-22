@@ -69,8 +69,11 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 	if decision.TriggerKind == RouterTriggerTurnSettled {
 		state.settleTurn = true
 	}
+	// 巡检回合（回合结算 / 停滞 / 孤儿 / 打断）没有来源用户留言：它们由系统
+	// 发起，证据在事件载荷里。此时 userAct 为 nil，只允许回话类动作（见
+	// applyRouteAction），任何需要「回复某条留言」的动作都会被拒绝。
 	userAct, err := s.activities.Get(ctx, strings.TrimSpace(decision.UserActivityID))
-	if err != nil {
+	if err != nil && !(strings.TrimSpace(decision.UserActivityID) == "" && errors.Is(err, ErrActivityNotFound)) {
 		return err
 	}
 	store := NewRouterStore(s.tasks.db)
@@ -155,6 +158,14 @@ func (s *ActivityService) applyRouteAction(
 	state *routeApplyState,
 	action RouterAction,
 ) error {
+	// 没有来源留言的巡检回合只能回话。收尾、起 Run、投递、监管写入都需要一条
+	// 留言当锚点（回复绑定、证据、投递目标），没有它就不是「巡检发现问题」，
+	// 而是「凭空操作任务」。只对巡检类触发判定：直接调用的应用测试与用户留言
+	// 回合没有留言是另一回事，不在这里改变它们的语义。
+	if userAct == nil && routerTurnAllowsNoUserActivity(string(decision.TriggerKind)) &&
+		action.Kind != RouterActionSay && action.Kind != RouterActionAskUser {
+		return fmt.Errorf("action %q requires an originating user activity", action.Kind)
+	}
 	switch action.Kind {
 	case RouterActionSay:
 		return s.applyRouteSay(ctx, decision, task, userAct, state, action)
@@ -289,7 +300,7 @@ func (s *ActivityService) applyRouteSay(
 	changes := map[string]any{
 		"body": body, "status": ActivityStatusCompleted,
 		"purpose": fields["purpose"], "ordinal": action.Seq,
-		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
+		"reply_to_id": routeUserActivityID(userAct), "router_decision_id": decision.ID,
 	}
 	if redundantProgress {
 		changes["hidden"] = true
@@ -368,7 +379,7 @@ func (s *ActivityService) applyRouteAskUser(
 	s.broadcastUpdated(act, map[string]any{
 		"body": body, "status": ActivityStatusWaitingUser,
 		"purpose": fields["purpose"], "ordinal": action.Seq,
-		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
+		"reply_to_id": routeUserActivityID(userAct), "router_decision_id": decision.ID,
 	})
 	// 提问就是「等人回话」：任务头与活动状态一致，停在待审核。
 	if decision.TriggerKind == RouterTriggerUserMessage && act.RunID == "" {

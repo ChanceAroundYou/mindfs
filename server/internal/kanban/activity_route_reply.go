@@ -127,6 +127,15 @@ func summaryTriggerAllowed(kind RouterTriggerKind) bool {
 
 // markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。运行期事件的
 // 汇报默认 purpose=progress；用户留言仍是 reply 或调用方指定值。
+// routeUserActivityID 返回这条动作要回复的用户留言 ID。巡检回合没有来源
+// 留言，回复行的 reply_to_id 保持空 —— 广播帧与落库都要同一个值。
+func routeUserActivityID(userAct *TaskActivity) string {
+	if userAct == nil {
+		return ""
+	}
+	return userAct.ID
+}
+
 func (s *ActivityService) markRouteReply(
 	ctx context.Context,
 	decision *RouterDecision,
@@ -147,11 +156,11 @@ func (s *ActivityService) markRouteReply(
 	if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {
 		purpose = "progress"
 	}
-	if err := s.activities.SetRouteFields(ctx, act.ID, decision.ID, userAct.ID, purpose, action.Seq); err != nil {
+	if err := s.activities.SetRouteFields(ctx, act.ID, decision.ID, routeUserActivityID(userAct), purpose, action.Seq); err != nil {
 		return nil, err
 	}
 	act.RouterDecisionID = decision.ID
-	act.ReplyToID = userAct.ID
+	act.ReplyToID = routeUserActivityID(userAct)
 	act.Purpose = purpose
 	act.Ordinal = action.Seq
 	return map[string]any{"purpose": purpose}, nil
