@@ -46,7 +46,7 @@ export type UseAppKanbanTaskPanelParams = {
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
   openTaskCreateDialog: (targetRootId?: string, targetNodeId?: string) => void;
-  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
+  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => boolean;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<{ title: string; message: string; details: string[]; } | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
   agents: AgentStatus[];

@@ -91,7 +91,7 @@ export type UseAppViewCompositionParams = {
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleSelectSessionAndClose: (session: SessionItem) => void;
   handleSyncSession: (session: SessionItem) => Promise<void>;
-  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
+  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => boolean;
   hasMoreExternalSessions: boolean;
   hasMoreSessions: boolean;
   importMenuOpen: boolean;

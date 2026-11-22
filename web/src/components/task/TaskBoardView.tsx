@@ -92,7 +92,7 @@ export function TaskBoardView({
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
   openTaskCreateDialog: (targetRootId?: string) => void;
-  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
+  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => boolean;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
   onOpenWorkflowEditor: () => void;

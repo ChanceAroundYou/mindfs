@@ -11608,6 +11608,17 @@ groups:
       让遮罩在面板刚挂载的 350ms 内忽略点击，之后照常关闭。
       `useComposerBottomPin` 保留：输入区长高、正文仍贴底（`COMPOSER_PIN_PX=48`）时继续把
       `.mindfs-panel-body` 滚到底。
+      ⑭ 从详情跳进会话后面板自己关掉（2026-11-22）：详情里的「打开会话」有多个入口——
+      活动卡页脚、直连节点行、工作流节点行、工作流会话按钮——它们全部汇到
+      `TaskDetailPanel.onOpenSession`，所以修复点放在 `TaskDetailPanelGate` 这一个包装层，
+      不动 `TaskDetailPanel` 内部的各个入口，也不改 `handleSelectSession`（在那里关会在导航
+      之前把面板卸掉）。`handleTaskSessionDrawerOpen` 改为返回布尔：只有真的解析出可跳目标
+      并调用了 `handleSelectSession` 才 `return true`，空 key / 找不到 root / 没有可跳目标
+      一律 `return false`；Gate 在拿到 `true` 之后才 `setSelectedKanbanTaskId("")`。顺序是
+      「先用当前任务的 root/id 组装跳转目标并同步写入 selectedSession + URL + 模式，再关面板」，
+      所以会话页拿到的参数完整（`?root=…&node=…&session=…&view=chat`），`preserveTaskSelection`
+      不变、看板卡片仍保持选中。看板卡片上的两个同名调用点（`TaskBoardView`）只使用返回值前
+      的副作用，忽略布尔，行为不变。
     boundary: |
       只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
@@ -11636,8 +11647,16 @@ groups:
       worktree 的旧 bundle（2026-11-22 实测线上入口指向 `index-6VOQZPjU.js`，里面还是
       `data-align` / `flex-end` 的旧代码）。`e2e/live/panel_geometry.py` 同时核对服务端入口、
       浏览器**实际执行**的 bundle（resource timing）与首帧/内容到齐后的矩形。
+      跳会话关面板只改「谁在什么时候卸载详情」，不改跳转本身：`handleSelectSession` 的
+      装配顺序、`preserveTaskSelection` 语义与会话页参数解析一律不动；解析失败时面板必须
+      留着（否则用户点了没反应还丢了上下文）。
     files:
       - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/app/TaskDetailPanelGate.tsx
+      - web/src/app/useAppTaskDrawer.ts
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/app/useAppViewCompositionTypes.ts
+      - web/src/app/useAppKanbanTaskPanel.tsx
       - web/src/components/task/ActivityInput.tsx
       - web/src/components/task/ConversationView.tsx
       - web/src/components/task/RunImmediatelyControl.tsx
@@ -11689,6 +11708,8 @@ groups:
       - e2e/test_task_detail_pills_flow.py
       - e2e/test_task_detail_open_geometry.py
       - e2e/live/panel_geometry.py
+      - e2e/live/detail_to_session.py
+      - web/tests/task-detail-open-session-closes-panel.test.mjs
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
@@ -11753,6 +11774,13 @@ groups:
       - 'web/src/components/task/ConversationView.tsx:flex: "1 0 auto"'
       - 'web/src/components/task/ConversationView.tsx:aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }}'
       - 'e2e/live/panel_geometry.py:def check(result: dict, mobile: bool) -> list[str]:'
+      - 'e2e/live/detail_to_session.py:def find_open_button(page):'
+      - 'web/src/components/app/TaskDetailPanelGate.tsx:const navigated = handleTaskSessionDrawerOpen('
+      - 'web/src/components/app/TaskDetailPanelGate.tsx:if (navigated) setSelectedKanbanTaskId("");'
+      - 'web/src/app/useAppTaskDrawer.ts:// 返回「是否真的发起了跳转」：详情面板要等这一步完成后再关自己，'
+      - 'web/src/app/useAppTaskDrawer.ts:void handleSelectSession(target as any, { preserveTaskSelection: true });'
+      - 'web/src/components/task/TaskBoardView.tsx:handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => boolean;'
+      - 'web/tests/task-detail-open-session-closes-panel.test.mjs:assert.ok(closeAt > handlerAt, "closing the panel must come after the navigation call");'
       - 'e2e/live/harness.py:"matches_dist_entry"'
       - 'web/src/shared/activityModel.ts:export function queuedUserActivity(activities: TaskActivity[]): TaskActivity | null {'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.startImmediatelyHint": "建完任务就立刻派发首条留言",'
