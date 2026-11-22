@@ -437,6 +437,8 @@ def main():
     parser.add_argument("--iso-src", default="", help="MINDFS_ISO_SRC（C 需要）")
     parser.add_argument("--repo", default=os.path.dirname(HERE), help="仓库根（找 mindfs-iso.sh）")
     opts = parser.parse_args()
+    if ":7331" in opts.base:
+        raise SystemExit("拒绝在线上实例上跑：--base 指向 7331，本脚本只动隔离实例")
 
     client = Client(opts.base, opts.user, opts.root)
     db = DB(opts.db)

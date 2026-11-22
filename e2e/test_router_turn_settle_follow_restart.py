@@ -86,6 +86,8 @@ def iso_control(repo, iso_root, iso_port, iso_src, action, timeout=900):
 
 
 def scenario_c(client, db, opts):
+    if ":7331" in opts.base:
+        raise SystemExit("拒绝在线上实例上 kill -9：--base 指向 7331，本脚本只动隔离实例")
     if not (opts.iso_root and opts.iso_port and opts.iso_src):
         raise SystemExit("C 场景需要 --iso-root / --iso-port / --iso-src：它会 kill -9 并重启实例")
     mode = (client.router_status().get("supervision_mode") or "").strip()

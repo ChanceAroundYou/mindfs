@@ -13131,6 +13131,50 @@ groups:
       - 'server/internal/api/appcontext_task_prompt.go:s.Kanban.NoteSessionAnsweredQuestion(rootID, sessionKey)'
       - 'server/internal/api/ws_session_message.go:h.AppContext.Kanban.BeginOutOfBandSessionTurn(msgCtx, rootID, key)'
 
+  # ── W5 验收：回合结算 · 会话推进跟随 · kill -9 重启恢复（隔离实例，真实模型） ──
+  - id: G-PS
+    title: W5 验收脚本：直连长回合总结归属 / 会话推进跟随 / kill -9 重启恢复
+    kind: docs
+    symptom: |
+      上游没有 Router，也没有 `turn_settled` / `turn_interrupted` 事件，更没有这三条行为的验收
+      资产。没有脚本时 W1–W4 只能靠单测与变异验证：真实模型下「总结是不是转交口信」「会话被
+      用户推进时任务跟不跟」「kill -9 之后有没有可见说明与自动重试」都只能靠人肉复现；合上游
+      时脚本被当成普通 e2e 资产删掉，这三条行为就再没有可重放的证据。
+    why: |
+      必须保留：① 只作用于隔离实例 —— 两个脚本都在入口拒绝 `:7331`（A/B 在 main、C 在
+      `scenario_c`），账本一律 `sqlite3 ...?mode=ro` 只读打开，线上只做 GET /health；
+      ② 断言的是可见行为与持久证据（`tasks.result_summary` 的来源、`router_events` 载荷、
+      `router_decisions.kinds`、回复行终态），不是实现细节；
+      ③ A 必须等 `summary_source == "router"` 再判：兜底摘要是回合结束那一刻先落的占位，
+      Router 结算回合实测晚 10–25 s 应用，早了会把占位当结论（第一版断言就栽在这里）；
+      ④ 提问卡载荷可能是顶层 `questions`，也可能是 adapter 原样透传的 `input`（JSON 字符串），
+      按前端 `AskUserQuestionCard.tsx::getAskUserQuestions` 同口径解析；
+      ⑤ 杀进程树取 `/proc/<pid>/task/*/children` 并集 —— Go 运行时从任意线程 fork，只看主线程
+      会漏掉 CLI 子进程，模拟不出断电。
+      测试 → 钉住什么（脚本自证，无 Go/Vitest 测试，kind=docs 豁免）：
+      · A 场景 —— 直连长回合期间摘要不是转交口信、结算后 summary 来自 Router；
+      · B 场景 —— 两条 `turn_settled` 的 `out_of_band` / `answered_question` 依次为 false→true；
+      · C 场景 —— 重启后 `turn_interrupted` ≤5 min、原回复 cancelled 带「进程重启」说明、
+        `retry_direct` 应用且重试行跑到 completed。
+    files:
+      - e2e/test_router_turn_settle_follow.py
+      - e2e/test_router_turn_settle_follow_restart.py
+    anchors:
+      - 'e2e/test_router_turn_settle_follow.py:def summary_source(text):'
+      - 'e2e/test_router_turn_settle_follow.py:def payload_questions(payload):'
+      - 'e2e/test_router_turn_settle_follow.py:def scenario_a(client, db, opts):'
+      - 'e2e/test_router_turn_settle_follow.py:def scenario_b(client, db, opts):'
+      - 'e2e/test_router_turn_settle_follow.py:if ":7331" in opts.base:'
+      - 'e2e/test_router_turn_settle_follow_restart.py:def thread_children(pid):'
+      - 'e2e/test_router_turn_settle_follow_restart.py:def process_tree(pid):'
+      - 'e2e/test_router_turn_settle_follow_restart.py:if ":7331" in opts.base:'
+      - 'e2e/test_router_turn_settle_follow_restart.py:def scenario_c(client, db, opts):'
+    boundary: |
+      只覆盖隔离实例的真实 agent 验收，不替代线上只读审计（W5-2 的四项判据必须取部署之后的
+      24 h 窗口，脚本不宣称线上通过）；不覆盖 Router 对 workflow Run 的监管动作、不覆盖双进程
+      抢读、不覆盖 SQLite 语句中断。脚本是 Python 验收工具而非 Go/Vitest 测试，故 kind=docs；
+      `e2e/` 同时被 G-BA 的前缀条目覆盖，本组给它独立的语义与失败症状。
+
   - id: G-PH
     title: 飞书通道 M2 + M4：owner 私聊建任务 / 项目选择卡 / 主控代发卡片 / 按卡片节点回传点击
     kind: feature

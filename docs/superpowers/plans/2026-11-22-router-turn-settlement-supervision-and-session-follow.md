@@ -276,3 +276,49 @@ Plan 2026-11-22。用户要求「审阅任务运行和 Router，至少找出三�
   `taskCardActions.ts` 后，守卫的扫描清单没跟着扩，`archived_at` 失去认领。守卫已补扫该文件，
   并把「引号里的 `task.xxx`」一律当文案键排除（`labelKey` 字面量不是字段读取）；变异「把
   `taskCardActions.ts` 从扫描清单删掉」打红同一条断言。
+
+### W5 执行记录（2026-11-22，Scope: G-PS）
+
+**W5-1 隔离三场景（真实模型，`scripts/mindfs-iso.sh`，端口 7436，线上 7331 全程只读）**。脚本
+`e2e/test_router_turn_settle_follow.py`（A/B，470 行）与 `e2e/test_router_turn_settle_follow_restart.py`
+（C，191 行，拆两文件是为守 500 行硬线），共用取证工具在第一个文件里；两者都拒绝 `:7331`、
+账本一律 `mode=ro` 打开。
+
+- **A / #100 型 PASS**（`task_731b3aecfcb5c03b`）：13 次 `sleep 60` 串行直连回合 **852 s**；
+  第 2 / 10 分钟的卡片摘要都是**空**（不是转交口信）；回合结束后 `turn_settled` 载荷
+  `duration_ms=850220`、`has_output=true`，Router 决策 `trigger=turn_settled → say`，
+  `result_summary` 是四段式（结论 / 证据 / 没做或未验证 / 下一步），`summary_source=router`。
+- **B / #68 型 PASS**（`task_ab0b1c16200b97d6`）：种子回合结束后在会话里由用户自己再推一轮
+  （`post_activity` 走会话消息而非任务留言），出现两张提问卡并各答一次；两轮 `turn_settled`
+  依次是 `{out_of_band:false, answered_question:false}` → `{out_of_band:true, answered_question:true}`，
+  任务状态在 `running → waiting_user` 之间跟随，结算回合的 summary 与 `turn_settled` 同属该会话
+  （`summary_tied=true`）。
+- **C / #106 型 PASS**（`task_faa5be0bf3db27c1`，`router.supervision.mode=on`）：直连回合执行中
+  `kill -9` 整棵进程树（7 个后代，含 CLI 子进程）→ 重启后 **4.3 s** 写 `turn_interrupted`
+  （载荷含 `activity_id/since/status/supervision/task_id`），原回复被结算成 `cancelled` 并留下可见
+  说明「进程重启时这一轮还在执行，结果无法确定；可以直接发消息让我重开一轮。」；Router 决策
+  `kinds=[retry_direct, say]` `status=applied`，确定性行 `direct-retry:rdec_4808adcd99c86d5e`
+  重跑至 `completed`，之后又有一条 `turn_settled`。重启耗时 4.3 s（`restart_ms=4284`）。
+- **过程中修掉两处验收脚本自身的缺陷**（不是产品缺陷）：
+  ① A 的第一版断言把「可读」当通过条件，而兜底摘要在回合结束那一刻就先落了占位（带
+  「本轮未生成总结」头 + 三段标记），Router 的结算回合**实测晚 10–25 s** 才应用 —— 断言改为等到
+  `summary_source == "router"` 再判，否则记录「Router 没有覆盖兜底摘要」。此前一度把这一时序读成
+  「兜底摘要没有被覆盖」的产品缺陷，直接读库取证后排除。
+  ② B 的提问卡载荷是 `{"tool_use_id", "input": "<questions 的 JSON 字符串>"}`（`appcontext_task_prompt.go`
+  原样透传 adapter 的 input），脚本一开始只读顶层 `questions` 才报「提问卡没有 questions」；
+  改为与前端 `AskUserQuestionCard.tsx::getAskUserQuestions` 同口径（先 `meta.questions`，再解析
+  `input`）。
+  ③ C 的杀进程树原先只看主线程的 `children`，Go 运行时从任意线程 fork，会漏掉 CLI 子进程；
+  改为 `/proc/<pid>/task/*/children` 并集。
+
+**W5-2 线上 24 h 只读审计：未做，代码未部署，只记基线**。窗口 `2026-11-21T13:06Z` 起、生产任务库
+只读副本：12 个有 Agent 回复的任务、`turn_settled=0`、`result_summary` 非空 3 条、为空 0 条、
+其中 3 条超 600 字（2,125 / 2,833 / 9,001 字，全是 agent 逐字叙述）。这正是 W1–W4 要改的现场，
+也是审计不能在部署前宣称通过的原因 —— 四项判据（坏摘要 0、每任务有 summary 或兜底、
+`turn_settled` ≈ 任务会话回合数、中断/停滞事件 1 拍内 `done`）必须取**部署之后**起的 24 h 窗口。
+
+**门禁**：W5 只新增验收脚本与文档，未改产品代码；Go / `tsc` / Vitest 沿用 W4 结果，`make check-upstream`
+在干净 worktree 上重跑（共享工作区的 G-PB 红是另一条会话在改 `workflow_runtime_router_cancel.go`
+的假红，HEAD 上该锚点存在）。Scope: G-PS（e2e 目录另被 G-BA 前缀条目覆盖，本组给语义与失败症状）。
+
+**状态**：W1–W5 全部实现并验收；**未部署、未重启任何节点、未改任何线上配置**。
