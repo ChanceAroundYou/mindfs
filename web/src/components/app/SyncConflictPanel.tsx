@@ -11,8 +11,10 @@ import { useI18n } from "../../i18n";
 import { useSyncConflicts } from "../../hooks/useSyncConflicts";
 import {
   conflictChoiceKeys,
+  conflictEditPayload,
   conflictSideSummary,
   groupSyncConflicts,
+  parseConflictEdit,
   type SyncConflictChoice,
   type SyncConflictView,
 } from "../../shared/syncConflicts";
@@ -68,13 +70,20 @@ function SideBox({ label, text }: { label: string; text: string }) {
 
 export function SyncConflictPanel() {
   const { t } = useI18n();
-  const { open, close, conflicts, busy, error, reload, resolveOne, resolveMany } =
+  const { open, close, conflicts, busy, error, reload, resolveOne, resolveMany, resolveManyPayloads } =
     useSyncConflicts();
   // 批量裁决先进入待确认态；确认条里写明条数，确认后只提交一次。
   const [pendingBatch, setPendingBatch] = useState<{
     domain: string;
     choice: Exclude<SyncConflictChoice, "payload">;
   } | null>(null);
+  // 批量手动合并：每条卡一个独立草稿，绝不把同一份 JSON 套到不同 key 上。
+  const [pendingManualBatch, setPendingManualBatch] = useState<{
+    domain: string;
+    ids: string[];
+  } | null>(null);
+  const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({});
+  const [manualBatchInvalid, setManualBatchInvalid] = useState<string[]>([]);
   const [manual, setManual] = useState<{ id: string; text: string } | null>(null);
   const [manualInvalid, setManualInvalid] = useState(false);
 
@@ -90,18 +99,65 @@ export function SyncConflictPanel() {
     return summary.text;
   };
 
+  const startManual = (conflict: SyncConflictView) => {
+    // 摘要被截到 600 字符，不能当草稿；远端删除时从本地载荷起步。
+    const text =
+      conflictEditPayload(conflict, "remote") ?? conflictEditPayload(conflict, "local") ?? "";
+    setPendingBatch(null);
+    setPendingManualBatch(null);
+    setManualInvalid(false);
+    setManual({ id: conflict.id, text });
+  };
+
   const submitManual = async () => {
     if (!manual) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(manual.text);
-    } catch {
+    const parsed = parseConflictEdit(manual.text);
+    if (!parsed.ok) {
       setManualInvalid(true);
       return;
     }
     setManualInvalid(false);
-    const ok = await resolveOne(manual.id, "payload", parsed);
+    const ok = await resolveOne(manual.id, "payload", parsed.payload);
     if (ok) setManual(null);
+  };
+
+  const startManualBatch = (group: { domain: string; conflicts: SyncConflictView[] }) => {
+    const ids = group.conflicts
+      .filter((conflict) => conflictChoiceKeys(conflict).includes("payload"))
+      .map((conflict) => conflict.id);
+    if (ids.length === 0) return;
+    const drafts: Record<string, string> = {};
+    for (const conflict of group.conflicts) {
+      if (!ids.includes(conflict.id)) continue;
+      drafts[conflict.id] =
+        conflictEditPayload(conflict, "remote") ?? conflictEditPayload(conflict, "local") ?? "";
+    }
+    setManualDrafts(drafts);
+    setManualBatchInvalid([]);
+    setManual(null);
+    setPendingBatch(null);
+    setPendingManualBatch({ domain: group.domain, ids });
+  };
+
+  const submitManualBatch = async () => {
+    if (!pendingManualBatch || busy) return;
+    const invalid: string[] = [];
+    const edits: { id: string; payload: unknown }[] = [];
+    for (const id of pendingManualBatch.ids) {
+      const parsed = parseConflictEdit(manualDrafts[id] ?? "");
+      if (!parsed.ok) invalid.push(id);
+      else edits.push({ id, payload: parsed.payload });
+    }
+    if (invalid.length > 0) {
+      setManualBatchInvalid(invalid);
+      return;
+    }
+    setManualBatchInvalid([]);
+    // 失败时保留全部草稿：用户改一条就能重试，不必重新打开面板。
+    if (await resolveManyPayloads(edits)) {
+      setPendingManualBatch(null);
+      setManualDrafts({});
+    }
   };
 
   return createPortal(
@@ -149,6 +205,11 @@ export function SyncConflictPanel() {
 
         {groups.map((group) => {
           const batch = pendingBatch?.domain === group.domain ? pendingBatch : null;
+          const manualBatch =
+            pendingManualBatch?.domain === group.domain ? pendingManualBatch : null;
+          const manualIds = group.conflicts
+            .filter((conflict) => conflictChoiceKeys(conflict).includes("payload"))
+            .map((conflict) => conflict.id);
           return (
             <section key={group.domain} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -175,6 +236,16 @@ export function SyncConflictPanel() {
                 >
                   {t("syncConflict.batchUsePrimary")}
                 </button>
+                {manualIds.length > 0 ? (
+                  <button
+                    type="button"
+                    style={BUTTON_STYLE}
+                    disabled={busy}
+                    onClick={() => startManualBatch(group)}
+                  >
+                    {t("syncConflict.batchMerge")}
+                  </button>
+                ) : null}
               </div>
 
               {batch ? (
@@ -211,6 +282,45 @@ export function SyncConflictPanel() {
                 </div>
               ) : null}
 
+              {manualBatch ? (
+                <div
+                  role="alertdialog"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "1px solid color-mix(in srgb, var(--status-warn) 45%, transparent)",
+                    background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    {t("syncConflict.batchMergeConfirm", { count: manualBatch.ids.length })}
+                  </span>
+                  <button
+                    type="button"
+                    style={BUTTON_STYLE}
+                    disabled={busy}
+                    onClick={() => void submitManualBatch()}
+                  >
+                    {t("common.confirm")}
+                  </button>
+                  <button
+                    type="button"
+                    style={BUTTON_STYLE}
+                    onClick={() => {
+                      setPendingManualBatch(null);
+                      setManualDrafts({});
+                      setManualBatchInvalid([]);
+                    }}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              ) : null}
+
               {group.conflicts.map((conflict) => {
                 const choices = conflictChoiceKeys(conflict);
                 const editing = manual?.id === conflict.id;
@@ -232,6 +342,38 @@ export function SyncConflictPanel() {
                         text={sideText(conflict, "remote")}
                       />
                     </div>
+
+                    {manualBatch && manualBatch.ids.includes(conflict.id) ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <textarea
+                          aria-label={`${t("syncConflict.mergeManually")} ${conflict.key}`}
+                          value={manualDrafts[conflict.id] ?? ""}
+                          rows={6}
+                          onChange={(event) =>
+                            setManualDrafts((drafts) => ({
+                              ...drafts,
+                              [conflict.id]: event.target.value,
+                            }))
+                          }
+                          style={{
+                            width: "100%",
+                            boxSizing: "border-box",
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            fontSize: 12,
+                            borderRadius: 8,
+                            border: "1px solid var(--border-color)",
+                            background: "var(--input-bg, transparent)",
+                            color: "var(--text-primary, inherit)",
+                            padding: 8,
+                          }}
+                        />
+                        {manualBatchInvalid.includes(conflict.id) ? (
+                          <span style={{ fontSize: 12, color: "var(--status-bad)" }}>
+                            {t("syncConflict.payloadInvalid")}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     {editing && manual ? (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -299,11 +441,8 @@ export function SyncConflictPanel() {
                           <button
                             type="button"
                             style={BUTTON_STYLE}
-                            disabled={busy || conflict.remote_deleted === true}
-                            onClick={() => {
-                              setManualInvalid(false);
-                              setManual({ id: conflict.id, text: sideText(conflict, "remote") });
-                            }}
+                            disabled={busy || !!manualBatch}
+                            onClick={() => startManual(conflict)}
                           >
                             {t("syncConflict.mergeManually")}
                           </button>

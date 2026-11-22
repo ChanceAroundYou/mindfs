@@ -208,3 +208,29 @@ export async function resolveSyncConflicts(
   }
   return { resolved, failed };
 }
+
+export type SyncConflictPayloadEdit = { id: string; payload: unknown };
+
+/**
+ * 批量自定义合并：每条卡带自己的 payload，绝不把同一份 JSON 套到不同 key 上。
+ * 和 local/primary 批量走同一条串行路径与计数口径；任何一条失败都不阻断其余。
+ */
+export async function resolveConflictPayloadEdits(
+  edits: readonly SyncConflictPayloadEdit[],
+): Promise<SyncConflictBatchResult> {
+  let resolved = 0;
+  let failed = 0;
+  for (const edit of edits) {
+    try {
+      await resolveSyncConflict(edit.id, "payload", edit.payload);
+      resolved += 1;
+    } catch (err) {
+      if (err instanceof APIError && (err.status === 404 || err.status === 409)) {
+        resolved += 1;
+      } else {
+        failed += 1;
+      }
+    }
+  }
+  return { resolved, failed };
+}

@@ -12301,6 +12301,11 @@ groups:
       两套算法迟早对不上）；**静态目录每请求重新求值**（`servingStaticDir` 走 `StaticDirProvider`，
       镜像切换不需要重启进程 —— 「重启才生效」不叫无感更新；`StaticDir` 仍是安装目录，
       `/api/control-sync/ui/*` 只认它，否则边缘会把自己的镜像当成「本机构建」再发出去）。
+      ㉖ 冲突手动合并的三个必须保留：**编辑初值取完整载荷而不是 600 字符摘要**（`conflictEditPayload`
+      与 `conflictSideSummary` 分开 —— 拿预览当草稿会把截断内容提交回权威存储）；**删除/脱敏/缺失
+      一侧不给假 JSON**（远端删除时从本地载荷起步，users 域一律不开放编辑）；**批量合并逐卡带自己的
+      payload**（`resolveConflictPayloadEdits` 串行发，404/409 算已达成，部分失败在刷新后再报错，
+      草稿留在面板里供重试）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12755,3 +12760,11 @@ groups:
       - 'server/internal/api/http_frontend_serve_test.go:func TestServingStaticDirFollowsProviderAtRequestTime(t *testing.T) {'
       - 'server/app/control_sync_test.go:func TestControlSyncAppliesMirrorStaticDirOnlyOnEdge(t *testing.T) {'
       - 'server/app/workspace_static_dir_test.go:func TestHandlerDefaultsCarryStaticDirProvider(t *testing.T) {'
+      - 'web/src/shared/syncConflicts.ts:export function conflictEditPayload('
+      - 'web/src/shared/syncConflicts.ts:export function parseConflictEdit('
+      - 'web/src/services/net/controlSync.ts:export async function resolveConflictPayloadEdits('
+      - 'web/src/hooks/useSyncConflicts.ts:  const resolveManyPayloads = useCallback('
+      - 'web/src/components/app/SyncConflictPanel.tsx:  const startManualBatch = ('
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:  "syncConflict.batchMerge": "批量手动合并",'
+      - 'web/tests/sync-conflict-panel.test.mjs:test("手动合并初值取完整载荷，删除/脱敏/缺失都不拿提示文字当 JSON", () => {'
+      - 'web/tests/sync-conflict-panel.test.mjs:test("批量自定义合并逐条带各自 payload，部分失败在刷新后仍可见", () => {'

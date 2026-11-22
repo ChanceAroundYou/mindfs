@@ -420,6 +420,8 @@ export const enUSWorkspace = {
   "syncConflict.batchKeepLocal": "Keep all local",
   "syncConflict.batchUsePrimary": "Use primary for all",
   "syncConflict.batchConfirm": "Resolve all {count} conflicts in this domain the same way? This writes to the authoritative store immediately and cannot be undone.",
+  "syncConflict.batchMerge": "Merge selected manually",
+  "syncConflict.batchMergeConfirm": "Resolve {count} conflicts in this domain using each card's edited content? This writes to the authoritative store immediately and cannot be undone.",
   "syncConflict.submitMerge": "Submit merge",
   "syncConflict.payloadInvalid": "Merge content is not valid JSON.",
   "syncConflict.resolving": "Resolving…",

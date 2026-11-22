@@ -420,6 +420,8 @@ export const zhCNWorkspace = {
   "syncConflict.batchKeepLocal": "全部保留本地",
   "syncConflict.batchUsePrimary": "全部采用主节点",
   "syncConflict.batchConfirm": "把本域 {count} 条冲突全部按同一选择裁决？裁决立即写入权威存储，不能撤销。",
+  "syncConflict.batchMerge": "批量手动合并",
+  "syncConflict.batchMergeConfirm": "把本域 {count} 条冲突按各卡编辑的内容逐条提交？裁决立即写入权威存储，不能撤销。",
   "syncConflict.submitMerge": "提交合并",
   "syncConflict.payloadInvalid": "合并内容不是合法 JSON。",
   "syncConflict.resolving": "正在裁决…",

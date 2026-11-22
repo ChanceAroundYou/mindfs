@@ -104,3 +104,35 @@ export function conflictSideSummary(
     text: text.length > PAYLOAD_PREVIEW_LIMIT ? `${text.slice(0, PAYLOAD_PREVIEW_LIMIT)}…` : text,
   };
 }
+
+/**
+ * 手动合并的编辑初值必须是完整载荷，不能拿上面那个预览 —— 预览故意截到 600 字符，
+ * 拿它当草稿等于让用户把截断的 JSON 提交回去。删除/脱敏/缺失一侧返回 null，
+ * 调用方需要显式选另一侧起步而不是把「已删除」「—」解析成 JSON。
+ */
+export function conflictEditPayload(view: SyncConflictView, side: SyncConflictSide): string | null {
+  if (view.domain === "users" || view.redacted) return null;
+  const deleted = side === "local" ? view.local_deleted : view.remote_deleted;
+  if (deleted) return null;
+  const value = side === "local" ? view.local : view.remote;
+  if (value === undefined) return null;
+  return JSON.stringify(value, null, 2);
+}
+
+export type ConflictEditParse =
+  | { ok: true; payload: unknown }
+  | { ok: false; reason: "empty" | "invalid" | "null" };
+
+/** null 在 JSON.parse 眼里是合法值，但服务端 resolver 明确拒绝它；在提交前就拦住。 */
+export function parseConflictEdit(text: string): ConflictEditParse {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: false, reason: "empty" };
+  let payload: unknown;
+  try {
+    payload = JSON.parse(trimmed);
+  } catch {
+    return { ok: false, reason: "invalid" };
+  }
+  if (payload === null) return { ok: false, reason: "null" };
+  return { ok: true, payload };
+}

@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { rawReadFileSync } from "./source-map.mjs";
 import {
   conflictChoiceKeys,
+  conflictEditPayload,
   conflictSideSummary,
   groupSyncConflicts,
+  parseConflictEdit,
 } from "../src/shared/syncConflicts.ts";
 
 const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
@@ -152,6 +154,8 @@ test("中英文都补齐冲突面板文案", () => {
     "syncConflict.batchKeepLocal",
     "syncConflict.batchUsePrimary",
     "syncConflict.batchConfirm",
+    "syncConflict.batchMerge",
+    "syncConflict.batchMergeConfirm",
     "syncConflict.submitMerge",
     "syncConflict.payloadInvalid",
     "syncConflict.resolving",
@@ -165,4 +169,44 @@ test("中英文都补齐冲突面板文案", () => {
   // 占位符名字也要对：视图传 count，文案写成 {n} 就会原样显示花括号。
   assert.match(zh, /"syncConflict\.batchConfirm":\s*"[^"]*\{count\}/);
   assert.match(en, /"syncConflict\.batchConfirm":\s*"[^"]*\{count\}/);
+  assert.match(zh, /"syncConflict\.batchMergeConfirm":\s*"[^"]*\{count\}/);
+  assert.match(en, /"syncConflict\.batchMergeConfirm":\s*"[^"]*\{count\}/);
+});
+
+test("手动合并初值取完整载荷，删除/脱敏/缺失都不拿提示文字当 JSON", () => {
+  const longText = "x".repeat(1200);
+  const full = { id: "p1", text: longText };
+  assert.equal(conflictEditPayload({ ...preferencesView, remote: full }, "remote"), JSON.stringify(full, null, 2));
+  assert.ok(conflictEditPayload({ ...preferencesView, remote: full }, "remote").endsWith(`${longText}"\n}`));
+  assert.equal(conflictEditPayload(usersView, "local"), null);
+  assert.equal(conflictEditPayload({ ...preferencesView, local_deleted: true }, "local"), null);
+  assert.equal(conflictEditPayload(preferencesView, "remote"), null);
+  // 远端删除时本地仍有载荷，给得出可编辑的起点；不是把「已删除」当 JSON。
+  assert.equal(
+    conflictEditPayload({ ...preferencesView, remote_deleted: true, local: full }, "local"),
+    JSON.stringify(full, null, 2),
+  );
+});
+
+test("手动合并提交拒绝空串、非法 JSON 与 null", () => {
+  assert.deepEqual(parseConflictEdit("  "), { ok: false, reason: "empty" });
+  assert.deepEqual(parseConflictEdit("{oops"), { ok: false, reason: "invalid" });
+  assert.deepEqual(parseConflictEdit("null"), { ok: false, reason: "null" });
+  assert.deepEqual(parseConflictEdit(' {"a":1} '), { ok: true, payload: { a: 1 } });
+});
+
+test("批量自定义合并逐条带各自 payload，部分失败在刷新后仍可见", () => {
+  assert.match(service, /export async function resolveConflictPayloadEdits\(/);
+  assert.match(service, /resolveSyncConflict\(edit\.id, "payload", edit\.payload\)/);
+  assert.match(service, /err\.status === 404 \|\| err\.status === 409/);
+  assert.match(hook, /resolveManyPayloads/);
+  assert.match(
+    hook,
+    /resolveManyPayloads[\s\S]{0,500}await reload\(\)[\s\S]{0,120}result\.failed > 0/,
+  );
+  assert.match(panel, /pendingManualBatch/);
+  assert.match(panel, /conflictEditPayload\(/);
+  assert.match(panel, /resolveManyPayloads\(edits\)/);
+  // 手动编辑器不再拿 600 字符摘要当初值。
+  assert.doesNotMatch(panel, /setManual\(\{ id: conflict\.id, text: sideText\(conflict, "remote"\) \}\)/);
 });

@@ -7,8 +7,10 @@ import { CONTROL_CONFLICTS_EVENT } from "../shared/controlMode";
 import type { SyncConflictChoice, SyncConflictView } from "../shared/syncConflicts";
 import {
   fetchSyncConflicts,
+  resolveConflictPayloadEdits,
   resolveSyncConflict,
   resolveSyncConflicts,
+  type SyncConflictPayloadEdit,
 } from "../services/net/controlSync";
 
 export type SyncConflictError = "load" | "resolve" | null;
@@ -73,10 +75,31 @@ export function useSyncConflicts() {
       setError(null);
       try {
         const result = await resolveSyncConflicts(views, choice);
-        if (result.failed > 0) setError("resolve");
         await reload();
+        // 刷新会清掉 error，所以失败提示要在刷新之后再写，否则部分失败被静默吞掉。
+        if (result.failed > 0) setError("resolve");
       } catch {
         setError("resolve");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reload],
+  );
+
+  // 批量自定义合并：每条卡各自带 payload，沿用同一套串行与 404/409 计数口径。
+  const resolveManyPayloads = useCallback(
+    async (edits: readonly SyncConflictPayloadEdit[]): Promise<boolean> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const result = await resolveConflictPayloadEdits(edits);
+        await reload();
+        if (result.failed > 0) setError("resolve");
+        return result.failed === 0;
+      } catch {
+        setError("resolve");
+        return false;
       } finally {
         setBusy(false);
       }
@@ -89,5 +112,15 @@ export function useSyncConflicts() {
     setError(null);
   }, []);
 
-  return { open, close, conflicts, busy, error, reload, resolveOne, resolveMany };
+  return {
+    open,
+    close,
+    conflicts,
+    busy,
+    error,
+    reload,
+    resolveOne,
+    resolveMany,
+    resolveManyPayloads,
+  };
 }
