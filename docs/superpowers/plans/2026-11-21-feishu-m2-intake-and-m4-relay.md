@@ -625,7 +625,7 @@ RED/GREEN 证据：`prepareFeishuChannel`/`Claim`/`NewRelayClient` 未实现时�
 - `go test -count=1 ./...`：重跑最终全绿。中途一轮仅 `TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch` 因 sqlite readonly 偶发红，同一测试在基线 `9b9c6cf7`（`-count=5`）同样 RED；它不是本波改动。
 - `(cd web && npx tsc -b --noEmit)`：clean。
 - `(cd web && npx vitest run)`：260 passed / 5 skipped 文件，863 passed / 6 skipped 用例。
-- 干净 worktree `HEAD` 上 `make check-upstream`：见下方执行记录。
+- 干净 worktree `HEAD`（`314e3c52`）`git worktree add --detach /tmp/mindfs-gph-fix HEAD && (cd /tmp/mindfs-gph-fix && make check-upstream)`：`✓ 全部通过：2381 个 delta 文件被 359 组完整覆盖`。
 
 提交：`f57e4115`（wiring+intake）、`62597b8f`（dedupe）、`fbaaeed4`（retry）、`a25cb331`（redirect helper）、`ff8a1612`（生产回答中继 client 补口），均带 `Scope: G-PH`。未部署、未重启任何节点，未改配置。
 
