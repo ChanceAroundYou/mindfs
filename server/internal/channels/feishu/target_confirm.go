@@ -109,6 +109,7 @@ func (s *IntakeService) resolveUniquelyNamedTarget(ctx context.Context, msg Inbo
 	}
 	label := pickerLabel(project, s.cfg.NodeID)
 	number, explicit := explicitTaskNumber(text)
+	reviewHits := s.reviewHits(text)
 	appender, tasks := s.targetDeps()
 
 	if !explicit && appender != nil {
@@ -176,9 +177,10 @@ func (s *IntakeService) resolveUniquelyNamedTarget(ctx context.Context, msg Inbo
 		ChatID:          msg.ChatID,
 		NodeID:          s.cfg.NodeID,
 		IntakeText:      text,
-		Text:            targetCardText(target, candidates, text, truncated),
+		Text:            targetCardText(target, candidates, text, truncated, reviewHits),
 		Target:          &target,
 		Candidates:      candidates,
+		ReviewHits:      reviewHits,
 		TargetMode:      mode,
 		PickerTTL:       s.pickerTTL(),
 	}
@@ -208,7 +210,7 @@ func (s *Service) refreshTargetCandidates(ctx context.Context, c Card, deps pick
 		return nil
 	}
 	candidates := targetRefsFromTasks(refs)
-	text := targetCardText(target, candidates, c.IntakeText, false) + "\n\n已刷新候选，请重新确认。"
+	text := targetCardText(target, candidates, c.IntakeText, false, c.ReviewHits) + "\n\n已刷新候选，请重新确认。"
 	_, changed, err := s.store.Update(c.ID, func(x *Card) bool {
 		if x.State != StateApplying {
 			return false
@@ -231,7 +233,7 @@ func (s *Service) refreshTargetCandidates(ctx context.Context, c Card, deps pick
 
 // targetCardText is the explanatory body of an open confirmation card: what
 // was understood, what the message says, and how to override the task.
-func targetCardText(target TargetRef, candidates []TargetRef, text string, truncated bool) string {
+func targetCardText(target TargetRef, candidates []TargetRef, text string, truncated bool, reviewHits []string) string {
 	label := target.ProjectLabel
 	if label == "" {
 		label = target.RootID + " · " + target.NodeID
@@ -240,6 +242,9 @@ func targetCardText(target TargetRef, candidates []TargetRef, text string, trunc
 	fmt.Fprintf(&b, "**项目**：%s\n\n", label)
 	b.WriteString("**消息**：" + oneLineLimit(text, 200))
 	b.WriteString("\n\n")
+	if len(reviewHits) > 0 {
+		b.WriteString("命中审核分类：" + strings.Join(reviewHits, "、") + "\n\n")
+	}
 	if target.TaskNumber > 0 || target.TaskID != "" {
 		b.WriteString("默认" + targetRefLabel(target) + "；点「确认」把这条消息追加进去。\n")
 	} else {

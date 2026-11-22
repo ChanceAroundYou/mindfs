@@ -64,6 +64,9 @@ type IntakeService struct {
 	targetFinder func(string, time.Time) (Card, bool)
 	appender     TaskAppender
 	tasks        TaskCatalog
+	// reviewClassifier maps a message to the kanban review categories it hits.
+	// Injected by the app layer so this package never imports kanban.
+	reviewClassifier func(string) []string
 }
 
 // NewIntakeService builds the inbound service. A nil limiter means the
@@ -130,6 +133,9 @@ func (s *IntakeService) Handle(ctx context.Context, msg InboundMessage) error {
 	}
 
 	text, truncated := clampInput(msg.Text)
+	if cmd, ok := parseIntakeCommand(text); ok {
+		return s.runIntakeCommand(ctx, msg, id, text, cmd, truncated)
+	}
 	res, err := ResolveProject(text, msg.ChatID, s.cfg.Bindings, s.catalog, s.cfg.DefaultRootID, s.cfg.PickerMax)
 	if err != nil {
 		return s.fail(ctx, msg, "", "catalog_error", "暂时查不到项目，请稍后再试。", err)
