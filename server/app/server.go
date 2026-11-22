@@ -322,6 +322,9 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	workspaces.SetRole(nodeinfo.Normalize(opts.Role))
 	workspaces.SetHandlerDefaults(staticDir, func() string { return localCLIToken })
 	workspaces.SetControlSync(controlSync)
+	// 前端版本在运行期可变：边缘镜像到新构建后立刻出那一版，不需要重启进程
+	// （用户的要求是「在线无感更新」，重启才生效就不叫无感了）。
+	applyUIMirrorStaticDir(workspaces, controlSync)
 	if controlSync != nil {
 		// 后台循环：主节点兜底采集；边缘另有探活、追平、交接与推送。
 		go controlSync.runtime.Run(ctx)

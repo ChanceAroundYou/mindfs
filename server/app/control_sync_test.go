@@ -305,11 +305,95 @@ func TestControlSyncWrapRootCapturesLocalWrites(t *testing.T) {
 
 // 边缘在线时控制面请求必须真的发到主节点、并且**不**在本机执行；
 // 数据面请求留在本机；掉线后控制面写入留在本机（离线可用）。
+// 前端镜像只属于边缘：主节点自己就是产物的来源，没东西可镜像。
+// 有镜像之后，handler 的静态目录要跟着镜像走 —— 否则「同步了但页面还是旧的」。
+func TestControlSyncWiresUIMirrorOnlyOnEdge(t *testing.T) {
+	primary := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer primary.Close()
+
+	edgeDir, edgeStores := controlSyncFixture(t)
+	edge, err := startControlSync(t.Context(), &ControlSyncOptions{
+		Enabled: true, Role: controlsync.RoleEdge, InstanceID: "hasee",
+		PrimaryURL: primary.URL, Token: syncTestToken, BuildVersion: "v1",
+	}, nodeinfo.RoleControl, edgeDir, edgeStores)
+	if err != nil {
+		t.Fatalf("edge startControlSync: %v", err)
+	}
+	mirror := edge.uiMirrorOf()
+	if mirror == nil {
+		t.Fatal("边缘没有前端镜像：主节点不可达时页面就打不开了")
+	}
+	// 还没同步到任何版本时 CurrentDir 为空，调用方回落到安装目录。
+	if got := mirror.CurrentDir(); got != "" {
+		t.Fatalf("首次同步前不该有可用目录，实际 %q", got)
+	}
+
+	primaryDir, primaryStores := controlSyncFixture(t)
+	prim, err := startControlSync(t.Context(), &ControlSyncOptions{
+		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home",
+		Token: syncTestToken, BuildVersion: "v1",
+	}, nodeinfo.RoleControl, primaryDir, primaryStores)
+	if err != nil {
+		t.Fatalf("primary startControlSync: %v", err)
+	}
+	if prim.uiMirrorOf() != nil {
+		t.Fatal("主节点不该装前端镜像 —— 它自己就是产物的来源")
+	}
+}
+
+// 镜像装好了、指针也会切，但 handler 拿不到 provider 的话页面永远出安装目录那份：
+// 症状只有「更新了但页面没变」。这里钉的是最后这一跳。
+func TestControlSyncAppliesMirrorStaticDirOnlyOnEdge(t *testing.T) {
+	primary := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer primary.Close()
+	edgeDir, edgeStores := controlSyncFixture(t)
+	edge, err := startControlSync(t.Context(), &ControlSyncOptions{
+		Enabled: true, Role: controlsync.RoleEdge, InstanceID: "hasee",
+		PrimaryURL: primary.URL, Token: syncTestToken, BuildVersion: "v1",
+	}, nodeinfo.RoleControl, edgeDir, edgeStores)
+	if err != nil {
+		t.Fatalf("edge startControlSync: %v", err)
+	}
+	edgeWorkspaces := &workspaceManager{}
+	edgeWorkspaces.SetHandlerDefaults("/install/web", nil)
+	applyUIMirrorStaticDir(edgeWorkspaces, edge)
+	if _, provider, _, _ := edgeWorkspaces.handlerDefaults(); provider == nil {
+		t.Fatal("边缘装了镜像却没接到静态目录：页面会一直出安装目录那版")
+	}
+	// 按账户构建的 handler 才是真正服务页面的那个：provider 必须落到它身上。
+	if h := edgeWorkspaces.NewHTTPHandler(nil, "v1"); h.StaticDirProvider == nil {
+		t.Fatal("handler 没拿到 provider：镜像切了版本，页面还是旧的")
+	}
+
+	primaryDir, primaryStores := controlSyncFixture(t)
+	prim, err := startControlSync(t.Context(), &ControlSyncOptions{
+		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home",
+		Token: syncTestToken, BuildVersion: "v1",
+	}, nodeinfo.RoleControl, primaryDir, primaryStores)
+	if err != nil {
+		t.Fatalf("primary startControlSync: %v", err)
+	}
+	primaryWorkspaces := &workspaceManager{}
+	primaryWorkspaces.SetHandlerDefaults("/install/web", nil)
+	applyUIMirrorStaticDir(primaryWorkspaces, prim)
+	if _, provider, _, _ := primaryWorkspaces.handlerDefaults(); provider != nil {
+		t.Fatal("主节点不该有前端镜像 provider：它自己就是产物的来源")
+	}
+}
+
 func TestControlSyncWrapRootForwardsOnlyOnEdge(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	var primaryHits int32
 	primary := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&primaryHits, 1)
+		// 只数被转发的控制面请求：边缘还会自己来拉前端清单与包（UI 镜像），
+		// 那是另一条链路，混进来会让这条断言变成「主节点一共收到几次请求」。
+		if r.URL.Path == "/api/preferences" {
+			atomic.AddInt32(&primaryHits, 1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer primary.Close()

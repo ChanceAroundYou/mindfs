@@ -55,6 +55,27 @@ type controlSyncWiring struct {
 	token string
 	// proxy 只有边缘非空：主节点不转发。
 	proxy *api.ControlProxy
+	// uiMirror 只有边缘非空：把主节点的前端构建搬到本机，主节点不可达时仍能出页面。
+	uiMirror *controlsync.UIMirror
+}
+
+// uiMirrorOf 在 wiring 为 nil（未启用同步）时也安全。
+func (w *controlSyncWiring) uiMirrorOf() *controlsync.UIMirror {
+	if w == nil {
+		return nil
+	}
+	return w.uiMirror
+}
+
+// applyUIMirrorStaticDir 把前端镜像接到静态目录上。只有边缘会走到。
+//
+// 单独抽出来是为了让这一跳能被用例钉住：镜像照常下载、指针照常切换，但 handler
+// 拿不到 provider 的话页面永远出安装目录那份 —— 症状只有「更新了但页面没变」，
+// 没有任何报错。
+func applyUIMirrorStaticDir(workspaces *workspaceManager, w *controlSyncWiring) {
+	if mirror := w.uiMirrorOf(); mirror != nil {
+		workspaces.SetStaticDirProvider(func() string { return mirror.CurrentDir() })
+	}
 }
 
 // applyTo 把同步能力装进按账户构建的 HTTP handler。
@@ -193,10 +214,43 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		proxy.Mode = mode.Mode
 		proxy.BlockedDomain = blockedDomainChecker(store)
 		w.proxy = proxy
+
+		// 前端镜像：边缘出页面靠的是主节点构建出来的产物，所以必须在自己还连得上
+		// 主节点的时候先搬一份。拿不到新版本时继续用本机已有的那一版 —— 这条失败
+		// 只影响「能不能自动更新前端」，不能影响同步本身，所以只记日志不返回错误。
+		if mirror := newUIMirror(configDir, cfg); mirror != nil {
+			w.uiMirror = mirror
+			go mirror.Run(ctx)
+		}
 	}
 	log.Printf("[control-sync] enabled role=%s instance=%s primary=%s",
 		cfg.Role, cfg.InstanceID, cfg.PrimaryURL)
 	return w, nil
+}
+
+// newUIMirror 构造边缘的前端镜像。
+//
+// 返回 nil 表示「这台机器不需要镜像」：同步没启用、不是边缘、或者建不起来。
+// 建不起来的两种情况（没配 primary_url / token 不合格）在上面已经拦过，
+// 所以这里失败只可能是参数组合问题 —— 记一行日志即可，它不是启动的硬条件。
+func newUIMirror(configDir string, cfg controlsync.Config) *controlsync.UIMirror {
+	if cfg.PrimaryURL == "" {
+		return nil
+	}
+	mirror, err := controlsync.NewUIMirror(controlsync.UIMirrorOptions{
+		Dir:         filepath.Join(configDir, "ui"),
+		PrimaryURL:  cfg.PrimaryURL,
+		Token:       cfg.Token,
+		InstanceID:  cfg.InstanceID,
+		CAFile:      cfg.CAFile,
+		ServerBuild: cfg.BuildVersion,
+		OnError:     func(err error) { log.Printf("[control-sync] ui.mirror.error err=%v", err) },
+	})
+	if err != nil {
+		log.Printf("[control-sync] ui.mirror.disabled err=%v", err)
+		return nil
+	}
+	return mirror
 }
 
 // controlSyncDomains 组装六个同步域。启用同步却建不出某个域时直接失败：

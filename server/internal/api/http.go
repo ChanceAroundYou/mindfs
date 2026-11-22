@@ -22,10 +22,14 @@ import (
 
 // HTTPHandler provides REST endpoints for health, tree, file, and action.
 type HTTPHandler struct {
-	AppContext    *AppContext
-	StaticDir     string
-	Version       string
-	LocalCLIToken string
+	AppContext *AppContext
+	StaticDir  string
+	// StaticDirProvider 让「当前该用哪一版前端」在运行期可变：边缘把主节点的
+	// 构建产物镜像到本机后切换指针，不需要重启进程。返回空 = 用 StaticDir。
+	// StaticDir 仍是**安装目录**（本机自己那份构建），/api/control-sync/ui/* 只认它。
+	StaticDirProvider func() string
+	Version           string
+	LocalCLIToken     string
 	// NodeRole 决定这台机器提不提供控制面。零值 "" 视为 RoleControl
 	// —— 默认必须等于改造前的行为，否则升级不改配置就坏。
 	NodeRole nodeinfo.Role

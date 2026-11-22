@@ -93,6 +93,8 @@ type workspaceManager struct {
 	ctx       context.Context
 	baseDir   string // <cfg>/users
 	staticDir string
+	// staticDirProvider 让边缘在运行期换前端版本（镜像切换），nil = 只认 staticDir。
+	staticDirProvider func() string
 	// role 决定这台机器提不提供控制面（见 internal/nodeinfo）。零值 "" 视为 control。
 	role nodeinfo.Role
 
@@ -129,6 +131,16 @@ func (m *workspaceManager) SetHandlerDefaults(staticDir string, cliToken func() 
 	m.cliToken = cliToken
 }
 
+// SetStaticDirProvider 设定「当前该用哪一版前端」。返回空时回落到 staticDir。
+//
+// 单独一个 setter 而不是塞进 SetHandlerDefaults：前端镜像只有边缘才有，
+// 主节点与未启用同步的机器不该被迫知道这个概念。
+func (m *workspaceManager) SetStaticDirProvider(provider func() string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.staticDirProvider = provider
+}
+
 // SetRole 设定节点角色。必须在 StartHandlerDefaults 之前调。
 func (m *workspaceManager) SetRole(role nodeinfo.Role) {
 	m.mu.Lock()
@@ -160,10 +172,10 @@ func (m *workspaceManager) Role() nodeinfo.Role {
 	return nodeinfo.Normalize(string(m.role))
 }
 
-func (m *workspaceManager) handlerDefaults() (string, func() string, nodeinfo.Role) {
+func (m *workspaceManager) handlerDefaults() (string, func() string, func() string, nodeinfo.Role) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.staticDir, m.cliToken, nodeinfo.Normalize(string(m.role))
+	return m.staticDir, m.staticDirProvider, m.cliToken, nodeinfo.Normalize(string(m.role))
 }
 
 // PrimaryUserID 是存量数据的归属账户。
@@ -333,18 +345,19 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 
 // NewHTTPHandler 为账户构建 HTTP handler（供 api.ScopedRouter 使用）。
 func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *api.HTTPHandler {
-	staticDir, cliToken, role := m.handlerDefaults()
+	staticDir, staticDirProvider, cliToken, role := m.handlerDefaults()
 	token := ""
 	if cliToken != nil {
 		token = cliToken()
 	}
 	handler := &api.HTTPHandler{
-		AppContext:    ctx,
-		StaticDir:     staticDir,
-		Version:       version,
-		LocalCLIToken: token,
-		NodeRole:      role,
-		WorkflowLLM:   api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
+		AppContext:        ctx,
+		StaticDir:         staticDir,
+		StaticDirProvider: staticDirProvider,
+		Version:           version,
+		LocalCLIToken:     token,
+		NodeRole:          role,
+		WorkflowLLM:       api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
 	}
 	m.controlSyncWiringOf().applyTo(handler)
 	return handler

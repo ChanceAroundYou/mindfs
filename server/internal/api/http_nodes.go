@@ -39,7 +39,9 @@ func (h *HTTPHandler) handleNodeInfo(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{
 		"role":    string(nodeinfo.Normalize(string(h.NodeRole))),
 		"version": h.Version,
-		"static":  strings.TrimSpace(h.StaticDir) != "",
+		// 问的是「现在打得开页面吗」，所以与真实服务路径同源：只用镜像出页面的边缘
+		// 也算 static=true，否则前端会把这个节点的「打开网页」入口藏掉。
+		"static": h.servingStaticDir() != "",
 	})
 }
 
