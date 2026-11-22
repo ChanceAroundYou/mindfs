@@ -9010,6 +9010,8 @@ groups:
       - server/internal/api/usecase/external_sessions_live_tail_full_test.go
       - server/internal/api/usecase/session_agent_open.go
       - server/internal/api/usecase/session_send.go
+      - docs/plans/2026-11-22-session-stream-provisional-blocks.md
+      - docs/plans/README.md
       - server/internal/session/blocks_provisional.go
       - server/internal/session/blocks_provisional_test.go
       - server/internal/api/usecase/session_stream_provisional.go
