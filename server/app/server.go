@@ -311,6 +311,15 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 	if feishuChannel != nil {
+		if err := prepareFeishuChannel(feishuChannel, opts.Feishu, FeishuIntakeDeps{
+			ConfigDir: configDir,
+			NodeID:    opts.FeishuNodeID,
+			Nodes:     sharedNodes,
+			Workspace: workspaces,
+		}); err != nil {
+			// 入站装配失败不能杀掉进程：M1 的卡片出口与首页仍照常可用。
+			log.Printf("[feishu] 入站装配失败，M2 不启用: %v", err)
+		}
 		feishuChannel.SetAnswerHandler(newFeishuAnswerRelay(workspaces))
 		feishuChannel.Start(ctx)
 	}

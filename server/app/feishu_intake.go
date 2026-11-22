@@ -34,6 +34,14 @@ type FeishuIntakeDeps struct {
 	Now       func() time.Time
 }
 
+// prepareFeishuChannel is the single assembly seam used by server.Run and by
+// the end-to-end tests. Keeping it separate from AttachFeishuIntake means a
+// test can pin exactly what production installs, instead of silently wiring
+// the intake only inside the test.
+func prepareFeishuChannel(svc *feishu.Service, opts FeishuOptions, deps FeishuIntakeDeps) error {
+	return AttachFeishuIntake(svc, opts, deps)
+}
+
 // AttachFeishuIntake builds and installs the inbound side of the channel. It
 // is deliberately a separate helper so T7/T8 only need one call after the
 // card Service, workspaces and node table exist.
@@ -41,8 +49,10 @@ func AttachFeishuIntake(svc *feishu.Service, opts FeishuOptions, deps FeishuInta
 	if svc == nil {
 		return errors.New("feishu intake: service is nil")
 	}
-	if deps.ConfigDir == "" || deps.NodeID == "" {
-		return errors.New("feishu intake: config dir and node id are required")
+	// 控制节点可以不配 feishu_node_id：空值在目录、通知与任务创建里一律按
+	// 「本机」解释，不再要求每台机器都填一个节点名。
+	if deps.ConfigDir == "" {
+		return errors.New("feishu intake: config dir is required")
 	}
 	now := deps.Now
 	if now == nil {
@@ -69,6 +79,9 @@ func AttachFeishuIntake(svc *feishu.Service, opts FeishuOptions, deps FeishuInta
 		}
 		creator = &feishuTaskCreator{nodes: deps.Nodes, workspaces: deps.Workspace, localNode: deps.NodeID}
 	}
+	// 项目选择卡的点击发生在另一条 goroutine：它必须用同一个去重账本和
+	// 同一个 creator，否则线上点击只会报「选择卡缺少建任务依赖」。
+	svc.SetPickerTaskDeps(store, creator)
 	cfg := feishu.Config{
 		OwnerOpenID: opts.OwnerOpenID, NodeID: deps.NodeID, RelayToken: opts.RelayToken,
 		Bindings: feishuBindings(opts.Bindings), DefaultRootID: opts.DefaultRootID,

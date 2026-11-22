@@ -20,6 +20,7 @@ const (
 	feishuITOwner     = "ou_owner"
 	feishuITMessageEv = `{"header":{"event_id":"ev-intake","event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"ou_owner"}},"message":{"message_id":"om-intake","chat_id":"oc_intake","chat_type":"p2p","message_type":"text","content":"{\"text\":\"在 fn 的 docs 建个任务\"}","create_time":"1700000000000"}}}`
 	feishuITClickEv   = `{"type":"card.action.trigger","event_id":"ev-click","operator_id":"ou_owner","message_id":"om_sent","action_tag":"button","action_name":"card_button_click","action_value":"{\"card\":\"card-relay-1\",\"choice\":0}"}`
+	feishuITPickerEv  = `{"header":{"event_id":"ev-picker","event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"ou_owner"}},"message":{"message_id":"om-picker","chat_id":"oc_pick","chat_type":"p2p","message_type":"text","content":"{\"text\":\"docs wiki 建个任务\"}","create_time":"1700000000000"}}}`
 )
 
 type feishuITCatalog struct{ projects []feishu.ProjectRef }
@@ -121,8 +122,9 @@ func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {
 	}
 
 	svc := feishuITService(t, dir, lark)
+	svc.SetAnswerHandler(func(context.Context, feishu.Answer) error { return nil })
 	opts := FeishuOptions{OwnerOpenID: feishuITOwner, PickerTTL: 24 * time.Hour, PickerMax: 5}
-	if err := AttachFeishuIntake(svc, opts, FeishuIntakeDeps{
+	if err := prepareFeishuChannel(svc, opts, FeishuIntakeDeps{
 		ConfigDir: dir,
 		NodeID:    "home",
 		Nodes:     nodesStore,
@@ -163,9 +165,151 @@ func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {
 		t.Fatal("owner 私聊没有在 fn 节点建出任务")
 	}
 
+	// 重投的消息只能建一次任务：确认没有第二条建任务请求。
+	select {
+	case duplicate := <-calls:
+		t.Fatalf("重复投递建出了第二个任务：%s %s", duplicate.method, duplicate.path)
+	case <-time.After(300 * time.Millisecond):
+	}
+
 	// Picker TTL is a product promise (24h). Pin it here so a narrowed TTL
 	// cannot silently make a card expire before the owner sees it.
 	if feishu.PickerTTL != 24*time.Hour {
 		t.Fatalf("feishu.PickerTTL = %s, want 24h", feishu.PickerTTL)
+	}
+}
+
+// TestServerRunPreparesFeishuIntakeBeforeStart pins the production assembly:
+// a test that only calls AttachFeishuIntake directly cannot catch a regression
+// where server.Run forgets to install the inbound side at all.
+func TestServerRunPreparesFeishuIntakeBeforeStart(t *testing.T) {
+	src, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	const call = "prepareFeishuChannel(feishuChannel, opts.Feishu, FeishuIntakeDeps{"
+	装配 := strings.Index(text, call)
+	if 装配 < 0 {
+		t.Fatal("server.Run 没有调用 prepareFeishuChannel")
+	}
+	start := strings.Index(text, "feishuChannel.Start(ctx)")
+	if start < 0 || 装配 > start {
+		t.Fatal("入站装配必须发生在 feishuChannel.Start(ctx) 之前")
+	}
+	block := strings.Join(strings.Fields(text[装配:start]), " ")
+	for _, field := range []string{
+		"ConfigDir: configDir", "NodeID: opts.FeishuNodeID",
+		"Nodes: sharedNodes", "Workspace: workspaces",
+	} {
+		if !strings.Contains(block, field) {
+			t.Fatalf("生产装配缺少 %s", field)
+		}
+	}
+	if !strings.Contains(text, "[feishu] 入站装配失败，M2 不启用: %v") {
+		t.Fatal("装配失败必须有可见日志，不能静默降级")
+	}
+}
+
+func TestPrepareFeishuChannelAllowsEmptyNodeID(t *testing.T) {
+	dir := t.TempDir()
+	svc := feishuITService(t, dir, filepath.Join(dir, "no-lark"))
+	opts := FeishuOptions{OwnerOpenID: feishuITOwner}
+	if err := prepareFeishuChannel(svc, opts, FeishuIntakeDeps{
+		ConfigDir: dir,
+		Catalog:   feishuITCatalog{},
+		Creator:   &feishuTaskCreator{nodes: feishuAnswerNodeStore(t), localNode: "home"},
+	}); err != nil {
+		t.Fatalf("控制节点没有 feishu_node_id 也应能装配入站：%v", err)
+	}
+}
+
+// TestPrepareFeishuChannelInstallsPickerTaskDeps drives a real ambiguous DM and
+// a real card click. Without SetPickerTaskDeps the click only reports
+// "选择卡缺少建任务依赖" and no task POST ever reaches the chosen node.
+func TestPrepareFeishuChannelInstallsPickerTaskDeps(t *testing.T) {
+	dir := t.TempDir()
+	lark, _, ready := feishuITLark(t, dir, map[string]string{
+		"im.message.receive_v1": feishuITPickerEv,
+	})
+	nodesStore := feishuAnswerNodeStore(t,
+		nodes.NodeConnection{ID: "home", Name: "home", URL: "http://127.0.0.1:1"},
+		nodes.NodeConnection{ID: "fn", Name: "fn", URL: "http://127.0.0.1:2"},
+	)
+	var taskServer *httptest.Server
+	calls := make(chan feishuITTaskCall, 4)
+	taskServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			t.Errorf("read task body: %v", err)
+		}
+		calls <- feishuITTaskCall{method: r.Method, path: r.URL.Path, body: body}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"task-picker"}`)
+	}))
+	defer taskServer.Close()
+	if _, err := nodesStore.Upsert(nodes.NodeConnection{ID: "fn", Name: "fn", URL: taskServer.URL}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := feishuITService(t, dir, lark)
+	opts := FeishuOptions{OwnerOpenID: feishuITOwner, PickerTTL: 24 * time.Hour, PickerMax: 5}
+	if err := prepareFeishuChannel(svc, opts, FeishuIntakeDeps{
+		ConfigDir: dir,
+		NodeID:    "home",
+		Nodes:     nodesStore,
+		Catalog: feishuITCatalog{projects: []feishu.ProjectRef{
+			{NodeID: "fn", RootID: "root-a", Name: "docs"},
+			{NodeID: "fn", RootID: "root-b", Name: "wiki"},
+		}},
+		Creator: &feishuTaskCreator{nodes: nodesStore, localNode: "home"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); svc.Wait() }()
+	svc.Start(ctx)
+	if err := os.WriteFile(ready["im.message.receive_v1"], []byte("go"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cardStore := feishu.NewStore(filepath.Join(dir, "cards.json"))
+	var card feishu.Card
+	feishuITWaitFor(t, "项目选择卡", func() bool {
+		if err := cardStore.Load(); err != nil {
+			return false
+		}
+		found, ok := cardStore.FindOpenPickerByChat("oc_pick")
+		if !ok {
+			return false
+		}
+		card = found
+		return true
+	})
+	if len(card.Projects) != 2 || card.SourceMessageID != "om-picker" {
+		t.Fatalf("picker = %+v", card)
+	}
+	if err := svc.HandleAction(ctx, feishu.Action{
+		CardID: card.ID, Choice: 0, MessageID: card.MessageID, OperatorID: feishuITOwner,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case call := <-calls:
+		if call.method != http.MethodPost || call.path != "/api/tasks" {
+			t.Fatalf("picker task request = %s %s", call.method, call.path)
+		}
+		var got struct {
+			RootID string `json:"root_id"`
+			Input  string `json:"input"`
+		}
+		if err := json.Unmarshal(call.body, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.RootID != card.Projects[0].RootID || got.Input != "docs wiki 建个任务" {
+			t.Fatalf("picker task body = %+v, card = %+v", got, card.Projects)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("选择卡点击后没有通过真实 creator 建任务")
 	}
 }
