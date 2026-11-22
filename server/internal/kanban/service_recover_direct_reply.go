@@ -62,6 +62,9 @@ func (s *Service) settleOrphanDirectReplies(ctx context.Context, store *TaskStor
 		})
 		// 进度正文（"步骤 i/n"）属于运行中提示，这一轮已经结束，留着会被当成终态文案。
 		_ = activities.ClearBody(ctx, updated.ID)
+		// 结算只是把现场收干净；还要让 Router 知道「这一轮缺一个结果」，否则
+		// 重启就等于安静地把活丢了（W3-3）。
+		s.recordTurnInterruptedEvent(ctx, store, activities, updated)
 		settled[updated.TaskID] = true
 	}
 	for taskID := range settled {

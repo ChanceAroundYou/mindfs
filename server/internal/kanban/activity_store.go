@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS task_activities (
 	hidden INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL DEFAULT '',
+	last_output_at TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (task_id, id)
 );`); err != nil {
 		return err
@@ -101,6 +102,9 @@ CREATE TABLE IF NOT EXISTS task_activities (
 		`ALTER TABLE task_activities ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE task_activities ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE task_activities ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`,
+		// 输出水位（W3-1，见 turn_watermark.go）：这一轮最后一次真的吐出内容帧的时刻。
+		// 只在内存里判定，这一列供诊断与跨进程可见。
+		`ALTER TABLE task_activities ADD COLUMN last_output_at TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alters {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {

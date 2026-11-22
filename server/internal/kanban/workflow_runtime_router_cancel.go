@@ -88,6 +88,14 @@ func (s *Service) cancelWorkflowNodeRunProjected(ctx context.Context, store *Tas
 // CancelWorkflowRunForRouter 停掉这一轮 Run，但把任务放回 waiting_user 交给用户；
 // 取消任务本身是另一档（CancelTaskForRouter）。
 func (s *Service) CancelWorkflowRunForRouter(ctx context.Context, rootID, taskID, reason string) error {
+	return s.stopWorkflowRunToWaitingUser(ctx, rootID, taskID, reason, "run_cancelled_by_router")
+}
+
+// stopWorkflowRunToWaitingUser 是「停掉这一轮 Run、任务回待处理」的唯一实现：
+// 节点回合一并打断、driver 停摆、投影冻结成 cancelled，最后写任务头。Router 的
+// cancel_run（事件名 run_cancelled_by_router）与人工「终止」（task_terminated）
+// 只在任务事件名上不同，现场处理必须完全一致。
+func (s *Service) stopWorkflowRunToWaitingUser(ctx context.Context, rootID, taskID, reason, eventType string) error {
 	store, task, err := s.loadForMove(ctx, rootID, taskID)
 	if err != nil {
 		return err
@@ -113,7 +121,7 @@ func (s *Service) CancelWorkflowRunForRouter(ctx context.Context, rootID, taskID
 	if err := s.projectRunCancelled(ctx, store, run.ID, reason); err != nil {
 		return err
 	}
-	if _, err := s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, "run_cancelled_by_router", reason, false); err != nil {
+	if _, err := s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, eventType, reason, false); err != nil {
 		return err
 	}
 	// 投影写回之后再读一次，settleWorkflowReply 才会看到「全部终态」。

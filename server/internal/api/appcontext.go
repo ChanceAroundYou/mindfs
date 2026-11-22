@@ -51,6 +51,9 @@ type AppContext struct {
 	// 空值 = 没配置：选 Agent 退回「探针顺序里第一个可用」的老启发式。
 	TaskAgent string
 	TaskModel string
+	// Hygiene 是会话卫生状态机（超长会话提示 + N 轮后自动压缩）。nil = 没装配，
+	// 读口一律返回 disabled，发送路径不做任何观测与触发。
+	Hygiene *usecase.HygieneTracker
 
 	mu                       sync.RWMutex
 	sessionWorktreeMu        sync.Mutex
@@ -73,6 +76,15 @@ type AppContext struct {
 	// routerTools 按任务缓存注册给 CLI 的 Router 工具句柄。Router 会话长期
 	// 存活且只注册一次工具，句柄必须按名字路由到当前轮实现（见 routerToolBindings）。
 	routerTools map[string]*routerToolBindings
+}
+
+// SessionHygiene 把会话卫生状态机交给 usecase（它只持有 Registry，靠可选接口
+// 取能力）。没装配时返回 nil，调用方按「关闭」处理。
+func (s *AppContext) SessionHygiene() *usecase.HygieneTracker {
+	if s == nil {
+		return nil
+	}
+	return s.Hygiene
 }
 
 func (s *AppContext) TaskUpdated(rootID string, detail kanban.TaskDetail) {

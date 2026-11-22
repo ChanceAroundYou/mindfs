@@ -13,7 +13,11 @@ import (
 // LoadConfig loads agent configuration from the given path or default location.
 func LoadConfig(path string) (Config, error) {
 	if path != "" {
-		return loadConfigFile(path)
+		cfg, err := loadConfigFile(path)
+		if err != nil {
+			return Config{}, err
+		}
+		return finalizeAgentConfig(cfg), nil
 	}
 
 	resolved, err := defaultConfigPath()
@@ -31,11 +35,11 @@ func LoadConfig(path string) (Config, error) {
 	userCfg, err := loadConfigFile(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return baseCfg, nil
+			return finalizeAgentConfig(baseCfg), nil
 		}
 		return Config{}, err
 	}
-	return mergeConfigs(baseCfg, userCfg), nil
+	return finalizeAgentConfig(mergeConfigs(baseCfg, userCfg)), nil
 }
 
 // LoadUserConfig 只读用户层那一份（ResolveConfigPath），**不**叠加安装自带的定义。
@@ -86,13 +90,13 @@ func LoadConfigWithExtra(extraPath string) (Config, error) {
 	}
 	extraPath = strings.TrimSpace(extraPath)
 	if extraPath == "" {
-		return cfg, nil
+		return finalizeAgentConfig(cfg), nil
 	}
 	extraCfg, err := loadConfigFile(extraPath)
 	if err != nil {
 		return Config{}, err
 	}
-	return mergeConfigs(cfg, extraCfg), nil
+	return finalizeAgentConfig(mergeConfigs(cfg, extraCfg)), nil
 }
 
 func loadConfigFile(path string) (Config, error) {

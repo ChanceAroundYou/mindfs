@@ -5,7 +5,7 @@ description: 发布一个版本：写发布说明 → 打 tag → make release�
 
 # APK / 版本发布
 
-> `ship` 管「代码到三台机器」，本 skill 管「代码到 GitHub 发布页 + 安卓客户端的更新清单」。
+> `ship` 管「代码到三个 worker 节点」，本 skill 管「代码到 GitHub 发布页 + 安卓客户端的更新清单」。
 > 两者独立：ship 不需要发版，发版前代码必须已经 ship 过。
 
 ## 前置（三样，缺一样都会在半路报错）
@@ -75,7 +75,7 @@ curl -sL https://github.com/ChanceAroundYou/mindfs/releases/latest/download/andr
 
 - **只想装到手上这台安卓机**：`make android-install`（走 adb，含 `build-android`）。
 - **先看看环境齐不齐**：`make android-doctor`。
-- **发完要上线三台机器**：那是 `/ship` 的活，不在这里做。
+- **发完要上线三个 worker 节点**：那是 `/ship` 的活，不在这里做。
 - **发布说明漏了一段**：`release-notes.md` 是 `publish-release-notes` 的输入，改完重跑第 3 步会覆盖
   `dist/release-notes-<TAG>.md`；已发布的 release 正文要 `gh release edit <TAG> --notes-file ...` 单独改。
 - **`make release` 中途失败**：先看它死在哪一步（版本号不匹配 / 缺公钥 / gradle / `gh`），

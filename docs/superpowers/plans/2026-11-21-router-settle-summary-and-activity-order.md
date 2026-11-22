@@ -130,3 +130,7 @@ progress」断言）、`TestFailedEventProgressSayDoesNotBecomeSummary`。三处
 还原：禁用提升 → A 红；去掉「Run 真的存在且成功」这道闸 → 行为 12 红；兜底忽略显式
 summary → B 红。`go test ./server/internal/kanban/` 全绿（`TestRouterShadow…` 的 sqlite
 readonly 单跑即过，属既有 flake）。**未部署、未重启任何节点。**
+
+**2026-11-22 四端部署**：`738d9a5c`（有真实成功结算 Run 的 `run_settled` 回合，最后一条 say 就是
+总结；直连回复也补结算压缩总结）随 `v0.5.5-1201-57-g0cc70c6e` 发布，四端版本逐字一致，本机由用户
+重启后运行该二进制（md5 与安装文件一致、`/mindfs/health` 200 `role=control`）。

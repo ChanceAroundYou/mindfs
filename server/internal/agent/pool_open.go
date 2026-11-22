@@ -156,6 +156,20 @@ func isClaudeProviderEnvKey(key string) bool {
 	return strings.HasPrefix(key, "ANTHROPIC_")
 }
 
+// claudeSessionEnv 装配一个 Claude runtime 子进程的 env 与 --settings JSON。
+//
+// 窗口策略压在最外层：它只由这一次会话的模型名（是否带 [1m]）决定，不该被
+// agent env 或用户 settings 里继承来的值改写（见 claude.WithLongContextPolicy）。
+func (p *Pool) claudeSessionEnv(def Definition, in agenttypes.OpenSessionInput) (map[string]string, string) {
+	env := withClaudeProviderEnv(cloneEnv(def.Env), in.ConfigDir)
+	settingsJSON := ""
+	if binding := p.compactProxyEnv(in.SessionKey, def, in.ConfigDir); binding != nil {
+		env = mergeCompactProxyEnv(env, binding)
+		settingsJSON = binding.settingsJSON
+	}
+	return claude.WithLongContextPolicy(env, in.Model), settingsJSON
+}
+
 func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definition, in agenttypes.OpenSessionInput) (agenttypes.Session, error) {
 	// Router 工具只存在于 claude 适配器；codex/acp 拿到工具说明装配错了，
 	// 必须显式失败而不是静默丢掉工具（那会让 Router 以为工具可用）。
@@ -164,12 +178,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 	}
 	switch protocol {
 	case ProtocolClaudeSDK:
-		env := withClaudeProviderEnv(cloneEnv(def.Env), in.ConfigDir)
-		settingsJSON := ""
-		if binding := p.compactProxyEnv(in.SessionKey, def, in.ConfigDir); binding != nil {
-			env = mergeCompactProxyEnv(env, binding)
-			settingsJSON = binding.settingsJSON
-		}
+		env, settingsJSON := p.claudeSessionEnv(def, in)
 		return p.claude.OpenSession(ctx, claude.OpenOptions{
 			AgentName:             in.AgentName,
 			SessionKey:            in.SessionKey,

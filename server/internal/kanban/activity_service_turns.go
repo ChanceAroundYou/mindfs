@@ -121,8 +121,24 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 	s.broadcastUpdatedByID(ctx, agentAct.ID, map[string]any{"status": ActivityStatusRunning})
 
 	text, err := s.directExecutor.RunDirectActivity(ctx, task, body)
+	if err == nil {
+		// 「成功但什么都没说」不是完成：用户看到的是一条空回复。harness 的错误行
+		// （Prompt is too long 之类）也一样——它是故障，不是这一轮的答案。
+		if reason := directOutputFailure(text); reason != "" {
+			err = errors.New(reason)
+		}
+	}
 	if err != nil {
-		failure := strings.TrimSpace(err.Error())
+		// 用户点了「终止」：被打断不是故障，写 cancelled + 明确说明，而不是把
+		// 主动叫停显示成一条红色失败。任务头同样停在待处理，等用户接着说话。
+		// 不调 restore()：它会把任务回滚到进入这一轮之前的状态（可能是「未开始」），
+		// 而终止的落点固定是「待处理」。
+		if s.terminations.Consume(agentAct.ID) {
+			s.markTurnTaskWaitingUser(ctx, task.ID)
+			_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCancelled, terminatedTurnSummary)
+			return
+		}
+		failure := readableDirectFailure(err.Error())
 		_ = s.activities.UpdateBody(ctx, agentAct.ID, failure)
 		// 先恢复任务状态再广播终态：前端收到 activity.updated 会立刻点查任务头，
 		// 晚于广播的恢复会让界面停在「执行中」。
@@ -130,7 +146,7 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 		// 失败与成功一样以「等用户」收尾：退回 pending 会让输入框按状态禁用、
 		// 卡片停在「未开始」，用户明明看到一条报错却回不了话。暂停/终态不复活。
 		s.markTurnTaskWaitingUser(ctx, task.ID)
-		s.recordTurnResultSummary(ctx, task.ID, failure)
+		s.recordTurnResultSummary(ctx, task.ID, failure, turnSummaryFailedPrefix+failure)
 		_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusFailed, failure)
 		return
 	}
@@ -138,19 +154,36 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 	restore()
 	// 直连回合也没有 Run 可投影任务头：回了话就要停在待审核，而不是退回未开始。
 	s.markTurnTaskWaitingUser(ctx, task.ID)
-	s.recordTurnResultSummary(ctx, task.ID, text)
+	s.recordTurnResultSummary(ctx, task.ID, text, turnSummaryFallbackStatus)
 	_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCompleted, "")
+	// 正文已落库，再异步补短总结：直连回合没有 WorkflowRun，不在这条补，
+	// 任务详情就会把 Agent 原始输出整段摊开（工作流回复一直有压缩，直连没有）。
+	if s.replySummarizer != nil {
+		s.replySummarizer(ctx, s.tasks, agentAct, text)
+	}
+}
+
+// SetReplySummarizer 装配「直连回复落库后补短总结」的端口。装配期调用一次。
+func (s *ActivityService) SetReplySummarizer(
+	fn func(ctx context.Context, store *TaskStore, activity *TaskActivity, raw string),
+) {
+	if s != nil {
+		s.replySummarizer = fn
+	}
 }
 
 // recordTurnResultSummary 把这一轮的结果写回任务行，供看板卡片展示。直连回合
-// 没有 WorkflowRun 可投影，回复正文就是结果；不写的话卡片只能看到用户原始需求。
+// 没有 WorkflowRun 可投影，但也不能把 Agent 的逐字叙述当摘要（#100 的卡片就是
+// 那样变成一屏读不完的原文）：写结构化兜底摘要，等价于「Router 没在收尾回合
+// 给出总结」时的样子，随后由异步压缩总结覆盖。
 // 回合可能跑几十秒，期间操作员可能已经暂停/完成/取消任务：那条结果更新，不能被
 // 迟到的回复覆盖（与 Router say 共用同一个带状态条件的投影）。
-func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, text string) {
+func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, text, statusLine string) {
 	if s == nil || s.tasks == nil {
 		return
 	}
-	_ = s.tasks.recordReplySummaryIfActive(ctx, taskID, truncateSummary(strings.TrimSpace(text)))
+	summary := s.deterministicTurnSummary(ctx, taskID, text, statusLine)
+	_ = s.tasks.recordReplySummaryIfActive(ctx, taskID, summary)
 }
 
 // beginWorkflowRun 落一个 WorkflowRun 并把它挂到占位回复上。

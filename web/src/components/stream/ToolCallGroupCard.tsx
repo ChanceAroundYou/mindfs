@@ -49,7 +49,7 @@ function summarizeStatus(toolCalls: ToolCall[]): { running: number; failed: numb
     const status = `${toolCall.status || ""}`.toLowerCase();
     if (status === "running" || status === "pending" || status === "in_progress") {
       running += 1;
-    } else if (status === "failed" || status === "error") {
+    } else if (status === "failed" || status === "error" || status === "interrupted") {
       failed += 1;
     }
   }

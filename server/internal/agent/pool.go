@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"mindfs/server/internal/agent/claude"
 	"mindfs/server/internal/agent/codex"
 	"mindfs/server/internal/agent/fold"
+	"mindfs/server/internal/agent/processguard"
 	"mindfs/server/internal/agent/proxy"
 	agenttypes "mindfs/server/internal/agent/types"
 )
@@ -33,7 +35,8 @@ type Pool struct {
 	memoryMu           sync.RWMutex
 	memoryCollectMu    sync.Mutex
 	memorySnapshot     MemorySnapshot
-	compactProxy       *proxy.Server     // nil if startup failed (non-fatal)
+	compactProxy       *proxy.Server // nil if startup failed (non-fatal)
+	processGuard       processGuard
 	pendingProxyTokens map[string]string // sessionKey → proxy token, cleared on session creation
 }
 
@@ -99,6 +102,7 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 		claude:             claude.NewRuntime(),
 		codex:              codex.NewRuntime(),
 		runtimeLocks:       make(map[runtimeGroup]*sync.Mutex),
+		processGuard:       processguard.New(),
 	}
 	if ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
 		Mode:             opts.LiveCompactMode,
@@ -211,6 +215,15 @@ retryExisting:
 	if err != nil {
 		return nil, err
 	}
+	// Claude and Codex children inherit a process-local proxy URL. If MindFS
+	// is hard-killed, they must not survive pointing at that dead port.
+	// ACP already starts its own process tree and is intentionally excluded.
+	if protocol == ProtocolClaudeSDK || protocol == ProtocolCodexSDK {
+		if err := attachSessionProcessID(p.processGuard, sess); err != nil {
+			_ = sess.Close()
+			return nil, fmt.Errorf("bind agent process to lifetime guard: %w", err)
+		}
+	}
 
 	p.mu.Lock()
 	if p.closed {
@@ -249,8 +262,26 @@ retryExisting:
 	p.mu.Unlock()
 	if threadID != "" {
 		p.compactProxy.RegisterThread(threadID, in.SessionKey)
+		// The only resume path that hands back a different thread id is the
+		// model-provider mismatch fork (rethreadCodexResumeOnProviderMismatch):
+		// the fork copies history, including reasoning encrypted by the old
+		// provider, which the new one cannot decrypt. Tell the proxy so it can
+		// drop those items from every request on this thread.
+		if codexThreadRethreaded(in.AgentSessionID, threadID) {
+			p.compactProxy.MarkProviderSwitch(threadID)
+		}
 	}
 	return sess, nil
+}
+
+// codexThreadRethreaded reports whether opening a Codex session replaced the
+// persisted thread id. An explicit user fork arrives with an empty persisted id
+// and never reaches this check, so a true result means the provider-mismatch
+// fork ran.
+func codexThreadRethreaded(persisted, current string) bool {
+	persisted = strings.TrimSpace(persisted)
+	current = strings.TrimSpace(current)
+	return persisted != "" && current != "" && persisted != current
 }
 
 // BeginSessionUse prevents idle cleanup while a turn is using the session.
@@ -471,5 +502,12 @@ func (p *Pool) CloseAll() {
 	}
 	if codexRuntime != nil {
 		codexRuntime.CloseAll()
+	}
+	guard := p.processGuard
+	p.processGuard = nil
+	if guard != nil {
+		if err := guard.Close(); err != nil {
+			log.Printf("[agent/pool] process guard close: %v", err)
+		}
 	}
 }

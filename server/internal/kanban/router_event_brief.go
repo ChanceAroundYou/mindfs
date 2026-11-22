@@ -44,6 +44,13 @@ const (
 var routerEventBriefPayloadKeys = []string{
 	"run_id", "task_id", "node_id", "node_run_id", "gate_node_id",
 	"status", "reason", "error", "attempt", "since", "activity_id",
+	// 会话回合结算（turn_settled）：这一轮跑在哪个会话、跑了多久、有没有产出、
+	// 是不是系统发起、有没有答复提问卡。excerpt 单独走 RouterBriefEvent.Excerpt
+	// （它有独立的长度上限，比普通载荷值宽松得多）。
+	"session_key", "turn_id", "duration_ms", "has_output", "out_of_band", "answered_question",
+	// 任务级巡检（turn_stalled / task_orphaned）与重启恢复（turn_interrupted）：
+	// 现场事实 —— 停滞了多久、最后一次产出是什么时候、探针是否仍报在回复。
+	"last_output_at", "stalled_for_ms", "replying", "open_nodes",
 }
 
 // routerEventBriefProducerKeys 是生产端自己写进事件载荷、但不进 brief 的键：
@@ -56,6 +63,9 @@ var routerEventBriefProducerKeys = []string{
 	"started_at", "open_node_runs", "resumed", "unknown",
 	// 主动监管的水位块由生产端写进载荷，事件回合原样挂回 brief.Supervision。
 	"supervision",
+	// 会话回合的产出摘要：由生产端写入、单独提升到 RouterBriefEvent.Excerpt，
+	// 不当成越界载荷。
+	"excerpt",
 }
 
 // routerEventBriefControlledKey 判断该键是否由生产端受控写入（白名单或摘要）。
@@ -82,6 +92,10 @@ type RouterBriefEvent struct {
 	Attempt    int            `json:"attempt,omitempty"`
 	Payload    map[string]any `json:"payload,omitempty"`
 	Truncated  bool           `json:"truncated,omitempty"`
+	// Excerpt 是会话回合（turn_settled）的产出摘要尾巴。它单独一个字段而不是塞
+	// 进 Payload，是因为载荷值有统一的短上限，而这里的摘要要够 Router 判断这一轮
+	// 值不值得总结。
+	Excerpt string `json:"excerpt,omitempty"`
 }
 
 type RouterBriefEvidence struct {
@@ -132,6 +146,7 @@ func attachRouterEventBrief(ctx context.Context, store *TaskStore, brief *Situat
 		Attempt:    event.Attempt,
 		Payload:    payload,
 		Truncated:  payloadTruncated,
+		Excerpt:    routerEventBriefExcerpt(event.PayloadJSON),
 	}
 	brief.Trigger.Ref = event.ID
 	attachRouterEventUserMessage(ctx, store, brief, event.UserActivityID)
@@ -154,6 +169,12 @@ func attachRouterEventBrief(ctx context.Context, store *TaskStore, brief *Situat
 		// 直连事件没有 Run：可核对的证据只有那条卡住的回复行本身，节点段留空，
 		// 也不写「run 不存在」这种会误导模型的未验证项。
 		attachRouterEventDirectReply(ctx, store, evidence, event)
+	} else if event.Kind == RouterEventTurnSettled {
+		// 会话回合也没有 Run。证据是事件载荷里的会话/时长/产出摘要，节点段留空，
+		// 同样不写「run 不存在」——那句话会让 Router 以为执行失败了。
+	} else if routerEventHealthKind(event.Kind) {
+		// 巡检/恢复事件同样没有 Run：证据是载荷里的水位与会话状态。
+		evidence.Unverified = append(evidence.Unverified, routerEventHealthUnverified(event)...)
 	} else if run, err := store.WorkflowRunByID(ctx, event.RunID); err != nil || run == nil {
 		evidence.RunStatus = "missing"
 		evidence.Unverified = append(evidence.Unverified, fmt.Sprintf("run %s: not found in task store", event.RunID))
@@ -359,6 +380,15 @@ func routerEventRunStatus(kind RouterEventKind) string {
 		return "reconcile"
 	case RouterEventDirectStalled:
 		return "direct"
+	case RouterEventTurnSettled:
+		// 会话回合不属于任何 Run；用独立取值，避免上游把「没有 Run」读成失败。
+		return "turn"
+	case RouterEventTurnStalled:
+		return "turn_stalled"
+	case RouterEventTurnInterrupted:
+		return "turn_interrupted"
+	case RouterEventTaskOrphaned:
+		return "orphaned"
 	default:
 		return "unknown"
 	}

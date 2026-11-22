@@ -101,7 +101,7 @@ func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, 
 		activitySvc, err := s.ActivityServiceForRoot(rootID)
 		if err != nil {
 			log.Printf("[kanban/human-gate] note queue skipped task=%s err=%v", run.TaskID, err)
-		} else if _, err := activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed); err != nil {
+		} else if _, err := activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed, CommentWorkflowChoiceEmpty, nil); err != nil {
 			log.Printf("[kanban/human-gate] note queue failed task=%s err=%v", run.TaskID, err)
 		}
 	}

@@ -70,7 +70,10 @@ assert.match(viewerSrc, /const \[visibleAux, setVisibleAux\]/, "visibleAux state
 assert.match(viewerSrc, /const \[windowMeta, setWindowMeta\]/, "windowMeta state missing");
 assert.match(viewerSrc, /const \[loadingMore, setLoadingMore\]/, "loadingMore state missing");
 assert.match(viewerSrc, /const topSentinelRef = useRef/, "topSentinelRef missing");
-assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*composedExchanges,\s*\n?\s*visibleAux/, "useSessionStream should consume composed window+overlay");
+assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*composedExchanges,\s*\n?\s*effectiveAux/, "useSessionStream should consume composed window+overlay");
+// overlay 行不在窗口的块 / aux 映射里，正文必须从会话级映射按 seq 补（只补窗口缺的键）。
+assert.match(viewerSrc, /supplementOverlayMap\(\s*\n?\s*visibleAux/, "overlay aux must be supplemented from the session map");
+assert.match(viewerSrc, /supplementOverlayMap\(\s*\n?\s*visibleBlocks/, "overlay blocks must be supplemented from the session map");
 assert.match(viewerSrc, /getSessionWindow/, "initial window fetch missing");
 assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "window fetch must use the shared SESSION_WINDOW_SIZE");
 assert.match(viewerSrc, /const loadMore = useCallback/, "loadMore callback missing");
@@ -205,6 +208,23 @@ assert.doesNotMatch(
   "overlay must not keep the retired sequence watermark",
 );
 assert.match(overlaySrc, /renderedIdentities/);
+// 下界必须是**现算的派生值**，不是状态水位（2026-11-22 同步刷页脚）。
+// 只允许从窗口集里扫出来的局部变量；不许有与之配套的 useState/useRef 生命周期。
+assert.match(
+  overlaySrc,
+  /let visibleMaxSeq = 0;[\s\S]{0,200}?visibleMaxSeq = seq;/,
+  "the persisted-row lower bound must be derived from the visible window each call",
+);
+assert.match(
+  overlaySrc,
+  /seqOf\(ex\) > visibleMaxSeq && !visibleSeqs\.has\(seqOf\(ex\)\)/,
+  "persisted rows below the window's newest seq are history, not live tail",
+);
+assert.doesNotMatch(
+  overlaySrc,
+  /visibleMaxSeq(State|Ref)|use(State|Ref)\([^)]*visibleMaxSeq/,
+  "the lower bound must not be kept in React state (that is the retired latch shape)",
+);
 assert.match(overlaySrc, /identityOf/);
 assert.match(
   overlaySrc,

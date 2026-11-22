@@ -66,7 +66,9 @@ func (s *ActivityService) workflowPublishRequest(ctx context.Context, action Rou
 		Reason:      strings.TrimSpace(action.Reason),
 	}
 	if action.Graph != nil {
-		req.Graph = *action.Graph
+		// 补 agent 只改副本：决策里存的图还要原样重放。
+		req.Graph = cloneWorkflowDefinition(*action.Graph)
+		fillDefaultNodeAgent(req.Graph.Nodes)
 	}
 	req, err := req.Normalize()
 	if err != nil {
@@ -91,10 +93,12 @@ func (s *ActivityService) workflowPublishRequest(ctx context.Context, action Rou
 	}
 	graph := base.Graph
 	graph.RootID = ""
-	if _, err := sanitizeRouterGraph(&graph); err != nil {
+	sanitized, err := sanitizeRouterGraph(&graph)
+	if err != nil {
 		return req, err
 	}
-	req.Graph = graph
+	// 派生沿用来源的图，agent 同样要落成具体 harness。
+	req.Graph = *sanitized
 	return req, nil
 }
 

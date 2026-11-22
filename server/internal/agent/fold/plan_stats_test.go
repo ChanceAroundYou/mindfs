@@ -33,6 +33,12 @@ func TestPlanStatsSplitsResultBytesByRule(t *testing.T) {
 	if stats.ResultBytes != 16312 {
 		t.Fatalf("result bytes = %d, want 16312", stats.ResultBytes)
 	}
+	// Everything outside tool output is unreachable for any fold policy. When
+	// that share dominates, "the request is huge" says nothing about how much
+	// there is to fold.
+	if stats.UnaccountedBytes != len(body)-16312 {
+		t.Fatalf("unaccounted bytes = %d, want %d", stats.UnaccountedBytes, len(body)-16312)
+	}
 	if stats.ProtectedBytes != 7002 {
 		t.Fatalf("protected bytes = %d, want 7002", stats.ProtectedBytes)
 	}
@@ -84,6 +90,9 @@ func TestPlanStatsReportsBodyBytesWithoutConversation(t *testing.T) {
 		t.Fatalf("body bytes = %d, want 2", stats.BodyBytes)
 	}
 	if stats.ResultBytes != 0 || stats.ProtectedBytes != 0 || stats.CandidateBytes != 0 {
-		t.Fatalf("stats = %+v, want only BodyBytes", stats)
+		t.Fatalf("stats = %+v, want only BodyBytes and UnaccountedBytes", stats)
+	}
+	if stats.UnaccountedBytes != 2 {
+		t.Fatalf("unaccounted bytes = %d, want the whole body", stats.UnaccountedBytes)
 	}
 }

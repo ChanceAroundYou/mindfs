@@ -215,3 +215,102 @@ func TestSupervisorHandlerTimeoutDoesNotBlockReconnect(t *testing.T) {
 	go sup.Run(ctx)
 	waitFor(t, 10*time.Second, func() bool { return runCount(counterPath) >= 3 })
 }
+
+// 第二条长连接只收私聊文本事件。它必须有自己的事件类型、必须把每行原文
+// 直接交给 HandleRaw，而且绝不能落到卡片点击的 Handle 上。
+func TestSupervisorUsesConfiguredEventTypeAndRawHandler(t *testing.T) {
+	line, err := os.ReadFile("testdata/message_p2p.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	argvPath := filepath.Join(dir, "argv.txt")
+	bin := filepath.Join(dir, "lark-cli")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + argvPath + "\n" +
+		"cat <<'LINE'\n" + strings.TrimSpace(string(line)) + "\nLINE\n" +
+		"cat >/dev/null\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := make(chan []byte, 4)
+	var clicks atomic.Int32
+	sup := &Supervisor{Path: bin, EventType: "im.message.receive_v1", Logf: noLog,
+		HandleRaw: func(_ context.Context, b []byte) error { raw <- append([]byte(nil), b...); return nil },
+		Handle:    func(context.Context, Action) error { clicks.Add(1); return nil }}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { sup.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	select {
+	case got := <-raw:
+		if strings.TrimSpace(string(got)) != strings.TrimSpace(string(line)) {
+			t.Fatalf("raw line = %q, want the fixture verbatim", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("raw handler never saw the message; argv:\n%s", readText(t, argvPath))
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		argv, err := os.ReadFile(argvPath)
+		return err == nil && strings.Contains(string(argv), "event consume im.message.receive_v1 --as bot")
+	})
+	if n := clicks.Load(); n != 0 {
+		t.Fatalf("card handler called %d times for a chat message", n)
+	}
+}
+
+// Service 必须同时拉起两条连接，并把私聊原文送到注入的入站处理器；缺一条
+// 时消息或卡片会静默消失，而 Wait 也必须两条都等到。
+func TestServiceStartRunsBothListenersAndForwardsRawMessage(t *testing.T) {
+	line, err := os.ReadFile("testdata/message_p2p.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	argvPath := filepath.Join(dir, "argv.txt")
+	bin := filepath.Join(dir, "lark-cli")
+	script := "#!/bin/sh\n" +
+		"args=\"$*\"\n" +
+		"printf '%s\\n' \"$args\" >> " + argvPath + "\n" +
+		"case \"$args\" in\n" +
+		"  *im.message.receive_v1*) cat <<'LINE'\n" + strings.TrimSpace(string(line)) + "\nLINE\n  ;;\n" +
+		"esac\n" +
+		"cat >/dev/null\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := NewStore(filepath.Join(dir, "cards.json"))
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Config{OwnerOpenID: "ou_owner", LarkCLIPath: bin, Logf: noLog,
+		DeliverInterval: time.Hour}, st, &CLI{Path: bin, Timeout: 2 * time.Second})
+	raw := make(chan []byte, 4)
+	svc.SetMessageHandler(func(_ context.Context, b []byte) error {
+		raw <- append([]byte(nil), b...)
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	svc.Start(ctx)
+	defer func() { cancel(); svc.Wait() }()
+
+	select {
+	case got := <-raw:
+		if strings.TrimSpace(string(got)) != strings.TrimSpace(string(line)) {
+			t.Fatalf("service raw line = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("service never forwarded the message; argv:\n%s", readText(t, argvPath))
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		argv, err := os.ReadFile(argvPath)
+		if err != nil {
+			return false
+		}
+		text := string(argv)
+		return strings.Contains(text, "event consume card.action.trigger --as bot") &&
+			strings.Contains(text, "event consume im.message.receive_v1 --as bot")
+	})
+}

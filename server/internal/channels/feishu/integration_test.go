@@ -74,7 +74,7 @@ func TestClickFromEventStreamReachesAnswerHandler(t *testing.T) {
 
 	waitFor(t, 10*time.Second, func() bool {
 		calls, err := os.ReadFile(logPath)
-		return err == nil && strings.Contains(string(calls), "mindfs-card-gate-nr-1")
+		return err == nil && strings.Contains(string(calls), idempotencyKey("gate-nr-1"))
 	})
 	// 真实顺序是「卡片先发出去，用户才可能点」。放行假事件流，让它按真实时序到达。
 	if err := os.WriteFile(readyPath, nil, 0o644); err != nil {

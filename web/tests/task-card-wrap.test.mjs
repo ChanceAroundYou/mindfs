@@ -63,8 +63,8 @@ assert.ok(
 assert.match(cardRows, /justifyContent: "space-between", gap: "4px", flexWrap: "wrap"/, "操作行应允许换行");
 assert.match(
   cardRows,
-  /justifyContent: "flex-end", gap: 0, marginLeft: "auto"/,
-  "按钮组靠 marginLeft:auto 换行后仍贴右",
+  /justifyContent: "flex-end", gap: TASK_CONTROL_GAP, marginLeft: "auto"/,
+  "按钮组靠 marginLeft:auto 换行后仍贴右；键间距取共享常量",
 );
 
 // 6) 名字是卡片上信息量最高的字段，必须有 title 兜底（2 行仍装不下的超长名）

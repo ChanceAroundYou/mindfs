@@ -41,6 +41,34 @@ export function taskCardIconButtonStyle(tone: "default" | "accent" | "success" |
 
 
 
+/**
+ * 任务相关界面里相邻控件的统一间距：卡片动作行、详情 header 的动作键之间、
+ * 动作键与关闭键之间、编辑键与任务名之间，全部取这一条。
+ *
+ * 距上一轮统一后动作键之间是 gap 0，22px 的透明底盒子挨在一起时，图标之间
+ * 只剩盒子内边距，视觉上挤成一坨；而关闭键和编辑键又各自离 8px，同一行里
+ * 出现三种节奏。取 4px 与卡片左侧会话键那排一致，换行时行距也跟着它走。
+ */
+export const TASK_CONTROL_GAP = 4;
+
+/**
+ * 动作语义档位 → 图标键外观。卡片与详情 header 都走这一条，
+ * 免得「完成」在一处是绿、另一处是蓝。
+ *
+ * flexShrink: 0 是给间距让路的：行容器加了 gap 之后，窄卡上按钮原本会被
+ * 压窄（22px 是图标盒子的尺寸，不该随容器收缩），这里禁掉压缩。
+ */
+export function taskActionIconStyle(tone: "default" | "primary" | "success" | "warn"): React.CSSProperties {
+  return {
+    ...taskCardIconButtonStyle(
+      tone === "primary" ? "accent" : tone === "success" ? "success" : tone === "warn" ? "danger" : "default",
+    ),
+    flexShrink: 0,
+  };
+}
+
+
+
 // 2026-10-16（用户要求「其他小图标再做小一号，和 worktree 差不多大」）：
 // 盒子 18→14、圆角 5→4，对齐 14px 高的 worktree 标签。
 //

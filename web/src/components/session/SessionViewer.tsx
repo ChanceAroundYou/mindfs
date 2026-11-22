@@ -19,6 +19,7 @@ import { useI18n } from "../../i18n/index";
 import { formatSessionDuration } from "../../shared/sessionDuration";
 import {
   computeTailOverlay,
+  supplementOverlayMap,
   type OverlayExchange,
 } from "../../shared/sessionOverlay";
 import {
@@ -137,21 +138,17 @@ function SessionViewerInner({
   // 方案 C：overlay 尾巴 = App 缓存里「窗口尚未覆盖」的条目，只读派生、永不合并回窗口。
   // 窗口是唯一持久化源，只在 init 拉取 / 翻页前插 / 重锚定（_windowMeta）时整体替换。
   //
-  // 判定刻意不依赖 windowMeta：loadMore 与 targetSeq 取窗都会用旧/中段窗口的 meta 覆盖
-  // windowMeta，拿它当「会话最新 seq」会塌回旧值（曾导致按位次裁剪错算并把实时流式内容
-  // 一起 slice 掉）。改为三个规则：
-  //   - seq>0：由 latestSeq 界定。latestSeq 只增不减、按会话键绑定，且仅在 init/anchor 这类
-  //     「最新窗口」经 applyWindow 更新（loadMore / targetSeq 不碰）。seq<=latestSeq → 窗口已含
-  //     或即将含，丢弃；seq>latestSeq → 刚发出、窗口还没追上，保留（自己发的消息立即出现）。
-  //   - seq==0 且 role=user：按 content 与窗口计数消抵——窗口里同内容出现 covered 次，就丢弃
-  //     缓存中同内容的前 covered 个，其余保留。这是跨端丢事件（手机后台 / WS 断连）时的兜底，
-  //     不依赖时间戳（客户端 ISO 毫秒 vs 服务端 RFC3339Nano 永不相等）。
-  //   - seq==0 且 role=tool：callId 已出现在窗口 aux → 让位（见 windowToolCallIds）。
-  //   - seq==0 的其它（流式文本 / 思考）：默认保留（流式内容要实时可见），但若窗口最新几条
-  //     持久化行里已经包含它（去空白后判定），说明这一轮已落盘、这份是陈旧拷贝 → 让位。
-  //     这是 2026-09-17 的缺口：以前这里「一律保留」，于是 ask 前后被渲染成两块一样的正文。
+  // 持久行只认「比窗口最新一条更新」的：下界由 computeTailOverlay 从 visibleExchanges 现算，
+  // 不持有水位状态。手点「同步」时回包是 afterSeq 之后的整段历史（缓存缺失时就是整个会话），
+  // App 缓存会因此装着窗口以下的几百条行；若把「不在窗口里」当成「新尾巴」，它们会被全部
+  // 追加到窗口之后，又因为不在 visibleBlocks 里、`content` 恒空而各自退化成 `turn_meta`
+  // 纯页脚（复制 / 模型 / 用量 / 时间 / 上下文胶囊）—— 就是「同步后底部一大堆控件」。
+  // 窗口以下的持久行一律交给 applyWindow（上翻分页）。
+  //
+  // 为什么不用 windowMeta 当这个下界：loadMore 与 targetSeq 取窗都会用旧/中段窗口的 meta
+  // 覆盖它，拿它当「会话最新 seq」会塌回旧值（曾导致按位次裁剪错算并把实时流式内容一起
+  // slice 掉）。瞬时行（seq==0）按 mindfs_id + 角色类别与窗口对账；文本相似不能证明相同。
   // 只读派生不写回缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
-  // 瞬时缓存与窗口只按 MindFS 身份对账；文本相似不能证明两行相同。
   // 持久行按 seq；无身份的瞬时行继续保留，确保实时正文与思考不会被丢。
   const tailOverlay = useMemo(
     () =>
@@ -169,13 +166,32 @@ function SessionViewerInner({
     const extra = tailOverlay.filter((ex) => !inWindow.has(ex));
     return [...visibleExchanges, ...extra] as ExchangeArray;
   }, [visibleExchanges, tailOverlay]);
+  // overlay 行的正文块 / aux 住在会话级映射里（窗口没拉过它们）。只补窗口缺的键 ——
+  // 同一 seq 两个 revision 并存会让正文与工具卡重复。
+  const overlaySeqs = useMemo(
+    () => tailOverlay.map((ex) => Number(ex?.seq || 0)).filter((seq) => seq > 0),
+    [tailOverlay],
+  );
+  const effectiveAux = useMemo(
+    () => supplementOverlayMap(visibleAux, session?.exchange_aux, overlaySeqs) || visibleAux,
+    [visibleAux, session?.exchange_aux, overlaySeqs],
+  );
+  const effectiveBlocks = useMemo(
+    () =>
+      supplementOverlayMap(
+        visibleBlocks,
+        session?.blocks as Record<string, SessionBlock[]> | undefined,
+        overlaySeqs,
+      ) || visibleBlocks,
+    [visibleBlocks, session?.blocks, overlaySeqs],
+  );
   const { timeline, isStreaming, streamVersion, streamStatusText } = useSessionStream(
     sessionKey,
     composedExchanges,
-    visibleAux,
+    effectiveAux,
     session?.context_window,
     isAwaiting,
-    visibleBlocks,
+    effectiveBlocks,
   );
   // CUSTOM(G-AU): 原先在 timeline.map 里对每个 user 项做「切前缀再 filter 数 user」、
   // 对每个 assistant 项做 previousUserTimestamp 反向扫描 —— 两处都是 O(n²)，

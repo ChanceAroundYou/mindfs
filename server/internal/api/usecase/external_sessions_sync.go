@@ -63,7 +63,18 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 		return out, err
 	}
 	if binding == nil || strings.TrimSpace(binding.AgentSessionID) == "" {
-		return out, nil
+		// 空绑定 + live-owned + 尾部未收尾 = 首轮中途被重启的孤儿会话：绑定里没有转录 id，
+		// 但转录还在盘上。按「首条用户消息（是转录首条的前缀）+ cwd」认领唯一匹配的转录，
+		// 补回绑定，再继续走补录。认领不到或有歧义就不猜（保守）；认领后绑定了 id，
+		// 重启的下一次 resume 也会接到同一份转录上。
+		if adopted, aerr := s.adoptOrphanedLiveTailBinding(ctx, root, in.RootID, manager, current, agentName, binding); aerr != nil {
+			log.Printf("[session/recovery] live_tail.adopt.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, aerr)
+		} else if adopted != nil {
+			binding = adopted
+		}
+		if binding == nil || strings.TrimSpace(binding.AgentSessionID) == "" {
+			return out, nil
+		}
 	}
 	lastTimestamp := lastExternalSyncTimestamp(current.Exchanges)
 	if lastTimestamp.IsZero() {
@@ -83,14 +94,35 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	//
 	// 需要补历史时走用户手点的「同步」（Full）：那是显式意图，且带时间地板（见下），
 	// 只会补「比库里最新一条更新」的部分。
-	if !in.Full && session.SessionIsLiveOwned(current.Exchanges) {
-		// 唯一例外：**最后一轮没收尾**（重启把回合掐在中间）。这不是「重导历史」，
-		// 而是把用户已经在屏幕上流式看过、却随进程一起丢掉的那一段从转录补回来 ——
-		// 已收尾的回合一个字节都不碰（判据见 recoverInterruptedLiveTurn）。
-		if err := s.recoverInterruptedLiveTurn(ctx, root, in.RootID, manager, current, agentName, binding); err != nil {
-			log.Printf("[session/recovery] live_tail.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, err)
+	if session.SessionIsLiveOwned(current.Exchanges) {
+		// 增量（delta）与手点「同步」（Full）都先尝试补回被重启掐断的最后一轮。之前 Full
+		// 落到下面的通用导入时会用「最后一行时间戳」当时间地板 —— 中断时最后一行是回合
+		// 收尾才写的空占位行，时间比转录里的回复还晚，地板把要补的回复全挡掉。recover 用
+		// 用户行时刻当起点、强制重读、并复用尾部占位行，正好补上这一段。
+		if rerr := s.recoverInterruptedLiveTurn(ctx, root, in.RootID, manager, current, agentName, binding, in.Full); rerr != nil {
+			log.Printf("[session/recovery] live_tail.error root=%s session=%s agent=%s full=%t err=%v", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, in.Full, rerr)
 		}
-		return out, nil
+		// provisional 恢复会新写一条助手行；通用导入的 floor 必须按恢复后的最新行重算，
+		// 否则仍拿旧的用户行时刻，会把同一轮 prompt 再从转录导一遍。
+		if latest, gerr := manager.Get(ctx, current.Key, 0); gerr == nil {
+			current = latest
+			if refreshed := lastExternalSyncTimestamp(current.Exchanges); !refreshed.IsZero() {
+				lastTimestamp = refreshed
+				out.LastTimestamp = refreshed
+			}
+		}
+		if !in.Full {
+			// 收尾之后 CLI 自己续跑的那一段（后台任务回注）不在实时落盘的覆盖范围里，
+			// 由这条补录。标记只在「回合结束却有事件进来」时置位，平时这里一次都不读转录。
+			if cerr := s.recoverLiveContinuationTail(ctx, root, in.RootID, manager, current, agentName, binding); cerr != nil {
+				log.Printf("[session/recovery] live_continuation.error root=%s session=%s agent=%s err=%v",
+					strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, cerr)
+			}
+			// delta 到此为止：live-owned 会话不做通用导入（2026-09-16 重导事故的守卫）。
+			return out, nil
+		}
+		// Full 继续往下走通用导入：补回尾巴之外，还要导入子代理等尾部补录不覆盖的内容。
+		// 通用导入的 floor 仍会滤掉尾巴那段（空占位行时间更晚），不会与 recover 重复。
 	}
 
 	importer, err := s.resolveExternalSessionImporter(agentName)

@@ -6,8 +6,7 @@ web/src/
 ├── components/
 │   ├── <domain>/   按产品域组织 UI 与强绑定的 colocated hook；跨域复用件放 shared/ 或 hooks/
 │   ├── app/        壳层专属组装型纯展示组件（SessionPane/AppActionBar/SessionSheet/
-│   │               FileTreePanel/OnboardingGate/TaskInlineEditPanel/
-│   │               TaskDetailPanelGate/TaskSessionErrorDialog）。禁逻辑门
+│   │               TaskDetailPanelGate/TaskSessionErrorDialog 等）。禁逻辑门
 │   └── common/     无业务语义通用 UI 小件（Select/Icon/Scroll）
 ├── services/
 │   ├── <domain>/   按域收拢（file/git/net/platform/prefs/task/session）
@@ -15,6 +14,7 @@ web/src/
 ├── hooks/          跨 2+ 域复用的 hook。禁单域 hook、禁非 hook 内容
 ├── shared/         零 UI：纯函数 + 纯样式（.ts，禁 JSX）
 ├── layout/         有布局语义的跨视图复用 UI（AppShell/ViewHeader）
+├── platform/       浏览器 / 原生壳能力的浏览器侧适配（剪贴板等）。不依赖具体域
 ├── i18n/           纯基建：语言包 + useI18n + locale 类型。零业务
 ├── plugins/        插件管理器 + 信任/安全逻辑。不依赖具体域
 └── renderer/       渲染器注册表。只依赖具体 viewer，禁反向依赖

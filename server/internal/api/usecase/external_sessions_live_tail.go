@@ -41,9 +41,128 @@ func interruptedLiveTailAttemptKey(rootID, sessionKey string, userSeq int) strin
 	return fmt.Sprintf("%s::%s::%d", strings.TrimSpace(rootID), strings.TrimSpace(sessionKey), userSeq)
 }
 
-// recoverInterruptedLiveTurn 在 best-effort 同步的「live-owned 早退」处被调用。
+// orphanAdoptAttempts 记录本进程已经尝试过「认领孤立转录」的会话，避免每次轮询都重扫磁盘。
+var orphanAdoptAttempts sync.Map
+
+// adoptOrphanedLiveTailBinding 为「首轮中途被重启、绑定里没有转录 id」的 live-owned 会话
+// 找回它的转录，并补写绑定。
+//
+// 成因：claude 的 CLI session id 要等第一条流消息才可见，若进程在第一轮中途被重启，绑定里
+// 一直是空的（persistLearnedAgentSessionID 没来得及写）。重启后既 resume 不了，同步也因
+// 「没有 id」直接返回 —— 那一轮内容永久留在转录里、界面看不到，正是用户报的「丢记录、
+// 同步不回来」。
+//
+// 判据必须保守：只认领**唯一**匹配的转录 —— 首条用户正文（无损空白后是转录首条用户消息的
+// 子串）且 cwd 与根目录一致；0 个或多个匹配一律放弃（绝不猜），避免把别处会话的内容串进来。
+// 只在「尾部未收尾」时尝试：已收尾的回合本就没有要补的东西，没必要扫盘。
+func (s *Service) adoptOrphanedLiveTailBinding(
+	ctx context.Context,
+	root fs.RootInfo,
+	rootID string,
+	manager *session.Manager,
+	current *session.Session,
+	agentName string,
+	binding *session.AgentBinding,
+) (*session.AgentBinding, error) {
+	if manager == nil || current == nil || !session.SessionIsLiveOwned(current.Exchanges) {
+		return nil, nil
+	}
+	attemptKey := fmt.Sprintf("%s::%s", strings.TrimSpace(rootID), strings.TrimSpace(current.Key))
+	if _, seen := orphanAdoptAttempts.LoadOrStore(attemptKey, struct{}{}); seen {
+		return nil, nil
+	}
+	lastUser, tailFinished, err := liveTailIndex(ctx, manager, current)
+	if err != nil || lastUser == nil || tailFinished {
+		return nil, err
+	}
+	firstUserText := firstUserExchangeText(ctx, manager, current)
+	if firstUserText == "" {
+		return nil, nil
+	}
+	importer, err := s.resolveExternalSessionImporter(agentName)
+	if err != nil {
+		return nil, err
+	}
+	listed, err := importer.ListExternalSessions(ctx, agenttypes.ListExternalSessionsInput{
+		RootPath: root.RootPath,
+		Agent:    agentName,
+		Limit:    200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var match *agenttypes.ExternalSessionSummary
+	ambiguous := false
+	for index := range listed.Items {
+		item := listed.Items[index]
+		if !strings.EqualFold(strings.TrimSpace(item.Agent), agentName) {
+			continue
+		}
+		if trimPath(item.Cwd) != trimPath(root.RootPath) {
+			continue
+		}
+		if !firstUserTextMatches(firstUserText, item.FirstUserText) {
+			continue
+		}
+		if match != nil {
+			ambiguous = true
+			break
+		}
+		copied := item
+		match = &copied
+	}
+	if ambiguous || match == nil || strings.TrimSpace(match.AgentSessionID) == "" {
+		return nil, nil
+	}
+	ctxSeq := 0
+	if binding != nil {
+		ctxSeq = binding.AgentCtxSeq
+	}
+	if err := manager.UpdateAgentState(ctx, current, agentName, ctxSeq, match.AgentSessionID); err != nil {
+		return nil, err
+	}
+	log.Printf("[session/recovery] live_tail.adopt root=%s session=%s agent=%s agent_session_id=%s",
+		strings.TrimSpace(rootID), current.Key, agentName, match.AgentSessionID)
+	return manager.FindAgentBinding(ctx, current.Key, agentName)
+}
+
+// firstUserExchangeText 返回会话第一条用户行的正文（块流优先，老会话退回主日志）。
+func firstUserExchangeText(ctx context.Context, manager *session.Manager, current *session.Session) string {
+	if current == nil {
+		return ""
+	}
+	for _, exchange := range current.Exchanges {
+		if exchange.Role != "user" {
+			continue
+		}
+		if body := strings.TrimSpace(recordedExchangeBody(ctx, manager, current.Key, exchange)); body != "" {
+			return body
+		}
+	}
+	return ""
+}
+
+// firstUserTextMatches 判定「会话里存的用户正文」是不是「转录首条用户消息」的可信前缀/子串。
+// 转录首条 = 用户正文 + MindFS 注入的上下文/提示（后缀），所以正文通常是它的前缀；插件模式下
+// 正文被包在 [USER_PROMPT] 里，用子串兜住。要求正文足够长（≥16 字）以免「继续」「好」这类
+// 短应答误配。
+func firstUserTextMatches(sessionText, transcriptText string) bool {
+	needle := normalizeExchangeContent(sessionText)
+	haystack := normalizeExchangeContent(transcriptText)
+	if len([]rune(needle)) < 16 || haystack == "" {
+		return false
+	}
+	return strings.Contains(haystack, needle)
+}
+
+func trimPath(path string) string {
+	return strings.TrimRight(strings.TrimSpace(path), "/")
+}
+
+// recoverInterruptedLiveTurn 在 best-effort 同步的「开始处」被调用（增量与手点「同步」都走它）。
 // 每个 (会话, 最后一轮用户行) 每进程只尝试一次：转录里确实没有回复的回合（比如
-// provider 直接 403）不该让每次轮询都重读一遍转录。
+// provider 直接 403）不该让每次轮询都重读一遍转录。force=true（用户手点「同步」，Full）
+// 跳过这条去重 —— 首拍转录可能还没 flush，用户有权重试一次。
 func (s *Service) recoverInterruptedLiveTurn(
 	ctx context.Context,
 	root fs.RootInfo,
@@ -52,12 +171,15 @@ func (s *Service) recoverInterruptedLiveTurn(
 	current *session.Session,
 	agentName string,
 	binding *session.AgentBinding,
+	force bool,
 ) error {
 	if manager == nil || current == nil || binding == nil {
 		return nil
 	}
 	if strings.TrimSpace(binding.AgentSessionID) == "" {
-		// 没有转录 id 就无从导入；留一轮给「打开时写回绑定」生效后的下一次。
+		// 没有转录 id 就无从导入。正常情况下这里不该出现：会话进行中会由
+		// persistLearnedAgentSessionID 尽早写回；真正的空绑定由调用方在进入本函数前
+		// 尝试「按首条用户消息认领孤立转录」。
 		return nil
 	}
 	// 本进程里这一轮正在跑：屏幕上的流式内容属于**进行中**的回合，不能被当成被中断的尾巴。
@@ -68,9 +190,17 @@ func (s *Service) recoverInterruptedLiveTurn(
 	if err != nil || lastUser == nil || tailFinished {
 		return err
 	}
+	// 流式 provisional 块是本进程被 kill 前就已经落盘的正文。它能恢复就不需要
+	// importer：开放 tool_use 尾在转录里没有最终回复，捞只会得到重复的用户 prompt。
+	handled, err := s.recoverProvisionalTurnBlocks(ctx, manager, current, agentName, binding.AgentSessionID, lastUser)
+	if err != nil || handled {
+		return err
+	}
 	attemptKey := interruptedLiveTailAttemptKey(rootID, current.Key, lastUser.Seq)
-	if _, seen := interruptedLiveTailAttempts.LoadOrStore(attemptKey, struct{}{}); seen {
-		return nil
+	if !force {
+		if _, seen := interruptedLiveTailAttempts.LoadOrStore(attemptKey, struct{}{}); seen {
+			return nil
+		}
 	}
 	importer, err := s.resolveExternalSessionImporter(agentName)
 	if err != nil {
@@ -136,6 +266,116 @@ func liveTailIndex(ctx context.Context, manager *session.Manager, current *sessi
 		}
 	}
 	return lastUser, false, nil
+}
+
+// recoverLiveContinuationTail 补录「回合边界之后 CLI 自己续跑」的那一段输出。
+//
+// 与上面 recoverInterruptedLiveTurn 的区别：那条补的是**没走完的回合**（尾部是空占位或
+// 根本没有助手行）；这条补的是**已经收尾的回合之后**又冒出来的内容 —— Claude CLI 在
+// result 之后收到后台任务回注（task-notification）会自己再跑一整段循环，事件实时可见
+// （走的还是上一轮那个 OnUpdate 回调），但实时路径的落盘只在 SendMessage 返回时做了一次，
+// 之后的续写没有任何写入者；live-owned 会话的自动增量同步又是关着的，于是「刷新就没了」
+// （2026-11-22 实测 llm-deploy 会话：seq=196 之后的思考卡与工具行全在转录里、库里没有）。
+//
+// 三个闸门，缺一不可：
+//   - 回合不在跑：跑着的那一轮由实时路径负责，导入器插进来就是双写；
+//   - 补录标记：标记只在「回合结束之后还有事件进来」时置位（session_send.go），
+//     否则每次同步都要读一次转录（live-owned 的字节游标是冻结的，读一次就是从游标到文件尾）；
+//   - 最后一行是助手行 + 有真实时间：地板取**最后一行**的时间戳。续写发生在整轮落盘之后，
+//     所以「比最后一行还新」正好把已落库的内容挡在外面；尾部是用户行说明这一轮没走完，
+//     归 recoverInterruptedLiveTurn 管。
+//
+// 写入只取助手侧条目（recoveryAgentExchanges）：用户行由实时路径在发消息时就写好了。
+// 判重靠导入器的 native id（appendImportedExchange），所以同一条转录被补两次也只会落一行。
+func (s *Service) recoverLiveContinuationTail(
+	ctx context.Context,
+	root fs.RootInfo,
+	rootID string,
+	manager *session.Manager,
+	current *session.Session,
+	agentName string,
+	binding *session.AgentBinding,
+) error {
+	if current == nil || binding == nil || strings.TrimSpace(binding.AgentSessionID) == "" {
+		return nil
+	}
+	if SessionTurnActive(rootID, current.Key) {
+		return nil
+	}
+	if !takeSessionContinuationTail(rootID, current.Key) {
+		return nil
+	}
+	// 出错要把标记放回去，否则这一段续写要等到下一轮结束才有人再看它一眼。
+	restore := true
+	defer func() {
+		if restore {
+			markSessionContinuationTail(rootID, current.Key)
+		}
+	}()
+	importer, err := s.resolveExternalSessionImporter(agentName)
+	if err != nil || importer == nil || !importer.HasTranscriptTimestamps() {
+		// 没有真实时间戳的 agent 找不到可信地板，交给身份判重兜不住重复，宁可不补。
+		restore = false
+		return nil
+	}
+	if n := len(current.Exchanges); n == 0 || current.Exchanges[n-1].Role != "agent" {
+		restore = false
+		return nil
+	}
+	floor := lastExternalSyncTimestamp(current.Exchanges)
+	if floor.IsZero() {
+		restore = false
+		return nil
+	}
+	imported, err := importer.ImportExternalSession(ctx, agenttypes.ImportExternalSessionInput{
+		RootPath:       root.RootPath,
+		Agent:          agentName,
+		AgentSessionID: binding.AgentSessionID,
+		TimestampFloor: floor,
+		// 从冻结的字节游标往后读：这条路径只在真有续写时才进来，游标能让重复补录
+		// 退化成一次 stat（导入器的「文件未变即跳过」快路径）。
+		Cursor: binding.ExternalCursor(),
+	})
+	if err != nil {
+		return err
+	}
+	restore = false
+	items := recoveryAgentExchanges(imported.Exchanges)
+	added := 0
+	for _, item := range items {
+		ok, err := appendImportedExchange(ctx, manager, current, agentName, item)
+		if err != nil {
+			return err
+		}
+		if ok {
+			added++
+		}
+	}
+	// 游标必须推进：它只服务于「这条路径下次从哪儿接着读」，Full 同步与中断回合补录
+	// 都不吃它（那两条路径故意从 0 重读再按时间地板过滤）。
+	if strings.TrimSpace(imported.Cursor.SourcePath) != "" {
+		if err := manager.UpdateExternalSessionCursor(ctx, current.Key, agentName, imported.Cursor); err != nil {
+			log.Printf("[session/recovery] live_continuation.cursor.error root=%s session=%s err=%v",
+				strings.TrimSpace(rootID), current.Key, err)
+		}
+	}
+	// 尾部还没收尾（续写仍在跑 / 正在跑工具）：这一条被导入器扣下了，标记放回去，
+	// 下一次同步再试。收尾之后 committed 会追上 offset。
+	if imported.Cursor.CommittedOffset < imported.Cursor.Offset {
+		restore = true
+	}
+	if added > 0 {
+		latest, err := manager.Get(ctx, current.Key, 0)
+		if err != nil {
+			return err
+		}
+		if err := manager.UpdateAgentState(ctx, latest, agentName, len(latest.Exchanges), binding.AgentSessionID); err != nil {
+			return err
+		}
+		log.Printf("[session/recovery] live_continuation.recover root=%s session=%s agent=%s agent_session_id=%s rows=%d",
+			strings.TrimSpace(rootID), current.Key, agentName, binding.AgentSessionID, added)
+	}
+	return nil
 }
 
 // recoveryAgentExchanges 只取助手侧条目：用户行在实时路径上**发消息前**就已落盘，

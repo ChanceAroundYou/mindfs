@@ -1,4 +1,5 @@
 import type { TaskDetail, TaskOverviewItem } from "./types";
+import type { WorkflowChoice } from "../../shared/taskComments";
 import { appURL } from "../net/base";
 import { getRootNodeId } from "../net/rootNode";
 import { protectedJSON } from "../net/api";
@@ -41,7 +42,13 @@ export async function createTask(
   worktreeBranchMode: "new" | "existing" = "new",
   worktreeBranch = "",
   nodeId?: string,
-  options?: { name?: string; startImmediately?: boolean },
+  options?: {
+    name?: string;
+    startImmediately?: boolean;
+    /** 首条留言的工作流选择；缺省交给 Router 自动挑。 */
+    workflowChoice?: WorkflowChoice;
+    workflowVersionId?: string;
+  },
 ): Promise<TaskDetail> {
   nodeId = nodeId || getRootNodeId(rootId);
   return protectedJSON<TaskDetail>(appURL("/api/tasks", undefined, nodeId), {
@@ -54,6 +61,8 @@ export async function createTask(
       worktree_branch_mode: worktreeBranchMode,
       worktree_branch: worktreeBranch,
       start_immediately: options?.startImmediately ?? true,
+      ...(options?.workflowChoice ? { workflow_choice: options.workflowChoice } : {}),
+      ...(options?.workflowVersionId ? { workflow_version_id: options.workflowVersionId } : {}),
       ...(options?.name ? { name: options.name } : {}),
     }),
   });
@@ -72,7 +81,7 @@ export async function runTaskNow(rootId: string, taskId: string, nodeId?: string
   });
 }
 
-export async function moveTask(rootId: string, taskId: string, action: "pause" | "resume" | "complete" | "cancel" | "fail" | "reopen", reason = "", nodeId?: string): Promise<TaskDetail> {
+export async function moveTask(rootId: string, taskId: string, action: "start" | "terminate" | "pause" | "resume" | "complete" | "cancel" | "fail" | "reopen", reason = "", nodeId?: string): Promise<TaskDetail> {
   return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },

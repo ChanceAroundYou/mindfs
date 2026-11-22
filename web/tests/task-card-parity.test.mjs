@@ -22,6 +22,7 @@ const finishButton = readFileSync(new URL("../src/components/task/TaskCardFinish
 const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
 const taskRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskRow.tsx", import.meta.url), "utf8");
 const types = readFileSync(new URL("../src/shared/taskTypes.ts", import.meta.url), "utf8");
+const cardActions = readFileSync(new URL("../src/components/task/taskCardActions.ts", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 
 // ── 1. 两侧必须引用同一个卡片组件 ────────────────────────────────────────────
@@ -52,12 +53,17 @@ assert.match(
   "the workspace row must suppress it too — it always renders the status text",
 );
 
-// ── 3. 收尾键的判据两侧一致 ──────────────────────────────────────────────────
-// 判据只剩 worktree 三态。「有 agent 段」那条 2026-10-07 去掉了：它会让「有
-// worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它。
+// ── 3. 收尾键的判据只有一处 ──────────────────────────────────────────────────
+// 判据只剩 worktree 三态，并且只写在 taskCardActions.ts 一处：卡片与详情图标行
+// 都读它，任何一侧再抄一遍条件就是「一处显示一个、另一处却有好几个」的来源。
 assert.match(
   cardRows,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
+  /const buttons = taskActionButtons\(task\);/,
+  "the card must render the shared action list (finish included)",
+);
+assert.match(
+  cardActions,
+  /return task\.create_worktree === true && !!task\.worktree_path && task\.worktree_missing !== true;/,
   "the finish gate is worktree-liveness only",
 );
 assert.doesNotMatch(
@@ -70,33 +76,41 @@ assert.doesNotMatch(
 // 会话模型下没有「推进」可言：任务不在跑、也不是终态，就允许收口。
 assert.match(
   cardRows,
-  /const canComplete = !terminal && !taskRunning;/,
-  "完成 must be withheld only while running or after the task reached a terminal state",
+  /const buttons = taskActionButtons\(task\);/,
+  "完成 must come from the shared action list too",
+);
+assert.match(
+  cardActions,
+  /actions\.push\("complete"\);/,
+  "完成 must come from the shared non-terminal branch (running returns terminate earlier)",
 );
 
 // ── 5. 终态任务只要 worktree 还在就必须有收尾键 ──────────────────────────────
 // 用户原话：「只要还有 worktree 就必须有收尾键」。收尾键因此不能住在 !terminal
-// 分支里 —— 它现在由 FinishWorktreeButton 在两个分支各渲染一次。
+// 分支里 —— 判据在 canFinishWorktree，两个分支各自 push 一次。
+assert.equal(
+  (cardActions.match(/if \(canFinishWorktree\(task\)\) actions\.push\("finish-worktree"\);/g) || []).length,
+  2,
+  "the finish key must be produced in BOTH the non-terminal and the terminal branch",
+);
 assert.match(
   finishButton,
   /function TaskCardFinishButton\(/,
-  "the finish button is extracted so both branches can render it without duplicating markup",
+  "the finish button stays extracted so the card can render it without duplicating markup",
 );
-assert.equal(
-  (cardRows.match(/canFinishWorktree \? <TaskCardFinishButton/g) || []).length,
-  2,
-  "the finish button must render in BOTH the non-terminal and the terminal branch",
-);
-// 终态分支里删除键仍在收尾键之后 —— 顺序反了会让「收尾」被挤出可视区。
-// 中间允许夹其它终态键（回到待审核、归档）：按位置比，不绑死中间有哪些按钮，
-// 否则每加一个终态动作都得改这条测试。
-const terminalFinishAt = cardRows.lastIndexOf("canFinishWorktree ? <TaskCardFinishButton");
-const terminalDeleteAt = cardRows.indexOf('onMove(task, "delete-task")', terminalFinishAt);
-assert.ok(
-  terminalFinishAt > 0 && terminalDeleteAt > terminalFinishAt,
-  "in the terminal branch the finish key comes before delete",
-);
+assert.match(cardRows, /if \(key === "finish-worktree"\) \{\s*return <TaskCardFinishButton/, "the card renders it from the shared key list");
 assert.match(finishButton, /onMove\(task, "finish-worktree"\)/, "the extracted finish button preserves its action");
+// 终态里收尾排在返回 / 归档之前（taskCardActions 的推入顺序），删除永远最后。
+assert.match(
+  cardActions,
+  /if \(canFinishWorktree\(task\)\) actions\.push\("finish-worktree"\);\n\s*actions\.push\("reopen", "archive-task"\);/,
+  "in the terminal branch the finish key comes before reopen/archive",
+);
+assert.match(
+  cardActions,
+  /if \(isTerminalKanbanTask\(task\)\) keys\.push\("delete-task"\);/,
+  "delete is always appended last",
+);
 
 // ── 6. 投影必须带上卡片读的每个 aux 标记 ────────────────────────────────────
 // 这是「看板有小图标、工作台没有」的根因：投影丢了 aux_flags。
@@ -242,4 +256,27 @@ assert.match(
   /export async function beginTaskFinishWorktree[\s\S]{0,1400}?throw new FinishWorktreeUserChanges/,
   "beginTaskFinishWorktree must convert its 409 into typed errors too — otherwise the file list is lost",
 );
+
+// ── 9. 图标键间距只有一条（卡片与详情 header 同源） ─────────────────────────
+// 上一轮把两处按钮统一成同一套外观时，间距写的是 gap 0；22px 的透明底盒子挨在
+// 一起时图标只剩盒内留白，视觉上挤成一坨。间距收成一条常量，两处各写一个数字
+// 就是下一次漂移的起点。
+const detailPanel = readFileSync(new URL("../src/components/task/TaskDetailPanel.tsx", import.meta.url), "utf8");
+const taskStyles = readFileSync(new URL("../src/components/task/taskStyles.ts", import.meta.url), "utf8");
+assert.match(taskStyles, /export const TASK_CONTROL_GAP = 4;/, "键间距只有一份定义");
+assert.match(detailPanel, /gap: TASK_CONTROL_GAP/, "详情 header 用共享间距");
+assert.match(cardRows, /gap: TASK_CONTROL_GAP/, "卡片动作行用同一条间距（工作台卡同源）");
+assert.match(taskStyles, /flexShrink: 0/, "22px 盒子不随容器收缩：加间距后窄卡上也不许被压窄");
+assert.match(
+  finishButton,
+  /taskActionIconStyle\("success"\)/,
+  "收尾键与其它动作键同一套外观（含 flexShrink），不再走裸的卡片图标样式",
+);
+// 三处间距（动作键之间 / 动作键与关闭键 / 编辑键与任务名）走同一条常量；
+// 标题槽里除了名字与编辑键没有别的控件，所以整槽取它不会波及别处。
+assert.match(detailPanel, /gap: TASK_CONTROL_GAP, minWidth: 0, maxWidth: "100%", flexWrap: "nowrap"/, "名字与编辑键同源");
+assert.match(detailPanel, /headerRightGap=\{TASK_CONTROL_GAP\}/, "动作键与关闭键同源");
+assert.doesNotMatch(detailPanel, /gap: "8px"/, "详情 header 里不再有第二种图标间距");
+assert.match(detailPanel, /title=\{action\.label\}/);
+assert.match(detailPanel, /aria-label=\{action\.label\}/);
 });

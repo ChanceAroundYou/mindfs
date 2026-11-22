@@ -246,13 +246,13 @@ export function useWorkspaceBoard(params: {
   return { projects, loading, unreachableNodes, refresh };
 }
 
-/** 待审核：等人回话。顶部条带与「待处理」筛选都按这批。 */
+/** 待处理：等人回话。顶部条带与「待处理」筛选都按这批。 */
 export function isBlockedTask(task: KanbanTask): boolean {
   return task.status === "waiting_user" || task.status === "pending";
 }
 
 /**
- * 「进行中」的口径是**执行中 + 待审核**，不是「非终态」。
+ * 「进行中」的口径是**执行中 + 待处理**，不是「非终态」。
  *
  * 非终态还包含 queued（还没排上）和 paused（手动停的）—— 它们没在跑，也没人等，
  * 混进来之后这个筛选就名不副实了。而一旦选了「进行中」，行里就只该出现这两类状态；

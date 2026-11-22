@@ -150,6 +150,17 @@ func readClaudeImportedExchangeLocators(path string, committedOffset int64, boot
 				}
 			}
 		}
+		// 时间地板是**条目级**的，不只是 item 级：相邻同角色条目会合并成一条 item，
+		// 而合并后的时间戳取**最后一条**条目。只在地板处拦 item，就会让「已落库那一轮
+		// 的尾段 + 之后的续写」并成一条时间戳更新的 item —— 它带着续写条目的 uuid，
+		// NativeID 判重必然失手，重导一次就把旧正文再落一遍（2026-11-22 实测：
+		// result 之后 CLI 自动续跑，06:33 的回复与 06:35–06:39 的续写被并成一条）。
+		// 所以先按条目自己的时间戳把地板之前的助手条目挡在门外，让合并组从地板之后重开。
+		// 尾部状态（lastRole/lastHadText/lastHadToolUse）在上面已按真实条目记好，
+		// 挡住内容不影响「这条尾巴收没收尾」的判断。
+		if !floor.IsZero() && (ts.IsZero() || !ts.After(floor)) {
+			return nil
+		}
 		text := strings.TrimSpace(extractClaudeMessageText(message["content"]))
 		if isAutoContinueAck(text) {
 			// 自动续跑一问一答的应答侧。提问侧靠 isMeta 挡住，应答侧没有 isMeta

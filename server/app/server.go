@@ -48,6 +48,10 @@ type StartOptions struct {
 	Role string
 	// Feishu 是外部通道（飞书）的本机配置。Enabled=false（缺省）时通道不创建。
 	Feishu FeishuOptions
+	// 根级飞书中继配置：FeishuRelayURL 是 worker 把卡片/回答交给控制节点的地址，
+	// FeishuNodeID 是本节点在飞书项目目录里的名字。两者只走 config.json。
+	FeishuRelayURL string
+	FeishuNodeID   string
 	// Task Router 是节点本地配置；cli/cmd 不能 import server/internal/kanban，
 	// 所以入口只传字符串/时长，在 Start 里归一化成 kanban.RouterConfig。
 	RouterMode        string
@@ -104,6 +108,30 @@ type StartOptions struct {
 	// ControlSync 是控制面同步（离线优先本地控制面）。nil / Enabled=false 时
 	// 一切保持改造前的行为：不建库、不采集、不转发、端点 404。
 	ControlSync *ControlSyncOptions
+	// SessionHygiene 是会话卫生策略（config.json 的 session_hygiene）。零值 =
+	// 默认策略（开启），见 sessionHygieneConfigFromOptions。
+	SessionHygiene SessionHygieneOptions
+}
+
+// SessionHygieneOptions 是节点本地的超长会话提示策略。它只影响本机，不走控制面。
+//
+// 零值不是「关闭」而是「默认值」：这个特性按用户裁定默认开启，要关必须显式写
+// enabled=false。时长上限等以秒为单位，0 = 用默认值。
+type SessionHygieneOptions struct {
+	Enabled        *bool
+	ActiveSeconds  int
+	ContextTokens  int
+	HintTurns      int
+	IdleGapSeconds int
+	Harnesses      map[string]SessionHygieneHarnessOverride
+}
+
+// SessionHygieneHarnessOverride 按 harness 覆盖全局阈值；0 = 沿用全局值。
+type SessionHygieneHarnessOverride struct {
+	ActiveSeconds  int
+	ContextTokens  int
+	HintTurns      int
+	IdleGapSeconds int
 }
 
 // LiveCompactHarnessOverride 是 fold.HarnessOverride 的可导入别名。
@@ -293,12 +321,23 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		writerGate:       kanban.NewWriterGate(),
 		routerConfig:     routerConfigFromOptions(opts),
 		taskConfig:       taskConfigFromOptions(opts),
+		hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),
 		parallelMainTree: &opts.WorkflowParallelMainTree,
 		feishu:           feishuChannel,
+		feishuRelay:      feishuRelayConfigFromOptions(opts),
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 	if feishuChannel != nil {
-		feishuChannel.SetAnswerHandler(workspaces.ApplyFeishuAnswer)
+		if err := prepareFeishuChannel(feishuChannel, opts.Feishu, FeishuIntakeDeps{
+			ConfigDir: configDir,
+			NodeID:    opts.FeishuNodeID,
+			Nodes:     sharedNodes,
+			Workspace: workspaces,
+		}); err != nil {
+			// 入站装配失败不能杀掉进程：M1 的卡片出口与首页仍照常可用。
+			log.Printf("[feishu] 入站装配失败，M2 不启用: %v", err)
+		}
+		feishuChannel.SetAnswerHandler(newFeishuAnswerRelay(workspaces))
 		feishuChannel.Start(ctx)
 	}
 

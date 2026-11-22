@@ -330,11 +330,13 @@ groups:
   - id: G-T
     title: 流式重放与正文正确性（快照重建协议）
     kind: fix
-    symptom: "同一段正文在行内被拼成 aabb（文本出现两遍、越切越多）；每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；切回运行中会话时在途内容整块丢失；正在完成的正文瞬间消失；控制台每个重放批帧抛一次 onStream(undefined) TypeError；没有用户操作也每 8 秒自持一次 done → session.ready → 重放 → done。"
-    why: "重放是快照重建，不是增量续流：服务端每次挂载恒回一帧 reset:true 的整批事件，客户端清掉瞬时尾巴再照单重建，于是「客户端尾巴 = 服务端 buffer 的纯函数」无条件成立。这一组 2026-10-06 被整体反转过一次，合上游时切勿按旧版恢复（event_cursor 序号续传、mergeStreamedText 重发判据、completed 表补发 done(replay:true) 三者全部删除）。reset 必须是参数而不是常量：首帧与排空续投帧形状相同、语义相反。瞬时行判据只能有一处实现，且 seq=0 的用户行例外必须保留 —— 那是乐观回声，服务端事件流里从来没有它。"
+    symptom: "同一段正文在行内被拼成 aabb（文本出现两遍、越切越多）；每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；切回运行中会话时在途内容整块丢失；正在完成的正文瞬间消失；控制台每个重放批帧抛一次 onStream(undefined) TypeError；没有用户操作也每 8 秒自持一次 done → session.ready → 重放 → done；用户新发的消息有时被插到 assistant 最后几条消息的上方而不是会话末尾（现场：CLI 在 result 之后继续输出的续写行没有持久行可落，留在缓存尾巴上，被整体追加到窗口之后，把 19 分钟后才发出的用户消息顶到了它们上面）；点会话右上角「同步」后，消息流底部刷出一大堆只有复制/模型/用量/时间/上下文胶囊、没有正文的行，时间戳从旧到新。"
+    why: "重放是快照重建，不是增量续流：服务端每次挂载恒回一帧 reset:true 的整批事件，客户端清掉瞬时尾巴再照单重建，于是「客户端尾巴 = 服务端 buffer 的纯函数」无条件成立。这一组 2026-10-06 被整体反转过一次，合上游时切勿按旧版恢复（event_cursor 序号续传、mergeStreamedText 重发判据、completed 表补发 done(replay:true) 三者全部删除）。reset 必须是参数而不是常量：首帧与排空续投帧形状相同、语义相反。瞬时行判据只能有一处实现，且 seq=0 的用户行例外必须保留 —— 那是乐观回声，服务端事件流里从来没有它。computeTailOverlay 只把「缓存里最新一条持久化 user 行之后」的瞬时行当活尾巴：排在它前面、又比它早 60s 以上的行属于上一轮的续写残留，不得当 tail 追加到窗口之后（位置判据防残留被顶到新消息后面，时间判据防持久化 user 行晚到时误杀本轮正在流出的行，60s 容忍时钟偏差）。**持久行另有一条下界**：只有 seq **大于窗口内最大 seq** 的持久行才算尾巴，窗口以下的持久行归 applyWindow 分页管。少了这条，`POST /sync` 的回包（缓存缺失时 `afterSeq=0` = 整个会话）会被 `handleSyncSession` 整份写进缓存，overlay 就把几百条历史行追加到窗口之后；它们不在 `visibleBlocks` 里、而 S2d 之后主日志 `content` 恒空，于是各自退化成 turn_meta 纯页脚 —— 就是上面那条「同步刷出一大堆控件」。这条下界每次渲染从 `visibleExchanges` 现算，**不是**被退役的 `latestSeq` 有状态水位（那个会把晚到的真实行永久吞掉，2026-09-28 事故）；守卫同时禁「状态水位」和「没有下界」两个方向。下界修好之后仍会有真正的新行（seq 比窗口新）走 overlay，所以块与 aux 要按 seq 从会话级映射补一份（`supplementOverlayMap`，只补窗口缺的键 —— 同 seq 两个 revision 并存会把正文与工具卡渲染两遍）。`withSessionMeta` 的 `blocks` 同理必须按 seq 合并而非整份替换：带 `seq` 的增量同步只回增量那几段的块，整份替换会让缓存里其它 seq 的正文消失，而 `saveCachedSession` 照旧落盘。"
     files:
       - web/src/services/session.ts
       - web/src/services/session/sessionDispatcher.ts
+      - web/src/services/session/sessionExchangeMerge.ts
+      - web/src/components/session/SessionViewer.tsx
       - web/src/app/useSessionStreamCache.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/shared/sessionOverlay.ts
@@ -352,6 +354,7 @@ groups:
       - web/tests/sync-preserves-pending-ask-card.test.mjs
       - web/tests/session-timeline-seq.test.mjs
       - web/tests/session-overlay-unit.test.mjs
+      - web/tests/session-window-merge.test.mjs
       - web/tests/message-mechanism-merges.test.mjs
       - web/tests/session-core-unit.test.mjs
       - web/tests/e2e-message-behavior.test.mjs
@@ -361,6 +364,8 @@ groups:
       - web/src/services/session/sessionExchangeMerge.ts:composeLoadedExchanges
       - web/src/services/session/sessionExchangeMerge.ts:isTransientExchange
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
+      - web/src/shared/sessionOverlay.ts:supplementOverlayMap
+      - web/src/services/session/sessionExchangeMerge.ts:mergeSessionBlockMaps
 
   - id: G-W
     title: worktree 会话 repoint（把会话从已删工作树搬回主 checkout）
@@ -1251,17 +1256,20 @@ groups:
       - web/src/i18n/locales/en-US.ts
     tests:
       - server/internal/kanban/task_delete_test.go
+      - web/tests/task-card-actions.test.mjs
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-create-panel.test.mjs
+      - web/tests/task-detail-header.test.mjs
+      - web/tests/task-ghost-card.test.mjs
     anchors:
       - server/internal/kanban/service_run_moves.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
       - server/internal/api/http_routes.go:r.Delete("/api/tasks/{id}"
       - web/src/services/task/crud.ts:export async function deleteTask
       - web/src/components/task/taskIcons.tsx:export function TaskCancelIcon
-      - web/src/components/task/TaskCardRows.tsx:"delete-task"
+      - web/src/components/task/TaskCardRows.tsx:buttons.map((key) => {
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.deleteTask": "删除任务卡片"'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.cancelTask": "取消任务"'
   - id: G-BC
@@ -1280,6 +1288,10 @@ groups:
       - server/internal/gitview/worktree_finish.go
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/taskCardActions.ts
+      - web/src/components/task/taskActionIcons.tsx
+      - web/src/components/task/taskStyles.ts
+      - web/src/components/task/taskIcons.tsx
       - web/src/components/workspace/WorkspaceTaskRow.tsx
       - web/src/components/shell/ToastContainer.tsx
       - web/src/services/task/worktree.ts
@@ -1298,6 +1310,8 @@ groups:
       - server/internal/gitview/worktree_finish_test.go
       - web/tests/task-card-parity.test.mjs
       - web/tests/task-button-gates.test.mjs
+      - web/tests/task-card-actions.test.mjs
+      - web/tests/task-detail-header.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-create-panel.test.mjs
@@ -1317,8 +1331,10 @@ groups:
       - server/internal/api/http_tasks_finish_teardown.go:UserChanges []string
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - web/src/components/task/TaskCardFinishButton.tsx:function TaskCardFinishButton
-      - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;
-      - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;
+      - web/src/components/task/TaskCardRows.tsx:const buttons = taskActionButtons(task);
+      - 'web/src/components/task/taskCardActions.ts:export function taskCardActions(task: KanbanTask): TaskCardActionKey[] {'
+
+      - 'web/src/components/task/useTaskDetailPanel.ts:const setArchived = async (archived: boolean) => {'
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
       - web/src/services/net/error.ts:"task.action_failed"
@@ -2904,7 +2920,7 @@ groups:
     anchors:
       - web/src/components/task/ScheduledAgentTaskList.tsx:ScheduledAgentTaskList
       - web/src/components/task/TaskCardFinishButton.tsx:TaskCardFinishButton
-      - web/tests/task-card-parity.test.mjs:the finish button is extracted
+      - web/tests/task-card-parity.test.mjs:the finish button stays extracted so the card can render it without duplicating markup
 
   - id: G-CP
     title: Project-add mode panel extraction
@@ -7922,7 +7938,7 @@ groups:
       - 'server/internal/kanban/workflow_runtime_cancel.go:func (s *Service) cancelOpenWorkflowNodeRuns('
       - 'server/internal/kanban/workflow_runtime.go:if fresh, ok, err := s.workflowRunForTask(ctx, store, task.ID); err == nil && ok {'
       - 'server/internal/kanban/workflow_runtime_test.go:func TestWorkflowCancelSettlesBoundReplyActivity('
-      - 'server/internal/api/appcontext_workflow.go:profile := kanban.WorkflowNodeAgentProfileOf(exec.Node)'
+      - 'server/internal/api/appcontext_workflow.go:profile := workflowNodeProfile(exec)'
       - 'server/internal/api/appcontext_workflow_test.go:func TestSendWorkflowCommentCarriesNodeAgentProfile('
       - 'server/internal/kanban/task_store_workflow_runtime.go:func (s *TaskStore) RequeueWorkflowNodeRun('
       - 'server/internal/kanban/task_store_workflow_events.go:WorkflowEventRunCompleted = "run_completed"'
@@ -8076,7 +8092,7 @@ groups:
     title: Codex/Claude 共享配置、MindFS provider 元数据与自定义模型目录安全双向同步
     kind: feature
     symptom: "Codex default/llmux 配置、Claude settings/MCP 和 MindFS provider 元数据分别困在各设备；直接同步完整备份会把 auth token、API Key、项目路径与 hook trust hash 推进 Git。设置页此前把「添加配置」「切换重启」拆成两条平行流程，同步入口只对 Codex 出现，其他 harness 既看不到原因也无法同步。"
-    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。同步引擎按 harness 注册表扩展：Codex 校验/渲染保持原路径，Claude 在 Go 里重写 render.sh 的语义（settings.deepMerge、permissions.deny 并集、MCP null 停用、${HOME} 展开、~/.claude.json 只合并 mcpServers、语义等价不落盘、非法现有文件拒绝覆盖），使 pc-win 无 jq 也能得到同一结果。设置页收成两个入口：Agent 配置（先选 harness，再切换/备份/同步）与 API 供应商/模型。自定义模型目录只存在于 preferences 并合入 /api/agents 的模型列表，发送时的 validateAgentModel 必须读同一份合并后的目录——只读 prober 状态会让界面能选中的模型在发送时被服务端拒绝（Codex 报「不支持其他别名，只有内部 gpt 系列」）。"
+    why: "保留完整 MindFS 快照为本机恢复点，只把白名单 Codex 字段和 provider 元数据提交到私有 .agents；凭据单独以 0600 留在本机。共享源通过配置的 Git upstream 双向 fetch/rebase/push，遇到同文件冲突或无关工作区改动就停止并保留双方内容。Windows profile 无法建 symlink 时用本机副本与 hash 判断本机编辑是否可安全导入。同步引擎按 harness 注册表扩展：Codex 校验/渲染保持原路径，Claude 在 Go 里重写 render.sh 的语义（settings.deepMerge、permissions.deny 并集、MCP null 停用、${HOME} 展开、~/.claude.json 只合并 mcpServers、语义等价不落盘、非法现有文件拒绝覆盖），使 pc-win 无 jq 也能得到同一结果。设置页收成两个入口：Agent 配置（先选 harness，再切换/备份/同步）与 API 供应商/模型。自定义模型目录只存在于 preferences 并合入 /api/agents 的模型列表，发送时的 validateAgentModel 必须读同一份合并后的目录——只读 prober 状态会让界面能选中的模型在发送时被服务端拒绝（Codex 报「不支持其他别名，只有内部 gpt 系列」）。Agent 重启端点不能同步等 KillAgentProcess：它要拿 agent 运行锁，Windows 上 CLI 启动超过 20s，连续重启会让第二次撞前端 10s 跨节点 deadline 并报「重启提示超时」。"
     boundary: "不共享 auth.json、API Key、OAuth token、项目路径、Codex 信任状态、Claude settings.local.json、~/.claude.json 除 mcpServers 外的键、会话或缓存；不做 last-writer-wins，不把 .agents 外的路径纳入 Git 暂存。首次快照迁移只由 --apply 显式触发。"
     files:
       - docs/upstream-customizations.yaml
@@ -8094,6 +8110,7 @@ groups:
       - server/internal/api/agent_config*.go
       - server/internal/api/agent_custom_models.go
       - server/internal/api/agent_custom_models_test.go
+      - server/internal/api/agent_restart_nonblocking_test.go
       - server/internal/api/usecase/session_model_validation.go
       - server/internal/api/usecase/session_model_validation_test.go
       - server/internal/api/http_routes.go
@@ -8129,6 +8146,7 @@ groups:
       - cli/cmd/agent_config_sync_test.go
       - server/internal/api/agent_api_provider_storage_test.go
       - server/internal/api/agent_config_export_test.go
+      - server/internal/api/agent_restart_nonblocking_test.go
       - server/internal/api/agent_config_shared_test.go
       - server/internal/api/agent_config_sync_handlers_test.go
       - server/internal/api/agent_custom_models_test.go
@@ -8227,6 +8245,8 @@ groups:
       - 'server/app/codex_profile_selection.go:func initializeCodexProfileSelection(prefs *preferences.Store) error'
       - 'server/internal/api/agent_api_provider_scope.go:func scopeCodexAPIProvidersAt(paths codexsync.Paths, providers []agentAPIProvider, activeProfile string) ([]agentAPIProvider, error)'
       - 'server/internal/api/agent_config_switch.go:func switchAgentConfig(req agentConfigSwitchRequest, app *AppContext) (agentConfigManifestEntry, bool, error)'
+      - 'server/internal/api/agent_config_switch.go:func scheduleAgentRestart(agentName string, hooks agentRestartHooks)'
+      - 'server/internal/api/agent_config_switch.go:func restartAgent(agentName string, app *AppContext) error'
       - 'server/internal/api/agent_config_shared.go:func configuredCodexSDKAgent(name string) (string, bool, error)'
       - 'web/src/components/file/useAgentConfigSelection.ts:const chooseAgentForConfig = React.useCallback('
 
@@ -8276,15 +8296,15 @@ groups:
       - web/tests/long-context-inheritance.test.mjs
     anchors:
       - 'server/internal/kanban/task_store_convert_stages.go:func ConvertStagesToConversation(ctx context.Context, db *sql.DB, opts StageConversionOptions) (StageConversionStats, error)'
-      - 'server/internal/kanban/task_store_convert_stages.go:func legacyWorkflowVersionFor(templateName string) string'
-      - 'server/internal/kanban/task_store_convert_stages.go:TriggeredBy:       WorkflowTriggeredByLegacyImport'
+      - 'server/internal/kanban/task_store_convert_legacy_graph.go:func legacyWorkflowVersionFor(templateName string) string'
+      - 'server/internal/kanban/task_store_convert_legacy_graph.go:TriggeredBy:       WorkflowTriggeredByLegacyImport'
       - 'server/internal/kanban/task_store_migrate.go:func MigrateTaskSchema(db *sql.DB) error'
       - 'server/internal/kanban/task_store_migrate.go:ConvertStagesToConversation(context.Background(), s.db, StageConversionOptions{})'
       - 'server/internal/kanban/task_store_workflow_runs.go:bound.TriggeredBy != WorkflowTriggeredByLegacyImport'
       - 'server/internal/kanban/workflow_recovery.go:WorkflowTriggeredByLegacyImport)'
       - 'server/internal/kanban/workflow_types.go:WorkflowTriggeredByLegacyImport = "legacy_import"'
       - 'web/src/components/task/TaskDetailPanel.tsx:<ConversationView'
-      - 'web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !taskRunningNow;'
+      - 'web/src/components/task/useTaskDetailPanel.ts:moveTask(task.root_id, task.id, "cancel", "", nodeId)'
 
   # ── 任务 Router（super agent 总控）+ 直连执行器；阶段概念彻底移除 ──────────
   - id: G-LN
@@ -8346,7 +8366,7 @@ groups:
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) runFinishTurn('
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) acquireTaskFinish(rootID, taskID string) (func(), error)'
       - 'web/src/app/useAppKanbanColumns.ts:const kanbanColumns: KanbanColumn[] = ['
-      - 'web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !taskRunning;'
+      - 'web/src/components/task/TaskCardRows.tsx:const buttons = taskActionButtons(task);'
       - 'web/tests/upstream-removals.test.mjs:阶段模型不得复活'
 
   # ── Task Router P0（shadow）：隐藏 CC 调度会话 + 决策账本 ───────────────────
@@ -8797,7 +8817,7 @@ groups:
     title: 新建任务可勾掉「立即执行」，首条留言先排队再手动派发
     kind: feature
     symptom: "新建任务面板少了「立即执行」开关：勾掉后任务只落卡，首条留言停在「待执行」，等用户点对话里的「立即执行」再交给 Router。默认勾选时与改造前一致——建完立刻派发首条留言。"
-    why: "用户 2026-11-17 明确要求把立即执行加回来且默认选中、勾掉可不立刻执行。必须保留：① `start_immediately` 缺省（nil）按 true 处理，老调用方/老客户端不传字段行为不变；② 勾掉时首条留言以 `queued` 状态落库且**不触发** Router（不建 Run、不发 agent 回合），任务停在待开始，`queued` 只属于用户留言，agent 回复不会使用；③ 派发入口唯一：`DispatchQueuedUserActivity` 由 RunNow 与 Resume（暂停中的排队任务）调用，先原子 claim 最早一条（`UPDATE ... WHERE status='queued'` + RowsAffected）再走 `dispatchUserActivity`，双击/重复 RunNow 幂等，绝不重复开一轮；④ 不复制分发逻辑：`CreateUserActivity` 与排队派发共用 `insertUserActivity`/`dispatchUserActivity`，Router shadow 快照仍严格早于 legacy 分发；⑤ 前端「立即执行」收在输入框右下角的控件行（`RunImmediatelyControl` 的 action 形态），只在真的存在 queued 用户留言时出现（终态任务不给入口）；排队留言气泡只留「待执行」徽标，点完乐观清 queued 并刷新任务头。"
+    why: "用户 2026-11-17 明确要求把立即执行加回来且默认选中、勾掉可不立刻执行。必须保留：① `start_immediately` 缺省（nil）按 true 处理，老调用方/老客户端不传字段行为不变；② 勾掉时首条留言以 `queued` 状态落库且**不触发** Router（不建 Run、不发 agent 回合），任务停在待开始，`queued` 只属于用户留言，agent 回复不会使用；③ 派发入口唯一：`DispatchQueuedUserActivity` 由 RunNow 与 Resume（暂停中的排队任务）调用，先原子 claim 最早一条（`UPDATE ... WHERE status='queued'` + RowsAffected）再走 `dispatchUserActivity`，双击/重复 RunNow 幂等，绝不重复开一轮；④ 不复制分发逻辑：`CreateUserActivity` 与排队派发共用 `insertUserActivity`/`dispatchUserActivity`，Router shadow 快照仍严格早于 legacy 分发；⑤ 前端「立即执行」只在**新建任务面板**的控件行里，且只留图标（28×28、8px 圆角，与发送键同款；文案走 `aria-label`/`title`）；任务详情输入框**没有**这个开关——留言一律立刻发出，派发入口搬到排队留言气泡的页脚（`data-testid` 为 `activity-run-queued`），只在真的存在 queued 用户留言时出现（终态任务不给入口）；排队留言气泡只留「待执行」徽标，点完乐观清 queued 并刷新任务头；⑥ 工作流选择随首条留言一起落库（`workflow_choice` / `workflow_version_id`，语义与 `POST /api/tasks/{id}/activities` 同名字段一致），排队路径在 `DispatchQueuedUserActivity` 里从留言行恢复版本再派发；`specified` 不带版本在建卡时就 400（`normalizeCreateTaskWorkflow`），不留一张每次点「立即执行」都报同一句错、用户无从修起的卡。"
     boundary: "只改新建任务的立即执行开关、用户留言的 queued 状态与派发路径；不改 Router 决策语义（G-LP）、不改一轮结束后的任务状态投影与结果摘要（G-LX）、不改 workflow 引擎/DAG，也不引入后台定时派发——排队留言只能由 RunNow/Resume 显式派发。"
     files:
       - server/internal/kanban/types.go
@@ -8808,6 +8828,7 @@ groups:
       - server/internal/kanban/service_run_moves.go
       - server/internal/kanban/service_create_test.go
       - server/internal/api/http_tasks.go
+      - server/internal/api/http_task_create_workflow_test.go
       - web/src/app/appTask.ts
       - web/src/app/useTaskComposer.ts
       - web/src/components/app/TaskInlineEditPanel.tsx
@@ -8822,20 +8843,27 @@ groups:
       - web/tests/task-panel-unification.test.mjs
     tests:
       - server/internal/kanban/service_create_test.go
+      - server/internal/api/http_task_create_workflow_test.go
       - web/tests/task-create-panel.test.mjs
       - web/tests/task-panel-unification.test.mjs
     anchors:
       - 'server/internal/kanban/types.go:ActivityStatusQueued = "queued"'
       - 'server/internal/kanban/service.go:StartImmediately *bool'
-      - 'server/internal/kanban/service_tasks.go:activitySvc.QueueUserActivity(ctx, taskID, input)'
-      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body string) (*TaskActivity, error) {'
+      - 'server/internal/kanban/service_tasks.go:normalizeCreateTaskWorkflow(in.WorkflowChoice, in.WorkflowVersionID)'
+      - 'server/internal/kanban/service_tasks.go:if version == "" {'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) QueueUserActivity(ctx context.Context, taskID, body, choice string, versionID *string) (*TaskActivity, error) {'
+      - 'server/internal/kanban/activity_service.go:func workflowVersionOf(choice string, versionID *string) string {'
       - 'server/internal/kanban/activity_service.go:func (s *ActivityService) DispatchQueuedUserActivity(ctx context.Context, taskID string) (*TaskActivity, *TaskActivity, error) {'
       - 'server/internal/kanban/activity_store.go:func (s *ActivityStore) ClaimFirstQueuedUserMessage(ctx context.Context, taskID string) (*TaskActivity, error) {'
       - 'server/internal/kanban/service_run_moves.go:activitySvc.DispatchQueuedUserActivity(ctx, task.ID)'
       - 'server/internal/api/http_tasks.go:StartImmediately *bool `json:"start_immediately"`'
+      - 'server/internal/api/http_tasks.go:WorkflowVersionID string `json:"workflow_version_id"`'
+      - 'server/internal/kanban/service.go:// 排队时一并落在留言行上，RunNow 派发按原选择执行。'
       - 'web/src/components/app/TaskInlineEditPanel.tsx:active={taskInlineEdit.startImmediately}'
-      - 'web/src/components/task/RunImmediatelyControl.tsx:running ? t("task.startingNow") : label'
+      - 'web/src/components/task/RunImmediatelyControl.tsx:const hint = t("task.startImmediatelyHint");'
       - 'web/src/hooks/useTaskActivities.ts:runQueued: () => Promise<void>;'
+      - 'web/src/app/useTaskComposer.ts:workflowChoice: edit.workflowChoice,'
+      - 'web/src/services/task/crud.ts:workflow_choice: options.workflowChoice'
       - 'web/src/services/task/crud.ts:start_immediately: options?.startImmediately ?? true'
 
   # ── 拖选复制只认聊天正文 ─────────────────────────────────────────────
@@ -8958,7 +8986,7 @@ groups:
       - 'server/internal/kanban/activity_service_turns.go:s.tasks.recordReplySummaryIfActive('
       - 'server/internal/kanban/activity_service_turns.go:if err := s.tasks.checkRouteDirectGate(ctx, task.ID); err != nil {'
       - 'server/internal/kanban/router_brief.go:if trigger.Mode != RouterModeRoute && trigger.Brief != nil {'
-      - 'server/internal/kanban/router_brief.go:kinds[nodeRun.NodeID] != NodeKindAgent'
+      - 'server/internal/kanban/router_brief_views.go:kinds[nodeRun.NodeID] != NodeKindAgent'
       - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) ApplyRouteActions('
       - 'server/internal/kanban/activity_route_apply.go:if !claimed {'
       - 'server/internal/kanban/activity_route_apply.go:if err := routeTaskStatusError(task.Status); err != nil {'
@@ -8974,19 +9002,39 @@ groups:
   - id: G-MD
     title: 进程在回合中途重启后，从 agent 转录补回被掐断的最后一轮
     kind: fix
-    symptom: "长任务回合中 systemctl restart / 崩溃后，用户屏幕上流式看过的回复在库里一个字都没有：只剩用户行和一条空助手行，刷新/重开都不回来。根因是实时路径只在回合收尾时写块流，而 live-owned 会话的常规增量同步被所有权守卫故意关掉。另有同源缺口：转录 id 只在收尾时写回绑定，死在第一轮中途时绑定为空，重启后既不能 resume 也找不到转录。"
-    why: "2026-11-17 实测 codex 会话 1794875218-883d38d3f760 长回合中被重启复现。必须保留：① 只补**最后一轮**且必须先证明它没收尾（尾部没有块/正文）；已收尾回合一个字节都不碰，避免重演 2026-09-16 整会话重导事故；② 时间地板取该轮**用户行**时间戳而不是最后一行——中断时补写的助手行时间比转录里的回复还晚，用它当起点会永远挡住要补的内容；③ 本进程内该会话回合仍在跑时绝不补（那是进行中的流，不是被掐断的尾巴）；④ 每个 `(root, session, 用户行 seq)` 每进程只尝试一次，provider 403 这类无回复回合不能每次轮询都重读转录；⑤ 尾部已有空助手行就挂到它上面，否则按用户行身份新建助手行，形态与正常收尾一致；⑥ 首次打开 agent 会话后立刻把非空转录 id 写回空绑定，只补空绑定，绝不覆盖已有 resume 绑定。"
-    boundary: "只修「被中断的最后一轮」的可恢复性与首轮绑定落库；不改所有权守卫本身、不改常规增量/全量同步语义、不改回合收尾写块流的路径，也不做每会话启动兜底补齐（该方案已被事故证伪并撤掉）。"
+    symptom: "长任务回合中 systemctl restart / 崩溃后，用户屏幕上流式看过的回复在库里一个字都没有：只剩用户行和一条空助手行，刷新/重开都不回来。根因是实时路径原本只在回合收尾时写块流，而 live-owned 会话的常规增量同步被所有权守卫故意关掉；kill -9 撞在工具调用中时，助手正文可能还没结束，但已经流到屏幕的文字/工具卡本来就应留下。A+ 把流式内容即时写成隐藏 provisional 块，重启后封口成可见记录，并把中断工具卡标成失败态。另有同源缺口：转录 id 只在收尾时写回绑定，死在第一轮中途时绑定为空，重启后既不能 resume 也找不到转录。"
+    why: "2026-11-17 实测 codex 会话 1794875218-883d38d3f760 长回合中被重启复现。必须保留：① 只补**最后一轮**且必须先证明它没收尾（尾部没有块/正文）；已收尾回合一个字节都不碰，避免重演 2026-09-16 整会话重导事故；② 时间地板取该轮**用户行**时间戳而不是最后一行——中断时补写的助手行时间比转录里的回复还晚，用它当起点会永远挡住要补的内容；③ 本进程内该会话回合仍在跑时绝不补（那是进行中的流，不是被掐断的尾巴）；④ 每个 `(root, session, 用户行 seq)` 每进程只尝试一次，provider 403 这类无回复回合不能每次轮询都重读转录；⑤ 尾部已有空助手行就挂到它上面，否则按用户行身份新建助手行，形态与正常收尾一致；⑥ 转录 id 一出现就写回空绑定，只补空绑定，绝不覆盖已有 resume 绑定——claude 的 CLI session id 要到第一条流消息才可见，打开时绑定必然是空的，所以学习必须发生在回合**进行中**（persistLearnedAgentSessionID 在 OnUpdate 里反复尝试），不能等收尾；⑦ 手点「同步」（Full）也必须先走同一套补录，且必须能跳过「每进程一次」的去重（force）——自动增量首拍转录可能还没 flush，用户有权重试；Full 补录后仍继续通用导入补子代理等尾部之外的内容，靠时间地板避免重复；⑧ 空绑定 + 尾部未收尾时，按「首条用户正文（是转录首条的前缀/子串）+ cwd」认领**唯一**匹配的转录，0 个或多个匹配一律放弃（绝不猜），认领后写回绑定再补录；⑨ 已流到屏幕的文字与 tool_call 在收到流事件时立刻写成 `Step=-1` 的 provisional 块，读窗口按 Step 忽略它们，所以正常回合不会重复渲染；写失败只记日志，不能打断模型回合。⑩ 恢复时按 `(seq, turnID)` 读 provisional 块，追加高 revision 的可见副本封口；相邻的流式文本片段必须拼回一条（中间夹工具卡的不合并），否则同一段回复会在界面上变成多个独立气泡；工具状态改 `interrupted`，界面必须按失败态渲染；重复封口/重复 Full/delta 不能增减行数。⑪ provisional 恢复后必须重算 Full 的时间地板，否则新写的助手行会让同一轮用户 prompt 再导一遍。"
+    boundary: "只修「被中断的最后一轮」的可恢复性与首轮绑定落库；流式路径只新增隐藏 provisional 块，不改正常收尾块的内容与时序。不改所有权守卫本身、不改常规增量同步语义、不改通用导入的子代理导入语义、不改 importer 只认闭合尾的规则，也不做每会话启动兜底补齐、进程级回合续跑或代理接管（后者依赖随服务端死亡的进程内代理，且该兜底方案已被事故证伪并撤掉）。"
     files:
       - server/internal/api/usecase/external_sessions_live_tail.go
       - server/internal/api/usecase/external_sessions_live_tail_test.go
       - server/internal/api/usecase/external_sessions_sync.go
       - server/internal/api/usecase/external_sessions_sync_helpers.go
       - server/internal/api/usecase/external_sessions_ownership_test.go
+      - server/internal/api/usecase/external_sessions_test.go
+      - server/internal/api/usecase/external_sessions_live_tail_full_test.go
       - server/internal/api/usecase/session_agent_open.go
+      - server/internal/api/usecase/session_send.go
+      - docs/plans/2026-11-22-session-stream-provisional-blocks.md
+      - docs/plans/README.md
+      - server/internal/session/blocks_provisional.go
+      - server/internal/session/blocks_provisional_test.go
+      - server/internal/api/usecase/session_stream_provisional.go
+      - server/internal/api/usecase/session_stream_provisional_test.go
+      - server/internal/api/usecase/session_provisional_recovery.go
+      - server/internal/api/usecase/external_sessions_provisional_test.go
+      - web/src/components/stream/ToolCallGroupCard.tsx
+      - web/src/components/stream/useToolCallCard.ts
+      - web/src/components/stream/toolCallRender.tsx
+      - web/tests/tool-card-interrupted.test.mjs
     tests:
       - server/internal/api/usecase/external_sessions_live_tail_test.go
+      - server/internal/api/usecase/external_sessions_live_tail_full_test.go
       - server/internal/api/usecase/external_sessions_ownership_test.go
+      - server/internal/session/blocks_provisional_test.go
+      - server/internal/api/usecase/session_stream_provisional_test.go
+      - server/internal/api/usecase/external_sessions_provisional_test.go
+      - web/tests/tool-card-interrupted.test.mjs
     anchors:
       - 'server/internal/api/usecase/external_sessions_sync.go:recoverInterruptedLiveTurn('
       - 'server/internal/api/usecase/external_sessions_live_tail.go:func (s *Service) recoverInterruptedLiveTurn('
@@ -8995,6 +9043,27 @@ groups:
       - 'server/internal/api/usecase/external_sessions_live_tail.go:AfterTimestamp: lastUser.Timestamp,'
       - 'server/internal/api/usecase/external_sessions_sync_helpers.go:func persistImportedExchangeContent('
       - 'server/internal/api/usecase/session_agent_open.go:persistOpenedAgentSessionBinding(ctx, manager, current, agentName, binding, sess)'
+      - 'server/internal/api/usecase/session_agent_open.go:func persistLearnedAgentSessionID('
+      - 'server/internal/api/usecase/session_send.go:if persistLearnedAgentSessionID(context.Background(), manager, current, in.Agent, runtime) {'
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:var orphanAdoptAttempts sync.Map'
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:func (s *Service) adoptOrphanedLiveTailBinding('
+      - 'server/internal/api/usecase/external_sessions_sync.go:s.adoptOrphanedLiveTailBinding(ctx, root, in.RootID, manager, current, agentName, binding)'
+      - 'server/internal/api/usecase/external_sessions_sync.go:current, agentName, binding, in.Full); rerr != nil {'
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) AppendProvisionalText('
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) AppendProvisionalToolCall('
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) ReadProvisionalTurnBlocks('
+      - 'server/internal/session/blocks_provisional.go:func (m *Manager) SealProvisionalTurnBlocks('
+      - 'server/internal/session/blocks_provisional.go:call.Status = "interrupted"'
+      - 'server/internal/api/usecase/session_stream_provisional.go:type provisionalStreamWriter struct {'
+      - 'server/internal/api/usecase/session_send.go:provisional := newProvisionalStreamWriter('
+      - 'server/internal/api/usecase/session_send.go:provisional.text(chunk.Content)'
+      - 'server/internal/api/usecase/session_send.go:provisional.toolCall(toolCall)'
+      - 'server/internal/api/usecase/session_provisional_recovery.go:func (s *Service) recoverProvisionalTurnBlocks('
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:s.recoverProvisionalTurnBlocks(ctx, manager, current, agentName, binding.AgentSessionID, lastUser)'
+      - 'server/internal/api/usecase/external_sessions_sync.go:if refreshed := lastExternalSyncTimestamp(current.Exchanges); !refreshed.IsZero() {'
+      - 'web/src/components/stream/ToolCallGroupCard.tsx:status === "interrupted"'
+      - 'web/src/components/stream/useToolCallCard.ts:normalizedStatus === "interrupted"'
+      - 'web/src/components/stream/toolCallRender.tsx:interrupted: "#ef4444"'
 
   # ── 任务详情对话输入框：与新建任务面板同源 composer + 图标式工作流选择器 ──
   - id: G-ME
@@ -9260,9 +9329,9 @@ groups:
       - 'server/internal/kanban/router_brief.go:if trigger.Event != nil {'
       - 'server/internal/kanban/router_brief.go:Event    *RouterBriefEvent    `json:"event,omitempty"`'
       - 'server/internal/kanban/router_brief_cap.go:func trimRouterEventUnverified(brief *SituationBrief) bool {'
-      - 'server/internal/kanban/activity_route_apply.go:func routeEffectActivityID(decision *RouterDecision, action RouterAction) string {'
-      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivity, deterministic bool) error {'
-      - 'server/internal/kanban/activity_route_apply.go:if purpose == "" {'
+      - 'server/internal/kanban/activity_route_reply.go:func routeEffectActivityID(decision *RouterDecision, action RouterAction) string {'
+      - 'server/internal/kanban/activity_route_reply.go:func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivity, deterministic bool) error {'
+      - 'server/internal/kanban/activity_route_reply.go:if purpose == "" {'
       - 'server/internal/kanban/router_coordinate_turn.go:actions[i].Purpose = "progress"'
       - 'server/internal/kanban/router_tools_schema.go:func isRuntimeEventBrief(brief *SituationBrief) bool {'
       - 'server/internal/kanban/router_prompt.md:**运行期事件只依据 `brief.event` 与 `brief.evidence` 汇报**'
@@ -9464,7 +9533,7 @@ groups:
       - 'server/internal/agent/fold/pointer.go:PointerMarker = "[MindFS live-compact]"'
       - 'server/internal/agent/fold/config.go:func (c Config) ForHarness(name string) Config {'
       - 'server/internal/agent/proxy/live_compact_log.go:func liveCompactProviderLine(token string, gate liveCompactGate, result foldResult, usage fold.Usage) string {'
-      - 'server/internal/agent/proxy/live_compact_log.go:actual=%d cached=%d growth=%d projected=%d candidates=%d'
+      - 'server/internal/agent/proxy/live_compact_log.go:actual=%d cached=%d usage_missing=%s growth=%d projected=%d candidates=%d'
       - 'server/internal/agent/proxy/provider_route.go:scanned := key != "" && r.Method == http.MethodPost'
       - 'server/internal/agent/proxy/provider_route.go:observed := scanned && s.harnessRuntimeFor(harnessForAdapter(adapterResponses)).cfg.Observes()'
       - 'server/internal/agent/proxy/provider_route.go:if observed && resp.Header.Get("Content-Encoding") == "" {'
@@ -9580,12 +9649,12 @@ groups:
       - 'server/internal/agent/pool.go:ArchiveDir:       opts.LiveCompactArchiveDir'
       - 'server/internal/agent/pool_context_saving.go:func (p *Pool) SessionContextSaving(sessionKey string) fold.ContextSaving'
       - 'server/internal/api/usecase/session_context_saving.go:func (s *Service) GetSessionContextSaving('
-      - 'server/internal/api/usecase/session_context_saving.go:return pool.SessionContextSaving(agentPoolSessionKey(key, agentName)), nil'
+      - 'server/internal/api/usecase/session_context_saving.go:view.ContextSaving = pool.SessionContextSaving(agentPoolSessionKey(key, agentName))'
       - 'server/internal/api/http_session_context_saving.go:func (h *HTTPHandler) handleSessionContextSaving('
       - 'server/internal/api/http_routes.go:r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)'
       - 'server/app/server.go:liveCompactArchiveDir = filepath.Join(configDir, "context")'
       - 'web/src/services/agent/contextSaving.ts:/context-saving`, params, nodeId)'
-      - 'web/src/components/agent/useContextSaving.ts:if (wasPending && !pending) void refresh()'
+      - 'web/src/components/agent/useContextSaving.ts:if (!wasPending || pending) return;'
       - 'web/src/components/agent/ContextSavingIndicator.tsx:if (!visible) return null;'
       - 'web/src/components/action/ComposerTopChips.tsx:{hasBoundSession && mode !== "command" ? ('
       - 'server/internal/agent/pool_context_saving_test.go:func TestNewPoolWithOptionsWiresArchiveDir('
@@ -9599,7 +9668,7 @@ groups:
     title: 任务详情展示收口 —— 运行汇报先折叠后平铺（2026-11-19 用户裁定改平铺）+ 直达工作流会话
     kind: fix
     symptom: "R1 T10 复核登记的 UX 残留：同一轮任务结算后用户会看到同一句结果被说两遍 —— 引擎结算回填的 reply 行（status+summary）与 Router 运行期事件 say 出来的 purpose=progress 汇报行；后者另带失败节点/未验证项等增量信息，两条都不能删。另一处：工作流节点在各自的 agent 会话里干活，任务对话只放汇报，用户想看节点实际做了什么、或接管那个会话，必须先展开运行视图、再逐节点点「打开会话」。"
-    why: "必须保留：① 运行视图仍是对话流的下钻（桌面排在 ConversationView 之后；mobile 下 `.task-detail-execution` `order:-1` 置顶，见 G-NY）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。直连对话任务没有 WorkflowRun，入口回落为「打开任务主会话」，不再整条消失（G-NY）。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只靠页脚的类型胶囊标成「进度」做区分（`activityTypeTagKey` + `activity-type-tag`，见 G-NY）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
+    why: "必须保留：① 运行视图仍是对话流的下钻（两端都排在 ConversationView 之后，即输入框下方的胶囊行里；2026-11-21 删掉了移动端 `order:-1` 置顶，见 G-NY）—— 独立的「工作流会话」直达按钮已按用户要求整体删除（见 G-MV），会话入口只剩逐节点图标。直连对话任务没有 WorkflowRun，入口回落为「打开任务主会话」，不再整条消失（G-NY）。② **2026-11-19 用户裁定推翻了折叠**（原话：「运行汇报为什么要加折叠功能？」）：默认收起的「运行汇报 N 条」小组让用户看不到流程跑到哪一步，还得先点开才知道有没有上报。现在的契约是平铺：所有活动按时间顺序原样渲染，`purpose=progress` 的行只靠页脚的类型胶囊标成「进度」做区分（`activityTypeTagKey` + `activity-type-tag`，见 G-NY）。`ActivityReportsGroup`、`conversationRows`、`isSettledReply` 与 `task.activity.reports/reportsHide` 两个 i18n 键一并删除，不留「以后可能用」的死代码。见 G-MY。"
     boundary: "只改前端展示层；不动活动/事件/决策/结果摘要的数据路径，不新增 HTTP 端点，不改路由与权限。平铺不改变任何活动的可见性判定 —— 唯一例外是等待审批时隐藏同一 Run 的占位回复（见 G-MY 的 `visibleConversationActivities`），那是「一张审批卡」的可读性要求，不是折叠。"
     files:
       - web/src/shared/activityModel.ts
@@ -9735,6 +9804,7 @@ groups:
       - server/internal/kanban/service_activities_summary.go
       - server/internal/kanban/service_activities.go
       - server/internal/kanban/service.go
+      - server/internal/kanban/activity_service.go
       - server/internal/kanban/activity_store.go
       - server/internal/kanban/task_store.go
       - server/internal/kanban/activity_route_apply.go
@@ -9751,17 +9821,22 @@ groups:
       - web/src/i18n/locales/en-US-tasks.ts
     tests:
       - server/internal/kanban/service_activity_summary_test.go
+      - server/internal/kanban/activity_direct_summary_test.go
       - server/internal/kanban/activity_task_status_test.go
       - server/internal/kanban/router_route_test.go
       - web/tests/run-timeline-readable.test.mjs
       - web/tests/task-panel-options.test.mjs
     anchors:
-      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 20000'
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 600'
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) scheduleReplySummaryCompression('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) applyCompressedReplySummary('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) resolveCompressUserMessage('
-      - 'server/internal/kanban/service_activities_summary.go:activities.ReplaceSummaryIfUnchanged(ctx, activityID, raw, text)'
-      - 'server/internal/kanban/service_activities_summary.go:store.ReplaceTaskResultSummaryIfUnchanged(ctx, taskID, raw, text)'
+      - 'server/internal/kanban/service_activities_summary.go:func (s *Service) scheduleDirectReplySummaryCompression('
+      - 'server/internal/kanban/service_activities_summary.go:const directSummaryCompressMinRunes = 240'
+      - 'server/internal/kanban/service_activities_summary.go:activities.ReplaceSummaryIfUnchanged(ctx, target.activityID, target.wantSummary, text)'
+      - 'server/internal/kanban/service_activities_summary.go:store.ReplaceTaskResultSummaryIfUnchanged(ctx, target.taskID, target.wantTaskResult, text)'
+      - 'server/internal/kanban/activity_service.go:replySummarizer func(ctx context.Context, store *TaskStore, activity *TaskActivity, raw string)'
+      - 'server/internal/kanban/activity_service_turns.go:s.replySummarizer(ctx, s.tasks, agentAct, text)'
       - 'server/internal/kanban/service_activities_summary.go:const runSummaryCompressMaxRunes = 800'
       - 'server/internal/kanban/service_activities_summary.go:_, width := utf8.DecodeRuneInString(text[idx:])'
       - 'server/internal/kanban/service_activities.go:s.scheduleReplySummaryCompression(ctx, store, run, activity, raw)'
@@ -9860,7 +9935,7 @@ groups:
       - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) hasWorkflowLibrary(ctx context.Context) bool {'
       - 'server/internal/kanban/router_brief.go:routerBriefTriggerBodyLimit = 8000'
       - 'server/internal/kanban/router_brief.go:Body:           truncateRouterText(item.Body, routerBriefTriggerBodyLimit),'
-      - 'server/internal/kanban/router_brief.go:BodyExcerpt: truncateRouterText(item.Body, routerBriefActivityExcerpt),'
+      - 'server/internal/kanban/router_brief_views.go:BodyExcerpt: truncateRouterText(item.Body, routerBriefActivityExcerpt),'
       - 'server/internal/kanban/task_store.go:DELETE FROM workflow_run_events WHERE run_id IN (SELECT id FROM workflow_runs WHERE task_id = ?)'
       - 'server/internal/kanban/task_store.go:"task_activities",'
       - 'server/internal/kanban/router_service_recovery.go:[router] fallback task=%s decision=%s latency_ms=%d route_mode=%v cause=%s'
@@ -10073,7 +10148,7 @@ groups:
       - 'server/internal/kanban/workflow_human_gate_payload.go:func gateActivityPayload(run *WorkflowRun, node WorkflowNode, nr NodeRun) (string, error) {'
       - 'server/internal/kanban/workflow_human_gate_payload.go:payload["upstream"] = upstream'
       - 'server/internal/kanban/workflow_human_gate.go:func (s *Service) ResolveWorkflowHumanGate(ctx context.Context, rootID, taskID, nodeID, decision, commentID, note string) (NodeRun, error) {'
-      - 'server/internal/kanban/workflow_human_gate.go:} else if _, err := activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed); err != nil {'
+      - 'server/internal/kanban/workflow_human_gate.go:activitySvc.QueueUserActivity(ctx, run.TaskID, trimmed, CommentWorkflowChoiceEmpty, nil)'
       - 'server/internal/kanban/service_gate_note.go:func (s *Service) dispatchQueuedGateNote(ctx context.Context, store *TaskStore, run *WorkflowRun) {'
       - 'server/internal/api/http_task_human_gate.go:Note string `json:"note"`'
       - 'web/src/shared/activityModel.ts:export function visibleConversationActivities(activities: TaskActivity[]): TaskActivity[] {'
@@ -10125,8 +10200,8 @@ groups:
       - 'server/internal/kanban/router_service_recovery.go:func (rs *RouterService) salvageRouteActions('
       - 'server/internal/kanban/router_service_recovery.go:func (rs *RouterService) notifyRouterTurnTimeout('
       - 'server/internal/kanban/router_service_recovery.go:func isRouterTurnTimeout(err error) bool {'
-      - 'server/internal/kanban/router_brief.go:func briefTaskStatus(run *WorkflowRun, task Task) string {'
-      - 'server/internal/kanban/router_brief.go:Status:             briefTaskStatus(run, task),'
+      - 'server/internal/kanban/router_brief_views.go:func briefTaskStatus(run *WorkflowRun, task Task) string {'
+      - 'server/internal/kanban/router_brief_views.go:Status:             briefTaskStatus(run, task),'
       - 'server/internal/kanban/router_brief_cap.go:func capSituationBrief(brief *SituationBrief) *SituationBrief {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteTimeoutKeepsRecordedActions(t *testing.T) {'
       - 'server/internal/kanban/router_timeout_salvage_test.go:func TestRouterRouteNonTimeoutSalvageKeepsActionsWithoutTimeoutNotice(t *testing.T) {'
@@ -10223,7 +10298,7 @@ groups:
       - 'server/app/workspace_build.go:services.Kanban.StartArchiveSweeper(m.ctx)'
       - 'web/src/app/useAppKanbanColumns.ts:key: "archived",'
       - 'web/src/app/useTaskWorkspaceState.ts:new Set(["archived"])'
-      - 'web/src/components/task/TaskCardRows.tsx:onMove(task, "archive-task");'
+      - 'web/src/components/task/TaskCardRows.tsx:onMove(task, key);'
       - 'web/src/components/task/taskBoardTypes.ts:| "archive-task"'
       - 'web/src/services/task/crud.ts:export async function archiveTask('
       - 'web/src/shared/taskTypes.ts:archived_at?: string;'
@@ -10233,7 +10308,7 @@ groups:
       - 'server/internal/kanban/task_store_incremental_sync_test.go:func TestListTasksArchivedAfterSeesArchiveChanges(t *testing.T) {'
       - 'server/internal/kanban/service_archive_test.go:func TestArchiveDismissalLifetime(t *testing.T) {'
       - 'server/internal/kanban/task_archive_dismissal_test.go:func TestUnarchivedTaskIsNotAutoArchivedAgain(t *testing.T) {'
-      - 'web/tests/task-archive.test.mjs:test("an archived card is reduced to unarchive + delete", () => {'
+      - 'web/tests/task-archive.test.mjs:test("an archived card offers reopen + unarchive + delete", () => {'
   # 撞号说明：本轮开发时同工作区另一条会话的归档计划已在 docs/plans/README.md 里
   # 自称 Scope: G-NB（尚未登记本表）。为避免两组抢同一个 ID，本组取 G-NC。
   - id: G-NC
@@ -10271,15 +10346,15 @@ groups:
       - 'server/internal/kanban/workflow_engine.go:func taskStatusFromRun(run *WorkflowRun) string {'
       - 'server/internal/kanban/workflow_engine.go:if status == StatusSuccess || status == StatusFail {'
       - 'server/internal/kanban/service_user_turn.go:if isTerminalStatus(ProjectStatusFromRun(run)) {'
-      - 'server/internal/kanban/router_brief.go:if isTerminalStatus(derived) {'
+      - 'server/internal/kanban/router_brief_views.go:if isTerminalStatus(derived) {'
       - 'server/internal/kanban/task_store.go:func (s *TaskStore) ReopenTask(ctx context.Context, taskID string) error {'
       - 'server/internal/kanban/service_run_moves.go:func (s *Service) Reopen(ctx context.Context, in MoveInput) (TaskDetail, error) {'
       - 'server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskReopen(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/reopen", h.handleKanbanTaskReopen)'
-      - 'web/src/components/task/TaskCardRows.tsx:const canReopen = terminal;'
-      - 'web/src/components/task/useTaskDetailPanel.ts:const canReopenTask = terminal;'
-      - 'web/src/components/task/TaskDetailPanel.tsx:if (canReopenTask) {'
-      - 'web/src/app/useTaskBoard.ts:if (action === "cancel" || action === "reopen" || action === "rebuild-worktree") {'
+      - 'web/src/components/task/taskCardActions.ts:actions.push("reopen", "archive-task");'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const reopenTask = async () => {'
+      - 'web/src/components/task/TaskDetailPanel.tsx:reopen: () => void reopenTask(),'
+      - 'web/src/app/useTaskBoard.ts:action === "start" ||'
   - id: G-ND
     title: 工作台项目头的折叠箭头移到项目名之前
     kind: feature
@@ -10571,8 +10646,8 @@ groups:
       - 'server/internal/kanban/router_brief_open_nodes.go:func workflowNodeStateSettled(state string) bool {'
       - 'server/internal/kanban/router_brief_open_nodes.go:func workflowRunHasOpenNodes(run *WorkflowRun, rows []NodeRun) bool {'
       - 'server/internal/kanban/router_brief.go:if isActiveTaskStatus(status) && (status == StatusPaused || workflowRunHasOpenNodes(run, nodeRuns)) {'
-      - 'server/internal/kanban/router_brief.go:"unknown": 0}'
-      - 'server/internal/kanban/router_brief.go:func latestNodeRunStatus(nodeRuns []NodeRun) map[string]string {'
+      - 'server/internal/kanban/router_brief_views.go:"unknown": 0}'
+      - 'server/internal/kanban/router_brief_views.go:func latestNodeRunStatus(nodeRuns []NodeRun) map[string]string {'
       - 'server/internal/kanban/router_brief.go:router_read_session 默认给最后一段文本，用 offset 往前翻；只能读本任务的会话'
       - 'server/internal/kanban/workflow_recovery.go:func (s *Service) projectWorkflowRunStopped(ctx context.Context, store *TaskStore, runID string) error {'
       - 'server/internal/kanban/workflow_recovery.go:func (s *Service) settleWorkflowReplyUnknown(ctx context.Context, store *TaskStore, runID string) {'
@@ -10964,10 +11039,10 @@ groups:
       - 'server/internal/kanban/service_router.go:SupervisionActionsLastHour int'
       - 'server/internal/kanban/router_supervision_direct.go:const supervisionDirectMaxRetries = 1'
       - 'server/internal/kanban/router_supervision_actions.go:case RouterActionRetryDirect:'
-      - 'server/internal/kanban/router_supervision_actions.go:if obs.Direct.Replying {'
+      - 'server/internal/kanban/router_supervision_actions.go:if obs.Direct.Replying && !obs.Direct.StalledByWatermark {'
       - 'server/internal/kanban/router_supervision_tools.go:e.supervisionMode != RouterSupervisionOn && e.supervisionMode != RouterSupervisionShadow'
       - 'server/internal/kanban/router_event_direct.go:func (s *Service) scanDirectStalledEvents('
-      - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && ev.Kind != RouterEventDirectStalled && ev.Kind != RouterEventCompletionBlocked {'
+      - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && !routerEventAllowsEmptyRun(ev.Kind) {'
       - 'server/internal/kanban/router_coordinate.go:case RouterEventDirectStalled:'
       - 'server/internal/kanban/router_coordinate_turn.go:if event.Kind == RouterEventDirectStalled && !rs.directEvidenceHolds(ctx, *event) {'
       - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) applyRouteRetryDirect('
@@ -11174,7 +11249,7 @@ groups:
       - 'server/internal/kanban/activity_service.go:completion CompletionApplier'
       - 'server/internal/kanban/router_event_types.go:RouterEventCompletionBlocked RouterEventKind = "completion_blocked"'
       - 'server/internal/kanban/router_event_types.go:router event completion_blocked uses RouterEventCompletionInstanceKey'
-      - 'server/internal/kanban/router_event_store.go:ev.Kind != RouterEventDirectStalled && ev.Kind != RouterEventCompletionBlocked'
+      - 'server/internal/kanban/router_event_store.go:!routerEventAllowsEmptyRun(ev.Kind)'
       - 'server/internal/kanban/router_types.go:RouterTriggerCompletionBlocked RouterTriggerKind = "completion_blocked"'
       - 'server/internal/kanban/router_coordinate.go:kind = RouterTriggerCompletionBlocked'
       - 'server/internal/kanban/router_coordinate.go:kind == RouterTriggerCompletionBlocked'
@@ -11189,7 +11264,7 @@ groups:
       - 'server/internal/kanban/router_supervision.go:SupervisionFailureEvidenceFailed SupervisionFailureKind = "evidence_failed"'
       - 'server/internal/kanban/router_supervision.go:EvidenceFailedNodes []SupervisionNodeState'
       - 'server/internal/kanban/router_supervision_actions.go:case SupervisionFailureEvidenceFailed:'
-      - 'server/internal/kanban/router_coordinate_turn.go:if event.Kind != RouterEventCompletionBlocked {'
+      - 'server/internal/kanban/router_coordinate_turn.go:skipReason, budgetErr := eventTurnBudgetSkip('
       - 'server/internal/kanban/service_completion.go:return s.emitCompletionBlockedEvent('
       - 'server/internal/kanban/service_completion.go:if completionNeedsVerifier(run, report) || (run == nil && !report.Contract) {'
       - 'server/internal/kanban/service_completion.go:func (s *Service) completionDecisionRun('
@@ -11398,7 +11473,7 @@ groups:
       - server/internal/kanban/activity_store_test.go
       - server/internal/api/turn_text_blocks_test.go
     anchors:
-      - 'server/internal/kanban/activity_route_apply.go:if purpose == "summary" && decision.TriggerKind != RouterTriggerRunSettled {'
+      - 'server/internal/kanban/activity_route_reply.go:if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {'
       - 'server/internal/kanban/activity_route_apply.go:if act.Purpose == "summary" {'
       - 'server/internal/kanban/activity_store.go:const activityOrderBy = ` ORDER BY CASE WHEN type = ''agent_reply'' AND status = ''completed'' AND updated_at <> '''''
       - 'server/internal/kanban/router_tools.go:case "chat", "progress", "summary":'
@@ -11407,7 +11482,7 @@ groups:
       - 'server/internal/kanban/router_coordinate.go:rs.requeueFailedSettleEvents(ctx, now)'
       - 'server/internal/kanban/router_event_store.go:func (s *RouterStore) RequeueFailedEventForCompensation(ctx context.Context, eventID, reason string) (bool, error) {'
       - 'server/internal/kanban/router_settle_compensation.go:func (rs *RouterService) requeueFailedSettleEvents(ctx context.Context, now time.Time) {'
-      - 'server/internal/kanban/router_prompt.md:18. **结算总结（`brief.trigger.kind=run_settled`）**'
+      - 'server/internal/kanban/router_prompt.md:18. **结算总结（`brief.trigger.kind=run_settled` 或 `turn_settled`）**'
       - 'server/internal/kanban/service_activities_summary.go:const runSummaryCompressTimeout = 90 * time.Second'
       - 'server/internal/api/turn_text_blocks.go:func appendTurnTextBlock(text, lastType string, updateType types.EventType, chunk string) (string, string) {'
       - 'server/internal/api/usecase/session_subagent_stream.go:responseText = AppendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)'
@@ -11429,6 +11504,10 @@ groups:
       之外，取消与 gate 驳回这两条绕开 `setTaskStatus` 的终态路径各自补一张卡片，否则在飞书上点「驳回」
       或叫停任务的人只会看到卡片变成「已处理」，不知道任务已经停了。⑥ 定时任务结果用
       `scheduled-` 前缀，和看板的 `notice-` 分开 —— 同一任务两条来源撞 ID 会被卡片去重静默吞掉一张。
+      ⑦ 投递有界：`--idempotency-key` 必须是确定性摘要且 ≤50 字符（飞书上限；终态与定时卡片的 ID
+      本身就有 55+ 字符，拼 `"mindfs-card-"+ID` 会让每一张 notice 卡永远发不出去、且每 2 秒重试一次），
+      失败按 5s 起倍增、封顶 10 分钟退避；从未发出过的卡片连续 12 次失败即停止重试并保留 `last_error`
+      （它背后没有消息，不存在用户点不到的损失），已发出的卡片补丁失败只退避不放弃。
     boundary: "M1 只做出站、只做本机、只做进程内。不接 `im.message.receive_v1` 入站（不能让用户从飞书新建任务）、没有项目选择卡、没有 relay token 与 worker 跨节点派发（M2/M4）。notice 卡片的点击是无动作的确认。卡片的点击处理落在卡片里记录的账户上，重启后仍然落到同一个任务库。通道缺省关闭，`enabled=false` 时进程里不建任何通道对象。"
     files:
       - docs/superpowers/plans/2026-11-21-feishu-channel-m1-outbound.md
@@ -11468,6 +11547,7 @@ groups:
       - server/internal/channels/feishu/event_test.go
       - server/internal/channels/feishu/supervisor_test.go
       - server/internal/channels/feishu/service_test.go
+      - server/internal/channels/feishu/delivery_retry_test.go
       - server/internal/channels/feishu/integration_test.go
       - server/internal/kanban/card_notifier_test.go
       - server/internal/kanban/activity_service_reply_test.go
@@ -11475,6 +11555,8 @@ groups:
       - cli/cmd/startup_feishu_test.go
     anchors:
       - 'server/internal/channels/feishu/service.go:func (s *Service) Notify(_ context.Context, n Notice) error {'
+      - 'server/internal/channels/feishu/service.go:func idempotencyKey(cardID string) string {'
+      - 'server/internal/channels/feishu/service.go:stopped := c.MessageID == "" && attempts >= deliveryAttemptCap'
       - 'server/internal/channels/feishu/service_click.go:func (s *Service) HandleAction(ctx context.Context, a Action) error {'
       - 'server/internal/channels/feishu/supervisor.go:func (s *Supervisor) Run(ctx context.Context) {'
       - 'server/internal/channels/feishu/store.go:func NewStore(path string) *Store {'
@@ -11488,7 +11570,7 @@ groups:
       - 'server/app/feishu.go:func newFeishuChannel(opts FeishuOptions, configDir string) *feishu.Service {'
       - 'server/internal/api/appcontext_feishu.go:func (s *AppContext) ApplyFeishuAnswer(ctx context.Context, a feishu.Answer) error {'
       - 'server/internal/api/appcontext_notify.go:func (s *AppContext) notifyFeishuScheduled(rootID, taskID, taskName, summary, message string, success bool) {'
-      - 'cli/cmd/startup_feishu.go:func applyFeishuConfig(cfg startupConfig, explicit map[string]bool, flags startupFlags) {'
+      - 'cli/cmd/startup_feishu.go:func applyFeishuConfig(cfg startupConfig, explicit map[string]bool, flags startupFlags) error {'
       - 'cli/cmd/startup_feishu.go:func feishuOptions(flags startupFlags) app.FeishuOptions {'
 
   - id: G-NY
@@ -11508,8 +11590,12 @@ groups:
       多像素才看到最新一条；⑧ 只有 `purpose=progress` 的行有标记，用户分不清一条消息是
       留言、回复、结果还是系统事件；上翻历史后也没有「回到底部」，只能自己一路滑回去。
     why: |
-      必须保留：① 移动端（`max-width:640px`）用 `order:-1` 把 `.task-detail-execution` 提到
-      对话流之前，桌面仍保持「对话流 → 执行详情」的下钻顺序。② 表格最小宽度退化为
+      必须保留：① 胶囊行（`.task-detail-execution`）在两端只有一种顺序 —— 对话流（含输入框）
+      → 胶囊行 → 收尾区。2026-11-21 曾用 `order:-1` 把它提到移动端最前面，用户两次复测报
+      「吸顶」：它恒在正文顶端、贴着面板标题下沿；长对话里又离面板落地处两万多像素，
+      反而够不着。可见性由「首屏滚到真正的底部」与「输入框长高时贴底对齐」两条机制保证，
+      与流内顺序无关，所以 `.task-detail-execution` 只剩 `min-width:0`，任何断点都不许再改
+      `order` / `position`。② 表格最小宽度退化为
       `min(520px, 100%)`、表头允许折行、单元格 `overflow-wrap:anywhere`，`.markdown-viewer`
       与 `#conversation-view` 加 `min-width:0; max-width:100%`，让宽内容在卡片内收住而不是
       把面板撑出横向滚动。③ 消息页脚删掉状态 span 与 `STATUS_LABEL_KEYS`/`STATUS_COLORS`，
@@ -11537,30 +11623,89 @@ groups:
       `JUMP_VISIBLE_PX=200`（会话页仍是 `STICK_REARM_PX=2`）：任务详情的输入框在滚动流里、
       就在对话末尾，面板底部还有 12–46px 收尾区，2px 会让按钮在刚打开、刚自动落底时就亮着，
       紧贴输入框时两个控件还会重叠。移动端与桌面是同一颗按钮、同一个位置（面板正文底部居中）。
-      ⑨ header 收口（2026-11-21 用户要求）：编辑键从右上角搬到任务名旁边并与名字锁在同一行
+      ⑨ header 收口（2026-11-21 初版，2026-11-22 按用户口径重做）：编辑键从右上角搬到任务名旁边并与名字锁在同一行
       （名字 `flex:0 1 auto` + `minWidth:0` 省略，组内 nowrap，否则长名字会把编辑键挤到第二行、
-      header 变两行高）；收尾 worktree / 完成任务 / 重新打开收进右上角「操作控件」菜单
-      （`TaskDetailActionsMenu`，portal 到 body + fixed 定位，点外面 / Esc / 滚动 / 改窗口都收起，
-      没有可执行动作时给一行说明）；**删除不进菜单**，仍按原样单独摆在 header 上（终态任务才出现）；
-      `PanelShell` 新增 opt-in 的 `showCloseButton`，任务详情右上角有 ×，它复用 `requestClose`，
-      未保存改名照样先确认。最终布局：左「状态 #编号 任务名 [编辑]」，中间留白，右「[操作控件] [删除] [关闭]」。
+      header 变两行高）；右上角**不再有「操作控件」菜单**，可用动作按状态平铺成一行图标键。
+      2026-11-22 用户要求「详情右上角与看板卡片在样式、颜色、数量、种类、hover 提示上完全统一」，
+      并把四个冲突点逐条裁定为：① 执行中 / 已暂停 / 待开始以卡片为准；② 已归档卡片补「返回」，
+      两侧同为 返回 + 取消归档 + 删除；③ 详情补「收尾 worktree」键，条件与卡片同用 `canFinishWorktree`
+      （有 worktree 且未丢失）；④ hover 文案两边都用完整动作名，`title` === `aria-label` === 文案。
+      至此两处共用四份单源：`taskActionButtons(task)`（= `taskCardActions` 的状态集合，终态再追加删除，
+      决定键序与数量）、`TASK_ACTION_BUTTON_META`（文案键 + 色调）、`taskActionIcons`（图标映射）、
+      `taskActionIconStyle(tone)`（色调 → 颜色）。分支形状：执行中 → 暂停、取消；已暂停 → 恢复、取消；
+      待开始 / 待审阅 → 完成、取消；已结束 → 收尾（有树时）、返回、归档、删除；已归档 → 返回、取消归档、删除。
+      「开始」撤出 header：它本就该由对话流里的排队留言触发（`ConversationView` 的 `runQueued → runTaskNow`），
+      卡片同样没有这个键。`PanelShell` 新增 opt-in 的 `showCloseButton`，任务详情右上角有 ×，
+      它复用 `requestClose`，未保存改名照样先确认。最终布局：左「状态 #编号 任务名 [编辑]」，
+      中间留白，右「[动作…] [关闭]」。
       ⑩ 移动端正文左右留白从 14px 收到 8px（`@media (max-width:640px)` 的 `.task-detail-content`），
       上下仍 12px；子项一律 `min-width:0`，收窄不产生横向溢出。
-      ⑪ 「立即执行」两处统一成同一颗胶囊、同一个落点 —— `PromptEditor` 右下角的控件行
-      （`extraControls`）：新建任务面板是开关（`mode="toggle"`，真实 checkbox，默认开，决定建完
-      是否马上派发首条留言），任务详情面板是动作（`mode="action"`，只在真的存在一条 `queued`
-      用户留言时出现，点它仍走既有 `POST /api/tasks/{id}/run-now`）。排队留言的气泡页脚只留
-      「待执行」状态胶囊，不再自带按钮。控件比一颗 28px 图标宽，`PromptEditor` 因此新增
-      `extraControlsExtraInset`，单行正文多让 84px（`composerEditorInsets` 的 132 → 216），
-      否则字会压在胶囊上。
+      ⑪ 「立即执行」收成控件行里的一颗图标键（2026-11-21 第三轮）：新建任务面板保留它，
+      但只留图标（`RunNowIcon`，`title`/`aria-label` 给完整文案），外观与发送键同款 ——
+      28×28、`borderRadius: 8px`、可用时同一套强调色；同一排还有新增的「选择工作流」
+      （`WorkflowSelector`，可选「自动」或某个 workflow 版本）。任务详情输入框**不再有**
+      「立即执行」：派发入口搬到排队留言的气泡页脚（`data-testid="activity-run-queued"`，
+      只在真的存在一条 `queued` 用户留言且视图传了 `onRunQueued` 时出现），点它仍走既有
+      `POST /api/tasks/{id}/run-now`。控件行比原来宽，`PromptEditor` 的
+      `extraControlsExtraInset` 新建侧 128px、详情侧 0。
+      ⑫ 回车语义统一（2026-11-21）：`shared/sendShortcut.ts` 的 `resolveEnterIntent` 是唯一
+      口径（`matchesSendShortcut` → `Ctrl/Cmd` → `Shift/Alt` → 桌面换行 → 移动端偏好），
+      新建任务面板、任务详情输入框与**会话输入框**共用它 —— 桌面 `Enter` 换行、
+      `Ctrl/Cmd+Enter` 发送；移动端（`useMobileKeyboard`：`pointer: coarse`，768px 兜底）
+      默认回车换行、尊重「回车发送」偏好，发送键始终可点，不出现只能靠回车的死角。
+      ⑬ 外框固定尺寸 + 居中、双击不误关（2026-11-22）：旧方案给任务详情传 `align="end"`，
+      卡片贴底并随异步内容向上长，用户看到的是「离底部固定 + 一段展开动画」。现在
+      `PanelShell` 的贴底锚点整体删除（`align` / `data-align` / 移动端 `flex-end` 覆盖一起删），
+      新增 `fixedHeight`：桌面 `720 × min(88dvh, var(--panel-vh)-48px)`、居中；移动端
+      `data-fixed-height="true"` 把 `height:auto!important` 覆盖成 `var(--panel-vh)-56px`。
+      对话流自身 `flex:1 0 auto` + 输入框前一个可增长零内容占位，消息少时输入框仍被顶在
+      对话区底部，消息多时只滚正文。另一个实测缺陷：双击卡片的第一下打开面板、第二下落到
+      刚挂载的遮罩上，面板数 1→0，用户感知成「要点两下才打开」；`PANEL_OPEN_CLICK_GUARD_MS=350`
+      让遮罩在面板刚挂载的 350ms 内忽略点击，之后照常关闭。
+      `useComposerBottomPin` 保留：输入区长高、正文仍贴底（`COMPOSER_PIN_PX=48`）时继续把
+      `.mindfs-panel-body` 滚到底。
+      ⑭ 从详情跳进会话后面板自己关掉（2026-11-22）：详情里的「打开会话」有多个入口——
+      活动卡页脚、直连节点行、工作流节点行、工作流会话按钮——它们全部汇到
+      `TaskDetailPanel.onOpenSession`，所以修复点放在 `TaskDetailPanelGate` 这一个包装层，
+      不动 `TaskDetailPanel` 内部的各个入口，也不改 `handleSelectSession`（在那里关会在导航
+      之前把面板卸掉）。`handleTaskSessionDrawerOpen` 改为返回布尔：只有真的解析出可跳目标
+      并调用了 `handleSelectSession` 才 `return true`，空 key / 找不到 root / 没有可跳目标
+      一律 `return false`；Gate 在拿到 `true` 之后才 `setSelectedKanbanTaskId("")`。顺序是
+      「先用当前任务的 root/id 组装跳转目标并同步写入 selectedSession + URL + 模式，再关面板」，
+      所以会话页拿到的参数完整（`?root=…&node=…&session=…&view=chat`），`preserveTaskSelection`
+      不变、看板卡片仍保持选中。看板卡片上的两个同名调用点（`TaskBoardView`）只使用返回值前
+      的副作用，忽略布尔，行为不变。
+      ⑮ 详情右上角动作键与卡片同形同色（2026-11-22）：以前详情把图标键放到 28×28 / 圆角 8 /
+      间距 2px，完成任务用 accent 蓝；看板卡片是 22×22 / 圆角 6、完成用 success 绿。
+      现在详情删掉三处覆写，盒子、圆角与三档配色全部回到 `taskCardIconButtonStyle` 一份
+      来源（`TaskDetailActionTone` 增 `success`，`complete` 改 `success`，删除仍走 `warn → danger`
+      红），hover 文案仍是动作名（title = aria-label = 动作名）。线上实测（2026-11-22，1440×900，
+      bundle `index-XXY6kfFW.js`）：完成键两边都是 22×22 / 6px / `rgb(22,163,74)`；取消键都是
+      `rgb(71,85,105)`；已归档的取消归档键都是 `rgb(59,130,246)`、删除键都是 `rgb(220,38,38)`。
+      ⑯ 相邻控件间距收成一条常量（2026-11-22）：原先动作键之间 gap 0、动作键与关闭键 8px、
+      编辑键与任务名 8px，同一行里三种节奏。现在统一取 `TASK_CONTROL_GAP = 4`
+      （定义在 `taskStyles.ts`，唯一来源），覆盖三处：卡片动作行、详情 header 的动作键内部、
+      动作键与关闭键之间、编辑键与任务名之间。按钮尺寸（22×22 / 圆角 6 / 关闭键 28×28）、
+      颜色与 hover 文案（title = aria-label = 动作名）一律不变；`taskActionIconStyle` 补
+      `flexShrink: 0`，窄卡上按钮不会被压窄，收尾键也改走同一函数。关闭键在 `PanelShell`
+      里与 `headerRight` 编成一组，间距由新 prop `headerRightGap` 控制（默认 8，其它面板
+      不传即原样；任务详情传 `TASK_CONTROL_GAP`）。详情 header 的换行沿用 `flexWrap`，
+      窄屏换行后的行距同样跟随这条常量。桌面 1440×900 与移动端 390×844 线上实测：
+      动作键之间 gap 4px、相邻键屏幕间距 4.0px、动作键→关闭键 4px、编辑键→任务名 4px，
+      盒子仍是 22×22 / r6。
+      **本轮范围之外**：动作集合（执行中 / 已暂停 / 待开始三档以哪边为准）用户尚未裁定，
+      本轮只调间距、不动集合；卡片上「完成 / 暂停」hover 用短词还是完整动作名，也留待那次
+      裁定一并处理。
     boundary: |
       只改前端展示层：不删活动状态字段、不改接口。直连任务的执行详情打开的是任务主会话，
       不是新的执行详情视图。桌面布局顺序不变。宽表格在桌面保留 520px 阅读下限，窄容器才收成
       100%；会话图标角标在嵌套节点行仍有 2px 级 scrollWidth 差（不产生面板级横向滚动），
       本组未处理。「进度」标记仍只按 `purpose=progress` 判定，不动 Router 的 purpose 语义。
       自动滚动只发生在首屏到齐那一刻：用户随后手动上翻不会被拉回，重复的任务增量不会二次
-      滚动；移动端胶囊行仍由 `order:-1` 置顶，落到真正的底部时它在视口之外（位置与折叠状态
-      都没变，需要向上滚才看到），本组未改它的定位，只让间距与滚动目标和桌面同一套规则。
+      滚动；胶囊行在两端都是流内内容，落到真正的底部时它与收尾区一起在视口内，往上翻历史时
+      跟着内容一起走（2026-11-21 删掉了移动端 `order:-1` 置顶，两轮「吸顶」反馈的根因）。
+      真实几何由 `e2e/test_task_detail_pills_flow.py` 在 390×844 下实测：长对话打开即见、
+      中途位移与 scrollTop 一一对应、滚到顶时不在视口内；短对话连敲 8 行位置不漂移。
       header 的关闭键是 opt-in（`showCloseButton` 默认 false）：其它面板（新建任务对话框等）
       仍然只有遮罩一条关闭路径，不要给 `PanelShell` 改成默认带 ×。操作控件菜单只承载
       「收尾 / 完成 / 重新打开」三类现有动作，本组不新增归档、返回、取消任务能力 —— 这些
@@ -11568,9 +11713,27 @@ groups:
       移动端只收窄正文左右留白，header 的内边距与面板圆角不动。
       「立即执行」只换落点，不改语义：新建侧仍是建卡时的一个布尔（`start_immediately` 默认 true），
       详情侧仍只在有排队留言时出现、点它仍是同一个 `run-now` 接口；不新增自动派发、不在面板
-      其它位置再开一个入口，也不给已经跑起来的任务加「重新执行」。
+      其它位置再开一个入口，也不给已经跑起来的任务加「重新执行」。回车语义只动「按键怎么触发
+      发送」，不改发送链路与草稿重放；移动端默认仍然是回车换行，偏好不改。固定高度只给任务
+      详情这一种面板：新建任务面板、工作流编辑器等仍是内容高度、居中；`PanelShell` 不再有
+      `align` 参数，竖直方向只有居中一种。
+      输入区向上生长时只有 `.mindfs-panel-body` 滚动，不滚 window、不改首屏落底逻辑；
+      外框尺寸从第一帧起固定，异步数据不再改变面板高度或位置。真实几何与双击路径由
+      `e2e/test_task_detail_open_geometry.py` 在桌面 1440×900 与移动端 390×844 实测；
+      线上核对不能只看「make install 跑过」——并发会话在共享 PREFIX 上安装会覆盖成别的
+      worktree 的旧 bundle（2026-11-22 实测线上入口指向 `index-6VOQZPjU.js`，里面还是
+      `data-align` / `flex-end` 的旧代码）。`e2e/live/panel_geometry.py` 同时核对服务端入口、
+      浏览器**实际执行**的 bundle（resource timing）与首帧/内容到齐后的矩形。
+      跳会话关面板只改「谁在什么时候卸载详情」，不改跳转本身：`handleSelectSession` 的
+      装配顺序、`preserveTaskSelection` 语义与会话页参数解析一律不动；解析失败时面板必须
+      留着（否则用户点了没反应还丢了上下文）。
     files:
       - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/app/TaskDetailPanelGate.tsx
+      - web/src/app/useAppTaskDrawer.ts
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/app/useAppViewCompositionTypes.ts
+      - web/src/app/useAppKanbanTaskPanel.tsx
       - web/src/components/task/ActivityInput.tsx
       - web/src/components/task/ConversationView.tsx
       - web/src/components/task/RunImmediatelyControl.tsx
@@ -11580,10 +11743,16 @@ groups:
       - web/src/components/task/SupervisionEntry.tsx
       - web/src/components/task/TaskInspectEntries.tsx
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/TaskDetailActionsMenu.tsx
+      - web/src/components/task/taskCardActions.ts
+      - web/src/components/task/taskActionIcons.tsx
+      - web/src/components/task/taskStyles.ts
+      - web/src/components/task/taskIcons.tsx
       - web/src/components/shell/PanelShell.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/useSupervisionEntry.ts
+      - web/src/components/task/useComposerBottomPin.ts
+      - web/src/shared/sendShortcut.ts
+      - web/src/hooks/useMobileKeyboard.ts
       - web/src/components/task/conversationScroll.ts
       - web/src/components/task/useConversationJumpToLatest.ts
       - web/src/components/task/ActivityTypeTag.tsx
@@ -11608,19 +11777,32 @@ groups:
       - web/tests/conversation-auto-scroll.test.mjs
       - web/tests/task-detail-scroll-and-tags.test.mjs
       - web/tests/task-detail-header.test.mjs
+      - web/tests/task-card-actions.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/task-card-wrap.test.mjs
+      - web/tests/task-button-gates.test.mjs
       - web/tests/task-panel-options.test.mjs
       - web/tests/task-create-panel.test.mjs
       - web/tests/task-run-immediately.test.mjs
       - web/tests/session-viewer-scroll-split.test.mjs
+      - web/tests/composer-bottom-pin.test.mjs
+      - web/tests/shared-send-shortcut.test.mjs
+      - web/tests/task-composer-mention-image.test.mjs
+      - e2e/test_task_composer_enter_and_layout.py
+      - e2e/test_task_detail_pills_flow.py
+      - e2e/test_task_detail_open_geometry.py
+      - e2e/live/panel_geometry.py
+      - e2e/live/detail_to_session.py
+      - web/tests/task-detail-open-session-closes-panel.test.mjs
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
-      - 'web/src/components/task/ConversationView.tsx:style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%" }}'
+      - 'web/src/components/task/ConversationView.tsx:style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%", flex: "1 0 auto" }}'
       - 'web/src/components/task/ConversationView.tsx:if (initialScrollKeyRef.current === key) return;'
       - 'web/src/components/task/ConversationView.tsx:data-testid="conversation-scroll-anchor"'
       - 'web/src/components/task/conversationScroll.ts:export function alignPanelToBottom(anchor: HTMLElement): HTMLElement | null {'
       - 'web/src/components/task/conversationScroll.ts:return Math.max(0, input.scrollHeight - input.clientHeight);'
-      - 'web/src/components/task/TaskDetailPanel.tsx:flexDirection: "column", gap: "6px", minWidth: 0'
+      - 'web/src/components/task/TaskDetailPanel.tsx:flexDirection: "column", gap: "6px", minWidth: 0, flex: "1 0 auto"'
       - 'web/src/components/task/TaskDetailPanel.tsx:<div className="task-detail-execution">'
       - 'web/src/components/task/TaskDetailPanel.tsx:fallbackSessionKey={task.main_session_key}'
       - 'web/src/components/task/TaskDetailPanel.tsx:taskStatus={task.status}'
@@ -11643,24 +11825,68 @@ groups:
       - 'web/src/hooks/useMarkdownViewer.tsx:minWidth: "min(520px, 100%)",'
       - 'web/src/hooks/useMarkdownViewer.tsx:overflowWrap: "anywhere",'
       - 'web/src/index.css:.task-detail-execution {'
+      - 'web/tests/composer-bottom-pin.test.mjs:assert.doesNotMatch(styles, /\.task-detail-execution\s*\{[^}]*\border\s*:/);'
       - 'web/src/index.css:.task-detail-content {'
       - 'web/src/index.css:padding: 10px 8px;'
-      - 'web/src/components/task/TaskDetailPanel.tsx:<TaskDetailActionsMenu actions={actions} disabled={saving} />'
+      - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions"'
       - 'web/src/components/task/TaskDetailPanel.tsx:flexWrap: "nowrap"'
       - 'web/src/components/task/TaskDetailPanel.tsx:className="task-detail-content"'
-      - 'web/src/components/task/TaskDetailActionsMenu.tsx:export function TaskDetailActionsMenu({ actions, disabled = false }: TaskDetailActionsMenuProps) {'
-      - 'web/src/components/task/TaskDetailActionsMenu.tsx:role="menuitem"'
+      - 'web/src/components/task/taskCardActions.ts:export function taskActionButtons(task: KanbanTask): TaskActionButtonKey[] {'
+      - 'web/src/components/task/taskCardActions.ts:if (task.archived_at) return ["reopen", "unarchive-task"];'
+      - 'web/src/components/task/taskActionIcons.tsx:export const taskActionIcons: Record<TaskActionButtonKey, React.ReactNode> = {'
+      - 'web/src/components/task/taskStyles.ts:export function taskActionIconStyle(tone: "default" | "primary" | "success" | "warn"): React.CSSProperties {'
       - 'web/src/components/task/RunImmediatelyControl.tsx:export function RunImmediatelyControl({'
       - 'web/src/components/task/RunImmediatelyControl.tsx:data-testid="run-immediately-toggle"'
-      - 'web/src/components/task/ActivityInput.tsx:<RunImmediatelyControl mode="action" running={runningQueued} onClick={onRunQueued} />'
+      - 'web/src/components/task/RunImmediatelyControl.tsx:...composerSendButtonStyle({ enabled: active && !disabled, variant: "panel" }),'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-run-queued"'
       - 'web/src/components/task/ConversationView.tsx:const queuedActivity = queuedUserActivity(activities);'
       - 'web/src/components/editor/PromptEditor.tsx:extraControlsExtraInset = 0,'
-      - 'web/src/components/app/TaskInlineEditPanel.tsx:mode="toggle"'
+      - 'web/src/components/editor/PromptEditor.tsx:const intent = resolveEnterIntent(event, {'
+      - 'web/src/shared/sendShortcut.ts:export function resolveEnterIntent('
+      - 'web/src/hooks/useMobileKeyboard.ts:export function useMobileKeyboard(): boolean {'
+      - 'web/src/components/task/useComposerBottomPin.ts:export const COMPOSER_PIN_PX = 48;'
+      - 'web/src/components/task/useComposerBottomPin.ts:if (!delta || !pinned) return;'
+      - 'web/src/components/task/ConversationView.tsx:useComposerBottomPin(composerRef, scrollAnchorRef);'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:<RunImmediatelyControl'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:<WorkflowSelector'
+      - 'web/src/components/app/TaskInlineEditPanel.tsx:extraControlsExtraInset={128}'
+      - 'web/src/components/shell/PanelShell.tsx:fixedHeight = false,'
+      - 'web/src/components/shell/PanelShell.tsx:alignItems: "center",'
+      - 'web/src/components/shell/PanelShell.tsx:.mindfs-panel-dialog[data-fixed-height="true"] {'
+      - 'web/src/components/shell/PanelShell.tsx:export const PANEL_OPEN_CLICK_GUARD_MS = 350;'
+      - 'web/src/components/shell/PanelShell.tsx:if (performance.now() - openedAtRef.current < PANEL_OPEN_CLICK_GUARD_MS) return;'
+      - 'web/src/components/task/TaskDetailPanel.tsx:fixedHeight'
+      - 'web/src/components/task/ConversationView.tsx:flex: "1 0 auto"'
+      - 'web/src/components/task/ConversationView.tsx:aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }}'
+      - 'web/src/components/task/taskCardActions.ts:complete: { labelKey: "task.complete", tone: "success" },'
+      - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_CONTROL_GAP }}'
+      - 'web/src/components/task/taskStyles.ts:export const TASK_CONTROL_GAP = 4;'
+      - 'web/src/components/task/TaskCardRows.tsx:justifyContent: "flex-end", gap: TASK_CONTROL_GAP, marginLeft: "auto"'
+      - 'web/src/components/task/TaskDetailPanel.tsx:headerRightGap={TASK_CONTROL_GAP}'
+      - 'web/src/components/task/TaskDetailPanel.tsx:gap: TASK_CONTROL_GAP, minWidth: 0, maxWidth: "100%", flexWrap: "nowrap"'
+      - 'web/src/components/shell/PanelShell.tsx:headerRightGap = 8,'
+      - 'web/src/components/shell/PanelShell.tsx:gap: `${headerRightGap}px`'
+      - 'web/src/components/task/TaskCardFinishButton.tsx:taskActionIconStyle("success")'
+      - 'web/tests/task-card-parity.test.mjs:TASK_CONTROL_GAP = 4;'
+      - 'web/src/components/task/TaskDetailPanel.tsx:const actions = taskActionButtons(task).map((key) => ({'
+      - 'web/src/components/task/TaskDetailPanel.tsx:...taskActionIconStyle(action.tone),'
+      - 'web/tests/task-detail-header.test.mjs:assert.match(right, /title=\{action\.label\}/);'
+      - 'e2e/live/panel_geometry.py:def check(result: dict, mobile: bool) -> list[str]:'
+      - 'e2e/live/detail_to_session.py:def find_open_button(page):'
+      - 'web/src/components/app/TaskDetailPanelGate.tsx:const navigated = handleTaskSessionDrawerOpen('
+      - 'web/src/components/app/TaskDetailPanelGate.tsx:if (navigated) setSelectedKanbanTaskId("");'
+      - 'web/src/app/useAppTaskDrawer.ts:// 返回「是否真的发起了跳转」：详情面板要等这一步完成后再关自己，'
+      - 'web/src/app/useAppTaskDrawer.ts:void handleSelectSession(target as any, { preserveTaskSelection: true });'
+      - 'web/src/components/task/TaskBoardView.tsx:handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => boolean;'
+      - 'web/tests/task-detail-open-session-closes-panel.test.mjs:assert.ok(closeAt > handlerAt, "closing the panel must come after the navigation call");'
+      - 'e2e/live/harness.py:"matches_dist_entry"'
       - 'web/src/shared/activityModel.ts:export function queuedUserActivity(activities: TaskActivity[]): TaskActivity | null {'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.startImmediatelyHint": "建完任务就立刻派发首条留言",'
       - 'web/src/components/shell/PanelShell.tsx:showCloseButton = false,'
-      - 'web/src/components/shell/PanelShell.tsx:onClick={() => requestClose()}'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.actionsMenu": "操作控件",'
+      - 'web/src/components/shell/PanelShell.tsx:if (event.target !== event.currentTarget) return;'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.complete": "完成任务",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.cancelTask": "取消任务",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.reopen": "回到待处理，继续对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.label": "执行详情",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directNode": "直连对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.supervision.empty": "该任务还没有监管记录",'
@@ -11705,6 +11931,17 @@ groups:
       「MindFS 任务提醒」。③ 正文是 Markdown 原文：``` 代码围栏、`**粗体**`、列表符号与
       表格竖线原样出现在系统通知里；内容一长，用户看到的还是开头那段（对「跑完了，结论是
       什么」毫无用处）。
+
+      **2026-11-22 追加（同一个症状的第二条出口）**：修完之后桌面 PWA 仍在推「子任务完成」，
+      标题是子会话名（截图 `Implement shared prompt expansion core · 完成`）。取证在 wsl 的
+      llm-deploy 一轮：`11:53:53` 一秒内 5 条 `[webpush] send.error`，其中 4 条的 tag 结尾是
+      `0001-01-01T00:00:00Z`（`pending.UpdatedAt` 零值），对应 4 个 `parent_session_key`
+      指向本轮主会话的子会话。链条是：子代理先由 `OnSubAgentTurnFinished` 收尾（`SubSession`
+      闸门拦下、`ClearSessionPending` **删掉** pending 条目），回合结束时
+      `executeWorkflowTurn` 的 defer 又逐个再收一次 —— 第二次读到的是**零值快照**，
+      `SubSession` / `SilentCompletion` 都变回 false，`shouldNotifySessionDone` 放行，
+      标题回落到会话库里的子会话名。完成账本因 `RecordCompletion` 的 `RootID == ""` 守卫
+      躲过了这一条（所以轮询/安卓侧看起来是干净的），只有 Web Push 没有守卫。
     why: |
       必须保留：① 「这一轮完成要不要提醒」是**服务端**的判定，不是各端各写一套。
       `workflowTurnRequest.SilentCompletion=true` 在建 pending 的同一回调里立刻调
@@ -11720,6 +11957,12 @@ groups:
       强调/链接/表格；只去掉标记保留内容），再**从尾部**截断到 `BodyMaxRunes=1000`
       （`FallbackBodyMaxRunes=300` 给外发脚本类载荷），截断结果以 `...` 开头。
       调阈值只改这两个常量，所有端一起变。
+      ④ 收尾侧只认**还在的** pending：`EndSessionTurn` 用
+      `PendingSessionSnapshotFound` 的 `(snapshot, ok)` 分流，`ok=false`（条目已被
+      `ClearSessionPending` 删掉、或这一轮压根没置过 pending）时既不入完成账本也不发提醒，
+      但 `session.done` 广播与清 pending 照旧 —— 前端的灯依赖那条广播，重复 done 的灯语义
+      本来就该是 no-op。只判「快照是否为零值」不够：`AwaitingAnswer` 路径会保留条目、
+      零值快照也可能是合法的第一轮，所以判据必须是「条目在不在」这个显式布尔。
     boundary: |
       只改提醒面（文案、正文、是否提醒），不动会话/任务/工作流的任何状态与落库，也不动
       会话内 Markdown 渲染。`silent` 只压「完成」这一类提醒：提问（ask_user）与出错提醒
@@ -11769,6 +12012,8 @@ groups:
       - 'server/internal/notify/plaintext.go:func PlainText(value string, maxRunes int) string {'
       - 'server/internal/notify/notify.go:body := PlainText(in.Summary, BodyMaxRunes)'
       - 'server/internal/api/appcontext_notify.go:return !pending.SubSession && !pending.SilentCompletion'
+      - 'server/internal/api/appcontext_task_flags.go:pending, hasPending := hub.PendingSessionSnapshotFound(sessionKey)'
+      - 'server/internal/api/stream_hub_pending.go:func (h *StreamHub) PendingSessionSnapshotFound(sessionKey string) (PendingSessionSnapshot, bool) {'
       - 'server/internal/api/appcontext_workflow.go:SilentCompletion: true,'
       - 'server/internal/api/appcontext_workflow.go:s.MarkPendingCompletionSilent(req.RootID, sessionKey, id)'
       - 'server/internal/api/stream_hub_completions.go:Silent:      snapshot.SilentCompletion,'
@@ -11867,7 +12112,7 @@ groups:
       - 'server/internal/kanban/router_supervision_actions.go:cannot be combined with a cancel action'
       - 'server/internal/kanban/router_supervision_tools.go:Name: "router_cancel_node",'
       - 'server/internal/kanban/workflow_runtime_router_cancel.go:func (s *Service) CancelWorkflowRunForRouter(ctx context.Context, rootID, taskID, reason string) error {'
-      - 'server/internal/kanban/workflow_runtime_router_cancel.go:s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, "run_cancelled_by_router", reason, false)'
+      - 'server/internal/kanban/workflow_runtime_router_cancel.go:if _, err := s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, eventType, reason, false); err != nil {'
       - 'server/internal/kanban/router_supervision.go:defaultSupervisionMaxActionsPerRun = 12'
       - 'server/internal/kanban/router_supervision_actions.go:supervision action budget exhausted for this run'
       - 'cli/cmd/startup.go:MaxActionsPerRun  *int    `json:"max_actions_per_run"`'
@@ -11994,15 +12239,17 @@ groups:
       - server/internal/kanban/workflow_driver.go
       - server/internal/kanban/router_prompt.md
       - docs/superpowers/plans/2026-11-21-super-agent-node-admin.md
+      - e2e/test_task_router_w2_node_admin.py
     tests:
       - server/internal/kanban/router_brief_nodes_test.go
       - server/internal/kanban/router_node_admin_test.go
+      - e2e/test_task_router_w2_node_admin.py
     anchors:
       - 'server/internal/kanban/router_brief.go:type RouterBriefNode struct {'
       - 'server/internal/kanban/router_brief.go:const briefNodeCardLimit = 16'
-      - 'server/internal/kanban/router_brief.go:func briefNodeCards(run *WorkflowRun, nodeRuns []NodeRun) ([]RouterBriefNode, int) {'
-      - 'server/internal/kanban/router_brief.go:func briefNodeActions(node WorkflowNode, status string) []string {'
-      - 'server/internal/kanban/router_brief.go:func graphNodeModel(node WorkflowNode) string {'
+      - 'server/internal/kanban/router_brief_views.go:func briefNodeCards(run *WorkflowRun, nodeRuns []NodeRun) ([]RouterBriefNode, int) {'
+      - 'server/internal/kanban/router_brief_views.go:func briefNodeActions(node WorkflowNode, status string) []string {'
+      - 'server/internal/kanban/router_brief_views.go:func graphNodeModel(node WorkflowNode) string {'
       - 'server/internal/kanban/router_brief.go:Nodes              []RouterBriefNode `json:"nodes,omitempty"`'
       - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCards(brief *SituationBrief) bool {'
       - 'server/internal/kanban/router_brief_cap.go:func trimRouterBriefNodeCardCount(brief *SituationBrief, keep int) bool {'
@@ -12020,7 +12267,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:20. **节点级管理（`router_set_node_model` / `router_skip_node`）**'
 
   - id: G-PE
-    title: Super agent 自设计 workflow W3：临时图直接跑（不进目录）+ 固化分两档（项目级新条目免批、全局/改已有需人批准）
+    title: Super agent 自设计 workflow W3：临时图直接跑（不进目录）+ 固化分两档（项目级新条目免批、全局/改已有需人批准）+ 模型档并入 workflow（节点 > workflow 默认 > harness 全局）
     kind: feature
     symptom: |
       brief 里的 workflow 目录是人工维护的固定流程。任务需要的形状（先定位再修、分头排查再汇总）
@@ -12053,10 +12300,25 @@ groups:
       旧内容盖到新草稿上。同一张卡重复决定返回 409，不会重复发布。
       ⑧ 免批路径与批准路径走同一个 `commitWorkflowPublish`，避免「批准后的写入」与「免批写入」
       出现两套语义；作用域翻译也只有一处（`RootIDForScope`：global → 空 root）。
+      ⑨ **模型档并入 workflow（T4）**：用户裁定「按任务选模型可以融入到 workflow 里」，所以没有
+      独立的 `Task.Model` 列，中间那一档由 `WorkflowDefinition.Defaults.Model` 表达 —— 任务用哪张
+      图就继承它的默认模型。层级 `AgentProfileFor`（节点 `params.model` > `defaults.model` > 留空交给
+      harness 全局）**只解释一次**：`prepareWorkflowNodeAt` 写进 `WorkflowNodeExecution.Profile`，
+      `RunWorkflowNodeAttempt` 用它落 `NodeRun` 行（运行视图与 `inspect_run` 读这张行，写裸 params 会
+      让继承默认的节点显示成没设模型），适配层经 `workflowNodeProfile` 读同一个结果。模型写的图在
+      `sanitizeRouterGraph` 去空白、空串归一成 `nil`，不留「显式空模型」的假档位。
+      ⑩ **节点 harness 在起草/固化时就落成具体值**：`params.agent` 是结构字段，缺了它图能过校验、
+      能固化、能发布，节点却在执行时以 "agent required" 立刻失败 —— 而 Router 只写 `prompt` 是
+      常态（2026-11-21 隔离验收里起草与固化出的两个版本都跑不起来）。`fillDefaultNodeAgent` 在
+      `sanitizeRouterGraph`（临时图）、`workflowPublishRequest`（卡片载荷）与 `commitWorkflowPublish`
+      （写目录的最后一道门，覆盖升级前落下的旧待批准卡）三处补默认 harness（`defaultRouterAgent`
+      = claude）；显式写了 agent 的节点一律不动，补写只落在深拷贝上，决策里存的图原样保留。提示词
+      规则 21 与两个工具的 `graph` 描述写明「可省略、默认 claude」，不让模型以为这是必填项。
     boundary: |
-      W3 T1（临时图直接跑）与 T2（固化两档 + 待批准卡）已实现。派生目前只做「复制一份并记
-      `derived:wf-x` 标签」，不做版本链追溯；模型档并入 workflow 的层级（节点 > 任务 > 全局）
-      仍是 W3 后续任务。临时图与固化都不受特殊待遇：Run 照常走证据门、监管、worktree 生命周期。
+      W3 T1（临时图直接跑）、T2（固化两档 + 待批准卡）、T4（模型档层级）已实现，W3 收口。
+      派生目前只做「复制一份并记 `derived:wf-x` 标签」，不做版本链追溯。`defaults` 只有模型
+      一项，不承载 effort / harness；模型档不做 harness 可用列表校验。临时图与固化都不受特殊
+      待遇：Run 照常走证据门、监管、worktree 生命周期。
     files:
       - server/internal/kanban/router_workflow_graph.go
       - server/internal/kanban/router_types.go
@@ -12068,10 +12330,19 @@ groups:
       - server/internal/api/http_task_workflow_publish.go
       - server/internal/api/http_routes.go
       - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/workflow_types.go
+      - server/internal/kanban/workflow_node_executor.go
+      - server/internal/kanban/workflow_executor.go
+      - server/internal/api/appcontext_workflow.go
+      - e2e/test_task_router_w3_publish.py
     tests:
       - server/internal/kanban/router_inline_workflow_test.go
       - server/internal/kanban/router_workflow_publish_test.go
+      - server/internal/kanban/router_prompt_guidance_test.go
+      - server/internal/kanban/workflow_default_model_test.go
       - server/internal/api/http_task_workflow_publish_test.go
+      - server/internal/api/workflow_node_profile_test.go
+      - e2e/test_task_router_w3_publish.py
     anchors:
       - 'server/internal/kanban/router_workflow_graph.go:const routerAdhocWorkflowID = "adhoc"'
       - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxNodes = 12'
@@ -12079,17 +12350,21 @@ groups:
       - 'server/internal/kanban/router_workflow_graph.go:	routerInlineGraphMaxBytes = 64 * 1024'
       - 'server/internal/kanban/router_workflow_graph.go:func sanitizeRouterGraph(graph *WorkflowDefinition) (*WorkflowDefinition, error) {'
       - 'server/internal/kanban/router_workflow_graph.go:func adhocVersionID(graph WorkflowDefinition) string {'
+      - 'server/internal/kanban/router_workflow_graph.go:func fillDefaultNodeAgent(nodes []WorkflowNode) {'
+      - 'server/internal/kanban/router_workflow_graph.go:			n.Params["agent"] = defaultRouterAgent'
+      - 'server/internal/kanban/workflow_publish.go:	fillDefaultNodeAgent(graph.Nodes)'
+      - 'server/internal/kanban/activity_route_workflow_publish.go:		fillDefaultNodeAgent(req.Graph.Nodes)'
       - 'server/internal/kanban/router_workflow_graph.go:func inlineGraphEdgeCount(graph WorkflowDefinition) int {'
       - 'server/internal/kanban/router_types.go:	Graph  *WorkflowDefinition `json:"graph,omitempty"`'
       - 'server/internal/kanban/router_tools.go:func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {'
       - 'server/internal/kanban/router_tools.go:				if _, err := sanitizeRouterGraph(action.Graph); err != nil {'
-      - 'server/internal/kanban/activity_route_apply.go:func (s *ActivityService) resolveRouteWorkflowVersion(ctx context.Context, task Task, action RouterAction) (WorkflowVersion, error) {'
-      - 'server/internal/kanban/activity_route_apply.go:		graph.RootID = task.RootID'
+      - 'server/internal/kanban/activity_route_reply.go:func (s *ActivityService) resolveRouteWorkflowVersion(ctx context.Context, task Task, action RouterAction) (WorkflowVersion, error) {'
+      - 'server/internal/kanban/activity_route_reply.go:		graph.RootID = task.RootID'
       - 'server/internal/kanban/router_types.go:	RouterActionSaveWorkflow RouterActionKind = "save_workflow"'
       - 'server/internal/kanban/workflow_publish.go:var ErrWorkflowPublishStale = errors.New("workflow draft changed since the request; ask again")'
       - 'server/internal/kanban/workflow_publish.go:func workflowPublishNeedsApproval(ctx context.Context, store *WorkflowStore, req WorkflowPublishRequest) (bool, error) {'
       - 'server/internal/kanban/workflow_publish.go:func commitWorkflowPublish(ctx context.Context, store *WorkflowStore, req WorkflowPublishRequest, taskRootID, publishedBy string) (WorkflowVersion, error) {'
-      - 'server/internal/kanban/workflow_publish.go:	if req.BaseDraftRevision != "" && draft.Revision != req.BaseDraftRevision {'
+      - 'server/internal/kanban/workflow_publish.go:			return WorkflowVersion{}, ErrWorkflowPublishStale'
       - 'server/internal/kanban/workflow_publish.go:func RootIDForScope(taskRootID, scope string) string {'
       - 'server/internal/kanban/activity_route_workflow_publish.go:const ActivityTypeWorkflowPublish = "workflow_publish"'
       - 'server/internal/kanban/activity_route_workflow_publish.go:func (s *ActivityService) applyRouteSaveWorkflow(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {'
@@ -12098,6 +12373,1154 @@ groups:
       - 'server/internal/api/http_routes.go:	r.Post("/api/tasks/{id}/workflow-publish", h.handleKanbanTaskWorkflowPublish)'
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
+      - 'server/internal/kanban/router_prompt.md:   - **模型档**：整张图可以给 `"defaults":{"model":"..."}`'
+      - 'server/internal/kanban/router_prompt.md:`params.agent` 可省略 —— 默认 claude'
+      - 'server/internal/kanban/workflow_types.go:type WorkflowDefaults struct {'
+      - 'server/internal/kanban/workflow_types.go:func (d WorkflowDefinition) AgentProfileFor(node WorkflowNode) WorkflowNodeAgentProfile {'
+      - 'server/internal/kanban/workflow_types.go:	profile.Model = strings.TrimSpace(d.Defaults.Model)'
+      - 'server/internal/kanban/workflow_node_executor.go:	Profile WorkflowNodeAgentProfile'
+      - 'server/internal/kanban/workflow_node_executor.go:		Profile: run.Graph.AgentProfileFor(node),'
+      - 'server/internal/kanban/workflow_executor.go:	profile := run.Graph.AgentProfileFor(node)'
+      - 'server/internal/api/appcontext_workflow.go:func workflowNodeProfile(exec kanban.WorkflowNodeExecution) kanban.WorkflowNodeAgentProfile {'
+  - id: G-PG
+    title: 超长会话提示：久 × 大 三档、N 轮后自动触发 harness 原生压缩（Claude + Codex）
+    kind: feature
+    symptom: |
+      会话跑到两三小时、上下文十几万 token 之后，harness 会自己撞上硬上限并压一次 —— 时机由 CLI
+      决定，用户全程看不见；而在撞上限之前，界面没有任何「这个会话该收一收了」的信号。反过来，
+      内容不多的短会话、以及只久不大的低负载长对话都不该被打扰，一条规则要同时说清这三种情况。
+    why: |
+      ① **三档是纯函数**：`EvaluateHygiene(cfg, snap)` 只读活跃时长与上下文 token 两个数，
+      `long && big → hint`、`big → notice`、否则 `normal`、关掉 → `disabled`。阈值判定与「该不该
+      触发」只算这一次，测试直接打这张表；UI、自动触发、读口看到的结论天然一致。
+      ② **「久」是距上次压缩的累计活跃时长，不是创建时间也不是进程寿命**：`ObserveAt` 只把
+      `0 < gap <= idle_gap` 的间隔计入，挂机一夜再回来不会一夜之间变成「又久又大」；活跃时长与
+      观测锚点按会话落盘，重启不清零，harness 压缩时一起重置（见 ⑭）。
+      ③ **提示当轮不计数，且只有回合结束能推进**：`hinted` 从 false 翻 true 的那一轮
+      `turnsSinceHint` 仍是 0 —— 用户看到「还有 3 轮」时确实还剩 3 轮。读口 `Snapshot` 因此必须
+      完全无副作用（不置 `hinted`、不置 `autoAttempted`、不建记录）：它在回合中途随时会被胶囊
+      刷新触发，一旦改状态，提示窗口就整体少一轮（2026-11-21 实测「提示与自动压缩同一刻发生」）。
+      ④ **只有正常结束的用户回合推进计数**：`session_send.go` 只在 `sendErr == nil` 时调
+      `finishHygieneTurn`；取消/失败的回合、以 `/` 开头的命令回合、自动压缩自己那一轮都不算。
+      ⑤ **自动触发不打断在途回合**：`runHygieneAutoCompact` 先按 2s 轮询 `SessionTurnActive` 等会话
+      空闲（总预算 30 分钟），再以普通 `SendMessage` 发 `/compact`；失败（没有压缩事件或发送出错）
+      只置 `auto_failed` 并停手，不做退避重试 —— 通道坏了的话每轮重试只是把失败变成噪声。
+      ⑥ **成功以 harness 的压缩事件为准**：只有 `onCompactSeen` 被置位才算成功；`EventTypeCompact`
+      的处理里调 `MarkCompacted` 清提示与计数、把活跃时长归零并重设观测锚点（「久」从这次压缩重新
+      起算），手动与自动一致。
+      ⑦ **只认能本地压缩的 harness**：`claude` / `codex`；`codex-acp` / `gemini` / `shell` 与非 chat
+      会话（命令、router、文件查看）一律跳过，手动入口直接 400 说明原因。
+      ⑧ **零值是默认而不是关闭**：`session_hygiene.enabled` 用 `*bool` 区分「没写」与「显式 false」，
+      数值 0 一律沿用默认；`harness.<name>` 只覆盖写出来的字段。配置只走 `config.json`，不进控制面。
+      ⑨ **读口与手动入口共用一套字段**：`HygieneView` 的字段既是胶囊入参也是档位结论来源，
+      前端不重算；`POST .../compact` 只把回合排出去（202），结果走正常会话事件流。
+      ⑩ **按钮禁用到真压缩结束**：线上 Claude 一次 `/compact` 要 3–9 分钟，固定 8 秒前端计时会让
+      用户以为「点了没反应」；`compact_pending` 由服务端在排程时置位、在收尾时清除，`compact_error`
+      把 Codex token 过期等具体原因写进胶囊。`compacting` 仍用于 POST 在途，二者合并成 `compactBusy`。
+      ⑪ **压缩后大小不靠猜**：Claude 的 compact boundary 原始 JSONL 带 `postTokens`，但 SDK typed message 不带；适配器按 UUID 从转录补读，除了塞进 `CompactNotice.PostTokens`，还写回自己的内存上下文 `s.context.TotalTokens` —— `message_done` 与 `GET /api/sessions/{key}` 读的都是这份内存态，而 `/compact` 回合没有 `message_delta`，不写回的话界面会一直显示压缩前的旧值（2026-11-22 现场：手动压缩 153572→17672，界面仍是 152K/200K）。API 侧的 `contextWindowAfterCompact` 仍是第二道防线，用它覆盖 `lastContextWindow` 并落库。Codex 没有这个数，保留后续 `token_count`。
+      ⑫ **stale 窗口不重复压缩**：压缩事件先到、`token_count` 未到时 `contextStale` 闸住 `Observe`，既不推进轮数也不发 `AutoCompactDue`；新 token 到来后清掉。胶囊累计行只显示总量（当前会话 + agent 的账本，不是全局，也不写「最近 200 次折叠」），所有 token 数字 <10k 原值、>=10k 用 k；不新增「压缩后上下文」展示行，也不改本轮请求 / 本轮节省两行。
+      ⑬ **压缩事件优先于流尾部异常**：Codex 的 `/compact` 回合可能在 `compacted` 落盘之后才因流关闭返回 `codex response stream ended unexpectedly`。`runHygieneAutoCompact` 先检查 `onCompactSeen`：已经报告过压缩就按成功收尾，只把流异常写进诊断日志，绝不写 `compact_error` / `auto_failed`；没有压缩事件时才保留原来的失败提示。
+      ⑭ **活跃时长跨重启、压缩即归零**：原先 `activeSeconds` 只在内存里，重启就归零，频繁重启的机器上「久」永远不成立。现在按 `root + session` 把 `active_seconds` 与 `last_seen` 写到 `<configDir>/session-hygiene/hy-<sha256[:12]>.json`（临时文件 + rename，0600/0700），启动时回填；收到 harness 压缩事件时两者一起重置并立即写盘，于是「久」始终表示距上次压缩的累计活跃时长。`ObserveAt` 更新后也写盘，因此跨重启仍按 idle gap 丢弃挂机空档。写盘失败只记日志，不阻断会话。只持久化这两项；`hinted` / 轮数 / pending / error / stale 仍只在进程内，重启后重新积累。
+    boundary: |
+      持久化的只有活跃时长与观测锚点，按账户各自一份（主账户 `<config-dir>/session-hygiene/`，其他账户 `<config-dir>/users/<id>/session-hygiene/`）。提示轮数、`hint`、`auto_failed`、`compact_pending/error`、`context_stale` 仍是进程内状态；服务停机期间发生的 harness 压缩收不到事件，锚点无法自动重置。会话删除暂不联动清理这些小文件：文件名是 scope 哈希，留待专门的清理策略，不扩大本次范围。
+      不自动新建会话、不归档、不删转录；不改 live-compact 的任何阈值；「只久」永不自动压缩；
+      不做跨会话面板。自动压缩失败后只能手动，用户需自己判断是否要新开会话。
+      端到端只在隔离实例验证过（`e2e/test_session_hygiene.py`，真实 Claude + 真实 `/compact`，
+      CLI 回 `compact_result=success`）：主体已随 `v0.5.5-1201-57/67` 四端发布，本轮活跃时长持久化尚未部署；提示状态不持久化，重启后「已提示 / 已失败」都会重来。Codex 的 access token 过期由
+      设备本地重新登录解决，本项目不复制或自动刷新设备凭据；胶囊只负责把错误显示出来。
+      手动压缩按钮按服务端 pending 状态禁用；旧节点不回该字段时只用 80 秒兜底，不声称能感知结果。
+      Claude postTokens 只在转录可读时补到；读不到就退回原值，不拿估算冒充真实值。Codex 压缩事件后若迟迟没有新 token_count，stale 闸会一直挡住自动压缩，直到下一次 token_count 或重启（stale 状态不持久化）。胶囊累计数来自当前会话 + agent 的 retained ledger，不是全局；账本仍保留最近 200 行供计算，但 UI 不再显示这个窗口数。
+      ⑬ 只修「压缩已发生但流尾部报错」的状态归类：不尝试从 Codex rollout 回填 token；如果 post-compact `token_count` 没进入事件流，`context_tokens` 仍可能是压缩前的值，stale 闸只保证不重复自动压缩。
+    files:
+      - server/internal/api/usecase/session_hygiene.go
+      - server/internal/api/usecase/session_hygiene_store.go
+      - server/internal/api/usecase/session_hygiene_persistence_test.go
+      - server/app/workspace_build.go
+      - server/internal/api/usecase/session_hygiene_wire.go
+      - server/internal/api/usecase/session_hygiene_test.go
+      - server/internal/api/usecase/session_hygiene_wire_test.go
+      - server/internal/api/usecase/root.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_context_saving.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/http_session_context_saving.go
+      - server/internal/api/http_routes.go
+      - server/app/session_hygiene.go
+      - server/app/server.go
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - web/src/services/agent/contextSaving.ts
+      - web/src/components/agent/useContextSaving.ts
+      - web/src/components/agent/ContextSavingIndicator.tsx
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/tests/context-saving-chip.test.mjs
+      - e2e/test_session_hygiene.py
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-21-session-hygiene-long-session-hint.md
+      - server/internal/agent/types/event.go
+      - server/internal/agent/claude/session_compact_tokens.go
+      - server/internal/agent/claude/session_messages_tasks.go
+      - server/internal/agent/claude/session_compact_tokens_test.go
+      - server/internal/api/usecase/session_compact_context.go
+      - server/internal/api/usecase/session_compact_context_test.go
+      - web/src/components/agent/tokenAmount.ts
+      - web/tests/token-amount.test.mjs
+    tests:
+      - server/internal/api/usecase/session_hygiene_test.go
+      - server/internal/api/usecase/session_hygiene_persistence_test.go
+      - server/internal/api/usecase/session_hygiene_wire_test.go
+      - web/tests/context-saving-chip.test.mjs
+      - e2e/test_session_hygiene.py
+      - server/internal/agent/claude/session_compact_tokens_test.go
+      - server/internal/api/usecase/session_compact_context_test.go
+      - web/tests/token-amount.test.mjs
+    anchors:
+      - 'server/internal/api/usecase/session_hygiene.go:HygieneStateHint = "hint"'
+      - 'server/internal/api/usecase/session_hygiene.go:func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens int, turnEnded bool) HygieneView {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens int) HygieneView {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompacted(rootID, sessionKey string) {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) markCompactedAt(rootID, sessionKey string, at time.Time) {'
+      - 'server/internal/api/usecase/session_hygiene_store.go:const hygieneStoreVersion = 1'
+      - 'server/internal/api/usecase/session_hygiene_store.go:func NewHygieneTrackerAt(configDir string, cfg HygieneConfig) *HygieneTracker {'
+      - 'server/internal/api/usecase/session_hygiene_store.go:func (st *hygieneStore) save(scope string, rec *hygieneRecord) {'
+      - 'server/internal/api/usecase/session_hygiene_persistence_test.go:func TestHygieneActiveTimeSurvivesTrackerRestart(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_persistence_test.go:func TestHygieneCompactionResetsPersistedStateImmediately(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_persistence_test.go:func TestHygieneCompactionRestartsTheIdleAnchor(t *testing.T) {'
+      - 'server/app/workspace_build.go:Hygiene:   usecase.NewHygieneTrackerAt(configDir, m.shared.hygiene),'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompactPending(rootID, sessionKey string) {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) FinishCompact(rootID, sessionKey, errText string) {'
+      - 'server/internal/api/usecase/session_hygiene.go:CompactPending bool   `json:"compact_pending"`'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:const hygieneCompactCommand = "/compact"'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func hygieneAutoCompactSupported(harness string) bool {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) scheduleHygieneAutoCompact(in SendMessageInput, harness string) {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) runHygieneAutoCompact(in SendMessageInput) {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) finishHygieneCompact(in SendMessageInput, errText string) {'
+      - 'server/internal/api/usecase/session_hygiene_test.go:func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestHygieneAutoCompactTreatsStreamErrorAfterCompactEventAsSuccess(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:reason=stream_error_after_compact'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) CompactSession(ctx context.Context, in GetSessionContextSavingInput) error {'
+      - 'server/internal/api/usecase/root.go:hygieneSend func(context.Context, SendMessageInput) error'
+      - 'server/internal/api/usecase/session_send.go:s.scheduleHygieneAutoCompact(in, hygieneHarnessForSession(current))'
+      - 'server/internal/api/usecase/session_context_saving.go:return s.hygieneTracker().Snapshot(rootID, current.Key, harness, tokens)'
+      - 'server/internal/api/http_session_context_saving.go:func (h *HTTPHandler) handleSessionCompact(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:r.Post("/api/sessions/{key}/compact", h.handleSessionCompact)'
+      - 'server/internal/api/appcontext.go:func (s *AppContext) SessionHygiene() *usecase.HygieneTracker {'
+      - 'server/app/session_hygiene.go:func sessionHygieneConfigFromOptions(opts SessionHygieneOptions) usecase.HygieneConfig {'
+      - 'server/app/server.go:hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),'
+      - 'cli/cmd/startup.go:func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {'
+      - 'web/src/services/agent/contextSaving.ts:export type SessionHygiene = {'
+      - 'web/src/services/agent/contextSaving.ts:export async function compactSession('
+      - 'web/src/services/agent/contextSaving.ts:  compact_pending: boolean;'
+      - 'web/src/services/agent/contextSaving.ts:  compact_error: string;'
+      - 'web/src/components/agent/useContextSaving.ts:const compactBusy = compacting || !!hygiene?.compact_pending;'
+      - 'web/src/components/agent/useContextSaving.ts:const timer = window.setInterval(() => void refresh(), 2000);'
+      - 'web/src/components/agent/useContextSaving.ts:const hygieneBand = hygiene?.state === "notice" || hygiene?.state === "hint";'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:disabled={compactBusy}'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:compact_error ? t("contextSaving.compactFailedDetail", { error: hygiene.compact_error }) : null'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:t("contextSaving.compactNow")'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:data-hygiene={hygiene?.state || "none"}'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.hygieneHintTitle"'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.compactFailedDetail"'
+      - 'web/tests/context-saving-chip.test.mjs:test("没读到用量的样本只留在账本里，不再在胶囊里提示"'
+      - 'e2e/test_session_hygiene.py:def test_manual_compact_button_follows_server_pending(page: Page) -> None:'
+      - 'server/internal/agent/types/event.go:PostTokens int'
+      - 'server/internal/agent/claude/session_compact_tokens.go:func (s *session) compactBoundaryPostTokens('
+      - 'server/internal/agent/claude/session_messages_tasks.go:s.context.TotalTokens = postTokens'
+      - 'server/internal/agent/claude/session_messages_tasks.go:postTokens := s.compactBoundaryPostTokens(msg)'
+      - 'server/internal/agent/claude/session_compact_tokens_test.go:func TestClaudeCompactBoundaryRefreshesContextWindow('
+      - 'server/internal/agent/claude/session_compact_tokens_test.go:func TestClaudeCompactBoundaryWithoutPostTokensKeepsContextWindow('
+      - 'server/internal/api/usecase/session_compact_context.go:func contextWindowAfterCompact('
+      - 'server/internal/api/usecase/session_hygiene.go:contextStale bool'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkContextStale('
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) ClearContextStale('
+      - 'server/internal/api/usecase/session_hygiene_wire.go:s.hygieneTracker().MarkContextStale('
+      - 'server/internal/api/usecase/session_send.go:compactPostTokens = compact.PostTokens'
+      - 'server/internal/api/usecase/session_send.go:lastContextWindow = contextWindowAfterCompact('
+      - 'web/src/components/agent/tokenAmount.ts:export function formatTokenAmount('
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:import { formatTokenAmount } from "./tokenAmount";'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:t("contextSaving.savedTotalValue", { size: totalText })'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.savedTotalValue": "{size}",'
+      - 'web/tests/token-amount.test.mjs:test("token amounts use k from 10k up, without false precision"'
+      - 'web/tests/context-saving-chip.test.mjs:import { formatTokenAmount } from "../src/components/agent/tokenAmount";'
+  - id: G-PI
+    title: Windows 上 Codex 优先用桌面端内置 CLI，不再用 0.166 插件版
+    kind: feature
+    symptom: |
+      pc-win 的用户级 agents.json 把 codex.command 指向
+      ~/.codex/plugins/.plugin-appserver/codex.exe（实测 0.166.0-alpha.5.1），
+      而同一台机器的 Codex 桌面端与 PATH CLI 都是 0.171；旧 app-server 会和桌面端
+      争同一份 CODEX_HOME 的 thread writer，切 provider 后也容易拿到旧线程记录。
+    why: |
+      ① 只在配置合并完成后做平台特化：`LoadConfig` / `LoadConfigWithExtra` 都过
+      `finalizeAgentConfig`，所以用户层写死旧插件路径也不会在合并后把默认值重新盖回去。
+      ② 桌面端装在 WindowsApps 的带版本号目录里，`filepath.Glob` 取
+      `OpenAI.Codex_*/app/resources/codex.exe` 中字典序最大的那个；桌面端升级换目录后
+      下次启动自动跟随，不需要手改 agents.json。
+      ③ 找不到桌面端时，旧插件路径也降级成 PATH 写法 `codex`，确保 0.166 不再被用；
+      用户显式指定的其它 codex 路径保持不动，避免覆盖自定义 harness。
+    files:
+      - server/internal/agent/config_codex_desktop.go
+      - server/internal/agent/config_codex_desktop_test.go
+      - server/internal/agent/config.go
+    tests:
+      - server/internal/agent/config_codex_desktop_test.go
+    anchors:
+      - 'server/internal/agent/config_codex_desktop.go:func preferWindowsDesktopCodex(cfg *Config, goos, programFiles string) {'
+      - 'server/internal/agent/config_codex_desktop.go:func finalizeAgentConfig(cfg Config) Config {'
+      - 'server/internal/agent/config.go:return finalizeAgentConfig(mergeConfigs(baseCfg, userCfg)), nil'
+      - 'server/internal/agent/config.go:return finalizeAgentConfig(mergeConfigs(cfg, extraCfg)), nil'
+      - 'server/internal/agent/config_codex_desktop_test.go:func TestPreferWindowsDesktopCodexReplacesStalePluginBinary(t *testing.T) {'
+
+  - id: G-PJ
+    title: 后台会话跑完后列表时间停在开跑前（完成差分只喂提示音、没人重拉列表）
+    kind: fix
+    symptom: "右侧多项目会话列表里，没在打开的会话（别的项目的、看板任务的）跑完后时间不再更新：本机 llmux 项目『修复』会话 11:47 已结束，11:52 列表仍显示开跑前的『49m』，等多久都不动。改动会话本身（发送/打开）后时间立刻正常，所以用户看到的是『有时更新有时不更新』。"
+    why: "必须保留：`session.stream` / `session.done` 只发给**挂载了该会话**的客户端（StreamHub 按 sessionKey 绑客户端，见 `GetSessionClientIDs`），右侧列表里的后台会话根本没订阅，收不到 done；那时唯一的完成信号是 5s `/api/replying-sessions` 轮询的 pending true→false 差分，而 `newlyCompletedPendingKeys` **刻意排除激活节点**（激活节点假定 WS 已处理，避免提示音连响两遍），于是本地节点上的后台会话完成对列表完全不可见：只有『灭灯』触发一次重渲染，`updated_at` 仍是开跑前那条。修法是分出第二份差分 `completedPendingKeys`（不排除节点，仅驱动列表重拉，走调用方的 300ms 合并窗口），提示音/未读继续用排除激活节点的那份，语义互不污染。合上游时如果只留一份差分，要么静音远端会话的提示音，要么列表时间重新卡死；两者都是用户明确报过的缺陷。"
+    boundary: "纯前端：不新增通道、不改后端、不动 SQLite；`updated_at` 仍由 `EndSessionTurn` 在服务端触摸，前端只负责在完成时重拉。e2e/test_session_list_time_refresh.py 用路由拦截造出『列表 + 旁路状态』两份真相，不依赖真实 agent，也不碰线上 7331。"
+    files:
+      - web/src/app/useReplyingSessionPoll.ts
+      - web/src/app/useAppMultiProjectReload.ts
+      - web/src/shared/pendingCompletion.ts
+      - web/tests/session-list-time-refresh.test.mjs
+    tests:
+      - web/tests/session-list-time-refresh.test.mjs
+    anchors:
+      - 'web/src/shared/pendingCompletion.ts:export function completedPendingKeys('
+      - 'web/src/app/useReplyingSessionPoll.ts:  const reloadListRef = useRef(scheduleMultiProjectSessionReload);'
+      - 'web/src/app/useReplyingSessionPoll.ts:    const completedAnyNode = completedPendingKeys(previousPending, nextPending, okNodeIds);'
+      - 'web/src/app/useReplyingSessionPoll.ts:      reloadListRef.current?.();'
+      - 'web/src/app/useAppMultiProjectReload.ts:    scheduleMultiProjectSessionReload,'
+  - id: G-PK
+    title: Codex 跨 provider 续接时丢掉旧 provider 的加密 reasoning
+    kind: fix
+    symptom: |
+      pc-win 上一条在 llmux 下建的 Codex 线程（rollout 里 21 条
+      `reasoning.encrypted_content`），切到官方 ChatGPT 登录（`mindfs-chatgpt`）后每轮
+      都 400：`{"code":"invalid_encrypted_content","message":"The encrypted content
+      Omal...RQ== could not be verified"}`。会话看起来续上了（转录、工具调用都在），
+      但一轮都发不出去；手工改库重建线程只能救当次，下一次切 provider 还会复现。
+    why: |
+      根因在既有 `rethreadCodexResumeOnProviderMismatch`（session_resume_provider.go）：
+      它正确识别 provider 不一致并用 `thread/fork` 换到新 provider，但 fork 会把历史
+      原样复制，包括旧 provider 加密的 reasoning。Responses 是无状态协议，Codex 每轮
+      都把历史 reasoning 重新放进 `input` 发出去，所以新 provider 每轮都拒。
+
+      修法必须同时满足三条，缺一条就复发：
+      1) 只丢新 provider 解不开的密文，可见转录与工具调用一个字都不动 —— 否则等于
+         偷偷改写用户历史；
+      2) 决策要落盘 —— fork 出来的 rollout 会永远带着旧密文，进程重启后如果忘了
+         这件事就会重新开始发无效内容；
+      3) 要有被动兜底 —— 本修复上线前已经被 fork 出去的线程不会再产生一次「换 id」，
+         只能靠上游那句 400 认出来，剥掉后重试一次并记住。
+
+      落点在 MindFS 回环代理（`/c/{provider}/`）而不是 Codex 侧：它是所有 Codex 请求
+      的必经之路，且与 `live_compact` 的模式无关（proxy 总是启动），worker 节点上同样
+      存在。`stripEncryptedReasoningInput` 用字节级区间扫描重建 `input` 数组，数组以外
+      的每个字节原样保留，解析失败一律 fail-open 返回原 body。
+    files:
+      - server/internal/agent/proxy/provider_switch.go
+      - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/proxy/provider_route.go
+      - server/internal/agent/proxy/proxy.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_provider_switch_test.go
+    tests:
+      - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/pool_provider_switch_test.go
+    anchors:
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) MarkProviderSwitch(threadID string) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func stripEncryptedReasoningInput(body []byte) (out []byte, removed int, changed bool) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) recoverInvalidEncryptedContent('
+      - 'server/internal/agent/proxy/provider_route.go:	if scanned && s.providerSwitchedThread(threadID) {'
+      - 'server/internal/agent/proxy/provider_route.go:		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)'
+      - 'server/internal/agent/pool.go:		if codexThreadRethreaded(in.AgentSessionID, threadID) {'
+  - id: G-PL
+    title: 总结归属收口：progress 口信不再抢摘要、兜底摘要结构化、600 字句界截断
+    kind: fix
+    symptom: |
+      任务 #100 的卡片摘要是一屏读不完的 agent 原文，且被「已交给执行会话，
+      完成后我会汇总。」这类 progress 口信反复覆盖。「总结」到底归谁写没有判据：
+      任何 router_say 都能写 tasks.result_summary，直连回合干脆把 Agent 的逐字
+      叙述当摘要落库；0 字节输出被记成 completed，用户看到一条空回复；harness
+      的错误行（Prompt is too long）被原样贴成回复正文；摘要按 rune 硬切，卡片上
+      停在半句话。合并上游时把我们加的归属判据与提示词契约一起换掉，症状会原样
+      回来。
+    why: |
+      ① `summary` 只在收尾回合有所有权（`run_settled` / `turn_settled`），其它触发
+      一律降级成 progress；带执行动作的 user_message 回合里，progress 口信既不写
+      活动也不写任务摘要。反过来 chat 回复仍然算这一轮的答复，归属不能收得过窄。
+      ② 直连回合与无 Run 的结算回合写结构化兜底摘要（用户诉求 / 最后进展 / 状态），
+      不写 agent 逐字叙述；异步压缩总结随后用 CAS 覆盖它。CAS 的期望值只能现读任务
+      行——兜底摘要的字数由截断规则决定，猜不出来。
+      ③ 0 字节输出与已知 harness 错误行都按失败收尾，错误文案翻成用户能读的一句话，
+      原文不进回复正文。
+      ④ 写入 task_activities.summary / tasks.result_summary 的文本硬上限 600 rune，
+      并在句子边界截断；正文一个字不动。
+      ⑤ `router_prompt.md` 规则 18 写明 600 字硬上限、收尾回合清单与「交出去就不要再
+      复述」——这三句与代码判据同源，删掉任何一句模型就会滑回原来的行为。
+
+      测试 → 钉住什么：
+      · TestProgressSayDoesNotOwnTaskSummary —— 带执行动作的 user_message 回合里
+        progress 口信不写 tasks.result_summary。
+      · TestChatSayOwnsTaskSummaryWithoutExecution —— 没有执行动作的 chat 回复仍然
+        写任务摘要。
+      · TestTruncateSummaryStopsAtSentenceBoundary —— 600 rune 硬上限 + 句界截断 +
+        结果是原文前缀。
+      · TestDirectTurnSummaryIsDigestNotRawNarration —— 直连回合落结构化兜底摘要，
+        不是 agent 原文。
+      · TestEmptyDirectTurnIsRecordedAsFailure —— 0 字节输出记 failed 并写明原因。
+      · TestHarnessErrorTextIsScrubbed —— harness 错误行翻成可读文案，原文不进正文。
+      · TestRouterPromptStatesSummaryContract —— 提示词里的 turn_settled / 600 字硬
+        上限 / 丢弃 progress 三句。
+      · TestSettleWorkflowReplyKeepsLongSummary —— 结算原文再长，落库摘要仍在 600
+        rune 内且停在句界。
+      · TestActivityService_CreateUserActivity_Disabled_WithExecutor —— 直连回合的
+        任务摘要形状是结构化 digest。
+    files:
+      - server/internal/kanban/turn_summary.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_route_reply.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service_activities_summary.go
+      - server/internal/kanban/service_activity_output_text.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/turn_summary_ownership_test.go
+      - server/internal/kanban/service_activity_summary_test.go
+      - server/internal/kanban/activity_service_direct_test.go
+    anchors:
+      - 'server/internal/kanban/turn_summary.go:func (s *ActivityService) deterministicTurnSummary(ctx context.Context, taskID, text, statusLine string) string {'
+      - 'server/internal/kanban/turn_summary.go:func cutAtSentence(text string, limit int) string {'
+      - 'server/internal/kanban/turn_summary.go:func directOutputFailure(text string) string {'
+      - 'server/internal/kanban/turn_summary.go:func harnessFailureText(text string) string {'
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 600'
+      - 'server/internal/kanban/service_activity_output_text.go:return cutAtSentence(text, maxStoredSummaryRunes)'
+      - 'server/internal/kanban/activity_route_apply.go:if action.Purpose == "progress" && decision.TriggerKind == RouterTriggerUserMessage && decisionHasHandoff(decision) {'
+      - 'server/internal/kanban/activity_route_apply.go:if act.Purpose == "chat" && !decisionHasHandoff(decision) {'
+      - 'server/internal/kanban/activity_route_reply.go:func decisionHasHandoff(decision *RouterDecision) bool {'
+      - 'server/internal/kanban/activity_route_reply.go:func summaryTriggerAllowed(kind RouterTriggerKind) bool {'
+      - 'server/internal/kanban/activity_route_reply.go:if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {'
+      - 'server/internal/kanban/activity_service_turns.go:if reason := directOutputFailure(text); reason != "" {'
+      - 'server/internal/kanban/activity_service_turns.go:func (s *ActivityService) recordTurnResultSummary(ctx context.Context, taskID, text, statusLine string) {'
+      - 'server/internal/kanban/service_activities.go:summary = truncateSummary(strings.TrimSpace(summary))'
+      - 'server/internal/kanban/service_activities_summary.go:func currentTaskResultSummary(ctx context.Context, store *TaskStore, taskID string) string {'
+      - 'server/internal/kanban/router_types.go:RouterTriggerTurnSettled RouterTriggerKind = "turn_settled"'
+      - 'server/internal/kanban/router_prompt.md:中文，200–400 字；**硬上限 600 字**（超过会被截断，截断后卡片上读起来就是半句话）。'
+      - 'server/internal/kanban/router_prompt.md:交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。'
+  - id: G-PM
+    title: 会话回合结算事件：任务绑定的任何会话走完一轮都进 Router 账本（turn_settled）
+    kind: feature
+    symptom: |
+      用户在任务详情里推进一次会话（追问、改口、让节点接着干），那一轮走完系统里
+      没有任何事件 —— Router 既不总结也不跟进，只有下一轮 Run 结算才想起这条任务。
+      线上 mindfs #68 的进度就是这样整段漂出视野的。合并上游时把挂在
+      `EndSessionTurn` 上的那一处生产丢掉，或者事件种类白名单/实例键换成上游版本，
+      症状会原样回来（会话里干了一堆活，看板摘要停在上一轮）。
+    why: |
+      ① 生产端只挂在 `EndSessionTurn` 上：它是回合的唯一终结器，成功 / 出错 / 取消 /
+      panic 四条路径都经过它，另加钩子必然漏掉其中几条。
+      ② 会话归属反查必须走全四条绑定（`tasks.main_session_key` /
+      `workflow_runs.session_key` / `workflow_node_runs.session_key` /
+      `task_activities.session_key`）。只认主会话会漏掉节点会话与委派会话 —— 而那
+      正是任务真正干活的地方。
+      ③ 实例键是 `turn:<turnID>`，重放 / 重连 / 重复调度都变成一次 `ON CONFLICT
+      DO NOTHING`，不会重复唤醒 Router。
+      ④ 结算回合不计入「每条用户留言 3 回合」那把尺，改按每任务每小时 20 次自管：
+      否则一个高频委派会话会把 Router 的额度全花在收尾上；反过来共用用户预算会让
+      收尾回合被用户自己的多轮追问挤掉。
+      ⑤ 系统发起的回合（巡检补做、自动续跑）没有前置用户留言，事件照样要落，所以
+      coordinate 闸门对 `turn_settled` 豁免「必须有原始留言」这一条。
+      ⑥ 没有 Run 是正常形态而不是坏数据：事件存储按种类放行空 RunID，brief 走独立
+      分支（不写「run 不存在」这种会让模型以为执行失败的话），`run_status` 用独立
+      取值 `turn`，产出摘要单独走 `RouterBriefEvent.Excerpt`（brief 1200 rune、载荷
+      400 rune 尾巴），不当成越界载荷。
+      ⑦ 运行期动作只放开 `notify_user`；交出去的执行动作（run_workflow /
+      message_agent / deliver）与会话回合语义冲突，一律拒绝。
+      ⑧ 任务已终态或已归档时不发：这些回合不需要 Router 收尾，发了只是噪音。
+      ⑨ 账本写入与 Router 是否开 coordinate 无关 —— 账本记事实，消费由 coordinate
+      循环按拍扫描；把生产也塞进 `ModeForRoot == coordinate` 会让事件白白丢一段。
+
+      测试 → 钉住什么：
+      · TestEndSessionTurnEmitsTurnSettledEvent —— 任务会话走完一轮，EndSessionTurn
+        落且只落一条 turn_settled，载荷带 session_key。
+      · TestEndSessionTurnIgnoresNonTaskSession —— 非任务会话一条都不发。
+      · TestSettleSessionTurnEmitsOneEventPerTurn / TestSettleSessionTurnSkipsNonTaskSession
+        —— 同一 turnID 重放只写一次；非任务会话与终态/归档任务不发。
+      · TestTaskIDForSessionFindsEveryBinding —— 四条绑定任意一条命中都能反查到任务。
+      · TestTurnSettledExcludedFromUserTurnBudget —— 结算回合不占用户留言 3 回合预算。
+      · TestSettlementTurnBudgetCapsPerHour —— 每任务每小时 20 次上限，超出落 skipped。
+      · TestSettlementTurnIgnoresExhaustedUserTurnBudget —— 用户预算用尽不影响结算回合。
+      · TestTurnSettledBriefCarriesExcerptWithoutRunNoise —— brief 带摘要、run_status
+        为 turn、且不出现「run not found」未验证项。
+      · TestTurnSettledAllowsNotifyUserButRejectsHandoff —— 运行期动作只放开
+        notify_user，执行类动作被拒。
+      · TestTurnSettledEventMapsToSettlementTrigger —— 事件映射到
+        RouterTriggerTurnSettled，trigger ref 回落到 TurnID。
+    files:
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/task_store_session_lookup.go
+      - server/internal/kanban/router_event_types.go
+      - server/internal/kanban/router_event_store.go
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/api/appcontext_task_flags.go
+    tests:
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/api/appcontext_task_turn_settled_test.go
+    anchors:
+      - 'server/internal/kanban/service_turn_settled.go:func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnSettledInput) (bool, error) {'
+      - 'server/internal/kanban/service_turn_settled.go:func RouterEventTurnInstanceKey(turnID string) string {'
+      - 'server/internal/kanban/service_turn_settled.go:const routerSettlementTurnsPerHour = 20'
+      - 'server/internal/kanban/service_turn_settled.go:func routerEventAllowsEmptyRun(kind RouterEventKind) bool {'
+      - 'server/internal/kanban/service_turn_settled.go:func eventTurnBudgetSkip(ctx context.Context, store *TaskStore, event RouterEvent, userActivityID string) (string, error) {'
+      - 'server/internal/kanban/service_turn_settled.go:func routerEventBriefExcerpt(payloadJSON string) string {'
+      - 'server/internal/kanban/task_store_session_lookup.go:func (s *TaskStore) TaskIDForSession(ctx context.Context, sessionKey string) (string, error) {'
+      - 'server/internal/kanban/router_event_types.go:RouterEventTurnSettled RouterEventKind = "turn_settled"'
+      - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && !routerEventAllowsEmptyRun(ev.Kind) {'
+      - 'server/internal/kanban/router_event_brief.go:Excerpt string `json:"excerpt,omitempty"`'
+      - 'server/internal/kanban/router_event_brief.go:} else if event.Kind == RouterEventTurnSettled {'
+      - 'server/internal/kanban/router_coordinate.go:kind = RouterTriggerTurnSettled'
+      - 'server/internal/kanban/router_coordinate.go:triggerRef = strings.TrimSpace(ev.TurnID)'
+      - 'server/internal/api/appcontext_task_flags.go:s.settleSessionTurnForRouter(rootID, sessionKey, turnID, pending)'
+  - id: G-PP
+    title: 1M 开关真正决定窗口：默认模型钉在 200k，只有 [1m] 才给 1M
+    kind: fix
+    symptom: |
+      pc-win 上「1M」按钮点了没有任何效果。查日志：裸别名 `ok` 就被 CLI 判成
+      1M 窗口（`context_window model="ok" window=1000000`，而且 712k token 的请求
+      照样成功），开关只是把模型名改成 `ok[1m]`、窗口一点没变；反过来关掉开关，
+      窗口也不会退回 200k。合上游时如果把 `WithLongContextPolicy` 那一层丢掉、
+      或者把 `decideSessionReopen` 的 1M 分支摘掉，症状原样回来 —— 默认档到底是多少
+      由节点上的 CLI 版本决定，各机器不一致。
+    why: |
+      ① 窗口是 Claude Code CLI 自己算的，MindFS 没有窗口表。2.1.283/2.1.330 的算法是：
+      模型名带 `[1m]` → 1e6；请求的 beta 集合里有 `context-1m-2025-08-07` 且模型支持
+      → 1e6；CLI 目录声明原生 1M → 1e6；否则退回 `R$e = 200000`。pc-win 的 2.1.330
+      走的是第二条，所以裸别名也是 1M。
+      ② CLI 自己留了总闸 `CLAUDE_CODE_DISABLE_1M_CONTEXT`（`a0()`），它同时否掉
+      `[1m]` 分支、1M beta 分支与原生 1M 分支。MindFS 按「模型名是否带 `[1m]`」
+      逐进程设置它，默认档才会稳定落在 200k，且与节点上的 CLI 版本无关。
+      ③ 这个开关是**逐进程的 env**：进程活着就改不了。所以 1M 开关翻转不能走原地
+      `SetModel`，必须关掉池会话、按新策略 resume 一次（历史由转录承接）。
+      `decideSessionReopen` 把 1M 翻转排在 effort / fast service 之前，就是为了不让
+      「设置没变」那条原地分支把开关吞掉。
+      ④ 策略要压在 env 装配的最后一层（`claudeSessionEnv`），不能被 agent env 或
+      用户 settings 里继承来的同名键改写；反过来，开 1M 时也要主动删掉残留的闸，
+      否则开关按下去还是 200k。
+      ⑤ agent 默认值里不再写 `[1m]`（`defaultModelForAgent`）：默认档就是 200k。
+      留着后缀会让新建会话一开口就是 1M，而前端的勾选状态来自会话自身的模型名，
+      两边对不上。1M 只是每次会话里的开关，不是默认值。
+    files:
+      - server/internal/agent/claude/session_models_helpers.go
+      - server/internal/agent/pool_open.go
+      - server/internal/api/usecase/session_runtime.go
+      - server/internal/api/usecase/session_agent_open.go
+      - server/internal/api/usecase/session_send.go
+    tests:
+      - server/internal/agent/claude/session_long_context_env_test.go
+      - server/internal/agent/pool_claude_long_context_test.go
+      - server/internal/api/usecase/session_long_context_reopen_test.go
+    anchors:
+      - 'server/internal/agent/claude/session_models_helpers.go:const Disable1MContextEnv = "CLAUDE_CODE_DISABLE_1M_CONTEXT"'
+      - 'server/internal/agent/claude/session_models_helpers.go:func WithLongContextPolicy(env map[string]string, model string) map[string]string {'
+      - 'server/internal/agent/pool_open.go:func (p *Pool) claudeSessionEnv(def Definition, in agenttypes.OpenSessionInput) (map[string]string, string) {'
+      - 'server/internal/agent/pool_open.go:return claude.WithLongContextPolicy(env, in.Model), settingsJSON'
+      - 'server/internal/api/usecase/session_runtime.go:func decideSessionReopen(currentModel, nextModel string, settingsNeedReopen bool) sessionReopen {'
+      - 'server/internal/api/usecase/session_runtime.go:func defaultModelForAgent(agentName, model string) string {'
+      - 'server/internal/api/usecase/session_runtime.go:func shouldReopenSessionForLongContext(currentModel, nextModel string) bool {'
+      - 'server/internal/api/usecase/session_agent_open.go:reopen := decideSessionReopen('
+      - 'server/internal/api/usecase/session_agent_open.go:if reopen == sessionReopenLongContext {'
+      - 'server/internal/api/usecase/session_send.go:defaultModel := defaultModelForAgent(in.Agent, resolvedModel)'
+
+  - id: G-PQ
+    title: 回合收尾之后 CLI 自动续写的补录（触发边沿 + 条目级时间地板）
+    kind: fix
+    symptom: |
+      会话刷新之后，助手最后一段输出不见了：「回合 result 之后 CLI 因后台任务回注
+      （task-notification）自己再跑的一整段循环」，实时看得见、库里一行都没有 ——
+      2026-11-22 实测 llm-deploy 会话 seq=196 之后的思考卡与工具行全在转录里、库里没有。
+      合上游时若丢掉任一处（触发标记 / 同步里的补录调用 / 条目级地板），症状原样回来。
+    why: |
+      ① 实时落盘只在 SendMessage 返回时做一次（挂在 OnUpdate 的闭包上），而那一次返回
+      就是人类回合的 result；之后的续写不产生新的回合边界（origin.kind=task-notification，
+      `isTurnBoundaryResult` 直接忽略），于是这些事件只广播、不落盘。
+      ② live-owned 会话的自动增量同步是关着的（2026-09-16 重导事故的守卫），所以没有
+      第二个写入者；刷新触发的 delta 同步也补不到。
+      ③ 补录只能走导入器，而 live-owned 的字节游标是冻结的，每拍读转录太贵 —— 用进程内
+      标记做触发边沿：只有「回合已结束却还有事件进来」才读一次（session_send.go 判
+      SessionTurnActive，取即清除，失败或尾部未收尾就放回去）。
+      ④ 时间地板必须能切开一条 item：导入器把相邻同角色条目合并成一条，时间戳与 native id
+      都取最后一条。回合收尾的助手条目与续写之间只隔着一个被过滤掉的 task-notification
+      用户条目，两者并成一条 —— 只按 item 级地板过滤时，「已落库那一轮 + 续写」会带着
+      续写的 uuid 整条重导一遍（正文重复）。所以在地板处按**条目**自己的时间戳拦截。
+      ⑤ 只补助手侧条目（recoveryAgentExchanges）：用户行由实时路径在发消息前就写好，
+      再导一次只会多出一个合并出来的巨型用户气泡（2026-11-17 手动同步实测）。
+      ⑥ 尾部没收尾（committed < offset，续写还在跑）时不提交、标记放回去下一拍再试；
+      补录成功才推进游标，重复补录因此退化成一次 stat。
+    # 针对性测试：
+    #   importer_transcript_continuation_test.go —— 条目级地板把「已落库那一轮 + 续写」
+    #     切成一条只含续写的 item（NativeID 取续写条目、committed 到文件尾），
+    #     且没有地板时合并行为不变（日常 import-owned 增量不受影响）。
+    #   external_sessions_live_continuation_test.go —— 无标记不读转录；有标记才补、只补
+    #     助手侧一条；地板取最后一行时刻；游标推进后不再读；尾部未收尾时标记保留并重试；
+    #     同 native id 重放不落第二行；回合进行中不补。
+    files:
+      - server/internal/agent/claude/importer_transcript.go
+      - server/internal/api/usecase/external_sessions_live_tail.go
+      - server/internal/api/usecase/external_sessions_sync.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_turn_registry.go
+    tests:
+      - server/internal/agent/claude/importer_transcript_continuation_test.go
+      - server/internal/api/usecase/external_sessions_live_continuation_test.go
+    anchors:
+      - 'server/internal/agent/claude/importer_transcript.go:if !floor.IsZero() && (ts.IsZero() || !ts.After(floor)) {'
+      - 'server/internal/api/usecase/session_turn_registry.go:continuationTails = make(map[string]bool)'
+      - 'server/internal/api/usecase/session_turn_registry.go:func markSessionContinuationTail(rootID, sessionKey string) {'
+      - 'server/internal/api/usecase/session_turn_registry.go:func takeSessionContinuationTail(rootID, sessionKey string) bool {'
+      - 'server/internal/api/usecase/session_send.go:markSessionContinuationTail(in.RootID, in.Key)'
+      - 'server/internal/api/usecase/external_sessions_sync.go:s.recoverLiveContinuationTail(ctx, root, in.RootID, manager, current, agentName, binding)'
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:func (s *Service) recoverLiveContinuationTail('
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:items := recoveryAgentExchanges(imported.Exchanges)'
+      - 'server/internal/api/usecase/external_sessions_live_tail.go:if imported.Cursor.CommittedOffset < imported.Cursor.Offset {'
+
+  - id: G-PR
+    title: live compact 收尾：压缩事件宽限 · 计费口径 · 校准对护栏 · 诊断字段
+    kind: fix
+    symptom: |
+      ① 自动压缩明明生效，胶囊却记「harness 没有报告压缩事件」并停止自动重试 ——
+      Codex 的 compacted 事件比流结束晚到一点就触发，而压缩其实已经写回。
+      ② 胶囊的节省率读成 3%，实际是 39%：Codex 请求体里 89–95% 是推理密文，按字节
+      或按整包估算 token 算，分母里塞满了不计费的密文。合上游时若只留字节口径，
+      症状原样回来。
+      ③ rail 的校准对 (lastActual, lastForwardEst) 会被小体积旁路请求或没有 usage 的
+      请求写坏一半，之后所有投影都按一个从未成立过的比例折算，rail 要么永不触发、
+      要么每轮都触发。
+      ④ `[live-compact]` 行只有「折了几块」，答不了「请求很大为什么没得折」；
+      `actual=-1` 也分不清压缩响应与流提前结束。
+    why: |
+      ① 压缩事件与流结束是两个独立回调，顺序不确定。压缩回合结束后给 3s 宽限
+      （hygieneCompactGrace），事件已到即记成功（reason=stream_error_after_compact），
+      真没压仍记失败 —— 宽限只在收尾判定上用，不改变「必须看到压缩事件」的语义。
+      ② 计费上下文 = usage_input + cache_creation + cache_read，与同一批请求的折叠
+      tokens 同量纲，比例才没有被非文本字节稀释。账本汇总只累加「既有 usage 样本、
+      又有折叠估算」的行，两种量纲不混算；没有样本时前端退回原估算口径。
+      ③ 估算只在请求路径写、真实值在响应路径写，两半此前分别落库。改成估算先写
+      pendingForwardEst、接受样本时成对提交；本请求估算不足已校准估算 1/4 的旁路
+      请求不接受（它测的不是这段对话）；两条压缩信号路径（PostCompact hook 与 Codex
+      SignalCompact）置 calibrationReset，压缩后本来就会小，必须放行。
+      ④ PlanStats.UnaccountedBytes = BodyBytes - ResultBytes，是任何折叠策略都触不到
+      的字节；Usage.MissingReason 区分 upstream_unreachable / content_encoding /
+      not_observed / no_usage_block。两者只进日志与账本，没有策略读它们。
+    # 针对性测试：
+    #   session_hygiene_wire_test.go —— 流报错但压缩事件已在宽限内到达 → 记成功；
+    #     grace 改 0 时同一用例变红。
+    #   fold/ledger_test.go —— 计费口径累计只覆盖有样本的行；缺样本行不进分母；
+    #     usage_missing_reason 往返。plan_stats_test.go —— unaccounted 覆盖全部非工具
+    #     输出，有会话与无会话两路都对。
+    #   proxy/live_compact_calibration_test.go —— 未采样请求不留估算；旁路样本不动
+    #     校准对；压缩信号放行小样本；首个样本正常校准。三处变异各自打红。
+    #   proxy/live_compact_log_test.go —— provider 行带 usage_missing 原因、
+    #     plan_unaccounted_bytes。live_compact_usage_ledger_test.go —— 缺样本账本行
+    #     带 no_usage_block。
+    #   web/tests/context-saving-chip.test.mjs —— 有样本时按计费口径算节省率与累计。
+    files:
+      - server/internal/api/usecase/session_hygiene_wire.go
+      - server/internal/agent/fold/ledger.go
+      - server/internal/agent/fold/types.go
+      - server/internal/agent/fold/plan.go
+      - server/internal/agent/proxy/proxy.go
+      - server/internal/agent/proxy/thread.go
+      - server/internal/agent/proxy/live_compact_fold_request.go
+      - server/internal/agent/proxy/provider_route.go
+      - server/internal/agent/proxy/live_compact_ledger.go
+      - server/internal/agent/proxy/live_compact_log.go
+      - server/internal/agent/proxy/live_compact.go
+      - server/internal/agent/proxy/lcsmoke/main.go
+      - web/src/components/agent/ContextSavingIndicator.tsx
+      - web/src/services/agent/contextSaving.ts
+    tests:
+      - server/internal/api/usecase/session_hygiene_wire_test.go
+      - server/internal/agent/fold/ledger_test.go
+      - server/internal/agent/fold/plan_stats_test.go
+      - server/internal/agent/proxy/live_compact_calibration_test.go
+      - server/internal/agent/proxy/live_compact_log_test.go
+      - server/internal/agent/proxy/live_compact_usage_ledger_test.go
+      - web/tests/context-saving-chip.test.mjs
+    anchors:
+      - 'server/internal/api/usecase/session_hygiene_wire.go:var hygieneCompactGrace = 3 * time.Second'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:func waitHygieneCompactSeen(ctx context.Context, seen <-chan struct{}, grace time.Duration) bool {'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:if waitHygieneCompactSeen(ctx, seen, hygieneCompactGrace) {'
+      - 'server/internal/agent/fold/ledger.go:json:"total_context_tokens"'
+      - 'server/internal/agent/fold/ledger.go:json:"total_folded_tokens"'
+      - 'server/internal/agent/fold/ledger.go:json:"context_token_samples"'
+      - 'server/internal/agent/fold/ledger.go:if entry.UsageSource != UsageSourceMissing && entry.TokensEst > 0 {'
+      - 'server/internal/agent/fold/ledger.go:json:"usage_missing_reason"'
+      - 'server/internal/agent/fold/types.go:MissingReason string'
+      - 'server/internal/agent/fold/types.go:UsageMissingUpstreamUnreachable = "upstream_unreachable"'
+      - 'server/internal/agent/fold/types.go:UsageMissingContentEncoding = "content_encoding"'
+      - 'server/internal/agent/fold/types.go:UsageMissingNotObserved = "not_observed"'
+      - 'server/internal/agent/fold/types.go:UsageMissingNoUsageBlock = "no_usage_block"'
+      - 'server/internal/agent/fold/plan.go:UnaccountedBytes int'
+      - 'server/internal/agent/fold/plan.go:stats.UnaccountedBytes = stats.BodyBytes - stats.ResultBytes'
+      - 'server/internal/agent/proxy/proxy.go:pendingForwardEst int'
+      - 'server/internal/agent/proxy/proxy.go:calibrationReset bool'
+      - 'server/internal/agent/proxy/thread.go:st.calibrationReset = true'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:st.pendingForwardEst = est'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:func (st *sessionState) auxiliarySample() bool {'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:if !st.auxiliarySample() {'
+      - 'server/internal/agent/proxy/live_compact_fold_request.go:st.calibrationReset = false'
+      - 'server/internal/agent/proxy/provider_route.go:fold.UsageMissingUpstreamUnreachable,'
+      - 'server/internal/agent/proxy/provider_route.go:usage.MissingReason = missingReason'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:UsageMissingReason: usage.MissingReason,'
+      - 'server/internal/agent/proxy/live_compact_ledger.go:MissingReason: fold.UsageMissingNoUsageBlock,'
+      - 'server/internal/agent/proxy/live_compact_log.go:usage_missing=%s'
+      - 'server/internal/agent/proxy/live_compact_log.go:plan_unaccounted_bytes=%d'
+      - 'server/internal/agent/proxy/live_compact.go:obs.cold, obs.coldReason, obs.wouldFoldTokens, planStatsFields(obs.plan))'
+      - 'server/internal/agent/proxy/lcsmoke/main.go:flag.Int("min-fold-bytes"'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:const billingSized = !!latest && latest.usage_source !== "missing" && billingContext > 0 && foldedTokens > 0;'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:const totalPercent = formatPercent(saving.total_folded_tokens, saving.total_context_tokens + saving.total_folded_tokens);'
+      - 'web/src/services/agent/contextSaving.ts:total_context_tokens: number;'
+  - id: G-PN
+    title: 任务级巡检与中断恢复：输出水位 · turn_stalled / task_orphaned / turn_interrupted · 卡片角标
+    kind: feature
+    symptom: |
+      任务行写着 running、底下却什么都没有（重启把在飞回合带走、会话僵住不再出帧、
+      直连回复无人结算），Router 既不巡检也不发事件，卡片也不给提示 —— 用户只能自己
+      发现「卡住了」。健康任务反而会被误判：只看「进程还在回包」会把已经静默十分钟的
+      回合当成正常。合并上游时若把 coordinateTick 里的 taskHealthSweep 摘掉、把水位
+      判据换成会话探针空闲、或把中断重试白名单改回只认 startup_reconcile，症状原样回来。
+    why: |
+      ① 输出水位单独成文件（`turn_watermark.go`），只信 harness 帧：
+      `BroadcastSessionUpdate` 是所有 harness 帧的必经之路，也是唯一能证明「这一轮
+      真的还在产出」的地方（会话探针只能证明进程还在回包）。内存为主，每 30 s 或每
+      20 帧落一次 `last_output_at`（回复行 + 运行中的节点行），只为诊断与跨进程可见；
+      进程重启后水位是「未知」而不是「0 分钟没动」—— 未知不能当停滞。
+      ② 水位只在回合结算时清零（`clearSessionTurnWatermark`），成功 / 失败 / 取消都清，
+      免得把上一轮的产出时刻算到下一轮头上。
+      ③ 巡检只看任务级事实（非终态任务的活会话 / open 节点 / 在飞回复 / 水位），与
+      workflow 引擎解耦；分类是纯函数 `classifyTaskHealth`，healthy / stalled_turn /
+      orphaned / waiting_busy 四类先红。
+      ④ 事件去重按任务或回复 + 5 分钟时间桶（`routerEventHealthInstanceKey`），同一
+      现场每桶只一条；健康任务零事件。
+      ⑤ 重启恢复在 `settleOrphanDirectReplies` 里先写 `turn_interrupted`（可见系统行写
+      清来由），再按任务状态决策；自动重开上限 3 次（用户裁定：
+      `supervisionInterruptedMaxRetries = 3`），24 小时时效
+      （`routerInterruptedRetryMaxAge`），用完只通知用户。
+      ⑥ 巡检/恢复事件没有 Run 是正常形态：事件存储按种类放行空 RunID，brief 的监管块
+      按载荷 + 实时水位重算（不复用事件快照），不写「run 不存在」这种会让模型以为
+      执行失败的话。
+      ⑦ 事件回合预算豁免沿用 G-PM：`turn_interrupted` / `turn_stalled` /
+      `task_orphaned` 不占用户留言的 3 回合预算，否则巡检自己会把用户额度花光。
+      ⑧ 卡片角标是派生值而不落库：判据是事件账本里还是 pending / claimed（= Router
+      还没处理），处理完自然消失；同时挂到 `ListTasks` 与 `GetTask` 两处，
+      保证 `broadcastTask → GetDetail → GetTask` 推给前端的详情与列表同形，不会把
+      角标擦掉。中断优先于停滞，条数按事件条数给。
+    files:
+      - server/internal/kanban/turn_watermark.go
+      - server/internal/kanban/router_task_health.go
+      - server/internal/kanban/router_turn_recovery.go
+      - server/internal/kanban/task_router_alert.go
+      - server/internal/kanban/router_event_types.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/router_brief.go
+      - server/internal/kanban/router_supervision_actions.go
+      - server/internal/kanban/router_supervision_direct.go
+      - server/internal/kanban/service_recover_direct_reply.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/task_store.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/types.go
+      - server/internal/api/appcontext_task_flags.go
+      - server/internal/api/appcontext_broadcast.go
+      - web/src/components/task/routerAlertModel.ts
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/shared/taskTypes.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - server/internal/kanban/turn_watermark_test.go
+      - server/internal/kanban/router_task_health_test.go
+      - server/internal/kanban/router_turn_recovery_test.go
+      - server/internal/kanban/router_task_alert_test.go
+      - server/internal/api/appcontext_task_watermark_test.go
+      - server/internal/api/http_tasks_overview_card_parity_test.go
+      - web/tests/task-router-alert.test.mjs
+    anchors:
+      - 'server/internal/kanban/turn_watermark.go:func (s *Service) NoteSessionTurnOutput(ctx context.Context, rootID, sessionKey string, now time.Time) {'
+      - 'server/internal/kanban/turn_watermark.go:func (s *Service) ClearSessionTurnWatermark(rootID, sessionKey string) {'
+      - 'server/internal/kanban/turn_watermark.go:turnWatermarkFlushInterval = 30 * time.Second'
+      - 'server/internal/api/appcontext_broadcast.go:s.noteSessionTurnOutput(rootID, sessionKey)'
+      - 'server/internal/api/appcontext_task_flags.go:s.clearSessionTurnWatermark(rootID, sessionKey)'
+      - 'server/internal/kanban/router_task_health.go:func classifyTaskHealth(in taskHealthInput) taskHealth {'
+      - 'server/internal/kanban/router_task_health.go:func (s *Service) taskHealthSweep(ctx context.Context, rootID string, now time.Time) ([]RouterEvent, error) {'
+      - 'server/internal/kanban/router_task_health.go:func routerEventHealthInstanceKey(kind RouterEventKind, ref string, at time.Time) string {'
+      - 'server/internal/kanban/router_coordinate.go:rs.service.taskHealthSweep(ctx, rs.rootID, now)'
+      - 'server/internal/kanban/router_turn_recovery.go:supervisionInterruptedMaxRetries = 3'
+      - 'server/internal/kanban/router_turn_recovery.go:func (s *Service) recordTurnInterruptedEvent(ctx context.Context, store *TaskStore, activities *ActivityStore, reply *TaskActivity) {'
+      - 'server/internal/kanban/service_recover_direct_reply.go:s.recordTurnInterruptedEvent(ctx, store, activities, updated)'
+      - 'server/internal/kanban/router_event_types.go:RouterEventTurnStalled  RouterEventKind = "turn_stalled"'
+      - 'server/internal/kanban/router_event_types.go:RouterEventTurnInterrupted RouterEventKind = "turn_interrupted"'
+      - 'server/internal/kanban/router_supervision_actions.go:if obs.Direct.Interrupted {'
+      - 'server/internal/kanban/activity_store.go:ALTER TABLE task_activities ADD COLUMN last_output_at'
+      - 'server/internal/kanban/task_router_alert.go:func (s *TaskStore) attachRouterAlerts(ctx context.Context, tasks []Task) {'
+      - 'server/internal/kanban/task_store.go:s.attachRouterAlerts(ctx, items)'
+      - 'server/internal/kanban/types.go:RouterAlert    *TaskRouterAlert `json:"router_alert,omitempty"`'
+      - 'web/src/components/task/routerAlertModel.ts:export function taskRouterAlertBadge('
+      - 'web/src/components/task/TaskCardRows.tsx:const routerAlert = taskRouterAlertBadge(task);'
+      - 'web/src/components/task/taskIcons.tsx:export function TaskRouterAlertIcon('
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.routerAlertInterrupted":'
+      - 'web/src/i18n/locales/en-US-tasks.ts:"task.routerAlertStalled":'
+
+  - id: G-PO
+    title: 会话推进跟随：作答落 user_answer · out-of-band 回合进出 running · 无主会话时回退最近活跃会话
+    kind: feature
+    symptom: |
+      任务卡停在 waiting_user、底下却没有任何可见的推进：用户在提问卡上作答，任务对话里
+      看不到自己答了什么；用户直接进会话继续聊，任务头一直不动，Router 也收不到「这一轮
+      结束了」；任务没有 main_session_key 时（历史任务、纯节点会话）详情面板与轮询拿不到
+      会话入口，看起来像「任务空着」—— 线上 #68 四天 11 次提问作答、0 决策 0 事件、卡片
+      摘要为空就是这个形状。合并上游时若去掉 user_answer 活动、把 out-of-band 判据改回只看
+      主会话、或删掉当前会话回退，症状原样回来。
+    why: |
+      ① 作答是事实，不只是标记：`MarkTaskQuestionAnswered` 两个 changed 分支都落一条
+      `user_answer` 活动（role=user，正文「问题：答案；…」按问题排序，ID 由
+      `taskPromptHash(sessionKey, toolUseID)` 决定所以重放幂等），用户能在对话里看见自己的
+      答复；「这一轮答复了提问」用一次性内存标记交给随后的 `SettleSessionTurn`，事件载荷
+      才带 `answered_question=true`，不依赖活动行反查。
+      ② out-of-band 回合的唯一入口是 `ws_session_message.go` 的 `OnStart` —— 用户从会话
+      面板发出的每一轮都从这里进；`BeginOutOfBandSessionTurn` 只在任务 `waiting_user` 时
+      推进到 `running`（主会话与节点会话同一判据，`TaskIDForSession` 跟进），结算时取走标记
+      写 `out_of_band=true`，再把仍停在 running 的任务放回 `waiting_user`。恢复放在事件落库
+      错误返回之前：事件写失败不代表这一轮没结束，任务头不能永远 running。
+      ③ 当前会话回退只填内存、不落库（`attachCurrentSessionKeys`，一条 UNION 查询按
+      `updated_at` 倒序取最近活跃的相关会话）：回退不该把一个节点会话悄悄钉成主会话；挂在
+      `GetTask` 与 `ListTasks` 上，任务详情 API 无需改动就拿到会话视图入口与轮询目标。
+      ④ 不新增读工具：结算回合用既有 `router_read_session` 读会话尾部，权限边界不变。
+    files:
+      - server/internal/kanban/service_session_follow.go
+      - server/internal/kanban/task_store_session_fallback.go
+      - server/internal/kanban/service_task_prompts.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/types.go
+      - server/internal/kanban/task_store.go
+      - server/internal/api/appcontext_task_prompt.go
+      - server/internal/api/ws_session_message.go
+    tests:
+      - server/internal/kanban/service_task_prompts_test.go
+      - server/internal/kanban/session_follow_test.go
+      - server/internal/api/appcontext_task_prompt_test.go
+    anchors:
+      - 'server/internal/kanban/types.go:ActivityTypeUserAnswer = "user_answer"'
+      - 'server/internal/kanban/service_task_prompts.go:func (s *ActivityService) recordUserAnswerActivity('
+      - 'server/internal/kanban/service_task_prompts.go:func userAnswerBody(answers map[string]string) string {'
+      - 'server/internal/kanban/service.go:sessionFollowMu  sync.Mutex'
+      - 'server/internal/kanban/service_session_follow.go:func sessionFollowKey(rootID, sessionKey string) string {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) NoteSessionAnsweredQuestion(rootID, sessionKey string) {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) BeginOutOfBandSessionTurn(ctx context.Context, rootID, sessionKey string) bool {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID string) {'
+      - 'server/internal/kanban/service_turn_settled.go:if s.takeSessionAnsweredQuestion(rootID, sessionKey) {'
+      - 'server/internal/kanban/service_turn_settled.go:outOfBand := s.takeSessionOutOfBandTurn(rootID, sessionKey)'
+      - 'server/internal/kanban/service_turn_settled.go:s.restoreOutOfBandTask(ctx, store, taskID)'
+      - 'server/internal/kanban/task_store_session_fallback.go:func (s *TaskStore) attachCurrentSessionKeys(ctx context.Context, tasks []Task) {'
+      - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, items)'
+      - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, tasks)'
+      - 'server/internal/api/appcontext_task_prompt.go:s.Kanban.NoteSessionAnsweredQuestion(rootID, sessionKey)'
+      - 'server/internal/api/ws_session_message.go:h.AppContext.Kanban.BeginOutOfBandSessionTurn(msgCtx, rootID, key)'
+
+  # ── W5 验收：回合结算 · 会话推进跟随 · kill -9 重启恢复（隔离实例，真实模型） ──
+  - id: G-PS
+    title: W5 验收脚本：直连长回合总结归属 / 会话推进跟随 / kill -9 重启恢复
+    kind: docs
+    symptom: |
+      上游没有 Router，也没有 `turn_settled` / `turn_interrupted` 事件，更没有这三条行为的验收
+      资产。没有脚本时 W1–W4 只能靠单测与变异验证：真实模型下「总结是不是转交口信」「会话被
+      用户推进时任务跟不跟」「kill -9 之后有没有可见说明与自动重试」都只能靠人肉复现；合上游
+      时脚本被当成普通 e2e 资产删掉，这三条行为就再没有可重放的证据。
+    why: |
+      必须保留：① 只作用于隔离实例 —— 两个脚本都在入口拒绝 `:7331`（A/B 在 main、C 在
+      `scenario_c`），账本一律 `sqlite3 ...?mode=ro` 只读打开，线上只做 GET /health；
+      ② 断言的是可见行为与持久证据（`tasks.result_summary` 的来源、`router_events` 载荷、
+      `router_decisions.kinds`、回复行终态），不是实现细节；
+      ③ A 必须等 `summary_source == "router"` 再判：兜底摘要是回合结束那一刻先落的占位，
+      Router 结算回合实测晚 10–25 s 应用，早了会把占位当结论（第一版断言就栽在这里）；
+      ④ 提问卡载荷可能是顶层 `questions`，也可能是 adapter 原样透传的 `input`（JSON 字符串），
+      按前端 `AskUserQuestionCard.tsx::getAskUserQuestions` 同口径解析；
+      ⑤ 杀进程树取 `/proc/<pid>/task/*/children` 并集 —— Go 运行时从任意线程 fork，只看主线程
+      会漏掉 CLI 子进程，模拟不出断电。
+      测试 → 钉住什么（脚本自证，无 Go/Vitest 测试，kind=docs 豁免）：
+      · A 场景 —— 直连长回合期间摘要不是转交口信、结算后 summary 来自 Router；
+      · B 场景 —— 两条 `turn_settled` 的 `out_of_band` / `answered_question` 依次为 false→true；
+      · C 场景 —— 重启后 `turn_interrupted` ≤5 min、原回复 cancelled 带「进程重启」说明、
+        `retry_direct` 应用且重试行跑到 completed。
+    files:
+      - e2e/test_router_turn_settle_follow.py
+      - e2e/test_router_turn_settle_follow_restart.py
+    anchors:
+      - 'e2e/test_router_turn_settle_follow.py:def summary_source(text):'
+      - 'e2e/test_router_turn_settle_follow.py:def payload_questions(payload):'
+      - 'e2e/test_router_turn_settle_follow.py:def scenario_a(client, db, opts):'
+      - 'e2e/test_router_turn_settle_follow.py:def scenario_b(client, db, opts):'
+      - 'e2e/test_router_turn_settle_follow.py:if ":7331" in opts.base:'
+      - 'e2e/test_router_turn_settle_follow_restart.py:def thread_children(pid):'
+      - 'e2e/test_router_turn_settle_follow_restart.py:def process_tree(pid):'
+      - 'e2e/test_router_turn_settle_follow_restart.py:if ":7331" in opts.base:'
+      - 'e2e/test_router_turn_settle_follow_restart.py:def scenario_c(client, db, opts):'
+    boundary: |
+      只覆盖隔离实例的真实 agent 验收，不替代线上只读审计（W5-2 的四项判据必须取部署之后的
+      24 h 窗口，脚本不宣称线上通过）；不覆盖 Router 对 workflow Run 的监管动作、不覆盖双进程
+      抢读、不覆盖 SQLite 语句中断。脚本是 Python 验收工具而非 Go/Vitest 测试，故 kind=docs；
+      `e2e/` 同时被 G-BA 的前缀条目覆盖，本组给它独立的语义与失败症状。
+
+  - id: G-PH
+    title: 飞书通道 M2 + M4：owner 私聊建任务 / 项目选择卡 / 主控代发卡片 / 按卡片节点回传点击
+    kind: feature
+    symptom: |
+      用户不在电脑前时只能等网页：飞书里既不能发一句「在 fn 的 docs 建个任务」让对应节点真的建卡，
+      重名项目也没有选择卡；worker 上跑出来的 gate/ask 卡因为只有主节点持有 lark-cli 而送不到飞书，
+      即使送到，点击也无处可去。不能把 worker 的卡片内容当作路由地址，否则任何任务都能借卡片把
+      主控的点击引到别的机器。复审又发现：生产启动根本没装入站服务，选择卡点击缺建任务依赖，
+      并发重投能建出两张卡，中继少一次重试，自定义 token 还会随跨主机 302 泄露；
+      选择卡发送失败后去重占坑不释放，同一条消息重投被静默吞掉，owner 永远收不到卡。
+    why: |
+      ① **入站只认 owner 的 p2p 文本**：`im.message.receive_v1` 与 `card.action.trigger` 是两条独立的
+      lark-cli 长连接，消息先过 dedupe / 限速再解析；群聊、非 owner、非文本一律不产生任务。
+      去重是**先占坑后作业**（`Claim` 写 `creating`，终态再 `SetStatus`）：只有「用户什么都没看到」
+      的失败（选择卡发不出去）才 `Release` 退回，已到 picker/created 的记录绝不释放。
+      ② **项目身份是 (node, root)**：`bindings` → `#`/`@` 前缀 → 唯一文本命中 → ≤5 个项目选择卡；
+      24h 过期与每聊天只留一张 pending 卡由 store 保证，点击时重新按卡里的节点/RootID 建任务。
+      ③ **远程建任务不碰主库**：`feishuTaskCreator` 只按节点表找到 worker 的 `/api/tasks`，载荷固定为
+      `root_id`/`input`/`name`/`workflow_choice=empty`/`start_immediately=true`。
+      ④ **卡片只由主控发**：worker 的 `RelayNotifier` 只 POST 固定 control URL；主控 `/api/channels/feishu/relay`
+      校验共享 token、节点存在于节点表、信封 `node_id` 与卡片 `node_id` 一致，才写 card store。
+      ⑤ **点击只按卡片 node_id 回传**：`feishuAnswerRelay` 的地址只来自节点表，载荷里没有 URL 字段；
+      4xx 立即失败，5xx/网络错才按 10s/30s/2m 退避；本地节点直接 apply。worker `/api/channels/feishu/answer`
+      再校验 token 与 `FeishuNodeID`，错误 token 连 apply 都到不了。
+      ⑥ **控制面只开一条精确路径**：`nodeinfo` 只把 `/api/channels/feishu/relay` 列为控制面，
+      `/api/channels` 整段仍是数据面，不能让 worker 失去自己的任务 API。
+      ⑦ **入站装配必须与生产同一条缝**：`server.Run` 在 `workspaces` 就绪后调用 `prepareFeishuChannel`
+      再 `Start(ctx)`；装配失败只记日志不杀进程。`feishu_node_id` 为空表示本机，不能伪造 hostname。
+      `SetPickerTaskDeps` 与入站共用 store/creator，否则选择卡点下去永远报缺依赖。
+      ⑧ **先占坑再产生副作用**：`IntakeStore.Claim` 原子写 `creating`，终态一律 `SetStatus`；
+      重投在 Claim 处被吞掉，不会重复建任务。`Claim` 落盘失败回滚内存条目，允许下次重投。
+      ⑨ **token 不跨主机**：`NewRelayClient` 在 scheme/host 变化时报错；`RelayNotifier` 默认客户端
+      与 `newFeishuAnswerRelay` 的构造参数都用它，生产 1 次初始 + 3 次重试（10s/30s/2m）。
+    boundary: |
+      不做群聊、不做多账户、不在 worker 上放 lark-cli 或凭据；模型端点不进同步范围。
+      `channels.feishu` 缺省关闭，relay token 只走 `config.json`，日志不写 token 与消息全文。
+      notice 卡点击在本地结案，gate/ask 的 NodeRun 级真实推进仍需部署后在真实 worker 上验收；
+      本轮只做到真实 HTTP 往返 + 卡片状态机 + 节点路由的隔离端到端，未部署、未重启任何节点。
+    files:
+      - cli/cmd/mindfs.go
+      - cli/cmd/startup.go
+      - cli/cmd/startup_config_test.go
+      - cli/cmd/startup_feishu.go
+      - server/app/feishu.go
+      - server/app/feishu_answer_relay.go
+      - server/app/feishu_answer_relay_test.go
+      - server/app/feishu_intake.go
+      - server/app/feishu_test.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/app/workspace_build.go
+      - server/app/feishu_intake_relay_integration_test.go
+      - server/app/feishu_click_relay_integration_test.go
+      - server/internal/api/http.go
+      - server/internal/api/http_feishu_answer.go
+      - server/internal/api/http_feishu_answer_test.go
+      - server/internal/api/http_feishu_relay.go
+      - server/internal/api/http_feishu_relay_test.go
+      - server/internal/api/http_routes.go
+      - server/internal/channels/feishu/catalog.go
+      - server/internal/channels/feishu/catalog_test.go
+      - server/internal/channels/feishu/event_message.go
+      - server/internal/channels/feishu/event_message_test.go
+      - server/internal/channels/feishu/intake.go
+      - server/internal/channels/feishu/intake_store.go
+      - server/internal/channels/feishu/intake_store_test.go
+      - server/internal/channels/feishu/intake_test.go
+      - server/internal/channels/feishu/relay.go
+      - server/internal/channels/feishu/relay_client.go
+      - server/internal/channels/feishu/relay_redirect_test.go
+      - server/internal/channels/feishu/relay_notifier.go
+      - server/internal/channels/feishu/relay_notifier_test.go
+      - server/internal/channels/feishu/relay_test.go
+      - server/internal/channels/feishu/render.go
+      - server/internal/channels/feishu/render_test.go
+      - server/internal/channels/feishu/resolve.go
+      - server/internal/channels/feishu/resolve_test.go
+      - server/internal/channels/feishu/service.go
+      - server/internal/channels/feishu/service_click.go
+      - server/internal/channels/feishu/service_click_retry_test.go
+      - server/internal/channels/feishu/service_click_test.go
+      - server/internal/channels/feishu/store.go
+      - server/internal/channels/feishu/store_test.go
+      - server/internal/channels/feishu/supervisor.go
+      - server/internal/channels/feishu/supervisor_deadline_test.go
+      - server/internal/channels/feishu/supervisor_test.go
+      - server/internal/channels/feishu/testdata/message_p2p.json
+      - server/internal/channels/feishu/types.go
+      - server/internal/nodeinfo/role.go
+      - server/internal/nodeinfo/role_test.go
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-21-feishu-m2-intake-and-m4-relay.md
+    tests:
+      - server/app/feishu_intake_relay_integration_test.go
+      - server/app/feishu_click_relay_integration_test.go
+      - server/app/feishu_answer_relay_test.go
+      - server/internal/channels/feishu/intake_test.go
+      - server/internal/channels/feishu/intake_store_test.go
+      - server/internal/channels/feishu/resolve_test.go
+      - server/internal/channels/feishu/catalog_test.go
+      - server/internal/channels/feishu/relay_test.go
+      - server/internal/channels/feishu/relay_redirect_test.go
+      - server/internal/channels/feishu/relay_notifier_test.go
+      - server/internal/channels/feishu/service_click_test.go
+      - server/internal/channels/feishu/event_message_test.go
+      - server/internal/channels/feishu/render_test.go
+      - server/internal/api/http_feishu_relay_test.go
+      - server/internal/api/http_feishu_answer_test.go
+      - server/internal/nodeinfo/role_test.go
+      - cli/cmd/startup_config_test.go
+    anchors:
+      - 'server/app/feishu_intake_relay_integration_test.go:func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {'
+      - 'server/app/feishu_click_relay_integration_test.go:func TestFeishuRelayEndToEndCardAndAnswer(t *testing.T) {'
+      - 'server/app/feishu_answer_relay.go:func (r *feishuAnswerRelay) Relay(ctx context.Context, answer feishu.Answer) error {'
+      - 'server/internal/channels/feishu/intake.go:func NewIntakeService(cfg Config, catalog ProjectCatalog, store *IntakeStore, creator TaskCreator,'
+      - 'server/internal/channels/feishu/relay.go:func AddRelayNotice(ctx context.Context, svc *Service, nodeID string, notice Notice, lister NodeLister) error {'
+      - 'server/internal/api/http_feishu_relay.go:func (h *HTTPHandler) handleFeishuRelay(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_feishu_answer.go:func (h *HTTPHandler) handleFeishuAnswer(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/nodeinfo/role.go:"/api/channels/feishu/relay",'
+      - 'server/internal/channels/feishu/types.go:const PickerTTL = 24 * time.Hour'
+      - 'server/app/server.go:if err := prepareFeishuChannel(feishuChannel, opts.Feishu, FeishuIntakeDeps{'
+      - 'server/app/feishu_intake.go:func prepareFeishuChannel(svc *feishu.Service, opts FeishuOptions, deps FeishuIntakeDeps) error {'
+      - 'server/app/feishu_intake.go:svc.SetPickerTaskDeps(store, creator)'
+      - 'server/internal/channels/feishu/intake.go:claimed, err := s.store.Claim(id)'
+      - 'server/internal/channels/feishu/intake_store.go:func (s *IntakeStore) Claim(messageID string) (bool, error) {'
+      - 'server/internal/channels/feishu/intake_store.go:func (s *IntakeStore) Release(messageID string) error {'
+      - 'server/internal/channels/feishu/intake.go:if relErr := s.store.Release(id); relErr != nil {'
+      - 'server/internal/channels/feishu/intake_test.go:func TestIntakePickerNotifyFailureReleasesClaim(t *testing.T) {'
+      - 'server/internal/channels/feishu/intake_store_test.go:func TestIntakeReleaseOnlyDropsUnfinishedClaim(t *testing.T) {'
+      - 'server/internal/channels/feishu/relay_notifier.go:relayMaxAttempts   = 4'
+      - 'server/internal/channels/feishu/relay_client.go:func NewRelayClient(timeout time.Duration) *http.Client {'
+      - 'server/app/feishu_answer_relay.go:Client:      feishu.NewRelayClient(feishuAnswerTimeout),'
+      - 'server/app/feishu_intake_relay_integration_test.go:func TestServerRunPreparesFeishuIntakeBeforeStart(t *testing.T) {'
+      - 'server/app/feishu_intake_relay_integration_test.go:func TestPrepareFeishuChannelInstallsPickerTaskDeps(t *testing.T) {'
+      - 'server/internal/channels/feishu/intake_test.go:func TestIntakeConcurrentRedeliveryCreatesOneTask(t *testing.T) {'
+      - 'server/internal/channels/feishu/relay_redirect_test.go:func TestNewRelayClientRefusesCrossHostRedirect(t *testing.T) {'
+      - 'server/app/feishu_answer_relay_test.go:func TestNewFeishuAnswerRelayRefusesCrossHostRedirect(t *testing.T) {'
+
+  - id: G-PU
+    title: Agent 子进程随 MindFS 生命周期退出（Windows Job Object + Unix 控制组）
+    kind: fix
+    symptom: |
+      pc-win 重启 MindFS 时，计划任务的硬终止只杀掉 MindFS 自己；Claude/Codex
+      子进程还拿着进程内 live-compact 代理的临时端口继续请求，先 ECONNRESET、
+      再 10 次 ECONNREFUSED，最后 CLI 自己往会话写「API Error: Connection refused」。
+      防火墙、模型配置和 1M 开关都改不掉这个症状；同一批二进制在 Linux/systemd
+      上不复发，因为服务单元按 control-group 连子进程一起收走。
+    why: |
+      ① 代理端口是 `127.0.0.1:0` 临时分配、绑定关系只活在 MindFS 进程里；
+      重启必然换端口，旧子进程绝不能跨进程存活。
+      ② Windows 侧用共享 Job Object + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`：
+      MindFS 被 `schtasks /end` 或 kill -9 带走时，操作系统关闭最后一个 job
+      handle 并杀掉全部 attach 过的 CLI；不是靠 Go 的 defer，硬杀也有效。
+      ③ Claude/Codex 的 SDK 自己启动子进程，MindFS 拿不到启动前的 SysProcAttr；
+      因此在 `OpenSession` 返回后立刻读 CLI PID 并 attach。attach 失败就关会话
+      并报错，绝不留下一个没有生命周期绑定的 agent。
+      ④ Unix 侧服务单元显式钉 `KillMode=control-group`，Pool 关闭时再兜底清理：
+      Linux 用 pidfd 钉住 attach 时的那个进程，避免 PID 被回收后误杀无关进程。
+      ACP 已有自己的进程树，不重复 attach。
+    files:
+      - server/internal/agent/processguard/guard.go
+      - server/internal/agent/processguard/guard_unix.go
+      - server/internal/agent/processguard/process_linux.go
+      - server/internal/agent/processguard/process_otherunix.go
+      - server/internal/agent/processguard/guard_windows.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_process_guard.go
+      - server/internal/agent/codex/session.go
+      - cli/cmd/autostart_unix.go
+    tests:
+      - server/internal/agent/processguard/processguard_unix_test.go
+      - server/internal/agent/processguard/guard_windows_test.go
+      - server/internal/agent/pool_process_guard_test.go
+      - cli/cmd/autostart_unix_test.go
+    anchors:
+      - 'server/internal/agent/processguard/guard.go:JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'
+      - 'server/internal/agent/processguard/guard.go:type Guard struct {'
+      - 'server/internal/agent/processguard/guard_unix.go:func (g *unixGuard) Close() error {'
+      - 'server/internal/agent/processguard/process_linux.go:unix.PidfdOpen(pid, 0)'
+      - 'server/internal/agent/processguard/guard_windows.go:windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'
+      - 'server/internal/agent/processguard/guard_windows.go:windows.AssignProcessToJobObject(g.job, process)'
+      - 'server/internal/agent/pool.go:processGuard       processGuard'
+      - 'server/internal/agent/pool.go:attachSessionProcessID(p.processGuard, sess)'
+      - 'server/internal/agent/pool.go:guard.Close()'
+      - 'server/internal/agent/pool_process_guard.go:func attachSessionProcessID(guard processGuard, sess any) error {'
+      - 'server/internal/agent/codex/session.go:func (s *session) ProcessID() int {'
+      - 'cli/cmd/autostart_unix.go:KillMode=control-group'
+      - 'server/internal/agent/processguard/processguard_unix_test.go:func TestGuardCloseKillsAttachedProcess(t *testing.T) {'
+      - 'server/internal/agent/processguard/processguard_unix_test.go:func TestGuardAttachRejectsUnknownPID(t *testing.T) {'
+      - 'server/internal/agent/processguard/guard_windows_test.go:func TestGuardCloseKillsAttachedProcess(t *testing.T) {'
+      - 'server/internal/agent/pool_process_guard_test.go:func TestAttachSessionProcessIDRegistersSubprocess(t *testing.T) {'
+      - 'cli/cmd/autostart_unix_test.go:"KillMode=control-group"'
+
+  - id: G-PT
+    title: 任务卡 / 任务详情的「开始 · 终止」动作与「待处理」文案（2026-11-22 用户裁定）
+    kind: feature
+    symptom: |
+      「未开始」的任务卡片与详情头部摆着「完成」和「取消」：还没有任何产出，却先给了一个交付键；
+      真正要做的「开始」只能从对话流里那条排队留言的「立即执行」触发，两处入口不一致。
+      「运行中」只给「暂停」，而暂停并不打断会话 —— 点下去界面说停了、CLI 还在跑工具；
+      「完成 / 取消」同样不打断在跑的回合，用户想真的叫停没有任何入口。
+      另一侧，「待审核」这个叫法与实际语义（等人说话，不是等人审批）不符，全站文案要统一成「待处理」。
+    why: |
+      ① **动作表是唯一真源**：卡片（TaskCardRows）与详情（TaskDetailPanel）都读
+      `taskActionButtons()` → `TASK_ACTION_BUTTON_META` + `taskActionIcons`，所以只改这一处，
+      两处的数量、顺序、文案、图标、配色一起变。
+      ② **未开始 = 开始 + 取消**（可选 `finish-worktree`）：`start` 走 `POST /api/tasks/{id}/start`
+      落到 `Service.RunNow`，把排队留言发出去，任务随之进入运行中；`cancel` 仍是终态取消。
+      「完成」不再出现在未开始（没有产出可交付）。
+      ③ **运行中 = 只给终止**：`terminate` 走 `POST /api/tasks/{id}/terminate` → `Service.Terminate`。
+      有 workflow Run 时复用 `stopWorkflowRunToWaitingUser`（节点行打断、driver 停摆、投影冻结成
+      cancelled、回复结算），只是任务事件名换成 `task_terminated`；直连回合走
+      `ActivityService.TerminateDirectTurn`：先在共享登记簿 `TurnTerminations` 标记在飞回复，
+      再经 `SetSessionTurnCanceller` 打断主会话当前回合，最后把回复结算成 cancelled 并清掉进度正文。
+      两条路的落点都是 `waiting_user`（待处理），旧现场（Run 投影、回复行、转录）原样保留。
+      ④ **被打断不是失败**：`executeDirectActivity` 的失败分支先 `Consume` 终止标记 —— 命中的回合写
+      cancelled + 「已被用户终止；可以直接发消息重开一轮。」并停在待处理，不走 `restore()` 回滚成
+      「未开始」，也不写红色 failed。标记是单次消费，5 分钟过期，避免残留把后续真实失败读成用户叫停。
+      ⑤ **跨实例共享**：`ActivityServiceForRoot` 每次现建实例，写标记（HTTP 侧）与读标记（跑回合的
+      实例）不是同一个对象，所以登记簿挂在 `Service.turnTerminations` 上，装配期注入每个实例。
+      ⑥ **文案统一**：`task.status.waitingUser` / `task.column.waitingUser` /
+      `task.workspaceFilterBlocked` / `task.reopen` / `task.activity.disabled` 全部由「待审核」改为
+      「待处理」，英文统一成 `Awaiting action`。
+    boundary: |
+      只做「停当前这轮活」，不做进程级续跑 / 接管（与 A+ 计划同一边界）。已知残留：Router 决策回合
+      可能在本轮终止之后才落地并再起一轮 —— 目前没有 per-task 的 Router lane 取消（`CloseTask` 只服务
+      删除任务），这条竞态未在本组修复，需要时另开一组。本轮未部署、未重启任何节点。
+    # 针对性测试：
+    #   service_terminate_test.go —— 直连终止（会话打断被调用一次、在飞回复 cancelled + 说明、
+    #     进度正文清空、任务 waiting_user、task_terminated 事件）、工作流终止（Run 投影 cancelled、
+    #     任务 waiting_user）、终止标记单次消费、以及 executeDirectActivity 在标记命中时写 cancelled
+    #     而不是 failed（去掉标记分支 / 去掉 TerminateDirectTurn 两处变异各自打红）。
+    #   task-card-actions.test.mjs —— 未开始 = start + cancel、待处理 = complete + cancel、
+    #     运行中 = 只有 terminate（含活着 worktree 的情形）、终态仍 reopen/archive/delete、11 个键都有文案。
+    #   task-button-gates.test.mjs —— 运行中不给暂停/完成、未开始不给完成、start/terminate 在详情 header
+    #     接到真实处理函数、看板对 start/terminate/cancel/reopen/rebuild 都重拉。
+    #   task-board-view.test.mjs / task-archive.test.mjs / workspace-board.test.mjs / task-card-status.test.mjs
+    #     —— 列名与状态文案是「待处理」、旧词「待审核」不再出现、「完成」不再按 status !== running 判。
+    #   task-detail-header.test.mjs / task-ghost-card.test.mjs / task-icons-inventory.test.mjs
+    #     —— start/terminate 文案键有效、详情九个动作的 catch 统一走 fail()、图标导出清单同步。
+    files:
+      - server/internal/kanban/service_terminate.go
+      - server/internal/kanban/activity_terminate.go
+      - server/internal/kanban/activity_terminations.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/activity_store_orphan.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/workflow_runtime_router_cancel.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/appcontext_workflow.go
+      - server/app/workspace_build.go
+      - web/src/components/task/taskBoardTypes.ts
+      - web/src/components/task/taskCardActions.ts
+      - web/src/components/task/taskActionIcons.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/useTaskDetailPanel.ts
+      - web/src/app/useTaskBoard.ts
+      - web/src/services/task/crud.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - server/internal/kanban/service_terminate_test.go
+      - web/tests/task-card-actions.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-card-status.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-archive.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/task-detail-header.test.mjs
+      - web/tests/task-ghost-card.test.mjs
+      - web/tests/task-icons-inventory.test.mjs
+    anchors:
+      - 'server/internal/kanban/service_terminate.go:func (s *Service) Terminate(ctx context.Context, in MoveInput) (TaskDetail, error) {'
+      - 'server/internal/kanban/service_terminate.go:func (s *Service) SetSessionTurnCanceller(fn func(ctx context.Context, rootID, sessionKey string) error) {'
+      - 'server/internal/kanban/service_terminate.go:func (s *Service) turnTerminationsRegistry() *TurnTerminations {'
+      - 'server/internal/kanban/workflow_runtime_router_cancel.go:func (s *Service) stopWorkflowRunToWaitingUser(ctx context.Context, rootID, taskID, reason, eventType string) error {'
+      - 'server/internal/kanban/activity_terminate.go:func (s *ActivityService) TerminateDirectTurn(ctx context.Context, task Task, reason string) {'
+      - 'server/internal/kanban/activity_terminations.go:const terminatedTurnSummary = "已被用户终止；可以直接发消息重开一轮。"'
+      - 'server/internal/kanban/activity_terminations.go:func (t *TurnTerminations) Consume(id string) bool {'
+      - 'server/internal/kanban/activity_service.go:terminations *TurnTerminations'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) SetTurnTerminations(t *TurnTerminations) {'
+      - 'server/internal/kanban/activity_service_turns.go:if s.terminations.Consume(agentAct.ID) {'
+      - 'server/internal/kanban/activity_store_orphan.go:func (s *ActivityStore) ListLiveDirectReplies(ctx context.Context, taskID string) ([]*TaskActivity, error) {'
+      - 'server/internal/kanban/service_activities.go:svc.SetTurnTerminations(s.turnTerminationsRegistry())'
+      - 'server/internal/api/http_tasks.go:case "terminate":'
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/start", h.handleKanbanTaskStart)'
+      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) CancelTaskSessionTurn(ctx context.Context, rootID, sessionKey string) error {'
+      - 'server/app/workspace_build.go:services.Kanban.SetSessionTurnCanceller(services.CancelTaskSessionTurn)'
+      - 'web/src/components/task/taskCardActions.ts:if (task.status === "running") return ["terminate"];'
+      - 'web/src/components/task/taskCardActions.ts:actions.push("start");'
+      - 'web/src/components/task/taskBoardTypes.ts:| "start"'
+      - 'web/src/components/task/taskActionIcons.tsx:start: <TaskStartIcon />,'
+      - 'web/src/components/task/taskIcons.tsx:export function TaskStartIcon() {'
+      - 'web/src/components/task/TaskDetailPanel.tsx:terminate: () => void panel.terminateTask(),'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const terminateTask = async () => {'
+      - 'web/src/app/useTaskBoard.ts:action === "start" ||'
+      - 'web/src/services/task/crud.ts:export async function moveTask(rootId: string, taskId: string, action: "start" | "terminate" | "pause" | "resume" | "complete" | "cancel" | "fail" | "reopen", reason = "", nodeId?: string): Promise<TaskDetail> {'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.status.waitingUser": "待处理",'
+      - 'web/src/i18n/locales/en-US-tasks.ts:"task.status.waitingUser": "Awaiting action",'
+
+  - id: G-PV
+    title: Router 转录与内容搜索只读解析后的块流（A+ provisional 片段与旧 revision 不可见）
+    kind: fix
+    symptom: |
+      A+ 流式记录上线后，正常完成的回合也会在块流里留下每条流式片段（Step=-1）
+      与收尾正式块两份内容。Router 的 `router_read_session` 直接转发原始
+      `Manager.ReadBlocks`，于是同一段回复被数两遍、`offset=1` 翻到的是半句片段而
+      不是上一条真实消息（隔离实例实测：852 秒回合留下 7 条片段 + 3 条正式块，文本
+      条数 3 → 10）。内容搜索同样会重复计数，并且可能把片段当成命中正文。
+      合上游时若把 `ReadResolvedBlocks` 丢掉、调用方退回 `ReadBlocks`，症状原样回来。
+    why: |
+      「用户可见正文」的唯一解析规则是 `resolveBlocks`：丢弃 `Step<0` 的未收口
+      片段、同一 `(seq,pos)` 只保留最高 `Revision`、按 seq/pos 排序。渲染窗口
+      `GetBlocksWindow` 早就在用它，A+ 之后这条规则必须在所有正文读者上一致。
+      新增 `Manager.ReadResolvedBlocks` 作为正文读口，Router 转录适配器与块内容
+      搜索改用它；封口（`SealProvisionalTurnBlocks`）、fork 复制、清理判空仍走原始
+      `ReadBlocks` —— 它们需要看到每一条落盘记录或保留全部 revision。
+    files:
+      - server/internal/session/blocks_store.go
+      - server/internal/session/manager_search.go
+      - server/internal/api/appcontext_router_transcript.go
+    tests:
+      - server/internal/api/appcontext_router_transcript_test.go
+      - server/internal/session/search_blocks_test.go
+    anchors:
+      - 'server/internal/session/blocks_store.go:func (m *Manager) ReadResolvedBlocks(ctx context.Context, key string) ([]Block, error) {'
+      - 'server/internal/session/blocks_store.go:return resolveBlocks(raw, nil), nil'
+      - 'server/internal/session/manager_search.go:blocks, err := m.ReadResolvedBlocks(context.Background(), s.Key)'
+      - 'server/internal/api/appcontext_router_transcript.go:blocks, err := manager.ReadResolvedBlocks(ctx, sessionKey)'
+      - 'server/internal/api/appcontext_router_transcript_test.go:func TestRouterTranscriptReaderSkipsProvisionalAndStaleRevisions(t *testing.T) {'
+      - 'server/internal/session/search_blocks_test.go:func TestSearchableBlockTextsIgnoresProvisionalFragments(t *testing.T) {'
   - id: G-PF
     title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生 + P1 安装包前端自检 + T18 节点可达性 + T19 前端清单与打包 + T20 边缘镜像与切换）
     kind: feature

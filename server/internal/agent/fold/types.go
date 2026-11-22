@@ -86,7 +86,25 @@ type Usage struct {
 	// Source is Response or Missing; a missing block must not be silently read
 	// as zero.
 	Source string
+	// MissingReason says why a sample is missing. It is diagnosis only — the
+	// ledger and the provider log print it so "no usage" can be told apart
+	// from "the response was compressed" or "the stream ended early".
+	MissingReason string
 }
+
+// Why a usage sample is missing. Set together with Source = UsageSourceMissing.
+const (
+	// UsageMissingUpstreamUnreachable: the request never reached the upstream.
+	UsageMissingUpstreamUnreachable = "upstream_unreachable"
+	// UsageMissingContentEncoding: the response was compressed, so its bytes
+	// are not scannable; the sample is unknown rather than zero.
+	UsageMissingContentEncoding = "content_encoding"
+	// UsageMissingNotObserved: the harness runtime does not observe this
+	// session, so no scanner ever saw the stream.
+	UsageMissingNotObserved = "not_observed"
+	// UsageMissingNoUsageBlock: the stream ended without a usage block.
+	UsageMissingNoUsageBlock = "no_usage_block"
+)
 
 // GuardVerdict is the adapter's answer to "may this model be rewritten at all".
 type GuardVerdict struct {

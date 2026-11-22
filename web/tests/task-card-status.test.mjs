@@ -60,22 +60,44 @@ assert.doesNotMatch(
 //    「取消」—— 取消只改状态、卡片照旧留在板上，终态卡永远清不掉。所以那条
 //    「终态也得能收拾」的断言换成了钉删除键，而不是删掉换绿灯。
 //
-//    2026-10-07 终态那一侧多了一把键：**收尾**。任务跑完了 worktree 还留着没收，
-//    那正是收尾唯一有意义的时刻（服务端 reviveTerminalTask 会把它拉回 waiting_user
-//    再让收尾段跑）。所以终态分支现在是「收尾 + 删除」，不是只有删除。
+//    2026-11-22 动作集合收成一份纯函数（taskCardActions.ts）：卡片与详情图标行
+//    都按 `taskActionButtons(task)` 渲染，分支形状改由那份函数钉住
+//    （见 task-card-actions.test.mjs）。这里只钉「卡片确实读它、且不再按 terminal
+//    把整排藏起来」。
 const cardRows = read("src/components/TaskCardRows.tsx");
+assert.match(cardRows, /const buttons = taskActionButtons\(task\);/, "the action row renders the shared list");
+assert.match(cardRows, /buttons\.map\(\(key\) => \{/, "one renderer for every state — no duplicated branches");
 assert.match(
   cardRows,
-  /\{!terminal \? \(\s*<>[\s\S]*?canFinishWorktree[\s\S]*?onMove\(task, "pause"\)[\s\S]*?onMove\(task, "complete"\)[\s\S]*?onMove\(task, "cancel"\)[\s\S]*?<\/>\s*\) : \(\s*<>[\s\S]*?canFinishWorktree[\s\S]*?onMove\(task, "delete-task"\)[\s\S]*?<\/>\s*\)/,
-  "the non-terminal branch gets 暂停/完成/取消 while terminal keeps 收尾 + 删除",
+  /if \(key === "finish-worktree"\) \{\s*return <TaskCardFinishButton/,
+  "the finish key keeps its dedicated button inside the shared list",
 );
-// 删除键收尾于终态分支的 `)}` —— 它不在 !terminal 那一侧（那一侧以取消键收尾）。
-// 2026-10-07 起那一侧多了一个 Fragment 包裹（收尾 + 删除），所以锚点从 `)}`
-// 换成 Fragment 的 `</>`。
+const cardActionsSource = read("src/components/task/taskCardActions.ts");
 assert.match(
+  cardActionsSource,
+  /if \(task\.status === "running"\) return \["terminate"\];/,
+  "运行中只有一个动作：终止（暂停/完成/取消都会让「活还在跑」与界面不一致）",
+);
+assert.match(
+  cardActionsSource,
+  /if \(task\.status === "pending"\) \{[\s\S]*?actions\.push\("start"\);[\s\S]*?\} else \{[\s\S]*?actions\.push\("complete"\);[\s\S]*?\}[\s\S]*?actions\.push\("cancel"\);/,
+  "未开始给「开始」、待处理给「完成」，两者都有「取消」",
+);
+assert.match(
+  cardActionsSource,
+  /if \(canFinishWorktree\(task\)\) actions\.push\("finish-worktree"\);\n\s*actions\.push\("reopen", "archive-task"\);/,
+  "terminal keeps 收尾 + 返回 + 归档",
+);
+// 删除由 taskActionButtons 只在终态追加，且永远在最右。
+assert.match(
+  cardActionsSource,
+  /if \(isTerminalKanbanTask\(task\)\) keys\.push\("delete-task"\);/,
+  "the delete key belongs to terminal tasks only",
+);
+assert.doesNotMatch(
   cardRows,
-  /onMove\(task, "delete-task"\)[\s\S]{0,220}?<\/button>\s*<\/>\s*\)\}/,
-  "the delete key belongs to the terminal branch, not to the whole action row",
+  /<DeleteIcon \/>/,
+  "取消与删除的图形各在一处（共享映射），卡片里不再内联删除图标",
 );
 assert.doesNotMatch(
   cardRows,

@@ -170,8 +170,10 @@ func (m *Manager) searchSessionContent(s *Session, qLower string) (SearchHit, bo
 }
 
 // searchableBlockTexts 从块流取可搜文本。错误时返回 nil（退回主日志那遍）。
+// 用解析后的读口：流式片段与旧 revision 会和收口正文重复，搜出来的片段
+// 也会和用户看到的气泡对不上。
 func (m *Manager) searchableBlockTexts(s *Session) ([]searchableText, error) {
-	blocks, err := m.ReadBlocks(context.Background(), s.Key)
+	blocks, err := m.ReadResolvedBlocks(context.Background(), s.Key)
 	if err != nil {
 		return nil, err
 	}

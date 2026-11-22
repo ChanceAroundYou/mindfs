@@ -9,7 +9,7 @@ export interface TaskDetailPanelGateProps {
   currentRootIdRef: RefObject<string | null>;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   dropKanbanTask: (rootId: string, taskId: string, nodeId?: string) => void;
-  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null | undefined, taskId?: string | undefined) => void;
+  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null | undefined, taskId?: string | undefined) => boolean;
   selectedKanbanTask: KanbanTask | null;
   setSelectedKanbanTaskId: Dispatch<SetStateAction<string>>;
   taskDetailsById: Record<string, TaskDetail>;
@@ -44,7 +44,17 @@ export function TaskDetailPanelGate(props: TaskDetailPanelGateProps) {
               // （fn/pc 都有 `docs`）的编辑打到另一台机器。
               nodeId={taskNodeId(selectedKanbanTask.root_id || currentRootId)}
               onClose={() => setSelectedKanbanTaskId("")}
-              onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
+              onOpenSession={(sessionKey) => {
+                // 先导航、后关面板：跳转要用的 root/taskId 在这里按当前任务算好并交给
+                // handleTaskSessionDrawerOpen（内部同步装配 selectedSession + URL + 模式），
+                // 只有它真的发起了跳转才关详情；解析失败时面板留着，不无谓卸载。
+                const navigated = handleTaskSessionDrawerOpen(
+                  sessionKey,
+                  selectedKanbanTask.root_id || currentRootIdRef.current,
+                  selectedKanbanTask.id,
+                );
+                if (navigated) setSelectedKanbanTaskId("");
+              }}
               onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
               // 任务在服务端已经被删掉（幽灵卡）：请看板把它从内存与缓存里摘掉，
               // 否则每点一次完成/删除都再失败一次。

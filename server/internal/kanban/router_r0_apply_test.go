@@ -21,7 +21,7 @@ func TestRouterApplyFailedDeliveryFinishesUnusedPlaceholder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			user, err := activity.QueueUserActivity(ctx, run.TaskID, "补充要求")
+			user, err := activity.QueueUserActivity(ctx, run.TaskID, "补充要求", CommentWorkflowChoiceEmpty, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

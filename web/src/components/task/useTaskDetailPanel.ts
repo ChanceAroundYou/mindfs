@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { confirmDialog } from "../../services/dialog";
 import {
+  archiveTask,
   beginTaskFinishWorktree,
   deleteTask,
   fetchTaskDetails,
@@ -86,15 +87,8 @@ export function useTaskDetailPanel({
 
   if (!task || !detail) return null;
 
-  const canFinishWorktree = task?.create_worktree === true
-    && !!task?.worktree_path
-    && task?.worktree_missing !== true;
   const terminal = isTerminalKanbanTask(task);
   const paused = task.status === "paused";
-  const taskRunningNow = task.status === "running";
-  const canCompleteTask = !terminal && !taskRunningNow;
-  // 终态是封板，封错了得有出路：完成 / 失败 / 取消都能放回「待审核」继续对话。
-  const canReopenTask = terminal;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   const apply = (next: TaskDetail) => onMoved?.(next);
@@ -176,6 +170,44 @@ export function useTaskDetailPanel({
     } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
+  // 取消与归档都只改状态/标记，卡片不会被删掉 —— 删除是独立的破坏性动作。
+  const cancelTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "cancel", "", nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
+
+  const setArchived = async (archived: boolean) => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await archiveTask(task.root_id, task.id, archived, nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
+
+  // 「开始」：未开始的任务由 header 的开始键发起（发出排队留言，任务进入运行中）。
+  // 对话流里那条排队留言的「立即执行」仍走 runQueued → runTaskNow，两条入口落到
+  // 同一个后端 RunNow，不会各跑一遍。
+  const startTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "start", "", nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
+
+  // 「终止」：停掉在跑的会话 / 工作流，任务回到待处理。落点不是取消 ——
+  // 用户还可以接着说话，旧现场（Run 投影、回复行、转录）原样保留。
+  const terminateTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "terminate", "", nodeId));
+    } catch (error) { fail(error); } finally { setSaving(false); }
+  };
+
   const setPaused = async (next: "pause" | "resume") => {
     if (!task) return;
     try {
@@ -184,7 +216,7 @@ export function useTaskDetailPanel({
     } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
-  // 回到待审核：会话输入框会随状态重新打开，旧轮次的 Run / 回复原样保留。
+  // 回到待处理：会话输入框会随状态重新打开，旧轮次的 Run / 回复原样保留。
   const reopenTask = async () => {
     if (!task) return;
     try {
@@ -212,13 +244,15 @@ export function useTaskDetailPanel({
     nameDraft,
     setNameDraft,
     saving,
-    canFinishWorktree,
     terminal,
     paused,
     pauseTask: () => setPaused("pause"),
     resumeTask: () => setPaused("resume"),
-    canCompleteTask,
-    canReopenTask,
+    startTask,
+    terminateTask,
+    cancelTask,
+    archiveTaskCard: () => setArchived(true),
+    unarchiveTaskCard: () => setArchived(false),
     numberLabel,
     refreshTask,
     saveName,

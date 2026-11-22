@@ -146,3 +146,23 @@ func TestSearchFindsReasoningBlockText(t *testing.T) {
 		t.Fatalf("hit.Seq = %d, want %d", hit.Seq, seq)
 	}
 }
+
+// A+ 的流式片段（Step=-1）与收尾正文会同时留在块流里。搜索若照盘读，
+// 同一段回复会被数两遍，半句片段也可能被当成命中正文。
+func TestSearchableBlockTextsIgnoresProvisionalFragments(t *testing.T) {
+	manager, s := newSearchSession(t, "Provisional")
+	seq := addRow(t, manager, s, "agent", "", "dsh", time.Now().UTC())
+	mustAppendBlocks(t, manager, s.Key, []Block{
+		{Seq: seq, Pos: 0, Type: BlockTypeText, Text: "半句", Step: blockStepSentinel},
+		{Seq: seq, Pos: 1, Type: BlockTypeText, Text: "片段", Step: blockStepSentinel},
+		{Seq: seq, Pos: 0, Revision: 0, Type: BlockTypeText, Text: "完整回复", Step: 1},
+	})
+
+	texts, err := manager.searchableBlockTexts(s)
+	if err != nil {
+		t.Fatalf("searchableBlockTexts: %v", err)
+	}
+	if len(texts) != 1 || texts[0].Text != "完整回复" {
+		t.Fatalf("可搜文本 = %#v, want 只有收口后的「完整回复」", texts)
+	}
+}

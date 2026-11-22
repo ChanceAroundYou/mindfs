@@ -30,6 +30,7 @@ type AddManagedDirOutput struct {
 type rootMetaLocationUpserter interface {
 	UpsertRootWithMetaLocation(path, metaLocation string) (fs.RootInfo, error)
 }
+
 func (s *Service) ensureFileWatcher(rootID, dir string) {
 	if strings.TrimSpace(rootID) == "" {
 		return

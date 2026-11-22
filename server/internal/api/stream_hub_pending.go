@@ -206,11 +206,25 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string, min
 // 判「已结束」是错的。快照只反映 pending 表当下状态 —— 条目在回合结束时被
 // ClearSessionPending 删掉，快照自然就空了。
 func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnapshot {
+	snapshot, _ := h.PendingSessionSnapshotFound(sessionKey)
+	return snapshot
+}
+
+// PendingSessionSnapshotFound 与 PendingSessionSnapshot 同义，但多回答一句「这条
+// pending 还在不在」。**收尾侧必须用这个**：`ClearSessionPending` 会把条目整条删掉，
+// 于是同一轮的第二次 done（子代理完成 + 回合 defer 再收一次）拿到的是零值快照 ——
+// SubSession / SilentCompletion 全变成 false，闸门放行，桌面 PWA 就会收到一条
+// 「子会话标题 · 完成」（2026-11-22 wsl llm-deploy 一次收了 4 条）。
+// 完成账本靠 RootID 守卫躲过了这条，Web Push 没有守卫，所以缺口在这里补。
+func (h *StreamHub) PendingSessionSnapshotFound(sessionKey string) (PendingSessionSnapshot, bool) {
+	if h == nil || blank(sessionKey) {
+		return PendingSessionSnapshot{}, false
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	state := h.pendingSessions[sessionKey]
 	if state == nil {
-		return PendingSessionSnapshot{}
+		return PendingSessionSnapshot{}, false
 	}
 	return PendingSessionSnapshot{
 		RootID:           state.RootID,
@@ -219,7 +233,7 @@ func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnap
 		UpdatedAt:        state.UpdatedAt,
 		SubSession:       state.SubSession,
 		SilentCompletion: state.SilentCompletion,
-	}
+	}, true
 }
 
 // MarkPendingCompletionSilent 把**当前这一轮**标记成「完成不提醒」。

@@ -199,6 +199,9 @@ func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update ag
 	s.updateSessionAwaitingFromEvent(rootID, sessionKey, event)
 	s.notifyAskUserIfNeeded(rootID, sessionKey, event)
 	s.recordTaskQuestionFromEvent(rootID, sessionKey, event)
+	// 输出水位（W3-1）：这个函数是所有 harness 帧的必经之路，也是唯一能证明
+	// 「这一轮真的还在产出」的地方（会话探针只能证明进程还在回包）。
+	s.noteSessionTurnOutput(rootID, sessionKey)
 	s.GetSessionStreamHub().BroadcastSessionStream(rootID, sessionKey, event)
 }
 

@@ -152,6 +152,13 @@ type SendMessageInput struct {
 	ConfigDir             string
 	Tools                 []agenttypes.ToolSpec
 	ToolPolicy            *agenttypes.ToolPolicy
+	// hygieneCompact 标记这是会话卫生自动触发的压缩回合：它不参与观测，也不
+	// 再触发下一轮自动压缩。只有 Usecase 内部的 scheduleHygieneAutoCompact 会置位。
+	hygieneCompact bool
+	// onCompactSeen 在本回合观察到 harness 压缩时回调一次。自动触发用它区分
+	// 「压缩真的发生了」与「命令被当普通消息发出去了」——后者必须按失败处理，
+	// 否则会每轮重发。
+	onCompactSeen func()
 }
 
 type MessageStart struct {

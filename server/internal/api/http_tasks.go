@@ -69,10 +69,26 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		WorktreeBranch     string `json:"worktree_branch"`
 		// 缺省（nil）按 true 处理：老客户端不传这个字段时行为不变。
 		StartImmediately *bool `json:"start_immediately"`
+		// 首条留言的工作流选择，语义与 POST /api/tasks/{id}/activities 一致。
+		WorkflowChoice    string `json:"workflow_choice"`
+		WorkflowVersionID string `json:"workflow_version_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
+	}
+	if choice := strings.TrimSpace(req.WorkflowChoice); choice != "" {
+		valid := false
+		for _, candidate := range activityWorkflowChoices {
+			if choice == candidate {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			respondError(w, http.StatusBadRequest, errInvalidRequest("invalid workflow_choice"))
+			return
+		}
 	}
 	create := kanban.CreateTaskInput{
 		RootID:             req.RootID,
@@ -82,6 +98,8 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		WorktreeBranchMode: req.WorktreeBranchMode,
 		WorktreeBranch:     req.WorktreeBranch,
 		StartImmediately:   req.StartImmediately,
+		WorkflowChoice:     req.WorkflowChoice,
+		WorkflowVersionID:  req.WorkflowVersionID,
 	}
 	detail, err := svc.CreateTask(r.Context(), create)
 	if err != nil {
@@ -116,10 +134,22 @@ func (h *HTTPHandler) handleKanbanTaskFail(w http.ResponseWriter, r *http.Reques
 	h.handleKanbanTaskMove(w, r, "fail")
 }
 
-// handleKanbanTaskReopen 把完成 / 失败 / 取消的任务放回「待审核」，让这条对话
+// handleKanbanTaskReopen 把完成 / 失败 / 取消的任务放回「待处理」，让这条对话
 // 继续。终态是封板，封错了（点早了 / 一次偶发失败 / 取消后改主意）得有出路。
 func (h *HTTPHandler) handleKanbanTaskReopen(w http.ResponseWriter, r *http.Request) {
 	h.handleKanbanTaskMove(w, r, "reopen")
+}
+
+// handleKanbanTaskStart 对应「未开始」卡片/详情上的「开始」：发出排队留言，任务
+// 随之进入运行中。
+func (h *HTTPHandler) handleKanbanTaskStart(w http.ResponseWriter, r *http.Request) {
+	h.handleKanbanTaskMove(w, r, "start")
+}
+
+// handleKanbanTaskTerminate 对应「运行中」卡片/详情上的「终止」：停掉在跑的会话
+// 与工作流，任务回到「待处理」（不是取消 —— 用户还可以接着说话）。
+func (h *HTTPHandler) handleKanbanTaskTerminate(w http.ResponseWriter, r *http.Request) {
+	h.handleKanbanTaskMove(w, r, "terminate")
 }
 
 // handleKanbanTaskDelete 删掉一张任务卡（终态任务的「删除」按钮）。
@@ -296,6 +326,12 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 		detail, err = svc.Fail(r.Context(), in)
 	case "reopen":
 		detail, err = svc.Reopen(r.Context(), in)
+	case "start":
+		// 「开始」与 run-now 同义：它把排队中的第一条留言发出去、任务随之进入
+		// 运行中。多一个路由名是为了让卡片/详情按钮的语义直接落在 API 上。
+		detail, err = svc.RunNow(r.Context(), in)
+	case "terminate":
+		detail, err = svc.Terminate(r.Context(), in)
 	default:
 		err = errInvalidRequest("unsupported task action")
 	}

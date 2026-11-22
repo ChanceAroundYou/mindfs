@@ -114,6 +114,81 @@ func TestEndSessionTurnSubSessionStaysQuiet(t *testing.T) {
 	}
 }
 
+// readNotificationLines 只读一次、不等待：用来断言「过一会儿也没有新通知」。
+func readNotificationLines(t *testing.T, path string) []notify.Payload {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var payloads []notify.Payload
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var payload notify.Payload
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			t.Fatalf("notify payload is not JSON: %v (%s)", err, line)
+		}
+		payloads = append(payloads, payload)
+	}
+	return payloads
+}
+
+// TestEndSessionTurnRepeatedDoneStaysQuiet 钉住「同一轮的第二次收尾必须彻底静默」。
+//
+// 现场（2026-11-22 11:53:53，wsl 的 llm-deploy 一轮）：子代理各自先由
+// OnSubAgentTurnFinished 收尾，pending 被 ClearSessionPending 整条删掉；回合结束时
+// executeWorkflowTurn 的 defer 又逐个再收一次 —— 第二次拿到的是**零值快照**，
+// SubSession / SilentCompletion 全变成 false，闸门放行，桌面 PWA 一次收到 4 条
+// 「子会话标题 · 完成」。完成账本有 RootID 守卫（所以轮询侧看不见），Web Push 没有。
+func TestEndSessionTurnRepeatedDoneStaysQuiet(t *testing.T) {
+	app, rootID, sessionKey := newTaskQuestionTestApp(t, "task-repeat")
+	out, service := captureNotifyScript(t)
+	app.Notify = service
+
+	appendPendingSummary(app, sessionKey, "子任务跑完了")
+	subTurn := app.SetSessionPendingReply(rootID, sessionKey, "子任务", "mindfs-sub-repeat")
+	app.EndSessionTurn(rootID, sessionKey, "", subTurn)
+	app.EndSessionTurn(rootID, sessionKey, "", subTurn) // 重放：pending 已清
+
+	// 对照：普通回合的真实收尾要发一条，重放不得再发第二条。
+	normalTurn := startTopLevelTurn(app, rootID, sessionKey, "主会话", "普通留言", "user-main-repeat")
+	appendPendingSummary(app, sessionKey, "主会话跑完了")
+	app.EndSessionTurn(rootID, sessionKey, "", normalTurn)
+	app.EndSessionTurn(rootID, sessionKey, "", normalTurn)
+
+	if payloads := waitNotificationLines(t, out, 1); len(payloads) < 1 {
+		t.Fatal("普通回合的完成提醒没有发出来，对照失效")
+	}
+	// 通知脚本是异步打的：等到一条之后再看一眼，重放产生的那条会在这段时间落地。
+	time.Sleep(300 * time.Millisecond)
+	payloads := readNotificationLines(t, out)
+	if len(payloads) != 1 {
+		t.Fatalf("同一轮的重放收尾不应再发通知，实际 %d 条：%+v", len(payloads), payloads)
+	}
+	if got := payloads[0].Title; got != "主会话 · 完成" {
+		t.Fatalf("通知标题 = %q，want 主会话 · 完成", got)
+	}
+}
+
+// TestEndSessionTurnWithoutPendingStaysQuiet 钉住「没有 pending 的收尾不得凭空推一条」。
+//
+// 这类调用连回合标题都没有，只能回落到会话库里的名字 —— 正是截图里那条
+// 「Implement shared prompt expansion core · 完成」的来源。
+func TestEndSessionTurnWithoutPendingStaysQuiet(t *testing.T) {
+	app, rootID, sessionKey := newTaskQuestionTestApp(t, "task-nopending")
+	out, service := captureNotifyScript(t)
+	app.Notify = service
+
+	app.EndSessionTurn(rootID, sessionKey, "", "")
+	time.Sleep(300 * time.Millisecond)
+	if payloads := readNotificationLines(t, out); len(payloads) != 0 {
+		t.Fatalf("没有 pending 的收尾不应发通知，实际 %+v", payloads)
+	}
+}
+
 func TestEndSessionTurnNotificationBodyIsPlainText(t *testing.T) {
 	app, rootID, sessionKey := newTaskQuestionTestApp(t, "task-body")
 	out, service := captureNotifyScript(t)

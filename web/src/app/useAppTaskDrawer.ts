@@ -32,6 +32,9 @@ export type UseAppTaskDrawerParams = {
 /**
  * handleSelectSession 的 options 形如 preserveTaskSelection：从任务跳进会话时
  * 要保住看板上的任务高亮，否则用户回不去。
+ *
+ * handleTaskSessionDrawerOpen 返回**是否真的发起了跳转**：详情面板里所有「打开会话」
+ * 入口都汇到这一个函数，面板据此在跳转之后关掉自己（解析失败时不关）。
  */
 export function useAppTaskDrawer(params: UseAppTaskDrawerParams) {
   const { currentRootIdRef, file, getNodeIdForRoot, handleSelectSession, rootSessionKey, sessionCacheRef, sessions, setSelectedKanbanTaskId, setTaskRelatedFilesById, taskDetailsByIdRef, taskSessionKeysById, taskSessionKeysByIdRef, updateSessionRelatedFilesForKey } = params;
@@ -60,12 +63,12 @@ export function useAppTaskDrawer(params: UseAppTaskDrawerParams) {
 	  const handleTaskSessionDrawerOpen = useCallback(
     (sessionKey: string, rootOverride?: string | null, taskId?: string) => {
       const key = String(sessionKey || "").trim();
-      if (!key) return;
+      if (!key) return false;
       const matched = sessions.find((item) => (item.key || item.session_key) === key);
       // 任务会话就是普通会话：直接走主面板装配（selectedSession + main 模式 + URL + 同步），
       // 不再走 drawer 浮层——drawer 模式下在会话面板里切换工作台/看板没有全屏语境。
       const root = resolveSessionJumpRoot(rootOverride, matched, currentRootIdRef.current);
-      if (!root) return;
+      if (!root) return false;
       const cached = sessionCacheRef.current[rootSessionKey(root, key)];
       // CUSTOM(G-Z): 缓存里可能是历史写入的无 root 对象，这里强制写回卡片 root，
       // 否则 handleSelectSession 的 `root_id || 当前根` 兜底会把它认成当前项目。
@@ -77,8 +80,11 @@ export function useAppTaskDrawer(params: UseAppTaskDrawerParams) {
         cached,
         currentRoot: currentRootIdRef.current,
       });
-      if (!target) return;
+      if (!target) return false;
+      // 返回「是否真的发起了跳转」：详情面板要等这一步完成后再关自己，
+      // 解析失败（空 key / 找不到 root / 没有可跳目标）时保持原样、不误关。
       void handleSelectSession(target as any, { preserveTaskSelection: true });
+      return true;
     },
     [
       currentRootIdRef,

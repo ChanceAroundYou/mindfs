@@ -293,7 +293,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     handleGitPush, handleGitCommit, handleGitStageItem, handleGitUnstageItem,
     handleGitDiscardItem, switchGitBranch, treeSortMode,
   });
-  // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
+  // 四块 = 未开始 / 执行中 / 待处理 / 已结束（已结束内分 完成、取消；失败并入取消）。
   const { kanbanColumns
   } = useAppKanbanColumns({
     kanbanTasks, t,

@@ -58,6 +58,9 @@ func (s *Server) SignalCompact(threadID string) {
 	if st, ok := s.sessions[threadStateKey(threadID)]; ok {
 		st.live.pendingColdFold = true
 		st.live.pendingColdFoldAt = time.Now()
+		// Same as the PostCompact hook: the first sample after a compaction is
+		// legitimately much smaller than the calibrated one.
+		st.calibrationReset = true
 	}
 	s.mu.Unlock()
 }

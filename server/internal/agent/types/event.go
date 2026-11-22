@@ -67,6 +67,10 @@ type CompactNotice struct {
 	ID      string `json:"id,omitempty"`
 	Status  string `json:"status,omitempty"`
 	Summary string `json:"summary,omitempty"`
+	// PostTokens 是 harness 报告的压缩后上下文大小。Claude 的 SDK 不暴露
+	// compact boundary 原始 JSON 里的 postTokens，适配器从转录文件补读；
+	// Codex 的 compact item 没有这个数，保持 0 由后续 token_count 更新。
+	PostTokens int `json:"post_tokens,omitempty"`
 }
 
 type LoginNotice struct {

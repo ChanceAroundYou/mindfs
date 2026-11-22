@@ -105,6 +105,26 @@ func TestLedgerKeepsUsageProvenance(t *testing.T) {
 	}
 }
 
+// A missing sample keeps its reason, and rows written before the field still
+// read back as "unknown" instead of a fabricated diagnosis.
+func TestLedgerKeepsUsageMissingReason(t *testing.T) {
+	store := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	entry := ledgerTestEntry(100)
+	entry.UsageSource = UsageSourceMissing
+	entry.UsageMissingReason = UsageMissingContentEncoding
+	entry.RewriteTokens = -1
+	if err := store.Write("s", entry); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.read("s", 0)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("read = %+v, %v", entries, err)
+	}
+	if entries[0].UsageMissingReason != UsageMissingContentEncoding {
+		t.Fatalf("missing reason = %q, want %q", entries[0].UsageMissingReason, UsageMissingContentEncoding)
+	}
+}
+
 // 2026-11-21 之前写的账本行没有这两个键。缺字段只能读成 0（前端据此回退字节），
 // 不能让整份历史解析失败。
 func TestLedgerReadsLegacyRowsWithoutTokenEstimates(t *testing.T) {
@@ -327,5 +347,37 @@ func TestLedgerEntryTimestampsAreRecent(t *testing.T) {
 	entries, _ := store.read("s", 0)
 	if len(entries) != 1 || entries[0].TS < before {
 		t.Fatalf("entry = %+v", entries)
+	}
+}
+
+// Billing-context totals: the chip needs a denominator that is not the whole
+// request body. Codex reasoning ciphertext makes the body 14-21x the billed
+// context, so the byte-based percentage reads 3% for a 39% saving.
+func TestSummarizeLedgerBillingContextTotals(t *testing.T) {
+	codex := ledgerTestEntry(100)
+	codex.UsageInput, codex.UsageCacheRead, codex.UsageCacheCreation = 10000, 169000, 0
+	codex.TokensEst, codex.UsageSource = 132000, UsageSourceResponse
+
+	claude := ledgerTestEntry(200)
+	claude.UsageInput, claude.UsageCacheRead, claude.UsageCacheCreation = 20000, 80000, 1000
+	claude.TokensEst, claude.UsageSource = 30000, UsageSourceResponse
+
+	missing := ledgerTestEntry(300)
+	missing.UsageInput, missing.UsageCacheRead = 50000, 0
+	missing.TokensEst, missing.UsageSource = 90000, UsageSourceMissing
+
+	summary := SummarizeLedger([]LedgerEntry{codex, claude, missing})
+	if summary.TotalContextTokens != 280000 {
+		t.Fatalf("total context tokens = %d, want 280000", summary.TotalContextTokens)
+	}
+	if summary.TotalFoldedTokens != 162000 {
+		t.Fatalf("total folded tokens = %d, want 162000", summary.TotalFoldedTokens)
+	}
+	if summary.ContextTokenSamples != 2 {
+		t.Fatalf("context token samples = %d, want 2 (missing usage excluded)", summary.ContextTokenSamples)
+	}
+	share := float64(summary.TotalFoldedTokens) / float64(summary.TotalContextTokens+summary.TotalFoldedTokens)
+	if share < 0.36 || share > 0.37 {
+		t.Fatalf("billing share = %.3f, want ~0.366", share)
 	}
 }

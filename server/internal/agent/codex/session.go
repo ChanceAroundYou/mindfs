@@ -97,6 +97,15 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 	return fmt.Errorf("%w（另一个 Codex 客户端正占用该会话，通常是 Codex 桌面版打开了同一个对话；在那边关闭该会话后重试）", lastErr)
 }
 
+// ProcessID returns the app-server PID behind this session. The pool uses it
+// to attach the process to the MindFS lifetime guard as soon as it opens.
+func (s *session) ProcessID() int {
+	if s == nil || s.client == nil {
+		return 0
+	}
+	return s.client.ProcessID()
+}
+
 // codex 的 thread writer 是**跨进程独占文件锁**（rollout/src/writer_lock.rs）。
 // 同一个 CODEX_HOME 下任何另一个 codex 进程（最典型的是 Codex 桌面版）把该 thread
 // 加载成 live recorder，就会按住锁直到它自己退出；此时 thread/resume 返回

@@ -102,8 +102,15 @@ func (s *AppContext) markTaskQuestionAnswered(ctx context.Context, rootID, sessi
 	if err != nil {
 		return
 	}
-	if _, _, err := activityService.MarkTaskQuestionAnswered(ctx, sessionKey, toolUseID, answers); err != nil {
+	_, changed, err := activityService.MarkTaskQuestionAnswered(ctx, sessionKey, toolUseID, answers)
+	if err != nil {
 		log.Printf("[kanban] task.question.answer.error root=%s session=%s tool=%s err=%v", rootID, sessionKey, toolUseID, err)
+		return
+	}
+	// W4-1：把「这一轮答过提问」标记给回合结算，随后的 turn_settled 会带
+	// answered_question=true。空答案（只收口）不算作答。
+	if changed && len(answers) > 0 && s.Kanban != nil {
+		s.Kanban.NoteSessionAnsweredQuestion(rootID, sessionKey)
 	}
 }
 

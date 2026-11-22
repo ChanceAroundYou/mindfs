@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"mindfs/server/internal/api"
+	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/config"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
@@ -105,6 +106,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 
 		TaskAgent: m.shared.taskConfig.Agent,
 		TaskModel: m.shared.taskConfig.Model,
+		Hygiene:   usecase.NewHygieneTrackerAt(configDir, m.shared.hygiene),
 	}
 	services.Scheduled = scheduled.NewService(services, services)
 	if err := normalizeRegisteredForkSessions(m.ctx, services); err != nil {
@@ -118,8 +120,8 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban = kanban.NewService(services)
 	// 外部通道（飞书）是进程级一份；本账户的看板把卡片交给它，账户身份由适配器固定。
 	services.Feishu = m.shared.feishu
-	if m.shared.feishu != nil {
-		services.Kanban.SetCardNotifier(feishuCardNotifier{svc: m.shared.feishu, accountID: userID})
+	if notifier := feishuCardNotifierFor(m.shared, userID); notifier != nil {
+		services.Kanban.SetCardNotifier(notifier)
 	}
 	// 工作流库属共享控制面数据（主节点一份），每账户的 Kanban 实例共用同一份；
 	// 不接的话 /api/workflows 一律 503，迁移入口也就无从谈起。
@@ -149,6 +151,9 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
+	// 人工「终止」要真的打断主会话里正在跑的回合；没有这个端口就只能结算回复行，
+	// 会话那边的工具调用会继续跑到下一轮才停。
+	services.Kanban.SetSessionTurnCanceller(services.CancelTaskSessionTurn)
 	services.WireFoldUsageReader(services.Kanban)
 	// Router 读会话转录（router_read_session）：只读本任务会话的文本块。
 	services.WireRouterTranscriptReader(services.Kanban)

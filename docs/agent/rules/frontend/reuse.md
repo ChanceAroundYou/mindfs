@@ -8,6 +8,6 @@
 ## 已有复用（勿重复造）
 
 `shared/datetime.ts`（`formatCompactTime`/`formatCompactSize`）、`shared/styles.ts`
-（`iconButtonStyle`/`emptyStyle`/`errorStyle`…）、`sessionListShared.tsx`
+（`iconButtonStyle`/`emptyStyle`/`errorStyle`…）、`components/session/sessionListShared.tsx`
 （ToggleRowButton/PinIcon/ArchiveHeaderButton）、`layout/ViewHeader.tsx`、
-`sessionCardHelpers.tsx`（`formatTime` 相对时间版、`renderHighlightedText`）。
+`components/session/sessionCardHelpers.tsx`（`formatTime` 相对时间版、`renderHighlightedText`）。

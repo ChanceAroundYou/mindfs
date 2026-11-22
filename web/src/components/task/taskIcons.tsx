@@ -6,10 +6,11 @@
  * CheckIconSmall, TaskCompleteIcon, TaskQueuedSpinnerIcon, TaskPauseIcon,
  * TaskResumeIcon, TaskRebuildWorktreeIcon, TaskFinishWorktreeIcon,
  * TaskSessionErrorIcon, TaskCancelIcon, TaskReopenIcon, DeleteIcon, TaskPlanAuxIcon,
+ * TaskStartIcon, TaskTerminateIcon,
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
- * ChevronDownSmallIcon, WorkflowIcon.
+ * ChevronDownSmallIcon, WorkflowIcon, TaskRouterAlertIcon.
  * Task styles: taskCardSurfaceStyle,
- * taskCardIconButtonStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
+ * taskCardIconButtonStyle, taskActionIconStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
  * WorktreeTagState, taskWorktreeTagStyle, taskReplyPulseStyle.
  *
  * INVENTORY-END
@@ -112,6 +113,22 @@ export function TaskPauseIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
       <rect x="6" y="5" width="4" height="14" rx="1.2" />
       <rect x="14" y="5" width="4" height="14" rx="1.2" />
+    </svg>
+  );
+}
+
+export function TaskStartIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
+      <path d="M8 5.2c0-.9 1-1.5 1.8-1l9.2 6.1c.7.5.7 1.5 0 2l-9.2 6.1c-.8.5-1.8-.1-1.8-1V5.2z" />
+    </svg>
+  );
+}
+
+export function TaskTerminateIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
+      <rect x="5.5" y="5.5" width="13" height="13" rx="2" />
     </svg>
   );
 }
@@ -240,7 +257,7 @@ export function TaskCancelIcon() {
 }
 
 /**
- * 回到待审核：一个回退箭头（undo）。
+ * 回到待处理：一个回退箭头（undo）。
  *
  * 与「删除」的垃圾桶、「取消」的作废符区分开：这个动作不销毁任何东西，
  * 只是把已封板的任务放回可继续对话的状态，上一轮的 Run 与回复都还留着。
@@ -292,6 +309,18 @@ export function TaskPlanAuxIcon({ color }: { color?: string } = {}) {
     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M7 6h10M7 12h10M7 18h6" stroke={c} strokeWidth="2" strokeLinecap="round" />
       <path d="M4 6h.01M4 12h.01M4 18h.01" stroke={c} strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TaskRouterAlertIcon({ color }: { color?: string } = {}) {
+  // 三角警告：中断用红、停滞用琥珀。颜色由调用方给，图标本身不带语义。
+  const c = String(color || "#f59e0b").trim() || "#f59e0b";
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 3.6 2.6 20h18.8L12 3.6Z" stroke={c} strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M12 9.6v4.6" stroke={c} strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="17.2" r="1" fill={c} />
     </svg>
   );
 }

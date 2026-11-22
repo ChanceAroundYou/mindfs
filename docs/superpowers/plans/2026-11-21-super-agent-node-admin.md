@@ -127,9 +127,9 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
 
 ## 状态
 
-**W1、W2 已完成，W3 进行中。** W1 组号 **G-PB**（计划首次提交时记作 G-NY，与同日的移动端任务
-详情面板组撞号，以本文件与 `docs/upstream-customizations.yaml` 的 G-PB 为准）；W2 组号
-**G-PD**。
+**W1、W2、W3 已完成；R4 本轮只记录，不设计（用户裁定机器管理放到 R4）。** W1 组号 **G-PB**
+（计划首次提交时记作 G-NY，与同日的移动端任务详情面板组撞号，以本文件与
+`docs/upstream-customizations.yaml` 的 G-PB 为准）；W2 组号 **G-PD**；W3 组号 **G-PE**。
 
 ### T1 完成（2026-11-21）
 
@@ -153,6 +153,12 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
   `TestCoordinatorTickReclaimsStaleClaims` 是既有 sqlite 并发 flake，单跑通过。
 - 提示词：新增三档工具说明；删掉「禁止 cancel Run」的总禁令，改为「只能走监管取消工具，
   最小够用、收口动作不与开工同轮、不许绕预算」。
+- **验收边界（2026-11-22，隔离实例 7465 真实模型取证）**：三档取消只在监管回合可用 ——
+  `router_brief.go` 仅在 `trigger.Event != nil` 时挂 `supervision` 块，提示词规则 8 / 11 也
+  明写「只在 brief 带 `supervision` 块时可用」。因此「用户发一条『把 n2 取消掉』」的回合
+  结构上不可能调 `cancel_node`：实测 Router 选了 `deliver_to_active_run + say`（把要求投递
+  给运行中的节点），这是设计行为，不是缺陷。真实模型 e2e 只能走事件回合，故 W1 取消三档的
+  验收由 `router_supervision_cancel_test.go` 的注入决策用例承担（见上），不再写用户回合版脚本。
 
 ### T2 完成（2026-11-21）
 
@@ -319,7 +325,7 @@ Plan 2026-11-21。上一轮（G-NQ 主动监管 S0–S4）之后，用户裁定 
 - W2 边界（不再扩）：节点级动作只认顶层 agent 节点；模型档不校验 harness 可用列表；
   跨轮历史卡片不做。
 
-## W3 — 自设计 workflow（进行中）
+## W3 — 自设计 workflow（已完成）
 
 用户裁定：「Router 应该要会自己设计生产或者派生总结需要的 workflow」，「发新的 / 改已有的
 workflow 需要显式批准，项目级别、临时使用的可以自由生成，但固化、提升到全局的 workflow
@@ -358,7 +364,10 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   普通留言端点不能批准 —— 与 HumanGate 同一条规矩。重复决定返回 409，不重复发布。
 - **批准的是看过的这一版**：请求钉住提出时的草稿 `revision`，批准时按它 CAS；期间草稿被改过
   就 `ErrWorkflowPublishStale`（HTTP 409），卡片转 failed 并写明「需要重新起草」，绝不把旧
-  内容盖到新草稿上。
+  内容盖到新草稿上。**「当时没有、现在有了」同样算 stale**（2026-11-22 补）：请求时的
+  `base_draft_revision` 为空意味着人看到的是「新建」，等待期间别人把同 id 条目建出来后，
+  commit 现在按 stale 失败而不是拿 `UpdateDraft` 覆盖别人的草稿；直接发布路径撞上同一竞态
+  也一样失败（Router 重试时会看到已有条目、转而落卡）。
 - **动作与工具**：`RouterActionSaveWorkflow`（`save_workflow`），`graph` 与
   `base_workflow_id` **互斥且必须给一个**（工具层 + 校验层各拒一次）；只给
   `base_workflow_id` 时从该条目最新版本复制一份图，并在 meta 上记 `derived:<id>` 标签
@@ -374,3 +383,70 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   一次驳回悄悄发布。
 - 边界：派生只记标签，不做版本链追溯；模型档并入 workflow 的层级（节点 > 任务 > 全局）
   仍是 W3 后续任务（T4）。
+
+### T4 完成（2026-11-21）— 模型档并入 workflow（节点 > workflow 默认 > harness 全局）
+
+用户裁定「按任务选模型是需要的，但是可以融入到 workflow 里」——所以没有独立的 `Task.Model`
+列：中间那一档由任务所跑的 workflow 表达，任务用哪张图就继承它的默认模型。
+
+- **数据形状**：`WorkflowDefinition.Defaults *WorkflowDefaults{Model}`（刻意只有模型一档：
+  agent / harness 绑在节点上是结构性选择，模型才是逐任务最容易变的那一档）。为空 = 不设档。
+- **层级只解释一次**：`WorkflowDefinition.AgentProfileFor(node)`（节点 `params.model` >
+  `defaults.model` > 留空交给 harness 全局）。三处消费同一个结果，运行期不再各自解释：
+  ① `prepareWorkflowNodeAt` 写进 `WorkflowNodeExecution.Profile`，适配层
+  `workflowNodeProfile(exec)` 读它（手搓 exec 未跑 prepare 时退回节点 params，保持既有行为）；
+  ② `RunWorkflowNodeAttempt` 落 `NodeRun` 行时用它 —— 行是运行视图与 Router `inspect_run`
+  的事实来源，写裸 params 会让「继承默认」的节点显示成没设模型；③ Shadow/单测构造的路径
+  不受影响。
+- **模型写的图要规整**：`sanitizeRouterGraph` 去空白，空串归一成 `nil`（否则运行期会多一个
+  「显式空模型」的假档位），拷贝一份不改调用方的图。
+- **提示词与工具**：规则 21 说明三档与「只在用户明确要求换模型时才设」；`router_run_workflow`
+  与 `router_save_workflow` 的 `graph` 描述都写明可给 `defaults.model`、节点 `params.model` 优先。
+- **前端零改动**：编辑器只在 `{...graph, nodes: …}` 上改节点，`defaults` 随图往返；画布不做
+  模型档 UI（这一档由 Router 起草、由图本身承载）。
+- 验证：`workflow_default_model_test.go` 10 条（档位解析 / 去空白 / 空串归一 / prepare 落档 /
+  节点优先 / `NodeRun` 行记实际档）+ `workflow_node_profile_test.go` 2 条（适配层优先读
+  prepared profile、未 prepare 时退回节点 params）；7 处变异各自打红后还原（默认档不参与
+  解析 / 空白不去 / 空串不归一 / prepare 不落 `Profile` / 适配层退回只看节点 / 落行用裸
+  params / 节点档被默认档覆盖）。`go build ./...` OK；`go test ./server/internal/kanban/
+  ./server/internal/api/ -count=1` 全绿（335.0s / 57.2s）。
+- 边界：`defaults` 目前只有模型一项，不承载 effort / harness；固化的 workflow 保留它自己的
+  `defaults`，任务用它的版本就继承那一版的默认 —— 换版本即换档，不再有第二处开关。
+
+### 补口（2026-11-21）— 起草/固化的图必须带可执行的节点 harness
+
+隔离实例真实验收（W2 节点管理脚本）撞出来的缺陷：Router 起草的图只写 `prompt`，`params.agent`
+为空 —— 图能通过校验、能固化、能发布，节点却在执行时以 `agent required` 立刻失败；W3 固化的
+`wf-iso-w3g-*` / `wf-iso-w3p-*` 两个已发布版本同样跑不起来。
+
+- `fillDefaultNodeAgent`：缺 `params.agent` 的 agent 节点补 `defaultRouterAgent`（claude），显式写
+  了的一律不动；`loop` 内层图（原始 JSON 存在 `params.graph`）就地递归补。
+- 三处调用：`sanitizeRouterGraph`（临时图，深拷贝后补，不改调用方原图）、
+  `workflowPublishRequest`（待批准卡载荷）、`commitWorkflowPublish`（写目录的最后一道门 ——
+  覆盖升级前落下的旧卡，旧卡图里同样没有 agent）。
+- 提示词规则 21 与两个工具的 `graph` 描述写明「`params.agent` 可省略，默认 claude」，不让模型
+  以为这是必填项。
+- 验证：4 条用例先红后绿（临时图带 agent、显式 agent 不被覆盖 + 循环内层 + 不污染原图、固化
+  版本带 agent、旧待批准卡在批准时补 agent）+ 1 条提示词/工具描述内容守卫；5 处变异各自打红
+  后还原（sanitize 不补 / 覆盖显式 agent / 固化请求不补 / commit 不补 / 提示词删掉默认说明）。
+  `go test ./server/internal/kanban/ -count=1` 全绿（303.1s）。
+- **真实模型复验（2026-11-22，隔离实例 7465 / claude sonnet）**：
+  - `e2e/test_task_router_w2_node_admin.py` PASS：n1 运行中改它被 409 frozen；未触发的 n2 改
+    prompt 成功、NodeRun 的 `input.prompt` 确认执行时用的是新 prompt；Router 在 n1 仍 `running`
+    时跳过 n3（决策 `skip_node(node_id=n3)` 落 `applied`），最终 `n1 success / n2 success /
+    n3 skipped`。
+  - `e2e/test_task_router_w3_publish.py --scenario ABC` PASS：A 全局条目只落待批准卡 → 批准后
+    发布，`defaults.model=sonnet` 与节点 `agent=claude` 都带过去；B 项目级新条目直接发布、无卡，
+    节点同样带 `agent`；C Router 用 `router_run_workflow(graph)` 起一轮临时图（图里刻意不写
+    `params.agent`），两个节点都 `success`、输出含 A-OK / B-OK，控制面目录没有多出条目。
+  - 脚本自身修掉两处观测错误（不是产品缺陷）：`/workflow-run` 的 `node_states` 投影只在节点
+    收尾时写，运行中的真相在 `/workflow-run/nodes` 的 NodeRun 行；节点 prompt 只写「只回复
+    OK」这类裸 token 会被 envelope 判成 blocked，夹具改成 `echo` + token。
+
+## 部署记录
+
+**2026-11-22 四端发布 `v0.5.5-1201-57-g0cc70c6e`**：W2（节点级管理员）与 W3（自设计 / 派生
+workflow 与审批）全部上线，含 `0cc70c6e` 的固化 stale 守卫（批准期间条目被别人新建出来 → 按
+stale 拒绝，绝不覆盖草稿）与两份隔离验收脚本 `e2e/test_task_router_w2_node_admin.py` /
+`e2e/test_task_router_w3_publish.py`。四端版本逐字一致；本机由用户重启，运行进程与安装文件同
+md5 `540a0e8f…`、`/mindfs/health` 200 `role=control`。R4（机器管理）仍只记录、未设计。

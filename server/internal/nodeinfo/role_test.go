@@ -45,6 +45,7 @@ func TestIsControlPlane(t *testing.T) {
 		"/api/node-info",
 		"/api/token-station/userinfo",
 		"/api/app/update",
+		"/api/channels/feishu/relay",
 	}
 	for _, p := range control {
 		if !IsControlPlane(p) {
@@ -84,6 +85,10 @@ func TestDataPlaneIsNotControlPlane(t *testing.T) {
 		"/api/agent-config/defaults",
 		"/api/agent-api-providers",
 		"/api/imports/github",
+		// 飞书只有 relay 是控制面；入口与点击回传都留在工作节点本地。
+		"/api/channels",
+		"/api/channels/feishu",
+		"/api/channels/feishu/answer",
 	}
 	for _, p := range dataPlane {
 		if IsControlPlane(p) {
@@ -127,6 +132,7 @@ func TestControlPlanePrefixesSnapshot(t *testing.T) {
 		"/api/node-info",
 		"/api/token-station",
 		"/api/app/update",
+		"/api/channels/feishu/relay",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("prefix count = %d, want %d (%v)", len(got), len(want), got)
@@ -135,6 +141,27 @@ func TestControlPlanePrefixesSnapshot(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("prefix[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+// 飞书中继只有整条 /api/channels/feishu/relay 是控制面；把整个 /api/channels
+// 收进去会让 worker 自己的入口与点击回传端点一起被 403。
+func TestFeishuRelayIsExactControlPlanePath(t *testing.T) {
+	for _, path := range []string{
+		"/api/channels",
+		"/api/channels/feishu",
+		"/api/channels/feishu/answer",
+		"/api/channels/feishu/relay-extra",
+	} {
+		if IsControlPlane(path) {
+			t.Errorf("%s must stay data-plane", path)
+		}
+	}
+	if !IsControlPlane("/api/channels/feishu/relay") {
+		t.Error("/api/channels/feishu/relay must be control-plane")
+	}
+	if !IsControlPlane("/api/channels/feishu/relay/") {
+		t.Error("subpath of the relay endpoint must remain control-plane")
 	}
 }
 

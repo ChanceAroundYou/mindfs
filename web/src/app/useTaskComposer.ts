@@ -181,6 +181,8 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 	      // 「立即执行」默认勾上：建完就交给 Router。勾掉则留言排队，等用户在
 	      // 对话流里点「立即执行」再派发。
 	      startImmediately: true,
+	      workflowChoice: "empty",
+	      workflowVersionId: "",
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	      worktreeBranchMode: worktreePref.worktreeBranchMode,
 	      worktreeBranch: worktreePref.worktreeBranch,
@@ -400,6 +402,10 @@ export function useTaskComposer(params: UseTaskComposerParams) {
           ...(edit.name?.trim() ? { name: edit.name.trim() } : {}),
 
           startImmediately: edit.startImmediately,
+
+          workflowChoice: edit.workflowChoice,
+
+          workflowVersionId: edit.workflowVersionId,
 
         },
 

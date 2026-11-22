@@ -13,7 +13,6 @@ import (
 	"mindfs/server/internal/fs"
 )
 
-
 func preferredNewProjectMetaLocation(registry Registry) string {
 	if prefs := registry.GetPreferences(); prefs != nil {
 		return prefs.NewProjectMetaLocation()

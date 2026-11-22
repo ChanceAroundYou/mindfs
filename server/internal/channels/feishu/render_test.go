@@ -58,6 +58,51 @@ func TestRenderAskAndNoticeHaveTextForms(t *testing.T) {
 	}
 }
 
+func TestRenderPickerCardHasProjectChoicesAndNoOtherKinds(t *testing.T) {
+	card := Card{ID: "pick-nr-1", Kind: KindPicker, State: StateOpen,
+		SourceMessageID: "om_im_1", IntakeText: "修一下",
+		Projects: []PickerProject{
+			{NodeID: "fn", RootID: "docs", Label: "docs · fn"},
+			{NodeID: "pc", RootID: "docs", Label: "docs · pc"},
+			{NodeID: "home", RootID: "proj", Label: "proj"},
+		}}
+	raw := renderText(t, card)
+	var out struct {
+		Schema string `json:"schema"`
+		Header struct {
+			Title struct {
+				Content string `json:"content"`
+			} `json:"title"`
+		} `json:"header"`
+		Body struct {
+			Elements []json.RawMessage `json:"elements"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Schema != "2.0" {
+		t.Fatalf("schema = %q", out.Schema)
+	}
+	if len(out.Body.Elements) != 3 {
+		t.Fatalf("body has %d elements, want exactly three project buttons: %s", len(out.Body.Elements), raw)
+	}
+	if !strings.Contains(out.Header.Title.Content, "修一下") {
+		t.Fatalf("title lost the original question: %q", out.Header.Title.Content)
+	}
+	for _, label := range []string{"docs · fn", "docs · pc", "proj"} {
+		if !strings.Contains(raw, label) {
+			t.Fatalf("picker lost label %q: %s", label, raw)
+		}
+	}
+	if !strings.Contains(raw, `"choice":2`) || strings.Contains(raw, `"choice":3`) {
+		t.Fatalf("picker callbacks do not match the three projects: %s", raw)
+	}
+	if strings.Contains(raw, `"form"`) || strings.Contains(raw, `"input"`) {
+		t.Fatalf("picker must not render a free-text form: %s", raw)
+	}
+}
+
 func TestRenderSettledCardHidesButtonsAndShowsOutcome(t *testing.T) {
 	raw := renderText(t, Card{ID: "gate-1", Kind: KindGate, State: StateDone, Selected: 0,
 		Choices: []Choice{{Label: "批准", Value: "approve"}}, Summary: "已批准"})

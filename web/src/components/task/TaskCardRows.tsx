@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { isTerminalKanbanTask, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../../app/appTask";
+import { parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../../app/appTask";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
@@ -10,16 +10,15 @@ import type { SessionPresentationSummary } from "../../shared/sessionPresentatio
 import type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 export type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { TaskCardFinishButton } from "./TaskCardFinishButton";
-import { ArchiveIcon } from "../session/sessionListShared";
+import { TASK_ACTION_BUTTON_META, taskActionButtons } from "./taskCardActions";
+import { taskActionIcons } from "./taskActionIcons";
+import { taskRouterAlertBadge } from "./routerAlertModel";
 import {
-  DeleteIcon,
-  TaskCancelIcon,
-  TaskCompleteIcon,
-  TaskPauseIcon,
+  TASK_CONTROL_GAP,
   TaskPlanAuxIcon,
-  TaskReopenIcon,
-  TaskResumeIcon,
+  TaskRouterAlertIcon,
   TaskSessionErrorIcon,
+  taskActionIconStyle,
   taskAuxBadgeStyle,
   taskAuxIconScaleStyle,
   taskCardIconButtonStyle,
@@ -95,17 +94,23 @@ export function TaskCardRows({
   const auxFlags = task.aux_flags || {};
   const sessionError = parseTaskSessionErrorMessage(auxFlags.session_error);
   const sessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
+  // Router 角标（W3-4）：健康事件还没被 Router 处理时点亮，处理完服务端就
+  // 不再下发 router_alert，卡片随之恢复干净 —— 语义在服务端，这里只负责画。
+  const routerAlert = taskRouterAlertBadge(task);
   const auxBadges = [
     auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
+    routerAlert
+      ? {
+          key: routerAlert.key,
+          label: t(routerAlert.labelKey, { count: String(routerAlert.count) }),
+          icon: <TaskRouterAlertIcon color={routerAlert.key === "router_interrupted" ? "#ef4444" : undefined} />,
+          attention: routerAlert.attention,
+        }
+      : null,
     auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon color={nodeColor || undefined} />, attention: false } : null,
     auxFlags.has_todos ? { key: "todos", label: t("task.hasTodos"), icon: renderToolIcon("todo"), attention: false } : null,
     auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
   ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
-  const terminal = isTerminalKanbanTask(task);
-  // 暂停只在一轮真的在跑时给；等待/未开始没有「暂停」可言。恢复同理。
-  const taskRunning = task.status === "running";
-  const canPause = taskRunning;
-  const canResume = task.status === "paused";
   const statusText = taskStatusLabel(task.status || "", t);
   // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」。create_worktree
   // 是创建时的配置，永久为 true；收尾之后它一点没变，于是徽标照样显示绿色 worktree，
@@ -145,12 +150,10 @@ export function TaskCardRows({
   // 那正是收尾唯一有意义的场景；服务端会把它复活成 running 再起收尾回合。
   // 收尾进行中照样可点，且必须幂等 —— 收尾回合卡住时，用户能再点一次走机械清场
   // （后端按「分支是否已合进主干」分流，见 handleKanbanTaskBeginFinish）。
-  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;
-  // 完成只要求「不在跑」：活还在动时先暂停；终态没有后续可完成。
-  const canComplete = !terminal && !taskRunning;
-  // 终态卡片可以「回到待审核」继续对话：完成点早了、一次偶发失败、取消后改主意，
-  // 以前只能删卡重建。
-  const canReopen = terminal;
+  // 卡片与任务详情 header 读同一份「实际渲染的图标键」（taskActionButtons）：
+  // 两边各抄一遍条件，就是「卡片有、详情没有」的来源。暂停只在一轮真的在跑时给；
+  // 等待/未开始没有「暂停」可言，恢复同理。
+  const buttons = taskActionButtons(task);
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || taskNameFallback || t("task.unnamed");
   const title = task.task_template_name || taskNameFallback || t("task.defaultTitle");
@@ -341,137 +344,34 @@ export function TaskCardRows({
             </div>
           ) : null}
         </div>
-        {/* 未结束的任务：暂停 / 恢复 / 完成，末尾一个「取消」。
-            终态任务只剩一个「删除」—— 活已经停了，卡片留着只为看历史，
-            看完了得能真的清掉（否则看板只增不减）。 */}
+        {/* 动作行与详情 header 同源：键序来自 taskActionButtons，文案与配色来自
+            TASK_ACTION_BUTTON_META。未结束 → 收尾/暂停/恢复/完成/取消；
+            终态 → 收尾/返回/归档/删除；归档 → 返回/取消归档/删除。 */}
         {/* 换行后靠 marginLeft:auto 仍贴右（space-between 在单行时本来也等效） */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, marginLeft: "auto" }}>
-          {!terminal ? (
-            <>
-              {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
-              {canPause ? (
-                <button
-                  type="button"
-                  title={t("task.status.paused")}
-                  aria-label={t("task.actionPause")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "pause");
-                  }}
-                  style={taskCardIconButtonStyle()}
-                >
-                  <TaskPauseIcon />
-                </button>
-              ) : null}
-              {canResume ? (
-                <button
-                  type="button"
-                  title={t("task.actionResume")}
-                  aria-label={t("task.actionResume")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "resume");
-                  }}
-                  style={taskCardIconButtonStyle("accent")}
-                >
-                  <TaskResumeIcon />
-                </button>
-              ) : null}
-              {canComplete ? (
-                <button
-                  type="button"
-                  title={t("task.completeShort")}
-                  aria-label={t("task.complete")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "complete");
-                  }}
-                  style={taskCardIconButtonStyle("success")}
-                >
-                  <TaskCompleteIcon />
-                </button>
-              ) : null}
-              {/* 取消：**只改状态**，卡片留在板上（终态列里还能翻回去看）。
-                  用「作废符」而不是垃圾桶 —— 垃圾桶在这里是句谎话，
-                  它删不掉任何东西。删除键只给终态任务。 */}
+        {/* 键间距与详情 header 同一条 TASK_CONTROL_GAP；按钮自身 flexShrink:0
+            （见 taskActionIconStyle），窄卡上也保持 22×22。 */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: TASK_CONTROL_GAP, marginLeft: "auto" }}>
+          {buttons.map((key) => {
+            if (key === "finish-worktree") {
+              return <TaskCardFinishButton key={key} task={task} onMove={onMove} />;
+            }
+            const meta = TASK_ACTION_BUTTON_META[key];
+            return (
               <button
+                key={key}
                 type="button"
-                title={t("task.cancelTask")}
-                aria-label={t("task.cancelTask")}
+                title={t(meta.labelKey)}
+                aria-label={t(meta.labelKey)}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onMove(task, "cancel");
+                  onMove(task, key);
                 }}
-                style={taskCardIconButtonStyle()}
+                style={taskActionIconStyle(meta.tone)}
               >
-                <TaskCancelIcon />
+                {taskActionIcons[key]}
               </button>
-            </>
-          ) : (
-            <>
-              {/* 归档的卡片只剩「取消归档 + 删除」：活已经收起来了，能做的要么是把它
-                  拿回「完成/取消」组，要么是真删掉。finish/reopen 在归档时也收起来 ——
-                  归档语义是「这条已经翻篇」，留一堆操作键只会让人误以为它还在流转。 */}
-              {task.archived_at ? (
-                <button
-                  type="button"
-                  title={t("task.actionUnarchive")}
-                  aria-label={t("task.actionUnarchive")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "unarchive-task");
-                  }}
-                  style={taskCardIconButtonStyle("accent")}
-                >
-                  <ArchiveIcon />
-                </button>
-              ) : (
-                <>
-                  {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
-                  {canReopen ? (
-                    <button
-                      type="button"
-                      title={t("task.reopen")}
-                      aria-label={t("task.reopen")}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onMove(task, "reopen");
-                      }}
-                      style={taskCardIconButtonStyle("accent")}
-                    >
-                      <TaskReopenIcon />
-                    </button>
-                  ) : null}
-                  {/* 归档：只打标记，卡片挪去「已结束 → 归档」子组并从工作台隐藏；
-                      相关会话被一起打上归档标记，但不会被删除。 */}
-                  <button
-                    type="button"
-                    title={t("task.actionArchive")}
-                    aria-label={t("task.actionArchive")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onMove(task, "archive-task");
-                    }}
-                    style={taskCardIconButtonStyle()}
-                  >
-                    <ArchiveIcon />
-                  </button>
-                </>
-              )}
-              <button
-                type="button"
-                title={t("task.deleteTask")}
-                aria-label={t("task.deleteTask")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onMove(task, "delete-task");
-                }}
-                style={taskCardIconButtonStyle("danger")}
-              >
-                <DeleteIcon />
-              </button>
-            </>
-          )}
+            );
+          })}
         </div>
       </div>
     </>

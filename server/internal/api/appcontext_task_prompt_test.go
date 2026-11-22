@@ -262,6 +262,39 @@ func TestMarkTaskQuestionAnsweredUpdatesTaskCard(t *testing.T) {
 	if question.Status != kanban.ActivityStatusCompleted || !strings.Contains(question.PayloadJSON, `"q_0":"继续"`) {
 		t.Fatalf("answered question = status %q payload %q", question.Status, question.PayloadJSON)
 	}
+
+	// W4-1：答案也要在任务对话里留一条 user_answer 用户行，并让随后的一轮结算
+	// 带上 answered_question —— Router 才知道「用户答复了，会话继续了」。
+	answerRows := 0
+	for _, activity := range activities {
+		if activity.Type == kanban.ActivityTypeUserAnswer {
+			answerRows++
+			if activity.Role != kanban.RoleUser || !strings.Contains(activity.Body, "继续") {
+				t.Fatalf("user_answer activity = role %q body %q", activity.Role, activity.Body)
+			}
+		}
+	}
+	if answerRows != 1 {
+		t.Fatalf("user_answer activities = %d, want 1", answerRows)
+	}
+	if _, err := svc.SettleSessionTurn(ctx, rootID, kanban.TurnSettledInput{
+		SessionKey: created.Key, TurnID: "turn-answer", Excerpt: "按你的选择继续完成了。",
+	}); err != nil {
+		t.Fatalf("SettleSessionTurn: %v", err)
+	}
+	events, err := svc.ListRouterEventsForTask(ctx, rootID, "task-answer")
+	if err != nil {
+		t.Fatalf("ListRouterEvents: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Kind == kanban.RouterEventTurnSettled {
+			found = strings.Contains(event.PayloadJSON, `"answered_question":true`)
+		}
+	}
+	if !found {
+		t.Fatalf("turn_settled did not carry answered_question=true: %#v", events)
+	}
 }
 
 // WS 回答成功后必须把同一张任务卡写回答案；漏掉这一句，任务对话会永远停在
@@ -393,4 +426,21 @@ func findQuestionActivity(t *testing.T, activities []*kanban.TaskActivity) *kanb
 	}
 	t.Fatal("question activity missing")
 	return nil
+}
+
+// W4-2 的 API 接缝：用户在会话视图里发消息（ws_session_message）时，必须把这一轮
+// 认领成任务绑定的 out-of-band 回合；没有这一句，任务头整段时间都停在 waiting_user。
+// 真跑 WS 需要活的 agent 会话，这里沿用本文件既有的源码守卫做法钉住接线。
+func TestSessionSendClaimsOutOfBandTaskTurn(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	src, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "ws_session_message.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "BeginOutOfBandSessionTurn(") {
+		t.Fatal("ws_session_message.go 没有在回合开始时认领 out-of-band 任务回合")
+	}
 }

@@ -173,10 +173,13 @@ test("任务详情面板只挂一条对话流，且保留运行视图入口", ()
     /setOpenSection\(\(current\) => \(current === section \? null : section\)\)/,
     "一个 openSection 状态保证两个面板互斥",
   );
-  // mobile 下执行详情入口必须置顶，否则会被整段对话顶到面板最底部。
+  // 胶囊行在面板正文里的位置由 DOM 流决定，两端同一顺序（对话流 → 胶囊行 →
+  // 收尾区）。移动端曾用 `order:-1` 把它提到最前面，用户两次复测报「吸顶」：
+  // 它恒在正文顶端、贴着面板标题下沿。可见性改由「首屏滚到底 + 输入区贴底
+  // 对齐」保证，所以这里连 order 覆盖本身都不许存在。
   assert.match(panel, /className="task-detail-execution"/);
   const css = read("../src/index.css");
-  assert.match(css, /@media \(max-width: 640px\) \{[\s\S]*?\.task-detail-execution \{\s*order: -1;/);
+  assert.doesNotMatch(css, /\.task-detail-execution \{\s*order:/);
   // 运行视图就在对话流里，不再提供「返回留言板」的折叠入口。
   assert.doesNotMatch(entry, /onBackToComments/, "the back-to-comments wiring is gone");
   // 取数必须显式传 nodeId（跨节点铁律：不传会静默打激活节点）。

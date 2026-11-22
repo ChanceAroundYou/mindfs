@@ -53,8 +53,14 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetNodeAdmin(s)
 	// complete_task 的应用端口：证据门 + 收尾都在 Service 上。
 	svc.SetCompletionApplier(s)
+	// 直连回复落库后补短总结：与工作流结算压走同一套端口、同一套 CAS。
+	svc.SetReplySummarizer(s.scheduleDirectReplySummaryCompression)
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
+	// 人工「终止」：打断主会话当前回合；终止标记挂在 Service 上，因为本函数每次
+	// 调用都新建实例，而写标记（HTTP 侧）与读标记（跑回合的实例）不是同一个。
+	svc.SetSessionTurnCanceller(s.sessionTurnCancellerFn())
+	svc.SetTurnTerminations(s.turnTerminationsRegistry())
 	return svc, nil
 }
 
@@ -264,7 +270,11 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 	// 任务 #87 第 2 条：同一条 Run 重复结算（审批继续、启动对账）时，summary 可能
 	// 已经被上一次结算压过。压缩只认「原文 → 压缩结果」这一份记录，识别到就
 	// 沿用它，绝不把压缩结果盖回原文再压一次。
+	// 落库的摘要一律走 600 字上限：#100 的卡片就是把各节点原文直接相接（几千字、
+	// 没有段落），既是「总结」又是「日志」。原文仍完整保留在 raw 里交给异步压缩，
+	// 这里只限制写进活动行/任务行的那一段。
 	raw := summary
+	summary = truncateSummary(strings.TrimSpace(summary))
 	if cached, ok := s.compressedReplyFor(activity.ID, raw); ok {
 		summary = cached
 	}

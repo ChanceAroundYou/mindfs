@@ -75,8 +75,11 @@ func cancelRuntimeAfterNonRecoverableError(sess agenttypes.Session, pool *agent.
 // 原先转录 id 只在回合收尾的 UpdateAgentState 里落库（session_send.go）。如果进程死在
 // **第一轮中途**，绑定里始终是空的 —— 重启后既无法 resume，也无从找到转录（同步与重启
 // 兜底都要求 agent_session_id），那一轮内容于是永久留在转录里、用户界面看不到。
-// 打开成功的那一刻 id 就已经存在（claude = CLI session id，codex = thread id），
-// 先落库让它在「回合还没收尾」的窗口里也是真的。
+//
+// 对 codex 而言打开那一刻 thread id 就已存在，这里能直接落库；但 claude 的 CLI session id
+// 要等到第一条流消息才由 SDK 带上来（setSessionID），打开时 SessionID() 仍是空的 ——
+// 所以本函数对 claude 恒为 no-op，首轮被掐断时绑定仍然空着。claude 那条缺口由回合进行中
+// 的 persistLearnedAgentSessionID 兜住（见下）。
 //
 // 只补空绑定：非空的绑定属于「resume 到已经存在的转录」，写错就是抹掉历史（那条路径由
 // 下面的 rebind 逻辑负责，它只在 id 真的变了时写）。
@@ -103,6 +106,52 @@ func persistOpenedAgentSessionBinding(
 		return
 	}
 	log.Printf("[session/model] bind.done session=%s agent=%s agent_session_id=%s", current.Key, agentName, agentSessionID)
+}
+
+// persistLearnedAgentSessionID 在回合**进行中**反复尝试把 agent 报出的转录 id 补进空绑定。
+//
+// 为什么需要它：claude 的 CLI session id 要等第一条流消息才由 SDK 带上来（见
+// claude/session.setSessionID），打开那一刻 sess.SessionID() 还是空的 ——
+// persistOpenedAgentSessionBinding 对 claude 恒为 no-op。于是「首轮跑到一半进程被重启」
+// 时绑定里一直是空的：重启后既 resume 不了，也找不到转录，那一轮内容永久留在转录里、
+// 界面看不到（这正是 2026-11-17 codex 同形事故的 claude 版本，也是「重启丢记录且同步不
+// 回来」的根因之一）。这里在每条流消息到达时试一次，id 一出现就落库。
+//
+// 返回 true 表示「已确定、无需再试」（已写入，或绑定本来就有 id）；调用方把它记成一次性
+// 状态，避免每条流消息都查一次库。空 id / 写库失败返回 false，下一条消息再试。
+func persistLearnedAgentSessionID(
+	ctx context.Context,
+	manager *session.Manager,
+	current *session.Session,
+	agentName string,
+	sess agenttypes.Session,
+) bool {
+	if manager == nil || current == nil || sess == nil {
+		return true
+	}
+	agentSessionID := strings.TrimSpace(sess.SessionID())
+	if agentSessionID == "" {
+		return false
+	}
+	binding, err := manager.FindAgentBinding(ctx, current.Key, agentName)
+	if err != nil {
+		log.Printf("[session/model] bind.learn.error session=%s agent=%s err=%v", current.Key, agentName, err)
+		return false
+	}
+	// 非空绑定属于 resume/已写，交给 rebind 逻辑；这里绝不覆盖。
+	if binding != nil && strings.TrimSpace(binding.AgentSessionID) != "" {
+		return true
+	}
+	ctxSeq := 0
+	if binding != nil {
+		ctxSeq = binding.AgentCtxSeq
+	}
+	if err := manager.UpdateAgentState(ctx, current, agentName, ctxSeq, agentSessionID); err != nil {
+		log.Printf("[session/model] bind.learn.error session=%s agent=%s agent_session_id=%s err=%v", current.Key, agentName, agentSessionID, err)
+		return false
+	}
+	log.Printf("[session/model] bind.learned session=%s agent=%s agent_session_id=%s", current.Key, agentName, agentSessionID)
+	return true
 }
 
 func (s *Service) ensureAgentSession(
@@ -147,8 +196,11 @@ func (s *Service) ensureAgentSession(
 	}
 	if existing, ok := pool.Get(poolSessionKey); ok {
 		currentModel := currentModelForRuntime(current, existing)
-		if !shouldReopenSessionForSetting(pool, agentName, currentEffort, nextEffort) &&
-			currentFastService == nextFastService {
+		reopen := decideSessionReopen(
+			currentModel, nextModel,
+			shouldReopenSessionForSetting(pool, agentName, currentEffort, nextEffort) || currentFastService != nextFastService,
+		)
+		if reopen == sessionReuse {
 			if current != nil && currentModel != nextModel {
 				log.Printf("[session/model] switch.detected session=%s agent=%s from=%q to=%q action=set_runtime_model", current.Key, agentName, currentModel, nextModel)
 				if err := existing.SetModel(ctx, nextModel); err != nil {
@@ -189,7 +241,11 @@ func (s *Service) ensureAgentSession(
 			}
 			return existing, currentSeq, nil
 		}
-		log.Printf("[session/settings] reopen.detected session=%s agent=%s effort_from=%q effort_to=%q fast_service_from=%q fast_service_to=%q action=resume_runtime_session", current.Key, agentName, currentEffort, nextEffort, currentFastService, nextFastService)
+		if reopen == sessionReopenLongContext {
+			log.Printf("[session/model] reopen.detected session=%s agent=%s from=%q to=%q reason=long_context action=resume_runtime_session", current.Key, agentName, currentModel, nextModel)
+		} else {
+			log.Printf("[session/settings] reopen.detected session=%s agent=%s effort_from=%q effort_to=%q fast_service_from=%q fast_service_to=%q action=resume_runtime_session", current.Key, agentName, currentEffort, nextEffort, currentFastService, nextFastService)
+		}
 		pool.Close(poolSessionKey)
 	}
 

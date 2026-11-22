@@ -102,6 +102,48 @@ assert.equal(
   "the merge must sort by seq — callers rely on order",
 );
 
+// ── blocks 必须按 seq 合并，不能被增量回包整份替换 ─────────────────────────
+// 2026-11-22：`withSessionMeta` 用 `{...base, ...incoming}` 展开，`blocks` 于是被回包那份
+// **整份替换**。带 `seq` 的增量同步只回增量那几段的 blocks，缓存的其它 seq 就此消失，
+// 而 `saveCachedSession` 照旧落盘 —— 正文（S2d 之后只在块流里）跟着丢。
+// 语义与 aux 相反：块流是整段重写，所以同 seq 后到的整组覆盖；其余键保序保留。
+{
+  const appendSessionDelta = sessionMod.appendSessionDelta;
+  const withSessionMeta = sessionMod.withSessionMeta;
+  assert.equal(typeof appendSessionDelta, "function", "appendSessionDelta must be exported");
+  assert.equal(typeof withSessionMeta, "function", "withSessionMeta must be exported");
+
+  const base = {
+    key: "s",
+    exchanges: [{ seq: 1 }, { seq: 2 }],
+    exchange_aux: { "1": [{ kind: "tool" }] },
+    blocks: {
+      "1": [{ type: "text", text: "old body 1" }],
+      "2": [{ type: "text", text: "old body 2" }],
+    },
+  };
+  // 增量回包只带新 seq（`seq=maxSeq` 的同步形状）
+  const deltaOnlyNew = {
+    exchanges: [{ seq: 9 }],
+    exchange_aux: { "9": [{ kind: "tool" }] },
+    blocks: { "9": [{ type: "text", text: "new body 9" }] },
+  };
+  const mergedDelta = appendSessionDelta(base, deltaOnlyNew);
+  assert.deepEqual(Object.keys(mergedDelta.blocks).sort(), ["1", "2", "9"]);
+  assert.deepEqual(mergedDelta.blocks["1"], base.blocks["1"], "old block keys must survive a delta sync");
+
+  // 同 seq 重写：后到的整组覆盖，绝不允许两个 revision 并存
+  const rewritten = withSessionMeta(base, {
+    blocks: { "1": [{ type: "text", text: "revised body 1" }] },
+  });
+  assert.deepEqual(rewritten.blocks["1"], [{ type: "text", text: "revised body 1" }]);
+  assert.deepEqual(rewritten.blocks["2"], base.blocks["2"], "untouched seq keeps the base revision");
+
+  // 任何一侧缺失时原样保留另一侧（增量首包 / 老缓存没有 blocks 字段）
+  assert.equal(withSessionMeta(base, { key: "s" }).blocks, base.blocks);
+  assert.deepEqual(withSessionMeta(null, { key: "s", blocks: { "3": [] } }).blocks, { "3": [] });
+}
+
 // ── composeLoadedExchanges：加载时的唯一组装规则 ───────────────────────────
 // 这条规则曾经被写了 4 遍（restoreActiveSession 的窗口/fallback 两处 + 各自的
 // resumeCursor 块 + handleSyncSession），其中 3 遍都去**服务端回包**找瞬时行 ——

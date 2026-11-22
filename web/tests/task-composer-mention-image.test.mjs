@@ -36,9 +36,11 @@ test("PromptEditor exposes active-token, keydown and paste to task composers", (
   assert.match(editor, /onActiveTokenChange\?\.\(payload\.activeToken\)/);
   assert.match(editor, /onKeyDown=\{onKeyDown\}/);
   assert.match(editor, /onPaste=\{onPaste\}/);
-  // 自定义 onEnter 只消费候选，不能顺手吞掉默认发送（返回值 false 继续走发送逻辑）。
+  // 自定义 onEnter 只消费候选，不能顺手吞掉默认发送（返回值 false 继续走下面的逻辑）。
   assert.match(editor, /if \(onEnter\?\.\(event\)\) return true;/);
-  assert.match(editor, /if \(isComposing\(event\) \|\| event\?\.shiftKey\) return false;/);
+  // 回车语义统一由 resolveEnterIntent 决定：桌面 Enter 换行、Ctrl/Cmd+Enter 发送。
+  assert.match(editor, /const intent = resolveEnterIntent\(event, \{/);
+  assert.match(editor, /if \(intent !== "send"\) return false;/);
 });
 
 test("new-task panel wires @ mentions, candidate keyboard and pasted images", () => {

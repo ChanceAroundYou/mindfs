@@ -12,7 +12,8 @@
 ## 跑法
 
 ```bash
-# 完整跑（先按 /mindfs 前缀构建 dist，再编译后端、起服务、跑 10 个用例）
+# 完整跑（先按 /mindfs 前缀构建 dist，再编译后端、起服务、跑 e2e/ 下全部 pytest 套件；
+# 其中 test_task_prompt_cards_iso.py / test_session_hygiene.py 要先起 scripts/mindfs-iso.sh）
 .venv/bin/python -m pytest e2e/ -v -p no:cacheprovider
 
 # 迭代时复用已有 dist（快很多；dist 必须是 VITE_MIND_FS_BASE=/mindfs 构建的）
@@ -50,7 +51,7 @@ uv pip install --python .venv/bin/python -r e2e/requirements.txt
 （`web/src/services/net/base.ts` 的 `withAccountUser`）。所以用 API 造数据时必须打同一个分区
 （`user_query` fixture），否则界面上什么都看不到。
 
-## 覆盖范围（10 个用例）
+## 冒烟套件（`test_app_smoke.py`，10 个用例）
 
 | 用例 | 钉住什么 |
 |---|---|
@@ -64,6 +65,31 @@ uv pip install --python .venv/bin/python -r e2e/requirements.txt
 | `test_view_switcher_round_trips` | Workspace → Files → Workspace 来回切 |
 | `test_session_sidebar_present` | 会话侧栏 + 搜索按钮 |
 | `test_sidebar_collapse_round_trip` | 左侧栏折叠/展开来回切 |
+
+### 场景套件（同样由 `pytest e2e/` 收集）
+
+| 套件 | 覆盖 |
+|---|---|
+| `test_task_detail_*` / `test_task_ghost_card.py` | 任务详情面板几何与动作、终态按钮、卡片不残留 |
+| `test_task_composer_*.py` | 任务输入框的 `@` 候选、粘贴图片、Enter 行为与候选菜单几何 |
+| `test_kanban_archive.py` | 归档 → 工作台隐藏 → 取消归档 |
+| `test_conversation_task.py` / `test_compact_footer.py` | 对话式任务、压缩页脚 |
+| `test_workflow_authoring.py` | 工作流编辑器：AI 起草 → 校验 → 应用 |
+| `test_image_zoom_and_file_refresh.py` / `test_session_list_time_refresh.py` / `test_workspace_project_toggle.py` | 图片缩放与文件刷新、会话列表时间、项目头折叠 |
+
+### 独立脚本 / 隔离实例套件
+
+`test_task_router_*.py` 是 Router / 工作流的隔离验收脚本：打 `scripts/mindfs-iso.sh` 起的实例
+（真实模型），各自带 `--base/--user/--root` 参数或读环境变量，按文件头注释单独跑
+（`test_task_router_coordinate_common.py` / `_fixtures.py` 是共用夹具，不是独立脚本）。
+
+另有两条虽然会被 `pytest e2e/` 收集，但同样要求隔离实例（自带 `agents.json`、能跑真实 Agent），
+跑之前先 `bash scripts/mindfs-iso.sh start`，否则会失败：
+
+| 套件 | 覆盖 |
+|---|---|
+| `test_task_prompt_cards_iso.py` | 任务对话里的 HumanGate / 提问卡（见下节） |
+| `test_session_hygiene.py` | 超长会话提示三档 + 真触发一次 harness 压缩（真调模型） |
 
 选择器口径：优先 `data-onboarding`（引导浮层锚点，属对外可观测契约）和 aria-label，
 避开 class 名与内部 DOM 结构。

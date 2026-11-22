@@ -1,6 +1,7 @@
 package kanban
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -35,5 +36,25 @@ func TestRouterPromptPrefersMessageAgentForContinuity(t *testing.T) {
 	// 可复用的固定流程仍然是 workflow 的判据；不能把它删掉，否则又会滑回「一律直连」。
 	if !strings.Contains(prompt, "可复用的固定流程") {
 		t.Fatal("workflow 的判据（可复用的固定流程）必须保留")
+	}
+}
+
+// 起草图时只写 prompt 是模型的常态：提示词与两个工具的 graph 描述都必须写明
+// params.agent 可省略、默认 claude。2026-11-21 隔离验收里 Router 起草与固化出的
+// 两张图都没有 agent —— 能校验、能发布，一执行就 "agent required"。
+func TestRouterWorkflowGuidanceExplainsDefaultNodeAgent(t *testing.T) {
+	if prompt := RouterDeveloperInstructions(); !strings.Contains(prompt, "`params.agent` 可省略") {
+		t.Fatal("提示词要写明 params.agent 可省略（默认 claude）")
+	}
+	env := &routerToolEnv{brief: &SituationBrief{}, collector: newRouterTurnCollector(RouterConfig{})}
+	for _, name := range []string{"router_run_workflow", "router_save_workflow"} {
+		tool := toolByName(t, env, name)
+		schema, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal %s schema: %v", name, err)
+		}
+		if !strings.Contains(string(schema), "params.agent 可省略") {
+			t.Fatalf("%s 的 graph 描述要写明 params.agent 可省略（默认 claude）", name)
+		}
 	}
 }

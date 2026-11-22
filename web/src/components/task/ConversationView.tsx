@@ -9,6 +9,7 @@ import { ActivityMessage } from "./ActivityMessage";
 import { ScrollToBottomButton } from "../common/ScrollToBottomButton";
 import { alignPanelToBottom, findScrollableAncestor } from "./conversationScroll";
 import { useConversationJumpToLatest } from "./useConversationJumpToLatest";
+import { useComposerBottomPin } from "./useComposerBottomPin";
 import { useWorkflowNames } from "./useWorkflowNames";
 
 export type ConversationMessagesProps = {
@@ -39,6 +40,9 @@ export type ConversationMessagesProps = {
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
+  /** 排队留言上的「立即执行」：把最早一条 queued 留言交给 Router。 */
+  onRunQueued?: (activity: TaskActivity) => void;
+  runningQueued?: boolean;
 };
 
 /**
@@ -61,6 +65,8 @@ export function ConversationMessages({
   onWorkflowPublishDecision,
   onPauseTask,
   onResumeTask,
+  onRunQueued,
+  runningQueued = false,
 }: ConversationMessagesProps) {
   const { t } = useI18n();
 
@@ -114,6 +120,8 @@ export function ConversationMessages({
     onWorkflowPublishDecision,
     onPauseTask,
     onResumeTask,
+    onRunQueued,
+    runningQueued,
   };
 
   return (
@@ -192,8 +200,20 @@ export function ConversationView({
   const workflowNames = useWorkflowNames();
   const pendingPrompt = pendingTaskPrompt(activities);
   const queuedActivity = queuedUserActivity(activities);
+  // 「立即执行」挂在排队那条留言自己的页脚上（发送框里不再放它）：入口只在真有
+  // 排队留言时出现，终态任务不给。派发后任务头（待开始）与 Agent 回复都变了，
+  // 让详情面板重新点查一次。
+  const runQueuedFromMessage = () => {
+    void (async () => {
+      await runQueued();
+      onAgentActivityChange?.();
+    })();
+  };
   const lastAgentReplyRef = useRef("");
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  // 输入区长高时把面板底部钉住：对话内容往上顶，下方胶囊与收尾区不掉出视口。
+  useComposerBottomPin(composerRef, scrollAnchorRef);
   const initialScrollKeyRef = useRef("");
   // 用户上翻后才出现的「回到底部」：显隐与收敛复用会话时间线那一份。
   const { visible: jumpVisible, jumpToLatest } = useConversationJumpToLatest(scrollAnchorRef, taskId);
@@ -275,7 +295,7 @@ export function ConversationView({
     // 16px 撑成 32px、「输入框 → 面板下方胶囊」多出 16px 死区。
     <div
       data-testid="conversation-view"
-      style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%" }}
+      style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%", flex: "1 0 auto" }}
     >
       <ConversationMessages
         activities={activities}
@@ -294,6 +314,8 @@ export function ConversationView({
         onWorkflowPublishDecision={decideWorkflowPublish}
         onPauseTask={onPauseTask}
         onResumeTask={onResumeTask}
+        onRunQueued={queuedActivity && !disabled ? runQueuedFromMessage : undefined}
+        runningQueued={runningQueued}
       />
 
       {/*
@@ -329,8 +351,11 @@ export function ConversationView({
         </div>
       </div>
 
+      {/* 固定高度面板里消息少时把输入框顶到底部；消息多时它收缩到 0，
+          输入框原有的 16px 上边距不变。 */}
+      <div aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }} />
       {/* 输入框与对话流之间固定 16px；用 margin 而不是父层 gap，见容器上的注释。 */}
-      <div style={{ marginTop: 16, minWidth: 0 }}>
+      <div ref={composerRef} style={{ marginTop: 16, minWidth: 0 }}>
         {disabled ? (
           <div
             data-testid="conversation-disabled"
@@ -373,16 +398,6 @@ export function ConversationView({
               setVersionId(nextVersionId);
             }}
             sending={sending}
-            // 排队中的首条留言 → 输入框右下角出现「立即执行」（与新建任务面板同一颗
-            // 胶囊、同一个落点）。终态任务不再给入口。
-            onRunQueued={queuedActivity && !disabled ? () => {
-              void (async () => {
-                await runQueued();
-                // 任务头（待开始）与 Agent 回复都变了，让详情面板重新点查一次。
-                onAgentActivityChange?.();
-              })();
-            } : undefined}
-            runningQueued={runningQueued}
             error={sendError}
             resetKey={composerResetKey}
             attachments={pendingAttachments}

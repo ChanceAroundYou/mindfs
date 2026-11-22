@@ -23,18 +23,25 @@ import (
 // 组件多读一个字段而投影没加 → 红；投影多带一个前端零读取的键 → 红（体积）。
 // 这样「加字段」和「改投影」被绑在同一批改动里，没法再各走各的。
 //
-// 卡片把一部分判据委托给 appTask.ts 的纯函数（isFinishStageActive / hasLaterStage /
-// canAdvanceCard），所以两个文件一起扫。
+// 卡片把一部分判据委托给别的模块，所以这些文件一起扫：
+//   - appTask.ts：isFinishStageActive / hasLaterStage / canAdvanceCard 等纯函数；
+//   - taskCardActions.ts：卡片真正渲染哪几个动作键（含 archived_at 这个终态判据）。
+//
+// 动作模块是 2026-11-22 从 appTask 里拆出来的；拆完这里没跟着扫，投影里的
+// archived_at 就没人认领，守卫会误报「前端零读取」。
 func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
-	cardPath := filepath.Join("..", "..", "..", "web", "src", "components", "task", "TaskCardRows.tsx")
-	appTaskPath := filepath.Join("..", "..", "..", "web", "src", "app", "appTask.ts")
-	cardSrc, err := os.ReadFile(cardPath)
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	sources := []string{
+		filepath.Join("..", "..", "..", "web", "src", "components", "task", "TaskCardRows.tsx"),
+		filepath.Join("..", "..", "..", "web", "src", "app", "appTask.ts"),
+		filepath.Join("..", "..", "..", "web", "src", "components", "task", "taskCardActions.ts"),
 	}
-	appTaskSrc, err := os.ReadFile(appTaskPath)
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	srcs := make([]string, 0, len(sources))
+	for _, path := range sources {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		srcs = append(srcs, string(raw))
 	}
 
 	// ① 抽出卡片读取的 task.<field>。
@@ -42,17 +49,18 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 	//    这条测试会去断言一堆文案键，红得毫无意义。
 	i18n := regexp.MustCompile(`t\("task\.([A-Za-z]+)"`)
 	i18nKeys := map[string]bool{}
-	for _, m := range i18n.FindAllStringSubmatch(string(cardSrc), -1) {
-		i18nKeys[m[1]] = true
-	}
-	for _, m := range i18n.FindAllStringSubmatch(string(appTaskSrc), -1) {
-		i18nKeys[m[1]] = true
+	for _, src := range srcs {
+		for _, m := range i18n.FindAllStringSubmatch(src, -1) {
+			i18nKeys[m[1]] = true
+		}
 	}
 
 	taskReads := map[string]bool{}
 	// 前缀必须是行首或非标识符字符：文件名里的 `task.go` 不是字段读取。
-	taskFieldRe := regexp.MustCompile(`(?:^|[^A-Za-z0-9_])task\.([A-Za-z_][A-Za-z0-9_]*)`)
-	for _, src := range []string{string(cardSrc), string(appTaskSrc)} {
+	// 引号后面的一律跳过：`"task.finishWorktree"` 这类是 labelKey 字面量，
+	// 字段读取永远不写在字符串里。
+	taskFieldRe := regexp.MustCompile(`(?:^|[^A-Za-z0-9_'"` + "`" + `])task\.([A-Za-z_][A-Za-z0-9_]*)`)
+	for _, src := range srcs {
 		for _, m := range taskFieldRe.FindAllStringSubmatch(src, -1) {
 			if i18nKeys[m[1]] {
 				continue
@@ -77,7 +85,7 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 		ResultSummary:    "登录页已经改好了",
 		CreatedAt:        time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:        time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC), CreateWorktree: true,
-		ArchivedAt: "2026-11-18T00:00:00Z",
+		ArchivedAt:    "2026-11-18T00:00:00Z",
 		WorktreeBuilt: true,
 		WorktreePath:  "/tmp/worktree/task_parity",
 		AuxFlags: kanban.TaskAuxFlags{

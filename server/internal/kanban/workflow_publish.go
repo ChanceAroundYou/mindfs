@@ -109,14 +109,23 @@ func commitWorkflowPublish(ctx context.Context, store *WorkflowStore, req Workfl
 	if store == nil {
 		return WorkflowVersion{}, errors.New("workflow control-plane store unavailable")
 	}
-	graph := req.Graph
+	// 最后一道门：无论图来自哪条路径（新起草、派生、旧待批准卡），写进目录的
+	// 版本都必须是能直接跑的 —— 缺 agent 的节点执行时会以 "agent required" 失败。
+	graph := cloneWorkflowDefinition(req.Graph)
 	graph.RootID = RootIDForScope(taskRootID, req.Scope)
+	fillDefaultNodeAgent(graph.Nodes)
 
 	revision := ""
 	draft, err := store.GetDraft(ctx, req.WorkflowID)
 	switch {
 	case err == nil:
-		if req.BaseDraftRevision != "" && draft.Revision != req.BaseDraftRevision {
+		// BaseDraftRevision 为空 = 提出请求时目录里没有这个 id（新条目）。现在有了，
+		// 说明等待批准期间别人刚建过，人眼看过的那一版已不存在：按 stale 处理，
+		// 绝不静默覆盖别人的草稿。
+		if req.BaseDraftRevision == "" {
+			return WorkflowVersion{}, ErrWorkflowPublishStale
+		}
+		if draft.Revision != req.BaseDraftRevision {
 			return WorkflowVersion{}, ErrWorkflowPublishStale
 		}
 		updated, err := store.UpdateDraft(ctx, req.WorkflowID, draft.Revision, publishedBy, graph)

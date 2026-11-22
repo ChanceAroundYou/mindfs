@@ -25,13 +25,23 @@ func (s *session) handleTodoUpdateMessage(msg claudeagent.TodoUpdateMessage) {
 }
 
 func (s *session) handleCompactBoundaryMessage(msg claudeagent.CompactBoundaryMessage) {
+	postTokens := s.compactBoundaryPostTokens(msg)
+	// message_done 与 GET /api/sessions/{key} 读的都是 s.context；/compact 回合
+	// 没有 message_delta，不在这里写回的话界面会一直停在压缩前的旧值。
+	// 读不到 postTokens（传 0）时保持原值，不拿 0 覆盖。
+	if postTokens > 0 {
+		s.mu.Lock()
+		s.context.TotalTokens = postTokens
+		s.mu.Unlock()
+	}
 	s.emit(types.Event{
 		Type:      types.EventTypeCompact,
 		SessionID: s.SessionID(),
 		Data: types.CompactNotice{
-			ID:      firstNonEmpty(msg.UUID, msg.SessionID),
-			Status:  strings.TrimSpace(msg.CompactMetadata.Trigger),
-			Summary: compactBoundarySummary(msg),
+			ID:         firstNonEmpty(msg.UUID, msg.SessionID),
+			Status:     strings.TrimSpace(msg.CompactMetadata.Trigger),
+			Summary:    compactBoundarySummary(msg),
+			PostTokens: postTokens,
 		},
 	})
 }

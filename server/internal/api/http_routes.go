@@ -96,6 +96,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/sessions/worktree-ownership", h.handleSessionWorktreeOwnershipClear)
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.handleSessionToolCallGet)
 	r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)
+	r.Post("/api/sessions/{key}/compact", h.handleSessionCompact)
 	r.Post("/api/sessions/{key}/sync", h.handleSessionSync)
 	r.Get("/api/sessions/{key}", h.handleSessionGet)
 	r.Post("/api/sessions/{key}/messages", h.handleSessionUserMessage)
@@ -158,6 +159,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/tasks", h.handleKanbanTaskCreate)
 	r.Post("/api/tasks/{id}/rename", h.handleKanbanTaskRename)
 	r.Post("/api/tasks/{id}/run-now", h.handleKanbanTaskRunNow)
+	r.Post("/api/tasks/{id}/start", h.handleKanbanTaskStart)
+	r.Post("/api/tasks/{id}/terminate", h.handleKanbanTaskTerminate)
 	r.Post("/api/tasks/{id}/pause", h.handleKanbanTaskPause)
 	r.Post("/api/tasks/{id}/resume", h.handleKanbanTaskResume)
 	r.Post("/api/tasks/{id}/complete", h.handleKanbanTaskComplete)
@@ -217,6 +220,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 	// 中继到 worker 是空操作），所以不进 worker 的允许清单即可 —— 默认 worker
 	// 只放行数据面，这条会被 403。
 	r.Post("/api/web-push/relay", h.handleWebPushRelay)
+
+	// 飞书卡片中继：只有主控代发（凭据与 lark-cli 只在主控）。worker 自己的
+	// 入口/点击端点仍属数据面，只在 nodeinfo.controlPlanePrefixes 里登记这一条。
+	r.Post("/api/channels/feishu/relay", h.handleFeishuRelay)
+	// worker 就地处理主控转来的点击；这是数据面端点，worker 必须能提供。
+	r.Post("/api/channels/feishu/answer", h.handleFeishuAnswer)
 
 	// Agent status API
 	r.Get("/api/agents", h.handleAgentsList)

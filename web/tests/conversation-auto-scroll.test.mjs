@@ -53,7 +53,7 @@ test("零高度元素不吃 flex 间距：间距改为显式 margin", () => {
   // （实测对话 → 输入框 16px 被撑成 32px，输入框 → 胶囊再多 16px）。
   assert.match(
     view,
-    /data-testid="conversation-view"\s+style=\{\{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%" \}\}/,
+    /data-testid="conversation-view"\s+style=\{\{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%", flex: "1 0 auto" \}\}/,
   );
   assert.doesNotMatch(view, /flexDirection: "column", gap: 16/);
   // 对话 → 输入框的 16px 由输入框外层 margin 提供（含禁用/待回答两种占位）。
@@ -64,7 +64,9 @@ test("零高度元素不吃 flex 间距：间距改为显式 margin", () => {
     /data-testid="conversation-scroll-anchor" aria-hidden style=\{\{ height: 0 \}\}/,
   );
   // 面板内容间距收紧到 6px：输入框 → 执行详情/监管记录胶囊不再留一道死区。
-  assert.match(panel, /flexDirection: "column", gap: "6px", minWidth: 0/);
-  // 移动端胶囊置顶的既有约定不受影响。
-  assert.match(read("../src/index.css"), /\.task-detail-execution \{\n\s+order: -1;\n\s+\}/);
+  assert.match(panel, /flexDirection: "column", gap: "6px", minWidth: 0, flex: "1 0 auto"/);
+  // 胶囊两端同一顺序，移动端不许再把它提到正文最前面 —— 那样它在手机上就是
+  // 一条贴着面板标题下沿的横条（用户复测两次报「吸顶」）。可见性由首屏滚到底
+  // 与 useComposerBottomPin 保证，与流内顺序无关。
+  assert.doesNotMatch(read("../src/index.css"), /\.task-detail-execution \{\n\s+order: -1;\n\s+\}/);
 });

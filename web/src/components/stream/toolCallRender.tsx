@@ -173,6 +173,7 @@ export const statusColors: Record<string, string> = {
   success: "#22c55e",
   failed: "#ef4444",
   error: "#ef4444",
+  interrupted: "#ef4444",
 };
 
 export const terminalFontFamily =

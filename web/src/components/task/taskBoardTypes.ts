@@ -12,6 +12,8 @@ export type KanbanColumn = {
 export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
 
 export type TaskCardAction =
+  | "start"
+  | "terminate"
   | "pause"
   | "resume"
   | "complete"

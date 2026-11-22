@@ -34,7 +34,9 @@ func (r routerTranscriptReader) ReadSessionBlocks(ctx context.Context, rootID, s
 	if err != nil {
 		return nil, err
 	}
-	blocks, err := manager.ReadBlocks(ctx, sessionKey)
+	// 走解析后的读口：A+ 的流式片段（Step<0）与旧 revision 不是用户可见正文，
+	// 让 Router 看到它们会把 offset=1 翻成半句片段、把同一段回复数两遍。
+	blocks, err := manager.ReadResolvedBlocks(ctx, sessionKey)
 	if err != nil {
 		return nil, err
 	}

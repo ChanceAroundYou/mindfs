@@ -68,6 +68,12 @@ type Service struct {
 	// sessionArchiver 是任务归档级联用的「只打标记」端口（#86）。nil 时只改
 	// 任务自己的 archived_at，不动会话。
 	sessionArchiver SessionArchiver
+	// sessionTurnCanceller 是「终止任务」用的会话打断端口：按 root + 会话 key
+	// 取消此刻在跑的那一轮。nil（单测 / 老装配）时终止只结算回复行。
+	sessionTurnCanceller func(ctx context.Context, rootID, sessionKey string) error
+	// turnTerminations 是「这一轮是被用户终止的」共享登记簿。ActivityServiceForRoot
+	// 每次现建实例，终止与回合收尾可能落在不同实例上，状态必须挂在这里。
+	turnTerminations *TurnTerminations
 	// cardNotifier 是「把任务卡片推到外部通道」的端口（飞书等）。nil = 通道关闭，
 	// 所有通知静默丢弃；通道失败只记日志，绝不改任务状态。
 	cardNotifier CardNotifier
@@ -81,6 +87,15 @@ type Service struct {
 	// 赢下状态，就会得到「树已合并删除、行记 cancelled」的矛盾。锁只在进程内
 	// 有效，跨进程语义本来就未宣称 durable。
 	workflowFinishLocks map[string]*workflowFinishLock
+	// turnWatermarks 是会话回合的输出水位（见 turn_watermark.go）：最后一次真的
+	// 吐出内容帧的时刻。只在内存里，重启后一律「未知」。
+	turnWatermarkMu sync.Mutex
+	turnWatermarks  map[string]*turnWatermarkEntry
+	// sessionFollowMu 保护下面两张逐会话标记（见 service_session_follow.go）：
+	// answered = 本轮真的答过提问卡；outOfBand = 这一轮是用户在会话里自己推的。
+	sessionFollowMu  sync.Mutex
+	sessionAnswered  map[string]bool
+	sessionOutOfBand map[string]bool
 	// workflowRunSessionLocks 串行化「同一轮 Run 首次绑定共享会话」：并行分支
 	// 同时起步时只能有一条会话被记成 Run 的会话，否则另一条立刻变成孤儿。
 	workflowRunSessionLocks map[string]*workflowFinishLock
@@ -142,7 +157,7 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(roots RootProvider) *Service {
-	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowRunSessionLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}}
+	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowRunSessionLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}, turnTerminations: newTurnTerminations()}
 }
 
 // lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径
@@ -433,6 +448,11 @@ type CreateTaskInput struct {
 	// 的「建完就开跑」行为保持不变）；false 时留言以 queued 状态落库，
 	// 任务停在「待开始」，由 RunNow（立即执行）再派发。
 	StartImmediately *bool
+	// WorkflowChoice / WorkflowVersionID 是首条留言的工作流选择，语义与
+	// POST /api/tasks/{id}/activities 的同名字段一致（空串 = 交给 Router 自动挑）。
+	// 排队时一并落在留言行上，RunNow 派发按原选择执行。
+	WorkflowChoice    string
+	WorkflowVersionID string
 }
 
 type MoveInput struct {

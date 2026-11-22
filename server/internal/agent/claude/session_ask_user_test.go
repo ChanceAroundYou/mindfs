@@ -127,7 +127,7 @@ func TestHandleCanUseToolDeniesUnreadableAskUserQuestion(t *testing.T) {
 	for name, arguments := range map[string]string{
 		"arguments 不是 JSON": `{`,
 		"questions 为空":      `{"questions":[]}`,
-		"没有 questions 字段":  `{}`,
+		"没有 questions 字段":   `{}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			result := s.handleCanUseTool(context.Background(), claudeagent.ToolPermissionRequest{

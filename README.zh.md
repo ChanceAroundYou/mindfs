@@ -34,27 +34,26 @@ MindFS 提供 Android 壳（Capacitor），封装网页版并从 GitHub Releases
 
 - **多 Agent 支持**：Claude Code · OpenAI Codex · Gemini CLI · Grok · Cursor · Copilot · CodeBuddy · Cline · Augment · Kimi · Kiro · Qwen · Qoder · OMP · Pi · Hermes · DeepSeek Harness（DSH）· Reasonix · OpenCode · OpenClaw，自动探测已安装的 Agent。
 - **实时流式输出**：逐 token 推送，工具调用、思考过程、权限请求均以结构化卡片实时渲染，上下文窗口实时余量。
-- **灵活切换**：会话中随时切换 Agent 或模型，多 Agent 共享同一上下文，无需重新描述背景。
+- **灵活切换**：会话中随时切换 Agent 或模型，每个 Agent 各自保留底层 CLI 会话。
 - **会话搜索**：支持按会话标题或对话内容搜索，并可直接跳转到命中的会话和片段。
-- **外部会话双向导入同步**：可浏览受支持 Agent CLI 的已有会话，选择后导入到 MindFS，并作为原生 MindFS 会话继续使用，同时 MindFS 中的会话亦可在cli中恢复。后续亦可双向同步。
+- **外部会话导入与同步**：可浏览受支持 Agent CLI 的已有会话，选择后导入到 MindFS，并作为原生 MindFS 会话继续使用；MindFS 中的会话也可在 CLI 中恢复，并支持双向同步。
 - **绑定持久化与恢复**：MindFS 会持久化内部会话与底层 Agent 会话的绑定关系，服务重启后可恢复该关联；后续消息在条件允许时会继续落到同一个 Agent 会话上。
 - **富媒体输入**：支持在消息中直接附带文件和图片。
 - **多端同步**：同一实例可同时在多个设备上访问，会话状态实时同步。
 - **配置添加和切换**：agent可备份配置/添加 api 供应商，添加后可以一键切换配置，解决 多账号/多apikey 切换的麻烦。
 - **subagent**：codex/claudecode subagent 自动发现和展示。
-- **会话 fork**: 可从历史回复 fork 出新的会话。
+- **会话 fork**：可从历史回复 fork 出新的会话。
 - **定时任务**：在指定时间触发 Agent 执行任务。
-- **codex 远程登录**: 通过/login 命令实现 codex 远程登录。
-- **内置 token 加油站**：余额实时展示、一键切换生效。
+- **codex 远程登录**：通过 `/login` 命令实现 codex 远程登录。
 - **Token 用量数据**：记录并展示 token 用量和上下文窗口用量。
 
 ### 任务看板
 
-- **任务编排**：复杂目标可自动拆解为具备依赖关系的子任务，由多个 Agent 并行执行、统一调度；子任务完成后，由父会话进行全局验收，形成从拆解到交付的闭环。
-- **并发执行**：可运行多个任务，任务之间通过 worktree 隔离。
-- **任务模板**：可在模板中自定义任务阶段，每阶段可指定 agent, 模型，是否计划模式，预置提示词等。
+- **任务编排**：任务是对话。Router 按每条用户留言决定跑工作流还是直接回答，执行过程中可随时调整计划，不再受固定阶段流水线约束。
+- **并发执行**：可并行运行多个任务，按需为任务启用独立 worktree 隔离。
+- **工作流**：在可视化编辑器里编排 agent、人工审批与通知节点，也可以让 Agent 按描述起草；支持项目内发布，全局发布需批准。
 - **深度关联**：任务、worktree、会话、文件之间动态关联交互。
-- **快速创建**：通过模板快速创建任务，支持文件、图片、skill的输入。
+- **快速创建**：直接在看板建任务，支持附件、粘贴图片与 `@` 文件引用。
 
 ### 文件访问
 
@@ -93,7 +92,7 @@ MindFS 提供 Android 壳（Capacitor），封装网页版并从 GitHub Releases
 
 ### 安装运行
 
-- **单二进制**：生产构建是一个静态编译的单二进制文件，内嵌所有 Web 资源，安装包小于 10M。
+- **单个 Go 二进制**：生产构建是一个静态编译的二进制，Web 资源安装在它旁边的目录（`~/.local/share/mindfs/web/`），由同一个进程提供服务。
 - **零依赖**：宿主机无需安装 Node.js、Docker 或任何守护进程管理器。
 - **多平台**：支持 macOS（Intel + Apple Silicon）、Linux（x86-64、ARM64、ARMv7）、Windows（x86-64、ARM64）。
 
@@ -173,7 +172,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ChanceAroundYou/mindfs
 
 如需同时删除用户级 MindFS 配置和日志，macOS/Linux 追加 `--purge`，Windows 追加 `-Purge`。项目目录中的 `.mindfs/` 不会被自动删除。
 
-**从源码编译**（需要 Go 1.22+、Node.js 20+）
+**从源码编译**（需要 Go 1.25+、Node.js 20+）
 ```bash
 git clone https://github.com/ChanceAroundYou/mindfs.git
 cd mindfs

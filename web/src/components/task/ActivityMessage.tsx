@@ -12,7 +12,7 @@ import { InlineTokenText } from "../common/InlineTokenText";
 import { ActivityTypeTag } from "./ActivityTypeTag";
 import { MarkdownViewer } from "../common/MarkdownViewer";
 import { TaskHumanGateCard } from "./TaskHumanGateCard";
-import { TaskWorkflowPublishCard } from "./TaskWorkflowPublishCard";
+import { TaskWorkflowPublishCard, type WorkflowPublishDecision } from "./TaskWorkflowPublishCard";
 import { TaskQuestionCard, type TaskQuestionAnswers } from "./TaskQuestionCard";
 
 export type ActivityMessageProps = {
@@ -37,11 +37,14 @@ export type ActivityMessageProps = {
   ) => void | Promise<void>;
   onWorkflowPublishDecision?: (
     activity: TaskActivity,
-    decision: "approve" | "reject",
+    decision: WorkflowPublishDecision,
     note?: string,
   ) => void | Promise<void>;
   onPauseTask?: () => void | Promise<void>;
   onResumeTask?: () => void | Promise<void>;
+  /** 排队留言的「立即执行」：把最早一条 queued 留言交给 Router。 */
+  onRunQueued?: (activity: TaskActivity) => void;
+  runningQueued?: boolean;
 };
 
 /**
@@ -76,6 +79,8 @@ export function ActivityMessage({
   onWorkflowPublishDecision,
   onPauseTask,
   onResumeTask,
+  onRunQueued,
+  runningQueued = false,
 }: ActivityMessageProps) {
   const { t, locale } = useI18n();
 
@@ -105,8 +110,6 @@ export function ActivityMessage({
     );
   }
 
-  // workflow_publish 是「把这张图固化进目录」的待批准卡（W3 T2）：批准才会写
-  // 控制面，所以和 human_gate 一样必须在 role 分支之前拦下。
   if (activity.type === "workflow_publish") {
     const waiting = normalizeActivityStatus(activity.status) === "waiting_user";
     return (
@@ -183,9 +186,23 @@ export function ActivityMessage({
         {created !== null && (
           <div style={userMetaRowStyle}>
             {activity.status === "queued" ? (
-              // 只留「待执行」状态胶囊：派发入口已经收进输入框右下角的控件行
-              // （RunImmediatelyControl），不再挂在气泡页脚上。
-              <span style={queuedBadgeStyle}>{t("task.queued")}</span>
+              // 「待执行」状态 + 就地派发入口：发送框里不再放「立即执行」，
+              // 入口跟着排队这条留言走，只有真的排队时才出现。
+              <>
+                <span style={queuedBadgeStyle}>{t("task.queued")}</span>
+                {onRunQueued ? (
+                  <button
+                    type="button"
+                    data-testid="activity-run-queued"
+                    disabled={runningQueued}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => onRunQueued(activity)}
+                    style={queuedRunButtonStyle(runningQueued)}
+                  >
+                    {runningQueued ? t("task.startingNow") : t("task.startImmediately")}
+                  </button>
+                ) : null}
+              </>
             ) : null}
             <ActivityTypeTag activity={activity} />
             <time
@@ -278,6 +295,21 @@ const queuedBadgeStyle: React.CSSProperties = {
   borderRadius: 999,
   padding: "1px 6px",
 };
+
+function queuedRunButtonStyle(running: boolean): React.CSSProperties {
+  return {
+    fontSize: 10,
+    fontWeight: 600,
+    lineHeight: 1,
+    padding: "3px 8px",
+    borderRadius: 999,
+    border: "1px solid var(--accent-color)",
+    background: "transparent",
+    color: "var(--accent-color)",
+    cursor: running ? "default" : "pointer",
+    opacity: running ? 0.6 : 1,
+  };
+}
 
 const agentMessageStyle: React.CSSProperties = {
   display: "flex",

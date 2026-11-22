@@ -120,17 +120,14 @@ func stringList(value any) []string {
 }
 
 // maxStoredSummaryRunes 是写入 task_activities.summary / tasks.result_summary 的
-// 兜底上限，不是展示上限。历史值是 1200，实测把真实总结截在半句（任务 #87：
-// 17 条活动行 summary 长度恰好 1201，末尾带「…」）。现在的口径：
-//   - 正常路径写全文（Router 结算时已经由压缩总结保证简短）；
-//   - 只有病态输出（单个节点把几 MB 的转录吐进 output）才截到这个上限，
-//     避免一行活动把任务库和 WS 广播撑爆。
-const maxStoredSummaryRunes = 20000
+// 硬上限。历史值是 1200，再后来是 20000 —— 两者都只防「病态输出撑爆库」，
+// 于是任务卡片上出现了整段 Agent 叙述（#100）。2026-11-22 起改成 600 字：
+// 摘要本来就是一屏之内能读完的东西，超过就不是摘要了。
+//
+// 截断停在句末标点上（见 turn_summary.go 的 cutAtSentence），不把一句话切成
+// 半截；找不到句末标点才硬截并补「…」。
+const maxStoredSummaryRunes = 600
 
 func truncateSummary(text string) string {
-	runes := []rune(text)
-	if len(runes) <= maxStoredSummaryRunes {
-		return text
-	}
-	return string(runes[:maxStoredSummaryRunes]) + "…"
+	return cutAtSentence(text, maxStoredSummaryRunes)
 }

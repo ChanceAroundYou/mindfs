@@ -96,6 +96,13 @@ export type PanelShellProps = {
   title: React.ReactNode;
   /** header 右侧（保存等）。默认关闭只走遮罩；要 × 请开 showCloseButton。 */
   headerRight?: React.ReactNode;
+  /**
+   * headerRight 与关闭键之间的间距（px），默认 8（与 header 本身的 gap 一致）。
+   *
+   * 任务详情传 4：那一行是图标键，键与键、键与 × 要同一条节奏
+   * （`TASK_CONTROL_GAP`）；其它面板不传，保持原样。
+   */
+  headerRightGap?: number;
   /** header 标题左侧的额外内容（状态徽章等） */
   headerLeft?: React.ReactNode;
   children: React.ReactNode;
@@ -104,6 +111,14 @@ export type PanelShellProps = {
   width?: number;
   /** 卡片最小高度，默认不设 */
   minHeight?: number;
+  /**
+   * 固定高度 + 居中（默认关闭）。
+   *
+   * 任务详情用：内容从异步接口慢慢补进来时，外框不再跟着从底部往上长 ——
+   * 用户看到的「贴在底部 + 展开动画」其实是 auto 高度随数据增长。固定高度后
+   * 外框从第一帧就是同一个尺寸，滚动只发生在正文内部。
+   */
+  fixedHeight?: boolean;
   onClose?: () => void;
   /**
    * header 右上角是否显示关闭（×）按钮，默认不显示。
@@ -124,14 +139,25 @@ export type PanelShellProps = {
   hasUnsavedChanges?: () => boolean;
 };
 
+/**
+ * 面板刚挂载时忽略遮罩点击。
+ *
+ * 双击卡片打开详情时，第一下打开面板、第二下（几十毫秒后）落在刚挂上的遮罩上，
+ * 会把面板立刻关掉 —— 用户看到的是「点了没反应，得再点一下」。实测双击两下之后
+ * 面板数从 1 变 0，补一次单击才重新打开；350ms 足够覆盖双击/双触间隔。
+ */
+export const PANEL_OPEN_CLICK_GUARD_MS = 350;
+
 export function PanelShell({
   title,
   headerRight,
+  headerRightGap = 8,
   headerLeft,
   children,
   footer,
   width = 720,
   minHeight,
+  fixedHeight = false,
   onClose,
   showCloseButton = false,
   belowHeader,
@@ -140,6 +166,7 @@ export function PanelShell({
   const { t } = useI18n();
   // 关闭守卫和放弃确认由逻辑 hook 统一处理。
   const requestClose = usePanelShellClose({ onClose, hasUnsavedChanges, t });
+  const openedAtRef = useRef(performance.now());
   // CUSTOM(G-MA)：面板正文（任务对话等）拖选复制时，选区不许扩到面板标题栏。
   const bodyRef = useRef<HTMLDivElement>(null);
   useSelectionContainment(bodyRef);
@@ -182,17 +209,23 @@ export function PanelShell({
         ...(viewportHeight ? { "--panel-vh": `${viewportHeight}px` } : null),
       } as React.CSSProperties}
       onClick={(event) => {
-        if (event.target === event.currentTarget) requestClose();
+        if (event.target !== event.currentTarget) return;
+        // 双击/双触的第二下会落在刚挂载的遮罩上，别把它当成「点外面关闭」。
+        if (performance.now() - openedAtRef.current < PANEL_OPEN_CLICK_GUARD_MS) return;
+        requestClose();
       }}
     >
       <section
         className="mindfs-panel-dialog"
+        data-fixed-height={fixedHeight ? "true" : undefined}
         style={{
           width: `min(${width}px, 100%)`,
           // 高度上限跟着**可视视口**走。移动端键盘弹出时 layout 视口不动、
           // visualViewport 变矮，写死 dvh/vh 的话面板下半截会躲到键盘后面 ——
           // 也就是「输入框在屏幕外、看不见自己打了什么」。
           maxHeight: "min(88dvh, calc(var(--panel-vh, 100dvh) - 48px))",
+          // 固定高度：第一帧就占满可用高度，异步内容不再改变外框尺寸。
+          ...(fixedHeight ? { height: "min(88dvh, calc(var(--panel-vh, 100dvh) - 48px))" } : {}),
           ...(minHeight ? { minHeight } : {}),
           overflow: "hidden",
           borderRadius: "10px",
@@ -221,6 +254,11 @@ export function PanelShell({
                  正文滚到底也看不见。把顶栏 36px 与上下 padding 20px 一并扣掉。 */
               max-height: calc(var(--panel-vh, 100dvh) - 56px) !important;
             }
+            /* 固定高度的面板（任务详情）：移动端也保持同一尺寸，不退回 auto。
+               属性选择器比上面的 height:auto!important 更具体，且写在后面。 */
+            .mindfs-panel-dialog[data-fixed-height="true"] {
+              height: calc(var(--panel-vh, 100dvh) - 56px) !important;
+            }
             .mindfs-panel-body {
               min-height: 0 !important;
               overflow: auto !important;
@@ -248,33 +286,39 @@ export function PanelShell({
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", userSelect: "text" }}>
             {title}
           </div>
-          {headerRight}
-          {showCloseButton ? (
-            // 显式关闭入口：和遮罩同一条 requestClose，未保存修改照样先确认。
-            <button
-              type="button"
-              aria-label={t("common.close")}
-              title={t("common.close")}
-              onClick={() => requestClose()}
-              style={{
-                width: "28px",
-                height: "28px",
-                flexShrink: 0,
-                padding: 0,
-                border: "none",
-                borderRadius: "8px",
-                background: "transparent",
-                color: "var(--text-secondary)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>
+          {/* headerRight 与关闭键编成一组：两者之间的间距由 headerRightGap 决定
+              （任务详情传 4，与动作键内部同一条），组与标题之间仍是 header 的 8px。 */}
+          {headerRight || showCloseButton ? (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: `${headerRightGap}px`, flexShrink: 0 }}>
+              {headerRight}
+              {showCloseButton ? (
+                // 显式关闭入口：和遮罩同一条 requestClose，未保存修改照样先确认。
+                <button
+                  type="button"
+                  aria-label={t("common.close")}
+                  title={t("common.close")}
+                  onClick={() => requestClose()}
+                  style={{
+                    width: "28px",
+                    height: "28px",
+                    flexShrink: 0,
+                    padding: 0,
+                    border: "none",
+                    borderRadius: "8px",
+                    background: "transparent",
+                    color: "var(--text-secondary)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </header>
         {belowHeader}

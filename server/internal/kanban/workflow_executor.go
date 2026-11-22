@@ -27,7 +27,10 @@ func (s *Service) RunWorkflowNodeAttempt(ctx context.Context, store *TaskStore, 
 	if nodeRun.Attempt < 1 {
 		return NodeRun{}, errors.New("workflow node run attempt must be >= 1")
 	}
-	profile := WorkflowNodeAgentProfileOf(node)
+	// 落行的是**实际会跑的档**：节点 params 优先，其次继承 workflow 默认模型。
+	// 运行视图与 Router 的 inspect_run 都读这张行，写裸 params 会让「继承默认」
+	// 的节点显示成没设模型。
+	profile := run.Graph.AgentProfileFor(node)
 	nodeRun.Agent = profile.Agent
 	nodeRun.Harness = profile.Harness
 	nodeRun.Model = profile.Model

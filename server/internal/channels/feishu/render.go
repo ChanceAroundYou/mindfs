@@ -31,6 +31,19 @@ func RenderJSON(c Card) (string, error) {
 
 func (c Card) title() string {
 	switch {
+	case c.Kind == KindPicker:
+		question := c.IntakeText
+		if question == "" {
+			question = c.Prompt
+		}
+		if question == "" {
+			return "请选择项目"
+		}
+		runes := []rune(question)
+		if len(runes) > 50 {
+			return "选择项目：" + string(runes[:50]) + "…"
+		}
+		return "选择项目：" + question
 	case c.TaskTitle != "":
 		return c.TaskTitle
 	case c.Prompt != "":
@@ -54,12 +67,23 @@ func template(c Card) string {
 }
 
 func elements(c Card) []any {
+	if c.Kind == KindPicker {
+		if c.State != StateOpen {
+			return []any{markdown("**" + outcome(c) + "**")}
+		}
+		return pickerBlocks(c)
+	}
 	out := make([]any, 0, 6)
 	if c.Prompt != "" && c.Prompt != c.title() {
 		out = append(out, markdown(c.Prompt))
 	}
 	if c.Text != "" {
 		out = append(out, markdown(c.Text))
+	}
+	if c.State == StateOpen && c.LastError != "" {
+		// An open card stays tappable; the owner must see why the last answer
+		// did not reach the worker before clicking again.
+		out = append(out, plainDiv("回传失败："+c.LastError))
 	}
 	if c.State == StateOpen {
 		if c.Kind == KindGate {
@@ -101,6 +125,21 @@ func optionBlocks(c Card) []any {
 		})
 	}
 	return out
+}
+
+// pickerBlocks reuses the ask card's tappable blocks without its free-text
+// input: each index is a project candidate, in the order the owner sees.
+func pickerBlocks(c Card) []any {
+	picker := c
+	picker.Choices = make([]Choice, 0, len(c.Projects))
+	for _, project := range c.Projects {
+		label := project.Label
+		if label == "" {
+			label = project.RootID
+		}
+		picker.Choices = append(picker.Choices, Choice{Label: label})
+	}
+	return optionBlocks(picker)
 }
 
 func choiceBorder(c Card, i int) string {

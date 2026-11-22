@@ -36,27 +36,26 @@ The in-app updater checks the manifest above on launch (configurable via `VITE_A
 
 - **Multi-Agent support**: Claude Code · OpenAI Codex · Gemini CLI · Grok · Cursor · GitHub Copilot · CodeBuddy · Cline · Augment · Kimi · Kiro · Qwen · Qoder · OMP · Pi · Hermes · DeepSeek Harness (DSH) · Reasonix · OpenCode · OpenClaw — installed agents are detected automatically.
 - **Real-time streaming**: Token-by-token output pushed to the browser; tool calls, thought traces, permission prompts, and remaining context-window capacity are rendered live as structured, collapsible cards.
-- **Flexible switching**: Switch agents or models mid-session; all agents share the same context — no need to re-explain the background.
+- **Flexible switching**: Switch agents or models mid-session from the composer; each agent keeps its own underlying CLI session.
 - **Session search**: Search by session title or conversation content, then jump straight to the matched session and snippet.
-- **External session both-way import&synchronization**: Browse existing sessions from supported agent CLIs, import one into MindFS, and continue it as a native MindFS session. MindFS session can resumed in agent cli too. Bidirectional synchronization is also possible.
+- **External session import & sync**: Browse existing sessions from supported agent CLIs, import one into MindFS, and continue it as a native MindFS session. MindFS sessions can also be resumed in the agent CLI, and sync runs in both directions.
 - **Binding persistence and recovery**: MindFS persists the mapping between its internal session and the underlying agent session, so the link can be restored after service restarts and follow-up messages continue on the same agent session when available.
 - **Rich media input**: Attach files and images directly in your messages.
 - **Multi-device sync**: Access the same instance from multiple devices simultaneously with live session sync.
 - **Configuration Management & Switching**: Agents configurations / API providers can be backup / added and switched with one click, making it easier to move between multiple accounts or API keys.
 - **Subagents**: Codex/claudecode subagents are automatically discovered and displayed.
-- **session fork**: Session can forked from historical replies.
+- **Session fork**: Fork a session from any historical reply.
 - **Scheduled tasks**: Trigger agents to run tasks at specified times.
 - **Codex Remote Login**: Login to Codex remotely via the /login command.
-- **Built-in Token Stagion**: Real-time balance display and one-click activation.
 - **Token Usage data**: Record and display token usage and context-window usage.
 
 ### Task Board
 
-- **Task Orchestration**: Automatically break down complex goals into subtasks with dependencies, coordinate parallel execution across multiple agents, and complete the workflow with an overall acceptance review in the parent conversation.
-- **Concurrent Execution**: Run multiple tasks in parallel, with each task isolated via its own worktree.
-- **Task Templates**: Customize task stages within templates. Each stage supports configuration of the agent, model, planning mode toggle, preset prompts, and more.
+- **Task Orchestration**: Each task is a conversation. A router agent decides per user message whether to run a workflow or answer directly, and can adjust the plan mid-flight instead of restarting a fixed pipeline.
+- **Concurrent Execution**: Run multiple tasks in parallel, with optional per-task worktree isolation.
+- **Workflows**: Compose agent, human-approval and notification nodes in a visual editor, or let the agent draft one from a description. Publish project-wide, or globally with approval.
 - **Deep Linking**: Dynamic, interactive associations between tasks, worktrees, sessions, and files.
-- **Quick Creation**: Instantly spin up tasks from templates, with support for file uploads, images, and skill inputs.
+- **Quick Creation**: Start a task from the board with file attachments, pasted images, and `@` file references.
 
 ### File Access
 
@@ -96,7 +95,7 @@ The in-app updater checks the manifest above on launch (configurable via `VITE_A
 
 ### Installation
 
-- **Single binary**: The production build is a statically compiled binary with all web assets embedded, and the install package is under 10 MB.
+- **Single Go binary**: The production build is one statically compiled binary that serves the web assets installed alongside it (`~/.local/share/mindfs/web/`).
 - **Zero dependencies**: No Node.js, Docker, or daemon manager required on the host.
 - **Cross-platform**: macOS (Intel + Apple Silicon), Linux (x86-64, ARM64, ARMv7), Windows (x86-64, ARM64).
 
@@ -125,7 +124,7 @@ MindFS does not include any AI model — you need at least one Agent CLI install
 | **Qwen** | https://qwen.ai/qwencode |
 | **Qoder** | https://docs.qoder.com/cli/quick-start |
 | **OMP** | https://github.com/can1357/oh-my-pi (`omp acp`) |
-| **Pi** | https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent, and acp adatper: https://github.com/svkozak/pi-acp |
+| **Pi** | https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent, and the ACP adapter: https://github.com/svkozak/pi-acp |
 | **Hermes** | https://hermes-agent.nousresearch.com/docs/user-guide/features/acp |
 | **DeepSeek Harness (DSH)** | https://github.com/deepseek-ai/deepseek-harness, with the https://github.com/openma-ai/deepseek-harness-acp adapter |
 | **Reasonix** | https://github.com/esengine/DeepSeek-Reasonix |
@@ -176,7 +175,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ChanceAroundYou/mindfs
 
 To also remove user-level MindFS config and logs, add `--purge` on macOS/Linux or `-Purge` on Windows. Project `.mindfs/` directories are never removed automatically.
 
-**Build from source** (requires Go 1.22+, Node.js 20+)
+**Build from source** (requires Go 1.25+, Node.js 20+)
 ```bash
 git clone https://github.com/ChanceAroundYou/mindfs.git
 cd mindfs

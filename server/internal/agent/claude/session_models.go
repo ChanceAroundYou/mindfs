@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	types "mindfs/server/internal/agent/types"
-
 )
+
 func (s *session) resolveClaudeModelArg(model string) string {
 	return ResolveClaudeModelArg(model, claudeEffectiveEnv(s.baseEnv, s.rootPath))
 }

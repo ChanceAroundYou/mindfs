@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // routerAdhocWorkflowID 是临时 workflow 的占位 ID：它不进控制面目录，只为了让
@@ -28,10 +29,11 @@ const (
 
 // sanitizeRouterGraph 校验并规整 Router 起草的图，返回可以起 Run 的副本。
 //
-// 三条边界：
+// 四条边界：
 //   - 规模：节点 / 边 / 字节都有上限（12 / 24 / 64 KiB），超了直接拒绝；
 //   - 结构：走 ValidateWorkflowDefinitionForAuthoring —— 与工作流编辑器同一套
 //     规则（未知 kind、悬空边、环、末端 gate 都拒）；
+//   - 执行：agent 节点缺 params.agent 时补上默认 harness（见 fillDefaultNodeAgent）；
 //   - 作用域：RootID 一律清空。临时图不属于任何目录条目，作用域由 apply 阶段
 //     按任务所在 root 填，绝不让模型自己声明「全局」。
 func sanitizeRouterGraph(graph *WorkflowDefinition) (*WorkflowDefinition, error) {
@@ -57,9 +59,107 @@ func sanitizeRouterGraph(graph *WorkflowDefinition) (*WorkflowDefinition, error)
 	if err := ValidateWorkflowDefinitionForAuthoring(*graph); err != nil {
 		return nil, fmt.Errorf("workflow graph invalid: %w", err)
 	}
-	out := *graph
+	out := cloneWorkflowDefinition(*graph)
 	out.RootID = ""
+	fillDefaultNodeAgent(out.Nodes)
+	// 默认模型是模型写的字符串：去空白，空串等于没设（否则运行期会多一个假的
+	// 空档，把「全局默认」变成「显式空模型」）。拷贝一份，不改调用方的图。
+	if graph.Defaults != nil {
+		defaults := *graph.Defaults
+		defaults.Model = strings.TrimSpace(defaults.Model)
+		if defaults.Model == "" {
+			out.Defaults = nil
+		} else {
+			out.Defaults = &defaults
+		}
+	}
 	return &out, nil
+}
+
+// fillDefaultNodeAgent 给 Router 起草的图补上节点 harness。
+//
+// params.agent 是结构字段：缺了它图能通过校验、能固化、能发布，节点却在执行
+// 时以 "agent required" 立刻失败，而 Router 起草时只写 prompt 是常态（2026-11-21
+// 隔离验收里起草与固化出的两个版本都跑不起来）。缺省值取 Router 自己的默认
+// harness；显式写了的节点一律不动。
+func fillDefaultNodeAgent(nodes []WorkflowNode) {
+	for i := range nodes {
+		n := &nodes[i]
+		switch n.Kind {
+		case NodeKindAgent:
+			if s, _ := n.Params["agent"].(string); strings.TrimSpace(s) != "" {
+				continue
+			}
+			if n.Params == nil {
+				n.Params = map[string]any{}
+			}
+			n.Params["agent"] = defaultRouterAgent
+		case NodeKindLoop:
+			// 内层图以原始 JSON（map/slice）存在 params.graph 里，重新编解码会
+			// 丢掉未知键，所以就地递归。
+			fillRawNodeAgent(n.Params["graph"])
+		}
+	}
+}
+
+func fillRawNodeAgent(raw any) {
+	switch v := raw.(type) {
+	case map[string]any:
+		if kind, _ := v["kind"].(string); kind == NodeKindAgent {
+			params, _ := v["params"].(map[string]any)
+			if params == nil {
+				params = map[string]any{}
+				v["params"] = params
+			}
+			if s, _ := params["agent"].(string); strings.TrimSpace(s) == "" {
+				params["agent"] = defaultRouterAgent
+			}
+		}
+		if nodes, ok := v["nodes"]; ok {
+			fillRawNodeAgent(nodes)
+		}
+		if params, ok := v["params"].(map[string]any); ok {
+			fillRawNodeAgent(params["graph"])
+		}
+	case []any:
+		for _, child := range v {
+			fillRawNodeAgent(child)
+		}
+	}
+}
+
+// cloneWorkflowDefinition 深拷贝节点参数。补 agent 只改副本，不能把改动漏回
+// 调用方（决策里存的图、卡片载荷里的图都指向原来那份 map）。
+func cloneWorkflowDefinition(in WorkflowDefinition) WorkflowDefinition {
+	out := in
+	out.Nodes = make([]WorkflowNode, len(in.Nodes))
+	for i, n := range in.Nodes {
+		if n.Params != nil {
+			n.Params, _ = cloneWorkflowParams(n.Params).(map[string]any)
+		}
+		out.Nodes[i] = n
+	}
+	return out
+}
+
+// cloneWorkflowParams 深拷贝 JSON 形状的节点参数。
+func cloneWorkflowParams(raw any) any {
+	switch v := raw.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, child := range v {
+			out[k] = cloneWorkflowParams(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, child := range v {
+			out[i] = cloneWorkflowParams(child)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // adhocVersionID 按图内容生成版本号：同一次决策重放会得到同一个 ID，日志与

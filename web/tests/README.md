@@ -1,5 +1,8 @@
 # Session virtualization browser regression
 
+> Source-contract tests (`.test.mjs`, run by `npm test` / Vitest) live in this same
+> directory; this page documents only the manual browser fixture below.
+
 Start `npm run dev` in `web`, then open `/mindfs/tests/session-virtualization.html`
 (the dev server runs under the `/mindfs` deploy prefix, so the bare path 404s).
 Run `await window.runVirtualizationChecks()` in the browser console on a fresh page.

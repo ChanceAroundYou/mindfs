@@ -92,7 +92,7 @@ export function TaskBoardView({
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
   openTaskCreateDialog: (targetRootId?: string) => void;
-  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
+  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => boolean;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
   onOpenWorkflowEditor: () => void;
@@ -286,7 +286,7 @@ export function TaskBoardView({
                   const inputExpanded = expandedTaskInputIds.has(task.id);
                   // 正文超过 3 行（或 120 字）才需要展开开关 —— 它只对正文生效
                   const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
-                    // 「已结束」与「待审核」列显示状态文字 —— 同一张卡在列之间信息量一致，
+                    // 「已结束」与「待处理」列显示状态文字 —— 同一张卡在列之间信息量一致，
                     // 都走 TaskCardRows 的 showStatus（位置在名字后、worktree 前）。
                     const showTaskStatus = column.name === t("task.column.ended")
                       || column.name === t("task.column.waitingUser");

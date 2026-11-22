@@ -13,9 +13,15 @@ const (
 	KindGate Kind = "gate"
 	// KindAsk is a Router question: pick an option or write an answer.
 	KindAsk Kind = "ask"
+	// KindPicker asks the owner which project a message belongs to.
+	KindPicker Kind = "picker"
 	// KindNotice reports an outcome and asks for nothing.
 	KindNotice Kind = "notice"
 )
+
+// PickerTTL keeps a project choice usable overnight; longer would accumulate
+// unanswered cards in every chat.
+const PickerTTL = 24 * time.Hour
 
 // State is where a card stands in its own life.
 type State string
@@ -34,6 +40,15 @@ const (
 type Choice struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
+}
+
+// PickerProject is one candidate on a project choice card. Label is what the
+// owner sees ("docs · fn"); node and root identify the destination after the
+// click, so a display-name change cannot redirect an already-sent card.
+type PickerProject struct {
+	NodeID string `json:"node_id"`
+	RootID string `json:"root_id"`
+	Label  string `json:"label"`
 }
 
 // Card is one message MindFS sent, and everything needed to act on a click
@@ -61,9 +76,22 @@ type Card struct {
 	Choices  []Choice `json:"choices,omitempty"`
 	Selected int      `json:"selected"`
 
+	// SourceMessageID is the inbound message a picker refers to; IntakeText is
+	// the question shown on the card so the owner knows what they are placing.
+	SourceMessageID string          `json:"source_message_id,omitempty"`
+	IntakeText      string          `json:"intake_text,omitempty"`
+	Projects        []PickerProject `json:"projects,omitempty"`
+
 	MessageID string `json:"message_id,omitempty"`
 	ChatID    string `json:"chat_id,omitempty"`
 	LastError string `json:"last_error,omitempty"`
+
+	// DeliveryAttempts counts consecutive failed sends/patches since the last
+	// success; NextAttemptAt holds the card back until its backoff ends;
+	// DeliveryStopped means an unsent card burned its attempts and was given up.
+	DeliveryAttempts int       `json:"delivery_attempts,omitempty"`
+	NextAttemptAt    time.Time `json:"next_attempt_at,omitempty"`
+	DeliveryStopped  bool      `json:"delivery_stopped,omitempty"`
 
 	Version         int `json:"version"`
 	RenderedVersion int `json:"rendered_version"`

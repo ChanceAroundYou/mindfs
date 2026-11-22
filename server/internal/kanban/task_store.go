@@ -115,6 +115,13 @@ func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Tas
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// 角标要另发一次查询：本库 SetMaxOpenConns(1)，必须先关掉这一批 rows
+	// 才能再查（defer 留作兜底，Close 可重复调用）。
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	s.attachRouterAlerts(ctx, items)
+	s.attachCurrentSessionKeys(ctx, items)
 	return items, nil
 }
 
@@ -136,7 +143,14 @@ func (s *TaskStore) ListTaskDetails(ctx context.Context, opts ListTasksOptions) 
 
 func (s *TaskStore) GetTask(ctx context.Context, id string) (Task, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+taskSelectColumns+` FROM tasks WHERE id = ?`, strings.TrimSpace(id))
-	return scanTask(row)
+	task, err := scanTask(row)
+	if err != nil {
+		return task, err
+	}
+	tasks := []Task{task}
+	s.attachRouterAlerts(ctx, tasks)
+	s.attachCurrentSessionKeys(ctx, tasks)
+	return tasks[0], nil
 }
 
 // TaskIDForMainSession 反查绑定了该会话的任务（main_session_key 匹配）；无则返回空串。

@@ -1,7 +1,7 @@
 import { useI18n } from "../../i18n/index";
 import type { KanbanTask } from "../../shared/taskTypes";
 import type { TaskCardAction } from "./taskBoardTypes";
-import { TaskFinishWorktreeIcon, taskCardIconButtonStyle } from "./taskIcons";
+import { TaskFinishWorktreeIcon, taskActionIconStyle } from "./taskIcons";
 
 /**
  * 收尾键。看板卡与工作台卡**两处都要它**（未终态 + 终态），抽成一个组件免得
@@ -31,7 +31,7 @@ export function TaskCardFinishButton({ task, onMove }: TaskCardFinishButtonProps
         event.stopPropagation();
         onMove(task, "finish-worktree");
       }}
-      style={taskCardIconButtonStyle("success")}
+      style={taskActionIconStyle("success")}
     >
       <TaskFinishWorktreeIcon />
     </button>

@@ -56,8 +56,12 @@ type Task struct {
 	// ResultSummary 是最近一轮结算后的可读结果（成功摘要是节点汇报，失败/等待
 	// 是原因）。看板卡片用它回答「这个任务最后做到了什么」；没有它，卡片只剩
 	// 第一条用户留言，任务列表看起来和对话开头毫无区别。
-	ResultSummary  string `json:"result_summary,omitempty"`
-	WorktreeRootID string `json:"worktree_root_id,omitempty"`
+	ResultSummary string `json:"result_summary,omitempty"`
+	// RouterAlert 是任务卡角标（W3-4）：Router 还没处理完的巡检/恢复事件。
+	// 派生值，不落库 —— 由事件账本状态现算（见 task_router_alert.go），
+	// 处理完自然消失。
+	RouterAlert    *TaskRouterAlert `json:"router_alert,omitempty"`
+	WorktreeRootID string           `json:"worktree_root_id,omitempty"`
 	WorktreePath   string `json:"worktree_path,omitempty"`
 	// WorktreeBuilt 报告这个任务**曾经建出过一个 worktree**。
 	//
@@ -188,6 +192,10 @@ const (
 	// PayloadJSON 存 questions/agent；ToolUseID 关联会话里的同一条 tool call，
 	// 回答时两处必须同步。
 	ActivityTypeQuestion = "question"
+	// ActivityTypeUserAnswer 是用户回答提问卡后落在任务对话里的用户行（W4）。
+	// 它让 Router 看得见「用户答了什么、会话因此继续」；不占用户留言的 3 回合预算
+	// 之外的任何配额 —— 预算按留言活动各自计算，这条只是新的一条用户活动。
+	ActivityTypeUserAnswer = "user_answer"
 	// ActivityTypeHumanGate 是 HumanGate 的审批卡。PayloadJSON 存
 	// prompt/node_id/node_run_id；卡片本身就是审批入口，普通留言不能批准。
 	ActivityTypeHumanGate = "human_gate"

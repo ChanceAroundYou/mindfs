@@ -9,8 +9,9 @@ import { TaskInspectEntries } from "./TaskInspectEntries";
 import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
-import { DeleteIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskReopenIcon } from "./taskIcons";
-import { TaskDetailActionsMenu, type TaskDetailAction } from "./TaskDetailActionsMenu";
+import { TASK_CONTROL_GAP, taskActionIconStyle } from "./taskStyles";
+import { TASK_ACTION_BUTTON_META, taskActionButtons, type TaskActionButtonKey } from "./taskCardActions";
+import { taskActionIcons } from "./taskActionIcons";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
 
 export type TaskDetailPanelProps = {
@@ -34,56 +35,51 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
     nameDraft,
     setNameDraft,
     saving,
-    canFinishWorktree,
     terminal,
-    canCompleteTask,
-    canReopenTask,
     numberLabel,
     saveName,
-    finishWorktree,
     completeTask,
     reopenTask,
+    cancelTask,
+    archiveTaskCard,
+    unarchiveTaskCard,
     deleteTaskCard,
   } = panel;
 
-  // header 右上角「操作控件」菜单的内容：只有当前真的可做的动作才出现。
-  // 删除不进来 —— 它是终态任务的破坏性动作，仍单独摆在 header 上。
-  const actions: TaskDetailAction[] = [];
-  if (canFinishWorktree) {
-    actions.push({
-      key: "finish-worktree",
-      label: t("task.finishWorktree"),
-      icon: <TaskFinishWorktreeIcon />,
-      tone: "primary",
-      onSelect: () => void finishWorktree(),
-    });
-  }
-  if (canCompleteTask) {
-    actions.push({
-      key: "complete",
-      label: t("task.completeShort"),
-      icon: <TaskCompleteIcon />,
-      tone: "primary",
-      onSelect: () => void completeTask(),
-    });
-  }
-  if (canReopenTask) {
-    // 终态任务（完成 / 失败 / 取消）回到待审核：输入框随之重新打开，
-    // 上一轮的 Run 与回复都原样留着，直接继续写下一轮。
-    actions.push({
-      key: "reopen",
-      label: t("task.reopen"),
-      icon: <TaskReopenIcon />,
-      tone: "warn",
-      onSelect: () => void reopenTask(),
-    });
-  }
+  // 动作集合只有一份定义：taskActionButtons（看板卡片与详情 header 共用）。
+  // 以前详情与卡片各有一套动作口径，两套必然漂移 ——
+  // 2026-11-22 用户要求样式/颜色/数量/种类/hover 完全统一，于是收成一份。
+  // 这里只负责把动作键翻译成回调；图标取 taskActionIcons，文案与配色取 META。
+  const actionHandlers: Record<TaskActionButtonKey, () => void> = {
+    "finish-worktree": () => void panel.finishWorktree(),
+    start: () => void panel.startTask(),
+    terminate: () => void panel.terminateTask(),
+    pause: () => void panel.pauseTask(),
+    resume: () => void panel.resumeTask(),
+    complete: () => void completeTask(),
+    cancel: () => void cancelTask(),
+    reopen: () => void reopenTask(),
+    "archive-task": () => void archiveTaskCard(),
+    "unarchive-task": () => void unarchiveTaskCard(),
+    "delete-task": () => void deleteTaskCard(),
+  };
+  const actions = taskActionButtons(task).map((key) => ({
+    key,
+    label: t(TASK_ACTION_BUTTON_META[key].labelKey),
+    icon: taskActionIcons[key],
+    tone: TASK_ACTION_BUTTON_META[key].tone,
+    onSelect: actionHandlers[key],
+  }));
 
   return (
     <>
     <PanelShell
       width={720}
+      // 固定高度 + 居中：异步内容补进来时外框不再从底部往上长，打开第一帧就是最终尺寸。
+      fixedHeight
       onClose={onClose}
+      // 动作键与关闭键之间也取 TASK_CONTROL_GAP；其它面板不传，仍是原来的 8px。
+      headerRightGap={TASK_CONTROL_GAP}
       hasUnsavedChanges={() => editingName && nameDraft.trim() !== (task.name || "").trim()}
       title={editingName ? (
         <input
@@ -102,7 +98,9 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           {/* 任务名 + 编辑键是一个整体，标题槽允许换行（PanelShell 的 flexWrap），
               所以必须自己 nowrap：否则长名字会把编辑键挤到第二行、header 变成两行高。
               组内名字 flex 0 1 auto + minWidth 0 按需省略，按钮始终紧跟其后。 */}
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "8px", minWidth: 0, maxWidth: "100%", flexWrap: "nowrap" }}>
+          {/* 编辑键与任务名之间取统一间距 TASK_CONTROL_GAP（原先是 8px，同一行里
+              动作键 4 / 关闭键 8 / 编辑键 8 三种节奏）。 */}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: TASK_CONTROL_GAP, minWidth: 0, maxWidth: "100%", flexWrap: "nowrap" }}>
             <span style={{ flex: "0 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {task.name || t("task.namePlaceholder")}
             </span>
@@ -133,29 +131,36 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={panelButtonStyle("secondary")}>{t("common.cancel")}</button>
         </>
       ) : (
-        <>
-          {/* 收尾 / 完成 / 重新打开都收进「操作控件」菜单，header 只剩这一颗键。 */}
-          <TaskDetailActionsMenu actions={actions} disabled={saving} />
-          {terminal ? (
+        // 动作全部平铺：有几项画几项，删除也在同一排里（不再做独立特例，也不再收进菜单）。
+        // 与看板卡片的图标键完全同形同色：同一份键序（taskActionButtons）、同一套图形
+        // （taskActionIcons）、同一档配色（taskActionIconStyle）→ 22×22 / 圆角 6；
+        // 键间距也取同一条 TASK_CONTROL_GAP（移动端换行时行距一并跟随）。
+        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: TASK_CONTROL_GAP }}>
+          {actions.map((action) => (
             <button
+              key={action.key}
               type="button"
-              title={t("task.deleteTask")}
-              aria-label={t("task.deleteTask")}
+              title={action.label}
+              aria-label={action.label}
               disabled={saving}
-              onClick={() => void deleteTaskCard()}
-              style={{ ...pencilStyle(false), color: "#dc2626", opacity: saving ? 0.4 : 1 }}
+              onClick={action.onSelect}
+              style={{
+                ...taskActionIconStyle(action.tone),
+                opacity: saving ? 0.4 : 1,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
             >
-              <DeleteIcon />
+              {action.icon}
             </button>
-          ) : null}
-        </>
+          ))}
+        </div>
       )}
       showCloseButton
     >
       {/* 对话流与下方内容之间留 6px：输入框本身已带 16px 上边距，这里再大就会在
           「输入框 ↔ 执行详情/监管记录胶囊」之间堆出一道死区（用户要求收紧）。
           左右内边距走 .task-detail-content：桌面 14px，移动端再收窄（index.css）。 */}
-      <div className="task-detail-content" style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }}>
+      <div className="task-detail-content" style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0, flex: "1 0 auto" }}>
         {/* 详情面板只有一条对话流（ConversationView）。旧的 CommentThread 读的是同一份
             /api/tasks/{id}/activities，再挂一份列表 + 输入框就是「同一段对话出现两套」。 */}
         <ConversationView
@@ -170,8 +175,10 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           onOpenSession={onOpenSession}
         />
         {/* 执行详情 + 监管记录：同一行的两个胶囊，始终存在、展开互斥。
-            human_gate 在对话卡与执行详情里都能审批。mobile 下由 CSS `order:-1`
-            置顶，否则会被整段对话 + 输入框顶到面板最底部。 */}
+            human_gate 在对话卡与执行详情里都能审批。两端同一 DOM 顺序（对话流 →
+            胶囊行 → 收尾区），不许用 `order` / `position` 改排位：移动端曾把它
+            提到正文最前面，用户读成「吸顶横条」。可见性靠首屏滚到底 + 输入区贴底
+            对齐保证（conversationScroll.ts / useComposerBottomPin.ts）。 */}
         <div className="task-detail-execution">
           <TaskInspectEntries
             rootId={task.root_id}

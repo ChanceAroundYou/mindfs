@@ -57,6 +57,7 @@ type Candidate struct {
 //     request reported `no-backlog` while the context kept growing.
 //   - A failed result below min_block_tokens is left verbatim: folding it saves
 //     nothing and its text is often the whole diagnostic.
+//
 // PlanStats explains what a request body is made of, in wire bytes.
 //
 // The rail fires on total size, but the planner can only act on tool output
@@ -71,6 +72,11 @@ type PlanStats struct {
 	// and JSON structure. Results that carry an image under-count: the image
 	// bytes belong to no text span.
 	ResultBytes int
+	// UnaccountedBytes is BodyBytes minus ResultBytes: the part of a request no
+	// fold policy can ever reach. When it dominates, "the request is large" and
+	// "there is something to fold" are unrelated, and no threshold change will
+	// help.
+	UnaccountedBytes int
 	// ProtectedBytes is tool output kept verbatim because its round is inside
 	// the keep window or the protected tail.
 	ProtectedBytes int
@@ -93,6 +99,7 @@ type PlanStats struct {
 func Plan(body []byte, conv *Conversation, cfg Config, commits *Commits) ([]Candidate, PlanStats) {
 	stats := PlanStats{BodyBytes: len(body)}
 	if conv == nil {
+		stats.UnaccountedBytes = stats.BodyBytes
 		return nil, stats
 	}
 	closed := make([]Round, 0, len(conv.Rounds))
@@ -101,6 +108,12 @@ func Plan(body []byte, conv *Conversation, cfg Config, commits *Commits) ([]Cand
 			closed = append(closed, round)
 			stats.ResultBytes += roundBytes(round)
 		}
+	}
+	stats.UnaccountedBytes = stats.BodyBytes - stats.ResultBytes
+	if stats.UnaccountedBytes < 0 {
+		// Span widths are measured on the wire, so this cannot happen; a clamp
+		// keeps a future accounting bug from printing a negative size.
+		stats.UnaccountedBytes = 0
 	}
 	protectedFrom := len(closed) - cfg.KeepRounds
 	if protectedFrom < 0 {

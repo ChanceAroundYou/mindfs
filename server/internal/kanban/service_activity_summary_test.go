@@ -9,18 +9,19 @@ import (
 	"time"
 )
 
-// 任务 #87 第 1 条：写进任务详情的总结不得被截断。
+// 任务 #87 第 1 条：写进任务详情的总结不得被截断在半句话上。
 //
-// 历史实现把 nodeRunOutputSummary 的每条返回都过了 1200 字截断，线上表现是
-// 总结停在一句话中间加「…」。这里用一条远超旧上限的总结走真实结算路径，
-// 钉住「活动行和任务行都拿到全文」。
+// 历史实现把 nodeRunOutputSummary 的每条返回都过了 1200 字硬截断，线上表现是
+// 总结停在一句话中间加「…」。2026-11-22 起上限收到 600 字（摘要就是一屏读完
+// 的东西），但截断必须停在句末标点上。这里用一条远超上限、由完整句子拼成的
+// 总结走真实结算路径，钉住「活动行和任务行都拿到同一段、且都停在句末」。
 func TestSettleWorkflowReplyKeepsLongSummary(t *testing.T) {
 	ctx := context.Background()
 	f := setupActivityService(t)
 	run, act := f.seedRunState(t, NodeRunSuccess, NodeRunSuccess, StatusSuccess)
 
-	long := strings.Repeat("这一轮改了会话页与任务详情面板的多个地方，", 120) // ≈2900 字符
-	if len([]rune(long)) <= 1200 {
+	long := strings.Repeat("这一轮改了会话页与任务详情面板的事。", 160) // ≈2900 字符
+	if len([]rune(long)) <= maxStoredSummaryRunes {
 		t.Fatalf("fixture summary too short: %d runes", len([]rune(long)))
 	}
 	if err := f.tasks.UpsertWorkflowNodeRun(ctx, NodeRun{
@@ -37,27 +38,39 @@ func TestSettleWorkflowReplyKeepsLongSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if stored.Summary != long {
-		t.Fatalf("activity summary truncated: got %d runes, want %d", len([]rune(stored.Summary)), len([]rune(long)))
-	}
+	assertSummaryIsSentenceBounded(t, "activity", stored.Summary, long)
 
 	task, err := f.tasks.GetTask(ctx, "task-1")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if task.ResultSummary != long {
-		t.Fatalf("task result summary truncated: got %d runes, want %d", len([]rune(task.ResultSummary)), len([]rune(long)))
+	assertSummaryIsSentenceBounded(t, "task", task.ResultSummary, long)
+}
+
+// assertSummaryIsSentenceBounded 校验一段被截断的摘要是原文前缀、不超上限、
+// 且停在句末（硬截时以「…」收尾）。
+func assertSummaryIsSentenceBounded(t *testing.T, label, got, original string) {
+	t.Helper()
+	if n := len([]rune(got)); n > maxStoredSummaryRunes+1 {
+		t.Fatalf("%s summary keeps %d runes, want <= %d", label, n, maxStoredSummaryRunes+1)
+	}
+	body := strings.TrimSuffix(got, "…")
+	if !strings.HasPrefix(original, body) {
+		t.Fatalf("%s summary is not a prefix of the original", label)
+	}
+	if !strings.HasSuffix(body, "。") {
+		t.Fatalf("%s summary is cut mid-sentence: %q", label, tailRunes(body, 12))
 	}
 }
 
 // truncateSummary 只是「病态输出」的兜底：正常长度的总结原样返回，只有超过
-// 存储上限才截，且截断后仍保留可读前缀。
+// 存储上限才截，且截断后仍停在句末标点上。
 func TestTruncateSummaryOnlyGuardsPathologicalOutput(t *testing.T) {
 	normal := strings.Repeat("短总结。", 100) // 400 字符
 	if got := truncateSummary(normal); got != normal {
 		t.Fatalf("normal summary must pass through, got %q", got)
 	}
-	huge := strings.Repeat("很长的节点输出。", 5000)
+	huge := strings.Repeat("很长的节点输出，", 5000) // 没有句末标点：只能硬截
 	got := truncateSummary(huge)
 	if len([]rune(got)) != maxStoredSummaryRunes+1 {
 		t.Fatalf("huge summary = %d runes, want %d (+ ellipsis)", len([]rune(got)), maxStoredSummaryRunes)
@@ -65,6 +78,9 @@ func TestTruncateSummaryOnlyGuardsPathologicalOutput(t *testing.T) {
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("huge summary must end with an ellipsis")
 	}
+	// 有句末标点时不能切在句中：取最后一个完整句子。
+	bounded := truncateSummary(strings.Repeat("很长的节点输出。", 5000))
+	assertSummaryIsSentenceBounded(t, "bounded", bounded, strings.Repeat("很长的节点输出。", 5000))
 }
 
 // stubCompressor 是可控的 SummaryCompressor：记录调用次数与提示词，
@@ -297,7 +313,7 @@ func TestBuildReplySummaryCompressPromptCarriesEvidence(t *testing.T) {
 	// 拿到，而不是读回复自己的 body（结算后那是空的）。
 	svc := NewService(testRoots{root: f.root})
 	userMessage := svc.resolveCompressUserMessage(ctx, f.tasks, act)
-	prompt, ok := buildReplySummaryCompressPrompt(ctx, f.tasks, loaded, userMessage, raw)
+	prompt, ok := buildSummaryCompressPrompt(ctx, f.tasks, loaded.TaskID, loaded, userMessage, raw)
 	if !ok {
 		t.Fatal("prompt build rejected a healthy run")
 	}

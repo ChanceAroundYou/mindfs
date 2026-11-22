@@ -104,6 +104,12 @@ func TestApplySaveWorkflowProjectScopePublishesImmediately(t *testing.T) {
 	if got := len(versions[0].Graph.Nodes); got != 2 {
 		t.Fatalf("published graph nodes = %d, want 2", got)
 	}
+	// 发布出去的版本必须能直接跑：Router 只写了 prompt，agent 要在固化时补上。
+	for _, n := range versions[0].Graph.Nodes {
+		if got, _ := n.Params["agent"].(string); strings.TrimSpace(got) != defaultRouterAgent {
+			t.Fatalf("published node %q agent = %q, want %q", n.ID, got, defaultRouterAgent)
+		}
+	}
 	if cards := publishCards(t, store, task.ID); len(cards) != 0 {
 		t.Fatalf("project-scope new workflow must not ask for approval, got %d cards", len(cards))
 	}
@@ -151,6 +157,12 @@ func TestApplySaveWorkflowGlobalScopeRequiresApproval(t *testing.T) {
 	if card.Request.Scope != WorkflowScopeGlobal || len(card.Request.Graph.Nodes) != 2 {
 		t.Fatalf("card payload lost the request: %+v", card.Request)
 	}
+	// 卡片里的图就是批准后要发布的图：批准之前就得是能跑的。
+	for _, n := range card.Request.Graph.Nodes {
+		if got, _ := n.Params["agent"].(string); strings.TrimSpace(got) == "" {
+			t.Fatalf("card node %q has no agent: %+v", n.ID, n.Params)
+		}
+	}
 	if card.Request.BaseDraftRevision != "" {
 		t.Fatalf("a brand-new workflow has no base revision, got %q", card.Request.BaseDraftRevision)
 	}
@@ -184,6 +196,44 @@ func TestApplySaveWorkflowExistingIDRequiresApproval(t *testing.T) {
 	}
 	if card.Request.BaseDraftRevision == "" {
 		t.Fatal("modify request must pin the draft revision it was written against")
+	}
+}
+
+// 升级前落下的待批准卡，图里没有 agent。批准时不补，旧卡批出来的版本仍然
+// 一执行就 "agent required" —— 卡片可能已经在队列里躺了几天。
+func TestResolveWorkflowPublishFillsAgentOnLegacyCard(t *testing.T) {
+	store, svc, task, workflows := newPublishFixture(t)
+	ctx := context.Background()
+	req, err := WorkflowPublishRequest{
+		WorkflowID: "wf-legacy-card",
+		Name:       "旧卡",
+		Scope:      WorkflowScopeGlobal,
+		Graph:      publishGraph(),
+		Reason:     "升级前落下的待批准卡",
+	}.Normalize()
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	activity := publishActivityService(t, svc, task.RootID)
+	decision := &RouterDecision{ID: "dec-legacy-card", TaskID: task.ID, RootID: task.RootID}
+	if err := activity.recordWorkflowPublishRequest(ctx, decision, task, req); err != nil {
+		t.Fatalf("recordWorkflowPublishRequest: %v", err)
+	}
+	cards := publishCards(t, store, task.ID)
+	if len(cards) != 1 {
+		t.Fatalf("want 1 card, got %d", len(cards))
+	}
+	if _, err := svc.ResolveWorkflowPublish(ctx, task.RootID, task.ID, cards[0].ID, "approve", ""); err != nil {
+		t.Fatalf("ResolveWorkflowPublish(approve): %v", err)
+	}
+	versions := versionsOf(t, workflows, "wf-legacy-card")
+	if len(versions) != 1 {
+		t.Fatalf("want 1 published version, got %d", len(versions))
+	}
+	for _, n := range versions[0].Graph.Nodes {
+		if got, _ := n.Params["agent"].(string); strings.TrimSpace(got) == "" {
+			t.Fatalf("legacy card published node %q without agent: %+v", n.ID, n.Params)
+		}
 	}
 }
 
@@ -283,6 +333,36 @@ func TestResolveWorkflowPublishStaleDraftFails(t *testing.T) {
 	}
 	if versions := versionsOf(t, workflows, "wf-review"); len(versions) != 1 {
 		t.Fatalf("stale approval must not publish, got %d versions", len(versions))
+	}
+}
+
+// 提出请求时目录里还没有这个 id，等待批准期间别人把它建了出来：批准看的
+// 「新条目」已经不存在了，必须按 stale 失败，绝不静默覆盖别人刚建的草稿。
+func TestCommitWorkflowPublishStaleWhenEntryAppearedAfterRequest(t *testing.T) {
+	_, _, task, workflows := newPublishFixture(t)
+	ctx := context.Background()
+	other := publishGraph()
+	other.Nodes = append(other.Nodes, WorkflowNode{ID: "check", Name: "复核", Kind: NodeKindAgent, Params: map[string]any{"prompt": "复核"}})
+	other.Edges = append(other.Edges, WorkflowEdge{From: "fix", To: "check"})
+	if _, err := workflows.CreateDraft(ctx, "wf-review", task.RootID, "someone", other); err != nil {
+		t.Fatalf("CreateDraft: %v", err)
+	}
+
+	_, err := commitWorkflowPublish(ctx, workflows, WorkflowPublishRequest{
+		WorkflowID: "wf-review", Name: "代码复查", Scope: WorkflowScopeProject, Graph: publishGraph(),
+	}, task.RootID, "user")
+	if !errors.Is(err, ErrWorkflowPublishStale) {
+		t.Fatalf("commit err = %v, want ErrWorkflowPublishStale", err)
+	}
+	draft, err := workflows.GetDraft(ctx, "wf-review")
+	if err != nil {
+		t.Fatalf("GetDraft: %v", err)
+	}
+	if len(draft.Graph.Nodes) != len(other.Nodes) {
+		t.Fatalf("别人的草稿被覆盖了：%+v", draft.Graph.Nodes)
+	}
+	if versions := versionsOf(t, workflows, "wf-review"); len(versions) != 0 {
+		t.Fatalf("stale 提交不得发布版本，got %d", len(versions))
 	}
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { protectedAPIReady } from "../../services/net/api";
 import { bootstrapService } from "../../services/net/bootstrap";
-import { fetchSessionContextSaving, type SessionContextSaving } from "../../services/agent/contextSaving";
+import { compactSession, fetchSessionContextSaving, type SessionContextSaving } from "../../services/agent/contextSaving";
 
 export type ContextSavingIndicatorProps = {
   sessionKey: string;
@@ -27,8 +27,12 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [apiReady, setAPIReady] = useState(protectedAPIReady);
+  const [compacting, setCompacting] = useState(false);
   const requestRef = useRef(0);
   const wasPendingRef = useRef(pending);
+  const compactPollRef = useRef(false);
+  const compactFallbackRef = useRef<number | null>(null);
+  const settleTimerRef = useRef<number | null>(null);
 
   const refresh = async () => {
     if (!sessionKey) return;
@@ -60,17 +64,89 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiReady, sessionKey, rootId, nodeId]);
 
+  // 卸载或换会话时取消补偿刷新，别让它们打旧会话。
+  useEffect(() => {
+    compactPollRef.current = false;
+    return () => {
+      if (compactFallbackRef.current !== null) {
+        window.clearTimeout(compactFallbackRef.current);
+        compactFallbackRef.current = null;
+      }
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
+    };
+  }, [sessionKey]);
+
   // 回合结束刷新一次；这一轮到底折没折叠只有服务端知道。
+  //
+  // 再补一次延迟刷新：会话卫生的结论是在 `SendMessage` 收尾时算的，而界面看到的
+  // 「回落空闲」信号来自回合内的广播 —— 两者可能差几毫秒到几百毫秒，只刷一次时
+  // 实测会读到还没更新的 `normal`，胶囊（也就是「超长会话」提示的唯一载体）就此
+  // 一直不出现，直到用户手动换会话。
   useEffect(() => {
     const wasPending = wasPendingRef.current;
     wasPendingRef.current = pending;
     if (!apiReady || !sessionKey) return;
-    if (wasPending && !pending) void refresh();
+    if (!wasPending || pending) return;
+    void refresh();
+    if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = window.setTimeout(() => {
+      settleTimerRef.current = null;
+      void refresh();
+    }, 2000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending, apiReady, sessionKey]);
 
   const savedBytes = contextSavingBytes(saving);
-  const visible = savedBytes > 0 || !!saving?.requests;
+  // 又久又大 / 又大不久：即使一次都没折叠过，胶囊也要出现 —— 它就是这两个
+  // 档位的提示载体。normal 与 disabled 不占位置。
+  const hygiene = saving?.hygiene ?? null;
+  const hygieneBand = hygiene?.state === "notice" || hygiene?.state === "hint";
+  const visible = savedBytes > 0 || !!saving?.requests || hygieneBand;
+
+  const compactBusy = compacting || !!hygiene?.compact_pending;
+
+  // 真实压缩要几分钟（线上实测 claude 3–9 分钟），所以按钮不能按前端猜的秒数
+  // 复原：只要读口说还在 pending 就每 2 秒补拉一次，收到结果后再解禁。
+  useEffect(() => {
+    if (compactFallbackRef.current !== null) {
+      window.clearTimeout(compactFallbackRef.current);
+      compactFallbackRef.current = null;
+    }
+    if (!hygiene?.compact_pending) {
+      if (compactPollRef.current) {
+        compactPollRef.current = false;
+        setCompacting(false);
+        void refresh();
+      }
+      return;
+    }
+    compactPollRef.current = true;
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hygiene?.compact_pending, apiReady, sessionKey]);
+
+  const compact = async () => {
+    if (!sessionKey || compactBusy) return;
+    setCompacting(true);
+    setError("");
+    try {
+      await compactSession(sessionKey, rootId, nodeId);
+      // 202 只表示回合已排上；上面的轮询负责等它真正结束。旧节点不回 pending
+      // 字段时留一个兜底，避免按钮永远停在「正在压缩」。
+      void refresh();
+      compactFallbackRef.current = window.setTimeout(() => {
+        compactFallbackRef.current = null;
+        if (!compactPollRef.current) setCompacting(false);
+      }, 80_000);
+    } catch (err) {
+      setCompacting(false);
+      setError(String((err as Error)?.message || ""));
+    }
+  };
 
   return {
     saving,
@@ -78,12 +154,15 @@ export function useContextSaving({ sessionKey, rootId, nodeId, pending = false }
     loading,
     error,
     savedBytes,
+    hygiene,
     visible,
+    compacting: compactBusy,
     setOpen,
     handleOpen: () => {
       setOpen(true);
       void refresh();
     },
+    compact,
     refresh,
   };
 }

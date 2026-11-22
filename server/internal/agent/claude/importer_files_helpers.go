@@ -13,7 +13,6 @@ import (
 	"mindfs/server/internal/apperr"
 )
 
-
 func sortedSessionJSONLFiles(baseDir string) ([]sessionFileCandidate, error) {
 	items := make([]sessionFileCandidate, 0)
 	err := filepath.WalkDir(baseDir, func(path string, d os.DirEntry, walkErr error) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -96,7 +97,8 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 	// unregistered one is forwarded untouched with one log line (see
 	// thread.go). The adapter is fixed: everything on this route is Responses.
 	key := ""
-	if threadID := providerThreadID(r); threadID != "" {
+	threadID := providerThreadID(r)
+	if threadID != "" {
 		if _, known := s.ThreadSessionKey(threadID); known {
 			key = threadStateKey(threadID)
 		} else {
@@ -104,6 +106,15 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	scanned := key != "" && r.Method == http.MethodPost
+	// A thread that crossed a model provider still carries the previous
+	// provider's encrypted reasoning, which the new provider cannot decrypt.
+	// Drop those items before folding so the upstream never sees them.
+	if scanned && s.providerSwitchedThread(threadID) {
+		if stripped, removed, changed := stripEncryptedReasoningInput(body); changed {
+			body = stripped
+			log.Printf("[proxy] provider-switch.strip thread=%s items=%d bytes=%d", ShortToken(threadID), removed, len(body))
+		}
+	}
 	// Usage scanning is part of the observation pipeline: with live compact off
 	// this route stays a byte-for-byte pass-through and pays nothing.
 	observed := scanned && s.harnessRuntimeFor(harnessForAdapter(adapterResponses)).cfg.Observes()
@@ -127,10 +138,19 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		// A turn that never reached the upstream still leaves its fold decision
 		// in the log; only the usage half is missing.
 		if scanned && gate.decision != "" {
-			logLiveCompactProvider(key, gate, result, fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1})
+			logLiveCompactProvider(key, gate, result, fold.Usage{
+				Source:        fold.UsageSourceMissing,
+				RewriteTokens: -1,
+				MissingReason: fold.UsageMissingUpstreamUnreachable,
+			})
 		}
 		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
+	}
+	// Safety net for a thread that crossed providers before the marker existed:
+	// retry once without the undecryptable ciphertext and remember the thread.
+	if scanned && threadID != "" {
+		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)
 	}
 	defer resp.Body.Close()
 
@@ -158,9 +178,24 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		reader = io.TeeReader(resp.Body, scanner)
 	}
 	_, _ = io.Copy(&flushWriter{w: w}, reader)
-	usage, seen := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}, false
+	// A missing sample keeps a reason: "no usage" is not the same failure as a
+	// compressed body or a stream that ended early, and the log is the only
+	// place that difference is visible.
+	missingReason := fold.UsageMissingNotObserved
+	if observed {
+		missingReason = fold.UsageMissingNoUsageBlock
+		if resp.Header.Get("Content-Encoding") != "" {
+			missingReason = fold.UsageMissingContentEncoding
+		}
+	}
+	usage, seen := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1, MissingReason: missingReason}, false
 	if scanner != nil {
 		usage, seen = scanner.Totals().Usage()
+		if !seen {
+			// The scanner owns the "missing" shape but not why it is missing;
+			// keep the reason this path observed.
+			usage.MissingReason = missingReason
+		}
 	}
 	// The ledger line belongs to a folded turn only: its bytes describe a
 	// rewrite. The calibration pair belongs to the session and is updated by

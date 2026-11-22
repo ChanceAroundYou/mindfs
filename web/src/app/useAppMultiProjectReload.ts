@@ -79,6 +79,7 @@ export function useAppMultiProjectReload({
     multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
     playCompletionSound,
+    scheduleMultiProjectSessionReload,
     selectedSessionRef,
     setMultiProjectPendingByKey,
     setMultiProjectAwaitingByKey,

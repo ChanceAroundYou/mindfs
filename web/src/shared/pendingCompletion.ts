@@ -23,6 +23,25 @@ export function newlyCompletedPendingKeys(
   okNodeIds: Iterable<string>,
   excludeNodeId = "",
 ): string[] {
+  return completedPendingKeys(previous, next, okNodeIds, excludeNodeId);
+}
+
+/**
+ * 同一条 pending true→false 差分，但**不排除任何节点** —— 只用于判定「会话列表里的
+ * `updated_at` 需要重拉」，不参与提示音与未读徽标。
+ *
+ * 为什么列表时间不能排除激活节点：`session.stream` 与 `session.done` 都只发给**挂载了
+ * 该会话**的客户端（StreamHub 按 sessionKey 绑客户端，见 `GetSessionClientIDs`）。右侧
+ * 多项目列表里后台项目的会话、看板任务会话根本没挂载，收不到 done；唯一还能看到「它刚
+ * 跑完」的就是这张 pending 表。不同步重拉，卡片会一直停在开跑前那条 `updated_at` 上
+ * （2026-11-22 实测：本机 llmux 项目的会话 11:47 已跑完，列表 11:52 仍显示开跑前的 49m）。
+ */
+export function completedPendingKeys(
+  previous: Record<string, boolean>,
+  next: Record<string, boolean>,
+  okNodeIds: Iterable<string>,
+  excludeNodeId = "",
+): string[] {
   const ok = new Set(
     Array.from(okNodeIds, (v) => String(v || "").trim()).filter(Boolean),
   );

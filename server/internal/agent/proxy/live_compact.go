@@ -255,7 +255,7 @@ func liveCompactObservationLine(token string, obs liveCompactObservation, totals
 	if !obs.foldAllowed {
 		scope = "observe-only"
 	}
-	return fmt.Sprintf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d usg_in=%d usg_create=%d usg_read=%d cand_blocks=%d cand_error_blocks=%d cand_failed_blocks=%d cand_tokens=%d cand_bytes=%d skip_bytes_error=%d skip_bytes_multipart=%d skip_bytes_nontext=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d cold=%t cold_reason=%s would_fold_tokens=%d plan_body_bytes=%d plan_result_bytes=%d plan_protected_bytes=%d plan_nontext_bytes=%d plan_multipart_kept_bytes=%d plan_failed_small_bytes=%d plan_candidate_bytes=%d",
+	return fmt.Sprintf("[live-compact] %s token=%s scope=%s msgs=%d rounds=%d closed=%d keep=%d epoch=%d est_in=%d actual_in=%d usg_in=%d usg_create=%d usg_read=%d cand_blocks=%d cand_error_blocks=%d cand_failed_blocks=%d cand_tokens=%d cand_bytes=%d skip_bytes_error=%d skip_bytes_multipart=%d skip_bytes_nontext=%d drift=%d drift_age=%d parse_ms=%d gate=%s gate_est=%d gate_growth=%d gate_projected=%d cold=%t cold_reason=%s would_fold_tokens=%d %s",
 		obs.mode, ShortToken(token), scope, obs.messages, obs.rounds, obs.closedRounds,
 		obs.keepRounds, obs.epoch, obs.estimatedInput, actual,
 		totals.InputTokens, totals.CacheCreationInputTokens, totals.CacheReadInputTokens, obs.candidates, obs.errorCandidates,
@@ -263,9 +263,7 @@ func liveCompactObservationLine(token string, obs liveCompactObservation, totals
 		obs.skippedErrorBytes, obs.skippedMultiPartBytes, obs.skippedNonTextBytes,
 		obs.driftAt, obs.driftFromTail, obs.parseMillis,
 		obs.gateDecision, obs.gateEst, obs.gateGrowth, obs.gateProjected,
-		obs.cold, obs.coldReason, obs.wouldFoldTokens,
-		obs.plan.BodyBytes, obs.plan.ResultBytes, obs.plan.ProtectedBytes, obs.plan.NonTextBytes,
-		obs.plan.MultiPartKeptBytes, obs.plan.FailedSmallBytes, obs.plan.CandidateBytes)
+		obs.cold, obs.coldReason, obs.wouldFoldTokens, planStatsFields(obs.plan))
 }
 
 // driftDistanceFromTail reports how far before the previous request's tail the

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"mindfs/server/app"
 )
 
 // writeConfig 在临时的 XDG 配置目录里放一份 config.json。
@@ -352,5 +355,120 @@ func TestTaskConfigFromFile(t *testing.T) {
 	}
 	if agent != "codex" || model != "gpt-6.1-terra" {
 		t.Fatalf("task 配置未落盘：agent=%q model=%q", agent, model)
+	}
+}
+
+// M2/M4 的入口配置只在 config.json：没有命令行开关，也不碰其他配置段。
+func TestFeishuM2M4ConfigComesFromFileOnly(t *testing.T) {
+	writeConfig(t, `{
+		"channels":{"feishu":{
+			"bindings":[{"chat_id":"oc_1","node_id":"fn","root_id":"docs"}],
+			"default_root_id":"proj",
+			"project_picker_ttl_hours":48,
+			"project_picker_max":4,
+			"inbound_per_minute":20,
+			"inbound_burst":5,
+			"relay_token":"012345678901234567890123456789012345"
+		}},
+		"feishu_relay_url":"  http://127.0.0.1:7331/mindfs/api/channels/feishu/relay  ",
+		"feishu_node_id":" fn "
+	}`)
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		enabled                                          = false
+		owner, lark, root, token, relayURL, nodeID       string
+		cardHours, ttlHours, pickerMax, perMinute, burst int
+		bindings                                         []app.FeishuBinding
+	)
+	flags := startupFlags{
+		FeishuEnabled:          &enabled,
+		FeishuOwnerOpenID:      &owner,
+		FeishuLarkCLI:          &lark,
+		FeishuCardTTLHours:     &cardHours,
+		FeishuBindings:         &bindings,
+		FeishuDefaultRootID:    &root,
+		FeishuPickerTTLHours:   &ttlHours,
+		FeishuPickerMax:        &pickerMax,
+		FeishuInboundPerMinute: &perMinute,
+		FeishuInboundBurst:     &burst,
+		FeishuRelayToken:       &token,
+		FeishuRelayURL:         &relayURL,
+		FeishuNodeID:           &nodeID,
+	}
+	if err := applyStartupConfig(cfg, map[string]bool{}, flags); err != nil {
+		t.Fatal(err)
+	}
+	opts := feishuOptions(flags)
+	if len(opts.Bindings) != 1 || opts.Bindings[0] != (app.FeishuBinding{ChatID: "oc_1", NodeID: "fn", RootID: "docs"}) {
+		t.Fatalf("bindings 未落盘: %+v", opts.Bindings)
+	}
+	if opts.DefaultRootID != "proj" || opts.PickerTTL != 48*time.Hour || opts.PickerMax != 4 {
+		t.Fatalf("选择卡配置未落盘: root=%q ttl=%v max=%d", opts.DefaultRootID, opts.PickerTTL, opts.PickerMax)
+	}
+	if opts.InboundRatePerMinute != 20 || opts.InboundBurst != 5 {
+		t.Fatalf("入口限速未落盘: %d/%d", opts.InboundRatePerMinute, opts.InboundBurst)
+	}
+	if len(opts.RelayToken) != 36 {
+		t.Fatalf("relay token 未落盘: len=%d", len(opts.RelayToken))
+	}
+	if relayURL != "http://127.0.0.1:7331/mindfs/api/channels/feishu/relay" || nodeID != "fn" {
+		t.Fatalf("根级 relay 配置未落盘: url=%q node=%q", relayURL, nodeID)
+	}
+	for _, name := range []string{
+		"feishu-bindings", "feishu-default-root-id", "feishu-project-picker-ttl-hours",
+		"feishu-project-picker-max", "feishu-inbound-per-minute", "feishu-inbound-burst",
+		"feishu-relay-token", "feishu-relay-url", "feishu-node-id",
+	} {
+		if flag.Lookup(name) != nil {
+			t.Fatalf("%s 不应有命令行开关", name)
+		}
+	}
+
+	// 缺省值：不配就是 24h / 5 / 30 / 10，跨节点关闭。
+	writeConfig(t, `{}`)
+	cfg, err = loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, token, relayURL, nodeID = "", "", "", ""
+	ttlHours, pickerMax, perMinute, burst = 0, 0, 0, 0
+	bindings = nil
+	defaults := startupFlags{
+		FeishuBindings:         &bindings,
+		FeishuDefaultRootID:    &root,
+		FeishuPickerTTLHours:   &ttlHours,
+		FeishuPickerMax:        &pickerMax,
+		FeishuInboundPerMinute: &perMinute,
+		FeishuInboundBurst:     &burst,
+		FeishuRelayToken:       &token,
+		FeishuRelayURL:         &relayURL,
+		FeishuNodeID:           &nodeID,
+	}
+	if err := applyStartupConfig(cfg, map[string]bool{}, defaults); err != nil {
+		t.Fatal(err)
+	}
+	fallback := feishuOptions(defaults)
+	if fallback.PickerTTL != 24*time.Hour || fallback.PickerMax != 5 || fallback.InboundRatePerMinute != 30 || fallback.InboundBurst != 10 {
+		t.Fatalf("缺省值不对: ttl=%v max=%d rate=%d burst=%d", fallback.PickerTTL, fallback.PickerMax, fallback.InboundRatePerMinute, fallback.InboundBurst)
+	}
+	if fallback.RelayToken != "" || relayURL != "" || nodeID != "" {
+		t.Fatal("缺省必须关闭跨节点中继")
+	}
+
+	// 短 token 直接拒绝，且错误里不能回显 token。
+	writeConfig(t, `{"channels":{"feishu":{"relay_token":"short"}}}`)
+	cfg, err = loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token = ""
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{FeishuRelayToken: &token}); err == nil {
+		t.Fatal("短 token 必须报错")
+	} else if strings.Contains(err.Error(), "short") {
+		t.Fatalf("错误里不能回显 token: %v", err)
 	}
 }

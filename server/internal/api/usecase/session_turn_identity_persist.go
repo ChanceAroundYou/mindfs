@@ -12,7 +12,6 @@ import (
 	"mindfs/server/internal/session"
 )
 
-
 func persistUserTurnExchange(ctx context.Context, manager *session.Manager, current *session.Session, content, agent, mode, effort, fastService string, ts time.Time) (int, string, error) {
 	exchangeCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 	if current == nil {

@@ -33,6 +33,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err != nil {
 		return err
 	}
+	s.observeHygieneTurnStart(in, current)
 	if in.PlanMode != nil && current.PlanMode != *in.PlanMode {
 		if err := manager.UpdatePlanMode(ctx, current, *in.PlanMode); err != nil {
 			return err
@@ -155,8 +156,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		LinesBeforeThisTurn:           &linesBeforeThisTurn,
 	})
 	var responseText string
+	provisional := newProvisionalStreamWriter(manager, current.Key, userExchangeSeq, turnID)
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
+	var compactPostTokens int
 	var turnTokenUsage *agenttypes.TokenUsage
 	// turnAgentMessageID 是本轮最后一个 agent 原生消息 id（ACP `messageId`，
 	// claude 是转录 uuid），回合结束时写进助手行的 `agent_id`。没有它，导入器重放
@@ -204,7 +207,24 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 永远亮着的子代理灯（用户看到"卡死"）。
 	defer claudeSubagents.FinishAll()
 	attachSessionUpdates := func(runtime agenttypes.Session) {
+		// claude 的转录 id 只在第一条流消息之后才可见（打开时为空），所以打开后立刻落库
+		// 对它是 no-op；这里在回合进行中补写，id 一出现就写进绑定，避免「首轮中途重启 →
+		// 绑定永远为空 → 既 resume 不了也同步不回来」。true 之后不再查库。
+		learnedBinding := false
 		runtime.OnUpdate(func(update agenttypes.Event) {
+			// 回合边界之后 CLI 还会在这条流上继续输出（后台任务结果回注，origin.kind=
+			// task-notification，实测能再跑一整段循环）。SendMessage 返回之后实时落盘
+			// 已经结束，那些行没人写库 —— 这里只留一个「该补录」的标记，真正补录走
+			// 下一次同步（recoverLiveContinuationTail），免得在事件回调里读转录。
+			// 判据用「这一轮还活着吗」：回合期间恒为 true，因此不会误标正常回合。
+			if !SessionTurnActive(in.RootID, in.Key) {
+				markSessionContinuationTail(in.RootID, in.Key)
+			}
+			if !learnedBinding {
+				if persistLearnedAgentSessionID(context.Background(), manager, current, in.Agent, runtime) {
+					learnedBinding = true
+				}
+			}
 			update = normalizeAgentUpdatePaths(root, update)
 			if claudeSubagents.Handle(context.Background(), update) {
 				return
@@ -239,6 +259,9 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 					}
 				}
 				if toolCall, ok := update.Data.(agenttypes.ToolCall); ok {
+					if update.Type == agenttypes.EventTypeToolCall && toolCall.Status == "running" {
+						provisional.toolCall(toolCall)
+					}
 					s.ensureSubagentSessions(context.Background(), subagentSessionInput{
 						RootID:      in.RootID,
 						Parent:      current,
@@ -289,11 +312,27 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 						Line:    currentAssistantLine(responseText),
 						Compact: &compactCopy,
 					})
+					compactPostTokens = compact.PostTokens
+					if compactPostTokens > 0 {
+						// Claude 从转录补到了 postTokens：这就是新的上下文大小。
+						lastContextWindow.TotalTokens = compactPostTokens
+						s.clearHygieneContextStale(in)
+					} else {
+						// Codex 的 compact item 没有 token 数；等 token_count，
+						// 在此之前不许拿旧值再触发一次自动压缩。
+						s.markHygieneContextStale(in)
+					}
+				}
+				// 任何一次压缩（harness 自己的或我们自动触发的）都清掉提示与计数。
+				s.markHygieneCompacted(in)
+				if in.onCompactSeen != nil {
+					in.onCompactSeen()
 				}
 			}
 			if update.Type == agenttypes.EventTypeMessageChunk {
 				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok {
 					sawAssistantChunk = true
+					provisional.text(chunk.Content)
 					// 记住**最后一个**带 messageId 的文本块的 id（方案 S2c）：一轮里
 					// agent 会发多条原生消息，块流按它切 step；行级身份取**最后一条** ——
 					// 与导入侧取法一致（ACP importer 的 append 同样在 messageId 变化时
@@ -306,7 +345,11 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 				}
 			} else if update.Type == agenttypes.EventTypeMessageDone {
 				if done, ok := update.Data.(agenttypes.MessageDone); ok {
-					lastContextWindow = done.ContextWindow
+					if compactPostTokens == 0 && done.ContextWindow.TotalTokens > 0 {
+						// Codex 在压缩后靠 token_count 拿到新的上下文大小。
+						s.clearHygieneContextStale(in)
+					}
+					lastContextWindow = contextWindowAfterCompact(done.ContextWindow, compactPostTokens)
 					turnTokenUsage = done.TokenUsage
 				}
 			} else if update.Type == agenttypes.EventTypeThoughtChunk ||
@@ -385,10 +428,11 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	resolvedEffort := resolveRuntimeEffort(in.Agent, current, in.Effort)
 	resolvedFastService = resolveRuntimeFastService(in.Agent, current, in.FastService)
 	if prefs := s.Registry.GetPreferences(); prefs != nil {
-		if changed, err := prefs.UpdateAgentDefaultsIfChanged(in.Agent, resolvedModel, resolvedEffort, resolvedFastService); err != nil {
+		defaultModel := defaultModelForAgent(in.Agent, resolvedModel)
+		if changed, err := prefs.UpdateAgentDefaultsIfChanged(in.Agent, defaultModel, resolvedEffort, resolvedFastService); err != nil {
 			log.Printf("[preferences] agent_defaults.update.error agent=%s err=%v", strings.TrimSpace(in.Agent), err)
 		} else if changed {
-			log.Printf("[preferences] agent_defaults.update.done agent=%s model=%q effort=%q fast_service=%q", strings.TrimSpace(in.Agent), resolvedModel, resolvedEffort, resolvedFastService)
+			log.Printf("[preferences] agent_defaults.update.done agent=%s model=%q effort=%q fast_service=%q", strings.TrimSpace(in.Agent), defaultModel, resolvedEffort, resolvedFastService)
 			if in.OnAgentDefaultsChanged != nil {
 				in.OnAgentDefaultsChanged(strings.TrimSpace(in.Agent))
 			}
@@ -460,6 +504,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		return sendErr
 	} else if prober != nil {
 		prober.ReportSuccess(in.Agent)
+	}
+	// 回合正常结束才推进会话卫生：取消的回合不算「用户又聊了一轮」。
+	if sendErr == nil && s.finishHygieneTurn(in, current, lastContextWindow.TotalTokens) {
+		s.scheduleHygieneAutoCompact(in, hygieneHarnessForSession(current))
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"context"
 	"errors"
 
 	"mindfs/server/internal/agent"
@@ -29,6 +30,9 @@ type Registry interface {
 
 type Service struct {
 	Registry Registry
+	// hygieneSend 是自动压缩回合的执行入口；生产永远走 SendMessage，测试注入
+	// 假实现以免起真 agent。它是本包内唯一的测试缝。
+	hygieneSend func(context.Context, SendMessageInput) error
 }
 
 // accountMetaRoot 取本账户私有的 meta 根（主账户/测试替身没有这个能力 → 空串）。

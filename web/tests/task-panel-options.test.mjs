@@ -48,7 +48,11 @@ assert.match(
   "a dirty close must confirm before discarding",
 );
 assert.match(panelCloseHook, /if \(ok\) onClose\(\);/, "the panel may only close after the user confirms discarding");
-assert.match(panelShell, /if \(event\.target === event\.currentTarget\) requestClose\(\);/, "the overlay must close through the guard");
+assert.match(
+  panelShell,
+  /if \(event\.target !== event\.currentTarget\) return;[\s\S]{0,220}?requestClose\(\);/,
+  "the overlay must close through the guard (and skip clicks that land during the open guard window)",
+);
 assert.doesNotMatch(panelShell, /closeOnOverlayClick/, "closeOnOverlayClick is dead — the overlay always closes");
 assert.doesNotMatch(panelShell, /CloseGlyph/, "the shared × must be gone entirely");
 assert.doesNotMatch(panelShell, /onKeyDown|"Escape"|keydown/, "Esc must no longer close the panel");
@@ -78,7 +82,7 @@ assert.match(
 assert.match(panel, /title=\{editingName \? \(\s*<input/, "the rename input must take over the title slot, not sit beside it");
 assert.doesNotMatch(panel, /headerLeft=\{editingName \? \(\s*<input/, "the rename input must not live in headerLeft — that is what left the stale name on screen");
 assert.doesNotMatch(panel, /headerLeft=\{editingName \?[\s\S]{0,400}?taskStatusColor\(task\.status\)/, "the status/#number badges are not the cell being edited — keep them out of the editing ternary");
-assert.match(panel, /title=\{editingName \?[\s\S]{0,1200}?task\.name \|\| t\("task\.namePlaceholder"\)/, "the read-only name must stay in the title slot, shown only when not editing");
+assert.match(panel, /title=\{editingName \?[\s\S]{0,1500}?task\.name \|\| t\("task\.namePlaceholder"\)/, "the read-only name must stay in the title slot, shown only when not editing");
 assert.match(
   inlinePanel,
   /hasUnsavedChanges=\{\(\) => String\(taskInlineEdit\?\.text \|\| ""\)\.trim\(\) !== ""\}/,

@@ -2,11 +2,46 @@ package feishu
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 )
+
+// Delivery retries: a failed card waits out an exponential backoff instead of
+// being re-sent on every tick, and an unsent card stops after a bounded number
+// of attempts (nothing is behind it that a reader could click).
+const (
+	deliveryAttemptCap  = 12
+	deliveryBackoffBase = 5 * time.Second
+	deliveryBackoffCap  = 10 * time.Minute
+)
+
+// idempotencyKey dedupes retries of one card upstream. Feishu caps the key at
+// 50 characters and terminal/scheduled card ids are longer than that on their
+// own, so the key is a digest: deterministic per card, never over the cap.
+func idempotencyKey(cardID string) string {
+	sum := sha256.Sum256([]byte(cardID))
+	return "mindfs-" + hex.EncodeToString(sum[:])[:32]
+}
+
+// deliveryBackoff is exponential from deliveryBackoffBase, capped so a long
+// outage still retries a few times an hour instead of never.
+func deliveryBackoff(attempts int) time.Duration {
+	d := deliveryBackoffBase
+	for i := 1; i < attempts; i++ {
+		if d >= deliveryBackoffCap {
+			return deliveryBackoffCap
+		}
+		d *= 2
+	}
+	if d > deliveryBackoffCap {
+		return deliveryBackoffCap
+	}
+	return d
+}
 
 // Config is what the channel needs from MindFS configuration. Nothing here
 // is a credential: lark-cli owns those.
@@ -16,7 +51,18 @@ type Config struct {
 	// LarkCLIPath defaults to "lark-cli" on PATH.
 	LarkCLIPath string
 	// NodeID names the machine that sent the card, so a click can be traced.
+	// It comes from the root-level feishu_node_id and also labels local
+	// projects in the intake catalog.
 	NodeID string
+	// RelayToken is shared with workers; the relay HTTP layer owns its checks.
+	RelayToken string
+	// Bindings pin a chat to a project; the first matching binding wins.
+	Bindings []Binding
+	// DefaultRootID is only a fallback when text names no unique project.
+	DefaultRootID string
+	// PickerTTL / PickerMax bound the project choice card.
+	PickerTTL time.Duration
+	PickerMax int
 	// CardTTL is how long a card may still act. Zero means 168h.
 	CardTTL time.Duration
 	// DeliverInterval is how often unsent or stale cards are re-sent.
@@ -48,6 +94,14 @@ type Notice struct {
 	Summary string
 	Text    string
 	Options []string
+
+	// Intake fields travel with a project choice card so the click can create
+	// the task for the original message even after a restart.
+	SourceMessageID string
+	ChatID          string
+	IntakeText      string
+	Projects        []PickerProject
+	PickerTTL       time.Duration
 }
 
 // Answer is what a click meant, in MindFS terms rather than Feishu ones.
@@ -70,6 +124,14 @@ type Answer struct {
 	Note string
 }
 
+// RetryableAnswerError marks a temporary answer-delivery failure. The relay
+// wraps network/5xx/deadline failures in this type so the Service can keep the
+// card open for another click; deterministic local errors stay plain errors.
+type RetryableAnswerError interface {
+	error
+	RetryableAnswer() bool
+}
+
 // Service owns the cards: it sends them, keeps them current, and turns clicks
 // into answers. It never blocks MindFS on Feishu being reachable.
 type Service struct {
@@ -81,9 +143,11 @@ type Service struct {
 	ttl   time.Duration
 	tick  time.Duration
 
-	mu      sync.Mutex
-	handler func(context.Context, Answer) error
-	started bool
+	mu             sync.Mutex
+	handler        func(context.Context, Answer) error
+	messageHandler func(context.Context, []byte) error
+	intake         *IntakeService
+	started        bool
 
 	// loops counts the goroutines Start launched. Both write to disk (card
 	// store, lark-cli), so shutdown must be able to see them finish; Wait is
@@ -129,6 +193,41 @@ func (s *Service) SetAnswerHandler(fn func(context.Context, Answer) error) {
 	s.handler = fn
 }
 
+// SetMessageHandler installs what an inbound chat message does. It receives
+// the raw event line so intake owns parsing, dedupe and policy. A nil handler
+// is a no-op: the listener still runs but drops the messages.
+func (s *Service) SetMessageHandler(fn func(context.Context, []byte) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messageHandler = fn
+}
+
+// SetIntake installs the owner-p2p inbound service on the message supervisor
+// callback. An explicitly installed raw message handler still wins, so an
+// embedding app can replace the whole pipeline (tests and future transports).
+func (s *Service) SetIntake(service *IntakeService) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.intake = service
+}
+
+func (s *Service) handleRawMessage(ctx context.Context, line []byte) error {
+	s.mu.Lock()
+	fn, intake := s.messageHandler, s.intake
+	s.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, line)
+	}
+	if intake == nil {
+		return nil
+	}
+	msg, ok := ParseMessage(line)
+	if !ok {
+		return nil
+	}
+	return intake.Handle(ctx, msg)
+}
+
 func (s *Service) answerHandler() func(context.Context, Answer) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,29 +244,37 @@ func (s *Service) Notify(_ context.Context, n Notice) error {
 		return nil
 	}
 	now := s.now()
+	expires := now.Add(s.ttl)
+	if n.Kind == KindPicker && n.PickerTTL > 0 {
+		expires = now.Add(n.PickerTTL)
+	}
 	c := Card{
-		ID:             n.CardID,
-		Kind:           n.Kind,
-		State:          StateOpen,
-		AccountID:      n.AccountID,
-		RootID:         n.RootID,
-		NodeID:         n.NodeID,
-		TaskID:         n.TaskID,
-		TaskTitle:      n.TaskTitle,
-		TaskNumber:     n.TaskNumber,
-		WorkflowNodeID: n.WorkflowNodeID,
-		NodeName:       n.NodeName,
-		QuestionID:     n.QuestionID,
-		Prompt:         n.Prompt,
-		Status:         n.Status,
-		Summary:        n.Summary,
-		Text:           n.Text,
-		Choices:        choicesFor(n),
-		Selected:       -1,
-		Version:        1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		ExpiresAt:      now.Add(s.ttl),
+		ID:              n.CardID,
+		Kind:            n.Kind,
+		State:           StateOpen,
+		AccountID:       n.AccountID,
+		RootID:          n.RootID,
+		NodeID:          n.NodeID,
+		TaskID:          n.TaskID,
+		TaskTitle:       n.TaskTitle,
+		TaskNumber:      n.TaskNumber,
+		WorkflowNodeID:  n.WorkflowNodeID,
+		NodeName:        n.NodeName,
+		QuestionID:      n.QuestionID,
+		Prompt:          n.Prompt,
+		Status:          n.Status,
+		Summary:         n.Summary,
+		Text:            n.Text,
+		Choices:         choicesFor(n),
+		Selected:        -1,
+		Version:         1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ExpiresAt:       expires,
+		SourceMessageID: n.SourceMessageID,
+		ChatID:          n.ChatID,
+		IntakeText:      n.IntakeText,
+		Projects:        n.Projects,
 	}
 	_, err := s.store.Put(c)
 	return err
@@ -194,8 +301,8 @@ func choicesFor(n Notice) []Choice {
 	}
 }
 
-// Start runs delivery and the click listener until ctx ends. It returns at
-// once; both loops are goroutines so a broken lark-cli never delays startup.
+// Start runs delivery and both event listeners until ctx ends. It returns at
+// once; the loops are goroutines so a broken lark-cli never delays startup.
 func (s *Service) Start(ctx context.Context) {
 	s.mu.Lock()
 	if s.started {
@@ -205,7 +312,7 @@ func (s *Service) Start(ctx context.Context) {
 	s.started = true
 	s.mu.Unlock()
 
-	s.loops.Add(2)
+	s.loops.Add(3)
 	go func() {
 		defer s.loops.Done()
 		s.deliverLoop(ctx)
@@ -215,12 +322,21 @@ func (s *Service) Start(ctx context.Context) {
 		defer s.loops.Done()
 		sup.Run(ctx)
 	}()
+	// Feishu needs a separate long connection per event type. The two
+	// supervisors keep separate stdin pipes and never hand a chat message to
+	// the click handler.
+	messages := &Supervisor{Path: s.cli.Path, EventType: "im.message.receive_v1",
+		HandleRaw: s.handleRawMessage, Logf: s.logf}
+	go func() {
+		defer s.loops.Done()
+		messages.Run(ctx)
+	}()
 }
 
 // Wait blocks until every loop Start launched has returned. Callers cancel the
-// ctx they passed to Start first; Wait then guarantees no delivery, no patch
-// and no click handling is still in flight — needed before shutdown, and by
-// tests whose temp dirs must not be written behind their back.
+// ctx they passed to Start first; Wait then guarantees no delivery, no patch,
+// no click handling and no chat handling is still in flight — needed before
+// shutdown, and by tests whose temp dirs must not be written behind their back.
 func (s *Service) Wait() {
 	s.loops.Wait()
 }
@@ -241,8 +357,9 @@ func (s *Service) deliverLoop(ctx context.Context) {
 }
 
 // DeliverOnce sends every card that has never reached Feishu, and patches
-// every card whose state moved since the message was last rendered. Failures
-// are recorded on the card and retried on the next tick.
+// every card whose state moved since the message was last rendered. A failed
+// card is held back until its backoff ends; one that keeps failing to send is
+// given up on rather than retried forever.
 func (s *Service) DeliverOnce(ctx context.Context) error {
 	// 过期卡片在这里顺手清掉：没人清的话状态文件随任务数一直长，而每一拍
 	// 都要在锁里重写整个文件。
@@ -250,6 +367,9 @@ func (s *Service) DeliverOnce(ctx context.Context) error {
 	for _, c := range s.store.List() {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if c.DeliveryStopped || s.now().Before(c.NextAttemptAt) {
+			continue
 		}
 		if c.MessageID == "" {
 			s.sendCard(ctx, c)
@@ -268,7 +388,7 @@ func (s *Service) sendCard(ctx context.Context, c Card) {
 		s.recordError(c.ID, err)
 		return
 	}
-	id, err := s.cli.SendInteractive(ctx, s.cfg.OwnerOpenID, content, "mindfs-card-"+c.ID)
+	id, err := s.cli.SendInteractive(ctx, s.cfg.OwnerOpenID, content, idempotencyKey(c.ID))
 	if err != nil {
 		s.recordError(c.ID, err)
 		return
@@ -300,10 +420,23 @@ func (s *Service) patchCard(ctx context.Context, id string) error {
 	return nil
 }
 
+// recordError books a failed send or patch: it counts the attempt, schedules
+// the retry, and gives up on a card that never reached Feishu — there is no
+// message behind it, so nothing a reader could have clicked is lost.
 func (s *Service) recordError(id string, err error) {
 	msg := oneLine(err.Error())
 	s.logf("飞书卡片 %s：%s", id, msg)
-	if _, _, uerr := s.store.RecordDeliveryError(id, msg); uerr != nil {
+	c, ok := s.store.Get(id)
+	if !ok {
+		return
+	}
+	attempts := c.DeliveryAttempts + 1
+	stopped := c.MessageID == "" && attempts >= deliveryAttemptCap
+	if stopped {
+		s.logf("飞书卡片 %s 连续 %d 次发送失败，停止重试（卡片保留到过期）", id, attempts)
+	}
+	next := s.now().Add(deliveryBackoff(attempts))
+	if _, _, uerr := s.store.RecordDeliveryFailure(id, msg, attempts, next, stopped); uerr != nil {
 		s.logf("飞书记下卡片 %s 的错误失败：%v", id, uerr)
 	}
 }

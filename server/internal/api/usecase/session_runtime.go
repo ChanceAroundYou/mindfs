@@ -30,6 +30,52 @@ func shouldReopenSessionForSetting(pool *agent.Pool, agentName, currentValue, ne
 	return protocol == agent.ProtocolCodexSDK || protocol == agent.ProtocolClaudeSDK
 }
 
+// sessionReopen 决定复用已存在的池会话时要不要重建 runtime。
+type sessionReopen int
+
+const (
+	// sessionReuse 原地改设置（SetModel / SetMode / SetPlanMode）。
+	sessionReuse sessionReopen = iota
+	// sessionReopenSettings effort / fast service 变了，只能换进程。
+	sessionReopenSettings
+	// sessionReopenLongContext [1m] 开关翻转，窗口策略写在子进程 env 里，只能换进程。
+	sessionReopenLongContext
+)
+
+// decideSessionReopen 是「复用还是重建」的唯一判定。
+//
+// 顺序有意义：1M 翻转优先——它决定新进程要不要带 CLAUDE_CODE_DISABLE_1M_CONTEXT，
+// 即使 effort 没变也必须换进程；两者同时变时按 1M 记录日志更贴近用户动作。
+func decideSessionReopen(currentModel, nextModel string, settingsNeedReopen bool) sessionReopen {
+	if shouldReopenSessionForLongContext(currentModel, nextModel) {
+		return sessionReopenLongContext
+	}
+	if settingsNeedReopen {
+		return sessionReopenSettings
+	}
+	return sessionReuse
+}
+
+// shouldReopenSessionForLongContext 判断「1m」开关的翻转是否必须重建 runtime。
+//
+// 窗口策略写在 CLI 子进程的 env 里（claude.WithLongContextPolicy），进程活着就改不了；
+// 原地 SetModel 只能换模型名。所以裸模型 ↔ [1m] 之间切换时要关掉池会话、按新策略重新
+// resume —— 历史由转录承接，代价只是一次 CLI 重启。
+func shouldReopenSessionForLongContext(currentModel, nextModel string) bool {
+	return claude.Has1MSuffix(currentModel) != claude.Has1MSuffix(nextModel)
+}
+
+// defaultModelForAgent 给出「写进 agent 默认值」的模型名。
+//
+// 默认档就是 200k：默认值里留着 [1m] 会让新建会话一开口就是 1M，
+// 而前端的 1M 勾选来自会话自身的模型名，两边对不上。1M 只是每次会话里的开关。
+func defaultModelForAgent(agentName, model string) string {
+	if !strings.EqualFold(strings.TrimSpace(agentName), "claude") {
+		return model
+	}
+	return claude.Strip1MSuffix(model)
+}
+
 func resolveRuntimeModel(current *session.Session, runtime agenttypes.Session, requested string) string {
 	if model := strings.TrimSpace(requested); model != "" {
 		return model

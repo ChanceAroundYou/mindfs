@@ -57,12 +57,17 @@ assert.doesNotMatch(
 // 禁用态灰底：不能用未定义的 CSS 变量。
 assert.doesNotMatch(composer, /var\(--button-bg\)/, "composerStyles must not reference the undefined button-bg variable");
 
-// 回车 = 发送（复用 PromptEditor 的输入框都得有）。
+// 回车语义：桌面端 Enter 换行、Ctrl/Cmd+Enter 发送；移动端沿用「回车发送」偏好。
+// 判定收敛在 shared/sendShortcut 的 resolveEnterIntent，会话输入框与两个任务输入框共用。
+const sendShortcut = fs.readFileSync(path.join(root, "src/shared/sendShortcut.ts"), "utf8");
 assert.match(promptEditor, /onEnter\?: \(event: KeyboardEvent \| null\) => boolean;/, "PromptEditor must accept an onEnter override");
 assert.match(promptEditor, /onEnter=\{handleEnter\}/, "PromptEditor must forward Enter handling to TokenEditor");
-assert.match(promptEditor, /if \(isComposing\(event\) \|\| event\?\.shiftKey\) return false;/, "Enter must pass through while composing and on Shift+Enter");
+assert.match(promptEditor, /resolveEnterIntent\(event, \{/, "PromptEditor must defer Enter semantics to the shared resolver");
+assert.match(promptEditor, /if \(intent !== "send"\) return false;/, "a newline intent must fall through to Lexical");
 assert.match(promptEditor, /if \(canSend\) flushAndSend\(\);/, "Enter must send when the editor has text and is not sending");
 assert.match(promptEditor, /const canSend = !sending && !sendDisabled;/, "send is gated by the sending state and the caller's send gate");
+assert.match(sendShortcut, /if \(!options\.isMobile\) return "newline";/, "desktop Enter must insert a newline");
+assert.match(sendShortcut, /if \(event\.ctrlKey \|\| event\.metaKey\) return "send";/, "Ctrl/Cmd+Enter must send");
 
 // setText 不得无条件抢焦点。
 const tokenEditor = fs.readFileSync(path.join(root, "src/components/editor/TokenEditor.tsx"), "utf8");
@@ -97,16 +102,29 @@ assert.doesNotMatch(inlinePanel, /<StageEditor\b/, "the create panel must not re
 assert.doesNotMatch(inlinePanel, /<AgentSelector\b/, "agent choice belongs to the router, not the create panel");
 assert.doesNotMatch(inlinePanel, /DEFAULT_TASK_MODEL|inheritAgentStage|<StageOptionsBar\b/, "stage options must be gone from the create panel");
 // 「立即执行」在对话模型里只剩一个含义：建完立刻派发首条留言（默认勾上）。
-// 位置已收进输入框右下角的控件行，与任务详情面板共用同一颗胶囊。
+// 位置在输入框右下角的控件行，与「选择工作流」并排；详情面板的发送框里没有它。
 assert.match(inlinePanel, /active=\{taskInlineEdit\.startImmediately\}/, "the create panel must expose the immediate-run toggle");
 assert.match(
   inlinePanel,
-  /<RunImmediatelyControl[\s\S]{0,200}?mode="toggle"[\s\S]{0,200}?active=\{taskInlineEdit\.startImmediately\}/,
+  /<RunImmediatelyControl[\s\S]{0,200}?active=\{taskInlineEdit\.startImmediately\}/,
   "the toggle must be the shared run-immediately control",
 );
-assert.match(inlinePanel, /extraControlsExtraInset=\{84\}/, "单行正文要让出胶囊的宽度");
+assert.doesNotMatch(inlinePanel, /mode="toggle"|mode="action"/, "the toggle has a single icon-only form");
+assert.match(
+  inlinePanel,
+  /<WorkflowSelector[\s\S]{0,320}?choice=\{taskInlineEdit\.workflowChoice\}/,
+  "the create panel must let the first message pick a workflow",
+);
+assert.match(inlinePanel, /extraControlsExtraInset=\{128\}/, "两个控件都比单颗胶囊宽，正文要让出位置");
 assert.doesNotMatch(inlinePanel, /type="checkbox"/, "面板自己不再手搓一个勾选框");
 assert.match(tasks, /start_immediately: options\?\.startImmediately \?\? true/, "createTask must send start_immediately and default it to true");
+assert.match(tasks, /workflow_choice: options\.workflowChoice/, "createTask must forward the picked workflow_choice");
+assert.match(tasks, /workflow_version_id: options\.workflowVersionId/, "createTask must forward the picked workflow version");
+assert.match(
+  fs.readFileSync(path.join(root, "src/app/useTaskComposer.ts"), "utf8"),
+  /workflowChoice: edit\.workflowChoice/,
+  "the create dialog must pass its workflow choice into createTask",
+);
 assert.match(tasks, /export async function runTaskNow\(/, "the queued message needs a run-now service call");
 assert.match(
   inlinePanel,
@@ -136,37 +154,38 @@ for (const name of ["removeTaskStage", "appendTaskStage", "saveStage"]) {
   assert.doesNotMatch(tasks, new RegExp(`\\b${name}\\b`), `tasks service must not expose ${name}`);
 }
 
-// 详情面板只读对话流；「完成 / 删除」仍住在头部（完成收进「操作控件」菜单），判据与卡片同一口径。
+// 详情面板只读对话流；动作全部平铺在 header 右上角（2026-11-22 起不再有菜单）。
+// 动作集合与看板卡片只有一份定义（taskCardActions.ts 的 taskActionButtons），两处共读。
 assert.doesNotMatch(panel, /<StageEditor\b/, "the detail panel no longer renders a stage editor");
 assert.doesNotMatch(panelHook, /appendStage|setEditingStage|startEditStage|saveStage|removeTaskStage/, "the detail hook must not keep stage editing state");
-assert.match(panelHook, /const canCompleteTask = !terminal && !taskRunningNow;/, "完成 is available to every non-terminal, non-running task");
+const cardActions = fs.readFileSync(path.join(root, "src/components/task/taskCardActions.ts"), "utf8");
 assert.match(
-  panelHook,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true;/,
-  "the panel must still read the server-derived worktree_missing flag for 收尾",
+  cardActions,
+  /actions\.push\("complete"\);/,
+  "完成 is available to every non-terminal, non-running card",
 );
-// 完成 / 收尾 / 重新打开由「操作控件」菜单承载；菜单挂在 headerRight 里。
 assert.match(
-  panel,
-  /if \(canCompleteTask\)[\s\S]{0,400}?key: "complete"[\s\S]{0,300}?onSelect: \(\) => void completeTask\(\)/,
-  "完成 must be one of the panel header actions",
+  cardActions,
+  /task\.create_worktree === true && !!task\.worktree_path && task\.worktree_missing !== true;/,
+  "收尾 must still read the server-derived worktree_missing flag",
 );
+// 详情 header：动作来自 taskActionButtons 平铺渲染，删除也在同一排。
+assert.match(panel, /taskActionButtons\(task\)\.map/, "the panel header renders the shared flat action list");
+assert.match(panel, /complete: \(\) => void completeTask\(\)/, "the panel must wire the complete handler");
 const headerRightAt = panel.indexOf("headerRight={editingName");
 assert.ok(headerRightAt > 0, "TaskDetailPanel must pass a headerRight block");
 const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 1600);
-assert.match(headerRightSlice, /<TaskDetailActionsMenu actions=\{actions\} disabled=\{saving\} \/>/, "the header actions menu is the only place for secondary actions");
-assert.match(
-  headerRightSlice,
-  /\{terminal \? \([\s\S]{0,500}?onClick=\{\(\) => void deleteTaskCard\(\)\}[\s\S]{0,300}?<DeleteIcon \/>/,
-  "删除 is only for terminal tasks and must live in the panel header (not inside the actions menu)",
-);
-assert.doesNotMatch(headerRightSlice, /finishWorktree|completeTask\(\)|reopenTask\(\)/, "secondary actions must not stay as loose header icons");
+assert.match(headerRightSlice, /actions\.map\(\(action\) => \(/, "the header actions are flat buttons");
+assert.match(headerRightSlice, /action\.onSelect/, "each flat button dispatches through the shared handler map");
+assert.doesNotMatch(headerRightSlice, /TaskDetailActionsMenu|aria-haspopup="menu"/, "the actions menu is gone");
+assert.doesNotMatch(headerRightSlice, /finishWorktree|completeTask\(\)|reopenTask\(\)/, "actions must not stay as loose hand-written header icons outside the flat map");
 assert.doesNotMatch(panel, /rebuildTaskWorktree|TaskRebuildWorktreeIcon|task\.rebuildWorktree/, "the panel must not offer a rebuild-worktree entry");
 assert.match(composerIcons, /export function TrashIcon/);
-assert.match(panel, /\{terminal \? \([\s\S]*?<DeleteIcon \/>/, "terminal tasks get the trash can");
+// 删除与其它动作同排：图形来自共享映射，不再在 panel 里单独写一个 DeleteIcon。
+const actionIcons = fs.readFileSync(path.join(root, "src/components/task/taskActionIcons.tsx"), "utf8");
+assert.match(actionIcons, /"delete-task": <DeleteIcon \/>/, "删除与其它动作共用同一张图标表");
 
-// 面板的完成判据直接跑真函数会落到 useTaskDetailPanel 的 hook 里（不是纯函数），
-// 这里用源码断言钉住；对话视图本身由 conversation-view.test.mjs 覆盖。
+// 详情面板「完成」的出口：待审阅给完成/取消；完成判据住在共享纯函数里。
 test("the panel's complete gate is non-terminal and not running", () => {
   const gate = (terminal, running) => !terminal && !running;
   assert.equal(gate(false, false), true);

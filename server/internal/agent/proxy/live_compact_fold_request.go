@@ -223,8 +223,10 @@ func (s *Server) sessionCalibration(token string) (actual, forwardEst int) {
 }
 
 // noteForwardEstimate records the estimator size of the body this request
-// forwarded. It is one half of the calibration pair; the other half arrives
-// with the response usage.
+// forwarded. It stays pending until this request's usage sample arrives: an
+// estimate may only join the calibration pair together with the actual measured
+// on the same request, or a small side request that never reports usage would
+// pair its tiny body with the main conversation's actual.
 func (s *Server) noteForwardEstimate(token string, est int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -232,7 +234,20 @@ func (s *Server) noteForwardEstimate(token string, est int) {
 	if !ok {
 		return
 	}
-	st.lastForwardEst = est
+	st.pendingForwardEst = est
+}
+
+// auxiliarySample reports whether this sample belongs to a small side request
+// (Claude Code's title/validation queries reuse the session key with a body a
+// fraction of the conversation). Such a sample measures a different request
+// than the pair describes, so accepting it makes the rail project the main
+// conversation from a ratio that never held for it. calibrationReset marks the
+// legitimate version of the same shape: the first sample after a compaction.
+func (st *sessionState) auxiliarySample() bool {
+	if st.calibrationReset || st.pendingForwardEst <= 0 || st.lastForwardEst <= 0 {
+		return false
+	}
+	return st.pendingForwardEst*4 < st.lastForwardEst
 }
 
 // noteActualContext records the upstream-reported context size for the request
@@ -253,7 +268,15 @@ func (s *Server) noteActualContext(token string, totals usageTotals) {
 	st.live.lastUsageAt = time.Now()
 	if actual > 0 {
 		st.live.lastContext = actual
-		st.lastActual = actual
+		if !st.auxiliarySample() {
+			st.lastActual = actual
+			// Commit the pair atomically: whenever the estimate is known, the
+			// other half of the pair is this request's, never an older one's.
+			if st.pendingForwardEst > 0 {
+				st.lastForwardEst = st.pendingForwardEst
+			}
+			st.calibrationReset = false
+		}
 	}
 	// Neither read nor write means this response was served without touching
 	// the cache at all. One such response is an ordinary cold start; a streak is

@@ -157,7 +157,7 @@ export function useToolCallCard({
     : displayTitle || "tool";
   const isRunning = normalizedStatus === "running" || normalizedStatus === "in_progress";
   const isComplete = normalizedStatus === "complete" || normalizedStatus === "success";
-  const isFailed = normalizedStatus === "failed" || normalizedStatus === "error";
+  const isFailed = normalizedStatus === "failed" || normalizedStatus === "error" || normalizedStatus === "interrupted";
   const progressText = toolProgressText(effectiveMeta);
   const showProgress = Boolean(progressText);
   const hasStructuredDetails = detailSections.length > 0;

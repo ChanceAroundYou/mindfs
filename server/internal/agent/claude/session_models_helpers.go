@@ -86,6 +86,36 @@ func Strip1MSuffix(model string) string { return strip1MSuffix(model) }
 // Has1MSuffix 判断模型名是否带 [1m]/[1M] 后缀（导出供 agent 包复用）。
 func Has1MSuffix(model string) bool { return has1MSuffix(model) }
 
+// Disable1MContextEnv 是 Claude Code CLI 关掉整组 1M 上下文路径的开关：
+// 它同时否掉 [1m] 后缀、1M beta 头与目录里的原生 1M，窗口退回 CLI 的
+// 默认/目录声明值（非 1M 模型是 200k）。
+const Disable1MContextEnv = "CLAUDE_CODE_DISABLE_1M_CONTEXT"
+
+// WithLongContextPolicy 按模型名给这一进程的 CLI 打窗口策略。
+//
+// 窗口是 CLI 自己算的（模型名带 [1m] / beta 集合里有 1M 头 / 目录声明原生 1M），
+// MindFS 没有窗口表。实测 pc-win 的 CLI 2.1.330 把裸别名 `ok` 也判成 1M
+// （context_window model="ok" window=1000000，712k token 的请求照样成功），
+// 于是「1m」开关只改了模型名、窗口不变，默认模型也没落在 200k。
+// 这里用 CLI 自己的总闸把默认档钉回 200k：不带 [1m] 就设闸，带了就清掉
+// （清掉是为了不让 agent env 或设置里的残留值把开关按死）。
+//
+// env 是逐进程的，所以开关翻转必须重建 runtime —— 见 usecase 的
+// shouldReopenSessionForLongContext。
+func WithLongContextPolicy(env map[string]string, model string) map[string]string {
+	if has1MSuffix(model) {
+		if env != nil {
+			delete(env, Disable1MContextEnv)
+		}
+		return env
+	}
+	if env == nil {
+		env = make(map[string]string, 1)
+	}
+	env[Disable1MContextEnv] = "1"
+	return env
+}
+
 // TierKey 将模型名归一并忽略 [1m]/[1M] 后缀，映射到 Anthropic 家族短 key
 // （fable/of→of、opus/op→op、sonnet/os→os、haiku/ok→ok，其余小写原样）。
 // 用于探测目录去重与默认模型归属比对，避免 os[1m] 与 os 被误判为不同模型。

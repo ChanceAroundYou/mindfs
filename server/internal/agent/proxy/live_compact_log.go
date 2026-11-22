@@ -51,11 +51,20 @@ func logLiveCompactProvider(token string, gate liveCompactGate, result foldResul
 
 func liveCompactProviderLine(token string, gate liveCompactGate, result foldResult, usage fold.Usage) string {
 	actual, cached := -1, 0
+	// A missing sample prints why it is missing: "actual=-1" alone cannot tell
+	// a compressed body from a stream that ended before its usage block, and
+	// those need different fixes.
+	missing := "-"
 	if usage.Source == fold.UsageSourceResponse {
 		actual, cached = usage.ContextTokens, usage.CacheRead
+	} else {
+		missing = usage.MissingReason
+		if missing == "" {
+			missing = "unknown"
+		}
 	}
-	return fmt.Sprintf("[live-compact] provider=responses token=%s gate=%s est=%d actual=%d cached=%d growth=%d projected=%d candidates=%d cold=%t cold_reason=%s folded=%t blocks=%d new_blocks=%d new_tokens=%d sticky_blocks=%d saved_bytes=%d skipped=%d archive_errors=%d %s",
-		ShortToken(token), gate.decision, gate.est, actual, cached, gate.growth, gate.projected, gate.candidates,
+	return fmt.Sprintf("[live-compact] provider=responses token=%s gate=%s est=%d actual=%d cached=%d usage_missing=%s growth=%d projected=%d candidates=%d cold=%t cold_reason=%s folded=%t blocks=%d new_blocks=%d new_tokens=%d sticky_blocks=%d saved_bytes=%d skipped=%d archive_errors=%d %s",
+		ShortToken(token), gate.decision, gate.est, actual, cached, missing, gate.growth, gate.projected, gate.candidates,
 		gate.cold, gate.coldReason, result.changed(), result.foldedBlocks, result.newBlocks, result.newTokens,
 		result.stickyBlocks, result.foldedBytes, result.skipped, result.archiveFailures,
 		planStatsFields(gate.plan))
@@ -66,7 +75,7 @@ func liveCompactProviderLine(token string, gate liveCompactGate, result foldResu
 // request was made of, and "candidates=0" alone cannot say whether the
 // protected tail or the content itself was the reason.
 func planStatsFields(stats fold.PlanStats) string {
-	return fmt.Sprintf("plan_body_bytes=%d plan_result_bytes=%d plan_protected_bytes=%d plan_nontext_bytes=%d plan_multipart_kept_bytes=%d plan_failed_small_bytes=%d plan_candidate_bytes=%d",
-		stats.BodyBytes, stats.ResultBytes, stats.ProtectedBytes, stats.NonTextBytes,
+	return fmt.Sprintf("plan_body_bytes=%d plan_result_bytes=%d plan_unaccounted_bytes=%d plan_protected_bytes=%d plan_nontext_bytes=%d plan_multipart_kept_bytes=%d plan_failed_small_bytes=%d plan_candidate_bytes=%d",
+		stats.BodyBytes, stats.ResultBytes, stats.UnaccountedBytes, stats.ProtectedBytes, stats.NonTextBytes,
 		stats.MultiPartKeptBytes, stats.FailedSmallBytes, stats.CandidateBytes)
 }

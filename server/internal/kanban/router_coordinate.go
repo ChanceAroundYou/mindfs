@@ -68,6 +68,14 @@ func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {
 		kind = RouterTriggerDirectStalled
 	case RouterEventCompletionBlocked:
 		kind = RouterTriggerCompletionBlocked
+	case RouterEventTurnSettled:
+		kind = RouterTriggerTurnSettled
+	case RouterEventTurnStalled:
+		kind = RouterTriggerTurnStalled
+	case RouterEventTurnInterrupted:
+		kind = RouterTriggerTurnInterrupted
+	case RouterEventTaskOrphaned:
+		kind = RouterTriggerTaskOrphaned
 	default:
 		return RouterTrigger{}, ""
 	}
@@ -78,6 +86,14 @@ func routerTriggerForEvent(ev RouterEvent) (RouterTrigger, RouterTriggerKind) {
 		triggerRef = routerEventPayloadString(ev.PayloadJSON, "activity_id")
 	}
 	if triggerRef == "" && kind == RouterTriggerCompletionBlocked {
+		triggerRef = strings.TrimSpace(ev.TaskID)
+	}
+	if triggerRef == "" && kind == RouterTriggerTurnSettled {
+		// 会话回合没有 Run、也没有卡住的回复行：指向回合 id，便于日志对齐。
+		triggerRef = strings.TrimSpace(ev.TurnID)
+	}
+	if triggerRef == "" && kind == RouterTriggerTaskOrphaned {
+		// 孤儿任务连回复行都没有：指向任务本身。
 		triggerRef = strings.TrimSpace(ev.TaskID)
 	}
 	event := ev
@@ -218,6 +234,13 @@ func (rs *RouterService) coordinateTick() {
 	rs.pruneExpiredEvents(ctx, now)
 	if _, err := rs.service.scanRouterEventSourcesBounded(ctx, rs.rootID, now, routerCoordinateScanWindow); err != nil {
 		log.Printf("[router/coordinate] scan.error root=%s err=%v", rs.rootID, err)
+	}
+	// 任务级巡检（W3-2）：事件扫描只看 Run 与直连回复，看不见「回合在飞但没有
+	// 产出」和「running 的空壳任务」。它只写事件，动作仍由消费侧决定。
+	if produced, err := rs.service.taskHealthSweep(ctx, rs.rootID, now); err != nil {
+		log.Printf("[router/coordinate] health.error root=%s err=%v", rs.rootID, err)
+	} else if len(produced) > 0 {
+		log.Printf("[router/coordinate] health.produced root=%s count=%d", rs.rootID, len(produced))
 	}
 	if _, err := rs.ConsumeRouterEvents(ctx, now); err != nil {
 		log.Printf("[router/coordinate] consume.error root=%s err=%v", rs.rootID, err)

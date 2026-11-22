@@ -408,11 +408,18 @@ export function useTaskBoard(params: UseTaskBoardParams) {
         void refreshTaskWorktreeRef.current?.(rootId, detail.task.worktree_path);
       }
       // 取消会把卡挪出当前筛选、重建 worktree 会改 worktree 徽标、重开会把卡从
-      // 「已结束」挪回「待审核」—— 这些 applyTaskDetails 管不到（它只换那张卡的
-      // 内容，管不了卡片在哪一列）。
+      // 「已结束」挪回「待处理」—— 这些 applyTaskDetails 管不到（它只换那张卡的
+      // 内容，管不了卡片在哪一列）。开始 / 终止同样是跨列（未开始→运行中、
+      // 运行中→待处理），也必须整板重拉。
       // finish-worktree 不在此列：它在上面就 return 了，而清场真正落地是几秒后
       // 服务端 goroutine 里的事，那时由 WS task.finish_teardown 负责重拉。
-      if (action === "cancel" || action === "reopen" || action === "rebuild-worktree") {
+      if (
+        action === "start" ||
+        action === "terminate" ||
+        action === "cancel" ||
+        action === "reopen" ||
+        action === "rebuild-worktree"
+      ) {
         refreshWorkspaceBoard();
       }
     } catch (err) {

@@ -224,6 +224,12 @@ func (s *ActivityService) applyRouteSay(
 	if state != nil && state.settleSummarySeq == action.Seq && action.Purpose != "summary" {
 		action.Purpose = "summary"
 	}
+	// 转交口信默认不发（Plan 2026-11-22，W1-5）：同一决策里已经有执行动作时，
+	// 「已交给执行会话，完成后我会汇总」这类 progress 只是把占位重复一遍，
+	// 线上 #100 的对话流里 19/45 条就是它。占位留给执行会话自己的回复。
+	if action.Purpose == "progress" && decision.TriggerKind == RouterTriggerUserMessage && decisionHasHandoff(decision) {
+		return nil
+	}
 	act := state.take()
 	if act == nil {
 		effectID := routeEffectActivityID(decision, action)
@@ -264,13 +270,16 @@ func (s *ActivityService) applyRouteSay(
 	if act.Purpose == "summary" {
 		return s.tasks.UpdateTaskResultSummary(ctx, task.ID, body)
 	}
-	// 纯回复没有 Run 可投影任务结果，正文就是这一轮的结果摘要。运行期事件的
-	// 汇报（trigger != user_message）不得覆盖用户回合留下的任务结果摘要。
+	// 纯回复没有 Run 可投影任务结果。只有这一轮**没有执行动作**的 chat 回答才算
+	// 结果摘要：progress 是过程口信，带执行动作的 chat 是开场白，两者都没有总结
+	// 所有权（W1-1）。任务头仍然要停到「待审核」。
 	if act.RunID == "" && decision.TriggerKind == RouterTriggerUserMessage {
 		// 这一轮已经回了话、又没有 Run 可投影任务头：任务必须停在「待审核」，
 		// 不能退回「未开始」（用户实测：#87 回复完成后卡片仍是未开始）。
 		s.markTurnTaskWaitingUser(ctx, task.ID)
-		return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
+		if act.Purpose == "chat" && !decisionHasHandoff(decision) {
+			return s.tasks.recordReplySummaryIfActive(ctx, task.ID, body)
+		}
 	}
 	return nil
 }
@@ -483,190 +492,3 @@ func (s *ActivityService) applyRouteAnswerWaiting(
 
 // hideRouteActivity 把占位回复从用户可见活动流里摘掉。Row 保留（审计/幂等
 // 都需要它），只置 hidden=1 并广播 hidden 让前端移除。
-func (s *ActivityService) hideRouteActivity(ctx context.Context, state *routeApplyState, act *TaskActivity, reason string) error {
-	if act == nil {
-		act = state.take()
-	}
-	if act == nil {
-		return nil
-	}
-	if err := s.activities.SetHidden(ctx, act.ID, true); err != nil {
-		return err
-	}
-	act.Hidden = true
-	s.broadcastUpdated(act, map[string]any{"hidden": true, "hidden_reason": reason})
-	return nil
-}
-
-// routeEffectActivityID 给出运行期事件回合的确定活动 ID。用户留言保持既有语义：
-// 复用同步占位，或每次新起随机 ID 的活动。
-func routeEffectActivityID(decision *RouterDecision, action RouterAction) string {
-	if decision == nil || decision.TriggerKind == RouterTriggerUserMessage {
-		return ""
-	}
-	return routerEventEffectID(decision.ID, action.Seq)
-}
-
-// insertRouteReply 插入一条回复活动。确定 ID 路径用 InsertOrIgnore：已存在同一行
-// 时只更新正文/状态（可广播 updated），不插第二行、不广播 created。
-func (s *ActivityService) insertRouteReply(ctx context.Context, act *TaskActivity, deterministic bool) error {
-	if !deterministic {
-		if err := s.activities.Insert(ctx, act); err != nil {
-			return err
-		}
-		s.broadcastCreated(act)
-		return nil
-	}
-	created, err := s.activities.InsertOrIgnore(ctx, act)
-	if err != nil {
-		return err
-	}
-	if created {
-		s.broadcastCreated(act)
-		return nil
-	}
-	if err := s.activities.UpdateBody(ctx, act.ID, act.Body); err != nil {
-		return err
-	}
-	return s.activities.UpdateStatus(ctx, act.ID, act.Status, nil)
-}
-
-// settledRunSucceeded 判定这条 run_settled 决策背后是不是一轮真的成功结算的
-// Run。运行期事件里也有 kind=run_settled 但任务根本没有 Run 的合成回合（T8
-// 的运行时汇报），那些只是进度说明，不能顶掉任务结果摘要。
-func (s *ActivityService) settledRunSucceeded(ctx context.Context, decision *RouterDecision) bool {
-	if s.tasks == nil || decision == nil || decision.TriggerKind != RouterTriggerRunSettled {
-		return false
-	}
-	runID := strings.TrimSpace(decision.TriggerRef)
-	if runID == "" {
-		return false
-	}
-	run, err := s.tasks.WorkflowRunByID(ctx, runID)
-	if err != nil || run == nil {
-		return false
-	}
-	return ProjectStatusFromRun(run) == StatusSuccess
-}
-
-// settleSummaryActionSeq 决定结算回合里哪一条 say 承担总结：模型显式写了
-// purpose=summary 就用它；只写了 progress/chat（线上补偿回合的实测形态）时
-// 取最后一条 say。没有 say 返回 -1。
-func settleSummaryActionSeq(decision *RouterDecision) int {
-	if decision == nil {
-		return -1
-	}
-	last := -1
-	for _, action := range decision.Actions {
-		if action.Kind != RouterActionSay {
-			continue
-		}
-		if strings.TrimSpace(action.Purpose) == "summary" {
-			return action.Seq
-		}
-		last = action.Seq
-	}
-	return last
-}
-
-// markRouteReply 写 Router 归属字段（决策/回复对象/用途/顺序）。运行期事件的
-// 汇报默认 purpose=progress；用户留言仍是 reply 或调用方指定值。
-func (s *ActivityService) markRouteReply(
-	ctx context.Context,
-	decision *RouterDecision,
-	userAct *TaskActivity,
-	act *TaskActivity,
-	action RouterAction,
-) (map[string]any, error) {
-	purpose := strings.TrimSpace(action.Purpose)
-	if purpose == "" {
-		purpose = "reply"
-		if decision.TriggerKind != RouterTriggerUserMessage {
-			purpose = "progress"
-		}
-	}
-	// purpose=summary 只对「Run 成功结算」这一轮成立。模型在别的回合写了 summary
-	// 也不该让整轮失败（那会把一条汇报连同回合一起丢掉）：降级成 progress，正文
-	// 照常发给用户，只是不写任务结果摘要。
-	if purpose == "summary" && decision.TriggerKind != RouterTriggerRunSettled {
-		purpose = "progress"
-	}
-	if err := s.activities.SetRouteFields(ctx, act.ID, decision.ID, userAct.ID, purpose, action.Seq); err != nil {
-		return nil, err
-	}
-	act.RouterDecisionID = decision.ID
-	act.ReplyToID = userAct.ID
-	act.Purpose = purpose
-	act.Ordinal = action.Seq
-	return map[string]any{"purpose": purpose}, nil
-}
-
-// resolveRouteWorkflowVersion 解析 Router 给的版本：显式 version_id 优先，
-// 否则取该 workflow 的最新发布版本。两者都不存在是决策失败，不是回落。
-func (s *ActivityService) resolveRouteWorkflowVersion(ctx context.Context, task Task, action RouterAction) (WorkflowVersion, error) {
-	// 临时图（Router 当场起草）不进控制面目录，也不需要控制面可用：合成一个
-	// 只属于这一次 Run 的版本，作用域取任务所在的 root —— 项目级、免批。
-	if action.Graph != nil {
-		graph := *action.Graph
-		graph.RootID = task.RootID
-		return WorkflowVersion{
-			WorkflowID: routerAdhocWorkflowID,
-			Version:    adhocVersionID(graph),
-			Revision:   "1",
-			Graph:      graph,
-			Author:     "router",
-		}, nil
-	}
-	if s.workflows == nil {
-		return WorkflowVersion{}, errors.New("workflow control-plane store unavailable")
-	}
-	if id := strings.TrimSpace(action.VersionID); id != "" {
-		if version, err := s.workflows.GetVersion(ctx, id); err == nil {
-			return version, nil
-		}
-	}
-	workflowID := strings.TrimSpace(action.WorkflowID)
-	if workflowID == "" {
-		return WorkflowVersion{}, errors.New("run_workflow requires workflow_id or version_id")
-	}
-	latest, ok := s.latestVersion(ctx, workflowID)
-	if !ok {
-		return WorkflowVersion{}, fmt.Errorf("workflow %s has no published version", workflowID)
-	}
-	return s.workflows.GetVersion(ctx, latest)
-}
-
-// routeTurnStarted 把「起跑守卫拒绝」翻译成决策失败：占位回复已经显示原因，
-// 这里只负责让 router_decisions 不假装 applied。
-func routeTurnStarted(act *TaskActivity, kind string) error {
-	if act != nil && act.Status == ActivityStatusFailed {
-		summary := strings.TrimSpace(act.Summary)
-		if summary == "" {
-			summary = "turn rejected"
-		}
-		return fmt.Errorf("%s: %s", kind, summary)
-	}
-	return nil
-}
-
-func cleanRouteOptions(options []string) []string {
-	out := make([]string, 0, len(options))
-	for _, option := range options {
-		if trimmed := strings.TrimSpace(option); trimmed != "" {
-			out = append(out, "· "+trimmed)
-		}
-	}
-	return out
-}
-
-// routeOptionLabels 是卡片用的选项标签：与正文同源（同样去空、同样顺序），
-// 但不带正文里的项目符号 —— 卡片按钮自己就是图形，再叠一个「· 」只是噪声。
-func routeOptionLabels(options []string) []string {
-	out := make([]string, 0, len(options))
-	for _, option := range options {
-		if trimmed := strings.TrimSpace(option); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}

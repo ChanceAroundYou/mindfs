@@ -10,7 +10,6 @@ import (
 	"mindfs/server/internal/gitview"
 )
 
-
 func resolveGitRelatedFileDiffTarget(ctx context.Context, root fs.RootInfo, in GitRelatedFileDiffInput) (string, string, string, string, error) {
 	path := strings.TrimSpace(in.Path)
 	repoPath := strings.TrimSpace(in.RepoPath)

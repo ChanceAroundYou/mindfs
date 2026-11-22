@@ -5,6 +5,9 @@ import type { ActiveToken } from "./tokenEditorUtils";
 import { PlusIcon, SendIcon } from "../action/composerIcons";
 import { composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n";
+import { resolveEnterIntent } from "../../shared/sendShortcut";
+import { useMobileKeyboard } from "../../hooks/useMobileKeyboard";
+import { loadMobileEnterKeySends } from "../../app/appStorage";
 
 export type PromptEditorProps = {
   value: string;
@@ -76,6 +79,10 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
 ) {
   const { t } = useI18n();
   const editorRef = useRef<TokenEditorHandle | null>(null);
+  // 回车语义与对话输入框同源（见 shared/sendShortcut.ts）：桌面 Enter 换行、
+  // Ctrl/Cmd+Enter 发送；移动端按「回车键发送」设置走，发送键始终可用。
+  const isMobileKeyboard = useMobileKeyboard();
+  const mobileEnterKeySends = useRef(loadMobileEnterKeySends()).current;
   // 折行判定与 inset 切换与对话输入框共用同一 hook（阈值只有一处，不会各改各的）。
   const {
     isMultiLine,
@@ -117,7 +124,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     onSend?.(latest);
   };
 
-  // 默认回车 = 发送（Shift+Enter 换行），与对话输入框一致；输入法组合中的回车放行。
+  // 默认回车 = 换行，Ctrl/Cmd+Enter = 发送（与对话输入框同一套判断）；输入法组合中的回车放行。
   const isComposing = (event: KeyboardEvent | null) => {
     const native = event as (KeyboardEvent & { isComposing?: boolean; keyCode?: number }) | null | undefined;
     return !!native?.isComposing || native?.keyCode === 229;
@@ -125,7 +132,9 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   const handleEnter = (event: KeyboardEvent | null): boolean => {
     // 候选下拉优先：面板返回 true 时由它选中候选，不再触发发送。
     if (onEnter?.(event)) return true;
-    if (isComposing(event) || event?.shiftKey) return false;
+    if (isComposing(event)) return true;
+    const intent = resolveEnterIntent(event, { isMobile: isMobileKeyboard, mobileEnterKeySends });
+    if (intent !== "send") return false;
     event?.preventDefault();
     if (canSend) flushAndSend();
     return true;

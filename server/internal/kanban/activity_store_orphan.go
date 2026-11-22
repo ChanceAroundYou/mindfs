@@ -35,6 +35,30 @@ func (s *ActivityStore) ListOrphanDirectReplies(ctx context.Context) ([]*TaskAct
 	return items, rows.Err()
 }
 
+// ListLiveDirectReplies 返回某任务上 run_id 为空、仍停在 pending/running 的回复行。
+// 判据与 ListOrphanDirectReplies 相同，只是把范围收窄到一个任务：人工「终止」只
+// 结算这一任务自己的在飞回复，不能顺手把别的任务的活也收掉。
+func (s *ActivityStore) ListLiveDirectReplies(ctx context.Context, taskID string) ([]*TaskActivity, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+activitySelectColumns+` FROM task_activities
+		 WHERE task_id = ? AND type = ? AND status IN (?, ?) AND COALESCE(run_id, '') = ''
+		 ORDER BY created_at ASC, rowid ASC`,
+		strings.TrimSpace(taskID), ActivityTypeAgentReply, ActivityStatusPending, ActivityStatusRunning)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []*TaskActivity{}
+	for rows.Next() {
+		activity, err := scanActivityRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, activity)
+	}
+	return items, rows.Err()
+}
+
 // ListLiveRepliesByRun 返回绑在某条 Run 上、仍停在 pending/running 的回复行。
 // 用于 legacy 审计 Run 的收尾：那类回复 run_id 不为空，直连孤儿查询按设计收不到。
 func (s *ActivityStore) ListLiveRepliesByRun(ctx context.Context, runID string) ([]*TaskActivity, error) {

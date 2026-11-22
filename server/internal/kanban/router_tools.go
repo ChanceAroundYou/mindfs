@@ -153,7 +153,7 @@ func (e *routerToolEnv) runWorkflowTool() RouterToolSpec {
 			"version_id":  map[string]any{"type": "string"},
 			"graph": map[string]any{
 				"type":        "object",
-				"description": "临时 workflow：nodes（id/kind/params）+ edges（from/to）。最多 12 个节点，结构按编辑器同一套规则校验",
+				"description": "临时 workflow：nodes（id/kind/params）+ edges（from/to）。最多 12 个节点，结构按编辑器同一套规则校验。agent 节点的 params.agent 可省略（默认 claude）。可给 defaults.model 设整张图的默认模型（节点 params.model 优先）",
 			},
 			"session_mode": map[string]any{
 				"type": "string", "enum": []string{RouterSessionModeNew, RouterSessionModeContinue},
@@ -224,7 +224,7 @@ func (e *routerToolEnv) saveWorkflowTool() RouterToolSpec {
 			"workflow_id": map[string]any{"type": "string", "minLength": 1, "description": "目录里的条目 id（小写短横线）"},
 			"name":        map[string]any{"type": "string", "description": "展示名"},
 			"scope":       map[string]any{"type": "string", "enum": []string{WorkflowScopeProject, WorkflowScopeGlobal}},
-			"graph":       map[string]any{"type": "object", "description": "要固化的图（与 base_workflow_id 二选一）"},
+			"graph":       map[string]any{"type": "object", "description": "要固化的图（与 base_workflow_id 二选一）。agent 节点的 params.agent 可省略（默认 claude）。可给 defaults.model 设整张图的默认模型（节点 params.model 优先）"},
 			"base_workflow_id": map[string]any{
 				"type": "string", "description": "从目录里这一版派生（复制它的图；可再用 graph 覆盖）",
 			},

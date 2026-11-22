@@ -85,8 +85,12 @@ func TestServiceSendsUnsentCardOnceWithStableIdempotencyKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := readText(t, logPath)
-	if !strings.Contains(calls, "mindfs-card-gate-nr-1") {
+	key := idempotencyKey("gate-nr-1")
+	if !strings.Contains(calls, key) {
 		t.Fatalf("idempotency key missing:\n%s", calls)
+	}
+	if len(key) > feishuKeyLimit {
+		t.Fatalf("idempotency key %q is %d chars", key, len(key))
 	}
 	c, ok := st.Get("gate-nr-1")
 	if !ok || c.MessageID != "om_1" || c.RenderedVersion != c.Version || c.State != StateOpen {
