@@ -43,7 +43,7 @@
 - [ ] `server/internal/kanban/activity_store.go`（640）
 - [ ] `server/internal/kanban/router_tools.go`（627）
 - [ ] `server/internal/api/usecase/session_prompt_test.go`（589）
-- [ ] `server/internal/kanban/task_store_workflow_runs.go`（573）
+- [x] `server/internal/kanban/task_store_workflow_runs.go`（573→439，2026-11-23 把建表/补列/历史重建拆到 `task_store_workflow_run_schema.go`）
 - [ ] `server/internal/kanban/activity_service.go`（563）
 - [ ] `server/internal/kanban/router_coordinate_turn.go`（560）
 - [ ] `cli/cmd/startup.go`（560）
