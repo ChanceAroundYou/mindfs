@@ -330,11 +330,13 @@ groups:
   - id: G-T
     title: 流式重放与正文正确性（快照重建协议）
     kind: fix
-    symptom: "同一段正文在行内被拼成 aabb（文本出现两遍、越切越多）；每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；切回运行中会话时在途内容整块丢失；正在完成的正文瞬间消失；控制台每个重放批帧抛一次 onStream(undefined) TypeError；没有用户操作也每 8 秒自持一次 done → session.ready → 重放 → done；用户新发的消息有时被插到 assistant 最后几条消息的上方而不是会话末尾（现场：CLI 在 result 之后继续输出的续写行没有持久行可落，留在缓存尾巴上，被整体追加到窗口之后，把 19 分钟后才发出的用户消息顶到了它们上面）。"
-    why: "重放是快照重建，不是增量续流：服务端每次挂载恒回一帧 reset:true 的整批事件，客户端清掉瞬时尾巴再照单重建，于是「客户端尾巴 = 服务端 buffer 的纯函数」无条件成立。这一组 2026-10-06 被整体反转过一次，合上游时切勿按旧版恢复（event_cursor 序号续传、mergeStreamedText 重发判据、completed 表补发 done(replay:true) 三者全部删除）。reset 必须是参数而不是常量：首帧与排空续投帧形状相同、语义相反。瞬时行判据只能有一处实现，且 seq=0 的用户行例外必须保留 —— 那是乐观回声，服务端事件流里从来没有它。computeTailOverlay 只把「缓存里最新一条持久化 user 行之后」的瞬时行当活尾巴：排在它前面、又比它早 60s 以上的行属于上一轮的续写残留，不得当 tail 追加到窗口之后（位置判据防残留被顶到新消息后面，时间判据防持久化 user 行晚到时误杀本轮正在流出的行，60s 容忍时钟偏差）。"
+    symptom: "同一段正文在行内被拼成 aabb（文本出现两遍、越切越多）；每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；切回运行中会话时在途内容整块丢失；正在完成的正文瞬间消失；控制台每个重放批帧抛一次 onStream(undefined) TypeError；没有用户操作也每 8 秒自持一次 done → session.ready → 重放 → done；用户新发的消息有时被插到 assistant 最后几条消息的上方而不是会话末尾（现场：CLI 在 result 之后继续输出的续写行没有持久行可落，留在缓存尾巴上，被整体追加到窗口之后，把 19 分钟后才发出的用户消息顶到了它们上面）；点会话右上角「同步」后，消息流底部刷出一大堆只有复制/模型/用量/时间/上下文胶囊、没有正文的行，时间戳从旧到新。"
+    why: "重放是快照重建，不是增量续流：服务端每次挂载恒回一帧 reset:true 的整批事件，客户端清掉瞬时尾巴再照单重建，于是「客户端尾巴 = 服务端 buffer 的纯函数」无条件成立。这一组 2026-10-06 被整体反转过一次，合上游时切勿按旧版恢复（event_cursor 序号续传、mergeStreamedText 重发判据、completed 表补发 done(replay:true) 三者全部删除）。reset 必须是参数而不是常量：首帧与排空续投帧形状相同、语义相反。瞬时行判据只能有一处实现，且 seq=0 的用户行例外必须保留 —— 那是乐观回声，服务端事件流里从来没有它。computeTailOverlay 只把「缓存里最新一条持久化 user 行之后」的瞬时行当活尾巴：排在它前面、又比它早 60s 以上的行属于上一轮的续写残留，不得当 tail 追加到窗口之后（位置判据防残留被顶到新消息后面，时间判据防持久化 user 行晚到时误杀本轮正在流出的行，60s 容忍时钟偏差）。**持久行另有一条下界**：只有 seq **大于窗口内最大 seq** 的持久行才算尾巴，窗口以下的持久行归 applyWindow 分页管。少了这条，`POST /sync` 的回包（缓存缺失时 `afterSeq=0` = 整个会话）会被 `handleSyncSession` 整份写进缓存，overlay 就把几百条历史行追加到窗口之后；它们不在 `visibleBlocks` 里、而 S2d 之后主日志 `content` 恒空，于是各自退化成 turn_meta 纯页脚 —— 就是上面那条「同步刷出一大堆控件」。这条下界每次渲染从 `visibleExchanges` 现算，**不是**被退役的 `latestSeq` 有状态水位（那个会把晚到的真实行永久吞掉，2026-09-28 事故）；守卫同时禁「状态水位」和「没有下界」两个方向。下界修好之后仍会有真正的新行（seq 比窗口新）走 overlay，所以块与 aux 要按 seq 从会话级映射补一份（`supplementOverlayMap`，只补窗口缺的键 —— 同 seq 两个 revision 并存会把正文与工具卡渲染两遍）。`withSessionMeta` 的 `blocks` 同理必须按 seq 合并而非整份替换：带 `seq` 的增量同步只回增量那几段的块，整份替换会让缓存里其它 seq 的正文消失，而 `saveCachedSession` 照旧落盘。"
     files:
       - web/src/services/session.ts
       - web/src/services/session/sessionDispatcher.ts
+      - web/src/services/session/sessionExchangeMerge.ts
+      - web/src/components/session/SessionViewer.tsx
       - web/src/app/useSessionStreamCache.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/shared/sessionOverlay.ts
@@ -352,6 +354,7 @@ groups:
       - web/tests/sync-preserves-pending-ask-card.test.mjs
       - web/tests/session-timeline-seq.test.mjs
       - web/tests/session-overlay-unit.test.mjs
+      - web/tests/session-window-merge.test.mjs
       - web/tests/message-mechanism-merges.test.mjs
       - web/tests/session-core-unit.test.mjs
       - web/tests/e2e-message-behavior.test.mjs
@@ -361,6 +364,8 @@ groups:
       - web/src/services/session/sessionExchangeMerge.ts:composeLoadedExchanges
       - web/src/services/session/sessionExchangeMerge.ts:isTransientExchange
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
+      - web/src/shared/sessionOverlay.ts:supplementOverlayMap
+      - web/src/services/session/sessionExchangeMerge.ts:mergeSessionBlockMaps
 
   - id: G-W
     title: worktree 会话 repoint（把会话从已删工作树搬回主 checkout）
