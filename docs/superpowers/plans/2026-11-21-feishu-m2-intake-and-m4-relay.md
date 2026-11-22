@@ -571,3 +571,78 @@ git commit -- \
 - worker 节点任务产生 gate → 主节点飞书收到卡；用户点击 → 对应 worker 的 NodeRun 推进，主节点任务库不误写。
 - 错误 token / 伪造 node_id 的 relay 与 answer 请求分别被 401/400/403 拒绝，日志无 token、无消息全文。
 - 本机 `sudo systemctl restart mindfs` 只能由用户执行；WSL / fn / pc-win 的重启按节点表执行，版本逐字一致。
+
+## Task 9 执行结果（2026-11-22）
+
+### 端到端接线
+
+- 新增 `server/app/feishu_intake_relay_integration_test.go`（171 行）与 `server/app/feishu_click_relay_integration_test.go`（240 行），均位于 `package app`：能同时触达 `feishuAnswerRelay`、`feishuTaskCreator` 与 `api.HTTPHandler.Routes()`，不需要导出任何包私有符号。
+- `TestFeishuIntakeEndToEndRoutesToRemoteTask`：用真实 `im.message.receive_v1` 事件驱动真实 Service/supervisor、真实 intake 策略、真实项目解析和真实 `feishuTaskCreator`，断言 owner 私聊「在 fn 的 docs 建个任务」只向 fn 的 `/api/tasks` 发一次 POST，载荷 `root_id=root-docs`、`input` 原文、`name=feishuTaskName(input)`、`workflow_choice=empty`、`start_immediately=true`；同时钉住 `PickerTTL=24h`。
+- `TestFeishuRelayEndToEndCardAndAnswer`：worker 卡片经真实 `RelayNotifier` → 主控 `/api/channels/feishu/relay` → 真实 card store + lark-cli 假脚本；断言卡片落在主控、`NodeID=fn`，且点击后 `state=done`。再把 `Answer` 经生产 `feishuAnswerRelay` 发到 worker 的 `/api/channels/feishu/answer`，断言口令头、路径和整个 `Answer` 原样到达，`AppContext{}` 下 `KindNotice` 直接返回 200；载荷里塞了 decoy URL，decoy 服务器零命中。
+- `TestFeishuRelayEndToEndRejectsWrongToken`：两端 401，错误口令不建卡、不到 apply。
+- RED/GREEN：临时注释掉 `http_routes.go` 中 answer 路由，定向测试报 `answer relay: feishu answer: node fn rejected answer with HTTP 404` 与 `answer wrong token = 404`；恢复后 3 条全部 PASS。
+
+### 变异账本
+
+| # | 变异 | 定向命令 | RED 证据 | 恢复后 |
+|---|---|---|---|---|
+| M1 | 去掉 `s.store.Seen(id)` 去重 | `go test ./server/internal/channels/feishu -run TestIntakeDedupAndRateLimit -count=1` | `同一 message_id 只能处理一次：calls=2 notices=2` | PASS |
+| M2 | 去掉 owner 检查 | `go test ./server/internal/channels/feishu -run TestIntakeIgnoresNonOwnerGroupAndNonText -count=1` | `非 owner / 群聊 / 非文本必须忽略：calls=0 notices=1` | PASS |
+| M3 | `PickerTTL` 改为 1h | `go test ./server/app -run TestFeishuIntakeEndToEndRoutesToRemoteTask -count=1` | `feishu.PickerTTL = 1h0m0s, want 24h` | PASS |
+| M4 | relay token 改成明文比较 | `go test ./server/internal/api -run TestFeishuRelayUsesConstantTimeTokenCompare -count=1` | `relay token must not be compared with plain string equality` | PASS |
+| M5 | 控制面前缀放宽到 `/api/channels` | `go test ./server/internal/nodeinfo -run TestFeishuRelayIsExactControlPlanePath -count=1` | `/api/channels must stay data-plane` 等 4 行 | PASS |
+| M6 | 去掉节点表校验 | `go test ./server/internal/channels/feishu -run TestValidateRelayRequestRejectsUnconfiguredNode -count=1` | 第一次因 `known` 未使用编译失败，不构成行为证据；改为 `_ = known` 后真实 RED：`ValidateRelayRequest(...NodeID:attacker...) accepted an unconfigured node` | PASS |
+| M7 | answer 按载荷 URL 路由 | `go test ./server/app -run TestFeishuRelayEndToEndCardAndAnswer -count=1` | `answer 没有被回传到 fn 节点`（decoy 收到请求） | PASS |
+| M8 | notifier 重试 4xx | `go test ./server/internal/channels/feishu -run TestRelayNotifierFailsImmediatelyOnClientError -count=1` | `4xx must fail immediately` | PASS |
+
+### 门禁
+
+- `go test -count=1 ./...`：全绿（28 包，`server/internal/kanban` 271.6s）。
+- `(cd web && npx tsc -b --noEmit)`：clean（只有 npm 的 `allow-scripts` 警告）。
+- `(cd web && npx vitest run)`：260 passed / 5 skipped 文件，863 passed / 6 skipped 用例，77.93s。
+- `git worktree add --detach /tmp/mindfs-gph-check HEAD && (cd /tmp/mindfs-gph-check && make check-upstream)`：首跑报 G-LV/G-NW 两处锚点漂移（由 T1–T8 改动造成），修正后复跑 `✓ 全部通过：2379 个 delta 文件被 359 组完整覆盖`；没有基线 flake。
+
+### 已知边界
+
+- notice 卡点击在 `service_click.go` 里走 `settleNotice` 本地结案，不经过 answer handler；因此「卡片点击 → 主控 answer handler → worker」这一段由直接调用生产 `feishuAnswerRelay` 覆盖，卡片状态机另由真实 click 事件覆盖。gate/ask 的 NodeRun 级推进由 T7/T8 单测覆盖，未在本轮隔离端到端里跑真实 kanban。
+- 未部署、未重启任何节点；本机 system 单元仍只能由用户重启。
+
+## 复审 fix wave（2026-11-22，Scope: G-PH）
+
+五项一次收口，全部 TDD：先改测试看 RED，再改生产；最后重跑完整门禁。
+
+| 发现 | 修复 | 钉住的测试 |
+|---|---|---|
+| F1 Critical：`server.Run` 只启动卡片通道，`AttachFeishuIntake` 没有生产调用者，owner 私聊永远被静默忽略 | 新增 `prepareFeishuChannel` 单一装配缝；`server.Run` 在 `workspaces` 就绪后、`Start(ctx)` 前调用它装配 `ConfigDir/NodeID/Nodes/Workspace`，失败只记 `[feishu] 入站装配失败，M2 不启用` 并保留 M1；`feishu_node_id` 可为空，按「本机」解释 | `TestServerRunPreparesFeishuIntakeBeforeStart`、`TestFeishuIntakeEndToEndRoutesToRemoteTask`（改用 `prepareFeishuChannel`）、`TestPrepareFeishuChannelAllowsEmptyNodeID` |
+| F2 Important：选择卡点击缺少 `SetPickerTaskDeps`，线上点击只报「选择卡缺少建任务依赖」 | `AttachFeishuIntake` 在 store/creator 就绪后调用 `svc.SetPickerTaskDeps(store, creator)` | `TestPrepareFeishuChannelInstallsPickerTaskDeps`（真实歧义私聊 → 真卡 → 真 `HandleAction` → 真 creator POST） |
+| F3 Important：并发重投都能过 `Seen(id)` 并重复建任务 | 新增 `IntakeStore.Claim`（原子写 `creating`，失败回滚内存，重投直接吞掉）；`Handle` 先 Claim，成功/选择卡/所有终态拒绝与失败改走 `SetStatus` | `TestIntakeStoreClaimIsAtomic`、`TestIntakeStoreClaimRollsBackOnSaveFailure`、`TestIntakeConcurrentRedeliveryCreatesOneTask`、`TestIntakePickerStatusSurvivesClickClaim` |
+| F4 Important：中继只有 1+2 次尝试，与设计 `10s/30s/2m` 不符 | `relayMaxAttempts=4`、`relayBackoffs={10s,30s,2m}` | `TestRelayNotifierRetriesThenSucceeds`、`TestRelayNotifierGivesUpWithReadableError` |
+| F5 Important：自定义中继 token 会被 Go 默认客户端带到跨主机 302 | 新增 `feishu.NewRelayClient`（scheme/host 变化即报错）；`RelayNotifier` 默认客户端与 `newFeishuAnswerRelay` **构造时的 `Client`** 都改用它（不是只改 nil fallback） | `TestNewRelayClientRefusesCrossHostRedirect`、`TestNewRelayClientAllowsSameHostRedirect`、`TestNewFeishuAnswerRelayRefusesCrossHostRedirect`、`TestFeishuAnswerRelayUsesRedirectSafeClient` |
+
+RED/GREEN 证据：`prepareFeishuChannel`/`Claim`/`NewRelayClient` 未实现时定向测试编译失败；F4 把常量临时改回 3 与 `{10s,30s}`，两条 retry 用例 RED，恢复后 GREEN；F5 把生产 `Client` 留在裸 `http.Client` 时两条守卫 RED（`decoy reached`/`跨主机 redirect 必须让回答回传失败`），改完 GREEN。`RelayNotifier` 的生产构造点 `server/app/feishu.go` 不设置 `Client`，因此走 nil fallback 的 `NewRelayClient`，同样受保护。
+
+门禁（worktree HEAD `ff8a1612`）：
+- `go test -count=1 ./...`：重跑最终全绿。中途一轮仅 `TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch` 因 sqlite readonly 偶发红，同一测试在基线 `9b9c6cf7`（`-count=5`）同样 RED；它不是本波改动。
+- `(cd web && npx tsc -b --noEmit)`：clean。
+- `(cd web && npx vitest run)`：260 passed / 5 skipped 文件，863 passed / 6 skipped 用例。
+- 干净 worktree `HEAD`（`314e3c52`）`git worktree add --detach /tmp/mindfs-gph-fix HEAD && (cd /tmp/mindfs-gph-fix && make check-upstream)`：`✓ 全部通过：2381 个 delta 文件被 359 组完整覆盖`。
+
+提交：`f57e4115`（wiring+intake）、`62597b8f`（dedupe）、`fbaaeed4`（retry）、`a25cb331`（redirect helper）、`ff8a1612`（生产回答中继 client 补口），均带 `Scope: G-PH`。未部署、未重启任何节点，未改配置。
+
+
+### 收尾复审（2026-11-22，Scope: G-PH）
+
+fix wave 的定向复审判定 F1–F5 全部 ADDRESSED（每条都给出行号与测试证据），同时在**本轮修复触及的代码**里新发现一条 Important 回归，不修不放行：
+
+| 发现 | 根因 | 修复 | 钉住的测试 |
+|---|---|---|---|
+| 选择卡发送失败后消息永久被吞 | F3 的 `Claim` 把去重记录提前写成 `creating`，选择卡分支失败时只 `return err`，记录停在 `creating`；同一条消息重投被 `Claim` 静默吞掉，owner 永远收不到卡，去重账本却显示已处理 | 新增 `IntakeStore.Release`（只释放仍为 `creating` 的占坑；已到 picker/created 的属于真实卡片或任务，必须继续去重，落盘失败回滚内存）；选择卡分支发送失败时先 `Release` 再返回错误 | `TestIntakeReleaseOnlyDropsUnfinishedClaim`、`TestIntakePickerNotifyFailureReleasesClaim` |
+
+RED/GREEN：两个测试先跑 RED（`重投后应补发一张选择卡，got []`、`已经发出卡片的记录不能被释放`），实现后 GREEN。变异两处各自打红后还原：把 `Release` 改成无条件删除 → 第二条用例红；去掉选择卡分支的 `Release` 调用 → 第一条用例红。
+
+门禁（worktree HEAD `329694ea`）：
+- `go build ./...` OK、`gofmt -l` 无输出。
+- `go test ./server/internal/channels/feishu -count=1` 全绿。
+- 全量 `go test -count=1 ./...` 曾在机器同时跑 3–4 份全量套件时出现两处既有 flake：`TestProxyFoldRespectsDisableFile`（TempDir 清理竞态，单跑通过）与 `server/internal/kanban` 600s 超时；kanban 单跑复现的 `TestCoordinatorTickReclaimsStaleClaims` 失败信息为 `TempDir RemoveAll cleanup: directory not empty`，单独 `-count=3` 三次全 PASS，与本组改动无关。
+
+提交：`329694ea`（`Scope: G-PH`）。未部署、未重启任何节点，未改配置。

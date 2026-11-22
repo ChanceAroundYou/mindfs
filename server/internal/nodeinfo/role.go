@@ -61,6 +61,8 @@ var controlPlanePrefixes = []string{
 	"/api/node-info",
 	"/api/token-station",
 	"/api/app/update",
+	// 只有主控代发卡片；飞书入口与点击回传留在 worker 本地（数据面）。
+	"/api/channels/feishu/relay",
 }
 
 // ControlPlanePrefixes 返回控制面前缀表（副本，调用方改它不影响包内状态）。

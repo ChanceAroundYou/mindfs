@@ -41,16 +41,19 @@ type startupConfig struct {
 	SessionHygiene *startupSessionHygieneConfig `json:"session_hygiene"`
 	// Channels 是外部通道（飞书等）的本机配置。不配置 = 全关。
 	Channels *startupChannelsConfig `json:"channels"`
+	// 根级飞书中继配置：只在 config.json，没有对应 flag。
+	FeishuRelayURL *string `json:"feishu_relay_url"`
+	FeishuNodeID   *string `json:"feishu_node_id"`
 }
 
 // startupSessionHygieneConfig 只影响本机。它是少数「不配置也生效」的特性：
 // 用户裁定默认开、配置可关，所以 Enabled 用指针区分「没写」与「显式关闭」。
 type startupSessionHygieneConfig struct {
-	Enabled        *bool                                  `json:"enabled"`
-	ActiveHours    *float64                               `json:"active_hours"`
-	ContextTokens  *int                                   `json:"context_tokens"`
-	HintTurns      *int                                   `json:"hint_turns"`
-	IdleGapMinutes *int                                   `json:"idle_gap_minutes"`
+	Enabled        *bool                                   `json:"enabled"`
+	ActiveHours    *float64                                `json:"active_hours"`
+	ContextTokens  *int                                    `json:"context_tokens"`
+	HintTurns      *int                                    `json:"hint_turns"`
+	IdleGapMinutes *int                                    `json:"idle_gap_minutes"`
 	Harness        map[string]startupSessionHygieneHarness `json:"harness"`
 }
 
@@ -189,10 +192,19 @@ type startupFlags struct {
 	LiveCompactCacheTTLSeconds    *int
 
 	// 飞书通道没有 CLI flag：只由 config.json 的 channels.feishu 段填充。
-	FeishuEnabled      *bool
-	FeishuOwnerOpenID  *string
-	FeishuLarkCLI      *string
-	FeishuCardTTLHours *int
+	FeishuEnabled          *bool
+	FeishuOwnerOpenID      *string
+	FeishuLarkCLI          *string
+	FeishuCardTTLHours     *int
+	FeishuBindings         *[]app.FeishuBinding
+	FeishuDefaultRootID    *string
+	FeishuPickerTTLHours   *int
+	FeishuPickerMax        *int
+	FeishuInboundPerMinute *int
+	FeishuInboundBurst     *int
+	FeishuRelayToken       *string
+	FeishuRelayURL         *string
+	FeishuNodeID           *string
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -278,6 +290,12 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 	if flags.WebPushRelayURL != nil && cfg.WebPushRelayURL != nil {
 		*flags.WebPushRelayURL = strings.TrimSpace(*cfg.WebPushRelayURL)
 	}
+	if flags.FeishuRelayURL != nil && cfg.FeishuRelayURL != nil {
+		*flags.FeishuRelayURL = strings.TrimSpace(*cfg.FeishuRelayURL)
+	}
+	if flags.FeishuNodeID != nil && cfg.FeishuNodeID != nil {
+		*flags.FeishuNodeID = strings.TrimSpace(*cfg.FeishuNodeID)
+	}
 	if flags.Role != nil && cfg.Role != nil && !explicit["role"] {
 		*flags.Role = strings.TrimSpace(*cfg.Role)
 	}
@@ -339,7 +357,9 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		}
 	}
 	// Channels 与 router 无关，必须在那条提前 return 之前落地。
-	applyFeishuConfig(cfg, explicit, flags)
+	if err := applyFeishuConfig(cfg, explicit, flags); err != nil {
+		return err
+	}
 	router := cfg.Router
 	if task := cfg.Task; task != nil {
 		if flags.TaskAgent != nil && task.Agent != nil {

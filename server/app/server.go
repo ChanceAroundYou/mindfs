@@ -48,6 +48,10 @@ type StartOptions struct {
 	Role string
 	// Feishu 是外部通道（飞书）的本机配置。Enabled=false（缺省）时通道不创建。
 	Feishu FeishuOptions
+	// 根级飞书中继配置：FeishuRelayURL 是 worker 把卡片/回答交给控制节点的地址，
+	// FeishuNodeID 是本节点在飞书项目目录里的名字。两者只走 config.json。
+	FeishuRelayURL string
+	FeishuNodeID   string
 	// Task Router 是节点本地配置；cli/cmd 不能 import server/internal/kanban，
 	// 所以入口只传字符串/时长，在 Start 里归一化成 kanban.RouterConfig。
 	RouterMode        string
@@ -303,10 +307,20 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),
 		parallelMainTree: &opts.WorkflowParallelMainTree,
 		feishu:           feishuChannel,
+		feishuRelay:      feishuRelayConfigFromOptions(opts),
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 	if feishuChannel != nil {
-		feishuChannel.SetAnswerHandler(workspaces.ApplyFeishuAnswer)
+		if err := prepareFeishuChannel(feishuChannel, opts.Feishu, FeishuIntakeDeps{
+			ConfigDir: configDir,
+			NodeID:    opts.FeishuNodeID,
+			Nodes:     sharedNodes,
+			Workspace: workspaces,
+		}); err != nil {
+			// 入站装配失败不能杀掉进程：M1 的卡片出口与首页仍照常可用。
+			log.Printf("[feishu] 入站装配失败，M2 不启用: %v", err)
+		}
+		feishuChannel.SetAnswerHandler(newFeishuAnswerRelay(workspaces))
 		feishuChannel.Start(ctx)
 	}
 

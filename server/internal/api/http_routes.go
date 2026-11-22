@@ -194,6 +194,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 	// 只放行数据面，这条会被 403。
 	r.Post("/api/web-push/relay", h.handleWebPushRelay)
 
+	// 飞书卡片中继：只有主控代发（凭据与 lark-cli 只在主控）。worker 自己的
+	// 入口/点击端点仍属数据面，只在 nodeinfo.controlPlanePrefixes 里登记这一条。
+	r.Post("/api/channels/feishu/relay", h.handleFeishuRelay)
+	// worker 就地处理主控转来的点击；这是数据面端点，worker 必须能提供。
+	r.Post("/api/channels/feishu/answer", h.handleFeishuAnswer)
+
 	// Agent status API
 	r.Get("/api/agents", h.handleAgentsList)
 	r.Get("/api/agents/custom-models", h.handleAgentCustomModelsGet)

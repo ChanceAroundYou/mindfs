@@ -12,13 +12,28 @@ import (
 	"mindfs/server/internal/kanban"
 )
 
+// FeishuBinding 是 config.json 里的 chat_id → {node_id, root_id} 显式绑定。
+// app 不依赖 feishu 的配置结构：映射只在 newFeishuChannel 做一次。
+type FeishuBinding struct {
+	ChatID string
+	NodeID string
+	RootID string
+}
+
 // FeishuOptions 是飞书通道的启动参数。Enabled=false（缺省）时整个通道不创建，
 // 进程里不会多出任何 goroutine 或文件。
 type FeishuOptions struct {
-	Enabled     bool
-	OwnerOpenID string
-	LarkCLIPath string
-	CardTTL     time.Duration
+	Enabled              bool
+	OwnerOpenID          string
+	LarkCLIPath          string
+	CardTTL              time.Duration
+	Bindings             []FeishuBinding
+	DefaultRootID        string
+	PickerTTL            time.Duration
+	PickerMax            int
+	InboundRatePerMinute int
+	InboundBurst         int
+	RelayToken           string
 }
 
 // newFeishuChannel 按配置建通道。缺 owner 时宁可不启动：点击只认 owner，
@@ -40,6 +55,15 @@ func newFeishuChannel(opts FeishuOptions, configDir string) *feishu.Service {
 		log.Printf("[feishu] 读取卡片状态失败，通道不启动 path=%s err=%v", statePath, err)
 		return nil
 	}
+	// 显式映射而不是类型别名：feishu 包不能依赖 app，入口配置的变化只在这里翻译一次。
+	bindings := make([]feishu.Binding, 0, len(opts.Bindings))
+	for _, binding := range opts.Bindings {
+		bindings = append(bindings, feishu.Binding{
+			ChatID: strings.TrimSpace(binding.ChatID),
+			NodeID: strings.TrimSpace(binding.NodeID),
+			RootID: strings.TrimSpace(binding.RootID),
+		})
+	}
 	nodeID, _ := os.Hostname()
 	svc := feishu.New(feishu.Config{
 		OwnerOpenID: owner,
@@ -47,7 +71,7 @@ func newFeishuChannel(opts FeishuOptions, configDir string) *feishu.Service {
 		NodeID:      nodeID,
 		CardTTL:     opts.CardTTL,
 	}, store, &feishu.CLI{Path: opts.LarkCLIPath, Timeout: 30 * time.Second})
-	log.Printf("[feishu] 通道已启用 owner=%s node=%s state=%s", shortOpenID(owner), nodeID, statePath)
+	log.Printf("[feishu] 通道已启用 owner=%s node=%s bindings=%d state=%s", shortOpenID(owner), nodeID, len(bindings), statePath)
 	return svc
 }
 
@@ -57,6 +81,23 @@ func shortOpenID(id string) string {
 		return id
 	}
 	return "…" + id[len(id)-6:]
+}
+
+// feishuCardNotifierFor 只按根级 feishu_relay_url 选出口：非空就把卡片交给
+// 主控代发（worker 的 channels.feishu.enabled=false 时也一样装配）；为空才
+// 退回 M1 的本地 lark-cli 出口。绝不因为通道禁用而静默丢卡片。
+func feishuCardNotifierFor(shared sharedServices, accountID string) kanban.CardNotifier {
+	if shared.feishuRelay.URL != "" {
+		return &feishu.RelayNotifier{
+			URL:    shared.feishuRelay.URL,
+			Token:  shared.feishuRelay.Token,
+			NodeID: shared.feishuRelay.NodeID,
+		}
+	}
+	if shared.feishu == nil {
+		return nil
+	}
+	return feishuCardNotifier{svc: shared.feishu, accountID: accountID}
 }
 
 // feishuCardNotifier 把一个账户的任务卡片交给飞书通道。账户是装配时固定的 ——
