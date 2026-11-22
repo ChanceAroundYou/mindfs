@@ -113,15 +113,14 @@ type hygieneRecord struct {
 	autoAttempted bool
 }
 
-// HygieneTracker 保存进程内的会话卫生状态。
-//
-// 只存「增量」：活跃时长按观测间隔累计，提示轮数按回合结束推进。会话的上下文
-// 大小每次从调用方传入（它来自已持久化的 last_context_window），所以重启后即使
-// 内存状态清零，下一次观测也会立刻按真实的时长/上下文重新判定。
+// HygieneTracker 保存会话卫生状态：进程内是热缓存，活跃时长与最近观测时刻
+// 另有一份按会话落盘的快照。上下文大小每次从调用方传入（它来自已持久化的
+// last_context_window），所以重启后下一次观测就能按真实时长/上下文重新判定。
 type HygieneTracker struct {
 	mu      sync.Mutex
 	cfg     HygieneConfig
 	records map[string]*hygieneRecord
+	store   *hygieneStore
 }
 
 func NewHygieneTracker(cfg HygieneConfig) *HygieneTracker {
@@ -179,6 +178,7 @@ func (t *HygieneTracker) ObserveAt(rootID, sessionKey, harness string, at time.T
 		}
 	}
 	rec.lastSeen = at
+	t.persistLocked(key, rec)
 }
 
 // Observe 读取当前结论并按需要推进状态。
@@ -274,18 +274,27 @@ func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTok
 }
 
 // MarkCompacted 在任意一次压缩之后调用（harness 自己的或我们触发的）：
-// 清掉提示与计数，下一次变长要重新积累完整的 N 轮。
+// 清掉提示与计数，下一次变长要重新积累完整的 N 轮。活跃时长也从这次压缩
+// 重新起算 —— 「久」表示的是距上次压缩的累计活跃时长，不是进程活了多久。
 func (t *HygieneTracker) MarkCompacted(rootID, sessionKey string) {
+	t.markCompactedAt(rootID, sessionKey, time.Now())
+}
+
+func (t *HygieneTracker) markCompactedAt(rootID, sessionKey string, at time.Time) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	rec := t.recordLocked(hygieneScope(rootID, sessionKey))
+	key := hygieneScope(rootID, sessionKey)
+	rec := t.recordLocked(key)
 	rec.hinted = false
 	rec.turnsSinceHint = 0
 	rec.autoFailed = false
 	rec.autoAttempted = false
+	rec.activeSeconds = 0
+	rec.lastSeen = at
+	t.persistLocked(key, rec)
 }
 
 // MarkContextStale 在压缩事件已到但新 token_count 未到时调用。

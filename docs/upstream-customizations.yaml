@@ -12294,8 +12294,9 @@ groups:
       ① **三档是纯函数**：`EvaluateHygiene(cfg, snap)` 只读活跃时长与上下文 token 两个数，
       `long && big → hint`、`big → notice`、否则 `normal`、关掉 → `disabled`。阈值判定与「该不该
       触发」只算这一次，测试直接打这张表；UI、自动触发、读口看到的结论天然一致。
-      ② **「久」是累计活跃时长，不是创建时间**：`Observe` 只把 `0 < gap <= idle_gap` 的间隔计入，
-      挂机一夜再回来不会一夜之间变成「又久又大」。
+      ② **「久」是距上次压缩的累计活跃时长，不是创建时间也不是进程寿命**：`ObserveAt` 只把
+      `0 < gap <= idle_gap` 的间隔计入，挂机一夜再回来不会一夜之间变成「又久又大」；活跃时长与
+      观测锚点按会话落盘，重启不清零，harness 压缩时一起重置（见 ⑭）。
       ③ **提示当轮不计数，且只有回合结束能推进**：`hinted` 从 false 翻 true 的那一轮
       `turnsSinceHint` 仍是 0 —— 用户看到「还有 3 轮」时确实还剩 3 轮。读口 `Snapshot` 因此必须
       完全无副作用（不置 `hinted`、不置 `autoAttempted`、不建记录）：它在回合中途随时会被胶囊
@@ -12306,7 +12307,8 @@ groups:
       空闲（总预算 30 分钟），再以普通 `SendMessage` 发 `/compact`；失败（没有压缩事件或发送出错）
       只置 `auto_failed` 并停手，不做退避重试 —— 通道坏了的话每轮重试只是把失败变成噪声。
       ⑥ **成功以 harness 的压缩事件为准**：只有 `onCompactSeen` 被置位才算成功；`EventTypeCompact`
-      的处理里调 `MarkCompacted` 清提示状态并保留活跃时长（压缩解决的是「大」），手动与自动一致。
+      的处理里调 `MarkCompacted` 清提示与计数、把活跃时长归零并重设观测锚点（「久」从这次压缩重新
+      起算），手动与自动一致。
       ⑦ **只认能本地压缩的 harness**：`claude` / `codex`；`codex-acp` / `gemini` / `shell` 与非 chat
       会话（命令、router、文件查看）一律跳过，手动入口直接 400 说明原因。
       ⑧ **零值是默认而不是关闭**：`session_hygiene.enabled` 用 `*bool` 区分「没写」与「显式 false」，
@@ -12319,19 +12321,22 @@ groups:
       ⑪ **压缩后大小不靠猜**：Claude 的 compact boundary 原始 JSONL 带 `postTokens`，但 SDK typed message 不带；适配器按 UUID 从转录补读并塞进 `CompactNotice.PostTokens`，`contextWindowAfterCompact` 用它覆盖 MessageDone 仍带着的压缩前旧值。Codex 没有这个数，保留后续 `token_count`。
       ⑫ **stale 窗口不重复压缩**：压缩事件先到、`token_count` 未到时 `contextStale` 闸住 `Observe`，既不推进轮数也不发 `AutoCompactDue`；新 token 到来后清掉。胶囊累计行只显示总量（当前会话 + agent 的账本，不是全局，也不写「最近 200 次折叠」），所有 token 数字 <10k 原值、>=10k 用 k；不新增「压缩后上下文」展示行，也不改本轮请求 / 本轮节省两行。
       ⑬ **压缩事件优先于流尾部异常**：Codex 的 `/compact` 回合可能在 `compacted` 落盘之后才因流关闭返回 `codex response stream ended unexpectedly`。`runHygieneAutoCompact` 先检查 `onCompactSeen`：已经报告过压缩就按成功收尾，只把流异常写进诊断日志，绝不写 `compact_error` / `auto_failed`；没有压缩事件时才保留原来的失败提示。
+      ⑭ **活跃时长跨重启、压缩即归零**：原先 `activeSeconds` 只在内存里，重启就归零，频繁重启的机器上「久」永远不成立。现在按 `root + session` 把 `active_seconds` 与 `last_seen` 写到 `<configDir>/session-hygiene/hy-<sha256[:12]>.json`（临时文件 + rename，0600/0700），启动时回填；收到 harness 压缩事件时两者一起重置并立即写盘，于是「久」始终表示距上次压缩的累计活跃时长。`ObserveAt` 更新后也写盘，因此跨重启仍按 idle gap 丢弃挂机空档。写盘失败只记日志，不阻断会话。只持久化这两项；`hinted` / 轮数 / pending / error / stale 仍只在进程内，重启后重新积累。
     boundary: |
-      状态在进程内、按 `root + session` 保存：重启后「久」从零重新累计，「已提示过」也一并清空。
+      持久化的只有活跃时长与观测锚点，按账户各自一份（主账户 `<config-dir>/session-hygiene/`，其他账户 `<config-dir>/users/<id>/session-hygiene/`）。提示轮数、`hint`、`auto_failed`、`compact_pending/error`、`context_stale` 仍是进程内状态；服务停机期间发生的 harness 压缩收不到事件，锚点无法自动重置。会话删除暂不联动清理这些小文件：文件名是 scope 哈希，留待专门的清理策略，不扩大本次范围。
       不自动新建会话、不归档、不删转录；不改 live-compact 的任何阈值；「只久」永不自动压缩；
       不做跨会话面板。自动压缩失败后只能手动，用户需自己判断是否要新开会话。
       端到端只在隔离实例验证过（`e2e/test_session_hygiene.py`，真实 Claude + 真实 `/compact`，
-      CLI 回 `compact_result=success`）：线上四端尚未部署这段代码，也没有在用户真实会话里观察过
-      自动触发；状态不持久化，重启后「已提示 / 已失败」都会重来。Codex 的 access token 过期由
+      CLI 回 `compact_result=success`）：主体已随 `v0.5.5-1201-57/67` 四端发布，本轮活跃时长持久化尚未部署；提示状态不持久化，重启后「已提示 / 已失败」都会重来。Codex 的 access token 过期由
       设备本地重新登录解决，本项目不复制或自动刷新设备凭据；胶囊只负责把错误显示出来。
       手动压缩按钮按服务端 pending 状态禁用；旧节点不回该字段时只用 80 秒兜底，不声称能感知结果。
-      Claude postTokens 只在转录可读时补到；读不到就退回原值，不拿估算冒充真实值。Codex 压缩事件后若迟迟没有新 token_count，stale 闸会一直挡住自动压缩，直到下一次 token_count 或重启（状态不持久化）。胶囊累计数来自当前会话 + agent 的 retained ledger，不是全局；账本仍保留最近 200 行供计算，但 UI 不再显示这个窗口数。
+      Claude postTokens 只在转录可读时补到；读不到就退回原值，不拿估算冒充真实值。Codex 压缩事件后若迟迟没有新 token_count，stale 闸会一直挡住自动压缩，直到下一次 token_count 或重启（stale 状态不持久化）。胶囊累计数来自当前会话 + agent 的 retained ledger，不是全局；账本仍保留最近 200 行供计算，但 UI 不再显示这个窗口数。
       ⑬ 只修「压缩已发生但流尾部报错」的状态归类：不尝试从 Codex rollout 回填 token；如果 post-compact `token_count` 没进入事件流，`context_tokens` 仍可能是压缩前的值，stale 闸只保证不重复自动压缩。
     files:
       - server/internal/api/usecase/session_hygiene.go
+      - server/internal/api/usecase/session_hygiene_store.go
+      - server/internal/api/usecase/session_hygiene_persistence_test.go
+      - server/app/workspace_build.go
       - server/internal/api/usecase/session_hygiene_wire.go
       - server/internal/api/usecase/session_hygiene_test.go
       - server/internal/api/usecase/session_hygiene_wire_test.go
@@ -12364,6 +12369,7 @@ groups:
       - web/tests/token-amount.test.mjs
     tests:
       - server/internal/api/usecase/session_hygiene_test.go
+      - server/internal/api/usecase/session_hygiene_persistence_test.go
       - server/internal/api/usecase/session_hygiene_wire_test.go
       - web/tests/context-saving-chip.test.mjs
       - e2e/test_session_hygiene.py
@@ -12376,6 +12382,14 @@ groups:
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens int, turnEnded bool) HygieneView {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens int) HygieneView {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompacted(rootID, sessionKey string) {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) markCompactedAt(rootID, sessionKey string, at time.Time) {'
+      - 'server/internal/api/usecase/session_hygiene_store.go:const hygieneStoreVersion = 1'
+      - 'server/internal/api/usecase/session_hygiene_store.go:func NewHygieneTrackerAt(configDir string, cfg HygieneConfig) *HygieneTracker {'
+      - 'server/internal/api/usecase/session_hygiene_store.go:func (st *hygieneStore) save(scope string, rec *hygieneRecord) {'
+      - 'server/internal/api/usecase/session_hygiene_persistence_test.go:func TestHygieneActiveTimeSurvivesTrackerRestart(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_persistence_test.go:func TestHygieneCompactionResetsPersistedStateImmediately(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_persistence_test.go:func TestHygieneCompactionRestartsTheIdleAnchor(t *testing.T) {'
+      - 'server/app/workspace_build.go:Hygiene:   usecase.NewHygieneTrackerAt(configDir, m.shared.hygiene),'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompactPending(rootID, sessionKey string) {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) FinishCompact(rootID, sessionKey, errText string) {'
       - 'server/internal/api/usecase/session_hygiene.go:CompactPending bool   `json:"compact_pending"`'
@@ -12477,3 +12491,47 @@ groups:
       - 'web/src/app/useReplyingSessionPoll.ts:    const completedAnyNode = completedPendingKeys(previousPending, nextPending, okNodeIds);'
       - 'web/src/app/useReplyingSessionPoll.ts:      reloadListRef.current?.();'
       - 'web/src/app/useAppMultiProjectReload.ts:    scheduleMultiProjectSessionReload,'
+  - id: G-PK
+    title: Codex 跨 provider 续接时丢掉旧 provider 的加密 reasoning
+    kind: fix
+    symptom: |
+      pc-win 上一条在 llmux 下建的 Codex 线程（rollout 里 21 条
+      `reasoning.encrypted_content`），切到官方 ChatGPT 登录（`mindfs-chatgpt`）后每轮
+      都 400：`{"code":"invalid_encrypted_content","message":"The encrypted content
+      Omal...RQ== could not be verified"}`。会话看起来续上了（转录、工具调用都在），
+      但一轮都发不出去；手工改库重建线程只能救当次，下一次切 provider 还会复现。
+    why: |
+      根因在既有 `rethreadCodexResumeOnProviderMismatch`（session_resume_provider.go）：
+      它正确识别 provider 不一致并用 `thread/fork` 换到新 provider，但 fork 会把历史
+      原样复制，包括旧 provider 加密的 reasoning。Responses 是无状态协议，Codex 每轮
+      都把历史 reasoning 重新放进 `input` 发出去，所以新 provider 每轮都拒。
+
+      修法必须同时满足三条，缺一条就复发：
+      1) 只丢新 provider 解不开的密文，可见转录与工具调用一个字都不动 —— 否则等于
+         偷偷改写用户历史；
+      2) 决策要落盘 —— fork 出来的 rollout 会永远带着旧密文，进程重启后如果忘了
+         这件事就会重新开始发无效内容；
+      3) 要有被动兜底 —— 本修复上线前已经被 fork 出去的线程不会再产生一次「换 id」，
+         只能靠上游那句 400 认出来，剥掉后重试一次并记住。
+
+      落点在 MindFS 回环代理（`/c/{provider}/`）而不是 Codex 侧：它是所有 Codex 请求
+      的必经之路，且与 `live_compact` 的模式无关（proxy 总是启动），worker 节点上同样
+      存在。`stripEncryptedReasoningInput` 用字节级区间扫描重建 `input` 数组，数组以外
+      的每个字节原样保留，解析失败一律 fail-open 返回原 body。
+    files:
+      - server/internal/agent/proxy/provider_switch.go
+      - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/proxy/provider_route.go
+      - server/internal/agent/proxy/proxy.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_provider_switch_test.go
+    tests:
+      - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/pool_provider_switch_test.go
+    anchors:
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) MarkProviderSwitch(threadID string) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func stripEncryptedReasoningInput(body []byte) (out []byte, removed int, changed bool) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) recoverInvalidEncryptedContent('
+      - 'server/internal/agent/proxy/provider_route.go:	if scanned && s.providerSwitchedThread(threadID) {'
+      - 'server/internal/agent/proxy/provider_route.go:		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)'
+      - 'server/internal/agent/pool.go:		if codexThreadRethreaded(in.AgentSessionID, threadID) {'

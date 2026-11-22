@@ -106,7 +106,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 
 		TaskAgent: m.shared.taskConfig.Agent,
 		TaskModel: m.shared.taskConfig.Model,
-		Hygiene:   usecase.NewHygieneTracker(m.shared.hygiene),
+		Hygiene:   usecase.NewHygieneTrackerAt(configDir, m.shared.hygiene),
 	}
 	services.Scheduled = scheduled.NewService(services, services)
 	if err := normalizeRegisteredForkSessions(m.ctx, services); err != nil {

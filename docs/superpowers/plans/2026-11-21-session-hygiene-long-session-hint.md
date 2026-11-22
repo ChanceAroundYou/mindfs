@@ -338,3 +338,38 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 上下文 / 胶囊累计口径）随 `v0.5.5-1201-57-g0cc70c6e` 发布，四端版本逐字一致；本机由用户重启，
 运行进程与安装文件同 md5 `540a0e8f…`、`/mindfs/health` 200。更晚的 `045680dc`（流尾异常不再误报
 失败）**不在**这次发布里，仍需下一轮 ship。
+
+## 2026-11-22 追加：活跃时间跨重启，并从上次 harness compact 起算
+
+用户报「live compact 的活跃时间总是非常低」，要求改成「从上次 harness 内置 compact 后的累计
+活跃时间」。取证发现两个叠加原因：① `activeSeconds` 只在 `HygieneTracker` 进程内累计，服务重启
+（含 deploy 后的重启）立刻归零；② 即使不重启，旧语义是「进程启动以来按观测间隔累计」，
+`MarkCompacted` 原本保留它，按字面改成「压缩后重新计时」反而会让刚压缩完的数值更小。用户裁定
+「跨重启保留，从上次 compact 起累计」。
+
+### 改动
+
+- 新增 `server/internal/api/usecase/session_hygiene_store.go`：按 `rootID + "\x00" + sessionKey`
+  的 sha256 前 12 位命名 `<configDir>/session-hygiene/hy-*.json`，只存 `version` / `scope` /
+  `active_seconds` / `last_seen`。临时文件 + `os.Rename` 原子替换，目录 0700、文件 0600；
+  坏文件跳过，写盘失败只记日志，不阻断会话发送。
+- `NewHygieneTrackerAt(configDir, cfg)` 启动时回填这两项；`ObserveAt` 每次更新后写盘；跨进程
+  的 idle gap 仍按 `IdleGapSeconds` 整段丢弃。
+- `markCompactedAt` 在任何 harness 压缩事件后把 `activeSeconds=0`、`lastSeen=now` 并立即写盘，
+  于是「久」表示距上次压缩的累计活跃时长；提示轮数、`hinted`、`auto_failed`、
+  `compact_pending/error`、`context_stale` 仍只在进程内。
+- `server/app/workspace_build.go` 按账户把 `configDir` 接进构造函数，主账户与其余账户各自一份。
+- 旧用例 `TestHygieneCompactionClearsHint` 按新语义改为「压缩后先回 `notice`，重新积累够久才
+  再次 `hint`」；它同时钉住「提示清零不依赖上下文掉出大档」。
+
+### 验证
+
+- 新增 5 条持久化用例：跨重启累计、压缩后跨重启从零累计、压缩立即写盘、压缩重设 idle 锚点、
+  跨重启丢弃长 idle gap。RED（`undefined: NewHygieneTrackerAt`）→ GREEN 全绿。
+- 变异验证（各自打红后还原）：去掉 `ObserveAt` 写盘、去掉 compact 时 `activeSeconds=0`、
+  去掉 compact 时 `lastSeen=at`、去掉 compact 写盘、去掉启动时 `store.load()`。
+- `go build ./...` 通过；`go test -count=1 ./...` 首轮 kanban 偶发红，原样重跑全绿（已知
+  sqlite/TempDir flake，见记忆 `kanban-gate-flaky-sqlite-io`）。
+- 本轮不部署、不重启任何节点；前端无改动。`045680dc` 已随 `v0.5.5-1201-67-ga48e3684`
+  四端发布上线（以 `docs/plans/README.md` 的 2026-11-22 部署状态为权威），本段旧记录说它
+  「仍需下一轮 ship」已被那次发布取代。

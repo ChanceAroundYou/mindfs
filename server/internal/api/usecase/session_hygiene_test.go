@@ -137,6 +137,7 @@ func TestHygieneOnlyTurnEndsAdvanceTheCounter(t *testing.T) {
 }
 
 // 压缩之后上下文变小，提示必须自己消失；再变长要重新积累 N 轮，不能沿用旧计数。
+// 活跃时长也从这次压缩重新起算：旧会话的「久」不能让刚压缩完的会话立刻又到期。
 func TestHygieneCompactionClearsHint(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
@@ -144,14 +145,19 @@ func TestHygieneCompactionClearsHint(t *testing.T) {
 	tracker.Observe("root", "s1", "claude", 200000, true)
 	// 压缩之后上下文仍然很大（真实压缩只是把历史摘要掉）：清提示不能靠
 	// 「掉出大档」这条分支顺带完成，MarkCompacted 必须自己把状态清干净。
-	tracker.MarkCompacted("root", "s1")
+	base := time.Unix(1_700_000_000, 0)
+	tracker.markCompactedAt("root", "s1", base)
 	view := tracker.Snapshot("root", "s1", "claude", 200000)
-	if view.TurnsSinceHint != 0 || view.TurnsUntilAutoCompact != 3 {
-		t.Fatalf("snapshot after compaction = %+v, want a fresh %d-turn window", view, hygieneConfig().HintTurns)
+	if view.ActiveSeconds != 0 || view.TurnsSinceHint != 0 || view.State != HygieneStateNotice {
+		t.Fatalf("snapshot after compaction = %+v, want fresh active time and no hint", view)
+	}
+	// 压缩后重新积累够「久」才重新进提示档，且提示出现的那一轮不计数。
+	for i := 1; i <= 4; i++ {
+		tracker.ObserveAt("root", "s1", "claude", base.Add(time.Duration(i)*30*time.Minute))
 	}
 	first := tracker.Observe("root", "s1", "claude", 200000, true)
 	if first.State != HygieneStateHint {
-		t.Fatalf("state after compaction = %q, want hint", first.State)
+		t.Fatalf("state after re-accumulating active time = %q, want hint", first.State)
 	}
 	if first.TurnsSinceHint != 0 {
 		t.Fatalf("re-hinted session counted the arrival turn: %d", first.TurnsSinceHint)
