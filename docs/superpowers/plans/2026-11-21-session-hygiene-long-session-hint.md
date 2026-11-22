@@ -322,6 +322,7 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 - **RED→GREEN**：2 条 Claude 转录读取、1 条 stale 闸、2 条上下文合并、2 条 formatter、26 条胶囊契约；先看见 `PostTokens undefined` / `MarkContextStale undefined` / `contextWindowAfterCompact undefined` / 模块缺失与旧文案断言失败，再实现到全绿。
 - **变异验证（6 处各自打红后还原）**：去 transcript postTokens、去 stale 闸、context 合并不覆盖、累计行恢复 count、formatter 阈值退回 1k、请求行改回精确整数。
 - **门禁（干净 worktree，只叠本组改动）**：`go test -count=1 ./...` 全包绿；`tsc -b --noEmit` clean；`npx vitest run` 261 文件 / 865 通过 / 6 跳过；`gofmt -l` 无输出；`make check-upstream` 2358 delta / 358 组全绿（含 G-PG 新锚点）。隔离 E2E 本轮未重跑，真实 harness 压缩仍由上一轮证据覆盖。
+- **第三轮（2026-11-22，压缩成功但流尾部报错）**：pc/WSL 的 `HBS-research` codex 会话实测：手动 `POST /compact` 后 Codex rollout 已落 `compacted`，MindFS `.aux.jsonl` 也写了 `compact.status=complete`，但同一回合 `SendMessage` 返回 `codex response stream ended unexpectedly`。`runHygieneAutoCompact` 原本先判 `err` 再判 `onCompactSeen`，失败分支的 `MarkAutoFailed` 覆盖了 `MarkCompacted` 的清理，于是胶囊长期显示「上次压缩没有生效」。改成：观察过压缩事件后即使流尾部报错也按成功收尾，只写 `reason=stream_error_after_compact` 诊断日志；没有压缩事件才保留原失败提示。新增 1 条用例，RED→GREEN，变异（`if compacted` 改成 `if false && compacted`）打红后还原。边界：不从 rollout 回填 token，post-compact `token_count` 没进事件流时 `context_tokens` 仍可能显示旧值，stale 闸只防重复自动压缩。
 
 ## 状态
 
@@ -331,4 +332,4 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 （旧节点下前端走 80 秒兜底）。前端刷新生效。本机 `sudo systemctl restart mindfs` 仅用户可执行。
 端到端证据与变异账本见上；`e2e/test_session_hygiene.py` 刻意不进常规门禁（会真调模型）。
 
-**2026-11-22 再修（stale context + 胶囊累计简化）已实现并完成上述门禁；未部署、未重启任何节点。**
+**2026-11-22 第三轮（流尾部异常误报压缩失败）已实现并经定向验证；本轮未部署、未重启任何节点。**

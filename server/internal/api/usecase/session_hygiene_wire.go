@@ -181,6 +181,13 @@ func (s *Service) runHygieneAutoCompact(in SendMessageInput) {
 	}
 	log.Printf("[session-hygiene] auto_compact.start root=%s session=%s agent=%s", in.RootID, in.Key, in.Agent)
 	if err := s.sendHygieneCompact(ctx, in); err != nil {
+		if compacted {
+			// Codex 的 /compact 回合会在压缩落盘后才关流，关流异常不等于压缩失败。
+			// 既然 harness 已经报告过压缩事件，就按成功收尾；流错误只留诊断日志。
+			log.Printf("[session-hygiene] auto_compact.done root=%s session=%s agent=%s reason=stream_error_after_compact err=%v", in.RootID, in.Key, in.Agent, err)
+			s.finishHygieneCompact(in, "")
+			return
+		}
 		s.finishHygieneCompact(in, err.Error())
 		log.Printf("[session-hygiene] auto_compact.error root=%s session=%s err=%v", in.RootID, in.Key, err)
 		return

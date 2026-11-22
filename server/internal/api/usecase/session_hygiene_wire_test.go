@@ -166,6 +166,26 @@ func TestHygieneAutoCompactMarksFailureOnSendError(t *testing.T) {
 	}
 }
 
+func TestHygieneAutoCompactTreatsStreamErrorAfterCompactEventAsSuccess(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	service := newHygieneTestService(tracker)
+	seedActive(tracker, "root", "s1", 3)
+	tracker.Observe("root", "s1", "claude", 200000, true)
+	service.hygieneSend = func(_ context.Context, in SendMessageInput) error {
+		if in.onCompactSeen == nil {
+			t.Fatal("auto compact turn must install onCompactSeen")
+		}
+		in.onCompactSeen()
+		return errors.New("codex response stream ended unexpectedly")
+	}
+
+	service.runHygieneAutoCompact(SendMessageInput{RootID: "root", Key: "s1", Agent: "claude"})
+	view := tracker.Snapshot("root", "s1", "claude", 200000)
+	if view.AutoFailed || view.CompactError != "" {
+		t.Fatalf("compaction completed before stream error was reported as failure: %+v", view)
+	}
+}
+
 func TestHygieneAutoCompactSucceedsWhenCompactEventArrives(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	service := newHygieneTestService(tracker)
