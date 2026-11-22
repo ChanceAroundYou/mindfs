@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	agenttypes "mindfs/server/internal/agent/types"
@@ -61,6 +62,9 @@ func TestProvisionalTurnBlocksStayHiddenUntilSealed(t *testing.T) {
 	}
 	if window[1].ToolCall == nil || window[1].ToolCall.Status != "interrupted" {
 		t.Fatalf("tool call not marked interrupted: %#v", window[1].ToolCall)
+	}
+	if !strings.Contains(window[1].ToolCall.Title, "服务端重启，工具未返回") {
+		t.Fatalf("interrupted tool call lacks visible reason: %q", window[1].ToolCall.Title)
 	}
 
 	// 重复封口按 revision 取最高版本，界面仍只看到一份。

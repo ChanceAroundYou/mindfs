@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"sort"
+	"strings"
 
 	agenttypes "mindfs/server/internal/agent/types"
 )
@@ -82,6 +83,7 @@ func (m *Manager) SealProvisionalTurnBlocks(ctx context.Context, key string, seq
 		if next.Type == BlockTypeToolCall && next.ToolCall != nil {
 			call := *next.ToolCall
 			call.Status = "interrupted"
+			call.Title = strings.TrimSpace(call.Title) + "（服务端重启，工具未返回）"
 			next.ToolCall = &call
 		}
 		maxRevision[block.Pos] = next.Revision
