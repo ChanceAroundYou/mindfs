@@ -330,8 +330,8 @@ groups:
   - id: G-T
     title: 流式重放与正文正确性（快照重建协议）
     kind: fix
-    symptom: "同一段正文在行内被拼成 aabb（文本出现两遍、越切越多）；每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；切回运行中会话时在途内容整块丢失；正在完成的正文瞬间消失；控制台每个重放批帧抛一次 onStream(undefined) TypeError；没有用户操作也每 8 秒自持一次 done → session.ready → 重放 → done。"
-    why: "重放是快照重建，不是增量续流：服务端每次挂载恒回一帧 reset:true 的整批事件，客户端清掉瞬时尾巴再照单重建，于是「客户端尾巴 = 服务端 buffer 的纯函数」无条件成立。这一组 2026-10-06 被整体反转过一次，合上游时切勿按旧版恢复（event_cursor 序号续传、mergeStreamedText 重发判据、completed 表补发 done(replay:true) 三者全部删除）。reset 必须是参数而不是常量：首帧与排空续投帧形状相同、语义相反。瞬时行判据只能有一处实现，且 seq=0 的用户行例外必须保留 —— 那是乐观回声，服务端事件流里从来没有它。"
+    symptom: "同一段正文在行内被拼成 aabb（文本出现两遍、越切越多）；每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；切回运行中会话时在途内容整块丢失；正在完成的正文瞬间消失；控制台每个重放批帧抛一次 onStream(undefined) TypeError；没有用户操作也每 8 秒自持一次 done → session.ready → 重放 → done；用户新发的消息有时被插到 assistant 最后几条消息的上方而不是会话末尾（现场：CLI 在 result 之后继续输出的续写行没有持久行可落，留在缓存尾巴上，被整体追加到窗口之后，把 19 分钟后才发出的用户消息顶到了它们上面）。"
+    why: "重放是快照重建，不是增量续流：服务端每次挂载恒回一帧 reset:true 的整批事件，客户端清掉瞬时尾巴再照单重建，于是「客户端尾巴 = 服务端 buffer 的纯函数」无条件成立。这一组 2026-10-06 被整体反转过一次，合上游时切勿按旧版恢复（event_cursor 序号续传、mergeStreamedText 重发判据、completed 表补发 done(replay:true) 三者全部删除）。reset 必须是参数而不是常量：首帧与排空续投帧形状相同、语义相反。瞬时行判据只能有一处实现，且 seq=0 的用户行例外必须保留 —— 那是乐观回声，服务端事件流里从来没有它。computeTailOverlay 只把「缓存里最新一条持久化 user 行之后」的瞬时行当活尾巴：排在它前面、又比它早 60s 以上的行属于上一轮的续写残留，不得当 tail 追加到窗口之后（位置判据防残留被顶到新消息后面，时间判据防持久化 user 行晚到时误杀本轮正在流出的行，60s 容忍时钟偏差）。"
     files:
       - web/src/services/session.ts
       - web/src/services/session/sessionDispatcher.ts
