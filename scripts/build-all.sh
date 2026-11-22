@@ -17,6 +17,13 @@ PLATFORMS=(
   "windows/arm64"
 )
 
+# 前端是发布包的一部分，不是可选装饰：control 角色的页面就靠它，装完打不开首页
+# 等于整台机器不可用。缺了就在打包前失败（`make build-all` 会先跑 build-web）。
+if [[ ! -f "${ROOT}/web/dist/index.html" ]]; then
+  echo "missing web/dist/index.html: run 'make build-web' first" >&2
+  exit 1
+fi
+
 echo "==> Building mindfs ${VERSION}"
 echo "    Output: ${DIST_DIR}/"
 echo
@@ -70,10 +77,11 @@ for PLATFORM in "${PLATFORMS[@]}"; do
       -o "${ROOT}/${TARGET}" \
       ./cli/cmd
 
-  # Bundle web assets (already built) and install scripts
-  if [[ -d "${ROOT}/web/dist" ]]; then
-    cp -r "${ROOT}/web/dist" "${ROOT}/${OUT_DIR}/web"
-  fi
+  # Bundle web assets (checked above) and install scripts
+  cp -r "${ROOT}/web/dist" "${ROOT}/${OUT_DIR}/web"
+  # 页面的构建身份写进包里：边缘对账要知道「装进去的这一版是谁」，
+  # 而不是靠文件名或首页内容去猜（T20 的版本切换判据读它）。
+  printf '%s\n' "${VERSION}" > "${ROOT}/${OUT_DIR}/web/BUILD_VERSION"
   if [[ -f "${ROOT}/agents.json" ]]; then
     cp "${ROOT}/agents.json" "${ROOT}/${OUT_DIR}/agents.json"
   fi

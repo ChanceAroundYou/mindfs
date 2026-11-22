@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生 + P1 安装包前端自检）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12266,6 +12266,17 @@ groups:
       边缘拉取全停摆）；**库与 `-wal`/`-shm` 每次启动都收紧到 0600、目录 0700**（旧库可能
       是 0644 建的，而库里是含口令 hash 的整份控制面；token 同理只认 `token_file`，
       装配处用 `ValidateSyncToken` 拒绝短于 16 字节的凭据，内联字段与环境变量那套已删除）。
+      ㉓ 安装包必须自带可用的前端（`scripts/build-all.sh` / `scripts/install.ps1`）：
+      **打包前检查 `web/dist/index.html`，缺了直接在编译之前失败**（先跑 `make build-web`；
+      先编七个平台再报错等于白等十分钟）；**包内写 `web/BUILD_VERSION`**（值取构建版本，
+      供 T20 对账「装进去的这一版是谁」，不要靠文件名或首页内容猜）；**安装器把前端当必需项
+      ——包里没有 `web/` 直接失败，拷完再逐项核对 `index.html` 与 `favicon.svg` 真的落地，
+      缺一个就整体失败**（`role=worker` 的节点 `GET /` 是 403、control 节点装完却打不开页面，
+      用户看到的是「这台机器坏了」，而实际只是半套安装；安装器自己还会打印 Done，没有任何线索）；
+      **install.ps1 保持不含 CJK 字符**（Windows 按本地代码页 GBK 解码，中文注释会吃掉后面的
+      换行、把下一条语句并进注释，不报错也不生效）。Linux 上没有 pwsh、也跑不了七平台交叉编译，
+      所以 `internal/deploy/install_script_test.go` 用两种手段守：真实执行 build-all.sh 的缺前端
+      分支，其余以源码契约钉住顺序与结构（先定位 → 再拷贝 → 再校验 → 最后才打印 Done）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12275,6 +12286,10 @@ groups:
     files:
       - server/app/control_plane_isolation_test.go
       - web/tests/node-unreachable-baseline.test.mjs
+      - internal/deploy/install_script_test.go
+      - scripts/install.ps1
+      - scripts/build-all.sh
+      - docs/multi-node-control-plane.md
       - server/internal/controlsync/record.go
       - server/internal/controlsync/record_test.go
       - server/internal/controlsync/store.go
@@ -12365,6 +12380,7 @@ groups:
 
     tests:
       - server/app/control_plane_isolation_test.go
+      - internal/deploy/install_script_test.go
       - web/tests/node-unreachable-baseline.test.mjs
       - server/internal/controlsync/record_test.go
       - server/internal/controlsync/store_test.go
@@ -12407,6 +12423,17 @@ groups:
       - server/internal/api/http_control_sync_conflicts_test.go
 
     anchors:
+      - 'internal/deploy/install_script_test.go:func TestBuildAllRefusesPackageWithoutWebAssets(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestBuildAllStampsFrontendBuildVersion(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestWindowsInstallerVerifiesWebAssets(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestWindowsInstallerStaysASCIISafe(t *testing.T) {'
+      - 'scripts/build-all.sh:if [[ ! -f "${ROOT}/web/dist/index.html" ]]; then'
+      - 'scripts/build-all.sh:${ROOT}/${OUT_DIR}/web/BUILD_VERSION'
+      - 'scripts/install.ps1:    $WebSrc = Join-Path $PkgDir "web"'
+      - 'scripts/install.ps1:        Write-Error "Web assets missing from archive: $WebSrc"'
+      - 'scripts/install.ps1:    foreach ($Rel in @("index.html", "favicon.svg")) {'
+      - 'scripts/install.ps1:            Write-Error "Web asset missing after install: $Probe"'
+      - 'docs/multi-node-control-plane.md:## 离线 control 安装（Windows）'
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationAuthStores(t *testing.T) {'
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationNodeStores(t *testing.T) {'
       - 'server/app/control_plane_isolation_test.go:func TestControlPlaneIsolationWorkflowStores(t *testing.T) {'
