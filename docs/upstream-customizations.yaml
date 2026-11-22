@@ -10349,7 +10349,7 @@ groups:
       - 'web/src/components/task/taskCardActions.ts:actions.push("reopen", "archive-task");'
       - 'web/src/components/task/useTaskDetailPanel.ts:const reopenTask = async () => {'
       - 'web/src/components/task/TaskDetailPanel.tsx:reopen: () => void reopenTask(),'
-      - 'web/src/app/useTaskBoard.ts:if (action === "cancel" || action === "reopen" || action === "rebuild-worktree") {'
+      - 'web/src/app/useTaskBoard.ts:action === "start" ||'
   - id: G-ND
     title: 工作台项目头的折叠箭头移到项目名之前
     kind: feature
@@ -11881,7 +11881,7 @@ groups:
       - 'web/src/components/shell/PanelShell.tsx:if (event.target !== event.currentTarget) return;'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.complete": "完成任务",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.cancelTask": "取消任务",'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.reopen": "回到待审核，继续对话",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.reopen": "回到待处理，继续对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.label": "执行详情",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directNode": "直连对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.supervision.empty": "该任务还没有监管记录",'
@@ -12107,7 +12107,7 @@ groups:
       - 'server/internal/kanban/router_supervision_actions.go:cannot be combined with a cancel action'
       - 'server/internal/kanban/router_supervision_tools.go:Name: "router_cancel_node",'
       - 'server/internal/kanban/workflow_runtime_router_cancel.go:func (s *Service) CancelWorkflowRunForRouter(ctx context.Context, rootID, taskID, reason string) error {'
-      - 'server/internal/kanban/workflow_runtime_router_cancel.go:s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, "run_cancelled_by_router", reason, false)'
+      - 'server/internal/kanban/workflow_runtime_router_cancel.go:if _, err := s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, eventType, reason, false); err != nil {'
       - 'server/internal/kanban/router_supervision.go:defaultSupervisionMaxActionsPerRun = 12'
       - 'server/internal/kanban/router_supervision_actions.go:supervision action budget exhausted for this run'
       - 'cli/cmd/startup.go:MaxActionsPerRun  *int    `json:"max_actions_per_run"`'
