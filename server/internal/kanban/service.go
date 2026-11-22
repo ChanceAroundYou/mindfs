@@ -68,6 +68,12 @@ type Service struct {
 	// sessionArchiver 是任务归档级联用的「只打标记」端口（#86）。nil 时只改
 	// 任务自己的 archived_at，不动会话。
 	sessionArchiver SessionArchiver
+	// sessionTurnCanceller 是「终止任务」用的会话打断端口：按 root + 会话 key
+	// 取消此刻在跑的那一轮。nil（单测 / 老装配）时终止只结算回复行。
+	sessionTurnCanceller func(ctx context.Context, rootID, sessionKey string) error
+	// turnTerminations 是「这一轮是被用户终止的」共享登记簿。ActivityServiceForRoot
+	// 每次现建实例，终止与回合收尾可能落在不同实例上，状态必须挂在这里。
+	turnTerminations *TurnTerminations
 	// cardNotifier 是「把任务卡片推到外部通道」的端口（飞书等）。nil = 通道关闭，
 	// 所有通知静默丢弃；通道失败只记日志，绝不改任务状态。
 	cardNotifier CardNotifier
@@ -151,7 +157,7 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(roots RootProvider) *Service {
-	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowRunSessionLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}}
+	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowRunSessionLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}, turnTerminations: newTurnTerminations()}
 }
 
 // lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径

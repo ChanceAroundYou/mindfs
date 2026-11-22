@@ -105,6 +105,29 @@ type ActivityService struct {
 	// replySummarizer 是「直连回复落库后补一条压缩总结」的端口。工作流回复在
 	// settleWorkflowReply 里做同一件事；nil = 不压缩，界面显示原文。
 	replySummarizer func(ctx context.Context, store *TaskStore, activity *TaskActivity, raw string)
+	// sessionTurnCanceller 是「按会话打断当前回合」的端口（人工终止任务用）。
+	// nil（单测 / 老装配）时终止只结算已经无人推进的回复行。
+	sessionTurnCanceller func(ctx context.Context, rootID, sessionKey string) error
+	// terminations 是「这一轮是被用户终止的」共享登记簿：终止由 HTTP 侧现建的
+	// 实例写、收尾由跑回合的实例读，所以状态挂在共享对象上（见 TurnTerminations）。
+	terminations *TurnTerminations
+}
+
+// SetSessionTurnCanceller 装配会话打断端口。nil 时终止退化成只结算回复行。
+func (s *ActivityService) SetSessionTurnCanceller(fn func(ctx context.Context, rootID, sessionKey string) error) {
+	if s == nil {
+		return
+	}
+	s.sessionTurnCanceller = fn
+}
+
+// SetTurnTerminations 挂上跨实例共享的终止登记簿。装配期调用一次。
+// nil 不覆盖默认实例：老装配 / 单测至少还能用本地那份。
+func (s *ActivityService) SetTurnTerminations(t *TurnTerminations) {
+	if s == nil || t == nil {
+		return
+	}
+	s.terminations = t
 }
 
 // SetCardNotifier installs the outbound card channel for waiting questions.
@@ -113,7 +136,9 @@ func (s *ActivityService) SetCardNotifier(n CardNotifier) { s.cardNotifier = n }
 // NewActivityService builds the service for one task node. workflows/recommender
 // may be nil for workflow_choice=disabled; other choices then fail visibly.
 func NewActivityService(tasks *TaskStore, workflows *WorkflowStore, recommender *WorkflowRecommender) *ActivityService {
-	svc := &ActivityService{tasks: tasks, workflows: workflows, recommender: recommender}
+	// terminations 默认非 nil：单测直接构造实例时也要能「终止」。生产装配会把它
+	// 换成 Service 上那份共享登记簿（ActivityServiceForRoot 每次新建实例）。
+	svc := &ActivityService{tasks: tasks, workflows: workflows, recommender: recommender, terminations: newTurnTerminations()}
 	if tasks != nil {
 		svc.activities = NewActivityStore(tasks.db)
 	}

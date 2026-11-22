@@ -151,6 +151,9 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban.SetRouterBroadcaster(api.NewTaskRouterDecisionBroadcaster(services))
 	services.WireFinishTeardown(services.Kanban)
 	services.WireSessionRunningProbe(services.Kanban)
+	// 人工「终止」要真的打断主会话里正在跑的回合；没有这个端口就只能结算回复行，
+	// 会话那边的工具调用会继续跑到下一轮才停。
+	services.Kanban.SetSessionTurnCanceller(services.CancelTaskSessionTurn)
 	services.WireFoldUsageReader(services.Kanban)
 	// Router 读会话转录（router_read_session）：只读本任务会话的文本块。
 	services.WireRouterTranscriptReader(services.Kanban)

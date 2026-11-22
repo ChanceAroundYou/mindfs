@@ -159,6 +159,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/tasks", h.handleKanbanTaskCreate)
 	r.Post("/api/tasks/{id}/rename", h.handleKanbanTaskRename)
 	r.Post("/api/tasks/{id}/run-now", h.handleKanbanTaskRunNow)
+	r.Post("/api/tasks/{id}/start", h.handleKanbanTaskStart)
+	r.Post("/api/tasks/{id}/terminate", h.handleKanbanTaskTerminate)
 	r.Post("/api/tasks/{id}/pause", h.handleKanbanTaskPause)
 	r.Post("/api/tasks/{id}/resume", h.handleKanbanTaskResume)
 	r.Post("/api/tasks/{id}/complete", h.handleKanbanTaskComplete)

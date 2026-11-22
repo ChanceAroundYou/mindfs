@@ -256,6 +256,21 @@ func (s *AppContext) CancelWorkflowNode(ctx context.Context, rootID string, node
 	})
 }
 
+// CancelTaskSessionTurn 是「终止」用的会话打断口：把任务主会话里正在跑的回合
+// 停掉。与 CancelWorkflowNode 走同一个 usecase 端口，区别只是调用方是操作员
+// 动作而不是工作流收尾。会话层自带超时，这里不额外包一层。
+func (s *AppContext) CancelTaskSessionTurn(ctx context.Context, rootID, sessionKey string) error {
+	key := strings.TrimSpace(sessionKey)
+	if key == "" {
+		return nil
+	}
+	uc := &usecase.Service{Registry: s}
+	return uc.CancelSessionTurn(ctx, usecase.CancelSessionTurnInput{
+		RootID: strings.TrimSpace(rootID),
+		Key:    key,
+	})
+}
+
 func (s *AppContext) runWorkflowTurn(ctx context.Context, req workflowTurnRequest) (string, error) {
 	if s.workflowTurnOverride != nil {
 		return s.workflowTurnOverride(ctx, req)

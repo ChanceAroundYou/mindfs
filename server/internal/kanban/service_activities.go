@@ -57,6 +57,10 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetReplySummarizer(s.scheduleDirectReplySummaryCompression)
 	// Task Router P0：mode=off 返回 nil，ActivityService 连一次额外读取都不做。
 	svc.SetRouter(s.RouterServiceForRoot(rootID))
+	// 人工「终止」：打断主会话当前回合；终止标记挂在 Service 上，因为本函数每次
+	// 调用都新建实例，而写标记（HTTP 侧）与读标记（跑回合的实例）不是同一个。
+	svc.SetSessionTurnCanceller(s.sessionTurnCancellerFn())
+	svc.SetTurnTerminations(s.turnTerminationsRegistry())
 	return svc, nil
 }
 

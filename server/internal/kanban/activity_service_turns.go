@@ -129,6 +129,15 @@ func (s *ActivityService) executeDirectActivity(ctx context.Context, agentAct *T
 		}
 	}
 	if err != nil {
+		// 用户点了「终止」：被打断不是故障，写 cancelled + 明确说明，而不是把
+		// 主动叫停显示成一条红色失败。任务头同样停在待处理，等用户接着说话。
+		// 不调 restore()：它会把任务回滚到进入这一轮之前的状态（可能是「未开始」），
+		// 而终止的落点固定是「待处理」。
+		if s.terminations.Consume(agentAct.ID) {
+			s.markTurnTaskWaitingUser(ctx, task.ID)
+			_ = s.finishActivityByID(ctx, agentAct.ID, ActivityStatusCancelled, terminatedTurnSummary)
+			return
+		}
 		failure := readableDirectFailure(err.Error())
 		_ = s.activities.UpdateBody(ctx, agentAct.ID, failure)
 		// 先恢复任务状态再广播终态：前端收到 activity.updated 会立刻点查任务头，
