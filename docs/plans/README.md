@@ -9,10 +9,13 @@ to resume their old TODOs or baselines.
 **2026-11-23 四端发布 `v0.5.5-1201-220-gf79a0e5a`**（origin/main `f79a0e5a`，含
 `0b060ede..f79a0e5a` 全部提交，本批只有 G-PW）。四端版本逐字一致：wsl `is-active` + health 200、
 fn `user` 单元 `is-active` + health 200（`/proc/<pid>/exe` 与安装文件 md5 同为 `f4ad9194…`）、
-pc-win 计划任务 PID 4504（02:15:55 起、Session 0）、`:7332` LISTENING、health 200、
-日志 `checker.start current=v0.5.5-1201-220-gf79a0e5a`；本机已安装同一二进制（`--version`
-`v0.5.5-1201-220-gf79a0e5a`，`/mindfs/health` 200 `role=control`，bundle
-`assets/index-BOTUDlWQ.js` 与安装目录一致），**运行进程仍是旧二进制，待用户
+pc-win 部署后经历一次 Windows 更新重启（02:15:10 TrustedInstaller 发起的计划内重启），**BootTrigger
+在无快照状态下用新二进制把服务拉起来**（02:15:55 任务事件 118 → 进程 4504、Session 0），随后
+02:22:03 有人以交互账户终止任务、02:22:24 重启（事件 330/110 → 100），当前 PID 7072、`:7332`
+LISTENING、health 200 `role=worker`、日志 `checker.start current=v0.5.5-1201-220-gf79a0e5a`，
+HKCU Run 键与快照仍为 `ABSENT`；本机已安装同一二进制（`--version` `v0.5.5-1201-220-gf79a0e5a`，
+`/mindfs/health` 200 `role=control`，bundle `assets/index-BOTUDlWQ.js` 与安装目录一致），
+**运行进程仍是旧二进制（`v0.5.5-1201-149-g881a94bd`，22:56:52 起），待用户
 `sudo systemctl restart mindfs`**。本批内容只有 G-PW：`prepareAutoStartEnvironment()` 把
 「快照文件不存在」从错误降级成 no-op（只放行 `os.ErrNotExist`，坏 JSON / 版本不符仍报错），
 消除 pc-win 每次启动必失败的那条环境恢复路径；隔离实例实测 `--internal-autostart` 在无快照的
