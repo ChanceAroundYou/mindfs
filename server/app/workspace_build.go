@@ -182,6 +182,9 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 低频是有意的 —— 归档不是实时语义，晚一小时没有可见影响；真写 archived_at
 	// 才能让「取消归档 / 工作台过滤 / 分组」三处只有一个答案。
 	services.Kanban.StartArchiveSweeper(m.ctx)
+	// OOB 会话回合的重启恢复（C2）：超过 30 分钟的标记每分钟扫一次，不再依赖
+	// 「回合结束」回调活到重启之后。
+	services.Kanban.StartOutOfBandRecovery(m.ctx)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err

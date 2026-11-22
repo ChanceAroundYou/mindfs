@@ -76,7 +76,22 @@ CREATE TABLE IF NOT EXISTS router_task_state (
   updated_at         TEXT NOT NULL
 );
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	// 旧库逐列补齐（同名幂等）。out_of_band 三个列记录「用户在会话视图里自己
+	// 推的一轮」：这个标记原先只在进程内 map 里，重启就丢，任务永远停在
+	// running（C2，见 service_recover_out_of_band.go）。
+	for _, stmt := range []string{
+		`ALTER TABLE router_task_state ADD COLUMN out_of_band INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE router_task_state ADD COLUMN out_of_band_started_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE router_task_state ADD COLUMN out_of_band_session_key TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, alterErr := db.Exec(stmt); alterErr != nil && !strings.Contains(strings.ToLower(alterErr.Error()), "duplicate column name") {
+			return alterErr
+		}
+	}
+	return nil
 }
 
 type RouterStore struct {

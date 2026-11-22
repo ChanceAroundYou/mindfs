@@ -79,6 +79,8 @@ type Service struct {
 	cardNotifier CardNotifier
 	// archiveSweepOnce 保证低频归档扫描在同一实例里只起一个 goroutine。
 	archiveSweepOnce sync.Once
+	// outOfBandSweepOnce 保证 OOB 回合恢复扫描（C2）只起一个 goroutine。
+	outOfBandSweepOnce sync.Once
 	// compressedReplies 记录「哪条回复的 summary 已经是压缩结果」，键为活动 id。
 	// 见 service_activities_summary.go 的 compressedReply；只影响是否重复压缩。
 	compressedReplies map[string]compressedReply

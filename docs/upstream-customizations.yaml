@@ -14260,8 +14260,11 @@ groups:
       ③ 巡检事件（`turn_settled` / `turn_stalled` / `task_orphaned` / `turn_interrupted`）全部 skipped，
          `last_error='missing originating user activity'` —— 巡检回合没有任何用户留言，
          两道闸门都要求它，于是发现问题也只会在账本里留一条跳过。
+      ④ 用户直接在任务绑定的会话里推一轮（out-of-band 回合）时任务头被推进到 running，
+         但「这一轮是 OOB、什么时候开始」只记在进程内 map 里；进程一重启，回合结束回调
+         与标记一起消失，任务永远停在 running 转圈，用户没有任何解释（线上 #106 型现场）。
     why: |
-      这三项都是「Router 说了什么」到「用户看到什么」之间的失真，修在消费端而不是
+      前三项都是「Router 说了什么」到「用户看到什么」之间的失真，修在消费端而不是
       生产端，因为生产端（Router 模型）本来就不可靠：
       - 摘要上限收口到 `truncateSummary`，并在 `TaskStore` / `ActivityStore` 的
         六条写口各自兜底。只靠调用方截断时漏了两个，历史已经证明靠不住；
@@ -14271,6 +14274,10 @@ groups:
       - 巡检回合豁免「必须有原始用户留言」的闸门，但只放开 `say` / `ask_user`
         两个无绑定动作；`complete_task` 维持原限制 —— 巡检不该在用户没说话时
         自行闭合任务。
+      - OOB 标记落 `router_task_state`（用户 2026-11-23 裁定：加列，不用事件反推）：
+        `BeginOutOfBandSessionTurn` 写入、`restoreOutOfBandTask` 清除；超过 30 分钟仍没
+        结束的标记由启动对账与每分钟后台扫描恢复成 `waiting_user`，并记一条无来源留言
+        的 `turn_interrupted` —— C1 放开的巡检回合因此能向用户解释这一轮为什么没了。
     files:
       - server/internal/kanban/
     tests:
@@ -14281,6 +14288,7 @@ groups:
       - server/internal/api/appcontext_task_turn_settled_failure_test.go
       - server/internal/kanban/router_progress_suppression_test.go
       - server/internal/kanban/router_inspection_turn_test.go
+      - server/internal/kanban/router_out_of_band_recovery_test.go
     anchors:
       - 'server/internal/kanban/task_store.go:截断在这里做，而不是只靠调用方'
       - 'server/internal/kanban/activity_store.go:truncateSummary(activity.Summary)'
@@ -14301,3 +14309,11 @@ groups:
       - 'server/internal/kanban/activity_route_reply.go:func routeUserActivityID(userAct *TaskActivity) string {'
       - 'server/internal/kanban/router_inspection_turn_test.go:func TestCoordinatorInspectionEventWithoutOriginCanSay(t *testing.T) {'
       - 'server/internal/kanban/router_prompt.md:这类回合只能 `router_say` / `router_ask_user`'
+      - 'server/internal/kanban/router_store.go:ALTER TABLE router_task_state ADD COLUMN out_of_band INTEGER'
+      - 'server/internal/kanban/router_task_state.go:ON CONFLICT(task_id) DO UPDATE SET'
+      - 'server/internal/kanban/service_session_follow.go:persist out-of-band task %s'
+      - 'server/internal/kanban/service_session_follow.go:标记先清：这一轮对进程而言已经结束'
+      - 'server/internal/kanban/service_recover_out_of_band.go:routerOutOfBandInterruptAfter = 30 * time.Minute'
+      - 'server/internal/kanban/service_recover_out_of_band.go:先写事件、后改状态'
+      - 'server/internal/kanban/router_out_of_band_recovery_test.go:func TestRecoverStaleOutOfBandTaskWritesInterruptedTurn(t *testing.T) {'
+      - 'server/app/workspace_build.go:services.Kanban.StartOutOfBandRecovery(m.ctx)'

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 )
 
 // 会话推进跟随（W4）。
@@ -78,6 +79,12 @@ func (s *Service) BeginOutOfBandSessionTurn(ctx context.Context, rootID, session
 	if err := store.UpdateTaskStatus(ctx, taskID, StatusRunning, false); err != nil {
 		return false
 	}
+	// 持久化标记（C2）：进程内 map 只够本进程的收尾用，重启后它能证明「这一
+	// 轮是 OOB 回合、什么时候开始」。写失败不撤销认领：进程还在时内存路径照
+	// 常收尾，只是丢了跨重启的恢复能力，比让任务卡在 running 好。
+	if err := NewRouterStore(store.db).MarkOutOfBand(ctx, rootID, taskID, sessionKey, time.Now().UTC()); err != nil {
+		log.Printf("[kanban/follow] persist out-of-band task %s: %v", taskID, err)
+	}
 	key := sessionFollowKey(rootID, sessionKey)
 	s.sessionFollowMu.Lock()
 	if s.sessionOutOfBand == nil {
@@ -109,6 +116,11 @@ func (s *Service) takeSessionOutOfBandTurn(rootID, sessionKey string) bool {
 func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID string) {
 	if s == nil || store == nil || strings.TrimSpace(taskID) == "" {
 		return
+	}
+	// 标记先清：这一轮对进程而言已经结束，无论任务头停在哪，留着它只会在下一
+	// 拍被当成「超过 30 分钟被重启带走」再恢复一次。
+	if err := NewRouterStore(store.db).ClearOutOfBand(ctx, taskID); err != nil {
+		log.Printf("[kanban/follow] clear out-of-band task %s: %v", taskID, err)
 	}
 	task, err := store.GetTask(ctx, taskID)
 	if err != nil {

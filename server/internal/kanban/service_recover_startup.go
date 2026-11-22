@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 )
 
 // RecoverOnStartupForRoot 是 WP-03 启动恢复的 Service 层入口：同步执行、
@@ -70,6 +71,14 @@ func (s *Service) RecoverOnStartupForRoot(ctx context.Context, rootID string, pr
 			}
 			_ = store.UpdateTaskStatus(ctx, req.TaskID, StatusWaitingUser, false)
 		}
+	}
+	// 第四类：out-of-band 会话回合。它的状态反查不到任何回复行（会话回合不
+	// 落 task_activities），标记又只在进程内 —— 重启后任务会永远停在 running。
+	// 超过 30 分钟（C2）仍没结束的回合恢复成 waiting_user 并记 turn_interrupted。
+	if n, oobErr := s.restoreStaleOutOfBandTasks(ctx, store, time.Now().UTC()); oobErr != nil {
+		log.Printf("[kanban/recover] out-of-band recovery: %v", oobErr)
+	} else if n > 0 {
+		log.Printf("[kanban/recover] out-of-band recovered=%d root=%s", n, rootID)
 	}
 	return plan, nil
 }
