@@ -12749,3 +12749,52 @@ groups:
       - 'server/internal/kanban/router_coordinate.go:kind = RouterTriggerTurnSettled'
       - 'server/internal/kanban/router_coordinate.go:triggerRef = strings.TrimSpace(ev.TurnID)'
       - 'server/internal/api/appcontext_task_flags.go:s.settleSessionTurnForRouter(rootID, sessionKey, turnID, pending)'
+  - id: G-PP
+    title: 1M 开关真正决定窗口：默认模型钉在 200k，只有 [1m] 才给 1M
+    kind: fix
+    symptom: |
+      pc-win 上「1M」按钮点了没有任何效果。查日志：裸别名 `ok` 就被 CLI 判成
+      1M 窗口（`context_window model="ok" window=1000000`，而且 712k token 的请求
+      照样成功），开关只是把模型名改成 `ok[1m]`、窗口一点没变；反过来关掉开关，
+      窗口也不会退回 200k。合上游时如果把 `WithLongContextPolicy` 那一层丢掉、
+      或者把 `decideSessionReopen` 的 1M 分支摘掉，症状原样回来 —— 默认档到底是多少
+      由节点上的 CLI 版本决定，各机器不一致。
+    why: |
+      ① 窗口是 Claude Code CLI 自己算的，MindFS 没有窗口表。2.1.283/2.1.330 的算法是：
+      模型名带 `[1m]` → 1e6；请求的 beta 集合里有 `context-1m-2025-08-07` 且模型支持
+      → 1e6；CLI 目录声明原生 1M → 1e6；否则退回 `R$e = 200000`。pc-win 的 2.1.330
+      走的是第二条，所以裸别名也是 1M。
+      ② CLI 自己留了总闸 `CLAUDE_CODE_DISABLE_1M_CONTEXT`（`a0()`），它同时否掉
+      `[1m]` 分支、1M beta 分支与原生 1M 分支。MindFS 按「模型名是否带 `[1m]`」
+      逐进程设置它，默认档才会稳定落在 200k，且与节点上的 CLI 版本无关。
+      ③ 这个开关是**逐进程的 env**：进程活着就改不了。所以 1M 开关翻转不能走原地
+      `SetModel`，必须关掉池会话、按新策略 resume 一次（历史由转录承接）。
+      `decideSessionReopen` 把 1M 翻转排在 effort / fast service 之前，就是为了不让
+      「设置没变」那条原地分支把开关吞掉。
+      ④ 策略要压在 env 装配的最后一层（`claudeSessionEnv`），不能被 agent env 或
+      用户 settings 里继承来的同名键改写；反过来，开 1M 时也要主动删掉残留的闸，
+      否则开关按下去还是 200k。
+      ⑤ agent 默认值里不再写 `[1m]`（`defaultModelForAgent`）：默认档就是 200k。
+      留着后缀会让新建会话一开口就是 1M，而前端的勾选状态来自会话自身的模型名，
+      两边对不上。1M 只是每次会话里的开关，不是默认值。
+    files:
+      - server/internal/agent/claude/session_models_helpers.go
+      - server/internal/agent/pool_open.go
+      - server/internal/api/usecase/session_runtime.go
+      - server/internal/api/usecase/session_agent_open.go
+      - server/internal/api/usecase/session_send.go
+    tests:
+      - server/internal/agent/claude/session_long_context_env_test.go
+      - server/internal/agent/pool_claude_long_context_test.go
+      - server/internal/api/usecase/session_long_context_reopen_test.go
+    anchors:
+      - 'server/internal/agent/claude/session_models_helpers.go:const Disable1MContextEnv = "CLAUDE_CODE_DISABLE_1M_CONTEXT"'
+      - 'server/internal/agent/claude/session_models_helpers.go:func WithLongContextPolicy(env map[string]string, model string) map[string]string {'
+      - 'server/internal/agent/pool_open.go:func (p *Pool) claudeSessionEnv(def Definition, in agenttypes.OpenSessionInput) (map[string]string, string) {'
+      - 'server/internal/agent/pool_open.go:return claude.WithLongContextPolicy(env, in.Model), settingsJSON'
+      - 'server/internal/api/usecase/session_runtime.go:func decideSessionReopen(currentModel, nextModel string, settingsNeedReopen bool) sessionReopen {'
+      - 'server/internal/api/usecase/session_runtime.go:func defaultModelForAgent(agentName, model string) string {'
+      - 'server/internal/api/usecase/session_runtime.go:func shouldReopenSessionForLongContext(currentModel, nextModel string) bool {'
+      - 'server/internal/api/usecase/session_agent_open.go:reopen := decideSessionReopen('
+      - 'server/internal/api/usecase/session_agent_open.go:if reopen == sessionReopenLongContext {'
+      - 'server/internal/api/usecase/session_send.go:defaultModel := defaultModelForAgent(in.Agent, resolvedModel)'

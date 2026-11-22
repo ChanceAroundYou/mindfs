@@ -196,8 +196,11 @@ func (s *Service) ensureAgentSession(
 	}
 	if existing, ok := pool.Get(poolSessionKey); ok {
 		currentModel := currentModelForRuntime(current, existing)
-		if !shouldReopenSessionForSetting(pool, agentName, currentEffort, nextEffort) &&
-			currentFastService == nextFastService {
+		reopen := decideSessionReopen(
+			currentModel, nextModel,
+			shouldReopenSessionForSetting(pool, agentName, currentEffort, nextEffort) || currentFastService != nextFastService,
+		)
+		if reopen == sessionReuse {
 			if current != nil && currentModel != nextModel {
 				log.Printf("[session/model] switch.detected session=%s agent=%s from=%q to=%q action=set_runtime_model", current.Key, agentName, currentModel, nextModel)
 				if err := existing.SetModel(ctx, nextModel); err != nil {
@@ -238,7 +241,11 @@ func (s *Service) ensureAgentSession(
 			}
 			return existing, currentSeq, nil
 		}
-		log.Printf("[session/settings] reopen.detected session=%s agent=%s effort_from=%q effort_to=%q fast_service_from=%q fast_service_to=%q action=resume_runtime_session", current.Key, agentName, currentEffort, nextEffort, currentFastService, nextFastService)
+		if reopen == sessionReopenLongContext {
+			log.Printf("[session/model] reopen.detected session=%s agent=%s from=%q to=%q reason=long_context action=resume_runtime_session", current.Key, agentName, currentModel, nextModel)
+		} else {
+			log.Printf("[session/settings] reopen.detected session=%s agent=%s effort_from=%q effort_to=%q fast_service_from=%q fast_service_to=%q action=resume_runtime_session", current.Key, agentName, currentEffort, nextEffort, currentFastService, nextFastService)
+		}
 		pool.Close(poolSessionKey)
 	}
 

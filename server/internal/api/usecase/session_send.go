@@ -415,10 +415,11 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	resolvedEffort := resolveRuntimeEffort(in.Agent, current, in.Effort)
 	resolvedFastService = resolveRuntimeFastService(in.Agent, current, in.FastService)
 	if prefs := s.Registry.GetPreferences(); prefs != nil {
-		if changed, err := prefs.UpdateAgentDefaultsIfChanged(in.Agent, resolvedModel, resolvedEffort, resolvedFastService); err != nil {
+		defaultModel := defaultModelForAgent(in.Agent, resolvedModel)
+		if changed, err := prefs.UpdateAgentDefaultsIfChanged(in.Agent, defaultModel, resolvedEffort, resolvedFastService); err != nil {
 			log.Printf("[preferences] agent_defaults.update.error agent=%s err=%v", strings.TrimSpace(in.Agent), err)
 		} else if changed {
-			log.Printf("[preferences] agent_defaults.update.done agent=%s model=%q effort=%q fast_service=%q", strings.TrimSpace(in.Agent), resolvedModel, resolvedEffort, resolvedFastService)
+			log.Printf("[preferences] agent_defaults.update.done agent=%s model=%q effort=%q fast_service=%q", strings.TrimSpace(in.Agent), defaultModel, resolvedEffort, resolvedFastService)
 			if in.OnAgentDefaultsChanged != nil {
 				in.OnAgentDefaultsChanged(strings.TrimSpace(in.Agent))
 			}
