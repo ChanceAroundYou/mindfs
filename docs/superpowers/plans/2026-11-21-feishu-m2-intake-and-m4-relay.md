@@ -600,7 +600,7 @@ git commit -- \
 - `go test -count=1 ./...`：全绿（28 包，`server/internal/kanban` 271.6s）。
 - `(cd web && npx tsc -b --noEmit)`：clean（只有 npm 的 `allow-scripts` 警告）。
 - `(cd web && npx vitest run)`：260 passed / 5 skipped 文件，863 passed / 6 skipped 用例，77.93s。
-- `git worktree add --detach /tmp/mindfs-gph-check HEAD && (cd /tmp/mindfs-gph-check && make check-upstream)`：结果见提交后复跑记录；本轮没有基线 flake 出现。
+- `git worktree add --detach /tmp/mindfs-gph-check HEAD && (cd /tmp/mindfs-gph-check && make check-upstream)`：首跑报 G-LV/G-NW 两处锚点漂移（由 T1–T8 改动造成），修正后复跑 `✓ 全部通过：2379 个 delta 文件被 359 组完整覆盖`；没有基线 flake。
 
 ### 已知边界
 
