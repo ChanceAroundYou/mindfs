@@ -122,8 +122,21 @@ type sessionState struct {
 	// upstream-reported context size of the previous request and the proxy's
 	// estimate for the body it forwarded. Together they let the rail compare
 	// against real tokens instead of byte estimates (see foldContext.actualScale).
+	// Both halves are committed together when the response sample arrives, so
+	// they always describe the same request.
 	lastActual     int
 	lastForwardEst int
+	// pendingForwardEst is the estimator size of the request most recently
+	// forwarded. It only becomes half of the calibration pair when that same
+	// request's usage sample is accepted (see noteActualContext): dropping it
+	// there keeps a request that never reports usage from pairing its estimate
+	// with an earlier request's actual.
+	pendingForwardEst int
+	// calibrationReset marks the next accepted sample as a legitimate step
+	// change, so the auxiliary-request guard does not reject it. Set by the
+	// harness compaction signals: the request that follows a compaction really
+	// is a fraction of the previous context.
+	calibrationReset bool
 	// commits is the set of blocks this session has committed to folding. It is
 	// never evicted: losing it would unfold the whole prefix.
 	commits *foldCommits
@@ -276,6 +289,10 @@ func (s *Server) handleCompactSignal(w http.ResponseWriter, r *http.Request) {
 		// that has something to fold.
 		st.live.pendingColdFold = true
 		st.live.pendingColdFoldAt = time.Now()
+		// The request after a compaction carries a fraction of the previous
+		// context; the calibration guard must not read that drop as a small
+		// auxiliary request and keep the old scale.
+		st.calibrationReset = true
 	}
 	s.mu.Unlock()
 	log.Printf("[proxy] post-compact signal token=%s", ShortToken(body.Token))
