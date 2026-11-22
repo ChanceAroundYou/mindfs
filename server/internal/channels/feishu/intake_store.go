@@ -87,6 +87,29 @@ func (s *IntakeStore) Seen(messageID string) bool {
 	return ok
 }
 
+// Claim reserves a message id before any side effect. Exactly one concurrent
+// caller can win; every terminal outcome then calls SetStatus. A failed write
+// removes the in-memory reservation so a later redelivery can try again.
+func (s *IntakeStore) Claim(messageID string) (bool, error) {
+	if messageID == "" {
+		return false, errors.New("feishu intake: message id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	if _, ok := s.records[messageID]; ok {
+		return false, nil
+	}
+	s.records[messageID] = intakeRecord{
+		MessageID: messageID, Status: "creating", CreatedAt: s.now(),
+	}
+	if err := s.saveLocked(); err != nil {
+		delete(s.records, messageID)
+		return false, err
+	}
+	return true, nil
+}
+
 // Record remembers a handled message once. The first status wins: a later
 // picker click must use SetStatus to turn a recorded picker into created.
 func (s *IntakeStore) Record(messageID, taskID, status string) error {

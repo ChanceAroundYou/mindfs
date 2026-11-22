@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -333,5 +335,63 @@ func TestRemoteTaskCreationUsesSharedBody(t *testing.T) {
 	}
 	if !strings.Contains(string(src), "feishu.RemoteTaskBody(") {
 		t.Fatal("远端建任务必须走 RemoteTaskBody，避免载荷形状漂移")
+	}
+}
+
+type countingCreator struct{ calls atomic.Int64 }
+
+func (c *countingCreator) Create(context.Context, string, string, string) (string, error) {
+	c.calls.Add(1)
+	return "task-once", nil
+}
+
+func TestIntakeConcurrentRedeliveryCreatesOneTask(t *testing.T) {
+	store, err := NewIntakeStore(filepath.Join(t.TempDir(), "intake.json"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creator := &countingCreator{}
+	svc := NewIntakeService(
+		Config{OwnerOpenID: "ou_owner"},
+		intakeCatalog{refs: []ProjectRef{{NodeID: "fn", RootID: "r1", Name: "docs"}}}, store, creator,
+		func(context.Context, Notice) error { return nil }, time.Now, nil,
+	)
+	msg := inbound("om-dup", "p2p", "ou_owner", "fix docs")
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := svc.Handle(context.Background(), msg); err != nil {
+				t.Errorf("Handle: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := creator.calls.Load(); got != 1 {
+		t.Fatalf("并发重投建任务次数 = %d, want 1", got)
+	}
+	rec := store.records["om-dup"]
+	if rec.Status != "created" || rec.TaskID != "task-once" {
+		t.Fatalf("去重记录 = %+v, want created/task-once", rec)
+	}
+}
+
+func TestIntakePickerStatusSurvivesClickClaim(t *testing.T) {
+	store, err := NewIntakeStore(filepath.Join(t.TempDir(), "intake.json"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetStatus("om-pick", "", "picker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := claimPickerIntake(store, "om-pick"); err != nil {
+		t.Fatalf("picker 状态不能因为改成 SetStatus 而失效：%v", err)
+	}
+	if got := store.records["om-pick"].Status; got != "creating" {
+		t.Fatalf("picker claim status = %q, want creating", got)
 	}
 }

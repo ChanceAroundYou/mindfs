@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -138,6 +140,60 @@ func TestIntakeStoreWriteFailureRollsBackMemory(t *testing.T) {
 	}
 	if store.Seen("om_fail") {
 		t.Fatal("落盘失败后内存里不能留下这条记录，否则同一条消息会被永久吞掉")
+	}
+}
+
+func TestIntakeStoreClaimIsAtomic(t *testing.T) {
+	store, err := NewIntakeStore(filepath.Join(t.TempDir(), "intake.json"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const messageID = "om-concurrent"
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var won atomic.Int32
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := store.Claim(messageID)
+			if err != nil {
+				t.Errorf("Claim: %v", err)
+			}
+			if ok {
+				won.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if won.Load() != 1 {
+		t.Fatalf("Claim winners = %d, want 1", won.Load())
+	}
+	if got := store.records[messageID]; got.Status != "creating" {
+		t.Fatalf("claimed status = %q, want creating", got.Status)
+	}
+	ok, err := store.Claim(messageID)
+	if err != nil || ok {
+		t.Fatalf("second Claim = %v, %v, want false, nil", ok, err)
+	}
+}
+
+func TestIntakeStoreClaimRollsBackOnSaveFailure(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &IntakeStore{
+		path:    filepath.Join(blocker, "intake.json"),
+		records: map[string]intakeRecord{}, now: time.Now,
+	}
+	if ok, err := store.Claim("om-fail"); err == nil || ok {
+		t.Fatalf("Claim with broken path = %v, %v, want false, error", ok, err)
+	}
+	if store.Seen("om-fail") {
+		t.Fatal("落盘失败不能把消息留在内存去重表里")
 	}
 }
 

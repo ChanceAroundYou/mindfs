@@ -108,7 +108,18 @@ func (s *IntakeService) Handle(ctx context.Context, msg InboundMessage) error {
 		return nil
 	}
 	id := inboundID(msg)
-	if id == "" || s.store.Seen(id) {
+	if id == "" {
+		return nil
+	}
+	// Claim before the first side effect: two redeliveries must not both pass
+	// Seen() and create two tasks. Every terminal path below advances the
+	// reservation to a final status, so a replay is swallowed by Claim.
+	claimed, err := s.store.Claim(id)
+	if err != nil {
+		n := Notice{Kind: KindNotice, Text: "暂时无法记录消息，请稍后再试。", SourceMessageID: id, ChatID: msg.ChatID, NodeID: s.cfg.NodeID}
+		return errors.Join(err, s.notifyWithCardID(ctx, id, n))
+	}
+	if !claimed {
 		return nil
 	}
 	if !s.allowed(msg.ChatID) {
@@ -133,7 +144,7 @@ func (s *IntakeService) Handle(ctx context.Context, msg InboundMessage) error {
 		if err != nil {
 			return s.fail(ctx, msg, "", "failed", "建任务失败，请稍后重试。", err)
 		}
-		if err := s.store.Record(id, taskID, "created"); err != nil {
+		if err := s.store.SetStatus(id, taskID, "created"); err != nil {
 			return s.fail(ctx, msg, taskID, "failed", "任务已建，但没能记下去重记录，请到网页确认。", err)
 		}
 		notice.Kind = KindNotice
@@ -161,7 +172,7 @@ func (s *IntakeService) Handle(ctx context.Context, msg InboundMessage) error {
 		if err := s.notifyWithCardID(ctx, id, notice); err != nil {
 			return err
 		}
-		return s.store.Record(id, "", "picker")
+		return s.store.SetStatus(id, "", "picker")
 	case ResolutionAnswer:
 		return s.reject(ctx, msg, "", "answer", "没有找到对应项目。请在消息里写项目名（必要时带节点前缀，如 #fn/docs）；候选超过 5 个时请写得更具体。")
 	default:
@@ -195,7 +206,7 @@ func (s *IntakeService) notifyWithCardID(ctx context.Context, messageID string, 
 // and the supervisor does not log an error.
 func (s *IntakeService) reject(ctx context.Context, msg InboundMessage, taskID, status, text string) error {
 	id := inboundID(msg)
-	if err := s.store.Record(id, taskID, status); err != nil {
+	if err := s.store.SetStatus(id, taskID, status); err != nil {
 		return err
 	}
 	n := Notice{Kind: KindNotice, Text: text, SourceMessageID: id, ChatID: msg.ChatID, NodeID: s.cfg.NodeID}
@@ -206,7 +217,7 @@ func (s *IntakeService) reject(ctx context.Context, msg InboundMessage, taskID, 
 // the error, and the message is deduped so a replay cannot double-notify.
 func (s *IntakeService) fail(ctx context.Context, msg InboundMessage, taskID, status, text string, cause error) error {
 	id := inboundID(msg)
-	if err := s.store.Record(id, taskID, status); err != nil {
+	if err := s.store.SetStatus(id, taskID, status); err != nil {
 		return errors.Join(cause, err)
 	}
 	n := Notice{Kind: KindNotice, Text: text, SourceMessageID: id, ChatID: msg.ChatID, NodeID: s.cfg.NodeID}
