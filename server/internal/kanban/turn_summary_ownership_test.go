@@ -183,12 +183,14 @@ func TestHarnessErrorTextIsScrubbed(t *testing.T) {
 
 // W1-2 / W1-5 的内容守卫：提示词是 fork 定制，合上游时会被整份替换。这三句
 // 少了任何一句，模型就会滑回「摘要是几千字原文」和「交出去还要复述一遍」。
+// H2 补一条：失败回合的结算事件带 failed=true，Router 必须按失败说明写结论。
 func TestRouterPromptStatesSummaryContract(t *testing.T) {
 	prompt := RouterDeveloperInstructions()
 	for _, want := range []string{
 		"turn_settled", // 会话回合结算也是收尾回合
 		"硬上限 600 字",    // 与 truncateSummary 的上限同源
 		"系统会直接丢弃它",     // 交出执行动作后不再复述 progress
+		"failed=true",  // 失败回合的结论是失败说明
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("提示词缺少「%s」", want)

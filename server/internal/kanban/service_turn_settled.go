@@ -48,6 +48,12 @@ const routerSettlementTurnsPerHour = 20
 // 判断「这一轮值不值得总结」用的证据，不是全文；原文在活动流里。
 const routerSettlementExcerptRunes = 400
 
+// turnSettledErrorRunes 是结算事件里失败原因的长度上限。它比 excerpt 短得多：
+// Router 只需要知道「为什么没跑成」，堆栈与整段请求体都在会话行与日志里。
+// 也不能直接复用 400 —— payload 值有 500 **字节**的硬上限，400 个中文字符
+// 会被 brief 判成「载荷被截断」，凭空多一条未验证项。
+const turnSettledErrorRunes = 160
+
 // routerEventBriefExcerptRunes 是交给 Router 的产出摘要长度上限。它比写进
 // 账本的 routerSettlementExcerptRunes 更宽松：账本记事实，brief 供判断。
 const routerEventBriefExcerptRunes = 1200
@@ -75,12 +81,18 @@ func routerEventBriefExcerpt(payloadJSON string) string {
 // TurnSettledInput 是一次会话回合的结算输入。Excerpt 通常来自 harness 累积的
 // 助手文本末尾；OutOfBand 表示这一轮是系统发起的（巡检、自动补做），
 // AnsweredQuestion 表示回合内答复了一张提问卡。
+//
+// Failed / Error 来自会话行的 Aux.SessionError —— 回合开始时它被清空，所以结算时
+// 读到非空就一定是**本轮内**报过的错。没有这个标记，失败回合在 Router 眼里和正常
+// 回合一模一样（错误说明本身也算 has_output），会被当成「这一轮正常结束」。
 type TurnSettledInput struct {
 	SessionKey       string
 	TurnID           string
 	Excerpt          string
 	OutOfBand        bool
 	AnsweredQuestion bool
+	Failed           bool
+	Error            string
 }
 
 // SettleSessionTurn 给任务绑定的会话记一条 turn_settled 事件。返回 true 表示
@@ -142,7 +154,11 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 		"has_output":        strings.TrimSpace(in.Excerpt) != "",
 		"out_of_band":       in.OutOfBand,
 		"answered_question": in.AnsweredQuestion,
+		"failed":            in.Failed,
 		"excerpt":           tailExcerpt(in.Excerpt, routerSettlementExcerptRunes),
+	}
+	if in.Failed {
+		payload["error"] = cutAtSentence(strings.TrimSpace(in.Error), turnSettledErrorRunes)
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

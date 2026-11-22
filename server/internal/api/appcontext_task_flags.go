@@ -109,20 +109,41 @@ func (s *AppContext) settleSessionTurnForRouter(rootID, sessionKey, turnID strin
 	if err != nil || svc == nil {
 		return
 	}
+	turnErr := s.sessionTurnError(rootID, sessionKey)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	inserted, err := svc.SettleSessionTurn(ctx, rootID, kanban.TurnSettledInput{
 		SessionKey: sessionKey,
 		TurnID:     turnID,
 		Excerpt:    pending.Summary,
+		Failed:     turnErr != "",
+		Error:      turnErr,
 	})
 	if err != nil {
 		log.Printf("[kanban] router.turn_settled.error root=%s session=%s turn=%s err=%v", rootID, sessionKey, turnID, err)
 		return
 	}
 	if inserted {
-		log.Printf("[kanban] router.turn_settled root=%s session=%s turn=%s", rootID, sessionKey, turnID)
+		log.Printf("[kanban] router.turn_settled root=%s session=%s turn=%s failed=%v", rootID, sessionKey, turnID, turnErr != "")
 	}
+}
+
+// sessionTurnError 读会话行 aux 里本轮的错误标记；空串表示这一轮没报过错。
+//
+// 唯一写入口是 BroadcastSessionError → UpdateTaskSessionErrorForSession，而每个
+// 新回合的 OnStart 都会 ClearTaskAuxFlagsForSession 把它清空 —— 所以结算时读到
+// 非空就一定是本轮内的失败，不会把上一轮的错误带进来。读失败按「没失败」处理：
+// 账本只记日志，不能因为诊断读不到就把一整轮标红。
+func (s *AppContext) sessionTurnError(rootID, sessionKey string) string {
+	manager, err := s.GetSessionManager(rootID)
+	if err != nil || manager == nil {
+		return ""
+	}
+	sess, err := manager.GetMeta(context.Background(), sessionKey)
+	if err != nil || sess == nil {
+		return ""
+	}
+	return strings.TrimSpace(sess.Aux.SessionError)
 }
 
 // noteSessionTurnOutput 记一帧输出到会话回合的输出水位（W3-1，见

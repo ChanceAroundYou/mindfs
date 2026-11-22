@@ -2,6 +2,7 @@ package kanban
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,58 @@ func TestSettleSessionTurnEmitsOneEventPerTurn(t *testing.T) {
 	}
 	if got := routerEventPayloadString(ev.PayloadJSON, "excerpt"); !strings.Contains(got, "会话列表") {
 		t.Fatalf("event excerpt = %q", got)
+	}
+}
+
+// H2：失败回合的结算事件必须自带失败标记与原因。
+//
+// `has_output` 对失败回合也成立（错误说明本身就是输出），Router 拿到的旧载荷
+// 与正常回合完全一样，于是把故障当成了「这一轮正常结束」。
+func TestTurnSettledPayloadCarriesFailure(t *testing.T) {
+	ctx := context.Background()
+	f := newTurnSettledFixture(t, "task-turn-failed-payload", "sess-main")
+	reason := strings.Repeat("远端在中途断开了这条 SSE 流。", 30) // 远超过上限，验证会截断
+	inserted, err := f.svc.SettleSessionTurn(ctx, f.rootID, TurnSettledInput{
+		SessionKey: "sess-main",
+		TurnID:     "turn-failed-payload",
+		Excerpt:    "Prompt is too long",
+		Failed:     true,
+		Error:      reason,
+	})
+	if err != nil || !inserted {
+		t.Fatalf("SettleSessionTurn: inserted=%v err=%v", inserted, err)
+	}
+	events := f.events(t, RouterEventTurnSettled)
+	if len(events) != 1 {
+		t.Fatalf("turn_settled events = %d, want 1", len(events))
+	}
+	var payload struct {
+		Failed *bool  `json:"failed"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(events[0].PayloadJSON), &payload); err != nil {
+		t.Fatalf("payload json: %v", err)
+	}
+	if payload.Failed == nil || !*payload.Failed {
+		t.Fatalf("failed flag missing: %s", events[0].PayloadJSON)
+	}
+	if !strings.Contains(payload.Error, "远端在中途断开") {
+		t.Fatalf("error text missing: %q", payload.Error)
+	}
+	if n := len([]rune(payload.Error)); n > turnSettledErrorRunes+1 {
+		t.Fatalf("error keeps %d runes, want <= %d", n, turnSettledErrorRunes+1)
+	}
+	// brief 白名单要放行 failed，否则 Router 看到的是「载荷被截断」。
+	brief := &SituationBrief{}
+	event := events[0]
+	if err := attachRouterEventBrief(ctx, f.store, brief, event); err != nil {
+		t.Fatalf("attachRouterEventBrief: %v", err)
+	}
+	if got, _ := brief.Event.Payload["failed"].(bool); !got {
+		t.Fatalf("brief dropped the failed flag: %#v", brief.Event.Payload)
+	}
+	if brief.Event.Truncated {
+		t.Fatal("failed flag was treated as an unknown payload key")
 	}
 }
 

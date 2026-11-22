@@ -45,9 +45,11 @@ var routerEventBriefPayloadKeys = []string{
 	"run_id", "task_id", "node_id", "node_run_id", "gate_node_id",
 	"status", "reason", "error", "attempt", "since", "activity_id",
 	// 会话回合结算（turn_settled）：这一轮跑在哪个会话、跑了多久、有没有产出、
-	// 是不是系统发起、有没有答复提问卡。excerpt 单独走 RouterBriefEvent.Excerpt
-	// （它有独立的长度上限，比普通载荷值宽松得多）。
-	"session_key", "turn_id", "duration_ms", "has_output", "out_of_band", "answered_question",
+	// 是不是系统发起、有没有答复提问卡、是不是失败了（failed + error：失败
+	// 回合也有「产出」——错误说明本身就是输出，只看 has_output 会把故障当正常
+	// 结束）。excerpt 单独走 RouterBriefEvent.Excerpt（它有独立的长度上限，比
+	// 普通载荷值宽松得多）。
+	"session_key", "turn_id", "duration_ms", "has_output", "out_of_band", "answered_question", "failed",
 	// 任务级巡检（turn_stalled / task_orphaned）与重启恢复（turn_interrupted）：
 	// 现场事实 —— 停滞了多久、最后一次产出是什么时候、探针是否仍报在回复。
 	"last_output_at", "stalled_for_ms", "replying", "open_nodes",
