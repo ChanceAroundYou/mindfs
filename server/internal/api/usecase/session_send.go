@@ -211,6 +211,14 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		// 绑定永远为空 → 既 resume 不了也同步不回来」。true 之后不再查库。
 		learnedBinding := false
 		runtime.OnUpdate(func(update agenttypes.Event) {
+			// 回合边界之后 CLI 还会在这条流上继续输出（后台任务结果回注，origin.kind=
+			// task-notification，实测能再跑一整段循环）。SendMessage 返回之后实时落盘
+			// 已经结束，那些行没人写库 —— 这里只留一个「该补录」的标记，真正补录走
+			// 下一次同步（recoverLiveContinuationTail），免得在事件回调里读转录。
+			// 判据用「这一轮还活着吗」：回合期间恒为 true，因此不会误标正常回合。
+			if !SessionTurnActive(in.RootID, in.Key) {
+				markSessionContinuationTail(in.RootID, in.Key)
+			}
 			if !learnedBinding {
 				if persistLearnedAgentSessionID(context.Background(), manager, current, in.Agent, runtime) {
 					learnedBinding = true

@@ -103,6 +103,12 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 			log.Printf("[session/recovery] live_tail.error root=%s session=%s agent=%s full=%t err=%v", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, in.Full, rerr)
 		}
 		if !in.Full {
+			// 收尾之后 CLI 自己续跑的那一段（后台任务回注）不在实时落盘的覆盖范围里，
+			// 由这条补录。标记只在「回合结束却有事件进来」时置位，平时这里一次都不读转录。
+			if cerr := s.recoverLiveContinuationTail(ctx, root, in.RootID, manager, current, agentName, binding); cerr != nil {
+				log.Printf("[session/recovery] live_continuation.error root=%s session=%s agent=%s err=%v",
+					strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, cerr)
+			}
 			// delta 到此为止：live-owned 会话不做通用导入（2026-09-16 重导事故的守卫）。
 			return out, nil
 		}

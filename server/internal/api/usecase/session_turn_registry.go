@@ -25,7 +25,15 @@ var (
 	sessionSendLocks   = make(map[string]*sync.Mutex)
 	activeTurnsMu      sync.Mutex
 	activeTurns        = make(map[string]*activeTurnState)
-	activeTurnSeq      uint64
+	// continuationTails 记「这一轮的边界之后，CLI 还在这条流上继续输出」。
+	//
+	// 起因：Claude CLI 在回合 result 之后会因后台任务回注（task-notification）自己再跑
+	// 一整段循环，输出的行实时可见，但实时路径只在 SendMessage 返回时落一次盘，那之后
+	// 的续写没有任何写入者。补录走导入器，而导入器每拍都读转录太贵（live-owned 的字节
+	// 游标是冻结的，读一次就是从游标到文件尾），所以用这个标记当触发边沿：只有真的
+	// 见到「回合已结束却还有事件进来」才去读一次转录。
+	continuationTails = make(map[string]bool)
+	activeTurnSeq     uint64
 )
 
 type activeTurnState struct {
@@ -114,4 +122,30 @@ func activeTurnIDOrNil(active *activeTurnState) any {
 // SendMessage's existing per-session lock remains the final serialization guard.
 func SessionTurnActive(rootID, sessionKey string) bool {
 	return getActiveTurn(rootID, sessionKey) != nil
+}
+
+// markSessionContinuationTail 记下「回合边界之后这条流还在输出」，等下一次同步补录。
+func markSessionContinuationTail(rootID, sessionKey string) {
+	if strings.TrimSpace(rootID) == "" || strings.TrimSpace(sessionKey) == "" {
+		return
+	}
+	activeTurnsMu.Lock()
+	continuationTails[activeTurnKey(rootID, sessionKey)] = true
+	activeTurnsMu.Unlock()
+}
+
+// takeSessionContinuationTail 取走标记（取即清除）：补录失败或转录尾部还没收尾时，
+// 调用方负责用 markSessionContinuationTail 放回去。
+func takeSessionContinuationTail(rootID, sessionKey string) bool {
+	if strings.TrimSpace(rootID) == "" || strings.TrimSpace(sessionKey) == "" {
+		return false
+	}
+	activeTurnsMu.Lock()
+	defer activeTurnsMu.Unlock()
+	key := activeTurnKey(rootID, sessionKey)
+	if !continuationTails[key] {
+		return false
+	}
+	delete(continuationTails, key)
+	return true
 }

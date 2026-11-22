@@ -262,6 +262,116 @@ func liveTailIndex(ctx context.Context, manager *session.Manager, current *sessi
 	return lastUser, false, nil
 }
 
+// recoverLiveContinuationTail 补录「回合边界之后 CLI 自己续跑」的那一段输出。
+//
+// 与上面 recoverInterruptedLiveTurn 的区别：那条补的是**没走完的回合**（尾部是空占位或
+// 根本没有助手行）；这条补的是**已经收尾的回合之后**又冒出来的内容 —— Claude CLI 在
+// result 之后收到后台任务回注（task-notification）会自己再跑一整段循环，事件实时可见
+// （走的还是上一轮那个 OnUpdate 回调），但实时路径的落盘只在 SendMessage 返回时做了一次，
+// 之后的续写没有任何写入者；live-owned 会话的自动增量同步又是关着的，于是「刷新就没了」
+// （2026-11-22 实测 llm-deploy 会话：seq=196 之后的思考卡与工具行全在转录里、库里没有）。
+//
+// 三个闸门，缺一不可：
+//   - 回合不在跑：跑着的那一轮由实时路径负责，导入器插进来就是双写；
+//   - 补录标记：标记只在「回合结束之后还有事件进来」时置位（session_send.go），
+//     否则每次同步都要读一次转录（live-owned 的字节游标是冻结的，读一次就是从游标到文件尾）；
+//   - 最后一行是助手行 + 有真实时间：地板取**最后一行**的时间戳。续写发生在整轮落盘之后，
+//     所以「比最后一行还新」正好把已落库的内容挡在外面；尾部是用户行说明这一轮没走完，
+//     归 recoverInterruptedLiveTurn 管。
+//
+// 写入只取助手侧条目（recoveryAgentExchanges）：用户行由实时路径在发消息时就写好了。
+// 判重靠导入器的 native id（appendImportedExchange），所以同一条转录被补两次也只会落一行。
+func (s *Service) recoverLiveContinuationTail(
+	ctx context.Context,
+	root fs.RootInfo,
+	rootID string,
+	manager *session.Manager,
+	current *session.Session,
+	agentName string,
+	binding *session.AgentBinding,
+) error {
+	if current == nil || binding == nil || strings.TrimSpace(binding.AgentSessionID) == "" {
+		return nil
+	}
+	if SessionTurnActive(rootID, current.Key) {
+		return nil
+	}
+	if !takeSessionContinuationTail(rootID, current.Key) {
+		return nil
+	}
+	// 出错要把标记放回去，否则这一段续写要等到下一轮结束才有人再看它一眼。
+	restore := true
+	defer func() {
+		if restore {
+			markSessionContinuationTail(rootID, current.Key)
+		}
+	}()
+	importer, err := s.resolveExternalSessionImporter(agentName)
+	if err != nil || importer == nil || !importer.HasTranscriptTimestamps() {
+		// 没有真实时间戳的 agent 找不到可信地板，交给身份判重兜不住重复，宁可不补。
+		restore = false
+		return nil
+	}
+	if n := len(current.Exchanges); n == 0 || current.Exchanges[n-1].Role != "agent" {
+		restore = false
+		return nil
+	}
+	floor := lastExternalSyncTimestamp(current.Exchanges)
+	if floor.IsZero() {
+		restore = false
+		return nil
+	}
+	imported, err := importer.ImportExternalSession(ctx, agenttypes.ImportExternalSessionInput{
+		RootPath:       root.RootPath,
+		Agent:          agentName,
+		AgentSessionID: binding.AgentSessionID,
+		TimestampFloor: floor,
+		// 从冻结的字节游标往后读：这条路径只在真有续写时才进来，游标能让重复补录
+		// 退化成一次 stat（导入器的「文件未变即跳过」快路径）。
+		Cursor: binding.ExternalCursor(),
+	})
+	if err != nil {
+		return err
+	}
+	restore = false
+	items := recoveryAgentExchanges(imported.Exchanges)
+	added := 0
+	for _, item := range items {
+		ok, err := appendImportedExchange(ctx, manager, current, agentName, item)
+		if err != nil {
+			return err
+		}
+		if ok {
+			added++
+		}
+	}
+	// 游标必须推进：它只服务于「这条路径下次从哪儿接着读」，Full 同步与中断回合补录
+	// 都不吃它（那两条路径故意从 0 重读再按时间地板过滤）。
+	if strings.TrimSpace(imported.Cursor.SourcePath) != "" {
+		if err := manager.UpdateExternalSessionCursor(ctx, current.Key, agentName, imported.Cursor); err != nil {
+			log.Printf("[session/recovery] live_continuation.cursor.error root=%s session=%s err=%v",
+				strings.TrimSpace(rootID), current.Key, err)
+		}
+	}
+	// 尾部还没收尾（续写仍在跑 / 正在跑工具）：这一条被导入器扣下了，标记放回去，
+	// 下一次同步再试。收尾之后 committed 会追上 offset。
+	if imported.Cursor.CommittedOffset < imported.Cursor.Offset {
+		restore = true
+	}
+	if added > 0 {
+		latest, err := manager.Get(ctx, current.Key, 0)
+		if err != nil {
+			return err
+		}
+		if err := manager.UpdateAgentState(ctx, latest, agentName, len(latest.Exchanges), binding.AgentSessionID); err != nil {
+			return err
+		}
+		log.Printf("[session/recovery] live_continuation.recover root=%s session=%s agent=%s agent_session_id=%s rows=%d",
+			strings.TrimSpace(rootID), current.Key, agentName, binding.AgentSessionID, added)
+	}
+	return nil
+}
+
 // recoveryAgentExchanges 只取助手侧条目：用户行在实时路径上**发消息前**就已落盘，
 // 这里再导一次只会多出一个「相邻用户条目合并」后的巨型气泡（实测 2026-11-17 手动同步
 // 就在 ask 下面渲染了四条提问拼起来的重复用户消息）。
