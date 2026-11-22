@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作 + T27 存储卫生）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12252,6 +12252,20 @@ groups:
       （崩溃重启或并发收尾把同一次迁移再报一遍时，界面上不能变成两条「又断线了」；随机 id 会让去重失效）；
       **事件写失败不阻断状态机**（内存与 `state` 表已经正确，少一条历史不值得让同步停下来 ——
       与 `RecordProbe` 同一取舍）。
+      ㉒ 变更流清理与库文件权限（`store_prune.go` / `store.go` / `store_merge.go` /
+      `store_migrate.go` / `feed.go` / `runtime.go` / `token.go`）的五条必须保留：
+      **rev 分配与 `HeadRev` 都与 `state.pruned_through_rev` 取大**（change 行删光后
+      `MAX(rev)` 归零，照着它发号会从 1 重来、`HeadRev` 也会倒退 —— 水位停在旧值的边缘
+      会把新变更当成「已应用过」整段跳过，而两侧都没有任何异常信号）；**下限取「仍存在的
+      最小 rev 减一」、删空时取清理前的 head**（删的是最旧一批，所以它以下都已不在；表空时
+      退回 head 才不至于把「曾经发出去过的最大序号」忘掉）；**保留窗口缺口显式报
+      `ErrRetentionGap`**（`Page` 里 `since <= floor` 直接失败 → HTTP 409 → 边缘
+      `BlockLocal`）—— 返回一页「看起来正常」的变更等于让副本永久缺一段控制面，而主节点
+      本身没坏、重试也不会好，折成 5xx 只会让它一直重试注定的失败；**单次清理有行数上限**
+      （`PruneBatchSize`，按 rev 子查询 + LIMIT；一次删几十万行会把写锁攥住，期间采集与
+      边缘拉取全停摆）；**库与 `-wal`/`-shm` 每次启动都收紧到 0600、目录 0700**（旧库可能
+      是 0644 建的，而库里是含口令 hash 的整份控制面；token 同理只认 `token_file`，
+      装配处用 `ValidateSyncToken` 拒绝短于 16 字节的凭据，内联字段与环境变量那套已删除）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12327,6 +12341,9 @@ groups:
       - server/internal/controlsync/push_client.go
       - server/internal/controlsync/runtime.go
       - server/internal/controlsync/store_changes.go
+      - server/internal/controlsync/store_prune.go
+      - server/internal/controlsync/store_prune_test.go
+      - server/internal/controlsync/runtime_retention_test.go
       - server/internal/controlsync/store_migrate.go
       - server/internal/controlsync/store_runtime.go
       - server/internal/controlsync/token.go
@@ -12374,6 +12391,8 @@ groups:
       - server/internal/controlsync/runtime_test.go
       - server/internal/controlsync/runtime_handover_test.go
       - server/internal/controlsync/store_changes_test.go
+      - server/internal/controlsync/store_prune_test.go
+      - server/internal/controlsync/runtime_retention_test.go
       - server/internal/controlsync/store_pending_test.go
       - server/internal/controlsync/store_runtime_test.go
       - server/internal/controlsync/token_test.go
@@ -12564,9 +12583,38 @@ groups:
       - 'server/internal/controlsync/mode.go:		if m.successes >= UpgradeAfterSuccess && m.blocked == "" {'
       - 'server/internal/controlsync/mode.go:func (m *ModeController) BlockLocal(ctx context.Context, reason string) (Mode, error) {'
       - 'server/internal/controlsync/mode.go:func (m *ModeController) AdoptPrimary(ctx context.Context) (Mode, error) {'
-      - 'server/internal/controlsync/runtime.go:			if errors.Is(err, ErrReplicaOriginMismatch) || errors.Is(err, ErrReplicaSchemaMismatch) {'
+      - 'server/internal/controlsync/runtime.go:			if errors.Is(err, ErrReplicaOriginMismatch) || errors.Is(err, ErrReplicaSchemaMismatch) ||'
       - 'server/internal/controlsync/store_state.go:func (s *Store) ResetReplicaForAdopt(ctx context.Context) error {'
       - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {'
       - 'server/internal/api/http_control_sync.go:	case "adopt_primary":'
       - 'server/internal/controlsync/mode_block_test.go:func TestModeControllerBlockedStaysLocalAcrossProbeSuccess(t *testing.T) {'
       - 'server/internal/controlsync/origin_test.go:func TestAdoptPrimaryRebasesReplicaOntoNewPrimary(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune.go:	ChangeRetention = 90 * 24 * time.Hour'
+      - 'server/internal/controlsync/store_prune.go:	PruneBatchSize = 5000'
+      - 'server/internal/controlsync/store_prune.go:var ErrRetentionGap = errors.New("controlsync: change log retention gap")'
+      - 'server/internal/controlsync/store_prune.go:		if v := minRemaining.Int64 - 1; v > newFloor {'
+      - 'server/internal/controlsync/store_prune.go:		newFloor = headBefore'
+      - 'server/internal/controlsync/store_prune.go:ON CONFLICT(id) DO UPDATE SET pruned_through_rev = MAX(pruned_through_rev, excluded.pruned_through_rev)'
+      - 'server/internal/controlsync/store_prune.go:	q := `DELETE FROM changes WHERE rev IN ('
+      - 'server/internal/controlsync/store.go:	COALESCE((SELECT pruned_through_rev FROM state WHERE id = 1), 0)'
+      - 'server/internal/controlsync/store.go:os.MkdirAll(filepath.Dir(path), 0o700)'
+      - 'server/internal/controlsync/store_merge.go:	COALESCE((SELECT pruned_through_rev FROM state WHERE id = 1), 0)'
+      - 'server/internal/controlsync/store_migrate.go:		"pruned_through_rev": "pruned_through_rev INTEGER NOT NULL DEFAULT 0",'
+      - 'server/internal/controlsync/store_migrate.go:	return s.hardenStoreFiles()'
+      - 'server/internal/controlsync/store_migrate.go:			return fmt.Errorf("controlsync: harden %s: %w", filepath.Base(path), err)'
+      - 'server/internal/controlsync/store_prune_test.go:func TestPruneChangesDeletesOnlyExpired(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestPruneChangesHonorsBatchBudget(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestPruneKeepsRevMonotonicAfterEverythingDeleted(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestChangeFeedRejectsRetentionGap(t *testing.T) {'
+      - 'server/internal/controlsync/store_prune_test.go:func TestMigrateHardensStoredFilePermissions(t *testing.T) {'
+      - 'server/internal/controlsync/feed.go:	if floor > 0 && since <= floor {'
+      - 'server/internal/controlsync/runtime.go:				errors.Is(err, ErrRetentionGap) {'
+      - 'server/internal/controlsync/runtime.go:		go r.pruneLoop(ctx)'
+      - 'server/internal/controlsync/runtime.go:const PruneInterval = time.Hour'
+      - 'server/internal/controlsync/runtime_retention_test.go:func TestRuntimeBlocksReconcileOnRetentionGap(t *testing.T) {'
+      - 'server/internal/controlsync/runtime_retention_test.go:func TestRuntimePrimaryPrunesExpiredChangesAtStartup(t *testing.T) {'
+      - 'server/internal/controlsync/token.go:const MinSyncTokenLen = 16'
+      - 'server/app/control_sync.go:	if err := controlsync.ValidateSyncToken(cfg.Token); err != nil {'
+      - 'server/app/control_sync_test.go:func TestStartControlSyncRejectsWeakToken(t *testing.T) {'
+      - 'server/internal/api/http_control_sync.go:		if errors.Is(err, controlsync.ErrRetentionGap) {'
+      - 'server/internal/api/http_control_sync_feed_test.go:func TestControlSyncChangesEndpointReportsRetentionGap(t *testing.T) {'

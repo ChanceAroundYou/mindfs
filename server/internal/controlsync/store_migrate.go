@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -61,10 +63,35 @@ func (s *Store) migrateOnce(ctx context.Context) error {
 		// 追平被拒的原因（非空 = 锁住）。重启后必须读回来：全量重拉一遍再撞上
 		// 同一个身份不符，只会重复失败。
 		"blocked_reason": "blocked_reason TEXT NOT NULL DEFAULT ''",
+		// 变更流已清理到哪一条 rev（含）。rev 分配、HeadRev 与保留窗口缺口判据
+		// 共用它 —— 见 PruneChanges。
+		"pruned_through_rev": "pruned_through_rev INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}
-	return s.ensureChangePayloadColumn(ctx)
+	if err := s.ensureChangePayloadColumn(ctx); err != nil {
+		return err
+	}
+	// 权限放在最后：前面每一步都可能新建 -wal / -shm。
+	return s.hardenStoreFiles()
+}
+
+// hardenStoreFiles 把库与它的伴生文件收紧到 0600。
+//
+// 这份库里是含口令 hash 的整份控制面，文件权限就是最后的边界：新建时由 Open
+// 收紧目录、SQLite 按库文件权限建 WAL/SHM，但**旧库可能是 0644 建的**，
+// 所以每次启动都对齐一次。SQLite 之后重建 WAL 时会照抄库文件的模式，一次收紧即可。
+func (s *Store) hardenStoreFiles() error {
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		path := s.path + suffix
+		if err := os.Chmod(path, 0o600); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("controlsync: harden %s: %w", filepath.Base(path), err)
+		}
+	}
+	return nil
 }
 
 // ensureColumns 给已存在的表补列：`CREATE TABLE IF NOT EXISTS` 对旧表什么都不做，

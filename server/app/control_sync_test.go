@@ -52,6 +52,10 @@ func controlSyncFixture(t *testing.T) (string, controlSyncStores) {
 	}
 }
 
+// syncTestToken 满足 MinSyncTokenLen：短 token 现在会在装配处被拒，
+// 用例里的凭据必须是真的可用形状，否则测的就不是它想测的那件事。
+const syncTestToken = "test-token-0123456789"
+
 func TestStartControlSyncDisabledIsNoOp(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	ctx := t.Context()
@@ -79,7 +83,7 @@ func TestStartControlSyncDisabledIsNoOp(t *testing.T) {
 func TestStartControlSyncRejectsWorkerNode(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	_, err := startControlSync(t.Context(), &ControlSyncOptions{
-		Enabled: true, Role: controlsync.RolePrimary, Token: "t",
+		Enabled: true, Role: controlsync.RolePrimary, Token: syncTestToken,
 	}, nodeinfo.RoleWorker, cfgDir, stores)
 	if err == nil || !strings.Contains(err.Error(), "role=control") {
 		t.Fatalf("err = %v，worker 上应拒绝启用同步", err)
@@ -98,13 +102,27 @@ func TestStartControlSyncPrimaryRequiresToken(t *testing.T) {
 	}
 }
 
+// token 是这条通道唯一的凭据，而通道搬的是含口令 hash 的整份控制面：
+// 一个手输的短串（"123456"）挡不住任何东西，启动时就该拒绝。
+func TestStartControlSyncRejectsWeakToken(t *testing.T) {
+	cfgDir, stores := controlSyncFixture(t)
+	for _, token := range []string{"short", "1234567890123"} {
+		_, err := startControlSync(t.Context(), &ControlSyncOptions{
+			Enabled: true, Role: controlsync.RolePrimary, Token: token,
+		}, nodeinfo.RoleControl, cfgDir, stores)
+		if err == nil || !strings.Contains(err.Error(), "token") {
+			t.Fatalf("token %q 的 err = %v，弱 token 应拒绝启动", token, err)
+		}
+	}
+}
+
 // 主节点启动就要把整份控制面写进变更流。兜底扫描 15 秒才有第一拍，而边缘完全可能
 // 在这之前完成首次追平然后掉线 —— 那一版副本会缺记录（首次启动生成的管理员账户
 // 就在其中），恢复时把主节点早就有的记录当成「两侧都改」报冲突。
 func TestStartControlSyncPrimaryPublishesBaselineAtStartup(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	w, err := startControlSync(t.Context(), &ControlSyncOptions{
-		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home", Token: "t0ken",
+		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home", Token: syncTestToken,
 	}, nodeinfo.RoleControl, cfgDir, stores)
 	if err != nil || w == nil {
 		t.Fatalf("startControlSync: %v", err)
@@ -128,7 +146,7 @@ func TestStartControlSyncPrimaryPublishesBaselineAtStartup(t *testing.T) {
 func TestStartControlSyncPrimaryExposesPushAndFeed(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	w, err := startControlSync(t.Context(), &ControlSyncOptions{
-		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home", Token: "t0ken",
+		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home", Token: syncTestToken,
 	}, nodeinfo.RoleControl, cfgDir, stores)
 	if err != nil {
 		t.Fatalf("startControlSync: %v", err)
@@ -139,7 +157,7 @@ func TestStartControlSyncPrimaryExposesPushAndFeed(t *testing.T) {
 	if w.pusher == nil || w.feed == nil {
 		t.Fatalf("主节点缺 push/feed：%+v", w)
 	}
-	if w.token != "t0ken" {
+	if w.token != syncTestToken {
 		t.Fatalf("token = %q", w.token)
 	}
 	if w.service != nil {
@@ -150,7 +168,7 @@ func TestStartControlSyncPrimaryExposesPushAndFeed(t *testing.T) {
 	}
 	h := &api.HTTPHandler{}
 	w.applyTo(h)
-	if h.ControlSyncToken != "t0ken" || h.ControlSyncPush == nil || h.ControlSyncFeed == nil {
+	if h.ControlSyncToken != syncTestToken || h.ControlSyncPush == nil || h.ControlSyncFeed == nil {
 		t.Fatalf("handler 没装上同步端点：%+v", h)
 	}
 	if h.ControlSync != nil {
@@ -168,7 +186,7 @@ func TestStartControlSyncEdgeWiresProxyAndMode(t *testing.T) {
 		Role:       controlsync.RoleEdge,
 		InstanceID: "hasee",
 		PrimaryURL: "https://home.example:7331",
-		Token:      "t0ken",
+		Token:      syncTestToken,
 	}, nodeinfo.RoleControl, cfgDir, stores)
 	if err != nil {
 		t.Fatalf("startControlSync: %v", err)
@@ -210,9 +228,9 @@ func TestStartControlSyncEdgeRejectsBadConfig(t *testing.T) {
 		want string
 	}{
 		{"缺实例 id", ControlSyncOptions{Enabled: true, Role: "edge",
-			PrimaryURL: "https://home:7331", Token: "t"}, "instance_id required"},
+			PrimaryURL: "https://home:7331", Token: syncTestToken}, "instance_id required"},
 		{"明文主节点", ControlSyncOptions{Enabled: true, Role: "edge",
-			InstanceID: "hasee", PrimaryURL: "http://home:7331", Token: "t"}, "must be https"},
+			InstanceID: "hasee", PrimaryURL: "http://home:7331", Token: syncTestToken}, "must be https"},
 		{"缺 token", ControlSyncOptions{Enabled: true, Role: "edge",
 			InstanceID: "hasee", PrimaryURL: "https://home:7331"}, "token required"},
 	}
@@ -256,7 +274,7 @@ func TestControlSyncDomainsCoverAllSix(t *testing.T) {
 func TestControlSyncWrapRootCapturesLocalWrites(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	w, err := startControlSync(t.Context(), &ControlSyncOptions{
-		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home", Token: "t0ken",
+		Enabled: true, Role: controlsync.RolePrimary, InstanceID: "home", Token: syncTestToken,
 	}, nodeinfo.RoleControl, cfgDir, stores)
 	if err != nil {
 		t.Fatalf("startControlSync: %v", err)
@@ -306,7 +324,7 @@ func TestControlSyncWrapRootForwardsOnlyOnEdge(t *testing.T) {
 		InstanceID: "hasee",
 		PrimaryURL: primary.URL,
 		CAFile:     caPath,
-		Token:      "t0ken",
+		Token:      syncTestToken,
 	}, nodeinfo.RoleControl, cfgDir, stores)
 	if err != nil {
 		t.Fatalf("startControlSync: %v", err)

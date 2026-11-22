@@ -281,6 +281,10 @@ func (r *Runtime) Run(ctx context.Context) {
 		return
 	}
 	go r.capturer.Run(ctx, FallbackInterval)
+	if r.cfg.Role == RolePrimary {
+		// 变更流只在主节点增长；边缘跑清理只会白扫空表。
+		go r.pruneLoop(ctx)
+	}
 	if r.cfg.Role != RoleEdge || r.mode == nil {
 		<-ctx.Done()
 		return
@@ -318,9 +322,10 @@ func (r *Runtime) tick(ctx context.Context) {
 		}
 	case ModeReconciling:
 		if _, err := r.reconciler.Reconcile(ctx); err != nil {
-			// 身份/schema 不符不会因为重试而变好：锁住并停在本地模式，否则探活
-			// 20 秒后会把边缘拉回 reconciling，再撞同一个不符，来回跳。
-			if errors.Is(err, ErrReplicaOriginMismatch) || errors.Is(err, ErrReplicaSchemaMismatch) {
+			// 身份/schema 不符、保留窗口缺口都不会因为重试而变好：锁住并停在本地模式，
+			// 否则探活 20 秒后会把边缘拉回 reconciling，再撞同一个错误，来回跳。
+			if errors.Is(err, ErrReplicaOriginMismatch) || errors.Is(err, ErrReplicaSchemaMismatch) ||
+				errors.Is(err, ErrRetentionGap) {
 				if _, blockErr := r.mode.BlockLocal(ctx, err.Error()); blockErr != nil {
 					r.report(blockErr)
 				}
@@ -508,5 +513,35 @@ func (r *Runtime) modeChanged(from, to Mode) {
 func (r *Runtime) report(err error) {
 	if err != nil && r.cfg.OnError != nil {
 		r.cfg.OnError(err)
+	}
+}
+
+// PruneInterval 是主节点清理变更流的节奏（spec §4.2：启动一次 + 每小时一次）。
+const PruneInterval = time.Hour
+
+// pruneLoop 启动即清一拍，之后每小时一拍。单拍只删一批（PruneBatchSize），
+// 积压的多余部分自然由后续每拍接着删 —— 慢一点可以接受，卡住写入不行。
+func (r *Runtime) pruneLoop(ctx context.Context) {
+	if r == nil || r.store == nil {
+		return
+	}
+	r.pruneOnce(ctx)
+	ticker := time.NewTicker(PruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.pruneOnce(ctx)
+		}
+	}
+}
+
+func (r *Runtime) pruneOnce(ctx context.Context) {
+	if _, err := r.store.PruneChanges(ctx, PruneOptions{}); err != nil {
+		if ctx.Err() == nil {
+			r.report(err)
+		}
 	}
 }

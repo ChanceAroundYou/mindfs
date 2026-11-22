@@ -3,6 +3,7 @@ package controlsync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -97,6 +98,16 @@ func (f *ChangeFeed) Page(ctx context.Context, since int64, limit int) ([]Remote
 	}
 	if limit > ChangePageMax {
 		limit = ChangePageMax
+	}
+	// since 是闭区间下界：它落在已清理区间里（<= 下限）就意味着这位拉取方需要的
+	// 变更已经被删掉了。此时返回一页「看起来正常」的变更是最坏的选择 ——
+	// 副本会永久缺一段控制面，而两边都没有任何异常信号。
+	floor, err := f.store.PrunedThroughRev(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	if floor > 0 && since <= floor {
+		return nil, 0, fmt.Errorf("%w: since=%d pruned_through=%d", ErrRetentionGap, since, floor)
 	}
 	changes, err := f.store.ListChangesSince(ctx, since, limit)
 	if err != nil {

@@ -117,6 +117,11 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		// 那不是「少个可选配置」，是同步根本没通，必须在启动时说出来。
 		return nil, fmt.Errorf("control_sync: sync token required for primary (token_file)")
 	}
+	// token 是这条通道唯一的凭据，而它搬的是含口令 hash 的整份控制面：
+	// 手输的短串挡不住任何东西，在装配处（两个角色都在这里过一遍）直接拒掉。
+	if err := controlsync.ValidateSyncToken(cfg.Token); err != nil {
+		return nil, err
+	}
 
 	domains, err := controlSyncDomains(configDir, stores)
 	if err != nil {

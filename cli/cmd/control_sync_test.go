@@ -36,7 +36,7 @@ func TestControlSyncOptionsAbsentIsNil(t *testing.T) {
 func TestControlSyncOptionsReadsTokenFile(t *testing.T) {
 	dir := t.TempDir()
 	tokenPath := filepath.Join(dir, "sync.token")
-	if err := os.WriteFile(tokenPath, []byte("  s3cret-token\n"), 0o600); err != nil {
+	if err := os.WriteFile(tokenPath, []byte("  s3cret-token-0123456789\n"), 0o600); err != nil {
 		t.Fatalf("write token: %v", err)
 	}
 	cfg := startupConfig{ControlSync: &startupControlSyncConfig{
@@ -54,7 +54,7 @@ func TestControlSyncOptionsReadsTokenFile(t *testing.T) {
 	if opts == nil || !opts.Enabled {
 		t.Fatalf("opts = %+v，应已启用", opts)
 	}
-	if opts.Token != "s3cret-token" {
+	if opts.Token != "s3cret-token-0123456789" {
 		t.Fatalf("token = %q，应去掉首尾空白", opts.Token)
 	}
 	if opts.Role != "edge" || opts.InstanceID != "hasee" ||

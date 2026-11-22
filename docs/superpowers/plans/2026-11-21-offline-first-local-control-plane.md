@@ -904,3 +904,41 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   `tsc -b --noEmit` clean、`npx vitest run` 262 文件 / 870 通过 / 6 跳过。
 - 未做：横幅的「接受新主节点」按钮（`adopt_primary` 端点已就绪，留给真机验收时按需接）；
   未部署、未重启、未改配置。
+
+### T27 存储卫生（2026-11-22）
+
+- 清理口径落在 `store_prune.go`：`PruneChanges` 先按 `created_at < now-90d` 删最旧的一批，
+  再在行数超过 50 万时从最旧删起，两条路径共用 `PruneBatchSize = 5000` 的单次删除预算
+  （按 rev 子查询 + LIMIT —— SQLite 默认构建不支持 `DELETE ... LIMIT`）。主节点
+  `Runtime.Run` 起 `pruneLoop`（启动一拍 + 每小时），边缘不跑：变更流只在主节点增长。
+- **一个新增的状态列承担三件事**：`state.pruned_through_rev`。① rev 分配与 `HeadRev`
+  都改成与它取大 —— 不然 change 行删空后 `MAX(rev)` 归零，新 rev 从 1 重发，水位停在旧值
+  的边缘被 `rev <= base_rev` 的幂等守卫整段跳过，而两侧都没有异常信号；② 下限取「仍然
+  存在的最小 rev 减一」（删的是最旧一批，以下都已不在），表被删空时取清理前的 head；
+  ③ 保留窗口缺口判据。
+- 缺口处理与身份/schema 不符同一档：`ChangeFeed.Page` 在 `since <= floor` 时返回
+  `ErrRetentionGap` → `GET /api/control-sync/changes` 折 409（不是 500：主节点没坏，
+  是这份副本落得太远）→ 边缘 `Runtime.tick` 的 reconciling 分支 `BlockLocal`。出路仍是
+  已有的 `adopt_primary`：重试不会把删掉的历史变回来。
+- 文件权限：`Open` 建目录改 0700；`Migrate` 末尾 `hardenStoreFiles()` 把库与
+  `-wal` / `-shm` 一律收紧到 0600（旧库可能是 0644 建的；SQLite 之后重建 WAL 会照抄库
+  文件模式，一次收紧即可）。
+- token 口径收口：删掉从未被生产调用的 `ResolveSyncToken` / `TokenEnvVar`（env → 文件 →
+  内联那套与「只认 token_file」的决策相反，留着就是一条没人走但看起来能走的路），
+  `ValidateSyncToken`（≥16 字节、无空白）接到 `server/app` 的装配处 —— 两个角色都在那里
+  过一遍，而 CLI 侧受 Go internal 规则限制无法直接引用该包。spec §6 的 token 段落、
+  §4.2 的清理段落同步改写。既有用例里的短 token fixture（`"t0ken"` / `"t"` /
+  `"s3cret-token"`）随之换成 ≥16 字节的真实形状。
+- 用例：`store_prune_test.go` 5 条（只删过期且墓碑同规则、批量上限逐拍收敛、删空后 rev
+  不复用且 HeadRev 不倒退、`Page` 对 `since <= floor` 报缺口而窗口内照常供给、新旧库都收
+  到 0600 且新目录 0700）、`runtime_retention_test.go` 2 条（缺口锁进 offline-local 且探测
+  成功也不解锁、主节点启动即清理）、`http_control_sync_feed_test.go` 409 一条、
+  `app` 弱 token 一条。
+- 变异 9 处各自打红后还原：默认保留期改成 100 年（不删过期）/ 时间条件反向（删未过期）/
+  预算改 2^30（无批量上限）/ 不写下限（rev 复用）/ 不收紧权限 / 去掉缺口判定 /
+  runtime 不拦缺口 / 409 折回 500 / 不校验 token。第一轮 M1 没红 —— 用例把保留期当参数
+  传了进去，等于替生产默认值打了保票；改为用例只给 `Now`、保留期与行数走零值后才红。
+- 门禁：`go test ./server/internal/controlsync/ ./server/internal/api/ ./server/app/ ./cli/...`
+  全绿、`gofmt` 无新增待格式化文件。
+- 未做：`applied_changes` 不随清理回收（幂等凭据，行很小，删掉会把「已应用过」的推送重新
+  判成冲突）；未部署、未重启、未改配置，`control_sync.enabled` 仍为 `false`。

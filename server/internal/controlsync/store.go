@@ -122,7 +122,7 @@ func Open(path string) (*Store, error) {
 	if strings.ContainsAny(path, "?#") {
 		return nil, fmt.Errorf("controlsync: db path contains '?' or '#': %q", path)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("controlsync: create db dir: %w", err)
 	}
 	// busy_timeout：并发写排队而不是立刻报 "database is locked"。
@@ -335,7 +335,12 @@ ON CONFLICT(id) DO UPDATE SET base_rev = excluded.base_rev`, newRev); err != nil
 // 测试也靠它验证「回滚不留半条 change」。
 func writeRecordTx(ctx context.Context, tx *sql.Tx, rec Record, now func() time.Time) (int64, error) {
 	var rev int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rev), 0) + 1 FROM changes`).Scan(&rev); err != nil {
+	// 下限要跟清理水位取大：change 行被清光之后 MAX(rev) 会掉回 0，
+	// 照着它发号就会从 1 重新开始，把落后边缘的幂等守卫骗过去。
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(
+	COALESCE((SELECT MAX(rev) FROM changes), 0),
+	COALESCE((SELECT pruned_through_rev FROM state WHERE id = 1), 0)
+) + 1`).Scan(&rev); err != nil {
 		return 0, fmt.Errorf("controlsync: allocate rev: %w", err)
 	}
 	updatedAt := rec.UpdatedAt

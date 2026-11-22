@@ -138,6 +138,14 @@ conflicts(id TEXT PRIMARY KEY, domain, key, local_payload, remote_payload,
 `rev` 是主节点单调递增整数，每次成功写入控制面后分配。
 `changes` 是变更日志，供边缘按 `since=rev` 增量拉取；按 90 天或 50 万行清理。
 
+清理（`PruneChanges`，主节点启动一次 + 每小时一次）只删最旧的一批，单次上限
+5000 行 —— 一次删几十万行会把写锁攥住，期间采集与边缘拉取都停摆。删空的 rev 不会
+被复用：`state.pruned_through_rev` 同时充当 rev 分配下限与 `HeadRev` 下限，否则水位
+停在旧值的边缘会把新变更当成「已应用过」全部跳过。拉取方要的 `since` 落在已清理
+区间（`since <= pruned_through_rev`）时返回 `ErrRetentionGap`（HTTP 409），
+边缘据此锁进 `offline-local`：重试不会让删掉的历史回来，只能由人决定是否
+`adopt_primary` 重新采纳主节点。
+
 ### 4.3 边缘
 
 `<configDir>/control_replica.db`：
@@ -237,8 +245,11 @@ conflicts(...);  -- 与主节点同构，便于 UI 只写一套读取逻辑
 }
 ```
 
-- 共享密钥放 `<configDir>/control-sync.token`（0600），或环境变量
-  `MINDFS_CONTROL_SYNC_TOKEN`；**不写进仓库、不写进 config.json**。
+- 共享密钥**只**从 `<configDir>/control-sync.token`（0600）读，配置里只有
+  `token_file` 指路，**没有内联字段、没有环境变量、没有 flag** —— 这条通道搬的是
+  含口令 hash 的整份控制面，任何「顺手写在 config.json 里」的入口都是泄露面。
+  token 少于 16 字节或含空白一律拒绝启动（`controlsync.ValidateSyncToken`）。
+  **不写进仓库、不写进 config.json**。
 - 每个请求带 `X-MindFS-Instance`、`X-MindFS-Timestamp`（Unix 秒）、`X-MindFS-Nonce`、
   `X-MindFS-Signature` = HMAC-SHA256(token, timestamp + "\n" + nonce + "\n" + body)。
 - 时间窗 ±300 秒；nonce 在服务端缓存 10 分钟拒绝重放。

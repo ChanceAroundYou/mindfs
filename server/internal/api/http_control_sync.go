@@ -152,6 +152,12 @@ func (h *HTTPHandler) handleControlSyncChanges(w http.ResponseWriter, r *http.Re
 	}
 	changes, head, err := h.ControlSyncFeed.Page(r.Context(), since, limit)
 	if err != nil {
+		// 保留窗口缺口是 409 不是 500：主节点没坏，是这位拉取方落得太远，
+		// 重试不会好。折成 5xx 只会让它一直重试同一个注定的失败。
+		if errors.Is(err, controlsync.ErrRetentionGap) {
+			respondError(w, http.StatusConflict, err)
+			return
+		}
 		respondError(w, http.StatusInternalServerError, err)
 		return
 	}

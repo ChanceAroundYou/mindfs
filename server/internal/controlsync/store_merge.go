@@ -40,14 +40,19 @@ FROM records WHERE domain = ? AND key = ?`, domain, key).
 	return rec, true, nil
 }
 
-// HeadRev 返回变更流最大 rev（没有变更时为 0）。
+// HeadRev 返回变更流的最大 rev（没有变更时为 0）。
+//
+// 清理水位也参与取大：change 行删光之后 MAX(rev) 归零，而主节点并没有回到
+// 「什么都没有」的状态 —— 对边缘来说水位倒退等于把所有旧变更重发一遍。
 func (s *Store) HeadRev(ctx context.Context) (int64, error) {
 	if s == nil || s.db == nil {
 		return 0, errors.New("controlsync: store closed")
 	}
 	var rev int64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE((SELECT MAX(rev) FROM changes), 0)`).Scan(&rev); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(
+	COALESCE((SELECT MAX(rev) FROM changes), 0),
+	COALESCE((SELECT pruned_through_rev FROM state WHERE id = 1), 0)
+)`).Scan(&rev); err != nil {
 		return 0, fmt.Errorf("controlsync: head rev: %w", err)
 	}
 	return rev, nil

@@ -200,3 +200,16 @@ func TestControlSyncFeedEndpointReportsFailure(t *testing.T) {
 		t.Fatalf("code = %d，应为 500", rec.Code)
 	}
 }
+
+// 保留窗口缺口不是 5xx：主节点本身没坏，是这份副本落得太远、重试也不会好。
+// 折成 500 会让边缘把它当暂时故障一直重试，而正确处置是当场停下等人裁决。
+func TestControlSyncChangesEndpointReportsRetentionGap(t *testing.T) {
+	feed := &fakeFeed{err: controlsync.ErrRetentionGap}
+	rec := serve(newFeedTestServer(feed), http.MethodGet, "/api/control-sync/changes?since=1", feedTestToken)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code = %d（body=%s），应为 409", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "retention") {
+		t.Fatalf("响应 = %s，应写明保留窗口缺口", rec.Body.String())
+	}
+}
