@@ -74,30 +74,53 @@ type pickerTaskDeps struct {
 }
 
 var pickerDepsByService sync.Map // map[*Service]pickerTaskDeps
+var pickerDepsMu sync.Mutex      // guards read-modify-write of pickerDepsByService
 
 // SetPickerTaskDeps installs the intake ledger and task creator used when a
 // project-choice card is clicked. Both are required; with either missing a
 // picker click fails its card closed instead of creating an untracked task.
+// The update merges into the existing value so calling it after
+// SetTargetTaskDeps never drops the appender or task catalog.
 func (s *Service) SetPickerTaskDeps(store *IntakeStore, creator TaskCreator) {
 	if s == nil {
 		return
 	}
-	pickerDepsByService.Store(s, pickerTaskDeps{store: store, creator: creator})
+	s.updatePickerTaskDeps(func(d *pickerTaskDeps) {
+		d.store, d.creator = store, creator
+	})
 }
 
 // SetTargetTaskDeps adds the appender and task catalog the confirmation card
-// needs. It keeps whatever SetPickerTaskDeps already installed, so the two
-// setters can be called in either order (or one of them not at all).
+// needs. Like SetPickerTaskDeps it merges, so the two setters can be called in
+// either order (or one of them not at all) without dropping fields.
 func (s *Service) SetTargetTaskDeps(appender TaskAppender, tasks TaskCatalog) {
 	if s == nil {
 		return
 	}
-	deps := s.pickerTaskDeps()
-	deps.appender, deps.tasks = appender, tasks
+	s.updatePickerTaskDeps(func(d *pickerTaskDeps) {
+		d.appender, d.tasks = appender, tasks
+	})
+}
+
+// updatePickerTaskDeps applies fn to the service's deps under the package lock,
+// making the read-modify-store atomic across the two setters.
+func (s *Service) updatePickerTaskDeps(fn func(*pickerTaskDeps)) {
+	pickerDepsMu.Lock()
+	defer pickerDepsMu.Unlock()
+	var deps pickerTaskDeps
+	if v, ok := pickerDepsByService.Load(s); ok {
+		deps = v.(pickerTaskDeps)
+	}
+	fn(&deps)
 	pickerDepsByService.Store(s, deps)
 }
 
 func (s *Service) pickerTaskDeps() pickerTaskDeps {
+	if s == nil {
+		return pickerTaskDeps{}
+	}
+	pickerDepsMu.Lock()
+	defer pickerDepsMu.Unlock()
 	v, ok := pickerDepsByService.Load(s)
 	if !ok {
 		return pickerTaskDeps{}

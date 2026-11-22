@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,14 +33,19 @@ type targetCall struct {
 // uses. Splitting them here is what lets a test assert that nothing was created
 // before the owner confirmed.
 type targetRecorder struct {
-	created    []targetCall
-	appended   []targetCall
-	createID   string
-	createErr  error
+	created   []targetCall
+	appended  []targetCall
+	createID  string
+	createErr error
 	appendErr error
+	onCreate  func() // lets a test inspect state just before the side effect
+	onAppend  func()
 }
 
 func (r *targetRecorder) Create(_ context.Context, nodeID, rootID, input string) (string, error) {
+	if r.onCreate != nil {
+		r.onCreate()
+	}
 	if r.createErr != nil {
 		return "", r.createErr
 	}
@@ -51,6 +57,9 @@ func (r *targetRecorder) Create(_ context.Context, nodeID, rootID, input string)
 }
 
 func (r *targetRecorder) Append(_ context.Context, target TargetRef, input string) error {
+	if r.onAppend != nil {
+		r.onAppend()
+	}
 	if r.appendErr != nil {
 		return r.appendErr
 	}
@@ -71,18 +80,32 @@ type targetHarness struct {
 
 func newTargetHarness(t *testing.T, cfg Config, catalog ProjectCatalog, tasks TaskCatalog) *targetHarness {
 	t.Helper()
-	svc, cards, _ := newTestService(t, Config{OwnerOpenID: "ou_owner"})
-	if cfg.OwnerOpenID == "" {
-		cfg.OwnerOpenID = "ou_owner"
-	}
-	store, err := NewIntakeStore(filepath.Join(t.TempDir(), "intake.json"), time.Now)
+	clock := func() time.Time { return fixedNow() }
+	return newTargetHarnessClock(t, cfg, catalog, tasks, clock)
+}
+
+// newTargetHarnessClock builds the harness around one clock so the card store,
+// the intake ledger and the service all agree on "now". Tests that need to move
+// time (stale-snapshot checks) capture and advance a closure.
+func newTargetHarnessClock(t *testing.T, cfg Config, catalog ProjectCatalog, tasks TaskCatalog, clock func() time.Time) *targetHarness {
+	t.Helper()
+	cfg.OwnerOpenID = "ou_owner"
+	cfg.Now = clock
+	svc, cards, _ := newTestService(t, cfg)
+	// The card store has its own clock separate from Config.Now; point it at the
+	// same source so CreatedAt/ExpiresAt compare cleanly with the active target.
+	cards.now = clock
+	store, err := NewIntakeStore(filepath.Join(t.TempDir(), "intake.json"), clock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := &targetRecorder{}
 	h := &targetHarness{svc: svc, cards: cards, store: store, rec: rec}
-	h.intake = NewIntakeService(cfg, catalog, store, rec, svc.Notify, time.Now, func(string) bool { return true })
+	h.intake = NewIntakeService(cfg, catalog, store, rec, svc.Notify, clock, func(string) bool { return true })
 	h.intake.SetTargetDeps(rec, tasks)
+	h.intake.SetTargetFinder(func(chatID string, _ time.Time) (Card, bool) {
+		return cards.FindOpenTargetByChat(chatID)
+	})
 	svc.SetPickerTaskDeps(store, rec)
 	svc.SetTargetTaskDeps(rec, tasks)
 	return h
@@ -99,7 +122,9 @@ func (h *targetHarness) cardsOfKind(kind Kind) []Card {
 }
 
 // notifyTarget puts a confirmation card straight into the card store, the way
-// production does after the intake resolved a project.
+// production does after the intake resolved a project. It records the intake
+// record as "confirming" so a later click can claim it (a real card is always
+// preceded by that transition).
 func (h *targetHarness) notifyTarget(t *testing.T, n Notice) Card {
 	t.Helper()
 	if n.Kind == "" {
@@ -110,6 +135,11 @@ func (h *targetHarness) notifyTarget(t *testing.T, n Notice) Card {
 	}
 	if err := h.svc.Notify(context.Background(), n); err != nil {
 		t.Fatal(err)
+	}
+	if n.SourceMessageID != "" && h.store != nil {
+		if err := h.store.SetStatus(n.SourceMessageID, "", "confirming"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	c, ok := h.cards.Get(n.CardID)
 	if !ok {
@@ -282,10 +312,10 @@ func TestTargetAppendFailureClearsActiveAndFailsCard(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h.rec.appendErr = errors.New("task moved")
+	h.rec.appendErr = fmt.Errorf("task moved: %w", ErrTargetStale)
 	card := h.notifyTarget(t, Notice{
 		CardID: "tgt-append-fail", SourceMessageID: "om_t7", IntakeText: "追加到老任务",
-		Target: &TargetRef{NodeID: "fn", RootID: "r1", TaskID: "task_9", TaskNumber: 9, TaskTitle: "登录"},
+		Target:     &TargetRef{NodeID: "fn", RootID: "r1", TaskID: "task_9", TaskNumber: 9, TaskTitle: "登录"},
 		TargetMode: "append",
 	})
 	clickTarget(t, h, card, "confirm", nil)
@@ -380,7 +410,7 @@ func TestTargetCardOffersFourChoicesAndTaskNumberForm(t *testing.T) {
 	h := newTargetHarness(t, Config{}, intakeCatalog{}, staticTasks{})
 	card := h.notifyTarget(t, Notice{
 		CardID: "tgt-shape", SourceMessageID: "om_t10", IntakeText: "看清楚再点",
-		Target: &TargetRef{NodeID: "fn", RootID: "r1", TaskNumber: 42, TaskID: "task_42", TaskTitle: "登录", ProjectLabel: "docs · fn"},
+		Target:     &TargetRef{NodeID: "fn", RootID: "r1", TaskNumber: 42, TaskID: "task_42", TaskTitle: "登录", ProjectLabel: "docs · fn"},
 		ReviewHits: []string{"代码变更"},
 		TargetMode: "append", PickerTTL: PickerTTL,
 	})

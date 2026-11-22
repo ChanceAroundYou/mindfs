@@ -61,6 +61,7 @@ type IntakeService struct {
 
 	mu           sync.Mutex
 	pickerFinder func(string, time.Time) (Card, bool)
+	targetFinder func(string, time.Time) (Card, bool)
 	appender     TaskAppender
 	tasks        TaskCatalog
 }

@@ -100,24 +100,24 @@ func elements(c Card) []any {
 		// so before the owner clicks, not after.
 		out = append(out, plainDiv("该项目需要审核："+strings.Join(c.ReviewHits, "、")))
 	}
-		if c.State == StateOpen {
-			if c.Kind == KindGate {
-				return append(out, optionBlocks(c)...)
-			}
-			if c.Kind == KindNotice {
-				out = append(out, textForm(c))
-				out = append(out, optionBlocks(c)...)
-				return out
-			}
-			if c.Kind == KindTarget {
-				out = append(out, optionBlocks(c)...)
-				out = append(out, targetTaskForm(c))
-				return out
-			}
-			out = append(out, optionBlocks(c)...)
+	if c.State == StateOpen {
+		if c.Kind == KindGate {
+			return append(out, optionBlocks(c)...)
+		}
+		if c.Kind == KindNotice {
 			out = append(out, textForm(c))
+			out = append(out, optionBlocks(c)...)
 			return out
 		}
+		if c.Kind == KindTarget {
+			out = append(out, optionBlocks(c)...)
+			out = append(out, targetTaskForm(c))
+			return out
+		}
+		out = append(out, optionBlocks(c)...)
+		out = append(out, textForm(c))
+		return out
+	}
 	out = append(out, markdown("**"+outcome(c)+"**"))
 	if c.Note != "" {
 		out = append(out, plainDiv("处理说明："+c.Note))

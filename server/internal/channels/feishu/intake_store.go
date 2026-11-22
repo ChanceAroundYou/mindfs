@@ -205,6 +205,57 @@ func (s *IntakeStore) SetStatus(messageID, taskID, status string) error {
 	return nil
 }
 
+// ClaimTarget atomically moves a confirmation record from "confirming" to the
+// given claimed status ("creating" or "appending") before a card click runs its
+// remote side effect. A click can be redelivered after a restart — the card
+// store resets "applying" cards to "open" — so without this the side effect
+// would run twice. A missing record, a record already claimed/created, or one
+// in any other status fails closed (returns false, nil).
+func (s *IntakeStore) ClaimTarget(messageID, claimedStatus string) (bool, error) {
+	if messageID == "" {
+		return false, errors.New("feishu intake: message id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	rec, ok := s.records[messageID]
+	if !ok || rec.Status != "confirming" {
+		return false, nil
+	}
+	before := rec
+	rec.TaskID, rec.Status = "", claimedStatus
+	s.records[messageID] = rec
+	if err := s.saveLocked(); err != nil {
+		s.records[messageID] = before
+		return false, err
+	}
+	return true, nil
+}
+
+// RollbackTarget returns a claimed confirmation record to "confirming" when the
+// click's side effect definitively did not happen (a transient remote error),
+// so the owner can retry the still-open card. It never touches a record that a
+// later handler already advanced past the claim.
+func (s *IntakeStore) RollbackTarget(messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[messageID]
+	if !ok || (rec.Status != "creating" && rec.Status != "appending") {
+		return nil
+	}
+	before := rec
+	rec.TaskID, rec.Status = "", "confirming"
+	s.records[messageID] = rec
+	if err := s.saveLocked(); err != nil {
+		s.records[messageID] = before
+		return err
+	}
+	return nil
+}
+
 // SetActiveTarget makes chatID's confirmed destination the default for later
 // messages. Node and project are required: a target without them could not
 // route anything. TaskID empty means confirmed 「新建」 — messages create tasks

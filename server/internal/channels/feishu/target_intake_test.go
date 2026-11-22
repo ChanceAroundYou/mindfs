@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -119,5 +120,84 @@ func TestTargetRedeliveryConfirmsOnceAndCreatesOne(t *testing.T) {
 	clickTarget(t, h, targets[0], "confirm", nil)
 	if len(h.rec.created) != 1 {
 		t.Fatalf("重投后点确认只能建一个任务：%+v", h.rec.created)
+	}
+}
+
+// TestTargetOneOpenCardPerChat proves a second message cannot open a second
+// confirmation card while the first is still unhandled.
+func TestTargetOneOpenCardPerChat(t *testing.T) {
+	h := newTargetHarness(t, Config{
+		Bindings: []Binding{{ChatID: "oc_chat", NodeID: "fn", RootID: "r1"}},
+	}, intakeCatalog{refs: []ProjectRef{{NodeID: "fn", RootID: "r1", Name: "docs"}}}, staticTasks{})
+
+	if err := h.intake.Handle(context.Background(), inbound("om_a1", "p2p", "ou_owner", "第一个需求")); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.cardsOfKind(KindTarget)); n != 1 {
+		t.Fatalf("第一个需求应发一张确认卡：%d", n)
+	}
+	if err := h.intake.Handle(context.Background(), inbound("om_a2", "p2p", "ou_owner", "第二个需求")); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.cardsOfKind(KindTarget)); n != 1 {
+		t.Fatalf("每聊只能有一张未处理的确认卡，got %d", n)
+	}
+	found := false
+	for _, n := range h.cardsOfKind(KindNotice) {
+		if strings.Contains(n.Text, "确认卡") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("第二张被拒时应告知 owner：%+v", h.cardsOfKind(KindNotice))
+	}
+}
+
+// TestTargetIntakeStaleAppendClearsActive proves the fast path drops a stale
+// active target when the appender reports ErrTargetStale.
+func TestTargetIntakeStaleAppendClearsActive(t *testing.T) {
+	h := newTargetHarness(t, Config{
+		Bindings: []Binding{{ChatID: "oc_chat", NodeID: "fn", RootID: "r1"}},
+	}, intakeCatalog{refs: []ProjectRef{{NodeID: "fn", RootID: "r1", Name: "docs"}}}, staticTasks{})
+	if err := h.store.SetActiveTarget(ActiveTarget{
+		ChatID: "oc_chat", NodeID: "fn", RootID: "r1", TaskID: "task_9", TaskNumber: 9,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.rec.appendErr = fmt.Errorf("gone: %w", ErrTargetStale)
+
+	if err := h.intake.Handle(context.Background(), inbound("om_s1", "p2p", "ou_owner", "再补一句")); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.store.ActiveTarget("oc_chat"); ok {
+		t.Fatal("ErrTargetStale 后必须清掉活跃目标")
+	}
+	if n := len(h.cardsOfKind(KindTarget)); n != 1 {
+		t.Fatalf("失效后要回落到确认卡：%d", n)
+	}
+}
+
+// TestTargetIntakeTransientAppendKeepsActive proves a transient append error
+// keeps the active target for a later retry.
+func TestTargetIntakeTransientAppendKeepsActive(t *testing.T) {
+	h := newTargetHarness(t, Config{
+		Bindings: []Binding{{ChatID: "oc_chat", NodeID: "fn", RootID: "r1"}},
+	}, intakeCatalog{refs: []ProjectRef{{NodeID: "fn", RootID: "r1", Name: "docs"}}}, staticTasks{})
+	if err := h.store.SetActiveTarget(ActiveTarget{
+		ChatID: "oc_chat", NodeID: "fn", RootID: "r1", TaskID: "task_9", TaskNumber: 9,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.rec.appendErr = errors.New("temporary boom")
+
+	if err := h.intake.Handle(context.Background(), inbound("om_s2", "p2p", "ou_owner", "再补一句")); err != nil {
+		t.Fatal(err)
+	}
+	active, ok := h.store.ActiveTarget("oc_chat")
+	if !ok || active.TaskID != "task_9" {
+		t.Fatalf("瞬时失败必须保留活跃目标：%+v ok=%v", active, ok)
+	}
+	if n := len(h.cardsOfKind(KindTarget)); n != 1 {
+		t.Fatalf("瞬时失败要回落到确认卡：%d", n)
 	}
 }

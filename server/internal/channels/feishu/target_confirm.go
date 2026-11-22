@@ -2,15 +2,27 @@ package feishu
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// ErrTargetStale classifies an append failure where the (node, project, task)
+// triple no longer holds — the task was deleted, moved, or now belongs to a
+// different project. TaskAppender implementations must wrap this exact error
+// (fmt.Errorf("...: %w", ErrTargetStale)) so the channel can drop a dead active
+// target instead of retrying it forever. Any other append error is treated as
+// transient: the message still falls back to a confirmation card and the active
+// target is kept for a later retry.
+var ErrTargetStale = errors.New("feishu: target no longer exists")
 
 // TaskAppender adds one message to an existing task. The implementation owns
 // the server-side re-validation: it must only accept the call when the whole
-// (node, project, task) triple still holds, and fail otherwise. The channel
-// layer cannot see the task store, so it treats any error as "target is stale"
-// and asks the owner again instead of silently creating a task elsewhere.
+// (node, project, task) triple still holds, and otherwise return an error that
+// wraps ErrTargetStale. The channel layer cannot see the task store, so it
+// clears the active target only for ErrTargetStale and asks the owner again
+// instead of silently creating a task elsewhere.
 type TaskAppender interface {
 	Append(ctx context.Context, target TargetRef, input string) error
 }
@@ -34,6 +46,25 @@ func (s *IntakeService) targetDeps() (TaskAppender, TaskCatalog) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.appender, s.tasks
+}
+
+// SetTargetFinder installs the one-open-target-card-per-chat check, normally
+// backed by the card Store (FindOpenTargetByChat). It is optional so unit
+// tests and future transports can build the service without a card store.
+func (s *IntakeService) SetTargetFinder(fn func(string, time.Time) (Card, bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.targetFinder = fn
+}
+
+func (s *IntakeService) openTarget(chatID string) (Card, bool) {
+	s.mu.Lock()
+	fn := s.targetFinder
+	s.mu.Unlock()
+	if fn == nil {
+		return Card{}, false
+	}
+	return fn(chatID, s.clock())
 }
 
 func (s *IntakeService) logTargetf(format string, args ...any) {
@@ -96,13 +127,26 @@ func (s *IntakeService) resolveUniquelyNamedTarget(ctx context.Context, msg Inbo
 					Text: "已追加到" + targetRefLabel(target) + "（项目：" + label + "）。" + truncSuffix(truncated),
 				}
 				return s.notifyWithCardID(ctx, id, n)
+			} else if errors.Is(err, ErrTargetStale) {
+				// The stored triple no longer holds: forget it so later messages
+				// stop aiming at a task that is gone, then fall through to a card.
+				if clearErr := s.store.ClearActiveTarget(msg.ChatID); clearErr != nil {
+					s.logTargetf("飞书入站清理失效活跃目标失败：%v", clearErr)
+				}
+				s.logTargetf("飞书入站活跃目标已失效，改为确认卡：%v", err)
 			} else {
-				// The message must not be lost because a stale target failed:
-				// fall through to the confirmation card, which the owner can
-				// still act on.
-				s.logTargetf("飞书入站直接追加到任务 %s 失败，改为确认卡：%v", active.TaskID, err)
+				// Transient: keep the active target so the next message can retry
+				// it, and fall through to a card the owner can act on now.
+				s.logTargetf("飞书入站直接追加到任务 %s 暂时失败，改为确认卡：%v", active.TaskID, err)
 			}
 		}
+	}
+
+	// One open target card per chat: a second card would let the owner confirm
+	// two write targets for overlapping messages. It mirrors the picker guard.
+	if open, ok := s.openTarget(msg.ChatID); ok {
+		s.logTargetf("飞书入站已有未处理的确认卡 %s，拒绝再发一张", open.ID)
+		return s.reject(ctx, msg, "", "target_pending", "你还有一张未处理的确认卡，请先完成确认。")
 	}
 
 	var candidates []TargetRef
@@ -148,116 +192,6 @@ func (s *IntakeService) resolveUniquelyNamedTarget(ctx context.Context, msg Inbo
 		return err
 	}
 	return s.store.SetStatus(id, "", "confirming")
-}
-
-// applyTargetChoice is the click side of a confirmation card. Every path ends
-// through finish/fail so the card, the intake record and the active target
-// stay one story.
-func (s *Service) applyTargetChoice(ctx context.Context, c Card, selected int, a Action) error {
-	deps := s.pickerTaskDeps()
-	if deps.store == nil {
-		s.fail(ctx, c.ID, "目标确认暂不可用，请稍后重试。")
-		return nil
-	}
-	if c.Target == nil {
-		s.fail(ctx, c.ID, "这张卡没有目标信息，请重新发送需求。")
-		return nil
-	}
-	target := *c.Target
-	mode := c.TargetMode
-
-	if raw := strings.TrimSpace(a.Fields["task_no"]); raw != "" {
-		if n, ok := parseTaskNumber(raw); ok && n != target.TaskNumber {
-			found := false
-			for _, cand := range c.Candidates {
-				if cand.TaskNumber == n {
-					target, mode, found = cand, "append", true
-					break
-				}
-			}
-			if !found {
-				s.fail(ctx, c.ID, fmt.Sprintf("没有找到任务 #%d，请重新选择。", n))
-				return nil
-			}
-		}
-	}
-
-	switch c.Choices[selected].Value {
-	case "cancel":
-		s.finish(ctx, c.ID, "已取消，本次没有建任务。")
-		return nil
-	case "switch":
-		return s.refreshTargetCandidates(ctx, c, deps, target)
-	case "create":
-		mode = "create"
-	}
-
-	label := target.ProjectLabel
-	if label == "" {
-		label = target.RootID + " · " + target.NodeID
-	}
-	if mode == "append" && target.TaskID != "" {
-		if deps.appender == nil {
-			s.fail(ctx, c.ID, "暂时不能追加到已有任务，请稍后重试。")
-			return nil
-		}
-		if target.NodeID == "" || target.RootID == "" {
-			s.fail(ctx, c.ID, "目标信息不完整，请重新发送需求。")
-			return nil
-		}
-		if err := deps.appender.Append(ctx, target, c.IntakeText); err != nil {
-			s.logf("飞书确认卡 %s 追加失败：%v", c.ID, err)
-			// The stored triple no longer holds: drop it so later messages do
-			// not keep aiming at a task that is gone.
-			if err := deps.store.ClearActiveTarget(c.ChatID); err != nil {
-				s.logf("飞书确认卡 %s 清理活跃目标失败：%v", c.ID, err)
-			}
-			s.fail(ctx, c.ID, "目标已失效（任务可能被删除或移动），请重新发送。")
-			return nil
-		}
-		if err := deps.store.SetStatus(c.SourceMessageID, target.TaskID, "appended"); err != nil {
-			s.logf("飞书确认卡 %s 更新入站记录失败：%v", c.ID, err)
-		}
-		if c.ChatID != "" {
-			if err := deps.store.SetActiveTarget(ActiveTarget{
-				ChatID: c.ChatID, NodeID: target.NodeID, RootID: target.RootID,
-				TaskID: target.TaskID, TaskNumber: target.TaskNumber, TaskTitle: target.TaskTitle,
-			}); err != nil {
-				s.logf("飞书确认卡 %s 记录活跃目标失败：%v", c.ID, err)
-			}
-		}
-		s.finish(ctx, c.ID, "已追加到"+targetRefLabel(target)+"（项目："+label+"）。")
-		return nil
-	}
-
-	if deps.creator == nil {
-		s.fail(ctx, c.ID, "暂时不能新建任务，请稍后重试。")
-		return nil
-	}
-	if target.NodeID == "" || target.RootID == "" {
-		s.fail(ctx, c.ID, "目标信息不完整，请重新发送需求。")
-		return nil
-	}
-	taskID, err := deps.creator.Create(ctx, target.NodeID, target.RootID, c.IntakeText)
-	if err != nil {
-		s.logf("飞书确认卡 %s 建任务失败：%v", c.ID, err)
-		s.fail(ctx, c.ID, "建任务失败，请稍后重试。")
-		return nil
-	}
-	if err := deps.store.SetStatus(c.SourceMessageID, taskID, "created"); err != nil {
-		s.logf("飞书确认卡 %s 更新入站记录失败：%v", c.ID, err)
-		s.fail(ctx, c.ID, "任务已建，但没能记下去重记录，请到网页确认。")
-		return nil
-	}
-	if c.ChatID != "" {
-		if err := deps.store.SetActiveTarget(ActiveTarget{
-			ChatID: c.ChatID, NodeID: target.NodeID, RootID: target.RootID, TaskID: taskID,
-		}); err != nil {
-			s.logf("飞书确认卡 %s 记录活跃目标失败：%v", c.ID, err)
-		}
-	}
-	s.finish(ctx, c.ID, "已建任务 "+taskID+"（项目："+label+"）。")
-	return nil
 }
 
 // refreshTargetCandidates re-asks the task catalog and re-opens the card. The
