@@ -18,6 +18,13 @@ func TestGuardAttachRejectsNonPositivePID(t *testing.T) {
 	}
 }
 
+func TestGuardAttachRejectsUnknownPID(t *testing.T) {
+	g := New()
+	if err := g.Attach(2147483647); err == nil {
+		t.Fatal("Attach should fail for a process id that cannot exist")
+	}
+}
+
 func TestGuardCloseKillsAttachedProcess(t *testing.T) {
 	cmd := exec.Command("sh", "-c", "sleep 30")
 	if err := cmd.Start(); err != nil {
