@@ -6,6 +6,18 @@ to resume their old TODOs or baselines.
 
 ## 部署状态（权威，覆盖下方条目里的「未部署」）
 
+**2026-11-22 四端发布 `v0.5.5-1201-156-g9f62b54b`**（origin/main `9f62b54b`，含
+`28266b98..9f62b54b` 全部提交）。四端版本逐字一致：wsl / fn 的 user 单元 `is-active` + health 200
+（`role=worker`）；pc-win 计划任务 PID 8128、`:7332` LISTENING、health 200（`role=worker`）；
+本机已安装同一二进制（`/mindfs/health` 200 `role=control`，bundle `assets/index-C_qTgGGB.js` 已由
+7331 服务），**运行进程仍是旧二进制，待用户 `sudo systemctl restart mindfs`**。本批上线的组：
+G-PU（Agent 子进程随 MindFS 生命周期退出：Windows 共享 Job Object + kill-on-close、Unix pidfd
+显式收尾 + `KillMode=control-group`；pc-win 已实测 `schtasks /end` 后 codex 子进程同时消失、
+重启后 PID 可查、health 200）、G-PP（Claude 默认 200k，只有 `[1m]` 才给 1M）、G-PK（Codex 跨
+provider 续接丢弃旧 provider 加密 reasoning）、G-PG/`881a94bd`（压缩后写回适配器上下文窗口）、
+G-PT（任务开始/终止动作与「待处理」文案）。门禁：`go test -count=1 ./...` 全绿、`tsc` clean、
+Vitest 891 通过、`make check-upstream` 2465 delta / 373 组全绿。
+
 **2026-11-22 四端发布 `v0.5.5-1201-57-g0cc70c6e`**（origin/main `0cc70c6e`，含 `6159f483..0cc70c6e`
 全部提交）。四端版本逐字一致：本机 system 单元由用户重启，运行进程与安装文件同 md5
 `540a0e8f…`、`/mindfs/health` 200 `role=control`；wsl / fn 的 user 单元 `is-active` + health 200
