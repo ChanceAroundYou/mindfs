@@ -98,14 +98,30 @@ func truncateRunes(text string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
+// harnessFailureHeadRunes 是签名匹配的范围：首行之外最多再看这么多字。
+const harnessFailureHeadRunes = 200
+
 // harnessFailureText 把已知的 harness 错误行翻成一句用户能看懂的话。返回空串
-// 表示这不是 harness 错误。只认短文本，避免把正常回复里恰好出现的词判成错误。
+// 表示这不是 harness 错误。
+//
+// 只认开头（首行 / 首 200 字），而不是整段文本。旧实现是「超过 400 字就不是错误」，
+// 本意是别把正常回复里恰好出现的词判成错误，但反方向的代价更大：线上实测 3 条
+// 以 `Prompt is too long` 开头、后面跟了 2000–2400 字正文的回合全部被记成
+// completed，任务以 success 收尾。限制范围比限制长度更贴近意图 —— 正文中段顺带
+// 提到「context length」的正常长回复仍然不判红，而错误行出现在开头就一定判红。
 func harnessFailureText(text string) string {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || len([]rune(trimmed)) > 400 {
+	if trimmed == "" {
 		return ""
 	}
-	lower := strings.ToLower(trimmed)
+	head := trimmed
+	if i := strings.IndexByte(head, '\n'); i >= 0 {
+		head = head[:i]
+	}
+	if r := []rune(head); len(r) > harnessFailureHeadRunes {
+		head = string(r[:harnessFailureHeadRunes])
+	}
+	lower := strings.ToLower(head)
 	switch {
 	case strings.Contains(lower, "prompt is too long"),
 		strings.Contains(lower, "context length"),
