@@ -91,6 +91,16 @@ CREATE TABLE IF NOT EXISTS conflicts (
 	resolution TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS conflicts_open ON conflicts(domain, key) WHERE resolved_at = '';
+-- 模式迁移的可见事件：spec §7 要求降级/升级各留一条，横幅据此显示「上次变化」。
+-- id 由 (from,to,at) 决定（见 ModeEventID），重放同一次迁移不会写第二条。
+CREATE TABLE IF NOT EXISTS mode_events (
+	id TEXT PRIMARY KEY,
+	from_mode TEXT NOT NULL,
+	to_mode TEXT NOT NULL,
+	reason TEXT NOT NULL DEFAULT '',
+	at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mode_events_recent ON mode_events(at DESC);
 `
 
 // Store 是同步索引库的句柄。它只存「记录快照、变更日志、待回传、冲突现场」，

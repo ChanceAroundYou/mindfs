@@ -110,6 +110,9 @@ type Status struct {
 	BlockedReason string    `json:"blocked_reason,omitempty"`
 	LastPrimaryAt time.Time `json:"last_primary_at,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
+	// RecentEvents 是最近几次模式迁移（最新在前）。spec §7 要求降级/升级留下可见事件，
+	// 前端横幅就用它显示「什么时候变的、为什么」，并用事件 id 做一次性提醒的幂等键。
+	RecentEvents []ModeEvent `json:"recent_events,omitempty"`
 }
 
 // ModeController 拥有模式状态机：计数、迁移、持久化、对外状态。
@@ -211,6 +214,12 @@ func (m *ModeController) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	// 事件读不出来就报错，不返回空列表：空列表在界面上等于「从没变过模式」，
+	// 而真相可能是「刚刚断过又恢复」—— 把读失败伪装成平静比报错更糟。
+	events, err := m.store.ListModeEvents(ctx, 5)
+	if err != nil {
+		return Status{}, err
+	}
 	m.mu.Lock()
 	mode, reachable, blocked := m.mode, m.reachable, m.blocked
 	m.mu.Unlock()
@@ -223,6 +232,7 @@ func (m *ModeController) Status(ctx context.Context) (Status, error) {
 		BlockedReason:    blocked,
 		LastPrimaryAt:    state.LastPrimaryAt,
 		LastError:        state.LastError,
+		RecentEvents:     events,
 	}, nil
 }
 
@@ -436,14 +446,29 @@ func (m *ModeController) CompleteReconcile(ctx context.Context, hasConflicts boo
 	return next, nil
 }
 
-// transition 通知一次模式翻转；持久化由各入口自己做（它们要能返回写失败）。
+// transition 记录并通知一次模式翻转；持久化由各入口自己做（它们要能返回写失败）。
 func (m *ModeController) transition(from, to Mode) {
 	if from == to {
 		return
 	}
+	m.recordModeEvent(from, to)
 	if m.OnModeChange != nil {
 		m.OnModeChange(from, to)
 	}
+}
+
+// recordModeEvent 落一条可见事件。写失败不阻断状态机 —— 内存里的模式已经正确、
+// 库里的模式也已由调用方写过，少一条历史不值得让同步停下来（与 RecordProbe 同一取舍）。
+func (m *ModeController) recordModeEvent(from, to Mode) {
+	if m.store == nil {
+		return
+	}
+	m.mu.Lock()
+	reason := m.blocked
+	m.mu.Unlock()
+	_, _ = m.store.RecordModeEvent(context.Background(), ModeEvent{
+		From: from, To: to, Reason: reason, At: m.now(),
+	})
 }
 
 // parsePrimaryURL 是复制/转发/探活三处共用的唯一校验：非 https 一律拒绝。

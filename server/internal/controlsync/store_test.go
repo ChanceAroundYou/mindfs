@@ -73,7 +73,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := store.Migrate(context.Background()); err != nil {
 		t.Fatalf("二次 Migrate: %v", err)
 	}
-	want := []string{"applied_changes", "changes", "conflicts", "local_seq", "pending", "records", "state"}
+	want := []string{"applied_changes", "changes", "conflicts", "local_seq", "mode_events", "pending", "records", "state"}
 	rows, err := store.db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
 		t.Fatalf("query tables: %v", err)

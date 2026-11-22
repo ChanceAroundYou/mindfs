@@ -65,11 +65,16 @@ func decodeStatus(t *testing.T, rec *httptest.ResponseRecorder) controlsync.Stat
 }
 
 func TestControlSyncStatusEndpoint(t *testing.T) {
+	changedAt := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
 	svc := &fakeControlSync{status: controlsync.Status{
 		Mode:          controlsync.ModeOfflineLocal,
 		BaseRev:       42,
 		LastPrimaryAt: time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC),
 		LastError:     "dial tcp: refused",
+		RecentEvents: []controlsync.ModeEvent{{
+			ID: "mode:online->offline-local:1", From: controlsync.ModeOnline,
+			To: controlsync.ModeOfflineLocal, Reason: "primary unreachable", At: changedAt,
+		}},
 	}}
 	h := &HTTPHandler{ControlSync: svc}
 	rec := httptest.NewRecorder()
@@ -83,6 +88,13 @@ func TestControlSyncStatusEndpoint(t *testing.T) {
 	}
 	if got.LastPrimaryAt.IsZero() {
 		t.Fatalf("last_primary_at 丢了")
+	}
+	// 模式迁移事件随状态一起下发：横幅靠它显示「上次变化」并做一次性提醒。
+	if len(got.RecentEvents) != 1 || got.RecentEvents[0].ID == "" || got.RecentEvents[0].To != controlsync.ModeOfflineLocal {
+		t.Fatalf("recent_events = %+v", got.RecentEvents)
+	}
+	if got.RecentEvents[0].At.IsZero() {
+		t.Fatalf("recent_events 丢了时间")
 	}
 }
 

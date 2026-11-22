@@ -4,8 +4,10 @@
 // 组件只拿「当前状态 + 要不要显示 + 能做什么」，不碰请求细节。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  conflictReminder,
   controlModeBanner,
   CONTROL_CONFLICTS_EVENT,
+  type ControlBannerAction,
   type ControlSyncStatus,
 } from "../shared/controlMode";
 import { fetchControlSyncStatus, switchControlSyncMode } from "../services/net/controlSync";
@@ -47,27 +49,49 @@ export function useControlSyncStatus() {
     };
   }, [enabled]);
 
-  const banner = useMemo(() => controlModeBanner(status?.mode), [status?.mode]);
+  const banner = useMemo(
+    () =>
+      controlModeBanner(status?.mode, {
+        conflictCount: status?.conflict_count ?? 0,
+      }),
+    [status?.mode, status?.conflict_count],
+  );
 
-  const runAction = useCallback(async () => {
-    if (!banner || busy) return;
-    if (banner.action === "view-conflicts") {
-      // 冲突面板（T17）订阅这个事件；面板就绪前点它不会有副作用。
-      window.dispatchEvent(new CustomEvent(CONTROL_CONFLICTS_EVENT));
-      return;
-    }
-    setBusy(true);
-    try {
-      const next = await switchControlSyncMode(
-        banner.action === "switch-local" ? "local" : "retry",
-      );
-      if (next) setStatus(next);
-    } catch {
-      // 切换失败时状态由下一拍轮询纠正，不额外弹错。
-    } finally {
-      setBusy(false);
-    }
-  }, [banner, busy]);
+  // 一次性冲突提醒按事件 id 去重：关掉之后同一次进入不再弹回来（见 conflictReminder）。
+  const [dismissedConflicts, setDismissedConflicts] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const reminder = useMemo(
+    () => conflictReminder(status, dismissedConflicts),
+    [status, dismissedConflicts],
+  );
+  const dismissConflictReminder = useCallback(() => {
+    if (!reminder) return;
+    setDismissedConflicts((prev) => new Set(prev).add(reminder.id));
+  }, [reminder]);
 
-  return { status, enabled, busy, banner, runAction };
+  const runAction = useCallback(
+    async (action: ControlBannerAction) => {
+      if (action === "view-conflicts") {
+        // 冲突面板（T17）订阅这个事件；面板就绪前点它不会有副作用。
+        window.dispatchEvent(new CustomEvent(CONTROL_CONFLICTS_EVENT));
+        // 「去处理了」等价于关掉提醒；真的没处理完，常驻横幅还在。
+        dismissConflictReminder();
+        return;
+      }
+      if (busy) return;
+      setBusy(true);
+      try {
+        const next = await switchControlSyncMode(action === "switch-local" ? "local" : "retry");
+        if (next) setStatus(next);
+      } catch {
+        // 切换失败时状态由下一拍轮询纠正，不额外弹错。
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, dismissConflictReminder],
+  );
+
+  return { status, enabled, busy, banner, reminder, runAction, dismissConflictReminder };
 }

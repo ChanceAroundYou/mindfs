@@ -1,7 +1,7 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { rawReadFileSync } from "./source-map.mjs";
-import { controlModeBanner, isControlMode } from "../src/shared/controlMode.ts";
+import { controlModeBanner, conflictReminder, controlModeLabel, isControlMode, newestModeEventTo } from "../src/shared/controlMode.ts";
 
 const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -13,36 +13,88 @@ const rootView = read("../src/app/AppRootView.tsx");
 const zh = read("../src/i18n/locales/zh-CN-workspace.ts");
 const en = read("../src/i18n/locales/en-US-workspace.ts");
 
-test("在线与未启用时不出横幅", () => {
-  // 主节点和没开 control_sync 的机器也会被问到 —— 一律「没有横幅」，
-  // 而不是渲染一个永远显示「在线」的装饰条。
+test("未启用时不出横幅；在线出弱化横幅并带切本地入口", () => {
+  // 端点 404（主节点 / 没开 control_sync）就是「没有这个能力」：一律不渲染，
+  // 而不是在每个普通节点上挂一条装饰条。
   assert.equal(controlModeBanner(null), null);
-  assert.equal(controlModeBanner("online"), null);
+  assert.equal(controlModeBanner(undefined), null);
   assert.equal(isControlMode("online"), true);
   assert.equal(isControlMode("bogus"), false);
   assert.equal(isControlMode(undefined), false);
+
+  // 在线也可见（T26）：主节点随时会断，用户得有看得见的入口主动切到本地。
+  const online = controlModeBanner("online");
+  assert.equal(online?.tone, "online");
+  assert.deepEqual(online?.actions, ["switch-local"]);
+  assert.ok(online?.title && online?.detail);
 });
 
-test("三种降级状态各自给出唯一动作", () => {
+test("三种降级状态各自给出动作，攒了冲突才多出查看入口", () => {
   // 动作是纯函数输出，按钮渲染必须照它走：把「本地模式」画成「查看冲突」这种
   // 错位在页面上看不出来，只会点出一个不存在的面板。
   const local = controlModeBanner("offline-local");
   assert.equal(local?.tone, "local");
-  assert.equal(local?.action, "retry");
+  assert.deepEqual(local?.actions, ["retry"]);
+
+  // 离线期间攒下冲突：重试之外还要能把人带到面板前。
+  const localWithConflicts = controlModeBanner("offline-local", { conflictCount: 2 });
+  assert.deepEqual(localWithConflicts?.actions, ["retry", "view-conflicts"]);
 
   const syncing = controlModeBanner("reconciling");
   assert.equal(syncing?.tone, "syncing");
-  assert.equal(syncing?.action, "switch-local");
+  assert.deepEqual(syncing?.actions, ["switch-local"]);
 
   const conflict = controlModeBanner("conflict-review");
   assert.equal(conflict?.tone, "conflict");
-  assert.equal(conflict?.action, "view-conflicts");
+  assert.deepEqual(conflict?.actions, ["view-conflicts"]);
 
-  // 三个状态都得有标题与说明，缺一条横幅就只剩一个色块。
+  // 三种动作合起来必须覆盖「切本地 / 重试 / 查看冲突」。
+  const all = new Set(
+    [controlModeBanner("online"), local, syncing, conflict].flatMap((s) => s.actions),
+  );
+  assert.deepEqual([...all].sort(), ["retry", "switch-local", "view-conflicts"]);
+
+  // 每个降级状态都得有标题与说明，缺一条横幅就只剩一个色块。
   for (const state of [local, syncing, conflict]) {
     assert.ok(state?.title);
     assert.ok(state?.detail);
   }
+});
+
+test("冲突提醒按事件 id 只提醒一次", () => {
+  const at = "2026-11-22T10:00:00Z";
+  const conflictStatus = (id, count = 2) => ({
+    mode: "conflict-review",
+    conflict_count: count,
+    recent_events: [
+      { id, from: "reconciling", to: "conflict-review", at },
+      { id: "mode:online->reconciling:1", from: "online", to: "reconciling", at },
+    ],
+  });
+
+  const first = conflictReminder(conflictStatus("mode:reconciling->conflict-review:7"), new Set());
+  assert.equal(first?.id, "mode:reconciling->conflict-review:7");
+
+  // 关掉之后同一次进入不再弹回来 —— 这是「一次性」的全部意义。
+  const dismissed = new Set([first.id]);
+  assert.equal(conflictReminder(conflictStatus("mode:reconciling->conflict-review:7"), dismissed), null);
+
+  // 走完一轮又撞上新冲突：新事件 id，要再提醒一次。
+  const again = conflictReminder(conflictStatus("mode:reconciling->conflict-review:9"), dismissed);
+  assert.equal(again?.id, "mode:reconciling->conflict-review:9");
+
+  // 不在冲突模式、或冲突已经裁决干净，都不提醒。
+  assert.equal(conflictReminder({ mode: "online", recent_events: [] }, new Set()), null);
+  assert.equal(conflictReminder(conflictStatus("id-x", 0), new Set()), null);
+  assert.equal(conflictReminder(null, new Set()), null);
+});
+
+test("模式标签与事件历史同源", () => {
+  assert.equal(controlModeLabel("online"), "controlMode.online");
+  assert.equal(controlModeLabel("offline-local"), "controlMode.local");
+  assert.equal(controlModeLabel("reconciling"), "controlMode.syncing");
+  assert.equal(controlModeLabel("conflict-review"), "controlMode.conflict");
+  assert.equal(newestModeEventTo([], "conflict-review"), null);
 });
 
 test("状态端点走页面服务器，404 视为未启用而不是故障", () => {
@@ -82,6 +134,17 @@ test("横幅轮询状态，未启用后不再重试", () => {
   assert.doesNotMatch(banner, /\bservices\//);
 });
 
+test("横幅三个动作各自打到对应的请求", () => {
+  // 查看冲突只派发事件（面板自己订阅），不发控制面请求；
+  // 切本地与重试才走 mode 端点，且 action 取值必须与服务端一致。
+  const runAction = hook.split("const runAction")[1].split("const [")[0];
+  assert.match(runAction, /action === "view-conflicts"[\s\S]{0,200}CONTROL_CONFLICTS_EVENT/);
+  assert.match(runAction, /action === "switch-local" \? "local" : "retry"/);
+  assert.match(hook, /switchControlSyncMode/);
+  // 提醒的「关闭」按事件 id 记，不是按模式记 —— 否则下一拍轮询又会弹回来。
+  assert.match(hook, /new Set\(prev\)\.add\(reminder\.id\)/);
+});
+
 test("App 根视图挂上横幅，且只挂一处", () => {
   assert.match(rootView, /import \{ ControlModeBanner \} from "\.\.\/components\/app\/ControlModeBanner"/);
   assert.equal((rootView.match(/<ControlModeBanner \/>/g) || []).length, 1);
@@ -89,6 +152,8 @@ test("App 根视图挂上横幅，且只挂一处", () => {
 
 test("中英文都补齐横幅文案", () => {
   for (const key of [
+    "controlMode.online",
+    "controlMode.onlineDetail",
     "controlMode.local",
     "controlMode.localDetail",
     "controlMode.syncing",
@@ -99,8 +164,13 @@ test("中英文都补齐横幅文案", () => {
     "controlMode.retrying",
     "controlMode.switchLocal",
     "controlMode.viewConflicts",
+    "controlMode.conflictReminder",
+    "controlMode.dismiss",
   ]) {
     assert.match(zh, new RegExp(`"${key.replace(/\./g, "\\.")}"`), `中文缺 ${key}`);
     assert.match(en, new RegExp(`"${key.replace(/\./g, "\\.")}"`), `英文缺 ${key}`);
   }
+  // 提醒文案要带条数占位符，否则「检测到 N 条」只能说成「有冲突」。
+  assert.match(zh, /controlMode\.conflictReminder": "[^"]*\{count\}/);
+  assert.match(en, /controlMode\.conflictReminder": "[^"]*\{count\}/);
 });

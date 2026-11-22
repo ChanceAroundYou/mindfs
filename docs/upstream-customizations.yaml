@@ -12099,7 +12099,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:router_save_workflow(workflow_id, graph?|base_workflow_id?, scope?, name?, reason?)'
       - 'server/internal/kanban/router_prompt.md:21. **自己设计 workflow（`graph`）**'
   - id: G-PF
-    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁）
+    title: 离线优先的本地控制面：边缘副本 + 在线转发 + 离线接管（P0 基线 + P2 同步内核 + P3/P4 启动装配 + T16 模式横幅 + T17 冲突面板 + T21 双实例验收 + T24 通道认证 + T25 身份/追平锁 + T26 模式事件与横幅动作）
     kind: feature
     symptom: |
       控制面（accounts / preferences / nodes / prompts / pins / workflows / WebPush / app update）
@@ -12212,12 +12212,17 @@ groups:
       在下一次采集被当成新增发出去）；**primary 启动即 `CaptureAll` 发布基线**（兜底扫描 15 秒才有第一拍，
       边缘完全可能在这之前追平后掉线 —— 那一版副本缺一批记录，恢复时同样撞冲突）。
       ⑱ 前端模式横幅（`shared/controlMode.ts` / `services/net/controlSync.ts` / `hooks/useControlSyncStatus.ts` /
-      `components/app/ControlModeBanner.tsx`）的四条必须保留：**在线与 404 都不出横幅**（主节点和未启用
+      `components/app/ControlModeBanner.tsx`）的六条必须保留：**404 不出横幅**（主节点和未启用
       control_sync 的机器不注册 `/api/control-sync/status`，把它当请求失败会在每台普通节点上弹一条永远
-      报错的横幅）；**404 只静默关闭轮询、其他错误保留上一份状态继续轮询**（一次超时不能把边缘的横幅
-      永久关掉，两者必须能区分）；**四态到动作是纯函数**（本地模式→立即重试、同步中→切换到本地、
-      冲突→查看冲突，渲染层不再自己 if/else 一遍）；**视图层只经 hook 访问网络**（components 直接
-      import services 会踩仓库的 view→service 架构红线，轮询与请求一律留在 hook）。
+      报错的横幅；在线仍然出横幅，但弱化显示 —— 用户需要一个随时能主动切到本地模式的入口，这跟
+      「404 静默」是两件事）；**404 只静默关闭轮询、其他错误保留上一份状态继续轮询**（一次超时不能把边缘的横幅
+      永久关掉，两者必须能区分）；**四态到动作是纯函数、且返回动作列表**（在线→切换到本地、本地模式→立即重试、
+      同步中→切换到本地、冲突→查看冲突；本地模式下确实攒了冲突才多出「查看冲突」，渲染层不再自己 if/else 一遍）；
+      **冲突提醒按事件 id 幂等**（服务端每次模式迁移写一条 `mode_events`，id 由 from/to/at 决定、`INSERT OR IGNORE`
+      去重；前端 `conflictReminder` 按事件 id 记住「已关闭」，按模式记会让下一拍轮询又弹回来 —— 那等于没有关闭）；
+      **视图层只经 hook 访问网络**（components 直接 import services 会踩仓库的 view→service 架构红线，
+      轮询与请求一律留在 hook）；**事件历史来自服务端**（`/status` 的 `recent_events`，换台浏览器看到的是同一份
+      「什么时候变的」，前端不自己攒本地记忆）。
       ⑲ 冲突面板与裁决端点转义（`shared/syncConflicts.ts` / `hooks/useSyncConflicts.ts` /
       `components/app/SyncConflictPanel.tsx` / `services/net/controlSync.ts` /
       `api/http_control_sync.go`）的五条必须保留：**conflict id 在路径两处都要按整体处理**
@@ -12241,6 +12246,12 @@ groups:
       追平开头重做）；**采纳新主节点只能人工触发**（`AdoptPrimary` 丢掉按旧主节点建的
       records / base_rev / 冲突卡但**保留 pending**）—— 自动采纳等于把「主节点被换掉了」
       静默吞掉，而删掉 pending 就是扔用户的离线改动，两者都不能做。
+      ㉑ 模式迁移的可见事件（`store_mode_events.go` / `mode.go` / `store.go`）的三条必须保留：
+      **每次真翻转写一条 `mode_events`**（spec §7：降级/升级都要留痕；事件同时是横幅的数据源，
+      换台浏览器看到的还是同一份「什么时候变的」）；**事件 id 由 from/to/at 决定、写入 `INSERT OR IGNORE`**
+      （崩溃重启或并发收尾把同一次迁移再报一遍时，界面上不能变成两条「又断线了」；随机 id 会让去重失效）；
+      **事件写失败不阻断状态机**（内存与 `state` 表已经正确，少一条历史不值得让同步停下来 ——
+      与 `RecordProbe` 同一取舍）。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12283,6 +12294,8 @@ groups:
       - server/internal/controlsync/replicator_test.go
       - server/internal/controlsync/mode.go
       - server/internal/controlsync/mode_test.go
+      - server/internal/controlsync/mode_events_test.go
+      - server/internal/controlsync/store_mode_events.go
       - server/internal/controlsync/store_state.go
       - server/internal/controlsync/merge.go
       - server/internal/controlsync/merge_test.go
@@ -12495,8 +12508,10 @@ groups:
       - 'server/app/server.go:controlSync, err := startControlSync(ctx, opts.ControlSync, nodeinfo.Normalize(opts.Role), configDir, controlSyncStores{'
       - 'server/app/server.go:root = controlSync.wrapRoot(inner)'
       - 'server/app/workspace.go:m.controlSyncWiringOf().applyTo(handler)'
-      - 'web/src/shared/controlMode.ts:export function controlModeBanner(mode: ControlMode | null | undefined): ControlModeBannerState | null {'
-      - 'web/src/shared/controlMode.ts:action: "retry",'
+      - 'web/src/shared/controlMode.ts:export function controlModeBanner('
+      - 'web/src/shared/controlMode.ts:const actions: ControlBannerAction[] = ["retry"];'
+      - 'web/src/shared/controlMode.ts:export function conflictReminder('
+      - 'web/src/shared/controlMode.ts:if (!event || dismissed.has(event.id)) return null;'
       - 'web/src/services/net/controlSync.ts:export async function fetchControlSyncStatus(): Promise<ControlSyncStatus | null> {'
       - 'web/src/services/net/controlSync.ts:if (endpointMissing(err)) return null;'
       - 'web/src/hooks/useControlSyncStatus.ts:if (!enabled) return;'
@@ -12505,7 +12520,13 @@ groups:
       - 'web/src/app/AppRootView.tsx:<ControlModeBanner />'
       - 'web/src/i18n/locales/zh-CN-workspace.ts:"controlMode.local": "本地模式",'
       - 'web/src/i18n/locales/en-US-workspace.ts:"controlMode.local": "Local mode",'
-      - 'web/tests/control-mode-banner.test.mjs:test("三种降级状态各自给出唯一动作", () => {'
+      - 'web/tests/control-mode-banner.test.mjs:test("三种降级状态各自给出动作，攒了冲突才多出查看入口", () => {'
+      - 'web/tests/control-mode-banner.test.mjs:test("冲突提醒按事件 id 只提醒一次", () => {'
+      - 'server/internal/controlsync/store_mode_events.go:func ModeEventID(from, to Mode, at time.Time) string {'
+      - 'server/internal/controlsync/store_mode_events.go:func (s *Store) RecordModeEvent(ctx context.Context, ev ModeEvent) (bool, error) {'
+      - 'server/internal/controlsync/mode.go:	m.recordModeEvent(from, to)'
+      - 'server/internal/controlsync/store.go:CREATE TABLE IF NOT EXISTS mode_events ('
+      - 'server/internal/controlsync/mode_events_test.go:func TestModeControllerConflictReviewEventOnce(t *testing.T) {'
       - 'server/internal/api/http_control_sync.go:id, err := url.PathUnescape(chi.URLParam(r, "id"))'
       - 'server/internal/api/http_control_sync_conflicts_test.go:func TestControlSyncConflictResolveDecodesEscapedID(t *testing.T) {'
       - 'web/src/shared/syncConflicts.ts:export function groupSyncConflicts(conflicts: readonly SyncConflictView[]): SyncConflictGroup[] {'

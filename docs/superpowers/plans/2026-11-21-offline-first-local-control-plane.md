@@ -868,3 +868,39 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 - 门禁：`go test -count=1 ./server/internal/controlsync/ ./server/internal/api/ ./server/app/`
   全绿、`go build ./...` 成功、`go vet` 干净、gofmt 干净。
 - 未做：T26 横幅的「接受新主节点」按钮（端点已就绪）；未部署、未重启、未改配置。
+
+### T26 模式可见性（2026-11-22）
+
+- 事件落点**偏离计划文本的一处**：计划写「接到任务库系统事件」，但仓库里能落「系统事件」
+  的两处都不合适 —— kanban 的 `ActivityTypeSystemEvent` 是**每任务**的（模式迁移是整台
+  节点的事），`router_events` 是**每 root** 的（root 是项目维度）。硬塞进任一处都会给
+  某个任务/项目编一条与它无关的历史。改为 `controlsync.db` 自己的 `mode_events` 表
+  （`store_mode_events.go`）+ `/status.recent_events` + 横幅展示：spec §7 要的是
+  「可见」，横幅本来就是那条可见面，且 `/status` 每 10 秒已经在轮询。
+- `ModeEvent{ID, From, To, Reason, At}`；`ModeEventID(from, to, at)` =
+  `mode:<from>-><to>:<UnixMilli>`，写入用 `INSERT OR IGNORE`。理由：崩溃重启、并发收尾
+  都可能把同一次迁移再报一遍，界面上「又断线了」重复弹比漏报更伤信任。时间截到毫秒 ——
+  每次迁移都要经过一次探测循环，同毫秒内重复同一对不现实。
+- `ModeController.transition` 在真翻转时 `recordModeEvent`（带上当时的 `blocked`，于是
+  追平锁那次降级能说清「为什么明明能连上却是本地模式」）；写失败不阻断状态机（与
+  `RecordProbe` 同一取舍）。`Status()` 读最近 5 条，**读失败返回错误**而不是空列表 ——
+  空列表在界面上等于「从没变过模式」。
+- 前端：`controlModeBanner(mode, {conflictCount})` 从「单一 action」改成**动作列表**，
+  四态都出横幅（在线弱化：低对比度、无阴影），覆盖三种动作 —— 在线→切换到本地、
+  本地模式→立即重试（攒了冲突才多出「查看冲突」）、同步中→切换到本地、冲突→查看冲突。
+  展开区显示 `blocked_reason` / `last_error` 与最近 3 条事件（`HH:MM · 模式名`，模式名
+  复用标题键，见 `controlModeLabel`）。
+- 「conflict-review 只提醒一次」落在 `conflictReminder(status, dismissed)`：按**事件 id**
+  记「已关闭」。按模式记的话，用户关掉后下一拍轮询又会弹回来，等于没有关闭；真走完一轮
+  又撞上新冲突时服务端会留新事件，新 id 自然会再提醒一次。「查看冲突」等于「去处理了」，
+  点它也顺手关掉提醒（常驻横幅还在）。
+- 用例：`mode_events_test.go` 4 条（同一次迁移重放只留一条且 id 由 from/to/at 决定、
+  降级/升级各写一条且状态接口能读到、锁降级带原因、停在 conflict-review 反复收尾不追加
+  事件而真的进出才追加）、`api` 的 status 用例补 `recent_events` 断言、web 4 条（在线弱化
+  横幅与切本地入口、四态动作列表与「三种动作齐全」、冲突提醒按事件 id 幂等、模式标签）。
+- 变异：不写事件 / 事件 ID 改成时间戳（去重失效）/ 在线不出横幅 / 提醒忽略已关闭集合 ——
+  4 处各自打红后还原。
+- 门禁：`go test ./server/internal/controlsync/ ./server/internal/api/` 全绿、`gofmt` 干净、
+  `tsc -b --noEmit` clean、`npx vitest run` 262 文件 / 870 通过 / 6 跳过。
+- 未做：横幅的「接受新主节点」按钮（`adopt_primary` 端点已就绪，留给真机验收时按需接）；
+  未部署、未重启、未改配置。
