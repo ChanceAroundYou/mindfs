@@ -24,6 +24,38 @@
 
 维护方式：新超线文件直接进本表并当批清掉，不要重建「批次」列 —— 批次是那轮改造的临时刻度。
 
+### 2026-11-22 复核：硬线再次被突破
+
+`kanban` 与 `/api` 在 11-14 之后的扩张重新越过了 500 行（这几轮都没登记进本表）。复核时全仓
+有 21 个手写 Go 文件（含测试）超线；本轮维护拆掉 4 个最大的：
+
+| 文件 | 拆前 | 现在 | 去向 |
+|---|---|---|---|
+| `server/internal/kanban/activity_service_test.go` | 998 | 493 | `activity_service_summary_test.go`（177）/ `activity_service_direct_test.go`（180）/ `activity_service_status_test.go`（181） |
+| `server/internal/kanban/task_store_convert_stages.go` | 888 | 454 | `task_store_convert_legacy_graph.go`（448） |
+| `server/internal/kanban/activity_route_apply.go` | 672 | 485 | `activity_route_reply.go`（200） |
+| `server/internal/kanban/router_brief.go` | 643 | 292 | `router_brief_views.go`（361） |
+
+拆法全部是纯移动（无行为改动），`go build ./...` 通过，`go test ./server/internal/kanban/`
+全包绿。仍超线的 16 个（按行数倒序，下一轮照这个顺序拆）：
+
+- [ ] `server/internal/kanban/activity_store.go`（640）
+- [ ] `server/internal/kanban/router_tools.go`（627）
+- [ ] `server/internal/api/usecase/session_prompt_test.go`（589）
+- [ ] `server/internal/kanban/task_store_workflow_runs.go`（573）
+- [ ] `server/internal/kanban/activity_service.go`（563）
+- [ ] `server/internal/kanban/router_coordinate_turn.go`（560）
+- [ ] `cli/cmd/startup.go`（560）
+- [ ] `server/internal/kanban/router_route_test.go`（559）
+- [ ] `server/internal/kanban/activity_store_test.go`（551）
+- [ ] `server/internal/kanban/router_event_sources_test.go`（544）
+- [ ] `server/internal/kanban/service_completion_verifier.go`（541）
+- [ ] `server/cmd/mindfs-server/main.go`（538）
+- [ ] `server/internal/kanban/router_event_store.go`（533）
+- [ ] `server/internal/kanban/workflow_node_executor.go`（525）
+- [ ] `server/internal/api/usecase/session_send.go`（503）
+- [ ] `server/internal/update/service_test.go`（502）
+
 ## 软线区间（300–500）—— 下次动它时顺手拆
 
 不要求一次清完。判据是「超过软线就判断职责边界并记录拆分安排」，
