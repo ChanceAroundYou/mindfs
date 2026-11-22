@@ -9,18 +9,9 @@ import { TaskInspectEntries } from "./TaskInspectEntries";
 import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
-import {
-  DeleteIcon,
-  RunNowIcon,
-  TaskCancelIcon,
-  TaskCompleteIcon,
-  TaskPauseIcon,
-  TaskReopenIcon,
-  TaskResumeIcon,
-} from "./taskIcons";
-import { ArchiveIcon } from "../session/sessionListShared";
-import { taskCardIconButtonStyle } from "./taskStyles";
-import { TASK_DETAIL_ACTION_META, taskDetailActions, type TaskDetailActionKey } from "./taskDetailActions";
+import { taskActionIconStyle } from "./taskStyles";
+import { TASK_ACTION_BUTTON_META, taskActionButtons, type TaskActionButtonKey } from "./taskCardActions";
+import { taskActionIcons } from "./taskActionIcons";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
 
 export type TaskDetailPanelProps = {
@@ -50,28 +41,18 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
     completeTask,
     reopenTask,
     cancelTask,
-    startTask,
     archiveTaskCard,
     unarchiveTaskCard,
     deleteTaskCard,
   } = panel;
 
-  // 动作集合只有一份定义：taskDetailActions（详情面板口径，与看板卡片刻意不同，
-  // 差异写在模块头部）。这里只负责把动作键翻译成图标 / 文案 / 回调。
-  const actionIcons: Record<TaskDetailActionKey, React.ReactNode> = {
-    start: <RunNowIcon />,
-    interrupt: <TaskPauseIcon />,
-    resume: <TaskResumeIcon />,
-    complete: <TaskCompleteIcon />,
-    cancel: <TaskCancelIcon />,
-    reopen: <TaskReopenIcon />,
-    "archive-task": <ArchiveIcon />,
-    "unarchive-task": <ArchiveIcon />,
-    "delete-task": <DeleteIcon />,
-  };
-  const actionHandlers: Record<TaskDetailActionKey, () => void> = {
-    start: () => void startTask(),
-    interrupt: () => void panel.pauseTask(),
+  // 动作集合只有一份定义：taskActionButtons（看板卡片与详情 header 共用）。
+  // 以前详情与卡片各有一套动作口径，两套必然漂移 ——
+  // 2026-11-22 用户要求样式/颜色/数量/种类/hover 完全统一，于是收成一份。
+  // 这里只负责把动作键翻译成回调；图标取 taskActionIcons，文案与配色取 META。
+  const actionHandlers: Record<TaskActionButtonKey, () => void> = {
+    "finish-worktree": () => void panel.finishWorktree(),
+    pause: () => void panel.pauseTask(),
     resume: () => void panel.resumeTask(),
     complete: () => void completeTask(),
     cancel: () => void cancelTask(),
@@ -80,11 +61,11 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
     "unarchive-task": () => void unarchiveTaskCard(),
     "delete-task": () => void deleteTaskCard(),
   };
-  const actions = taskDetailActions(task).map((key) => ({
+  const actions = taskActionButtons(task).map((key) => ({
     key,
-    label: t(TASK_DETAIL_ACTION_META[key].labelKey),
-    icon: actionIcons[key],
-    tone: TASK_DETAIL_ACTION_META[key].tone,
+    label: t(TASK_ACTION_BUTTON_META[key].labelKey),
+    icon: taskActionIcons[key],
+    tone: TASK_ACTION_BUTTON_META[key].tone,
     onSelect: actionHandlers[key],
   }));
 
@@ -145,7 +126,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
         </>
       ) : (
         // 动作全部平铺：有几项画几项，删除也在同一排里（不再做独立特例，也不再收进菜单）。
-        // 图标键与看板卡片的图标键完全同形同色：22×22 / 圆角 6 / 间距 0 / 同一套档位配色。
+        // 与看板卡片的图标键完全同形同色：同一份键序（taskActionButtons）、同一套图形
+        // （taskActionIcons）、同一档配色（taskActionIconStyle）→ 22×22 / 圆角 6 / 间距 0。
         <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 }}>
           {actions.map((action) => (
             <button
@@ -156,7 +138,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
               disabled={saving}
               onClick={action.onSelect}
               style={{
-                ...taskCardIconButtonStyle(action.tone === "primary" ? "accent" : action.tone === "success" ? "success" : action.tone === "warn" ? "danger" : "default"),
+                ...taskActionIconStyle(action.tone),
                 flexShrink: 0,
                 opacity: saving ? 0.4 : 1,
                 cursor: saving ? "not-allowed" : "pointer",

@@ -41,6 +41,18 @@ export function taskCardIconButtonStyle(tone: "default" | "accent" | "success" |
 
 
 
+/**
+ * 动作语义档位 → 图标键外观。卡片与详情 header 都走这一条，
+ * 免得「完成」在一处是绿、另一处是蓝。
+ */
+export function taskActionIconStyle(tone: "default" | "primary" | "success" | "warn"): React.CSSProperties {
+  return taskCardIconButtonStyle(
+    tone === "primary" ? "accent" : tone === "success" ? "success" : tone === "warn" ? "danger" : "default",
+  );
+}
+
+
+
 // 2026-10-16（用户要求「其他小图标再做小一号，和 worktree 差不多大」）：
 // 盒子 18→14、圆角 5→4，对齐 14px 高的 worktree 标签。
 //

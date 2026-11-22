@@ -1264,7 +1264,7 @@ groups:
       - server/internal/api/http_routes.go:r.Delete("/api/tasks/{id}"
       - web/src/services/task/crud.ts:export async function deleteTask
       - web/src/components/task/taskIcons.tsx:export function TaskCancelIcon
-      - web/src/components/task/TaskCardRows.tsx:"delete-task"
+      - web/src/components/task/TaskCardRows.tsx:buttons.map((key) => {
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.deleteTask": "删除任务卡片"'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.cancelTask": "取消任务"'
   - id: G-BC
@@ -1284,7 +1284,9 @@ groups:
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/components/task/taskCardActions.ts
-      - web/src/components/task/taskDetailActions.ts
+      - web/src/components/task/taskActionIcons.tsx
+      - web/src/components/task/taskStyles.ts
+      - web/src/components/task/taskIcons.tsx
       - web/src/components/workspace/WorkspaceTaskRow.tsx
       - web/src/components/shell/ToastContainer.tsx
       - web/src/services/task/worktree.ts
@@ -1303,6 +1305,8 @@ groups:
       - server/internal/gitview/worktree_finish_test.go
       - web/tests/task-card-parity.test.mjs
       - web/tests/task-button-gates.test.mjs
+      - web/tests/task-card-actions.test.mjs
+      - web/tests/task-detail-header.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-create-panel.test.mjs
@@ -1322,8 +1326,9 @@ groups:
       - server/internal/api/http_tasks_finish_teardown.go:UserChanges []string
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - web/src/components/task/TaskCardFinishButton.tsx:function TaskCardFinishButton
-      - web/src/components/task/TaskCardRows.tsx:const canComplete = actions.includes("complete");
+      - web/src/components/task/TaskCardRows.tsx:const buttons = taskActionButtons(task);
       - 'web/src/components/task/taskCardActions.ts:export function taskCardActions(task: KanbanTask): TaskCardActionKey[] {'
+
       - 'web/src/components/task/useTaskDetailPanel.ts:const setArchived = async (archived: boolean) => {'
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
@@ -2910,7 +2915,7 @@ groups:
     anchors:
       - web/src/components/task/ScheduledAgentTaskList.tsx:ScheduledAgentTaskList
       - web/src/components/task/TaskCardFinishButton.tsx:TaskCardFinishButton
-      - web/tests/task-card-parity.test.mjs:the finish button is extracted
+      - web/tests/task-card-parity.test.mjs:the finish button stays extracted so the card can render it without duplicating markup
 
   - id: G-CP
     title: Project-add mode panel extraction
@@ -8356,7 +8361,7 @@ groups:
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) runFinishTurn('
       - 'server/internal/kanban/worktree_finish_turn.go:func (s *Service) acquireTaskFinish(rootID, taskID string) (func(), error)'
       - 'web/src/app/useAppKanbanColumns.ts:const kanbanColumns: KanbanColumn[] = ['
-      - 'web/src/components/task/TaskCardRows.tsx:const canComplete = actions.includes("complete");'
+      - 'web/src/components/task/TaskCardRows.tsx:const buttons = taskActionButtons(task);'
       - 'web/tests/upstream-removals.test.mjs:阶段模型不得复活'
 
   # ── Task Router P0（shadow）：隐藏 CC 调度会话 + 决策账本 ───────────────────
@@ -10257,7 +10262,7 @@ groups:
       - 'server/app/workspace_build.go:services.Kanban.StartArchiveSweeper(m.ctx)'
       - 'web/src/app/useAppKanbanColumns.ts:key: "archived",'
       - 'web/src/app/useTaskWorkspaceState.ts:new Set(["archived"])'
-      - 'web/src/components/task/TaskCardRows.tsx:onMove(task, "archive-task");'
+      - 'web/src/components/task/TaskCardRows.tsx:onMove(task, key);'
       - 'web/src/components/task/taskBoardTypes.ts:| "archive-task"'
       - 'web/src/services/task/crud.ts:export async function archiveTask('
       - 'web/src/shared/taskTypes.ts:archived_at?: string;'
@@ -10267,7 +10272,7 @@ groups:
       - 'server/internal/kanban/task_store_incremental_sync_test.go:func TestListTasksArchivedAfterSeesArchiveChanges(t *testing.T) {'
       - 'server/internal/kanban/service_archive_test.go:func TestArchiveDismissalLifetime(t *testing.T) {'
       - 'server/internal/kanban/task_archive_dismissal_test.go:func TestUnarchivedTaskIsNotAutoArchivedAgain(t *testing.T) {'
-      - 'web/tests/task-archive.test.mjs:test("an archived card is reduced to unarchive + delete", () => {'
+      - 'web/tests/task-archive.test.mjs:test("an archived card offers reopen + unarchive + delete", () => {'
   # 撞号说明：本轮开发时同工作区另一条会话的归档计划已在 docs/plans/README.md 里
   # 自称 Scope: G-NB（尚未登记本表）。为避免两组抢同一个 ID，本组取 G-NC。
   - id: G-NC
@@ -11584,12 +11589,17 @@ groups:
       紧贴输入框时两个控件还会重叠。移动端与桌面是同一颗按钮、同一个位置（面板正文底部居中）。
       ⑨ header 收口（2026-11-21 初版，2026-11-22 按用户口径重做）：编辑键从右上角搬到任务名旁边并与名字锁在同一行
       （名字 `flex:0 1 auto` + `minWidth:0` 省略，组内 nowrap，否则长名字会把编辑键挤到第二行、
-      header 变两行高）；右上角**不再有「操作控件」菜单**，可用动作按状态平铺成一行图标键，
-      删除不再是独立特例、与其他动作同排（`taskDetailActions.ts` 是唯一口径，动作集合与看板卡片的
-      `taskCardActions` 有意不同）：完成 / 取消 → 返回、归档、删除；已归档 → 返回、取消归档、删除；
-      待审阅 → 完成、取消；执行中 → 中断；待开始 → 开始（RunNow 派发排队首条留言）；
-      已暂停 → 恢复（用户清单未列，否则中断后无处可去）。卡片上的「收尾 worktree」不在详情里，
-      worktree 清场仍从卡片发起。`PanelShell` 新增 opt-in 的 `showCloseButton`，任务详情右上角有 ×，
+      header 变两行高）；右上角**不再有「操作控件」菜单**，可用动作按状态平铺成一行图标键。
+      2026-11-22 用户要求「详情右上角与看板卡片在样式、颜色、数量、种类、hover 提示上完全统一」，
+      并把四个冲突点逐条裁定为：① 执行中 / 已暂停 / 待开始以卡片为准；② 已归档卡片补「返回」，
+      两侧同为 返回 + 取消归档 + 删除；③ 详情补「收尾 worktree」键，条件与卡片同用 `canFinishWorktree`
+      （有 worktree 且未丢失）；④ hover 文案两边都用完整动作名，`title` === `aria-label` === 文案。
+      至此两处共用四份单源：`taskActionButtons(task)`（= `taskCardActions` 的状态集合，终态再追加删除，
+      决定键序与数量）、`TASK_ACTION_BUTTON_META`（文案键 + 色调）、`taskActionIcons`（图标映射）、
+      `taskActionIconStyle(tone)`（色调 → 颜色）。分支形状：执行中 → 暂停、取消；已暂停 → 恢复、取消；
+      待开始 / 待审阅 → 完成、取消；已结束 → 收尾（有树时）、返回、归档、删除；已归档 → 返回、取消归档、删除。
+      「开始」撤出 header：它本就该由对话流里的排队留言触发（`ConversationView` 的 `runQueued → runTaskNow`），
+      卡片同样没有这个键。`PanelShell` 新增 opt-in 的 `showCloseButton`，任务详情右上角有 ×，
       它复用 `requestClose`，未保存改名照样先确认。最终布局：左「状态 #编号 任务名 [编辑]」，
       中间留白，右「[动作…] [关闭]」。
       ⑩ 移动端正文左右留白从 14px 收到 8px（`@media (max-width:640px)` 的 `.task-detail-content`），
@@ -11687,7 +11697,10 @@ groups:
       - web/src/components/task/SupervisionEntry.tsx
       - web/src/components/task/TaskInspectEntries.tsx
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/taskDetailActions.ts
+      - web/src/components/task/taskCardActions.ts
+      - web/src/components/task/taskActionIcons.tsx
+      - web/src/components/task/taskStyles.ts
+      - web/src/components/task/taskIcons.tsx
       - web/src/components/shell/PanelShell.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/useSupervisionEntry.ts
@@ -11718,6 +11731,8 @@ groups:
       - web/tests/conversation-auto-scroll.test.mjs
       - web/tests/task-detail-scroll-and-tags.test.mjs
       - web/tests/task-detail-header.test.mjs
+      - web/tests/task-card-actions.test.mjs
+      - web/tests/task-button-gates.test.mjs
       - web/tests/task-panel-options.test.mjs
       - web/tests/task-create-panel.test.mjs
       - web/tests/task-run-immediately.test.mjs
@@ -11768,9 +11783,10 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions"'
       - 'web/src/components/task/TaskDetailPanel.tsx:flexWrap: "nowrap"'
       - 'web/src/components/task/TaskDetailPanel.tsx:className="task-detail-content"'
-      - 'web/src/components/task/taskDetailActions.ts:export function taskDetailActions(task: KanbanTask): TaskDetailActionKey[] {'
-      - 'web/src/components/task/taskDetailActions.ts:if (task.archived_at) return ["reopen", "unarchive-task", "delete-task"];'
-      - 'web/src/components/task/useTaskDetailPanel.ts:runTaskNow(task.root_id, task.id, nodeId)'
+      - 'web/src/components/task/taskCardActions.ts:export function taskActionButtons(task: KanbanTask): TaskActionButtonKey[] {'
+      - 'web/src/components/task/taskCardActions.ts:if (task.archived_at) return ["reopen", "unarchive-task"];'
+      - 'web/src/components/task/taskActionIcons.tsx:export const taskActionIcons: Record<TaskActionButtonKey, React.ReactNode> = {'
+      - 'web/src/components/task/taskStyles.ts:export function taskActionIconStyle(tone: "default" | "primary" | "success" | "warn"): React.CSSProperties {'
       - 'web/src/components/task/RunImmediatelyControl.tsx:export function RunImmediatelyControl({'
       - 'web/src/components/task/RunImmediatelyControl.tsx:data-testid="run-immediately-toggle"'
       - 'web/src/components/task/RunImmediatelyControl.tsx:...composerSendButtonStyle({ enabled: active && !disabled, variant: "panel" }),'
@@ -11794,11 +11810,11 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:fixedHeight'
       - 'web/src/components/task/ConversationView.tsx:flex: "1 0 auto"'
       - 'web/src/components/task/ConversationView.tsx:aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }}'
-      - 'web/src/components/task/taskDetailActions.ts:export type TaskDetailActionTone = "default" | "primary" | "success" | "warn";'
-      - 'web/src/components/task/taskDetailActions.ts:complete: { labelKey: "task.complete", tone: "success" },'
+      - 'web/src/components/task/taskCardActions.ts:complete: { labelKey: "task.complete", tone: "success" },'
       - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 }}'
-      - 'web/src/components/task/TaskDetailPanel.tsx:action.tone === "success" ? "success"'
-      - 'web/tests/task-detail-header.test.mjs:assert.match(detail, /complete: \{ labelKey: "task\.complete", tone: "success" \}/);'
+      - 'web/src/components/task/TaskDetailPanel.tsx:const actions = taskActionButtons(task).map((key) => ({'
+      - 'web/src/components/task/TaskDetailPanel.tsx:...taskActionIconStyle(action.tone),'
+      - 'web/tests/task-detail-header.test.mjs:assert.match(right, /title=\{action\.label\}/);'
       - 'e2e/live/panel_geometry.py:def check(result: dict, mobile: bool) -> list[str]:'
       - 'e2e/live/detail_to_session.py:def find_open_button(page):'
       - 'web/src/components/app/TaskDetailPanelGate.tsx:const navigated = handleTaskSessionDrawerOpen('
@@ -11812,8 +11828,9 @@ groups:
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.startImmediatelyHint": "建完任务就立刻派发首条留言",'
       - 'web/src/components/shell/PanelShell.tsx:showCloseButton = false,'
       - 'web/src/components/shell/PanelShell.tsx:if (event.target !== event.currentTarget) return;'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.actionStart": "开始任务",'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.actionInterrupt": "中断任务",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.complete": "完成任务",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.cancelTask": "取消任务",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.reopen": "回到待审核，继续对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.label": "执行详情",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directNode": "直连对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.supervision.empty": "该任务还没有监管记录",'

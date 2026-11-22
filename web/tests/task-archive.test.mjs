@@ -124,13 +124,15 @@ test("a terminal card offers archive next to delete", () => {
   assert.match(html, /回到待审核|Return to review/, "unarchived cards keep the reopen entry");
 });
 
-test("an archived card is reduced to unarchive + delete", () => {
+test("an archived card offers reopen + unarchive + delete", () => {
+  // 2026-11-22 用户裁定「已归档以卡片为准，卡片补『返回』」：归档卡要先能拿回
+  // 活动列，所以「返回」与「取消归档」并列，删除照旧。
   const html = renderCard(terminalTask({ archived_at: "2026-11-18T00:00:00Z" }));
   assert.match(html, /取消归档|Unarchive/, "archived cards must offer unarchive");
   assert.doesNotMatch(html, /归档任务|Archive task/, "archived cards must not offer archive again");
-  assert.doesNotMatch(html, /回到待审核|Return to review/, "archived cards hide reopen (archiving means the card is put away)");
+  assert.match(html, /回到待审核|Return to review/, "archived cards keep the reopen entry");
   assert.match(html, /删除任务卡片|Delete task card/, "delete must stay available");
-  // 归档卡只剩两个操作键：取消归档 + 删除。
+  // 归档卡只剩三个操作键：返回 + 取消归档 + 删除。
   const buttons = html.match(/<button/g) || [];
-  assert.equal(buttons.length, 2, `archived card must render exactly 2 action buttons, got ${buttons.length}`);
+  assert.equal(buttons.length, 3, `archived card must render exactly 3 action buttons, got ${buttons.length}`);
 });

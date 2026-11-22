@@ -14,8 +14,6 @@ export const enUSTasks = {
   "task.actionArchive": "Archive task (moves it to Ended → Archived)",
   "task.actionUnarchive": "Unarchive task (back to Ended)",
   "task.actionResume": "Resume task",
-  "task.actionStart": "Start task",
-  "task.actionInterrupt": "Interrupt task",
   "task.reasonPrompt": "{action} reason (optional)",
   "task.actionFailed": "Task action failed",
   "task.goneRemoved": "This task no longer exists on the server; removed from the board",

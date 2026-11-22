@@ -144,11 +144,15 @@ assert.match(hook, /tasks: bucket\.filter\(\(item\) => matchesFilter\(item\.task
 assert.doesNotMatch(projectRow, /\[\.\.\.group\.active, \.\.\.group\.ended\]/, "ended tasks must not be appended under any filter");
 
 // 7) 就地操作仍在：完成/暂停/继续/取消，都走 App 传来的统一回调。
-//    卡片两行已抽进共享的 TaskCardRows（看板同一份），所以这三件事由它保证，
-//    工作台只负责把 onMove 透下去。
-assert.match(cardRows, /onMove\(task, "complete"\)/, "complete stays inline");
-assert.match(cardRows, /onMove\(task, "pause"\)/, "pause stays inline");
-assert.match(cardRows, /onMove\(task, "resume"\)/, "resume stays inline");
+//    卡片两行已抽进共享的 TaskCardRows（看板同一份），动作集合又收进
+//    taskCardActions 一份纯函数，所以这三件事由它们保证，工作台只负责把 onMove 透下去。
+assert.match(cardRows, /const buttons = taskActionButtons\(task\);/, "the row renders the shared action list");
+assert.match(cardRows, /onMove\(task, key\)/, "every flat action reports through the same onMove");
+assert.match(
+  readFileSync(new URL("../src/components/task/taskCardActions.ts", import.meta.url), "utf8"),
+  /actions\.push\("complete"\)[\s\S]*?actions\.push\("cancel"\)/,
+  "complete / pause / resume / cancel all come from the shared list",
+);
 assert.match(taskRow, /onMove=\{\(_cardTask, action\) => onMove\(item, action\)\}/, "the move is reported against the workbench item, not the bare task");
 
 // 8) 快速发起必须**一步到位**：按钮直接打开新建任务面板，不能再夹一层小弹窗。

@@ -9,7 +9,7 @@
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
  * ChevronDownSmallIcon, WorkflowIcon.
  * Task styles: taskCardSurfaceStyle,
- * taskCardIconButtonStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
+ * taskCardIconButtonStyle, taskActionIconStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
  * WorktreeTagState, taskWorktreeTagStyle, taskReplyPulseStyle.
  *
  * INVENTORY-END

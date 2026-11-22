@@ -8,7 +8,6 @@ import {
   isTaskGoneError,
   moveTask,
   renameTask,
-  runTaskNow,
   type TaskDetail,
 } from "../../services/tasks";
 import { reportError } from "../../services/net/error";
@@ -188,14 +187,9 @@ export function useTaskDetailPanel({
     } catch (error) { fail(error); } finally { setSaving(false); }
   };
 
-  // 「开始」= RunNow：把建卡时排队的那条留言交给 Router。后端幂等，重复点不会多跑一轮。
-  const startTask = async () => {
-    if (!task) return;
-    try {
-      setSaving(true);
-      apply(await runTaskNow(task.root_id, task.id, nodeId));
-    } catch (error) { fail(error); } finally { setSaving(false); }
-  };
+  // 「开始」不再有 header 入口：待开始的任务由对话流里那条排队留言的「立即执行」
+  // 触发（ConversationView 的 runQueued → runTaskNow）。卡片本来就没有开始键，
+  // 2026-11-22 两处统一后详情也一并撤掉，避免同一个动作两套入口。
 
   const setPaused = async (next: "pause" | "resume") => {
     if (!task) return;
@@ -235,7 +229,6 @@ export function useTaskDetailPanel({
     saving,
     terminal,
     paused,
-    startTask,
     pauseTask: () => setPaused("pause"),
     resumeTask: () => setPaused("resume"),
     cancelTask,

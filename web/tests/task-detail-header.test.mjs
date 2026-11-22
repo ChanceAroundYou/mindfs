@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "vitest";
-import { TASK_DETAIL_ACTION_META, taskDetailActions } from "../src/components/task/taskDetailActions.ts";
 
 // 任务详情 header 的收口：编辑键贴着任务名，右上角**平铺**全部可用动作（含删除），
-// 不再有「操作控件」菜单；移动端正文左右留白收窄。这里只钉源码契约与纯函数行为，
-// 几何与各状态的实际展示由 Playwright 实测（e2e/test_task_detail_actions.py）。
+// 不再有「操作控件」菜单；移动端正文左右留白收窄。
+//
+// 2026-11-22 起两处图标键（看板卡片 / 详情 header）只读 taskActionButtons 一份：
+// 「哪些动作此刻存在」与各状态的形状由 task-card-actions.test.mjs 钉住，
+// 这里只管详情侧的结构契约（怎么渲染、有没有自造口径）。几何与实测由
+// Playwright 覆盖（e2e/test_task_detail_actions.py）。
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
-
-const task = (extra = {}) => ({ status: "waiting_user", create_worktree: false, ...extra });
 
 test("header 结构：名字旁边是编辑键，动作平铺在右侧，关闭是 opt-in", () => {
   const panel = read("../src/components/task/TaskDetailPanel.tsx");
@@ -50,15 +51,24 @@ test("header 结构：名字旁边是编辑键，动作平铺在右侧，关闭�
   assert.ok(shell.indexOf("{headerRight}") < closeAt, "关闭键排在动作行右边");
 });
 
-test("平铺动作：动作表单一来源、九种动作都有图标与回调、删除在同一排里", () => {
+test("平铺动作与看板卡片同源：一份键序、一份图形、一份配色", () => {
   const panel = read("../src/components/task/TaskDetailPanel.tsx");
 
-  assert.match(panel, /taskDetailActions\(task\)\.map/);
-  assert.match(panel, /TASK_DETAIL_ACTION_META\[key\]\.labelKey/);
-  // 九种动作都要有图标与回调；漏一个会在 tsc 的 Record 上直接报错，这里再钉一次。
+  // 键序：与卡片同一个纯函数（不再是详情专用的 taskDetailActions）。
+  assert.match(panel, /taskActionButtons\(task\)\.map/);
+  assert.doesNotMatch(panel, /taskDetailActions|TASK_DETAIL_ACTION_META/);
+  // 文案/档位取共享表，图形取共享映射。
+  assert.match(panel, /TASK_ACTION_BUTTON_META\[key\]\.labelKey/);
+  assert.match(panel, /TASK_ACTION_BUTTON_META\[key\]\.tone/);
+  assert.match(panel, /taskActionIcons\[key\]/);
+  // hover 文案 = aria-label = 动作全称（用户裁定「更随卡片，补全所有短语」）。
+  assert.match(panel, /title=\{action\.label\}/);
+  assert.match(panel, /aria-label=\{action\.label\}/);
+
+  // 九种动作都要有回调；漏一个会在 tsc 的 Record 上直接报错，这里再钉一次。
   for (const key of [
-    "start",
-    "interrupt",
+    "finish-worktree",
+    "pause",
     "resume",
     "complete",
     "cancel",
@@ -67,65 +77,36 @@ test("平铺动作：动作表单一来源、九种动作都有图标与回调�
     "unarchive-task",
     "delete-task",
   ]) {
-    assert.match(panel, new RegExp(`"?${key}"?: `), `panel must wire the ${key} action`);
+    assert.match(panel, new RegExp(`"?${key}"?: \\(\\) => void `), `panel must wire the ${key} action`);
   }
-  // 删除与其它动作一起排：在同一个 actionIcons / actionHandlers 映射里。
-  assert.match(panel, /"delete-task": <DeleteIcon \/>/);
-  assert.match(panel, /"delete-task": \(\) => void deleteTaskCard\(\)/);
+  // 收尾与暂停都接到真实处理函数上（用户裁定「详情补收尾」「以卡片为准」）。
+  assert.match(panel, /"finish-worktree": \(\) => void panel\.finishWorktree\(\)/);
+  assert.match(panel, /pause: \(\) => void panel\.pauseTask\(\)/);
+
   // 不再有菜单弹层：没有 portal、没有 role=menu、没有竖排弹层。
   assert.doesNotMatch(panel, /createPortal|role="menu"|role="menuitem"/);
-  // 平铺键与看板卡片的图标键同形同色：形状取 taskCardIconButtonStyle（不再覆写宽高/圆角），
-  // 三种语义档位按卡片的配色映射，间距也回到卡片的 0。
-  assert.match(panel, /taskCardIconButtonStyle\(action\.tone === "primary"/);
-  assert.match(panel, /action\.tone === "success" \? "success"/);
+  // 形状与配色交给卡片同一份映射：不再自己写 tone 三元式、不再覆写宽高/圆角。
+  assert.match(panel, /taskActionIconStyle\(action\.tone\)/);
+  assert.doesNotMatch(panel, /taskCardIconButtonStyle\(/, "详情不再手搓档位映射");
   assert.doesNotMatch(panel, /width: "28px"|height: "28px"|borderRadius: "8px"/, "盒子尺寸交给卡片同一份样式");
   assert.match(panel, /data-testid="task-detail-actions" style=\{\{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 0 \}\}/);
-
-  // 动作集合只有一份定义，且与看板卡片的 taskCardActions 分开（口径不同）。
-  const detail = read("../src/components/task/taskDetailActions.ts");
-  // 完成的颜色与卡片一致（卡片按钮用 success 绿），不是详情原来的 accent 蓝。
-  assert.match(detail, /complete: \{ labelKey: "task\.complete", tone: "success" \}/);
-  assert.match(detail, /export function taskDetailActions\(task: KanbanTask\): TaskDetailActionKey\[\] \{/);
-  assert.doesNotMatch(detail, /from "\.\/taskCardActions"/, "详情口径不反过来 import 卡片口径，避免两边一起漂");
 });
 
-test("按状态给按钮：完成/取消、已归档、待审阅、执行中、待开始", () => {
-  // 完成 / 取消（终态）→ 返回、归档、删除
-  for (const status of ["success", "fail", "cancelled"]) {
-    assert.deepEqual(taskDetailActions(task({ status })), ["reopen", "archive-task", "delete-task"], status);
+test("详情侧不再保留自己的一套动作口径", () => {
+  // 旧文件删除后不许有人再 import 它；开始/中断两条旧动作与文案一起下线。
+  for (const src of [
+    read("../src/components/task/taskCardActions.ts"),
+    read("../src/components/task/TaskDetailPanel.tsx"),
+    read("../src/components/task/TaskCardRows.tsx"),
+  ]) {
+    assert.doesNotMatch(src, /taskDetailActions|TASK_DETAIL_ACTION_META/);
   }
-  // 已归档 → 返回、取消归档、删除
-  assert.deepEqual(taskDetailActions(task({ status: "success", archived_at: "2026-11-22T00:00:00Z" })), [
-    "reopen",
-    "unarchive-task",
-    "delete-task",
-  ]);
-  // 待审阅 → 完成、取消
-  assert.deepEqual(taskDetailActions(task({ status: "waiting_user" })), ["complete", "cancel"]);
-  // 执行中 → 只给中断
-  assert.deepEqual(taskDetailActions(task({ status: "running" })), ["interrupt"]);
-  // 待开始 → 只给开始
-  assert.deepEqual(taskDetailActions(task({ status: "pending" })), ["start"]);
-  // 用户清单没列「已暂停」：给恢复，否则中断之后无处可去。
-  assert.deepEqual(taskDetailActions(task({ status: "paused" })), ["resume"]);
-  // 已归档优先于终态：不再多给归档键。
-  assert.ok(!taskDetailActions(task({ status: "success", archived_at: "x" })).includes("archive-task"));
-});
-
-test("动作文案键在两种语言里都写了", () => {
   const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
   const en = read("../src/i18n/locales/en-US-tasks.ts");
-  for (const [action, meta] of Object.entries(TASK_DETAIL_ACTION_META)) {
-    assert.match(meta.labelKey, /^task\./, `${action}: labels come from the task namespace`);
-    assert.match(zh, new RegExp(`"${meta.labelKey}": `), `${action}: zh label missing`);
-    assert.match(en, new RegExp(`"${meta.labelKey}": `), `${action}: en label missing`);
-  }
-  assert.match(zh, /"task\.actionStart": "开始任务"/);
-  assert.match(zh, /"task\.actionInterrupt": "中断任务"/);
-  // 菜单删掉后，它的两条文案也不许留成死键。
   for (const src of [zh, en]) {
-    assert.doesNotMatch(src, /"task\.actionsMenu":/);
-    assert.doesNotMatch(src, /"task\.actionsEmpty":/);
+    for (const dead of ["task.actionStart", "task.actionInterrupt", "task.actionsMenu", "task.actionsEmpty"]) {
+      assert.doesNotMatch(src, new RegExp(`"${dead.replace(/\./g, "\\.")}":`), `${dead} 不许留成死键`);
+    }
   }
 });
 

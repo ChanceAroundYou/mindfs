@@ -155,7 +155,7 @@ for (const name of ["removeTaskStage", "appendTaskStage", "saveStage"]) {
 }
 
 // 详情面板只读对话流；动作全部平铺在 header 右上角（2026-11-22 起不再有菜单）。
-// 看板卡片的判据仍住在 taskCardActions；详情口径是 taskDetailActions，两者有意不同。
+// 动作集合与看板卡片只有一份定义（taskCardActions.ts 的 taskActionButtons），两处共读。
 assert.doesNotMatch(panel, /<StageEditor\b/, "the detail panel no longer renders a stage editor");
 assert.doesNotMatch(panelHook, /appendStage|setEditingStage|startEditStage|saveStage|removeTaskStage/, "the detail hook must not keep stage editing state");
 const cardActions = fs.readFileSync(path.join(root, "src/components/task/taskCardActions.ts"), "utf8");
@@ -169,21 +169,23 @@ assert.match(
   /task\.create_worktree === true && !!task\.worktree_path && task\.worktree_missing !== true;/,
   "收尾 must still read the server-derived worktree_missing flag",
 );
-// 详情 header：动作来自 taskDetailActions 平铺渲染，删除也在同一排。
-assert.match(panel, /taskDetailActions\(task\)\.map/, "the panel header renders the flat detail actions");
+// 详情 header：动作来自 taskActionButtons 平铺渲染，删除也在同一排。
+assert.match(panel, /taskActionButtons\(task\)\.map/, "the panel header renders the shared flat action list");
 assert.match(panel, /complete: \(\) => void completeTask\(\)/, "the panel must wire the complete handler");
 const headerRightAt = panel.indexOf("headerRight={editingName");
 assert.ok(headerRightAt > 0, "TaskDetailPanel must pass a headerRight block");
 const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 1600);
 assert.match(headerRightSlice, /actions\.map\(\(action\) => \(/, "the header actions are flat buttons");
-assert.match(headerRightSlice, /"delete-task": \(\) => void deleteTaskCard\(\)|action\.onSelect/, "delete is one of the flat actions");
+assert.match(headerRightSlice, /action\.onSelect/, "each flat button dispatches through the shared handler map");
 assert.doesNotMatch(headerRightSlice, /TaskDetailActionsMenu|aria-haspopup="menu"/, "the actions menu is gone");
 assert.doesNotMatch(headerRightSlice, /finishWorktree|completeTask\(\)|reopenTask\(\)/, "actions must not stay as loose hand-written header icons outside the flat map");
 assert.doesNotMatch(panel, /rebuildTaskWorktree|TaskRebuildWorktreeIcon|task\.rebuildWorktree/, "the panel must not offer a rebuild-worktree entry");
 assert.match(composerIcons, /export function TrashIcon/);
-assert.match(panel, /"delete-task": <DeleteIcon \/>/, "删除与其它动作同排渲染");
+// 删除与其它动作同排：图形来自共享映射，不再在 panel 里单独写一个 DeleteIcon。
+const actionIcons = fs.readFileSync(path.join(root, "src/components/task/taskActionIcons.tsx"), "utf8");
+assert.match(actionIcons, /"delete-task": <DeleteIcon \/>/, "删除与其它动作共用同一张图标表");
 
-// 详情面板「完成」的出口：待审阅给完成/取消；完成判据住在 taskDetailActions 纯函数里。
+// 详情面板「完成」的出口：待审阅给完成/取消；完成判据住在共享纯函数里。
 test("the panel's complete gate is non-terminal and not running", () => {
   const gate = (terminal, running) => !terminal && !running;
   assert.equal(gate(false, false), true);

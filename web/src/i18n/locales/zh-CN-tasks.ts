@@ -14,8 +14,6 @@ export const zhCNTasks = {
   "task.actionArchive": "归档任务（移入「已结束 → 归档」）",
   "task.actionUnarchive": "取消归档（放回「已结束」）",
   "task.actionResume": "恢复任务",
-  "task.actionStart": "开始任务",
-  "task.actionInterrupt": "中断任务",
   "task.reasonPrompt": "{action}原因（可留空）",
   "task.actionFailed": "任务操作失败",
   "task.goneRemoved": "该任务已在服务器上删除，已从看板移除",

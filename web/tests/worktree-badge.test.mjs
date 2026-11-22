@@ -197,18 +197,19 @@ assert.doesNotMatch(card, /task\.worktreeFinishing(?:Label|Title)/, "the finishi
 assert.doesNotMatch(card, /TaskQueuedSpinnerIcon/, "the card must not keep a spinner import for a state that no longer renders one");
 // 判据只剩 worktree 三态（2026-10-07）：「有 agent 段」那条去掉了 —— 它会让
 // 「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它。
-// 2026-11-22 起该判据只写在 taskCardActions.ts：卡片与详情菜单同源，避免一边改一边忘。
+// 2026-11-22 起该判据只写在 taskCardActions.ts：卡片与详情图标行同源，避免一边改一边忘。
 const cardActions = fs.readFileSync(path.join(root, "src/components/task/taskCardActions.ts"), "utf8");
 assert.match(
   card,
-  /const canFinishWorktree = actions\.includes\("finish-worktree"\);/,
-  "the finish gate must not exclude the finishing state",
+  /const buttons = taskActionButtons\(task\);/,
+  "the card must render the shared action list (finish included)",
 );
 assert.match(
   cardActions,
   /return task\.create_worktree === true && !!task\.worktree_path && task\.worktree_missing !== true;/,
   "the finish gate is still worktree liveness only",
 );
+assert.match(cardActions, /if \(canFinishWorktree\(task\)\) actions\.push\("finish-worktree"\);/, "the gate feeds the shared list");
 
 // 收尾完成必须有回执。清场跑在服务端的 goroutine 里，没有任何 HTTP 响应会回来，
 // 界面唯一知道结果的途径就是这条 WS 推送 —— 不接等于收尾「点了没反应」。

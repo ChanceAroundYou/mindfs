@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "vitest";
-import { TASK_CARD_ACTION_META, taskCardActions } from "../src/components/task/taskCardActions.ts";
+import {
+  TASK_ACTION_BUTTON_META,
+  taskActionButtons,
+  taskCardActions,
+} from "../src/components/task/taskCardActions.ts";
 
-// 看板任务卡「此刻真正可做的动作」只有一份定义（taskCardActions.ts）。
+// 看板任务卡与任务详情 header 「此刻真正可做的动作」只有一份定义
+// （taskCardActions.ts）。
 //
-// 卡片按钮行读它。任务详情 header 自 2026-11-22 起改用另一份口径
-// （taskDetailActions.ts：平铺、含删除、归档可返回、待开始给开始），两者**有意
-// 不同**，差异写在 taskDetailActions.ts 的文件头。这里只钉卡片这份纯函数本身。
+// 2026-11-22 用户要求两处完全统一（样式、颜色、数量、种类、hover 文案），
+// 于是 `taskActionButtons` 成了**两处共读**的那一份：键序、文案、配色都从它和
+// TASK_ACTION_BUTTON_META 取。旧的 taskDetailActions.ts（详情另立一套口径）已删除。
+// 这里既钉纯函数本身，也钉「两处都读同一份」这条结构约束。
 
 const task = (extra = {}) => ({
   status: "waiting_user",
@@ -51,11 +57,16 @@ test("终态：重新打开 + 归档；worktree 还在就再给收尾", () => {
   }
 });
 
-test("已归档：只剩取消归档（收尾与重开一起收起）", () => {
-  assert.deepEqual(taskCardActions(task({ status: "success", archived_at: "2026-11-20T00:00:00Z" })), ["unarchive-task"]);
+test("已归档：返回 + 取消归档（收尾收起）", () => {
+  // 2026-11-22 用户裁定「已归档以卡片为准，卡片补『返回』」：
+  // 归档卡要先能拿回活动列，所以返回与取消归档并列。
+  assert.deepEqual(
+    taskCardActions(task({ status: "success", archived_at: "2026-11-20T00:00:00Z" })),
+    ["reopen", "unarchive-task"],
+  );
   assert.deepEqual(
     taskCardActions(withWorktree({ status: "success", archived_at: "2026-11-20T00:00:00Z" })),
-    ["unarchive-task"],
+    ["reopen", "unarchive-task"],
     "归档语义是「这条已经翻篇」，不再摆收尾键",
   );
 });
@@ -73,7 +84,7 @@ test("worktree 目录已删或从未建过：不给收尾", () => {
   );
 });
 
-test("删除永远不在共享动作表里（两处都单独摆）", () => {
+test("删除不进共享动作表，只由 taskActionButtons 给终态追加在最右", () => {
   const samples = [
     task(),
     task({ status: "running" }),
@@ -86,33 +97,45 @@ test("删除永远不在共享动作表里（两处都单独摆）", () => {
   for (const sample of samples) {
     assert.ok(!taskCardActions(sample).includes("delete-task"), JSON.stringify(sample));
   }
+  // 非终态没有删除入口；三种终态形状都在末尾补一个删除。
+  assert.deepEqual(taskActionButtons(task({ status: "running" })), ["pause", "cancel"]);
+  assert.deepEqual(taskActionButtons(task({ status: "success" })), ["reopen", "archive-task", "delete-task"]);
+  assert.deepEqual(
+    taskActionButtons(withWorktree({ status: "success" })),
+    ["finish-worktree", "reopen", "archive-task", "delete-task"],
+  );
+  assert.deepEqual(
+    taskActionButtons(task({ status: "success", archived_at: "2026-11-20T00:00:00Z" })),
+    ["reopen", "unarchive-task", "delete-task"],
+  );
 });
 
 test("每个动作都有文案键与档位，且两种语言都写了", () => {
   const zh = readFileSync(new URL("../src/i18n/locales/zh-CN-tasks.ts", import.meta.url), "utf8");
   const en = readFileSync(new URL("../src/i18n/locales/en-US-tasks.ts", import.meta.url), "utf8");
-  const keys = Object.keys(TASK_CARD_ACTION_META);
-  assert.equal(keys.length, 8, "the shared table covers every action except delete");
-  for (const [action, meta] of Object.entries(TASK_CARD_ACTION_META)) {
+  const keys = Object.keys(TASK_ACTION_BUTTON_META);
+  assert.equal(keys.length, 9, "the shared table covers every button, delete included");
+  for (const [action, meta] of Object.entries(TASK_ACTION_BUTTON_META)) {
     assert.match(meta.labelKey, /^task\./, `${action}: labels come from the task namespace`);
-    assert.ok(["default", "primary", "warn"].includes(meta.tone), `${action}: known tone`);
+    assert.ok(["default", "primary", "success", "warn"].includes(meta.tone), `${action}: known tone`);
     assert.match(zh, new RegExp(`"${meta.labelKey}": `), `${action}: zh label missing`);
     assert.match(en, new RegExp(`"${meta.labelKey}": `), `${action}: en label missing`);
   }
 });
 
-test("看板卡片从这一份取动作；详情面板用自己的口径（两者有意不同）", () => {
+test("卡片与详情 header 读同一份动作表、同一套图形与配色", () => {
   const card = readFileSync(new URL("../src/components/task/TaskCardRows.tsx", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../src/components/task/TaskDetailPanel.tsx", import.meta.url), "utf8");
-  assert.match(card, /import \{ taskCardActions \} from "\.\/taskCardActions";/);
-  assert.match(card, /const actions = taskCardActions\(task\);/);
-  // 2026-11-22 用户把详情 header 改成平铺按钮，口径与卡片不同（归档可返回、
-  // 待开始给开始、执行中只给中断…），详情侧不许再读卡片这份表。
-  assert.match(panel, /taskDetailActions\(task\)\.map/);
-  assert.doesNotMatch(panel, /taskCardActions\(task\)/);
-  // 旧的互斥条件不许回来。
-  assert.doesNotMatch(panel, /if \(canCompleteTask\)/);
-  assert.doesNotMatch(panel, /if \(canReopenTask\)/);
+  for (const [name, source] of [["card", card], ["detail", panel]]) {
+    assert.match(source, /taskActionButtons\(task\)/, `${name}: action keys come from the shared list`);
+    assert.match(source, /TASK_ACTION_BUTTON_META\[key\]/, `${name}: labels/tones come from the shared table`);
+    assert.match(source, /taskActionIcons\[key\]/, `${name}: icons come from the shared map`);
+    assert.match(source, /taskActionIconStyle\(/, `${name}: tone → colours go through one mapping`);
+    // 旧的互斥条件不许回来：两处都不许再自己算「能不能完成 / 能不能重开」。
+    assert.doesNotMatch(source, /canCompleteTask|canReopenTask/, name);
+  }
+  // 详情侧不许再出现自己的一套动作表。
+  assert.doesNotMatch(panel, /taskDetailActions|TASK_DETAIL_ACTION_META/);
 });
 
 console.log("task-card-actions.test.mjs: OK");

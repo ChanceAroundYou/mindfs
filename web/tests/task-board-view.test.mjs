@@ -326,10 +326,16 @@ assert.doesNotMatch(
   "已收尾的卡片不该再出现重建 worktree 的黄色循环键",
 );
 // 完成 = 「不在跑、也不是终态」。会话模型下没有「推进」键，「完成」不再需要
-// 与推进门反相兜底。
+// 与推进门反相兜底。2026-11-22 起判据只写在 taskCardActions.ts，卡片与详情共读。
+const cardActions = readFileSync(new URL("../src/components/task/taskCardActions.ts", import.meta.url), "utf8");
 assert.match(
   cardRows,
-  /const canComplete = actions[.]includes[(]"complete"[)];/,
+  /const buttons = taskActionButtons\(task\);/,
+  "卡片渲染共享动作表（完成也在内）",
+);
+assert.match(
+  cardActions,
+  /if \(task[.]status !== "running"\) actions[.]push[(]"complete"[)];/,
   "「完成」只被「正在跑」和终态挡住",
 );
 assert.match(
@@ -340,11 +346,10 @@ assert.match(
 // 收尾键的判据只剩「worktree 还在」（2026-10-07）：去掉了 has_agent_stage ——
 // 它会让「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最
 // 需要它（没有 agent 去 commit，只能服务端直接机械清场）。服务端已同步。
-// 2026-11-22 起这份判据只写在 taskCardActions.ts，卡片与详情菜单同源。
-const cardActions = readFileSync(new URL("../src/components/task/taskCardActions.ts", import.meta.url), "utf8");
+// 2026-11-22 起这份判据只写在 taskCardActions.ts，卡片与详情图标行同源。
 assert.match(
   cardRows,
-  /const canFinishWorktree = actions[.]includes[(]"finish-worktree"[)];/,
+  /const buttons = taskActionButtons\(task\);/,
   "canFinishWorktree 从共享动作表派生",
 );
 assert.match(
