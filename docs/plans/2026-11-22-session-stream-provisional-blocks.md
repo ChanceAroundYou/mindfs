@@ -151,4 +151,12 @@ A+ 侧两次恢复的临时实例分别是 `/tmp/mindfs-a-plus-verify-run`（合
 - `make check-upstream`：2398 delta 文件被 363 组完整覆盖，通过。
 - 全量 `go test -count=1 ./...` 有三条红，均与本组改动无关：`TestOverviewProjectionCoversEveryFieldTheSharedCardReads` 在基线 `a2f82597` 的干净 worktree 上同样失败（投影多 `archived_at` 的既有 parity 漂移）；`TestWorkspaceWorkerDerivesAccountID` 与 `TestCoordinatorTickReclaimsStaleClaims` 都是单独重跑也能复现的 `TempDir RemoveAll cleanup: directory not empty` 竞态。本组涉及的 `session` / `usecase` 包全绿。
 
-未 push、未部署、未重启任何节点；本机生产 7331 全程未碰。
+### 发布（2026-11-22）
+
+按用户指令「提交现行的所有修改，并 push，然后重新编译出一个最新版 ship 到所有设备，随后我会自行重启」：A+ 分支合入 `main`（merge `c5dd3369`），连同并发在飞改动一起提交，`bash scripts/deploy-all.sh` 退出 0，四端 `v0.5.5-1201-112-g4a039bdb` 逐字一致（origin/main `4a039bdb`）。
+
+- 门禁：`go test` 全绿（kanban 295.410s）、`tsc` clean、Vitest 266 文件 / 889 通过 / 6 跳过、`make check-upstream` 2419 delta / 368 组全绿。
+- wsl / fn：`is-active`，health 200 `role=worker`，已自动重启。
+- pc-win：计划任务 PID `43136`，`:7332` LISTENING，health 正常。
+- 本机：已安装同一二进制（`~/.local/bin/mindfs --version` 一致，安装 mtime 20:41:42），health 200 `role=control`；**运行进程仍是 `15:13` 起的旧二进制（`/proc/2536175/exe` 指向 deleted），待用户 `sudo systemctl restart mindfs`**。
+- 发布时把另一个并发会话留下的未跟踪重复文件 `server/internal/kanban/router_event_turn.go` 移到 `/tmp/mindfs-wip-preserve/`（与已跟踪的 `router_coordinate_turn.go` 逐字节相同，留在工作区会让 `go build` 因重复声明失败）；未提交另一会话新生成的 `e2e/test_router_turn_settle_follow.py`。
