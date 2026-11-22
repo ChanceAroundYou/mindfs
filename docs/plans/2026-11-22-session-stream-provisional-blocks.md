@@ -158,5 +158,5 @@ A+ 侧两次恢复的临时实例分别是 `/tmp/mindfs-a-plus-verify-run`（合
 - 门禁：`go test` 全绿（kanban 295.410s）、`tsc` clean、Vitest 266 文件 / 889 通过 / 6 跳过、`make check-upstream` 2419 delta / 368 组全绿。
 - wsl / fn：`is-active`，health 200 `role=worker`，已自动重启。
 - pc-win：计划任务 PID `43136`，`:7332` LISTENING，health 正常。
-- 本机：已安装同一二进制（`~/.local/bin/mindfs --version` 一致，安装 mtime 20:41:42），health 200 `role=control`；**运行进程仍是 `15:13` 起的旧二进制（`/proc/2536175/exe` 指向 deleted），待用户 `sudo systemctl restart mindfs`**。
+- 本机：已安装同一二进制（`~/.local/bin/mindfs --version` 一致，安装 mtime 20:41:42）；用户于 21:01:37 重启后，PID `3316496` 的 `/proc/3316496/exe` 指向 `~/.local/bin/mindfs`，两者 md5 同为 `5ab087de057ae5bc79b6c3f00e852bc2`，health 200 `role=control`，旧进程已不在运行。四端重启后逐节点复核：本机 / wsl / fn / pc-win 版本均为 `v0.5.5-1201-112-g4a039bdb`，health 分别 200（`control` / `worker` / `worker` / `worker`），pc-win PID `4276` 且 `:7332` LISTENING。
 - 发布时把另一个并发会话留下的未跟踪重复文件 `server/internal/kanban/router_event_turn.go` 移到 `/tmp/mindfs-wip-preserve/`（与已跟踪的 `router_coordinate_turn.go` 逐字节相同，留在工作区会让 `go build` 因重复声明失败）；未提交另一会话新生成的 `e2e/test_router_turn_settle_follow.py`。
