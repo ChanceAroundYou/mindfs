@@ -15,6 +15,11 @@ const (
 	KindAsk Kind = "ask"
 	// KindPicker asks the owner which project a message belongs to.
 	KindPicker Kind = "picker"
+	// KindTarget asks the owner to confirm where an inbound message goes:
+	// node, project, and (optional) task. Unlike KindPicker it can also point
+	// at an existing task, and a confirmed card becomes the chat's default
+	// destination for later messages.
+	KindTarget Kind = "target"
 	// KindNotice reports an outcome and asks for nothing.
 	KindNotice Kind = "notice"
 )
@@ -51,6 +56,19 @@ type PickerProject struct {
 	Label  string `json:"label"`
 }
 
+// TargetRef is one confirmed destination: the node and project a message goes
+// to, plus the task when it joins an existing one. TaskID empty means 「新建」 —
+// the confirmed card creates a task instead of appending. Kept as one value on
+// the card so a re-render (ack, state change) cannot lose what was confirmed.
+type TargetRef struct {
+	NodeID       string `json:"node_id"`
+	RootID       string `json:"root_id"`
+	TaskID       string `json:"task_id,omitempty"`
+	TaskNumber   int    `json:"task_number,omitempty"`
+	TaskTitle    string `json:"task_title,omitempty"`
+	ProjectLabel string `json:"project_label,omitempty"`
+}
+
 // Card is one message MindFS sent, and everything needed to act on a click
 // that comes back later — possibly after a restart.
 type Card struct {
@@ -81,6 +99,16 @@ type Card struct {
 	SourceMessageID string          `json:"source_message_id,omitempty"`
 	IntakeText      string          `json:"intake_text,omitempty"`
 	Projects        []PickerProject `json:"projects,omitempty"`
+
+	// Target is the destination a KindTarget card asks the owner to confirm;
+	// Candidates are the other places the same message could go (the card
+	// offers 「新建」 plus these). ReviewHits are review-category names the
+	// task matched, shown so a «要审核» project is not silently skipped.
+	// TargetMode is what the click will do when it lands: "append" / "create".
+	Target     *TargetRef  `json:"target,omitempty"`
+	Candidates []TargetRef `json:"candidates,omitempty"`
+	ReviewHits []string    `json:"review_hits,omitempty"`
+	TargetMode string      `json:"target_mode,omitempty"`
 
 	MessageID string `json:"message_id,omitempty"`
 	ChatID    string `json:"chat_id,omitempty"`

@@ -29,6 +29,9 @@ type Action struct {
 	MessageID  string
 	OperatorID string
 	ChatID     string
+	// Fields carries the editable values a target card submits with the click
+	// (task number, title). Absent or empty is a nil map, never a panic.
+	Fields map[string]string
 }
 
 const (
@@ -65,10 +68,12 @@ func (e Event) ParseAction() (Action, bool) {
 			return Action{}, false
 		}
 		act.CardID, act.Text = id, text
+		act.Fields = formFields(e.FormValue)
 		return act, true
 	}
 	if id, ok := strings.CutPrefix(e.ActionName, noticeFormPrefix); ok {
 		act.CardID, act.Text, act.Choice = id, formNote(e.FormValue), 0
+		act.Fields = formFields(e.FormValue)
 		return act, true
 	}
 
@@ -76,6 +81,7 @@ func (e Event) ParseAction() (Action, bool) {
 	if value == nil {
 		return Action{}, false
 	}
+	act.Fields = anyStringFields(value["fields"])
 	act.CardID = anyString(value["card"])
 	if act.CardID == "" {
 		return Action{}, false
@@ -119,6 +125,50 @@ func formNote(raw json.RawMessage) string {
 	}
 	text, _ := value["note"].(string)
 	return text
+}
+
+// formFields keeps the editable values a form submitted besides the answer
+// text. Feishu sends each named input at the top level ({"note":"…",
+// "task_no":"#42"}); a nested "fields" object is accepted too, because the
+// button path carries its values that way.
+func formFields(raw json.RawMessage) map[string]string {
+	value := anyValue(raw)
+	if value == nil {
+		return nil
+	}
+	out := anyStringFields(value["fields"])
+	for k, v := range value {
+		if k == "note" || k == "fields" {
+			continue
+		}
+		if s := anyString(v); s != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = s
+		}
+	}
+	return out
+}
+
+// anyStringFields decodes a fields object into a flat string map. Numbers keep
+// their text form so a task number typed into a form round-trips. Missing,
+// empty, or non-object input is nil — callers read it like a nil map.
+func anyStringFields(v any) map[string]string {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, raw := range m {
+		if s := anyString(raw); s != "" {
+			out[k] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func anyString(v any) string {
