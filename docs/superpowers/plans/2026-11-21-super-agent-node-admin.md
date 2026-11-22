@@ -442,3 +442,11 @@ workflow 需要显式批准，项目级别、临时使用的可以自由生成�
   - 脚本自身修掉两处观测错误（不是产品缺陷）：`/workflow-run` 的 `node_states` 投影只在节点
     收尾时写，运行中的真相在 `/workflow-run/nodes` 的 NodeRun 行；节点 prompt 只写「只回复
     OK」这类裸 token 会被 envelope 判成 blocked，夹具改成 `echo` + token。
+
+## 部署记录
+
+**2026-11-22 四端发布 `v0.5.5-1201-57-g0cc70c6e`**：W2（节点级管理员）与 W3（自设计 / 派生
+workflow 与审批）全部上线，含 `0cc70c6e` 的固化 stale 守卫（批准期间条目被别人新建出来 → 按
+stale 拒绝，绝不覆盖草稿）与两份隔离验收脚本 `e2e/test_task_router_w2_node_admin.py` /
+`e2e/test_task_router_w3_publish.py`。四端版本逐字一致；本机由用户重启，运行进程与安装文件同
+md5 `540a0e8f…`、`/mindfs/health` 200 `role=control`。R4（机器管理）仍只记录、未设计。
