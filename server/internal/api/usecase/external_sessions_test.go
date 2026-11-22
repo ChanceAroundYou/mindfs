@@ -342,6 +342,7 @@ type syncDeltaTestImporter struct {
 	input     agenttypes.ImportExternalSessionInput
 	exchanges []agenttypes.ImportedExchange
 	subagents []agenttypes.ImportedSubagentSession
+	external  []agenttypes.ExternalSessionSummary
 	calls     int
 }
 
@@ -351,7 +352,7 @@ func (i *syncDeltaTestImporter) AgentName() string { return "codex" }
 func (i *syncDeltaTestImporter) HasTranscriptTimestamps() bool { return true }
 
 func (i *syncDeltaTestImporter) ListExternalSessions(context.Context, agenttypes.ListExternalSessionsInput) (agenttypes.ListExternalSessionsResult, error) {
-	return agenttypes.ListExternalSessionsResult{}, nil
+	return agenttypes.ListExternalSessionsResult{Items: i.external}, nil
 }
 
 func (i *syncDeltaTestImporter) ImportExternalSession(_ context.Context, in agenttypes.ImportExternalSessionInput) (agenttypes.ImportedExternalSession, error) {

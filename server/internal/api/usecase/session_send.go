@@ -206,7 +206,16 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 永远亮着的子代理灯（用户看到"卡死"）。
 	defer claudeSubagents.FinishAll()
 	attachSessionUpdates := func(runtime agenttypes.Session) {
+		// claude 的转录 id 只在第一条流消息之后才可见（打开时为空），所以打开后立刻落库
+		// 对它是 no-op；这里在回合进行中补写，id 一出现就写进绑定，避免「首轮中途重启 →
+		// 绑定永远为空 → 既 resume 不了也同步不回来」。true 之后不再查库。
+		learnedBinding := false
 		runtime.OnUpdate(func(update agenttypes.Event) {
+			if !learnedBinding {
+				if persistLearnedAgentSessionID(context.Background(), manager, current, in.Agent, runtime) {
+					learnedBinding = true
+				}
+			}
 			update = normalizeAgentUpdatePaths(root, update)
 			if claudeSubagents.Handle(context.Background(), update) {
 				return
