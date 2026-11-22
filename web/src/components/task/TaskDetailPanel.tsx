@@ -11,16 +11,16 @@ import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
 import {
   DeleteIcon,
+  RunNowIcon,
   TaskCancelIcon,
   TaskCompleteIcon,
-  TaskFinishWorktreeIcon,
   TaskPauseIcon,
   TaskReopenIcon,
   TaskResumeIcon,
 } from "./taskIcons";
 import { ArchiveIcon } from "../session/sessionListShared";
-import { TaskDetailActionsMenu, type TaskDetailAction } from "./TaskDetailActionsMenu";
-import { TASK_CARD_ACTION_META, taskCardActions, type TaskCardActionKey } from "./taskCardActions";
+import { taskCardIconButtonStyle } from "./taskStyles";
+import { TASK_DETAIL_ACTION_META, taskDetailActions, type TaskDetailActionKey } from "./taskDetailActions";
 import { useTaskDetailPanel } from "./useTaskDetailPanel";
 
 export type TaskDetailPanelProps = {
@@ -47,45 +47,44 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
     terminal,
     numberLabel,
     saveName,
-    finishWorktree,
     completeTask,
     reopenTask,
     cancelTask,
+    startTask,
     archiveTaskCard,
     unarchiveTaskCard,
     deleteTaskCard,
   } = panel;
 
-  // 图标与回调按动作键登记；**哪些键出现**只由 taskCardActions 决定，与看板卡片
-  // 同源。以前这里手写 finish/complete/reopen 三段条件，三者互斥，任何时刻都只剩
-  // 一个键 —— 卡片上有几个动作，菜单里就该有几个。
-  const actionIcons: Record<TaskCardActionKey, React.ReactNode> = {
-    "finish-worktree": <TaskFinishWorktreeIcon />,
-    pause: <TaskPauseIcon />,
+  // 动作集合只有一份定义：taskDetailActions（详情面板口径，与看板卡片刻意不同，
+  // 差异写在模块头部）。这里只负责把动作键翻译成图标 / 文案 / 回调。
+  const actionIcons: Record<TaskDetailActionKey, React.ReactNode> = {
+    start: <RunNowIcon />,
+    interrupt: <TaskPauseIcon />,
     resume: <TaskResumeIcon />,
     complete: <TaskCompleteIcon />,
     cancel: <TaskCancelIcon />,
     reopen: <TaskReopenIcon />,
     "archive-task": <ArchiveIcon />,
     "unarchive-task": <ArchiveIcon />,
+    "delete-task": <DeleteIcon />,
   };
-  const actionHandlers: Record<TaskCardActionKey, () => void> = {
-    "finish-worktree": () => void finishWorktree(),
-    pause: () => void panel.pauseTask(),
+  const actionHandlers: Record<TaskDetailActionKey, () => void> = {
+    start: () => void startTask(),
+    interrupt: () => void panel.pauseTask(),
     resume: () => void panel.resumeTask(),
     complete: () => void completeTask(),
     cancel: () => void cancelTask(),
     reopen: () => void reopenTask(),
     "archive-task": () => void archiveTaskCard(),
     "unarchive-task": () => void unarchiveTaskCard(),
+    "delete-task": () => void deleteTaskCard(),
   };
-  // header 右上角「操作控件」菜单：当前卡片真正可用的动作，一项不少。
-  // 删除不进来 —— 它是终态任务的破坏性动作，仍单独摆在 header 上。
-  const actions: TaskDetailAction[] = taskCardActions(task).map((key) => ({
+  const actions = taskDetailActions(task).map((key) => ({
     key,
-    label: t(TASK_CARD_ACTION_META[key].labelKey),
+    label: t(TASK_DETAIL_ACTION_META[key].labelKey),
     icon: actionIcons[key],
-    tone: TASK_CARD_ACTION_META[key].tone,
+    tone: TASK_DETAIL_ACTION_META[key].tone,
     onSelect: actionHandlers[key],
   }));
 
@@ -145,22 +144,31 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={panelButtonStyle("secondary")}>{t("common.cancel")}</button>
         </>
       ) : (
-        <>
-          {/* 收尾 / 完成 / 重新打开都收进「操作控件」菜单，header 只剩这一颗键。 */}
-          <TaskDetailActionsMenu actions={actions} disabled={saving} />
-          {terminal ? (
+        // 动作全部平铺：有几项画几项，删除也在同一排里（不再做独立特例，也不再收进菜单）。
+        // 图标键沿用看板卡片的形状与配色档位，标题 / 读屏文案取动作名。
+        <div data-testid="task-detail-actions" style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: "2px" }}>
+          {actions.map((action) => (
             <button
+              key={action.key}
               type="button"
-              title={t("task.deleteTask")}
-              aria-label={t("task.deleteTask")}
+              title={action.label}
+              aria-label={action.label}
               disabled={saving}
-              onClick={() => void deleteTaskCard()}
-              style={{ ...pencilStyle(false), color: "#dc2626", opacity: saving ? 0.4 : 1 }}
+              onClick={action.onSelect}
+              style={{
+                ...taskCardIconButtonStyle(action.tone === "primary" ? "accent" : action.tone === "warn" ? "danger" : "default"),
+                width: "28px",
+                height: "28px",
+                borderRadius: "8px",
+                flexShrink: 0,
+                opacity: saving ? 0.4 : 1,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
             >
-              <DeleteIcon />
+              {action.icon}
             </button>
-          ) : null}
-        </>
+          ))}
+        </div>
       )}
       showCloseButton
     >

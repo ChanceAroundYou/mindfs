@@ -136,13 +136,17 @@ test("回到待审核 is offered exactly for terminal tasks, on card and panel",
     assert.equal(gatesOf(worktreeTask({ status })).canReopen, false, `${status}: nothing closed to reopen`);
   }
 
-  // 详情面板不再自己抄条件：菜单项直接来自 taskCardActions(task)，与卡片同源。
+  // 详情面板也不自己抄条件：动作来自 taskDetailActions(task)（详情的口径，见模块头）。
   const panel = fs.readFileSync(path.join(root, "src/components/task/TaskDetailPanel.tsx"), "utf8");
-  assert.match(panel, /taskCardActions\(task\)\.map/, "the detail menu must read the shared action list");
+  assert.match(panel, /taskDetailActions\(task\)\.map/, "the flat detail header must read the detail action list");
+  const detailActions = fs.readFileSync(path.join(root, "src/components/task/taskDetailActions.ts"), "utf8");
+  assert.match(detailActions, /return \["reopen", "archive-task", "delete-task"\];/, "terminal tasks keep the reopen exit");
+  assert.match(detailActions, /return \["reopen", "unarchive-task", "delete-task"\];/, "archived tasks can also reopen");
   const hooks = fs.readFileSync(path.join(root, "src/components/task/useTaskDetailPanel.ts"), "utf8");
   assert.match(hooks, /moveTask\(task\.root_id, task\.id, "reopen"/, "the panel must call the reopen route");
   assert.match(hooks, /moveTask\(task\.root_id, task\.id, "cancel"/, "the panel must call the cancel route");
   assert.match(hooks, /archiveTask\(task\.root_id, task\.id, archived, nodeId\)/, "the panel must call the archive route");
+  assert.match(hooks, /runTaskNow\(task\.root_id, task\.id, nodeId\)/, "「开始」 must dispatch the queued first message via RunNow");
 
   const crud = fs.readFileSync(path.join(root, "src/services/task/crud.ts"), "utf8");
   assert.match(crud, /"complete" \| "cancel" \| "fail" \| "reopen"/, "moveTask must expose the reopen action");

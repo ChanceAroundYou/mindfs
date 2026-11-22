@@ -335,14 +335,15 @@ assert.doesNotMatch(
 assert.match(
   card,
   /const canFinishWorktree = actions[.]includes[(]"finish-worktree"[)];/,
-  "the card button must read the same shared gate as the detail menu: same terminal and finishing exemptions",
+  "the card button must read the shared card gate: same terminal and finishing exemptions",
 );
 assert.doesNotMatch(card, /TaskQueuedSpinnerIcon/, "the card must not swap the finish button for a spinner either");
 assert.match(card, /onMove\(task, "finish-worktree"\)/, "the card button must dispatch finish-worktree");
 assert.match(app, /action === "finish-worktree"/, "App must handle the finish-worktree card action");
 
 // 收尾和重建是两个键，长在同一处但不是一回事：混起来会让人以为「重建」也把活合回去了。
-assert.match(panel, /<TaskFinishWorktreeIcon \/>/, "the panel must render the finish icon");
+// 2026-11-22 起详情 header 按用户清单平铺动作，不再提供收尾键 —— worktree 清场只从卡片发起。
+assert.doesNotMatch(panel, /TaskFinishWorktreeIcon/, "the detail header no longer offers finish; the card is the entry point");
 assert.match(card, /<TaskFinishWorktreeIcon \/>/, "the card must render the finish icon");
 assert.match(read("src/components/task/taskIcons.tsx"), /export function TaskFinishWorktreeIcon\(\)/, "the finish icon must exist");
 

@@ -1283,8 +1283,8 @@ groups:
       - server/internal/gitview/worktree_finish.go
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/TaskDetailActionsMenu.tsx
       - web/src/components/task/taskCardActions.ts
+      - web/src/components/task/taskDetailActions.ts
       - web/src/components/workspace/WorkspaceTaskRow.tsx
       - web/src/components/shell/ToastContainer.tsx
       - web/src/services/task/worktree.ts
@@ -11572,13 +11572,16 @@ groups:
       `JUMP_VISIBLE_PX=200`（会话页仍是 `STICK_REARM_PX=2`）：任务详情的输入框在滚动流里、
       就在对话末尾，面板底部还有 12–46px 收尾区，2px 会让按钮在刚打开、刚自动落底时就亮着，
       紧贴输入框时两个控件还会重叠。移动端与桌面是同一颗按钮、同一个位置（面板正文底部居中）。
-      ⑨ header 收口（2026-11-21 用户要求）：编辑键从右上角搬到任务名旁边并与名字锁在同一行
+      ⑨ header 收口（2026-11-21 初版，2026-11-22 按用户口径重做）：编辑键从右上角搬到任务名旁边并与名字锁在同一行
       （名字 `flex:0 1 auto` + `minWidth:0` 省略，组内 nowrap，否则长名字会把编辑键挤到第二行、
-      header 变两行高）；收尾 worktree / 完成任务 / 重新打开收进右上角「操作控件」菜单
-      （`TaskDetailActionsMenu`，portal 到 body + fixed 定位，点外面 / Esc / 滚动 / 改窗口都收起，
-      没有可执行动作时给一行说明）；**删除不进菜单**，仍按原样单独摆在 header 上（终态任务才出现）；
-      `PanelShell` 新增 opt-in 的 `showCloseButton`，任务详情右上角有 ×，它复用 `requestClose`，
-      未保存改名照样先确认。最终布局：左「状态 #编号 任务名 [编辑]」，中间留白，右「[操作控件] [删除] [关闭]」。
+      header 变两行高）；右上角**不再有「操作控件」菜单**，可用动作按状态平铺成一行图标键，
+      删除不再是独立特例、与其他动作同排（`taskDetailActions.ts` 是唯一口径，动作集合与看板卡片的
+      `taskCardActions` 有意不同）：完成 / 取消 → 返回、归档、删除；已归档 → 返回、取消归档、删除；
+      待审阅 → 完成、取消；执行中 → 中断；待开始 → 开始（RunNow 派发排队首条留言）；
+      已暂停 → 恢复（用户清单未列，否则中断后无处可去）。卡片上的「收尾 worktree」不在详情里，
+      worktree 清场仍从卡片发起。`PanelShell` 新增 opt-in 的 `showCloseButton`，任务详情右上角有 ×，
+      它复用 `requestClose`，未保存改名照样先确认。最终布局：左「状态 #编号 任务名 [编辑]」，
+      中间留白，右「[动作…] [关闭]」。
       ⑩ 移动端正文左右留白从 14px 收到 8px（`@media (max-width:640px)` 的 `.task-detail-content`），
       上下仍 12px；子项一律 `min-width:0`，收窄不产生横向溢出。
       ⑪ 「立即执行」收成控件行里的一颗图标键（2026-11-21 第三轮）：新建任务面板保留它，
@@ -11631,7 +11634,7 @@ groups:
       - web/src/components/task/SupervisionEntry.tsx
       - web/src/components/task/TaskInspectEntries.tsx
       - web/src/components/task/TaskDetailPanel.tsx
-      - web/src/components/task/TaskDetailActionsMenu.tsx
+      - web/src/components/task/taskDetailActions.ts
       - web/src/components/shell/PanelShell.tsx
       - web/src/components/task/useRunViewEntry.ts
       - web/src/components/task/useSupervisionEntry.ts
@@ -11705,11 +11708,12 @@ groups:
       - 'web/tests/composer-bottom-pin.test.mjs:assert.doesNotMatch(styles, /\.task-detail-execution\s*\{[^}]*\border\s*:/);'
       - 'web/src/index.css:.task-detail-content {'
       - 'web/src/index.css:padding: 10px 8px;'
-      - 'web/src/components/task/TaskDetailPanel.tsx:<TaskDetailActionsMenu actions={actions} disabled={saving} />'
+      - 'web/src/components/task/TaskDetailPanel.tsx:data-testid="task-detail-actions"'
       - 'web/src/components/task/TaskDetailPanel.tsx:flexWrap: "nowrap"'
       - 'web/src/components/task/TaskDetailPanel.tsx:className="task-detail-content"'
-      - 'web/src/components/task/TaskDetailActionsMenu.tsx:export function TaskDetailActionsMenu({ actions, disabled = false }: TaskDetailActionsMenuProps) {'
-      - 'web/src/components/task/TaskDetailActionsMenu.tsx:role="menuitem"'
+      - 'web/src/components/task/taskDetailActions.ts:export function taskDetailActions(task: KanbanTask): TaskDetailActionKey[] {'
+      - 'web/src/components/task/taskDetailActions.ts:if (task.archived_at) return ["reopen", "unarchive-task", "delete-task"];'
+      - 'web/src/components/task/useTaskDetailPanel.ts:runTaskNow(task.root_id, task.id, nodeId)'
       - 'web/src/components/task/RunImmediatelyControl.tsx:export function RunImmediatelyControl({'
       - 'web/src/components/task/RunImmediatelyControl.tsx:data-testid="run-immediately-toggle"'
       - 'web/src/components/task/RunImmediatelyControl.tsx:...composerSendButtonStyle({ enabled: active && !disabled, variant: "panel" }),'
@@ -11733,7 +11737,8 @@ groups:
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.startImmediatelyHint": "建完任务就立刻派发首条留言",'
       - 'web/src/components/shell/PanelShell.tsx:showCloseButton = false,'
       - 'web/src/components/shell/PanelShell.tsx:onClick={() => requestClose()}'
-      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.actionsMenu": "操作控件",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.actionStart": "开始任务",'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.actionInterrupt": "中断任务",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.label": "执行详情",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.runTimeline.directNode": "直连对话",'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.supervision.empty": "该任务还没有监管记录",'

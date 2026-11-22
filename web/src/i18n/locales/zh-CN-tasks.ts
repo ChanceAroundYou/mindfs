@@ -14,6 +14,8 @@ export const zhCNTasks = {
   "task.actionArchive": "归档任务（移入「已结束 → 归档」）",
   "task.actionUnarchive": "取消归档（放回「已结束」）",
   "task.actionResume": "恢复任务",
+  "task.actionStart": "开始任务",
+  "task.actionInterrupt": "中断任务",
   "task.reasonPrompt": "{action}原因（可留空）",
   "task.actionFailed": "任务操作失败",
   "task.goneRemoved": "该任务已在服务器上删除，已从看板移除",
@@ -102,10 +104,6 @@ export const zhCNTasks = {
   "task.complete": "完成任务",
   "task.completeShort": "完成",
   "task.reopen": "回到待审核，继续对话",
-  // header 右上角的「操作控件」菜单：收尾 worktree / 完成任务 / 重新打开。
-  // 删除不进来（终态任务的破坏性动作仍单独摆在 header 上）。
-  "task.actionsMenu": "操作控件",
-  "task.actionsEmpty": "当前没有可执行的操作",
   // 两个入口是同一行的小胶囊，展开/收起靠箭头记号；文案只说明内容，不随状态变化。
   "task.runTimeline.label": "执行详情",
   "task.runTimeline.loading": "加载运行…",

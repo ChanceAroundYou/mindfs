@@ -3,12 +3,11 @@ import { readFileSync } from "node:fs";
 import { test } from "vitest";
 import { TASK_CARD_ACTION_META, taskCardActions } from "../src/components/task/taskCardActions.ts";
 
-// 任务卡「此刻真正可做的动作」只有一份定义（taskCardActions.ts）。
+// 看板任务卡「此刻真正可做的动作」只有一份定义（taskCardActions.ts）。
 //
-// 看板卡片的按钮行与任务详情 header 的「操作控件」菜单都读它 —— 以前两边各抄
-// 一遍条件，详情菜单那三段时间互斥，用户实测「卡片上有好几个动作、菜单只显示一个」。
-// 这里钉的是纯函数本身的行为；接线由 task-detail-header / task-card-parity 的源码
-// 契约钉住（两边都必须 import 这一份）。
+// 卡片按钮行读它。任务详情 header 自 2026-11-22 起改用另一份口径
+// （taskDetailActions.ts：平铺、含删除、归档可返回、待开始给开始），两者**有意
+// 不同**，差异写在 taskDetailActions.ts 的文件头。这里只钉卡片这份纯函数本身。
 
 const task = (extra = {}) => ({
   status: "waiting_user",
@@ -102,13 +101,15 @@ test("每个动作都有文案键与档位，且两种语言都写了", () => {
   }
 });
 
-test("卡片与详情菜单都从这一份取动作，不再各写一套条件", () => {
+test("看板卡片从这一份取动作；详情面板用自己的口径（两者有意不同）", () => {
   const card = readFileSync(new URL("../src/components/task/TaskCardRows.tsx", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../src/components/task/TaskDetailPanel.tsx", import.meta.url), "utf8");
   assert.match(card, /import \{ taskCardActions \} from "\.\/taskCardActions";/);
-  assert.match(panel, /import \{ TASK_CARD_ACTION_META, taskCardActions, type TaskCardActionKey \} from "\.\/taskCardActions";/);
   assert.match(card, /const actions = taskCardActions\(task\);/);
-  assert.match(panel, /taskCardActions\(task\)\.map/);
+  // 2026-11-22 用户把详情 header 改成平铺按钮，口径与卡片不同（归档可返回、
+  // 待开始给开始、执行中只给中断…），详情侧不许再读卡片这份表。
+  assert.match(panel, /taskDetailActions\(task\)\.map/);
+  assert.doesNotMatch(panel, /taskCardActions\(task\)/);
   // 旧的互斥条件不许回来。
   assert.doesNotMatch(panel, /if \(canCompleteTask\)/);
   assert.doesNotMatch(panel, /if \(canReopenTask\)/);
