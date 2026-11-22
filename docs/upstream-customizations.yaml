@@ -13367,6 +13367,119 @@ groups:
       - 'server/internal/agent/pool_process_guard_test.go:func TestAttachSessionProcessIDRegistersSubprocess(t *testing.T) {'
       - 'cli/cmd/autostart_unix_test.go:"KillMode=control-group"'
 
+  - id: G-PT
+    title: 任务卡 / 任务详情的「开始 · 终止」动作与「待处理」文案（2026-11-22 用户裁定）
+    kind: feature
+    symptom: |
+      「未开始」的任务卡片与详情头部摆着「完成」和「取消」：还没有任何产出，却先给了一个交付键；
+      真正要做的「开始」只能从对话流里那条排队留言的「立即执行」触发，两处入口不一致。
+      「运行中」只给「暂停」，而暂停并不打断会话 —— 点下去界面说停了、CLI 还在跑工具；
+      「完成 / 取消」同样不打断在跑的回合，用户想真的叫停没有任何入口。
+      另一侧，「待审核」这个叫法与实际语义（等人说话，不是等人审批）不符，全站文案要统一成「待处理」。
+    why: |
+      ① **动作表是唯一真源**：卡片（TaskCardRows）与详情（TaskDetailPanel）都读
+      `taskActionButtons()` → `TASK_ACTION_BUTTON_META` + `taskActionIcons`，所以只改这一处，
+      两处的数量、顺序、文案、图标、配色一起变。
+      ② **未开始 = 开始 + 取消**（可选 `finish-worktree`）：`start` 走 `POST /api/tasks/{id}/start`
+      落到 `Service.RunNow`，把排队留言发出去，任务随之进入运行中；`cancel` 仍是终态取消。
+      「完成」不再出现在未开始（没有产出可交付）。
+      ③ **运行中 = 只给终止**：`terminate` 走 `POST /api/tasks/{id}/terminate` → `Service.Terminate`。
+      有 workflow Run 时复用 `stopWorkflowRunToWaitingUser`（节点行打断、driver 停摆、投影冻结成
+      cancelled、回复结算），只是任务事件名换成 `task_terminated`；直连回合走
+      `ActivityService.TerminateDirectTurn`：先在共享登记簿 `TurnTerminations` 标记在飞回复，
+      再经 `SetSessionTurnCanceller` 打断主会话当前回合，最后把回复结算成 cancelled 并清掉进度正文。
+      两条路的落点都是 `waiting_user`（待处理），旧现场（Run 投影、回复行、转录）原样保留。
+      ④ **被打断不是失败**：`executeDirectActivity` 的失败分支先 `Consume` 终止标记 —— 命中的回合写
+      cancelled + 「已被用户终止；可以直接发消息重开一轮。」并停在待处理，不走 `restore()` 回滚成
+      「未开始」，也不写红色 failed。标记是单次消费，5 分钟过期，避免残留把后续真实失败读成用户叫停。
+      ⑤ **跨实例共享**：`ActivityServiceForRoot` 每次现建实例，写标记（HTTP 侧）与读标记（跑回合的
+      实例）不是同一个对象，所以登记簿挂在 `Service.turnTerminations` 上，装配期注入每个实例。
+      ⑥ **文案统一**：`task.status.waitingUser` / `task.column.waitingUser` /
+      `task.workspaceFilterBlocked` / `task.reopen` / `task.activity.disabled` 全部由「待审核」改为
+      「待处理」，英文统一成 `Awaiting action`。
+    boundary: |
+      只做「停当前这轮活」，不做进程级续跑 / 接管（与 A+ 计划同一边界）。已知残留：Router 决策回合
+      可能在本轮终止之后才落地并再起一轮 —— 目前没有 per-task 的 Router lane 取消（`CloseTask` 只服务
+      删除任务），这条竞态未在本组修复，需要时另开一组。本轮未部署、未重启任何节点。
+    # 针对性测试：
+    #   service_terminate_test.go —— 直连终止（会话打断被调用一次、在飞回复 cancelled + 说明、
+    #     进度正文清空、任务 waiting_user、task_terminated 事件）、工作流终止（Run 投影 cancelled、
+    #     任务 waiting_user）、终止标记单次消费、以及 executeDirectActivity 在标记命中时写 cancelled
+    #     而不是 failed（去掉标记分支 / 去掉 TerminateDirectTurn 两处变异各自打红）。
+    #   task-card-actions.test.mjs —— 未开始 = start + cancel、待处理 = complete + cancel、
+    #     运行中 = 只有 terminate（含活着 worktree 的情形）、终态仍 reopen/archive/delete、11 个键都有文案。
+    #   task-button-gates.test.mjs —— 运行中不给暂停/完成、未开始不给完成、start/terminate 在详情 header
+    #     接到真实处理函数、看板对 start/terminate/cancel/reopen/rebuild 都重拉。
+    #   task-board-view.test.mjs / task-archive.test.mjs / workspace-board.test.mjs / task-card-status.test.mjs
+    #     —— 列名与状态文案是「待处理」、旧词「待审核」不再出现、「完成」不再按 status !== running 判。
+    #   task-detail-header.test.mjs / task-ghost-card.test.mjs / task-icons-inventory.test.mjs
+    #     —— start/terminate 文案键有效、详情九个动作的 catch 统一走 fail()、图标导出清单同步。
+    files:
+      - server/internal/kanban/service_terminate.go
+      - server/internal/kanban/activity_terminate.go
+      - server/internal/kanban/activity_terminations.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/activity_service_turns.go
+      - server/internal/kanban/activity_store_orphan.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/workflow_runtime_router_cancel.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/appcontext_workflow.go
+      - server/app/workspace_build.go
+      - web/src/components/task/taskBoardTypes.ts
+      - web/src/components/task/taskCardActions.ts
+      - web/src/components/task/taskActionIcons.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/useTaskDetailPanel.ts
+      - web/src/app/useTaskBoard.ts
+      - web/src/services/task/crud.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - server/internal/kanban/service_terminate_test.go
+      - web/tests/task-card-actions.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-card-status.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-archive.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/task-create-panel.test.mjs
+      - web/tests/task-detail-header.test.mjs
+      - web/tests/task-ghost-card.test.mjs
+      - web/tests/task-icons-inventory.test.mjs
+    anchors:
+      - 'server/internal/kanban/service_terminate.go:func (s *Service) Terminate(ctx context.Context, in MoveInput) (TaskDetail, error) {'
+      - 'server/internal/kanban/service_terminate.go:func (s *Service) SetSessionTurnCanceller(fn func(ctx context.Context, rootID, sessionKey string) error) {'
+      - 'server/internal/kanban/service_terminate.go:func (s *Service) turnTerminationsRegistry() *TurnTerminations {'
+      - 'server/internal/kanban/workflow_runtime_router_cancel.go:func (s *Service) stopWorkflowRunToWaitingUser(ctx context.Context, rootID, taskID, reason, eventType string) error {'
+      - 'server/internal/kanban/activity_terminate.go:func (s *ActivityService) TerminateDirectTurn(ctx context.Context, task Task, reason string) {'
+      - 'server/internal/kanban/activity_terminations.go:const terminatedTurnSummary = "已被用户终止；可以直接发消息重开一轮。"'
+      - 'server/internal/kanban/activity_terminations.go:func (t *TurnTerminations) Consume(id string) bool {'
+      - 'server/internal/kanban/activity_service.go:terminations *TurnTerminations'
+      - 'server/internal/kanban/activity_service.go:func (s *ActivityService) SetTurnTerminations(t *TurnTerminations) {'
+      - 'server/internal/kanban/activity_service_turns.go:if s.terminations.Consume(agentAct.ID) {'
+      - 'server/internal/kanban/activity_store_orphan.go:func (s *ActivityStore) ListLiveDirectReplies(ctx context.Context, taskID string) ([]*TaskActivity, error) {'
+      - 'server/internal/kanban/service_activities.go:svc.SetTurnTerminations(s.turnTerminationsRegistry())'
+      - 'server/internal/api/http_tasks.go:case "terminate":'
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/start", h.handleKanbanTaskStart)'
+      - 'server/internal/api/appcontext_workflow.go:func (s *AppContext) CancelTaskSessionTurn(ctx context.Context, rootID, sessionKey string) error {'
+      - 'server/app/workspace_build.go:services.Kanban.SetSessionTurnCanceller(services.CancelTaskSessionTurn)'
+      - 'web/src/components/task/taskCardActions.ts:if (task.status === "running") return ["terminate"];'
+      - 'web/src/components/task/taskCardActions.ts:actions.push("start");'
+      - 'web/src/components/task/taskBoardTypes.ts:| "start"'
+      - 'web/src/components/task/taskActionIcons.tsx:start: <TaskStartIcon />,'
+      - 'web/src/components/task/taskIcons.tsx:export function TaskStartIcon() {'
+      - 'web/src/components/task/TaskDetailPanel.tsx:terminate: () => void panel.terminateTask(),'
+      - 'web/src/components/task/useTaskDetailPanel.ts:const terminateTask = async () => {'
+      - 'web/src/app/useTaskBoard.ts:action === "start" ||'
+      - 'web/src/services/task/crud.ts:export async function moveTask(rootId: string, taskId: string, action: "start" | "terminate" | "pause" | "resume" | "complete" | "cancel" | "fail" | "reopen", reason = "", nodeId?: string): Promise<TaskDetail> {'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.status.waitingUser": "待处理",'
+      - 'web/src/i18n/locales/en-US-tasks.ts:"task.status.waitingUser": "Awaiting action",'
+
   - id: G-PV
     title: Router 转录与内容搜索只读解析后的块流（A+ provisional 片段与旧 revision 不可见）
     kind: fix
