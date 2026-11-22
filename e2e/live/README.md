@@ -49,7 +49,20 @@ MINDFS_LIVE_PASS=<口令>
 
 # 变异验证：拿一份旧 index-*.js 顶替线上产物，同一段动作跑两遍
 ... scroll_repro.py --bundle ~/.local/share/mindfs/web/assets/index-<旧>.js
+
+# 任务详情面板：线上跑的是哪份 bundle + 首帧/内容到齐后的矩形（桌面 / 手机）
+.venv/bin/python e2e/live/panel_geometry.py
+.venv/bin/python e2e/live/panel_geometry.py --mobile
 ```
+
+`panel_geometry.py` 只读：登录 → 看板 → 打开一张真实任务卡（优先带结果文本）→ 从点击前
+开始按 50ms 采样 `.mindfs-panel-dialog` 的矩形 → 双击验证只开一个面板 → 打印 JSON。
+它同时核对三件事：服务端入口指向哪个 `index-*.js`、浏览器**实际执行**的是哪个
+（resource timing）、外框从第一帧到内容渲染完成后有没有变高或移动。**2026-11-22 的教训**：
+用户两次报「面板还是贴底 + 被顶高」，代码与隔离实例都正常，是并发会话在共享
+`~/.local/share/mindfs/web` 上用别的 worktree 跑了 `make install`，把旧 bundle 覆盖回来
+（线上入口 `index-6VOQZPjU.js` 里还是 `data-align` / `flex-end`）。只比对「served 文件存在」
+抓不到，必须比对内容或行为。
 
 退出码：`0` 正常、`1` 复现到了问题、`2` 找不到够长的会话、`3` 该会话没走虚拟化。
 

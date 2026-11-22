@@ -195,12 +195,17 @@ def dump(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=1)
 
 
-def bundle_hashes(env: dict[str, str]) -> dict[str, str]:
+def bundle_hashes(env: dict[str, str]) -> dict[str, object]:
     """线上正在发的 index-*.js 是否就是本地 `web/dist` 的那一份。
 
     2026-10-27 踩过两次「改了但线上没变」：一次是 `make install` 没跑，一次是服务没重启。
     光看页面没变化分不清是这两者还是代码本身没修好 —— 先把这条排掉再谈行为。
+
+    2026-11-22 补第三态：并发会话在共享 PREFIX 上 `make install`，把**别的 worktree**
+    里的旧前端装进同一个 `~/.local/share/mindfs/web`，线上发的是旧 bundle、二进制版本号
+    却看着是新的。只看「served 文件存在」抓不到 —— 必须把线上内容与服务端 dist 逐字节比。
     """
+    import hashlib
     import re
     import urllib.request
 
@@ -213,10 +218,31 @@ def bundle_hashes(env: dict[str, str]) -> dict[str, str]:
     match = re.search(r"assets/(index-[A-Za-z0-9_-]+\.js)", html)
     served = match.group(1) if match else ""
     installed = Path.home() / ".local" / "share" / "mindfs" / "web" / "assets" / served
-    return {
+    result: dict[str, object] = {
         "served": served,
         # 「线上跑的就是刚装的那份」——不同就是服务没重启，或 make install 没跑。
         "matches_installed": bool(served) and installed.exists(),
     }
+    dist_index = REPO / "web" / "dist" / "index.html"
+    dist_entry = ""
+    if dist_index.exists():
+        dist_match = re.search(r"assets/(index-[A-Za-z0-9_-]+\.js)", dist_index.read_text("utf-8"))
+        dist_entry = dist_match.group(1) if dist_match else ""
+    result["dist_entry"] = dist_entry
+    result["matches_dist_entry"] = bool(served) and served == dist_entry
+    if served:
+        try:
+            with urllib.request.urlopen(url + "assets/" + served, timeout=30) as resp:
+                served_body = resp.read()
+            result["served_sha256"] = hashlib.sha256(served_body).hexdigest()[:16]
+            dist_file = REPO / "web" / "dist" / "assets" / served
+            if dist_file.exists():
+                result["dist_sha256"] = hashlib.sha256(dist_file.read_bytes()).hexdigest()[:16]
+                result["matches_dist"] = served_body == dist_file.read_bytes()
+            else:
+                result["matches_dist"] = False
+        except Exception as exc:  # noqa: BLE001
+            result["served_error"] = str(exc)
+    return result
 
 

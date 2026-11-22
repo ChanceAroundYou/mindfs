@@ -11631,7 +11631,11 @@ groups:
       `align` 参数，竖直方向只有居中一种。
       输入区向上生长时只有 `.mindfs-panel-body` 滚动，不滚 window、不改首屏落底逻辑；
       外框尺寸从第一帧起固定，异步数据不再改变面板高度或位置。真实几何与双击路径由
-      `e2e/test_task_detail_open_geometry.py` 在桌面 1440×900 与移动端 390×844 实测。
+      `e2e/test_task_detail_open_geometry.py` 在桌面 1440×900 与移动端 390×844 实测；
+      线上核对不能只看「make install 跑过」——并发会话在共享 PREFIX 上安装会覆盖成别的
+      worktree 的旧 bundle（2026-11-22 实测线上入口指向 `index-6VOQZPjU.js`，里面还是
+      `data-align` / `flex-end` 的旧代码）。`e2e/live/panel_geometry.py` 同时核对服务端入口、
+      浏览器**实际执行**的 bundle（resource timing）与首帧/内容到齐后的矩形。
     files:
       - web/src/components/task/ActivityMessage.tsx
       - web/src/components/task/ActivityInput.tsx
@@ -11684,6 +11688,7 @@ groups:
       - e2e/test_task_composer_enter_and_layout.py
       - e2e/test_task_detail_pills_flow.py
       - e2e/test_task_detail_open_geometry.py
+      - e2e/live/panel_geometry.py
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const displayText = activityDisplayText(activity);'
       - 'web/src/components/task/ActivityMessage.tsx:{workflowName && <span style={footerItemStyle}>{workflowName}</span>}'
@@ -11747,6 +11752,8 @@ groups:
       - 'web/src/components/task/TaskDetailPanel.tsx:fixedHeight'
       - 'web/src/components/task/ConversationView.tsx:flex: "1 0 auto"'
       - 'web/src/components/task/ConversationView.tsx:aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }}'
+      - 'e2e/live/panel_geometry.py:def check(result: dict, mobile: bool) -> list[str]:'
+      - 'e2e/live/harness.py:"matches_dist_entry"'
       - 'web/src/shared/activityModel.ts:export function queuedUserActivity(activities: TaskActivity[]): TaskActivity | null {'
       - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.startImmediatelyHint": "建完任务就立刻派发首条留言",'
       - 'web/src/components/shell/PanelShell.tsx:showCloseButton = false,'
