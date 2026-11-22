@@ -47,19 +47,19 @@ func relayNotifierServer(t *testing.T, statuses []int, calls *[]relayCall) *http
 
 func TestRelayNotifierRetriesThenSucceeds(t *testing.T) {
 	var calls []relayCall
-	srv := relayNotifierServer(t, []int{500, 500, 200}, &calls)
+	srv := relayNotifierServer(t, []int{500, 500, 500, 200}, &calls)
 	defer srv.Close()
 
 	var sleeps []time.Duration
 	n := &RelayNotifier{URL: srv.URL, Token: strings.Repeat("k", 32), NodeID: "wsl", Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }}
 	notice := kanban.CardNotice{ID: "gate-1", Kind: kanban.CardKindGate, TaskID: "task-1", Prompt: "approve?"}
 	if err := n.NotifyCard(context.Background(), notice); err != nil {
-		t.Fatalf("third attempt succeeded: %v", err)
+		t.Fatalf("fourth attempt succeeded: %v", err)
 	}
-	if len(calls) != 3 {
-		t.Fatalf("want 3 attempts, got %d", len(calls))
+	if len(calls) != 4 {
+		t.Fatalf("want 4 attempts, got %d", len(calls))
 	}
-	if want := []time.Duration{10 * time.Second, 30 * time.Second}; !reflect.DeepEqual(sleeps, want) {
+	if want := []time.Duration{10 * time.Second, 30 * time.Second, 2 * time.Minute}; !reflect.DeepEqual(sleeps, want) {
 		t.Fatalf("want backoff %v, got %v", want, sleeps)
 	}
 	for _, c := range calls {
@@ -71,7 +71,7 @@ func TestRelayNotifierRetriesThenSucceeds(t *testing.T) {
 
 func TestRelayNotifierGivesUpWithReadableError(t *testing.T) {
 	var calls []relayCall
-	srv := relayNotifierServer(t, []int{500, 500, 500}, &calls)
+	srv := relayNotifierServer(t, []int{500, 500, 500, 500}, &calls)
 	defer srv.Close()
 
 	var sleeps []time.Duration
@@ -79,11 +79,12 @@ func TestRelayNotifierGivesUpWithReadableError(t *testing.T) {
 	notice := kanban.CardNotice{ID: "gate-2", Kind: kanban.CardKindGate}
 	before := notice
 	if err := n.NotifyCard(context.Background(), notice); err == nil {
-		t.Fatal("want an error after three 5xx responses")
-	} else if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "3") {
+		t.Fatal("want an error after four 5xx responses")
+	} else if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "4") {
 		t.Fatalf("error must name the status and attempt count: %v", err)
 	}
-	if len(calls) != 3 || !reflect.DeepEqual(sleeps, []time.Duration{10 * time.Second, 30 * time.Second}) {
+	wantSleeps := []time.Duration{10 * time.Second, 30 * time.Second, 2 * time.Minute}
+	if len(calls) != 4 || !reflect.DeepEqual(sleeps, wantSleeps) {
 		t.Fatalf("attempts=%d sleeps=%v", len(calls), sleeps)
 	}
 	if !reflect.DeepEqual(notice, before) {

@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	relayMaxAttempts   = 3
+	relayMaxAttempts   = 4
 	relayMaxBodyBytes  = 64 << 10
 	relayClientTimeout = 5 * time.Second
 )
 
-var relayBackoffs = [...]time.Duration{10 * time.Second, 30 * time.Second}
+var relayBackoffs = [...]time.Duration{10 * time.Second, 30 * time.Second, 2 * time.Minute}
 
 // RelayNotifier sends a worker's card to the control node, which owns the
 // lark-cli connection. The destination is configuration, never card content:
@@ -37,7 +37,7 @@ type RelayNotifier struct {
 var _ kanban.CardNotifier = (*RelayNotifier)(nil)
 
 // NotifyCard posts exactly one configured envelope to the control node. Only
-// network failures and 5xx are retried (three attempts, 10s/30s backoff); a
+// network failures and 5xx are retried (four attempts, 10s/30s/2m backoff); a
 // 4xx means the request itself was rejected and must not be repeated.
 func (r *RelayNotifier) NotifyCard(ctx context.Context, notice kanban.CardNotice) error {
 	url := strings.TrimSpace(r.URL)
@@ -57,7 +57,7 @@ func (r *RelayNotifier) NotifyCard(ctx context.Context, notice kanban.CardNotice
 
 	client := r.Client
 	if client == nil {
-		client = &http.Client{Timeout: relayClientTimeout}
+		client = NewRelayClient(relayClientTimeout)
 	}
 	sleep := r.Sleep
 	if sleep == nil {
