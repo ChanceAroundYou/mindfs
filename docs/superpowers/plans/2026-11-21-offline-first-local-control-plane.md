@@ -1068,7 +1068,7 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 
 ### T22 前端镜像与安全验收（2026-11-22）
 
-- 脚本：`e2e/test_control_sync_ui_and_auth.py`（434 行，真进程 + 真 Chromium，端口
+- 脚本：`e2e/test_control_sync_ui_and_auth.py`（524 行，真进程 + 真 Chromium，端口
   7470/7471/7472，两个独立 `XDG_CONFIG_HOME`，绝不碰 7331）。自己 `go build`（不带部署
   前缀）并用 `VITE_MIND_FS_BASE=/` 现编一份前端 —— 随包的 `web/dist` 是 `/mindfs` 前缀，
   与无前缀后端配不上；边缘另配 `MINDFS_STATIC_DIR`，这样「移走安装副本仍出页面」才能
@@ -1092,3 +1092,20 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   `min_server_build` 判定永远不满足，镜像装不上。
 - 未做：pc-win 真机（Windows 边缘）点验；未部署、未重启、未改配置，
   `control_sync.enabled` 仍为 `false`。
+
+### T23 全量门禁与上线（2026-11-22，只做到门禁）
+
+- 门禁五条全绿（worktree `offline-control`，提交 `6c41cf55`）：
+  - `go test -count=1 ./...` → EXIT=0，36 个包 `ok`、零 FAIL（前一次全量红在
+    `TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch`，日志是
+    `disk I/O error` / `attempt to write a readonly database`，同机另有 3–4 个
+    并发会话在跑 `kanban.test`；等它们退出后单跑 `./server/internal/kanban/`
+    得 `ok 323.991s`，再跑全量即绿 —— 属既有 flake，未改任何测试）。
+  - `go build ./...` → EXIT=0。
+  - `npx tsc -b --noEmit` → 0 错；`npx vitest run` → 263 文件通过 / 5 跳过，
+    885 用例通过 / 6 跳过。
+  - `make build` → EXIT=0（`ui-manifest files=287 build=v0.5.5-1201-75-gc3a2c096-dirty`）。
+  - `make check-upstream` → 2443 个 delta 文件被 358 组完整覆盖，全绿。
+- **上线一律未做**：四端（hasee / 主节点 / WSL / fn）都没有部署、没有重启，
+  `control_sync.enabled` 在所有 `config.json` 里仍是 `false`；按 T23 的既定顺序，
+  首次上线也要先由用户安装并重启 hasee 与主节点。
