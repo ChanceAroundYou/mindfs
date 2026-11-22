@@ -12412,7 +12412,7 @@ groups:
       ⑩ **按钮禁用到真压缩结束**：线上 Claude 一次 `/compact` 要 3–9 分钟，固定 8 秒前端计时会让
       用户以为「点了没反应」；`compact_pending` 由服务端在排程时置位、在收尾时清除，`compact_error`
       把 Codex token 过期等具体原因写进胶囊。`compacting` 仍用于 POST 在途，二者合并成 `compactBusy`。
-      ⑪ **压缩后大小不靠猜**：Claude 的 compact boundary 原始 JSONL 带 `postTokens`，但 SDK typed message 不带；适配器按 UUID 从转录补读并塞进 `CompactNotice.PostTokens`，`contextWindowAfterCompact` 用它覆盖 MessageDone 仍带着的压缩前旧值。Codex 没有这个数，保留后续 `token_count`。
+      ⑪ **压缩后大小不靠猜**：Claude 的 compact boundary 原始 JSONL 带 `postTokens`，但 SDK typed message 不带；适配器按 UUID 从转录补读，除了塞进 `CompactNotice.PostTokens`，还写回自己的内存上下文 `s.context.TotalTokens` —— `message_done` 与 `GET /api/sessions/{key}` 读的都是这份内存态，而 `/compact` 回合没有 `message_delta`，不写回的话界面会一直显示压缩前的旧值（2026-11-22 现场：手动压缩 153572→17672，界面仍是 152K/200K）。API 侧的 `contextWindowAfterCompact` 仍是第二道防线，用它覆盖 `lastContextWindow` 并落库。Codex 没有这个数，保留后续 `token_count`。
       ⑫ **stale 窗口不重复压缩**：压缩事件先到、`token_count` 未到时 `contextStale` 闸住 `Observe`，既不推进轮数也不发 `AutoCompactDue`；新 token 到来后清掉。胶囊累计行只显示总量（当前会话 + agent 的账本，不是全局，也不写「最近 200 次折叠」），所有 token 数字 <10k 原值、>=10k 用 k；不新增「压缩后上下文」展示行，也不改本轮请求 / 本轮节省两行。
       ⑬ **压缩事件优先于流尾部异常**：Codex 的 `/compact` 回合可能在 `compacted` 落盘之后才因流关闭返回 `codex response stream ended unexpectedly`。`runHygieneAutoCompact` 先检查 `onCompactSeen`：已经报告过压缩就按成功收尾，只把流异常写进诊断日志，绝不写 `compact_error` / `auto_failed`；没有压缩事件时才保留原来的失败提示。
       ⑭ **活跃时长跨重启、压缩即归零**：原先 `activeSeconds` 只在内存里，重启就归零，频繁重启的机器上「久」永远不成立。现在按 `root + session` 把 `active_seconds` 与 `last_seen` 写到 `<configDir>/session-hygiene/hy-<sha256[:12]>.json`（临时文件 + rename，0600/0700），启动时回填；收到 harness 压缩事件时两者一起重置并立即写盘，于是「久」始终表示距上次压缩的累计活跃时长。`ObserveAt` 更新后也写盘，因此跨重启仍按 idle gap 丢弃挂机空档。写盘失败只记日志，不阻断会话。只持久化这两项；`hinted` / 轮数 / pending / error / stale 仍只在进程内，重启后重新积累。
@@ -12456,6 +12456,7 @@ groups:
       - docs/superpowers/plans/2026-11-21-session-hygiene-long-session-hint.md
       - server/internal/agent/types/event.go
       - server/internal/agent/claude/session_compact_tokens.go
+      - server/internal/agent/claude/session_messages_tasks.go
       - server/internal/agent/claude/session_compact_tokens_test.go
       - server/internal/api/usecase/session_compact_context.go
       - server/internal/api/usecase/session_compact_context_test.go
@@ -12523,7 +12524,10 @@ groups:
       - 'e2e/test_session_hygiene.py:def test_manual_compact_button_follows_server_pending(page: Page) -> None:'
       - 'server/internal/agent/types/event.go:PostTokens int'
       - 'server/internal/agent/claude/session_compact_tokens.go:func (s *session) compactBoundaryPostTokens('
-      - 'server/internal/agent/claude/session_messages_tasks.go:PostTokens: s.compactBoundaryPostTokens(msg),'
+      - 'server/internal/agent/claude/session_messages_tasks.go:s.context.TotalTokens = postTokens'
+      - 'server/internal/agent/claude/session_messages_tasks.go:postTokens := s.compactBoundaryPostTokens(msg)'
+      - 'server/internal/agent/claude/session_compact_tokens_test.go:func TestClaudeCompactBoundaryRefreshesContextWindow('
+      - 'server/internal/agent/claude/session_compact_tokens_test.go:func TestClaudeCompactBoundaryWithoutPostTokensKeepsContextWindow('
       - 'server/internal/api/usecase/session_compact_context.go:func contextWindowAfterCompact('
       - 'server/internal/api/usecase/session_hygiene.go:contextStale bool'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkContextStale('
