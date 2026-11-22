@@ -16,6 +16,11 @@ type routeApplyState struct {
 	used        bool
 	// settleSummarySeq 是结算回合里承担总结的那条 say（-1 = 不适用）。
 	settleSummarySeq int
+	// settleTurn 表示这是一轮收尾（Run 成功结算 / 会话回合结算）。
+	settleTurn bool
+	// settleSummarySeen 表示本回合已经出现过承担总结的那条 say。之后的
+	// progress 只是把总结再念一遍，落库但不进可见流。
+	settleSummarySeen bool
 }
 
 func (st *routeApplyState) take() *TaskActivity {
@@ -55,6 +60,14 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 	}()
 	if s.settledRunSucceeded(ctx, decision) {
 		state.settleSummarySeq = settleSummaryActionSeq(decision)
+		state.settleTurn = true
+	}
+	// 会话回合结算同样是收尾回合（prompt 规则 12 与 summaryTriggerAllowed 都这么
+	// 认定），但它没有 Run 可判定「真的跑成了」，所以只用来识别「本回合已有总结」，
+	// 不做「最后一条 say 提升成总结」的兜底 —— 每轮会话都结算，那样会把普通进度
+	// 顶成卡片结论。
+	if decision.TriggerKind == RouterTriggerTurnSettled {
+		state.settleTurn = true
 	}
 	userAct, err := s.activities.Get(ctx, strings.TrimSpace(decision.UserActivityID))
 	if err != nil {
@@ -224,6 +237,14 @@ func (s *ActivityService) applyRouteSay(
 	if state != nil && state.settleSummarySeq == action.Seq && action.Purpose != "summary" {
 		action.Purpose = "summary"
 	}
+	// 收尾回合里总结之后的进度汇报不再进可见流（M1）：它只是把刚写下的总结再
+	// 念一遍，用户看到的就是「进度和汇报老是重复」。正文照旧落库（审计/回看要
+	// 原文），只是标成 hidden —— 也不能并进总结，那会让总结超过 600 字上限。
+	redundantProgress := state != nil && state.settleTurn && state.settleSummarySeen &&
+		action.Purpose == "progress"
+	if action.Purpose == "summary" && state != nil {
+		state.settleSummarySeen = true
+	}
 	// 转交口信默认不发（Plan 2026-11-22，W1-5）：同一决策里已经有执行动作时，
 	// 「已交给执行会话，完成后我会汇总」这类 progress 只是把占位重复一遍，
 	// 线上 #100 的对话流里 19/45 条就是它。占位留给执行会话自己的回复。
@@ -239,6 +260,9 @@ func (s *ActivityService) applyRouteSay(
 		}
 		act.Body = body
 		act.Status = ActivityStatusCompleted
+		// 落库前就带上 hidden：插入时会一并写 hidden 列，activity.created 帧
+		// 因此不会让前端先渲染一帧再删掉。
+		act.Hidden = redundantProgress
 		if err := s.insertRouteReply(ctx, act, effectID != ""); err != nil {
 			return err
 		}
@@ -251,6 +275,12 @@ func (s *ActivityService) applyRouteSay(
 		}
 		act.Body = body
 		act.Status = ActivityStatusCompleted
+		if redundantProgress {
+			if err := s.activities.SetHidden(ctx, act.ID, true); err != nil {
+				return err
+			}
+			act.Hidden = true
+		}
 	}
 	fields, err := s.markRouteReply(ctx, decision, userAct, act, action)
 	if err != nil {
@@ -260,6 +290,10 @@ func (s *ActivityService) applyRouteSay(
 		"body": body, "status": ActivityStatusCompleted,
 		"purpose": fields["purpose"], "ordinal": action.Seq,
 		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
+	}
+	if redundantProgress {
+		changes["hidden"] = true
+		changes["hidden_reason"] = "redundant_progress"
 	}
 	s.broadcastUpdated(act, changes)
 	// purpose=summary 是 Router 对这一轮结果写下的总结：它同时成为任务结果摘要，
@@ -408,87 +442,3 @@ func (s *ActivityService) applyRouteRunWorkflow(
 	}
 	return routeTurnStarted(begun, "run_workflow")
 }
-
-// applyRouteDeliver 把用户留言绑到当前唯一的活动 Agent NodeRun，并隐藏占位
-// 回复：答复会出现在节点会话里，任务对话流不需要一条空洞的「已转交」。
-func (s *ActivityService) applyRouteDeliver(
-	ctx context.Context,
-	decision *RouterDecision,
-	task Task,
-	userAct *TaskActivity,
-	state *routeApplyState,
-	action RouterAction,
-) error {
-	// 校验阶段已经保证这里最多一个活动执行；没有活动节点时 give up，
-	// 让决策落 failed 而不是把留言静默留在 pending_phase。
-	if _, err := s.tasks.DeliverActivityToActiveNodeRun(ctx, task.ID, userAct.ID, ""); err != nil {
-		return err
-	}
-	if err := s.hideRouteActivity(ctx, state, nil, "delivered"); err != nil {
-		return err
-	}
-	updated, err := s.activities.Get(ctx, userAct.ID)
-	if err == nil {
-		s.broadcastUpdated(updated, map[string]any{"node_run_id": updated.NodeRunID, "run_id": updated.RunID})
-	}
-	return nil
-}
-
-// applyRouteAnswerWaiting 把用户答复真的交回那个停住的节点：服务重开一次带答复
-// 的尝试，节点回到 running。
-//
-// 与 deliver 的差别就在「可见性」：deliver 把留言排进正在跑的节点会话，占位回复
-// 会被隐藏（用户看不到任何动作）；这里必须留一句事实回执，否则用户会以为又什么
-// 都没发生 —— 那正是 2026-11-19 的报障。
-func (s *ActivityService) applyRouteAnswerWaiting(
-	ctx context.Context,
-	decision *RouterDecision,
-	task Task,
-	userAct *TaskActivity,
-	state *routeApplyState,
-	action RouterAction,
-) error {
-	body := strings.TrimSpace(action.Body)
-	if body == "" {
-		return errors.New("answer_waiting_node body required")
-	}
-	if s.nodeAnswerer == nil {
-		return errors.New("node answer port not configured")
-	}
-	answered, err := s.nodeAnswerer.AnswerWaitingWorkflowNode(ctx, task.RootID, task.ID, strings.TrimSpace(action.NodeRunID), body, userAct.ID)
-	if err != nil {
-		return err
-	}
-	notice := fmt.Sprintf("已把你的答复交给「%s」节点，正在带着答复重跑。", answered.NodeID)
-	act := state.take()
-	if act == nil {
-		act = s.newAgentActivity(task, CommentWorkflowChoiceEmpty)
-		act.Body = notice
-		act.Status = ActivityStatusCompleted
-		if err := s.insertRouteReply(ctx, act, false); err != nil {
-			return err
-		}
-	} else {
-		if err := s.activities.UpdateBody(ctx, act.ID, notice); err != nil {
-			return err
-		}
-		if err := s.activities.UpdateStatus(ctx, act.ID, ActivityStatusCompleted, nil); err != nil {
-			return err
-		}
-		act.Body = notice
-		act.Status = ActivityStatusCompleted
-	}
-	fields, err := s.markRouteReply(ctx, decision, userAct, act, action)
-	if err != nil {
-		return err
-	}
-	s.broadcastUpdated(act, map[string]any{
-		"body": notice, "status": ActivityStatusCompleted,
-		"purpose": fields["purpose"], "ordinal": action.Seq,
-		"reply_to_id": userAct.ID, "router_decision_id": decision.ID,
-	})
-	return nil
-}
-
-// hideRouteActivity 把占位回复从用户可见活动流里摘掉。Row 保留（审计/幂等
-// 都需要它），只置 hidden=1 并广播 hidden 让前端移除。

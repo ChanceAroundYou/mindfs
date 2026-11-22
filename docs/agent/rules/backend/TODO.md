@@ -34,7 +34,7 @@
 |---|---|---|---|
 | `server/internal/kanban/activity_service_test.go` | 998 | 493 | `activity_service_summary_test.go`（177）/ `activity_service_direct_test.go`（180）/ `activity_service_status_test.go`（181） |
 | `server/internal/kanban/task_store_convert_stages.go` | 888 | 454 | `task_store_convert_legacy_graph.go`（448） |
-| `server/internal/kanban/activity_route_apply.go` | 672 | 485 | `activity_route_reply.go`（200） |
+| `server/internal/kanban/activity_route_apply.go` | 672 | 444 | `activity_route_reply.go`（228）+ `activity_route_deliver.go`（92，2026-11-23 第二轮） |
 | `server/internal/kanban/router_brief.go` | 643 | 292 | `router_brief_views.go`（361） |
 
 拆法全部是纯移动（无行为改动），`go build ./...` 通过，`go test ./server/internal/kanban/`

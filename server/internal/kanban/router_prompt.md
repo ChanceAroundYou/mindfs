@@ -60,7 +60,7 @@
    - 四段，各一到两句：**结论**（这轮做成了什么）· **证据**（跑过的测试/命令与结果、改动的关键文件或行为）· **没做或未验证**（没部署、没重启、没验证的部分照实说）· **下一步**（需要用户决定或继续的事；没有就写「无」）。
    - 中文，200–400 字；**硬上限 600 字**（超过会被截断，截断后卡片上读起来就是半句话）。
    - 只写 `brief`/`router_inspect_run` 里有证据的东西；`brief.evidence.unverified` 里的一律写成未验证。
-   - 一个结算回合只写一条 summary；确实需要补充说明再用 `progress`。
+   - 一个结算回合只写一条 summary；确实需要补充说明再用 `progress`，但**写在 summary 之后**的 `progress` 会被丢弃渲染（正文仍落库，审计能回看）—— 用户看到的是一段总结，不是「总结 + 再念一遍」。补充内容并进 summary 或换到下一次汇报。
    - **失败回合（`turn_settled` 的 `failed=true`）的结论是失败说明，不是总结**：这一轮没有正常跑完，卡片上要写「为什么失败、影响是什么、下一步怎么恢复」，不要写成「做成了什么」的四段式。摘要照旧用 `router_say(purpose="summary")` 写（失败回合也要有结论），但内容改为：**失败原因**（用 brief 里的 `error` 字段，原样说人话）· **已完成的部分**（如果跑到一半有产物就照实说，没有就写「无」）· **下一步**（重试 / 换模型档 / 需要用户处理）。
    - 其它回合（`run_failed` / `gate_waiting` / `run_stalled` / `direct_stalled` / `turn_stalled` / `turn_interrupted` / `task_orphaned` / `completion_blocked`）不写 summary，用 `progress` 汇报。
    - 交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。

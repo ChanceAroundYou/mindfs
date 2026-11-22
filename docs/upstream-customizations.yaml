@@ -9902,7 +9902,7 @@ groups:
       - 'server/internal/kanban/task_store_workflow_runtime.go:input["user_answer"] = strings.TrimSpace(answer)'
       - 'server/internal/kanban/workflow_node_executor.go:prompt = withUserAnswerPrompt(ctx, store, nodeRun, prompt)'
       - 'server/internal/kanban/workflow_node_executor.go:func withUserAnswerPrompt(ctx context.Context, store *TaskStore, nodeRun NodeRun, prompt string) string {'
-      - 'server/internal/kanban/activity_route_apply.go:notice := fmt.Sprintf("已把你的答复交给「%s」节点，正在带着答复重跑。", answered.NodeID)'
+      - 'server/internal/kanban/activity_route_deliver.go:notice := fmt.Sprintf("已把你的答复交给「%s」节点，正在带着答复重跑。", answered.NodeID)'
       - 'server/internal/kanban/activity_service.go:AnswerWaitingWorkflowNode(ctx context.Context, rootID, taskID, nodeRunID, body, activityID string) (NodeRun, error)'
       - 'server/internal/kanban/service_activities.go:svc.SetNodeAnswerer(s)'
       - 'server/internal/kanban/router_prompt.md:router_answer_waiting_node(body, node_id?, reason?)'
@@ -14267,9 +14267,22 @@ groups:
     tests:
       - server/internal/kanban/summary_truncation_test.go
       - server/internal/kanban/turn_summary_fallback_test.go
+      - server/internal/kanban/turn_summary_failure_test.go
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/api/appcontext_task_turn_settled_failure_test.go
+      - server/internal/kanban/router_progress_suppression_test.go
     anchors:
       - 'server/internal/kanban/task_store.go:截断在这里做，而不是只靠调用方'
       - 'server/internal/kanban/activity_store.go:truncateSummary(activity.Summary)'
       - 'server/internal/kanban/summary_truncation_test.go:func TestUpdateTaskResultSummaryTruncatesOversizeBody(t *testing.T) {'
       - 'server/internal/kanban/activity_service_turns.go:不写 result_summary：那是卡片上「这一轮做到了什么」的位置'
       - 'server/internal/kanban/turn_summary_fallback_test.go:func TestFailedDirectTurnDoesNotWriteFallbackSummary(t *testing.T) {'
+      - 'server/internal/api/appcontext_task_flags.go:func (s *AppContext) sessionTurnError(rootID, sessionKey string) string {'
+      - 'server/internal/api/appcontext_task_flags.go:Failed:     turnErr != "",'
+      - 'server/internal/kanban/service_turn_settled.go:"failed":            in.Failed,'
+      - 'server/internal/kanban/service_turn_settled.go:payload["error"] = cutAtSentence(strings.TrimSpace(in.Error), turnSettledErrorRunes)'
+      - 'server/internal/kanban/router_event_brief.go:"answered_question", "failed",'
+      - 'server/internal/kanban/turn_summary.go:strings.Contains(lower, "prompt is too long"),'
+      - 'server/internal/kanban/router_progress_suppression_test.go:func TestTurnSettledProgressIsHiddenWhenSummaryExists(t *testing.T) {'
+      - 'server/internal/kanban/activity_route_apply.go:redundantProgress := state != nil && state.settleTurn && state.settleSummarySeen &&'
+      - 'server/internal/kanban/router_prompt.md:但**写在 summary 之后**的 `progress` 会被丢弃渲染'
