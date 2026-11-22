@@ -12675,7 +12675,7 @@ groups:
       - 'server/internal/kanban/router_prompt.md:交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。'
   - id: G-PM
     title: 会话回合结算事件：任务绑定的任何会话走完一轮都进 Router 账本（turn_settled）
-    kind: feat
+    kind: feature
     symptom: |
       用户在任务详情里推进一次会话（追问、改口、让节点接着干），那一轮走完系统里
       没有任何事件 —— Router 既不总结也不跟进，只有下一轮 Run 结算才想起这条任务。
