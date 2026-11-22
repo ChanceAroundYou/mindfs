@@ -607,3 +607,25 @@ git commit -- \
 - notice 卡点击在 `service_click.go` 里走 `settleNotice` 本地结案，不经过 answer handler；因此「卡片点击 → 主控 answer handler → worker」这一段由直接调用生产 `feishuAnswerRelay` 覆盖，卡片状态机另由真实 click 事件覆盖。gate/ask 的 NodeRun 级推进由 T7/T8 单测覆盖，未在本轮隔离端到端里跑真实 kanban。
 - 未部署、未重启任何节点；本机 system 单元仍只能由用户重启。
 
+## 复审 fix wave（2026-11-22，Scope: G-PH）
+
+五项一次收口，全部 TDD：先改测试看 RED，再改生产；最后重跑完整门禁。
+
+| 发现 | 修复 | 钉住的测试 |
+|---|---|---|
+| F1 Critical：`server.Run` 只启动卡片通道，`AttachFeishuIntake` 没有生产调用者，owner 私聊永远被静默忽略 | 新增 `prepareFeishuChannel` 单一装配缝；`server.Run` 在 `workspaces` 就绪后、`Start(ctx)` 前调用它装配 `ConfigDir/NodeID/Nodes/Workspace`，失败只记 `[feishu] 入站装配失败，M2 不启用` 并保留 M1；`feishu_node_id` 可为空，按「本机」解释 | `TestServerRunPreparesFeishuIntakeBeforeStart`、`TestFeishuIntakeEndToEndRoutesToRemoteTask`（改用 `prepareFeishuChannel`）、`TestPrepareFeishuChannelAllowsEmptyNodeID` |
+| F2 Important：选择卡点击缺少 `SetPickerTaskDeps`，线上点击只报「选择卡缺少建任务依赖」 | `AttachFeishuIntake` 在 store/creator 就绪后调用 `svc.SetPickerTaskDeps(store, creator)` | `TestPrepareFeishuChannelInstallsPickerTaskDeps`（真实歧义私聊 → 真卡 → 真 `HandleAction` → 真 creator POST） |
+| F3 Important：并发重投都能过 `Seen(id)` 并重复建任务 | 新增 `IntakeStore.Claim`（原子写 `creating`，失败回滚内存，重投直接吞掉）；`Handle` 先 Claim，成功/选择卡/所有终态拒绝与失败改走 `SetStatus` | `TestIntakeStoreClaimIsAtomic`、`TestIntakeStoreClaimRollsBackOnSaveFailure`、`TestIntakeConcurrentRedeliveryCreatesOneTask`、`TestIntakePickerStatusSurvivesClickClaim` |
+| F4 Important：中继只有 1+2 次尝试，与设计 `10s/30s/2m` 不符 | `relayMaxAttempts=4`、`relayBackoffs={10s,30s,2m}` | `TestRelayNotifierRetriesThenSucceeds`、`TestRelayNotifierGivesUpWithReadableError` |
+| F5 Important：自定义中继 token 会被 Go 默认客户端带到跨主机 302 | 新增 `feishu.NewRelayClient`（scheme/host 变化即报错）；`RelayNotifier` 默认客户端与 `newFeishuAnswerRelay` **构造时的 `Client`** 都改用它（不是只改 nil fallback） | `TestNewRelayClientRefusesCrossHostRedirect`、`TestNewRelayClientAllowsSameHostRedirect`、`TestNewFeishuAnswerRelayRefusesCrossHostRedirect`、`TestFeishuAnswerRelayUsesRedirectSafeClient` |
+
+RED/GREEN 证据：`prepareFeishuChannel`/`Claim`/`NewRelayClient` 未实现时定向测试编译失败；F4 把常量临时改回 3 与 `{10s,30s}`，两条 retry 用例 RED，恢复后 GREEN；F5 把生产 `Client` 留在裸 `http.Client` 时两条守卫 RED（`decoy reached`/`跨主机 redirect 必须让回答回传失败`），改完 GREEN。`RelayNotifier` 的生产构造点 `server/app/feishu.go` 不设置 `Client`，因此走 nil fallback 的 `NewRelayClient`，同样受保护。
+
+门禁（worktree HEAD `ff8a1612`）：
+- `go test -count=1 ./...`：重跑最终全绿。中途一轮仅 `TestRouterShadowDoesNotMutateAndSnapshotsBriefBeforeDispatch` 因 sqlite readonly 偶发红，同一测试在基线 `9b9c6cf7`（`-count=5`）同样 RED；它不是本波改动。
+- `(cd web && npx tsc -b --noEmit)`：clean。
+- `(cd web && npx vitest run)`：260 passed / 5 skipped 文件，863 passed / 6 skipped 用例。
+- 干净 worktree `HEAD` 上 `make check-upstream`：见下方执行记录。
+
+提交：`f57e4115`（wiring+intake）、`62597b8f`（dedupe）、`fbaaeed4`（retry）、`a25cb331`（redirect helper）、`ff8a1612`（生产回答中继 client 补口），均带 `Scope: G-PH`。未部署、未重启任何节点，未改配置。
+
