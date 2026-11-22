@@ -13312,3 +13312,53 @@ groups:
       - 'server/internal/channels/feishu/intake_test.go:func TestIntakeConcurrentRedeliveryCreatesOneTask(t *testing.T) {'
       - 'server/internal/channels/feishu/relay_redirect_test.go:func TestNewRelayClientRefusesCrossHostRedirect(t *testing.T) {'
       - 'server/app/feishu_answer_relay_test.go:func TestNewFeishuAnswerRelayRefusesCrossHostRedirect(t *testing.T) {'
+
+  - id: G-PU
+    title: Agent 子进程随 MindFS 生命周期退出（Windows Job Object + Unix 控制组）
+    kind: fix
+    symptom: |
+      pc-win 重启 MindFS 时，计划任务的硬终止只杀掉 MindFS 自己；Claude/Codex
+      子进程还拿着进程内 live-compact 代理的临时端口继续请求，先 ECONNRESET、
+      再 10 次 ECONNREFUSED，最后 CLI 自己往会话写「API Error: Connection refused」。
+      防火墙、模型配置和 1M 开关都改不掉这个症状；同一批二进制在 Linux/systemd
+      上不复发，因为服务单元按 control-group 连子进程一起收走。
+    why: |
+      ① 代理端口是 `127.0.0.1:0` 临时分配、绑定关系只活在 MindFS 进程里；
+      重启必然换端口，旧子进程绝不能跨进程存活。
+      ② Windows 侧用共享 Job Object + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`：
+      MindFS 被 `schtasks /end` 或 kill -9 带走时，操作系统关闭最后一个 job
+      handle 并杀掉全部 attach 过的 CLI；不是靠 Go 的 defer，硬杀也有效。
+      ③ Claude/Codex 的 SDK 自己启动子进程，MindFS 拿不到启动前的 SysProcAttr；
+      因此在 `OpenSession` 返回后立刻读 CLI PID 并 attach。attach 失败就关会话
+      并报错，绝不留下一个没有生命周期绑定的 agent。
+      ④ Unix 侧服务单元显式钉 `KillMode=control-group`，Pool 关闭时再按 PID
+      兜底清理；ACP 已有自己的进程树，不重复 attach。
+    files:
+      - server/internal/agent/processguard/guard.go
+      - server/internal/agent/processguard/guard_unix.go
+      - server/internal/agent/processguard/guard_windows.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_process_guard.go
+      - server/internal/agent/codex/session.go
+      - cli/cmd/autostart_unix.go
+    tests:
+      - server/internal/agent/processguard/processguard_unix_test.go
+      - server/internal/agent/processguard/guard_windows_test.go
+      - server/internal/agent/pool_process_guard_test.go
+      - cli/cmd/autostart_unix_test.go
+    anchors:
+      - 'server/internal/agent/processguard/guard.go:JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'
+      - 'server/internal/agent/processguard/guard.go:type Guard struct {'
+      - 'server/internal/agent/processguard/guard_unix.go:func (g *unixGuard) Close() error {'
+      - 'server/internal/agent/processguard/guard_windows.go:windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'
+      - 'server/internal/agent/processguard/guard_windows.go:windows.AssignProcessToJobObject(g.job, process)'
+      - 'server/internal/agent/pool.go:processGuard       processGuard'
+      - 'server/internal/agent/pool.go:attachSessionProcessID(p.processGuard, sess)'
+      - 'server/internal/agent/pool.go:guard.Close()'
+      - 'server/internal/agent/pool_process_guard.go:func attachSessionProcessID(guard processGuard, sess any) error {'
+      - 'server/internal/agent/codex/session.go:func (s *session) ProcessID() int {'
+      - 'cli/cmd/autostart_unix.go:KillMode=control-group'
+      - 'server/internal/agent/processguard/processguard_unix_test.go:func TestGuardCloseKillsAttachedProcess(t *testing.T) {'
+      - 'server/internal/agent/processguard/guard_windows_test.go:func TestGuardCloseKillsAttachedProcess(t *testing.T) {'
+      - 'server/internal/agent/pool_process_guard_test.go:func TestAttachSessionProcessIDRegistersSubprocess(t *testing.T) {'
+      - 'cli/cmd/autostart_unix_test.go:"KillMode=control-group"'

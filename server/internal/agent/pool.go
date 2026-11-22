@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"mindfs/server/internal/agent/claude"
 	"mindfs/server/internal/agent/codex"
 	"mindfs/server/internal/agent/fold"
+	"mindfs/server/internal/agent/processguard"
 	"mindfs/server/internal/agent/proxy"
 	agenttypes "mindfs/server/internal/agent/types"
 )
@@ -33,7 +35,8 @@ type Pool struct {
 	memoryMu           sync.RWMutex
 	memoryCollectMu    sync.Mutex
 	memorySnapshot     MemorySnapshot
-	compactProxy       *proxy.Server     // nil if startup failed (non-fatal)
+	compactProxy       *proxy.Server // nil if startup failed (non-fatal)
+	processGuard       processGuard
 	pendingProxyTokens map[string]string // sessionKey → proxy token, cleared on session creation
 }
 
@@ -99,6 +102,7 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 		claude:             claude.NewRuntime(),
 		codex:              codex.NewRuntime(),
 		runtimeLocks:       make(map[runtimeGroup]*sync.Mutex),
+		processGuard:       processguard.New(),
 	}
 	if ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
 		Mode:             opts.LiveCompactMode,
@@ -210,6 +214,15 @@ retryExisting:
 	sess, err := p.openSession(ctx, protocol, def, in)
 	if err != nil {
 		return nil, err
+	}
+	// Claude and Codex children inherit a process-local proxy URL. If MindFS
+	// is hard-killed, they must not survive pointing at that dead port.
+	// ACP already starts its own process tree and is intentionally excluded.
+	if protocol == ProtocolClaudeSDK || protocol == ProtocolCodexSDK {
+		if err := attachSessionProcessID(p.processGuard, sess); err != nil {
+			_ = sess.Close()
+			return nil, fmt.Errorf("bind agent process to lifetime guard: %w", err)
+		}
 	}
 
 	p.mu.Lock()
@@ -489,5 +502,12 @@ func (p *Pool) CloseAll() {
 	}
 	if codexRuntime != nil {
 		codexRuntime.CloseAll()
+	}
+	guard := p.processGuard
+	p.processGuard = nil
+	if guard != nil {
+		if err := guard.Close(); err != nil {
+			log.Printf("[agent/pool] process guard close: %v", err)
+		}
 	}
 }
