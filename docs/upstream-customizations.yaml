@@ -13334,9 +13334,15 @@ groups:
     why: |
       ① 代理端口是 `127.0.0.1:0` 临时分配、绑定关系只活在 MindFS 进程里；
       重启必然换端口，旧子进程绝不能跨进程存活。
-      ② Windows 侧用共享 Job Object + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`：
-      MindFS 被 `schtasks /end` 或 kill -9 带走时，操作系统关闭最后一个 job
-      handle 并杀掉全部 attach 过的 CLI；不是靠 Go 的 defer，硬杀也有效。
+      ② Windows 侧**每个子进程一个 Job Object** + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`：
+      MindFS 被 `schtasks /end` 或 kill -9 带走时，操作系统关闭这些 job handle 并杀掉
+      对应 CLI；不是靠 Go 的 defer，硬杀也有效。
+      **不能共用同一个 job**（2026-11-23 在 pc 上实测，Windows 10.0.26320）：已经在
+      某个 job 里的进程只能再装进「空 job」，装进一个已有其他成员的 job 一律
+      `ERROR_ACCESS_DENIED`；Claude CLI 启动约 100 ms 后自己就落在一个 job 里，
+      所以共用 job 只有第一个 attach 成功，之后每次 OpenSession 都报
+      `bind agent process to lifetime guard: assign agent process N to job: Access is denied.`
+      （Claude 全部不可用、Codex 仍可用——第一个 attach 的是 Codex 探针）。
       ③ Claude/Codex 的 SDK 自己启动子进程，MindFS 拿不到启动前的 SysProcAttr；
       因此在 `OpenSession` 返回后立刻读 CLI PID 并 attach。attach 失败就关会话
       并报错，绝不留下一个没有生命周期绑定的 agent。
@@ -13364,7 +13370,8 @@ groups:
       - 'server/internal/agent/processguard/guard_unix.go:func (g *unixGuard) Close() error {'
       - 'server/internal/agent/processguard/process_linux.go:unix.PidfdOpen(pid, 0)'
       - 'server/internal/agent/processguard/guard_windows.go:windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'
-      - 'server/internal/agent/processguard/guard_windows.go:windows.AssignProcessToJobObject(g.job, process)'
+      - 'server/internal/agent/processguard/guard_windows.go:windows.AssignProcessToJobObject(job, process)'
+      - 'server/internal/agent/processguard/guard_windows.go:func (g *windowsGuard) pruneLocked() {'
       - 'server/internal/agent/pool.go:processGuard       processGuard'
       - 'server/internal/agent/pool.go:attachSessionProcessID(p.processGuard, sess)'
       - 'server/internal/agent/pool.go:guard.Close()'
@@ -13374,6 +13381,8 @@ groups:
       - 'server/internal/agent/processguard/processguard_unix_test.go:func TestGuardCloseKillsAttachedProcess(t *testing.T) {'
       - 'server/internal/agent/processguard/processguard_unix_test.go:func TestGuardAttachRejectsUnknownPID(t *testing.T) {'
       - 'server/internal/agent/processguard/guard_windows_test.go:func TestGuardCloseKillsAttachedProcess(t *testing.T) {'
+      - 'server/internal/agent/processguard/guard_windows_test.go:func TestGuardAttachesProcessAlreadyInsideAnotherJob(t *testing.T) {'
+      - 'server/internal/agent/processguard/guard_windows_test.go:func TestGuardCloseKillsEveryAttachedProcess(t *testing.T) {'
       - 'server/internal/agent/pool_process_guard_test.go:func TestAttachSessionProcessIDRegistersSubprocess(t *testing.T) {'
       - 'cli/cmd/autostart_unix_test.go:"KillMode=control-group"'
 
@@ -14248,7 +14257,7 @@ groups:
       ② `Prompt is too long` 之类的 harness 报错回合被记成 `has_output=true` 的正常回复，
          任务以 success 收尾，用户看不到失败。失败信号只存在于
          `TaskAuxFlags.SessionError`，没有进 `turn_settled` 事件。
-      ③ 巡检事件（`task_stalled` / `task_orphaned` / `turn_interrupted`）全部 skipped，
+      ③ 巡检事件（`turn_settled` / `turn_stalled` / `task_orphaned` / `turn_interrupted`）全部 skipped，
          `last_error='missing originating user activity'` —— 巡检回合没有任何用户留言，
          两道闸门都要求它，于是发现问题也只会在账本里留一条跳过。
     why: |
@@ -14271,6 +14280,7 @@ groups:
       - server/internal/kanban/router_turn_settled_test.go
       - server/internal/api/appcontext_task_turn_settled_failure_test.go
       - server/internal/kanban/router_progress_suppression_test.go
+      - server/internal/kanban/router_inspection_turn_test.go
     anchors:
       - 'server/internal/kanban/task_store.go:截断在这里做，而不是只靠调用方'
       - 'server/internal/kanban/activity_store.go:truncateSummary(activity.Summary)'
@@ -14286,3 +14296,8 @@ groups:
       - 'server/internal/kanban/router_progress_suppression_test.go:func TestTurnSettledProgressIsHiddenWhenSummaryExists(t *testing.T) {'
       - 'server/internal/kanban/activity_route_apply.go:redundantProgress := state != nil && state.settleTurn && state.settleSummarySeen &&'
       - 'server/internal/kanban/router_prompt.md:但**写在 summary 之后**的 `progress` 会被丢弃渲染'
+      - 'server/internal/kanban/service_turn_settled.go:func routerEventAllowsNoUserActivity(kind RouterEventKind) bool {'
+      - 'server/internal/kanban/activity_route_apply.go:requires an originating user activity'
+      - 'server/internal/kanban/activity_route_reply.go:func routeUserActivityID(userAct *TaskActivity) string {'
+      - 'server/internal/kanban/router_inspection_turn_test.go:func TestCoordinatorInspectionEventWithoutOriginCanSay(t *testing.T) {'
+      - 'server/internal/kanban/router_prompt.md:这类回合只能 `router_say` / `router_ask_user`'

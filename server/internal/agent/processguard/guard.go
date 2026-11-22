@@ -1,11 +1,15 @@
 // Package processguard keeps agent CLI subprocesses tied to the MindFS
 // process that started them.
 //
-// On Windows a shared job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE is
-// the load-bearing piece: when MindFS is hard-terminated, Windows closes the
-// job handle and terminates every attached CLI process. Without it a
+// On Windows job objects with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE are the
+// load-bearing piece: when MindFS is hard-terminated, Windows closes the job
+// handles and terminates every attached CLI process. Without it a
 // scheduled-task restart leaves Claude/Codex children alive with a dead
-// proxy port, which surfaces as a synthetic ECONNREFUSED API error.
+// proxy port, which surfaces as a synthetic ECONNREFUSED API error. The guard
+// keeps one job object per child, not a shared one: a process that already
+// lives in a job (the Claude CLI does, shortly after starting) can only be
+// re-assigned into an empty job, so a shared job accepts the first child and
+// fails every later attach with ERROR_ACCESS_DENIED. See guard_windows.go.
 //
 // On Unix the service manager already owns the whole cgroup (systemd
 // KillMode=control-group); the guard still tracks PIDs so an orderly MindFS
