@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	types "mindfs/server/internal/agent/types"
-
 )
 
 func (s *session) trackPendingToolCall(toolCall types.ToolCall) {
