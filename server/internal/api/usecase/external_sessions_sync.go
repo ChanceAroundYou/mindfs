@@ -102,6 +102,15 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 		if rerr := s.recoverInterruptedLiveTurn(ctx, root, in.RootID, manager, current, agentName, binding, in.Full); rerr != nil {
 			log.Printf("[session/recovery] live_tail.error root=%s session=%s agent=%s full=%t err=%v", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key), agentName, in.Full, rerr)
 		}
+		// provisional 恢复会新写一条助手行；通用导入的 floor 必须按恢复后的最新行重算，
+		// 否则仍拿旧的用户行时刻，会把同一轮 prompt 再从转录导一遍。
+		if latest, gerr := manager.Get(ctx, current.Key, 0); gerr == nil {
+			current = latest
+			if refreshed := lastExternalSyncTimestamp(current.Exchanges); !refreshed.IsZero() {
+				lastTimestamp = refreshed
+				out.LastTimestamp = refreshed
+			}
+		}
 		if !in.Full {
 			// delta 到此为止：live-owned 会话不做通用导入（2026-09-16 重导事故的守卫）。
 			return out, nil

@@ -156,6 +156,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		LinesBeforeThisTurn:           &linesBeforeThisTurn,
 	})
 	var responseText string
+	provisional := newProvisionalStreamWriter(manager, current.Key, userExchangeSeq, turnID)
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
 	var compactPostTokens int
@@ -250,6 +251,9 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 					}
 				}
 				if toolCall, ok := update.Data.(agenttypes.ToolCall); ok {
+					if update.Type == agenttypes.EventTypeToolCall && toolCall.Status == "running" {
+						provisional.toolCall(toolCall)
+					}
 					s.ensureSubagentSessions(context.Background(), subagentSessionInput{
 						RootID:      in.RootID,
 						Parent:      current,
@@ -320,6 +324,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			if update.Type == agenttypes.EventTypeMessageChunk {
 				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok {
 					sawAssistantChunk = true
+					provisional.text(chunk.Content)
 					// 记住**最后一个**带 messageId 的文本块的 id（方案 S2c）：一轮里
 					// agent 会发多条原生消息，块流按它切 step；行级身份取**最后一条** ——
 					// 与导入侧取法一致（ACP importer 的 append 同样在 messageId 变化时
