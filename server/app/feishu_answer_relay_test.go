@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -330,7 +331,42 @@ func TestFeishuAnswerRelayUsesRedirectSafeClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "feishu.NewRelayClient(feishuAnswerTimeout)") {
-		t.Fatal("回答中继的默认 client 必须拒绝跨主机跳转，防止 token 被带去恶意主机")
+	compact := strings.Join(strings.Fields(string(src)), " ")
+	if !strings.Contains(compact, "Client: feishu.NewRelayClient(feishuAnswerTimeout)") {
+		t.Fatal("newFeishuAnswerRelay 构造的默认 client 必须拒绝跨主机跳转，不能只改 nil fallback")
+	}
+}
+
+func TestNewFeishuAnswerRelayRefusesCrossHostRedirect(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	var reached, leaked atomic.Int32
+	decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		if r.Header.Get(feishu.RelayTokenHeader) == token {
+			leaked.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer decoy.Close()
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, decoy.URL+"/steal", http.StatusFound)
+	}))
+	defer first.Close()
+
+	store := feishuAnswerNodeStore(t,
+		nodes.NodeConnection{ID: "home", Name: "home", URL: "http://127.0.0.1:1"},
+		nodes.NodeConnection{ID: "remote", Name: "remote", URL: first.URL},
+	)
+	relay := newFeishuAnswerRelay(newWorkspaceManager(context.Background(), sharedServices{
+		nodes:       store,
+		feishuRelay: feishuRelayConfig{Token: token, NodeID: "home"},
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := relay(ctx, feishu.Answer{CardID: "card-1", Kind: feishu.KindNotice, NodeID: "remote"}); err == nil {
+		t.Fatal("跨主机 redirect 必须让回答回传失败")
+	}
+	if reached.Load() != 0 || leaked.Load() != 0 {
+		t.Fatalf("decoy reached=%d token leaked=%d", reached.Load(), leaked.Load())
 	}
 }

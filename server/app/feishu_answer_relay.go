@@ -79,7 +79,7 @@ func newFeishuAnswerRelay(workspaces *workspaceManager) answerRelay {
 		LocalNodeID: strings.TrimSpace(workspaces.shared.feishuRelay.NodeID),
 		Token:       workspaces.shared.feishuRelay.Token,
 		Apply:       workspaces.ApplyFeishuAnswer,
-		Client:      &http.Client{Timeout: feishuAnswerTimeout},
+		Client:      feishu.NewRelayClient(feishuAnswerTimeout),
 		Sleep:       sleepWithAnswerContext,
 	}
 	return relay.Relay
