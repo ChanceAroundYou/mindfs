@@ -270,6 +270,9 @@ func TestIntakeRateLimiterBurstAndRefill(t *testing.T) {
 func TestServiceNotifyCarriesPickerFieldsToCard(t *testing.T) {
 	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 	store := NewStore(filepath.Join(t.TempDir(), "cards.json"))
+	// 服务与卡片库必须共用同一只时钟：服务按冻结时间盖 ExpiresAt，
+	// 卡片库若按真实时间判断过期，这个用例会在 24h TTL 到期那一刻凭空变红。
+	store.now = func() time.Time { return now }
 	svc := New(Config{Now: func() time.Time { return now }}, store, nil)
 	n := Notice{
 		CardID: "intake-picker-1", Kind: KindPicker, ChatID: "oc_chat",
