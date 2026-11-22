@@ -12306,6 +12306,13 @@ groups:
       一侧不给假 JSON**（远端删除时从本地载荷起步，users 域一律不开放编辑）；**批量合并逐卡带自己的
       payload**（`resolveConflictPayloadEdits` 串行发，404/409 算已达成，部分失败在刷新后再报错，
       草稿留在面板里供重试）。
+      ㉗ 节点表「拉到了没有」是两个答案，不能只看有没有抛异常：`syncNodesFromServer` 失败时会退回
+      缓存或本地兜底并**照常返回一份列表**，早先 `syncNodeTableHealth` 等它不抛就当成功，于是主节点
+      整个不可达时界面拿到的是「拉到了」，转头拿陈旧清单宣布「所有节点都连不上」。现在返回值多带
+      `source: server | cache | local-fallback`（`syncNodesFromServerWithOutcome`，两个入口共用同一个
+      在途 promise），只有 `server` 才 `markNodeTableReachable`；`force` 不再跳过一次 —— 强制刷新
+      恰恰最需要知道成败。远端提示**有分组时也要出**：陈旧缓存意味着列表还在（还显示着已删除的节点、
+      或少了刚加的），只在空列表时提示等于最该提醒的时刻一声不响。
     boundary: |
       P0 只新增测试，不改任何产品代码、不改配置、不部署。P2–P5 新增的是内核与运行时，
       `control_sync.enabled` 缺省 false，同样不部署、不重启任何节点；P3/P4 已把内核接进
@@ -12445,6 +12452,7 @@ groups:
       - internal/deploy/install_script_test.go
       - web/tests/node-unreachable-baseline.test.mjs
       - web/tests/node-health.test.mjs
+      - web/tests/node-table-unreachable.test.mjs
       - server/internal/controlsync/record_test.go
       - server/internal/controlsync/store_test.go
       - server/internal/controlsync/domain_nodes_test.go
@@ -12624,7 +12632,12 @@ groups:
       - 'web/tests/node-health.test.mjs:test("分组：只标记连不上的那台，其它组不受影响", () => {'
       - 'web/src/services/net/nodeHealth.ts:export function markNodeUnreachable(nodeId: unknown, detail: unknown = "", at: number = Date.now()): void {'
       - 'web/src/shared/nodeAvailability.ts:export function classifyNodesAvailability(input: NodesAvailabilityInput): NodesAvailability {'
-      - 'web/src/app/managedRootNodeHealth.ts:export async function syncNodeTableHealth(force?: boolean): Promise<void> {'
+      - 'web/src/app/managedRootNodeHealth.ts:export async function syncNodeTableHealth(_force?: boolean): Promise<void> {'
+      - 'web/src/services/net/nodeRegistry.ts:export type NodesSyncOutcome = {'
+      - 'web/src/services/net/nodeRegistry.ts:export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome> {'
+      - 'web/src/components/file/FileTreeProjectContent.tsx:      {nodesAvailability === "table-unreachable" ? ('
+      - 'web/tests/node-table-unreachable.test.mjs:test("节点表拉不到：记成 offline，不能说「拉到了」", async () => {'
+      - 'web/tests/node-table-unreachable.test.mjs:test("屏幕上有分组时，清单不可信仍然要提示 —— 陈旧缓存恰恰意味着列表还在", async () => {'
       - 'web/src/app/managedRootNodeHealth.ts:    markNodeUnreachable(node.id, (err as Error)?.message || String(err));'
       - 'web/src/components/file/FileTreeEntryFilters.ts:unreachable: !!nid && !!isUnreachable?.(nid)'
       - 'web/src/components/file/FileTreeProjectContent.tsx:const emptyKey: MessageKey = nodesAvailability === "table-unreachable"'

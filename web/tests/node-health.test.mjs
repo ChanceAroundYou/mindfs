@@ -160,8 +160,11 @@ test("分组：没有 _nodeId 的条目（单节点聚合结果）不会被误�
 test("节点表拉取失败不再被静默吞掉", () => {
   const src = read("src/app/managedRootNodeHealth.ts");
   assert.doesNotMatch(src, /syncNodesFromServer\(\)\.catch\(\(\) => \{\}\)/, "又被吞回去了：失败必须落到 nodeHealth");
-  assert.match(src, /await syncNodesFromServer\(\);\s*markNodeTableReachable\(\);/, "成功没记 → 恢复后仍显示「可能不是最新」");
-  assert.match(src, /catch \(err\) \{\s*markNodeTableUnreachable\(/, "节点表失败必须记下来");
+  // 判成败只能看 source：syncNodesFromServer 失败时退回缓存/本地兜底照常返回，
+  // 「没抛异常」不等于「拉到了」。
+  assert.match(src, /outcome\.source === "server"/, "只有 source=server 才算拉到了");
+  assert.match(src, /markNodeTableReachable\(\)/, "成功没记 → 恢复后仍显示「可能不是最新」");
+  assert.match(src, /markNodeTableUnreachable\(/, "节点表失败必须记下来");
 });
 
 test("逐节点请求把成功与失败都记进健康表，并保留失败提示", () => {
