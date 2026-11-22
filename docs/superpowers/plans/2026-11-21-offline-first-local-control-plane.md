@@ -578,6 +578,56 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 
 ---
 
+## P9 复核补漏（2026-11-22）
+
+2026-11-22 复核发现四处 spec 要求没有任务承接，按用户「全部授权」补入。T24–T27
+都只在内核与接口层，不改变已有的转发 / 追平 / 合并语义。
+
+### T24 同步通道认证与重放
+
+- 目标：对齐 spec §6.3 / D4 —— bearer + 时间戳 + nonce + HMAC-SHA256。
+- 做法：新增 `controlsync/auth.go`（签名、校验、nonce 缓存）；主节点三个同步端点
+  改走完整验签；边缘的 push / changes / 探活三处客户端统一签名；`X-MindFS-Instance`
+  随请求上行（审计用，不进签名）。
+- 验收：正确签名 200；错签 401；超 ±5 分钟 401；同 nonce 重放 401；无 token 端点
+  仍是 404；坏签名不占用 nonce；认证层读过的 body 必须原样放回。
+- 变异：不校验 nonce / 放宽时间窗 / 签名漏 body / 先记账后验签 / 不放回 body，
+  各自打红对应用例。
+
+### T25 恢复对账与状态口径
+
+- 目标：对齐 spec §6 / §7 —— `/head` 带 `instance_id`、`build_version`、
+  `schema_version`；边缘记住主节点身份，主节点被重建/替换时拒绝合并并留在本地模式。
+- 做法：`HeadInfo` 类型 + `ChangeFeed.Head` 改返回结构体；`state` 表新增
+  `primary_instance_id`（旧库 `ALTER TABLE` 幂等补列）；`Replicator` 每轮追平前先
+  取 head，身份不符返回 `ErrReplicaOriginMismatch` 且不动水位；`/status` 增
+  `primary_reachable`、`pending_count`、`conflict_count`。
+- 验收：head 载荷四个字段齐全；首次接触记录身份；身份相同继续；主节点换身份
+  409/`replica_origin_mismatch` 语义（内核错误 + 模式停 `offline-local`）；
+  schema 版本高于本机拒绝；status 三个新字段读数正确。
+- 变异：不记身份 / 不比对身份 / 比对了但继续应用 / 计数接口写死 0，各自打红。
+
+### T26 模式可见性
+
+- 目标：spec §7 要求模式变化留下可见系统事件；conflict-review 只提醒一次；
+  online 也提供「切到本地」入口。
+- 做法：`Runtime` 已有 `OnModeChange` 钩子，接到任务库系统事件（幂等 ID）；
+  横幅补三种动作（切本地 / 重试 / 查看冲突），online 时也可见但弱化。
+- 验收：模式迁移写一条可见事件且重放不重复；conflict-review 只提醒一次；
+  横幅三动作都能触发对应请求。
+- 变异：不写事件 / 事件 ID 随机 / 去掉 online 入口 / 提醒不幂等，各自打红。
+
+### T27 存储卫生
+
+- 目标：spec §4.2 的 90 天 / 50 万行清理，以及含口令 hash 的库文件权限。
+- 做法：`changes`/墓碑按批清理（只删终态、按 id 子查询 + LIMIT），启动与每小时
+  各跑一次；`control_sync.db` 落盘 0600；配置文档写明 token 只认 `token_file`。
+- 验收：过期记录被删、未过期与墓碑保留期内不动；批量上限生效；新库文件权限
+  0600；旧库不改权限但启动时收紧。
+- 变异：不删 / 删未过期 / 无批量上限 / 不收紧权限，各自打红。
+
+---
+
 ## 风险与回滚
 
 | 风险 | 表现 | 处置 |
@@ -747,3 +797,32 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
   `go test ./server/internal/api ./server/internal/controlsync` 全绿、`go build ./...` 成功。
 - 未做：真浏览器点验（T22）、节点可达性（T18）、批量里的「手动合并」（只在逐条里提供）；
   未部署、未重启、未改配置。
+
+### T24 同步通道认证与重放（2026-11-22）
+
+- 新增 `server/internal/controlsync/auth.go`：`SyncSignature`（HMAC-SHA256 over
+  `timestamp + "\n" + nonce + "\n" + body`）、`SignSyncRequest`、`VerifySyncRequest`、
+  `NonceCache`（TTL 10 分钟、上限 65536、按到期时间淘汰）；`SyncClockSkew = 5m`、
+  `SyncMaxBodyBytes = 8 MiB`。
+- 校验顺序固定：bearer → 时间戳窗口 → nonce 形状 → 签名 → 记账。nonce **只在签名
+  通过后**才写入缓存，否则一个坏签名就能烧掉合法请求的重放位（有专门用例钉住）。
+- 主节点：`api/http_control_sync.go` 的 `requireSyncToken` 改为读全 body（上限
+  8 MiB + 1，超限 413、读失败 400）→ 验签 → 原样放回 `r.Body`。没配 token 时三条
+  路由仍然完全不注册（404 不变）。
+- 边缘：`push_client.go`、`replicator.go`（含 `/changes`）、`mode.go` 的探活全部签名，
+  `InstanceID` 从 `Runtime` 配置透传到三处客户端并写进 `X-MindFS-Instance`。
+  没有 token 时客户端直接失败，不会发出未签名请求。
+- 用例：`controlsync/auth_test.go` 9 条（往返、缺头矩阵、错签、body 不进签名、时间窗
+  四个边界、重放、坏签名不占 nonce、TTL 与上限）；`api/http_control_sync_auth_test.go`
+  7 条（只有 bearer、bearer 对但签名错、漏签 body、过期、重放、413、路由级 body 放回）。
+  `replicator_token_test.go`、`push_client_test.go`、`mode_test.go` 的假主节点改成
+  真验签并断言 instance 头。
+- 变异：关掉 nonce 校验、关掉时间窗、签名漏 body、先记账后验签、不放回 body —— 各自
+  打红后还原；其中「先记账后验签」第一次没红，原因是用例把错误 token 也写进了
+  Authorization，被 bearer 先挡掉，改成「bearer 正确、签名用另一个 token」后转红。
+- 门禁：`go test ./server/internal/controlsync ./server/internal/api ./server/app` 全绿、
+  `go build ./...` 成功、`go vet` 干净（`HTTPHandler` 新增 `sync.Once` 没有值拷贝）。
+- 端到端：`python3 e2e/test_control_sync_offline.py --root /tmp/mindfs-control-sync-t24`
+  六个场景全 PASS（在线转发 / 断网降级 / 离线写 / 重启保持 / 恢复无冲突 / 恢复有冲突），
+  真实双进程、边缘所有出站请求都带签名。
+- 未做：T22 的 curl 安全断言脚本（放入 T22 一起做）；未部署、未重启、未改配置。

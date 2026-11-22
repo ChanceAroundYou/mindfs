@@ -2,6 +2,7 @@ package controlsync
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,15 +32,27 @@ func TestNewPushClientRequiresHTTPSAndToken(t *testing.T) {
 func TestPushClientSendsAuthorizedRequestAndDecodesResults(t *testing.T) {
 	const token = "s3cret"
 	var (
-		gotAuth string
-		gotPath string
-		gotReq  PushRequest
+		gotAuth     string
+		gotPath     string
+		gotInstance string
+		gotReq      PushRequest
 	)
+	nonces := NewNonceCache(SyncNonceTTL)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mindfs/api/control-sync/push", func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
-		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+		gotInstance = r.Header.Get(SyncInstanceHeader)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		// 签名覆盖的是实际发送的字节，所以必须先读原文再验，不能边解码边验。
+		if err := VerifySyncRequest(r, body, SyncVerifyOptions{Token: token, Nonces: nonces}); err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if err := json.Unmarshal(body, &gotReq); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -50,6 +63,7 @@ func TestPushClientSendsAuthorizedRequestAndDecodesResults(t *testing.T) {
 	client, err := NewPushClient(PushClientOptions{
 		PrimaryURL: srv.URL + "/mindfs",
 		Token:      token,
+		InstanceID: "edge-pc",
 		CAFile:     writeTempCA(t, srv.Certificate()),
 	})
 	if err != nil {
@@ -67,6 +81,9 @@ func TestPushClientSendsAuthorizedRequestAndDecodesResults(t *testing.T) {
 	}
 	if gotAuth != "Bearer "+token {
 		t.Fatalf("Authorization = %q", gotAuth)
+	}
+	if gotInstance != "edge-pc" {
+		t.Fatalf("instance 头 = %q", gotInstance)
 	}
 	if gotPath != "/mindfs/api/control-sync/push" {
 		t.Fatalf("path = %q，部署前缀被丢了", gotPath)

@@ -23,6 +23,8 @@ type PushSender interface {
 type PushClientOptions struct {
 	PrimaryURL string
 	Token      string
+	// InstanceID 是边沿自己的节点标识，随签名头一起上行（审计与对账用）。
+	InstanceID string
 	CAFile     string
 	Timeout    time.Duration
 }
@@ -33,9 +35,10 @@ type PushClientOptions struct {
 // 系统根 + 可选 ca_file、Bearer token。非 https 直接构造失败 —— 口令 hash
 // 会随 users 域上行，明文通道等于把凭据摊在网上。
 type PushClient struct {
-	endpoint *url.URL
-	token    string
-	client   *http.Client
+	endpoint   *url.URL
+	token      string
+	instanceID string
+	client     *http.Client
 }
 
 // NewPushClient 校验配置并构造客户端。
@@ -68,7 +71,12 @@ func NewPushClient(opts PushClientOptions) (*PushClient, error) {
 	endpoint.Path = joinSyncPath(base.Path, "/api/control-sync/push")
 	endpoint.RawQuery = ""
 	endpoint.Fragment = ""
-	return &PushClient{endpoint: &endpoint, token: opts.Token, client: client}, nil
+	return &PushClient{
+		endpoint:   &endpoint,
+		token:      opts.Token,
+		instanceID: strings.TrimSpace(opts.InstanceID),
+		client:     client,
+	}, nil
 }
 
 // Push 发一整批并解析逐条结论。非 2xx 一律当失败：同步通道上「部分成功」
@@ -85,7 +93,10 @@ func (c *PushClient) Push(ctx context.Context, req PushRequest) (PushBatch, erro
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	// 签名必须覆盖实际发送的字节（就是上面 Marshal 的 body）。
+	if err := SignSyncRequest(httpReq, c.token, c.instanceID, body, time.Now()); err != nil {
+		return batch, fmt.Errorf("controlsync: sign push request: %w", err)
+	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
 		return batch, fmt.Errorf("controlsync: push: %w", err)

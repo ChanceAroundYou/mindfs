@@ -14,10 +14,13 @@ func TestReplicatorSendsSyncToken(t *testing.T) {
 		remoteChange(t, 1, DomainPreferences, "agents", `{"v":1}`, false),
 	}}
 	store := openTestStore(t)
-	var sawAuth string
+	var sawAuth, sawInstance string
+	nonces := NewNonceCache(SyncNonceTTL)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawAuth = r.Header.Get("Authorization")
-		if !AuthorizeSyncRequest(token, sawAuth) {
+		sawInstance = r.Header.Get(SyncInstanceHeader)
+		// 只认完整签名：bearer 对了但没签名、签名过期、重放都拿不到数据。
+		if err := VerifySyncRequest(r, nil, SyncVerifyOptions{Token: token, Nonces: nonces}); err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -34,7 +37,9 @@ func TestReplicatorSendsSyncToken(t *testing.T) {
 		t.Fatalf("没有 token 时 SyncOnce 居然成功")
 	}
 
-	rep, err := NewReplicator(store, ReplicatorOptions{PrimaryURL: srv.URL, CAFile: ca, Token: token})
+	rep, err := NewReplicator(store, ReplicatorOptions{
+		PrimaryURL: srv.URL, CAFile: ca, Token: token, InstanceID: "edge-01",
+	})
 	if err != nil {
 		t.Fatalf("NewReplicator(token): %v", err)
 	}
@@ -43,5 +48,8 @@ func TestReplicatorSendsSyncToken(t *testing.T) {
 	}
 	if sawAuth != "Bearer "+token {
 		t.Fatalf("请求头 = %q", sawAuth)
+	}
+	if sawInstance != "edge-01" {
+		t.Fatalf("instance 头 = %q", sawInstance)
 	}
 }

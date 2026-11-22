@@ -195,6 +195,7 @@ func NewRuntime(ctx context.Context, cfg Config, deps Deps) (*Runtime, error) {
 			PrimaryURL: cfg.PrimaryURL,
 			CAFile:     cfg.CAFile,
 			Token:      cfg.Token,
+			InstanceID: cfg.InstanceID,
 			Limit:      cfg.BatchSize,
 			Interval:   cfg.ReplicaInterval,
 			OnError:    cfg.OnError,
@@ -208,6 +209,7 @@ func NewRuntime(ctx context.Context, cfg Config, deps Deps) (*Runtime, error) {
 		sender, err := NewPushClient(PushClientOptions{
 			PrimaryURL: cfg.PrimaryURL,
 			Token:      cfg.Token,
+			InstanceID: cfg.InstanceID,
 			CAFile:     cfg.CAFile,
 		})
 		if err != nil {
@@ -216,7 +218,7 @@ func NewRuntime(ctx context.Context, cfg Config, deps Deps) (*Runtime, error) {
 		rt.sender = sender
 	}
 	if rt.mode == nil {
-		prober, err := NewHTTPProber(cfg.PrimaryURL, cfg.CAFile, cfg.Token)
+		prober, err := NewHTTPProber(cfg.PrimaryURL, cfg.CAFile, cfg.Token, cfg.InstanceID)
 		if err != nil {
 			return nil, err
 		}

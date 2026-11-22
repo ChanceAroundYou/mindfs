@@ -12280,6 +12280,7 @@ groups:
       - server/internal/controlsync/store_pending.go
       - server/internal/controlsync/store_reconcile.go
       - server/internal/api/http_control_sync.go
+      - server/internal/api/http_control_sync_auth_test.go
       - server/internal/api/http_control_sync_test.go
       - server/internal/api/http_control_sync_push_test.go
       - server/internal/controlsync/conflicts_test.go
@@ -12289,6 +12290,8 @@ groups:
       - server/internal/api/http_control_sync_conflicts_test.go
       - server/internal/api/http.go
       - server/internal/api/http_routes.go
+      - server/internal/controlsync/auth.go
+      - server/internal/controlsync/auth_test.go
       - server/internal/controlsync/feed.go
       - server/internal/controlsync/pending_pusher.go
       - server/internal/controlsync/push_client.go
@@ -12501,3 +12504,16 @@ groups:
       - 'web/src/i18n/locales/zh-CN-workspace.ts:"syncConflict.title": "同步冲突",'
       - 'web/src/i18n/locales/en-US-workspace.ts:"syncConflict.title": "Sync conflicts",'
       - 'web/tests/sync-conflict-panel.test.mjs:test("按域分组并固定顺序，未知域排最后", () => {'
+      - 'server/internal/controlsync/auth.go:func VerifySyncRequest(r *http.Request, body []byte, opts SyncVerifyOptions) error {'
+      - 'server/internal/controlsync/auth.go:	if opts.Nonces != nil && !opts.Nonces.Accept(nonce, now) {'
+      - 'server/internal/controlsync/auth.go:mac.Write(body)'
+      - 'server/internal/controlsync/auth.go:	if skew := now.Sub(at); skew > SyncClockSkew || skew < -SyncClockSkew {'
+      - 'server/internal/api/http_control_sync.go:	if err := controlsync.VerifySyncRequest(r, body, controlsync.SyncVerifyOptions{'
+      - 'server/internal/api/http_control_sync.go:	r.Body = io.NopCloser(bytes.NewReader(body))'
+      - 'server/internal/controlsync/push_client.go:	if err := SignSyncRequest(httpReq, c.token, c.instanceID, body, time.Now()); err != nil {'
+      - 'server/internal/controlsync/replicator.go:	if err := SignSyncRequest(req, r.token, r.instanceID, nil, time.Now()); err != nil {'
+      - 'server/internal/controlsync/mode.go:	if err := SignSyncRequest(req, p.token, p.instanceID, nil, time.Now()); err != nil {'
+      - 'server/internal/controlsync/auth_test.go:func TestVerifySyncRequestRejectsReplay(t *testing.T) {'
+      - 'server/internal/controlsync/auth_test.go:func TestVerifySyncRequestDoesNotConsumeNonceOnBadSignature(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_auth_test.go:func TestControlSyncEndpointsRequireSignedRequest(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_auth_test.go:func TestControlSyncPushRoutesPreserveSignedBody(t *testing.T) {'

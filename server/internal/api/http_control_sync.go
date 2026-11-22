@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -41,20 +43,65 @@ type ControlSyncFeed interface {
 // 不回显「token 错了还是没带」，两者对调用方是同一件事。
 var errControlSyncUnauthorized = errors.New("control_sync: unauthorized")
 
-// requireSyncToken 给同步通道端点套上 bearer token 校验。
+// errSyncBodyTooLarge 只用于区分 413 与读失败（400）。
+var errSyncBodyTooLarge = errors.New("controlsync: body too large")
+
+// requireSyncToken 给同步通道端点套上认证：bearer token + 时间戳 + nonce + HMAC。
 //
 // 这些端点能一次读出（或改写）整个控制面，包括用户口令 hash —— 主节点是公网可达的，
 // 不能沿用应用里「API 层不鉴权」的约定。只有配了 token 才注册这些路由；
-// token 形状在启动时校验，这里只做常量时间比对。
+// token 形状在启动时校验，这里做完整校验。
+//
+// 校验要读 body，所以中间件必须先收全再还原：签名覆盖原始字节，任何「边读边验」
+// 都会让下游拿到被截断的载荷。上限与 push handler 共用同一个常量，8 MiB 以外
+// 在认证层就回 413，不把超大体读进内存再交给解码器。
 func (h *HTTPHandler) requireSyncToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !controlsync.AuthorizeSyncRequest(h.ControlSyncToken, r.Header.Get("Authorization")) {
+		body, err := readSyncBody(r)
+		if err != nil {
+			if errors.Is(err, errSyncBodyTooLarge) {
+				respondError(w, http.StatusRequestEntityTooLarge, errInvalidRequest("control sync body too large"))
+			} else {
+				respondError(w, http.StatusBadRequest, errInvalidRequest("control sync body unreadable"))
+			}
+			return
+		}
+		if err := controlsync.VerifySyncRequest(r, body, controlsync.SyncVerifyOptions{
+			Token:  h.ControlSyncToken,
+			Nonces: h.syncNonceCache(),
+		}); err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="control-sync"`)
 			respondError(w, http.StatusUnauthorized, errControlSyncUnauthorized)
 			return
 		}
 		next(w, r)
 	}
+}
+
+// syncNonceCache 懒创建：正常构造路径与测试都只设置 ControlSyncToken，
+// 不该为了一个重放缓存再要求每个调用方多传一个参数。
+func (h *HTTPHandler) syncNonceCache() *controlsync.NonceCache {
+	h.controlSyncNoncesOnce.Do(func() {
+		h.controlSyncNonces = controlsync.NewNonceCache(controlsync.SyncNonceTTL)
+	})
+	return h.controlSyncNonces
+}
+
+// readSyncBody 把请求体收进内存并放回 r.Body。超上限返回错误而不是截断：
+// 截断后的 body 既验不过签名，也不该被下游当成一份合法但缩水的请求。
+func readSyncBody(r *http.Request) ([]byte, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, controlsync.SyncMaxBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > controlsync.SyncMaxBodyBytes {
+		return nil, errSyncBodyTooLarge
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
 }
 
 // handleControlSyncHead 返回变更流水位。探活也打这条：只判状态码、不看内容。

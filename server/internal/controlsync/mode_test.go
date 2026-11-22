@@ -226,14 +226,18 @@ func TestHTTPProberHitsHeadEndpoint(t *testing.T) {
 	status := http.StatusOK
 	var paths []string
 	var auths []string
+	var instances []string
+	nonces := NewNonceCache(SyncNonceTTL)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !AuthorizeSyncRequest(token, r.Header.Get("Authorization")) {
+		// 探活与同步走同一套认证：只要 bearer 不够，还得有签名与时间戳。
+		if err := VerifySyncRequest(r, nil, SyncVerifyOptions{Token: token, Nonces: nonces}); err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		auths = append(auths, r.Header.Get("Authorization"))
+		instances = append(instances, r.Header.Get(SyncInstanceHeader))
 		code := status
 		mu.Unlock()
 		w.WriteHeader(code)
@@ -241,7 +245,7 @@ func TestHTTPProberHitsHeadEndpoint(t *testing.T) {
 	t.Cleanup(srv.Close)
 	ca := writeTempCA(t, srv.Certificate())
 
-	prober, err := NewHTTPProber(srv.URL+"/mindfs", ca, token)
+	prober, err := NewHTTPProber(srv.URL+"/mindfs", ca, token, "pc-win")
 	if err != nil {
 		t.Fatalf("NewHTTPProber: %v", err)
 	}
@@ -263,8 +267,11 @@ func TestHTTPProberHitsHeadEndpoint(t *testing.T) {
 	if len(auths) != 2 || auths[0] != "Bearer "+token {
 		t.Fatalf("探活没带 token：%v", auths)
 	}
+	if len(instances) != 2 || instances[0] != "pc-win" {
+		t.Fatalf("探活没带 instance 头：%v", instances)
+	}
 
-	wrong, err := NewHTTPProber(srv.URL, ca, "ffffffffffffffffffff")
+	wrong, err := NewHTTPProber(srv.URL, ca, "ffffffffffffffffffff", "pc-win")
 	if err != nil {
 		t.Fatalf("NewHTTPProber(wrong): %v", err)
 	}
@@ -272,7 +279,7 @@ func TestHTTPProberHitsHeadEndpoint(t *testing.T) {
 		t.Fatalf("token 不对时 Probe 居然成功（401 会被读成主节点可用）")
 	}
 
-	if _, err := NewHTTPProber("http://home:7331", "", token); err == nil {
+	if _, err := NewHTTPProber("http://home:7331", "", token, "pc-win"); err == nil {
 		t.Fatalf("探活接受明文 primary_url")
 	}
 }

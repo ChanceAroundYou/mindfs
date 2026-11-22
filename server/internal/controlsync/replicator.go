@@ -49,10 +49,12 @@ type ReplicatorOptions struct {
 	CAFile     string
 	// Token 是同步通道的 bearer token。主节点的 /changes 一次能吐出整个控制面
 	// （含口令 hash），没 token 的服务端根本不会注册这条路由。
-	Token    string
-	Limit    int
-	Interval time.Duration
-	OnError  func(error)
+	Token string
+	// InstanceID 是边缘自己的节点标识，随签名头一起上行。
+	InstanceID string
+	Limit      int
+	Interval   time.Duration
+	OnError    func(error)
 }
 
 // Replicator 在转发期间把主节点的变更流追到本地副本（records 表）。
@@ -60,13 +62,14 @@ type ReplicatorOptions struct {
 // 本阶段只做「副本追平」：读路径仍走转发，副本是主节点不可达时的底子。
 // 把远端记录应用到权威存储（并在两侧都改时判冲突）属于合并阶段，不在这里做。
 type Replicator struct {
-	store    *Store
-	base     *url.URL
-	client   *http.Client
-	token    string
-	limit    int
-	interval time.Duration
-	onError  func(error)
+	store      *Store
+	base       *url.URL
+	client     *http.Client
+	token      string
+	instanceID string
+	limit      int
+	interval   time.Duration
+	onError    func(error)
 }
 
 // NewReplicator 校验配置并构造追平器。同步通道一律 https（无绕过开关）；
@@ -105,13 +108,14 @@ func NewReplicator(store *Store, opts ReplicatorOptions) (*Replicator, error) {
 		interval = ReplicatorInterval
 	}
 	return &Replicator{
-		store:    store,
-		base:     base,
-		client:   client,
-		token:    strings.TrimSpace(opts.Token),
-		limit:    limit,
-		interval: interval,
-		onError:  opts.OnError,
+		store:      store,
+		base:       base,
+		client:     client,
+		token:      strings.TrimSpace(opts.Token),
+		instanceID: strings.TrimSpace(opts.InstanceID),
+		limit:      limit,
+		interval:   interval,
+		onError:    opts.OnError,
 	}, nil
 }
 
@@ -210,8 +214,10 @@ func (r *Replicator) fetchPage(ctx context.Context, since int64) (*changePage, e
 		return nil, fmt.Errorf("controlsync: build changes request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	if r.token != "" {
-		req.Header.Set("Authorization", "Bearer "+r.token)
+	// GET 没有 body，但同样要签名：重放一个 changes 请求等于把整份控制面
+	// （含口令 hash）再要一遍。没 token 时直接失败，不发未签名请求。
+	if err := SignSyncRequest(req, r.token, r.instanceID, nil, time.Now()); err != nil {
+		return nil, fmt.Errorf("controlsync: sign changes request: %w", err)
 	}
 	resp, err := r.client.Do(req)
 	if err != nil {

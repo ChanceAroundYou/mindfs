@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api/usecase"
+	"mindfs/server/internal/controlsync"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/nodeinfo"
@@ -45,6 +47,12 @@ type HTTPHandler struct {
 	ControlSyncToken string
 	// ControlSyncConflicts 是冲突卡的查询与裁决。nil = 未启用。
 	ControlSyncConflicts ControlSyncConflicts
+
+	// 同步通道的 nonce 缓存：懒初始化，只有配了 token 的节点才会用到。
+	// 单次初始化是为了让 Routes 之外构造的 handler（测试、装配）也共享同一份缓存，
+	// 不需要在每个构造点都记得传。
+	controlSyncNoncesOnce sync.Once
+	controlSyncNonces     *controlsync.NonceCache
 }
 
 const (

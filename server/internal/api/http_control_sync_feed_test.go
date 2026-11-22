@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"mindfs/server/internal/controlsync"
 )
@@ -41,14 +42,17 @@ func newFeedTestServer(f ControlSyncFeed) http.Handler {
 }
 
 func serve(h http.Handler, method, path, token string) *httptest.ResponseRecorder {
-	body := strings.NewReader("")
+	payload := ""
 	if method == http.MethodPost {
 		// /push 的鉴权在解析 body 之前，给一个能过解析的最小载荷。
-		body = strings.NewReader(`{"changes":[]}`)
+		payload = `{"changes":[]}`
 	}
-	req := httptest.NewRequest(method, path, body)
+	req := httptest.NewRequest(method, path, strings.NewReader(payload))
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		// 认证已经不是「带个 bearer 就行」：请求必须整体签名，签名覆盖 body。
+		if err := controlsync.SignSyncRequest(req, token, "feed-test", []byte(payload), time.Now()); err != nil {
+			panic(err)
+		}
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

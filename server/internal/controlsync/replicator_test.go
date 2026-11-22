@@ -94,6 +94,9 @@ func newReplicatorFixture(t *testing.T, primary *fakePrimary) (*Store, *Replicat
 	rep, err := NewReplicator(store, ReplicatorOptions{
 		PrimaryURL: srv.URL,
 		CAFile:     ca,
+		// 同步通道的每个请求都要签名，没 token 连测试服务器都不该收到请求。
+		Token:      "replicator-test-token",
+		InstanceID: "edge-test",
 		Limit:      2,
 	})
 	if err != nil {

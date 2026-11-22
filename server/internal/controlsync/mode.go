@@ -46,14 +46,15 @@ type Prober interface {
 // 只判状态码、不解析响应体：探活的意义是「主节点在不在」，把 head 解析也压进来
 // 会让一条格式变更（比如多一个字段）表现成「主节点挂了」。
 type HTTPProber struct {
-	base   *url.URL
-	client *http.Client
-	token  string
+	base       *url.URL
+	client     *http.Client
+	token      string
+	instanceID string
 }
 
 // NewHTTPProber 构造探活器。token 必须与服务端一致：主节点的 /head 是要鉴权的，
 // 不带 token 会得到 401，那会被当成「主节点不可用」而误判降级。
-func NewHTTPProber(primaryURL, caFile, token string) (*HTTPProber, error) {
+func NewHTTPProber(primaryURL, caFile, token, instanceID string) (*HTTPProber, error) {
 	base, err := parsePrimaryURL(primaryURL)
 	if err != nil {
 		return nil, err
@@ -62,7 +63,12 @@ func NewHTTPProber(primaryURL, caFile, token string) (*HTTPProber, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &HTTPProber{base: base, client: client, token: strings.TrimSpace(token)}, nil
+	return &HTTPProber{
+		base:       base,
+		client:     client,
+		token:      strings.TrimSpace(token),
+		instanceID: strings.TrimSpace(instanceID),
+	}, nil
 }
 
 func (p *HTTPProber) Probe(ctx context.Context) error {
@@ -72,8 +78,10 @@ func (p *HTTPProber) Probe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("controlsync: build probe: %w", err)
 	}
-	if p.token != "" {
-		req.Header.Set("Authorization", "Bearer "+p.token)
+	// 探活也走签名：主节点只注册了鉴权后的 /head，裸 bearer 会被 401，
+	// 而 401 在状态机里与「主节点不可达」是同一个降级信号。
+	if err := SignSyncRequest(req, p.token, p.instanceID, nil, time.Now()); err != nil {
+		return fmt.Errorf("controlsync: sign probe: %w", err)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
