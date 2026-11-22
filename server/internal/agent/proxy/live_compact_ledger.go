@@ -44,7 +44,11 @@ func (s *Server) newFoldLedgerPending(harness, mode string, originalBytes, forwa
 // Observe-only sessions never reach here (they never fold), which is what the
 // design requires: isolated sessions must not inflate the user-facing saving.
 func (s *Server) writeFoldLedger(token string, pending *foldLedgerPending, totals usageTotals) {
-	usage := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}
+	usage := fold.Usage{
+		Source:        fold.UsageSourceMissing,
+		RewriteTokens: -1,
+		MissingReason: fold.UsageMissingNoUsageBlock,
+	}
 	if totals.Seen {
 		// Messages reports three disjoint counters; a rewrite costs the fresh
 		// input plus whatever was written to cache.
@@ -114,6 +118,7 @@ func (s *Server) writeFoldLedgerUsage(token string, pending *foldLedgerPending, 
 		UsageCacheCreation: usage.CacheWrite,
 		UsageCacheRead:     usage.CacheRead,
 		UsageSource:        source,
+		UsageMissingReason: usage.MissingReason,
 		UsageProvenance:    usageProvenance(source, upstreamBase),
 	}
 	// The ledger is a diagnostic; a failed write must not fail the turn.

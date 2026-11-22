@@ -28,7 +28,7 @@ func TestShortTokenKeepsProviderTail(t *testing.T) {
 func TestLiveCompactProviderLine(t *testing.T) {
 	gate := liveCompactGate{
 		decision: "fold", est: 87056, growth: 4055, projected: 90000, candidates: 6,
-		plan: fold.PlanStats{BodyBytes: 97000, ResultBytes: 88000, ProtectedBytes: 20000, CandidateBytes: 64000},
+		plan: fold.PlanStats{BodyBytes: 97000, ResultBytes: 88000, UnaccountedBytes: 9000, ProtectedBytes: 20000, CandidateBytes: 64000},
 	}
 	result := foldResult{body: []byte("x"), foldedBlocks: 6, newBlocks: 6, newTokens: 12000, foldedBytes: 180257}
 	usage := fold.Usage{Source: fold.UsageSourceResponse, ContextTokens: 128072, CacheRead: 53248, RewriteTokens: 74824}
@@ -39,16 +39,30 @@ func TestLiveCompactProviderLine(t *testing.T) {
 		// Responses body, so a rail line without the real count cannot be read.
 		"actual=128072", "cached=53248",
 		"candidates=6", "folded=true", "blocks=6", "new_blocks=6", "new_tokens=12000",
-		"saved_bytes=180257", "plan_body_bytes=97000", "plan_protected_bytes=20000",
+		"saved_bytes=180257", "plan_body_bytes=97000", "plan_unaccounted_bytes=9000", "plan_protected_bytes=20000",
 		"plan_candidate_bytes=64000",
 	} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("line %q missing %q", line, want)
 		}
 	}
-	empty := liveCompactProviderLine("thread:x", liveCompactGate{}, foldResult{}, fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1})
-	if !strings.Contains(empty, "folded=false") || !strings.Contains(empty, "actual=-1") {
-		t.Fatalf("unfolded line = %q", empty)
+	missing := liveCompactProviderLine("thread:x", liveCompactGate{}, foldResult{}, fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1})
+	if !strings.Contains(missing, "folded=false") || !strings.Contains(missing, "actual=-1") {
+		t.Fatalf("unfolded line = %q", missing)
+	}
+	if !strings.Contains(missing, "usage_missing=unknown") {
+		t.Fatalf("missing sample without a reason = %q", missing)
+	}
+	// The reason is what separates a compressed body from a stream that ended
+	// early; both look like actual=-1 without it.
+	compressed := liveCompactProviderLine("thread:x", liveCompactGate{}, foldResult{}, fold.Usage{
+		Source: fold.UsageSourceMissing, RewriteTokens: -1, MissingReason: fold.UsageMissingContentEncoding,
+	})
+	if !strings.Contains(compressed, "usage_missing=content_encoding") {
+		t.Fatalf("compressed line = %q", compressed)
+	}
+	if !strings.Contains(line, "usage_missing=-") {
+		t.Fatalf("sampled line must not carry a missing reason: %q", line)
 	}
 }
 
@@ -68,7 +82,7 @@ func TestLiveCompactObservationLineCarriesPlanComposition(t *testing.T) {
 		candidates: 2, candidateBytes: 5000,
 		gateDecision: "fold", gateEst: 130000,
 		plan: fold.PlanStats{
-			BodyBytes: 131072, ResultBytes: 96000, ProtectedBytes: 20000,
+			BodyBytes: 131072, ResultBytes: 96000, UnaccountedBytes: 35072, ProtectedBytes: 20000,
 			NonTextBytes: 900, MultiPartKeptBytes: 1000, FailedSmallBytes: 700,
 			CandidateBytes: 73400,
 		},
@@ -76,7 +90,7 @@ func TestLiveCompactObservationLineCarriesPlanComposition(t *testing.T) {
 	line := liveCompactObservationLine("1795174185", obs, usageTotals{}, 129000)
 	for _, want := range []string{
 		"on token=17951741", "cand_bytes=5000",
-		"plan_body_bytes=131072", "plan_result_bytes=96000", "plan_protected_bytes=20000",
+		"plan_body_bytes=131072", "plan_result_bytes=96000", "plan_unaccounted_bytes=35072", "plan_protected_bytes=20000",
 		"plan_nontext_bytes=900", "plan_multipart_kept_bytes=1000", "plan_failed_small_bytes=700",
 		"plan_candidate_bytes=73400",
 	} {

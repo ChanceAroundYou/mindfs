@@ -80,6 +80,9 @@ func TestFoldLedgerMarksMissingUsageExplicitly(t *testing.T) {
 	if summary.Latest.RewriteTokens != -1 {
 		t.Fatalf("rewrite tokens = %d, want -1", summary.Latest.RewriteTokens)
 	}
+	if summary.Latest.UsageMissingReason != fold.UsageMissingNoUsageBlock {
+		t.Fatalf("missing reason = %q, want %q", summary.Latest.UsageMissingReason, fold.UsageMissingNoUsageBlock)
+	}
 	if summary.UsageMissing != 1 || summary.RewriteSamples != 0 {
 		t.Fatalf("missing=%d samples=%d, want 1/0", summary.UsageMissing, summary.RewriteSamples)
 	}

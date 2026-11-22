@@ -138,7 +138,11 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		// A turn that never reached the upstream still leaves its fold decision
 		// in the log; only the usage half is missing.
 		if scanned && gate.decision != "" {
-			logLiveCompactProvider(key, gate, result, fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1})
+			logLiveCompactProvider(key, gate, result, fold.Usage{
+				Source:        fold.UsageSourceMissing,
+				RewriteTokens: -1,
+				MissingReason: fold.UsageMissingUpstreamUnreachable,
+			})
 		}
 		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
@@ -174,9 +178,24 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 		reader = io.TeeReader(resp.Body, scanner)
 	}
 	_, _ = io.Copy(&flushWriter{w: w}, reader)
-	usage, seen := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1}, false
+	// A missing sample keeps a reason: "no usage" is not the same failure as a
+	// compressed body or a stream that ended early, and the log is the only
+	// place that difference is visible.
+	missingReason := fold.UsageMissingNotObserved
+	if observed {
+		missingReason = fold.UsageMissingNoUsageBlock
+		if resp.Header.Get("Content-Encoding") != "" {
+			missingReason = fold.UsageMissingContentEncoding
+		}
+	}
+	usage, seen := fold.Usage{Source: fold.UsageSourceMissing, RewriteTokens: -1, MissingReason: missingReason}, false
 	if scanner != nil {
 		usage, seen = scanner.Totals().Usage()
+		if !seen {
+			// The scanner owns the "missing" shape but not why it is missing;
+			// keep the reason this path observed.
+			usage.MissingReason = missingReason
+		}
 	}
 	// The ledger line belongs to a folded turn only: its bytes describe a
 	// rewrite. The calibration pair belongs to the session and is updated by

@@ -50,6 +50,9 @@ func main() {
 	dir := flag.String("dir", "", "working directory for the child session (default: current directory)")
 	minBody := flag.Int("min-body", 2048, "min_body_bytes for the probe proxy")
 	keep := flag.Int("keep", 3, "keep_rounds for the probe proxy")
+	minFold := flag.Int("min-fold-bytes", 4096, "min_fold_bytes: rejection floor for one fold event")
+	keepTail := flag.Int("keep-tail", 32000, "keep_tail_tokens: protected tail size, in estimated tokens")
+	rail := flag.Int("rail", 100000, "rail_tokens: calibrated context size that arms folding")
 	mode := flag.String("mode", string(proxy.LiveCompactShadow), "live-compact mode: shadow (observe only) or on (fold)")
 	prompt := flag.String("prompt", "", "override the child prompt (default: read six repo files one at a time)")
 	flag.Parse()
@@ -78,6 +81,9 @@ func main() {
 		MinBlockTokens:   2000,
 		MinBodyBytes:     *minBody,
 		MaxDriftMessages: 8192,
+		MinFoldBytes:     *minFold,
+		KeepTailTokens:   *keepTail,
+		RailTokens:       *rail,
 		DisableFile:      filepath.Join(tmp, "DISABLED"),
 		ArchiveDir:       filepath.Join(tmp, "context"),
 		ArchiveEnabled:   true,
@@ -124,8 +130,17 @@ server/internal/kanban/service_outbox.go`
 
 	// B2 path: read back the ledger exactly as the session page does. In shadow
 	// mode this stays empty on purpose (nothing is folded, nothing is recorded).
+	// The billing-context totals are the A/B metric: a body is mostly text the
+	// fold cannot reach, so bytes compare policies badly. Folded tokens over
+	// (context tokens + folded tokens) is what the user actually saves.
 	saving := ps.SessionContextSaving("smoke-session")
+	share := 0.0
+	if saving.TotalContextTokens+saving.TotalFoldedTokens > 0 {
+		share = float64(saving.TotalFoldedTokens) / float64(saving.TotalContextTokens+saving.TotalFoldedTokens)
+	}
 	fmt.Fprintf(os.Stderr, "ledger: requests=%d max_saved=%d rewrite_total=%d latest={saved=%d rewrite=%d blocks=%d}\n",
 		saving.Requests, saving.MaxSavedBytes, saving.TotalRewriteTokens,
 		saving.Latest.SavedBytes, saving.Latest.RewriteTokens, saving.Latest.Blocks)
+	fmt.Fprintf(os.Stderr, "billing: context_tokens=%d folded_tokens=%d samples=%d share=%.3f\n",
+		saving.TotalContextTokens, saving.TotalFoldedTokens, saving.ContextTokenSamples, share)
 }
