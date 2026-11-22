@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   conflictReminder,
   controlModeBanner,
+  controlSyncActionFor,
   CONTROL_CONFLICTS_EVENT,
   type ControlBannerAction,
   type ControlSyncStatus,
@@ -53,8 +54,9 @@ export function useControlSyncStatus() {
     () =>
       controlModeBanner(status?.mode, {
         conflictCount: status?.conflict_count ?? 0,
+        blockedCode: status?.blocked_code,
       }),
-    [status?.mode, status?.conflict_count],
+    [status?.mode, status?.conflict_count, status?.blocked_code],
   );
 
   // 一次性冲突提醒按事件 id 去重：关掉之后同一次进入不再弹回来（见 conflictReminder）。
@@ -82,7 +84,7 @@ export function useControlSyncStatus() {
       if (busy) return;
       setBusy(true);
       try {
-        const next = await switchControlSyncMode(action === "switch-local" ? "local" : "retry");
+        const next = await switchControlSyncMode(controlSyncActionFor(action));
         if (next) setStatus(next);
       } catch {
         // 切换失败时状态由下一拍轮询纠正，不额外弹错。

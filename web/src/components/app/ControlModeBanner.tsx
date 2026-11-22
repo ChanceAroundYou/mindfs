@@ -6,7 +6,7 @@
 // 这里只做展示与点击：轮询与请求在 useControlSyncStatus，模式真相由服务端状态机
 // 持有并持久化，前端不自行判定。事件历史也来自服务端（/status 的 recent_events），
 // 换台浏览器看到的仍是同一份「什么时候变的」。
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
 import { useControlSyncStatus } from "../../hooks/useControlSyncStatus";
@@ -24,6 +24,14 @@ export function ControlModeBanner() {
   const { status, enabled, busy, banner, reminder, runAction, dismissConflictReminder } =
     useControlSyncStatus();
   const [expanded, setExpanded] = useState(false);
+  // 「接受新主节点」是两步：先点开确认条，明写会丢什么，再点一次才真发请求。
+  // 它是这套界面里唯一会丢弃副本的动作，不能跟「重试」一样一击即中。
+  const [confirmAdopt, setConfirmAdopt] = useState(false);
+  const modeKey = status?.mode ?? "";
+  // 模式一变就把确认态收回：横幅已经换了一轮，上一轮的「确认接受」不该还挂着。
+  useEffect(() => {
+    setConfirmAdopt(false);
+  }, [modeKey]);
 
   if (!enabled || !banner) return null;
 
@@ -121,19 +129,61 @@ export function ControlModeBanner() {
           {t("controlMode.dismiss")}
         </button>
       ) : null}
-      {banner.actions.map((action) => (
-        <button
-          key={action}
-          type="button"
-          onClick={() => {
-            void runAction(action);
-          }}
-          disabled={busy}
-          style={bannerButtonStyle(color, busy)}
-        >
-          {actionLabel(action, busy, t)}
-        </button>
-      ))}
+      {banner.actions.map((action) => {
+        if (action === "adopt-primary" && confirmAdopt) {
+          return (
+            <span
+              key={action}
+              style={{
+                flexBasis: "100%",
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <span style={{ color: color, minWidth: 0, overflowWrap: "anywhere" }}>
+                {t("controlMode.adoptWarning")}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmAdopt(false);
+                  void runAction(action);
+                }}
+                disabled={busy}
+                style={bannerButtonStyle(color, busy)}
+              >
+                {t("controlMode.adoptConfirm")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmAdopt(false)}
+                style={bannerButtonStyle(color)}
+              >
+                {t("controlMode.cancel")}
+              </button>
+            </span>
+          );
+        }
+        return (
+          <button
+            key={action}
+            type="button"
+            onClick={() => {
+              if (action === "adopt-primary") {
+                setConfirmAdopt(true);
+                return;
+              }
+              void runAction(action);
+            }}
+            disabled={busy}
+            style={bannerButtonStyle(color, busy)}
+          >
+            {actionLabel(action, busy, t)}
+          </button>
+        );
+      })}
     </div>,
     document.body,
   );
@@ -146,6 +196,7 @@ function actionLabel(
 ): string {
   if (action === "retry") return t(busy ? "controlMode.retrying" : "controlMode.retry");
   if (action === "switch-local") return t("controlMode.switchLocal");
+  if (action === "adopt-primary") return t("controlMode.adoptPrimary");
   return t("controlMode.viewConflicts");
 }
 

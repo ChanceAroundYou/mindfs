@@ -12388,6 +12388,7 @@ groups:
       - server/internal/controlsync/store_migrate.go
       - server/internal/controlsync/store_runtime.go
       - server/internal/controlsync/token.go
+      - server/internal/controlsync/blocked.go
       - cli/cmd/control_sync.go
       - cli/cmd/control_sync_test.go
       - server/app/control_sync.go
@@ -12469,6 +12470,7 @@ groups:
       - server/internal/controlsync/store_pending_test.go
       - server/internal/controlsync/store_runtime_test.go
       - server/internal/controlsync/token_test.go
+      - server/internal/controlsync/mode_block_test.go
       - server/internal/controlsync/capture_pending_test.go
       - server/internal/api/controlproxy_mode_test.go
       - server/internal/api/http_control_sync_feed_test.go
@@ -12686,7 +12688,7 @@ groups:
       - 'server/internal/controlsync/replicator.go:var ErrReplicaOriginMismatch = errors.New("controlsync: primary instance changed")'
       - 'server/internal/controlsync/replicator.go:func (r *Replicator) verifyOrigin(ctx context.Context) error {'
       - 'server/internal/controlsync/replicator.go:		return fmt.Errorf("%w: recorded=%s primary=%s", ErrReplicaOriginMismatch, st.PrimaryInstanceID, head.InstanceID)'
-      - 'server/internal/controlsync/mode.go:	BlockedReason string    `json:"blocked_reason,omitempty"`'
+      - 'server/internal/controlsync/mode.go:	BlockedReason string `json:"blocked_reason,omitempty"`'
       - 'server/internal/controlsync/mode.go:		if m.successes >= UpgradeAfterSuccess && m.blocked == "" {'
       - 'server/internal/controlsync/mode.go:func (m *ModeController) BlockLocal(ctx context.Context, reason string) (Mode, error) {'
       - 'server/internal/controlsync/mode.go:func (m *ModeController) AdoptPrimary(ctx context.Context) (Mode, error) {'
@@ -12694,6 +12696,12 @@ groups:
       - 'server/internal/controlsync/store_state.go:func (s *Store) ResetReplicaForAdopt(ctx context.Context) error {'
       - 'server/internal/controlsync/store_migrate.go:func (s *Store) ensureColumns(ctx context.Context, table string, want map[string]string) error {'
       - 'server/internal/api/http_control_sync.go:	case "adopt_primary":'
+      - 'server/internal/controlsync/blocked.go:func BlockedCode(reason string) string {'
+      - 'server/internal/controlsync/blocked.go:	case strings.Contains(reason, ErrReplicaOriginMismatch.Error()):'
+      - 'server/internal/controlsync/mode_block_test.go:func TestModeStatusReportsBlockedCode(t *testing.T) {'
+      - 'server/internal/controlsync/mode.go:		BlockedCode:      BlockedCode(blocked),'
+      - 'web/src/shared/controlMode.ts:export function controlSyncActionFor(action: ControlBannerAction): ControlSyncAction {'
+      - 'web/src/components/app/ControlModeBanner.tsx:  const [confirmAdopt, setConfirmAdopt] = useState(false);'
       - 'server/internal/controlsync/mode_block_test.go:func TestModeControllerBlockedStaysLocalAcrossProbeSuccess(t *testing.T) {'
       - 'server/internal/controlsync/origin_test.go:func TestAdoptPrimaryRebasesReplicaOntoNewPrimary(t *testing.T) {'
       - 'server/internal/controlsync/store_prune.go:	ChangeRetention = 90 * 24 * time.Hour'

@@ -1,7 +1,7 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { rawReadFileSync } from "./source-map.mjs";
-import { controlModeBanner, conflictReminder, controlModeLabel, isControlMode, newestModeEventTo } from "../src/shared/controlMode.ts";
+import { controlModeBanner, controlModeLabel, conflictReminder, controlSyncActionFor, isControlMode, newestModeEventTo } from "../src/shared/controlMode.ts";
 
 const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -48,11 +48,18 @@ test("三种降级状态各自给出动作，攒了冲突才多出查看入口",
   assert.equal(conflict?.tone, "conflict");
   assert.deepEqual(conflict?.actions, ["view-conflicts"]);
 
-  // 三种动作合起来必须覆盖「切本地 / 重试 / 查看冲突」。
+  // 四种动作合起来必须覆盖「切本地 / 重试 / 查看冲突 / 接受新主节点」。
   const all = new Set(
-    [controlModeBanner("online"), local, syncing, conflict].flatMap((s) => s.actions),
+    [
+      controlModeBanner("online"),
+      local,
+      localWithConflicts,
+      controlModeBanner("offline-local", { blockedCode: "origin-mismatch" }),
+      syncing,
+      conflict,
+    ].flatMap((s) => s.actions),
   );
-  assert.deepEqual([...all].sort(), ["retry", "switch-local", "view-conflicts"]);
+  assert.deepEqual([...all].sort(), ["adopt-primary", "retry", "switch-local", "view-conflicts"]);
 
   // 每个降级状态都得有标题与说明，缺一条横幅就只剩一个色块。
   for (const state of [local, syncing, conflict]) {
@@ -111,7 +118,7 @@ test("状态端点走页面服务器，404 视为未启用而不是故障", () =
   assert.match(fetchStatusBody, /if \(endpointMissing\(err\)\) return null;/);
 });
 
-test("模式端点只发 local / retry 两种动作", () => {
+test("模式端点只发 local / retry / adopt_primary 三种动作", () => {
   assert.match(service, /controlPath\("\/api\/control-sync\/mode"\)/);
   assert.match(service, /method: "POST"/);
   assert.match(service, /JSON\.stringify\(\{ action \}\)/);
@@ -119,6 +126,8 @@ test("模式端点只发 local / retry 两种动作", () => {
   assert.equal(actions.length, 1, "动作类型必须只有一处定义");
   assert.match(actions[0][1], /"local"/);
   assert.match(actions[0][1], /"retry"/);
+  // 服务端 handleControlSyncMode 认的就是这三个；写错一个字会 400，界面上是「点了没反应」。
+  assert.match(actions[0][1], /"adopt_primary"/);
   assert.doesNotMatch(actions[0][1], /"switch"|"online"/);
 });
 
@@ -134,13 +143,16 @@ test("横幅轮询状态，未启用后不再重试", () => {
   assert.doesNotMatch(banner, /\bservices\//);
 });
 
-test("横幅三个动作各自打到对应的请求", () => {
+test("横幅四个动作各自打到对应的请求", () => {
   // 查看冲突只派发事件（面板自己订阅），不发控制面请求；
   // 切本地与重试才走 mode 端点，且 action 取值必须与服务端一致。
   const runAction = hook.split("const runAction")[1].split("const [")[0];
   assert.match(runAction, /action === "view-conflicts"[\s\S]{0,200}CONTROL_CONFLICTS_EVENT/);
-  assert.match(runAction, /action === "switch-local" \? "local" : "retry"/);
+  // 横幅动作与服务端动作是两套词，对照只在 controlSyncActionFor 一处。
+  assert.match(runAction, /switchControlSyncMode\(controlSyncActionFor\(action\)\)/);
   assert.match(hook, /switchControlSyncMode/);
+  // blocked_code 必须从状态透传到纯映射：漏了这一行，采纳入口永远不会出现。
+  assert.match(hook, /blockedCode: status\?\.blocked_code/);
   // 提醒的「关闭」按事件 id 记，不是按模式记 —— 否则下一拍轮询又会弹回来。
   assert.match(hook, /new Set\(prev\)\.add\(reminder\.id\)/);
 });
@@ -166,6 +178,10 @@ test("中英文都补齐横幅文案", () => {
     "controlMode.viewConflicts",
     "controlMode.conflictReminder",
     "controlMode.dismiss",
+    "controlMode.adoptPrimary",
+    "controlMode.adoptWarning",
+    "controlMode.adoptConfirm",
+    "controlMode.cancel",
   ]) {
     assert.match(zh, new RegExp(`"${key.replace(/\./g, "\\.")}"`), `中文缺 ${key}`);
     assert.match(en, new RegExp(`"${key.replace(/\./g, "\\.")}"`), `英文缺 ${key}`);
@@ -173,4 +189,43 @@ test("中英文都补齐横幅文案", () => {
   // 提醒文案要带条数占位符，否则「检测到 N 条」只能说成「有冲突」。
   assert.match(zh, /controlMode\.conflictReminder": "[^"]*\{count\}/);
   assert.match(en, /controlMode\.conflictReminder": "[^"]*\{count\}/);
+});
+test("只有身份不符的锁才给「接受新主节点」", () => {
+  // 主节点被重装/换机时副本按旧主节点建的，永远追不平 —— 采纳是唯一出路。
+  const adopted = controlModeBanner("offline-local", { blockedCode: "origin-mismatch" });
+  assert.ok(adopted.actions.includes("adopt-primary"));
+
+  // schema 不兼容采纳也没用（换台机器还是同一个版本），不能给这个会丢副本的入口。
+  const schema = controlModeBanner("offline-local", { blockedCode: "schema-mismatch" });
+  assert.deepEqual(schema.actions, ["retry"]);
+
+  // 没锁、或服务端给了个认不出来的原因：照旧只给重试。
+  assert.deepEqual(controlModeBanner("offline-local").actions, ["retry"]);
+  assert.deepEqual(controlModeBanner("offline-local", { blockedCode: "something-new" }).actions, ["retry"]);
+
+  // 采纳只属于本地模式：别处出现说明动作表被串了。
+  for (const mode of ["online", "reconciling", "conflict-review"]) {
+    assert.ok(!controlModeBanner(mode, { blockedCode: "origin-mismatch" }).actions.includes("adopt-primary"));
+  }
+});
+
+test("横幅动作到服务端动作只有一处对照", () => {
+  assert.equal(controlSyncActionFor("switch-local"), "local");
+  assert.equal(controlSyncActionFor("retry"), "retry");
+  assert.equal(controlSyncActionFor("adopt-primary"), "adopt_primary");
+  // 查看冲突不发控制面请求，落到 else 也只是 retry —— 调用点在发请求前就分流了。
+  assert.equal(controlSyncActionFor("view-conflicts"), "retry");
+});
+
+test("接受新主节点是两步确认，且写明会丢什么", () => {
+  // 这是整套界面里唯一会丢弃副本的动作：第一下只展开确认条，第二下才发请求。
+  assert.match(banner, /const \[confirmAdopt, setConfirmAdopt\] = useState\(false\)/);
+  assert.match(banner, /action === "adopt-primary" && confirmAdopt/);
+  assert.match(banner, /if \(action === "adopt-primary"\) \{[\s\S]{0,80}setConfirmAdopt\(true\)/);
+  // 确认条里必须先有警告文案与「取消」，不能只剩一个确认键。
+  const confirmBlock = banner.split('action === "adopt-primary" && confirmAdopt')[1].split("return (")[1];
+  assert.match(confirmBlock, /controlMode\.adoptWarning/);
+  assert.match(confirmBlock, /controlMode\.cancel/);
+  // 模式一变就收回确认态，免得「确认接受」在下一轮横幅里还挂着。
+  assert.match(banner, /useEffect\(\(\) => \{[\s\S]{0,60}setConfirmAdopt\(false\)/);
 });

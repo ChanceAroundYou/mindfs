@@ -1109,3 +1109,30 @@ reconcile 冲突 → 裁决 → 推送落地全链路、旧库补列迁移；HTT
 - **上线一律未做**：四端（hasee / 主节点 / WSL / fn）都没有部署、没有重启，
   `control_sync.enabled` 在所有 `config.json` 里仍是 `false`；按 T23 的既定顺序，
   首次上线也要先由用户安装并重启 hasee 与主节点。
+
+### T26 补：横幅的「接受新主节点」（2026-11-22）
+
+T25/T26 记录里留的「`adopt_primary` 端点已就绪、按钮未接」在这里收口 —— 不接它，
+主节点被有意重装或换机之后边缘会永远锁在 `offline-local`（探活一直通、追平一直撞
+同一处身份不符），界面上没有任何出路，只能去命令行敲 curl。
+
+- 后端：新增 `controlsync/blocked.go` —— `BlockedCode(reason)` 把持久化的
+  `blocked_reason`（`err.Error()` 拼出来的诊断串）归一成 `origin-mismatch` /
+  `schema-mismatch` / 空。跨语言猜英文措辞是最脆的耦合，所以由产生原因的一侧归一；
+  `/status` 增 `blocked_code`（`mode.go` 只多一个字段与一行赋值，文件仍在 500 行内）。
+- 前端：`shared/controlMode.ts` 的 `ControlBannerAction` 加 `adopt-primary`，
+  只在 `mode=offline-local && blockedCode=origin-mismatch` 时出现 —— schema 不兼容
+  采纳也没用（换台机器还是同一个版本），认不出来的原因一律不给这个会丢副本的入口；
+  `controlSyncActionFor` 是「横幅动作 → 服务端动作」的唯一对照表；hook 透传
+  `blocked_code`；横幅里它是**两步确认**（第一下只展开警告条「会丢掉旧副本与冲突卡，
+  没推送出去的本地改动会变成新的冲突卡」，第二下才发请求），模式一变确认态即收回。
+- 用例：Go 2 条（`BlockedCode` 分类表、锁着时 `/status` 报代码 / 解锁后为空）；
+  web 4 条（只有身份不符才给采纳、动作映射唯一、两步确认与警告文案、`blocked_code`
+  必须透传）＋ i18n 四键补进既有清单。变异五处各自打红后还原：去掉采纳动作、
+  放宽成任意 `blockedCode`、映射退回 `retry`、去掉第一步确认（一键即发）、
+  hook 不传 `blocked_code`。
+- 门禁：`go test ./server/internal/controlsync/ ./server/internal/api/` 全绿、
+  `tsc -b --noEmit` clean、`npx vitest run` 263 文件 / 888 通过 / 6 跳过；
+  `make check-upstream` 在提交后转绿（锚点同步更新了 `mode.go` 那行结构体）
+- 未做：真浏览器点验这条新路径（T22 脚本不覆盖「主节点被换掉」这一档）；
+  未部署、未重启、未改配置。

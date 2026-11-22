@@ -8,7 +8,10 @@ import type { MessageKey } from "../i18n";
 export type ControlMode = "online" | "offline-local" | "reconciling" | "conflict-review";
 
 /** 显式切换只允许两种动作，与 POST /api/control-sync/mode 的取值一一对应。 */
-export type ControlSyncAction = "local" | "retry";
+// 发给 `POST /api/control-sync/mode` 的动作（服务端只认这三个字符串）。
+// `adopt_primary` 是破坏性动作：会丢掉按旧主节点建的整份副本与冲突卡，只在
+// 「主节点被有意重装/换机」时由人工确认后使用。
+export type ControlSyncAction = "local" | "retry" | "adopt_primary";
 
 /** 冲突面板就绪前，横幅只负责喊人：事件名是两层之间唯一的接口。 */
 export const CONTROL_CONFLICTS_EVENT = "mindfs:control-conflicts";
@@ -29,13 +32,15 @@ export type ControlSyncStatus = {
   pending_count?: number;
   conflict_count?: number;
   blocked_reason?: string;
+  /** 上面那条原因的结构化代码（服务端归一），前端只认它，不去猜诊断串的措辞。 */
+  blocked_code?: string;
   last_primary_at?: string;
   last_error?: string;
   recent_events?: ControlModeEvent[];
 };
 
-/** 横幅按钮。三种动作合起来覆盖「切本地 / 重试 / 查看冲突」。 */
-export type ControlBannerAction = "retry" | "switch-local" | "view-conflicts";
+/** 横幅按钮。四种动作合起来覆盖「切本地 / 重试 / 查看冲突 / 接受新主节点」。 */
+export type ControlBannerAction = "retry" | "switch-local" | "view-conflicts" | "adopt-primary";
 
 export type ControlModeBannerState = {
   tone: "online" | "local" | "syncing" | "conflict";
@@ -68,7 +73,7 @@ export function isControlMode(value: unknown): value is ControlMode {
  */
 export function controlModeBanner(
   mode: ControlMode | null | undefined,
-  opts: { conflictCount?: number } = {},
+  opts: { conflictCount?: number; blockedCode?: string } = {},
 ): ControlModeBannerState | null {
   switch (mode) {
     case "online":
@@ -81,6 +86,10 @@ export function controlModeBanner(
     case "offline-local": {
       // 本地模式下「切本地」是空操作，只给重试；确实攒了冲突才把查看入口带出来。
       const actions: ControlBannerAction[] = ["retry"];
+      // 主节点被有意重装/换机时会锁在本地且永远追不平 —— 唯一出路是人工采纳新主节点。
+      // 只认服务端归一后的代码：schema 不兼容采纳也没用，认不出来的原因
+      // 一律不给这个会丢副本的入口。
+      if (opts.blockedCode === "origin-mismatch") actions.push("adopt-primary");
       if ((opts.conflictCount ?? 0) > 0) actions.push("view-conflicts");
       return {
         tone: "local",
@@ -105,6 +114,19 @@ export function controlModeBanner(
       };
     default:
       return null;
+  }
+}
+
+/** 横幅动作 → 服务端认的字符串。两套词（`adopt-primary` / `adopt_primary`）只在
+ * 这一处对照，避免每个调用点各写一遍三元表达式。 */
+export function controlSyncActionFor(action: ControlBannerAction): ControlSyncAction {
+  switch (action) {
+    case "switch-local":
+      return "local";
+    case "adopt-primary":
+      return "adopt_primary";
+    default:
+      return "retry";
   }
 }
 

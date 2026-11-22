@@ -107,7 +107,10 @@ type Status struct {
 	ConflictCount int `json:"conflict_count"`
 	// BlockedReason 非空表示追平被锁住（主节点身份或 schema 不符）。此时探测可能
 	// 一直是通的、模式却是 offline-local —— 横幅要照这个字段解释原因。
-	BlockedReason string    `json:"blocked_reason,omitempty"`
+	BlockedReason string `json:"blocked_reason,omitempty"`
+	// BlockedCode 是上面那条原因的结构化代码（见 blocked.go）。前端用它决定给不给
+	// 「接受新主节点」入口 —— 去猜中文/英文诊断串会在改一个字之后静默失效。
+	BlockedCode   string    `json:"blocked_code,omitempty"`
 	LastPrimaryAt time.Time `json:"last_primary_at,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
 	// RecentEvents 是最近几次模式迁移（最新在前）。spec §7 要求降级/升级留下可见事件，
@@ -230,6 +233,7 @@ func (m *ModeController) Status(ctx context.Context) (Status, error) {
 		PendingCount:     pending,
 		ConflictCount:    conflicts,
 		BlockedReason:    blocked,
+		BlockedCode:      BlockedCode(blocked),
 		LastPrimaryAt:    state.LastPrimaryAt,
 		LastError:        state.LastError,
 		RecentEvents:     events,

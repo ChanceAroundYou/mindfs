@@ -1,6 +1,7 @@
 package controlsync
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -92,5 +93,60 @@ func TestModeControllerClearBlockIsIdempotent(t *testing.T) {
 	mc.Observe(true)
 	if got := mc.Observe(true); got != ModeReconciling {
 		t.Fatalf("解锁后 2 次探测成功模式 = %s，应回 reconciling", got)
+	}
+}
+
+// blocked_code 是给前端的结构化原因：`blocked_reason` 是诊断串，改一个字前端就
+// 认不出来；代码只由产生原因的一侧归一，不认识的一律留空（不给会丢数据的入口）。
+func TestBlockedCodeClassifiesKnownReasons(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+		want   string
+	}{
+		{"空原因", "", ""},
+		{
+			"身份不符（带诊断后缀）",
+			"controlsync: primary instance changed: recorded=home primary=hasee2",
+			BlockedCodeOriginMismatch,
+		},
+		{
+			"schema 不符（带诊断后缀）",
+			"controlsync: primary schema version incompatible: primary=2 local=1",
+			BlockedCodeSchemaMismatch,
+		},
+		{"不认识的原因", "blocked for test", ""},
+	}
+	for _, tc := range cases {
+		if got := BlockedCode(tc.reason); got != tc.want {
+			t.Fatalf("%s：BlockedCode(%q) = %q，应为 %q", tc.name, tc.reason, got, tc.want)
+		}
+	}
+}
+
+// 锁着的时候 /status 必须把代码一起报出来：前端只认这个字段，不能靠翻
+// blocked_reason 的英文措辞。
+func TestModeStatusReportsBlockedCode(t *testing.T) {
+	prober := &fakeProber{}
+	_, mc := newModeFixture(t, prober)
+	ctx := t.Context()
+	if _, err := mc.BlockLocal(ctx, fmt.Errorf("%w: recorded=home primary=hasee2", ErrReplicaOriginMismatch).Error()); err != nil {
+		t.Fatalf("BlockLocal: %v", err)
+	}
+	status, err := mc.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.BlockedCode != BlockedCodeOriginMismatch {
+		t.Fatalf("blocked_code = %q，应为 %q", status.BlockedCode, BlockedCodeOriginMismatch)
+	}
+	if err := mc.ClearBlock(ctx); err != nil {
+		t.Fatalf("ClearBlock: %v", err)
+	}
+	if status, err = mc.Status(ctx); err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.BlockedCode != "" {
+		t.Fatalf("解锁后 blocked_code = %q，应为空", status.BlockedCode)
 	}
 }
