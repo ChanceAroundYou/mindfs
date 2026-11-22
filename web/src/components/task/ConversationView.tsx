@@ -295,7 +295,7 @@ export function ConversationView({
     // 16px 撑成 32px、「输入框 → 面板下方胶囊」多出 16px 死区。
     <div
       data-testid="conversation-view"
-      style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%" }}
+      style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: "100%", flex: "1 0 auto" }}
     >
       <ConversationMessages
         activities={activities}
@@ -351,6 +351,9 @@ export function ConversationView({
         </div>
       </div>
 
+      {/* 固定高度面板里消息少时把输入框顶到底部；消息多时它收缩到 0，
+          输入框原有的 16px 上边距不变。 */}
+      <div aria-hidden style={{ flex: "1 1 auto", minHeight: 0 }} />
       {/* 输入框与对话流之间固定 16px；用 margin 而不是父层 gap，见容器上的注释。 */}
       <div ref={composerRef} style={{ marginTop: 16, minWidth: 0 }}>
         {disabled ? (

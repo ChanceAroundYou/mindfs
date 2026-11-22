@@ -48,7 +48,11 @@ assert.match(
   "a dirty close must confirm before discarding",
 );
 assert.match(panelCloseHook, /if \(ok\) onClose\(\);/, "the panel may only close after the user confirms discarding");
-assert.match(panelShell, /if \(event\.target === event\.currentTarget\) requestClose\(\);/, "the overlay must close through the guard");
+assert.match(
+  panelShell,
+  /if \(event\.target !== event\.currentTarget\) return;[\s\S]{0,220}?requestClose\(\);/,
+  "the overlay must close through the guard (and skip clicks that land during the open guard window)",
+);
 assert.doesNotMatch(panelShell, /closeOnOverlayClick/, "closeOnOverlayClick is dead — the overlay always closes");
 assert.doesNotMatch(panelShell, /CloseGlyph/, "the shared × must be gone entirely");
 assert.doesNotMatch(panelShell, /onKeyDown|"Escape"|keydown/, "Esc must no longer close the panel");

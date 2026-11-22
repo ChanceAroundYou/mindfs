@@ -134,7 +134,7 @@ test("移动端正文左右留白收窄，且不引入横向溢出", () => {
     "手机上左右留白收到 8px",
   );
   // 正文容器的样式里不再写死 padding（否则会盖过媒体查询）。
-  assert.match(panel, /className="task-detail-content" style=\{\{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 \}\}/);
+  assert.match(panel, /className="task-detail-content" style=\{\{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0, flex: "1 0 auto" \}\}/);
   assert.doesNotMatch(panel, /padding: "12px 14px"/);
   // 折行与横滚都在正文内部解决：容器保持 min-width: 0。
   assert.match(css, /\.task-detail-content \{/);

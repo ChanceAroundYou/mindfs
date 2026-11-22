@@ -105,13 +105,13 @@ export type PanelShellProps = {
   /** 卡片最小高度，默认不设 */
   minHeight?: number;
   /**
-   * 卡片的竖直锚点，默认 `center`（居中）。
+   * 固定高度 + 居中（默认关闭）。
    *
-   * 对话类面板（任务详情）用 `end`：输入区多打一行时卡片向上长，卡片底边、
-   * 底部的「执行详情」胶囊都定在原处。居中锚点会让新增的高度上下各分一半，
-   * 胶囊被顶下去甚至掉出视口 —— 用户报的就是这个。
+   * 任务详情用：内容从异步接口慢慢补进来时，外框不再跟着从底部往上长 ——
+   * 用户看到的「贴在底部 + 展开动画」其实是 auto 高度随数据增长。固定高度后
+   * 外框从第一帧就是同一个尺寸，滚动只发生在正文内部。
    */
-  align?: "center" | "end";
+  fixedHeight?: boolean;
   onClose?: () => void;
   /**
    * header 右上角是否显示关闭（×）按钮，默认不显示。
@@ -132,6 +132,15 @@ export type PanelShellProps = {
   hasUnsavedChanges?: () => boolean;
 };
 
+/**
+ * 面板刚挂载时忽略遮罩点击。
+ *
+ * 双击卡片打开详情时，第一下打开面板、第二下（几十毫秒后）落在刚挂上的遮罩上，
+ * 会把面板立刻关掉 —— 用户看到的是「点了没反应，得再点一下」。实测双击两下之后
+ * 面板数从 1 变 0，补一次单击才重新打开；350ms 足够覆盖双击/双触间隔。
+ */
+export const PANEL_OPEN_CLICK_GUARD_MS = 350;
+
 export function PanelShell({
   title,
   headerRight,
@@ -140,7 +149,7 @@ export function PanelShell({
   footer,
   width = 720,
   minHeight,
-  align = "center",
+  fixedHeight = false,
   onClose,
   showCloseButton = false,
   belowHeader,
@@ -149,6 +158,7 @@ export function PanelShell({
   const { t } = useI18n();
   // 关闭守卫和放弃确认由逻辑 hook 统一处理。
   const requestClose = usePanelShellClose({ onClose, hasUnsavedChanges, t });
+  const openedAtRef = useRef(performance.now());
   // CUSTOM(G-MA)：面板正文（任务对话等）拖选复制时，选区不许扩到面板标题栏。
   const bodyRef = useRef<HTMLDivElement>(null);
   useSelectionContainment(bodyRef);
@@ -173,7 +183,6 @@ export function PanelShell({
   return (
     <div
       className="mindfs-panel-overlay"
-      data-align={align}
       style={{
         position: "fixed",
         // inset:0 会把遮罩钉在 layout 视口，键盘弹出后它和卡片一起被压在键盘下面。
@@ -185,24 +194,30 @@ export function PanelShell({
         zIndex: 90,
         background: "rgba(15, 23, 42, 0.36)",
         display: "flex",
-        alignItems: align === "end" ? "flex-end" : "center",
+        alignItems: "center",
         justifyContent: "center",
         padding: "24px",
         // 供上面的 max-height 表达式取值；0 高度时 CSS 回退到 100dvh。
         ...(viewportHeight ? { "--panel-vh": `${viewportHeight}px` } : null),
       } as React.CSSProperties}
       onClick={(event) => {
-        if (event.target === event.currentTarget) requestClose();
+        if (event.target !== event.currentTarget) return;
+        // 双击/双触的第二下会落在刚挂载的遮罩上，别把它当成「点外面关闭」。
+        if (performance.now() - openedAtRef.current < PANEL_OPEN_CLICK_GUARD_MS) return;
+        requestClose();
       }}
     >
       <section
         className="mindfs-panel-dialog"
+        data-fixed-height={fixedHeight ? "true" : undefined}
         style={{
           width: `min(${width}px, 100%)`,
           // 高度上限跟着**可视视口**走。移动端键盘弹出时 layout 视口不动、
           // visualViewport 变矮，写死 dvh/vh 的话面板下半截会躲到键盘后面 ——
           // 也就是「输入框在屏幕外、看不见自己打了什么」。
           maxHeight: "min(88dvh, calc(var(--panel-vh, 100dvh) - 48px))",
+          // 固定高度：第一帧就占满可用高度，异步内容不再改变外框尺寸。
+          ...(fixedHeight ? { height: "min(88dvh, calc(var(--panel-vh, 100dvh) - 48px))" } : {}),
           ...(minHeight ? { minHeight } : {}),
           overflow: "hidden",
           borderRadius: "10px",
@@ -223,13 +238,6 @@ export function PanelShell({
               align-items: flex-start !important;
               padding: 8px 12px 12px !important;
             }
-            /* 底部锚点的对话面板：默认的 top:36px 会让遮罩底边比可见区多出 36px，
-               再按 flex-end 排卡片就把卡片推出屏幕。这里改回贴满可视视口，
-               底部留 12px 呼吸位，卡片继续贴底、向上长。 */
-            .mindfs-panel-overlay[data-align="end"] {
-              top: 0 !important;
-              align-items: flex-end !important;
-            }
             .mindfs-panel-dialog {
               width: 100% !important;
               height: auto !important;
@@ -237,6 +245,11 @@ export function PanelShell({
                  结果卡片比遮罩高 36px+padding —— 底部（运行视图）露在可见区外，
                  正文滚到底也看不见。把顶栏 36px 与上下 padding 20px 一并扣掉。 */
               max-height: calc(var(--panel-vh, 100dvh) - 56px) !important;
+            }
+            /* 固定高度的面板（任务详情）：移动端也保持同一尺寸，不退回 auto。
+               属性选择器比上面的 height:auto!important 更具体，且写在后面。 */
+            .mindfs-panel-dialog[data-fixed-height="true"] {
+              height: calc(var(--panel-vh, 100dvh) - 56px) !important;
             }
             .mindfs-panel-body {
               min-height: 0 !important;

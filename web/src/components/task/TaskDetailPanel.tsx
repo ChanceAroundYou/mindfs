@@ -92,8 +92,8 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
     <>
     <PanelShell
       width={720}
-      // 对话面板贴底：输入区多打一行时卡片向上长，底部的「执行详情」胶囊原地不动。
-      align="end"
+      // 固定高度 + 居中：异步内容补进来时外框不再从底部往上长，打开第一帧就是最终尺寸。
+      fixedHeight
       onClose={onClose}
       hasUnsavedChanges={() => editingName && nameDraft.trim() !== (task.name || "").trim()}
       title={editingName ? (
@@ -175,7 +175,7 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
       {/* 对话流与下方内容之间留 6px：输入框本身已带 16px 上边距，这里再大就会在
           「输入框 ↔ 执行详情/监管记录胶囊」之间堆出一道死区（用户要求收紧）。
           左右内边距走 .task-detail-content：桌面 14px，移动端再收窄（index.css）。 */}
-      <div className="task-detail-content" style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }}>
+      <div className="task-detail-content" style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0, flex: "1 0 auto" }}>
         {/* 详情面板只有一条对话流（ConversationView）。旧的 CommentThread 读的是同一份
             /api/tasks/{id}/activities，再挂一份列表 + 输入框就是「同一段对话出现两套」。 */}
         <ConversationView

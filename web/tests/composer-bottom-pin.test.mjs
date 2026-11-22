@@ -57,24 +57,39 @@ test("输入区与胶囊的层级：胶囊排在对话之后，不被输入区�
   assert.doesNotMatch(styles, /\.task-detail-execution\s*\{[^}]*\bposition\s*:/);
 });
 
-test("对话面板贴底锚定：卡片向上长，底部胶囊与输入区底边不动", () => {
+test("对话面板固定高度 + 居中：打开第一帧就是最终尺寸，不再贴底向上长", () => {
   const shell = read("../src/components/shell/PanelShell.tsx");
-  // PanelShell 提供两种竖直锚点，默认居中（其它弹窗行为不变）。
-  assert.match(shell, /align\?: "center" \| "end";/);
-  assert.match(shell, /align = "center",/);
-  assert.match(shell, /alignItems: align === "end" \? "flex-end" : "center",/);
-  // 锚点同时落到 DOM 上，CSS 才能给移动端单独收口。
-  assert.match(shell, /data-align=\{align\}/);
-  // 移动端遮罩默认 top:36px（顶栏之下），底部锚点会因此把卡片推出屏幕；
-  // 贴底面板要改回贴满可视视口。
+  // 旧的贴底锚点（align="end" + 移动端 flex-end 覆盖）已整体删除，
+  // 任务详情改为固定高度、默认居中。
+  assert.doesNotMatch(shell, /align\?: "center" \| "end";/);
+  assert.doesNotMatch(shell, /data-align=\{align\}/);
+  assert.match(shell, /fixedHeight\?: boolean;/);
+  assert.match(shell, /fixedHeight = false,/);
+  assert.match(shell, /data-fixed-height=\{fixedHeight \? "true" : undefined\}/);
   assert.match(
     shell,
-    /\.mindfs-panel-overlay\[data-align="end"\] \{\s*top: 0 !important;\s*align-items: flex-end !important;/,
+    /height: "min\(88dvh, calc\(var\(--panel-vh, 100dvh\) - 48px\)\)"/,
   );
+  assert.match(
+    shell,
+    /\.mindfs-panel-dialog\[data-fixed-height="true"\] \{\s*height: calc\(var\(--panel-vh, 100dvh\) - 56px\) !important;/,
+  );
+  // alignItems 只剩居中，没有第二个竖直锚点分支。
+  assert.match(shell, /alignItems: "center",/);
 
-  // 只有任务详情走贴底；新建任务面板保持居中（没有「胶囊不能被顶走」的约束）。
+  // 双击卡片时第二下会落到刚挂载的遮罩上，面板刚开的一小段窗口内不吃这次点击。
+  assert.match(shell, /export const PANEL_OPEN_CLICK_GUARD_MS = 350;/);
+  assert.match(shell, /performance\.now\(\) - openedAtRef\.current < PANEL_OPEN_CLICK_GUARD_MS/);
+
+  // 只有任务详情走固定高度；新建任务面板保持内容高度。
   const detail = read("../src/components/task/TaskDetailPanel.tsx");
-  assert.match(detail, /<PanelShell[\s\S]{0,200}?align="end"/);
+  assert.match(detail, /<PanelShell[\s\S]{0,220}?fixedHeight/);
   const create = read("../src/components/app/TaskInlineEditPanel.tsx");
-  assert.doesNotMatch(create, /align="end"/);
+  assert.doesNotMatch(create, /fixedHeight/);
+
+  // 固定高度后消息少时要把输入框顶到底部：对话流自身撑满，输入框前留一个
+  // 可增长的零内容占位（消息多时收缩到 0，原有的 16px 间距不变）。
+  const conversation = read("../src/components/task/ConversationView.tsx");
+  assert.match(conversation, /data-testid="conversation-view"[\s\S]{0,180}?flex: "1 0 auto"/);
+  assert.match(conversation, /aria-hidden style=\{\{ flex: "1 1 auto", minHeight: 0 \}\}/);
 });
