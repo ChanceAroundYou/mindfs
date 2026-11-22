@@ -112,7 +112,7 @@ func (r *feishuAnswerRelay) Relay(ctx context.Context, answer feishu.Answer) err
 
 	client := r.Client
 	if client == nil {
-		client = &http.Client{Timeout: feishuAnswerTimeout}
+		client = feishu.NewRelayClient(feishuAnswerTimeout)
 	}
 	sleep := r.Sleep
 	if sleep == nil {

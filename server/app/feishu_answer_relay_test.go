@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -321,5 +322,15 @@ func TestFeishuAnswerRelayDeadlinePermitsFourSends(t *testing.T) {
 				t.Fatalf("fourth send under 3m deadline failed: %v", err)
 			}
 		})
+	}
+}
+
+func TestFeishuAnswerRelayUsesRedirectSafeClient(t *testing.T) {
+	src, err := os.ReadFile("feishu_answer_relay.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "feishu.NewRelayClient(feishuAnswerTimeout)") {
+		t.Fatal("回答中继的默认 client 必须拒绝跨主机跳转，防止 token 被带去恶意主机")
 	}
 }
