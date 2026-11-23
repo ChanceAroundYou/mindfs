@@ -129,12 +129,23 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
    `activeUses > 0` 正是 repoint 掐进程的同一个判据；按账户枚举会漏掉节点会话与委派会话。
 3. **公钥注入** —— `deploy-pcwin.sh` 与日常交叉编译补 `MINDFS_RELEASE_PUBLIC_KEY`，否则
    `auto_update_supported=false`，静默更新永远不可用（E2）。
+   **已由 `be463453`（Scope: G-PZ）落地**：`scripts/deploy-pcwin.sh:26-28` 与
+   `scripts/build-all.sh:38-39` 都注入了 `-X mindfs/server/internal/update.releaseManifestPublicKey=`，
+   `internal/deploy/release_key_test.go::TestDeployScriptsInjectReleaseManifestKey` 钉住。
+   该条**不在 W3 新增范围内**，只是 W3 的前置条件已满足。
 4. **`scripts/build-windows-setup.sh`** —— 产出自解包 exe（内嵌 `mindfs.exe` + `web/` + `agents.json`
    + `config.json` 模板 + 纯 ASCII `setup.ps1`）：解包到 `%LOCALAPPDATA%\Programs\mindfs`、
    按 E6 的 XML 形状用 `schtasks /create /xml` 注册 `\mindfs`、注册用户 PATH。
    安装器写 `control_sync.role = "edge"`（配 W2 的 `PendingPairing` 口径）与 `update.auto_install: true`。
 5. **托盘菜单扩项** —— 现在只有「退出」。至少「打开页面」「重启以应用配对」（W2 把重启交给这里）、
    「退出」（E7）。
+   **已完成**：`trayMenuItems()` 三项（`menuOpenPageID=102` / `menuRestartID=103` /
+   `menuQuitID=101`，退出 ID 不动）。「重启以应用配对」走 `trayRestartScript`
+   （纯函数，Linux 上可测）：后台 powershell 轮询本 PID 消失 → `schtasks /run /tn mindfs`
+   → 失败用原命令行兜底拉起；本进程随后走与「退出」同一条优雅收尾。
+   不用 `schtasks /end`（`TerminateProcess` 会砍掉写盘中的收尾）、不自重启（E3）。
+   等待循环是必需项：真机任务 `MultipleInstancesPolicy=IgnoreNew`，早一步 `/run` 被静默吞掉。
+   变异四处各自打红（菜单退回一项 / 删等待循环 / `/run`→`/end` / 引号改双引号）。
 6. **发版链** —— `Makefile` / `RELEASE_ARTIFACTS` 纳入 setup exe；`make release` 一并上传。
 
 代码签名按计划**不做**。
