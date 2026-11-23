@@ -142,7 +142,18 @@ ANDROID_GRADLE_ENV :=
 ifneq ($(strip $(ANDROID_JAVA_HOME)),)
 ANDROID_GRADLE_ENV := JAVA_HOME="$(ANDROID_JAVA_HOME)"
 endif
+# Windows edge-controller one-click installer (self-extracting exe). Separate
+# from `mindfs_<TAG>_windows_amd64.zip`: that zip needs a manual unpack + four
+# steps, and its `web/` never lands where the service reads it (a silent half
+# install). The setup exe carries the payload, registers the S4U task and sets
+# the user PATH in one double-click -- see scripts/build-windows-setup.sh.
+WINDOWS_SETUP_EXE ?= $(DIST_DIR)/mindfs_$(VERSION)_windows_amd64-setup.exe
+RELEASE_WINDOWS_SETUP ?= 1
+
 RELEASE_ARTIFACTS := $(DIST_DIR)/mindfs_$(TAG)_*.tar.gz $(DIST_DIR)/mindfs_$(TAG)_*.zip $(DIST_DIR)/mindfs_$(TAG)_manifest.json
+ifeq ($(RELEASE_WINDOWS_SETUP),1)
+RELEASE_ARTIFACTS += $(DIST_DIR)/mindfs_$(TAG)_windows_amd64-setup.exe
+endif
 ifeq ($(RELEASE_ANDROID),1)
 RELEASE_ARTIFACTS += $(DIST_DIR)/mindfs_$(TAG)_android.apk
 RELEASE_ARTIFACTS += $(DIST_DIR)/android-version.json
@@ -160,6 +171,9 @@ PLATFORMS := \
 
 build-all: build-web
 	@MIND_FS_BASE="$(MIND_FS_BASE)" bash scripts/build-all.sh "$(VERSION)" "$(DIST_DIR)"
+ifeq ($(RELEASE_WINDOWS_SETUP),1)
+	@bash scripts/build-windows-setup.sh "$(VERSION)" "$(DIST_DIR)"
+endif
 
 build-android:
 	cd $(WEB_DIR) && VITE_MIND_FS_BASE=/ VITE_ANDROID_VERSION_URL="$(ANDROID_VERSION_URL)" $(NPM) run build:shell

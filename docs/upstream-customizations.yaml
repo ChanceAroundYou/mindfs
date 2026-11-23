@@ -14544,7 +14544,7 @@ groups:
       - 'server/internal/api/http_control_sync_pair_test.go:func TestPairRejectsNonLoopback(t *testing.T) {'
       - 'server/internal/controlsync/pairing_test.go:func TestPairLeavesNothingOnFailure(t *testing.T) {'
   - id: G-QB
-    title: 边控端静默自动更新：update.auto_install 判据 + 空闲闸门 + 托盘重启入口（代码默认关）
+    title: 边控端交付：静默自动更新判据 + 空闲闸门 + 托盘重启入口 + Windows 自解包安装器（代码默认关）
     kind: feature
     symptom: |
       Windows 独立安装包要「参考安卓客户端」自动更新，但改造前**代码里根本没有静默安装这一步**：
@@ -14598,6 +14598,42 @@ groups:
       `MultipleInstancesPolicy` 是 `IgnoreNew`，早一步 `/run` 会被**静默吞掉**，服务停在
       「已退出、没人拉起」而界面上零线索。拉起失败时**不退出**：用户得到「点了没反应」，
       但服务还在，比静默停服务好得多。
+
+      **Windows 独立安装包是「自解包 exe」，不是又一个 zip**：`dist/mindfs_<ver>_windows_amd64.zip`
+      已经有了，但它要手动解包 + 四步安装，而用户把 zip 的 `web/` 解到哪儿都不会落到服务读取的
+      `%LOCALAPPDATA%\Programs\mindfs\share\mindfs\web` —— 装错形状的症状是「二进制活着、页面 403」，
+      没有任何报错。exe 的构造是 `[Go 桩程序][载荷 zip][8 字节大端长度 + 4 字节魔数]`（PE 加载器对
+      尾部多余字节透明），双击即完成：停旧进程 → 拷贝 → 注册计划任务 → 改用户 PATH → 起服务 → 探活。
+
+      拆成 Go 桩 + `setup.ps1` 两半，是因为**路径推导、JSON 改写、任务 XML 生成都是纯逻辑**，
+      放在 `internal/deploy` 里能让 Linux 门禁逐条钉住（装安装器的机器未必跑得了 Windows 测试）；
+      而停进程、改用户 PATH、`schtasks` 只能是 Windows API/命令，只能进 `.ps1`。
+      由此派生出三条不能破的约束：
+
+      - **所有落地路径由桩程序算好传入**（`deploy.SetupPathsFor` 是唯一来源）。`.ps1` 再拼一遍
+        `%LOCALAPPDATA%\Programs\mindfs` 就是第二个实现，与 Go 侧漂移后装出「服务在跑但页面 403」，
+        而两边单独看都对；
+      - **任务 XML 只由 Go 侧编码一次**，且必须是 UTF-16LE（`schtasks /create /xml` 只吃它；
+        写 UTF-8 报「任务 XML 无效」，错误信息不提编码）。`.ps1` 里任何 `WriteAllText` / `Out-File`
+        都会二次编码，症状是双字节乱码；
+      - **`.ps1` 必须纯 ASCII**（与 `install.ps1` 同一条）：Windows 按本地代码页解码，CJK 注释会
+        吃掉下一行换行。
+
+      **桩程序住在 `server/cmd/mindfs-setup-stub/`，不是 `scripts/`**：Go 的 internal 规则不允许
+      `scripts/` 树导入 `mindfs/server/internal/*`（`use of internal package … not allowed`），
+      而桩程序要写 `config.json`（`config.UpdateJSONFile`：原子换名、0600、数字不漂移、失败不落盘）。
+      该包只有 `//go:build windows` 文件，Linux 上 `go build ./...` / `go vet ./...` / `go test ./...`
+      会**静默跳过并退出 0** —— 所以编译错误没有人替我们发现，`TestWindowsSetupStubLivesUnderServerCmd`
+      点名它的两条真实依赖（`deploy.ExtractSetupPayloadToDir` / `config.UpdateJSONFile`）作为兜底。
+
+      **发版链有三处，漏任一处都不报错，只是 GitHub release 里少了那个文件**：
+      `Makefile` 的 `RELEASE_ARTIFACTS`（不传 → 安装包永远发不出去）、`build-all` 目标（不生成 →
+      上传前那条 `test -f` 才失败，发布半途崩）、`scripts/sign-release-manifest.go::artifactPaths`
+      （不枚举 → 客户端拿到一个不在签名清单里的安装包，「静默自动更新」永远用不上安装器这条路）。
+      `RELEASE_WINDOWS_SETUP ?= 1` 与 `RELEASE_ANDROID` 同一形态：默认带上，显式给 0 才跳过。
+
+      安装器写 `control_sync.role = "edge"` 与 `update.auto_install: true`，这正是上面那些判据
+      唯一该被打开的部署形态。
     files:
       - server/internal/update/auto_install.go
       - server/internal/update/auto_install_test.go
@@ -14611,10 +14647,27 @@ groups:
       - cli/cmd/tray.go
       - cli/cmd/tray_windows.go
       - cli/cmd/tray_test.go
+      - internal/deploy/archive.go
+      - internal/deploy/archive_test.go
+      - internal/deploy/setup.go
+      - internal/deploy/setup_test.go
+      - internal/deploy/setup_extract.go
+      - internal/deploy/setup_extract_test.go
+      - internal/deploy/setup_script_test.go
+      - scripts/windows-setup/main.go
+      - scripts/windows-setup/setup.ps1
+      - scripts/build-windows-setup.sh
+      - server/cmd/mindfs-setup-stub/main.go
+      - Makefile
+      - scripts/sign-release-manifest.go
     tests:
       - server/internal/update/auto_install_test.go
       - cli/cmd/startup_update_test.go
       - cli/cmd/tray_test.go
+      - internal/deploy/setup_test.go
+      - internal/deploy/setup_extract_test.go
+      - internal/deploy/setup_script_test.go
+      - internal/deploy/archive_test.go
     anchors:
       - 'server/internal/update/auto_install.go:func autoInstallDecision(st Status, autoInstall, busy bool) (bool, string) {'
       - 'server/internal/update/auto_install.go:case busy:'
@@ -14632,3 +14685,31 @@ groups:
       - 'cli/cmd/tray_windows.go:func restartFromTray() {'
       - 'cli/cmd/tray_windows.go:windows.DETACHED_PROCESS'
       - 'cli/cmd/tray_test.go:func TestTrayRestartWaitsForExitThenRunsTask(t *testing.T) {'
+      - 'internal/deploy/setup.go:const SetupTrailerMagic uint32 = 0x4D465353 // "MFSS"'
+      - 'internal/deploy/setup.go:func AppendSetupPayload(stubPath, dst string, payload []byte) error {'
+      - 'internal/deploy/setup.go:func ReadSetupPayload(r io.ReaderAt, size int64) (io.ReaderAt, int64, error) {'
+      - 'internal/deploy/setup.go:func SetupPathsFor(localAppData, roamingAppData string) (SetupPaths, error) {'
+      - 'internal/deploy/setup.go:func ApplySetupConfig(doc map[string]any) error {'
+      - 'internal/deploy/setup.go:func BuildSetupTaskXML(opt SetupTaskOptions) (string, error) {'
+      - 'internal/deploy/setup.go:func EncodeUTF16LEFile(text string) []byte {'
+      - 'internal/deploy/setup.go:func MergeUserPath(current, dir string) (string, bool) {'
+      - 'internal/deploy/setup.go:func BuildSetupPayload(b SetupBundle) ([]byte, error) {'
+      - 'internal/deploy/setup.go:func VerifySetupBundle(b SetupBundle) error {'
+      - 'internal/deploy/setup_extract.go:func ExtractSetupPayloadToDir(exePath, dst string) (string, error) {'
+      - 'internal/deploy/archive.go:func SafeArchiveTarget(root, name string) (string, error) {'
+      - 'internal/deploy/archive.go:func ExtractZipReader(r io.ReaderAt, size int64, dst string) error {'
+      - 'internal/deploy/setup_test.go:func TestSetupPathsMatchInstallLayout(t *testing.T) {'
+      - 'internal/deploy/setup_test.go:func TestBuildSetupTaskXMLCarriesRealMachineShape(t *testing.T) {'
+      - 'internal/deploy/setup_extract_test.go:func TestBuildSetupPayloadRoundTripsThroughExtractor(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupScriptStaysASCIISafe(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupStubLivesUnderServerCmd(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestReleaseChainShipsTheWindowsInstaller(t *testing.T) {'
+      - 'scripts/build-windows-setup.sh:go build -trimpath -ldflags "-s -w -H=windowsgui"'
+      - 'scripts/build-windows-setup.sh:for f in mindfs.exe agents.json web/index.html web/favicon.svg; do'
+      - 'scripts/windows-setup/main.go:func run(version, distDir, out, stubPath string) error {'
+      - 'scripts/windows-setup/setup.ps1:& schtasks.exe /create /tn $TaskName /xml $TaskXml /f | Out-Null'
+      - 'server/cmd/mindfs-setup-stub/main.go://go:build windows'
+      - 'server/cmd/mindfs-setup-stub/main.go:func currentUserSID() (string, error) {'
+      - 'Makefile:RELEASE_WINDOWS_SETUP ?= 1'
+      - 'Makefile:	@bash scripts/build-windows-setup.sh "$(VERSION)" "$(DIST_DIR)"'
+      - 'scripts/sign-release-manifest.go:filepath.Join(distDir, fmt.Sprintf("mindfs_%s_*setup.exe", version)),'
