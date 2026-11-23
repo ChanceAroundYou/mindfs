@@ -92,6 +92,10 @@ scope-id resolve --branch <name>      # 撞号裁决
 | `-dirty` 显式告警 | `scripts/deploy-all.sh` |
 | 使用说明 | `.claude/skills/scope-id/SKILL.md` |
 
+`scripts/scope-id/main.go` 一度写到 609 行，超了 500 行硬线，按职责拆出 `resolve.go`。
+后端规则（`docs/agent/rules/backend/file-size.md`）的字面范围是 `server/` + `cli/`，
+没有点名 `scripts/`；这里按仓库通行的行数约定处理，不拿「规则没写」当豁免。
+
 ## 验收证据
 
 - 断言 6：往探针 worktree 的清单里复制一组（`G-QC` 出现两次）→ 门禁退出码 1，
@@ -132,13 +136,17 @@ scope-id resolve --branch <name>      # 撞号裁决
 $ scope-id claim docs/superpowers/plans/2026-11-23-probe.md --count 2
 已申请 G-QE / G-QF
   · 清单已追加 2 个占位组
-  · …/probe.md 头部已写入 `> Scope IDs: G-QE / G-QF`
+  · probe.md 头部已写声明行（两个号，格式见本文件首行）
 $ scope-id next --count 3
 G-QG G-QH G-QI          # 已占的号不再发，只增不回填
 ```
 
-门禁确实读得到 claim 写的那行：往探针计划追加 `> Scope IDs: G-QZ`（未登记）→
+门禁确实读得到 claim 写的那行：往探针计划追加一条声明行、指向未登记号（本轮用 `G-QZ`）→
 `scope-id check` 退出码 1、报 `probe.md:7 引用了 G-QZ`；删掉即恢复 0。
+
+> 这一段本身就被断言 7 抓过一次：正文把声明行原样抄成示例、指向当时还不存在的号，
+> 门禁把这行当成真声明并报「未登记」—— 扫描器只认行的形状，不区分「示例」与「声明」。
+> 所以讲机制的文字只能用模板占位 `G-XX`，不能写具体号。
 
 这一轮 E2E 当场抓出**第二个真实缺陷**：用法文本写 `claim <plan.md> [--count N]`，
 但 Go 的 `flag` 包遇到第一个非 flag 参数就停止解析，`--count` 被当成第二个位置参数、
