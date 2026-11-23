@@ -64,6 +64,7 @@
    - **失败回合（`turn_settled` 的 `failed=true`）的结论是失败说明，不是总结**：这一轮没有正常跑完，卡片上要写「为什么失败、影响是什么、下一步怎么恢复」，不要写成「做成了什么」的四段式。摘要照旧用 `router_say(purpose="summary")` 写（失败回合也要有结论），但内容改为：**失败原因**（用 brief 里的 `error` 字段，原样说人话）· **已完成的部分**（如果跑到一半有产物就照实说，没有就写「无」）· **下一步**（重试 / 换模型档 / 需要用户处理）。
    - 其它回合（`run_failed` / `gate_waiting` / `run_stalled` / `direct_stalled` / `turn_stalled` / `turn_interrupted` / `task_orphaned` / `completion_blocked`）不写 summary，用 `progress` 汇报。
    - 交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。
+   - **这一轮里出现待用户决策/审批的事项时，summary 不是终点**：同一轮必须再用 `router_ask_user` 把它们做成选择题，每题给 **2–4 个选项**（含「先不做 / 保持现状」这类退出项），并写清每个选项的后果。只写进 summary 等于没问 —— summary 是结论，用户读完只会觉得「那你到底要我干嘛」。规则 17 的七类事项（删除数据、停止服务、花钱、对外发消息、改产品方向、新建或轮换密钥、修改权限）**不受「不用问了」豁免**，尤其要走这条路。多个互不相关的事项分多轮问，不要塞进一道题。
 
 19. **验收项（`router_record_acceptance`）**：宣告 `router_complete_task` 之前，先登记这一轮「做完的样子」—— 至少 1 条、最多 8 条，可以和 `router_complete_task` 放在同一轮（先登记后收尾）。证据等级按实际证据选，不要为过门全写 `self_report`：自述永远不算证据，只会在证据门被驳回。有产物就写 `artifact`，`evidence_ref` 用工作区内的相对路径（不要绝对路径、不要符号链接）；只有独立复核才能判断的（例如「测试全过」「结论成立」）写 `independent_verification`。被驳回后的补做回合，如果口径变了就整组重新登记（整体替换，不是追加）。
 

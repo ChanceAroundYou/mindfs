@@ -57,7 +57,15 @@ func (f *coordinateFixture) insertDirectStalledEvent(t *testing.T, turnID string
 
 func (f *coordinateFixture) consumeEvents(t *testing.T) {
 	t.Helper()
-	if _, err := f.router.ConsumeRouterEvents(context.Background(), time.Now().UTC()); err != nil {
+	f.consumeEventsAt(t, time.Now().UTC())
+}
+
+// consumeEventsAt 用调用方给的时钟消费事件。现场是按某个固定时刻造的用例必须走
+// 这条：判据里有「中断后 24 小时内才允许重开」这类时间差，消费时改用真实时钟，
+// 现场日期一过就永远判 false —— 2026-11-23 有两条用例正是这样变红的。
+func (f *coordinateFixture) consumeEventsAt(t *testing.T, now time.Time) {
+	t.Helper()
+	if _, err := f.router.ConsumeRouterEvents(context.Background(), now); err != nil {
 		t.Fatalf("ConsumeRouterEvents: %v", err)
 	}
 }

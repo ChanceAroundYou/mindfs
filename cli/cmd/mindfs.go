@@ -331,8 +331,9 @@ func main() {
 	}
 
 	// 控制面同步配置在起服务之前解析：token 读不到就别起，而不是等健康检查
-	// 超时后只留一句「服务没起来」。
-	controlSyncCfg, err := controlSyncOptions(startupCfg)
+	// 超时后只留一句「服务没起来」。角色此时已由 applyStartupConfig 填好 ——
+	// 默认开启只对控制面节点成立，worker 上整段跳过。
+	controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag, effectiveConfigPath(*configFlag))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -438,6 +439,7 @@ func main() {
 			LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
 			ControlSync:                        controlSyncCfg,
 			SessionHygiene:                     sessionHygieneOptions(startupCfg),
+			UpdateAutoInstall:                  updateAutoInstall(startupCfg),
 			Feishu: feishuOptions(startupFlags{
 				FeishuEnabled:          &feishuEnabled,
 				FeishuOwnerOpenID:      &feishuOwnerOpenID,

@@ -27,7 +27,9 @@ func (s *Service) BuildPrompt(in BuildPromptInput) string {
 		if in.Session.TaskID != "" {
 			prompt += " task_id=" + in.Session.TaskID
 		}
-		prompt += ". If asked to orchestrate tasks, read mindfs -orchestration; create a task group with this parent session_key, then create ordinary template tasks in that group.\n"
+		// 任务组 / 普通模板任务 / orchestration CLI 已在 Phase 3 删除。这里只保留身份上下文：
+		// 旧文案让 agent 拿不存在的字段去打 POST /api/tasks，400 又被误判成 root 路由故障。
+		prompt += ".\n"
 	}
 	return prependSwitchHint(in, prompt)
 }

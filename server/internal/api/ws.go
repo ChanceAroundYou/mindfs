@@ -122,6 +122,12 @@ func (h *WSHandler) handleSessionAnswerQuestion(ctx context.Context, conn *webso
 		h.sendWSError(conn, clientID, req.ID, "session.answer_question_failed", err.Error())
 		return
 	}
+	// 答案已经交给 agent ⇒ 这一轮是用户亲手推进的，和普通发消息一样把任务头从
+	// 待处理抬到运行中。原来这个入口完全没走 OOB：会话在跑、任务却一直显示
+	// 待处理（#104 现场）。收尾由 SettleSessionTurn 按会话存活判定放回。
+	if svc, svcErr := h.AppContext.GetKanbanService(); svcErr == nil {
+		svc.BeginOutOfBandSessionTurn(ctx, rootID, key)
+	}
 	// 答案已经交给 agent，任务对话里的同一张提问卡也要收口并写回答案；
 	// 否则会话侧答完，任务面板会一直停在 waiting_user。
 	h.AppContext.markTaskQuestionAnswered(ctx, rootID, key, toolUseID, answers)

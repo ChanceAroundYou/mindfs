@@ -364,14 +364,17 @@ func ProjectStatusFromRun(run *WorkflowRun) string {
 			allSuccess = false
 		}
 	}
-	if hasWaiting {
-		return StatusWaitingUser
-	}
+	// 运行中优先于等待：一个节点停在 human_gate / waiting_user 不等于任务停了，
+	// 别的分支的节点此刻在跑，任务头就必须是 running。反过来的顺序（等待优先）
+	// 会把「节点会话说在跑、任务却显示待处理」变成投影的常态。
 	if allSuccess {
 		return StatusSuccess
 	}
 	if hasRunning {
 		return StatusRunning
+	}
+	if hasWaiting {
+		return StatusWaitingUser
 	}
 	if hasPending {
 		return StatusPending

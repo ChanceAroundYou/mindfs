@@ -376,47 +376,34 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	sendErr := sendWithAttachedUpdates(sess, prompt)
 	if sendErr != nil && !isCanceledTurnError(sendErr) {
-		if isNonRecoverableAgentError(sendErr) {
-			log.Printf("[session] turn.send.non_recoverable root=%s session=%s agent=%s action=fail_without_recovery err=%v", in.RootID, current.Key, in.Agent, sendErr)
-			cancelRuntimeAfterNonRecoverableError(sess, agentPool, in.Agent, sendErr)
-		} else if !sawAssistantChunk {
-			log.Printf("[session] turn.send.no_response root=%s session=%s agent=%s action=fail_without_recovery", in.RootID, current.Key, in.Agent)
-		} else {
-			if in.OnUpdate != nil {
-				in.OnUpdate(agenttypes.Event{
-					Type: agenttypes.EventTypeRecovery,
-					Data: agenttypes.RecoveryStatus{Message: "遇到错误，重试中..."},
-				})
-			}
-			recoveredSess, recoveredErr := s.recoverAgentTurn(turnCtx, SendRecoveryInput{
-				RootID:             in.RootID,
-				SessionKey:         current.Key,
-				Manager:            manager,
-				Current:            current,
-				AgentName:          in.Agent,
-				Model:              in.Model,
-				Mode:               in.Mode,
-				Effort:             in.Effort,
-				FastService:        in.FastService,
-				PlanMode:           planMode,
-				RootAbs:            rootAbs,
-				CurrentSession:     sess,
-				Prompt:             prompt,
-				SawAssistantChunk:  sawAssistantChunk,
-				SendWithAttachment: sendWithAttachedUpdates,
-			})
-			if recoveredErr != nil {
-				sendErr = recoveredErr
-			} else {
-				sess = recoveredSess
-				sendErr = nil
-			}
-		}
+		sess, sendErr = s.applySendFailure(sendFailureContext{
+			Err:                sendErr,
+			TurnCtx:            turnCtx,
+			RootID:             in.RootID,
+			SessionKey:         current.Key,
+			AgentName:          in.Agent,
+			Model:              in.Model,
+			Mode:               in.Mode,
+			Effort:             in.Effort,
+			FastService:        in.FastService,
+			Manager:            manager,
+			Current:            current,
+			CurrentSession:     sess,
+			AgentPool:          agentPool,
+			PlanMode:           planMode,
+			RootAbs:            rootAbs,
+			Prompt:             prompt,
+			SawAssistantChunk:  sawAssistantChunk,
+			SendWithAttachment: sendWithAttachedUpdates,
+			OnUpdate:           in.OnUpdate,
+		})
 	}
 	flushThought()
 	if sendErr != nil && !isCanceledTurnError(sendErr) {
 		log.Printf("[session] turn.send.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, sendErr)
 	}
+	// 终端错误翻成用户能照做的下一步；%w 保留原始错误供详情与日志查看。
+	sendErr = explainTerminalTurnError(sendErr)
 	// 落盘不能被回合死线连坐：这里的 ctx 带的是**模型调用**上限（Router 回合
 	// 生产 180s），超时后它已经过期。继续用它写库会把「回合超时」错报成
 	// "persist turn blocks: context deadline exceeded"，助手行还会只剩元数据，

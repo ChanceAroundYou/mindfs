@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
 import { useControlSyncStatus } from "../../hooks/useControlSyncStatus";
 import { controlModeLabel, type ControlBannerAction, type ControlModeBannerState } from "../../shared/controlMode";
+import { ControlPairingGate } from "./ControlPairingGate";
 
 const TONE_COLOR: Record<ControlModeBannerState["tone"], string> = {
   online: "var(--text-secondary, #888)",
@@ -21,8 +22,23 @@ const TONE_COLOR: Record<ControlModeBannerState["tone"], string> = {
 
 export function ControlModeBanner() {
   const { t, formatTime } = useI18n();
-  const { status, enabled, busy, banner, reminder, runAction, dismissConflictReminder } =
-    useControlSyncStatus();
+  const {
+    status,
+    enabled,
+    busy,
+    banner,
+    reminder,
+    runAction,
+    dismissConflictReminder,
+    pairing,
+    pairingOpen,
+    openPairing,
+    closePairing,
+    pairingBusy,
+    pairingFailure,
+    paired,
+    submitPairing,
+  } = useControlSyncStatus();
   const [expanded, setExpanded] = useState(false);
   // 「接受新主节点」是两步：先点开确认条，明写会丢什么，再点一次才真发请求。
   // 它是这套界面里唯一会丢弃副本的动作，不能跟「重试」一样一击即中。
@@ -32,6 +48,24 @@ export function ControlModeBanner() {
   useEffect(() => {
     setConfirmAdopt(false);
   }, [modeKey]);
+
+  // 未配对的边缘：状态横幅此刻没有意义（连不上任何主控端），要出的是配对入口。
+  // 这是同一份轮询的另一半，放在这里而不是在 App 里再挂一次：
+  // 两处各自轮询会让「表单说没配上、横幅说在同步」真的发生。
+  if (pairing?.pending_pairing) {
+    return (
+      <ControlPairingGate
+        pairing={pairing}
+        open={pairingOpen}
+        busy={pairingBusy}
+        failure={pairingFailure}
+        paired={paired}
+        onOpen={openPairing}
+        onClose={closePairing}
+        onSubmit={submitPairing}
+      />
+    );
+  }
 
   if (!enabled || !banner) return null;
 

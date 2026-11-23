@@ -17,6 +17,10 @@ import {
   type ControlSyncStatus,
 } from "../../shared/controlMode";
 import type { SyncConflictChoice, SyncConflictView } from "../../shared/syncConflicts";
+import {
+  toPairingRequest,
+  type PairingDraft,
+} from "../../shared/controlPairing";
 
 export type { ControlMode, ControlSyncAction, ControlSyncStatus } from "../../shared/controlMode";
 export type { SyncConflictChoice, SyncConflictView } from "../../shared/syncConflicts";
@@ -86,6 +90,95 @@ export async function fetchControlSyncStatus(): Promise<ControlSyncStatus | null
     throw err;
   }
 }
+
+/**
+ * 读配对状态。返回 null = 本机不是「等着配对的边缘」。
+ *
+ * 这条探针本身只回 `pending_pairing` 与实例名，不回任何路径或密钥。
+ * 它存在的唯一理由：未配对时 `/status` 也不注册，前端否则无从区分
+ * 「等着配对」与「这台机器根本不同步」。
+ */
+export async function fetchControlSyncPairing(): Promise<ControlSyncPairingState | null> {
+  try {
+    const payload = await protectedJSON<unknown>(controlPath("/api/control-sync/pair"));
+    if (!payload || typeof payload !== "object") return null;
+    const record = payload as Record<string, unknown>;
+    if (record.pending_pairing !== true) return null;
+    return {
+      pending_pairing: true,
+      instance_id: typeof record.instance_id === "string" ? record.instance_id : undefined,
+    };
+  } catch (err) {
+    if (endpointMissing(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * 提交配对。
+ *
+ * 失败不抛异常，而是分类返回：三条失败路径对用户是三种完全不同的动作 ——
+ * 「去那台机器上打开页面」「检查主控端地址/网络」「改 token」，都交给视图层
+ * 直接说，不要再让它们各自去解 HTTP 状态码。
+ *
+ * 403 不是错误而是设计：配对会改信任锚、写通道密钥、改 config.json，所以服务端
+ * 只接受本机回环来源。经反代从外部打开页面时一定会撞到它。
+ */
+export async function pairControlSync(draft: PairingDraft): Promise<PairControlSyncOutcome> {
+  try {
+    const payload = await protectedJSON<unknown>(controlPath("/api/control-sync/pair"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(toPairingRequest(draft)),
+    });
+    return { ok: true, result: toPairResult(payload) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!(err instanceof APIError)) return { ok: false, kind: "rejected", message };
+    switch (err.status) {
+      case 403:
+        return { ok: false, kind: "not-local", message };
+      case 404:
+        return { ok: false, kind: "unsupported", message };
+      case 502:
+        return { ok: false, kind: "unreachable", message };
+      default:
+        return { ok: false, kind: "rejected", message };
+    }
+  }
+}
+
+function toPairResult(payload: unknown): ControlSyncPairResult {
+  if (!payload || typeof payload !== "object") return { restart_required: true };
+  const record = payload as Record<string, unknown>;
+  return {
+    // 服务端恒回 true（路由在启动期装配），缺字段时按 true 处理：
+    // 显示「已连接，无需重启」而实际还在未配对状态是最糟的方向。
+    restart_required: record.restart_required !== false,
+    instance_id: typeof record.instance_id === "string" ? record.instance_id : undefined,
+    primary_url: typeof record.primary_url === "string" ? record.primary_url : undefined,
+    primary_version:
+      typeof record.primary_version === "string" ? record.primary_version : undefined,
+    head_rev: typeof record.head_rev === "number" ? record.head_rev : undefined,
+  };
+}
+
+export type ControlSyncPairingState = {
+  pending_pairing: boolean;
+  instance_id?: string;
+};
+
+export type ControlSyncPairResult = {
+  restart_required: boolean;
+  instance_id?: string;
+  primary_url?: string;
+  primary_version?: string;
+  head_rev?: number;
+};
+
+export type PairControlSyncOutcome =
+  | { ok: true; result: ControlSyncPairResult }
+  | { ok: false; kind: "not-local" | "unsupported" | "unreachable" | "rejected"; message: string };
 
 /**
  * 显式切换 / 立即重试。retry 探不通不算失败：服务端仍回 200，状态里的

@@ -101,6 +101,15 @@ CREATE TABLE IF NOT EXISTS mode_events (
 	at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mode_events_recent ON mode_events(at DESC);
+-- 边控端名单：主节点靠它回答「谁在同步」与「谁被踢了」。
+-- 注册自动发生（任何一条过了签名校验的同步请求都会记一行），所以这张表是
+-- 运维索引而不是准入白名单 —— 真正的凭证始终是 token（见 store_edges.go）。
+CREATE TABLE IF NOT EXISTS edges (
+	instance_id TEXT PRIMARY KEY,
+	registered_at TEXT NOT NULL,
+	last_seen_at TEXT NOT NULL,
+	revoked_at TEXT NOT NULL DEFAULT ''
+);
 `
 
 // Store 是同步索引库的句柄。它只存「记录快照、变更日志、待回传、冲突现场」，

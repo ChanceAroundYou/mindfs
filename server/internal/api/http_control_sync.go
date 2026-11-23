@@ -78,6 +78,11 @@ func (h *HTTPHandler) requireSyncToken(next http.HandlerFunc) http.HandlerFunc {
 			respondError(w, http.StatusUnauthorized, errControlSyncUnauthorized)
 			return
 		}
+		// 认证通过之后才登记调用方：没带 token 的请求不该在名单里留下任何痕迹。
+		// 已被踢掉的边控端在这里被拒（403），且它的请求不会推进 last_seen_at。
+		if !h.noteRequestingEdge(w, r) {
+			return
+		}
 		next(w, r)
 	}
 }

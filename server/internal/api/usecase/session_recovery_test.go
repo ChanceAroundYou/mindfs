@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,5 +138,159 @@ func TestCancelRuntimeAfterNonRecoverableErrorClosesSession(t *testing.T) {
 	}
 	if runtime.closeCalls != 1 {
 		t.Fatalf("close calls = %d, want 1", runtime.closeCalls)
+	}
+}
+
+func TestIsTerminalTurnError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"typed blocking_limit", &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"}, true},
+		{"typed prompt_too_long case and space", &agenttypes.TurnTerminalError{Reason: " Prompt_Too_Long ", Message: "too big"}, true},
+		{"typed max_turns is retryable", &agenttypes.TurnTerminalError{Reason: "max_turns", Message: "max turns"}, false},
+		{"plain overflow text falls back", errors.New("API error: Prompt is too long"), true},
+		{"429 is not terminal", errors.New("429 Too Many Requests"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTerminalTurnError(tc.err); got != tc.want {
+				t.Fatalf("isTerminalTurnError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPlanSendFailure(t *testing.T) {
+	terminal := &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"}
+	cases := []struct {
+		name        string
+		err         error
+		sawChunk    bool
+		recycle     bool
+		recoverTurn bool
+		reason      string
+	}{
+		{"nil", nil, true, false, false, "none"},
+		{"non-recoverable wins and recycles", errors.New("429 Too Many Requests"), true, true, false, "non_recoverable"},
+		{"terminal with output does not retry", terminal, true, false, false, "terminal_turn"},
+		{"terminal without output does not retry", terminal, false, false, false, "terminal_turn"},
+		{"plain overflow with output does not retry", errors.New("Prompt is too long"), true, false, false, "terminal_turn"},
+		{"generic after output recovers", errors.New("stream ended unexpectedly"), true, false, true, "recover"},
+		{"generic without output does not retry", errors.New("stream ended unexpectedly"), false, false, false, "no_assistant_output"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := planSendFailure(tc.err, tc.sawChunk)
+			if got.RecycleRuntime != tc.recycle || got.RecoverTurn != tc.recoverTurn || got.Reason != tc.reason {
+				t.Fatalf("planSendFailure(%v, %v) = %#v, want recycle=%v recover=%v reason=%s",
+					tc.err, tc.sawChunk, got, tc.recycle, tc.recoverTurn, tc.reason)
+			}
+		})
+	}
+}
+
+func TestExplainTerminalTurnErrorKeepsCauseAndNextStep(t *testing.T) {
+	cause := &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"}
+	got := explainTerminalTurnError(cause)
+	if got == nil {
+		t.Fatal("explainTerminalTurnError returned nil")
+	}
+	if !strings.Contains(got.Error(), "压缩") {
+		t.Fatalf("message does not tell the user to compact: %v", got)
+	}
+	if !strings.Contains(got.Error(), "Prompt is too long") {
+		t.Fatalf("message lost the harness cause: %v", got)
+	}
+	if reason := agenttypes.TurnTerminalReason(got); reason != "blocking_limit" {
+		t.Fatalf("wrapped terminal reason = %q, want blocking_limit", reason)
+	}
+
+	generic := errors.New("boom")
+	if got := explainTerminalTurnError(generic); got != generic {
+		t.Fatalf("generic error was replaced: %v", got)
+	}
+}
+
+func TestApplySendFailureTerminalDoesNotCancelRuntime(t *testing.T) {
+	runtime := &fakeUsecaseAgentSession{id: "claude-session"}
+	service := Service{}
+	gotSess, gotErr := service.applySendFailure(sendFailureContext{
+		Err:               &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"},
+		AgentName:         "claude",
+		CurrentSession:    runtime,
+		SawAssistantChunk: true,
+	})
+	if gotErr == nil {
+		t.Fatal("terminal failure returned nil error")
+	}
+	if gotSess != runtime {
+		t.Fatalf("session = %#v, want the original runtime", gotSess)
+	}
+	if runtime.cancelCalls != 0 || runtime.closeCalls != 0 {
+		t.Fatalf("terminal failure touched the runtime: cancel=%d close=%d, want 0/0", runtime.cancelCalls, runtime.closeCalls)
+	}
+}
+
+func TestApplySendFailureNonRecoverableStillRecycles(t *testing.T) {
+	runtime := &fakeUsecaseAgentSession{id: "claude-session"}
+	service := Service{}
+	_, gotErr := service.applySendFailure(sendFailureContext{
+		Err:               errors.New("429 Too Many Requests"),
+		AgentName:         "claude",
+		CurrentSession:    runtime,
+		SawAssistantChunk: true,
+	})
+	if gotErr == nil {
+		t.Fatal("non-recoverable failure returned nil error")
+	}
+	if runtime.cancelCalls != 1 || runtime.closeCalls != 1 {
+		t.Fatalf("non-recoverable failure: cancel=%d close=%d, want 1/1", runtime.cancelCalls, runtime.closeCalls)
+	}
+}
+
+func TestRecoverAgentTurnStopsOnTerminalError(t *testing.T) {
+	rootDir := t.TempDir()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
+	manager := session.NewManager(root)
+	current, err := manager.Create(context.Background(), session.CreateInput{
+		Type:  session.TypeChat,
+		Agent: "claude",
+		Name:  "chat",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	service := Service{}
+	runtime := &fakeUsecaseAgentSession{id: "claude-session"}
+	var sent []string
+	gotSess, err := service.recoverAgentTurn(context.Background(), SendRecoveryInput{
+		RootID:            root.ID,
+		SessionKey:        current.Key,
+		Manager:           manager,
+		Current:           current,
+		AgentName:         "claude",
+		CurrentSession:    runtime,
+		Prompt:            "original prompt",
+		SawAssistantChunk: true,
+		SendWithAttachment: func(_ agenttypes.Session, content string) error {
+			sent = append(sent, content)
+			return &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"}
+		},
+	})
+	if err == nil {
+		t.Fatal("recoverAgentTurn returned nil error")
+	}
+	if gotSess != nil {
+		t.Fatalf("recoverAgentTurn returned session %#v, want nil", gotSess)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent %d recovery attempts, want exactly 1 (no retry after terminal error): %#v", len(sent), sent)
+	}
+	if reason := agenttypes.TurnTerminalReason(err); reason != "blocking_limit" {
+		t.Fatalf("recoverAgentTurn error reason = %q, want blocking_limit", reason)
 	}
 }

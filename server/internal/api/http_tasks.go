@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -103,7 +104,14 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 	}
 	detail, err := svc.CreateTask(r.Context(), create)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err)
+		errText := err.Error()
+		if strings.Contains(errText, "root not found") {
+			// 账户只在本节点数据面解析：陌生 user= 会得到空注册表，接着 root 查不到。
+			// 原文案只说 root not found，调用方误以为路由/编码坏了，实际要先核对 user。
+			errText = fmt.Sprintf("%s (root_id=%s, user=%s; check ?user= and the target node)",
+				errText, req.RootID, r.URL.Query().Get(userQueryParam))
+		}
+		respondError(w, http.StatusBadRequest, errors.New(errText))
 		return
 	}
 	h.broadcastTaskUpdated(req.RootID, detail)

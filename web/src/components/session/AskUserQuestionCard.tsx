@@ -129,10 +129,15 @@ export function AskUserQuestionCard({
     `${toolCall.title || ""}`.trim() ||
     (typeof toolCall.meta?.title === "string" ? toolCall.meta.title : "") ||
     "ask user";
+  // 任务里的 Router 提问卡没有会话与 tool call：答案要落成一条用户留言，
+  // 由任务面板自己回传（payload 里 sessionKey/toolUseId 为空，调用方据此分流）。
+  // 有会话的卡仍然必须带齐 session 与 tool id —— 少了其中之一说明数据坏了，
+  // 不能当成 Router 卡放行。
+  const sessionBound = !!sessionKey;
+  const routerCard = !sessionBound && !toolUseId;
   const canSubmit =
     !!rootId &&
-    !!sessionKey &&
-    !!toolUseId &&
+    (sessionBound ? !!toolUseId : routerCard) &&
     !!onAnswer &&
     questions.length > 0 &&
     questions.every((_, index) => (answers[`q_${index}`] || "").trim() !== "") &&
@@ -384,11 +389,19 @@ export function AskUserQuestionCard({
           type="button"
           disabled={!canSubmit}
           onClick={async () => {
-            if (!canSubmit || !rootId || !sessionKey || !toolUseId || !onAnswer) return;
+            if (!canSubmit || !rootId || !onAnswer) return;
             setSubmitting(true);
             setSubmitError(null);
             try {
-              await onAnswer({ rootId, sessionKey, agent, toolUseId, answers });
+              // Router 卡没有会话目标，两个 id 传空串：调用方按「都为空」分流到
+              // 任务留言端点，而不是往一个不存在的会话里回 tool_result。
+              await onAnswer({
+                rootId,
+                sessionKey: sessionKey || "",
+                agent,
+                toolUseId: toolUseId || "",
+                answers,
+              });
               setSubmitted(true);
               setExpanded(false);
             } catch (err) {

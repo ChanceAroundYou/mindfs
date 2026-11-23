@@ -270,6 +270,11 @@ func artifactPaths(distDir, version string) ([]string, error) {
 		filepath.Join(distDir, fmt.Sprintf("mindfs_%s_*.zip", version)),
 		filepath.Join(distDir, fmt.Sprintf("mindfs_%s_*.apk", version)),
 		filepath.Join(distDir, fmt.Sprintf("mindfs_%s_*.hap", version)),
+		// Windows 一键安装器（自解包 exe）。它和同名平台的 .zip 是两个产物：
+		// zip 要手动解包 + 四步安装，exe 双击即可（注册计划任务、改 PATH）。
+		// 签名清单是客户端唯一的产物索引 —— 漏了它，exe 能下载但永远不参与
+		// 自动更新校验，而错误是「清单里没有这个文件」，不指向这里。
+		filepath.Join(distDir, fmt.Sprintf("mindfs_%s_*setup.exe", version)),
 	}
 	var paths []string
 	for _, pattern := range patterns {

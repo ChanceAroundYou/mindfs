@@ -29,8 +29,20 @@ type ControlSyncOptions struct {
 	PrimaryURL string
 	CAFile     string
 	Token      string
+	// TokenFile 是 token 的落盘位置。只有主节点用得上：token 为空时代替「拒绝启动」，
+	// 在该路径上生成一份并写 0600（见 ensurePrimarySyncToken）。边缘的 token 由人放进去，
+	// 读不到就已经在 cli 侧拒绝了。
+	TokenFile string
 	// BuildVersion 是本进程的版本号，随 head 下发供对端诊断（不参与拒绝判定）。
 	BuildVersion string
+	// ConfigPath 是本进程实际读到的 config.json 路径（显式 -config 优先，否则缺省路径）。
+	// 只有边缘用得上：配对成功后要把 control_sync 段写回去，重启后才会以配对身份起来。
+	ConfigPath string
+	// PendingPairing 表示「这台机器想当边控端，但还没配好」：不启同步，只挂配对端点。
+	//
+	// 没有这一档的话，未配对的边缘在 cli 侧就会被拒（没有 token 不许起），用户拿到的
+	// 是一个起不来的服务 —— 连填配对表单的页面都没有。
+	PendingPairing bool
 }
 
 // controlSyncStores 是同步域赖以读写的既有权威存储。nil 表示那份存储没建起来。
@@ -51,12 +63,17 @@ type controlSyncWiring struct {
 	pusher    api.ControlSyncPusher
 	feed      api.ControlSyncFeed
 	conflicts api.ControlSyncConflicts
+	// edges 只有主节点非空：名单是「谁在同步我」的运维索引，边缘没有这个视角。
+	edges api.ControlSyncEdges
 	// token 只有主节点非空：边缘没有 push / head / changes 端点。
 	token string
 	// proxy 只有边缘非空：主节点不转发。
 	proxy *api.ControlProxy
 	// uiMirror 只有边缘非空：把主节点的前端构建搬到本机，主节点不可达时仍能出页面。
 	uiMirror *controlsync.UIMirror
+	// pairing 只有边缘非空：还没配好的机器靠它接上主控端。配对成功后要重启才生效，
+	// 所以它只负责落盘，不负责切换运行态。
+	pairing api.ControlSyncPairing
 }
 
 // uiMirrorOf 在 wiring 为 nil（未启用同步）时也安全。
@@ -87,7 +104,9 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 	h.ControlSyncPush = w.pusher
 	h.ControlSyncFeed = w.feed
 	h.ControlSyncConflicts = w.conflicts
+	h.ControlSyncEdges = w.edges
 	h.ControlSyncToken = w.token
+	h.ControlSyncPair = w.pairing
 }
 
 // wrapRoot 按角色包一层中间件：采集在内、转发在外。
@@ -97,6 +116,9 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 // 写入是否冻结由 ControlProxy 按域判定。
 func (w *controlSyncWiring) wrapRoot(next http.Handler) http.Handler {
 	if w == nil {
+		return next
+	}
+	if w.capturer == nil {
 		return next
 	}
 	root := w.capturer.WriteCapture(next)
@@ -109,7 +131,13 @@ func (w *controlSyncWiring) wrapRoot(next http.Handler) http.Handler {
 // startControlSync 组装控制面同步。opts 为 nil / 未启用时返回 (nil, nil)：
 // 这台机器保持改造前的行为，不建库也不起任何后台循环。
 func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole nodeinfo.Role, configDir string, stores controlSyncStores) (*controlSyncWiring, error) {
-	if opts == nil || !opts.Enabled {
+	if opts == nil {
+		return nil, nil
+	}
+	if opts.PendingPairing {
+		return pendingPairingWiring(opts, nodeRole), nil
+	}
+	if !opts.Enabled {
 		return nil, nil
 	}
 	if nodeRole == nodeinfo.RoleWorker {
@@ -135,8 +163,13 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 	}
 	if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {
 		// 没有 token 的 primary 不会注册 /push /head /changes，边缘永远同步不了 ——
-		// 那不是「少个可选配置」，是同步根本没通，必须在启动时说出来。
-		return nil, fmt.Errorf("control_sync: sync token required for primary (token_file)")
+		// 那不是「少个可选配置」，是同步根本没通。首次上线不该要求用户先手搓密钥，
+		// 所以在 token_file 上生成一份；生成失败才拒绝启动。
+		token, err := ensurePrimarySyncToken(opts.TokenFile)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Token = token
 	}
 	// token 是这条通道唯一的凭据，而它搬的是含口令 hash 的整份控制面：
 	// 手输的短串挡不住任何东西，在装配处（两个角色都在这里过一遍）直接拒掉。
@@ -157,6 +190,10 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		return nil, err
 	}
 	if err := store.Migrate(ctx); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if err := guardSinglePrimary(ctx, store, cfg); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
@@ -196,7 +233,12 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 	if cfg.Role == controlsync.RolePrimary {
 		w.pusher = rt.Pusher()
 		w.feed = rt.Feed()
+		w.edges = store
 		w.token = cfg.Token
+	} else {
+		// 已配对但运行中的边缘也挂配对端点：换主控端是同一件写配置＋换密钥的事，
+		// 多留一条人工改文件的路径只会让「换主控」变成一次手工事故。
+		w.pairing = newControlSyncPairer(opts, false)
 	}
 	if mode := rt.Mode(); mode != nil {
 		// 边缘：状态/模式端点 + 转发器。转发器只有在 online 时真的转发，

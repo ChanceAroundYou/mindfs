@@ -71,6 +71,7 @@ func TestSettleSessionTurnEmitsOneEventPerTurn(t *testing.T) {
 		SessionKey: "sess-main",
 		TurnID:     "turn-a",
 		Excerpt:    "把会话列表的排序改成了按更新时间。",
+		ToolCalls:  2,
 	}
 	inserted, err := f.svc.SettleSessionTurn(ctx, f.rootID, in)
 	if err != nil {
@@ -99,6 +100,11 @@ func TestSettleSessionTurnEmitsOneEventPerTurn(t *testing.T) {
 	}
 	if got := routerEventPayloadString(ev.PayloadJSON, "excerpt"); !strings.Contains(got, "会话列表") {
 		t.Fatalf("event excerpt = %q", got)
+	}
+	// tool_calls 是 Router 判断「这一轮有没有真干活」的唯一依据（turn_settled
+	// 回合的最后一条 say 要靠它才允许升成任务结论），必须在载荷里。
+	if got := routerEventPayloadInt(ev.PayloadJSON, "tool_calls"); got != 2 {
+		t.Fatalf("event tool_calls = %d, want 2", got)
 	}
 }
 
@@ -300,6 +306,35 @@ func TestTurnSettledBriefCarriesExcerptWithoutRunNoise(t *testing.T) {
 	}
 	if got := routerEventPayloadValue(brief.Event.Payload, "duration_ms"); got == nil {
 		t.Fatal("turn payload keys were dropped from the brief")
+	}
+}
+
+// 待决策项常常不在这一轮的最后一句：旧上限 400 字符只保留末尾 400 字，
+// 一旦后面还有收尾说明，四条「待拍板」就被切掉，Router 只能看到结论（#68）。
+func TestTurnSettledExcerptCarriesDecisionItemsBeyondLegacyLimit(t *testing.T) {
+	ctx := context.Background()
+	f := newTurnSettledFixture(t, "task-turn-excerpt", "sess-main")
+	decision := "【待拍板】1) 是否上线 2) 换哪个模型 3) 摘要口径"
+	// 决策项之后还有 600 个字符的收尾说明：落在旧 400 字窗口之外、新窗口之内。
+	excerpt := strings.Repeat("过程记录。", 150) + decision + strings.Repeat("收尾说明。", 120)
+	in := TurnSettledInput{SessionKey: "sess-main", TurnID: "turn-excerpt", Excerpt: excerpt}
+	if _, err := f.svc.SettleSessionTurn(ctx, f.rootID, in); err != nil {
+		t.Fatalf("SettleSessionTurn: %v", err)
+	}
+	events := f.events(t, RouterEventTurnSettled)
+	if len(events) != 1 {
+		t.Fatalf("turn_settled events = %d, want 1", len(events))
+	}
+	brief := &SituationBrief{}
+	if err := attachRouterEventBrief(ctx, f.store, brief, events[0]); err != nil {
+		t.Fatalf("attachRouterEventBrief: %v", err)
+	}
+	if !strings.Contains(brief.Event.Excerpt, "【待拍板】") {
+		t.Fatalf("brief 丢失了待决策项（保留 %d 字）：\n%s",
+			len([]rune(brief.Event.Excerpt)), brief.Event.Excerpt)
+	}
+	if n := len([]rune(brief.Event.Excerpt)); n > routerEventBriefExcerptRunes {
+		t.Fatalf("excerpt keeps %d runes, want <= %d", n, routerEventBriefExcerptRunes)
 	}
 }
 

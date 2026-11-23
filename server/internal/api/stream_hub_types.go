@@ -64,6 +64,13 @@ type SessionPendingState struct {
 	//
 	// 由 executeWorkflowTurn 在节点回合开始时显式置位；顶层对话与直连回合保持 false。
 	SilentCompletion bool
+	// ToolCalls 数的是**本轮**发起过多少次工具调用。
+	//
+	// 用途只有一个：回合结算时告诉 Router「这一轮到底有没有真干活」。纯闲聊回合
+	// 最后一条 say 不该被提升成任务结论，而 has_output / Summary 都区分不了「读了
+	// 三个文件后给出四条待决策项」和「回了一句好的」。每轮在 SetPendingUserAt
+	// 重置，AppendReplyEvent 见到工具调用就加一。
+	ToolCalls int
 }
 
 type ClientStreamStatus string
@@ -107,6 +114,9 @@ type PendingSessionSnapshot struct {
 	// SilentCompletion 与 SessionPendingState.SilentCompletion 同义；Web Push 用它跳过
 	// 任务子步骤（工作流节点）的完成提醒。
 	SilentCompletion bool
+	// ToolCalls 与 SessionPendingState.ToolCalls 同义；回合结算时用作「这一轮真的
+	// 干了活」的判据（turn_settled 事件载荷的 tool_calls）。
+	ToolCalls int
 }
 
 type replayStep struct {

@@ -236,7 +236,8 @@ func (rs *RouterService) coordinateTick() {
 		log.Printf("[router/coordinate] scan.error root=%s err=%v", rs.rootID, err)
 	}
 	// 任务级巡检（W3-2）：事件扫描只看 Run 与直连回复，看不见「回合在飞但没有
-	// 产出」和「running 的空壳任务」。它只写事件，动作仍由消费侧决定。
+	// 产出」和「running 的空壳任务」。它只写事件（waiting_busy 例外：按会话存活把
+	// 已落到待处理的任务头纠回 running），动作仍由消费侧决定。
 	if produced, err := rs.service.taskHealthSweep(ctx, rs.rootID, now); err != nil {
 		log.Printf("[router/coordinate] health.error root=%s err=%v", rs.rootID, err)
 	} else if len(produced) > 0 {

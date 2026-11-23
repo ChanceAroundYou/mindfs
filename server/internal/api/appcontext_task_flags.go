@@ -116,6 +116,7 @@ func (s *AppContext) settleSessionTurnForRouter(rootID, sessionKey, turnID strin
 		SessionKey: sessionKey,
 		TurnID:     turnID,
 		Excerpt:    pending.Summary,
+		ToolCalls:  pending.ToolCalls,
 		Failed:     turnErr != "",
 		Error:      turnErr,
 	})

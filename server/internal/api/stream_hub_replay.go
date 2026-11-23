@@ -24,6 +24,12 @@ func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) Strea
 		event.Timestamp = time.Now().UTC()
 	}
 	state.UpdatedAt = event.Timestamp
+	// 只数真正的工具调用：流式更新（userShell 的 ToolUpdate）是同一个调用的续传，
+	// 数进来会让一条命令被记成很多次。回合结算时这个值决定 Router 的总结能不能
+	// 成为任务结论，宁少勿多。
+	if event.Type == string(agenttypes.EventTypeToolCall) {
+		state.ToolCalls++
+	}
 	if coalesceUserShellStreamEvent(state, event) {
 		return event
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	claudeagent "github.com/roasbeef/claude-agent-sdk-go"
+
+	agenttypes "mindfs/server/internal/agent/types"
 )
 
 func (s *session) SendMessage(ctx context.Context, content string) error {
@@ -109,16 +111,28 @@ func resultErr(msg claudeagent.ResultMessage) error {
 	if !msg.IsError && (status == "success" || subtype == "success") && !strings.HasPrefix(subtype, "error") {
 		return nil
 	}
+	err := errors.New("claude turn failed")
 	if len(msg.Errors) > 0 {
-		return errors.New(strings.Join(msg.Errors, "; "))
+		err = errors.New(strings.Join(msg.Errors, "; "))
+	} else if strings.TrimSpace(msg.Result) != "" && (msg.IsError || strings.EqualFold(msg.Status, "error")) {
+		err = errors.New(msg.Result)
+	} else if strings.TrimSpace(msg.Subtype) != "" {
+		err = errors.New("claude result: " + msg.Subtype)
 	}
-	if strings.TrimSpace(msg.Result) != "" && (msg.IsError || strings.EqualFold(msg.Status, "error")) {
-		return errors.New(msg.Result)
+	return wrapTurnTerminalError(msg, err)
+}
+
+// wrapTurnTerminalError 把 terminal_reason 挂到错误上，供上层区分「重试也没用」。
+// 成功结果不挂：terminal_reason=completed 是正常收尾，不是失败判据。
+func wrapTurnTerminalError(msg claudeagent.ResultMessage, err error) error {
+	if err == nil || msg.TerminalReason == nil {
+		return err
 	}
-	if strings.TrimSpace(msg.Subtype) != "" {
-		return errors.New("claude result: " + msg.Subtype)
+	reason := strings.TrimSpace(string(*msg.TerminalReason))
+	if reason == "" {
+		return err
 	}
-	return errors.New("claude turn failed")
+	return &agenttypes.TurnTerminalError{Reason: reason, Message: err.Error()}
 }
 
 // isTurnBoundaryResult 判定一条 ResultMessage 是否代表「人类发起的那一轮结束」。

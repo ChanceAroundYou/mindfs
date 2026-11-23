@@ -11,7 +11,18 @@ import {
   type ControlBannerAction,
   type ControlSyncStatus,
 } from "../shared/controlMode";
-import { fetchControlSyncStatus, switchControlSyncMode } from "../services/net/controlSync";
+import type { PairingDraft } from "../shared/controlPairing";
+import {
+  fetchControlSyncPairing,
+  fetchControlSyncStatus,
+  pairControlSync,
+  switchControlSyncMode,
+  type ControlSyncPairResult,
+  type ControlSyncPairingState,
+  type PairControlSyncOutcome,
+} from "../services/net/controlSync";
+
+export type { ControlSyncPairResult, ControlSyncPairingState, PairControlSyncOutcome };
 
 // 与服务端探测间隔同量级：探测 10 秒一拍、3 次失败才降级，前端更密也看不出差别。
 const POLL_MS = 10_000;
@@ -21,6 +32,13 @@ export function useControlSyncStatus() {
   // 端点 404 = 本机没有这个能力（主节点 / 未启用）。关掉后不再轮询。
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
+  // 未配对的边缘：只注册了 /pair 与它的只读探针，/status 同样 404。
+  // 这两件事在前端必须分开，否则配对表单永远不会出现。
+  const [pairing, setPairing] = useState<ControlSyncPairingState | null>(null);
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [pairingOpen, setPairingOpen] = useState(false);
+  const [paired, setPaired] = useState<ControlSyncPairResult | null>(null);
+  const [pairingFailure, setPairingFailure] = useState<PairControlSyncOutcome | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -30,8 +48,11 @@ export function useControlSyncStatus() {
         const next = await fetchControlSyncStatus();
         if (cancelled) return;
         if (!next) {
+          // /status 404 有两种可能：这台机器根本不同步，或者它是等着配对的边缘。
+          // 后者的页面上必须出现配对表单 —— 那是拿到 token 的唯一入口。
           setEnabled(false);
           setStatus(null);
+          setPairing(await fetchControlSyncPairing());
           return;
         }
         setStatus(next);
@@ -95,5 +116,43 @@ export function useControlSyncStatus() {
     [busy, dismissConflictReminder],
   );
 
-  return { status, enabled, busy, banner, reminder, runAction, dismissConflictReminder };
+  const submitPairing = useCallback(
+    async (draft: PairingDraft) => {
+      if (pairingBusy) return;
+      setPairingBusy(true);
+      setPairingFailure(null);
+      try {
+        const outcome = await pairControlSync(draft);
+        if (outcome.ok) {
+          setPaired(outcome.result);
+          // 配好之后这台机器仍是「未配对」进程：路由在启动期装配，要重启才生效。
+          // 表单留在原处并改成「已连接，重启后生效」，不能默默消失 ——
+          // 用户会以为没点中。
+          return;
+        }
+        setPairingFailure(outcome);
+      } finally {
+        setPairingBusy(false);
+      }
+    },
+    [pairingBusy],
+  );
+
+  return {
+    status,
+    enabled,
+    busy,
+    banner,
+    reminder,
+    runAction,
+    dismissConflictReminder,
+    pairing,
+    pairingOpen,
+    openPairing: useCallback(() => setPairingOpen(true), []),
+    closePairing: useCallback(() => setPairingOpen(false), []),
+    pairingBusy,
+    pairingFailure,
+    paired,
+    submitPairing,
+  };
 }

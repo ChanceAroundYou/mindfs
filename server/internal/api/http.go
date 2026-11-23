@@ -53,6 +53,12 @@ type HTTPHandler struct {
 	ControlSyncToken string
 	// ControlSyncConflicts 是冲突卡的查询与裁决。nil = 未启用。
 	ControlSyncConflicts ControlSyncConflicts
+	// ControlSyncEdges 是主节点侧的边控端名单（自动登记 + 踢人）。
+	// nil = 未启用；非 nil 时 requireSyncToken 会顺手登记调用方。
+	ControlSyncEdges ControlSyncEdges
+	// ControlSyncPair 是边控端的「接到主控端」动作。只有还没配好的边缘会挂它 ——
+	// 那时没有 token 可校验，守卫是本机回环（见 handleControlSyncPair）。
+	ControlSyncPair ControlSyncPairing
 
 	// 同步通道的 nonce 缓存：懒初始化，只有配了 token 的节点才会用到。
 	// 单次初始化是为了让 Routes 之外构造的 handler（测试、装配）也共享同一份缓存，

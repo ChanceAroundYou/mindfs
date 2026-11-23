@@ -1,6 +1,8 @@
 # Router 巡检回合可决策化 · 提问卡收口 · OOB 活跃判定 · 摘要保留决策
 
-> Scope IDs: G-QE / G-QF（G-QE claimed 2026-11-23T08:16Z，批次 1；G-QF claimed 2026-11-23T09:11Z，批次 2；批次 3 的组号在实现时再申请，见文末「组号」一节）
+> Scope IDs: G-QE / G-QF / G-QG / G-QI / G-QN（G-QE claimed 2026-11-23T08:16Z，批次 1；
+> G-QF claimed 2026-11-23T09:11Z，批次 2；G-QG claimed 2026-11-23T09:36Z，批次 3 第 5 项；
+> G-QI claimed 2026-11-23T14:53Z，批次 3 第 6 项；G-QN 原为 G-QL，2026-11-24 合回 main 时撞号改号，批次 4）
 
 Plan 2026-11-23。起点是用户在本机（local 节点）mindfs 项目上的两条观察：
 
@@ -129,7 +131,7 @@ if s.sessionRunning(item.SessionKey) {
 仍 `waiting_user` 的收口成 `cancelled`（理由「已被更新的提问取代」）。这同时清掉线上
 `q-84825203e4fe3902`（**不改库，只靠代码**；直接写库要另行授权）。
 
-### 批次 3 —— 总结与真卡片（Scope: 实现时申请）
+### 批次 3 —— 总结与真卡片（Scope: G-QG / G-QI）
 
 **5. `turn_settled` 也允许把最后一条 say 提升成 summary**，但仅当这一轮有真实执行
 结果（会话里确实有工具调用/产物，不是纯闲聊）。同轮还要加一道保护：**Router 写进
@@ -187,10 +189,93 @@ AskUserQuestion 被重问过，旧卡仍有效。行内二次清扫是空操作�
 门禁：`go test ./server/internal/kanban/ -count=1` EXIT=0（379 s）、
 `make check-upstream` 2625 delta / 383 组全绿。
 
+### 批次 3 · 第 5 项（Scope: G-QG）—— 已实现，门禁绿
+
+**判据是「这一轮真跑过工具」，不是「回合结算了」。** `turn_settled` 没有 Run，
+每轮会话又都会结算（纯闲聊也结算），所以把「结算」当判据会让每句闲聊顶掉卡片结论。
+真正可用的信号只有会话流自己知道：这一轮发起过几次工具调用。
+
+| 项 | RED 证据 | GREEN | 变异验证 |
+|---|---|---|---|
+| 有执行结果的一轮才提升最后一条 say | `TestTurnSettledPromotesLastSayWhenTurnHadToolCalls` 首跑 `result_summary = "", want 本轮结论…` | 决策行走通 `tool_calls>0 → HadToolCalls → settleSummarySeq` 后任务摘要等于最后一条 say | ① 去掉 `if decision.HadToolCalls` 直接无条件提升 → 纯闲聊用例红；② 条件写反（`!HadToolCalls`）→ 两条用例同时红；③ 只在 payload 里写死 0 → 提升用例红 |
+| 纯文本回合不许顶掉摘要 | `TestTurnSettledKeepsProgressWhenTurnHadNoToolCalls` 首跑 `result_summary = "收到，我把口径记下来了。"` | 同一套代码下摘要保持为空 | 同上 ① |
+| 工具调用按轮计数 | `TestAppendReplyEventCountsToolCallsPerTurn` 首跑 `tool_calls = 0, want 2` | `SessionPendingState.ToolCalls` 在 `setPendingUserAt` 归零、`EventTypeToolCall` 累加，快照带出 2；新回合归零 | 把累加挪到 `EventTypeToolUpdate`（同一调用的续传）→ 计数变成 3，用例红 |
+| 载荷与 brief 白名单 | `TestSettleSessionTurnEmitsOneEventPerTurn` 增断言 `event tool_calls = 0, want 2` | `TurnSettledInput.ToolCalls` → 载荷 `"tool_calls"`，brief 白名单放行（不放行会被当未知键、报「载荷被截断」） | 从白名单删掉 `"tool_calls"` → 该断言红且 brief 标记 truncated |
+| Router 总结不被迟到的压缩器覆盖 | `TestCompressedReplySummaryCannotOverwriteRouterSummary` 首跑 `result_summary = "压缩器给出的短句", want ""`（Router 刚写下的总结已被顶掉） | 压缩器调度时快照期望值、落地 CAS 只改仍等于快照的行 → Router 后写的摘要保留；`TestCompressedReplySummaryLandsWhenTaskSummaryUnchanged` 钉住反向：目标值仍等于快照时压缩照常落地 | 把 CAS 去掉改成无条件写 → 第一条用例红 |
+| 压缩器不许压掉待决策项 | `TestBuildReplySummaryCompressPromptCarriesEvidence` 增断言（原型只查任务名/留言/原文/agent，提示词里找不到「待用户决策」） | `buildSummaryCompressPrompt` 增两条：决策/审批事项逐条列清、不得为压字数合并；这类事项可超出 200 字上限 | 删掉新增的两条 `WriteString` → 该用例红（`prompt missing "待用户决策"`） |
+
+判据口径：`ToolCalls` 数的是**本轮**发起的工具调用次数（`EventTypeToolCall`），
+`EventTypeToolUpdate` 是同一调用的续传，不重复计数；`had_tool_calls` 落库是为了应用期
+不依赖被裁剪过的 brief 载荷（载荷值有 500 字节上限）。
+
+同批修正（测试基建，不涉及产品行为）：`turnInterruptedFixture` 原把现场钉在
+`2026-11-22T12:00Z`，而决策时重算监管块的时钟是真实 `time.Now()`，于是「中断后 24 小时
+内才允许重开」在 2026-11-23T12:00Z 之后永远判 false —— `TestTurnInterruptedEventRestartsTurn`
+与 `TestHealthSupervisionInterruptedAllowsRetryOfSettledReply` 当天集体变红（报错还写成
+自相矛盾的 `budget exhausted (0/3)`）。改为按调用时刻取锚点，并新增 `consumeEventsAt`
+让按时刻造的现场用同一个时钟消费事件。
+
+门禁：`go test ./server/internal/kanban/ -count=1` EXIT=0、`go test ./server/internal/api/ -count=1` 绿。
+
+### 批次 3 · 第 6 项（Scope: G-QI）—— 已实现，门禁绿
+
+**「Router 把问题写进正文」等于没问。** 等待态的 `agent_reply` 在前端只是一条没说完的
+话：没有按钮、不挡输入框，答案也不以任何形式回到 Router —— #68 的四条待拍板事项就是
+这么漂走的。`type=question` 一次给齐三样东西：卡片按钮（`payload.questions`）、输入框锁
+（`pendingTaskPrompt` 只认 question / human_gate）、一个明确的作答入口。
+
+| 项 | RED 证据 | GREEN | 变异验证 |
+|---|---|---|---|
+| ask_user 落成真提问卡 | `TestRouteAskUserLandsRealQuestionCard` 首跑 `activity type = "agent_reply", want "question"` | `SetQuestionCard` 把占位行改成 `type=question` + `payload_json`（`source=router`、`questions[].question/header`、`options[].label`），正文与广播同步带 `type`/`payload_json` | 把 `SetQuestionCard` 整段删掉 → 用例红（报的正是 type 仍是 agent_reply） |
+| 新卡取代旧卡 | `TestRouteAskUserSupersedesEarlierWaitingCard` 首跑 `superseded card status = "waiting_user", want cancelled` | `closeRouterQuestionsBefore` 只收口 `session_key` 为空的更早 `waiting_user` 卡，`ResolvePrompt` CAS 后广播 `cancelled` + 「已被更新的提问取代」 | 让 `OpenRouterQuestionsByTask` 返回空集 → 用例红（旧卡停在 waiting_user） |
+| 作答 = 绑定留言 + 卡片收口 | `TestAnswerQuestionCardCreatesUserReplyAndClosesCard` 首跑 `answer body = "A", want the question paired with the choice` | `AnswerQuestionCard` 先 `CreateUserReply`（正文「问题 → 答案」），再 CAS 收口并把 `payload.answers` 写回同一行 | ① 正文只写答案 → 用例红；② 不回写 `answers` → `card answers = nil` 红 |
+| 会话卡不许走这条入口 | `TestAnswerQuestionCardRejectsSessionBoundCard` 首跑 `err = <nil>, want ErrQuestionSessionBound` | 载荷 `source != router` 一律拒绝：那答案属于会话的 tool call，当成任务留言派发会让 Agent 永远等不到 tool_result | 删掉 `source` 判断 → 用例红 |
+| 前端放行 Router 卡 | `web/tests/task-router-question-card.test.mjs` 的守卫用例 | `AskUserQuestionCard` 区分「有会话」与「Router 卡」；提交时两个 id 以空串回传 | 把 `routerCard` 写成常量 `false` → 守卫用例红 |
+| 作答分流 | 同上第三条用例 | `useTaskActivities.answerQuestion`：`payload.source=router`（或两个 id 都空）走 `answerTaskQuestion`，否则仍走会话 `answerQuestion` | 同上一处 |
+| Router 看得见整轮决策项 | `TestTurnSettledExcerptCarriesDecisionItemsBeyondLegacyLimit` 首跑 `brief 丢失了待决策项（保留 401 字）` | `routerSettlementExcerptRunes` 400 → 1000，仍在 brief 1200 字上限与载荷 8192 字节硬顶之内 | 把常量改回 400 → 用例红（保留 401 字） |
+
+顺序约束：**先留言、后收口**。`CreateUserReply` 要求卡还停在 `waiting_user`，先收口会让它
+把答案当成「已经答过」丢弃；反过来中途失败时卡仍是打开的，重试命中已有留言的幂等分支，
+不会写出第二条留言。新卡取代旧卡是**单向**的（Router 只关 Router 的卡），会话里的卡归
+会话事件管。
+
+同批（规则面，已在批次 1/3a 落地的部分一并复核）：`router_prompt.md` 规则 18 增补
+「同轮出现待决策/审批事项就必须 `router_ask_user`，每题 2–4 个选项，规则 17 的七类不受
+「不用问了」豁免」，由 `TestRouterPromptTurnsDecisionItemsIntoQuestionCards` 钉住；兜底 B
+（从纯文本嗅探决策项）按用户裁定不做。摘要窗口同组放宽（400 → 1000），理由见上表：
+#68 的待拍板事项排在收尾说明之前，旧窗口只留得住末尾的收尾。
+
+门禁：`go test ./server/internal/kanban/ -run 'TestRouteAskUser|TestAnswerQuestionCard' -count=1`
+绿、`tsc -b --noEmit` clean、`npx vitest run tests/task-router-question-card.test.mjs` 3/3、
+`make check-upstream` 见提交记录。前端未部署、未重启任何节点。
+
 ## 6. 组号
 
 - **G-QE** —— 批次 1（OOB 活跃判定 / 提问卡收口 / 巡检回合可见拒绝 + 规则 11/12），已实现并登记。
 - **G-QF** —— 批次 2（启动清扫收口被重问取代的存量等待卡），已实现并登记。
-- 批次 3 的组号在实现时由 `scripts/scope-id claim` 现场申请：前一批落地、登记、门禁绿之后
-  再取号。一次性 claim 多组会让尚未实现的占位一直把 `make check-upstream` 的断言 5 打红，
-  抢不到干净的提交点。
+- **G-QG** —— 批次 3 第 5 项（`tool_calls` 证据链 + 有执行结果才提升结算总结 + 压缩器覆盖保护），
+  已实现并登记。
+- **G-QI** —— 批次 3 第 6 项（ask_user 落成真提问卡：按钮 / 输入框锁 / 作答成留言，新卡取代
+  旧卡，前端双路分流），已实现并登记。批次 3 第 6 项在取号时 G-QG 已被第 5 项占用，按
+  「前一批落地、登记、门禁绿之后再取号」的规矩现场用 `scripts/scope-id claim` 取了 G-QI ——
+  一次性 claim 多组会让尚未实现的占位一直把 `make check-upstream` 的断言 5 打红。
+- **G-QN** —— 批次 4（任务状态跟随会话/节点的真实运行状态），已实现并登记；原为 G-QL，
+  2026-11-24 合回 main 时撞号改号。
+
+### 批次 4（Scope: G-QN）—— 任务状态跟随会话/节点的真实运行状态
+
+用户 2026-11-24 现场：「如果任务的某些节点的会话在运行中，任务状态应该正确切换到运行中，
+即使已经落到待处理。包括用户直接给会话发消息。」线上 #104 / #68 取证：任务行 `waiting_user`，
+绑定会话仍出现在 `/api/replying-sessions` 且块文件在长；任务从运行中掉到待处理、又没能切回去。
+
+| 根因 | 修复 | 钉住的测试 |
+|---|---|---|
+| 投影 `ProjectStatusFromRun` 让 waiting 压过 running，一个节点停在 gate 就把整个任务投影成待处理 | 运行中优先于等待（终态仍最高） | `TestProjectStatusFromRunRunningBeatsWaiting` |
+| 用户直接给会话发消息时 `BeginOutOfBandSessionTurn` 只认 `waiting_user`，`pending` 任务不抬升 | 等待类状态（含 pending）都认领 | `TestOutOfBandTurnLivenessRestoresOnlyWhenAlone` |
+| 回答提问卡走 `answer_question`，完全没走 OOB 入口 | 成功提交答案后按同一入口认领回合 | `TestAnswerQuestionHandlerClaimsOutOfBandTurn`（源码契约） |
+| 节点回合开始时不写任务头，上轮留下的 waiting 一直显示到终态投影 | 执行器 claim 成功后抬到 running | `TestWorkflowNodeTurnMarksWaitingTaskRunning`（agent 回合内读任务状态） |
+| 结算无条件写回 waiting_user，把同任务另一条还在跑的会话一起标成待处理 | 结算时按统一判定 `taskRuntimeLive` 回落；Router 会话不计入 | `TestOutOfBandTurnLivenessRestoresOnlyWhenAlone` |
+| 已经落到待处理之后没人再纠（节点会话仍跑） | 巡检 `waiting_busy` 分支按同一判定纠回 running（只改任务头、不发事件） | `TestHealthSweepCorrectsWaitingBusyTask` |
+
+判定口径统一在 `service_task_runtime_status.go`：绑定会话探针（排除当前结算的会话）+ 节点行
+`running`（不看只写终态的 NodeStates）。六处修复逐一变异验证，改回旧逻辑各自打红对应用例。

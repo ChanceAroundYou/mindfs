@@ -12,7 +12,7 @@ import {
   applyActivityUpdated,
   parseTaskActivityPayload,
 } from "../shared/activityModel";
-import { createActivity, listActivities } from "../services/activities";
+import { answerTaskQuestion, createActivity, listActivities } from "../services/activities";
 import {
   fileTokenPath,
   formatFileToken,
@@ -209,22 +209,30 @@ export function useTaskActivities(
       const sessionKey = activity.session_key || "";
       const toolUseId =
         `${activity.tool_use_id || payload.tool_use_id || ""}`.trim();
-      if (!targetRoot || !sessionKey || !toolUseId) {
+      // 两种提问卡走两条路：会话里的卡把答案回给那个 tool call；Router 的卡没有
+      // 会话（payload.source=router），答案要落成一条用户留言 —— Router 读的
+      // 是 user_message 回合，往不存在的会话里发答案只会安静丢掉。
+      const routerCard = payload.source === "router" || (!sessionKey && !toolUseId);
+      if (!targetRoot || (!routerCard && (!sessionKey || !toolUseId))) {
         setPromptError(errorMessage(new Error("question card is missing its session or tool id")));
         throw new Error("question card is missing its session or tool id");
       }
       setPromptDeciding(true);
       setPromptError(null);
       try {
-        const answered = await sessionService.answerQuestion(
-          targetRoot,
-          sessionKey,
-          typeof payload.agent === "string" ? payload.agent : undefined,
-          toolUseId,
-          answers,
-        );
-        if (!answered) {
-          throw new Error("answer was not accepted");
+        if (routerCard) {
+          await answerTaskQuestion(taskId, targetRoot, activity.id, answers, nodeId);
+        } else {
+          const answered = await sessionService.answerQuestion(
+            targetRoot,
+            sessionKey,
+            typeof payload.agent === "string" ? payload.agent : undefined,
+            toolUseId,
+            answers,
+          );
+          if (!answered) {
+            throw new Error("answer was not accepted");
+          }
         }
         // 乐观收口：WS 回声到达前先让卡片退出等待态，避免用户重复点击。
         setActivities((prev) =>

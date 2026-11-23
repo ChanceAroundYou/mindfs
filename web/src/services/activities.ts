@@ -41,6 +41,11 @@ export async function listActivities(
   return Array.isArray(payload?.activities) ? payload.activities : [];
 }
 
+export type AnswerQuestionResponse = {
+  user_activity: TaskActivity;
+  agent_activity?: TaskActivity | null;
+};
+
 export async function createActivity(
   taskId: string,
   rootId: string,
@@ -63,6 +68,34 @@ export async function createActivity(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    },
+  );
+}
+
+/**
+ * 回答 Router 发起的任务提问卡。
+ *
+ * 与 createActivity 的差别只在入口：答案以「这张卡」为 reply_to 落成一条用户
+ * 留言，后端同时把卡收口。会话里的提问卡不走这里 —— 它们的答案必须回到那个
+ * 会话的 tool call（WS 的 answerQuestion）。
+ */
+export async function answerTaskQuestion(
+  taskId: string,
+  rootId: string,
+  activityId: string,
+  answers: Record<string, string>,
+  nodeId?: string,
+): Promise<AnswerQuestionResponse> {
+  return protectedJSON<AnswerQuestionResponse>(
+    appURL(
+      `/api/tasks/${encodeURIComponent(taskId)}/activities/${encodeURIComponent(activityId)}/answer`,
+      undefined,
+      nodeId,
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ root_id: requiredRoot(rootId), answers }),
     },
   );
 }

@@ -6322,7 +6322,7 @@ groups:
     title: Windows 后台运行：GUI 子系统不分配控制台 + 不跳探针 + 托盘入口（图标用网页那份）
     kind: fix
     symptom: "PC（Windows）上一直跑着一个黑色控制台窗口：登录或后台启动 mindfs 时弹一个黑框，关掉它就把服务一起带走。**只给子进程加 CREATE_NO_WINDOW 治不了它** —— 2026-10-19 在 pc-win 上实测：任务计划直接拉起的 mindfs.exe 自己是控制台子系统程序，Windows 照样给它分配控制台，而且那台机器把 Windows Terminal 设成了默认终端，控制台被交接过去，屏幕上是一个标题为 `...\\Programs\\mindfs\\bin\\mindfs.exe` 的 Windows Terminal 窗口；这种交接后的窗口在进程内部藏不掉（GetConsoleWindow 拿到的是隐藏的假句柄，ShowWindow 无效）。同一个节点上 codex/claude 永远显示「probe pending」、状态灯红、agent 选不了 —— 数据面其实正常（项目与会话按 API 能读出来）。而且后台实例没有任何可点的地方：界面里不存在「启动某个节点」的动作，节点行连双击都没反应。托盘消息循环把 MSG 句柄当结构体指针传给 DispatchMessageW 时，进程会当场 0xc0000005 退出（计划任务里表现为 LastTaskResult 2、节点离线）—— 结构布局与传参口径由 cli/cmd/tray_test.go 钉住。托盘图标曾经是 LoadIconW(IDI_APPLICATION) 那个系统默认白板图标，用户认不出是哪个程序。最误导人的一条是「图标在、悬停提示也在，但右键没有任何反应」：注册图标时给的 uFlags 表把 NIF_MESSAGE 写成了 NIF_TIP 的值、NIF_TIP 写成了 NIF_STATE 的值，于是 shell 只画图标和提示、**从不回调鼠标事件**，看着像「菜单弹不出来」，实际是点击事件根本没送到窗口。"
-    why: "上游的 windowsBackgroundCreationFlags 只给 DETACHED_PROCESS，而 DETACHED_PROCESS 的含义是「不挂在启动它的那个终端上」——控制台子系统程序没有控制台时 Windows 会**新建一个**，于是每次弹黑框；上游定义了 CREATE_NO_WINDOW 却只用在浏览器启动路径（browser_command.go），合上游时这一行会被静冲掉、黑框回来。但那只管得住 mindfs 自己派生出去的子进程：**mindfs.exe 本身是控制台子系统程序这件事，只能靠 `-H=windowsgui` 改**（scripts/build-all.sh 按 GOOS 追加，非 Windows 目标不受影响），否则任务计划 / 资源管理器双击 / Run 键这三种「启动方本来就没有控制台」的路径必然弹框。代价是 CLI 输出没有出口，所以启动时 AttachConsole(ATTACH_PARENT_PROCESS) 把父进程的控制台挂回来并把三个标准句柄指过去（log 包在 init 时就存了 os.Stderr，必须再 log.SetOutput 一次）；挂不上就什么都不做，那正是要的「没有窗口」。顺带把后台实例的 stdout/stderr 落到 logPath：systemd 的 StandardOutput 与 launchd 的 StandardOutPath 都让后台实例日志落盘，Windows 原本拿那个黑框当出口，黑框没了就得自己写文件。上游另一处按平台一刀切（shouldRunBackgroundRuntimeProbe 排除 windows），理由是「探测会弹控制台窗口」——窗口问题归进程标志管：agent CLI 一律走 acp 进程路径，那条路径带 CREATE_NO_WINDOW（acp/process_windows_flags_test.go 钉着），所以一刀切剩下的只有副作用：Windows 上 agent 永远停在 available=false / probe pending，没有任何路径能让它变绿（ReportSuccess 只在真的跑过一次交互时才写，而 available=false 已经挡掉了那次交互）。两条是同一块改动面：先有标志，才谈得上把一刀切拿掉。托盘是同一形态的第三件——后台实例没有终端、界面里也没有启动入口，所以它需要一个可点的图标（双击开页面、右键退出），图标用网页那份应用图标（web/public/pwa-512.png，与 favicon 同一套 glyph）转成 assets/tray.ico 嵌进二进制：worker 上不保证有 web 资源可读，回退系统默认图标等于让用户看到一个不认识的白板。托盘这条路径上唯一必须逐位钉死的是 NIF_/NIM_ 的字面值（NIF_MESSAGE=1、NIF_ICON=2、NIF_TIP=4、NIF_STATE=8，照 winuser.h/shellapi.h 抄，别凭记忆写）与 NOTIFYICONDATAW 的 cbSize：cbSize 是 shell 判断结构长度的唯一依据，uFlags 少一位 NIF_MESSAGE 就只剩「图标在、提示在、右键没反应」这个极具误导性的形态。tray_test.go 把这张表、结构布局（amd64 上 976 字节及关键偏移）和「trayIconFlags() 必须含 NIF_MESSAGE」都钉住了。"
+    why: "上游的 windowsBackgroundCreationFlags 只给 DETACHED_PROCESS，而 DETACHED_PROCESS 的含义是「不挂在启动它的那个终端上」——控制台子系统程序没有控制台时 Windows 会**新建一个**，于是每次弹黑框；上游定义了 CREATE_NO_WINDOW 却只用在浏览器启动路径（browser_command.go），合上游时这一行会被静冲掉、黑框回来。但那只管得住 mindfs 自己派生出去的子进程：**mindfs.exe 本身是控制台子系统程序这件事，只能靠 `-H=windowsgui` 改**（scripts/build-all.sh 按 GOOS 追加，非 Windows 目标不受影响），否则任务计划 / 资源管理器双击 / Run 键这三种「启动方本来就没有控制台」的路径必然弹框。代价是 CLI 输出没有出口，所以启动时 AttachConsole(ATTACH_PARENT_PROCESS) 把父进程的控制台挂回来并把三个标准句柄指过去（log 包在 init 时就存了 os.Stderr，必须再 log.SetOutput 一次）；挂不上就什么都不做，那正是要的「没有窗口」。顺带把后台实例的 stdout/stderr 落到 logPath：systemd 的 StandardOutput 与 launchd 的 StandardOutPath 都让后台实例日志落盘，Windows 原本拿那个黑框当出口，黑框没了就得自己写文件。上游另一处按平台一刀切（shouldRunBackgroundRuntimeProbe 排除 windows），理由是「探测会弹控制台窗口」——窗口问题归进程标志管：agent CLI 一律走 acp 进程路径，那条路径带 CREATE_NO_WINDOW（acp/process_windows_flags_test.go 钉着），所以一刀切剩下的只有副作用：Windows 上 agent 永远停在 available=false / probe pending，没有任何路径能让它变绿（ReportSuccess 只在真的跑过一次交互时才写，而 available=false 已经挡掉了那次交互）。两条是同一块改动面：先有标志，才谈得上把一刀切拿掉。托盘是同一形态的第三件——后台实例没有终端、界面里也没有启动入口，所以它需要一个可点的图标，图标用网页那份应用图标（web/public/pwa-512.png，与 favicon 同一套 glyph）转成 assets/tray.ico 嵌进二进制：worker 上不保证有 web 资源可读，回退系统默认图标等于让用户看到一个不认识的白板。托盘这条路径上唯一必须逐位钉死的是 NIF_/NIM_ 的字面值（NIF_MESSAGE=1、NIF_ICON=2、NIF_TIP=4、NIF_STATE=8，照 winuser.h/shellapi.h 抄，别凭记忆写）与 NOTIFYICONDATAW 的 cbSize：cbSize 是 shell 判断结构长度的唯一依据，uFlags 少一位 NIF_MESSAGE 就只剩「图标在、提示在、右键没反应」这个极具误导性的形态。tray_test.go 把这张表、结构布局（amd64 上 976 字节及关键偏移）和「trayIconFlags() 必须含 NIF_MESSAGE」都钉住了。"
     boundary: "只改 Windows 进程创建标志、子系统、平台判定与后台实例的托盘入口；HideWindow、taskkill 停止路径、自启注册方式与探针本身的行为不动。托盘只在 Windows，其它平台留空实现，调用点只有一处判断。图标资产只由 web/public 的应用图标转出，不新增设计。"
     files:
       - cli/cmd/windows_creation_flags.go
@@ -13156,10 +13156,10 @@ groups:
       - 'server/internal/kanban/service_session_follow.go:func sessionFollowKey(rootID, sessionKey string) string {'
       - 'server/internal/kanban/service_session_follow.go:func (s *Service) NoteSessionAnsweredQuestion(rootID, sessionKey string) {'
       - 'server/internal/kanban/service_session_follow.go:func (s *Service) BeginOutOfBandSessionTurn(ctx context.Context, rootID, sessionKey string) bool {'
-      - 'server/internal/kanban/service_session_follow.go:func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID string) {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID, sessionKey string) {'
       - 'server/internal/kanban/service_turn_settled.go:if s.takeSessionAnsweredQuestion(rootID, sessionKey) {'
       - 'server/internal/kanban/service_turn_settled.go:outOfBand := s.takeSessionOutOfBandTurn(rootID, sessionKey)'
-      - 'server/internal/kanban/service_turn_settled.go:s.restoreOutOfBandTask(ctx, store, taskID)'
+      - 'server/internal/kanban/service_turn_settled.go:s.restoreOutOfBandTask(ctx, store, taskID, sessionKey)'
       - 'server/internal/kanban/task_store_session_fallback.go:func (s *TaskStore) attachCurrentSessionKeys(ctx context.Context, tasks []Task) {'
       - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, items)'
       - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, tasks)'
@@ -14100,10 +14100,10 @@ groups:
       - 'web/src/components/file/FileTreeEntryFilters.ts:unreachable: !!nid && !!isUnreachable?.(nid)'
       - 'web/src/components/file/FileTreeProjectContent.tsx:const emptyKey: MessageKey = nodesAvailability === "table-unreachable"'
       - 'web/src/components/file/fileTreeEntries.tsx:        if (nodeDead) return;'
-      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig) (*app.ControlSyncOptions, error) {'
-      - 'cli/cmd/control_sync.go:token, err := readSyncToken(stringValue(cs.TokenFile))'
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string, configPath string) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:opts.PendingPairing = true'
       - 'cli/cmd/startup.go:ControlSync *startupControlSyncConfig `json:"control_sync"`'
-      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg)'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag, effectiveConfigPath(*configFlag))'
       - 'server/app/control_sync.go:if nodeRole == nodeinfo.RoleWorker {'
       - 'server/app/control_sync.go:if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {'
       - 'server/app/control_sync.go:root := w.capturer.WriteCapture(next)'
@@ -14657,8 +14657,640 @@ groups:
       - 'server/internal/kanban/service_recover_questions.go:func (s *Service) closeSupersededQuestionsOnStartup('
       - 'server/internal/kanban/service_recover_startup.go:s.closeSupersededQuestionsOnStartup(ctx, store)'
 
+  # ── 撞号说明（2026-11-23 合回 main 时改号，共两次）────────────────────
+  # 第一次：本组原先占用 G-PZ / G-QA / G-QB。合回 main 前 main 已把同一批号分配给
+  # 配额挂起与飞书入站两组（`95a3ea53` 起），而那是已发布到主干的登记 —— 分支侧
+  # 改号，主干不动。改动只涉及组号本身，group 内容与锚点不变。
+  # 第二次：W2 的组号原取 G-QI，合入 `7654b149`（Router 提问卡那批）时撞上主干
+  # 刚分配的 G-QI，同一个理由再改一次 —— 现为 G-QK（`scripts/scope-id next` 发出）。
+  # 由此 G-QH / G-QK / G-QJ 在本清单里**不连号**，不是漏号，是两次避让的结果。
+  - id: G-QH
+    title: 边控端地基：主控同步默认开 + token 自生成 + 边控端名单（含 pc-win 发布清单公钥）
+    kind: feature
+    symptom: |
+      「主控端的同步默认打开，并且能接受边缘控制端的握手、主动发现和同步」这条需求
+      在改造前落不了地，有三处各自独立的原因：
+      ① `control_sync` 段不写就整段关闭 —— 全新节点上线要人先手写一段 JSON，
+         漏写时既没有日志也没有报错，症状只有「边缘永远追不平」；
+      ② 主节点没有 token 就拒绝启动，而 token 只能手搓一个 32 字节随机串写进文件，
+         首次上线没有任何提示告诉你要搓、搓多长、放哪；
+      ③ `/api/control-sync/edges` 三条路由（列表 / 踢人 / 恢复）早已落地，但装配层
+         从未给 `HTTPHandler.ControlSyncEdges` 赋值，`if h.ControlSyncEdges != nil`
+         恒假 → 端点永远 404，且不报任何错。文档里承诺的 curl 全是空门。
+      另有一条同类缺陷：`scripts/deploy-pcwin.sh` 的 ldflags 少了
+      `-X ...update.releaseManifestPublicKey`（`build-all.sh` 一直有），
+      `canAutoUpdate()` 恒 false，pc-win 的 `/api/app/update` 永远回「需要配置公钥」，
+      症状只有「点更新什么都不发生」。
+    why: |
+      三处都按「默认行为要能直接上线」改，不留「请先手动配置」的门槛：
+      **① 默认开启只对控制面成立**（`cli/cmd/control_sync.go`）。根 module 不能
+      import `server/internal`，拿不到 `nodeinfo.Normalize`，所以在 cli 侧自判一档：
+      `strings.EqualFold(strings.TrimSpace(nodeRole), "worker")` 才是 worker，零值与
+      未知值一律按 control —— 语义与 `nodeinfo` 一致，但只能写在这里。worker 不持有
+      控制面，开着只会得到一个永远转发的角色，所以整段跳过。
+      **② token 自生成**（`server/app/control_sync_token.go`）。`TokenFile` 承载路径
+      （缺省 `<config-dir>/mindfs/control_sync.token`，与 `control_sync.db` 同目录），
+      主节点读到空/不存在就生成 32 字节 base64url 并 0600 落盘，**幂等**：已有可用
+      token 绝不覆盖（重启换钥匙会让所有边缘同时失联）。写盘走
+      `CreateTemp → WriteString → Chmod 0600 → Rename`，中途失败不留半份 token
+      （半个 token 比没有更难查 —— 它看起来像配置存在，只是永远验不过）；目录
+      写完再 `Chmod 0700`（`MkdirAll` 不改已有目录权限）。日志只打路径，**永不打
+      token 本身**。边缘**没有**这条退路（W2/G-QK 起改成「等配对」档：读不到 token 时
+      服务照常起、只挂 `POST /api/control-sync/pair`，由本机页面完成配对；在此之前
+      这里是 cli 侧直接报错 —— 那一版把用户关在门外，连填表单的页面都没有）。
+      **③ 名单接线 + 踢人生效**。`controlsyncWiring` 加 `edges` 字段、
+      `applyTo` 装进 handler、主节点分支 `w.edges = store`（边缘保持 nil —— 它没有
+      「谁在同步我」的视角）。注册发生在 `requireSyncToken` **验签通过之后**
+      （`noteRequestingEdge`）：没带 token 的请求不该在名单里留下痕迹；已被踢掉的
+      边控端在这里拿 403 且不推进 `last_seen_at`。
+      **这张表是运维索引，不是准入白名单** —— `X-MindFS-Instance` 不在签名覆盖范围
+      内，是客户端自称的；真正的凭证始终是 token。踢人挡不住换个名字重连的客户端，
+      这一点必须写在文档里而不是让人以为它是准入控制。
+      **④ 单主控守卫**（`server/app/control_sync_guard.go`）。唯一写者是这条通道的
+      前提：两个 primary 各自往自己的变更流里追加 rev，边缘拉到谁的就是谁的那半份
+      控制面，而且两侧日志都写着 `enabled role=primary`。判据只用库里已有的证据 ——
+      `state.primary_instance_id` 全仓唯一写者是 `Replicator.verifyOrigin`，而
+      Replicator 只在边缘构造：配置成 primary 而这一列非空，说明这份
+      `control_sync.db` 曾经是别人家的副本。读不出状态时同样拒绝启动（读失败可能
+      是「曾是谁的副本」这份事实读不出来，把未知当空正是两个写者的起步方式）。
+      出路不是死路：边缘那套 `adopt_primary` 会 `ResetReplicaForAdopt` 清掉这一列。
+      **⑤ pc-win 发布清单公钥**：`scripts/deploy-pcwin.sh` 补齐与 `build-all.sh`
+      同源的 ldflag，另一条编译路径不再静默丢掉自更新能力。
+    files:
+      - cli/cmd/
+      - server/app/
+      - server/internal/api/
+      - server/internal/controlsync/
+      - scripts/deploy-pcwin.sh
+      - internal/deploy/release_key_test.go
+      - docs/multi-node-control-plane.md
+    tests:
+      - cli/cmd/control_sync_test.go
+      - server/app/control_sync_test.go
+      - server/app/control_sync_token_test.go
+      - server/app/control_sync_guard_test.go
+      - server/internal/api/http_control_sync_edges_test.go
+      - server/internal/controlsync/store_edges_test.go
+      - server/internal/controlsync/store_test.go
+      - internal/deploy/release_key_test.go
+    anchors:
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string, configPath string) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:opts.PendingPairing = true'
+      - 'cli/cmd/control_sync.go:const controlSyncTokenFileName = "control_sync.token"'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag, effectiveConfigPath(*configFlag))'
+      - 'server/app/control_sync_token.go:func ensurePrimarySyncToken(path string) (string, error) {'
+      - 'server/app/control_sync_token.go:const syncTokenBytes = 32'
+      - 'server/app/control_sync_guard.go:func guardSinglePrimary(ctx context.Context, store *controlsync.Store, cfg controlsync.Config) error {'
+      - 'server/app/control_sync.go:h.ControlSyncEdges = w.edges'
+      - 'server/app/control_sync.go:if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {'
+      - 'server/internal/api/http.go:ControlSyncEdges ControlSyncEdges'
+      - 'server/internal/api/http_control_sync.go:if !h.noteRequestingEdge(w, r) {'
+      - 'server/internal/controlsync/store.go:CREATE TABLE IF NOT EXISTS edges ('
+      - 'server/internal/controlsync/store_edges.go:func (s *Store) ObserveEdge(ctx context.Context, instanceID string, at time.Time) (EdgeInfo, error) {'
+      - 'server/app/control_sync_guard_test.go:func TestControlSyncPrimaryGuardRejectsFormerReplica(t *testing.T) {'
+      - 'docs/multi-node-control-plane.md:### 边控端名单：`/edges`（列表 / 踢人 / 恢复）'
+      - 'docs/multi-node-control-plane.md:**这张表是运维索引，不是准入白名单。**'
+      - 'docs/multi-node-control-plane.md:**一台机器只能有一个主控。**'
+      - 'server/internal/api/http_control_sync_edges_test.go:func TestRevokedEdgeGets403(t *testing.T) {'
+      - 'cli/cmd/control_sync_test.go:func TestControlSyncOptionsDefaultEnabledForControl(t *testing.T) {'
+  - id: G-QK
+    title: 边控端握手：POST /api/control-sync/pair（探活 / 验签 / 落 token / 写回 config）
+    kind: feature
+    symptom: |
+      「主控端能接受边缘控制端的握手、主动发现和同步」缺的是**握手这一段**：
+      装好的第二台 control 既没有 token 也没有 `primary_url`，而 cli 侧在缺 token 时
+      直接拒绝启动 —— 那台机器连页面都出不来，用户没有任何地方可以填「主控端在哪」。
+      全仓也没有任何写回 `config.json` 的函数：即便手工起了个表单，配完也无处落盘，
+      重启后回到原样。
+    why: |
+      **配对是一次有顺序的四步，任何一步失败都不留痕**（`controlsync.Pair`）：
+
+      1. 本地校验：`primary_url` 非空、`token_file` 与 `config.json` 路径已知、
+         `ValidateSyncToken`（≥16 字节、无空白）、`parsePrimaryURL` 要求 https；
+      2. 探活 `GET <primary>/health`：`ok` 必须 true、`role` 必须 `control` ——
+         挡的是「把 worker 当主控」和「地址填到了别的服务」；
+      3. 签名 GET `<primary>/api/control-sync/head`：401 区分「token 对不上」、
+         404 区分「主控端没开启同步」、schema 不匹配直接拒（拿旧副本合新控制面
+         比不同步更糟）。这一步才真正证明 token 与版本都对；
+      4. 落盘：先 `WriteSyncTokenFile`（目录 0700、文件 0600、临时文件 + rename），
+         再 `config.UpdateJSONFile` 只改 `control_sync` 段。
+
+      **写回只碰 `control_sync`**（`applyPairing`）：其余键原样保留，`UseNumber` 防
+      大整数被 float64 改写，`ca_file` 为空时删键而不是留空串。写入时把
+      `control_sync.role` 定成 `edge`，显式写着 `role: worker` 的一并纠正成 `control`——
+      否则配好的是个不注入静态目录的 worker，打开页面是 403。
+
+      **没有 token 的边缘换成 `PendingPairing` 档，且配对 POST 只接受本机回环**：`PendingPairing` 这一档
+      让服务在「还没有 token」时照常起、只挂 `POST /api/control-sync/pair`（不建库、
+      不采集、不转发）；没有这一档，未配对边缘在 cli 侧就起不来，用户拿不到填表单的
+      页面。它此时没有 token 可校验 —— token 正是它要解决的问题 —— 而配对会改信任锚、
+      写通道密钥、改 `config.json`，三件事凑起来等于在 `0.0.0.0` 上开一个无鉴权的
+      「重定向整份控制面」入口，所以按 `RemoteAddr` 判本机回环，**不信**
+      `X-Forwarded-For`（那类头任何人都能写）。
+
+      **配对不重启**：路由、同步器、转发中间件都在启动期装配（每账户一个 handler，
+      根中间件只包一次），运行期改不了。所以返回 `restart_required: true`，重启交给
+      用户 / 安装器的托盘菜单。`os.Exit(0)` 自重启在两种部署里都不成立：本机 systemd
+      是 `Type=simple` + `Restart=on-failure`，pc-win 计划任务的
+      `RestartOnFailure` 只认非零退出。
+
+      已配对但运行中的边缘也挂这条端点：换主控端是同一件「写配置 + 换密钥」，多留一条
+      人工改文件的路径只会让「换主控」变成一次手工事故。**代价是探针语义必须分开**：
+      `PairingState().pending_pairing` 由构造点决定，未配对接线恒真、已配对边缘恒假。
+      这里踩过一次真缺陷（e2e 抓出）：原先硬编码 `PendingPairing: true`，而前端
+      `fetchControlSyncPairing` 只把 `true` 当「等配对」—— 一台正在 online 同步的边控端
+      页面上会永远显示配对表单。
+
+      **只读探针 `GET /api/control-sync/pair`**：未配对时 `/status` 同样不注册（它由
+      同步器装配，而这时候还没有同步器），前端于是分不清「等着配对」与「这台机器根本
+      不同步」—— 两种都只会看到 404，配对表单永远不出现。这条探针只回
+      `{pending_pairing, instance_id}`，**不含 token、路径与主控端地址**；不做回环守卫
+      （只报实例名，`/api/node-info` 本来就有），POST 那条的守卫不受影响。
+    files:
+      - server/internal/config/configfile.go
+      - server/internal/controlsync/pairing.go
+      - server/internal/controlsync/token.go
+      - server/internal/api/http_control_sync_pair.go
+      - server/app/control_sync_pairing.go
+      - cli/cmd/control_sync.go
+      - docs/multi-node-control-plane.md
+      - web/src/shared/controlPairing.ts
+      - web/src/components/app/ControlPairingGate.tsx
+      - web/src/components/app/ControlModeBanner.tsx
+      - web/src/hooks/useControlSyncStatus.ts
+      - web/src/services/net/controlSync.ts
+    tests:
+      - server/internal/config/configfile_test.go
+      - server/internal/controlsync/pairing_test.go
+      - server/internal/api/http_control_sync_pair_test.go
+      - server/app/control_sync_pairing_test.go
+      - cli/cmd/control_sync_test.go
+      - web/tests/control-pairing.test.mjs
+      - e2e/test_control_sync_pairing.py
+    anchors:
+      - 'server/internal/api/http_control_sync_pair.go:type PairingState struct {'
+      - 'server/internal/api/http_control_sync_pair.go:func (h *HTTPHandler) handleControlSyncPairState(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:r.Get("/api/control-sync/pair", h.handleControlSyncPairState)'
+      - 'server/app/control_sync_pairing.go:func (p controlSyncPairer) PairingState() api.PairingState {'
+      - 'web/src/shared/controlPairing.ts:export function pairingDraftIssue(draft: PairingDraft): PairingDraftIssue | null {'
+      - 'web/src/services/net/controlSync.ts:export async function fetchControlSyncPairing(): Promise<ControlSyncPairingState | null> {'
+      - 'web/src/components/app/ControlModeBanner.tsx:if (pairing?.pending_pairing) {'
+      - 'web/src/components/app/ControlPairingGate.tsx:export function ControlPairingGate(props: ControlPairingGateProps) {'
+      - 'web/src/hooks/useControlSyncStatus.ts:setPairing(await fetchControlSyncPairing());'
+      - 'server/app/control_sync_pairing_test.go:func TestPendingPairingWiringReportsState(t *testing.T) {'
+      - 'server/app/control_sync_pairing_test.go:func TestPairedEdgePairerDoesNotReportPending(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_pair_test.go:func TestPairStateRouteReportsPendingPairing(t *testing.T) {'
+      - 'web/tests/control-pairing.test.mjs:test("未配对状态靠只读探针发现，而非 /status", () => {'
+      - 'server/internal/config/configfile.go:func UpdateJSONFile(path string, mutate func(map[string]any) error) error {'
+      - 'server/internal/config/configfile.go:tmp, err := os.CreateTemp(dir, ".config-*.tmp")'
+      - 'server/internal/controlsync/pairing.go:func Pair(ctx context.Context, req PairRequest, tokenFile, configPath string) (PairResult, error) {'
+      - 'server/internal/controlsync/pairing.go:var ErrPairUnreachable = errors.New("control_sync: primary unreachable")'
+      - 'server/internal/controlsync/pairing.go:func applyPairing(doc map[string]any, result PairResult, caFile, tokenFile string) error {'
+      - 'server/internal/controlsync/token.go:func WriteSyncTokenFile(path, token string) error {'
+      - 'server/internal/api/http_control_sync_pair.go:func (h *HTTPHandler) handleControlSyncPair(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_control_sync_pair.go:func isLoopbackRequest(r *http.Request) bool {'
+      - 'server/internal/api/http_routes.go:r.Post("/api/control-sync/pair", h.handleControlSyncPair)'
+      - 'server/app/control_sync_pairing.go:func pendingPairingWiring(opts *ControlSyncOptions, nodeRole nodeinfo.Role) *controlSyncWiring {'
+      - 'server/app/control_sync.go:if opts.PendingPairing {'
+      - 'cli/cmd/control_sync.go:func effectiveConfigPath(explicit string) string {'
+      - 'docs/multi-node-control-plane.md:### 首次配对（不用手搓 JSON）'
+      - 'server/internal/api/http_control_sync_pair_test.go:func TestPairRejectsNonLoopback(t *testing.T) {'
+      - 'server/internal/controlsync/pairing_test.go:func TestPairLeavesNothingOnFailure(t *testing.T) {'
+  - id: G-QJ
+    title: 边控端交付：静默自动更新判据 + 空闲闸门 + 托盘重启入口 + Windows 自解包安装器（代码默认关）
+    kind: feature
+    symptom: |
+      Windows 独立安装包要「参考安卓客户端」自动更新，但改造前**代码里根本没有静默安装这一步**：
+      `update.Service.Start` 只做 `CheckNow`（把 `Status` 标成 `available`），装更新的唯一入口是
+      `TriggerUpdate`，而它只由 `POST /api/app/update` 与 CLI `-update` 调用。装上安装包后每台
+      边控端都会停在「有新版本」，等一个永远不会有人点按钮的页面。
+    why: |
+      **判据抽成纯函数 `autoInstallDecision`（`server/internal/update/auto_install.go`），六条分支
+      各自值一次事故**：
+
+      - 未开 → `disabled`。这是默认值，**必须**是默认值（见下一条）；
+      - `!AutoUpdateSupported` → `unsupported`。安装布局不支持时（portable 目录、dev 构建、
+        缺发布公钥）`installUpdate` 装完也不会重启，硬装只会把状态写到 `failed`；
+      - 无新版本 / 版本号为空 → `no-update`；
+      - 已在 `downloading` / `installing` / `restarting` → `in-progress`，重复触发会让
+        `TriggerUpdate` 回 error 并把它写进 `Status.Message`，用户看到一条假故障；
+      - 有会话在跑 → `busy`，**这一条是整组的理由**：装完会替换二进制并重启进程，正在跑的
+        agent 回合被腰斩在半句上，转录停在中间；
+      - 全过 → `install`。
+
+      **代码默认 false，且只该由 Windows 独立安装包写 true**：Unix 侧 systemd 单元是
+      `Type=simple` + `Restart=on-failure`（退出码 0 不重拉），而替换进程的路径是
+      `startReplacementProcess` + `os.Exit(0)` 且 `Setsid: true` 脱离 cgroup —— 静默重启
+      等于让服务从 systemd 眼里消失，还会顺手杀掉正在跑的 claude 子进程。pc-win 的计划任务
+      （S4U + BootTrigger）才扛得住重启，所以只有那条部署形态打开它。
+
+      **空闲闸门接的是 `Pool.HasAnyActiveUse()`，不是 `ListReplyingSessions()`**。后者按账户枚举
+      `Active || AwaitingAnswer` 的会话，而共享 Pool 是全局一份、`activeUses > 0` 正是
+      `pool.Close` 掐进程（repoint / 部署）用的同一个判据；按账户枚举会漏掉节点会话与委派会话，
+      也就是漏掉「真的会被腰斩的那个回合」。
+
+      **触发失败只打日志、不 panic**：`TriggerUpdate` 的错误已经写进 `Status`，下一拍 ticker 会
+      重试；让一个可选特性把整个进程带下来是更糟的失败模式。每拍一行
+      `[update] auto_install.skip reason=...`（`disabled` / `no-update` 不打，否则每小时两行噪音）
+      是排查「它为什么没装」的唯一线索。
+
+      **托盘菜单从「只有退出」扩成三项（打开页面 / 重启以应用配对 / 退出）**，因为 Windows
+      安装包把托盘当成了唯一入口：计划任务跑在 Session 0，没有终端、也没有开始菜单项，
+      「双击图标开页面」是个没有任何提示的隐藏手势，而配对落盘后服务端只回
+      `restart_required`、不自己重启（见 W2 的 D 类裁定），所以「重启以应用配对」必须有一个
+      可点的入口。退出仍是 101，旧 ID 不动 —— 换掉会让已经装出去的托盘行为错位。
+
+      **「重启以应用配对」不能 `schtasks /end`，也不能 `os.Exit(0)` 自重启。** 前者的
+      `TerminateProcess` 会把正在写盘的收尾（agent 回合、sqlite WAL、转录落盘）砍在半路；
+      后者在 Unix 部署下会把服务停死（`Type=simple` + `Restart=on-failure` 不重拉退出码 0 的
+      进程）。落地形态是**先**把一个 `DETACHED_PROCESS` 的 powershell 挂到后台
+      （`trayRestartScript`：轮询 `Get-Process -Id $pidToWait` 等本 PID 消失，**然后**
+      `schtasks.exe /run /tn mindfs`，失败则用原命令行兜底拉起），**再**走与「退出」同一条
+      优雅收尾（`WM_QUIT → onQuit → 关服务`）。顺序不能反：脚本靠 PID 消失推进，先退出就
+      永远没有进程去执行那一步了。那个轮询循环也不是保险丝 —— 实测真机任务 XML 的
+      `MultipleInstancesPolicy` 是 `IgnoreNew`，早一步 `/run` 会被**静默吞掉**，服务停在
+      「已退出、没人拉起」而界面上零线索。拉起失败时**不退出**：用户得到「点了没反应」，
+      但服务还在，比静默停服务好得多。
+
+      **Windows 独立安装包是「自解包 exe」，不是又一个 zip**：`dist/mindfs_<ver>_windows_amd64.zip`
+      已经有了，但它要手动解包 + 四步安装，而用户把 zip 的 `web/` 解到哪儿都不会落到服务读取的
+      `%LOCALAPPDATA%\Programs\mindfs\share\mindfs\web` —— 装错形状的症状是「二进制活着、页面 403」，
+      没有任何报错。exe 的构造是 `[Go 桩程序][载荷 zip][8 字节大端长度 + 4 字节魔数]`（PE 加载器对
+      尾部多余字节透明），双击即完成：停旧进程 → 拷贝 → 注册计划任务 → 改用户 PATH → 起服务 → 探活。
+
+      拆成 Go 桩 + `setup.ps1` 两半，是因为**路径推导、JSON 改写、任务 XML 生成都是纯逻辑**，
+      放在 `internal/deploy` 里能让 Linux 门禁逐条钉住（装安装器的机器未必跑得了 Windows 测试）；
+      而停进程、改用户 PATH、`schtasks` 只能是 Windows API/命令，只能进 `.ps1`。
+      由此派生出三条不能破的约束：
+
+      - **所有落地路径由桩程序算好传入**（`deploy.SetupPathsFor` 是唯一来源）。`.ps1` 再拼一遍
+        `%LOCALAPPDATA%\Programs\mindfs` 就是第二个实现，与 Go 侧漂移后装出「服务在跑但页面 403」，
+        而两边单独看都对；
+      - **任务 XML 只由 Go 侧编码一次**，且必须是 UTF-16LE（`schtasks /create /xml` 只吃它；
+        写 UTF-8 报「任务 XML 无效」，错误信息不提编码）。`.ps1` 里任何 `WriteAllText` / `Out-File`
+        都会二次编码，症状是双字节乱码；
+      - **`.ps1` 必须纯 ASCII**（与 `install.ps1` 同一条）：Windows 按本地代码页解码，CJK 注释会
+        吃掉下一行换行。
+
+      **桩程序住在 `server/cmd/mindfs-setup-stub/`，不是 `scripts/`**：Go 的 internal 规则不允许
+      `scripts/` 树导入 `mindfs/server/internal/*`（`use of internal package … not allowed`），
+      而桩程序要写 `config.json`（`config.UpdateJSONFile`：原子换名、0600、数字不漂移、失败不落盘）。
+      该包只有 `//go:build windows` 文件，Linux 上 `go build ./...` / `go vet ./...` / `go test ./...`
+      会**静默跳过并退出 0** —— 所以编译错误没有人替我们发现，`TestWindowsSetupStubLivesUnderServerCmd`
+      点名它的两条真实依赖（`deploy.ExtractSetupPayloadToDir` / `config.UpdateJSONFile`）作为兜底。
+
+      **发版链有三处，漏任一处都不报错，只是 GitHub release 里少了那个文件**：
+      `Makefile` 的 `RELEASE_ARTIFACTS`（不传 → 安装包永远发不出去）、`build-all` 目标（不生成 →
+      上传前那条 `test -f` 才失败，发布半途崩）、`scripts/sign-release-manifest.go::artifactPaths`
+      （不枚举 → 客户端拿到一个不在签名清单里的安装包，「静默自动更新」永远用不上安装器这条路）。
+      `RELEASE_WINDOWS_SETUP ?= 1` 与 `RELEASE_ANDROID` 同一形态：默认带上，显式给 0 才跳过。
+
+      安装器写 `control_sync.role = "edge"` 与 `update.auto_install: true`，这正是上面那些判据
+      唯一该被打开的部署形态。
+    files:
+      - server/internal/update/auto_install.go
+      - server/internal/update/auto_install_test.go
+      - server/internal/update/service.go
+      - server/internal/update/release_fetch.go
+      - server/internal/agent/pool.go
+      - cli/cmd/startup.go
+      - cli/cmd/startup_update_test.go
+      - cli/cmd/mindfs.go
+      - server/app/server.go
+      - cli/cmd/tray.go
+      - cli/cmd/tray_windows.go
+      - cli/cmd/tray_test.go
+      - internal/deploy/archive.go
+      - internal/deploy/archive_test.go
+      - internal/deploy/setup.go
+      - internal/deploy/setup_test.go
+      - internal/deploy/setup_extract.go
+      - internal/deploy/setup_extract_test.go
+      - internal/deploy/setup_script_test.go
+      - scripts/windows-setup/main.go
+      - scripts/windows-setup/setup.ps1
+      - scripts/build-windows-setup.sh
+      - server/cmd/mindfs-setup-stub/main.go
+      - Makefile
+      - scripts/sign-release-manifest.go
+    tests:
+      - server/internal/update/auto_install_test.go
+      - cli/cmd/startup_update_test.go
+      - cli/cmd/tray_test.go
+      - internal/deploy/setup_test.go
+      - internal/deploy/setup_extract_test.go
+      - internal/deploy/setup_script_test.go
+      - internal/deploy/archive_test.go
+    anchors:
+      - 'server/internal/update/auto_install.go:func autoInstallDecision(st Status, autoInstall, busy bool) (bool, string) {'
+      - 'server/internal/update/auto_install.go:case busy:'
+      - 'server/internal/update/release_fetch.go:s.checkAndMaybeInstall(context.Background())'
+      - 'server/internal/update/service.go:// 静默自动更新（见 auto_install.go）：默认关闭，由 Windows 安装包显式打开。'
+      - 'server/internal/agent/pool.go:func (p *Pool) HasAnyActiveUse() bool {'
+      - 'server/app/server.go:updateSvc.SetBusyProbe(sharedPool.HasAnyActiveUse)'
+      - 'server/app/server.go:UpdateAutoInstall bool'
+      - 'cli/cmd/startup.go:func updateAutoInstall(cfg startupConfig) bool {'
+      - 'cli/cmd/startup_update_test.go:func TestUpdateAutoInstallDefaultsOff(t *testing.T) {'
+      - 'cli/cmd/startup_update_test.go:func TestServerOptionsCarryUpdateAutoInstall(t *testing.T) {'
+      - 'cli/cmd/tray.go:const trayRestartTaskName = "mindfs"'
+      - 'cli/cmd/tray.go:func trayRestartScript(pid int, exe string, args []string) string {'
+      - 'cli/cmd/tray.go:"schtasks.exe /run /tn " + trayRestartTaskName'
+      - 'cli/cmd/tray_windows.go:func restartFromTray() {'
+      - 'cli/cmd/tray_windows.go:windows.DETACHED_PROCESS'
+      - 'cli/cmd/tray_test.go:func TestTrayRestartWaitsForExitThenRunsTask(t *testing.T) {'
+      - 'internal/deploy/setup.go:const SetupTrailerMagic uint32 = 0x4D465353 // "MFSS"'
+      - 'internal/deploy/setup.go:func AppendSetupPayload(stubPath, dst string, payload []byte) error {'
+      - 'internal/deploy/setup.go:func ReadSetupPayload(r io.ReaderAt, size int64) (io.ReaderAt, int64, error) {'
+      - 'internal/deploy/setup.go:func SetupPathsFor(localAppData, roamingAppData string) (SetupPaths, error) {'
+      - 'internal/deploy/setup.go:func ApplySetupConfig(doc map[string]any) error {'
+      - 'internal/deploy/setup.go:func BuildSetupTaskXML(opt SetupTaskOptions) (string, error) {'
+      - 'internal/deploy/setup.go:func EncodeUTF16LEFile(text string) []byte {'
+      - 'internal/deploy/setup.go:func MergeUserPath(current, dir string) (string, bool) {'
+      - 'internal/deploy/setup.go:func BuildSetupPayload(b SetupBundle) ([]byte, error) {'
+      - 'internal/deploy/setup.go:func VerifySetupBundle(b SetupBundle) error {'
+      - 'internal/deploy/setup_extract.go:func ExtractSetupPayloadToDir(exePath, dst string) (string, error) {'
+      - 'internal/deploy/archive.go:func SafeArchiveTarget(root, name string) (string, error) {'
+      - 'internal/deploy/archive.go:func ExtractZipReader(r io.ReaderAt, size int64, dst string) error {'
+      - 'internal/deploy/setup_test.go:func TestSetupPathsMatchInstallLayout(t *testing.T) {'
+      - 'internal/deploy/setup_test.go:func TestBuildSetupTaskXMLCarriesRealMachineShape(t *testing.T) {'
+      - 'internal/deploy/setup_extract_test.go:func TestBuildSetupPayloadRoundTripsThroughExtractor(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupScriptStaysASCIISafe(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupStubLivesUnderServerCmd(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestReleaseChainShipsTheWindowsInstaller(t *testing.T) {'
+      - 'scripts/build-windows-setup.sh:go build -trimpath -ldflags "-s -w -H=windowsgui"'
+      - 'scripts/build-windows-setup.sh:for f in mindfs.exe agents.json web/index.html web/favicon.svg; do'
+      - 'scripts/windows-setup/main.go:func run(version, distDir, out, stubPath string) error {'
+      - 'scripts/windows-setup/setup.ps1:& schtasks.exe /create /tn $TaskName /xml $TaskXml /f | Out-Null'
+      - 'server/cmd/mindfs-setup-stub/main.go://go:build windows'
+      - 'server/cmd/mindfs-setup-stub/main.go:func currentUserSID() (string, error) {'
+      - 'Makefile:RELEASE_WINDOWS_SETUP ?= 1'
+      - 'Makefile:	@bash scripts/build-windows-setup.sh "$(VERSION)" "$(DIST_DIR)"'
+      - 'scripts/sign-release-manifest.go:filepath.Join(distDir, fmt.Sprintf("mindfs_%s_*setup.exe", version)),'
+  # ── Router 任务可信化 · 第四轮批次 3（2026-11-23）────────────────────
+  - id: G-QG
+    title: 会话回合结算总结：这一轮真跑过工具时，最后一条 say 才升成任务结论
+    kind: fix
+    symptom: |
+      #68 的卡片摘要始终偏离要点。Router 在会话回合（turn_settled）里把四条待拍板
+      事项完整说了一遍，写成 purpose=progress，于是不落任务摘要；卡片上只剩异步
+      压缩器给的那句「本轮做了什么」，需要人决定的部分全丢。
+      缺的是一个判据信号：turn_settled 没有 Run，「这一轮有没有真实执行结果」只能由
+      会话自己报给 Router。
+    why: |
+      回合结算是每轮都会发生的（纯闲聊也结算），所以不能把「结算了」当判据 —— 那会
+      让每句闲聊都顶掉卡片结论。证据必须逐轮从会话流里数出来：StreamHub 的 pending
+      状态在每次用户回合重置计数、AppendReplyEvent 见到 EventTypeToolCall 才加一
+      （ToolUpdate 是同一调用的续传，不数）；快照随 SessionPendingState 交给结算点，
+      写进 turn_settled 载荷 tool_calls；决策行落 had_tool_calls 库列；应用期只有它为
+      真才把最后一条 say 提升成 summary。
+      上游没有这条链路，合并时整组会消失，症状原样回归（#68）。
+    files:
+      - server/internal/api/stream_hub_types.go
+      - server/internal/api/stream_hub_pending.go
+      - server/internal/api/stream_hub_replay.go
+      - server/internal/api/appcontext_task_flags.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/router_store.go
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/service_turn_settled.go
+    tests:
+      - server/internal/kanban/router_turn_settled_summary_test.go
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/api/stream_hub_turn_tool_calls_test.go
+      - server/internal/kanban/reply_summary_router_protection_test.go
+    anchors:
+      - 'server/internal/api/stream_hub_pending.go:state.ToolCalls = 0'
+      - 'server/internal/api/stream_hub_replay.go:state.ToolCalls++'
+      - 'server/internal/api/appcontext_task_flags.go:ToolCalls:  pending.ToolCalls,'
+      - 'server/internal/kanban/router_store.go:had_tool_calls         INTEGER NOT NULL DEFAULT 0'
+      - 'server/internal/kanban/router_event_brief.go:"tool_calls",'
+      - 'server/internal/kanban/router_coordinate_turn.go:HadToolCalls: event.Kind == RouterEventTurnSettled &&'
+      - 'server/internal/kanban/activity_route_apply.go:if decision.HadToolCalls {'
+      - 'server/internal/kanban/service_turn_settled.go:"tool_calls":        in.ToolCalls,'
+      - 'server/internal/kanban/service_activities_summary.go:待用户决策、待审批、待确认的事项是这段总结里最重要的部分'
+
+  # ── Router 任务可信化 · 第四轮批次 3b（2026-11-23）──────────────────
+  - id: G-QI
+    title: Router 的 ask_user 落成真正的提问卡（按钮 + 输入框锁 + 作答成留言）
+    kind: fix
+    symptom: |
+      Router 把问题写成一条等待态的 agent 回复：正文里有问题和选项，但前端只把它
+      当「一条没说完的话」—— 没有按钮、不挡输入框，答案也不以任何形式回到 Router。
+      线上 #68 的四条待拍板事项就是这么漂走的：用户读完只能自己重打一遍，Router
+      收不到「哪一项被拍成了什么」，下一轮继续问。
+    why: |
+      fork 侧新增语义，上游没有对应实现。`applyRouteAskUser` 建完占位回复后调
+      `SetQuestionCard` 把同一行改成 `type=question` 并写入 `payload_json`
+      （`source=router`、`questions[].question/header/options[].label`，与会话里的
+      AskUserQuestionCard 同形 —— 两处共用同一个渲染组件，形状分叉就会一边能点、
+      一边点不动）；正文同时保留问题与选项，飞书通知和纯文本客户端读的是它。
+      `type=question` 一次给齐三样：卡片按钮、输入框锁（`pendingTaskPrompt` 只认
+      question / human_gate）、一个明确的作答入口 `AnswerQuestionCard` —— 答案经
+      `CreateUserReply` 落成一条绑定该卡的用户留言，卡片随后 CAS 收口并回写
+      `payload.answers`。顺序必须是先留言后收口（`CreateUserReply` 要求卡还停在
+      `waiting_user`）；中途失败时重试命中已有留言的幂等分支，不会写出第二条。
+      新卡落地前 `closeRouterQuestionsBefore` 只收口同一任务里更早的 Router 卡
+      （`session_key` 为空）：前端锁输入框读的是最早那张，旧卡留着用户就会点到过时
+      的问题（#104 的形态）；会话里的提问卡不动 —— 它们归会话事件管，关掉会让那个
+      Agent 永远等不到 tool_result。HTTP 入口 `POST /api/tasks/{id}/activities/
+      {activityId}/answer` 按 `payload.source` 分流，会话卡由
+      `ErrQuestionSessionBound` 拒掉（答案属于那个会话，走 WS）。
+      合上游时整组消失，症状原样回归。
+    files:
+      - server/internal/kanban/activity_router_questions.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_store_questions.go
+      - server/internal/api/http_activities.go
+      - server/internal/api/http_routes.go
+      - web/src/components/session/AskUserQuestionCard.tsx
+      - web/src/hooks/useTaskActivities.ts
+      - web/src/services/activities.ts
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/activity_router_questions_test.go
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/kanban/router_prompt_guidance_test.go
+      - web/tests/task-router-question-card.test.mjs
+    anchors:
+      - 'server/internal/kanban/activity_route_apply.go:if err := s.activities.SetQuestionCard(ctx, act.ID, payloadJSON); err != nil {'
+      - 'server/internal/kanban/service_turn_settled.go:const routerSettlementExcerptRunes = 1000'
+      - 'server/internal/kanban/router_prompt.md:summary 不是终点'
+      - 'server/internal/kanban/activity_route_apply.go:"type": ActivityTypeQuestion, "payload_json": payloadJSON,'
+      - 'server/internal/kanban/activity_router_questions.go:const routerQuestionSource = "router"'
+      - 'server/internal/kanban/activity_router_questions.go:func (s *ActivityService) AnswerQuestionCard('
+      - 'server/internal/kanban/activity_router_questions.go:if payload.Source != routerQuestionSource {'
+      - 'server/internal/kanban/activity_store_questions.go:func (s *ActivityStore) SetQuestionCard(ctx context.Context, id, payloadJSON string) error {'
+      - 'server/internal/kanban/activity_store_questions.go:func (s *ActivityStore) OpenRouterQuestionsByTask(ctx context.Context, taskID string) ([]*TaskActivity, error) {'
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/activities/{activityId}/answer", h.handleTaskQuestionAnswer)'
+      - 'server/internal/api/http_activities.go:func respondQuestionAnswerError(w http.ResponseWriter, err error) {'
+      - 'web/src/hooks/useTaskActivities.ts:const routerCard = payload.source === "router" || (!sessionKey && !toolUseId);'
+      - 'web/src/components/session/AskUserQuestionCard.tsx:const routerCard = !sessionBound && !toolUseId;'
+
+
   # ── scope-id claim 占位 ──────────────────────────────────────────────
   # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QL
+    title: 删除已废弃的任务组提示，并让 root not found 带上账户与节点线索
+    kind: fix
+    symptom: |
+      agent 在 worker 为冰晶智能建「任务组 / 普通模板任务」时，拿到
+      `POST /mindfs/api/tasks?user=local → 400 {"error":"root not found"}` 后误判为
+      root/session 路由或 Unicode 问题。原因有两层：① 会话提示仍在教 agent 用 Phase 3
+      已删除的 `mindfs -orchestration` / 任务组 / 模板任务（实测 CLI 报
+      `flag provided but not defined`）；② 陌生 `user=` 在 worker 上解析为空工作区
+      （既定语义），root 查不到时错误只说 `root not found`，看不出该核对账户还是节点。
+    why: |
+      必须保留：① 提示是全局注入到每个会话的，合上游若带回旧文案，agent 会继续拿
+      `task_template_id` 等不存在字段反复撞 400；② 账户只在本节点数据面解析，跨节点
+      同名项目不串（G-NR），错误文案必须把 user 与 root 一起说出来，才能让调用方
+      自行分清「账户不对」和「这台机器没有这个项目」。不得把 worker 的陌生 user
+      改成 unknown_user 错误 —— 空工作区是 control/worker 共用设计，跨机器首次建数据
+      与新账户可见性都靠它（`server/app/unknown_user_test.go` 钉住）。
+    files:
+      - server/internal/api/usecase/session_prompt.go
+      - server/internal/api/usecase/session_prompt_no_stale_tasks_test.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_task_create_root_error_test.go
+      - docs/superpowers/plans/2026-11-24-stale-task-prompt-and-root-error.md
+      - docs/plans/README.md
+    tests:
+      - server/internal/api/usecase/session_prompt_no_stale_tasks_test.go
+      - server/internal/api/http_task_create_root_error_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_prompt.go:prompt += ".\n"'
+      - 'server/internal/api/usecase/session_prompt.go:旧文案让 agent 拿不存在的字段'
+      - 'server/internal/api/usecase/session_prompt_no_stale_tasks_test.go:TestBuildPromptDoesNotRecommendRemovedTaskFeatures'
+      - 'server/internal/api/http_tasks.go:errText = fmt.Sprintf('
+      - 'server/internal/api/http_tasks.go:check ?user= and the target node'
+      - 'server/internal/api/http_task_create_root_error_test.go:TestTaskCreateRootNotFoundNamesAccountAndNode'
+
+  - id: G-QM
+    title: 巡检回合无来源留言时放行 notify_user / escalate
+    kind: fix
+    symptom: |
+      生产决策 rdec_47d5992f117dc51b / rdec_04816ea01 在 turn_interrupted 回合
+      分别产出 escalate / notify_user，却都被应用层以
+      `requires an originating user activity` 拒成 failed；用户只看到一条
+      `route-rejected` 说明，巡检发现的问题没人接手。
+    why: |
+      必须保留：上层 validateRuntimeEventActions 已允许这两个动作，两个 applier
+      的签名也不接收 userAct；唯一的阻断点是无来源留言巡检回合的 say/ask_user
+      白名单。不放行它们，监管开关 on 的巡检仍然只会写拒绝说明，任务无法升级给
+      用户，也没有可见通知。其余需要留言锚点的动作继续被拒，不在这里放宽。
+    files:
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/router_inspection_turn_test.go
+      - docs/superpowers/plans/2026-11-24-router-inspection-supervision-apply.md
+      - docs/plans/README.md
+    tests:
+      - server/internal/kanban/router_inspection_turn_test.go
+    anchors:
+      - 'server/internal/kanban/activity_route_apply.go:action.Kind != RouterActionNotifyUser && action.Kind != RouterActionEscalate'
+      - 'server/internal/kanban/router_inspection_turn_test.go:TestCoordinatorInspectionEventWithoutOriginAppliesSupervisionNotice'
+      - 'server/internal/kanban/router_inspection_turn_test.go:route-notify:'
+      - 'server/internal/kanban/router_inspection_turn_test.go:route-escalate:'
+      - 'docs/superpowers/plans/2026-11-24-router-inspection-supervision-apply.md:rdec_47d5992f117dc51b'
+      - 'docs/plans/README.md:2026-11-24-router-inspection-supervision-apply.md'
+
+  # ── 撞号说明（2026-11-24 合回 main 时改号）──────────────────────────
+  # 本组原占用 G-QL。main 的 248ec040（过期任务提示与 root 错误可诊断性修复）
+  # 已先登记同一号；按「先引入者保留、合入方改号」的裁决，本组改为 G-QN。
+  - id: G-QN
+    title: "任务状态跟随会话/节点的真实运行状态（待处理 ↔ 运行中）"
+    kind: fix
+    symptom: |
+      会话或工作流节点明明还在跑，任务卡却停在「待处理」：用户直接给任务会话发消息、
+      回答提问卡、节点 claim 后开始执行，任务头都不跟着变成 running；更糟的是旧进程
+      结算时无条件把任务写回 waiting_user，把另一条还在跑的会话也一起标成待处理。
+    why: |
+      上游没有「会话活跃 ⇒ 任务运行中」这条语义：直连回合只在 beginTurnTaskStatus
+      里改状态，节点回合靠 Run 投影，提问卡回答完全没有 OOB 入口，而投影里等待优先于
+      运行。合上游时整套会被顶掉，复发成「节点会话说在跑、看板说待处理」。必须保留
+      统一判定 taskRuntimeLive（绑定会话探针 + 节点行状态，Router 会话不算）、开工抬升、
+      结算按存活判定回落、投影运行优先于等待、巡检纠正已落到待处理的任务头。
+    files:
+      - server/internal/kanban/service_task_runtime_status.go
+      - server/internal/kanban/service_session_follow.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/task_store_archive.go
+      - server/internal/kanban/workflow_engine.go
+      - server/internal/kanban/workflow_driver_loop.go
+      - server/internal/kanban/workflow_executor.go
+      - server/internal/kanban/router_task_health.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/api/ws.go
+    tests:
+      - server/internal/kanban/task_runtime_status_test.go
+      - server/internal/kanban/session_follow_test.go
+    anchors:
+      - 'server/internal/kanban/service_task_runtime_status.go:func (s *Service) taskRuntimeLive('
+      - 'server/internal/kanban/service_task_runtime_status.go:func (s *Service) markTaskRuntimeRunning('
+      - 'server/internal/kanban/service_task_runtime_status.go:func (s *Service) reconcileTaskRuntimeStatus('
+      - 'server/internal/kanban/task_store_archive.go:func (s *TaskStore) TaskRuntimeSessionKeys('
+      - 'server/internal/kanban/service_session_follow.go:task.Status != StatusWaitingUser && task.Status != StatusPending'
+      - 'server/internal/kanban/service_session_follow.go:s.reconcileTaskRuntimeStatus(ctx, store, taskID, sessionKey)'
+      - 'server/internal/kanban/service_turn_settled.go:s.reconcileTaskRuntimeStatus(ctx, store, taskID, sessionKey)'
+      - 'server/internal/kanban/workflow_engine.go:if hasRunning {'
+      - 'server/internal/kanban/workflow_driver_loop.go:s.taskRuntimeLive(ctx, store, run.TaskID, "")'
+      - 'server/internal/kanban/workflow_executor.go:s.markTaskRuntimeRunning(ctx, store, run.TaskID)'
+      - 'server/internal/kanban/router_task_health.go:case taskHealthWaitingBusy:'
+      - 'server/internal/kanban/router_coordinate.go:taskHealthSweep(ctx, rs.rootID, now)'
+      - 'server/internal/api/ws.go:svc.BeginOutOfBandSessionTurn(ctx, rootID, key)'
+      - 'server/internal/kanban/task_runtime_status_test.go:func TestOutOfBandTurnLivenessRestoresOnlyWhenAlone('
+  - id: G-QO
+    title: "上下文溢出：错误结果不再当正文、不重试本轮、不连坐回收运行时"
+    kind: fix
+    symptom: |
+      线上会话出现 `Prompt is too longPrompt is too long` 的重复正文。journal 里同一轮
+      先收到一条 `is_error=true, result="Prompt is too long", terminal_reason="blocking_limit"`
+      的 result，补发 `continue` 后又收到一条同样的 result；`handleResultMessage` 在
+      「本轮还没见过助手正文」时把 Result 当正文发成 MessageChunk，两次直接拼接。
+      同时 `recoverAgentTurn` 对这条错误照样重试 3 次（每次 30 秒），浪费请求且不改结果。
+    why: |
+      不能把 `prompt is too long` 加进 `isNonRecoverableAgentError`：那条路径会
+      `KillAgentProcess` 掉该 agent 名下的所有会话，把同 agent 其它正常会话连坐杀掉。
+      必须保留三条判据的分工：① 适配层把 `terminal_reason` 用
+      `agenttypes.TurnTerminalError` 带出，失败 result 的 Result 不再发成正文；
+      ② 终端错误（blocking_limit / prompt_too_long）只停本轮、不回收运行时；
+      ③ 非可恢复错误（429/配额/远端压缩失败）仍按原样回收运行时。合上游时这三处
+      任一被顶掉，重复正文或连坐杀会话就会复发。
+    files:
+      - server/internal/agent/types/errors.go
+      - server/internal/agent/claude/session_turn.go
+      - server/internal/agent/claude/session_message_loop.go
+      - server/internal/api/usecase/session_recovery.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/agent/types/errors_test.go
+      - server/internal/agent/claude/session_result_terminal_test.go
+      - server/internal/api/usecase/session_recovery_test.go
+    tests:
+      - 'server/internal/agent/types/errors_test.go:func TestTurnTerminalReasonReadsWrappedError(t *testing.T) {'
+      - 'server/internal/agent/types/errors_test.go:func TestTurnTerminalReasonWithoutTypedErrorIsEmpty(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestResultErrCarriesTerminalReason(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestHandleResultMessageDoesNotEmitErrorResultAsBody(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestRepeatedOverflowResultsNeverBecomeBodyText(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestHandleResultMessageStillEmitsSuccessfulResultBody(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestIsTerminalTurnError(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestPlanSendFailure(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestExplainTerminalTurnErrorKeepsCauseAndNextStep(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestRecoverAgentTurnStopsOnTerminalError(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestApplySendFailureTerminalDoesNotCancelRuntime(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestApplySendFailureNonRecoverableStillRecycles(t *testing.T) {'
+    anchors:
+      - 'server/internal/agent/types/errors.go:type TurnTerminalError struct {'
+      - 'server/internal/agent/types/errors.go:func TurnTerminalReason(err error) string {'
+      - 'server/internal/agent/claude/session_turn.go:return wrapTurnTerminalError(msg, err)'
+      - 'server/internal/agent/claude/session_message_loop.go:if turnErr == nil && !s.sawMessageText && strings.TrimSpace(msg.Result) != "" {'
+      - 'server/internal/api/usecase/session_recovery.go:"blocking_limit":  {},'
+      - 'server/internal/api/usecase/session_recovery.go:func isTerminalTurnError(err error) bool {'
+      - 'server/internal/api/usecase/session_recovery.go:func planSendFailure(err error, sawAssistantChunk bool) sendFailurePlan {'
+      - 'server/internal/api/usecase/session_recovery.go:case plan.Reason == "terminal_turn":'
+      - 'server/internal/api/usecase/session_recovery.go:if isTerminalTurnError(err) {'
+      - 'server/internal/api/usecase/session_send.go:sess, sendErr = s.applySendFailure(sendFailureContext{'
+
   # 本组原占用 G-QL。合并 main 时发现该号已被「过期任务提示与 root 错误可诊断性修复」
   # （248ec040）占用，按 scripts/scope-id next 的输出改为 G-QP。
   - id: G-QP

@@ -158,6 +158,82 @@ control 上陌生 `user=` 仍回空工作区（`emptyWorkspace`），因为 cont
   `share\mindfs\web\index.html` 与 `favicon.svg` 真的落地，缺一个就整体失败 ——
   不允许留下「二进制在、页面 404」的半套安装。
 
+### 主节点侧也得配（顺序不能反）
+
+同步是双向的：主节点自己不配 `primary`，边缘配得再对也只会拿到 404。两端各一份
+`config.json`，**主节点先配先重启，再配边缘**。
+
+主节点**可以什么都不写**：`control_sync` 缺省即启用，`role` 缺省 `primary`，
+`token_file` 缺省 `<config-dir>/mindfs/control_sync.token`。要写的只有 `instance_id`
+（变更流里的来源标签，缺省取主机名）和「哪天想关掉」时的那一行 `"enabled": false`。
+`role=worker` 的节点整段跳过 —— 它不持有控制面，开着只会得到一个永远转发的角色。
+
+```json
+{
+  "role": "control",
+  "control_sync": {
+    "enabled": true,
+    "role": "primary",
+    "instance_id": "home",
+    "token_file": "/home/<user>/.config/mindfs/control_sync.token"
+  }
+}
+```
+
+主节点的 `token_file` 不存在（或为空）时会**自动生成** 32 字节随机 token（base64url，
+43 字符）并以 `0600` 落盘，目录 `0700`；日志只打「已生成 + 路径」，**不打 token 本身**。
+**幂等**：文件里已有可用 token 就原样用，重启绝不换钥匙 —— 换了所有边缘同时失联。
+生成失败（路径不可写、目录占位）才拒绝启动。
+
+生成后把**这个文件的内容**拷到边缘的 `token_file`（同一个值），或者走边缘侧的配对流程（见下）。
+token 至少 16 字节且不含空白，短串会在装配处被拒（见 `controlsync.ValidateSyncToken`）。
+
+**一台机器只能有一个主控。** 配置成 `primary` 而其 `control_sync.db` 的
+`state.primary_instance_id` 非空时，启动直接失败 —— 那一列只由边缘的
+`Replicator` 写，非空即说明这份库曾经是**别人家的副本**，拿它当主控会出现两个写者
+（两侧各自往自己的变更流里追加 rev，边缘拉到谁的就是谁的那半份控制面，而双方日志
+都写着 `enabled role=primary`）。出路不是删库重来：在**那台机器**上先跑一次
+`POST /api/control-sync/mode {"action":"adopt_primary"}`（边缘的「接受新主节点」，
+会清掉这一列并丢掉旧副本，保留 pending 本地改动）。
+
+主节点自检三条（不带 token 一定 401，这是正常的）：
+
+```bash
+BASE='http://127.0.0.1:7331/mindfs'
+TOKEN="$(cat /home/<user>/.config/mindfs/control_sync.token)"
+curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/head"    # 200 + head_rev
+curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/edges"   # 200 + 已注册边控端
+```
+
+`/head` 404 表示主节点没启用同步（`"enabled": false`）；401 表示 token 对不上；
+这两种都不是边缘的问题。
+
+### 边控端名单：`/edges`（列表 / 踢人 / 恢复）
+
+三条端点，全部走与 `/head` 同一档鉴权（bearer + 签名），且**只在主节点**
+（`role=primary` 且 token 非空）注册 —— 边缘访问这里只会拿到 404，它没有「谁在同步我」
+这个视角。
+
+```bash
+BASE='http://127.0.0.1:7331/mindfs'
+TOKEN="$(cat /home/<user>/.config/mindfs/control_sync.token)"
+# 列表：instance_id / registered_at / last_seen_at / revoked_at
+curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/edges"
+# 踢人：之后该 instance 的同步请求一律 403 edge revoked，且不再推进 last_seen_at
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/edges/<instance>/revoke"
+# 恢复
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/edges/<instance>/restore"
+```
+
+**这张表是运维索引，不是准入白名单。** `X-MindFS-Instance` 不在签名覆盖范围内，是
+客户端**自称**的；真正的凭证始终是 token，签名通过之后才会登记（没带 token 的请求
+不该在名单里留下任何痕迹）。所以「踢掉某台边控端」的真实含义是「拒绝它现在用的这个
+名字继续同步」，挡不住一个改了 `instance_id` 重连的客户端。要让某个泄露的 token 失效，
+唯一的办法是轮换 token 文件（然后把新值分发给所有合法边缘）—— 换 token 是破坏性操作，
+按仓库约定需要人授权。
+
+### 边缘侧（边控端）
+
 安装后配置（`config.json`）：
 
 ```json
@@ -169,10 +245,54 @@ control 上陌生 `user=` 仍回空工作区（`emptyWorkspace`），因为 cont
     "instance_id": "pc-win",
     "primary_url": "https://home.xiaokubao.space/mindfs",
     "ca_file": "",
-    "token_file": "C:\\Users\\<user>\\AppData\\Roaming\\mindfs\\control-sync.token"
+    "token_file": "C:\\Users\\<user>\\AppData\\Roaming\\mindfs\\control_sync.token"
   }
 }
 ```
+
+`primary_url` 必须是 `https://`（`controlsync/mode.go` 的 `parsePrimaryURL` 直接拒 http），
+自签/内网 CA 走 `ca_file`；**没有** `insecure_skip_verify` 这个开关。
+
+边缘**不生成** token —— 自动生成会让每台机器拿着不同的钥匙，症状是「每台都说自己
+配对好了，却谁也同步不了」。token 从 `token_file` 读（缺省
+`<config-dir>/mindfs/control_sync.token`，Windows 是 `%AppData%\mindfs\control_sync.token`），
+**只允许**由配对流程或人工拷贝写入。
+
+### 首次配对（不用手搓 JSON）
+
+上面那份 `config.json` 不需要人手写。装好就往这台机器自己的页面发起一次配对：
+
+```bash
+curl -sS -X POST http://127.0.0.1:7332/api/control-sync/pair \
+  -H 'content-type: application/json' \
+  -d '{"primary_url":"https://home.xiaokubao.space/mindfs","token":"<主节点 token_file 的内容>"}'
+# {"status":"paired","restart_required":true,"instance_id":"pc-win",
+#  "primary_url":"https://home.xiaokubao.space/mindfs","primary_version":"v0.5.5-1300","head_rev":42}
+```
+
+一次配对做四件事，顺序固定（任何一步失败都不落盘）：
+
+1. 校验 `primary_url` 必须是 `https://`、token ≥16 字节且不含空白；
+2. 探活 `GET <primary_url>/health`，要求 `ok=true` 且 `role=control` —— 它挡的是
+   「把 worker 当主控」和「地址填到了别的服务」；
+3. 签名 GET `<primary_url>/api/control-sync/head`（这一步才真正验证 token 与 schema）：
+   401 → 「token 对不上，重新拷一份」；404 → 「主控端没启用同步，先在那边开」；
+   schema 版本不符直接拒（拿旧副本合新控制面比不同步更糟）；
+4. 落盘：token 写 `token_file`（目录 `0700`、文件 `0600`、原子换名），
+   `config.json` 只改 `control_sync` 段 —— 其余键（`role` / `router` / `live_compact` …）
+   原样保留，大整数不被浮点改写，`ca_file` 为空时删键而不是留空串。
+
+配对写入时把 `control_sync.role` 定成 `edge`，若显式写着 `role: worker` 会一并纠正成
+`control` —— 否则配对成功的机器是个不注入静态目录的 worker，打开页面是 403。
+
+**配对不重启，必须重启进程才生效**：路由、同步器、转发中间件都在启动期装配，
+`restart_required=true` 就是这件事的如实告知。Windows 边控端由安装器的托盘菜单重启；
+Linux 上 `systemctl --user restart mindfs`。
+
+**配对端点只在未配好的边缘（`PendingPairing`）上注册，且只接受本机回环请求**（按
+`RemoteAddr` 判断，不信 `X-Forwarded-For`）。它没有 token 可校验 —— token 正是它要解决的
+问题 —— 而它会改信任锚、写通道密钥、改 `config.json`。反代把请求转到回环上确实会让它
+「看起来是本机」，那种部署下这个入口该由运维自己收口。
 
 自检三条：
 

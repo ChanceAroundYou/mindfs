@@ -18,8 +18,16 @@ ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
 die()  { printf '    \033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 step "交叉编译 Windows 二进制（pc-win）"
+# 发布清单公钥必须一起编进去：update.Service.canAutoUpdate() 读的就是它，
+# 缺了这行 pc-win 的 /api/app/update 永远返回「需要配置公钥」，自更新静默失效
+# （症状只有「点了更新什么都不发生」，日志里也只有一行 unsupported）。
+# 与 scripts/build-all.sh 同一个变量、同一个 -X 目标。
+PCWIN_LDFLAGS="-H windowsgui -X main.version=$VERSION -X mindfs/internal/deploy.Prefix=/mindfs"
+if [[ -n "${MINDFS_RELEASE_PUBLIC_KEY:-}" ]]; then
+  PCWIN_LDFLAGS="$PCWIN_LDFLAGS -X mindfs/server/internal/update.releaseManifestPublicKey=${MINDFS_RELEASE_PUBLIC_KEY}"
+fi
 GOOS=windows GOARCH=amd64 go build \
-  -ldflags "-H windowsgui -X main.version=$VERSION -X mindfs/internal/deploy.Prefix=/mindfs" \
+  -ldflags "$PCWIN_LDFLAGS" \
   -o /tmp/mindfs-pcwin.exe ./cli/cmd \
   || die "Windows 交叉编译失败"
 ok "Windows 二进制已构建"

@@ -63,11 +63,16 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 		state.settleTurn = true
 	}
 	// 会话回合结算同样是收尾回合（prompt 规则 12 与 summaryTriggerAllowed 都这么
-	// 认定），但它没有 Run 可判定「真的跑成了」，所以只用来识别「本回合已有总结」，
-	// 不做「最后一条 say 提升成总结」的兜底 —— 每轮会话都结算，那样会把普通进度
-	// 顶成卡片结论。
+	// 认定），但它没有 Run 可判定「真的跑成了」，所以判据换成「这一轮有没有真实
+	// 执行结果」：会话里跑过工具（decision.HadToolCalls）才把最后一条 say 提升成
+	// 总结；纯文本闲聊不提升 —— 每轮会话都结算，全升会把普通进度顶成卡片结论。
+	// 线上 #68 正是「Router 说对了、说了四条待决策项，但写成 progress，永远不落
+	// 任务摘要」，卡片上只剩压缩器那段短句。
 	if decision.TriggerKind == RouterTriggerTurnSettled {
 		state.settleTurn = true
+		if decision.HadToolCalls {
+			state.settleSummarySeq = settleSummaryActionSeq(decision)
+		}
 	}
 	// 巡检回合（回合结算 / 停滞 / 孤儿 / 打断）没有来源用户留言：它们由系统
 	// 发起，证据在事件载荷里。此时 userAct 为 nil，只允许回话类动作（见
@@ -158,12 +163,16 @@ func (s *ActivityService) applyRouteAction(
 	state *routeApplyState,
 	action RouterAction,
 ) error {
-	// 没有来源留言的巡检回合只能回话。收尾、起 Run、投递、监管写入都需要一条
-	// 留言当锚点（回复绑定、证据、投递目标），没有它就不是「巡检发现问题」，
-	// 而是「凭空操作任务」。只对巡检类触发判定：直接调用的应用测试与用户留言
-	// 回合没有留言是另一回事，不在这里改变它们的语义。
+	// 没有来源留言的巡检回合只能回话，或写一条不依赖留言锚点的监管说明/升级卡。
+	// 收尾、起 Run、投递等动作都需要留言当锚点（回复绑定、证据、投递目标），
+	// 没有它就不是「巡检发现问题」，而是「凭空操作任务」。notify_user / escalate
+	// 的 applier 本来就不接收 userAct；本现场的上层 validateRuntimeEventActions
+	// 也已经确认过监管观测块。这里放行它们，真正修掉巡检发现问题却只留下拒绝说明的现场。
+	// 只对巡检类触发判定：直接调用的应用测试与用户留言回合没有留言是另一回事，
+	// 不在这里改变它们的语义。
 	if userAct == nil && routerTurnAllowsNoUserActivity(string(decision.TriggerKind)) &&
-		action.Kind != RouterActionSay && action.Kind != RouterActionAskUser {
+		action.Kind != RouterActionSay && action.Kind != RouterActionAskUser &&
+		action.Kind != RouterActionNotifyUser && action.Kind != RouterActionEscalate {
 		// 拒掉之后必须留一条可见说明。否则整轮 failed 只在日志里，用户侧
 		// 零变化 —— 现场就是这样：巡检发现了问题、动作被拒、谁也不知道
 		// （rdec_47d5992f117dc51b）。
@@ -378,12 +387,29 @@ func (s *ActivityService) applyRouteAskUser(
 		act.Body = body
 		act.Status = ActivityStatusWaitingUser
 	}
+	// Router 的提问落成真正的提问卡：按钮、输入框锁、作答入口都挂在 type=question
+	// 上。正文保留（问题 + 选项各一行），飞书通知与纯文本客户端读的是它。
+	payloadJSON, err := routerAskUserQuestionPayload(question, action.Options, decision.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.activities.SetQuestionCard(ctx, act.ID, payloadJSON); err != nil {
+		return err
+	}
+	act.Type = ActivityTypeQuestion
+	act.PayloadJSON = payloadJSON
+	// 新卡落地前先收口旧的 Router 提问卡：前端锁输入框读的是最早那张，旧卡留着
+	// 用户就会点到过时的问题（#104）。
+	if err := s.closeRouterQuestionsBefore(ctx, task.ID, act.ID); err != nil {
+		return err
+	}
 	fields, err := s.markRouteReply(ctx, decision, userAct, act, action)
 	if err != nil {
 		return err
 	}
 	s.broadcastUpdated(act, map[string]any{
 		"body": body, "status": ActivityStatusWaitingUser,
+		"type": ActivityTypeQuestion, "payload_json": payloadJSON,
 		"purpose": fields["purpose"], "ordinal": action.Seq,
 		"reply_to_id": routeUserActivityID(userAct), "router_decision_id": decision.ID,
 	})

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/session"
 )
@@ -45,6 +46,146 @@ type SendRecoveryInput struct {
 	Prompt             string
 	SawAssistantChunk  bool
 	SendWithAttachment func(agenttypes.Session, string) error
+}
+
+// terminalTurnReasons 是「这一轮已终止，重试同一个请求只会原样再失败，且不该
+// 连坐回收运行时」的 harness 判据。
+//
+// Claude CLI 上下文用满时给的是 result="Prompt is too long" +
+// terminal_reason="blocking_limit"（2026-11-24 线上 journal 实测）；
+// prompt_too_long 是 SDK 的同义取值。它们**不能**塞进
+// isNonRecoverableAgentError —— 那条路径会 KillAgentProcess，把该 agent
+// 名下所有会话一起杀掉。这里只停本轮。
+var terminalTurnReasons = map[string]struct{}{
+	"blocking_limit":  {},
+	"prompt_too_long": {},
+}
+
+func isTerminalTurnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if reason := agenttypes.TurnTerminalReason(err); reason != "" {
+		_, ok := terminalTurnReasons[reason]
+		return ok
+	}
+	// 旧版 CLI / 其它 harness 只把这句话写进错误文本，没有 terminal_reason。
+	return strings.Contains(strings.ToLower(err.Error()), "prompt is too long")
+}
+
+const terminalOverflowMessage = "上下文已满，本轮不会自动重试；请先压缩或清理上下文，再重新发送"
+
+// explainTerminalTurnError 把机器判据翻成用户能照做的下一步，同时用 %w
+// 保留原始错误，日志与前端详情仍能读到 harness 的原文。
+func explainTerminalTurnError(err error) error {
+	if !isTerminalTurnError(err) {
+		return err
+	}
+	return fmt.Errorf("%s（%w）", terminalOverflowMessage, err)
+}
+
+// sendFailureContext 是一次回合失败后决定「补发 / 不补发 / 回收运行时」所需的
+// 全部输入。抽出来是为了让 session_send.go 的主路径只留一句调用，避免继续膨胀。
+type sendFailureContext struct {
+	Err                error
+	TurnCtx            context.Context
+	RootID             string
+	SessionKey         string
+	AgentName          string
+	Model              string
+	Mode               string
+	Effort             string
+	FastService        string
+	Manager            *session.Manager
+	Current            *session.Session
+	CurrentSession     agenttypes.Session
+	AgentPool          *agent.Pool
+	PlanMode           bool
+	RootAbs            string
+	Prompt             string
+	SawAssistantChunk  bool
+	SendWithAttachment func(agenttypes.Session, string) error
+	OnUpdate           func(agenttypes.Event)
+}
+
+// applySendFailure 按 planSendFailure 的判据执行失败后的动作，返回可能被替换的
+// 运行时（补发成功时新会话）与最终错误。
+func (s *Service) applySendFailure(in sendFailureContext) (agenttypes.Session, error) {
+	sess := in.CurrentSession
+	sendErr := in.Err
+	plan := planSendFailure(sendErr, in.SawAssistantChunk)
+	switch {
+	case plan.RecycleRuntime:
+		log.Printf("[session] turn.send.non_recoverable root=%s session=%s agent=%s action=fail_without_recovery err=%v", in.RootID, in.SessionKey, in.AgentName, sendErr)
+		cancelRuntimeAfterNonRecoverableError(sess, in.AgentPool, in.AgentName, sendErr)
+	case plan.Reason == "terminal_turn":
+		// 上下文用满：重试同一个请求不会变，也不该连坐回收运行时 —— 同 agent
+		// 名下别的会话是好的，KillAgentProcess 会把它们一起杀掉。
+		log.Printf("[session] turn.send.terminal root=%s session=%s agent=%s action=fail_without_recovery reason=%s err=%v", in.RootID, in.SessionKey, in.AgentName, agenttypes.TurnTerminalReason(sendErr), sendErr)
+	case plan.Reason == "no_assistant_output":
+		log.Printf("[session] turn.send.no_response root=%s session=%s agent=%s action=fail_without_recovery", in.RootID, in.SessionKey, in.AgentName)
+	case plan.RecoverTurn:
+		if in.OnUpdate != nil {
+			in.OnUpdate(agenttypes.Event{
+				Type: agenttypes.EventTypeRecovery,
+				Data: agenttypes.RecoveryStatus{Message: "遇到错误，重试中..."},
+			})
+		}
+		recoveredSess, recoveredErr := s.recoverAgentTurn(in.TurnCtx, SendRecoveryInput{
+			RootID:             in.RootID,
+			SessionKey:         in.SessionKey,
+			Manager:            in.Manager,
+			Current:            in.Current,
+			AgentName:          in.AgentName,
+			Model:              in.Model,
+			Mode:               in.Mode,
+			Effort:             in.Effort,
+			FastService:        in.FastService,
+			PlanMode:           in.PlanMode,
+			RootAbs:            in.RootAbs,
+			CurrentSession:     sess,
+			Prompt:             in.Prompt,
+			SawAssistantChunk:  in.SawAssistantChunk,
+			SendWithAttachment: in.SendWithAttachment,
+		})
+		if recoveredErr != nil {
+			sendErr = recoveredErr
+		} else {
+			sess = recoveredSess
+			sendErr = nil
+		}
+	}
+	return sess, sendErr
+}
+
+// sendFailurePlan 把「失败之后做什么」收成一个纯判据，顺序即优先级：
+//   - 非可恢复错误（限流/配额/远端压缩失败…）：不重试且回收运行时，现状不变；
+//   - 终端错误（上下文用满）：不重试、不回收运行时；
+//   - 一个字都没出：不重试（重复发同一 prompt 只会再失败）；
+//   - 其余：补发 continue。
+//
+// 抽成纯函数是为了让四类失败的分界可以被表驱动测试钉住，而不是散在
+// if/else 里靠阅读顺序保证。
+type sendFailurePlan struct {
+	RecycleRuntime bool
+	RecoverTurn    bool
+	Reason         string
+}
+
+func planSendFailure(err error, sawAssistantChunk bool) sendFailurePlan {
+	if err == nil {
+		return sendFailurePlan{Reason: "none"}
+	}
+	if isNonRecoverableAgentError(err) {
+		return sendFailurePlan{RecycleRuntime: true, Reason: "non_recoverable"}
+	}
+	if isTerminalTurnError(err) {
+		return sendFailurePlan{Reason: "terminal_turn"}
+	}
+	if !sawAssistantChunk {
+		return sendFailurePlan{Reason: "no_assistant_output"}
+	}
+	return sendFailurePlan{RecoverTurn: true, Reason: "recover"}
 }
 
 func (s *Service) recoverAgentTurn(ctx context.Context, in SendRecoveryInput) (agenttypes.Session, error) {
@@ -87,6 +228,10 @@ func (s *Service) recoverAgentTurn(ctx context.Context, in SendRecoveryInput) (a
 			}
 			if isNonRecoverableAgentError(err) {
 				log.Printf("[session/recovery] send.non_recoverable root=%s session=%s agent=%s attempt=%d/%d action=%s err=%v", in.RootID, in.SessionKey, in.AgentName, attempt, sessionRecoveryAttempts, recoveryAction, err)
+				return nil, err
+			}
+			if isTerminalTurnError(err) {
+				log.Printf("[session/recovery] send.terminal root=%s session=%s agent=%s attempt=%d/%d action=%s reason=%s err=%v", in.RootID, in.SessionKey, in.AgentName, attempt, sessionRecoveryAttempts, recoveryAction, agenttypes.TurnTerminalReason(err), err)
 				return nil, err
 			}
 			lastErr = err

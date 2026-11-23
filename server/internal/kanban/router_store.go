@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS router_decisions (
   placeholder_activity_id TEXT NOT NULL DEFAULT '',
   trigger_kind           TEXT NOT NULL,
   trigger_ref            TEXT NOT NULL DEFAULT '',
+  had_tool_calls         INTEGER NOT NULL DEFAULT 0,
   router_session_key     TEXT NOT NULL DEFAULT '',
   turn_id                TEXT NOT NULL,
   brief_hash             TEXT NOT NULL DEFAULT '',
@@ -86,6 +87,9 @@ CREATE TABLE IF NOT EXISTS router_task_state (
 		`ALTER TABLE router_task_state ADD COLUMN out_of_band INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE router_task_state ADD COLUMN out_of_band_started_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE router_task_state ADD COLUMN out_of_band_session_key TEXT NOT NULL DEFAULT ''`,
+		// had_tool_calls 记「这一轮会话有没有真实执行结果」：结算总结只在这条为真
+		// 时才把最后一条 say 升成任务结论，否则每轮闲聊都会顶掉卡片摘要。
+		`ALTER TABLE router_decisions ADD COLUMN had_tool_calls INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, alterErr := db.Exec(stmt); alterErr != nil && !strings.Contains(strings.ToLower(alterErr.Error()), "duplicate column name") {
 			return alterErr
@@ -139,13 +143,13 @@ func (s *RouterStore) InsertDecision(ctx context.Context, decision *RouterDecisi
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO router_decisions (
   id, task_id, root_id, scope, owner_id, user_activity_id, placeholder_activity_id,
-  trigger_kind, trigger_ref, router_session_key, turn_id, brief_hash, brief_json,
+  trigger_kind, trigger_ref, had_tool_calls, router_session_key, turn_id, brief_hash, brief_json,
   actions_json, status, applied_seq, legacy_action_json, agreement, error,
   latency_ms, prompt_tokens, completion_tokens, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		decision.ID, decision.TaskID, decision.RootID, string(decision.Scope), decision.OwnerID,
 		decision.UserActivityID, decision.PlaceholderActivityID, string(decision.TriggerKind),
-		decision.TriggerRef, decision.RouterSessionKey, decision.TurnID, decision.BriefHash,
+		decision.TriggerRef, decision.HadToolCalls, decision.RouterSessionKey, decision.TurnID, decision.BriefHash,
 		decision.BriefJSON, string(actions), string(decision.Status), decision.AppliedSeq,
 		legacy, decision.Agreement, decision.Error, decision.LatencyMS,
 		decision.PromptTokens, decision.CompletionTokens,
@@ -346,8 +350,8 @@ WHERE id = ?`,
 }
 
 const routerDecisionColumns = `id, task_id, root_id, scope, owner_id, user_activity_id,
-placeholder_activity_id, trigger_kind, trigger_ref, router_session_key, turn_id,
-brief_hash, brief_json, actions_json, status, applied_seq, legacy_action_json,
+placeholder_activity_id, trigger_kind, trigger_ref, had_tool_calls, router_session_key,
+turn_id, brief_hash, brief_json, actions_json, status, applied_seq, legacy_action_json,
 agreement, error, latency_ms, prompt_tokens, completion_tokens, created_at, updated_at`
 
 func scanRouterDecision(row scanner) (*RouterDecision, error) {
@@ -360,7 +364,7 @@ func scanRouterDecision(row scanner) (*RouterDecision, error) {
 	if err := row.Scan(
 		&decision.ID, &decision.TaskID, &decision.RootID, &scope, &decision.OwnerID,
 		&decision.UserActivityID, &decision.PlaceholderActivityID, &triggerKind,
-		&decision.TriggerRef, &decision.RouterSessionKey, &decision.TurnID,
+		&decision.TriggerRef, &decision.HadToolCalls, &decision.RouterSessionKey, &decision.TurnID,
 		&decision.BriefHash, &decision.BriefJSON, &actionsRaw, &decision.Status,
 		&decision.AppliedSeq, &legacyRaw, &decision.Agreement, &decision.Error,
 		&decision.LatencyMS, &decision.PromptTokens, &decision.CompletionTokens,
