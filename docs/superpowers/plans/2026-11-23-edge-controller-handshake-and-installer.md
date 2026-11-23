@@ -40,7 +40,7 @@ Plan 2026-11-23。起点是用户三条需求：
 | W1 | 主控同步默认开 + token 自生成 + 单主控守卫 + `/edges` 名单（注册/列表/踢人/恢复） | G-QH | 完成（`fd48fa1f`、`11498130`） |
 | W2 | 边控端握手与自动同步：`POST /api/control-sync/pair` + 未配对档位 + 落盘 | G-QK | 完成 |
 | W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QJ | 代码完成（`59ad9f32`），真机未验 |
-| W4 | 部署与四端对账（需当次授权） | — | 待做 |
+| W4 | 部署与四端对账（需当次授权） | — | 已完成（四端 `v0.5.5-1300-66-g6d1b174e`，hasee 已装） |
 
 ### W1（已完成）
 
@@ -200,6 +200,40 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
   `go vet`（`GOOS=windows` 桩程序）退出 0、`go build ./...` 退出 0、
   `go test ./internal/deploy/` ok、`go run ./scripts/check-upstream` →
   `2626 个 delta 文件被 380 组完整覆盖`。
+
+## W4 执行记录（2026-11-24）
+
+用户授权「合入 + 常规部署 + hasee 安装器部署」。执行顺序与结果：
+
+1. **合入**：`edge-controller` 两次合并 `main` 解决撞号（G-PZ/G-QA/G-QB → G-QH/G-QK/G-QJ，
+   第二次 G-QI → G-QK，理由写在 `docs/upstream-customizations.yaml` 的撞号说明里），
+   最终 tip `6d1b174e`（parents `68993950` / `c544cf41`），`main` 以 `--ff-only` 跟到同一点并推送。
+2. **门禁（合并后 tip 上独立跑过一遍，deploy-all 内又跑一遍）**：`go test -count=1 ./...` 35 包
+   `ok`、零 FAIL；`tsc -b --noEmit` 退出 0；Vitest 274 文件 / 959 通过 / 6 跳过；
+   `make check-upstream` 2671 delta / 389 组全绿。
+   - 中途一次全量跑出 `FAIL mindfs/server/internal/api`（`TestActivityAPI_List` 断言恰好 2 条活动，
+     实际 3 条 —— 第三条是创建留言异步派发的 workflow driver 写下的 `node_notified` 系统事件）。
+     该测试与 `main` 逐字相同、本分支未改；隔离单跑 `-count=20` 全过；带负载的全量复跑全过。
+     判定为**既有的并发负载 flake**（同 `kanban` 的 sqlite/TempDir 一类），未改测试。
+3. **部署**：`bash scripts/deploy-all.sh` 退出 0，四端 `v0.5.5-1300-66-g6d1b174e` 逐字一致 ——
+   wsl / fn `user` 单元 `active` + health 200 + `--version` 同串；pc-win 计划任务 PID **26572**、
+   `:7332` LISTENING 由它持有、health 200；本机二进制已装同版本、bundle `assets/index-CShnHyZ0.js`
+   即刚装的那份。**本机运行进程仍未重启**（`/api/node-info` 报旧值 `v0.5.5-1300`），
+   待用户 `sudo systemctl restart mindfs`。
+4. **hasee 安装（真 Windows 首跑）**：`dist/mindfs_v0.5.5-1300-66-g6d1b174e_windows_amd64-setup.exe`
+   （16,898,303 B，载荷 14,050,035 B，魔数 `0x4d465353`，294 条目与 dist 包逐字节一致）拷到
+   hasee 后启动。装完实测：计划任务 `\mindfs` 形状（S4U / `PT0S` / `IgnoreNew` / `RestartOnFailure` /
+   `BootTrigger` / `--internal-autostart --addr 0.0.0.0:7332`）、进程 PID 8776 落在 **Session 0**、
+   health 200、`/api/node-info` 报 `role=control` + `version=v0.5.5-1300-66-g6d1b174e`、
+   `config.json` 写入 `control_sync.role=edge` 与 `update.auto_install=true`、`GET /mindfs/` 200、
+   `GET /api/control-sync/pair` 200 且 `pending_pairing:true`（此时 `/api/control-sync/status` 按设计 404）。
+   - 形态说明：通过 ssh 非交互启动，不是人工双击。安装器是 `windowsgui` 子系统、失败只走
+     `MessageBoxW` —— 无人值守启动下失败会表现为进程挂住而不是报错，这是**已知的运维缺口**
+     （成功路径不受影响），后续可考虑失败时落一份日志文件。
+5. **剩余（须等本机重启）**：配对要求主控端先跑新二进制（token 在 `token_file` 生成、
+   `/api/control-sync/*` 注册）。重启后在 hasee 本机回环上 `POST /api/control-sync/pair`
+   指向 `https://home.xiaokubao.space/mindfs`，再重启任务并核对 `/api/control-sync/status`。
+   `update.auto_install` 的端到端也需真实 GitHub release（对外发布，另行授权）。
 
 ## 边界
 
