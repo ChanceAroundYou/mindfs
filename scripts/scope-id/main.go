@@ -113,10 +113,16 @@ func runClaim(args []string) error {
 	root := fs.String("root", "", "仓库根")
 	remote := fs.String("remote", "origin/main", "取号依据的 git 引用")
 	registry := fs.String("registry", "", "清单路径")
-	if err := fs.Parse(args); err != nil {
+	// flag 包遇到第一个非 flag 参数就停止解析，而用法是 `claim <plan.md> --count N`
+	// （位置参数在前）。不重排的话 `--count` 会被当成第二个位置参数，报「用法」错。
+	flags, positional, err := splitFlagArgs(args)
+	if err != nil {
 		return err
 	}
-	rest := fs.Args()
+	if err := fs.Parse(flags); err != nil {
+		return err
+	}
+	rest := append(positional, fs.Args()...)
 	if len(rest) != 1 {
 		return fmt.Errorf("用法：scope-id claim <plan.md> [--count N]")
 	}
@@ -148,6 +154,31 @@ func runClaim(args []string) error {
 	fmt.Println("下一步：把占位填成真条目（title / kind / symptom / why / files / tests / anchors），")
 	fmt.Println("       否则 check-upstream 的断言 3/5 会红 —— 这是刻意的。")
 	return nil
+}
+
+// splitFlagArgs 把 flag 与位置参数分开，让 `claim <plan.md> --count N` 这种
+// 「位置参数在前」的写法也能解析。flag 包本身不允许，但这是用法文本里写的形式，
+// 两者必须一致 —— 否则文档写着能跑、实际报「用法」错。
+//
+// 只认 `--flag` / `--flag=value` 形态（本工具全部用长 flag）；`-` 开头的都当 flag，
+// 位置参数里不会有这种。
+func splitFlagArgs(args []string) (flags, positional []string, err error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+			continue
+		}
+		flags = append(flags, a)
+		// `--count 3` 这种带独立取值的，把值一起带走
+		if !strings.Contains(a, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			// 只有已知需要取值的 flag 才吃掉下一个 token；布尔 flag 不会走到这里，
+			// 因为本工具没有布尔 flag。
+			flags = append(flags, args[i+1])
+			i++
+		}
+	}
+	return flags, positional, nil
 }
 
 func runCheck(args []string) error {

@@ -128,3 +128,55 @@ func TestRestampPlansOnlyTouchesScopeIDsLine(t *testing.T) {
 		t.Fatalf("正文的历史叙述不该被改：\n%s", data)
 	}
 }
+
+// 用法文本写的是 `claim <plan.md> [--count N]`（位置参数在前），而 Go 的 flag 包
+// 遇到第一个非 flag 参数就停止解析。不重排的话 `--count` 会被当成第二个位置参数，
+// 命令直接报「用法」错 —— 文档写着能跑、实际跑不了。
+func TestSplitFlagArgsHandlesPositionalBeforeFlags(t *testing.T) {
+	flags, pos, err := splitFlagArgs([]string{"docs/p.md", "--count", "2", "--root", "/tmp/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(pos, " "); got != "docs/p.md" {
+		t.Fatalf("位置参数应只有计划路径，实际 %q", got)
+	}
+	if got := strings.Join(flags, " "); got != "--count 2 --root /tmp/x" {
+		t.Fatalf("flag 与取值顺序应原样保留，实际 %q", got)
+	}
+
+	// `--flag=value` 形态不能被拆开。
+	flags, pos, err = splitFlagArgs([]string{"--count=3", "docs/p.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(flags, " "); got != "--count=3" {
+		t.Fatalf("= 形态应整条保留，实际 %q", got)
+	}
+	if got := strings.Join(pos, " "); got != "docs/p.md" {
+		t.Fatalf("位置参数应正确分离，实际 %q", got)
+	}
+}
+
+// runClaim 必须真的接受「位置参数在前」的写法 —— 上面的纯函数测的是拆分，
+// 这里测的是它接到了 runClaim 上。
+func TestRunClaimAcceptsPlanBeforeCount(t *testing.T) {
+	dir := t.TempDir()
+	plan := filepath.Join(dir, "p.md")
+	if err := os.WriteFile(plan, []byte("# 计划\n\n正文\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := filepath.Join(dir, "reg.yaml")
+	if err := os.WriteFile(registry, []byte("version: 1\nbaseline:\n  upstream_ref: upstream/main\ngroups: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 用不存在的 remote：取号会退到空基准，但命令本身必须走到「已申请」那一步，
+	// 而不是在参数校验处就报「用法」。
+	err := runClaim([]string{plan, "--count", "2", "--root", dir, "--registry", registry})
+	if err != nil {
+		t.Fatalf("位置参数在前的写法应被接受，实际报错：%v", err)
+	}
+	data, _ := os.ReadFile(registry)
+	if n := strings.Count(string(data), "id: G-"); n != 2 {
+		t.Fatalf("应追加 2 个占位组，实际 %d：\n%s", n, data)
+	}
+}
