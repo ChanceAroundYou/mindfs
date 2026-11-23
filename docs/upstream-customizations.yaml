@@ -14483,6 +14483,12 @@ groups:
 
       已配对但运行中的边缘也挂这条端点：换主控端是同一件「写配置 + 换密钥」，多留一条
       人工改文件的路径只会让「换主控」变成一次手工事故。
+
+      **只读探针 `GET /api/control-sync/pair`**：未配对时 `/status` 同样不注册（它由
+      同步器装配，而这时候还没有同步器），前端于是分不清「等着配对」与「这台机器根本
+      不同步」—— 两种都只会看到 404，配对表单永远不出现。这条探针只回
+      `{pending_pairing, instance_id}`，**不含 token、路径与主控端地址**；不做回环守卫
+      （只报实例名，`/api/node-info` 本来就有），POST 那条的守卫不受影响。
     files:
       - server/internal/config/configfile.go
       - server/internal/controlsync/pairing.go
@@ -14491,13 +14497,31 @@ groups:
       - server/app/control_sync_pairing.go
       - cli/cmd/control_sync.go
       - docs/multi-node-control-plane.md
+      - web/src/shared/controlPairing.ts
+      - web/src/components/app/ControlPairingGate.tsx
+      - web/src/components/app/ControlModeBanner.tsx
+      - web/src/hooks/useControlSyncStatus.ts
+      - web/src/services/net/controlSync.ts
     tests:
       - server/internal/config/configfile_test.go
       - server/internal/controlsync/pairing_test.go
       - server/internal/api/http_control_sync_pair_test.go
       - server/app/control_sync_pairing_test.go
       - cli/cmd/control_sync_test.go
+      - web/tests/control-pairing.test.mjs
     anchors:
+      - 'server/internal/api/http_control_sync_pair.go:type PairingState struct {'
+      - 'server/internal/api/http_control_sync_pair.go:func (h *HTTPHandler) handleControlSyncPairState(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_routes.go:r.Get("/api/control-sync/pair", h.handleControlSyncPairState)'
+      - 'server/app/control_sync_pairing.go:func (p controlSyncPairer) PairingState() api.PairingState {'
+      - 'web/src/shared/controlPairing.ts:export function pairingDraftIssue(draft: PairingDraft): PairingDraftIssue | null {'
+      - 'web/src/services/net/controlSync.ts:export async function fetchControlSyncPairing(): Promise<ControlSyncPairingState | null> {'
+      - 'web/src/components/app/ControlModeBanner.tsx:if (pairing?.pending_pairing) {'
+      - 'web/src/components/app/ControlPairingGate.tsx:export function ControlPairingGate(props: ControlPairingGateProps) {'
+      - 'web/src/hooks/useControlSyncStatus.ts:setPairing(await fetchControlSyncPairing());'
+      - 'server/app/control_sync_pairing_test.go:func TestPendingPairingWiringReportsState(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_pair_test.go:func TestPairStateRouteReportsPendingPairing(t *testing.T) {'
+      - 'web/tests/control-pairing.test.mjs:test("未配对状态靠只读探针发现，而非 /status", () => {'
       - 'server/internal/config/configfile.go:func UpdateJSONFile(path string, mutate func(map[string]any) error) error {'
       - 'server/internal/config/configfile.go:tmp, err := os.CreateTemp(dir, ".config-*.tmp")'
       - 'server/internal/controlsync/pairing.go:func Pair(ctx context.Context, req PairRequest, tokenFile, configPath string) (PairResult, error) {'
