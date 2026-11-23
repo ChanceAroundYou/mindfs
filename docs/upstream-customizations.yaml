@@ -14467,7 +14467,7 @@ groups:
       `control_sync.role` 定成 `edge`，显式写着 `role: worker` 的一并纠正成 `control`——
       否则配好的是个不注入静态目录的 worker，打开页面是 403。
 
-      **配对端点只在未配好的边缘上注册，且只接受本机回环**：`PendingPairing` 这一档
+      **没有 token 的边缘换成 `PendingPairing` 档，且配对 POST 只接受本机回环**：`PendingPairing` 这一档
       让服务在「还没有 token」时照常起、只挂 `POST /api/control-sync/pair`（不建库、
       不采集、不转发）；没有这一档，未配对边缘在 cli 侧就起不来，用户拿不到填表单的
       页面。它此时没有 token 可校验 —— token 正是它要解决的问题 —— 而配对会改信任锚、
@@ -14482,7 +14482,11 @@ groups:
       `RestartOnFailure` 只认非零退出。
 
       已配对但运行中的边缘也挂这条端点：换主控端是同一件「写配置 + 换密钥」，多留一条
-      人工改文件的路径只会让「换主控」变成一次手工事故。
+      人工改文件的路径只会让「换主控」变成一次手工事故。**代价是探针语义必须分开**：
+      `PairingState().pending_pairing` 由构造点决定，未配对接线恒真、已配对边缘恒假。
+      这里踩过一次真缺陷（e2e 抓出）：原先硬编码 `PendingPairing: true`，而前端
+      `fetchControlSyncPairing` 只把 `true` 当「等配对」—— 一台正在 online 同步的边控端
+      页面上会永远显示配对表单。
 
       **只读探针 `GET /api/control-sync/pair`**：未配对时 `/status` 同样不注册（它由
       同步器装配，而这时候还没有同步器），前端于是分不清「等着配对」与「这台机器根本
@@ -14509,6 +14513,7 @@ groups:
       - server/app/control_sync_pairing_test.go
       - cli/cmd/control_sync_test.go
       - web/tests/control-pairing.test.mjs
+      - e2e/test_control_sync_pairing.py
     anchors:
       - 'server/internal/api/http_control_sync_pair.go:type PairingState struct {'
       - 'server/internal/api/http_control_sync_pair.go:func (h *HTTPHandler) handleControlSyncPairState(w http.ResponseWriter, r *http.Request) {'
@@ -14520,6 +14525,7 @@ groups:
       - 'web/src/components/app/ControlPairingGate.tsx:export function ControlPairingGate(props: ControlPairingGateProps) {'
       - 'web/src/hooks/useControlSyncStatus.ts:setPairing(await fetchControlSyncPairing());'
       - 'server/app/control_sync_pairing_test.go:func TestPendingPairingWiringReportsState(t *testing.T) {'
+      - 'server/app/control_sync_pairing_test.go:func TestPairedEdgePairerDoesNotReportPending(t *testing.T) {'
       - 'server/internal/api/http_control_sync_pair_test.go:func TestPairStateRouteReportsPendingPairing(t *testing.T) {'
       - 'web/tests/control-pairing.test.mjs:test("未配对状态靠只读探针发现，而非 /status", () => {'
       - 'server/internal/config/configfile.go:func UpdateJSONFile(path string, mutate func(map[string]any) error) error {'
