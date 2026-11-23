@@ -15166,3 +15166,31 @@ groups:
       - 'server/internal/api/http_tasks.go:errText = fmt.Sprintf('
       - 'server/internal/api/http_tasks.go:check ?user= and the target node'
       - 'server/internal/api/http_task_create_root_error_test.go:TestTaskCreateRootNotFoundNamesAccountAndNode'
+
+  - id: G-QM
+    title: 巡检回合无来源留言时放行 notify_user / escalate
+    kind: fix
+    symptom: |
+      生产决策 rdec_47d5992f117dc51b / rdec_04816ea01 在 turn_interrupted 回合
+      分别产出 escalate / notify_user，却都被应用层以
+      `requires an originating user activity` 拒成 failed；用户只看到一条
+      `route-rejected` 说明，巡检发现的问题没人接手。
+    why: |
+      必须保留：上层 validateRuntimeEventActions 已允许这两个动作，两个 applier
+      的签名也不接收 userAct；唯一的阻断点是无来源留言巡检回合的 say/ask_user
+      白名单。不放行它们，监管开关 on 的巡检仍然只会写拒绝说明，任务无法升级给
+      用户，也没有可见通知。其余需要留言锚点的动作继续被拒，不在这里放宽。
+    files:
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/router_inspection_turn_test.go
+      - docs/superpowers/plans/2026-11-24-router-inspection-supervision-apply.md
+      - docs/plans/README.md
+    tests:
+      - server/internal/kanban/router_inspection_turn_test.go
+    anchors:
+      - 'server/internal/kanban/activity_route_apply.go:action.Kind != RouterActionNotifyUser && action.Kind != RouterActionEscalate'
+      - 'server/internal/kanban/router_inspection_turn_test.go:TestCoordinatorInspectionEventWithoutOriginAppliesSupervisionNotice'
+      - 'server/internal/kanban/router_inspection_turn_test.go:route-notify:'
+      - 'server/internal/kanban/router_inspection_turn_test.go:route-escalate:'
+      - 'docs/superpowers/plans/2026-11-24-router-inspection-supervision-apply.md:rdec_47d5992f117dc51b'
+      - 'docs/plans/README.md:2026-11-24-router-inspection-supervision-apply.md'

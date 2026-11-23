@@ -103,6 +103,87 @@ func TestCoordinatorInspectionEventWithoutOriginRejectsCompleteTask(t *testing.T
 	}
 }
 
+// 巡检/恢复事件没有来源留言，但 notify_user / escalate 的 applier 不消费来源留言。
+// 生产现场 rdec_04816ea01 / rdec_47d5992f117dc51b 被应用层闸门拒掉，
+// 这里钉住这两个动作应该真的落地，而不是只留一条拒绝说明。
+func TestCoordinatorInspectionEventWithoutOriginAppliesSupervisionNotice(t *testing.T) {
+	cases := []struct {
+		name     string
+		tool     string
+		argName  string
+		body     string
+		idPrefix string
+	}{
+		{
+			name:     "notify_user",
+			tool:     "router_notify_user",
+			argName:  "body",
+			body:     "巡检发现回合被中断，请确认是否继续。",
+			idPrefix: "route-notify:",
+		},
+		{
+			name:     "escalate",
+			tool:     "router_escalate",
+			argName:  "summary",
+			body:     "巡检发现回合被中断，需要你决定下一步。",
+			idPrefix: "route-escalate:",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Now().UTC()
+			f := newCoordinateFixture(t, RouterModeCoordinate)
+			f.stopLoop(t)
+			f.svc.SetRouterConfig(RouterConfig{
+				Mode:        RouterModeCoordinate,
+				IdleClose:   time.Hour,
+				Supervision: RouterSupervisionConfig{Mode: RouterSupervisionOn},
+			})
+			f.agent.calls = []scriptedRouterCall{{
+				tool: tc.tool,
+				args: map[string]any{tc.argName: tc.body},
+			}}
+			ev := f.addEvent(t, RouterEvent{
+				Kind:        RouterEventTurnInterrupted,
+				TurnID:      "turn-interrupted-" + tc.name,
+				PayloadJSON: `{"activity_id":"missing"}`,
+			})
+			if _, err := f.router.ConsumeRouterEvents(ctx, now); err != nil {
+				t.Fatalf("ConsumeRouterEvents: %v", err)
+			}
+			got := f.waitEvent(t, ev.ID, RouterEventDone)
+			if got.LastError != "" {
+				t.Fatalf("事件失败: %s", got.LastError)
+			}
+			decision := f.waitDecision(t, "task-1", ev.TurnID, RouterDecisionApplied)
+			if decision.UserActivityID != "" {
+				t.Fatalf("决策不该凭空长出用户留言: %q", decision.UserActivityID)
+			}
+
+			acts, err := NewActivityStore(f.store.db).List(ctx, "task-1")
+			must(t, err, "List")
+			wantID := tc.idPrefix + decision.ID + ":0"
+			var found *TaskActivity
+			for _, act := range acts {
+				if act.ID == wantID {
+					found = act
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("库里没有可见系统行 %q: %#v", wantID, acts)
+			}
+			if found.Type != ActivityTypeAttention || found.Role != "system" || found.Status != ActivityStatusCompleted {
+				t.Fatalf("系统行 type/role/status = %q/%q/%q", found.Type, found.Role, found.Status)
+			}
+			if found.Body != tc.body {
+				t.Fatalf("系统行正文 = %q, want %q", found.Body, tc.body)
+			}
+		})
+	}
+}
+
 // 闸门的准入集合就是「系统自己发现的现场」这四类；其它事件缺来源留言仍然跳过。
 func TestRouterEventAllowsNoUserActivity(t *testing.T) {
 	for kind, want := range map[RouterEventKind]bool{
