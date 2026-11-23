@@ -4,13 +4,20 @@
 // 每次改动都是一份会被上游合并冲掉的定制。清单 docs/upstream-customizations.yaml 是
 // 「哪条该留」的唯一真相，本工具把它与 git 的实际分歧面对账。
 //
-// 六条断言，任一失败即非零退出：
+// 七条断言，任一失败即非零退出：
 //
 //	1 覆盖  —— 每个 delta 文件必须被某组 files 命中（新增定制未登记；已删除的文件不算）
 //	2 尚存  —— 每个 files 条目必须仍在 delta 里（定制已被上游覆盖 / 已被上游吸收）
 //	3 测试  —— 每个 tests 路径不仅存在，还得真能被测试运行器跑到
 //	4 锚点  —— 每个 anchors 的 path:子串在源码里命中
 //	5 非空  —— 每组至少有一个针对性测试
+//	6 唯一  —— 组号不得重复（两个并行分支各自申请到同一个号时，合并后不会报错，
+//	           只会让「Scope: G-XX」在 git log 里指向两组互不相关的定制）
+//	7 声明  —— docs/superpowers/plans/*.md 里写下的 Scope 组号必须在清单里存在
+//	           （计划写了号却没登记 = 该组的定制没有任何人保护）
+//
+// 6/7 是 2026-11-23 撞号事故的直接产物：三个并行分支各自从本地清单取「最大号 + 1」，
+// 拿到同一批号；合并时不冲突、门禁不红，只有人事后读 git log 才会发现同一个号指两件事。
 //
 // 断言 2 是「静默丢失」的主检测器：定制被上游实现顶掉时，该文件往往仍因上游自身的改动
 // 留在 delta 里，光看文件级差异查不出来；而一旦整份定制连同上游改动一起被替换，
@@ -35,6 +42,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"mindfs/scripts/internal/scopeid"
 )
 
 const (
@@ -285,6 +294,29 @@ func run(root, baselineFlag string, explain bool) error {
 		failures = append(failures, fmt.Sprintf("%d 处分组不自洽", len(selfBad)))
 	}
 
+	if bad := duplicateGroupIDs(reg.Groups); len(bad) > 0 {
+		fmt.Printf("✗ 组号重复：%d\n", len(bad))
+		for _, s := range bad {
+			fmt.Printf("    %s\n", s)
+		}
+		fmt.Println("    （两个分支各自取号时撞车，合并不会冲突。后登记的一方按惯例改号，")
+		fmt.Println("      提交信息保持原文不改写历史，并留一条 `# 撞号说明` 注释。）")
+		fmt.Println()
+		failures = append(failures, fmt.Sprintf("%d 个组号重复", len(bad)))
+	}
+
+	if unresolved, err := unresolvedPlanScopes(root, reg.Groups); err != nil {
+		return err
+	} else if len(unresolved) > 0 {
+		fmt.Printf("✗ 计划里写了、清单里没有的 Scope 组号：%d\n", len(unresolved))
+		for _, s := range unresolved {
+			fmt.Printf("    %s\n", s)
+		}
+		fmt.Println("    （计划引用的组号必须在清单里存在，否则该组改动无人保护。先登记再写计划。）")
+		fmt.Println()
+		failures = append(failures, fmt.Sprintf("%d 个计划 Scope 组号未登记", len(unresolved)))
+	}
+
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "；"))
 	}
@@ -328,7 +360,42 @@ func mergeBase(root, upstreamRef string) (string, error) {
 }
 
 // diffDelta 取 baseline..HEAD 的文件级差异。
-// --no-renames 让改名退化成 A+D，覆盖判定就不必额外处理 R/C 条目。
+// duplicateGroupIDs 找清单里重复的组号。出现即说明两个分支各自申请到了同一个号。
+//
+// 算术在 scripts/internal/scopeid，与分配器 scripts/scope-id 共用同一份实现 ——
+// 否则「什么算一个号」「重复怎么 Iterate」两处会各说各话。
+func duplicateGroupIDs(groups []group) []string {
+	ids := make([]string, 0, len(groups))
+	for _, g := range groups {
+		ids = append(ids, g.ID)
+	}
+	var out []string
+	for _, id := range scopeid.Duplicates(ids) {
+		out = append(out, id+" 出现多次")
+	}
+	return out
+}
+
+// unresolvedPlanScopes 收集「计划里写下、但清单里没有」的组号。
+//
+// 只看含 "Scope" 的行：计划正文里顺带提到别的组号（登记表引用、历史撞号说明）不构成
+// 本计划的承诺，要求它们全部登记会逼着人加进永远不用的空组。
+func unresolvedPlanScopes(root string, groups []group) ([]string, error) {
+	known := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		known[g.ID] = true
+	}
+	refs, err := scopeid.ScanPlanScopes(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range scopeid.Unresolved(refs, known) {
+		out = append(out, fmt.Sprintf("%s:%d 引用了 %s", r.File, r.Line, r.ID))
+	}
+	return out, nil
+}
+
 func diffDelta(root, baseline string) ([]deltaFile, error) {
 	out, err := git(root, "diff", "--name-status", "--no-renames", baseline+"..HEAD")
 	if err != nil {
@@ -400,4 +467,3 @@ func matchesAnyDelta(pattern string, present map[string]bool) bool {
 	}
 	return false
 }
-

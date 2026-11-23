@@ -91,6 +91,13 @@ ok "tsc 通过"
 VITEST_COUNT="$(grep -oE 'Tests[[:space:]]+[0-9]+ passed' /tmp/mindfs-web-test.log | tail -1 | grep -oE '[0-9]+' | head -1 || true)"
 ok "web 测试通过（Vitest ${VITEST_COUNT:-0} 项通过）"
 
+# fork 定制清单门禁（组号唯一、计划 Scope 已登记、delta 全被覆盖）。
+# 它检查的是「已提交」的文件，所以必须放在推送之前：漏登记的定制一旦推到 origin，
+# 下游 worker 会先拿到一份没人保护的二进制。
+( cd "$ROOT" && go run ./scripts/check-upstream ) >/tmp/mindfs-check-upstream.log 2>&1 \
+  || { tail -40 /tmp/mindfs-check-upstream.log >&2; die "check-upstream 失败，见 /tmp/mindfs-check-upstream.log"; }
+ok "check-upstream 通过"
+
 # ── 3. 推送 ──
 step "推送到 origin"
 git push origin main
