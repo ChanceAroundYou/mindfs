@@ -15305,3 +15305,53 @@ groups:
       - 'web/src/hooks/useAnchoredMenuPosition.ts:const observer = new ResizeObserver((entries) => {'
       - 'web/src/components/task/useWorkflowSelectorMenu.ts:prefer: "above",'
       - 'web/src/components/task/WorkflowSelector.tsx:flex: "1 1 232px",'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QQ
+    title: "任务巡检判活覆盖 Run 会话 · 显式 Run 启动对账事件 · 会话结算携带 Run 证据"
+    kind: fix
+    symptom: |
+      看板任务 #112 在重启后三件事同时发生：① worker 会话其实已经恢复并在干活，Router
+      却从 17:58 到 19:15 连续产出 17 条 task_orphaned 反复询问是否重开；② 显式发起的
+      Workflow Run 被启动对账标成 unknown，Router 一条事件都没收到；③ 用户手动推进的
+      会话回合完成（turn_settled 带 103 次工具调用），Router 据此写了「完成」总结，
+      而 Run 投影仍是 plan=unknown / implement=cancelled。用户看到的是「任务被判断异常、
+      不断重试」与「实际状态和 Router 汇报不符」。
+    why: |
+      上游判活只看 tasks.main_session_key，而显式 Run 的共享会话写在
+      workflow_runs.session_key、节点会话写在 workflow_node_runs.session_key，两者都
+      不在主会话字段里，于是正在跑的任务每 5 分钟被判一次孤儿；启动对账又复用正常扫描
+      的 ownership 闸门（要求 activity 带 router_decision_id），显式 Run 的中断事实被
+      静默丢弃；turn_settled 只认会话→任务，不反查绑定的 Run，也不附节点证据，模型只能
+      把「会话这轮干完了」当成「Workflow 成功了」。合上游时这三处任一被顶掉，就会复发
+      「实际在跑却判异常」「重启中断无人知道」「总结与投影不符」。
+    files:
+      - server/internal/kanban/router_task_health.go
+      - server/internal/kanban/router_event_startup.go
+      - server/internal/kanban/router_event_turn_evidence.go
+      - server/internal/kanban/router_event_brief.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/workflow_recovery.go
+      - server/internal/kanban/workflow_recovery_router_cancel.go
+      - server/internal/kanban/router_task_health_test.go
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/kanban/workflow_recovery_unknown_settled_test.go
+      - docs/superpowers/plans/2026-11-24-workflow-session-liveness-and-turn-evidence.md
+    tests:
+      - server/internal/kanban/router_task_health_test.go
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/kanban/workflow_recovery_unknown_settled_test.go
+    anchors:
+      - 'server/internal/kanban/router_task_health.go:live := s.taskRuntimeLive(ctx, store, task.ID, "")'
+      - 'server/internal/kanban/service_task_runtime_status.go:func (s *Service) taskRuntimeLive('
+      - 'server/internal/kanban/router_event_startup.go:func (s *Service) emitStartupReconcileRouterEvent('
+      - 'server/internal/kanban/router_event_startup.go:func startupReconcileUserActivity('
+      - 'server/internal/kanban/service_turn_settled.go:store.WorkflowRunIDForSession(ctx, taskID, sessionKey)'
+      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) WorkflowRunIDForSession('
+      - 'server/internal/kanban/router_event_turn_evidence.go:this turn does not prove the workflow run succeeded'
+      - 'server/internal/kanban/router_task_health_test.go:func TestTaskHealthSweepTreatsWorkflowRunSessionAsLive('
+      - 'server/internal/kanban/router_turn_settled_test.go:func TestTurnSettledCarriesBoundRunEvidence('
+      - 'server/internal/kanban/workflow_recovery_unknown_settled_test.go:func TestStartupReconcileEmitsForExplicitRun('
+      - 'docs/superpowers/plans/2026-11-24-workflow-session-liveness-and-turn-evidence.md:# 工作流会话活跃判定 · 显式 Run 启动事件 · 回合结算的 Run 证据'
