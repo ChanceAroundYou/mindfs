@@ -14625,3 +14625,34 @@ groups:
       - 'server/internal/kanban/activity_route_apply.go:if noteErr := s.recordRejectedInspectionAction(ctx, decision, task, action); noteErr != nil {'
       - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) recordRejectedInspectionAction('
       - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` 与 `router_ask_user`'
+
+  - id: G-QF
+    title: 启动清扫收口被重问取代的存量提问卡
+    kind: fix
+    symptom: |
+      升级前遗留的孤儿等待卡一直挡住任务对话的输入框：Agent 换了新的
+      `tool_use_id` 重问之后，旧卡的 (session_key, tool_use_id) 再也不会被任何
+      路径命中，停在 `waiting_user` 永不收口；而前端锁输入框读的是**最早**那张
+      等待卡，于是用户答完新卡界面照样卡死（现场 #104 / q-84825203e4fe3902，
+      03:21:57 的卡在两分钟后被重问，之后一直挂着）。
+    why: |
+      fork 侧新增语义，上游没有对应实现：运行期的收口（`RecordTaskQuestion` →
+      `closeQuestionsBefore`）只覆盖「新卡进来」那一刻，升级前已经存在的存量卡
+      没有任何路径会碰。`RecoverOnStartupForRoot` 里补一拍
+      `closeSupersededQuestionsOnStartup`：`ListSupersededOpenQuestions` 找出同
+      会话存在更晚提问、自己仍 `waiting_user` 的卡，用 `ResolvePrompt` 的 CAS 收成
+      `cancelled`（summary「已被更新的提问取代」）并广播。判据只认
+      `type='question'` 的更晚行 —— 同会话后到的 HumanGate / 人类留言不代表
+      AskUserQuestion 被重问过，旧卡仍有效。合上游时丢了这一拍，#104 这类存量卡
+      会重新永久卡住输入框。
+    files:
+      - server/internal/kanban/activity_store_questions.go
+      - server/internal/kanban/service_recover_questions.go
+      - server/internal/kanban/service_recover_startup.go
+    tests:
+      - server/internal/kanban/service_recover_questions_test.go
+    anchors:
+      - 'server/internal/kanban/activity_store_questions.go:func (s *ActivityStore) ListSupersededOpenQuestions('
+      - 'server/internal/kanban/activity_store_questions.go:WHERE n.session_key = q.session_key AND n.type = ? AND n.id <> q.id'
+      - 'server/internal/kanban/service_recover_questions.go:func (s *Service) closeSupersededQuestionsOnStartup('
+      - 'server/internal/kanban/service_recover_startup.go:s.closeSupersededQuestionsOnStartup(ctx, store)'

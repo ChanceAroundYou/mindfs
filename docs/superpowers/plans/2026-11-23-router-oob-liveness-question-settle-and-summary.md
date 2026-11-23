@@ -1,6 +1,6 @@
 # Router 巡检回合可决策化 · 提问卡收口 · OOB 活跃判定 · 摘要保留决策
 
-> Scope IDs: G-QE（claimed 2026-11-23T08:16Z；批次 2/3 的组号在对应实现时再申请，见文末「组号」一节）
+> Scope IDs: G-QE / G-QF（G-QE claimed 2026-11-23T08:16Z，批次 1；G-QF claimed 2026-11-23T09:11Z，批次 2；批次 3 的组号在实现时再申请，见文末「组号」一节）
 
 Plan 2026-11-23。起点是用户在本机（local 节点）mindfs 项目上的两条观察：
 
@@ -123,7 +123,7 @@ if s.sessionRunning(item.SessionKey) {
 就用 `ask_user`**，`escalate` 只在有来源留言的回合用；并写明被拒动作会变成用户可见的
 系统说明（不要再靠「反正会被拒」来试探）。
 
-### 批次 2 —— 存量孤儿卡（Scope: 实现时申请）
+### 批次 2 —— 存量孤儿卡（Scope: G-QF）
 
 启动清扫：`RecoverOnStartupForRoot` 里加一拍 —— 同会话存在更晚的 `question` 时，把更早
 仍 `waiting_user` 的收口成 `cancelled`（理由「已被更新的提问取代」）。这同时清掉线上
@@ -144,6 +144,21 @@ if s.sessionRunning(item.SessionKey) {
 - `applyRouteAskUser` 升级成落真正的 `ActivityTypeQuestion` 卡（带 `payload.questions`），
   按钮、输入框锁、`user_answer` 三样一并得到；审批场景复用同一张卡（批准/驳回/需要修改）。
 - 兜底 B（纯文本里嗅探决策项）**暂不做**。
+
+### 批次 2（Scope: G-QF）—— 已实现，门禁绿
+
+| 项 | RED 证据 | GREEN | 变异验证 |
+|---|---|---|---|
+| 启动清扫收口被重问取代的等待卡 | `TestRecoverOnStartupClosesSupersededQuestionCards` 首跑 `孤儿等待卡 q-orphan 状态 = "waiting_user", want cancelled` | `ListSupersededOpenQuestions` + `closeSupersededQuestionsOnStartup` 落地后孤儿卡 `cancelled`、summary「已被更新的提问取代」；同会话唯一等待卡、HumanGate 旁的提问卡、已答的卡均不动 | ① 把「更晚的提问」放宽成「任何更晚的活动」→ 红（HumanGate 旁的提问卡被误收）；② 去掉 `RecoverOnStartupForRoot` 里的调用 → 红（孤儿卡仍 waiting）；③ 时间比较反向 → 红（收掉的是最新的、留下最旧的） |
+
+判据口径：只认 `type='question'` 的更晚行。同会话后到的 HumanGate 或人类留言不代表
+AskUserQuestion 被重问过，旧卡仍有效。行内二次清扫是空操作（`ResolvePrompt` 的 CAS
+对已终态返回 `changed=false`），并行收口（回合终结/用户答题）先到时也不会覆盖。
+
+线上 `q-84825203e4fe3902` 不改库：下次服务启动由这条清扫收口；直接写库需另行授权。
+
+门禁：`go test ./server/internal/kanban/ -run 'TestRecoverOnStartupClosesSupersededQuestionCards|TestCloseOpenTaskQuestions|TestRecordTaskQuestion' -count=1` 绿、
+`go vet ./server/internal/kanban/` clean。
 
 ## 4. 边界
 
@@ -175,6 +190,7 @@ if s.sessionRunning(item.SessionKey) {
 ## 6. 组号
 
 - **G-QE** —— 批次 1（OOB 活跃判定 / 提问卡收口 / 巡检回合可见拒绝 + 规则 11/12），已实现并登记。
-- 批次 2、批次 3 的组号在各自实现时由 `scripts/scope-id claim` 现场申请：先实现的批次落地、
-  登记、门禁绿之后，下一个批次再取号。一次性 claim 三组会让尚未实现的占位一直把
-  `make check-upstream` 的断言 5 打红，抢不到干净的提交点。
+- **G-QF** —— 批次 2（启动清扫收口被重问取代的存量等待卡），已实现并登记。
+- 批次 3 的组号在实现时由 `scripts/scope-id claim` 现场申请：前一批落地、登记、门禁绿之后
+  再取号。一次性 claim 多组会让尚未实现的占位一直把 `make check-upstream` 的断言 5 打红，
+  抢不到干净的提交点。
