@@ -32,7 +32,10 @@ var codexResumeProbeTimeout = 20 * time.Second
 // 完成，赶上 MCP 初始化则是 30.8 秒 —— 与线程历史大小无关（1.09 MB 的线程 2.3 秒、
 // 70 KB 的线程 30.8 秒）。把它和 config/read、thread/read 塞进同一个 20 秒预算，
 // 前面的读取就会吃掉 fork 的时间，而 fork 超时在旧实现里与「不需要 fork」同形。
-var codexProviderForkTimeout = 20 * time.Second
+//
+// 值必须大于实测的 30.8 秒，否则等于换了预算却没换到能用的档位。90 秒留出三倍余量：
+// fork 超时的代价是用户这一轮直接失败，而它正常情况下几秒就结束，等久一点没有副作用。
+var codexProviderForkTimeout = 90 * time.Second
 
 // errCodexProviderRethread 表示「线程确实需要换供应商，但这次没换成」。
 //

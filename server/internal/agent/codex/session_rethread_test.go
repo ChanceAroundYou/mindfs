@@ -370,6 +370,58 @@ func TestSetModelRethreadsStaleProviderThread(t *testing.T) {
 	}
 }
 
+// 生产上真正出现的形态是 thread 级错误（`{"type":"error","message":...}`），不是
+// turn.failed。pc 的日志里就长这样：
+//
+//	[agent/codex] send.error session=… err=app server error (-32600): This chat uses
+//	              model provider "llmux", which is no longer configured.
+//	[session] turn.send.error … err=codex thread error: app server error (-32600): …
+//
+// 后续那半句 `codex thread error:` 就是本分支产出的（TurnFailedEvent 会写成
+// `codex turn failed:`）。上面那些用例全走 turn.failed，等于没测到线上这条路径：
+// 一旦有人改掉这里的错误构造方式、把原始文案丢掉，turn.failed 的用例照样绿。
+func TestSendMessageRethreadsOnThreadErrorProviderMismatch(t *testing.T) {
+	exec := newRethreadFakeExec()
+	exec.lines = []string{
+		`{"type":"error","message":"app server error (-32600): This chat uses model provider \"llmux\", which is no longer configured. Restore this provider's configuration to continue."}`,
+		codexTurnCompletedLine,
+	}
+	client := codexsdk.NewCodexWithExec(exec, codexsdk.CodexOptions{})
+	s := &session{
+		client:     client,
+		thread:     client.ResumeThread("01a20360", codexsdk.ThreadOptions{WorkingDirectory: "/tmp"}),
+		threadOpts: codexsdk.ThreadOptions{WorkingDirectory: "/tmp"},
+		threadID:   "01a20360",
+		sessionKey: "test-session",
+	}
+
+	if err := s.SendMessage(context.Background(), "hi"); err != nil {
+		t.Fatalf("SendMessage must recover from a thread-level provider mismatch, got %v", err)
+	}
+	if got := s.SessionID(); got != exec.forkID {
+		t.Fatalf("thread id = %q, want the forked %q", got, exec.forkID)
+	}
+	if got := exec.runCount(); got != 2 {
+		t.Fatalf("turns = %d, want 2 (failed + retried)", got)
+	}
+}
+
+// fork 的默认预算必须盖住实测最坏情况。
+//
+// 上面那条用例自己设了 5 秒，等于替生产默认值打了保票 —— 把默认值改回 20 秒它
+// 照样绿。这条直接断言默认常量：2026-11-22 pc 上赶上 app-server 初始化 MCP
+// manager 时，同一条 fork 跑了 30.8 秒，而 20 秒的默认值正好把它判成超时，也就是
+// 「换了预算但没换到能用的档位」。
+func TestCodexProviderForkTimeoutCoversSlowMCPSetup(t *testing.T) {
+	const observedSlowFork = 30800 * time.Millisecond // pc 实测，见 codexProviderForkTimeout 注释
+	if codexProviderForkTimeout <= observedSlowFork {
+		t.Fatalf("default fork budget = %v, must exceed the observed %v slow fork", codexProviderForkTimeout, observedSlowFork)
+	}
+	if codexProviderForkTimeout <= codexResumeProbeTimeout {
+		t.Fatalf("fork budget %v must be larger than the probe budget %v", codexProviderForkTimeout, codexResumeProbeTimeout)
+	}
+}
+
 func containsMethod(methods []string, want string) bool {
 	for _, method := range methods {
 		if method == want {
