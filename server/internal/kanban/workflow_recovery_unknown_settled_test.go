@@ -3,7 +3,53 @@ package kanban
 import (
 	"context"
 	"testing"
+	"time"
 )
+
+// 显式发起的 Run（triggered_by=user、没有 router_decision_id）不属于 Router
+// 的正常生命周期，扫描时应当跳过；但启动对账把在跑节点标成 unknown 是用户必须
+// 知道的事实，不能被同一个 ownership 闸门静默吞掉。#112 现场就是这样：Run 被
+// 重启打断，Router 一条事件都没收到。
+func TestStartupReconcileEmitsForExplicitRun(t *testing.T) {
+	ctx := context.Background()
+	taskID, runID := "task-explicit-recovery", "run-explicit-recovery"
+	store, svc, run, root := newWorkflowCommentFixture(t, taskID, runID, WorkflowDefinition{
+		Nodes: []WorkflowNode{{ID: "plan", Kind: NodeKindAgent, Params: map[string]any{"prompt": "规划"}}},
+	})
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE workflow_runs SET triggered_by = ? WHERE id = ?`, WorkflowTriggeredByUser, run.ID); err != nil {
+		t.Fatalf("set triggered_by: %v", err)
+	}
+	userAct := &TaskActivity{
+		ID: "act-explicit-user", TaskID: taskID, RootID: root.ID, Type: ActivityTypeUserMessage,
+		Role: RoleUser, Body: "把这件事做完", CreatedAt: time.Now().UTC().Add(-time.Minute),
+	}
+	if err := NewActivityStore(store.db).Insert(ctx, userAct); err != nil {
+		t.Fatalf("insert user activity: %v", err)
+	}
+	startWorkflowAgentNode(t, store, run.ID, "plan", "sess-explicit")
+
+	if _, err := svc.RecoverOnStartupForRoot(ctx, root.ID, nil); err != nil {
+		t.Fatalf("RecoverOnStartupForRoot: %v", err)
+	}
+	events, err := svc.ListRouterEventsForTask(ctx, root.ID, taskID)
+	if err != nil {
+		t.Fatalf("ListRouterEventsForTask: %v", err)
+	}
+	var startup *RouterEvent
+	for i := range events {
+		if events[i].Kind == RouterEventStartupReconcile && events[i].RunID == run.ID {
+			startup = &events[i]
+			break
+		}
+	}
+	if startup == nil {
+		t.Fatalf("显式 Run 的启动对账事件被吞了：%+v", events)
+	}
+	if startup.UserActivityID != userAct.ID {
+		t.Fatalf("startup event user activity = %q, want %q", startup.UserActivityID, userAct.ID)
+	}
+}
 
 // 启动对账把 NodeRun 标成 unknown 时，NodeStates 从来没被写过（投影只在节点
 // 终态时写）。#86 因此同时坏了三件事：

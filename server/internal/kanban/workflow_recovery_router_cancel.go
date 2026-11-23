@@ -59,7 +59,7 @@ func (s *Service) reconcileRouterCancelledRun(ctx context.Context, store *TaskSt
 			}
 			return false, err
 		}
-		if err := s.emitRouterEvent(ctx, store, runID, RouterEventStartupReconcile, "", "", "", "", 0,
+		if err := s.emitStartupReconcileRouterEvent(ctx, store, runID,
 			map[string]any{"cancel_replayed": true}); err != nil {
 			log.Printf("[kanban/recover] router event failed run=%s err=%v", runID, err)
 		}
