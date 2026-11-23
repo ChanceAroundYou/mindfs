@@ -27,7 +27,10 @@ func turnInterruptedFixture(t *testing.T, mode RouterSupervisionMode) (*coordina
 	f.stopLoop(t)
 	f.svc.SetSessionRunningProbe(func(string) bool { return false })
 	ctx := context.Background()
-	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	// 生产巡检用真实时钟：写死日期的夹具会在 24h 重试窗口之后过期，让「刚中断
+	// 就可以重试」的用例稳定失败。用相对时间，并把回复造得足够旧（超过 OOB 恢复
+	// 的 30 分钟门槛）以保留原来的现场语义。
+	now := time.Now().UTC().Add(-time.Hour)
 	acts := NewActivityStore(f.store.db)
 	must(t, acts.Insert(ctx, &TaskActivity{
 		ID: "uact-direct", TaskID: "task-1", RootID: f.root.ID,
