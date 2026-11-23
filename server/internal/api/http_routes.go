@@ -146,6 +146,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/tasks/{id}/activities", h.handleTaskActivitiesList)
 	r.Post("/api/tasks/{id}/activities", h.handleTaskActivitiesCreate)
 	r.Get("/api/tasks/{id}/activities/{activityId}", h.handleTaskActivityGet)
+	// Router 提问卡的作答入口：答案落成用户留言 + 卡片收口（会话卡不走这里）。
+	r.Post("/api/tasks/{id}/activities/{activityId}/answer", h.handleTaskQuestionAnswer)
 	// 完成证据清单（只读投影：报告条目 + 补做预算 + 复核结论）。
 	r.Get("/api/tasks/{id}/completion", h.handleTaskCompletionGet)
 	// Task Router 调度记录（只读；决策/会话是每节点自己的运行数据）。

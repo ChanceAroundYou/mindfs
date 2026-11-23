@@ -85,6 +85,66 @@ func (h *HTTPHandler) handleTaskActivitiesCreate(w http.ResponseWriter, r *http.
 
 // handleTaskActivitiesList handles GET /api/tasks/{id}/activities?root_id=...
 // The frontend uses the `root` alias, so both spellings are accepted.
+// handleTaskQuestionAnswer handles POST /api/tasks/{id}/activities/{activityId}/answer.
+//
+// Router 发起的提问卡（type=question，payload.source=router）在这里作答：答案
+// 落成一条用户留言后 Router 才有 user_message 回合，同时卡片收口、输入框解锁。
+// 会话里的提问卡不走这里 —— 它们的答案必须回到那个会话的 tool call（前端用
+// WS 的 answerQuestion），服务层会用 ErrQuestionSessionBound 拒掉。
+func (h *HTTPHandler) handleTaskQuestionAnswer(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	taskID := strings.TrimSpace(chi.URLParam(r, "id"))
+	activityID := strings.TrimSpace(chi.URLParam(r, "activityId"))
+	if taskID == "" || activityID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("task_id and activity_id required"))
+		return
+	}
+	var req struct {
+		RootID  string            `json:"root_id"`
+		Answers map[string]string `json:"answers"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxActivityRequestBytes)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	rootID := strings.TrimSpace(req.RootID)
+	if rootID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id required"))
+		return
+	}
+	activityService, err := svc.ActivityServiceForRoot(rootID)
+	if err != nil {
+		respondActivityError(w, err)
+		return
+	}
+	userAct, agentAct, err := activityService.AnswerQuestionCard(r.Context(), taskID, activityID, req.Answers)
+	if err != nil {
+		respondQuestionAnswerError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"user_activity":  userAct,
+		"agent_activity": agentAct,
+	})
+}
+
+// respondQuestionAnswerError 把作答失败映射成前端能分辨的状态码：
+// 已答过是 409（别让用户以为没提交上），会话卡/空答案是 400（点错了地方）。
+func respondQuestionAnswerError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, kanban.ErrQuestionAlreadyAnswered):
+		respondError(w, http.StatusConflict, err)
+	case errors.Is(err, kanban.ErrQuestionSessionBound),
+		errors.Is(err, kanban.ErrQuestionAnswerRequired):
+		respondError(w, http.StatusBadRequest, err)
+	default:
+		respondActivityError(w, err)
+	}
+}
+
 func (h *HTTPHandler) handleTaskActivitiesList(w http.ResponseWriter, r *http.Request) {
 	svc, ok := h.kanbanService(w)
 	if !ok {

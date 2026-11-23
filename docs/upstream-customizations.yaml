@@ -14657,10 +14657,13 @@ groups:
       - 'server/internal/kanban/service_recover_questions.go:func (s *Service) closeSupersededQuestionsOnStartup('
       - 'server/internal/kanban/service_recover_startup.go:s.closeSupersededQuestionsOnStartup(ctx, store)'
 
-  # ── 撞号说明（2026-11-23 合回 main 时改号）────────────────────────────
-  # 本组原先占用 G-PZ / G-QA / G-QB。合回 main 前 main 已把同一批号分配给
+  # ── 撞号说明（2026-11-23 合回 main 时改号，共两次）────────────────────
+  # 第一次：本组原先占用 G-PZ / G-QA / G-QB。合回 main 前 main 已把同一批号分配给
   # 配额挂起与飞书入站两组（`95a3ea53` 起），而那是已发布到主干的登记 —— 分支侧
   # 改号，主干不动。改动只涉及组号本身，group 内容与锚点不变。
+  # 第二次：W2 的组号原取 G-QI，合入 `7654b149`（Router 提问卡那批）时撞上主干
+  # 刚分配的 G-QI，同一个理由再改一次 —— 现为 G-QK（`scripts/scope-id next` 发出）。
+  # 由此 G-QH / G-QK / G-QJ 在本清单里**不连号**，不是漏号，是两次避让的结果。
   - id: G-QH
     title: 边控端地基：主控同步默认开 + token 自生成 + 边控端名单（含 pc-win 发布清单公钥）
     kind: feature
@@ -14692,7 +14695,7 @@ groups:
       `CreateTemp → WriteString → Chmod 0600 → Rename`，中途失败不留半份 token
       （半个 token 比没有更难查 —— 它看起来像配置存在，只是永远验不过）；目录
       写完再 `Chmod 0700`（`MkdirAll` 不改已有目录权限）。日志只打路径，**永不打
-      token 本身**。边缘**没有**这条退路（W2/G-QI 起改成「等配对」档：读不到 token 时
+      token 本身**。边缘**没有**这条退路（W2/G-QK 起改成「等配对」档：读不到 token 时
       服务照常起、只挂 `POST /api/control-sync/pair`，由本机页面完成配对；在此之前
       这里是 cli 侧直接报错 —— 那一版把用户关在门外，连填表单的页面都没有）。
       **③ 名单接线 + 踢人生效**。`controlsyncWiring` 加 `edges` 字段、
@@ -14750,7 +14753,7 @@ groups:
       - 'docs/multi-node-control-plane.md:**一台机器只能有一个主控。**'
       - 'server/internal/api/http_control_sync_edges_test.go:func TestRevokedEdgeGets403(t *testing.T) {'
       - 'cli/cmd/control_sync_test.go:func TestControlSyncOptionsDefaultEnabledForControl(t *testing.T) {'
-  - id: G-QI
+  - id: G-QK
     title: 边控端握手：POST /api/control-sync/pair（探活 / 验签 / 落 token / 写回 config）
     kind: feature
     symptom: |
@@ -15065,3 +15068,56 @@ groups:
       - 'server/internal/kanban/router_coordinate_turn.go:HadToolCalls: event.Kind == RouterEventTurnSettled &&'
       - 'server/internal/kanban/activity_route_apply.go:if decision.HadToolCalls {'
       - 'server/internal/kanban/service_turn_settled.go:"tool_calls":        in.ToolCalls,'
+
+  # ── Router 任务可信化 · 第四轮批次 3b（2026-11-23）──────────────────
+  - id: G-QI
+    title: Router 的 ask_user 落成真正的提问卡（按钮 + 输入框锁 + 作答成留言）
+    kind: fix
+    symptom: |
+      Router 把问题写成一条等待态的 agent 回复：正文里有问题和选项，但前端只把它
+      当「一条没说完的话」—— 没有按钮、不挡输入框，答案也不以任何形式回到 Router。
+      线上 #68 的四条待拍板事项就是这么漂走的：用户读完只能自己重打一遍，Router
+      收不到「哪一项被拍成了什么」，下一轮继续问。
+    why: |
+      fork 侧新增语义，上游没有对应实现。`applyRouteAskUser` 建完占位回复后调
+      `SetQuestionCard` 把同一行改成 `type=question` 并写入 `payload_json`
+      （`source=router`、`questions[].question/header/options[].label`，与会话里的
+      AskUserQuestionCard 同形 —— 两处共用同一个渲染组件，形状分叉就会一边能点、
+      一边点不动）；正文同时保留问题与选项，飞书通知和纯文本客户端读的是它。
+      `type=question` 一次给齐三样：卡片按钮、输入框锁（`pendingTaskPrompt` 只认
+      question / human_gate）、一个明确的作答入口 `AnswerQuestionCard` —— 答案经
+      `CreateUserReply` 落成一条绑定该卡的用户留言，卡片随后 CAS 收口并回写
+      `payload.answers`。顺序必须是先留言后收口（`CreateUserReply` 要求卡还停在
+      `waiting_user`）；中途失败时重试命中已有留言的幂等分支，不会写出第二条。
+      新卡落地前 `closeRouterQuestionsBefore` 只收口同一任务里更早的 Router 卡
+      （`session_key` 为空）：前端锁输入框读的是最早那张，旧卡留着用户就会点到过时
+      的问题（#104 的形态）；会话里的提问卡不动 —— 它们归会话事件管，关掉会让那个
+      Agent 永远等不到 tool_result。HTTP 入口 `POST /api/tasks/{id}/activities/
+      {activityId}/answer` 按 `payload.source` 分流，会话卡由
+      `ErrQuestionSessionBound` 拒掉（答案属于那个会话，走 WS）。
+      合上游时整组消失，症状原样回归。
+    files:
+      - server/internal/kanban/activity_router_questions.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_store_questions.go
+      - server/internal/api/http_activities.go
+      - server/internal/api/http_routes.go
+      - web/src/components/session/AskUserQuestionCard.tsx
+      - web/src/hooks/useTaskActivities.ts
+      - web/src/services/activities.ts
+    tests:
+      - server/internal/kanban/activity_router_questions_test.go
+      - web/tests/task-router-question-card.test.mjs
+    anchors:
+      - 'server/internal/kanban/activity_route_apply.go:if err := s.activities.SetQuestionCard(ctx, act.ID, payloadJSON); err != nil {'
+      - 'server/internal/kanban/activity_route_apply.go:"type": ActivityTypeQuestion, "payload_json": payloadJSON,'
+      - 'server/internal/kanban/activity_router_questions.go:const routerQuestionSource = "router"'
+      - 'server/internal/kanban/activity_router_questions.go:func (s *ActivityService) AnswerQuestionCard('
+      - 'server/internal/kanban/activity_router_questions.go:if payload.Source != routerQuestionSource {'
+      - 'server/internal/kanban/activity_store_questions.go:func (s *ActivityStore) SetQuestionCard(ctx context.Context, id, payloadJSON string) error {'
+      - 'server/internal/kanban/activity_store_questions.go:func (s *ActivityStore) OpenRouterQuestionsByTask(ctx context.Context, taskID string) ([]*TaskActivity, error) {'
+      - 'server/internal/api/http_routes.go:r.Post("/api/tasks/{id}/activities/{activityId}/answer", h.handleTaskQuestionAnswer)'
+      - 'server/internal/api/http_activities.go:func respondQuestionAnswerError(w http.ResponseWriter, err error) {'
+      - 'web/src/hooks/useTaskActivities.ts:const routerCard = payload.source === "router" || (!sessionKey && !toolUseId);'
+      - 'web/src/components/session/AskUserQuestionCard.tsx:const routerCard = !sessionBound && !toolUseId;'
+

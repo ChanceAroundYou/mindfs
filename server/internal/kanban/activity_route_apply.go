@@ -383,12 +383,29 @@ func (s *ActivityService) applyRouteAskUser(
 		act.Body = body
 		act.Status = ActivityStatusWaitingUser
 	}
+	// Router 的提问落成真正的提问卡：按钮、输入框锁、作答入口都挂在 type=question
+	// 上。正文保留（问题 + 选项各一行），飞书通知与纯文本客户端读的是它。
+	payloadJSON, err := routerAskUserQuestionPayload(question, action.Options, decision.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.activities.SetQuestionCard(ctx, act.ID, payloadJSON); err != nil {
+		return err
+	}
+	act.Type = ActivityTypeQuestion
+	act.PayloadJSON = payloadJSON
+	// 新卡落地前先收口旧的 Router 提问卡：前端锁输入框读的是最早那张，旧卡留着
+	// 用户就会点到过时的问题（#104）。
+	if err := s.closeRouterQuestionsBefore(ctx, task.ID, act.ID); err != nil {
+		return err
+	}
 	fields, err := s.markRouteReply(ctx, decision, userAct, act, action)
 	if err != nil {
 		return err
 	}
 	s.broadcastUpdated(act, map[string]any{
 		"body": body, "status": ActivityStatusWaitingUser,
+		"type": ActivityTypeQuestion, "payload_json": payloadJSON,
 		"purpose": fields["purpose"], "ordinal": action.Seq,
 		"reply_to_id": routeUserActivityID(userAct), "router_decision_id": decision.ID,
 	})
