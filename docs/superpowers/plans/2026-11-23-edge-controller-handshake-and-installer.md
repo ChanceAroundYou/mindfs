@@ -34,7 +34,7 @@ Plan 2026-11-23。起点是用户三条需求：
 |---|---|---|---|
 | W0 | 取证：本机/四端现状、重启语义、托盘与自更新是否已具备 | — | 完成 |
 | W1 | 主控同步默认开 + token 自生成 + 单主控守卫 + `/edges` 名单（注册/列表/踢人/恢复） | G-PZ | 完成（`fd48fa1f`、`11498130`） |
-| W2 | 边控端握手与自动同步：`POST /api/control-sync/pair` + 未配对档位 + 落盘 | G-QA | 进行中 |
+| W2 | 边控端握手与自动同步：`POST /api/control-sync/pair` + 未配对档位 + 落盘 | G-QA | 完成 |
 | W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QB | 待做 |
 | W4 | 部署与四端对账（需当次授权） | — | 待做 |
 
@@ -48,7 +48,7 @@ Plan 2026-11-23。起点是用户三条需求：
   可列出、踢掉（`revoked_at`）、恢复。**这张表是运维索引，不是准入白名单** —— 共享 token
   的语义就是「谁拿到都能进」，踢人只让那台机器的同步立刻 403 并停在本地模式。
 
-### W2（进行中，Scope: G-QA）
+### W2（已完成，Scope: G-QA）
 
 三处缺口与处置：
 
@@ -67,6 +67,33 @@ Plan 2026-11-23。起点是用户三条需求：
 
 配对写入时把 `control_sync.role` 定为 `edge`，显式写着 `role: worker` 的会一并纠正成
 `control`：否则配好的是个不注入静态目录的 worker，打开页面是 403。
+
+#### 实施记录（2026-11-23）
+
+已完成并跑通隔离双实例 e2e。落地形态与计划的三处差异：
+
+1. **配对端点不随配对消失**。计划里隐含「配好就没这个入口了」，实际保留：换主控端是
+   同一件写配置＋换密钥的事，删掉入口只会让「换主控」变成一次手工改文件事故
+   （`server/app/control_sync.go` 的 else 分支显式留着 `w.pairing`）。
+   **代价是探针语义必须分开**：`PairingState().pending_pairing` 由构造点决定，
+   未配对接线恒真、已配对边缘恒假。
+2. **这条 e2e 抓出一个真缺陷**：原先 `controlSyncPairer.PairingState()` 硬编码
+   `PendingPairing: true`，而前端 `fetchControlSyncPairing` 只把 `pending_pairing===true`
+   当「等配对」，于是**一台正在 online 同步的边控端页面上永远显示配对表单**。
+   修法见 `newControlSyncPairer(opts, pending bool)` + `TestPairedEdgePairerDoesNotReportPending`
+   （把 `pending: pending` 改回 `pending: true` 即红）。
+3. **主节点 token 自生成**（W1 落的）让 e2e 不必预置共享 token：读主节点 `token_file`
+   拿到的就是那把 43 字符的 `base64.RawURLEncoding` 串。
+
+e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，真实进程 + 自签 CA）：
+
+| # | 场景 | 钉住什么 |
+|---|---|---|
+| 0 | 未配对边缘起得来 | 服务在、`GET /pair` 200 且 `pending_pairing=true`、回显实例名、不泄露 token 与路径；`GET /status` **404** |
+| 1 | `POST /pair` | 200 + `status=paired` + `restart_required=true`；`token_file` 内容 == 提交值且 0600；`config.json` 的 `control_sync` 段写齐、`addr` 未被动、`role != worker`；**重启前 `/status` 仍 404**（落盘 ≠ 生效） |
+| 2 | 重启后 | `GET /pair` 仍 200 但 `pending_pairing=false`；`GET /status` 200；模式稳定到 `online` |
+| 3 | 主节点名单 | `/edges` 出现该实例、无 `revoked_at`、`last_seen_at` 非空 |
+| 4 | 签名踢人 | 200 带 `revoked_at`；边缘 `wait_mode_stable("offline-local", 90s)`；踢后 22 秒 `last_seen_at` **逐字未推进**（基线在踢人**之后**取，否则踢前那一拍会误报） |
 
 ## 验收
 

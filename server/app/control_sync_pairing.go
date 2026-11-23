@@ -11,12 +11,15 @@ import (
 
 // controlSyncPairer 把「接到主控端」这件事接到 controlsync.Pair 上。
 //
-// 它只持有两个路径：token 落到哪、config.json 在哪。主控端的地址与密钥都来自请求体，
-// 因为这台机器还没有它们的任何一份副本。
+// 它只持有两个路径与一个 pending 标记：token 落到哪、config.json 在哪、这台机器是不是
+// 还没配上。主控端的地址与密钥都来自请求体 —— 未配对的机器根本没有它们的副本，
+// 已配好的机器换主控端时也该以请求体为准。
 type controlSyncPairer struct {
 	tokenFile  string
 	configPath string
 	instanceID string
+	// pending 由构造点决定：未配对接线里恒真，已配对边缘里恒假。
+	pending bool
 }
 
 // Pair 是 api.ControlSyncPairing 的实现。
@@ -26,17 +29,19 @@ func (p controlSyncPairer) Pair(ctx context.Context, req controlsync.PairRequest
 
 // PairingState 是 api.ControlSyncPairing 的实现。
 //
-// 挂出这个接口的机器只可能是「还没配好的边缘」，所以 pending 恒为真；带上实例名是
-// 为了让表单预填、并在主控端的 `/edges` 名单里认得出来。
+// 挂出这个接口的有两种机器：还没配好的边缘（静态 pending），以及已经配好、正在
+// 同步但留着一个「换主控端」入口的边缘。后者绝不能自报 pending —— 前端见到
+// pending 就整条横幅换成配对表单，一台好好在同步的机器页面上会永远显示「请配对」。
+// 所以 pending 只由构造点决定，这里如实转述。
 func (p controlSyncPairer) PairingState() api.PairingState {
-	return api.PairingState{PendingPairing: true, InstanceID: p.instanceID}
+	return api.PairingState{PendingPairing: p.pending, InstanceID: p.instanceID}
 }
 
 // newControlSyncPairer 在缺路径时返回 nil（等于不挂端点）。
 //
 // 没有 config.json 路径就写不回落盘配置，配完重启还是未配对 —— 那比不提供入口更糟：
 // 用户会得到一次「配对成功」的提示，然后看着机器回到原样。所以宁可少这个入口。
-func newControlSyncPairer(opts *ControlSyncOptions) api.ControlSyncPairing {
+func newControlSyncPairer(opts *ControlSyncOptions, pending bool) api.ControlSyncPairing {
 	if opts == nil {
 		return nil
 	}
@@ -45,7 +50,10 @@ func newControlSyncPairer(opts *ControlSyncOptions) api.ControlSyncPairing {
 			opts.ConfigPath, opts.TokenFile)
 		return nil
 	}
-	return controlSyncPairer{tokenFile: opts.TokenFile, configPath: opts.ConfigPath, instanceID: opts.InstanceID}
+	return controlSyncPairer{
+		tokenFile: opts.TokenFile, configPath: opts.ConfigPath,
+		instanceID: opts.InstanceID, pending: pending,
+	}
 }
 
 // pendingPairingWiring 是未配对边缘的接线：只有配对端点，没有同步、采集、转发。
@@ -57,7 +65,7 @@ func pendingPairingWiring(opts *ControlSyncOptions, nodeRole nodeinfo.Role) *con
 		// worker 不持有控制面、也不出页面，配对在它身上没有意义。
 		return nil
 	}
-	pairing := newControlSyncPairer(opts)
+	pairing := newControlSyncPairer(opts, true)
 	if pairing == nil {
 		return nil
 	}

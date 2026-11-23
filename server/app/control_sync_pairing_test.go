@@ -51,6 +51,27 @@ func TestPendingPairingWiringReportsState(t *testing.T) {
 	}
 }
 
+// 已配对边缘也挂配对端点（就地换主控端），但它绝不能自报 pending：
+// 前端见到 pending 会把整条横幅换成配对表单 —— 一台正在 online 同步的机器
+// 页面上永远显示「请配对」。这条是 e2e 抓出来的：探针恒回 pending=true。
+func TestPairedEdgePairerDoesNotReportPending(t *testing.T) {
+	p := newControlSyncPairer(&ControlSyncOptions{
+		Role:       "edge",
+		InstanceID: "hasee",
+		TokenFile:  "/tmp/t",
+		ConfigPath: "/tmp/c",
+	}, false)
+	if p == nil {
+		t.Fatal("已配对边缘应保留换主控端的入口")
+	}
+	if state := p.PairingState(); state.PendingPairing {
+		t.Fatalf("已配对边缘自报 pending：%+v —— 前端会一直显示配对表单", state)
+	}
+	if p.PairingState().InstanceID != "hasee" {
+		t.Fatalf("实例名应照旧回显：%+v", p.PairingState())
+	}
+}
+
 // worker 上没有控制面、也不出页面，配对在它身上没有意义。
 func TestPendingPairingWiringSkipsWorker(t *testing.T) {
 	w := pendingPairingWiring(&ControlSyncOptions{

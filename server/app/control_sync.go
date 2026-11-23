@@ -238,7 +238,7 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 	} else {
 		// 已配对但运行中的边缘也挂配对端点：换主控端是同一件写配置＋换密钥的事，
 		// 多留一条人工改文件的路径只会让「换主控」变成一次手工事故。
-		w.pairing = newControlSyncPairer(opts)
+		w.pairing = newControlSyncPairer(opts, false)
 	}
 	if mode := rt.Mode(); mode != nil {
 		// 边缘：状态/模式端点 + 转发器。转发器只有在 online 时真的转发，
