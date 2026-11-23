@@ -416,8 +416,13 @@ type RouterBriefCompletion struct {
 - 到期唤醒：coordinate 的 30 s 扫描增加一步「`not_before <= now` 的行改回 queued 并
   `WakeWorkflowRun`」，不需要新定时器。
 - 引擎侧：`EngineReadyNodes` 跳过 `not_before` 仍在未来的行（与现有「暂停时不 claim」同形）。
-- 可见性：系统行写「节点 X 撞到用量上限，已挂起到 HH:MM，到点自动继续」；任务停在
-  `waiting_user`，不报错、不 escalate。
+- 可见性：系统行写「节点 X 撞到用量上限，已挂起到 HH:MM，到点自动继续（本 Run 第 N/3 次）」。
+- **状态语义**：正常挂起**不改变任务状态**（保持 `running`）—— `waiting_user` 是
+  「需要人说话」的状态，而挂起会自己到点继续，把它写成 `waiting_user` 等于每次撞限
+  都假装要人介入。挂起额度按 Run 计（`workflow_runs.holds_used`，上限 3），
+  **额度用完**才转 `waiting_user` 并写一行「本 Run 的配额挂起额度已用完（3/3），
+  需要你介入」，此后不再自动建 attempt。
+- 不报错、不 escalate（额度用完那一档除外，它按「需要人」处理）。
 - 直连回合不受影响（没有 NodeRun）。
 
 ### 6.10 崩溃注入 + 变异账本（G9，吸收 `sim/crash.ts` / `sim/mutate.ts`）
@@ -460,7 +465,10 @@ type RouterBriefCompletion struct {
 
 - `server/internal/agent/conformance`：对**隔离实例的真实 HTTP/WS** 跑一组探针，
   断言 claude 与 codex 两个适配器在共同面上给出同样形状（会话打开/关闭、芯片与用量、
-  错误事件、取消、compact 事件的三种形态）。
+  错误事件、取消、**已归一化的 compact 事件**）。
+- 共同面只认归一化事件（`EventTypeCompact` 及其载荷语义）。Codex 传输层的三种 wire
+  形态（`CompactedItem`、`UnknownItem` 的 `contextCompaction`、按 `GetType()` 兜底）
+  是**适配器实现细节**，由适配器自己的用例钉住，不作为跨 harness 契约。
 - 只覆盖「两者都该有」的部分；harness 特有的字段显式列在例外表里。
 - 与 `scripts/crash-sim.sh` 一样只跑在隔离实例上，绝不指向 7331。
 
@@ -569,4 +577,4 @@ type RouterBriefCompletion struct {
 | C2 | 规则引擎 DSL（cron + source 匹配 + lane） | `protocol/rules.ts`、`kernel/cron.ts` | **不吸收**：与 Router 争调度权威 |
 | C3 | 插件独立进程模型 | `plugins/*` | **不吸收**：与单二进制 + systemd 部署冲突 |
 | C4 | `cards` 作为唯一对外状态机 | `kernel/decide.ts` | **不吸收**：与任务/会话/回复三层重复 |
-| C5 | `later` 延迟复核、`5m·2^n` 退避 | `kernel/decide.ts` | **不吸收**（本轮）：`later` 用户已裁定不做；退避并入 §6.9 |
+| C5 | `later` 延迟复核、`5m·2^n` 退避 | `kernel/decide.ts` | **不吸收**（本轮）：`later` 用户已裁定不做；指数退避本轮不吸收（§6.9 只做配额挂起到重置，不含退避序列） |

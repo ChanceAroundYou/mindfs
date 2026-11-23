@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,19 +24,35 @@ type intakeRecord struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ActiveTarget is one chat's confirmed destination: the node and project every
+// later message in that chat lands in by default, plus the task when the owner
+// confirmed an existing one (TaskID empty = messages create new tasks there).
+// Keyed by chat, not by message: this is context, not deduplication.
+type ActiveTarget struct {
+	ChatID     string    `json:"chat_id"`
+	NodeID     string    `json:"node_id"`
+	RootID     string    `json:"root_id"`
+	TaskID     string    `json:"task_id,omitempty"`
+	TaskNumber int       `json:"task_number,omitempty"`
+	TaskTitle  string    `json:"task_title,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 type intakeStoreFile struct {
 	Version int            `json:"version"`
 	Records []intakeRecord `json:"records"`
+	Active  []ActiveTarget `json:"active,omitempty"`
 }
 
-// IntakeStore remembers which inbound Feishu messages were already handled.
-// One JSON file, rewritten via temp+rename: a crash during a write must not
-// leave a half-written dedup ledger (nor a memory-only entry that a restart
-// would forget).
+// IntakeStore remembers which inbound Feishu messages were already handled,
+// and where each chat's messages currently go. One JSON file, rewritten via
+// temp+rename: a crash during a write must not leave a half-written dedup
+// ledger (nor a memory-only entry that a restart would forget).
 type IntakeStore struct {
 	mu      sync.Mutex
 	path    string
 	records map[string]intakeRecord
+	active  map[string]ActiveTarget
 	now     func() time.Time
 }
 
@@ -43,7 +61,9 @@ func NewIntakeStore(path string, now func() time.Time) (*IntakeStore, error) {
 	if now == nil {
 		now = time.Now
 	}
-	s := &IntakeStore{path: path, records: map[string]intakeRecord{}, now: now}
+	s := &IntakeStore{
+		path: path, records: map[string]intakeRecord{}, active: map[string]ActiveTarget{}, now: now,
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("feishu intake store %s: %w", path, err)
@@ -62,6 +82,11 @@ func NewIntakeStore(path string, now func() time.Time) (*IntakeStore, error) {
 	for _, rec := range f.Records {
 		if rec.MessageID != "" {
 			s.records[rec.MessageID] = rec
+		}
+	}
+	for _, t := range f.Active {
+		if t.ChatID != "" {
+			s.active[t.ChatID] = t
 		}
 	}
 	if s.pruneLocked() {
@@ -180,6 +205,123 @@ func (s *IntakeStore) SetStatus(messageID, taskID, status string) error {
 	return nil
 }
 
+// ClaimTarget atomically moves a confirmation record from "confirming" to the
+// given claimed status ("creating" or "appending") before a card click runs its
+// remote side effect. A click can be redelivered after a restart — the card
+// store resets "applying" cards to "open" — so without this the side effect
+// would run twice. A missing record, a record already claimed/created, or one
+// in any other status fails closed (returns false, nil).
+func (s *IntakeStore) ClaimTarget(messageID, claimedStatus string) (bool, error) {
+	if messageID == "" {
+		return false, errors.New("feishu intake: message id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	rec, ok := s.records[messageID]
+	if !ok || rec.Status != "confirming" {
+		return false, nil
+	}
+	before := rec
+	rec.TaskID, rec.Status = "", claimedStatus
+	s.records[messageID] = rec
+	if err := s.saveLocked(); err != nil {
+		s.records[messageID] = before
+		return false, err
+	}
+	return true, nil
+}
+
+// RollbackTarget returns a claimed confirmation record to "confirming" when the
+// click's side effect definitively did not happen (a transient remote error),
+// so the owner can retry the still-open card. It never touches a record that a
+// later handler already advanced past the claim.
+func (s *IntakeStore) RollbackTarget(messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[messageID]
+	if !ok || (rec.Status != "creating" && rec.Status != "appending") {
+		return nil
+	}
+	before := rec
+	rec.TaskID, rec.Status = "", "confirming"
+	s.records[messageID] = rec
+	if err := s.saveLocked(); err != nil {
+		s.records[messageID] = before
+		return err
+	}
+	return nil
+}
+
+// SetActiveTarget makes chatID's confirmed destination the default for later
+// messages. Node and project are required: a target without them could not
+// route anything. TaskID empty means confirmed 「新建」 — messages create tasks
+// in that project instead of appending to one. Same chat overwrites; other
+// chats are untouched.
+func (s *IntakeStore) SetActiveTarget(t ActiveTarget) error {
+	t.ChatID = strings.TrimSpace(t.ChatID)
+	if t.ChatID == "" {
+		return errors.New("feishu intake: chat id required")
+	}
+	if strings.TrimSpace(t.NodeID) == "" || strings.TrimSpace(t.RootID) == "" {
+		return errors.New("feishu intake: target node and project required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	before, had := s.active[t.ChatID]
+	t.UpdatedAt = s.now()
+	s.active[t.ChatID] = t
+	if err := s.saveLocked(); err != nil {
+		if had {
+			s.active[t.ChatID] = before
+		} else {
+			delete(s.active, t.ChatID)
+		}
+		return err
+	}
+	return nil
+}
+
+// ActiveTarget returns the chat's confirmed destination. Expired entries read
+// as absent and are dropped lazily, so a chat that went quiet for a week does
+// not silently drop messages into a finished task.
+func (s *IntakeStore) ActiveTarget(chatID string) (ActiveTarget, bool) {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return ActiveTarget{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	t, ok := s.active[chatID]
+	return t, ok
+}
+
+// ClearActiveTarget forgets the chat's destination (owner pressed 切换目标 后
+// 取消, or the task was deleted). Missing entries are a no-op.
+func (s *IntakeStore) ClearActiveTarget(chatID string) error {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	before, ok := s.active[chatID]
+	if !ok {
+		return nil
+	}
+	delete(s.active, chatID)
+	if err := s.saveLocked(); err != nil {
+		s.active[chatID] = before
+		return err
+	}
+	return nil
+}
+
 // Prune drops records older than the dedup window and persists the result.
 // Production paths expire lazily inside Seen/Record/SetStatus; this explicit
 // entry point remains for callers that want to force a disk rewrite.
@@ -192,14 +334,22 @@ func (s *IntakeStore) Prune() error {
 	return s.saveLocked()
 }
 
-// pruneLocked removes expired records from memory and reports whether anything
-// changed. Callers must hold s.mu.
+// pruneLocked removes expired records and active targets from memory and
+// reports whether anything changed. Both windows are the same seven days: a
+// chat whose card was never confirmed is as stale as an unhandled message.
+// Callers must hold s.mu.
 func (s *IntakeStore) pruneLocked() bool {
 	cutoff := s.now().Add(-intakeDedupTTL)
 	changed := false
 	for id, rec := range s.records {
 		if rec.CreatedAt.Before(cutoff) {
 			delete(s.records, id)
+			changed = true
+		}
+	}
+	for chatID, t := range s.active {
+		if t.UpdatedAt.Before(cutoff) {
+			delete(s.active, chatID)
 			changed = true
 		}
 	}
@@ -211,7 +361,13 @@ func (s *IntakeStore) saveLocked() error {
 	for _, rec := range s.records {
 		records = append(records, rec)
 	}
-	raw, err := json.Marshal(intakeStoreFile{Version: 1, Records: records})
+	active := make([]ActiveTarget, 0, len(s.active))
+	for _, t := range s.active {
+		active = append(active, t)
+	}
+	// 排序只为了让落盘内容可比（测试与人工排障），语义与顺序无关。
+	sort.Slice(active, func(i, j int) bool { return active[i].ChatID < active[j].ChatID })
+	raw, err := json.Marshal(intakeStoreFile{Version: 1, Records: records, Active: active})
 	if err != nil {
 		return err
 	}

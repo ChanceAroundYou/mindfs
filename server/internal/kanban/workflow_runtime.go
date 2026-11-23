@@ -381,6 +381,29 @@ func (s *Service) createWorkflowNodeAttempt(ctx context.Context, rootID, taskID,
 			return NodeRun{}, fmt.Errorf("%w: node %s already has an open attempt", ErrWorkflowNodeRunNotActionable, original.NodeID)
 		}
 	}
+	// 配额挂起记账。挂起本身不改变任务状态（到点自己继续），但同一轮里反复等额度
+	// 不能无人过问：额度用完说明这件事已经需要人介入，才转 waiting_user 且不建
+	// attempt。记账在「已确认这次重试合法」之后，所以一次被拒绝的重试不会白占额度。
+	if notBefore != "" {
+		granted, used, err := store.IncrementWorkflowRunHolds(ctx, run.ID, supervisionMaxHoldsPerRun)
+		if err != nil {
+			return NodeRun{}, err
+		}
+		if !granted {
+			s.noteQuotaHold(ctx, store, task, quotaHoldNoticeID("exhausted:"+run.ID),
+				quotaHoldsExhaustedBody(supervisionMaxHoldsPerRun), "")
+			if _, parkErr := s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser,
+				"quota_holds_exhausted", quotaHoldsExhaustedBody(supervisionMaxHoldsPerRun), false); parkErr != nil {
+				// 额度用完本身是确定的事实，重试它也不会变；但「已经把人叫来」
+				// 这件事没做成，必须和额度一起报出去，否则任务看起来像停住了。
+				return NodeRun{}, fmt.Errorf("%w: run %s used %d/%d (parking the task failed: %v)",
+					ErrQuotaHoldsExhausted, run.ID, used, supervisionMaxHoldsPerRun, parkErr)
+			}
+			return NodeRun{}, fmt.Errorf("%w: run %s used %d/%d", ErrQuotaHoldsExhausted, run.ID, used, supervisionMaxHoldsPerRun)
+		}
+		s.noteQuotaHold(ctx, store, task, quotaHoldNoticeID(original.ID),
+			quotaHoldNoticeBody(original.NodeID, notBefore, used, supervisionMaxHoldsPerRun), "")
+	}
 	retried, err := store.CreateRetryWorkflowNodeRun(ctx, run, original)
 	if err != nil {
 		return NodeRun{}, err

@@ -92,6 +92,17 @@ func AttachFeishuIntake(svc *feishu.Service, opts FeishuOptions, deps FeishuInta
 	intake.SetPickerFinder(func(chatID string, _ time.Time) (feishu.Card, bool) {
 		return svc.Store().FindOpenPickerByChat(chatID)
 	})
+	// 目标确认卡与文本命令（#N / 切换 / 新任务）需要追加与任务目录；确认卡的
+	// 点击发生在另一条 goroutine，所以 Service 侧也装同一对依赖。审核分类由
+	// 这里注入，feishu 包不 import kanban。
+	taskClient := newFeishuTaskClient(deps.Nodes, deps.Workspace, deps.NodeID)
+	taskCatalog := feishu.NewTaskCatalog(taskClient, 0, now)
+	intake.SetTargetDeps(taskClient, taskCatalog)
+	intake.SetTargetFinder(func(chatID string, _ time.Time) (feishu.Card, bool) {
+		return svc.Store().FindOpenTargetByChat(chatID)
+	})
+	intake.SetReviewClassifier(feishuReviewClassifier)
+	svc.SetTargetTaskDeps(taskClient, taskCatalog)
 	svc.SetIntake(intake)
 	return nil
 }

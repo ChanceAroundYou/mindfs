@@ -67,23 +67,60 @@ func (s *Service) rollbackPickerClaim(store *IntakeStore, messageID string) {
 // live beside the click path instead of on the M1 Service struct so adding M2
 // does not change the constructor every M1 caller uses.
 type pickerTaskDeps struct {
-	store   *IntakeStore
-	creator TaskCreator
+	store    *IntakeStore
+	creator  TaskCreator
+	appender TaskAppender
+	tasks    TaskCatalog
 }
 
 var pickerDepsByService sync.Map // map[*Service]pickerTaskDeps
+var pickerDepsMu sync.Mutex      // guards read-modify-write of pickerDepsByService
 
 // SetPickerTaskDeps installs the intake ledger and task creator used when a
 // project-choice card is clicked. Both are required; with either missing a
 // picker click fails its card closed instead of creating an untracked task.
+// The update merges into the existing value so calling it after
+// SetTargetTaskDeps never drops the appender or task catalog.
 func (s *Service) SetPickerTaskDeps(store *IntakeStore, creator TaskCreator) {
 	if s == nil {
 		return
 	}
-	pickerDepsByService.Store(s, pickerTaskDeps{store: store, creator: creator})
+	s.updatePickerTaskDeps(func(d *pickerTaskDeps) {
+		d.store, d.creator = store, creator
+	})
+}
+
+// SetTargetTaskDeps adds the appender and task catalog the confirmation card
+// needs. Like SetPickerTaskDeps it merges, so the two setters can be called in
+// either order (or one of them not at all) without dropping fields.
+func (s *Service) SetTargetTaskDeps(appender TaskAppender, tasks TaskCatalog) {
+	if s == nil {
+		return
+	}
+	s.updatePickerTaskDeps(func(d *pickerTaskDeps) {
+		d.appender, d.tasks = appender, tasks
+	})
+}
+
+// updatePickerTaskDeps applies fn to the service's deps under the package lock,
+// making the read-modify-store atomic across the two setters.
+func (s *Service) updatePickerTaskDeps(fn func(*pickerTaskDeps)) {
+	pickerDepsMu.Lock()
+	defer pickerDepsMu.Unlock()
+	var deps pickerTaskDeps
+	if v, ok := pickerDepsByService.Load(s); ok {
+		deps = v.(pickerTaskDeps)
+	}
+	fn(&deps)
+	pickerDepsByService.Store(s, deps)
 }
 
 func (s *Service) pickerTaskDeps() pickerTaskDeps {
+	if s == nil {
+		return pickerTaskDeps{}
+	}
+	pickerDepsMu.Lock()
+	defer pickerDepsMu.Unlock()
 	v, ok := pickerDepsByService.Load(s)
 	if !ok {
 		return pickerTaskDeps{}
@@ -162,6 +199,10 @@ func (s *Service) HandleAction(ctx context.Context, a Action) error {
 		return s.applyPickerChoice(ctx, c, selected)
 	}
 
+	if c.Kind == KindTarget {
+		return s.applyTargetChoice(ctx, c, selected, a)
+	}
+
 	if c.Kind == KindNotice {
 		return s.settleNotice(ctx, c.ID, text)
 	}
@@ -226,6 +267,15 @@ func interpret(c Card, a Action) (selected int, text string, ok bool) {
 			return 0, "", false
 		}
 		return a.Choice, "", true
+	case KindTarget:
+		// An out-of-range choice means the card the owner see is not the one
+		// stored here; returning false leaves zero side effects and lets the
+		// caller patch the real state back. A form submit names no choice but
+		// is exactly 「确认」 with a task number.
+		if a.Choice >= 0 && a.Choice < len(c.Choices) {
+			return a.Choice, "", true
+		}
+		return 0, "", false
 	default:
 		return 0, "", false
 	}
