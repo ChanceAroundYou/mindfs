@@ -134,6 +134,49 @@ func (s *TaskStore) ListTasksDueForArchive(ctx context.Context, cutoff time.Time
 // 只做汇总，不判断存在与否 —— 会话可能早就被删了，归档方按 key 逐个尝试、
 // 找不到就跳过（见 api 层的 SessionArchiver 适配器）。
 func (s *TaskStore) TaskRelatedSessionKeys(ctx context.Context, taskID string) ([]string, error) {
+	keys, err := s.TaskRuntimeSessionKeys(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	taskID = strings.TrimSpace(taskID)
+	seen := map[string]bool{}
+	for _, key := range keys {
+		seen[key] = true
+	}
+	// Router 会话在 router_sessions 里按 (scope, owner_id) 记录；任务范围是
+	// 任务归档时唯一会命中的那一类。表一定存在（migrateRouterTables 建过）。
+	// Router 会话不进 TaskRuntimeSessionKeys：它是调度者，自己回合跑起来不代表
+	// 任务在干活，判「任务是否运行中」时不能把它算成活会话。
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT session_key FROM router_sessions WHERE scope = ? AND owner_id = ? AND session_key != ''`,
+		RouterScopeTask, taskID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		key = strings.TrimSpace(key)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+// TaskRuntimeSessionKeys 是任务自己的执行会话：主会话、Run 共享会话、节点会话
+// 与活动行上的会话。归档/删除要用全集（TaskRelatedSessionKeys 在此之上再加
+// Router 会话），判「任务是否在跑」只认这一份。
+func (s *TaskStore) TaskRuntimeSessionKeys(ctx context.Context, taskID string) ([]string, error) {
 	taskID = strings.TrimSpace(taskID)
 	keys := []string{}
 	seen := map[string]bool{}
@@ -190,26 +233,6 @@ func (s *TaskStore) TaskRelatedSessionKeys(ctx context.Context, taskID string) (
 	}
 	rows, err = s.db.QueryContext(ctx,
 		`SELECT DISTINCT session_key FROM task_activities WHERE task_id = ? AND session_key != ''`, taskID)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		add(key)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	// Router 会话在 router_sessions 里按 (scope, owner_id) 记录；任务范围是
-	// 任务归档时唯一会命中的那一类。表一定存在（migrateRouterTables 建过）。
-	rows, err = s.db.QueryContext(ctx,
-		`SELECT session_key FROM router_sessions WHERE scope = ? AND owner_id = ? AND session_key != ''`,
-		RouterScopeTask, taskID)
 	if err != nil {
 		return nil, err
 	}

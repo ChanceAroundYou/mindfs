@@ -66,6 +66,10 @@ func (s *Service) RunWorkflowNodeAttempt(ctx context.Context, store *TaskStore, 
 	}
 	nodeRun.Status = NodeRunRunning
 	nodeRun.StartedAt = started
+	// 节点真的开始跑了：任务头必须抬到 running。上一轮的投影可能把任务留在
+	// waiting_user（审核态），节点却已在会话里干活 —— 不在这里抬，界面就一直
+	// 显示待处理直到下一个终态投影。
+	s.markTaskRuntimeRunning(ctx, store, run.TaskID)
 
 	// 先确定物理 workspace 再起外部回合：没有可得目录/写权限时绝不调用 Agent。
 	// 独立树在这一步创建并由 NodeRun 持久认领；Task 2 阶段所有终态都保留树，

@@ -1,6 +1,6 @@
 # Router 巡检回合可决策化 · 提问卡收口 · OOB 活跃判定 · 摘要保留决策
 
-> Scope IDs: G-QE / G-QF（G-QE claimed 2026-11-23T08:16Z，批次 1；G-QF claimed 2026-11-23T09:11Z，批次 2；批次 3 的组号在实现时再申请，见文末「组号」一节）
+> Scope IDs: G-QE / G-QF / G-QL（G-QE claimed 2026-11-23T08:16Z，批次 1；G-QF claimed 2026-11-23T09:11Z，批次 2；G-QL claimed 2026-11-23T18:11Z，批次 4）
 
 Plan 2026-11-23。起点是用户在本机（local 节点）mindfs 项目上的两条观察：
 
@@ -194,3 +194,21 @@ AskUserQuestion 被重问过，旧卡仍有效。行内二次清扫是空操作�
 - 批次 3 的组号在实现时由 `scripts/scope-id claim` 现场申请：前一批落地、登记、门禁绿之后
   再取号。一次性 claim 多组会让尚未实现的占位一直把 `make check-upstream` 的断言 5 打红，
   抢不到干净的提交点。
+
+### 批次 4（Scope: G-QL）—— 任务状态跟随会话/节点的真实运行状态
+
+用户 2026-11-24 现场：「如果任务的某些节点的会话在运行中，任务状态应该正确切换到运行中，
+即使已经落到待处理。包括用户直接给会话发消息。」线上 #104 / #68 取证：任务行 `waiting_user`，
+绑定会话仍出现在 `/api/replying-sessions` 且块文件在长；任务从运行中掉到待处理、又没能切回去。
+
+| 根因 | 修复 | 钉住的测试 |
+|---|---|---|
+| 投影 `ProjectStatusFromRun` 让 waiting 压过 running，一个节点停在 gate 就把整个任务投影成待处理 | 运行中优先于等待（终态仍最高） | `TestProjectStatusFromRunRunningBeatsWaiting` |
+| 用户直接给会话发消息时 `BeginOutOfBandSessionTurn` 只认 `waiting_user`，`pending` 任务不抬升 | 等待类状态（含 pending）都认领 | `TestOutOfBandTurnLivenessRestoresOnlyWhenAlone` |
+| 回答提问卡走 `answer_question`，完全没走 OOB 入口 | 成功提交答案后按同一入口认领回合 | `TestAnswerQuestionHandlerClaimsOutOfBandTurn`（源码契约） |
+| 节点回合开始时不写任务头，上轮留下的 waiting 一直显示到终态投影 | 执行器 claim 成功后抬到 running | `TestWorkflowNodeTurnMarksWaitingTaskRunning`（agent 回合内读任务状态） |
+| 结算无条件写回 waiting_user，把同任务另一条还在跑的会话一起标成待处理 | 结算时按统一判定 `taskRuntimeLive` 回落；Router 会话不计入 | `TestOutOfBandTurnLivenessRestoresOnlyWhenAlone` |
+| 已经落到待处理之后没人再纠（节点会话仍跑） | 巡检 `waiting_busy` 分支按同一判定纠回 running（只改任务头、不发事件） | `TestHealthSweepCorrectsWaitingBusyTask` |
+
+判定口径统一在 `service_task_runtime_status.go`：绑定会话探针（排除当前结算的会话）+ 节点行
+`running`（不看只写终态的 NodeStates）。六处修复逐一变异验证，改回旧逻辑各自打红对应用例。

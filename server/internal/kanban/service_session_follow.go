@@ -55,8 +55,11 @@ func (s *Service) takeSessionAnsweredQuestion(rootID, sessionKey string) bool {
 }
 
 // BeginOutOfBandSessionTurn 把「用户正在任务绑定的会话里自己推一轮」投影到任务头：
-// 只有任务当前停在 waiting_user 才推进到 running 并打 out_of_band 标记。返回
-// true 表示这一轮确实由本方法认领（结算时负责放回 waiting_user）。
+// 只有任务当前停在等待类状态（waiting_user / pending）才推进到 running 并打
+// out_of_band 标记。返回 true 表示这一轮确实由本方法认领（结算时负责放回）。
+//
+// pending 也算等待：任务建好但从没跑过时，用户在绑定会话里直接说话同样是「有人
+// 开始干活了」，不认领的话任务头会一直停在待处理。
 //
 // 任务已在 running（正被工作流/直连回合驱动）或已暂停/终态时不认领：那不是
 // out-of-band，也不该被本方法改状态。
@@ -73,7 +76,7 @@ func (s *Service) BeginOutOfBandSessionTurn(ctx context.Context, rootID, session
 		return false
 	}
 	task, err := store.GetTask(ctx, taskID)
-	if err != nil || task.Status != StatusWaitingUser {
+	if err != nil || (task.Status != StatusWaitingUser && task.Status != StatusPending) {
 		return false
 	}
 	if err := store.UpdateTaskStatus(ctx, taskID, StatusRunning, false); err != nil {
@@ -111,9 +114,11 @@ func (s *Service) takeSessionOutOfBandTurn(rootID, sessionKey string) bool {
 }
 
 // restoreOutOfBandTask 把 out-of-band 回合开始前被推进到 running 的任务放回
-// waiting_user。只动仍在 running 的任务：工作流终态投影或用户操作已经改过状态时
-// 不覆盖。失败只记日志（调用方已经拿到了结算结果，不该因展示状态失败而丢弃）。
-func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID string) {
+// waiting_user —— 前提是同一任务上确实没人再跑了：同一任务可能绑着多条会话
+// （多节点并行、Run 共享会话），结算一条就把任务放回待处理会让另一条还在跑的
+// 会话看起来像卡死。判定与回落口径统一在 reconcileTaskRuntimeStatus。
+// 失败只记日志（调用方已经拿到了结算结果，不该因展示状态失败而丢弃）。
+func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID, sessionKey string) {
 	if s == nil || store == nil || strings.TrimSpace(taskID) == "" {
 		return
 	}
@@ -130,9 +135,5 @@ func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, ta
 	if task.Status != StatusRunning {
 		return
 	}
-	if err := store.UpdateTaskStatus(ctx, taskID, StatusWaitingUser, false); err != nil {
-		log.Printf("[kanban/follow] restore out-of-band task %s status: %v", taskID, err)
-		return
-	}
-	s.broadcastTask(ctx, store, taskID)
+	s.reconcileTaskRuntimeStatus(ctx, store, taskID, sessionKey)
 }
