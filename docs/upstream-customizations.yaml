@@ -14656,3 +14656,29 @@ groups:
       - 'server/internal/kanban/activity_store_questions.go:WHERE n.session_key = q.session_key AND n.type = ? AND n.id <> q.id'
       - 'server/internal/kanban/service_recover_questions.go:func (s *Service) closeSupersededQuestionsOnStartup('
       - 'server/internal/kanban/service_recover_startup.go:s.closeSupersededQuestionsOnStartup(ctx, store)'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  # 本组原占用 G-QL。合并 main 时发现该号已被「过期任务提示与 root 错误可诊断性修复」
+  # （248ec040）占用，按 scripts/scope-id next 的输出改为 G-QP。
+  - id: G-QP
+    title: 移动端工作流两级弹层的可视视口避让
+    kind: feature
+    symptom: "手机上新建任务面板/任务详情里点开工作流，两级菜单的左侧或顶部跑出屏幕、软键盘弹出时被盖住，一级三态或二级工作流列表点不到。"
+    why: "上游只有一套固定 bottom/right 的锚定算法：不量菜单尺寸、用 layout 视口、只订 resize。Fork 的任务面板正文是滚动容器且软键盘不缩 layout 视口，必须量测菜单、按 visualViewport 翻面夹取，并把剩余高度写成 maxHeight 让菜单内部滚动；丢掉后移动端工作流选择再次不可用。"
+    # 针对性测试：anchored-menu-position 钉翻面/夹高/夹宽与缺省兼容；workflow-selector 钉委托共享 hook 与 flex 列宽；e2e 在 375×667 / 360×640 真浏览器量四边与可点性。
+    files:
+      - web/src/shared/anchoredMenuPosition.ts
+      - web/src/hooks/useAnchoredMenuPosition.ts
+      - web/src/components/task/useWorkflowSelectorMenu.ts
+      - web/src/components/task/WorkflowSelector.tsx
+    tests:
+      - web/tests/anchored-menu-position.test.mjs
+      - web/tests/workflow-selector.test.mjs
+      - e2e/test_workflow_selector_menu.py
+    anchors:
+      - 'web/src/shared/anchoredMenuPosition.ts:placeAbove = spaceAbove > spaceBelow || (spaceAbove === spaceBelow && prefer === "above");'
+      - 'web/src/hooks/useAnchoredMenuPosition.ts:window.visualViewport?.addEventListener("scroll", recompute);'
+      - 'web/src/hooks/useAnchoredMenuPosition.ts:const observer = new ResizeObserver((entries) => {'
+      - 'web/src/components/task/useWorkflowSelectorMenu.ts:prefer: "above",'
+      - 'web/src/components/task/WorkflowSelector.tsx:flex: "1 1 232px",'

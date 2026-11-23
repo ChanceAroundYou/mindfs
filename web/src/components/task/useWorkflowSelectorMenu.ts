@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, RefObject } from "react";
+import { useAnchoredMenuPosition } from "../../hooks/useAnchoredMenuPosition";
 
 export type WorkflowSelectorMenuState = {
   open: boolean;
@@ -12,42 +13,32 @@ export type WorkflowSelectorMenuState = {
 /**
  * 工作流选择器的开合、锚定与关闭。
  *
- * 任务详情面板的正文是 `overflow: auto`，绝对定位的菜单会被裁掉 —— 所以菜单
- * portal 到 body、用 `position: fixed` 贴在触发按钮上方（输入框在面板底部，
- * 往上弹比往下弹更不容易出屏）。定位算法与 AgentSelector 的 viewport 模式同源：
- * 打开时按触发按钮的 rect 算一次，窗口/可视视口变化时重算。
+ * 任务面板的正文是 `overflow: auto`，绝对定位的菜单会被裁掉 —— 所以菜单
+ * portal 到 body、用 `position: fixed` 定位，定位本身交给
+ * `useAnchoredMenuPosition`（与 Select / 文件菜单同一套量测与避让）：
+ *   - 量触发按钮与菜单的真实尺寸，上下翻面、左右夹取；
+ *   - 用 visualViewport 而不是 layout 视口尺寸，软键盘压矮视口时不会被盖住；
+ *   - 两级都展开后菜单会向左长高长宽，由 `manualOpen` 触发重算；
+ *   - 两侧都放不下时把可用高度写进 maxHeight，菜单内部滚动而不再溢出屏幕。
+ *
+ * 输入框在面板底部，所以优先向上展开，保留原来的观感。
  */
-export function useWorkflowSelectorMenu(): WorkflowSelectorMenuState {
+export function useWorkflowSelectorMenu(manualOpen: boolean): WorkflowSelectorMenuState {
   const [open, setOpen] = useState(false);
-  const [anchor, setAnchor] = useState<{ bottom: number; right: number } | null>(null);
   const triggerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const { position } = useAnchoredMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    align: "right",
+    margin: 8,
+    prefer: "above",
+    deps: [manualOpen],
+  });
 
   useEffect(() => {
     if (!open) return;
-    const recompute = () => {
-      const trigger = triggerRef.current;
-      if (!trigger) return;
-      const rect = trigger.getBoundingClientRect();
-      setAnchor({
-        bottom: Math.max(8, window.innerHeight - rect.top + 8),
-        right: Math.max(8, window.innerWidth - rect.right),
-      });
-    };
-    recompute();
-    window.addEventListener("resize", recompute);
-    window.visualViewport?.addEventListener("resize", recompute);
-    return () => {
-      window.removeEventListener("resize", recompute);
-      window.visualViewport?.removeEventListener("resize", recompute);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      setAnchor(null);
-      return;
-    }
     const handlePointerOutside = (event: PointerEvent) => {
       const target = event.target as Node;
       if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) {
@@ -68,9 +59,13 @@ export function useWorkflowSelectorMenu(): WorkflowSelectorMenuState {
 
   const menuStyle: CSSProperties = {
     position: "fixed",
-    bottom: anchor?.bottom ?? 0,
-    right: anchor?.right ?? 0,
-    visibility: anchor ? "visible" : "hidden",
+    top: position?.top ?? 0,
+    left: position?.left ?? 0,
+    maxHeight: position?.maxHeight,
+    maxWidth: position?.maxWidth,
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    visibility: position ? "visible" : "hidden",
     zIndex: 10100,
   };
 

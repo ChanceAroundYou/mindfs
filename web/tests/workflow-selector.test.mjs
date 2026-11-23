@@ -255,3 +255,28 @@ test("workflow selector i18n keys exist in both locales", () => {
     assert.equal(enUS[key], undefined, `en-US must drop ${key}`);
   }
 });
+
+// ── 移动端避让：定位必须委托量测式 hook，不再自算 layout 视口 ──────────────
+test("workflow selector menu delegates placement to the shared measured hook", () => {
+  const hook = read("components/task/useWorkflowSelectorMenu.ts");
+  // 自算 window.innerHeight/innerWidth 在软键盘弹出时会算错（layout 视口不缩小），
+  // 也拿不到「两侧都放不下时内部滚动」的高度上限。
+  assert.match(hook, /useAnchoredMenuPosition\(/);
+  assert.match(hook, /prefer:\s*"above"/);
+  assert.match(hook, /deps:\s*\[manualOpen\]/);
+  assert.doesNotMatch(hook, /window\.innerHeight|window\.innerWidth/);
+  assert.doesNotMatch(hook, /bottom:\s*/);
+  // 位置来自量测结果，未算好前沿用一帧隐藏，避免菜单先闪在 0,0。
+  assert.match(hook, /top:\s*position\?\.top/);
+  assert.match(hook, /maxHeight:\s*position\?\.maxHeight/);
+  assert.match(hook, /visibility:\s*position\s*\?\s*"visible"\s*:\s*"hidden"/);
+});
+
+test("workflow menu columns size from the available width, not 100vw math", () => {
+  const source = read("components/task/WorkflowSelector.tsx");
+  assert.match(source, /flex:\s*"1 1 232px"/);
+  assert.doesNotMatch(source, /calc\(100vw - 200px\)/);
+  assert.match(source, /flexShrink:\s*0/);
+  // 二级列展开会改变菜单宽高，必须把 manualOpen 传进定位 hook 触发重量。
+  assert.match(source, /useWorkflowSelectorMenu\(manualOpen\)/);
+});
