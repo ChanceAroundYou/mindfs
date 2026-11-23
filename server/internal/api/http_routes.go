@@ -222,6 +222,9 @@ func (h *HTTPHandler) Routes() http.Handler {
 	// 理由就是「这台机器还没有 token」。守卫是本机回环，见 handleControlSyncPair。
 	if h.ControlSyncPair != nil {
 		r.Post("/api/control-sync/pair", h.handleControlSyncPair)
+		// 只读探针：前端靠它区分「等着配对」与「这台机器根本不同步」。
+		r.Get("/api/control-sync/pair", h.handleControlSyncPairState)
+		// 只读探针：前端靠它区分「等着配对」与「这台机器根本不同步」。
 	}
 	r.Post("/api/imports/github", h.handleGitHubImportStart)
 	r.Get("/api/web-push/status", h.handleWebPushStatus)

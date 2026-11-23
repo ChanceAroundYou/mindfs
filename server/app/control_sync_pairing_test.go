@@ -9,8 +9,7 @@ import (
 
 // 未配对的边缘：服务必须起得来，但只挂配对端点 —— 没有同步、没有采集、没有转发。
 // 少挂一条（比如连带 capturer）会让这台机器在还没配对时就开始记变更流。
-func TestPendingPairingWiringOnlyExposesPairing(t *testing.T) {
-	w := pendingPairingWiring(&ControlSyncOptions{
+func TestPendingPairingWiringOnlyExposesPairing(t *testing.T) {	w := pendingPairingWiring(&ControlSyncOptions{
 		Enabled:        false,
 		PendingPairing: true,
 		Role:           "edge",
@@ -27,6 +26,27 @@ func TestPendingPairingWiringOnlyExposesPairing(t *testing.T) {
 	if w.runtime != nil || w.capturer != nil || w.proxy != nil || w.service != nil ||
 		w.pusher != nil || w.feed != nil || w.edges != nil || w.token != "" {
 		t.Fatalf("未配对边缘不该有同步能力：%+v", w)
+	}
+}
+
+// 接线层也要把 pending 与实例名交出去：前端靠这条探针决定「要不要出配对表单」。
+// API 用例用的是 fake，钉得住路由与 403，钉不住这里到底回什么。
+func TestPendingPairingWiringReportsState(t *testing.T) {
+	w := pendingPairingWiring(&ControlSyncOptions{
+		PendingPairing: true,
+		InstanceID:     "hasee",
+		TokenFile:      "/tmp/does-not-matter.token",
+		ConfigPath:     "/tmp/does-not-matter.json",
+	}, nodeinfo.RoleControl)
+	if w == nil || w.pairing == nil {
+		t.Fatalf("wiring = %+v，应挂上配对端点", w)
+	}
+	state := w.pairing.PairingState()
+	if !state.PendingPairing {
+		t.Fatal("未配对的边缘必须自报 pending —— 否则没有 token 可用的机器在页面上看不见")
+	}
+	if state.InstanceID != "hasee" {
+		t.Fatalf("instance_id = %q，应回显本次实例名", state.InstanceID)
 	}
 }
 

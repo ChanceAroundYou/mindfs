@@ -20,6 +20,16 @@ import (
 // 0.0.0.0 上开一个无鉴权的「重定向整份控制面」入口。
 type ControlSyncPairing interface {
 	Pair(ctx context.Context, req controlsync.PairRequest) (controlsync.PairResult, error)
+	// PairingState 是给前端的只读探针：这条路由存在就等于「本机是等着配对的边缘」。
+	// 少了它，页面拿不到任何信号 —— `/api/control-sync/status` 在未配对时同样 404，
+	// 与「这台机器根本不同步」无法区分，表单只能永远不出现。
+	PairingState() PairingState
+}
+
+// PairingState 只描述「还差什么」，不含 token 与任何路径。
+type PairingState struct {
+	PendingPairing bool   `json:"pending_pairing"`
+	InstanceID     string `json:"instance_id"`
 }
 
 // pairRequestBody 是配对表单提交的形状。
@@ -72,6 +82,18 @@ func (h *HTTPHandler) handleControlSyncPair(w http.ResponseWriter, r *http.Reque
 		"primary_version":  result.PrimaryBuild,
 		"head_rev":         result.HeadRev,
 	})
+}
+
+// handleControlSyncPairState 回一份只读的配对状态。
+//
+// 不做回环守卫：它只回「本机等着配对」与实例名，这两样在别处本来就能看到
+// （`/api/node-info`）。真正会改信任锚的是 POST，那条才必须限本机。
+func (h *HTTPHandler) handleControlSyncPairState(w http.ResponseWriter, r *http.Request) {
+	if h.ControlSyncPair == nil {
+		respondError(w, http.StatusNotFound, errInvalidRequest("control sync pairing not configured"))
+		return
+	}
+	respondJSON(w, http.StatusOK, h.ControlSyncPair.PairingState())
 }
 
 // isLoopbackRequest 判断请求是否来自本机。

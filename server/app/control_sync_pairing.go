@@ -16,11 +16,20 @@ import (
 type controlSyncPairer struct {
 	tokenFile  string
 	configPath string
+	instanceID string
 }
 
 // Pair 是 api.ControlSyncPairing 的实现。
 func (p controlSyncPairer) Pair(ctx context.Context, req controlsync.PairRequest) (controlsync.PairResult, error) {
 	return controlsync.Pair(ctx, req, p.tokenFile, p.configPath)
+}
+
+// PairingState 是 api.ControlSyncPairing 的实现。
+//
+// 挂出这个接口的机器只可能是「还没配好的边缘」，所以 pending 恒为真；带上实例名是
+// 为了让表单预填、并在主控端的 `/edges` 名单里认得出来。
+func (p controlSyncPairer) PairingState() api.PairingState {
+	return api.PairingState{PendingPairing: true, InstanceID: p.instanceID}
 }
 
 // newControlSyncPairer 在缺路径时返回 nil（等于不挂端点）。
@@ -36,7 +45,7 @@ func newControlSyncPairer(opts *ControlSyncOptions) api.ControlSyncPairing {
 			opts.ConfigPath, opts.TokenFile)
 		return nil
 	}
-	return controlSyncPairer{tokenFile: opts.TokenFile, configPath: opts.ConfigPath}
+	return controlSyncPairer{tokenFile: opts.TokenFile, configPath: opts.ConfigPath, instanceID: opts.InstanceID}
 }
 
 // pendingPairingWiring 是未配对边缘的接线：只有配对端点，没有同步、采集、转发。

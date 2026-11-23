@@ -27,6 +27,10 @@ func (f *fakePairing) Pair(_ context.Context, req controlsync.PairRequest) (cont
 	return f.result, nil
 }
 
+func (f *fakePairing) PairingState() PairingState {
+	return PairingState{PendingPairing: true, InstanceID: "hasee"}
+}
+
 func pairTestHandler(pair ControlSyncPairing) *HTTPHandler {
 	return &HTTPHandler{AppContext: &AppContext{}, ControlSyncPair: pair}
 }
@@ -131,6 +135,40 @@ func TestPairMapsOtherFailuresTo400(t *testing.T) {
 		`{"primary_url":"https://home.example:7331","token":"0123456789abcdef"}`, "127.0.0.1:40000"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d，应为 400（body=%s）", rec.Code, rec.Body.String())
+	}
+}
+
+// 前端只能靠这条只读探针认出「本机等着配对」：/status 在未配对时也 404，
+// 与「这台机器根本不同步」没有区别。少这条，页面上的配对表单永远不会出现。
+func TestPairStateRouteReportsPendingPairing(t *testing.T) {
+	h := pairTestHandler(&fakePairing{})
+	req := httptest.NewRequest(http.MethodGet, "/api/control-sync/pair", nil)
+	req.RemoteAddr = "192.168.1.10:51234"
+	rec := serveHTTP(h.Routes(), req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d，应为 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["pending_pairing"] != true || body["instance_id"] != "hasee" {
+		t.Fatalf("body = %v，应报 pending_pairing 与实例名", body)
+	}
+	// 只读探针不能顺带泄露路径或密钥：它是公开可读的（不做回环守卫）。
+	for _, key := range []string{"token", "token_file", "config_path", "primary_url"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("body 不该含 %q：%v", key, body)
+		}
+	}
+}
+
+// 没挂配对能力的机器上这条探针也必须是 404 —— 前端据此判断「本机不需要配对」。
+func TestPairStateRouteAbsentWithoutPairing(t *testing.T) {
+	h := pairTestHandler(nil)
+	rec := serveHTTP(h.Routes(), httptest.NewRequest(http.MethodGet, "/api/control-sync/pair", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("code = %d，应为 404", rec.Code)
 	}
 }
 
