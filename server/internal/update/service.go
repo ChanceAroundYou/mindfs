@@ -1,6 +1,7 @@
 package update
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -36,6 +37,14 @@ type Service struct {
 	mu        sync.RWMutex
 	status    Status
 	listeners []func(Status)
+
+	// 静默自动更新（见 auto_install.go）：默认关闭，由 Windows 安装包显式打开。
+	autoInstall bool
+	busyProbe   func() bool
+	// checkNow / trigger 是测试接缝：nil 表示走真的 CheckNow / TriggerUpdate。
+	// 判据的每条分支都值一次真实事故，不能只靠「读代码看着对」。
+	checkNow func(ctx context.Context)
+	trigger  func(ctx context.Context) error
 }
 
 func (s *Service) installLayout() (installLayout, error) {

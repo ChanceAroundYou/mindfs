@@ -439,6 +439,7 @@ func main() {
 			LiveCompactCacheTTLSeconds:         liveCompactCacheTTLSeconds,
 			ControlSync:                        controlSyncCfg,
 			SessionHygiene:                     sessionHygieneOptions(startupCfg),
+			UpdateAutoInstall:                  updateAutoInstall(startupCfg),
 			Feishu: feishuOptions(startupFlags{
 				FeishuEnabled:          &feishuEnabled,
 				FeishuOwnerOpenID:      &feishuOwnerOpenID,

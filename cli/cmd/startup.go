@@ -44,6 +44,8 @@ type startupConfig struct {
 	// ControlSync 是控制面同步（离线优先本地控制面）。不配置 = 默认启用（只对
 	// control 节点成立；worker 整段跳过），见 controlSyncOptions。
 	ControlSync *startupControlSyncConfig `json:"control_sync"`
+	// Update 是自更新策略。不配置 = 只查不装（默认行为，也是唯一安全的默认值）。
+	Update *startupUpdateConfig `json:"update"`
 	// 根级飞书中继配置：只在 config.json，没有对应 flag。
 	FeishuRelayURL *string `json:"feishu_relay_url"`
 	FeishuNodeID   *string `json:"feishu_node_id"`
@@ -60,6 +62,16 @@ type startupControlSyncConfig struct {
 	PrimaryURL *string `json:"primary_url"`
 	CAFile     *string `json:"ca_file"`
 	TokenFile  *string `json:"token_file"`
+}
+
+// startupUpdateConfig 是 update 段。
+//
+// AutoInstall 默认 false，且**只能**由 Windows 独立安装包写 true：装更新会替换二进制并
+// 重启进程，Unix 侧 systemd 是 Restart=on-failure（退出码 0 不重拉）而替换进程又 setsid
+// 脱离了 cgroup —— 静默重启等于让服务从 systemd 眼里消失；本机与 worker 上还会顺手
+// 杀掉正在跑的 claude 子进程。详见 server/internal/update/auto_install.go。
+type startupUpdateConfig struct {
+	AutoInstall *bool `json:"auto_install"`
 }
 
 // startupSessionHygieneConfig 只影响本机。它是少数「不配置也生效」的特性：
@@ -553,6 +565,15 @@ func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {
 		}
 	}
 	return opts
+}
+
+// updateAutoInstall 读 update.auto_install。没写这段、或写了 false，一律关闭 ——
+// 见 startupUpdateConfig 上关于「为什么默认必须关」的那段。
+func updateAutoInstall(cfg startupConfig) bool {
+	if cfg.Update == nil || cfg.Update.AutoInstall == nil {
+		return false
+	}
+	return *cfg.Update.AutoInstall
 }
 
 // hoursToSeconds 把可带小数的时长折成秒；<=0 视为未配置。

@@ -44,19 +44,38 @@ func (s *Service) Start(ctx context.Context) {
 		return
 	}
 	go func() {
-		log.Printf("[update] checker.start repo=%s current=%s interval=%s auto_update_supported=%t", s.repo, s.current, s.checkInterval, s.canAutoUpdate())
-		s.CheckNow(context.Background())
+		log.Printf("[update] checker.start repo=%s current=%s interval=%s auto_update_supported=%t auto_install=%t", s.repo, s.current, s.checkInterval, s.canAutoUpdate(), s.AutoInstallEnabled())
+		s.checkAndMaybeInstall(context.Background())
 		ticker := time.NewTicker(s.checkInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				s.CheckNow(context.Background())
+				s.checkAndMaybeInstall(context.Background())
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+// checkAndMaybeInstall 是启动时与每一拍共用的顺序：先查版本，再看这一拍要不要静默装。
+//
+// 顺序不能反：CheckNow 才把 HasUpdate / LatestVersion 填进状态，
+// 先判判据只会永远读到上一拍的值。
+func (s *Service) checkAndMaybeInstall(ctx context.Context) {
+	if check := s.checkFn(); check != nil {
+		check(ctx)
+	} else {
+		s.CheckNow(ctx)
+	}
+	s.maybeAutoInstall(ctx)
+}
+
+func (s *Service) checkFn() func(ctx context.Context) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.checkNow
 }
 
 func (s *Service) AddListener(listener func(Status)) {

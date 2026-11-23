@@ -111,6 +111,11 @@ type StartOptions struct {
 	// SessionHygiene 是会话卫生策略（config.json 的 session_hygiene）。零值 =
 	// 默认策略（开启），见 sessionHygieneConfigFromOptions。
 	SessionHygiene SessionHygieneOptions
+	// UpdateAutoInstall 打开静默自动更新（config.json 的 update.auto_install）。
+	// 默认 false，且只该由 Windows 独立安装包打开：装完会重启进程，而 Unix 的
+	// systemd 单元是 Restart=on-failure + 替换进程 setsid 脱离 cgroup ——
+	// 静默重启等于让服务从 systemd 眼里消失，还会腰斩正在跑的 agent 回合。
+	UpdateAutoInstall bool
 }
 
 // SessionHygieneOptions 是节点本地的超长会话提示策略。它只影响本机，不走控制面。
@@ -302,6 +307,14 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		}
 		return time.Duration(hours) * time.Hour
 	})
+
+	// 静默自动更新（D4）：只有安装包显式打开时才生效，且只在没有回合在跑时装。
+	// 忙探针挂在共享 Pool 上 —— 与 repoint 掐进程用的是同一个判据（activeUses>0）。
+	updateSvc.SetAutoInstall(opts.UpdateAutoInstall)
+	updateSvc.SetBusyProbe(sharedPool.HasAnyActiveUse)
+	if opts.UpdateAutoInstall {
+		log.Printf("[update] auto_install.enabled — idle machines will install updates and restart")
+	}
 
 	// 外部通道先于工作区创建：每账户的 Kanban 实例在构建时就要拿到适配器，
 	// 否则启动期建好的主账户永远发不出卡片。

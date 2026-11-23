@@ -371,6 +371,27 @@ func (p *Pool) HasActiveUse(sessionKey string) bool {
 	return entry != nil && entry.activeUses > 0
 }
 
+// HasAnyActiveUse 报告**这台机器上**现在有没有任意会话在跑回合。
+//
+// 与 HasActiveUse 同一个判据（BeginSessionUse 圈起来的 activeUses>0），只是不挑会话。
+// 用途是「这件事会不会腰斩用户正在看的回复」——重装二进制（静默自动更新）要问它：
+// 重启会把在途回合连同 agent 进程一起带走，转录停在半句上。
+//
+// 注意它**不数**排队中的请求与没开始跑的会话：那些还没有 activeUses。
+func (p *Pool) HasAnyActiveUse() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, entry := range p.sessions {
+		if entry != nil && entry.activeUses > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Close closes a session (not the underlying runtime pool).
 func (p *Pool) Close(sessionKey string) {
 	p.mu.Lock()
