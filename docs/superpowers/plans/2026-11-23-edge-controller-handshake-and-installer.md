@@ -230,10 +230,23 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
    - 形态说明：通过 ssh 非交互启动，不是人工双击。安装器是 `windowsgui` 子系统、失败只走
      `MessageBoxW` —— 无人值守启动下失败会表现为进程挂住而不是报错，这是**已知的运维缺口**
      （成功路径不受影响），后续可考虑失败时落一份日志文件。
-5. **剩余（须等本机重启）**：配对要求主控端先跑新二进制（token 在 `token_file` 生成、
-   `/api/control-sync/*` 注册）。重启后在 hasee 本机回环上 `POST /api/control-sync/pair`
-   指向 `https://home.xiaokubao.space/mindfs`，再重启任务并核对 `/api/control-sync/status`。
-   `update.auto_install` 的端到端也需真实 GitHub release（对外发布，另行授权）。
+5. **配对完成（2026-11-24 02:02，用户重启本机后）**：本机 PID **4008366**、`/proc/<pid>/exe`
+   与 `~/.local/bin/mindfs` 同 md5 `85b40a40…`，`/api/node-info` 报 `v0.5.5-1300-66-g6d1b174e`、
+   health 200 `role=control`；启动日志有三行 —— `[control-sync] generated sync token at
+   …/control_sync.token`（0600、44 B）、`baseline published records=44`、`enabled role=primary`。
+   同步前从 hasee 实测到主控端的 https 链路可用（`/mindfs/api/node-info` 200、同版本）。
+   在 hasee 本机回环上 `POST /mindfs/api/control-sync/pair`（body 经 ssh stdin +
+   `--data-binary @-`，**token 不进命令行、不进日志**）返回
+   `{"status":"paired","head_rev":45,"restart_required":true}`；随后 `schtasks /end` + `/run` 重启任务：
+   - `config.json` 写齐 `enabled/instance_id=hasee/primary_url/role=edge/token_file`，
+     token 文件 44 B / 0600 落盘；新进程 PID 25516、Session 0、health 200、首页 200、版本同串。
+   - `GET /api/control-sync/status` = `mode=online / base_rev=45 / primary_reachable=true /
+     pending_count=0 / conflict_count=0`；`GET /api/control-sync/pair` 变为 `pending_pairing:false`。
+   - 在线转发生效：hasee 的 `/api/nodes` 与主控端逐字一致。
+   - 主控端日志出现签名 `head` 200、`changes?since=…` 追平循环与
+     `ui.bundle.served version=v0.5.5-1300-66-g6d1b174e files=287`；`control_sync.db` 的
+     `edges` 表自动登记 `hasee`，`last_seen_at` 持续前进、未踢。
+6. **剩余**：`update.auto_install` 的端到端需真实 GitHub release（对外发布，另行授权）。
 
 ## 边界
 
