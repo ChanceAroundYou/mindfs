@@ -15129,3 +15129,40 @@ groups:
       - 'web/src/hooks/useTaskActivities.ts:const routerCard = payload.source === "router" || (!sessionKey && !toolUseId);'
       - 'web/src/components/session/AskUserQuestionCard.tsx:const routerCard = !sessionBound && !toolUseId;'
 
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QL
+    title: 删除已废弃的任务组提示，并让 root not found 带上账户与节点线索
+    kind: fix
+    symptom: |
+      agent 在 worker 为冰晶智能建「任务组 / 普通模板任务」时，拿到
+      `POST /mindfs/api/tasks?user=local → 400 {"error":"root not found"}` 后误判为
+      root/session 路由或 Unicode 问题。原因有两层：① 会话提示仍在教 agent 用 Phase 3
+      已删除的 `mindfs -orchestration` / 任务组 / 模板任务（实测 CLI 报
+      `flag provided but not defined`）；② 陌生 `user=` 在 worker 上解析为空工作区
+      （既定语义），root 查不到时错误只说 `root not found`，看不出该核对账户还是节点。
+    why: |
+      必须保留：① 提示是全局注入到每个会话的，合上游若带回旧文案，agent 会继续拿
+      `task_template_id` 等不存在字段反复撞 400；② 账户只在本节点数据面解析，跨节点
+      同名项目不串（G-NR），错误文案必须把 user 与 root 一起说出来，才能让调用方
+      自行分清「账户不对」和「这台机器没有这个项目」。不得把 worker 的陌生 user
+      改成 unknown_user 错误 —— 空工作区是 control/worker 共用设计，跨机器首次建数据
+      与新账户可见性都靠它（`server/app/unknown_user_test.go` 钉住）。
+    files:
+      - server/internal/api/usecase/session_prompt.go
+      - server/internal/api/usecase/session_prompt_no_stale_tasks_test.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_task_create_root_error_test.go
+      - docs/superpowers/plans/2026-11-24-stale-task-prompt-and-root-error.md
+      - docs/plans/README.md
+    tests:
+      - server/internal/api/usecase/session_prompt_no_stale_tasks_test.go
+      - server/internal/api/http_task_create_root_error_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_prompt.go:prompt += ".\n"'
+      - 'server/internal/api/usecase/session_prompt.go:旧文案让 agent 拿不存在的字段'
+      - 'server/internal/api/usecase/session_prompt_no_stale_tasks_test.go:TestBuildPromptDoesNotRecommendRemovedTaskFeatures'
+      - 'server/internal/api/http_tasks.go:errText = fmt.Sprintf('
+      - 'server/internal/api/http_tasks.go:check ?user= and the target node'
+      - 'server/internal/api/http_task_create_root_error_test.go:TestTaskCreateRootNotFoundNamesAccountAndNode'
