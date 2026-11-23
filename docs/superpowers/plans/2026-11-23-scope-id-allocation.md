@@ -120,3 +120,35 @@ scope-id resolve --branch <name>      # 撞号裁决
   `scripts/check-tag.sh` 这个非 Go 输入，否则变异跑的是上一次的缓存结果（`(cached)` 是信号）；
   ② 只断言「失败」不够 —— 去掉形状检查后同一批输入会改由「发布说明不一致」而失败，
   测试照样绿，必须断言失败原因。
+
+## 端到端自证（用这套机制管它自己）
+
+本组自己的组号 `G-QD` 就是 `scope-id claim` 发出来的 —— 计划头部的
+`> Scope IDs: G-QD（claimed 2026-11-23T07:24Z）` 是工具写的，不是手填的。
+
+隔离 worktree 里另跑了一遍完整流程（不碰生产仓库）：
+
+```
+$ scope-id claim docs/superpowers/plans/2026-11-23-probe.md --count 2
+已申请 G-QE / G-QF
+  · 清单已追加 2 个占位组
+  · …/probe.md 头部已写入 `> Scope IDs: G-QE / G-QF`
+$ scope-id next --count 3
+G-QG G-QH G-QI          # 已占的号不再发，只增不回填
+```
+
+门禁确实读得到 claim 写的那行：往探针计划追加 `> Scope IDs: G-QZ`（未登记）→
+`scope-id check` 退出码 1、报 `probe.md:7 引用了 G-QZ`；删掉即恢复 0。
+
+这一轮 E2E 当场抓出**第二个真实缺陷**：用法文本写 `claim <plan.md> [--count N]`，
+但 Go 的 `flag` 包遇到第一个非 flag 参数就停止解析，`--count` 被当成第二个位置参数、
+命令直接报「用法」错 —— 文档写着能跑、实际跑不了。修法是 `splitFlagArgs` 先分离
+位置参数与 flag（`--flag` 与 `--flag=value` 两种形态），两条用例钉住，变异（退回
+`fs.Parse(args)`）打红 `TestRunClaimAcceptsPlanBeforeCount`。
+
+## 边界（这套机制不做什么）
+
+- **不管版本号**：版本由 `git describe` 派生，`check-tag.sh` 只管打 tag 前的五条护栏。
+- **不改写历史**：撞号裁决只改清单与计划头部；提交信息里的历史 `Scope:` 是事实，不动。
+- **不阻断共享工作区**：`deploy-all.sh` 遇到 `-dirty` 只警告不失败 —— 别的会话在飞是常态，
+  但四端会跑一份无法用 git 复现的产物，这件事必须被喊出来而不是静默通过。
