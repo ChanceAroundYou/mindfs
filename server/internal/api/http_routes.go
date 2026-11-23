@@ -206,6 +206,13 @@ func (h *HTTPHandler) Routes() http.Handler {
 		// 与 /head /changes 同一档鉴权 —— 它同样能一次吐出整套静态资源。
 		r.Get("/api/control-sync/ui/manifest", h.requireSyncToken(h.handleControlSyncUIManifest))
 		r.Get("/api/control-sync/ui/bundle", h.requireSyncToken(h.handleControlSyncUIBundle))
+		// 边控端名单：查看谁在同步、踢掉某台。鉴权必须与上面同档 ——
+		// 能改名单就能让一台机器的同步停摆，那和能读控制面是同一个级别。
+		if h.ControlSyncEdges != nil {
+			r.Get("/api/control-sync/edges", h.requireSyncToken(h.handleControlSyncEdgesList))
+			r.Post("/api/control-sync/edges/{id}/revoke", h.requireSyncToken(h.handleControlSyncEdgeRevoke))
+			r.Post("/api/control-sync/edges/{id}/restore", h.requireSyncToken(h.handleControlSyncEdgeRestore))
+		}
 	}
 	if h.ControlSyncConflicts != nil {
 		r.Get("/api/control-sync/conflicts", h.handleControlSyncConflicts)
