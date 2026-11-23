@@ -75,6 +75,11 @@ scope-id resolve --branch <name>      # 撞号裁决
 脏工作区会打出带未提交代码的 tag；`TAG` 写错形状 git 照样接受；重复 tag 直接失败；
 发布说明首行与 `TAG` 不一致要到 `make release` 才报。现在前置到 `tag` 目标里。
 
+五条护栏**只有一份实现**：`scripts/check-tag.sh`。`make tag` 只委托它（`TestMakeTagDelegatesToScript`
+钉住 Makefile 里不再出现第二份 `git status --porcelain` / `MERGE_HEAD` / `refs/tags` /
+形状正则）。这不是洁癖：内联那份与脚本各改各的就会漂移，而这条路的失败模式是
+「校验看起来跑过了」。
+
 ## 交付清单
 
 | 项 | 落点 |
@@ -82,8 +87,8 @@ scope-id resolve --branch <name>      # 撞号裁决
 | 组号算术与扫描 | `scripts/internal/scopeid/` |
 | 门禁断言 6/7 | `scripts/check-upstream/main.go` |
 | 门禁接入 ship | `scripts/deploy-all.sh`（推送前） |
-| 命令行 | `scripts/scope-id/` |
-| 版本 tag 校验 | `Makefile` 的 `tag` 目标 |
+| 命令行 | `scripts/scope-id/`（`main.go` 取号/声明、`resolve.go` 撞号裁决） |
+| 版本 tag 五条护栏 | `scripts/check-tag.sh`；`Makefile` 的 `tag` 目标只委托它 |
 | `-dirty` 显式告警 | `scripts/deploy-all.sh` |
 | 使用说明 | `.claude/skills/scope-id/SKILL.md` |
 
@@ -93,5 +98,25 @@ scope-id resolve --branch <name>      # 撞号裁决
   报 `✗ 组号重复：1 / G-QC 出现多次`；还原后恢复 0。
 - 断言 7：往另一份计划末尾追加一行声明、指向清单里没有的号（本次用 `G-QZ` 验证）→
   门禁报 `2026-11-09-kanban-agent-workflows.md:168 引用了 G-QZ`；还原后恢复 0。
-- 真实仓库当前全绿：2614 个 delta 文件被 381 组完整覆盖。
+- 真实仓库当前全绿：2620 个 delta 文件被 382 组完整覆盖。
 - `scope-id next --count 3` 在真实仓库上输出 `G-QD G-QE G-QF`。
+- `resolve` 用**真 git 仓库**做夹具（`scripts/scope-id/resolve_test.go`，不是 mock）：
+  三个用例分别是「当前分支是后来者 → 改号」「当前分支是先引入者 → 拒绝」「`--dry-run`
+  不写文件」。真夹具当场抓出一个缺陷 —— 读不到 `origin/main` 时基准退化成空集，把两边
+  共同的祖先号（`G-QB`）也判成撞号；修法是退到 `merge-base HEAD <branch>`，变异（退回空基准）
+  打红其中两条用例。
+- `check-tag.sh` 五条护栏逐条做过变异验证，每条都必须**因正确原因**变红：
+
+  | 变异 | 变红的用例 |
+  |---|---|
+  | 去掉脏工作区检查 | `TestCheckTagRejectsDirtyWorktree` |
+  | 去掉 tag 已存在检查 | `TestCheckTagRejectsExistingTag` |
+  | 去掉形状检查 | `TestCheckTagRejectsMalformedShape`（断言失败**原因**含「形状」） |
+  | 去掉发布说明版本检查 | `TestCheckTagRejectsNotesVersionMismatch` |
+  | 去掉半截合并检查 | `TestCheckTagRejectsMergeInProgress` |
+  | Makefile 内联回一份校验 | `TestMakeTagDelegatesToScript` |
+
+  两处口径教训，都已固化进测试：① 变异必须带 `-count=1` —— Go 测试缓存不追踪
+  `scripts/check-tag.sh` 这个非 Go 输入，否则变异跑的是上一次的缓存结果（`(cached)` 是信号）；
+  ② 只断言「失败」不够 —— 去掉形状检查后同一批输入会改由「发布说明不一致」而失败，
+  测试照样绿，必须断言失败原因。

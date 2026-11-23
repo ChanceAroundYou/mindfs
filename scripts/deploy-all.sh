@@ -38,6 +38,7 @@ done
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '    \033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ── 0. 门禁：先确保没在别的分支、没在半截合并里 ──
@@ -116,6 +117,14 @@ make install >>/tmp/mindfs-build.log 2>&1 || { tail -30 /tmp/mindfs-build.log >&
 VERSION="$(sed -nE 's/.*-X main\.version=([^ "]+).*/\1/p' /tmp/mindfs-build.log | tail -1)"
 [[ -n "$VERSION" ]] || die "从构建日志里读不出版本号（/tmp/mindfs-build.log）"
 ok "本机已安装 $VERSION"
+
+# `-dirty` 意味着二进制里编进了未提交的代码 —— 四端会带着一份没人能复现的产物跑起来，
+# 而版本号看起来照样正常。不阻断（共享工作区里常有别的会话在飞），但必须喊出来。
+if [[ "$VERSION" == *-dirty ]]; then
+  warn "版本号带 -dirty：$VERSION"
+  warn "  二进制里编进了未提交的改动，四端将运行一份无法用 git 复现的产物。"
+  warn "  要干净发布：git status 确认后重新提交，或从 HEAD 的干净 worktree 构建。"
+fi
 
 # ── 5. worker 端：调用独立部署脚本（各自可单独运行/测试） ──
 step "部署 WSL"

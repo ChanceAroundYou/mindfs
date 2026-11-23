@@ -14569,13 +14569,20 @@ groups:
       - scripts/check-upstream/main.go
       - scripts/check-upstream/main_test.go
       - scripts/deploy-all.sh
+      - scripts/check-tag.sh
+      - internal/deploy/check_tag_test.go
+      - Makefile
+      - .claude/skills/scope-id/SKILL.md
       - docs/superpowers/plans/2026-11-23-scope-id-allocation.md
     tests:
       - scripts/internal/scopeid/scopeid_test.go
       - scripts/scope-id/main_test.go
       - scripts/check-upstream/main_test.go
+      - internal/deploy/check_tag_test.go
     anchors:
       - 'scripts/internal/scopeid/scopeid.go:func NextIDs(existing []string, n int) ([]string, error) {'
       - 'scripts/internal/scopeid/scopeid.go:func IsTemplatePlaceholder(id string) bool {'
       - 'scripts/check-upstream/main.go:if bad := duplicateGroupIDs(reg.Groups); len(bad) > 0 {'
       - 'scripts/scope-id/main.go:const claimStampPrefix = "> Scope IDs: "'
+      - 'scripts/check-tag.sh:if ! printf ''%s'' "$TAG" | grep -Eq ''^v[0-9]+'
+      - 'Makefile:@RELEASE_NOTES_FILE="$(RELEASE_NOTES_FILE)" bash scripts/check-tag.sh "$(TAG)" || exit 1'
