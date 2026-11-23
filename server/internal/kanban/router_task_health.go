@@ -225,11 +225,12 @@ func (s *Service) taskHealthInputFor(ctx context.Context, store *TaskStore, root
 	if err != nil {
 		return taskHealthInput{}, err
 	}
-	live := s.sessionRunning(task.MainSessionKey)
+	// 判活必须覆盖全部绑定会话：显式发起的 Run 把共享会话写在
+	// workflow_runs.session_key，节点会话写在 workflow_node_runs.session_key，
+	// 它们都不会出现在 tasks.main_session_key 里。只看主会话会把一个正在干活的
+	// Run 每 5 分钟判一次孤儿（#112 连续 17 条 task_orphaned）。
+	live := s.taskRuntimeLive(ctx, store, task.ID, "")
 	for i := range replies {
-		if s.sessionRunning(replies[i].SessionKey) {
-			live = true
-		}
 		if watermark, known := s.SessionTurnWatermark(rootID, replies[i].SessionKey); known {
 			replies[i].LastOutput, replies[i].OutputKnown = watermark, true
 		}

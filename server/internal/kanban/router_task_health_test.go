@@ -154,6 +154,30 @@ func (f *taskHealthFixture) events(t *testing.T) []RouterEvent {
 	return out
 }
 
+// 显式发起的 Workflow Run 把共享会话写在 workflow_runs.session_key，任务主会话
+// 仍是空的。巡检必须把这条会话算进「任务还在跑」，否则会每 5 分钟判一次孤儿。
+func TestTaskHealthSweepTreatsWorkflowRunSessionAsLive(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	f := newTaskHealthFixture(t, "task-run-live", StatusRunning, "")
+	if _, err := f.store.db.ExecContext(ctx, `
+INSERT INTO workflow_runs (id, task_id, graph_json, created_at, updated_at)
+VALUES ('run-live', ?, '{}', '2026-11-22T11:00:00Z', '2026-11-22T11:00:00Z')`, f.taskID); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	if _, err := f.store.SetWorkflowRunSessionKey(ctx, "run-live", "sess-run"); err != nil {
+		t.Fatalf("SetWorkflowRunSessionKey: %v", err)
+	}
+	f.svc.SetSessionRunningProbe(func(key string) bool { return key == "sess-run" })
+
+	if _, err := f.svc.taskHealthSweep(ctx, f.rootID, now); err != nil {
+		t.Fatalf("taskHealthSweep: %v", err)
+	}
+	if events := f.events(t); len(events) != 0 {
+		t.Fatalf("Run 会话还在回话，不该判孤儿：%+v", events)
+	}
+}
+
 func TestTaskHealthSweepEmitsStalledTurnOncePerBucket(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
