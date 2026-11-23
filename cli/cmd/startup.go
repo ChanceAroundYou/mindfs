@@ -41,7 +41,8 @@ type startupConfig struct {
 	SessionHygiene *startupSessionHygieneConfig `json:"session_hygiene"`
 	// Channels 是外部通道（飞书等）的本机配置。不配置 = 全关。
 	Channels *startupChannelsConfig `json:"channels"`
-	// ControlSync 是控制面同步（离线优先本地控制面）。不配置 = 关闭。
+	// ControlSync 是控制面同步（离线优先本地控制面）。不配置 = 默认启用（只对
+	// control 节点成立；worker 整段跳过），见 controlSyncOptions。
 	ControlSync *startupControlSyncConfig `json:"control_sync"`
 	// 根级飞书中继配置：只在 config.json，没有对应 flag。
 	FeishuRelayURL *string `json:"feishu_relay_url"`

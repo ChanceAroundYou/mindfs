@@ -9,7 +9,8 @@ import (
 
 // 未配对的边缘：服务必须起得来，但只挂配对端点 —— 没有同步、没有采集、没有转发。
 // 少挂一条（比如连带 capturer）会让这台机器在还没配对时就开始记变更流。
-func TestPendingPairingWiringOnlyExposesPairing(t *testing.T) {	w := pendingPairingWiring(&ControlSyncOptions{
+func TestPendingPairingWiringOnlyExposesPairing(t *testing.T) {
+	w := pendingPairingWiring(&ControlSyncOptions{
 		Enabled:        false,
 		PendingPairing: true,
 		Role:           "edge",
