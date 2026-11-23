@@ -46,7 +46,11 @@ const routerSettlementTurnsPerHour = 20
 
 // routerSettlementExcerptRunes 是写进事件载荷的产出摘要长度上限。它是给 Router
 // 判断「这一轮值不值得总结」用的证据，不是全文；原文在活动流里。
-const routerSettlementExcerptRunes = 400
+//
+// 曾用 400：#68 那四条待拍板事项排在收尾说明之前，400 字只留得住末尾的收尾，
+// Router 看不到要人决定的部分。现在取 1000 —— 仍在 brief 的 1200 字上限之内、
+// 也远低于 payload 8192 字节的硬顶（1000 个中文字符约 3000 字节）。
+const routerSettlementExcerptRunes = 1000
 
 // turnSettledErrorRunes 是结算事件里失败原因的长度上限。它比 excerpt 短得多：
 // Router 只需要知道「为什么没跑成」，堆栈与整段请求体都在会话行与日志里。

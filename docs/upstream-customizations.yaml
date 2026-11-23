@@ -15059,6 +15059,7 @@ groups:
       - server/internal/kanban/router_turn_settled_summary_test.go
       - server/internal/kanban/router_turn_settled_test.go
       - server/internal/api/stream_hub_turn_tool_calls_test.go
+      - server/internal/kanban/reply_summary_router_protection_test.go
     anchors:
       - 'server/internal/api/stream_hub_pending.go:state.ToolCalls = 0'
       - 'server/internal/api/stream_hub_replay.go:state.ToolCalls++'
@@ -15068,6 +15069,7 @@ groups:
       - 'server/internal/kanban/router_coordinate_turn.go:HadToolCalls: event.Kind == RouterEventTurnSettled &&'
       - 'server/internal/kanban/activity_route_apply.go:if decision.HadToolCalls {'
       - 'server/internal/kanban/service_turn_settled.go:"tool_calls":        in.ToolCalls,'
+      - 'server/internal/kanban/service_activities_summary.go:待用户决策、待审批、待确认的事项是这段总结里最重要的部分'
 
   # ── Router 任务可信化 · 第四轮批次 3b（2026-11-23）──────────────────
   - id: G-QI
@@ -15105,11 +15107,17 @@ groups:
       - web/src/components/session/AskUserQuestionCard.tsx
       - web/src/hooks/useTaskActivities.ts
       - web/src/services/activities.ts
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/router_prompt.md
     tests:
       - server/internal/kanban/activity_router_questions_test.go
+      - server/internal/kanban/router_turn_settled_test.go
+      - server/internal/kanban/router_prompt_guidance_test.go
       - web/tests/task-router-question-card.test.mjs
     anchors:
       - 'server/internal/kanban/activity_route_apply.go:if err := s.activities.SetQuestionCard(ctx, act.ID, payloadJSON); err != nil {'
+      - 'server/internal/kanban/service_turn_settled.go:const routerSettlementExcerptRunes = 1000'
+      - 'server/internal/kanban/router_prompt.md:summary 不是终点'
       - 'server/internal/kanban/activity_route_apply.go:"type": ActivityTypeQuestion, "payload_json": payloadJSON,'
       - 'server/internal/kanban/activity_router_questions.go:const routerQuestionSource = "router"'
       - 'server/internal/kanban/activity_router_questions.go:func (s *ActivityService) AnswerQuestionCard('

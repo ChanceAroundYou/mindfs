@@ -363,6 +363,10 @@ func buildSummaryCompressPrompt(
 	b.WriteString("- 1–3 句，总共不超过 200 字；用户读一行就知道这轮做了什么、成没成。\n")
 	b.WriteString("- 说清结果与关键产物：改了哪些文件/做了什么操作、卡在什么问题上。\n")
 	b.WriteString("- 保留关键文件路径、命令与错误原因；不要编造原文没有的事实。\n")
+	// #68：压缩器原先没有「保留待决策项」这一条，四条待拍板事项被 200 字上限
+	// 连同其它内容一起压没了 —— Router 明明写对了，用户看到的却是被压缩掉的版本。
+	b.WriteString("- 待用户决策、待审批、待确认的事项是这段总结里最重要的部分：逐条列清，每个选项都在，不得为了压字数合并或省略；\n")
+	b.WriteString("  出现这类事项时可以为逐条列出而超出 200 字上限。\n")
 	b.WriteString("- 不要写「已完成」「执行成功」这类空话，也不要整段抄原文。\n")
 	b.WriteString("- 全程中文，面向用户，不要出现 output/summary/outcome 这类内部字段名。\n\n")
 	if task, err := store.GetTask(ctx, taskID); err == nil {
