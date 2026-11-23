@@ -6,6 +6,21 @@ to resume their old TODOs or baselines.
 
 ## 部署状态（权威，覆盖下方条目里的「未部署」）
 
+**2026-11-23 四端发布 `v0.5.5-1300`**（新 tag `v0.5.5-1300` → `904c682e`，origin/main 同点；
+含 `f79a0e5a..904c682e` 共 13 个提交：G-PX 七条 —— 摘要 600 字截断 `b73d8781`、失败回合不写兜底
+文案 `6d0bf607`、错误行后跟长正文仍判失败 `d31f3aae`、`turn_settled` 带失败标记 `76ddd367`、
+结算回合不重复渲染进度 `104f89e4`、巡检回合放开 `say/ask_user` `593760db`、OOB 回合跨重启恢复
+`fdff1e25`；G-PY 块流读取流式化 `baca9439`；G-PU 每个 agent 子进程单独一个 job object
+`3e6b7475`；G-PW 两条文档提交）。`bash scripts/deploy-all.sh` 退出 0。四端版本逐字一致：
+wsl `user` 单元 `is-active` + health 200 `role=worker` + `--version` `v0.5.5-1300`；fn 同上；
+pc-win 计划任务 PID **34228**（`StartTime` 10:02:08 晚于二进制写入 10:01）、`:7332` LISTENING
+由 34228 持有、health 200 `role=worker`、`bin/mindfs.exe --version` `v0.5.5-1300`；本机已安装
+`v0.5.5-1300`（md5 `882a9aa3…`）、bundle `assets/index-zj48uj_q.js` 服务的就是安装目录那份，
+**运行进程仍是旧二进制（PID 498268，`/proc/<pid>/exe` 已 deleted，md5 `68d7c209…`，
+`/api/node-info` 报 `v0.5.5-1201-149-g881a94bd`），待用户 `sudo systemctl restart mindfs`**。
+门禁：`go test ./...` 全绿、`tsc --noEmit` clean、Vitest 271 文件 / 943 通过 / 6 跳过、
+`make check-upstream` 2590 delta / 377 组全绿（baseline `9ab95722`）。
+
 **2026-11-23 四端发布 `v0.5.5-1201-220-gf79a0e5a`**（origin/main `f79a0e5a`，含
 `0b060ede..f79a0e5a` 全部提交，本批只有 G-PW）。四端版本逐字一致：wsl `is-active` + health 200、
 fn `user` 单元 `is-active` + health 200（`/proc/<pid>/exe` 与安装文件 md5 同为 `f4ad9194…`）、
@@ -72,7 +87,7 @@ health 200 `role=worker`；pc-win 进程 PID `4276`、`:7332` LISTENING、health
 
 ## Active
 
-- [Router 回合可信化第三轮：巡检回话 · OOB 恢复 · 摘要与失败判定 · 块流读取](../superpowers/plans/2026-11-23-router-turn-trust-third-round.md) — Plan 2026-11-23，起点是用户观察「回复次数太多、进度和汇报老是重复」，要求「全部涉及到的需要改动的点都做深度修复」。只读审核出 6 类问题并按用户对 8 条编号清单的裁定执行（第 7 条块流由「单独立项」改为本轮处理）。**G-PX**：H1 摘要落库统一截断 600 字（`b73d8781`）、H2 失败回合不写兜底文案进 `result_summary`（`6d0bf607`）、M2 错误行后跟长正文仍判失败（`d31f3aae`）、`turn_settled` 带失败标记（`76ddd367`）、M1 结算回合的进度汇报不再重复渲染（`104f89e4`）、C1 巡检回合放开 `say/ask_user`（`593760db`）、C2 OOB 回合标记落 `router_task_state` 并在 30 分钟后由启动对账 + 每分钟扫描恢复成 `waiting_user`（`fdff1e25`，6 条用例 + 6 处变异）。**G-PY**：块流读取流式化（`baca9439`）—— 线上单文件 70,712,496 B / 45,693 行，发送路径每轮 `CountBlocksAfterSeq` 原为 685.6 ms / 157 MB 分配，改为 bufio 逐行 + 行首 seq 前缀解析后 59.0 ms / 75 MB（约 11.6×），封口合并单次扫描；坏行语义与旧实现逐项对齐（无换行末行不回调、前缀路径要求行尾 `}`），3 处变异各自打红。**剩余**：存量 770 MB 块流/aux 数据用户裁定「不动」（不归档、不压缩、不删除、不重写，本轮未改 `.mindfs/sessions` 任何文件）；`make build && make install` 后不重启，本机重启由用户执行；线上验收待重启后取窗口。Scope: G-PX / G-PY。
+- [Router 回合可信化第三轮：巡检回话 · OOB 恢复 · 摘要与失败判定 · 块流读取](../superpowers/plans/2026-11-23-router-turn-trust-third-round.md) — Plan 2026-11-23，起点是用户观察「回复次数太多、进度和汇报老是重复」，要求「全部涉及到的需要改动的点都做深度修复」。只读审核出 6 类问题并按用户对 8 条编号清单的裁定执行（第 7 条块流由「单独立项」改为本轮处理）。**G-PX**：H1 摘要落库统一截断 600 字（`b73d8781`）、H2 失败回合不写兜底文案进 `result_summary`（`6d0bf607`）、M2 错误行后跟长正文仍判失败（`d31f3aae`）、`turn_settled` 带失败标记（`76ddd367`）、M1 结算回合的进度汇报不再重复渲染（`104f89e4`）、C1 巡检回合放开 `say/ask_user`（`593760db`）、C2 OOB 回合标记落 `router_task_state` 并在 30 分钟后由启动对账 + 每分钟扫描恢复成 `waiting_user`（`fdff1e25`，6 条用例 + 6 处变异）。**G-PY**：块流读取流式化（`baca9439`）—— 线上单文件 70,712,496 B / 45,693 行，发送路径每轮 `CountBlocksAfterSeq` 原为 685.6 ms / 157 MB 分配，改为 bufio 逐行 + 行首 seq 前缀解析后 59.0 ms / 75 MB（约 11.6×），封口合并单次扫描；坏行语义与旧实现逐项对齐（无换行末行不回调、前缀路径要求行尾 `}`），3 处变异各自打红。**剩余**：存量 770 MB 块流/aux 数据用户裁定「不动」（不归档、不压缩、不删除、不重写，本轮未改 `.mindfs/sessions` 任何文件）；`make build && make install` 后不重启，本机重启由用户执行；线上验收待重启后取窗口。Scope: G-PX / G-PY。**部署（2026-11-23）：随四端发布 `v0.5.5-1300` 上线，见上方部署状态。**
 
 - [Live compact 收尾：压缩竞态 · 计费口径 · 校准护栏 · 诊断字段](../superpowers/plans/2026-11-22-live-compact-compact-race-calibration-and-billing-metric.md) — Plan 2026-11-22，承上一轮 live-compact 现场核查，用户确认范围 **P0 + P1 A/B + P2**、交付到 **代码+测试+本地提交**（不部署、不重启、不 push）。**P0-1 压缩竞态**：压缩回合结束而 harness 事件未到时会给 `hygieneCompactGrace`（3s）宽限，事件已到即记成功（`stream_error_after_compact`），真没压仍记失败。**P0-2 计费口径**：账本汇总新增 `total_context_tokens` / `total_folded_tokens` / `context_token_samples`（只算既有 usage 样本又有折叠估算的行），胶囊在有样本时按「折叠 tokens ÷（计费上下文 + 折叠 tokens）」计节省率与累计 —— Codex 密文让字节口径把 39% 读成 3%。**P0-3 校准护栏**：`noteForwardEstimate` 只写 pending，真实样本到达时成对提交 `(actual, pendingForwardEst)`；本请求估算不足已校准估算 1/4 的旁路请求不接受；两条压缩信号路径置 `calibrationReset` 放行压缩后的小样本。**P1**：`lcsmoke` 新增 `-min-fold-bytes` / `-keep-tail` / `-rail` 与计费口径输出，固定夹具两臂 A/B。**P2 诊断**：`PlanStats.UnaccountedBytes`（任何策略都触不到的字节）、`fold.Usage.MissingReason`（upstream_unreachable / content_encoding / not_observed / no_usage_block），provider 行 `usage_missing=`、账本行 `usage_missing_reason`。变异逐项打红。Scope: G-PR。
 
