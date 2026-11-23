@@ -16,6 +16,7 @@ package conformance
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -94,6 +95,85 @@ var Required = map[string]TurnContract{
 		Frames:   []string{"session.accepted"},
 		Terminal: []string{"session.done", "session.error"},
 	},
+}
+
+// CompactEventContract 是「归一化 compact 事件」这一跨 harness 共同面的契约。
+//
+// 共同面只有一层：两个适配器都把各家 wire 上的压缩通知折叠成同一个
+// types.EventTypeCompact 事件，载荷是 types.CompactNotice。wire 形态（Claude 的
+// compact boundary；Codex 的 compacted item、unknown 与 typed contextCompaction）
+// 属于适配器实现细节，不在本契约内，只由各适配器自己的用例钉住 —— 把它们写成跨
+// harness 契约，正是 spec §6.12 曾经的错。
+type CompactEventContract struct {
+	// EventType 是归一化事件类型名，必须等于 types.EventTypeCompact。
+	EventType string
+	// PayloadFields 是两个适配器都必须填写的载荷字段（JSON 名）。只列两边今天
+	// 都真正赋值的字段；只有单边有值的（如 post_tokens，Codex 恒为 0）不算共同面。
+	PayloadFields []string
+}
+
+// CompactContract 是 compact 事件的跨 harness 契约，由各适配器的用例引用判定。
+var CompactContract = CompactEventContract{
+	EventType:     "compact_notice",
+	PayloadFields: []string{"id", "status", "summary"},
+}
+
+// Matches 判定一条已归一化的 compact 事件是否符合契约：事件类型一致，且载荷是带齐
+// PayloadFields 全部字段（按 JSON 名）的结构。值可以为空 —— 契约钉的是形状，不是
+// 内容；某一次压缩没有摘要，不代表适配器少报了字段。
+func (c CompactEventContract) Matches(eventType string, payload any) error {
+	if eventType != c.EventType {
+		return fmt.Errorf("compact event type = %q, want %q", eventType, c.EventType)
+	}
+	got := payloadFieldNames(payload)
+	for _, want := range c.PayloadFields {
+		if !got[want] {
+			return fmt.Errorf("compact payload missing field %q (got %v)", want, sortedKeys(got))
+		}
+	}
+	return nil
+}
+
+// payloadFieldNames 收出结构体载荷的 JSON 字段名。契约只关心「字段在不在」，不看值，
+// 所以读结构体标签而不看序列化后的 JSON（omitempty 会把空值字段整个吞掉）。
+func payloadFieldNames(payload any) map[string]bool {
+	names := map[string]bool{}
+	v := reflect.ValueOf(payload)
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return names
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return names
+	}
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		if name := jsonFieldName(t.Field(i)); name != "" && name != "-" {
+			names[name] = true
+		}
+	}
+	return names
+}
+
+// jsonFieldName 取结构体字段的 JSON 名，规则与 encoding/json 对齐（取标签逗号前
+// 部分，缺省用字段名）。本契约唯一的载荷 types.CompactNotice 没有内嵌字段，故不展开；
+// 真出现内嵌时该改这里的判据，而不是在契约里塞一个假字段。
+func jsonFieldName(field reflect.StructField) string {
+	tag := field.Tag.Get("json")
+	if tag == "-" {
+		return "-"
+	}
+	if tag != "" {
+		if idx := strings.IndexByte(tag, ','); idx >= 0 {
+			tag = tag[:idx]
+		}
+		if tag != "" {
+			return tag
+		}
+	}
+	return field.Name
 }
 
 // BuildTurn 把采集到的观测折成一个形状：帧与事件去重后排序，字段按事件分组去重排序。
