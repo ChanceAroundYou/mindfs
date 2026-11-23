@@ -158,6 +158,41 @@ control 上陌生 `user=` 仍回空工作区（`emptyWorkspace`），因为 cont
   `share\mindfs\web\index.html` 与 `favicon.svg` 真的落地，缺一个就整体失败 ——
   不允许留下「二进制在、页面 404」的半套安装。
 
+### 主节点侧也得配（顺序不能反）
+
+同步是双向的：主节点自己不配 `primary`，边缘配得再对也只会拿到 404。两端各一份
+`config.json`，**主节点先配先重启，再配边缘**：
+
+```json
+{
+  "role": "control",
+  "control_sync": {
+    "enabled": true,
+    "role": "primary",
+    "instance_id": "home",
+    "token_file": "/home/<user>/.config/mindfs/control-sync.token"
+  }
+}
+```
+
+主节点的 `token_file` 不存在时会**自动生成** 32 字节随机 token 并以 `0600` 落盘，
+日志只打「已生成 + 路径」，不打 token 本身。生成后把**这个文件的内容**拷到边缘的
+`token_file`（同一个值），或者走边缘侧的配对流程（见下）。
+
+主节点自检两条（不带 token 一定 401，这是正常的）：
+
+```bash
+BASE='http://127.0.0.1:7331/mindfs'
+TOKEN="$(cat /home/<user>/.config/mindfs/control-sync.token)"
+curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/head"    # 200 + head_rev
+curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/edges"   # 200 + 已注册边控端
+```
+
+`/head` 404 表示主节点没启用同步（`config.json` 缺 `control_sync` 段或 `enabled=false`）；
+401 表示 token 对不上；这两种都不是边缘的问题。
+
+### 边缘侧（边控端）
+
 安装后配置（`config.json`）：
 
 ```json
@@ -173,6 +208,9 @@ control 上陌生 `user=` 仍回空工作区（`emptyWorkspace`），因为 cont
   }
 }
 ```
+
+`primary_url` 必须是 `https://`（`controlsync/mode.go` 的 `parsePrimaryURL` 直接拒 http），
+自签/内网 CA 走 `ca_file`；**没有** `insecure_skip_verify` 这个开关。
 
 自检三条：
 
