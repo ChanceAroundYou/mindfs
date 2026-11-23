@@ -201,7 +201,8 @@ AskUserQuestion 被重问过，旧卡仍有效。行内二次清扫是空操作�
 | 纯文本回合不许顶掉摘要 | `TestTurnSettledKeepsProgressWhenTurnHadNoToolCalls` 首跑 `result_summary = "收到，我把口径记下来了。"` | 同一套代码下摘要保持为空 | 同上 ① |
 | 工具调用按轮计数 | `TestAppendReplyEventCountsToolCallsPerTurn` 首跑 `tool_calls = 0, want 2` | `SessionPendingState.ToolCalls` 在 `setPendingUserAt` 归零、`EventTypeToolCall` 累加，快照带出 2；新回合归零 | 把累加挪到 `EventTypeToolUpdate`（同一调用的续传）→ 计数变成 3，用例红 |
 | 载荷与 brief 白名单 | `TestSettleSessionTurnEmitsOneEventPerTurn` 增断言 `event tool_calls = 0, want 2` | `TurnSettledInput.ToolCalls` → 载荷 `"tool_calls"`，brief 白名单放行（不放行会被当未知键、报「载荷被截断」） | 从白名单删掉 `"tool_calls"` → 该断言红且 brief 标记 truncated |
-| Router 总结不被迟到的压缩器覆盖 | `TestRouterSummarySurvivesLateCompression` 首跑 `result_summary = "压缩器给出的短句", want 本轮结论…` | 压缩器调度时快照期望值、落地 CAS 只改仍等于快照的行 → Router 后写的摘要保留、活动气泡仍看到压缩短句 | 把 CAS 去掉改成无条件写 → 用例红 |
+| Router 总结不被迟到的压缩器覆盖 | `TestCompressedReplySummaryCannotOverwriteRouterSummary` 首跑 `result_summary = "压缩器给出的短句", want ""`（Router 刚写下的总结已被顶掉） | 压缩器调度时快照期望值、落地 CAS 只改仍等于快照的行 → Router 后写的摘要保留；`TestCompressedReplySummaryLandsWhenTaskSummaryUnchanged` 钉住反向：目标值仍等于快照时压缩照常落地 | 把 CAS 去掉改成无条件写 → 第一条用例红 |
+| 压缩器不许压掉待决策项 | `TestBuildReplySummaryCompressPromptCarriesEvidence` 增断言（原型只查任务名/留言/原文/agent，提示词里找不到「待用户决策」） | `buildSummaryCompressPrompt` 增两条：决策/审批事项逐条列清、不得为压字数合并；这类事项可超出 200 字上限 | 删掉新增的两条 `WriteString` → 该用例红（`prompt missing "待用户决策"`） |
 
 判据口径：`ToolCalls` 数的是**本轮**发起的工具调用次数（`EventTypeToolCall`），
 `EventTypeToolUpdate` 是同一调用的续传，不重复计数；`had_tool_calls` 落库是为了应用期
@@ -231,6 +232,7 @@ AskUserQuestion 被重问过，旧卡仍有效。行内二次清扫是空操作�
 | 会话卡不许走这条入口 | `TestAnswerQuestionCardRejectsSessionBoundCard` 首跑 `err = <nil>, want ErrQuestionSessionBound` | 载荷 `source != router` 一律拒绝：那答案属于会话的 tool call，当成任务留言派发会让 Agent 永远等不到 tool_result | 删掉 `source` 判断 → 用例红 |
 | 前端放行 Router 卡 | `web/tests/task-router-question-card.test.mjs` 的守卫用例 | `AskUserQuestionCard` 区分「有会话」与「Router 卡」；提交时两个 id 以空串回传 | 把 `routerCard` 写成常量 `false` → 守卫用例红 |
 | 作答分流 | 同上第三条用例 | `useTaskActivities.answerQuestion`：`payload.source=router`（或两个 id 都空）走 `answerTaskQuestion`，否则仍走会话 `answerQuestion` | 同上一处 |
+| Router 看得见整轮决策项 | `TestTurnSettledExcerptCarriesDecisionItemsBeyondLegacyLimit` 首跑 `brief 丢失了待决策项（保留 401 字）` | `routerSettlementExcerptRunes` 400 → 1000，仍在 brief 1200 字上限与载荷 8192 字节硬顶之内 | 把常量改回 400 → 用例红（保留 401 字） |
 
 顺序约束：**先留言、后收口**。`CreateUserReply` 要求卡还停在 `waiting_user`，先收口会让它
 把答案当成「已经答过」丢弃；反过来中途失败时卡仍是打开的，重试命中已有留言的幂等分支，
@@ -240,7 +242,8 @@ AskUserQuestion 被重问过，旧卡仍有效。行内二次清扫是空操作�
 同批（规则面，已在批次 1/3a 落地的部分一并复核）：`router_prompt.md` 规则 18 增补
 「同轮出现待决策/审批事项就必须 `router_ask_user`，每题 2–4 个选项，规则 17 的七类不受
 「不用问了」豁免」，由 `TestRouterPromptTurnsDecisionItemsIntoQuestionCards` 钉住；兜底 B
-（从纯文本嗅探决策项）按用户裁定不做。
+（从纯文本嗅探决策项）按用户裁定不做。摘要窗口同组放宽（400 → 1000），理由见上表：
+#68 的待拍板事项排在收尾说明之前，旧窗口只留得住末尾的收尾。
 
 门禁：`go test ./server/internal/kanban/ -run 'TestRouteAskUser|TestAnswerQuestionCard' -count=1`
 绿、`tsc -b --noEmit` clean、`npx vitest run tests/task-router-question-card.test.mjs` 3/3、
