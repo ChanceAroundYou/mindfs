@@ -29,9 +29,14 @@ type session struct {
 	onUpdate      func(types.Event)
 	onCompact     func(threadID string)
 	onThreadStart func(threadID string)
-	turn          types.TurnCanceler
-	contextWindow types.ContextWindow
-	planTextByID  map[string]string
+	// onThreadRethreaded 与 onThreadStart 分开：换绑出来的线程除了「登记」，
+	// 还必须在代理那边标成跨了供应商（旧供应商的 encrypted_content 新供应商
+	// 解不开，G-PK）。两者都登记线程，但只有换绑要额外标记，所以不能共用一个
+	// 回调 —— 池子侧只能从回调里知道「这是换绑，不是新线程」。
+	onThreadRethreaded func(threadID string)
+	turn               types.TurnCanceler
+	contextWindow      types.ContextWindow
+	planTextByID       map[string]string
 	// emitted 是本会话累计发出的事件数。writer 冲突重试只在**一个事件都没发出去**
 	// 时进行：那说明 thread/resume 就失败了，重发不会重复内容；一旦有 delta 落地，
 	// 重发就可能把同一条用户消息写两遍。
@@ -52,6 +57,7 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 	log.Printf("[agent/codex] input session=%s content=%q", s.sessionKey, preview(content))
 
 	var lastErr error
+	rethreaded := false
 	for attempt := 1; attempt <= codexWriterConflictAttempts; attempt++ {
 		before := s.emitted.Load()
 		streamed, err := s.thread.RunStreamed(content, codexsdk.TurnOptions{Context: turnCtx})
@@ -80,6 +86,18 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 		}
 
 		lastErr = err
+		// 供应商不一致：线程记录的供应商已经不在配置里，重发只会再撞一次同样的
+		// 错误。当场把线程 fork 到当前供应商再重试一轮（只做一次）。这条路径修
+		// 的是「打开时没能重新绑定」留下的中毒会话 —— 池子里缓存着它，光靠
+		// 打开路径的修复对已经中毒的会话不生效。
+		if !rethreaded && isCodexProviderMismatch(err) && s.emitted.Load() == before {
+			if forkErr := s.rethreadThread(turnCtx); forkErr != nil {
+				log.Printf("[agent/codex] provider.rethread.error session=%s err=%v", s.sessionKey, forkErr)
+				return fmt.Errorf("%w（线程仍记录着已不再配置的模型供应商，且换绑失败：%v）", err, forkErr)
+			}
+			rethreaded = true
+			continue
+		}
 		// writer 冲突只在「本回合一个事件都没发出去」时重试（见 emitted 字段）。
 		if !isCodexWriterConflict(err) || s.emitted.Load() != before {
 			return err
@@ -93,6 +111,11 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 			return turnCtx.Err()
 		case <-time.After(time.Duration(attempt) * codexWriterConflictBackoff):
 		}
+	}
+	if !isCodexWriterConflict(lastErr) {
+		// 换绑把这一轮用完了循环预算时，收尾不能报成 writer 冲突 —— 那会误导
+		// 用户去关 Codex 桌面版，而真正的原因是供应商换绑。
+		return lastErr
 	}
 	return fmt.Errorf("%w（另一个 Codex 客户端正占用该会话，通常是 Codex 桌面版打开了同一个对话；在那边关闭该会话后重试）", lastErr)
 }
@@ -236,6 +259,106 @@ func (s *session) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.thread.Close(ctx)
+}
+
+// ensureThreadProvider 检查线程记录的供应商是否仍是当前配置，不一致就当场换绑。
+//
+// 所有「重新 ResumeThread 一条已有线程」的路径都要先走它：SetModel 与
+// SetPlanMode 会重建 thread 对象，旧供应商的线程在那里被原样留下时，用户之后
+// 每发一条消息都撞 -32600，而这条路径不经过打开逻辑，池子里的缓存会话也救不到。
+//
+// 换绑失败不阻断设置本身（模型 / plan 模式与供应商无关），但必须记日志说明
+// 线程仍是旧供应商：接下来的回合会在 SendMessage 里再撞一次并尝试自己修。
+func (s *session) ensureThreadProvider(ctx context.Context) error {
+	if s == nil || s.client == nil {
+		return errors.New("codex session not initialized")
+	}
+	threadID := strings.TrimSpace(s.SessionID())
+	if threadID == "" {
+		s.updateThreadIDFromThread()
+		threadID = strings.TrimSpace(s.SessionID())
+	}
+	if threadID == "" {
+		return nil
+	}
+	s.mu.RLock()
+	opts := s.threadOpts
+	s.mu.RUnlock()
+	forked, rethreaded, err := rethreadCodexResumeOnProviderMismatch(ctx, s.client, threadID, opts, opts.WorkingDirectory)
+	if err != nil {
+		log.Printf("[agent/codex] provider.rethread.error session=%s path=settings err=%v", s.sessionKey, err)
+		return nil
+	}
+	if !rethreaded || forked == "" {
+		return nil
+	}
+	opts.ModelProvider = ""
+	thread := s.client.ResumeThread(forked, opts)
+	s.mu.Lock()
+	s.thread = thread
+	s.threadOpts = opts
+	s.threadID = forked
+	s.mu.Unlock()
+	log.Printf("[agent/codex] provider.rethreaded session=%s path=settings source=%s forked=%s", s.sessionKey, threadID, forked)
+	if notify := s.onThreadRethreaded; notify != nil {
+		notify(forked)
+	} else if notify := s.onThreadStart; notify != nil {
+		notify(forked)
+	}
+	return nil
+}
+
+// rethreadThread 在会话已经打开之后把线程换绑到当前配置的供应商。
+//
+// 打开路径（session_open.go）在 resume 之前就会做同样的检查，所以正常情况走不到
+// 这里。它修的是另一条：会话在**旧**版本下打开过、池子里缓存着那条旧供应商线程
+// （-32600 之后每一轮都失败），或者在打开之后供应商又被切走。这类中毒会话光修
+// 打开路径没用 —— pool.GetOrCreate 命中缓存就直接返回（pool.go 的 sessions 短路），
+// 根本不会再打开一次。
+//
+// 换绑后线程 id 会变，必须同步：s.thread/threadOpts/threadID 与池子里的绑定
+// （onThreadStart 回调 → RegisterThread）都换到新线程。
+func (s *session) rethreadThread(ctx context.Context) error {
+	if s == nil || s.client == nil {
+		return errors.New("codex session not initialized")
+	}
+	threadID := strings.TrimSpace(s.SessionID())
+	if threadID == "" {
+		s.updateThreadIDFromThread()
+		threadID = strings.TrimSpace(s.SessionID())
+	}
+	if threadID == "" {
+		return errors.New("codex thread id unavailable")
+	}
+	s.mu.RLock()
+	opts := s.threadOpts
+	s.mu.RUnlock()
+	forked, rethreaded, err := rethreadCodexResumeOnProviderMismatch(ctx, s.client, threadID, opts, opts.WorkingDirectory)
+	if err != nil {
+		return err
+	}
+	if !rethreaded || forked == "" {
+		// 走到这里说明线程其实不需要换绑（判定在更近的一次读取里不成立），
+		// 或者上一轮已经把线程换成了当前供应商。原样重试即可。
+		return nil
+	}
+	opts.ModelProvider = ""
+	thread := s.client.ResumeThread(forked, opts)
+	s.mu.Lock()
+	s.thread = thread
+	s.threadOpts = opts
+	s.threadID = forked
+	s.mu.Unlock()
+	log.Printf("[agent/codex] provider.rethreaded session=%s source=%s forked=%s", s.sessionKey, threadID, forked)
+	// 让池子把新线程登记到代理上，并标记这条线程跨了供应商。这里不能直接调
+	// RegisterThread：那是 Pool 的方法，而 session 只持有回调。优先用换绑回调；
+	// 没接（单独构造的 session）时退回普通登记回调，至少不让代理丢映射。
+	if notify := s.onThreadRethreaded; notify != nil {
+		notify(forked)
+	} else if notify := s.onThreadStart; notify != nil {
+		notify(forked)
+	}
+	return nil
 }
 
 func (s *session) updateThreadIDFromThread() {

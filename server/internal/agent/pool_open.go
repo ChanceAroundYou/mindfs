@@ -206,7 +206,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 		}
 		args := append([]string{}, def.Args...)
 		var onCompact func(string)
-		var onThreadStarted func(string)
+		var onThreadStarted, onThreadRethreaded func(string)
 		if p.compactProxy != nil {
 			// Codex compacts by itself; tell the proxy the next request's cache
 			// is cold so that fold is free.
@@ -216,6 +216,12 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			// attributing this session's provider traffic.
 			onThreadStarted = func(threadID string) {
 				p.RegisterThread(in.SessionKey, threadID)
+			}
+			// A rethread forks the history onto a new provider: register the new
+			// id *and* mark the cross-provider switch, or the copied
+			// `encrypted_content` gets rejected with invalid_encrypted_content.
+			onThreadRethreaded = func(threadID string) {
+				p.RegisterRethreadedThread(in.SessionKey, threadID)
 			}
 			// Codex reads its providers from config.toml. Point each of them at
 			// the proxy with a command-line override rather than editing that
@@ -266,6 +272,7 @@ func (p *Pool) openSession(ctx context.Context, protocol Protocol, def Definitio
 			CodexUserOrdinal:      codexUserOrdinal,
 			OnCompact:             onCompact,
 			OnThreadStarted:       onThreadStarted,
+			OnThreadRethreaded:    onThreadRethreaded,
 		})
 	case ProtocolACP:
 		fallthrough

@@ -52,7 +52,10 @@ func TestRethreadCodexResumeOnProviderMismatchLive(t *testing.T) {
 	t.Logf("源线程记录 provider=%s，当前配置 provider=%s", persisted, provider)
 
 	threadOptions := codexsdk.ThreadOptions{WorkingDirectory: rootPath}
-	forked, did := rethreadCodexResumeOnProviderMismatch(ctx, client, threadID, threadOptions, rootPath)
+	forked, did, err := rethreadCodexResumeOnProviderMismatch(ctx, client, threadID, threadOptions, rootPath)
+	if err != nil {
+		t.Fatalf("rethread 失败：%v", err)
+	}
 	if !did || forked == "" {
 		t.Fatalf("元数据不一致却没有 fork（返回 %q/%v）", forked, did)
 	}

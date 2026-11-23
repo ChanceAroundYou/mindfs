@@ -20,9 +20,12 @@ func (s *session) CurrentModel() string {
 	return strings.TrimSpace(s.threadOpts.Model)
 }
 
-func (s *session) SetModel(_ context.Context, model string) error {
+func (s *session) SetModel(ctx context.Context, model string) error {
 	if s == nil || s.client == nil {
 		return errors.New("codex session not initialized")
+	}
+	if err := s.ensureThreadProvider(ctx); err != nil {
+		return err
 	}
 	threadID := strings.TrimSpace(s.SessionID())
 	if threadID == "" {
@@ -47,6 +50,9 @@ func (s *session) SetModel(_ context.Context, model string) error {
 func (s *session) SetPlanMode(ctx context.Context, enabled bool) error {
 	if s == nil || s.client == nil {
 		return errors.New("codex session not initialized")
+	}
+	if err := s.ensureThreadProvider(ctx); err != nil {
+		return err
 	}
 	threadID := strings.TrimSpace(s.SessionID())
 	if threadID == "" {
