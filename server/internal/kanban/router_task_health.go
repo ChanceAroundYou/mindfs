@@ -19,7 +19,9 @@ import (
 //   - waiting_user 却有会话在跑（不该静默，但也不必报事件）。
 //
 // 所以要有**一拍一次**的巡检：只读非终态任务，分类后只把可行动的两类写成事件。
-// 巡检本身不结算、不重试、不改任务状态：动作仍归 Router（supervision.mode=on 时）。
+// 巡检本身不结算、不重试：动作仍归 Router（supervision.mode=on 时）。
+// 唯一例外是 waiting_busy：任务头已经落到待处理、而绑定会话/节点确实还在跑时，
+// 巡检把它纠回 running（只改任务头，不发事件也不决策）。
 
 const (
 	// taskHealthStallAfter 是「在飞但没有任何产出」的停滞阈值。取 10 分钟：
@@ -133,6 +135,14 @@ func (s *Service) taskHealthSweep(ctx context.Context, rootID string, now time.T
 		var kind RouterEventKind
 		payload := map[string]any{"task_id": task.ID, "status": task.Status, "session_key": task.MainSessionKey}
 		switch classifyTaskHealth(in) {
+		case taskHealthWaitingBusy:
+			// 任务头已经落到待处理，但绑定会话/在跑节点其实还在干活：巡检把
+			// 任务头纠回 running。这是唯一由巡检直接改任务状态的分支 —— 它不
+			// 产生事件、不替代 Router 的决策，只让看板不再说谎。
+			if s.taskRuntimeLive(ctx, store, task.ID, "") {
+				s.markTaskRuntimeRunning(ctx, store, task.ID)
+			}
+			continue
 		case taskHealthStalledTurn:
 			kind = RouterEventTurnStalled
 			stale := stalestReply(in.Replies, now)

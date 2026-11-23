@@ -278,6 +278,12 @@ func (s *Service) projectWorkflowTaskStatus(ctx context.Context, store *TaskStor
 	if status == StatusPending && currentStatus == StatusRunning {
 		status = StatusRunning
 	}
+	// 投影只看节点行/状态，看不到「会话还在回话」：节点刚收尾、finalize 还没走完，
+	// 或同一任务另一条节点会话仍在跑时，投影会先给出 waiting_user。此刻按活会话
+	// 再判一次，有人还在跑就保持 running，避免任务头在待处理/执行中之间闪。
+	if (status == StatusWaitingUser || status == StatusPending) && s.taskRuntimeLive(ctx, store, run.TaskID, "") {
+		status = StatusRunning
+	}
 	if err := store.UpdateTaskStatus(ctx, run.TaskID, status, isTerminalStatus(status)); err != nil {
 		return err
 	}

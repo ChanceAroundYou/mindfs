@@ -37,7 +37,8 @@ func turnInterruptedFixture(t *testing.T, mode RouterSupervisionMode) (*coordina
 	// 链路内部用的是 time.Now()，并按 routerInterruptedRetryMaxAge 判「中断太久
 	// 就不再自动重开」。曾把这里钉成固定的 2026-11-22T12:00Z，于是同一个用例在
 	// 24 小时之后必然转红 —— 一个随时间流逝自己失效的测试，与被测行为无关。
-	now := time.Now().UTC()
+	// 同时把回复造得足够旧（超过 OOB 恢复的 30 分钟门槛），保留原来的现场语义。
+	now := time.Now().UTC().Add(-time.Hour)
 	acts := NewActivityStore(f.store.db)
 	must(t, acts.Insert(ctx, &TaskActivity{
 		ID: "uact-direct", TaskID: "task-1", RootID: f.root.ID,

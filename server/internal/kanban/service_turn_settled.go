@@ -182,11 +182,14 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 		PayloadJSON:    string(raw),
 		CreatedAt:      now,
 	})
-	// out-of-band 回合结束了：任务头放回 waiting_user（只动仍停在 running 的）。
+	// out-of-band 回合结束了：任务头按「确实没人再跑」回落。
 	// 放在错误返回之前：事件落库失败不代表这一轮没结束，任务头不能永远 running。
 	if outOfBand {
-		s.restoreOutOfBandTask(ctx, store, taskID)
+		s.restoreOutOfBandTask(ctx, store, taskID, sessionKey)
 	}
+	// 任何绑定会话的结算都顺手对账一次：任务可能被节点会话或回答提问卡抬到
+	// running 而没人收尾，这一拍按「确实没人再跑」统一回落。
+	s.reconcileTaskRuntimeStatus(ctx, store, taskID, sessionKey)
 	if err != nil {
 		return false, err
 	}

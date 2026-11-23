@@ -13156,10 +13156,10 @@ groups:
       - 'server/internal/kanban/service_session_follow.go:func sessionFollowKey(rootID, sessionKey string) string {'
       - 'server/internal/kanban/service_session_follow.go:func (s *Service) NoteSessionAnsweredQuestion(rootID, sessionKey string) {'
       - 'server/internal/kanban/service_session_follow.go:func (s *Service) BeginOutOfBandSessionTurn(ctx context.Context, rootID, sessionKey string) bool {'
-      - 'server/internal/kanban/service_session_follow.go:func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID string) {'
+      - 'server/internal/kanban/service_session_follow.go:func (s *Service) restoreOutOfBandTask(ctx context.Context, store *TaskStore, taskID, sessionKey string) {'
       - 'server/internal/kanban/service_turn_settled.go:if s.takeSessionAnsweredQuestion(rootID, sessionKey) {'
       - 'server/internal/kanban/service_turn_settled.go:outOfBand := s.takeSessionOutOfBandTurn(rootID, sessionKey)'
-      - 'server/internal/kanban/service_turn_settled.go:s.restoreOutOfBandTask(ctx, store, taskID)'
+      - 'server/internal/kanban/service_turn_settled.go:s.restoreOutOfBandTask(ctx, store, taskID, sessionKey)'
       - 'server/internal/kanban/task_store_session_fallback.go:func (s *TaskStore) attachCurrentSessionKeys(ctx context.Context, tasks []Task) {'
       - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, items)'
       - 'server/internal/kanban/task_store.go:s.attachCurrentSessionKeys(ctx, tasks)'
@@ -15194,3 +15194,49 @@ groups:
       - 'server/internal/kanban/router_inspection_turn_test.go:route-escalate:'
       - 'docs/superpowers/plans/2026-11-24-router-inspection-supervision-apply.md:rdec_47d5992f117dc51b'
       - 'docs/plans/README.md:2026-11-24-router-inspection-supervision-apply.md'
+
+  # ── 撞号说明（2026-11-24 合回 main 时改号）──────────────────────────
+  # 本组原占用 G-QL。main 的 248ec040（过期任务提示与 root 错误可诊断性修复）
+  # 已先登记同一号；按「先引入者保留、合入方改号」的裁决，本组改为 G-QN。
+  - id: G-QN
+    title: "任务状态跟随会话/节点的真实运行状态（待处理 ↔ 运行中）"
+    kind: fix
+    symptom: |
+      会话或工作流节点明明还在跑，任务卡却停在「待处理」：用户直接给任务会话发消息、
+      回答提问卡、节点 claim 后开始执行，任务头都不跟着变成 running；更糟的是旧进程
+      结算时无条件把任务写回 waiting_user，把另一条还在跑的会话也一起标成待处理。
+    why: |
+      上游没有「会话活跃 ⇒ 任务运行中」这条语义：直连回合只在 beginTurnTaskStatus
+      里改状态，节点回合靠 Run 投影，提问卡回答完全没有 OOB 入口，而投影里等待优先于
+      运行。合上游时整套会被顶掉，复发成「节点会话说在跑、看板说待处理」。必须保留
+      统一判定 taskRuntimeLive（绑定会话探针 + 节点行状态，Router 会话不算）、开工抬升、
+      结算按存活判定回落、投影运行优先于等待、巡检纠正已落到待处理的任务头。
+    files:
+      - server/internal/kanban/service_task_runtime_status.go
+      - server/internal/kanban/service_session_follow.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/task_store_archive.go
+      - server/internal/kanban/workflow_engine.go
+      - server/internal/kanban/workflow_driver_loop.go
+      - server/internal/kanban/workflow_executor.go
+      - server/internal/kanban/router_task_health.go
+      - server/internal/kanban/router_coordinate.go
+      - server/internal/api/ws.go
+    tests:
+      - server/internal/kanban/task_runtime_status_test.go
+      - server/internal/kanban/session_follow_test.go
+    anchors:
+      - 'server/internal/kanban/service_task_runtime_status.go:func (s *Service) taskRuntimeLive('
+      - 'server/internal/kanban/service_task_runtime_status.go:func (s *Service) markTaskRuntimeRunning('
+      - 'server/internal/kanban/service_task_runtime_status.go:func (s *Service) reconcileTaskRuntimeStatus('
+      - 'server/internal/kanban/task_store_archive.go:func (s *TaskStore) TaskRuntimeSessionKeys('
+      - 'server/internal/kanban/service_session_follow.go:task.Status != StatusWaitingUser && task.Status != StatusPending'
+      - 'server/internal/kanban/service_session_follow.go:s.reconcileTaskRuntimeStatus(ctx, store, taskID, sessionKey)'
+      - 'server/internal/kanban/service_turn_settled.go:s.reconcileTaskRuntimeStatus(ctx, store, taskID, sessionKey)'
+      - 'server/internal/kanban/workflow_engine.go:if hasRunning {'
+      - 'server/internal/kanban/workflow_driver_loop.go:s.taskRuntimeLive(ctx, store, run.TaskID, "")'
+      - 'server/internal/kanban/workflow_executor.go:s.markTaskRuntimeRunning(ctx, store, run.TaskID)'
+      - 'server/internal/kanban/router_task_health.go:case taskHealthWaitingBusy:'
+      - 'server/internal/kanban/router_coordinate.go:taskHealthSweep(ctx, rs.rootID, now)'
+      - 'server/internal/api/ws.go:svc.BeginOutOfBandSessionTurn(ctx, rootID, key)'
+      - 'server/internal/kanban/task_runtime_status_test.go:func TestOutOfBandTurnLivenessRestoresOnlyWhenAlone('
