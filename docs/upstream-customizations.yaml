@@ -14499,10 +14499,10 @@ groups:
       - cli/cmd/control_sync_test.go
     anchors:
       - 'server/internal/config/configfile.go:func UpdateJSONFile(path string, mutate func(map[string]any) error) error {'
-      - 'server/internal/config/configfile.go:temp, err := os.CreateTemp(dir, ".config-*.tmp")'
+      - 'server/internal/config/configfile.go:tmp, err := os.CreateTemp(dir, ".config-*.tmp")'
       - 'server/internal/controlsync/pairing.go:func Pair(ctx context.Context, req PairRequest, tokenFile, configPath string) (PairResult, error) {'
       - 'server/internal/controlsync/pairing.go:var ErrPairUnreachable = errors.New("control_sync: primary unreachable")'
-      - 'server/internal/controlsync/pairing.go:func applyPairing(section map[string]any, req PairRequest) error {'
+      - 'server/internal/controlsync/pairing.go:func applyPairing(doc map[string]any, result PairResult, caFile, tokenFile string) error {'
       - 'server/internal/controlsync/token.go:func WriteSyncTokenFile(path, token string) error {'
       - 'server/internal/api/http_control_sync_pair.go:func (h *HTTPHandler) handleControlSyncPair(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_control_sync_pair.go:func isLoopbackRequest(r *http.Request) bool {'
