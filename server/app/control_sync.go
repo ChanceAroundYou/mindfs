@@ -29,6 +29,10 @@ type ControlSyncOptions struct {
 	PrimaryURL string
 	CAFile     string
 	Token      string
+	// TokenFile 是 token 的落盘位置。只有主节点用得上：token 为空时代替「拒绝启动」，
+	// 在该路径上生成一份并写 0600（见 ensurePrimarySyncToken）。边缘的 token 由人放进去，
+	// 读不到就已经在 cli 侧拒绝了。
+	TokenFile string
 	// BuildVersion 是本进程的版本号，随 head 下发供对端诊断（不参与拒绝判定）。
 	BuildVersion string
 }
@@ -51,6 +55,8 @@ type controlSyncWiring struct {
 	pusher    api.ControlSyncPusher
 	feed      api.ControlSyncFeed
 	conflicts api.ControlSyncConflicts
+	// edges 只有主节点非空：名单是「谁在同步我」的运维索引，边缘没有这个视角。
+	edges api.ControlSyncEdges
 	// token 只有主节点非空：边缘没有 push / head / changes 端点。
 	token string
 	// proxy 只有边缘非空：主节点不转发。
@@ -87,6 +93,7 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 	h.ControlSyncPush = w.pusher
 	h.ControlSyncFeed = w.feed
 	h.ControlSyncConflicts = w.conflicts
+	h.ControlSyncEdges = w.edges
 	h.ControlSyncToken = w.token
 }
 
@@ -135,8 +142,13 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 	}
 	if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {
 		// 没有 token 的 primary 不会注册 /push /head /changes，边缘永远同步不了 ——
-		// 那不是「少个可选配置」，是同步根本没通，必须在启动时说出来。
-		return nil, fmt.Errorf("control_sync: sync token required for primary (token_file)")
+		// 那不是「少个可选配置」，是同步根本没通。首次上线不该要求用户先手搓密钥，
+		// 所以在 token_file 上生成一份；生成失败才拒绝启动。
+		token, err := ensurePrimarySyncToken(opts.TokenFile)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Token = token
 	}
 	// token 是这条通道唯一的凭据，而它搬的是含口令 hash 的整份控制面：
 	// 手输的短串挡不住任何东西，在装配处（两个角色都在这里过一遍）直接拒掉。
@@ -157,6 +169,10 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		return nil, err
 	}
 	if err := store.Migrate(ctx); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if err := guardSinglePrimary(ctx, store, cfg); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
@@ -196,6 +212,7 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 	if cfg.Role == controlsync.RolePrimary {
 		w.pusher = rt.Pusher()
 		w.feed = rt.Feed()
+		w.edges = store
 		w.token = cfg.Token
 	}
 	if mode := rt.Mode(); mode != nil {

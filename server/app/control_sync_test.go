@@ -91,14 +91,37 @@ func TestStartControlSyncRejectsWorkerNode(t *testing.T) {
 }
 
 // 没有 token 的主节点不注册 /push /head /changes，边缘永远同步不了 ——
-// 这不是可选项缺失，是同步根本没通。
-func TestStartControlSyncPrimaryRequiresToken(t *testing.T) {
+// 那不是「少个可选配置」，是同步根本没通。首次上线不该要求用户先手搓密钥，
+// 所以给了 token_file 就自己生成一份；连路径都没有才拒绝启动。
+func TestStartControlSyncPrimaryGeneratesTokenFile(t *testing.T) {
+	cfgDir, stores := controlSyncFixture(t)
+	tokenPath := filepath.Join(t.TempDir(), "control_sync.token")
+	w, err := startControlSync(t.Context(), &ControlSyncOptions{
+		Enabled: true, Role: controlsync.RolePrimary, TokenFile: tokenPath,
+	}, nodeinfo.RoleControl, cfgDir, stores)
+	if err != nil {
+		t.Fatalf("主节点缺 token 时应生成一份，err = %v", err)
+	}
+	if w == nil || w.token == "" {
+		t.Fatalf("wiring = %+v，生成的 token 应接进 /head /changes /push", w)
+	}
+	if raw, err := os.ReadFile(tokenPath); err != nil {
+		t.Fatalf("read token file: %v", err)
+	} else if w.token != strings.TrimSpace(string(raw)) {
+		t.Fatal("接线用的 token 与落盘内容不一致：重启后边缘就全被拒了")
+	}
+	if err := controlsync.ValidateSyncToken(w.token); err != nil {
+		t.Fatalf("生成的 token 不合法：%v", err)
+	}
+}
+
+func TestStartControlSyncPrimaryWithoutTokenFileFails(t *testing.T) {
 	cfgDir, stores := controlSyncFixture(t)
 	_, err := startControlSync(t.Context(), &ControlSyncOptions{
 		Enabled: true, Role: controlsync.RolePrimary,
 	}, nodeinfo.RoleControl, cfgDir, stores)
-	if err == nil || !strings.Contains(err.Error(), "token required for primary") {
-		t.Fatalf("err = %v，主节点缺 token 应拒绝启动", err)
+	if err == nil || !strings.Contains(err.Error(), "token_file is required") {
+		t.Fatalf("err = %v，没有 token_file 就无从生成，应拒绝启动", err)
 	}
 }
 
@@ -171,6 +194,11 @@ func TestStartControlSyncPrimaryExposesPushAndFeed(t *testing.T) {
 	if h.ControlSyncToken != syncTestToken || h.ControlSyncPush == nil || h.ControlSyncFeed == nil {
 		t.Fatalf("handler 没装上同步端点：%+v", h)
 	}
+	// 名单接口与 token 同一档：装上它才会注册 /edges 三条路由。漏装不会报错，
+	// 只是那三条路由永远 404 —— 症状是「文档里的 curl 全都走了空门」。
+	if h.ControlSyncEdges == nil {
+		t.Fatalf("主节点的边控端名单没装上 handler：/edges 不会注册")
+	}
 	if h.ControlSync != nil {
 		t.Fatalf("主节点不该暴露 /status /mode")
 	}
@@ -203,6 +231,10 @@ func TestStartControlSyncEdgeWiresProxyAndMode(t *testing.T) {
 	// 边缘不暴露主节点侧端点：它没有 token，也不该被别人推送。
 	if w.token != "" || w.pusher != nil || w.feed != nil {
 		t.Fatalf("边缘不该有 push/feed/token：token=%q", w.token)
+	}
+	// 名单是「谁在同步我」的视角，边缘没有它。
+	if w.edges != nil {
+		t.Fatalf("边缘不该有边控端名单：%+v", w.edges)
 	}
 	h := &api.HTTPHandler{}
 	w.applyTo(h)

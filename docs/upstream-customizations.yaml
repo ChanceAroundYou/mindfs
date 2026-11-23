@@ -14074,10 +14074,10 @@ groups:
       - 'web/src/components/file/FileTreeEntryFilters.ts:unreachable: !!nid && !!isUnreachable?.(nid)'
       - 'web/src/components/file/FileTreeProjectContent.tsx:const emptyKey: MessageKey = nodesAvailability === "table-unreachable"'
       - 'web/src/components/file/fileTreeEntries.tsx:        if (nodeDead) return;'
-      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig) (*app.ControlSyncOptions, error) {'
-      - 'cli/cmd/control_sync.go:token, err := readSyncToken(stringValue(cs.TokenFile))'
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:if strings.EqualFold(role, "edge") {'
       - 'cli/cmd/startup.go:ControlSync *startupControlSyncConfig `json:"control_sync"`'
-      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg)'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag)'
       - 'server/app/control_sync.go:if nodeRole == nodeinfo.RoleWorker {'
       - 'server/app/control_sync.go:if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {'
       - 'server/app/control_sync.go:root := w.capturer.WriteCapture(next)'
@@ -14351,3 +14351,91 @@ groups:
       - 'server/internal/session/blocks_parse.go:func parseBlockLine(line []byte) (Block, bool) {'
       - 'server/internal/session/blocks_provisional.go:func (m *Manager) readProvisionalTurnState('
       - 'server/internal/session/blocks_stream_test.go:func TestCountBlocksAfterSeqStreamsLongLines(t *testing.T) {'
+  - id: G-PZ
+    title: 边控端地基：主控同步默认开 + token 自生成 + 边控端名单（含 pc-win 发布清单公钥）
+    kind: feature
+    symptom: |
+      「主控端的同步默认打开，并且能接受边缘控制端的握手、主动发现和同步」这条需求
+      在改造前落不了地，有三处各自独立的原因：
+      ① `control_sync` 段不写就整段关闭 —— 全新节点上线要人先手写一段 JSON，
+         漏写时既没有日志也没有报错，症状只有「边缘永远追不平」；
+      ② 主节点没有 token 就拒绝启动，而 token 只能手搓一个 32 字节随机串写进文件，
+         首次上线没有任何提示告诉你要搓、搓多长、放哪；
+      ③ `/api/control-sync/edges` 三条路由（列表 / 踢人 / 恢复）早已落地，但装配层
+         从未给 `HTTPHandler.ControlSyncEdges` 赋值，`if h.ControlSyncEdges != nil`
+         恒假 → 端点永远 404，且不报任何错。文档里承诺的 curl 全是空门。
+      另有一条同类缺陷：`scripts/deploy-pcwin.sh` 的 ldflags 少了
+      `-X ...update.releaseManifestPublicKey`（`build-all.sh` 一直有），
+      `canAutoUpdate()` 恒 false，pc-win 的 `/api/app/update` 永远回「需要配置公钥」，
+      症状只有「点更新什么都不发生」。
+    why: |
+      三处都按「默认行为要能直接上线」改，不留「请先手动配置」的门槛：
+      **① 默认开启只对控制面成立**（`cli/cmd/control_sync.go`）。根 module 不能
+      import `server/internal`，拿不到 `nodeinfo.Normalize`，所以在 cli 侧自判一档：
+      `strings.EqualFold(strings.TrimSpace(nodeRole), "worker")` 才是 worker，零值与
+      未知值一律按 control —— 语义与 `nodeinfo` 一致，但只能写在这里。worker 不持有
+      控制面，开着只会得到一个永远转发的角色，所以整段跳过。
+      **② token 自生成**（`server/app/control_sync_token.go`）。`TokenFile` 承载路径
+      （缺省 `<config-dir>/mindfs/control_sync.token`，与 `control_sync.db` 同目录），
+      主节点读到空/不存在就生成 32 字节 base64url 并 0600 落盘，**幂等**：已有可用
+      token 绝不覆盖（重启换钥匙会让所有边缘同时失联）。写盘走
+      `CreateTemp → WriteString → Chmod 0600 → Rename`，中途失败不留半份 token
+      （半个 token 比没有更难查 —— 它看起来像配置存在，只是永远验不过）；目录
+      写完再 `Chmod 0700`（`MkdirAll` 不改已有目录权限）。日志只打路径，**永不打
+      token 本身**。边缘**没有**这条退路：读不到 token 就在 cli 侧报错，不带着空
+      token 起来之后每次同步都失败。
+      **③ 名单接线 + 踢人生效**。`controlsyncWiring` 加 `edges` 字段、
+      `applyTo` 装进 handler、主节点分支 `w.edges = store`（边缘保持 nil —— 它没有
+      「谁在同步我」的视角）。注册发生在 `requireSyncToken` **验签通过之后**
+      （`noteRequestingEdge`）：没带 token 的请求不该在名单里留下痕迹；已被踢掉的
+      边控端在这里拿 403 且不推进 `last_seen_at`。
+      **这张表是运维索引，不是准入白名单** —— `X-MindFS-Instance` 不在签名覆盖范围
+      内，是客户端自称的；真正的凭证始终是 token。踢人挡不住换个名字重连的客户端，
+      这一点必须写在文档里而不是让人以为它是准入控制。
+      **④ 单主控守卫**（`server/app/control_sync_guard.go`）。唯一写者是这条通道的
+      前提：两个 primary 各自往自己的变更流里追加 rev，边缘拉到谁的就是谁的那半份
+      控制面，而且两侧日志都写着 `enabled role=primary`。判据只用库里已有的证据 ——
+      `state.primary_instance_id` 全仓唯一写者是 `Replicator.verifyOrigin`，而
+      Replicator 只在边缘构造：配置成 primary 而这一列非空，说明这份
+      `control_sync.db` 曾经是别人家的副本。读不出状态时同样拒绝启动（读失败可能
+      是「曾是谁的副本」这份事实读不出来，把未知当空正是两个写者的起步方式）。
+      出路不是死路：边缘那套 `adopt_primary` 会 `ResetReplicaForAdopt` 清掉这一列。
+      **⑤ pc-win 发布清单公钥**：`scripts/deploy-pcwin.sh` 补齐与 `build-all.sh`
+      同源的 ldflag，另一条编译路径不再静默丢掉自更新能力。
+    files:
+      - cli/cmd/
+      - server/app/
+      - server/internal/api/
+      - server/internal/controlsync/
+      - scripts/deploy-pcwin.sh
+      - internal/deploy/release_key_test.go
+      - docs/multi-node-control-plane.md
+    tests:
+      - cli/cmd/control_sync_test.go
+      - server/app/control_sync_test.go
+      - server/app/control_sync_token_test.go
+      - server/app/control_sync_guard_test.go
+      - server/internal/api/http_control_sync_edges_test.go
+      - server/internal/controlsync/store_edges_test.go
+      - server/internal/controlsync/store_test.go
+      - internal/deploy/release_key_test.go
+    anchors:
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:if strings.EqualFold(role, "edge") {'
+      - 'cli/cmd/control_sync.go:const controlSyncTokenFileName = "control_sync.token"'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag)'
+      - 'server/app/control_sync_token.go:func ensurePrimarySyncToken(path string) (string, error) {'
+      - 'server/app/control_sync_token.go:const syncTokenBytes = 32'
+      - 'server/app/control_sync_guard.go:func guardSinglePrimary(ctx context.Context, store *controlsync.Store, cfg controlsync.Config) error {'
+      - 'server/app/control_sync.go:h.ControlSyncEdges = w.edges'
+      - 'server/app/control_sync.go:if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {'
+      - 'server/internal/api/http.go:ControlSyncEdges ControlSyncEdges'
+      - 'server/internal/api/http_control_sync.go:if !h.noteRequestingEdge(w, r) {'
+      - 'server/internal/controlsync/store.go:CREATE TABLE IF NOT EXISTS edges ('
+      - 'server/internal/controlsync/store_edges.go:func (s *Store) ObserveEdge(ctx context.Context, instanceID string, at time.Time) (EdgeInfo, error) {'
+      - 'server/app/control_sync_guard_test.go:func TestControlSyncPrimaryGuardRejectsFormerReplica(t *testing.T) {'
+      - 'docs/multi-node-control-plane.md:### 边控端名单：`/edges`（列表 / 踢人 / 恢复）'
+      - 'docs/multi-node-control-plane.md:**这张表是运维索引，不是准入白名单。**'
+      - 'docs/multi-node-control-plane.md:**一台机器只能有一个主控。**'
+      - 'server/internal/api/http_control_sync_edges_test.go:func TestRevokedEdgeGets403(t *testing.T) {'
+      - 'cli/cmd/control_sync_test.go:func TestControlSyncOptionsDefaultEnabledForControl(t *testing.T) {'
