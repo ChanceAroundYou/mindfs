@@ -317,7 +317,10 @@ func TestBuildReplySummaryCompressPromptCarriesEvidence(t *testing.T) {
 	if !ok {
 		t.Fatal("prompt build rejected a healthy run")
 	}
-	for _, want := range []string{"任务详情面板修改", "跑一下", raw, "agent-1"} {
+	for _, want := range []string{"任务详情面板修改", "跑一下", raw, "agent-1",
+		// #68：压缩器结构上从来没有「保留待决策项」这一条，四条待拍板事项被
+		// 200 字上限连同其它内容一起压没了。
+		"待用户决策", "不得为了压字数"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
