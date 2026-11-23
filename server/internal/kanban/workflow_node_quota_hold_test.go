@@ -162,6 +162,48 @@ func TestHoldsExhaustedParksTaskWithoutNewAttempt(t *testing.T) {
 	}
 }
 
+// 额度用完时「把人叫来」那一步自己也可能失败。它失败的含义不是「额度还在」，
+// 而是「额度用完 + 任务没被交出去」—— 调用方必须能看见后者，否则任务会静默
+// 停在 running 上，与额度用完这件事完全对不上。
+func TestHoldsExhaustedSurfacesParkingFailure(t *testing.T) {
+	svc, store, run := newHoldFixture(t)
+	rootID := store.root.ID
+	ctx := context.Background()
+	for i := 0; i < supervisionMaxHoldsPerRun-1; i++ {
+		if ok, _, err := store.IncrementWorkflowRunHolds(ctx, run.ID, supervisionMaxHoldsPerRun); err != nil || !ok {
+			t.Fatalf("seed quota hold #%d = (ok=%v, err=%v)", i+1, ok, err)
+		}
+	}
+	// 只让「转 waiting_user」这一步写失败；其余路径（建 attempt 之前的额度记账、
+	// 正常挂起）都不碰 tasks.status，所以这个触发器精确命中 park 这一次写入。
+	if _, err := store.db.Exec(`CREATE TRIGGER fail_park BEFORE UPDATE ON tasks
+		WHEN NEW.status = 'waiting_user'
+		BEGIN SELECT RAISE(ABORT, 'injected park failure'); END`); err != nil {
+		t.Fatalf("create park-failure trigger: %v", err)
+	}
+	nr := quotaFailedNodeRun(t, store, run, "nr-quota-last")
+	if _, err := svc.RetryFailedWorkflowNode(ctx, rootID, run.TaskID, nr.ID, ""); err != nil {
+		t.Fatalf("the last hold inside the cap must be granted: %v", err)
+	}
+	again := quotaFailedNodeRunOn(t, store, run, "nr-quota-over", "agent-2", 1)
+	_, err := svc.RetryFailedWorkflowNode(ctx, rootID, run.TaskID, again.ID, "")
+	if err == nil {
+		t.Fatal("retry past the quota hold cap must fail")
+	}
+	if !IsQuotaHoldsExhausted(err) {
+		t.Fatalf("err = %v, want the refusal to stay classified as quota-holds-exhausted", err)
+	}
+	if !strings.Contains(err.Error(), "injected park failure") {
+		t.Fatalf("err = %v, want the parking failure surfaced (otherwise the task looks parked while it is not)", err)
+	}
+	if got := nodeRunCount(t, store, run.ID); got != 3 {
+		t.Fatalf("node runs = %d, want 3 (a refused hold never creates an attempt)", got)
+	}
+	if got := loadTaskStatus(t, svc, rootID, run.TaskID); got != StatusRunning {
+		t.Fatalf("task status = %q, want %q (the park genuinely did not happen)", got, StatusRunning)
+	}
+}
+
 // 挂起额度落库：重启后仍然算数，否则额度每次重启清零。
 func TestHoldsUsedSurvivesReload(t *testing.T) {
 	_, store, run := newHoldFixture(t)
