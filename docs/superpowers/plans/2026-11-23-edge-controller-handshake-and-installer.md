@@ -35,7 +35,7 @@ Plan 2026-11-23。起点是用户三条需求：
 | W0 | 取证：本机/四端现状、重启语义、托盘与自更新是否已具备 | — | 完成 |
 | W1 | 主控同步默认开 + token 自生成 + 单主控守卫 + `/edges` 名单（注册/列表/踢人/恢复） | G-PZ | 完成（`fd48fa1f`、`11498130`） |
 | W2 | 边控端握手与自动同步：`POST /api/control-sync/pair` + 未配对档位 + 落盘 | G-QA | 完成 |
-| W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QB | 待做 |
+| W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QB | 进行中 |
 | W4 | 部署与四端对账（需当次授权） | — | 待做 |
 
 ### W1（已完成）
@@ -94,6 +94,50 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
 | 2 | 重启后 | `GET /pair` 仍 200 但 `pending_pairing=false`；`GET /status` 200；模式稳定到 `online` |
 | 3 | 主节点名单 | `/edges` 出现该实例、无 `revoked_at`、`last_seen_at` 非空 |
 | 4 | 签名踢人 | 200 带 `revoked_at`；边缘 `wait_mode_stable("offline-local", 90s)`；踢后 22 秒 `last_seen_at` **逐字未推进**（基线在踢人**之后**取，否则踢前那一拍会误报） |
+
+### W3（进行中，Scope: G-QB）
+
+#### 取证结论（2026-11-23，只读）
+
+| # | 事实 | 证据 |
+|---|---|---|
+| E1 | **静默自动更新在代码里完全不存在**。`update.Service.Start` 只做 `CheckNow`（标 `Status="available"`），装更新的唯一入口是 `TriggerUpdate`，只由 `POST /api/app/update` 与 CLI `-update` 调用；全仓 grep 不到 `auto_install` | `server/internal/update/release_fetch.go:42,136`、`server/internal/api/http.go:245`、`cli/cmd/mindfs.go:79` |
+| E2 | `canAutoUpdate()` 四道闸，其中发布公钥靠 `-X mindfs/server/internal/update.releaseManifestPublicKey=` 注入 | `server/internal/update/install.go:163`、`scripts/build-all.sh` 读 `MINDFS_RELEASE_PUBLIC_KEY` |
+| E3 | **Unix 静默自重启会把服务停死**：本机 systemd 是 `Type=simple` + `Restart=on-failure`，而替换路径是 `restartInstalledBinary` → `startReplacementProcess` + `os.Exit(0)`，且 `Setsid` 让替换进程脱离 cgroup | `/etc/systemd/system/mindfs.service`、`server/internal/update/service_unix.go`、`install.go` 的 `restartInstalledBinary` |
+| E4 | Windows 侧 `handleUpdateCommand` 在服务运行时**硬拒绝**（要求先 `-stop`）；静默更新必须走进程内 `TriggerUpdate`，不能走 CLI | `cli/cmd/service_control.go:98-125` |
+| E5 | 「机器是否忙」有现成信号：`ListReplyingSessions()` 返回 `Active \|\| AwaitingAnswer` 的会话 | `server/internal/api/stream_hub.go:174` |
+| E6 | 真机计划任务形状已取到：S4U + `BootTrigger` + `LogonTrigger` + `--internal-autostart --addr 0.0.0.0:7332`；而 `scripts/install.ps1` **不注册计划任务** | `schtasks /query /xml` 实测（pc-win）、`scripts/install.ps1`（243 行） |
+| E7 | 托盘当前只有「退出」（`menuQuitID = 101`），唯一调用点 `cli/cmd/mindfs.go:485-492` | `cli/cmd/tray.go`、`tray_windows.go` |
+| E8 | 尺寸：`mindfs` 二进制 31 MB、`web/dist` 13 MB ⇒ 自解包 exe 约 45 MB；`RELEASE_ARTIFACTS` 用 `mindfs_$(TAG)_*.zip/*.tar.gz` 通配 | 实测、`Makefile` |
+
+#### 待做清单
+
+1. **`update.auto_install`（代码默认 `false`）** —— `Start()` 的 ticker 里，`CheckNow` 之后若
+   `hasUpdate && autoInstall && 空闲`，调 `TriggerUpdate`。
+   **默认必须 `false` 且只能由 Windows 安装器写 `true`**：按 E3，Unix 侧静默重启会停死服务；
+   且本机/worker 被静默重启会杀掉正在跑的 claude 子进程。
+   **已完成**：判据抽成纯函数 `autoInstallDecision`（`server/internal/update/auto_install.go`），
+   六条分支 —— 未开 / 安装布局不支持 / 无新版本 / 已有轮次在跑 / 有会话在回复 / 放行。
+   配置链 `config.json` 的 `update.auto_install` → `cli/cmd` → `app.StartOptions.UpdateAutoInstall`
+   → `updateSvc.SetAutoInstall`；读取侧另有 `TestUpdateAutoInstallDefaultsOff`（4 条：没写 / 只写段 /
+   显式关 / 显式开）与 `TestServerOptionsCarryUpdateAutoInstall`（源码契约，装配漏接即红）。
+   触发失败只打日志不 panic —— 下一拍 ticker 会重试，这里没必要让整个进程带病。
+2. **空闲闸门** —— `update.Service` 加 busy 探针（由 `server/app` 注入）；有会话在回复就只标
+   `available`，下一拍再试。
+   **落地时偏离本条一处**：探针用新加的 `Pool.HasAnyActiveUse()`（遍历共享 Pool 全部会话的
+   `activeUses > 0`），不按账户枚举 `ListReplyingSessions()` —— 共享 Pool 是全局一份，
+   `activeUses > 0` 正是 repoint 掐进程的同一个判据；按账户枚举会漏掉节点会话与委派会话。
+3. **公钥注入** —— `deploy-pcwin.sh` 与日常交叉编译补 `MINDFS_RELEASE_PUBLIC_KEY`，否则
+   `auto_update_supported=false`，静默更新永远不可用（E2）。
+4. **`scripts/build-windows-setup.sh`** —— 产出自解包 exe（内嵌 `mindfs.exe` + `web/` + `agents.json`
+   + `config.json` 模板 + 纯 ASCII `setup.ps1`）：解包到 `%LOCALAPPDATA%\Programs\mindfs`、
+   按 E6 的 XML 形状用 `schtasks /create /xml` 注册 `\mindfs`、注册用户 PATH。
+   安装器写 `control_sync.role = "edge"`（配 W2 的 `PendingPairing` 口径）与 `update.auto_install: true`。
+5. **托盘菜单扩项** —— 现在只有「退出」。至少「打开页面」「重启以应用配对」（W2 把重启交给这里）、
+   「退出」（E7）。
+6. **发版链** —— `Makefile` / `RELEASE_ARTIFACTS` 纳入 setup exe；`make release` 一并上传。
+
+代码签名按计划**不做**。
 
 ## 验收
 
