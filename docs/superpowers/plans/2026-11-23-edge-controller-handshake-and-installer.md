@@ -246,7 +246,42 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
    - 主控端日志出现签名 `head` 200、`changes?since=…` 追平循环与
      `ui.bundle.served version=v0.5.5-1300-66-g6d1b174e files=287`；`control_sync.db` 的
      `edges` 表自动登记 `hasee`，`last_seen_at` 持续前进、未踢。
-6. **剩余**：`update.auto_install` 的端到端需真实 GitHub release（对外发布，另行授权）。
+6. **真实 GitHub release 与 `update.auto_install` 端到端（2026-11-24）**：用户明确授权对外发布后执行。tag
+   `v0.5.5-1400` → `040c904325aa30ad6374a024d9bbaf94c5960a45`（`origin/main` 同点），release 地址
+   https://github.com/ChanceAroundYou/mindfs/releases/tag/v0.5.5-1400，公开、非预发布。9 个产物全部上传，
+   远端下载后与本机 `dist/` 的大小与 sha256 逐项一致：
+
+   | 产物 | 字节 | sha256 |
+   |---|---:|---|
+   | `mindfs_v0.5.5-1400_darwin_amd64.tar.gz` | 13,770,055 | `1f514172d6b6a55704d0736d471941ec748d5d42ed6fe931657793a36366b59e` |
+   | `mindfs_v0.5.5-1400_darwin_arm64.tar.gz` | 13,108,475 | `2470de05f59bfff9338228e9aef69eae2e577b90d03efc4a746000a293dcc6e8` |
+   | `mindfs_v0.5.5-1400_linux_amd64.tar.gz` | 13,625,227 | `21f007a9a3c1885ad2e79aef6a594f88de5d1bdafa31acc5d3bfd62242ffd5cf` |
+   | `mindfs_v0.5.5-1400_linux_arm.tar.gz` | 12,999,810 | `4af5517b532b4602a698a5e9f71b608e370114a12d9536555856ee7829bb71c5` |
+   | `mindfs_v0.5.5-1400_linux_arm64.tar.gz` | 12,760,455 | `bf9c8332869ddb92f71877fe137b8a340e4a9fbc921a008e9bfe94184d1f1894` |
+   | `mindfs_v0.5.5-1400_manifest.json` | 2,115 | `a8bbc9151c18525517216a83997fd88d9855b0a42d9973123149b6057f61392a` |
+   | `mindfs_v0.5.5-1400_windows_amd64-setup.exe` | 16,901,734 | `3d58ff4232bb2f2a98d782180e5a6068c4b7e30ac9f1dafe215fe97b7f2cb795` |
+   | `mindfs_v0.5.5-1400_windows_amd64.zip` | 13,811,662 | `e2080a4bd9de5a694ac0722767e4c751ff00d38fd330ce99235ab4fe4da6b864` |
+   | `mindfs_v0.5.5-1400_windows_arm64.zip` | 12,867,031 | `644197e5dda7571f9550ec4538c42a67f0906f2cf581cf08823a4c19c4c4e08d` |
+
+   - 版本发现仍以 `release-notes.md` 首行 `# MindFS v0.5.5-1400` 为准，asset URL 按
+     `mindfs_<tag>_<GOOS>_<GOARCH>.zip` 拼；发布公钥由 `build-all.sh` 注入，manifest 签名与校验走
+     `scripts/sign-release-manifest.go`。
+   - **hasee 真机自动更新**：旧版 `v0.5.5-1300-66-g6d1b174e` 在 `03:42:23` 已看到
+     `latest=0.5.5-1400 has_update=true`，但因缺内嵌公钥报 `auto_install.skip reason=unsupported`；
+     换上内嵌公钥的降级构建 `v0.5.5-1300-71-g040c9043` 后，`03:45:35` 依次出现
+     `checker.start auto_update_supported=true`、`check.result has_update=true`、`auto_install.begin`，
+     `03:45:38` 完成签名 manifest 校验与 zip 内 `mindfs.exe` sha256 校验并 `restart.begin`，`03:45:41`
+     新进程报 `current=v0.5.5-1400`、`check.result has_update=false`。安装文件 sha256
+     `F2BEEB27…B102` 等于 release zip 内的 `f2beeb27eb997502546ec86cb960ee153e1351bf5161c80071225b1e6c3db102`；
+     PID 30448、控制面 `mode=online / base_rev=62 / pending_count=0 / conflict_count=0`。
+   - **release 安装器真跑**：上传的 setup.exe 与 release 产物 sha256 一致，`installer_exit=0 elapsed_s=36`；
+     PID 668 / Session 0，命令行带 `--internal-autostart --addr 0.0.0.0:7332`，`/mindfs/health` 200
+     `role=control`、`/api/node-info version=v0.5.5-1400`，config 的 `instance_id` / `primary_url` /
+     `token_file` 均保留，UI 清单 `build_version=v0.5.5-1400` / 289 文件，计划任务仍是 S4U +
+     BootTrigger。临时上传文件与备份已清（`Test-Path` 全 False）。
+   - **未验 / 边界**：`busy` 闸门只有单测，没有真机「有活跃会话时跳过、空闲后再装」的完整链路；本轮未再验
+     Windows 重启后的 BootTrigger 自启；非 Windows 的自动安装未跑（Unix 上默认关闭）；GUI 双击安装器未模拟。
+     本机与 wsl / fn / pc-win 本轮未分发、未重启。
 
 ## 边界
 
