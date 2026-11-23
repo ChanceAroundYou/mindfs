@@ -218,6 +218,39 @@ func (s *ActivityService) applyRouteNotifyUser(ctx context.Context, decision *Ro
 // 为什么没有结果」，但不把责任推给用户。
 const supervisionDirectRetrySummary = "这一轮直连回复卡住了（会话已空闲但回合没收尾），已自动重开一轮。"
 
+// recordRejectedInspectionAction 把巡检回合里被闸门拒掉的动作折成一条可见系统
+// 说明。巡检没有来源留言，被拒之后整轮只会 failed 在日志里 —— 用户侧什么也
+// 看不到，也就无从判断「系统发现了问题、但没权限动」。
+//
+// 口径：只说明「想做什么 + 为什么没做成」，不假装做过、不写进任务结论。
+// effect ID 由决策 + seq 确定，重放只命中同一行。
+func (s *ActivityService) recordRejectedInspectionAction(
+	ctx context.Context,
+	decision *RouterDecision,
+	task Task,
+	action RouterAction,
+) error {
+	if s == nil || s.activities == nil || decision == nil {
+		return errors.New("activity service not configured")
+	}
+	body := fmt.Sprintf("巡检回合未能执行 `%s`：这类动作需要一条用户留言作为来源（回复归属、证据与投递目标都绑在它上面），本轮是系统自己发现的现场，没有来源留言。需要推进请先在任务里说一句，或让 Router 用提问卡征得你的意见。", action.Kind)
+	act := &TaskActivity{
+		ID:     "route-rejected:" + decision.ID + ":" + strconv.Itoa(action.Seq),
+		TaskID: decision.TaskID, RootID: task.RootID,
+		Type: ActivityTypeAttention, Author: "system", Role: "system",
+		Status: ActivityStatusCompleted,
+		Body:   body,
+	}
+	created, err := s.activities.InsertOrIgnore(ctx, act)
+	if err != nil {
+		return err
+	}
+	if created {
+		s.broadcastCreated(act)
+	}
+	return nil
+}
+
 // applyRouteRetryDirect 重开卡住的直连回合（S3-3）：
 //   - 先结算停在 running 的旧回复（条件更新，重放/别人已结算都是空操作）；
 //   - 再用确定性 ID `direct-retry:<decision>` 插一条新的待回复行；

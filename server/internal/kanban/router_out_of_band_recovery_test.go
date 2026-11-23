@@ -197,6 +197,56 @@ func TestRecoverFreshOutOfBandTurnLeavesTaskRunning(t *testing.T) {
 	}
 }
 
+// 会话还在写时绝不能按「被重启带走」恢复：慢回合本来就可能跑过 30 分钟，
+// 现场 #104 的两轮都是这样被误判的（块流当时还在持续增长）。此时不恢复、
+// 不写事件，**也不清标记** —— 清掉的话这一轮结束时收尾代码找不到 OOB 归属，
+// 任务就再也回不到 waiting_user，等于把一种卡死换成另一种。
+func TestRecoverStaleOutOfBandSkipsLiveSession(t *testing.T) {
+	ctx := context.Background()
+	f := newTurnSettledFixture(t, "task-oob-live", "sess-main")
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	f.markOutOfBand(t, now.Add(-31*time.Minute))
+
+	var asked []string
+	f.svc.SetSessionRunningProbe(func(sessionKey string) bool {
+		asked = append(asked, sessionKey)
+		return true
+	})
+
+	restored, err := f.svc.restoreStaleOutOfBandTasks(ctx, f.store, now)
+	if err != nil {
+		t.Fatalf("restoreStaleOutOfBandTasks: %v", err)
+	}
+	if restored != 0 {
+		t.Fatalf("restored = %d, want 0 for a live session", restored)
+	}
+	if len(asked) != 1 || asked[0] != "sess-main" {
+		t.Fatalf("probe asked %v, want exactly [sess-main]", asked)
+	}
+	if got := f.taskStatus(t); got != StatusRunning {
+		t.Fatalf("task status = %q, want running (live turn must not be settled)", got)
+	}
+	if !f.outOfBandState(t).Active {
+		t.Fatal("live out-of-band marker was cleared; the turn can no longer settle itself")
+	}
+	if got := len(f.events(t, RouterEventTurnInterrupted)); got != 0 {
+		t.Fatalf("live turn wrote %d turn_interrupted events, want 0", got)
+	}
+
+	// 会话结束之后同一份标记必须仍然有效：它没被丢掉，那一轮跑完会被正常收尾。
+	f.svc.SetSessionRunningProbe(func(string) bool { return false })
+	restored, err = f.svc.restoreStaleOutOfBandTasks(ctx, f.store, now)
+	if err != nil {
+		t.Fatalf("restoreStaleOutOfBandTasks (idle): %v", err)
+	}
+	if restored != 1 {
+		t.Fatalf("restored = %d after session went idle, want 1", restored)
+	}
+	if got := f.taskStatus(t); got != StatusWaitingUser {
+		t.Fatalf("task status = %q, want waiting_user", got)
+	}
+}
+
 // 任务已经不在 running（被用户取消、被别处收尾）时不该再改写状态，但标记是
 // 上一轮留下的垃圾，必须清掉 —— 否则它会跟着任务一直留到下次命中阈值。
 func TestRecoverOutOfBandSkipsNonRunningTaskAndClearsMarker(t *testing.T) {

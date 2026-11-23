@@ -59,6 +59,14 @@ func (s *Service) restoreStaleOutOfBandTasks(ctx context.Context, store *TaskSto
 			}
 			continue
 		}
+		// 会话还在写：这一轮没被带走，只是慢。「超过 30 分钟」只对「重启后没
+		// 人再推这一轮」成立，对本进程里仍在跑的慢回合不成立 —— 现场 #104
+		// 两次误判时块流都还在持续增长。此时**什么都不动**，尤其是不能清标记：
+		// 清掉之后回合结束时收尾代码找不到 OOB 归属，任务就再也回不到
+		// waiting_user，等于把一种卡死换成另一种。
+		if s.sessionRunning(item.SessionKey) {
+			continue
+		}
 		// 先写事件、后改状态：反过来若崩在两步之间，任务已 waiting_user、事件
 		// 却没落，巡检与用户都看不到「这一轮为什么没了」。
 		if err := s.insertOutOfBandInterruptedEvent(ctx, router, store, task, item, now); err != nil {

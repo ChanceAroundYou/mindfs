@@ -14334,7 +14334,7 @@ groups:
       - 'server/internal/kanban/activity_route_apply.go:requires an originating user activity'
       - 'server/internal/kanban/activity_route_reply.go:func routeUserActivityID(userAct *TaskActivity) string {'
       - 'server/internal/kanban/router_inspection_turn_test.go:func TestCoordinatorInspectionEventWithoutOriginCanSay(t *testing.T) {'
-      - 'server/internal/kanban/router_prompt.md:这类回合只能 `router_say` / `router_ask_user`'
+      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` 与 `router_ask_user`'
       - 'server/internal/kanban/router_store.go:ALTER TABLE router_task_state ADD COLUMN out_of_band INTEGER'
       - 'server/internal/kanban/router_task_state.go:ON CONFLICT(task_id) DO UPDATE SET'
       - 'server/internal/kanban/service_session_follow.go:persist out-of-band task %s'
@@ -14586,3 +14586,42 @@ groups:
       - 'scripts/scope-id/main.go:const claimStampPrefix = "> Scope IDs: "'
       - 'scripts/check-tag.sh:if ! printf ''%s'' "$TAG" | grep -Eq ''^v[0-9]+'
       - 'Makefile:@RELEASE_NOTES_FILE="$(RELEASE_NOTES_FILE)" bash scripts/check-tag.sh "$(TAG)" || exit 1'
+
+  # ── Router 任务可信化 · 第四轮（2026-11-23）──────────────────────────
+  - id: G-QE
+    title: OOB 恢复认活跃会话、同会话新提问卡取代旧卡、巡检回合被拒动作留可见说明
+    kind: fix
+    symptom: |
+      三处「用户看得见的卡死 / 静默」（现场 #104 与 rdec_47d5992f117dc51b）：
+      ① 任务详情一直卡在等待态 —— 会话还在写，30 分钟没推进就被 OOB 恢复判成
+      「重启带走」，把还在跑的回合打断；② 用户明明答了提问卡，输入框还被锁着 ——
+      Agent 换了 `tool_use_id` 重问一次，旧卡停在 `waiting_user` 永不收口，而前端
+      锁输入框读的是**最早**那张等待卡；③ Router 巡检发现的问题、被闸门拒掉的动作，
+      整轮只在日志里 failed，用户侧零可见变化。
+    why: |
+      三处都是 fork 侧新增语义，上游没有对应实现，合上游时整套会被顶掉：
+      ① `restoreStaleOutOfBandTasks` 必须先问 `sessionRunning`（本进程里还活着的
+      会话一律不动，**尤其不能清标记** —— 清了之后回合收尾找不到 OOB 归属，任务
+      再也回不到 `waiting_user`）；② `RecordTaskQuestion` 建新卡后收口同会话更早的
+      等待卡（`closeQuestionsBefore`），只动 `type=question`，不动 HumanGate；
+      ③ 巡检回合（`routerTurnAllowsNoUserActivity` 的四类触发）被拒的动作折成
+      `route-rejected:<decision>:<seq>` 的 attention 行，`InsertOrIgnore` 保证重放幂等。
+      `router_prompt.md` 规则 11/12 已按同一口径订正（巡检回合用 `ask_user` 表达待拍板，
+      `escalate` 只对有来源留言的回合）。
+    files:
+      - server/internal/kanban/service_recover_out_of_band.go
+      - server/internal/kanban/service_task_prompts.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_route_supervision.go
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/router_out_of_band_recovery_test.go
+      - server/internal/kanban/service_task_prompts_test.go
+      - server/internal/kanban/router_inspection_turn_test.go
+    anchors:
+      - 'server/internal/kanban/service_recover_out_of_band.go:if s.sessionRunning(item.SessionKey) {'
+      - 'server/internal/kanban/service_task_prompts.go:if err := s.closeQuestionsBefore(ctx, store, activity.SessionKey, activity.CreatedAt, activity.ID); err != nil {'
+      - 'server/internal/kanban/service_task_prompts.go:const supersededByNewerQuestion = "已被更新的提问取代"'
+      - 'server/internal/kanban/activity_route_apply.go:if noteErr := s.recordRejectedInspectionAction(ctx, decision, task, action); noteErr != nil {'
+      - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) recordRejectedInspectionAction('
+      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` 与 `router_ask_user`'

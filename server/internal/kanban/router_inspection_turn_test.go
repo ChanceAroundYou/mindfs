@@ -59,6 +59,10 @@ func TestCoordinatorInspectionEventWithoutOriginCanSay(t *testing.T) {
 
 // 巡检回合同样只能「说」：complete_task 需要一条来源留言承担这轮收尾的证据，
 // 没有它就不该被应用 —— 否则一个没有用户回合的任务会被巡检悄悄宣告完成。
+//
+// 但「拒绝」不等于「什么都不说」：上一轮就是这样，动作被拒、决策 failed、
+// 用户侧零可见变化（现场 rdec_47d5992f117dc51b）。被拒的动作必须折成一条
+// 可见系统说明，用户才知道 Router 想做什么以及为什么没做成。
 func TestCoordinatorInspectionEventWithoutOriginRejectsCompleteTask(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
@@ -83,8 +87,19 @@ func TestCoordinatorInspectionEventWithoutOriginRejectsCompleteTask(t *testing.T
 	}
 	acts, err := NewActivityStore(f.store.db).List(ctx, "task-1")
 	must(t, err, "List")
-	if len(acts) != 0 {
-		t.Fatalf("被拒的动作不该留下可见活动: %#v", acts)
+	if len(acts) != 1 {
+		t.Fatalf("被拒的动作要留一条可见说明 = %d 条, want 1: %#v", len(acts), acts)
+	}
+	note := acts[0]
+	if note.Type != ActivityTypeAttention || note.Role != "system" {
+		t.Fatalf("说明行 = type %q role %q, want attention/system", note.Type, note.Role)
+	}
+	if !strings.Contains(note.Body, "complete_task") {
+		t.Fatalf("说明行没写清被拒的动作: %q", note.Body)
+	}
+	// 它只是说明，不是对任务的结论，也不是对某条留言的回复。
+	if note.Status != ActivityStatusCompleted || note.ReplyToID != "" {
+		t.Fatalf("说明行状态/绑定 = %q/%q", note.Status, note.ReplyToID)
 	}
 }
 
