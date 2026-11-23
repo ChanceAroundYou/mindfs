@@ -12,12 +12,14 @@ to resume their old TODOs or baselines.
 结算回合不重复渲染进度 `104f89e4`、巡检回合放开 `say/ask_user` `593760db`、OOB 回合跨重启恢复
 `fdff1e25`；G-PY 块流读取流式化 `baca9439`；G-PU 每个 agent 子进程单独一个 job object
 `3e6b7475`；G-PW 两条文档提交）。`bash scripts/deploy-all.sh` 退出 0。四端版本逐字一致：
-wsl `user` 单元 `is-active` + health 200 `role=worker` + `--version` `v0.5.5-1300`；fn 同上；
+wsl `user` 单元 `is-active` + health 200 `role=worker` + `--version` `v0.5.5-1300`
+（PID 426242，`/proc/<pid>/exe` 与安装文件同 md5）；fn 同上（PID 2986515，同 md5）；
 pc-win 计划任务 PID **34228**（`StartTime` 10:02:08 晚于二进制写入 10:01）、`:7332` LISTENING
-由 34228 持有、health 200 `role=worker`、`bin/mindfs.exe --version` `v0.5.5-1300`；本机已安装
-`v0.5.5-1300`（md5 `882a9aa3…`）、bundle `assets/index-zj48uj_q.js` 服务的就是安装目录那份，
-**运行进程仍是旧二进制（PID 498268，`/proc/<pid>/exe` 已 deleted，md5 `68d7c209…`，
-`/api/node-info` 报 `v0.5.5-1201-149-g881a94bd`），待用户 `sudo systemctl restart mindfs`**。
+由 34228 持有、health 200 `role=worker`、`bin/mindfs.exe --version` `v0.5.5-1300`；本机已由用户
+**10:29:32 重启完成**（system 单元 `active`、`NRestarts=0`）：PID **505751**、`/proc/<pid>/exe`
+与 `~/.local/bin/mindfs` 同 md5 `882a9aa3…` 且不再带 deleted、`/api/node-info` `version=v0.5.5-1300`、
+health 200 `role=control`、bundle `assets/index-zj48uj_q.js` 即安装目录那份、
+`/api/router/status` 报 `mode=coordinate` + `supervision_mode=on`。
 门禁：`go test ./...` 全绿、`tsc --noEmit` clean、Vitest 271 文件 / 943 通过 / 6 跳过、
 `make check-upstream` 2590 delta / 377 组全绿（baseline `9ab95722`）。
 
