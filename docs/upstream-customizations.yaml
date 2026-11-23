@@ -7821,7 +7821,7 @@ groups:
     anchors:
       - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) ClaimWorkflowNodeRun('
       - 'server/internal/kanban/task_store_workflow_node_runs.go:ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING'
-      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
+      - 'server/internal/kanban/task_store_workflow_run_schema.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
       - 'server/internal/kanban/node_run_identity.go:func ResolveNodeRun('
       - 'server/internal/kanban/task_store_workflow_runs_history_test.go:func TestWorkflowRunHistoryAllowsNewRunOnlyAfterTerminal('
 
@@ -13313,7 +13313,7 @@ groups:
       - 'server/app/feishu_answer_relay.go:Client:      feishu.NewRelayClient(feishuAnswerTimeout),'
       - 'server/app/feishu_intake_relay_integration_test.go:func TestServerRunPreparesFeishuIntakeBeforeStart(t *testing.T) {'
       - 'server/app/feishu_intake_relay_integration_test.go:func TestPrepareFeishuChannelInstallsPickerTaskDeps(t *testing.T) {'
-      - 'server/internal/channels/feishu/intake_test.go:func TestIntakeConcurrentRedeliveryCreatesOneTask(t *testing.T) {'
+      - 'server/internal/channels/feishu/intake_test.go:func TestIntakeConcurrentRedeliverySendsOneConfirmCard(t *testing.T) {'
       - 'server/internal/channels/feishu/relay_redirect_test.go:func TestNewRelayClientRefusesCrossHostRedirect(t *testing.T) {'
       - 'server/app/feishu_answer_relay_test.go:func TestNewFeishuAnswerRelayRefusesCrossHostRedirect(t *testing.T) {'
 
@@ -13516,3 +13516,150 @@ groups:
       - 'server/internal/api/appcontext_router_transcript.go:blocks, err := manager.ReadResolvedBlocks(ctx, sessionKey)'
       - 'server/internal/api/appcontext_router_transcript_test.go:func TestRouterTranscriptReaderSkipsProvisionalAndStaleRevisions(t *testing.T) {'
       - 'server/internal/session/search_blocks_test.go:func TestSearchableBlockTextsIgnoresProvisionalFragments(t *testing.T) {'
+
+  # ── 配额挂起收口（A1）────────────────────────────────────────────────────
+  - id: G-PW
+    title: 配额挂起设上限并写可见系统行（A1 收口）
+    kind: fix
+    symptom: |
+      节点撞到上游用量上限时，Run 只把 NodeRun 的 `not_before` 推到重置时刻然后无声
+      等待：同一轮 Run 可以无限次挂起，没有任何上限；界面上只有 NodeRun 列表里那一
+      行 `not_before` 能看出发生过什么，任务卡片上没有任何提示；额度用完之后也不叫
+      人，任务永远停在 running。spec §6.9 原文还写着「任务停在 `waiting_user`」，与
+      代码实际行为相反（留 `running` 才对 —— `waiting_user` 的语义是「需要人说话」）。
+    why: |
+      配额挂起要三件事同时在场，缺一件症状就回来：
+      ① `workflow_runs.holds_used` 加每 Run 上限 3，由 `IncrementWorkflowRunHolds`
+      用一条 `UPDATE ... WHERE holds_used < ?` 原子推进。这个计数刻意不参与 Run 的
+      CAS 整行更新 —— 引擎每次 `SaveWorkflowRun` 都写整行，读-改-写会把它抹回旧值。
+      ② 每次挂起写一行确定性系统提示（ID `quota-hold:<nodeRunID>`，`InsertOrIgnore`
+      幂等并 broadcast 立即上屏），正文是「节点 X 撞到用量上限，已挂起到 HH:MM UTC，
+      到点自动继续（本 Run 第 N/3 次）」。
+      ③ 额度用完时不再建 attempt、任务停 `waiting_user`，并写一条「额度已用完」的
+      可见说明；配额挂起不消耗每节点 2 次重试预算 —— 它是「等上游恢复」，不是失败重试。
+      合上游时若把 `holds_used` 列迁移或挂起上限丢掉，「无限挂起 + 无提示」原样回来。
+    files:
+      - server/internal/kanban/workflow_node_quota_hold.go
+      - server/internal/kanban/task_store_workflow_run_schema.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/workflow_runtime.go
+      - server/internal/kanban/workflow_types.go
+      - docs/superpowers/specs/2026-11-20-evidence-gated-autonomous-completion-design.md
+      - docs/superpowers/plans/2026-11-22-intake-target-confirm-and-quota-hold.md
+    tests:
+      - server/internal/kanban/workflow_node_quota_hold_test.go
+    anchors:
+      - 'server/internal/kanban/workflow_node_quota_hold.go:const supervisionMaxHoldsPerRun = 3'
+      - 'server/internal/kanban/workflow_node_quota_hold.go:var ErrQuotaHoldsExhausted = errors.New("workflow run quota hold budget is exhausted")'
+      - 'server/internal/kanban/workflow_node_quota_hold.go:func (s *TaskStore) IncrementWorkflowRunHolds(ctx context.Context, runID string, cap int) (bool, int, error) {'
+      - 'server/internal/kanban/workflow_node_quota_hold.go:return "quota-hold:" + strings.TrimSpace(nodeRunID)'
+      - 'server/internal/kanban/task_store_workflow_run_schema.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique() error {'
+      - 'server/internal/kanban/task_store_workflow_run_schema.go:{"workflow_runs", "holds_used", "INTEGER NOT NULL DEFAULT 0"},'
+      - 'server/internal/kanban/task_store_workflow_runs.go:holds_used) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID,'
+      - 'server/internal/kanban/workflow_node_quota_hold_test.go:func TestQuotaHoldKeepsTaskRunningAndNotesIt(t *testing.T) {'
+      - 'server/internal/kanban/workflow_node_quota_hold_test.go:func TestHoldsExhaustedParksTaskWithoutNewAttempt(t *testing.T) {'
+      - 'server/internal/kanban/workflow_node_quota_hold_test.go:func TestHoldsQuotaIsPerRun(t *testing.T) {'
+
+  # ── 飞书显式目标确认 ──────────────────────────────────────────────────────
+  - id: G-PX
+    title: 飞书唯一匹配不再直接建任务，改为目标确认卡与会话级活跃目标
+    kind: feature
+    symptom: |
+      owner 在飞书里发一句「在 fn 的 docs 建个任务」时，只要唯一匹配到项目就直接建卡，
+      既不问一句「是不是这里」，也不记得你刚确认过哪里：紧接着的后续消息只能再新建
+      一个任务，无法追加到已有任务；想换目标或看都有哪些任务也没有任何入口。误建出
+      来的卡只能回网页删。合上游时若把确认卡或活跃目标账本丢掉，症状原样回来。
+    why: |
+      目标归属必须由人确认一次、之后默认沿用，且**每次追加都要重新校验**：
+      ① 识别出唯一 (node, project) 后不再建任务，而是发 `KindTarget` 卡 —— 确认 /
+      新建任务 / 切换目标 / 取消四个动作，任务号是可编辑表单，`TargetRef` 随卡片
+      落库（`types.go`）。选「确认」才建卡。
+      ② `IntakeStore` 维护会话级活跃目标账本（`ActiveTarget`，7 天后过期），后续
+      消息默认追加到该目标；服务端逐次重校验 (nodeID, rootID, taskID) 三元组，
+      任务被删/被移走即 `ErrTargetStale`、清活跃目标并回落到确认卡，绝不静默写到
+      错误的任务上。
+      ③ 文本命令 `#123` / `#N <正文>` / `切换` / `新任务`（`parseIntakeCommand`
+      只认整句或 `#<digits>` 开头，句子里的「帮我切换一下」仍是普通正文）；任务
+      目录（`TaskCatalog`，按关键词/任务号匹配、上限 5 条、按 TTL 缓存）提供候选。
+      ④ 真写入与查询走 app 层（`feishuTaskClient`：`POST <node>/api/tasks/{id}/activities`、
+      `GET <node>/api/tasks?root=…`），审核分类由 app 层注入 —— 包 `feishu` 不
+      import `kanban`。URL 只从节点表解析，聊天正文里的地址永不被信任。
+      边界不变：只接 owner 私聊文本、去重与限流、worker 卡片经主节点中继回传。
+    files:
+      - server/app/feishu_tasks.go
+      - server/app/feishu_intake.go
+      - server/internal/channels/feishu/target_confirm.go
+      - server/internal/channels/feishu/target_apply.go
+      - server/internal/channels/feishu/task_catalog.go
+      - server/internal/channels/feishu/intake_command.go
+      - server/internal/channels/feishu/intake.go
+      - server/internal/channels/feishu/intake_store.go
+      - server/internal/channels/feishu/service.go
+      - server/internal/channels/feishu/service_click.go
+      - server/internal/channels/feishu/event.go
+      - server/internal/channels/feishu/render.go
+      - server/internal/channels/feishu/types.go
+      - server/internal/channels/feishu/store.go
+    tests:
+      - server/app/feishu_tasks_integration_test.go
+      - server/internal/channels/feishu/target_confirm_test.go
+      - server/internal/channels/feishu/target_apply_test.go
+      - server/internal/channels/feishu/target_command_test.go
+      - server/internal/channels/feishu/target_intake_test.go
+      - server/internal/channels/feishu/task_catalog_test.go
+      - server/internal/channels/feishu/intake_store_active_test.go
+      - server/internal/channels/feishu/types_test.go
+      - server/internal/channels/feishu/intake_test.go
+    anchors:
+      - 'server/internal/channels/feishu/target_confirm.go:var ErrTargetStale = errors.New("feishu: target no longer exists")'
+      - 'server/internal/channels/feishu/target_confirm.go:type TaskAppender interface {'
+      - 'server/internal/channels/feishu/target_apply.go:func (s *Service) applyTargetChoice(ctx context.Context, c Card, selected int, a Action) error {'
+      - 'server/internal/channels/feishu/task_catalog.go:func NewTaskCatalog(finder TaskFinder, ttl time.Duration, now func() time.Time) TaskCatalog {'
+      - 'server/internal/channels/feishu/intake_command.go:func parseIntakeCommand(text string) (intakeCommand, bool) {'
+      - 'server/internal/channels/feishu/intake_command.go:return intakeCommand{kind: commandNewTask}, true'
+      - 'server/internal/channels/feishu/intake_store.go:func (s *IntakeStore) SetActiveTarget(t ActiveTarget) error {'
+      - 'server/internal/channels/feishu/intake_store.go:func (s *IntakeStore) ActiveTarget(chatID string) (ActiveTarget, bool) {'
+      - 'server/internal/channels/feishu/types.go:KindTarget Kind = "target"'
+      - 'server/internal/channels/feishu/types.go:type TargetRef struct {'
+      - 'server/app/feishu_tasks.go:func (c *feishuTaskClient) Append(ctx context.Context, target feishu.TargetRef, input string) error {'
+      - 'server/app/feishu_tasks_integration_test.go:func TestFeishuTaskClientAppendStaleClassifiesMissingTask(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_confirm_test.go:func TestTargetCardOffersFourChoicesAndTaskNumberForm(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_apply_test.go:func TestTargetTypedNumberResolvesViaCatalogBeyondCandidates(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_command_test.go:func TestBareTaskNumberCommandSelectsActiveTarget(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_intake_test.go:func TestTargetActiveTargetAppendsDirectly(t *testing.T) {'
+      - 'server/internal/channels/feishu/task_catalog_test.go:func TestTaskCatalogCapsCandidatesAtFive(t *testing.T) {'
+      - 'server/internal/channels/feishu/intake_store_active_test.go:func TestIntakeStoreActiveTargetExpiresAfterSevenDays(t *testing.T) {'
+      - 'server/internal/channels/feishu/types_test.go:func TestParseActionKeepsTargetFields(t *testing.T) {'
+
+  # ── 跨 harness 一致性契约（B3 订正）──────────────────────────────────────
+  - id: G-PY
+    title: 跨 harness 一致性只认归一化 compact 事件，Codex 三种 wire 形态降为适配器细节
+    kind: fix
+    symptom: |
+      spec §6.12 曾把 Codex 的三种 wire 形态（`CompactedItem`、
+      `UnknownItem{Type:"contextCompaction"}`、typed `contextCompaction`）写成跨 harness
+      契约，§13 C5 又谎称「指数退避并入了 §6.9」。照着这条契约去合上游时，会误以为
+      Claude 侧也必须产出这三种形状，或者把 Codex 的解析分支当成共同面去改；共同面
+      一旦被改错，两个 harness 的压缩事件就不再对得上，胶囊与自动压缩会一起失效。
+    why: |
+      两个 harness 之间**唯一**的共同面是归一化之后的压缩事件：
+      `types.EventTypeCompact` + `types.CompactNotice`。Codex 的三种 wire 形态是
+      `server/internal/agent/codex` 适配器的实现细节，只由 codex 自己的测试钉住，
+      不进跨 harness 契约。`conformance.CompactContract` 按归一化事件判定，
+      `Matches` 在两边的 `session_compact_contract_test.go` 里各跑一次 —— 要改共同面
+      就改这里，要改 Codex 的解析形状就改适配器并更新 codex 侧用例。spec §6.12 / §13 C5
+      已订正为这一口径；合上游时若把 wire 形态写回「跨 harness 契约」，误改的起点就回来了。
+    files:
+      - server/internal/agent/conformance/conformance.go
+      - server/internal/agent/claude/session_compact_contract_test.go
+      - server/internal/agent/codex/session_compact_contract_test.go
+      - docs/superpowers/specs/2026-11-20-evidence-gated-autonomous-completion-design.md
+    tests:
+      - server/internal/agent/claude/session_compact_contract_test.go
+      - server/internal/agent/codex/session_compact_contract_test.go
+    anchors:
+      - 'server/internal/agent/conformance/conformance.go:type CompactEventContract struct {'
+      - 'server/internal/agent/conformance/conformance.go:var CompactContract = CompactEventContract{'
+      - 'server/internal/agent/conformance/conformance.go:func (c CompactEventContract) Matches(eventType string, payload any) error {'
+      - 'server/internal/agent/claude/session_compact_contract_test.go:func TestClaudeCompactEventSatisfiesCrossHarnessContract(t *testing.T) {'
+      - 'server/internal/agent/codex/session_compact_contract_test.go:func TestCodexCompactEventSatisfiesCrossHarnessContract(t *testing.T) {'
