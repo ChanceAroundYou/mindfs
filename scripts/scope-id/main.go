@@ -356,11 +356,32 @@ func gitDirty(root string) (bool, error) {
 	return strings.TrimSpace(string(out)) != "", nil
 }
 
-func resolveBranch(root, registry, remote, branch string, localIDs []string, dryRun bool) error {
-	baseIDs, err := scopeid.RegistryIDsAt(root, remote, scopeid.RegistryPath)
+// mergeBase 取当前 HEAD 与另一条分支的共同祖先。
+func mergeBase(root, branch string) (string, error) {
+	out, err := exec.Command("git", "-C", root, "merge-base", "HEAD", branch).Output()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "· 读不到 %s 的清单（%v），以空基准继续\n", remote, err)
-		baseIDs = nil
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func resolveBranch(root, registry, remote, branch string, localIDs []string, dryRun bool) error {
+	baseIDs, remoteErr := scopeid.RegistryIDsAt(root, remote, scopeid.RegistryPath)
+	if remoteErr != nil {
+		// 退到 merge-base 再试一次：真正回答「这个号是这两边各自新取的，还是本来就有的」
+		// 的是共同祖先，不是某条 remote 分支。退化成空基准会把祖先里早就登记过的号
+		// 全判成撞号（真撞号里还混着 G-QB 这类老号，改号就会挪走无关的组）。
+		var mb string
+		mb, err := mergeBase(root, branch)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "· 读不到 %s 的清单（%v），退到 merge-base 也失败（%v），以空基准继续\n", remote, remoteErr, err)
+			baseIDs = nil
+		} else if baseIDs, err = scopeid.RegistryIDsAt(root, mb, scopeid.RegistryPath); err != nil {
+			fmt.Fprintf(os.Stderr, "· 读不到 %s 的清单（%v），merge-base %s 也读不到（%v），以空基准继续\n", remote, remoteErr, shortSHA(mb), err)
+			baseIDs = nil
+		} else {
+			fmt.Fprintf(os.Stderr, "· 读不到 %s 的清单（%v），改用 merge-base %s\n", remote, remoteErr, shortSHA(mb))
+		}
 	}
 	base := make(map[string]bool, len(baseIDs))
 	for _, id := range baseIDs {
