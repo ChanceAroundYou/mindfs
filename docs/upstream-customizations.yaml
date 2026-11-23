@@ -14552,3 +14552,30 @@ groups:
       - 'web/src/app/useAppAgentActions.ts:const confirmed = await confirmDialog({'
       - 'web/src/i18n/locales/zh-CN-sessions.ts:"session.forkConfirm":'
       - 'web/tests/session-fork-confirm.test.mjs:test("fork 必须先确认再发请求"'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QD
+    title: "Scope 组号治理：脚本取号、门禁查重、撞号裁决"
+    kind: deploy
+    symptom: "同一个 G-XX 在 git log 里指向两组互不相关的定制；计划里写了号却没登记。"
+    why: >-
+      组号是手写字符串，三个并行分支都从本地清单取「最大号 + 1」，必然撞车；
+      撞号后 git 合并干净、旧门禁全绿，只有人事后读 git log 才发现。上游不会提供
+      这套机制，丢掉它等于回到 2026-11-18/11-20/11-23 的三次事故。
+    files:
+      - scripts/internal/scopeid/
+      - scripts/scope-id/
+      - scripts/check-upstream/main.go
+      - scripts/check-upstream/main_test.go
+      - scripts/deploy-all.sh
+      - docs/superpowers/plans/2026-11-23-scope-id-allocation.md
+    tests:
+      - scripts/internal/scopeid/scopeid_test.go
+      - scripts/scope-id/main_test.go
+      - scripts/check-upstream/main_test.go
+    anchors:
+      - 'scripts/internal/scopeid/scopeid.go:func NextIDs(existing []string, n int) ([]string, error) {'
+      - 'scripts/internal/scopeid/scopeid.go:func IsTemplatePlaceholder(id string) bool {'
+      - 'scripts/check-upstream/main.go:if bad := duplicateGroupIDs(reg.Groups); len(bad) > 0 {'
+      - 'scripts/scope-id/main.go:const claimStampPrefix = "> Scope IDs: "'
