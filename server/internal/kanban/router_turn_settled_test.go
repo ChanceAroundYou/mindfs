@@ -309,6 +309,35 @@ func TestTurnSettledBriefCarriesExcerptWithoutRunNoise(t *testing.T) {
 	}
 }
 
+// 待决策项常常不在这一轮的最后一句：旧上限 400 字符只保留末尾 400 字，
+// 一旦后面还有收尾说明，四条「待拍板」就被切掉，Router 只能看到结论（#68）。
+func TestTurnSettledExcerptCarriesDecisionItemsBeyondLegacyLimit(t *testing.T) {
+	ctx := context.Background()
+	f := newTurnSettledFixture(t, "task-turn-excerpt", "sess-main")
+	decision := "【待拍板】1) 是否上线 2) 换哪个模型 3) 摘要口径"
+	// 决策项之后还有 600 个字符的收尾说明：落在旧 400 字窗口之外、新窗口之内。
+	excerpt := strings.Repeat("过程记录。", 150) + decision + strings.Repeat("收尾说明。", 120)
+	in := TurnSettledInput{SessionKey: "sess-main", TurnID: "turn-excerpt", Excerpt: excerpt}
+	if _, err := f.svc.SettleSessionTurn(ctx, f.rootID, in); err != nil {
+		t.Fatalf("SettleSessionTurn: %v", err)
+	}
+	events := f.events(t, RouterEventTurnSettled)
+	if len(events) != 1 {
+		t.Fatalf("turn_settled events = %d, want 1", len(events))
+	}
+	brief := &SituationBrief{}
+	if err := attachRouterEventBrief(ctx, f.store, brief, events[0]); err != nil {
+		t.Fatalf("attachRouterEventBrief: %v", err)
+	}
+	if !strings.Contains(brief.Event.Excerpt, "【待拍板】") {
+		t.Fatalf("brief 丢失了待决策项（保留 %d 字）：\n%s",
+			len([]rune(brief.Event.Excerpt)), brief.Event.Excerpt)
+	}
+	if n := len([]rune(brief.Event.Excerpt)); n > routerEventBriefExcerptRunes {
+		t.Fatalf("excerpt keeps %d runes, want <= %d", n, routerEventBriefExcerptRunes)
+	}
+}
+
 // 结算回合可以汇报、提问、静默、通知用户；交出新执行仍然不允许。
 func TestTurnSettledAllowsNotifyUserButRejectsHandoff(t *testing.T) {
 	brief := &SituationBrief{Event: &RouterBriefEvent{Kind: string(RouterEventTurnSettled)}}

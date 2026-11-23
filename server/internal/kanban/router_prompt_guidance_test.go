@@ -39,6 +39,19 @@ func TestRouterPromptPrefersMessageAgentForContinuity(t *testing.T) {
 	}
 }
 
+// #68：Agent 在会话里把四条待拍板事项写成了回复正文，Router 又把它们原样写进
+// progress —— 它们既没进入任务结论，也没有变成用户能点的选择。规则 18 必须要求
+// 「有决策/审批项就同轮 ask_user，每题 2–4 个选项」，并点明规则 17 的七类事项
+// 不受「不用问了」豁免。
+func TestRouterPromptTurnsDecisionItemsIntoQuestionCards(t *testing.T) {
+	prompt := RouterDeveloperInstructions()
+	for _, want := range []string{"2–4 个选项", "规则 17", "不受「不用问了」豁免"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("规则 18 缺少 %q", want)
+		}
+	}
+}
+
 // 起草图时只写 prompt 是模型的常态：提示词与两个工具的 graph 描述都必须写明
 // params.agent 可省略、默认 claude。2026-11-21 隔离验收里 Router 起草与固化出的
 // 两张图都没有 agent —— 能校验、能发布，一执行就 "agent required"。
