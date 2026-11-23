@@ -13582,8 +13582,10 @@ groups:
       只认整句或 `#<digits>` 开头，句子里的「帮我切换一下」仍是普通正文）；任务
       目录（`TaskCatalog`，按关键词/任务号匹配、上限 5 条、按 TTL 缓存）提供候选。
       ④ 真写入与查询走 app 层（`feishuTaskClient`：`POST <node>/api/tasks/{id}/activities`、
-      `GET <node>/api/tasks?root=…`），审核分类由 app 层注入 —— 包 `feishu` 不
-      import `kanban`。URL 只从节点表解析，聊天正文里的地址永不被信任。
+      `GET <node>/api/tasks?root=…`），审核分类由 app 层经
+      `IntakeService.SetReviewClassifier` 注入（`server/app/feishu_intake.go`）——
+      本组这些文件不 import `kanban`；例外是 `relay_notifier.go` 的中继出口，它本来
+      就实现 `kanban.CardNotifier`。URL 只从节点表解析，聊天正文里的地址永不被信任。
       边界不变：只接 owner 私聊文本、去重与限流、worker 卡片经主节点中继回传。
     files:
       - server/app/feishu_tasks.go

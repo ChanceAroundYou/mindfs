@@ -182,7 +182,8 @@ noteQuotaHold("节点 X 撞到用量上限，已挂起到 HH:MM UTC，到点自�
 - [ ] `#123` / `切换` / `新任务` 三条命令；`TaskAppender` 在 app 层用
   `POST <node>/api/tasks/{id}/activities` 实现，`TaskFinder` 用
   `GET <node>/api/tasks?root=…`；审核分类从 app 层注入
-  （`kanban.ReviewCategories`，feishu 包不 import kanban）。
+  （`kanban.ReviewCategories`，经 `IntakeService.SetReviewClassifier` 注入；本组
+  这些文件不 import kanban，`relay_notifier.go` 的中继出口例外）。
 - [ ] 测试：命令解析、远程节点走主控中继、审核分类命中时确认卡标注。
 - [ ] 提交（`feat(feishu): 目标切换命令与生产装配（Scope: G-PX）`）
 
