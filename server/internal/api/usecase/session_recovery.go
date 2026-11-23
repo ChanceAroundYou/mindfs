@@ -73,7 +73,20 @@ func isTerminalTurnError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "prompt is too long")
 }
 
-const terminalOverflowMessage = "上下文已满，本轮不会自动重试；请先压缩或清理上下文，再重新发送"
+const (
+	terminalOverflowMessage = "上下文已满，本轮不会自动重试；请先压缩或清理上下文，再重新发送"
+	// 溢出后已经排了一次有界压缩时，用户下一步是「等压缩完再发」而不是自己找入口。
+	terminalOverflowCompactingMessage = "上下文已满，本轮不会自动重试；已开始压缩，完成后请重新发送"
+)
+
+// overflowCompactScheduledError 标记「终端溢出后已经补了一次有界压缩」。
+// 只用于选用户文案，原始错误仍在链上 —— TurnTerminalReason 照旧能读出
+// blocking_limit，日志与详情不受影响。
+type overflowCompactScheduledError struct{ err error }
+
+func (e *overflowCompactScheduledError) Error() string { return e.err.Error() }
+
+func (e *overflowCompactScheduledError) Unwrap() error { return e.err }
 
 // explainTerminalTurnError 把机器判据翻成用户能照做的下一步，同时用 %w
 // 保留原始错误，日志与前端详情仍能读到 harness 的原文。
@@ -81,29 +94,71 @@ func explainTerminalTurnError(err error) error {
 	if !isTerminalTurnError(err) {
 		return err
 	}
+	var scheduled *overflowCompactScheduledError
+	if errors.As(err, &scheduled) {
+		return fmt.Errorf("%s（%w）", terminalOverflowCompactingMessage, err)
+	}
 	return fmt.Errorf("%s（%w）", terminalOverflowMessage, err)
+}
+
+// ensureOverflowCompact 在「这一轮已经因上下文用满失败」之后补一次有界压缩。
+//
+// 复用 hygiene 自动压缩那条 /compact 通道：等待会话空闲、30 分钟封顶、胶囊里
+// 能看到压缩中与失败原因、失败后不再重试。这里**不改** hygiene 分级 —— notice
+// 档仍然永不因「大」自动压缩；本次只处理已经撞墙之后的出口。
+//
+// 返回值表示「此刻确实有一次压缩在途（刚排上或原本就在跑）」，供文案二选一。
+func (s *Service) ensureOverflowCompact(in sendFailureContext) bool {
+	if in.HygieneCompact || in.Current == nil {
+		return false
+	}
+	harness := hygieneHarnessForSession(in.Current)
+	if !hygieneAppliesToSession(in.Current) || !hygieneAutoCompactSupported(harness) {
+		return false
+	}
+	tracker := s.hygieneTracker()
+	view := tracker.Snapshot(in.RootID, in.SessionKey, harness, 0)
+	if view.AutoFailed {
+		return false
+	}
+	if view.CompactPending {
+		return true
+	}
+	tracker.MarkCompactPending(in.RootID, in.SessionKey)
+	log.Printf("[session] turn.overflow.compact.schedule root=%s session=%s agent=%s", in.RootID, in.SessionKey, harness)
+	go s.runHygieneAutoCompact(SendMessageInput{
+		RootID:          in.RootID,
+		RuntimeRootPath: in.RootAbs,
+		Key:             in.SessionKey,
+		Agent:           harness,
+		Content:         hygieneCompactCommand,
+		hygieneCompact:  true,
+	})
+	return true
 }
 
 // sendFailureContext 是一次回合失败后决定「补发 / 不补发 / 回收运行时」所需的
 // 全部输入。抽出来是为了让 session_send.go 的主路径只留一句调用，避免继续膨胀。
 type sendFailureContext struct {
-	Err                error
-	TurnCtx            context.Context
-	RootID             string
-	SessionKey         string
-	AgentName          string
-	Model              string
-	Mode               string
-	Effort             string
-	FastService        string
-	Manager            *session.Manager
-	Current            *session.Session
-	CurrentSession     agenttypes.Session
-	AgentPool          *agent.Pool
-	PlanMode           bool
-	RootAbs            string
-	Prompt             string
-	SawAssistantChunk  bool
+	Err               error
+	TurnCtx           context.Context
+	RootID            string
+	SessionKey        string
+	AgentName         string
+	Model             string
+	Mode              string
+	Effort            string
+	FastService       string
+	Manager           *session.Manager
+	Current           *session.Session
+	CurrentSession    agenttypes.Session
+	AgentPool         *agent.Pool
+	PlanMode          bool
+	RootAbs           string
+	Prompt            string
+	SawAssistantChunk bool
+	// HygieneCompact 为真表示失败的这一轮本身就是压缩回合：不能再排压缩。
+	HygieneCompact     bool
 	SendWithAttachment func(agenttypes.Session, string) error
 	OnUpdate           func(agenttypes.Event)
 }
@@ -122,6 +177,9 @@ func (s *Service) applySendFailure(in sendFailureContext) (agenttypes.Session, e
 		// 上下文用满：重试同一个请求不会变，也不该连坐回收运行时 —— 同 agent
 		// 名下别的会话是好的，KillAgentProcess 会把它们一起杀掉。
 		log.Printf("[session] turn.send.terminal root=%s session=%s agent=%s action=fail_without_recovery reason=%s err=%v", in.RootID, in.SessionKey, in.AgentName, agenttypes.TurnTerminalReason(sendErr), sendErr)
+		if s.ensureOverflowCompact(in) {
+			sendErr = &overflowCompactScheduledError{err: sendErr}
+		}
 	case plan.Reason == "no_assistant_output":
 		log.Printf("[session] turn.send.no_response root=%s session=%s agent=%s action=fail_without_recovery", in.RootID, in.SessionKey, in.AgentName)
 	case plan.RecoverTurn:

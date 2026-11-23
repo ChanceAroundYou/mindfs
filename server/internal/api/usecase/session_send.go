@@ -394,6 +394,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			RootAbs:            rootAbs,
 			Prompt:             prompt,
 			SawAssistantChunk:  sawAssistantChunk,
+			HygieneCompact:     in.hygieneCompact,
 			SendWithAttachment: sendWithAttachedUpdates,
 			OnUpdate:           in.OnUpdate,
 		})

@@ -251,6 +251,170 @@ func TestApplySendFailureNonRecoverableStillRecycles(t *testing.T) {
 	}
 }
 
+func newOverflowTestSession(t *testing.T, agent string) (*session.Manager, *session.Session) {
+	t.Helper()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type:  session.TypeChat,
+		Agent: agent,
+		Name:  "chat",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	return manager, created
+}
+
+func overflowFailureContext(manager *session.Manager, current *session.Session) sendFailureContext {
+	return sendFailureContext{
+		Err:               &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"},
+		RootID:            "root",
+		SessionKey:        current.Key,
+		AgentName:         "claude",
+		Manager:           manager,
+		Current:           current,
+		CurrentSession:    &fakeUsecaseAgentSession{id: "claude-session"},
+		SawAssistantChunk: true,
+	}
+}
+
+// applyExplainedSendFailure 复刻生产顺序：先决定失败动作，再把终端错误翻成
+// 用户文案（session_send.go 在 persist 之前做这两步）。
+func applyExplainedSendFailure(service *Service, in sendFailureContext) (agenttypes.Session, error) {
+	sess, err := service.applySendFailure(in)
+	return sess, explainTerminalTurnError(err)
+}
+
+// 上下文用满之后补一次有界压缩：复用 hygiene 的 /compact 通道，同一段溢出
+// 连续命中时只允许一个在途压缩，且原始错误链（blocking_limit）不能丢。
+func TestApplySendFailureTerminalSchedulesOneShotCompaction(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	service := newHygieneTestService(tracker)
+	manager, current := newOverflowTestSession(t, "claude")
+
+	release := make(chan struct{})
+	defer close(release)
+	sent := make(chan SendMessageInput, 4)
+	service.hygieneSend = func(_ context.Context, in SendMessageInput) error {
+		sent <- in
+		<-release
+		if in.onCompactSeen != nil {
+			in.onCompactSeen()
+		}
+		return nil
+	}
+
+	in := overflowFailureContext(manager, current)
+	for attempt := 0; attempt < 2; attempt++ {
+		_, gotErr := applyExplainedSendFailure(service, in)
+		if gotErr == nil {
+			t.Fatal("terminal failure returned nil error")
+		}
+		if !strings.Contains(gotErr.Error(), "已开始压缩") {
+			t.Fatalf("attempt %d: user message does not report the scheduled compaction: %v", attempt, gotErr)
+		}
+		if reason := agenttypes.TurnTerminalReason(gotErr); reason != "blocking_limit" {
+			t.Fatalf("attempt %d: wrapped reason = %q, want blocking_limit (err=%v)", attempt, reason, gotErr)
+		}
+	}
+
+	select {
+	case got := <-sent:
+		if !got.hygieneCompact || got.Content != hygieneCompactCommand {
+			t.Fatalf("scheduled turn is not a compact turn: %#v", got)
+		}
+		if got.Key != current.Key || got.Agent != "claude" {
+			t.Fatalf("compact went to the wrong session: %#v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("overflow did not schedule a compaction")
+	}
+	select {
+	case extra := <-sent:
+		t.Fatalf("second overflow scheduled a duplicate compaction: %#v", extra)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// 没有本地压缩通道的 harness 只能维持旧文案，不能假装已开始压缩。
+func TestApplySendFailureTerminalKeepsManualHintWithoutCompaction(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	service := newHygieneTestService(tracker)
+	manager, current := newOverflowTestSession(t, "gemini")
+
+	called := make(chan struct{}, 1)
+	service.hygieneSend = func(context.Context, SendMessageInput) error {
+		called <- struct{}{}
+		return nil
+	}
+
+	_, gotErr := applyExplainedSendFailure(service, overflowFailureContext(manager, current))
+	if gotErr == nil {
+		t.Fatal("terminal failure returned nil error")
+	}
+	if strings.Contains(gotErr.Error(), "已开始压缩") {
+		t.Fatalf("unsupported harness reported a compaction that cannot run: %v", gotErr)
+	}
+	if !strings.Contains(gotErr.Error(), "请先压缩") {
+		t.Fatalf("user message lost the manual next step: %v", gotErr)
+	}
+	select {
+	case <-called:
+		t.Fatal("unsupported harness was asked to compact")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// 压缩通道刚失败过就不再自动重试，否则每一轮都用同一个失败换一条噪声。
+func TestApplySendFailureTerminalSkipsCompactionAfterCompactFailure(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	service := newHygieneTestService(tracker)
+	manager, current := newOverflowTestSession(t, "claude")
+	tracker.MarkAutoFailed("root", current.Key)
+
+	called := make(chan struct{}, 1)
+	service.hygieneSend = func(context.Context, SendMessageInput) error {
+		called <- struct{}{}
+		return nil
+	}
+
+	_, gotErr := applyExplainedSendFailure(service, overflowFailureContext(manager, current))
+	if gotErr == nil || !strings.Contains(gotErr.Error(), "请先压缩") {
+		t.Fatalf("expected manual hint after a failed compaction, got %v", gotErr)
+	}
+	select {
+	case <-called:
+		t.Fatal("compaction was retried after it already failed")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// 压缩回合自己撞上溢出时不能再排一次压缩（否则递归）。
+func TestApplySendFailureOnCompactTurnDoesNotScheduleAnother(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	service := newHygieneTestService(tracker)
+	manager, current := newOverflowTestSession(t, "claude")
+
+	called := make(chan struct{}, 1)
+	service.hygieneSend = func(context.Context, SendMessageInput) error {
+		called <- struct{}{}
+		return nil
+	}
+
+	in := overflowFailureContext(manager, current)
+	in.HygieneCompact = true
+	_, gotErr := applyExplainedSendFailure(service, in)
+	if gotErr == nil || !strings.Contains(gotErr.Error(), "请先压缩") {
+		t.Fatalf("compact turn should not re-schedule compaction, got %v", gotErr)
+	}
+	select {
+	case <-called:
+		t.Fatal("compact turn re-scheduled itself")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 func TestRecoverAgentTurnStopsOnTerminalError(t *testing.T) {
 	rootDir := t.TempDir()
 	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
