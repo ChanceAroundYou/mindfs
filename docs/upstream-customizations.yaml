@@ -15267,18 +15267,9 @@ groups:
       - server/internal/agent/claude/session_result_terminal_test.go
       - server/internal/api/usecase/session_recovery_test.go
     tests:
-      - 'server/internal/agent/types/errors_test.go:func TestTurnTerminalReasonReadsWrappedError(t *testing.T) {'
-      - 'server/internal/agent/types/errors_test.go:func TestTurnTerminalReasonWithoutTypedErrorIsEmpty(t *testing.T) {'
-      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestResultErrCarriesTerminalReason(t *testing.T) {'
-      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestHandleResultMessageDoesNotEmitErrorResultAsBody(t *testing.T) {'
-      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestRepeatedOverflowResultsNeverBecomeBodyText(t *testing.T) {'
-      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestHandleResultMessageStillEmitsSuccessfulResultBody(t *testing.T) {'
-      - 'server/internal/api/usecase/session_recovery_test.go:func TestIsTerminalTurnError(t *testing.T) {'
-      - 'server/internal/api/usecase/session_recovery_test.go:func TestPlanSendFailure(t *testing.T) {'
-      - 'server/internal/api/usecase/session_recovery_test.go:func TestExplainTerminalTurnErrorKeepsCauseAndNextStep(t *testing.T) {'
-      - 'server/internal/api/usecase/session_recovery_test.go:func TestRecoverAgentTurnStopsOnTerminalError(t *testing.T) {'
-      - 'server/internal/api/usecase/session_recovery_test.go:func TestApplySendFailureTerminalDoesNotCancelRuntime(t *testing.T) {'
-      - 'server/internal/api/usecase/session_recovery_test.go:func TestApplySendFailureNonRecoverableStillRecycles(t *testing.T) {'
+      - server/internal/agent/types/errors_test.go
+      - server/internal/agent/claude/session_result_terminal_test.go
+      - server/internal/api/usecase/session_recovery_test.go
     anchors:
       - 'server/internal/agent/types/errors.go:type TurnTerminalError struct {'
       - 'server/internal/agent/types/errors.go:func TurnTerminalReason(err error) string {'
