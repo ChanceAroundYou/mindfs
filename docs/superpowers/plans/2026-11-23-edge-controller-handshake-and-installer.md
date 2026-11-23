@@ -35,7 +35,7 @@ Plan 2026-11-23。起点是用户三条需求：
 | W0 | 取证：本机/四端现状、重启语义、托盘与自更新是否已具备 | — | 完成 |
 | W1 | 主控同步默认开 + token 自生成 + 单主控守卫 + `/edges` 名单（注册/列表/踢人/恢复） | G-PZ | 完成（`fd48fa1f`、`11498130`） |
 | W2 | 边控端握手与自动同步：`POST /api/control-sync/pair` + 未配对档位 + 落盘 | G-QA | 完成 |
-| W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QB | 进行中 |
+| W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QB | 代码完成（`59ad9f32`），真机未验 |
 | W4 | 部署与四端对账（需当次授权） | — | 待做 |
 
 ### W1（已完成）
@@ -95,7 +95,7 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
 | 3 | 主节点名单 | `/edges` 出现该实例、无 `revoked_at`、`last_seen_at` 非空 |
 | 4 | 签名踢人 | 200 带 `revoked_at`；边缘 `wait_mode_stable("offline-local", 90s)`；踢后 22 秒 `last_seen_at` **逐字未推进**（基线在踢人**之后**取，否则踢前那一拍会误报） |
 
-### W3（进行中，Scope: G-QB）
+### W3（代码完成，Scope: G-QB）
 
 #### 取证结论（2026-11-23，只读）
 
@@ -137,6 +137,23 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
    + `config.json` 模板 + 纯 ASCII `setup.ps1`）：解包到 `%LOCALAPPDATA%\Programs\mindfs`、
    按 E6 的 XML 形状用 `schtasks /create /xml` 注册 `\mindfs`、注册用户 PATH。
    安装器写 `control_sync.role = "edge"`（配 W2 的 `PendingPairing` 口径）与 `update.auto_install: true`。
+   **已完成（`59ad9f32`）**：形态是 `[Go 桩][载荷 zip][8 字节大端长度 + 4 字节魔数 "MFSS"]`
+   （PE 加载器对尾部多余字节透明）。拆三块 —— `internal/deploy`（跨平台纯逻辑：`SetupPathsFor` /
+   `ApplySetupConfig` / `BuildSetupTaskXML` / `EncodeUTF16LEFile` / `MergeUserPath` /
+   `BuildSetupPayload` / `VerifySetupBundle` / `AppendSetupPayload` / `ReadSetupPayload` /
+   `ExtractSetupPayloadToDir`，外加 `archive.go` 的 zip 安全读写）、
+   `scripts/windows-setup/main.go`（Linux 侧拼装器）、`server/cmd/mindfs-setup-stub/main.go`
+   （windows-only 桩：解包 → 写 config → 求 SID → 生成 UTF-16LE 任务 XML → 跑 `setup.ps1`）。
+   桩程序不在 `scripts/` 是硬约束：Go 的 internal 规则不允许 `scripts/` 树导入
+   `mindfs/server/internal/config`，而它必须写 `config.json`。
+   `setup.ps1` 全部路径从参数接收（`TestWindowsSetupScriptTakesPathsFromStub` 禁它自己拼
+   `%LOCALAPPDATA%\Programs`），五步顺序 stop → install → task → PATH → start，
+   挑战 XML 绝不二次编码，`.ps1` 纯 ASCII。生成器在**编译前**核对包完整性
+   （`mindfs.exe` / `agents.json` / `web/index.html` / `web/favicon.svg`），缺一件直接
+   `exit 1` —— 装出一个「二进制在、页面 404」的包比没有包更糟。
+   26 处变异全部 RED（M16「web 锚点缺失没有失败」与 M20「先编译再校验」首轮不红，
+   经查是**测试自身的缺陷**并已修好，不是被测代码没问题）。真实端到端：假包 →
+   `build-windows-setup.sh` → 2,851,807 B 的 setup exe → 解包得 6 个文件齐全。
 5. **托盘菜单扩项** —— 现在只有「退出」。至少「打开页面」「重启以应用配对」（W2 把重启交给这里）、
    「退出」（E7）。
    **已完成**：`trayMenuItems()` 三项（`menuOpenPageID=102` / `menuRestartID=103` /
@@ -147,6 +164,11 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
    等待循环是必需项：真机任务 `MultipleInstancesPolicy=IgnoreNew`，早一步 `/run` 被静默吞掉。
    变异四处各自打红（菜单退回一项 / 删等待循环 / `/run`→`/end` / 引号改双引号）。
 6. **发版链** —— `Makefile` / `RELEASE_ARTIFACTS` 纳入 setup exe；`make release` 一并上传。
+   **已完成（`59ad9f32`）**：三处缺一不可且都不报错，只是 GitHub release 里少了文件 ——
+   `Makefile:151` 的 `RELEASE_WINDOWS_SETUP ?= 1` 与 `RELEASE_ARTIFACTS` 追加、
+   `build-all` 目标里调 `scripts/build-windows-setup.sh`、`scripts/sign-release-manifest.go`
+   的 `artifactPaths` 枚举 `mindfs_%s_*setup.exe`（漏了它 = 客户端拿到一个不在签名清单里的
+   安装包，静默自动更新永远用不上安装器）。`TestReleaseChainShipsTheWindowsInstaller` 三条一起钉。
 
 代码签名按计划**不做**。
 
@@ -156,11 +178,24 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
   `controlsync.Pair` 5 条（401、worker 主控、schema、明文 http 四种失败都不留痕；prefix 保留）、
   配对端点 7 条（404/非回环 403/回环放行/坏体 400/502/其余 400/转发头不算本机）、
   cli 3 条（缺 token 与空 token 都进「等配对」、显式 `-config` 优先）、装配 4 条。
+- 安装器单测：`internal/deploy` 4 个文件 26 条 —— `setup_test.go` 11 条（载荷往返、坏文件、
+  安装布局判据、两个根都必需、任务 XML 真机形状/必填/转义、UTF-16LE、PATH 合并、
+  `ApplySetupConfig` 两个分支）、`setup_extract_test.go` 5 条（载荷端到端往返、缺 `setup.ps1`
+  要点名、普通二进制必须拒、超大长度用**正数**越界、区间恰好是载荷）、
+  `setup_script_test.go` 11 条（纯 ASCII、路径全由桩传入、五步顺序、半装必须失败、
+  XML 不二次编码、PATH 安全合并、先停再拷、生成器结构、桩程序位置与依赖、发版链三处）、
+  `archive_test.go` 4 条（zip 解包写内容、拒符号链接条目、目标逃逸、绝对名）。
+  变异 **26 处全部 RED**，其中 M16 / M20 首轮不红是测试自身的缺陷（扫到文件尾、
+  变异没真搬块），已修好测试后复验转红 —— 这两条正是「测试通过 ≠ 守得住」的例子。
 - 变异：去掉回环守卫、去掉 502 映射、edge 缺 token 仍拒启、未配对也起同步、配对不写 `role`
   五处各自打红后还原。
 - e2e：隔离双实例（两个 `XDG_CONFIG_HOME`，端口 7470/7471，不碰 7331）跑「首次配对 →
   重启 → 追平 → 踢人后停在本地」。
 - 门禁：`go test ./...`、`tsc --noEmit`、Vitest 全绿、`make check-upstream` 绿。
+  本段实测：`gofmt -l` 干净（另有两条 upstream 既有文件，与本组无关）、`go vet ./...` 退出 0、
+  `go vet`（`GOOS=windows` 桩程序）退出 0、`go build ./...` 退出 0、
+  `go test ./internal/deploy/` ok、`go run ./scripts/check-upstream` →
+  `2626 个 delta 文件被 380 组完整覆盖`。
 
 ## 边界
 
