@@ -309,6 +309,67 @@ func TestTurnSettledBriefCarriesExcerptWithoutRunNoise(t *testing.T) {
 	}
 }
 
+// 会话结算绑定着 Workflow Run 时，事件必须带上 Run 身份与节点证据：
+// 「这一轮会话干完了」不等于「Workflow 成功了」。#112 里 Run 投影是
+// plan=unknown / implement=cancelled，Router 却只看到完成正文。
+func TestTurnSettledCarriesBoundRunEvidence(t *testing.T) {
+	ctx := context.Background()
+	f := newTurnSettledFixture(t, "task-turn-run-bound", "sess-main")
+	run := &WorkflowRun{
+		ID: "run-turn-bound", TaskID: f.taskID, Revision: 1,
+		TriggeredBy: WorkflowTriggeredByUser,
+		Graph: WorkflowDefinition{Nodes: []WorkflowNode{{
+			ID: "build", Kind: NodeKindAgent, Params: map[string]any{"prompt": "实现"},
+		}}},
+	}
+	if err := f.store.CreateWorkflowRunAndSetEngine(ctx, run); err != nil {
+		t.Fatalf("CreateWorkflowRunAndSetEngine: %v", err)
+	}
+	if _, err := f.store.SetWorkflowRunSessionKey(ctx, run.ID, "sess-main"); err != nil {
+		t.Fatalf("SetWorkflowRunSessionKey: %v", err)
+	}
+	nr := startWorkflowAgentNode(t, f.store, run.ID, "build", "sess-main")
+	if _, err := f.store.MarkWorkflowNodeRunUnknown(ctx, nr, "startup_ambiguous_side_effect"); err != nil {
+		t.Fatalf("MarkWorkflowNodeRunUnknown: %v", err)
+	}
+
+	inserted, err := f.svc.SettleSessionTurn(ctx, f.rootID, TurnSettledInput{
+		SessionKey: "sess-main", TurnID: "turn-run-bound", ToolCalls: 12,
+		Excerpt: "本地已经改完并提交，但流程记录还没收尾。",
+	})
+	if err != nil || !inserted {
+		t.Fatalf("SettleSessionTurn: inserted=%v err=%v", inserted, err)
+	}
+	events := f.events(t, RouterEventTurnSettled)
+	if len(events) != 1 {
+		t.Fatalf("turn_settled events = %d, want 1", len(events))
+	}
+	if events[0].RunID != run.ID {
+		t.Fatalf("turn_settled RunID = %q, want %q", events[0].RunID, run.ID)
+	}
+
+	brief := &SituationBrief{}
+	if err := attachRouterEventBrief(ctx, f.store, brief, events[0]); err != nil {
+		t.Fatalf("attachRouterEventBrief: %v", err)
+	}
+	if brief.Evidence == nil {
+		t.Fatal("no evidence block")
+	}
+	if _, ok := evidenceNodesByID(brief)["build"]; !ok {
+		t.Fatalf("brief 没有带上绑定 Run 的节点证据：%+v", brief.Evidence.Nodes)
+	}
+	found := false
+	for _, item := range brief.Evidence.Unverified {
+		if strings.Contains(item, "settled session turn") && strings.Contains(item, "does not prove") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("缺少「会话结算不等于 Workflow 成功」的未验证项：%+v", brief.Evidence.Unverified)
+	}
+}
+
 // 待决策项常常不在这一轮的最后一句：旧上限 400 字符只保留末尾 400 字，
 // 一旦后面还有收尾说明，四条「待拍板」就被切掉，Router 只能看到结论（#68）。
 func TestTurnSettledExcerptCarriesDecisionItemsBeyondLegacyLimit(t *testing.T) {

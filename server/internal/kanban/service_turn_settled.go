@@ -138,6 +138,14 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 	if outOfBand {
 		in.OutOfBand = true
 	}
+	// 会话可能同时绑着一轮 Workflow Run（显式发起时共享会话记在
+	// workflow_runs.session_key）。不带上 Run 身份，Router 会把「会话里这轮干完
+	// 了」读成「Workflow 成功了」——#112 就是这样：Run 投影 plan=unknown /
+	// implement=cancelled，总结却写成完成。
+	runID, err := store.WorkflowRunIDForSession(ctx, taskID, sessionKey)
+	if err != nil {
+		return false, err
+	}
 	now := time.Now().UTC()
 	activities := NewActivityStore(store.db)
 	// 结算回合尽量挂在「这一轮之前最近的用户留言」上：brief 会把它作为「用户这一轮
@@ -157,6 +165,7 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 	payload := map[string]any{
 		"session_key":       sessionKey,
 		"turn_id":           turnID,
+		"run_id":            runID,
 		"duration_ms":       durationMS,
 		"has_output":        strings.TrimSpace(in.Excerpt) != "",
 		"tool_calls":        in.ToolCalls,
@@ -175,6 +184,7 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 	_, inserted, err := NewRouterStore(store.db).InsertEvent(ctx, RouterEvent{
 		RootID:         rootID,
 		TaskID:         taskID,
+		RunID:          runID,
 		Kind:           RouterEventTurnSettled,
 		InstanceKey:    instanceKey,
 		TurnID:         routerEventTurnID(turnID, RouterEventTurnSettled, instanceKey),

@@ -211,6 +211,40 @@ func (s *TaskStore) SetWorkflowRunSessionKey(ctx context.Context, runID, session
 	return strings.TrimSpace(current), nil
 }
 
+// WorkflowRunIDForSession 反查这条会话当前绑定的是哪一轮 Run。先看 Run 共享
+// 会话（session_reuse_policy=run 的默认形态），再看节点会话。查询带上 task_id：
+// 同一会话 key 理论上不会跨任务，但脏数据不该把别任务的事件挂过来。
+func (s *TaskStore) WorkflowRunIDForSession(ctx context.Context, taskID, sessionKey string) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	sessionKey = strings.TrimSpace(sessionKey)
+	if taskID == "" || sessionKey == "" {
+		return "", nil
+	}
+	var runID string
+	err := s.db.QueryRowContext(ctx, `
+SELECT id FROM workflow_runs
+ WHERE task_id = ? AND session_key = ?
+ ORDER BY created_at DESC, id DESC LIMIT 1`, taskID, sessionKey).Scan(&runID)
+	if err == nil {
+		return strings.TrimSpace(runID), nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	err = s.db.QueryRowContext(ctx, `
+SELECT r.id FROM workflow_node_runs nr
+  JOIN workflow_runs r ON r.id = nr.run_id
+ WHERE r.task_id = ? AND nr.session_key = ?
+ ORDER BY nr.created_at DESC, nr.id DESC LIMIT 1`, taskID, sessionKey).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(runID), nil
+}
+
 // LatestTaskSessionKey 返回「这条任务最近一次真正在用的会话」，供 Router 选择
 // 接续（session_mode=continue）时把新一轮 Run 直接绑上去。
 //

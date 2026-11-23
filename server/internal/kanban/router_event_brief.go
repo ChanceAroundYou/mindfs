@@ -169,22 +169,7 @@ func attachRouterEventBrief(ctx context.Context, store *TaskStore, brief *Situat
 		RunStatus:  routerEventRunStatus(event.Kind),
 	}
 	brief.Evidence = evidence
-	if event.Kind == RouterEventDirectStalled {
-		// 直连事件没有 Run：可核对的证据只有那条卡住的回复行本身，节点段留空，
-		// 也不写「run 不存在」这种会误导模型的未验证项。
-		attachRouterEventDirectReply(ctx, store, evidence, event)
-	} else if event.Kind == RouterEventTurnSettled {
-		// 会话回合也没有 Run。证据是事件载荷里的会话/时长/产出摘要，节点段留空，
-		// 同样不写「run 不存在」——那句话会让 Router 以为执行失败了。
-	} else if routerEventHealthKind(event.Kind) {
-		// 巡检/恢复事件同样没有 Run：证据是载荷里的水位与会话状态。
-		evidence.Unverified = append(evidence.Unverified, routerEventHealthUnverified(event)...)
-	} else if run, err := store.WorkflowRunByID(ctx, event.RunID); err != nil || run == nil {
-		evidence.RunStatus = "missing"
-		evidence.Unverified = append(evidence.Unverified, fmt.Sprintf("run %s: not found in task store", event.RunID))
-	} else {
-		attachRouterEventNodes(ctx, store, evidence, run, event)
-	}
+	attachRouterEventEvidence(ctx, store, evidence, event)
 	if brief.Event.Truncated {
 		evidence.Unverified = append(evidence.Unverified,
 			"event payload was truncated; only whitelisted fields are shown")
