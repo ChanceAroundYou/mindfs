@@ -27,7 +27,12 @@ func turnInterruptedFixture(t *testing.T, mode RouterSupervisionMode) (*coordina
 	f.stopLoop(t)
 	f.svc.SetSessionRunningProbe(func(string) bool { return false })
 	ctx := context.Background()
-	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	// 现场时间必须相对**真实时钟**：这条现场会被 settleOrphanDirectReplies →
+	// turn_interrupted 事件 → consumeEvents → healthEventSupervision 消费，而那条
+	// 链路内部用的是 time.Now()，并按 routerInterruptedRetryMaxAge 判「中断太久
+	// 就不再自动重开」。曾把这里钉成固定的 2026-11-22T12:00Z，于是同一个用例在
+	// 24 小时之后必然转红 —— 一个随时间流逝自己失效的测试，与被测行为无关。
+	now := time.Now().UTC().Truncate(time.Second)
 	acts := NewActivityStore(f.store.db)
 	must(t, acts.Insert(ctx, &TaskActivity{
 		ID: "uact-direct", TaskID: "task-1", RootID: f.root.ID,
@@ -140,7 +145,7 @@ func TestTurnInterruptedEventRestartsTurn(t *testing.T) {
 // 行为：turn_interrupted 的监管块认得出「这一轮已经被重启结算」，于是重开不需要
 // 「旧回复仍停在 pending/running」这个前提 —— 那条回复永远不会再有进展了。
 func TestHealthSupervisionInterruptedAllowsRetryOfSettledReply(t *testing.T) {
-	f, _ := turnInterruptedFixture(t, RouterSupervisionOn)
+	f, now := turnInterruptedFixture(t, RouterSupervisionOn)
 	ctx := context.Background()
 	f.svc.settleOrphanDirectReplies(ctx, f.store)
 	events := turnInterruptedEvents(t, f)
@@ -152,7 +157,7 @@ func TestHealthSupervisionInterruptedAllowsRetryOfSettledReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	obs := f.svc.healthEventSupervision(ctx, f.store, task, events[0], time.Now().UTC())
+	obs := f.svc.healthEventSupervision(ctx, f.store, task, events[0], now)
 	if obs == nil || obs.Direct == nil {
 		t.Fatalf("observation = %+v, want a direct supervision block", obs)
 	}

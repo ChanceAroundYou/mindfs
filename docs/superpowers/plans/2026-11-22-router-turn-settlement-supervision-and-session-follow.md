@@ -322,3 +322,14 @@ Plan 2026-11-22。用户要求「审阅任务运行和 Router，至少找出三�
 的假红，HEAD 上该锚点存在）。Scope: G-PS（e2e 目录另被 G-BA 前缀条目覆盖，本组给语义与失败症状）。
 
 **状态**：W1–W5 全部实现并验收；**未部署、未重启任何节点、未改任何线上配置**。
+
+**时炸弹修复（2026-11-23）**：`turnInterruptedFixture` 把现场钉在固定的
+`2026-11-22T12:00Z`，而 `settleOrphanDirectReplies → turn_interrupted → consumeEvents →
+healthEventSupervision` 这条链路内部用的是 `time.Now()`，按 `routerInterruptedRetryMaxAge`（24h）
+判「中断太久就不再自动重开」。于是 `TestTurnInterruptedEventRestartsTurn` 与
+`TestHealthSupervisionInterruptedAllowsRetryOfSettledReply` 在 2026-11-23T11:30Z 之后
+**必然转红**（实测 `retry_allowed=false`、决策 `rejected`，而额度还是 0/3）—— 一个随时间流逝
+自己失效的测试，与被测行为无关。修法：现场时间改为 `time.Now().UTC()` 的相对偏移，
+并让显式调用点复用同一个 `now`（原先那处传的是 `time.Now()`，与冻结现场差 25 小时）。
+变异验证：把 `routerInterruptedRetryMaxAge` 改成 0，两条用例立即转红 —— 修完之后它们仍然守得住。
+**根因不在本组改动**：被测文件与本分支 HEAD 逐字相同，主干同样会红。
