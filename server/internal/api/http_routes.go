@@ -218,6 +218,11 @@ func (h *HTTPHandler) Routes() http.Handler {
 		r.Get("/api/control-sync/conflicts", h.handleControlSyncConflicts)
 		r.Post("/api/control-sync/conflicts/{id}/resolve", h.handleControlSyncConflictResolve)
 	}
+	// 配对：只挂在还没配好的边控端上。这条路径不能进 requireSyncToken —— 它存在的
+	// 理由就是「这台机器还没有 token」。守卫是本机回环，见 handleControlSyncPair。
+	if h.ControlSyncPair != nil {
+		r.Post("/api/control-sync/pair", h.handleControlSyncPair)
+	}
 	r.Post("/api/imports/github", h.handleGitHubImportStart)
 	r.Get("/api/web-push/status", h.handleWebPushStatus)
 	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)

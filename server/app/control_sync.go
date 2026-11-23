@@ -35,6 +35,14 @@ type ControlSyncOptions struct {
 	TokenFile string
 	// BuildVersion 是本进程的版本号，随 head 下发供对端诊断（不参与拒绝判定）。
 	BuildVersion string
+	// ConfigPath 是本进程实际读到的 config.json 路径（显式 -config 优先，否则缺省路径）。
+	// 只有边缘用得上：配对成功后要把 control_sync 段写回去，重启后才会以配对身份起来。
+	ConfigPath string
+	// PendingPairing 表示「这台机器想当边控端，但还没配好」：不启同步，只挂配对端点。
+	//
+	// 没有这一档的话，未配对的边缘在 cli 侧就会被拒（没有 token 不许起），用户拿到的
+	// 是一个起不来的服务 —— 连填配对表单的页面都没有。
+	PendingPairing bool
 }
 
 // controlSyncStores 是同步域赖以读写的既有权威存储。nil 表示那份存储没建起来。
@@ -63,6 +71,9 @@ type controlSyncWiring struct {
 	proxy *api.ControlProxy
 	// uiMirror 只有边缘非空：把主节点的前端构建搬到本机，主节点不可达时仍能出页面。
 	uiMirror *controlsync.UIMirror
+	// pairing 只有边缘非空：还没配好的机器靠它接上主控端。配对成功后要重启才生效，
+	// 所以它只负责落盘，不负责切换运行态。
+	pairing api.ControlSyncPairing
 }
 
 // uiMirrorOf 在 wiring 为 nil（未启用同步）时也安全。
@@ -95,6 +106,7 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 	h.ControlSyncConflicts = w.conflicts
 	h.ControlSyncEdges = w.edges
 	h.ControlSyncToken = w.token
+	h.ControlSyncPair = w.pairing
 }
 
 // wrapRoot 按角色包一层中间件：采集在内、转发在外。
@@ -104,6 +116,9 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 // 写入是否冻结由 ControlProxy 按域判定。
 func (w *controlSyncWiring) wrapRoot(next http.Handler) http.Handler {
 	if w == nil {
+		return next
+	}
+	if w.capturer == nil {
 		return next
 	}
 	root := w.capturer.WriteCapture(next)
@@ -116,7 +131,13 @@ func (w *controlSyncWiring) wrapRoot(next http.Handler) http.Handler {
 // startControlSync 组装控制面同步。opts 为 nil / 未启用时返回 (nil, nil)：
 // 这台机器保持改造前的行为，不建库也不起任何后台循环。
 func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole nodeinfo.Role, configDir string, stores controlSyncStores) (*controlSyncWiring, error) {
-	if opts == nil || !opts.Enabled {
+	if opts == nil {
+		return nil, nil
+	}
+	if opts.PendingPairing {
+		return pendingPairingWiring(opts, nodeRole), nil
+	}
+	if !opts.Enabled {
 		return nil, nil
 	}
 	if nodeRole == nodeinfo.RoleWorker {
@@ -214,6 +235,10 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		w.feed = rt.Feed()
 		w.edges = store
 		w.token = cfg.Token
+	} else {
+		// 已配对但运行中的边缘也挂配对端点：换主控端是同一件写配置＋换密钥的事，
+		// 多留一条人工改文件的路径只会让「换主控」变成一次手工事故。
+		w.pairing = newControlSyncPairer(opts)
 	}
 	if mode := rt.Mode(); mode != nil {
 		// 边缘：状态/模式端点 + 转发器。转发器只有在 online 时真的转发，

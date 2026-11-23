@@ -14074,10 +14074,10 @@ groups:
       - 'web/src/components/file/FileTreeEntryFilters.ts:unreachable: !!nid && !!isUnreachable?.(nid)'
       - 'web/src/components/file/FileTreeProjectContent.tsx:const emptyKey: MessageKey = nodesAvailability === "table-unreachable"'
       - 'web/src/components/file/fileTreeEntries.tsx:        if (nodeDead) return;'
-      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string) (*app.ControlSyncOptions, error) {'
-      - 'cli/cmd/control_sync.go:if strings.EqualFold(role, "edge") {'
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string, configPath string) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:opts.PendingPairing = true'
       - 'cli/cmd/startup.go:ControlSync *startupControlSyncConfig `json:"control_sync"`'
-      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag)'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag, effectiveConfigPath(*configFlag))'
       - 'server/app/control_sync.go:if nodeRole == nodeinfo.RoleWorker {'
       - 'server/app/control_sync.go:if cfg.Role == controlsync.RolePrimary && cfg.Token == "" {'
       - 'server/app/control_sync.go:root := w.capturer.WriteCapture(next)'
@@ -14382,8 +14382,9 @@ groups:
       `CreateTemp → WriteString → Chmod 0600 → Rename`，中途失败不留半份 token
       （半个 token 比没有更难查 —— 它看起来像配置存在，只是永远验不过）；目录
       写完再 `Chmod 0700`（`MkdirAll` 不改已有目录权限）。日志只打路径，**永不打
-      token 本身**。边缘**没有**这条退路：读不到 token 就在 cli 侧报错，不带着空
-      token 起来之后每次同步都失败。
+      token 本身**。边缘**没有**这条退路（W2/G-QA 起改成「等配对」档：读不到 token 时
+      服务照常起、只挂 `POST /api/control-sync/pair`，由本机页面完成配对；在此之前
+      这里是 cli 侧直接报错 —— 那一版把用户关在门外，连填表单的页面都没有）。
       **③ 名单接线 + 踢人生效**。`controlsyncWiring` 加 `edges` 字段、
       `applyTo` 装进 handler、主节点分支 `w.edges = store`（边缘保持 nil —— 它没有
       「谁在同步我」的视角）。注册发生在 `requireSyncToken` **验签通过之后**
@@ -14420,10 +14421,10 @@ groups:
       - server/internal/controlsync/store_test.go
       - internal/deploy/release_key_test.go
     anchors:
-      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string) (*app.ControlSyncOptions, error) {'
-      - 'cli/cmd/control_sync.go:if strings.EqualFold(role, "edge") {'
+      - 'cli/cmd/control_sync.go:func controlSyncOptions(cfg startupConfig, nodeRole string, configPath string) (*app.ControlSyncOptions, error) {'
+      - 'cli/cmd/control_sync.go:opts.PendingPairing = true'
       - 'cli/cmd/control_sync.go:const controlSyncTokenFileName = "control_sync.token"'
-      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag)'
+      - 'cli/cmd/mindfs.go:controlSyncCfg, err := controlSyncOptions(startupCfg, *roleFlag, effectiveConfigPath(*configFlag))'
       - 'server/app/control_sync_token.go:func ensurePrimarySyncToken(path string) (string, error) {'
       - 'server/app/control_sync_token.go:const syncTokenBytes = 32'
       - 'server/app/control_sync_guard.go:func guardSinglePrimary(ctx context.Context, store *controlsync.Store, cfg controlsync.Config) error {'
@@ -14439,3 +14440,76 @@ groups:
       - 'docs/multi-node-control-plane.md:**一台机器只能有一个主控。**'
       - 'server/internal/api/http_control_sync_edges_test.go:func TestRevokedEdgeGets403(t *testing.T) {'
       - 'cli/cmd/control_sync_test.go:func TestControlSyncOptionsDefaultEnabledForControl(t *testing.T) {'
+  - id: G-QA
+    title: 边控端握手：POST /api/control-sync/pair（探活 / 验签 / 落 token / 写回 config）
+    kind: feature
+    symptom: |
+      「主控端能接受边缘控制端的握手、主动发现和同步」缺的是**握手这一段**：
+      装好的第二台 control 既没有 token 也没有 `primary_url`，而 cli 侧在缺 token 时
+      直接拒绝启动 —— 那台机器连页面都出不来，用户没有任何地方可以填「主控端在哪」。
+      全仓也没有任何写回 `config.json` 的函数：即便手工起了个表单，配完也无处落盘，
+      重启后回到原样。
+    why: |
+      **配对是一次有顺序的四步，任何一步失败都不留痕**（`controlsync.Pair`）：
+
+      1. 本地校验：`primary_url` 非空、`token_file` 与 `config.json` 路径已知、
+         `ValidateSyncToken`（≥16 字节、无空白）、`parsePrimaryURL` 要求 https；
+      2. 探活 `GET <primary>/health`：`ok` 必须 true、`role` 必须 `control` ——
+         挡的是「把 worker 当主控」和「地址填到了别的服务」；
+      3. 签名 GET `<primary>/api/control-sync/head`：401 区分「token 对不上」、
+         404 区分「主控端没开启同步」、schema 不匹配直接拒（拿旧副本合新控制面
+         比不同步更糟）。这一步才真正证明 token 与版本都对；
+      4. 落盘：先 `WriteSyncTokenFile`（目录 0700、文件 0600、临时文件 + rename），
+         再 `config.UpdateJSONFile` 只改 `control_sync` 段。
+
+      **写回只碰 `control_sync`**（`applyPairing`）：其余键原样保留，`UseNumber` 防
+      大整数被 float64 改写，`ca_file` 为空时删键而不是留空串。写入时把
+      `control_sync.role` 定成 `edge`，显式写着 `role: worker` 的一并纠正成 `control`——
+      否则配好的是个不注入静态目录的 worker，打开页面是 403。
+
+      **配对端点只在未配好的边缘上注册，且只接受本机回环**：`PendingPairing` 这一档
+      让服务在「还没有 token」时照常起、只挂 `POST /api/control-sync/pair`（不建库、
+      不采集、不转发）；没有这一档，未配对边缘在 cli 侧就起不来，用户拿不到填表单的
+      页面。它此时没有 token 可校验 —— token 正是它要解决的问题 —— 而配对会改信任锚、
+      写通道密钥、改 `config.json`，三件事凑起来等于在 `0.0.0.0` 上开一个无鉴权的
+      「重定向整份控制面」入口，所以按 `RemoteAddr` 判本机回环，**不信**
+      `X-Forwarded-For`（那类头任何人都能写）。
+
+      **配对不重启**：路由、同步器、转发中间件都在启动期装配（每账户一个 handler，
+      根中间件只包一次），运行期改不了。所以返回 `restart_required: true`，重启交给
+      用户 / 安装器的托盘菜单。`os.Exit(0)` 自重启在两种部署里都不成立：本机 systemd
+      是 `Type=simple` + `Restart=on-failure`，pc-win 计划任务的
+      `RestartOnFailure` 只认非零退出。
+
+      已配对但运行中的边缘也挂这条端点：换主控端是同一件「写配置 + 换密钥」，多留一条
+      人工改文件的路径只会让「换主控」变成一次手工事故。
+    files:
+      - server/internal/config/configfile.go
+      - server/internal/controlsync/pairing.go
+      - server/internal/controlsync/token.go
+      - server/internal/api/http_control_sync_pair.go
+      - server/app/control_sync_pairing.go
+      - cli/cmd/control_sync.go
+      - docs/multi-node-control-plane.md
+    tests:
+      - server/internal/config/configfile_test.go
+      - server/internal/controlsync/pairing_test.go
+      - server/internal/api/http_control_sync_pair_test.go
+      - server/app/control_sync_pairing_test.go
+      - cli/cmd/control_sync_test.go
+    anchors:
+      - 'server/internal/config/configfile.go:func UpdateJSONFile(path string, mutate func(map[string]any) error) error {'
+      - 'server/internal/config/configfile.go:temp, err := os.CreateTemp(dir, ".config-*.tmp")'
+      - 'server/internal/controlsync/pairing.go:func Pair(ctx context.Context, req PairRequest, tokenFile, configPath string) (PairResult, error) {'
+      - 'server/internal/controlsync/pairing.go:var ErrPairUnreachable = errors.New("control_sync: primary unreachable")'
+      - 'server/internal/controlsync/pairing.go:func applyPairing(section map[string]any, req PairRequest) error {'
+      - 'server/internal/controlsync/token.go:func WriteSyncTokenFile(path, token string) error {'
+      - 'server/internal/api/http_control_sync_pair.go:func (h *HTTPHandler) handleControlSyncPair(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_control_sync_pair.go:func isLoopbackRequest(r *http.Request) bool {'
+      - 'server/internal/api/http_routes.go:r.Post("/api/control-sync/pair", h.handleControlSyncPair)'
+      - 'server/app/control_sync_pairing.go:func pendingPairingWiring(opts *ControlSyncOptions, nodeRole nodeinfo.Role) *controlSyncWiring {'
+      - 'server/app/control_sync.go:if opts.PendingPairing {'
+      - 'cli/cmd/control_sync.go:func effectiveConfigPath(explicit string) string {'
+      - 'docs/multi-node-control-plane.md:### 首次配对（不用手搓 JSON）'
+      - 'server/internal/api/http_control_sync_pair_test.go:func TestPairRejectsNonLoopback(t *testing.T) {'
+      - 'server/internal/controlsync/pairing_test.go:func TestPairLeavesNothingOnFailure(t *testing.T) {'

@@ -253,12 +253,46 @@ curl -sS -X POST -H "Authorization: Bearer $TOKEN" "$BASE/api/control-sync/edges
 `primary_url` 必须是 `https://`（`controlsync/mode.go` 的 `parsePrimaryURL` 直接拒 http），
 自签/内网 CA 走 `ca_file`；**没有** `insecure_skip_verify` 这个开关。
 
-边缘与主节点的差别只有一处，但它决定「起得来」还是「起不来」：**边缘没有 token 就直接
-拒绝启动**，不会替它生成一份 —— 自动生成会让每台机器拿着不同的钥匙，症状是
-「每台都说自己配对好了，却谁也同步不了」。文件放哪由 `token_file` 说，缺省
-`<config-dir>/mindfs/control_sync.token`（Windows 是
-`%AppData%\mindfs\control_sync.token`）。同步起不来时先看这条路：文件不存在、内容为空、
-或与主节点不一致，都会被 cli 侧在起服务之前拦下并给出路径。
+边缘**不生成** token —— 自动生成会让每台机器拿着不同的钥匙，症状是「每台都说自己
+配对好了，却谁也同步不了」。token 从 `token_file` 读（缺省
+`<config-dir>/mindfs/control_sync.token`，Windows 是 `%AppData%\mindfs\control_sync.token`），
+**只允许**由配对流程或人工拷贝写入。
+
+### 首次配对（不用手搓 JSON）
+
+上面那份 `config.json` 不需要人手写。装好就往这台机器自己的页面发起一次配对：
+
+```bash
+curl -sS -X POST http://127.0.0.1:7332/api/control-sync/pair \
+  -H 'content-type: application/json' \
+  -d '{"primary_url":"https://home.xiaokubao.space/mindfs","token":"<主节点 token_file 的内容>"}'
+# {"status":"paired","restart_required":true,"instance_id":"pc-win",
+#  "primary_url":"https://home.xiaokubao.space/mindfs","primary_version":"v0.5.5-1300","head_rev":42}
+```
+
+一次配对做四件事，顺序固定（任何一步失败都不落盘）：
+
+1. 校验 `primary_url` 必须是 `https://`、token ≥16 字节且不含空白；
+2. 探活 `GET <primary_url>/health`，要求 `ok=true` 且 `role=control` —— 它挡的是
+   「把 worker 当主控」和「地址填到了别的服务」；
+3. 签名 GET `<primary_url>/api/control-sync/head`（这一步才真正验证 token 与 schema）：
+   401 → 「token 对不上，重新拷一份」；404 → 「主控端没启用同步，先在那边开」；
+   schema 版本不符直接拒（拿旧副本合新控制面比不同步更糟）；
+4. 落盘：token 写 `token_file`（目录 `0700`、文件 `0600`、原子换名），
+   `config.json` 只改 `control_sync` 段 —— 其余键（`role` / `router` / `live_compact` …）
+   原样保留，大整数不被浮点改写，`ca_file` 为空时删键而不是留空串。
+
+配对写入时把 `control_sync.role` 定成 `edge`，若显式写着 `role: worker` 会一并纠正成
+`control` —— 否则配对成功的机器是个不注入静态目录的 worker，打开页面是 403。
+
+**配对不重启，必须重启进程才生效**：路由、同步器、转发中间件都在启动期装配，
+`restart_required=true` 就是这件事的如实告知。Windows 边控端由安装器的托盘菜单重启；
+Linux 上 `systemctl --user restart mindfs`。
+
+**配对端点只在未配好的边缘（`PendingPairing`）上注册，且只接受本机回环请求**（按
+`RemoteAddr` 判断，不信 `X-Forwarded-For`）。它没有 token 可校验 —— token 正是它要解决的
+问题 —— 而它会改信任锚、写通道密钥、改 `config.json`。反代把请求转到回环上确实会让它
+「看起来是本机」，那种部署下这个入口该由运维自己收口。
 
 自检三条：
 

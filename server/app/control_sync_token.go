@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"mindfs/server/internal/controlsync"
 )
 
 // syncTokenBytes 是自生成 token 的熵。32 字节 → 43 字符 base64url，
@@ -40,7 +41,7 @@ func ensurePrimarySyncToken(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := writeSyncTokenFile(path, token); err != nil {
+	if err := controlsync.WriteSyncTokenFile(path, token); err != nil {
 		return "", err
 	}
 	log.Printf("[control-sync] generated sync token at %s (share it with edge nodes)", path)
@@ -69,39 +70,4 @@ func newSyncToken() (string, error) {
 		return "", fmt.Errorf("control_sync: generate token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
-}
-
-// writeSyncTokenFile 落盘。先写临时文件再改名：中途失败不会留下半份 token
-// （半个 token 比没有更难查 —— 它看起来像配置存在，只是永远验不过）。
-//
-// 目录与文件权限在写完后再收紧一次：目录可能早就存在（0644 建的），
-// 而 MkdirAll 不会改已有目录的权限。
-func writeSyncTokenFile(path string, token string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("control_sync: create token dir: %w", err)
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return fmt.Errorf("control_sync: chmod token dir: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".control_sync.token-*")
-	if err != nil {
-		return fmt.Errorf("control_sync: create token file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.WriteString(token + "\n"); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("control_sync: write token file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("control_sync: close token file: %w", err)
-	}
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return fmt.Errorf("control_sync: chmod token file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("control_sync: install token file: %w", err)
-	}
-	return nil
 }
