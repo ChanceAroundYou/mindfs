@@ -122,9 +122,16 @@ func (s *session) handleResultMessage(msg claudeagent.ResultMessage, raw []byte)
 		return
 	}
 	// 回合边界。Claude may place the final text here when no incremental tokens
-	// were streamed, so emit it as a last fallback.
+	// were streamed, so emit it as a last fallback —— 只在**成功**回合发。
+	//
+	// 失败 result 的 Result 是 harness 错误文案（如 `Prompt is too long`），
+	// 不是这一轮的助手正文。照原样发出去会落成可见正文；上一轮失败后补发
+	// `continue` 再失败一次，同一句就被 MessageChunk 拼成
+	// `Prompt is too longPrompt is too long`。失败本身由 completeTurn 的错误
+	// 通道交给上层展示。
+	turnErr := resultErr(msg)
 	s.flushAllDeltas()
-	if !s.sawMessageText && strings.TrimSpace(msg.Result) != "" {
+	if turnErr == nil && !s.sawMessageText && strings.TrimSpace(msg.Result) != "" {
 		s.emitMessageChunk(msg.Result)
 	}
 	s.updateContextWindow(msg)
@@ -135,7 +142,7 @@ func (s *session) handleResultMessage(msg claudeagent.ResultMessage, raw []byte)
 		SessionID: s.SessionID(),
 		Data:      types.MessageDone{ContextWindow: contextWindow, TokenUsage: tokenUsage},
 	})
-	s.completeTurn(resultErr(msg))
+	s.completeTurn(turnErr)
 	s.sawDelta = false
 	s.sawMessageText = false
 }

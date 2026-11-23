@@ -15240,3 +15240,53 @@ groups:
       - 'server/internal/kanban/router_coordinate.go:taskHealthSweep(ctx, rs.rootID, now)'
       - 'server/internal/api/ws.go:svc.BeginOutOfBandSessionTurn(ctx, rootID, key)'
       - 'server/internal/kanban/task_runtime_status_test.go:func TestOutOfBandTurnLivenessRestoresOnlyWhenAlone('
+  - id: G-QO
+    title: "上下文溢出：错误结果不再当正文、不重试本轮、不连坐回收运行时"
+    kind: fix
+    symptom: |
+      线上会话出现 `Prompt is too longPrompt is too long` 的重复正文。journal 里同一轮
+      先收到一条 `is_error=true, result="Prompt is too long", terminal_reason="blocking_limit"`
+      的 result，补发 `continue` 后又收到一条同样的 result；`handleResultMessage` 在
+      「本轮还没见过助手正文」时把 Result 当正文发成 MessageChunk，两次直接拼接。
+      同时 `recoverAgentTurn` 对这条错误照样重试 3 次（每次 30 秒），浪费请求且不改结果。
+    why: |
+      不能把 `prompt is too long` 加进 `isNonRecoverableAgentError`：那条路径会
+      `KillAgentProcess` 掉该 agent 名下的所有会话，把同 agent 其它正常会话连坐杀掉。
+      必须保留三条判据的分工：① 适配层把 `terminal_reason` 用
+      `agenttypes.TurnTerminalError` 带出，失败 result 的 Result 不再发成正文；
+      ② 终端错误（blocking_limit / prompt_too_long）只停本轮、不回收运行时；
+      ③ 非可恢复错误（429/配额/远端压缩失败）仍按原样回收运行时。合上游时这三处
+      任一被顶掉，重复正文或连坐杀会话就会复发。
+    files:
+      - server/internal/agent/types/errors.go
+      - server/internal/agent/claude/session_turn.go
+      - server/internal/agent/claude/session_message_loop.go
+      - server/internal/api/usecase/session_recovery.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/agent/types/errors_test.go
+      - server/internal/agent/claude/session_result_terminal_test.go
+      - server/internal/api/usecase/session_recovery_test.go
+    tests:
+      - 'server/internal/agent/types/errors_test.go:func TestTurnTerminalReasonReadsWrappedError(t *testing.T) {'
+      - 'server/internal/agent/types/errors_test.go:func TestTurnTerminalReasonWithoutTypedErrorIsEmpty(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestResultErrCarriesTerminalReason(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestHandleResultMessageDoesNotEmitErrorResultAsBody(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestRepeatedOverflowResultsNeverBecomeBodyText(t *testing.T) {'
+      - 'server/internal/agent/claude/session_result_terminal_test.go:func TestHandleResultMessageStillEmitsSuccessfulResultBody(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestIsTerminalTurnError(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestPlanSendFailure(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestExplainTerminalTurnErrorKeepsCauseAndNextStep(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestRecoverAgentTurnStopsOnTerminalError(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestApplySendFailureTerminalDoesNotCancelRuntime(t *testing.T) {'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestApplySendFailureNonRecoverableStillRecycles(t *testing.T) {'
+    anchors:
+      - 'server/internal/agent/types/errors.go:type TurnTerminalError struct {'
+      - 'server/internal/agent/types/errors.go:func TurnTerminalReason(err error) string {'
+      - 'server/internal/agent/claude/session_turn.go:return wrapTurnTerminalError(msg, err)'
+      - 'server/internal/agent/claude/session_message_loop.go:if turnErr == nil && !s.sawMessageText && strings.TrimSpace(msg.Result) != "" {'
+      - 'server/internal/api/usecase/session_recovery.go:"blocking_limit":  {},'
+      - 'server/internal/api/usecase/session_recovery.go:func isTerminalTurnError(err error) bool {'
+      - 'server/internal/api/usecase/session_recovery.go:func planSendFailure(err error, sawAssistantChunk bool) sendFailurePlan {'
+      - 'server/internal/api/usecase/session_recovery.go:case plan.Reason == "terminal_turn":'
+      - 'server/internal/api/usecase/session_recovery.go:if isTerminalTurnError(err) {'
+      - 'server/internal/api/usecase/session_send.go:sess, sendErr = s.applySendFailure(sendFailureContext{'
