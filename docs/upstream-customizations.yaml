@@ -9271,7 +9271,7 @@ groups:
       - 'server/internal/kanban/router_event_payload.go:return "revt-turn:" + hex.EncodeToString(sum[:8])'
       - 'server/internal/kanban/service_activities.go:s.emitRunTerminalRouterEvent(ctx, store, run)'
       - 'server/internal/kanban/workflow_driver.go:RouterEventGateWaiting, instanceKey'
-      - 'server/internal/kanban/workflow_recovery.go:RouterEventStartupReconcile'
+      - 'server/internal/kanban/workflow_recovery.go:s.emitStartupReconcileRouterEvent(ctx, store, b.runID'
       - 'server/internal/kanban/workflow_runtime.go:s.emitOperatorOutcomeRouterEvent(ctx, store, run.ID, status)'
 
   # ── Router coordinate 消费（T7）：事件循环、预算、运行期汇报回合 ───────────
@@ -12811,7 +12811,7 @@ groups:
       - 'server/internal/kanban/router_event_types.go:RouterEventTurnSettled RouterEventKind = "turn_settled"'
       - 'server/internal/kanban/router_event_store.go:if ev.RunID == "" && !routerEventAllowsEmptyRun(ev.Kind) {'
       - 'server/internal/kanban/router_event_brief.go:Excerpt string `json:"excerpt,omitempty"`'
-      - 'server/internal/kanban/router_event_brief.go:} else if event.Kind == RouterEventTurnSettled {'
+      - 'server/internal/kanban/router_event_brief.go:attachRouterEventEvidence(ctx, store, evidence, event)'
       - 'server/internal/kanban/router_coordinate.go:kind = RouterTriggerTurnSettled'
       - 'server/internal/kanban/router_coordinate.go:triggerRef = strings.TrimSpace(ev.TurnID)'
       - 'server/internal/api/appcontext_task_flags.go:s.settleSessionTurnForRouter(rootID, sessionKey, turnID, pending)'
