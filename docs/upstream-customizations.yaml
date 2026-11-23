@@ -14543,3 +14543,64 @@ groups:
       - 'docs/multi-node-control-plane.md:### 首次配对（不用手搓 JSON）'
       - 'server/internal/api/http_control_sync_pair_test.go:func TestPairRejectsNonLoopback(t *testing.T) {'
       - 'server/internal/controlsync/pairing_test.go:func TestPairLeavesNothingOnFailure(t *testing.T) {'
+  - id: G-QB
+    title: 边控端静默自动更新：update.auto_install 判据 + 空闲闸门（代码默认关）
+    kind: feature
+    symptom: |
+      Windows 独立安装包要「参考安卓客户端」自动更新，但改造前**代码里根本没有静默安装这一步**：
+      `update.Service.Start` 只做 `CheckNow`（把 `Status` 标成 `available`），装更新的唯一入口是
+      `TriggerUpdate`，而它只由 `POST /api/app/update` 与 CLI `-update` 调用。装上安装包后每台
+      边控端都会停在「有新版本」，等一个永远不会有人点按钮的页面。
+    why: |
+      **判据抽成纯函数 `autoInstallDecision`（`server/internal/update/auto_install.go`），六条分支
+      各自值一次事故**：
+
+      - 未开 → `disabled`。这是默认值，**必须**是默认值（见下一条）；
+      - `!AutoUpdateSupported` → `unsupported`。安装布局不支持时（portable 目录、dev 构建、
+        缺发布公钥）`installUpdate` 装完也不会重启，硬装只会把状态写到 `failed`；
+      - 无新版本 / 版本号为空 → `no-update`；
+      - 已在 `downloading` / `installing` / `restarting` → `in-progress`，重复触发会让
+        `TriggerUpdate` 回 error 并把它写进 `Status.Message`，用户看到一条假故障；
+      - 有会话在跑 → `busy`，**这一条是整组的理由**：装完会替换二进制并重启进程，正在跑的
+        agent 回合被腰斩在半句上，转录停在中间；
+      - 全过 → `install`。
+
+      **代码默认 false，且只该由 Windows 独立安装包写 true**：Unix 侧 systemd 单元是
+      `Type=simple` + `Restart=on-failure`（退出码 0 不重拉），而替换进程的路径是
+      `startReplacementProcess` + `os.Exit(0)` 且 `Setsid: true` 脱离 cgroup —— 静默重启
+      等于让服务从 systemd 眼里消失，还会顺手杀掉正在跑的 claude 子进程。pc-win 的计划任务
+      （S4U + BootTrigger）才扛得住重启，所以只有那条部署形态打开它。
+
+      **空闲闸门接的是 `Pool.HasAnyActiveUse()`，不是 `ListReplyingSessions()`**。后者按账户枚举
+      `Active || AwaitingAnswer` 的会话，而共享 Pool 是全局一份、`activeUses > 0` 正是
+      `pool.Close` 掐进程（repoint / 部署）用的同一个判据；按账户枚举会漏掉节点会话与委派会话，
+      也就是漏掉「真的会被腰斩的那个回合」。
+
+      **触发失败只打日志、不 panic**：`TriggerUpdate` 的错误已经写进 `Status`，下一拍 ticker 会
+      重试；让一个可选特性把整个进程带下来是更糟的失败模式。每拍一行
+      `[update] auto_install.skip reason=...`（`disabled` / `no-update` 不打，否则每小时两行噪音）
+      是排查「它为什么没装」的唯一线索。
+    files:
+      - server/internal/update/auto_install.go
+      - server/internal/update/auto_install_test.go
+      - server/internal/update/service.go
+      - server/internal/update/release_fetch.go
+      - server/internal/agent/pool.go
+      - cli/cmd/startup.go
+      - cli/cmd/startup_update_test.go
+      - cli/cmd/mindfs.go
+      - server/app/server.go
+    tests:
+      - server/internal/update/auto_install_test.go
+      - cli/cmd/startup_update_test.go
+    anchors:
+      - 'server/internal/update/auto_install.go:func autoInstallDecision(st Status, autoInstall, busy bool) (bool, string) {'
+      - 'server/internal/update/auto_install.go:case busy:'
+      - 'server/internal/update/release_fetch.go:s.checkAndMaybeInstall(context.Background())'
+      - 'server/internal/update/service.go:// 静默自动更新（见 auto_install.go）：默认关闭，由 Windows 安装包显式打开。'
+      - 'server/internal/agent/pool.go:func (p *Pool) HasAnyActiveUse() bool {'
+      - 'server/app/server.go:updateSvc.SetBusyProbe(sharedPool.HasAnyActiveUse)'
+      - 'server/app/server.go:UpdateAutoInstall bool'
+      - 'cli/cmd/startup.go:func updateAutoInstall(cfg startupConfig) bool {'
+      - 'cli/cmd/startup_update_test.go:func TestUpdateAutoInstallDefaultsOff(t *testing.T) {'
+      - 'cli/cmd/startup_update_test.go:func TestServerOptionsCarryUpdateAutoInstall(t *testing.T) {'
