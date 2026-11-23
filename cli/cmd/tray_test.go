@@ -2,6 +2,7 @@ package main
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 	"unsafe"
 )
@@ -101,9 +102,74 @@ func TestTrayIsWindowsOnlyAndOpensThePageOnQuit(t *testing.T) {
 		t.Fatalf("tooltip = %q, want the addr in it so a multi-node box is distinguishable", got)
 	}
 
-	// 右键菜单只留「退出」：开页面双击图标就行，不必占菜单位（用户 2026-10-19 明确要求）。
+	// 菜单三项，顺序固定：打开页面 / 重启以应用配对 / 退出。
+	// 2026-10-19 用户曾要求「只留退出，开页面双击图标就行」；W3 的 Windows 安装包把托盘
+	// 当成了唯一入口（计划任务跑在 Session 0，没有终端、也没有开始菜单项），双击图标成了
+	// 一个没有提示的隐藏手势，所以显式补回「打开页面」；「重启以应用配对」是边控端配好之后
+	// 唯一的重启路径（配对端点只回 restart_required，不自己重启）。退出必须仍在，且 ID 不变。
 	items := trayMenuItems()
-	if len(items) != 1 || items[0].ID != menuQuitID {
-		t.Fatalf("menu must be exactly quit, got %v", items)
+	want := []trayMenuItem{
+		{ID: menuOpenPageID, Label: "打开页面"},
+		{ID: menuRestartID, Label: "重启以应用配对"},
+		{ID: menuQuitID, Label: "退出"},
+	}
+	if len(items) != len(want) {
+		t.Fatalf("menu must be open/restart/quit, got %v", items)
+	}
+	for i := range want {
+		if items[i] != want[i] {
+			t.Fatalf("menu[%d] = %+v, want %+v", i, items[i], want[i])
+		}
+	}
+	// ID 是 WM_COMMAND 的唯一标识，换一个就等于把行为换到别的项上。退出保持 101。
+	for _, c := range []struct {
+		name string
+		got  uint32
+		want uint32
+	}{
+		{"quit", menuQuitID, 101},
+		{"open", menuOpenPageID, 102},
+		{"restart", menuRestartID, 103},
+	} {
+		if c.got != c.want {
+			t.Fatalf("menu id %s = %d, want %d", c.name, c.got, c.want)
+		}
+	}
+}
+
+// 「重启以应用配对」不许用 schtasks /end：那是 TerminateProcess，会把正在写盘的收尾砍在半路。
+// 契约是「先等本进程自己退出，再 /run」。而早一步 /run 会被 IgnoreNew 静默吞掉（实测真机
+// 任务 XML 的 MultipleInstancesPolicy），所以那个等待循环是必需项，不是保险丝。
+func TestTrayRestartWaitsForExitThenRunsTask(t *testing.T) {
+	got := trayRestartScript(4321, `C:\Program Files\mindfs\mindfs.exe`, []string{"--addr", "0.0.0.0:7332"})
+	for _, want := range []string{
+		"$pidToWait = 4321",
+		"Get-Process -Id $pidToWait",
+		"schtasks.exe /run /tn " + trayRestartTaskName,
+		"'--addr', '0.0.0.0:7332'",
+		"'C:\\Program Files\\mindfs\\mindfs.exe'",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("restart script missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "/end") {
+		t.Fatalf("restart script must not terminate the task; the process exits on its own:\n%s", got)
+	}
+	if !strings.Contains(got, "Start-Sleep -Milliseconds 200") {
+		t.Fatalf("restart script must poll for the old pid; IgnoreNew would swallow an early /run:\n%s", got)
+	}
+}
+
+// PowerShell 单引号串里的 ' 必须写成 ”，否则路径里的 ' 会提前闭合字符串。
+func TestTrayPSQuoteDoublesSingleQuotes(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{`C:\mindfs`, `'C:\mindfs'`},
+		{`C:\it's`, `'C:\it''s'`},
+		{`"quoted"`, `'"quoted"'`},
+	} {
+		if got := trayPSQuote(c.in); got != c.want {
+			t.Fatalf("trayPSQuote(%q) = %s, want %s", c.in, got, c.want)
+		}
 	}
 }
