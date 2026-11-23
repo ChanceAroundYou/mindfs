@@ -16,6 +16,11 @@ import (
 
 // turnInterruptedFixture 造一条「上一进程死在回合中间」的现场：用户留言 + 旧回复
 // 仍停在 running，任务 running，没有任何活会话。
+//
+// 锚点取调用时刻而不是固定日期：重启重开的判据里有「中断后 24 小时内才允许重试」，
+// 而决策时重算监管块的时钟是真实的 time.Now()。固定成 2026-11-22T12:00Z 时，
+// 现场在 2026-11-23T12:00Z 之后对代码来说就已经「过期 26 小时」，retry_allowed
+// 永远 false —— 两条用例正是这样在第二天集体变红的。
 func turnInterruptedFixture(t *testing.T, mode RouterSupervisionMode) (*coordinateFixture, time.Time) {
 	t.Helper()
 	f := newCoordinateFixture(t, RouterModeCoordinate)
@@ -27,7 +32,7 @@ func turnInterruptedFixture(t *testing.T, mode RouterSupervisionMode) (*coordina
 	f.stopLoop(t)
 	f.svc.SetSessionRunningProbe(func(string) bool { return false })
 	ctx := context.Background()
-	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	acts := NewActivityStore(f.store.db)
 	must(t, acts.Insert(ctx, &TaskActivity{
 		ID: "uact-direct", TaskID: "task-1", RootID: f.root.ID,
@@ -97,7 +102,7 @@ func TestSettleOrphanDirectReplyEmitsTurnInterruptedEvent(t *testing.T) {
 // 行为：一条 turn_interrupted 走完整条链路 —— 领取、决策、重开。新回合拿到的
 // 是原始用户留言，旧回复保持 cancelled。这正是「重启后不会主动恢复」要补的那一环。
 func TestTurnInterruptedEventRestartsTurn(t *testing.T) {
-	f, _ := turnInterruptedFixture(t, RouterSupervisionOn)
+	f, now := turnInterruptedFixture(t, RouterSupervisionOn)
 	ctx := context.Background()
 	f.svc.settleOrphanDirectReplies(ctx, f.store)
 	events := turnInterruptedEvents(t, f)
@@ -107,7 +112,7 @@ func TestTurnInterruptedEventRestartsTurn(t *testing.T) {
 	f.agent.calls = []scriptedRouterCall{
 		{tool: "router_retry_direct", args: map[string]any{"reason": "重启把这一轮带走了"}},
 	}
-	f.consumeEvents(t)
+	f.consumeEventsAt(t, now)
 	f.waitEvent(t, events[0].ID, RouterEventDone)
 
 	decision, err := NewRouterStore(f.store.db).DecisionByTurn(ctx, "task-1", events[0].TurnID)
@@ -140,7 +145,7 @@ func TestTurnInterruptedEventRestartsTurn(t *testing.T) {
 // 行为：turn_interrupted 的监管块认得出「这一轮已经被重启结算」，于是重开不需要
 // 「旧回复仍停在 pending/running」这个前提 —— 那条回复永远不会再有进展了。
 func TestHealthSupervisionInterruptedAllowsRetryOfSettledReply(t *testing.T) {
-	f, _ := turnInterruptedFixture(t, RouterSupervisionOn)
+	f, now := turnInterruptedFixture(t, RouterSupervisionOn)
 	ctx := context.Background()
 	f.svc.settleOrphanDirectReplies(ctx, f.store)
 	events := turnInterruptedEvents(t, f)
@@ -152,7 +157,7 @@ func TestHealthSupervisionInterruptedAllowsRetryOfSettledReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	obs := f.svc.healthEventSupervision(ctx, f.store, task, events[0], time.Now().UTC())
+	obs := f.svc.healthEventSupervision(ctx, f.store, task, events[0], now)
 	if obs == nil || obs.Direct == nil {
 		t.Fatalf("observation = %+v, want a direct supervision block", obs)
 	}

@@ -90,6 +90,8 @@ func (h *StreamHub) setPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 	}
 	state.NextEventSeq = 0
 	state.Summary = ""
+	// 每轮重新计数：上一轮的工具调用不能算到这一轮头上。
+	state.ToolCalls = 0
 	state.UpdatedAt = state.User.Timestamp
 	// 顶层用户留言默认要提醒；工作流节点回合会在 OnStart 之后立刻改成 true。
 	state.SilentCompletion = false
@@ -233,6 +235,7 @@ func (h *StreamHub) PendingSessionSnapshotFound(sessionKey string) (PendingSessi
 		UpdatedAt:        state.UpdatedAt,
 		SubSession:       state.SubSession,
 		SilentCompletion: state.SilentCompletion,
+		ToolCalls:        state.ToolCalls,
 	}, true
 }
 

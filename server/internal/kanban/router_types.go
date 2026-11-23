@@ -326,21 +326,25 @@ type RouterDecision struct {
 	PlaceholderActivityID string
 	TriggerKind           RouterTriggerKind
 	TriggerRef            string
-	RouterSessionKey      string
-	TurnID                string
-	BriefHash             string
-	BriefJSON             string
-	Actions               []RouterAction
-	Status                RouterDecisionStatus
-	AppliedSeq            int
-	LegacyAction          *RouterLegacyAction
-	Agreement             string
-	Error                 string
-	LatencyMS             int
-	PromptTokens          int
-	CompletionTokens      int
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	// HadToolCalls 只对 turn_settled 有意义：这一轮会话里真的跑过工具。
+	// 结算总结的判据是「有真实执行结果」而不是「回合结算了」—— 每轮都会结算，
+	// 全升就把纯闲聊顶成卡片结论。
+	HadToolCalls     bool
+	RouterSessionKey string
+	TurnID           string
+	BriefHash        string
+	BriefJSON        string
+	Actions          []RouterAction
+	Status           RouterDecisionStatus
+	AppliedSeq       int
+	LegacyAction     *RouterLegacyAction
+	Agreement        string
+	Error            string
+	LatencyMS        int
+	PromptTokens     int
+	CompletionTokens int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ---- Agent 接口（由 api.AppContext 实现；kanban 不 import api） ----

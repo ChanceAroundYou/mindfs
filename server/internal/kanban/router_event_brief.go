@@ -50,6 +50,8 @@ var routerEventBriefPayloadKeys = []string{
 	// 结束）。excerpt 单独走 RouterBriefEvent.Excerpt（它有独立的长度上限，比
 	// 普通载荷值宽松得多）。
 	"session_key", "turn_id", "duration_ms", "has_output", "out_of_band", "answered_question", "failed",
+	// 这一轮会话真实发生的工具调用次数：结算总结「有没有真实执行结果」的判据。
+	"tool_calls",
 	// 任务级巡检（turn_stalled / task_orphaned）与重启恢复（turn_interrupted）：
 	// 现场事实 —— 停滞了多久、最后一次产出是什么时候、探针是否仍报在回复。
 	"last_output_at", "stalled_for_ms", "replying", "open_nodes",
@@ -414,6 +416,26 @@ func routerEventPayloadString(payloadJSON, key string) string {
 	}
 	value, _ := payload[key].(string)
 	return strings.TrimSpace(value)
+}
+
+// routerEventPayloadInt 读载荷里的整数字段（JSON 解出来是 float64）。读不到、
+// 类型不对、负数一律按 0：这些是计数，缺省必须是「没有」而不是猜一个值。
+func routerEventPayloadInt(payloadJSON, key string) int {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(payloadJSON)), &payload); err != nil {
+		return 0
+	}
+	switch value := payload[key].(type) {
+	case float64:
+		if value > 0 {
+			return int(value)
+		}
+	case int:
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 // routerEventBriefPayload 只保留白名单键：字符串值截到 500 字节，累计超过 2KB
