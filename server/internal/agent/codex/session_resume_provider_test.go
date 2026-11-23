@@ -122,9 +122,9 @@ func TestCodexResumeNeedsFork(t *testing.T) {
 }
 
 func TestRethreadCodexResumeWithoutClientIsNoop(t *testing.T) {
-	forked, ok := rethreadCodexResumeOnProviderMismatch(context.Background(), nil, "01a1bf60", codexsdk.ThreadOptions{}, "/tmp")
-	if ok || forked != "" {
-		t.Fatalf("rethread without client = (%q, %v), want empty/false", forked, ok)
+	forked, ok, err := rethreadCodexResumeOnProviderMismatch(context.Background(), nil, "01a1bf60", codexsdk.ThreadOptions{}, "/tmp")
+	if ok || forked != "" || err != nil {
+		t.Fatalf("rethread without client = (%q, %v, %v), want empty/false/nil", forked, ok, err)
 	}
 }
 

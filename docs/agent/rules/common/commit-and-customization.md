@@ -9,6 +9,23 @@
 - 涉及 fork 定制的改动，信息末尾标 **`Scope: G-X`**（组号对应
   `docs/upstream-customizations.yaml` 的分组），便于 `git log` 反查。
 
+## 组号从脚本取，不从记忆取
+
+手写组号会撞：两个并行分支各自取「本地清单最大号 + 1」，拿到同一批号；合并时 git 不冲突、
+门禁也不报，只有事后读 `git log` 才发现一个号指着两组互不相关的定制（2026-11-23 真实发生
+过一次，三组撞车）。
+
+```bash
+go run ./scripts/scope-id claim docs/superpowers/plans/YYYY-MM-DD-xxx.md [--count N]
+```
+
+这条命令取号、在清单里写占位组、在计划头部写声明行。占位会让门禁变红直到填成真条目 ——
+刻意的。规则：只增号不回填空洞；两字母段 `G-AA`…`G-ZZ` 用尽才进三字母段；讲机制的文档
+里写示例一律用 `G-XX`（同字母重复算模板占位，扫描器跳过），不要写具体号。
+
+两侧都新取了号时用 `go run ./scripts/scope-id resolve --branch <分支>` 裁决：先引入者保留、
+后来者改号，提交信息里的历史 `Scope:` 不改写。详见 `.claude/skills/scope-id/SKILL.md`。
+
 ## 三件套（缺一不可）
 
 1. **登记** `docs/upstream-customizations.yaml`：按分组格式写「哪个文件、改了什么、

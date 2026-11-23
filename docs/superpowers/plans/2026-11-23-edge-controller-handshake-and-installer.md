@@ -1,5 +1,9 @@
 # 边控端（Edge Controller）：握手 · 安装包 · 自更新
 
+> Scope IDs: G-QH / G-QI / G-QJ（原取 G-PZ / G-QA / G-QB；2026-11-23 合回 main 时
+> 主干已把这三个号分配给配额挂起与飞书入站两组，按「主干已发布优先」由分支侧改号，
+> 见 `docs/upstream-customizations.yaml` 的撞号说明）
+
 Plan 2026-11-23。起点是用户三条需求：
 
 > 1. 我希望主控端的同步默认打开 并且可以接受边缘控制端的握手 主动发现和同步
@@ -33,9 +37,9 @@ Plan 2026-11-23。起点是用户三条需求：
 | 波 | 内容 | Scope | 状态 |
 |---|---|---|---|
 | W0 | 取证：本机/四端现状、重启语义、托盘与自更新是否已具备 | — | 完成 |
-| W1 | 主控同步默认开 + token 自生成 + 单主控守卫 + `/edges` 名单（注册/列表/踢人/恢复） | G-PZ | 完成（`fd48fa1f`、`11498130`） |
-| W2 | 边控端握手与自动同步：`POST /api/control-sync/pair` + 未配对档位 + 落盘 | G-QA | 完成 |
-| W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QB | 代码完成（`59ad9f32`），真机未验 |
+| W1 | 主控同步默认开 + token 自生成 + 单主控守卫 + `/edges` 名单（注册/列表/踢人/恢复） | G-QH | 完成（`fd48fa1f`、`11498130`） |
+| W2 | 边控端握手与自动同步：`POST /api/control-sync/pair` + 未配对档位 + 落盘 | G-QI | 完成 |
+| W3 | Windows 独立安装包（自解包 exe + 托盘菜单 + 计划任务）+ 静默自动更新 | G-QJ | 代码完成（`59ad9f32`），真机未验 |
 | W4 | 部署与四端对账（需当次授权） | — | 待做 |
 
 ### W1（已完成）
@@ -48,7 +52,7 @@ Plan 2026-11-23。起点是用户三条需求：
   可列出、踢掉（`revoked_at`）、恢复。**这张表是运维索引，不是准入白名单** —— 共享 token
   的语义就是「谁拿到都能进」，踢人只让那台机器的同步立刻 403 并停在本地模式。
 
-### W2（已完成，Scope: G-QA）
+### W2（已完成，Scope: G-QI）
 
 三处缺口与处置：
 
@@ -95,7 +99,7 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
 | 3 | 主节点名单 | `/edges` 出现该实例、无 `revoked_at`、`last_seen_at` 非空 |
 | 4 | 签名踢人 | 200 带 `revoked_at`；边缘 `wait_mode_stable("offline-local", 90s)`；踢后 22 秒 `last_seen_at` **逐字未推进**（基线在踢人**之后**取，否则踢前那一拍会误报） |
 
-### W3（代码完成，Scope: G-QB）
+### W3（代码完成，Scope: G-QJ）
 
 #### 取证结论（2026-11-23，只读）
 
@@ -129,7 +133,7 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
    `activeUses > 0` 正是 repoint 掐进程的同一个判据；按账户枚举会漏掉节点会话与委派会话。
 3. **公钥注入** —— `deploy-pcwin.sh` 与日常交叉编译补 `MINDFS_RELEASE_PUBLIC_KEY`，否则
    `auto_update_supported=false`，静默更新永远不可用（E2）。
-   **已由 `be463453`（Scope: G-PZ）落地**：`scripts/deploy-pcwin.sh:26-28` 与
+   **已由 `be463453`（Scope: G-QH）落地**：`scripts/deploy-pcwin.sh:26-28` 与
    `scripts/build-all.sh:38-39` 都注入了 `-X mindfs/server/internal/update.releaseManifestPublicKey=`，
    `internal/deploy/release_key_test.go::TestDeployScriptsInjectReleaseManifestKey` 钉住。
    该条**不在 W3 新增范围内**，只是 W3 的前置条件已满足。

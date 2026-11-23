@@ -164,6 +164,12 @@ func (s *ActivityService) applyRouteAction(
 	// 回合没有留言是另一回事，不在这里改变它们的语义。
 	if userAct == nil && routerTurnAllowsNoUserActivity(string(decision.TriggerKind)) &&
 		action.Kind != RouterActionSay && action.Kind != RouterActionAskUser {
+		// 拒掉之后必须留一条可见说明。否则整轮 failed 只在日志里，用户侧
+		// 零变化 —— 现场就是这样：巡检发现了问题、动作被拒、谁也不知道
+		// （rdec_47d5992f117dc51b）。
+		if noteErr := s.recordRejectedInspectionAction(ctx, decision, task, action); noteErr != nil {
+			log.Printf("[router] reject.notice.error id=%s seq=%d err=%v", decision.ID, action.Seq, noteErr)
+		}
 		return fmt.Errorf("action %q requires an originating user activity", action.Kind)
 	}
 	switch action.Kind {

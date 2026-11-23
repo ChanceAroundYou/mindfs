@@ -214,8 +214,17 @@ dist-clean:
 
 # ── Release ──────────────────────────────────────────────────────────────
 # Usage: make tag TAG=v1.2.3
+#
+# tag 是「一次发布」的锚点：四端版本号、APK versionCode、更新清单全从它来。
+# 打错了不能改（改 tag 等于让已装的机器认不出新旧），所以四件事必须在打 tag
+# 之前校验，而不是留到 make release 才炸。
+#
+# 五条护栏只在 scripts/check-tag.sh 里有一份实现（对应 internal/deploy 的
+# 用例），这里只做委托 —— 复制第二份的代价是两边会各自漂移，而这条路的失败
+# 模式是「校验看起来跑过了」。
 tag:
 	@test -n "$(TAG)" || (echo "Usage: make tag TAG=v1.2.3" >&2; exit 1)
+	@RELEASE_NOTES_FILE="$(RELEASE_NOTES_FILE)" bash scripts/check-tag.sh "$(TAG)" || exit 1
 	@echo "Tagging $(TAG)"
 	git push origin main
 	git tag $(TAG)

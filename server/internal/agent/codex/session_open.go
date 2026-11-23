@@ -37,6 +37,12 @@ type OpenOptions struct {
 	// `thread/start` runs), so this is how the pool learns which MindFS
 	// session the proxy traffic belongs to.
 	OnThreadStarted func(threadID string)
+	// OnThreadRethreaded reports a thread that a running session forked onto
+	// the current provider after a -32600 provider mismatch. The pool must do
+	// both what OnThreadStarted does (register) and mark the thread as having
+	// crossed providers, because the fork carries reasoning encrypted by the
+	// old provider.
+	OnThreadRethreaded func(threadID string)
 }
 
 type Runtime struct {
@@ -92,7 +98,15 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		thread = client.ResumeThread(threadID, threadOptions)
 	} else if strings.TrimSpace(opts.ResumeSessionID) != "" {
 		resumeID := strings.TrimSpace(opts.ResumeSessionID)
-		if forkedID, ok := rethreadCodexResumeOnProviderMismatch(ctx, client, resumeID, threadOptions, opts.RootPath); ok {
+		forkedID, rethreaded, err := rethreadCodexResumeOnProviderMismatch(ctx, client, resumeID, threadOptions, opts.RootPath)
+		if err != nil {
+			// 线程确实需要换供应商但没换成。绝不能照常 resume：旧供应商已经不在
+			// 配置里，那条线程之后的每一轮都会撞 -32600（2026-11-22 pc 上就是这样
+			// 连挂十几次）。把错误抛出去，上层 ensureAgentSession 会丢掉这个绑定、
+			// 新开一条会话，用户至少还能继续干活。
+			return nil, err
+		}
+		if rethreaded {
 			resumeID = forkedID
 			opts.ResumeSessionID = forkedID
 		}
@@ -116,8 +130,10 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		planMode:      opts.PlanMode,
 		onCompact:     opts.OnCompact,
 		onThreadStart: opts.OnThreadStarted,
-		questionWaits: make(map[string]chan codexAskUserAnswerResult),
-		agentDebugLog: logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
+
+		onThreadRethreaded: opts.OnThreadRethreaded,
+		questionWaits:      make(map[string]chan codexAskUserAnswerResult),
+		agentDebugLog:      logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
 	}
 	return sess, nil
 }

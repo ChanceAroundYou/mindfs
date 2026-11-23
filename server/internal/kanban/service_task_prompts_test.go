@@ -201,26 +201,31 @@ func TestMarkTaskQuestionAnsweredFillsAnswersAfterSilentCompletion(t *testing.T)
 // 回合结束/取消时，仍停在 waiting_user 的提问卡必须收口。任务对话在存在
 // waiting 卡时会挡住输入框；不收起一张已经不可能回答的卡，用户既答不了也
 // 发不了新消息，任务就永久卡死。
+//
+// 这里直接插行而不走 RecordTaskQuestion：后者现在会在同一会话插入新卡时把更早
+// 的卡收口（见下一个用例），造不出「同一会话两张同时等待」的现场。而本用例要
+// 钉的正是收口函数的筛选口径 —— 升级前遗留的多张等待卡必须都能被这一条路收掉。
 func TestCloseOpenTaskQuestionsClosesOnlyWaitingCardsForSession(t *testing.T) {
 	ctx := context.Background()
 	f := setupActivityService(t)
-	record := func(session, tool string) *TaskActivity {
-		act, _, err := f.service.RecordTaskQuestion(ctx, TaskQuestionInput{
-			TaskID: "task-1", SessionKey: session, ToolUseID: tool,
-			Body: "需要确认", PayloadJSON: `{"questions":[{"question":"继续吗？"}]}`,
-		})
-		if err != nil {
-			t.Fatalf("RecordTaskQuestion(%s/%s): %v", session, tool, err)
+	store := NewActivityStore(f.tasks.db)
+	seed := func(id, session, tool, status string) *TaskActivity {
+		act := &TaskActivity{
+			ID: id, TaskID: "task-1", RootID: f.root.ID,
+			Type: ActivityTypeQuestion, Author: "agent", Role: RoleAgent,
+			Body: "需要确认", Status: status,
+			SessionKey: session, ToolUseID: tool,
+			PayloadJSON: `{"questions":[{"question":"继续吗？"}]}`,
+		}
+		if _, err := store.InsertOrIgnore(ctx, act); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
 		}
 		return act
 	}
-	openA := record("sess-close", "tool-a")
-	openB := record("sess-close", "tool-b")
-	other := record("sess-other", "tool-c")
-	answered := record("sess-close", "tool-d")
-	if _, _, err := f.service.MarkTaskQuestionAnswered(ctx, "sess-close", "tool-d", map[string]string{"q_0": "继续"}); err != nil {
-		t.Fatalf("MarkTaskQuestionAnswered: %v", err)
-	}
+	openA := seed("q-close-a", "sess-close", "tool-a", ActivityStatusWaitingUser)
+	openB := seed("q-close-b", "sess-close", "tool-b", ActivityStatusWaitingUser)
+	other := seed("q-close-other", "sess-other", "tool-c", ActivityStatusWaitingUser)
+	answered := seed("q-close-done", "sess-close", "tool-d", ActivityStatusCompleted)
 
 	closed, err := f.service.CloseOpenTaskQuestions(ctx, "sess-close", "回合已结束，提问未回答")
 	if err != nil {
@@ -229,7 +234,6 @@ func TestCloseOpenTaskQuestionsClosesOnlyWaitingCardsForSession(t *testing.T) {
 	if closed != 2 {
 		t.Fatalf("closed = %d, want 2 (only waiting cards in this session)", closed)
 	}
-	store := NewActivityStore(f.tasks.db)
 	for _, id := range []string{openA.ID, openB.ID} {
 		got, err := store.Get(ctx, id)
 		if err != nil {
@@ -346,4 +350,94 @@ func TestMarkTaskQuestionAnsweredRecordsUserAnswerActivity(t *testing.T) {
 	if empty != 1 {
 		t.Fatalf("user_answer activities after empty close = %d, want 1", empty)
 	}
+}
+
+// 同一会话里新插一张等待卡时，更早那张必须退出等待态。
+//
+// 现场 #104：Agent 用新的 tool_use_id 重问了一次，旧卡（q-84825203e4fe3902）
+// 永远停在 waiting_user —— 去重键是 (session_key, tool_use_id)，换了 id 就是
+// 新卡，而前端取的是**最早**那张等待卡来锁输入框。结果用户答了新卡，挡住
+// 输入框的却是那张再也没人回答的旧卡。
+func TestRecordTaskQuestionCancelsOlderWaitingCards(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+
+	first, _, err := f.service.RecordTaskQuestion(ctx, TaskQuestionInput{
+		TaskID: "task-1", SessionKey: "sess-q", ToolUseID: "tool-old",
+		Body: "第一问", PayloadJSON: `{"questions":[{"question":"第一问"}]}`,
+	})
+	if err != nil {
+		t.Fatalf("RecordTaskQuestion(first): %v", err)
+	}
+	second, _, err := f.service.RecordTaskQuestion(ctx, TaskQuestionInput{
+		TaskID: "task-1", SessionKey: "sess-q", ToolUseID: "tool-new",
+		Body: "第二问", PayloadJSON: `{"questions":[{"question":"第二问"}]}`,
+	})
+	if err != nil {
+		t.Fatalf("RecordTaskQuestion(second): %v", err)
+	}
+
+	store := NewActivityStore(f.tasks.db)
+	old, err := store.Get(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("Get(old): %v", err)
+	}
+	if old.Status != ActivityStatusCancelled {
+		t.Fatalf("older card status = %q, want cancelled", old.Status)
+	}
+	if !strings.Contains(old.Summary, "已被更新的提问取代") {
+		t.Fatalf("older card summary = %q, want the superseded explanation", old.Summary)
+	}
+	latest, err := store.Get(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("Get(new): %v", err)
+	}
+	if latest.Status != ActivityStatusWaitingUser {
+		t.Fatalf("newest card status = %q, want waiting_user", latest.Status)
+	}
+
+	// 只留一张可回答的卡：这正是前端锁输入框时读到的集合。
+	open, err := store.OpenQuestionsBySession(ctx, "sess-q")
+	if err != nil {
+		t.Fatalf("OpenQuestionsBySession: %v", err)
+	}
+	if len(open) != 1 || open[0].ID != second.ID {
+		t.Fatalf("open questions = %v, want only the newest card", ids(open))
+	}
+}
+
+// 换会话/换任务不算「被更新的提问取代」：别的任务或别的会话里的卡照旧等答案。
+func TestRecordTaskQuestionOnlySupersedesSameSession(t *testing.T) {
+	ctx := context.Background()
+	f := setupActivityService(t)
+
+	if _, _, err := f.service.RecordTaskQuestion(ctx, TaskQuestionInput{
+		TaskID: "task-1", SessionKey: "sess-a", ToolUseID: "tool-a",
+		Body: "会话 A", PayloadJSON: `{"questions":[{"question":"会话 A"}]}`,
+	}); err != nil {
+		t.Fatalf("RecordTaskQuestion(sess-a): %v", err)
+	}
+	if _, _, err := f.service.RecordTaskQuestion(ctx, TaskQuestionInput{
+		TaskID: "task-1", SessionKey: "sess-b", ToolUseID: "tool-b",
+		Body: "会话 B", PayloadJSON: `{"questions":[{"question":"会话 B"}]}`,
+	}); err != nil {
+		t.Fatalf("RecordTaskQuestion(sess-b): %v", err)
+	}
+
+	openA, err := NewActivityStore(f.tasks.db).OpenQuestionsBySession(ctx, "sess-a")
+	if err != nil {
+		t.Fatalf("OpenQuestionsBySession(sess-a): %v", err)
+	}
+	if len(openA) != 1 {
+		t.Fatalf("session A open questions = %d, want 1 (other sessions must not close it)", len(openA))
+	}
+}
+
+// ids 把卡列表压成 id 列表，失败信息里能看出是哪几张卡。
+func ids(list []*TaskActivity) []string {
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		out = append(out, item.ID)
+	}
+	return out
 }

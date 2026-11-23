@@ -7291,19 +7291,29 @@ groups:
     title: Codex 供应商不一致时 fork 续聊 + 配置恢复不留悬空 model_provider
     kind: fix
     symptom: "切换 API 供应商或在 MindFS 里恢复/切换配置后，打开任何旧 Codex 会话都报 app server error (-32600)：This chat uses model provider \"llmux\", which is no longer configured（或 ..., but your current provider is openai. Switch to ... to continue.），整段对话无法继续；codex 0.170.0 起同一场景改成报 failed to load configuration: Cannot change this thread's model provider from `openai` to `llmux` on resume.（2026-11-19 fn 上 CMAI 会话实测）；恢复官方配置后连新建会话也可能报同一句；已切到 llmux 的会话若线程由 VS Code 创建（rollout 记着 openai），只打开不报错但之后每轮仍走 ChatGPT，上下文超窗口时报 Error running remote compact task: workspace routing discovery failed。"
-    why: "codex app-server 把创建时的 model_provider 记进线程元数据（~/.codex/state_5.sqlite 的 threads.model_provider），thread/resume 要求它等于当前生效的 model_provider。2026-11-09 用隔离 CODEX_HOME 在真机 app-server 实测：线程已被按旧供应商加载后，resume 的 modelProvider 覆盖参数对两种报错都无效，唯一可行路径是 thread/fork 到当前供应商（fork 复制完整历史，实测成功）。2026-11-11 补充并修正：覆盖参数在「首次加载」时是生效的，先前探针自己先发了一次不带 modelProvider 的 thread/resume，把线程按 rollout 里的旧供应商加载了，之后的 SDK resume 才变成空操作——所以探针必须带当前供应商（config/read 取，缺省回落 openai），并按返回值里的生效供应商判断是否需要 fork；fork 参数也要带供应商，否则 fork 出的仍是同一供应商的新线程。所以 OpenSession 在 resume 前用一次本地 thread/resume 探测，命中供应商不一致时 fork 成新线程并返回新 id；上层 ensureAgentSession 立刻把新 id 写回绑定（UpdateAgentState 只更新 agent_session_id/agent_ctx_seq，保留 external_source_* 游标），避免「只打开不发送」时反复 fork 出重复历史。配套修的第二个坑：恢复官方配置时 preserveCodexModelProviderKey 会把当前 key 硬塞进没有任何 model_providers 表的配置，留下悬空 model_provider，新建会话同样报错；现在只有恢复内容真的定义了该 provider 表才保留选择器。**2026-11-19 加固（根治文案依赖）**：codex 0.170.0（fn 于 10:59 升级）换了错误文案，isCodexProviderMismatch 只认旧两句，于是探测把失败当「无关错误」→ 判定无需 fork → 带当前供应商 resume 当场报错，整条会话打不开。改为两级判定：主判定 codexThreadProvider 用 thread/read 直接读线程元数据里的 modelProvider 与当前配置比对（不依赖任何错误文案，实测返回体仅 1.7 KB、不加载线程、不碰 writer 锁，且「先 read 再 resume」与「直接 resume」结果逐字一致，无副作用）；只有读不到元数据时才退回按错误文案判定，并补上 0.170 的新文案。fn 上用报错线程 01a1f1c0（记录 openai、当前 llmux）跑真实 0.170.0 端到端：metadata 判定 → fork → 新线程 resume 成功；反向用例（线程已是 llmux）确认不会被误 fork。"
-    boundary: "只管 codex 线程的供应商不一致续聊与配置恢复时的 provider 选择器一致性。不改 Claude/ACP；不改供应商切换写配置的格式（仍复用同一个 provider key）；不直接改写 Codex 的 state_*.sqlite 与 rollout 文件；thread/read 只读取元数据，不改变线程状态。"
+    why: "codex app-server 把创建时的 model_provider 记进线程元数据（~/.codex/state_5.sqlite 的 threads.model_provider），thread/resume 要求它等于当前生效的 model_provider。2026-11-09 用隔离 CODEX_HOME 在真机 app-server 实测：线程已被按旧供应商加载后，resume 的 modelProvider 覆盖参数对两种报错都无效，唯一可行路径是 thread/fork 到当前供应商（fork 复制完整历史，实测成功）。2026-11-11 补充并修正：覆盖参数在「首次加载」时是生效的，先前探针自己先发了一次不带 modelProvider 的 thread/resume，把线程按 rollout 里的旧供应商加载了，之后的 SDK resume 才变成空操作——所以探针必须带当前供应商（config/read 取，缺省回落 openai），并按返回值里的生效供应商判断是否需要 fork；fork 参数也要带供应商，否则 fork 出的仍是同一供应商的新线程。所以 OpenSession 在 resume 前用一次本地 thread/resume 探测，命中供应商不一致时 fork 成新线程并返回新 id；上层 ensureAgentSession 立刻把新 id 写回绑定（UpdateAgentState 只更新 agent_session_id/agent_ctx_seq，保留 external_source_* 游标），避免「只打开不发送」时反复 fork 出重复历史。配套修的第二个坑：恢复官方配置时 preserveCodexModelProviderKey 会把当前 key 硬塞进没有任何 model_providers 表的配置，留下悬空 model_provider，新建会话同样报错；现在只有恢复内容真的定义了该 provider 表才保留选择器。**2026-11-23 加固（反复修但仍在 pc 复发的那一层）**：前三轮修的都是「判定」与「正常路径下的恢复」，2026-11-22 在 pc 上又连挂十几次，日志显示问题出在换绑动作本身而不是判定：① config/read、thread/read、探针 resume、thread/fork 共用同一份 20 秒预算（codexResumeProbeTimeout），前面三步把预算吃掉后 fork 超时；② fork 失败被写成 return（空串, false）——与「不需要 fork」完全同形，调用方照常 resume 了旧供应商线程，11 秒后这一轮撞 -32600，发送层又因 isNonRecoverableAgentError 里没有这个特征把它判成 fail_without_recovery，于是每一轮都死同一处；③ 那条 fork 其实 30.8 秒后成功建出了新线程（rollout 019… 现存在盘上）却被丢弃。实测延迟与线程体积无关（1.09 MB 的线程 2.3 秒、70 KB 的线程 30.8 秒；空闲 app-server 上同一 fork 2.4–3.3 秒），瓶颈是 app-server 启动时初始化 MCP manager。四处补洞：(a) fork 独立预算 codexProviderForkTimeout（var，便于测试压缩），不再与读取共用 —— 值必须大于实测的 30.8 秒，否则只是换了预算却没换到能用的档位（初版给 20 秒，仍会超时；现为 90 秒，留三倍余量），为此新增 TestCodexProviderForkTimeoutCoversSlowMCPSetup 直接断言默认值而不是把它当参数传给用例；(b) fork 失败返回可识别的 errCodexProviderRethread（errors.Is），OpenSession 据此中断而非 resume 旧线程，上层的 open_new_runtime_session 回退这才第一次真正生效；(c) SendMessage 在「本回合一个事件都没发出去」时对 -32600 自救：当场 fork 到当前供应商、换 thread/threadOpts/threadID、重试一轮——修的是池子里已缓存的中毒会话（pool.GetOrCreate 命中缓存不会再打开）；(d) SetModel / SetPlanMode 这两条会重建 thread 对象却绕过换绑判定的路径，改为先走 ensureThreadProvider。另外现场换绑必须与打开路径做同样两件事：登记新线程**并**标记跨供应商（MarkProviderSwitch），否则 fork 复制过来的旧供应商 encrypted_content 会让下一轮被 invalid_encrypted_content 拒掉（G-PK）；为此新增 onThreadRethreaded 回调与 Pool.RegisterRethreadedThread，与新线程回调分开。**同日第二次补口（钉错了事件形态）**：fork 的预算拆出来之后值仍给的是 20 秒，而实测的慢 fork 正是 30.8 秒 —— 换了结构没换到能用的档位，同一场景照样超时；现为 90 秒（三倍余量），并让 TestCodexProviderForkTimeoutCoversSlowMCPSetup 直接断言**默认常量**（此前用例把预算当参数传进去，等于替生产默认值打了保票，改回 20 秒照样绿）。另一处漏覆盖：线上 -32600 是 thread 级错误，走 ThreadErrorEvent（日志 `codex thread error:`），而此前九个用例全用 turn.failed 造错；现补 TestSendMessageRethreadsOnThreadErrorProviderMismatch 钉住真实形态，变异（丢掉 e.Message）即红。**2026-11-23 第二次补口（用例覆盖的真实形态不对）**：pc 的日志里 -32600 出现在 `[agent/codex] send.error err=app server error (-32600) …`，紧随其后是 `[session] turn.send.error … err=codex thread error: …` —— 走的是 ThreadErrorEvent（type=error 的 thread 级消息）分支，不是 TurnFailedEvent（会写成 `codex turn failed:`）。此前那批用例全用 turn.failed 造错，等于把自愈逻辑钉在了线上不会发生的那条路上；现补 TestSendMessageRethreadsOnThreadErrorProviderMismatch 钉住 thread 级形态。变异验证：把 ThreadErrorEvent 分支的错误构造改成丢掉原始文案，该用例即红（证明它测的确实是「文案要一路带到这里」）。**2026-11-19 加固（根治文案依赖）**：codex 0.170.0（fn 于 10:59 升级）换了错误文案，isCodexProviderMismatch 只认旧两句，于是探测把失败当「无关错误」→ 判定无需 fork → 带当前供应商 resume 当场报错，整条会话打不开。改为两级判定：主判定 codexThreadProvider 用 thread/read 直接读线程元数据里的 modelProvider 与当前配置比对（不依赖任何错误文案，实测返回体仅 1.7 KB、不加载线程、不碰 writer 锁，且「先 read 再 resume」与「直接 resume」结果逐字一致，无副作用）；只有读不到元数据时才退回按错误文案判定，并补上 0.170 的新文案。fn 上用报错线程 01a1f1c0（记录 openai、当前 llmux）跑真实 0.170.0 端到端：metadata 判定 → fork → 新线程 resume 成功；反向用例（线程已是 llmux）确认不会被误 fork。"
+    boundary: "只管 codex 线程的供应商不一致续聊与配置恢复时的 provider 选择器一致性。不改 Claude/ACP；不改供应商切换写配置的格式（仍复用同一个 provider key）；不直接改写 Codex 的 state_*.sqlite 与 rollout 文件；thread/read 只读取元数据，不改变线程状态。换绑永远 fork、绝不改写 codex 自己的线程元数据；捕获不到「fork 真的失败」时宁可让这次打开失败并回退新会话，也不静默续用旧供应商线程。"
     files:
       - server/internal/agent/codex/session_open.go
       - server/internal/agent/codex/session_resume_provider.go
       - server/internal/agent/codex/session_resume_provider_test.go
       - server/internal/agent/codex/session_resume_provider_live_test.go
+      - server/internal/agent/codex/session.go
+      - server/internal/agent/codex/session_models.go
+      - server/internal/agent/codex/session_rethread_test.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_rethread.go
+      - server/internal/agent/pool_rethread_switch_test.go
+      - server/internal/agent/proxy/provider_switch.go
       - server/internal/api/agent_api_provider_codex.go
       - server/internal/api/agent_api_provider_test.go
       - server/internal/api/usecase/session_agent_open.go
     tests:
       - server/internal/agent/codex/session_resume_provider_test.go
       - server/internal/agent/codex/session_resume_provider_live_test.go
+      - server/internal/agent/codex/session_rethread_test.go
+      - server/internal/agent/pool_rethread_switch_test.go
       - server/internal/api/agent_api_provider_test.go
     anchors:
       - 'server/internal/agent/codex/session_open.go:rethreadCodexResumeOnProviderMismatch(ctx, client, resumeID, threadOptions, opts.RootPath)'
@@ -7311,10 +7321,26 @@ groups:
       - 'server/internal/agent/codex/session_resume_provider.go:func codexThreadProvider(ctx context.Context, client *codexsdk.Codex, threadID string) (string, bool)'
       - 'server/internal/agent/codex/session_resume_provider.go:func codexThreadProviderNeedsForkFrom(persisted string, ok bool, provider string) (needsFork bool, byMetadata bool)'
       - 'server/internal/agent/codex/session_resume_provider.go:func codexResumeProbeResult('
-      - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(probeCtx, client, forkOptions, threadID, nil)'
+      - 'server/internal/agent/codex/session_resume_provider.go:forkCodexThread(forkCtx, client, forkOptions, threadID, nil)'
       - 'server/internal/agent/codex/session_resume_provider.go:func codexResumeProbeParams(threadID, cwd, provider string) map[string]any'
       - 'server/internal/api/agent_api_provider_codex.go:func hasCodexModelProviderTable(existing, providerName string) bool'
       - 'server/internal/api/usecase/session_agent_open.go:rebind.done'
+      - 'server/internal/agent/codex/session_resume_provider.go:var codexProviderForkTimeout = 90 * time.Second'
+      - 'server/internal/agent/codex/session_resume_provider.go:var errCodexProviderRethread = errors.New('
+      - 'server/internal/agent/codex/session_resume_provider.go:func isCodexProviderRethreadError(err error) bool'
+      - 'server/internal/agent/codex/session.go:func (s *session) rethreadThread(ctx context.Context) error'
+      - 'server/internal/agent/codex/session.go:func (s *session) ensureThreadProvider(ctx context.Context) error'
+      - 'server/internal/agent/codex/session.go:if !rethreaded && isCodexProviderMismatch(err) && s.emitted.Load() == before {'
+      - 'server/internal/agent/codex/session.go:onThreadRethreaded func(threadID string)'
+      - 'server/internal/agent/codex/session_open.go:OnThreadRethreaded func(threadID string)'
+      - 'server/internal/agent/pool_open.go:p.RegisterRethreadedThread(in.SessionKey, threadID)'
+      - 'server/internal/agent/pool_rethread.go:func (p *Pool) RegisterRethreadedThread(sessionKey, threadID string)'
+      # 生产上真正的 -32600 形态是 thread 级 error（`codex thread error:`），不是 turn.failed；
+      # 上面那些用例全走 turn.failed，所以这条单独钉住真实形态与 fork 的默认预算档位。
+      - 'server/internal/agent/codex/session_rethread_test.go:func TestSendMessageRethreadsOnThreadErrorProviderMismatch'
+      - 'server/internal/agent/codex/session_rethread_test.go:func TestCodexProviderForkTimeoutCoversSlowMCPSetup'
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) ProviderSwitchMarked(threadID string) bool'
+      - 'server/internal/agent/codex/session_models.go:if err := s.ensureThreadProvider(ctx); err != nil {'
 
   # ── 看板留言板后端（WP-01）：TaskActivity + ContinueRequest ──────────────
   - id: G-LH
@@ -7826,7 +7852,7 @@ groups:
     anchors:
       - 'server/internal/kanban/task_store_workflow_node_runs.go:func (s *TaskStore) ClaimWorkflowNodeRun('
       - 'server/internal/kanban/task_store_workflow_node_runs.go:ON CONFLICT(run_id,node_id,loop_path,iteration,attempt) DO NOTHING'
-      - 'server/internal/kanban/task_store_workflow_runs.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
+      - 'server/internal/kanban/task_store_workflow_run_schema.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique('
       - 'server/internal/kanban/node_run_identity.go:func ResolveNodeRun('
       - 'server/internal/kanban/task_store_workflow_runs_history_test.go:func TestWorkflowRunHistoryAllowsNewRunOnlyAfterTerminal('
 
@@ -13318,7 +13344,7 @@ groups:
       - 'server/app/feishu_answer_relay.go:Client:      feishu.NewRelayClient(feishuAnswerTimeout),'
       - 'server/app/feishu_intake_relay_integration_test.go:func TestServerRunPreparesFeishuIntakeBeforeStart(t *testing.T) {'
       - 'server/app/feishu_intake_relay_integration_test.go:func TestPrepareFeishuChannelInstallsPickerTaskDeps(t *testing.T) {'
-      - 'server/internal/channels/feishu/intake_test.go:func TestIntakeConcurrentRedeliveryCreatesOneTask(t *testing.T) {'
+      - 'server/internal/channels/feishu/intake_test.go:func TestIntakeConcurrentRedeliverySendsOneConfirmCard(t *testing.T) {'
       - 'server/internal/channels/feishu/relay_redirect_test.go:func TestNewRelayClientRefusesCrossHostRedirect(t *testing.T) {'
       - 'server/app/feishu_answer_relay_test.go:func TestNewFeishuAnswerRelayRefusesCrossHostRedirect(t *testing.T) {'
 
@@ -14308,7 +14334,7 @@ groups:
       - 'server/internal/kanban/activity_route_apply.go:requires an originating user activity'
       - 'server/internal/kanban/activity_route_reply.go:func routeUserActivityID(userAct *TaskActivity) string {'
       - 'server/internal/kanban/router_inspection_turn_test.go:func TestCoordinatorInspectionEventWithoutOriginCanSay(t *testing.T) {'
-      - 'server/internal/kanban/router_prompt.md:这类回合只能 `router_say` / `router_ask_user`'
+      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` 与 `router_ask_user`'
       - 'server/internal/kanban/router_store.go:ALTER TABLE router_task_state ADD COLUMN out_of_band INTEGER'
       - 'server/internal/kanban/router_task_state.go:ON CONFLICT(task_id) DO UPDATE SET'
       - 'server/internal/kanban/service_session_follow.go:persist out-of-band task %s'
@@ -14351,7 +14377,291 @@ groups:
       - 'server/internal/session/blocks_parse.go:func parseBlockLine(line []byte) (Block, bool) {'
       - 'server/internal/session/blocks_provisional.go:func (m *Manager) readProvisionalTurnState('
       - 'server/internal/session/blocks_stream_test.go:func TestCountBlocksAfterSeqStreamsLongLines(t *testing.T) {'
+
+  # 撞号说明：本组计划原文与提交信息写的是 Scope: G-PW / G-PX / G-PY
+  # （docs/superpowers/plans/2026-11-22-intake-target-confirm-and-quota-hold.md），
+  # 但这三个 ID 已被 2026-11-23 凌晨落在 main 的三组占用（G-PW 自动启动环境快照
+  # f79a0e5a 01:57、G-PX Router 摘要与失败轮 b73d8781 02:40、G-PY 块流流式读取
+  # baca9439 06:34），而本分支 10:02 才登记。按 G-MG→G-MN / G-NP→G-NS 的先例：
+  # 提交信息保持原文不改写历史，本表登记改用 G-PZ / G-QA / G-QB。
   - id: G-PZ
+    title: 配额挂起设上限并写可见系统行（A1 收口）
+    kind: fix
+    symptom: |
+      节点撞到上游用量上限时，Run 只把 NodeRun 的 `not_before` 推到重置时刻然后无声
+      等待：同一轮 Run 可以无限次挂起，没有任何上限；界面上只有 NodeRun 列表里那一
+      行 `not_before` 能看出发生过什么，任务卡片上没有任何提示；额度用完之后也不叫
+      人，任务永远停在 running。spec §6.9 原文还写着「任务停在 `waiting_user`」，与
+      代码实际行为相反（留 `running` 才对 —— `waiting_user` 的语义是「需要人说话」）。
+    why: |
+      配额挂起要三件事同时在场，缺一件症状就回来：
+      ① `workflow_runs.holds_used` 加每 Run 上限 3，由 `IncrementWorkflowRunHolds`
+      用一条 `UPDATE ... WHERE holds_used < ?` 原子推进。这个计数刻意不参与 Run 的
+      CAS 整行更新 —— 引擎每次 `SaveWorkflowRun` 都写整行，读-改-写会把它抹回旧值。
+      ② 每次挂起写一行确定性系统提示（ID `quota-hold:<nodeRunID>`，`InsertOrIgnore`
+      幂等并 broadcast 立即上屏），正文是「节点 X 撞到用量上限，已挂起到 HH:MM UTC，
+      到点自动继续（本 Run 第 N/3 次）」。
+      ③ 额度用完时不再建 attempt、任务停 `waiting_user`，并写一条「额度已用完」的
+      可见说明；配额挂起不消耗每节点 2 次重试预算 —— 它是「等上游恢复」，不是失败重试。
+      合上游时若把 `holds_used` 列迁移或挂起上限丢掉，「无限挂起 + 无提示」原样回来。
+    files:
+      - server/internal/kanban/workflow_node_quota_hold.go
+      - server/internal/kanban/task_store_workflow_run_schema.go
+      - server/internal/kanban/task_store_workflow_runs.go
+      - server/internal/kanban/workflow_runtime.go
+      - server/internal/kanban/workflow_types.go
+      - docs/superpowers/specs/2026-11-20-evidence-gated-autonomous-completion-design.md
+      - docs/superpowers/plans/2026-11-22-intake-target-confirm-and-quota-hold.md
+    tests:
+      - server/internal/kanban/workflow_node_quota_hold_test.go
+    anchors:
+      - 'server/internal/kanban/workflow_node_quota_hold.go:const supervisionMaxHoldsPerRun = 3'
+      - 'server/internal/kanban/workflow_node_quota_hold.go:var ErrQuotaHoldsExhausted = errors.New("workflow run quota hold budget is exhausted")'
+      - 'server/internal/kanban/workflow_node_quota_hold.go:func (s *TaskStore) IncrementWorkflowRunHolds(ctx context.Context, runID string, cap int) (bool, int, error) {'
+      - 'server/internal/kanban/workflow_node_quota_hold.go:return "quota-hold:" + strings.TrimSpace(nodeRunID)'
+      - 'server/internal/kanban/task_store_workflow_run_schema.go:func (s *TaskStore) migrateWorkflowRunsDropTaskUnique() error {'
+      - 'server/internal/kanban/task_store_workflow_run_schema.go:{"workflow_runs", "holds_used", "INTEGER NOT NULL DEFAULT 0"},'
+      - 'server/internal/kanban/task_store_workflow_runs.go:holds_used) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID,'
+      - 'server/internal/kanban/workflow_node_quota_hold_test.go:func TestQuotaHoldKeepsTaskRunningAndNotesIt(t *testing.T) {'
+      - 'server/internal/kanban/workflow_node_quota_hold_test.go:func TestHoldsExhaustedParksTaskWithoutNewAttempt(t *testing.T) {'
+      - 'server/internal/kanban/workflow_node_quota_hold_test.go:func TestHoldsQuotaIsPerRun(t *testing.T) {'
+
+  # ── 飞书显式目标确认 ──────────────────────────────────────────────────────
+  - id: G-QA
+    title: 飞书唯一匹配不再直接建任务，改为目标确认卡与会话级活跃目标
+    kind: feature
+    symptom: |
+      owner 在飞书里发一句「在 fn 的 docs 建个任务」时，只要唯一匹配到项目就直接建卡，
+      既不问一句「是不是这里」，也不记得你刚确认过哪里：紧接着的后续消息只能再新建
+      一个任务，无法追加到已有任务；想换目标或看都有哪些任务也没有任何入口。误建出
+      来的卡只能回网页删。合上游时若把确认卡或活跃目标账本丢掉，症状原样回来。
+    why: |
+      目标归属必须由人确认一次、之后默认沿用，且**每次追加都要重新校验**：
+      ① 识别出唯一 (node, project) 后不再建任务，而是发 `KindTarget` 卡 —— 确认 /
+      新建任务 / 切换目标 / 取消四个动作，任务号是可编辑表单，`TargetRef` 随卡片
+      落库（`types.go`）。选「确认」才建卡。
+      ② `IntakeStore` 维护会话级活跃目标账本（`ActiveTarget`，7 天后过期），后续
+      消息默认追加到该目标；服务端逐次重校验 (nodeID, rootID, taskID) 三元组，
+      任务被删/被移走即 `ErrTargetStale`、清活跃目标并回落到确认卡，绝不静默写到
+      错误的任务上。
+      ③ 文本命令 `#123` / `#N <正文>` / `切换` / `新任务`（`parseIntakeCommand`
+      只认整句或 `#<digits>` 开头，句子里的「帮我切换一下」仍是普通正文）；任务
+      目录（`TaskCatalog`，按关键词/任务号匹配、上限 5 条、按 TTL 缓存）提供候选。
+      ④ 真写入与查询走 app 层（`feishuTaskClient`：`POST <node>/api/tasks/{id}/activities`、
+      `GET <node>/api/tasks?root=…`）。飞书包（`server/internal/channels/feishu`）不能
+      import `kanban` —— 例外是 `relay_notifier.go` 的 `kanban.CardNotifier` 中继出口；
+      审核分类因此由 app 层经 `IntakeService.SetReviewClassifier` 注入
+      （`server/app/feishu_tasks.go` 的 `feishuReviewClassifier`，用
+      `kanban.ReviewCategories`；该文件与 `server/app/feishu_intake.go` 本就可以 import
+      `kanban`）。URL 只从节点表解析，聊天正文里的地址永不被信任。
+      边界不变：只接 owner 私聊文本、去重与限流、worker 卡片经主节点中继回传。
+    files:
+      - server/app/feishu_tasks.go
+      - server/app/feishu_intake.go
+      - server/internal/channels/feishu/target_confirm.go
+      - server/internal/channels/feishu/target_apply.go
+      - server/internal/channels/feishu/task_catalog.go
+      - server/internal/channels/feishu/intake_command.go
+      - server/internal/channels/feishu/intake.go
+      - server/internal/channels/feishu/intake_store.go
+      - server/internal/channels/feishu/service.go
+      - server/internal/channels/feishu/service_click.go
+      - server/internal/channels/feishu/event.go
+      - server/internal/channels/feishu/render.go
+      - server/internal/channels/feishu/types.go
+      - server/internal/channels/feishu/store.go
+    tests:
+      - server/app/feishu_tasks_integration_test.go
+      - server/internal/channels/feishu/target_confirm_test.go
+      - server/internal/channels/feishu/target_apply_test.go
+      - server/internal/channels/feishu/target_command_test.go
+      - server/internal/channels/feishu/target_intake_test.go
+      - server/internal/channels/feishu/task_catalog_test.go
+      - server/internal/channels/feishu/intake_store_active_test.go
+      - server/internal/channels/feishu/types_test.go
+      - server/internal/channels/feishu/intake_test.go
+    anchors:
+      - 'server/internal/channels/feishu/target_confirm.go:var ErrTargetStale = errors.New("feishu: target no longer exists")'
+      - 'server/internal/channels/feishu/target_confirm.go:type TaskAppender interface {'
+      - 'server/internal/channels/feishu/target_apply.go:func (s *Service) applyTargetChoice(ctx context.Context, c Card, selected int, a Action) error {'
+      - 'server/internal/channels/feishu/task_catalog.go:func NewTaskCatalog(finder TaskFinder, ttl time.Duration, now func() time.Time) TaskCatalog {'
+      - 'server/internal/channels/feishu/intake_command.go:func parseIntakeCommand(text string) (intakeCommand, bool) {'
+      - 'server/internal/channels/feishu/intake_command.go:return intakeCommand{kind: commandNewTask}, true'
+      - 'server/internal/channels/feishu/intake_store.go:func (s *IntakeStore) SetActiveTarget(t ActiveTarget) error {'
+      - 'server/internal/channels/feishu/intake_store.go:func (s *IntakeStore) ActiveTarget(chatID string) (ActiveTarget, bool) {'
+      - 'server/internal/channels/feishu/types.go:KindTarget Kind = "target"'
+      - 'server/internal/channels/feishu/types.go:type TargetRef struct {'
+      - 'server/app/feishu_tasks.go:func (c *feishuTaskClient) Append(ctx context.Context, target feishu.TargetRef, input string) error {'
+      - 'server/app/feishu_tasks_integration_test.go:func TestFeishuTaskClientAppendStaleClassifiesMissingTask(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_confirm_test.go:func TestTargetCardOffersFourChoicesAndTaskNumberForm(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_apply_test.go:func TestTargetTypedNumberResolvesViaCatalogBeyondCandidates(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_command_test.go:func TestBareTaskNumberCommandSelectsActiveTarget(t *testing.T) {'
+      - 'server/internal/channels/feishu/target_intake_test.go:func TestTargetActiveTargetAppendsDirectly(t *testing.T) {'
+      - 'server/internal/channels/feishu/task_catalog_test.go:func TestTaskCatalogCapsCandidatesAtFive(t *testing.T) {'
+      - 'server/internal/channels/feishu/intake_store_active_test.go:func TestIntakeStoreActiveTargetExpiresAfterSevenDays(t *testing.T) {'
+      - 'server/internal/channels/feishu/types_test.go:func TestParseActionKeepsTargetFields(t *testing.T) {'
+
+  # ── 跨 harness 一致性契约（B3 订正）──────────────────────────────────────
+  - id: G-QB
+    title: 跨 harness 一致性只认归一化 compact 事件，Codex 三种 wire 形态降为适配器细节
+    kind: fix
+    symptom: |
+      spec §6.12 曾把 Codex 的三种 wire 形态（`CompactedItem`、
+      `UnknownItem{Type:"contextCompaction"}`、typed `contextCompaction`）写成跨 harness
+      契约，§13 C5 又谎称「指数退避并入了 §6.9」。照着这条契约去合上游时，会误以为
+      Claude 侧也必须产出这三种形状，或者把 Codex 的解析分支当成共同面去改；共同面
+      一旦被改错，两个 harness 的压缩事件就不再对得上，胶囊与自动压缩会一起失效。
+    why: |
+      两个 harness 之间**唯一**的共同面是归一化之后的压缩事件：
+      `types.EventTypeCompact` + `types.CompactNotice`。Codex 的三种 wire 形态是
+      `server/internal/agent/codex` 适配器的实现细节，只由 codex 自己的测试钉住，
+      不进跨 harness 契约。`conformance.CompactContract` 按归一化事件判定，
+      `Matches` 在两边的 `session_compact_contract_test.go` 里各跑一次 —— 要改共同面
+      就改这里，要改 Codex 的解析形状就改适配器并更新 codex 侧用例。spec §6.12 / §13 C5
+      已订正为这一口径；合上游时若把 wire 形态写回「跨 harness 契约」，误改的起点就回来了。
+    files:
+      - server/internal/agent/conformance/conformance.go
+      - server/internal/agent/claude/session_compact_contract_test.go
+      - server/internal/agent/codex/session_compact_contract_test.go
+      - docs/superpowers/specs/2026-11-20-evidence-gated-autonomous-completion-design.md
+    tests:
+      - server/internal/agent/claude/session_compact_contract_test.go
+      - server/internal/agent/codex/session_compact_contract_test.go
+    anchors:
+      - 'server/internal/agent/conformance/conformance.go:type CompactEventContract struct {'
+      - 'server/internal/agent/conformance/conformance.go:var CompactContract = CompactEventContract{'
+      - 'server/internal/agent/conformance/conformance.go:func (c CompactEventContract) Matches(eventType string, payload any) error {'
+      - 'server/internal/agent/claude/session_compact_contract_test.go:func TestClaudeCompactEventSatisfiesCrossHarnessContract(t *testing.T) {'
+      - 'server/internal/agent/codex/session_compact_contract_test.go:func TestCodexCompactEventSatisfiesCrossHarnessContract(t *testing.T) {'
+
+  - id: G-QC
+    title: fork 会话前二次确认 + 在途不重发
+    kind: fix
+    symptom: "正常聊天时凭空多出一条完整副本会话（2026-11-23 pc 的 projects 项目现场）：用户没想 fork，但侧栏里多了一条到当前消息为止的整段历史副本，且视图被切到了副本上。触发面极小 —— fork 键是回合页脚上一个 18×18 的小图标，与「复制」只隔 3px，整行还压着 0.5 透明度；旧实现单击即发 POST /api/sessions/fork，一次要跑二十多秒（pc 实测 24.464s），期间没有任何在途反馈，成功后立刻 handleSelectSession 切走。"
+    why: "fork 是不可撤销的重动作：复制整段历史、新建一条会话、把当前视图切过去，服务端还要开一个 agent 分支会话。它与「删除会话」同级，后者早在 b46b808e 就改成了先确认再执行，fork 却一直是单击直达 —— 同一类不可逆动作两套规矩，小图标误触的代价就是「莫名多出一条副本」。因此在 fork 前统一走 confirmDialog（与 b46b808e 同一个组件、同一条规矩），并加在途守卫：确认后到请求返回之间再点不再发第二次，否则连点两下就是两份副本。确认框文案说明「整段对话会被复制、原会话不受影响、可能要等几十秒」，让用户在选择之前就知道代价。"
+    files:
+      - web/src/app/useAppAgentActions.ts
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+      - web/tests/session-fork-confirm.test.mjs
+      - e2e/test_session_fork_confirm.py
+    tests:
+      - web/tests/session-fork-confirm.test.mjs
+    anchors:
+      - 'web/src/app/useAppAgentActions.ts:const forkInFlightRef = useRef(false);'
+      - 'web/src/app/useAppAgentActions.ts:const confirmed = await confirmDialog({'
+      - 'web/src/i18n/locales/zh-CN-sessions.ts:"session.forkConfirm":'
+      - 'web/tests/session-fork-confirm.test.mjs:test("fork 必须先确认再发请求"'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QD
+    title: "Scope 组号治理：脚本取号、门禁查重、撞号裁决"
+    kind: deploy
+    symptom: "同一个 G-XX 在 git log 里指向两组互不相关的定制；计划里写了号却没登记。"
+    why: >-
+      组号是手写字符串，三个并行分支都从本地清单取「最大号 + 1」，必然撞车；
+      撞号后 git 合并干净、旧门禁全绿，只有人事后读 git log 才发现。上游不会提供
+      这套机制，丢掉它等于回到 2026-11-18/11-20/11-23 的三次事故。
+    files:
+      - scripts/internal/scopeid/
+      - scripts/scope-id/
+      - scripts/check-upstream/main.go
+      - scripts/check-upstream/main_test.go
+      - scripts/deploy-all.sh
+      - scripts/check-tag.sh
+      - internal/deploy/check_tag_test.go
+      - Makefile
+      - .claude/skills/scope-id/SKILL.md
+      - docs/superpowers/plans/2026-11-23-scope-id-allocation.md
+    tests:
+      - scripts/internal/scopeid/scopeid_test.go
+      - scripts/scope-id/main_test.go
+      - scripts/check-upstream/main_test.go
+      - internal/deploy/check_tag_test.go
+    anchors:
+      - 'scripts/internal/scopeid/scopeid.go:func NextIDs(existing []string, n int) ([]string, error) {'
+      - 'scripts/internal/scopeid/scopeid.go:func IsTemplatePlaceholder(id string) bool {'
+      - 'scripts/check-upstream/main.go:if bad := duplicateGroupIDs(reg.Groups); len(bad) > 0 {'
+      - 'scripts/scope-id/main.go:const claimStampPrefix = "> Scope IDs: "'
+      - 'scripts/check-tag.sh:if ! printf ''%s'' "$TAG" | grep -Eq ''^v[0-9]+'
+      - 'Makefile:@RELEASE_NOTES_FILE="$(RELEASE_NOTES_FILE)" bash scripts/check-tag.sh "$(TAG)" || exit 1'
+
+  # ── Router 任务可信化 · 第四轮（2026-11-23）──────────────────────────
+  - id: G-QE
+    title: OOB 恢复认活跃会话、同会话新提问卡取代旧卡、巡检回合被拒动作留可见说明
+    kind: fix
+    symptom: |
+      三处「用户看得见的卡死 / 静默」（现场 #104 与 rdec_47d5992f117dc51b）：
+      ① 任务详情一直卡在等待态 —— 会话还在写，30 分钟没推进就被 OOB 恢复判成
+      「重启带走」，把还在跑的回合打断；② 用户明明答了提问卡，输入框还被锁着 ——
+      Agent 换了 `tool_use_id` 重问一次，旧卡停在 `waiting_user` 永不收口，而前端
+      锁输入框读的是**最早**那张等待卡；③ Router 巡检发现的问题、被闸门拒掉的动作，
+      整轮只在日志里 failed，用户侧零可见变化。
+    why: |
+      三处都是 fork 侧新增语义，上游没有对应实现，合上游时整套会被顶掉：
+      ① `restoreStaleOutOfBandTasks` 必须先问 `sessionRunning`（本进程里还活着的
+      会话一律不动，**尤其不能清标记** —— 清了之后回合收尾找不到 OOB 归属，任务
+      再也回不到 `waiting_user`）；② `RecordTaskQuestion` 建新卡后收口同会话更早的
+      等待卡（`closeQuestionsBefore`），只动 `type=question`，不动 HumanGate；
+      ③ 巡检回合（`routerTurnAllowsNoUserActivity` 的四类触发）被拒的动作折成
+      `route-rejected:<decision>:<seq>` 的 attention 行，`InsertOrIgnore` 保证重放幂等。
+      `router_prompt.md` 规则 11/12 已按同一口径订正（巡检回合用 `ask_user` 表达待拍板，
+      `escalate` 只对有来源留言的回合）。
+    files:
+      - server/internal/kanban/service_recover_out_of_band.go
+      - server/internal/kanban/service_task_prompts.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_route_supervision.go
+      - server/internal/kanban/router_prompt.md
+    tests:
+      - server/internal/kanban/router_out_of_band_recovery_test.go
+      - server/internal/kanban/service_task_prompts_test.go
+      - server/internal/kanban/router_inspection_turn_test.go
+    anchors:
+      - 'server/internal/kanban/service_recover_out_of_band.go:if s.sessionRunning(item.SessionKey) {'
+      - 'server/internal/kanban/service_task_prompts.go:if err := s.closeQuestionsBefore(ctx, store, activity.SessionKey, activity.CreatedAt, activity.ID); err != nil {'
+      - 'server/internal/kanban/service_task_prompts.go:const supersededByNewerQuestion = "已被更新的提问取代"'
+      - 'server/internal/kanban/activity_route_apply.go:if noteErr := s.recordRejectedInspectionAction(ctx, decision, task, action); noteErr != nil {'
+      - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) recordRejectedInspectionAction('
+      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` 与 `router_ask_user`'
+
+  - id: G-QF
+    title: 启动清扫收口被重问取代的存量提问卡
+    kind: fix
+    symptom: |
+      升级前遗留的孤儿等待卡一直挡住任务对话的输入框：Agent 换了新的
+      `tool_use_id` 重问之后，旧卡的 (session_key, tool_use_id) 再也不会被任何
+      路径命中，停在 `waiting_user` 永不收口；而前端锁输入框读的是**最早**那张
+      等待卡，于是用户答完新卡界面照样卡死（现场 #104 / q-84825203e4fe3902，
+      03:21:57 的卡在两分钟后被重问，之后一直挂着）。
+    why: |
+      fork 侧新增语义，上游没有对应实现：运行期的收口（`RecordTaskQuestion` →
+      `closeQuestionsBefore`）只覆盖「新卡进来」那一刻，升级前已经存在的存量卡
+      没有任何路径会碰。`RecoverOnStartupForRoot` 里补一拍
+      `closeSupersededQuestionsOnStartup`：`ListSupersededOpenQuestions` 找出同
+      会话存在更晚提问、自己仍 `waiting_user` 的卡，用 `ResolvePrompt` 的 CAS 收成
+      `cancelled`（summary「已被更新的提问取代」）并广播。判据只认
+      `type='question'` 的更晚行 —— 同会话后到的 HumanGate / 人类留言不代表
+      AskUserQuestion 被重问过，旧卡仍有效。合上游时丢了这一拍，#104 这类存量卡
+      会重新永久卡住输入框。
+    files:
+      - server/internal/kanban/activity_store_questions.go
+      - server/internal/kanban/service_recover_questions.go
+      - server/internal/kanban/service_recover_startup.go
+    tests:
+      - server/internal/kanban/service_recover_questions_test.go
+    anchors:
+      - 'server/internal/kanban/activity_store_questions.go:func (s *ActivityStore) ListSupersededOpenQuestions('
+      - 'server/internal/kanban/activity_store_questions.go:WHERE n.session_key = q.session_key AND n.type = ? AND n.id <> q.id'
+      - 'server/internal/kanban/service_recover_questions.go:func (s *Service) closeSupersededQuestionsOnStartup('
+      - 'server/internal/kanban/service_recover_startup.go:s.closeSupersededQuestionsOnStartup(ctx, store)'
+
+  # ── 撞号说明（2026-11-23 合回 main 时改号）────────────────────────────
+  # 本组原先占用 G-PZ / G-QA / G-QB。合回 main 前 main 已把同一批号分配给
+  # 配额挂起与飞书入站两组（`95a3ea53` 起），而那是已发布到主干的登记 —— 分支侧
+  # 改号，主干不动。改动只涉及组号本身，group 内容与锚点不变。
+  - id: G-QH
     title: 边控端地基：主控同步默认开 + token 自生成 + 边控端名单（含 pc-win 发布清单公钥）
     kind: feature
     symptom: |
@@ -14382,7 +14692,7 @@ groups:
       `CreateTemp → WriteString → Chmod 0600 → Rename`，中途失败不留半份 token
       （半个 token 比没有更难查 —— 它看起来像配置存在，只是永远验不过）；目录
       写完再 `Chmod 0700`（`MkdirAll` 不改已有目录权限）。日志只打路径，**永不打
-      token 本身**。边缘**没有**这条退路（W2/G-QA 起改成「等配对」档：读不到 token 时
+      token 本身**。边缘**没有**这条退路（W2/G-QI 起改成「等配对」档：读不到 token 时
       服务照常起、只挂 `POST /api/control-sync/pair`，由本机页面完成配对；在此之前
       这里是 cli 侧直接报错 —— 那一版把用户关在门外，连填表单的页面都没有）。
       **③ 名单接线 + 踢人生效**。`controlsyncWiring` 加 `edges` 字段、
@@ -14440,7 +14750,7 @@ groups:
       - 'docs/multi-node-control-plane.md:**一台机器只能有一个主控。**'
       - 'server/internal/api/http_control_sync_edges_test.go:func TestRevokedEdgeGets403(t *testing.T) {'
       - 'cli/cmd/control_sync_test.go:func TestControlSyncOptionsDefaultEnabledForControl(t *testing.T) {'
-  - id: G-QA
+  - id: G-QI
     title: 边控端握手：POST /api/control-sync/pair（探活 / 验签 / 落 token / 写回 config）
     kind: feature
     symptom: |
@@ -14543,7 +14853,7 @@ groups:
       - 'docs/multi-node-control-plane.md:### 首次配对（不用手搓 JSON）'
       - 'server/internal/api/http_control_sync_pair_test.go:func TestPairRejectsNonLoopback(t *testing.T) {'
       - 'server/internal/controlsync/pairing_test.go:func TestPairLeavesNothingOnFailure(t *testing.T) {'
-  - id: G-QB
+  - id: G-QJ
     title: 边控端交付：静默自动更新判据 + 空闲闸门 + 托盘重启入口 + Windows 自解包安装器（代码默认关）
     kind: feature
     symptom: |

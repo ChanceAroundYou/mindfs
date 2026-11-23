@@ -106,7 +106,7 @@ func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {
 		nodes.NodeConnection{ID: "fn", Name: "fn", URL: "http://127.0.0.1:2"},
 	)
 	var taskServer *httptest.Server
-	calls := make(chan feishuITTaskCall, 4)
+	calls := make(chan feishuITTaskCall, 8)
 	taskServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
@@ -114,6 +114,12 @@ func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {
 		}
 		calls <- feishuITTaskCall{method: r.Method, path: r.URL.Path, body: body}
 		w.Header().Set("Content-Type", "application/json")
+		// The confirmation card first asks for candidates, then a click creates
+		// the task. Answer each shape so neither step sees a bad response.
+		if r.Method == http.MethodGet && r.URL.Path == "/api/tasks" {
+			_, _ = io.WriteString(w, `{"items":[]}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"id":"task-1"}`)
 	}))
 	defer taskServer.Close()
@@ -144,6 +150,39 @@ func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {
 
 	select {
 	case call := <-calls:
+		if call.method != http.MethodGet || call.path != "/api/tasks" {
+			t.Fatalf("确认卡生成后应先查候选任务，got %s %s", call.method, call.path)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("确认卡没有查询 fn 节点的任务候选")
+	}
+
+	// Explicit target confirmation: the message only opens a card; nothing is
+	// written until the owner clicks 「确认」.
+	cardStore := feishu.NewStore(filepath.Join(dir, "cards.json"))
+	var card feishu.Card
+	feishuITWaitFor(t, "目标确认卡", func() bool {
+		if err := cardStore.Load(); err != nil {
+			return false
+		}
+		found, ok := cardStore.FindOpenTargetByChat("oc_intake")
+		if !ok {
+			return false
+		}
+		card = found
+		return true
+	})
+	if card.Target == nil || card.Target.RootID != "root-docs" || card.TargetMode != "create" {
+		t.Fatalf("确认卡 = target=%+v mode=%q", card.Target, card.TargetMode)
+	}
+	if err := svc.HandleAction(ctx, feishu.Action{
+		CardID: card.ID, Choice: 0, MessageID: card.MessageID, OperatorID: feishuITOwner,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case call := <-calls:
 		if call.method != http.MethodPost || call.path != "/api/tasks" {
 			t.Fatalf("remote task request = %s %s", call.method, call.path)
 		}
@@ -162,13 +201,15 @@ func TestFeishuIntakeEndToEndRoutesToRemoteTask(t *testing.T) {
 			t.Fatalf("task body = %+v", got)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("owner 私聊没有在 fn 节点建出任务")
+		t.Fatal("owner 点击确认后没有在 fn 节点建出任务")
 	}
 
-	// 重投的消息只能建一次任务：确认没有第二条建任务请求。
+	// 一条消息只建一个任务：确认之后不应再有第二条建任务请求。
 	select {
 	case duplicate := <-calls:
-		t.Fatalf("重复投递建出了第二个任务：%s %s", duplicate.method, duplicate.path)
+		if duplicate.method == http.MethodPost && duplicate.path == "/api/tasks" {
+			t.Fatalf("重复投递建出了第二个任务：%s %s", duplicate.method, duplicate.path)
+		}
 	case <-time.After(300 * time.Millisecond):
 	}
 

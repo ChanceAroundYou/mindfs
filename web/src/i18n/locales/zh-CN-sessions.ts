@@ -99,6 +99,8 @@ export const zhCNSessions = {
   "session.copyMessage": "复制消息",
   "session.copyMarkdown": "复制 Markdown",
   "session.forkFromMessage": "从此消息 fork",
+  "session.forkConfirm": "从这条消息 fork 出一个新会话？\n\n到这条消息为止的整段对话会被完整复制到新会话里，原会话不受影响。对话很长时可能要等几十秒。",
+  "session.forkConfirmAction": "fork",
   "session.loginWaiting": "等待登录完成...",
   "session.statusFetching": "正在获取状态...",
   "session.statusRunning": "运行中",

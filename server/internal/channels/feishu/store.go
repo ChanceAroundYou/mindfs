@@ -271,6 +271,27 @@ func (s *Store) FindOpenPickerByChat(chatID string) (Card, bool) {
 	return found, ok
 }
 
+// FindOpenTargetByChat returns the live target confirmation card for a chat, if
+// any. Like FindOpenPickerByChat it only observes: superseding a card is the
+// caller's decision, so this scan never changes card state.
+func (s *Store) FindOpenTargetByChat(chatID string) (Card, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	var found Card
+	ok := false
+	for _, c := range s.cards {
+		if c.ChatID != chatID || c.Kind != KindTarget || c.State != StateOpen ||
+			c.ExpiresAt.IsZero() || !c.ExpiresAt.After(now) {
+			continue
+		}
+		if !ok || c.CreatedAt.After(found.CreatedAt) {
+			found, ok = c, true
+		}
+	}
+	return found, ok
+}
+
 // List returns cards ordered oldest first.
 func (s *Store) List() []Card {
 	s.mu.Lock()

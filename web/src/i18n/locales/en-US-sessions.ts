@@ -96,6 +96,8 @@ export const enUSSessions = {
   "session.copyMessage": "Copy message",
   "session.copyMarkdown": "Copy Markdown",
   "session.forkFromMessage": "Fork from this message",
+  "session.forkConfirm": "Fork a new session from this message?\n\nThe whole conversation up to this message will be copied into the new session; the original stays untouched. Long conversations can take a while.",
+  "session.forkConfirmAction": "Fork",
   "session.loginWaiting": "Waiting for login to complete...",
   "session.statusFetching": "Fetching status...",
   "session.statusRunning": "Running",

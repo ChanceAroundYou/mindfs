@@ -3,6 +3,8 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -11,11 +13,42 @@ import (
 )
 
 const (
-	// codexResumeProbeTimeout 只用于本地 app-server 的 thread/resume 校验，不走网络。
-	codexResumeProbeTimeout = 20 * time.Second
 	// codexProviderConfigTimeout 只用于本地 app-server 的 config/read。
 	codexProviderConfigTimeout = 20 * time.Second
 )
+
+// codexResumeProbeTimeout 覆盖 config/read 与 thread/read 两步。
+//
+// var 而非 const：测试要把它压到毫秒级，验证「fork 不吃探测的预算」。
+var codexResumeProbeTimeout = 20 * time.Second
+
+// codexProviderForkTimeout 是 thread/fork 自己的预算。
+//
+// var 而非 const：测试要把它压到毫秒级。
+//
+// 这条预算为什么要与上面的探测预算分开：thread/fork 会真的在 app-server 里
+// 建一条新线程，而新进程起来时要初始化 MCP manager（codex_app / node_repl /
+// cua_repl）。2026-11-22 在 pc 上实测，同一条 fork 在空闲 app-server 上 2.4–3.3 秒
+// 完成，赶上 MCP 初始化则是 30.8 秒 —— 与线程历史大小无关（1.09 MB 的线程 2.3 秒、
+// 70 KB 的线程 30.8 秒）。把它和 config/read、thread/read 塞进同一个 20 秒预算，
+// 前面的读取就会吃掉 fork 的时间，而 fork 超时在旧实现里与「不需要 fork」同形。
+//
+// 值必须大于实测的 30.8 秒，否则等于换了预算却没换到能用的档位。90 秒留出三倍余量：
+// fork 超时的代价是用户这一轮直接失败，而它正常情况下几秒就结束，等久一点没有副作用。
+var codexProviderForkTimeout = 90 * time.Second
+
+// errCodexProviderRethread 表示「线程确实需要换供应商，但这次没换成」。
+//
+// 它必须与「不需要 fork」区分开：调用方看到这个错误时唯一安全的动作是不要
+// resume 原线程 —— 旧供应商已经不在配置里，那条线程之后的每一轮都会撞
+// app server error (-32600)。是否降级为「新开一条会话」由上层决定。
+var errCodexProviderRethread = errors.New("codex thread still records a model provider that is no longer configured")
+
+// isCodexProviderRethreadError 供上层判定是否属于「换供应商失败」。用 errors.Is
+// 而不是文案匹配，文案随 codex 版本变过多次。
+func isCodexProviderRethreadError(err error) bool {
+	return errors.Is(err, errCodexProviderRethread)
+}
 
 // isCodexProviderMismatch 判定 thread/resume 的失败是否属于「线程记录的供应商
 // 与当前配置不一致」。codex app-server 实测三种文案：
@@ -175,10 +208,10 @@ func codexResumeProbeResult(
 // fork 会复制完整历史，所以切换供应商后旧会话仍可续聊；新 id 由上层
 // ensureAgentSession 立刻写回绑定，避免重复 fork。非供应商原因的失败保持原有
 // 惰性语义（不在 open 阶段报错），交由发消息时暴露。
-func rethreadCodexResumeOnProviderMismatch(ctx context.Context, client *codexsdk.Codex, threadID string, threadOptions codexsdk.ThreadOptions, rootPath string) (string, bool) {
+func rethreadCodexResumeOnProviderMismatch(ctx context.Context, client *codexsdk.Codex, threadID string, threadOptions codexsdk.ThreadOptions, rootPath string) (string, bool, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" || client == nil {
-		return "", false
+		return "", false, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -188,7 +221,7 @@ func rethreadCodexResumeOnProviderMismatch(ctx context.Context, client *codexsdk
 	provider := resolveCodexModelProvider(probeCtx, client, rootPath)
 	if provider == "" {
 		log.Printf("[codex] resume.provider_probe.skipped thread=%s reason=config_unavailable", threadID)
-		return "", false
+		return "", false, nil
 	}
 	// 先读线程自己记录的供应商：这一步与 app-server 的报错文案无关，是主判定。
 	persisted, readOK := codexThreadProvider(probeCtx, client, threadID)
@@ -205,18 +238,22 @@ func rethreadCodexResumeOnProviderMismatch(ctx context.Context, client *codexsdk
 		if probeErr != nil {
 			log.Printf("[codex] resume.provider_probe.error thread=%s provider=%s err=%v", threadID, provider, probeErr)
 		}
-		return "", false
+		return "", false, nil
 	}
 	if byMetadata {
 		log.Printf("[codex] resume.provider_mismatch.metadata thread=%s persisted=%s current=%s", threadID, persisted, provider)
 	}
 	forkOptions := threadOptions
 	forkOptions.ModelProvider = provider
-	forked, forkErr := forkCodexThread(probeCtx, client, forkOptions, threadID, nil)
+	// fork 用自己的预算：它会真的在 app-server 里建一条新线程，赶上 MCP 初始化
+	// 可以跑三十秒以上（2026-11-22 pc 实测），不能与前两步共用一份预算。
+	forkCtx, forkCancel := context.WithTimeout(ctx, codexProviderForkTimeout)
+	defer forkCancel()
+	forked, forkErr := forkCodexThread(forkCtx, client, forkOptions, threadID, nil)
 	if forkErr != nil {
 		log.Printf("[codex] resume.provider_mismatch.fork_error thread=%s provider=%s err=%v", threadID, provider, forkErr)
-		return "", false
+		return "", false, fmt.Errorf("%w: %v", errCodexProviderRethread, forkErr)
 	}
 	log.Printf("[codex] resume.provider_mismatch.rethreaded source=%s provider=%s forked=%s", threadID, provider, forked)
-	return forked, true
+	return forked, true, nil
 }

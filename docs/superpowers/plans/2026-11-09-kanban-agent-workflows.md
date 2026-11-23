@@ -18,7 +18,7 @@
 - WorkflowVersion 发布只新增版本，不原地改写；Draft 用 `base_revision` CAS；运行编辑用 run `revision` CAS，冲突返回 conflict。
 - Unknown 永不自动重试；用户显式重试建新 attempt ID 并链接原记录，不声称 exactly-once。
 - 不重启 `mindfs.service`（本机 system 单元，用户专权）；WSL/fn 重启可由 Agent 直接执行。
-- 每次改动登记 `docs/upstream-customizations.yaml`，加针对性测试，提交信息标 `Scope: G-XXX`，跑 `make check-upstream` 对账。
+- 每次改动登记 `docs/upstream-customizations.yaml`，加针对性测试，提交信息标 `Scope: <本组组号>`，跑 `make check-upstream` 对账。
 - Go 提交 Conventional Commits（中文描述）。前端改完 `make build-web && make install`（不 embed）。
 - 移动端工作流画布仅简单查看；桌面端完整编辑。
 
@@ -89,7 +89,7 @@
 
 - 跨 worktree diff 对账（文件所有权、接口一致性、Status 投影、writer gate 粒度）。
 - 跑门禁：`make test`（Go）、`make build-web`（前端）、`make check-upstream`。
-- 登记 `docs/upstream-customizations.yaml`（新组 G-XXX 互斥边界）、更新本计划状态、写 CHANGELOG 段。
+- 登记 `docs/upstream-customizations.yaml`（先把本组组号登记好）、更新本计划状态、写 CHANGELOG 段。
 - 失败/跳过/不确定如实汇报；不替业务 Agent 改代码（只出评审意见 + CHANGELOG）。
 
 ## 验收标准（10 条）

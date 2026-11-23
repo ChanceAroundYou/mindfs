@@ -154,7 +154,12 @@ type WorkflowRun struct {
 	// SessionKey 是这一轮 Run 的共享会话（session_reuse_policy=run，2026-11-20
 	// 起的默认）。创建 Run 时为空 = 第一个节点执行时惰性创建；Router 选「接续」
 	// 时预置成上一条会话。为空与非空都必须能读回，所以不进 Run 的 CAS 更新。
-	SessionKey     string                    `json:"session_key,omitempty"`
+	SessionKey string `json:"session_key,omitempty"`
+	// HoldsUsed 是这一轮 Run 已经用掉的配额挂起额度（见 workflow_node_quota_hold.go）。
+	// 配额挂起不改变任务状态，但同一轮里反复撞上游限额不能永远「等 15 分钟再试」，
+	// 所以额度用完就把人叫来。只由 IncrementWorkflowRunHolds 推进，不参与 Run 的
+	// CAS 更新：引擎每次 SaveWorkflowRun 都会写整行，读-改-写会把它抹回旧值。
+	HoldsUsed      int                       `json:"holds_used,omitempty"`
 	NodeStates     map[string]string         `json:"node_states,omitempty"`
 	NodeOutputs    map[string]map[string]any `json:"node_outputs,omitempty"`
 	SelectedRoutes map[string]string         `json:"selected_routes,omitempty"`

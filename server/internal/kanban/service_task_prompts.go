@@ -9,6 +9,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 )
 
 // TaskQuestionInput 是会话 ask_user 事件映射到任务对话所需的全部信息。
@@ -80,7 +81,47 @@ func (s *ActivityService) RecordTaskQuestion(ctx context.Context, in TaskQuestio
 		return existing, false, nil
 	}
 	s.broadcastCreated(activity)
+	// 同一会话里更早的等待卡此刻已经不可能被回答：Agent 用新的 tool_use_id
+	// 重问了一次，旧卡既不会被去重命中（键是 tool_use_id）也不会被任何收尾
+	// 路径碰到。而前端锁输入框读的是**最早**那张等待卡 —— 留着它，用户答完
+	// 新卡之后界面照样卡死（现场 #104）。
+	if err := s.closeQuestionsBefore(ctx, store, activity.SessionKey, activity.CreatedAt, activity.ID); err != nil {
+		// 收口失败不影响新卡本身：下一张卡进来时还会再扫一次。
+		log.Printf("[kanban/questions] supersede older cards in %s: %v", activity.SessionKey, err)
+	}
 	return activity, true, nil
+}
+
+// supersededByNewerQuestion 是旧等待卡被收口时写给用户的说明。
+const supersededByNewerQuestion = "已被更新的提问取代"
+
+// closeQuestionsBefore 把同一会话里创建时间更早、仍 waiting_user 的提问卡收口。
+// 只动提问卡（type=question），不动 HumanGate 等其它等待态活动。
+func (s *ActivityService) closeQuestionsBefore(
+	ctx context.Context,
+	store *ActivityStore,
+	sessionKey string,
+	cutoff time.Time,
+	keepID string,
+) error {
+	open, err := store.OpenQuestionsBySession(ctx, sessionKey)
+	if err != nil {
+		return err
+	}
+	reason := supersededByNewerQuestion
+	for _, question := range open {
+		if question.ID == keepID || !question.CreatedAt.Before(cutoff) {
+			continue
+		}
+		updated, changed, err := store.ResolvePrompt(ctx, question.ID, ActivityStatusCancelled, question.PayloadJSON, &reason)
+		if err != nil {
+			return err
+		}
+		if changed {
+			s.broadcastUpdated(updated, map[string]any{"status": ActivityStatusCancelled, "summary": reason})
+		}
+	}
+	return nil
 }
 
 // taskPromptHash 用 64 位稳定哈希做 Prompt 卡 id。不能截短 session/tool id：

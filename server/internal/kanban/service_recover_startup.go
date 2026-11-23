@@ -61,6 +61,9 @@ func (s *Service) RecoverOnStartupForRoot(ctx context.Context, rootID string, pr
 	s.settleLegacyImportLeftovers(ctx, store)
 	// 复核回合是后台 goroutine：进程一死它就没了，verifying 行不能永远挂着。
 	s.reconcileVerifyingCompletions(ctx, store)
+	// 升级前遗留的孤儿等待卡：同一会话已被新 tool_use_id 重问，旧卡没人能答，
+	// 却一直挡着任务对话的输入框（现场 #104）。
+	s.closeSupersededQuestionsOnStartup(ctx, store)
 	if plan.NeedsUser {
 		for _, id := range plan.UnknownIDs {
 			// 可确定性地拿到 task_id 就置 waiting_user；拿不到就只保留 unknown 标记，

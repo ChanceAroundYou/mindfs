@@ -38,6 +38,7 @@ done
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '    \033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ── 0. 门禁：先确保没在别的分支、没在半截合并里 ──
@@ -91,6 +92,13 @@ ok "tsc 通过"
 VITEST_COUNT="$(grep -oE 'Tests[[:space:]]+[0-9]+ passed' /tmp/mindfs-web-test.log | tail -1 | grep -oE '[0-9]+' | head -1 || true)"
 ok "web 测试通过（Vitest ${VITEST_COUNT:-0} 项通过）"
 
+# fork 定制清单门禁（组号唯一、计划 Scope 已登记、delta 全被覆盖）。
+# 它检查的是「已提交」的文件，所以必须放在推送之前：漏登记的定制一旦推到 origin，
+# 下游 worker 会先拿到一份没人保护的二进制。
+( cd "$ROOT" && go run ./scripts/check-upstream ) >/tmp/mindfs-check-upstream.log 2>&1 \
+  || { tail -40 /tmp/mindfs-check-upstream.log >&2; die "check-upstream 失败，见 /tmp/mindfs-check-upstream.log"; }
+ok "check-upstream 通过"
+
 # ── 3. 推送 ──
 step "推送到 origin"
 git push origin main
@@ -109,6 +117,14 @@ make install >>/tmp/mindfs-build.log 2>&1 || { tail -30 /tmp/mindfs-build.log >&
 VERSION="$(sed -nE 's/.*-X main\.version=([^ "]+).*/\1/p' /tmp/mindfs-build.log | tail -1)"
 [[ -n "$VERSION" ]] || die "从构建日志里读不出版本号（/tmp/mindfs-build.log）"
 ok "本机已安装 $VERSION"
+
+# `-dirty` 意味着二进制里编进了未提交的代码 —— 四端会带着一份没人能复现的产物跑起来，
+# 而版本号看起来照样正常。不阻断（共享工作区里常有别的会话在飞），但必须喊出来。
+if [[ "$VERSION" == *-dirty ]]; then
+  warn "版本号带 -dirty：$VERSION"
+  warn "  二进制里编进了未提交的改动，四端将运行一份无法用 git 复现的产物。"
+  warn "  要干净发布：git status 确认后重新提交，或从 HEAD 的干净 worktree 构建。"
+fi
 
 # ── 5. worker 端：调用独立部署脚本（各自可单独运行/测试） ──
 step "部署 WSL"

@@ -53,6 +53,13 @@ func (s *Server) MarkProviderSwitch(threadID string) {
 	}
 }
 
+// ProviderSwitchMarked reports whether this thread has been recorded as having
+// crossed a model provider switch. It exists for callers outside the proxy
+// (the pool) that need to verify the marker was written.
+func (s *Server) ProviderSwitchMarked(threadID string) bool {
+	return s.providerSwitchedThread(threadID)
+}
+
 // providerSwitchedThread reports whether this thread crossed a provider
 // switch. The in-memory set answers the common case; a marker file makes the
 // answer survive a restart.
