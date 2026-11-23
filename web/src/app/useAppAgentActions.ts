@@ -1,6 +1,7 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { sessionService, type Session } from "../services/session";
 import { reportError } from "../services/net/error";
+import { confirmDialog } from "../services/dialog";
 import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { toSessionItem, type SessionItem, type SessionMode } from "./appSession";
 import type { MessageKey, MessageParams } from "../i18n/index";
@@ -46,6 +47,11 @@ export type UseAppAgentActionsParams = {
 export function useAppAgentActions(params: UseAppAgentActionsParams) {
   const { boundSessionByRootRef, bumpCacheVersion, currentRootIdRef, currentSessionRef, getNodeIdForRoot, handleSelectSession, handleSendMessage, loadSessionsForRoot, loadedSessionRef, rootSessionKey, scopedRootKey, selectedSessionByRootRef, selectedSessionRef, sessionCacheRef, setBoundSessionForRoot, setDrawerOpenForRoot, setDrawerSessionForRoot, setInteractionMode, setSelectedSession, setSessions, suppressedAutoBindSessionByRootRef, t } = params;
 
+  // fork 是「把到这条消息为止的整段历史复制成新会话」的重动作：pc 实测一次要跑
+  // 二十多秒，期间界面没有任何反馈（2026-11-23 就是这样凭空多出一条完整副本）。
+  // 在途期间不再接受第二次点击，否则连点两下就是两份副本。
+  const forkInFlightRef = useRef(false);
+
   const handleForkAgentMessage = useCallback(
     async (
       rootID: string | null | undefined,
@@ -58,42 +64,61 @@ export function useAppAgentActions(params: UseAppAgentActionsParams) {
         reportError("session.sync_failed", t("session.forkMissing"));
         return;
       }
-      let result: Awaited<ReturnType<typeof sessionService.forkSession>>;
+      if (forkInFlightRef.current) {
+        return;
+      }
+      // fork 不可撤销：它会复制整段历史、新开一条会话，还会把当前视图切过去。
+      // 触发它的只是回合页脚上一个 18×18 的小图标，且与「复制」只隔 3px ——
+      // 2026-11-23 pc 上「正常聊天时凭空多出一条副本会话」就是这么来的。
+      // 与删除会话（b46b808e）同一个规矩：动手前问一次。
+      const confirmed = await confirmDialog({
+        message: t("session.forkConfirm"),
+        confirmLabel: t("session.forkConfirmAction"),
+      });
+      if (!confirmed) {
+        return;
+      }
+      forkInFlightRef.current = true;
       try {
-        result = await sessionService.forkSession(resolvedRoot, resolvedKey, seq, getNodeIdForRoot(resolvedRoot));
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        reportError("session.sync_failed", `${t("session.forkFailed")}: ${detail}`);
-        return;
-      }
-      const forked = result?.session;
-      const forkedKey = String(result?.session_key || forked?.key || "").trim();
-      if (!forkedKey) {
-        reportError("session.sync_failed", t("session.forkFailed"));
-        return;
-      }
-      if (forked) {
-        const normalized = {
-          ...(forked as any),
-          key: forkedKey,
-          session_key: forkedKey,
-          root_id: resolvedRoot,
-        } as Session;
-        const cacheKey = rootSessionKey(resolvedRoot, forkedKey);
-        sessionCacheRef.current[cacheKey] = normalized;
-        loadedSessionRef.current[cacheKey] = true;
-        const item = toSessionItem(resolvedRoot, normalized);
-        if (item) {
-          setSessions((prev) => mergeSessionItems(prev, [item]));
-          await handleSelectSession(item);
+        let result: Awaited<ReturnType<typeof sessionService.forkSession>>;
+        try {
+          result = await sessionService.forkSession(resolvedRoot, resolvedKey, seq, getNodeIdForRoot(resolvedRoot));
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          reportError("session.sync_failed", `${t("session.forkFailed")}: ${detail}`);
+          return;
+        }
+        const forked = result?.session;
+        const forkedKey = String(result?.session_key || forked?.key || "").trim();
+        if (!forkedKey) {
+          reportError("session.sync_failed", t("session.forkFailed"));
+          return;
+        }
+        if (forked) {
+          const normalized = {
+            ...(forked as any),
+            key: forkedKey,
+            session_key: forkedKey,
+            root_id: resolvedRoot,
+          } as Session;
+          const cacheKey = rootSessionKey(resolvedRoot, forkedKey);
+          sessionCacheRef.current[cacheKey] = normalized;
+          loadedSessionRef.current[cacheKey] = true;
+          const item = toSessionItem(resolvedRoot, normalized);
+          if (item) {
+            setSessions((prev) => mergeSessionItems(prev, [item]));
+            await handleSelectSession(item);
+          } else {
+            await handleSelectSession({ key: forkedKey, session_key: forkedKey, root_id: resolvedRoot });
+          }
         } else {
           await handleSelectSession({ key: forkedKey, session_key: forkedKey, root_id: resolvedRoot });
         }
-      } else {
-        await handleSelectSession({ key: forkedKey, session_key: forkedKey, root_id: resolvedRoot });
+        void loadSessionsForRoot(resolvedRoot, { replace: true, force: true });
+        bumpCacheVersion();
+      } finally {
+        forkInFlightRef.current = false;
       }
-      void loadSessionsForRoot(resolvedRoot, { replace: true, force: true });
-      bumpCacheVersion();
     },
     [
       bumpCacheVersion,
@@ -101,6 +126,7 @@ export function useAppAgentActions(params: UseAppAgentActionsParams) {
       loadSessionsForRoot,
       mergeSessionItems,
       rootSessionKey,
+      t,
     ],
   );
 

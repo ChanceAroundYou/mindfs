@@ -14533,3 +14533,22 @@ groups:
       - 'server/internal/agent/conformance/conformance.go:func (c CompactEventContract) Matches(eventType string, payload any) error {'
       - 'server/internal/agent/claude/session_compact_contract_test.go:func TestClaudeCompactEventSatisfiesCrossHarnessContract(t *testing.T) {'
       - 'server/internal/agent/codex/session_compact_contract_test.go:func TestCodexCompactEventSatisfiesCrossHarnessContract(t *testing.T) {'
+
+  - id: G-QC
+    title: fork 会话前二次确认 + 在途不重发
+    kind: fix
+    symptom: "正常聊天时凭空多出一条完整副本会话（2026-11-23 pc 的 projects 项目现场）：用户没想 fork，但侧栏里多了一条到当前消息为止的整段历史副本，且视图被切到了副本上。触发面极小 —— fork 键是回合页脚上一个 18×18 的小图标，与「复制」只隔 3px，整行还压着 0.5 透明度；旧实现单击即发 POST /api/sessions/fork，一次要跑二十多秒（pc 实测 24.464s），期间没有任何在途反馈，成功后立刻 handleSelectSession 切走。"
+    why: "fork 是不可撤销的重动作：复制整段历史、新建一条会话、把当前视图切过去，服务端还要开一个 agent 分支会话。它与「删除会话」同级，后者早在 b46b808e 就改成了先确认再执行，fork 却一直是单击直达 —— 同一类不可逆动作两套规矩，小图标误触的代价就是「莫名多出一条副本」。因此在 fork 前统一走 confirmDialog（与 b46b808e 同一个组件、同一条规矩），并加在途守卫：确认后到请求返回之间再点不再发第二次，否则连点两下就是两份副本。确认框文案说明「整段对话会被复制、原会话不受影响、可能要等几十秒」，让用户在选择之前就知道代价。"
+    files:
+      - web/src/app/useAppAgentActions.ts
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+      - web/tests/session-fork-confirm.test.mjs
+      - e2e/test_session_fork_confirm.py
+    tests:
+      - web/tests/session-fork-confirm.test.mjs
+    anchors:
+      - 'web/src/app/useAppAgentActions.ts:const forkInFlightRef = useRef(false);'
+      - 'web/src/app/useAppAgentActions.ts:const confirmed = await confirmDialog({'
+      - 'web/src/i18n/locales/zh-CN-sessions.ts:"session.forkConfirm":'
+      - 'web/tests/session-fork-confirm.test.mjs:test("fork 必须先确认再发请求"'
