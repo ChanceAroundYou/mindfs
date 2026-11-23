@@ -71,6 +71,7 @@ func TestSettleSessionTurnEmitsOneEventPerTurn(t *testing.T) {
 		SessionKey: "sess-main",
 		TurnID:     "turn-a",
 		Excerpt:    "把会话列表的排序改成了按更新时间。",
+		ToolCalls:  2,
 	}
 	inserted, err := f.svc.SettleSessionTurn(ctx, f.rootID, in)
 	if err != nil {
@@ -99,6 +100,11 @@ func TestSettleSessionTurnEmitsOneEventPerTurn(t *testing.T) {
 	}
 	if got := routerEventPayloadString(ev.PayloadJSON, "excerpt"); !strings.Contains(got, "会话列表") {
 		t.Fatalf("event excerpt = %q", got)
+	}
+	// tool_calls 是 Router 判断「这一轮有没有真干活」的唯一依据（turn_settled
+	// 回合的最后一条 say 要靠它才允许升成任务结论），必须在载荷里。
+	if got := routerEventPayloadInt(ev.PayloadJSON, "tool_calls"); got != 2 {
+		t.Fatalf("event tool_calls = %d, want 2", got)
 	}
 }
 

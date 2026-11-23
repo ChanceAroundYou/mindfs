@@ -86,9 +86,12 @@ func routerEventBriefExcerpt(payloadJSON string) string {
 // 读到非空就一定是**本轮内**报过的错。没有这个标记，失败回合在 Router 眼里和正常
 // 回合一模一样（错误说明本身也算 has_output），会被当成「这一轮正常结束」。
 type TurnSettledInput struct {
-	SessionKey       string
-	TurnID           string
-	Excerpt          string
+	SessionKey string
+	TurnID     string
+	Excerpt    string
+	// ToolCalls 是这一轮发起过的工具调用次数。它是「有真实执行结果」的唯一判据：
+	// 高于 0 时 Router 的最后一条 say 才允许提升成任务结论（纯闲聊回合不行）。
+	ToolCalls        int
 	OutOfBand        bool
 	AnsweredQuestion bool
 	Failed           bool
@@ -152,6 +155,7 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 		"turn_id":           turnID,
 		"duration_ms":       durationMS,
 		"has_output":        strings.TrimSpace(in.Excerpt) != "",
+		"tool_calls":        in.ToolCalls,
 		"out_of_band":       in.OutOfBand,
 		"answered_question": in.AnsweredQuestion,
 		"failed":            in.Failed,

@@ -63,11 +63,16 @@ func (s *ActivityService) ApplyRouteActions(ctx context.Context, decision *Route
 		state.settleTurn = true
 	}
 	// 会话回合结算同样是收尾回合（prompt 规则 12 与 summaryTriggerAllowed 都这么
-	// 认定），但它没有 Run 可判定「真的跑成了」，所以只用来识别「本回合已有总结」，
-	// 不做「最后一条 say 提升成总结」的兜底 —— 每轮会话都结算，那样会把普通进度
-	// 顶成卡片结论。
+	// 认定），但它没有 Run 可判定「真的跑成了」，所以判据换成「这一轮有没有真实
+	// 执行结果」：会话里跑过工具（decision.HadToolCalls）才把最后一条 say 提升成
+	// 总结；纯文本闲聊不提升 —— 每轮会话都结算，全升会把普通进度顶成卡片结论。
+	// 线上 #68 正是「Router 说对了、说了四条待决策项，但写成 progress，永远不落
+	// 任务摘要」，卡片上只剩压缩器那段短句。
 	if decision.TriggerKind == RouterTriggerTurnSettled {
 		state.settleTurn = true
+		if decision.HadToolCalls {
+			state.settleSummarySeq = settleSummaryActionSeq(decision)
+		}
 	}
 	// 巡检回合（回合结算 / 停滞 / 孤儿 / 打断）没有来源用户留言：它们由系统
 	// 发起，证据在事件载荷里。此时 userAct 为 nil，只允许回话类动作（见

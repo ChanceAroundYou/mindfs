@@ -16,6 +16,11 @@ import (
 
 // turnInterruptedFixture 造一条「上一进程死在回合中间」的现场：用户留言 + 旧回复
 // 仍停在 running，任务 running，没有任何活会话。
+//
+// 锚点取调用时刻而不是固定日期：重启重开的判据里有「中断后 24 小时内才允许重试」，
+// 而决策时重算监管块的时钟是真实的 time.Now()。固定成 2026-11-22T12:00Z 时，
+// 现场在 2026-11-23T12:00Z 之后对代码来说就已经「过期 26 小时」，retry_allowed
+// 永远 false —— 两条用例正是这样在第二天集体变红的。
 func turnInterruptedFixture(t *testing.T, mode RouterSupervisionMode) (*coordinateFixture, time.Time) {
 	t.Helper()
 	f := newCoordinateFixture(t, RouterModeCoordinate)
@@ -32,7 +37,7 @@ func turnInterruptedFixture(t *testing.T, mode RouterSupervisionMode) (*coordina
 	// 链路内部用的是 time.Now()，并按 routerInterruptedRetryMaxAge 判「中断太久
 	// 就不再自动重开」。曾把这里钉成固定的 2026-11-22T12:00Z，于是同一个用例在
 	// 24 小时之后必然转红 —— 一个随时间流逝自己失效的测试，与被测行为无关。
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC()
 	acts := NewActivityStore(f.store.db)
 	must(t, acts.Insert(ctx, &TaskActivity{
 		ID: "uact-direct", TaskID: "task-1", RootID: f.root.ID,
@@ -102,7 +107,7 @@ func TestSettleOrphanDirectReplyEmitsTurnInterruptedEvent(t *testing.T) {
 // 行为：一条 turn_interrupted 走完整条链路 —— 领取、决策、重开。新回合拿到的
 // 是原始用户留言，旧回复保持 cancelled。这正是「重启后不会主动恢复」要补的那一环。
 func TestTurnInterruptedEventRestartsTurn(t *testing.T) {
-	f, _ := turnInterruptedFixture(t, RouterSupervisionOn)
+	f, now := turnInterruptedFixture(t, RouterSupervisionOn)
 	ctx := context.Background()
 	f.svc.settleOrphanDirectReplies(ctx, f.store)
 	events := turnInterruptedEvents(t, f)
@@ -112,7 +117,7 @@ func TestTurnInterruptedEventRestartsTurn(t *testing.T) {
 	f.agent.calls = []scriptedRouterCall{
 		{tool: "router_retry_direct", args: map[string]any{"reason": "重启把这一轮带走了"}},
 	}
-	f.consumeEvents(t)
+	f.consumeEventsAt(t, now)
 	f.waitEvent(t, events[0].ID, RouterEventDone)
 
 	decision, err := NewRouterStore(f.store.db).DecisionByTurn(ctx, "task-1", events[0].TurnID)

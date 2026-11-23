@@ -1,6 +1,7 @@
 # Router 巡检回合可决策化 · 提问卡收口 · OOB 活跃判定 · 摘要保留决策
 
-> Scope IDs: G-QE / G-QF（G-QE claimed 2026-11-23T08:16Z，批次 1；G-QF claimed 2026-11-23T09:11Z，批次 2；批次 3 的组号在实现时再申请，见文末「组号」一节）
+> Scope IDs: G-QE / G-QF / G-QG（G-QE claimed 2026-11-23T08:16Z，批次 1；G-QF claimed
+> 2026-11-23T09:11Z，批次 2；G-QG claimed 2026-11-23T09:36Z，批次 3）
 
 Plan 2026-11-23。起点是用户在本机（local 节点）mindfs 项目上的两条观察：
 
@@ -187,10 +188,39 @@ AskUserQuestion 被重问过，旧卡仍有效。行内二次清扫是空操作�
 门禁：`go test ./server/internal/kanban/ -count=1` EXIT=0（379 s）、
 `make check-upstream` 2625 delta / 383 组全绿。
 
+### 批次 3 · 第 5 项（Scope: G-QG）—— 已实现，门禁绿
+
+**判据是「这一轮真跑过工具」，不是「回合结算了」。** `turn_settled` 没有 Run，
+每轮会话又都会结算（纯闲聊也结算），所以把「结算」当判据会让每句闲聊顶掉卡片结论。
+真正可用的信号只有会话流自己知道：这一轮发起过几次工具调用。
+
+| 项 | RED 证据 | GREEN | 变异验证 |
+|---|---|---|---|
+| 有执行结果的一轮才提升最后一条 say | `TestTurnSettledPromotesLastSayWhenTurnHadToolCalls` 首跑 `result_summary = "", want 本轮结论…` | 决策行走通 `tool_calls>0 → HadToolCalls → settleSummarySeq` 后任务摘要等于最后一条 say | ① 去掉 `if decision.HadToolCalls` 直接无条件提升 → 纯闲聊用例红；② 条件写反（`!HadToolCalls`）→ 两条用例同时红；③ 只在 payload 里写死 0 → 提升用例红 |
+| 纯文本回合不许顶掉摘要 | `TestTurnSettledKeepsProgressWhenTurnHadNoToolCalls` 首跑 `result_summary = "收到，我把口径记下来了。"` | 同一套代码下摘要保持为空 | 同上 ① |
+| 工具调用按轮计数 | `TestAppendReplyEventCountsToolCallsPerTurn` 首跑 `tool_calls = 0, want 2` | `SessionPendingState.ToolCalls` 在 `setPendingUserAt` 归零、`EventTypeToolCall` 累加，快照带出 2；新回合归零 | 把累加挪到 `EventTypeToolUpdate`（同一调用的续传）→ 计数变成 3，用例红 |
+| 载荷与 brief 白名单 | `TestSettleSessionTurnEmitsOneEventPerTurn` 增断言 `event tool_calls = 0, want 2` | `TurnSettledInput.ToolCalls` → 载荷 `"tool_calls"`，brief 白名单放行（不放行会被当未知键、报「载荷被截断」） | 从白名单删掉 `"tool_calls"` → 该断言红且 brief 标记 truncated |
+| Router 总结不被迟到的压缩器覆盖 | `TestRouterSummarySurvivesLateCompression` 首跑 `result_summary = "压缩器给出的短句", want 本轮结论…` | 压缩器调度时快照期望值、落地 CAS 只改仍等于快照的行 → Router 后写的摘要保留、活动气泡仍看到压缩短句 | 把 CAS 去掉改成无条件写 → 用例红 |
+
+判据口径：`ToolCalls` 数的是**本轮**发起的工具调用次数（`EventTypeToolCall`），
+`EventTypeToolUpdate` 是同一调用的续传，不重复计数；`had_tool_calls` 落库是为了应用期
+不依赖被裁剪过的 brief 载荷（载荷值有 500 字节上限）。
+
+同批修正（测试基建，不涉及产品行为）：`turnInterruptedFixture` 原把现场钉在
+`2026-11-22T12:00Z`，而决策时重算监管块的时钟是真实 `time.Now()`，于是「中断后 24 小时
+内才允许重开」在 2026-11-23T12:00Z 之后永远判 false —— `TestTurnInterruptedEventRestartsTurn`
+与 `TestHealthSupervisionInterruptedAllowsRetryOfSettledReply` 当天集体变红（报错还写成
+自相矛盾的 `budget exhausted (0/3)`）。改为按调用时刻取锚点，并新增 `consumeEventsAt`
+让按时刻造的现场用同一个时钟消费事件。
+
+门禁：`go test ./server/internal/kanban/ -count=1` EXIT=0、`go test ./server/internal/api/ -count=1` 绿。
+
 ## 6. 组号
 
 - **G-QE** —— 批次 1（OOB 活跃判定 / 提问卡收口 / 巡检回合可见拒绝 + 规则 11/12），已实现并登记。
 - **G-QF** —— 批次 2（启动清扫收口被重问取代的存量等待卡），已实现并登记。
+- **G-QG** —— 批次 3 第 5 项（`tool_calls` 证据链 + 有执行结果才提升结算总结 + 压缩器覆盖保护），
+  已实现并登记。
 - 批次 3 的组号在实现时由 `scripts/scope-id claim` 现场申请：前一批落地、登记、门禁绿之后
   再取号。一次性 claim 多组会让尚未实现的占位一直把 `make check-upstream` 的断言 5 打红，
   抢不到干净的提交点。

@@ -43,6 +43,10 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 		TriggerRef:     trigger.TriggerRef,
 		TurnID:         routerEventAttemptTurnID(event),
 		Status:         RouterDecisionApplying,
+		// 只有会话回合带「这一轮跑过工具」的证据；其它触发类型的执行结果由
+		// Run / 节点自身表达。
+		HadToolCalls: event.Kind == RouterEventTurnSettled &&
+			routerEventPayloadInt(event.PayloadJSON, "tool_calls") > 0,
 	}
 	if !rs.beginCoordinateEventTurn(ctx, decision, &event) {
 		return
