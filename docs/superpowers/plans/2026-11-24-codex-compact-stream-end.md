@@ -69,7 +69,8 @@ pc-wsl 上 codex 会话里手动输入 `/compact`：压缩本身成功（上下�
 
 ## 边界与未验证
 
-- 未在真机 pc-wsl 上重跑（需要部署新二进制，本轮明确不做 push / 部署 / 重启）。
+- 未在真机 pc-wsl 上重跑（需要部署新二进制，本轮明确不做 push / 部署 / 重启）；隔离实例里的
+  真实 codex 端到端已验（见下）。
 - 不改 SDK；若上游将来给压缩回合补 `turn.completed`，本分支退化为无害的提前返回。
 
 ## 执行记录（2026-11-24）
@@ -89,3 +90,23 @@ pc-wsl 上 codex 会话里手动输入 `/compact`：压缩本身成功（上下�
   `go test -count=1 ./server/internal/api/usecase/ ./server/internal/api/` 两包 ok
   （30.455 s / 50.468 s）；`go build ./...` 与 `go vet ./server/internal/agent/codex/` 均 exit 0。
   `make check-upstream` 在提交后单独复核。
+
+## 隔离实例端到端 A/B（2026-11-24）
+
+环境：本机真实 codex CLI `0.171.0`（ChatGPT 登录，`gpt-6-luna`），`scripts/mindfs-iso.sh`
+起两个隔离实例（独立 `XDG_CONFIG_HOME` + 独立项目根，端口 7480/7481），线上 7331 全程只读；
+探针经 `/ws` 发两轮：普通消息（确认回合链路正常，日志出现 `output.done`）→ 同一会话发
+`/compact`。
+
+| 臂 | 二进制 | `/compact` 后 11 s 的日志 | 结论 |
+|---|---|---|---|
+| 基线 | `6f34fd4c`（修复前） | `turn.send.no_response … action=fail_without_recovery` → `turn.send.error err=codex response stream ended unexpectedly` → `[ws] session.message.error` | 复现用户症状 |
+| 修复 | `be0389d4`（本次） | `[agent/codex] compact.done` → `[ws] session.done`，无任何 error 行 | 通过 |
+
+两侧 codex 自己的 rollout 里都落了 `{"type":"compacted", …}` 与 `item_completed
+ContextCompaction`，`cwd` 分别指向各自隔离项目根 —— 压缩在两条臂上都真的执行了，差别只在
+MindFS 是否把「没有 turn.completed」误报成失败。
+
+收尾：两个隔离实例 `stop`、基线 worktree 与 `web/dist` 符号链接删除、临时目录与探针脚本清理；
+`/mindfs/health`（7331）200、7480/7481 无监听。codex 会话文件留在 `~/.codex/sessions/`
+（真实 codex home 共用，未删数据）。
