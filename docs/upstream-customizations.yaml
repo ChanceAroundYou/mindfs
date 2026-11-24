@@ -15902,3 +15902,36 @@ groups:
 
   # ── scope-id claim 占位 ──────────────────────────────────────────────
   # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RD
+    title: "导入项目时在路径浏览里新建文件夹"
+    kind: feature
+    symptom: "添加项目只能在磁盘上已有目录里挑；想导入的目录还没建，用户得先切到终端或文件管理器建好再回来，导入流程被打断。"
+    why: >-
+      上游的路径浏览只有只读列表（GET /api/local_dirs），没有任何就地建目录的入口。
+      既有的两条创建通道都不合用：POST /api/file 要求目录已经注册成项目（正是这里要
+      绕开的循环），POST /api/dirs 的 create 会把目录同时注册成项目（用户还在浏览、
+      没决定导入哪个）。所以新增独立的数据面端点 POST /api/local_dirs，只建目录不注册；
+      丢了它，导入流程会退回「先离开 MindFS 建目录」。它必须在数据面（worker 放行），
+      别把它并进控制面。
+    files:
+      - server/internal/api/usecase/local_dirs.go
+      - server/internal/api/http_local_dirs.go
+      - server/internal/api/http_routes.go
+      - web/src/app/useProjectDirectoryBrowser.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/components/file/LocalNewFolderButton.tsx
+      - web/src/shared/projectAddTypes.ts
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/tests/source-map-modules-components.mjs
+      - docs/superpowers/plans/2026-11-25-project-add-new-folder.md
+    tests:
+      - server/internal/api/usecase/local_dirs_test.go
+      - server/internal/api/http_local_dirs_test.go
+      - web/tests/project-add-new-folder.test.mjs
+    anchors:
+      - server/internal/api/http_local_dirs.go:func (h *HTTPHandler) handleLocalDirsCreate
+      - server/internal/api/usecase/local_dirs.go:func (s *Service) CreateLocalDir
+      - web/src/app/useProjectDirectoryBrowser.ts:handleLocalDirCreate
+      - web/src/components/file/LocalNewFolderButton.tsx:export function LocalNewFolderButton

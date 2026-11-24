@@ -178,7 +178,7 @@ export const COMPONENT_MODULES = {
     "src/components/file/DefaultListViewMenu.tsx",
     "src/components/file/DirectorySortMenu.tsx",
   ],
-  "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx", "src/components/file/ProjectAddModePanel.tsx", "src/components/file/projectAddStyles.ts", "src/components/file/PathBreadcrumb.tsx", "src/shared/projectAddTypes.ts"],
+  "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx", "src/components/file/ProjectAddModePanel.tsx", "src/components/file/projectAddStyles.ts", "src/components/file/PathBreadcrumb.tsx", "src/components/file/LocalNewFolderButton.tsx", "src/shared/projectAddTypes.ts"],
   "src/components/AgentConfigPopover.tsx": ["src/components/file/AgentConfigPopover.tsx", "src/components/file/AgentConfigAgentStep.tsx", "src/components/file/AgentLifecyclePopover.tsx", "src/components/file/agentConfigStyles.ts"],
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
   "src/components/SymlinkBadge.tsx": ["src/components/file/SymlinkBadge.tsx"],
