@@ -192,6 +192,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/nodes", h.handleNodesPost)
 	r.Delete("/api/nodes/{id}", h.handleNodesDelete)
 	r.Get("/api/local_dirs", h.handleLocalDirs)
+	r.Post("/api/local_dirs", h.handleLocalDirsCreate)
 	r.Get("/api/app/update", h.handleAppUpdateGet)
 	r.Post("/api/app/update", h.handleAppUpdatePost)
 	// 控制面同步：只在启用时注册。nil 时保持改造前行为（两条路径 404），

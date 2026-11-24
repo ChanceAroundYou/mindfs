@@ -35,5 +35,7 @@ export type LocalDirBrowserState = {
   loading: boolean;
   selectedPath: string;
   adding: boolean;
+  /** 正在新建文件夹（prompt → POST 之间），用于按钮防重。只有导入弹窗会置位。 */
+  creating?: boolean;
   error: string;
 };

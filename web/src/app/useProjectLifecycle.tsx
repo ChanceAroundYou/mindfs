@@ -173,6 +173,7 @@ export function useProjectLifecycle({
     openDirectoryPicker,
     handleLocalDirSelect,
     handleLocalDirAdd,
+    handleLocalDirCreate,
   } = useProjectDirectoryBrowser({
     currentRootIdRef,
     managedRootByIdRef,
@@ -390,6 +391,7 @@ export function useProjectLifecycle({
       onLocalNavigate={(path) => void loadLocalDirs(path, projectAddNodeId)}
       onLocalSelect={handleLocalDirSelect}
       onLocalAdd={() => void handleLocalDirAdd()}
+      onCreateFolder={() => void handleLocalDirCreate()}
       githubState={githubImportState}
       onGitHubUrlChange={(value) => setGitHubImportState((prev) => ({
         ...prev,

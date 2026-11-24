@@ -14558,11 +14558,14 @@ groups:
   - id: G-QD
     title: "Scope 组号治理：脚本取号、门禁查重、撞号裁决"
     kind: deploy
-    symptom: "同一个 G-XX 在 git log 里指向两组互不相关的定制；计划里写了号却没登记。"
+    symptom: "同一个 G-XX 在 git log 里指向两组互不相关的定制；计划里写了号却没登记；两条分支各自追加新组，合并时报清单尾部冲突。"
     why: >-
       组号是手写字符串，三个并行分支都从本地清单取「最大号 + 1」，必然撞车；
       撞号后 git 合并干净、旧门禁全绿，只有人事后读 git log 才发现。上游不会提供
-      这套机制，丢掉它等于回到 2026-11-18/11-20/11-23 的三次事故。
+      这套机制，丢掉它等于回到 2026-11-18/11-20/11-23 的三次事故。修法分两层：
+      claim 在共享 $(git-common-dir)/scope-ids/ 下用 O_EXCL 原子占号、并扫过全部
+      本地分支已提交的号，杜绝「读到 stale 远端再发同号」；.gitattributes 对清单
+      声明 merge=union，不同号的两段追加不再产生文本冲突，同号则留成重复再由门禁判红。
     files:
       - scripts/internal/scopeid/
       - scripts/scope-id/
@@ -14572,6 +14575,7 @@ groups:
       - scripts/check-tag.sh
       - internal/deploy/check_tag_test.go
       - Makefile
+      - .gitattributes
       - .claude/skills/scope-id/SKILL.md
       - docs/superpowers/plans/2026-11-23-scope-id-allocation.md
     tests:
@@ -14581,6 +14585,7 @@ groups:
       - internal/deploy/check_tag_test.go
     anchors:
       - 'scripts/internal/scopeid/scopeid.go:func NextIDs(existing []string, n int) ([]string, error) {'
+      - 'scripts/internal/scopeid/scopeid.go:func ReservationsDir(root string) (string, error) {'
       - 'scripts/internal/scopeid/scopeid.go:func IsTemplatePlaceholder(id string) bool {'
       - 'scripts/check-upstream/main.go:if bad := duplicateGroupIDs(reg.Groups); len(bad) > 0 {'
       - 'scripts/scope-id/main.go:const claimStampPrefix = "> Scope IDs: "'
@@ -15906,3 +15911,36 @@ groups:
 
   # ── scope-id claim 占位 ──────────────────────────────────────────────
   # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RD
+    title: "导入项目时在路径浏览里新建文件夹"
+    kind: feature
+    symptom: "添加项目只能在磁盘上已有目录里挑；想导入的目录还没建，用户得先切到终端或文件管理器建好再回来，导入流程被打断。"
+    why: >-
+      上游的路径浏览只有只读列表（GET /api/local_dirs），没有任何就地建目录的入口。
+      既有的两条创建通道都不合用：POST /api/file 要求目录已经注册成项目（正是这里要
+      绕开的循环），POST /api/dirs 的 create 会把目录同时注册成项目（用户还在浏览、
+      没决定导入哪个）。所以新增独立的数据面端点 POST /api/local_dirs，只建目录不注册；
+      丢了它，导入流程会退回「先离开 MindFS 建目录」。它必须在数据面（worker 放行），
+      别把它并进控制面。
+    files:
+      - server/internal/api/usecase/local_dirs.go
+      - server/internal/api/http_local_dirs.go
+      - server/internal/api/http_routes.go
+      - web/src/app/useProjectDirectoryBrowser.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/components/file/LocalNewFolderButton.tsx
+      - web/src/shared/projectAddTypes.ts
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/tests/source-map-modules-components.mjs
+      - docs/superpowers/plans/2026-11-25-project-add-new-folder.md
+    tests:
+      - server/internal/api/usecase/local_dirs_test.go
+      - server/internal/api/http_local_dirs_test.go
+      - web/tests/project-add-new-folder.test.mjs
+    anchors:
+      - server/internal/api/http_local_dirs.go:func (h *HTTPHandler) handleLocalDirsCreate
+      - server/internal/api/usecase/local_dirs.go:func (s *Service) CreateLocalDir
+      - web/src/app/useProjectDirectoryBrowser.ts:handleLocalDirCreate
+      - web/src/components/file/LocalNewFolderButton.tsx:export function LocalNewFolderButton
