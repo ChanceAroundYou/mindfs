@@ -299,6 +299,35 @@ sessionmaintenance、api、app、cli 全绿；`usecase` 的全量并发跑出现
 存在 TOCTOU 窗口；锁清理只处理 `<pid>.json`，不碰可能的 `.key` 旁车文件。Codex 桌面端并发
 repoint 与真机大数据图片续聊未验。
 
+### 自动收尾与 workflow 建树的竞态（2026-11-25）
+
+**症状**：任务被显式置为终态时 Run 里还剩会自己动的节点，自动收尾按 task status 就放行，
+清场后引擎紧接着为下游节点建树 —— 「清了又建」。
+
+**修复**：`maybeAutoFinishWorktree` 在会话探针之后、写 `finish_auto_queued` 之前增加
+`autoFinishRunStillOpen` 守卫，判据复用 `workflowRunHasOpenNodes`；读 Run / 读行失败
+按 open 处理（fail-closed），`legacy_import` 的审计快照 Run 放行。守卫挡下时不占坑，
+否则一次守卫命中会让该任务永久失去自动收尾。因为 `setTaskStatus` 与
+`projectWorkflowTaskStatus` 对终态任务都早退，收敛点在 `finalizeWorkflowNodeTerminal`
+（顶层节点落定后，任务已终态/已归档时补一次触发）；重复触发由 `finish_auto_queued`
+去重。
+
+**先红后绿**：
+
+- `TestAutoFinishWorktreeWaitsForTerminalWorkflowNode`：Run 里仍有 running 行时不排队、
+  不拆树；节点逐个落定后由收敛点补排恰好一次并清场。变异（去掉守卫）→ 第一段红；
+  变异（去掉 `finalizeWorkflowNodeTerminal` 的重试触发）→ 末段等不到排队。
+- `TestAutoFinishWorktreeWaitsForUnclaimedDownstreamNode`：上游已 success、下游还没有行
+  （「两边都没有」= open）时同样不拆。变异（去掉守卫）打红。
+- `TestAutoFinishWorktreeIgnoresConversationTask` / `TestAutoFinishWorktreeIgnoresLegacyImportRun`：
+  无 Run 与 legacy_import 两种「Run 永远不会再动」不能被守卫误伤。
+- `TestAutoFinishRetryTriggerNeedsTerminalTask`：任务没进终态时收敛点不补排。
+
+**取舍**：`waiting_user` 行或图里永远不会被 claim 的下游节点会让 Run 一直算 open，
+自动收尾被推迟、树保留；手工「收尾」按钮仍是逃生口。生产库只读核查：52 个终态
+`create_worktree=1` 任务（其中 44 个挂了 workflow run）里，严格门禁只挡 1 个
+（`task_39c5ae0402585f89`，行 `waiting_user`，其 worktree 目录已不存在），眼下 0 个真实回归。
+
 ### 收尾修复与隔离端到端（2026-11-24）
 
 - `99099cf4`：`POST /api/sessions/runtime-issues/sweep` 原先只读 `root_id` / URL 段，不认
