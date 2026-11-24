@@ -14064,7 +14064,7 @@ groups:
       - 'server/internal/api/http_control_sync.go:func (h *HTTPHandler) handleControlSyncConflictResolve(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:	if h.ControlSyncConflicts != nil {'
       - 'server/internal/controlsync/runtime.go:func (r *Runtime) Handover(ctx context.Context) error {'
-      - 'server/internal/controlsync/runtime.go:				if pending[rec.Key] {'
+      - 'server/internal/controlsync/replica_apply.go:if pending[rec.Key] {'
       - 'server/internal/controlsync/runtime.go:	if err := r.Handover(ctx); err != nil {'
       - 'server/internal/controlsync/runtime.go:	r.pending.SetFrozenDomains(frozen)'
       - 'server/internal/controlsync/runtime.go:	if pending > 0 {'
