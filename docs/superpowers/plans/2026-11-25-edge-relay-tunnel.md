@@ -25,6 +25,18 @@ Plan 2026-11-25。设计正文见
 | 账户对齐 | 在线采纳 `users` 域副本到权威存储；`@primary` 依赖序；`SetPrimary` 幂等 | `controlsync/replica_apply.go`、`runtime.go`、`domain_users.go`、`auth/store_mutate.go` |
 | 前端 | `/relay/<name>/` 判为跨机器 | `web/src/services/net/base.ts` |
 
+**端到端暴露并修掉的三个真问题**（单测各自都是绿的，只有真跑一遍才现形）：
+
+1. `dialTunnel` / `dialChannel` 把 `https://` 基址直接喂给 gorilla —— 报
+   `malformed ws or wss URL`。补 `toWSScheme`（https→wss / http→ws）。
+2. `relayTransport.RoundTrip` 在 `defer cancel()` 里给整条请求加了 30 分钟超时。
+   `RoundTrip` 返回时响应体还没读完，defer 一执行就关掉数据通道：256KB 响应只到 36KB，
+   客户端拿到 `200 + unexpected EOF`。改成不给请求加上下文超时（寿命跟客户端连接走），
+   死连接交给 `ResponseHeaderTimeout`（30s，只限响应头）。
+3. 主控的 `serveControlChannel` 只写不读，边控端正常下线时主控要等下一次写 ping 失败
+   （30s+）才发现；这段时间 `/relay/<name>/` 借到死通道，用户看到超时而不是 503。
+   改成真的读（`ReadMessage` + 90s 读超时），断开即时 `Unregister`。
+
 ## 测试（针对性，全部已通过 + 变异验证）
 
 | 测试文件 | 钉住什么 |
@@ -36,6 +48,7 @@ Plan 2026-11-25。设计正文见
 | `controlsync/runtime_online_users_test.go` | 在线采纳账户副本、`@primary` 在账户之后、交接同序、删除传播 |
 | `auth/store_primary_test.go` | `SetPrimary` 幂等（mtime 不变）、换主账户真落盘 |
 | `api/relay_test.go` | 路径穿越全拒、直通路径、错误码（404/403/503/502）、借通道失败映射、查询串保留、签名覆盖查询 |
+| `api/relay_e2e_test.go` | 真实 TLS+WS+ReverseProxy 主线：前缀被剥离、查询串保留、256KB 响应体完整、下线后 503 |
 | `web/tests/relay-path-same-server.test.mjs` | relay 判跨机器、普通同源、文件路径碰巧叫 relay、非法名字、异 host |
 
 ## 待办（需单独授权，未执行）

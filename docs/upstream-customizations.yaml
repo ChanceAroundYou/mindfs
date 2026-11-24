@@ -15831,6 +15831,7 @@ groups:
       - server/internal/controlsync/relay_tunnel_test.go
       - server/internal/controlsync/store_relay_name_test.go
       - server/internal/api/relay_test.go
+      - server/internal/api/relay_e2e_test.go
     anchors:
       - 'server/internal/controlsync/relay_hub.go:func AssignRelayName(existing, candidate, instanceID string, taken map[string]string) string {'
       - 'server/internal/controlsync/relay_hub.go:func ValidRelayName(name string) bool {'
@@ -15838,8 +15839,10 @@ groups:
       - 'server/internal/controlsync/relay_tunnel.go:type TunnelOptions struct {'
       - 'server/internal/controlsync/store_edges.go:var ErrRelayNameTaken = errors.New("control_sync: relay name already taken")'
       - 'server/internal/api/relay.go:func splitRelayPath(p string) (name, rest string, ok bool) {'
+      - 'server/internal/api/relay.go:const relayResponseHeaderTimeout = 30 * time.Second'
       - 'server/internal/api/relay.go:func NewRelayHandler(hub RelayHubService) http.Handler {'
       - 'server/internal/api/relay_tunnel.go:func publicBaseFromRequest(r *http.Request) string {'
+      - 'server/internal/api/relay_e2e_test.go:func TestRelayEndToEndOverTLS(t *testing.T) {'
       - 'server/app/relay_service.go:func relayBaseFromConfig(primaryURL string) string {'
   - id: G-RD
     title: "边缘在线时采纳主控账户表，relay 请求用它解析身份"

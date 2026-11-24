@@ -241,6 +241,7 @@ func (c *TunnelClient) dialTunnel(ctx context.Context) (*websocket.Conn, string,
 		return nil, "", err
 	}
 	target := *base
+	toWSScheme(&target)
 	target.Path = joinSyncPath(base.Path, "/api/control-sync/relay/tunnel")
 	q := target.Query()
 	q.Set("name", c.opts.Name)
@@ -270,6 +271,23 @@ func (c *TunnelClient) dialTunnel(ctx context.Context) (*websocket.Conn, string,
 		name = SlugRelayName(c.opts.Name)
 	}
 	return conn, name, nil
+}
+
+// toWSScheme 把 HTTP 基址换成 gorilla 认的 WS scheme。
+//
+// primary_url 是 https://（HTTP 基址）。WS 方言要 wss://，scheme 不换，
+// Dial 直接报「malformed ws or wss URL」—— 这条路径只在真连时才走到，
+// 单看 config 校验（只查 https）发现不了，控制通道与数据通道都一样。
+func toWSScheme(u *url.URL) {
+	if u == nil {
+		return
+	}
+	switch u.Scheme {
+	case "https":
+		u.Scheme = "wss"
+	case "http":
+		u.Scheme = "ws"
+	}
 }
 
 // websocketDialer 用与同步通道一致的 TLS 信任链：系统根 + 可选 ca_file，
@@ -387,6 +405,7 @@ func (c *TunnelClient) dialChannel(ctx context.Context) (*websocket.Conn, *http.
 		return nil, nil, err
 	}
 	target := *base
+	toWSScheme(&target)
 	target.Path = joinSyncPath(base.Path, "/api/control-sync/relay/channel")
 	q := target.Query()
 	q.Set("instance_id", c.opts.InstanceID)

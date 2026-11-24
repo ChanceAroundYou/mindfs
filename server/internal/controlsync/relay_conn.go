@@ -36,9 +36,16 @@ func NewWSConn(conn *websocket.Conn) *wsConn {
 
 // Read 从当前消息里读；一条消息读完就取下一条。
 //
-// 返回 (0, nil) 会让上层的 io 逻辑空转（net/http 会把零长度读当成异常），所以
-// 消息边界处若没有拿到任何字节，就地继续读下一条。
+// **消息边界绝不能返回 io.EOF**：上层是 net/http，它把 net.Conn 上的 EOF
+// 当成「对端关连接」，会在一条消息结束时把整个响应截断（实测 256KB 响应体
+// 读到 14KB 就 unexpected EOF）。所以读完一条消息后释放读取器、阻塞等下一条：
+// 真正的「对端关了」由 NextReader 自己返回 err。
+//
+// 返回 (0, nil) 同样不行（net/http 会把零长度读当异常），所以没有拿到字节时继续循环。
 func (c *wsConn) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	c.rmu.Lock()
 	defer c.rmu.Unlock()
 	for {
@@ -55,7 +62,7 @@ func (c *wsConn) Read(p []byte) (int, error) {
 			if n > 0 {
 				return n, nil
 			}
-			continue
+			continue // 空消息（keepalive 帧之类），取下一条
 		}
 		return n, err
 	}

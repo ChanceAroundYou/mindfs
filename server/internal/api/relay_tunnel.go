@@ -108,20 +108,49 @@ func (h *HTTPHandler) handleRelayTunnel(w http.ResponseWriter, r *http.Request) 
 }
 
 // serveControlChannel 读心跳、写踢人通知，直到任一端断开。
+//
+// 读必须真的发生。gorilla 只有在实际读连接时才处理对端的 ping/pong 与关闭帧，
+// 也只有读才能发现「对端已经没了」。原先这里只写不读，边控端正常下线（TCP 关闭）
+// 时主控要等到下一次写 ping 失败才知道 —— 离线检测被推迟到 30 秒以后，
+// 这段时间里 /relay/<name>/ 会借到已经死掉的通道，用户看到的是超时而不是 503。
 func (h *HTTPHandler) serveControlChannel(ctx context.Context, conn *websocket.Conn, instanceID string) {
-	ping := time.NewTicker(30 * time.Second)
-	defer ping.Stop()
-	for {
+	done := make(chan struct{})
+	defer close(done)
+	// ctx 结束时把连接关掉，唤醒阻塞中的 ReadMessage。
+	go func() {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ping.C:
-			// 心跳用 WS 协议级 ping：它不会在应用层留下一条需要解析的消息，
-			// 对端由 gorilla 的默认 handler 自动回 pong。
-			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+
+	go func() {
+		ping := time.NewTicker(controlPingInterval)
+		defer ping.Stop()
+		for {
+			select {
+			case <-done:
 				return
+			case <-ping.C:
+				// 心跳用 WS 协议级 ping：它不会在应用层留下一条需要解析的消息，
+				// 对端由 gorilla 的默认 handler 自动回 pong。
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+					_ = conn.Close()
+					return
+				}
 			}
 		}
+	}()
+
+	// 任何上行帧都算活着（边控端默认每 30 秒发一次应用层 ping），
+	// 连续 controlReadTimeout 完全没有声音就判定隧道已死。
+	_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
 	}
 }
 
@@ -201,6 +230,14 @@ var relayUpgrader = websocket.Upgrader{
 	ReadBufferSize:  32 * 1024,
 	WriteBufferSize: 32 * 1024,
 }
+
+const (
+	// controlPingInterval 是主控向边控端发协议级 ping 的间隔。
+	controlPingInterval = 30 * time.Second
+	// controlReadTimeout 是控制通道上「多久没听到任何上行就判定隧道已死」。
+	// 边控端默认每 30 秒发一次应用层心跳，取三倍留出网络抖动余量。
+	controlReadTimeout = 90 * time.Second
+)
 
 // newWSConnFromUpgrade 把升级后的连接包成 net.Conn。
 //

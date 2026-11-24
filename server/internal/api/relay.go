@@ -38,11 +38,13 @@ var (
 	errRelayBusy = errors.New("relay: edge busy")
 )
 
-// relayRequestTimeout 是单条数据通道从借到到请求读完的总时限。
+// relayResponseHeaderTimeout 是「借到通道之后，边控端把响应头写回来」的上限。
 //
-// 与 nginx 那边 proxy_read_timeout 3600s 同一档：文件面板的大文件、长轮询、
-// WS 会话流都要能跑完。这里只是防止一条通道永远不归还。
-const relayRequestTimeout = 30 * time.Minute
+// 只限响应头，**不限响应体**：大文件、长轮询、WS 会话流的寿命由客户端连接
+// 本身决定（客户端断开 → 请求上下文取消 → Transport 关闭这条通道）。
+// 想在这里给整条请求加 WithTimeout 会在大响应读到一半时掐断连接，
+// 见 RoundTrip 里的注释。
+const relayResponseHeaderTimeout = 30 * time.Second
 
 // NewRelayHandler 构造 /relay/<name>/... 的转发器。
 //
@@ -185,15 +187,15 @@ type relayTransport struct {
 }
 
 func (t *relayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	ctx := req.Context()
 	if t == nil || t.hub == nil {
 		return nil, errRelayOffline
 	}
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > relayRequestTimeout {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, relayRequestTimeout)
-		defer cancel()
-	}
+	// 这里**不能** WithTimeout + defer cancel()：RoundTrip 返回时响应体还没读完，
+	// 一 cancel 请求上下文，Transport 立刻关掉这条数据通道，大响应就停在读到
+	// 一半的位置（实测 256KB 只到 36KB，客户端拿到 200 + unexpected EOF）。
+	// 通道寿命跟客户端连接走：客户端断开时 ReverseProxy 取消请求上下文，
+	// 响应体随之关闭、连接随之归还；等不到响应头的死连接由 ResponseHeaderTimeout 兜底。
+	ctx := req.Context()
 	conn, err := t.hub.Acquire(ctx, t.instanceID)
 	if err != nil {
 		return nil, err
@@ -205,10 +207,11 @@ func (t *relayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		DisableKeepAlives: true,
 		// 边控端那边也是 Go 的 http.Server，默认就接受 HTTP/1.1；
 		// 明确关掉 h2 是因为隧道是一条裸字节流，不需要 ALPN 协商。
-		ForceAttemptHTTP2:   false,
-		MaxIdleConns:        -1,
-		IdleConnTimeout:     time.Second,
-		TLSHandshakeTimeout: time.Second,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          -1,
+		IdleConnTimeout:       time.Second,
+		TLSHandshakeTimeout:   time.Second,
+		ResponseHeaderTimeout: relayResponseHeaderTimeout,
 		// 大文件上传：不给请求体加额外的缓冲上限。
 		ExpectContinueTimeout: 0,
 	}
