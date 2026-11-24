@@ -112,6 +112,54 @@ func TestWindowsInstallerVerifiesWebAssets(t *testing.T) {
 	}
 }
 
+// TestWindowsInstallerManagesStartMenuShortcut 钉「装得上也卸得掉」。
+//
+// 两条必须同时成立：安装创建 %APPDATA%\...\Start Menu\Programs\MindFS.lnk，
+// 卸载删掉同一条。只装不卸会留下一个指向已删 exe 的快捷方式；只卸不装则用户
+// 装完仍然找不到入口（这正是 hasee 上的原始反馈）。
+//
+// 卸载刻意**不动** %APPDATA%\mindfs：重装必须还能找回 token 与配对状态，
+// 那是 -Purge 才做的事。
+func TestWindowsInstallerManagesStartMenuShortcut(t *testing.T) {
+	script := readRepoFile(t, "scripts/install.ps1")
+
+	installAt := strings.Index(script, `$LinkPath = Join-Path $Programs "MindFS.lnk"`)
+	if installAt < 0 {
+		t.Fatal("install.ps1 安装路径没有创建开始菜单快捷方式")
+	}
+	if !strings.Contains(script[installAt:], "Write-Host \"Done. mindfs installed") {
+		t.Fatal("创建快捷方式的代码不在安装流程里")
+	}
+	for _, needle := range []string{
+		`$Sc.TargetPath = Join-Path $BinDir "mindfs.exe"`,
+		`$Sc.Arguments = ""`,
+		`$Sc.Save()`,
+	} {
+		if !strings.Contains(script[installAt:], needle) {
+			t.Fatalf("快捷方式缺少 %q", needle)
+		}
+	}
+
+	uninstallAt := strings.Index(script, `$ShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MindFS.lnk"`)
+	if uninstallAt < 0 {
+		t.Fatal("install.ps1 -Uninstall 没有删除开始菜单快捷方式")
+	}
+	if uninstallAt > installAt {
+		t.Fatal("删除快捷方式的代码不在卸载函数里")
+	}
+	// 只算出路径不算数：卸载函数里必须真的删这一条。少了这一句，
+	// 用户卸载后会留下一个指向已删 exe 的开始菜单条目。
+	if !strings.Contains(script[uninstallAt:installAt], "Remove-Item -Force $ShortcutPath") {
+		t.Fatal("卸载算了快捷方式路径，却没有真的删掉它")
+	}
+	// 默认卸载路径必须保留配置目录：删掉 %APPDATA%\mindfs 是 -Purge 的事。
+	// 判据取那一行「保住了」的说明，而不是看有没有 Remove-Item —— 后者在 -Purge
+	// 分支里本来就该出现。
+	if !strings.Contains(script, "User config and project .mindfs data were kept.") {
+		t.Fatal("卸载没有保留配置目录：token 与配对状态要留给重装")
+	}
+}
+
 // TestWindowsInstallerStaysASCIISafe 给 install.ps1 钉纯 ASCII 之外的底线：
 // 这段脚本在 Windows 上会被按本地代码页（GBK）解码，中文注释会吃掉后面的换行，
 // 把下一条语句并进注释里 —— 不报错、不生效，只在运行期表现为「某步被跳过了」。

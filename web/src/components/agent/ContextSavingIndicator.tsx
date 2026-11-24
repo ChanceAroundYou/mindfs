@@ -139,6 +139,11 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   const activeMinutes = Math.floor((hygiene?.active_seconds || 0) / 60);
   const hygieneTokens = formatTokenAmount(hygiene?.context_tokens || 0);
   const hygieneLimit = hygiene?.context_limit || 0;
+  // CLI 在本地拒发前先扣掉输出预留与 3k 余量：200k 窗口的拒发线约 177k。
+  // 这是本地预检口径，不是上游计量，下面单独标「估算」，不和真实 usage 混在一起。
+  const contextWindow = hygiene?.context_window || 0;
+  const localBlockLine = contextWindow > 0 ? contextWindow - 20000 - 3000 : 0;
+  const localPrecheck = (hygiene?.context_tokens || 0) + 20000 + 3000;
   const turnsUntilAuto = hygiene?.turns_until_auto_compact ?? -1;
   // 这一对数据是「会话卫生」的全部可观测事实，和折叠省了多少无关：只要特性开着
   // 就得能读到 —— 之前按档位隐藏，结果没到 notice/hint 的会话完全看不到自己
@@ -158,7 +163,17 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
           ? t("contextSaving.hygieneContextValue", { tokens: hygieneTokens, limit: formatTokenAmount(hygieneLimit) })
           : t("contextSaving.tokensValue", { count: hygieneTokens }),
       ],
+      [t("contextSaving.hygieneLastUsage"), t("contextSaving.tokensValue", { count: hygieneTokens })],
     );
+    if (localBlockLine > 0) {
+      rows.push([
+        t("contextSaving.hygieneLocalBudget"),
+        t("contextSaving.hygieneLocalBudgetValue", {
+          used: formatTokenAmount(localPrecheck),
+          limit: formatTokenAmount(localBlockLine),
+        }),
+      ]);
+    }
     if (hygiene.state === "hint" && turnsUntilAuto >= 0) {
       rows.push([t("contextSaving.hygieneAutoIn"), t("contextSaving.hygieneAutoInValue", { count: String(turnsUntilAuto) })]);
     }

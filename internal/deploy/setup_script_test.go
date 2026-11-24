@@ -57,13 +57,15 @@ func TestWindowsSetupScriptTakesPathsFromStub(t *testing.T) {
 	}
 }
 
-// TestWindowsSetupScriptOrder 钉住五步顺序。每一步都依赖前一步：
-// 不停旧进程就拷不了二进制（文件被占用）；不先拷就注册任务会指向不存在的文件。
+// TestWindowsSetupScriptOrder 钉住六步顺序。每一步都依赖前一步：
+// 不停旧进程就拷不了二进制（文件被占用）；不先拷就注册任务会指向不存在的文件；
+// 快捷方式指向装好的 exe，所以必须排在拷贝之后。
 func TestWindowsSetupScriptOrder(t *testing.T) {
 	script := readSetupScript(t)
 	steps := []struct{ label, needle string }{
 		{"stop", "Stop-RunningInstance $Binary"},
 		{"install", "Install-Payload $StageDir"},
+		{"shortcut", "Install-Shortcuts $Binary"},
 		{"task", "Register-ScheduledTask $TaskName"},
 		{"path", "Add-UserPath $BinDir"},
 		{"start", "Start-AndWait $TaskName"},
@@ -78,6 +80,48 @@ func TestWindowsSetupScriptOrder(t *testing.T) {
 			t.Fatalf("步骤顺序不对：%s 必须在 %s 之后", s.label, prevLabel)
 		}
 		prev, prevLabel = at, s.label
+	}
+}
+
+// TestWindowsSetupScriptInstallsStartMenuShortcut 钉住「装完能在开始菜单里找到」。
+//
+// 契约有三条，缺一条都会把入口还回去：
+//  1. 落在 per-user 的开始菜单目录（%APPDATA%\...\Start Menu\Programs），
+//     与安装前缀 %LOCALAPPDATA%\Programs 同属当前用户 —— 不需要提权；
+//  2. 目标就是装好的那个 exe，参数为空（带 autostart 旗标会开成控制台）；
+//  3. Save() 之后还要在盘上确认一次：COM 调用可以「成功」而没有文件。
+func TestWindowsSetupScriptInstallsStartMenuShortcut(t *testing.T) {
+	script := readSetupScript(t)
+	at := strings.Index(script, "function Install-Shortcuts")
+	if at < 0 {
+		t.Fatal("setup.ps1 没有 Install-Shortcuts")
+	}
+	body := script[at:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	for _, needle := range []string{
+		`Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'`,
+		"'MindFS.lnk'",
+		// 整行匹配：`$sc.TargetPath = $Binary + ".bak"` 这种拼接收敛不了，
+		// 目标必须就是装好的那个 exe 本身。
+		"\n    $sc.TargetPath = $Binary\n",
+		"$sc.Arguments = ''",
+		"$sc.Save()",
+	} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("Install-Shortcuts 缺少 %q", needle)
+		}
+	}
+	// Save() 是 COM 调用，Start Menu 只读或配置目录被重定向时它会静默什么也不做。
+	// 装完没有条目，用户看到的是「装好了但找不到」，脚本却照样打印 Done。
+	if !strings.Contains(body, "if (-not (Test-Path $link -PathType Leaf)) { throw") {
+		t.Fatal("Install-Shortcuts 没有在 Save() 之后确认 .lnk 真的落盘")
+	}
+	// 参数必须是空的：autostart 旗标会把快捷方式变成控制台服务。注释里也不能出现
+	// 这个字面量，否则这条断言就没法分辨「写在注释里」与「写在 Arguments 里」。
+	if strings.Contains(body, "internal-autostart") {
+		t.Fatal("快捷方式带上了 autostart 旗标：无参才是「打开页面」")
 	}
 }
 

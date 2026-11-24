@@ -2508,7 +2508,7 @@ groups:
       - web/tests/agent-docs.test.mjs
     anchors:
       - docs/agent/rules/frontend/TODO.md:目前没有待处理的一次性存量事项
-      - docs/plans/README.md:Rule completion rollout
+      - docs/plans/PLAN_HISTORY.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:test("agent rule and plan index links resolve"
   - id: G-BZ
     title: 将 plan 前缀逻辑移出 action view
@@ -15596,8 +15596,212 @@ groups:
       - 'server/internal/api/usecase/session_overflow_cancel_test.go:func TestUnpinnedCancelStillWorksWhileCompactPending(t *testing.T) {'
       - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestMarkCompactedClearsStaleCompactError(t *testing.T) {'
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-resume-interrupted.md:# 溢出压缩被用户重试打断：自动重发闭环修复'
-
   # ── 2026-11-24：worktree-finish / session-compress 产品化 ──────────────
+  - id: G-QV
+    title: "主节点 /api/control-sync/status 返回只读同步摘要"
+    kind: fix
+    symptom: "主控节点的 /api/control-sync/status 一直 404（/edges 却是 401，说明路由已注册）：页面无法判断这台机器是谁、同步追到哪一版，只能靠「edges 要 token」反推。"
+    why: "必须保留：上游装配只给边缘建 ModeController（w.service），主节点上 handler 与路由都因 h.ControlSync == nil 直接 404。摘要刻意不含 token 与任何记录载荷 —— 这条端点浏览器可直接访问；只给计数与时间，且已踢掉的边缘不计入 active_edge_count、也不参与最近可见时间。"
+    files:
+      - server/internal/controlsync/status_primary.go
+      - server/internal/api/http_control_sync.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http.go
+      - server/app/control_sync.go
+      - docs/superpowers/plans/2026-11-24-hasee-edge-controller-five-items.md
+    tests:
+      # TestPrimaryStatusSummarizesWatermarkEdgesAndConflicts → 钉住 head_rev / 边缘计数 / 活跃边缘 / 最近可见时间 / 冲突数的汇总口径，已踢边缘不计数
+      - server/internal/controlsync/status_primary_test.go
+      # TestControlSyncStatusRouteRegisteredForPrimary → 主节点真的挂上 GET /status 且 /mode 仍 404；TestControlSyncStatusFallsBackToPrimarySummary → 边缘优先、主节点兜底、都没有才 404
+      - server/internal/api/http_control_sync_primary_test.go
+      # 主节点装配必须有 ControlSyncPrimary、边缘必须没有 → 防「主节点又 404」与「摘要抢答边缘」两种回归
+      - server/app/control_sync_test.go
+    anchors:
+      - 'server/internal/controlsync/status_primary.go:type PrimaryStatus struct {'
+      - 'server/internal/controlsync/status_primary.go:func (s *Store) PrimaryStatus(ctx context.Context, now time.Time) (PrimaryStatus, error) {'
+      - 'server/internal/api/http_control_sync.go:type ControlSyncPrimaryStatus interface {'
+      - 'server/internal/api/http_routes.go:if h.ControlSync == nil && h.ControlSyncPrimary != nil {'
+      - 'server/internal/api/http.go:ControlSyncPrimary ControlSyncPrimaryStatus'
+      - 'server/app/control_sync.go:w.primaryStatus = primaryStatusSource{store: store}'
+      - 'server/internal/controlsync/status_primary_test.go:func TestPrimaryStatusSummarizesWatermarkEdgesAndConflicts(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_primary_test.go:func TestControlSyncStatusRouteRegisteredForPrimary(t *testing.T) {'
+      - 'docs/superpowers/plans/2026-11-24-hasee-edge-controller-five-items.md:# hasee 边控端：状态可查 · 安装器快捷方式 · 局域网可达 · 自动切换 · 升级'
+  - id: G-QW
+    title: "Windows 安装器创建开始菜单快捷方式"
+    kind: feature
+    symptom: "hasee 上装完 edge controller 后开始菜单里找不到入口，只能靠人记住 %LOCALAPPDATA%\\Programs\\mindfs\\bin\\mindfs.exe —— 用户原话是「装好了但看不到」。"
+    why: "必须保留：上游两条安装链（自解包 setup.ps1 与 install.ps1）都没有任何快捷方式代码。参数必须留空 —— 无参 mindfs.exe 的语义是「服务在跑就开页面」，带上计划任务那套 autostart 旗标会开成控制台；Save() 是 COM 调用，可能「成功」而磁盘上没有文件，所以落盘后必须再 Test-Path 一次。卸载只删 .lnk，%APPDATA%\\mindfs 留给重装找回 token 与配对状态。"
+    files:
+      - scripts/windows-setup/setup.ps1
+      - scripts/install.ps1
+      - internal/deploy/setup_script_test.go
+      - internal/deploy/install_script_test.go
+      - docs/superpowers/plans/2026-11-24-hasee-edge-controller-five-items.md
+    tests:
+      # TestWindowsSetupScriptInstallsStartMenuShortcut → 钉住 per-user Start Menu 路径、目标就是装好的 exe、参数为空、Save 后复核落盘；变异（删 Save / 追加 autostart / 目标拼接 / 去掉复核）逐一打红
+      - internal/deploy/setup_script_test.go
+      # TestWindowsInstallerManagesStartMenuShortcut → 钉住 install.ps1 装得上也卸得掉，且默认卸载保留配置目录
+      - internal/deploy/install_script_test.go
+    anchors:
+      - 'scripts/windows-setup/setup.ps1:function Install-Shortcuts([string]$Binary) {'
+      - 'scripts/windows-setup/setup.ps1:Install-Shortcuts $Binary'
+      - 'scripts/install.ps1:$ShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MindFS.lnk"'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupScriptInstallsStartMenuShortcut(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestWindowsInstallerManagesStartMenuShortcut(t *testing.T) {'
+
+  # ── G-QZ ─────────────────────────────────────────────────────────────────
+  - id: G-QZ
+    title: "指令注入预算根除：plans 索引按需读取 + 本地预检口径分离"
+    kind: fix
+    symptom: |
+      长会话完成时上下文看起来没满，主动再发一条却立刻 `Prompt is too long`：Claude CLI
+      在发 HTTP 请求前把 AGENTS.md 的 `@docs/plans/README.md` 展开注入（146,783 chars），
+      按 200k − 20k 输出预留 − 3k 余量 ≈ 177k 的本地拒发线判超；胶囊却只显示上一次成功
+      请求的 usage，口径不同让用户以为误判。发第二条可用是因为 `/compact` 把基数降下来。
+    why: |
+      这是本 fork 的定制：上游没有把随每次发版增长的 plans 索引内联进唯一指令入口，
+      也没有把本地预检线暴露给会话胶囊。必须保留的判据：
+      ① AGENTS.md 只自动注入小体积规则索引，plans / 部署史 / 计划执行记录改成按需读取；
+      ② plans 索引瘦到 Active 链接 + 规则，历史原文搬到 DEPLOY_HISTORY.md / PLAN_HISTORY.md，
+         不丢部署证据也不再让 session_start 顶爆本地预算；
+      ③ 静态门禁断言 AGENTS.md ≤8 KiB、每个 @import 目标 ≤16k chars、展开总量 ≤32k chars，
+         防止未来发版把巨型日志重新内联；这是文档预算闸门，不是新增按请求大小自动压缩；
+      ④ 胶囊把「上次真实 usage」与「本地预检线（估算）」分开显示，不把估算冒充上游计量。
+      保持 200k 默认窗口，不用 [1m]、不改 blocking override。合上游时任一条被顶掉都会
+      复发「会话没满却拒发」或让用户继续误判。
+    files:
+      - AGENTS.md
+      - docs/plans/README.md
+      - docs/plans/DEPLOY_HISTORY.md
+      - docs/plans/PLAN_HISTORY.md
+      - docs/superpowers/plans/2026-11-24-instruction-budget-eradication.md
+      - web/tests/agent-docs.test.mjs
+      - web/src/components/agent/ContextSavingIndicator.tsx
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/tests/context-saving-chip.test.mjs
+    tests:
+      - web/tests/agent-docs.test.mjs
+      - web/tests/context-saving-chip.test.mjs
+    anchors:
+      - 'AGENTS.md:只有规则索引由它内联加载'
+      - 'AGENTS.md:DEPLOY_HISTORY.md'
+      - 'docs/plans/README.md:## Active'
+      - 'docs/plans/DEPLOY_HISTORY.md:# 部署 / 发布历史（从 plans 索引移出）'
+      - 'docs/plans/PLAN_HISTORY.md:# 计划记录（从 plans 索引移出）'
+      - 'docs/superpowers/plans/2026-11-24-instruction-budget-eradication.md:# 指令注入预算根除'
+      - 'web/tests/agent-docs.test.mjs:instruction injection stays under every harness budget'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:const localBlockLine = contextWindow > 0 ? contextWindow - 20000 - 3000 : 0;'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.hygieneLocalBudgetValue": "{used} / {limit}（估算）"'
+      - 'web/src/i18n/locales/en-US-agents.ts:"contextSaving.hygieneLocalBudgetValue": "{used} / {limit} (estimate)"'
+      - 'web/tests/context-saving-chip.test.mjs:上次真实 usage 与本地预检线分开显示，预检线标为估算'
+  # ── 撞号说明（2026-11-24 合回 main 时改号）──────────────────────────
+  # 本组 claim 到的 G-QU 在合回 main 时已被 main 的 6f34fd4c（防止用户重试打断
+  # 溢出压缩自动重发）登记；按「先引入者保留、合入方改号」的裁决，本组改为
+  # G-RA（G-QV / G-QW / G-QZ 是同批其他会话已登记的组，G-QX / G-QY 是避让留下
+  # 的空档，按「只增不回填空洞」不回收，直接取 G-QZ 之后的下一段）。
+  # 提交信息保持原文 3b25d4a9 的 `Scope: G-QU`，不再改写历史。
+  - id: G-RA
+    title: "Web Push 只在页面还开着时投递（关闭页面后不再弹桌面通知）"
+    kind: fix
+    symptom: |
+      页面/界面关闭后，桌面通知仍持续弹出；多台设备即使都关掉了页面，通知还是不停。
+      根因：Web Push 与页面生命周期无关 —— 订阅一旦建立永久有效，服务端对订阅表
+      全量扇出，事件源是后台 agent 的回合结束/提问，用户「页面关了」这个事实
+      服务端根本拿不到。
+    why: |
+      这是本 fork 的定制：上游没有「页面在场」概念，推送一建成就是永久通道。
+      必须保留的判据：
+      ① 在场是**每条订阅**的属性：`PresenceCapable` 由客户端在订阅上报时声明
+         （`presence: true`），一旦置真不回落 —— 它描述客户端能力，不是单次请求参数；
+      ② fail-open 是刻意的：没有声明能力的旧订阅（服务端先升级、浏览器还是旧 bundle）
+         照常投递，否则升级当天会把所有合法通知一起静音；
+      ③ 到场必须靠心跳，不能靠 visibility：后台标签页仍然算「页面开着」，浏览器把
+         定时器节流到约 1 次/分钟，所以 TTL 是 10 分钟、心跳 30 秒；
+      ④ 关页立即生效：`pagehide` 用 `sendBeacon` 上报（内容类型必须是 CORS 安全
+         清单内的 text/plain，否则跨源部署下预检失败、上报丢失）；不依赖 TTL；
+      ⑤ 多标签页互不连坐：client_id 存 sessionStorage，关一个只注销它自己；
+      ⑥ 零窗口自愈：强杀/崩溃会丢掉 beacon，service worker 在第一次推送时发现
+         一个窗口都没有就补报 leave —— 但仍照常 showNotification，去掉它会被
+         Chrome 换成「此后台页面已更新」的兜底提示；
+      ⑦ 用户主动「发送测试」不受在场约束（`SendTestToEndpoint` 走 requirePresence=false）。
+      合上游时任一闸门被顶掉，用户看到的就是「通知又开始乱弹」，而功能表面一切正常。
+    # 针对性测试：靶心是「页面开着才投递」。TTL/多客户端/无 client_id 清整条订阅、
+    # 扇出过滤、旧订阅豁免、测试端点豁免、保存时在场能力粘连、HTTP 上报往返、
+    # 前端源码契约（心跳/pagehide beacon/零窗口自愈）。
+    files:
+      - server/internal/webpush/presence.go
+      - server/internal/webpush/presence_test.go
+      - server/internal/webpush/send.go
+      - server/internal/webpush/send_presence_test.go
+      - server/internal/webpush/service.go
+      - server/internal/webpush/store.go
+      - server/internal/api/http_webpush.go
+      - server/internal/api/http_webpush_presence_test.go
+      - server/internal/api/http_routes.go
+      - web/src/services/webPushPresence.ts
+      - web/src/services/webPush.ts
+      - web/vite.config.ts
+      - web/tests/web-push-presence.test.mjs
+      - docs/superpowers/plans/2026-11-24-web-push-presence-close-page.md
+    tests:
+      - server/internal/webpush/presence_test.go
+      - server/internal/webpush/send_presence_test.go
+      - server/internal/api/http_webpush_presence_test.go
+      - web/tests/web-push-presence.test.mjs
+    anchors:
+      - 'server/internal/webpush/presence.go:// 页面在场表：Web Push 是唯一与页面生命周期无关的通道'
+      - 'server/internal/webpush/presence.go:func (p *PresenceTracker) Leave(endpoint, clientID string) {'
+      - 'server/internal/webpush/presence.go:if now.Sub(seen) <= p.ttl {'
+      - 'server/internal/webpush/send.go:if requirePresence && item.PresenceCapable && !s.presenceTracker().Live(item.Endpoint) {'
+      - 'server/internal/webpush/store.go:PresenceCapable bool'
+      - 'server/internal/webpush/store.go:items[i].PresenceCapable = items[i].PresenceCapable || in.PresenceCapable'
+      - 'server/internal/webpush/service.go:func (s *Service) ReportPresence(endpoint, clientID string, leave bool) error {'
+      - 'server/internal/webpush/service.go:s.presenceTracker().Leave(endpoint, "")'
+      - 'server/internal/api/http_webpush.go:func (h *HTTPHandler) handleWebPushPresence(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_webpush.go:_ = svc.ReportPresence(sub.Endpoint, req.ClientID, false)'
+      - 'server/internal/api/http_routes.go:r.Post("/api/web-push/presence", h.handleWebPushPresence)'
+      - 'web/src/services/webPushPresence.ts:export function startWebPushPresence(endpoint: string): void {'
+      - 'web/src/services/webPushPresence.ts:navigator.sendBeacon(url, blob)'
+      - 'web/src/services/webPush.ts:presence: true,'
+      - 'web/src/services/webPush.ts:startWebPushPresence(subscription.endpoint)'
+      - 'web/vite.config.ts:async function reportClosedPageToServer() {'
+      - 'server/internal/webpush/presence_test.go:func TestPresenceLeaveOnlyRemovesThatClient(t *testing.T) {'
+      - 'server/internal/webpush/send_presence_test.go:func TestSendSkipsPresenceCapableSubscriptionWithoutHeartbeat(t *testing.T) {'
+      - 'server/internal/webpush/send_presence_test.go:func TestSendKeepsLegacySubscriptionWithoutHeartbeat(t *testing.T) {'
+      - 'server/internal/api/http_webpush_presence_test.go:func TestWebPushSubscriptionSaveMarksPresenceCapable(t *testing.T) {'
+      - 'web/tests/web-push-presence.test.mjs:service worker 在零窗口时自愈上报关页'
+      - 'docs/superpowers/plans/2026-11-24-web-push-presence-close-page.md:# Web Push 只在页面还开着时投递'
+
+
+  # ── 撞号说明（2026-11-24 合回 main 时改号）──────────────────────────
+  # 本组 claim 到的 G-QV 在合回 main 时已被 main 的 5a0cc14c（hasee 边控端五项需求，
+  # claimed 2026-11-24T11:27Z，比本组早 2 分钟）登记；按「先引入者保留、合入方改号」
+  # 的裁决，本组改为 G-RB。G-QW / G-QZ / G-RA 是同批其他会话已登记的组，按「只增不回填
+  # 空洞」直接取 main 清单的下一段。
+  # 提交信息保持原文 be0389d4 / 6d6d33fe 的 `Scope: G-QV`，不再改写历史。
+  - id: G-RB
+    title: "codex 手动 /compact 回合按压缩完成收尾，不再误报流意外结束"
+    kind: fix
+    symptom: "pc-wsl（任何节点同理）的 codex 会话里手动输入 /compact，压缩本身成功，界面上却弹「codex response stream ended unexpectedly」，日志里那一轮没有 output.done（2026-11-24 16:57 实测）。"
+    why: "codex app-server 的压缩回合在协议上以 item/completed(contextCompaction) 收尾，SDK 的 RunCompact 收到它就返回，**永远不会再发 turn.completed**（codex/app_server_exec.go RunCompact；只有不支持 RunCompact 的 exec 才走 syntheticMessageStream 补一条）。MindFS 适配器把「通道关闭但没见到 TurnCompleted」一律当意外结束 —— 这条判据本身不能删（进程中途死亡同样只关流），必须补一条「压缩完成的证据」并在只对 /compact 回合放行。丢了这条定制，每次手动压缩都会继续弹错误；自动压缩因为被 stream_error_after_compact 宽限吞掉，只会在日志里留噪。"
+    files:
+      - server/internal/agent/codex/session.go
+      - server/internal/agent/codex/session_events.go
+      - server/internal/agent/codex/session_test.go
+      - server/internal/agent/codex/session_compact_turn_test.go
+      - docs/superpowers/plans/2026-11-24-codex-compact-stream-end.md
+    tests:
+      - server/internal/agent/codex/session_compact_turn_test.go
+    anchors:
+      - 'server/internal/agent/codex/session_events.go:type streamOutcome struct {'
+      - 'server/internal/agent/codex/session_events.go:func isContextCompactionItem(item codexsdk.ThreadItem) bool {'
+      - 'server/internal/agent/codex/session.go:if outcome.CompactionCompleted && isCompactSlashCommand(content) {'
+      - 'server/internal/agent/codex/session.go:func isCompactSlashCommand(content string) bool {'
+      - 'server/internal/agent/codex/session_compact_turn_test.go:// compactTurnExec 复刻真 AppServerExec 在 `/compact` 上的事件形状'
+      - 'docs/superpowers/plans/2026-11-24-codex-compact-stream-end.md:# codex 手动 `/compact` 不再误报「response stream ended unexpectedly」'
+
+
   - id: G-RC
     title: "把 worktree-finish / session-compress 吸收为 MindFS 产品能力"
     kind: feature
@@ -15696,3 +15900,5 @@ groups:
       - "web/src/components/app/SessionHealthPanel.tsx:export function SessionHealthPanel"
       - "docs/superpowers/plans/2026-11-24-worktree-finish-and-session-maintenance.md:## 执行记录"
 
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。

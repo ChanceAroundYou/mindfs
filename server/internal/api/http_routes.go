@@ -200,6 +200,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
 		r.Post("/api/control-sync/mode", h.handleControlSyncMode)
 	}
+	// 主节点的状态摘要：主节点没有 ModeController，但同步确实在跑，用户要能查。
+	// 与边缘同一个地址，返回体带 role 区分；不含边控端名单与任何记录载荷，
+	// 所以不挂 token —— 浏览器里的横幅要读它。
+	if h.ControlSync == nil && h.ControlSyncPrimary != nil {
+		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
+	}
 	// 控制面同步：主节点侧的 /head /changes /push 一次能读出或改写整个控制面
 	// （含口令 hash），所以只有配了 token 才注册，且一律走 bearer 校验。
 	if h.ControlSyncToken != "" {
@@ -238,6 +244,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)
 	r.Delete("/api/web-push/subscriptions", h.handleWebPushSubscriptionDelete)
 	r.Post("/api/web-push/test", h.handleWebPushTest)
+	// 页面在场心跳 / 关页上报：订阅表是设备本地的，所以这条与其它 web-push 端点同源。
+	r.Post("/api/web-push/presence", h.handleWebPushPresence)
 	// worker → 控制节点的通知中继。它必须留在控制面上（worker 上没有订阅表，
 	// 中继到 worker 是空操作），所以不进 worker 的允许清单即可 —— 默认 worker
 	// 只放行数据面，这条会被 403。

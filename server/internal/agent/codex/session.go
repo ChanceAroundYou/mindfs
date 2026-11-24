@@ -66,9 +66,9 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 			return err
 		}
 
-		completed, err := s.handleStreamedEvents(streamed.Events)
+		outcome, err := s.handleStreamedEvents(streamed.Events)
 		if err == nil {
-			if !completed {
+			if !outcome.TurnCompleted {
 				// 回合被取消时，SDK 往调用方转发事件的那个 select 会先走 ctx.Done()
 				// 分支，事件通道直接关闭 —— 「这一轮是被停掉的」这个原因在流里就丢了。
 				// 写成「流意外结束」会被恢复循环当成可重试的失败：停止按钮按下去，
@@ -77,6 +77,18 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 				// 取消的原因从 turnCtx 补回来：SDK 收到的就是这个 ctx。
 				if cause := turnCtx.Err(); cause != nil {
 					return cause
+				}
+				// `/compact` 例外：codex app-server 的压缩回合在协议上就是以
+				// item/completed(contextCompaction) 收尾，不会再发 turn.completed
+				// （SDK 的 runCompact 收到那条通知就返回，只有不支持 RunCompact 的
+				// exec 才会补一条合成的 turn.completed）。压缩完成的证据已经拿到，
+				// 这一轮就该算成功 —— 否则每次手动压缩都会弹
+				// 「codex response stream ended unexpectedly」（pc-wsl 2026-11-24）。
+				// 只对压缩命令放行：普通回合里自动压缩过、随后进程死掉，仍然要报错。
+				if outcome.CompactionCompleted && isCompactSlashCommand(content) {
+					log.Printf("[agent/codex] compact.done session=%s", s.sessionKey)
+					s.updateThreadIDFromThread()
+					return nil
 				}
 				// 真·意外结束（进程中途死亡），不能当成功。
 				return errors.New("codex response stream ended unexpectedly")
@@ -143,6 +155,28 @@ func isCodexWriterConflict(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "already has an active writer") ||
 		strings.Contains(msg, "already has a live local writer")
+}
+
+// isCompactSlashCommand 判断这一轮的输入是不是 codex 的 `/compact`。
+//
+// 与 SDK 的 slash 解析保持同形（codex/slash.go 的 parseSlashCommandLine）：只看
+// 第一行、去掉前导 `/`、命令名到空白为止。用处只有一个 —— 把 `streamOutcome` 里
+// 「压缩完成但流里没有 turn.completed」这条协议事实限定在压缩回合上（见
+// SendMessage）；普通回合不能因为中途自动压缩过就放过真正的流中断。
+func isCompactSlashCommand(content string) bool {
+	firstLine := content
+	if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
+		firstLine = firstLine[:idx]
+	}
+	firstLine = strings.TrimSpace(firstLine)
+	if !strings.HasPrefix(firstLine, "/") {
+		return false
+	}
+	name := strings.TrimPrefix(firstLine, "/")
+	if idx := strings.IndexFunc(name, func(r rune) bool { return r == ' ' || r == '\t' }); idx >= 0 {
+		name = name[:idx]
+	}
+	return name == "compact"
 }
 
 func (s *session) LoginChatGPTDeviceCode(ctx context.Context) error {

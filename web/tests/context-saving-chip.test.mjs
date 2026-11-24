@@ -40,6 +40,9 @@ const CONTEXT_SAVING_KEYS = [
   "hygieneActive",
   "hygieneDuration",
   "hygieneContext",
+  "hygieneLastUsage",
+  "hygieneLocalBudget",
+  "hygieneLocalBudgetValue",
   "hygieneAutoIn",
   "hygieneAutoInValue",
   "hygieneHintTitle",
@@ -351,6 +354,24 @@ test("文案在两种语言里成对存在", () => {
   assert.match(zh, /"contextSaving\.cacheHitValue": "\{percent\}（\{tokens\} tokens）"/);
   assert.match(zh, /"contextSaving\.badgeRewriteTotal": "重算合计"/);
   assert.match(en, /"contextSaving\.badgeRewriteTotal": "Rewritten in total"/);
+});
+
+test("上次真实 usage 与本地预检线分开显示，预检线标为估算", () => {
+  // 用户看到「上下文没满」却被 CLI 在发请求前拒绝：胶囊此前只报上一次成功请求的
+  // usage。这里把真实 usage 与本地预检预算（窗口 - 20k 输出预留 - 3k 余量）并列，
+  // 后者明确是估算，不冒充上游计量。
+  assert.match(indicator, /const contextWindow = hygiene\?\.context_window \|\| 0;/);
+  assert.match(indicator, /const localBlockLine = contextWindow > 0 \? contextWindow - 20000 - 3000 : 0;/);
+  assert.match(indicator, /const localPrecheck = \(hygiene\?\.context_tokens \|\| 0\) \+ 20000 \+ 3000;/);
+  assert.match(indicator, /t\("contextSaving\.hygieneLastUsage"\)/);
+  assert.match(
+    indicator,
+    /t\("contextSaving\.hygieneLocalBudgetValue", \{\s*used: formatTokenAmount\(localPrecheck\),\s*limit: formatTokenAmount\(localBlockLine\),?\s*\}\)/,
+  );
+  assert.match(zh, /"contextSaving\.hygieneLastUsage":/);
+  assert.match(en, /"contextSaving\.hygieneLastUsage":/);
+  assert.match(zh, /"contextSaving\.hygieneLocalBudgetValue": "[^"]*估算/);
+  assert.match(en, /"contextSaving\.hygieneLocalBudgetValue": "[^"]*estimate/);
 });
 
 test("没读到用量的样本只留在账本里，不再在胶囊里提示", () => {

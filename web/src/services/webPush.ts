@@ -1,6 +1,7 @@
 import { controlPath } from "./net/controlPlane";
 import { protectedJSON } from "./net/api";
 import { isNativeShellRuntime } from "./platform/runtime";
+import { presenceClientID, startWebPushPresence, stopWebPushPresence } from "./webPushPresence";
 import { translateNow } from "../i18n";
 
 export type WebPushStatus = {
@@ -144,6 +145,10 @@ async function saveSubscription(subscription: PushSubscription, platform: string
       endpoint: json.endpoint || subscription.endpoint,
       keys: json.keys,
       platform,
+      // 声明 presence 能力：服务端此后只在这个订阅还有页面心跳时投递。
+      // 不报旧的订阅保持 fail-open（服务端先升级、浏览器还在跑旧 bundle 时不会误静音）。
+      presence: true,
+      client_id: presenceClientID(),
     }),
   });
 }
@@ -249,10 +254,13 @@ export async function subscribeWebPush(): Promise<WebPushStatus> {
         throw error;
       });
   await saveSubscription(subscription, currentPlatform());
+  // 订阅成功即开始上报页面在场：服务端以后的每次推送都要求这条订阅还有心跳。
+  startWebPushPresence(subscription.endpoint);
   return getWebPushStatus();
 }
 
 export async function unsubscribeWebPush(): Promise<WebPushStatus> {
+  stopWebPushPresence();
   const subscription = await currentSubscription().catch(() => null);
   const endpoint = subscription?.endpoint || "";
   if (subscription) {
@@ -315,6 +323,9 @@ export async function ensureWebPushSubscribed(options: { prompt?: boolean } = {}
     );
   // 每次启动都回传一次：服务端订阅表在换 config-dir / 重装后会丢，而 upsert 幂等。
   await saveSubscription(subscription, currentPlatform());
+  // 存量订阅也一样：升级后的第一次启动把这条订阅标成 presence-capable 并开始心跳，
+  // 否则旧订阅会一直是 fail-open（服务端不敢静音没有在场能力声明的订阅）。
+  startWebPushPresence(subscription.endpoint);
   return getWebPushStatus();
 }
 
