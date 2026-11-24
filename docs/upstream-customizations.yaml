@@ -12505,8 +12505,8 @@ groups:
     anchors:
       - 'server/internal/api/usecase/session_hygiene.go:HygieneStateHint = "hint"'
       - 'server/internal/api/usecase/session_hygiene.go:func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {'
-      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens int, turnEnded bool) HygieneView {'
-      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens int) HygieneView {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens, contextWindow int, turnEnded bool) HygieneView {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens, contextWindow int) HygieneView {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkCompacted(rootID, sessionKey string) {'
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) markCompactedAt(rootID, sessionKey string, at time.Time) {'
       - 'server/internal/api/usecase/session_hygiene_store.go:const hygieneStoreVersion = 1'
@@ -12531,7 +12531,7 @@ groups:
       - 'server/internal/api/usecase/session_hygiene_wire.go:func (s *Service) CompactSession(ctx context.Context, in GetSessionContextSavingInput) error {'
       - 'server/internal/api/usecase/root.go:hygieneSend func(context.Context, SendMessageInput) error'
       - 'server/internal/api/usecase/session_send.go:s.scheduleHygieneAutoCompact(in, hygieneHarnessForSession(current))'
-      - 'server/internal/api/usecase/session_context_saving.go:return s.hygieneTracker().Snapshot(rootID, current.Key, harness, tokens)'
+      - 'server/internal/api/usecase/session_context_saving.go:return s.hygieneTracker().Snapshot(rootID, current.Key, harness, tokens, window)'
       - 'server/internal/api/http_session_context_saving.go:func (h *HTTPHandler) handleSessionCompact(w http.ResponseWriter, r *http.Request) {'
       - 'server/internal/api/http_routes.go:r.Post("/api/sessions/{key}/compact", h.handleSessionCompact)'
       - 'server/internal/api/appcontext.go:func (s *AppContext) SessionHygiene() *usecase.HygieneTracker {'
@@ -15402,16 +15402,17 @@ groups:
       - docs/superpowers/plans/2026-11-18-mindfs-native-live-compact.md
     tests:
       - cli/cmd/startup_config_test.go
+      - cli/cmd/startup_harness_test.go
       - server/internal/agent/fold/config_test.go
+      - server/internal/agent/fold/config_harness_test.go
       - server/internal/agent/proxy/fold_golden_test.go
-      - 'cli/cmd/startup_config_test.go:func TestLiveCompactTargetTokensIsDeprecatedKeepTailAlias('
-      - 'cli/cmd/startup.go:log.Printf("[live-compact] target_tokens is deprecated; using %d as keep_tail_tokens", *live.TargetTokens)'
-      - 'cli/cmd/startup.go:case *live.KeepTailTokens != *live.TargetTokens:'
-      - 'server/cmd/mindfs-server/main.go:case *live.KeepTailTokens != *live.TargetTokens:'
+      - server/internal/agent/proxy/harness_config_test.go
     anchors:
       - 'server/internal/agent/fold/config.go:// DrainEndpoint has no separate knob: one fold event drains every candidate'
       - 'server/internal/agent/fold/config.go:keep_tail_tokens, 20k by default — is both the drain endpoint and what'
+      - 'cli/cmd/startup.go:log.Printf("[live-compact] target_tokens is deprecated; using %d as keep_tail_tokens", *live.TargetTokens)'
       - 'cli/cmd/startup.go:log.Printf("[live-compact] target_tokens is deprecated and ignored: keep_tail_tokens=%d wins over target_tokens=%d", *live.KeepTailTokens, *live.TargetTokens)'
+      - 'server/cmd/mindfs-server/main.go:case *live.KeepTailTokens != *live.TargetTokens:'
       - 'cli/cmd/startup_config_test.go:func TestLiveCompactTargetTokensIsDeprecatedKeepTailAlias('
       - 'docs/superpowers/plans/2026-11-18-mindfs-native-live-compact.md:# MindFS 原生上下文活压缩（Live Compact）实施计划'
 
@@ -15470,17 +15471,19 @@ groups:
     tests:
       - server/internal/api/usecase/session_hygiene_test.go
       - server/internal/api/usecase/session_hygiene_wire_test.go
+      - server/internal/api/usecase/session_hygiene_persistence_test.go
       - server/app/session_hygiene_test.go
       - cli/cmd/startup_hygiene_test.go
       - web/tests/context-saving-chip.test.mjs
+    anchors:
       - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneContextThresholdIsAPercentageOfTheWindow('
       - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneOverLineCountsTheArrivalTurn('
       - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneReadPathDoesNotAdvanceTheCounter('
       - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneUnderLineTurnResetsTheStreak('
+      - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneAutoCompactBecomesDueOnTheThirdOverLineTurn('
       - 'server/app/session_hygiene_test.go:func TestSessionHygieneDefaults('
       - 'cli/cmd/startup_hygiene_test.go:func TestSessionHygieneDeprecatedKeys('
       - 'web/tests/context-saving-chip.test.mjs:距上次压缩的活跃时长不再按档位隐藏'
-    anchors:
       - 'server/internal/api/usecase/session_hygiene.go:const hygieneDefaultContextWindow = 200000'
       - 'server/internal/api/usecase/session_hygiene.go:// ContextPercent 是「大」的阈值，按上下文窗口的百分比算'
       - 'server/internal/api/usecase/session_hygiene.go:// OverLineTurns 是自动压缩前需要的**连续**过线用户回合数'
