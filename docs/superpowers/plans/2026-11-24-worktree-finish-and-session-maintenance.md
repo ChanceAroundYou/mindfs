@@ -1,6 +1,6 @@
 # 把 worktree-finish / session-compress 吸收为 MindFS 产品能力
 
-> Scope IDs: G-QV（claimed 2026-11-24T11:05Z）
+> Scope IDs: G-RC（claimed 2026-11-24T11:05Z，合回 main 前避让撞号改号；撞号说明见下方「撞号」一节）
 
 ## Context
 
@@ -330,3 +330,15 @@ repoint 与真机大数据图片续聊未验。
 400 组全绿；`go test -count=1 ./...` 首轮唯一红是既有 flake
 `TestCoordinatorCrashReplayCompletesWithoutModelCall`（`sql: database is closed`），单跑
 `-count=3` 全绿，复跑全量确认。前端门禁沿用上一轮结果（本轮只改 Go）。
+
+### 撞号裁决：G-QV → G-RC（2026-11-24）
+
+本组取号时（11:05Z）`main` 上还没有 G-QV，随后 main 的 `5a0cc14c`（hasee 边控端五项需求，
+11:27Z）先登记了 G-QV 给「主节点 `/api/control-sync/status` 返回只读同步摘要」。按仓库既定
+裁决「先引入者保留、合入方改号」（先例 `c7bba8e7`，G-QV → G-RB），本组在合回 main 前改为
+**G-RC**：`docs/upstream-customizations.yaml` 的组号、`docs/plans/README.md` 的 Scope 行与本文
+头部同步改号；已提交的五个 `Scope: G-QV` 提交信息保持原文，不改写历史。此后本计划引用的
+**G-RC 即原 G-QV**。
+
+G-RB 当时已被 task-114 的 `de00fc72` 用掉，`G-RC` 由 `scripts/scope-id next` 在 main 与
+origin/main 两个基准上都确认为下一个空号。
