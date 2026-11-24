@@ -194,6 +194,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
 		r.Post("/api/control-sync/mode", h.handleControlSyncMode)
 	}
+	// 主节点的状态摘要：主节点没有 ModeController，但同步确实在跑，用户要能查。
+	// 与边缘同一个地址，返回体带 role 区分；不含边控端名单与任何记录载荷，
+	// 所以不挂 token —— 浏览器里的横幅要读它。
+	if h.ControlSync == nil && h.ControlSyncPrimary != nil {
+		r.Get("/api/control-sync/status", h.handleControlSyncStatus)
+	}
 	// 控制面同步：主节点侧的 /head /changes /push 一次能读出或改写整个控制面
 	// （含口令 hash），所以只有配了 token 才注册，且一律走 bearer 校验。
 	if h.ControlSyncToken != "" {

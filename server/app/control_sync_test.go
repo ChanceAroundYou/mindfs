@@ -200,7 +200,11 @@ func TestStartControlSyncPrimaryExposesPushAndFeed(t *testing.T) {
 		t.Fatalf("主节点的边控端名单没装上 handler：/edges 不会注册")
 	}
 	if h.ControlSync != nil {
-		t.Fatalf("主节点不该暴露 /status /mode")
+		t.Fatalf("主节点没有模式状态机，ControlSync 应为空")
+	}
+	// 但 /status 要有答案：主节点没有四态，仍有水位 / 边控端 / 冲突可查。
+	if h.ControlSyncPrimary == nil {
+		t.Fatalf("主节点的状态摘要没装上 handler：/status 会 404")
 	}
 	if _, statErr := os.Stat(filepath.Join(cfgDir, "control_sync.db")); statErr != nil {
 		t.Fatalf("同步库没建：%v", statErr)
@@ -236,10 +240,17 @@ func TestStartControlSyncEdgeWiresProxyAndMode(t *testing.T) {
 	if w.edges != nil {
 		t.Fatalf("边缘不该有边控端名单：%+v", w.edges)
 	}
+	// 状态摘要也是主节点视角：边缘的四态由 ControlSync 回答，两者都装上会互相盖。
+	if w.primaryStatus != nil {
+		t.Fatalf("边缘不该有主节点状态摘要：%+v", w.primaryStatus)
+	}
 	h := &api.HTTPHandler{}
 	w.applyTo(h)
 	if h.ControlSync == nil || h.ControlSyncConflicts == nil || h.ControlSyncToken != "" {
 		t.Fatalf("handler 装载不对：%+v", h)
+	}
+	if h.ControlSyncPrimary != nil {
+		t.Fatalf("边缘 handler 不该带主节点状态摘要：/status 必须走四态")
 	}
 	// 转发范围：控制面转发、本机域与控制同步自身不转发。
 	if !w.proxy.ShouldForward("/api/preferences") {

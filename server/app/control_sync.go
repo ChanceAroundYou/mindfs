@@ -65,6 +65,9 @@ type controlSyncWiring struct {
 	conflicts api.ControlSyncConflicts
 	// edges 只有主节点非空：名单是「谁在同步我」的运维索引，边缘没有这个视角。
 	edges api.ControlSyncEdges
+	// primaryStatus 只有主节点非空：主节点没有 ModeController，但 /status 要能回答
+	// 「水位到哪、几台边控端在跟、有没有待裁决冲突」。
+	primaryStatus api.ControlSyncPrimaryStatus
 	// token 只有主节点非空：边缘没有 push / head / changes 端点。
 	token string
 	// proxy 只有边缘非空：主节点不转发。
@@ -105,6 +108,7 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 	h.ControlSyncFeed = w.feed
 	h.ControlSyncConflicts = w.conflicts
 	h.ControlSyncEdges = w.edges
+	h.ControlSyncPrimary = w.primaryStatus
 	h.ControlSyncToken = w.token
 	h.ControlSyncPair = w.pairing
 }
@@ -234,6 +238,9 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 		w.pusher = rt.Pusher()
 		w.feed = rt.Feed()
 		w.edges = store
+		// 主节点也要能回答 /api/control-sync/status：没有 ModeController，
+		// 但水位、边控端心跳与未裁决冲突正是「同步到底有没有在跑」的答案。
+		w.primaryStatus = primaryStatusSource{store: store}
 		w.token = cfg.Token
 	} else {
 		// 已配对但运行中的边缘也挂配对端点：换主控端是同一件写配置＋换密钥的事，
@@ -348,4 +355,19 @@ func blockedDomainChecker(store *controlsync.Store) func(string) bool {
 		}
 		return false
 	}
+}
+
+// primaryStatusSource 给 *controlsync.Store 补上「当前时刻」这一位，让它满足
+// api.ControlSyncPrimaryStatus。时钟从外面注入，测试才能断言 checked_at。
+type primaryStatusSource struct {
+	store *controlsync.Store
+	now   func() time.Time
+}
+
+func (p primaryStatusSource) PrimaryStatus(ctx context.Context) (controlsync.PrimaryStatus, error) {
+	now := time.Now
+	if p.now != nil {
+		now = p.now
+	}
+	return p.store.PrimaryStatus(ctx, now())
 }

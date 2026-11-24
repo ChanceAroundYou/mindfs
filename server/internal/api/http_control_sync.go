@@ -34,6 +34,14 @@ type ControlSyncPusher interface {
 	Push(ctx context.Context, req controlsync.PushRequest) (controlsync.PushBatch, error)
 }
 
+// ControlSyncPrimaryStatus 是主节点侧的状态摘要来源。
+//
+// 主节点没有 ModeController（四态是边缘的概念），但用户同样要能查「同步到底有没有在跑」，
+// 所以 /api/control-sync/status 在主节点上也要有答案。返回体带 role 字段区分两种视角。
+type ControlSyncPrimaryStatus interface {
+	PrimaryStatus(ctx context.Context) (controlsync.PrimaryStatus, error)
+}
+
 // ControlSyncFeed 是主节点侧的只读同步端点：head 与 changes。
 // 与 Pusher 同理，边缘没有它。
 //
@@ -175,19 +183,32 @@ func (h *HTTPHandler) handleControlSyncChanges(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// handleControlSyncStatus 返回四态模式、水位与最后一次探测信息。
-// 两种模式（online / offline-local）都要能读到它，否则断线时前端连横幅都点不出来。
+// handleControlSyncStatus 返回同步状态：边缘是四态模式与水位，主节点是水位与
+// 边控端概况。两种模式的读口都必须是同一个地址 —— 前端不需要先知道自己是谁。
+//
+// 边缘：online / offline-local / reconciling / conflict-review 都要能读到，
+// 否则断线时连横幅都点不出来。主节点没有 ModeController（那只是边缘的概念），
+// 这时退到 ControlSyncPrimary；两者都没有才算「这台机器不同步」，回 404。
 func (h *HTTPHandler) handleControlSyncStatus(w http.ResponseWriter, r *http.Request) {
-	if h.ControlSync == nil {
-		respondError(w, http.StatusNotFound, errInvalidRequest("control sync not configured"))
+	if h.ControlSync != nil {
+		status, err := h.ControlSync.Status(r.Context())
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, status)
 		return
 	}
-	status, err := h.ControlSync.Status(r.Context())
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err)
+	if h.ControlSyncPrimary != nil {
+		status, err := h.ControlSyncPrimary.PrimaryStatus(r.Context())
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, status)
 		return
 	}
-	respondJSON(w, http.StatusOK, status)
+	respondError(w, http.StatusNotFound, errInvalidRequest("control sync not configured"))
 }
 
 // handleControlSyncMode 接受用户动作：{action:"local"|"retry"}。
