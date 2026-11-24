@@ -279,8 +279,16 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
      `role=control`、`/api/node-info version=v0.5.5-1400`，config 的 `instance_id` / `primary_url` /
      `token_file` 均保留，UI 清单 `build_version=v0.5.5-1400` / 289 文件，计划任务仍是 S4U +
      BootTrigger。临时上传文件与备份已清（`Test-Path` 全 False）。
-   - **未验 / 边界**：`busy` 闸门只有单测，没有真机「有活跃会话时跳过、空闲后再装」的完整链路；本轮未再验
-     Windows 重启后的 BootTrigger 自启；非 Windows 的自动安装未跑（Unix 上默认关闭）；GUI 双击安装器未模拟。
+   - **非 Windows 自动安装已补验（2026-11-24 10:38）**：隔离 Linux 实例（独立 `XDG_CONFIG_HOME`、
+     端口 7483、内嵌发布公钥的旧版 `v0.5.5-1300` 二进制、`auto_install:true`）从 release 检查到
+     更新并自动安装重启；日志 `check.result latest=0.5.5-1400 has_update=true` →
+     `auto_install.begin` → `restart.begin` → 新进程 `current=v0.5.5-1400 has_update=false`，
+     health 200、`/api/node-info version=v0.5.5-1400`，安装文件 sha256 `69ac9aef…1a0cf` 等于
+     release `mindfs_v0.5.5-1400_linux_amd64.tar.gz` 内 `mindfs`，配置里的 `auto_install:true`
+     保留。隔离进程 / 端口 / 临时 worktree 已清，生产 7331 全程只读。
+   - **未验 / 边界**：`busy` 闸门只有单测，没有真机「有活跃会话时跳过、空闲后再装」的完整链路；
+     当前 release 已是最新版，当前版本实例不会再装，真机造 busy 需新 release 或改生产，均未授权。
+     本轮未再验 Windows 重启后的 BootTrigger 自启，也未模拟 GUI 双击安装器。
      本机与 wsl / fn / pc-win 在**发布当轮**未分发、未重启；随后另一批已于 2026-11-24 部署
      `v0.5.5-1400-12-ge2be3c18` 到四端（见 `docs/plans/README.md` 部署状态），本机运行进程仍待用户重启。
 

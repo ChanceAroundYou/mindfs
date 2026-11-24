@@ -40,8 +40,14 @@ to resume their old TODOs or baselines.
 setup.exe 在 hasee 真跑安装器：`installer_exit=0`、PID 668 Session 0、`/mindfs/health` 200
 `role=control`、`/api/node-info version=v0.5.5-1400`，config 中 `primary_url` / `token_file` /
 `instance_id` 保留，UI bundle `build_version=v0.5.5-1400`（289 文件），计划任务仍 S4U +
-BootTrigger；临时文件与备份已清。**未验**：busy 闸门只做单测、Windows 重启后自启未再验、
-非 Windows 自动安装未跑、GUI 双击未模拟。
+BootTrigger；临时文件与备份已清。**非 Windows 自动安装已在隔离 Linux 实例真跑（2026-11-24
+10:38）**：独立 `XDG_CONFIG_HOME` + 端口 7483 + 内嵌发布公钥的旧版 `v0.5.5-1300` 二进制，
+`config.json` 显式 `auto_install:true`；日志 `check.result latest=0.5.5-1400 has_update=true` →
+`auto_install.begin` → `restart.begin` → 新进程 `current=v0.5.5-1400 has_update=false`，health 200、
+`/api/node-info version=v0.5.5-1400`，安装文件 sha256 `69ac9aef…1a0cf` 等于 release
+`mindfs_v0.5.5-1400_linux_amd64.tar.gz` 内 `mindfs`，`auto_install:true` 安装后保留；
+隔离进程 / 端口 / 临时 worktree 已清，生产 7331 全程只读且运行进程仍是旧版。**未验**：busy 闸门只做单测（当前无更新可装，真机造 busy 需新 release 或改生产，未授权）、
+Windows 重启后自启未再验、GUI 双击未模拟。
 
 **2026-11-23 四端发布 `v0.5.5-1300`**（新 tag `v0.5.5-1300` → `904c682e`，origin/main 同点；
 含 `f79a0e5a..904c682e` 共 13 个提交：G-PX 七条 —— 摘要 600 字截断 `b73d8781`、失败回合不写兜底
