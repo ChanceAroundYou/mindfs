@@ -289,11 +289,11 @@ func TestHandleStreamedEventsCloseWithoutTurnCompleted(t *testing.T) {
 	s := &session{}
 	ch := make(chan codexsdk.ThreadEvent)
 	close(ch)
-	completed, err := s.handleStreamedEvents(ch)
+	outcome, err := s.handleStreamedEvents(ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if completed {
+	if outcome.TurnCompleted {
 		t.Fatalf("空通道关闭不应报告 turn 完成")
 	}
 }
@@ -304,11 +304,11 @@ func TestHandleStreamedEventsReportsTurnCompleted(t *testing.T) {
 	ch := make(chan codexsdk.ThreadEvent, 1)
 	ch <- &codexsdk.TurnCompletedEvent{Type: "turn.completed"}
 	close(ch)
-	completed, err := s.handleStreamedEvents(ch)
+	outcome, err := s.handleStreamedEvents(ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !completed {
+	if !outcome.TurnCompleted {
 		t.Fatalf("TurnCompletedEvent 后应报告完成")
 	}
 }
@@ -319,11 +319,11 @@ func TestHandleStreamedEventsTurnFailedReturnsError(t *testing.T) {
 	ch := make(chan codexsdk.ThreadEvent, 1)
 	ch <- &codextypes.TurnFailedEvent{Error: codextypes.ThreadError{Message: "boom"}}
 	close(ch)
-	completed, err := s.handleStreamedEvents(ch)
+	outcome, err := s.handleStreamedEvents(ch)
 	if err == nil {
 		t.Fatalf("TurnFailedEvent 应返回错误")
 	}
-	if completed {
+	if outcome.TurnCompleted {
 		t.Fatalf("失败的回合不应报告完成")
 	}
 }
