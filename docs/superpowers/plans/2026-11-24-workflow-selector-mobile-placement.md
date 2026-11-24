@@ -75,7 +75,24 @@ measurePlacement（会成为第三份实现）、动 `--panel-vh` 或 z-index。
   -p no:cacheprovider` → `1 passed in 82.82s`。两条入口 × 两个视口的全流程放在一个用例里：
   `authed_page` 是会话级 Playwright 夹具，拆成两个 pytest 用例在同一进程连跑时，第二个用例会在
   fixture 交接处挂住（各自单独进程跑均通过）；单用例顺序覆盖四个组合稳定通过。
-- `make check-upstream`、提交与部署均未执行：本条只交付本地代码与测试；未 push、未安装、未重启任何节点。
+- 提交与合并：产品代码与测试提交为 `0666db09`（10 文件，+579/−51），随后 `cdc97420` 合入 main；
+  main 上 `make check-upstream` 通过（`2682 个 delta 文件被 394 组完整覆盖`），
+  `go run ./scripts/scope-id check` 报 394 个组号唯一。
+- 部署：随四端 `v0.5.5-1400-12-ge2be3c18` 发布（`bash scripts/deploy-all.sh` 退出 0）。
+  本机 7331 服务的 `assets/index-DsKaVt7P.js` 已含本条修复
+  （bundle 内可 grep 到 `prefer:"above"` 与 `minWidth:0,maxWidth:232`）。
+- 仍未做：本机运行进程是旧二进制（`v0.5.5-1300-66-g6d1b174e`，待用户
+  `sudo systemctl restart mindfs`）；移动端真机点验未做。静态资源不 embed，
+  前端修复由旧进程从安装目录直接服务，刷新客户端即可生效。
+- 2026-11-24 11:13 按用户要求重建纯前端并安装：用 `git archive e2be3c18`（已部署提交，
+  刻意不含 main 上其他会话尚未部署的前端提交）在 `/tmp` 快照里 `make build-web`，
+  产物 `cp -R dist/. ~/.local/share/mindfs/web/`（未重编 Go 二进制、未重启任何节点）。
+  - 新入口 `assets/index-BZpBxgmt.js`，bundle 内 `prefer:"above"` 与
+    `minWidth:0,maxWidth:232` 各命中 1 次；
+  - `service-worker.js` 的 `SHELL_CACHE` 从 `mindfs-shell-268695349d08` 变为
+    `mindfs-shell-926565d4c62f`，客户端重装 SW 后会清掉旧 shell 缓存；
+  - 7331 已服务新入口与新的 `ui-manifest.json`（`build_version` / `min_server_build`
+    均为 `v0.5.5-1400-12-ge2be3c18`，与运行中二进制一致）。
 
 ## 范围
 
