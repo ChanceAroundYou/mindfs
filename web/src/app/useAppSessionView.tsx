@@ -64,6 +64,7 @@ export function useAppSessionView(params: UseAppSessionViewParams) {
         agent: selectedSessionSnapshot.agent,
         rootId: headerMenuRootId,
         nodeId: headerMenuNodeId,
+        sessionKey: selectedSessionSnapshot.key || selectedSessionSnapshot.session_key || "",
         rootPath:
           managedRootByIdRef.current[headerMenuRootId || ""]?.root_path || null,
         workDir: selectedSessionSnapshot.work_dir,

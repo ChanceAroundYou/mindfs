@@ -147,18 +147,26 @@ func (s *Service) runFinishTurn(ctx context.Context, rootID string, task Task, r
 	text, err := s.directExecutor.RunDirectActivity(ctx, task, finishTurnPromptTemplate)
 	succeeded := err == nil && strings.Contains(text, finishTurnDoneMarker)
 
+	autoReason := ""
 	store, storeErr := s.taskStore(rootID)
 	if storeErr == nil {
 		if err != nil {
-			_ = s.recordTaskError(ctx, store, task, err.Error())
+			autoReason = err.Error()
+			_ = s.recordTaskError(ctx, store, task, autoReason)
 		} else if !succeeded {
-			_ = s.recordTaskError(ctx, store, task, "收尾回合没有回报完成标记，需要你确认："+firstLine(text))
+			autoReason = "收尾回合没有回报完成标记，需要你确认：" + firstLine(text)
+			_ = s.recordTaskError(ctx, store, task, autoReason)
 		}
 		if !isTerminalStatus(task.Status) {
 			_, _ = s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser, "finish_finished", "", false)
 		}
 	}
 	if !succeeded {
+		// 收尾回合的失败发生在 BeginFinishWorktree 返回之后；自动触发必须在这里
+		// 留下失败事件，否则 finish_auto_queued 会永久挡住后续重试。
+		if autoFinishFromContext(ctx) && autoReason != "" {
+			s.recordAutoFinishFailureEvent(ctx, rootID, task.ID, "自动收尾回合失败："+autoReason)
+		}
 		return
 	}
 	s.mu.Lock()

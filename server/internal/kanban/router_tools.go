@@ -78,6 +78,10 @@ type routerToolEnv struct {
 	collector *routerTurnCollector
 	// transcripts 是 router_read_session 的读端口；nil 时该工具显式报错。
 	transcripts RouterTranscriptReader
+	// worktreeFinisher 是收尾端口；nil 时 finish_worktree 显式报错。
+	worktreeFinisher ActivityWorktreeFinisher
+	// sessionMaintainer 是无损会话维护端口；nil 时相关工具显式报错。
+	sessionMaintainer ActivitySessionMaintainer
 	// supervisionMode 决定监管工具名是否暴露。名字必须在每一轮都相同（会话只
 	// 注册一次工具），off 时整组不暴露。
 	supervisionMode RouterSupervisionMode
@@ -98,6 +102,8 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.recordAcceptanceTool(),
 		e.setNodeModelTool(),
 		e.skipNodeTool(),
+		e.finishWorktreeTool(),
+		e.sessionMaintenanceTool(),
 		e.saveWorkflowTool(),
 	}
 	// 监管工具只要实例开着监管就出现，与本轮有没有观测块无关（S1/S2）。
@@ -440,6 +446,25 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 		case RouterActionAskUser, RouterActionSilent:
 			if len(actions) != 1 {
 				return fmt.Errorf("%s must be the only action", action.Kind)
+			}
+		case RouterActionFinishWorktree:
+			switch action.FinishMode {
+			case "begin", "teardown":
+			default:
+				return fmt.Errorf("invalid finish_mode %q", action.FinishMode)
+			}
+		case RouterActionSessionMaintenance:
+			switch action.MaintenanceAction {
+			case "clean_locks":
+			case "strip_images", "purge_empty":
+				if strings.TrimSpace(action.SessionKey) == "" {
+					return fmt.Errorf("%s requires session_key", action.Kind)
+				}
+				if action.MaintenanceAction == "purge_empty" && !action.Confirm {
+					return errors.New("purge_empty requires confirm:true")
+				}
+			default:
+				return fmt.Errorf("invalid maintenance_action %q", action.MaintenanceAction)
 			}
 		case RouterActionRunWorkflow:
 			executions++

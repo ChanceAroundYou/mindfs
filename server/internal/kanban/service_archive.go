@@ -66,6 +66,7 @@ func (s *Service) ArchiveTask(ctx context.Context, in ArchiveTaskInput) (TaskDet
 	}
 	if in.Archived {
 		s.archiveRelatedSessions(ctx, store, rootID, taskID)
+		s.maybeAutoFinishWorktree(ctx, rootID, taskID)
 	}
 	return store.GetDetail(ctx, taskID)
 }

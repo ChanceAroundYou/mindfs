@@ -34,10 +34,18 @@ test("session-header-menu", async () => {
   assert.ok(sessionView.includes("sessionService.repointSession("));
   assert.ok(menu.includes("await onRepoint(targetPath)"));
 
-  // 只有 claude 会话能换目录；有回合在跑时也不给换（repoint 要掐 agent 进程）
-  assert.ok(menu.includes('String(agent || "") === "claude" && !!rootId && !running'));
+  // repoint 跨 harness：只有 rootId 与 running 是前端判据，其余交给服务端的可读错误
+  assert.ok(menu.includes("const canRepoint = !!rootId && !running;"));
+  assert.ok(!menu.includes('=== "claude"'), "不许再写死 claude-only");
+  assert.ok(menu.includes('t("session.changeDirNoRoot")'));
   assert.ok(menu.includes("disabled={!canRepoint}"));
   assert.ok(sessionView.includes('running: selectedSessionPresence !== "idle"'));
+
+  // 「会话维护」只发事件；面板由 AppRootView 挂载，菜单不碰 services
+  assert.ok(menu.includes('t("sessionMaintenance.menu")'));
+  assert.ok(menu.includes("SESSION_MAINTENANCE_EVENT"));
+  assert.ok(sessionView.includes("sessionKey: selectedSessionSnapshot.key || selectedSessionSnapshot.session_key || \"\""));
+  assert.ok(!menu.includes("services/"), "视图不许直接 import services");
 
   // 路径行：可换行（不限制行数）、不存在标红
   assert.ok(menu.includes('color: dirMissing ? "#dc2626" : "var(--text-secondary)"'));
@@ -75,7 +83,7 @@ test("session-header-menu", async () => {
   assert.equal((wsMeta.match(/work_dir:/g) || []).length, 2);
 
   // 文案双语齐备
-  for (const key of ["session.changeDir", "session.changeDirRunning", "session.dirPicker.placeholder", "session.dirPicker.loadFailed", "session.dirPicker.confirm", "session.dirPicker.moving", "session.dirPicker.failed"]) {
+  for (const key of ["session.changeDir", "session.changeDirRunning", "session.changeDirNoRoot", "session.dirPicker.placeholder", "session.dirPicker.loadFailed", "session.dirPicker.confirm", "session.dirPicker.moving", "session.dirPicker.failed", "sessionMaintenance.menu"]) {
     assert.ok(zh.includes("\"" + key + "\""), `zh-CN missing ${key}`);
     assert.ok(en.includes("\"" + key + "\""), `en-US missing ${key}`);
   }

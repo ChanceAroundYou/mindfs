@@ -118,6 +118,11 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 并在执行时用本账户的 session manager 跑（scheduled/tasks.go 用 registry.GetSessionManager）。
 	// 共享实例会让同一个任务被两边各跑一次。
 	services.Kanban = kanban.NewService(services)
+	// Router 的无损会话维护走 usecase.Service；AppContext 只提供 Registry。
+	services.Kanban.SetSessionMaintainer(&usecase.Service{Registry: services})
+	services.SetMaintenanceOptions(m.shared.sessionMaintenance.maintenanceOptions())
+	// 自动收尾默认开；零值 Service 仍是关闭，只有装配处按配置打开。
+	services.Kanban.SetAutoFinishEnabled(m.shared.worktree.autoFinishEnabled())
 	// 外部通道（飞书）是进程级一份；本账户的看板把卡片交给它，账户身份由适配器固定。
 	services.Feishu = m.shared.feishu
 	if notifier := feishuCardNotifierFor(m.shared, userID); notifier != nil {
@@ -185,6 +190,16 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// OOB 会话回合的重启恢复（C2）：超过 30 分钟的标记每分钟扫一次，不再依赖
 	// 「回合结束」回调活到重启之后。
 	services.Kanban.StartOutOfBandRecovery(m.ctx)
+	// 卡死会话巡检与死 PID 锁清理是数据面能力，逐节点本地执行；主账户负责锁，
+	// 避免多账户重复扫同一份 ~/.claude/sessions。
+	startSessionMaintenanceSweeper(m.ctx, &usecase.Service{Registry: services}, func() []string {
+		roots := services.ListRoots()
+		ids := make([]string, 0, len(roots))
+		for _, root := range roots {
+			ids = append(ids, root.ID)
+		}
+		return ids
+	}, m.shared.worktree, m.shared.sessionMaintenance, primary)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err

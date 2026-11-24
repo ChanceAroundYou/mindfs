@@ -62,7 +62,7 @@ type Task struct {
 	// 处理完自然消失。
 	RouterAlert    *TaskRouterAlert `json:"router_alert,omitempty"`
 	WorktreeRootID string           `json:"worktree_root_id,omitempty"`
-	WorktreePath   string `json:"worktree_path,omitempty"`
+	WorktreePath   string           `json:"worktree_path,omitempty"`
 	// WorktreeBuilt 报告这个任务**曾经建出过一个 worktree**。
 	//
 	// 为什么要有它：WorktreePath 为空有两种相反的含义 ——

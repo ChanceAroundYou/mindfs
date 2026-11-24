@@ -52,9 +52,9 @@ type routerQuestionItem struct {
 // routerQuestionPayload 是 Router 提问卡的载荷：与会话卡同形，额外带一个
 // source 用于分流作答路径（见 routerQuestionSource）。
 type routerQuestionPayload struct {
-	Source    string              `json:"source"`
+	Source    string               `json:"source"`
 	Questions []routerQuestionItem `json:"questions"`
-	Answers   map[string]string   `json:"answers,omitempty"`
+	Answers   map[string]string    `json:"answers,omitempty"`
 }
 
 // routerAskUserQuestionPayload 把 Router 的提问渲染成提问卡载荷。

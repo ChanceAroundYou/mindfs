@@ -17,6 +17,7 @@ import (
 	"mindfs/server/internal/pins"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/scheduled"
+	"mindfs/server/internal/sessionmaintenance"
 	"mindfs/server/internal/update"
 	"mindfs/server/internal/webpush"
 )
@@ -55,7 +56,10 @@ type AppContext struct {
 	// 读口一律返回 disabled，发送路径不做任何观测与触发。
 	Hygiene *usecase.HygieneTracker
 
-	mu                       sync.RWMutex
+	mu sync.RWMutex
+	// maintenance 是节点本地的无损维护策略（是否留 .bak）。
+	maintenance sessionmaintenance.Options
+
 	sessionWorktreeMu        sync.Mutex
 	roots                    map[string]*RootContext // root id -> root context
 	fileChangeListeners      []func(fs.FileChangeEvent)
