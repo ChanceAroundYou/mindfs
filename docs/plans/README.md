@@ -54,9 +54,17 @@ trigger 1 且真的安装 22,220,962 B；去掉 probe 的变异让测试红，�
 hasee 经用户授权整机重启：PID 668 → 4084（均 Session 0），新进程 StartTime
 `2026-11-24T10:58:41.7356307+08:00` 晚于开机，BootTrigger `True`、`:7332` LISTENING 由 4084 持有、
 health 200 `role=control`、version `v0.5.5-1400`、同步 `online / base_rev=92 / pending=0 / conflict=0`，
-整机重启自启已验。**未验**：GUI 双击 —— 当前无 Windows MCP；hasee `quser` / `query user` 0 行、
-`explorer_count=0`，Session 1 只有 `winlogon` / `LogonUI` 等登录阶段进程、无可交互桌面，
-无法对安装器做真实双击；此前的 ssh `Start-Process` 只证明非交互安装，不升级措辞。
+整机重启自启已验。**GUI 结论分级（2026-11-24）**：SSH 直跑脚本落 Session 0、无交互桌面，
+不能双击；但 hasee 确有 Session 1 交互桌面，`LogonType Interactive` 的临时任务可进 Session 1
+（`UserInteractive=True`、1707×1067）。Highest 交互任务里
+`Shell.Application...InvokeVerb('open')` 打开 release setup.exe 实测通过：安装器 PID 3040
+启动后正常退出、无失败弹窗，新 mindfs PID 18008 / Session 0，health 200 `role=control`、
+version `v0.5.5-1400`；直接 `Start-Process` 的 Highest 重跑也通过（PID 20080）。
+Limited token 的 UIA 启动、默认 Explorer 里的真实 `mouse_event` 双击都仍失败在
+`setup.ps1 failed: exit status 1`（先后是 `Stop-Process` Session 0 进程被拒与
+`schtasks /create /f` 被拒）。**人工桌面双击未验**，不把 shell verb 启动升级成人工双击；
+临时任务与文件已清，正式 `mindfs` 任务仍 `Running`、health 200。详见
+[边控端计划](../superpowers/plans/2026-11-23-edge-controller-handshake-and-installer.md)。
 
 **2026-11-23 四端发布 `v0.5.5-1300`**（新 tag `v0.5.5-1300` → `904c682e`，origin/main 同点；
 含 `f79a0e5a..904c682e` 共 13 个提交：G-PX 七条 —— 摘要 600 字截断 `b73d8781`、失败回合不写兜底

@@ -304,7 +304,46 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
      `:7332` LISTENING 由 4084 持有，health 200 `role=control`，version `v0.5.5-1400`，
      同步仍 `online / base_rev=92 / pending=0 / conflict=0`。PID 与 StartTime 都变化且晚于开机，
      证明是整机重启后的 BootTrigger 拉起，不是任务重启冒充。
-   - **GUI 双击未验（2026-11-24）**：当前工具集没有 Windows MCP；用户追问「能否 ssh hasee 后用 Python 脚本操作」后做了两层只读取证。① Python 不可用：`python --version` / `py -3 --version` 都失败，只有 `WindowsApps\python.exe`、`python3.exe` 应用执行别名（点开跳商店），`C:\Python*`、`Program Files\Python*`、`Anaconda*` 等安装根目录全空 —— 没有可运行的 Python。② 未为此安装软件（装 Python 属额外系统变更，且不构成可点击桌面），改用 Windows 自带 .NET/PowerShell 调同一组 Win32 API 验证等价可行性：SSH 起的进程 `pid=7856 / session_id=0`，`active_console_session_id=1`，`window_station=Service-0x0-4fd38b$`，`thread_desktop=Default`，`OpenInputDesktop=0 error=1`，可见顶层窗口 0，`SystemInformation.UserInteractive=False`；`query.exe user` / `quser.exe` 均 0 行、`Win32_ComputerSystem.UserName=[]`、`explorer_count=0`，Session 1 只有 `winlogon` / `LogonUI` / `dwm` / `csrss` 等登录阶段进程。安装器文件 `C:\Users\<中文用户名>\mindfs-setup.exe`（16,898,303 B）确实存在，但 SSH 脚本无论用 Python 还是 PowerShell 都落在 Session 0 服务窗口站，`OpenInputDesktop` 失败、无可注入窗口/桌面，不能做真实 GUI 双击。用户已授权虚拟点击脚本，前提是存在可注入会话；本环境不满足，因此仍只认此前的 ssh `Start-Process` 非交互安装证据，不把命令行启动升级成「GUI 双击已验」。
+   - **GUI 路径取证与分级结论（2026-11-24）**：SSH 直接启动的脚本确实落在 Session 0
+     （`pid=7856 / session_id=0`、`window_station=Service-0x0-4fd38b$`、
+     `OpenInputDesktop=0 error=1`、`UserInteractive=False`、可见窗口 0），且机器没有可运行的
+     Python（只有 `WindowsApps` 应用执行别名）；`CreateProcessWithTokenW` 复制 Session 1 token
+     仍落 Session 0，`CreateProcessAsUserW` / `WTSQueryUserToken` 因缺
+     `SeAssignPrimaryTokenPrivilege` / `SeTcbPrivilege` 不可用，桌面附加也只能看到 Session 0
+     对象。这条路不能再试参数，换手段后确认：**hasee 有真实 Session 1 交互桌面**（WTS
+     Session 1、active console、多个 `explorer.exe`、1707×1067 屏幕）；用当前用户 SID 注册
+     `LogonType Interactive` 的临时计划任务，任务内进程落 Session 1 /
+     `WinSta0\Default` / `UserInteractive=True`，可枚举窗口、截图并用 UIA/`mouse_event`
+     操作。
+     证据分级必须分开写：
+     ① **GUI 启动（Limited）**：UIA `InvokePattern.Invoke()` 在 Explorer 里点中
+     `mindfs_v0.5.5-1400_windows_amd64-setup.exe`，`uia_invoke=ok`，安装器 PID 25504 /
+     Session 1，但失败弹窗 `MindFS setup failed: setup.ps1 failed: exit status 1`；抓到的
+     stderr 依次是 Limited token 不能 `Stop-Process` 掉 Session 0 的 PID 4084、停掉服务后
+     不能 `schtasks /create /f` 覆盖既有 S4U 任务。
+     ② **GUI 启动（Highest）**：同一交互式计划任务改 `RunLevel Highest`，
+     `probe session=1 elevated=True interactive=True`，`Start-Process ... -WindowStyle Normal`
+     的重跑 stdout 出现 `Health ... is up` / `Done.`、stderr 为空、退出后新 mindfs PID 20080 /
+     Session 0，health 200 `role=control`、`/api/node-info version=v0.5.5-1400`。
+     ③ **GUI shell 打开（Highest）**：在 Highest 交互式任务里用
+     `Shell.Application.Namespace(...).ParseName(...).InvokeVerb('open')` 打开 release
+     setup.exe（等价于 shell 的“打开”动作，不是直接鼠标双击）：`installer_process_seen
+     pid=3040 session=1` → `installer_process_exited`（12:07:24），无失败弹窗；随后
+     `:7332` health 200 `role=control`、`/api/node-info version=v0.5.5-1400`，新进程
+     PID **18008** / Session 0、StartTime `2026-11-24T12:07:23`。
+     ④ **真实鼠标双击（Highest 任务驱动，但落点窗口是默认 Limited Explorer）**：
+     `SetForegroundWindow` + `SetCursorPos` + 两次 `mouse_event` 在文件项中心
+     `(768,648)` 发出，`installer_process_seen pid=12224 session=1`，但仍失败在
+     `setup.ps1 failed: exit status 1`；这说明双击命中的 Explorer 进程本身是 Limited
+     token，子安装器继承后仍过不了上面两道权限点。首次未置前窗口的尝试只触发了控制台
+     “选择”模式，没有启动安装器，不计入双击证据。
+     **结论**：GUI shell 打开 → 安装 → 重启服务这条链在 Highest 交互会话里实测通过；
+     人工在桌面上双击、以及 Limited token 下双击，仍未验证为成功。没有改 ACL、UAC、任务
+     权限或删除既有任务/数据；所有 `mindfs-gui-*` / `mindfs-setup-diag*` 临时任务与
+     `C:\Users\Public\*` 临时脚本/日志/截图，以及下载的 setup.exe 副本均已清理，正式
+     `mindfs` 任务仍 `Running`、health 200 `role=control`。
+     早先「hasee `quser` 0 行、`explorer_count=0`、无可交互桌面」的判断只对 SSH 当时的
+     Session 0 上下文成立，不能推广到整机没有 Session 1。
      本机与 wsl / fn / pc-win 在**发布当轮**未分发、未重启；随后另一批已于 2026-11-24 部署
      `v0.5.5-1400-12-ge2be3c18` 到四端（见 `docs/plans/README.md` 部署状态），本机运行进程仍待用户重启。
 
