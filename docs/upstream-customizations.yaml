@@ -2508,7 +2508,7 @@ groups:
       - web/tests/agent-docs.test.mjs
     anchors:
       - docs/agent/rules/frontend/TODO.md:目前没有待处理的一次性存量事项
-      - docs/plans/README.md:Rule completion rollout
+      - docs/plans/PLAN_HISTORY.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:test("agent rule and plan index links resolve"
   - id: G-BZ
     title: 将 plan 前缀逻辑移出 action view
@@ -15596,3 +15596,50 @@ groups:
       - 'server/internal/api/usecase/session_overflow_cancel_test.go:func TestUnpinnedCancelStillWorksWhileCompactPending(t *testing.T) {'
       - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestMarkCompactedClearsStaleCompactError(t *testing.T) {'
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-resume-interrupted.md:# 溢出压缩被用户重试打断：自动重发闭环修复'
+
+  # ── G-QZ ─────────────────────────────────────────────────────────────────
+  - id: G-QZ
+    title: "指令注入预算根除：plans 索引按需读取 + 本地预检口径分离"
+    kind: fix
+    symptom: |
+      长会话完成时上下文看起来没满，主动再发一条却立刻 `Prompt is too long`：Claude CLI
+      在发 HTTP 请求前把 AGENTS.md 的 `@docs/plans/README.md` 展开注入（146,783 chars），
+      按 200k − 20k 输出预留 − 3k 余量 ≈ 177k 的本地拒发线判超；胶囊却只显示上一次成功
+      请求的 usage，口径不同让用户以为误判。发第二条可用是因为 `/compact` 把基数降下来。
+    why: |
+      这是本 fork 的定制：上游没有把随每次发版增长的 plans 索引内联进唯一指令入口，
+      也没有把本地预检线暴露给会话胶囊。必须保留的判据：
+      ① AGENTS.md 只自动注入小体积规则索引，plans / 部署史 / 计划执行记录改成按需读取；
+      ② plans 索引瘦到 Active 链接 + 规则，历史原文搬到 DEPLOY_HISTORY.md / PLAN_HISTORY.md，
+         不丢部署证据也不再让 session_start 顶爆本地预算；
+      ③ 静态门禁断言 AGENTS.md ≤8 KiB、每个 @import 目标 ≤16k chars、展开总量 ≤32k chars，
+         防止未来发版把巨型日志重新内联；这是文档预算闸门，不是新增按请求大小自动压缩；
+      ④ 胶囊把「上次真实 usage」与「本地预检线（估算）」分开显示，不把估算冒充上游计量。
+      保持 200k 默认窗口，不用 [1m]、不改 blocking override。合上游时任一条被顶掉都会
+      复发「会话没满却拒发」或让用户继续误判。
+    files:
+      - AGENTS.md
+      - docs/plans/README.md
+      - docs/plans/DEPLOY_HISTORY.md
+      - docs/plans/PLAN_HISTORY.md
+      - docs/superpowers/plans/2026-11-24-instruction-budget-eradication.md
+      - web/tests/agent-docs.test.mjs
+      - web/src/components/agent/ContextSavingIndicator.tsx
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/tests/context-saving-chip.test.mjs
+    tests:
+      - web/tests/agent-docs.test.mjs
+      - web/tests/context-saving-chip.test.mjs
+    anchors:
+      - 'AGENTS.md:只有规则索引由它内联加载'
+      - 'AGENTS.md:DEPLOY_HISTORY.md'
+      - 'docs/plans/README.md:## Active'
+      - 'docs/plans/DEPLOY_HISTORY.md:# 部署 / 发布历史（从 plans 索引移出）'
+      - 'docs/plans/PLAN_HISTORY.md:# 计划记录（从 plans 索引移出）'
+      - 'docs/superpowers/plans/2026-11-24-instruction-budget-eradication.md:# 指令注入预算根除'
+      - 'web/tests/agent-docs.test.mjs:instruction injection stays under every harness budget'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:const localBlockLine = contextWindow > 0 ? contextWindow - 20000 - 3000 : 0;'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.hygieneLocalBudgetValue": "{used} / {limit}（估算）"'
+      - 'web/src/i18n/locales/en-US-agents.ts:"contextSaving.hygieneLocalBudgetValue": "{used} / {limit} (estimate)"'
+      - 'web/tests/context-saving-chip.test.mjs:上次真实 usage 与本地预检线分开显示，预检线标为估算'

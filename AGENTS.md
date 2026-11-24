@@ -5,13 +5,13 @@ Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
 
 ## Agent 指令入口与规范
 
-`AGENTS.md` 是**唯一**的项目指令入口；两个索引由它内联加载：
+`AGENTS.md` 是**唯一**的项目指令入口；只有规则索引由它内联加载，执行计划按需读取：
 
 @docs/agent/rules/README.md
-@docs/plans/README.md
 
 - 不要新增 `CLAUDE.md` / `GEMINI.md` 这类空壳——存在时会遮住本文件的自动发现（`web/tests/agent-docs.test.mjs` 钉住）。
-- 代码规范：[docs/agent/rules/README.md](docs/agent/rules/README.md)；执行计划：[docs/plans/README.md](docs/plans/README.md)，只有标为 Active 的可执行。
+- 代码规范：[docs/agent/rules/README.md](docs/agent/rules/README.md)；执行计划：[docs/plans/README.md](docs/plans/README.md)，只有标为 Active 的可执行；发布 / 部署历史：[docs/plans/DEPLOY_HISTORY.md](docs/plans/DEPLOY_HISTORY.md)，计划执行记录：[docs/plans/PLAN_HISTORY.md](docs/plans/PLAN_HISTORY.md)，均按需读取。
+- `@import` 会被 Claude CLI 在 `session_start` 全部展开；plans 索引随每次发版增长，内联会把本地预检预算顶爆。因此这里只保留小体积规则索引，plans / 部署史用上面的链接按需读取，不写 `@` 行。
 - 若规则冲突：平台/用户要求优先；安全、权限、节点/部署边界以本文件为准；语言/模块约束以 `docs/agent/rules/` 为准；任务范围以 Active 计划为准。
 
 ## 节点表（别叫错）
