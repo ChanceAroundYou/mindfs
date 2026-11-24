@@ -85,3 +85,63 @@
 - 不新增「按大小自动压缩」策略：重发只消费已经因为撞墙而排上的那一次压缩。
 - 不在压缩失败时重发、不在重发再次溢出时二次压缩。
 - 重启丢待办（内存态），文档写明。
+
+## 执行记录（2026-11-24）
+
+**提交**：`851c455b feat(session): 上下文溢出压缩成功后自动重发原消息（Scope: G-QT）`，
+14 文件 +931/−2。**未 push、未部署、未重启任何节点。**
+
+**测试顺序的实际情况（不粉饰）**：实现在先、测试在后，没有逐任务走严格的
+RED→GREEN；测试有效性由下面的 11 处变异证明 —— 每处都是**断言失败**打红
+（不是编译失败），还原后复绿。
+
+**测试**：
+- `server/internal/api/usecase/session_overflow_resume_test.go` 8 条：登记原回合
+  完整输入、重发回合不再登记/不排压缩、用户回合作废而压缩/重发回合保留、成功消费
+  一次、忙丢弃、runner 拒绝也丢弃、压缩失败丢弃、复用身份不落库。
+- `server/internal/api/overflow_resume_test.go` 6 条：队列非空拒绝、缺回合身份拒绝、
+  空 AppContext 拒绝、spec→job 逐项搬运且标记 `OverflowResume`、身份不完整不复用、
+  `HasQueuedSessionMessage`/`overflowResumeAcceptable`、OnStart 源码契约（重发分支
+  只置 pending 且位于普通广播之前）。
+
+```
+go test -count=1 ./server/internal/api/usecase/ ./server/internal/api/
+ok  mindfs/server/internal/api/usecase  25.244s
+ok  mindfs/server/internal/api         38.511s
+go build ./...                         BUILD_OK
+make check-upstream                    ✓ 2692 个 delta 文件被 398 组完整覆盖
+```
+
+**变异验证（11 处，全部断言失败打红后还原）**：
+
+| # | 变异 | 打红的用例 |
+|---|---|---|
+| M1 | `ensureOverflowCompact` 递归闸门去掉 `in.OverflowResume` | `TestOverflowResumeTurnDoesNotArmAgain` |
+| M2 | 删掉 `s.markOverflowResume(in)` | `TestOverflowFailureArmsResumeWithOriginalTurn` |
+| M3 | 用户回合清待办的 flag 闸门改成 `if false` | `TestUserTurnDropsPendingResume` |
+| M4 | 会话忙丢弃分支改成永不触发 | `TestCompactSuccessDropsResumeWhenSessionBusy` |
+| M5 | 成功路径改成 `dropOverflowResume` | `TestCompactSuccessPathConsumesResume` |
+| M6 | 失败路径去掉 `dropOverflowResume` | `TestCompactFailureDropsResume` |
+| M7 | `persistTurnUserRow` 去掉身份复用 | `TestPersistTurnUserRowReusesIdentity` |
+| M8 | job 不标记 `OverflowResume` | `TestOverflowResumeJobCarriesTurnIdentity` |
+| M9 | job 在缺 TurnSeq 时也设复用身份 | `TestOverflowResumeJobOmitsIdentityWhenIncomplete` |
+| M10 | `overflowResumeAcceptable` 恒接受 | `TestOverflowResumeAcceptableReflectsQueue` |
+| M11 | OnStart 的重发分支改成 `if false` | `TestOverflowResumeStartHookSkipsUserBubble` |
+
+**实现期偏离计划的三处（都必要）**：
+
+1. **新增队列闸门**：排队中的消息对 `SendMessage` 不可见，所以「用户已经排了话」
+   只能由 API 层用 `StreamHub.HasQueuedSessionMessage` 判定；否则重发会插到用户
+   消息前面。
+2. **不能用「最后一条 user 行是否还是溢出的那条」做陈旧判断**：`/compact` 本身也落
+   user 行，这条判据会把待办误判成陈旧。改为「用户发起新回合即作废」+ 队列闸门。
+3. **判据抽成纯函数 `overflowResumeAcceptable`**：直接在 `ResumeSessionOverflowTurn`
+   上做变异会让门禁失效时真的提交任务、起一个真实 agent，测试现场不可控；抽成纯
+   函数后变异只影响返回值。
+
+**未验证 / 剩余风险**：
+- 真实长会话上的端到端闭环未跑（需要线上流量与重启，属用户执行范围）；发布继续搁置，
+  `Prompt is too long` 是否彻底消失要等上线后取真实窗口。
+- `go vet ./server/internal/api/...` 有一条既有告警
+  （`http_feishu_relay_test.go:174` 复制含 `sync.Once` 的值），非本组引入。
+- 压缩期间 MindFS 重启会丢掉待办（设计如此，与今天的「手动重发」体验一致）。
