@@ -8957,7 +8957,7 @@ groups:
       - 'server/internal/kanban/service_workflow_workspace.go:release, err = s.AcquireWorkflowSharedTreeWriter(ctx, task.ID, node, lease.RootPath, branch)'
       - 'cli/cmd/mindfs.go:flag.Bool("workflow-parallel-main-tree", true,'
       - 'server/app/workspace.go:func (s sharedServices) parallelMainTreeEnabled() bool {'
-      - 'server/app/server.go:parallelMainTree: &opts.WorkflowParallelMainTree'
+      - 'server/app/server.go:parallelMainTree:   &opts.WorkflowParallelMainTree'
 
   # ── Router route 模式：真正接管任务回合 ─────────────────────────────────
   - id: G-MC
@@ -10448,7 +10448,7 @@ groups:
       - 'server/internal/api/appcontext_activity.go:Model:           s.taskModelFor(agentName),'
       - 'server/internal/api/appcontext_activity.go:func (s *AppContext) taskModelFor(agentName string) string {'
       - 'server/app/server.go:func taskConfigFromOptions(opts StartOptions) taskConfig {'
-      - 'server/app/server.go:taskConfig:       taskConfigFromOptions(opts),'
+      - 'server/app/server.go:taskConfig:         taskConfigFromOptions(opts),'
       - 'server/app/workspace_build.go:TaskModel: m.shared.taskConfig.Model,'
       - 'cli/cmd/startup.go:Task     *startupTaskConfig     `json:"task"`'
       - 'cli/cmd/mindfs.go:TaskModel:                          taskModel,'
@@ -12536,7 +12536,7 @@ groups:
       - 'server/internal/api/http_routes.go:r.Post("/api/sessions/{key}/compact", h.handleSessionCompact)'
       - 'server/internal/api/appcontext.go:func (s *AppContext) SessionHygiene() *usecase.HygieneTracker {'
       - 'server/app/session_hygiene.go:func sessionHygieneConfigFromOptions(opts SessionHygieneOptions) usecase.HygieneConfig {'
-      - 'server/app/server.go:hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),'
+      - 'server/app/server.go:hygiene:            sessionHygieneConfigFromOptions(opts.SessionHygiene),'
       - 'cli/cmd/startup.go:func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {'
       - 'web/src/services/agent/contextSaving.ts:export type SessionHygiene = {'
       - 'web/src/services/agent/contextSaving.ts:export async function compactSession('
