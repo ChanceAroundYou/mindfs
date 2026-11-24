@@ -293,8 +293,9 @@ sessionmaintenance、api、app、cli 全绿；`usecase` 的全量并发跑出现
 `web/node_modules/.bin/vitest run --config ./vitest.config.ts` 275 文件 / 977 通过 / 6 跳过。
 `GOOS=windows GOARCH=amd64 go build ./server/internal/sessionmaintenance/` 通过。
 
-**边界**：未部署、未 push、未重启任何节点；两个旧 skill 目录与
-`~/.agents/claude/scripts/session_*.py` 均未删除。图片清理仍整文件读入，空闲检查与改写之间
+**边界**：未部署、未 push、未重启任何节点；两个旧 skill 目录、`.render` 副本和 Claude 链接
+已在确认实现后删除（`~/.agents` 提交 `57dabb9`），但
+`~/.agents/claude/scripts/session_{maintenance,debloat,cleanup}.py` 仍未删除（需单独确认）。图片清理仍整文件读入，空闲检查与改写之间
 存在 TOCTOU 窗口；锁清理只处理 `<pid>.json`，不碰可能的 `.key` 旁车文件。Codex 桌面端并发
 repoint 与真机大数据图片续聊未验。
 
