@@ -226,8 +226,15 @@ const (
 	// W3：把 Router 起草的 workflow 固化进目录。项目级新条目直接发布；全局条目
 	// 与「改已有」落一张待批准卡，人在任务详情里批准后才写控制面。
 	RouterActionSaveWorkflow RouterActionKind = "save_workflow"
-	RouterActionCancelRun    RouterActionKind = "cancel_run"
-	RouterActionCancelTask   RouterActionKind = "cancel_task"
+	// finish_worktree 把任务遗留的 linked worktree 收掉：begin 起一轮带显式
+	// pathspec 的收尾回合（commit/merge 在回合里发生，没有单独的 commit 按钮），
+	// teardown 只做机械清场。status 是只读，不落 action。
+	RouterActionFinishWorktree RouterActionKind = "finish_worktree"
+	// session_maintenance 只做无损维护：诊断 / 清死 PID 锁 / 清图片 / 删空会话。
+	// 后两项会改历史，purge_empty 必须显式确认；不碰思考与工具负载。
+	RouterActionSessionMaintenance RouterActionKind = "session_maintenance"
+	RouterActionCancelRun          RouterActionKind = "cancel_run"
+	RouterActionCancelTask         RouterActionKind = "cancel_task"
 	// W1 T3：登记这一轮的验收项。它不是收尾动作，只是把「做完的样子」写下来，
 	// 供 complete_task 的证据门逐条核对。
 	RouterActionRecordAcceptance RouterActionKind = "record_acceptance"
@@ -261,6 +268,11 @@ type RouterAction struct {
 	// SessionMode 只对 run_workflow 有意义：new（默认）= 这一轮开一段新会话，
 	// continue = 接续任务最近实际在用的那条会话。由 Router 跨工作流决定。
 	SessionMode string `json:"session_mode,omitempty"`
+	FinishMode  string `json:"finish_mode,omitempty"` // finish_worktree: begin|teardown
+	// MaintenanceAction / SessionKey / Confirm 只对 session_maintenance 有意义。
+	MaintenanceAction string `json:"maintenance_action,omitempty"`
+	SessionKey        string `json:"session_key,omitempty"`
+	Confirm           bool   `json:"confirm,omitempty"`
 	// Scope / WorkflowName / DerivedFrom 只对 save_workflow 有意义：目标是哪个
 	// 目录条目、叫什么、从哪一版派生（派生只记录来源，不复制版本链）。
 	Scope        string `json:"scope,omitempty"`

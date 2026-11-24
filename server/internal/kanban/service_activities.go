@@ -34,6 +34,8 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetCardNotifier(s.cardNotifier)
 	// 装配 WorkflowRun 执行端口：通过 Service.WakeWorkflowRun 触发实际执行
 	svc.SetWorkflowExecutor(s)
+	svc.SetWorktreeFinisher(s)
+	svc.SetSessionMaintainer(s.sessionMaintainer)
 	s.mu.Lock()
 	direct := s.directExecutor
 	s.mu.Unlock()

@@ -71,6 +71,8 @@ type Service struct {
 	// sessionTurnCanceller 是「终止任务」用的会话打断端口：按 root + 会话 key
 	// 取消此刻在跑的那一轮。nil（单测 / 老装配）时终止只结算回复行。
 	sessionTurnCanceller func(ctx context.Context, rootID, sessionKey string) error
+	// sessionMaintainer 是 Router 的无损会话维护端口；装配期由 api 层注入。
+	sessionMaintainer ActivitySessionMaintainer
 	// turnTerminations 是「这一轮是被用户终止的」共享登记簿。ActivityServiceForRoot
 	// 每次现建实例，终止与回合收尾可能落在不同实例上，状态必须挂在这里。
 	turnTerminations *TurnTerminations
@@ -127,6 +129,8 @@ type Service struct {
 	// directExecutor 是「纯对话模式」的直连执行端口，由 api 层注入。
 	// ActivityServiceForRoot 每次新建的 ActivityService 都会带上它。
 	directExecutor ActivityDirectExecutor
+	// autoFinishWorktree 控制任务进终态后是否自动起收尾回合。零值关，由装配按配置注入。
+	autoFinishWorktree bool
 	// routerConfig 是节点本地 Task Router 配置。零值/off 时 Router 完全不存在。
 	routerConfig RouterConfig
 	// routerAgent 由 api 层装配（AppContext 实现 kanban.RouterAgent）；nil 时

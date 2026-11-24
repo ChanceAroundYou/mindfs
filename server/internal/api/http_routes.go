@@ -94,6 +94,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 	// 的那批会话 —— 在它们身上 repoint 会在任何副作用之前 400，于是没有任何修复入口。
 	r.Post("/api/sessions/{key}/worktree-ownership", h.handleSessionWorktreeOwnershipClear)
 	r.Post("/api/sessions/worktree-ownership", h.handleSessionWorktreeOwnershipClear)
+	r.Get("/api/sessions/runtime-issues", h.handleSessionRuntimeIssues)
+	r.Post("/api/sessions/runtime-issues/sweep", h.handleSessionRuntimeIssuesSweep)
+	r.Get("/api/sessions/maintenance/diagnose", h.handleSessionMaintenanceDiagnose)
+	r.Post("/api/sessions/maintenance/locks/clean", h.handleSessionMaintenanceCleanLocks)
+	r.Post("/api/sessions/{key}/maintenance/images/clean", h.handleSessionMaintenanceCleanImages)
+	r.Post("/api/sessions/{key}/maintenance/purge", h.handleSessionMaintenancePurgeEmpty)
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.handleSessionToolCallGet)
 	r.Get("/api/sessions/{key}/context-saving", h.handleSessionContextSaving)
 	r.Post("/api/sessions/{key}/compact", h.handleSessionCompact)

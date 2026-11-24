@@ -70,7 +70,9 @@ type sharedServices struct {
 	feishuRelay feishuRelayConfig
 	// hygiene 是补全默认值后的会话卫生策略；每账户用自己的 tracker 实例
 	// （作用域键含 session key，账户之间不共享状态）。
-	hygiene usecase.HygieneConfig
+	hygiene            usecase.HygieneConfig
+	worktree           WorktreeOptions
+	sessionMaintenance SessionMaintenanceOptions
 }
 
 func (s sharedServices) parallelMainTreeEnabled() bool {

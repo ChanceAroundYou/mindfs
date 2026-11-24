@@ -202,6 +202,10 @@ func (s *ActivityService) applyRouteAction(
 		return s.hideRouteActivity(ctx, state, nil, "silent")
 	case RouterActionRetryNode:
 		return s.applyRouteRetryNode(ctx, decision, action)
+	case RouterActionFinishWorktree:
+		return s.applyRouteFinishWorktree(ctx, decision, task, action)
+	case RouterActionSessionMaintenance:
+		return s.applyRouteSessionMaintenance(ctx, decision, task, action)
 	case RouterActionNotifyUser:
 		return s.applyRouteNotifyUser(ctx, decision, task, action)
 	case RouterActionResumeRun:

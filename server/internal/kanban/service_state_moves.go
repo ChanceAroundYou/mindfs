@@ -100,6 +100,7 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 			TaskTitle: taskTitle(detail.Task), TaskNumber: detail.Task.TaskNumber,
 			Status: status, Summary: strings.TrimSpace(reason),
 		})
+		s.maybeAutoFinishWorktree(ctx, rootID, taskID)
 	}
 	return detail, err
 }
