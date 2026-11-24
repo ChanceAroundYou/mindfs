@@ -214,7 +214,7 @@ func (c *TunnelClient) runOnce(ctx context.Context) error {
 	defer sessionCancel()
 
 	// 先补满预热通道，再进心跳循环。
-	c.spawnChannels(sessionCtx, c.opts.IdleChannels)
+	c.runChannelPool(sessionCtx)
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- c.readControl(sessionCtx, conn) }()
@@ -356,26 +356,55 @@ func (c *TunnelClient) heartbeat(ctx context.Context, conn *websocket.Conn) erro
 	}
 }
 
-// spawnChannels 拨 n 条数据通道。每条都是「拨出去 → 交给主控 → 一直服务到对端关闭」。
+// runChannelPool 维持一组数据通道。每条通道服务完一次请求就重拨一条。
 //
-// 这里不维护本地池：主控那边是唯一知道「什么时候需要一条新通道」的一方
-// （它按请求来借），所以边控端只负责在通道被用完之后补一条。
-func (c *TunnelClient) spawnChannels(ctx context.Context, n int) {
-	for i := 0; i < n; i++ {
+// 「一条通道只服务一次请求」是 RelayHub 的硬约束（数据通道上没有多路复用，
+// 只有这样才能原生支持 WS 升级）。所以「拨若干条、用完就结束」的写法会让池子
+// 被逐条吃空：第 IdleChannels+1 个请求起，主控永远借不到通道，表现是永久的
+// 502/503 —— 单次请求的测试完全看不到这一点（第一次总是成功）。
+//
+// 并发上限是 min(IdleChannels, MaxChannels)：一条通道同一时刻只服务一个请求。
+// 默认 8 条，高于浏览器对同一 origin 的并发上限（6）；高出部分不预扩：
+// 主控没有向边控端要通道的指令通道，凭猜测扩容只会白养连接。
+func (c *TunnelClient) runChannelPool(ctx context.Context) {
+	workers := channelWorkers(c.opts.IdleChannels, c.opts.MaxChannels)
+	for i := 0; i < workers; i++ {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			c.serveOneChannel(ctx)
+			for ctx.Err() == nil {
+				c.serveOneChannel(ctx)
+			}
 		}()
 	}
 }
 
-// serveOneChannel 拨一条数据通道，把它交给主控，然后等它被用掉或对端关闭。
+// channelWorkers 决定并发服务多少条数据通道：min(IdleChannels, MaxChannels)。
+// MaxChannels 是「同时存在的通道上限（含正在服务的）」，拨多了就绕过了它。
+func channelWorkers(idle, max int) int {
+	if idle <= 0 {
+		return 1
+	}
+	if max > 0 && max < idle {
+		return max
+	}
+	return idle
+}
+
+// serveOneChannel 拨一条数据通道，交给主控，然后服务到这条通道结束。
+//
+// 拨不通时退避后返回，由 runChannelPool 的循环再试：少一条连接不该让整台机器
+// 的隧道永久缺额（NAT 抖动、RST 之后都会走到这条路径）。
 func (c *TunnelClient) serveOneChannel(ctx context.Context) {
 	conn, _, err := c.dialChannel(ctx)
 	if err != nil {
-		if ctx.Err() == nil {
-			c.report(err)
+		if ctx.Err() != nil {
+			return
+		}
+		c.report(err)
+		select {
+		case <-ctx.Done():
+		case <-time.After(c.opts.ReconnectMin):
 		}
 		return
 	}
@@ -383,7 +412,11 @@ func (c *TunnelClient) serveOneChannel(ctx context.Context) {
 
 	// 边控端这边把隧道回的字节当成一次 HTTP 连接的输入：一次性 listener 交出
 	// 这一条连接，http.Server 用本机原来的 handler 服务它，服务完就退出。
-	ln := &oneShotListener{conn: NewWSConn(conn), done: make(chan struct{})}
+	//
+	// 必须等这条连接真的被服务完（server 读完响应后关掉它）才返回：Serve 只负责
+	// 把连接交给一个 goroutine，它自己立刻就因为「没有第二条连接」返回了。
+	// 早返回会让 defer conn.Close() 在响应还没写完时掐断隧道。
+	wrapped := &closeSignalConn{Conn: NewWSConn(conn), done: make(chan struct{})}
 	srv := &http.Server{
 		Handler:           c.handler,
 		ReadHeaderTimeout: 30 * time.Second,
@@ -392,11 +425,15 @@ func (c *TunnelClient) serveOneChannel(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			_ = srv.Close()
-		case <-ln.done:
+		case <-wrapped.done:
 		}
 	}()
-	// Serve 在这条连接结束后返回 ErrServerClosed 或 nil；错误只影响这一条通道。
-	_ = srv.Serve(ln)
+	// Serve 只在一件事上返回错误：第二条连接取不到（一次性 listener 的正常结局）。
+	_ = srv.Serve(&oneShotListener{conn: wrapped})
+	select {
+	case <-ctx.Done():
+	case <-wrapped.done:
+	}
 }
 
 func (c *TunnelClient) dialChannel(ctx context.Context) (*websocket.Conn, *http.Response, error) {
@@ -437,10 +474,15 @@ func (c *TunnelClient) report(err error) {
 // oneShotListener 只交出一条连接，之后 Serve 立刻返回。
 //
 // 这是把「一条现成连接」接进 net/http 的最小代价：不需要伪造一整个 TCP 监听。
+//
+// **第二次 Accept 必须直接返回错误，不能阻塞。** serveOneChannel 依赖
+// srv.Serve 在请求处理完之后返回，才能去拨下一条通道；如果这里挂在
+// `<-l.done` 上等 Close，而 Close 只由 Serve 返回后才触发（onceCloseListener
+// 的 defer），两边互等 → 这条通道永远不归还、也永远不补新的，
+// 隧道在 IdleChannels 次请求之后永久失效（表现为 502，且没有任何日志）。
 type oneShotListener struct {
 	conn net.Conn
 	once sync.Once
-	done chan struct{}
 }
 
 func (l *oneShotListener) Accept() (net.Conn, error) {
@@ -453,22 +495,25 @@ func (l *oneShotListener) Accept() (net.Conn, error) {
 	if taken {
 		return out, nil
 	}
-	// 第二次及以后：没有更多连接，等 done 被关闭。
-	<-l.done
 	return nil, net.ErrClosed
 }
 
-func (l *oneShotListener) Close() error {
-	select {
-	case <-l.done:
-	default:
-		close(l.done)
-	}
-	return nil
+func (l *oneShotListener) Close() error   { return nil }
+func (l *oneShotListener) Addr() net.Addr { return tunnelAddr{} }
+
+// closeSignalConn 在 net.Conn 被关闭时关掉 done，用来等「这条通道上的请求真的
+// 结束了」。Serve 把连接交出去就返回了，不提供这个信号。
+type closeSignalConn struct {
+	net.Conn
+	once sync.Once
+	done chan struct{}
 }
 
-// Addr 只用于日志；隧道没有真实监听地址。
-func (l *oneShotListener) Addr() net.Addr { return tunnelAddr{} }
+func (c *closeSignalConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { close(c.done) })
+	return err
+}
 
 type tunnelAddr struct{}
 

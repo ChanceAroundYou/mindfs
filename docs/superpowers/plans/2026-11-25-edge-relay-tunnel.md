@@ -36,6 +36,12 @@ Plan 2026-11-25。设计正文见
 3. 主控的 `serveControlChannel` 只写不读，边控端正常下线时主控要等下一次写 ping 失败
    （30s+）才发现；这段时间 `/relay/<name>/` 借到死通道，用户看到超时而不是 503。
    改成真的读（`ReadMessage` + 90s 读超时），断开即时 `Unregister`。
+4. 数据通道**用完不补**。`oneShotListener` 的第二次 `Accept` 阻塞等 `Close`，而
+   `Close` 只由 `srv.Serve` 返回后才触发 —— 两边互等，`Serve` 永不返回，池子被逐条
+   吃空：第 `IdleChannels+1` 个请求起永久 502/503，日志里一行都没有。单次请求的测试
+   永远看不到（第一次总是成功）。改成第二次 `Accept` 立刻返回 + `closeSignalConn`
+   等请求真的结束 + 每条 worker 循环重拨。`api/relay_e2e_test.go` 的
+   `TestRelayEndToEndReplenishesChannels`（6 次顺序请求 > IdleChannels=2）钉住它。
 
 ## 测试（针对性，全部已通过 + 变异验证）
 
@@ -43,6 +49,7 @@ Plan 2026-11-25。设计正文见
 |---|---|
 | `controlsync/relay_hub_test.go` | 离线/忙区分、借出即交入、池满拒绝、重连替旧池、迟到注销不误杀、名字分配四规则与幂等 |
 | `controlsync/relay_conn_test.go` | 多消息在字节层无缝拼接、单次写落成一条消息 |
+| `controlsync/relay_lifecycle_test.go` | 一次性 listener 第二次 Accept 立即返回、关连接发信号、并发数受 MaxChannels 限制、拨号失败退避 |
 | `controlsync/relay_tunnel_test.go` | https-only、必填项、缺省值补齐 |
 | `controlsync/store_relay_name_test.go` | 旧库补列后空串、持久化可解析、唯一冲突、未登记拒绝、幂等、映射不含未命名 |
 | `controlsync/runtime_online_users_test.go` | 在线采纳账户副本、`@primary` 在账户之后、交接同序、删除传播 |

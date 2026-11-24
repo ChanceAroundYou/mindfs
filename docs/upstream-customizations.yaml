@@ -15829,6 +15829,7 @@ groups:
       - server/internal/controlsync/relay_hub_test.go
       - server/internal/controlsync/relay_conn_test.go
       - server/internal/controlsync/relay_tunnel_test.go
+      - server/internal/controlsync/relay_lifecycle_test.go
       - server/internal/controlsync/store_relay_name_test.go
       - server/internal/api/relay_test.go
       - server/internal/api/relay_e2e_test.go
@@ -15838,6 +15839,9 @@ groups:
       - 'server/internal/controlsync/relay_hub.go:func AssignRelayName(existing, candidate, instanceID string, taken map[string]string) string {'
       - 'server/internal/controlsync/relay_hub.go:func ValidRelayName(name string) bool {'
       - 'server/internal/controlsync/relay_conn.go:func NewWSConn('
+      - 'server/internal/controlsync/relay_tunnel.go:func channelWorkers(idle, max int) int {'
+      - 'server/internal/controlsync/relay_tunnel.go:type oneShotListener struct {'
+      - 'server/internal/controlsync/relay_lifecycle_test.go:func TestOneShotListenerSecondAcceptReturnsImmediately(t *testing.T) {'
       - 'server/internal/controlsync/relay_tunnel.go:type TunnelOptions struct {'
       - 'server/internal/controlsync/store_edges.go:var ErrRelayNameTaken = errors.New("control_sync: relay name already taken")'
       - 'server/internal/api/relay.go:func splitRelayPath(p string) (name, rest string, ok bool) {'

@@ -205,6 +205,47 @@ func TestRelayEndToEndLargeBody(t *testing.T) {
 	}
 }
 
+// 数据通道用完之后必须补一条。
+//
+// 池里只有 IdleChannels 条空闲通道；每服务一个请求用掉一条。如果边控端不在
+// 「用掉一条」之后补新的，隧道会在若干次请求之后永久 503 —— 而单次请求的测试
+// 永远看不到这一点（第一次总是成功）。
+func TestRelayEndToEndReplenishesChannels(t *testing.T) {
+	const token = "relay-e2e-pool"
+	_, hub, srv := newPrimaryRelay(t, token)
+	client, err := controlsync.NewTunnelClient(controlsync.TunnelOptions{
+		PrimaryURL:        srv.URL,
+		Token:             token,
+		InstanceID:        "hasee",
+		Name:              "hasee",
+		CAFile:            writeTestCA(t, srv),
+		IdleChannels:      2,
+		MaxChannels:       8,
+		HeartbeatInterval: 200 * time.Millisecond,
+		OnError:           func(err error) { t.Logf("[tunnel] %v", err) },
+	}, edgeHTTPFace(t))
+	if err != nil {
+		t.Fatalf("NewTunnelClient: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go client.Run(ctx)
+	waitOnline(t, hub, "hasee", 5*time.Second)
+	name := client.Status().Name
+
+	// 远多于 IdleChannels 次顺序请求：每一条都得成功。
+	for i := 0; i < 6; i++ {
+		body := getViaRelay(t, srv.URL+"/relay/"+name+"/api/whoami", 10*time.Second)
+		var got map[string]string
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("第 %d 次请求响应不是 JSON: %v（body=%q）", i+1, err, string(body))
+		}
+		if got["edge"] != "hasee" {
+			t.Fatalf("第 %d 次请求响应不对：%+v", i+1, got)
+		}
+	}
+}
+
 // 隧道断开后，主控的 /relay/<name>/ 必须立刻变 503，而不是挂住等超时。
 func TestRelayEndToEndOfflineAfterDisconnect(t *testing.T) {
 	const token = "relay-e2e-off"
