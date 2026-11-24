@@ -97,9 +97,6 @@ func (e *Engine) preview(req Request, candidates []Candidate, estimate Estimate,
 			newTokens += candidate.Result.Tokens
 			newBlocks++
 			committed = append(committed, candidate.Key)
-			if out.Estimated > 0 && current+estimate.Growth*scaleNum/scaleDen-newTokens*scaleNum/scaleDen <= e.cfg.TargetTokens {
-				break
-			}
 		}
 		// A fold event too small to pay for a cache break commits nothing, and
 		// its keys are not recorded either.

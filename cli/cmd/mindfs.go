@@ -96,7 +96,6 @@ func main() {
 	liveCompactMinBodyBytes := 0
 	liveCompactMaxDriftMessages := 0
 	liveCompactRailTokens := 0
-	liveCompactTargetTokens := 0
 	liveCompactMinFoldBytes := 0
 	liveCompactMaxFoldBytes := 0
 	liveCompactLargeBlockTokens := 0
@@ -154,7 +153,6 @@ func main() {
 		LiveCompactMinBodyBytes:       &liveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages:   &liveCompactMaxDriftMessages,
 		LiveCompactRailTokens:         &liveCompactRailTokens,
-		LiveCompactTargetTokens:       &liveCompactTargetTokens,
 		LiveCompactMinFoldBytes:       &liveCompactMinFoldBytes,
 		LiveCompactMaxFoldBytes:       &liveCompactMaxFoldBytes,
 		LiveCompactLargeBlockTokens:   &liveCompactLargeBlockTokens,
@@ -428,7 +426,6 @@ func main() {
 			LiveCompactMinBodyBytes:            liveCompactMinBodyBytes,
 			LiveCompactMaxDriftMessages:        liveCompactMaxDriftMessages,
 			LiveCompactRailTokens:              liveCompactRailTokens,
-			LiveCompactTargetTokens:            liveCompactTargetTokens,
 			LiveCompactMinFoldBytes:            liveCompactMinFoldBytes,
 			LiveCompactMaxFoldBytes:            liveCompactMaxFoldBytes,
 			LiveCompactLargeBlockTokens:        liveCompactLargeBlockTokens,

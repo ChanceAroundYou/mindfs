@@ -22,7 +22,6 @@ func TestFoldCoversBlocksBelowLegacyTokenFloor(t *testing.T) {
 	cfg := foldTestConfig(t.TempDir())
 	cfg.MinBlockTokens = 2000 // the production default
 	cfg.RailTokens = 1
-	cfg.TargetTokens = 1
 	cfg.MinFoldBytes = 1
 	server, _ := newFoldServer(t, cfg)
 
@@ -45,7 +44,6 @@ func TestFoldCoversBlocksBelowLegacyTokenFloor(t *testing.T) {
 func TestFoldSkipsBlockWhosePointerSavesTooLittle(t *testing.T) {
 	cfg := foldTestConfig(t.TempDir())
 	cfg.RailTokens = 1
-	cfg.TargetTokens = 1
 	cfg.MinFoldBytes = 1
 	server, _ := newFoldServer(t, cfg)
 

@@ -18,7 +18,6 @@ func TestLiveCompactHarnessOverridesReachTheServer(t *testing.T) {
 		Harness: map[string]startupLiveCompactHarnessConfig{
 			"Codex": {
 				RailTokens:     intPtr(20000),
-				TargetTokens:   intPtr(8000),
 				MinBodyBytes:   intPtr(65536),
 				KeepRounds:     intPtr(1),
 				KeepTailTokens: intPtr(4000),
@@ -31,8 +30,8 @@ func TestLiveCompactHarnessOverridesReachTheServer(t *testing.T) {
 	if !ok {
 		t.Fatalf("harness key not normalized: %+v", got)
 	}
-	if codex.RailTokens != 20000 || codex.TargetTokens != 8000 || codex.MinBodyBytes != 65536 {
-		t.Fatalf("rail/target/body = %+v", codex)
+	if codex.RailTokens != 20000 || codex.MinBodyBytes != 65536 {
+		t.Fatalf("rail/body = %+v", codex)
 	}
 	if codex.KeepRounds != 1 || codex.KeepTailTokens != 4000 {
 		t.Fatalf("keep = %+v", codex)

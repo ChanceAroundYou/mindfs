@@ -214,7 +214,6 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 	if estimate.Actual > 0 {
 		current = estimate.Actual
 	}
-	scaleNum, scaleDen := estimate.Scale()
 	largeBlock := false
 	for index, candidate := range candidates {
 		if !used[index] && candidate.Result.Tokens >= e.cfg.LargeBlockTokens {
@@ -269,9 +268,6 @@ func (e *Engine) Fold(req Request) (Outcome, error) {
 			chunkBytes += width
 			newBytes += rendered.textBytes
 			newTokens += rendered.tokens
-			if estimate.Est > 0 && current+estimate.Growth*scaleNum/scaleDen-newTokens*scaleNum/scaleDen <= e.cfg.TargetTokens {
-				break
-			}
 		}
 		// A fold event that is too small does not justify a cache break. Drop
 		// the whole new set; never go back to accumulate more.

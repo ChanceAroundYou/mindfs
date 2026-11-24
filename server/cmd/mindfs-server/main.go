@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -42,7 +43,6 @@ func main() {
 	liveCompactMaxDriftMessages := 0
 	// Rail gate and fold budget (design §12.6). 只由 config.json 填充，没有 CLI flag。
 	liveCompactRailTokens := 0
-	liveCompactTargetTokens := 0
 	liveCompactMinFoldBytes := 0
 	liveCompactMaxFoldBytes := 0
 	liveCompactLargeBlockTokens := 0
@@ -83,7 +83,6 @@ func main() {
 		LiveCompactMinBodyBytes:       &liveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages:   &liveCompactMaxDriftMessages,
 		LiveCompactRailTokens:         &liveCompactRailTokens,
-		LiveCompactTargetTokens:       &liveCompactTargetTokens,
 		LiveCompactMinFoldBytes:       &liveCompactMinFoldBytes,
 		LiveCompactMaxFoldBytes:       &liveCompactMaxFoldBytes,
 		LiveCompactLargeBlockTokens:   &liveCompactLargeBlockTokens,
@@ -132,7 +131,6 @@ func main() {
 		LiveCompactMinBodyBytes:            liveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages:        liveCompactMaxDriftMessages,
 		LiveCompactRailTokens:              liveCompactRailTokens,
-		LiveCompactTargetTokens:            liveCompactTargetTokens,
 		LiveCompactMinFoldBytes:            liveCompactMinFoldBytes,
 		LiveCompactMaxFoldBytes:            liveCompactMaxFoldBytes,
 		LiveCompactLargeBlockTokens:        liveCompactLargeBlockTokens,
@@ -178,7 +176,10 @@ type startupLiveCompactConfig struct {
 	MaxDriftMessages *int    `json:"max_drift_messages"`
 	// Rail gate and fold budget (design §12.6). No CLI flags: node tuning
 	// knobs, not something to carry on every command line.
-	RailTokens       *int `json:"rail_tokens"`
+	RailTokens *int `json:"rail_tokens"`
+	// Deprecated: merged into keep_tail_tokens. Still parsed so an old config
+	// keeps meaning what it meant, but only as a fallback when the new key is
+	// absent; a deprecation line is logged on every start that uses it.
 	TargetTokens     *int `json:"target_tokens"`
 	MinFoldBytes     *int `json:"min_fold_bytes"`
 	MaxFoldBytes     *int `json:"max_fold_bytes"`
@@ -197,12 +198,13 @@ type startupLiveCompactConfig struct {
 
 // startupLiveCompactHarnessConfig 只写与节点值不同的字段；缺省字段沿用全局值。
 type startupLiveCompactHarnessConfig struct {
-	Enabled          *bool `json:"enabled"`
-	KeepRounds       *int  `json:"keep_rounds"`
-	KeepTailTokens   *int  `json:"keep_tail_tokens"`
-	MinBlockTokens   *int  `json:"min_block_tokens"`
-	MinBodyBytes     *int  `json:"min_body_bytes"`
-	RailTokens       *int  `json:"rail_tokens"`
+	Enabled        *bool `json:"enabled"`
+	KeepRounds     *int  `json:"keep_rounds"`
+	KeepTailTokens *int  `json:"keep_tail_tokens"`
+	MinBlockTokens *int  `json:"min_block_tokens"`
+	MinBodyBytes   *int  `json:"min_body_bytes"`
+	RailTokens     *int  `json:"rail_tokens"`
+	// Deprecated: see startupLiveCompactConfig.TargetTokens.
 	TargetTokens     *int  `json:"target_tokens"`
 	MinFoldBytes     *int  `json:"min_fold_bytes"`
 	MaxFoldBytes     *int  `json:"max_fold_bytes"`
@@ -264,7 +266,6 @@ type startupFlags struct {
 	LiveCompactMinBodyBytes       *int
 	LiveCompactMaxDriftMessages   *int
 	LiveCompactRailTokens         *int
-	LiveCompactTargetTokens       *int
 	LiveCompactMinFoldBytes       *int
 	LiveCompactMaxFoldBytes       *int
 	LiveCompactLargeBlockTokens   *int
@@ -369,8 +370,17 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		if flags.LiveCompactRailTokens != nil && live.RailTokens != nil {
 			*flags.LiveCompactRailTokens = *live.RailTokens
 		}
-		if flags.LiveCompactTargetTokens != nil && live.TargetTokens != nil {
-			*flags.LiveCompactTargetTokens = *live.TargetTokens
+		// target_tokens 已并入 keep_tail_tokens；旧键只在没写新键时按别名生效。
+		if live.TargetTokens != nil {
+			switch {
+			case live.KeepTailTokens == nil:
+				if flags.LiveCompactKeepTailTokens != nil {
+					*flags.LiveCompactKeepTailTokens = *live.TargetTokens
+				}
+				log.Printf("[live-compact] target_tokens is deprecated; using %d as keep_tail_tokens", *live.TargetTokens)
+			case *live.KeepTailTokens != *live.TargetTokens:
+				log.Printf("[live-compact] target_tokens is deprecated and ignored: keep_tail_tokens=%d wins over target_tokens=%d", *live.KeepTailTokens, *live.TargetTokens)
+			}
 		}
 		if flags.LiveCompactMinFoldBytes != nil && live.MinFoldBytes != nil {
 			*flags.LiveCompactMinFoldBytes = *live.MinFoldBytes
@@ -515,7 +525,6 @@ func liveCompactHarnessOverrides(cfg *startupConfig) map[string]fold.HarnessOver
 			MinBlockTokens:   intValue(h.MinBlockTokens),
 			MinBodyBytes:     intValue(h.MinBodyBytes),
 			RailTokens:       intValue(h.RailTokens),
-			TargetTokens:     intValue(h.TargetTokens),
 			MinFoldBytes:     intValue(h.MinFoldBytes),
 			MaxFoldBytes:     intValue(h.MaxFoldBytes),
 			LargeBlockTokens: intValue(h.LargeBlockTokens),

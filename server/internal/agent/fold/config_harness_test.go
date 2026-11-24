@@ -6,16 +6,16 @@ import "testing"
 // on the same node: Codex folds a much larger context than Claude Code, so it
 // can wait for a higher rail and still fold in time.
 func TestHarnessOverrideAppliesCodexDefaults(t *testing.T) {
-	c := Config{Mode: ModeOn, RailTokens: 100000, TargetTokens: 20000}.Normalized()
+	c := Config{Mode: ModeOn, RailTokens: 100000, KeepTailTokens: 20000}.Normalized()
 	c.Harnesses = map[string]HarnessOverride{
-		"codex": {Enabled: boolPtr(true), RailTokens: 200000, TargetTokens: 60000, ColdRailTokens: 120000},
+		"codex": {Enabled: boolPtr(true), RailTokens: 200000, KeepTailTokens: 60000, ColdRailTokens: 120000},
 	}
 	got := c.ForHarness("codex")
-	if got.RailTokens != 200000 || got.TargetTokens != 60000 || got.ColdRailTokens != 120000 {
+	if got.RailTokens != 200000 || got.KeepTailTokens != 60000 || got.ColdRailTokens != 120000 {
 		t.Fatalf("codex override not applied: %+v", got)
 	}
 	// Fields the override leaves at zero keep the node-wide value.
-	if got.KeepTailTokens != c.KeepTailTokens || got.MinFoldBytes != c.MinFoldBytes {
+	if got.MinFoldBytes != c.MinFoldBytes {
 		t.Fatalf("unspecified fields must fall back: %+v", got)
 	}
 	if c.ForHarness("claude").RailTokens != 100000 {

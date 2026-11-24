@@ -76,13 +76,6 @@ type Config struct {
 	// resident-context ceiling the user asked for: 160k measured within noise of
 	// 100k on cost but let requests reach 130k, while 100k peaked at 95k.
 	RailTokens int
-	// TargetTokens is the low-water line one fold event commits down to. It
-	// sits far below the rail on purpose: the model is "fold deep, fold rarely"
-	// (§12.7(b) — a shallow fold cannot repay the cache rewrite it costs). In
-	// practice keep_rounds and keep_tail_tokens are the binding constraints; the
-	// target only stops an event early when the context was already small. At a
-	// 100k rail it is also never the binding one: the tail alone can be 50k+.
-	TargetTokens int
 	// MinFoldBytes rejects a fold event too small to be worth a cache break.
 	MinFoldBytes int
 	// MaxFoldBytes caps one event. Zero means the default cap (262144); no
@@ -152,7 +145,6 @@ type HarnessOverride struct {
 	MinBlockTokens   int
 	MinBodyBytes     int
 	RailTokens       int
-	TargetTokens     int
 	MinFoldBytes     int
 	MaxFoldBytes     int
 	LargeBlockTokens int
@@ -165,6 +157,13 @@ type HarnessOverride struct {
 func (c Config) Folds() bool {
 	return c.Mode == ModeOn
 }
+
+// DrainEndpoint has no separate knob: one fold event drains every candidate
+// outside the protected tail (KeepRounds bounded by KeepTailTokens), which is
+// what "fold deep, fold rarely" (§12.7(b)) means. A separate target_tokens let
+// the two numbers drift apart, so a request could stop draining far above the
+// window it was supposed to make room in. Plan already excludes the protected
+// rounds from the candidate list, so the tail is the endpoint.
 
 // ForHarness returns the configuration one harness runs with: the node-wide
 // configuration with that harness's override applied. The result is normalized
@@ -185,7 +184,6 @@ func (c Config) ForHarness(name string) Config {
 	pick(&out.MinBlockTokens, override.MinBlockTokens)
 	pick(&out.MinBodyBytes, override.MinBodyBytes)
 	pick(&out.RailTokens, override.RailTokens)
-	pick(&out.TargetTokens, override.TargetTokens)
 	pick(&out.MinFoldBytes, override.MinFoldBytes)
 	pick(&out.MaxFoldBytes, override.MaxFoldBytes)
 	pick(&out.LargeBlockTokens, override.LargeBlockTokens)
@@ -241,9 +239,10 @@ func (c Config) Normalized() Config {
 	// A negative rail disables the gate; zero means the default.
 	//
 	// The defaults are the "fold deep, fold rarely" shape measured in design
-	// §12.7: cut all the way down (target 20k; the protected tail — keep_rounds
-	// plus keep_tail_tokens, 20k by default — is what actually stops the cut) so one event
-	// repays its cache rewrite in a round or two. The rail is 100k, not the
+	// §12.7: cut all the way down (the protected tail — keep_rounds plus
+	// keep_tail_tokens, 20k by default — is both the drain endpoint and what
+	// actually stops the cut) so one event repays its cache rewrite in a round
+	// or two. The rail is 100k, not the
 	// CLI's ~167k auto-compact threshold: the seven-arm uniform-read bench put
 	// 100k within noise of 160k on cost (339,933–380,111 vs 340,190–367,914) but
 	// capped the resident request at 95.2k instead of 129.7k. Going lower is not
@@ -253,16 +252,6 @@ func (c Config) Normalized() Config {
 	// 2.26x the cost of not folding at all.
 	if c.RailTokens == 0 {
 		c.RailTokens = 100000
-	}
-	if c.RailTokens > 0 {
-		if c.TargetTokens <= 0 {
-			c.TargetTokens = 20000
-		}
-		// A target at or above the rail would make one event commit nothing and
-		// leave the next request above the rail again.
-		if c.TargetTokens >= c.RailTokens {
-			c.TargetTokens = c.RailTokens * 3 / 4
-		}
 	}
 	// dsh's chunkMin is 1000 tokens for one cut; below that the cache break is
 	// pure loss (design §12.7(b)).

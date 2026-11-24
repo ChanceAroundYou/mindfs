@@ -19,9 +19,8 @@ import (
 func TestCodexHarnessOverrideSelectsItsOwnRail(t *testing.T) {
 	cfg := codexFoldConfig(t)
 	cfg.RailTokens = 1000000
-	cfg.TargetTokens = 900000
 	cfg.Harnesses = map[string]fold.HarnessOverride{
-		harnessCodex: {RailTokens: 10, TargetTokens: 5},
+		harnessCodex: {RailTokens: 10, KeepTailTokens: 5},
 	}
 
 	var forwarded []byte

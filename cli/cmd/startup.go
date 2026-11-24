@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,7 +105,10 @@ type startupLiveCompactConfig struct {
 	MaxDriftMessages *int    `json:"max_drift_messages"`
 	// Rail gate and fold budget (design §12.6). No CLI flags: these are node
 	// tuning knobs, not something to carry on every command line.
-	RailTokens       *int `json:"rail_tokens"`
+	RailTokens *int `json:"rail_tokens"`
+	// Deprecated: merged into keep_tail_tokens. Still parsed so an old config
+	// keeps meaning what it meant, but only as a fallback when the new key is
+	// absent; a deprecation line is logged on every start that uses it.
 	TargetTokens     *int `json:"target_tokens"`
 	MinFoldBytes     *int `json:"min_fold_bytes"`
 	MaxFoldBytes     *int `json:"max_fold_bytes"`
@@ -122,12 +126,13 @@ type startupLiveCompactConfig struct {
 
 // startupLiveCompactHarnessConfig 只写与节点值不同的字段；缺省字段沿用全局值。
 type startupLiveCompactHarnessConfig struct {
-	Enabled          *bool `json:"enabled"`
-	KeepRounds       *int  `json:"keep_rounds"`
-	KeepTailTokens   *int  `json:"keep_tail_tokens"`
-	MinBlockTokens   *int  `json:"min_block_tokens"`
-	MinBodyBytes     *int  `json:"min_body_bytes"`
-	RailTokens       *int  `json:"rail_tokens"`
+	Enabled        *bool `json:"enabled"`
+	KeepRounds     *int  `json:"keep_rounds"`
+	KeepTailTokens *int  `json:"keep_tail_tokens"`
+	MinBlockTokens *int  `json:"min_block_tokens"`
+	MinBodyBytes   *int  `json:"min_body_bytes"`
+	RailTokens     *int  `json:"rail_tokens"`
+	// Deprecated: see startupLiveCompactConfig.TargetTokens.
 	TargetTokens     *int  `json:"target_tokens"`
 	MinFoldBytes     *int  `json:"min_fold_bytes"`
 	MaxFoldBytes     *int  `json:"max_fold_bytes"`
@@ -209,7 +214,6 @@ type startupFlags struct {
 	LiveCompactMinBodyBytes       *int
 	LiveCompactMaxDriftMessages   *int
 	LiveCompactRailTokens         *int
-	LiveCompactTargetTokens       *int
 	LiveCompactMinFoldBytes       *int
 	LiveCompactMaxFoldBytes       *int
 	LiveCompactLargeBlockTokens   *int
@@ -356,8 +360,19 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, flags start
 		if flags.LiveCompactRailTokens != nil && live.RailTokens != nil {
 			*flags.LiveCompactRailTokens = *live.RailTokens
 		}
-		if flags.LiveCompactTargetTokens != nil && live.TargetTokens != nil {
-			*flags.LiveCompactTargetTokens = *live.TargetTokens
+		// target_tokens 已并入 keep_tail_tokens（两者是同一个数：折叠一直折到
+		// 保护区边缘）。旧配置只在没写 keep_tail_tokens 时按别名生效一次，并把
+		// 这件事打进日志 —— 静默忽略会改变线上折叠深度却不留任何线索。
+		if live.TargetTokens != nil {
+			switch {
+			case live.KeepTailTokens == nil:
+				if flags.LiveCompactKeepTailTokens != nil {
+					*flags.LiveCompactKeepTailTokens = *live.TargetTokens
+				}
+				log.Printf("[live-compact] target_tokens is deprecated; using %d as keep_tail_tokens", *live.TargetTokens)
+			case *live.KeepTailTokens != *live.TargetTokens:
+				log.Printf("[live-compact] target_tokens is deprecated and ignored: keep_tail_tokens=%d wins over target_tokens=%d", *live.KeepTailTokens, *live.TargetTokens)
+			}
 		}
 		if flags.LiveCompactMinFoldBytes != nil && live.MinFoldBytes != nil {
 			*flags.LiveCompactMinFoldBytes = *live.MinFoldBytes
@@ -506,14 +521,18 @@ func liveCompactHarnessOverrides(cfg startupConfig) map[string]app.LiveCompactHa
 		if key == "" {
 			continue
 		}
+		keepTail := intValue(h.KeepTailTokens)
+		if h.TargetTokens != nil && h.KeepTailTokens == nil {
+			keepTail = intValue(h.TargetTokens)
+			log.Printf("[live-compact] harness %s target_tokens is deprecated; using %d as keep_tail_tokens", key, keepTail)
+		}
 		out[key] = app.LiveCompactHarnessOverride{
 			Enabled:          h.Enabled,
 			KeepRounds:       intValue(h.KeepRounds),
-			KeepTailTokens:   intValue(h.KeepTailTokens),
+			KeepTailTokens:   keepTail,
 			MinBlockTokens:   intValue(h.MinBlockTokens),
 			MinBodyBytes:     intValue(h.MinBodyBytes),
 			RailTokens:       intValue(h.RailTokens),
-			TargetTokens:     intValue(h.TargetTokens),
 			MinFoldBytes:     intValue(h.MinFoldBytes),
 			MaxFoldBytes:     intValue(h.MaxFoldBytes),
 			LargeBlockTokens: intValue(h.LargeBlockTokens),

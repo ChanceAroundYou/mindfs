@@ -12,7 +12,7 @@ func TestConfigNormalizedDefaults(t *testing.T) {
 	if got.KeepRounds != 3 || got.KeepTailTokens != 20000 || got.MinBlockTokens != 2000 {
 		t.Fatalf("keep defaults: %+v", got)
 	}
-	if got.RailTokens != 100000 || got.TargetTokens != 20000 {
+	if got.RailTokens != 100000 {
 		t.Fatalf("rail defaults: %+v", got)
 	}
 	if got.MinFoldBytes != 4096 || got.MaxFoldBytes != 262144 || got.LargeBlockTokens != 32000 {

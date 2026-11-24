@@ -99,7 +99,6 @@ func newGoldenServer(t *testing.T, dir string) *Server {
 	t.Helper()
 	cfg := foldTestConfig(dir)
 	cfg.RailTokens = 1
-	cfg.TargetTokens = 1
 	cfg.MinFoldBytes = 1
 	cfg.MaxFoldBytes = 0
 	// No keep window: every closed round is eligible, so each fixture exercises

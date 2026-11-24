@@ -165,7 +165,6 @@ func gateConfig() Config {
 	return Config{
 		Mode:             ModeOn,
 		RailTokens:       1,
-		TargetTokens:     1,
 		KeepRounds:       0,
 		KeepTailTokens:   1 << 30,
 		MinBlockTokens:   10,

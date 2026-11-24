@@ -15362,3 +15362,55 @@ groups:
       - 'server/internal/kanban/router_turn_settled_test.go:func TestTurnSettledCarriesBoundRunEvidence('
       - 'server/internal/kanban/workflow_recovery_unknown_settled_test.go:func TestStartupReconcileEmitsForExplicitRun('
       - 'docs/superpowers/plans/2026-11-24-workflow-session-liveness-and-turn-evidence.md:# 工作流会话活跃判定 · 显式 Run 启动事件 · 回合结算的 Run 证据'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QR
+    title: "live compact：target_tokens 并入 keep_tail_tokens，折深只由保护区收尾"
+    kind: fix
+    symptom: |
+      `target_tokens` 与 `keep_tail_tokens` 描述的是同一个数（折叠一直折到保护尾部），
+      两个键并存时折深受两者大小关系支配：engine 里另有一条「估算已降到 target 就
+      提前 break」的分支，先到 target 就停手，`keep_tail_tokens` 设得再小也折不到。
+      用户要求「20000 keep 不要改，且直接和 Target 合成为一个字段」。
+    why: |
+      上游没有 live compact，这一段是本 fork 的定制。合并后 `keep_tail_tokens` 是唯一
+      入口：保护尾部就是单次折叠的排空终点，`fold.Config` 不再有 `TargetTokens`
+      字段，`Engine.Fold` 的独立早退分支已删除（golden 哈希逐字节不变，证明删除是
+      等价改动而不是改了策略）。旧键 `target_tokens` 仍被解析，但只在新键缺席时按
+      别名生效并打一条 deprecation 日志 —— 线上四个节点的 config.json 里两把键都在，
+      直接删别名会让它们静默失去保护区（单次折叠会一路吃掉整个上下文）。两个键
+      同时写且取值不同时 `keep_tail_tokens` 赢，同样留日志。合上游时若把
+      `TargetTokens` 字段或那条早退分支带回来，等于恢复「一个策略两个入口」；
+      若删掉别名，则线上旧配置静默失效。
+    # 针对性测试：靶心是「同一策略只有一个入口」——别名只在新键缺席时生效、
+    # 新键赢、golden 五个 body 的转发字节逐字不变。
+    files:
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - server/cmd/mindfs-server/main.go
+      - server/internal/agent/fold/config.go
+      - server/internal/agent/fold/engine.go
+      - server/internal/agent/fold/preview.go
+      - server/internal/agent/pool.go
+      - cli/cmd/startup_config_test.go
+      - server/internal/agent/fold/config_test.go
+      - server/internal/agent/fold/config_harness_test.go
+      - server/internal/agent/fold/gate_test.go
+      - server/internal/agent/fold/preview_test.go
+      - server/internal/agent/proxy/harness_config_test.go
+      - docs/superpowers/plans/2026-11-18-mindfs-native-live-compact.md
+    tests:
+      - cli/cmd/startup_config_test.go
+      - server/internal/agent/fold/config_test.go
+      - server/internal/agent/proxy/fold_golden_test.go
+      - 'cli/cmd/startup_config_test.go:func TestLiveCompactTargetTokensIsDeprecatedKeepTailAlias('
+      - 'cli/cmd/startup.go:log.Printf("[live-compact] target_tokens is deprecated; using %d as keep_tail_tokens", *live.TargetTokens)'
+      - 'cli/cmd/startup.go:case *live.KeepTailTokens != *live.TargetTokens:'
+      - 'server/cmd/mindfs-server/main.go:case *live.KeepTailTokens != *live.TargetTokens:'
+    anchors:
+      - 'server/internal/agent/fold/config.go:// DrainEndpoint has no separate knob: one fold event drains every candidate'
+      - 'server/internal/agent/fold/config.go:keep_tail_tokens, 20k by default — is both the drain endpoint and what'
+      - 'cli/cmd/startup.go:log.Printf("[live-compact] target_tokens is deprecated and ignored: keep_tail_tokens=%d wins over target_tokens=%d", *live.KeepTailTokens, *live.TargetTokens)'
+      - 'cli/cmd/startup_config_test.go:func TestLiveCompactTargetTokensIsDeprecatedKeepTailAlias('
+      - 'docs/superpowers/plans/2026-11-18-mindfs-native-live-compact.md:# MindFS 原生上下文活压缩（Live Compact）实施计划'

@@ -87,7 +87,6 @@ type StartOptions struct {
 	// Rail gate and fold budget (design §12.7). Zero values mean the proxy
 	// defaults; a negative LiveCompactRailTokens disables the gate.
 	LiveCompactRailTokens       int
-	LiveCompactTargetTokens     int
 	LiveCompactMinFoldBytes     int
 	LiveCompactMaxFoldBytes     int
 	LiveCompactLargeBlockTokens int
@@ -285,7 +284,6 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		LiveCompactMinBodyBytes:       opts.LiveCompactMinBodyBytes,
 		LiveCompactMaxDriftMessages:   opts.LiveCompactMaxDriftMessages,
 		LiveCompactRailTokens:         opts.LiveCompactRailTokens,
-		LiveCompactTargetTokens:       opts.LiveCompactTargetTokens,
 		LiveCompactMinFoldBytes:       opts.LiveCompactMinFoldBytes,
 		LiveCompactMaxFoldBytes:       opts.LiveCompactMaxFoldBytes,
 		LiveCompactLargeBlockTokens:   opts.LiveCompactLargeBlockTokens,

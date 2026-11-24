@@ -37,7 +37,6 @@ func codexFoldConfig(t *testing.T) LiveCompactConfig {
 		KeepRounds:       1,
 		KeepTailTokens:   1,
 		RailTokens:       10,
-		TargetTokens:     5,
 		MinFoldBytes:     1,
 		MinBodyBytes:     1,
 		LargeBlockTokens: 100000,

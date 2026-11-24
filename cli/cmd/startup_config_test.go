@@ -262,16 +262,15 @@ func TestLiveCompactConfigPrecedence(t *testing.T) {
 // 折叠门禁与预算（design §12.6）只走 config.json：没有对应 flag，
 // 文件里有值就必须原样落到运行期配置。
 func TestLiveCompactRailConfigFromFile(t *testing.T) {
-	writeConfig(t, `{"live_compact":{"rail_tokens":120000,"target_tokens":90000,"min_fold_bytes":4096,"max_fold_bytes":65536,"large_block_tokens":24000}}`)
+	writeConfig(t, `{"live_compact":{"rail_tokens":120000,"min_fold_bytes":4096,"max_fold_bytes":65536,"large_block_tokens":24000}}`)
 
 	cfg, err := loadStartupConfig("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rail, target, minFold, maxFold, largeBlock := 0, 0, 0, 0, 0
+	rail, minFold, maxFold, largeBlock := 0, 0, 0, 0
 	flags := startupFlags{
 		LiveCompactRailTokens:       &rail,
-		LiveCompactTargetTokens:     &target,
 		LiveCompactMinFoldBytes:     &minFold,
 		LiveCompactMaxFoldBytes:     &maxFold,
 		LiveCompactLargeBlockTokens: &largeBlock,
@@ -279,9 +278,39 @@ func TestLiveCompactRailConfigFromFile(t *testing.T) {
 	if err := applyStartupConfig(cfg, map[string]bool{}, flags); err != nil {
 		t.Fatal(err)
 	}
-	if rail != 120000 || target != 90000 || minFold != 4096 || maxFold != 65536 || largeBlock != 24000 {
-		t.Fatalf("门禁/预算文件值没有落地: rail=%d target=%d min=%d max=%d large=%d",
-			rail, target, minFold, maxFold, largeBlock)
+	if rail != 120000 || minFold != 4096 || maxFold != 65536 || largeBlock != 24000 {
+		t.Fatalf("门禁/预算文件值没有落地: rail=%d min=%d max=%d large=%d",
+			rail, minFold, maxFold, largeBlock)
+	}
+}
+
+// target_tokens 已并入 keep_tail_tokens（折叠一直折到保护区边缘）。旧键只在
+// 没写新键时按别名生效一次，不能静默丢失 —— 否则旧配置重启后折叠深度会变。
+func TestLiveCompactTargetTokensIsDeprecatedKeepTailAlias(t *testing.T) {
+	writeConfig(t, `{"live_compact":{"target_tokens":90000}}`)
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keepTail := 0
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{LiveCompactKeepTailTokens: &keepTail}); err != nil {
+		t.Fatal(err)
+	}
+	if keepTail != 90000 {
+		t.Fatalf("legacy target_tokens should become keep_tail_tokens, got %d", keepTail)
+	}
+
+	writeConfig(t, `{"live_compact":{"target_tokens":90000,"keep_tail_tokens":30000}}`)
+	cfg, err = loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keepTail = 0
+	if err := applyStartupConfig(cfg, map[string]bool{}, startupFlags{LiveCompactKeepTailTokens: &keepTail}); err != nil {
+		t.Fatal(err)
+	}
+	if keepTail != 30000 {
+		t.Fatalf("keep_tail_tokens must win over the deprecated alias, got %d", keepTail)
 	}
 }
 

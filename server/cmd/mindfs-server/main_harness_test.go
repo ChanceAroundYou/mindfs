@@ -30,7 +30,7 @@ func TestLiveCompactHarnessOverridesParsed(t *testing.T) {
 		t.Fatalf("cold_fold = %v, want explicit false", codex.ColdFold)
 	}
 	// Fields the override does not mention stay zero so ForHarness falls back.
-	if codex.TargetTokens != 0 || codex.MinFoldBytes != 0 {
+	if codex.KeepTailTokens != 0 || codex.MinFoldBytes != 0 {
 		t.Fatalf("unspecified fields must stay zero: %+v", codex)
 	}
 }

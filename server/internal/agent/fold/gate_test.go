@@ -3,7 +3,7 @@ package fold
 import "testing"
 
 func gateTestConfig() Config {
-	return Config{RailTokens: 100000, TargetTokens: 20000, MinFoldBytes: 4096, MaxFoldBytes: 262144, ColdRailTokens: 60000}
+	return Config{RailTokens: 100000, KeepTailTokens: 20000, MinFoldBytes: 4096, MaxFoldBytes: 262144, ColdRailTokens: 60000}
 }
 
 func TestDecideBudgetUnmeasuredCommitsEverything(t *testing.T) {

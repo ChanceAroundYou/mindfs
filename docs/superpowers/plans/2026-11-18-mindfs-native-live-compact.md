@@ -1,5 +1,7 @@
 # MindFS 原生上下文活压缩（Live Compact）实施计划
 
+> Scope IDs: G-QR（claimed 2026-11-24T03:04Z）
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在现有 Claude 会话回环代理里加入可观测、可回滚的上下文活压缩。原计划只交付 Phase A（只测量、不改写）；2026-11-18 用户指令「把 B 全部做完」后追加 Task B1（无损折叠）与 Task B2（账本 + 只读 API + 前端胶囊）。B3（抽取卡片）明确不在本计划内，需另一次设计评审。线上 `mode=on` 仍未启用。
@@ -537,3 +539,27 @@ preserved-thinking 模型对请求前缀带指纹，「比较的是你发的，�
 → 观察 24h（`usage_source=missing` < 5%、`rewrite_tokens` 与 `usg_in/usg_create` 对得上、
 `cold_reason=compact` 每个 epoch 一次、`gate=prefix-guard` 为 0 且每会话一条 warn）→
 `bash scripts/deploy-all.sh` 分发其余三端。急停仍是 `<config-dir>/context/DISABLED`。
+
+## 2026-11-24 `target_tokens` 并入 `keep_tail_tokens`（Scope: G-QR）
+
+用户裁定「20000 keep 不要改，且直接和 Target 合成为一个字段」。取证结论：两者描述的是同一
+个数 —— 折叠一直折到保护区长度，`keep_tail_tokens` 就是单次折叠的排空终点；`target_tokens`
+另有一条「估算降到 target 就提前 break」的分支，于是折深受两个值的大小关系支配，把
+`keep_tail_tokens` 设小也折不到。
+
+改动：
+
+- `fold.Config` 删除 `TargetTokens`；`Engine.Fold` 与 `preview` 删除对应的提前退出分支，
+  保护区（`keep_tail_tokens`，默认 20000）成为唯一终点。删除是等价改动：
+  `server/internal/agent/proxy` 的五个 golden body 转发哈希逐字节不变。
+- 旧键 `target_tokens` 仍解析：只在新键缺席时按别名写进 `keep_tail_tokens` 并打一条
+  deprecation 日志；两个键同时写且取值不同时 `keep_tail_tokens` 赢，同样留日志。全局段与
+  harness 段、`cli/cmd/startup.go` 与 `server/cmd/mindfs-server/main.go` 两条解析路径都一致。
+- 测试：`TestLiveCompactTargetTokensIsDeprecatedKeepTailAlias`（别名生效、新键优先）；
+  既有用例把原先只为「压掉早退」而设的 `TargetTokens` 值删掉，golden 与 gate 用例不变。
+
+变异验证（`-overlay`，各自打红后还原）：去掉别名 → `legacy target_tokens should become
+keep_tail_tokens, got 0`；旧键反压新键 → `keep_tail_tokens must win …, got 90000`。
+
+本轮不部署、不重启任何节点。四个节点的 `config.json` 保持原样（本机两把键都在，WSL/fn 的
+`keep_tail_tokens=32000` 也未被改动，折深随各自配置不变）。

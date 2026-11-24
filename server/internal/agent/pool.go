@@ -63,7 +63,6 @@ type PoolOptions struct {
 	LiveCompactMinBodyBytes     int
 	LiveCompactMaxDriftMessages int
 	LiveCompactRailTokens       int
-	LiveCompactTargetTokens     int
 	LiveCompactMinFoldBytes     int
 	LiveCompactMaxFoldBytes     int
 	LiveCompactLargeBlockTokens int
@@ -112,7 +111,6 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 		MinBodyBytes:     opts.LiveCompactMinBodyBytes,
 		MaxDriftMessages: opts.LiveCompactMaxDriftMessages,
 		RailTokens:       opts.LiveCompactRailTokens,
-		TargetTokens:     opts.LiveCompactTargetTokens,
 		MinFoldBytes:     opts.LiveCompactMinFoldBytes,
 		MaxFoldBytes:     opts.LiveCompactMaxFoldBytes,
 		LargeBlockTokens: opts.LiveCompactLargeBlockTokens,
