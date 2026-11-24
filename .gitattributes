@@ -1,0 +1,5 @@
+# docs/upstream-customizations.yaml 由 scope-id 在多条并行分支上各自「末尾追加」新组。
+# 两条分支即使追加的是不同组，也改动了同一段尾部上下文 —— 普通 merge 会报文本冲突。
+# merge=union 让两边独有的追加行都保留下来：不同号自动合并（正确），同号则会产生两段
+# 相同的 `id:`，被 check-upstream 的断言 6 当场判红、再走 `scope-id resolve` 改号。
+docs/upstream-customizations.yaml merge=union

@@ -2,8 +2,10 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"mindfs/scripts/internal/scopeid"
@@ -178,5 +180,90 @@ func TestRunClaimAcceptsPlanBeforeCount(t *testing.T) {
 	data, _ := os.ReadFile(registry)
 	if n := strings.Count(string(data), "id: G-"); n != 2 {
 		t.Fatalf("应追加 2 个占位组，实际 %d：\n%s", n, data)
+	}
+}
+
+// 核心回归：在同一个仓库里并发 claim，任意两个 claim 都不能拿到同一个号。
+//
+// 旧实现的 allocate() 只读清单、读-算-写无锁，两个 goroutine 必然可能读到同一份
+// stale 清单而拿到同号。现在每号先在共享目录里 O_EXCL 占住，抢不到就顺延。
+func TestConcurrentClaimsNeverCollide(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	runGit(t, base, "git", "init", "-q", repo)
+	runGit(t, repo, "git", "config", "user.email", "t@t")
+	runGit(t, repo, "git", "config", "user.name", "t")
+	// 两份独立清单 + 计划，各自由不同 goroutine 写 —— 模拟不同 worktree 各写各的。
+	// 但它们共享同一份预留目录（这里都指向同一 repo），这正是原子性要覆盖的场景。
+	if err := os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "git", "add", "f")
+	runGit(t, repo, "git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+
+	const workers = 8
+	regs := make([]string, workers)
+	plans := make([]string, workers)
+	for i := 0; i < workers; i++ {
+		regs[i] = filepath.Join(repo, "reg"+string(rune('a'+i))+".yaml")
+		plans[i] = filepath.Join(repo, "plan"+string(rune('a'+i))+".md")
+		if err := os.WriteFile(regs[i], []byte("version: 1\ngroups: []\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(plans[i], []byte("# 计划\n\n正文\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = runClaim([]string{plans[i], "--count", "1", "--root", repo, "--registry", regs[i], "--remote", ""})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("worker %d claim 失败：%v", i, err)
+		}
+	}
+
+	// 所有 plan 头部写的号必须两两不同。
+	seen := map[string]int{}
+	for i := 0; i < workers; i++ {
+		data, _ := os.ReadFile(plans[i])
+		line := ""
+		for _, l := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(l, claimStampPrefix) {
+				line = l
+				break
+			}
+		}
+		if line == "" {
+			t.Fatalf("worker %d 的 plan 没有 Scope IDs 头", i)
+		}
+		for _, id := range scopeid.TokenRE.FindAllString(line, -1) {
+			seen[id]++
+		}
+	}
+	for id, n := range seen {
+		if n > 1 {
+			t.Fatalf("组号 %s 被 %d 个并发 claim 拿到（撞号未修复）", id, n)
+		}
+	}
+	if len(seen) != workers {
+		t.Fatalf("应有 %d 个不同的号，实际 %d：%v", workers, len(seen), seen)
+	}
+}
+
+func runGit(t *testing.T, dir string, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s %v 失败：%v\n%s", name, args, err, out)
 	}
 }

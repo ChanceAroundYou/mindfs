@@ -18,6 +18,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -51,6 +52,10 @@ func main() {
 		err = runNext(args)
 	case "claim":
 		err = runClaim(args)
+	case "reservations":
+		err = runReservations(args)
+	case "release":
+		err = runRelease(args)
 	case "check":
 		err = runCheck(args)
 	case "resolve":
@@ -72,8 +77,10 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `scope-id —— Scope 组号的分配与撞号裁决
 
-  scope-id next [--count N]              打印接下来 N 个空号
-  scope-id claim <plan.md> [--count N]   申请 N 个号：清单里占位 + 写进计划头部
+  scope-id next [--count N]              打印接下来 N 个空号（只读，不占位）
+  scope-id claim <plan.md> [--count N]   申请 N 个号：先在共享预留目录原子占位，再写清单 + 计划头部
+  scope-id reservations [--gc]           列出组号预留；--gc 回收已完成/失效的预留
+  scope-id release <ID...>               释放指定预留（claim 中途失败时手动回滚）
   scope-id check                         清单内组号唯一、计划里的号都已登记
   scope-id resolve --branch <name>       撞号裁决：先引入者保留，当前分支改号
 
@@ -83,6 +90,9 @@ func usage() {
   --registry <path> 清单路径（默认 docs/upstream-customizations.yaml）
 
 取号规则：两字母段取「最大号 + 1」，绝不回填空洞；G-ZZ 之后进入三字母段。
+claim 的号先在 $(git-common-dir)/scope-ids/ 下用 O_EXCL 原子占住，所以共享同一
+clone 的多个 worktree 并发取号也不会拿到同一个 —— 这是撞号的根治点。
+next 只读：它把现有预留也计入，但不占位，真正的原子性在 claim。
 `)
 }
 
@@ -141,16 +151,32 @@ func runClaim(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := appendPlaceholders(reg, ids); err != nil {
+
+	// 先在所有 worktree 共享的目录里原子占住号，再写清单 / 计划。预留才是真正的
+	// 「这号归我」：并发里抢输的候选会被顺延成新号，所以后续一切都以 reserved 为准，
+	// 不再用 allocate 猜出来的 ids。任一步失败就回滚本轮预留，避免泄漏死号。
+	reserved, err := reserveIDs(r, ids, plan)
+	if err != nil {
 		return err
 	}
-	if err := stampPlan(plan, ids); err != nil {
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = scopeid.Release(r, reserved)
+		}
+	}()
+
+	if err := appendPlaceholders(reg, reserved); err != nil {
 		return err
 	}
+	if err := stampPlan(plan, reserved); err != nil {
+		return err
+	}
+	committed = true
 	rel, _ := filepath.Rel(r, plan)
-	fmt.Printf("已申请 %s\n", strings.Join(ids, " / "))
-	fmt.Printf("  · 清单已追加 %d 个占位组（标题「%s」）\n", len(ids), placeholderTitle)
-	fmt.Printf("  · %s 头部已写入 `%s`\n", rel, claimStampPrefix+strings.Join(ids, " / "))
+	fmt.Printf("已申请 %s\n", strings.Join(reserved, " / "))
+	fmt.Printf("  · 清单已追加 %d 个占位组（标题「%s」）\n", len(reserved), placeholderTitle)
+	fmt.Printf("  · %s 头部已写入 `%s`\n", rel, claimStampPrefix+strings.Join(reserved, " / "))
 	fmt.Println("下一步：把占位填成真条目（title / kind / symptom / why / files / tests / anchors），")
 	fmt.Println("       否则 check-upstream 的断言 3/5 会红 —— 这是刻意的。")
 	return nil
@@ -227,6 +253,94 @@ func runCheck(args []string) error {
 	return nil
 }
 
+func runReservations(args []string) error {
+	fs := flag.NewFlagSet("reservations", flag.ContinueOnError)
+	root := fs.String("root", "", "仓库根")
+	registry := fs.String("registry", "", "清单路径")
+	gc := fs.Bool("gc", false, "回收已完成/失效的预留")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	r, reg, err := resolvePaths(*root, *registry)
+	if err != nil {
+		return err
+	}
+	if *gc {
+		committed, err := scopeid.RegistryIDs(reg)
+		if err != nil {
+			return err
+		}
+		known := make(map[string]bool, len(committed))
+		for _, id := range committed {
+			known[id] = true
+		}
+		dropped, err := scopeid.GCReservations(r, scopeid.GCOptions{
+			Committed: known,
+			// 空文件（崩溃残留）过了 1 小时仍没写成清单，就当死号回收。
+			StaleAfter: time.Hour,
+		})
+		if err != nil {
+			return err
+		}
+		for _, id := range dropped {
+			fmt.Printf("  · 回收 %s\n", id)
+		}
+		if len(dropped) == 0 {
+			fmt.Println("没有可回收的预留")
+		}
+	}
+	rs, err := scopeid.ListReservations(r)
+	if err != nil {
+		return err
+	}
+	if len(rs) == 0 {
+		fmt.Println("（无预留）")
+		return nil
+	}
+	fmt.Printf("共 %d 个预留：\n", len(rs))
+	for _, res := range rs {
+		if res.Empty {
+			fmt.Printf("  %s  空文件（崩溃残留，--gc 回收）\n", res.ID)
+			continue
+		}
+		when := ""
+		if !res.TS.IsZero() {
+			when = res.TS.Local().Format("2006-01-02 15:04")
+		}
+		fmt.Printf("  %s  %s  %s  %s\n", res.ID, orDash(res.Branch), orDash(res.Plan), when)
+	}
+	return nil
+}
+
+func runRelease(args []string) error {
+	fs := flag.NewFlagSet("release", flag.ContinueOnError)
+	root := fs.String("root", "", "仓库根")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ids := fs.Args()
+	if len(ids) == 0 {
+		return fmt.Errorf("用法：scope-id release <ID...>")
+	}
+	r, _, err := resolvePaths(*root, "")
+	if err != nil {
+		return err
+	}
+	n, err := scopeid.Release(r, ids)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("已释放 %d 个预留（请求 %d 个）\n", n, len(ids))
+	return nil
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
 // resolvePaths 确定仓库根与清单绝对路径。
 func resolvePaths(rootFlag, registryFlag string) (string, string, error) {
 	root := rootFlag
@@ -250,8 +364,14 @@ func resolvePaths(rootFlag, registryFlag string) (string, string, error) {
 	return abs, reg, nil
 }
 
-// allocate 推出接下来 n 个空号：取「origin/main 的清单」与「本地清单」的并集，
-// 这样本地已经提交但还没推送的号也算占位，重跑不会发出同一个号。
+// allocate 推出接下来 n 个空号：取「origin/main 的清单」「本地清单」「共享预留目录」
+// 以及「本 clone 所有本地分支已提交的清单」的并集。
+//
+// 为什么还要扫全部本地分支：兄弟 worktree 常常已经提交了某个号但还没推、也没走预留
+// （旧机制留下的号，或并发里先落盘的那一方）。只读 origin/main 会看不见它们，于是
+// 从陈旧远端重新发出同一个号 —— 这正是撞号的现场（task-117 已用 G-RD，origin/main
+// 还停在 G-QT）。同一 clone 里 `git show <branch>:registry` 是现成的，扫一遍比事后
+// resolve 便宜得多。真正落盘前的原子性仍由 reserveIDs 的 O_EXCL 保证。
 func allocate(root, registry, remote string, n int) ([]string, error) {
 	if n <= 0 {
 		return nil, fmt.Errorf("--count 必须 >= 1")
@@ -276,12 +396,97 @@ func allocate(root, registry, remote string, n int) ([]string, error) {
 			add(remoteIDs)
 		}
 	}
+	add(localBranchIDs(root))
+	reserved, err := scopeid.ListReservations(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range reserved {
+		seen[r.ID] = true
+	}
 	all := make([]string, 0, len(seen))
 	for id := range seen {
 		all = append(all, id)
 	}
 	sort.Strings(all)
 	return scopeid.NextIDs(all, n)
+}
+
+// localBranchIDs 汇总本 clone 所有本地分支已提交清单里的组号。取不到的（清单还没
+// 提交、YAML 坏了等）静默跳过 —— 少看一个分支只影响防撞强度，不该阻断取号。
+func localBranchIDs(root string) []string {
+	out, err := exec.Command("git", "-C", root, "for-each-ref", "--format=%(refname:short)", "refs/heads").Output()
+	if err != nil {
+		return nil
+	}
+	var all []string
+	for _, branch := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if branch == "" {
+			continue
+		}
+		ids, err := scopeid.RegistryIDsAt(root, branch, scopeid.RegistryPath)
+		if err != nil {
+			continue
+		}
+		all = append(all, ids...)
+	}
+	return all
+}
+
+// reserveIDs 在共享预留目录里原子占住这些号，返回实际占到的号。
+//
+// 正常情况下 allocate 已经把现有占位计入，第一次就全中；但两个 claim 可能几乎同时
+// 读到同一份旧状态，于是 Reserve 会撞上 ErrIDTaken —— 这时把该号并入已用集、重新取号，
+// 直到凑够 n 个。任何非「已被占」的错误直接上报（调用方 defer 会回滚已占部分）。
+func reserveIDs(root string, ids []string, plan string) ([]string, error) {
+	branch := currentBranch(root)
+	meta := scopeid.Reservation{Branch: branch, Plan: plan, Worktree: root, TS: time.Now().UTC()}
+	var got []string
+	used := make(map[string]bool)
+	for _, id := range ids {
+		used[id] = true
+	}
+	pending := append([]string{}, ids...)
+	for len(got) < len(ids) {
+		if len(pending) == 0 {
+			// 候选用完了还不够，说明撞得厉害：按已占集重新取剩下的号。
+			all := make([]string, 0, len(used))
+			for id := range used {
+				all = append(all, id)
+			}
+			sort.Strings(all)
+			more, err := scopeid.NextIDs(all, len(ids)-len(got))
+			if err != nil {
+				return got, err
+			}
+			pending = append(pending, more...)
+			for _, id := range more {
+				used[id] = true
+			}
+			continue
+		}
+		id := pending[0]
+		pending = pending[1:]
+		err := scopeid.Reserve(root, id, meta)
+		switch {
+		case err == nil:
+			got = append(got, id)
+		case errors.Is(err, scopeid.ErrIDTaken):
+			// 被别的 worktree 抢先占了 —— 该号已在 used 里，继续试下一个。
+		default:
+			return got, err
+		}
+	}
+	return got, nil
+}
+
+// currentBranch 返回当前分支名；取不到时给空串（预留仍成立，只是 GC 少一条判据）。
+func currentBranch(root string) string {
+	out, err := exec.Command("git", "-C", root, "branch", "--show-current").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // appendPlaceholders 在清单末尾追加占位组。清单是手写 YAML、带大量注释，
