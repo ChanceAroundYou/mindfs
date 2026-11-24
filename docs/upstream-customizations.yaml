@@ -15596,6 +15596,59 @@ groups:
       - 'server/internal/api/usecase/session_overflow_cancel_test.go:func TestUnpinnedCancelStillWorksWhileCompactPending(t *testing.T) {'
       - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestMarkCompactedClearsStaleCompactError(t *testing.T) {'
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-resume-interrupted.md:# 溢出压缩被用户重试打断：自动重发闭环修复'
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QV
+    title: "主节点 /api/control-sync/status 返回只读同步摘要"
+    kind: fix
+    symptom: "主控节点的 /api/control-sync/status 一直 404（/edges 却是 401，说明路由已注册）：页面无法判断这台机器是谁、同步追到哪一版，只能靠「edges 要 token」反推。"
+    why: "必须保留：上游装配只给边缘建 ModeController（w.service），主节点上 handler 与路由都因 h.ControlSync == nil 直接 404。摘要刻意不含 token 与任何记录载荷 —— 这条端点浏览器可直接访问；只给计数与时间，且已踢掉的边缘不计入 active_edge_count、也不参与最近可见时间。"
+    files:
+      - server/internal/controlsync/status_primary.go
+      - server/internal/api/http_control_sync.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http.go
+      - server/app/control_sync.go
+      - docs/superpowers/plans/2026-11-24-hasee-edge-controller-five-items.md
+    tests:
+      # TestPrimaryStatusSummarizesWatermarkEdgesAndConflicts → 钉住 head_rev / 边缘计数 / 活跃边缘 / 最近可见时间 / 冲突数的汇总口径，已踢边缘不计数
+      - server/internal/controlsync/status_primary_test.go
+      # TestControlSyncStatusRouteRegisteredForPrimary → 主节点真的挂上 GET /status 且 /mode 仍 404；TestControlSyncStatusFallsBackToPrimarySummary → 边缘优先、主节点兜底、都没有才 404
+      - server/internal/api/http_control_sync_primary_test.go
+      # 主节点装配必须有 ControlSyncPrimary、边缘必须没有 → 防「主节点又 404」与「摘要抢答边缘」两种回归
+      - server/app/control_sync_test.go
+    anchors:
+      - 'server/internal/controlsync/status_primary.go:type PrimaryStatus struct {'
+      - 'server/internal/controlsync/status_primary.go:func (s *Store) PrimaryStatus(ctx context.Context, now time.Time) (PrimaryStatus, error) {'
+      - 'server/internal/api/http_control_sync.go:type ControlSyncPrimaryStatus interface {'
+      - 'server/internal/api/http_routes.go:if h.ControlSync == nil && h.ControlSyncPrimary != nil {'
+      - 'server/internal/api/http.go:ControlSyncPrimary ControlSyncPrimaryStatus'
+      - 'server/app/control_sync.go:w.primaryStatus = primaryStatusSource{store: store}'
+      - 'server/internal/controlsync/status_primary_test.go:func TestPrimaryStatusSummarizesWatermarkEdgesAndConflicts(t *testing.T) {'
+      - 'server/internal/api/http_control_sync_primary_test.go:func TestControlSyncStatusRouteRegisteredForPrimary(t *testing.T) {'
+      - 'docs/superpowers/plans/2026-11-24-hasee-edge-controller-five-items.md:# hasee 边控端：状态可查 · 安装器快捷方式 · 局域网可达 · 自动切换 · 升级'
+  - id: G-QW
+    title: "Windows 安装器创建开始菜单快捷方式"
+    kind: feature
+    symptom: "hasee 上装完 edge controller 后开始菜单里找不到入口，只能靠人记住 %LOCALAPPDATA%\\Programs\\mindfs\\bin\\mindfs.exe —— 用户原话是「装好了但看不到」。"
+    why: "必须保留：上游两条安装链（自解包 setup.ps1 与 install.ps1）都没有任何快捷方式代码。参数必须留空 —— 无参 mindfs.exe 的语义是「服务在跑就开页面」，带上计划任务那套 autostart 旗标会开成控制台；Save() 是 COM 调用，可能「成功」而磁盘上没有文件，所以落盘后必须再 Test-Path 一次。卸载只删 .lnk，%APPDATA%\\mindfs 留给重装找回 token 与配对状态。"
+    files:
+      - scripts/windows-setup/setup.ps1
+      - scripts/install.ps1
+      - internal/deploy/setup_script_test.go
+      - internal/deploy/install_script_test.go
+      - docs/superpowers/plans/2026-11-24-hasee-edge-controller-five-items.md
+    tests:
+      # TestWindowsSetupScriptInstallsStartMenuShortcut → 钉住 per-user Start Menu 路径、目标就是装好的 exe、参数为空、Save 后复核落盘；变异（删 Save / 追加 autostart / 目标拼接 / 去掉复核）逐一打红
+      - internal/deploy/setup_script_test.go
+      # TestWindowsInstallerManagesStartMenuShortcut → 钉住 install.ps1 装得上也卸得掉，且默认卸载保留配置目录
+      - internal/deploy/install_script_test.go
+    anchors:
+      - 'scripts/windows-setup/setup.ps1:function Install-Shortcuts([string]$Binary) {'
+      - 'scripts/windows-setup/setup.ps1:Install-Shortcuts $Binary'
+      - 'scripts/install.ps1:$ShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MindFS.lnk"'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupScriptInstallsStartMenuShortcut(t *testing.T) {'
+      - 'internal/deploy/install_script_test.go:func TestWindowsInstallerManagesStartMenuShortcut(t *testing.T) {'
 
   # ── G-QZ ─────────────────────────────────────────────────────────────────
   - id: G-QZ
