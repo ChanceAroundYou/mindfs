@@ -304,13 +304,7 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
      `:7332` LISTENING 由 4084 持有，health 200 `role=control`，version `v0.5.5-1400`，
      同步仍 `online / base_rev=92 / pending=0 / conflict=0`。PID 与 StartTime 都变化且晚于开机，
      证明是整机重启后的 BootTrigger 拉起，不是任务重启冒充。
-   - **GUI 双击未验（2026-11-24）**：当前工具集没有 Windows MCP；用 PowerShell 探针取证：
-     `query.exe user` / `quser.exe` 均 0 行、`Win32_ComputerSystem.UserName=[]`、
-     `explorer_count=0`；mindfs PID 4084 在 Session 0；Session 1 只有 `winlogon` / `LogonUI`
-     / `dwm` / `csrss` 等登录阶段进程，没有 Explorer 或可交互桌面。安装器文件
-     `C:\Users\<中文用户名>\mindfs-setup.exe`（16,898,303 B）确实存在，但无法对不存在的
-     用户桌面做真实双击。用户已授权虚拟点击脚本，前提是存在可注入会话；本环境不满足，
-     因此仍只认此前的 ssh `Start-Process` 非交互安装证据，不把命令行启动升级成「GUI 双击已验」。
+   - **GUI 双击未验（2026-11-24）**：当前工具集没有 Windows MCP；用户追问「能否 ssh hasee 后用 Python 脚本操作」后做了两层只读取证。① Python 不可用：`python --version` / `py -3 --version` 都失败，只有 `WindowsApps\python.exe`、`python3.exe` 应用执行别名（点开跳商店），`C:\Python*`、`Program Files\Python*`、`Anaconda*` 等安装根目录全空 —— 没有可运行的 Python。② 未为此安装软件（装 Python 属额外系统变更，且不构成可点击桌面），改用 Windows 自带 .NET/PowerShell 调同一组 Win32 API 验证等价可行性：SSH 起的进程 `pid=7856 / session_id=0`，`active_console_session_id=1`，`window_station=Service-0x0-4fd38b$`，`thread_desktop=Default`，`OpenInputDesktop=0 error=1`，可见顶层窗口 0，`SystemInformation.UserInteractive=False`；`query.exe user` / `quser.exe` 均 0 行、`Win32_ComputerSystem.UserName=[]`、`explorer_count=0`，Session 1 只有 `winlogon` / `LogonUI` / `dwm` / `csrss` 等登录阶段进程。安装器文件 `C:\Users\<中文用户名>\mindfs-setup.exe`（16,898,303 B）确实存在，但 SSH 脚本无论用 Python 还是 PowerShell 都落在 Session 0 服务窗口站，`OpenInputDesktop` 失败、无可注入窗口/桌面，不能做真实 GUI 双击。用户已授权虚拟点击脚本，前提是存在可注入会话；本环境不满足，因此仍只认此前的 ssh `Start-Process` 非交互安装证据，不把命令行启动升级成「GUI 双击已验」。
      本机与 wsl / fn / pc-win 在**发布当轮**未分发、未重启；随后另一批已于 2026-11-24 部署
      `v0.5.5-1400-12-ge2be3c18` 到四端（见 `docs/plans/README.md` 部署状态），本机运行进程仍待用户重启。
 
