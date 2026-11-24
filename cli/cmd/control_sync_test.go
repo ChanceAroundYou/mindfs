@@ -97,6 +97,40 @@ func TestControlSyncOptionsReadsTokenFile(t *testing.T) {
 	}
 }
 
+// relay_name / relay_base_url 要原样带到启动参数里。
+//
+// 两者语义不同，不能混：relay_name 是**边控端**期望的对外名字（主控可能改名并回写）；
+// relay_base_url 是**主控**自己发布节点记录时用的对外基址（通常留空，从拨进来的
+// 请求里推）。映射断了的表现是「配了不生效、也不报错」—— 只能靠这条钉住。
+func TestControlSyncOptionsCarriesRelayFields(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "sync.token")
+	if err := os.WriteFile(tokenPath, []byte("s3cret-token-0123456789"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	cfg := startupConfig{ControlSync: &startupControlSyncConfig{
+		Enabled:      boolPtr(true),
+		Role:         strPtr("edge"),
+		InstanceID:   strPtr("hasee"),
+		PrimaryURL:   strPtr("https://home.example:7331"),
+		TokenFile:    strPtr(tokenPath),
+		RelayName:    strPtr("  office-pc  "),
+		RelayBaseURL: strPtr(" https://home.example/mindfs "),
+	}}
+	opts, err := controlSyncOptions(cfg, "control", "")
+	if err != nil {
+		t.Fatalf("controlSyncOptions: %v", err)
+	}
+	if opts == nil {
+		t.Fatal("opts = nil")
+	}
+	if opts.RelayName != "office-pc" {
+		t.Fatalf("RelayName = %q，应去掉首尾空白", opts.RelayName)
+	}
+	if opts.RelayBaseURL != "https://home.example/mindfs" {
+		t.Fatalf("RelayBaseURL = %q", opts.RelayBaseURL)
+	}
+}
+
 // 边缘读不到密钥：进「等配对」而不是拒绝启动。
 //
 // 边缘的 token 是别人给的，本机生成不出来。但拒绝启动会把用户关在门外 —— 唯一能

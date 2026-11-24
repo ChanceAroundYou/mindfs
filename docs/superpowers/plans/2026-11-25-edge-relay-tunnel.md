@@ -49,6 +49,8 @@ Plan 2026-11-25。设计正文见
 | `auth/store_primary_test.go` | `SetPrimary` 幂等（mtime 不变）、换主账户真落盘 |
 | `api/relay_test.go` | 路径穿越全拒、直通路径、错误码（404/403/503/502）、借通道失败映射、查询串保留、签名覆盖查询 |
 | `api/relay_e2e_test.go` | 真实 TLS+WS+ReverseProxy 主线：前缀被剥离、查询串保留、256KB 响应体完整、下线后 503 |
+| `app/relay_service_test.go` | 上线发布节点记录（基址+前缀+分配名字、`Remote`、`relay:` 前缀 id）、回落到请求基址、无基址不发、按实例幂等、下线保留记录 |
+| `cli/cmd/control_sync_test.go` | `relay_name` / `relay_base_url` 从 config.json 到启动参数的映射（写反了只表现为「配了不生效」） |
 | `web/tests/relay-path-same-server.test.mjs` | relay 判跨机器、普通同源、文件路径碰巧叫 relay、非法名字、异 host |
 
 ## 待办（需单独授权，未执行）

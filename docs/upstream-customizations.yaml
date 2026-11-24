@@ -15832,6 +15832,8 @@ groups:
       - server/internal/controlsync/store_relay_name_test.go
       - server/internal/api/relay_test.go
       - server/internal/api/relay_e2e_test.go
+      - server/app/relay_service_test.go
+      - cli/cmd/control_sync_test.go
     anchors:
       - 'server/internal/controlsync/relay_hub.go:func AssignRelayName(existing, candidate, instanceID string, taken map[string]string) string {'
       - 'server/internal/controlsync/relay_hub.go:func ValidRelayName(name string) bool {'
@@ -15844,6 +15846,8 @@ groups:
       - 'server/internal/api/relay_tunnel.go:func publicBaseFromRequest(r *http.Request) string {'
       - 'server/internal/api/relay_e2e_test.go:func TestRelayEndToEndOverTLS(t *testing.T) {'
       - 'server/app/relay_service.go:func relayBaseFromConfig(primaryURL string) string {'
+      - 'server/app/relay_service.go:func (r *relayService) OnTunnelUp(ctx context.Context, instanceID, name, publicBase string) {'
+      - 'server/app/relay_service_test.go:func TestRelayServiceOnTunnelUpPublishesNodeRecord(t *testing.T) {'
   - id: G-RD
     title: "边缘在线时采纳主控账户表，relay 请求用它解析身份"
     kind: fix
