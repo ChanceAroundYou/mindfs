@@ -163,6 +163,21 @@ func TestIsTerminalTurnError(t *testing.T) {
 	}
 }
 
+func TestExplainTerminalTurnErrorScheduledTellsUserToWait(t *testing.T) {
+	terminal := &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"}
+	err := explainTerminalTurnError(&overflowCompactScheduledError{err: terminal})
+	msg := err.Error()
+	if !strings.Contains(msg, "完成后会自动重发") || !strings.Contains(msg, "无需手动发送") {
+		t.Fatalf("已排压缩的文案没有说明自动重发：%q", msg)
+	}
+	if strings.Contains(msg, "请重新发送") {
+		t.Fatalf("已排压缩的文案仍在诱导用户重试：%q", msg)
+	}
+	if got := agenttypes.TurnTerminalReason(err); got != "blocking_limit" {
+		t.Fatalf("包装后丢失原始原因：%q", got)
+	}
+}
+
 func TestPlanSendFailure(t *testing.T) {
 	terminal := &agenttypes.TurnTerminalError{Reason: "blocking_limit", Message: "Prompt is too long"}
 	cases := []struct {

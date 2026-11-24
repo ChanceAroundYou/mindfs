@@ -15566,3 +15566,33 @@ groups:
       - 'server/internal/api/overflow_resume_test.go:func TestOverflowResumeAcceptableReflectsQueue('
       - 'server/internal/api/overflow_resume_test.go:func TestOverflowResumeStartHookSkipsUserBubble('
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-auto-resend.md:# 上下文溢出压缩成功后的自动重发（复用原回合，有界一次）'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QU
+    title: "溢出压缩自动重发不被用户重试打断"
+    kind: fix
+    symptom: "Claude 会话第一次发消息报「上下文已满…完成后请重新发送（Prompt is too long）」，用户照文案停止压缩再发第二条就立刻可用；实际 CLI 本地窗口判定在 191ms 内失败（input_tokens=0），MindFS 代理没有发出对应请求，G-QT 自动重发待办被 session.cancel 当成用户新回合丢掉，harness 后来报压缩成功也不会重发，胶囊还残留「压缩没生效」。"
+    why: "必须保留：这是 200k 默认窗口下终端溢出的唯一无感出口。上游重发文案会诱导用户手动重试，手动重试取消压缩回合并清掉自动重发待办，G-QT 等于白做；合上游丢了会再次出现「第一条失败、第二条立刻能用」。不改 1M、不新增按大小自动压缩、不动 CLI 本地窗口语义。"
+    files:
+      - server/internal/api/usecase/session_recovery.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_hygiene.go
+      - docs/superpowers/plans/2026-11-24-overflow-compact-resume-interrupted.md
+    tests:
+      # TestExplainTerminalTurnErrorScheduledTellsUserToWait → 钉住已排压缩的文案说明自动重发、不再诱导手动发送，同时保留 blocking_limit 机器判据。
+      - server/internal/api/usecase/session_recovery_test.go
+      # TestPinnedCancelRejectedWhileOverflowCompactPending → 钉住用户显式停止压缩回合时被拒绝；TestUnpinnedCancelStillWorksWhileCompactPending → 钉住内部取消不受影响。
+      - server/internal/api/usecase/session_overflow_cancel_test.go
+      # TestMarkCompactedClearsStaleCompactError → 钉住压缩成功后清掉上一次失败说明，避免用户据此再手动重发。
+      - server/internal/api/usecase/session_hygiene_wire_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_recovery.go:terminalOverflowCompactingMessage = "上下文已满，本轮不会自动重试；已开始压缩，完成后会自动重发，无需手动发送"'
+      - 'server/internal/api/usecase/session.go:if in.TargetPinned && in.TargetTurnID > 0 {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) CompactPending(rootID, sessionKey string) bool {'
+      - 'server/internal/api/usecase/session_hygiene.go:rec.compactError = ""'
+      - 'server/internal/api/usecase/session_recovery_test.go:func TestExplainTerminalTurnErrorScheduledTellsUserToWait(t *testing.T) {'
+      - 'server/internal/api/usecase/session_overflow_cancel_test.go:func TestPinnedCancelRejectedWhileOverflowCompactPending(t *testing.T) {'
+      - 'server/internal/api/usecase/session_overflow_cancel_test.go:func TestUnpinnedCancelStillWorksWhileCompactPending(t *testing.T) {'
+      - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestMarkCompactedClearsStaleCompactError(t *testing.T) {'
+      - 'docs/superpowers/plans/2026-11-24-overflow-compact-resume-interrupted.md:# 溢出压缩被用户重试打断：自动重发闭环修复'

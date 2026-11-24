@@ -75,8 +75,10 @@ func isTerminalTurnError(err error) bool {
 
 const (
 	terminalOverflowMessage = "上下文已满，本轮不会自动重试；请先压缩或清理上下文，再重新发送"
-	// 溢出后已经排了一次有界压缩时，用户下一步是「等压缩完再发」而不是自己找入口。
-	terminalOverflowCompactingMessage = "上下文已满，本轮不会自动重试；已开始压缩，完成后请重新发送"
+	// 溢出后已经排了一次有界压缩：告诉用户等自动重发，而不是让他再发一条。
+	// 用户重试会先取消压缩回合（现场 16:29:02 的 session.cancel），进而把 G-QT
+	// 的待办当成「用户新回合」丢掉，正是上一版自动重发没闭环的原因。
+	terminalOverflowCompactingMessage = "上下文已满，本轮不会自动重试；已开始压缩，完成后会自动重发，无需手动发送"
 )
 
 // overflowCompactScheduledError 标记「终端溢出后已经补了一次有界压缩」。

@@ -23,6 +23,26 @@ func newHygieneTestService(tracker *HygieneTracker) *Service {
 	return &Service{Registry: &hygieneTestRegistry{tracker: tracker}}
 }
 
+// T3：压缩成功后不能把上一次「没有收到压缩事件」的失败说明留在界面上，
+// 否则用户看到自动重发前的成功压缩仍以为没生效，会再去手动重发。
+func TestMarkCompactedClearsStaleCompactError(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	tracker.FinishCompact("root", "chat", "harness 没有报告压缩事件，这次压缩没有生效")
+	before := tracker.Snapshot("root", "chat", "claude", 1000, 200000)
+	if before.CompactError == "" {
+		t.Fatal("前置条件失败：FinishCompact 应留下 compact_error")
+	}
+
+	tracker.MarkCompacted("root", "chat")
+	after := tracker.Snapshot("root", "chat", "claude", 1000, 200000)
+	if after.CompactError != "" {
+		t.Fatalf("压缩成功后仍残留旧错误：%q", after.CompactError)
+	}
+	if after.AutoFailed {
+		t.Fatal("压缩成功后 auto_failed 仍为真")
+	}
+}
+
 // 只有自带本地压缩命令的 harness 才允许收 /compact；写错一个名字就会把
 // "/compact" 当成普通提问发给 agent。
 func TestHygieneAutoCompactSupportedHarnesses(t *testing.T) {

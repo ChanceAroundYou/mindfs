@@ -308,6 +308,9 @@ func (t *HygieneTracker) markCompactedAt(rootID, sessionKey string, at time.Time
 	rec.overLineTurns = 0
 	rec.autoFailed = false
 	rec.autoAttempted = false
+	// 成功后必须抹掉上次失败说明；否则胶囊在自动重发前仍显示「压缩没生效」，
+	// 用户会再手动重发一次，又把当前回合打断。
+	rec.compactError = ""
 	rec.activeSeconds = 0
 	rec.lastSeen = at
 	t.persistLocked(key, rec)
@@ -420,6 +423,17 @@ func (t *HygieneTracker) DropOverflowResume(rootID, sessionKey string) bool {
 	}
 	rec.overflowResume = nil
 	return true
+}
+
+// CompactPending 只读查询压缩回合是否在途；WS 的 pinned cancel 用它挡住
+// 「用户重试顺手取消压缩」这条把自动重发待办打断的路径。
+func (t *HygieneTracker) CompactPending(rootID, sessionKey string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.recordLocked(hygieneScope(rootID, sessionKey)).compactPending
 }
 
 // HasOverflowResume 只读查询，测试与日志用。

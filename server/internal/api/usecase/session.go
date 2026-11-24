@@ -439,6 +439,16 @@ func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInp
 	if key == "" {
 		return errors.New("session key required")
 	}
+	// 用户显式停止（前端带 pinned target turn）不能掐掉溢出后的有界压缩：
+	// 现场是用户看到「完成后请重新发送」后按停止再发，压缩被 abort，G-QT 待办
+	// 随即按「用户新回合」丢弃，自动重发永远没机会执行。内部 cancel（无 pinned
+	// 目标）照常放行，task/workflow 的收尾不受影响。
+	if in.TargetPinned && in.TargetTurnID > 0 {
+		if tracker := s.hygieneTracker(); tracker != nil && tracker.CompactPending(in.RootID, key) {
+			log.Printf("[session] turn.cancel.rejected root=%s session=%s target_turn=%d reason=compact_pending", in.RootID, key, in.TargetTurnID)
+			return errors.New("压缩中，完成后会自动继续，请勿取消")
+		}
+	}
 	if strings.HasPrefix(key, "transient-") {
 		active := getActiveTurn(in.RootID, key)
 		if active == nil || staleCancelTarget(in, active) {
