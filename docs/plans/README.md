@@ -6,6 +6,19 @@ to resume their old TODOs or baselines.
 
 ## 部署状态（权威，覆盖下方条目里的「未部署」）
 
+**2026-11-24 四端部署 `v0.5.5-1400-12-ge2be3c18`**（`origin/main` `040c9043..e2be3c18` 共 12 个
+提交：G-QQ 三条 —— 巡检判活覆盖 Run 与节点会话 `61375412`、显式 Run 的启动对账写 Router 事件
+`058be3d6`、会话结算携带绑定 Run 与节点证据 `22b01f25`；G-QO 两条上下文溢出修复
+`626a787c`/`e2be3c18`；G-QP 移动端两级弹层避让 `0666db09`；`task-112` 合并与发布记录）。
+`bash scripts/deploy-all.sh` 退出 0，门禁：`go test ./...` 全绿、`tsc` clean、Vitest 274 文件 /
+967 通过 / 6 跳过、`check-upstream` 绿。四端版本逐字一致：wsl / fn user 单元 `active` + health 200
+`role=worker` + `--version` 同串（PID 612031 / 639806）；pc-win 计划任务 PID **10072**、
+`:7332` LISTENING 由 10072 持有、进程 `StartTime` 10:14:55 晚于安装、health 200 `role=worker`、
+`--version` 同串；本机 `make install` 已装同一二进制且 7331 服务的就是这版 bundle
+`assets/index-DsKaVt7P.js`，**运行进程仍是旧版 `v0.5.5-1300-66-g6d1b174e`（PID 1179794，09:56:40
+起、exe 已 deleted、md5 `85b40a40…`），需用户再执行一次 `sudo systemctl restart mindfs`** ——
+用户 09:56 的那次重启早于本次安装，不算覆盖。
+
 **2026-11-24 真实发布 `v0.5.5-1400`（GitHub release；不等于四端部署）**：tag
 `v0.5.5-1400` → `040c904325aa30ad6374a024d9bbaf94c5960a45`（`origin/main` 同点），
 地址 https://github.com/ChanceAroundYou/mindfs/releases/tag/v0.5.5-1400，公开、非预发布。
