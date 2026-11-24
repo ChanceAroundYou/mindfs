@@ -228,17 +228,26 @@ func TestCompactSuccessPathConsumesResume(t *testing.T) {
 }
 
 // T5 的 usecase 半边：重发回合复用原回合身份，不再写第二条 user 行。
-// manager 传 nil：一旦走到持久化路径必然报错，能走到返回值就证明没写。
-func TestPersistTurnUserRowReusesIdentity(t *testing.T) {
-	svc := &Service{}
-	seq, turnID, err := svc.persistTurnUserRow(nil, nil, nil, SendMessageInput{
+// 判据抽成纯函数，落盘点留在 SendMessage 里由源码契约用例钉住。
+func TestReuseUserTurnIdentity(t *testing.T) {
+	seq, turnID, ok := reuseUserTurnIdentity(SendMessageInput{
 		Content:       "重发我",
 		ReuseUserTurn: &UserTurnIdentity{Seq: 88, TurnID: "turn-88"},
-	}, "", "", time.Now())
-	if err != nil {
-		t.Fatalf("复用身份不该落库: %v", err)
+	})
+	if !ok {
+		t.Fatal("有完整身份时应复用")
 	}
 	if seq != 88 || turnID != "turn-88" {
 		t.Fatalf("复用身份 = (%d,%q), want (88,turn-88)", seq, turnID)
+	}
+
+	for name, in := range map[string]SendMessageInput{
+		"无身份":      {Content: "普通回合"},
+		"seq 为零":   {ReuseUserTurn: &UserTurnIdentity{Seq: 0, TurnID: "turn-0"}},
+		"缺 turnID": {ReuseUserTurn: &UserTurnIdentity{Seq: 7, TurnID: "  "}},
+	} {
+		if _, _, ok := reuseUserTurnIdentity(in); ok {
+			t.Fatalf("%s：不该复用", name)
+		}
 	}
 }

@@ -1,12 +1,9 @@
 package usecase
 
 import (
-	"context"
 	"log"
 	"strings"
 	"time"
-
-	"mindfs/server/internal/session"
 )
 
 // OverflowResumeSpec 是「上下文溢出 → 压缩在途 → 压缩成功后自动重发」的待办。
@@ -147,18 +144,19 @@ func (s *Service) maybeDropOverflowResumeForUserTurn(in SendMessageInput) {
 	s.dropOverflowResume(in.RootID, in.Key, "user_turn")
 }
 
-// persistTurnUserRow 写本轮 user 行。重发回合复用原回合身份（不新增行）：
+// reuseUserTurnIdentity 判定这一轮是否复用已落盘的用户回合（不新增 user 行）：
 // 用户看到的仍然是原来那条消息，助手正文接在它下面。
-func (s *Service) persistTurnUserRow(
-	ctx context.Context,
-	manager *session.Manager,
-	current *session.Session,
-	in SendMessageInput,
-	mode, fastService string,
-	ts time.Time,
-) (int, string, error) {
-	if reuse := in.ReuseUserTurn; reuse != nil && reuse.Seq > 0 && strings.TrimSpace(reuse.TurnID) != "" {
-		return reuse.Seq, strings.TrimSpace(reuse.TurnID), nil
+//
+// 纯函数：落盘点留在 SendMessage 里（user 行必须先于 runtime.SendMessage 写下去），
+// 这里只回答「要不要跳过那次落盘」。
+func reuseUserTurnIdentity(in SendMessageInput) (int, string, bool) {
+	reuse := in.ReuseUserTurn
+	if reuse == nil || reuse.Seq <= 0 {
+		return 0, "", false
 	}
-	return persistUserTurnExchange(ctx, manager, current, in.Content, in.Agent, mode, resolveRuntimeEffort(in.Agent, current, in.Effort), fastService, ts)
+	turnID := strings.TrimSpace(reuse.TurnID)
+	if turnID == "" {
+		return 0, "", false
+	}
+	return reuse.Seq, turnID, true
 }

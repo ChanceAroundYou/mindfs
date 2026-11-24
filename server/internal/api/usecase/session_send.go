@@ -73,7 +73,16 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 用户自己发起的新回合让「溢出压缩后重发」失效：旧内容已经不该再发一次。
 	// 压缩回合（hygieneCompact）与重发回合本身不算用户发起，必须保留待办。
 	s.maybeDropOverflowResumeForUserTurn(in)
-	userExchangeSeq, turnID, err := s.persistTurnUserRow(ctx, manager, current, in, resolvedMode, resolvedFastService, userTimestamp)
+	// 溢出重发（OverflowResume）复用原回合身份：正文接在原来那条用户消息下面，
+	// 不再新增一条一模一样的 user 行。落盘点保持在同一处也是契约：user 行必须先于
+	// runtime.SendMessage 落盘，否则整轮执行期间窗口读不到它。
+	var userExchangeSeq int
+	var turnID string
+	if seq, reuseID, ok := reuseUserTurnIdentity(in); ok {
+		userExchangeSeq, turnID = seq, reuseID
+	} else {
+		userExchangeSeq, turnID, err = persistUserTurnExchange(ctx, manager, current, in.Content, in.Agent, resolvedMode, resolveRuntimeEffort(in.Agent, current, in.Effort), resolvedFastService, userTimestamp)
+	}
 	if err != nil {
 		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, in.Key, in.Agent, err)
 		return err

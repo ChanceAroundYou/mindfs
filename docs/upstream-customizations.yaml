@@ -15510,7 +15510,8 @@ groups:
       ① 登记的是**那条失败回合**的完整输入（内容、模型、模式、effort、计划模式、
          客户端上下文、时间戳）与回合身份（seq + mindfs_id），重发时逐项复现，
          不能到重发时再猜一遍；
-      ② 重发**复用原 user 行**：`persistTurnUserRow` 直接返回原 seq/TurnID，
+      ② 重发**复用原 user 行**：`reuseUserTurnIdentity` 判出原 seq/TurnID 并跳过
+         `persistUserTurnExchange`（落盘点仍留在 `SendMessage` 内），
          OnStart 走 `SetSessionPendingReply` 而不是 `BroadcastSessionUserMessageAt`，
          所以块流与前端都只有一条用户消息；
       ③ 有界一次：重发回合本身（`OverflowResume`）不再排压缩、不再登记；压缩失败
@@ -15544,7 +15545,8 @@ groups:
       - 'server/internal/api/usecase/session_overflow_resume.go:type SessionOverflowResumeRunner interface {'
       - 'server/internal/api/usecase/session_overflow_resume.go:if SessionTurnActive(rootID, sessionKey) {'
       - 'server/internal/api/usecase/session_overflow_resume.go:func (s *Service) maybeDropOverflowResumeForUserTurn('
-      - 'server/internal/api/usecase/session_overflow_resume.go:if reuse := in.ReuseUserTurn; reuse != nil && reuse.Seq > 0 && strings.TrimSpace(reuse.TurnID) != "" {'
+      - 'server/internal/api/usecase/session_overflow_resume.go:func reuseUserTurnIdentity(in SendMessageInput) (int, string, bool) {'
+      - 'server/internal/api/usecase/session_send.go:userExchangeSeq, turnID, err = persistUserTurnExchange('
       - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkOverflowResume('
       - 'server/internal/api/usecase/session_recovery.go:if in.HygieneCompact || in.OverflowResume || in.Current == nil {'
       - 'server/internal/api/usecase/session_recovery.go:s.markOverflowResume(in)'
@@ -15560,7 +15562,7 @@ groups:
       - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestOverflowResumeTurnDoesNotArmAgain('
       - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestCompactSuccessDropsResumeWhenSessionBusy('
       - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestCompactFailureDropsResume('
-      - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestPersistTurnUserRowReusesIdentity('
+      - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestReuseUserTurnIdentity('
       - 'server/internal/api/overflow_resume_test.go:func TestOverflowResumeAcceptableReflectsQueue('
       - 'server/internal/api/overflow_resume_test.go:func TestOverflowResumeStartHookSkipsUserBubble('
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-auto-resend.md:# 上下文溢出压缩成功后的自动重发（复用原回合，有界一次）'

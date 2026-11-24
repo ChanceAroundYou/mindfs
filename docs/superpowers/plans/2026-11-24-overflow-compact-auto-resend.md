@@ -122,7 +122,7 @@ make check-upstream                    ✓ 2692 个 delta 文件被 398 组完�
 | M4 | 会话忙丢弃分支改成永不触发 | `TestCompactSuccessDropsResumeWhenSessionBusy` |
 | M5 | 成功路径改成 `dropOverflowResume` | `TestCompactSuccessPathConsumesResume` |
 | M6 | 失败路径去掉 `dropOverflowResume` | `TestCompactFailureDropsResume` |
-| M7 | `persistTurnUserRow` 去掉身份复用 | `TestPersistTurnUserRowReusesIdentity` |
+| M7 | `reuseUserTurnIdentity` 恒不复用 | `TestReuseUserTurnIdentity` |
 | M8 | job 不标记 `OverflowResume` | `TestOverflowResumeJobCarriesTurnIdentity` |
 | M9 | job 在缺 TurnSeq 时也设复用身份 | `TestOverflowResumeJobOmitsIdentityWhenIncomplete` |
 | M10 | `overflowResumeAcceptable` 恒接受 | `TestOverflowResumeAcceptableReflectsQueue` |
@@ -145,3 +145,21 @@ make check-upstream                    ✓ 2692 个 delta 文件被 398 组完�
 - `go vet ./server/internal/api/...` 有一条既有告警
   （`http_feishu_relay_test.go:174` 复制含 `sync.Once` 的值），非本组引入。
 - 压缩期间 MindFS 重启会丢掉待办（设计如此，与今天的「手动重发」体验一致）。
+## 追加修正（2026-11-24，deploy-all 门禁抓出）
+
+首次跑 `bash scripts/deploy-all.sh` 时 Go 与 tsc 均绿，**Vitest 红 1 条**：
+`web/tests/user-message-persist-timing.test.mjs` 要求 `persistUserTurnExchange(` 字面出现在
+`SendMessage` 函数体内且先于 `runtime.SendMessage(` —— 原实现把落盘包进了
+`persistTurnUserRow` 包装函数，语义没错但源码顺序契约看不穿这层间接。
+
+处理：**不放宽守卫**。把身份复用分支内联回 `SendMessage`（`persistUserTurnExchange(` 回到
+函数体），包装函数缩成纯判定 `reuseUserTurnIdentity(in) (int, string, bool)`；测试改为直接
+钉这个纯函数（含「seq 为零」「turnID 空白」两条负例）。11 处变异全部重跑，M7 改为让
+`reuseUserTurnIdentity` 恒返回 false，仍因断言失败打红。
+
+```
+go build ./...                                             BUILD_OK
+go test -count=1 ./server/internal/api/usecase/            ok
+npx vitest run tests/user-message-persist-timing.test.mjs  1 passed
+python3 /tmp/gqt_mutate.py                                 ALL MUTATIONS RED FOR THE RIGHT REASON
+```
