@@ -63,6 +63,12 @@ function Uninstall-MindFS {
     Remove-FromUserPath $BinDir
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "MindFS" -ErrorAction SilentlyContinue
     Write-Host "  Removed automatic startup entry."
+    # The shortcut the installer created. Config and data are deliberately kept
+    # (only -Purge removes %APPDATA%\mindfs) -- a reinstall must find its token
+    # and pairing state again.
+    $ShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MindFS.lnk"
+    Remove-Item -Force $ShortcutPath -ErrorAction SilentlyContinue
+    Write-Host "  Removed Start Menu shortcut: $ShortcutPath"
 
     if ($Purge) {
         $ConfigDir = Join-Path $env:APPDATA "mindfs"
@@ -221,6 +227,29 @@ try {
         }
     }
     Write-Host "  Web     -> $WebDest"
+
+    # ── Start Menu shortcut ─────────────────────────────────────────────────
+    # Same entry the self-extracting setup creates: without it the only way back
+    # to the page is remembering the install path. Arguments stay empty -- bare
+    # mindfs.exe opens the page, the autostart flag belongs to the service.
+    $Programs = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+    if (-not (Test-Path $Programs -PathType Container)) {
+        Write-Error "Start Menu folder missing: $Programs"
+        exit 1
+    }
+    $LinkPath = Join-Path $Programs "MindFS.lnk"
+    $Shell = New-Object -ComObject WScript.Shell
+    $Sc = $Shell.CreateShortcut($LinkPath)
+    $Sc.TargetPath = Join-Path $BinDir "mindfs.exe"
+    $Sc.Arguments = ""
+    $Sc.WorkingDirectory = $BinDir
+    $Sc.Description = "MindFS edge controller"
+    $Sc.Save()
+    if (-not (Test-Path $LinkPath -PathType Leaf)) {
+        Write-Error "Shortcut was not created: $LinkPath"
+        exit 1
+    }
+    Write-Host "  Menu    -> $LinkPath"
 
     # ── Add to user PATH (if not already present) ────────────────────────────
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")

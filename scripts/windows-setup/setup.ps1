@@ -10,9 +10,11 @@
 # comment swallows the next newline, silently merging the following statement
 # into the comment. internal/deploy/install_script_test.go pins this.
 #
-# Order: stop -> copy -> register task -> PATH -> start -> health. Stopping
-# first is what makes the copy succeed: the running service holds its own exe
-# open and schtasks /create refuses a task that is still running.
+# Order: stop -> copy -> shortcut -> register task -> PATH -> start -> health.
+# Stopping first is what makes the copy succeed: the running service holds its
+# own exe open and schtasks /create refuses a task that is still running. The
+# shortcut goes in after the copy (it targets the installed exe) and before the
+# task starts, so a failed shortcut leaves no running service behind.
 
 param(
     [Parameter(Mandatory = $true)][string]$StageDir,
@@ -108,6 +110,37 @@ function Add-UserPath([string]$Dir) {
     Write-Host "  PATH   -> added $Dir"
 }
 
+function Install-Shortcuts([string]$Binary) {
+    # A real Start Menu entry, not a launcher script: without it the only way
+    # back to the page is remembering the install path, which is where the
+    # "I installed it but cannot find it" report comes from.
+    #
+    # Arguments stay EMPTY on purpose. Bare mindfs.exe means "open the page if
+    # the service is already running" (cli/cmd/mindfs.go); the autostart flag
+    # used by the scheduled task sets foreground=true / autoStart=false and
+    # belongs to the task XML only. Pinning that flag here would open a console
+    # instead of the UI, which is exactly what this shortcut is for.
+    $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    if (-not (Test-Path $programs -PathType Container)) {
+        throw "Start Menu folder not found: $programs"
+    }
+    $link = Join-Path $programs 'MindFS.lnk'
+    # COM rather than a hand-written .lnk: the binary format is not worth
+    # reproducing, and CreateShortcut overwrites an existing link in place,
+    # which is what an upgrade needs.
+    $shell = New-Object -ComObject WScript.Shell
+    $sc = $shell.CreateShortcut($link)
+    $sc.TargetPath = $Binary
+    $sc.Arguments = ''
+    $sc.WorkingDirectory = Split-Path -Parent $Binary
+    $sc.Description = 'MindFS edge controller'
+    $sc.Save()
+    # Save() is a COM call: it can return without the file existing (read-only
+    # Start Menu, redirected profile). Say so instead of printing Done.
+    if (-not (Test-Path $link -PathType Leaf)) { throw "shortcut was not created: $link" }
+    Write-Host "  Shortcut -> $link"
+}
+
 function Start-AndWait([string]$TaskName, [string]$Addr) {
     & schtasks.exe /run /tn $TaskName | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "schtasks /run failed with exit code $LASTEXITCODE" }
@@ -136,6 +169,7 @@ Write-Host "MindFS edge controller -> $Prefix"
 
 Stop-RunningInstance $Binary
 Install-Payload $StageDir $Prefix $Binary $Agents $Web
+Install-Shortcuts $Binary
 Register-ScheduledTask $TaskName
 Add-UserPath $BinDir
 Start-AndWait $TaskName $Addr
