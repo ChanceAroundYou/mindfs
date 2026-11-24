@@ -1,8 +1,12 @@
 # codex 手动 `/compact` 不再误报「response stream ended unexpectedly」
 
-> Scope IDs: G-QV（claimed 2026-11-24T11:29Z）
+> Scope IDs: G-RB（claimed 2026-11-24T11:29Z）
+>
+> 撞号说明：原 claim 号 `G-QV` 在合回 main 时已被 `5a0cc14c`（hasee 边控端五项需求，
+> 11:27Z，早 2 分钟）先登记，按「先引入者保留、合入方改号」改为 `G-RB`；提交信息保持
+> 原文组号，不再改写历史。
 
-Scope: G-QV
+Scope: G-RB
 
 ## 现象
 

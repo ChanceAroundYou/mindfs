@@ -15597,9 +15597,13 @@ groups:
       - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestMarkCompactedClearsStaleCompactError(t *testing.T) {'
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-resume-interrupted.md:# 溢出压缩被用户重试打断：自动重发闭环修复'
 
-  # ── scope-id claim 占位 ──────────────────────────────────────────────
-  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
-  - id: G-QV
+  # ── 撞号说明（2026-11-24 合回 main 时改号）──────────────────────────
+  # 本组 claim 到的 G-QV 在合回 main 时已被 main 的 5a0cc14c（hasee 边控端五项需求，
+  # claimed 2026-11-24T11:27Z，比本组早 2 分钟）登记；按「先引入者保留、合入方改号」
+  # 的裁决，本组改为 G-RB。G-QW / G-QZ / G-RA 是同批其他会话已登记的组，按「只增不回填
+  # 空洞」直接取 main 清单的下一段。
+  # 提交信息保持原文 be0389d4 / 6d6d33fe 的 `Scope: G-QV`，不再改写历史。
+  - id: G-RB
     title: "codex 手动 /compact 回合按压缩完成收尾，不再误报流意外结束"
     kind: fix
     symptom: "pc-wsl（任何节点同理）的 codex 会话里手动输入 /compact，压缩本身成功，界面上却弹「codex response stream ended unexpectedly」，日志里那一轮没有 output.done（2026-11-24 16:57 实测）。"
