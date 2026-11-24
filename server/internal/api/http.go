@@ -63,6 +63,9 @@ type HTTPHandler struct {
 	// （那只是边缘的概念），所以 ControlSync 为空；/status 靠它在主节点上也有答案。
 	// 与边缘共用同一路径，返回体里带 role 区分。
 	ControlSyncPrimary ControlSyncPrimaryStatus
+	// ControlSyncRelay 只有主节点非空：边控端拨进来的隧道与 /relay/<name> 转发。
+	// nil = 不注册相关路由，保持改造前行为。
+	ControlSyncRelay ControlSyncRelay
 
 	// 同步通道的 nonce 缓存：懒初始化，只有配了 token 的节点才会用到。
 	// 单次初始化是为了让 Routes 之外构造的 handler（测试、装配）也共享同一份缓存，

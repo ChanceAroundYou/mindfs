@@ -105,6 +105,20 @@ func (d *UsersDomain) Apply(ctx context.Context, rec Record) error {
 		if strings.TrimSpace(marker.ID) == "" {
 			return errors.New("controlsync: empty primary account id")
 		}
+		// 主节点的这个账户在这台机器上不存在（它的账户表是主节点账户与本地账户的并集，
+		// 而本地账户在这边保留、在那边没有）。远端的主账户标记只是「那边谁是主账户」，
+		// 不是「这边也要把谁设成主账户」—— 强应用只会报 user_not_found，把整批 apply 打断。
+		users, primaryID := d.store.ExportUsers()
+		exists := false
+		for _, u := range users {
+			if u.ID == marker.ID {
+				exists = true
+				break
+			}
+		}
+		if !exists && marker.ID != primaryID {
+			return nil
+		}
 		return d.store.SetPrimary(marker.ID)
 	}
 	if strings.HasPrefix(key, "@") {

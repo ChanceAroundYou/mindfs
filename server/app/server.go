@@ -268,6 +268,20 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if err != nil {
 		return err
 	}
+	// 边控端 relay：只有主节点侧（有 store、有 token）才会真的建起来。
+	// 边控端自己不接受别人的隧道 —— 它拨出去的那条在 edgeside 装配。
+	//
+	// 变量用具体类型而不是接口：转发端（NewRelayHandler）与隧道端点要的能力面不同，
+	// relayService 同时满足两者，取具体类型就不用在这里做一次转换。
+	var controlSyncRelay *relayService
+	if rs, err := startControlSyncRelay(controlSync, sharedNodes, opts.ControlSync); err != nil {
+		return err
+	} else if rs != nil {
+		controlSyncRelay = rs
+		// 现在挂进 wiring 而不是等 SetControlSync：每个账户的 HTTPHandler 是在
+		// applyTo 里一次性拷贝这些字段的，wiring 之后被替换它就再也看不到 relay。
+		controlSync.relay = rs
+	}
 	liveCompactDisableFile := opts.LiveCompactDisableFile
 	liveCompactArchiveDir := opts.LiveCompactArchiveDir
 	if liveCompactArchiveDir == "" {
@@ -392,6 +406,14 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	// WithRawAccountPath 必须在 ScopedRouter 之前：账户段要在派发时就定下来。
 	inner.Handle("/", api.WithRawAccountPath(httpRoutes))
 	inner.Handle("/ws", wsRoutes)
+	// 边控端 relay：/relay/<edge-name>/... 在这里被接住并转发进隧道。
+	//
+	// 必须是嵌在后端的一条真实路由，不能交给 nginx：后端在部署前缀之后接管了
+	// 整个 origin（下面那行 mux.Handle("/", ...)），nginx 无法在同一个 origin
+	// 下把 /mindfs/relay/* 切给另一个上游而不破坏其余路径。
+	if controlSyncRelay != nil {
+		inner.Handle("/relay/", api.NewRelayHandler(controlSyncRelay))
+	}
 	var root http.Handler = inner
 	if controlSync != nil {
 		root = controlSync.wrapRoot(inner)
@@ -399,6 +421,19 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), root))
 
 	handler := api.LoggingMiddleware(mux)
+
+	// 边控端 relay 隧道：主动拨向主控，拨通后整台机器的 HTTP 面就挂在
+	// 主控的 /relay/<name>/ 下面，别的设备不需要能直连这台机器。
+	//
+	// 交给隧道的是**剥掉部署前缀之后**的 root：主控转发进来时已经把
+	// /mindfs/relay/<name> 换成了 /<rest>，再套一层 StripDeployPrefix 只会 404。
+	// 它必须经过 wrapRoot —— 边缘在线时控制面请求照旧转发给主控，数据面
+	// （会话/文件/agent）才落在本机，和本机浏览器访问走的是同一条路。
+	//
+	// 失败只记日志不返回错误：这台机器本地仍然可用，只是别的设备暂时连不上它。
+	if _, err := startEdgeRelayTunnel(ctx, controlSync, api.LoggingMiddleware(root), opts.ControlSync); err != nil {
+		log.Printf("[relay] tunnel client disabled: %v", err)
+	}
 
 	server, cancelWait := newWaitAwareServer(addr, handler)
 	listener, err := net.Listen("tcp", addr)

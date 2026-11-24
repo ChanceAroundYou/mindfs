@@ -43,6 +43,14 @@ type ControlSyncOptions struct {
 	// 没有这一档的话，未配对的边缘在 cli 侧就会被拒（没有 token 不许起），用户拿到的
 	// 是一个起不来的服务 —— 连填配对表单的页面都没有。
 	PendingPairing bool
+	// RelayName 是边控端期望的对外名字（/relay/<name>）。可选：留空取主机名。
+	//
+	// 只是**候选**：主控按「先到先得、已占用的不能抢」分配最终名字并回写到
+	// X-MindFS-Relay-Name，边控端不改自己这边的配置 —— 名字的权威在主控。
+	RelayName string
+	// RelayBaseURL 是主控显式指定的对外基址。留空（常态）时主控从边控端拨进来的
+	// 那条请求里取 scheme+Host，比让用户填一遍自己的公网域名可靠。
+	RelayBaseURL string
 }
 
 // controlSyncStores 是同步域赖以读写的既有权威存储。nil 表示那份存储没建起来。
@@ -77,6 +85,9 @@ type controlSyncWiring struct {
 	// pairing 只有边缘非空：还没配好的机器靠它接上主控端。配对成功后要重启才生效，
 	// 所以它只负责落盘，不负责切换运行态。
 	pairing api.ControlSyncPairing
+	// relay 只有主节点非空：边控端拨进来的隧道与 /relay/<name> 转发。
+	// nil = 不注册相关路由，保持改造前的行为。
+	relay api.ControlSyncRelay
 }
 
 // uiMirrorOf 在 wiring 为 nil（未启用同步）时也安全。
@@ -111,6 +122,7 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 	h.ControlSyncPrimary = w.primaryStatus
 	h.ControlSyncToken = w.token
 	h.ControlSyncPair = w.pairing
+	h.ControlSyncRelay = w.relay
 }
 
 // wrapRoot 按角色包一层中间件：采集在内、转发在外。

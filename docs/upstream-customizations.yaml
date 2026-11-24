@@ -15801,3 +15801,74 @@ groups:
       - 'server/internal/agent/codex/session.go:func isCompactSlashCommand(content string) bool {'
       - 'server/internal/agent/codex/session_compact_turn_test.go:// compactTurnExec 复刻真 AppServerExec 在 `/compact` 上的事件形状'
       - 'docs/superpowers/plans/2026-11-24-codex-compact-stream-end.md:# codex 手动 `/compact` 不再误报「response stream ended unexpectedly」'
+
+  # ── 边控端反向接入（Edge Relay Tunnel）──────────────────────────────
+  - id: G-RC
+    title: "边控端反向接入：主控 /relay/<edge-name>/ 经长连接承载边缘 HTTP 面"
+    kind: feature
+    symptom: "没有公网域名/端口的边缘控制端（hasee，办公室 NAT 后）在主控上无法被其他设备访问；其他设备的节点表里也没有它的可达地址。"
+    why: "用户场景：hasee 在办公室、主控在家（外网可达）、手机在任何地方，只要连上主控就要能用 hasee。上游没有任何 relay/反向隧道实现；合上游时丢掉这套，边缘就只剩「同一局域网内直连」一种用法。实现刻意不加 relay 侧鉴权（用户裁定「完全按主控」）：relay 只透传主控本就匿名可达的 API 暴露面，引入第二套凭据反而制造假边界。名字由主控分配并唯一落库（`edges.relay_name`），因为地址会进其他设备的节点表，重连/重启都不能变；握手复用既有 HMAC 同步签名。"
+    files:
+      - server/internal/controlsync/relay_hub.go
+      - server/internal/controlsync/relay_conn.go
+      - server/internal/controlsync/relay_tunnel.go
+      - server/internal/controlsync/store_edges.go
+      - server/internal/controlsync/store_migrate.go
+      - server/internal/api/relay.go
+      - server/internal/api/relay_tunnel.go
+      - server/internal/api/http.go
+      - server/internal/api/http_routes.go
+      - server/app/relay_service.go
+      - server/app/control_sync.go
+      - server/app/server.go
+      - cli/cmd/control_sync.go
+      - cli/cmd/startup.go
+      - docs/superpowers/specs/2026-11-25-edge-relay-tunnel-design.md
+      - docs/superpowers/plans/2026-11-25-edge-relay-tunnel.md
+    tests:
+      - server/internal/controlsync/relay_hub_test.go
+      - server/internal/controlsync/relay_conn_test.go
+      - server/internal/controlsync/relay_tunnel_test.go
+      - server/internal/controlsync/store_relay_name_test.go
+      - server/internal/api/relay_test.go
+    anchors:
+      - 'server/internal/controlsync/relay_hub.go:func AssignRelayName(existing, candidate, instanceID string, taken map[string]string) string {'
+      - 'server/internal/controlsync/relay_hub.go:func ValidRelayName(name string) bool {'
+      - 'server/internal/controlsync/relay_conn.go:func NewWSConn('
+      - 'server/internal/controlsync/relay_tunnel.go:type TunnelOptions struct {'
+      - 'server/internal/controlsync/store_edges.go:var ErrRelayNameTaken = errors.New("control_sync: relay name already taken")'
+      - 'server/internal/api/relay.go:func splitRelayPath(p string) (name, rest string, ok bool) {'
+      - 'server/internal/api/relay.go:func NewRelayHandler(hub RelayHubService) http.Handler {'
+      - 'server/internal/api/relay_tunnel.go:func publicBaseFromRequest(r *http.Request) string {'
+      - 'server/app/relay_service.go:func relayBaseFromConfig(primaryURL string) string {'
+  - id: G-RD
+    title: "边缘在线时采纳主控账户表，relay 请求用它解析身份"
+    kind: fix
+    symptom: '经 /mindfs/relay/<edge-name>/ 打进来的页面能打开、内容全空；Workspace("xiaokubao") 落到 emptyWorkspace —— 边缘本机 users.json 只有它自己的 admin。'
+    why: "跨机器请求只带主控那边的账户（id 带不过去，只能对齐用户名）。边缘若不把主控账户表采纳进本机权威存储，经 relay 的每个请求都解析不到人。上游只有离线 Handover 才写副本，且按 ListRecords 的 key 升序盲写 —— `@primary` 排在所有账户之前，先应用它会 user_not_found 把整批打断。这里把「副本写进权威存储」抽成一条共用路径（applyReplicaDomain），在线采纳与离线交接同序、同 pending 跳过规则、同在 Suppress 内；远端 `@primary` 指向本机不存在的账户时跳过（union 账户：本地 admin 在主控表里没有）。SetPrimary 幂等，否则每 5s tick 重写 users.json。"
+    files:
+      - server/internal/controlsync/replica_apply.go
+      - server/internal/controlsync/runtime.go
+      - server/internal/controlsync/domain_users.go
+      - server/internal/auth/store_mutate.go
+    tests:
+      - server/internal/controlsync/runtime_online_users_test.go
+      - server/internal/auth/store_primary_test.go
+    anchors:
+      - 'server/internal/controlsync/replica_apply.go:func (r *Runtime) applyReplicaDomain(ctx context.Context, domain string) error {'
+      - 'server/internal/controlsync/replica_apply.go:func sortRecordsForApply(domain string, records []Record) {'
+      - 'server/internal/controlsync/runtime.go:func (r *Runtime) applyOnlineUsers(ctx context.Context) {'
+      - 'server/internal/controlsync/domain_users.go:if !exists && marker.ID != primaryID {'
+      - 'server/internal/auth/store_mutate.go:if s.primaryID == s.users[idx].ID {'
+  - id: G-RE
+    title: "前端把 /relay/<name>/ 判为跨机器（按用户名而不是本机账户 id 发请求）"
+    kind: fix
+    symptom: "从主控打开 /mindfs/relay/hasee/ 后，前端把请求当成同源，发本机账户 id；边缘不认识这个 id，页面打得开但取不到内容。"
+    why: "relay 路径表面上同源（同一 origin），实际落到另一台机器的 HTTP 面，账户表是那台机器自己那份。判成同源就会带上本机账户 id（对方查无此人）；判成跨机器才会退回用户名（跨机器唯一能对齐的东西，服务端 Resolve 认 id 也认用户名）。isRelayPath 只认第 0 或第 1 段（部署前缀后）的 relay，且名字必须匹配 [a-z0-9][a-z0-9-]{0,31} —— 「文件路径里恰好叫 relay 的目录」不能被误判。"
+    files:
+      - web/src/services/net/base.ts
+    tests:
+      - web/tests/relay-path-same-server.test.mjs
+    anchors:
+      - 'web/src/services/net/base.ts:function isRelayPath('
+      - 'web/src/services/net/base.ts:if (isRelayPath(target.pathname)) {'

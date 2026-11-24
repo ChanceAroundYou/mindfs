@@ -55,7 +55,7 @@ func controlSyncOptions(cfg startupConfig, nodeRole string, configPath string) (
 	if !enabled {
 		return nil, nil
 	}
-	var instanceID, primaryURL, caFile, tokenFile string
+	var instanceID, primaryURL, caFile, tokenFile, relayName, relayBaseURL string
 	role := "primary"
 	if cs != nil {
 		if v := strings.TrimSpace(stringValue(cs.Role)); v != "" {
@@ -65,6 +65,8 @@ func controlSyncOptions(cfg startupConfig, nodeRole string, configPath string) (
 		primaryURL = strings.TrimSpace(stringValue(cs.PrimaryURL))
 		caFile = strings.TrimSpace(stringValue(cs.CAFile))
 		tokenFile = strings.TrimSpace(stringValue(cs.TokenFile))
+		relayName = strings.TrimSpace(stringValue(cs.RelayName))
+		relayBaseURL = strings.TrimSpace(stringValue(cs.RelayBaseURL))
 	}
 	if tokenFile == "" {
 		dir, err := autoStartConfigDir()
@@ -74,13 +76,15 @@ func controlSyncOptions(cfg startupConfig, nodeRole string, configPath string) (
 		tokenFile = filepath.Join(dir, controlSyncTokenFileName)
 	}
 	opts := &app.ControlSyncOptions{
-		Enabled:    true,
-		Role:       role,
-		InstanceID: instanceID,
-		PrimaryURL: primaryURL,
-		CAFile:     caFile,
-		TokenFile:  tokenFile,
-		ConfigPath: configPath,
+		Enabled:      true,
+		Role:         role,
+		InstanceID:   instanceID,
+		PrimaryURL:   primaryURL,
+		CAFile:       caFile,
+		TokenFile:    tokenFile,
+		ConfigPath:   configPath,
+		RelayName:    relayName,
+		RelayBaseURL: relayBaseURL,
 	}
 	token, err := readSyncToken(tokenFile)
 	switch {

@@ -63,6 +63,15 @@ type startupControlSyncConfig struct {
 	PrimaryURL *string `json:"primary_url"`
 	CAFile     *string `json:"ca_file"`
 	TokenFile  *string `json:"token_file"`
+	// RelayName 是边缘期望的对外名字（主控 /relay/<name>/）。留空取主机名。
+	//
+	// 只是候选名：最终值由主控分配并回写，边缘这边改了不会搬走已有的地址。
+	RelayName *string `json:"relay_name"`
+	// RelayBaseURL 是主控自己的对外基址（https://<域名>[/前缀]）。
+	//
+	// 主控留空即可 —— 它从边缘拨进来的请求里读出 scheme+Host，比人填一遍更准。
+	// 只有反向代理改写了 Host、靠请求推不准时才需要显式写。
+	RelayBaseURL *string `json:"relay_base_url"`
 }
 
 // startupUpdateConfig 是 update 段。

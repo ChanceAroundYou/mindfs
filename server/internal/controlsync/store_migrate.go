@@ -56,6 +56,14 @@ func (s *Store) migrateOnce(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.ensureColumns(ctx, "edges", map[string]string{
+		// 边控端在 /mindfs/relay/<name> 下对外使用的名字。主控分配后落库：
+		// 名字一变，其他设备 sync 到的节点地址就跟着变，所以它必须稳定、
+		// 且由主控掌握（边控端只上报候选名，见 RelayHub）。
+		"relay_name": "relay_name TEXT NOT NULL DEFAULT ''",
+	}); err != nil {
+		return err
+	}
 	if err := s.ensureColumns(ctx, "state", map[string]string{
 		// 对面主节点是谁：没有它，主节点被重装/换机后边缘会把一台空库当成
 		// 「主节点把记录全删了」照单全收。旧库补齐后为空串，下次追平自动记上。

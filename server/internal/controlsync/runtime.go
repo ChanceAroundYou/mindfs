@@ -314,7 +314,10 @@ func (r *Runtime) tick(ctx context.Context) {
 	}
 	switch r.mode.Mode() {
 	case ModeOnline:
-		r.syncReplica(ctx)
+		// 只有这一拍真的拉过新变更，副本才可能变；没拉过就不必再比较一遍账户表。
+		if r.syncReplica(ctx) {
+			r.applyOnlineUsers(ctx)
+		}
 		r.settle(ctx)
 	case ModeOfflineLocal:
 		if err := r.ensureHandover(ctx); err != nil {
@@ -359,33 +362,7 @@ func (r *Runtime) Handover(ctx context.Context) error {
 	}
 	var errs error
 	for _, domain := range r.registry.Names() {
-		d, err := r.registry.Get(domain)
-		if err != nil {
-			errs = errors.Join(errs, err)
-			continue
-		}
-		records, err := r.store.ListRecords(ctx, domain)
-		if err != nil {
-			errs = errors.Join(errs, err)
-			continue
-		}
-		pending, err := r.store.PendingKeys(ctx, domain)
-		if err != nil {
-			errs = errors.Join(errs, err)
-			continue
-		}
-		apply := func() error {
-			for _, rec := range records {
-				if pending[rec.Key] {
-					continue
-				}
-				if err := d.Apply(ctx, rec); err != nil {
-					return fmt.Errorf("controlsync: handover %s/%s: %w", rec.Domain, rec.Key, err)
-				}
-			}
-			return nil
-		}
-		if err := r.capturer.Suppress(ctx, []string{domain}, apply); err != nil {
+		if err := r.applyReplicaDomain(ctx, domain); err != nil {
 			errs = errors.Join(errs, err)
 		}
 	}
@@ -479,13 +456,38 @@ func (r *Runtime) pushAll(ctx context.Context) (PushStats, error) {
 
 // syncReplica 在线时把主节点的变更流追到本地副本。只在 online 跑：合并阶段必须由
 // Reconciler 逐页处理，直接追平会绕过三方比对。
-func (r *Runtime) syncReplica(ctx context.Context) {
+//
+// 返回值是「这一拍真的去拉过」，不是「拉到条数」：节流跳过时调用方不该再跑一遍
+// 跟随动作（账户表采纳），否则每秒一拍都在白比较整份账户表。
+func (r *Runtime) syncReplica(ctx context.Context) bool {
 	now := time.Now()
 	if !r.lastSync.IsZero() && now.Sub(r.lastSync) < r.cfg.ReplicaInterval {
-		return
+		return false
 	}
 	r.lastSync = now
 	if _, err := r.source.SyncOnce(ctx); err != nil {
+		r.report(err)
+	}
+	return true
+}
+
+// applyOnlineUsers 在线时把主控的账户表采纳进本机权威存储。
+//
+// 为什么在线就要采纳，而不是等掉线交接：经主控 /relay/<name>/ 进来的请求带的是
+// **主控那边的账户**（跨机器只能对齐用户名）。这台机器的账户表若只有它自己的
+// admin，Workspace("xiaokubao") 会落到 emptyWorkspace —— 页面打得开、内容全空，
+// 这正是 relay 用起来的默认状态。
+//
+// 只做 users 一个域：别的域（偏好/节点表/提示词）在线时由控制面转发直接读写主控，
+// 本地那份只给离线用；账户表不一样，它是请求进门时的身份解析依据，在线也绕不开。
+func (r *Runtime) applyOnlineUsers(ctx context.Context) {
+	if r == nil || r.registry == nil {
+		return
+	}
+	if _, err := r.registry.Get(DomainUsers); err != nil {
+		return // 这套部署没注册 users 域，不关本函数的事
+	}
+	if err := r.applyReplicaDomain(ctx, DomainUsers); err != nil {
 		r.report(err)
 	}
 }
