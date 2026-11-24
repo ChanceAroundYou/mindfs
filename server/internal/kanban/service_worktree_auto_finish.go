@@ -61,6 +61,14 @@ func (s *Service) maybeAutoFinishWorktree(ctx context.Context, rootID, taskID st
 	if s.sessionRunningProbe != nil && s.sessionRunningProbe(task.MainSessionKey) {
 		return
 	}
+	// 任务终态不等于 Run 收敛：引擎会在节点落定后为下游节点建树
+	// （PrepareWorkflowNodeWorktree / snapshotRunIntegrationBranch），中间有一拍
+	// 「上游 success、下游还没 claim」。这一拍拆树，引擎立刻又建一棵，就是
+	// 「清了又建」。判据复用 workflowRunHasOpenNodes —— 它是本仓「Run 还会不会
+	// 自己动」的唯一口径；只看 task.Status 或末节点是否在跑都会漏掉这一拍。
+	if s.autoFinishRunStillOpen(ctx, store, taskID) {
+		return
+	}
 	events, err := store.ListEvents(ctx, taskID)
 	if err != nil {
 		return
@@ -111,6 +119,41 @@ func (s *Service) maybeAutoFinishWorktree(ctx context.Context, rootID, taskID st
 			s.failAutoFinish(bgCtx, rootID, taskID, "自动收尾回合启动失败", err)
 		}
 	}()
+}
+
+// autoFinishRunStillOpen 报告任务的 workflow Run 是否还有会自己动的节点。
+//
+// 用它替代「task.Status 已终态」和「末节点不在跑」这两个更弱的判据：引擎在上游
+// 节点 success 之后才会为下游建树（PrepareWorkflowNodeWorktree /
+// snapshotRunIntegrationBranch），这一拍 mask 在两个弱判据之外，却是拆树后
+// 立刻重建的唯一窗口。
+//
+//   - 非 workflow 任务、读不到绑定 → 放行（没有 Run 可动）；
+//   - legacy_import 的 Run 是转换时留的审计快照，引擎永远不会再驱动，放行；
+//   - 读 Run / 读行失败 → 当作 open（fail-closed：状态不明时不拆树，晚一拍由
+//     finalizeWorkflowNodeTerminal 的重试点补上）。
+//
+// 代价：waiting_user 行、或图里永远不会被 claim 的下游节点，会让 Run 一直算
+// open，自动收尾被推迟；树保留，手工「收尾」按钮仍是逃生口。这个取舍是刻意的：
+// 树多留一会儿，好过拆了又建。
+func (s *Service) autoFinishRunStillOpen(ctx context.Context, store *TaskStore, taskID string) bool {
+	run, found, err := s.workflowRunForTask(ctx, store, taskID)
+	if err != nil {
+		log.Printf("[kanban/auto-finish] read run failed task=%s: %v", taskID, err)
+		return true
+	}
+	if !found || run == nil {
+		return false
+	}
+	if strings.TrimSpace(run.TriggeredBy) == WorkflowTriggeredByLegacyImport {
+		return false
+	}
+	rows, err := store.ListWorkflowNodeRuns(ctx, run.ID)
+	if err != nil {
+		log.Printf("[kanban/auto-finish] read node runs failed task=%s run=%s: %v", taskID, run.ID, err)
+		return true
+	}
+	return workflowRunHasOpenNodes(run, rows)
 }
 
 // failAutoFinish 不静默吞掉后台失败：任务退回 waiting_user 并把原因写到 session_error。

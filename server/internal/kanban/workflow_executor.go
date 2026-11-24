@@ -415,6 +415,16 @@ func (s *Service) finalizeWorkflowNodeTerminal(ctx context.Context, store *TaskS
 	if detail, err := store.GetDetail(ctx, run.TaskID); err == nil && s.Runner != nil {
 		s.Runner.TaskUpdated(detail.Task.RootID, detail)
 	}
+	// 终态那一刻自动收尾可能正被「Run 还有 open 节点」挡下（见
+	// maybeAutoFinishWorktree / autoFinishRunStillOpen）。任务已终态/已归档时，
+	// 每个顶层节点落定就补一次触发：本节点很可能就是最后一个 open 节点。
+	// 重复触发由 finish_auto_queued 事件去重，不会多排。
+	if nodeRun.LoopPath == "" {
+		if task, err := store.GetTask(ctx, run.TaskID); err == nil &&
+			(isTerminalStatus(task.Status) || strings.TrimSpace(task.ArchivedAt) != "") {
+			s.maybeAutoFinishWorktree(ctx, task.RootID, task.ID)
+		}
+	}
 	return nodeRun, firstErr
 }
 
