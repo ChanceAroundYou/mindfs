@@ -43,9 +43,14 @@ type Subscription struct {
 	UserAgent string           `json:"user_agent,omitempty"`
 	Platform  string           `json:"platform,omitempty"`
 	Enabled   bool             `json:"enabled"`
-	LastError string           `json:"last_error,omitempty"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
+	// PresenceCapable 由客户端在订阅上报时声明（`presence: true`）：此后服务端只在这个
+	// 订阅还有页面心跳时才投递。升级前落库的旧订阅保持 false（fail-open），
+	// 避免「服务端先升级、浏览器还在跑旧 bundle」时把合法通知一起静音。
+	// 一旦置真就不再回落 —— 它描述的是客户端能力，不是某一次请求的参数。
+	PresenceCapable bool      `json:"presence_capable,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 func (s *Store) List() ([]Subscription, error) {
@@ -104,6 +109,7 @@ func (s *Store) Upsert(in Subscription) (Subscription, error) {
 		items[i].UserAgent = strings.TrimSpace(in.UserAgent)
 		items[i].Platform = strings.TrimSpace(in.Platform)
 		items[i].Enabled = true
+		items[i].PresenceCapable = items[i].PresenceCapable || in.PresenceCapable
 		items[i].LastError = ""
 		items[i].UpdatedAt = now
 		if err := s.saveLocked(items); err != nil {

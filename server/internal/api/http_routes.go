@@ -232,6 +232,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)
 	r.Delete("/api/web-push/subscriptions", h.handleWebPushSubscriptionDelete)
 	r.Post("/api/web-push/test", h.handleWebPushTest)
+	// 页面在场心跳 / 关页上报：订阅表是设备本地的，所以这条与其它 web-push 端点同源。
+	r.Post("/api/web-push/presence", h.handleWebPushPresence)
 	// worker → 控制节点的通知中继。它必须留在控制面上（worker 上没有订阅表，
 	// 中继到 worker 是空操作），所以不进 worker 的允许清单即可 —— 默认 worker
 	// 只放行数据面，这条会被 403。

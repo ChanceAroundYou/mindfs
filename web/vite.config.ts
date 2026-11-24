@@ -110,8 +110,33 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
+// 页面在场自愈：服务端只给「还有页面开着」的订阅发通知。正常关页由页面侧
+// pagehide beacon 上报；强杀 / 崩溃会丢掉那条 beacon，于是第一次推送到达时
+// 这里发现一个窗口都没有，替它补报一次。通知照常显示 —— userVisibleOnly 订阅
+// 必须 showNotification，否则 Chrome 会换成「此后台页面已更新」的兜底提示。
+async function reportClosedPageToServer() {
+  const windowClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (windowClients.length > 0) {
+    return;
+  }
+  const subscription = await self.registration.pushManager.getSubscription();
+  if (!subscription) {
+    return;
+  }
+  const presenceURL = new URL("api/web-push/presence", self.registration.scope).toString();
+  await fetch(presenceURL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: subscription.endpoint, leave: true }),
+    keepalive: true,
+  });
+}
+
 self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
+    // 页面全关掉时补一次「关页」上报：正常关闭由 pagehide 的 beacon 立刻送达，
+    // 强杀 / 崩溃时那条 beacon 丢了，这里在第一次推送时自愈（服务端 TTL 是第二道兜底）。
+    await reportClosedPageToServer().catch(() => undefined);
     const payload = readPushPayload(event);
     const title = payload.title || "提醒";
     const options = {
