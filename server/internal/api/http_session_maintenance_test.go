@@ -53,3 +53,13 @@ func TestSessionMaintenanceCleanLocksWithoutConfiguredDirs(t *testing.T) {
 		t.Fatalf("clean locks status=%d body=%s, want 200", response.Code, response.Body.String())
 	}
 }
+
+func TestRuntimeIssuesSweepReadsRootQueryParameter(t *testing.T) {
+	h := newSessionMaintenanceHandler(t)
+	response := httptest.NewRecorder()
+	h.handleSessionRuntimeIssuesSweep(response, httptest.NewRequest(http.MethodPost,
+		"/api/sessions/runtime-issues/sweep?root=proj", strings.NewReader(`{}`)))
+	if strings.Contains(response.Body.String(), "root_id is required") {
+		t.Fatalf("sweep must accept the same ?root= query as diagnose: %s", response.Body.String())
+	}
+}

@@ -100,7 +100,7 @@ func (s *Service) SweepRuntimeIssues(ctx context.Context, rootID string) (Runtim
 	out.Scanned = report.Scanned
 	pool := s.Registry.GetAgentPool()
 	for _, issue := range report.Issues {
-		if pool != nil && pool.HasActiveUse(issue.SessionKey) {
+		if pool != nil && sessionMaintenanceBusy(pool, issue.Agent, issue.SessionKey) {
 			out.Skipped++
 			out.Details = append(out.Details, fmt.Sprintf("skip %s: running", issue.SessionKey))
 			continue

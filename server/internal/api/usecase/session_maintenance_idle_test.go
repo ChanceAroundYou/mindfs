@@ -20,3 +20,13 @@ func TestMaintenanceIdlePoolKeysIncludeHarnessPrefix(t *testing.T) {
 		t.Fatal("ensureSessionIdle no longer uses the shared pool-key helper")
 	}
 }
+
+func TestRuntimeSweepUsesSharedBusyGuard(t *testing.T) {
+	source, err := os.ReadFile("session_runtime_issues.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "sessionMaintenanceBusy(pool, issue.Agent, issue.SessionKey)") {
+		t.Fatal("runtime sweep no longer uses the harness-prefixed busy guard")
+	}
+}

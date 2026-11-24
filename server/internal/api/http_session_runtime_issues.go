@@ -40,6 +40,9 @@ func (h *HTTPHandler) handleSessionRuntimeIssuesSweep(w http.ResponseWriter, r *
 		req.RootID = chi.URLParam(r, "rootID")
 	}
 	if req.RootID == "" {
+		req.RootID = r.URL.Query().Get("root")
+	}
+	if req.RootID == "" {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id is required"))
 		return
 	}

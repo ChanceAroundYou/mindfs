@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"mindfs/server/internal/agent"
 	"mindfs/server/internal/session"
 	"mindfs/server/internal/sessionmaintenance"
 )
@@ -176,13 +177,21 @@ func (s *Service) ensureSessionIdle(agent, sessionKey string) error {
 	if pool == nil {
 		return nil
 	}
-	// pool 里的键带 harness 前缀；裸键也查一遍，兼容历史调用方。
-	for _, key := range sessionMaintenancePoolKeys(agent, sessionKey) {
-		if pool.HasActiveUse(key) {
-			return errors.New("会话正在回复，不能维护")
-		}
+	if sessionMaintenanceBusy(pool, agent, sessionKey) {
+		return errors.New("会话正在回复，不能维护")
 	}
 	return nil
+}
+
+// sessionMaintenanceBusy 是所有无损维护共用的活跃判据：真实 pool 键必须优先，
+// 裸键只作历史兼容。巡检与单会话维护不能各写一份，否则一边放行一边拒绝。
+func sessionMaintenanceBusy(pool *agent.Pool, agentName, sessionKey string) bool {
+	for _, key := range sessionMaintenancePoolKeys(agentName, sessionKey) {
+		if pool.HasActiveUse(key) {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionMaintenancePoolKeys 给出维护守卫需要检查的 pool 键顺序。
