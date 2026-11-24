@@ -15567,9 +15567,12 @@ groups:
       - 'server/internal/api/overflow_resume_test.go:func TestOverflowResumeStartHookSkipsUserBubble('
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-auto-resend.md:# 上下文溢出压缩成功后的自动重发（复用原回合，有界一次）'
 
-  # ── scope-id claim 占位 ──────────────────────────────────────────────
-  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
-  - id: G-QU
+  # ── 撞号说明（2026-11-24 合回 main 时改号）──────────────────────────
+  # 本组 claim 到的 G-QU 在合回 main 时已被 main 的 6f34fd4c（防止用户重试打断
+  # 溢出压缩自动重发）登记；按「先引入者保留、合入方改号」的裁决，本组改为
+  # G-RA（G-QV…G-QZ 另有在飞会话占用，按「只增不回填空洞」直接取下一段）。
+  # 提交信息保持原文 3b25d4a9 的 `Scope: G-QU`，不再改写历史。
+  - id: G-RA
     title: "Web Push 只在页面还开着时投递（关闭页面后不再弹桌面通知）"
     kind: fix
     symptom: |
