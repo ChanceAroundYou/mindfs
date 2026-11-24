@@ -2,7 +2,7 @@
 
 > Scope IDs: G-QT（claimed 2026-11-24T06:47Z）
 
-> Plan 2026-11-24。只本地提交：不 push、不部署、不重启任何节点。
+> Plan 2026-11-24。原定只本地提交；2026-11-24 用户授权「全设备部署 push 发布，本地我随后自己重启」后，已随四端 `v0.5.5-1400-25-g74ceff29` 部署并随 `v0.5.5-1500` 发布（本机重启由用户执行）。
 
 ## 背景
 
@@ -163,3 +163,13 @@ go test -count=1 ./server/internal/api/usecase/            ok
 npx vitest run tests/user-message-persist-timing.test.mjs  1 passed
 python3 /tmp/gqt_mutate.py                                 ALL MUTATIONS RED FOR THE RIGHT REASON
 ```
+
+## 部署与发布（2026-11-24）
+
+- 四端部署 `v0.5.5-1400-25-g74ceff29`：`bash scripts/deploy-all.sh` 退出 0；门禁
+  `go test ./...` 全绿、`tsc` clean、Vitest 274 文件 / 968 通过 / 6 跳过、
+  `check-upstream` 2692 delta / 398 组。wsl / fn `is-active` + health 200 `role=worker`，
+  pc-win PID 28128 + `:7332` LISTENING + health 200，版本逐字一致。
+- 发布 `v0.5.5-1500`（11 个产物，sha256 与 `dist/` 逐项一致；APK `CN=MindFS`）。
+- **本机运行进程仍是旧二进制**（`v0.5.5-1300-66-g6d1b174e`，`/proc/<pid>/exe` 带
+  `(deleted)`），待用户 `sudo systemctl restart mindfs`；重启前该特性在本机不生效。
