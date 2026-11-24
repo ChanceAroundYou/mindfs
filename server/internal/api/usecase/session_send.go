@@ -70,7 +70,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// agent 执行中自己的消息从列表消失，点同步也刷不回来，回合结束才自愈）。
 	// 从这一刻起这个会话的持久化归实时路径（"谁驱动，谁落盘"），导入器不再常规增量
 	// 同步——判据是推导的，见 session.SessionIsLiveOwned。
-	userExchangeSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, in.Content, in.Agent, resolvedMode, resolveRuntimeEffort(in.Agent, current, in.Effort), resolvedFastService, userTimestamp)
+	// 用户自己发起的新回合让「溢出压缩后重发」失效：旧内容已经不该再发一次。
+	// 压缩回合（hygieneCompact）与重发回合本身不算用户发起，必须保留待办。
+	s.maybeDropOverflowResumeForUserTurn(in)
+	userExchangeSeq, turnID, err := s.persistTurnUserRow(ctx, manager, current, in, resolvedMode, resolvedFastService, userTimestamp)
 	if err != nil {
 		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, in.Key, in.Agent, err)
 		return err
@@ -395,6 +398,12 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			Prompt:             prompt,
 			SawAssistantChunk:  sawAssistantChunk,
 			HygieneCompact:     in.hygieneCompact,
+			OverflowResume:     in.OverflowResume,
+			Content:            in.Content,
+			UserTimestamp:      userTimestamp,
+			ClientCtx:          in.ClientCtx,
+			TurnSeq:            userExchangeSeq,
+			TurnID:             turnID,
 			SendWithAttachment: sendWithAttachedUpdates,
 			OnUpdate:           in.OnUpdate,
 		})

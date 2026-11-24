@@ -155,6 +155,12 @@ type SendMessageInput struct {
 	// hygieneCompact 标记这是会话卫生自动触发的压缩回合：它不参与观测，也不
 	// 再触发下一轮自动压缩。只有 Usecase 内部的 scheduleHygieneAutoCompact 会置位。
 	hygieneCompact bool
+	// OverflowResume 标记这是「上下文溢出、压缩成功后自动重发」的回合（G-QT）。
+	// 它不再排压缩、不再登记重发 —— 一次为限；也不会清掉待办。
+	OverflowResume bool
+	// ReuseUserTurn 非空时复用已落盘的用户回合：不写新的 user 行，块流与前端气泡
+	// 都只有一份。只有 OverflowResume 回合会设置。
+	ReuseUserTurn *UserTurnIdentity
 	// onCompactSeen 在本回合观察到 harness 压缩时回调一次。自动触发用它区分
 	// 「压缩真的发生了」与「命令被当普通消息发出去了」——后者必须按失败处理，
 	// 否则会每轮重发。

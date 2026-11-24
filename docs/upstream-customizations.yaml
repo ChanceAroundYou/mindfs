@@ -15494,3 +15494,73 @@ groups:
       - 'web/src/components/agent/ContextSavingIndicator.tsx:if (hygiene?.enabled) {'
       - 'web/src/i18n/locales/zh-CN-agents.ts:contextSaving.hygieneActive": "距上次压缩"'
       - 'docs/superpowers/plans/2026-11-21-session-hygiene-long-session-hint.md:# 超长会话提示：久 × 大 三档 + N 轮后自动触发 harness 压缩'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QT
+    title: "上下文溢出压缩成功后自动重发原消息（复用原回合，有界一次）"
+    kind: fix
+    symptom: |
+      长会话第一次发送必失败：`Prompt is too long（terminal_reason=blocking_limit）`。
+      G-QO 补了一次有界 `/compact`，但界面只给「已开始压缩，完成后请重新发送」——
+      用户必须手打第二遍同一条消息。用户明确要求：保持 200k 默认窗口（不切 [1m]），
+      压缩成功后由系统自动重发那一条。
+    why: |
+      这是本 fork 的定制：上游没有溢出压缩，也没有自动重发。必须保留的判据：
+      ① 登记的是**那条失败回合**的完整输入（内容、模型、模式、effort、计划模式、
+         客户端上下文、时间戳）与回合身份（seq + mindfs_id），重发时逐项复现，
+         不能到重发时再猜一遍；
+      ② 重发**复用原 user 行**：`persistTurnUserRow` 直接返回原 seq/TurnID，
+         OnStart 走 `SetSessionPendingReply` 而不是 `BroadcastSessionUserMessageAt`，
+         所以块流与前端都只有一条用户消息；
+      ③ 有界一次：重发回合本身（`OverflowResume`）不再排压缩、不再登记；压缩失败
+         立即丢弃待办；会话忙（已有在途回合）或队列里已有用户消息时丢弃，不把旧
+         内容插到用户新消息前面；用户自己发起新回合也作废待办；
+      ④ 重发必须异步走 WS 队列：`SendMessage` 整轮持会话发送锁，在失败调用里同步
+         等压缩再重发会死锁，而且绕过 WS handler 会丢掉实时正文/工具卡/子会话。
+      合上游时这些闸门任一被顶掉，就会复发「首次发送必失败要手动重发」，或者
+      更糟：重复 user 行、旧内容插队、无限重发。
+    # 针对性测试：靶心是「只发一次、只留一条」——登记原回合身份、重发不再登记、
+    # 忙/队列非空/失败/用户新回合四路丢弃、成功路径交给 runner 一次、源码契约钉
+    # OnStart 不广播用户气泡。
+    files:
+      - server/internal/api/usecase/session_hygiene.go
+      - server/internal/api/usecase/session_hygiene_wire.go
+      - server/internal/api/usecase/session_recovery.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_overflow_resume.go
+      - server/internal/api/usecase/session_overflow_resume_test.go
+      - server/internal/api/appcontext_overflow_resume.go
+      - server/internal/api/overflow_resume_test.go
+      - server/internal/api/stream_hub_queue.go
+      - server/internal/api/ws_session_message.go
+      - docs/superpowers/plans/2026-11-24-overflow-compact-auto-resend.md
+    tests:
+      - server/internal/api/usecase/session_overflow_resume_test.go
+      - server/internal/api/overflow_resume_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_overflow_resume.go:type OverflowResumeSpec struct {'
+      - 'server/internal/api/usecase/session_overflow_resume.go:type SessionOverflowResumeRunner interface {'
+      - 'server/internal/api/usecase/session_overflow_resume.go:if SessionTurnActive(rootID, sessionKey) {'
+      - 'server/internal/api/usecase/session_overflow_resume.go:func (s *Service) maybeDropOverflowResumeForUserTurn('
+      - 'server/internal/api/usecase/session_overflow_resume.go:if reuse := in.ReuseUserTurn; reuse != nil && reuse.Seq > 0 && strings.TrimSpace(reuse.TurnID) != "" {'
+      - 'server/internal/api/usecase/session_hygiene.go:func (t *HygieneTracker) MarkOverflowResume('
+      - 'server/internal/api/usecase/session_recovery.go:if in.HygieneCompact || in.OverflowResume || in.Current == nil {'
+      - 'server/internal/api/usecase/session_recovery.go:s.markOverflowResume(in)'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:s.consumeOverflowResume(in.RootID, in.Key)'
+      - 'server/internal/api/usecase/session_hygiene_wire.go:s.dropOverflowResume(in.RootID, in.Key, "compact_failed")'
+      - 'server/internal/api/appcontext_overflow_resume.go:func (s *AppContext) ResumeSessionOverflowTurn('
+      - 'server/internal/api/appcontext_overflow_resume.go:return !hub.HasQueuedSessionMessage(sessionKey)'
+      - 'server/internal/api/appcontext_overflow_resume.go:OverflowResume: true,'
+      - 'server/internal/api/ws_session_message.go:if job.OverflowResume {'
+      - 'server/internal/api/ws_session_message.go:OverflowResume:  job.OverflowResume,'
+      - 'server/internal/api/stream_hub_queue.go:func (h *StreamHub) HasQueuedSessionMessage('
+      - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestOverflowFailureArmsResumeWithOriginalTurn('
+      - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestOverflowResumeTurnDoesNotArmAgain('
+      - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestCompactSuccessDropsResumeWhenSessionBusy('
+      - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestCompactFailureDropsResume('
+      - 'server/internal/api/usecase/session_overflow_resume_test.go:func TestPersistTurnUserRowReusesIdentity('
+      - 'server/internal/api/overflow_resume_test.go:func TestOverflowResumeAcceptableReflectsQueue('
+      - 'server/internal/api/overflow_resume_test.go:func TestOverflowResumeStartHookSkipsUserBubble('
+      - 'docs/superpowers/plans/2026-11-24-overflow-compact-auto-resend.md:# 上下文溢出压缩成功后的自动重发（复用原回合，有界一次）'

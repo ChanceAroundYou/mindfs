@@ -27,6 +27,11 @@ type sessionMessageJob struct {
 	ClientCtx       usecase.ClientContext
 	ExcludeClientID string
 	Queued          bool
+	// OverflowResume 表示这一轮是「上下文溢出、压缩成功后自动重发」（G-QT）：
+	// 不广播 user_message（原消息已经在列表里），改用 pending 续上同一个回合。
+	OverflowResume bool
+	// ReuseUserTurn 非空时复用已落盘的用户回合，不新增 user 行。
+	ReuseUserTurn *usecase.UserTurnIdentity
 }
 
 func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Conn, clientID string, req WSRequest) {
@@ -305,12 +310,20 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		Content:         job.User.Content,
 		UserTimestamp:   job.User.Timestamp,
 		ClientCtx:       job.ClientCtx,
+		OverflowResume:  job.OverflowResume,
+		ReuseUserTurn:   job.ReuseUserTurn,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
 			// W4-2：这一轮是用户在任务绑定的会话里自己推的。任务头 waiting_user →
 			// running，回合结算时再放回 waiting_user 并带 out_of_band=true。
 			if h.AppContext != nil && h.AppContext.Kanban != nil {
 				h.AppContext.Kanban.BeginOutOfBandSessionTurn(msgCtx, rootID, key)
+			}
+			if job.OverflowResume {
+				// 原消息已经在列表里（第一次发送就已落盘并广播过），重发不能再推一条
+				// user_message —— 只续上同一个回合并把 pending 重新点亮。
+				turnID = h.AppContext.SetSessionPendingReply(rootID, key, job.SessionName, start.MindFSID)
+				return
 			}
 			turnID = streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, start.MindFSID, job.ExcludeClientID, job.Queued)
 		},

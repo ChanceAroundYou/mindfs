@@ -30,6 +30,19 @@ func (h *StreamHub) EnqueueSessionMessage(rootID, sessionKey, sessionTitle strin
 	return h.enqueueSessionMessageLocked(rootID, sessionKey, sessionTitle, item)
 }
 
+// HasQueuedSessionMessage 报告这个会话是否已经排着用户消息。
+//
+// 溢出自动重发（G-QT）用它让路：用户已经排了话，就不该把旧内容插回去。
+func (h *StreamHub) HasQueuedSessionMessage(sessionKey string) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state := h.pendingSessions[sessionKey]
+	return state != nil && len(state.Queue) > 0
+}
+
 // Reserve a turn before starting its goroutine so concurrent HTTP and WS
 // submissions queue behind the same active conversation.
 func (h *StreamHub) reserveOrQueueSessionMessage(rootID, key, title string, item QueuedUserMessage) ([]QueuedUserMessage, bool) {

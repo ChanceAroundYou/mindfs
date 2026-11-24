@@ -145,6 +145,9 @@ type hygieneRecord struct {
 	// autoAttempted 保证同一段提示期只派发一次自动压缩：派发是异步的，
 	// 派发后、压缩完成前的每一轮都会继续算出「已到期」，不拦就会连环开火。
 	autoAttempted bool
+	// overflowResume 是「溢出压缩成功后重发这条消息」的待办。只在内存里：
+	// 压缩期间进程重启就丢掉，用户看到原错误、手动重发即可（与没有本特性时一致）。
+	overflowResume *OverflowResumeSpec
 }
 
 // HygieneTracker 保存会话卫生状态：进程内是热缓存，活跃时长与最近观测时刻
@@ -374,6 +377,59 @@ func (t *HygieneTracker) FinishCompact(rootID, sessionKey, errText string) {
 	rec := t.recordLocked(hygieneScope(rootID, sessionKey))
 	rec.compactPending = false
 	rec.compactError = compactErrorText(errText)
+}
+
+// MarkOverflowResume 登记一次「压缩成功后重发」。后到覆盖先到：同一会话同一时刻
+// 只可能有一条被溢出打断的回合（发送锁串行），覆盖即最新的那条。
+func (t *HygieneTracker) MarkOverflowResume(rootID, sessionKey string, spec OverflowResumeSpec) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	copied := spec
+	t.recordLocked(hygieneScope(rootID, sessionKey)).overflowResume = &copied
+}
+
+// TakeOverflowResume 取出并清除待办；调用方负责真正执行重发。
+func (t *HygieneTracker) TakeOverflowResume(rootID, sessionKey string) (OverflowResumeSpec, bool) {
+	if t == nil {
+		return OverflowResumeSpec{}, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rec := t.recordLocked(hygieneScope(rootID, sessionKey))
+	if rec.overflowResume == nil {
+		return OverflowResumeSpec{}, false
+	}
+	spec := *rec.overflowResume
+	rec.overflowResume = nil
+	return spec, true
+}
+
+// DropOverflowResume 清掉待办并报告「原来确实有一条」，供调用方决定是否记日志。
+func (t *HygieneTracker) DropOverflowResume(rootID, sessionKey string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rec := t.recordLocked(hygieneScope(rootID, sessionKey))
+	if rec.overflowResume == nil {
+		return false
+	}
+	rec.overflowResume = nil
+	return true
+}
+
+// HasOverflowResume 只读查询，测试与日志用。
+func (t *HygieneTracker) HasOverflowResume(rootID, sessionKey string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.recordLocked(hygieneScope(rootID, sessionKey)).overflowResume != nil
 }
 
 func compactErrorText(text string) string {

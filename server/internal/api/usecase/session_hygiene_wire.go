@@ -240,8 +240,15 @@ func waitHygieneCompactSeen(ctx context.Context, seen <-chan struct{}, grace tim
 func (s *Service) finishHygieneCompact(in SendMessageInput, errText string) {
 	if errText != "" {
 		s.hygieneTracker().MarkAutoFailed(in.RootID, in.Key)
+		s.hygieneTracker().FinishCompact(in.RootID, in.Key, errText)
+		// 压缩失败就没有「压完再发一次」这回事，待办必须一起丢掉。
+		s.dropOverflowResume(in.RootID, in.Key, "compact_failed")
+		return
 	}
 	s.hygieneTracker().FinishCompact(in.RootID, in.Key, errText)
+	// 只有压缩真的成功、且会话已经空下来，才重发那条被溢出打断的消息。
+	// consumeOverflowResume 自己再查一次空闲与 runner，忙就丢弃。
+	s.consumeOverflowResume(in.RootID, in.Key)
 }
 
 // waitSessionIdle 等到这个会话没有在跑的回合为止。

@@ -109,7 +109,9 @@ func explainTerminalTurnError(err error) error {
 //
 // 返回值表示「此刻确实有一次压缩在途（刚排上或原本就在跑）」，供文案二选一。
 func (s *Service) ensureOverflowCompact(in sendFailureContext) bool {
-	if in.HygieneCompact || in.Current == nil {
+	// OverflowResume：这一轮本身就是「压缩成功后自动重发」的回合。它再撞墙说明
+	// 压完仍然放不下，再排一次压缩只会换来同样的结局 —— 一次为限，按普通终端失败收尾。
+	if in.HygieneCompact || in.OverflowResume || in.Current == nil {
 		return false
 	}
 	harness := hygieneHarnessForSession(in.Current)
@@ -121,6 +123,8 @@ func (s *Service) ensureOverflowCompact(in sendFailureContext) bool {
 	if view.AutoFailed {
 		return false
 	}
+	// 压缩在途或刚排上，都登记重发待办：用户不用再手动发一次。
+	s.markOverflowResume(in)
 	if view.CompactPending {
 		return true
 	}
@@ -157,6 +161,15 @@ type sendFailureContext struct {
 	RootAbs           string
 	Prompt            string
 	SawAssistantChunk bool
+	// 溢出自动重发（G-QT）需要的东西：那次失败回合的原始输入与回合身份。
+	// 重发必须逐项复现第一轮的提示词前提，不能到重发时再猜。
+	Content       string
+	UserTimestamp time.Time
+	ClientCtx     ClientContext
+	TurnSeq       int
+	TurnID        string
+	// OverflowResume 为真表示失败的是重发回合本身：不再排压缩、不再登记重发。
+	OverflowResume bool
 	// HygieneCompact 为真表示失败的这一轮本身就是压缩回合：不能再排压缩。
 	HygieneCompact     bool
 	SendWithAttachment func(agenttypes.Session, string) error
