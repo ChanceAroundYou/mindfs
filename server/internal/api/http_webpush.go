@@ -13,6 +13,9 @@ type webPushSubscriptionRequest struct {
 	Endpoint string                   `json:"endpoint"`
 	Keys     webpush.SubscriptionKeys `json:"keys"`
 	Platform string                   `json:"platform"`
+	// Presence 由新版客户端声明：此后只有页面还开着（有心跳）时才给这条订阅发通知。
+	Presence bool   `json:"presence"`
+	ClientID string `json:"client_id"`
 }
 
 func (h *HTTPHandler) webPushService() (*webpush.Service, error) {
@@ -43,20 +46,66 @@ func (h *HTTPHandler) handleWebPushSubscriptionSave(w http.ResponseWriter, r *ht
 		return
 	}
 	sub, err := svc.SaveSubscription(webpush.Subscription{
-		Endpoint:  strings.TrimSpace(req.Endpoint),
-		Keys:      req.Keys,
-		UserAgent: strings.TrimSpace(r.UserAgent()),
-		Platform:  strings.TrimSpace(req.Platform),
+		Endpoint:        strings.TrimSpace(req.Endpoint),
+		Keys:            req.Keys,
+		UserAgent:       strings.TrimSpace(r.UserAgent()),
+		Platform:        strings.TrimSpace(req.Platform),
+		PresenceCapable: req.Presence,
 	})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
 		return
+	}
+	if req.Presence {
+		// 刚上报订阅的页面此刻一定开着，立刻记一次在场，省掉等到下一次心跳的窗口。
+		_ = svc.ReportPresence(sub.Endpoint, req.ClientID, false)
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
 		"subscription": sub,
 	})
 }
+
+// handleWebPushPresence 接收页面心跳与关页上报。body: {endpoint, client_id, leave}。
+// 返回 active 让调用方（service worker 自愈）能直接看出服务端是否仍认为页面在场。
+func (h *HTTPHandler) handleWebPushPresence(w http.ResponseWriter, r *http.Request) {
+	svc, err := h.webPushService()
+	if err != nil {
+		respondError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if !svc.Enabled() {
+		// 没开推送的节点收到心跳是正常现象（页面照常工作），不该让 beacon 报错。
+		respondJSON(w, http.StatusOK, map[string]any{"ok": false, "active": false})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebPushPresenceBodyBytes)
+	var req struct {
+		Endpoint string `json:"endpoint"`
+		ClientID string `json:"client_id"`
+		Leave    bool   `json:"leave"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid web push presence payload"))
+		return
+	}
+	endpoint := strings.TrimSpace(req.Endpoint)
+	if endpoint == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("web push subscription endpoint is required"))
+		return
+	}
+	if err := svc.ReportPresence(endpoint, req.ClientID, req.Leave); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"active": svc.PresenceActive(endpoint),
+	})
+}
+
+// maxWebPushPresenceBodyBytes 限制心跳请求体：只有三个短字段。
+const maxWebPushPresenceBodyBytes = 4 << 10
 
 func (h *HTTPHandler) handleWebPushSubscriptionDelete(w http.ResponseWriter, r *http.Request) {
 	svc, err := h.webPushService()

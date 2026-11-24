@@ -61,10 +61,12 @@ func (s *Service) send(ctx context.Context, payload Payload) error {
 	if err != nil {
 		return err
 	}
-	return s.sendToItems(ctx, payload, items)
+	return s.sendToItems(ctx, payload, items, true)
 }
 
-func (s *Service) sendToItems(ctx context.Context, payload Payload, items []Subscription) error {
+// requirePresence 为真时，声明了 presence 能力、但当前没有任何页面心跳的订阅会被跳过：
+// 页面关掉以后不再弹桌面通知。用户当场发起的「发送测试」走 requirePresence=false。
+func (s *Service) sendToItems(ctx context.Context, payload Payload, items []Subscription, requirePresence bool) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -78,10 +80,16 @@ func (s *Service) sendToItems(ctx context.Context, payload Payload, items []Subs
 		}
 	}
 	activeCount := 0
+	presenceSkipped := 0
 	successCount := 0
 	var failures []string
 	for _, item := range items {
 		if !item.Enabled {
+			continue
+		}
+		if requirePresence && item.PresenceCapable && !s.presenceTracker().Live(item.Endpoint) {
+			// 页面已经不在了：不是失败，也不删订阅 —— 用户下一次打开页面会重新心跳。
+			presenceSkipped++
 			continue
 		}
 		activeCount++
@@ -92,6 +100,7 @@ func (s *Service) sendToItems(ctx context.Context, payload Payload, items []Subs
 				P256dh: item.Keys.P256dh,
 			},
 		}, &webpushgo.Options{
+			HTTPClient:      s.httpClient,
 			Subscriber:      s.config.Subject,
 			TTL:             defaultTTLSeconds,
 			Urgency:         webpushgo.UrgencyNormal,
@@ -127,6 +136,10 @@ func (s *Service) sendToItems(ctx context.Context, payload Payload, items []Subs
 		successCount++
 	}
 	if activeCount == 0 {
+		if presenceSkipped > 0 {
+			// 所有订阅都因为「页面已关闭」被跳过 —— 这是预期内的静默，不是错误。
+			return nil
+		}
 		return errors.New("no web push subscriptions")
 	}
 	if successCount == 0 && len(failures) > 0 {

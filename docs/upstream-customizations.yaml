@@ -15696,3 +15696,81 @@ groups:
       - 'web/src/i18n/locales/zh-CN-agents.ts:"contextSaving.hygieneLocalBudgetValue": "{used} / {limit}（估算）"'
       - 'web/src/i18n/locales/en-US-agents.ts:"contextSaving.hygieneLocalBudgetValue": "{used} / {limit} (estimate)"'
       - 'web/tests/context-saving-chip.test.mjs:上次真实 usage 与本地预检线分开显示，预检线标为估算'
+  # ── 撞号说明（2026-11-24 合回 main 时改号）──────────────────────────
+  # 本组 claim 到的 G-QU 在合回 main 时已被 main 的 6f34fd4c（防止用户重试打断
+  # 溢出压缩自动重发）登记；按「先引入者保留、合入方改号」的裁决，本组改为
+  # G-RA（G-QV / G-QW / G-QZ 是同批其他会话已登记的组，G-QX / G-QY 是避让留下
+  # 的空档，按「只增不回填空洞」不回收，直接取 G-QZ 之后的下一段）。
+  # 提交信息保持原文 3b25d4a9 的 `Scope: G-QU`，不再改写历史。
+  - id: G-RA
+    title: "Web Push 只在页面还开着时投递（关闭页面后不再弹桌面通知）"
+    kind: fix
+    symptom: |
+      页面/界面关闭后，桌面通知仍持续弹出；多台设备即使都关掉了页面，通知还是不停。
+      根因：Web Push 与页面生命周期无关 —— 订阅一旦建立永久有效，服务端对订阅表
+      全量扇出，事件源是后台 agent 的回合结束/提问，用户「页面关了」这个事实
+      服务端根本拿不到。
+    why: |
+      这是本 fork 的定制：上游没有「页面在场」概念，推送一建成就是永久通道。
+      必须保留的判据：
+      ① 在场是**每条订阅**的属性：`PresenceCapable` 由客户端在订阅上报时声明
+         （`presence: true`），一旦置真不回落 —— 它描述客户端能力，不是单次请求参数；
+      ② fail-open 是刻意的：没有声明能力的旧订阅（服务端先升级、浏览器还是旧 bundle）
+         照常投递，否则升级当天会把所有合法通知一起静音；
+      ③ 到场必须靠心跳，不能靠 visibility：后台标签页仍然算「页面开着」，浏览器把
+         定时器节流到约 1 次/分钟，所以 TTL 是 10 分钟、心跳 30 秒；
+      ④ 关页立即生效：`pagehide` 用 `sendBeacon` 上报（内容类型必须是 CORS 安全
+         清单内的 text/plain，否则跨源部署下预检失败、上报丢失）；不依赖 TTL；
+      ⑤ 多标签页互不连坐：client_id 存 sessionStorage，关一个只注销它自己；
+      ⑥ 零窗口自愈：强杀/崩溃会丢掉 beacon，service worker 在第一次推送时发现
+         一个窗口都没有就补报 leave —— 但仍照常 showNotification，去掉它会被
+         Chrome 换成「此后台页面已更新」的兜底提示；
+      ⑦ 用户主动「发送测试」不受在场约束（`SendTestToEndpoint` 走 requirePresence=false）。
+      合上游时任一闸门被顶掉，用户看到的就是「通知又开始乱弹」，而功能表面一切正常。
+    # 针对性测试：靶心是「页面开着才投递」。TTL/多客户端/无 client_id 清整条订阅、
+    # 扇出过滤、旧订阅豁免、测试端点豁免、保存时在场能力粘连、HTTP 上报往返、
+    # 前端源码契约（心跳/pagehide beacon/零窗口自愈）。
+    files:
+      - server/internal/webpush/presence.go
+      - server/internal/webpush/presence_test.go
+      - server/internal/webpush/send.go
+      - server/internal/webpush/send_presence_test.go
+      - server/internal/webpush/service.go
+      - server/internal/webpush/store.go
+      - server/internal/api/http_webpush.go
+      - server/internal/api/http_webpush_presence_test.go
+      - server/internal/api/http_routes.go
+      - web/src/services/webPushPresence.ts
+      - web/src/services/webPush.ts
+      - web/vite.config.ts
+      - web/tests/web-push-presence.test.mjs
+      - docs/superpowers/plans/2026-11-24-web-push-presence-close-page.md
+    tests:
+      - server/internal/webpush/presence_test.go
+      - server/internal/webpush/send_presence_test.go
+      - server/internal/api/http_webpush_presence_test.go
+      - web/tests/web-push-presence.test.mjs
+    anchors:
+      - 'server/internal/webpush/presence.go:// 页面在场表：Web Push 是唯一与页面生命周期无关的通道'
+      - 'server/internal/webpush/presence.go:func (p *PresenceTracker) Leave(endpoint, clientID string) {'
+      - 'server/internal/webpush/presence.go:if now.Sub(seen) <= p.ttl {'
+      - 'server/internal/webpush/send.go:if requirePresence && item.PresenceCapable && !s.presenceTracker().Live(item.Endpoint) {'
+      - 'server/internal/webpush/store.go:PresenceCapable bool'
+      - 'server/internal/webpush/store.go:items[i].PresenceCapable = items[i].PresenceCapable || in.PresenceCapable'
+      - 'server/internal/webpush/service.go:func (s *Service) ReportPresence(endpoint, clientID string, leave bool) error {'
+      - 'server/internal/webpush/service.go:s.presenceTracker().Leave(endpoint, "")'
+      - 'server/internal/api/http_webpush.go:func (h *HTTPHandler) handleWebPushPresence(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/api/http_webpush.go:_ = svc.ReportPresence(sub.Endpoint, req.ClientID, false)'
+      - 'server/internal/api/http_routes.go:r.Post("/api/web-push/presence", h.handleWebPushPresence)'
+      - 'web/src/services/webPushPresence.ts:export function startWebPushPresence(endpoint: string): void {'
+      - 'web/src/services/webPushPresence.ts:navigator.sendBeacon(url, blob)'
+      - 'web/src/services/webPush.ts:presence: true,'
+      - 'web/src/services/webPush.ts:startWebPushPresence(subscription.endpoint)'
+      - 'web/vite.config.ts:async function reportClosedPageToServer() {'
+      - 'server/internal/webpush/presence_test.go:func TestPresenceLeaveOnlyRemovesThatClient(t *testing.T) {'
+      - 'server/internal/webpush/send_presence_test.go:func TestSendSkipsPresenceCapableSubscriptionWithoutHeartbeat(t *testing.T) {'
+      - 'server/internal/webpush/send_presence_test.go:func TestSendKeepsLegacySubscriptionWithoutHeartbeat(t *testing.T) {'
+      - 'server/internal/api/http_webpush_presence_test.go:func TestWebPushSubscriptionSaveMarksPresenceCapable(t *testing.T) {'
+      - 'web/tests/web-push-presence.test.mjs:service worker 在零窗口时自愈上报关页'
+      - 'docs/superpowers/plans/2026-11-24-web-push-presence-close-page.md:# Web Push 只在页面还开着时投递'
+
