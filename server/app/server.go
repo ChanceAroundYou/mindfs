@@ -124,8 +124,8 @@ type StartOptions struct {
 type SessionHygieneOptions struct {
 	Enabled        *bool
 	ActiveSeconds  int
-	ContextTokens  int
-	HintTurns      int
+	ContextPercent int
+	OverLineTurns  int
 	IdleGapSeconds int
 	Harnesses      map[string]SessionHygieneHarnessOverride
 }
@@ -133,8 +133,8 @@ type SessionHygieneOptions struct {
 // SessionHygieneHarnessOverride 按 harness 覆盖全局阈值；0 = 沿用全局值。
 type SessionHygieneHarnessOverride struct {
 	ActiveSeconds  int
-	ContextTokens  int
-	HintTurns      int
+	ContextPercent int
+	OverLineTurns  int
 	IdleGapSeconds int
 }
 

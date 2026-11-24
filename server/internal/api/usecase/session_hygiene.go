@@ -12,18 +12,27 @@ const (
 	HygieneStateNormal = "normal"
 	// HygieneStateNotice: 上下文已经很大但会话还不算久 —— 只提示，永不自动压缩。
 	HygieneStateNotice = "notice"
-	// HygieneStateHint: 又久又大 —— 提示，并在再经过 HintTurns 个用户回合后自动压缩。
+	// HygieneStateHint: 又久又大 —— 提示，并在连续 OverLineTurns 个用户回合都过线后自动压缩。
 	HygieneStateHint = "hint"
 	// HygieneStateDisabled: 节点关掉了这个特性。
 	HygieneStateDisabled = "disabled"
 )
 
+// hygieneDefaultContextWindow 是上下文窗口未知时的判定基准。窗口由 harness 上报，
+// 但旧会话、导入会话与部分中转都可能没有这个数；用一个固定基准比「不知道就不判」
+// 更安全 —— 后者会让这些会话永远进不了 hint 档。
+const hygieneDefaultContextWindow = 200000
+
 // HygieneConfig 是一个节点上的会话卫生策略。零值等于关闭，由配置层显式打开。
 type HygieneConfig struct {
-	Enabled        bool
-	ActiveSeconds  int
-	ContextTokens  int
-	HintTurns      int
+	Enabled       bool
+	ActiveSeconds int
+	// ContextPercent 是「大」的阈值，按上下文窗口的百分比算。相对阈值让同一策略
+	// 在 200k 与 272k 窗口上含义一致；绝对 token 数在两种窗口下差出一整个会话。
+	ContextPercent int
+	// OverLineTurns 是自动压缩前需要的**连续**过线用户回合数。某一轮不满足
+	// 「又久又大」就清零重来 —— 否则聊到一半缩回去、过很久再涨回来也会立刻被压。
+	OverLineTurns  int
 	IdleGapSeconds int
 	// Harness 按 harness 覆盖；零值字段沿用全局值。
 	Harness map[string]HygieneConfig
@@ -31,22 +40,27 @@ type HygieneConfig struct {
 
 // HygieneSnapshot 是判定所需的全部输入，来自会话本身的持久状态与进程内累计。
 type HygieneSnapshot struct {
-	ActiveSeconds  int
-	ContextTokens  int
-	Hinted         bool
-	TurnsSinceHint int
-	AutoFailed     bool
+	ActiveSeconds int
+	ContextTokens int
+	// ContextWindow 是 harness 上报的窗口；<=0 时按 hygieneDefaultContextWindow 算。
+	ContextWindow int
+	// OverLineTurns 是已连续过线的用户回合数（含当前这一轮，如果它过线）。
+	OverLineTurns int
+	AutoFailed    bool
 }
 
 // HygieneView 是给前端与调用方的结论。TurnsUntilAutoCompact 为 -1 表示这一档
-// 不会自动压缩（关闭、只大不久、或 HintTurns 未配置）。
+// 不会自动压缩（关闭、只大不久、或 OverLineTurns 未配置）。
 type HygieneView struct {
 	State                 string `json:"state"`
 	Enabled               bool   `json:"enabled"`
 	ActiveSeconds         int    `json:"active_seconds"`
 	ContextTokens         int    `json:"context_tokens"`
-	HintTurns             int    `json:"hint_turns"`
-	TurnsSinceHint        int    `json:"turns_since_hint"`
+	ContextWindow         int    `json:"context_window"`
+	ContextPercent        int    `json:"context_percent"`
+	ContextLimit          int    `json:"context_limit"`
+	OverLineTurns         int    `json:"over_line_turns"`
+	TurnsOverLine         int    `json:"turns_over_line"`
 	TurnsUntilAutoCompact int    `json:"turns_until_auto_compact"`
 	AutoCompactDue        bool   `json:"auto_compact_due"`
 	AutoFailed            bool   `json:"auto_failed"`
@@ -66,8 +80,11 @@ func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {
 		Enabled:               cfg.Enabled,
 		ActiveSeconds:         snap.ActiveSeconds,
 		ContextTokens:         snap.ContextTokens,
-		HintTurns:             cfg.HintTurns,
-		TurnsSinceHint:        snap.TurnsSinceHint,
+		ContextWindow:         hygieneContextWindowFor(snap.ContextWindow),
+		ContextPercent:        cfg.ContextPercent,
+		ContextLimit:          hygieneContextLimit(cfg, snap.ContextWindow),
+		OverLineTurns:         cfg.OverLineTurns,
+		TurnsOverLine:         snap.OverLineTurns,
 		TurnsUntilAutoCompact: -1,
 		AutoFailed:            snap.AutoFailed,
 	}
@@ -75,8 +92,9 @@ func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {
 		view.State = HygieneStateDisabled
 		return view
 	}
-	long := snap.ActiveSeconds >= cfg.ActiveSeconds
-	big := snap.ContextTokens >= cfg.ContextTokens
+	long := cfg.ActiveSeconds > 0 && snap.ActiveSeconds >= cfg.ActiveSeconds
+	limit := hygieneContextLimit(cfg, snap.ContextWindow)
+	big := limit > 0 && snap.ContextTokens >= limit
 	switch {
 	case long && big:
 		view.State = HygieneStateHint
@@ -85,8 +103,8 @@ func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {
 	default:
 		view.State = HygieneStateNormal
 	}
-	if view.State == HygieneStateHint && cfg.HintTurns > 0 {
-		remaining := cfg.HintTurns - snap.TurnsSinceHint
+	if view.State == HygieneStateHint && cfg.OverLineTurns > 0 {
+		remaining := cfg.OverLineTurns - snap.OverLineTurns
 		if remaining < 0 {
 			remaining = 0
 		}
@@ -97,11 +115,27 @@ func EvaluateHygiene(cfg HygieneConfig, snap HygieneSnapshot) HygieneView {
 	return view
 }
 
+// hygieneContextLimit 把百分比阈值换算成 token 数。百分比未配置时返回 0，
+// 调用方据此判定「大」永远不成立 —— 零值配置等于关闭，不做隐式默认。
+func hygieneContextLimit(cfg HygieneConfig, window int) int {
+	if cfg.ContextPercent <= 0 {
+		return 0
+	}
+	return hygieneContextWindowFor(window) * cfg.ContextPercent / 100
+}
+
+// hygieneContextWindowFor 把缺失的窗口换成判定基准；上报过的窗口原样返回。
+func hygieneContextWindowFor(window int) int {
+	if window <= 0 {
+		return hygieneDefaultContextWindow
+	}
+	return window
+}
+
 type hygieneRecord struct {
 	lastSeen       time.Time
 	activeSeconds  float64
-	hinted         bool
-	turnsSinceHint int
+	overLineTurns  int
 	autoFailed     bool
 	compactPending bool
 	compactError   string
@@ -144,11 +178,11 @@ func (t *HygieneTracker) ConfigFor(harness string) HygieneConfig {
 	if override.ActiveSeconds > 0 {
 		cfg.ActiveSeconds = override.ActiveSeconds
 	}
-	if override.ContextTokens > 0 {
-		cfg.ContextTokens = override.ContextTokens
+	if override.ContextPercent > 0 {
+		cfg.ContextPercent = override.ContextPercent
 	}
-	if override.HintTurns > 0 {
-		cfg.HintTurns = override.HintTurns
+	if override.OverLineTurns > 0 {
+		cfg.OverLineTurns = override.OverLineTurns
 	}
 	if override.IdleGapSeconds > 0 {
 		cfg.IdleGapSeconds = override.IdleGapSeconds
@@ -183,55 +217,36 @@ func (t *HygieneTracker) ObserveAt(rootID, sessionKey, harness string, at time.T
 
 // Observe 读取当前结论并按需要推进状态。
 //
-// turnEnded=true 表示这是一个用户回合刚刚结束的时刻：若提示已经出现过，轮数 +1。
-// 提示刚出现的那一轮不计数，用户看到提示时还剩完整的 N 轮。
-func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens int, turnEnded bool) HygieneView {
+// turnEnded=true 表示这是一个用户回合刚刚结束的时刻。过线（又久又大）的回合
+// 把连续计数 +1，**含刚过线的那一轮**——「过线运行 3 轮」就是从第 3 轮结束开始压，
+// 而不是提示出现后再白送 3 轮。某一轮不再过线就清零：中断过的话重新攒。
+func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextTokens, contextWindow int, turnEnded bool) HygieneView {
+	snap := HygieneSnapshot{ContextTokens: contextTokens, ContextWindow: contextWindow}
 	if t == nil {
-		return EvaluateHygiene(HygieneConfig{}, HygieneSnapshot{ContextTokens: contextTokens})
+		return EvaluateHygiene(HygieneConfig{}, snap)
 	}
 	key := hygieneScope(rootID, sessionKey)
 	cfg := t.ConfigFor(harness)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	rec := t.recordLocked(key)
+	snap.ActiveSeconds = int(rec.activeSeconds)
+	snap.OverLineTurns = rec.overLineTurns
+	snap.AutoFailed = rec.autoFailed
+	view := EvaluateHygiene(cfg, snap)
 	if rec.contextStale {
 		// stale 期间不推进轮数、不开新压缩；读口仍报告当前档位，用户看得见。
-		snap := HygieneSnapshot{
-			ActiveSeconds:  int(rec.activeSeconds),
-			ContextTokens:  contextTokens,
-			Hinted:         rec.hinted,
-			TurnsSinceHint: rec.turnsSinceHint,
-			AutoFailed:     rec.autoFailed,
-		}
-		view := EvaluateHygiene(cfg, snap)
 		view.AutoCompactDue = false
 		return view
 	}
-	snap := HygieneSnapshot{
-		ActiveSeconds:  int(rec.activeSeconds),
-		ContextTokens:  contextTokens,
-		Hinted:         rec.hinted,
-		TurnsSinceHint: rec.turnsSinceHint,
-		AutoFailed:     rec.autoFailed,
-	}
-	view := EvaluateHygiene(cfg, snap)
-	newlyHinted := view.State == HygieneStateHint && !rec.hinted
-	switch {
-	case view.State != HygieneStateHint:
-		rec.hinted = false
-		rec.turnsSinceHint = 0
+	if view.State != HygieneStateHint {
+		rec.overLineTurns = 0
 		rec.autoFailed = false
 		rec.autoAttempted = false
-	case newlyHinted:
-		rec.hinted = true
-		rec.turnsSinceHint = 0
-		rec.autoAttempted = false
+	} else if turnEnded {
+		rec.overLineTurns++
 	}
-	if turnEnded && rec.hinted && !newlyHinted {
-		rec.turnsSinceHint++
-	}
-	snap.Hinted = rec.hinted
-	snap.TurnsSinceHint = rec.turnsSinceHint
+	snap.OverLineTurns = rec.overLineTurns
 	snap.AutoFailed = rec.autoFailed
 	view = EvaluateHygiene(cfg, snap)
 	// 到期只报一次：调用方据此派发一次自动压缩，后续轮次等结果而不是重复开火。
@@ -247,22 +262,21 @@ func (t *HygieneTracker) Observe(rootID, sessionKey, harness string, contextToke
 
 // Snapshot 是不推进任何状态的读取，给胶囊这类只读路径用。
 //
-// 读路径必须完全无副作用：前端每次刷新胶囊都会调它，而它一旦把「提示刚到」
-// 的那一格记成 hinted，紧接着的回合结束就会被算成「提示之后的第 1 轮」——
-// 用户看到的提示窗口整体少一轮，实测会出现「提示和自动压缩同一刻发生」。
+// 读路径必须完全无副作用：前端每次刷新胶囊都会调它，而它一旦把「刚过线」
+// 的那一格记成已计数的回合，紧接着的回合结束就会凭空多算一轮 ——
+// 用户看到的窗口整体少一轮，实测会出现「提示和自动压缩同一刻发生」。
 // 它也不建记录：没活动过的会话不该因为有人点开看一眼就多一条内存状态。
-func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens int) HygieneView {
+func (t *HygieneTracker) Snapshot(rootID, sessionKey, harness string, contextTokens, contextWindow int) HygieneView {
+	snap := HygieneSnapshot{ContextTokens: contextTokens, ContextWindow: contextWindow}
 	if t == nil {
-		return EvaluateHygiene(HygieneConfig{}, HygieneSnapshot{ContextTokens: contextTokens})
+		return EvaluateHygiene(HygieneConfig{}, snap)
 	}
 	cfg := t.ConfigFor(harness)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	snap := HygieneSnapshot{ContextTokens: contextTokens}
 	if rec := t.records[hygieneScope(rootID, sessionKey)]; rec != nil {
 		snap.ActiveSeconds = int(rec.activeSeconds)
-		snap.Hinted = rec.hinted
-		snap.TurnsSinceHint = rec.turnsSinceHint
+		snap.OverLineTurns = rec.overLineTurns
 		snap.AutoFailed = rec.autoFailed
 	}
 	view := EvaluateHygiene(cfg, snap)
@@ -288,8 +302,7 @@ func (t *HygieneTracker) markCompactedAt(rootID, sessionKey string, at time.Time
 	defer t.mu.Unlock()
 	key := hygieneScope(rootID, sessionKey)
 	rec := t.recordLocked(key)
-	rec.hinted = false
-	rec.turnsSinceHint = 0
+	rec.overLineTurns = 0
 	rec.autoFailed = false
 	rec.autoAttempted = false
 	rec.activeSeconds = 0

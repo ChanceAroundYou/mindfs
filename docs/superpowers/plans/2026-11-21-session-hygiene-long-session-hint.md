@@ -1,5 +1,7 @@
 # 超长会话提示：久 × 大 三档 + N 轮后自动触发 harness 压缩
 
+> Scope IDs: G-QS（claimed 2026-11-24T03:04Z）
+
 > Plan 2026-11-21。用户原话：「那我们能不能有一个超长会话的小hint 当一个会话又持续久又内容多的时候，
 > 主动提示甚至主动触发一下harness自己的压缩？持续久但压缩过内容不多的短对话不触发、持续不久但是
 > 已经很长的胶囊提示、又久又长的几轮提示后自动触发压缩。」
@@ -373,3 +375,59 @@ M7 第一次没打红 —— 原用例靠「压缩后上下文掉回 40000」走
 - 本轮不部署、不重启任何节点；前端无改动。`045680dc` 已随 `v0.5.5-1201-67-ga48e3684`
   四端发布上线（以 `docs/plans/README.md` 的 2026-11-22 部署状态为权威），本段旧记录说它
   「仍需下一轮 ship」已被那次发布取代。
+
+## 2026-11-24 阈值改版：窗口百分比 · 连续过线回合 · 胶囊恢复活跃时间（Scope: G-QS）
+
+用户四条裁定取代本节之前的 `active_hours=2` / `context_tokens=140000` / `hint_turns`：
+
+1. **「久」= 距上次压缩的累计活跃 1 小时**（不是 2 小时；空闲超 `idle_gap_minutes` 的整段
+   不计；harness 自己的 `/compact` 与本节特性的自动压缩都清零，live compact 的折叠不清零）。
+2. **「大」= 上下文窗口的 70%**（不再是绝对 140k）。窗口取 harness 上报的
+   `ModelContextWindow`；未知时按 200k 基准算，于是回落到 140k，而不是「不知道就不判」。
+3. **自动压缩要求连续 3 个过线回合**。刚过线的那一轮算第 1 轮，第 3 个连续过线回合结束时
+   触发；中间任何一轮不过线就清零重来。只大的会话停在 `notice` 档，只提示、永不自动压缩；
+   大会话的自动压缩是 harness 自带职责，本特性不再叠加尺寸策略（原提案里的「≥90% 紧急档」
+   取消，不再复活）。
+4. **胶囊详情恢复「距上次压缩的累计活跃时间」**：该行原先只在 `notice` / `hint` 档渲染，
+   没到阈值的会话整行消失。现在只要 `hygiene.enabled` 就渲染；只有倒计时仍只给 `hint`。
+   上下文行同时显示「当前 / 阈值」，阈值由窗口百分比算出。
+
+### 改动
+
+- `usecase/session_hygiene.go`：`HygieneConfig.ContextTokens` → `ContextPercent`，
+  `HintTurns` → `OverLineTurns`；`HygieneView` 增 `context_window` / `context_percent` /
+  `context_limit` / `turns_over_line`（`hint_turns` / `turns_since_hint` 下线）；
+  新增 `hygieneContextLimit` 与 `hygieneContextWindowFor`（200k 回落）；
+  `Observe` 在 hint 档且 `turnEnded` 时 `overLineTurns++`，不在 hint 档时清零；
+  `Snapshot` 保持零副作用（不建记录、不推进计数）；`markCompactedAt` 继续清零
+  `activeSeconds`，并同时清 `overLineTurns` / `autoFailed` / `autoAttempted`。
+- `usecase/session_hygiene_wire.go` / `session_send.go` / `session_context_saving.go` /
+  `session_recovery.go`：把 `lastContextWindow.ModelContextWindow` 透传到判定与读口
+  （压缩路径 `contextWindowAfterCompact` 只改 `TotalTokens`，窗口值保留）。
+- `app/session_hygiene.go`：默认 1 小时 / 70% / 3 轮 / 30 分钟；**删掉 Codex 内置的
+  180k 绝对覆盖** —— 相对阈值本身跨 harness 成立。harness 覆盖改为逐字段合并、空键跳过。
+- `cli/cmd/startup.go`：新键 `context_percent` / `over_line_turns`；旧 `hint_turns` 只在新键
+  缺席时按别名生效并打日志，旧 `context_tokens` 无法等价换算，忽略并打日志；两个 harness
+  段同样处理。
+- 前端：`services/agent/contextSaving.ts` 类型跟进（删 `hint_turns` / `turns_since_hint`）；
+  `ContextSavingIndicator.tsx` 行渲染条件改成 `hygiene?.enabled`，上下文行显示
+  `{tokens} / {limit}`；zh/en 新增 `contextSaving.hygieneContextValue`，
+  `hygieneActive` 文案改为「距上次压缩 / Since last compact」。
+
+### 验证
+
+- 单测：`session_hygiene_test.go` 重写 —— 三档、272k/200k 两条百分比线、200k 回落、
+  到达轮计入、第三个连续过线回合到期、掉线重置、只读不推进、压缩清零并重新积累、
+  活跃时长跨重启与 idle 截断、harness 覆盖、stale 门禁；`session_hygiene_wire_test.go`
+  与持久化用例按新字段改签名；`app/session_hygiene_test.go`（新）钉默认值与合并规则；
+  `cli/cmd/startup_hygiene_test.go`（新）钉新键解析与旧键让位；`web/tests/context-saving-chip.test.mjs`
+  钉面板行不再按档位隐藏。
+- 变异验证（`-overlay`，各自打红后还原；`go test -count=1`）：
+  百分比改成固定 140k → 272k 断言行红；去掉 200k 回落 → 回落断言行红；到达轮不计 →
+  `turns over line = 0, want 1`；不过线不清零 → `got 2`；`Snapshot` 顺手 +1 →
+  `snapshot consumed a turn`；默认改 7200 → `active seconds = 7200`；给 Codex 加内置
+  覆盖 → `defaults must not ship a built-in harness override`；别名消失 → `got 0`；
+  旧键反压新键 → `over_line_turns must win … got 5`；前端把行条件改回按档位 → chip 用例
+  正则断言红。前端另验文案改回「累计活跃时间」时 i18n 断言红。
+- 本轮**不部署、不重启任何节点**；本机 `config.json` 里仍写着 `target_tokens` 与
+  `keep_tail_tokens` 两把键，启动时打一条 deprecation 日志，行为不变。

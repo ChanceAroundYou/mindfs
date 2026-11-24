@@ -263,14 +263,27 @@ test("胶囊带回超长会话状态，字段与服务端 HygieneView 同名", (
     "enabled",
     "active_seconds",
     "context_tokens",
-    "hint_turns",
-    "turns_since_hint",
+    "context_window",
+    "context_percent",
+    "context_limit",
+    "over_line_turns",
+    "turns_over_line",
     "turns_until_auto_compact",
     "auto_compact_due",
     "auto_failed",
   ]) {
     assert.match(service, new RegExp(`${key}:`), `SessionHygiene missing ${key}`);
   }
+});
+
+test("距上次压缩的活跃时长不再按档位隐藏", () => {
+  // 用户报过「累计活跃时间从胶囊详情里消失了」：原来这两行只在 notice/hint 出现，
+  // 没到阈值的会话完全看不到。现在只要 hygiene 开着就渲染，只有倒计时仍只给 hint。
+  assert.match(indicator, /if \(hygiene\?\.enabled\) \{/);
+  assert.doesNotMatch(indicator, /if \(hygieneBand && hygiene\) \{/);
+  assert.match(zh, /contextSaving\.hygieneActive": "距上次压缩"/);
+  assert.match(en, /contextSaving\.hygieneActive": "Since last compact"/);
+  assert.match(zh, /contextSaving\.hygieneContextValue": "\{tokens\} \/ \{limit\}"/);
 });
 
 test("又大不久只提示：不显示倒计时，也不提供自动触发", () => {

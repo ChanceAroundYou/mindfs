@@ -494,7 +494,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		prober.ReportSuccess(in.Agent)
 	}
 	// 回合正常结束才推进会话卫生：取消的回合不算「用户又聊了一轮」。
-	if sendErr == nil && s.finishHygieneTurn(in, current, lastContextWindow.TotalTokens) {
+	if sendErr == nil && s.finishHygieneTurn(in, current, lastContextWindow.TotalTokens, lastContextWindow.ModelContextWindow) {
 		s.scheduleHygieneAutoCompact(in, hygieneHarnessForSession(current))
 	}
 	return nil

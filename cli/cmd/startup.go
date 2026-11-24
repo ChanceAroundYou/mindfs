@@ -80,18 +80,28 @@ type startupUpdateConfig struct {
 type startupSessionHygieneConfig struct {
 	Enabled        *bool                                   `json:"enabled"`
 	ActiveHours    *float64                                `json:"active_hours"`
-	ContextTokens  *int                                    `json:"context_tokens"`
-	HintTurns      *int                                    `json:"hint_turns"`
+	ContextPercent *int                                    `json:"context_percent"`
+	OverLineTurns  *int                                    `json:"over_line_turns"`
 	IdleGapMinutes *int                                    `json:"idle_gap_minutes"`
 	Harness        map[string]startupSessionHygieneHarness `json:"harness"`
+	// Deprecated: 阈值改成按上下文窗口的百分比算，绝对 token 数不再有对应语义。
+	// 仍然解析它是为了能打一条明确的日志，而不是让旧配置静默换含义。
+	ContextTokens *int `json:"context_tokens"`
+	// Deprecated: renamed to over_line_turns. 语义也变了：旧键数的是「提示出现之后
+	// 的第 N 轮」，新键数的是「连续过线的第 N 轮」（含刚过线的那一轮）。
+	HintTurns *int `json:"hint_turns"`
 }
 
 // startupSessionHygieneHarness 只写与全局值不同的字段。
 type startupSessionHygieneHarness struct {
 	ActiveHours    *float64 `json:"active_hours"`
-	ContextTokens  *int     `json:"context_tokens"`
-	HintTurns      *int     `json:"hint_turns"`
+	ContextPercent *int     `json:"context_percent"`
+	OverLineTurns  *int     `json:"over_line_turns"`
 	IdleGapMinutes *int     `json:"idle_gap_minutes"`
+	// Deprecated: see startupSessionHygieneConfig.ContextTokens.
+	ContextTokens *int `json:"context_tokens"`
+	// Deprecated: see startupSessionHygieneConfig.HintTurns.
+	HintTurns *int `json:"hint_turns"`
 }
 
 // startupLiveCompactConfig 只影响本机，不走控制面共享。mode 默认 off；
@@ -564,9 +574,12 @@ func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {
 	opts := app.SessionHygieneOptions{
 		Enabled:        hygiene.Enabled,
 		ActiveSeconds:  hoursToSeconds(hygiene.ActiveHours),
-		ContextTokens:  intValue(hygiene.ContextTokens),
-		HintTurns:      intValue(hygiene.HintTurns),
+		ContextPercent: intValue(hygiene.ContextPercent),
+		OverLineTurns:  hygieneOverLineTurns("", hygiene.OverLineTurns, hygiene.HintTurns),
 		IdleGapSeconds: minutesToSeconds(hygiene.IdleGapMinutes),
+	}
+	if hygiene.ContextTokens != nil {
+		log.Printf("[session-hygiene] context_tokens is deprecated and ignored: the threshold is context_percent (percent of the context window)")
 	}
 	if len(hygiene.Harness) > 0 {
 		opts.Harnesses = make(map[string]app.SessionHygieneHarnessOverride, len(hygiene.Harness))
@@ -575,10 +588,13 @@ func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {
 			if key == "" {
 				continue
 			}
+			if h.ContextTokens != nil {
+				log.Printf("[session-hygiene] harness %s context_tokens is deprecated and ignored: use context_percent", key)
+			}
 			opts.Harnesses[key] = app.SessionHygieneHarnessOverride{
 				ActiveSeconds:  hoursToSeconds(h.ActiveHours),
-				ContextTokens:  intValue(h.ContextTokens),
-				HintTurns:      intValue(h.HintTurns),
+				ContextPercent: intValue(h.ContextPercent),
+				OverLineTurns:  hygieneOverLineTurns(key, h.OverLineTurns, h.HintTurns),
 				IdleGapSeconds: minutesToSeconds(h.IdleGapMinutes),
 			}
 		}
@@ -633,4 +649,24 @@ func startBackgroundProcess(logPath string) error {
 		return err
 	}
 	return logFile.Close()
+}
+
+// hygieneOverLineTurns 读新键，旧键 hint_turns 只在新键缺席时按别名生效并留日志。
+// scope 为空表示全局段，非空表示某个 harness 覆盖段 —— 日志里要能分清是哪一行。
+func hygieneOverLineTurns(scope string, turns, legacy *int) int {
+	value := intValue(turns)
+	if legacy == nil || (turns != nil && *turns != *legacy) {
+		return value
+	}
+	if turns == nil {
+		log.Printf("[session-hygiene] %shint_turns is deprecated; using %d as over_line_turns", hygieneScopeLabel(scope), *legacy)
+	}
+	return *legacy
+}
+
+func hygieneScopeLabel(scope string) string {
+	if scope == "" {
+		return ""
+	}
+	return "harness " + scope + " "
 }

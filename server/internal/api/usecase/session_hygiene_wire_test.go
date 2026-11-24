@@ -70,19 +70,19 @@ func TestFinishHygieneTurnIgnoresSlashCommands(t *testing.T) {
 	current := &session.Session{Type: session.TypeChat, AgentCtxSeq: map[string]int{"claude": 0}}
 	seedActive(tracker, "root", "s1", 3)
 	// 先把提示臂好：提示只在回合结束的那一刻成立，只读快照不改状态。
-	if view := tracker.Observe("root", "s1", "claude", 200000, true); view.State != HygieneStateHint || view.TurnsSinceHint != 0 {
+	if view := tracker.Observe("root", "s1", "claude", 200000, 200000, true); view.State != HygieneStateHint || view.TurnsOverLine != 1 {
 		t.Fatalf("precondition: %+v", view)
 	}
 
-	if due := service.finishHygieneTurn(SendMessageInput{RootID: "root", Key: "s1", Content: "/compact"}, current, 200000); due {
+	if due := service.finishHygieneTurn(SendMessageInput{RootID: "root", Key: "s1", Content: "/compact"}, current, 200000, 200000); due {
 		t.Fatal("slash command must not trigger auto compact")
 	}
-	if view := tracker.Snapshot("root", "s1", "claude", 200000); view.TurnsSinceHint != 0 {
+	if view := tracker.Snapshot("root", "s1", "claude", 200000, 200000); view.TurnsOverLine != 1 {
 		t.Fatalf("slash command advanced turn count: %+v", view)
 	}
 	// 对照：同一条会话上的普通留言才开始计数。
-	service.finishHygieneTurn(SendMessageInput{RootID: "root", Key: "s1", Content: "继续"}, current, 200000)
-	if view := tracker.Snapshot("root", "s1", "claude", 200000); view.TurnsSinceHint != 1 {
+	service.finishHygieneTurn(SendMessageInput{RootID: "root", Key: "s1", Content: "继续"}, current, 200000, 200000)
+	if view := tracker.Snapshot("root", "s1", "claude", 200000, 200000); view.TurnsOverLine != 2 {
 		t.Fatalf("plain turn did not advance count: %+v", view)
 	}
 }
@@ -93,13 +93,13 @@ func TestHygieneAutoCompactTurnIsNotObserved(t *testing.T) {
 	service := newHygieneTestService(tracker)
 	current := &session.Session{Type: session.TypeChat, AgentCtxSeq: map[string]int{"claude": 0}}
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true) // 提示在这一轮出现
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true) // 提示在这一轮出现
 
 	service.observeHygieneTurnStart(SendMessageInput{RootID: "root", Key: "s1", hygieneCompact: true}, current)
-	if due := service.finishHygieneTurn(SendMessageInput{RootID: "root", Key: "s1", hygieneCompact: true, Content: "/compact"}, current, 200000); due {
+	if due := service.finishHygieneTurn(SendMessageInput{RootID: "root", Key: "s1", hygieneCompact: true, Content: "/compact"}, current, 200000, 200000); due {
 		t.Fatal("auto compact turn scheduled another auto compact")
 	}
-	if view := tracker.Snapshot("root", "s1", "claude", 200000); view.TurnsSinceHint != 0 {
+	if view := tracker.Snapshot("root", "s1", "claude", 200000, 200000); view.TurnsOverLine != 1 {
 		t.Fatalf("auto compact turn counted as a user turn: %+v", view)
 	}
 }
@@ -110,18 +110,18 @@ func TestMarkHygieneCompactedClearsAutoCompactTurn(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	service := newHygieneTestService(tracker)
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true) // 提示出现
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true) // 提示出现
 	var due bool
-	for i := 0; i < hygieneConfig().HintTurns; i++ {
-		due = tracker.Observe("root", "s1", "claude", 200000, true).AutoCompactDue
+	for i := 0; i < hygieneConfig().OverLineTurns-1; i++ {
+		due = tracker.Observe("root", "s1", "claude", 200000, 200000, true).AutoCompactDue
 	}
 	if !due {
 		t.Fatal("precondition: auto compact should be due")
 	}
 
 	service.markHygieneCompacted(SendMessageInput{RootID: "root", Key: "s1", hygieneCompact: true})
-	view := tracker.Snapshot("root", "s1", "claude", 200000)
-	if view.TurnsSinceHint != 0 || view.AutoCompactDue {
+	view := tracker.Snapshot("root", "s1", "claude", 200000, 200000)
+	if view.TurnsOverLine != 0 || view.AutoCompactDue {
 		t.Fatalf("auto compact turn did not clear counters: %+v", view)
 	}
 }
@@ -132,7 +132,7 @@ func TestHygieneAutoCompactMarksFailureWithoutCompactEvent(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	service := newHygieneTestService(tracker)
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	sent := 0
 	service.hygieneSend = func(_ context.Context, in SendMessageInput) error {
 		sent++
@@ -146,7 +146,7 @@ func TestHygieneAutoCompactMarksFailureWithoutCompactEvent(t *testing.T) {
 	if sent != 1 {
 		t.Fatalf("send count = %d, want 1", sent)
 	}
-	if !tracker.Snapshot("root", "s1", "claude", 200000).AutoFailed {
+	if !tracker.Snapshot("root", "s1", "claude", 200000, 200000).AutoFailed {
 		t.Fatal("missing compact event must mark auto_failed")
 	}
 }
@@ -155,13 +155,13 @@ func TestHygieneAutoCompactMarksFailureOnSendError(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	service := newHygieneTestService(tracker)
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	service.hygieneSend = func(context.Context, SendMessageInput) error {
 		return errors.New("agent unavailable")
 	}
 
 	service.runHygieneAutoCompact(SendMessageInput{RootID: "root", Key: "s1", Agent: "claude"})
-	if !tracker.Snapshot("root", "s1", "claude", 200000).AutoFailed {
+	if !tracker.Snapshot("root", "s1", "claude", 200000, 200000).AutoFailed {
 		t.Fatal("send error must mark auto_failed")
 	}
 }
@@ -170,7 +170,7 @@ func TestHygieneAutoCompactTreatsStreamErrorAfterCompactEventAsSuccess(t *testin
 	tracker := NewHygieneTracker(hygieneConfig())
 	service := newHygieneTestService(tracker)
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	service.hygieneSend = func(_ context.Context, in SendMessageInput) error {
 		if in.onCompactSeen == nil {
 			t.Fatal("auto compact turn must install onCompactSeen")
@@ -180,7 +180,7 @@ func TestHygieneAutoCompactTreatsStreamErrorAfterCompactEventAsSuccess(t *testin
 	}
 
 	service.runHygieneAutoCompact(SendMessageInput{RootID: "root", Key: "s1", Agent: "claude"})
-	view := tracker.Snapshot("root", "s1", "claude", 200000)
+	view := tracker.Snapshot("root", "s1", "claude", 200000, 200000)
 	if view.AutoFailed || view.CompactError != "" {
 		t.Fatalf("compaction completed before stream error was reported as failure: %+v", view)
 	}
@@ -190,7 +190,7 @@ func TestHygieneAutoCompactSucceedsWhenCompactEventArrives(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	service := newHygieneTestService(tracker)
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	service.hygieneSend = func(_ context.Context, in SendMessageInput) error {
 		if in.onCompactSeen == nil {
 			t.Fatal("auto compact turn must install onCompactSeen")
@@ -200,7 +200,7 @@ func TestHygieneAutoCompactSucceedsWhenCompactEventArrives(t *testing.T) {
 	}
 
 	service.runHygieneAutoCompact(SendMessageInput{RootID: "root", Key: "s1", Agent: "claude"})
-	if tracker.Snapshot("root", "s1", "claude", 200000).AutoFailed {
+	if tracker.Snapshot("root", "s1", "claude", 200000, 200000).AutoFailed {
 		t.Fatal("successful compact reported as failure")
 	}
 }
@@ -305,7 +305,7 @@ func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {
 			if err := service.CompactSession(context.Background(), GetSessionContextSavingInput{RootID: root.ID, Key: created.Key}); err != nil {
 				t.Fatalf("CompactSession: %v", err)
 			}
-			if !tracker.Snapshot(root.ID, created.Key, "claude", 200000).CompactPending {
+			if !tracker.Snapshot(root.ID, created.Key, "claude", 200000, 200000).CompactPending {
 				t.Fatal("manual compact was accepted but never shown as pending")
 			}
 			select {
@@ -314,10 +314,10 @@ func TestManualCompactPendingFollowsTheRealTurn(t *testing.T) {
 				t.Fatal("compact turn was never sent")
 			}
 			deadline := time.Now().Add(5 * time.Second)
-			view := tracker.Snapshot(root.ID, created.Key, "claude", 200000)
+			view := tracker.Snapshot(root.ID, created.Key, "claude", 200000, 200000)
 			for view.CompactPending && time.Now().Before(deadline) {
 				time.Sleep(10 * time.Millisecond)
-				view = tracker.Snapshot(root.ID, created.Key, "claude", 200000)
+				view = tracker.Snapshot(root.ID, created.Key, "claude", 200000, 200000)
 			}
 			if view.CompactPending {
 				t.Fatal("compact stayed pending after the turn finished")
@@ -362,10 +362,10 @@ func TestCompactEventArrivingAfterStreamErrorIsSuccess(t *testing.T) {
 		t.Fatalf("CompactSession: %v", err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	view := tracker.Snapshot(root.ID, created.Key, "codex", 200000)
+	view := tracker.Snapshot(root.ID, created.Key, "codex", 200000, 200000)
 	for view.CompactPending && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
-		view = tracker.Snapshot(root.ID, created.Key, "codex", 200000)
+		view = tracker.Snapshot(root.ID, created.Key, "codex", 200000, 200000)
 	}
 	if view.CompactPending {
 		t.Fatal("compact stayed pending after the late event")

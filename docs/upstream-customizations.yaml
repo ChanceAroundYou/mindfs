@@ -15414,3 +15414,80 @@ groups:
       - 'cli/cmd/startup.go:log.Printf("[live-compact] target_tokens is deprecated and ignored: keep_tail_tokens=%d wins over target_tokens=%d", *live.KeepTailTokens, *live.TargetTokens)'
       - 'cli/cmd/startup_config_test.go:func TestLiveCompactTargetTokensIsDeprecatedKeepTailAlias('
       - 'docs/superpowers/plans/2026-11-18-mindfs-native-live-compact.md:# MindFS 原生上下文活压缩（Live Compact）实施计划'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-QS
+    title: "会话卫生：按窗口百分比判「大」、连续过线回合自动压缩、胶囊恢复距上次压缩的活跃时长"
+    kind: feature
+    symptom: |
+      用户重定的三条阈值：①「大」从绝对 140k 改成上下文窗口的 70%（窗口未知按 200k
+      基准）；②「久」改成距上次压缩的累计活跃 1 小时（空闲超 30 分钟的那段不计）；
+      ③自动压缩要「过线连续运行 3 轮」才触发，且只大的会话只提示、永不自动压缩。
+      另：胶囊详情里「距上次压缩的累计活跃时间」原先只在 notice/hint 两档渲染，
+      没到阈值的会话整行消失，用户观察到「从胶囊详情里消失了」。
+    why: |
+      上游没有会话卫生特性，整条链路是本 fork 的定制。必须保留的四条判据：
+      ① 阈值按百分比，绝对 token 数在 200k 与 272k 窗口上差出一整个会话；窗口由
+      harness 上报（Claude / Codex / ACP 各自填 ModelContextWindow），缺失时回落
+      200k 而不是「不知道就不判」。
+      ② 过线计数是**连续**的，且刚过线的那一轮算第 1 轮（第 3 个连续过线回合结束
+      时压缩）；某一轮不再过线就清零 —— 否则几个月里断断续续过线会攒够总数突然
+      触发。
+      ③ 自动压缩只发生在 hint 档；notice（只大）与 normal 永不自动压缩。大会话的
+      自动压缩是 harness 自带职责，MindFS 不建自己的尺寸策略（用户明确否决了
+      「≥90% 紧急档」）。
+      ④ 读路径 `Snapshot` 必须零副作用、也不建记录：前端每次刷新胶囊都会调它，它
+      一旦顺手记一轮，倒计时会比真实行为快，实测会出现「提示与自动压缩同一刻发生」。
+      压缩事件（harness 自己的 /compact 或本特性的自动压缩）要把活跃时长、连续计数、
+      失败标记一起清零；live compact 的折叠不清零 —— 「久」指的是距上次压缩。
+      ⑤ 胶囊面板行只按 `hygiene.enabled` 渲染，只有倒计时仍只给 hint 档。
+    # 针对性测试：session_hygiene_test 钉三档、百分比换算与 200k 回落、到达轮计入、
+    # 连续计数重置、读路径不推进、压缩清零、harness 覆盖；startup_hygiene 钉新旧键
+    # 解析与别名优先级；session_hygiene(app) 钉默认值与 Harness 合并；chip 用例钉
+    # 面板行不再按档位隐藏。
+    files:
+      - server/internal/api/usecase/session_hygiene.go
+      - server/internal/api/usecase/session_hygiene_wire.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_context_saving.go
+      - server/internal/api/usecase/session_recovery.go
+      - server/app/session_hygiene.go
+      - server/app/server.go
+      - cli/cmd/startup.go
+      - web/src/services/agent/contextSaving.ts
+      - web/src/components/agent/ContextSavingIndicator.tsx
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/tests/context-saving-chip.test.mjs
+      - server/internal/api/usecase/session_hygiene_test.go
+      - server/internal/api/usecase/session_hygiene_wire_test.go
+      - server/internal/api/usecase/session_hygiene_persistence_test.go
+      - server/app/session_hygiene_test.go
+      - cli/cmd/startup_hygiene_test.go
+      - docs/plans/README.md
+      - docs/superpowers/plans/2026-11-21-session-hygiene-long-session-hint.md
+    tests:
+      - server/internal/api/usecase/session_hygiene_test.go
+      - server/internal/api/usecase/session_hygiene_wire_test.go
+      - server/app/session_hygiene_test.go
+      - cli/cmd/startup_hygiene_test.go
+      - web/tests/context-saving-chip.test.mjs
+      - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneContextThresholdIsAPercentageOfTheWindow('
+      - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneOverLineCountsTheArrivalTurn('
+      - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneReadPathDoesNotAdvanceTheCounter('
+      - 'server/internal/api/usecase/session_hygiene_test.go:func TestHygieneUnderLineTurnResetsTheStreak('
+      - 'server/app/session_hygiene_test.go:func TestSessionHygieneDefaults('
+      - 'cli/cmd/startup_hygiene_test.go:func TestSessionHygieneDeprecatedKeys('
+      - 'web/tests/context-saving-chip.test.mjs:距上次压缩的活跃时长不再按档位隐藏'
+    anchors:
+      - 'server/internal/api/usecase/session_hygiene.go:const hygieneDefaultContextWindow = 200000'
+      - 'server/internal/api/usecase/session_hygiene.go:// ContextPercent 是「大」的阈值，按上下文窗口的百分比算'
+      - 'server/internal/api/usecase/session_hygiene.go:// OverLineTurns 是自动压缩前需要的**连续**过线用户回合数'
+      - 'server/internal/api/usecase/session_hygiene.go:func hygieneContextLimit(cfg HygieneConfig, window int) int {'
+      - 'server/internal/api/usecase/session_hygiene.go:rec.activeSeconds = 0'
+      - 'server/app/session_hygiene.go:defaultHygieneContextPercent = 70'
+      - 'cli/cmd/startup.go:func hygieneOverLineTurns(scope string, turns, legacy *int) int {'
+      - 'web/src/components/agent/ContextSavingIndicator.tsx:if (hygiene?.enabled) {'
+      - 'web/src/i18n/locales/zh-CN-agents.ts:contextSaving.hygieneActive": "距上次压缩"'
+      - 'docs/superpowers/plans/2026-11-21-session-hygiene-long-session-hint.md:# 超长会话提示：久 × 大 三档 + N 轮后自动触发 harness 压缩'

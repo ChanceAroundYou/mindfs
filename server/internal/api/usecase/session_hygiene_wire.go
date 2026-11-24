@@ -102,7 +102,7 @@ func (s *Service) observeHygieneTurnStart(in SendMessageInput, current *session.
 }
 
 // finishHygieneTurn 在成功回合结束时推进状态，并返回是否要派发自动压缩。
-func (s *Service) finishHygieneTurn(in SendMessageInput, current *session.Session, contextTokens int) bool {
+func (s *Service) finishHygieneTurn(in SendMessageInput, current *session.Session, contextTokens, contextWindow int) bool {
 	if in.hygieneCompact || !hygieneAppliesToSession(current) {
 		return false
 	}
@@ -119,12 +119,12 @@ func (s *Service) finishHygieneTurn(in SendMessageInput, current *session.Sessio
 	if tracker == nil {
 		return false
 	}
-	view := tracker.Observe(in.RootID, in.Key, harness, contextTokens, true)
+	view := tracker.Observe(in.RootID, in.Key, harness, contextTokens, contextWindow, true)
 	if !view.AutoCompactDue {
 		return false
 	}
-	log.Printf("[session-hygiene] auto_compact.due root=%s session=%s agent=%s active_seconds=%d context_tokens=%d hint_turns=%d",
-		in.RootID, in.Key, harness, view.ActiveSeconds, view.ContextTokens, view.HintTurns)
+	log.Printf("[session-hygiene] auto_compact.due root=%s session=%s agent=%s active_seconds=%d context_tokens=%d context_limit=%d turns_over_line=%d",
+		in.RootID, in.Key, harness, view.ActiveSeconds, view.ContextTokens, view.ContextLimit, view.TurnsOverLine)
 	return true
 }
 

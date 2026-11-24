@@ -8,9 +8,9 @@ import (
 func hygieneConfig() HygieneConfig {
 	return HygieneConfig{
 		Enabled:        true,
-		ActiveSeconds:  2 * 3600,
-		ContextTokens:  140000,
-		HintTurns:      3,
+		ActiveSeconds:  3600,
+		ContextPercent: 70,
+		OverLineTurns:  3,
 		IdleGapSeconds: 1800,
 	}
 }
@@ -38,15 +38,40 @@ func TestEvaluateHygieneBands(t *testing.T) {
 		{"large only", 1800, 200000, HygieneStateNotice},
 		{"long only", 3 * 3600, 50000, HygieneStateNormal},
 		{"neither", 1800, 50000, HygieneStateNormal},
-		{"exactly at both thresholds", 2 * 3600, 140000, HygieneStateHint},
+		{"exactly at both thresholds", 3600, 140000, HygieneStateHint},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			view := EvaluateHygiene(cfg, HygieneSnapshot{ActiveSeconds: tc.active, ContextTokens: tc.context})
+			view := EvaluateHygiene(cfg, HygieneSnapshot{ActiveSeconds: tc.active, ContextTokens: tc.context, ContextWindow: 200000})
 			if view.State != tc.want {
 				t.Fatalf("state = %q, want %q", view.State, tc.want)
 			}
 		})
+	}
+}
+
+// 「大」是窗口的百分比，不是绝对 token 数：同一个 140k 在 Claude 的 200k 窗口上
+// 已是七成，在 Codex 的 272k 窗口上还不够。窗口未知时按 200k 基准，这样导入的
+// 旧会话与不报窗口的中转也有确定行为，而不是永远进不了提示档。
+func TestHygieneContextThresholdIsAPercentageOfTheWindow(t *testing.T) {
+	cfg := hygieneConfig()
+	// 272000 的 70% = 190400。
+	if view := EvaluateHygiene(cfg, HygieneSnapshot{ActiveSeconds: 3 * 3600, ContextTokens: 190399, ContextWindow: 272000}); view.State != HygieneStateNormal {
+		t.Fatalf("below the 272k line = %q, want normal", view.State)
+	}
+	if view := EvaluateHygiene(cfg, HygieneSnapshot{ActiveSeconds: 3 * 3600, ContextTokens: 190400, ContextWindow: 272000}); view.State != HygieneStateHint {
+		t.Fatalf("at the 272k line = %q, want hint", view.State)
+	}
+	// 未上报窗口：按 200k 基准，70% = 140000。
+	if view := EvaluateHygiene(cfg, HygieneSnapshot{ActiveSeconds: 3 * 3600, ContextTokens: 139999}); view.State != HygieneStateNormal {
+		t.Fatalf("below the 200k fallback line = %q, want normal", view.State)
+	}
+	if view := EvaluateHygiene(cfg, HygieneSnapshot{ActiveSeconds: 3 * 3600, ContextTokens: 140000}); view.State != HygieneStateHint {
+		t.Fatalf("at the 200k fallback line = %q, want hint", view.State)
+	}
+	view := EvaluateHygiene(cfg, HygieneSnapshot{ContextWindow: 272000})
+	if view.ContextLimit != 190400 || view.ContextWindow != 272000 || view.ContextPercent != 70 {
+		t.Fatalf("view does not expose the window arithmetic: %+v", view)
 	}
 }
 
@@ -65,61 +90,63 @@ func TestEvaluateHygieneDisabledStopsEverything(t *testing.T) {
 	}
 }
 
-// 提示出现的那一轮不计数：用户看到提示时还剩完整的 N 轮，而不是一出现就少一轮。
-func TestHygieneHintTurnIsNotCountedOnArrival(t *testing.T) {
+// 「过线运行 3 轮」把刚过线的那一轮算作第 1 轮：第 3 个连续过线回合结束时压缩。
+// 若不算它，实际会白送用户 4 轮，胶囊上的倒计时也会比真实行为慢一拍。
+func TestHygieneOverLineCountsTheArrivalTurn(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	view := tracker.Observe("root", "s1", "claude", 200000, true)
+	view := tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	if view.State != HygieneStateHint {
 		t.Fatalf("state = %q, want hint", view.State)
 	}
-	if view.TurnsSinceHint != 0 {
-		t.Fatalf("turns since hint = %d, want 0 on the arrival turn", view.TurnsSinceHint)
+	if view.TurnsOverLine != 1 {
+		t.Fatalf("turns over line = %d, want 1 (the arrival turn counts)", view.TurnsOverLine)
 	}
-	if view.TurnsUntilAutoCompact != 3 {
-		t.Fatalf("turns until auto = %d, want 3", view.TurnsUntilAutoCompact)
-	}
-}
-
-// 胶囊的读口在回合中间就会刷新：它先看到「又久又大」时绝不能把提示算作已经
-// 出现过，否则紧接着的回合结束会把它当成「提示之后的第 1 轮」，用户的 N 轮
-// 窗口整体少一轮 —— 线上实测出现过「提示和自动压缩同一刻发生」。
-func TestHygieneSnapshotDoesNotConsumeTheArrivalTurn(t *testing.T) {
-	tracker := NewHygieneTracker(hygieneConfig())
-	seedActive(tracker, "root", "s1", 3)
-	for i := 0; i < 3; i++ {
-		if view := tracker.Snapshot("root", "s1", "claude", 200000); view.State != HygieneStateHint {
-			t.Fatalf("snapshot %d state = %q, want hint", i, view.State)
-		}
-	}
-	view := tracker.Observe("root", "s1", "claude", 200000, true)
-	if view.TurnsSinceHint != 0 {
-		t.Fatalf("turns since hint = %d, want 0: a read consumed the arrival turn", view.TurnsSinceHint)
-	}
-	if view.TurnsUntilAutoCompact != 3 {
-		t.Fatalf("turns until auto = %d, want 3", view.TurnsUntilAutoCompact)
+	if view.TurnsUntilAutoCompact != 2 {
+		t.Fatalf("turns until auto = %d, want 2", view.TurnsUntilAutoCompact)
 	}
 	if view.AutoCompactDue {
-		t.Fatal("the hint arrival turn must not be due")
+		t.Fatal("the arrival turn must not be due")
 	}
 }
 
-func TestHygieneAutoCompactBecomesDueAfterHintTurns(t *testing.T) {
+func TestHygieneAutoCompactBecomesDueOnTheThirdOverLineTurn(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true) // hint appears here, not counted
-	for i := 1; i <= 2; i++ {
-		view := tracker.Observe("root", "s1", "claude", 200000, true)
-		if view.AutoCompactDue {
-			t.Fatalf("due after %d of 3 turns", i)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true) // 第 1 轮
+	for i := 2; i <= 3; i++ {
+		view := tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+		if i < 3 {
+			if view.AutoCompactDue {
+				t.Fatalf("due after %d of 3 over-line turns", i)
+			}
+			if view.TurnsUntilAutoCompact != 3-i {
+				t.Fatalf("turns until auto = %d after %d turns, want %d", view.TurnsUntilAutoCompact, i, 3-i)
+			}
+			continue
 		}
-		if view.TurnsUntilAutoCompact != 3-i {
-			t.Fatalf("turns until auto = %d after %d turns, want %d", view.TurnsUntilAutoCompact, i, 3-i)
+		if !view.AutoCompactDue {
+			t.Fatal("the third consecutive over-line turn must be due")
+		}
+		if view.TurnsOverLine != 3 {
+			t.Fatalf("turns over line = %d, want 3", view.TurnsOverLine)
 		}
 	}
-	view := tracker.Observe("root", "s1", "claude", 200000, true)
-	if !view.AutoCompactDue {
-		t.Fatal("third turn after the hint must be due")
+}
+
+// 连续过线：中间掉下去过就重新攒。否则一个会话几个月里断断续续过线，
+// 攒够的总数也会在某天突然触发压缩。
+func TestHygieneUnderLineTurnResetsTheStreak(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	seedActive(tracker, "root", "s1", 3)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	if view := tracker.Observe("root", "s1", "claude", 50000, 200000, true); view.TurnsOverLine != 0 {
+		t.Fatalf("an under-line turn must reset the streak, got %d", view.TurnsOverLine)
+	}
+	view := tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	if view.TurnsOverLine != 1 || view.AutoCompactDue {
+		t.Fatalf("the streak must restart from 1: %+v", view)
 	}
 }
 
@@ -127,12 +154,28 @@ func TestHygieneAutoCompactBecomesDueAfterHintTurns(t *testing.T) {
 func TestHygieneOnlyTurnEndsAdvanceTheCounter(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	for i := 0; i < 5; i++ {
-		view := tracker.Observe("root", "s1", "claude", 200000, false)
-		if view.TurnsSinceHint != 0 {
-			t.Fatalf("read-only observation advanced the counter to %d", view.TurnsSinceHint)
+		view := tracker.Observe("root", "s1", "claude", 200000, 200000, false)
+		if view.TurnsOverLine != 1 {
+			t.Fatalf("read-only observation advanced the counter to %d", view.TurnsOverLine)
 		}
+	}
+}
+
+// 只读路径同样不能推进：前端每次刷新胶囊都会调 Snapshot，它一旦顺手记一轮，
+// 用户看到的倒计时就比真实行为快，实测会出现「提示和自动压缩同一刻发生」。
+func TestHygieneReadPathDoesNotAdvanceTheCounter(t *testing.T) {
+	tracker := NewHygieneTracker(hygieneConfig())
+	seedActive(tracker, "root", "s1", 3)
+	for i := 0; i < 3; i++ {
+		view := tracker.Snapshot("root", "s1", "claude", 200000, 200000)
+		if view.TurnsOverLine != 0 || view.AutoCompactDue {
+			t.Fatalf("snapshot consumed a turn: %+v", view)
+		}
+	}
+	if view := tracker.Observe("root", "s1", "claude", 200000, 200000, true); view.TurnsOverLine != 1 {
+		t.Fatalf("observe after snapshots = %d, want 1", view.TurnsOverLine)
 	}
 }
 
@@ -141,32 +184,32 @@ func TestHygieneOnlyTurnEndsAdvanceTheCounter(t *testing.T) {
 func TestHygieneCompactionClearsHint(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
-	tracker.Observe("root", "s1", "claude", 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	// 压缩之后上下文仍然很大（真实压缩只是把历史摘要掉）：清提示不能靠
 	// 「掉出大档」这条分支顺带完成，MarkCompacted 必须自己把状态清干净。
 	base := time.Unix(1_700_000_000, 0)
 	tracker.markCompactedAt("root", "s1", base)
-	view := tracker.Snapshot("root", "s1", "claude", 200000)
-	if view.ActiveSeconds != 0 || view.TurnsSinceHint != 0 || view.State != HygieneStateNotice {
+	view := tracker.Snapshot("root", "s1", "claude", 200000, 200000)
+	if view.ActiveSeconds != 0 || view.TurnsOverLine != 0 || view.State != HygieneStateNotice {
 		t.Fatalf("snapshot after compaction = %+v, want fresh active time and no hint", view)
 	}
-	// 压缩后重新积累够「久」才重新进提示档，且提示出现的那一轮不计数。
+	// 压缩后重新积累够「久」才重新进提示档，且从第 1 轮重新数。
 	for i := 1; i <= 4; i++ {
 		tracker.ObserveAt("root", "s1", "claude", base.Add(time.Duration(i)*30*time.Minute))
 	}
-	first := tracker.Observe("root", "s1", "claude", 200000, true)
+	first := tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	if first.State != HygieneStateHint {
 		t.Fatalf("state after re-accumulating active time = %q, want hint", first.State)
 	}
-	if first.TurnsSinceHint != 0 {
-		t.Fatalf("re-hinted session counted the arrival turn: %d", first.TurnsSinceHint)
+	if first.TurnsOverLine != 1 {
+		t.Fatalf("re-hinted session = %d turns over line, want 1", first.TurnsOverLine)
 	}
 	if first.AutoCompactDue {
 		t.Fatal("re-hinted session must not be due on the arrival turn")
 	}
-	if first.TurnsUntilAutoCompact != 3 {
-		t.Fatalf("re-hinted session starts at %d turns until auto, want 3", first.TurnsUntilAutoCompact)
+	if first.TurnsUntilAutoCompact != 2 {
+		t.Fatalf("re-hinted session starts at %d turns until auto, want 2", first.TurnsUntilAutoCompact)
 	}
 }
 
@@ -174,7 +217,7 @@ func TestHygieneCompactionClearsHint(t *testing.T) {
 func TestHygieneActiveTimeIgnoresIdleGaps(t *testing.T) {
 	cfg := hygieneConfig()
 	cfg.ActiveSeconds = 3600
-	cfg.ContextTokens = 1
+	cfg.ContextPercent = 1
 	tracker := NewHygieneTracker(cfg)
 	base := time.Unix(1_700_000_000, 0)
 	tracker.ObserveAt("root", "s1", "claude", base)
@@ -182,7 +225,7 @@ func TestHygieneActiveTimeIgnoresIdleGaps(t *testing.T) {
 	tracker.ObserveAt("root", "s1", "claude", base.Add(30*time.Minute+5*time.Minute))
 	// 挂机 4 小时后回来：这一段不能计入。
 	tracker.ObserveAt("root", "s1", "claude", base.Add(4*time.Hour+35*time.Minute))
-	view := tracker.Snapshot("root", "s1", "claude", 1)
+	view := tracker.Snapshot("root", "s1", "claude", 1, 200000)
 	if view.ActiveSeconds != 35*60 {
 		t.Fatalf("active seconds = %d, want %d", view.ActiveSeconds, 35*60)
 	}
@@ -191,10 +234,10 @@ func TestHygieneActiveTimeIgnoresIdleGaps(t *testing.T) {
 func TestHygieneSessionsAreIsolated(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
-	view := tracker.Snapshot("root", "s2", "claude", 200000)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	view := tracker.Snapshot("root", "s2", "claude", 200000, 200000)
 	// 另一个会话只共享配置，不共享任何计数；它够大但不够久，停在 notice 档。
-	if view.State != HygieneStateNotice || view.TurnsSinceHint != 0 || view.TurnsUntilAutoCompact != -1 {
+	if view.State != HygieneStateNotice || view.TurnsOverLine != 0 || view.TurnsUntilAutoCompact != -1 {
 		t.Fatalf("session s2 inherited s1 state: %+v", view)
 	}
 }
@@ -204,11 +247,11 @@ func TestHygieneSessionsAreIsolated(t *testing.T) {
 func TestHygieneAutoFailureStopsRetries(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
-	tracker.Observe("root", "s1", "claude", 200000, true)
-	tracker.Observe("root", "s1", "claude", 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	tracker.MarkAutoFailed("root", "s1")
-	view := tracker.Observe("root", "s1", "claude", 200000, true)
+	view := tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	if view.AutoCompactDue {
 		t.Fatal("auto compaction must not be due after a failure")
 	}
@@ -216,7 +259,7 @@ func TestHygieneAutoFailureStopsRetries(t *testing.T) {
 		t.Fatal("view must report the previous failure")
 	}
 	tracker.MarkCompacted("root", "s1")
-	view = tracker.Observe("root", "s1", "claude", 200000, true)
+	view = tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	if view.State != HygieneStateNotice && view.AutoFailed {
 		t.Fatalf("compaction did not clear the failure: %+v", view)
 	}
@@ -227,14 +270,13 @@ func TestHygieneAutoFailureStopsRetries(t *testing.T) {
 func TestHygieneAutoCompactIsReportedOnlyOnce(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true)
-	tracker.Observe("root", "s1", "claude", 200000, true)
-	tracker.Observe("root", "s1", "claude", 200000, true)
-	if !tracker.Observe("root", "s1", "claude", 200000, true).AutoCompactDue {
-		t.Fatal("first due observation must report the trigger")
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true)
+	if !tracker.Observe("root", "s1", "claude", 200000, 200000, true).AutoCompactDue {
+		t.Fatal("third over-line turn must report the trigger")
 	}
 	for i := 0; i < 3; i++ {
-		view := tracker.Observe("root", "s1", "claude", 200000, true)
+		view := tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 		if view.AutoCompactDue {
 			t.Fatalf("due was reported again on follow-up observation %d", i)
 		}
@@ -244,11 +286,11 @@ func TestHygieneAutoCompactIsReportedOnlyOnce(t *testing.T) {
 	}
 	// 失败之后不再重试；一次真实压缩之后重新积累。
 	tracker.MarkAutoFailed("root", "s1")
-	if tracker.Observe("root", "s1", "claude", 200000, true).AutoCompactDue {
+	if tracker.Observe("root", "s1", "claude", 200000, 200000, true).AutoCompactDue {
 		t.Fatal("failed auto compaction must not be retried")
 	}
 	tracker.MarkCompacted("root", "s1")
-	view := tracker.Observe("root", "s1", "claude", 200000, true)
+	view := tracker.Observe("root", "s1", "claude", 200000, 200000, true)
 	if view.AutoCompactDue || view.AutoFailed {
 		t.Fatalf("compaction must clear the in-flight/failed state: %+v", view)
 	}
@@ -256,38 +298,43 @@ func TestHygieneAutoCompactIsReportedOnlyOnce(t *testing.T) {
 
 func TestHygieneConfigHarnessOverride(t *testing.T) {
 	cfg := HygieneConfig{
-		Enabled:       true,
-		ActiveSeconds: 7200,
-		ContextTokens: 140000,
-		HintTurns:     3,
+		Enabled:        true,
+		ActiveSeconds:  3600,
+		ContextPercent: 70,
+		OverLineTurns:  3,
 		Harness: map[string]HygieneConfig{
-			"codex": {ContextTokens: 180000, HintTurns: 2},
+			"codex": {ContextPercent: 80, OverLineTurns: 2},
 		},
 	}
 	tracker := NewHygieneTracker(cfg)
 	codex := tracker.ConfigFor("codex")
-	if codex.ContextTokens != 180000 || codex.HintTurns != 2 {
+	if codex.ContextPercent != 80 || codex.OverLineTurns != 2 {
 		t.Fatalf("codex override = %+v", codex)
 	}
-	if codex.ActiveSeconds != 7200 || !codex.Enabled {
+	if codex.ActiveSeconds != 3600 || !codex.Enabled {
 		t.Fatalf("codex override dropped global fields: %+v", codex)
 	}
 	claude := tracker.ConfigFor("claude")
-	if claude.ContextTokens != 140000 || claude.HintTurns != 3 {
+	if claude.ContextPercent != 70 || claude.OverLineTurns != 3 {
 		t.Fatalf("claude inherited codex override: %+v", claude)
 	}
 }
 
 func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
+	view := tracker.Snapshot("root", "s1", "claude", 200000, 200000)
+	if view.CompactPending || view.CompactError != "" {
+		t.Fatalf("fresh snapshot = %+v", view)
+	}
+
 	tracker.MarkCompactPending("root", "s1")
-	view := tracker.Snapshot("root", "s1", "claude", 200000)
-	if !view.CompactPending || view.CompactError != "" {
-		t.Fatalf("pending compact was not surfaced: %+v", view)
+	view = tracker.Snapshot("root", "s1", "claude", 200000, 200000)
+	if !view.CompactPending {
+		t.Fatalf("compact pending not visible: %+v", view)
 	}
 
 	tracker.FinishCompact("root", "s1", "codex thread error: token expired\nplease sign in again")
-	view = tracker.Snapshot("root", "s1", "claude", 200000)
+	view = tracker.Snapshot("root", "s1", "claude", 200000, 200000)
 	if view.CompactPending {
 		t.Fatalf("finished compact still pending: %+v", view)
 	}
@@ -296,7 +343,7 @@ func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {
 	}
 
 	tracker.MarkCompactPending("root", "s1")
-	view = tracker.Snapshot("root", "s1", "claude", 200000)
+	view = tracker.Snapshot("root", "s1", "claude", 200000, 200000)
 	if !view.CompactPending || view.CompactError != "" {
 		t.Fatalf("a new compact must clear the previous error: %+v", view)
 	}
@@ -307,17 +354,15 @@ func TestCompactPendingAndErrorAreVisibleInSnapshot(t *testing.T) {
 func TestHygieneStaleContextBlocksAutoCompactUntilCleared(t *testing.T) {
 	tracker := NewHygieneTracker(hygieneConfig())
 	seedActive(tracker, "root", "s1", 3)
-	tracker.Observe("root", "s1", "claude", 200000, true) // hint
-	for i := 0; i < 2; i++ {
-		tracker.Observe("root", "s1", "claude", 200000, true)
-	}
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true) // 第 1 轮
+	tracker.Observe("root", "s1", "claude", 200000, 200000, true) // 第 2 轮
 
 	tracker.MarkContextStale("root", "s1")
-	if view := tracker.Observe("root", "s1", "claude", 200000, true); view.AutoCompactDue {
+	if view := tracker.Observe("root", "s1", "claude", 200000, 200000, true); view.AutoCompactDue {
 		t.Fatal("stale context must not trigger another compaction")
 	}
 	tracker.ClearContextStale("root", "s1")
-	if view := tracker.Observe("root", "s1", "claude", 200000, true); !view.AutoCompactDue {
+	if view := tracker.Observe("root", "s1", "claude", 200000, 200000, true); !view.AutoCompactDue {
 		t.Fatalf("fresh context must release the gate: %+v", view)
 	}
 }

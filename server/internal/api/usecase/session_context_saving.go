@@ -60,13 +60,14 @@ func (s *Service) GetSessionContextSaving(ctx context.Context, in GetSessionCont
 
 // hygieneViewForSession 是只读判定：不推进轮数、不创建任何后台动作。
 func (s *Service) hygieneViewForSession(rootID string, current *session.Session) HygieneView {
-	tokens := 0
+	tokens, window := 0, 0
 	if current != nil {
 		tokens = current.LastContextWindow.TotalTokens
+		window = current.LastContextWindow.ModelContextWindow
 	}
 	if !hygieneAppliesToSession(current) {
-		return EvaluateHygiene(HygieneConfig{}, HygieneSnapshot{ContextTokens: tokens})
+		return EvaluateHygiene(HygieneConfig{}, HygieneSnapshot{ContextTokens: tokens, ContextWindow: window})
 	}
 	harness := hygieneHarnessForSession(current)
-	return s.hygieneTracker().Snapshot(rootID, current.Key, harness, tokens)
+	return s.hygieneTracker().Snapshot(rootID, current.Key, harness, tokens, window)
 }

@@ -8,18 +8,19 @@ import (
 
 // 会话卫生的默认策略。选这些数字的依据：
 //
-//   - 2 小时活跃：一次专注的深聊通常在 1–3 小时；低于 2 小时的会话压缩收益
-//     抵不过一次摘要请求。
-//   - 140k / 180k 上下文：两家 CLI 的自动压缩都在真实上下文 ~167k（100k rail
-//     折叠之后）附近触发，留出余量让我们先提醒、再由提示转自动。
-//   - 3 轮：用户看到提示后还有三次说话机会自己决定；「静默自动」不等于「立刻
-//     动手」。
+//   - 1 小时活跃（距上次压缩）：live compact 已经把「大」这一侧压住了，剩下的
+//     风险是长时间对话里反复累积的碎片；1 小时是用户观察到的、还愿意为一次摘要
+//     请求买单的间隔。
+//   - 上下文窗口的 70%：阈值必须相对窗口算。绝对 token 数在 200k 与 272k 窗口上
+//     含义完全不同 —— 同一个 140k 在 Claude 上已过半、在 Codex 上还没发力。
+//     窗口未知时按 200k 基准（见 usecase.hygieneDefaultContextWindow）。
+//   - 3 个连续过线回合：用户看到提示后还有机会自己决定；「静默自动」不等于
+//     「立刻动手」。中断过（某一轮不再过线）就重新攒。
 //   - 30 分钟空闲：挂机回来的会话不算「持续久」。
 const (
-	defaultHygieneActiveSeconds  = 2 * 3600
-	defaultHygieneContextTokens  = 140000
-	defaultHygieneCodexTokens    = 180000
-	defaultHygieneHintTurns      = 3
+	defaultHygieneActiveSeconds  = 3600
+	defaultHygieneContextPercent = 70
+	defaultHygieneOverLineTurns  = 3
 	defaultHygieneIdleGapSeconds = 1800
 )
 
@@ -29,8 +30,8 @@ func sessionHygieneConfigFromOptions(opts SessionHygieneOptions) usecase.Hygiene
 	cfg := usecase.HygieneConfig{
 		Enabled:        true,
 		ActiveSeconds:  defaultHygieneActiveSeconds,
-		ContextTokens:  defaultHygieneContextTokens,
-		HintTurns:      defaultHygieneHintTurns,
+		ContextPercent: defaultHygieneContextPercent,
+		OverLineTurns:  defaultHygieneOverLineTurns,
 		IdleGapSeconds: defaultHygieneIdleGapSeconds,
 	}
 	if opts.Enabled != nil {
@@ -39,22 +40,19 @@ func sessionHygieneConfigFromOptions(opts SessionHygieneOptions) usecase.Hygiene
 	if opts.ActiveSeconds > 0 {
 		cfg.ActiveSeconds = opts.ActiveSeconds
 	}
-	if opts.ContextTokens > 0 {
-		cfg.ContextTokens = opts.ContextTokens
+	if opts.ContextPercent > 0 {
+		cfg.ContextPercent = opts.ContextPercent
 	}
-	if opts.HintTurns > 0 {
-		cfg.HintTurns = opts.HintTurns
+	if opts.OverLineTurns > 0 {
+		cfg.OverLineTurns = opts.OverLineTurns
 	}
 	if opts.IdleGapSeconds > 0 {
 		cfg.IdleGapSeconds = opts.IdleGapSeconds
 	}
-	// Codex 的窗口比 Claude 大：同一个全局阈值会让它更早提示，且默认值应是
-	// 各自压缩点前一点。显式配置永远覆盖这一条。
-	if _, ok := opts.Harnesses["codex"]; !ok {
-		cfg.Harness = map[string]usecase.HygieneConfig{
-			"codex": {ContextTokens: defaultHygieneCodexTokens},
-		}
-	}
+	// 百分比阈值本身跨 harness 成立（各自按自己的窗口算），所以不再给 Codex
+	// 单独的内置绝对阈值 —— 那正是「同一策略在两种窗口上含义不同」的来源。
+	// 这里只保留用户显式写的覆盖，逐字段合并，不整体替换：只写
+	// `harness.codex.over_line_turns` 的人不该顺手把 codex 的窗口比例改回全局值。
 	for name, override := range opts.Harnesses {
 		key := strings.ToLower(strings.TrimSpace(name))
 		if key == "" {
@@ -63,18 +61,15 @@ func sessionHygieneConfigFromOptions(opts SessionHygieneOptions) usecase.Hygiene
 		if cfg.Harness == nil {
 			cfg.Harness = map[string]usecase.HygieneConfig{}
 		}
-		// 在既有覆盖（例如 codex 的内置 180k）上逐字段覆盖，而不是整体替换：
-		// 只写 `harness.codex.hint_turns` 的人不该顺手把 codex 的上下文阈值
-		// 悄悄改回全局值。
 		merged := cfg.Harness[key]
 		if override.ActiveSeconds > 0 {
 			merged.ActiveSeconds = override.ActiveSeconds
 		}
-		if override.ContextTokens > 0 {
-			merged.ContextTokens = override.ContextTokens
+		if override.ContextPercent > 0 {
+			merged.ContextPercent = override.ContextPercent
 		}
-		if override.HintTurns > 0 {
-			merged.HintTurns = override.HintTurns
+		if override.OverLineTurns > 0 {
+			merged.OverLineTurns = override.OverLineTurns
 		}
 		if override.IdleGapSeconds > 0 {
 			merged.IdleGapSeconds = override.IdleGapSeconds

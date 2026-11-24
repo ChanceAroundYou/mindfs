@@ -138,8 +138,12 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
   const hygieneBand = hygiene?.state === "hint" || hygiene?.state === "notice";
   const activeMinutes = Math.floor((hygiene?.active_seconds || 0) / 60);
   const hygieneTokens = formatTokenAmount(hygiene?.context_tokens || 0);
+  const hygieneLimit = hygiene?.context_limit || 0;
   const turnsUntilAuto = hygiene?.turns_until_auto_compact ?? -1;
-  if (hygieneBand && hygiene) {
+  // 这一对数据是「会话卫生」的全部可观测事实，和折叠省了多少无关：只要特性开着
+  // 就得能读到 —— 之前按档位隐藏，结果没到 notice/hint 的会话完全看不到自己
+  // 距上次压缩活跃了多久。
+  if (hygiene?.enabled) {
     rows.push(
       [
         t("contextSaving.hygieneActive"),
@@ -148,7 +152,12 @@ export function ContextSavingIndicator(props: ContextSavingIndicatorProps) {
           minutes: String(activeMinutes % 60),
         }),
       ],
-      [t("contextSaving.hygieneContext"), t("contextSaving.tokensValue", { count: hygieneTokens })],
+      [
+        t("contextSaving.hygieneContext"),
+        hygieneLimit > 0
+          ? t("contextSaving.hygieneContextValue", { tokens: hygieneTokens, limit: formatTokenAmount(hygieneLimit) })
+          : t("contextSaving.tokensValue", { count: hygieneTokens }),
+      ],
     );
     if (hygiene.state === "hint" && turnsUntilAuto >= 0) {
       rows.push([t("contextSaving.hygieneAutoIn"), t("contextSaving.hygieneAutoInValue", { count: String(turnsUntilAuto) })]);

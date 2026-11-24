@@ -117,7 +117,7 @@ func (s *Service) ensureOverflowCompact(in sendFailureContext) bool {
 		return false
 	}
 	tracker := s.hygieneTracker()
-	view := tracker.Snapshot(in.RootID, in.SessionKey, harness, 0)
+	view := tracker.Snapshot(in.RootID, in.SessionKey, harness, 0, in.Current.LastContextWindow.ModelContextWindow)
 	if view.AutoFailed {
 		return false
 	}

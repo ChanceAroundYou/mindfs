@@ -64,11 +64,19 @@ export type SessionHygieneState = "normal" | "notice" | "hint" | "disabled";
 export type SessionHygiene = {
   state: SessionHygieneState;
   enabled: boolean;
-  /** 累计活跃时长（秒）：空闲超过 idle gap 的时间段已被丢弃。 */
+  /** 距上次压缩的累计活跃时长（秒）：空闲超过 idle gap 的时间段已被丢弃。 */
   active_seconds: number;
   context_tokens: number;
-  hint_turns: number;
-  turns_since_hint: number;
+  /** 判定基准：harness 上报的上下文窗口（缺失时服务端按 200k 算）。 */
+  context_window: number;
+  /** 「大」的阈值：窗口的百分比。 */
+  context_percent: number;
+  /** 阈值换算出来的 token 数 = context_window * context_percent / 100。 */
+  context_limit: number;
+  /** 自动压缩前需要的连续过线回合数。 */
+  over_line_turns: number;
+  /** 已连续过线的回合数（含刚过线的那一轮）。 */
+  turns_over_line: number;
   /** < 0 表示没有倒计时（notice / normal 档）。 */
   turns_until_auto_compact: number;
   auto_compact_due: boolean;
