@@ -286,9 +286,31 @@ e2e 五场景全 PASS（`e2e/test_control_sync_pairing.py`，端口 7470/7471，
      health 200、`/api/node-info version=v0.5.5-1400`，安装文件 sha256 `69ac9aef…1a0cf` 等于
      release `mindfs_v0.5.5-1400_linux_amd64.tar.gz` 内 `mindfs`，配置里的 `auto_install:true`
      保留。隔离进程 / 端口 / 临时 worktree 已清，生产 7331 全程只读。
-   - **未验 / 边界**：`busy` 闸门只有单测，没有真机「有活跃会话时跳过、空闲后再装」的完整链路；
-     当前 release 已是最新版，当前版本实例不会再装，真机造 busy 需新 release 或改生产，均未授权。
-     本轮未再验 Windows 重启后的 BootTrigger 自启，也未模拟 GUI 双击安装器。
+   - **busy 闸门隔离集成验证（2026-11-24）**：不改仓库源码——用 `16c9dfa3` 的干净 detached
+     worktree + Go `-overlay` 注入测试文件，本地 `httptest` 提供真实 release 的
+     `release-notes-v0.5.5-1400.md`、签名 manifest 与 `mindfs_v0.5.5-1400_linux_amd64.tar.gz`，
+     `update.Service` 从旧版 `v0.5.5-1300`  discovery 出 `latest=0.5.5-1400 has_update=true`。
+     busy probe 接的是真实 `agent.Pool.HasAnyActiveUse`：有 active session 时
+     `autoInstallDecision=(false,busy)`、`auto_install.skip reason=busy`、安装触发器计数 **0**；
+     `finish()` 释放会话后 `(true,install)`、触发器计数 **1**、真的落盘安装 **22,220,962 B**。
+     变异把 `SetBusyProbe(pool.HasAnyActiveUse)` 去掉后测试在 busy 断言处红（trigger=1），
+     还原后复绿。没有碰生产配置、进程或 release；临时 worktree / overlay 文件在记录后清理。
+   - **hasee 整机重启后的 BootTrigger 自启（2026-11-24，获用户授权）**：重启前 PID 668、
+     Session 0、任务 `Running`、BootTrigger `True`、S4U、health 200 `role=control`、
+     version `v0.5.5-1400`、同步 `online / base_rev=92 / pending=0 / conflict=0`。
+     `shutdown.exe /r /t 5 /f /d p:4:1` 发出时间 `2026-11-24T10:57:40.6247920+08:00`；
+     重启后新 PID **4084**、Session 0、任务 `Running`、BootTrigger `True`、
+     `last_run=2026-11-24T10:58:41.0000000+08:00`、`start_time=2026-11-24T10:58:41.7356307+08:00`、
+     `:7332` LISTENING 由 4084 持有，health 200 `role=control`，version `v0.5.5-1400`，
+     同步仍 `online / base_rev=92 / pending=0 / conflict=0`。PID 与 StartTime 都变化且晚于开机，
+     证明是整机重启后的 BootTrigger 拉起，不是任务重启冒充。
+   - **GUI 双击未验（2026-11-24）**：当前工具集没有 Windows MCP；用 PowerShell 探针取证：
+     `query.exe user` / `quser.exe` 均 0 行、`Win32_ComputerSystem.UserName=[]`、
+     `explorer_count=0`；mindfs PID 4084 在 Session 0；Session 1 只有 `winlogon` / `LogonUI`
+     / `dwm` / `csrss` 等登录阶段进程，没有 Explorer 或可交互桌面。安装器文件
+     `C:\Users\<中文用户名>\mindfs-setup.exe`（16,898,303 B）确实存在，但无法对不存在的
+     用户桌面做真实双击。用户已授权虚拟点击脚本，前提是存在可注入会话；本环境不满足，
+     因此仍只认此前的 ssh `Start-Process` 非交互安装证据，不把命令行启动升级成「GUI 双击已验」。
      本机与 wsl / fn / pc-win 在**发布当轮**未分发、未重启；随后另一批已于 2026-11-24 部署
      `v0.5.5-1400-12-ge2be3c18` 到四端（见 `docs/plans/README.md` 部署状态），本机运行进程仍待用户重启。
 
