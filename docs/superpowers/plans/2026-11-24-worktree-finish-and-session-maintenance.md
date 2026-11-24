@@ -324,9 +324,11 @@ repoint 与真机大数据图片续聊未验。
 - `TestAutoFinishRetryTriggerNeedsTerminalTask`：任务没进终态时收敛点不补排。
 
 **取舍**：`waiting_user` 行或图里永远不会被 claim 的下游节点会让 Run 一直算 open，
-自动收尾被推迟、树保留；手工「收尾」按钮仍是逃生口。生产库只读核查：52 个终态
-`create_worktree=1` 任务（其中 44 个挂了 workflow run）里，严格门禁只挡 1 个
-（`task_39c5ae0402585f89`，行 `waiting_user`，其 worktree 目录已不存在），眼下 0 个真实回归。
+自动收尾被推迟、树保留；手工「收尾」按钮仍是逃生口。顶层 Loop 容器同理 —— 它没有顶层
+行、投影里的 running 只有内层迭代行支撑，而内层行不参与 Run 级闸门，所以带 Loop 且被
+操作员终态的任务也会被推迟（生产库当前 0 个 Loop 图，属设计后果而非已观测回归）。
+生产库只读核查：52 个终态 `create_worktree=1` 任务（其中 44 个挂了 workflow run）里，
+严格门禁只挡 1 个（`task_39c5ae0402585f89`，行 `waiting_user`，其 worktree 目录已不存在）。
 
 ### 收尾修复与隔离端到端（2026-11-24）
 
