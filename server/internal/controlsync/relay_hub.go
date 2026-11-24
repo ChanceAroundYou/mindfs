@@ -33,12 +33,14 @@ type RelayHub struct {
 	mu    sync.Mutex
 	edges map[string]*relayEdge // instance id → 活着的隧道
 
-	// idleTimeout 是空闲数据通道的最长等待。超过就主动关掉，让边控端按需再拨；
-	// 否则连接池会在 NAT 上留下大量已经死掉但又没被发现的连接。
-	idleTimeout time.Duration
 	// acquireTimeout 是请求等一条空闲通道的最长时间。等不到回 503 relay_busy，
 	// 语义与既有的 primary_unreachable 同一档（前端已有处理路径）。
 	acquireTimeout time.Duration
+
+	// 这里刻意**没有**「空闲通道过期」：池子里的连接是边控端拨出来、由它决定
+	// 保持多久的。主控单方面到期关掉一条健康的空闲通道，边控端只会立刻重拨一条，
+	// 换来一次跨网握手和一段没有通道可借的空窗。真死掉的连接由控制通道断开
+	// （Register 换池 / Unregister）统一清掉。
 }
 
 type relayEdge struct {
@@ -51,11 +53,10 @@ type relayEdge struct {
 	tunnelAt time.Time
 }
 
-// NewRelayHub 建一个空的 hub。两个超时都为零时取默认值。
+// NewRelayHub 建一个空的 hub。
 func NewRelayHub() *RelayHub {
 	return &RelayHub{
 		edges:          make(map[string]*relayEdge),
-		idleTimeout:    2 * time.Minute,
 		acquireTimeout: 5 * time.Second,
 	}
 }
@@ -139,7 +140,27 @@ func (h *RelayHub) OnlineNames() []string {
 	return out
 }
 
+// HasRoom 报告这条隧道的空闲通道池还能不能再收一条连接。
+//
+// 必须在 WebSocket 升级**之前**问：先升级再 Attach 失败，边控端看到的是一条刚
+// 建好就被关掉的连接，它分不清「主控没有空位」和「网络抖了一下」，于是立刻重拨。
+// 池满时这会变成每秒上千次带签名的握手，而每次握手都白吃一次跨网 TLS。
+func (h *RelayHub) HasRoom(instanceID string) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	edge, ok := h.edges[strings.TrimSpace(instanceID)]
+	h.mu.Unlock()
+	if !ok {
+		return false
+	}
+	return edge.hasRoom()
+}
+
 // Attach 把一条已升级的数据通道交进池子。池满时返回 false，调用方应当关掉它。
+// 正常路径上 Attach 不该失败（handleRelayChannel 已先用 HasRoom 问过），
+// 失败只发生在并发争抢那一瞬间。
 func (h *RelayHub) Attach(instanceID string, conn net.Conn) bool {
 	if h == nil || conn == nil {
 		return false
@@ -168,6 +189,16 @@ func (h *RelayHub) Acquire(ctx context.Context, instanceID string) (net.Conn, er
 		return nil, ErrRelayOffline
 	}
 	return edge.acquire(ctx, h.acquireTimeout)
+}
+
+func (e *relayEdge) hasRoom() bool {
+	e.mu.Lock()
+	closed := e.closed
+	e.mu.Unlock()
+	if closed {
+		return false
+	}
+	return len(e.idle) < cap(e.idle)
 }
 
 func (e *relayEdge) attach(conn net.Conn) bool {

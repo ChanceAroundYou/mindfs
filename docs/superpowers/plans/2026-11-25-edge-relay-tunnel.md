@@ -42,19 +42,35 @@ Plan 2026-11-25。设计正文见
    永远看不到（第一次总是成功）。改成第二次 `Accept` 立刻返回 + `closeSignalConn`
    等请求真的结束 + 每条 worker 循环重拨。`api/relay_e2e_test.go` 的
    `TestRelayEndToEndReplenishesChannels`（6 次顺序请求 > IdleChannels=2）钉住它。
+5. **握手风暴 + 永久 502**（2026-11-25 隔离端到端实测，460→833 次/秒）。三处缺陷叠加，
+   任一没补都照样转：
+   - 边控端的数据通道 http.Server 照搬了通用模板 `ReadHeaderTimeout: 30s`。可这条连接
+     的正常状态就是**空闲地摆在主控池子里等请求**，30 秒一到边控端自己把它掐死。日志
+     时间对得上：04:07:27 建池，04:08:22 起雪崩（≈55s，含 8 条 worker 错峰）。
+   - 主控 hub 的 `idleTimeout` 声明了、默认值也填了，**全仓无人读**。死连接永不淘汰，
+     8 个槽位被尸体占满。
+   - 主控 handler 先 `Upgrade` 再 `Attach`，满了就静默 close。边控端分不清「没空位」和
+     「网抖了」，`Serve` 立刻返回 → worker 无条件重拨。
+   修法：边控端通道服务器三个超时全零（`newChannelServer`）；主控 `HasRoom` 在升级前
+   检查、满回 429；边控端 worker 对「没服务过请求的通道」指数退避（`ReconnectMin` 起，
+   封顶 5s），错误里带上 HTTP 状态码。
+   验证：隔离双实例（7441/7442）连上后空闲 90s 拨号数 **0**、20 并发全 200、1MB 直读
+   通过、WS 101 透传、边控端重启后自动重连。四次变异（`HasRoom` 恒真 / 去掉升级前检查 /
+   恢复 `ReadHeaderTimeout` / 去掉 worker 退避）各自让对应测试转红。
 
 ## 测试（针对性，全部已通过 + 变异验证）
 
 | 测试文件 | 钉住什么 |
 |---|---|
-| `controlsync/relay_hub_test.go` | 离线/忙区分、借出即交入、池满拒绝、重连替旧池、迟到注销不误杀、名字分配四规则与幂等 |
+| `controlsync/relay_hub_test.go` | 离线/忙区分、借出即交入、池满拒绝、`HasRoom` 四个状态（未登记/新建/满/注销）、重连替旧池、迟到注销不误杀、名字分配四规则与幂等 |
 | `controlsync/relay_conn_test.go` | 多消息在字节层无缝拼接、单次写落成一条消息 |
-| `controlsync/relay_lifecycle_test.go` | 一次性 listener 第二次 Accept 立即返回、关连接发信号、并发数受 MaxChannels 限制、拨号失败退避 |
+| `controlsync/relay_lifecycle_test.go` | 一次性 listener 第二次 Accept 立即返回、关连接发信号、并发数受 MaxChannels 限制、拨号失败退避（**由 worker 循环退避、`serveOneChannel` 自己不再睡**）、500ms 内重拨次数 < 8、通道服务器三个超时全为零、没服务过请求的通道报 `errChannelUnused`、服务过请求的不报错、拨号失败的 error 带上 429 状态码 |
 | `controlsync/relay_tunnel_test.go` | https-only、必填项、缺省值补齐 |
 | `controlsync/store_relay_name_test.go` | 旧库补列后空串、持久化可解析、唯一冲突、未登记拒绝、幂等、映射不含未命名 |
 | `controlsync/runtime_online_users_test.go` | 在线采纳账户副本、`@primary` 在账户之后、交接同序、删除传播 |
 | `auth/store_primary_test.go` | `SetPrimary` 幂等（mtime 不变）、换主账户真落盘 |
 | `api/relay_test.go` | 路径穿越全拒、直通路径、错误码（404/403/503/502）、借通道失败映射、查询串保留、签名覆盖查询 |
+| `api/relay_channel_capacity_test.go` | 池满在升级**之前**回 429（不是 101+close）、有空位不被误拒、没有控制通道回 409 |
 | `api/relay_e2e_test.go` | 真实 TLS+WS+ReverseProxy 主线：前缀被剥离、查询串保留、256KB 响应体完整、下线后 503 |
 | `app/relay_service_test.go` | 上线发布节点记录（基址+前缀+分配名字、`Remote`、`relay:` 前缀 id）、回落到请求基址、无基址不发、按实例幂等、下线保留记录 |
 | `cli/cmd/control_sync_test.go` | `relay_name` / `relay_base_url` 从 config.json 到启动参数的映射（写反了只表现为「配了不生效」） |

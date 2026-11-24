@@ -178,10 +178,21 @@ func (h *HTTPHandler) handleRelayChannel(w http.ResponseWriter, r *http.Request)
 		respondError(w, http.StatusConflict, errRelayOffline)
 		return
 	}
+	// 池满必须在**升级之前**拒。先交出 101 再 close，边控端看到的是一条刚建好
+	// 就被掐断的连接，它分不清「主控没有空位」和「网络抖了一下」，于是立刻重拨；
+	// 池子长期满着的时候这就是每秒上千次带签名的跨网握手（实测 460→833 次/秒）。
+	// 回 429 是个明确的、可退避的信号：gorilla 的 Dial 会把它变成
+	// ErrBadHandshake + resp.StatusCode，边控端据此指数退避。
+	if !h.ControlSyncRelay.Hub().HasRoom(instanceID) {
+		respondError(w, http.StatusTooManyRequests, errInvalidRequest("relay pool full"))
+		return
+	}
 	conn, err := relayUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
+	// HasRoom 与 Attach 之间还有极窄的争抢窗口。真撞上了只能关掉，但对端已经
+	// 拿到 101，所以这条通道算「没服务过请求」——边控端会退避后再拨，不会再热循环。
 	if !h.ControlSyncRelay.Hub().Attach(instanceID, newWSConnFromUpgrade(conn)) {
 		_ = conn.Close()
 		return

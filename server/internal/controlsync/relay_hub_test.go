@@ -94,6 +94,33 @@ func TestRelayHubAttachRejectsWhenPoolFull(t *testing.T) {
 	}
 }
 
+// HasRoom 必须在升级**之前**就能回答「还收不收得下」。它想错的方向决定两种故障：
+// 该 false 却 true → 边控端拿到 101 再被关掉（热循环）；该 true 却 false →
+// 池子永远停在半空（并发被白白压掉一半）。
+func TestRelayHubHasRoom(t *testing.T) {
+	h := NewRelayHub()
+	if h.HasRoom("hasee") {
+		t.Fatal("未登记的实例不该有空位")
+	}
+	pool, err := h.Register("hasee", "hasee", 2)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if !h.HasRoom("hasee") {
+		t.Fatal("新建的池子应有空位")
+	}
+	if !h.Attach("hasee", &fakeConn{}) || !h.Attach("hasee", &fakeConn{}) {
+		t.Fatal("两条通道都该被收下")
+	}
+	if h.HasRoom("hasee") {
+		t.Fatal("池子已满却仍报告有空位")
+	}
+	h.Unregister(pool)
+	if h.HasRoom("hasee") {
+		t.Fatal("注销后不该有空位")
+	}
+}
+
 // 重连时 Register 替换旧隧道，旧池里的空闲通道必须被关掉：
 // 对端已经不读它们了，留着只会让请求被派到死连接上。
 func TestRelayHubRegisterReplacesAndClosesOldPool(t *testing.T) {

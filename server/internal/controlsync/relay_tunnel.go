@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -372,11 +373,51 @@ func (c *TunnelClient) runChannelPool(ctx context.Context) {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
+			backoff := c.opts.ReconnectMin
 			for ctx.Err() == nil {
-				c.serveOneChannel(ctx)
+				if err := c.serveOneChannel(ctx); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					c.report(err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(backoff):
+					}
+					backoff = nextChannelBackoff(backoff, c.opts.ReconnectMin, channelBackoffMax)
+					continue
+				}
+				backoff = c.opts.ReconnectMin
 			}
 		}()
 	}
+}
+
+// channelBackoffMax 是数据通道重拨退避的上限。
+//
+// 它比控制通道的 ReconnectMax（30s）小得多，因为两者的代价不同：控制通道断了整条
+// 隧道都不存在，多等一会儿无所谓；数据通道是每次请求都要用的热路径，池子缺一条就
+// 少一份并发，退避太长的直接表现是「隧道明明在线，头几个请求却 503」。
+const channelBackoffMax = 5 * time.Second
+
+// nextChannelBackoff 返回下一次重拨前的等待：从 min 起翻倍，封顶 max。
+//
+// 必须指数退避而不是固定间隔：失败里混着「主控池子满了」（429）这种完全正常的
+// 状态——主控已经有 IdleChannels 条通道时，多拨的那条一定会被拒。固定间隔会让
+// 每条 worker 每秒都去撞一次门；指数退避把这种情况下的拨号速率压到可以忽略。
+func nextChannelBackoff(cur, min, max time.Duration) time.Duration {
+	if cur <= 0 {
+		cur = min
+	}
+	next := cur * 2
+	if next < min {
+		next = min
+	}
+	if max > 0 && next > max {
+		next = max
+	}
+	return next
 }
 
 // channelWorkers 决定并发服务多少条数据通道：min(IdleChannels, MaxChannels)。
@@ -393,20 +434,12 @@ func channelWorkers(idle, max int) int {
 
 // serveOneChannel 拨一条数据通道，交给主控，然后服务到这条通道结束。
 //
-// 拨不通时退避后返回，由 runChannelPool 的循环再试：少一条连接不该让整台机器
-// 的隧道永久缺额（NAT 抖动、RST 之后都会走到这条路径）。
-func (c *TunnelClient) serveOneChannel(ctx context.Context) {
-	conn, _, err := c.dialChannel(ctx)
+// 返回 nil 表示这条通道跑完了自己的那一份（服务过请求，或被主控正常收回）；
+// 返回错误表示这次根本没跑起来，调用方应当退避后再试。
+func (c *TunnelClient) serveOneChannel(ctx context.Context) error {
+	conn, err := c.dialChannel(ctx)
 	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		c.report(err)
-		select {
-		case <-ctx.Done():
-		case <-time.After(c.opts.ReconnectMin):
-		}
-		return
+		return err
 	}
 	defer conn.Close()
 
@@ -416,11 +449,19 @@ func (c *TunnelClient) serveOneChannel(ctx context.Context) {
 	// 必须等这条连接真的被服务完（server 读完响应后关掉它）才返回：Serve 只负责
 	// 把连接交给一个 goroutine，它自己立刻就因为「没有第二条连接」返回了。
 	// 早返回会让 defer conn.Close() 在响应还没写完时掐断隧道。
+	//
+	// **这里刻意不设 ReadHeaderTimeout。** 这条连接的正常状态就是「空闲地摆在主控
+	// 的池子里等请求」，可能等上几分钟；按「读完请求头」的超时去掐它，等于每 30 秒
+	// 杀掉一条健康通道。主控池子里于是留下死连接（它还以为是活的），边控端则立刻
+	// 重拨 —— 两边叠加就是 2026-11-25 实测的每秒 460→833 次握手风暴，以及
+	// 「隧道在线但每个请求都 502」。通道的寿命只有两个主人：主控借出去（用完关掉）
+	// 和控制通道断开（sessionCtx 取消 → srv.Close）。
+	var served atomic.Bool
 	wrapped := &closeSignalConn{Conn: NewWSConn(conn), done: make(chan struct{})}
-	srv := &http.Server{
-		Handler:           c.handler,
-		ReadHeaderTimeout: 30 * time.Second,
-	}
+	srv := newChannelServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served.Store(true)
+		c.handler.ServeHTTP(w, r)
+	}))
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -432,14 +473,34 @@ func (c *TunnelClient) serveOneChannel(ctx context.Context) {
 	_ = srv.Serve(&oneShotListener{conn: wrapped})
 	select {
 	case <-ctx.Done():
+		return nil
 	case <-wrapped.done:
 	}
+	if !served.Load() {
+		// 主控建好又立刻收回：要么 HasRoom/Attach 撞了窗口，要么对端压根没打算用。
+		// 一次请求都没派过来还无条件立刻重拨，就是热循环的另一半。
+		return errChannelUnused
+	}
+	return nil
 }
 
-func (c *TunnelClient) dialChannel(ctx context.Context) (*websocket.Conn, *http.Response, error) {
+// errChannelUnused 表示一条数据通道从头到尾没服务过任何请求。
+var errChannelUnused = errors.New("controlsync: relay channel closed before serving a request")
+
+// newChannelServer 是数据通道上那个 http.Server 的唯一构造点。
+//
+// 三个超时**全部为零**，每一条都是有意为之：
+//   - ReadHeaderTimeout：通道的正常状态是空闲等待，不是「马上就有请求」。
+//   - ReadTimeout / WriteTimeout：一次请求可能跑很久（大文件下载、WS 会话流），
+//     它们的寿命由请求本身与客户端决定。
+func newChannelServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler}
+}
+
+func (c *TunnelClient) dialChannel(ctx context.Context) (*websocket.Conn, error) {
 	base, err := url.Parse(c.opts.PrimaryURL)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	target := *base
 	toWSScheme(&target)
@@ -451,13 +512,23 @@ func (c *TunnelClient) dialChannel(ctx context.Context) (*websocket.Conn, *http.
 	header := http.Header{}
 	req := &http.Request{Method: http.MethodGet, URL: &target, Header: header}
 	if err := SignSyncRequest(req, c.opts.Token, c.opts.InstanceID, []byte(target.RawQuery), time.Now()); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	dialer, err := c.websocketDialer(base)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return dialer.DialContext(ctx, target.String(), header)
+	conn, resp, err := dialer.DialContext(ctx, target.String(), header)
+	if err != nil {
+		// 状态码是关键证据：429 是「池子满了」（正常，退避即可），403/409 是
+		// 「这台机器不该在这里」（被踢 / 没有控制通道）。只报 bad handshake 的话
+		// 日志里两者长得一模一样。
+		if resp != nil {
+			return nil, fmt.Errorf("controlsync: relay channel dial: %w (status %d)", err, resp.StatusCode)
+		}
+		return nil, fmt.Errorf("controlsync: relay channel dial: %w", err)
+	}
+	return conn, nil
 }
 
 func (c *TunnelClient) report(err error) {

@@ -15807,7 +15807,7 @@ groups:
     title: "边控端反向接入：主控 /relay/<edge-name>/ 经长连接承载边缘 HTTP 面"
     kind: feature
     symptom: "没有公网域名/端口的边缘控制端（hasee，办公室 NAT 后）在主控上无法被其他设备访问；其他设备的节点表里也没有它的可达地址。"
-    why: "用户场景：hasee 在办公室、主控在家（外网可达）、手机在任何地方，只要连上主控就要能用 hasee。上游没有任何 relay/反向隧道实现；合上游时丢掉这套，边缘就只剩「同一局域网内直连」一种用法。实现刻意不加 relay 侧鉴权（用户裁定「完全按主控」）：relay 只透传主控本就匿名可达的 API 暴露面，引入第二套凭据反而制造假边界。名字由主控分配并唯一落库（`edges.relay_name`），因为地址会进其他设备的节点表，重连/重启都不能变；握手复用既有 HMAC 同步签名。"
+    why: "用户场景：hasee 在办公室、主控在家（外网可达）、手机在任何地方，只要连上主控就要能用 hasee。上游没有任何 relay/反向隧道实现；合上游时丢掉这套，边缘就只剩「同一局域网内直连」一种用法。实现刻意不加 relay 侧鉴权（用户裁定「完全按主控」）：relay 只透传主控本就匿名可达的 API 暴露面，引入第二套凭据反而制造假边界。名字由主控分配并唯一落库（`edges.relay_name`），因为地址会进其他设备的节点表，重连/重启都不能变；握手复用既有 HMAC 同步签名。数据通道的寿命只由主控借出与控制通道断开决定：边控端不在空闲通道上设读超时（空闲等待是正常状态），主控池满时在 WS 升级**之前**回 429，边控端对「没服务过请求的通道」指数退避（上限 5s）。三条一起才是防热循环的完整闭环——只补其中一条，2026-11-25 实测的每秒 460→833 次握手风暴照样复现。"
     files:
       - server/internal/controlsync/relay_hub.go
       - server/internal/controlsync/relay_conn.go
@@ -15833,6 +15833,7 @@ groups:
       - server/internal/controlsync/store_relay_name_test.go
       - server/internal/api/relay_test.go
       - server/internal/api/relay_e2e_test.go
+      - server/internal/api/relay_channel_capacity_test.go
       - server/app/relay_service_test.go
       - cli/cmd/control_sync_test.go
     anchors:
@@ -15842,6 +15843,11 @@ groups:
       - 'server/internal/controlsync/relay_tunnel.go:func channelWorkers(idle, max int) int {'
       - 'server/internal/controlsync/relay_tunnel.go:type oneShotListener struct {'
       - 'server/internal/controlsync/relay_lifecycle_test.go:func TestOneShotListenerSecondAcceptReturnsImmediately(t *testing.T) {'
+      - 'server/internal/controlsync/relay_lifecycle_test.go:func TestChannelPoolDoesNotHotLoopOnDialFailure(t *testing.T) {'
+      - 'server/internal/controlsync/relay_lifecycle_test.go:func TestChannelServerHasNoHeaderReadTimeout(t *testing.T) {'
+      - 'server/internal/api/relay_channel_capacity_test.go:func TestRelayChannelFullPoolIs429NotUpgrade(t *testing.T) {'
+      - 'server/internal/controlsync/relay_tunnel.go:func nextChannelBackoff(cur, min, max time.Duration) time.Duration {'
+      - 'server/internal/controlsync/relay_hub.go:func (h *RelayHub) HasRoom(instanceID string) bool {'
       - 'server/internal/controlsync/relay_tunnel.go:type TunnelOptions struct {'
       - 'server/internal/controlsync/store_edges.go:var ErrRelayNameTaken = errors.New("control_sync: relay name already taken")'
       - 'server/internal/api/relay.go:func splitRelayPath(p string) (name, rest string, ok bool) {'
