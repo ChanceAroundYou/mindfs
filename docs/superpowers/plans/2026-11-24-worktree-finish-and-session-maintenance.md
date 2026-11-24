@@ -297,3 +297,35 @@ sessionmaintenance、api、app、cli 全绿；`usecase` 的全量并发跑出现
 `~/.agents/claude/scripts/session_*.py` 均未删除。图片清理仍整文件读入，空闲检查与改写之间
 存在 TOCTOU 窗口；锁清理只处理 `<pid>.json`，不碰可能的 `.key` 旁车文件。Codex 桌面端并发
 repoint 与真机大数据图片续聊未验。
+
+### 收尾修复与隔离端到端（2026-11-24）
+
+- `99099cf4`：`POST /api/sessions/runtime-issues/sweep` 原先只读 `root_id` / URL 段，不认
+  `?root=`，与同族 diagnose 端点不一致；隔离实例实测报 `root_id is required`。已补查询参数
+  兜底并加回归用例（变异：去掉兜底 → 用例红）。
+- 同一提交把巡检的活跃会话判据与单会话维护统一到 `sessionMaintenanceBusy`：必须优先查带
+  harness 前缀的真实 pool 键，裸键只是兼容兜底；否则会话在回复时巡检可能误判为空闲并
+  `pool.Close` 腰斩半句话。变异（退回裸键）打红源码契约用例。
+
+隔离实例 `scripts/mindfs-iso.sh`（端口 7437，独立 config / 项目，生产 7331 全程只读）：
+
+1. 造 codex 会话 `work_dir=/tmp/mindfs-gqv-iso/deleted-worktree` 并停服写库，重启后启动自动
+   巡检在 21:46:02 记 `[session-maintenance] repoint gqv-runtime-e2e:` 与
+   `[session/repoint] done ... agent=codex old=thread-gqv-e2e new=thread-gqv-e2e`；thread id
+   不变、零转录搬移。此后 `GET runtime-issues` 为 `{"scanned":1,"issues":[]}`。
+2. 运行中再造一条 `gqv-runtime-manual`，`GET runtime-issues` 返回
+   `workdir-missing`；`POST runtime-issues/sweep?root=proj` 带 `{"apply":true}` 返回
+   `repaired=1 / skipped=0 / failed=0`，复诊 `issues=[]`。
+3. 造 Claude 真 JSONL（2 行、240,330 B，其中 base64 图片 240,000 B）并绑 uuid：diagnose
+   报 `image_bytes=240207`；`POST .../maintenance/images/clean` 返回 `removed_images=1`
+   / `reclaimed_bytes=240023`，文件降到 307 B、`.bak` 保留 240,330 B，`uuid` 与
+   `parentUuid` 链不变，图片块换成完整 text 块；`GET /api/sessions/{key}` 200 可打开。
+4. Codex 会话的 `images/clean` 与 `purge?confirm=true` 均显式 400（「当前 harness 不支持
+   安全改写图片块」/「harness "codex" 不支持安全判定空会话」），没有静默降级。
+5. 未触发真实 `clean-locks`：diagnose 列出的是用户 `~/.claude/sessions/` 的存量锁，
+   删除它们属于用户数据改动，本轮只观察不执行。
+
+夹具（含 `.bak` 与隔离 DB 行）已清，隔离进程已停。门禁：`make check-upstream` 2732 delta /
+400 组全绿；`go test -count=1 ./...` 首轮唯一红是既有 flake
+`TestCoordinatorCrashReplayCompletesWithoutModelCall`（`sql: database is closed`），单跑
+`-count=3` 全绿，复跑全量确认。前端门禁沿用上一轮结果（本轮只改 Go）。
