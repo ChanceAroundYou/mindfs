@@ -16499,11 +16499,6 @@ groups:
       - 'web/src/components/task/ActivityMessage.tsx:export function attentionSeverityColor(severity: string | undefined): string {'
       - 'web/src/components/task/ActivityTypeTag.tsx:style={color ? { ...activityMetaPillStyle, color } : activityMetaPillStyle}'
       - 'web/tests/activity-attention-inline.test.mjs:test("提醒按 severity 着色：info 浅灰 / warning 黄 / error 红，全部走现有 token", () => {'
-      - 'web/src/components/task/ActivityMessage.tsx:const isAttention = activity.type === "attention";'
-      - 'web/src/components/task/ActivityMessage.tsx:data-testid={isAttention ? "activity-attention-bubble" : undefined}'
-      - 'web/src/components/task/ActivityMessage.tsx:const attentionBubbleStyle: React.CSSProperties = {'
-      - 'web/src/components/task/ActivityMessage.tsx:  ...userBubbleStyle,'
-      - 'web/tests/activity-attention-bubble.test.mjs:test("提醒渲染成居中气泡：四角一致、灰底、文本左对齐", () => {'
 
   # ── scope-id claim 占位 ──────────────────────────────────────────────
   # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
@@ -16619,9 +16614,11 @@ groups:
       - 'web/src/app/useTaskBoard.ts:carryTaskNodeTag(detail, detail?.task?.id ? taskDetailsByIdRef.current[String(detail.task.id)] : undefined),'
       - 'web/tests/task-node-tag-carry.test.mjs:test("裸详情继承在册归属：服务端不返 _nodeId，刷新不能把标抹掉", () => {'
 
-  # ── scope-id claim 占位 ──────────────────────────────────────────────
-  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
-  - id: G-RT
+  # ── 撞号说明（2026-11-25 合回 main 后改号）──────────────────────────
+  # G-RT 已由较早的 f75d75f3（跨节点归属修复，20:25）先登记；较晚的
+  # 4f4d73b3（任务卡 Router 标记，20:54）重复取号。按「先引入者保留、后来者让号」
+  # 改为 G-RW；组号只增不减、不回填空洞。提交信息中的历史 Scope: G-RT 保持不变。
+  - id: G-RW
     title: "任务卡显示 Router 自行派发的提问角标，并显示最新一条分级提醒"
     kind: feature
     symptom: |
