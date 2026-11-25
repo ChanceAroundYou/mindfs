@@ -15803,7 +15803,7 @@ groups:
       - 'docs/superpowers/plans/2026-11-24-codex-compact-stream-end.md:# codex 手动 `/compact` 不再误报「response stream ended unexpectedly」'
 
   # ── 边控端反向接入（Edge Relay Tunnel）──────────────────────────────
-  - id: G-RC
+  - id: G-RF
     title: "边控端反向接入：主控 /relay/<edge-name>/ 经长连接承载边缘 HTTP 面"
     kind: feature
     symptom: "没有公网域名/端口的边缘控制端（hasee，办公室 NAT 后）在主控上无法被其他设备访问；其他设备的节点表里也没有它的可达地址。"
@@ -15858,7 +15858,7 @@ groups:
       - 'server/app/relay_service.go:func relayBaseFromConfig(primaryURL string) string {'
       - 'server/app/relay_service.go:func (r *relayService) OnTunnelUp(ctx context.Context, instanceID, name, publicBase string) {'
       - 'server/app/relay_service_test.go:func TestRelayServiceOnTunnelUpPublishesNodeRecord(t *testing.T) {'
-  - id: G-RD
+  - id: G-RG
     title: "边缘在线时采纳主控账户表，relay 请求用它解析身份"
     kind: fix
     symptom: '经 /mindfs/relay/<edge-name>/ 打进来的页面能打开、内容全空；Workspace("xiaokubao") 落到 emptyWorkspace —— 边缘本机 users.json 只有它自己的 admin。'

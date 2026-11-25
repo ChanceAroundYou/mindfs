@@ -1,6 +1,7 @@
 # 边控端反向接入（Edge Relay Tunnel）执行计划
 
-> Scope IDs: G-RC / G-RD / G-RE（claimed 2026-11-24T18:50Z）
+> Scope IDs: G-RF / G-RG / G-RE（claimed 2026-11-24T18:50Z；合回 main 前因与 main 上更早占用的
+> 组号冲突，按「后来者让号」整体改号，原号见提交历史）
 
 Plan 2026-11-25。设计正文见
 [2026-11-25-edge-relay-tunnel-design.md](../specs/2026-11-25-edge-relay-tunnel-design.md)。
