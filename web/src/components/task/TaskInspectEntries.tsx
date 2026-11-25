@@ -3,14 +3,22 @@ import { useI18n } from "../../i18n/index";
 import { ChevronIcon } from "../common/ChevronIcon";
 import { RunViewEntry } from "./RunViewEntry";
 import { SupervisionEntry } from "./SupervisionEntry";
+import { TaskCompletionEntry } from "./TaskCompletionEntry";
+import { completionStatusKey } from "./taskCompletionModel";
+import { useTaskCompletion } from "./useTaskCompletion";
 
-// 任务详情里的两个只读入口：执行详情 + 监管记录。
+// 任务详情里的三个只读入口：执行详情 + 监管记录 + 完成证据。
 //
-// 用户要求（2026-11-21）：两个小胶囊始终存在于同一行；展开互斥——点开一个就
+// 用户要求（2026-11-21）：小胶囊始终存在于同一行；展开互斥——点开一个就
 // 收起另一个；每个胶囊自己带人字箭头（展开时转 90°），一眼能看出当前展开的是哪个。
 //
-// 互斥靠这里唯一的一份 openSection 状态，不靠两个子组件各自记 open：两个独立
+// 互斥靠这里唯一的一份 openSection 状态，不靠各子组件自己记 open：多个独立
 // 布尔值一旦都能为 true，就会同时展开。子组件只负责面板内容，按钮不在里面。
+//
+// 完成证据（2026-11-25）：以前它常驻展开挂在胶囊行下面，长任务的验收项会把详情页
+// 底部铺成一墙文字。改成同一行的第三个胶囊后，底部只剩一行胶囊；它是否出现仍由
+// 「有没有完成记录」决定，所以取数也提到这一层（useTaskCompletion），胶囊才能按
+// loaded + present 决定显不显示。
 
 export type TaskInspectEntriesProps = {
   rootId: string;
@@ -25,7 +33,7 @@ export type TaskInspectEntriesProps = {
   onOpenSession: (sessionKey: string) => void;
 };
 
-type InspectSection = "run" | "supervision";
+type InspectSection = "run" | "supervision" | "completion";
 
 export function TaskInspectEntries({
   rootId,
@@ -38,10 +46,15 @@ export function TaskInspectEntries({
 }: TaskInspectEntriesProps) {
   const { t } = useI18n();
   const [openSection, setOpenSection] = useState<InspectSection | null>(null);
+  const completionState = useTaskCompletion(rootId, taskId, nodeId, refreshKey);
 
   const toggle = useCallback((section: InspectSection) => {
     setOpenSection((current) => (current === section ? null : section));
   }, []);
+
+  const completion = completionState.completion;
+  const showCompletion = completionState.loaded && !!completion && completion.present;
+  const completionStatus = completion ? completionStatusKey(completion.status) : null;
 
   return (
     <div data-testid="task-inspect-entries" style={containerStyle}>
@@ -60,6 +73,18 @@ export function TaskInspectEntries({
           open={openSection === "supervision"}
           onClick={() => toggle("supervision")}
         />
+        {showCompletion ? (
+          // 状态词进胶囊标题：「待补做」这类信息不该非要再点一次才看得见。
+          <InspectCapsule
+            testId="completion-toggle"
+            controls="task-completion-panel"
+            label={completionStatus
+              ? `${t("task.completion.title")} · ${t(completionStatus)}`
+              : t("task.completion.title")}
+            open={openSection === "completion"}
+            onClick={() => toggle("completion")}
+          />
+        ) : null}
       </div>
       <RunViewEntry
         rootId={rootId}
@@ -77,6 +102,13 @@ export function TaskInspectEntries({
         nodeId={nodeId}
         refreshKey={refreshKey}
         open={openSection === "supervision"}
+      />
+      <TaskCompletionEntry
+        completion={completion}
+        loaded={completionState.loaded}
+        loading={completionState.loading}
+        error={completionState.error}
+        open={openSection === "completion"}
       />
     </div>
   );
@@ -140,4 +172,3 @@ const capsuleOpenStyle: React.CSSProperties = {
   color: "var(--text-primary)",
   fontWeight: 600,
 };
-

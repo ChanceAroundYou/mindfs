@@ -224,7 +224,9 @@ def login(page: Page, app_url: str, user: dict[str, str] = TEST_USER) -> None:
     page.fill('input[autocomplete="current-password"]', user["password"])
     # 密码框的 Enter 直接触发 submit()，比找按钮稳
     page.press('input[autocomplete="current-password"]', "Enter")
-    page.wait_for_selector('[data-onboarding="workspace"]', timeout=60_000)
+    # 工作区的稳定锚点：主视图切换器（role=tablist）。首开向导已在 G-RO 删除，
+    # 原先的 data-onboarding="workspace" 不复存在。
+    page.wait_for_selector('[role="tablist"]', timeout=60_000)
     skip_tour(page)
 
 
