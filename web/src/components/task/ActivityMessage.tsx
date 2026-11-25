@@ -264,7 +264,6 @@ const metaTimeStyle: React.CSSProperties = {
   opacity: 0.5,
 };
 
-
 const userRowStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -337,7 +336,6 @@ const footerItemStyle: React.CSSProperties = {
   fontVariantNumeric: "tabular-nums",
   opacity: 0.5,
 };
-
 
 const footerButtonStyle: React.CSSProperties = {
   border: "none",
