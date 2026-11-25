@@ -18,7 +18,7 @@ import (
 // 工作区给出 pass/fail/uncertain。
 //
 // 三条约束来自 spec §6.4.2：
-//   - 复核不能占 Router 回合：apply 只落 verifying 就返回，判定在后台跑，90s 上限；
+//   - 复核不能占 Router 回合：apply 只落 verifying 就返回，判定在后台跑；
 //   - 只走 Claude：ToolPolicy 只有 Claude 适配器能强制，别的 harness 上「只读」没有保证；
 //   - 复核是模型判定，不是证明：结论落库并如实展示，不被当成机检证据。
 
@@ -30,9 +30,31 @@ const (
 	CompletionVerdictFail      = "fail"
 	CompletionVerdictUncertain = "uncertain"
 
-	// completionVerifierTimeout 是复核回合的上限。它比 Router 回合（180s）短得多：
-	// 复核失败不致命，按未完成处理即可，没必要拖住补做节奏。
-	completionVerifierTimeout = 90 * time.Second
+	// completionVerifierIdleTimeout 是「多久没有任何新事件」的预算，不是总时长。
+	//
+	// 2026-11-25 现场：复核在工作区里读了 73 次、跑了 5 分 43 秒并算出 pass，
+	// 却被 120 秒硬超时拦腰砍断，结论没人收，界面只剩「正在独立复核」。复核要
+	// 核对的是真实产物，耗时由任务规模决定；只有长时间毫无事件才说明卡住。
+	completionVerifierIdleTimeout = 90 * time.Second
+
+	// completionVerifierMaxRuntime 是单个复核回合的总上限（含持续有事件的
+	// 情况）：再长的复核也不该无限占着 agent 池与 token。
+	completionVerifierMaxRuntime = 10 * time.Minute
+
+	// completionVerifierStaleAfter 是「没有采集者了」的判定线：看门狗与启动
+	// 对账都按它区分「还在跑」与「早已无人收口」。
+	completionVerifierStaleAfter = completionVerifierMaxRuntime + 2*time.Minute
+
+	// completionVerifierStaleMinutes 是上面那条线的分钟数，只用于用户可见文案，
+	// 避免把 12m0s 这种格式直接写进消息。
+	completionVerifierStaleMinutes = int(completionVerifierStaleAfter / time.Minute)
+
+	// completionVerifierFallbackTimeout 约束复核失败后的收尾写库/关会话：
+	// 这些动作必须用脱离原 ctx 的 context，不能跟着已经超时的回合一起死。
+	completionVerifierFallbackTimeout = 10 * time.Second
+
+	// completionVerifierWatchdogInterval 是运行期看门狗的扫描间隔。
+	completionVerifierWatchdogInterval = time.Minute
 
 	completionVerifierSessionPrefix = "verify-"
 	completionVerifierPromptLimit   = 2000
@@ -143,14 +165,15 @@ func (s *Service) beginCompletionVerification(ctx context.Context, store *TaskSt
 		return err
 	}
 	s.noteCompletionSystemRow(ctx, store, task, "completion-verifying:"+decision.ID,
-		"完成声明已受理：这一轮没有可机检的完成契约，正在独立复核（只读会话，约一分钟）。复核通过就自动收尾，不通过会告诉你还差什么。",
+		"完成声明已受理：这一轮没有可机检的完成契约，正在独立复核（只读会话，通常几分钟；持续有进展就不会被切断）。复核通过就自动收尾，不通过会告诉你还差什么。",
 		decision.ID)
 	s.startCompletionVerification(task.ID, runID, decision.ID)
 	return nil
 }
 
 // startCompletionVerification 起后台复核。用独立 ctx：Router 回合结束后回合 ctx
-// 就被取消，复核会跟着死；这里只受 90s 上限约束。
+// 就被取消，复核会跟着死。这里只设总上限；「卡住」由回合层的空闲判据
+// （RouterAgentRequest.Timeout）负责，避免仍在产出时被硬切。
 func (s *Service) startCompletionVerification(taskID, runID, decisionID string) {
 	if s == nil {
 		return
@@ -161,7 +184,7 @@ func (s *Service) startCompletionVerification(taskID, runID, decisionID string) 
 				log.Printf("[completion-verifier] panic task=%s decision=%s: %v", taskID, decisionID, r)
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), completionVerifierTimeout+30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), completionVerifierMaxRuntime)
 		defer cancel()
 		if err := s.verifyCompletion(ctx, taskID, runID, decisionID); err != nil {
 			log.Printf("[completion-verifier] task=%s decision=%s: %v", taskID, decisionID, err)
@@ -207,11 +230,18 @@ func (s *Service) verifyCompletion(ctx context.Context, taskID, runID, decisionI
 	}
 	raw, turnErr := s.runCompletionVerifierTurn(ctx, store, task, run, report, summary, key)
 	if turnErr != nil {
-		s.noteCompletionSystemRow(ctx, store, task, "completion-verifier-unavailable:"+decision.ID,
+		// 收尾不能再用回合 ctx：复核失败最常见的原因就是它已经超时/被取消
+		// （2026-11-25 120 秒硬切现场），此时用同一个 ctx 写「复核不可用」系统行、
+		// 把任务转 waiting_user 都会失败，且 SQL 错误被静默吞掉 —— 界面于是永远
+		// 停在「正在独立复核」。这里换成脱离取消的 ctx，并显式关掉被放弃的运行时。
+		s.closeAbandonedVerifierRuntime(ctx, task, key)
+		fallbackCtx, cancelFallback := completionVerifierFallbackContext(ctx)
+		defer cancelFallback()
+		s.noteCompletionSystemRow(fallbackCtx, store, task, "completion-verifier-unavailable:"+decision.ID,
 			"独立复核不可用（"+turnErr.Error()+"），按未完成处理：需要你确认这一轮是否真的做完了。",
 			decision.ID)
-		s.parkForUser(ctx, store, task)
-		return s.blockCompletion(ctx, store, task, run, report, decision)
+		s.parkForUser(fallbackCtx, store, task)
+		return s.blockCompletion(fallbackCtx, store, task, run, report, decision)
 	}
 	verdict, findings, parseErr := parseVerifierVerdict(raw)
 	if parseErr != nil {
@@ -347,12 +377,42 @@ func (s *Service) runCompletionVerifierTurn(ctx context.Context, store *TaskStor
 		Effort:                config.Effort,
 		Prompt:                completionVerifierPrompt(task, run, report, summary, latestUserMessageBody(ctx, store, task.ID)),
 		DeveloperInstructions: completionVerifierInstructions,
-		Timeout:               completionVerifierTimeout,
+		// 空闲判据：只有连续这么久没有任何事件才算卡住。总上限由外层 ctx 管。
+		Timeout: completionVerifierIdleTimeout,
 	})
 	if err != nil {
 		return "", err
 	}
 	return res.FinalText, nil
+}
+
+// completionVerifierFallbackContext 给「回合已经失败」之后的收尾动作一个不受
+// 原 ctx 取消影响的短期 ctx。复核失败十有八九就发生在 ctx 超时/取消之后，
+// 沿用原 ctx 会让系统行、park、block 三件事一起静默失败。
+func completionVerifierFallbackContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if ctx != nil {
+		base = context.WithoutCancel(ctx)
+	}
+	return context.WithTimeout(base, completionVerifierFallbackTimeout)
+}
+
+// closeAbandonedVerifierRuntime 关掉被放弃的复核会话运行时。
+//
+// SendMessage 在 ctx 超时/取消后返回，但底层 CLI 进程未必跟着退出（2026-11-25
+// 现场它又跑了近 4 分钟、烧掉一轮 token 才输出结论，而那时已经没人读了）。
+// 关闭失败只记日志：它不影响收尾写库。
+func (s *Service) closeAbandonedVerifierRuntime(ctx context.Context, task Task, key string) {
+	if s == nil || s.routerAgent == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	closeCtx, cancel := completionVerifierFallbackContext(ctx)
+	defer cancel()
+	if err := s.routerAgent.CloseRouterSession(closeCtx, task.RootID, key); err != nil {
+		log.Printf("[completion-verifier] task=%s close runtime session=%s: %v", task.ID, key, err)
+		return
+	}
+	log.Printf("[completion-verifier] task=%s closed abandoned runtime session=%s", task.ID, key)
 }
 
 // completionVerifierWorkspace 给复核选一个能看见产出的目录：优先任务 worktree，
@@ -434,35 +494,156 @@ func completionClaimSummary(decision RouterDecision) string {
 
 // reconcileVerifyingCompletions 把停在 verifying 的行收口成 blocked：复核是后台
 // goroutine，进程一死就没人把结论写回来，不收拾的话任务会永远显示「复核中」。
+//
+// 进程重启只是最后一根稻草：如果这条记录在重启前就已经超过无人收口的时间线，
+// 文案必须说「早已超时」而不是「被重启打断」——2026-11-25 现场就是这样，复核
+// 120 秒就被砍断，27 分钟后重启却把原因写成了重启。
 func (s *Service) reconcileVerifyingCompletions(ctx context.Context, store *TaskStore) {
 	rows, err := store.ListVerifyingCompletions(ctx)
 	if err != nil {
 		log.Printf("[completion-verifier] list verifying: %v", err)
 		return
 	}
+	now := time.Now().UTC()
 	for _, row := range rows {
 		task, err := store.GetTask(ctx, row.TaskID)
 		if err != nil {
+			log.Printf("[completion-verifier] reconcile task=%s read: %v", row.TaskID, err)
 			continue
 		}
-		if err := store.UpsertTaskCompletion(ctx, TaskCompletion{
-			TaskID:          row.TaskID,
-			RunID:           row.RunID,
-			Status:          CompletionStatusBlocked,
-			ReportJSON:      row.ReportJSON,
-			VerifierKey:     row.VerifierKey,
-			VerifierVerdict: row.VerifierVerdict,
-			DecisionID:      row.DecisionID,
-			RepairsUsed:     row.RepairsUsed,
-			UpdatedAt:       time.Now().UTC(),
-		}); err != nil {
+		if completionVerificationAbandoned(row, now) {
+			if err := s.settleVerifyingCompletion(ctx, store, task, row,
+				"completion-verifier-timeout:"+row.TaskID,
+				fmt.Sprintf("复核早已超时未收口（最后一次进展距今超过 %d 分钟），本次启动只是补做对账：按未完成处理，需要你确认是否真的做完了。", completionVerifierStaleMinutes)); err != nil {
+				log.Printf("[completion-verifier] reconcile task=%s: %v", row.TaskID, err)
+			}
+			continue
+		}
+		if err := s.settleVerifyingCompletion(ctx, store, task, row,
+			"completion-verifier-interrupted:"+row.TaskID,
+			"复核被重启打断：这一轮还没有复核结论，按未完成处理。需要你确认是否真的做完了。"); err != nil {
 			log.Printf("[completion-verifier] reconcile task=%s: %v", row.TaskID, err)
+		}
+	}
+}
+
+// completionVerificationAbandoned 报告一条 verifying 记录是否已经过了无人收口
+// 的时间线。UpdatedAt 是复核开始（最近一次 status=verifying 写入）的时刻；零值
+// 是历史数据，交给启动对账按「被重启打断」处理。
+func completionVerificationAbandoned(row TaskCompletion, now time.Time) bool {
+	if row.Status != CompletionStatusVerifying || row.UpdatedAt.IsZero() {
+		return false
+	}
+	return now.Sub(row.UpdatedAt) > completionVerifierStaleAfter
+}
+
+// settleVerifyingCompletion 把一条 verifying 记录收成 blocked，并留一条可核对
+// 的系统行。activityID 同时是去重身份：同一任务同一种原因只留一条。
+func (s *Service) settleVerifyingCompletion(ctx context.Context, store *TaskStore, task Task, row TaskCompletion, activityID, body string) error {
+	if err := store.UpsertTaskCompletion(ctx, TaskCompletion{
+		TaskID:          row.TaskID,
+		RunID:           row.RunID,
+		Status:          CompletionStatusBlocked,
+		ReportJSON:      row.ReportJSON,
+		VerifierKey:     row.VerifierKey,
+		VerifierVerdict: row.VerifierVerdict,
+		DecisionID:      row.DecisionID,
+		RepairsUsed:     row.RepairsUsed,
+		UpdatedAt:       time.Now().UTC(),
+	}); err != nil {
+		return err
+	}
+	s.noteCompletionSystemRow(ctx, store, task, activityID, body, row.DecisionID)
+	return nil
+}
+
+// StartCompletionVerifierWatchdog 起运行期复核看门狗：启动时不扫（启动对账由
+// RecoverOnStartupForRoot 负责），之后每分钟把「早已无人收口」的 verifying 行
+// 收成 blocked。没有它的话，复核 goroutine 一旦异常退出（panic 被 recover 后
+// 只剩一行日志），界面会一直停在「正在独立复核」，直到下一次进程重启。
+func (s *Service) StartCompletionVerifierWatchdog(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	s.verifierWatchOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(completionVerifierWatchdogInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s.SweepStaleCompletionVerifications(ctx)
+				}
+			}
+		}()
+	})
+}
+
+// SweepStaleCompletionVerifications 扫一遍所有 root 的超时 verifying 行，返回
+// 本轮收口的条数。单个 root 失败只记日志，不影响其它 root。
+func (s *Service) SweepStaleCompletionVerifications(ctx context.Context) int {
+	if s == nil || s.Roots == nil {
+		return 0
+	}
+	now := time.Now().UTC()
+	total := 0
+	for _, root := range s.Roots.ListRoots() {
+		store, err := s.taskStore(root.ID)
+		if err != nil {
+			log.Printf("[completion-verifier] watchdog root=%s store: %v", root.ID, err)
 			continue
 		}
-		s.noteCompletionSystemRow(ctx, store, task, "completion-verifier-interrupted:"+row.TaskID,
-			"复核被重启打断：这一轮还没有复核结论，按未完成处理。需要你确认是否真的做完了。",
-			row.DecisionID)
+		rows, err := store.ListVerifyingCompletions(ctx)
+		if err != nil {
+			log.Printf("[completion-verifier] watchdog root=%s list: %v", root.ID, err)
+			continue
+		}
+		for _, row := range rows {
+			if !completionVerificationAbandoned(row, now) {
+				continue
+			}
+			task, err := store.GetTask(ctx, row.TaskID)
+			if err != nil {
+				log.Printf("[completion-verifier] watchdog task=%s read: %v", row.TaskID, err)
+				continue
+			}
+			run, runErr := s.completionRunByID(ctx, store, row.RunID)
+			if runErr != nil {
+				run = nil
+			}
+			reason, err := s.completionVerifierStaleReason(ctx, store, task, run)
+			if err != nil {
+				log.Printf("[completion-verifier] watchdog task=%s stale check: %v", row.TaskID, err)
+				continue
+			}
+			if reason != "" {
+				// 任务已结束或已起新一轮执行：结论本来也不会被采用，只归档，
+				// 绝不能把正在跑的新一轮打成 waiting_user。
+				if err := s.settleVerifyingCompletion(ctx, store, task, row,
+					"completion-verifier-stale:"+row.TaskID,
+					"独立复核结论未采用："+reason+"。这条复核记录只做归档。"); err != nil {
+					log.Printf("[completion-verifier] watchdog task=%s stale settle: %v", row.TaskID, err)
+					continue
+				}
+				total++
+				continue
+			}
+			if err := s.settleVerifyingCompletion(ctx, store, task, row,
+				"completion-verifier-timeout:"+row.TaskID,
+				fmt.Sprintf("复核长时间没有结论（超过 %d 分钟没有收口），按未完成处理：需要你确认这一轮是否真的做完了。", completionVerifierStaleMinutes)); err != nil {
+				log.Printf("[completion-verifier] watchdog task=%s timeout settle: %v", row.TaskID, err)
+				continue
+			}
+			s.parkForUser(ctx, store, task)
+			total++
+		}
 	}
+	if total > 0 {
+		log.Printf("[completion-verifier] watchdog settled=%d", total)
+	}
+	return total
 }
 
 // noteCompletionSystemRow 写一条确定性系统行：同一条决策重放不会多出一条。
@@ -478,7 +659,13 @@ func (s *Service) noteCompletionSystemRow(ctx context.Context, store *TaskStore,
 		RouterDecisionID: decisionID,
 	}
 	created, err := NewActivityStore(store.db).InsertOrIgnore(ctx, row)
-	if err != nil || !created {
+	if err != nil {
+		// 这条写入失败以前是完全静默的：复核在超时 ctx 上写「不可用」系统行，
+		// SQL 拿到 context canceled 后什么都没留下，日志里也查不到原因。
+		log.Printf("[completion-verifier] note row id=%s task=%s: %v", id, task.ID, err)
+		return
+	}
+	if !created {
 		return
 	}
 	s.broadcastWorkflowActivity(ctx, store, row, created, nil)
