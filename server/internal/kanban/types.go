@@ -60,9 +60,16 @@ type Task struct {
 	// RouterAlert 是任务卡角标（W3-4）：Router 还没处理完的巡检/恢复事件。
 	// 派生值，不落库 —— 由事件账本状态现算（见 task_router_alert.go），
 	// 处理完自然消失。
-	RouterAlert    *TaskRouterAlert `json:"router_alert,omitempty"`
-	WorktreeRootID string           `json:"worktree_root_id,omitempty"`
-	WorktreePath   string           `json:"worktree_path,omitempty"`
+	RouterAlert *TaskRouterAlert `json:"router_alert,omitempty"`
+	// RouterAsk 是任务卡上的 Router 提问角标：Router 自己派发的 ask
+	// （session_key 为空的 waiting_user 提问卡）。会话 worker 透传的 ask 走
+	// AuxFlags.AskUserWaiting，两者分源，不互相置位。派生值，不落库。
+	RouterAsk *TaskRouterAsk `json:"router_ask,omitempty"`
+	// LatestAttention 是该任务最新一条可见提醒（attention），severity 决定卡片
+	// 着色。派生值，不落库；空 severity 由前端按 info 处理，兼容存量行。
+	LatestAttention *TaskLatestAttention `json:"latest_attention,omitempty"`
+	WorktreeRootID  string               `json:"worktree_root_id,omitempty"`
+	WorktreePath    string               `json:"worktree_path,omitempty"`
 	// WorktreeBuilt 报告这个任务**曾经建出过一个 worktree**。
 	//
 	// 为什么要有它：WorktreePath 为空有两种相反的含义 ——

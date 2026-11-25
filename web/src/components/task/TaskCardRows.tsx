@@ -14,10 +14,14 @@ import { TaskCardFinishButton } from "./TaskCardFinishButton";
 import { TASK_ACTION_BUTTON_META, taskActionButtons } from "./taskCardActions";
 import { taskActionIcons } from "./taskActionIcons";
 import { taskRouterAlertBadge } from "./routerAlertModel";
+import { taskRouterAskBadge } from "./routerAskModel";
+import { attentionSeverityColor, normalizeAttentionSeverity } from "./ActivityMessage";
+import { activityMetaPillStyle } from "./ActivityTypeTag";
 import {
   TASK_CONTROL_GAP,
   TaskPlanAuxIcon,
   TaskRouterAlertIcon,
+  TaskRouterAskIcon,
   TaskSessionErrorIcon,
   taskActionIconStyle,
   taskAuxBadgeStyle,
@@ -98,11 +102,28 @@ export function TaskCardRows({
   // Router 角标（W3-4）：健康事件还没被 Router 处理时点亮，处理完服务端就
   // 不再下发 router_alert，卡片随之恢复干净 —— 语义在服务端，这里只负责画。
   const routerAlert = taskRouterAlertBadge(task);
+  // Router 自己派发的提问（与 worker 透传 ask 分源）。两个徽标各有 key 与文案，
+  // 同时存在时并列显示，不合并也不互相置位。
+  const routerAsk = taskRouterAskBadge(task);
+  // 最新一条提醒：沿用详情里“类型胶囊 + 正文”的样式，颜色由 severity 决定。
+  const latestAttention = task.latest_attention;
+  const latestAttentionText = latestAttention?.body ? summaryPlainText(latestAttention.body) : "";
+  const latestAttentionTone = attentionSeverityColor(latestAttention?.severity);
   // 摘要按纯文本渲染（S8）：卡片没有 Markdown 解析器，`**结论**`、反引号与表格
   // 原样显示就是一串符号。title 与正文同源，悬停看到的与卡片上的一致。
   const resultSummary = task.result_summary ? summaryPlainText(task.result_summary) : "";
   const auxBadges = [
     auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
+    routerAsk
+      ? {
+          key: routerAsk.key,
+          label: routerAsk.question
+            ? t("task.routerAskWaitingTitle", { question: routerAsk.question })
+            : t("task.routerAskWaiting", { count: String(routerAsk.count) }),
+          icon: <TaskRouterAskIcon />,
+          attention: routerAsk.attention,
+        }
+      : null,
     routerAlert
       ? {
           key: routerAlert.key,
@@ -243,6 +264,39 @@ export function TaskCardRows({
         </span>
       </div>
       {children}
+      {latestAttentionText ? (
+        <div
+          data-testid="task-card-attention"
+          data-severity={normalizeAttentionSeverity(latestAttention?.severity)}
+          title={latestAttentionText}
+          style={{
+            marginTop: "6px",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "5px",
+            minWidth: 0,
+          }}
+        >
+          <span style={{ ...activityMetaPillStyle, color: latestAttentionTone, flex: "0 0 auto" }}>
+            {t("task.activity.type.attention")}
+          </span>
+          <span
+            style={{
+              color: latestAttentionTone,
+              fontSize: "11px",
+              lineHeight: "16px",
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              wordBreak: "break-word",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {latestAttentionText}
+          </span>
+        </div>
+      ) : null}
       {resultSummary ? (
         <div
           data-testid="task-card-result"

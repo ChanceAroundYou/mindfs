@@ -73,6 +73,25 @@ export type KanbanTask = {
     count?: number;
     since?: string;
   };
+  /**
+   * Router 自己派发的提问（后端派生字段，不落库）。与会话 worker 透传的 ask
+   * （`aux_flags.ask_user_waiting`）分源：这里只认 `session_key` 为空的
+   * `waiting_user` 提问卡。
+   */
+  router_ask?: {
+    count?: number;
+    since?: string;
+    question?: string;
+  };
+  /**
+   * 最新一条可见提醒（后端派生字段，不落库）。severity 为 info / warning / error，
+   * 存量行可能为空（按 info 着色）。
+   */
+  latest_attention?: {
+    body?: string;
+    severity?: string;
+    created_at?: string;
+  };
 };
 
 export type TaskEvent = {
