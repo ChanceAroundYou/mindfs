@@ -1,10 +1,11 @@
 import { useCallback, useState } from "react";
 import { appPath, appURL } from "../services/net/base";
-import { protectedJSON as apiProtectedJSON } from "../services/net/api";
+import { ProtectedAPIError, protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { getActiveNode, LOCAL_NODE_ID } from "../services/net/nodeRegistry";
+import { promptDialog } from "../services/dialog";
 import { managedDirAddErrorMessage, type LocalDirsPayload, type ManagedRootPayload } from "./appMisc";
 import { useI18n } from "../i18n";
-import type { GitHubImportState, LocalDirBrowserState, ProjectAddMode } from "../shared/projectAddTypes";
+import type { GitHubImportState, LocalDirBrowserState, LocalDirItem, ProjectAddMode } from "../shared/projectAddTypes";
 
 type OpenDirPayload = { path: string; root: string; isRoot: boolean; forceDirectory?: boolean };
 
@@ -118,6 +119,71 @@ export function useProjectDirectoryBrowser({
   const localPath = localDirState.path;
   const selectedPath = localDirState.selectedPath;
   const adding = localDirState.adding;
+  const creating = localDirState.creating === true;
+
+  /**
+   * 在当前浏览目录下就地新建文件夹，建完继续导入。
+   *
+   * 两条收尾按模式分开：加入本地目录（"local"）是要把某个已存在目录登记成项目，
+   * 所以建完把新目录设为 **选中**，用户再点「添加」；空白项目 / GitHub / worktree
+   * 的按钮语义是「放置于此目录」，所以直接 **进入** 新目录，让后续动作落在它上面。
+   */
+  const handleLocalDirCreate = useCallback(async () => {
+    const parentPath = String(localPath || "").trim();
+    if (!parentPath || creating) return;
+    const input = await promptDialog({ message: t("projectAdd.newFolderPrompt") });
+    if (input === null) return;
+    const name = input.trim();
+    if (!name || name === "." || name === ".." || /[/\\\x00]/.test(name)) {
+      setLocalDirState((prev) => ({ ...prev, error: t("directory.invalidFileName") }));
+      return;
+    }
+    setLocalDirState((prev) => ({ ...prev, creating: true, error: "" }));
+    const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+    try {
+      const payload = await apiProtectedJSON<{ path?: string }>(
+        appURL("/api/local_dirs", undefined, targetCreateNodeId),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: parentPath, name }),
+        },
+      );
+      const createdPath = String(payload?.path || "").trim();
+      if (!createdPath) throw new Error(t("projectAdd.newFolderFailed"));
+      if (projectAddMode === "local") {
+        // 加入本地目录：留在父目录，把新目录插进列表并选中，交给「添加」。
+        const item: LocalDirItem = {
+          name,
+          path: createdPath,
+          is_dir: true,
+          is_added_root: false,
+          root_id: "",
+        };
+        setLocalDirState((prev) => ({
+          ...prev,
+          creating: false,
+          selectedPath: createdPath,
+          items: [...prev.items, item].sort((a, b) => a.name.localeCompare(b.name)),
+        }));
+        return;
+      }
+      // 其余模式：进入新目录，「放置于此目录」即落在它上面。
+      setLocalDirState((prev) => ({ ...prev, creating: false }));
+      void loadLocalDirs(createdPath, targetCreateNodeId);
+    } catch (error) {
+      setLocalDirState((prev) => ({
+        ...prev,
+        creating: false,
+        error: error instanceof ProtectedAPIError && error.status === 409
+          ? t("directory.fileExists")
+          : String((error as Error)?.message || t("projectAdd.newFolderFailed")),
+      }));
+    }
+  }, [
+    creating, loadLocalDirs, localPath, projectAddMode, projectAddNodeId, t,
+  ]);
+
   const handleLocalDirAdd = useCallback(async () => {
     const path = String(selectedPath || "").trim();
     if (adding) return;
@@ -173,7 +239,7 @@ export function useProjectDirectoryBrowser({
     setGitHubImportState, setProjectAddMode, t,
   ]);
 
-  return { localDirState, setLocalDirState, loadLocalDirs, openDirectoryPicker, handleLocalDirSelect, handleLocalDirAdd };
+  return { localDirState, setLocalDirState, loadLocalDirs, openDirectoryPicker, handleLocalDirSelect, handleLocalDirAdd, handleLocalDirCreate };
 }
 
 function mapLocalDirItem(item: NonNullable<LocalDirsPayload["items"]>[number]) {

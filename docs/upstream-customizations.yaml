@@ -8957,7 +8957,7 @@ groups:
       - 'server/internal/kanban/service_workflow_workspace.go:release, err = s.AcquireWorkflowSharedTreeWriter(ctx, task.ID, node, lease.RootPath, branch)'
       - 'cli/cmd/mindfs.go:flag.Bool("workflow-parallel-main-tree", true,'
       - 'server/app/workspace.go:func (s sharedServices) parallelMainTreeEnabled() bool {'
-      - 'server/app/server.go:parallelMainTree: &opts.WorkflowParallelMainTree'
+      - 'server/app/server.go:parallelMainTree:   &opts.WorkflowParallelMainTree'
 
   # ── Router route 模式：真正接管任务回合 ─────────────────────────────────
   - id: G-MC
@@ -10448,7 +10448,7 @@ groups:
       - 'server/internal/api/appcontext_activity.go:Model:           s.taskModelFor(agentName),'
       - 'server/internal/api/appcontext_activity.go:func (s *AppContext) taskModelFor(agentName string) string {'
       - 'server/app/server.go:func taskConfigFromOptions(opts StartOptions) taskConfig {'
-      - 'server/app/server.go:taskConfig:       taskConfigFromOptions(opts),'
+      - 'server/app/server.go:taskConfig:         taskConfigFromOptions(opts),'
       - 'server/app/workspace_build.go:TaskModel: m.shared.taskConfig.Model,'
       - 'cli/cmd/startup.go:Task     *startupTaskConfig     `json:"task"`'
       - 'cli/cmd/mindfs.go:TaskModel:                          taskModel,'
@@ -12536,7 +12536,7 @@ groups:
       - 'server/internal/api/http_routes.go:r.Post("/api/sessions/{key}/compact", h.handleSessionCompact)'
       - 'server/internal/api/appcontext.go:func (s *AppContext) SessionHygiene() *usecase.HygieneTracker {'
       - 'server/app/session_hygiene.go:func sessionHygieneConfigFromOptions(opts SessionHygieneOptions) usecase.HygieneConfig {'
-      - 'server/app/server.go:hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),'
+      - 'server/app/server.go:hygiene:            sessionHygieneConfigFromOptions(opts.SessionHygiene),'
       - 'cli/cmd/startup.go:func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {'
       - 'web/src/services/agent/contextSaving.ts:export type SessionHygiene = {'
       - 'web/src/services/agent/contextSaving.ts:export async function compactSession('
@@ -14558,11 +14558,14 @@ groups:
   - id: G-QD
     title: "Scope 组号治理：脚本取号、门禁查重、撞号裁决"
     kind: deploy
-    symptom: "同一个 G-XX 在 git log 里指向两组互不相关的定制；计划里写了号却没登记。"
+    symptom: "同一个 G-XX 在 git log 里指向两组互不相关的定制；计划里写了号却没登记；两条分支各自追加新组，合并时报清单尾部冲突。"
     why: >-
       组号是手写字符串，三个并行分支都从本地清单取「最大号 + 1」，必然撞车；
       撞号后 git 合并干净、旧门禁全绿，只有人事后读 git log 才发现。上游不会提供
-      这套机制，丢掉它等于回到 2026-11-18/11-20/11-23 的三次事故。
+      这套机制，丢掉它等于回到 2026-11-18/11-20/11-23 的三次事故。修法分两层：
+      claim 在共享 $(git-common-dir)/scope-ids/ 下用 O_EXCL 原子占号、并扫过全部
+      本地分支已提交的号，杜绝「读到 stale 远端再发同号」；.gitattributes 对清单
+      声明 merge=union，不同号的两段追加不再产生文本冲突，同号则留成重复再由门禁判红。
     files:
       - scripts/internal/scopeid/
       - scripts/scope-id/
@@ -14572,6 +14575,7 @@ groups:
       - scripts/check-tag.sh
       - internal/deploy/check_tag_test.go
       - Makefile
+      - .gitattributes
       - .claude/skills/scope-id/SKILL.md
       - docs/superpowers/plans/2026-11-23-scope-id-allocation.md
     tests:
@@ -14581,6 +14585,7 @@ groups:
       - internal/deploy/check_tag_test.go
     anchors:
       - 'scripts/internal/scopeid/scopeid.go:func NextIDs(existing []string, n int) ([]string, error) {'
+      - 'scripts/internal/scopeid/scopeid.go:func ReservationsDir(root string) (string, error) {'
       - 'scripts/internal/scopeid/scopeid.go:func IsTemplatePlaceholder(id string) bool {'
       - 'scripts/check-upstream/main.go:if bad := duplicateGroupIDs(reg.Groups); len(bad) > 0 {'
       - 'scripts/scope-id/main.go:const claimStampPrefix = "> Scope IDs: "'
@@ -15596,8 +15601,7 @@ groups:
       - 'server/internal/api/usecase/session_overflow_cancel_test.go:func TestUnpinnedCancelStillWorksWhileCompactPending(t *testing.T) {'
       - 'server/internal/api/usecase/session_hygiene_wire_test.go:func TestMarkCompactedClearsStaleCompactError(t *testing.T) {'
       - 'docs/superpowers/plans/2026-11-24-overflow-compact-resume-interrupted.md:# 溢出压缩被用户重试打断：自动重发闭环修复'
-  # ── scope-id claim 占位 ──────────────────────────────────────────────
-  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  # ── 2026-11-24：worktree-finish / session-compress 产品化 ──────────────
   - id: G-QV
     title: "主节点 /api/control-sync/status 返回只读同步摘要"
     kind: fix
@@ -15889,3 +15893,141 @@ groups:
     anchors:
       - 'web/src/services/net/base.ts:function isRelayPath('
       - 'web/src/services/net/base.ts:if (isRelayPath(target.pathname)) {'
+
+  - id: G-RC
+    title: "把 worktree-finish / session-compress 吸收为 MindFS 产品能力"
+    kind: feature
+    symptom: "两个能力此前只存在于公开 skill：只有 Claude 可用、收尾要人点、会话钉在已删 worktree 目录上没人巡检，压缩只剩 Claude 向的有损脚本入口。"
+    why: "跨 harness 的 repoint / 自动收尾 / 无损会话维护是本机数据面能力，合上游时丢了会退回手工 skill，Codex 会话无法收尾，陈旧锁和超大图片只能靠人清。必须先于上游合并保留。"
+    files:
+      - "cli/cmd/mindfs.go"
+      - "cli/cmd/startup.go"
+      - "docs/plans/README.md"
+      - "docs/superpowers/plans/2026-11-24-worktree-finish-and-session-maintenance.md"
+      - "server/app/server.go"
+      - "server/app/session_maintenance_config.go"
+      - "server/app/session_maintenance_sweeper.go"
+      - "server/app/workspace.go"
+      - "server/app/workspace_build.go"
+      - "server/internal/api/appcontext.go"
+      - "server/internal/api/appcontext_maintenance.go"
+      - "server/internal/api/http_routes.go"
+      - "server/internal/api/http_session_maintenance.go"
+      - "server/internal/api/http_session_runtime_issues.go"
+      - "server/internal/api/usecase/session_maintenance.go"
+      - "server/internal/api/usecase/session_maintenance_options.go"
+      - "server/internal/api/usecase/session_repoint.go"
+      - "server/internal/api/usecase/session_repoint_adapters.go"
+      - "server/internal/api/usecase/session_runtime_issues.go"
+      - "server/internal/kanban/activity_route_apply.go"
+      - "server/internal/kanban/activity_route_finish_worktree.go"
+      - "server/internal/kanban/activity_router_questions.go"
+      - "server/internal/kanban/activity_service.go"
+      - "server/internal/kanban/router_coordinate_turn.go"
+      - "server/internal/kanban/router_service.go"
+      - "server/internal/kanban/router_tool_finish_worktree.go"
+      - "server/internal/kanban/router_tool_session_maintenance.go"
+      - "server/internal/kanban/router_tools.go"
+      - "server/internal/kanban/router_types.go"
+      - "server/internal/kanban/service.go"
+      - "server/internal/kanban/service_activities.go"
+      - "server/internal/kanban/service_archive.go"
+      - "server/internal/kanban/service_session_maintenance.go"
+      - "server/internal/kanban/service_state_moves.go"
+      - "server/internal/kanban/service_worktree_auto_finish.go"
+      - "server/internal/kanban/types.go"
+      - "server/internal/kanban/workflow_executor.go"
+      - "server/internal/kanban/worktree_finish_status.go"
+      - "server/internal/kanban/worktree_finish_turn.go"
+      - "server/internal/session/runtime_path.go"
+      - "server/internal/sessionmaintenance/adapter.go"
+      - "server/internal/sessionmaintenance/diagnose.go"
+      - "server/internal/sessionmaintenance/images.go"
+      - "server/internal/sessionmaintenance/pid_unix.go"
+      - "server/internal/sessionmaintenance/pid_windows.go"
+      - "server/internal/sessionmaintenance/transcripts.go"
+      - "server/internal/sessionmaintenance/types.go"
+      - "web/src/app/AppRootView.tsx"
+      - "web/src/app/useAppSessionView.tsx"
+      - "web/src/components/app/SessionHealthPanel.tsx"
+      - "web/src/components/file/FileTreeHeaderOverlays.tsx"
+      - "web/src/components/session/SessionHeaderMenu.tsx"
+      - "web/src/components/session/SessionMaintenancePanel.tsx"
+      - "web/src/hooks/useSessionMaintenance.ts"
+      - "web/src/i18n/locales/en-US-sessions.ts"
+      - "web/src/i18n/locales/zh-CN-sessions.ts"
+      - "web/src/services/session/sessionMaintenanceApi.ts"
+      - "web/src/shared/sessionMaintenance.ts"
+    tests:
+      - "cli/cmd/startup_maintenance_test.go"
+      - "server/app/session_maintenance_config_test.go"
+      - "server/internal/api/http_session_maintenance_test.go"
+      - "server/internal/api/usecase/session_maintenance_idle_test.go"
+      - "server/internal/api/usecase/session_repoint_test.go"
+      - "server/internal/api/usecase/session_runtime_issues_test.go"
+      - "server/internal/kanban/activity_router_questions_test.go"
+      - "server/internal/kanban/router_tool_finish_worktree_test.go"
+      - "server/internal/kanban/router_tool_session_maintenance_test.go"
+      - "server/internal/kanban/service_worktree_auto_finish_test.go"
+      - "server/internal/kanban/service_worktree_auto_finish_workflow_test.go"
+      - "server/internal/kanban/worktree_finish_dispatch_test.go"
+      - "server/internal/sessionmaintenance/session_maintenance_test.go"
+      - "web/tests/session-header-menu.test.mjs"
+      - "web/tests/session-maintenance.test.mjs"
+    anchors:
+      - "server/internal/api/usecase/session_repoint_adapters.go:type repointAdapter interface"
+      - "server/internal/api/usecase/session_runtime_issues.go:func (s *Service) DiagnoseRuntimeIssues"
+      - "server/internal/session/runtime_path.go:func RuntimeRootPath"
+      - "server/internal/kanban/service_worktree_auto_finish.go:type autoFinishContextKey struct{}"
+      - "server/internal/kanban/service_worktree_auto_finish.go:func (s *Service) autoFinishRunStillOpen"
+      - "server/internal/kanban/workflow_executor.go:s.maybeAutoFinishWorktree(ctx, task.RootID, task.ID)"
+      - "server/internal/kanban/worktree_finish_status.go:Merged bool `json:\"merged\"`"
+      - "server/internal/kanban/router_tool_finish_worktree.go:func (e *routerToolEnv) finishWorktreeTool"
+      - "server/internal/kanban/router_tool_session_maintenance.go:func (e *routerToolEnv) sessionMaintenanceTool"
+      - "server/internal/sessionmaintenance/images.go:func CleanImagesWithOptions"
+      - "server/internal/sessionmaintenance/adapter.go:SupportsPurge() bool"
+      - "server/internal/sessionmaintenance/pid_windows.go:func pidAlive"
+      - "server/app/session_maintenance_sweeper.go:runtimeTicker := time.NewTicker(worktree.sweepInterval())"
+      - "server/app/session_maintenance_config.go:func (o WorktreeOptions) sweepInterval() time.Duration"
+      - "server/internal/api/http_session_maintenance.go:handleSessionMaintenancePurgeEmpty"
+      - "server/internal/api/http_session_runtime_issues.go:handleSessionRuntimeIssuesSweep"
+      - "web/src/shared/sessionMaintenance.ts:export const SESSION_MAINTENANCE_EVENT"
+      - "web/src/components/session/SessionMaintenancePanel.tsx:export function SessionMaintenancePanel"
+      - "web/src/components/app/SessionHealthPanel.tsx:export function SessionHealthPanel"
+      - "docs/superpowers/plans/2026-11-24-worktree-finish-and-session-maintenance.md:## 执行记录"
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RD
+    title: "导入项目时在路径浏览里新建文件夹"
+    kind: feature
+    symptom: "添加项目只能在磁盘上已有目录里挑；想导入的目录还没建，用户得先切到终端或文件管理器建好再回来，导入流程被打断。"
+    why: >-
+      上游的路径浏览只有只读列表（GET /api/local_dirs），没有任何就地建目录的入口。
+      既有的两条创建通道都不合用：POST /api/file 要求目录已经注册成项目（正是这里要
+      绕开的循环），POST /api/dirs 的 create 会把目录同时注册成项目（用户还在浏览、
+      没决定导入哪个）。所以新增独立的数据面端点 POST /api/local_dirs，只建目录不注册；
+      丢了它，导入流程会退回「先离开 MindFS 建目录」。它必须在数据面（worker 放行），
+      别把它并进控制面。
+    files:
+      - server/internal/api/usecase/local_dirs.go
+      - server/internal/api/http_local_dirs.go
+      - server/internal/api/http_routes.go
+      - web/src/app/useProjectDirectoryBrowser.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/components/file/LocalNewFolderButton.tsx
+      - web/src/shared/projectAddTypes.ts
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/tests/source-map-modules-components.mjs
+      - docs/superpowers/plans/2026-11-25-project-add-new-folder.md
+    tests:
+      - server/internal/api/usecase/local_dirs_test.go
+      - server/internal/api/http_local_dirs_test.go
+      - web/tests/project-add-new-folder.test.mjs
+    anchors:
+      - server/internal/api/http_local_dirs.go:func (h *HTTPHandler) handleLocalDirsCreate
+      - server/internal/api/usecase/local_dirs.go:func (s *Service) CreateLocalDir
+      - web/src/app/useProjectDirectoryBrowser.ts:handleLocalDirCreate
+      - web/src/components/file/LocalNewFolderButton.tsx:export function LocalNewFolderButton

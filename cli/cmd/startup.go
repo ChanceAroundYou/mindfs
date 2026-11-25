@@ -40,6 +40,10 @@ type startupConfig struct {
 	LiveCompact *startupLiveCompactConfig `json:"live_compact"`
 	// SessionHygiene 是超长会话提示与自动压缩的节点本地策略。不配置 = 开启（默认值）。
 	SessionHygiene *startupSessionHygieneConfig `json:"session_hygiene"`
+	// Worktree 是任务收尾的自动能力，默认开；只走 config.json，不随控制面同步。
+	Worktree *startupWorktreeConfig `json:"worktree"`
+	// SessionMaintenance 是无损会话维护（巡检、清死 PID 锁、备份策略）。
+	SessionMaintenance *startupSessionMaintenanceConfig `json:"session_maintenance"`
 	// Channels 是外部通道（飞书等）的本机配置。不配置 = 全关。
 	Channels *startupChannelsConfig `json:"channels"`
 	// ControlSync 是控制面同步（离线优先本地控制面）。不配置 = 默认启用（只对
@@ -72,6 +76,20 @@ type startupControlSyncConfig struct {
 	// 主控留空即可 —— 它从边缘拨进来的请求里读出 scheme+Host，比人填一遍更准。
 	// 只有反向代理改写了 Host、靠请求推不准时才需要显式写。
 	RelayBaseURL *string `json:"relay_base_url"`
+}
+
+// startupWorktreeConfig 只影响本机。auto_finish 为 nil 或 true 都开，false 显式关。
+type startupWorktreeConfig struct {
+	AutoFinish           *bool `json:"auto_finish"`
+	SweepIntervalMinutes *int  `json:"sweep_interval_minutes"`
+}
+
+// startupSessionMaintenanceConfig 只做无损维护。enabled 管自动巡检；
+// keep_backups 为 nil 或 true 都保留 .bak，只有显式 false 才不留。
+type startupSessionMaintenanceConfig struct {
+	Enabled              *bool `json:"enabled"`
+	SweepIntervalMinutes *int  `json:"sweep_interval_minutes"`
+	KeepBackups          *bool `json:"keep_backups"`
 }
 
 // startupUpdateConfig 是 update 段。
@@ -609,6 +627,29 @@ func sessionHygieneOptions(cfg startupConfig) app.SessionHygieneOptions {
 		}
 	}
 	return opts
+}
+
+// worktreeOptions 把 `worktree` 段转成 app 的可导入结构。零值是默认（开启）。
+func worktreeOptions(cfg startupConfig) app.WorktreeOptions {
+	if cfg.Worktree == nil {
+		return app.WorktreeOptions{}
+	}
+	return app.WorktreeOptions{
+		AutoFinish:           cfg.Worktree.AutoFinish,
+		SweepIntervalMinutes: intValue(cfg.Worktree.SweepIntervalMinutes),
+	}
+}
+
+// sessionMaintenanceOptions 把 `session_maintenance` 段转成 app 的可导入结构。
+func sessionMaintenanceOptions(cfg startupConfig) app.SessionMaintenanceOptions {
+	if cfg.SessionMaintenance == nil {
+		return app.SessionMaintenanceOptions{}
+	}
+	return app.SessionMaintenanceOptions{
+		Enabled:              cfg.SessionMaintenance.Enabled,
+		SweepIntervalMinutes: intValue(cfg.SessionMaintenance.SweepIntervalMinutes),
+		KeepBackups:          cfg.SessionMaintenance.KeepBackups,
+	}
 }
 
 // updateAutoInstall 读 update.auto_install。没写这段、或写了 false，一律关闭 ——

@@ -25,6 +25,8 @@ import { AppShell } from "../layout/AppShell";
 import { ApkUpdatePrompt } from "../components/app/ApkUpdatePrompt";
 import { ControlModeBanner } from "../components/app/ControlModeBanner";
 import { SyncConflictPanel } from "../components/app/SyncConflictPanel";
+import { SessionHealthPanel } from "../components/app/SessionHealthPanel";
+import { SessionMaintenancePanel } from "../components/session/SessionMaintenancePanel";
 import { ToastContainer } from "../components/shell/ToastContainer";
 import { DialogHost } from "../components/shell/DialogHost";
 import { BottomSheet } from "../components/shell/BottomSheet";
@@ -83,7 +85,7 @@ export function AppRootView(props: AppRootViewProps) {
     gitDiffSideBySide, handleTaskInlineAttachmentChange,
     interactionModeRef, isDrawerOpen, isLeftOpen, isMobile,
     isRightOpen, mainDirectoryError, mainView, mainViewRef,
-    managedRootByIdRef, managedRootByKeyRef, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
+    managedRootByIdRef, managedRootByKeyRef, managedRootIds, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
     pluginBypass, pluginContentRef, pluginLoading, projectTreeTab,
     refreshGitStatus, removeTaskInlineAttachment, rootEntries, saveTaskInlineEdit,
     scheduledAgentDialogOpen, scopedRootKey, selectedDir, selectedDirKey,
@@ -436,6 +438,8 @@ drawer={<
       <ApkUpdatePrompt />
       <ControlModeBanner />
       <SyncConflictPanel />
+      <SessionHealthPanel rootIds={managedRootIds} />
+      <SessionMaintenancePanel />
       <ToastContainer />
       <DialogHost />
     </>

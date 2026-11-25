@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/index";
+import { SESSION_MAINTENANCE_EVENT } from "../../shared/sessionMaintenance";
 import { menuItemStyle } from "../../shared/styles";
 import { SessionDirectoryPicker } from "./SessionDirectoryPicker";
 import { useSessionDirExists } from "./useSessionDirBrowser";
@@ -11,14 +12,17 @@ import { useSessionDirExists } from "./useSessionDirBrowser";
  * 最后一项「修改目录」是这里独有的：下面再挂一行小字显示会话当前的工作目录
  * （长路径换行、目录不存在标红）。点它开选路径弹层。
  *
- * 两个置灰条件，都不是「点了才报错」：
- *   - 非 claude 会话：repoint 要 fork 转录，别的 agent 没有这条路径。
- *   - 会话正在回复：repoint 第一件事是掐掉 agent 进程，跑着的回合会被腰斩在半句上。
+ * 「会话维护」只发事件打开面板（诊断 / 清图 / 清锁 / 删空会话），面板与数据层解耦。
+ *
+ * repoint 的置灰条件只留前端能可靠判断的两条：没有 root，或会话正在回复（换目录要
+ * 掐掉 agent 进程，跑着的回合会被腰斩在半句上）。claude / codex 都已支持，其它
+ * harness 的错误由服务端给出可读文案，不在前端写死 agent 白名单。
  */
 export function SessionHeaderMenu({
   agent,
   rootId,
   nodeId,
+  sessionKey,
   rootPath,
   workDir,
   archived,
@@ -31,6 +35,7 @@ export function SessionHeaderMenu({
   agent?: string;
   rootId?: string | null;
   nodeId?: string;
+  sessionKey?: string;
   rootPath?: string | null;
   /** 会话显式选定的工作目录；空 = 项目主 checkout。 */
   workDir?: string;
@@ -51,9 +56,14 @@ export function SessionHeaderMenu({
   const [pickerError, setPickerError] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  const canRepoint = String(agent || "") === "claude" && !!rootId && !running;
-  // 置灰的原因要写出来，否则「点了没反应」比报错还费解。
-  const repointBlockedReason = running ? t("session.changeDirRunning") : "";
+  // repoint 已跨 harness（claude / codex）：只有「有没有 root + 会话是否在跑」是前端
+  // 能可靠判断的；其它 harness 不被前端揣测，服务端会给可读错误，照原样展示即可。
+  const canRepoint = !!rootId && !running;
+  const repointBlockedReason = running
+    ? t("session.changeDirRunning")
+    : !rootId
+      ? t("session.changeDirNoRoot")
+      : "";
   // 显示的是「这个会话在哪个目录里干活」：显式选过就是那个，没选过就是项目主 checkout。
   const displayDir = String(workDir || "").trim() || String(rootPath || "").trim();
   // 只有显式选过的目录才可能「不存在」——项目主 checkout 是注册表里登记着的，
@@ -141,6 +151,25 @@ export function SessionHeaderMenu({
                 <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
               </svg>
               {t("sessionList.rename")}
+            </button>
+            <button
+              type="button"
+              disabled={!sessionKey}
+              onClick={() => {
+                closeMenu();
+                window.dispatchEvent(
+                  new CustomEvent(SESSION_MAINTENANCE_EVENT, {
+                    detail: { sessionKey, rootId, nodeId, agent, running },
+                  }),
+                );
+              }}
+              style={menuItemStyle}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 3v3m0 12v3m9-9h-3M6 12H3m14.5-6.5-2.1 2.1M8.6 15.4l-2.1 2.1m0-11 2.1 2.1m7.8 7.8 2.1 2.1" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              {t("sessionMaintenance.menu")}
             </button>
             <button
               type="button"

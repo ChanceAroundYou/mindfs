@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"mindfs/server/internal/agent/claude"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/session"
 )
@@ -68,11 +67,22 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	// 这份 Claude 转录对应的 agent。不要因此误选另一个 binding。
 	selectedAgent := ""
 	if agentSessionID != "" {
-		selectedAgent = "claude"
-		binding, err := manager.FindAgentBindingByAgentSession(ctx, selectedAgent, agentSessionID)
-		if err != nil {
-			return out, err
+		// 谁持有这份 id 就搬谁。claude 的脚本还按 session id 反查；codex 的 thread id
+		// 现在也能反查。先按已登记的 harness 顺序找，找不到才报原来的错。
+		var explicitBinding *session.AgentBinding
+		for _, candidate := range []string{"claude", "codex"} {
+			b, err := manager.FindAgentBindingByAgentSession(ctx, candidate, agentSessionID)
+			if err != nil {
+				return out, err
+			}
+			if b == nil {
+				continue
+			}
+			selectedAgent = candidate
+			explicitBinding = b
+			break
 		}
+		binding := explicitBinding
 		if binding == nil {
 			return out, fmt.Errorf("no mindfs session bound to agent session id %q", agentSessionID)
 		}
@@ -92,8 +102,9 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	if agentName == "" {
 		return out, errors.New("session has no agent binding")
 	}
-	if agentName != "claude" {
-		return out, fmt.Errorf("repoint is only supported for claude sessions, got %q", agentName)
+	adapter := repointAdapterFor(agentName)
+	if adapter == nil || !adapter.supported() {
+		return out, fmt.Errorf("当前 harness %q 不支持换目录", agentName)
 	}
 	binding, err := manager.FindAgentBinding(ctx, key, agentName)
 	if err != nil {
@@ -138,12 +149,12 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		return out, fmt.Errorf("会话已经在这个目录里：%s", filepath.Clean(currentDir))
 	}
 
-	// 掐断活进程之前先确认转录还在：RepointTranscript 最主要的失败原因就是「找不到
-	// 转录」，而它排在 pool.Close 之后 —— 不先验就掐，用户拿到的是「会话没了、状态
-	// 却一点没改」，唯一那种不可逆又什么都没换来的失败。校验放在不可逆动作之前。
-	if !claude.HasTranscript(binding.AgentSessionID) {
-		return out, fmt.Errorf("找不到会话 %s 的转录（可能在 ~/.claude/projects 下被移动或删除），先确认再收尾",
-			binding.AgentSessionID)
+	// 掐断活进程之前先做 harness 自己的预检。claude 要确认转录还在（RepointTranscript
+	// 最主要的失败原因就是找不到转录，而它排在 pool.Close 之后 —— 不先验就掐，用户拿到
+	// 的是「会话没了、状态却一点没改」，唯一那种不可逆又什么都没换来的失败）。
+	// codex 的 rollout 全局存放，没有搬移这一步，预检是 no-op。校验一律放在不可逆动作之前。
+	if err := adapter.preflight(binding.AgentSessionID); err != nil {
+		return out, err
 	}
 
 	// 1. 掐断活进程。此后 mindfs 不再往旧转录写。
@@ -151,23 +162,23 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		pool.Close(agentPoolSessionKey(key, agentName))
 	}
 
-	// 2+3. fork 出新 id 并把转录搬进目标目录的 slug 目录。
-	moved, err := claude.RepointTranscript(targetAbs, binding.AgentSessionID)
+	// 2+3. claude fork 出新 id 并把转录搬进目标目录的 slug；codex 什么都不搬。
+	moved, err := adapter.move(targetAbs, binding)
 	if err != nil {
 		return out, err
 	}
 
-	// 4+6. 换绑定 id 并把游标推进到新转录末尾——**一个事务**。分两次写时，若游标那步
-	// 失败，binding 已是新 id 而游标还指着旧路径的冻结偏移；导入器按 SourcePath 判变化，
-	// 路径一变就从 committed（live-owned 会话为 0）整份重读，正是 2026-09-16 那个
-	// 「ask 下面又渲染了一轮出现过的文字」。合成事务就没有这个中间态。
-	if err := manager.RepointAgentBinding(key, agentName, binding.AgentSessionID, moved.AgentSessionID, agenttypes.ExternalSessionCursor{
-		SourcePath:      moved.TranscriptPath,
-		Offset:          moved.TranscriptBytes,
-		ModTimeUnixNano: moved.TranscriptModTimeUnixNano,
-		CommittedOffset: moved.TranscriptBytes,
-	}); err != nil {
-		return out, err
+	// 4+6. 只有转录真的换了 id 才换绑定并把游标推进到新转录末尾 —— **一个事务**。
+	// codex 的 thread id 不变，动游标反而会让导入器按旧路径重读整份 rollout。
+	if moved.bindingChanged {
+		if err := manager.RepointAgentBinding(key, agentName, binding.AgentSessionID, moved.agentID, agenttypes.ExternalSessionCursor{
+			SourcePath:      moved.transcriptPath,
+			Offset:          moved.transcriptBytes,
+			ModTimeUnixNano: moved.transcriptModTimeUnixNano,
+			CommittedOffset: moved.transcriptBytes,
+		}); err != nil {
+			return out, err
+		}
 	}
 
 	// 5. 解除 worktree 归属：此后 sessionRuntimeRootPath 不再因工作树而指向旧目录。
@@ -207,8 +218,10 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	//（旧转录刻意不删，就是回滚保险）。只有整条 repoint 真的走完了才作废它们。
 	// 清不掉不算 repoint 失败：id 与转录都已换好、会话可用；残留的 native id 只会让回查
 	// 退回「按 MindFS mindfs_id 找」，而那是权威路径。
-	if err := manager.ClearNativeIdentity(ctx, key); err != nil {
-		log.Printf("[session/repoint] clear.native.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), key, agentName, err)
+	if moved.clearNativeIdentity {
+		if err := manager.ClearNativeIdentity(ctx, key); err != nil {
+			log.Printf("[session/repoint] clear.native.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), key, agentName, err)
+		}
 	}
 
 	// 刻意**不**动任务侧的 worktree 归属。
@@ -224,15 +237,15 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	//（worktree_finish.go），语义正确，也不需要谁来代劳。
 
 	log.Printf("[session/repoint] done root=%s session=%s agent=%s old=%s new=%s transcript=%s bytes=%d from=%s to=%s",
-		strings.TrimSpace(in.RootID), key, agentName, binding.AgentSessionID, moved.AgentSessionID,
-		moved.TranscriptPath, moved.TranscriptBytes, currentDir, targetAbs)
+		strings.TrimSpace(in.RootID), key, agentName, binding.AgentSessionID, moved.agentID,
+		moved.transcriptPath, moved.transcriptBytes, currentDir, targetAbs)
 
 	return RepointSessionOutput{
 		SessionKey:             key,
 		Agent:                  agentName,
-		PreviousAgentSessionID: moved.PreviousAgentSessionID,
-		AgentSessionID:         moved.AgentSessionID,
-		TranscriptPath:         moved.TranscriptPath,
+		PreviousAgentSessionID: moved.previousID,
+		AgentSessionID:         moved.agentID,
+		TranscriptPath:         moved.transcriptPath,
 		WorktreeCleared:        cleared,
 	}, nil
 }
@@ -267,17 +280,5 @@ func validateRepointTarget(path string) (string, error) {
 // sessionRuntimeRootPathFor 与 api 包里的 sessionRuntimeRootPath 同口径：空 = 主 checkout。
 // 这里复制而不是跨包引用，是因为 ws.go 那个在 api 包、且带 websocket 相关上下文。
 func sessionRuntimeRootPathFor(current *session.Session) string {
-	if current == nil {
-		return ""
-	}
-	if workDir := strings.TrimSpace(current.WorkDir); workDir != "" {
-		return workDir
-	}
-	if current.RelatedWorktree == nil {
-		return ""
-	}
-	if strings.TrimSpace(current.TaskID) == "" && strings.TrimSpace(current.Source) != "worktree" {
-		return ""
-	}
-	return strings.TrimSpace(current.RelatedWorktree.Path)
+	return session.RuntimeRootPath(current)
 }

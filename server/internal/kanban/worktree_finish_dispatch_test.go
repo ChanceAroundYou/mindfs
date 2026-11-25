@@ -189,16 +189,25 @@ func TestTaskWorktreeBranchMergedWithoutAWorktree(t *testing.T) {
 // 收尾不再追加阶段：BeginFinishWorktree 起一轮普通对话，用一个完成标记判定成功。
 // 同一时刻只允许一次收尾，重复请求必须被挡回。
 type fakeFinishExecutor struct {
-	mu     sync.Mutex
-	prompt string
-	reply  string
-	err    error
+	mu          sync.Mutex
+	prompt      string
+	reply       string
+	err         error
+	started     chan struct{}
+	startedOnce sync.Once
+	release     chan struct{}
 }
 
 func (f *fakeFinishExecutor) RunDirectActivity(_ context.Context, _ Task, body string) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.prompt = body
+	f.mu.Unlock()
+	if f.started != nil {
+		f.startedOnce.Do(func() { close(f.started) })
+	}
+	if f.release != nil {
+		<-f.release
+	}
 	return f.reply, f.err
 }
 

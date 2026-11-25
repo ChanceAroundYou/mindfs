@@ -294,3 +294,74 @@ func TestRepointSessionRejectsKeyAndAgentSessionMismatch(t *testing.T) {
 		t.Fatalf("error = %v, want mismatched key and agent session to be rejected", err)
 	}
 }
+
+// Codex 的 rollout 是全局存放的，换目录不需要搬转录；只需清掉工作树归属并回主 checkout。
+// 用空的 CLAUDE_CONFIG_DIR 取证：一旦实现误走 claude 转录搬移路径，这里必然失败。
+func TestRepointSessionRebindsCodexToRootWithoutMovingTranscript(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	service, manager := newRepointService(t)
+	ctx := context.Background()
+	root := service.Registry.(repointTestRegistry).root
+	rootPath, err := root.RootDir()
+	if err != nil {
+		t.Fatalf("root path: %v", err)
+	}
+	worktreePath := filepath.Join(rootPath, ".worktree", "task-codex")
+	created, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Agent: "codex", Source: "worktree", Name: "C"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const threadID = "codex-thread-1234"
+	if err := manager.UpsertAgentBinding(ctx, session.AgentBinding{
+		SessionKey: created.Key, Agent: "codex", AgentSessionID: threadID,
+	}); err != nil {
+		t.Fatalf("bind codex: %v", err)
+	}
+	if err := manager.AddExchangeForAgent(ctx, created, "assistant", "codex reply", "codex", "", threadID, ""); err != nil {
+		t.Fatalf("add exchange: %v", err)
+	}
+	if _, err := manager.RecordRelatedWorktree(ctx, created.Key, "mindfs", worktreePath, "task-codex", "head"); err != nil {
+		t.Fatalf("record worktree: %v", err)
+	}
+
+	out, err := service.RepointSession(ctx, RepointSessionInput{RootID: "mindfs", Key: created.Key})
+	if err != nil {
+		t.Fatalf("repoint codex: %v", err)
+	}
+	if out.Agent != "codex" || out.AgentSessionID != threadID {
+		t.Fatalf("repoint output = %+v, want codex thread id unchanged", out)
+	}
+	if out.TranscriptPath != "" {
+		t.Fatalf("codex repoint must not move a transcript, got path %q", out.TranscriptPath)
+	}
+	if !out.WorktreeCleared {
+		t.Fatal("worktree was not cleared")
+	}
+	binding, err := manager.FindAgentBinding(ctx, created.Key, "codex")
+	if err != nil {
+		t.Fatalf("find binding: %v", err)
+	}
+	if binding.AgentSessionID != threadID || binding.ExternalSourcePath != "" {
+		t.Fatalf("codex binding changed: %+v", binding)
+	}
+	current, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if current.RelatedWorktree != nil || strings.TrimSpace(current.WorkDir) != "" {
+		t.Fatalf("session still points at worktree: related=%+v workdir=%q", current.RelatedWorktree, current.WorkDir)
+	}
+}
+
+func rootfsRoot(t *testing.T, s Service) (string, string) {
+	t.Helper()
+	root, err := s.Registry.GetRoot("mindfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := root.RootDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, root.ID
+}

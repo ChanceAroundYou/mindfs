@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { SESSION_HEALTH_EVENT } from "../../shared/sessionMaintenance";
 import { AgentSelector } from "../agent/AgentSelector";
 import { AccountPanel } from "../account/AccountPanel";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
@@ -215,6 +216,20 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
                   <span>{t("account.title")}</span>
                 </button>
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    window.dispatchEvent(new CustomEvent(SESSION_HEALTH_EVENT));
+                  }}
+                  style={fileTreeMenuButtonStyle}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 3c-3.6 1.6-6 4.6-6 8v5l-1 2h14l-1-2v-5c0-3.4-2.4-6.4-6-8Z" />
+                    <path d="M9.5 19a2.5 2.5 0 0 0 5 0" />
+                  </svg>
+                  <span>{t("sessionHealth.menu")}</span>
+                </button>
                 <button type="button" onClick={() => { setIsMenuOpen(false); setAboutOpen(true); }} style={fileTreeMenuButtonStyle}>
                   <span>关于 MindFS</span>
                 </button>

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"mindfs/server/internal/sessionmaintenance"
 )
 
 // Task 5 (Phase 2): ActivityService 把「用户留言」翻译成「WorkflowRun + Agent 回复」。
@@ -111,6 +113,38 @@ type ActivityService struct {
 	// terminations 是「这一轮是被用户终止的」共享登记簿：终止由 HTTP 侧现建的
 	// 实例写、收尾由跑回合的实例读，所以状态挂在共享对象上（见 TurnTerminations）。
 	terminations *TurnTerminations
+	// worktreeFinisher 是 Router 收尾端口。nil 时 router_finish_worktree 明确报错。
+	worktreeFinisher ActivityWorktreeFinisher
+	// sessionMaintainer 是 Router 会话维护端口。nil 时相关工具显式报错。
+	sessionMaintainer ActivitySessionMaintainer
+}
+
+// ActivityWorktreeFinisher 是 Router 的收尾端口，由 kanban.Service 实现并装配期注入。
+type ActivityWorktreeFinisher interface {
+	BeginFinishWorktree(ctx context.Context, in BeginFinishInput) (TaskDetail, error)
+	FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput) (FinishWorktreeResult, error)
+}
+
+// SetWorktreeFinisher 挂上收尾端口，装配期调用一次。
+func (s *ActivityService) SetWorktreeFinisher(f ActivityWorktreeFinisher) {
+	if s != nil {
+		s.worktreeFinisher = f
+	}
+}
+
+// ActivitySessionMaintainer 是 Router 的无损会话维护端口，由 usecase.Service 实现。
+type ActivitySessionMaintainer interface {
+	SessionMaintenanceDiagnose(ctx context.Context, rootID string) (sessionmaintenance.Report, error)
+	SessionMaintenanceCleanLocks(ctx context.Context) (sessionmaintenance.LockResult, error)
+	SessionMaintenanceCleanImages(ctx context.Context, rootID, sessionKey string) ([]sessionmaintenance.CleanResult, error)
+	SessionMaintenancePurgeEmpty(ctx context.Context, rootID, sessionKey string, confirm bool) ([]sessionmaintenance.CleanResult, error)
+}
+
+// SetSessionMaintainer 装配会话维护端口。
+func (s *ActivityService) SetSessionMaintainer(port ActivitySessionMaintainer) {
+	if s != nil {
+		s.sessionMaintainer = port
+	}
 }
 
 // SetSessionTurnCanceller 装配会话打断端口。nil 时终止退化成只结算回复行。

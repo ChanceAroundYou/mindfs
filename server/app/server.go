@@ -110,6 +110,12 @@ type StartOptions struct {
 	// SessionHygiene 是会话卫生策略（config.json 的 session_hygiene）。零值 =
 	// 默认策略（开启），见 sessionHygieneConfigFromOptions。
 	SessionHygiene SessionHygieneOptions
+	// Worktree 是任务 worktree 的自动收尾与巡检策略（config.json 的 worktree）。
+	// 零值 = 自动收尾开启、巡检间隔 10 分钟。
+	Worktree WorktreeOptions
+	// SessionMaintenance 是无损会话维护策略（config.json 的 session_maintenance）。
+	// 零值 = 开启、巡检间隔 10 分钟、改写真转录前保留 .bak。
+	SessionMaintenance SessionMaintenanceOptions
 	// UpdateAutoInstall 打开静默自动更新（config.json 的 update.auto_install）。
 	// 默认 false，且只该由 Windows 独立安装包打开：装完会重启进程，而 Unix 的
 	// systemd 单元是 Restart=on-failure + 替换进程 setsid 脱离 cgroup ——
@@ -128,6 +134,20 @@ type SessionHygieneOptions struct {
 	OverLineTurns  int
 	IdleGapSeconds int
 	Harnesses      map[string]SessionHygieneHarnessOverride
+}
+
+// WorktreeOptions 只走节点本地 config.json。指针区分「没写」与显式关闭。
+type WorktreeOptions struct {
+	AutoFinish           *bool
+	SweepIntervalMinutes int
+}
+
+// SessionMaintenanceOptions 只做无损维护的开关；enabled 控制自动巡检，
+// 手动入口（HTTP / Router）不因它关闭而消失。
+type SessionMaintenanceOptions struct {
+	Enabled              *bool
+	SweepIntervalMinutes int
+	KeepBackups          *bool
 }
 
 // SessionHygieneHarnessOverride 按 harness 覆盖全局阈值；0 = 沿用全局值。
@@ -333,23 +353,25 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	feishuChannel := newFeishuChannel(opts.Feishu, configDir)
 
 	workspaces := newWorkspaceManager(ctx, sharedServices{
-		agentConfig:      agentConfig,
-		update:           updateSvc,
-		auth:             authStore,
-		notify:           notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-		prefs:            sharedPrefs,
-		nodes:            sharedNodes,
-		webPush:          sharedWebPush,
-		workflows:        sharedWorkflows,
-		pool:             sharedPool,
-		prober:           sharedProber,
-		writerGate:       kanban.NewWriterGate(),
-		routerConfig:     routerConfigFromOptions(opts),
-		taskConfig:       taskConfigFromOptions(opts),
-		hygiene:          sessionHygieneConfigFromOptions(opts.SessionHygiene),
-		parallelMainTree: &opts.WorkflowParallelMainTree,
-		feishu:           feishuChannel,
-		feishuRelay:      feishuRelayConfigFromOptions(opts),
+		agentConfig:        agentConfig,
+		update:             updateSvc,
+		auth:               authStore,
+		notify:             notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
+		prefs:              sharedPrefs,
+		nodes:              sharedNodes,
+		webPush:            sharedWebPush,
+		workflows:          sharedWorkflows,
+		pool:               sharedPool,
+		prober:             sharedProber,
+		writerGate:         kanban.NewWriterGate(),
+		routerConfig:       routerConfigFromOptions(opts),
+		taskConfig:         taskConfigFromOptions(opts),
+		hygiene:            sessionHygieneConfigFromOptions(opts.SessionHygiene),
+		worktree:           opts.Worktree,
+		sessionMaintenance: opts.SessionMaintenance,
+		parallelMainTree:   &opts.WorkflowParallelMainTree,
+		feishu:             feishuChannel,
+		feishuRelay:        feishuRelayConfigFromOptions(opts),
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 	if feishuChannel != nil {

@@ -3,6 +3,7 @@ import { LOCAL_NODE_ID } from "../../shared/nodePalette";
 import { useProjectAddNodes } from "./useProjectAddNodes";
 import { useI18n } from "../../i18n/index";
 import { PathBreadcrumb } from "./PathBreadcrumb";
+import { LocalNewFolderButton } from "./LocalNewFolderButton";
 import { AsyncStateMessage } from "../common/AsyncStateMessage";
 import { ProjectAddModePanel } from "./ProjectAddModePanel";
 import { localBareStyle, projectAddPopoverStyle } from "./projectAddStyles";
@@ -23,6 +24,11 @@ type ProjectAddPopoverProps = {
   onLocalNavigate: (path: string) => void;
   onLocalSelect: (path: string) => void;
   onLocalAdd: () => void;
+  /**
+   * 在当前浏览目录下就地新建文件夹。只有导入弹窗会传；会话标题栏的「修改目录」
+   * 复用了 LocalPanel，那里不传 = 不渲染按钮。
+   */
+  onCreateFolder?: () => void;
   localActionLabel: string;
   localDisabledAddedRoot: boolean;
   localBrowseOnly: boolean;
@@ -57,6 +63,7 @@ export function LocalPanel({
   onLocalNavigate,
   onLocalSelect,
   onLocalAdd,
+  onCreateFolder,
   localActionLabel,
   localDisabledAddedRoot,
   localBrowseOnly,
@@ -69,6 +76,7 @@ export function LocalPanel({
   | "onLocalNavigate"
   | "onLocalSelect"
   | "onLocalAdd"
+  | "onCreateFolder"
   | "localActionLabel"
   | "localDisabledAddedRoot"
   | "localBrowseOnly"
@@ -139,6 +147,14 @@ export function LocalPanel({
           volumes={volumes}
           onNavigate={onLocalNavigate}
         />
+        {onCreateFolder ? (
+          <LocalNewFolderButton
+            path={localState.path}
+            loading={localState.loading}
+            creating={localState.creating === true}
+            onCreateFolder={onCreateFolder}
+          />
+        ) : null}
       </div>
       <div
         style={{
@@ -356,6 +372,7 @@ export function ProjectAddPopover({
   onLocalNavigate,
   onLocalSelect,
   onLocalAdd,
+  onCreateFolder,
   localActionLabel,
   localDisabledAddedRoot,
   localBrowseOnly,
@@ -381,6 +398,7 @@ export function ProjectAddPopover({
         onLocalNavigate={onLocalNavigate}
         onLocalSelect={onLocalSelect}
         onLocalAdd={onLocalAdd}
+        onCreateFolder={onCreateFolder}
         localActionLabel={localActionLabel}
         localDisabledAddedRoot={localDisabledAddedRoot}
         localBrowseOnly={localBrowseOnly}
@@ -410,6 +428,7 @@ export function ProjectAddLifecycleOverlay({
   onLocalNavigate,
   onLocalSelect,
   onLocalAdd,
+  onCreateFolder,
   githubState,
   onGitHubUrlChange,
   onGitHubImport,
@@ -427,6 +446,7 @@ export function ProjectAddLifecycleOverlay({
   onLocalNavigate: (path: string) => void;
   onLocalSelect: (path: string) => void;
   onLocalAdd: () => void;
+  onCreateFolder?: () => void;
   githubState: GitHubImportState;
   onGitHubUrlChange: (value: string) => void;
   onGitHubImport: () => void;
@@ -448,6 +468,7 @@ export function ProjectAddLifecycleOverlay({
         onLocalNavigate={onLocalNavigate}
         onLocalSelect={onLocalSelect}
         onLocalAdd={onLocalAdd}
+        onCreateFolder={onCreateFolder}
         localActionLabel={mode === "local" ? t("projectAdd.add") : t("projectAdd.placeHere")}
         localDisabledAddedRoot={mode === "local"}
         localBrowseOnly={mode === "blank_location" || mode === "github_location" || mode === "worktree_location"}

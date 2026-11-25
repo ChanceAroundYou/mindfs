@@ -116,6 +116,9 @@ func (s *Service) TaskWorktreeBranchMerged(ctx context.Context, rootID, taskID, 
 type FinishPlan struct {
 	// Mechanical=true 表示机械清场能直接做完，不必等 agent。
 	Mechanical bool `json:"mechanical"`
+	// Merged=true 表示分支已并入主干且工作树干净；只有这种形状允许自动收尾
+	// 跳过回合。机械可做但尚未合并的树（干净、合并无冲突）仍需回合完成合并。
+	Merged bool `json:"merged"`
 	// Reason 是 Mechanical=false 的原因（短句，给用户看）。
 	Reason string `json:"reason,omitempty"`
 	// Files 是相关文件清单（未提交的文件 / 会冲突的文件），给 UI 列表渲染。
@@ -204,7 +207,7 @@ func (s *Service) PlanFinishWorktree(ctx context.Context, rootID, taskID string)
 
 	// 树干净、分支也已在主干 → 真的只剩清场了。
 	if merged, mergedErr := gitview.BranchMergedInto(ctx, mainDir, branch, target); mergedErr == nil && merged {
-		return FinishPlan{Mechanical: true, Reason: "分支已合进主干"}, nil
+		return FinishPlan{Mechanical: true, Merged: true, Reason: "分支已合进主干"}, nil
 	}
 
 	// 合并会冲突 → 交给 agent：冲突要解释、要给取舍判断，机器替不了。

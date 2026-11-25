@@ -7,13 +7,17 @@
 package scopeid
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -250,3 +254,180 @@ func Unresolved(refs []PlanRef, known map[string]bool) []PlanRef {
 	}
 	return out
 }
+
+// ReservationsDir 返回组号预留目录：所有共享同一个 clone 的 worktree 看到的是同一个
+// 目录（git common dir 下的 scope-ids/）。取号先在这里原子占位，再写清单 —— 两个
+// worktree 才能既不读到对方的 stale 清单，也不会拿到同一个号。
+//
+// 不在 git 仓库里（例如单元测试的临时目录）时退回到 <root>/.scope-ids：那里没有
+// worktree 并发可言，回退是等价语义，只是让命令在仓外也能跑。
+func ReservationsDir(root string) (string, error) {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		abs, aerr := filepath.Abs(root)
+		if aerr != nil {
+			return "", aerr
+		}
+		return filepath.Join(abs, ".scope-ids"), nil
+	}
+	common := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(common) {
+		// 老版本 git 没有 --path-format=absolute，返回的是相对路径（可能相对 root）。
+		common, err = filepath.Abs(filepath.Join(root, common))
+		if err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(common, "scope-ids"), nil
+}
+
+// Reservation 是一个组号的占位记录。Empty 表示哨兵文件在崩溃窗口里被留下、metadata
+// 没写完 —— 仍按「已占用」处理（宁可跳号，绝不重发），由 GC 回收。
+type Reservation struct {
+	ID       string    `json:"id"`
+	Branch   string    `json:"branch"`
+	Plan     string    `json:"plan"`
+	Worktree string    `json:"worktree"`
+	TS       time.Time `json:"ts"`
+	Empty    bool      `json:"-"`
+}
+
+// Reserve 在共享目录里原子占住一个组号。已存在（含只落了空文件的崩溃残留）返回
+// ErrIDTaken，让调用方去试下一个号。目录不存在时自动创建。
+func Reserve(root, id string, meta Reservation) error {
+	dir, err := ReservationsDir(root)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return ErrIDTaken
+		}
+		return err
+	}
+	meta.ID = id
+	data, _ := json.MarshalIndent(meta, "", "  ")
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	if cerr != nil {
+		return cerr
+	}
+	return nil
+}
+
+// ErrIDTaken 表示该号已被（另一个 worktree 或崩溃残留）占住。
+var ErrIDTaken = errors.New("组号已被预留")
+
+// ListReservations 读出所有预留，按组号排序。空文件以 Empty=true 呈现。
+func ListReservations(root string) ([]Reservation, error) {
+	dir, err := ReservationsDir(root)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Reservation
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var r Reservation
+		if len(strings.TrimSpace(string(data))) == 0 {
+			r = Reservation{ID: e.Name(), Empty: true}
+		} else if err := json.Unmarshal(data, &r); err != nil {
+			// metadata 坏了也当成已占用，只是信息不全。
+			r = Reservation{ID: e.Name(), Empty: true}
+		}
+		if r.ID == "" {
+			r.ID = e.Name()
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// Release 删掉指定组号的预留，返回实际删掉的个数。不存在的号静默跳过。
+func Release(root string, ids []string) (int, error) {
+	dir, err := ReservationsDir(root)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, id := range ids {
+		if err := os.Remove(filepath.Join(dir, id)); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
+// GCOptions 控制 GCReservations 的回收范围。
+type GCOptions struct {
+	// Committed 是当前已提交清单里的组号：已在清单里的预留已完成使命（改由 resolve
+	// 管），可以回收。
+	Committed map[string]bool
+	// BranchExists 判断某分支名是否还存在：分支删了，它的预留就是死号。
+	BranchExists func(string) bool
+	// StaleAfter：空文件（崩溃残留）超过这个时长才回收；零值表示立刻可回收。
+	StaleAfter time.Duration
+	Now        time.Time
+}
+
+// GCReservations 回收已无意义的预留，返回被删掉的组号。三种情形：
+//  1. 号已进当前已提交清单 —— 预留的作用已由清单接管；
+//  2. 预留记录的分支已不存在；
+//  3. 空文件（metadata 没写完）且超过 StaleAfter。
+//
+// 只删不搬；判不准的一律保留。
+func GCReservations(root string, opts GCOptions) ([]string, error) {
+	rs, err := ListReservations(root)
+	if err != nil {
+		return nil, err
+	}
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	var drop []string
+	for _, r := range rs {
+		switch {
+		case opts.Committed[r.ID]:
+			drop = append(drop, r.ID)
+		case opts.BranchExists != nil && r.Branch != "" && !opts.BranchExists(r.Branch):
+			drop = append(drop, r.ID)
+		case r.Empty:
+			// 空文件没有 TS；用文件修改时间判超龄。
+			dir, _ := ReservationsDir(root)
+			info, statErr := os.Stat(filepath.Join(dir, r.ID))
+			if statErr == nil && opts.StaleAfter > 0 && now.Sub(info.ModTime()) > opts.StaleAfter {
+				drop = append(drop, r.ID)
+			}
+		}
+	}
+	if _, err := Release(root, drop); err != nil {
+		return nil, err
+	}
+	return drop, nil
+}
+

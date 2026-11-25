@@ -13,18 +13,31 @@
 
 手写组号会撞：两个并行分支各自取「本地清单最大号 + 1」，拿到同一批号；合并时 git 不冲突、
 门禁也不报，只有事后读 `git log` 才发现一个号指着两组互不相关的定制（2026-11-23 真实发生
-过一次，三组撞车）。
+过一次，三组撞车；2026-11-24 又发生一次）。
 
 ```bash
 go run ./scripts/scope-id claim docs/superpowers/plans/YYYY-MM-DD-xxx.md [--count N]
 ```
 
-这条命令取号、在清单里写占位组、在计划头部写声明行。占位会让门禁变红直到填成真条目 ——
-刻意的。规则：只增号不回填空洞；两字母段 `G-AA`…`G-ZZ` 用尽才进三字母段；讲机制的文档
-里写示例一律用 `G-XX`（同字母重复算模板占位，扫描器跳过），不要写具体号。
+这条命令**先在共享目录原子占号**（`$(git rev-parse --path-format=absolute --git-common-dir)/scope-ids/`
+下用 `O_EXCL`），再在清单里写占位组、在计划头部写声明行。共享同一 clone 的多个 worktree 并发
+`claim` 因此不会拿到同一个号；取号还会扫过全部本地分支已提交的号，避免只看陈旧 `origin/main`
+而重发兄弟分支已用的号。`next` 只读不占位，真正防撞的是 `claim`。
+
+占位会让门禁变红直到填成真条目 —— 刻意的。规则：只增号不回填空洞；两字母段 `G-AA`…`G-ZZ`
+用尽才进三字母段；讲机制的文档里写示例一律用 `G-XX`（同字母重复算模板占位，扫描器跳过），
+不要写具体号。
 
 两侧都新取了号时用 `go run ./scripts/scope-id resolve --branch <分支>` 裁决：先引入者保留、
 后来者改号，提交信息里的历史 `Scope:` 不改写。详见 `.claude/skills/scope-id/SKILL.md`。
+
+## 清单合并：merge=union，不再人工解尾部冲突
+
+清单是 append-only，每个分支都在文件尾追加新组。仓库根 `.gitattributes` 对
+`docs/upstream-customizations.yaml` 声明了 `merge=union`：两条分支追加**不同**号时自动合并、
+两边都留，不再报 EOF 文本冲突；追加**同一**号时留成重复（两段 `id:`，或重复 mapping key
+导致解析失败），由 `check-upstream` 当场判红，再走 `resolve` 改号。这样「合并意外冲突」与
+「真撞号」被干净地分开：前者消失，后者一定响亮地暴露。
 
 ## 三件套（缺一不可）
 

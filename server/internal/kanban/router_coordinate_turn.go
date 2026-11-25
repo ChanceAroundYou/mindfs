@@ -90,7 +90,7 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 	promptHash := RouterPromptHash()
 	sessionKey := rs.prepareSessionKey(ctx, agent, decision.RootID, taskID, config, promptHash)
 	collector := newRouterTurnCollector(config)
-	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader(),
+	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader(), worktreeFinisher: rs.service, sessionMaintainer: rs.service.sessionMaintainer,
 		supervisionMode: rs.service.RouterConfig().Supervision.Normalized().Mode}
 	timeout := config.TurnTimeout
 	if timeout <= 0 {
@@ -469,6 +469,12 @@ func validateRuntimeEventActions(brief *SituationBrief, actions []RouterAction, 
 			// complete_task / record_acceptance 不属于监管动作：事件回合（例如
 			// run_settled / completion_blocked）本来就是收尾时机，不该要求
 			// supervision 观测块。
+			continue
+		case RouterActionFinishWorktree:
+			// 任务结算回合本身就是收尾时机，不需要监管观测块。
+			continue
+		case RouterActionSessionMaintenance:
+			// 会话维护是用户主动要求或巡检触发的无损动作，不要求监管水位。
 			continue
 		case RouterActionNotifyUser:
 			// 通知是唯一不依赖观测块的监管动作：会话回合（turn_settled）没有任何
