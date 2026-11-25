@@ -23,9 +23,9 @@ import urllib.request
 from playwright.sync_api import Page
 
 BOARD_TAB = "Board"
-BOARD_REFRESH = '[data-onboarding="task-refresh"]'
-VIEW_SWITCHER = '[data-onboarding="main-view-switcher"]'
-WORKSPACE = '[data-onboarding="workspace"]'
+BOARD_REFRESH = "[data-task-refresh-visual]"
+VIEW_TABS = '[role="tablist"] [role="tab"]'
+WORKSPACE = '[role="tablist"]'
 PILLS = ".task-detail-execution"
 NAME = "完成证据胶囊验收任务"
 
@@ -105,7 +105,7 @@ def _open_task(page: Page) -> None:
     page.wait_for_selector(WORKSPACE, timeout=60_000)
     page.wait_for_timeout(1_500)
     page.locator('button[aria-label^="Expand"]').first.click()
-    page.locator(VIEW_SWITCHER).first.get_by_role("tab", name=BOARD_TAB, exact=True).click()
+    page.locator(VIEW_TABS, has_text=BOARD_TAB).first.click()
     page.wait_for_selector(BOARD_REFRESH, timeout=30_000)
     page.mouse.click(page.viewport_size["width"] - 12, 400)
     page.wait_for_timeout(400)
