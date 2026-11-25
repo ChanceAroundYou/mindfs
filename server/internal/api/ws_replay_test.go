@@ -394,3 +394,27 @@ func TestReplyListBoundedByBytes(t *testing.T) {
 		t.Fatalf("newest call = %q; want the last appended one（裁剪只能丢最旧的）", lastCall)
 	}
 }
+
+// 不同回合的相邻文本块不得合并：它们属于两条独立的 assistant 消息，拼在一起
+// 客户端会看到上一轮的尾巴并进这一轮。
+func TestChunksAcrossTurnsStaySeparate(t *testing.T) {
+	hub := NewStreamHub()
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type:     string(agenttypes.EventTypeMessageChunk),
+		Data:     agenttypes.MessageChunk{MessageID: "m1", Content: "turn1"},
+		MindFSID: "turn-1",
+	})
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type:     string(agenttypes.EventTypeMessageChunk),
+		Data:     agenttypes.MessageChunk{MessageID: "m1", Content: "turn2"},
+		MindFSID: "turn-2",
+	})
+
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if got := len(hub.pendingSessions["sess-1"].ReplyingList); got != 2 {
+		t.Fatalf("replying list = %d events; want 2（跨回合不得合并）", got)
+	}
+}

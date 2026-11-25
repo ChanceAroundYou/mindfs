@@ -171,7 +171,7 @@ func mergeContiguousChunkLocked(state *SessionPendingState, event StreamEvent) b
 	}
 	i := len(state.ReplyingList) - 1
 	prev := state.ReplyingList[i]
-	if prev.Type != event.Type {
+	if prev.Type != event.Type || prev.MindFSID != event.MindFSID {
 		return false
 	}
 	switch event.Type {
