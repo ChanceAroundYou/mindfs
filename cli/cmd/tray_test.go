@@ -2,7 +2,6 @@ package main
 
 import (
 	"runtime"
-	"strings"
 	"testing"
 	"unsafe"
 )
@@ -88,88 +87,49 @@ func TestTrayIconRegistersForCallbackMessages(t *testing.T) {
 	}
 }
 
-func TestTrayIsWindowsOnlyAndOpensThePageOnQuit(t *testing.T) {
-	if !shouldShowTray("windows") {
-		t.Fatal("Windows background instance has no terminal and no UI action to start it, so the tray must show there")
-	}
-	for _, goos := range []string{"linux", "darwin"} {
-		if shouldShowTray(goos) {
-			t.Fatalf("tray must not show on %s: terminal or systemd already covers it", goos)
-		}
-	}
-
-	if got := trayTooltip("0.0.0.0:7332"); got != "mindfs 0.0.0.0:7332" {
+func TestTrayMenuBelongsToDesktopShell(t *testing.T) {
+	// 悬停提示带上节点名：一台机器上可能同时跑主控与边缘的多个入口，
+	// 只写 addr 在托盘里分不出谁是谁（托盘现在只剩套壳进程一个来源）。
+	if got := trayTooltip(trayOptions{Addr: "0.0.0.0:7332"}); got != "mindfs 0.0.0.0:7332" {
 		t.Fatalf("tooltip = %q, want the addr in it so a multi-node box is distinguishable", got)
 	}
+	if got := trayTooltip(trayOptions{Addr: "0.0.0.0:7332", Label: "书房 PC"}); got != "书房 PC · mindfs 0.0.0.0:7332" {
+		t.Fatalf("tooltip = %q, want the node name first", got)
+	}
 
-	// 菜单三项，顺序固定：打开页面 / 重启以应用配对 / 退出。
-	// 2026-10-19 用户曾要求「只留退出，开页面双击图标就行」；W3 的 Windows 安装包把托盘
-	// 当成了唯一入口（计划任务跑在 Session 0，没有终端、也没有开始菜单项），双击图标成了
-	// 一个没有提示的隐藏手势，所以显式补回「打开页面」；「重启以应用配对」是边控端配好之后
-	// 唯一的重启路径（配对端点只回 restart_required，不自己重启）。退出必须仍在，且 ID 不变。
+	// 托盘随套壳进程一起搬到登录会话：服务进程在 Session 0，图标根本不可见。
+	// 菜单项顺序固定，退出保持 101 —— 换 ID 等于把行为换到别的项上。
 	items := trayMenuItems()
 	want := []trayMenuItem{
-		{ID: menuOpenPageID, Label: "打开页面"},
-		{ID: menuRestartID, Label: "重启以应用配对"},
+		{ID: menuOpenWindowID, Label: "打开主界面"},
+		{ID: menuOpenBrowserID, Label: "在浏览器中打开"},
+		{ID: menuCheckUpdateID, Label: "检查更新"},
+		{ID: menuOpenDataDirID, Label: "打开数据目录"},
+		{ID: menuUninstallID, Label: "卸载 MindFS"},
 		{ID: menuQuitID, Label: "退出"},
 	}
 	if len(items) != len(want) {
-		t.Fatalf("menu must be open/restart/quit, got %v", items)
+		t.Fatalf("menu must be window/browser/update/data/uninstall/quit, got %v", items)
 	}
 	for i := range want {
 		if items[i] != want[i] {
 			t.Fatalf("menu[%d] = %+v, want %+v", i, items[i], want[i])
 		}
 	}
-	// ID 是 WM_COMMAND 的唯一标识，换一个就等于把行为换到别的项上。退出保持 101。
 	for _, c := range []struct {
 		name string
 		got  uint32
 		want uint32
 	}{
 		{"quit", menuQuitID, 101},
-		{"open", menuOpenPageID, 102},
-		{"restart", menuRestartID, 103},
+		{"open-window", menuOpenWindowID, 102},
+		{"open-browser", menuOpenBrowserID, 103},
+		{"check-update", menuCheckUpdateID, 104},
+		{"open-data-dir", menuOpenDataDirID, 105},
+		{"uninstall", menuUninstallID, 106},
 	} {
 		if c.got != c.want {
 			t.Fatalf("menu id %s = %d, want %d", c.name, c.got, c.want)
-		}
-	}
-}
-
-// 「重启以应用配对」不许用 schtasks /end：那是 TerminateProcess，会把正在写盘的收尾砍在半路。
-// 契约是「先等本进程自己退出，再 /run」。而早一步 /run 会被 IgnoreNew 静默吞掉（实测真机
-// 任务 XML 的 MultipleInstancesPolicy），所以那个等待循环是必需项，不是保险丝。
-func TestTrayRestartWaitsForExitThenRunsTask(t *testing.T) {
-	got := trayRestartScript(4321, `C:\Program Files\mindfs\mindfs.exe`, []string{"--addr", "0.0.0.0:7332"})
-	for _, want := range []string{
-		"$pidToWait = 4321",
-		"Get-Process -Id $pidToWait",
-		"schtasks.exe /run /tn " + trayRestartTaskName,
-		"'--addr', '0.0.0.0:7332'",
-		"'C:\\Program Files\\mindfs\\mindfs.exe'",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("restart script missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "/end") {
-		t.Fatalf("restart script must not terminate the task; the process exits on its own:\n%s", got)
-	}
-	if !strings.Contains(got, "Start-Sleep -Milliseconds 200") {
-		t.Fatalf("restart script must poll for the old pid; IgnoreNew would swallow an early /run:\n%s", got)
-	}
-}
-
-// PowerShell 单引号串里的 ' 必须写成 ”，否则路径里的 ' 会提前闭合字符串。
-func TestTrayPSQuoteDoublesSingleQuotes(t *testing.T) {
-	for _, c := range []struct{ in, want string }{
-		{`C:\mindfs`, `'C:\mindfs'`},
-		{`C:\it's`, `'C:\it''s'`},
-		{`"quoted"`, `'"quoted"'`},
-	} {
-		if got := trayPSQuote(c.in); got != c.want {
-			t.Fatalf("trayPSQuote(%q) = %s, want %s", c.in, got, c.want)
 		}
 	}
 }

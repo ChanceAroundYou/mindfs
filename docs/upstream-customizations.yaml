@@ -6334,7 +6334,6 @@ groups:
       - 'cli/cmd/windows_creation_flags.go:windowsCreateNoWindow'
       - 'cli/cmd/console_windows.go:func attachParentConsole'
       - 'cli/cmd/console_windows.go:func redirectBackgroundLogs'
-      - 'cli/cmd/tray.go:func shouldShowTray'
       - 'cli/cmd/tray.go:func trayIconFlags'
       - 'cli/cmd/tray_types.go:trayMessage'
       - 'cli/cmd/tray_windows.go:func runTray'
@@ -14882,23 +14881,11 @@ groups:
       `[update] auto_install.skip reason=...`（`disabled` / `no-update` 不打，否则每小时两行噪音）
       是排查「它为什么没装」的唯一线索。
 
-      **托盘菜单从「只有退出」扩成三项（打开页面 / 重启以应用配对 / 退出）**，因为 Windows
-      安装包把托盘当成了唯一入口：计划任务跑在 Session 0，没有终端、也没有开始菜单项，
-      「双击图标开页面」是个没有任何提示的隐藏手势，而配对落盘后服务端只回
-      `restart_required`、不自己重启（见 W2 的 D 类裁定），所以「重启以应用配对」必须有一个
-      可点的入口。退出仍是 101，旧 ID 不动 —— 换掉会让已经装出去的托盘行为错位。
-
-      **「重启以应用配对」不能 `schtasks /end`，也不能 `os.Exit(0)` 自重启。** 前者的
-      `TerminateProcess` 会把正在写盘的收尾（agent 回合、sqlite WAL、转录落盘）砍在半路；
-      后者在 Unix 部署下会把服务停死（`Type=simple` + `Restart=on-failure` 不重拉退出码 0 的
-      进程）。落地形态是**先**把一个 `DETACHED_PROCESS` 的 powershell 挂到后台
-      （`trayRestartScript`：轮询 `Get-Process -Id $pidToWait` 等本 PID 消失，**然后**
-      `schtasks.exe /run /tn mindfs`，失败则用原命令行兜底拉起），**再**走与「退出」同一条
-      优雅收尾（`WM_QUIT → onQuit → 关服务`）。顺序不能反：脚本靠 PID 消失推进，先退出就
-      永远没有进程去执行那一步了。那个轮询循环也不是保险丝 —— 实测真机任务 XML 的
-      `MultipleInstancesPolicy` 是 `IgnoreNew`，早一步 `/run` 会被**静默吞掉**，服务停在
-      「已退出、没人拉起」而界面上零线索。拉起失败时**不退出**：用户得到「点了没反应」，
-      但服务还在，比静默停服务好得多。
+      **托盘「重启以应用配对」已被 2026-11 的套壳改造取代（见 G-RP）**：托盘连同窗口搬到
+      登录会话里的桌面壳进程，重启由壳的 5 秒健康复查与服务监督负责，不再有等待脚本；
+      「退出」只结束壳、不停服务。两条旧约束仍然有效，且是替换方案的设计前提：不能用
+      `schtasks /end` 硬杀去「重启」（`TerminateProcess` 会砍断正在写盘的回合），也不能在
+      Unix 上 `os.Exit(0)` 自重启（`Type=simple` + `Restart=on-failure` 不重拉退出码 0）。
 
       **Windows 独立安装包是「自解包 exe」，不是又一个 zip**：`dist/mindfs_<ver>_windows_amd64.zip`
       已经有了，但它要手动解包 + 四步安装，而用户把 zip 的 `web/` 解到哪儿都不会落到服务读取的
@@ -14965,9 +14952,6 @@ groups:
       - cli/cmd/startup_update_test.go
       - cli/cmd/mindfs.go
       - server/app/server.go
-      - cli/cmd/tray.go
-      - cli/cmd/tray_windows.go
-      - cli/cmd/tray_test.go
       - internal/deploy/archive.go
       - internal/deploy/archive_test.go
       - internal/deploy/setup.go
@@ -14984,7 +14968,6 @@ groups:
     tests:
       - server/internal/update/auto_install_test.go
       - cli/cmd/startup_update_test.go
-      - cli/cmd/tray_test.go
       - internal/deploy/setup_test.go
       - internal/deploy/setup_extract_test.go
       - internal/deploy/setup_script_test.go
@@ -15000,12 +14983,6 @@ groups:
       - 'cli/cmd/startup.go:func updateAutoInstall(cfg startupConfig) bool {'
       - 'cli/cmd/startup_update_test.go:func TestUpdateAutoInstallDefaultsOff(t *testing.T) {'
       - 'cli/cmd/startup_update_test.go:func TestServerOptionsCarryUpdateAutoInstall(t *testing.T) {'
-      - 'cli/cmd/tray.go:const trayRestartTaskName = "mindfs"'
-      - 'cli/cmd/tray.go:func trayRestartScript(pid int, exe string, args []string) string {'
-      - 'cli/cmd/tray.go:"schtasks.exe /run /tn " + trayRestartTaskName'
-      - 'cli/cmd/tray_windows.go:func restartFromTray() {'
-      - 'cli/cmd/tray_windows.go:windows.DETACHED_PROCESS'
-      - 'cli/cmd/tray_test.go:func TestTrayRestartWaitsForExitThenRunsTask(t *testing.T) {'
       - 'internal/deploy/setup.go:const SetupTrailerMagic uint32 = 0x4D465353 // "MFSS"'
       - 'internal/deploy/setup.go:func AppendSetupPayload(stubPath, dst string, payload []byte) error {'
       - 'internal/deploy/setup.go:func ReadSetupPayload(r io.ReaderAt, size int64) (io.ReaderAt, int64, error) {'
@@ -16511,13 +16488,53 @@ groups:
       - 'web/src/components/action/SessionRing.tsx:[data-mindfs-command-input-width]'
       - 'web/tests/onboarding-removed.test.mjs:test("onboarding-removed", () => {'
   - id: G-RP
-    title: "WIP — 待填写（scope-id claim 占位）"
+    title: "Windows 套壳：单 exe 双入口、WebView2 窗口 + 托盘、健康等待与错误页"
     kind: feature
-    symptom: "待填写：用户会看到什么。"
-    why: "待填写：为什么必须保留、合上游时丢了会怎样。"
-    files: []
-    tests: []
-    anchors: []
+    symptom: |
+      改造前 Windows 双击 mindfs.exe 起服务后弹默认浏览器，服务进程（Session 0）里的托盘
+      图标根本不可见；关掉浏览器就没有任何入口去找回界面，也没有窗口位置记忆。
+      现在无参数/--desktop 进入套壳：单实例互斥体（重复双击只把已有窗口叫到前台）、
+      WebView2 原生窗口（标题=节点名、记住位置大小）、先显示「正在启动本机服务…」
+      等待页（3 秒自刷新）并在 60 秒后换成带日志路径的错误页；服务未跑时优先
+      `schtasks /run /tn mindfs` 拉起、任务不存在则分离子进程 `--serve`；
+      每隔 5 秒复查健康，断而恢复后自动重新加载页面。托盘（打开主界面 / 在浏览器中打开 /
+      检查更新 / 打开数据目录 / 卸载 MindFS / 退出）随套壳进程搬到登录会话，关窗口收进
+      托盘，菜单「退出」只结束壳、不停服务。WebView2 运行时缺失时给原生三选框
+      （下载运行时 / 用浏览器打开 / 重试），不会出现黑框或静默退出。
+    why: |
+      必须保留：这是本 fork 的边缘端安装体验基线（标准桌面软件形态），依赖单 exe 三入口
+      与登录会话/服务会话分离。合上游若恢复「起服务 + 浏览器」或把托盘放回服务进程，
+      托盘会在 Session 0 不可见、关窗即失去入口、更新后窗口不会重连；`--desktop`/`--serve`
+      的参数语义一旦被上游覆盖，计划任务与快捷方式会互相误判（服务在 Session 0 里开一个
+      看不见的窗口然后退出）。
+    boundary: |
+      只新增套壳入口与窗口/托盘/健康监督，不改服务端行为、日志、端口与前缀；
+      `desktop.go` 与平台无关（URL、窗口位置、健康轮询、等待/错误页），
+      `desktop_windows.go` 才碰 WebView2/托盘/注册表，其他平台 `--desktop` 返回明确错误。
+      `tray_windows.go` 仍是唯一的托盘实现，但只由套壳进程调用；服务进程不再注册托盘。
+      关窗只隐藏窗口；「退出」不结束服务。WebView2 绑定用无 CGO 的纯 Go 实现
+      （`github.com/jchv/go-webview2`），保持 `CGO_ENABLED=0` 交叉编译链不变。
+    files:
+      - cli/cmd/desktop.go
+      - cli/cmd/desktop_other.go
+      - cli/cmd/desktop_windows.go
+      - cli/cmd/mindfs.go
+      - cli/cmd/tray.go
+      - cli/cmd/tray_other.go
+      - cli/cmd/tray_windows.go
+      - go.mod
+      - go.sum
+    tests:
+      # 入口判据（双击 vs 计划任务/脚本）、URL 前缀、窗口位置合法性、健康轮询、页面转义、
+      # 节点名与更新文案；托盘菜单项与 ID 也在其中。
+      - cli/cmd/desktop_test.go
+      - cli/cmd/tray_test.go
+    anchors:
+      - 'cli/cmd/desktop.go:func desktopEntry(goos string, argCount int, desktop, serve, foreground, internalAutoStart, internalRestart, daemon bool) bool {'
+      - 'cli/cmd/desktop.go:func (c desktopShellConfig) appURL() string {'
+      - 'cli/cmd/desktop_windows.go:func runDesktopShell(cfg desktopShellConfig) error {'
+      - 'cli/cmd/tray.go:func trayMenuItems() []trayMenuItem {'
+      - 'cli/cmd/desktop_test.go:func TestDesktopEntryOnlyForBareWindowsDoubleClick(t *testing.T) {'
   - id: G-RQ
     title: "WIP — 待填写（scope-id claim 占位）"
     kind: feature

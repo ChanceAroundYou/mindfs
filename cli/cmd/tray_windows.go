@@ -6,8 +6,6 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -41,11 +39,9 @@ var (
 	trayPostMsgProc     = trayUser32.NewProc("PostMessageW")
 
 	trayState struct {
-		addr           string
-		useTLS         bool
+		options        trayOptions
 		icon           trayNotifyIcon
 		taskbarCreated uint32
-		onQuit         func()
 	}
 )
 
@@ -89,17 +85,26 @@ func trayWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 			log.Printf("[tray] menu requested")
 			showTrayMenu(hwnd)
 		case wmLButtonDoubleClick:
-			openTrayPage()
+			runTrayAction(trayState.options.OpenWindow)
 		}
 		return 0
 	case wmCommand:
 		switch uint32(wparam & 0xffff) {
-		case menuOpenPageID:
-			log.Printf("[tray] open page from menu")
-			openTrayPage()
-		case menuRestartID:
-			log.Printf("[tray] restart from menu")
-			restartFromTray()
+		case menuOpenWindowID:
+			log.Printf("[tray] open window from menu")
+			runTrayAction(trayState.options.OpenWindow)
+		case menuOpenBrowserID:
+			log.Printf("[tray] open browser from menu")
+			runTrayAction(trayState.options.OpenBrowser)
+		case menuCheckUpdateID:
+			log.Printf("[tray] check update from menu")
+			runTrayAction(trayState.options.CheckUpdate)
+		case menuOpenDataDirID:
+			log.Printf("[tray] open data dir from menu")
+			runTrayAction(trayState.options.OpenDataDir)
+		case menuUninstallID:
+			log.Printf("[tray] uninstall from menu")
+			runTrayAction(trayState.options.Uninstall)
 		case menuQuitID:
 			log.Printf("[tray] quit from menu")
 			removeTrayIcon()
@@ -134,43 +139,11 @@ func showTrayMenu(hwnd uintptr) {
 	trayPostMsgProc.Call(hwnd, wmNull, 0, 0)
 }
 
-func openTrayPage() {
-	if err := openTarget(trayState.addr, trayState.useTLS, ""); err != nil {
-		log.Printf("[tray] open failed: %v", err)
+// runTrayAction 包一层 nil 检查：菜单项在壳还没建好窗口时也可能被点到。
+func runTrayAction(action func()) {
+	if action != nil {
+		action()
 	}
-}
-
-// restartFromTray 是「重启以应用配对」：先把拉起的脚本挂到后台，再走和「退出」同一条优雅收尾。
-//
-// 顺序不能反。脚本靠 Get-Process 轮询本 PID 消失，所以只要它先跑起来，我们怎么退出都行；
-// 反过来（先退出再拉起）就永远没有进程去执行那一步了。
-func restartFromTray() {
-	if err := startTrayRestartProcess(); err != nil {
-		// 拉不起来就别退出：用户会得到「点了没反应」，但服务还在 —— 比静默停服务好得多。
-		log.Printf("[tray] restart failed: %v", err)
-		return
-	}
-	removeTrayIcon()
-	trayQuitProc.Call(0)
-}
-
-// startTrayRestartProcess 把 trayRestartScript 交给一个脱离的 powershell。
-//
-// DETACHED_PROCESS 是必需的：脚本要在本进程退出之后继续活着，挂在同一个控制台/进程组里
-// 会被一起收走。命令行走 `-Command` 而不是临时 .ps1 文件 —— Session 0 里 %TEMP% 谁都能写，
-// 但那要多管一次清理，而这段脚本只跑一次。
-func startTrayRestartProcess() error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	script := trayRestartScript(os.Getpid(), exe, os.Args[1:])
-	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
-	}
-	return cmd.Start()
 }
 
 func removeTrayIcon() {
@@ -184,20 +157,18 @@ func addTrayIcon(hwnd uintptr) bool {
 	trayState.icon.ID = 1
 	trayState.icon.Flags = trayIconFlags()
 	trayState.icon.Callback = trayCallbackMessage
-	copyUTF16Into(&trayState.icon.Tip, trayTooltip(trayState.addr))
+	copyUTF16Into(&trayState.icon.Tip, trayTooltip(trayState.options))
 	ok, _, _ := trayNotifyProc.Call(nimAdd, uintptr(unsafe.Pointer(&trayState.icon)))
 	return ok != 0
 }
 
 // 消息循环必须和建窗口的线程是同一个，所以这里锁线程。
 // 托盘只是入口，拿不到（没有 shell、shell 还没起）时只少一个图标，不该把服务带停。
-func runTray(addr string, useTLS bool, onQuit func()) error {
+func runTray(opts trayOptions) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	trayState.addr = addr
-	trayState.useTLS = useTLS
-	trayState.onQuit = onQuit
+	trayState.options = opts
 
 	className := windows.StringToUTF16Ptr("mindfs.tray")
 	class := trayWindowClass{
@@ -236,7 +207,7 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 		log.Printf("[tray] Shell_NotifyIconW add failed")
 		return nil
 	}
-	log.Printf("[tray] icon added tip=%q", trayTooltip(addr))
+	log.Printf("[tray] icon added tip=%q", trayTooltip(trayState.options))
 	defer removeTrayIcon()
 
 	for {
@@ -253,9 +224,7 @@ func runTray(addr string, useTLS bool, onQuit func()) error {
 		trayDispatchProc.Call(uintptr(unsafe.Pointer(&message)))
 	}
 
-	if trayState.onQuit != nil {
-		trayState.onQuit()
-	}
+	runTrayAction(trayState.options.Quit)
 	return nil
 }
 
