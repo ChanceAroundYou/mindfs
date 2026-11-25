@@ -1,4 +1,4 @@
-package config
+package configfile
 
 import (
 	"bytes"
@@ -40,7 +40,7 @@ func TestUpdateJSONFilePreservesUnknownKeys(t *testing.T) {
   "channels": {"feishu": {"enabled": true}}
 }`)
 
-	err := UpdateJSONFile(path, func(doc map[string]any) error {
+	err := Update(path, func(doc map[string]any) error {
 		cs, _ := doc["control_sync"].(map[string]any)
 		if cs == nil {
 			cs = map[string]any{}
@@ -77,7 +77,7 @@ func TestUpdateJSONFilePreservesLargeNumbers(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	writeFile(t, path, `{"big": 9007199254740993}`)
 
-	if err := UpdateJSONFile(path, func(doc map[string]any) error {
+	if err := Update(path, func(doc map[string]any) error {
 		doc["touched"] = true
 		return nil
 	}); err != nil {
@@ -102,7 +102,7 @@ func TestUpdateJSONFilePreservesLargeNumbers(t *testing.T) {
 func TestUpdateJSONFileCreatesMissingFileWith0600(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "config.json")
-	if err := UpdateJSONFile(path, func(doc map[string]any) error {
+	if err := Update(path, func(doc map[string]any) error {
 		doc["role"] = "control"
 		return nil
 	}); err != nil {
@@ -128,7 +128,7 @@ func TestUpdateJSONFileKeepsExistingMode(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	if err := UpdateJSONFile(path, func(doc map[string]any) error {
+	if err := Update(path, func(doc map[string]any) error {
 		doc["touched"] = true
 		return nil
 	}); err != nil {
@@ -150,7 +150,7 @@ func TestUpdateJSONFileLeavesInvalidJSONUntouched(t *testing.T) {
 	const broken = `{"role": "control",`
 	writeFile(t, path, broken)
 
-	err := UpdateJSONFile(path, func(doc map[string]any) error {
+	err := Update(path, func(doc map[string]any) error {
 		doc["role"] = "edge"
 		return nil
 	})
@@ -171,7 +171,7 @@ func TestUpdateJSONFileRejectsNonObject(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	writeFile(t, path, `[1,2,3]`)
 
-	if err := UpdateJSONFile(path, func(doc map[string]any) error { return nil }); err == nil {
+	if err := Update(path, func(doc map[string]any) error { return nil }); err == nil {
 		t.Fatal("expected error for array document")
 	}
 }
@@ -184,7 +184,7 @@ func TestUpdateJSONFileSkipsWriteWhenMutateFails(t *testing.T) {
 	writeFile(t, path, body)
 
 	wantErr := os.ErrInvalid
-	err := UpdateJSONFile(path, func(doc map[string]any) error {
+	err := Update(path, func(doc map[string]any) error {
 		doc["role"] = "edge"
 		return wantErr
 	})

@@ -52,7 +52,9 @@ type NodeLister interface {
 // card's own identity before anything is written to the card store.
 func ValidateRelayRequest(req RelayRequest, lister NodeLister) error {
 	nodeID := strings.TrimSpace(req.NodeID)
-	if nodeID == "" || nodeID == "local" || lister == nil {
+	// 不再特判 "local"：那曾是「当前页面所在设备」的伪节点，现在每台机器
+	// 自报 id，「本机」也不会出现在节点表里，下面的已知性检查自然拒绝。
+	if nodeID == "" || lister == nil {
 		return ErrRelayNodeInvalid
 	}
 	known := false

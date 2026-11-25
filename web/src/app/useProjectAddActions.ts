@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { appPath } from "../services/net/base";
 import { protectedJSON as apiProtectedJSON } from "../services/net/api";
-import { getActiveNode, LOCAL_NODE_ID } from "../services/net/nodeRegistry";
+import { getActiveNode, getSelfNodeId } from "../services/net/nodeRegistry";
 import { useI18n } from "../i18n";
 import type { GitHubImportState, ProjectAddMode } from "../shared/projectAddTypes";
 
@@ -78,7 +78,7 @@ export function useProjectAddActions({
       message: "",
     }));
     try {
-      const targetImportNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+      const targetImportNodeId = projectAddNodeId || getActiveNode()?.id || getSelfNodeId();
       const payload = await apiProtectedJSON<any>(appPath("/api/imports/github", targetImportNodeId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },

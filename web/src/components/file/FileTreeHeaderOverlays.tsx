@@ -113,7 +113,6 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
         <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
           <button
             type="button"
-            data-onboarding="sidebar-menu"
             onClick={() => {
               setIsMenuOpen((open: boolean) => {
                 const nextOpen = !open;

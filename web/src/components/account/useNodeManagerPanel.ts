@@ -7,7 +7,7 @@ import { confirmDialog } from "../../services/dialog";
 import {
   addNode,
   getNodes,
-  LOCAL_NODE_ID,
+  isSelfNode,
   nodeBaseKey,
   removeNode,
   updateNode,
@@ -188,11 +188,11 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
   );
 
   const commitEdit = async (node: NodeConnection) => {
-    const isLocal = node.id === LOCAL_NODE_ID;
+    const isSelf = isSelfNode(node.id);
     const name = draftName.trim();
     if (!name) return;
     let nextUrl = "";
-    if (!isLocal) {
+    if (!isSelf) {
       try {
         nextUrl = normalizeInputUrl(draftUrl);
       } catch {
@@ -220,8 +220,8 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
     }
     try {
       setError("");
-      // local 的 url 每次读取都会被 deviceLocalNodeURL() 覆盖，提交了也是白提交
-      await updateNode(node.id, isLocal ? { name, color: draftColor } : { name, color: draftColor, url: nextUrl });
+      // self 的 url 每次读取都会被 deviceLocalNodeURL() 覆盖，提交了也是白提交
+      await updateNode(node.id, isSelf ? { name, color: draftColor } : { name, color: draftColor, url: nextUrl });
       setEditingId(null);
     } catch (e: unknown) {
       setError(String((e as Error)?.message || e));

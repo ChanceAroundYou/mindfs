@@ -46,6 +46,10 @@ type StartOptions struct {
 	// import 不到 server/internal/nodeinfo（Go internal 规则），
 	// 而它是唯一需要设置这个字段的地方。值在使用点统一 Normalize。
 	Role string
+	// NodeID/NodeName 是本机身份。NodeID 参与前端 scope 键与本地持久化，
+	// 主控缺省 home，边缘取 control_sync.instance_id。空值由缺省补齐。
+	NodeID   string
+	NodeName string
 	// Feishu 是外部通道（飞书）的本机配置。Enabled=false（缺省）时通道不创建。
 	Feishu FeishuOptions
 	// 根级飞书中继配置：FeishuRelayURL 是 worker 把卡片/回答交给控制节点的地址，
@@ -406,6 +410,8 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		staticDir = resolveStaticDir()
 	}
 	workspaces.SetRole(nodeinfo.Normalize(opts.Role))
+	nodeID, nodeName := resolveNodeIdentity(opts)
+	workspaces.SetNodeIdentity(nodeID, nodeName)
 	workspaces.SetHandlerDefaults(staticDir, func() string { return localCLIToken })
 	workspaces.SetControlSync(controlSync)
 	// 前端版本在运行期可变：边缘镜像到新构建后立刻出那一版，不需要重启进程

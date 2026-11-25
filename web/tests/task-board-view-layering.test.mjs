@@ -26,9 +26,9 @@ test("TaskBoardView avoids runtime app/storage dependencies", () => {
 
 test("TaskBoard toolbar owns create, workflow-entry and refresh controls", () => {
   const toolbar = readFileSync(new URL("../src/components/task/TaskBoardToolbar.tsx", import.meta.url), "utf8");
-  assert.match(toolbar, /data-onboarding="task-create"/);
-  assert.match(toolbar, /data-onboarding="task-refresh"/);
-  assert.match(toolbar, /data-onboarding="task-workflow-editor"/);
+  assert.match(toolbar, /onClick=\{\(\) => openTaskCreateDialog\(currentRootId\)\}/);
+  assert.match(toolbar, /data-task-refresh-visual/);
+  assert.match(toolbar, /onClick=\{onOpenWorkflowEditor\}/);
   assert.match(toolbar, /useRefreshSpin\(onRefresh\)/);
   // 模板页签 / 模板动作菜单 / 按模板新建菜单已从工具栏下线（Phase 1）。
   assert.doesNotMatch(toolbar, /task-templates/);

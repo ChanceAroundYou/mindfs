@@ -54,7 +54,6 @@ import {
   ChevronRight,
   DirectoryIconSlot,
   getFileIcon,
-  OnboardingGuideIcon,
   fileTreeMenuButtonStyle,
 } from "./icons";
 

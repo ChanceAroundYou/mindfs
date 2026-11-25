@@ -8,7 +8,6 @@ export function SessionPane({ sessionView, showSessionPane, ...props }: SessionP
     <>
     {
               <div
-                data-onboarding="workspace"
                 style={{
                   width: "100%",
                   flex: 1,

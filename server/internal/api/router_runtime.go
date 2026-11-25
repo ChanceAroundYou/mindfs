@@ -190,7 +190,13 @@ func (s *AppContext) RunRouterTurn(ctx context.Context, req kanban.RouterAgentRe
 	var usage *agenttypes.TokenUsage
 	uc := &usecase.Service{Registry: s}
 	planMode := false
-	err = uc.SendMessage(ctx, usecase.SendMessageInput{
+	// req.Timeout 是「多久没有任何新事件」的预算，不是整个回合的总时长：
+	// 复核回合要读工作区核对产出（实测一次 5 分 43 秒、73 次工具调用），
+	// 按总时长硬切会把仍在产出的回合拦腰砍断。总时长仍由调用方 ctx 的
+	// deadline 约束；这里只在长时间毫无事件时判卡住。
+	watchdog := newIdleWatchdog(ctx, req.Timeout)
+	defer watchdog.Close()
+	err = uc.SendMessage(watchdog.CtxOr(ctx), usecase.SendMessageInput{
 		RootID:                rootID,
 		RuntimeRootPath:       workDir,
 		Key:                   key,
@@ -205,6 +211,7 @@ func (s *AppContext) RunRouterTurn(ctx context.Context, req kanban.RouterAgentRe
 		Tools:                 tools,
 		ToolPolicy:            policy,
 		OnUpdate: func(update agenttypes.Event) {
+			watchdog.Touch()
 			switch update.Type {
 			case agenttypes.EventTypeMessageChunk:
 				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok &&
@@ -219,7 +226,7 @@ func (s *AppContext) RunRouterTurn(ctx context.Context, req kanban.RouterAgentRe
 		},
 	})
 	if err != nil {
-		return kanban.RouterAgentResult{}, err
+		return kanban.RouterAgentResult{}, idleTurnError(watchdog, req.Timeout, err)
 	}
 	result := kanban.RouterAgentResult{
 		SessionKey: key,

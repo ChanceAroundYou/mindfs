@@ -358,7 +358,7 @@ func TestReleaseChainShipsTheWindowsInstaller(t *testing.T) {
 	if end := strings.Index(buildAll[1:], "\n\n"); end >= 0 {
 		buildAll = buildAll[:end+1]
 	}
-	if !strings.Contains(buildAll, "scripts/build-windows-setup.sh") {
+	if !strings.Contains(buildAll, "scripts/build-windows-installer.sh") {
 		t.Fatal("build-all 没有生成 Windows 安装器：发布时会在 test -f 那步才失败")
 	}
 

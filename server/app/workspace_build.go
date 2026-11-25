@@ -190,6 +190,9 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// OOB 会话回合的重启恢复（C2）：超过 30 分钟的标记每分钟扫一次，不再依赖
 	// 「回合结束」回调活到重启之后。
 	services.Kanban.StartOutOfBandRecovery(m.ctx)
+	// 完成复核的运行期看门狗：复核 goroutine 异常退出后，界面不能永远停在
+	// 「正在独立复核」等下一次进程重启。
+	services.Kanban.StartCompletionVerifierWatchdog(m.ctx)
 	// 卡死会话巡检与死 PID 锁清理是数据面能力，逐节点本地执行；主账户负责锁，
 	// 避免多账户重复扫同一份 ~/.claude/sessions。
 	startSessionMaintenanceSweeper(m.ctx, &usecase.Service{Registry: services}, func() []string {

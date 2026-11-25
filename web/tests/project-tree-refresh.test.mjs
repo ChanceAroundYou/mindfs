@@ -33,7 +33,7 @@ assert.match(
 );
 assert.match(
   fileTreeRefreshButton,
-  /data-onboarding="sidebar-refresh"[\s\S]*?width: "22px"[\s\S]*?justifyContent: "flex-end"/,
+  /onClick=\{\(\) => void handleRefreshClick\(\)\}[\s\S]*?width: "22px"[\s\S]*?justifyContent: "flex-end"/,
   "refresh hit area should shrink without moving its right edge",
 );
 assert.match(
@@ -85,12 +85,12 @@ assert.match(
 // 2026-09 App.tsx 拆分：任务刷新/新建按钮搬到 components/TaskBoardView.tsx，契约随文件走。
 assert.match(
   taskBoardToolbar,
-  /data-onboarding="task-refresh"[\s\S]*?width: "22px"[\s\S]*?data-task-refresh-visual[\s\S]*?width: "18px"/,
+  /width: "22px"[\s\S]*?justifyContent: "flex-end"[\s\S]*?data-task-refresh-visual[\s\S]*?width: "18px"/,
   "task refresh should use a compact hit area and centered feedback background",
 );
 assert.match(
   taskBoardToolbar,
-  /data-onboarding="task-create"[\s\S]*?width: "28px"[\s\S]*?justifyContent: "center"/,
+  /openTaskCreateDialog\(currentRootId\)[\s\S]*?width: "28px"[\s\S]*?justifyContent: "center"/,
   "task create should retain its normal button size",
 );
 assert.match(

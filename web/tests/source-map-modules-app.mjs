@@ -101,7 +101,6 @@ export const APP_MODULES = {
     "src/app/useRelatedFileDiff.ts",
     "src/components/app/TaskSessionErrorDialog.tsx",
     "src/components/app/TaskDetailPanelGate.tsx",
-    "src/components/app/OnboardingGate.tsx",
     "src/components/app/TaskInlineEditPanel.tsx",
     "src/components/app/TaskInlineCandidateMenu.tsx",
     "src/components/app/SessionSheet.tsx",

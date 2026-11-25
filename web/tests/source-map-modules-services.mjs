@@ -117,7 +117,6 @@ export const SERVICE_MODULES = {
   "src/services/appearance.ts": ["src/services/prefs/appearance.ts"],
   "src/services/fontSize.ts": ["src/services/prefs/fontSize.ts"],
   "src/services/sendShortcut.ts": ["src/services/prefs/sendShortcut.ts"],
-  "src/services/onboarding.ts": ["src/services/prefs/onboarding.ts"],
   "src/services/directorySort.ts": ["src/services/prefs/directorySort.ts"],
   "src/services/storage.ts": ["src/services/prefs/storage.ts"],
   "src/services/context.ts": ["src/services/prefs/context.ts"],

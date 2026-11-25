@@ -1,6 +1,6 @@
 /**
- * App 的根视图组合：外壳 + 全局浮层（Onboarding / 任务内联编辑 / 任务会话错误 /
- * 定时任务 / 任务模板 / Toast / DialogHost）。
+ * App 的根视图组合：外壳 + 全局浮层（任务内联编辑 / 任务会话错误 /
+ * 定时任务 / Toast / DialogHost）。
  *
  * 见 docs/plans/app-tsx-under-1000.md。原先这整段 JSX 直接写在 `App()` 的 return 里，
  * 是 App.tsx 冲到 4182 行的主因；现在整段搬到这里，`App()` 只负责把四层聚合 hook
@@ -33,11 +33,6 @@ import { BottomSheet } from "../components/shell/BottomSheet";
 import { ScheduledAgentTaskDialog } from "../components/task/ScheduledAgentTaskDialog";
 import { PanelShell } from "../components/shell/PanelShell";
 import { composerInputStyle } from "../components/action/composerStyles";
-import {
-  completeOnboarding,
-  dismissOnboarding,
-  shouldAutoStartOnboarding,
-} from "../services/prefs/onboarding";
 import { getDirectorySortKey, normalizeComparableRootPath, normalizeTreeResponse, unscopedRootId } from "../app/appUtils";
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "../app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "../app/appStorage";
@@ -45,7 +40,6 @@ import { firstTaskInputFromDetail, isTerminalKanbanTask, normalizeFastService, p
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../components/task/taskIcons";
 import { TaskSessionErrorDialog } from "../components/app/TaskSessionErrorDialog";
 import { TaskDetailPanelGate } from "../components/app/TaskDetailPanelGate";
-import { OnboardingGate } from "../components/app/OnboardingGate";
 import { TaskInlineEditPanel } from "../components/app/TaskInlineEditPanel";
 import { SessionSheet } from "../components/app/SessionSheet";
 import { AppActionBar } from "../components/app/AppActionBar";
@@ -85,7 +79,7 @@ export function AppRootView(props: AppRootViewProps) {
     gitDiffSideBySide, handleTaskInlineAttachmentChange,
     interactionModeRef, isDrawerOpen, isLeftOpen, isMobile,
     isRightOpen, mainDirectoryError, mainView, mainViewRef,
-    managedRootByIdRef, managedRootByKeyRef, managedRootIds, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
+    managedRootByIdRef, managedRootByKeyRef, managedRootIds, mobileEnterKeySends, pendingPlanMode,
     pluginBypass, pluginContentRef, pluginLoading, projectTreeTab,
     refreshGitStatus, removeTaskInlineAttachment, rootEntries, saveTaskInlineEdit,
     scheduledAgentDialogOpen, scopedRootKey, selectedDir, selectedDirKey,
@@ -93,7 +87,7 @@ export function AppRootView(props: AppRootViewProps) {
     setCodexRateLimitsRefreshToken, setCopiedSlashCommandKeys, setDirectorySortOverrides, setDrawerOpenForRoot,
     setEntriesByPath, setFile,
     setFontSizePreferences, setGitDiffSideBySide, setInteractionMode, setIsLeftOpen,
-    setIsRightOpen, setMobileEnterKeySends, setOnboardingMainContentViewRoot, setOnboardingOpen,
+    setIsRightOpen, setMobileEnterKeySends,
     setPluginBypass, setProjectTreeTab, setScheduledAgentDialogOpen, setSelectedKanbanTaskId,
     setSendShortcut, setSidebarsSwapped, setTaskInlineActiveToken, setTaskInlineCandidateIndex,
     setTaskInlineCandidates, setTaskInlineEdit, setTaskSessionErrorDialog,
@@ -109,7 +103,7 @@ export function AppRootView(props: AppRootViewProps) {
   // useAppSessionLayer 返回值中本组件用到的部分
   const {
     handleCancelCurrentTurn, handleCreateBlankFile, handleCreateFolder, handleForkAgentMessage, handleNewSession,
-    handleOnboardingStepChange, handleRestartAgent, handleRunAgentLifecycleCommand, handleSelectSession,
+    handleRestartAgent, handleRunAgentLifecycleCommand, handleSelectSession,
     handleSendMessage, handleSetPlanMode, handleStartUpdate, handleTreeUpload,
     refreshTreeDir,
   } = props;
@@ -367,17 +361,6 @@ drawer={<
         slashCommandResultForSession={slashCommandResultForSession}
         t={t}
         />}
-      />
-<OnboardingGate
-      completeOnboarding={completeOnboarding}
-      dismissOnboarding={dismissOnboarding}
-      handleOnboardingStepChange={handleOnboardingStepChange}
-      isMobile={isMobile}
-      onboardingOpen={onboardingOpen}
-      setIsLeftOpen={setIsLeftOpen}
-      setIsRightOpen={setIsRightOpen}
-      setOnboardingMainContentViewRoot={setOnboardingMainContentViewRoot}
-      setOnboardingOpen={setOnboardingOpen}
       />
 <TaskInlineEditPanel
       PanelShell={PanelShell}

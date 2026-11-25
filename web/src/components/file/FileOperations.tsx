@@ -65,15 +65,13 @@ export const moreMenuPopoverStyle: React.CSSProperties = {
   zIndex: 20,
 };
 
-export function MoreMenuButton({ open, label, onClick, onboarding }: {
+export function MoreMenuButton({ open, label, onClick }: {
   open: boolean;
   label: string;
   onClick: () => void;
-  onboarding?: string;
 }) {
   return <button
     type="button"
-    data-onboarding={onboarding}
     onClick={onClick}
     aria-label={label}
     aria-haspopup="menu"

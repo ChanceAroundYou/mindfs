@@ -11,18 +11,24 @@ import (
 // verifierAgent 是只读复核回合的假 agent：记录调用与请求形状，按脚本回一段
 // 文本。block 非 nil 时先等它关闭，用来观察「apply 已返回、复核还没回来」。
 type verifierAgent struct {
-	mu       sync.Mutex
-	calls    int
-	requests []RouterAgentRequest
-	block    chan struct{}
-	reply    string
-	err      error
+	mu         sync.Mutex
+	calls      int
+	requests   []RouterAgentRequest
+	deadlines  []time.Time
+	closeCalls int
+	closedKeys []string
+	block      chan struct{}
+	reply      string
+	err        error
 }
 
 func (a *verifierAgent) RunRouterTurn(ctx context.Context, req RouterAgentRequest) (RouterAgentResult, error) {
 	a.mu.Lock()
 	a.calls++
 	a.requests = append(a.requests, req)
+	if deadline, ok := ctx.Deadline(); ok {
+		a.deadlines = append(a.deadlines, deadline)
+	}
 	block, reply, err := a.block, a.reply, a.err
 	a.mu.Unlock()
 	if block != nil {
@@ -39,6 +45,10 @@ func (a *verifierAgent) RunRouterTurn(ctx context.Context, req RouterAgentReques
 }
 
 func (a *verifierAgent) CloseRouterSession(ctx context.Context, rootID, sessionKey string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.closeCalls++
+	a.closedKeys = append(a.closedKeys, sessionKey)
 	return nil
 }
 
@@ -295,4 +305,244 @@ func TestVerifierApplyReturnsBeforeVerdict(t *testing.T) {
 
 	close(agent.block)
 	waitCompletionStatus(t, f, CompletionStatusCompleted, 10*time.Second)
+}
+
+// slowVerifierAgent 模拟「持续产出但耗时较长」的复核回合。
+type slowVerifierAgent struct {
+	verifierAgent
+	delay time.Duration
+}
+
+func (a *slowVerifierAgent) RunRouterTurn(ctx context.Context, req RouterAgentRequest) (RouterAgentResult, error) {
+	select {
+	case <-time.After(a.delay):
+	case <-ctx.Done():
+		return RouterAgentResult{}, ctx.Err()
+	}
+	return a.verifierAgent.RunRouterTurn(ctx, req)
+}
+
+// cancelingVerifierAgent 模拟 2026-11-25 的现场：回合自己把 ctx 弄成已过期，
+// 然后返回超时错误。旧实现拿这个死 ctx 去写「复核不可用」系统行、park 任务，
+// 三步全部静默失败，界面永远停在「正在独立复核」。
+type cancelingVerifierAgent struct {
+	verifierAgent
+	cancel context.CancelFunc
+}
+
+func (a *cancelingVerifierAgent) RunRouterTurn(ctx context.Context, req RouterAgentRequest) (RouterAgentResult, error) {
+	a.mu.Lock()
+	a.calls++
+	a.requests = append(a.requests, req)
+	a.mu.Unlock()
+	a.cancel()
+	return RouterAgentResult{}, context.DeadlineExceeded
+}
+
+func (a *verifierAgent) deadlineAt(i int) (time.Time, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if i >= len(a.deadlines) {
+		return time.Time{}, false
+	}
+	return a.deadlines[i], true
+}
+
+// TestVerifierSlowTurnStillAppliesVerdict：复核耗时超过旧的 120 秒硬上限、
+// 但一直有事件时，必须拿到结论而不是被拦腰砍断。
+//
+// 现场：复核读了 73 次工作区、跑了 5 分 43 秒并算出 pass，120 秒硬切把结论
+// 丢掉，界面只剩「正在独立复核」。因此这里同时钉住两件事：
+//  1. RouterAgentRequest.Timeout 是空闲预算（90s），不是总时长；
+//  2. 外层 ctx 的总预算足够长（10 分钟量级），不是 90s+30s。
+func TestVerifierSlowTurnStillAppliesVerdict(t *testing.T) {
+	ctx := context.Background()
+	f := newCompletionFixture(t, nil)
+	agent := &slowVerifierAgent{
+		verifierAgent: verifierAgent{reply: `{"verdict":"pass","findings":["工作区产物齐全"]}`},
+		delay:         150 * time.Millisecond,
+	}
+	f.svc.SetRouterAgent(agent)
+	decision := insertVerifierDecision(t, f, "dec-slow-verifier", "都做完了")
+
+	report := f.evaluate(t)
+	if err := f.svc.beginCompletionVerification(ctx, f.store, f.task, f.run, report, decision, "都做完了"); err != nil {
+		t.Fatalf("beginCompletionVerification: %v", err)
+	}
+	waitCompletionStatus(t, f, CompletionStatusCompleted, 10*time.Second)
+
+	if rows := completionSystemRows(t, f, "completion-verifier-unavailable:"); len(rows) != 0 {
+		t.Fatalf("慢但持续的复核被当成不可用：%+v", rows)
+	}
+	req := agent.requestAt(0)
+	if req.Timeout != completionVerifierIdleTimeout {
+		t.Fatalf("RouterAgentRequest.Timeout = %v, want 空闲判据 %v", req.Timeout, completionVerifierIdleTimeout)
+	}
+	deadline, ok := agent.deadlineAt(0)
+	if !ok {
+		t.Fatal("复核回合没有总预算 deadline")
+	}
+	if remaining := time.Until(deadline); remaining < 5*time.Minute {
+		t.Fatalf("复核回合总预算只剩 %v：仍可能在持续产出时被硬切", remaining)
+	}
+}
+
+// TestVerifierFailureAfterDeadlineStillWritesState：回合 ctx 已经过期时，
+// 收尾的写库与关会话仍必须成功（脱离取消的 ctx）。
+func TestVerifierFailureAfterDeadlineStillWritesState(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := newCompletionFixture(t, nil)
+	agent := &cancelingVerifierAgent{cancel: cancel}
+	f.svc.SetRouterAgent(agent)
+	decision := insertVerifierDecision(t, f, "dec-dead-ctx", "都做完了")
+	must(t, f.store.UpsertTaskCompletion(ctx, TaskCompletion{
+		TaskID:     f.task.ID,
+		RunID:      f.run.ID,
+		Status:     CompletionStatusVerifying,
+		DecisionID: decision.ID,
+		UpdatedAt:  time.Now().UTC(),
+	}), "seed verifying")
+
+	if err := f.svc.verifyCompletion(ctx, f.task.ID, f.run.ID, decision.ID); err != nil {
+		t.Fatalf("verifyCompletion 收尾不应因原 ctx 已取消而失败：%v", err)
+	}
+
+	rows := completionSystemRows(t, f, "completion-verifier-unavailable:")
+	if len(rows) != 1 {
+		t.Fatalf("completion-verifier-unavailable 行 = %d, want 1（dead ctx 把写库吞了）", len(rows))
+	}
+	if !strings.Contains(rows[0].Body, "独立复核不可用") {
+		t.Fatalf("不可用行正文 = %q", rows[0].Body)
+	}
+	if got := completionRecord(t, f).Status; got != CompletionStatusBlocked {
+		t.Fatalf("completion status = %q, want blocked", got)
+	}
+	task, err := f.store.GetTask(context.Background(), f.task.ID)
+	must(t, err, "GetTask")
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want %q", task.Status, StatusWaitingUser)
+	}
+	agent.mu.Lock()
+	closeCalls := agent.closeCalls
+	agent.mu.Unlock()
+	if closeCalls != 1 {
+		t.Fatalf("CloseRouterSession calls = %d, want 1（被放弃的运行时必须关掉）", closeCalls)
+	}
+}
+
+// cancelThenPassVerifierAgent 模拟「回合成功算出结论、但恰好在那一刻 ctx 被取消」：
+// 先取消回合 ctx，再返回一段 pass 结论。旧实现用原 ctx 落盘会失败，任务停在 verifying。
+type cancelThenPassVerifierAgent struct {
+	verifierAgent
+	cancel context.CancelFunc
+}
+
+func (a *cancelThenPassVerifierAgent) RunRouterTurn(ctx context.Context, req RouterAgentRequest) (RouterAgentResult, error) {
+	a.mu.Lock()
+	a.calls++
+	a.requests = append(a.requests, req)
+	a.mu.Unlock()
+	a.cancel()
+	return RouterAgentResult{SessionKey: req.SessionKey, FinalText: `{"verdict":"pass","findings":["工作区里能看到 README.md 已更新"]}`}, nil
+}
+
+// TestVerifierSuccessAfterDeadlineStillAppliesVerdict：复核成功返回、但返回那一刻 ctx
+// 已被取消时，结论仍必须落盘并收尾 —— 否则 task_completion 会停在 verifying。
+func TestVerifierSuccessAfterDeadlineStillAppliesVerdict(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := newCompletionFixture(t, nil)
+	agent := &cancelThenPassVerifierAgent{cancel: cancel}
+	f.svc.SetRouterAgent(agent)
+	decision := insertVerifierDecision(t, f, "dec-pass-dead-ctx", "都做完了")
+
+	if err := f.svc.verifyCompletion(ctx, f.task.ID, f.run.ID, decision.ID); err != nil {
+		t.Fatalf("verifyCompletion 落盘不应因原 ctx 已取消而失败：%v", err)
+	}
+
+	task, err := f.store.GetTask(context.Background(), f.task.ID)
+	must(t, err, "GetTask")
+	if task.Status != StatusSuccess {
+		t.Fatalf("task status = %q, want success（pass 结论没有落盘）", task.Status)
+	}
+	if c := completionRecord(t, f); c.Status != CompletionStatusCompleted || c.VerifierVerdict != CompletionVerdictPass {
+		t.Fatalf("completion = %+v, want completed/pass", c)
+	}
+}
+
+// TestVerifierWatchdogSettlesAbandonedRow：运行期看门狗要把「早已无人收口」
+// 的 verifying 行收成 blocked 并 park，而不是等下一次进程重启。
+func TestVerifierWatchdogSettlesAbandonedRow(t *testing.T) {
+	ctx := context.Background()
+	f := newCompletionFixture(t, nil)
+	must(t, f.store.UpsertTaskCompletion(ctx, TaskCompletion{
+		TaskID:     f.task.ID,
+		RunID:      f.run.ID,
+		Status:     CompletionStatusVerifying,
+		DecisionID: "dec-watchdog",
+		UpdatedAt:  time.Now().UTC().Add(-completionVerifierStaleAfter - time.Minute),
+	}), "seed stale verifying")
+
+	if n := f.svc.SweepStaleCompletionVerifications(ctx); n != 1 {
+		t.Fatalf("watchdog settled = %d, want 1", n)
+	}
+	if got := completionRecord(t, f).Status; got != CompletionStatusBlocked {
+		t.Fatalf("completion status = %q, want blocked", got)
+	}
+	if rows := completionSystemRows(t, f, "completion-verifier-timeout:"); len(rows) != 1 {
+		t.Fatalf("timeout 行 = %d, want 1", len(rows))
+	}
+	task, err := f.store.GetTask(ctx, f.task.ID)
+	must(t, err, "GetTask")
+	if task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %q, want %q", task.Status, StatusWaitingUser)
+	}
+}
+
+// 刚开始的复核不能被看门狗误杀。
+func TestVerifierWatchdogLeavesFreshRowAlone(t *testing.T) {
+	ctx := context.Background()
+	f := newCompletionFixture(t, nil)
+	must(t, f.store.UpsertTaskCompletion(ctx, TaskCompletion{
+		TaskID:     f.task.ID,
+		RunID:      f.run.ID,
+		Status:     CompletionStatusVerifying,
+		DecisionID: "dec-fresh",
+		UpdatedAt:  time.Now().UTC(),
+	}), "seed fresh verifying")
+
+	if n := f.svc.SweepStaleCompletionVerifications(ctx); n != 0 {
+		t.Fatalf("watchdog settled = %d, want 0（刚起的复核被误杀）", n)
+	}
+	if got := completionRecord(t, f).Status; got != CompletionStatusVerifying {
+		t.Fatalf("completion status = %q, want verifying", got)
+	}
+}
+
+// TestVerifierRestartDistinguishesTimeoutFromInterrupt：重启对账要区分
+// 「刚被重启打断」与「重启前就已经超时无人收口」。2026-11-25 现场是后者，
+// 却被写成了「复核被重启打断」，把 27 分钟前的失败归因到重启。
+func TestVerifierRestartDistinguishesTimeoutFromInterrupt(t *testing.T) {
+	ctx := context.Background()
+	f := newCompletionFixture(t, nil)
+	must(t, f.store.UpsertTaskCompletion(ctx, TaskCompletion{
+		TaskID:     f.task.ID,
+		RunID:      f.run.ID,
+		Status:     CompletionStatusVerifying,
+		DecisionID: "dec-stale-restart",
+		UpdatedAt:  time.Now().UTC().Add(-completionVerifierStaleAfter - time.Minute),
+	}), "seed stale verifying")
+
+	if _, err := f.svc.RecoverOnStartupForRoot(ctx, f.root.ID, nil); err != nil {
+		t.Fatalf("RecoverOnStartupForRoot: %v", err)
+	}
+	rows := completionSystemRows(t, f, "completion-verifier-timeout:")
+	if len(rows) != 1 {
+		t.Fatalf("timeout 行 = %d, want 1", len(rows))
+	}
+	if !strings.Contains(rows[0].Body, "早已超时未收口") {
+		t.Fatalf("正文 = %q，仍把超时归因成重启", rows[0].Body)
+	}
+	if rows := completionSystemRows(t, f, "completion-verifier-interrupted:"); len(rows) != 0 {
+		t.Fatalf("不该再写 interrupted 行：%+v", rows)
+	}
 }

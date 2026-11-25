@@ -73,7 +73,6 @@ export function ComposerTopChips({
 
   return (
     <div
-      data-onboarding="composer-top-chips"
       style={{
         position: "relative",
         width: "100%",

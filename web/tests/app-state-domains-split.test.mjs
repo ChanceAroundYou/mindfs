@@ -24,6 +24,7 @@ test("state layer delegates session, responsive, and root-scope domains below th
   assert.match(sessions, /useAppSessionPins\(\)/);
   assert.match(sessions, /multiProjectSessionsEnabled: true = true[\s\S]*?MULTI_PROJECT_RELOAD_DEBOUNCE_MS: 300 = 300/);
   assert.match(selection, /selectedSession[\s\S]*?queueVersion[\s\S]*?interactionMode[\s\S]*?isDrawerOpen/);
-  assert.match(responsive, /useResponsive\(\)[\s\S]*?isLeftOpen[\s\S]*?onboardingAutoStartRef = useRef/);
+  assert.match(responsive, /useResponsive\(\)[\s\S]*?isLeftOpen[\s\S]*?setIsRightOpen/);
+  assert.doesNotMatch(responsive, /onboarding/, "首开向导已删除，响应式层不再持有它的状态");
   assert.match(rootScope, /getNodeIdForRoot[\s\S]*?scopedRootKey/);
 });

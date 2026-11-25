@@ -36,6 +36,11 @@ func (s *Service) installUpdate(ctx context.Context, version string, restart boo
 	if err != nil {
 		return err
 	}
+	if isInstallerAsset(asset.Name) {
+		// 安装包直接接管，不经过解包；restart 参数对它没有意义 —— 静默安装
+		// 自己会停服务、覆盖文件、再把服务拉起来。
+		return s.stageInstallerUpdate(ctx, asset, artifact)
+	}
 
 	tmpDir, err := os.MkdirTemp("", "mindfs-update-*")
 	if err != nil {
