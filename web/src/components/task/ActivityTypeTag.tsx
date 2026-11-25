@@ -19,21 +19,26 @@ export function ActivityTypeTag({ activity }: { activity: TaskActivity }) {
       data-testid="activity-type-tag"
       data-activity-type={activity.type}
       data-activity-purpose={activity.purpose || ""}
-      style={typeTagStyle}
+      style={activityMetaPillStyle}
     >
       {t(key)}
     </span>
   );
 }
 
-const typeTagStyle: React.CSSProperties = {
+/**
+ * 消息元信息胶囊的唯一外形：类型胶囊与排队徽标共用这一份。
+ *
+ * 胶囊是给用户看的，恒为满不透明；「次要」只由旁边的时间/工作流名/入口键的
+ * opacity 表达。**不要给行容器挂 opacity** —— 父级不透明度子级无法覆盖，整枚胶囊
+ * 会一起被压淡（2026-11-25 截图：Agent 页脚的「结果」比系统行的「提醒」浅一半）。
+ */
+export const activityMetaPillStyle: React.CSSProperties = {
   border: "1px solid var(--border-color)",
   borderRadius: 999,
   padding: "1px 6px",
-  fontSize: 9,
+  fontSize: 10,
   fontWeight: 700,
   lineHeight: 1.5,
   color: "var(--text-secondary)",
-  // Agent 页脚整体 opacity 0.5；类型胶囊是给用户看的，单独恢复不透明度。
-  opacity: 1,
 };
