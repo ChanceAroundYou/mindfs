@@ -16292,3 +16292,36 @@ groups:
       - 'web/src/components/task/ActivityMessage.tsx:<span style={activityMetaPillStyle}>{t("task.queued")}</span>'
       - 'web/src/components/task/ActivityMessage.tsx:const metaTimeStyle: React.CSSProperties = {'
       - 'web/tests/activity-meta-pill-unify.test.mjs:test("元信息行容器不挂 opacity：胶囊恒为满不透明", () => {'
+  # ── 提醒消息：居中气泡、文本左对齐（与右气泡用户 / 无气泡 Agent 区分） ──
+  - id: G-RM
+    title: "任务详情的提醒消息从居中灰字改为居中气泡、文本左对齐"
+    kind: fix
+    symptom: |
+      2026-11-25 用户反馈「提醒消息不要这么突兀的居中了」。此前 attention 与普通
+      system_event 共用一条居中灰字（`systemTextStyle`，fontSize 12 + textAlign center），
+      夹在右侧灰色用户气泡与无框 Agent 正文之间，既没有消息形态，长文本还整段居中，
+      读起来像一条通知条而不是消息。
+    why: |
+      必须保留：三种身份的排布是用户明确确定的设计约定 —— Agent 正文无气泡、用户
+      消息右气泡、提醒消息居中气泡且文本左对齐。实现上复用 `userBubbleStyle` 的灰底、
+      内边距、14px/1.5 正文，只把右下角尾巴抹平成四角一致（borderRadius 12），
+      避免新造配色；提醒的类型胶囊与时间仍留在气泡下方，不改变消息结构。
+      普通系统事件继续用中性一行，不受影响。合上游丢了这个分支，提醒会退回居中灰字。
+    boundary: |
+      只改 `ActivityMessage` 的 system 分支里 `type === "attention"` 的正文外壳；
+      不改消息分类（仍按 role 分三路）、不改 type→标签映射、不改异步/派发逻辑，
+      也不给 Agent 正文加气泡。气泡沿用现有 `--text-primary` 与灰色气泡底，
+      不新增主题色或动画。
+    files:
+      - web/src/components/task/ActivityMessage.tsx
+      - web/tests/activity-attention-bubble.test.mjs
+    tests:
+      # 四条：气泡居中且左对齐、复用用户气泡外形、Agent/系统事件未被波及、
+      # 胶囊与时间仍在气泡下方。
+      - web/tests/activity-attention-bubble.test.mjs
+    anchors:
+      - 'web/src/components/task/ActivityMessage.tsx:const isAttention = activity.type === "attention";'
+      - 'web/src/components/task/ActivityMessage.tsx:data-testid={isAttention ? "activity-attention-bubble" : undefined}'
+      - 'web/src/components/task/ActivityMessage.tsx:const attentionBubbleStyle: React.CSSProperties = {'
+      - 'web/src/components/task/ActivityMessage.tsx:  ...userBubbleStyle,'
+      - 'web/tests/activity-attention-bubble.test.mjs:test("提醒渲染成居中气泡：四角一致、灰底、文本左对齐", () => {'
