@@ -114,14 +114,26 @@ const turnBlockStep = 1
 // （见 session.BuildTurnBlocks），而那需要「正文 + aux 的交错上下文」——
 // appendExchange 只看到一段字符串，appendExchangeAux 只看到一条 aux，都拼不出完整顺序。
 func persistTurnBlocks(ctx context.Context, manager *session.Manager, key string, seq int, turnID, content string, aux []session.ExchangeAux) error {
+	_, err := persistTurnBlocksReturning(ctx, manager, key, seq, turnID, content, aux)
+	return err
+}
+
+// persistTurnBlocksReturning 与 persistTurnBlocks 相同，另外返回落下的块。
+//
+// 回合收尾后的续跑追加器（turnTailWriter）要靠首轮的块建「callId → pos」索引：
+// 迟到完成的工具卡必须在原 pos 上写 revision+1，而不是新开一张卡。
+func persistTurnBlocksReturning(ctx context.Context, manager *session.Manager, key string, seq int, turnID, content string, aux []session.ExchangeAux) ([]session.Block, error) {
 	if manager == nil || seq <= 0 {
-		return nil
+		return nil, nil
 	}
 	blocks := session.BuildTurnBlocks(seq, turnBlockStep, turnID, content, aux)
 	if len(blocks) == 0 {
-		return nil
+		return nil, nil
 	}
-	return manager.AppendBlocks(ctx, key, blocks)
+	if err := manager.AppendBlocks(ctx, key, blocks); err != nil {
+		return nil, err
+	}
+	return blocks, nil
 }
 
 // recordedUserExchangeSeq 返回判重命中的那条已有 user 行的 seq；找不到时返回 0。

@@ -38,6 +38,16 @@ func (t *turnUpdateTracker) End() {
 	t.mu.Unlock()
 }
 
+// IdleFor 返回距最后一次 Begin/End 的时长（回合空闲看门狗的判据）。
+func (t *turnUpdateTracker) IdleFor() time.Duration {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return time.Since(t.lastActivity)
+}
+
 func (t *turnUpdateTracker) WaitIdle(ctx context.Context, settleWindow, maxWait time.Duration) bool {
 	if t == nil {
 		return true

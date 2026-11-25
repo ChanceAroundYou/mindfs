@@ -295,6 +295,13 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		h.startNextQueuedSessionMessage(rootID, key)
 	}()
 
+	// 回合空闲看门狗：Prompt 没有死线，卡住的回合会让「运行中」一直亮。
+	// 连续空闲超过阈值就取消回合 ctx，走既有的取消收尾路径。
+	watchdogDone := make(chan struct{})
+	go watchSessionTurnIdle(msgCtx, cancel, updateTracker,
+		sessionTurnIdleTimeout, sessionTurnIdlePoll, rootID, key, requestID, watchdogDone)
+	defer close(watchdogDone)
+
 	err := uc.SendMessage(msgCtx, usecase.SendMessageInput{
 		RootID:          rootID,
 		RuntimeRootPath: job.RuntimeRootPath,
