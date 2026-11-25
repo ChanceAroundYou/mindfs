@@ -492,7 +492,8 @@ func TestHandleProviderStripsNestedCiphertextBeforeForwarding(t *testing.T) {
 	}
 }
 
-func TestHandleProviderDoesNotRetryWithoutCiphertext(t *testing.T) {	var mu sync.Mutex
+func TestHandleProviderDoesNotRetryWithoutCiphertext(t *testing.T) {
+	var mu sync.Mutex
 	requests := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()

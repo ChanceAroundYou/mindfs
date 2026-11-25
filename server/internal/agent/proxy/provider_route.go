@@ -129,6 +129,17 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 			s.recordProviderSwitchCiphertextIDs(threadID, nil)
 		}
 	}
+	// The official Responses API rejects message items whose id does not begin
+	// with `msg_`, and Codex gives the messages it creates locally (the
+	// pre-sampling compact prompt) `item_<hex>` ids. Drop those ids before
+	// folding; see normalizeInputMessageIDs.
+	if scanned {
+		if normalized, removed, changed := normalizeInputMessageIDs(body); changed {
+			body = normalized
+			log.Printf("[proxy] responses.id-normalize thread=%s items=%d bytes=%d",
+				ShortToken(threadID), removed, len(body))
+		}
+	}
 	// Usage scanning is part of the observation pipeline: with live compact off
 	// this route stays a byte-for-byte pass-through and pays nothing.
 	observed := scanned && s.harnessRuntimeFor(harnessForAdapter(adapterResponses)).cfg.Observes()

@@ -12634,7 +12634,7 @@ groups:
       - 'web/src/app/useReplyingSessionPoll.ts:      reloadListRef.current?.();'
       - 'web/src/app/useAppMultiProjectReload.ts:    scheduleMultiProjectSessionReload,'
   - id: G-PK
-    title: Codex 跨 provider 续接时丢掉旧 provider 的加密 reasoning
+    title: Codex 跨 provider 续接的请求清洗（丢旧密文 + 归一 message id）
     kind: fix
     symptom: |
       pc-win 上一条在 llmux 下建的 Codex 线程（rollout 里 21 条
@@ -12691,6 +12691,16 @@ groups:
       provider、又没有快照的线程，首个请求无法区分新旧密文，会连新的一起剥一次，
       这是可接受且有界的一次性代价。
 
+      同一组还承担第二种跨 provider 清洗：官方 Responses API 要求 message 条目的
+      id 以 `msg_` 开头，其余前缀整轮 400（`Invalid 'input[1055].id': 'item_…'.
+      Expected an ID that begins with 'msg'`，wsl 2026-11-25 17:17 实测）。Codex
+      给自己本地造的消息（pre-sampling compact 的提示词）用 `item_<hex>` id，
+      llmux 不校验，迁到官方 provider 后才炸。`normalizeInputMessageIDs` 在转发
+      前去掉这类 id：只处理顶层 `input` 里 `type:"message"`（或无 `type` 但有
+      `role`）的条目，`msg_` 前缀、reasoning / 工具调用 / compacted 内嵌条目一律
+      不动 —— 被删的 id 按定义就是官方 API 会拒绝的值，而输入条目没有 id 本身是
+      合法形态（Codex 的普通用户消息就不带 id）。
+
       测试 → 钉住什么：
       · TestStripEncryptedReasoningInput —— 四类实测载体（reasoning 顶层 /
         agent_message.content[] / compacted 的 guardian_history 与
@@ -12709,15 +12719,22 @@ groups:
       · TestHandleProviderStripsNestedCiphertextBeforeForwarding —— 未知成员下的密文
         在转发前就被剥掉，不必等 400。
       · TestHandleProviderDoesNotRetryWithoutCiphertext —— 无可剥内容时只请求一次。
+      · TestNormalizeInputMessageIDs —— 只删 message 上非 `msg_` 的 id：`msg_`
+        保住，reasoning / compacted 内嵌条目不动，兄弟顺序与正文逐字节保留。
+      · TestHandleProviderNormalizesMessageIDsBeforeForwarding —— 注册线程的请求
+        转发前就归一，上游看不到 `item_` 前缀的消息 id。
     files:
       - server/internal/agent/proxy/provider_switch.go
       - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/proxy/responses_ids.go
+      - server/internal/agent/proxy/responses_ids_test.go
       - server/internal/agent/proxy/provider_route.go
       - server/internal/agent/proxy/proxy.go
       - server/internal/agent/pool.go
       - server/internal/agent/pool_provider_switch_test.go
     tests:
       - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/proxy/responses_ids_test.go
       - server/internal/agent/pool_provider_switch_test.go
     anchors:
       - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) MarkProviderSwitch(threadID string) {'
@@ -12730,6 +12747,9 @@ groups:
       - 'server/internal/agent/proxy/provider_route.go:	if scanned && s.providerSwitchedThread(threadID) {'
       - 'server/internal/agent/proxy/provider_route.go:		allowed, snapshotted := s.providerSwitchCiphertextIDs(threadID)'
       - 'server/internal/agent/proxy/provider_route.go:		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)'
+      - 'server/internal/agent/proxy/responses_ids.go:func normalizeInputMessageIDs(body []byte) (out []byte, removed int, changed bool) {'
+      - 'server/internal/agent/proxy/responses_ids.go:func normalizeMessageIDElement(b []byte, start int) ([]byte, bool) {'
+      - 'server/internal/agent/proxy/provider_route.go:		if normalized, removed, changed := normalizeInputMessageIDs(body); changed {'
       - 'server/internal/agent/pool.go:		if codexThreadRethreaded(in.AgentSessionID, threadID) {'
   - id: G-PL
     title: 总结归属收口：progress 口信不再抢摘要、兜底摘要结构化、600 字句界截断
