@@ -2,6 +2,7 @@ import type { ExchangeAux } from "../services/session";
 import {
   attachTurnFooter,
   isBlankText,
+  isPlaceholderThought,
   normalizeToolCall,
   type TimelineItem,
 } from "./sessionBlocks";
@@ -76,7 +77,7 @@ export function buildAssistantTimeline(
       }
       emittedLines = aux.line;
     }
-    if (aux.thought) {
+    if (aux.thought && !isPlaceholderThought(aux.thought)) {
       out.push({
         id:
           aux.thought_id ||

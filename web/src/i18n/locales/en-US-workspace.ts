@@ -160,6 +160,7 @@ export const enUSWorkspace = {
   "markdown.expandOutline": "Expand outline",
   "markdown.collapseOutline": "Collapse outline",
   "thinking.title": "Thinking process",
+  "thinking.unavailable": "Thinking content unavailable",
   "projectAdd.selectVolume": "Select drive",
   "projectAdd.goUp": "Parent directory",
   "projectAdd.blankProject": "Blank project",

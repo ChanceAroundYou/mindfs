@@ -15,6 +15,11 @@ import type {
   ToolCall,
   TokenUsage,
 } from "../services/session";
+import {
+  hasMeaningfulChar,
+  isBlankText,
+  isPlaceholderThought,
+} from "../shared/thoughtText";
 
 /**
  * 一轮 agent 回复的页脚数据（模型、耗时、用量、上下文窗口）。
@@ -123,30 +128,9 @@ export function blockItemID(seq: number | undefined, pos: number): string {
   return `block:${seq && seq > 0 ? seq : 0}:${pos}`;
 }
 
-/**
- * 这段文本里有没有**看得见的字符**。
- *
- * agent 在工具卡之间会吐 `"\n\u200b"` 这种增量：Go 的 `strings.TrimSpace` 用的是
- * `unicode.IsSpace`，而 U+200B（零宽空格）不在其列，于是它被当成正文落成 text 块；
- * 前端这里只判空串，就渲染成一个只有零宽字符的 markdown 段落 —— 段落自带 `p` 的
- * 上下 margin，把相邻工具卡的间距从 6px 撑到 87.5px（实测，2026-10-25 用户报
- * 「每一个 tool call 之间的间距隔得非常大」）。
- */
-const ZERO_WIDTH_BLANK = /^[\s\u200b\u200c\u200d\ufeff]*$/;
-
-export function isBlankText(content: string): boolean {
-  return ZERO_WIDTH_BLANK.test(content);
-}
-
-/**
- * 内容里有没有至少一个「有意义的字符」——字母、数字或 CJK。
- * reasoning 块若全是标点/符号（如 "..."、"。。。"）不值得渲染成占位块。
- */
-const MEANINGFUL_CHAR = /[\p{L}\p{N}]/u;
-
-export function hasMeaningfulChar(content: string): boolean {
-  return MEANINGFUL_CHAR.test(content);
-}
+// 思考/正文的可见性判据住在 shared/thoughtText（三条思考路径与思考框共用）。
+// 这里重新导出，保持既有 import 与测试不变。
+export { hasMeaningfulChar, isBlankText, isPlaceholderThought };
 
 /**
  * 该 seq 的正文块；没有就返回 undefined（历史会话 / 本方案落地前落盘的轮次）。
@@ -253,11 +237,10 @@ export function buildAssistantTimelineFromBlocks(
     switch (block.type) {
       case "reasoning": {
         // 灰显 / 可折叠 —— 复用既有 thought 渲染，超大块由它自己折叠。
+        // 空白/零宽或纯标点（如 "..."、"。。"）是无内容占位，不值得渲染成
+        // 「思考过程 (N 字符)」；判据见 shared/thoughtText，三条思考路径共用一把尺。
         const content = block.text || "";
-        if (isBlankText(content)) break;
-        // 纯标点/符号的 reasoning（如 "..."、"。。"）不值得渲染成「思考过程 (N 字符)」
-        // 占位块，直接跳过。真实思考至少含一个字母、数字或 CJK 字符。
-        if (!hasMeaningfulChar(content)) break;
+        if (isPlaceholderThought(content)) break;
         out.push({ id, type: "thought", content });
         break;
       }
