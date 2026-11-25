@@ -59,6 +59,23 @@ type overviewTaskProjection struct {
 	// 布尔都没有 omitempty，每条任务都会挂一个 {"ask_user_waiting":false,...} 的固定
 	// 开销 —— 跨节点扇出下这是纯浪费，而且前端本来就读 `?? false`。
 	AuxFlags *overviewAuxFlags `json:"aux_flags,omitempty"`
+	// RouterAsk / LatestAttention 是卡片上的两类 Router 来源标记：
+	// Router 自己派发的提问（与 aux_flags.ask_user_waiting 分源）和最新一条
+	// 分级提醒。派生自 activity 行，随列表一起下发，否则工作台卡片会少标记。
+	RouterAsk       *overviewRouterAsk       `json:"router_ask,omitempty"`
+	LatestAttention *overviewLatestAttention `json:"latest_attention,omitempty"`
+}
+
+type overviewRouterAsk struct {
+	Count    int    `json:"count"`
+	Since    string `json:"since,omitempty"`
+	Question string `json:"question,omitempty"`
+}
+
+type overviewLatestAttention struct {
+	Body      string `json:"body"`
+	Severity  string `json:"severity,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // overviewAuxFlags 是辅助徽标的卡片视图。
@@ -96,7 +113,23 @@ func projectOverviewTask(task kanban.Task) overviewTaskProjection {
 		WorktreeBuilt:    task.WorktreeBuilt,
 		WorktreeMissing:  task.WorktreeMissingNow(),
 		AuxFlags:         projectOverviewAuxFlags(task.AuxFlags),
+		RouterAsk:        projectOverviewRouterAsk(task.RouterAsk),
+		LatestAttention:  projectOverviewLatestAttention(task.LatestAttention),
 	}
+}
+
+func projectOverviewRouterAsk(ask *kanban.TaskRouterAsk) *overviewRouterAsk {
+	if ask == nil {
+		return nil
+	}
+	return &overviewRouterAsk{Count: ask.Count, Since: ask.Since, Question: ask.Question}
+}
+
+func projectOverviewLatestAttention(attention *kanban.TaskLatestAttention) *overviewLatestAttention {
+	if attention == nil {
+		return nil
+	}
+	return &overviewLatestAttention{Body: attention.Body, Severity: attention.Severity, CreatedAt: attention.CreatedAt}
 }
 
 // projectOverviewAuxFlags 把辅助标记压成卡片视图；一个标记都没有时返回 nil

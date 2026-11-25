@@ -148,6 +148,9 @@ export const zhCNTasks = {
   // Router 角标（W3-4）：健康事件还没被 Router 处理时挂在卡片上，处理完即消失。
   "task.routerAlertInterrupted": "进程重启打断了这一轮，Router 还没接管（{count} 条）",
   "task.routerAlertStalled": "这一轮长时间没有新进展，Router 还没处理（{count} 条）",
+  // Router 自己派发的提问；会话 worker 透传的 ask 仍用 task.waitingUser。
+  "task.routerAskWaiting": "Router 等你拍板（{count}）",
+  "task.routerAskWaitingTitle": "Router 等你拍板：{question}",
   "task.completion.title": "完成证据",
   "task.completion.repairs": "补做 {used} / {max}",
   "task.completion.allPassed": "全部完成条件成立。",

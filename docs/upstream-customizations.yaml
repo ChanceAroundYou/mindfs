@@ -13201,7 +13201,7 @@ groups:
       - 'server/internal/kanban/activity_store.go:ALTER TABLE task_activities ADD COLUMN last_output_at'
       - 'server/internal/kanban/task_router_alert.go:func (s *TaskStore) attachRouterAlerts(ctx context.Context, tasks []Task) {'
       - 'server/internal/kanban/task_store.go:s.attachRouterAlerts(ctx, items)'
-      - 'server/internal/kanban/types.go:RouterAlert    *TaskRouterAlert `json:"router_alert,omitempty"`'
+      - 'server/internal/kanban/types.go:RouterAlert *TaskRouterAlert `json:"router_alert,omitempty"`'
       - 'web/src/components/task/routerAlertModel.ts:export function taskRouterAlertBadge('
       - 'web/src/components/task/TaskCardRows.tsx:const routerAlert = taskRouterAlertBadge(task);'
       - 'web/src/components/task/taskIcons.tsx:export function TaskRouterAlertIcon('
@@ -16634,3 +16634,48 @@ groups:
       - 'web/src/app/useTaskBoard.ts:import { carryTaskNodeTag } from "../shared/taskNodeTag";'
       - 'web/src/app/useTaskBoard.ts:carryTaskNodeTag(detail, detail?.task?.id ? taskDetailsByIdRef.current[String(detail.task.id)] : undefined),'
       - 'web/tests/task-node-tag-carry.test.mjs:test("裸详情继承在册归属：服务端不返 _nodeId，刷新不能把标抹掉", () => {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RT
+    title: "任务卡显示 Router 自行派发的提问角标，并显示最新一条分级提醒"
+    kind: feature
+    symptom: |
+      2026-11-25 用户要求补两类卡片标记。① Router 自己派发的 ask 落在
+      session_key 为空的 waiting_user 提问卡上，此前只有会话 worker 透传的 ask
+      有卡片角标（aux_flags.ask_user_waiting），Router 的提问在卡片上看不见。
+      ② 刚加 severity 的 info/warning/error 提醒只在任务详情时间线可见，卡片上看不到。
+    why: |
+      这是 MindFS 对话式看板的产品语义：卡片要能一眼看出「谁在等你回答」以及最新
+      提醒的级别。上游没有 Router ask 与 worker ask 的分源判据，也没有卡片级提醒，
+      合上游时若把派生字段或卡片渲染覆盖掉，用户会重新变成「Only 会话卡有问号，
+      Router 提问和提醒静默」。
+    files:
+      - server/internal/kanban/types.go
+      - server/internal/kanban/task_card_prompts.go
+      - server/internal/kanban/task_store.go
+      - server/internal/api/http_task_overview.go
+      - web/src/shared/taskTypes.ts
+      - web/src/components/task/routerAskModel.ts
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - server/internal/kanban/task_card_prompts_test.go
+      - server/internal/api/http_tasks_overview_card_parity_test.go
+      - web/tests/task-card-router-marks.test.mjs
+    tests:
+      # Go：router_ask 只认空 session_key，worker ask 不串源；最新提醒跳过 hidden；
+      # 列表与单任务一致。API：overview 投影与卡片字段对齐。
+      # Web：两种 ask 的 key/文案/图标不同，三档 severity 着色与 info 回退。
+      - server/internal/kanban/task_card_prompts_test.go
+      - server/internal/api/http_tasks_overview_card_parity_test.go
+      - web/tests/task-card-router-marks.test.mjs
+    anchors:
+      - 'server/internal/kanban/types.go:RouterAsk *TaskRouterAsk `json:"router_ask,omitempty"`'
+      - 'server/internal/kanban/task_card_prompts.go:func (s *TaskStore) attachRouterAsk(ctx context.Context, tasks []Task) {'
+      - 'server/internal/kanban/task_card_prompts.go:AND type = ? AND status = ? AND COALESCE(session_key, '''') = '''''
+      - 'server/internal/api/http_task_overview.go:RouterAsk       *overviewRouterAsk       `json:"router_ask,omitempty"`'
+      - 'web/src/components/task/routerAskModel.ts:key: "router_ask",'
+      - 'web/src/components/task/TaskCardRows.tsx:data-testid="task-card-attention"'
+      - 'web/tests/task-card-router-marks.test.mjs:test("Router ask 与 worker ask 的徽标 key/文案/图标互不混用", () => {'

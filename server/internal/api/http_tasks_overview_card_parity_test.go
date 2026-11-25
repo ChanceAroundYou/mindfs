@@ -34,6 +34,9 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 		filepath.Join("..", "..", "..", "web", "src", "components", "task", "TaskCardRows.tsx"),
 		filepath.Join("..", "..", "..", "web", "src", "app", "appTask.ts"),
 		filepath.Join("..", "..", "..", "web", "src", "components", "task", "taskCardActions.ts"),
+		// Router 提问角标的字段读取在纯函数模型里（与 routerAlertModel 同构），
+		// 卡片只调函数，不直接写 task.router_ask。
+		filepath.Join("..", "..", "..", "web", "src", "components", "task", "routerAskModel.ts"),
 	}
 	srcs := make([]string, 0, len(sources))
 	for _, path := range sources {
@@ -92,6 +95,10 @@ func TestOverviewProjectionCoversEveryFieldTheSharedCardReads(t *testing.T) {
 			AskUserWaiting: true,
 			HasPlan:        true,
 			SessionError:   `{"message":"transport is closed"}`,
+		},
+		RouterAsk: &kanban.TaskRouterAsk{Count: 1, Since: "2026-11-25T10:00:00Z", Question: "走哪个？"},
+		LatestAttention: &kanban.TaskLatestAttention{
+			Body: "复核不可用，先把结果交回给你", Severity: "warning", CreatedAt: "2026-11-25T11:00:00Z",
 		},
 	}
 	raw, err := json.Marshal(projectOverviewTask(task))

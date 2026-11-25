@@ -8,7 +8,7 @@
  * TaskSessionErrorIcon, TaskCancelIcon, TaskReopenIcon, DeleteIcon, TaskPlanAuxIcon,
  * TaskStartIcon, TaskTerminateIcon,
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
- * ChevronDownSmallIcon, WorkflowIcon, TaskRouterAlertIcon.
+ * ChevronDownSmallIcon, WorkflowIcon, TaskRouterAlertIcon, TaskRouterAskIcon.
  * Task styles: taskCardSurfaceStyle,
  * taskCardIconButtonStyle, taskActionIconStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
  * WorktreeTagState, taskWorktreeTagStyle, taskReplyPulseStyle.
@@ -321,6 +321,18 @@ export function TaskRouterAlertIcon({ color }: { color?: string } = {}) {
       <path d="M12 3.6 2.6 20h18.8L12 3.6Z" stroke={c} strokeWidth="1.8" strokeLinejoin="round" />
       <path d="M12 9.6v4.6" stroke={c} strokeWidth="1.8" strokeLinecap="round" />
       <circle cx="12" cy="17.2" r="1" fill={c} />
+    </svg>
+  );
+}
+
+export function TaskRouterAskIcon({ color }: { color?: string } = {}) {
+  // Router 自己派发的提问：空心圆圈问号，与 worker ask 的红色实心 ❓ 区分。
+  const c = String(color || "#0ea5e9").trim() || "#0ea5e9";
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.4" stroke={c} strokeWidth="1.7" />
+      <path d="M9.4 9.4a2.7 2.7 0 1 1 3.7 2.5c-.6.3-.9.8-.9 1.5v.4" stroke={c} strokeWidth="1.7" strokeLinecap="round" />
+      <circle cx="12.2" cy="16.8" r="1" fill={c} />
     </svg>
   );
 }
