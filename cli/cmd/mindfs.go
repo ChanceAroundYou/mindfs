@@ -36,6 +36,29 @@ func main() {
 		}
 		return
 	}
+	// 安装向导的两个纯命令行入口。必须在 attachParentConsole 之前：GUI 子系统下
+	// 这里不该弹控制台，结果走 --out 文件与退出码。
+	if handled, err := runNodeNameCommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if handled, err := runInitConfigCommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if handled, err := runServiceTaskCommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	attachParentConsole()
 	autoStartBoot := autoStartRequested(os.Args[1:])
 	if autoStartBoot {
