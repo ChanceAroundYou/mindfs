@@ -6734,6 +6734,7 @@ groups:
       - server/internal/session/blocks_build.go
       - server/internal/session/blocks_build_test.go
       - web/src/hooks/sessionBlocks.ts
+      - web/src/shared/thoughtText.ts
       - web/src/hooks/sessionTimeline.ts
       - web/src/hooks/sessionAssistantTimeline.ts
       - web/tests/session-blocks-render.test.mjs
@@ -6742,7 +6743,7 @@ groups:
       - web/tests/session-blocks-render.test.mjs
     anchors:
       - 'server/internal/session/blocks_build.go:func blankBlockText(text string) bool {'
-      - 'web/src/hooks/sessionBlocks.ts:export function isBlankText(content: string): boolean {'
+      - 'web/src/shared/thoughtText.ts:export function isBlankText(content: string): boolean {'
       - 'web/src/hooks/sessionBlocks.ts:        if (isBlankText(content)) break;'
 
   - id: G-JZ
@@ -8648,18 +8649,30 @@ groups:
       - 'web/src/hooks/useTaskActivities.ts:const decideGate = useCallback('
 
   - id: G-LR
-    title: 前端 reasoning 块过滤纯标点占位符
+    title: 前端过滤无内容思考占位（块流 / 流式 / aux 回退三条路径 + 思考框兜底）
     kind: fix
-    symptom: "使用 opus 时前端显示「思考过程 (3 字符)」占位块，内容只有 `...` 或 `。。。` 这类纯标点，没有实质思考内容。用户报「这个占位符有点莫名奇妙」。"
-    why: "Claude opus 有时会输出只含标点符号的 reasoning 块（`...` / `。。。` / `……`），这些块没有语义价值但仍被渲染成「思考过程 (N 字符)」胶囊占据视觉空间。`sessionBlocks.ts` 的 `hasMeaningfulChar()` 用 `\\p{L}\\p{N}` Unicode 正则检查是否含字母/数字，纯标点块被跳过；真实思考内容（如中文「先想」、英文 reasoning）保持渲染。零宽字符判定（`isBlankText`）继续工作，两层过滤互不干扰。"
-    boundary: "只管前端 reasoning 块渲染过滤（`sessionBlocks.ts` 的 `hasMeaningfulChar` + reasoning case 检查），不改后端块流生成（`server/internal/session/`）、不改 `ThinkingBlock` 组件本身、不改 token usage 显示逻辑（那是 `TurnTokenUsage` + `SessionViewerAssistantMessage`，与 reasoning 过滤无关）。"
+    symptom: "使用 opus 时前端显示「思考过程 (3 字符)」占位块，内容只有 `...` 或 `。。。` 这类纯标点，没有实质思考内容。用户报「这个占位符有点莫名奇妙」。2026-11-25 在 pc-wsl / CMAI 会话复现：上游 redacted thinking 落盘就是 `{\"thinking\":\"...\",\"type\":\"thinking\",\"signature\":\"...\"}`，回合进行中/刚结束（流式瞬时行）与导入型老会话（aux 回退）照样把它画出来。"
+    why: "Claude opus 有时会输出只含标点符号的 reasoning（`...` / `。。。` / `……`），这些块没有语义价值但仍被渲染成「思考过程 (N 字符)」胶囊占据视觉空间，而且展开只有一个点，比不显示更误导。前端有三条产出 `type:\"thought\"` 的路径，必须共用同一把尺：`sessionBlocks.ts` 的块流 reasoning 分支、`sessionTimeline.ts` 的流式 `role:\"thought\"` 瞬时行、`sessionAssistantTimeline.ts` 的旧 aux 回退（窗口去重不作用于增量同步的 exchange_aux，所以老会话仍会走到）。判据收在 `shared/thoughtText.ts`：`isPlaceholderThought` = 空白/零宽或没有任何 `\\p{L}\\p{N}`；`sessionBlocks.ts` 继续 re-export 既有名字，保持原有 import 与测试不变。`ThinkingBlock.tsx` 对仍然拿到占位内容的调用方（老缓存、外部直接调用）渲染不可展开的单行「思考内容不可用」，不再打印字符数。占位 thought 不能吞掉同条 aux 上的 plan。"
+    boundary: "只管前端思考内容的可见性：`shared/thoughtText.ts` 的判据、`sessionBlocks.ts`/`sessionTimeline.ts`/`sessionAssistantTimeline.ts` 三条时间线构建路径、`ThinkingBlock.tsx` 的不可用兜底与两处 `thinking.unavailable` 文案。不改后端块流生成（`server/internal/session/`）、不改 aux 的窗口专用去重（`DropAuxThoughtsCoveredByBlocks`）、不改 token usage 与上下文窗口显示（`TurnTokenUsage` + `SessionViewerAssistantMessage`）。一轮没有可渲染条目时仍只留一行纯页脚（G-LS 契约）。"
     files:
+      - web/src/shared/thoughtText.ts
       - web/src/hooks/sessionBlocks.ts
+      - web/src/hooks/sessionTimeline.ts
+      - web/src/hooks/sessionAssistantTimeline.ts
+      - web/src/components/stream/ThinkingBlock.tsx
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
     tests:
       - web/tests/session-blocks-render.test.mjs
+      - web/tests/thought-placeholder-filter.test.mjs
     anchors:
-      - web/src/hooks/sessionBlocks.ts:hasMeaningfulChar
-      - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
+      - 'web/src/shared/thoughtText.ts:export function isPlaceholderThought(content: string): boolean {'
+      - 'web/src/hooks/sessionBlocks.ts:export { hasMeaningfulChar, isBlankText, isPlaceholderThought };'
+      - 'web/src/hooks/sessionBlocks.ts:if (isPlaceholderThought(content)) break;'
+      - 'web/src/hooks/sessionTimeline.ts:if (isPlaceholderThought(content)) continue;'
+      - 'web/src/hooks/sessionAssistantTimeline.ts:if (aux.thought && !isPlaceholderThought(aux.thought)) {'
+      - 'web/src/components/stream/ThinkingBlock.tsx:if (isPlaceholderThought(content)) {'
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:"thinking.unavailable": "思考内容不可用",'
 
   - id: G-LU
     title: 工作流结果摘要与运行视图中文化
@@ -12633,7 +12646,7 @@ groups:
       - 'web/src/app/useReplyingSessionPoll.ts:      reloadListRef.current?.();'
       - 'web/src/app/useAppMultiProjectReload.ts:    scheduleMultiProjectSessionReload,'
   - id: G-PK
-    title: Codex 跨 provider 续接时丢掉旧 provider 的加密 reasoning
+    title: Codex 跨 provider 续接的请求清洗（丢旧密文 + 归一 message id）
     kind: fix
     symptom: |
       pc-win 上一条在 llmux 下建的 Codex 线程（rollout 里 21 条
@@ -12657,24 +12670,98 @@ groups:
 
       落点在 MindFS 回环代理（`/c/{provider}/`）而不是 Codex 侧：它是所有 Codex 请求
       的必经之路，且与 `live_compact` 的模式无关（proxy 总是启动），worker 节点上同样
-      存在。`stripEncryptedReasoningInput` 用字节级区间扫描重建 `input` 数组，数组以外
-      的每个字节原样保留，解析失败一律 fail-open 返回原 body。
+      存在。`stripEncryptedInput` 在 `input` 数组内递归重建：删除任何名为
+      `encrypted_content` 且值为**非空字符串**的成员（对象值可能是工具 schema，不能
+      当密文删），递归进入所有嵌套对象/数组；被剥空的条目或数组元素（只剩
+      type/id/role 等身份字段，或 content 成了空数组）整条丢弃。数组以外的每个字节
+      原样保留，解析失败一律 fail-open 返回原 body。
+
+      判据不能只认 `type:"reasoning"` + 顶层 `encrypted_content`：2026-11-25 的 400
+      点名的是 `amsg_01a20dc1-…` 这条 `agent_message`，密文在 `content[]` 元素里；
+      同一请求的主动剥离日志已经是 `items=232`，仍然把密文发了出去。同日 wsl
+      rollout 普查（`~/.codex/sessions/**`）的四类载体：reasoning 顶层 34859、
+      `agent_message.content[]` 798（另有 14 个嵌在 guardian message 里）、
+      `guardian_history[]` 的 reasoning 2658、`replacement_history[]` 的
+      `compaction` 52。按成员名剥离同时覆盖这四类与未来未见过的嵌套形态。
+
+      被动兜底另有一处必须同时改：`recoverInvalidEncryptedContent` 原先在
+      `providerSwitchedThread` 为真时直接返回。fork 在首个请求之前就
+      `MarkProviderSwitch`，所以中毒线程一定带标记 —— 这道早退让安全网在它唯一
+      可能被需要的场景里失效（2026-11-20 至 2026-11-25 期间没有任何
+      `provider-switch.recover` 日志）。现在只剩「状态码不是 400 / body 不含
+      `invalid_encrypted_content` / 剥离后没有变化」三道闸，且仍只重试一次。
+
+      剥离还必须**有范围**，否则会治好一个 bug 换来另一个更隐蔽的：marker 是永久的，
+      无差别剥离会把切换后新 provider 自己产出的密文也删掉 —— 它的加密 reasoning、
+      多智能体 `agent_message` 载荷、compaction 摘要，结果是长会话上下文被静默截短。
+      做法是按**密文值**（sha256 指纹）而不是条目 id 记快照：首个切换请求把当时
+      在途的密文值写进 `<sha256(threadID)[:16]>.ciphertext`，之后只删快照里的值；
+      按值而不按 id 是为了覆盖 compacted 这类自身没有 id 的条目。首个请求本来没有
+      密文时也要落一个空快照，否则之后每轮都会被当成「首个请求」无范围剥离。
+      400 兜底路径（`allowed=nil`）全剥并把新发现的值并入快照 —— 那 400 已经证明
+      这个 body 不可用，被剥的值按定义是旧的。残留风险：本修复上线前就已切过
+      provider、又没有快照的线程，首个请求无法区分新旧密文，会连新的一起剥一次，
+      这是可接受且有界的一次性代价。
+
+      同一组还承担第二种跨 provider 清洗：官方 Responses API 要求 message 条目的
+      id 以 `msg_` 开头，其余前缀整轮 400（`Invalid 'input[1055].id': 'item_…'.
+      Expected an ID that begins with 'msg'`，wsl 2026-11-25 17:17 实测）。Codex
+      给自己本地造的消息（pre-sampling compact 的提示词）用 `item_<hex>` id，
+      llmux 不校验，迁到官方 provider 后才炸。`normalizeInputMessageIDs` 在转发
+      前去掉这类 id：只处理顶层 `input` 里 `type:"message"`（或无 `type` 但有
+      `role`）的条目，`msg_` 前缀、reasoning / 工具调用 / compacted 内嵌条目一律
+      不动 —— 被删的 id 按定义就是官方 API 会拒绝的值，而输入条目没有 id 本身是
+      合法形态（Codex 的普通用户消息就不带 id）。
+
+      测试 → 钉住什么：
+      · TestStripEncryptedReasoningInput —— 四类实测载体（reasoning 顶层 /
+        agent_message.content[] / compacted 的 guardian_history 与
+        replacement_history）都剥干净，可见文本与成员顺序逐字节保留。
+      · TestStripEncryptedReasoningInputUnknownShapes —— 判据是成员名而非条目类型，
+        未知形态也覆盖；对象值的 encrypted_content 与正文里的同名字样不动。
+      · TestStripEncryptedInputScoped —— 快照里的旧密文删、新密文原样保留。
+      · TestHandleProviderStripsOnlySnapshotCiphertext —— 首个切换请求落快照，
+        后续请求只删旧值（永久 marker 不会吃掉新 provider 的密文）。
+      · TestHandleProviderSnapshotsEmptyFirstPass —— 首个请求没有密文时也落空快照，
+        之后不会被当成「首个请求」无范围剥离。
+      · TestHandleProviderRecoversFromInvalidEncryptedContent —— 未标记的中毒线程
+        400 后重试一次成功、并记住线程，下一轮主动剥离。
+      · TestHandleProviderMarkedThreadDoesNotRetryIdenticalBody —— 已标记线程剥离后
+        不再用相同 body 重试（只打一次上游）。
+      · TestHandleProviderStripsNestedCiphertextBeforeForwarding —— 未知成员下的密文
+        在转发前就被剥掉，不必等 400。
+      · TestHandleProviderDoesNotRetryWithoutCiphertext —— 无可剥内容时只请求一次。
+      · TestNormalizeInputMessageIDs —— 只删 message 上非 `msg_` 的 id：`msg_`
+        保住，reasoning / compacted 内嵌条目不动，兄弟顺序与正文逐字节保留。
+      · TestHandleProviderNormalizesMessageIDsBeforeForwarding —— 注册线程的请求
+        转发前就归一，上游看不到 `item_` 前缀的消息 id。
     files:
       - server/internal/agent/proxy/provider_switch.go
       - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/proxy/responses_ids.go
+      - server/internal/agent/proxy/responses_ids_test.go
       - server/internal/agent/proxy/provider_route.go
       - server/internal/agent/proxy/proxy.go
       - server/internal/agent/pool.go
       - server/internal/agent/pool_provider_switch_test.go
     tests:
       - server/internal/agent/proxy/provider_switch_test.go
+      - server/internal/agent/proxy/responses_ids_test.go
       - server/internal/agent/pool_provider_switch_test.go
     anchors:
       - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) MarkProviderSwitch(threadID string) {'
       - 'server/internal/agent/proxy/provider_switch.go:func stripEncryptedReasoningInput(body []byte) (out []byte, removed int, changed bool) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func stripEncryptedInput(body []byte, allowed map[string]struct{}) (out []byte, removed int, changed bool, stripped map[string]struct{}) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func fingerprintCiphertext(value string) string {'
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) providerSwitchCiphertextIDs(threadID string) (map[string]struct{}, bool) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) recordProviderSwitchCiphertextIDs(threadID string, ids map[string]struct{}) {'
       - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) recoverInvalidEncryptedContent('
       - 'server/internal/agent/proxy/provider_route.go:	if scanned && s.providerSwitchedThread(threadID) {'
+      - 'server/internal/agent/proxy/provider_route.go:		allowed, snapshotted := s.providerSwitchCiphertextIDs(threadID)'
       - 'server/internal/agent/proxy/provider_route.go:		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)'
+      - 'server/internal/agent/proxy/responses_ids.go:func normalizeInputMessageIDs(body []byte) (out []byte, removed int, changed bool) {'
+      - 'server/internal/agent/proxy/responses_ids.go:func normalizeMessageIDElement(b []byte, start int) ([]byte, bool) {'
+      - 'server/internal/agent/proxy/provider_route.go:		if normalized, removed, changed := normalizeInputMessageIDs(body); changed {'
       - 'server/internal/agent/pool.go:		if codexThreadRethreaded(in.AgentSessionID, threadID) {'
   - id: G-PL
     title: 总结归属收口：progress 口信不再抢摘要、兜底摘要结构化、600 字句界截断

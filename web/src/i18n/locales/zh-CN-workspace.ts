@@ -160,6 +160,7 @@ export const zhCNWorkspace = {
   "markdown.expandOutline": "展开大纲",
   "markdown.collapseOutline": "收起大纲",
   "thinking.title": "思考过程",
+  "thinking.unavailable": "思考内容不可用",
   "projectAdd.selectVolume": "选择盘符",
   "projectAdd.goUp": "上一级",
   "projectAdd.blankProject": "空白项目",

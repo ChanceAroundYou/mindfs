@@ -108,11 +108,36 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 	scanned := key != "" && r.Method == http.MethodPost
 	// A thread that crossed a model provider still carries the previous
 	// provider's encrypted reasoning, which the new provider cannot decrypt.
-	// Drop those items before folding so the upstream never sees them.
+	// Drop that ciphertext before folding so the upstream never sees it. The
+	// first post-switch request snapshots which values were old; later requests
+	// only strip those, so the new provider's own ciphertext survives.
 	if scanned && s.providerSwitchedThread(threadID) {
-		if stripped, removed, changed := stripEncryptedReasoningInput(body); changed {
+		allowed, snapshotted := s.providerSwitchCiphertextIDs(threadID)
+		if !snapshotted {
+			allowed = nil // first pass: the whole history is from the old provider
+		}
+		if stripped, removed, changed, found := stripEncryptedInput(body, allowed); changed {
 			body = stripped
-			log.Printf("[proxy] provider-switch.strip thread=%s items=%d bytes=%d", ShortToken(threadID), removed, len(body))
+			if !snapshotted {
+				s.recordProviderSwitchCiphertextIDs(threadID, found)
+			}
+			log.Printf("[proxy] provider-switch.strip thread=%s items=%d scoped=%v bytes=%d",
+				ShortToken(threadID), removed, snapshotted, len(body))
+		} else if !snapshotted {
+			// Nothing to strip: initialise an empty snapshot so later passes are
+			// value-scoped instead of stripping the new provider's ciphertext.
+			s.recordProviderSwitchCiphertextIDs(threadID, nil)
+		}
+	}
+	// The official Responses API rejects message items whose id does not begin
+	// with `msg_`, and Codex gives the messages it creates locally (the
+	// pre-sampling compact prompt) `item_<hex>` ids. Drop those ids before
+	// folding; see normalizeInputMessageIDs.
+	if scanned {
+		if normalized, removed, changed := normalizeInputMessageIDs(body); changed {
+			body = normalized
+			log.Printf("[proxy] responses.id-normalize thread=%s items=%d bytes=%d",
+				ShortToken(threadID), removed, len(body))
 		}
 	}
 	// Usage scanning is part of the observation pipeline: with live compact off

@@ -56,6 +56,8 @@ function loadModule(relPath) {
       // 编译后没有 require，所以直接递归加载即可 —— 不桩它，免得桩错了让分组测试
       // 变成「测了一个假模块」。
       if (name === "./sessionBlocks") return loadModule("hooks/sessionBlocks.ts");
+      // 思考/正文判据（CUSTOM(G-LR)）是纯函数、单独一个文件，递归加载即可。
+      if (name === "../shared/thoughtText") return loadModule("shared/thoughtText.ts");
       if (name === "./sessionTimeline") return loadModule("hooks/sessionTimeline.ts");
       if (name === "./sessionAssistantTimeline") return loadModule("hooks/sessionAssistantTimeline.ts");
       if (name === "./stableTimelineID") return loadModule("hooks/stableTimelineID.ts");

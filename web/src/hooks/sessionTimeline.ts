@@ -6,6 +6,7 @@ import {
   blocksTextContent,
   buildAssistantTimelineFromBlocks,
   isBlankText,
+  isPlaceholderThought,
   normalizeToolCall,
   type BlockExchangeLike,
   type SessionBlockMapLike,
@@ -194,7 +195,9 @@ export function buildTimelineItems(
       continue;
     }
     if (role === "thought") {
-      if (isBlankText(content)) continue;
+      // 流式瞬时行同样要挡住无内容占位（`"..."` 这类 redacted thinking）：
+      // 判据与块流/aux 回退共用 shared/thoughtText，见 isPlaceholderThought。
+      if (isPlaceholderThought(content)) continue;
       out.push({
         id:
           ex.thought_id ||

@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
+import { isPlaceholderThought } from "../../shared/thoughtText";
 
 type ThinkingBlockProps = {
   content: string;
@@ -17,6 +18,27 @@ export const ThinkingBlock = memo(function ThinkingBlock({ content, defaultExpan
   }, [defaultExpanded]);
 
   if (!content) return null;
+
+  // 无内容占位（上游 redacted thinking 落盘就是 "..."）：不给字符数、不许展开 ——
+  // 「思考过程 (3 字符)」展开只有一个点，比不显示更误导。正常路径已在三条时间线
+  // 构建处用同一把尺过滤掉，这里是组件层兜底（老缓存、外部直接调用）。
+  if (isPlaceholderThought(content)) {
+    return (
+      <div
+        style={{
+          borderRadius: "8px",
+          border: "1px solid var(--border-color)",
+          background: "var(--content-bg)",
+          padding: "6px 8px",
+          fontSize: "12px",
+          color: "var(--text-secondary)",
+          overflow: "hidden",
+        }}
+      >
+        {t("thinking.unavailable")}
+      </div>
+    );
+  }
 
   return (
     <div
