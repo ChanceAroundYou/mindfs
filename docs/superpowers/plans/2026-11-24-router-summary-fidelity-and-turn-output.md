@@ -1,6 +1,6 @@
 # Router 总结可信化与回合输出收口
 
-> Scope IDs: G-RI / G-RJ / G-RK（claimed 2026-11-24T18:54Z；合回 main 前撞号避让：原 G-RE / G-RF / G-RG 已被 Edge Relay 占用，按「后来者让号」整体改号）
+> Scope IDs: G-RI / G-RJ / G-RK（claimed 2026-11-24T18:54Z）
 
 任务 #115（`task_87a576cf87d91597`）。起点是只读诊断报告
 [`router-summary-problem-analysis.md`](../../router-summary-problem-analysis.md)：
@@ -91,3 +91,46 @@ hash 相同且距上次不足 30 分钟 → 抑制。进程重启后内存表丢
 
 只做本地提交。不 push、不部署、不重启任何节点、不改数据。本机要生效需用户
 `sudo systemctl restart mindfs`。
+
+## 实现记录（2026-11-24）
+
+### 提交 1：S1 + S2（Scope: G-RI，`a48411ae`）
+
+按设计落地，无偏移。`normalizeRouteActionOrder` 在校验前把 `[ask_user, say]` 归一成
+`[say, ask_user]` 并重排 `Seq`；`validateRouterActions` 的唯一约束改成「同轮至多一个
+`ask_user`，其余动作只能是 `say`」；两条 finish 路径在校验失败时先按 summary 应用
+纯文本 say，再写 `route-rejected:<decision>:<seq>` 说明行。`router_silent` 仍必须单独
+出现，执行类动作不受影响。
+
+### 提交 2：S3 + S4 + S5 + S6（Scope: G-RJ）
+
+- **S3**：`cutAtSentence` 全角 `。！？；` 直接算句末；ASCII `.!?;` 必须后随空白/换行/
+  结尾。结构化块（`-`/`*` 列表项、「没做」「未验证」段）从下半段起头时整块放弃，
+  不切一半。`maxStoredSummaryRunes` 600 → 1000（`service_activity_output_text.go`）。
+- **S4**：新增 `summary_change.go`。判据四条同时成立才降级成 `progress`：触发类是
+  `turn_settled`、`HadToolCalls == false`、brief 的 `out_of_band` / `answered_question`
+  都为假、与 `task.ResultSummary` 的字符三元组 Jaccard > 0.6。缺证据（brief 解析失败、
+  卡片无上一条摘要）一律不降级。
+- **S5**：新增 `inspection_dedupe.go`（指纹 = 触发类 + 任务状态 + 去空白去标点小写后的
+  正文 hash，30 分钟窗口，4096 条上限，进程内不落库）。登记簿与 `turnTerminations`
+  同构：`Service.inspectionDedupe` + `ActivityServiceForRoot` 注入。命中时落库但
+  `hidden=1` / `hidden_reason=duplicate_inspection`，摘要不变。
+- **S6**：`routerSettlementExcerptRunes` 1000，`headTailExcerpt` 头 500 + 尾 500，
+  中段用 `structuralExcerptLines`（200 字预算）保留要点行，省略处写明省掉多少字。
+
+两处计划外但必要的偏移：
+
+1. **巡检回合放行 `router_silent`**。S5 让提示词引导模型「零变化就沉默」，但
+   `applyRouteAction` 的白名单只有 `say/ask_user/notify_user/escalate` —— 模型照提示词
+   做出来的 `silent` 会被拒成一条可见说明，比说出那句「没有变化」更吵。沉默没有副作用，
+   加进白名单；规则 11 原文同步改为三者都允许。
+2. **文件拆分**。`activity_route_apply.go` 加完接线后 502 行，超过后端 500 硬线，
+   `applyRouteSay` 整块搬到新文件 `activity_route_say.go`（纯移动 + 新增判据）；
+   `activity_service.go` 已在存量超线清单里，新加的 setter/accessor 单独放
+   `activity_inspection_dedupe.go`，不往超线文件里加行。
+
+验证：`go test -count=1 ./...` 42 包全绿（kanban 335.2s，中途一次
+`TestCoordinatorTickReclaimsStaleClaims` 是既有并发 flake，单跑即过）、
+`npx tsc -b --noEmit` exit 0、`npx vitest run` 274 文件 / 968 通过 / 6 跳过。
+变异逐一打红后还原（S4 判据、S4 的 `out_of_band` 守卫、S5 去重、S5 的 `silent` 放行、
+S3 边界回退、S6 头尾保留）。

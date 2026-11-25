@@ -64,3 +64,17 @@ func (s *Service) turnTerminationsRegistry() *TurnTerminations {
 	}
 	return s.turnTerminations
 }
+
+// inspectionDedupeRegistry 返回跨 ActivityService 实例共享的巡检去重登记簿（S5）。
+// 与 turnTerminationsRegistry 同构：进程内一份，懒建（零值 Service 也能用）。
+func (s *Service) inspectionDedupeRegistry() *InspectionDedupe {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inspectionDedupe == nil {
+		s.inspectionDedupe = newInspectionDedupe()
+	}
+	return s.inspectionDedupe
+}

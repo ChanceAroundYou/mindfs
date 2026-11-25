@@ -111,6 +111,9 @@ type ActivityService struct {
 	// terminations 是「这一轮是被用户终止的」共享登记簿：终止由 HTTP 侧现建的
 	// 实例写、收尾由跑回合的实例读，所以状态挂在共享对象上（见 TurnTerminations）。
 	terminations *TurnTerminations
+	// inspectionDedupe 是「巡检零变化不重复出声」的共享登记簿（S5），共享理由
+	// 与 terminations 相同：每次 ActivityServiceForRoot 都是新实例。
+	inspectionDedupe *InspectionDedupe
 }
 
 // SetSessionTurnCanceller 装配会话打断端口。nil 时终止退化成只结算回复行。
@@ -136,9 +139,16 @@ func (s *ActivityService) SetCardNotifier(n CardNotifier) { s.cardNotifier = n }
 // NewActivityService builds the service for one task node. workflows/recommender
 // may be nil for workflow_choice=disabled; other choices then fail visibly.
 func NewActivityService(tasks *TaskStore, workflows *WorkflowStore, recommender *WorkflowRecommender) *ActivityService {
-	// terminations 默认非 nil：单测直接构造实例时也要能「终止」。生产装配会把它
-	// 换成 Service 上那份共享登记簿（ActivityServiceForRoot 每次新建实例）。
-	svc := &ActivityService{tasks: tasks, workflows: workflows, recommender: recommender, terminations: newTurnTerminations()}
+	// terminations / inspectionDedupe 默认非 nil：单测直接构造实例时也要能「终止」
+	// 与「判巡检重复」。生产装配会把它们换成 Service 上那两份共享登记簿
+	// （ActivityServiceForRoot 每次新建实例）。
+	svc := &ActivityService{
+		tasks:            tasks,
+		workflows:        workflows,
+		recommender:      recommender,
+		terminations:     newTurnTerminations(),
+		inspectionDedupe: newInspectionDedupe(),
+	}
 	if tasks != nil {
 		svc.activities = NewActivityStore(tasks.db)
 	}

@@ -61,6 +61,8 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	// 调用都新建实例，而写标记（HTTP 侧）与读标记（跑回合的实例）不是同一个。
 	svc.SetSessionTurnCanceller(s.sessionTurnCancellerFn())
 	svc.SetTurnTerminations(s.turnTerminationsRegistry())
+	// 巡检零变化去重（S5）：「这次说的和上次一样」要跨实例可见，同理挂 Service 上。
+	svc.SetInspectionDedupe(s.inspectionDedupeRegistry())
 	return svc, nil
 }
 
@@ -270,7 +272,7 @@ func (s *Service) settleWorkflowReply(ctx context.Context, store *TaskStore, run
 	// 任务 #87 第 2 条：同一条 Run 重复结算（审批继续、启动对账）时，summary 可能
 	// 已经被上一次结算压过。压缩只认「原文 → 压缩结果」这一份记录，识别到就
 	// 沿用它，绝不把压缩结果盖回原文再压一次。
-	// 落库的摘要一律走 600 字上限：#100 的卡片就是把各节点原文直接相接（几千字、
+	// 落库的摘要一律走 maxStoredSummaryRunes（1000 字）上限：#100 的卡片就是把各节点原文直接相接（几千字、
 	// 没有段落），既是「总结」又是「日志」。原文仍完整保留在 raw 里交给异步压缩，
 	// 这里只限制写进活动行/任务行的那一段。
 	raw := summary

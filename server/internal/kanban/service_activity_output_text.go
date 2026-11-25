@@ -121,12 +121,14 @@ func stringList(value any) []string {
 
 // maxStoredSummaryRunes 是写入 task_activities.summary / tasks.result_summary 的
 // 硬上限。历史值是 1200，再后来是 20000 —— 两者都只防「病态输出撑爆库」，
-// 于是任务卡片上出现了整段 Agent 叙述（#100）。2026-11-22 起改成 600 字：
-// 摘要本来就是一屏之内能读完的东西，超过就不是摘要了。
+// 于是任务卡片上出现了整段 Agent 叙述（#100）。2026-11-22 改成 600 字，
+// 2026-11-24 抬到 1000（S3）：600 字放不下「结论 / 证据 / 没做或未验证 / 下一步」
+// 四段，被砍掉的总是最后两段 —— 恰恰是读者最需要的部分。
 //
-// 截断停在句末标点上（见 turn_summary.go 的 cutAtSentence），不把一句话切成
-// 半截；找不到句末标点才硬截并补「…」。
-const maxStoredSummaryRunes = 600
+// 截断只在真正的边界上（见 turn_summary.go 的 cutAtSentence）：全角句末标点、
+// 后随空白的 ASCII 标点、换行；结构块（列表项 / 加粗标签 / 「没做」「未验证」段）
+// 不被切一半。找不到边界才硬截并补「…」。
+const maxStoredSummaryRunes = 1000
 
 func truncateSummary(text string) string {
 	return cutAtSentence(text, maxStoredSummaryRunes)
