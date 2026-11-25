@@ -247,7 +247,12 @@ func (s *Service) verifyCompletion(ctx context.Context, taskID, runID, decisionI
 	if parseErr != nil {
 		log.Printf("[completion-verifier] task=%s decision=%s: %v", task.ID, decision.ID, parseErr)
 	}
-	if err := store.UpsertTaskCompletion(ctx, TaskCompletion{
+	// 回合正常返回时 ctx 通常还活着，但它可能恰好压在总上限上：回合刚返回、ctx 随即
+	// 被取消。结论与收尾必须照常落盘，否则照样停在 verifying —— 与上面 turnErr 分支
+	// 同理，这里也换脱离取消的 ctx 写回（只影响落盘，不影响回合本身）。
+	settleCtx, cancelSettle := completionVerifierFallbackContext(ctx)
+	defer cancelSettle()
+	if err := store.UpsertTaskCompletion(settleCtx, TaskCompletion{
 		TaskID:          task.ID,
 		RunID:           runIDOf(run),
 		Status:          CompletionStatusVerifying,
@@ -259,7 +264,7 @@ func (s *Service) verifyCompletion(ctx context.Context, taskID, runID, decisionI
 	}); err != nil {
 		return err
 	}
-	return s.applyVerifierVerdict(ctx, store, task, run, report, decision, summary, verdict, findings)
+	return s.applyVerifierVerdict(settleCtx, store, task, run, report, decision, summary, verdict, findings)
 }
 
 // applyVerifierVerdict 把结论变成事实：pass 收尾，fail/uncertain 按未完成处理。

@@ -430,6 +430,45 @@ func TestVerifierFailureAfterDeadlineStillWritesState(t *testing.T) {
 	}
 }
 
+// cancelThenPassVerifierAgent 模拟「回合成功算出结论、但恰好在那一刻 ctx 被取消」：
+// 先取消回合 ctx，再返回一段 pass 结论。旧实现用原 ctx 落盘会失败，任务停在 verifying。
+type cancelThenPassVerifierAgent struct {
+	verifierAgent
+	cancel context.CancelFunc
+}
+
+func (a *cancelThenPassVerifierAgent) RunRouterTurn(ctx context.Context, req RouterAgentRequest) (RouterAgentResult, error) {
+	a.mu.Lock()
+	a.calls++
+	a.requests = append(a.requests, req)
+	a.mu.Unlock()
+	a.cancel()
+	return RouterAgentResult{SessionKey: req.SessionKey, FinalText: `{"verdict":"pass","findings":["工作区里能看到 README.md 已更新"]}`}, nil
+}
+
+// TestVerifierSuccessAfterDeadlineStillAppliesVerdict：复核成功返回、但返回那一刻 ctx
+// 已被取消时，结论仍必须落盘并收尾 —— 否则 task_completion 会停在 verifying。
+func TestVerifierSuccessAfterDeadlineStillAppliesVerdict(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := newCompletionFixture(t, nil)
+	agent := &cancelThenPassVerifierAgent{cancel: cancel}
+	f.svc.SetRouterAgent(agent)
+	decision := insertVerifierDecision(t, f, "dec-pass-dead-ctx", "都做完了")
+
+	if err := f.svc.verifyCompletion(ctx, f.task.ID, f.run.ID, decision.ID); err != nil {
+		t.Fatalf("verifyCompletion 落盘不应因原 ctx 已取消而失败：%v", err)
+	}
+
+	task, err := f.store.GetTask(context.Background(), f.task.ID)
+	must(t, err, "GetTask")
+	if task.Status != StatusSuccess {
+		t.Fatalf("task status = %q, want success（pass 结论没有落盘）", task.Status)
+	}
+	if c := completionRecord(t, f); c.Status != CompletionStatusCompleted || c.VerifierVerdict != CompletionVerdictPass {
+		t.Fatalf("completion = %+v, want completed/pass", c)
+	}
+}
+
 // TestVerifierWatchdogSettlesAbandonedRow：运行期看门狗要把「早已无人收口」
 // 的 verifying 行收成 blocked 并 park，而不是等下一次进程重启。
 func TestVerifierWatchdogSettlesAbandonedRow(t *testing.T) {
