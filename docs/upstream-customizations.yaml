@@ -6722,6 +6722,7 @@ groups:
       - server/internal/session/blocks_build.go
       - server/internal/session/blocks_build_test.go
       - web/src/hooks/sessionBlocks.ts
+      - web/src/shared/thoughtText.ts
       - web/src/hooks/sessionTimeline.ts
       - web/src/hooks/sessionAssistantTimeline.ts
       - web/tests/session-blocks-render.test.mjs
@@ -6730,7 +6731,7 @@ groups:
       - web/tests/session-blocks-render.test.mjs
     anchors:
       - 'server/internal/session/blocks_build.go:func blankBlockText(text string) bool {'
-      - 'web/src/hooks/sessionBlocks.ts:export function isBlankText(content: string): boolean {'
+      - 'web/src/shared/thoughtText.ts:export function isBlankText(content: string): boolean {'
       - 'web/src/hooks/sessionBlocks.ts:        if (isBlankText(content)) break;'
 
   - id: G-JZ
