@@ -337,6 +337,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 本机身份：显式 node.id/name 原样交给 app，缺省规则（主控 home/主控，
+	// 边缘取 control_sync.instance_id，worker 取主机名）与 mindfs-server 共用一份。
+	nodeID, nodeName := nodeIdentity(startupCfg)
+
 	// Resolve TLS certificate/key paths when TLS is enabled.
 	resolvedCert, resolvedKey := *certFlag, *keyFlag
 	if *tlsFlag && (resolvedCert == "" || resolvedKey == "") {
@@ -393,6 +397,8 @@ func main() {
 		errCh <- app.Start(ctx, *addr, app.StartOptions{
 			Version:                            version,
 			Args:                               os.Args[1:],
+			NodeID:                             nodeID,
+			NodeName:                           nodeName,
 			AgentConfigPath:                    *agentConfigFlag,
 			WebPushEnabled:                     *webPushFlag,
 			WebPushRelayURL:                    webPushRelayURL,

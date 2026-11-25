@@ -129,3 +129,15 @@ func TestNodeInfoReportsStaticAvailability(t *testing.T) {
 		t.Fatalf("node-info body = %s, want static:true + role control", body)
 	}
 }
+
+// 前端删掉 local 伪节点后，「我是谁」只能来自 node-info：id 参与 scope 键，
+// 缺了它页面会把本机当成一个陌生节点；name 是托盘/标题的展示来源。
+func TestNodeInfoReportsSelfIdentity(t *testing.T) {
+	h := &HTTPHandler{NodeRole: nodeinfo.RoleControl, NodeID: " pc-win ", NodeName: "书房 PC"}
+	rec := httptest.NewRecorder()
+	h.handleNodeInfo(rec, httptest.NewRequest(http.MethodGet, "/api/node-info", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `"id":"pc-win"`) || !strings.Contains(body, `"name":"书房 PC"`) {
+		t.Fatalf("node-info body = %s, want trimmed id pc-win + name 书房 PC", body)
+	}
+}

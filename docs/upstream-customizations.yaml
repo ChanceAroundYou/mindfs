@@ -16357,3 +16357,120 @@ groups:
       - 'web/src/components/task/ActivityMessage.tsx:const attentionBodyStyle: React.CSSProperties = {'
       - 'web/src/components/task/ActivityMessage.tsx:  color: "var(--text-secondary)",'
       - 'web/tests/activity-attention-inline.test.mjs:test("提醒是居左正文：与 Agent 回复同一骨架，没有气泡/灰底/内边距", () => {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RN
+    title: "本机身份自报：删掉伪节点 local，主控 home/主控、边缘取 instance_id，旧作用域键一次性迁移"
+    kind: feature
+    symptom: |
+      改造前前端把「当前页面所在设备」硬编码成一台叫 `local` 的机器：主控与边缘页面都
+      叫 local，节点表里同一行被不同设备反复覆盖（实测手机写入 local→home URL，PC 端
+      解析 nodeId=local 全部路由到 home 服务器）；机器人 id 只能靠 control_sync.instance_id
+      猜，托盘/标题也拿不到本机名字。本轮让每台机器**自报身份**：
+      `/api/node-info` 增加 `id`/`name`（主控缺省 home/主控；边缘取
+      `control_sync.instance_id` 与安装向导写下的节点名；worker 取主机名），
+      前端注册表用它生成 self 节点、拼作用域键，旧 `local` 前缀的 localStorage
+      与置顶键在一次启动内迁移到新 id。节点表同时补上「名称不得重名」的写入校验
+      （trim + 忽略大小写，历史重名不强行修），并新增安装向导/设置页/CLI 共用的
+      `POST /api/nodes/validate-name`。
+    why: |
+      必须保留：`local` 不是「主控的别名」，而是「页面所在这台机器」的伪节点；
+      直接把它全局改成 home 会让边缘节点也自称主控，scope 键、节点表、路由全部串台。
+      正确做法是每台机器自报身份：后端 `app.resolveNodeIdentity` 是唯一缺省规则
+      （显式 node.id/name > 边缘 instance_id > 主机名 > home/主控），CLI 与
+      mindfs-server 两个入口共用；前端 `shared/selfNodeStore.ts` 保存自报身份，
+      `isSelfNode()` 取代所有 `id === "local"` 比较，旧 id 一律按本机兼容读。
+      迁移逐段替换作用域键的节点段（`"::"` 与 `":"` 两种分隔、会话 key 自己还可能含
+      `::`、git 缓存还会 encodeURIComponent），全局字符串替换会改到会话 key 或路径。
+      合上游丢了这组，边缘端会退回「所有设备都叫 local」的共享脏行，节点名查重失效，
+      旧数据在新键下整体「消失」。
+    boundary: |
+      只改身份语义与节点名唯一性，不动权限模型（API 层仍不鉴权）、不动控制面只在主节点的
+      约束、不新增账户概念。`nodes.Store` 只去掉 `id=="local"` 特判，历史数据照读不修；
+      名称唯一只拦「本次写入新引入的冲突」，PUT 整表替换时按整表判重。worker 不提供
+      前端与控制面，`/api/node-info` 在 worker 上仍 403，自报身份只在它自己的配置里。
+    files:
+      - docs/plans/2026-11-25-windows-edge-shell.md
+      - server/app/node_identity.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/cmd/mindfs-server/main.go
+      - server/internal/api/http.go
+      - server/internal/api/http_nodes.go
+      - server/internal/api/http_routes.go
+      - server/internal/channels/feishu/relay.go
+      - server/internal/nodes/store.go
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - web/src/shared/nodePalette.ts
+      - web/src/shared/selfNodeStore.ts
+      - web/src/shared/nodeIdentityMigration.ts
+      - web/src/services/net/selfNode.ts
+      - web/src/services/net/nodeRegistry.ts
+      - web/src/services/pins.ts
+      - web/src/app/useProjectAddActions.ts
+      - web/src/app/useProjectDirectoryBrowser.ts
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/components/account/NodeManagerPanel.tsx
+      - web/src/components/account/useNodeManagerPanel.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+    tests:
+      # 后端：缺省规则四分支 + trim；node-info 自报 id/name；名称查重（validate-name、PUT 整表、
+      # 历史重名放行）；local 行可删。
+      - server/app/node_identity_test.go
+      - server/internal/api/http_node_role_test.go
+      - server/internal/api/http_nodes_name_test.go
+      - server/internal/nodes/store_test.go
+      # 前端：迁移逐段替换/幂等/冲突保留新值；身份未知退回 local、拉到后改写、失败保留缓存；
+      # 原有节点注册表/置顶/面板契约跟着身份语义更新。
+      - web/tests/node-identity-migration.test.ts
+      - web/tests/self-node-identity.test.ts
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/node-url-normalize.test.mjs
+      - web/tests/node-manager-panel.test.mjs
+      - web/tests/pins-authority.test.mjs
+      - web/tests/pins-refresh-dedup.test.mjs
+    anchors:
+      - 'server/app/node_identity.go:const ('
+      - 'server/app/node_identity.go:PrimaryNodeID   = "home"'
+      - 'server/app/node_identity.go:case edge && instance != "":'
+      - 'server/internal/api/http_nodes.go:"id":      strings.TrimSpace(h.NodeID),'
+      - 'server/internal/api/http_nodes.go:func (h *HTTPHandler) handleNodesValidateName(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/nodes/store.go:func NameConflicts(existing, incoming []NodeConnection) (NodeConnection, bool) {'
+      - 'web/src/shared/selfNodeStore.ts:export function isSelfNode(nodeId: string | null | undefined): boolean {'
+      - 'web/src/shared/nodeIdentityMigration.ts:export function rewriteNodeSegment(raw: string, selfId: string): string {'
+      - 'web/src/services/net/selfNode.ts:export function initSelfNodeIdentity(): Promise<SelfNodeIdentity | null> {'
+      - 'web/src/services/net/nodeRegistry.ts:await initSelfNodeIdentity().catch(() => null);'
+  - id: G-RO
+    title: "WIP — 待填写（scope-id claim 占位）"
+    kind: feature
+    symptom: "待填写：用户会看到什么。"
+    why: "待填写：为什么必须保留、合上游时丢了会怎样。"
+    files: []
+    tests: []
+    anchors: []
+  - id: G-RP
+    title: "WIP — 待填写（scope-id claim 占位）"
+    kind: feature
+    symptom: "待填写：用户会看到什么。"
+    why: "待填写：为什么必须保留、合上游时丢了会怎样。"
+    files: []
+    tests: []
+    anchors: []
+  - id: G-RQ
+    title: "WIP — 待填写（scope-id claim 占位）"
+    kind: feature
+    symptom: "待填写：用户会看到什么。"
+    why: "待填写：为什么必须保留、合上游时丢了会怎样。"
+    files: []
+    tests: []
+    anchors: []
+  - id: G-RR
+    title: "WIP — 待填写（scope-id claim 占位）"
+    kind: feature
+    symptom: "待填写：用户会看到什么。"
+    why: "待填写：为什么必须保留、合上游时丢了会怎样。"
+    files: []
+    tests: []
+    anchors: []

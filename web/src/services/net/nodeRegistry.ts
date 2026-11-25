@@ -2,8 +2,17 @@ import { getStoredString, setStoredString, removeStoredString } from "../prefs/s
 import { deriveLocalNodeBase, normalizeExplicitNodeBase, repairDuplicateDeployPrefix } from "./nodeBase";
 import { DEPLOY_PREFIX } from "./prefix";
 import { controlPath } from "./controlPlane";
-import { DEFAULT_NODE_COLOR, LOCAL_NODE_ID, PALETTE } from "../../shared/nodePalette";
-export { DEFAULT_NODE_COLOR, LOCAL_NODE_ID, PALETTE } from "../../shared/nodePalette";
+import { DEFAULT_NODE_COLOR, PALETTE } from "../../shared/nodePalette";
+export { DEFAULT_NODE_COLOR, PALETTE } from "../../shared/nodePalette";
+import {
+  LEGACY_SELF_NODE_ID,
+  getSelfNodeId,
+  getSelfNodeIdentity,
+  getSelfNodeName,
+  initSelfNodeIdentity,
+  isSelfNode,
+} from "./selfNode";
+export { LEGACY_SELF_NODE_ID, getSelfNodeId, getSelfNodeName, initSelfNodeIdentity, isSelfNode } from "./selfNode";
 const PREVIOUS_PALETTE = ["#7c6bd6", "#c9b84a", "#6a8dc2", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
 const OLD_PALETTE = ["#6d5bcf", "#0ea5a0", "#e07a2f", "#2f8f4e", "#d9466a", "#7a9a3a"] as const;
 const paletteIndex = [PREVIOUS_PALETTE, OLD_PALETTE] as const;
@@ -32,18 +41,18 @@ function localBaseURL(): string {
   return "";
 }
 
-// "local" 节点 = “当前设备”节点：其 URL 必须按当前设备推导，共享列表里持久化的 local URL
-// 是某台设备写入的，对其它设备必然错误（实测：手机写入 local→home URL，PC 端解析
-// nodeId="local" 全部路由到 home 服务器）。web 用当前 origin；原生壳 origin（capacitor://…）
-// 不可直接 fetch，留空走相对路径/原生代理，天然指向当前连接的服务器。
+// self 节点 = “当前这台机器”：其 URL 必须按当前设备推导，共享列表里持久化的
+// self URL 是某台设备写入的，对其它设备必然错误（实测：手机写入 local→home URL，
+// PC 端解析 nodeId="local" 全部路由到 home 服务器）。web 用当前 origin；原生壳
+// origin（capacitor://…）不可直接 fetch，留空走相对路径/原生代理。
 function deviceLocalNodeURL(): string {
   const base = localBaseURL();
   if (!base || !/^https?:\/\//i.test(base)) return "";
   return base;
 }
 
-function makeLocalNode(): NodeConnection {
-  return { id: LOCAL_NODE_ID, name: "local", url: deviceLocalNodeURL(), color: PALETTE[0] };
+function makeSelfNode(): NodeConnection {
+  return { id: getSelfNodeId(), name: getSelfNodeName(), url: deviceLocalNodeURL(), color: PALETTE[0] };
 }
 
 // 去重键必须带上路径段：同一台物理机可以挂两个部署前缀（实测 PC 上 WSL 节点走 /mindfs、
@@ -63,8 +72,10 @@ function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
     const key = nodeBaseKey(n.url);
     const prev = seen.get(key);
     if (!prev) { seen.set(key, n); continue; }
-    if (prev.id === LOCAL_NODE_ID) continue;
-    if (n.id === LOCAL_NODE_ID) seen.set(key, n);
+    // 同一 origin 上已有条目时，self 行必须留下：它的 URL 随后会按当前设备重算，
+    // 别的设备写进去的 URL 不能信。
+    if (isSelfNode(prev.id)) continue;
+    if (isSelfNode(n.id)) seen.set(key, n);
   }
   return Array.from(seen.values());
 }
@@ -90,8 +101,17 @@ export type NodesSyncOutcome = {
 
 function normalizeRecord(item: any): NodeConnection | null {
   if (!item || typeof item !== "object") return null;
-  const id = String(item.id || "").trim();
-  const name = String(item.name || "").trim();
+  let id = String(item.id || "").trim();
+  let name = String(item.name || "").trim();
+  // 旧伪节点 local 一律映射成自报身份：节点表是共享的，主控与边缘过去都往里写过
+  // 一个叫 local 的行；换成 home/pc-win 后，下一次整表写回就把它替换掉。
+  if (id === LEGACY_SELF_NODE_ID) {
+    const self = getSelfNodeIdentity();
+    if (self) {
+      id = self.id;
+      name = self.name;
+    }
+  }
   const rawURL = normalizeExplicitNodeBase(String(item.url || ""));
   const url = repairDuplicateDeployPrefix(normalizeExplicitNodeBase(rawURL), DEPLOY_PREFIX);
   let color = String(item.color || "").trim() || "";
@@ -106,22 +126,35 @@ function normalizeRecord(item: any): NodeConnection | null {
   return { id, name, url, color, remote: !!item.remote };
 }
 
+function dedupNodesByID(nodes: NodeConnection[]): NodeConnection[] {
+  const seen = new Map<string, NodeConnection>();
+  for (const node of nodes) {
+    const id = String(node.id || "").trim();
+    if (!id) continue;
+    // 同 id 两条（例如旧 local 行映射后撞上已有的 home 行）保留 self 那条：
+    // 它的 URL 是设备推导的，另一条的 URL 是别的设备写下的。
+    if (!seen.has(id) || isSelfNode(id)) seen.set(id, node);
+  }
+  return Array.from(seen.values());
+}
+
 function normalizeAndDedup(list: any[]): NodeConnection[] {
   let nodes = (Array.isArray(list) ? list : []).map(normalizeRecord).filter((x: any): x is NodeConnection => !!x);
   nodes = dedupNodesByOrigin(nodes as NodeConnection[]);
-  const hasLocal = nodes.some((n) => n.id === LOCAL_NODE_ID);
-  if (!hasLocal) {
-    nodes = [makeLocalNode(), ...nodes];
+  nodes = dedupNodesByID(nodes as NodeConnection[]);
+  const hasSelf = nodes.some((n) => isSelfNode(n.id));
+  if (!hasSelf) {
+    nodes = [makeSelfNode(), ...nodes];
   } else {
-    const idx = nodes.findIndex((n) => n.id === LOCAL_NODE_ID);
+    const idx = nodes.findIndex((n) => isSelfNode(n.id));
     if (idx > 0) {
-      const [local] = nodes.splice(idx, 1);
-      nodes.unshift(local!);
+      const [self] = nodes.splice(idx, 1);
+      nodes.unshift(self!);
     }
   }
-  const local = nodes.find((n) => n.id === LOCAL_NODE_ID);
-  // 读取时强制按当前设备推导（见 deviceLocalNodeURL）：共享列表持久化的 local URL 不可信
-  if (local) local.url = deviceLocalNodeURL();
+  const self = nodes.find((n) => isSelfNode(n.id));
+  // 读取时强制按当前设备推导（见 deviceLocalNodeURL）：共享列表持久化的 self URL 不可信
+  if (self) self.url = deviceLocalNodeURL();
   return nodes;
 }
 
@@ -190,10 +223,15 @@ export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome
   cachePromise = (async (): Promise<NodesSyncOutcome> => {
     const cacheAtStart = cache;
     try {
+      // 先拿本机身份：节点表的去重、旧 local 行的映射、作用域键都依赖它。
+      // 失败不阻塞同步（自报身份拿不到时退回旧 id，行为与改造前一致）。
+      await initSelfNodeIdentity().catch(() => null);
       const res = await fetch(nodesApiPath(), { cache: "no-store" });
       if (!res.ok) throw new Error(`fetch nodes failed: ${res.status}`);
       const remote = await res.json();
       const list = Array.isArray(remote) ? remote : [];
+      // 旧表中可能还留着 local 行；内存里已映射成自报 id，顺手写回让其它设备也看到新 id。
+      const hasLegacySelfRow = list.some((item) => String(item?.id || "").trim() === LEGACY_SELF_NODE_ID);
       const repairedRemoteURL = list.some((item) => {
         const rawURL = normalizeExplicitNodeBase(String(item?.url || ""));
         return rawURL !== repairDuplicateDeployPrefix(rawURL, DEPLOY_PREFIX);
@@ -204,7 +242,7 @@ export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome
       if (!list.length) {
         const legacy = readLegacyLocalNodes();
         if (legacy && legacy.length) {
-          const merged = normalizeAndDedup([...nodes, ...legacy.filter((n) => n.id !== LOCAL_NODE_ID)]);
+          const merged = normalizeAndDedup([...nodes, ...legacy.filter((n) => !isSelfNode(n.id))]);
           try {
             await enqueueServerWrite(merged);
             nodes = merged;
@@ -213,11 +251,11 @@ export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome
             console.warn("[nodes] failed to migrate legacy nodes", error);
           }
         } else {
-          // ensure at least local node is persisted so other devices see the same empty state
+          // ensure at least self node is persisted so other devices see the same empty state
           try { await enqueueServerWrite(nodes); } catch (error) { console.warn("[nodes] failed to initialize server nodes", error); }
         }
       } else {
-        if (repairedRemoteURL) await enqueueServerWrite(nodes);
+        if (repairedRemoteURL || hasLegacySelfRow) await enqueueServerWrite(nodes);
         // server has data -> legacy cache is stale, drop it
         clearLegacyLocalNodes();
       }
@@ -227,9 +265,9 @@ export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome
     } catch (error) {
       console.warn("[nodes] failed to sync server nodes", error);
       if (cache) return { nodes: cache, source: "cache", error };
-      const local = [makeLocalNode()];
-      writeCache(local);
-      return { nodes: local, source: "local-fallback", error };
+      const fallback = [makeSelfNode()];
+      writeCache(fallback);
+      return { nodes: fallback, source: "local-fallback", error };
     } finally {
       cachePromise = null;
     }
@@ -237,24 +275,24 @@ export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome
   return cachePromise;
 }
 
-export function ensureLocalNode(): NodeConnection {
+export function ensureSelfNode(): NodeConnection {
   const nodes = getNodes();
-  let local = nodes.find((n) => n.id === LOCAL_NODE_ID) || null;
-  if (!local) {
-    local = makeLocalNode();
-    nodes.unshift(local);
+  let self = nodes.find((n) => isSelfNode(n.id)) || null;
+  if (!self) {
+    self = makeSelfNode();
+    nodes.unshift(self);
     void setNodes(nodes);
-  } else if (!local.url) {
-    local.url = deviceLocalNodeURL();
+  } else if (!self.url) {
+    self.url = deviceLocalNodeURL();
     void setNodes(nodes);
   }
-  return local;
+  return self;
 }
 
 export function getNodes(): NodeConnection[] {
   if (cache) return [...cache];
-  // no localStorage cache: before first sync, show ephemeral local node only
-  return [makeLocalNode()];
+  // no localStorage cache: before first sync, show ephemeral self node only
+  return [makeSelfNode()];
 }
 
 export async function setNodes(nodes: NodeConnection[]): Promise<void> {
@@ -265,7 +303,15 @@ export async function setNodes(nodes: NodeConnection[]): Promise<void> {
 
 export function getActiveNodeId(): string | null {
   const v = getStoredString(ACTIVE_ID_KEY);
-  return v ? String(v).trim() : null;
+  if (!v) return null;
+  const id = String(v).trim();
+  // 兼容读：旧值 local = 本机。知道自报身份后顺手改写，避免每次启动都要映射一次。
+  if (id === LEGACY_SELF_NODE_ID && getSelfNodeIdentity()) {
+    const selfId = getSelfNodeId();
+    setStoredString(ACTIVE_ID_KEY, selfId);
+    return selfId;
+  }
+  return id;
 }
 
 export function setActiveNodeId(id: string | null): void {
@@ -286,10 +332,10 @@ export function getActiveNode(): NodeConnection | null {
   // 不带 nodeId 的请求（appURL(undefined) → getApiBaseURL → getActiveNode）
   // 会静默打到那台机器上：页面明明开在本机，会话却读的是 pc 的数据，
   // 而且两边 id/名字都一样，肉眼完全看不出来。
-  // local 节点的 URL 是按当前 origin 推导的（见 deviceLocalNodeURL），正是
+  // self 节点的 URL 是按当前 origin 推导的（见 deviceLocalNodeURL），正是
   // 「页面所在这台机器」，拿不到 active id 时应该选它。
-  const local = nodes.find((n) => n.id === LOCAL_NODE_ID);
-  if (local) return local;
+  const self = nodes.find((n) => isSelfNode(n.id));
+  if (self) return self;
   return nodes[0] || null;
 }
 
@@ -332,7 +378,8 @@ export async function updateNode(id: string, patch: Partial<Pick<NodeConnection,
 
 export async function removeNode(id: string): Promise<void> {
   const normalized = String(id || "").trim();
-  if (normalized === LOCAL_NODE_ID) throw new Error("cannot_remove_local");
+  // 本机不是「可删除的节点」：它由当前服务器与运行设备决定，删掉只会在下次同步时回来。
+  if (isSelfNode(normalized)) throw new Error("cannot_remove_self");
   const nodes = getNodes();
   const next = nodes.filter((n) => n.id !== normalized);
   await setNodes(next);

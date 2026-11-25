@@ -36,6 +36,8 @@ function loadPins() {
     require: (name) => {
       const base = name.split("/").pop();
       if (base === "controlPlane") return { controlPath: (p) => `/page${p}` };
+      if (base === "selfNode") return { getSelfNodeId: () => "home" };
+      if (base === "nodeIdentityMigration") return { rewriteNodeSegment: (raw, selfId) => raw };
       if (base === "api") {
         return {
           protectedJSON: (url) => {

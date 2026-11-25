@@ -48,13 +48,13 @@ assert.doesNotMatch(
 );
 
 // ——— 面板：local 的特殊处理 ———
-assert.match(panel, /disabled=\{isLocal\}/, "local 的地址框必须不可输入");
+assert.match(panel, /disabled=\{isSelf\}/, "本机的地址框必须不可输入");
 assert.match(
   panel,
-  /isLocal \? \{ name, color: draftColor \} : \{ name, color: draftColor, url: nextUrl \}/,
+  /isSelf \? \{ name, color: draftColor \} : \{ name, color: draftColor, url: nextUrl \}/,
   "local 的 url 不得提交：读取时会被 deviceLocalNodeURL() 覆盖，提交了也是白提交",
 );
-assert.match(panel, /\{!isLocal \? \(/, "local 不得有删除入口");
+assert.match(panel, /\{!isSelf \? \(/, "本机不得有删除入口");
 
 // ——— 面板：改地址的校验 ———
 assert.match(

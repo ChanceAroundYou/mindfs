@@ -1,6 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { LOCAL_NODE_ID, PALETTE } from "../../shared/nodePalette";
+import { PALETTE } from "../../shared/nodePalette";
+import { isSelfNode } from "../../shared/selfNodeStore";
 import { useNodeManagerPanel } from "./useNodeManagerPanel";
 
 // 挂载即"打开"（与它替换掉的 add/remove/edit 三个 popover 一致），外部点击由面板自己收。
@@ -129,7 +130,7 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
       </div>
 
       {nodes.map((node) => {
-        const isLocal = node.id === LOCAL_NODE_ID;
+        const isSelf = isSelfNode(node.id);
         const status = statusLabel(node.id);
         const editing = editingId === node.id;
         return (
@@ -170,14 +171,14 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
                 <input
                   value={draftUrl}
                   onChange={(e) => setDraftUrl(e.target.value)}
-                  placeholder={isLocal ? t("nodeManager.thisDevice") : t("login.nodeUrlPlaceholder")}
-                  disabled={isLocal}
+                  placeholder={isSelf ? t("nodeManager.thisDevice") : t("login.nodeUrlPlaceholder")}
+                  disabled={isSelf}
                   style={{
                     ...INPUT_STYLE,
                     fontSize: 11,
                     padding: "4px 8px",
-                    opacity: isLocal ? 0.6 : 1,
-                    cursor: isLocal ? "not-allowed" : "text",
+                    opacity: isSelf ? 0.6 : 1,
+                    cursor: isSelf ? "not-allowed" : "text",
                   }}
                 />
               ) : (
@@ -232,7 +233,7 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
                 <button type="button" onClick={() => startEdit(node)} style={SMALL_BUTTON_STYLE}>
                   {t("common.edit")}
                 </button>
-                {!isLocal ? (
+                {!isSelf ? (
                   <button
                     type="button"
                     onClick={() => void handleDelete(node)}

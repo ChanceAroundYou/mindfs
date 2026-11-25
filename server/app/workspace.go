@@ -122,6 +122,10 @@ type workspaceManager struct {
 	staticDirProvider func() string
 	// role 决定这台机器提不提供控制面（见 internal/nodeinfo）。零值 "" 视为 control。
 	role nodeinfo.Role
+	// nodeID/nodeName 是本机身份（主控 home/主控，边缘取 instance_id）。
+	// nodeID 是前端 scope 键的一部分，不能是空字符串以外的占位值。
+	nodeID   string
+	nodeName string
 
 	shared sharedServices
 
@@ -173,6 +177,14 @@ func (m *workspaceManager) SetRole(role nodeinfo.Role) {
 	m.role = role
 }
 
+// SetNodeIdentity 设定本机身份。空值保留空字符串，由 handler 侧归一成缺省。
+func (m *workspaceManager) SetNodeIdentity(id, name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nodeID = strings.TrimSpace(id)
+	m.nodeName = strings.TrimSpace(name)
+}
+
 // SetControlSync 挂上控制面同步能力（nil = 未启用）。必须在处理请求前调。
 func (m *workspaceManager) SetControlSync(w *controlSyncWiring) {
 	m.mu.Lock()
@@ -201,6 +213,14 @@ func (m *workspaceManager) handlerDefaults() (string, func() string, func() stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.staticDir, m.staticDirProvider, m.cliToken, nodeinfo.Normalize(string(m.role))
+}
+
+// NodeIdentity 返回本机 id/name。空值只该出现在「还没调 SetNodeIdentity 就建 handler」
+// 的测试路径上；生产由 app.Start 统一补齐（见 resolveNodeIdentity）。
+func (m *workspaceManager) NodeIdentity() (string, string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.nodeID, m.nodeName
 }
 
 // PrimaryUserID 是存量数据的归属账户。
@@ -371,6 +391,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 // NewHTTPHandler 为账户构建 HTTP handler（供 api.ScopedRouter 使用）。
 func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *api.HTTPHandler {
 	staticDir, staticDirProvider, cliToken, role := m.handlerDefaults()
+	nodeID, nodeName := m.NodeIdentity()
 	token := ""
 	if cliToken != nil {
 		token = cliToken()
@@ -382,6 +403,8 @@ func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *
 		Version:           version,
 		LocalCLIToken:     token,
 		NodeRole:          role,
+		NodeID:            nodeID,
+		NodeName:          nodeName,
 		FeishuRelayToken:  m.shared.feishuRelay.Token,
 		FeishuNodeID:      m.shared.feishuRelay.NodeID,
 		WorkflowLLM:       api.NewWorkflowLLMClient(ctx, m.shared.routerConfig.Agent, m.shared.routerConfig.Model),
