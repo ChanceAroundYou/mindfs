@@ -16599,9 +16599,10 @@ groups:
       `agents.json` / `web/index.html` / `web/favicon.svg` 缺任何一个就失败。少了 `web/` 的包
       能装、服务能跑，只是页面 404 —— 那种包发出去没人会发现。
 
-      **`local` → `home` 的语义修正带一版迁移兼容**：主控节点默认名从 `local` 改为 `home`
-      （显示为「主控」），已存在的 `local` 在读取时按 `home` 处理，避免升级后节点表里多出一个
-      重名幽灵。节点名写进 `control_sync.instance_id`，配对表单预填的就是安装时输入的名字。
+      **与「去 local」的分工**：身份自报与 `home/主控` 缺省规则在 G-RN（`resolveNodeIdentity`），
+      本组只负责「安装时问名字、把名字落到配置」。`--set-node-name` 写进
+      `control_sync.instance_id`，配对表单预填的就是向导里输入的名字；重名检查与设置页共用
+      `POST /api/nodes/validate-name`。
     files:
       - scripts/windows-installer/mindfs.nsi
       - scripts/build-windows-installer.sh
