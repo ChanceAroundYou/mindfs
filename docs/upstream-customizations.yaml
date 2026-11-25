@@ -11205,6 +11205,7 @@ groups:
       - server/internal/kanban/service_completion_verifier.go
       - server/internal/kanban/service_recover_startup.go
       - server/internal/api/router_runtime.go
+      - server/internal/api/router_runtime_idle.go
       - server/internal/kanban/router_prompt.md
       - cli/cmd/startup.go
       - cli/cmd/mindfs.go
@@ -11232,6 +11233,7 @@ groups:
       - server/internal/kanban/service_completion_review_fixes_test.go
       - server/internal/kanban/router_completion_event_test.go
       - server/internal/kanban/service_completion_verifier_test.go
+      - server/internal/api/router_runtime_idle_test.go
       - server/internal/kanban/intake_policy_test.go
       - server/internal/agent/conformance/conformance_test.go
       - server/internal/agent/conformance/probe_test.go
@@ -11313,6 +11315,8 @@ groups:
       - 'server/internal/kanban/service_completion_verifier.go:func (s *Service) reconcileVerifyingCompletions('
       - 'server/internal/kanban/service_completion_verifier.go:func (s *Service) SweepStaleCompletionVerifications('
       - 'server/internal/kanban/service_completion_verifier.go:func completionVerificationAbandoned('
+      - 'server/internal/api/router_runtime_idle.go:func newIdleWatchdog('
+      - 'server/internal/api/router_runtime_idle.go:func idleTurnError('
       - 'server/internal/kanban/completion_store.go:func (s *TaskStore) ListVerifyingCompletions('
       - 'server/internal/kanban/service_recover_startup.go:s.reconcileVerifyingCompletions(ctx, store)'
       - 'server/internal/kanban/router_types.go:ReadOnly bool'
