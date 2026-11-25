@@ -6,7 +6,6 @@ import { useI18n } from "../../i18n/index";
 import { pencilStyle, tagStyle } from "./taskDetailStyles";
 import { ConversationView } from "./ConversationView";
 import { TaskInspectEntries } from "./TaskInspectEntries";
-import { TaskCompletionEntry } from "./TaskCompletionEntry";
 import type { TaskDetail } from "../../shared/taskTypes";
 import { taskStatusColor, taskStatusLabel } from "../../app/appTask";
 import { TASK_CONTROL_GAP, taskActionIconStyle } from "./taskStyles";
@@ -174,11 +173,12 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
           onAgentActivityChange={() => void panel.refreshTask()}
           onOpenSession={onOpenSession}
         />
-        {/* 执行详情 + 监管记录：同一行的两个胶囊，始终存在、展开互斥。
-            human_gate 在对话卡与执行详情里都能审批。两端同一 DOM 顺序（对话流 →
-            胶囊行 → 收尾区），不许用 `order` / `position` 改排位：移动端曾把它
-            提到正文最前面，用户读成「吸顶横条」。可见性靠首屏滚到底 + 输入区贴底
-            对齐保证（conversationScroll.ts / useComposerBottomPin.ts）。 */}
+        {/* 执行详情 + 监管记录 + 完成证据：同一行的三个胶囊，展开互斥（完成证据按
+            有没有完成记录决定出现）。human_gate 在对话卡与执行详情里都能审批。两端
+            同一 DOM 顺序（对话流 → 胶囊行 → 收尾区），不许用 `order` / `position`
+            改排位：移动端曾把它提到正文最前面，用户读成「吸顶横条」。可见性靠首屏
+            滚到底 + 输入区贴底对齐保证（conversationScroll.ts /
+            useComposerBottomPin.ts）。 */}
         <div className="task-detail-execution">
           <TaskInspectEntries
             rootId={task.root_id}
@@ -190,7 +190,6 @@ export function TaskDetailPanel({ detail, onClose, onOpenSession, onMoved, onTas
             onOpenSession={onOpenSession}
           />
         </div>
-        <TaskCompletionEntry rootId={task.root_id} taskId={task.id} nodeId={nodeId} refreshKey={task.updated_at} />
       </div>
     </PanelShell>
     </>

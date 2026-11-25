@@ -1,37 +1,49 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import { TaskCompletionChecklist } from "./TaskCompletionChecklist";
-import { useTaskCompletion } from "./useTaskCompletion";
+import type { TaskCompletionView } from "../../shared/taskCompletion";
 
-// 完成证据入口：运行视图与监管记录下面的一条只读行，回答「这一轮还差什么证据」。
+// 完成证据面板：由 TaskInspectEntries 的胶囊展开，本身不再画按钮。
 //
-// 从来没有完成记录的任务整行隐藏（普通对话任务不该多出一个空清单）。有记录时
-// 默认展开一小段：被拦下的项就是用户此刻最需要看到的东西，不该再点一次。
+// 数据由同一行的容器取（useTaskCompletion）：胶囊要不要出现取决于「有没有完成
+// 记录」，所以取数必须发生在画按钮的那一层。2026-11-25 起默认收起 —— 以前这里
+// 常驻展开一份清单，长任务会把详情页底部铺成一墙验收项文字（用户：「太丑了」）。
+// 展开与否由父层唯一的 openSection 决定，与执行详情 / 监管记录互斥。
 export type TaskCompletionEntryProps = {
-  rootId: string;
-  taskId: string;
-  nodeId?: string;
-  /** 任务头每次更新递增（父层传 task.updated_at）：复核结论可能在回合中途出现。 */
-  refreshKey?: string;
+  completion: TaskCompletionView | null;
+  loaded: boolean;
+  loading: boolean;
+  error: string;
+  /** 由同一行的胶囊组控制；false 时面板不渲染内容。 */
+  open: boolean;
 };
 
-export function TaskCompletionEntry({ rootId, taskId, nodeId, refreshKey }: TaskCompletionEntryProps) {
+export function TaskCompletionEntry({ completion, loaded, loading, error, open }: TaskCompletionEntryProps) {
   const { t } = useI18n();
-  const { completion, loaded, loading, error } = useTaskCompletion(rootId, taskId, nodeId, refreshKey);
 
-  if (!loaded || !completion) return null;
+  if (!open || !loaded || !completion || !completion.present) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "8px" }} data-testid="task-completion-entry">
+    <div id="task-completion-panel" data-testid="task-completion-entry" style={panelStyle}>
       {error ? (
         <div style={{ fontSize: "12px", color: "var(--danger-color, #ef4444)" }} role="alert">
           {error}
         </div>
       ) : null}
       <TaskCompletionChecklist completion={completion} />
-      {loading ? (
-        <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.supervision.loading")}</div>
-      ) : null}
+      {loading ? <div style={hintStyle}>{t("task.supervision.loading")}</div> : null}
     </div>
   );
 }
+
+const panelStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "6px",
+  minWidth: 0,
+};
+
+const hintStyle: React.CSSProperties = {
+  fontSize: "11px",
+  color: "var(--text-secondary)",
+};
