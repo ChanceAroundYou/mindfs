@@ -16616,9 +16616,6 @@ groups:
       - internal/configfile/configfile.go
       - internal/configfile/configfile_test.go
       - server/internal/config/configfile.go
-      # 移动前的路径：G-RQ 把它挪成 internal/configfile/configfile_test.go，
-      # 相对上游这个路径就是「被删除」，不登记会被算成未覆盖的 delta。
-      - server/internal/config/configfile_test.go
       - Makefile
     tests:
       - internal/deploy/windows_installer_test.go
