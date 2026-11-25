@@ -285,6 +285,9 @@ type RouterAction struct {
 	Reason string              `json:"reason,omitempty"`
 	// Summary 是 complete_task 写给用户看的结果一句话（≤500 字节）。
 	Summary string `json:"summary,omitempty"`
+	// Severity 只对 notify_user 有意义：这条提醒的紧急程度（info/warning/error）。
+	// 决定任务详情里正文与胶囊的颜色；留空按 info 处理。
+	Severity string `json:"severity,omitempty"`
 	// Items 只对 record_acceptance 有意义：这一轮的验收项（≤8 条）。
 	Items []AcceptanceItemInput `json:"items,omitempty"`
 }

@@ -138,7 +138,9 @@ func (rs *RouterService) notifyRouterTurnTimeout(config RouterConfig, decision *
 		Author: "system",
 		Role:   "system",
 		Status: ActivityStatusCompleted,
-		Body:   body,
+		// 超时但已由原路径继续，属于降级不是失败：标 warning。
+		Severity: ActivitySeverityWarning,
+		Body:     body,
 	}
 	created, err := NewActivityStore(store.db).InsertOrIgnore(ctx, activity)
 	if err != nil {

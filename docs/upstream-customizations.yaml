@@ -16335,25 +16335,84 @@ groups:
       必须保留：三种身份的排布是用户明确确定的最终形态 —— Agent 正文无气泡、用户
       消息右气泡、提醒消息居左正文且与 Agent 消息基本完全一致。实现上 attention 直接
       复用 Agent 的 `agentMessageStyle` 骨架与 `footerStyle` 页脚（类型胶囊 + 时间），
-      只多一个 `data-testid="activity-attention-body"` 的正文壳，颜色单独走
-      `attentionBodyStyle` 一档（现有 `--text-secondary`），方便和它提醒的内容区分。
+      只多一个 `data-testid="activity-attention-body"` 的正文壳，颜色由 G-RS 的
+      severity 决定（info 时是现有 `--text-secondary`），方便和它提醒的内容区分。
       气泡、灰底、内边距、居中一律不加。普通系统事件继续用中性居中一行，不受影响。
       合上游丢了这个分支，提醒会退回不会出现在 Agent 页脚档里的居中灰字。
     boundary: |
       只改 `ActivityMessage` 里 `type === "attention"` 的渲染分支与它的正文样式；
       不改消息分类（仍按 role 分三路）、不改 type→标签映射、不改异步/派发逻辑，
       也不给 Agent 正文或用户气泡加改动。颜色只用现有 token，不新增主题色或动画；
-      「提醒/警告/报错」的分级当前不存在于消息模型，这里不自行发明。
+      紧急程度的数据来源见 G-RS，本组只负责布局。
     files:
       - web/src/components/task/ActivityMessage.tsx
       - web/tests/activity-attention-inline.test.mjs
     tests:
-      # 四条：居左正文无气泡/灰底/内边距；正文颜色走 --text-secondary 且不写死色值；
+      # 四条：居左正文无气泡/灰底/内边距；三档 severity 颜色与胶囊着色；
       # 胶囊与时间收进 Agent 页脚；普通系统事件仍居中、用户气泡与 Agent 正文未被波及。
       - web/tests/activity-attention-inline.test.mjs
     anchors:
       - 'web/src/components/task/ActivityMessage.tsx:const isAttention = isSystem && activity.type === "attention";'
       - 'web/src/components/task/ActivityMessage.tsx:data-testid="activity-attention-body"'
-      - 'web/src/components/task/ActivityMessage.tsx:const attentionBodyStyle: React.CSSProperties = {'
-      - 'web/src/components/task/ActivityMessage.tsx:  color: "var(--text-secondary)",'
+      - 'web/src/components/task/ActivityMessage.tsx:function attentionBodyStyle(color: string): React.CSSProperties {'
       - 'web/tests/activity-attention-inline.test.mjs:test("提醒是居左正文：与 Agent 回复同一骨架，没有气泡/灰底/内边距", () => {'
+  # ── 提醒消息的紧急程度：severity 列 + 三档颜色 ────────────────────────
+  - id: G-RS
+    title: "提醒消息增加 severity（info/warning/error），正文与类型胶囊按紧急程度着色"
+    kind: feat
+    symptom: |
+      2026-11-25 用户要求把提醒的「文本和胶囊的颜色修改」，并问有没有
+      「提醒(浅灰)/警告(黄)/报错(红)」这类分级。核查发现活动模型里只有单一的
+      attention 类型：TaskActivity 没有级别字段，所有写入方都只写 body，库里
+      12 条 attention 全是 status=completed。结果是路由超时、复核不可用、留言
+      投递失败、配额用尽在界面上同色，用户无从判断哪条需要立刻处理。
+    why: |
+      必须保留：task_activities 新增 severity 列（空串等价 info，存量行不迁移），
+      TaskActivity 增加 Severity 字段并随 JSON 下发；各写入方按语义标注 ——
+      留言投递失败 / 复核不可用 / 决策整轮被拒 / 配额用尽 / 条件无法求值 = error，
+      路由超时 / 复核未过或被打断 / 预算用尽 / 升级给人 = warning，其余通知 = info；
+      Router 的 notify_user 增加可选 severity 参数。前端 attention 分支用
+      --text-secondary / --status-warn / --status-bad 三档着色正文，并只覆盖类型
+      胶囊的文字颜色。取值沿用 ErrorSeverity 的 info/warning/error，不另造词汇。
+      合上游抹掉这一列，提醒会退回全部浅灰，分级信息无处可放。
+    boundary: |
+      只加一列、只给 attention 使用；severity 不参与任何调度或状态判断。未知值与
+      空串一律按 info —— 旧数据（没有该列）不会被画成告警色。颜色只用现有全局状态
+      token，不新增主题色；胶囊外形仍只有 activityMetaPillStyle 一份，只覆盖
+      color。其余活动类型的读写路径保持原样（列默认空串）。
+    files:
+      - server/internal/kanban/types.go
+      - server/internal/kanban/activity_store.go
+      - server/internal/kanban/task_store_comments.go
+      - server/internal/kanban/task_store_workflow_human_gate.go
+      - server/internal/kanban/task_store_workflow_transitions.go
+      - server/internal/kanban/workflow_comments.go
+      - server/internal/kanban/workflow_driver.go
+      - server/internal/kanban/workflow_node_quota_hold.go
+      - server/internal/kanban/workflow_runtime.go
+      - server/internal/kanban/router_service_recovery.go
+      - server/internal/kanban/router_supervision_turn.go
+      - server/internal/kanban/router_rejected_salvage.go
+      - server/internal/kanban/router_supervision_tools.go
+      - server/internal/kanban/router_types.go
+      - server/internal/kanban/service_completion.go
+      - server/internal/kanban/service_completion_verifier.go
+      - server/internal/kanban/activity_route_supervision.go
+      - web/src/components/task/ActivityMessage.tsx
+      - web/src/components/task/ActivityTypeTag.tsx
+      - web/src/shared/taskComments.ts
+      - server/internal/kanban/activity_store_test.go
+      - web/tests/activity-attention-inline.test.mjs
+    tests:
+      # Go：旧库迁移后列存在 + severity 落库再读回；前端：三档色值映射、
+      # 旧数据缺省 info、胶囊只换文字颜色。
+      - server/internal/kanban/activity_store_test.go
+      - web/tests/activity-attention-inline.test.mjs
+    anchors:
+      - 'server/internal/kanban/types.go:ActivitySeverityWarning = "warning"'
+      - 'server/internal/kanban/activity_store.go:summary, severity, run_id, node_run_id, session_key'
+      - 'server/internal/kanban/activity_route_supervision.go:func notifySeverity(raw string) string {'
+      - 'server/internal/kanban/router_supervision_tools.go:"invalid severity %q (want info|warning|error)"'
+      - 'web/src/components/task/ActivityMessage.tsx:export function attentionSeverityColor(severity: string | undefined): string {'
+      - 'web/src/components/task/ActivityTypeTag.tsx:style={color ? { ...activityMetaPillStyle, color } : activityMetaPillStyle}'
+      - 'web/tests/activity-attention-inline.test.mjs:test("提醒按 severity 着色：info 浅灰 / warning 黄 / error 红，全部走现有 token", () => {'

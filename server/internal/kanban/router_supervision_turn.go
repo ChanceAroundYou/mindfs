@@ -30,7 +30,9 @@ func (rs *RouterService) stopSupervisionForUser(ctx context.Context, decision *R
 		ID: "supervision-budget:" + decision.ID, TaskID: decision.TaskID, RootID: decision.RootID,
 		Type: ActivityTypeAttention, Author: "system", Role: "system",
 		Status: ActivityStatusCompleted,
-		Body:   "监管动作预算已用尽（" + reason + "）。这一轮不再自动重试，任务停在待审核；确认后可以手动重试节点或结束任务。",
+		// 预算用尽只是停止自动重试，任务仍可手动继续：warning。
+		Severity: ActivitySeverityWarning,
+		Body:     "监管动作预算已用尽（" + reason + "）。这一轮不再自动重试，任务停在待审核；确认后可以手动重试节点或结束任务。",
 	}
 	store := rs.taskStore()
 	if store != nil {

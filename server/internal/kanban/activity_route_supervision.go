@@ -73,7 +73,9 @@ func (s *ActivityService) applyRouteEscalate(ctx context.Context, decision *Rout
 		TaskID: decision.TaskID, RootID: task.RootID,
 		Type: ActivityTypeAttention, Author: "system", Role: "system",
 		Status: ActivityStatusCompleted,
-		Body:   body,
+		// 把决定权交回用户：需要人接手，标 warning。
+		Severity: ActivitySeverityWarning,
+		Body:     body,
 	}
 	if _, err := s.applyVisibleSystemRow(ctx, activity); err != nil {
 		return err
@@ -190,6 +192,19 @@ func (s *ActivityService) applyRouteRetryNode(ctx context.Context, decision *Rou
 	return nil
 }
 
+// notifySeverity 把决策里记录的紧急程度收成合法值；空串和未知值都按 info。
+// 旧决策（没有 severity 字段）不该被画成告警色。
+func notifySeverity(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case ActivitySeverityWarning:
+		return ActivitySeverityWarning
+	case ActivitySeverityError:
+		return ActivitySeverityError
+	default:
+		return ActivitySeverityInfo
+	}
+}
+
 // applyRouteNotifyUser 落一条可见的系统说明。effect ID 由决策 + seq 确定，
 // InsertOrIgnore 保证重放只会命中同一行。
 func (s *ActivityService) applyRouteNotifyUser(ctx context.Context, decision *RouterDecision, task Task, action RouterAction) error {
@@ -202,7 +217,9 @@ func (s *ActivityService) applyRouteNotifyUser(ctx context.Context, decision *Ro
 		TaskID: decision.TaskID, RootID: task.RootID,
 		Type: ActivityTypeAttention, Author: "system", Role: "system",
 		Status: ActivityStatusCompleted,
-		Body:   body,
+		// 紧急程度由 Router 决策时指定；旧决策没有这一项，按 info 处理。
+		Severity: notifySeverity(action.Severity),
+		Body:     body,
 	}
 	created, err := s.activities.InsertOrIgnore(ctx, act)
 	if err != nil {
@@ -239,7 +256,9 @@ func (s *ActivityService) recordRejectedInspectionAction(
 		TaskID: decision.TaskID, RootID: task.RootID,
 		Type: ActivityTypeAttention, Author: "system", Role: "system",
 		Status: ActivityStatusCompleted,
-		Body:   body,
+		// 系统发现了问题却没权限动，需要用户推一把：warning。
+		Severity: ActivitySeverityWarning,
+		Body:     body,
 	}
 	created, err := s.activities.InsertOrIgnore(ctx, act)
 	if err != nil {

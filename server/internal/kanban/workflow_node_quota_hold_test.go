@@ -107,7 +107,7 @@ func TestQuotaHoldNoticeIsIdempotent(t *testing.T) {
 	must(t, err, "GetTask")
 	// 重放的是同一次挂起：提示行的身份是原节点行（不是新建的 attempt 行），
 	// 所以重放会命中同一行 —— 按 retried.ID 另起一行才是 bug。
-	svc.noteQuotaHold(ctx, store, task, quotaHoldNoticeID(nr.ID), "重放时重算的提示", "")
+	svc.noteQuotaHold(ctx, store, task, quotaHoldNoticeID(nr.ID), "重放时重算的提示", "", ActivitySeverityInfo)
 	if got := len(holdNotices(t, store, run.TaskID)); got != 1 {
 		t.Fatalf("hold notices = %d after replay, want 1 (a replayed hold is the same hold)", got)
 	}

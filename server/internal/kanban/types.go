@@ -219,6 +219,17 @@ const (
 	ActivityStatusQueued = "queued"
 )
 
+// attention 消息的紧急程度，只决定前端正文与类型胶囊用哪一档颜色。
+//
+// 取值沿用前端 ErrorSeverity 的 info/warning/error，不再造第二套词汇；不设 fatal ——
+// 消息是给人看的提示，不存在「进程无法继续」这一级。空串等价 info，存量行不迁移。
+// 只有 attention 写这一列；其他活动类型留空。
+const (
+	ActivitySeverityInfo    = "info"
+	ActivitySeverityWarning = "warning"
+	ActivitySeverityError   = "error"
+)
+
 const (
 	CommentWorkflowChoiceSpecified = "specified"
 	CommentWorkflowChoiceDisabled  = "disabled"
@@ -253,8 +264,11 @@ type TaskActivity struct {
 	RunID     string `json:"run_id,omitempty"`
 	NodeRunID string `json:"node_run_id,omitempty"`
 	// 对话式模型（Phase 2）字段。用户留言/系统事件不写 Status/Summary。
-	Status     string `json:"status,omitempty"`
-	Summary    string `json:"summary,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	// Severity 是提醒（attention）的紧急程度（info/warning/error），空串等价 info。
+	// 只影响前端着色，不参与任何调度判断。
+	Severity   string `json:"severity,omitempty"`
 	SessionKey string `json:"session_key,omitempty"`
 	// PayloadJSON 是 question/human_gate 卡的结构化内容；ToolUseID 关联会话
 	// 里的 ask_user tool call。普通消息保持空串。

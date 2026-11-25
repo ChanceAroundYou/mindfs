@@ -116,7 +116,9 @@ func (s *ActivityService) recordRejectedTurnNotice(
 		TaskID: decision.TaskID, RootID: decision.RootID,
 		Type: ActivityTypeAttention, Author: "system", Role: "system",
 		Status: ActivityStatusCompleted,
-		Body:   rejectedTurnNoticeBody(reason, salvaged),
+		// 整轮决策被拒、动作一个都没执行：这是这一轮没做成，标 error。
+		Severity: ActivitySeverityError,
+		Body:     rejectedTurnNoticeBody(reason, salvaged),
 	}
 	created, err := s.activities.InsertOrIgnore(ctx, act)
 	if err != nil {

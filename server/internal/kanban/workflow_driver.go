@@ -158,7 +158,9 @@ func (s *Service) advanceWorkflowCondition(ctx context.Context, store *TaskStore
 		act := &TaskActivity{
 			ID:   "wf:" + nr.ID + ":" + WorkflowEventNodeUnknown,
 			Type: ActivityTypeAttention, Author: "system", Role: "system",
-			Body: "条件无法求值：" + err.Error(),
+			// 条件永远求不出值 = 工作流定义有问题，不是临时抖动：标 error。
+			Severity: ActivitySeverityError,
+			Body:     "条件无法求值：" + err.Error(),
 		}
 		if _, _, cerr := store.CommitWorkflowNodeTransition(ctx, run, WorkflowNodeTransition{
 			NodeRun: nr, EventType: WorkflowEventNodeUnknown,

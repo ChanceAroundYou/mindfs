@@ -144,7 +144,7 @@ func (s *Service) beginCompletionVerification(ctx context.Context, store *TaskSt
 	}
 	s.noteCompletionSystemRow(ctx, store, task, "completion-verifying:"+decision.ID,
 		"完成声明已受理：这一轮没有可机检的完成契约，正在独立复核（只读会话，约一分钟）。复核通过就自动收尾，不通过会告诉你还差什么。",
-		decision.ID)
+		decision.ID, ActivitySeverityInfo)
 	s.startCompletionVerification(task.ID, runID, decision.ID)
 	return nil
 }
@@ -209,7 +209,7 @@ func (s *Service) verifyCompletion(ctx context.Context, taskID, runID, decisionI
 	if turnErr != nil {
 		s.noteCompletionSystemRow(ctx, store, task, "completion-verifier-unavailable:"+decision.ID,
 			"独立复核不可用（"+turnErr.Error()+"），按未完成处理：需要你确认这一轮是否真的做完了。",
-			decision.ID)
+			decision.ID, ActivitySeverityError)
 		s.parkForUser(ctx, store, task)
 		return s.blockCompletion(ctx, store, task, run, report, decision)
 	}
@@ -256,7 +256,7 @@ func (s *Service) applyVerifierVerdict(ctx context.Context, store *TaskStore, ta
 		if len(findings) > 0 {
 			body += "：" + strings.Join(findings, "；")
 		}
-		s.noteCompletionSystemRow(ctx, store, task, "completion-verifier:"+decision.ID, body, decision.ID)
+		s.noteCompletionSystemRow(ctx, store, task, "completion-verifier:"+decision.ID, body, decision.ID, ActivitySeverityWarning)
 		// 复核说没做完：任务不能继续显示「进行中」。停在 waiting_user 让人看得见，
 		// Router 仍可以在这个状态上继续补做（waiting_user 不算活动执行）。
 		s.parkForUser(ctx, store, task)
@@ -304,7 +304,7 @@ func (s *Service) markVerifierVerdictStale(ctx context.Context, store *TaskStore
 	}
 	s.noteCompletionSystemRow(ctx, store, task, "completion-verifier-stale:"+decision.ID,
 		"独立复核结论回来时"+reason+"，结论未采用：这一轮是否做完由当前执行自己判定。",
-		decision.ID)
+		decision.ID, ActivitySeverityInfo)
 }
 
 // parkForUser 把非终态任务放回 waiting_user；终态（含已收尾）不动。
@@ -461,12 +461,12 @@ func (s *Service) reconcileVerifyingCompletions(ctx context.Context, store *Task
 		}
 		s.noteCompletionSystemRow(ctx, store, task, "completion-verifier-interrupted:"+row.TaskID,
 			"复核被重启打断：这一轮还没有复核结论，按未完成处理。需要你确认是否真的做完了。",
-			row.DecisionID)
+			row.DecisionID, ActivitySeverityWarning)
 	}
 }
 
 // noteCompletionSystemRow 写一条确定性系统行：同一条决策重放不会多出一条。
-func (s *Service) noteCompletionSystemRow(ctx context.Context, store *TaskStore, task Task, id, body, decisionID string) {
+func (s *Service) noteCompletionSystemRow(ctx context.Context, store *TaskStore, task Task, id, body, decisionID, severity string) {
 	row := &TaskActivity{
 		ID:               id,
 		TaskID:           task.ID,
@@ -474,6 +474,7 @@ func (s *Service) noteCompletionSystemRow(ctx context.Context, store *TaskStore,
 		Author:           "system",
 		Role:             "system",
 		Status:           ActivityStatusCompleted,
+		Severity:         severity,
 		Body:             body,
 		RouterDecisionID: decisionID,
 	}

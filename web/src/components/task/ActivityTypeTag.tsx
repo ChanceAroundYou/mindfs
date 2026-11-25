@@ -10,7 +10,7 @@ import { activityTypeTagKey } from "../../shared/activityModel";
  * 不再逐条挂状态）。文案 key 由 activityModel.activityTypeTagKey 从后端枚举推导，
  * 位置固定在页脚时间前面，和排队徽标、打开会话等元信息同一档字号。
  */
-export function ActivityTypeTag({ activity }: { activity: TaskActivity }) {
+export function ActivityTypeTag({ activity, color }: { activity: TaskActivity; color?: string }) {
   const { t } = useI18n();
   const key = activityTypeTagKey(activity);
   if (!key) return null;
@@ -19,7 +19,9 @@ export function ActivityTypeTag({ activity }: { activity: TaskActivity }) {
       data-testid="activity-type-tag"
       data-activity-type={activity.type}
       data-activity-purpose={activity.purpose || ""}
-      style={activityMetaPillStyle}
+      // 颜色只覆盖文字，外形仍只有 activityMetaPillStyle 这一份；
+      // 目前只有提醒消息按紧急程度传 color，其余分支保持次要文字色。
+      style={color ? { ...activityMetaPillStyle, color } : activityMetaPillStyle}
     >
       {t(key)}
     </span>

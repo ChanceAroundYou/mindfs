@@ -148,6 +148,7 @@ func (s *Service) commitCompletion(ctx context.Context, store *TaskStore, task T
 		Author:           "system",
 		Role:             "system",
 		Status:           ActivityStatusCompleted,
+		Severity:         ActivitySeverityInfo,
 		Body:             body,
 		RouterDecisionID: decisionID,
 	}
@@ -239,8 +240,11 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 		body += "\n" + strings.Join(gaps, "\n")
 	}
 	rowID := "completion-blocked:" + decision.ID
+	// 缺口还能自动补 = warning；补做次数用尽、只能等人 = error。
+	severity := ActivitySeverityWarning
 	if exhausted {
 		rowID = "completion-exhausted:" + decision.ID
+		severity = ActivitySeverityError
 	}
 	row := &TaskActivity{
 		ID:               rowID,
@@ -250,6 +254,7 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 		Author:           "system",
 		Role:             "system",
 		Status:           ActivityStatusCompleted,
+		Severity:         severity,
 		Body:             body,
 		RouterDecisionID: decision.ID,
 	}
@@ -264,7 +269,7 @@ func (s *Service) blockCompletion(ctx context.Context, store *TaskStore, task Ta
 	if len(supervisionEvidenceFailedNodes(ctx, store, run, report)) == 0 {
 		s.noteCompletionSystemRow(ctx, store, task, "completion-needs-user:"+decision.ID,
 			"这些缺口没有可以自动补做的节点：需要你介入确认或补齐条件后，再让 Router 继续。",
-			decision.ID)
+			decision.ID, ActivitySeverityWarning)
 		s.parkForUser(ctx, store, task)
 	}
 

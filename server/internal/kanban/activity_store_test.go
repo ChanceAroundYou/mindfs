@@ -71,7 +71,7 @@ func TestMigration006TaskActivities(t *testing.T) {
 	columns := tableColumns(t, db, "task_activities")
 	required := []string{
 		"id", "task_id", "root_id", "type", "role", "body",
-		"author", "status", "summary", "run_id",
+		"author", "status", "summary", "severity", "run_id",
 		"workflow_version_id", "workflow_choice", "session_key",
 		"payload_json", "tool_use_id",
 		"created_at", "updated_at",
@@ -548,4 +548,26 @@ func tableIndexes(t *testing.T, db *sql.DB, table string) map[string]bool {
 		t.Fatalf("index_list rows: %v", err)
 	}
 	return indexes
+}
+
+// 提醒的 severity 必须能落库再读回来：前端靠它选正文与胶囊的颜色，
+// 读写任一侧漏掉这一列，warning/error 就会悄悄退回浅灰。
+func TestActivityStore_SeverityRoundTrip(t *testing.T) {
+	store := setupActivityStore(t)
+	ctx := context.Background()
+	act := &TaskActivity{
+		ID: "attention-warn", TaskID: "task-1", Type: ActivityTypeAttention,
+		Author: "system", Role: "system", Status: ActivityStatusCompleted,
+		Severity: ActivitySeverityWarning, Body: "配额挂起额度已用完",
+	}
+	if err := store.Insert(ctx, act); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	got, err := store.Get(ctx, act.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Severity != ActivitySeverityWarning {
+		t.Fatalf("Severity = %q, want %q", got.Severity, ActivitySeverityWarning)
+	}
 }

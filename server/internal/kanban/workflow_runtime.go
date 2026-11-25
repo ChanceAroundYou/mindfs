@@ -391,7 +391,7 @@ func (s *Service) createWorkflowNodeAttempt(ctx context.Context, rootID, taskID,
 		}
 		if !granted {
 			s.noteQuotaHold(ctx, store, task, quotaHoldNoticeID("exhausted:"+run.ID),
-				quotaHoldsExhaustedBody(supervisionMaxHoldsPerRun), "")
+				quotaHoldsExhaustedBody(supervisionMaxHoldsPerRun), "", ActivitySeverityError)
 			if _, parkErr := s.setTaskStatus(ctx, rootID, task.ID, StatusWaitingUser,
 				"quota_holds_exhausted", quotaHoldsExhaustedBody(supervisionMaxHoldsPerRun), false); parkErr != nil {
 				// 额度用完本身是确定的事实，重试它也不会变；但「已经把人叫来」
@@ -402,7 +402,7 @@ func (s *Service) createWorkflowNodeAttempt(ctx context.Context, rootID, taskID,
 			return NodeRun{}, fmt.Errorf("%w: run %s used %d/%d", ErrQuotaHoldsExhausted, run.ID, used, supervisionMaxHoldsPerRun)
 		}
 		s.noteQuotaHold(ctx, store, task, quotaHoldNoticeID(original.ID),
-			quotaHoldNoticeBody(original.NodeID, notBefore, used, supervisionMaxHoldsPerRun), "")
+			quotaHoldNoticeBody(original.NodeID, notBefore, used, supervisionMaxHoldsPerRun), "", ActivitySeverityInfo)
 	}
 	retried, err := store.CreateRetryWorkflowNodeRun(ctx, run, original)
 	if err != nil {

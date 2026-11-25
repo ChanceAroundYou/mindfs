@@ -194,11 +194,13 @@ func deliveryFailure(ctx context.Context, store *TaskStore, run *WorkflowRun, no
 		r := toDeliver[at]
 		_ = store.SetWorkflowCommentStatus(ctx, run.TaskID, r.CommentID, ContinueRequestDeliveryFailed, r.NodeRunID, r.SessionKey)
 		_, _ = store.AppendTaskActivity(ctx, TaskActivity{
-			ID:        "wf:" + nodeRun.ID + ":comment:" + r.CommentID + ":delivery_failed",
-			TaskID:    run.TaskID,
-			Type:      ActivityTypeAttention,
-			Author:    "system",
-			Role:      "system",
+			ID:     "wf:" + nodeRun.ID + ":comment:" + r.CommentID + ":delivery_failed",
+			TaskID: run.TaskID,
+			Type:   ActivityTypeAttention,
+			Author: "system",
+			Role:   "system",
+			// 留言没送达 = 这一轮对话断在半路，需要人重新发：标 error。
+			Severity:  ActivitySeverityError,
 			Body:      "留言投递失败：" + cause.Error(),
 			RunID:     run.ID,
 			NodeRunID: nodeRun.ID,

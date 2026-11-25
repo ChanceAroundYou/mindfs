@@ -28,6 +28,9 @@ export type TaskActivity = {
   node_run_id?: string;
   status?: ActivityStatus | string;
   summary?: string;
+  // severity 只对提醒（attention）有意义：info / warning / error，空串等价 info。
+  // 详情面板据此给正文和类型胶囊着色；其他活动类型不写这一项。
+  severity?: "info" | "warning" | "error" | string;
   session_key?: string;
   // payload_json 是 question / human_gate 卡的结构化内容（问题、选项、审批说明）。
   // 后端按原样透传，前端只解析自己要用的键；解析失败按空对象处理。

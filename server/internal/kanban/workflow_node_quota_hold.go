@@ -82,14 +82,14 @@ func quotaHoldsExhaustedBody(cap int) string {
 
 // noteQuotaHold 写一行确定性系统提示（幂等）。与 noteCompletionSystemRow 同一套
 // 收口：InsertOrIgnore 保证重放只有一行，broadcast 让界面上立即出现。
-func (s *Service) noteQuotaHold(ctx context.Context, store *TaskStore, task Task, id, body, decisionID string) {
+func (s *Service) noteQuotaHold(ctx context.Context, store *TaskStore, task Task, id, body, decisionID, severity string) {
 	if s == nil || store == nil {
 		return
 	}
 	row := &TaskActivity{
 		ID: id, TaskID: task.ID, Type: ActivityTypeAttention,
 		Author: "system", Role: "system",
-		Status: ActivityStatusCompleted, Body: body, RouterDecisionID: decisionID,
+		Status: ActivityStatusCompleted, Severity: severity, Body: body, RouterDecisionID: decisionID,
 	}
 	created, err := NewActivityStore(store.db).InsertOrIgnore(ctx, row)
 	if err != nil || !created {

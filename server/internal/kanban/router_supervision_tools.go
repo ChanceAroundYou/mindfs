@@ -303,10 +303,15 @@ func (e *routerToolEnv) notifyUserTool(obs *SupervisionObservation) RouterToolSp
 		Class:       RouterToolWrite,
 		InputSchema: objectSchema(map[string]any{
 			"body": map[string]any{"type": "string", "minLength": 1, "description": "给用户看的说明"},
+			"severity": map[string]any{
+				"type": "string", "enum": []string{ActivitySeverityInfo, ActivitySeverityWarning, ActivitySeverityError},
+				"description": "这条提醒的紧急程度：info=普通提醒（默认），warning=需要留意/降级，error=这一轮没做成或需要立刻处理",
+			},
 		}, []string{"body"}),
 		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var args struct {
-				Body string `json:"body"`
+				Body     string `json:"body"`
+				Severity string `json:"severity"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
@@ -321,7 +326,15 @@ func (e *routerToolEnv) notifyUserTool(obs *SupervisionObservation) RouterToolSp
 			if len(body) > routerActionBodyMaxBytes {
 				return "", fmt.Errorf("body exceeds %d bytes", routerActionBodyMaxBytes)
 			}
-			return e.record(RouterAction{Kind: RouterActionNotifyUser, Body: body})
+			severity := strings.TrimSpace(args.Severity)
+			switch severity {
+			case "":
+				severity = ActivitySeverityInfo
+			case ActivitySeverityInfo, ActivitySeverityWarning, ActivitySeverityError:
+			default:
+				return "", fmt.Errorf("invalid severity %q (want info|warning|error)", severity)
+			}
+			return e.record(RouterAction{Kind: RouterActionNotifyUser, Body: body, Severity: severity})
 		},
 	}
 }

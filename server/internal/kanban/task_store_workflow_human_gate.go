@@ -27,14 +27,15 @@ func (s *TaskStore) DecideWorkflowHumanGate(ctx context.Context, run *WorkflowRu
 	if run == nil {
 		return NodeRun{}, false, errors.New("workflow run required")
 	}
-	var status, eventType, activityType, body string
+	var status, eventType, activityType, body, severity string
 	switch strings.TrimSpace(decision) {
 	case "approve":
 		status, eventType = NodeRunSuccess, WorkflowEventHumanApproved
 		activityType, body = ActivityTypeSystemEvent, "已批准人工确认节点"
 	case "reject":
 		status, eventType = NodeRunCancelled, WorkflowEventHumanRejected
-		activityType, body = ActivityTypeAttention, "已拒绝人工确认节点"
+		// 拒绝是用户自己刚做的决定，不是系统告警：留默认浅灰。
+		activityType, body, severity = ActivityTypeAttention, "已拒绝人工确认节点", ActivitySeverityInfo
 	default:
 		return NodeRun{}, false, fmt.Errorf("invalid human gate decision %q (want approve|reject)", decision)
 	}
@@ -154,10 +155,10 @@ func (s *TaskStore) DecideWorkflowHumanGate(ctx context.Context, run *WorkflowRu
 		return NodeRun{}, false, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
+		`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, severity, run_id, node_run_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
 		"wf:"+nodeRun.ID+":human:"+strings.TrimSpace(decision), run.TaskID, s.root.ID, activityType, "user", RoleUser,
-		activityBody, CommentWorkflowChoiceEmpty, "", run.ID, nodeRun.ID, stamp); err != nil {
+		activityBody, CommentWorkflowChoiceEmpty, "", severity, run.ID, nodeRun.ID, stamp); err != nil {
 		return NodeRun{}, false, err
 	}
 	if err := tx.Commit(); err != nil {

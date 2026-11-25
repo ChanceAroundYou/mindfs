@@ -23,7 +23,7 @@ import (
 //   - status/summary 在 Go 层用空串表示「无」，不建 CHECK 约束：存量活动类型
 //     （user_comment/attention/merge_conflict 等）超出计划的枚举，硬约束会
 //     直接拒绝现网写入。
-const activitySelectColumns = "id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, payload_json, tool_use_id, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at"
+const activitySelectColumns = "id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, severity, run_id, node_run_id, session_key, payload_json, tool_use_id, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at"
 
 var (
 	// ErrActivityNotFound 表示按 id 找不到活动。
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS task_activities (
 	root_id TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL DEFAULT '',
 	summary TEXT NOT NULL DEFAULT '',
+	severity TEXT NOT NULL DEFAULT '',
 	session_key TEXT NOT NULL DEFAULT '',
 	payload_json TEXT NOT NULL DEFAULT '',
 	tool_use_id TEXT NOT NULL DEFAULT '',
@@ -91,6 +92,8 @@ CREATE TABLE IF NOT EXISTS task_activities (
 		`ALTER TABLE task_activities ADD COLUMN root_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN status TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN summary TEXT NOT NULL DEFAULT ''`,
+		// 提醒消息的紧急程度（info/warning/error），空串等价 info。
+		`ALTER TABLE task_activities ADD COLUMN severity TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN session_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN payload_json TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE task_activities ADD COLUMN tool_use_id TEXT NOT NULL DEFAULT ''`,
@@ -160,15 +163,15 @@ func (s *ActivityStore) insert(ctx context.Context, activity *TaskActivity, igno
 	if activity.UpdatedAt.IsZero() {
 		activity.UpdatedAt = activity.CreatedAt
 	}
-	query := `INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, run_id, node_run_id, session_key, payload_json, tool_use_id, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, summary, severity, run_id, node_run_id, session_key, payload_json, tool_use_id, reply_to_id, router_decision_id, purpose, ordinal, hidden, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if ignoreConflict {
 		query += ` ON CONFLICT(task_id,id) DO NOTHING`
 	}
 	res, err := s.db.ExecContext(ctx, query,
 		activity.ID, activity.TaskID, activity.RootID, activity.Type, activity.Author, activity.Role,
 		activity.Body, activity.WorkflowChoice, activity.WorkflowVersionID, activity.Status,
-		truncateSummary(activity.Summary), activity.RunID, activity.NodeRunID, activity.SessionKey,
+		truncateSummary(activity.Summary), activity.Severity, activity.RunID, activity.NodeRunID, activity.SessionKey,
 		activity.PayloadJSON, activity.ToolUseID,
 		activity.ReplyToID, activity.RouterDecisionID, activity.Purpose, activity.Ordinal, boolToInt(activity.Hidden),
 		activity.CreatedAt.Format(time.RFC3339Nano), activity.UpdatedAt.Format(time.RFC3339Nano))
@@ -614,7 +617,7 @@ func scanActivityRecord(row scanner) (*TaskActivity, error) {
 	)
 	if err := row.Scan(
 		&a.ID, &a.TaskID, &a.RootID, &a.Type, &a.Author, &a.Role, &a.Body,
-		&a.WorkflowChoice, &a.WorkflowVersionID, &a.Status, &a.Summary,
+		&a.WorkflowChoice, &a.WorkflowVersionID, &a.Status, &a.Summary, &a.Severity,
 		&a.RunID, &a.NodeRunID, &a.SessionKey,
 		&a.PayloadJSON, &a.ToolUseID,
 		&a.ReplyToID, &a.RouterDecisionID, &a.Purpose, &a.Ordinal, &hidden,

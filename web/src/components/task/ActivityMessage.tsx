@@ -62,7 +62,8 @@ function parseActivityTime(value: string | undefined): number | null {
  *
  * - 用户留言：右侧灰底大圆角气泡，时间在气泡下方。
  * - Agent 回复：无框 Markdown 正文，状态/工作流/时间/会话入口收进一行页脚。
- * - 系统事件：居中灰字。
+ * - 提醒（attention）：与 Agent 回复同一骨架，正文与胶囊按 severity 着色。
+ * - 其他系统事件：居中灰字。
  *
  * 不再渲染「用户 / Agent」角色标签：左右位置和气泡形态已经表达了身份。
  */
@@ -149,8 +150,9 @@ export function ActivityMessage({
   const workflowName = workflowDisplayName(activity.workflow_version_id, workflowNames);
 
   // 提醒：居左正文，和 Agent 回复同一骨架（无气泡、无内边距、同样的页脚）。
-  // 只有正文颜色单独一档，用来和被提醒的内容区分开。
+  // 正文与胶囊按 severity 着色：info=浅灰、warning=黄、error=红。
   if (isAttention) {
+    const tone = attentionSeverityColor(activity.severity);
     return (
       <div
         data-testid="activity-system"
@@ -158,13 +160,17 @@ export function ActivityMessage({
         style={agentMessageStyle}
       >
         {displayText ? (
-          <div data-testid="activity-attention-body" style={attentionBodyStyle}>
+          <div
+            data-testid="activity-attention-body"
+            data-severity={normalizeAttentionSeverity(activity.severity)}
+            style={attentionBodyStyle(tone)}
+          >
             {displayText}
           </div>
         ) : null}
 
         <div data-testid="activity-footer" style={footerStyle}>
-          <ActivityTypeTag activity={activity} />
+          <ActivityTypeTag activity={activity} color={tone} />
           {timeLabel && (
             <time dateTime={activity.created_at} title={fullTime} style={footerItemStyle}>
               {timeLabel}
@@ -316,13 +322,45 @@ const userBubbleStyle: React.CSSProperties = {
 };
 
 /**
- * 提醒正文：和 Agent 回复同一骨架（左对齐、无气泡、无内边距），只把颜色单独一档，
+ * 提醒正文：和 Agent 回复同一骨架（左对齐、无气泡、无内边距），颜色按紧急程度一档，
  * 好和它提醒的内容区分开。色值只走现有 token，不新造主题色。
  */
-const attentionBodyStyle: React.CSSProperties = {
-  color: "var(--text-secondary)",
-  minWidth: 0,
-};
+function attentionBodyStyle(color: string): React.CSSProperties {
+  return {
+    color,
+    minWidth: 0,
+  };
+}
+
+/**
+ * 提醒的紧急程度：后端只写 info/warning/error，空串与未知值都按 info
+ * （旧数据没有 severity 列，不该被画成告警色）。
+ */
+export function normalizeAttentionSeverity(severity: string | undefined): "info" | "warning" | "error" {
+  switch ((severity || "").trim().toLowerCase()) {
+    case "warning":
+      return "warning";
+    case "error":
+      return "error";
+    default:
+      return "info";
+  }
+}
+
+/**
+ * 紧急程度 → 颜色。info 沿用次要文字色；warning/error 用全局状态色，
+ * 与任务状态同一套 token，不另造配色。
+ */
+export function attentionSeverityColor(severity: string | undefined): string {
+  switch (normalizeAttentionSeverity(severity)) {
+    case "warning":
+      return "var(--status-warn)";
+    case "error":
+      return "var(--status-bad)";
+    default:
+      return "var(--text-secondary)";
+  }
+}
 
 const userTimeStyle = metaTimeStyle;
 

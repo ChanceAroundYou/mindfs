@@ -235,7 +235,7 @@ func scanActivity(q interface {
 }, taskID, id string) (TaskActivity, error) {
 	var a TaskActivity
 	var created string
-	err := q.QueryRowContext(context.Background(), `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at FROM task_activities WHERE task_id = ? AND id = ?`, taskID, id).Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &a.RunID, &a.NodeRunID, &created)
+	err := q.QueryRowContext(context.Background(), `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, severity, run_id, node_run_id, created_at FROM task_activities WHERE task_id = ? AND id = ?`, taskID, id).Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &a.Severity, &a.RunID, &a.NodeRunID, &created)
 	if err != nil {
 		return TaskActivity{}, err
 	}
@@ -257,15 +257,15 @@ func (s *TaskStore) AppendTaskActivity(ctx context.Context, a TaskActivity) (Tas
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = now
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO task_activities (id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
-		a.ID, a.TaskID, a.Type, a.Author, a.Role, a.Body, a.WorkflowChoice, a.WorkflowVersionID, a.RunID, a.NodeRunID, a.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO task_activities (id, task_id, type, author, role, body, workflow_choice, workflow_version_id, severity, run_id, node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
+		a.ID, a.TaskID, a.Type, a.Author, a.Role, a.Body, a.WorkflowChoice, a.WorkflowVersionID, a.Severity, a.RunID, a.NodeRunID, a.CreatedAt.Format(time.RFC3339Nano)); err != nil {
 		return TaskActivity{}, err
 	}
 	return scanActivity(s.db, a.TaskID, a.ID)
 }
 
 func (s *TaskStore) ListActivities(ctx context.Context, taskID string) ([]TaskActivity, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, run_id, node_run_id, created_at FROM task_activities WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, type, author, role, body, workflow_choice, workflow_version_id, severity, run_id, node_run_id, created_at FROM task_activities WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +274,7 @@ func (s *TaskStore) ListActivities(ctx context.Context, taskID string) ([]TaskAc
 	for rows.Next() {
 		var a TaskActivity
 		var created string
-		if err := rows.Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &a.RunID, &a.NodeRunID, &created); err != nil {
+		if err := rows.Scan(&a.ID, &a.TaskID, &a.Type, &a.Author, &a.Role, &a.Body, &a.WorkflowChoice, &a.WorkflowVersionID, &a.Severity, &a.RunID, &a.NodeRunID, &created); err != nil {
 			return nil, err
 		}
 		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

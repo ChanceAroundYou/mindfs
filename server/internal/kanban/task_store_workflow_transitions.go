@@ -150,8 +150,8 @@ func (s *TaskStore) CommitWorkflowNodeTransition(ctx context.Context, run *Workf
 			act.CreatedAt = now
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, payload_json, tool_use_id, run_id, node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
-			act.ID, act.TaskID, act.RootID, act.Type, act.Author, act.Role, act.Body, act.WorkflowChoice, act.WorkflowVersionID, act.Status, act.PayloadJSON, act.ToolUseID, act.RunID, act.NodeRunID, act.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+			`INSERT INTO task_activities (id, task_id, root_id, type, author, role, body, workflow_choice, workflow_version_id, status, severity, payload_json, tool_use_id, run_id, node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(task_id,id) DO NOTHING`,
+			act.ID, act.TaskID, act.RootID, act.Type, act.Author, act.Role, act.Body, act.WorkflowChoice, act.WorkflowVersionID, act.Status, act.Severity, act.PayloadJSON, act.ToolUseID, act.RunID, act.NodeRunID, act.CreatedAt.Format(time.RFC3339Nano)); err != nil {
 			return NodeRun{}, false, err
 		}
 	}

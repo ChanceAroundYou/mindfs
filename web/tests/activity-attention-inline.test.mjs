@@ -44,13 +44,32 @@ test("提醒是居左正文：与 Agent 回复同一骨架，没有气泡/灰底
   assert.doesNotMatch(body, /text-align:center/);
 });
 
-test("提醒正文颜色走现有 token，不新造主题色", () => {
-  const body = styleOf(attention, "activity-attention-body");
-  assert.match(body, /color:var\(--text-secondary\)/, "浅灰一档就用现有的次要色");
+test("提醒按 severity 着色：info 浅灰 / warning 黄 / error 红，全部走现有 token", () => {
+  const info = render({ ...base, type: "attention", body: "x", severity: "info" });
+  const warning = render({ ...base, type: "attention", body: "x", severity: "warning" });
+  const error = render({ ...base, type: "attention", body: "x", severity: "error" });
+  // 旧数据没有 severity 列，必须落回 info，而不是被画成告警色。
+  const legacy = render({ ...base, type: "attention", body: "x" });
+
+  assert.match(styleOf(info, "activity-attention-body"), /color:var\(--text-secondary\)/);
+  assert.match(styleOf(legacy, "activity-attention-body"), /color:var\(--text-secondary\)/);
+  assert.match(styleOf(warning, "activity-attention-body"), /color:var\(--status-warn\)/);
+  assert.match(styleOf(error, "activity-attention-body"), /color:var\(--status-bad\)/);
+  assert.match(legacy, /data-severity="info"/);
+
+  // 胶囊只换文字颜色，外形仍是同一份 activityMetaPillStyle。
+  assert.match(styleOf(warning, "activity-type-tag"), /color:var\(--status-warn\)/);
+  assert.match(styleOf(error, "activity-type-tag"), /border-radius:999px[^"]*color:var\(--status-bad\)/);
+  assert.match(styleOf(info, "activity-type-tag"), /border-radius:999px[^"]*color:var\(--text-secondary\)/);
+
   // 不写死色值：深浅主题各自给值。
-  assert.doesNotMatch(body, /#[0-9a-f]{3,6}/i);
+  for (const html of [info, warning, error, legacy]) {
+    assert.doesNotMatch(styleOf(html, "activity-attention-body"), /#[0-9a-f]{3,6}/i);
+  }
   const source = readFileSync(new URL("../src/components/task/ActivityMessage.tsx", import.meta.url), "utf8");
-  assert.match(source, /const attentionBodyStyle: React\.CSSProperties = \{/);
+  assert.match(source, /export function attentionSeverityColor\(severity: string \| undefined\): string \{/);
+  assert.match(source, /return "var\(--status-warn\)";/);
+  assert.match(source, /return "var\(--status-bad\)";/);
 });
 
 test("提醒的元信息与 Agent 页脚同一档", () => {
