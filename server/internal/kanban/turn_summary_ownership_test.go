@@ -55,7 +55,7 @@ func TestChatSayOwnsTaskSummaryWithoutExecution(t *testing.T) {
 	}
 }
 
-// W1-2：摘要硬上限 600 字，且要停在句子边界上；正文一个字都不动。
+// W1-2：摘要存储硬上限 1000 字（提示词要求 800），且要停在句子边界上；正文一个字都不动。
 func TestTruncateSummaryStopsAtSentenceBoundary(t *testing.T) {
 	sentence := "先把路由的归属改清楚再补上巡检。"       // 16 字，不整除 600，硬切一定落在句中
 	text := strings.Repeat(sentence, 80) // 远超过 600 字
@@ -188,7 +188,8 @@ func TestRouterPromptStatesSummaryContract(t *testing.T) {
 	prompt := RouterDeveloperInstructions()
 	for _, want := range []string{
 		"turn_settled", // 会话回合结算也是收尾回合
-		"硬上限 600 字",    // 与 truncateSummary 的上限同源
+		"硬上限 800 字",    // 提示词要求 800，存储上限 1000 留出余量
+		"没做或未验证：",      // 固定四个标签行（S7）
 		"系统会直接丢弃它",     // 交出执行动作后不再复述 progress
 		"failed=true",  // 失败回合的结论是失败说明
 	} {

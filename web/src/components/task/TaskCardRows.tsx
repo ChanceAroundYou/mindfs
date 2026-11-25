@@ -5,6 +5,7 @@ import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import { renderToolIcon } from "../stream/toolCallIcons";
+import { summaryPlainText } from "../../shared/summaryText";
 import type { KanbanTask } from "../../shared/taskTypes";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
@@ -97,6 +98,9 @@ export function TaskCardRows({
   // Router 角标（W3-4）：健康事件还没被 Router 处理时点亮，处理完服务端就
   // 不再下发 router_alert，卡片随之恢复干净 —— 语义在服务端，这里只负责画。
   const routerAlert = taskRouterAlertBadge(task);
+  // 摘要按纯文本渲染（S8）：卡片没有 Markdown 解析器，`**结论**`、反引号与表格
+  // 原样显示就是一串符号。title 与正文同源，悬停看到的与卡片上的一致。
+  const resultSummary = task.result_summary ? summaryPlainText(task.result_summary) : "";
   const auxBadges = [
     auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
     routerAlert
@@ -239,10 +243,10 @@ export function TaskCardRows({
         </span>
       </div>
       {children}
-      {task.result_summary ? (
+      {resultSummary ? (
         <div
           data-testid="task-card-result"
-          title={task.result_summary}
+          title={resultSummary}
           style={{
             marginTop: "6px",
             fontSize: "11px",
@@ -258,7 +262,7 @@ export function TaskCardRows({
             whiteSpace: "pre-wrap",
           }}
         >
-          {task.result_summary}
+          {resultSummary}
         </div>
       ) : null}
       <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px", flexWrap: "wrap" }}>

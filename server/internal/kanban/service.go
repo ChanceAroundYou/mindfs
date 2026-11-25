@@ -76,6 +76,9 @@ type Service struct {
 	// turnTerminations 是「这一轮是被用户终止的」共享登记簿。ActivityServiceForRoot
 	// 每次现建实例，终止与回合收尾可能落在不同实例上，状态必须挂在这里。
 	turnTerminations *TurnTerminations
+	// inspectionDedupe 是「巡检零变化不重复出声」的共享登记簿（S5），共享理由
+	// 与 turnTerminations 相同：每次 ActivityServiceForRoot 都是新实例。
+	inspectionDedupe *InspectionDedupe
 	// cardNotifier 是「把任务卡片推到外部通道」的端口（飞书等）。nil = 通道关闭，
 	// 所有通知静默丢弃；通道失败只记日志，绝不改任务状态。
 	cardNotifier CardNotifier
@@ -163,7 +166,7 @@ var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，�
 var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(roots RootProvider) *Service {
-	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowRunSessionLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}, turnTerminations: newTurnTerminations()}
+	return &Service{Roots: roots, stores: map[string]*TaskStore{}, taskFinish: map[string]*finishToken{}, workflowDrives: map[string]*workflowDrive{}, workflowFinishLocks: map[string]*workflowFinishLock{}, workflowRunSessionLocks: map[string]*workflowFinishLock{}, workflowCancelTimeout: 10 * time.Second, compressedReplies: map[string]compressedReply{}, turnTerminations: newTurnTerminations(), inspectionDedupe: newInspectionDedupe()}
 }
 
 // lockWorkflowNodeFinish 取得某个 NodeRun 的收尾锁。取消路径与合并收尾路径

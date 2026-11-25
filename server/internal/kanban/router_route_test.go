@@ -460,6 +460,17 @@ func TestRouterRouteInvalidActionsRejectAndFallBack(t *testing.T) {
 		t.Fatalf("rejected error = %q", decision.Error)
 	}
 	waitForCondition(t, func() bool { return len(f.runs(t)) == 1 })
+	// 用户留言回合走 fallbackRoute：同一条回复由旧路径写，救回再写一遍会出现两次。
+	// 判据是触发类而不是留言 ID —— 运行期事件决策同样带 UserActivityID。
+	all, err := NewActivityStore(f.store.db).ListIncludingHidden(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("ListIncludingHidden: %v", err)
+	}
+	for _, act := range all {
+		if strings.HasPrefix(act.ID, "route-rejected:") {
+			t.Fatalf("user-message turn must fall back, not salvage: %#v", act)
+		}
+	}
 }
 
 func TestRouterRouteKeepsExplicitWorkflowChoiceOnLegacyPath(t *testing.T) {

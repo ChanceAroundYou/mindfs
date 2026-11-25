@@ -172,7 +172,7 @@ func (s *Service) SettleSessionTurn(ctx context.Context, rootID string, in TurnS
 		"out_of_band":       in.OutOfBand,
 		"answered_question": in.AnsweredQuestion,
 		"failed":            in.Failed,
-		"excerpt":           tailExcerpt(in.Excerpt, routerSettlementExcerptRunes),
+		"excerpt":           headTailExcerpt(in.Excerpt, routerSettlementExcerptRunes),
 	}
 	if in.Failed {
 		payload["error"] = cutAtSentence(strings.TrimSpace(in.Error), turnSettledErrorRunes)
@@ -217,15 +217,102 @@ func (s *Service) ListRouterEventsForTask(ctx context.Context, rootID, taskID st
 	return NewRouterStore(store.db).ListEventsByTask(ctx, taskID)
 }
 
-// tailExcerpt 取文本末尾最多 limit 个字符：harness 的累积摘要本身就是尾部，
-// 而「最后干了什么」比开头更能说明这一轮的结论。
-func tailExcerpt(text string, limit int) string {
+// headTailExcerptRunes 是头尾之外额外保留的「要点行」预算。只取头尾会把中间
+// 那几条待拍板事项丢掉 —— 那正是 #68 的老问题（四条待决策排在收尾说明之前）。
+const headTailStructuralRunes = 200
+
+// headTailExcerpt 取文本的头尾各一半，中间标记省掉多少字（S6）。
+//
+// 只取尾部时丢掉的是开头那段结论（harness 的累积摘要开头就是本轮的结论）；
+// 只取头部又丢掉待办与未验证。两段必须带可见的分隔说明 —— 否则 Router 会把
+// 省略处当成「原文就是这么连续」，把两段读成一句话。
+//
+// 被省略的中段里如果有要点行（待拍板事项、没做 / 未验证 / 下一步 / 结论 / 证据），
+// 按预算单独保留并在省略标记之后重建，不让它们跟着中段一起消失。
+func headTailExcerpt(text string, limit int) string {
 	trimmed := strings.TrimSpace(text)
 	runes := []rune(trimmed)
 	if len(runes) <= limit {
 		return trimmed
 	}
-	return "…" + string(runes[len(runes)-limit:])
+	// 要点行与省略标记占用预算，头尾等比收缩。body 不低于 limit/2：要点行走廊
+	// 再挤也要留够上下文，宁可少留一行要点。
+	body := limit - headTailStructuralRunes - headTailMarkerRunes
+	if body < limit/2 {
+		body = limit / 2
+	}
+	head, tail := body/2, body-body/2
+	middle := runes[head : len(runes)-tail]
+	kept := structuralExcerptLines(middle, headTailStructuralRunes)
+	omitted := len(middle) - runeLen(kept)
+	if omitted < 0 {
+		omitted = 0
+	}
+	var b strings.Builder
+	b.WriteString(string(runes[:head]))
+	b.WriteString("\n…（中间省略 ")
+	b.WriteString(strconv.Itoa(omitted))
+	b.WriteString(" 字）…")
+	if kept != "" {
+		b.WriteString("\n")
+		b.WriteString(kept)
+	}
+	b.WriteString("\n…")
+	b.WriteString(string(runes[len(runes)-tail:]))
+	return b.String()
+}
+
+// headTailMarkerRunes 是「…（中间省略 N 字）…」这段标记的估算长度（N 最多 7 位）。
+const headTailMarkerRunes = 24
+
+// structuralExcerptLines 挑出中段里的要点段，按预算拼成一段；放不下的整段放弃。
+//
+// 分段不只看换行：线上 worker 报告常常整段没有换行，四条待拍板事项就夹在一长串
+// 「过程记录。」中间。所以句末标点也算分段边界（与 cutAtSentence 同一套判据）。
+func structuralExcerptLines(runes []rune, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	left := budget
+	start := 0
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '\n' && !isSentenceEnd(runes, i) {
+			continue
+		}
+		line := strings.TrimSpace(string(runes[start : i+1]))
+		start = i + 1
+		if !isExcerptKeepLine(line) {
+			continue
+		}
+		n := runeLen(line)
+		if n > left {
+			break
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(line)
+		left -= n
+	}
+	return b.String()
+}
+
+// isExcerptKeepLine 判一行是否属于「不能跟着中段一起省略」的要点。
+func isExcerptKeepLine(line string) bool {
+	if line == "" {
+		return false
+	}
+	for _, marker := range []string{"待拍板", "没做", "未验证", "下一步", "结论", "证据"} {
+		if strings.Contains(line, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func runeLen(text string) int {
+	return len([]rune(text))
 }
 
 // eventTurnBudgetSkip 判一个事件回合是否还有额度：返回非空 reason 表示该落

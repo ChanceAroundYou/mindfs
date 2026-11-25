@@ -9853,7 +9853,7 @@ groups:
       - web/tests/run-timeline-readable.test.mjs
       - web/tests/task-panel-options.test.mjs
     anchors:
-      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 600'
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 1000'
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) scheduleReplySummaryCompression('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) applyCompressedReplySummary('
       - 'server/internal/kanban/service_activities_summary.go:func (s *Service) resolveCompressUserMessage('
@@ -11500,7 +11500,7 @@ groups:
       - server/internal/api/turn_text_blocks_test.go
     anchors:
       - 'server/internal/kanban/activity_route_reply.go:if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {'
-      - 'server/internal/kanban/activity_route_apply.go:if act.Purpose == "summary" {'
+      - 'server/internal/kanban/activity_route_say.go:if act.Purpose == "summary" {'
       - 'server/internal/kanban/activity_store.go:const activityOrderBy = ` ORDER BY CASE WHEN type = ''agent_reply'' AND status = ''completed'' AND updated_at <> '''''
       - 'server/internal/kanban/router_tools.go:case "chat", "progress", "summary":'
       - 'server/internal/kanban/router_coordinate_turn.go:const routerEventTurnMaxAttempts = 3'
@@ -12725,10 +12725,10 @@ groups:
       - 'server/internal/kanban/turn_summary.go:func cutAtSentence(text string, limit int) string {'
       - 'server/internal/kanban/turn_summary.go:func directOutputFailure(text string) string {'
       - 'server/internal/kanban/turn_summary.go:func harnessFailureText(text string) string {'
-      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 600'
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 1000'
       - 'server/internal/kanban/service_activity_output_text.go:return cutAtSentence(text, maxStoredSummaryRunes)'
-      - 'server/internal/kanban/activity_route_apply.go:if action.Purpose == "progress" && decision.TriggerKind == RouterTriggerUserMessage && decisionHasHandoff(decision) {'
-      - 'server/internal/kanban/activity_route_apply.go:if act.Purpose == "chat" && !decisionHasHandoff(decision) {'
+      - 'server/internal/kanban/activity_route_say.go:if action.Purpose == "progress" && decision.TriggerKind == RouterTriggerUserMessage && decisionHasHandoff(decision) {'
+      - 'server/internal/kanban/activity_route_say.go:if act.Purpose == "chat" && !decisionHasHandoff(decision) {'
       - 'server/internal/kanban/activity_route_reply.go:func decisionHasHandoff(decision *RouterDecision) bool {'
       - 'server/internal/kanban/activity_route_reply.go:func summaryTriggerAllowed(kind RouterTriggerKind) bool {'
       - 'server/internal/kanban/activity_route_reply.go:if purpose == "summary" && !summaryTriggerAllowed(decision.TriggerKind) {'
@@ -12737,7 +12737,7 @@ groups:
       - 'server/internal/kanban/service_activities.go:summary = truncateSummary(strings.TrimSpace(summary))'
       - 'server/internal/kanban/service_activities_summary.go:func currentTaskResultSummary(ctx context.Context, store *TaskStore, taskID string) string {'
       - 'server/internal/kanban/router_types.go:RouterTriggerTurnSettled RouterTriggerKind = "turn_settled"'
-      - 'server/internal/kanban/router_prompt.md:中文，200–400 字；**硬上限 600 字**（超过会被截断，截断后卡片上读起来就是半句话）。'
+      - 'server/internal/kanban/router_prompt.md:中文，200–400 字；**硬上限 800 字**（超过会被截断，截断后卡片上读起来就是半句话）。'
       - 'server/internal/kanban/router_prompt.md:交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。'
   - id: G-PM
     title: 会话回合结算事件：任务绑定的任何会话走完一轮都进 Router 账本（turn_settled）
@@ -14328,13 +14328,13 @@ groups:
       - 'server/internal/kanban/router_event_brief.go:"answered_question", "failed",'
       - 'server/internal/kanban/turn_summary.go:strings.Contains(lower, "prompt is too long"),'
       - 'server/internal/kanban/router_progress_suppression_test.go:func TestTurnSettledProgressIsHiddenWhenSummaryExists(t *testing.T) {'
-      - 'server/internal/kanban/activity_route_apply.go:redundantProgress := state != nil && state.settleTurn && state.settleSummarySeen &&'
+      - 'server/internal/kanban/activity_route_say.go:hiddenReason == "" && state != nil && state.settleTurn && state.settleSummarySeen &&'
       - 'server/internal/kanban/router_prompt.md:但**写在 summary 之后**的 `progress` 会被丢弃渲染'
       - 'server/internal/kanban/service_turn_settled.go:func routerEventAllowsNoUserActivity(kind RouterEventKind) bool {'
       - 'server/internal/kanban/activity_route_apply.go:requires an originating user activity'
       - 'server/internal/kanban/activity_route_reply.go:func routeUserActivityID(userAct *TaskActivity) string {'
       - 'server/internal/kanban/router_inspection_turn_test.go:func TestCoordinatorInspectionEventWithoutOriginCanSay(t *testing.T) {'
-      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` 与 `router_ask_user`'
+      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` / `router_ask_user` / `router_silent`'
       - 'server/internal/kanban/router_store.go:ALTER TABLE router_task_state ADD COLUMN out_of_band INTEGER'
       - 'server/internal/kanban/router_task_state.go:ON CONFLICT(task_id) DO UPDATE SET'
       - 'server/internal/kanban/service_session_follow.go:persist out-of-band task %s'
@@ -14629,7 +14629,7 @@ groups:
       - 'server/internal/kanban/service_task_prompts.go:const supersededByNewerQuestion = "已被更新的提问取代"'
       - 'server/internal/kanban/activity_route_apply.go:if noteErr := s.recordRejectedInspectionAction(ctx, decision, task, action); noteErr != nil {'
       - 'server/internal/kanban/activity_route_supervision.go:func (s *ActivityService) recordRejectedInspectionAction('
-      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` 与 `router_ask_user`'
+      - 'server/internal/kanban/router_prompt.md:这类回合能用的写入动作**只有** `router_say` / `router_ask_user` / `router_silent`'
 
   - id: G-QF
     title: 启动清扫收口被重问取代的存量提问卡
@@ -16031,3 +16031,188 @@ groups:
       - server/internal/api/usecase/local_dirs.go:func (s *Service) CreateLocalDir
       - web/src/app/useProjectDirectoryBrowser.ts:handleLocalDirCreate
       - web/src/components/file/LocalNewFolderButton.tsx:export function LocalNewFolderButton
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RI
+    title: "Router 允许结论与提问同轮，被拒回合保留纯文本"
+    kind: fix
+    symptom: |
+      两条用户可见的坏法。① 模型同时想说结论和提问时，`ask_user must be the only
+      action` 把整轮判 rejected：自 11-22 起线上 5 条 rejected 全是这一句
+      （task_79ce7b7a 三条、task_7280e0df 两条），触发都是 turn_settled —— 用户
+      看到的是这一轮什么都没发生，模型写下的判断一起消失。② 即便不是问句，
+      任何一条非法动作都会让整轮正文作废：巡检里模型先写结论、再试图执行，
+      结果只剩日志里一行 error。
+    why: |
+      必须保留。S1 把「只能一个动作」放宽成「同轮至多一个 ask_user，其余只能是
+      say」，并把顺序归一到 say 在前（占位回复归第一条回复类动作，否则用户先看到
+      问题、后看到解释）。S2 在整轮被拒时仍把纯文本 say 按 summary 应用、再写一条
+      `route-rejected:<decision>:<seq>` 可见说明；有副作用的动作照样整轮拒绝，不
+      会因此被放行。合上游丢了会回到「结论和提问二选一」和「被拒即静默」。
+      判据用 TriggerKind 而不是 UserActivityID：运行期事件决策同样带留言 ID
+      （线上 20 条 rejected 全部如此），按 ID 判空会把生产主路径整条漏掉。
+    boundary: |
+      只放宽「汇报类动作的共存」，执行类（run_workflow / message_agent / deliver /
+      answer_waiting_node）与监管写入仍必须单独成轮、仍整轮拒绝。救回只搬纯文本，
+      不改任何副作用路径。
+    files:
+      - server/internal/kanban/router_action_turn_shape.go
+      - server/internal/kanban/router_action_turn_shape_test.go
+      - server/internal/kanban/router_rejected_salvage.go
+      - server/internal/kanban/router_rejected_salvage_test.go
+      - server/internal/kanban/router_tools.go
+      - server/internal/kanban/router_shadow_test.go
+      - server/internal/kanban/router_route_test.go
+      - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/router_service.go
+      - server/internal/kanban/router_coordinate_turn.go
+      - docs/superpowers/plans/2026-11-24-router-summary-fidelity-and-turn-output.md
+      - docs/router-summary-problem-analysis.md
+    tests:
+      # TestRouterRouteAllowsSayBeforeAskUser → 钉住 [say, ask_user] 与 [ask_user, say] 都应用成功、顺序归一成 say 在前（占位回复 ordinal 0 是 chat，提问卡 ordinal 1）。
+      - server/internal/kanban/router_action_turn_shape_test.go
+      # TestCoordinatorRejectedTurnKeepsVisibleSay → 钉住被拒回合仍落一条 purpose=summary 的 say、任务摘要被它覆盖、并写 route-rejected 说明；TestCoordinatorRejectedTurnWithoutTextStillNotices → 钉住没有纯文本时仍留可见说明；TestShouldSalvageRejectedTurnKeysOnTriggerKind → 钉住判据是触发类而不是留言 ID。
+      - server/internal/kanban/router_rejected_salvage_test.go
+      # TestRouterValidateMatrix → 钉住 silent 仍独占、say+ask_user 的上限与各自错误串。
+      - server/internal/kanban/router_shadow_test.go
+      # TestRouterRouteInvalidActionsRejectAndFallBack → 钉住用户留言回合仍走 fallbackRoute（不产生 route-rejected 行、不复制正文明）；把判据放宽成「永远救回」时这条用例超时打红。
+      - server/internal/kanban/router_route_test.go
+    anchors:
+      - 'server/internal/kanban/router_action_turn_shape.go:func validateSingleTurnAction(actions []RouterAction, kind RouterActionKind) error {'
+      - 'server/internal/kanban/router_action_turn_shape.go:func normalizeRouterActionOrder(actions []RouterAction) []RouterAction {'
+      - 'server/internal/kanban/router_rejected_salvage.go:func shouldSalvageRejectedTurn(decision *RouterDecision) bool {'
+      - 'server/internal/kanban/router_rejected_salvage.go:picked.Purpose = "summary"'
+      - 'server/internal/kanban/router_rejected_salvage.go:"route-rejected:" + decision.ID'
+      - 'server/internal/kanban/router_service.go:rs.salvageRejectedTurnText(ctx, decision, actions, errText)'
+      - 'server/internal/kanban/router_coordinate_turn.go:rs.salvageRejectedTurnText(ctx, decision, actions, errText)'
+      - 'server/internal/kanban/router_tools.go:return normalizeRouterActionOrder(out)'
+      - 'server/internal/kanban/router_prompt.md:`router_silent` 必须单独使用。`router_ask_user` 可以和一个 `router_say` 同轮'
+      - 'server/internal/kanban/router_action_turn_shape_test.go:func TestRouterRouteAllowsSayBeforeAskUser(t *testing.T) {'
+      - 'server/internal/kanban/router_rejected_salvage_test.go:func TestCoordinatorRejectedTurnKeepsVisibleSay(t *testing.T) {'
+      - 'server/internal/kanban/router_rejected_salvage_test.go:func TestCoordinatorRejectedTurnWithoutTextStillNotices(t *testing.T) {'
+      - 'server/internal/kanban/router_rejected_salvage_test.go:func TestShouldSalvageRejectedTurnKeysOnTriggerKind(t *testing.T) {'
+      - 'docs/superpowers/plans/2026-11-24-router-summary-fidelity-and-turn-output.md:# Router 总结可信化与回合输出收口'
+  - id: G-RJ
+    title: "总结截断按结构边界、巡检去重、结算总结只在有实质变化时覆盖卡片"
+    kind: fix
+    symptom: |
+      四类用户可见的坏法，都出现在任务卡片的「结论」与对话流里。① 卡片上的结论文本
+      被机械切在第 600 个字：线上留下的是 `192.168.1.15:222` 这种半截地址，读起来
+      就是半句话。② Router 自己的输入也只有正文尾部，结论段（待办、未验证项）在结算
+      回合里常读不到。③ 任务没推进、只有一条系统发起的失败通知时，总结把上一轮那段
+      实质结论换个说法再写一遍，卡片上的答案被复读顶掉（#104）。④ 巡检回合零变化也照
+      发一整条「仍在运行、没有新产出」，同一句话连刷十几次（#112）。
+    why: |
+      必须保留。S3 把截断改成按结构边界（全角句末标点 / 后随空白的 ASCII 标点 / 换行 /
+      空白），结构块（列表项、加粗标签、「没做」「未验证」段）整体保留，找不到边界才
+      硬截补「…」，存储上限 600 → 1000。S6 把 Router 输入侧摘要改成头 500 + 尾 500，
+      中间用「…（中间省略 N 字）…」并保留中段的要点行（结论段在头、待办在尾）。
+      S4 只在一轮**没有实质变化**时把总结降级成 progress：零工具调用、系统发起
+      （out_of_band=false）、未作答提问卡、且与卡片上那条字符三元组 Jaccard > 0.6
+      四条同时成立；漏降级优于误降级，卡片保持上一条实质结论。S5 让巡检类回合
+      （turn_stalled / task_orphaned / turn_interrupted）的重复汇报落库但标 hidden，
+      指纹 = 触发类 + 任务状态 + 归一化正文（去空白、去标点、小写），窗口 30 分钟，
+      并放行巡检回合的 router_silent（沉默没有副作用，拒掉只会更吵）。合上游丢了
+      会回到「卡片切在 IP 中间」与「同一条巡检刷屏」。
+    boundary: |
+      不改提示词的总结契约与前端渲染（属 G-RK）。不做跨进程持久化：去重登记簿是进程内
+      map，重启后第一次巡检重新可见一次。S4 判据缺证据（brief 解析失败、无上一条摘要）
+      时一律不降级。巡检回合的其它执行类 / 监管类动作仍按原白名单拒绝。
+    files:
+      - server/internal/kanban/turn_summary.go
+      - server/internal/kanban/turn_summary_boundary_test.go
+      - server/internal/kanban/service_activity_output_text.go
+      - server/internal/kanban/service_turn_settled.go
+      - server/internal/kanban/turn_settled_excerpt_test.go
+      - server/internal/kanban/summary_change.go
+      - server/internal/kanban/inspection_dedupe.go
+      - server/internal/kanban/activity_inspection_dedupe.go
+      - server/internal/kanban/activity_route_say.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/service_terminate.go
+      - server/internal/kanban/route_say_repetition_test.go
+      - server/internal/kanban/router_progress_suppression_test.go
+      - server/internal/kanban/router_prompt.md
+      - docs/superpowers/plans/2026-11-24-router-summary-fidelity-and-turn-output.md
+    tests:
+      # TestCutAtSentenceNeverStopsMidAddress / KeepsCJKFullStopBoundary / FallsBackToParagraphBreak / DoesNotSplitStructuralBlock / StoredSummaryLimitIsOneThousandRunes → 钉住 S3 的四条边界与 1000 字上限；换回硬截时前两条打红。
+      - server/internal/kanban/turn_summary_boundary_test.go
+      # TestTurnSettledExcerptKeepsHeadAndTail / CarriesDecisionItemsBeyondLegacyLimit → 钉住 S6 头尾都在、中间有省略标记、中段要点行保留；删掉尾段或 kept 行时两条都红。
+      - server/internal/kanban/turn_settled_excerpt_test.go
+      # TestTurnSettledRepeatedSummaryDoesNotOverwriteCard（零工具系统回合降级 / 跑过工具照写 / 用户刚说过话照写 / 作答后照写）与 TestTurnSettledDifferentSummaryStillWritesCard → 钉住 S4 四条判据同时成立才降级、不相干的总结照常写卡片。
+      - server/internal/kanban/route_say_repetition_test.go
+      # TestInspectionDuplicateSayIsHidden / TestInspectionDedupeFingerprintAndWindow / TestInspectionSilentTurnIsAccepted → 钉住 S5 的 hidden 落地、指纹与 30 分钟窗口、巡检回合 silent 放行。
+      - server/internal/kanban/route_say_repetition_test.go
+      # TestProgressAfterSettlementSummaryIsHidden → 钉住 M1 通道在改用 hiddenReason 之后仍生效。
+      - server/internal/kanban/router_progress_suppression_test.go
+    anchors:
+      - 'server/internal/kanban/turn_summary.go:func cutAtSentence(text string, limit int) string {'
+      - 'server/internal/kanban/turn_summary.go:func isSentenceEnd(runes []rune, i int) bool {'
+      - 'server/internal/kanban/service_activity_output_text.go:const maxStoredSummaryRunes = 1000'
+      - 'server/internal/kanban/service_turn_settled.go:func headTailExcerpt(text string, limit int) string {'
+      - 'server/internal/kanban/service_turn_settled.go:const headTailStructuralRunes = 200'
+      - 'server/internal/kanban/summary_change.go:func demoteRepeatedSettlementSummary(decision *RouterDecision, task Task, body string) bool {'
+      - 'server/internal/kanban/summary_change.go:const repeatedSummarySimilarity = 0.6'
+      - 'server/internal/kanban/inspection_dedupe.go:const inspectionDedupeWindow = 30 * time.Minute'
+      - 'server/internal/kanban/inspection_dedupe.go:func (d *InspectionDedupe) Repeated(taskID, triggerKind, taskStatus, body string) bool {'
+      - 'server/internal/kanban/activity_route_say.go:if action.Purpose == "summary" && demoteRepeatedSettlementSummary(decision, task, body) {'
+      - 'server/internal/kanban/activity_route_say.go:hiddenReason = "duplicate_inspection"'
+      - 'server/internal/kanban/activity_route_say.go:hiddenReason == "" && state != nil && state.settleTurn && state.settleSummarySeen &&'
+      - 'server/internal/kanban/activity_route_apply.go:action.Kind != RouterActionSilent &&'
+      - 'server/internal/kanban/activity_service.go:inspectionDedupe *InspectionDedupe'
+      - 'server/internal/kanban/service_terminate.go:func (s *Service) inspectionDedupeRegistry() *InspectionDedupe {'
+      - 'server/internal/kanban/router_prompt.md:巡检类回合（`turn_stalled` / `task_orphaned` / `turn_interrupted`）和上一轮相比没有变化时用 `router_silent`'
+      - 'server/internal/kanban/turn_summary_boundary_test.go:func TestCutAtSentenceNeverStopsMidAddress(t *testing.T) {'
+      - 'server/internal/kanban/turn_settled_excerpt_test.go:func TestTurnSettledExcerptKeepsHeadAndTail(t *testing.T) {'
+      - 'server/internal/kanban/route_say_repetition_test.go:func TestTurnSettledRepeatedSummaryDoesNotOverwriteCard(t *testing.T) {'
+      - 'server/internal/kanban/route_say_repetition_test.go:func TestInspectionDuplicateSayIsHidden(t *testing.T) {'
+      - 'server/internal/kanban/route_say_repetition_test.go:func TestInspectionSilentTurnIsAccepted(t *testing.T) {'
+  - id: G-RK
+    title: "结算总结的固定标签行与卡片摘要纯文本渲染"
+    kind: fix
+    symptom: |
+      卡片上的结论是一串 Markdown 记号：`**结论**`、反引号里的命令、偶尔整张表格
+      （#103 那条 2,833 字），而看板卡按 `pre-wrap` 渲染、根本没有 Markdown 解析器 ——
+      符号比字还多，三行 clamp 里塞满 `| --- |`。同时提示词只说了「四段、200–400 字」，
+      没有说「怎么分行、能不能用列表/表格」，模型每次写法都不一样：同样的内容有时是
+      一段话，有时是四段，有时带标题与表格。
+    why: |
+      必须保留。S7 把规则 18 改成固定四个标签行（结论 / 证据 / 没做或未验证 / 下一步），
+      允许 `- ` 列表与行内代码、禁止表格与代码块，硬上限 600 → 800 字；规则 15 的
+      「不要套固定模板」补上例外，否则两条规则自相矛盾。S8 在卡片侧把摘要压成纯文本：
+      `web/src/shared/summaryText.ts` 与 `server/internal/notify/plaintext.go` 的
+      `stripMarkdown` 同一套语义（围栏、标题、引用、列表标记、行内代码反引号、链接/图片
+      只留文字、粗体/删除线/斜体、表格分隔行整行丢弃、表格行竖线换空格），区别只在
+      保留换行 —— 四个标签行要各自成行。存量带 Markdown 的摘要不用改库，刷新即正常。
+      合上游丢了前端这份，卡片又会把 `**结论**` 原样显示出来。
+    boundary: |
+      不动服务端存储与截断（G-RJ 的 1000 字上限）。不做受限 Markdown 渲染 —— 卡片是
+      三行 clamp 的纯文本行，渲染粗体/列表只会把宽度吃光；详情面板读的是同一字段，
+      不在本次范围。表格之外的 ASCII 竖线（shell 管道）原样保留。
+    files:
+      - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/turn_summary_ownership_test.go
+      - web/src/shared/summaryText.ts
+      - web/src/components/task/TaskCardRows.tsx
+      - web/tests/summary-text.test.mjs
+      - docs/superpowers/plans/2026-11-24-router-summary-fidelity-and-turn-output.md
+    tests:
+      # TestRouterPromptStatesSummaryContract → 钉住提示词里仍有「硬上限 800 字」与「没做或未验证：」标签行；改回 600 或删掉标签时打红。
+      - server/internal/kanban/turn_summary_ownership_test.go
+      # summary-text.test.mjs 六条：标签行剥 Markdown 且保持分行、表格压平与分隔行丢弃、shell 管道保留、围栏/分隔线丢弃与链接留文字、存量长摘要无零宽残渣、TaskCardRows 正文与 title 同源。
+      - web/tests/summary-text.test.mjs
+    anchors:
+      - 'server/internal/kanban/router_prompt.md:固定四个标签行，按这个顺序写'
+      - 'server/internal/kanban/router_prompt.md:硬上限 800 字'
+      - 'server/internal/kanban/router_prompt.md:结算总结是唯一例外 —— 规则 18 规定的四个标签行必须原样写'
+      - 'server/internal/kanban/turn_summary_ownership_test.go:"没做或未验证："'
+      - 'web/src/shared/summaryText.ts:export function summaryPlainText(value: string): string {'
+      - 'web/src/shared/summaryText.ts:const TABLE_SEPARATOR = /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/;'
+      - 'web/src/components/task/TaskCardRows.tsx:import { summaryPlainText } from "../../shared/summaryText";'
+      - 'web/src/components/task/TaskCardRows.tsx:const resultSummary = task.result_summary ? summaryPlainText(task.result_summary) : "";'
+      - 'web/src/components/task/TaskCardRows.tsx:title={resultSummary}'
+      - 'web/tests/summary-text.test.mjs:test("summaryPlainText strips the label-line markdown but keeps the lines", () => {'

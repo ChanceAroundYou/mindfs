@@ -244,7 +244,10 @@ func TestRouterValidateMatrix(t *testing.T) {
 		wantErr string
 	}{
 		{"empty", brief, nil, "no actions"},
-		{"ask plus say", brief, []RouterAction{{Kind: RouterActionAskUser, Question: "q"}, {Kind: RouterActionSay, Body: "x"}}, "only action"},
+		{"ask plus execution", brief, []RouterAction{{Kind: RouterActionAskUser, Question: "q"}, {Kind: RouterActionMessageAgent, Body: "go"}}, "can only be combined with one say"},
+		{"silent plus say", idleBrief, []RouterAction{{Kind: RouterActionSilent}, {Kind: RouterActionSay, Body: "x"}}, "silent must be the only action"},
+		{"two asks", brief, []RouterAction{{Kind: RouterActionAskUser, Question: "q"}, {Kind: RouterActionAskUser, Question: "q2"}}, "must appear once per turn"},
+		{"ask and two says", brief, []RouterAction{{Kind: RouterActionSay, Body: "x"}, {Kind: RouterActionSay, Body: "y"}, {Kind: RouterActionAskUser, Question: "q"}}, "can only be combined with one say"},
 		{"two executions", idleBrief, []RouterAction{{Kind: RouterActionRunWorkflow, WorkflowID: "wf-1"}, {Kind: RouterActionMessageAgent, Body: "go"}}, "at most one"},
 		{"unknown workflow", idleBrief, []RouterAction{{Kind: RouterActionRunWorkflow, WorkflowID: "nope"}}, "not available"},
 		{"run while active", brief, []RouterAction{{Kind: RouterActionRunWorkflow, WorkflowID: "wf-1"}}, "active"},

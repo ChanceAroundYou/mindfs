@@ -387,6 +387,14 @@ func (rs *RouterService) finishRouteTurn(ctx context.Context, config RouterConfi
 		decision.Actions = actions
 		rs.recordSession(ctx, config, promptHash, decision.TaskID, decision.RootID, result, RouterSessionActive, "")
 		now(RouterDecisionRejected, errText)
+		// 用户留言回合有旧路径可回落：FallbackRoute 按那条留言重新路由。
+		// 其它触发（没有 Event 的运行期 kind，正常生产都带 Event 走 finishCoordinateEventTurn）
+		// 没有「那条留言」可回落，整轮拒掉会让模型写下的结论一起消失；正常运行期事件
+		// 回合的同一处理见 finishCoordinateEventTurn。
+		if shouldSalvageRejectedTurn(decision) {
+			rs.salvageRejectedTurnText(ctx, decision, actions, errText)
+			return
+		}
 		rs.fallbackRoute(ctx, decision)
 		return
 	}
