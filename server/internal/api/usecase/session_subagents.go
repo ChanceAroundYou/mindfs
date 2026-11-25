@@ -146,16 +146,20 @@ func (r *claudeSubagentRouter) ensure(ctx context.Context, ref claudeSubagentRef
 	if primary == "" {
 		return nil, nil
 	}
-	if existing, err := r.in.Manager.FindAgentBindingByAgentSession(ctx, r.in.Agent, "claude-subagent:"+primary); err != nil {
+	existing, err := r.claimedBinding(ctx, primary)
+	if err != nil {
 		return nil, err
-	} else if existing != nil {
+	}
+	if existing != nil {
 		loaded, err := r.in.Manager.Get(ctx, existing.SessionKey, 0)
 		if err != nil {
 			return nil, err
 		}
-		child := r.attach(loaded, ref)
-		r.bindKeys(child, keys)
-		return child, nil
+		if loaded != nil {
+			child := r.attach(loaded, ref)
+			r.bindKeys(child, keys)
+			return child, nil
+		}
 	}
 	parentToolCallID := firstNonEmptyString(ref.ParentToolUseID, sourceCallID(source), ref.TaskID)
 	child, err := r.in.Manager.Create(ctx, session.CreateInput{
@@ -185,6 +189,29 @@ func (r *claudeSubagentRouter) ensure(ctx context.Context, ref claudeSubagentRef
 	return attached, nil
 }
 
+// claimedBinding 找回本父会话下已存在的子会话绑定。
+//
+// 先按规范认领键（claude-subagent:<id>）查，再退回裸 id：存量绑定写的是裸 id
+// （wsl 线上就是这样），只认前缀会让每个 Task 都新建一条重复子会话，同一
+// sessionKey 的回合身份被反复 attach 覆盖。两次查询都限定在本父会话的子会话
+// 范围内 —— 裸 id 不保证全局唯一，不能让子代理认领到别家的会话。
+func (r *claudeSubagentRouter) claimedBinding(ctx context.Context, primary string) (*session.AgentBinding, error) {
+	if r.in.Parent == nil {
+		return nil, nil
+	}
+	parentKey := r.in.Parent.Key
+	for _, candidate := range []string{"claude-subagent:" + primary, primary} {
+		binding, err := r.in.Manager.FindSubagentBindingByAgentSession(ctx, r.in.Agent, parentKey, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if binding != nil {
+			return binding, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *claudeSubagentRouter) find(ref claudeSubagentRef) *claudeSyntheticSubagent {
 	for _, key := range ref.keys() {
 		if child := r.byRef[key]; child != nil {
@@ -206,16 +233,20 @@ func (r *claudeSubagentRouter) attach(child *session.Session, ref claudeSubagent
 	// 回合身份在**每一条** attach 路径上统一发放（新建 + 认领已有 binding）。
 	// 认领分支此前只 attach 不发身份，于是那条子会话没有任何代码持有它的回合：
 	// defer drain 扫不到、close() 也不终结它，pending 永久残留。
-	turnID := subagentTurnID(child)
+	// activeTurnID 同时拼进身份：同一子会话被重复 attach 时两次身份必然不同，
+	// 旧 close 的终结请求会被 pending 的身份校验拒掉，不会误清后来者。
+	activeTurnID := registerActiveTurn(in.RootID, child.Key, cancel)
+	turnID := subagentTurnID(child, activeTurnID)
 	attached := &claudeSyntheticSubagent{
-		rootID:  in.RootID,
-		key:     child.Key,
-		child:   child,
-		runtime: runtime,
-		done:    done,
-		cancel:  cancel,
-		turnID:  turnID,
-		in:      in,
+		rootID:       in.RootID,
+		key:          child.Key,
+		child:        child,
+		runtime:      runtime,
+		done:         done,
+		cancel:       cancel,
+		activeTurnID: activeTurnID,
+		turnID:       turnID,
+		in:           in,
 	}
 	// 合成子代理也是一轮"在跑"：不登记的话 Service.CancelSessionTurn 会走
 	// active==nil 那条路静默返回 —— 表现就是停止按钮点了没反应。
@@ -223,7 +254,6 @@ func (r *claudeSubagentRouter) attach(child *session.Session, ref claudeSubagent
 		attached.close()
 		return nil
 	}
-	registerActiveTurn(in.RootID, child.Key, cancel)
 	setActiveTurnSession(in.RootID, child.Key, runtime)
 	// 由调用方在这里置 pending（拿到同一枚 turn id）并登记进自己的 drain map。
 	// 认领分支此前不走这里，是这条子会话身份缺失的直接原因。

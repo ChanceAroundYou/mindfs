@@ -1559,10 +1559,12 @@ groups:
     title: Claude 合成子代理可取消（停止按钮不再是空操作）
     kind: fix
     symptom: "子会话（Claude Task 子代理）卡住不动、在会话列表里永远亮着「在回复」，点停止按钮完全没反应（点几次都一样）；刷新、切换、等多久都不消失，只能重启服务。另一条独立症状：父回合一结束（正常结束/取消/报错都算），子会话停在半句话上、块内容整段不见，日志里只有一行 `[subagent] persist.blocks.error ... err=context canceled` —— 因为 finish 对这个错误只 log 不返回，丢失是静默的。第三种症状（2026-10-16 PC 节点实测，session 1792108831-a090328fbb21）：用户手动停止了卡死的子代理，**主会话的运行状态却没有结束**，空心「子代理运行中」灯一直亮。根因不是父回合没收尾 —— 父轮每次都正常 `[ws] session.done`；而是这条子会话由**一个普通 Bash 工具调用**（claude 转录里是 tool_use:Bash，不是 Task）带上 ParentToolUseID 触发创建，走中 ensure() 的**认领已有 binding 分支**，该分支只 attach 不调 OnCreated，于是没有任何代码持有它的 turn id；ws.go / appcontext.go / tasks.go 的 defer drain 只扫各自 map 里登记过的 key，close()/FinishAll() 也只注销活跃轮次、从不调终结器 —— pending 永久残留，前端 descendantRunning() 沿 parent_session_key 读到这条 Active pending，把父会话永久判成 delegating。服务重启也修不掉（新的 attach 会再造一条同形的）。"
-    why: "五处叠加缺一不可：① claudeSubagentRouter.attach 从不 registerActiveTurn（Codex 协作路径有），Service.CancelSessionTurn 拿到 active==nil 直接 return nil —— 静默「成功」；② syntheticAgentSession.CancelCurrentTurn() 无条件 return nil，第二个空操作；③ 父轮收尾 FinishAll 原先不是 defer、也不注销活跃轮次。于是 pending 只等 MessageDone 一条路，CLI 已死则灯永久常亮；④ finish 的落盘用的是订阅上下文，而子代理订阅上下文是从父回合 turnCtx 派生的（session_subagents.go:189），`defer FinishAll()` 跑在父回合尾部、正是 turnCtx 刚被掐的时刻 —— 正文/aux/块表/agent_state 四处 DB 写全撞 context canceled。改法：attach 建可取消上下文 + registerActiveTurn + setActiveTurnSession 并注入关闭函数；新增幂等 close()（done 落盘发终帧 → cancel 掐订阅 → unregisterActiveTurn，顺序不可换：先掐上下文会丢正文）；终帧与 FinishAll 都挂 defer；落盘改用脱离订阅取消的 persistCtx（只影响「写不写得进 DB」，不影响订阅什么时候断 —— ClearPendingExchangeAux 早就用 Background 了，这里把其余四处补齐）。⑤ 子会话的回合身份只在 create 分支发过，认领分支与导入路径都缺它，drain 也扫不到没登记过的 key。改法：attach() 是三条路径的唯一公共点，由它统一发 id（subagentTurnID 单一来源，原先那段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go / scheduled/tasks.go 三处各抄一遍），close() 自己终结自己那一轮。"
+    why: "五处叠加缺一不可：① claudeSubagentRouter.attach 从不 registerActiveTurn（Codex 协作路径有），Service.CancelSessionTurn 拿到 active==nil 直接 return nil —— 静默「成功」；② syntheticAgentSession.CancelCurrentTurn() 无条件 return nil，第二个空操作；③ 父轮收尾 FinishAll 原先不是 defer、也不注销活跃轮次。于是 pending 只等 MessageDone 一条路，CLI 已死则灯永久常亮；④ finish 的落盘用的是订阅上下文，而子代理订阅上下文是从父回合 turnCtx 派生的（session_subagents.go:189），`defer FinishAll()` 跑在父回合尾部、正是 turnCtx 刚被掐的时刻 —— 正文/aux/块表/agent_state 四处 DB 写全撞 context canceled。改法：attach 建可取消上下文 + registerActiveTurn + setActiveTurnSession 并注入关闭函数；新增幂等 close()（done 落盘发终帧 → cancel 掐订阅 → unregisterActiveTurn，顺序不可换：先掐上下文会丢正文）；终帧与 FinishAll 都挂 defer；落盘改用脱离订阅取消的 persistCtx（只影响「写不写得进 DB」，不影响订阅什么时候断 —— ClearPendingExchangeAux 早就用 Background 了，这里把其余四处补齐）。⑤ 子会话的回合身份只在 create 分支发过，认领分支与导入路径都缺它，drain 也扫不到没登记过的 key。改法：attach() 是三条路径的唯一公共点，由它统一发 id（subagentTurnID 单一来源，原先那段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go / scheduled/tasks.go 三处各抄一遍），close() 自己终结自己那一轮。⑥ 残留洞（2026-11-25 wsl / CMAI，子会话 1795584428）：compact 重入 / 重复认领会让同一个子会话被 attach 两次，而回合身份只由 `MaxExchangeSeq+1` 铸造、activeTurns 又只按 sessionKey 覆盖与删除 —— 旧 close 要么把新登记删掉（ActiveTurnID 恒 0），要么身份恰好相同、把新轮的灯提前清掉；随后停止请求带 target_turn=0，CancelSessionTurn 在 active==nil 分支静默返回，pending 永真、按钮结构性 no-op。改法：`registerActiveTurn` 返回本进程唯一的 attach id 并拼进 `subagentTurnID`；`unregisterActiveTurn` 只删 id 对得上的那一轮；停止路径在「无活跃轮」时按 sessionKey 幂等收敛残留的子会话 pending（带它自己的 MindFSID 走 EndSessionTurn，身份比对照旧）；认领键同时接受规范前缀与存量裸 agent_session_id，并限定在本父会话的子会话范围内，避免同一 parent_tool_call_id 下重复建子会话。"
     boundary: "子代理的生命周期归属与取消。不碰父 turn（取消子代理不打断父的 CLI），也不改 session.cancel 的 stale 门（ActiveTurnID 在读循环同步取证那条契约不变）。合成子代理没有可中断的进程（输出来自父进程的 CLI 流），能掐的只有订阅本身。回合身份的发放点收敛到 attach()、终结汇聚到 close()，但不改 EndSessionTurn 的身份比对语义（PendingTurnIDMatches / ClearSessionPending 不变），也不改「上游为什么会给普通 Bash 调用带上 ParentToolUseID」这一 agent 侧协议问题。"
     tests:
       - server/internal/api/usecase/session_subagent_cancel_test.go
+      - server/internal/api/usecase/session_turn_registry_test.go
+      - server/internal/api/ws_session_cancel_orphan_test.go
       - server/internal/api/workflow_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
     files:
@@ -1571,17 +1573,27 @@ groups:
       - server/internal/api/usecase/session_subagent_synthetic.go
       - server/internal/api/usecase/session_subagent_stream.go
       - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_turn_registry.go
+      - server/internal/api/stream_hub_pending.go
+      - server/internal/api/stream_hub_types.go
+      - server/internal/api/ws.go
+      - server/internal/api/ws_session_cancel_orphan_test.go
+      - server/internal/api/usecase/session_turn_registry_test.go
       - server/internal/api/ws_session_message.go
       - server/internal/api/appcontext.go
       - server/internal/scheduled/tasks_runner.go
     anchors:
       - server/internal/api/usecase/session_subagent_synthetic.go:func (c *claudeSyntheticSubagent) close()
       - server/internal/api/usecase/session_subagent_synthetic.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
-      - server/internal/api/usecase/session_subagent_synthetic.go:func subagentTurnID(child *session.Session) string
+      - server/internal/api/usecase/session_subagent_synthetic.go:func subagentTurnID(child *session.Session, attachID uint64) string
+      - server/internal/api/usecase/session_subagent_synthetic.go:unregisterActiveTurn(c.rootID, c.key, c.activeTurnID)
       - server/internal/api/usecase/session_subagent_synthetic.go:c.in.OnSubAgentTurnFinished(c.key, c.turnID)
-      - server/internal/api/usecase/session_subagents.go:registerActiveTurn(in.RootID, child.Key, cancel)
+      - server/internal/api/usecase/session_subagents.go:activeTurnID := registerActiveTurn(in.RootID, child.Key, cancel)
+      - server/internal/api/usecase/session_subagents.go:func (r *claudeSubagentRouter) claimedBinding(ctx context.Context, primary string) (*session.AgentBinding, error)
       - server/internal/api/usecase/session_subagents.go:in.OnSubAgentAttached(child, attached.turnID)
       - server/internal/api/usecase/session_subagents.go:func (r *claudeSubagentRouter) ensure(ctx context.Context, ref claudeSubagentRef, source *agenttypes.ToolCall) (*claudeSyntheticSubagent, error)
+      - server/internal/api/usecase/session_turn_registry.go:func unregisterActiveTurn(rootID, sessionKey string, ids ...uint64)
+      - server/internal/api/ws.go:func (h *WSHandler) reconcileOrphanedSubSessionPending(rootID, sessionKey, requestID string) bool
       - "server/internal/api/ws_session_message.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
       - "server/internal/api/ws_session_message.go:OnSubAgentTurnFinished: func(sessionKey, id string)"
       - "server/internal/api/appcontext_workflow.go:OnSubAgentAttached: func(child *session.Session, turnID string)"

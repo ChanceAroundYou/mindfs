@@ -144,6 +144,13 @@ SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path
 FROM session_agent_bindings
 WHERE agent = ? AND agent_session_id = ?
 LIMIT 1`
+	selectSubagentBindingByAgentSessionSQL = `
+SELECT b.session_key, b.agent, b.agent_session_id, b.agent_ctx_seq, b.external_source_path, b.external_source_offset, b.external_source_mtime_ns, b.external_source_committed_offset
+FROM session_agent_bindings b
+JOIN sessions s ON s.key = b.session_key
+WHERE b.agent = ? AND b.agent_session_id = ? AND s.parent_session_key = ?
+ORDER BY b.rowid DESC
+LIMIT 1`
 	selectSessionNameAliasSQL = `
 SELECT name FROM session_name_aliases WHERE key = ?`
 	selectSessionNameAliasByAgentSQL = `

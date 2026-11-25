@@ -311,8 +311,8 @@ func (s *Service) RunTransientSlashCommand(ctx context.Context, in RunTransientS
 	defer sendLock.Unlock()
 
 	turnCtx, turnCancel := context.WithCancel(ctx)
-	registerActiveTurn(in.RootID, key, turnCancel)
-	defer unregisterActiveTurn(in.RootID, key)
+	activeTurnID := registerActiveTurn(in.RootID, key, turnCancel)
+	defer unregisterActiveTurn(in.RootID, key, activeTurnID)
 
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {

@@ -175,3 +175,33 @@ func TestCancelSessionTurnDropsStaleTargetTurn(t *testing.T) {
 	}
 	_ = oldCtx
 }
+
+// 同一 sessionKey 的重叠登记：旧一轮的注销不能带走新一轮的登记。
+//
+// 现场是「停止按钮点了没反应」的上半段：重复 attach / compact 重入让同一个
+// sessionKey 被登记两次，旧 close 只按 key 注销，把新一轮的登记一起删掉；
+// 之后的停止请求拿到的 target_turn 恒为 0，CancelSessionTurn 在 active==nil
+// 分支静默返回（线上 1795584428）。
+func TestUnregisterActiveTurnOnlyRemovesMatchingID(t *testing.T) {
+	rootID := "root-" + t.Name()
+	sessionKey := "session-" + t.Name()
+	idOld := registerActiveTurn(rootID, sessionKey, func() {})
+	idNew := registerActiveTurn(rootID, sessionKey, func() {})
+	defer unregisterActiveTurn(rootID, sessionKey, idNew)
+	if idOld == 0 || idNew == 0 {
+		t.Fatalf("registerActiveTurn ids = %d/%d, want non-zero", idOld, idNew)
+	}
+	if idOld == idNew {
+		t.Fatalf("两次登记拿到了同一个 id %d：身份无法区分先后两轮", idOld)
+	}
+
+	unregisterActiveTurn(rootID, sessionKey, idOld)
+	if got := ActiveTurnID(rootID, sessionKey); got != idNew {
+		t.Fatalf("旧一轮注销后 ActiveTurnID = %d, want %d（旧登记删掉了新登记，停止按钮将永远 target_turn=0）", got, idNew)
+	}
+
+	unregisterActiveTurn(rootID, sessionKey, idNew)
+	if got := ActiveTurnID(rootID, sessionKey); got != 0 {
+		t.Fatalf("新一轮注销后 ActiveTurnID = %d, want 0", got)
+	}
+}

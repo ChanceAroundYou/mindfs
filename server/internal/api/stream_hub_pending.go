@@ -233,6 +233,7 @@ func (h *StreamHub) PendingSessionSnapshotFound(sessionKey string) (PendingSessi
 		SessionTitle:     state.SessionTitle,
 		Summary:          state.Summary,
 		UpdatedAt:        state.UpdatedAt,
+		MindFSID:         state.MindFSID,
 		SubSession:       state.SubSession,
 		SilentCompletion: state.SilentCompletion,
 		ToolCalls:        state.ToolCalls,

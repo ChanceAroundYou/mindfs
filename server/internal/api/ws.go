@@ -186,6 +186,42 @@ func (h *WSHandler) handleSessionCancel(ctx context.Context, conn *websocket.Con
 		h.sendWSError(conn, clientID, req.ID, "session.cancel_failed", err.Error())
 		return
 	}
+	// 子代理「早该结束却一直显示运行」的收敛路径。
+	// 残留的 pending 可能已经没有对应的活跃轮：attach 被重复认领/compact 重入覆盖后，
+	// 旧 close 的终结请求被身份校验丢掉、activeTurns 也被按 key 抹掉；此时停止请求带
+	// target_turn=0 落到 CancelSessionTurn 的 active==nil 分支，静默返回 —— 灯永远不灭。
+	// 只要残留条目确实属于本根且是子会话，就用它自己的身份走唯一终结器清掉。
+	// 顶层用户回合不走这里（SubSession=false）；真在跑的轮次也不会命中（ActiveTurnID!=0），
+	// 中途若已开出新轮，身份比对会把这次迟到清理由丢掉。
+	if h.reconcileOrphanedSubSessionPending(rootID, key, req.ID) {
+		return
+	}
+}
+
+// reconcileOrphanedSubSessionPending 收敛「没有活跃轮、却还挂着 pending」的子会话，
+// 返回是否真的清掉了一条。
+//
+// 这是停止按钮对**残留** pending 的唯一入口：子会话正常收尾时 close() 会自己终结，
+// 走不到这里；命中这里说明它的收尾链路已经断了（重叠 attach / compact 重入 / 身份被
+// 覆盖）。清理仍走 EndSessionTurn，身份比对照旧生效 —— 期间若已开出新轮，这次迟到
+// 的清理由 PendingTurnIDMatches 丢弃，不会误抹新灯。
+func (h *WSHandler) reconcileOrphanedSubSessionPending(rootID, sessionKey, requestID string) bool {
+	if h == nil || h.AppContext == nil {
+		return false
+	}
+	// 先取快照再查活跃轮：顺序不能反。若先查活跃轮看到 0、之后新的 attach 登记并置了
+	// 新 pending，我们就会拿「刚置上的新条目」当残留清掉。反过来时最坏只是漏清一次
+	// （活跃轮又出现 → 直接放弃），用户再点一次停止即可。
+	pending, found := h.AppContext.GetSessionStreamHub().PendingSessionSnapshotFound(sessionKey)
+	if !found || !pending.SubSession || pending.RootID != rootID {
+		return false
+	}
+	if usecase.ActiveTurnID(rootID, sessionKey) != 0 {
+		return false
+	}
+	log.Printf("[ws] session.cancel.orphan_pending root=%s session=%s request=%s turn=%s", rootID, sessionKey, requestID, pending.MindFSID)
+	h.AppContext.EndSessionTurn(rootID, sessionKey, requestID, pending.MindFSID)
+	return true
 }
 
 func normalizeAgentErrorMessage(err error) string {
