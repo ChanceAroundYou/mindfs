@@ -388,6 +388,7 @@ func (rs *RouterService) finishCoordinateEventTurn(
 			rs.stopSupervisionForUser(ctx, decision, event.ID, errText)
 			return
 		}
+		rs.salvageRejectedTurnText(ctx, decision, actions, errText)
 		rs.failCoordinateEventTurn(ctx, decision, RouterDecisionRejected, event.ID, errText)
 		return
 	}

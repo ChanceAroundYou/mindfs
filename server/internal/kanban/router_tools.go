@@ -61,7 +61,10 @@ func (c *routerTurnCollector) snapshot() []RouterAction {
 	defer c.mu.Unlock()
 	out := make([]RouterAction, len(c.actions))
 	copy(out, c.actions)
-	return out
+	// 收集顺序不一定是应用顺序：ask_user 允许与一个 say 同轮，但占位回复必须由
+	// say 先占用（见 router_action_turn_shape.go）。归一放在快照出口，校验、落库、
+	// 重放与广播因此看到同一份顺序与同一套 Seq。
+	return normalizeRouterActionOrder(out)
 }
 
 func (c *routerTurnCollector) fail(err error) {
@@ -317,7 +320,7 @@ func (e *routerToolEnv) messageAgentTool() RouterToolSpec {
 func (e *routerToolEnv) askUserTool() RouterToolSpec {
 	return RouterToolSpec{
 		Name:        "router_ask_user",
-		Description: "信息不足或有风险时向用户提问。必须单独使用；不能与其它写入工具同轮。",
+		Description: "信息不足或有风险时向用户提问。可与一个 router_say 同轮（结论先说，提问在后），不能与执行/监管等其它写入工具同轮。",
 		Class:       RouterToolWrite,
 		InputSchema: objectSchema(map[string]any{
 			"question": map[string]any{"type": "string", "minLength": 1},
@@ -438,8 +441,8 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 				return fmt.Errorf("say body exceeds %d bytes", routerActionBodyMaxBytes)
 			}
 		case RouterActionAskUser, RouterActionSilent:
-			if len(actions) != 1 {
-				return fmt.Errorf("%s must be the only action", action.Kind)
+			if err := validateSingleTurnAction(actions, action.Kind); err != nil {
+				return err
 			}
 		case RouterActionRunWorkflow:
 			executions++
