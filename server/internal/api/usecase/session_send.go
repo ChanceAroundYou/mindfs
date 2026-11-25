@@ -22,8 +22,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	sendLock.Lock()
 	defer sendLock.Unlock()
 	turnCtx, turnCancel := context.WithCancel(ctx)
-	registerActiveTurn(in.RootID, in.Key, turnCancel)
-	defer unregisterActiveTurn(in.RootID, in.Key)
+	activeTurnID := registerActiveTurn(in.RootID, in.Key, turnCancel)
+	defer unregisterActiveTurn(in.RootID, in.Key, activeTurnID)
 	s.applyMessageRuntimeDefaults(&in)
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {

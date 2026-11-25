@@ -71,8 +71,8 @@ func (s *Service) startSubagentSubscription(in subagentSessionInput, child *sess
 	go func() {
 		defer activeSubagentSubscriptions.Delete(key)
 		ctx, cancel := context.WithCancel(in.Pool.Context())
-		registerActiveTurn(in.RootID, child.Key, cancel)
-		defer unregisterActiveTurn(in.RootID, child.Key)
+		activeTurnID := registerActiveTurn(in.RootID, child.Key, cancel)
+		defer unregisterActiveTurn(in.RootID, child.Key, activeTurnID)
 		runtime, err := in.Pool.GetOrCreate(ctx, agenttypes.OpenSessionInput{
 			SessionKey:     agentPoolSessionKey(child.Key, in.Agent),
 			AgentName:      in.Agent,

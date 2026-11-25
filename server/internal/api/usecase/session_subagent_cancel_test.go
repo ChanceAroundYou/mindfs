@@ -305,3 +305,125 @@ func TestAdoptedSubagentTurnIsClosedByClose(t *testing.T) {
 		t.Fatalf("close() 终结用的 id = %q, attach 时发的 id = %q：身份不匹配会让清理变成 no-op", closedID, attachedID)
 	}
 }
+
+// 同一子会话二次 attach 后，旧 close 不得杀掉新一轮。
+//
+// 触发场景：compact 重入 / 重复认领让同一个 sessionKey 被 attach 两次。旧实现里
+// close() 只按 key 注销活跃轮、身份又只由 MaxExchangeSeq+1 铸造，于是旧 close
+// 把新登记删掉（ActiveTurnID 恒 0，停止按钮静默 no-op），或者两次身份相同、
+// 旧 close 的终结请求被 pending 身份校验放行，直接把新轮的灯误清。
+func TestDoubleAttachKeepsNewTurnAliveAfterOldClose(t *testing.T) {
+	router, _, _ := newClaudeSubagentTestRouter(t, nil)
+	child := openClaudeSubagentChild(t, router)
+	first := router.children[0]
+	ref := claudeSubagentRef{ParentToolUseID: "tool-1", TaskID: "task-1"}
+	second := router.attach(child, ref)
+	defer unregisterActiveTurn(router.in.RootID, child.Key)
+
+	if second == nil || second == first {
+		t.Fatal("二次 attach 没有产生独立的子代理实例")
+	}
+	if first.turnID == second.turnID {
+		t.Fatalf("两次 attach 的回合身份相同 (%q)：新旧回合无法区分", first.turnID)
+	}
+	if first.activeTurnID == second.activeTurnID {
+		t.Fatalf("两次 attach 的 activeTurnID 相同 (%d)", first.activeTurnID)
+	}
+
+	first.close()
+	if got := ActiveTurnID(router.in.RootID, child.Key); got != second.activeTurnID {
+		t.Fatalf("旧 close 之后 ActiveTurnID = %d, want %d：旧 close 删掉了新 attach 的登记，"+
+			"停止按钮随后只会拿到 target_turn=0", got, second.activeTurnID)
+	}
+
+	second.close()
+	if got := ActiveTurnID(router.in.RootID, child.Key); got != 0 {
+		t.Fatalf("新 close 之后 ActiveTurnID = %d, want 0", got)
+	}
+}
+
+// 存量绑定写的是裸 agent_session_id：认领必须仍能命中，否则每个 Task 都新建一条
+// 重复子会话，attach 反复覆盖同一子会话的回合身份（线上同一 parent_tool_call_id
+// 下各挂了 3 条子会话）。
+func TestAdoptedSubagentClaimsRawAgentSessionIDWithoutDuplicating(t *testing.T) {
+	router, manager, _ := newClaudeSubagentTestRouter(t, nil)
+	existing, err := manager.Create(context.Background(), session.CreateInput{
+		Type:             session.TypeChat,
+		ParentSessionKey: router.in.Parent.Key,
+		ParentToolCallID: "call_raw_agent_session",
+		Agent:            "claude",
+		Name:             "Research",
+	})
+	if err != nil {
+		t.Fatalf("create existing child: %v", err)
+	}
+	if err := manager.UpsertAgentBinding(context.Background(), session.AgentBinding{
+		SessionKey:     existing.Key,
+		Agent:          "claude",
+		AgentSessionID: "call_raw_agent_session",
+	}); err != nil {
+		t.Fatalf("upsert raw binding: %v", err)
+	}
+
+	consumed := router.Handle(context.Background(), agenttypes.Event{
+		Type: agenttypes.EventTypeMessageChunk,
+		Data: agenttypes.MessageChunk{
+			Content:         "child response",
+			ParentToolUseID: "call_raw_agent_session",
+		},
+	})
+	if !consumed {
+		t.Fatal("裸 id 绑定的子会话没有被认领")
+	}
+	if len(router.children) != 1 {
+		t.Fatalf("children = %d, want 1：裸 id 绑定没认领上，又新建了一条重复子会话", len(router.children))
+	}
+	if got := router.children[0].child.Key; got != existing.Key {
+		t.Fatalf("认领到的子会话 = %q, want %q", got, existing.Key)
+	}
+	unregisterActiveTurn(router.in.RootID, existing.Key)
+}
+
+// 裸 id 认领必须限定在本父会话：别家的子会话不能被认走。
+func TestRawAgentSessionClaimRejectsForeignParent(t *testing.T) {
+	router, manager, _ := newClaudeSubagentTestRouter(t, nil)
+	foreignParent, err := manager.Create(context.Background(), session.CreateInput{
+		Type:  session.TypeChat,
+		Agent: "claude",
+		Name:  "other parent",
+	})
+	if err != nil {
+		t.Fatalf("create foreign parent: %v", err)
+	}
+	foreignChild, err := manager.Create(context.Background(), session.CreateInput{
+		Type:             session.TypeChat,
+		ParentSessionKey: foreignParent.Key,
+		Agent:            "claude",
+		Name:             "foreign child",
+	})
+	if err != nil {
+		t.Fatalf("create foreign child: %v", err)
+	}
+	if err := manager.UpsertAgentBinding(context.Background(), session.AgentBinding{
+		SessionKey:     foreignChild.Key,
+		Agent:          "claude",
+		AgentSessionID: "call_shared_raw_id",
+	}); err != nil {
+		t.Fatalf("upsert foreign binding: %v", err)
+	}
+
+	router.Handle(context.Background(), agenttypes.Event{
+		Type: agenttypes.EventTypeMessageChunk,
+		Data: agenttypes.MessageChunk{
+			Content:         "new child",
+			ParentToolUseID: "call_shared_raw_id",
+		},
+	})
+	if len(router.children) != 1 {
+		t.Fatalf("children = %d, want 1", len(router.children))
+	}
+	if got := router.children[0].child.Key; got == foreignChild.Key {
+		t.Fatal("认领到了别的父会话下的子会话：裸 id 不保证全局唯一，父会话约束不能少")
+	}
+	unregisterActiveTurn(router.in.RootID, router.children[0].child.Key)
+}

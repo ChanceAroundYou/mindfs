@@ -61,14 +61,21 @@ func activeTurnKey(rootID, sessionKey string) string {
 	return rootID + "::" + sessionKey
 }
 
-func registerActiveTurn(rootID, sessionKey string, cancel context.CancelFunc) {
+// registerActiveTurn 登记一轮并返回本轮在本进程内唯一的 id。
+//
+// 返回值必须交给调用方自己的 unregisterActiveTurn：同一个 sessionKey 可能发生
+// 重叠 attach（重复子会话、compact 重入、新一轮认领）。只按 key 注销会把别人
+// 刚登记的那一轮一起删掉，之后停止按钮再也拿不到 target_turn（active==nil）。
+func registerActiveTurn(rootID, sessionKey string, cancel context.CancelFunc) uint64 {
 	if strings.TrimSpace(rootID) == "" || strings.TrimSpace(sessionKey) == "" || cancel == nil {
-		return
+		return 0
 	}
 	activeTurnsMu.Lock()
 	activeTurnSeq++
-	activeTurns[activeTurnKey(rootID, sessionKey)] = &activeTurnState{id: activeTurnSeq, cancel: cancel}
+	id := activeTurnSeq
+	activeTurns[activeTurnKey(rootID, sessionKey)] = &activeTurnState{id: id, cancel: cancel}
 	activeTurnsMu.Unlock()
+	return id
 }
 
 // ActiveTurnID 返回此刻在跑的那一轮的 id，没有在跑的一轮时返回 0。
@@ -96,12 +103,19 @@ func setActiveTurnSession(rootID, sessionKey string, sess agenttypes.Session) {
 	activeTurnsMu.Unlock()
 }
 
-func unregisterActiveTurn(rootID, sessionKey string) {
+// unregisterActiveTurn 注销一轮。传入 registerActiveTurn 的返回值时，只删「这一轮」
+// 的登记；不传 id 是强制删除（测试夹具/整轮硬清理），生产路径必须传 id。
+func unregisterActiveTurn(rootID, sessionKey string, ids ...uint64) {
 	if strings.TrimSpace(rootID) == "" || strings.TrimSpace(sessionKey) == "" {
 		return
 	}
 	activeTurnsMu.Lock()
-	delete(activeTurns, activeTurnKey(rootID, sessionKey))
+	key := activeTurnKey(rootID, sessionKey)
+	if len(ids) == 0 {
+		delete(activeTurns, key)
+	} else if state := activeTurns[key]; state != nil && state.id == ids[0] {
+		delete(activeTurns, key)
+	}
 	activeTurnsMu.Unlock()
 }
 

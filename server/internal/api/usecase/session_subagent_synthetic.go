@@ -38,16 +38,21 @@ type subagentSessionInput struct {
 	OnUpdate               func(sessionKey string, update agenttypes.Event)
 }
 
-// subagentTurnID 铸一条子会话的回合身份。//
-// 此前这段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go /
-// scheduled/tasks.go 三处各抄一遍。收敛到这里的理由不只是去重：三条路径必须
-// **铸出同一种形状的 id**，否则「attach 发放身份 / close 终结」在某个调用方上
-// 就会静默地拿不到 id（那正是认领分支此前的处境）。
-func subagentTurnID(child *session.Session) string {
+// subagentTurnID 铸一条子会话的回合身份。
+//
+// attachID 是 registerActiveTurn 发放的本次 attach 专属 id：同一个子会话可能被
+// 重复认领，若只按 MaxExchangeSeq+1 铸造，内容序号没变时会铸出同一个 id，旧的
+// close 就会通过身份校验、把新 attach 的 pending 提前清掉。把 attachID 拼进去，
+// 每次 attach 的身份都唯一，旧 close 只能被拒，不可能误清新灯。
+func subagentTurnID(child *session.Session, attachID uint64) string {
 	if child == nil {
 		return ""
 	}
-	return session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", child.Key, session.MaxExchangeSeq(child.Exchanges)+1))
+	payload := fmt.Sprintf("%s|agent|%d", child.Key, session.MaxExchangeSeq(child.Exchanges)+1)
+	if attachID != 0 {
+		payload = fmt.Sprintf("%s|attach|%d", payload, attachID)
+	}
+	return session.NewMindFSID("", payload)
 }
 
 type claudeSubagentRouter struct {
@@ -65,6 +70,10 @@ type claudeSyntheticSubagent struct {
 	// cancel 掐断本子代理的订阅上下文。它同时是登记进 activeTurns 的取消函数，
 	// 因此「停止按钮」能命中这个子代理（见 attach）。
 	cancel context.CancelFunc
+	// activeTurnID 是本次 attach 在 activeTurns 里的登记 id。close() 必须原样
+	// 交回：重叠 attach 时旧 close 只按 key 注销会删掉新 attach 的登记，之后
+	// ActiveTurnID 恒为 0，停止按钮就只剩静默 no-op。
+	activeTurnID uint64
 	// turnID 是 attach() 时发放的本轮身份。close() 必须原样交还给终结器 ——
 	// EndSessionTurn 按它比对（见 PendingTurnIDMatches），缺了它清理会退化成
 	// 无身份的「保守清」，把下一轮的灯误抹。
@@ -92,7 +101,9 @@ func (c *claudeSyntheticSubagent) close() {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	unregisterActiveTurn(c.rootID, c.key)
+	// 只注销本次 attach 的那一轮。按 key 强删会把后来者的登记一起带走，
+	// 之后停止按钮拿不到 target_turn，只剩静默 no-op。
+	unregisterActiveTurn(c.rootID, c.key, c.activeTurnID)
 	// 终结放在最后：done() 会同步发出终帧（OnUpdate → EventTypeMessageDone），
 	// 那条路径自己也会走一次终结。放前面会让它拿到已清理后的状态。
 	if c.turnID != "" && c.in.OnSubAgentTurnFinished != nil {

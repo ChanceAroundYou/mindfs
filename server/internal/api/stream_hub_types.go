@@ -112,6 +112,10 @@ type PendingSessionSnapshot struct {
 	SessionTitle string
 	Summary      string
 	UpdatedAt    time.Time
+	// MindFSID 是这条 pending 所属回合的身份。收尾侧用它交给 EndSessionTurn，
+	// 让「无活跃轮的残留 pending」也能走唯一终结器（身份比对仍然生效，
+	// 期间若已开出新轮，这次清理由 PendingTurnIDMatches 丢掉）。
+	MindFSID string
 	// SubSession 与 SessionPendingState.SubSession 同义；Web Push 用它跳过子会话完成。
 	SubSession bool
 	// SilentCompletion 与 SessionPendingState.SilentCompletion 同义；Web Push 用它跳过

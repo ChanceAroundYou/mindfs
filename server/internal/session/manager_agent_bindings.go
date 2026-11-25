@@ -186,6 +186,44 @@ func (m *Manager) FindAgentBindingByAgentSession(_ context.Context, agent, agent
 	return &binding, nil
 }
 
+// FindSubagentBindingByAgentSession 在指定父会话的子会话范围内按 agent_session_id 找绑定。
+//
+// 认领键历史上没统一：新写入的是 "claude-subagent:<id>"，存量（wsl 线上）是裸 id。
+// 只按前缀查会让存量子会话永远认领不到，每次 Task 都新建一条重复子会话，attach
+// 反复覆盖同一 sessionKey 的回合身份。父会话约束是必要的：裸 id 不保证全局唯一。
+func (m *Manager) FindSubagentBindingByAgentSession(_ context.Context, agent, parentSessionKey, agentSessionID string) (*AgentBinding, error) {
+	if strings.TrimSpace(agent) == "" {
+		return nil, errors.New("agent required")
+	}
+	if strings.TrimSpace(parentSessionKey) == "" {
+		return nil, errors.New("parent session key required")
+	}
+	if strings.TrimSpace(agentSessionID) == "" {
+		return nil, errors.New("agent session id required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return nil, err
+	}
+	var binding AgentBinding
+	row := db.QueryRow(
+		selectSubagentBindingByAgentSessionSQL,
+		strings.TrimSpace(agent),
+		strings.TrimSpace(agentSessionID),
+		strings.TrimSpace(parentSessionKey),
+	)
+	err = scanAgentBinding(row, &binding)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &binding, nil
+}
+
 func (m *Manager) HasAgentBinding(ctx context.Context, agent, agentSessionID string) (bool, error) {
 	binding, err := m.FindAgentBindingByAgentSession(ctx, agent, agentSessionID)
 	if err != nil {
