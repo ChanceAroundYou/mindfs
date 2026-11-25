@@ -16354,3 +16354,77 @@ groups:
       - 'web/src/components/task/ActivityMessage.tsx:const attentionBubbleStyle: React.CSSProperties = {'
       - 'web/src/components/task/ActivityMessage.tsx:  ...userBubbleStyle,'
       - 'web/tests/activity-attention-bubble.test.mjs:test("提醒渲染成居中气泡：四角一致、灰底、文本左对齐", () => {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RU
+    title: "回合收尾后的续跑增量落盘：迟到的事件追加进同一轮的块流"
+    kind: fix
+    symptom: |
+      2026-11-25 用户反馈「工具调用/工具使用结果堆在正文后面，与文本顺序错乱，后半段
+      正文消失」。ACP 的 `session/prompt` 在**人类发起的那一轮**结束时返回，Hermes
+      之后的自发续跑（后台任务结果回注）仍走同一个 OnUpdate。旧实现只在 Prompt 返回
+      处落盘一次，迟到的工具卡与正文只进 provisional 流水（step=-1，读取侧丢弃），
+      幸存的那段正文又被压成一个块贴在最后。实测会话 1795570207-89e3aba017b9：
+      seq 39 落盘 71 块（36 工具、2 段正文），provisional 里另有 26 个工具卡与两段
+      正文；seq 35 丢 13 个工具、seq 37/41/45 同类。
+    why: |
+      必须保留：没有 tail writer，迟到的更新只有两条路 —— 丢弃（正文与工具卡消失）
+      或退回转录补录（`recoverLiveContinuationTail` 把一段续跑拆成 25 条独立 exchange，
+      没有工具卡，用户看到的是一墙空助手气泡）。续跑可能持续几十分钟，不能靠
+      「等更久再落盘」。位置只增不减：首轮占 0..N-1，增量顺延；已落盘的工具卡在
+      原 pos 上写 revision+1 覆盖状态（reading 侧按 (seq,pos) 取最高 revision）。
+      合上游若丢掉，症状立刻回到「工具堆在正文后面」。
+    boundary: |
+      只改落盘路径：`session_send.go` 的缓冲改成带锁的 `turnStreamState`，首轮落盘
+      之后安装 `turnTailWriter`；`persistTurnBlocks` 增加返回块的变体给 writer 建
+      callId→pos 索引。不改 ACP 层、不改 `BuildTurnBlocks` 的布局语义、不改前端渲染、
+      不做方案 §3.3 的「按投递单元切 step」（S2c 的完整形态）。
+    files:
+      - server/internal/api/usecase/session_turn_tail.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_turn_identity_persist.go
+      - server/internal/api/usecase/session_turn_tail_test.go
+    tests:
+      # 四条：续跑顺序接在首轮之后、工具状态在原 pos 上 revision+1、行号平移
+      # 两种前缀情形、空白增量不落空块且游标推进。
+      - server/internal/api/usecase/session_turn_tail_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_turn_tail.go:type turnStreamState struct {'
+      - 'server/internal/api/usecase/session_turn_tail.go:type turnTailWriter struct {'
+      - 'server/internal/api/usecase/session_turn_tail.go:func newTurnTailWriter('
+      - 'server/internal/api/usecase/session_turn_tail.go:func turnTailPrefixLines(prefix string) int {'
+      - 'server/internal/api/usecase/session_send.go:tail.Store(newTurnTailWriter('
+      - 'server/internal/api/usecase/session_turn_tail_test.go:func TestTurnTailAppendsContinuationAfterInitialBlocks(t *testing.T) {'
+  - id: G-RV
+    title: "回合空闲看门狗：连续无更新超过阈值取消本轮，熄灭「运行中」"
+    kind: fix
+    symptom: |
+      2026-11-25 用户反馈「会话明明已完成却仍显示运行中」。ACP 的 `session/prompt`
+      没有死线，`sessionMessageContext()` 也没有，agent 卡住时 `SendMessage` 永不返回，
+      pending 灯与「运行中」一直亮。实测 `/compact` 那一轮 19:49:07 发出、20:00:08
+      才有落盘，这 11 分钟里没有任何 OnUpdate，前端状态仍是运行中。
+    why: |
+      必须保留：`SendMessage` 的收尾（persist + EndSessionTurn 熄灭 pending）全在
+      「Prompt 返回」之后；没有看门狗，唯一的出路是进程重启。看门狗以「连续多久没有
+      任何 OnUpdate」为判据（默认 30 分钟，远宽于 Hermes 自身 420s 的工具超时），
+      命中就取消回合 ctx —— SDK 的 `Prompt` 在 ctx 分支里会向 agent 发 cancel，
+      随后走既有的取消收尾路径落盘并清 pending。合上游丢掉则卡死回合永久亮灯。
+    boundary: |
+      只加一个旁路 goroutine 与一个只读探针：不改 Prompt 的调用方式、不改
+      `WaitIdle` 的 settle 语义、不改 pending 的置位/清除时机、不引入全局 ctx 死线
+      （正常长回合不受影响）。阈值与轮询间隔是本文件常量。
+    files:
+      - server/internal/api/ws_session_turn_watchdog.go
+      - server/internal/api/ws_session_turn_watchdog_test.go
+      - server/internal/api/ws_session_message.go
+      - server/internal/api/ws_turn_tracker.go
+    tests:
+      # 三条：空闲超阈值必须取消、活跃回合不得误杀、回合收尾后看门狗退出。
+      - server/internal/api/ws_session_turn_watchdog_test.go
+    anchors:
+      - 'server/internal/api/ws_session_turn_watchdog.go:const ('
+      - 'server/internal/api/ws_session_turn_watchdog.go:func watchSessionTurnIdle('
+      - 'server/internal/api/ws_turn_tracker.go:func (t *turnUpdateTracker) IdleFor() time.Duration {'
+      - 'server/internal/api/ws_session_message.go:go watchSessionTurnIdle(msgCtx, cancel, updateTracker,'
+      - 'server/internal/api/ws_session_turn_watchdog_test.go:func TestSessionTurnWatchdogCancelsStalledTurn(t *testing.T) {'
