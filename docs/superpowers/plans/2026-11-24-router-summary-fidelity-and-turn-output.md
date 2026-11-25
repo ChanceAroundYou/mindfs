@@ -1,6 +1,8 @@
 # Router 总结可信化与回合输出收口
 
 > Scope IDs: G-RI / G-RJ / G-RK（claimed 2026-11-24T18:54Z）
+> 合回 main 前撞号避让：原 G-RE / G-RF / G-RG 已被 Edge Relay 占用（`05c6e905` 裁决），
+> 按「后来者让号」整体改为 G-RI / G-RJ / G-RK；本分支提交已按新号重建。
 
 任务 #115（`task_87a576cf87d91597`）。起点是只读诊断报告
 [`router-summary-problem-analysis.md`](../../router-summary-problem-analysis.md)：
@@ -102,7 +104,7 @@ hash 相同且距上次不足 30 分钟 → 抑制。进程重启后内存表丢
 纯文本 say，再写 `route-rejected:<decision>:<seq>` 说明行。`router_silent` 仍必须单独
 出现，执行类动作不受影响。
 
-### 提交 2：S3 + S4 + S5 + S6（Scope: G-RJ）
+### 提交 2：S3 + S4 + S5 + S6（Scope: G-RJ，`564a9d7c`）
 
 - **S3**：`cutAtSentence` 全角 `。！？；` 直接算句末；ASCII `.!?;` 必须后随空白/换行/
   结尾。结构化块（`-`/`*` 列表项、「没做」「未验证」段）从下半段起头时整块放弃，
@@ -134,3 +136,24 @@ hash 相同且距上次不足 30 分钟 → 抑制。进程重启后内存表丢
 `npx tsc -b --noEmit` exit 0、`npx vitest run` 274 文件 / 968 通过 / 6 跳过。
 变异逐一打红后还原（S4 判据、S4 的 `out_of_band` 守卫、S5 去重、S5 的 `silent` 放行、
 S3 边界回退、S6 头尾保留）。
+
+### 提交 3：S7 + S8（Scope: G-RK）
+
+- **S7**：规则 18 改成固定四个标签行（`结论：` / `证据：` / `没做或未验证：` / `下一步：`），
+  标签行内允许 `- ` 列表与行内代码，禁止表格、多级标题与代码块；硬上限 600 → 800 字。
+  规则 15 的「不要套固定模板」补上例外，否则两条规则自相矛盾（与 S1 修的是同一类问题）。
+  内容守卫 `TestRouterPromptStatesSummaryContract` 的锚点从「硬上限 600 字」改成
+  「硬上限 800 字」+「没做或未验证：」。
+- **S8**：新增 `web/src/shared/summaryText.ts::summaryPlainText`，语义照
+  `server/internal/notify/plaintext.go` 的 `stripMarkdown`（围栏/分隔线整行丢弃、
+  表格分隔行丢弃、表格行竖线换空格、标题/引用/列表标记去除、行内代码反引号去除、
+  链接/图片留文字、粗体/删除线/斜体去标记），唯一区别是保留换行 —— 四个标签行要
+  各自成行。`TaskCardRows` 的正文与 `title` 都用同一份纯文本，存量带 Markdown 的
+  摘要不改库、刷新即正常。
+
+验证：`tsc -b --noEmit` exit 0、`vitest run` 275 文件 / 974 通过 / 6 跳过。Go 侧
+`go test -count=1 ./...` 与随后单跑 kanban 各命中一次既有 TempDir 清理竞态
+（`TestCoordinatorTickReclaimsStaleClaims`：`directory not empty`，改前就存在，
+`-count=10` 单跑复现 1 次），重跑 `./server/internal/kanban/` `ok 318.5s`；
+其余包在这一轮全量里全绿。变异三处各自打红后还原（提示词标签行 → 内容守卫红；
+`summaryPlainText` 不去粗体 → 两条断言红；卡片 `title` 退回原文 → 源码契约红）。

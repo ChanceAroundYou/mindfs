@@ -12737,7 +12737,7 @@ groups:
       - 'server/internal/kanban/service_activities.go:summary = truncateSummary(strings.TrimSpace(summary))'
       - 'server/internal/kanban/service_activities_summary.go:func currentTaskResultSummary(ctx context.Context, store *TaskStore, taskID string) string {'
       - 'server/internal/kanban/router_types.go:RouterTriggerTurnSettled RouterTriggerKind = "turn_settled"'
-      - 'server/internal/kanban/router_prompt.md:中文，200–400 字；**硬上限 600 字**（超过会被截断，截断后卡片上读起来就是半句话）。'
+      - 'server/internal/kanban/router_prompt.md:中文，200–400 字；**硬上限 800 字**（超过会被截断，截断后卡片上读起来就是半句话）。'
       - 'server/internal/kanban/router_prompt.md:交出去就不要再复述一遍：同一轮里已经调了 `router_message_agent` / `router_run_workflow` / `router_deliver_to_active_run`，就不要补「已交给执行会话，完成后我会汇总」之类的 `progress` —— 系统会直接丢弃它。'
   - id: G-PM
     title: 会话回合结算事件：任务绑定的任何会话走完一轮都进 Router 账本（turn_settled）
@@ -15737,10 +15737,47 @@ groups:
       - 'server/internal/kanban/route_say_repetition_test.go:func TestInspectionDuplicateSayIsHidden(t *testing.T) {'
       - 'server/internal/kanban/route_say_repetition_test.go:func TestInspectionSilentTurnIsAccepted(t *testing.T) {'
   - id: G-RK
-    title: "WIP — 待填写（scope-id claim 占位）"
-    kind: feature
-    symptom: "待填写：用户会看到什么。"
-    why: "待填写：为什么必须保留、合上游时丢了会怎样。"
-    files: []
-    tests: []
-    anchors: []
+    title: "结算总结的固定标签行与卡片摘要纯文本渲染"
+    kind: fix
+    symptom: |
+      卡片上的结论是一串 Markdown 记号：`**结论**`、反引号里的命令、偶尔整张表格
+      （#103 那条 2,833 字），而看板卡按 `pre-wrap` 渲染、根本没有 Markdown 解析器 ——
+      符号比字还多，三行 clamp 里塞满 `| --- |`。同时提示词只说了「四段、200–400 字」，
+      没有说「怎么分行、能不能用列表/表格」，模型每次写法都不一样：同样的内容有时是
+      一段话，有时是四段，有时带标题与表格。
+    why: |
+      必须保留。S7 把规则 18 改成固定四个标签行（结论 / 证据 / 没做或未验证 / 下一步），
+      允许 `- ` 列表与行内代码、禁止表格与代码块，硬上限 600 → 800 字；规则 15 的
+      「不要套固定模板」补上例外，否则两条规则自相矛盾。S8 在卡片侧把摘要压成纯文本：
+      `web/src/shared/summaryText.ts` 与 `server/internal/notify/plaintext.go` 的
+      `stripMarkdown` 同一套语义（围栏、标题、引用、列表标记、行内代码反引号、链接/图片
+      只留文字、粗体/删除线/斜体、表格分隔行整行丢弃、表格行竖线换空格），区别只在
+      保留换行 —— 四个标签行要各自成行。存量带 Markdown 的摘要不用改库，刷新即正常。
+      合上游丢了前端这份，卡片又会把 `**结论**` 原样显示出来。
+    boundary: |
+      不动服务端存储与截断（G-RJ 的 1000 字上限）。不做受限 Markdown 渲染 —— 卡片是
+      三行 clamp 的纯文本行，渲染粗体/列表只会把宽度吃光；详情面板读的是同一字段，
+      不在本次范围。表格之外的 ASCII 竖线（shell 管道）原样保留。
+    files:
+      - server/internal/kanban/router_prompt.md
+      - server/internal/kanban/turn_summary_ownership_test.go
+      - web/src/shared/summaryText.ts
+      - web/src/components/task/TaskCardRows.tsx
+      - web/tests/summary-text.test.mjs
+      - docs/superpowers/plans/2026-11-24-router-summary-fidelity-and-turn-output.md
+    tests:
+      # TestRouterPromptStatesSummaryContract → 钉住提示词里仍有「硬上限 800 字」与「没做或未验证：」标签行；改回 600 或删掉标签时打红。
+      - server/internal/kanban/turn_summary_ownership_test.go
+      # summary-text.test.mjs 六条：标签行剥 Markdown 且保持分行、表格压平与分隔行丢弃、shell 管道保留、围栏/分隔线丢弃与链接留文字、存量长摘要无零宽残渣、TaskCardRows 正文与 title 同源。
+      - web/tests/summary-text.test.mjs
+    anchors:
+      - 'server/internal/kanban/router_prompt.md:固定四个标签行，按这个顺序写'
+      - 'server/internal/kanban/router_prompt.md:硬上限 800 字'
+      - 'server/internal/kanban/router_prompt.md:结算总结是唯一例外 —— 规则 18 规定的四个标签行必须原样写'
+      - 'server/internal/kanban/turn_summary_ownership_test.go:"没做或未验证："'
+      - 'web/src/shared/summaryText.ts:export function summaryPlainText(value: string): string {'
+      - 'web/src/shared/summaryText.ts:const TABLE_SEPARATOR = /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/;'
+      - 'web/src/components/task/TaskCardRows.tsx:import { summaryPlainText } from "../../shared/summaryText";'
+      - 'web/src/components/task/TaskCardRows.tsx:const resultSummary = task.result_summary ? summaryPlainText(task.result_summary) : "";'
+      - 'web/src/components/task/TaskCardRows.tsx:title={resultSummary}'
+      - 'web/tests/summary-text.test.mjs:test("summaryPlainText strips the label-line markdown but keeps the lines", () => {'
