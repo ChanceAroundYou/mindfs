@@ -122,12 +122,14 @@ export function ActivityMessage({
     );
   }
 
-  // 分类只认 role。type 只区分「用户留言」与「Agent 回复」两个特例，
-  // attention / merge_conflict 这类系统活动同样带 role=system，
+  // 分类只认 role。type 只区分「用户留言」「Agent 回复」「提醒」三个特例，
+  // merge_conflict 这类系统活动同样带 role=system，
   // 按 type 白名单判断会把它们渲染成 Agent 正文。
   const role = activity.role === "agent" || activity.role === "system" ? activity.role : "user";
   const isUser = role === "user";
   const isSystem = role === "system";
+  // 提醒（attention）与 Agent 回复共用左对齐正文骨架：不居中、不套气泡。
+  const isAttention = isSystem && activity.type === "attention";
 
   const displayText = activityDisplayText(activity);
   const status = activity.status ? normalizeActivityStatus(activity.status) : null;
@@ -146,22 +148,42 @@ export function ActivityMessage({
   const fullTime = created !== null ? formatFullTime(created, locale) : undefined;
   const workflowName = workflowDisplayName(activity.workflow_version_id, workflowNames);
 
-  // 系统消息：居中显示；其中「提醒」单独用气泡，普通系统事件仍是中性一行。
-  // 分类只认后端写入的 type：attention 一律带 role=system，不像正文那样靠 role 猜。
+  // 提醒：居左正文，和 Agent 回复同一骨架（无气泡、无内边距、同样的页脚）。
+  // 只有正文颜色单独一档，用来和被提醒的内容区分开。
+  if (isAttention) {
+    return (
+      <div
+        data-testid="activity-system"
+        data-activity-id={activity.id}
+        style={agentMessageStyle}
+      >
+        {displayText ? (
+          <div data-testid="activity-attention-body" style={attentionBodyStyle}>
+            {displayText}
+          </div>
+        ) : null}
+
+        <div data-testid="activity-footer" style={footerStyle}>
+          <ActivityTypeTag activity={activity} />
+          {timeLabel && (
+            <time dateTime={activity.created_at} title={fullTime} style={footerItemStyle}>
+              {timeLabel}
+            </time>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 其他系统消息：居中显示，仍是中性一行。
   if (isSystem) {
-    const isAttention = activity.type === "attention";
     return (
       <div
         data-testid="activity-system"
         data-activity-id={activity.id}
         style={systemMessageStyle}
       >
-        <div
-          data-testid={isAttention ? "activity-attention-bubble" : undefined}
-          style={isAttention ? attentionBubbleStyle : systemTextStyle}
-        >
-          {displayText}
-        </div>
+        <div style={systemTextStyle}>{displayText}</div>
         {created !== null && (
           <div style={systemMetaRowStyle}>
             <ActivityTypeTag activity={activity} />
@@ -294,14 +316,12 @@ const userBubbleStyle: React.CSSProperties = {
 };
 
 /**
- * 提醒气泡：外形沿用用户气泡的灰底、内边距和字号，只把右下角的「尾巴」抹平成
- * 四角一致 —— 它既不是用户发言也不是 Agent 回复，不该带说话方向。外层容器仍居中，
- * 但文本左对齐，长提醒读起来才像一条消息而不是居中的通知条。
+ * 提醒正文：和 Agent 回复同一骨架（左对齐、无气泡、无内边距），只把颜色单独一档，
+ * 好和它提醒的内容区分开。色值只走现有 token，不新造主题色。
  */
-const attentionBubbleStyle: React.CSSProperties = {
-  ...userBubbleStyle,
-  borderRadius: 12,
-  textAlign: "left",
+const attentionBodyStyle: React.CSSProperties = {
+  color: "var(--text-secondary)",
+  minWidth: 0,
 };
 
 const userTimeStyle = metaTimeStyle;

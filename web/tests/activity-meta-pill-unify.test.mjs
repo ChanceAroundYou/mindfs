@@ -65,17 +65,18 @@ test("元信息行容器不挂 opacity：胶囊恒为满不透明", () => {
     React.createElement("div", null,
       React.createElement(ActivityMessage, { activity: base }),
       React.createElement(ActivityMessage, { activity: { ...base, type: "user_message", role: "user" } }),
+      // 提醒走 Agent 页脚那一档（2026-11-25 最终形态），系统行的样式由 system_event 覆盖。
       React.createElement(ActivityMessage, { activity: { ...base, type: "attention", role: "system" } }),
+      React.createElement(ActivityMessage, { activity: { ...base, type: "system_event", role: "system" } }),
     ),
   );
-  for (const id of ["activity-footer"]) {
-    const tag = html.match(new RegExp(`data-testid="${id}"[^>]*style="([^"]*)"`));
-    assert.ok(tag, `${id} must render`);
-    assert.doesNotMatch(tag[1], /opacity/, `${id} 的不透明度会连同胶囊一起压淡`);
-  }
+  // 两个 Agent 骨架（回复、提醒）的页脚都不许挂 opacity。
+  const footers = [...html.matchAll(/data-testid="activity-footer"[^>]*style="([^"]*)"/g)].map((m) => m[1]);
+  assert.equal(footers.length, 2, "agent 与 attention 各一个页脚");
+  for (const footer of footers) assert.doesNotMatch(footer, /opacity/, "行容器的不透明度会连同胶囊一起压淡");
   // 用户 / 系统的元信息行是匿名 div：取所有含 time 样式的那一层，同样不许挂 opacity。
   const rows = [...html.matchAll(/<div style="([^"]*)"><span data-testid="activity-type-tag"/g)].map((m) => m[1]);
-  assert.ok(rows.length >= 2, "user/system meta rows must render the chip");
+  assert.equal(rows.length, 2, "user/system meta rows must render the chip");
   for (const row of rows) assert.doesNotMatch(row, /opacity/);
 });
 
