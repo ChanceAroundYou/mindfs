@@ -9,7 +9,7 @@ import { workflowDisplayName } from "../../shared/workflowDisplay";
 import { formatFullTime } from "../../shared/datetime";
 import { formatTime } from "../session/sessionViewerFormat";
 import { InlineTokenText } from "../common/InlineTokenText";
-import { ActivityTypeTag } from "./ActivityTypeTag";
+import { ActivityTypeTag, activityMetaPillStyle } from "./ActivityTypeTag";
 import { MarkdownViewer } from "../common/MarkdownViewer";
 import { TaskHumanGateCard } from "./TaskHumanGateCard";
 import { TaskWorkflowPublishCard, type WorkflowPublishDecision } from "./TaskWorkflowPublishCard";
@@ -189,7 +189,7 @@ export function ActivityMessage({
               // 「待执行」状态 + 就地派发入口：发送框里不再放「立即执行」，
               // 入口跟着排队这条留言走，只有真的排队时才出现。
               <>
-                <span style={queuedBadgeStyle}>{t("task.queued")}</span>
+                <span style={activityMetaPillStyle}>{t("task.queued")}</span>
                 {onRunQueued ? (
                   <button
                     type="button"
@@ -253,6 +253,18 @@ export function ActivityMessage({
 
 // ========== Styles ==========
 
+/**
+ * 三种消息（用户 / Agent / 系统）的元信息行共用一档：时间、工作流名、入口键都是
+ * 10px + 次要色 + 半透明；胶囊恒为满不透明（见 activityMetaPillStyle）。
+ * 行容器不挂 opacity —— 父级不透明度子级无法覆盖，整枚胶囊会跟着变浅。
+ */
+const metaTimeStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-secondary)",
+  opacity: 0.5,
+};
+
+
 const userRowStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -275,33 +287,21 @@ const userBubbleStyle: React.CSSProperties = {
   minWidth: 0,
 };
 
-const userTimeStyle: React.CSSProperties = {
-  fontSize: 10,
-  color: "var(--text-secondary)",
-  opacity: 0.5,
-};
+const userTimeStyle = metaTimeStyle;
 
 const userMetaRowStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
+  flexWrap: "wrap",
   gap: 6,
-};
-
-const queuedBadgeStyle: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  color: "var(--text-secondary)",
-  border: "1px solid var(--border-color)",
-  borderRadius: 999,
-  padding: "1px 6px",
 };
 
 function queuedRunButtonStyle(running: boolean): React.CSSProperties {
   return {
     fontSize: 10,
     fontWeight: 600,
-    lineHeight: 1,
-    padding: "3px 8px",
+    lineHeight: 1.5,
+    padding: "1px 8px",
     borderRadius: 999,
     border: "1px solid var(--accent-color)",
     background: "transparent",
@@ -326,7 +326,6 @@ const footerStyle: React.CSSProperties = {
   gap: "2px 8px",
   fontSize: 10,
   color: "var(--text-secondary)",
-  opacity: 0.5,
   minWidth: 0,
 };
 
@@ -336,6 +335,7 @@ const footerItemStyle: React.CSSProperties = {
   minWidth: 0,
   overflowWrap: "anywhere",
   fontVariantNumeric: "tabular-nums",
+  opacity: 0.5,
 };
 
 
@@ -347,6 +347,7 @@ const footerButtonStyle: React.CSSProperties = {
   fontSize: 10,
   cursor: "pointer",
   flexShrink: 0,
+  opacity: 0.5,
 };
 
 const systemMessageStyle: React.CSSProperties = {
@@ -366,11 +367,8 @@ const systemTextStyle: React.CSSProperties = {
 const systemMetaRowStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
+  flexWrap: "wrap",
   gap: 6,
 };
 
-const systemTimeStyle: React.CSSProperties = {
-  fontSize: 10,
-  color: "var(--text-secondary)",
-  opacity: 0.7,
-};
+const systemTimeStyle = metaTimeStyle;

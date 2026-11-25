@@ -16250,3 +16250,45 @@ groups:
       - server/internal/api/stream_hub_replay.go:func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) StreamEvent {
       - server/internal/api/stream_hub_replay.go:func mergeContiguousChunkLocked(state *SessionPendingState, event StreamEvent) bool {
       - server/internal/api/stream_hub_types.go:replyBytes int
+  # ── 任务详情元信息胶囊：类型胶囊 / 排队徽标 / 时间同一档 ──────────────
+  - id: G-RL
+    title: "任务详情消息元信息统一：类型胶囊与排队徽标共用一枚胶囊，三种消息的时间同档"
+    kind: fix
+    symptom: |
+      2026-11-25 用户截图报「提醒字段的样式需要改一下，稍微统一一点」。同一档元信息里
+      三处不一致：① Agent 页脚的「结果」胶囊是 `#A3AAB4`，而系统行「提醒」、用户行
+      「留言」是满不透明的 `#475569` —— 页脚容器挂了 `opacity: 0.5`，胶囊上那句
+      `opacity: 1` 覆盖不了父级（父级不透明度是整棵子树合成的，子级写什么都没用），
+      注释说「单独恢复不透明度」其实从未生效。② 类型胶囊是 9px，同一行的「待执行」
+      徽标是 10px，紧挨着却大小不一；两枚胶囊各自抄了一份 999 圆角 + 1px 边框。
+      ③ 系统行的时间是 opacity 0.7，用户行与 Agent 页脚是 0.5；系统行/用户行的
+      元信息 gap 是 6px，页脚是 `2px 8px` 且允许换行。
+    why: |
+      必须保留：元信息胶囊是用户区分「这条消息是什么」的唯一线索，三处深浅不一等于
+      同一种信息在不同分支长得不一样。现在只有一份外形 `activityMetaPillStyle`
+      （ActivityTypeTag.tsx 导出，10px / 700 / line-height 1.5 / 999 圆角 / 1px 次要色边框），
+      类型胶囊与「待执行」徽标共用；三种消息的时间统一走 `metaTimeStyle`（10px + 次要色 +
+      opacity 0.5）；行容器一律不挂 `opacity`，「次要」只由时间/工作流名/入口键自己的
+      opacity 表达。「立即执行」按钮保留强调色，只把字号/行高/内边距对齐同一档
+      （3px 8px → 1px 8px、line-height 1 → 1.5）。合上游丢了这个文件，胶囊会退回
+      两套字号 + 父级 opacity 压淡。
+    boundary: |
+      只改 `web/src/components/task/` 里这两枚胶囊与三条消息的元信息行。不动消息分类
+      （仍只认 role）、不动正文气泡、不动「打开会话」入口与排队派发逻辑；不加新主题色，
+      仍只用 `--border-color` / `--text-secondary` / `--accent-color`。系统消息的居中
+      对齐、用户气泡右对齐、Agent 正文左对齐都不变 —— 对齐表达身份，不是风格分歧。
+    files:
+      - web/src/components/task/ActivityTypeTag.tsx
+      - web/src/components/task/ActivityMessage.tsx
+      - web/tests/activity-meta-pill-unify.test.mjs
+    tests:
+      # 五条：三条消息的胶囊 style 完全相同；排队徽标 === 类型胶囊；行容器无 opacity；
+      # 三处时间都 10px/0.5；胶囊外形只有一份定义（ActivityMessage 里 999 圆角只剩「立即执行」）。
+      - web/tests/activity-meta-pill-unify.test.mjs
+    anchors:
+      - 'web/src/components/task/ActivityTypeTag.tsx:export const activityMetaPillStyle: React.CSSProperties = {'
+      - 'web/src/components/task/ActivityTypeTag.tsx:不要给行容器挂 opacity'
+      - 'web/src/components/task/ActivityMessage.tsx:import { ActivityTypeTag, activityMetaPillStyle } from "./ActivityTypeTag";'
+      - 'web/src/components/task/ActivityMessage.tsx:<span style={activityMetaPillStyle}>{t("task.queued")}</span>'
+      - 'web/src/components/task/ActivityMessage.tsx:const metaTimeStyle: React.CSSProperties = {'
+      - 'web/tests/activity-meta-pill-unify.test.mjs:test("元信息行容器不挂 opacity：胶囊恒为满不透明", () => {'
