@@ -91,16 +91,22 @@ export function useSessionStreamRuntimeMeta({
       const exchanges = Array.isArray(cachedSession?.exchanges)
         ? ((cachedSession.exchanges || []) as Exchange[])
         : [];
-      const latestMatchingExchange = [...exchanges]
-        .reverse()
-        .find(
-          (item) =>
-            item?.agent ||
-	            item?.model ||
-	            item?.mode ||
-	            item?.effort ||
-	            item?.fast_service,
-        );
+      // 从尾向前找，不要 `[...exchanges].reverse()`：本函数每个流式事件都会调用，
+      // 复制+反转整列在后段（长回合数千条）时是 O(E) 的纯浪费。
+      let latestMatchingExchange: Exchange | undefined;
+      for (let i = exchanges.length - 1; i >= 0; i -= 1) {
+        const item = exchanges[i];
+        if (
+          item?.agent ||
+          item?.model ||
+          item?.mode ||
+          item?.effort ||
+          item?.fast_service
+        ) {
+          latestMatchingExchange = item;
+          break;
+        }
+      }
       const candidates = [
         fallback,
         latestMatchingExchange as any,
