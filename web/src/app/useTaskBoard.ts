@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, type MutableRefObject, type Dispatch, t
 import { useI18n } from "../i18n";
 import { getRootNodeId } from "../services/net/rootNode";
 import { shouldApplyTaskDetail } from "../services/taskDetailOrder";
+import { carryTaskNodeTag } from "../shared/taskNodeTag";
 import { taskActionNodeId } from "../services/task/routing";
 import {
   archiveTask,
@@ -107,6 +108,13 @@ export function useTaskBoard(params: UseTaskBoardParams) {
   const applyTaskDetails = useCallback((rootId: string, details: TaskDetail[], persist = true) => {
     const curNid = String(currentRootNodeIdRef.current || "").trim();
     const curRoot = String(currentRootIdRef.current || "");
+    // 传进来的可能是**裸**详情（面板按 task_number 重拉、WS 局部更新都不带
+    // `_nodeId`）。直接覆盖会把工作台按来源节点打好的标抹掉，任务随即失去归属，
+    // 后续请求回落到 active node —— 跨节点任务在那边没有 root，回 `root not found`。
+    // 这里先把在册的标补回去，后面的节点隔离与缓存前缀才拿得到正确节点。
+    details = details.map((detail) =>
+      carryTaskNodeTag(detail, detail?.task?.id ? taskDetailsByIdRef.current[String(detail.task.id)] : undefined),
+    );
     // 节点以**数据自带的**为准：工作台详情是跨节点取的，`_nodeId` 是唯一可靠的归属。
     // 只靠 rootId 反查的话，同名项目（fn 与 pc 都有 `docs`）会查到另一台机器，
     // 缓存也跟着写成不带节点前缀的老键 —— 两个项目从此共用一份详情。
