@@ -112,7 +112,6 @@ export function SessionList({
     >
       {/* 统一的 Header 边栏 */}
       <ViewHeader
-        data-onboarding="session-actions"
         padding={searchResultsMode ? "0 10px 0 4px" : "0 10px 0 2px"}
         showToggles={false}
         style={{ justifyContent: "space-between" }}

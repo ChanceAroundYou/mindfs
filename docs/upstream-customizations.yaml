@@ -5406,23 +5406,6 @@ groups:
       - web/src/components/shell/PanelShell.tsx:usePanelShellClose({ onClose, hasUnsavedChanges, t })
       - web/tests/task-panel-options.test.mjs:the guard must short-circuit straight to onClose
 
-  - id: G-IC
-    title: Remove dead onboarding service imports
-    kind: arch
-    symptom: "OnboardingGate keeps unused onboarding service imports although the rendered callbacks are supplied by props."
-    why: "Dead service edges should go without changing the prop-driven onboarding flow."
-    boundary: "Only the unused imports and the reviewed allowlist edge are removed; tour callbacks and step behavior are unchanged."
-    tests:
-      - web/tests/reviewer-architecture-rules.test.mjs
-    files:
-      - web/src/components/app/OnboardingGate.tsx
-      - docs/agent/rules/frontend/TODO.md
-      - docs/plans/README.md
-      - docs/plans/rule-completion-rollout.md
-    anchors:
-      - web/src/components/app/OnboardingGate.tsx:import { OnboardingTour }
-      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
-
   - id: G-IE
     title: Auth gate behavior moves to colocated hook
     kind: arch
@@ -6594,7 +6577,7 @@ groups:
     anchors:
       - 'server/internal/agent/codex/rate_limits.go:func selectFiveHourWindow(snapshot rawRateLimitSnapshot) *RateLimitWindow'
       - 'server/internal/agent/codex/rate_limits.go:FiveHour: selectFiveHourWindow(snapshot)'
-      - 'web/src/components/action/ComposerTopChips.tsx:data-onboarding="composer-top-chips"'
+      - 'web/src/components/action/ComposerTopChips.tsx:export function ComposerTopChips({'
       - 'web/src/components/action/ComposerTopChips.tsx:<AgentMemoryIndicator refreshToken={agentsVersion + codexRateLimitsRefreshToken} nodeId={rootNodeId} />'
       - 'web/src/components/action/ActionBar.tsx:<ComposerTopChips'
       - 'web/src/components/agent/useCodexRateLimit.ts:push("five_hour", t("codexLimit.fiveHour"), status?.five_hour)'
@@ -16443,13 +16426,90 @@ groups:
       - 'web/src/services/net/selfNode.ts:export function initSelfNodeIdentity(): Promise<SelfNodeIdentity | null> {'
       - 'web/src/services/net/nodeRegistry.ts:await initSelfNodeIdentity().catch(() => null);'
   - id: G-RO
-    title: "WIP — 待填写（scope-id claim 占位）"
+    title: "删除首开向导：11 步漫游、持久化状态、data-onboarding 锚点与文案全部移除"
     kind: feature
-    symptom: "待填写：用户会看到什么。"
-    why: "待填写：为什么必须保留、合上游时丢了会怎样。"
-    files: []
-    tests: []
-    anchors: []
+    symptom: |
+      改造前每个新浏览器首次打开工作区会在 700ms 后自动弹出 11 步漫游，逐步高亮侧栏、
+      项目页签、任务创建、消息输入、模式/Agent 菜单等；跳过与否写进 localStorage
+      `mindfs-onboarding-state`，菜单里还留一个「使用引导」入口。它挡住首屏、
+      在移动端一打开就被强制关闭、且每加一个按钮就要补一条锚点与双语说明。
+      本轮把整套向导连同 `OnboardingGate` / `OnboardingTour` / `useOnboardingTour` /
+      `onboardingSteps` / `services/prefs/onboarding` 五个文件一起删除，i18n 的 29 条
+      `onboarding.*` 文案同步移除；保留未配对边缘的配对页（那是必需流程）。
+    why: |
+      必须保留删除：这是本 fork 的产品决定（开箱直接进入工作区，节点名只在安装向导与
+      设置页维护），不打算再提供页面内漫游。若合上游把向导合回来，会出现「刚装好就弹
+      11 步说明」与已被删除的状态键；更隐蔽的是它依赖的 `data-onboarding` 锚点已经
+      无人渲染，向导会退化成定位不到元素的空跑。
+      锚点清理时把 e2e 依赖的两处换成语义名：输入框包裹元素 `data-composer-input`、
+      发送键 `data-composer-send`；`SessionRing` 改为按既有的
+      `data-mindfs-command-input-width` 找输入框，不再依赖向导属性。
+    boundary: |
+      只删首开向导与它的定位锚点/文案，不动任何业务按钮、布局与交互；未配对边缘的
+      配对页、设置页里的节点名编辑都不受影响。`useAppBootstrapActions` 收缩为只做
+      应用自更新（漫游步进是它唯一的另一个消费者），`useAppResponsiveState` 不再持有
+      onboarding 状态。e2e 夹具的语义不变，只是选择器换名。
+    files:
+      - web/src/app/AppRootView.tsx
+      - web/src/app/useAppBootstrapActions.ts
+      - web/src/app/useAppResponsiveState.ts
+      - web/src/app/useAppSessionCore.ts
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/useAppSessionLayerTypes.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/action/ActionBarControls.tsx
+      - web/src/components/action/ComposerTopChips.tsx
+      - web/src/components/action/SessionRing.tsx
+      - web/src/components/agent/AgentSelector.tsx
+      - web/src/components/agent/ModeSelector.tsx
+      - web/src/components/agent/useAgentSelector.ts
+      - web/src/components/app/SessionPane.tsx
+      - web/src/components/file/Breadcrumbs.tsx
+      - web/src/components/file/DefaultListView.tsx
+      - web/src/components/file/FileOperations.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/src/components/file/FileTreeProjectTabs.tsx
+      - web/src/components/file/FileTreeRefreshButton.tsx
+      - web/src/components/file/FileViewer.tsx
+      - web/src/components/file/icons.tsx
+      - web/src/components/git/GitDiffViewer.tsx
+      - web/src/components/session/ExternalSessionList.tsx
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/components/session/SessionHeaderMenu.tsx
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/shell/MainViewSwitcher.tsx
+      - web/src/components/task/TaskBoardToolbar.tsx
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/workspace/WorkspaceQuickLaunch.tsx
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/layout/AppShell.tsx
+      - web/src/layout/ViewHeader.tsx
+    tests:
+      # 删除本身被钉住：五个文件不存在、src 里不再有 data-onboarding、双语无 onboarding 文案、
+      # e2e 依赖的两个选择器仍然存在。
+      - web/tests/onboarding-removed.test.mjs
+      # 原先把 data-onboarding 当定位锚点的测试改成语义锚点（按钮 handler / 既有视觉属性）。
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/task-board-view-layering.test.mjs
+      - web/tests/project-tree-refresh.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - web/tests/composer-chips-layout.test.mjs
+      - web/tests/app-state-domains-split.test.mjs
+      - web/tests/e2e/harness.mjs
+      - web/tests/e2e-pending-indicators.test.mjs
+      - web/tests/e2e-stream-ownership.test.mjs
+      - web/tests/source-map-modules-app.mjs
+      - web/tests/source-map-modules-components.mjs
+      - web/tests/source-map-modules-services.mjs
+    anchors:
+      - 'web/src/app/useAppResponsiveState.ts:export function useAppResponsiveState() {'
+      - 'web/src/components/action/ActionBar.tsx:data-composer-input'
+      - 'web/src/components/action/ActionBarControls.tsx:data-composer-send'
+      - 'web/src/components/action/SessionRing.tsx:[data-mindfs-command-input-width]'
+      - 'web/tests/onboarding-removed.test.mjs:test("onboarding-removed", () => {'
   - id: G-RP
     title: "WIP — 待填写（scope-id claim 占位）"
     kind: feature

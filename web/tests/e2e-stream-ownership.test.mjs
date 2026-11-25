@@ -100,7 +100,7 @@ test.skipIf(!ENABLED)("E2E：stream 所有权隔离（隔离实例）", async ()
   await openSession(page, key);
   await sleep(3000);
   const hasInput = await page.ev(
-    `!!document.querySelector('[data-onboarding=message-input]')`,
+    `!!document.querySelector('[data-composer-input]')`,
   );
   assert.ok(hasInput, "composer 不可用");
   const shown = await dumpTimelineStable(page);

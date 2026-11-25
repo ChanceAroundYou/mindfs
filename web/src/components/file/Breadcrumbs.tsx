@@ -211,7 +211,6 @@ export function Breadcrumbs({
           ) : (
             <button
               type="button"
-              data-onboarding="project-home"
               onClick={() => onPathClick?.(".")}
               style={{
                 ...rootBadgeButtonStyle,

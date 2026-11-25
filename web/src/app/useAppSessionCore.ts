@@ -35,7 +35,7 @@ export function useAppSessionCore(params: UseAppSessionLayerParams) {
     setFile, setGitDiff, setGitStatus, setGitStatusByRoot,
     setHasMoreSessions, setInteractionMode, setIsLeftOpen, setIsRightOpen,
     setLoadingOlderSessions, setMainDirectoryError, setMainEntries, setMultiProjectPendingByKey,
-    setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setOnboardingMainContentViewRoot, setPendingPlanMode,
+    setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setPendingPlanMode,
     setPluginQuery, setRelatedSelectedFileKey, setSelectedDir, setSelectedDirKey,
     setSelectedKanbanTaskId, setSelectedSession, setSelectedSessionLoading, setSessionListMode,
     setSessions, setSlashCommandResults, setSyncingSessionKeys, setUpdateState,

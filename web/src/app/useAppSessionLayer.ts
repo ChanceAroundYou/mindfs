@@ -60,7 +60,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     setHasMoreSessions, setInteractionMode, setIsLeftOpen, setIsRightOpen,
     setLoadingOlderSessions, setMainDirectoryError, setMainEntries, setMultiProjectPendingByKey,
   setMultiProjectAwaitingByKey,
-    setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setOnboardingMainContentViewRoot, setPendingPlanMode,
+    setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setPendingPlanMode,
     setPluginQuery, setRelatedSelectedFileKey, setSelectedDir, setSelectedDirKey,
     setSelectedKanbanTaskId, setSelectedSession, setSelectedSessionLoading, setSessionListMode,
     setSessions, setSlashCommandResults, setSyncingSessionKeys, setUpdateState,
@@ -68,23 +68,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     suppressedAutoBindSessionByRootRef, switchMainView, t, treeFetchSeqRef,
     updateState } = params;
 
-  const {
-    handleStartUpdate,
-    handleOnboardingStepChange,
-  } = useAppBootstrapActions({
-    currentRootId,
-    didInitRef,
-    isMobile,
-    replaceURLState,
-    selectedSessionRef,
-    setFile,
-    setGitDiff,
-    setIsLeftOpen,
-    setIsRightOpen,
-    setOnboardingMainContentViewRoot,
-    setSelectedDir,
-    setSelectedSession,
-    setSelectedSessionLoading,
+  const { handleStartUpdate } = useAppBootstrapActions({
     setUpdateState,
     setUpdateSubmitting,
     t,
@@ -461,7 +445,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     handleConfirmExternalImport, handleCreateBlankFile, handleCreateFolder, handleDeleteSession, handleForkAgentMessage,
     handleGitCommit, handleGitDiscardItem, handleGitPull, handleGitPush,
     handleGitStageItem, handleGitUnstageItem, handleImportedSessionConfirmed, handleLoadOlderExternalSessions,
-    handleLoadOlderSessions, handleNewSession, handleOnboardingStepChange, handlePinSession,
+    handleLoadOlderSessions, handleNewSession, handlePinSession,
     handleRenameSession, handleRestartAgent, handleRunAgentLifecycleCommand, handleSearchQueryChange,
     handleSelectSession, handleSelectSessionAndClose, handleSendMessage, handleSetPlanMode,
     handleStartUpdate, handleSyncSession, handleTreeUpload, hasMoreExternalSessions,

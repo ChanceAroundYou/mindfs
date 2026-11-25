@@ -76,7 +76,7 @@ type ViewHeaderProps = {
    * 侧栏自身（FileTree / SessionList）传 false —— 侧栏已经可见，不需要切换按钮。
    */
   showToggles?: boolean;
-  /** 透传到 header 元素（data-onboarding 等） */
+  /** 透传到 header 元素的其它 data-* 属性 */
   [key: `data-${string}`]: unknown;
 };
 

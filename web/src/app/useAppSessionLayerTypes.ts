@@ -118,7 +118,6 @@ export type UseAppSessionLayerParams = {
   setMultiProjectAwaitingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: React.Dispatch<React.SetStateAction<MultiProjectSessionGroup[]>>;
   setMultiProjectSessionsLoading: React.Dispatch<React.SetStateAction<boolean>>;
-  setOnboardingMainContentViewRoot: React.Dispatch<React.SetStateAction<string | null>>;
   setPendingPlanMode: React.Dispatch<React.SetStateAction<boolean>>;
   setPluginQuery: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setRelatedSelectedFileKey: React.Dispatch<React.SetStateAction<string>>;

@@ -161,7 +161,6 @@ assert.match(taskRow, /onMove=\{\(_cardTask, action\) => onMove\(item, action\)\
 assert.doesNotMatch(quick, /PromptEditor/, "quick launch must not mount an editor of its own");
 assert.doesNotMatch(quick, /useState|useRef|setOpen|<Select|<div/, "the launch must be a plain trigger — no local panel state, no pickers, no second dialog");
 assert.match(quick, /onClick=\{\(\) => onPick\(group\.rootId, group\.nodeId\)\}/, "one click hands the project straight to the shared create dialog");
-assert.match(quick, /data-onboarding="task-create"/, "the onboarding anchor must survive the rewrite");
 assert.match(app, /allowProjectSwitch: Boolean\(targetRootId\)/, "only the workspace entry gets the project dropdown; the board entry has none");
 assert.match(app, /taskInlineEdit\.allowProjectSwitch && taskCreateProjectOptions\.length > 1/, "the dropdown only renders when there is a choice to make");
 // 换项目时 worktree 三个开关按项目分别记：还原回那个项目那份，第一次去则取它的偏好

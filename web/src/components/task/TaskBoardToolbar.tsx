@@ -29,7 +29,6 @@ export function TaskBoardToolbar({
     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px", padding: "0 0 8px", flexShrink: 0 }}>
       <button
         type="button"
-        data-onboarding="task-create"
         title={t("task.create")}
         aria-label={t("task.create")}
         disabled={!canCreate}
@@ -54,7 +53,6 @@ export function TaskBoardToolbar({
       </button>
       <button
         type="button"
-        data-onboarding="task-workflow-editor"
         title={t("task.workflowEditor.open")}
         aria-label={t("task.workflowEditor.open")}
         onClick={onOpenWorkflowEditor}
@@ -68,7 +66,6 @@ export function TaskBoardToolbar({
       </button>
       <button
         type="button"
-        data-onboarding="task-refresh"
         title={t("task.refresh")}
         aria-label={t("task.refresh")}
         onClick={() => void refreshSpin.handleClick()}

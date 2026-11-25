@@ -4,7 +4,6 @@ export function FileTreeProjectTabs({ projectTreeTab, setProjectTreeTab, t, acce
   return (
 <div
   role="tablist"
-  data-onboarding="project-tabs"
   aria-label={t("fileTree.projectTabs")}
   style={{
     display: "flex",

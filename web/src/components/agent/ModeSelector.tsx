@@ -12,7 +12,6 @@ type ModeSelectorProps = {
   onModeChange: (mode: SessionMode) => void;
   compact?: boolean;
   disabled?: boolean;
-  onboardingId?: string;
   viewportMenu?: boolean;
   accentColor?: string | null;
   onOpenChange?: (open: boolean) => void;
@@ -29,7 +28,6 @@ export function ModeSelector({
   onModeChange,
   compact = false,
   disabled = false,
-  onboardingId,
   viewportMenu = false,
   accentColor = null,
   onOpenChange,
@@ -144,7 +142,7 @@ export function ModeSelector({
   );
 
   return (
-    <div ref={dropdownRef} data-onboarding={onboardingId} style={{ position: "relative" }}>
+    <div ref={dropdownRef} style={{ position: "relative" }}>
       <button
         type="button"
         onMouseDown={(e) => e.preventDefault()}

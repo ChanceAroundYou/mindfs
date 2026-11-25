@@ -38,11 +38,11 @@ assert.match(defaultList, /rootBadgeButtonStyle/);
 const fileViewer = read("components/file/FileViewer.tsx");
 assert.match(
   fileViewer,
-  /<button[\s\S]*data-onboarding="project-home"[\s\S]*rootBadgeButtonStyle[\s\S]*background: "var\(--node-badge-bg\)"[\s\S]*color: String\(rootColor \|\| ""\)\.trim\(\) \|\|/,
+  /<button[\s\S]*onClick=\{\(\) => onPathClick\?\.\("\."\)\}[\s\S]*rootBadgeButtonStyle[\s\S]*background: "var\(--node-badge-bg\)"[\s\S]*color: String\(rootColor \|\| ""\)\.trim\(\) \|\|/,
 );
 assert.doesNotMatch(
   fileViewer,
-  /<span[\s\S]*data-onboarding="project-home"[\s\S]*rootBadgeStyle/,
+  /<span[^>]*rootBadgeStyle/,
 );
 assert.match(fileTreeEntries, /fontWeight: isManagedRootNode \? 600 : 400/);
 assert.doesNotMatch(fileTree, /fileTree\.onboarding/);

@@ -5,7 +5,6 @@ import { fetchEditableFile, saveTextFile } from "../services/file";
 import { syncNodesFromServer } from "../services/net/nodeRegistry";
 import { clearNativeReplyViewing, restoreNativeReplyViewing } from "../services/net/replyPoller";
 import { useI18n } from "../i18n";
-import { shouldAutoStartOnboarding } from "../services/prefs/onboarding";
 import { useAppRefSync } from "./useAppRefSync";
 import { useAppProjectDisplay } from "./useAppProjectDisplay";
 import { useAppRootBindingSetters } from "./useAppRootBindingSetters";
@@ -87,8 +86,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   } = useAppSessionSelectionState();
   const {
     isMobile, isTablet, isLeftOpen, setIsLeftOpen, isRightOpen, setIsRightOpen,
-    onboardingOpen, setOnboardingOpen, onboardingMainContentViewRoot,
-    setOnboardingMainContentViewRoot, onboardingAutoStartRef,
   } = useAppResponsiveState();
   const {
     currentRootId, setCurrentRootId, currentRootIdRef, currentRootNodeId, setCurrentRootNodeId,
@@ -258,26 +255,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
     bootstrapService.snapshot(),
   );
-  useEffect(() => {
-    if (
-      isMobile ||
-      onboardingAutoStartRef.current ||
-      !currentRootId ||
-      bootstrapState.phase !== "ready"
-    ) {
-      return;
-    }
-    onboardingAutoStartRef.current = true;
-    if (!shouldAutoStartOnboarding()) return;
-    const timer = window.setTimeout(() => setOnboardingOpen(true), 700);
-    return () => window.clearTimeout(timer);
-  }, [bootstrapState.phase, currentRootId, isMobile]);
-  useEffect(() => {
-    if (isMobile && onboardingOpen) {
-      setOnboardingOpen(false);
-      setOnboardingMainContentViewRoot(null);
-    }
-  }, [isMobile, onboardingOpen]);
   useEffect(() => { syncNodesFromServer().catch(()=>{}); }, []);
   const {
     editDraftRequest, setEditDraftRequest, entriesByPath, setEntriesByPath, entriesByPathRef,
@@ -363,11 +340,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     : undefined;
   // 主区内容派生：workspace/board 走看板容器，files 走文件列表；chat 由会话视图占据主区。
   const currentMainContentView: MainContentViewMode =
-    currentRootId && onboardingMainContentViewRoot === currentRootId
-      ? "task-kanban"
-      : mainView === "files"
-        ? "file-browser"
-        : "task-kanban";
+    mainView === "files" ? "file-browser" : "task-kanban";
   // 跨项目工作台是「模式」，不再是「没有打开项目」的副产物（后者会被自动选根冲掉）。
   // task.updated 的处理器要按这个放行跨项目推送（板态只收当前项目），
   // 而它是被 useRealtimeEvents 消费的——只能走 ref，不能直接传值。
@@ -443,7 +416,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     managedRootIds, managedRootIdsRef, managedRootsRequestRef, mobileEnterKeySends,
     multiProjectLoadSeqRef, multiProjectPendingByKey, multiProjectPendingRef, multiProjectAwaitingByKey, multiProjectAwaitingRef, multiProjectSessionGroups,
     multiProjectSessionGroupsRef, multiProjectSessionsEnabled, multiProjectSessionsLoading, nodeLoadFailuresRef,
-    notifiedNodeFailuresRef, notifyNodeLoadFailedRef, onboardingOpen, openTaskCreateDialog,
+    notifiedNodeFailuresRef, notifyNodeLoadFailedRef, openTaskCreateDialog,
     optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
     pendingPlanMode, pendingPluginTrust, pendingRequestRef, playNotificationSound,
     pluginBypass, pluginBypassRef, pluginContentRef, pluginLoading,
@@ -470,8 +443,8 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setGitStatusExpandedByRoot, setHasMoreSessions, setInteractionMode, setIsDrawerOpen,
     setIsLeftOpen, setIsRightOpen, setLoadingOlderSessions, setMainDirectoryError,
     setMainEntries, setMainView, setManagedRootIds, setMobileEnterKeySends,
-    setMultiProjectPendingByKey, setMultiProjectAwaitingByKey, setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setOnboardingMainContentViewRoot,
-    setOnboardingOpen, setPendingPlanMode, setPendingPluginTrust, setPluginBypass,
+    setMultiProjectPendingByKey, setMultiProjectAwaitingByKey, setMultiProjectSessionGroups, setMultiProjectSessionsLoading,
+    setPendingPlanMode, setPendingPluginTrust, setPluginBypass,
     setPluginLoading, setPluginQuery, setPluginVersion, setProjectTreeTab,
     setQueueVersion, setRelatedSelectedFileKey, setRootEntries,
     setScheduledAgentDialogOpen, setSelectedDir, setSelectedDirKey, setSelectedKanbanTaskId,

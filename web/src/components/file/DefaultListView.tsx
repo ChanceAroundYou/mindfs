@@ -285,7 +285,6 @@ export function DefaultListView({
             <MoreMenuButton
               open={isMenuOpen}
               label={t("directory.openMenu")}
-              onboarding="main-menu"
               onClick={() => {
                 setMoveOpen(false);
                 setIsMenuOpen((open) => {

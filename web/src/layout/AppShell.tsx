@@ -332,7 +332,7 @@ export function AppShell({
 
   return (
     <MobileSidebarToggleContext.Provider value={mobileSidebarToggle}>
-    <div style={shellStyle} data-onboarding="shell">
+    <div style={shellStyle}>
       {isMobile && <div style={overlayStyle} onClick={() => { onCloseLeft?.(); onCloseRight?.(); }} />}
 
       {(!isMobile || physicalLeftOpen) && physicalLeftContent ? (
