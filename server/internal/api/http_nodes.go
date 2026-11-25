@@ -32,11 +32,16 @@ func (h *HTTPHandler) rejectControlPlaneOnWorker(next http.Handler) http.Handler
 	})
 }
 
-// handleNodeInfo 只回答「这台机器是什么角色、提不提供前端」，供前端决定要不要
-// 给它 UI 入口。static=false 的节点点了「在新窗口打开」只会撞 403 ——
-// 不如入口干脆不显示。
+// handleNodeInfo 回答「这台机器是谁、什么角色、提不提供前端」。
+//
+//	id/name 是本机自报身份（主控 home/主控，边缘取 instance_id/安装时节点名）。
+//	前端用它取代过去硬编码的 local 伪节点，并据此拼 scope 键。
+//	role/static 供前端决定要不要给它 UI 入口：static=false 的节点点了
+//	「在新窗口打开」只会撞 403，不如入口干脆不显示。
 func (h *HTTPHandler) handleNodeInfo(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{
+		"id":      strings.TrimSpace(h.NodeID),
+		"name":    strings.TrimSpace(h.NodeName),
 		"role":    string(nodeinfo.Normalize(string(h.NodeRole))),
 		"version": h.Version,
 		// 问的是「现在打得开页面吗」，所以与真实服务路径同源：只用镜像出页面的边缘
@@ -65,6 +70,10 @@ func (h *HTTPHandler) handleNodesPut(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid nodes payload"))
 		return
 	}
+	if conflict, taken := nodes.NameConflicts(store.List(), payload); taken {
+		respondNodeNameTaken(w, conflict)
+		return
+	}
 	if err := store.Replace(payload); err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return
@@ -84,6 +93,25 @@ func (h *HTTPHandler) handleNodesPost(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid node payload"))
 		return
 	}
+	// 按「写入后的整表」判重：先把它替换进当前表，再比历史数据。
+	existing := store.List()
+	next := make([]nodes.NodeConnection, 0, len(existing)+1)
+	replaced := false
+	for _, n := range existing {
+		if n.ID == strings.TrimSpace(node.ID) {
+			next = append(next, node)
+			replaced = true
+			continue
+		}
+		next = append(next, n)
+	}
+	if !replaced {
+		next = append(next, node)
+	}
+	if conflict, taken := nodes.NameConflicts(existing, next); taken {
+		respondNodeNameTaken(w, conflict)
+		return
+	}
 	saved, err := store.Upsert(node)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
@@ -91,6 +119,58 @@ func (h *HTTPHandler) handleNodesPost(w http.ResponseWriter, r *http.Request) {
 	}
 	h.broadcastNodesChanged()
 	respondJSON(w, http.StatusOK, saved)
+}
+
+// handleNodesValidateName 是安装向导、设置页与 CLI 共用的查重入口。
+//
+// 把 trim/忽略大小写的规则收口在服务端，避免三处各写一份、结论不一致。
+// 只读：不改节点表；对端不可达等错误由调用方按网络错误处理，不在这里伪装成「可用」。
+func (h *HTTPHandler) handleNodesValidateName(w http.ResponseWriter, r *http.Request) {
+	store := h.nodesStore()
+	if store == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("nodes store not configured"))
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		// ID 是要改名的那个节点（新建时留空）：它自己不算冲突。
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("name required"))
+		return
+	}
+	excludeID := strings.TrimSpace(req.ID)
+	for _, n := range store.List() {
+		if n.ID == excludeID {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(n.Name), name) {
+			respondJSON(w, http.StatusOK, map[string]any{
+				"available": false,
+				"conflict":  map[string]any{"id": n.ID, "name": n.Name},
+			})
+			return
+		}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"available": true})
+}
+
+// respondNodeNameTaken 用 409 而不是 400：名字冲突是「当前状态不允许」，
+// 不是请求格式错误；前端与安装向导据此提示改名而不是报「请求无效」。
+func respondNodeNameTaken(w http.ResponseWriter, conflict nodes.NodeConnection) {
+	respondJSON(w, http.StatusConflict, map[string]any{
+		"error": "node_name_taken",
+		"conflict": map[string]any{
+			"id":   conflict.ID,
+			"name": conflict.Name,
+		},
+	})
 }
 
 func (h *HTTPHandler) handleNodesDelete(w http.ResponseWriter, r *http.Request) {

@@ -27,7 +27,6 @@ export function WorkspaceQuickLaunch({ projects, onPick }: {
   return (
     <button
       type="button"
-      data-onboarding="task-create"
       title={t("task.workspaceQuickLaunch")}
       aria-label={t("task.workspaceQuickLaunch")}
       onClick={() => onPick(group.rootId, group.nodeId)}

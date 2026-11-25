@@ -51,7 +51,6 @@ function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { 
         <>
           <button
             type="button"
-            data-onboarding="project-home"
             onClick={() => onPathClick?.(".")}
             style={{
               ...rootBadgeButtonStyle,

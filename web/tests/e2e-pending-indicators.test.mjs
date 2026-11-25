@@ -62,7 +62,7 @@ async function serverReplying(uid) {
 async function waitForInput(page, timeoutMs = 25000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const n = await page.ev(`document.querySelectorAll('[data-onboarding=message-input]').length`);
+    const n = await page.ev(`document.querySelectorAll('[data-composer-input]').length`);
     if (n > 0) return true;
     await sleep(300);
   }

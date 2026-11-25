@@ -190,6 +190,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/nodes", h.handleNodesList)
 	r.Put("/api/nodes", h.handleNodesPut)
 	r.Post("/api/nodes", h.handleNodesPost)
+	r.Post("/api/nodes/validate-name", h.handleNodesValidateName)
 	r.Delete("/api/nodes/{id}", h.handleNodesDelete)
 	r.Get("/api/local_dirs", h.handleLocalDirs)
 	r.Post("/api/local_dirs", h.handleLocalDirsCreate)

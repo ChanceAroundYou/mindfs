@@ -5418,23 +5418,6 @@ groups:
       - web/src/components/shell/PanelShell.tsx:usePanelShellClose({ onClose, hasUnsavedChanges, t })
       - web/tests/task-panel-options.test.mjs:the guard must short-circuit straight to onClose
 
-  - id: G-IC
-    title: Remove dead onboarding service imports
-    kind: arch
-    symptom: "OnboardingGate keeps unused onboarding service imports although the rendered callbacks are supplied by props."
-    why: "Dead service edges should go without changing the prop-driven onboarding flow."
-    boundary: "Only the unused imports and the reviewed allowlist edge are removed; tour callbacks and step behavior are unchanged."
-    tests:
-      - web/tests/reviewer-architecture-rules.test.mjs
-    files:
-      - web/src/components/app/OnboardingGate.tsx
-      - docs/agent/rules/frontend/TODO.md
-      - docs/plans/README.md
-      - docs/plans/rule-completion-rollout.md
-    anchors:
-      - web/src/components/app/OnboardingGate.tsx:import { OnboardingTour }
-      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
-
   - id: G-IE
     title: Auth gate behavior moves to colocated hook
     kind: arch
@@ -6363,7 +6346,6 @@ groups:
       - 'cli/cmd/windows_creation_flags.go:windowsCreateNoWindow'
       - 'cli/cmd/console_windows.go:func attachParentConsole'
       - 'cli/cmd/console_windows.go:func redirectBackgroundLogs'
-      - 'cli/cmd/tray.go:func shouldShowTray'
       - 'cli/cmd/tray.go:func trayIconFlags'
       - 'cli/cmd/tray_types.go:trayMessage'
       - 'cli/cmd/tray_windows.go:func runTray'
@@ -6606,7 +6588,7 @@ groups:
     anchors:
       - 'server/internal/agent/codex/rate_limits.go:func selectFiveHourWindow(snapshot rawRateLimitSnapshot) *RateLimitWindow'
       - 'server/internal/agent/codex/rate_limits.go:FiveHour: selectFiveHourWindow(snapshot)'
-      - 'web/src/components/action/ComposerTopChips.tsx:data-onboarding="composer-top-chips"'
+      - 'web/src/components/action/ComposerTopChips.tsx:export function ComposerTopChips({'
       - 'web/src/components/action/ComposerTopChips.tsx:<AgentMemoryIndicator refreshToken={agentsVersion + codexRateLimitsRefreshToken} nodeId={rootNodeId} />'
       - 'web/src/components/action/ActionBar.tsx:<ComposerTopChips'
       - 'web/src/components/agent/useCodexRateLimit.ts:push("five_hour", t("codexLimit.fiveHour"), status?.five_hour)'
@@ -14884,6 +14866,12 @@ groups:
       `control_sync.role` 定成 `edge`，显式写着 `role: worker` 的一并纠正成 `control`——
       否则配好的是个不注入静态目录的 worker，打开页面是 403。
 
+      **实现搬到根 `internal/configfile`，`server/internal/config` 只留一层转发**（2026-11-25，
+      见 G-RQ）：安装向导的节点名页要写同一份 `config.json`，而 `cli/` 不能 import
+      `server/internal/*`。两份实现一旦漂移，症状是「向导写的键服务读不到」——文件在、启动
+      不报错、设置就是不生效。所以实现只有一份，`UpdateJSONFile` 保持原签名转发过去，
+      既有调用点一行都不用改。
+
       **没有 token 的边缘换成 `PendingPairing` 档，且配对 POST 只接受本机回环**：`PendingPairing` 这一档
       让服务在「还没有 token」时照常起、只挂 `POST /api/control-sync/pair`（不建库、
       不采集、不转发）；没有这一档，未配对边缘在 cli 侧就起不来，用户拿不到填表单的
@@ -14911,6 +14899,7 @@ groups:
       `{pending_pairing, instance_id}`，**不含 token、路径与主控端地址**；不做回环守卫
       （只报实例名，`/api/node-info` 本来就有），POST 那条的守卫不受影响。
     files:
+      - internal/configfile/configfile.go
       - server/internal/config/configfile.go
       - server/internal/controlsync/pairing.go
       - server/internal/controlsync/token.go
@@ -14924,7 +14913,7 @@ groups:
       - web/src/hooks/useControlSyncStatus.ts
       - web/src/services/net/controlSync.ts
     tests:
-      - server/internal/config/configfile_test.go
+      - internal/configfile/configfile_test.go
       - server/internal/controlsync/pairing_test.go
       - server/internal/api/http_control_sync_pair_test.go
       - server/app/control_sync_pairing_test.go
@@ -14945,8 +14934,9 @@ groups:
       - 'server/app/control_sync_pairing_test.go:func TestPairedEdgePairerDoesNotReportPending(t *testing.T) {'
       - 'server/internal/api/http_control_sync_pair_test.go:func TestPairStateRouteReportsPendingPairing(t *testing.T) {'
       - 'web/tests/control-pairing.test.mjs:test("未配对状态靠只读探针发现，而非 /status", () => {'
-      - 'server/internal/config/configfile.go:func UpdateJSONFile(path string, mutate func(map[string]any) error) error {'
-      - 'server/internal/config/configfile.go:tmp, err := os.CreateTemp(dir, ".config-*.tmp")'
+      - 'internal/configfile/configfile.go:func Update(path string, mutate func(map[string]any) error) error {'
+      - 'internal/configfile/configfile.go:tmp, err := os.CreateTemp(dir, ".config-*.tmp")'
+      - 'server/internal/config/configfile.go:return configfile.Update(path, mutate)'
       - 'server/internal/controlsync/pairing.go:func Pair(ctx context.Context, req PairRequest, tokenFile, configPath string) (PairResult, error) {'
       - 'server/internal/controlsync/pairing.go:var ErrPairUnreachable = errors.New("control_sync: primary unreachable")'
       - 'server/internal/controlsync/pairing.go:func applyPairing(doc map[string]any, result PairResult, caFile, tokenFile string) error {'
@@ -14998,23 +14988,11 @@ groups:
       `[update] auto_install.skip reason=...`（`disabled` / `no-update` 不打，否则每小时两行噪音）
       是排查「它为什么没装」的唯一线索。
 
-      **托盘菜单从「只有退出」扩成三项（打开页面 / 重启以应用配对 / 退出）**，因为 Windows
-      安装包把托盘当成了唯一入口：计划任务跑在 Session 0，没有终端、也没有开始菜单项，
-      「双击图标开页面」是个没有任何提示的隐藏手势，而配对落盘后服务端只回
-      `restart_required`、不自己重启（见 W2 的 D 类裁定），所以「重启以应用配对」必须有一个
-      可点的入口。退出仍是 101，旧 ID 不动 —— 换掉会让已经装出去的托盘行为错位。
-
-      **「重启以应用配对」不能 `schtasks /end`，也不能 `os.Exit(0)` 自重启。** 前者的
-      `TerminateProcess` 会把正在写盘的收尾（agent 回合、sqlite WAL、转录落盘）砍在半路；
-      后者在 Unix 部署下会把服务停死（`Type=simple` + `Restart=on-failure` 不重拉退出码 0 的
-      进程）。落地形态是**先**把一个 `DETACHED_PROCESS` 的 powershell 挂到后台
-      （`trayRestartScript`：轮询 `Get-Process -Id $pidToWait` 等本 PID 消失，**然后**
-      `schtasks.exe /run /tn mindfs`，失败则用原命令行兜底拉起），**再**走与「退出」同一条
-      优雅收尾（`WM_QUIT → onQuit → 关服务`）。顺序不能反：脚本靠 PID 消失推进，先退出就
-      永远没有进程去执行那一步了。那个轮询循环也不是保险丝 —— 实测真机任务 XML 的
-      `MultipleInstancesPolicy` 是 `IgnoreNew`，早一步 `/run` 会被**静默吞掉**，服务停在
-      「已退出、没人拉起」而界面上零线索。拉起失败时**不退出**：用户得到「点了没反应」，
-      但服务还在，比静默停服务好得多。
+      **托盘「重启以应用配对」已被 2026-11 的套壳改造取代（见 G-RP）**：托盘连同窗口搬到
+      登录会话里的桌面壳进程，重启由壳的 5 秒健康复查与服务监督负责，不再有等待脚本；
+      「退出」只结束壳、不停服务。两条旧约束仍然有效，且是替换方案的设计前提：不能用
+      `schtasks /end` 硬杀去「重启」（`TerminateProcess` 会砍断正在写盘的回合），也不能在
+      Unix 上 `os.Exit(0)` 自重启（`Type=simple` + `Restart=on-failure` 不重拉退出码 0）。
 
       **Windows 独立安装包是「自解包 exe」，不是又一个 zip**：`dist/mindfs_<ver>_windows_amd64.zip`
       已经有了，但它要手动解包 + 四步安装，而用户把 zip 的 `web/` 解到哪儿都不会落到服务读取的
@@ -15071,6 +15049,15 @@ groups:
       桩程序还给子进程输出落盘（`<Prefix>\setup.log`，失败时把尾部接进错误对话框）：双击是
       GUI 子系统，`os.Stdout/Stderr` 是继承来的无效句柄，把 PowerShell 的报错挂上去等于扔掉 ——
       上面第 1 条根因就藏在那段被丢掉的话里，修之前只能看到「exit status 1」。
+
+      **2026-11-25：自解包桩不再发布，安装器换成 NSIS（G-RQ），自动更新的执行者也换成安装包
+      （G-RR）。** `build-all` 现在调 `scripts/build-windows-installer.sh`，
+      `Makefile:WINDOWS_SETUP_EXE` 指向 NSIS 产物。理由是用户要的两件事自解包桩给不了：
+      标准安装向导，以及一个「知道怎么删」的卸载程序（`uninstall.exe` + ARP 条目）。
+      `scripts/windows-setup/*` 与 `server/cmd/mindfs-setup-stub/` 暂时留在盘上，但发版链
+      已不再引用 —— 合上游时不要据此把 `build-all` 改回旧调用。下面关于停进程
+      （`schtasks /end` 而非 `taskkill`）与 UAC（S4U 任务注册必须管理员令牌）的两条实测结论
+      仍然有效，NSIS 侧就是照它们实现的。
     files:
       - server/internal/update/auto_install.go
       - server/internal/update/auto_install_test.go
@@ -15081,9 +15068,6 @@ groups:
       - cli/cmd/startup_update_test.go
       - cli/cmd/mindfs.go
       - server/app/server.go
-      - cli/cmd/tray.go
-      - cli/cmd/tray_windows.go
-      - cli/cmd/tray_test.go
       - internal/deploy/archive.go
       - internal/deploy/archive_test.go
       - internal/deploy/setup.go
@@ -15100,7 +15084,6 @@ groups:
     tests:
       - server/internal/update/auto_install_test.go
       - cli/cmd/startup_update_test.go
-      - cli/cmd/tray_test.go
       - internal/deploy/setup_test.go
       - internal/deploy/setup_extract_test.go
       - internal/deploy/setup_script_test.go
@@ -15116,12 +15099,6 @@ groups:
       - 'cli/cmd/startup.go:func updateAutoInstall(cfg startupConfig) bool {'
       - 'cli/cmd/startup_update_test.go:func TestUpdateAutoInstallDefaultsOff(t *testing.T) {'
       - 'cli/cmd/startup_update_test.go:func TestServerOptionsCarryUpdateAutoInstall(t *testing.T) {'
-      - 'cli/cmd/tray.go:const trayRestartTaskName = "mindfs"'
-      - 'cli/cmd/tray.go:func trayRestartScript(pid int, exe string, args []string) string {'
-      - 'cli/cmd/tray.go:"schtasks.exe /run /tn " + trayRestartTaskName'
-      - 'cli/cmd/tray_windows.go:func restartFromTray() {'
-      - 'cli/cmd/tray_windows.go:windows.DETACHED_PROCESS'
-      - 'cli/cmd/tray_test.go:func TestTrayRestartWaitsForExitThenRunsTask(t *testing.T) {'
       - 'internal/deploy/setup.go:const SetupTrailerMagic uint32 = 0x4D465353 // "MFSS"'
       - 'internal/deploy/setup.go:func AppendSetupPayload(stubPath, dst string, payload []byte) error {'
       - 'internal/deploy/setup.go:func ReadSetupPayload(r io.ReaderAt, size int64) (io.ReaderAt, int64, error) {'
@@ -15157,7 +15134,8 @@ groups:
       - 'server/cmd/mindfs-setup-stub/main.go:func installLogTail(logPath string) string {'
       - 'server/cmd/mindfs-setup-stub/main.go:func currentUserSID() (string, error) {'
       - 'Makefile:RELEASE_WINDOWS_SETUP ?= 1'
-      - 'Makefile:	@bash scripts/build-windows-setup.sh "$(VERSION)" "$(DIST_DIR)"'
+      - 'Makefile:WINDOWS_SETUP_EXE ?= $(DIST_DIR)/mindfs_$(VERSION)_windows_amd64-setup.exe'
+      - 'Makefile:	@bash scripts/build-windows-installer.sh "$(VERSION)" "$(DIST_DIR)"'
       - 'scripts/sign-release-manifest.go:filepath.Join(distDir, fmt.Sprintf("mindfs_%s_*setup.exe", version)),'
   # ── Router 任务可信化 · 第四轮批次 3（2026-11-23）────────────────────
   - id: G-QG
@@ -16679,3 +16657,396 @@ groups:
       - 'web/src/components/task/routerAskModel.ts:key: "router_ask",'
       - 'web/src/components/task/TaskCardRows.tsx:data-testid="task-card-attention"'
       - 'web/tests/task-card-router-marks.test.mjs:test("Router ask 与 worker ask 的徽标 key/文案/图标互不混用", () => {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RN
+    title: "本机身份自报：删掉伪节点 local，主控 home/主控、边缘取 instance_id，旧作用域键一次性迁移"
+    kind: feature
+    symptom: |
+      改造前前端把「当前页面所在设备」硬编码成一台叫 `local` 的机器：主控与边缘页面都
+      叫 local，节点表里同一行被不同设备反复覆盖（实测手机写入 local→home URL，PC 端
+      解析 nodeId=local 全部路由到 home 服务器）；机器人 id 只能靠 control_sync.instance_id
+      猜，托盘/标题也拿不到本机名字。本轮让每台机器**自报身份**：
+      `/api/node-info` 增加 `id`/`name`（主控缺省 home/主控；边缘取
+      `control_sync.instance_id` 与安装向导写下的节点名；worker 取主机名），
+      前端注册表用它生成 self 节点、拼作用域键，旧 `local` 前缀的 localStorage
+      与置顶键在一次启动内迁移到新 id。节点表同时补上「名称不得重名」的写入校验
+      （trim + 忽略大小写，历史重名不强行修），并新增安装向导/设置页/CLI 共用的
+      `POST /api/nodes/validate-name`。
+    why: |
+      必须保留：`local` 不是「主控的别名」，而是「页面所在这台机器」的伪节点；
+      直接把它全局改成 home 会让边缘节点也自称主控，scope 键、节点表、路由全部串台。
+      正确做法是每台机器自报身份：后端 `app.resolveNodeIdentity` 是唯一缺省规则
+      （显式 node.id/name > 边缘 instance_id > 主机名 > home/主控），CLI 与
+      mindfs-server 两个入口共用；前端 `shared/selfNodeStore.ts` 保存自报身份，
+      `isSelfNode()` 取代所有 `id === "local"` 比较，旧 id 一律按本机兼容读。
+      迁移逐段替换作用域键的节点段（`"::"` 与 `":"` 两种分隔、会话 key 自己还可能含
+      `::`、git 缓存还会 encodeURIComponent），全局字符串替换会改到会话 key 或路径。
+      合上游丢了这组，边缘端会退回「所有设备都叫 local」的共享脏行，节点名查重失效，
+      旧数据在新键下整体「消失」。
+    boundary: |
+      只改身份语义与节点名唯一性，不动权限模型（API 层仍不鉴权）、不动控制面只在主节点的
+      约束、不新增账户概念。`nodes.Store` 只去掉 `id=="local"` 特判，历史数据照读不修；
+      名称唯一只拦「本次写入新引入的冲突」，PUT 整表替换时按整表判重。worker 不提供
+      前端与控制面，`/api/node-info` 在 worker 上仍 403，自报身份只在它自己的配置里。
+    files:
+      - docs/plans/2026-11-25-windows-edge-shell.md
+      - server/app/node_identity.go
+      - server/app/server.go
+      - server/app/workspace.go
+      - server/cmd/mindfs-server/main.go
+      - server/internal/api/http.go
+      - server/internal/api/http_nodes.go
+      - server/internal/api/http_routes.go
+      - server/internal/channels/feishu/relay.go
+      - server/internal/nodes/store.go
+      - cli/cmd/startup.go
+      - cli/cmd/mindfs.go
+      - web/src/shared/nodePalette.ts
+      - web/src/shared/selfNodeStore.ts
+      - web/src/shared/nodeIdentityMigration.ts
+      - web/src/services/net/selfNode.ts
+      - web/src/services/net/nodeRegistry.ts
+      - web/src/services/pins.ts
+      - web/src/app/useProjectAddActions.ts
+      - web/src/app/useProjectDirectoryBrowser.ts
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/components/account/NodeManagerPanel.tsx
+      - web/src/components/account/useNodeManagerPanel.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+    tests:
+      # 后端：缺省规则四分支 + trim；node-info 自报 id/name；名称查重（validate-name、PUT 整表、
+      # 历史重名放行）；local 行可删。
+      - server/app/node_identity_test.go
+      - server/internal/api/http_node_role_test.go
+      - server/internal/api/http_nodes_name_test.go
+      - server/internal/nodes/store_test.go
+      # 前端：迁移逐段替换/幂等/冲突保留新值；身份未知退回 local、拉到后改写、失败保留缓存；
+      # 原有节点注册表/置顶/面板契约跟着身份语义更新。
+      - web/tests/node-identity-migration.test.ts
+      - web/tests/self-node-identity.test.ts
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/node-url-normalize.test.mjs
+      - web/tests/node-manager-panel.test.mjs
+      - web/tests/pins-authority.test.mjs
+      - web/tests/pins-refresh-dedup.test.mjs
+    anchors:
+      - 'server/app/node_identity.go:const ('
+      - 'server/app/node_identity.go:PrimaryNodeID   = "home"'
+      - 'server/app/node_identity.go:case edge && instance != "":'
+      - 'server/internal/api/http_nodes.go:"id":      strings.TrimSpace(h.NodeID),'
+      - 'server/internal/api/http_nodes.go:func (h *HTTPHandler) handleNodesValidateName(w http.ResponseWriter, r *http.Request) {'
+      - 'server/internal/nodes/store.go:func NameConflicts(existing, incoming []NodeConnection) (NodeConnection, bool) {'
+      - 'web/src/shared/selfNodeStore.ts:export function isSelfNode(nodeId: string | null | undefined): boolean {'
+      - 'web/src/shared/nodeIdentityMigration.ts:export function rewriteNodeSegment(raw: string, selfId: string): string {'
+      - 'web/src/services/net/selfNode.ts:export function initSelfNodeIdentity(): Promise<SelfNodeIdentity | null> {'
+      - 'web/src/services/net/nodeRegistry.ts:await initSelfNodeIdentity().catch(() => null);'
+  - id: G-RO
+    title: "删除首开向导：11 步漫游、持久化状态、data-onboarding 锚点与文案全部移除"
+    kind: feature
+    symptom: |
+      改造前每个新浏览器首次打开工作区会在 700ms 后自动弹出 11 步漫游，逐步高亮侧栏、
+      项目页签、任务创建、消息输入、模式/Agent 菜单等；跳过与否写进 localStorage
+      `mindfs-onboarding-state`，菜单里还留一个「使用引导」入口。它挡住首屏、
+      在移动端一打开就被强制关闭、且每加一个按钮就要补一条锚点与双语说明。
+      本轮把整套向导连同 `OnboardingGate` / `OnboardingTour` / `useOnboardingTour` /
+      `onboardingSteps` / `services/prefs/onboarding` 五个文件一起删除，i18n 的 29 条
+      `onboarding.*` 文案同步移除；保留未配对边缘的配对页（那是必需流程）。
+    why: |
+      必须保留删除：这是本 fork 的产品决定（开箱直接进入工作区，节点名只在安装向导与
+      设置页维护），不打算再提供页面内漫游。若合上游把向导合回来，会出现「刚装好就弹
+      11 步说明」与已被删除的状态键；更隐蔽的是它依赖的 `data-onboarding` 锚点已经
+      无人渲染，向导会退化成定位不到元素的空跑。
+      锚点清理时把 e2e 依赖的两处换成语义名：输入框包裹元素 `data-composer-input`、
+      发送键 `data-composer-send`；`SessionRing` 改为按既有的
+      `data-mindfs-command-input-width` 找输入框，不再依赖向导属性。
+    boundary: |
+      只删首开向导与它的定位锚点/文案，不动任何业务按钮、布局与交互；未配对边缘的
+      配对页、设置页里的节点名编辑都不受影响。`useAppBootstrapActions` 收缩为只做
+      应用自更新（漫游步进是它唯一的另一个消费者），`useAppResponsiveState` 不再持有
+      onboarding 状态。e2e 夹具的语义不变，只是选择器换名。
+    files:
+      - web/src/app/AppRootView.tsx
+      - web/src/app/useAppBootstrapActions.ts
+      - web/src/app/useAppResponsiveState.ts
+      - web/src/app/useAppSessionCore.ts
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/useAppSessionLayerTypes.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/action/ActionBarControls.tsx
+      - web/src/components/action/ComposerTopChips.tsx
+      - web/src/components/action/SessionRing.tsx
+      - web/src/components/agent/AgentSelector.tsx
+      - web/src/components/agent/ModeSelector.tsx
+      - web/src/components/agent/useAgentSelector.ts
+      - web/src/components/app/SessionPane.tsx
+      - web/src/components/file/Breadcrumbs.tsx
+      - web/src/components/file/DefaultListView.tsx
+      - web/src/components/file/FileOperations.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/src/components/file/FileTreeProjectTabs.tsx
+      - web/src/components/file/FileTreeRefreshButton.tsx
+      - web/src/components/file/FileViewer.tsx
+      - web/src/components/file/icons.tsx
+      - web/src/components/git/GitDiffViewer.tsx
+      - web/src/components/session/ExternalSessionList.tsx
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/components/session/SessionHeaderMenu.tsx
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/shell/MainViewSwitcher.tsx
+      - web/src/components/task/TaskBoardToolbar.tsx
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/workspace/WorkspaceQuickLaunch.tsx
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/layout/AppShell.tsx
+      - web/src/layout/ViewHeader.tsx
+    tests:
+      # 删除本身被钉住：五个文件不存在、src 里不再有 data-onboarding、双语无 onboarding 文案、
+      # e2e 依赖的两个选择器仍然存在。
+      - web/tests/onboarding-removed.test.mjs
+      # 原先把 data-onboarding 当定位锚点的测试改成语义锚点（按钮 handler / 既有视觉属性）。
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/task-board-view-layering.test.mjs
+      - web/tests/project-tree-refresh.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - web/tests/composer-chips-layout.test.mjs
+      - web/tests/app-state-domains-split.test.mjs
+      - web/tests/e2e/harness.mjs
+      - web/tests/e2e-pending-indicators.test.mjs
+      - web/tests/e2e-stream-ownership.test.mjs
+      - web/tests/source-map-modules-app.mjs
+      - web/tests/source-map-modules-components.mjs
+      - web/tests/source-map-modules-services.mjs
+    anchors:
+      - 'web/src/app/useAppResponsiveState.ts:export function useAppResponsiveState() {'
+      - 'web/src/components/action/ActionBar.tsx:data-composer-input'
+      - 'web/src/components/action/ActionBarControls.tsx:data-composer-send'
+      - 'web/src/components/action/SessionRing.tsx:[data-mindfs-command-input-width]'
+      - 'web/tests/onboarding-removed.test.mjs:test("onboarding-removed", () => {'
+  - id: G-RP
+    title: "Windows 套壳：单 exe 双入口、WebView2 窗口 + 托盘、健康等待与错误页"
+    kind: feature
+    symptom: |
+      改造前 Windows 双击 mindfs.exe 起服务后弹默认浏览器，服务进程（Session 0）里的托盘
+      图标根本不可见；关掉浏览器就没有任何入口去找回界面，也没有窗口位置记忆。
+      现在无参数/--desktop 进入套壳：单实例互斥体（重复双击只把已有窗口叫到前台）、
+      WebView2 原生窗口（标题=节点名、记住位置大小）、先显示「正在启动本机服务…」
+      等待页（3 秒自刷新）并在 60 秒后换成带日志路径的错误页；服务未跑时优先
+      `schtasks /run /tn mindfs` 拉起、任务不存在则分离子进程 `--serve`；
+      每隔 5 秒复查健康，断而恢复后自动重新加载页面。托盘（打开主界面 / 在浏览器中打开 /
+      检查更新 / 打开数据目录 / 卸载 MindFS / 退出）随套壳进程搬到登录会话，关窗口收进
+      托盘，菜单「退出」只结束壳、不停服务。WebView2 运行时缺失时给原生三选框
+      （下载运行时 / 用浏览器打开 / 重试），不会出现黑框或静默退出。
+    why: |
+      必须保留：这是本 fork 的边缘端安装体验基线（标准桌面软件形态），依赖单 exe 三入口
+      与登录会话/服务会话分离。合上游若恢复「起服务 + 浏览器」或把托盘放回服务进程，
+      托盘会在 Session 0 不可见、关窗即失去入口、更新后窗口不会重连；`--desktop`/`--serve`
+      的参数语义一旦被上游覆盖，计划任务与快捷方式会互相误判（服务在 Session 0 里开一个
+      看不见的窗口然后退出）。
+    boundary: |
+      只新增套壳入口与窗口/托盘/健康监督，不改服务端行为、日志、端口与前缀；
+      `desktop.go` 与平台无关（URL、窗口位置、健康轮询、等待/错误页），
+      `desktop_windows.go` 才碰 WebView2/托盘/注册表，其他平台 `--desktop` 返回明确错误。
+      `tray_windows.go` 仍是唯一的托盘实现，但只由套壳进程调用；服务进程不再注册托盘。
+      关窗只隐藏窗口；「退出」不结束服务。WebView2 绑定用无 CGO 的纯 Go 实现
+      （`github.com/jchv/go-webview2`），保持 `CGO_ENABLED=0` 交叉编译链不变。
+    files:
+      - cli/cmd/desktop.go
+      - cli/cmd/desktop_other.go
+      - cli/cmd/desktop_windows.go
+      - cli/cmd/mindfs.go
+      - cli/cmd/tray.go
+      - cli/cmd/tray_other.go
+      - cli/cmd/tray_windows.go
+      - go.mod
+      - go.sum
+    tests:
+      # 入口判据（双击 vs 计划任务/脚本）、URL 前缀、窗口位置合法性、健康轮询、页面转义、
+      # 节点名与更新文案；托盘菜单项与 ID 也在其中。
+      - cli/cmd/desktop_test.go
+      - cli/cmd/tray_test.go
+    anchors:
+      - 'cli/cmd/desktop.go:func desktopEntry(goos string, argCount int, desktop, serve, foreground, internalAutoStart, internalRestart, daemon bool) bool {'
+      - 'cli/cmd/desktop.go:func (c desktopShellConfig) appURL() string {'
+      - 'cli/cmd/desktop_windows.go:func runDesktopShell(cfg desktopShellConfig) error {'
+      - 'cli/cmd/tray.go:func trayMenuItems() []trayMenuItem {'
+      - 'cli/cmd/desktop_test.go:func TestDesktopEntryOnlyForBareWindowsDoubleClick(t *testing.T) {'
+  - id: G-RQ
+    title: 边控端安装器：NSIS 标准向导 + 卸载程序 + 安装时设置节点名 + 服务/更新任务注册
+    kind: feature
+    symptom: |
+      Windows 上装机体验是坏的，而且是用户逐条点出来的四件事：
+      「一点就消失」—— 旧的自解包 exe 双击后没有任何页面，只在出错时弹一个框；
+      「不知道怎么删」—— 没有 `uninstall.exe`、控制面板里没有条目，只能手工删目录 + 删计划任务；
+      「打开只弹小黑框」—— 没有窗口，只能自己开浏览器去 `127.0.0.1`；
+      「设备名字和主控重名」—— 装完就叫 `local`，和主控端的 `local` 撞在一起。
+      自动更新那侧还有一个更隐蔽的：新版装完，注册表里的卸载信息、快捷方式、卸载器都停在旧版。
+    why: |
+      **形态换成 NSIS（`scripts/windows-installer/mindfs.nsi`，Linux 上 makensis 交叉构建）**：
+      Unicode、MUI2 标准向导（欢迎 / 目录 / 安装 / 节点名 / 完成），`RequestExecutionLevel user`
+      —— per-user 装在 `$LOCALAPPDATA\Programs\MindFS`，只有注册 S4U 任务那一步用
+      `ExecShell "runas"` 提权。整包提权会让每一次自动更新的 `/S` 都弹 UAC，那等于没有自动更新。
+
+      **每一条结构约束都对应一次真实故障，测试钉在 `internal/deploy/windows_installer_test.go`**：
+
+      - **节点名页排在 INSTFILES 之后**：查重要调用刚装好的 `mindfs.exe`（`--check-node-name`），
+        放在拷贝之前就只能把整个 exe 再嵌一份，安装包直接翻倍。代价是 Back 会重跑安装段，
+        所以页面必须 `EnableWindow` 掉 Back 按钮（`GetDlgItem $0 $HWNDPARENT 3`）。
+      - **查重规则只有一份**：`--check-node-name` 走服务端 `POST /api/nodes/validate-name`
+        同一套规则，退出码 `0/10/11/12`（可用 / 重名 / 格式不合法 / 主控不可达）给 NSIS 判，
+        比解析 JSON 稳定。主控不可达时向导问「仍要用这个名字吗」，重名留给配对时再判 ——
+        安装时还没配对，本来就没有主控可问，这是设计边界不是缺陷。
+      - **停服务只走 `schtasks /end`**：它由 Task Scheduler 服务执行，不受跨会话 ACL 限制。
+        桌面壳不归计划任务管，所以还要按进程名 `taskkill /f /im mindfs.exe` 无条件兜底
+        —— 否则覆盖 `bin\mindfs.exe` 会「拒绝访问」。
+      - **启动服务要轮询**：任务策略是 `IgnoreNew`，旧实例还没结束时 `/run` 会被**静默吞掉**。
+        所以 `StartServiceTask` 是「`/run` → `tasklist` 看进程 → 没出现就重试」，最多 15 秒。
+      - **WebView2 查三处注册表**（HKCU / HKLM 32 位视图 / HKLM 64 位视图，后者要 `SetRegView 64`
+        再切回 32）：缺运行时就静默装内嵌的 Evergreen Bootstrapper，仍失败时给「重试 / 打开下载页 /
+        跳过」三选一；静默模式（自动更新）不弹框，只记 DetailPrint。
+      - **卸载器**：`WriteUninstaller` + ARP 条目（`DisplayName` / `UninstallString` /
+        `QuietUninstallString`），「同时删除本机数据」是显式勾选（默认保留配置、会话与日志）。
+        卸载要能反复跑：任务不存在、进程不在、PATH 里没有条目都不算失败。
+      - **配置由随包 exe 写**（`--init-config` → `deploy.ApplySetupConfig`），不在 `.nsi` 里拼 JSON：
+        用户已有的 config 必须保留未知键、大整数不能漂移。
+      - **`--register-service` / `--unregister-service` 也走 exe**（`cli/cmd/service_task_windows.go`）：
+        任务 XML 必须是 UTF-16LE、`UserId` 必须是 SID，这两条已经在 `internal/deploy` 里钉住，
+        让 `.nsi` 再实现一遍就是第二个实现。
+
+      **安装包内容校验在 makensis 之前**（`scripts/build-windows-installer.sh`）：`mindfs.exe` /
+      `agents.json` / `web/index.html` / `web/favicon.svg` 缺任何一个就失败。少了 `web/` 的包
+      能装、服务能跑，只是页面 404 —— 那种包发出去没人会发现。
+
+      **与「去 local」的分工**：身份自报与 `home/主控` 缺省规则在 G-RN（`resolveNodeIdentity`），
+      本组只负责「安装时问名字、把名字落到配置」。`--set-node-name` 写进
+      `control_sync.instance_id`，配对表单预填的就是向导里输入的名字；重名检查与设置页共用
+      `POST /api/nodes/validate-name`。
+    files:
+      - scripts/windows-installer/mindfs.nsi
+      - scripts/build-windows-installer.sh
+      - internal/deploy/windows_installer_test.go
+      - internal/deploy/setup_script_test.go
+      - cli/cmd/node_name.go
+      - cli/cmd/node_name_test.go
+      - cli/cmd/init_config.go
+      - cli/cmd/mindfs.go
+      - cli/cmd/service_task_windows.go
+      - cli/cmd/service_task_other.go
+      - internal/configfile/configfile.go
+      - internal/configfile/configfile_test.go
+      - server/internal/config/configfile.go
+      - Makefile
+    tests:
+      - internal/deploy/windows_installer_test.go
+      - internal/deploy/setup_script_test.go
+      - cli/cmd/node_name_test.go
+      - internal/configfile/configfile_test.go
+    anchors:
+      - 'scripts/windows-installer/mindfs.nsi:RequestExecutionLevel user'
+      - 'scripts/windows-installer/mindfs.nsi:Page custom NodeNamePageShow NodeNamePageLeave'
+      - 'scripts/windows-installer/mindfs.nsi:!define UPDATE_TASK_NAME "mindfs-update"'
+      - 'scripts/windows-installer/mindfs.nsi:Function EnsureServiceTask'
+      - 'scripts/windows-installer/mindfs.nsi:Function StartServiceTask'
+      - 'scripts/windows-installer/mindfs.nsi:--check-node-name "$NodeName"'
+      - 'scripts/windows-installer/mindfs.nsi:WriteUninstaller "$INSTDIR\uninstall.exe"'
+      - 'scripts/windows-installer/mindfs.nsi:同时删除本机数据'
+      - 'scripts/windows-installer/mindfs.nsi:SetRegView 64'
+      - 'scripts/build-windows-installer.sh:for f in mindfs.exe agents.json web/index.html web/favicon.svg'
+      - 'scripts/build-windows-installer.sh:"${MAKENSIS}" -V2'
+      - 'internal/deploy/windows_installer_test.go:func TestWindowsInstallerIsAStandardWizard(t *testing.T) {'
+      - 'internal/deploy/windows_installer_test.go:func TestWindowsInstallerShipsAnUninstaller(t *testing.T) {'
+      - 'internal/deploy/windows_installer_test.go:func TestWindowsInstallerStopsThroughScheduler(t *testing.T) {'
+      - 'internal/deploy/windows_installer_test.go:func TestWindowsInstallerWaitsForServiceToStart(t *testing.T) {'
+      - 'internal/deploy/windows_installer_test.go:func TestWindowsInstallerNodeNameComesAfterFiles(t *testing.T) {'
+      - 'internal/deploy/windows_installer_test.go:func TestWindowsInstallerChecksWebView2InAllScopes(t *testing.T) {'
+      - 'internal/deploy/windows_installer_test.go:func TestWindowsInstallerBuildScript(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:scripts/build-windows-installer.sh'
+      - 'cli/cmd/node_name.go:func runNodeNameCommand(args []string) (bool, error) {'
+      - 'cli/cmd/node_name.go:nodeNameExitTaken       = 10'
+      - 'cli/cmd/node_name.go:func checkNodeName(ctx context.Context, rawName, primaryFlag, configPath string, client nodeNameClient) (nodeNameResult, int) {'
+      - 'cli/cmd/node_name.go:func primaryFromConfig(configPath string) string {'
+      - 'cli/cmd/init_config.go:func runInitConfigCommand(args []string) (bool, error) {'
+      - 'cli/cmd/service_task_windows.go:func runServiceTaskCommand(args []string) (bool, error) {'
+      - 'cli/cmd/mindfs.go:if handled, err := runNodeNameCommand(os.Args[1:]); handled {'
+      - 'internal/configfile/configfile.go:func Update(path string, mutate func(map[string]any) error) error {'
+      - 'server/internal/config/configfile.go:return configfile.Update(path, mutate)'
+      - 'Makefile:WINDOWS_SETUP_EXE ?= $(DIST_DIR)/mindfs_$(VERSION)_windows_amd64-setup.exe'
+      - 'Makefile:	@bash scripts/build-windows-installer.sh "$(VERSION)" "$(DIST_DIR)"'
+
+  - id: G-RR
+    title: 边控端自动更新改由安装包执行（旁路计划任务 mindfs-update），不再自己解包换二进制
+    kind: feature
+    symptom: |
+      安装版边控端的自动更新**必然失败，而且没有日志**：状态走到 `restarting` 之后服务就没了，
+      计划任务显示「就绪」但没有进程，health 连不上。重装一次能恢复，所以很容易被当成偶发。
+      换成 NSIS 安装包之后这条更明显 —— 每台机器都会自动更新，每台都会在同一处消失。
+    why: |
+      **根因是计划任务的 job 语义，不是权限也不是路径**：任务实例结束时，它拉起的子孙进程
+      一起被终结。旧路径是「服务下载 zip → 起一个 PowerShell 等旧进程退出 → 覆盖文件 → 启动
+      新进程」，那个 PowerShell 是服务的子进程；服务一 `os.Exit(0)`，它就跟着死，新进程也就
+      从来没起来过。装成计划任务（S4U + BootTrigger）之后必然踩到，而 systemd 下不会 ——
+      所以这条缺陷只在 Windows 安装版上出现，且完全没有报错。
+
+      **解法是让安装包由另一个任务实例执行**：安装时随服务任务一起注册伴生任务
+      `mindfs-update`（`internal/deploy.BuildUpdateTaskXML`），服务只负责
+      「下载 → 验签 → 落到固定路径 → `schtasks /run /tn mindfs-update` → 交出进程」。
+      安装包不在服务的 job 里，所以能活到把服务重新拉起来。
+
+      三条约束各自有代价：
+
+      - **落点固定**（`deploy.SetupUpdateStagingPath`）：任务 XML 在安装时就把路径写死了，
+        每次更新只是覆盖同一个文件。所以下载先写 `.part`、验 sha256、再原子替换 ——
+        半个文件会被更新任务直接执行。
+      - **只有 Windows + 安装布局才走 setup.exe**（`updateAssetSuffix`）：portable 目录没有安装树，
+        安装包会把文件铺到 `%LOCALAPPDATA%\Programs` 去，反而把原目录留在那里。这是运行时判据，
+        不是编译期常量，测试用 `runtimeGOOS` 接缝在 Linux 上验 Windows 分支。
+      - **启动失败必须把路径给出来**：`schtasks /run` 失败时错误信息带上落点路径 ——
+        「手动运行这个安装包」是用户唯一能做的动作，不给路径等于让他自己找。
+
+      **更新用安装包而不是换二进制，还有一个长期收益**：卸载器、开始菜单快捷方式、ARP 版本号
+      都跟着更新。旧路径只换 `mindfs.exe`，于是会出现「程序是新版、卸载器还是旧版」。
+
+      **已知边界**：静默更新会 `schtasks /end` 掉服务、覆盖文件、再拉起来，**不重启桌面壳** ——
+      更新前开着的壳窗口会跟着退出，需要从开始菜单重新打开（服务本身不用管）。
+      升级已有安装时如果 `mindfs-update` 任务缺失而服务任务在，静默模式**不会**尝试补注册
+      （那一步要 UAC，自动更新里没人能点），本次更新照做，缺的任务留给下一次手动安装补上。
+    files:
+      - server/internal/update/installer_update.go
+      - server/internal/update/installer_update_windows.go
+      - server/internal/update/installer_update_other.go
+      - server/internal/update/installer_update_test.go
+      - server/internal/update/install.go
+      - server/internal/update/release_fetch_helpers.go
+      - server/internal/update/service.go
+      - internal/deploy/setup.go
+      - internal/deploy/setup_test.go
+    tests:
+      - server/internal/update/installer_update_test.go
+      - internal/deploy/setup_test.go
+    anchors:
+      - 'server/internal/update/installer_update.go:var runUpdateTask = platformRunUpdateTask'
+      - 'server/internal/update/installer_update.go:var runtimeGOOS = runtime.GOOS'
+      - 'server/internal/update/installer_update.go:func (s *Service) updateAssetSuffix() string {'
+      - 'server/internal/update/installer_update.go:func isInstallerAsset(name string) bool {'
+      - 'server/internal/update/installer_update.go:func (s *Service) stageInstallerUpdate(ctx context.Context, asset releaseAsset, artifact manifestArtifact) error {'
+      - 'server/internal/update/installer_update_windows.go:schtasks.exe", "/run", "/tn", deploy.SetupUpdateTaskName'
+      - 'server/internal/update/install.go:if isInstallerAsset(asset.Name) {'
+      - 'server/internal/update/release_fetch_helpers.go:func (s *Service) assetCandidates(version string) []string {'
+      - 'server/internal/update/service.go:func (s *Service) exit(code int) {'
+      - 'server/internal/update/installer_update_test.go:func TestUpdateAssetSuffixFollowsLayout(t *testing.T) {'
+      - 'server/internal/update/installer_update_test.go:func TestPickAssetUsesInstallerNameOnInstalledWindows(t *testing.T) {'
+      - 'server/internal/update/installer_update_test.go:func TestStageInstallerUpdateStagesVerifiedPackage(t *testing.T) {'
+      - 'server/internal/update/installer_update_test.go:func TestStageInstallerUpdateRejectsBadHash(t *testing.T) {'
+      - 'server/internal/update/installer_update_test.go:func TestStageInstallerUpdateReportsLaunchFailure(t *testing.T) {'
+      - 'server/internal/update/installer_update_test.go:func TestInstallUpdateRoutesToInstaller(t *testing.T) {'
+      - 'internal/deploy/setup.go:const SetupUpdateTaskName = "mindfs-update"'
+      - 'internal/deploy/setup.go:func SetupUpdateStagingPath(prefix string) string {'
+      - 'internal/deploy/setup.go:func BuildUpdateTaskXML(opt UpdateTaskOptions) (string, error) {'
+      - 'internal/deploy/setup_test.go:func TestBuildUpdateTaskXML(t *testing.T) {'
+      - 'internal/deploy/setup_test.go:func TestBuildUpdateTaskXMLRequiresInputs(t *testing.T) {'
+      - 'internal/deploy/setup_test.go:func TestSetupUpdateStagingPathIsUnderPrefix(t *testing.T) {'
+

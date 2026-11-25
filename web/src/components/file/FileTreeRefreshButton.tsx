@@ -20,7 +20,6 @@ export function FileTreeRefreshButton({
   return (
         <button
           type="button"
-          data-onboarding="sidebar-refresh"
           onClick={() => void handleRefreshClick()}
           onMouseDown={() => setTreePressed(true)}
           onMouseUp={() => setTreePressed(false)}

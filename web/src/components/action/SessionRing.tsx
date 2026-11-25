@@ -103,7 +103,7 @@ export function SessionRing({
   useEffect(() => {
     if (!quickSwitchOpen) return;
     const place = () => {
-      const rect = rootRef.current?.closest('[data-onboarding="message-input"]')?.getBoundingClientRect();
+      const rect = rootRef.current?.closest('[data-mindfs-command-input-width]')?.getBoundingClientRect();
       if (!rect) return;
       const width = Math.min(272, window.innerWidth - 16);
       setQuickSwitchPos({
@@ -162,7 +162,6 @@ export function SessionRing({
     <>
     <div
       ref={rootRef}
-      data-onboarding="session-ring"
       onMouseDown={handleDragStart}
       onTouchStart={handleDragStart}
       onClick={() => {

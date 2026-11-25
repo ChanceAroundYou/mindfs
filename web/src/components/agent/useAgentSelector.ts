@@ -28,7 +28,6 @@ export type AgentSelectorProps = {
   menuPlacement?: "top" | "bottom";
   showChevron?: boolean;
   defaultExpandOptions?: boolean;
-  onboardingId?: string;
   viewportMenu?: boolean;
   allowDefaultModel?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -53,7 +52,6 @@ export function useAgentSelector({
   menuPlacement = "top",
   showChevron: _showChevron,
   defaultExpandOptions = false,
-  onboardingId: _onboardingId,
   viewportMenu = false,
   allowDefaultModel = false,
   onOpenChange,

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { appPath, appURL } from "../services/net/base";
 import { ProtectedAPIError, protectedJSON as apiProtectedJSON } from "../services/net/api";
-import { getActiveNode, LOCAL_NODE_ID } from "../services/net/nodeRegistry";
+import { getActiveNode, getSelfNodeId } from "../services/net/nodeRegistry";
 import { promptDialog } from "../services/dialog";
 import { managedDirAddErrorMessage, type LocalDirsPayload, type ManagedRootPayload } from "./appMisc";
 import { useI18n } from "../i18n";
@@ -62,7 +62,7 @@ export function useProjectDirectoryBrowser({
     setLocalDirState((prev) => ({ ...prev, loading: true, error: "", path: trimmed, selectedPath: "" }));
     try {
       const params = trimmed ? new URLSearchParams({ path: trimmed }) : undefined;
-      const targetNodeId = nodeId || projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+      const targetNodeId = nodeId || projectAddNodeId || getActiveNode()?.id || getSelfNodeId();
       const payload = await apiProtectedJSON<LocalDirsPayload>(appURL("/api/local_dirs", params, targetNodeId));
       setLocalDirState({
         path: String(payload.path || trimmed),
@@ -139,7 +139,7 @@ export function useProjectDirectoryBrowser({
       return;
     }
     setLocalDirState((prev) => ({ ...prev, creating: true, error: "" }));
-    const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+    const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || getSelfNodeId();
     try {
       const payload = await apiProtectedJSON<{ path?: string }>(
         appURL("/api/local_dirs", undefined, targetCreateNodeId),
@@ -215,7 +215,7 @@ export function useProjectDirectoryBrowser({
     if (!path) return;
     setLocalDirState((prev) => ({ ...prev, adding: true, error: "" }));
     try {
-      const targetAddNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+      const targetAddNodeId = projectAddNodeId || getActiveNode()?.id || getSelfNodeId();
       const payload = await apiProtectedJSON<ManagedRootPayload>(appPath("/api/dirs", targetAddNodeId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },

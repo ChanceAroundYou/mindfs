@@ -128,7 +128,6 @@ export function TaskBoardView({
 
   return (
     <div
-      data-onboarding="task-board"
       style={{
         /* 铺满：以前这里写死 maxHeight: calc(100dvh - 92px)，而那 92px 猜的是
            ActionBar 高度 + 安全区，跟真实值对不上，内容一少底部就空一大截。

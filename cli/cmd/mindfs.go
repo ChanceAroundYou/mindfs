@@ -36,6 +36,29 @@ func main() {
 		}
 		return
 	}
+	// 安装向导的两个纯命令行入口。必须在 attachParentConsole 之前：GUI 子系统下
+	// 这里不该弹控制台，结果走 --out 文件与退出码。
+	if handled, err := runNodeNameCommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if handled, err := runInitConfigCommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if handled, err := runServiceTaskCommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	attachParentConsole()
 	autoStartBoot := autoStartRequested(os.Args[1:])
 	if autoStartBoot {
@@ -56,6 +79,7 @@ func main() {
 		fmt.Fprintf(out, "  mindfs\n")
 		fmt.Fprintf(out, "  mindfs /path/to/project\n")
 		fmt.Fprintf(out, "  mindfs --foreground\n")
+		fmt.Fprintf(out, "  mindfs --desktop\n")
 		fmt.Fprintf(out, "  mindfs --status\n")
 		fmt.Fprintf(out, "  mindfs --version\n")
 		fmt.Fprintf(out, "  mindfs --update\n")
@@ -70,6 +94,8 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7331", "listen address")
 	webPushFlag := flag.Bool("web-push", true, "enable PWA Web Push notifications")
 	foreground := flag.Bool("foreground", false, "run in the foreground instead of as a background service")
+	desktopFlag := flag.Bool("desktop", false, "open the desktop window (the default when started without arguments on Windows)")
+	serveFlag := flag.Bool("serve", false, "run the HTTP service in this process (used by the desktop shell and the scheduled task)")
 	autoStart := flag.Bool("autostart", false, "register or refresh automatic startup for this user")
 	internalAutoStartFlag := flag.Bool("internal-autostart", false, "internal flag used by the automatic startup entry")
 	stop := flag.Bool("stop", false, "stop the background mindfs service")
@@ -187,6 +213,9 @@ func main() {
 		*foreground = true
 		*autoStart = false
 	}
+	if *serveFlag {
+		*foreground = true
+	}
 	if *versionFlag {
 		printVersion()
 		return
@@ -303,6 +332,28 @@ func main() {
 		}
 	}
 
+	// 套壳模式：Windows 下双击（无参数）/ 显式 --desktop 都走这里。
+	// 显式带其它 flag 或位置参数时保持旧行为（起服务 + 浏览器），脚本与老快捷方式不受影响。
+	desktopMode := desktopEntry(runtime.GOOS, len(os.Args), *desktopFlag, *serveFlag, *foreground,
+		internalAutoStart, internalRestart, daemonMode)
+	if desktopMode {
+		_, nodeName := nodeIdentity(startupCfg)
+		if strings.TrimSpace(nodeName) == "" {
+			nodeName, _ = os.Hostname()
+		}
+		if err := runDesktopShell(desktopShellConfig{
+			Addr:     *addr,
+			UseTLS:   *tlsFlag,
+			NodeName: nodeName,
+			StateDir: stateDir,
+			LogPath:  logPath,
+		}); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+
 	if !internalRestart && !*restart && serverRunning(*addr, *tlsFlag) {
 		fmt.Fprintf(os.Stdout, "server already running on %s, reusing existing process\n", *addr)
 		rootID := ""
@@ -336,6 +387,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
+
+	// 本机身份：显式 node.id/name 原样交给 app，缺省规则（主控 home/主控，
+	// 边缘取 control_sync.instance_id，worker 取主机名）与 mindfs-server 共用一份。
+	nodeID, nodeName := nodeIdentity(startupCfg)
 
 	// Resolve TLS certificate/key paths when TLS is enabled.
 	resolvedCert, resolvedKey := *certFlag, *keyFlag
@@ -393,6 +448,8 @@ func main() {
 		errCh <- app.Start(ctx, *addr, app.StartOptions{
 			Version:                            version,
 			Args:                               os.Args[1:],
+			NodeID:                             nodeID,
+			NodeName:                           nodeName,
 			AgentConfigPath:                    *agentConfigFlag,
 			WebPushEnabled:                     *webPushFlag,
 			WebPushRelayURL:                    webPushRelayURL,
@@ -481,15 +538,6 @@ func main() {
 		if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
 			reportOpenTargetError(os.Stderr, err)
 		}
-	}
-
-	// 后台实例没有终端可看，托盘是它唯一的入口。
-	if shouldShowTray(runtime.GOOS) {
-		go func() {
-			if err := runTray(*addr, *tlsFlag, cancel); err != nil {
-				log.Printf("[tray] %v", err)
-			}
-		}()
 	}
 
 	runErr := waitForForegroundAppExit(ctx, errCh)

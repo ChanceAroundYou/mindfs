@@ -55,7 +55,6 @@ export function MainViewSwitcher({ value, onChange, accentColor }: MainViewSwitc
     <div
       role="tablist"
       aria-label={t("view.switcherLabel")}
-      data-onboarding="main-view-switcher"
       style={{
         flexShrink: 0,
         display: "grid",

@@ -118,7 +118,7 @@ export function ActionBarControls(props: ActionBarControlsProps) {
     t,
   } = props;
   return (
-    <div data-onboarding="input-controls" style={{ position: "absolute", right: isMobile ? "4px" : "8px", bottom: isMultiLine ? "6px" : "50%", transform: isMultiLine ? "none" : "translateY(50%)", display: "flex", alignItems: "center", gap: isMobile ? "0px" : "2px", zIndex: 5, transition: "all 0.2s cubic-bezier(0.4, 0, 0, 2, 1)" }}>
+    <div style={{ position: "absolute", right: isMobile ? "4px" : "8px", bottom: isMultiLine ? "6px" : "50%", transform: isMultiLine ? "none" : "translateY(50%)", display: "flex", alignItems: "center", gap: isMobile ? "0px" : "2px", zIndex: 5, transition: "all 0.2s cubic-bezier(0.4, 0, 0, 2, 1)" }}>
       <SessionRing
         hasBoundSession={hasBoundSession}
         canOpenSessionDrawer={canOpenSessionDrawer}
@@ -137,7 +137,7 @@ export function ActionBarControls(props: ActionBarControlsProps) {
       />
 
       <>
-        <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} onboardingId="mode-selector" viewportMenu accentColor={accentHex} onOpenChange={setModeSelectorOpen} />
+        <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} viewportMenu accentColor={accentHex} onOpenChange={setModeSelectorOpen} />
         {mode !== "command" ? (
           <div>
             <AgentSelector
@@ -187,7 +187,6 @@ export function ActionBarControls(props: ActionBarControlsProps) {
               compact={true}
               warnUnavailable={isSelectedAgentUnavailable}
               defaultExpandOptions
-              onboardingId="agent-selector"
               viewportMenu
               onOpenChange={setAgentSelectorOpen}
             />
@@ -201,7 +200,6 @@ export function ActionBarControls(props: ActionBarControlsProps) {
           />
         )}
         <button
-          data-onboarding="attachment-action"
           type="button"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => attachmentInputRef.current?.click()}
@@ -229,7 +227,7 @@ export function ActionBarControls(props: ActionBarControlsProps) {
           <PlusIcon />
         </button>
         <button
-          data-onboarding="send-action"
+          data-composer-send
           data-state={showCancel ? "cancel" : "send"}
           type="button"
           onMouseDown={(event) => event.preventDefault()}

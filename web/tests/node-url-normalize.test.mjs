@@ -50,11 +50,11 @@ assert.ok(registry.includes("function nodeBaseKey(url: string): string {"), "nod
 assert.ok(registry.includes('const path = u.pathname.replace(/\\/+$/, "");'), "dedup key must normalize the path segment");
 assert.ok(registry.includes('return `${u.protocol}//${u.host}${path}`.toLowerCase();'), "dedup key must include the deploy prefix path, not only the origin");
 
-// "local" 节点 URL 必须按当前设备推导：共享列表里持久化的 local URL 是某台设备写入的，
+// self 节点 URL 必须按当前设备推导：共享列表里持久化的 self URL 是某台设备写入的，
 // 对其它设备必然错误（实测手机写入 local→home URL，PC 端解析 nodeId="local" 全部串到 home）。
 assert.match(registry, /function deviceLocalNodeURL\(\): string \{\s*const base = localBaseURL\(\);\s*if \(!base \|\| !\/\^https\?:\\\/\\\/\/i\.test\(base\)\) return "";\s*return base;\s*\}/, "device-local URL must only accept fetchable http(s) origins");
-assert.match(registry, /function makeLocalNode\(\): NodeConnection \{\s*return \{ id: LOCAL_NODE_ID, name: "local", url: deviceLocalNodeURL\(\), color: PALETTE\[0\] \};\s*\}/, "ephemeral local node must use the device-derived URL");
-assert.match(registry, /\/\/ 读取时强制按当前设备推导[^\n]*\n[^\n]*if \(local\) local\.url = deviceLocalNodeURL\(\);/, "reading the node list must override the persisted local URL per device");
+assert.match(registry, /function makeSelfNode\(\): NodeConnection \{\s*return \{ id: getSelfNodeId\(\), name: getSelfNodeName\(\), url: deviceLocalNodeURL\(\), color: PALETTE\[0\] \};\s*\}/, "ephemeral self node must use the device-derived URL and the server-reported identity");
+assert.match(registry, /\/\/ 读取时强制按当前设备推导[^\n]*\n[^\n]*if \(self\) self\.url = deviceLocalNodeURL\(\);/, "reading the node list must override the persisted self URL per device");
 
 // 显式 nodeId 解析失败不得静默回退 active node：会把请求发给错误节点。
 const runtimeSource = fs.readFileSync(path.join(root, "src/services/platform/runtime.ts"), "utf8");

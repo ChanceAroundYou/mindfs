@@ -90,6 +90,59 @@ func normalize(in []NodeConnection) []NodeConnection {
 	return out
 }
 
+// NameConflicts 判定一次整表写入是否**新引入**了重名（trim + 忽略大小写）。
+//
+// 语义按「只拒绝新增/改名的冲突，不强行修历史数据」定：
+//   - 同一对 id 在 existing 里就已经同名并存 → 是历史数据，放行；
+//   - 其余任何两个不同 id 同名 → 拒绝，返回其中后一个作为冲突提示。
+//
+// 为什么按整表比较而不是逐条 upsert：前端保存节点表走 PUT（整表替换），
+// 逐条检查会被整体替换绕过。
+func NameConflicts(existing, incoming []NodeConnection) (NodeConnection, bool) {
+	fold := func(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+	existingNames := make(map[string]string, len(existing))
+	for _, n := range existing {
+		existingNames[n.ID] = fold(n.Name)
+	}
+	historicallyPaired := func(a, b string) bool {
+		nameA, okA := existingNames[a]
+		nameB, okB := existingNames[b]
+		return okA && okB && nameA != "" && nameA == nameB
+	}
+
+	groups := map[string][]NodeConnection{}
+	for _, n := range incoming {
+		key := fold(n.Name)
+		if key == "" {
+			continue
+		}
+		groups[key] = append(groups[key], n)
+	}
+	for _, group := range groups {
+		for i := 0; i < len(group); i++ {
+			for j := i + 1; j < len(group); j++ {
+				if historicallyPaired(group[i].ID, group[j].ID) {
+					continue
+				}
+				return group[j], true
+			}
+		}
+	}
+	return NodeConnection{}, false
+}
+
+func (s *Store) Get(id string) (NodeConnection, bool) {
+	id = strings.TrimSpace(id)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, n := range s.data {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return NodeConnection{}, false
+}
+
 func (s *Store) List() []NodeConnection {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -136,9 +189,6 @@ func (s *Store) Remove(id string) (NodeConnection, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return NodeConnection{}, errors.New("id required")
-	}
-	if id == "local" {
-		return NodeConnection{}, errors.New("cannot_remove_local")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

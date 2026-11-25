@@ -14,6 +14,8 @@
 // 各 worker 浏览器的新通道，而那些连接是浏览器直连 worker 的，主节点碰不到。
 import { controlPath } from "./net/controlPlane";
 import { protectedJSON } from "./net/api";
+import { getSelfNodeId } from "./net/selfNode";
+import { rewriteNodeSegment } from "../shared/nodeIdentityMigration";
 
 // 项目置顶：键 = scopeKey（nodeID::rootID），值 = 毫秒时间戳。
 // 模块私有：外部只消费 PinsSnapshot，不必知道两个桶各自的形状。
@@ -29,10 +31,15 @@ export interface PinsSnapshot {
 
 function normalizeProjects(input: unknown): ProjectPins {
   const src = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const selfId = getSelfNodeId();
   const out: ProjectPins = {};
-  for (const [key, raw] of Object.entries(src)) {
+  for (const [rawKey, raw] of Object.entries(src)) {
     const ts = Number(raw);
-    if (key && Number.isFinite(ts) && ts > 0) out[key] = ts;
+    if (!rawKey || !Number.isFinite(ts) || ts <= 0) continue;
+    // 兼容旧伪节点 local：服务端只把键当不透明字符串，不会替我们改名。
+    // 同一项目同时有 local:: 与 home:: 两条时取时间较晚的那条（后来置顶的才是真相）。
+    const key = rewriteNodeSegment(rawKey, selfId);
+    out[key] = Math.max(out[key] || 0, ts);
   }
   return out;
 }

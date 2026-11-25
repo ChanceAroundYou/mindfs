@@ -14,7 +14,7 @@ const agentMemoryService = read("../src/services/agent/agentMemory.ts");
 test("徽标带是流内一行：排在排队列表之前，不再是输入框上的浮层", () => {
   const chipsIndex = actionBar.indexOf("<ComposerTopChips");
   const queuedIndex = actionBar.indexOf("<QueuedMessagesList");
-  const inputIndex = actionBar.indexOf('data-onboarding="message-input"');
+  const inputIndex = actionBar.indexOf("data-composer-input");
 
   assert.ok(chipsIndex >= 0, "ActionBar must render ComposerTopChips");
   assert.ok(queuedIndex >= 0, "ActionBar must render QueuedMessagesList");

@@ -80,7 +80,6 @@ export function ExternalSessionList({
       }}
     >
       <div
-        data-onboarding="session-actions"
         style={{
           height: "36px",
           display: "flex",

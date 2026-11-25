@@ -142,11 +142,12 @@ ANDROID_GRADLE_ENV :=
 ifneq ($(strip $(ANDROID_JAVA_HOME)),)
 ANDROID_GRADLE_ENV := JAVA_HOME="$(ANDROID_JAVA_HOME)"
 endif
-# Windows edge-controller one-click installer (self-extracting exe). Separate
-# from `mindfs_<TAG>_windows_amd64.zip`: that zip needs a manual unpack + four
-# steps, and its `web/` never lands where the service reads it (a silent half
-# install). The setup exe carries the payload, registers the S4U task and sets
-# the user PATH in one double-click -- see scripts/build-windows-setup.sh.
+# Windows edge-controller installer (NSIS: standard wizard + uninstaller).
+# Separate from `mindfs_<TAG>_windows_amd64.zip`: that zip needs a manual unpack
+# + four steps, and its `web/` never lands where the service reads it (a silent
+# half install). The setup exe carries the payload, registers the S4U task, adds
+# the user PATH entry and ships an uninstaller -- see
+# scripts/build-windows-installer.sh.
 WINDOWS_SETUP_EXE ?= $(DIST_DIR)/mindfs_$(VERSION)_windows_amd64-setup.exe
 RELEASE_WINDOWS_SETUP ?= 1
 
@@ -172,7 +173,7 @@ PLATFORMS := \
 build-all: build-web
 	@MIND_FS_BASE="$(MIND_FS_BASE)" bash scripts/build-all.sh "$(VERSION)" "$(DIST_DIR)"
 ifeq ($(RELEASE_WINDOWS_SETUP),1)
-	@bash scripts/build-windows-setup.sh "$(VERSION)" "$(DIST_DIR)"
+	@bash scripts/build-windows-installer.sh "$(VERSION)" "$(DIST_DIR)"
 endif
 
 build-android:

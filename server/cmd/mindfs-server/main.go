@@ -98,6 +98,7 @@ func main() {
 		os.Exit(1)
 	}
 	routerSupervisionMode, routerSupervisionRetries, routerSupervisionRunActions, routerSupervisionActions, routerSupervisionQuotaHold = routerSupervision(startupCfg)
+	nodeID, nodeName := startupNodeIdentity(startupCfg)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -109,6 +110,8 @@ func main() {
 		WebPushEnabled:                     *webPushFlag,
 		NotifyScript:                       *notifyScriptFlag,
 		Role:                               *roleFlag,
+		NodeID:                             nodeID,
+		NodeName:                           nodeName,
 		RouterMode:                         *routerModeFlag,
 		RouterAgent:                        *routerAgentFlag,
 		RouterModel:                        *routerModelFlag,
@@ -156,6 +159,9 @@ type startupConfig struct {
 	// 不配置 = control = 改造前的行为。
 	Role   *string              `json:"role"`
 	Router *startupRouterConfig `json:"router"`
+	// Node 是本机身份。不配置 = 主控 home/主控；缺省规则与 CLI 入口共用
+	// app.resolveNodeIdentity，两个二进制读同一份 config.json。
+	Node *startupNodeConfig `json:"node"`
 	// Task 是新任务派发默认 Agent/模型的节点本地配置。只走 config.json。
 	Task     *startupTaskConfig     `json:"task"`
 	Workflow *startupWorkflowConfig `json:"workflow"`
@@ -165,6 +171,27 @@ type startupConfig struct {
 
 type startupWorkflowConfig struct {
 	ParallelMainTree *bool `json:"parallel_main_tree"`
+}
+
+// startupNodeConfig 是本机在节点表与前端里的身份（node.id/node.name）。
+// 缺省不写文件，由 app 侧补：主控 home/主控，边缘取 control_sync.instance_id。
+type startupNodeConfig struct {
+	ID   *string `json:"id"`
+	Name *string `json:"name"`
+}
+
+func startupNodeIdentity(cfg startupConfig) (string, string) {
+	if cfg.Node == nil {
+		return "", ""
+	}
+	var id, name string
+	if cfg.Node.ID != nil {
+		id = strings.TrimSpace(*cfg.Node.ID)
+	}
+	if cfg.Node.Name != nil {
+		name = strings.TrimSpace(*cfg.Node.Name)
+	}
+	return id, name
 }
 
 type startupLiveCompactConfig struct {

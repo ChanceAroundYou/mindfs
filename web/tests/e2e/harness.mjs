@@ -4,7 +4,7 @@
 //   · 登录要处理「输入框不是 textarea」—— 原生 value setter 会
 //     `TypeError: Illegal invocation`，必须用 CDP 的 `Input.insertText` 打到聚焦元素；
 //   · 打开会话必须带 `session=<key>&view=chat`，只给 `view=chat` 会被应用改写成
-//     `view=workspace`，于是 `[data-onboarding=message-input]` 数量为 0；
+//     `view=workspace`，于是 `[data-composer-input]` 数量为 0；
 //   · 建会话只能走 **WS 协议层**（`session.message` + `key=""`）—— 空项目页里根本没有
 //     输入框，DOM 层建不出第一个会话；
 //   · WS 握手必须带 `client_id`，缺了它服务端直接回 `client_id required`；
@@ -328,12 +328,12 @@ export async function openSession(page, key, rootId = "proj", waitMs = 8000) {
 /**
  * 从输入框发一条消息（**走 UI**，因此覆盖乐观回声那条路径）。
  *
- * 两个实测坑：`data-onboarding=message-input` 是包裹元素而不是 textarea（用原生 value setter
+ * 两个实测坑：`data-composer-input` 是包裹元素而不是 textarea（用原生 value setter
  * 会 `TypeError: Illegal invocation`）；写入必须用 CDP 的 `Input.insertText` 打到**聚焦元素**上。
  */
 export async function sendFromComposer(page, text) {
   const focused = await page.ev(`(() => {
-    const el = document.querySelector('[data-onboarding=message-input]');
+    const el = document.querySelector('[data-composer-input]');
     if (!el) return 'no-input';
     const t = el.matches('textarea,input,[contenteditable=true]')
       ? el : (el.querySelector('textarea,input,[contenteditable=true]') || el);
@@ -344,7 +344,7 @@ export async function sendFromComposer(page, text) {
   await page.send("Input.insertText", { text });
   await sleep(300);
   const clicked = await page.ev(`(() => {
-    const b = document.querySelector('[data-onboarding=send-action]');
+    const b = document.querySelector('[data-composer-send]');
     if (!b) return 'no-send';
     b.click();
     return 'clicked';

@@ -228,7 +228,6 @@ export const COMPONENT_MODULES = {
   "src/components/MainViewSwitcher.tsx": ["src/components/shell/MainViewSwitcher.tsx"],
   "src/components/RightSidebar.tsx": ["src/components/shell/RightSidebar.tsx"],
   "src/components/ErrorBoundary.tsx": ["src/components/shell/ErrorBoundary.tsx"],
-  "src/components/OnboardingTour.tsx": ["src/components/shell/OnboardingTour.tsx"],
   "src/components/Select.tsx": ["src/components/common/Select.tsx"],
   "src/components/common/Select.tsx": [
     "src/components/common/Select.tsx",

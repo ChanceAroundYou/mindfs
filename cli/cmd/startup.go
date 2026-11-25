@@ -51,9 +51,36 @@ type startupConfig struct {
 	ControlSync *startupControlSyncConfig `json:"control_sync"`
 	// Update 是自更新策略。不配置 = 只查不装（默认行为，也是唯一安全的默认值）。
 	Update *startupUpdateConfig `json:"update"`
+	// Node 是本机身份。不配置 = 主控 home/主控；边缘缺省取 control_sync.instance_id。
+	Node *startupNodeConfig `json:"node"`
 	// 根级飞书中继配置：只在 config.json，没有对应 flag。
 	FeishuRelayURL *string `json:"feishu_relay_url"`
 	FeishuNodeID   *string `json:"feishu_node_id"`
+}
+
+// startupNodeConfig 是本机在节点表与前端里的身份。
+//
+// id 参与 scope 键与本地持久化，安装后不应随手改；name 只用于展示，
+// 设置页可改，安装向导写入。两者都缺省时交给 app.resolveNodeIdentity 兜底：
+// 主控 home/主控，边缘取 control_sync.instance_id。
+type startupNodeConfig struct {
+	ID   *string `json:"id"`
+	Name *string `json:"name"`
+}
+
+// nodeIdentity 取出显式配置的身份（可能是空串，由 app 侧补缺省）。
+func nodeIdentity(cfg startupConfig) (string, string) {
+	if cfg.Node == nil {
+		return "", ""
+	}
+	var id, name string
+	if cfg.Node.ID != nil {
+		id = strings.TrimSpace(*cfg.Node.ID)
+	}
+	if cfg.Node.Name != nil {
+		name = strings.TrimSpace(*cfg.Node.Name)
+	}
+	return id, name
 }
 
 // startupControlSyncConfig 是 control_sync 段。

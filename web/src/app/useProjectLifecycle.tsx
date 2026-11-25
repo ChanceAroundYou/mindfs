@@ -9,7 +9,7 @@ import {
 import { appPath } from "../services/net/base";
 import { protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { reportError } from "../services/net/error";
-import { getActiveNode, LOCAL_NODE_ID } from "../services/net/nodeRegistry";
+import { getActiveNode, getSelfNodeId } from "../services/net/nodeRegistry";
 import { managedDirAddErrorMessage, type ManagedRootPayload } from "./appMisc";
 import { ProjectAddLifecycleOverlay } from "../components/file/ProjectAddPopover";
 import type { GitHubImportState, ProjectAddMode } from "../shared/projectAddTypes";
@@ -68,7 +68,7 @@ export function useProjectLifecycle({
   const [switchingWorktreePath, setSwitchingWorktreePath] = useState("");
   const [projectAddMode, setProjectAddMode] = useState<ProjectAddMode | null>(null);
   const [projectAddNodeId, setProjectAddNodeId] = useState<string>(() => {
-    try { const n = getActiveNode(); return n?.id || LOCAL_NODE_ID; } catch { return LOCAL_NODE_ID; }
+    try { const n = getActiveNode(); return n?.id || getSelfNodeId(); } catch { return getSelfNodeId(); }
   });
   const [githubImportState, setGitHubImportState] = useState<GitHubImportState>({
     url: "",
@@ -338,7 +338,7 @@ export function useProjectLifecycle({
         creatingRootParentPath && creatingRootParentPath.trim()
           ? `${creatingRootParentPath.replace(/[\\/]+$/, "")}/${name}`
           : name;
-      const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+      const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || getSelfNodeId();
       const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetCreateNodeId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },

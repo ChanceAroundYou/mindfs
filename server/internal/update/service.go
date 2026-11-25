@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -45,6 +46,20 @@ type Service struct {
 	// 判据的每条分支都值一次真实事故，不能只靠「读代码看着对」。
 	checkNow func(ctx context.Context)
 	trigger  func(ctx context.Context) error
+
+	// exitProcess / exitDelay 同样是测试接缝：安装包更新会把进程交给安装包，
+	// 真退出前留一点时间把状态和响应发出去。测试里换成一个 channel，
+	// 否则 os.Exit 会把整个测试进程带走。
+	exitProcess func(int)
+	exitDelay   time.Duration
+}
+
+func (s *Service) exit(code int) {
+	if s.exitProcess != nil {
+		s.exitProcess(code)
+		return
+	}
+	os.Exit(code)
 }
 
 func (s *Service) installLayout() (installLayout, error) {

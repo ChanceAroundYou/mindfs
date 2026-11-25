@@ -17,7 +17,6 @@ export function AgentSelector(props: AgentSelectorProps) {
   const {
     compact = false,
     showChevron = false,
-    onboardingId,
     ...rest
   } = props;
 
@@ -80,7 +79,7 @@ export function AgentSelector(props: AgentSelectorProps) {
   } = useAgentSelector(rest);
 
   return (
-    <div ref={dropdownRef} data-onboarding={onboardingId} style={{ position: "relative" }}>
+    <div ref={dropdownRef} style={{ position: "relative" }}>
       <AgentSelectorTrigger
         agent={agent}
         compact={compact}

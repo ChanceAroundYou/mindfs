@@ -103,7 +103,6 @@ export function SessionHeaderMenu({
       <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button
           type="button"
-          data-onboarding="session-menu"
           onClick={() => setMenuOpen((open) => !open)}
           aria-label={t("sessionList.menu")}
           title={t("sessionList.menu")}

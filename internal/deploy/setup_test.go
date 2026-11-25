@@ -341,3 +341,71 @@ func TestApplySetupConfigRejectsNonObjectSections(t *testing.T) {
 		}
 	}
 }
+
+// 自动更新任务和服​​务任务共用 S4U/编码/转义这些坑，但语义相反：
+// 它必须**没有触发器**、只跑一次、失败了不重试。每一条都对应一次真实故障形态。
+func TestBuildUpdateTaskXML(t *testing.T) {
+	xml, err := BuildUpdateTaskXML(UpdateTaskOptions{
+		UserSID:   "S-1-5-21-1-2-3-1001",
+		SetupPath: `C:\Users\u\AppData\Local\Programs\mindfs\update\mindfs-setup.exe`,
+	})
+	if err != nil {
+		t.Fatalf("xml: %v", err)
+	}
+	for _, want := range []string{
+		`<URI>\mindfs-update</URI>`,
+		`<UserId>S-1-5-21-1-2-3-1001</UserId>`,
+		`<LogonType>S4U</LogonType>`,
+		`<RunLevel>LeastPrivilege</RunLevel>`,
+		`<ExecutionTimeLimit>PT1H</ExecutionTimeLimit>`,
+		`<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`,
+		`<Triggers />`,
+		`<Command>C:\Users\u\AppData\Local\Programs\mindfs\update\mindfs-setup.exe</Command>`,
+		`<Arguments>/S</Arguments>`,
+	} {
+		if !strings.Contains(xml, want) {
+			t.Fatalf("update task XML missing %q\n%s", want, xml)
+		}
+	}
+	// 有触发器就意味着每次开机都重跑安装包：停服务、拷文件、再起服务，一天一次。
+	for _, forbidden := range []string{"BootTrigger", "LogonTrigger", "<CalendarTrigger", "RestartOnFailure"} {
+		if strings.Contains(xml, forbidden) {
+			t.Fatalf("update task XML must not contain %q\n%s", forbidden, xml)
+		}
+	}
+	if strings.Contains(xml, "\t") {
+		t.Fatal("task XML uses tabs; schtasks' parser is happier with plain spaces")
+	}
+}
+
+func TestBuildUpdateTaskXMLRequiresInputs(t *testing.T) {
+	for _, c := range []UpdateTaskOptions{
+		{UserSID: "", SetupPath: `C:\u\setup.exe`},
+		{UserSID: "S-1", SetupPath: "  "},
+	} {
+		if _, err := BuildUpdateTaskXML(c); err == nil {
+			t.Fatalf("BuildUpdateTaskXML(%+v) accepted empty input", c)
+		}
+	}
+	xml, err := BuildUpdateTaskXML(UpdateTaskOptions{UserSID: "S-1", SetupPath: `C:\a&b\setup.exe`})
+	if err != nil {
+		t.Fatalf("xml: %v", err)
+	}
+	if !strings.Contains(xml, `C:\a&amp;b\setup.exe`) {
+		t.Fatalf("path is not escaped:\n%s", xml)
+	}
+}
+
+func TestSetupUpdateStagingPathIsUnderPrefix(t *testing.T) {
+	prefix := filepath.Join("Users", "u", "AppData", "Local", "Programs", "mindfs")
+	got := SetupUpdateStagingPath(prefix)
+	want := filepath.Join(prefix, "update", "mindfs-setup.exe")
+	if got != want {
+		t.Fatalf("staging path = %q, want %q", got, want)
+	}
+	// 必须在安装前缀里，而不是 %LOCALAPPDATA%\mindfs（用户数据目录：
+	// 卸载勾了「删除数据」会连带清掉，而安装包属于程序）。
+	if rel, err := filepath.Rel(prefix, got); err != nil || strings.HasPrefix(rel, "..") {
+		t.Fatalf("staging path %q is not under the install prefix %q", got, prefix)
+	}
+}

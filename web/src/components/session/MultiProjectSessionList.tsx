@@ -85,7 +85,6 @@ export function MultiProjectSessionList({
   return (
     <div style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", background: "transparent" }}>
       <ViewHeader
-        data-onboarding="session-actions"
         padding="0 10px 0 2px"
         showToggles={false}
         style={{ display: hideHeader ? "none" : "flex", justifyContent: "space-between" }}
