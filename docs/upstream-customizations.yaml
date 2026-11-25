@@ -16507,3 +16507,43 @@ groups:
       - 'server/internal/api/ws_turn_tracker.go:func (t *turnUpdateTracker) IdleFor() time.Duration {'
       - 'server/internal/api/ws_session_message.go:go watchSessionTurnIdle(msgCtx, cancel, updateTracker,'
       - 'server/internal/api/ws_session_turn_watchdog_test.go:func TestSessionTurnWatchdogCancelsStalledTurn(t *testing.T) {'
+  # ── 任务详情刷新必须保住跨节点归属 ────────────────────────────────────
+  - id: G-RT
+    title: "任务详情合并保住 _nodeId：刷新回来的裸详情不再把跨节点归属抹掉"
+    kind: fix
+    symptom: |
+      2026-11-25 用户报「pc-wsl 的 CMAI 中的任务出现 对话加载失败: root not found，
+      重试仍失败」。请求链：工作台按来源节点（pc-wsl）打开了任务详情，第一次会话
+      请求打到 pc-wsl（200）；紧接着面板自己的按任务号重拉（useTaskDetailPanel 的
+      mount/refresh effect）取回一份**不带 `_nodeId`** 的详情，`onMoved` 直接交给
+      `applyTaskDetails` 覆盖在册记录 —— 标没了；面板 key 含 `_nodeId`，于是重挂，
+      `nodeId` 变成 undefined，`appURL` 回落到 active node（本机）。本机没有 CMAI
+      这个 root，`GET /api/tasks/{id}/activities?root_id=CMAI` 回 500
+      `root not found`（completion 同样 500、engine/router-decisions 404）。
+      重试走同一条无节点的请求，所以永远失败；详情缓存还被写成
+      `local::CMAI::task_...`（`detail.task._nodeId` 为 null），刷新后仍然没有归属。
+    why: |
+      必须保留：服务端不返 `_nodeId`（只有取数方知道数据来自哪台机器），前端把
+      「数据自带 > 已在册」作为归属来源。工作台打开详情时会按 `item.nodeId` 打标，
+      但面板重拉 / WS 局部更新 / 任务动作回包都是裸详情；只要合并入口不补标，
+      任何跨节点任务在第一次刷新后都会失去归属，请求回落到 active node。任务 id
+      全局唯一（不存在同名任务分属两台），沿用已在册的 `_nodeId` 是安全的。
+    boundary: |
+      只在 `applyTaskDetails` 合并前补标，且规则限定为「入参自带 `_nodeId` 优先，
+      缺失时沿用同一 taskId 已在册的那份」；不改服务端契约、不改节点解析
+      （`getNodeIdForRoot` / `resolveProjectNodeId`）、不改同名项目（rootId 相同）
+      的既有反查语义，也不改缓存读写键格式 —— 补标后 detailNid / 节点隔离 /
+      缓存前缀自然拿到正确节点。
+    files:
+      - web/src/app/useTaskBoard.ts
+      - web/src/shared/taskNodeTag.ts
+      - web/tests/task-node-tag-carry.test.mjs
+    tests:
+      # 五条：裸详情继承在册归属；自带节点优先；两处都没有时不造节点（空白不算）；
+      # 不变异入参；合并入口先补标再算 detailNid / 节点隔离（源码合同）。
+      - web/tests/task-node-tag-carry.test.mjs
+    anchors:
+      - 'web/src/shared/taskNodeTag.ts:export function carryTaskNodeTag<D extends TaskNodeTaggedDetail>('
+      - 'web/src/app/useTaskBoard.ts:import { carryTaskNodeTag } from "../shared/taskNodeTag";'
+      - 'web/src/app/useTaskBoard.ts:carryTaskNodeTag(detail, detail?.task?.id ? taskDetailsByIdRef.current[String(detail.task.id)] : undefined),'
+      - 'web/tests/task-node-tag-carry.test.mjs:test("裸详情继承在册归属：服务端不返 _nodeId，刷新不能把标抹掉", () => {'
