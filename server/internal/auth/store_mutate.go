@@ -31,6 +31,14 @@ func (s *Store) SetPrimary(id string) error {
 	if s.users[idx].Role != RoleAdmin || s.users[idx].Disabled {
 		return errors.New("主账户必须是一个启用中的管理员")
 	}
+	// 已经是主账户就什么都不做。
+	//
+	// 同步侧每次 tick 都会把整份账户副本重放一遍（见 controlsync.Runtime），
+	// 不判等的话这台机器每拍都重写一次 users.json —— 文件 mtime 永远在变，
+	// 备份与「谁改过账户表」的判断全都失效。
+	if s.primaryID == s.users[idx].ID {
+		return nil
+	}
 	if err := writeUsers(s.path, s.users, s.users[idx].ID); err != nil {
 		return err
 	}

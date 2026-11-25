@@ -1,0 +1,613 @@
+package controlsync
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+// TunnelClient 是边控端那一半：主动拨向主控，把自己的 HTTP 服务挂上去。
+//
+// 它由两部分组成：
+//
+//   - 一条**控制通道**（长连接）：注册、心跳、收主控的指令（踢人 / 补通道）；
+//   - 若干**数据通道**：每拨一条，主控就用它服务一次请求；用完了再拨。
+//
+// 全部由边控端主动拨出，所以 NAT / 防火墙后面也能用 —— 这正是这个设计存在的
+// 理由：办公室里的机器没有可暴露的域名和端口。
+//
+// 数据通道接进来的请求由一个**一次性 listener** 喂给本机原来那个 http.Handler。
+// 于是 /api/*、/ws、上传下载、WS 会话流全都不用改，边控端就是把自己「原样」
+// 挂到了主控的路径下面。
+type TunnelClient struct {
+	opts    TunnelOptions
+	handler http.Handler
+
+	mu      sync.Mutex
+	running bool
+	stop    context.CancelFunc
+	wg      sync.WaitGroup
+	status  TunnelStatus
+}
+
+// TunnelOptions 是边控端的隧道参数。
+type TunnelOptions struct {
+	// PrimaryURL 是主控基址（含部署前缀），例如 https://home.example.com/mindfs。
+	PrimaryURL string
+	// Token 与同步通道共用。隧道搬的是同一台机器的完整 HTTP 面，
+	// 另起一套凭据只会多一个要被保护的东西。
+	Token string
+	// InstanceID 是边控端自己的标识（主控按它管连接）。
+	InstanceID string
+	// Name 是期望的对外名字（候选名）。主控可能改它，最终值回写在 TunnelStatus.Name。
+	Name string
+	// CAFile 可选：自签 / 内网 CA。
+	CAFile string
+	// IdleChannels 是预热的空闲数据通道数。
+	IdleChannels int
+	// MaxChannels 是允许同时存在的数据通道上限（含正在服务的）。
+	MaxChannels int
+	// ReconnectMin / ReconnectMax 是指数退避的上下限。
+	ReconnectMin time.Duration
+	ReconnectMax time.Duration
+	// HeartbeatInterval 是控制通道心跳间隔。
+	HeartbeatInterval time.Duration
+	// OnError 只在状态真的变了时报告，避免心跳刷屏。
+	OnError func(error)
+}
+
+// TunnelStatus 是隧道的当前观测值，供 /api/control-sync/status 与诊断用。
+type TunnelStatus struct {
+	Running     bool   `json:"running"`
+	Name        string `json:"name"`
+	Connected   bool   `json:"connected"`
+	IdleChans   int    `json:"idle_channels"`
+	LastErrorAt string `json:"last_error_at,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
+}
+
+const (
+	defaultTunnelIdleChannels = 8
+	defaultTunnelMaxChannels  = 32
+	defaultTunnelReconnectMin = time.Second
+	defaultTunnelReconnectMax = 30 * time.Second
+	defaultTunnelHeartbeat    = 30 * time.Second
+)
+
+// NewTunnelClient 校验配置并构造。handler 就是本机原来的那个 HTTP handler。
+func NewTunnelClient(opts TunnelOptions, handler http.Handler) (*TunnelClient, error) {
+	raw := strings.TrimSpace(opts.PrimaryURL)
+	if raw == "" {
+		return nil, errors.New("controlsync: tunnel primary_url required")
+	}
+	base, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("controlsync: invalid tunnel primary_url: %w", err)
+	}
+	if base.Scheme != "https" {
+		// 与同步通道同一条规矩：隧道跑的是整台机器的 API（含口令 hash 能到达的
+		// 那些端点），明文等于把它摊在网络上。
+		return nil, fmt.Errorf("controlsync: tunnel primary_url must be https, got %q", base.Scheme)
+	}
+	if base.Host == "" {
+		return nil, errors.New("controlsync: tunnel primary_url has no host")
+	}
+	if strings.TrimSpace(opts.Token) == "" {
+		return nil, errors.New("controlsync: tunnel token required")
+	}
+	if strings.TrimSpace(opts.InstanceID) == "" {
+		return nil, errors.New("controlsync: tunnel instance id required")
+	}
+	if handler == nil {
+		return nil, errors.New("controlsync: tunnel handler required")
+	}
+	if opts.IdleChannels <= 0 {
+		opts.IdleChannels = defaultTunnelIdleChannels
+	}
+	if opts.MaxChannels < opts.IdleChannels {
+		opts.MaxChannels = defaultTunnelMaxChannels
+	}
+	if opts.ReconnectMin <= 0 {
+		opts.ReconnectMin = defaultTunnelReconnectMin
+	}
+	if opts.ReconnectMax < opts.ReconnectMin {
+		opts.ReconnectMax = defaultTunnelReconnectMax
+	}
+	if opts.HeartbeatInterval <= 0 {
+		opts.HeartbeatInterval = defaultTunnelHeartbeat
+	}
+	opts.PrimaryURL = raw
+	return &TunnelClient{opts: opts, handler: handler}, nil
+}
+
+// Status 返回当前观测值。
+func (c *TunnelClient) Status() TunnelStatus {
+	if c == nil {
+		return TunnelStatus{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.status
+}
+
+// Run 跑到 ctx 结束。控制通道断开后按退避重连，永不因单次失败退出。
+func (c *TunnelClient) Run(ctx context.Context) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		return
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	c.stop = cancel
+	c.running = true
+	c.status.Running = true
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		c.running = false
+		c.status.Running = false
+		c.status.Connected = false
+		c.mu.Unlock()
+		cancel()
+		c.wg.Wait()
+	}()
+
+	backoff := c.opts.ReconnectMin
+	for {
+		if runCtx.Err() != nil {
+			return
+		}
+		err := c.runOnce(runCtx)
+		if runCtx.Err() != nil {
+			return
+		}
+		c.report(err)
+		// 成功连上过就重置退避：一次正常的会话结束后不该等满 30 秒。
+		if err == nil {
+			backoff = c.opts.ReconnectMin
+		}
+		select {
+		case <-runCtx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < c.opts.ReconnectMax {
+			backoff *= 2
+			if backoff > c.opts.ReconnectMax {
+				backoff = c.opts.ReconnectMax
+			}
+		}
+	}
+}
+
+// runOnce 建一条控制通道并保持到它断开。返回 nil 表示对端正常关闭。
+func (c *TunnelClient) runOnce(ctx context.Context) error {
+	conn, name, err := c.dialTunnel(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	c.mu.Lock()
+	c.status.Name = name
+	c.status.Connected = true
+	c.mu.Unlock()
+	relayLogf("tunnel connected name=%s primary=%s", name, c.opts.PrimaryURL)
+
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
+
+	// 先补满预热通道，再进心跳循环。
+	c.runChannelPool(sessionCtx)
+
+	errCh := make(chan error, 2)
+	go func() { errCh <- c.readControl(sessionCtx, conn) }()
+	go func() { errCh <- c.heartbeat(sessionCtx, conn) }()
+
+	err = <-errCh
+	sessionCancel()
+	c.mu.Lock()
+	c.status.Connected = false
+	c.mu.Unlock()
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	return err
+}
+
+// dialTunnel 用与同步通道相同的签名方式拨控制通道。
+//
+// 签名覆盖 timestamp + nonce + 查询串（GET 没有 body）。这里复用 VerifySyncRequest
+// 的实现：主控那边对隧道端点和 push 端点跑的是同一套校验，不新增第二套凭据。
+func (c *TunnelClient) dialTunnel(ctx context.Context) (*websocket.Conn, string, error) {
+	base, err := url.Parse(c.opts.PrimaryURL)
+	if err != nil {
+		return nil, "", err
+	}
+	target := *base
+	toWSScheme(&target)
+	target.Path = joinSyncPath(base.Path, "/api/control-sync/relay/tunnel")
+	q := target.Query()
+	q.Set("name", c.opts.Name)
+	q.Set("instance_id", c.opts.InstanceID)
+	target.RawQuery = q.Encode()
+
+	header := http.Header{}
+	req := &http.Request{Method: http.MethodGet, URL: &target, Header: header}
+	if err := SignSyncRequest(req, c.opts.Token, c.opts.InstanceID, []byte(target.RawQuery), time.Now()); err != nil {
+		return nil, "", err
+	}
+	dialer, err := c.websocketDialer(base)
+	if err != nil {
+		return nil, "", err
+	}
+	conn, resp, err := dialer.DialContext(ctx, target.String(), header)
+	if err != nil {
+		if resp != nil {
+			return nil, "", fmt.Errorf("controlsync: tunnel dial: %w (status %d)", err, resp.StatusCode)
+		}
+		return nil, "", fmt.Errorf("controlsync: tunnel dial: %w", err)
+	}
+	// 名字由主控分配并在握手响应头里回传：其他设备同步到的节点地址就带着它，
+	// 所以边控端必须用主控给的这一份，不能自己再算一遍。
+	name := strings.TrimSpace(resp.Header.Get("X-MindFS-Relay-Name"))
+	if name == "" {
+		name = SlugRelayName(c.opts.Name)
+	}
+	return conn, name, nil
+}
+
+// toWSScheme 把 HTTP 基址换成 gorilla 认的 WS scheme。
+//
+// primary_url 是 https://（HTTP 基址）。WS 方言要 wss://，scheme 不换，
+// Dial 直接报「malformed ws or wss URL」—— 这条路径只在真连时才走到，
+// 单看 config 校验（只查 https）发现不了，控制通道与数据通道都一样。
+func toWSScheme(u *url.URL) {
+	if u == nil {
+		return
+	}
+	switch u.Scheme {
+	case "https":
+		u.Scheme = "wss"
+	case "http":
+		u.Scheme = "ws"
+	}
+}
+
+// websocketDialer 用与同步通道一致的 TLS 信任链：系统根 + 可选 ca_file，
+// 没有 insecure 开关。
+func (c *TunnelClient) websocketDialer(base *url.URL) (*websocket.Dialer, error) {
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if strings.TrimSpace(c.opts.CAFile) != "" {
+		pool := x509.NewCertPool()
+		pem, err := os.ReadFile(c.opts.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("controlsync: ca_file %q has no certificates", c.opts.CAFile)
+		}
+		tlsCfg.RootCAs = pool
+	}
+	return &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 15 * time.Second,
+		TLSClientConfig:  tlsCfg,
+		// 大数据通道与 WS 会话流都跑在这上面，帧上限不能卡住一次大块写入。
+		ReadBufferSize:  32 * 1024,
+		WriteBufferSize: 32 * 1024,
+	}, nil
+}
+
+// readControl 处理控制通道上的上行帧（心跳回执、踢人、补充通道指令）。
+func (c *TunnelClient) readControl(ctx context.Context, conn *websocket.Conn) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			return err
+		}
+		msg := parseControlFrame(data)
+		switch msg.Type {
+		case controlFrameRevoked:
+			// 被踢：立刻停掉所有通道。返回错误让退避循环重连时会拿到 403。
+			return ErrEdgeRevoked
+		case controlFramePing:
+			if err := writeControlFrame(conn, controlFrame{Type: controlFramePong}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// heartbeat 定时发 ping，写失败即断。
+func (c *TunnelClient) heartbeat(ctx context.Context, conn *websocket.Conn) error {
+	ticker := time.NewTicker(c.opts.HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := writeControlFrame(conn, controlFrame{Type: controlFramePing}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// runChannelPool 维持一组数据通道。每条通道服务完一次请求就重拨一条。
+//
+// 「一条通道只服务一次请求」是 RelayHub 的硬约束（数据通道上没有多路复用，
+// 只有这样才能原生支持 WS 升级）。所以「拨若干条、用完就结束」的写法会让池子
+// 被逐条吃空：第 IdleChannels+1 个请求起，主控永远借不到通道，表现是永久的
+// 502/503 —— 单次请求的测试完全看不到这一点（第一次总是成功）。
+//
+// 并发上限是 min(IdleChannels, MaxChannels)：一条通道同一时刻只服务一个请求。
+// 默认 8 条，高于浏览器对同一 origin 的并发上限（6）；高出部分不预扩：
+// 主控没有向边控端要通道的指令通道，凭猜测扩容只会白养连接。
+func (c *TunnelClient) runChannelPool(ctx context.Context) {
+	workers := channelWorkers(c.opts.IdleChannels, c.opts.MaxChannels)
+	for i := 0; i < workers; i++ {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			backoff := c.opts.ReconnectMin
+			for ctx.Err() == nil {
+				if err := c.serveOneChannel(ctx); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					c.report(err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(backoff):
+					}
+					backoff = nextChannelBackoff(backoff, c.opts.ReconnectMin, channelBackoffMax)
+					continue
+				}
+				backoff = c.opts.ReconnectMin
+			}
+		}()
+	}
+}
+
+// channelBackoffMax 是数据通道重拨退避的上限。
+//
+// 它比控制通道的 ReconnectMax（30s）小得多，因为两者的代价不同：控制通道断了整条
+// 隧道都不存在，多等一会儿无所谓；数据通道是每次请求都要用的热路径，池子缺一条就
+// 少一份并发，退避太长的直接表现是「隧道明明在线，头几个请求却 503」。
+const channelBackoffMax = 5 * time.Second
+
+// nextChannelBackoff 返回下一次重拨前的等待：从 min 起翻倍，封顶 max。
+//
+// 必须指数退避而不是固定间隔：失败里混着「主控池子满了」（429）这种完全正常的
+// 状态——主控已经有 IdleChannels 条通道时，多拨的那条一定会被拒。固定间隔会让
+// 每条 worker 每秒都去撞一次门；指数退避把这种情况下的拨号速率压到可以忽略。
+func nextChannelBackoff(cur, min, max time.Duration) time.Duration {
+	if cur <= 0 {
+		cur = min
+	}
+	next := cur * 2
+	if next < min {
+		next = min
+	}
+	if max > 0 && next > max {
+		next = max
+	}
+	return next
+}
+
+// channelWorkers 决定并发服务多少条数据通道：min(IdleChannels, MaxChannels)。
+// MaxChannels 是「同时存在的通道上限（含正在服务的）」，拨多了就绕过了它。
+func channelWorkers(idle, max int) int {
+	if idle <= 0 {
+		return 1
+	}
+	if max > 0 && max < idle {
+		return max
+	}
+	return idle
+}
+
+// serveOneChannel 拨一条数据通道，交给主控，然后服务到这条通道结束。
+//
+// 返回 nil 表示这条通道跑完了自己的那一份（服务过请求，或被主控正常收回）；
+// 返回错误表示这次根本没跑起来，调用方应当退避后再试。
+func (c *TunnelClient) serveOneChannel(ctx context.Context) error {
+	conn, err := c.dialChannel(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// 边控端这边把隧道回的字节当成一次 HTTP 连接的输入：一次性 listener 交出
+	// 这一条连接，http.Server 用本机原来的 handler 服务它，服务完就退出。
+	//
+	// 必须等这条连接真的被服务完（server 读完响应后关掉它）才返回：Serve 只负责
+	// 把连接交给一个 goroutine，它自己立刻就因为「没有第二条连接」返回了。
+	// 早返回会让 defer conn.Close() 在响应还没写完时掐断隧道。
+	//
+	// **这里刻意不设 ReadHeaderTimeout。** 这条连接的正常状态就是「空闲地摆在主控
+	// 的池子里等请求」，可能等上几分钟；按「读完请求头」的超时去掐它，等于每 30 秒
+	// 杀掉一条健康通道。主控池子里于是留下死连接（它还以为是活的），边控端则立刻
+	// 重拨 —— 两边叠加就是 2026-11-25 实测的每秒 460→833 次握手风暴，以及
+	// 「隧道在线但每个请求都 502」。通道的寿命只有两个主人：主控借出去（用完关掉）
+	// 和控制通道断开（sessionCtx 取消 → srv.Close）。
+	var served atomic.Bool
+	wrapped := &closeSignalConn{Conn: NewWSConn(conn), done: make(chan struct{})}
+	srv := newChannelServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served.Store(true)
+		c.handler.ServeHTTP(w, r)
+	}))
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = srv.Close()
+		case <-wrapped.done:
+		}
+	}()
+	// Serve 只在一件事上返回错误：第二条连接取不到（一次性 listener 的正常结局）。
+	_ = srv.Serve(&oneShotListener{conn: wrapped})
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-wrapped.done:
+	}
+	if !served.Load() {
+		// 主控建好又立刻收回：要么 HasRoom/Attach 撞了窗口，要么对端压根没打算用。
+		// 一次请求都没派过来还无条件立刻重拨，就是热循环的另一半。
+		return errChannelUnused
+	}
+	return nil
+}
+
+// errChannelUnused 表示一条数据通道从头到尾没服务过任何请求。
+var errChannelUnused = errors.New("controlsync: relay channel closed before serving a request")
+
+// newChannelServer 是数据通道上那个 http.Server 的唯一构造点。
+//
+// 三个超时**全部为零**，每一条都是有意为之：
+//   - ReadHeaderTimeout：通道的正常状态是空闲等待，不是「马上就有请求」。
+//   - ReadTimeout / WriteTimeout：一次请求可能跑很久（大文件下载、WS 会话流），
+//     它们的寿命由请求本身与客户端决定。
+func newChannelServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler}
+}
+
+func (c *TunnelClient) dialChannel(ctx context.Context) (*websocket.Conn, error) {
+	base, err := url.Parse(c.opts.PrimaryURL)
+	if err != nil {
+		return nil, err
+	}
+	target := *base
+	toWSScheme(&target)
+	target.Path = joinSyncPath(base.Path, "/api/control-sync/relay/channel")
+	q := target.Query()
+	q.Set("instance_id", c.opts.InstanceID)
+	target.RawQuery = q.Encode()
+
+	header := http.Header{}
+	req := &http.Request{Method: http.MethodGet, URL: &target, Header: header}
+	if err := SignSyncRequest(req, c.opts.Token, c.opts.InstanceID, []byte(target.RawQuery), time.Now()); err != nil {
+		return nil, err
+	}
+	dialer, err := c.websocketDialer(base)
+	if err != nil {
+		return nil, err
+	}
+	conn, resp, err := dialer.DialContext(ctx, target.String(), header)
+	if err != nil {
+		// 状态码是关键证据：429 是「池子满了」（正常，退避即可），403/409 是
+		// 「这台机器不该在这里」（被踢 / 没有控制通道）。只报 bad handshake 的话
+		// 日志里两者长得一模一样。
+		if resp != nil {
+			return nil, fmt.Errorf("controlsync: relay channel dial: %w (status %d)", err, resp.StatusCode)
+		}
+		return nil, fmt.Errorf("controlsync: relay channel dial: %w", err)
+	}
+	return conn, nil
+}
+
+func (c *TunnelClient) report(err error) {
+	if err == nil || c.opts.OnError == nil {
+		return
+	}
+	c.mu.Lock()
+	c.status.LastError = err.Error()
+	c.status.LastErrorAt = time.Now().UTC().Format(time.RFC3339)
+	c.mu.Unlock()
+	c.opts.OnError(err)
+}
+
+// oneShotListener 只交出一条连接，之后 Serve 立刻返回。
+//
+// 这是把「一条现成连接」接进 net/http 的最小代价：不需要伪造一整个 TCP 监听。
+//
+// **第二次 Accept 必须直接返回错误，不能阻塞。** serveOneChannel 依赖
+// srv.Serve 在请求处理完之后返回，才能去拨下一条通道；如果这里挂在
+// `<-l.done` 上等 Close，而 Close 只由 Serve 返回后才触发（onceCloseListener
+// 的 defer），两边互等 → 这条通道永远不归还、也永远不补新的，
+// 隧道在 IdleChannels 次请求之后永久失效（表现为 502，且没有任何日志）。
+type oneShotListener struct {
+	conn net.Conn
+	once sync.Once
+}
+
+func (l *oneShotListener) Accept() (net.Conn, error) {
+	var out net.Conn
+	taken := false
+	l.once.Do(func() {
+		out = l.conn
+		taken = true
+	})
+	if taken {
+		return out, nil
+	}
+	return nil, net.ErrClosed
+}
+
+func (l *oneShotListener) Close() error   { return nil }
+func (l *oneShotListener) Addr() net.Addr { return tunnelAddr{} }
+
+// closeSignalConn 在 net.Conn 被关闭时关掉 done，用来等「这条通道上的请求真的
+// 结束了」。Serve 把连接交出去就返回了，不提供这个信号。
+type closeSignalConn struct {
+	net.Conn
+	once sync.Once
+	done chan struct{}
+}
+
+func (c *closeSignalConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { close(c.done) })
+	return err
+}
+
+type tunnelAddr struct{}
+
+func (tunnelAddr) Network() string { return "relay" }
+func (tunnelAddr) String() string  { return "relay" }
+
+// 控制帧：只有 type，没有载荷。真正的分配结果走握手响应头，避免两套真相。
+const (
+	controlFramePing    = "ping"
+	controlFramePong    = "pong"
+	controlFrameRevoked = "revoked"
+)
+
+type controlFrame struct {
+	Type string `json:"type"`
+}
+
+func parseControlFrame(data []byte) controlFrame {
+	var f controlFrame
+	_ = json.Unmarshal(data, &f)
+	return f
+}
+
+func writeControlFrame(conn *websocket.Conn, f controlFrame) error {
+	return conn.WriteJSON(f)
+}

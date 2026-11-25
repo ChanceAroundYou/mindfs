@@ -35,6 +35,11 @@ export function appendQuery(url: string, params?: URLSearchParams | string): str
  * **不要**在这里放宽成「本机节点表里的地址也算本机」：那张表里的远端条目
  * 恰恰指向**别的机器**（实测 PC 端节点表里就有对方那台）。按表放宽会把本机账户 id
  * 发给没有该账户的机器，对方 404、项目全空。
+ *
+ * **`/relay/<name>/` 例外**：那是主控替另一台机器转发的路径，同源只是表象 ——
+ * 请求最终落到那台机器自己的 HTTP 面上，账户表是它自己那份。判成本机会把本机
+ * 账户 id 发过去，对方查无此人，页面全空。与上面那条理由相同，只是这里的
+ * 「别的机器」藏在主控的路径前缀后面。
  */
 export function isSameServerAsPage(url: string): boolean {
   if (typeof window === "undefined") {
@@ -43,6 +48,9 @@ export function isSameServerAsPage(url: string): boolean {
   try {
     const target = new URL(url, window.location.href);
     const page = new URL(window.location.href);
+    if (isRelayPath(target.pathname)) {
+      return false;
+    }
     const normalize = (protocol: string) =>
       protocol === "ws:" ? "http:" : protocol === "wss:" ? "https:" : protocol;
     return (
@@ -52,6 +60,24 @@ export function isSameServerAsPage(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 路径里是否带 relay 段（`/relay/<name>/...`，可带部署前缀）。
+ *
+ * 名字形状按服务端的 ValidRelayName 卡（小写字母数字与连字符、不超过 32 位），
+ * 免得把文件路径里恰好叫 relay 的目录也认成中继入口。认错了也只是改用用户名
+ * 传账户（服务端 id 与用户名都认），不会把请求打歪。
+ */
+function isRelayPath(pathname: string): boolean {
+  const segments = (pathname || "").split("/").filter(Boolean);
+  // 只认部署前缀之后的第一段：那正是服务端注册 `/relay/` 的位置。
+  // 往深处找会把文件路径里叫 relay 的目录也算进来。
+  const index = segments[0] === "relay" ? 0 : segments[1] === "relay" ? 1 : -1;
+  if (index < 0 || index + 1 >= segments.length) {
+    return false;
+  }
+  return /^[a-z0-9][a-z0-9-]{0,31}$/.test(segments[index + 1]);
 }
 
 /**

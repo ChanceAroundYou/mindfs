@@ -228,6 +228,14 @@ func (h *HTTPHandler) Routes() http.Handler {
 			r.Post("/api/control-sync/edges/{id}/revoke", h.requireSyncToken(h.handleControlSyncEdgeRevoke))
 			r.Post("/api/control-sync/edges/{id}/restore", h.requireSyncToken(h.handleControlSyncEdgeRestore))
 		}
+		// 边控端隧道：控制通道与数据通道都由边控端主动拨出。
+		//
+		// 不套 requireSyncToken —— 那层是按 body 验签的，而这两条是 GET，
+		// 签名覆盖的是规范化查询串（见 verifyRelaySignature）。校验在 handler 里。
+		if h.ControlSyncRelay != nil {
+			r.Get("/api/control-sync/relay/tunnel", h.handleRelayTunnel)
+			r.Get("/api/control-sync/relay/channel", h.handleRelayChannel)
+		}
 	}
 	if h.ControlSyncConflicts != nil {
 		r.Get("/api/control-sync/conflicts", h.handleControlSyncConflicts)
