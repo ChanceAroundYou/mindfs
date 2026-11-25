@@ -337,7 +337,6 @@ func BuildUpdateTaskXML(opt UpdateTaskOptions) (string, error) {
 		`    <Hidden>true</Hidden>`,
 		`    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`,
 		`    <StartWhenAvailable>false</StartWhenAvailable>`,
-		`    <AllowStartOnDemand>true</AllowStartOnDemand>`,
 		`    <IdleSettings>`,
 		`      <StopOnIdleEnd>false</StopOnIdleEnd>`,
 		`      <RestartOnIdle>false</RestartOnIdle>`,
