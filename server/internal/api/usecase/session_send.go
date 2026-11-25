@@ -7,6 +7,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	agenttypes "mindfs/server/internal/agent/types"
@@ -167,7 +168,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		IncludeReplyTipsInUserMessage: includeReplyTipsInUserMessage,
 		LinesBeforeThisTurn:           &linesBeforeThisTurn,
 	})
-	var responseText string
+	turnState := &turnStreamState{}
+	// tail 在首轮落盘之后安装：它把这之后到达的续跑更新追加进同一轮的块流。
+	// 用 atomic.Pointer 是因为写入方是 SendMessage 线程、读取方是 OnUpdate 回调线程。
+	var tail atomic.Pointer[turnTailWriter]
 	provisional := newProvisionalStreamWriter(manager, current.Key, userExchangeSeq, turnID)
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
@@ -178,7 +182,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 同一轮时只能靠内容认领 —— 而导入器会把相邻同角色条目合并，内容必然不同
 	// （实测 2026-10-07 某 live-owned 会话 Full 同步写出 9 对重复轮次）。
 	var turnAgentMessageID string
-	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	defer manager.ClearPendingExchangeAux(context.Background(), current.Key)
 	var thoughtBuffer strings.Builder
 	currentThoughtID := ""
@@ -192,13 +195,12 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		thoughtID := currentThoughtID
 		thoughtBuffer.Reset()
 		currentThoughtID = ""
-		auxBuffer = append(auxBuffer, session.ExchangeAux{
-			Line:      currentAssistantLine(responseText),
+		turnState.addAux(session.ExchangeAux{
+			Line:      turnState.assistantLine(),
 			Thought:   thought,
 			ThoughtID: thoughtID,
 		})
 	}
-	lastResponseUpdateType := ""
 	claudeSubagents := newClaudeSubagentRouter(subagentSessionInput{
 		Ctx:                    turnCtx,
 		RootID:                 in.RootID,
@@ -225,13 +227,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		learnedBinding := false
 		runtime.OnUpdate(func(update agenttypes.Event) {
 			// 回合边界之后 CLI 还会在这条流上继续输出（后台任务结果回注，origin.kind=
-			// task-notification，实测能再跑一整段循环）。SendMessage 返回之后实时落盘
-			// 已经结束，那些行没人写库 —— 这里只留一个「该补录」的标记，真正补录走
-			// 下一次同步（recoverLiveContinuationTail），免得在事件回调里读转录。
-			// 判据用「这一轮还活着吗」：回合期间恒为 true，因此不会误标正常回合。
-			if !SessionTurnActive(in.RootID, in.Key) {
-				markSessionContinuationTail(in.RootID, in.Key)
-			}
+			// task-notification，实测能再跑一整段循环）。旧做法只标记「该补录」，
+			// 让下一次同步从转录导入 —— 导入的碎片没有工具卡，还会变成一堆独立气泡
+			// （实测 seq 50–73）。现在只要首轮已经落盘，就由 tail writer 实时追加到
+			// 本轮块流；tail 还没装（首轮落盘失败/走的是别的收尾路径）才退回标记。
 			if !learnedBinding {
 				if persistLearnedAgentSessionID(context.Background(), manager, current, in.Agent, runtime) {
 					learnedBinding = true
@@ -291,8 +290,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 					})
 					if shouldPersistToolCallAux(toolCall) && toolCallHasDisplayContent(toolCall) {
 						toolCallCopy := toolCall
-						auxBuffer = append(auxBuffer, session.ExchangeAux{
-							Line:     currentAssistantLine(responseText),
+						turnState.addAux(session.ExchangeAux{
+							Line:     turnState.assistantLine(),
 							ToolCall: &toolCallCopy,
 						})
 						_ = manager.UpsertPendingExchangeAux(context.Background(), current.Key, session.ExchangeAux{ToolCall: &toolCallCopy})
@@ -302,8 +301,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			if update.Type == agenttypes.EventTypePlanUpdate {
 				if plan, ok := update.Data.(agenttypes.PlanUpdate); ok && strings.TrimSpace(plan.Content) != "" {
 					planCopy := plan
-					auxBuffer = append(auxBuffer, session.ExchangeAux{
-						Line: currentAssistantLine(responseText),
+					turnState.addAux(session.ExchangeAux{
+						Line: turnState.assistantLine(),
 						Plan: &planCopy,
 					})
 				}
@@ -311,8 +310,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			if update.Type == agenttypes.EventTypeTodoUpdate {
 				if todo, ok := update.Data.(agenttypes.TodoUpdate); ok && len(todo.Items) > 0 {
 					todoCopy := todo
-					auxBuffer = append(auxBuffer, session.ExchangeAux{
-						Line: currentAssistantLine(responseText),
+					turnState.addAux(session.ExchangeAux{
+						Line: turnState.assistantLine(),
 						Todo: &todoCopy,
 					})
 				}
@@ -320,8 +319,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			if update.Type == agenttypes.EventTypeCompact {
 				if compact, ok := update.Data.(agenttypes.CompactNotice); ok {
 					compactCopy := compact
-					auxBuffer = append(auxBuffer, session.ExchangeAux{
-						Line:    currentAssistantLine(responseText),
+					turnState.addAux(session.ExchangeAux{
+						Line:    turnState.assistantLine(),
 						Compact: &compactCopy,
 					})
 					compactPostTokens = compact.PostTokens
@@ -352,8 +351,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 					if strings.TrimSpace(chunk.MessageID) != "" {
 						turnAgentMessageID = strings.TrimSpace(chunk.MessageID)
 					}
-					responseText = AppendResponseChunk(responseText, lastResponseUpdateType, chunk.Content)
-					lastResponseUpdateType = string(update.Type)
+					turnState.appendChunk(chunk.Content)
 				}
 			} else if update.Type == agenttypes.EventTypeMessageDone {
 				if done, ok := update.Data.(agenttypes.MessageDone); ok {
@@ -370,13 +368,26 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 				update.Type == agenttypes.EventTypeTodoUpdate ||
 				update.Type == agenttypes.EventTypePlanUpdate ||
 				update.Type == agenttypes.EventTypeCompact {
-				lastResponseUpdateType = string(update.Type)
+				turnState.noteUpdateType(string(update.Type))
 			}
 			if watcher != nil {
 				watcher.MarkSessionActive(current.Key)
 			}
 			if in.OnUpdate != nil {
 				in.OnUpdate(clientUpdate)
+			}
+			// 回合已经收尾（SendMessage 返回、EndSessionTurn 播过 done）之后的更新
+			// 属于 agent 的自发续跑：首轮已落盘时实时追加到本轮块流，否则退回
+			// 「标记补录」。放在最后是因为要包含本条更新本身。
+			if !SessionTurnActive(in.RootID, in.Key) {
+				if w := tail.Load(); w != nil {
+					if update.Type != agenttypes.EventTypeThoughtChunk {
+						flushThought()
+					}
+					w.note()
+				} else {
+					markSessionContinuationTail(in.RootID, in.Key)
+				}
 			}
 		})
 	}
@@ -477,7 +488,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err := manager.UpdateLastContextWindow(persistCtx, current, lastContextWindow); err != nil {
 		return err
 	}
-	persistedAux := dedupeExchangeAuxBuffer(auxBuffer)
+	turnContent, rawAux := turnState.snapshot()
+	persistedAux := dedupeExchangeAuxBuffer(rawAux)
 	for i := range persistedAux {
 		persistedAux[i].Seq = agentSeq
 		persistedAux[i] = hydratePendingToolCallAux(persistCtx, manager, current.Key, persistedAux[i])
@@ -488,9 +500,13 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 块流是正文的**唯一**载体（D1，S2d-2）。顺序仍是先主日志再块：块要 mindfs_id，
 	// 而它随 AddExchangeForAgent 才定下来。失败**必须**返回 err —— 主日志那一行现在
 	// 只剩元数据，块丢了就等于这一轮没有正文，而用户看得出来。
-	if err := persistTurnBlocks(persistCtx, manager, current.Key, agentSeq, turnID, responseText, persistedAux); err != nil {
+	initialBlocks, err := persistTurnBlocksReturning(persistCtx, manager, current.Key, agentSeq, turnID, turnContent, persistedAux)
+	if err != nil {
 		return fmt.Errorf("persist turn blocks: %w", err)
 	}
+	// 首轮落盘之后安装续跑 writer：之后到达的更新（ACP 回合边界后的自发续跑）
+	// 追加进同一轮的块流，而不是散成 provisional 流水或独立的转录补录行。
+	tail.Store(newTurnTailWriter(manager, current.Key, agentSeq, turnID, turnState, len(turnContent), len(rawAux), initialBlocks))
 	// AgentCtxSeq 记的是「agent 已经看到多少行会话历史」，口径是**已落盘的总行数**
 	// （与 external_sessions.go:415 的 len(latest.Exchanges)、
 	// 子会话的 contextLineCount(child.Exchanges) 一致）。此刻 user 行（persistUserTurnExchange）
