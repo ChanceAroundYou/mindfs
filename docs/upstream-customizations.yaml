@@ -14952,6 +14952,26 @@ groups:
 
       安装器写 `control_sync.role = "edge"` 与 `update.auto_install: true`，这正是上面那些判据
       唯一该被打开的部署形态。
+
+      **双击安装曾经「从来没成功」，SSH 却能装 —— 两堵墙叠在一起（2026-11-25 实测定位）**：
+
+      1. **停旧进程**：服务由本组的 S4U 计划任务托管在 Session 0，双击拿到的是资源管理器给的
+         受限令牌。跨会话终止被 Windows 拒绝 —— `mindfs -stop`（`taskkill`）与 `Stop-Process`
+         都报「拒绝访问」。旧脚本的兜底 `Stop-Process -Force` 没有吞错，`$ErrorActionPreference='Stop'`
+         把它变成终止错误，脚本在**拷贝开始前**就退出 1，用户只看到「exit status 1」。正路是
+         `schtasks /end /tn mindfs`：Task Scheduler 以 SYSTEM 终止自己的 action，不受进程 ACL 限制
+         （实测 EXIT=0、进程真的没了）；兜底强杀改为 `-ErrorAction SilentlyContinue`，停不下来时
+         只抛一条可读的「关掉 MindFS 再装」而不是继续中断整个安装。
+      2. **注册任务**：`schtasks /create` 写 S4U 任务**需要管理员令牌**（同一份 XML、同一个用户
+         SID：Session 1 受限令牌报「拒绝访问」，SSH 管理员令牌 EXIT=0）。S4U 是「开机自启、不需
+         有人登录」的关键，不能为了免提权而放弃它；安装器又是运行期拼出来的 exe，没有也拿不到
+         UAC 清单。所以桩程序在 `run()` 之前自检令牌，非提权就 `ShellExecute(runas)` 重新拉起
+         自己、父进程静默退出（真正干活的是提权后的子进程，它自己弹结果对话框）；用户取消 UAC
+         时给明确指引。
+
+      桩程序还给子进程输出落盘（`<Prefix>\setup.log`，失败时把尾部接进错误对话框）：双击是
+      GUI 子系统，`os.Stdout/Stderr` 是继承来的无效句柄，把 PowerShell 的报错挂上去等于扔掉 ——
+      上面第 1 条根因就藏在那段被丢掉的话里，修之前只能看到「exit status 1」。
     files:
       - server/internal/update/auto_install.go
       - server/internal/update/auto_install_test.go
@@ -15020,13 +15040,22 @@ groups:
       - 'internal/deploy/setup_test.go:func TestBuildSetupTaskXMLCarriesRealMachineShape(t *testing.T) {'
       - 'internal/deploy/setup_extract_test.go:func TestBuildSetupPayloadRoundTripsThroughExtractor(t *testing.T) {'
       - 'internal/deploy/setup_script_test.go:func TestWindowsSetupScriptStaysASCIISafe(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupScriptStopsBeforeReplacingBinary(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupStubCapturesChildOutput(t *testing.T) {'
+      - 'internal/deploy/setup_script_test.go:func TestWindowsSetupStubSelfElevates(t *testing.T) {'
       - 'internal/deploy/setup_script_test.go:func TestWindowsSetupStubLivesUnderServerCmd(t *testing.T) {'
       - 'internal/deploy/setup_script_test.go:func TestReleaseChainShipsTheWindowsInstaller(t *testing.T) {'
       - 'scripts/build-windows-setup.sh:go build -trimpath -ldflags "-s -w -H=windowsgui"'
       - 'scripts/build-windows-setup.sh:for f in mindfs.exe agents.json web/index.html web/favicon.svg; do'
       - 'scripts/windows-setup/main.go:func run(version, distDir, out, stubPath string) error {'
+      - 'scripts/windows-setup/setup.ps1:& schtasks.exe /end /tn $TaskName 2>$null | Out-Null'
+      - 'scripts/windows-setup/setup.ps1:Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue'
       - 'scripts/windows-setup/setup.ps1:& schtasks.exe /create /tn $TaskName /xml $TaskXml /f | Out-Null'
       - 'server/cmd/mindfs-setup-stub/main.go://go:build windows'
+      - 'server/cmd/mindfs-setup-stub/main.go:func requireElevation() {'
+      - 'server/cmd/mindfs-setup-stub/main.go:windows.ShellExecute(0, verb, file, nil, cwd, windows.SW_SHOWNORMAL)'
+      - 'server/cmd/mindfs-setup-stub/main.go:		cmd.Stdout = logFile'
+      - 'server/cmd/mindfs-setup-stub/main.go:func installLogTail(logPath string) string {'
       - 'server/cmd/mindfs-setup-stub/main.go:func currentUserSID() (string, error) {'
       - 'Makefile:RELEASE_WINDOWS_SETUP ?= 1'
       - 'Makefile:	@bash scripts/build-windows-setup.sh "$(VERSION)" "$(DIST_DIR)"'

@@ -195,13 +195,33 @@ func TestWindowsSetupScriptMergesUserPathSafely(t *testing.T) {
 
 // TestWindowsSetupScriptStopsBeforeReplacingBinary 钉住「先停再拷」，
 // 以及「停不下来就强杀」—— 半路失败会留下新二进制 + 旧进程在跑。
+//
+// 另外钉住 2026-11-25 的双击失败根因：服务由 S4U 计划任务托管在 Session 0，
+// 受限令牌的交互式安装既不能 taskkill 也不能 Stop-Process（都报拒绝访问），
+// 而 $ErrorActionPreference='Stop' 会把那个拒绝访问变成终止错误、整个安装就此失败。
+// 正路是 schtasks /end 让 Task Scheduler 终止自己的 action；兜底强杀绝不能中断脚本。
 func TestWindowsSetupScriptStopsBeforeReplacingBinary(t *testing.T) {
 	script := readSetupScript(t)
+	if !strings.Contains(script, "schtasks.exe /end /tn $TaskName") {
+		t.Fatal("setup.ps1 没有用 schtasks /end 终止托管在 Session 0 的计划任务 —— 受限令牌下 taskkill/Stop-Process 会被拒绝")
+	}
+	if strings.Index(script, "schtasks.exe /end /tn $TaskName") > strings.Index(script, "& $Binary -stop") {
+		t.Fatal("setup.ps1 必须先试 schtasks /end 再退回 mindfs -stop")
+	}
 	if !strings.Contains(script, "-stop") {
 		t.Fatal("setup.ps1 没有调用 mindfs -stop")
 	}
 	if !strings.Contains(script, "Stop-Process -Force") {
 		t.Fatal("setup.ps1 在进程停不下来时没有兜底强杀")
+	}
+	// 兜底那行必须吞掉自己的错误：跨会话拒绝访问不能再次变成终止错误（这正是原 bug）。
+	at := strings.Index(script, "Stop-Process -Force")
+	line := script[at:]
+	if end := strings.Index(line, "\n"); end >= 0 {
+		line = line[:end]
+	}
+	if !strings.Contains(line, "-ErrorAction SilentlyContinue") {
+		t.Fatal("兜底 Stop-Process 没有 -ErrorAction SilentlyContinue：跨会话拒绝访问会再次中止整个安装")
 	}
 }
 
@@ -262,6 +282,63 @@ func TestWindowsSetupStubLivesUnderServerCmd(t *testing.T) {
 		if !strings.Contains(src, needle) {
 			t.Fatalf("桩程序没有用到 %s", needle)
 		}
+	}
+}
+
+// TestWindowsSetupStubCapturesChildOutput 钉住「子进程输出落盘、失败时带上尾部」。
+//
+// 桩程序是 -H=windowsgui，os.Stdout/Stderr 是从资源管理器继承的无效句柄：
+// 把 PowerShell 的 stdout/stderr 直接挂上去等于扔掉。2026-11-25 那次
+// 「每次双击都失败」的根因就藏在这段被丢掉的话里，而用户只看到 exit status 1。
+func TestWindowsSetupStubCapturesChildOutput(t *testing.T) {
+	p := filepath.Join("..", "..", "server", "cmd", "mindfs-setup-stub", "main.go")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("读不到桩程序 %s: %v", p, err)
+	}
+	src := string(data)
+	if strings.Contains(src, "cmd.Stdout = os.Stdout") || strings.Contains(src, "cmd.Stderr = os.Stderr") {
+		t.Fatal("桩程序把子进程输出挂到 os.Stdout/Stderr：GUI 子系统下那是无效句柄，报错会被丢弃")
+	}
+	for _, needle := range []string{
+		"cmd.Stdout = logFile",
+		"cmd.Stderr = logFile",
+		"func installLogTail(",
+		"installLogTail(logPath)",
+	} {
+		if !strings.Contains(src, needle) {
+			t.Fatalf("桩程序缺少 %q：失败对话框里必须能带出真实报错", needle)
+		}
+	}
+}
+
+// TestWindowsSetupStubSelfElevates 钉住「双击也能装」。
+//
+// 注册 S4U 计划任务需要管理员令牌，而双击拿到的是资源管理器给的受限令牌：
+// 2026-11-25 实测同一份 XML、同一个用户 SID，Session 1 受限令牌 schtasks /create
+// 报「拒绝访问」，SSH 管理员令牌 EXIT=0。SSH 一直能装、双击从来没成功，分裂就在这里。
+// 桩程序没有 UAC 清单（exe 是运行期拼的），所以必须运行期用 runas 自提权。
+func TestWindowsSetupStubSelfElevates(t *testing.T) {
+	p := filepath.Join("..", "..", "server", "cmd", "mindfs-setup-stub", "main.go")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("读不到桩程序 %s: %v", p, err)
+	}
+	src := string(data)
+	for _, needle := range []string{
+		"requireElevation()",
+		"func requireElevation(",
+		"windows.ShellExecute(",
+		`"runas"`,
+		"token.IsElevated()",
+	} {
+		if !strings.Contains(src, needle) {
+			t.Fatalf("桩程序缺少 %q：双击（受限令牌）注册不了 S4U 任务，安装永远失败", needle)
+		}
+	}
+	// requireElevation 必须在 run() 之前：先提权，再解包/写盘/注册。
+	if strings.Index(src, "requireElevation()") > strings.Index(src, "if err := run(); err != nil") {
+		t.Fatal("requireElevation() 必须在 run() 之前调用")
 	}
 }
 

@@ -31,7 +31,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Stop-RunningInstance([string]$Binary) {
+function Stop-RunningInstance([string]$Binary, [string]$TaskName) {
     # First install: nothing to stop. The stub has already written config.json
     # by now, so use the process list rather than shelling out to the old
     # binary (which may be a version whose -stop flag did not exist yet).
@@ -40,15 +40,42 @@ function Stop-RunningInstance([string]$Binary) {
     $running = @(Get-Process -Name $name -ErrorAction SilentlyContinue)
     if ($running.Count -eq 0) { return }
     Write-Host "Stopping running instance ($($running.Count) process(es))..."
-    try { & $Binary -stop | Out-Null } catch { Write-Host "  mindfs -stop failed: $($_.Exception.Message)" }
-    for ($i = 0; $i -lt 150; $i++) {
+
+    # The service is normally held by our own scheduled task, which runs in
+    # Session 0. A double-click install runs in the interactive session with a
+    # limited token, and Windows refuses a cross-session termination: both
+    # `mindfs -stop` (taskkill) and Stop-Process come back "Access is denied".
+    # That refusal used to abort the whole script here -- every double-click
+    # install died before the copy even started (SSH installs looked fine
+    # because they run elevated). Let the Task Scheduler end its own action
+    # instead: schtasks /end goes through the service, not the process ACL.
+    #
+    # Native stderr (a missing task on first install) must not be a terminating
+    # error, so run it with a temporary Continue preference.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & schtasks.exe /end /tn $TaskName 2>$null | Out-Null
+    $ErrorActionPreference = $prev
+    for ($i = 0; $i -lt 100; $i++) {
         if (-not (Get-Process -Name $name -ErrorAction SilentlyContinue)) { return }
         Start-Sleep -Milliseconds 200
     }
-    # Still alive after 30 s: it is wedged. Kill it rather than fail the
-    # upgrade half-way through, leaving a new binary and an old process.
-    Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force
+
+    # Not started by the task (or the task is gone): ask the binary itself.
+    try { & $Binary -stop | Out-Null } catch { Write-Host "  mindfs -stop failed: $($_.Exception.Message)" }
+    for ($i = 0; $i -lt 50; $i++) {
+        if (-not (Get-Process -Name $name -ErrorAction SilentlyContinue)) { return }
+        Start-Sleep -Milliseconds 200
+    }
+
+    # Last resort, and it MUST NOT abort the script: a limited-token installer
+    # cannot kill a Session 0 process, and that access-denied error is exactly
+    # what took every double-click install down. Try it, then report the truth.
+    Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
+    if (Get-Process -Name $name -ErrorAction SilentlyContinue) {
+        throw "mindfs is still running and this installer could not stop it. Close MindFS (or sign out and back in) and run setup again."
+    }
 }
 
 function Install-Payload([string]$Stage, [string]$Prefix, [string]$Binary, [string]$Agents, [string]$Web) {
@@ -167,7 +194,7 @@ function Start-AndWait([string]$TaskName, [string]$Addr) {
 
 Write-Host "MindFS edge controller -> $Prefix"
 
-Stop-RunningInstance $Binary
+Stop-RunningInstance $Binary $TaskName
 Install-Payload $StageDir $Prefix $Binary $Agents $Web
 Install-Shortcuts $Binary
 Register-ScheduledTask $TaskName

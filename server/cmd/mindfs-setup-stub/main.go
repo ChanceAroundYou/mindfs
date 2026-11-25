@@ -42,9 +42,60 @@ import (
 )
 
 func main() {
+	// 注册 S4U 计划任务（本安装器的核心动作：让 worker 开机就起、不需要有人登录）
+	// 需要管理员令牌 —— Windows 不允许受限令牌写 Task Scheduler 里的 S4U 任务。
+	// 从 SSH（管理员）装一直能成，双击（资源管理器给的受限令牌）却永远死在这里，
+	// 这就是「从来没成功」的根因。安装器没有也拿不到 UAC 清单（载荷是运行时拼的），
+	// 所以只能运行期自提权：用 runas 再拉起自己，UAC 是唯一的门槛。
+	requireElevation()
+
 	if err := run(); err != nil {
 		fatal(err)
 	}
+}
+
+// requireElevation 在非提权时用 ShellExecute(runas) 重新拉起自己并退出。
+//
+// 成功拉起后父进程必须静默退出：真正干活的是提权后的子进程，它会弹自己的结果
+// 对话框；父进程再弹任何东西都是重复。用户取消 UAC 时给出明确指引而不是哑失败。
+func requireElevation() {
+	if isElevated() {
+		return
+	}
+	self, err := os.Executable()
+	if err != nil {
+		fatal(fmt.Errorf("cannot locate this installer: %w", err))
+	}
+	if err := relaunchElevated(self); err != nil {
+		if errors.Is(err, windows.ERROR_CANCELLED) {
+			showMessage("MindFS setup needs administrator rights to register the background service.\n\n"+
+				"The prompt was cancelled. Double-click the installer again and choose Yes when Windows asks for permission.", true)
+			os.Exit(1)
+		}
+		fatal(fmt.Errorf("cannot restart with administrator rights: %w", err))
+	}
+	os.Exit(0)
+}
+
+func isElevated() bool {
+	token := windows.GetCurrentProcessToken()
+	return token.IsElevated()
+}
+
+func relaunchElevated(exe string) error {
+	verb, err := windows.UTF16PtrFromString("runas")
+	if err != nil {
+		return err
+	}
+	file, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return err
+	}
+	cwd, err := windows.UTF16PtrFromString(filepath.Dir(exe))
+	if err != nil {
+		cwd = nil
+	}
+	return windows.ShellExecute(0, verb, file, nil, cwd, windows.SW_SHOWNORMAL)
 }
 
 func fatal(err error) {
@@ -110,6 +161,11 @@ func writeConfig(configPath string) error {
 
 // runSetupScript 把全部路径预先算好传进去：让 .ps1 再拼一遍是第二次机会犯同一个错，
 // 而那时拼错的表现是「服务在跑但页面 403」，与安装器毫无关联。
+//
+// 子进程的输出必须落盘：安装器是 -H=windowsgui，os.Stdout/Stderr 只是从双击它的
+// 资源管理器继承来的无效句柄，PowerShell 的报错会被直接丢弃。丢失的代价是真实的
+// —— 一次「每次双击都失败」的根因（跨会话终止被拒）就藏在那段被扔掉的话里，
+// 而用户只看到 "exit status 1"。写到安装前缀旁边的 setup.log，失败时把尾部带上。
 func runSetupScript(ps1 string, paths deploy.SetupPaths, xmlPath string) error {
 	if _, err := os.Stat(ps1); err != nil {
 		return fmt.Errorf("payload is missing setup.ps1: %w", err)
@@ -128,14 +184,53 @@ func runSetupScript(ps1 string, paths deploy.SetupPaths, xmlPath string) error {
 		"-TaskXml", xmlPath,
 		"-TaskName", deploy.SetupTaskName,
 	}
-	cmd := exec.Command("powershell.exe", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("setup.ps1 failed: %w", err)
+	// 日志放在安装前缀下（%LOCALAPPDATA%\Programs\mindfs\setup.log）：重启/重装
+	// 都会被下一次覆盖，但它就是「装坏了去哪儿看」的固定位置。目录写不了时退回
+	// 临时目录，绝不因为日志写不了而让安装失败。
+	logPath := filepath.Join(paths.Prefix, "setup.log")
+	if err := os.MkdirAll(paths.Prefix, 0o755); err != nil {
+		logPath = filepath.Join(os.TempDir(), deploy.SetupStagingDirName+"-setup.log")
 	}
-	return nil
+	logFile, logErr := os.Create(logPath)
+	if logErr != nil {
+		logPath = filepath.Join(os.TempDir(), deploy.SetupStagingDirName+"-setup.log")
+		if f, err := os.Create(logPath); err == nil {
+			logFile = f
+		} else {
+			logPath = ""
+		}
+	}
+
+	cmd := exec.Command("powershell.exe", args...)
+	if logFile != nil {
+		defer logFile.Close()
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	runErr := cmd.Run()
+	if runErr == nil {
+		return nil
+	}
+	return fmt.Errorf("setup.ps1 failed: %v%s", runErr, installLogTail(logPath))
+}
+
+// installLogTail 把 setup.log 的末尾几行接进错误消息。空路径或读不到时返回空串：
+// 诊断信息是加分项，绝不能因为它自己出错而改变失败本身。
+func installLogTail(logPath string) string {
+	if logPath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	const maxTail = 1500
+	text := strings.TrimRight(string(data), "\r\n")
+	if len(text) > maxTail {
+		text = "..." + text[len(text)-maxTail:]
+	}
+	return "\n\n--- setup.log (tail) ---\n" + text + "\n--- end setup.log ---"
 }
 
 // currentUserSID 取当前进程令牌里的用户 SID（形如 S-1-5-21-...-1001）。
