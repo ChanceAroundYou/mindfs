@@ -86,6 +86,8 @@ type Service struct {
 	archiveSweepOnce sync.Once
 	// outOfBandSweepOnce 保证 OOB 回合恢复扫描（C2）只起一个 goroutine。
 	outOfBandSweepOnce sync.Once
+	// verifierWatchOnce 保证复核超时看门狗只起一个 goroutine。
+	verifierWatchOnce sync.Once
 	// compressedReplies 记录「哪条回复的 summary 已经是压缩结果」，键为活动 id。
 	// 见 service_activities_summary.go 的 compressedReply；只影响是否重复压缩。
 	compressedReplies map[string]compressedReply
