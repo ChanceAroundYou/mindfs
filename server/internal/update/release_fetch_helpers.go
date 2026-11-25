@@ -54,14 +54,7 @@ func (s *Service) fetchRawText(ctx context.Context, path string, limit int64) (s
 }
 
 func (s *Service) pickAsset(release latestRelease, version string) (releaseAsset, error) {
-	ext := ".tar.gz"
-	if runtime.GOOS == "windows" {
-		ext = ".zip"
-	}
-	candidates := []string{
-		fmt.Sprintf("mindfs_%s_%s_%s%s", version, runtime.GOOS, runtime.GOARCH, ext),
-		fmt.Sprintf("mindfs_v%s_%s_%s%s", strings.TrimPrefix(version, "v"), runtime.GOOS, runtime.GOARCH, ext),
-	}
+	candidates := s.assetCandidates(version)
 	for _, asset := range release.Assets {
 		name := strings.TrimSpace(asset.Name)
 		for _, candidate := range candidates {
@@ -72,19 +65,26 @@ func (s *Service) pickAsset(release latestRelease, version string) (releaseAsset
 	}
 	return releaseAsset{}, fmt.Errorf(
 		"release asset not found for %s/%s (candidates: %s)",
-		runtime.GOOS,
+		runtimeGOOS,
 		runtime.GOARCH,
 		strings.Join(candidates, ", "),
 	)
 }
 
+// assetCandidates 是这台机器可能用的产物名。后缀由 updateAssetSuffix 决定：
+// Windows 安装版下 setup.exe，其余是压缩包。两个候选（带/不带 v）沿用历史写法 ——
+// 这个 fork 的 tag 有两种形态，发布说明里出现过两种。
+func (s *Service) assetCandidates(version string) []string {
+	suffix := s.updateAssetSuffix()
+	return []string{
+		fmt.Sprintf("mindfs_%s_%s_%s%s", version, runtimeGOOS, runtime.GOARCH, suffix),
+		fmt.Sprintf("mindfs_v%s_%s_%s%s", strings.TrimPrefix(version, "v"), runtimeGOOS, runtime.GOARCH, suffix),
+	}
+}
+
 func (s *Service) releaseAssetForVersion(version string) releaseAsset {
 	version = normalizeTag(version)
-	ext := ".tar.gz"
-	if runtime.GOOS == "windows" {
-		ext = ".zip"
-	}
-	name := fmt.Sprintf("mindfs_%s_%s_%s%s", version, runtime.GOOS, runtime.GOARCH, ext)
+	name := fmt.Sprintf("mindfs_%s_%s_%s%s", version, runtimeGOOS, runtime.GOARCH, s.updateAssetSuffix())
 	return releaseAsset{
 		Name:               name,
 		BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", s.repo, version, name),

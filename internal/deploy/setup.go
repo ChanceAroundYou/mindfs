@@ -265,6 +265,97 @@ func BuildSetupTaskXML(opt SetupTaskOptions) (string, error) {
 	}, "\r\n"), nil
 }
 
+// SetupUpdateTaskName 是自动更新用的旁路任务名。
+//
+// 为什么不能由服务自己拉起安装包：计划任务把它的进程放进一个 job 对象，
+// 任务实例结束时连同子孙一起终止 —— 服务一退出，它启动的 setup.exe 就跟着死，
+// 而 setup.exe 又必须先等 exe 解锁才能覆盖文件。所以更新必须由**另一个**任务实例执行，
+// 它跟服务不在同一个 job 里，服务可以放心退出。
+//
+// 这个任务在安装时随 --register-service 一起注册（那一步本来就要管理员令牌），
+// 之后每次更新只需要 schtasks /run，不再碰 UAC。
+const SetupUpdateTaskName = "mindfs-update"
+
+// SetupUpdateStagingPath 是自动更新下载的安装包落点。
+//
+// prefix = 安装前缀（bin 的上一级）。放在 <prefix>\update 而不是 %LOCALAPPDATA%\mindfs：
+// 后者是用户数据目录，卸载时勾了「删除数据」会连带清掉，而安装包属于程序。
+// 固定路径是必需的 —— 任务 XML 在注册时就把这个路径写死了。
+func SetupUpdateStagingPath(prefix string) string {
+	return filepath.Join(prefix, "update", "mindfs-setup.exe")
+}
+
+// UpdateTaskOptions 是自动更新任务的变量。
+type UpdateTaskOptions struct {
+	TaskName  string // 缺省 mindfs-update
+	UserSID   string // 与 SetupTaskOptions 同一个 SID
+	SetupPath string // 安装包绝对路径，见 SetupUpdateStagingPath
+}
+
+// BuildUpdateTaskXML 生成自动更新任务的定义。
+//
+// 与服务任务的区别是有意的：
+//   - **没有触发器**：只在 schtasks /run 时执行一次。挂 BootTrigger 会在每次开机
+//     重跑一遍安装包（每次都要停服务、拷文件）。
+//   - **ExecutionTimeLimit PT1H**：安装包不该跑过一小时，卡住就让它被杀掉，
+//     否则下次更新会被 IgnoreNew 吞掉。
+//   - **没有 RestartOnFailure**：更新失败不该自动重试 —— 同一个坏包重试三次
+//     和重试一次的结果相同，只会多三次停服务。
+//   - **RunLevel LeastPrivilege**：安装包是 per-user 的，静默模式不会弹 UAC。
+func BuildUpdateTaskXML(opt UpdateTaskOptions) (string, error) {
+	name := strings.TrimSpace(opt.TaskName)
+	if name == "" {
+		name = SetupUpdateTaskName
+	}
+	sid := strings.TrimSpace(opt.UserSID)
+	if sid == "" {
+		return "", errors.New("update task XML needs the current user SID")
+	}
+	setup := strings.TrimSpace(opt.SetupPath)
+	if setup == "" {
+		return "", errors.New("update task XML needs the installer path")
+	}
+	esc := func(s string) string { return escapeXMLText(s) }
+	return strings.Join([]string{
+		`<?xml version="1.0" encoding="UTF-16"?>`,
+		`<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
+		`  <RegistrationInfo>`,
+		`    <URI>\` + esc(name) + `</URI>`,
+		`    <Description>MindFS 自动更新：运行下载好的安装包（静默）</Description>`,
+		`  </RegistrationInfo>`,
+		`  <Principals>`,
+		`    <Principal id="Author">`,
+		`      <UserId>` + esc(sid) + `</UserId>`,
+		`      <LogonType>S4U</LogonType>`,
+		`      <RunLevel>LeastPrivilege</RunLevel>`,
+		`    </Principal>`,
+		`  </Principals>`,
+		`  <Settings>`,
+		`    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>`,
+		`    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>`,
+		`    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>`,
+		`    <Hidden>true</Hidden>`,
+		`    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`,
+		`    <StartWhenAvailable>false</StartWhenAvailable>`,
+		`    <AllowStartOnDemand>true</AllowStartOnDemand>`,
+		`    <IdleSettings>`,
+		`      <StopOnIdleEnd>false</StopOnIdleEnd>`,
+		`      <RestartOnIdle>false</RestartOnIdle>`,
+		`    </IdleSettings>`,
+		`    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>`,
+		`  </Settings>`,
+		`  <Triggers />`,
+		`  <Actions Context="Author">`,
+		`    <Exec>`,
+		`      <Command>` + esc(setup) + `</Command>`,
+		`      <Arguments>/S</Arguments>`,
+		`    </Exec>`,
+		`  </Actions>`,
+		`</Task>`,
+		``,
+	}, "\r\n"), nil
+}
+
 // EncodeUTF16LEFile 把文本编成带 BOM 的 UTF-16LE 字节流。
 //
 // schtasks /create /xml 只吃 UTF-16：写成 UTF-8 会报「任务 XML 无效」，
