@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -259,5 +260,161 @@ func TestReplayAfterClearYieldsEmptySnapshot(t *testing.T) {
 	}
 	if !step.live {
 		t.Fatal("清空后应直接进入 live（无重放内容可排空）")
+	}
+}
+
+// 连续文本块在写入时合并：重放的历史里，一段长回答只占一条事件。
+//
+// 单轮跑数小时的会话，message_chunk 会到数万条；不合并的话挂载时要在全局锁内
+// 遍历/排序/序列化整份列表 —— 且一条长文本流的每一片都是独立事件。
+// 合并只在「无在途重放」时做：见 TestReplayChunksStayUnmergedWhileReplayActive。
+func TestContiguousChunksMergeIntoOneReplayEvent(t *testing.T) {
+	hub := NewStreamHub()
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type: string(agenttypes.EventTypeMessageChunk),
+		Data: agenttypes.MessageChunk{MessageID: "m1", Content: "a"},
+	})
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type: string(agenttypes.EventTypeMessageChunk),
+		Data: agenttypes.MessageChunk{MessageID: "m1", Content: "b"},
+	})
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type: string(agenttypes.EventTypeToolCall),
+		Data: agenttypes.ToolCall{CallID: "call-1", Title: "Bash"},
+	})
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type: string(agenttypes.EventTypeMessageChunk),
+		Data: agenttypes.MessageChunk{MessageID: "m1", Content: "c"},
+	})
+
+	// 重放状态在写入之后才出现：写入路径只看「此刻是否有客户端在续投」。
+	hub.mu.Lock()
+	hub.replayStates[pendingClientKey("client", "sess-1")] = &ClientReplayState{Status: ClientStreamStatusReplay}
+	hub.mu.Unlock()
+	step := hub.collectReplayStep("client", "sess-1")
+	if len(step.events) != 3 {
+		t.Fatalf("replay events = %d; want 3（ab 合并、tool、c 各一条）", len(step.events))
+	}
+	if step.events[0].EventCursor != "8:2" {
+		t.Fatalf("merged cursor = %q; want 8:2（取被合并事件的最新 cursor）", step.events[0].EventCursor)
+	}
+	chunk, ok := step.events[0].Data.(agenttypes.MessageChunk)
+	if !ok || chunk.Content != "ab" {
+		t.Fatalf("merged chunk = %#v; want content %q", step.events[0].Data, "ab")
+	}
+	if step.events[1].EventCursor != "8:3" || step.events[2].EventCursor != "8:4" {
+		t.Fatalf("cursors = %q, %q; want 8:3, 8:4（顺序与位置不得被打乱）", step.events[1].EventCursor, step.events[2].EventCursor)
+	}
+}
+
+// 有客户端正在重放时不得原地合并已投递事件：续投是按 cursor 增量下发的，
+// 把一条已发过的事件改成更大的累积快照，客户端会当成新内容再拼一遍。
+func TestReplayChunksStayUnmergedWhileReplayActive(t *testing.T) {
+	hub := NewStreamHub()
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	hub.mu.Lock()
+	hub.replayStates[pendingClientKey("client", "sess-1")] = &ClientReplayState{Status: ClientStreamStatusReplay}
+	hub.mu.Unlock()
+
+	for _, text := range []string{"a", "b"} {
+		hub.AppendReplyEvent("sess-1", StreamEvent{
+			Type: string(agenttypes.EventTypeMessageChunk),
+			Data: agenttypes.MessageChunk{MessageID: "m1", Content: text},
+		})
+	}
+
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if got := len(hub.pendingSessions["sess-1"].ReplyingList); got != 2 {
+		t.Fatalf("replying list = %d events; want 2（在途重放期间不得合并）", got)
+	}
+}
+
+func TestReplyListBoundedByCount(t *testing.T) {
+	hub := NewStreamHub()
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	total := maxReplayEvents + 500
+	for i := 0; i < total; i++ {
+		hub.AppendReplyEvent("sess-1", StreamEvent{
+			Type: string(agenttypes.EventTypeThoughtChunk),
+			// 不同 ID → 不合并，逐个计入条数上限。
+			Data: agenttypes.ThoughtChunk{ID: "th-" + strconv.Itoa(i), Content: "x"},
+		})
+	}
+
+	hub.mu.Lock()
+	state := hub.pendingSessions["sess-1"]
+	size := len(state.ReplyingList)
+	last := state.ReplyingList[size-1].EventCursor
+	hub.mu.Unlock()
+
+	if size > maxReplayEvents {
+		t.Fatalf("replying list = %d; want <= %d", size, maxReplayEvents)
+	}
+	if size < maxReplayEvents/2 {
+		t.Fatalf("replying list = %d; trimmed too aggressively (would lose recent history)", size)
+	}
+	if want := "8:" + strconv.Itoa(total); last != want {
+		t.Fatalf("newest cursor = %q; want %q（裁剪只能丢最旧的）", last, want)
+	}
+}
+
+func TestReplyListBoundedByBytes(t *testing.T) {
+	hub := NewStreamHub()
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	blob := strings.Repeat("x", 512*1024)
+	const events = 40 // ≈ 20 MB，超过 16 MB 预算
+	for i := 0; i < events; i++ {
+		hub.AppendReplyEvent("sess-1", StreamEvent{
+			Type: string(agenttypes.EventTypeToolCall),
+			Data: agenttypes.ToolCall{
+				CallID:  "call-" + strconv.Itoa(i),
+				Title:   "Bash",
+				Content: []agenttypes.ToolCallContentItem{{Type: "text", Text: blob}},
+			},
+		})
+	}
+
+	hub.mu.Lock()
+	state := hub.pendingSessions["sess-1"]
+	size := len(state.ReplyingList)
+	bytes := state.replyBytes
+	lastCall := state.ReplyingList[size-1].Data.(agenttypes.ToolCall).CallID
+	hub.mu.Unlock()
+
+	if bytes > maxReplayBytes {
+		t.Fatalf("replyBytes = %d; want <= %d", bytes, maxReplayBytes)
+	}
+	if size >= events {
+		t.Fatalf("replying list = %d events; want < %d（字节超预算时必须裁剪）", size, events)
+	}
+	if lastCall != "call-"+strconv.Itoa(events-1) {
+		t.Fatalf("newest call = %q; want the last appended one（裁剪只能丢最旧的）", lastCall)
+	}
+}
+
+// 不同回合的相邻文本块不得合并：它们属于两条独立的 assistant 消息，拼在一起
+// 客户端会看到上一轮的尾巴并进这一轮。
+func TestChunksAcrossTurnsStaySeparate(t *testing.T) {
+	hub := NewStreamHub()
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type:     string(agenttypes.EventTypeMessageChunk),
+		Data:     agenttypes.MessageChunk{MessageID: "m1", Content: "turn1"},
+		MindFSID: "turn-1",
+	})
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type:     string(agenttypes.EventTypeMessageChunk),
+		Data:     agenttypes.MessageChunk{MessageID: "m1", Content: "turn2"},
+		MindFSID: "turn-2",
+	})
+
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if got := len(hub.pendingSessions["sess-1"].ReplyingList); got != 2 {
+		t.Fatalf("replying list = %d events; want 2（跨回合不得合并）", got)
 	}
 }

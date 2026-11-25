@@ -71,6 +71,9 @@ type SessionPendingState struct {
 	// 三个文件后给出四条待决策项」和「回了一句好的」。每轮在 SetPendingUserAt
 	// 重置，AppendReplyEvent 见到工具调用就加一。
 	ToolCalls int
+	// replyBytes 是 ReplyingList 的近似载荷字节数（文本 + 工具内容），只用于给
+	// 待发历史设上限；不需要与真实 JSON 长度逐字相等。
+	replyBytes int
 }
 
 type ClientStreamStatus string

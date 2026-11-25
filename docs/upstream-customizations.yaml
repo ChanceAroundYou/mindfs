@@ -16216,3 +16216,37 @@ groups:
       - 'web/src/components/task/TaskCardRows.tsx:const resultSummary = task.result_summary ? summaryPlainText(task.result_summary) : "";'
       - 'web/src/components/task/TaskCardRows.tsx:title={resultSummary}'
       - 'web/tests/summary-text.test.mjs:test("summaryPlainText strips the label-line markdown but keeps the lines", () => {'
+  - id: G-RH
+    title: "长回合会话加载性能（分片缓存命中 / 流式合流 / pending 重放有界）"
+    kind: fix
+    symptom: "一个正在执行、单轮跑数小时的会话，打开时页面卡死、点侧栏或其他会话没反应；重放越长越明显，长回合期间其他会话的流事件也变慢。"
+    why: >-
+      正在执行的回合只存在于 StreamHub.ReplyingList，挂载靠整轮重放，绕开了已完成会话的
+      窗口预算。四处叠加：① 时间线分片缓存拿每次现包的 `{ [seq]: entry }` 做 `!==`，
+      恒不命中，每个流式事件都全量重建（块排序 + 全文拼接 + FNV 哈希）；命中分支还漏了
+      touched，复用会被 retainUntouched 淘汰。② 每条 chunk 各自复制 exchanges 数组、
+      线性查找、字符串拼接，且 tool_call_update 每条立即 bump、setSessions 每次造新数组，
+      长回合是 O(E²)/O(L²)。③ ReplyingList 无上限（maxReplayEvents 只有声明没有实现），
+      挂载时在 StreamHub 全局锁内克隆/排序数万条事件，期间所有会话的流事件排队。
+      ④ userShell 续传每次 O(N) 全表扫描并在锁内重拼 256KB。
+      合上游时这四处都会退回：表现为「打开长回合又卡死」。写入时合并文本块必须保留
+      「无在途重放才合并」的守卫，否则续投客户端会把已投递事件的累积快照当增量再拼一遍
+      （正文重复）。
+    files:
+      - web/src/hooks/sessionTimelineCache.ts
+      - web/src/app/realtimeWsSessionStream.ts
+      - web/src/app/useSessionStreamRuntimeMeta.ts
+      - server/internal/api/stream_hub_replay.go
+      - server/internal/api/stream_hub_types.go
+      - docs/superpowers/plans/2026-11-25-long-running-session-load-perf.md
+    tests:
+      - web/tests/session-timeline-chunk-cache-hit.test.mjs
+      - web/tests/stream-event-coalescing.test.mjs
+      - server/internal/api/ws_replay_test.go
+    anchors:
+      - web/src/hooks/sessionTimelineCache.ts:function depsChanged(
+      - web/src/app/realtimeWsSessionStream.ts:const pendingAgentChunks = new Map<string, PendingChunk>();
+      - web/src/app/useSessionStreamRuntimeMeta.ts:for (let i = exchanges.length - 1; i >= 0; i -= 1) {
+      - server/internal/api/stream_hub_replay.go:func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) StreamEvent {
+      - server/internal/api/stream_hub_replay.go:func mergeContiguousChunkLocked(state *SessionPendingState, event StreamEvent) bool {
+      - server/internal/api/stream_hub_types.go:replyBytes int

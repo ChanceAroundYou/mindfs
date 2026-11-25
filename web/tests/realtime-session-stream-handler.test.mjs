@@ -16,6 +16,8 @@ function loadStreamHandler() {
   const sandbox = {
     exports: {},
     module: { exports: {} },
+    setTimeout,
+    clearTimeout,
     require: (id) => {
       if (id.includes("sessionListMerge")) return { mergeSessionItems: (items) => items };
       if (id.includes("sessionDuration")) return { streamEventTimestamp: (event, fallback) => event.timestamp || fallback };
@@ -24,7 +26,7 @@ function loadStreamHandler() {
     },
   };
   vm.runInNewContext(compiled, sandbox, { filename: "realtimeWsSessionStream.ts" });
-  return sandbox.exports.createRealtimeWsSessionStreamHandler;
+  return sandbox.exports;
 }
 
 function loadAcceptedHandler() {
@@ -39,6 +41,8 @@ function loadAcceptedHandler() {
     exports: {},
     module: { exports: {} },
     console,
+    setTimeout,
+    clearTimeout,
     require: (id) => {
       if (id.includes("services/session")) return {
         isSamePendingEcho: (exchange, pending) => {
@@ -139,7 +143,9 @@ test("realtime-session-stream-handler", async () => {
   assert.match(realtime, /createRealtimeWsSessionStreamHandler\(ctx, \{/);
   assert.ok(MODULES["src/app/useRealtimeEvents.ts"].includes("src/app/realtimeWsSessionStream.ts"));
 
-  const createHandler = loadStreamHandler();
+  const streamModule = loadStreamHandler();
+  const createHandler = streamModule.createRealtimeWsSessionStreamHandler;
+  const { flushPendingChunks } = streamModule;
   const ref = (current) => ({ current });
   const shared = { pendingBySessionRef: ref({}), sessionCacheRef: ref({}) };
   const calls = { append: [], mark: [], done: [], bumps: 0 };
@@ -155,6 +161,7 @@ test("realtime-session-stream-handler", async () => {
     session_key: "opaque-child-key",
     event: { type: "message_chunk", data: { content: "child text" }, mindfs_id: "child-turn" },
   });
+  flushPendingChunks();
   assert.deepEqual(calls.append, [["root", "opaque-child-key", "child text", undefined, undefined, "child-turn"]]);
   assert.deepEqual(calls.mark, [["root", "opaque-child-key"]]);
   assert.equal(shared.pendingBySessionRef.current["home::root::opaque-child-key"], undefined);
@@ -226,6 +233,7 @@ test("realtime-session-stream-handler", async () => {
   });
   assert.equal(shared.pendingBySessionRef.current["home::root::opaque-child-key"], undefined);
   assert.deepEqual(calls.mark[calls.mark.length - 1], ["root", "opaque-child-key"]);
+  flushPendingChunks();
   const lastAppend = calls.append[calls.append.length - 1];
   assert.equal(lastAppend[1], "opaque-child-key");
 
