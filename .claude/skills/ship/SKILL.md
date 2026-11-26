@@ -1,6 +1,6 @@
 ---
 name: ship
-description: 代码变更后的收尾闭环：门禁测试 → 提交推送 → 本机编译 → 推送产物到三个 worker（WSL / fn / pc-win）安装重启 → 版本与 bundle 对账。触发词：收尾/部署/发布/上线/deploy/推上去/更新过去/更新 worker/三端部署
+description: 代码变更后的收尾闭环：门禁测试 → 提交推送 → 本机编译 → 推送产物到两个 worker（WSL / fn）与一台 Windows 边控端（pc-win / edge controller）安装重启 → 版本与 bundle 对账。触发词：收尾/部署/发布/上线/deploy/推上去/更新过去/更新 worker/三端部署
 ---
 
 # Ship — 代码变更收尾闭环
@@ -49,7 +49,7 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 | **本机** | Proxmox VM，Ubuntu 26.04 | **system** | `127.0.0.1:7331` | 有（`~/projects/mindfs`） | 编译安装，**不重启**（留给用户） |
 | **wsl** | PC 上的 WSL，Ubuntu 24.04 | **user** | `127.0.0.1:7331` | **无** | 收产物 + 安装 + 直接重启 |
 | **fn** | fnOS，`fn.xiaokubao.space` | **user** | `0.0.0.0:7331` | **无** | 收产物 + 安装 + 直接重启 |
-| **pc-win** | 同一台 PC 上的 Windows 实例（`ssh pc`） | **无 systemd**（计划任务 `\mindfs`，登录类型 S4U → Session 0） | `0.0.0.0:7332` | **无** | 交叉编译产物 + 换二进制 + `schtasks /run`；脚本会轮询 **PID + health** 并回报，取不到写「未确认在跑」（见铁律 7） |
+| **pc-win / edge controller** | 同一台 PC 上的 Windows 实例（`ssh pc`），现为边控端（`role=control`、`control_sync.role=edge`，不再是 worker） | **无 systemd**（计划任务 `\mindfs`，登录类型 S4U → Session 0） | `0.0.0.0:7332` | **无** | 交叉编译产物 + 换二进制 + `schtasks /run`；脚本会轮询 **PID + health** 并回报，取不到写「未确认在跑」（见铁律 7） |
 
 ssh 别名是 `wsl`（→ `pc.xiaokubao.space`，user `nnb`）和 `fn`（→ `fn.xiaokubao.space`，user `xiaokubao`），Windows 那台是 `pc`。分别用 `MINDFS_WSL_HOST`、`MINDFS_FN_HOST`、`MINDFS_PC_HOST` 覆盖。
 
@@ -57,7 +57,7 @@ ssh 别名是 `wsl`（→ `pc.xiaokubao.space`，user `nnb`）和 `fn`（→ `fn
 
 别只说「部署完成」。要给出**可核对的事实**：
 
-- 本机与各 worker 的版本号（**必须逐字相同**；脚本已经把不一致当失败处理）
+- 本机、两个 worker（wsl / fn）与 pc 边控端的版本号（**必须逐字相同**；脚本已经把不一致当失败处理）
 - **pc-win 要单独说清**：引用脚本回报的 **PID 与 health**（那是唯一有效证据）。脚本打「未确认在跑」时照原样转述，别美化成「已重启」；要自己确认就 `ssh pc "netstat -ano | findstr :7332"`
 - 门禁三项的实际结果（web 报告 Vitest 测试通过与跳过数）
 - 本机那条待用户执行的 `sudo systemctl restart mindfs`

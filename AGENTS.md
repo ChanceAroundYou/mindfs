@@ -21,8 +21,9 @@ Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
 | **本机** | Proxmox VM Ubuntu 26.04 | `home.xiaokubao.space` (192.168.1.6) / `xiaokubao` | `home` | system `/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**仅用户执行** |
 | **wsl** | WSL Ubuntu 24.04 | `pc.xiaokubao.space` / `nnb` | `pc` | user `~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，Agent 可执行 |
 | **fn** | fnOS | `fn.xiaokubao.space` / `xiaokubao` | `fn` | user `~/.config/systemd/user/mindfs.service` | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，Agent 可执行 |
-| **pc** | 同台物理 PC 的 Windows（旧称 pc-win） | `ssh pc` → 宿主 / `小哭包` (`C:\Users\10178`) | `pc`（`nodes.json` 有 `remote: true` 条目，前端前缀 `/mindfs-win`） | 计划任务 `\mindfs`（S4U + BootTrigger，Session 0） | `0.0.0.0:7332` | `ssh pc "schtasks /run /tn mindfs"`；详见 memory `windows-worker-on-pc` |
+| **pc** | 同台物理 PC 的 Windows 边控端（edge controller，旧称 pc-win） | `ssh pc` → 宿主 / `小哭包` (`C:\Users\10178`) | `pc`（共享节点表里 `remote: true`、旧直连前缀 `/mindfs-win`；`role=control`、`control_sync.role=edge`） | 计划任务 `\mindfs`（S4U + BootTrigger，Session 0） | `0.0.0.0:7332` | `ssh pc "schtasks /run /tn mindfs"`；详见 memory `windows-worker-on-pc` |
 
+- **pc 是边控端，不是 worker**：`/api/node-info` 报 `role=control`，控制面请求经配对通道到主控；但分发路径仍与两个 worker 相同（本机编译产物 + ssh 安装），Windows 上没有源码库。
 - **本机不叫 PC**。「PC」= WSL 所在的 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → WSL）。
 - 本机没有 user bus：`systemctl --user ...` 报错不代表服务不存在，查 `/proc/$(pgrep -x mindfs)/cgroup`。
 - `/home/nnb/...` 是 WSL 家目录，本机是 `/home/xiaokubao`。
