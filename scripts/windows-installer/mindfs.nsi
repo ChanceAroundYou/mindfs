@@ -77,6 +77,12 @@ Var PathNeedle
 Var PathContains
 
 ; ---------------------------------------------------------------- 页面顺序
+; 安装/卸载向导使用与应用同一套图标（构建脚本传 -DAPP_ICON=<app.ico>）。
+; 没传图标时保持 NSIS 默认，仍能构建（本地手动 makensis 不会因为缺参数失败）。
+!ifdef APP_ICON
+  !define MUI_ICON "${APP_ICON}"
+  !define MUI_UNICON "${APP_ICON}"
+!endif
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "安装 ${APP_NAME}"
 !define MUI_WELCOMEPAGE_TEXT "${APP_NAME} 会把这台电脑接入你的主控，并在后台常驻。$\r$\n$\r$\n安装完成后可以立即打开桌面窗口，也可以随时从开始菜单启动。"
