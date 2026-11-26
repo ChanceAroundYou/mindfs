@@ -3,6 +3,7 @@ import { FileEditStore } from "../services/fileEditing";
 import { bootstrapService } from "../services/net/bootstrap";
 import { fetchEditableFile, saveTextFile } from "../services/file";
 import { syncNodesFromServer } from "../services/net/nodeRegistry";
+import { learnNodeIdentitiesOnce } from "./nodeIdentitySync";
 import { clearNativeReplyViewing, restoreNativeReplyViewing } from "../services/net/replyPoller";
 import { useI18n } from "../i18n";
 import { useAppRefSync } from "./useAppRefSync";
@@ -255,7 +256,13 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
     bootstrapService.snapshot(),
   );
-  useEffect(() => { syncNodesFromServer().catch(()=>{}); }, []);
+  useEffect(() => {
+    // 拉完节点表顺手学一次各节点的控制面身份：relay 只知道 instance_id，
+    // 不学就无法把 relay 通道并回同一台机器的既有节点行（见 nodeIdentitySync）。
+    syncNodesFromServer()
+      .then(() => learnNodeIdentitiesOnce())
+      .catch(() => {});
+  }, []);
   const {
     editDraftRequest, setEditDraftRequest, entriesByPath, setEntriesByPath, entriesByPathRef,
     expanded, setExpanded, selectedDir, setSelectedDir, selectedDirKey, setSelectedDirKey,

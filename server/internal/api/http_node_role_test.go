@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,39 @@ import (
 
 	"mindfs/server/internal/nodeinfo"
 )
+
+// /health 是前端唯一能顺手学到「这台机器在控制面里是谁」的地方（探活同一个请求）。
+// 主控据此把 relay 通道并回同一台设备的节点行；不带 instanceId 就永远配不上号。
+func TestHealthReportsInstanceID(t *testing.T) {
+	// 边控端在 nodeinfo 里仍是 control（edge 是同步角色，不是节点角色）。
+	h := &HTTPHandler{NodeRole: nodeinfo.RoleControl, InstanceID: "hasee"}
+
+	for _, tc := range []struct {
+		name       string
+		instanceID string
+		want       string
+	}{
+		{name: "edge reports identity", instanceID: "hasee", want: "hasee"},
+		{name: "empty identity is omitted", instanceID: "", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h.InstanceID = tc.instanceID
+			rec := httptest.NewRecorder()
+			h.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode /health: %v (%s)", err, rec.Body.String())
+			}
+			if body["ok"] != true || body["role"] != "control" {
+				t.Fatalf("/health = %v, want ok+role=control", body)
+			}
+			got, _ := body["instanceId"].(string)
+			if got != tc.want {
+				t.Fatalf("instanceId = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // 运行节点必须硬拒绝控制面，而数据面照常服务 —— 后者是它存在的全部理由。
 // 前缀表本身在 nodeinfo 包里钉着，这里钉的是「守卫真的挂在路由上、真的生效」。

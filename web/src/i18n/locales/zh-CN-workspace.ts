@@ -111,6 +111,8 @@ export const zhCNWorkspace = {
   "nodeManager.probeTimeout": "联通超时，请检查地址",
   "nodeManager.probeUnreachable": "连不上这个节点，未保存",
   "nodeManager.probeFailed": "联通失败：{status}",
+  "nodeManager.viaRelay": "经主控中转：{url}",
+  "nodeManager.directPlaceholder": "留空则走主控中转",
   "login.downloadingPackage": "正在下载 {packageLabel} 更新包",
   "login.packageDownloadStarted": "更新包已开始下载，请在系统通知或下载目录中打开安装",
   "login.packageDownloadFailed": "{packageLabel} 更新下载失败",

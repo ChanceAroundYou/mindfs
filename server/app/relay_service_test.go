@@ -47,17 +47,61 @@ func TestRelayServiceOnTunnelUpPublishesNodeRecord(t *testing.T) {
 		t.Fatalf("节点表有 %d 条，want 1：%+v", len(list), list)
 	}
 	got := list[0]
-	if got.URL != "https://home.example.com/mindfs/relay/office-pc" {
-		t.Fatalf("URL = %q（部署前缀与分配名字都必须带上）", got.URL)
+	const wantRelay = "https://home.example.com/mindfs/relay/office-pc"
+	if got.RelayURL != wantRelay {
+		t.Fatalf("RelayURL = %q（部署前缀与分配名字都必须带上）", got.RelayURL)
+	}
+	if got.URL != "" {
+		t.Fatalf("relay-only 节点的直连 URL 必须为空，实际 %q", got.URL)
+	}
+	if got.RouteBase() != wantRelay {
+		t.Fatalf("RouteBase() = %q，want relay 兜底 %q", got.RouteBase(), wantRelay)
 	}
 	if !got.Remote {
 		t.Fatal("relay 发布的记录必须是 Remote：跨节点请求不带 user=")
 	}
-	if got.ID != "relay:hasee-01" {
-		t.Fatalf("ID = %q，应带 relay: 前缀便于与手工节点区分", got.ID)
+	if got.ID == "relay:hasee-01" || got.ID != "hasee-01" {
+		t.Fatalf("ID = %q，应以实例 id 为单位，不再生成 relay:* 第二节点", got.ID)
+	}
+	if got.InstanceID != "hasee-01" {
+		t.Fatalf("InstanceID = %q，want hasee-01", got.InstanceID)
 	}
 	if got.Name != "office-pc" {
 		t.Fatalf("Name = %q，应是主控分配的名字", got.Name)
+	}
+}
+
+// relay 是同一节点上的兜底通道：已有直连行（同 instanceID）时必须并进去，
+// 保留直连 URL、只补 relayUrl，绝不新增第二行。
+func TestRelayServiceMergesIntoExistingDirectNode(t *testing.T) {
+	svc, nodeStore := newRelayServiceFixture(t, "https://home.example.com/mindfs")
+	if _, err := nodeStore.Upsert(nodes.NodeConnection{
+		ID:         "node-pc-wsl",
+		Name:       "pc-wsl",
+		URL:        "https://pc.example.com/mindfs",
+		InstanceID: "hasee-01",
+		Remote:     true,
+	}); err != nil {
+		t.Fatalf("seed direct node: %v", err)
+	}
+	svc.OnTunnelUp(context.Background(), "hasee-01", "office-pc", "")
+
+	list := nodeStore.List()
+	if len(list) != 1 {
+		t.Fatalf("relay 应并进既有节点，实际有 %d 行：%+v", len(list), list)
+	}
+	got := list[0]
+	if got.ID != "node-pc-wsl" {
+		t.Fatalf("ID = %q，应保留直连行", got.ID)
+	}
+	if got.URL != "https://pc.example.com/mindfs" {
+		t.Fatalf("直连 URL 被覆盖：%q", got.URL)
+	}
+	if got.RelayURL != "https://home.example.com/mindfs/relay/office-pc" {
+		t.Fatalf("RelayURL = %q", got.RelayURL)
+	}
+	if got.RouteBase() != "https://pc.example.com/mindfs" {
+		t.Fatalf("RouteBase() 应直连优先，实际 %q", got.RouteBase())
 	}
 }
 
@@ -67,7 +111,7 @@ func TestRelayServiceFallsBackToRequestBase(t *testing.T) {
 	svc, nodeStore := newRelayServiceFixture(t, "")
 	svc.OnTunnelUp(context.Background(), "hasee-01", "office-pc", "https://home.example.com/mindfs")
 
-	if got := nodeStore.List(); len(got) != 1 || got[0].URL != "https://home.example.com/mindfs/relay/office-pc" {
+	if got := nodeStore.List(); len(got) != 1 || got[0].RelayURL != "https://home.example.com/mindfs/relay/office-pc" {
 		t.Fatalf("节点表 = %+v", got)
 	}
 }

@@ -171,7 +171,13 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
                 <input
                   value={draftUrl}
                   onChange={(e) => setDraftUrl(e.target.value)}
-                  placeholder={isSelf ? t("nodeManager.thisDevice") : t("login.nodeUrlPlaceholder")}
+                  placeholder={
+                    isSelf
+                      ? t("nodeManager.thisDevice")
+                      : node.relayUrl
+                        ? t("nodeManager.directPlaceholder")
+                        : t("login.nodeUrlPlaceholder")
+                  }
                   disabled={isSelf}
                   style={{
                     ...INPUT_STYLE,
@@ -183,7 +189,18 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
                 />
               ) : (
                 <div style={{ fontSize: 11, color: "var(--text-secondary)", overflowWrap: "anywhere" }}>
-                  {node.url || t("nodeManager.thisDevice")}
+                  {/* 直连是可选项、relay 是兜底：有直连就显示直连，同时标出兜底通道，
+                      否则用户看不出这台机器还有第二条路可走；只有 relay 时直接显示兜底地址。 */}
+                  {node.url
+                    ? node.url
+                    : node.relayUrl
+                      ? t("nodeManager.viaRelay", { url: node.relayUrl })
+                      : t("nodeManager.thisDevice")}
+                  {node.url && node.relayUrl && (
+                    <div style={{ marginTop: 2, opacity: 0.8 }}>
+                      {t("nodeManager.viaRelay", { url: node.relayUrl })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

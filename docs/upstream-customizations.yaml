@@ -15927,8 +15927,8 @@ groups:
   - id: G-RF
     title: "边控端反向接入：主控 /relay/<edge-name>/ 经长连接承载边缘 HTTP 面"
     kind: feature
-    symptom: "没有公网域名/端口的边缘控制端（hasee，办公室 NAT 后）在主控上无法被其他设备访问；其他设备的节点表里也没有它的可达地址。"
-    why: "用户场景：hasee 在办公室、主控在家（外网可达）、手机在任何地方，只要连上主控就要能用 hasee。上游没有任何 relay/反向隧道实现；合上游时丢掉这套，边缘就只剩「同一局域网内直连」一种用法。实现刻意不加 relay 侧鉴权（用户裁定「完全按主控」）：relay 只透传主控本就匿名可达的 API 暴露面，引入第二套凭据反而制造假边界。名字由主控分配并唯一落库（`edges.relay_name`），因为地址会进其他设备的节点表，重连/重启都不能变；握手复用既有 HMAC 同步签名。数据通道的寿命只由主控借出与控制通道断开决定：边控端不在空闲通道上设读超时（空闲等待是正常状态），主控池满时在 WS 升级**之前**回 429，边控端对「没服务过请求的通道」指数退避（上限 5s）。三条一起才是防热循环的完整闭环——只补其中一条，2026-11-25 实测的每秒 460→833 次握手风暴照样复现。"
+    symptom: "没有公网域名/端口的边缘控制端（hasee，办公室 NAT 后）在主控上无法被其他设备访问；其他设备的节点表里也没有它的可达地址。2026-11-26 追加症状：relay 接通后共享节点表多出 `relay:pc` 行，同一台 WSL 边缘在界面上变成两个节点（直连 `pc-wsl` + `relay:pc`），且只配 relay 的边控端在前端被当成「没有地址」。"
+    why: "用户场景：hasee 在办公室、主控在家（外网可达）、手机在任何地方，只要连上主控就要能用 hasee。上游没有任何 relay/反向隧道实现；合上游时丢掉这套，边缘就只剩「同一局域网内直连」一种用法。实现刻意不加 relay 侧鉴权（用户裁定「完全按主控」）：relay 只透传主控本就匿名可达的 API 暴露面，引入第二套凭据反而制造假边界。名字由主控分配并唯一落库（`edges.relay_name`），因为地址会进其他设备的节点表，重连/重启都不能变；握手复用既有 HMAC 同步签名。数据通道的寿命只由主控借出与控制通道断开决定：边控端不在空闲通道上设读超时（空闲等待是正常状态），主控池满时在 WS 升级**之前**回 429，边控端对「没服务过请求的通道」指数退避（上限 5s）。三条一起才是防热循环的完整闭环——只补其中一条，2026-11-25 实测的每秒 460→833 次握手风暴照样复现。 **2026-11-26 relay 是通道不是节点**：一台边缘设备 = 一个节点；直连可选、填了就优先，不填则 relay 兜底。`OnTunnelUp` 不再无条件 Upsert `relay:<slug>` 行，而是按设备身份（`control_sync.instance_id`）合并：命中既有行就只写 `relayUrl`、保留直连 `url` 与名字，未命中才建一条 `{ID: instance_id, RelayURL, Remote}`。`NodeConnection` 因此增 `relayUrl`（兜底基址）与 `instanceId`（配对键），存储加载时清掉遗留 `relay:*` 行并按 instanceId 合并同机多行；前端基址统一走 `url || relayUrl`，启动同步后与节点面板探活时各从 `/health` 的 `instanceId` 自动学一次设备身份写回节点行（relay 只知道 instance_id，手工行是随机 id，不学就永远配不上）。`relayUrl` 只能作辅助字段：控制面同步的键仍是 `NodeBaseKey(RouteBase())`，同一个 ID 不能对应第二个同步键。"
     files:
       - server/internal/controlsync/relay_hub.go
       - server/internal/controlsync/relay_conn.go
@@ -15938,12 +15938,24 @@ groups:
       - server/internal/api/relay.go
       - server/internal/api/relay_tunnel.go
       - server/internal/api/http.go
+      - server/internal/api/http_frontend.go
       - server/internal/api/http_routes.go
+      - server/internal/nodes/store.go
+      - server/internal/controlsync/domain_nodes.go
       - server/app/relay_service.go
       - server/app/control_sync.go
       - server/app/server.go
       - cli/cmd/control_sync.go
       - cli/cmd/startup.go
+      - web/src/services/net/nodeRegistry.ts
+      - web/src/services/platform/runtime.ts
+      - web/src/app/nodeIdentitySync.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/main.tsx
+      - web/src/components/account/useNodeManagerPanel.ts
+      - web/src/components/account/NodeManagerPanel.tsx
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
       - docs/superpowers/specs/2026-11-25-edge-relay-tunnel-design.md
       - docs/superpowers/plans/2026-11-25-edge-relay-tunnel.md
     tests:
@@ -15955,9 +15967,23 @@ groups:
       - server/internal/api/relay_test.go
       - server/internal/api/relay_e2e_test.go
       - server/internal/api/relay_channel_capacity_test.go
+      - server/internal/nodes/store_test.go
+      - server/internal/api/http_node_role_test.go
       - server/app/relay_service_test.go
       - cli/cmd/control_sync_test.go
+      - web/tests/node-relay-channel.test.mjs
+      - web/tests/node-url-normalize.test.mjs
+      - web/tests/node-manager-panel.test.mjs
     anchors:
+      - 'server/internal/nodes/store.go:func (n NodeConnection) RouteBase() string {'
+      - 'server/internal/nodes/store.go:func mergeByInstance(in []NodeConnection) []NodeConnection {'
+      - 'server/internal/nodes/store.go:func (s *Store) SetRelay(instanceID, name, relayURL string) (NodeConnection, error) {'
+      - 'server/internal/controlsync/domain_nodes.go:NodeBaseKey(node.RouteBase())'
+      - 'server/internal/api/http_frontend.go:body["instanceId"] = id'
+      - 'web/src/services/net/nodeRegistry.ts:export function nodeRouteBase('
+      - 'web/src/services/net/nodeRegistry.ts:export function learnNodeInstanceId('
+      - 'web/src/app/nodeIdentitySync.ts:export async function learnNodeIdentitiesOnce('
+      - 'web/src/services/platform/runtime.ts:const base = nodeRouteBase(node);'
       - 'server/internal/controlsync/relay_hub.go:func AssignRelayName(existing, candidate, instanceID string, taken map[string]string) string {'
       - 'server/internal/controlsync/relay_hub.go:func ValidRelayName(name string) bool {'
       - 'server/internal/controlsync/relay_conn.go:func NewWSConn('
@@ -16079,6 +16105,7 @@ groups:
       - "cli/cmd/startup_maintenance_test.go"
       - "server/app/session_maintenance_config_test.go"
       - "server/internal/api/http_session_maintenance_test.go"
+      - "server/internal/api/usecase/session_maintenance_agentless_test.go"
       - "server/internal/api/usecase/session_maintenance_idle_test.go"
       - "server/internal/api/usecase/session_repoint_test.go"
       - "server/internal/api/usecase/session_runtime_issues_test.go"
@@ -16093,6 +16120,8 @@ groups:
       - "web/tests/session-maintenance.test.mjs"
     anchors:
       - "server/internal/api/usecase/session_repoint_adapters.go:type repointAdapter interface"
+      - "server/internal/api/usecase/session_maintenance.go:if strings.TrimSpace(agent) == \"\" {"
+      - "server/internal/api/usecase/session_maintenance.go:log.Printf(\"[session-maintenance] skip session root=%s session=%s err=%v\""
       - "server/internal/api/usecase/session_runtime_issues.go:func (s *Service) DiagnoseRuntimeIssues"
       - "server/internal/session/runtime_path.go:func RuntimeRootPath"
       - "server/internal/kanban/service_worktree_auto_finish.go:type autoFinishContextKey struct{}"

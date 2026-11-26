@@ -8,7 +8,9 @@ import {
   addNode,
   getNodes,
   isSelfNode,
+  learnNodeInstanceId,
   nodeBaseKey,
+  nodeRouteBase,
   removeNode,
   updateNode,
   type NodeConnection,
@@ -44,7 +46,8 @@ async function probeNode(nodeId: string, timeoutMs = 4000): Promise<ProbeStatus>
 // 探角色走 /health 而不是 /api/node-info：后者自己在控制面前缀表里，
 // worker 上必然 403，于是每个运行节点都会被误判成「离线」。
 // /health 是公开端点且刻意不在控制面表内，worker 照常 200 并报出 role。
-type NodeRoleInfo = { ok?: boolean; role?: string };
+// instanceId 是边控端自报的控制面身份：主控据此把 relay 通道并回同一台机器的节点行。
+type NodeRoleInfo = { ok?: boolean; role?: string; instanceId?: string };
 
 async function fetchNodeRole(nodeId: string, timeoutMs = 4000): Promise<NodeRoleInfo | null> {
   let timer = 0;
@@ -109,6 +112,10 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
       list.map(async (n) => {
         const [status, info] = await Promise.all([probeNode(n.id), fetchNodeRole(n.id)]);
         setProbeStatus((prev) => ({ ...prev, [n.id]: status }));
+        // 探活顺带学到设备身份：主控用 relay 只知道 instance_id，节点行只有靠这条
+        // 才能跟 relay 通道对上号。只在值变化时整表写回一次（每次探活都会走到这里）。
+        const instanceId = String(info?.instanceId || "").trim();
+        if (instanceId && !isSelfNode(n.id)) learnNodeInstanceId(n.id, instanceId);
         // 只有真的拿到 role 才下判断。原来探不到也会走 else 分支把标记抹掉 ——
         // 于是任何一次瞬时失败（超时 / 非 JSON / 离线）都会把「运行节点」打回「在线」。
         const role = String(info?.role || "").trim();
@@ -193,28 +200,41 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
     if (!name) return;
     let nextUrl = "";
     if (!isSelf) {
-      try {
-        nextUrl = normalizeInputUrl(draftUrl);
-      } catch {
+      // 留空 = 只走 relay 兜底（未配直连的边控端本来就只有 relay 通道）。
+      // 但清空后必须还有可用基址，否则这条节点会变成没有地址的死行。
+      const rawDraft = String(draftUrl || "").trim();
+      if (!rawDraft && !node.relayUrl) {
         setError(t("nodeManager.urlInvalid"));
         return;
       }
-      // 改了地址就必须先连得上：连不上不保存，只能取消回退原值
-      if (nextUrl !== node.url) {
-        // 与别的节点同「origin + 前缀」才拦：读取时的去重键就是这两个加起来，同 origin 不同前缀
-        // 是两个合法节点（同一台机器挂两个前缀），不能拦。
-        const nextKey = nodeBaseKey(nextUrl);
-        const clash = getNodes().some((n) => n.id !== node.id && nextKey !== "" && nodeBaseKey(n.url) === nextKey);
-        if (clash) {
-          setError(t("nodeManager.urlExists"));
+      if (rawDraft) {
+        try {
+          nextUrl = normalizeInputUrl(rawDraft);
+        } catch {
+          setError(t("nodeManager.urlInvalid"));
           return;
         }
-        setEditBusy(true);
-        const probe = await probeCandidateUrl(nextUrl);
-        setEditBusy(false);
-        if (!probe.ok) {
-          setError(probe.message);
-          return;
+      }
+      // 改了地址就必须先连得上：连不上不保存，只能取消回退原值
+      if (nextUrl !== node.url) {
+        if (nextUrl) {
+          // 与别的节点同「origin + 前缀」才拦：读取时的去重键就是这两个加起来，同 origin 不同前缀
+          // 是两个合法节点（同一台机器挂两个前缀），不能拦。
+          const nextKey = nodeBaseKey(nextUrl);
+          const clash = getNodes().some(
+            (n) => n.id !== node.id && nextKey !== "" && nodeBaseKey(nodeRouteBase(n)) === nextKey,
+          );
+          if (clash) {
+            setError(t("nodeManager.urlExists"));
+            return;
+          }
+          setEditBusy(true);
+          const probe = await probeCandidateUrl(nextUrl);
+          setEditBusy(false);
+          if (!probe.ok) {
+            setError(probe.message);
+            return;
+          }
         }
       }
     }

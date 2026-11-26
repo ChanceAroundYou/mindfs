@@ -19,11 +19,25 @@ const paletteIndex = [PREVIOUS_PALETTE, OLD_PALETTE] as const;
 export type NodeConnection = {
   id: string;
   name: string;
+  /** 直连基址（用户可填，可为空）。 */
   url: string;
   color: string;
+  /** 主控替这台机器转发的兜底基址（<主控>/relay/<name>）。url 为空时才用它。 */
+  relayUrl?: string;
+  /** 这台设备的控制面身份（edge 的 instance_id）。主控据此把 relay 并回同一个节点。 */
+  instanceId?: string;
   /** 这是**另一台机器**上的节点。只用于展示与探测，不参与寻址。 */
   remote?: boolean;
 };
+
+// 节点实际可用的基址：直连优先、relay 兜底。寻址、去重、探活都必须走这里，
+// 否则「只有 relayUrl 的 relay-only 节点」会被当成没有地址而丢掉。
+export function nodeRouteBase(
+  node: { url?: string; relayUrl?: string } | null | undefined,
+): string {
+  if (!node) return "";
+  return (node.url || "").trim() || (node.relayUrl || "").trim();
+}
 
 const ACTIVE_ID_KEY = "mindfs_active_node_id";
 const AGGREGATED_KEY = "mindfs_aggregated";
@@ -69,7 +83,7 @@ export function nodeBaseKey(url: string): string {
 function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
   const seen = new Map<string, NodeConnection>();
   for (const n of nodes) {
-    const key = nodeBaseKey(n.url);
+    const key = nodeBaseKey(nodeRouteBase(n));
     const prev = seen.get(key);
     if (!prev) { seen.set(key, n); continue; }
     // 同一 origin 上已有条目时，self 行必须留下：它的 URL 随后会按当前设备重算，
@@ -78,6 +92,28 @@ function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
     if (isSelfNode(n.id)) seen.set(key, n);
   }
   return Array.from(seen.values());
+}
+
+// relay 是同一节点上的第二通道：同 instanceId 的直连行与 relay-only 行并成一行，
+// 直连优先、把 relayUrl 带过去。服务端 normalize 也做同样的合并；这里先保证界面
+// 立刻一致，不用等下一次整表同步。
+function dedupNodesByInstance(nodes: NodeConnection[]): NodeConnection[] {
+  const index = new Map<string, number>();
+  const out: NodeConnection[] = [];
+  for (const node of nodes) {
+    const iid = (node.instanceId || "").trim();
+    if (!iid) { out.push(node); continue; }
+    const i = index.get(iid);
+    if (i === undefined) { index.set(iid, out.length); out.push(node); continue; }
+    const prim = out[i]!;
+    const relayUrl = prim.relayUrl || node.relayUrl;
+    if (!prim.url && node.url) {
+      out[i] = { ...node, relayUrl, color: node.color || prim.color, remote: prim.remote || node.remote };
+    } else {
+      out[i] = { ...prim, relayUrl, remote: prim.remote || node.remote };
+    }
+  }
+  return out;
 }
 
 // ---- in-memory only, server is source of truth (no localStorage cache for nodes) ----
@@ -113,7 +149,10 @@ function normalizeRecord(item: any): NodeConnection | null {
     }
   }
   const rawURL = normalizeExplicitNodeBase(String(item.url || ""));
-  const url = repairDuplicateDeployPrefix(normalizeExplicitNodeBase(rawURL), DEPLOY_PREFIX);
+  const url = rawURL ? repairDuplicateDeployPrefix(rawURL, DEPLOY_PREFIX) : "";
+  const rawRelay = normalizeExplicitNodeBase(String(item.relayUrl || ""));
+  const relayUrl = rawRelay ? repairDuplicateDeployPrefix(rawRelay, DEPLOY_PREFIX) : "";
+  const instanceId = String(item.instanceId || "").trim();
   let color = String(item.color || "").trim() || "";
   if (!color) color = PALETTE[0];
   else if (!PALETTE.some((c) => c.toLowerCase() === color.toLowerCase())) {
@@ -122,8 +161,19 @@ function normalizeRecord(item: any): NodeConnection | null {
       if (idx >= 0) { color = PALETTE[idx]!; break; }
     }
   }
-  if (!id || !name || !url) return null;
-  return { id, name, url, color, remote: !!item.remote };
+  // 旧实现的 relay:* 独立节点行一律丢弃（与后端 normalize 同口径）：它已经被
+  // 合并成同一节点的 relayUrl，留着就是同一台机器的第二个节点。
+  if (id.startsWith("relay:")) return null;
+  if (!id || !name || (!url && !relayUrl)) return null;
+  return {
+    id,
+    name,
+    url,
+    color,
+    relayUrl: relayUrl || undefined,
+    instanceId: instanceId || undefined,
+    remote: !!item.remote,
+  };
 }
 
 function dedupNodesByID(nodes: NodeConnection[]): NodeConnection[] {
@@ -141,6 +191,7 @@ function dedupNodesByID(nodes: NodeConnection[]): NodeConnection[] {
 function normalizeAndDedup(list: any[]): NodeConnection[] {
   let nodes = (Array.isArray(list) ? list : []).map(normalizeRecord).filter((x: any): x is NodeConnection => !!x);
   nodes = dedupNodesByOrigin(nodes as NodeConnection[]);
+  nodes = dedupNodesByInstance(nodes as NodeConnection[]);
   nodes = dedupNodesByID(nodes as NodeConnection[]);
   const hasSelf = nodes.some((n) => isSelfNode(n.id));
   if (!hasSelf) {
@@ -301,6 +352,24 @@ export async function setNodes(nodes: NodeConnection[]): Promise<void> {
   await enqueueServerWrite(normalized);
 }
 
+/**
+ * 记录某节点自报的控制面身份（探活时从 /health 的 instanceId 学到）。
+ *
+ * 只在值真的变化时整表写回一次：主控据此把 relay 通道并回这台机器的既有节点行。
+ * 返回是否真的触发了写入。空 id 或已一致都返回 false（探活每次都会调，不能每次都写）。
+ */
+export function learnNodeInstanceId(nodeId: string, instanceId: string): boolean {
+  const iid = String(instanceId || "").trim();
+  const id = String(nodeId || "").trim();
+  if (!iid || !id) return false;
+  const list = getNodes();
+  const node = list.find((n) => n.id === id);
+  if (!node || (node.instanceId || "") === iid) return false;
+  const next = list.map((n) => (n.id === id ? { ...n, instanceId: iid } : n));
+  void setNodes(next);
+  return true;
+}
+
 export function getActiveNodeId(): string | null {
   const v = getStoredString(ACTIVE_ID_KEY);
   if (!v) return null;
@@ -353,7 +422,7 @@ export async function addNode(input: { name: string; url: string; color?: string
     url,
     color: String(input.color || "").trim() || nextColor(nodes),
   };
-  if (nodes.some((n) => nodeBaseKey(n.url) === nodeBaseKey(url))) throw new Error("node_url_exists");
+  if (nodes.some((n) => nodeBaseKey(nodeRouteBase(n)) === nodeBaseKey(url))) throw new Error("node_url_exists");
   const next = [...nodes, node];
   await setNodes(next);
   if (!getActiveNodeId()) setActiveNodeId(node.id);
@@ -365,10 +434,19 @@ export async function updateNode(id: string, patch: Partial<Pick<NodeConnection,
   const idx = nodes.findIndex((n) => n.id === String(id || "").trim());
   if (idx < 0) return null;
   const cur = nodes[idx]!;
+  // 直连是可选项：有 relayUrl 兜底时允许把 url 清空（回落 relay）。
+  // 没有兜底通道还清空 URL，这条行就没有地址了 —— normalizeRecord 会把它丢掉，
+  // 那样「保存一次」等于「删掉这个节点」，所以保留原值。
+  let nextUrl = cur.url;
+  if (patch.url !== undefined) {
+    const candidate = normalizeExplicitNodeBase(String(patch.url));
+    if (candidate) nextUrl = candidate;
+    else if (cur.relayUrl) nextUrl = "";
+  }
   const next: NodeConnection = {
     ...cur,
     name: patch.name !== undefined ? String(patch.name).trim() || cur.name : cur.name,
-    url: patch.url !== undefined ? normalizeExplicitNodeBase(String(patch.url)) || cur.url : cur.url,
+    url: nextUrl,
     color: patch.color !== undefined ? String(patch.color).trim() || cur.color : cur.color,
   };
   nodes[idx] = next;

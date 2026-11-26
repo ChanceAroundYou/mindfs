@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"mindfs/server/internal/agent"
@@ -18,6 +19,11 @@ func sessionMaintenanceEntryOf(ctx context.Context, manager *session.Manager, it
 		SessionKey:  item.Key,
 		Agent:       agent,
 		RuntimePath: session.RuntimeRootPath(item),
+	}
+	// 推断不出 agent 的会话没有可维护的 harness，也没有绑定可查（历史 command 会话
+	// 就是这种形态）。把它当错误会让整批诊断与锁清理一起失败，所以按「无 harness」返回。
+	if strings.TrimSpace(agent) == "" {
+		return entry, nil
 	}
 	binding, err := manager.FindAgentBinding(ctx, item.Key, agent)
 	if err != nil {
@@ -53,7 +59,10 @@ func (s *Service) sessionMaintenanceEntries(ctx context.Context, rootID string) 
 		for _, item := range items {
 			entry, err := sessionMaintenanceEntryOf(ctx, manager, item)
 			if err != nil {
-				return nil, err
+				// 单条会话取身份失败不该让整批作废：根级诊断与死 PID 锁清理都不依赖
+				// 每个会话都能维护，记录一条跳过即可。
+				log.Printf("[session-maintenance] skip session root=%s session=%s err=%v", id, item.Key, err)
+				continue
 			}
 			entries = append(entries, entry)
 		}

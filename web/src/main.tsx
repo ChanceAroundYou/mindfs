@@ -5,7 +5,7 @@ import { registerServiceWorker } from "./registerServiceWorker";
 import { applyAppearanceMode, getAppearanceMode } from "./services/prefs/appearance";
 import { Login } from "./components/account/Login";
 import { AuthGate } from "./components/account/AuthGate";
-import { addNode, getNodes, setActiveNodeId } from "./services/net/nodeRegistry";
+import { addNode, getNodes, nodeRouteBase, setActiveNodeId } from "./services/net/nodeRegistry";
 import { I18nProvider } from "./i18n";
 import { installReloadObserver } from "./services/platform/reloadObserver";
 import { installAssetRecoveryHandlers } from "./app/assetRecovery";
@@ -45,7 +45,7 @@ function AppRoot() {
               }
             })();
             const nodes = getNodes();
-            const existing = nodes.find((node) => node.url === url);
+            const existing = nodes.find((node) => nodeRouteBase(node) === url);
             if (existing) {
               setActiveNodeId(existing.id);
               window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
