@@ -1,5 +1,5 @@
 import { getStoredString, setStoredString, removeStoredString } from "../prefs/storage";
-import { deriveLocalNodeBase, normalizeExplicitNodeBase, repairDuplicateDeployPrefix } from "./nodeBase";
+import { normalizeExplicitNodeBase, repairDuplicateDeployPrefix } from "./nodeBase";
 import { DEPLOY_PREFIX } from "./prefix";
 import { controlPath } from "./controlPlane";
 import { DEFAULT_NODE_COLOR, PALETTE } from "../../shared/nodePalette";
@@ -8,36 +8,21 @@ import {
   LEGACY_SELF_NODE_ID,
   getSelfNodeId,
   getSelfNodeIdentity,
-  getSelfNodeName,
   initSelfNodeIdentity,
-  isSelfNode,
+  isSelfNodeConnection,
 } from "./selfNode";
-export { LEGACY_SELF_NODE_ID, getSelfNodeId, getSelfNodeName, initSelfNodeIdentity, isSelfNode } from "./selfNode";
-const PREVIOUS_PALETTE = ["#7c6bd6", "#c9b84a", "#6a8dc2", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
-const OLD_PALETTE = ["#6d5bcf", "#0ea5a0", "#e07a2f", "#2f8f4e", "#d9466a", "#7a9a3a"] as const;
-const paletteIndex = [PREVIOUS_PALETTE, OLD_PALETTE] as const;
-export type NodeConnection = {
-  id: string;
-  name: string;
-  /** 直连基址（用户可填，可为空）。 */
-  url: string;
-  color: string;
-  /** 主控替这台机器转发的兜底基址（<主控>/relay/<name>）。url 为空时才用它。 */
-  relayUrl?: string;
-  /** 这台设备的控制面身份（edge 的 instance_id）。主控据此把 relay 并回同一个节点。 */
-  instanceId?: string;
-  /** 这是**另一台机器**上的节点。只用于展示与探测，不参与寻址。 */
-  remote?: boolean;
-};
-
-// 节点实际可用的基址：直连优先、relay 兜底。寻址、去重、探活都必须走这里，
-// 否则「只有 relayUrl 的 relay-only 节点」会被当成没有地址而丢掉。
-export function nodeRouteBase(
-  node: { url?: string; relayUrl?: string } | null | undefined,
-): string {
-  if (!node) return "";
-  return (node.url || "").trim() || (node.relayUrl || "").trim();
-}
+export { LEGACY_SELF_NODE_ID, getSelfNodeId, getSelfNodeName, initSelfNodeIdentity, isSelfNode, isSelfNodeConnection } from "./selfNode";
+import {
+  deviceLocalNodeURL,
+  makeSelfNode,
+  nodeBaseKey,
+  nodeRouteBase,
+  normalizeAndDedup,
+  normalizeRecord,
+} from "./nodeTableNormalize";
+import type { NodeConnection } from "./nodeTableNormalize";
+export { nodeBaseKey, nodeRouteBase } from "./nodeTableNormalize";
+export type { NodeConnection } from "./nodeTableNormalize";
 
 const ACTIVE_ID_KEY = "mindfs_active_node_id";
 const AGGREGATED_KEY = "mindfs_aggregated";
@@ -45,75 +30,6 @@ const LEGACY_NODES_KEY = "mindfs_nodes";
 
 function nextColor(existing: NodeConnection[]): string {
   return PALETTE[existing.length % PALETTE.length];
-}
-
-function localBaseURL(): string {
-  try {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    return deriveLocalNodeBase(origin, DEPLOY_PREFIX);
-  } catch {}
-  return "";
-}
-
-// self 节点 = “当前这台机器”：其 URL 必须按当前设备推导，共享列表里持久化的
-// self URL 是某台设备写入的，对其它设备必然错误（实测：手机写入 local→home URL，
-// PC 端解析 nodeId="local" 全部路由到 home 服务器）。web 用当前 origin；原生壳
-// origin（capacitor://…）不可直接 fetch，留空走相对路径/原生代理。
-function deviceLocalNodeURL(): string {
-  const base = localBaseURL();
-  if (!base || !/^https?:\/\//i.test(base)) return "";
-  return base;
-}
-
-function makeSelfNode(): NodeConnection {
-  return { id: getSelfNodeId(), name: getSelfNodeName(), url: deviceLocalNodeURL(), color: PALETTE[0] };
-}
-
-// 去重键必须带上路径段：同一台物理机可以挂两个部署前缀（实测 PC 上 WSL 节点走 /mindfs、
-// Windows 节点走 /mindfs-win，两者共用 pc.xiaokubao.space）。只比 origin 会把后一个节点吞掉
-// —— 界面里看不到它，「添加节点」还会报 node_url_exists。
-// origin 那部分保留：它负责把共享列表里持久化的 local URL 与当前设备推导的那条并成一条。
-export function nodeBaseKey(url: string): string {
-  try {
-    const u = new URL(url);
-    const path = u.pathname.replace(/\/+$/, "");
-    return `${u.protocol}//${u.host}${path}`.toLowerCase();
-  } catch { return url.toLowerCase(); }
-}
-function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
-  const seen = new Map<string, NodeConnection>();
-  for (const n of nodes) {
-    const key = nodeBaseKey(nodeRouteBase(n));
-    const prev = seen.get(key);
-    if (!prev) { seen.set(key, n); continue; }
-    // 同一 origin 上已有条目时，self 行必须留下：它的 URL 随后会按当前设备重算，
-    // 别的设备写进去的 URL 不能信。
-    if (isSelfNode(prev.id)) continue;
-    if (isSelfNode(n.id)) seen.set(key, n);
-  }
-  return Array.from(seen.values());
-}
-
-// relay 是同一节点上的第二通道：同 instanceId 的直连行与 relay-only 行并成一行，
-// 直连优先、把 relayUrl 带过去。服务端 normalize 也做同样的合并；这里先保证界面
-// 立刻一致，不用等下一次整表同步。
-function dedupNodesByInstance(nodes: NodeConnection[]): NodeConnection[] {
-  const index = new Map<string, number>();
-  const out: NodeConnection[] = [];
-  for (const node of nodes) {
-    const iid = (node.instanceId || "").trim();
-    if (!iid) { out.push(node); continue; }
-    const i = index.get(iid);
-    if (i === undefined) { index.set(iid, out.length); out.push(node); continue; }
-    const prim = out[i]!;
-    const relayUrl = prim.relayUrl || node.relayUrl;
-    if (!prim.url && node.url) {
-      out[i] = { ...node, relayUrl, color: node.color || prim.color, remote: prim.remote || node.remote };
-    } else {
-      out[i] = { ...prim, relayUrl, remote: prim.remote || node.remote };
-    }
-  }
-  return out;
 }
 
 // ---- in-memory only, server is source of truth (no localStorage cache for nodes) ----
@@ -135,80 +51,6 @@ export type NodesSyncOutcome = {
   error?: unknown;
 };
 
-function normalizeRecord(item: any): NodeConnection | null {
-  if (!item || typeof item !== "object") return null;
-  let id = String(item.id || "").trim();
-  let name = String(item.name || "").trim();
-  // 旧伪节点 local 一律映射成自报身份：节点表是共享的，主控与边缘过去都往里写过
-  // 一个叫 local 的行；换成 home/pc-win 后，下一次整表写回就把它替换掉。
-  if (id === LEGACY_SELF_NODE_ID) {
-    const self = getSelfNodeIdentity();
-    if (self) {
-      id = self.id;
-      name = self.name;
-    }
-  }
-  const rawURL = normalizeExplicitNodeBase(String(item.url || ""));
-  const url = rawURL ? repairDuplicateDeployPrefix(rawURL, DEPLOY_PREFIX) : "";
-  const rawRelay = normalizeExplicitNodeBase(String(item.relayUrl || ""));
-  const relayUrl = rawRelay ? repairDuplicateDeployPrefix(rawRelay, DEPLOY_PREFIX) : "";
-  const instanceId = String(item.instanceId || "").trim();
-  let color = String(item.color || "").trim() || "";
-  if (!color) color = PALETTE[0];
-  else if (!PALETTE.some((c) => c.toLowerCase() === color.toLowerCase())) {
-    for (const p of paletteIndex) {
-      const idx = p.findIndex((c) => c.toLowerCase() === color.toLowerCase());
-      if (idx >= 0) { color = PALETTE[idx]!; break; }
-    }
-  }
-  // 旧实现的 relay:* 独立节点行一律丢弃（与后端 normalize 同口径）：它已经被
-  // 合并成同一节点的 relayUrl，留着就是同一台机器的第二个节点。
-  if (id.startsWith("relay:")) return null;
-  if (!id || !name || (!url && !relayUrl)) return null;
-  return {
-    id,
-    name,
-    url,
-    color,
-    relayUrl: relayUrl || undefined,
-    instanceId: instanceId || undefined,
-    remote: !!item.remote,
-  };
-}
-
-function dedupNodesByID(nodes: NodeConnection[]): NodeConnection[] {
-  const seen = new Map<string, NodeConnection>();
-  for (const node of nodes) {
-    const id = String(node.id || "").trim();
-    if (!id) continue;
-    // 同 id 两条（例如旧 local 行映射后撞上已有的 home 行）保留 self 那条：
-    // 它的 URL 是设备推导的，另一条的 URL 是别的设备写下的。
-    if (!seen.has(id) || isSelfNode(id)) seen.set(id, node);
-  }
-  return Array.from(seen.values());
-}
-
-function normalizeAndDedup(list: any[]): NodeConnection[] {
-  let nodes = (Array.isArray(list) ? list : []).map(normalizeRecord).filter((x: any): x is NodeConnection => !!x);
-  nodes = dedupNodesByOrigin(nodes as NodeConnection[]);
-  nodes = dedupNodesByInstance(nodes as NodeConnection[]);
-  nodes = dedupNodesByID(nodes as NodeConnection[]);
-  const hasSelf = nodes.some((n) => isSelfNode(n.id));
-  if (!hasSelf) {
-    nodes = [makeSelfNode(), ...nodes];
-  } else {
-    const idx = nodes.findIndex((n) => isSelfNode(n.id));
-    if (idx > 0) {
-      const [self] = nodes.splice(idx, 1);
-      nodes.unshift(self!);
-    }
-  }
-  const self = nodes.find((n) => isSelfNode(n.id));
-  // 读取时强制按当前设备推导（见 deviceLocalNodeURL）：共享列表持久化的 self URL 不可信
-  if (self) self.url = deviceLocalNodeURL();
-  return nodes;
-}
-
 function writeCache(next: NodeConnection[]) {
   const prev = cache;
   cache = next;
@@ -229,10 +71,15 @@ function nodesApiPath(): string {
 }
 
 async function pushToServer(next: NodeConnection[]): Promise<void> {
+  // 合成 self 行只在本机视角成立：表里已有别的行时把它写回去，服务端会按「同名不同 id」
+  // 拒绝整表（边缘上就是共享 pc 行 + 合成 pc 行），改名/改色/学到的 instanceId 全部
+  // 静默丢失。只有表本身就空（首次启动、只写本机这一行）时才让它落库。
+  const stored = next.filter((node) => !node._syntheticSelf);
+  const payload = (stored.length ? stored : next).map(({ _syntheticSelf, ...node }) => node);
   const res = await fetch(nodesApiPath(), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(next),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`put nodes failed: ${res.status}`);
 }
@@ -293,9 +140,11 @@ export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome
       if (!list.length) {
         const legacy = readLegacyLocalNodes();
         if (legacy && legacy.length) {
-          const merged = normalizeAndDedup([...nodes, ...legacy.filter((n) => !isSelfNode(n.id))]);
+          const merged = normalizeAndDedup([...nodes, ...legacy.filter((n) => !isSelfNodeConnection(n))]);
           try {
-            await enqueueServerWrite(merged);
+            // 这是「服务端表为空」的种子写入：本机行必须一起落库（pushToServer 平时会
+            // 把合成行剔除，这里显式去掉标记）。
+            await enqueueServerWrite(merged.map((n) => ({ ...n, _syntheticSelf: undefined })));
             nodes = merged;
             clearLegacyLocalNodes();
           } catch (error) {
@@ -328,10 +177,11 @@ export async function syncNodesFromServerWithOutcome(): Promise<NodesSyncOutcome
 
 export function ensureSelfNode(): NodeConnection {
   const nodes = getNodes();
-  let self = nodes.find((n) => isSelfNode(n.id)) || null;
+  let self = nodes.find(isSelfNodeConnection) || null;
   if (!self) {
     self = makeSelfNode();
-    nodes.unshift(self);
+    // 追加而不是前插：首行留给控制面顺序里的节点（主控置顶由服务端保证）。
+    nodes.push(self);
     void setNodes(nodes);
   } else if (!self.url) {
     self.url = deviceLocalNodeURL();
@@ -380,6 +230,15 @@ export function getActiveNodeId(): string | null {
     setStoredString(ACTIVE_ID_KEY, selfId);
     return selfId;
   }
+  // 本机行在共享表里可能挂着别的 id（边缘的 pc 行是随机 uuid）：旧 active id 等于
+  // 本机自报 id 时迁到合并后那条行的 id，否则这条 id 解析不到节点、请求会退到页面服务器。
+  if (getSelfNodeIdentity() && id === getSelfNodeId()) {
+    const self = getNodes().find(isSelfNodeConnection);
+    if (self && self.id !== id) {
+      setStoredString(ACTIVE_ID_KEY, self.id);
+      return self.id;
+    }
+  }
   return id;
 }
 
@@ -401,9 +260,9 @@ export function getActiveNode(): NodeConnection | null {
   // 不带 nodeId 的请求（appURL(undefined) → getApiBaseURL → getActiveNode）
   // 会静默打到那台机器上：页面明明开在本机，会话却读的是 pc 的数据，
   // 而且两边 id/名字都一样，肉眼完全看不出来。
-  // self 节点的 URL 是按当前 origin 推导的（见 deviceLocalNodeURL），正是
-  // 「页面所在这台机器」，拿不到 active id 时应该选它。
-  const self = nodes.find((n) => isSelfNode(n.id));
+  // 本机连接的寻址按当前 origin 推导（见 runtime.resolveNodeBaseURL / deviceLocalNodeURL），
+  // 正是「页面所在这台机器」，拿不到 active id 时应该选它。
+  const self = nodes.find(isSelfNodeConnection);
   if (self) return self;
   return nodes[0] || null;
 }
@@ -457,14 +316,33 @@ export async function updateNode(id: string, patch: Partial<Pick<NodeConnection,
 export async function removeNode(id: string): Promise<void> {
   const normalized = String(id || "").trim();
   // 本机不是「可删除的节点」：它由当前服务器与运行设备决定，删掉只会在下次同步时回来。
-  if (isSelfNode(normalized)) throw new Error("cannot_remove_self");
+  // 判定必须用连接身份：边缘的本机行在共享表里是随机 uuid，只比 id 会放行删除。
   const nodes = getNodes();
+  const target = nodes.find((n) => n.id === normalized);
+  if (isSelfNodeConnection(target)) throw new Error("cannot_remove_self");
   const next = nodes.filter((n) => n.id !== normalized);
   await setNodes(next);
   const activeId = getActiveNodeId();
   if (activeId === normalized) {
     setActiveNodeId(next[0]?.id || null);
   }
+}
+
+/**
+ * 上移/下移一行，整表写回（服务端按数组下标写 Order）。
+ *
+ * 首行固定：主控置顶是服务端保证的，客户端既不移动首行，也不让别的行挤到它前面。
+ */
+export async function moveNode(id: string, direction: "up" | "down"): Promise<void> {
+  const normalized = String(id || "").trim();
+  const nodes = getNodes();
+  const index = nodes.findIndex((n) => n.id === normalized);
+  if (index < 0) return;
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index === 0 || target < 1 || target >= nodes.length) return;
+  const next = [...nodes];
+  [next[index], next[target]] = [next[target]!, next[index]!];
+  await setNodes(next);
 }
 
 export function getAggregated(): boolean {

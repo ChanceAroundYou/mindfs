@@ -15987,7 +15987,7 @@ groups:
       - 'server/internal/nodes/store.go:func (s *Store) SetRelay(instanceID, name, relayURL string) (NodeConnection, error) {'
       - 'server/internal/controlsync/domain_nodes.go:NodeBaseKey(node.RouteBase())'
       - 'server/internal/api/http_frontend.go:body["instanceId"] = id'
-      - 'web/src/services/net/nodeRegistry.ts:export function nodeRouteBase('
+      - 'web/src/services/net/nodeTableNormalize.ts:export function nodeRouteBase('
       - 'web/src/services/net/nodeRegistry.ts:export function learnNodeInstanceId('
       - 'web/src/app/nodeIdentitySync.ts:export async function learnNodeIdentitiesOnce('
       - 'web/src/services/platform/runtime.ts:const base = nodeRouteBase(node);'
@@ -17190,3 +17190,63 @@ groups:
       - 'server/internal/api/ws_session_message_queue.go:if chunk.Start {'
       - 'server/internal/api/ws_session_message_queue_thought_start_test.go:func TestUpdateToEventDropsThoughtStartMarker(t *testing.T) {'
       - 'server/internal/agent/codex/session_test.go:func TestCodexReasoningStartPrecedesLateSummary(t *testing.T) {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SA
+    title: "边缘端节点表：本机行统一、主控置顶、顺序跨端持久"
+    kind: fix
+    symptom: "边缘（Windows，instance_id=pc）的「管理节点」里同时出现两条 pc（127.0.0.1:7332/mindfs 与 https://pc.xiaokubao.space/mindfs-win），主控 home 被挤到第二行；改名/改色/学到 instanceId 全部不落库，顺序与颜色不跨设备同步。"
+    why: "根因是前端把合成的本机行无条件前插，而共享表里同一台机器那条是随机 uuid：两条同名不同 id 让服务端 NameConflicts 拒绝整表 PUT，于是所有节点表写入静默失败；顺序本身也没有持久字段。修复必须同时做三件事，缺一条症状就回来：(1) 合成行带 instanceId 并追加在末尾，按 instance 与共享行合并，保留共享行 id/直连网址/颜色；(2) 合成行在表非空时不写回，解除同名冲突；(3) NodeConnection.Order 由 PUT 下标赋值、List 排序、随 control-sync 同步；GET/PUT 都把主控行强制排第一，面板只提供上移/下移且首行固定。本机连接寻址仍走当前设备地址（selfLocalBase），表里那条直连网址只用于展示。"
+    boundary: "不改 relay 通道与 node-info/health 的身份语义；不改 control-sync 的 domain 代码（order 随整条记录自然同步）；agent 的 nodeId/hostname 运行时数据保持不变。两条历史 pc 行由新前端 + 探活学到的 instanceId 合并，不手工删库。"
+    files:
+      - web/src/services/net/nodeRegistry.ts
+      - web/src/services/net/nodeTableNormalize.ts
+      - web/src/services/net/selfNode.ts
+      - web/src/shared/selfNodeStore.ts
+      - web/src/services/platform/runtime.ts
+      - web/src/components/account/NodeManagerPanel.tsx
+      - web/src/components/account/useNodeManagerPanel.ts
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/i18n/locales/en-US-workspace.ts
+      - server/internal/nodes/store.go
+      - server/internal/api/http_nodes.go
+      - docs/plans/2026-11-26-edge-node-table-and-icon.md
+    tests:
+      - web/tests/node-registry-self-unification.test.ts
+      - web/tests/node-url-normalize.test.mjs
+      - web/tests/node-manager-panel.test.mjs
+      - server/internal/nodes/store_test.go
+      - server/internal/api/http_nodes_order_test.go
+    anchors:
+      - 'web/src/services/net/nodeRegistry.ts:const payload = (stored.length ? stored : next).map(({ _syntheticSelf, ...node }) => node);'
+      - 'web/src/services/net/nodeRegistry.ts:export async function moveNode(id: string, direction: "up" | "down"): Promise<void> {'
+      - 'web/src/shared/selfNodeStore.ts:export function isSelfNodeConnection('
+      - 'web/src/services/platform/runtime.ts:function selfLocalBase(node: { id?: string; instanceId?: string } | null): string {'
+      - 'server/internal/nodes/store.go:Order int `json:"order,omitempty"`'
+      - 'server/internal/nodes/store.go:func sortByOrder(in []NodeConnection) []NodeConnection {'
+      - 'server/internal/api/http_nodes.go:func primaryRowFirst(list []nodes.NodeConnection, nodeID string) []nodes.NodeConnection {'
+      - 'web/tests/node-registry-self-unification.test.ts:test("首行固定，其它行上移下移按数组顺序整表写回", async () => {'
+      - 'server/internal/api/http_nodes_order_test.go:func TestNodesPutAssignsOrderAndPinsPrimaryFirst(t *testing.T) {'
+  - id: G-SB
+    title: "Windows 边缘客户端与安装器使用 MindFS 应用图标"
+    kind: feature
+    symptom: "Windows 边缘版 mindfs.exe 在资源管理器/任务栏/开始菜单里是通用空白图标，NSIS 安装向导也还是 NSIS 默认图标。"
+    why: "托盘图标走 go:embed，但 PE 资源里没有任何图标：没有 .syso 时 Go 不会给 exe 写 RT_ICON/RT_GROUP_ICON，快捷方式与任务栏只能显示默认图标。修复需要三件配套资源：多尺寸 app.ico、按目标架构生成的 .syso（Go 只链接匹配 GOOS/GOARCH 的文件；自解压安装器用 setup-stub 包的那份）、以及 NSIS 的 MUI_ICON/MUI_UNICON（由构建脚本传 -DAPP_ICON）。删除任何一个，图标都会退回默认。"
+    boundary: "只加资源与构建参数；不改 tray.ico（托盘已自带图标）、不改安装流程/计划任务/更新通道。没有 makensis 的环境仍可构建（.nsi 对 APP_ICON 做了 !ifdef 守卫）。"
+    files:
+      - cli/cmd/assets/app.ico
+      - cli/cmd/rsrc_windows_amd64.syso
+      - cli/cmd/rsrc_windows_arm64.syso
+      - server/cmd/mindfs-setup-stub/rsrc_windows_amd64.syso
+      - scripts/windows-installer/mindfs.nsi
+      - scripts/build-windows-installer.sh
+      - internal/deploy/windows_icon_test.go
+      - docs/plans/2026-11-26-edge-node-table-and-icon.md
+    tests:
+      - internal/deploy/windows_icon_test.go
+    anchors:
+      - 'scripts/windows-installer/mindfs.nsi:!define MUI_ICON "${APP_ICON}"'
+      - 'scripts/build-windows-installer.sh:-DAPP_ICON="${ROOT}/cli/cmd/assets/app.ico" '
+      - 'internal/deploy/windows_icon_test.go:func TestWindowsResourceObjectsMatchTargets(t *testing.T) {'
+

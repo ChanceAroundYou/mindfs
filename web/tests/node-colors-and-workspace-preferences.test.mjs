@@ -5,6 +5,7 @@ import { test } from "vitest";
 test("node-colors-and-workspace-preferences", async () => {
 const read = (file) => fs.readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
 const nodeRegistry = read("services/net/nodeRegistry.ts");
+const nodeTableNormalize = read("services/net/nodeTableNormalize.ts");
 const nodePalette = read("shared/nodePalette.ts");
 const defaultList = read("components/file/DefaultListView.tsx");
 const fileTree = read("components/file/FileTree.tsx");
@@ -23,15 +24,15 @@ const rootBadgeStyle = read("shared/rootBadgeStyle.ts");
 
 assert.match(nodePalette, /PALETTE = \["#3b82f6", "#f59e0b", "#7c6bd6"/);
 assert.match(nodeRegistry, /export \{ DEFAULT_NODE_COLOR, PALETTE \} from "\.\.\/\.\.\/shared\/nodePalette"/);
-assert.match(nodeRegistry, /const PREVIOUS_PALETTE = \["#7c6bd6", "#c9b84a"/);
-assert.match(nodeRegistry, /const OLD_PALETTE = \["#6d5bcf", "#0ea5a0"/);
+assert.match(nodeTableNormalize, /const PREVIOUS_PALETTE = \["#7c6bd6", "#c9b84a"/);
+assert.match(nodeTableNormalize, /const OLD_PALETTE = \["#6d5bcf", "#0ea5a0"/);
 // 当前调色板保护：已属于 PALETTE 的存储色（尤其 #7c6bd6）不得被迁移改写
 assert.match(
-  nodeRegistry,
+  nodeTableNormalize,
   /PALETTE\.some\(\(c\) => c\.toLowerCase\(\) === color\.toLowerCase\(\)\)/,
 );
 // paletteIndex 覆盖 PREVIOUS_PALETTE 与 OLD_PALETTE 两个历史调色板
-assert.match(nodeRegistry, /const paletteIndex = \[PREVIOUS_PALETTE, OLD_PALETTE\]/);
+assert.match(nodeTableNormalize, /const paletteIndex = \[PREVIOUS_PALETTE, OLD_PALETTE\]/);
 assert.match(defaultList, /rootColor\?: string/);
 assert.match(defaultList, /rootBadgeButtonStyle/);
 // project-home 徽标在 FileViewer / Breadcrumbs / GitDiffViewer 里（DefaultListView 通过 Breadcrumbs 间接渲染）

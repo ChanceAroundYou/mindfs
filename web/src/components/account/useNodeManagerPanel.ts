@@ -7,8 +7,9 @@ import { confirmDialog } from "../../services/dialog";
 import {
   addNode,
   getNodes,
-  isSelfNode,
+  isSelfNodeConnection,
   learnNodeInstanceId,
+  moveNode,
   nodeBaseKey,
   nodeRouteBase,
   removeNode,
@@ -115,7 +116,7 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
         // 探活顺带学到设备身份：主控用 relay 只知道 instance_id，节点行只有靠这条
         // 才能跟 relay 通道对上号。只在值变化时整表写回一次（每次探活都会走到这里）。
         const instanceId = String(info?.instanceId || "").trim();
-        if (instanceId && !isSelfNode(n.id)) learnNodeInstanceId(n.id, instanceId);
+        if (instanceId && !isSelfNodeConnection(n)) learnNodeInstanceId(n.id, instanceId);
         // 只有真的拿到 role 才下判断。原来探不到也会走 else 分支把标记抹掉 ——
         // 于是任何一次瞬时失败（超时 / 非 JSON / 离线）都会把「运行节点」打回「在线」。
         const role = String(info?.role || "").trim();
@@ -195,7 +196,7 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
   );
 
   const commitEdit = async (node: NodeConnection) => {
-    const isSelf = isSelfNode(node.id);
+    const isSelf = isSelfNodeConnection(node);
     const name = draftName.trim();
     if (!name) return;
     let nextUrl = "";
@@ -240,9 +241,19 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
     }
     try {
       setError("");
-      // self 的 url 每次读取都会被 deviceLocalNodeURL() 覆盖，提交了也是白提交
+      // 本机行的 url 不提交：寻址按当前设备推导（runtime.resolveNodeBaseURL），表里那条
+      // 直连网址是给其它设备看的，改了也只会在下次读取时被本机视角顶掉。
       await updateNode(node.id, isSelf ? { name, color: draftColor } : { name, color: draftColor, url: nextUrl });
       setEditingId(null);
+    } catch (e: unknown) {
+      setError(String((e as Error)?.message || e));
+    }
+  };
+
+  const handleMove = async (node: NodeConnection, direction: "up" | "down") => {
+    try {
+      setError("");
+      await moveNode(node.id, direction);
     } catch (e: unknown) {
       setError(String((e as Error)?.message || e));
     }
@@ -332,6 +343,7 @@ export function useNodeManagerPanel({ onClose, onRefreshAll }: UseNodeManagerPan
     setAddError,
     startEdit,
     commitEdit,
+    handleMove,
     handleDelete,
     handleAdd,
   };

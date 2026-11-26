@@ -1,7 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import { PALETTE } from "../../shared/nodePalette";
-import { isSelfNode } from "../../shared/selfNodeStore";
+import { isSelfNodeConnection } from "../../shared/selfNodeStore";
 import { useNodeManagerPanel } from "./useNodeManagerPanel";
 
 // 挂载即"打开"（与它替换掉的 add/remove/edit 三个 popover 一致），外部点击由面板自己收。
@@ -85,6 +85,7 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
     setAddError,
     startEdit,
     commitEdit,
+    handleMove,
     handleDelete,
     handleAdd,
   } = useNodeManagerPanel({ onClose, onRefreshAll });
@@ -129,8 +130,11 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
         </button>
       </div>
 
-      {nodes.map((node) => {
-        const isSelf = isSelfNode(node.id);
+      {nodes.map((node, index) => {
+        const isSelf = isSelfNodeConnection(node);
+        // 首行固定：主控置顶由服务端保证，第一行与第二行的「上移」都不可用。
+        const canMoveUp = index > 1;
+        const canMoveDown = index > 0 && index < nodes.length - 1;
         const status = statusLabel(node.id);
         const editing = editingId === node.id;
         return (
@@ -258,6 +262,40 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
                   >
                     {t("common.delete")}
                   </button>
+                ) : null}
+                {nodes.length > 1 ? (
+                  <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                    <button
+                      type="button"
+                      disabled={!canMoveUp}
+                      onClick={() => void handleMove(node, "up")}
+                      title={t("nodeManager.moveUp")}
+                      aria-label={t("nodeManager.moveUp")}
+                      style={{
+                        ...SMALL_BUTTON_STYLE,
+                        padding: "4px 8px",
+                        opacity: canMoveUp ? 1 : 0.4,
+                        cursor: canMoveUp ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canMoveDown}
+                      onClick={() => void handleMove(node, "down")}
+                      title={t("nodeManager.moveDown")}
+                      aria-label={t("nodeManager.moveDown")}
+                      style={{
+                        ...SMALL_BUTTON_STYLE,
+                        padding: "4px 8px",
+                        opacity: canMoveDown ? 1 : 0.4,
+                        cursor: canMoveDown ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      ↓
+                    </button>
+                  </div>
                 ) : null}
               </div>
             )}
