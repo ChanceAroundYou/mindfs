@@ -34,8 +34,8 @@ error 三类 Router 提醒也显示在任务卡上，沿用现有提醒样式并
    与工作台同一张卡拿到同一份数据（卡片路由字段扫描表同步加入新模型文件）。
 3. **前端卡片**
    - 新增纯函数 `routerAskModel.ts`（照 `routerAlertModel` 的模式），输出独立 key
-     `router_ask`、独立文案键与问题正文；图标用新的 `TaskRouterAskIcon`（蓝色问号），
-     与 worker ask 的红色 `❓` 区分。
+     `router_ask`、独立文案键与问题正文；图标用新的 `TaskRouterAskIcon`（红色问号），
+     与会话 worker 透传 ask 同一档告警色，靠形状与文案区分来源。
    - 最新提醒放在正文下方、结果摘要上方：类型胶囊复用 `activityMetaPillStyle`，正文
      颜色复用 `attentionSeverityColor`，两行截断，`data-severity` 留测试锚点。
 4. **不改动**：Router ask 不写 `aux_flags.ask_user_waiting`，worker ask 不产生 `router_ask`；

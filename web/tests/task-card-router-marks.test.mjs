@@ -56,22 +56,22 @@ test("Router ask 与 worker ask 的徽标 key/文案/图标互不混用", () => 
   const workerLabel = translateNow("task.waitingUser");
   const routerLabel = translateNow("task.routerAskWaitingTitle", { question: "走哪个？" });
 
-  // 只有 worker ask：不能出现 Router 的文案或蓝色圆圈图标。
+  // 只有 worker ask：不能出现 Router 的文案或圆圈图标。
   const workerOnly = cardHtml({
     ...baseTask,
     aux_flags: { ask_user_waiting: true },
   });
   assert.ok(workerOnly.includes(workerLabel), "worker ask 用 task.waitingUser");
   assert.ok(!workerOnly.includes(routerLabel), "worker ask 不得冒充 Router ask");
-  assert.ok(!workerOnly.includes("#0ea5e9"), "worker ask 不得画成 Router 图标");
+  assert.ok(!workerOnly.includes('stroke="#ef4444"'), "worker ask 不得画成 Router 图标");
 
-  // 只有 Router ask：不能出现 worker 的问号文案。
+  // 只有 Router ask：不能出现 worker 的问号文案；图标统一用告警红。
   const routerOnly = cardHtml({
     ...baseTask,
     router_ask: { count: 1, question: "走哪个？" },
   });
   assert.ok(routerOnly.includes(routerLabel), "Router ask 带上问题正文");
-  assert.ok(routerOnly.includes("#0ea5e9"), "Router ask 用独立的蓝色问号图标");
+  assert.ok(routerOnly.includes('stroke="#ef4444"'), "Router ask 图标与会话 ask 同为红色");
   assert.ok(!routerOnly.includes(workerLabel), "Router ask 不得复用 worker 文案");
 
   // 两者同时存在：各画各的，不合并、不互相吞掉。
@@ -82,7 +82,7 @@ test("Router ask 与 worker ask 的徽标 key/文案/图标互不混用", () => 
   });
   assert.ok(both.includes(workerLabel));
   assert.ok(both.includes(routerLabel));
-  assert.ok(both.includes("#0ea5e9"));
+  assert.ok(both.includes('stroke="#ef4444"'));
 });
 
 test("最新提醒沿用类型胶囊 + 正文，按 severity 着色并可回退 info", () => {

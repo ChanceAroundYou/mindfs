@@ -326,8 +326,9 @@ export function TaskRouterAlertIcon({ color }: { color?: string } = {}) {
 }
 
 export function TaskRouterAskIcon({ color }: { color?: string } = {}) {
-  // Router 自己派发的提问：空心圆圈问号，与 worker ask 的红色实心 ❓ 区分。
-  const c = String(color || "#0ea5e9").trim() || "#0ea5e9";
+  // Router 自己派发的提问：空心圆圈问号，与 worker 透传 ask 的红色问号统一用
+  // 告警红；形状不同只用来区分来源，不再靠配色区分。
+  const c = String(color || "#ef4444").trim() || "#ef4444";
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="8.4" stroke={c} strokeWidth="1.7" />
