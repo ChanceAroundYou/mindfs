@@ -560,3 +560,55 @@ func (s *Server) recoverInvalidEncryptedContent(resp *http.Response, original *h
 	log.Printf("[proxy] provider-switch.recover thread=%s items=%d status=%d", ShortToken(threadID), removed, retried.StatusCode)
 	return retried
 }
+
+// unresolvableItemMarker is the upstream error phrase for an input item whose
+// id cannot be resolved because the response that minted it was not stored
+// (`store:false`) — and, for us, because a different provider minted it.
+const unresolvableItemMarker = "Items are not persisted when"
+
+// recoverUnresolvableItemID retries a request that replayed response item ids
+// minted by the previous provider. Codex keeps prefixed ids across a provider
+// switch; the new upstream cannot resolve them with store:false and answers
+// 404 "Item with id 'rs_…' not found". The retry drops those references (and
+// any ciphertext that became unreadable on the way), then remembers the thread
+// so later turns strip proactively.
+//
+// This is the safety net for an already-poisoned thread: the proactive strip
+// only runs once the switch marker exists, so a thread that crossed providers
+// before the marker was persisted would otherwise keep failing every turn.
+func (s *Server) recoverUnresolvableItemID(resp *http.Response, original *http.Request, target *url.URL, threadID string, body []byte) *http.Response {
+	if resp == nil || (resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest) {
+		return resp
+	}
+	peek, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(peek))
+	if err != nil || !bytes.Contains(peek, []byte(unresolvableItemMarker)) {
+		return resp
+	}
+	stripped, ids, changed := stripInputItemIDs(body)
+	if !changed {
+		return resp
+	}
+	cipherStripped, _, cipherChanged, found := stripEncryptedInput(stripped, nil)
+	if cipherChanged {
+		stripped = cipherStripped
+	}
+	retry, err := http.NewRequestWithContext(original.Context(), original.Method, target.String(), bytes.NewReader(stripped))
+	if err != nil {
+		return resp
+	}
+	retry.Header = original.Header.Clone()
+	retry.Header.Del("Host")
+	retried, err := http.DefaultTransport.RoundTrip(retry)
+	if err != nil {
+		log.Printf("[proxy] provider-switch.recover-ids.retry_error thread=%s err=%v", ShortToken(threadID), err)
+		return resp
+	}
+	s.MarkProviderSwitch(threadID)
+	if cipherChanged {
+		s.recordProviderSwitchCiphertextIDs(threadID, found)
+	}
+	log.Printf("[proxy] provider-switch.recover-ids thread=%s items=%d status=%d", ShortToken(threadID), ids, retried.StatusCode)
+	return retried
+}

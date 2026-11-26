@@ -12051,6 +12051,8 @@ groups:
       - web/tests/pending-completion-sub-session.test.mjs
       - web/android/app/src/test/java/com/mindfs/app/ReplyCompletionFeedTest.java
       - web/android/app/src/test/java/com/mindfs/app/ReplyStateMergerTest.java
+      - server/internal/agent/proxy/provider_switch_ids_test.go
+      - server/internal/agent/proxy/provider_switch_codex_live_test.go
     anchors:
       - 'server/internal/notify/plaintext.go:const BodyMaxRunes = 1000'
       - 'server/internal/notify/plaintext.go:func PlainText(value string, maxRunes int) string {'
@@ -12639,7 +12641,7 @@ groups:
       - 'web/src/app/useReplyingSessionPoll.ts:      reloadListRef.current?.();'
       - 'web/src/app/useAppMultiProjectReload.ts:    scheduleMultiProjectSessionReload,'
   - id: G-PK
-    title: Codex 跨 provider 续接的请求清洗（丢旧密文 + 归一 message id）
+    title: Codex 跨 provider 续接的请求清洗（丢旧密文 + 归一 message id + 丢跨 provider item id）
     kind: fix
     symptom: |
       pc-win 上一条在 llmux 下建的 Codex 线程（rollout 里 21 条
@@ -12647,6 +12649,12 @@ groups:
       都 400：`{"code":"invalid_encrypted_content","message":"The encrypted content
       Omal...RQ== could not be verified"}`。会话看起来续上了（转录、工具调用都在），
       但一轮都发不出去；手工改库重建线程只能救当次，下一次切 provider 还会复现。
+
+      第二种症状（2026-11-26，wsl 实测）：llmux → 官方 ChatGPT 登录后每轮 404
+      `Item with id 'rs_…' not found. Items are not persisted when 'store' is set to
+      false. Try again with 'store' set to true, or remove this item from your input.`。
+      密文剥离已生效（日志 `provider-switch.strip … items=43`），失败的是旧 provider
+      铸造的 response item id 本身。
     why: |
       根因在既有 `rethreadCodexResumeOnProviderMismatch`（session_resume_provider.go）：
       它正确识别 provider 不一致并用 `thread/fork` 换到新 provider，但 fork 会把历史
@@ -12706,6 +12714,20 @@ groups:
       不动 —— 被删的 id 按定义就是官方 API 会拒绝的值，而输入条目没有 id 本身是
       合法形态（Codex 的普通用户消息就不带 id）。
 
+      第三种清洗处理 item id 本身：Codex 0.146+ 在 replay 时保留带前缀的 response
+      item id（`msg_` / `rs_` / `fc_` / `at_` …），而它固定发 `store:false`。换
+      provider 后新上游解析不了旧上游铸造的 id —— ChatGPT 官方登录回 404
+      `Item with id 'rs_…' not found. Items are not persisted when store is set to
+      false`（wsl 2026-11-26 16:34 实测，线程 `01a216fd`，id `rs_e2bc…`；同一请求
+      的密文剥离已经生效 `items=43`）。`stripInputItemIDs` 在
+      `providerSwitchedThread` 为真的请求上删除 `input[]` 每个对象顶层的 `id`；
+      条目正文、`call_id`（工具配对）与 content 内嵌 id 保留，`item_reference`
+      失去 id 后整条丢弃。这就是 Codex 0.146 之前的无状态请求形态，所有 Responses
+      上游都接受。反向切换（default→llmux）同样处理：标记属于线程，不属于某一个
+      上游。被动兜底 `recoverUnresolvableItemID`：400/404 且 body 含
+      `Items are not persisted when` 时剥 id（顺带全剥密文）重试一次并标记线程；
+      无关 404 原样透传，不重试。
+
       测试 → 钉住什么：
       · TestStripEncryptedReasoningInput —— 四类实测载体（reasoning 顶层 /
         agent_message.content[] / compacted 的 guardian_history 与
@@ -12728,11 +12750,28 @@ groups:
         保住，reasoning / compacted 内嵌条目不动，兄弟顺序与正文逐字节保留。
       · TestHandleProviderNormalizesMessageIDsBeforeForwarding —— 注册线程的请求
         转发前就归一，上游看不到 `item_` 前缀的消息 id。
+      · TestStripInputItemIDs —— 顶层 id 全删、call_id 与 content 内嵌 id 保留、
+        item_reference 整条丢弃、二次处理不再改动。
+      · TestStripInputItemIDsLeavesUntouchedShapesAlone —— 无 id / input 非数组 /
+        非 JSON 一律逐字节不变。
+      · TestHandleProviderStripsItemIDsOnSwitchedThread —— 已标记线程转发前删 id。
+      · TestHandleProviderKeepsItemIDsOnUnswitchedThread —— 未切换线程不动 id。
+      · TestHandleProviderRecoversUnresolvableItemID —— 未标记中毒线程 404 后剥 id
+        重试成功、标记线程，下一轮主动剥离。
+      · TestHandleProviderStripsItemIDsOnReverseSwitch —— default→llmux 方向同样
+        无状态。
+      · TestHandleProviderPassesThroughUnrelated404 —— 无关 404 不重试。
+      · TestCodexProviderSwitchItemIDsLive —— 可选真机 E2E（env
+        MINDFS_TEST_CODEX_PROVIDER_IDS=1）：真实 codex 在两套 mock 上游间
+        fork/resume/反向 fork，strict 上游按 ChatGPT 语义拒绝任何 input id；
+        断言往返请求都不带 id。
     files:
       - server/internal/agent/proxy/provider_switch.go
       - server/internal/agent/proxy/provider_switch_test.go
       - server/internal/agent/proxy/responses_ids.go
       - server/internal/agent/proxy/responses_ids_test.go
+      - server/internal/agent/proxy/provider_switch_ids_test.go
+      - server/internal/agent/proxy/provider_switch_codex_live_test.go
       - server/internal/agent/proxy/provider_route.go
       - server/internal/agent/proxy/proxy.go
       - server/internal/agent/pool.go
@@ -12752,6 +12791,11 @@ groups:
       - 'server/internal/agent/proxy/provider_route.go:	if scanned && s.providerSwitchedThread(threadID) {'
       - 'server/internal/agent/proxy/provider_route.go:		allowed, snapshotted := s.providerSwitchCiphertextIDs(threadID)'
       - 'server/internal/agent/proxy/provider_route.go:		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)'
+      - 'server/internal/agent/proxy/provider_route.go:		resp = s.recoverUnresolvableItemID(resp, r, targetURL, threadID, body)'
+      - 'server/internal/agent/proxy/provider_route.go:		if stripped, removed, changed := stripInputItemIDs(body); changed {'
+      - 'server/internal/agent/proxy/responses_ids.go:func stripInputItemIDs(body []byte) (out []byte, removed int, changed bool) {'
+      - 'server/internal/agent/proxy/responses_ids.go:func stripItemIDElement(value []byte) ([]byte, int, bool) {'
+      - 'server/internal/agent/proxy/provider_switch.go:func (s *Server) recoverUnresolvableItemID(resp *http.Response, original *http.Request, target *url.URL, threadID string, body []byte) *http.Response {'
       - 'server/internal/agent/proxy/responses_ids.go:func normalizeInputMessageIDs(body []byte) (out []byte, removed int, changed bool) {'
       - 'server/internal/agent/proxy/responses_ids.go:func normalizeMessageIDElement(b []byte, start int) ([]byte, bool) {'
       - 'server/internal/agent/proxy/provider_route.go:		if normalized, removed, changed := normalizeInputMessageIDs(body); changed {'

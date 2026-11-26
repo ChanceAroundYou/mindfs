@@ -128,6 +128,16 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 			// value-scoped instead of stripping the new provider's ciphertext.
 			s.recordProviderSwitchCiphertextIDs(threadID, nil)
 		}
+		// Item ids are provider-scoped references. Codex replays them with
+		// store:false, so an id minted by the previous upstream is not
+		// resolvable at the new one and the turn 404s with "Item with id …
+		// not found". Codex sends the full item, so dropping the reference is
+		// the stateless shape every provider accepts; see stripInputItemIDs.
+		if stripped, removed, changed := stripInputItemIDs(body); changed {
+			body = stripped
+			log.Printf("[proxy] provider-switch.strip-ids thread=%s items=%d bytes=%d",
+				ShortToken(threadID), removed, len(body))
+		}
 	}
 	// The official Responses API rejects message items whose id does not begin
 	// with `msg_`, and Codex gives the messages it creates locally (the
@@ -176,6 +186,7 @@ func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
 	// retry once without the undecryptable ciphertext and remember the thread.
 	if scanned && threadID != "" {
 		resp = s.recoverInvalidEncryptedContent(resp, r, targetURL, threadID, body)
+		resp = s.recoverUnresolvableItemID(resp, r, targetURL, threadID, body)
 	}
 	defer resp.Body.Close()
 
