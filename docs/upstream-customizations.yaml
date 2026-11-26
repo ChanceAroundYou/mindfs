@@ -16105,6 +16105,7 @@ groups:
       - "cli/cmd/startup_maintenance_test.go"
       - "server/app/session_maintenance_config_test.go"
       - "server/internal/api/http_session_maintenance_test.go"
+      - "server/internal/api/usecase/session_maintenance_agentless_test.go"
       - "server/internal/api/usecase/session_maintenance_idle_test.go"
       - "server/internal/api/usecase/session_repoint_test.go"
       - "server/internal/api/usecase/session_runtime_issues_test.go"
@@ -16119,6 +16120,8 @@ groups:
       - "web/tests/session-maintenance.test.mjs"
     anchors:
       - "server/internal/api/usecase/session_repoint_adapters.go:type repointAdapter interface"
+      - "server/internal/api/usecase/session_maintenance.go:if strings.TrimSpace(agent) == \"\" {"
+      - "server/internal/api/usecase/session_maintenance.go:log.Printf(\"[session-maintenance] skip session root=%s session=%s err=%v\""
       - "server/internal/api/usecase/session_runtime_issues.go:func (s *Service) DiagnoseRuntimeIssues"
       - "server/internal/session/runtime_path.go:func RuntimeRootPath"
       - "server/internal/kanban/service_worktree_auto_finish.go:type autoFinishContextKey struct{}"
