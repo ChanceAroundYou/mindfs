@@ -663,7 +663,13 @@ func TestHandleProviderSnapshotsEmptyFirstPass(t *testing.T) {
 
 	body := `{"input":[{"type":"reasoning","id":"rs_new","encrypted_content":"NEW"},` +
 		`{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`
-	if got := post(body); got != body {
+	// The item id is still dropped — every provider-switched thread sends the
+	// stateless shape — but the new provider's ciphertext must survive.
+	got := post(body)
+	if !strings.Contains(got, `"encrypted_content":"NEW"`) {
 		t.Fatalf("new provider ciphertext was stripped after an empty snapshot: %s", got)
+	}
+	if strings.Contains(got, `"id":"rs_new"`) {
+		t.Fatalf("item id survived the provider-switch strip: %s", got)
 	}
 }

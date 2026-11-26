@@ -130,3 +130,120 @@ func normalizeMessageIDElement(b []byte, start int) ([]byte, bool) {
 	obj.WriteByte('}')
 	return obj.Bytes(), true
 }
+
+// stripInputItemIDs removes the top-level `id` member from every element of
+// the Responses `input` array.
+//
+// Codex 0.146+ preserves prefixed response-item ids when it replays history.
+// Those ids are minted by the upstream that produced the item, and Codex always
+// sends `store:false`. After a provider switch the new upstream cannot resolve
+// an id minted by the old one, and there is no stored copy to fall back on, so
+// the whole turn dies with:
+//
+//	404 Not Found: Item with id 'rs_…' not found. Items are not persisted when
+//	`store` is set to false. Try again with `store` set to true, or remove this
+//	item from your input.
+//
+// The item's readable content is already in the body; only the reference is
+// unusable. Dropping `id` restores the stateless shape Codex used before 0.146,
+// which every Responses upstream accepts. `call_id`/`call_*` pairing and ids
+// nested inside content parts are untouched.
+func stripInputItemIDs(body []byte) (out []byte, removed int, changed bool) {
+	open := fold.ScanSkipSpace(body, 0)
+	if open >= len(body) || body[open] != '{' {
+		return body, 0, false
+	}
+	inputStart, inputEnd := -1, -1
+	err := fold.ScanEachMember(body, open, func(key []byte, valueStart, valueEnd int) (bool, error) {
+		if fold.MemberKeyIs(key, "input") {
+			inputStart, inputEnd = valueStart, valueEnd
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil || inputStart < 0 || body[inputStart] != '[' {
+		return body, 0, false
+	}
+	var array bytes.Buffer
+	array.Grow(len(body[inputStart:inputEnd]))
+	array.WriteByte('[')
+	first := true
+	scanErr := fold.ScanEachElement(body, inputStart, func(valueStart, valueEnd int) error {
+		value := body[valueStart:valueEnd]
+		if len(value) > 0 && value[0] == '{' {
+			if rewritten, dropped, ok := stripItemIDElement(value); ok {
+				removed += dropped
+				changed = true
+				if rewritten == nil {
+					return nil // item_reference has no purpose without its id
+				}
+				value = rewritten
+			}
+		}
+		if !first {
+			array.WriteByte(',')
+		}
+		first = false
+		array.Write(value)
+		return nil
+	})
+	if scanErr != nil || !changed {
+		return body, 0, false
+	}
+	array.WriteByte(']')
+	result := make([]byte, 0, len(body)-(inputEnd-inputStart)+array.Len())
+	result = append(result, body[:inputStart]...)
+	result = append(result, array.Bytes()...)
+	result = append(result, body[inputEnd:]...)
+	return result, removed, true
+}
+
+// stripItemIDElement rebuilds one input item without its top-level `id`
+// member. An item_reference has nothing left once the id is gone, so it is
+// dropped instead of being forwarded as an empty reference.
+func stripItemIDElement(value []byte) ([]byte, int, bool) {
+	members, err := scanMemberSpans(value, 0)
+	if err != nil {
+		return nil, 0, false
+	}
+	idIndex := -1
+	itemReference := false
+	for i, m := range members {
+		name, err := fold.JSONStringAt(value, m.keyStart, m.keyEnd)
+		if err != nil {
+			return nil, 0, false
+		}
+		switch name {
+		case "id":
+			idIndex = i
+		case "type":
+			if t, err := fold.JSONStringAt(value, m.valueStart, m.valueEnd); err == nil && t == "item_reference" {
+				itemReference = true
+			}
+		}
+	}
+	if idIndex < 0 {
+		return nil, 0, false
+	}
+	if itemReference {
+		return nil, 1, true
+	}
+	var obj bytes.Buffer
+	obj.Grow(len(value))
+	obj.WriteByte('{')
+	first := true
+	for i, m := range members {
+		if i == idIndex {
+			continue
+		}
+		if !first {
+			obj.WriteByte(',')
+		}
+		first = false
+		obj.Write(value[m.keyStart:m.keyEnd])
+		obj.WriteByte(':')
+		obj.Write(value[m.valueStart:m.valueEnd])
+	}
+	obj.WriteByte('}')
+	return obj.Bytes(), 1, true
+}

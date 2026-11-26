@@ -144,3 +144,50 @@ func TestHandleProviderNormalizesMessageIDsBeforeForwarding(t *testing.T) {
 		t.Fatalf("visible content was dropped: %s", got)
 	}
 }
+
+// A provider switch makes every replayed item id a stale reference: Codex
+// sends store:false, so the new upstream cannot resolve an id the old one
+// minted. Content and call pairing must survive; only top-level ids go.
+func TestStripInputItemIDs(t *testing.T) {
+	body := `{"model":"gpt-6","store":false,"input":[` +
+		`{"type":"reasoning","id":"rs_old","summary":[{"type":"summary_text","text":"think"}]},` +
+		`{"type":"message","role":"assistant","id":"msg_old","content":[{"type":"output_text","id":"part_keep","text":"hi"}]},` +
+		`{"type":"function_call","id":"fc_old","call_id":"call_old","name":"exec","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_old","output":"ok"},` +
+		`{"type":"item_reference","id":"msg_ref"},` +
+		`{"type":"additional_tools","id":"at_old","role":"developer","tools":[]},` +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}]}`
+	got, removed, changed := stripInputItemIDs([]byte(body))
+	if !changed || removed != 5 {
+		t.Fatalf("removed=%d changed=%v, want 5/true (body=%s)", removed, changed, got)
+	}
+	if !json.Valid(got) {
+		t.Fatalf("rewritten body is not valid json: %s", got)
+	}
+	for _, stale := range []string{`"rs_old"`, `"msg_old"`, `"fc_old"`, `"at_old"`, `"msg_ref"`, "item_reference"} {
+		if strings.Contains(string(got), stale) {
+			t.Fatalf("stale reference %s survived: %s", stale, got)
+		}
+	}
+	for _, keep := range []string{`"call_id":"call_old"`, `"id":"part_keep"`, `"text":"next"`, `"store":false`} {
+		if !strings.Contains(string(got), keep) {
+			t.Fatalf("payload %s was dropped: %s", keep, got)
+		}
+	}
+	if again, removed, changed := stripInputItemIDs(got); changed || removed != 0 {
+		t.Fatalf("second pass changed the body again: %s", again)
+	}
+}
+
+func TestStripInputItemIDsLeavesUntouchedShapesAlone(t *testing.T) {
+	for _, body := range []string{
+		`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`,
+		`{"input":"not-an-array"}`,
+		`{"model":"gpt-6"}`,
+		`not json`,
+	} {
+		if got, removed, changed := stripInputItemIDs([]byte(body)); changed || removed != 0 || string(got) != body {
+			t.Fatalf("body changed: in=%s out=%s removed=%d changed=%v", body, got, removed, changed)
+		}
+	}
+}
