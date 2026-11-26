@@ -70,10 +70,19 @@ assert.match(
 
 // 冲突判断必须用路径感知的去重键（nodeRegistry.nodeBaseKey）：两处口径不同就会拦掉
 // 同一台机器上合法的两个前缀（实测 PC 上 WSL 走 /mindfs、Windows worker 走 /mindfs-win）。
+// 对方的地址按 url || relayUrl 解析：relay-only 节点也有可用基址，只比 url 会漏拦。
 assert.match(
   panel,
-  /const clash = getNodes\(\)\.some\(\(n\) => n\.id !== node\.id && nextKey !== "" && nodeBaseKey\(n\.url\) === nextKey\)/,
+  /const clash = getNodes\(\)\.some\(\s*\(n\) => n\.id !== node\.id && nextKey !== "" && nodeBaseKey\(nodeRouteBase\(n\)\) === nextKey,?\s*\)/,
   "改地址的冲突判断必须用路径感知的去重键",
+);
+
+// ——— 直连可选、relay 兜底 ———
+// 未配直连的边控端只有 relayUrl：编辑时留空 = 继续走 relay，但清空后必须还有可用基址。
+assert.match(
+  panel,
+  /const rawDraft = String\(draftUrl \|\| ""\)\.trim\(\);\s*if \(!rawDraft && !node\.relayUrl\) \{\s*setError\(t\("nodeManager\.urlInvalid"\)\);/,
+  "清空直连后必须还有 relay 兜底，否则这个节点就没有地址了",
 );
 
 // ——— 角色判定：只在真的拿到 role 时下判断 ———

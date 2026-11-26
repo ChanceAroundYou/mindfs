@@ -111,6 +111,8 @@ export const enUSWorkspace = {
   "nodeManager.probeTimeout": "Connection timed out — check the URL",
   "nodeManager.probeUnreachable": "Cannot reach this node — not saved",
   "nodeManager.probeFailed": "Connection failed: {status}",
+  "nodeManager.viaRelay": "Via primary relay: {url}",
+  "nodeManager.directPlaceholder": "Leave empty to use the primary relay",
   "login.downloadingPackage": "Downloading {packageLabel} update package",
   "login.packageDownloadStarted": "Update package download started. Open it from system notifications or Downloads.",
   "login.packageDownloadFailed": "{packageLabel} update download failed",

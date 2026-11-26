@@ -39,6 +39,10 @@ type HTTPHandler struct {
 	// NodeID 参与 scope 键：空值只在老进程里出现，归一成 home/主控由上层保证。
 	NodeID   string
 	NodeName string
+	// InstanceID 是本机在控制面同步里的稳定身份（control_sync.instance_id）。
+	// 只有 edge 有值；主控/worker 为空。/health 会带上它，供前端把 relay 通道
+	// 按设备身份并回已有节点行（见 nodes.Store.SetRelay）。
+	InstanceID string
 	// WindowBlockBudget 覆盖窗口块数预算（0 = 用默认值）。
 	// **只为测试与不是「一键关闭」**：真正的关闭是回滚提交；这里给一个可覆写的
 	// 入口，是为了让契约测试能在小 fixture 上验证裁剪而不用造 400 块。

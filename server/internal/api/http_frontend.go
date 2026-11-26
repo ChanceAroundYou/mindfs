@@ -36,10 +36,16 @@ func (h *HTTPHandler) handleFrontend(w http.ResponseWriter, r *http.Request) {
 // NodeManagerPanel.probeNode（用 protectedJSON，能解析即成功），deploy-all.sh
 // 不碰这个端点。
 func (h *HTTPHandler) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"ok":   true,
 		"role": string(nodeinfo.Normalize(string(h.NodeRole))),
-	})
+	}
+	// instanceId 让前端在探活时顺手学到这台设备的控制面身份，用于把 relay 通道
+	// 并回节点表里同一台机器的既有行。主控/worker 没有 instance id，不带这个键。
+	if id := strings.TrimSpace(h.InstanceID); id != "" {
+		body["instanceId"] = id
+	}
+	respondJSON(w, http.StatusOK, body)
 }
 
 func (h *HTTPHandler) handleNotFound(w http.ResponseWriter, r *http.Request) {

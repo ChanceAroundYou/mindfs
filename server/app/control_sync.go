@@ -88,6 +88,9 @@ type controlSyncWiring struct {
 	// relay 只有主节点非空：边控端拨进来的隧道与 /relay/<name> 转发。
 	// nil = 不注册相关路由，保持改造前的行为。
 	relay api.ControlSyncRelay
+	// instanceID 是本机在控制面同步里的稳定身份（edge 才有值）。/health 会带出去，
+	// 供前端把 relay 通道按设备身份并回节点行。
+	instanceID string
 }
 
 // uiMirrorOf 在 wiring 为 nil（未启用同步）时也安全。
@@ -123,6 +126,7 @@ func (w *controlSyncWiring) applyTo(h *api.HTTPHandler) {
 	h.ControlSyncToken = w.token
 	h.ControlSyncPair = w.pairing
 	h.ControlSyncRelay = w.relay
+	h.InstanceID = w.instanceID
 }
 
 // wrapRoot 按角色包一层中间件：采集在内、转发在外。
@@ -242,9 +246,10 @@ func startControlSync(ctx context.Context, opts *ControlSyncOptions, nodeRole no
 	}
 
 	w := &controlSyncWiring{
-		runtime:   rt,
-		capturer:  capturer,
-		conflicts: rt.Resolver(),
+		runtime:    rt,
+		capturer:   capturer,
+		conflicts:  rt.Resolver(),
+		instanceID: cfg.InstanceID,
 	}
 	if cfg.Role == controlsync.RolePrimary {
 		w.pusher = rt.Pusher()

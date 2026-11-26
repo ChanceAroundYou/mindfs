@@ -87,10 +87,11 @@ func (r *relayService) AllocateName(ctx context.Context, instanceID, candidate s
 	return name, nil
 }
 
-// OnTunnelUp 在隧道建立后发布节点表记录。
+// OnTunnelUp 在隧道建立后把这台机器「可以从哪访问」并进节点表。
 //
-// 记录内容只有一件事：这台机器现在可以从哪个 base 访问。前端 getApiBaseURL
-// 直接取它当 /api/* 与 /ws 的 base，所以不需要任何前端改动。
+// relay 是**同一节点上的兜底通道**，不是第二个节点：按 instanceID 找到设备已有的
+// 节点行（直连 URL 保留），只补 RelayURL；没有既有行（relay-only 设备）才新建一行。
+// 前端寻址改为 url || relayUrl：直连优先、relay 兜底。
 //
 // 基址优先取配置，其次取「边控端拨进来的那条请求」里看到的 scheme+Host+前缀 ——
 // 后者天然就是这台机器对外的样子，不需要人去填一遍自己的公网域名。
@@ -108,21 +109,16 @@ func (r *relayService) OnTunnelUp(ctx context.Context, instanceID, name, publicB
 		log.Printf("[relay] publish skipped: no public base instance=%s name=%s", instanceID, name)
 		return
 	}
-	nodeID := relayNodeID(instanceID)
-	rec := nodes.NodeConnection{
-		ID:     nodeID,
-		Name:   name,
-		URL:    base + "/relay/" + name,
-		Remote: true,
-	}
-	if _, err := r.nodes.Upsert(rec); err != nil {
+	relayURL := base + "/relay/" + name
+	rec, err := r.nodes.SetRelay(instanceID, name, relayURL)
+	if err != nil {
 		log.Printf("[relay] publish failed instance=%s name=%s err=%v", instanceID, name, err)
 		return
 	}
 	r.mu.Lock()
-	r.published[instanceID] = nodeID
+	r.published[instanceID] = rec.ID
 	r.mu.Unlock()
-	log.Printf("[relay] published node=%s url=%s", nodeID, rec.URL)
+	log.Printf("[relay] published node=%s relayUrl=%s", rec.ID, rec.RelayURL)
 }
 
 // OnTunnelDown 在隧道断开时把节点标为不可达。
@@ -141,18 +137,6 @@ func (r *relayService) OnTunnelDown(ctx context.Context, instanceID string) {
 	}
 	// 记录留着，地址留着 —— 隧道一恢复，同一个地址立刻又能用了。
 	log.Printf("[relay] tunnel down instance=%s (node record kept)", instanceID)
-}
-
-// relayNodeID 由 instance id 派生节点 id。
-//
-// 加前缀是为了与手工添加的节点区分开：运维一眼能看出这一行是 relay 自动发布的，
-// 手工删掉它时也知道删的是什么。
-func relayNodeID(instanceID string) string {
-	slug := controlsync.SlugRelayName(instanceID)
-	if slug == "" {
-		slug = "edge"
-	}
-	return "relay:" + slug
 }
 
 // timeNow 单独抽出来，测试要能钉住时刻。

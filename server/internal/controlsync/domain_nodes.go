@@ -34,9 +34,9 @@ func (d *NodesDomain) Snapshot(ctx context.Context) ([]Record, error) {
 	out := make([]Record, 0, len(list))
 	seen := make(map[string]bool, len(list))
 	for _, node := range list {
-		key := NodeBaseKey(node.URL)
+		key := NodeBaseKey(node.RouteBase())
 		if key == "" {
-			return nil, fmt.Errorf("controlsync: node %q has empty url", node.ID)
+			return nil, fmt.Errorf("controlsync: node %q has no url or relay url", node.ID)
 		}
 		if seen[key] {
 			return nil, fmt.Errorf("controlsync: duplicate node url %q", key)
@@ -62,7 +62,7 @@ func (d *NodesDomain) Apply(ctx context.Context, rec Record) error {
 	list := d.store.List()
 	idx := -1
 	for i, node := range list {
-		if NodeBaseKey(node.URL) == rec.Key {
+		if NodeBaseKey(node.RouteBase()) == rec.Key {
 			idx = i
 			break
 		}
@@ -81,16 +81,18 @@ func (d *NodesDomain) Apply(ctx context.Context, rec Record) error {
 	node.Name = strings.TrimSpace(node.Name)
 	node.URL = strings.TrimSpace(node.URL)
 	node.Color = strings.TrimSpace(node.Color)
-	if node.ID == "" || node.Name == "" || node.URL == "" {
+	node.RelayURL = strings.TrimSpace(node.RelayURL)
+	node.InstanceID = strings.TrimSpace(node.InstanceID)
+	if node.ID == "" || node.Name == "" || (node.URL == "" && node.RelayURL == "") {
 		// store.Replace 会静默丢掉缺字段的条目 —— 那样同步就会无声地少一条节点。
 		return fmt.Errorf("controlsync: node payload missing id/name/url (key %q)", rec.Key)
 	}
-	if got := NodeBaseKey(node.URL); got != rec.Key {
+	if got := NodeBaseKey(node.RouteBase()); got != rec.Key {
 		return fmt.Errorf("controlsync: node key %q does not match payload url key %q", rec.Key, got)
 	}
 	for i, other := range list {
 		if i != idx && other.ID == node.ID {
-			return fmt.Errorf("controlsync: node id %q already used by %q", node.ID, NodeBaseKey(other.URL))
+			return fmt.Errorf("controlsync: node id %q already used by %q", node.ID, NodeBaseKey(other.RouteBase()))
 		}
 	}
 	if idx >= 0 {

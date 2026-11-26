@@ -1,5 +1,5 @@
 import { getStoredApiBaseURL, getStoredWsBaseURL } from "../prefs/storage";
-import { getActiveNode, getNodeById } from "../net/nodeRegistry";
+import { getActiveNode, getNodeById, nodeRouteBase } from "../net/nodeRegistry";
 import { deriveLocalNodeBase, normalizeExplicitNodeBase } from "../net/nodeBase";
 import { DEPLOY_PREFIX } from "../net/prefix";
 
@@ -119,7 +119,12 @@ function deriveOriginBaseURL(): string {
 function resolveNodeBaseURL(nodeId?: string): string {
   if (nodeId) {
     const node = getNodeById(nodeId);
-    if (node?.url) return normalizeExplicitNodeBase(node.url);
+    // 直连优先、relay 兜底：一条节点记录可能只有 relayUrl（未配直连的边控端，
+    // 或由主控经隧道发布）。只认 url 会把这类节点当成「没有地址」。
+    if (node) {
+      const base = nodeRouteBase(node);
+      if (base) return normalizeExplicitNodeBase(base);
+    }
     // 显式 nodeId 解析失败（节点被删/重加后旧 id、注册表未同步完成）时不回退 active node：
     // 静默回退会把请求发给错误节点（实测：其它节点会话的窗口拉取/关联文件 diff 串到当前节点）。
     // 返回空串让调用链落到“当前连接服务器”（origin/原生代理路径），与 UI 连接上下文一致。
@@ -127,7 +132,8 @@ function resolveNodeBaseURL(nodeId?: string): string {
     return "";
   }
   const active = getActiveNode();
-  if (active?.url) return normalizeExplicitNodeBase(active.url);
+  const activeBase = nodeRouteBase(active);
+  if (activeBase) return normalizeExplicitNodeBase(activeBase);
   return "";
 }
 
@@ -150,10 +156,9 @@ export function getWsBaseURL(nodeId?: string): string {
     let u = "";
     if (nodeId) {
       const node = getNodeById(nodeId);
-      if (node?.url) u = normalizeExplicitNodeBase(node.url);
+      u = normalizeExplicitNodeBase(nodeRouteBase(node));
     } else {
-      const active = getActiveNode();
-      if (active?.url) u = normalizeExplicitNodeBase(active.url);
+      u = normalizeExplicitNodeBase(nodeRouteBase(getActiveNode()));
     }
     if (u) {
       if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;

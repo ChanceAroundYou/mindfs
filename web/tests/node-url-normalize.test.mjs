@@ -57,8 +57,24 @@ assert.match(registry, /function makeSelfNode\(\): NodeConnection \{\s*return \{
 assert.match(registry, /\/\/ 读取时强制按当前设备推导[^\n]*\n[^\n]*if \(self\) self\.url = deviceLocalNodeURL\(\);/, "reading the node list must override the persisted self URL per device");
 
 // 显式 nodeId 解析失败不得静默回退 active node：会把请求发给错误节点。
+// 同时，节点地址必须走「直连优先、relay 兜底」——relay-only 节点（未配直连的边控端）
+// 只有 relayUrl，只认 url 会被当成「没有地址」。
 const runtimeSource = fs.readFileSync(path.join(root, "src/services/platform/runtime.ts"), "utf8");
-assert.match(runtimeSource, /function resolveNodeBaseURL\(nodeId\?: string\): string \{\s*if \(nodeId\) \{\s*const node = getNodeById\(nodeId\);\s*if \(node\?\.url\) return normalizeExplicitNodeBase\(node\.url\);[\s\S]*?console\.warn\("\[node-routing\] explicit nodeId unresolvable[\s\S]*?return "";\s*\}\s*const active = getActiveNode\(\);/, "unresolvable explicit nodeId must not fall back to the active node silently");
+assert.match(
+  runtimeSource,
+  /function resolveNodeBaseURL\(nodeId\?: string\): string \{\s*if \(nodeId\) \{\s*const node = getNodeById\(nodeId\);[\s\S]*?const base = nodeRouteBase\(node\);\s*if \(base\) return normalizeExplicitNodeBase\(base\);/,
+  "explicit nodeId must resolve url || relayUrl (direct preferred, relay fallback)",
+);
+assert.match(
+  runtimeSource,
+  /console\.warn\("\[node-routing\] explicit nodeId unresolvable[\s\S]*?return "";\s*\}\s*const active = getActiveNode\(\);\s*const activeBase = nodeRouteBase\(active\);\s*if \(activeBase\) return normalizeExplicitNodeBase\(activeBase\);/,
+  "unresolvable explicit nodeId must not fall back to the active node silently",
+);
+assert.match(
+  runtimeSource,
+  /u = normalizeExplicitNodeBase\(nodeRouteBase\(node\)\);[\s\S]*?u = normalizeExplicitNodeBase\(nodeRouteBase\(getActiveNode\(\)\)\);/,
+  "getWsBaseURL must derive from the same url || relayUrl resolution",
+);
 
 // 会话窗口拉取与关联文件 diff 按会话归属节点路由（同名根跨节点重名时裸 rootId 查表会串节点）。
 const sessionViewer = fs.readFileSync(path.join(root, "src/components/session/SessionViewer.tsx"), "utf8");
