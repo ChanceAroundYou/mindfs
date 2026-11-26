@@ -144,6 +144,8 @@ func runDesktopShell(cfg desktopShellConfig) error {
 	if wv == nil {
 		return fmt.Errorf("创建原生窗口失败：WebView2 运行时可能已损坏")
 	}
+	// 必须在任何导航之前注册：AddScriptToExecuteOnDocumentCreated 只对新文档生效。
+	wv.Init(desktopShellInitScript)
 
 	state := &desktopShellState{cfg: cfg, wv: wv, hwnd: uintptr(wv.Window())}
 	desktopActive = state

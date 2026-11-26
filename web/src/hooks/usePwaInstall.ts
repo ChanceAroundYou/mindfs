@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { isNativeShellRuntime } from "../services/platform/runtime";
+import { isDesktopShellRuntime, isNativeShellRuntime } from "../services/platform/runtime";
 import { pwaInstallService } from "../services/platform/pwaInstall";
 import { alertDialog } from "../services/dialog";
 
@@ -18,6 +18,8 @@ export function usePwaInstall(t: Translate) {
   const [isInstallCapable, setIsInstallCapable] = useState(false);
   const [installProbeDone, setInstallProbeDone] = useState(false);
   const [isNativeApp, setIsNativeApp] = useState(() => isNativeShellRuntime());
+  // 套壳标记在文档创建前注入，整个页面生命周期不变，不需要像原生桥那样轮询刷新。
+  const isDesktopShell = useMemo(() => isDesktopShellRuntime(), []);
 
   const isIOS = useMemo(() => {
     if (typeof window === "undefined") return false;
@@ -103,9 +105,9 @@ export function usePwaInstall(t: Translate) {
               : deferredInstallPrompt
                 ? t("pwa.helpDeferred")
                 : t("pwa.helpUnavailable");
-  const installProbePending = pwaInstallService.expectsPrompt() && !installProbeDone && !isKnownInstalled && !isNativeApp;
-  const shouldShowInstallButton = !installProbePending && !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
-  const shouldShowInstallHelp = !installProbePending && !isNativeApp && !!installHelp &&
+  const installProbePending = pwaInstallService.expectsPrompt() && !installProbeDone && !isKnownInstalled && !isNativeApp && !isDesktopShell;
+  const shouldShowInstallButton = !installProbePending && !isNativeApp && !isDesktopShell && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
+  const shouldShowInstallHelp = !installProbePending && !isNativeApp && !isDesktopShell && !!installHelp &&
     (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
   const handleInstall = useCallback(async () => {
     if (isKnownInstalled) return;

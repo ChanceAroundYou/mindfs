@@ -16895,6 +16895,10 @@ groups:
       检查更新 / 打开数据目录 / 卸载 MindFS / 退出）随套壳进程搬到登录会话，关窗口收进
       托盘，菜单「退出」只结束壳、不停服务。WebView2 运行时缺失时给原生三选框
       （下载运行时 / 用浏览器打开 / 重试），不会出现黑框或静默退出。
+      套壳窗口的左侧栏底部还曾常驻 PWA「安装应用」入口：程序本来由安装器装好，
+      WebView2 也装不了 PWA，点下去只会提示去地址栏安装。现在套壳在任何导航前注入
+      `__MIND_FS_DESKTOP_SHELL__`，前端同时认 WebView2 自带的 `window.chrome.webview`
+      （旧套壳二进制不必同升），据此不渲染安装入口；普通浏览器里照常显示。
     why: |
       必须保留：这是本 fork 的边缘端安装体验基线（标准桌面软件形态），依赖单 exe 三入口
       与登录会话/服务会话分离。合上游若恢复「起服务 + 浏览器」或把托盘放回服务进程，
@@ -16916,6 +16920,8 @@ groups:
       - cli/cmd/tray.go
       - cli/cmd/tray_other.go
       - cli/cmd/tray_windows.go
+      - web/src/services/platform/runtime.ts
+      - web/src/hooks/usePwaInstall.ts
       - go.mod
       - go.sum
     tests:
@@ -16923,10 +16929,14 @@ groups:
       # 节点名与更新文案；托盘菜单项与 ID 也在其中。
       - cli/cmd/desktop_test.go
       - cli/cmd/tray_test.go
+      # 套壳注入的全局名与前端读取一致、注入先于导航、安装入口三处判定都被关掉。
+      - web/tests/desktop-shell-install-cta.test.mjs
     anchors:
       - 'cli/cmd/desktop.go:func desktopEntry(goos string, argCount int, desktop, serve, foreground, internalAutoStart, internalRestart, daemon bool) bool {'
       - 'cli/cmd/desktop.go:func (c desktopShellConfig) appURL() string {'
       - 'cli/cmd/desktop_windows.go:func runDesktopShell(cfg desktopShellConfig) error {'
+      - 'cli/cmd/desktop.go:const desktopShellInitScript = "window.__MIND_FS_DESKTOP_SHELL__ = true;"'
+      - 'web/src/services/platform/runtime.ts:export function isDesktopShellRuntime(): boolean {'
       - 'cli/cmd/tray.go:func trayMenuItems() []trayMenuItem {'
       - 'cli/cmd/desktop_test.go:func TestDesktopEntryOnlyForBareWindowsDoubleClick(t *testing.T) {'
   - id: G-RQ

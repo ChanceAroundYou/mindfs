@@ -40,6 +40,12 @@ func desktopEntry(goos string, argCount int, desktop, serve, foreground, interna
 		!serve && !foreground && !internalAutoStart && !internalRestart && !daemon
 }
 
+// desktopShellInitScript 在 WebView2 的每个文档创建前注入，让页面知道自己跑在
+// 已安装的桌面套壳里。前端据此不渲染 PWA 安装入口（`isDesktopShellRuntime()`）：
+// 程序本来就是安装器装的，套壳也没有可安装的浏览器上下文。
+// 全局名与 web/src/services/platform/runtime.ts 的读取保持一致（web 测试做跨端核对）。
+const desktopShellInitScript = "window.__MIND_FS_DESKTOP_SHELL__ = true;"
+
 type desktopShellConfig struct {
 	Addr     string
 	UseTLS   bool
