@@ -3,6 +3,7 @@ import { SESSION_HEALTH_EVENT } from "../../shared/sessionMaintenance";
 import { AgentSelector } from "../agent/AgentSelector";
 import { AccountPanel } from "../account/AccountPanel";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
+import { ControlModeMenuSection } from "./ControlModeMenuSection";
 import {
   AgentLifecyclePopover,
   agentConfigActionRowStyle,
@@ -207,6 +208,7 @@ export function FileTreeHeaderOverlays({ ctx }: FileTreeHeaderOverlaysProps) {
                   </svg>
                   <span>{t("nodeManager.title")}</span>
                 </button>
+                <ControlModeMenuSection />
                 <button type="button" ref={accountButtonRef} onClick={() => { setIsMenuOpen(false); setAccountPanelOpen(true); }} style={fileTreeMenuButtonStyle}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />

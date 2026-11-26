@@ -117,6 +117,49 @@ export function controlModeBanner(
   }
 }
 
+/** 主控离线 / 恢复的一次性提示（只在模式迁移时出现，不常驻）。 */
+export type ControlTransitionKind = "offline" | "recovered";
+
+export type ControlTransitionNotice = {
+  id: string;
+  kind: ControlTransitionKind;
+  action: ControlBannerAction;
+};
+
+/**
+ * 模式迁移 → 一次性提示。
+ * - 进入 offline-local：主控掉线；
+ * - 离开 offline-local：主控恢复（进入 reconciling 即算，不等完整对账）。
+ * 没有 prev（首拍）返回 null：刷新页面不把「当前已离线」当成一次新切换。
+ * id 取服务端事件 id，保证同一轮轮询不会重复弹。
+ */
+export function controlTransitionNotice(
+  prevMode: ControlMode | null | undefined,
+  status: ControlSyncStatus | null | undefined,
+): ControlTransitionNotice | null {
+  if (!prevMode || !status) return null;
+  const next = status.mode;
+  if (prevMode !== "offline-local" && next === "offline-local") {
+    const event = newestModeEventTo(status.recent_events, "offline-local");
+    return {
+      id: event?.id || `offline:${status.last_primary_at || "unknown"}`,
+      kind: "offline",
+      action: "retry",
+    };
+  }
+  if (prevMode === "offline-local" && next !== "offline-local") {
+    const event =
+      newestModeEventTo(status.recent_events, "reconciling") ||
+      newestModeEventTo(status.recent_events, "online");
+    return {
+      id: event?.id || `recovered:${status.last_primary_at || next}`,
+      kind: "recovered",
+      action: "retry",
+    };
+  }
+  return null;
+}
+
 /** 横幅动作 → 服务端认的字符串。两套词（`adopt-primary` / `adopt_primary`）只在
  * 这一处对照，避免每个调用点各写一遍三元表达式。 */
 export function controlSyncActionFor(action: ControlBannerAction): ControlSyncAction {

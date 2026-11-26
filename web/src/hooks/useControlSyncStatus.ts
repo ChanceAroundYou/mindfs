@@ -2,14 +2,17 @@
 //
 // 视图层（components）按仓库规则不能直接 import services，这一层就是那条边界：
 // 组件只拿「当前状态 + 要不要显示 + 能做什么」，不碰请求细节。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   conflictReminder,
   controlModeBanner,
   controlSyncActionFor,
+  controlTransitionNotice,
   CONTROL_CONFLICTS_EVENT,
   type ControlBannerAction,
+  type ControlMode,
   type ControlSyncStatus,
+  type ControlTransitionNotice,
 } from "../shared/controlMode";
 import type { PairingDraft } from "../shared/controlPairing";
 import {
@@ -93,6 +96,27 @@ export function useControlSyncStatus() {
     setDismissedConflicts((prev) => new Set(prev).add(reminder.id));
   }, [reminder]);
 
+  // 主控离线 / 恢复的一次性提示：只在模式迁移时出现；首拍只记基线，
+  // 刷新页面不把「当前已离线」当成一次新切换。点掉后按事件 id 去重。
+  const [notice, setNotice] = useState<ControlTransitionNotice | null>(null);
+  const prevModeRef = useRef<ControlMode | null>(null);
+  const dismissedTransitionsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!status) return;
+    const prev = prevModeRef.current;
+    prevModeRef.current = status.mode;
+    if (!prev) return;
+    const next = controlTransitionNotice(prev, status);
+    if (!next || dismissedTransitionsRef.current.has(next.id)) return;
+    setNotice((cur) => (cur?.id === next.id ? cur : next));
+  }, [status]);
+  const dismissNotice = useCallback(() => {
+    setNotice((cur) => {
+      if (cur) dismissedTransitionsRef.current.add(cur.id);
+      return null;
+    });
+  }, []);
+
   const runAction = useCallback(
     async (action: ControlBannerAction) => {
       if (action === "view-conflicts") {
@@ -146,6 +170,8 @@ export function useControlSyncStatus() {
     reminder,
     runAction,
     dismissConflictReminder,
+    notice,
+    dismissNotice,
     pairing,
     pairingOpen,
     openPairing: useCallback(() => setPairingOpen(true), []),

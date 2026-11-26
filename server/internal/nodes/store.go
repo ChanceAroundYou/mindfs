@@ -309,6 +309,17 @@ func (s *Store) SetRelay(instanceID, name, relayURL string) (NodeConnection, err
 		}
 	}
 	if !found {
+		// 直连行是用户手工加的（id 是随机 uuid），可能没有 InstanceID；relay 只知道
+		// instance_id。名字就是 instance_id 且唯一的直连行可以确定是同一台设备，
+		// 把身份与 relay 补上去，而不是再建一条 relay-only 行（同一台机器两个节点）。
+		if i, ok := uniqueDirectRowByName(s.data, instanceID); ok {
+			s.data[i].InstanceID = instanceID
+			s.data[i].RelayURL = relayURL
+			s.data[i].Remote = true
+			found = true
+		}
+	}
+	if !found {
 		if name == "" {
 			name = instanceID
 		}
@@ -329,6 +340,27 @@ func (s *Store) SetRelay(instanceID, name, relayURL string) (NodeConnection, err
 		}
 	}
 	return out, s.saveLocked()
+}
+
+// uniqueDirectRowByName 找唯一一条「没有身份、名字等于 instanceID」的直连行。
+//
+// 只在恰好一条时返回；多个同名候选说明无法确定是哪台机器，宁可退回 relay-only
+// 行，也不要把通道并到别人身上。
+func uniqueDirectRowByName(rows []NodeConnection, instanceID string) (int, bool) {
+	idx := -1
+	for i := range rows {
+		if rows[i].InstanceID != "" || rows[i].URL == "" {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(rows[i].Name), instanceID) {
+			continue
+		}
+		if idx >= 0 {
+			return -1, false
+		}
+		idx = i
+	}
+	return idx, idx >= 0
 }
 
 func (s *Store) Remove(id string) (NodeConnection, error) {

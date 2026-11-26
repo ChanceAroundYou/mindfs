@@ -14,7 +14,7 @@ const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 const service = read("../src/services/net/controlSync.ts");
 const shared = read("../src/shared/controlPairing.ts");
 const form = read("../src/components/app/ControlPairingGate.tsx");
-const banner = read("../src/components/app/ControlModeBanner.tsx");
+const provider = read("../src/app/ControlSyncProvider.tsx");
 const hook = read("../src/hooks/useControlSyncStatus.ts");
 const zh = read("../src/i18n/locales/zh-CN-workspace.ts");
 const en = read("../src/i18n/locales/en-US-workspace.ts");
@@ -97,9 +97,9 @@ test("表单只做展示，提交与状态都在 hook 里", () => {
   assert.match(form, /from "\.\.\/\.\.\/hooks\/useControlSyncStatus"/);
   // 表单本身不轮询：两处各轮询会让「表单说没配上、横幅说在同步」真的发生。
   assert.doesNotMatch(form, /setInterval/);
-  // 横幅是唯一持有轮询的地方，未配对时把它整条换成配对入口。
-  assert.match(banner, /if \(pairing\?\.pending_pairing\)/);
-  assert.match(banner, /<ControlPairingGate/);
+  // provider 是唯一持有轮询的地方，未配对时把它整条换成配对入口。
+  assert.match(provider, /pairing\?\.pending_pairing/);
+  assert.match(provider, /<ControlPairingGate/);
 });
 
 test("配完不消失：写明要重启才生效", () => {
@@ -159,7 +159,7 @@ test("中英文都补齐配对文案", () => {
 test("源码里用的每个 controlPairing key 都有中英文", () => {
   // 只查清单会漏掉「新写了一行但忘了登记」；这里反向扫源码，按实际用到为准。
   const used = new Set([
-    ...[form, banner].flatMap((src) => [...src.matchAll(/t\("(controlPairing\.[A-Za-z]+)"/g)]),
+    ...[form, provider].flatMap((src) => [...src.matchAll(/t\("(controlPairing\.[A-Za-z]+)"/g)]),
   ].map((m) => m[1]));
   assert.ok(used.size >= 15, `只扫到 ${used.size} 个 key，正则可能失效了`);
   for (const key of used) {

@@ -216,3 +216,60 @@ func TestSetRelayIsIdempotentAndKeepsDirect(t *testing.T) {
 		t.Fatalf("RelayURL = %q", list[0].RelayURL)
 	}
 }
+
+func TestSetRelayBindsUniqueDirectRowByNameWhenInstanceIDMissing(t *testing.T) {
+	store, err := NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 用户手工加的直连行：随机 id、没有 instanceId。
+	if _, err := store.Upsert(NodeConnection{ID: "a1b2-uuid", Name: "pc", URL: "https://pc.example/mindfs-win", Remote: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetRelay("pc", "edge-pc", "https://home.example/mindfs/relay/edge-pc"); err != nil {
+		t.Fatal(err)
+	}
+	list := store.List()
+	if len(list) != 1 {
+		t.Fatalf("同一台机器出现了 %d 行：%+v", len(list), list)
+	}
+	if list[0].ID != "a1b2-uuid" || list[0].Name != "pc" {
+		t.Fatalf("直连行身份被改：%+v", list[0])
+	}
+	if list[0].URL != "https://pc.example/mindfs-win" {
+		t.Fatalf("直连 URL 被改：%+v", list[0])
+	}
+	if list[0].InstanceID != "pc" {
+		t.Fatalf("InstanceID = %q", list[0].InstanceID)
+	}
+	if list[0].RelayURL != "https://home.example/mindfs/relay/edge-pc" {
+		t.Fatalf("RelayURL = %q", list[0].RelayURL)
+	}
+}
+
+func TestSetRelayDoesNotGuessBetweenSameNameRows(t *testing.T) {
+	store, err := NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"uuid-1", "uuid-2"} {
+		if _, err := store.Upsert(NodeConnection{ID: id, Name: "pc", URL: "https://" + id + ".example/mindfs"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.SetRelay("pc", "edge-pc", "https://home.example/mindfs/relay/edge-pc"); err != nil {
+		t.Fatal(err)
+	}
+	list := store.List()
+	// 两个同名候选无法确定，保留两条直连，并新增一条 relay-only 行。
+	if len(list) != 3 {
+		t.Fatalf("多候选时不应猜：%+v", list)
+	}
+	for _, n := range list {
+		if n.ID == "uuid-1" || n.ID == "uuid-2" {
+			if n.InstanceID != "" || n.RelayURL != "" {
+				t.Fatalf("不应改同名直连行：%+v", n)
+			}
+		}
+	}
+}

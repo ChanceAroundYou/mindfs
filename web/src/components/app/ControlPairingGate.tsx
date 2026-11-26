@@ -5,7 +5,7 @@
 //
 // 视图层只管渲染与本地校验；提交、状态、失败分类都在 useControlSyncStatus，
 // 网络细节留在 service 层（仓库架构红线：components 不 import services）。
-// 所有数据都从 props 进来 —— 由 ControlModeBanner 那唯一一处轮询持有，两处各自
+// 所有数据都从 props 进来 —— 由 ControlSyncProvider 那唯一一处轮询持有，两处各自
 // 轮询会让「表单说没配上、横幅说在同步」这种事真的发生。
 //
 // 挂到 document.body：主区有 contain: paint，fixed 浮层留在 App 树里会被侧栏顶偏。

@@ -6,6 +6,7 @@ import {
   controlModeLabel,
   conflictReminder,
   controlSyncActionFor,
+  controlTransitionNotice,
   isControlMode,
   newestModeEventTo,
 } from "../src/shared/controlMode.ts";
@@ -16,7 +17,9 @@ const read = (path) => rawReadFileSync(new URL(path, import.meta.url), "utf8");
 const service = read("../src/services/net/controlSync.ts");
 const shared = read("../src/shared/controlMode.ts");
 const hook = read("../src/hooks/useControlSyncStatus.ts");
-const banner = read("../src/components/app/ControlModeBanner.tsx");
+const provider = read("../src/app/ControlSyncProvider.tsx");
+const menu = read("../src/components/file/ControlModeMenuSection.tsx");
+const notices = read("../src/components/app/ControlModeNotices.tsx");
 const rootView = read("../src/app/AppRootView.tsx");
 const zh = read("../src/i18n/locales/zh-CN-workspace.ts");
 const en = read("../src/i18n/locales/en-US-workspace.ts");
@@ -104,6 +107,36 @@ test("冲突提醒按事件 id 只提醒一次", () => {
   assert.equal(conflictReminder(null, new Set()), null);
 });
 
+test("主控离线与恢复各提示一次，首拍只记基线", () => {
+  const at = "2026-11-26T10:00:00Z";
+  const offline = {
+    mode: "offline-local",
+    last_primary_at: at,
+    recent_events: [{ id: "mode:online->offline-local:11", from: "online", to: "offline-local", at }],
+  };
+  // 首拍没有 prev：刷新页面不把「当前已离线」当成一次新切换。
+  assert.equal(controlTransitionNotice(null, offline), null);
+  assert.equal(controlTransitionNotice(undefined, offline), null);
+
+  const wentOffline = controlTransitionNotice("online", offline);
+  assert.equal(wentOffline?.kind, "offline");
+  assert.equal(wentOffline?.id, "mode:online->offline-local:11");
+  assert.equal(wentOffline?.action, "retry");
+
+  // 进入 reconciling 就算恢复，不等完整对账完成。
+  const reconciling = {
+    mode: "reconciling",
+    recent_events: [{ id: "mode:offline-local->reconciling:12", from: "offline-local", to: "reconciling", at }],
+  };
+  const recovered = controlTransitionNotice("offline-local", reconciling);
+  assert.equal(recovered?.kind, "recovered");
+  assert.equal(recovered?.id, "mode:offline-local->reconciling:12");
+
+  // 在线 <-> 在线、或还停在离线，都不提示。
+  assert.equal(controlTransitionNotice("online", { mode: "online", recent_events: [] }), null);
+  assert.equal(controlTransitionNotice("offline-local", offline), null);
+});
+
 test("模式标签与事件历史同源", () => {
   assert.equal(controlModeLabel("online"), "controlMode.online");
   assert.equal(controlModeLabel("offline-local"), "controlMode.local");
@@ -147,8 +180,10 @@ test("横幅轮询状态，未启用后不再重试", () => {
   assert.match(hook, /if \(!next\)[\s\S]{0,120}setEnabled\(false\)/);
   assert.match(hook, /if \(!enabled\) return/);
   // 视图层只消费 hook：直接 import services 会踩「view -> service」架构红线。
-  assert.match(banner, /useControlSyncStatus\(\)/);
-  assert.doesNotMatch(banner, /\bservices\//);
+  assert.match(provider, /useControlSyncStatus\(\)/);
+  assert.doesNotMatch(provider, /\bservices\//);
+  assert.doesNotMatch(menu, /\bservices\//);
+  assert.doesNotMatch(notices, /\bservices\//);
 });
 
 test("横幅四个动作各自打到对应的请求", () => {
@@ -165,9 +200,11 @@ test("横幅四个动作各自打到对应的请求", () => {
   assert.match(hook, /new Set\(prev\)\.add\(reminder\.id\)/);
 });
 
-test("App 根视图挂上横幅，且只挂一处", () => {
-  assert.match(rootView, /import \{ ControlModeBanner \} from "\.\.\/components\/app\/ControlModeBanner"/);
-  assert.equal((rootView.match(/<ControlModeBanner \/>/g) || []).length, 1);
+test("App 根视图挂上控制面 provider，且只挂一处", () => {
+  assert.match(rootView, /import \{ ControlSyncProvider \} from "\.\/ControlSyncProvider"/);
+  assert.equal((rootView.match(/<ControlSyncProvider>/g) || []).length, 1);
+  // 旧的常驻横幅已移除：顶部不再有 fixed 浮层。
+  assert.doesNotMatch(rootView, /ControlModeBanner/);
 });
 
 test("中英文都补齐横幅文案", () => {
@@ -176,6 +213,10 @@ test("中英文都补齐横幅文案", () => {
     "controlMode.onlineDetail",
     "controlMode.local",
     "controlMode.localDetail",
+    "controlMode.menuSection",
+    "controlMode.offlineNotice",
+    "controlMode.recoveredNotice",
+    "controlMode.syncNow",
     "controlMode.syncing",
     "controlMode.syncingDetail",
     "controlMode.conflict",
@@ -227,15 +268,15 @@ test("横幅动作到服务端动作只有一处对照", () => {
 
 test("接受新主节点是两步确认，且写明会丢什么", () => {
   // 这是整套界面里唯一会丢弃副本的动作：第一下只展开确认条，第二下才发请求。
-  assert.match(banner, /const \[confirmAdopt, setConfirmAdopt\] = useState\(false\)/);
-  assert.match(banner, /action === "adopt-primary" && confirmAdopt/);
-  assert.match(banner, /if \(action === "adopt-primary"\) \{[\s\S]{0,80}setConfirmAdopt\(true\)/);
+  assert.match(menu, /const \[confirmAdopt, setConfirmAdopt\] = useState\(false\)/);
+  assert.match(menu, /action === "adopt-primary" && confirmAdopt/);
+  assert.match(menu, /if \(action === "adopt-primary" && !confirmAdopt\) \{[\s\S]{0,80}setConfirmAdopt\(true\)/);
   // 确认条里必须先有警告文案与「取消」，不能只剩一个确认键。
-  const confirmBlock = banner.split('action === "adopt-primary" && confirmAdopt')[1].split("return (")[1];
+  const confirmBlock = menu.split("{confirmAdopt ? (")[1] || "";
   assert.match(confirmBlock, /controlMode\.adoptWarning/);
   assert.match(confirmBlock, /controlMode\.cancel/);
-  // 模式一变就收回确认态，免得「确认接受」在下一轮横幅里还挂着。
-  assert.match(banner, /useEffect\(\(\) => \{[\s\S]{0,60}setConfirmAdopt\(false\)/);
+  // 模式一变就收回确认态，免得「确认接受」在下一轮状态里还挂着。
+  assert.match(menu, /useEffect\(\(\) => \{[\s\S]{0,60}setConfirmAdopt\(false\)/);
 });
 
 test("状态端点带回的锁码与事件不能在服务层被丢掉", () => {

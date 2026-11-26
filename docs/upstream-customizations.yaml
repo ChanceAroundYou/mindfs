@@ -13769,12 +13769,14 @@ groups:
       **`RefreshBaseline` 把「副本不认识但权威存储里有」的记录并进基线**（只采纳副本会让本地既有记录
       在下一次采集被当成新增发出去）；**primary 启动即 `CaptureAll` 发布基线**（兜底扫描 15 秒才有第一拍，
       边缘完全可能在这之前追平后掉线 —— 那一版副本缺一批记录，恢复时同样撞冲突）。
-      ⑱ 前端模式横幅（`shared/controlMode.ts` / `services/net/controlSync.ts` / `hooks/useControlSyncStatus.ts` /
-      `components/app/ControlModeBanner.tsx`）的六条必须保留：**404 不出横幅**（主节点和未启用
+      ⑱ 控制面状态界面（`shared/controlMode.ts` / `services/net/controlSync.ts` / `hooks/useControlSyncStatus.ts` /
+      `app/ControlSyncProvider.tsx` / `components/file/ControlModeMenuSection.tsx` /
+      `components/app/ControlModeNotices.tsx`）的六条必须保留：**404 不出状态**（主节点和未启用
       control_sync 的机器不注册 `/api/control-sync/status`，把它当请求失败会在每台普通节点上弹一条永远
-      报错的横幅；在线仍然出横幅，但弱化显示 —— 用户需要一个随时能主动切到本地模式的入口，这跟
-      「404 静默」是两件事）；**404 只静默关闭轮询、其他错误保留上一份状态继续轮询**（一次超时不能把边缘的横幅
-      永久关掉，两者必须能区分）；**四态到动作是纯函数、且返回动作列表**（在线→切换到本地、本地模式→立即重试、
+      报错的状态；在线状态收在左侧三点菜单里，不再有页面顶部常驻横幅，但「随时能主动切到本地模式」的入口仍要在，
+      这跟「404 静默」是两件事）；**404 只静默关闭轮询、其他错误保留上一份状态继续轮询**（一次超时不能把边缘的状态
+      永久关掉，两者必须能区分）；**离线/恢复的一次性提示只由模式迁移触发**（`controlTransitionNotice`；首拍只记基线，
+      刷新不把「当前已离线」当成一次新切换，点掉后按事件 id 去重；常驻状态不重复占页面顶部）；**四态到动作是纯函数、且返回动作列表**（在线→切换到本地、本地模式→立即重试、
       同步中→切换到本地、冲突→查看冲突；本地模式下确实攒了冲突才多出「查看冲突」，渲染层不再自己 if/else 一遍）；
       **冲突提醒按事件 id 幂等**（服务端每次模式迁移写一条 `mode_events`，id 由 from/to/at 决定、`INSERT OR IGNORE`
       去重；前端 `conflictReminder` 按事件 id 记住「已关闭」，按模式记会让下一拍轮询又弹回来 —— 那等于没有关闭）；
@@ -13962,7 +13964,9 @@ groups:
       - web/src/services/net/controlSync.ts
       - web/src/hooks/useControlSyncStatus.ts
       - web/src/hooks/useSyncConflicts.ts
-      - web/src/components/app/ControlModeBanner.tsx
+      - web/src/app/ControlSyncProvider.tsx
+      - web/src/components/app/ControlModeNotices.tsx
+      - web/src/components/file/ControlModeMenuSection.tsx
       - web/src/components/app/SyncConflictPanel.tsx
       - web/src/app/AppRootView.tsx
       - web/src/i18n/locales/zh-CN-workspace.ts
@@ -14212,8 +14216,11 @@ groups:
       - 'web/src/services/net/controlSync.ts:if (endpointMissing(err)) return null;'
       - 'web/src/hooks/useControlSyncStatus.ts:if (!enabled) return;'
       - 'web/src/hooks/useControlSyncStatus.ts:window.clearInterval(timer);'
-      - 'web/src/components/app/ControlModeBanner.tsx:export function ControlModeBanner() {'
-      - 'web/src/app/AppRootView.tsx:<ControlModeBanner />'
+      - 'web/src/app/ControlSyncProvider.tsx:export function ControlSyncProvider({ children }: { children: React.ReactNode }) {'
+      - 'web/src/app/AppRootView.tsx:<ControlSyncProvider>'
+      - 'web/src/components/file/ControlModeMenuSection.tsx:export function ControlModeMenuSection() {'
+      - 'web/src/components/app/ControlModeNotices.tsx:export function ControlModeNotices({ control }: { control: ControlSyncValue }) {'
+      - 'web/src/shared/controlMode.ts:export function controlTransitionNotice('
       - 'web/src/i18n/locales/zh-CN-workspace.ts:"controlMode.local": "本地模式",'
       - 'web/src/i18n/locales/en-US-workspace.ts:"controlMode.local": "Local mode",'
       - 'web/tests/control-mode-banner.test.mjs:test("三种降级状态各自给出动作，攒了冲突才多出查看入口", () => {'
@@ -14271,7 +14278,7 @@ groups:
       - 'server/internal/controlsync/mode_block_test.go:func TestModeStatusReportsBlockedCode(t *testing.T) {'
       - 'server/internal/controlsync/mode.go:		BlockedCode:      BlockedCode(blocked),'
       - 'web/src/shared/controlMode.ts:export function controlSyncActionFor(action: ControlBannerAction): ControlSyncAction {'
-      - 'web/src/components/app/ControlModeBanner.tsx:  const [confirmAdopt, setConfirmAdopt] = useState(false);'
+      - 'web/src/components/file/ControlModeMenuSection.tsx:  const [confirmAdopt, setConfirmAdopt] = useState(false);'
       - 'server/internal/controlsync/mode_block_test.go:func TestModeControllerBlockedStaysLocalAcrossProbeSuccess(t *testing.T) {'
       - 'server/internal/controlsync/origin_test.go:func TestAdoptPrimaryRebasesReplicaOntoNewPrimary(t *testing.T) {'
       - 'server/internal/controlsync/store_prune.go:	ChangeRetention = 90 * 24 * time.Hour'
@@ -14920,7 +14927,7 @@ groups:
       - docs/multi-node-control-plane.md
       - web/src/shared/controlPairing.ts
       - web/src/components/app/ControlPairingGate.tsx
-      - web/src/components/app/ControlModeBanner.tsx
+      - web/src/app/ControlSyncProvider.tsx
       - web/src/hooks/useControlSyncStatus.ts
       - web/src/services/net/controlSync.ts
     tests:
@@ -14938,7 +14945,7 @@ groups:
       - 'server/app/control_sync_pairing.go:func (p controlSyncPairer) PairingState() api.PairingState {'
       - 'web/src/shared/controlPairing.ts:export function pairingDraftIssue(draft: PairingDraft): PairingDraftIssue | null {'
       - 'web/src/services/net/controlSync.ts:export async function fetchControlSyncPairing(): Promise<ControlSyncPairingState | null> {'
-      - 'web/src/components/app/ControlModeBanner.tsx:if (pairing?.pending_pairing) {'
+      - 'web/src/app/ControlSyncProvider.tsx:{value.pairing?.pending_pairing ? ('
       - 'web/src/components/app/ControlPairingGate.tsx:export function ControlPairingGate(props: ControlPairingGateProps) {'
       - 'web/src/hooks/useControlSyncStatus.ts:setPairing(await fetchControlSyncPairing());'
       - 'server/app/control_sync_pairing_test.go:func TestPendingPairingWiringReportsState(t *testing.T) {'
@@ -17114,3 +17121,19 @@ groups:
       - 'web/src/components/task/SupervisionEntryList.tsx:<TaskCompletionChecklist completion={completion} />'
       - 'web/src/components/task/SupervisionEntry.tsx:"task.supervision.empty.disabled"'
       - 'web/src/services/task/routerDecisions.ts:export async function fetchRouterStatus('
+  - id: G-RY
+    title: "节点表：relay 通道按唯一同名直连行补齐身份，不再生成 pc / edge-pc 双节点"
+    kind: fix
+    symptom: "2026-11-26 edge 页面同时列出 pc 与 edge-pc 两个节点（用户已把 pc-win 改名为 pc）。直连行是用户手工加的，id 是随机 uuid 且没有 instanceId；tunnel 建立后 SetRelay(instanceID=\"pc\", name=\"edge-pc\") 只按 InstanceID/ID 匹配，找不到就新建一条 relay-only 行，同一台机器于是有两个节点。"
+    why: "relay 只知道 instance_id，而直连行没有身份；当存在唯一一条「名字等于 instance_id、带直连 URL、没有身份」的行时，它就是同一台设备，应把 instanceId 与 relayUrl 补上去而不是再建一行。多候选时不猜：宁可保留 relay-only 行，也不能把通道并到另一台机器上。遗留的 relay:* 行继续由 normalize 在加载时丢弃并落盘，重启即清理，不做手工迁移。"
+    boundary: "只改 server/internal/nodes 的 SetRelay 兜底与加载归一化；不改 relay 内部 slug edge-pc（会改 /relay/edge-pc 路径，需重注册），不改前端协议与 nodes.json 格式，不做数据手工迁移。前端 /health 学习实例身份的兜底保持不变。"
+    files:
+      - server/internal/nodes/store.go
+      - server/internal/nodes/store_test.go
+    tests:
+      - server/internal/nodes/store_test.go
+    anchors:
+      - 'server/internal/nodes/store.go:func uniqueDirectRowByName(rows []NodeConnection, instanceID string) (int, bool) {'
+      - 'server/internal/nodes/store.go:if i, ok := uniqueDirectRowByName(s.data, instanceID); ok {'
+      - 'server/internal/nodes/store_test.go:func TestSetRelayBindsUniqueDirectRowByNameWhenInstanceIDMissing(t *testing.T) {'
+      - 'server/internal/nodes/store_test.go:func TestSetRelayDoesNotGuessBetweenSameNameRows(t *testing.T) {'

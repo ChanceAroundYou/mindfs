@@ -1,7 +1,7 @@
 # MindFS — AI Agent Remote Access Gateway · Result Visualization
 
 Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
-四个实例（本机 / wsl / fn / pc-win），重启权限一律见[节点表](#节点表别叫错)，别凭印象写。
+四个实例（本机 / wsl / fn / pc），重启权限一律见[节点表](#节点表别叫错)，别凭印象写。
 
 ## Agent 指令入口与规范
 
@@ -21,13 +21,13 @@ Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
 | **本机** | Proxmox VM Ubuntu 26.04 | `home.xiaokubao.space` (192.168.1.6) / `xiaokubao` | `home` | system `/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**仅用户执行** |
 | **wsl** | WSL Ubuntu 24.04 | `pc.xiaokubao.space` / `nnb` | `pc` | user `~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，Agent 可执行 |
 | **fn** | fnOS | `fn.xiaokubao.space` / `xiaokubao` | `fn` | user `~/.config/systemd/user/mindfs.service` | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，Agent 可执行 |
-| **pc-win** | 同台物理 PC 的 Windows | `ssh pc` → 宿主 / `小哭包` (`C:\Users\10178`) | `pc-win`（`nodes.json` 有 `remote: true` 条目，前端前缀 `/mindfs-win`） | 计划任务 `\mindfs`（S4U + BootTrigger，Session 0） | `0.0.0.0:7332` | `ssh pc "schtasks /run /tn mindfs"`；详见 memory `windows-worker-on-pc` |
+| **pc** | 同台物理 PC 的 Windows（旧称 pc-win） | `ssh pc` → 宿主 / `小哭包` (`C:\Users\10178`) | `pc`（`nodes.json` 有 `remote: true` 条目，前端前缀 `/mindfs-win`） | 计划任务 `\mindfs`（S4U + BootTrigger，Session 0） | `0.0.0.0:7332` | `ssh pc "schtasks /run /tn mindfs"`；详见 memory `windows-worker-on-pc` |
 
 - **本机不叫 PC**。「PC」= WSL 所在的 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → WSL）。
 - 本机没有 user bus：`systemctl --user ...` 报错不代表服务不存在，查 `/proc/$(pgrep -x mindfs)/cgroup`。
 - `/home/nnb/...` 是 WSL 家目录，本机是 `/home/xiaokubao`。
 - **WSL 与 fn 没有源码库**，永远别在 worker 上编译。唯一分发路径是 `bash scripts/deploy-all.sh`（tar + ssh 安装），**不推 `web/dist`**（worker 是 `role=worker`，`GET /` 403）。
-- pc-win「装上了」与「在跑」是两件事，`deploy-pcwin.sh` 取不到 PID 就明写「未确认」；自己核对：`ssh pc "netstat -ano | findstr :7332"`。
+- pc「装上了」与「在跑」是两件事，`deploy-pcwin.sh` 取不到 PID 就明写「未确认」；自己核对：`ssh pc "netstat -ano | findstr :7332"`。
 - 判断**本机**是否真的跑着刚装的二进制：`/proc/$(pgrep -x mindfs)/exe` 与 `~/.local/bin/mindfs` 同 inode，且 `GET /mindfs/api/app/update` 的 `current_version` 等于安装版本。只比 `--version` 不够（那是磁盘上的文件）。
 
 ## 构建与部署
@@ -38,7 +38,7 @@ make install        # 安装到 ~/.local/bin/mindfs + ~/.local/share/mindfs/web/
 make build-web      # 仅前端
 make test           # Go 测试
 make dev            # go run 后端 + Vite 前端
-bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL/fn/pc-win → 对账
+bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL/fn/pc → 对账
 ```
 
 **构建/重启分工（必守）**：编译与安装由 Agent 自行执行；本机 `sudo systemctl restart mindfs` 仅用户执行（会杀所有 claude 子进程）；WSL 与 fn 的 user 单元 Agent 可直接重启。
