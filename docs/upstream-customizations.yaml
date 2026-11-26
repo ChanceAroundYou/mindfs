@@ -17314,3 +17314,62 @@ groups:
       - 'scripts/build-windows-installer.sh:PAYLOAD="$(cd "${DIST_DIR}" && pwd)/nsis-payload"'
       - 'internal/deploy/windows_icon_test.go:func TestWindowsInstallerPayloadIsAbsolute(t *testing.T) {'
       - 'docs/superpowers/plans/2026-11-27-release-v056-nsis-payload.md:# 发布 v0.5.6：修复 NSIS 安装器构建的 payload 路径'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SD
+    title: "提问卡在看板上即时出现/收口，等待/已答复/已关闭三态一致"
+    kind: fix
+    symptom: |
+      2026-11-27 重启后用户仍反馈 ask 延迟、状态不清楚。取证结论分三层：
+      ① Router 提问卡落库后，看板卡片上的「等你回答」标记要等下一次无关的
+      task.updated 才出现；回合结束被收口的提问卡同理，标记迟迟不退。
+      ② worker 透传 ask 在回合结束时只把活动行收口成 cancelled，任务行的
+      aux_flags.ask_user_waiting 仍为 true，卡片一直挂着已失效的等待提示。
+      ③ 前端答题后卡片仍是红色「等你选择」的外观；被新提问取代或回合结束
+      收口的卡与仍在等待的卡外观相同，用户无法判断这张卡还要不要处理。
+    why: |
+      看板卡片只订阅 task.updated，活动事件（task.activity.*）只喂详情时间线；
+      Router ask 的生命周期只广播活动事件，而 worker ask 走 UpdateTaskAuxFlags
+      会广播 —— 两个入口看到的状态因此不一致。提问卡必须在「出现/作答/收口」
+      三个时刻各触发一次 task.updated，收口时同时清 aux 标志，才能让标记与
+      活动行同拍。合上游若把通知端口或清位覆盖掉，用户会重新看到「卡上没标记，
+      要刷新才有」和「答完了红标还在」。
+    boundary: |
+      只补提问卡生命周期的刷新与状态呈现，不改看板/活动模型，也不改 Router
+      LLM 回合时长（13–28 s 是模型推理时间，不在本次范围）。通知失败静默跳过，
+      由下一次整包刷新兜底；不引入阻塞或重试。
+    files:
+      - server/internal/kanban/activity_service.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/service_activities.go
+      - server/internal/kanban/activity_route_apply.go
+      - server/internal/kanban/activity_router_questions.go
+      - server/internal/kanban/service_task_prompts.go
+      - server/internal/kanban/activity_ask_task_card_test.go
+      - server/internal/api/appcontext_task_prompt.go
+      - server/internal/api/appcontext_task_prompt_test.go
+      - web/src/components/session/AskUserQuestionCard.tsx
+      - web/src/components/session/askUserCardState.ts
+      - web/src/components/session/askUserIcons.tsx
+      - web/src/components/task/TaskQuestionCard.tsx
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/tests/task-ask-state.test.mjs
+      - docs/superpowers/plans/2026-11-27-ask-card-freshness-and-states.md
+    tests:
+      # Go：Router ask 应用、回答、收口三条路径都会通知任务卡；回合终结收口后
+      # aux 标志归零。Web：三态胶囊、答案摘要、收口原因都渲染出来。
+      - server/internal/kanban/activity_ask_task_card_test.go
+      - server/internal/api/appcontext_task_prompt_test.go
+      - web/tests/task-ask-state.test.mjs
+    anchors:
+      - 'server/internal/kanban/activity_service.go:taskCardNotify func(ctx context.Context, rootID, taskID string)'
+      - 'server/internal/kanban/service_state_moves.go:func (s *Service) NotifyTaskCardChanged(ctx context.Context, rootID, taskID string) {'
+      - 'server/internal/kanban/activity_route_apply.go:s.notifyTaskCard(ctx, task.ID)'
+      - 'server/internal/kanban/activity_router_questions.go:s.notifyTaskCard(ctx, taskID)'
+      - 'server/internal/kanban/service_task_prompts.go:for taskID := range touched {'
+      - 'server/internal/api/appcontext_task_prompt.go:kanban.TaskAuxFlagsPatch{AskUserWaiting: &no}'
+      - 'web/src/components/session/AskUserQuestionCard.tsx:data-testid="ask-user-state"'
+      - 'web/src/components/task/TaskQuestionCard.tsx:const closed = normalized === "cancelled" || normalized === "failed";'
+      - 'web/tests/task-ask-state.test.mjs:test("已答复的提问卡标 answered 并显示答案摘要", () => {'

@@ -10,6 +10,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [提问卡可见性：看板即时刷新 · 等待/已答复/已关闭状态一致](../superpowers/plans/2026-11-27-ask-card-freshness-and-states.md) — Plan 2026-11-27，Scope: G-SD。重启后仍有 ask 延迟的取证结论：动作已不再被拒（12+ 条 decision 全 applied），但看板卡片只认 `task.updated` 而 Router ask 只广播 `task.activity.*`，等待徽标要等下一次无关事件；worker ask 在回合结束收口时又只收卡、不清 `aux_flags.ask_user_waiting`。修法：提问的出现/作答/收口三处各推一次任务卡刷新，收口同时清 aux 标志；前端把 waiting/answered/closed 三态做成统一胶囊与配色，已答复显示答案摘要、已关闭显示收口原因。
+
 - [发布 v0.5.6：NSIS payload 绝对路径](../superpowers/plans/2026-11-27-release-v056-nsis-payload.md) — Scope: G-SC。`make release` 在 NSIS 步报 `no files found`：相对 `dist/nsis-payload\*.*` 在 Linux makensis 上匹配为空（最小 .nsi 复现：相对失败、绝对成功）。构建脚本先把 DIST_DIR 转成绝对路径再传给 -DPAYLOAD；定向测试钉住该契约。
 
 - [边缘端节点表：主控置顶 · 统一重复的 pc 行 · 顺序与颜色跨端持久 · Windows 客户端图标](2026-11-26-edge-node-table-and-icon.md) — Plan 2026-11-26，Scope: G-SA / G-SB。用户四条诉求：① 主控 `home` 固定在「管理节点」首行；② 两条同名 `pc` 无法区分，裁定统一成一条、沿用旧直连网址 `/mindfs-win`（边缘已取代旧 pc）；③ 顺序与颜色在 PC 端与边缘端一致，用户改动跨端持久；④ Windows 边缘客户端把图标打进产物并确认生效。只读取证：前端 `normalizeAndDedup` 在共享表里找不到本机时**前插**合成 self 行（id `pc`），而共享的 `pc` 行是随机 uuid、没有 `instanceId`，两条并存且把主控挤到第二；该合成行随整表 PUT 回主控时被 `NameConflicts` 拒掉，所以边缘端改名/改色/学到的 `instanceId` 全部静默失败——这是「不跨端同步」的直接原因；顺序本身也没有持久字段。修法：合成行带 `instanceId`、改为追加、按 instance 与共享行合并（保留 id/URL/颜色），self 判定改 connection-aware（路由 self 走设备本地基址），合成行只在空表时写回；服务端新增 `NodeConnection.Order`，`List()` 稳定排序（0 排后），GET/PUT 都把 `h.NodeID` 行钉到首位，PUT 按数组下标赋 `Order=i+1`；面板上移/下移、首行固定；颜色随同一张表恢复读写。图标：由 `pwa-512.png` 生成多尺寸 `cli/cmd/assets/app.ico`，`rsrc` 生成 amd64/arm64 `.syso` 由 Go 自动链接进 exe，NSIS 经 `-DAPP_ICON` 定义 `MUI_ICON`/`MUI_UNICON`；已用 PE 资源解析确认 exe 与 setup-stub 含 `RT_ICON`/`RT_GROUP_ICON`。**未 push、未部署、未重启任何节点。**

@@ -120,6 +120,10 @@ type ActivityService struct {
 	worktreeFinisher ActivityWorktreeFinisher
 	// sessionMaintainer 是 Router 会话维护端口。nil 时相关工具显式报错。
 	sessionMaintainer ActivitySessionMaintainer
+	// taskCardNotify 让看板在提问卡出现/收口时立刻重拉任务卡。提问卡本身只广播
+	// task.activity.*，而看板只认 task.updated；没有这一拍，卡上「等你回答」
+	// 徽标要等下一次别的事件才出现/消失（router ask 不写 aux 标志，尤其明显）。
+	taskCardNotify func(ctx context.Context, rootID, taskID string)
 }
 
 // ActivityWorktreeFinisher 是 Router 的收尾端口，由 kanban.Service 实现并装配期注入。
@@ -133,6 +137,33 @@ func (s *ActivityService) SetWorktreeFinisher(f ActivityWorktreeFinisher) {
 	if s != nil {
 		s.worktreeFinisher = f
 	}
+}
+
+// SetTaskCardNotifier 挂上「任务卡内容变了」的通知端口，装配期调用一次。
+// nil 时退化为旧行为（只有活动事件，看板不重拉）。
+func (s *ActivityService) SetTaskCardNotifier(f func(ctx context.Context, rootID, taskID string)) {
+	if s != nil {
+		s.taskCardNotify = f
+	}
+}
+
+// notifyTaskCard 通知看板重拉这张卡；调用点都是「提问卡的生命周期变了」。
+// 取不到任务时静默跳过：看板还有下一次整包刷新兜底，不让通知失败影响主流程。
+func (s *ActivityService) notifyTaskCard(ctx context.Context, taskID string) {
+	if s == nil || s.taskCardNotify == nil || s.tasks == nil {
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	rootID := strings.TrimSpace(s.tasks.root.ID)
+	if task, err := s.tasks.GetTask(ctx, taskID); err == nil {
+		if v := strings.TrimSpace(task.RootID); v != "" {
+			rootID = v
+		}
+	}
+	s.taskCardNotify(ctx, rootID, taskID)
 }
 
 // ActivitySessionMaintainer 是 Router 的无损会话维护端口，由 usecase.Service 实现。

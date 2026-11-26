@@ -143,8 +143,19 @@ func (s *AppContext) closeTaskQuestions(ctx context.Context, rootID, sessionKey,
 	if err != nil {
 		return
 	}
-	if _, err := activityService.CloseOpenTaskQuestions(ctx, sessionKey, reason); err != nil {
+	closed, err := activityService.CloseOpenTaskQuestions(ctx, sessionKey, reason)
+	if err != nil {
 		log.Printf("[kanban] task.question.close.error root=%s session=%s err=%v", rootID, sessionKey, err)
+		return
+	}
+	if closed > 0 {
+		// 卡被回合终结/工具失败收口时，任务卡上的「等你回答」徽标也要退场：
+		// 它由 aux 标志驱动，不随提问卡状态变化。清位同时会广播 task.updated。
+		no := false
+		if _, err := kanbanService.UpdateTaskAuxFlags(ctx, rootID, sess.TaskID,
+			kanban.TaskAuxFlagsPatch{AskUserWaiting: &no}, "aux_ask_user_closed"); err != nil {
+			log.Printf("[kanban] task.question.clear_flag.error root=%s task=%s err=%v", rootID, sess.TaskID, err)
+		}
 	}
 }
 

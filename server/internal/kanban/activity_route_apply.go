@@ -320,6 +320,8 @@ func (s *ActivityService) applyRouteAskUser(
 	if decision.TriggerKind == RouterTriggerUserMessage && act.RunID == "" {
 		s.markTurnTaskWaitingUser(ctx, task.ID)
 	}
+	// 活动事件只喂详情时间线；看板卡片上的「等你回答」徽标靠 task.updated。
+	s.notifyTaskCard(ctx, task.ID)
 	if s.cardNotifier != nil {
 		notice := CardNotice{
 			ID: "ask-" + act.ID, Kind: CardKindAsk,

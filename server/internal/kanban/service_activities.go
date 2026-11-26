@@ -32,6 +32,8 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetBroadcaster(broadcaster)
 	svc.SetTurnTracker(&s.activityTurns)
 	svc.SetCardNotifier(s.cardNotifier)
+	// 提问卡的「出现 / 收口」要让看板立刻重拉任务卡（router ask 不写 aux 标志）。
+	svc.SetTaskCardNotifier(s.NotifyTaskCardChanged)
 	// 装配 WorkflowRun 执行端口：通过 Service.WakeWorkflowRun 触发实际执行
 	svc.SetWorkflowExecutor(s)
 	svc.SetWorktreeFinisher(s)

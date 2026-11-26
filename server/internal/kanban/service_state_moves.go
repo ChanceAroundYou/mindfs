@@ -40,6 +40,35 @@ func (s *Service) UpdateTaskAuxFlags(ctx context.Context, rootID, taskID string,
 	return detail, err
 }
 
+// NotifyTaskCardChanged 触发一次 task.updated，让看板重拉这张卡。
+//
+// 提问卡不写任务行时也需要它：router ask 生命周期只广播活动事件，而看板只认
+// task.updated —— 卡上的「等你回答」徽标因此要等下一次别的事件才出现/消失。
+// 读取失败不报错：下一次整包刷新会兜底。
+func (s *Service) NotifyTaskCardChanged(ctx context.Context, rootID, taskID string) {
+	if s == nil {
+		return
+	}
+	rootID = strings.TrimSpace(rootID)
+	taskID = strings.TrimSpace(taskID)
+	if rootID == "" || taskID == "" {
+		return
+	}
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return
+	}
+	// 调用点常在回合收尾路径上，上一层的 ctx 可能已经取消；通知本身很短，
+	// 用脱离取消的 ctx + 超时，避免「卡已经落库、看板却没收到」。
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	detail, err := store.GetDetail(ctx, taskID)
+	if err != nil || s.Runner == nil {
+		return
+	}
+	s.Runner.TaskUpdated(rootID, detail)
+}
+
 func patchPayload(patch TaskAuxFlagsPatch) map[string]any {
 	out := map[string]any{}
 	if patch.AskUserWaiting != nil {

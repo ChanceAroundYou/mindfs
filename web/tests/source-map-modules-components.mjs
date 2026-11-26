@@ -84,6 +84,8 @@ export const COMPONENT_MODULES = {
     "src/components/session/SessionViewerTokenViews.tsx",
     "src/components/session/SessionViewerCards.tsx",
     "src/components/session/AskUserQuestionCard.tsx",
+    "src/components/session/askUserCardState.ts",
+    "src/components/session/askUserIcons.tsx",
     "src/components/session/SessionViewerSlashCommandResult.tsx",
     "src/components/session/sessionViewerToolTimelineHelpers.tsx",
     "src/components/session/sessionViewerAuxiliaryTimelineHelpers.tsx",

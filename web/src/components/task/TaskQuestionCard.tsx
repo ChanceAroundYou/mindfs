@@ -24,11 +24,15 @@ export function TaskQuestionCard({ activity, rootId, onAnswer }: TaskQuestionCar
   const payload = parseTaskActivityPayload(activity);
   const toolUseId =
     `${activity.tool_use_id || payload.tool_use_id || ""}`.trim();
-  const waiting = normalizeActivityStatus(activity.status) === "waiting_user";
+  const normalized = normalizeActivityStatus(activity.status);
+  const waiting = normalized === "waiting_user";
+  // cancelled/failed 的卡已经不可能再答：卡片要显示「已关闭」而不是和无答案的
+  // completed 混在一起（超时收口、被新提问取代都走这条路）。
+  const closed = normalized === "cancelled" || normalized === "failed";
   const toolCall: ToolCall = {
     callId: toolUseId,
     title: activity.body,
-    status: waiting ? "running" : "complete",
+    status: waiting ? "running" : closed ? "cancelled" : "complete",
     kind: "ask_user",
     meta: {
       questions: payload.questions,
@@ -48,6 +52,7 @@ export function TaskQuestionCard({ activity, rootId, onAnswer }: TaskQuestionCar
         sessionKey={activity.session_key}
         agent={typeof payload.agent === "string" ? payload.agent : undefined}
         active={waiting}
+        statusNote={activity.summary}
         onAnswer={
           onAnswer
             ? ({ answers }) => onAnswer(activity, answers)

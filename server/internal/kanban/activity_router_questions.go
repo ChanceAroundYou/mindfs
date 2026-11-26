@@ -190,6 +190,8 @@ func (s *ActivityService) AnswerQuestionCard(
 			"payload_json": encodedPayload,
 		})
 	}
+	// 作答后卡上的等待徽标要立刻消失（看板只认 task.updated）。
+	s.notifyTaskCard(ctx, taskID)
 	return userAct, agentAct, nil
 }
 

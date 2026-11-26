@@ -2,6 +2,11 @@ import React, { useEffect, useState } from "react";
 import { useI18n } from "../../i18n/index";
 import type { ToolCall } from "../../shared/sessionTypes";
 import type { AskUserQuestionItem, SessionViewerProps } from "./sessionViewerTypes";
+import { askUserAnswerSummary, askUserPalette, resolveAskUserState } from "./askUserCardState";
+import { AskUserIcon } from "./askUserIcons";
+
+// 图标仍从这个模块导出：会话页脚只关心 ForkIcon，不该多记一个文件路径。
+export { AskUserIcon, ForkIcon } from "./askUserIcons";
 
 export function getAskUserQuestions(toolCall: Partial<ToolCall>): AskUserQuestionItem[] {
   const raw = toolCall.meta?.questions;
@@ -45,58 +50,13 @@ export function askUserQuestionTitle(question?: AskUserQuestionItem): string {
   return questionText || header;
 }
 
-export function AskUserIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      style={{ color: "#ef4444", flexShrink: 0 }}
-    >
-      <g fill="currentColor">
-        <path d="M8 11a.75.75 0 1 1 0 1.5a.75.75 0 0 1 0-1.5m0-7c1.262 0 2.25.988 2.25 2.25c0 1.083-.566 1.648-1.021 2.104c-.408.407-.729.728-.729 1.396a.5.5 0 0 1-1 0c0-1.083.566-1.648 1.021-2.104c.408-.407.729-.728.729-1.396C9.25 5.538 8.712 5 8 5s-1.25.538-1.25 1.25a.5.5 0 0 1-1 0C5.75 4.988 6.738 4 8 4" />
-        <path
-          fillRule="evenodd"
-          d="M8 1a7 7 0 0 1 6.999 7.001a7 7 0 0 1-10.504 6.06l-2.728.91a.582.582 0 0 1-.744-.714l.83-2.906A7 7 0 0 1 8 1m.001 1.001c-3.308 0-6 2.692-6 6c0 1.003.252 1.996.73 2.871l.196.36l-.726 2.54l1.978-.659l.428-.143l.39.226A6 6 0 0 0 8 14l.001.001c3.308 0 6-2.692 6-6s-2.692-6-6-6"
-          clipRule="evenodd"
-        />
-      </g>
-    </svg>
-  );
-}
-
-export function ForkIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-      style={{ transform: "rotate(180deg) scaleX(-1)" }}
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-        d="M17 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4m0 14a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7v10M17 7v1c0 2.5-2 3-2 3l-6 2s-2 .5-2 3v1"
-      />
-      <circle cx="17" cy="5" r="2" fill="currentColor" />
-    </svg>
-  );
-}
-
 export function AskUserQuestionCard({
   toolCall,
   rootId,
   sessionKey,
   agent,
   active,
+  statusNote,
   onAnswer,
 }: {
   toolCall: ToolCall;
@@ -104,6 +64,8 @@ export function AskUserQuestionCard({
   sessionKey?: string | null;
   agent?: string;
   active: boolean;
+  /** 卡被收口时的原因（回合结束、被新提问取代等）；只用于「已关闭」的说明行。 */
+  statusNote?: string;
   onAnswer?: SessionViewerProps["onAskUserAnswer"];
 }) {
   const { t } = useI18n();
@@ -141,8 +103,22 @@ export function AskUserQuestionCard({
     !!onAnswer &&
     questions.length > 0 &&
     questions.every((_, index) => (answers[`q_${index}`] || "").trim() !== "") &&
-    !submitting &&
-    !submitted;
+    !submitted &&
+    active &&
+    !submitting;
+
+  // 三种状态用同一套视觉语言：等待=红、已答复=绿、已关闭=灰。Router 卡与会话卡
+  // 共用这个组件，任务详情和会话查看器因此不会各显示一套。
+  const askState = resolveAskUserState({
+    submitted,
+    hasPersistedAnswers,
+    active,
+    isCurrent,
+  });
+  const askPalette = askUserPalette(askState);
+  // 已收口的卡不能再改答案：允许编辑却提交不了，比直接锁住更让人困惑。
+  const locked = submitted || !active;
+  const answerSummary = askUserAnswerSummary(questions, answers);
 
   useEffect(() => {
     if (hasPersistedAnswers) {
@@ -188,9 +164,8 @@ export function AskUserQuestionCard({
         width: "100%",
         minWidth: 0,
         borderRadius: "10px",
-        border: "1px solid rgba(239, 68, 68, 0.28)",
-        background:
-          "linear-gradient(180deg, rgba(239, 68, 68, 0.08), rgba(239, 68, 68, 0.03))",
+        border: `1px solid ${askPalette.border}`,
+        background: askPalette.background,
         overflow: "hidden",
       }}
     >
@@ -203,7 +178,7 @@ export function AskUserQuestionCard({
           alignItems: "center",
           justifyContent: "flex-start",
           padding: "6px 8px",
-          background: "rgba(239, 68, 68, 0.04)",
+          background: askPalette.header,
           border: "none",
           borderBottom: expanded ? "1px solid var(--border-color)" : "none",
           cursor: "pointer",
@@ -213,7 +188,7 @@ export function AskUserQuestionCard({
         }}
         title={title}
       >
-        <AskUserIcon />
+        <AskUserIcon color={askPalette.accent} />
         <span
           style={{
             minWidth: 0,
@@ -229,6 +204,22 @@ export function AskUserQuestionCard({
           }}
         >
           {title}
+        </span>
+        <span
+          data-testid="ask-user-state"
+          data-state={askState}
+          style={{
+            flexShrink: 0,
+            borderRadius: "999px",
+            padding: "1px 8px",
+            fontSize: "11px",
+            fontWeight: 600,
+            color: askPalette.accent,
+            background: askPalette.chip,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {t(`task.askState.${askState}`)}
         </span>
         <span
           style={{
@@ -254,6 +245,37 @@ export function AskUserQuestionCard({
           </svg>
         </span>
       </button>
+      {!expanded && askState === "answered" && answerSummary ? (
+        <div
+          data-testid="ask-user-answer-summary"
+          title={answerSummary}
+          style={{
+            padding: "0 10px 7px",
+            fontSize: "11px",
+            color: "var(--text-secondary)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {t("task.askState.answerSummary", { answer: answerSummary })}
+        </div>
+      ) : null}
+      {askState === "closed" && `${statusNote || ""}`.trim() ? (
+        <div
+          data-testid="ask-user-status-note"
+          style={{
+            padding: "0 10px 7px",
+            fontSize: "11px",
+            color: "var(--text-secondary)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {statusNote}
+        </div>
+      ) : null}
       {expanded ? (
         <div style={{ padding: "10px", display: "flex", flexDirection: "column", gap: "12px" }}>
           {questions.map((question, index) => {
@@ -312,14 +334,14 @@ export function AskUserQuestionCard({
                               ? "1px solid rgba(239, 68, 68, 0.42)"
                               : "1px solid var(--border-color)",
                             background: checked ? "rgba(239, 68, 68, 0.10)" : "var(--content-bg)",
-                            cursor: submitted ? "default" : "pointer",
+                            cursor: locked ? "default" : "pointer",
                           }}
                         >
                           <input
                             type={question.multiSelect ? "checkbox" : "radio"}
                             name={`${toolUseId}-${key}`}
                             checked={checked}
-                            disabled={submitted}
+                            disabled={locked}
                             onChange={() =>
                               question.multiSelect
                                 ? toggleMultiAnswer(index, label, optionLabels)
@@ -340,7 +362,7 @@ export function AskUserQuestionCard({
                     })}
                     <textarea
                       value={customAnswer}
-                      disabled={submitted}
+                      disabled={locked}
                       onFocus={() => setFocusedCustomAnswerKey(key)}
                       onBlur={() => setFocusedCustomAnswerKey((current) => (current === key ? "" : current))}
                       onChange={(event) => setAnswer(index, event.target.value)}
@@ -365,7 +387,7 @@ export function AskUserQuestionCard({
                 ) : (
                   <textarea
                     value={selected}
-                    disabled={submitted}
+                    disabled={locked}
                     onChange={(event) => setAnswer(index, event.target.value)}
                     placeholder={t("session.askAnswer")}
                     rows={3}

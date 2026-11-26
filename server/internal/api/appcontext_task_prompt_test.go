@@ -385,6 +385,44 @@ func TestEndSessionTurnClosesStaleTaskQuestions(t *testing.T) {
 	}
 }
 
+// 提问卡被回合终结收口时，任务行上的「等你回答」徽标也必须一起灭。徽标由 aux
+// 标志驱动，不随活动行状态变化：只收卡不清位，看板会一直挂着已失效的等待提示。
+func TestEndSessionTurnClearsAskUserWaitingFlag(t *testing.T) {
+	app, rootID, sessionKey := newTaskQuestionTestApp(t, "task-turn-flag")
+	app.BroadcastSessionUpdate(rootID, sessionKey, agenttypes.Event{
+		Type: agenttypes.EventTypeToolCall,
+		Data: agenttypes.ToolCall{
+			CallID: "tool-flag", Kind: agenttypes.ToolKindAskUser, Status: "running",
+			Meta: map[string]any{"questions": []agenttypes.AskUserQuestionItem{{Question: "继续执行吗？"}}},
+		},
+	})
+	svc, err := app.GetKanbanService()
+	if err != nil {
+		t.Fatalf("GetKanbanService: %v", err)
+	}
+	before, err := svc.GetTask(context.Background(), rootID, "task-turn-flag")
+	if err != nil {
+		t.Fatalf("GetTask before turn end: %v", err)
+	}
+	if !before.Task.AuxFlags.AskUserWaiting {
+		t.Fatal("AskUserWaiting = false before the turn ended, want true")
+	}
+
+	turnID := app.SetSessionPendingReply(rootID, sessionKey, "提问会话", "turn-flag")
+	if turnID == "" {
+		t.Fatal("SetSessionPendingReply returned an empty turn id")
+	}
+	app.EndSessionTurn(rootID, sessionKey, "", turnID)
+
+	after, err := svc.GetTask(context.Background(), rootID, "task-turn-flag")
+	if err != nil {
+		t.Fatalf("GetTask after turn end: %v", err)
+	}
+	if after.Task.AuxFlags.AskUserWaiting {
+		t.Fatal("AskUserWaiting = true after the turn closed the question, want false")
+	}
+}
+
 func newTaskQuestionTestApp(t *testing.T, taskID string) (*AppContext, string, string) {
 	t.Helper()
 	ctx := context.Background()

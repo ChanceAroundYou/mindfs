@@ -300,6 +300,7 @@ func (s *ActivityService) CloseOpenTaskQuestions(ctx context.Context, sessionKey
 	}
 	reason = strings.TrimSpace(reason)
 	closed := 0
+	touched := map[string]struct{}{}
 	for _, question := range open {
 		var summary *string
 		if reason != "" {
@@ -313,11 +314,16 @@ func (s *ActivityService) CloseOpenTaskQuestions(ctx context.Context, sessionKey
 			continue
 		}
 		closed++
+		touched[question.TaskID] = struct{}{}
 		changes := map[string]any{"status": ActivityStatusCancelled}
 		if summary != nil {
 			changes["summary"] = *summary
 		}
 		s.broadcastUpdated(updated, changes)
+	}
+	// 卡收口了，任务卡上的等待徽标也必须退场；不能等下一次别的事件。
+	for taskID := range touched {
+		s.notifyTaskCard(ctx, taskID)
 	}
 	return closed, nil
 }
