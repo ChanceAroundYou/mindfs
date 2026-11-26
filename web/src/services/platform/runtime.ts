@@ -9,6 +9,8 @@ export type NativePlatform = "web" | "android" | "ios" | "native";
 
 type NativeRuntimeWindow = Window & {
   __MIND_FS_NATIVE_PLATFORM__?: string;
+  __MIND_FS_DESKTOP_SHELL__?: boolean;
+  chrome?: { webview?: unknown };
   Capacitor?: {
     getPlatform?: () => string;
     isNativePlatform?: () => boolean;
@@ -65,6 +67,30 @@ export function getNativePlatform(): NativePlatform {
 
 export function isNativeShellRuntime(): boolean {
   return getNativePlatform() !== "web";
+}
+
+/**
+ * 桌面套壳（Windows 的 WebView2 窗口）里的页面。
+ *
+ * 它**不是**原生壳：没有 `MindFSNative` 桥，不能走原生下载/拉起/返回键那条路，
+ * 所以不能并进 `isNativeShellRuntime()`。但页面里那些「把这个网页装成应用」的
+ * 入口对它同样没有意义 —— 程序本来就是安装器装的，WebView2 也不支持 PWA 安装。
+ *
+ * 两条判据取并集：
+ *   - 套壳在文档创建前注入的 `__MIND_FS_DESKTOP_SHELL__`（见 desktopShellInitScript）；
+ *   - WebView2 宿主自带的 `window.chrome.webview`。旧版套壳二进制没有注入，
+ *     但页面照样能借此认出自己在窗口里 —— 前端不必等套壳一起升级。
+ * 普通浏览器标签页（Edge / Chrome）没有 `chrome.webview`。
+ */
+export function isDesktopShellRuntime(): boolean {
+  if (!isBrowserRuntime()) {
+    return false;
+  }
+  const w = window as NativeRuntimeWindow;
+  if (w.__MIND_FS_DESKTOP_SHELL__ === true) {
+    return true;
+  }
+  return Boolean(w.chrome?.webview);
 }
 
 export function isAndroidRuntime(): boolean {
@@ -190,5 +216,7 @@ export function shouldRegisterServiceWorker(): boolean {
 }
 
 export function shouldEnablePWAInstall(): boolean {
-  return !isNativeShellRuntime();
+  // 套壳里既没有可安装的浏览器上下文，程序也已经装好了：连 beforeinstallprompt
+  // 的监听都不必挂（WebView2 不会派发）。
+  return !isNativeShellRuntime() && !isDesktopShellRuntime();
 }

@@ -246,3 +246,15 @@ func TestPostDesktopUpdateMessages(t *testing.T) {
 		t.Fatalf("message = %q, want a connection error", got)
 	}
 }
+
+// 套壳页面里不该出现 PWA 安装入口：程序已由安装器装好，WebView2 也没有可安装的
+// 浏览器上下文。前端只在 `window.__MIND_FS_DESKTOP_SHELL__ === true` 时隐藏，
+// 所以注入脚本必须设置同名全局（跨端核对在 web/tests/desktop-shell-install-cta.test.mjs）。
+func TestDesktopShellInjectsInstallMarker(t *testing.T) {
+	if !strings.Contains(desktopShellInitScript, "__MIND_FS_DESKTOP_SHELL__") {
+		t.Fatalf("desktopShellInitScript = %q, want it to set __MIND_FS_DESKTOP_SHELL__", desktopShellInitScript)
+	}
+	if !strings.Contains(desktopShellInitScript, "= true") {
+		t.Fatalf("desktopShellInitScript = %q, want a truthy marker", desktopShellInitScript)
+	}
+}

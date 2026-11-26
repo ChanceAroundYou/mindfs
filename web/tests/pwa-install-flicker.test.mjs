@@ -84,12 +84,12 @@ assert.doesNotMatch(
 );
 assert.match(
   fileTree,
-  /const installProbePending = pwaInstallService\.expectsPrompt\(\)[\s\S]{0,140}&& !installProbeDone[\s\S]{0,80}&& !isKnownInstalled[\s\S]{0,40}&& !isNativeApp;/,
+  /const installProbePending = pwaInstallService\.expectsPrompt\(\)[\s\S]{0,140}&& !installProbeDone[\s\S]{0,80}&& !isKnownInstalled[\s\S]{0,40}&& !isNativeApp[\s\S]{0,40};/,
   "应显式区分「判定中」与「不能装」，且覆盖所有会派发该事件的平台",
 );
 assert.match(
   fileTree,
-  /const shouldShowInstallButton = !installProbePending && !isNativeApp && !isKnownInstalled/,
+  /const shouldShowInstallButton = !installProbePending && !isNativeApp && !isDesktopShell && !isKnownInstalled/,
   "按钮可见性必须以 installProbePending 为前置门",
 );
 assert.match(
