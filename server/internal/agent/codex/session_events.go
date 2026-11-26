@@ -51,6 +51,9 @@ func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) (stre
 			continue
 		case *codexsdk.ItemStartedEvent:
 			s.logRawToolItem(e.Item)
+			if s.emitThoughtStart(e.Item) {
+				continue
+			}
 			if _, ok := e.Item.(*codexsdk.AgentMessageItem); ok {
 				continue
 			}
@@ -64,6 +67,9 @@ func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) (stre
 			logUnhandledEvent(s.sessionKey, "item.started", raw)
 		case *codexsdk.ItemUpdatedEvent:
 			s.logRawToolItem(e.Item)
+			if s.emitThoughtStart(e.Item) {
+				continue
+			}
 			if toolCall, ok := mapToolItem(e.Item, false); ok {
 				s.emit(types.Event{Type: types.EventTypeToolUpdate, SessionID: s.SessionID(), Data: toolCall})
 				continue
@@ -153,6 +159,27 @@ func (s *session) emitCompact(notice types.CompactNotice) {
 	if s.onCompact != nil {
 		s.onCompact(s.SessionID())
 	}
+}
+
+// emitThoughtStart 报告「推理已经开始」，让上层把思考块锚在真实位置。
+//
+// 为什么不能等 item.completed：Codex 的 reasoning summary 要到条目完成时才完整。
+// SDK 把流式 item/reasoning/summaryTextDelta 累积进 item 的 text 字段
+// （app_server_exec.go 的 applyTextDelta），而 typed ReasoningItem 只解析 summary，
+// 所以 item.updated 到手时 Summary 为空。等 completed 再发 ThoughtChunk，正文早已
+// 流完，思考会被锚到正文末尾（实测 line=93/93，前端于是把整块思考画在答案之后）。
+// 这里只借 started/updated 的**时序**，不读内容：内容仍由 completed 提供。
+func (s *session) emitThoughtStart(item codexsdk.ThreadItem) bool {
+	reasoning, ok := item.(*codexsdk.ReasoningItem)
+	if !ok {
+		return false
+	}
+	s.emit(types.Event{
+		Type:      types.EventTypeThoughtChunk,
+		SessionID: s.SessionID(),
+		Data:      types.ThoughtChunk{ID: reasoning.ID, Start: true},
+	})
+	return true
 }
 
 func (s *session) handleNonToolItem(item codexsdk.ThreadItem, started bool) bool {
