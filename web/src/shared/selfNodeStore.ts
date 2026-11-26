@@ -61,6 +61,23 @@ export function isSelfNode(nodeId: string | null | undefined): boolean {
   return id.toLowerCase() === identity.id.toLowerCase();
 }
 
+/**
+ * 这条节点记录是不是本机。
+ *
+ * 本机行有两种来源：按 id 命中的共享行（主控 home），以及刚学到 instanceId 的共享行
+ * （边缘的 pc 行在控制面表里的 id 是随机 uuid）。只看 id 会把后者当陌生节点，
+ * 于是同一条 pc 在边缘上显示两次 —— 所以 instanceId 命中同样算本机。
+ */
+export function isSelfNodeConnection(
+  node: { id?: string; instanceId?: string } | null | undefined,
+): boolean {
+  if (!node) return false;
+  if (isSelfNode(node.id)) return true;
+  const instanceId = String(node.instanceId || "").trim();
+  if (!instanceId || !identity) return false;
+  return instanceId.toLowerCase() === identity.id.toLowerCase();
+}
+
 /** 写入身份（由 services/net/selfNode.ts 在拉到 node-info 后调用）。 */
 export function setSelfNodeIdentity(id: string, name: string): SelfNodeIdentity | null {
   const nextId = String(id || "").trim();

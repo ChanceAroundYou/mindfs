@@ -1,5 +1,6 @@
 import { getStoredApiBaseURL, getStoredWsBaseURL } from "../prefs/storage";
 import { getActiveNode, getNodeById, nodeRouteBase } from "../net/nodeRegistry";
+import { isSelfNodeConnection } from "../../shared/selfNodeStore";
 import { deriveLocalNodeBase, normalizeExplicitNodeBase } from "../net/nodeBase";
 import { DEPLOY_PREFIX } from "../net/prefix";
 
@@ -142,12 +143,24 @@ function deriveOriginBaseURL(): string {
   return deriveLocalNodeBase(window.location.origin, DEPLOY_PREFIX);
 }
 
+// 本机连接的寻址固定走页面所在的这台设备，而不是表里存的直连网址。
+//
+// 统一后的 pc 行在共享表里保留的是用户配置的 /mindfs-win 直连网址，但请求没有理由
+// 绕一圈公网/反代：公网链路挂了（WSL 停机时整个 pc 入口不可达）本机操作照样要能用。
+// 原生壳 origin 不可直接 fetch 时返回空串，调用方会退回记录里的地址。
+function selfLocalBase(node: { id?: string; instanceId?: string } | null): string {
+  if (!node || !isSelfNodeConnection(node)) return "";
+  return deriveOriginBaseURL();
+}
+
 function resolveNodeBaseURL(nodeId?: string): string {
   if (nodeId) {
     const node = getNodeById(nodeId);
     // 直连优先、relay 兜底：一条节点记录可能只有 relayUrl（未配直连的边控端，
     // 或由主控经隧道发布）。只认 url 会把这类节点当成「没有地址」。
     if (node) {
+      const local = selfLocalBase(node);
+      if (local) return local;
       const base = nodeRouteBase(node);
       if (base) return normalizeExplicitNodeBase(base);
     }
@@ -158,6 +171,8 @@ function resolveNodeBaseURL(nodeId?: string): string {
     return "";
   }
   const active = getActiveNode();
+  const activeLocal = selfLocalBase(active);
+  if (activeLocal) return normalizeExplicitNodeBase(activeLocal);
   const activeBase = nodeRouteBase(active);
   if (activeBase) return normalizeExplicitNodeBase(activeBase);
   return "";
@@ -182,9 +197,10 @@ export function getWsBaseURL(nodeId?: string): string {
     let u = "";
     if (nodeId) {
       const node = getNodeById(nodeId);
-      u = normalizeExplicitNodeBase(nodeRouteBase(node));
+      u = normalizeExplicitNodeBase(selfLocalBase(node) || nodeRouteBase(node));
     } else {
-      u = normalizeExplicitNodeBase(nodeRouteBase(getActiveNode()));
+      const active = getActiveNode();
+      u = normalizeExplicitNodeBase(selfLocalBase(active) || nodeRouteBase(active));
     }
     if (u) {
       if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;

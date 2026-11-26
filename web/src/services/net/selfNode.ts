@@ -21,6 +21,7 @@ export {
   getSelfNodeIdentity,
   getSelfNodeName,
   isSelfNode,
+  isSelfNodeConnection,
   type SelfNodeIdentity,
 } from "../../shared/selfNodeStore";
 

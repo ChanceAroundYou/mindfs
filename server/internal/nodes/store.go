@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -32,6 +33,10 @@ type NodeConnection struct {
 	//
 	// 零值 false = 本机节点，行为与加此字段之前逐字节一致，老 nodes.json 免迁移。
 	Remote bool `json:"remote,omitempty"`
+	// Order 是用户在共享表里排的显示顺序（1 起）。PUT 按数组下标写它，List 按它排序，
+	// 因此顺序是控制面数据的一部分，随 control-sync 一起跨端同步。
+	// 零值 = 旧数据/没排过：读时排在有序行之后，并保持原相对顺序。
+	Order int `json:"order,omitempty"`
 }
 
 // RouteBase 返回这个节点实际可用的基址：直连优先，relay 兜底。
@@ -157,9 +162,24 @@ func mergeByInstance(in []NodeConnection) []NodeConnection {
 		if prim.Color == "" {
 			prim.Color = n.Color
 		}
+		if prim.Order == 0 {
+			prim.Order = n.Order
+		}
 		prim.Remote = prim.Remote || n.Remote
 	}
 	return out
+}
+
+// sortByOrder 按 Order 升序稳定排序；Order==0 的旧行排在有序行之后并保持原相对顺序。
+func sortByOrder(in []NodeConnection) []NodeConnection {
+	sort.SliceStable(in, func(i, j int) bool {
+		a, b := in[i].Order, in[j].Order
+		if (a == 0) != (b == 0) {
+			return b == 0
+		}
+		return a < b
+	})
+	return in
 }
 
 // NameConflicts 判定一次整表写入是否**新引入**了重名（trim + 忽略大小写）。
@@ -220,7 +240,7 @@ func (s *Store) List() []NodeConnection {
 	defer s.mu.RUnlock()
 	out := make([]NodeConnection, len(s.data))
 	copy(out, s.data)
-	return out
+	return sortByOrder(out)
 }
 
 func (s *Store) Replace(nodes []NodeConnection) error {
@@ -245,11 +265,26 @@ func (s *Store) Replace(nodes []NodeConnection) error {
 			if incoming[i].InstanceID == "" {
 				incoming[i].InstanceID = old.InstanceID
 			}
+			// 老客户端/老同步记录不带 order：保留原有排序，别把它打回「未排序」。
+			if incoming[i].Order == 0 {
+				incoming[i].Order = old.Order
+			}
 			break
 		}
 	}
 	s.data = mergeByInstance(incoming)
 	return s.saveLocked()
+}
+
+// nextOrderLocked 返回下一行该用的 Order（现有最大值 +1）。调用方必须持写锁。
+func (s *Store) nextOrderLocked() int {
+	max := 0
+	for _, n := range s.data {
+		if n.Order > max {
+			max = n.Order
+		}
+	}
+	return max + 1
 }
 
 func (s *Store) Upsert(node NodeConnection) (NodeConnection, error) {
@@ -272,10 +307,16 @@ func (s *Store) Upsert(node NodeConnection) (NodeConnection, error) {
 	defer s.mu.Unlock()
 	for i, n := range s.data {
 		if n.ID == node.ID {
+			if node.Order == 0 {
+				node.Order = n.Order
+			}
 			s.data[i] = node
 			s.data = mergeByInstance(s.data)
 			return node, s.saveLocked()
 		}
+	}
+	if node.Order == 0 {
+		node.Order = s.nextOrderLocked()
 	}
 	s.data = append(s.data, node)
 	s.data = mergeByInstance(s.data)
@@ -329,6 +370,7 @@ func (s *Store) SetRelay(instanceID, name, relayURL string) (NodeConnection, err
 			RelayURL:   relayURL,
 			InstanceID: instanceID,
 			Remote:     true,
+			Order:      s.nextOrderLocked(),
 		})
 	}
 	s.data = mergeByInstance(s.data)

@@ -31,6 +31,8 @@ assert.equal(repairDuplicateDeployPrefix("https://pc.example/mindfs/api/mindfs",
 assert.equal(repairDuplicateDeployPrefix("https://pc.example/other", "/mindfs"), "https://pc.example/other");
 
 const registry = fs.readFileSync(path.join(root, "src/services/net/nodeRegistry.ts"), "utf8");
+// 表的规整/去重与 self 行合成在 net/nodeTableNormalize.ts（nodeRegistry 只做编排）。
+const tableNormalize = fs.readFileSync(path.join(root, "src/services/net/nodeTableNormalize.ts"), "utf8");
 // 节点连通性探测已从 FileTree 的「添加节点」popover 搬到 NodeManagerPanel（添加 + 改地址共用
 // probeCandidateUrl）；守卫跟着代码搬家，意图不变：候选地址必须用显式远端 base 直接拼，
 // 不得继承本地部署前缀，否则探测打到的是本机、连通性检查形同虚设。
@@ -39,22 +41,23 @@ assert.match(nodeManager, /fetch\(`\$\{normalizedUrl\}\/api\/agents`/, "node pro
 assert.doesNotMatch(nodeManager, /normalizeBaseURLWithPrefix\(/, "node probe must not inherit the local prefix");
 assert.match(registry, /const cacheAtStart = cache;/, "initial sync must detect a concurrent local write");
 assert.match(registry, /if \(cache !== cacheAtStart\) return \{ nodes: cache \|\| nodes, source: "server" \};/, "initial sync must not overwrite a concurrent local write");
-assert.match(registry, /await enqueueServerWrite\(merged\);\s*nodes = merged;\s*clearLegacyLocalNodes\(\);/s, "legacy nodes must only be cleared after a successful server write");
+assert.match(registry, /await enqueueServerWrite\(merged\.map\(\(n\) => \(\{ \.\.\.n, _syntheticSelf: undefined \}\)\)\);\s*nodes = merged;\s*clearLegacyLocalNodes\(\);/s, "legacy nodes must only be cleared after a successful server write");
 assert.doesNotMatch(registry, /if \(syncing\) return/, "overlapping node writes must not be dropped");
 assert.match(registry, /const write = writeQueue\.then\(\(\) => pushToServer\(snapshot\)\);/, "node writes must be serialized");
 
 // 去重键必须带路径段，不能只比 origin：同一台物理机可以挂两个前缀（实测 PC 上 WSL 节点
 // /mindfs 与 Windows 节点 /mindfs-win 共用 pc.xiaokubao.space），只比 origin 会把后一个节点吞掉，
 // 界面里根本看不到它，「添加节点」还会报 node_url_exists。
-assert.ok(registry.includes("function nodeBaseKey(url: string): string {"), "node dedup key must be path-aware, not origin-only");
-assert.ok(registry.includes('const path = u.pathname.replace(/\\/+$/, "");'), "dedup key must normalize the path segment");
-assert.ok(registry.includes('return `${u.protocol}//${u.host}${path}`.toLowerCase();'), "dedup key must include the deploy prefix path, not only the origin");
+assert.ok(tableNormalize.includes("function nodeBaseKey(url: string): string {"), "node dedup key must be path-aware, not origin-only");
+assert.ok(tableNormalize.includes('const path = u.pathname.replace(/\\/+$/, "");'), "dedup key must normalize the path segment");
+assert.ok(tableNormalize.includes('return `${u.protocol}//${u.host}${path}`.toLowerCase();'), "dedup key must include the deploy prefix path, not only the origin");
 
-// self 节点 URL 必须按当前设备推导：共享列表里持久化的 self URL 是某台设备写入的，
-// 对其它设备必然错误（实测手机写入 local→home URL，PC 端解析 nodeId="local" 全部串到 home）。
-assert.match(registry, /function deviceLocalNodeURL\(\): string \{\s*const base = localBaseURL\(\);\s*if \(!base \|\| !\/\^https\?:\\\/\\\/\/i\.test\(base\)\) return "";\s*return base;\s*\}/, "device-local URL must only accept fetchable http(s) origins");
-assert.match(registry, /function makeSelfNode\(\): NodeConnection \{\s*return \{ id: getSelfNodeId\(\), name: getSelfNodeName\(\), url: deviceLocalNodeURL\(\), color: PALETTE\[0\] \};\s*\}/, "ephemeral self node must use the device-derived URL and the server-reported identity");
-assert.match(registry, /\/\/ 读取时强制按当前设备推导[^\n]*\n[^\n]*if \(self\) self\.url = deviceLocalNodeURL\(\);/, "reading the node list must override the persisted self URL per device");
+// self 行的地址分两套：合成行用设备推导地址；共享行保留用户配置的直连网址
+// （统一后的 pc 行就是靠这条留住 /mindfs-win），本机请求的寻址另走 runtime.selfLocalBase。
+assert.match(tableNormalize, /function deviceLocalNodeURL\(\): string \{\s*const base = localBaseURL\(\);\s*if \(!base \|\| !\/\^https\?:\\\/\\\/\/i\.test\(base\)\) return "";\s*return base;\s*\}/, "device-local URL must only accept fetchable http(s) origins");
+assert.match(tableNormalize, /function makeSelfNode\(\): NodeConnection \{[\s\S]*?url: deviceLocalNodeURL\(\),[\s\S]*?instanceId: identity \? identity\.id : undefined,[\s\S]*?_syntheticSelf: true,[\s\S]*?\}/, "ephemeral self node must carry the device-derived URL, the server-reported identity and the synthetic marker");
+assert.doesNotMatch(tableNormalize, /读取时强制按当前设备推导[\s\S]{0,80}?if \(self\) self\.url = deviceLocalNodeURL\(\);/, "shared self rows keep their configured direct URL; only routing is device-local");
+assert.match(tableNormalize, /if \(!self\.url\) self\.url = deviceLocalNodeURL\(\);/, "a synthesized self row still needs the device-derived URL");
 
 // 显式 nodeId 解析失败不得静默回退 active node：会把请求发给错误节点。
 // 同时，节点地址必须走「直连优先、relay 兜底」——relay-only 节点（未配直连的边控端）
@@ -67,12 +70,12 @@ assert.match(
 );
 assert.match(
   runtimeSource,
-  /console\.warn\("\[node-routing\] explicit nodeId unresolvable[\s\S]*?return "";\s*\}\s*const active = getActiveNode\(\);\s*const activeBase = nodeRouteBase\(active\);\s*if \(activeBase\) return normalizeExplicitNodeBase\(activeBase\);/,
+  /console\.warn\("\[node-routing\] explicit nodeId unresolvable[\s\S]*?return "";\s*\}\s*const active = getActiveNode\(\);\s*const activeLocal = selfLocalBase\(active\);\s*if \(activeLocal\) return normalizeExplicitNodeBase\(activeLocal\);\s*const activeBase = nodeRouteBase\(active\);\s*if \(activeBase\) return normalizeExplicitNodeBase\(activeBase\);/,
   "unresolvable explicit nodeId must not fall back to the active node silently",
 );
 assert.match(
   runtimeSource,
-  /u = normalizeExplicitNodeBase\(nodeRouteBase\(node\)\);[\s\S]*?u = normalizeExplicitNodeBase\(nodeRouteBase\(getActiveNode\(\)\)\);/,
+  /u = normalizeExplicitNodeBase\(selfLocalBase\(node\) \|\| nodeRouteBase\(node\)\);[\s\S]*?const active = getActiveNode\(\);\s*u = normalizeExplicitNodeBase\(selfLocalBase\(active\) \|\| nodeRouteBase\(active\)\);/,
   "getWsBaseURL must derive from the same url || relayUrl resolution",
 );
 

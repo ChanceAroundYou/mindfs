@@ -2,6 +2,62 @@ package nodes
 
 import "testing"
 
+// 顺序是控制面数据：List 按 Order 升序，Order==0 的旧行排在最后并保持原相对顺序。
+func TestListSortsByOrderWithLegacyRowsLast(t *testing.T) {
+	store, err := NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Replace([]NodeConnection{
+		{ID: "legacy-b", Name: "B", URL: "https://b.example"},
+		{ID: "third", Name: "C", URL: "https://c.example", Order: 3},
+		{ID: "legacy-a", Name: "A", URL: "https://a.example"},
+		{ID: "first", Name: "F", URL: "https://f.example", Order: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := store.List()
+	want := []string{"first", "third", "legacy-b", "legacy-a"}
+	if len(got) != len(want) {
+		t.Fatalf("List() returned %d rows, want %d", len(got), len(want))
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("List()[%d] = %q, want %q (all=%v)", i, got[i].ID, id, got)
+		}
+	}
+}
+
+// 新行追加到末尾（Order = max+1）；更新已有行时不带 order 也要保留原顺序。
+func TestUpsertAssignsAndKeepsOrder(t *testing.T) {
+	store, err := NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []NodeConnection{
+		{ID: "a", Name: "A", URL: "https://a.example", Order: 1},
+		{ID: "b", Name: "B", URL: "https://b.example", Order: 2},
+	} {
+		if _, err := store.Upsert(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	added, err := store.Upsert(NodeConnection{ID: "c", Name: "C", URL: "https://c.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added.Order != 3 {
+		t.Fatalf("new row Order = %d, want 3", added.Order)
+	}
+	if _, err := store.Upsert(NodeConnection{ID: "a", Name: "A2", URL: "https://a.example"}); err != nil {
+		t.Fatal(err)
+	}
+	row, ok := store.Get("a")
+	if !ok || row.Order != 1 || row.Name != "A2" {
+		t.Fatalf("updated row = %+v ok=%v, want Order kept (1) and new name", row, ok)
+	}
+}
+
 func TestStoreNormalizeNodeURL(t *testing.T) {
 	tests := []struct {
 		name string

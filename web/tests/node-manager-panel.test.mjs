@@ -99,5 +99,17 @@ assert.match(panel, /const nodes = getNodes\(\);/, "面板必须在渲染时直�
 assert.doesNotMatch(panel, /useState<NodeConnection\[\]>/, "面板不得把节点列表镜像进 state");
 assert.match(panel, /addEventListener\("mindfs:nodes-changed"/, "面板必须订阅节点变化并强制重渲染");
 
+// ——— 面板：顺序编辑（首行固定） ———
+// 主控置顶由服务端保证；面板只提供上移/下移，且首行与「挤进首行」都不可用。
+assert.match(panel, /const canMoveUp = index > 1;/, "首行与第二行的上移必须不可用");
+assert.match(panel, /const canMoveDown = index > 0 && index < nodes\.length - 1;/, "首行不能下移");
+assert.match(panel, /onClick=\{\(\) => void handleMove\(node, "up"\)\}/, "上移按钮必须走 handleMove");
+assert.match(panel, /onClick=\{\(\) => void handleMove\(node, "down"\)\}/, "下移按钮必须走 handleMove");
+assert.match(
+  panel,
+  /isSelfNodeConnection\(node\)/,
+  "本机判定必须看连接身份：边缘的本机行在共享表里是随机 uuid + instanceId",
+);
+
 console.log("node-manager-panel.test.mjs: OK");
 });

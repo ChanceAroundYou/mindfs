@@ -111,6 +111,7 @@ echo "==> Building NSIS installer -> ${OUT}"
   -DOUTFILE="${OUT}" \
   -DPAYLOAD="${PAYLOAD}" \
   -DWEBVIEW2_BOOTSTRAPPER="${BOOTSTRAPPER}" \
+  -DAPP_ICON="${ROOT}/cli/cmd/assets/app.ico" \
   scripts/windows-installer/mindfs.nsi
 
 if [[ ! -f "${OUT}" ]]; then

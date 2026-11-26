@@ -112,6 +112,8 @@ export const zhCNWorkspace = {
   "nodeManager.probeUnreachable": "连不上这个节点，未保存",
   "nodeManager.probeFailed": "联通失败：{status}",
   "nodeManager.viaRelay": "经主控中转：{url}",
+  "nodeManager.moveUp": "上移",
+  "nodeManager.moveDown": "下移",
   "nodeManager.directPlaceholder": "留空则走主控中转",
   "login.downloadingPackage": "正在下载 {packageLabel} 更新包",
   "login.packageDownloadStarted": "更新包已开始下载，请在系统通知或下载目录中打开安装",

@@ -56,7 +56,30 @@ func (h *HTTPHandler) handleNodesList(w http.ResponseWriter, _ *http.Request) {
 		respondJSON(w, http.StatusOK, []nodes.NodeConnection{})
 		return
 	}
-	respondJSON(w, http.StatusOK, store.List())
+	respondJSON(w, http.StatusOK, primaryRowFirst(store.List(), h.NodeID))
+}
+
+// primaryRowFirst 把本机（主控）那一行提到最前。
+//
+// 主控置顶是服务端的保证，不靠任何客户端自觉：边缘的 /api/nodes 被控制面代理到这里，
+// 拿到的同样是主控排好的顺序。找不到本机行（普通 worker、或表里还没有这一行）时原样返回。
+func primaryRowFirst(list []nodes.NodeConnection, nodeID string) []nodes.NodeConnection {
+	id := strings.TrimSpace(nodeID)
+	if id == "" {
+		return list
+	}
+	for i := range list {
+		if list[i].ID != id {
+			continue
+		}
+		if i > 0 {
+			row := list[i]
+			copy(list[1:i+1], list[:i])
+			list[0] = row
+		}
+		break
+	}
+	return list
 }
 
 func (h *HTTPHandler) handleNodesPut(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +92,12 @@ func (h *HTTPHandler) handleNodesPut(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid nodes payload"))
 		return
+	}
+	// 顺序按请求数组下标落成 Order；本机（主控）行强制排第一 —— 客户端不提供顺序字段，
+	// 也不允许把主控挪出首位。
+	payload = primaryRowFirst(payload, h.NodeID)
+	for i := range payload {
+		payload[i].Order = i + 1
 	}
 	if conflict, taken := nodes.NameConflicts(store.List(), payload); taken {
 		respondNodeNameTaken(w, conflict)
