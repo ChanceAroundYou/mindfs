@@ -16196,19 +16196,26 @@ groups:
       （task_79ce7b7a 三条、task_7280e0df 两条），触发都是 turn_settled —— 用户
       看到的是这一轮什么都没发生，模型写下的判断一起消失。② 即便不是问句，
       任何一条非法动作都会让整轮正文作废：巡检里模型先写结论、再试图执行，
-      结果只剩日志里一行 error。
+      结果只剩日志里一行 error。③ 模型把 `router_silent` 当作「不另写回复」的
+      修饰语，和 `router_message_agent` / `router_ask_user` / `router_say` 同轮
+      调用，`silent must be the only action` 同样整轮拒绝：转交被丢、worker
+      根本没收到留言，提问卡也一起消失，用户只能等下一轮触发重跑（2026-11-26
+      task_d404e3fb7465e26e，01:34 / 02:35 / 02:42 / 03:56 四次，延迟数分钟）。
     why: |
       必须保留。S1 把「只能一个动作」放宽成「同轮至多一个 ask_user，其余只能是
       say」，并把顺序归一到 say 在前（占位回复归第一条回复类动作，否则用户先看到
       问题、后看到解释）。S2 在整轮被拒时仍把纯文本 say 按 summary 应用、再写一条
       `route-rejected:<decision>:<seq>` 可见说明；有副作用的动作照样整轮拒绝，不
-      会因此被放行。合上游丢了会回到「结论和提问二选一」和「被拒即静默」。
+      会因此被放行。S3 在归一出口丢弃与其它动作同轮的 `silent`（独占一轮时保留
+      一个）：它是修饰语而非决策，丢弃不损失任何用户可见输出，真正的转交/提问
+      必须留下；校验仍保持 `silent must be the only action` 作为兜底。合上游丢了
+      会回到「结论和提问二选一」「被拒即静默」和「silent 拖垮同轮动作」。
       判据用 TriggerKind 而不是 UserActivityID：运行期事件决策同样带留言 ID
       （线上 20 条 rejected 全部如此），按 ID 判空会把生产主路径整条漏掉。
     boundary: |
-      只放宽「汇报类动作的共存」，执行类（run_workflow / message_agent / deliver /
-      answer_waiting_node）与监管写入仍必须单独成轮、仍整轮拒绝。救回只搬纯文本，
-      不改任何副作用路径。
+      只放宽「汇报类动作的共存」，并丢弃同轮的 silent 修饰语；执行类
+      （run_workflow / message_agent / deliver / answer_waiting_node）与监管写入
+      仍必须单独成轮、仍整轮拒绝。救回只搬纯文本，不改任何副作用路径。
     files:
       - server/internal/kanban/router_action_turn_shape.go
       - server/internal/kanban/router_action_turn_shape_test.go
@@ -16224,12 +16231,14 @@ groups:
       - docs/router-summary-problem-analysis.md
     tests:
       # TestRouterRouteAllowsSayBeforeAskUser → 钉住 [say, ask_user] 与 [ask_user, say] 都应用成功、顺序归一成 say 在前（占位回复 ordinal 0 是 chat，提问卡 ordinal 1）。
+      # TestNormalizeRouterActionDropsRedundantSilent → 钉住同轮 silent 被丢弃、真正动作保留、多个 silent 收敛成一个、独占 silent 仍是合法决策、Seq 连续。
       - server/internal/kanban/router_action_turn_shape_test.go
       # TestCoordinatorRejectedTurnKeepsVisibleSay → 钉住被拒回合仍落一条 purpose=summary 的 say、任务摘要被它覆盖、并写 route-rejected 说明；TestCoordinatorRejectedTurnWithoutTextStillNotices → 钉住没有纯文本时仍留可见说明；TestShouldSalvageRejectedTurnKeysOnTriggerKind → 钉住判据是触发类而不是留言 ID。
       - server/internal/kanban/router_rejected_salvage_test.go
       # TestRouterValidateMatrix → 钉住 silent 仍独占、say+ask_user 的上限与各自错误串。
       - server/internal/kanban/router_shadow_test.go
       # TestRouterRouteInvalidActionsRejectAndFallBack → 钉住用户留言回合仍走 fallbackRoute（不产生 route-rejected 行、不复制正文明）；把判据放宽成「永远救回」时这条用例超时打红。
+      # TestRouterRouteMessageAgentWithSilentStillApplies → 钉住 message_agent+silent 仍启动 direct 执行器并送达留言；TestRouterRouteAskUserWithSilentStillApplies → 钉住 say+silent+ask_user 仍落 say 占位与 waiting_user 提问卡。
       - server/internal/kanban/router_route_test.go
     anchors:
       - 'server/internal/kanban/router_action_turn_shape.go:func validateSingleTurnAction(actions []RouterAction, kind RouterActionKind) error {'
@@ -16240,8 +16249,9 @@ groups:
       - 'server/internal/kanban/router_service.go:rs.salvageRejectedTurnText(ctx, decision, actions, errText)'
       - 'server/internal/kanban/router_coordinate_turn.go:rs.salvageRejectedTurnText(ctx, decision, actions, errText)'
       - 'server/internal/kanban/router_tools.go:return normalizeRouterActionOrder(out)'
-      - 'server/internal/kanban/router_prompt.md:`router_silent` 必须单独使用。`router_ask_user` 可以和一个 `router_say` 同轮'
+      - 'server/internal/kanban/router_prompt.md:`router_silent` 必须单独使用：只有这一轮不调用任何其它工具时才用它'
       - 'server/internal/kanban/router_action_turn_shape_test.go:func TestRouterRouteAllowsSayBeforeAskUser(t *testing.T) {'
+      - 'server/internal/kanban/router_action_turn_shape_test.go:func TestNormalizeRouterActionDropsRedundantSilent(t *testing.T) {'
       - 'server/internal/kanban/router_rejected_salvage_test.go:func TestCoordinatorRejectedTurnKeepsVisibleSay(t *testing.T) {'
       - 'server/internal/kanban/router_rejected_salvage_test.go:func TestCoordinatorRejectedTurnWithoutTextStillNotices(t *testing.T) {'
       - 'server/internal/kanban/router_rejected_salvage_test.go:func TestShouldSalvageRejectedTurnKeysOnTriggerKind(t *testing.T) {'

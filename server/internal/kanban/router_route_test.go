@@ -568,3 +568,81 @@ func TestRouterClaimAppliedSeqIsCompareAndSwap(t *testing.T) {
 		t.Fatalf("applied_seq = %d, want 2", got.AppliedSeq)
 	}
 }
+
+// 回归：模型把 router_silent 和 router_message_agent 同轮调用时，整轮不能被拒。
+//
+// 现场（2026-11-26 task_d404e3fb7465e26e，01:34/02:42/03:56 三次）：路由器想
+// 「转交给主会话、但不另写一句用户回复」，于是同时调用 message_agent 与 silent。
+// 旧规则判定 `silent must be the only action`，整轮 rejected —— 转交被丢，worker
+// 根本没收到留言，提问更无从发起。归一后 silent 被丢弃，message_agent 正常落地。
+func TestRouterRouteMessageAgentWithSilentStillApplies(t *testing.T) {
+	f := newRouteFixture(t, RouterModeRoute)
+	f.agent.calls = []scriptedRouterCall{
+		{tool: "router_message_agent", args: map[string]any{"body": "按已选方案继续", "reason": "继续干活"}},
+		{tool: "router_silent", args: map[string]any{"reason": "转交后不另写回复"}},
+	}
+	ctx := context.Background()
+
+	_, _, err := f.activity.CreateUserActivity(ctx, "task-1", "继续", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	decision := f.waitDecision(t, RouterDecisionApplied)
+	if got := actionKinds(decision.Actions); len(got) != 1 || got[0] != RouterActionMessageAgent {
+		t.Fatalf("applied actions = %v, want only message_agent", got)
+	}
+	select {
+	case <-f.direct.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("direct executor was not started: silent swallowed the message_agent round")
+	}
+	if f.direct.got != "按已选方案继续" {
+		t.Fatalf("direct body = %q, want the router's body", f.direct.got)
+	}
+}
+
+// 回归：router_say + router_silent + router_ask_user 同轮时，提问卡必须落地。
+//
+// 现场（2026-11-26 task_d404e3fb7465e26e，02:35:36）：路由器想「说结论、问用户、
+// 不再补充」，三个工具一起调用，整轮 rejected；路由器下一轮自己都写了「上一轮的
+// 提问卡没成功送达」，用户等了 4 分钟才看到问题。归一后只剩 [say, ask_user]。
+func TestRouterRouteAskUserWithSilentStillApplies(t *testing.T) {
+	f := newRouteFixture(t, RouterModeRoute)
+	f.agent.calls = []scriptedRouterCall{
+		{tool: "router_say", args: map[string]any{"body": "两个方案都可行，但风险不同。"}},
+		{tool: "router_silent", args: map[string]any{"reason": "提问后不另写回复"}},
+		{tool: "router_ask_user", args: map[string]any{"question": "走哪个？", "options": []any{"A", "B"}}},
+	}
+	ctx := context.Background()
+
+	_, placeholder, err := f.activity.CreateUserActivity(ctx, "task-1", "这个怎么选", CommentWorkflowChoiceEmpty, nil)
+	if err != nil {
+		t.Fatalf("CreateUserActivity: %v", err)
+	}
+	decision := f.waitDecision(t, RouterDecisionApplied)
+	want := []RouterActionKind{RouterActionSay, RouterActionAskUser}
+	if got := actionKinds(decision.Actions); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("applied actions = %v, want %v", got, want)
+	}
+	// say 占走同步占位，提问另起一张等待用户的卡。
+	say := f.reloadActivity(t, placeholder.ID)
+	if say.Status != ActivityStatusCompleted || !strings.Contains(say.Body, "两个方案都可行") {
+		t.Fatalf("say activity = status %q body %q", say.Status, say.Body)
+	}
+	all, err := NewActivityStore(f.store.db).List(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var question *TaskActivity
+	for _, act := range all {
+		if act.ID != placeholder.ID && act.Type == ActivityTypeQuestion {
+			question = act
+		}
+	}
+	if question == nil {
+		t.Fatalf("no question card; activities = %+v", all)
+	}
+	if question.Status != ActivityStatusWaitingUser || !strings.Contains(question.Body, "走哪个？") {
+		t.Fatalf("ask_user activity = status %q body %q", question.Status, question.Body)
+	}
+}
