@@ -81,6 +81,24 @@ func TestWindowsInstallerUsesAppIcon(t *testing.T) {
 	}
 }
 
+// G-SC：Linux makensis 对相对 PAYLOAD + `\*.*` 解析为空匹配，build-all 在 NSIS 步直接失败
+// （最小 .nsi 复现：相对路径 no files found，绝对路径正常打包）。
+func TestWindowsInstallerPayloadIsAbsolute(t *testing.T) {
+	script := readRepoFile(t, "scripts/build-windows-installer.sh")
+	if !strings.Contains(script, `PAYLOAD="$(cd "${DIST_DIR}" && pwd)/nsis-payload"`) {
+		t.Fatal("build-windows-installer.sh must pass an absolute PAYLOAD to makensis")
+	}
+	if !strings.Contains(script, `-DPAYLOAD="${PAYLOAD}"`) {
+		t.Fatal("mindfs.nsi must receive the absolute PAYLOAD built by the script")
+	}
+	if !strings.Contains(script, `if [[ "${BOOTSTRAPPER}" != /* ]]; then`) {
+		t.Fatal("File /oname=... ${WEBVIEW2_BOOTSTRAPPER} also needs an absolute path on Linux makensis")
+	}
+	if !strings.Contains(script, `OUT="$(cd "${DIST_DIR}" && pwd)/mindfs_`) {
+		t.Fatal("makensis cannot write a relative OutFile on Linux; OUT must be absolute")
+	}
+}
+
 // 自解压安装器由 mindfs-setup-stub 编出来：那个包的 .syso 就是它的图标来源。
 func TestWindowsSetupStubBuildsFromIconPackage(t *testing.T) {
 	script := readRepoFile(t, "scripts/build-windows-setup.sh")

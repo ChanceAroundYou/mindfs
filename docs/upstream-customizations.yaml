@@ -17294,3 +17294,23 @@ groups:
       - 'scripts/build-windows-installer.sh:-DAPP_ICON="${ROOT}/cli/cmd/assets/app.ico" '
       - 'internal/deploy/windows_icon_test.go:func TestWindowsResourceObjectsMatchTargets(t *testing.T) {'
 
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SC
+    title: "发布构建的 NSIS payload 使用绝对路径"
+    kind: fix
+    symptom: "`make release` 在 Windows 安装器步骤两次报 `no files found`（先是 `dist/nsis-payload\\*.*`，再是 `dist/cache/MicrosoftEdgeWebView2Setup.exe`），setup.exe 不生成，GitHub release 根本创建不出来。"
+    why: "Linux makensis 解析相对路径得到空匹配（最小 .nsi 已复现：相对失败、绝对成功）。构建脚本把相对 PAYLOAD / WEBVIEW2_BOOTSTRAPPER 传给 .nsi 的 `File /r` 与 `File /oname=`，相对 OutFile 则报 Can't open output file；安装器构建在 dist-clean 之后中止，release 创建之前就失败。上游不带这套 NSIS 构建链，合上游时很容易把绝对路径转换改回相对路径，必须钉住。"
+    boundary: "只改传给 makensis 的 PAYLOAD、WEBVIEW2_BOOTSTRAPPER 与 OutFile 值；不改 .nsi 的匹配方式、安装布局、图标参数或其它平台产物。"
+    files:
+      - scripts/build-windows-installer.sh
+      - internal/deploy/windows_icon_test.go
+      - docs/superpowers/plans/2026-11-27-release-v056-nsis-payload.md
+      - docs/plans/README.md
+    tests:
+      - internal/deploy/windows_icon_test.go
+    anchors:
+      - 'scripts/build-windows-installer.sh:PAYLOAD="$(cd "${DIST_DIR}" && pwd)/nsis-payload"'
+      - 'internal/deploy/windows_icon_test.go:func TestWindowsInstallerPayloadIsAbsolute(t *testing.T) {'
+      - 'docs/superpowers/plans/2026-11-27-release-v056-nsis-payload.md:# 发布 v0.5.6：修复 NSIS 安装器构建的 payload 路径'

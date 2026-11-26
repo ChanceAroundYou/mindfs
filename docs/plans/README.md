@@ -10,6 +10,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [发布 v0.5.6：NSIS payload 绝对路径](../superpowers/plans/2026-11-27-release-v056-nsis-payload.md) — Scope: G-SC。`make release` 在 NSIS 步报 `no files found`：相对 `dist/nsis-payload\*.*` 在 Linux makensis 上匹配为空（最小 .nsi 复现：相对失败、绝对成功）。构建脚本先把 DIST_DIR 转成绝对路径再传给 -DPAYLOAD；定向测试钉住该契约。
+
 - [边缘端节点表：主控置顶 · 统一重复的 pc 行 · 顺序与颜色跨端持久 · Windows 客户端图标](2026-11-26-edge-node-table-and-icon.md) — Plan 2026-11-26，Scope: G-SA / G-SB。用户四条诉求：① 主控 `home` 固定在「管理节点」首行；② 两条同名 `pc` 无法区分，裁定统一成一条、沿用旧直连网址 `/mindfs-win`（边缘已取代旧 pc）；③ 顺序与颜色在 PC 端与边缘端一致，用户改动跨端持久；④ Windows 边缘客户端把图标打进产物并确认生效。只读取证：前端 `normalizeAndDedup` 在共享表里找不到本机时**前插**合成 self 行（id `pc`），而共享的 `pc` 行是随机 uuid、没有 `instanceId`，两条并存且把主控挤到第二；该合成行随整表 PUT 回主控时被 `NameConflicts` 拒掉，所以边缘端改名/改色/学到的 `instanceId` 全部静默失败——这是「不跨端同步」的直接原因；顺序本身也没有持久字段。修法：合成行带 `instanceId`、改为追加、按 instance 与共享行合并（保留 id/URL/颜色），self 判定改 connection-aware（路由 self 走设备本地基址），合成行只在空表时写回；服务端新增 `NodeConnection.Order`，`List()` 稳定排序（0 排后），GET/PUT 都把 `h.NodeID` 行钉到首位，PUT 按数组下标赋 `Order=i+1`；面板上移/下移、首行固定；颜色随同一张表恢复读写。图标：由 `pwa-512.png` 生成多尺寸 `cli/cmd/assets/app.ico`，`rsrc` 生成 amd64/arm64 `.syso` 由 Go 自动链接进 exe，NSIS 经 `-DAPP_ICON` 定义 `MUI_ICON`/`MUI_UNICON`；已用 PE 资源解析确认 exe 与 setup-stub 含 `RT_ICON`/`RT_GROUP_ICON`。**未 push、未部署、未重启任何节点。**
 
 - [Codex 思考块按真实发生时间定位](../superpowers/plans/2026-11-26-codex-reasoning-block-order.md) — Plan 2026-11-26，Scope: G-RZ。用户报「Codex 回合末尾经常出现一个异常大的思考块」。只读取证（rollout + aux + blocks 三方对账）确认模型先思考后回答，落库把思考锚到了 flush 时刻的正文行数（实测 line=93/93，text pos=0 / reasoning pos=1）。修法：Codex reasoning 的 `item.started`/`item.updated` 先发 `Start` 时序信号，usecase 在到达时记录真实行号，summary 稍后到达沿用该锚点；没有提前信号、确实发生在正文之后的思考仍排在后面。**未 push、未部署、未重启任何节点。**

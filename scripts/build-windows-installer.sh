@@ -79,7 +79,10 @@ fi
 # <prefix>/share/mindfs/{agents.json,web}. Keeping it identical to deploy's
 # SetupPathsFor is what lets the scheduled task and the desktop shell agree on
 # where the web assets live.
-PAYLOAD="${DIST_DIR}/nsis-payload"
+# makensis 在 Linux 上解析相对路径（无论是 `\*.*` 通配还是 File 的单个文件）会得到空
+# 匹配，实测两种相对路径都报 "no files found"，绝对路径则正常，所以传给 .nsi 的
+# PAYLOAD / bootstrapper 都先转成绝对路径。
+PAYLOAD="$(cd "${DIST_DIR}" && pwd)/nsis-payload"
 rm -rf "${PAYLOAD}"
 mkdir -p "${PAYLOAD}/bin" "${PAYLOAD}/share/mindfs"
 cp "${PKG_DIR}/mindfs.exe" "${PAYLOAD}/bin/mindfs.exe"
@@ -102,8 +105,11 @@ if [[ ! -s "${BOOTSTRAPPER}" ]]; then
   echo "WebView2 bootstrapper missing: ${BOOTSTRAPPER}" >&2
   exit 1
 fi
+if [[ "${BOOTSTRAPPER}" != /* ]]; then
+  BOOTSTRAPPER="${ROOT}/${BOOTSTRAPPER}"
+fi
 
-OUT="${DIST_DIR}/mindfs_${VERSION}_windows_amd64-setup.exe"
+OUT="$(cd "${DIST_DIR}" && pwd)/mindfs_${VERSION}_windows_amd64-setup.exe"
 echo "==> Building NSIS installer -> ${OUT}"
 "${MAKENSIS}" -V2 \
   -DVERSION="${VERSION}" \
