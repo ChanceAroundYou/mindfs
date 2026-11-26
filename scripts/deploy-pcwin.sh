@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 单独部署 pc-win（Windows worker，监听 0.0.0.0:7332）。
+# 单独部署 pc-win（Windows 边控端 / edge controller，role=control，监听 0.0.0.0:7332）。
 # 用法: bash scripts/deploy-pcwin.sh [VERSION]
 #   VERSION 省略时从 git derive。
 set -euo pipefail

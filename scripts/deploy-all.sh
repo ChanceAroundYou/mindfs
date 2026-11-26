@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 代码变更收尾：提交 → 推送 → 本机编译安装 → 推送产物到各 worker → 对账。
+# 代码变更收尾：提交 → 推送 → 本机编译安装 → 推送产物到两个 worker 与 pc 边控端 → 对账。
 #
 # 用法:
 #   bash scripts/deploy-all.sh                 # 提交已在 main，直接走推送+部署
