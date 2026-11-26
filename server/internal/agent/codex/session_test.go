@@ -404,3 +404,32 @@ func TestSendMessageReportsPersistentCodexWriterConflict(t *testing.T) {
 		t.Fatalf("attempts = %d, want %d", got, codexWriterConflictAttempts)
 	}
 }
+
+// Codex 的 reasoning summary 要到 item.completed 才完整，而 item.updated 是推理
+// 正在发生的唯一实时信号。适配器必须在 updated 时先报起点，否则整块思考会被
+// 锚到正文末尾（2026-11-26 HBSN/latex seq 667：line=93/93，思考渲染在答案之后）。
+func TestCodexReasoningStartPrecedesLateSummary(t *testing.T) {
+	s := &session{threadID: "thread-1", sessionKey: "test-session"}
+	var got []agenttypes.Event
+	s.OnUpdate(func(event agenttypes.Event) { got = append(got, event) })
+
+	events := make(chan codexsdk.ThreadEvent, 2)
+	events <- &codexsdk.ItemUpdatedEvent{Item: &codexsdk.ReasoningItem{ID: "rs_1"}}
+	events <- &codexsdk.ItemCompletedEvent{Item: &codexsdk.ReasoningItem{ID: "rs_1", Summary: []string{"先想一下"}}}
+	close(events)
+
+	if _, err := s.handleStreamedEvents(events); err != nil {
+		t.Fatalf("handleStreamedEvents: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("events = %#v, want start + content", got)
+	}
+	start, ok := got[0].Data.(agenttypes.ThoughtChunk)
+	if !ok || !start.Start || start.Content != "" || start.ID != "rs_1" {
+		t.Fatalf("first event = %#v, want start marker for rs_1", got[0])
+	}
+	content, ok := got[1].Data.(agenttypes.ThoughtChunk)
+	if !ok || content.Start || content.Content != "先想一下" || content.ID != "rs_1" {
+		t.Fatalf("second event = %#v, want summary content", got[1])
+	}
+}

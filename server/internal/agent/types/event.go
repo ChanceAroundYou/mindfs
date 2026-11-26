@@ -26,8 +26,13 @@ type MessageChunk struct {
 }
 
 type ThoughtChunk struct {
-	ID              string `json:"id,omitempty"`
-	Content         string `json:"content"`
+	ID      string `json:"id,omitempty"`
+	Content string `json:"content"`
+	// Start 是「推理已开始」的时序信号，Content 为空。Codex 的 reasoning summary
+	// 要等 item.completed 才完整（流式 summaryTextDelta 被 SDK 攒进 item.text，
+	// typed ReasoningItem 只解析 summary），只有 item.started / item.updated 能给出
+	// 真实起点。它不进入 WS/前端，由 usecase 用来锚定思考块的位置。
+	Start           bool   `json:"start,omitempty"`
 	ParentToolUseID string `json:"parentToolUseId,omitempty"`
 	TaskID          string `json:"taskId,omitempty"`
 	SubagentType    string `json:"subagentType,omitempty"`

@@ -17157,3 +17157,36 @@ groups:
       - 'server/internal/nodes/store.go:if i, ok := uniqueDirectRowByName(s.data, instanceID); ok {'
       - 'server/internal/nodes/store_test.go:func TestSetRelayBindsUniqueDirectRowByNameWhenInstanceIDMissing(t *testing.T) {'
       - 'server/internal/nodes/store_test.go:func TestSetRelayDoesNotGuessBetweenSameNameRows(t *testing.T) {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RZ
+    title: "Codex 思考块按真实发生时间定位，不再被锚到正文末尾"
+    kind: fix
+    symptom: "Codex 回合常把整块「思考过程 (N 字符)」画在答案之后。实测 2026-11-26 HBSN/latex seq 667：reasoning item 在 06:23:02.374Z 先于正文 .380Z 完成，aux 却记 line=93（正文正好 93 行），blocks 落成 text pos=0 / reasoning pos=1。"
+    why: "位置必须由思考真实开始的时间决定。Codex 的 reasoning summary 只在 item.completed 才完整：SDK 把流式 summaryTextDelta 累积进 item 的 text 字段，typed ReasoningItem 只解析 summary，item.updated 到手时内容为空；适配器若只在 completed 发 ThoughtChunk，flushThought 用当时的正文行数当锚点，必然把整块思考锚到末尾。改为 item.started / item.updated 先发 Start 时序信号，useCase 在到达时记录正文行号，内容稍后沿用该锚点。不做「reasoning 永远排第一」的特判：没有提前信号、首个片段确实在正文之后的思考仍排在后面。"
+    boundary: "只改 Codex 适配器的时序信号与 usecase 的思考锚点；不改 Codex 协议、不 fork SDK、不恢复流式 summary 正文、不改 provisional 块与前端渲染顺序、不迁移历史数据。Claude/ACP 逐块流式路径语义不变。"
+    files:
+      - server/internal/agent/types/event.go
+      - server/internal/agent/codex/session_events.go
+      - server/internal/agent/codex/session_test.go
+      - server/internal/api/usecase/session_send.go
+      - server/internal/api/usecase/session_thought_anchor.go
+      - server/internal/api/usecase/session_thought_anchor_test.go
+      - server/internal/api/ws_session_message_queue.go
+      - server/internal/api/ws_session_message_queue_thought_start_test.go
+      - docs/superpowers/plans/2026-11-26-codex-reasoning-block-order.md
+    tests:
+      - server/internal/agent/codex/session_test.go
+      - server/internal/api/usecase/session_thought_anchor_test.go
+      - server/internal/api/ws_session_message_queue_thought_start_test.go
+    anchors:
+      - 'server/internal/agent/codex/session_events.go:if s.emitThoughtStart(e.Item) {'
+      - 'server/internal/agent/codex/session_events.go:func (s *session) emitThoughtStart(item codexsdk.ThreadItem) bool {'
+      - 'server/internal/agent/types/event.go:json:"start,omitempty"'
+      - 'server/internal/api/usecase/session_send.go:thought.note(chunk.ID, turnState.assistantLine())'
+      - 'server/internal/api/usecase/session_thought_anchor.go:func (a *thoughtAnchor) note(itemID string, line int) {'
+      - 'server/internal/api/usecase/session_thought_anchor_test.go:func TestThoughtAnchorKeepsStartLineWhenSummaryArrivesLate(t *testing.T) {'
+      - 'server/internal/api/ws_session_message_queue.go:if chunk.Start {'
+      - 'server/internal/api/ws_session_message_queue_thought_start_test.go:func TestUpdateToEventDropsThoughtStartMarker(t *testing.T) {'
+      - 'server/internal/agent/codex/session_test.go:func TestCodexReasoningStartPrecedesLateSummary(t *testing.T) {'

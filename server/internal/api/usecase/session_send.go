@@ -183,21 +183,15 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// （实测 2026-10-07 某 live-owned 会话 Full 同步写出 9 对重复轮次）。
 	var turnAgentMessageID string
 	defer manager.ClearPendingExchangeAux(context.Background(), current.Key)
-	var thoughtBuffer strings.Builder
-	currentThoughtID := ""
+	thought := &thoughtAnchor{}
 	flushThought := func() {
-		thought := thoughtBuffer.String()
-		if strings.TrimSpace(thought) == "" {
-			thoughtBuffer.Reset()
-			currentThoughtID = ""
+		content, line, thoughtID, ok := thought.take()
+		if !ok {
 			return
 		}
-		thoughtID := currentThoughtID
-		thoughtBuffer.Reset()
-		currentThoughtID = ""
 		turnState.addAux(session.ExchangeAux{
-			Line:      turnState.assistantLine(),
-			Thought:   thought,
+			Line:      line,
+			Thought:   content,
 			ThoughtID: thoughtID,
 		})
 	}
@@ -242,13 +236,18 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			}
 			switch update.Type {
 			case agenttypes.EventTypeThoughtChunk:
-				if chunk, ok := update.Data.(agenttypes.ThoughtChunk); ok && chunk.Content != "" {
-					if currentThoughtID == "" {
-						currentThoughtID = "thought-" + randomHex(8)
+				if chunk, ok := update.Data.(agenttypes.ThoughtChunk); ok {
+					if chunk.Start {
+						// 只记录真实起点，不落内容、不转发：内容稍后才完整
+						// （Codex 在 item.completed 给 summary）。
+						thought.note(chunk.ID, turnState.assistantLine())
+						return
 					}
-					chunk.ID = currentThoughtID
-					update.Data = chunk
-					thoughtBuffer.WriteString(chunk.Content)
+					if chunk.Content != "" {
+						thought.add(chunk.ID, chunk.Content, turnState.assistantLine())
+						chunk.ID = thought.thoughtID()
+						update.Data = chunk
+					}
 				}
 			case agenttypes.EventTypeToolCall, agenttypes.EventTypeToolUpdate, agenttypes.EventTypeTodoUpdate, agenttypes.EventTypePlanUpdate, agenttypes.EventTypeCompact, agenttypes.EventTypeMessageChunk, agenttypes.EventTypeMessageDone:
 				flushThought()

@@ -78,6 +78,11 @@ func updateToEvent(update agenttypes.Event) *StreamEvent {
 		}
 	case agenttypes.EventTypeThoughtChunk:
 		if chunk, ok := update.Data.(agenttypes.ThoughtChunk); ok {
+			if chunk.Start {
+				// 内部时序信号（推理开始、尚无内容），只供 usecase 锚定位置。
+				// 放进 WS 会先画出一个空思考块。
+				return nil
+			}
 			return &StreamEvent{Type: "thought_chunk", Data: chunk}
 		}
 	case agenttypes.EventTypeToolCall:
