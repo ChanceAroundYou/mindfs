@@ -169,9 +169,46 @@ SW 自愈删除 / 退订不停心跳。
 
 ### 6.4 未做 / 边界
 
-- 未在真机浏览器上点验（心跳/beacon 的真实时序依赖浏览器行为）；前端只做了源码契约 + 服务端
-  端到端。真机验收需部署后观察一次「关页 → 后台 agent 跑完一轮 → 无通知」。
+- ~~未在真机浏览器上点验~~ —— 2026-11-27 补做，见 §6.5。结论：用户报「升级后仍弹」的路径
+  真实存在，根因是旧订阅记录的 fail-open，不是客户端没跑新代码。
 - 心跳只在页面内存活；浏览器彻底冻结标签页（Memory Saver 丢弃）超过 TTL 后视为已关闭 —— 与
   「页面没了」语义一致。
 - presence 表是进程内状态：重启后归零，第一个心跳回来前新客户端订阅处于静默；旧订阅不受影响。
+
+### 6.5 真机复现与验证（2026-11-27）
+
+现场：`ssh pc` 的 Windows 11 设备（192.168.1.20），Edge 安装型 PWA（AUMID
+`Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!https://home.xiaokubao.space/mindfs/`）；服务端是本机
+`127.0.0.1:7331`（nginx 容器反代，mindfs 侧 `remote` 恒为 127.0.0.1，真实客户端只在 nginx 日志）。
+取证全部只读：设备通知库与 Edge 会话文件的临时拷贝、eth0 passive 抓包、nginx 访问日志、`/proc`
+与只读 presence 探针；未触发测试推送，未改任何生产状态。
+
+1. 客户端新代码确实在跑：11-25 04:24Z 起持续 30s/60s 心跳；pagehide beacon 正常送达
+   （27 字节响应 = `{"ok":true,"active":false}`）；service worker 零窗口自愈 leave 共 34 次。
+2. 设备通知库（`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`）中 103 条 MindFS
+   通知，全部在最后一次心跳后 ≤ 1.17 分钟内到达 —— TTL 语义与设备行为一致。
+3. **但 11-25 08:31–10:42Z 有 34 次「零窗口仍收到推送」**：每次 relay 后约 2 秒 SW 才补 leave；
+   最后一次真实心跳 08:30:25Z、pagehide leave 08:45:37Z，10 分钟 TTL 解释不了 09:48–10:42 的投递。
+   当时运行版本 `v0.5.5-1600`（本地 11-25 12:22 起）已含本修复
+   （`git merge-base --is-ancestor 1d69f0c4 v0.5.5-1600` 成立）。
+4. 与代码一致的唯一解释：接收推送的那条订阅当时 `presence_capable=false`（改动前保存的旧记录，
+   fail-open）。该标志只在「页面用新版 bundle 重新保存订阅且带 `presence:true`」时翻转；设备上这条
+   直到本地 02:39:48（11-26T18:39:48Z）页面重新加载保存才翻转。在此之前 SW 的自愈 leave 对
+   fail-open 记录无效 —— tracker 记了 leave，扇出判断根本不看这类订阅。
+5. 修复生效后的生产验证：02:39:51 本地 pagehide leave 返回 `active:false`；两个订阅现均为
+   `presence_capable:true` 且 tracker 无在场（只读探针复核均 `active:false`）。11-26T21:23:35Z 一次
+   真实 relay（来源 192.168.1.20）期间，eth0 抓包 0 次 `notify.windows.com` 解析、0 个 WNS SYN、
+   mindfs 进程 0 个 443 出站；仪器有效性由 21:18:56Z / 21:19:09Z 两次手工 TLS 探测在同一条抓包中
+   验证（均可见 DNS + SYN）。
+6. 「关页后设备不再弹」单独不作为证据：Edge 于本地 02:48:58 退出（profile 最后写入时间），早于
+   02:53 的第一次关页后 relay。决定性证据是第 5 条的服务端侧观测。
+
+边界与后续（均未实施）：
+- 升级不会补齐 `presence` 声明：旧订阅要等对应浏览器下一次加载新版页面并保存订阅才止血；长期
+  不打开页面的设备会一直是 fail-open，继续「关页也弹」。
+- 建议加固：收到任意该 endpoint 的 presence 上报（心跳或 SW 自愈 leave）即把订阅标记
+  `presence_capable=true` —— 上报本身证明客户端已是新版本，不必等下一次保存；可选再对长期
+  未更新且从未上报 presence 的记录禁用 / 清理。需另立 Scope 组号并单独授权部署。
+- 语义边界不变：最小化 / 被遮挡的 PWA 窗口仍算「开着」（60s 心跳），通知照发；要求「不在前台
+  就不发」属于产品语义变更。
 
