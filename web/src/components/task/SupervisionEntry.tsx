@@ -1,5 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
+import type { TaskCompletionView } from "../../shared/taskCompletion";
 import { SupervisionEntryList } from "./SupervisionEntryList";
 import { useSupervisionEntry } from "./useSupervisionEntry";
 
@@ -16,15 +17,35 @@ export type SupervisionEntryProps = {
   nodeId?: string;
   /** 任务头每次更新递增（父层传 task.updated_at）：新的监管决策可能在回合中途出现。 */
   refreshKey?: string;
+  /** 完成证据快照（父层已拉过）；有值时时间线里会出现「完成判定」行。 */
+  completion?: TaskCompletionView | null;
   /** 由同一行的胶囊组控制；false 时面板不渲染内容（hook 仍挂载以保留状态）。 */
   open: boolean;
 };
 
-export function SupervisionEntry({ rootId, taskId, nodeId, refreshKey, open }: SupervisionEntryProps) {
+export function SupervisionEntry({
+  rootId,
+  taskId,
+  nodeId,
+  refreshKey,
+  completion,
+  open,
+}: SupervisionEntryProps) {
   const { t } = useI18n();
-  const { rows, loaded, loading, error } = useSupervisionEntry(rootId, taskId, nodeId, refreshKey);
+  const { rows, loaded, loading, error, supervisionEnabled } = useSupervisionEntry(
+    rootId,
+    taskId,
+    nodeId,
+    refreshKey,
+    completion,
+  );
 
   if (!open) return null;
+
+  const emptyKey =
+    supervisionEnabled === false
+      ? "task.supervision.empty.disabled"
+      : "task.supervision.empty.idle";
 
   return (
     <div id="task-supervision-panel" data-testid="supervision-entry" style={panelStyle}>
@@ -33,7 +54,7 @@ export function SupervisionEntry({ rootId, taskId, nodeId, refreshKey, open }: S
           {error}
         </div>
       ) : null}
-      {loaded && rows.length === 0 ? <div style={hintStyle}>{t("task.supervision.empty")}</div> : null}
+      {loaded && rows.length === 0 ? <div style={hintStyle}>{t(emptyKey)}</div> : null}
       {rows.length > 0 ? <SupervisionEntryList rows={rows} /> : null}
       {!loaded || loading ? <div style={hintStyle}>{t("task.supervision.loading")}</div> : null}
     </div>

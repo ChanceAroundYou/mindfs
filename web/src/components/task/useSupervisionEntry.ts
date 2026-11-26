@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchRouterDecisions } from "../../services/task/routerDecisions";
+import { fetchRouterDecisions, fetchRouterStatus } from "../../services/task/routerDecisions";
 import type { RouterDecisionSummary } from "../../shared/routerDecisions";
+import type { TaskCompletionView } from "../../shared/taskCompletion";
 import { supervisionRows, type SupervisionRow } from "./supervisionEntryModel";
 
 // 监管记录面板的取数逻辑（.ts，允许 import services）。
@@ -14,6 +15,8 @@ export type SupervisionEntryState = {
   loaded: boolean;
   loading: boolean;
   error: string;
+  /** 主动监管是否开启；null = 状态未知（请求失败或还没回来）。 */
+  supervisionEnabled: boolean | null;
 };
 
 export function useSupervisionEntry(
@@ -21,11 +24,13 @@ export function useSupervisionEntry(
   taskId: string,
   nodeId?: string,
   refreshKey?: string,
+  completion?: TaskCompletionView | null,
 ): SupervisionEntryState {
   const [decisions, setDecisions] = useState<RouterDecisionSummary[] | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [supervisionEnabled, setSupervisionEnabled] = useState<boolean | null>(null);
   const identityRef = useRef("");
 
   useEffect(() => {
@@ -35,6 +40,7 @@ export function useSupervisionEntry(
       setDecisions(null);
       setLoaded(false);
       setError("");
+      setSupervisionEnabled(null);
     }
   }, [rootId, taskId, nodeId]);
 
@@ -55,12 +61,21 @@ export function useSupervisionEntry(
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    // 空态要区分「没有监管动作」和「监管没开」。状态读不到不阻塞记录展示。
+    fetchRouterStatus(rootId, nodeId)
+      .then((status) => {
+        if (cancelled) return;
+        setSupervisionEnabled(status.enabled && status.supervision_mode !== "off");
+      })
+      .catch(() => {
+        if (!cancelled) setSupervisionEnabled(null);
+      });
     return () => {
       cancelled = true;
     };
   }, [rootId, taskId, nodeId, refreshKey]);
 
-  const rows = useMemo(() => supervisionRows(decisions), [decisions]);
+  const rows = useMemo(() => supervisionRows(decisions, completion), [decisions, completion]);
 
-  return { rows, loaded, loading, error };
+  return { rows, loaded, loading, error, supervisionEnabled };
 }

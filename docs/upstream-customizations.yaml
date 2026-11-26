@@ -17058,3 +17058,30 @@ groups:
       - 'internal/deploy/setup_test.go:func TestBuildUpdateTaskXMLRequiresInputs(t *testing.T) {'
       - 'internal/deploy/setup_test.go:func TestSetupUpdateStagingPathIsUnderPrefix(t *testing.T) {'
 
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-RX
+    title: "监管记录合并完成判定：时间线纳入完成证据 + 空态区分监管开关"
+    kind: fix
+    symptom: "2026-11-26 用户发现任务详情里的「监管记录」永远为空：全库 415 条 Router 决策只有 4 条命中旧 trigger/action 白名单，当前任务 0 条。同页又新增了独立的「完成证据」胶囊，两块只读证据语义割裂；空态也只有一句「还没有监管记录」，看不出是「没有动作」还是「监管没开」。"
+    why: "监管记录原本只认 run_failed/run_stalled/direct_stalled 与 retry/resume/notify/escalate/cancel，对话回合模型下这些例外动作几乎不产生；完成判定（complete_task / completion_blocked）却是高频治理动作，却落在另一张表和另一个胶囊里。把完成判定作为监管时间线的一种条目、复用 task_completion 物化快照，既让面板有稳定内容，又保留完成证据的结构化明细；空态区分「没有监管动作」与「监管未启用」，避免用户误判功能坏了。改法只在展示层，不动存储/API/WS。"
+    boundary: "只改前端展示：监管行模型新增 kind=completion 与 completion 快照挂载、完成判定行复用 TaskCompletionChecklist、空态读取 /api/router/status 区分开关；不合并 task_completion 与 router_decisions 两张表，不改后端投影/WS。完成快照仍是每任务一份（task_completion 主键 task_id），时间线只挂一行；历史多条 complete_task 决策不重复成行。"
+    files:
+      - web/src/components/task/supervisionEntryModel.ts
+      - web/src/components/task/SupervisionEntryList.tsx
+      - web/src/components/task/SupervisionEntry.tsx
+      - web/src/components/task/useSupervisionEntry.ts
+      - web/src/components/task/TaskInspectEntries.tsx
+      - web/src/services/task/routerDecisions.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+    tests:
+      - web/tests/task-supervision-entry.test.mjs
+    anchors:
+      - 'web/src/components/task/supervisionEntryModel.ts:const COMPLETION_ACTIONS = new Set(["complete_task"]);'
+      - 'web/src/components/task/supervisionEntryModel.ts:export function isCompletionDecision('
+      - 'web/src/components/task/supervisionEntryModel.ts:if (completion && completion.present) {'
+      - 'web/src/components/task/SupervisionEntryList.tsx:<TaskCompletionChecklist completion={completion} />'
+      - 'web/src/components/task/SupervisionEntry.tsx:"task.supervision.empty.disabled"'
+      - 'web/src/services/task/routerDecisions.ts:export async function fetchRouterStatus('

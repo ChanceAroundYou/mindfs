@@ -1,5 +1,6 @@
 import type { MessageKey } from "../../i18n/index";
 import type { RouterDecisionSummary } from "../../shared/routerDecisions";
+import type { TaskCompletionView } from "../../shared/taskCompletion";
 
 // 监管记录（S4）的纯函数：哪些决策算「Router 自己动过手」、怎么排序、怎么读。
 //
@@ -18,10 +19,17 @@ const SUPERVISION_ACTIONS = new Set([
   "cancel_task",
 ]);
 
+// 完成判定也属于 Router 治理记录：complete_task 动作，或补做被拦下的
+// completion_blocked。完成证据本身是物化快照（task_completion），时间线只挂
+// 一行入口，明细继续由 TaskCompletionChecklist 渲染。
+const COMPLETION_ACTIONS = new Set(["complete_task"]);
+const COMPLETION_TRIGGERS = new Set(["completion_blocked"]);
+
 const TRIGGER_KEYS: Record<string, MessageKey> = {
   run_failed: "task.supervision.trigger.run_failed",
   run_stalled: "task.supervision.trigger.run_stalled",
   direct_stalled: "task.supervision.trigger.direct_stalled",
+  completion: "task.supervision.trigger.completion",
 };
 
 const ACTION_KEYS: Record<string, MessageKey> = {
@@ -44,7 +52,10 @@ const STATUS_KEYS: Record<string, MessageKey> = {
   shadow: "task.supervision.status.shadow",
 };
 
+export type SupervisionRowKind = "decision" | "completion";
+
 export type SupervisionRow = {
+  kind: SupervisionRowKind;
   id: string;
   trigger: string;
   /** 只含监管动作（普通 say / silent 之类的同轮动作不进这一列）。 */
@@ -52,6 +63,8 @@ export type SupervisionRow = {
   status: string;
   error: string;
   createdAt: string;
+  /** kind=completion 时携带完成证据快照；其余行没有。 */
+  completion?: TaskCompletionView;
 };
 
 export function supervisionTriggerKey(kind: string): MessageKey | null {
@@ -72,6 +85,13 @@ export function isSupervisionDecision(decision: RouterDecisionSummary | null | u
   return (decision.action_kinds || []).some((kind) => SUPERVISION_ACTIONS.has(kind));
 }
 
+/** 这条决策是否提出了完成判定（成功收尾或被补做拦下）。 */
+export function isCompletionDecision(decision: RouterDecisionSummary | null | undefined): boolean {
+  if (!decision) return false;
+  if (COMPLETION_TRIGGERS.has(decision.trigger_kind)) return true;
+  return (decision.action_kinds || []).some((kind) => COMPLETION_ACTIONS.has(kind));
+}
+
 function supervisionActions(kinds: string[] | undefined): string[] {
   const seen = new Set<string>();
   const actions: string[] = [];
@@ -89,8 +109,13 @@ function createdAtValue(iso: string): number {
 }
 
 /** 过滤 + 排序 + 归约成展示行；空输入返回空数组。 */
-export function supervisionRows(decisions: RouterDecisionSummary[] | null | undefined): SupervisionRow[] {
-  const rows = (decisions || []).filter(isSupervisionDecision).map((decision) => ({
+export function supervisionRows(
+  decisions: RouterDecisionSummary[] | null | undefined,
+  completion?: TaskCompletionView | null,
+): SupervisionRow[] {
+  const list = decisions || [];
+  const rows: SupervisionRow[] = list.filter(isSupervisionDecision).map((decision) => ({
+    kind: "decision",
     id: decision.id,
     trigger: decision.trigger_kind,
     actions: supervisionActions(decision.action_kinds),
@@ -98,6 +123,28 @@ export function supervisionRows(decisions: RouterDecisionSummary[] | null | unde
     error: (decision.error || "").trim(),
     createdAt: decision.created_at,
   }));
+
+  // 完成证据不再只靠独立胶囊：有完成快照就往监管时间线补一行「完成判定」。
+  // 锚点用最近一条 completion 决策的时间；决策列表拉不到时退回快照更新时间，
+  // 保证完成判定至少出现在时间线里，而不是整块消失。
+  if (completion && completion.present) {
+    const latest = list.filter(isCompletionDecision).reduce<RouterDecisionSummary | null>(
+      (best, item) =>
+        !best || createdAtValue(item.created_at) >= createdAtValue(best.created_at) ? item : best,
+      null,
+    );
+    rows.push({
+      kind: "completion",
+      id: `completion:${latest?.task_id || "task"}`,
+      trigger: "completion",
+      actions: [],
+      status: completion.status,
+      error: "",
+      createdAt: latest?.created_at || completion.updated_at,
+      completion,
+    });
+  }
+
   // Array.prototype.sort 在现代引擎里稳定；显式带下标兜底，保证同一时刻不乱序。
   return rows
     .map((row, index) => ({ row, index }))

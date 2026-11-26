@@ -101,6 +101,7 @@ export function TaskInspectEntries({
         taskId={taskId}
         nodeId={nodeId}
         refreshKey={refreshKey}
+        completion={completion}
         open={openSection === "supervision"}
       />
       <TaskCompletionEntry

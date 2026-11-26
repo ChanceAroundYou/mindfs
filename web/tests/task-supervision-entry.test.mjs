@@ -7,6 +7,7 @@ import { I18nProvider, translateNow } from "../src/i18n/index.tsx";
 import { SupervisionEntryList } from "../src/components/task/SupervisionEntryList.tsx";
 import { TaskInspectEntries } from "../src/components/task/TaskInspectEntries.tsx";
 import {
+  isCompletionDecision,
   isSupervisionDecision,
   supervisionActionKey,
   supervisionRowClock,
@@ -89,6 +90,7 @@ test("空的 / 坏的时间不炸，也不参与排序翻转", () => {
 test("已知触发/动作/状态映射到 i18n 键，未知的回落 null 由视图显示原文", () => {
   assert.equal(supervisionTriggerKey("run_failed"), "task.supervision.trigger.run_failed");
   assert.equal(supervisionTriggerKey("direct_stalled"), "task.supervision.trigger.direct_stalled");
+  assert.equal(supervisionTriggerKey("completion"), "task.supervision.trigger.completion");
   assert.equal(supervisionTriggerKey("user_message"), null);
   assert.equal(supervisionActionKey("retry_direct"), "task.supervision.action.retry_direct");
   assert.equal(supervisionActionKey("escalate"), "task.supervision.action.escalate");
@@ -123,6 +125,83 @@ test("列表渲染：触发 → 动作 → 结果，错误单独一行", () => {
   assert.ok(html.includes(translateNow("task.supervision.action.retry_direct")), "action label comes from i18n");
   assert.ok(html.includes(translateNow("task.supervision.status.applied")), "status label comes from i18n");
   assert.match(html, /reply act-1 is gone/, "error text is shown verbatim");
+});
+
+const completionView = {
+  present: true,
+  status: "completed",
+  items: [
+    { index: 0, id: "c1", label: "tests pass", kind: "command", pass: true, detail: "ok" },
+    { index: 1, id: "c2", label: "diff reviewed", kind: "manual", pass: false, detail: "missing" },
+  ],
+  passed: false,
+  repairs_used: 1,
+  repairs_max: 2,
+  verifier_verdict: "fail",
+  updated_at: "2026-11-20T12:00:00Z",
+};
+
+test("完成判定进入监管时间线：complete_task / completion_blocked，且只挂一行", () => {
+  assert.equal(isCompletionDecision(decision("d1", "turn_settled", { action_kinds: ["say", "complete_task"] })), true);
+  assert.equal(isCompletionDecision(decision("d2", "completion_blocked")), true);
+  assert.equal(isCompletionDecision(decision("d3", "turn_settled", { action_kinds: ["say"] })), false);
+
+  const rows = supervisionRows(
+    [
+      decision("d1", "user_message", { action_kinds: ["complete_task"], created_at: "2026-11-20T10:00:00Z" }),
+      decision("d2", "turn_settled", { action_kinds: ["complete_task"], created_at: "2026-11-20T11:00:00Z" }),
+    ],
+    completionView,
+  );
+  const completionRows = rows.filter((row) => row.kind === "completion");
+  assert.equal(completionRows.length, 1, "完成快照只挂一行，不按决策条数重复");
+  assert.equal(completionRows[0].trigger, "completion");
+  assert.equal(completionRows[0].status, "completed");
+  assert.equal(completionRows[0].createdAt, "2026-11-20T11:00:00Z", "锚点取最近一条完成决策");
+  assert.deepEqual(completionRows[0].completion, completionView);
+});
+
+test("没有完成快照时，complete_task 决策不单独占行", () => {
+  assert.deepEqual(
+    supervisionRows([decision("d1", "turn_settled", { action_kinds: ["complete_task"] })]),
+    [],
+  );
+});
+
+test("完成判定行渲染摘要与可展开清单", () => {
+  const rows = supervisionRows([], completionView);
+  const html = renderToString(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(SupervisionEntryList, { rows }),
+    ),
+  );
+  assert.match(html, /data-testid="supervision-row-completion:task"/);
+  assert.ok(html.includes(translateNow("task.supervision.trigger.completion")), "completion trigger label");
+  assert.ok(html.includes(translateNow("task.completion.status.completed")), "completion status label");
+  assert.ok(
+    html.includes(translateNow("task.supervision.completionSummary", { passed: 1, total: 2 })),
+    "shows passed/total",
+  );
+  assert.ok(html.includes(translateNow("task.supervision.completionDetails")), "details summary label");
+  assert.match(html, /<details/, "completion checklist is collapsible, not a wall of text");
+  assert.ok(html.includes("diff reviewed"), "failed item label comes from the completion snapshot");
+});
+
+test("完成判定与空态文案两种语言都齐", () => {
+  const zh = read("../src/i18n/locales/zh-CN-tasks.ts");
+  const en = read("../src/i18n/locales/en-US-tasks.ts");
+  for (const key of [
+    "task.supervision.trigger.completion",
+    "task.supervision.completionSummary",
+    "task.supervision.completionDetails",
+    "task.supervision.empty.idle",
+    "task.supervision.empty.disabled",
+  ]) {
+    assert.ok(zh.includes(`"${key}"`), `zh locale has ${key}`);
+    assert.ok(en.includes(`"${key}"`), `en locale has ${key}`);
+  }
 });
 
 test("两个胶囊同排渲染：始终存在、默认收起、带人字箭头 icon", () => {
@@ -177,6 +256,8 @@ test("源码契约：与执行详情同排的胶囊、始终存在、空态说�
   const entry = read("../src/components/task/SupervisionEntry.tsx");
   assert.doesNotMatch(entry, /rows\.length === 0\)\s*\{\s*return null/, "空记录不再隐藏整行");
   assert.match(entry, /task\.supervision\.empty/, "空态给一句说明");
+  assert.match(entry, /task\.supervision\.empty\.idle/, "区分「没有监管动作」");
+  assert.match(entry, /task\.supervision\.empty\.disabled/, "区分「监管没开」");
   assert.match(entry, /data-testid="supervision-entry"/);
   assert.match(entry, /if \(!open\) return null/, "折叠由父层单一状态控制");
 
@@ -188,6 +269,7 @@ test("源码契约：与执行详情同排的胶囊、始终存在、空态说�
     "requests must pass the node id to appURL (cross-node rule)",
   );
   assert.match(service, /router-decisions/);
+  assert.match(service, /router\/status/, "空态还要读监管开关状态");
 
   const list = read("../src/components/task/SupervisionEntryList.tsx");
   assert.doesNotMatch(list, /services\//, "view layer must not import services");

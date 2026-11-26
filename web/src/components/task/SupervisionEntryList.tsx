@@ -1,5 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
+import { TaskCompletionChecklist } from "./TaskCompletionChecklist";
+import { completionRows, completionStatusKey } from "./taskCompletionModel";
 import {
   supervisionActionKey,
   supervisionRowClock,
@@ -9,7 +11,8 @@ import {
 } from "./supervisionEntryModel";
 
 // 监管记录的行（presenter）：触发 → 动作 → 结果，一行一条决策。
-// 文案全走 i18n；后端将来新增没登记的字面量原样显示，不吞信息。
+// 完成判定单独成行，展开后复用完成证据清单；文案全走 i18n，后端将来新增
+// 没登记的字面量原样显示，不吞信息。
 
 function statusColor(status: string): string {
   switch (status) {
@@ -23,11 +26,56 @@ function statusColor(status: string): string {
   }
 }
 
+function completionColor(status: string): string {
+  switch (status) {
+    case "completed":
+      return "var(--success-color, #10b981)";
+    case "blocked":
+      return "var(--danger-color, #ef4444)";
+    default:
+      return "var(--text-secondary)";
+  }
+}
+
 export function SupervisionEntryList({ rows }: { rows: SupervisionRow[] }) {
   const { t } = useI18n();
   return (
     <div data-testid="supervision-list" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
       {rows.map((row) => {
+        if (row.kind === "completion" && row.completion) {
+          const completion = row.completion;
+          const items = completionRows(completion);
+          const passed = items.filter((item) => item.pass).length;
+          const statusKey = completionStatusKey(completion.status);
+          return (
+            <div key={row.id} data-testid={`supervision-row-${row.id}`} style={{ fontSize: "12px", lineHeight: 1.5 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "6px", flexWrap: "wrap" }}>
+                <span
+                  title={row.createdAt}
+                  style={{ fontSize: "11px", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}
+                >
+                  {supervisionRowClock(row.createdAt)}
+                </span>
+                <span style={{ fontWeight: 600 }}>{t("task.supervision.trigger.completion")}</span>
+                <span style={{ color: "var(--text-secondary)" }}>→</span>
+                <span style={{ color: completionColor(completion.status) }}>
+                  {statusKey ? t(statusKey) : completion.status}
+                </span>
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {t("task.supervision.completionSummary", { passed, total: items.length })}
+                </span>
+              </div>
+              <details style={{ marginTop: "2px" }}>
+                <summary style={{ cursor: "pointer", fontSize: "11px", color: "var(--text-secondary)" }}>
+                  {t("task.supervision.completionDetails")}
+                </summary>
+                <div style={{ marginTop: "4px" }}>
+                  <TaskCompletionChecklist completion={completion} />
+                </div>
+              </details>
+            </div>
+          );
+        }
         const triggerKey = supervisionTriggerKey(row.trigger);
         const statusKey = supervisionStatusKey(row.status);
         return (
