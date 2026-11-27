@@ -6,7 +6,7 @@ import { ViewHeader } from "../../layout/ViewHeader";
 import { PALETTE } from "../../shared/nodePalette";
 import { resolveGroupColor } from "../../shared/sessionGroupDisplay";
 import { SessionCardMemo } from "./SessionCard";
-import { TOP_BADGE_LIFT_PX } from "./SessionCardTopBadges";
+import { SESSION_ROW_GAP_PX, TOP_BADGE_LIFT_PX } from "./SessionCardTopBadges";
 import {
   ArchiveHeaderButton,
   MAIN_SESSION_ICON_OFFSET,
@@ -195,8 +195,10 @@ export function MultiProjectSessionList({
                   {/* 项目名与第一个会话之间的固定间距（用户 2026-10-16）：第一行的徽标排
                       悬在盒顶之上，选中时底色还要再向上拓 TOP_BADGE_LIFT_PX 去包住它 ——
                       这段留白就是给它借位的，所以直接绑同一个常量，改一处两处同步。
-                      没徽标、没选中时这段留白照旧在，行距不因状态变化而抖。 */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingTop: TOP_BADGE_LIFT_PX }}>
+                      没徽标、没选中时这段留白照旧在，行距不因状态变化而抖。
+                      行距同理绑 SESSION_ROW_GAP_PX：拓位必须落在行间留白里，不能压到
+                      上一行（任务分组头悬停底色铺满整行，叠上去就是「相互覆盖」）。 */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: SESSION_ROW_GAP_PX, paddingTop: TOP_BADGE_LIFT_PX }}>
                     {rows.map((row) => {
                       if (row.type === "task-group") {
                         return (

@@ -3,7 +3,7 @@ import { ViewHeader } from "../../layout/ViewHeader";
 import { useI18n } from "../../i18n/index";
 import { unreadCompletedSubscribe, unreadKeyOfSession } from "../../shared/unreadCompleted";
 import { SessionCardMemo } from "./SessionCard";
-import { TOP_BADGE_LIFT_PX } from "./SessionCardTopBadges";
+import { SESSION_ROW_GAP_PX, TOP_BADGE_LIFT_PX } from "./SessionCardTopBadges";
 import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardHelpers";
 import {
   ArchiveHeaderButton,
@@ -291,7 +291,9 @@ export function SessionList({
             </div>
           ) : null
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          // 行距不是审美值：它是下一行选中底色拓位的落点（见 SESSION_ROW_GAP_PX）。
+          // 压回 2px 就会让拓位压进上一行的盒子，任务分组头悬停时出现「相互覆盖」。
+          <div style={{ display: "flex", flexDirection: "column", gap: SESSION_ROW_GAP_PX }}>
             {visibleSessions.map((row) => {
               if (row.type === "task-group") {
                 return (
