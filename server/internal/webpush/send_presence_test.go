@@ -139,6 +139,41 @@ func TestSendKeepsLegacySubscriptionWithoutHeartbeat(t *testing.T) {
 	}
 }
 
+// 旧订阅一旦上报过 presence（心跳或零窗口自愈 leave），就证明页面已是新版本，
+// 必须当场补上能力声明：否则它会一直 fail-open，「关页也弹」要等到下一次
+// 页面重存订阅才止血。
+func TestPresenceReportMarksLegacySubscriptionCapableAndStopsDelivery(t *testing.T) {
+	endpoint, hits := newPushEndpoint(t)
+	svc := newPresenceTestService(t, newTestSubscription(t, endpoint.URL, false))
+	svc.httpClient = endpoint.Client()
+
+	if err := svc.send(context.Background(), testNotification()); err != nil {
+		t.Fatalf("send before mark: %v", err)
+	}
+	if got := atomic.LoadInt32(hits); got != 1 {
+		t.Fatalf("push requests = %d, want 1（上报前旧订阅保持 fail-open）", got)
+	}
+
+	// 只带 leave：模拟强杀/崩溃后 service worker 的零窗口自愈上报。
+	if err := svc.ReportPresence(endpoint.URL, "", true); err != nil {
+		t.Fatalf("report leave: %v", err)
+	}
+	sub, ok, err := svc.store.GetByEndpoint(endpoint.URL)
+	if err != nil || !ok {
+		t.Fatalf("subscription missing: ok=%v err=%v", ok, err)
+	}
+	if !sub.PresenceCapable {
+		t.Fatal("任意 presence 上报都必须把旧订阅标记为 capable")
+	}
+
+	if err := svc.send(context.Background(), testNotification()); err != nil {
+		t.Fatalf("send after mark: %v", err)
+	}
+	if got := atomic.LoadInt32(hits); got != 1 {
+		t.Fatalf("push requests = %d, want 1（标记后页面没开，必须静默）", got)
+	}
+}
+
 // 「发送测试」是用户当场点的，页面显然开着；即使心跳还没到也必须发出。
 func TestSendTestToEndpointIgnoresPresence(t *testing.T) {
 	endpoint, hits := newPushEndpoint(t)

@@ -1,9 +1,9 @@
 # Web Push 只在页面还开着时投递（关闭页面后不再弹桌面通知）
 
-> Scope IDs: G-RA（claimed 2026-11-24T10:40Z 为 G-QU；合回 main 时撞上 6f34fd4c 已登记的 G-QU，按「先引入者保留、合入方改号」改为 G-RA）
+> Scope IDs: G-RA（claimed 2026-11-24T10:40Z 为 G-QU；合回 main 时撞上 6f34fd4c 已登记的 G-QU，按「先引入者保留、合入方改号」改为 G-RA）；G-SE（claimed 2026-11-27T01:15Z，presence 上报即标记订阅 capable）
 
 - 日期：2026-11-24
-- Scope: G-RA（原 claim 号 G-QU 撞号后避让，见文首说明）
+- Scope: G-RA / G-SE（G-RA 原 claim 号 G-QU 撞号后避让，见文首说明；G-SE 为 6.5 根因的加固）
 - 用户诉求：PWA 在页面/界面关闭后仍持续弹桌面通知；多台设备关掉页面后通知还在往外蹦，实际没有必要。
   要求定位根因（SW / 推送订阅 / 后台定时通知），关闭页面后停止投递，并重跑复现路径验证。
 
@@ -229,4 +229,34 @@ SW 自愈删除 / 退订不停心跳。
 
 说明：relay 是从 worker 主机按 worker 配置地址发出的同形请求，不是由真实 agent 回合触发的；
 「发送测试」端点会绕过 presence 护栏，本验收刻意未用。
+
+## 7. G-SE：presence 上报即标记订阅 capable（2026-11-27）
+
+6.5 的现场根因是「旧订阅在浏览器重新保存订阅之前一直 `presence_capable=false`」：心跳 / 关页
+beacon 明明已经到达、tracker 也记了，但能力标志不会翻转，服务端仍按 fail-open 全量投递，于是
+「关页也弹」要等到下一次页面加载才止血。
+
+修法：
+- `Store.MarkPresenceCapable(endpoint)`：找到订阅且尚未 capable 时置位并落盘；不改 `Enabled`、
+  不刷新 `UpdatedAt`；已 capable 或未知 endpoint 直接返回，不写文件。
+- `Service.ReportPresence` 在 Touch / Leave 之后调用它（心跳、pagehide beacon、SW 零窗口自愈
+  三条路径共用）；写盘失败只记 `[webpush] presence.mark.error`，不影响在场信号本身。
+
+行为边界：
+- 仍需一次真实 presence 上报才会翻牌；从未用新版本打开过页面的设备保持 fail-open —— 服务端
+  无法区分「旧客户端」与「页面从未加载」。
+- 订阅保存路径不变：带 `presence:true` 的保存仍由 Upsert 置位；不带 presence 的保存不翻牌。
+
+测试与变异（RED→GREEN，3 处变异各自打红后还原）：
+- `TestStoreMarkPresenceCapableFlipsLegacyWithoutChurn`：翻转、`Enabled`/`UpdatedAt` 不变、
+  已 capable 时重复上报不写盘。
+- `TestStoreMarkPresenceCapableIgnoresUnknownEndpoint`：不凭空创建没有密钥的订阅。
+- `TestPresenceReportMarksLegacySubscriptionCapableAndStopsDelivery`：旧订阅先 fail-open 投递
+  1 次；只发 leave（模拟 SW 自愈）后翻牌，下一次投递 0 次。
+- `TestWebPushPresenceReportMarksLegacySubscriptionCapable`：HTTP 心跳往返把旧订阅翻成 capable
+  且心跳本身仍算在场。
+- `TestWebPushPresenceReportDoesNotCreateSubscription`：未知 endpoint 的上报返回 200 且订阅表
+  仍为空。
+- 变异：上报时传空 endpoint（2 条红）、已 capable 仍写盘（churn 测试红）、翻转时刷新
+  `UpdatedAt`（store 测试红）。
 

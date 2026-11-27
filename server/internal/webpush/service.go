@@ -3,6 +3,7 @@ package webpush
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +104,11 @@ func (s *Service) ReportPresence(endpoint, clientID string, leave bool) error {
 		s.presenceTracker().Leave(endpoint, clientID)
 	} else {
 		s.presenceTracker().Touch(endpoint, clientID)
+	}
+	// 上报本身证明页面已是新版本：旧的 fail-open 订阅必须在这里立刻补上能力声明，
+	// 不能等浏览器下一次重新保存订阅。写盘失败不影响在场信号本身。
+	if err := s.store.MarkPresenceCapable(endpoint); err != nil {
+		log.Printf("[webpush] presence.mark.error endpoint=%s err=%v", subscriptionID(endpoint), err)
 	}
 	return nil
 }

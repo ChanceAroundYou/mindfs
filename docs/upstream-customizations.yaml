@@ -17385,3 +17385,39 @@ groups:
       - 'web/src/components/session/AskUserQuestionCard.tsx:data-testid="ask-user-state"'
       - 'web/src/components/task/TaskQuestionCard.tsx:const closed = normalized === "cancelled" || normalized === "failed";'
       - 'web/tests/task-ask-state.test.mjs:test("已答复的提问卡标 answered 并显示答案摘要", () => {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SE
+    title: "presence 上报即标记订阅 capable（旧订阅 fail-open 收口）"
+    kind: fix
+    symptom: |
+      升级后未重新保存订阅的设备仍「关页也弹」：旧记录 presence_capable=false，
+      服务端按 fail-open 全量投递；页面心跳与 SW 零窗口自愈其实已经到达（tracker
+      记了在场/离开），但能力标志不会翻转，要等浏览器下一次加载并重存订阅才止血。
+      2026-11-25 现场有 34 次零窗口仍收到推送；本机订阅直到 11-27 02:39:48 本地
+      页面重新保存才翻牌。
+    why: |
+      客户端上报 presence 本身证明页面跑的是新版本，不存在「旧客户端误报」的风险；
+      不在这里翻牌，旧订阅就会在两次页面加载之间一直 fail-open，用户感知就是修复
+      没生效。合上游若把 MarkPresenceCapable 调用或「已 capable 不写盘」的短路顶掉，
+      症状都会回到「升级了，关页还弹」；若翻转时刷新 UpdatedAt，心跳每 30 秒一次会
+      造成持续写盘。未知 endpoint 必须忽略，否则会造出没有密钥的订阅记录。
+    files:
+      - server/internal/webpush/store.go
+      - server/internal/webpush/store_presence_test.go
+      - server/internal/webpush/service.go
+      - server/internal/webpush/send_presence_test.go
+      - server/internal/api/http_webpush_presence_test.go
+      - docs/superpowers/plans/2026-11-24-web-push-presence-close-page.md
+    tests:
+      - server/internal/webpush/store_presence_test.go
+      - server/internal/webpush/send_presence_test.go
+      - server/internal/api/http_webpush_presence_test.go
+    anchors:
+      - 'server/internal/webpush/store.go:func (s *Store) MarkPresenceCapable(endpoint string) error {'
+      - 'server/internal/webpush/store.go:if items[i].PresenceCapable {'
+      - 'server/internal/webpush/service.go:if err := s.store.MarkPresenceCapable(endpoint); err != nil {'
+      - 'server/internal/webpush/store_presence_test.go:func TestStoreMarkPresenceCapableFlipsLegacyWithoutChurn(t *testing.T) {'
+      - 'server/internal/webpush/send_presence_test.go:func TestPresenceReportMarksLegacySubscriptionCapableAndStopsDelivery(t *testing.T) {'
+      - 'server/internal/api/http_webpush_presence_test.go:func TestWebPushPresenceReportMarksLegacySubscriptionCapable(t *testing.T) {'

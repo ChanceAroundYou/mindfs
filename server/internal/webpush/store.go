@@ -128,6 +128,40 @@ func (s *Store) Upsert(in Subscription) (Subscription, error) {
 	return in, nil
 }
 
+// MarkPresenceCapable 把 endpoint 对应的订阅标成具备 presence 能力。
+//
+// 收到任意 presence 上报（页面心跳、关页 beacon、service worker 零窗口自愈）都证明
+// 页面跑的是新版本。旧订阅若等浏览器下次重存订阅才补声明，两次加载之间会继续
+// fail-open —— 用户看到的就是「已经升级了，关页还弹」。只提升标志位：不改 Enabled、
+// 不刷新 UpdatedAt（心跳每 30 秒一次，不能变成持续写盘）；未知 endpoint 直接忽略，
+// 不能凭空造一条没有密钥的记录。
+func (s *Store) MarkPresenceCapable(endpoint string) error {
+	if s == nil {
+		return nil
+	}
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if items[i].Endpoint != endpoint {
+			continue
+		}
+		if items[i].PresenceCapable {
+			return nil
+		}
+		items[i].PresenceCapable = true
+		return s.saveLocked(items)
+	}
+	return nil
+}
+
 func (s *Store) Delete(endpoint string) error {
 	if s == nil {
 		return nil

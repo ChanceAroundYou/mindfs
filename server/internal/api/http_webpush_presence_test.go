@@ -140,3 +140,53 @@ func TestWebPushSubscriptionSaveLeavesLegacyFailOpen(t *testing.T) {
 		t.Fatal("不声明 presence 的旧客户端必须保持 fail-open")
 	}
 }
+
+// 旧订阅收到心跳/关页上报即证明页面已升级：必须立刻补上能力声明，不需要等
+// 浏览器重新保存订阅（否则「关页也弹」会一直持续到下一次页面加载）。
+func TestWebPushPresenceReportMarksLegacySubscriptionCapable(t *testing.T) {
+	h, svc, store := newWebPushPresenceHandler(t)
+	endpoint := "https://push.example/endpoint-legacy-heartbeat"
+
+	rr := postWebPushJSON(t, "/api/web-push/subscriptions",
+		`{"endpoint":"`+endpoint+`","keys":{"auth":"auth-key","p256dh":"p256dh-key"}}`,
+		h.handleWebPushSubscriptionSave)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if sub, ok, err := store.GetByEndpoint(endpoint); err != nil || !ok || sub.PresenceCapable {
+		t.Fatalf("precondition: ok=%v err=%v capable=%v", ok, err, sub.PresenceCapable)
+	}
+
+	rr = postWebPushJSON(t, "/api/web-push/presence",
+		`{"endpoint":"`+endpoint+`","client_id":"tab-1"}`, h.handleWebPushPresence)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("presence status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	sub, ok, err := store.GetByEndpoint(endpoint)
+	if err != nil || !ok {
+		t.Fatalf("subscription missing after presence: ok=%v err=%v", ok, err)
+	}
+	if !sub.PresenceCapable {
+		t.Fatal("presence 上报必须把旧订阅标记为 capable")
+	}
+	if !svc.PresenceActive(endpoint) {
+		t.Fatal("心跳本身也应继续算作在场")
+	}
+}
+
+// 订阅表被清空后页面还在心跳：上报不能凭空造一条没有密钥的记录。
+func TestWebPushPresenceReportDoesNotCreateSubscription(t *testing.T) {
+	h, _, store := newWebPushPresenceHandler(t)
+	rr := postWebPushJSON(t, "/api/web-push/presence",
+		`{"endpoint":"https://push.example/unknown","client_id":"tab-1"}`, h.handleWebPushPresence)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("presence status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	items, err := store.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("subscriptions = %d, want 0（presence 上报不能创建订阅）", len(items))
+	}
+}
