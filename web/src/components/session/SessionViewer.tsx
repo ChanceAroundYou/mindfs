@@ -18,6 +18,7 @@ import type { AgentStatus } from "../../shared/agentTypes";
 import { useI18n } from "../../i18n/index";
 import { formatSessionDuration } from "../../shared/sessionDuration";
 import {
+  composeWindowAndOverlay,
   computeTailOverlay,
   supplementOverlayMap,
   type OverlayExchange,
@@ -158,14 +159,12 @@ function SessionViewerInner({
       }),
     [session?.exchanges, visibleExchanges],
   );
-  // 窗口态与 overlay 是两条独立来源，同一个 exchange 对象可能两边都在（重锚定会把整份
-  // 缓存装进窗口态时就发生过）。按对象同一性取差集，保证同一份 exchange 只渲染一次 ——
-  // 与 dedupeToolCards 同一条约定，只是这里对所有类型生效（thought/正文没有 callId 可去重）。
-  const composedExchanges = useMemo(() => {
-    const inWindow = new Set(visibleExchanges as unknown[]);
-    const extra = tailOverlay.filter((ex) => !inWindow.has(ex));
-    return [...visibleExchanges, ...extra] as ExchangeArray;
-  }, [visibleExchanges, tailOverlay]);
+  // CUSTOM(G-SJ)：合并规则（持久行按 seq 去重、瞬时行按对象同一性去重）收在
+  // composeWindowAndOverlay 里；窗口态与 overlay 可能持有同一 seq 的不同对象。
+  const composedExchanges = useMemo(
+    () => composeWindowAndOverlay(visibleExchanges as OverlayExchange[], tailOverlay) as unknown as ExchangeArray,
+    [visibleExchanges, tailOverlay],
+  );
   // overlay 行的正文块 / aux 住在会话级映射里（窗口没拉过它们）。只补窗口缺的键 ——
   // 同一 seq 两个 revision 并存会让正文与工具卡重复。
   const overlaySeqs = useMemo(

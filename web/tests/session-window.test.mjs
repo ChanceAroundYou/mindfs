@@ -199,8 +199,13 @@ assert.match(
 );
 assert.match(
   viewerSrc,
-  /const composedExchanges = useMemo\(\(\) => \{[\s\S]*?return \[\.\.\.visibleExchanges, \.\.\.extra\]/,
+  /const composedExchanges = useMemo\(\s*\(\) => composeWindowAndOverlay\(visibleExchanges/,
   "composed window+overlay input missing",
+);
+assert.match(
+  overlaySrc,
+  /export function composeWindowAndOverlay\(/,
+  "窗口/overlay 合并必须是纯模块的导出函数（持久行按 seq 去重，2026-11-27）",
 );
 assert.doesNotMatch(
   viewerSrc,

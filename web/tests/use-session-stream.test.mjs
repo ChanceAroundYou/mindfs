@@ -111,6 +111,7 @@ function loadHook(runtime, dispatcher) {
         },
         dedupeToolCards: (timeline) => timeline,
         settleRunningTools: (timeline) => timeline,
+        dropDuplicatedTransientThoughts: (timeline) => timeline,
       };
       return {};
     },

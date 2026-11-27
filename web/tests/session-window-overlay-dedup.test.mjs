@@ -16,25 +16,14 @@ const projection = readFileSync(
   "utf8",
 );
 
-// ── 1. 组合出口必须按对象同一性去重（两来源共用同一个 exchange 对象时只渲染一次）──
-// 只取 composedExchanges 这一个 useMemo，别把后面的 overlay 补块语句一起吞进来。
-const composeStart = viewer.indexOf("const composedExchanges = useMemo(");
-const composeTail = "}, [visibleExchanges, tailOverlay]);";
-const composeEnd = viewer.indexOf(composeTail, composeStart);
-assert.ok(composeStart >= 0 && composeEnd > composeStart, "composedExchanges block should be found");
-const composeSrc = viewer
-  .slice(composeStart, composeEnd + composeTail.length)
-  // 把 TS 类型断言剥掉，只留可求值的 JS
-  .replace(/\bas\s+[A-Za-z_$][\w$.]*(?:\[\])?/g, "");
-
-const compose = new Function(
-  "visibleExchanges",
-  "tailOverlay",
-  // useMemo 在测试里退化成直接求值：只取箭头函数本体，丢掉依赖数组
-  `${composeSrc
-    .replace("const composedExchanges = useMemo(", "return (")
-    .replace(/,\s*\[visibleExchanges,\s*tailOverlay\],?\s*\);\s*$/, ")();")};`,
+// ── 1. 合并规则收在纯模块导出函数里（2026-11-27 起）──────────────────
+// 组件只负责调用；规则本身见 src/shared/sessionOverlay.ts。
+assert.match(
+  viewer,
+  /const composedExchanges = useMemo\(\s*\(\) => composeWindowAndOverlay\(visibleExchanges/,
+  "SessionViewer 必须把窗口/overlay 合并交给 composeWindowAndOverlay",
 );
+const { composeWindowAndOverlay: compose } = await import("../src/shared/sessionOverlay.ts");
 
 // 正常情形：窗口 4 行 + overlay 补 2 行尾巴
 const winRows = [{ seq: 1 }, { seq: 2 }, { seq: 3 }, { seq: 4 }];
@@ -48,7 +37,7 @@ assert.deepEqual(
 // 故障情形：重锚定把整份缓存（含瞬时行）装进窗口，overlay 又给了同一批对象
 const shared = [{ seq: 0, role: "thought", content: "dup" }];
 assert.deepEqual(
-  compose(winRows, shared) ,
+  compose(winRows, shared),
   [...winRows, ...shared],
   "an overlay row not present in the window is still appended",
 );
@@ -62,6 +51,15 @@ assert.equal(
   compose(leaked, shared).filter((e) => e === shared[0]).length,
   1,
   "the shared exchange object must render exactly once",
+);
+
+// 故障情形（2026-11-27 实测）：窗口与缓存各持一份**不同对象**的同一 seq。
+// blocks 以 seq 为键，两份都进时间线时同一段思考/正文渲染两遍（尾部 598 字思考块）。
+const cachedCopy = [{ seq: 2, content: "b" }];
+assert.deepEqual(
+  compose([{ seq: 1, content: "a" }, { seq: 2, content: "b" }], cachedCopy),
+  [{ seq: 1, content: "a" }, { seq: 2, content: "b" }],
+  "同一 seq 的不同对象必须只保留窗口那份",
 );
 
 // ── 2. 重锚定只许把持久化行装进窗口态 ────────────────────────────────
