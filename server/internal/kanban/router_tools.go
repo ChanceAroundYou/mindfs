@@ -85,6 +85,8 @@ type routerToolEnv struct {
 	worktreeFinisher ActivityWorktreeFinisher
 	// sessionMaintainer 是无损会话维护端口；nil 时相关工具显式报错。
 	sessionMaintainer ActivitySessionMaintainer
+	// sessionRepointer 是 Router 会话改目录端口；nil 时 repoint_session 显式报错。
+	sessionRepointer ActivitySessionRepointer
 	// supervisionMode 决定监管工具名是否暴露。名字必须在每一轮都相同（会话只
 	// 注册一次工具），off 时整组不暴露。
 	supervisionMode RouterSupervisionMode
@@ -107,6 +109,7 @@ func (e *routerToolEnv) tools() []RouterToolSpec {
 		e.skipNodeTool(),
 		e.finishWorktreeTool(),
 		e.sessionMaintenanceTool(),
+		e.repointSessionTool(),
 		e.saveWorkflowTool(),
 	}
 	// 监管工具只要实例开着监管就出现，与本轮有没有观测块无关（S1/S2）。
@@ -431,6 +434,7 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 	says := 0
 	executions := 0
 	completions := 0
+	repoints := 0
 	totalBytes := 0
 	for index, action := range actions {
 		if action.Seq != index {
@@ -469,6 +473,13 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 			default:
 				return fmt.Errorf("invalid maintenance_action %q", action.MaintenanceAction)
 			}
+		case RouterActionRepointSession:
+			repoints++
+			if strings.TrimSpace(action.SessionKey) == "" {
+				return fmt.Errorf("%s requires session_key", action.Kind)
+			}
+			// target_path 不在这里判存在/绝对/目录：决策可能在重启后重放，
+			// 文件系统状态会变；校验统一放在 usecase.RepointSession。
 		case RouterActionRunWorkflow:
 			executions++
 			switch action.SessionMode {
@@ -588,6 +599,17 @@ func validateRouterActions(brief *SituationBrief, actions []RouterAction, config
 	// 已收尾的任务后面。
 	if completions > 0 && executions > 0 {
 		return errors.New("complete_task cannot be combined with an execution action")
+	}
+	// repoint 会关掉 agent pool：同一轮既搬会话又开工/收尾，等于让新启的回合
+	// 跑在一个正在被换掉的目录上。
+	if repoints > 1 {
+		return errors.New("at most one repoint_session per turn")
+	}
+	if repoints > 0 && executions > 0 {
+		return errors.New("repoint_session cannot be combined with an execution action")
+	}
+	if repoints > 0 && completions > 0 {
+		return errors.New("repoint_session cannot be combined with complete_task")
 	}
 	if err := validateSupervisionActions(brief, actions, config); err != nil {
 		return err

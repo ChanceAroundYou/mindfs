@@ -90,7 +90,7 @@ func (rs *RouterService) runCoordinateEventTurn(taskID string, trigger RouterTri
 	promptHash := RouterPromptHash()
 	sessionKey := rs.prepareSessionKey(ctx, agent, decision.RootID, taskID, config, promptHash)
 	collector := newRouterTurnCollector(config)
-	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader(), worktreeFinisher: rs.service, sessionMaintainer: rs.service.sessionMaintainer,
+	env := &routerToolEnv{store: rs.taskStore(), brief: brief, collector: collector, transcripts: rs.service.routerTranscriptReader(), worktreeFinisher: rs.service, sessionMaintainer: rs.service.sessionMaintainer, sessionRepointer: rs.service.sessionRepointer,
 		supervisionMode: rs.service.RouterConfig().Supervision.Normalized().Mode}
 	timeout := config.TurnTimeout
 	if timeout <= 0 {

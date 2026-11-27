@@ -73,6 +73,8 @@ type Service struct {
 	sessionTurnCanceller func(ctx context.Context, rootID, sessionKey string) error
 	// sessionMaintainer 是 Router 的无损会话维护端口；装配期由 api 层注入。
 	sessionMaintainer ActivitySessionMaintainer
+	// sessionRepointer 是 Router 的会话改目录端口；装配期由 app 层注入。
+	sessionRepointer ActivitySessionRepointer
 	// turnTerminations 是「这一轮是被用户终止的」共享登记簿。ActivityServiceForRoot
 	// 每次现建实例，终止与回合收尾可能落在不同实例上，状态必须挂在这里。
 	turnTerminations *TurnTerminations
@@ -419,6 +421,16 @@ func (s *Service) SetSessionRunningProbe(fn func(sessionKey string) bool) {
 	}
 	s.mu.Lock()
 	s.sessionRunningProbe = fn
+	s.mu.Unlock()
+}
+
+// SetSessionRepointer 挂上 Router 的会话改目录端口；装配期调用一次。
+func (s *Service) SetSessionRepointer(port ActivitySessionRepointer) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.sessionRepointer = port
 	s.mu.Unlock()
 }
 

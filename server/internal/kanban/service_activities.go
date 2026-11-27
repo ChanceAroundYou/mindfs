@@ -38,6 +38,7 @@ func (s *Service) ActivityServiceForRoot(rootID string) (*ActivityService, error
 	svc.SetWorkflowExecutor(s)
 	svc.SetWorktreeFinisher(s)
 	svc.SetSessionMaintainer(s.sessionMaintainer)
+	svc.SetSessionRepointer(s.sessionRepointer)
 	s.mu.Lock()
 	direct := s.directExecutor
 	s.mu.Unlock()

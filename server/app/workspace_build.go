@@ -29,6 +29,23 @@ func (c workflowNodeCanceller) CancelWorkflowNode(ctx context.Context, nodeRun k
 	return c.svc.CancelWorkflowNode(ctx, c.rootID, nodeRun)
 }
 
+// kanbanSessionRepointer 让 Kanban 复用 usecase 的 repoint：参数与副作用都留在
+// usecase，Kanban 侧只拿到一个 error，由 Router 的 coordinate 链路决定状态。
+type kanbanSessionRepointer struct {
+	svc *usecase.Service
+}
+
+var _ kanban.ActivitySessionRepointer = kanbanSessionRepointer{}
+
+func (a kanbanSessionRepointer) RepointSessionForRouter(ctx context.Context, in kanban.SessionRepointInput) error {
+	_, err := a.svc.RepointSession(ctx, usecase.RepointSessionInput{
+		RootID:     in.RootID,
+		Key:        in.SessionKey,
+		TargetPath: in.TargetPath,
+	})
+	return err
+}
+
 func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	primary := userID == m.PrimaryUserID()
 
@@ -118,8 +135,10 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 并在执行时用本账户的 session manager 跑（scheduled/tasks.go 用 registry.GetSessionManager）。
 	// 共享实例会让同一个任务被两边各跑一次。
 	services.Kanban = kanban.NewService(services)
-	// Router 的无损会话维护走 usecase.Service；AppContext 只提供 Registry。
-	services.Kanban.SetSessionMaintainer(&usecase.Service{Registry: services})
+	// Router 的无损会话维护与改目录都走 usecase.Service；AppContext 只提供 Registry。
+	repointer := &usecase.Service{Registry: services}
+	services.Kanban.SetSessionMaintainer(repointer)
+	services.Kanban.SetSessionRepointer(kanbanSessionRepointer{svc: repointer})
 	services.SetMaintenanceOptions(m.shared.sessionMaintenance.maintenanceOptions())
 	// 自动收尾默认开；零值 Service 仍是关闭，只有装配处按配置打开。
 	services.Kanban.SetAutoFinishEnabled(m.shared.worktree.autoFinishEnabled())

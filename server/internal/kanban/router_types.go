@@ -233,8 +233,11 @@ const (
 	// session_maintenance 只做无损维护：诊断 / 清死 PID 锁 / 清图片 / 删空会话。
 	// 后两项会改历史，purge_empty 必须显式确认；不碰思考与工具负载。
 	RouterActionSessionMaintenance RouterActionKind = "session_maintenance"
-	RouterActionCancelRun          RouterActionKind = "cancel_run"
-	RouterActionCancelTask         RouterActionKind = "cancel_task"
+	// repoint_session 把当前任务的一条会话搬到指定目录（留空 = 项目主 checkout）。
+	// 它会关掉 agent pool、搬/切换转录并推进游标，属于写动作，不能与同轮执行/收尾并排。
+	RouterActionRepointSession RouterActionKind = "repoint_session"
+	RouterActionCancelRun      RouterActionKind = "cancel_run"
+	RouterActionCancelTask     RouterActionKind = "cancel_task"
 	// W1 T3：登记这一轮的验收项。它不是收尾动作，只是把「做完的样子」写下来，
 	// 供 complete_task 的证据门逐条核对。
 	RouterActionRecordAcceptance RouterActionKind = "record_acceptance"
@@ -271,8 +274,11 @@ type RouterAction struct {
 	FinishMode  string `json:"finish_mode,omitempty"` // finish_worktree: begin|teardown
 	// MaintenanceAction / SessionKey / Confirm 只对 session_maintenance 有意义。
 	MaintenanceAction string `json:"maintenance_action,omitempty"`
-	SessionKey        string `json:"session_key,omitempty"`
+	SessionKey        string `json:"session_key,omitempty"` // 也是 repoint_session 的目标会话
 	Confirm           bool   `json:"confirm,omitempty"`
+	// TargetPath 只对 repoint_session 有意义：目标工作目录，留空表示项目主 checkout。
+	// 路径合法性由 usecase 在 apply 阶段判定，决策落库时不做文件系统检查。
+	TargetPath string `json:"target_path,omitempty"`
 	// Scope / WorkflowName / DerivedFrom 只对 save_workflow 有意义：目标是哪个
 	// 目录条目、叫什么、从哪一版派生（派生只记录来源，不复制版本链）。
 	Scope        string `json:"scope,omitempty"`

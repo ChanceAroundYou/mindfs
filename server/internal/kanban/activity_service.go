@@ -120,6 +120,8 @@ type ActivityService struct {
 	worktreeFinisher ActivityWorktreeFinisher
 	// sessionMaintainer 是 Router 会话维护端口。nil 时相关工具显式报错。
 	sessionMaintainer ActivitySessionMaintainer
+	// sessionRepointer 是 Router 会话改目录端口。nil 时 repoint_session 显式报错。
+	sessionRepointer ActivitySessionRepointer
 	// taskCardNotify 让看板在提问卡出现/收口时立刻重拉任务卡。提问卡本身只广播
 	// task.activity.*，而看板只认 task.updated；没有这一拍，卡上「等你回答」
 	// 徽标要等下一次别的事件才出现/消失（router ask 不写 aux 标志，尤其明显）。
@@ -178,6 +180,26 @@ type ActivitySessionMaintainer interface {
 func (s *ActivityService) SetSessionMaintainer(port ActivitySessionMaintainer) {
 	if s != nil {
 		s.sessionMaintainer = port
+	}
+}
+
+// SessionRepointInput 是 Router repoint_session 的应用入参。root 来自任务记录，
+// 不信任模型传参；target_path 留空表示项目主 checkout。
+type SessionRepointInput struct {
+	RootID     string
+	SessionKey string
+	TargetPath string
+}
+
+// ActivitySessionRepointer 由 usecase 侧实现，kanban 只调用它，不复制转录搬移逻辑。
+type ActivitySessionRepointer interface {
+	RepointSessionForRouter(ctx context.Context, in SessionRepointInput) error
+}
+
+// SetSessionRepointer 装配会话改目录端口。
+func (s *ActivityService) SetSessionRepointer(port ActivitySessionRepointer) {
+	if s != nil {
+		s.sessionRepointer = port
 	}
 }
 

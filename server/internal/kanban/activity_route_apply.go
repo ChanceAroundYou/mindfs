@@ -209,6 +209,8 @@ func (s *ActivityService) applyRouteAction(
 		return s.applyRouteFinishWorktree(ctx, decision, task, action)
 	case RouterActionSessionMaintenance:
 		return s.applyRouteSessionMaintenance(ctx, decision, task, action)
+	case RouterActionRepointSession:
+		return s.applyRouteRepointSession(ctx, task, action)
 	case RouterActionNotifyUser:
 		return s.applyRouteNotifyUser(ctx, decision, task, action)
 	case RouterActionResumeRun:
