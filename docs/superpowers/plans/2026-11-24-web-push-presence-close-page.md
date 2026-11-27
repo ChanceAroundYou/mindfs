@@ -212,3 +212,21 @@ SW 自愈删除 / 退订不停心跳。
 - 语义边界不变：最小化 / 被遮挡的 PWA 窗口仍算「开着」（60s 心跳），通知照发；要求「不在前台
   就不发」属于产品语义变更。
 
+#### 6.5.1 设备可见验收（2026-11-27 08:53 本地）
+
+条件：用临时计划任务在会话 1 打开一个普通 Edge 窗口（18 个 msedge 进程存活），MindFS PWA 窗口
+保持关闭 —— 服务端 00:45Z 起无任何 presence 上报，两条订阅的只读探针均为 `active:false`。从 wsl
+用 worker 配置里的 relay URL（`https://home.xiaokubao.space/mindfs/api/web-push/relay`）发一次带
+唯一 `event_id` 的真实 relay（00:53:13Z 发出，nginx 于 00:53:14.403Z 记录 200）。
+
+结果（触发后 30 s 窗口，00:52:55–00:54:02Z 抓包）：
+- 0 次 `notify.windows.com` 解析、0 个发往 `172.188.234.51:443` 的包；mindfs 进程远端连接仍只有
+  触发前就在的 Cloudflare / 路由器两条长连接，无新增 443 出站；journal 无 `[webpush]` 错误。
+- 设备通知库仍为 103 条 MindFS 通知，最后一条 `2026-11-26T18:31:48Z`，触发后新增 0 条。
+- 仪器控制：同一条抓包链路在 00:56:30Z 的手工 WNS TLS 探测中捕获 DNS + SYN。
+- 清理：临时计划任务已删除并复核不存在，临时脚本删除；`%TEMP%\wpn-accept` 与 `/tmp/wpn*`
+  取证拷贝按要求保留。
+
+说明：relay 是从 worker 主机按 worker 配置地址发出的同形请求，不是由真实 agent 回合触发的；
+「发送测试」端点会绕过 presence 护栏，本验收刻意未用。
+
