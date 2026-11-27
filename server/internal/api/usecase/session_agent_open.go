@@ -288,14 +288,24 @@ func (s *Service) ensureAgentSession(
 	sess, err := pool.GetOrCreate(openCtx, openInput)
 	var ctxSeqOverride *int
 	if err != nil {
-		if openInput.AgentSessionID != "" {
-			log.Printf("[session/model] resume.error session=%s agent=%s model=%q mode=%q effort=%q fast_service=%q pool_session=%s agent_session_id=%s err=%v fallback=open_new_runtime_session", current.Key, agentName, nextModel, nextMode, nextEffort, nextFastService, poolSessionKey, openInput.AgentSessionID, err)
+		if staleID := openInput.AgentSessionID; staleID != "" {
+			log.Printf("[session/model] resume.error session=%s agent=%s model=%q mode=%q effort=%q fast_service=%q pool_session=%s agent_session_id=%s err=%v fallback=open_new_runtime_session", current.Key, agentName, nextModel, nextMode, nextEffort, nextFastService, poolSessionKey, staleID, err)
 			openInput.AgentSessionID = ""
 			openInput.AgentCtxSeq = 0
 			sess, err = pool.GetOrCreate(openCtx, openInput)
 			if err == nil {
 				zero := 0
 				ctxSeqOverride = &zero
+				// 新会话的 id 由 agent 在首条流消息里报出；先把失效的旧绑定清空，
+				// 否则 persistLearnedAgentSessionID 会认为绑定已确定而跳过，下一轮
+				// 又拿同一个过期 id 去 resume。
+				if manager != nil && current != nil {
+					if clearErr := manager.ClearAgentSessionID(ctx, current.Key, agentName); clearErr != nil {
+						log.Printf("[session/model] rebind.clear.error session=%s agent=%s stale=%s err=%v", current.Key, agentName, staleID, clearErr)
+					} else {
+						log.Printf("[session/model] rebind.clear session=%s agent=%s stale=%s", current.Key, agentName, staleID)
+					}
+				}
 			}
 		}
 	}

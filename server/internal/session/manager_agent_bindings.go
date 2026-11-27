@@ -44,6 +44,41 @@ func (m *Manager) UpdateAgentState(_ context.Context, session *Session, agent st
 	return m.upsertExternalSessionNameUnsafe(agent, agentSessionID, session.Name)
 }
 
+// ClearAgentSessionID 把绑定里的 agent session id 置空，保留导入游标等其余列。
+//
+// 用在「resume 失败、已改开新会话」之后：新会话的 id 由 agent 在首条流消息里报出，
+// 由 persistLearnedAgentSessionID 补写。不先清掉旧 id，它会认为绑定已确定而跳过，
+// 下一轮又去 resume 那个已失效的 id（2026-11-27 卡死循环）。
+func (m *Manager) ClearAgentSessionID(_ context.Context, sessionKey, agent string) error {
+	key := strings.TrimSpace(sessionKey)
+	agent = strings.TrimSpace(agent)
+	if key == "" {
+		return errors.New("session key required")
+	}
+	if agent == "" {
+		return errors.New("agent required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, err := m.getSessionUnsafe(key, 0)
+	if err != nil {
+		return err
+	}
+	if current.AgentCtxSeq == nil {
+		current.AgentCtxSeq = map[string]int{}
+	}
+	current.AgentCtxSeq[agent] = 0
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(
+		`UPDATE session_agent_bindings SET agent_session_id = '', agent_ctx_seq = 0 WHERE session_key = ? AND agent = ?`,
+		key, agent,
+	)
+	return err
+}
+
 func (m *Manager) UpsertAgentBinding(_ context.Context, binding AgentBinding) error {
 	if strings.TrimSpace(binding.SessionKey) == "" {
 		return errors.New("session key required")

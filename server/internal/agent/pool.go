@@ -31,7 +31,7 @@ type Pool struct {
 	claude             *claude.Runtime
 	codex              *codex.Runtime
 	runtimeLocksMu     sync.Mutex
-	runtimeLocks       map[runtimeGroup]*sync.Mutex
+	runtimeLocks       map[runtimeGroup]*runtimeLock
 	memoryMu           sync.RWMutex
 	memoryCollectMu    sync.Mutex
 	memorySnapshot     MemorySnapshot
@@ -100,7 +100,7 @@ func NewPoolWithOptions(cfg Config, opts PoolOptions) *Pool {
 		acp:                acp.NewRuntime(processCtx),
 		claude:             claude.NewRuntime(),
 		codex:              codex.NewRuntime(),
-		runtimeLocks:       make(map[runtimeGroup]*sync.Mutex),
+		runtimeLocks:       make(map[runtimeGroup]*runtimeLock),
 		processGuard:       processguard.New(),
 	}
 	if ps, err := proxy.NewServerWithLiveCompact(proxy.LiveCompactConfig{
@@ -190,7 +190,10 @@ retryExisting:
 		protocol = DefaultProtocol(in.AgentName)
 	}
 	p.mu.Unlock()
-	unlockRuntime := p.lockRuntimeGroups([]runtimeGroup{{agentName: in.AgentName, protocol: protocol}})
+	unlockRuntime, err := p.lockRuntimeGroupsContext(ctx, []runtimeGroup{{agentName: in.AgentName, protocol: protocol}})
+	if err != nil {
+		return nil, err
+	}
 	defer unlockRuntime()
 
 	// A concurrent opener may have created the session while this goroutine

@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"sort"
-	"sync"
 	"time"
 )
 
@@ -103,9 +102,57 @@ type runtimeGroup struct {
 	protocol  Protocol
 }
 
+// runtimeLock 是可带上下文等待的互斥量。
+//
+// 之前这里是裸 sync.Mutex：一个卡住的 Claude 初始化会永远持有该 protocol 的锁，
+// 之后所有同 protocol 的会话打开都会无超时地排队，只能等进程重启（此时又统一报
+// agent pool closed），表现为「一批任务同时卡死几小时」。
+type runtimeLock struct {
+	ch chan struct{}
+}
+
+func newRuntimeLock() *runtimeLock {
+	return &runtimeLock{ch: make(chan struct{}, 1)}
+}
+
+func (l *runtimeLock) lock(ctx context.Context) error {
+	select {
+	case l.ch <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (l *runtimeLock) unlock() {
+	select {
+	case <-l.ch:
+	default:
+	}
+}
+
+// runtimeGroupLockWaitTimeout 是调用方没有 deadline 时，等运行时锁的上限。
+// 它只限制「排队等打开」这一段；正常打开远快于此，超时说明持锁方的初始化确实卡住了。
+const runtimeGroupLockWaitTimeout = 5 * time.Minute
+
+// lockRuntimeGroups 无条件等待（供关闭/清理等管理路径使用）。
 func (p *Pool) lockRuntimeGroups(groups []runtimeGroup) func() {
+	unlock, _ := p.lockRuntimeGroupsWithCap(context.Background(), groups, 0)
+	return unlock
+}
+
+// lockRuntimeGroupsContext 按需等待运行时锁；ctx 先到期时返回错误并释放已拿到的锁。
+func (p *Pool) lockRuntimeGroupsContext(ctx context.Context, groups []runtimeGroup) (func(), error) {
+	return p.lockRuntimeGroupsWithCap(ctx, groups, runtimeGroupLockWaitTimeout)
+}
+
+// lockRuntimeGroupsWithCap 在 waitCap <= 0 时无条件等待；否则给无 deadline 的 ctx 套上限。
+func (p *Pool) lockRuntimeGroupsWithCap(ctx context.Context, groups []runtimeGroup, waitCap time.Duration) (func(), error) {
 	if len(groups) == 0 {
-		return func() {}
+		return func() {}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	unique := make(map[runtimeGroup]struct{}, len(groups))
 	ordered := make([]runtimeGroup, 0, len(groups))
@@ -122,25 +169,39 @@ func (p *Pool) lockRuntimeGroups(groups []runtimeGroup) func() {
 		}
 		return ordered[i].agentName < ordered[j].agentName
 	})
-	locks := make([]*sync.Mutex, 0, len(ordered))
+	locks := make([]*runtimeLock, 0, len(ordered))
 	p.runtimeLocksMu.Lock()
 	for _, group := range ordered {
 		lock := p.runtimeLocks[group]
 		if lock == nil {
-			lock = &sync.Mutex{}
+			lock = newRuntimeLock()
 			p.runtimeLocks[group] = lock
 		}
 		locks = append(locks, lock)
 	}
 	p.runtimeLocksMu.Unlock()
+
+	waitCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && waitCap > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, waitCap)
+		defer cancel()
+	}
+	acquired := make([]*runtimeLock, 0, len(locks))
 	for _, lock := range locks {
-		lock.Lock()
+		if err := lock.lock(waitCtx); err != nil {
+			for index := len(acquired) - 1; index >= 0; index-- {
+				acquired[index].unlock()
+			}
+			return nil, err
+		}
+		acquired = append(acquired, lock)
 	}
 	return func() {
-		for index := len(locks) - 1; index >= 0; index-- {
-			locks[index].Unlock()
+		for index := len(acquired) - 1; index >= 0; index-- {
+			acquired[index].unlock()
 		}
-	}
+	}, nil
 }
 
 func (p *Pool) StartIdleReleaseLoop(ctx context.Context, idleFor func() time.Duration) {

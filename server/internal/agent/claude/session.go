@@ -44,6 +44,9 @@ type claudeTaskInfo struct {
 type session struct {
 	client *claudeagent.Client
 	stream *claudeagent.Stream
+	// cancelStream 结束初始化时派生出的上下文；Stream 的生命周期与它绑定，
+	// 必须在 Close 时调用（否则 ctx 泄漏）。
+	cancelStream context.CancelFunc
 
 	mu         sync.RWMutex
 	onUpdate   func(types.Event)
@@ -207,6 +210,10 @@ func (s *session) Close() error {
 	var closeErr error
 	s.closeOnce.Do(func() {
 		s.cancelPendingQuestions(errors.New("claude session closed"))
+		if s.cancelStream != nil {
+			s.cancelStream()
+			s.cancelStream = nil
+		}
 		if s.stream != nil {
 			closeErr = s.stream.Close()
 		}
