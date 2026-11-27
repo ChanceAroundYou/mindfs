@@ -17449,7 +17449,6 @@ groups:
       - web/capacitor.config.json
       - web/public/manifest.webmanifest
       - web/public/manifest-light.webmanifest
-      - web/public/offline.html
       - web/android/app/src/main/res/values/strings.xml
       - web/ios/App/App/Info.plist
       - web/src/i18n/index.tsx
