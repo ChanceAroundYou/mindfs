@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"mindfs/internal/brand"
 	"mindfs/server/app"
 )
 
@@ -72,7 +73,7 @@ func main() {
 		fmt.Fprintf(out, "Usage:\n")
 		fmt.Fprintf(out, "  mindfs [flags] [root]\n\n")
 		fmt.Fprintf(out, "Arguments:\n")
-		fmt.Fprintf(out, "  root    Directory to manage. If omitted, MindFS opens without adding a directory.\n\n")
+		fmt.Fprintf(out, "  root    Directory to manage. If omitted, %s opens without adding a directory.\n\n", brand.Name())
 		fmt.Fprintf(out, "Flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(out, "\nExamples:\n")
@@ -102,8 +103,8 @@ func main() {
 	restart := flag.Bool("restart", false, "restart the background mindfs service")
 	statusFlag := flag.Bool("status", false, "show background service status")
 	versionFlag := flag.Bool("version", false, "show version")
-	updateFlag := flag.Bool("update", false, "check for and install the latest MindFS release")
-	uninstallFlag := flag.Bool("uninstall", false, "print the MindFS uninstall command")
+	updateFlag := flag.Bool("update", false, "check for and install the latest "+brand.Name()+" release")
+	uninstallFlag := flag.Bool("uninstall", false, "print the "+brand.Name()+" uninstall command")
 	configFlag := flag.String("config", "", "mindfs startup config file; defaults to <config-dir>/config.json when present. Command-line flags override file values")
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file for customizable agent(ACP-protocol) and shell")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")

@@ -125,7 +125,7 @@ export const enUSAgents = {
   "plugin.renderFailedFallback": "Plugin {name} failed. Fell back to raw view.",
   "plugin.ignorePlugin": "Ignore plugin",
   "plugin.trustTitle": "Confirm project plugins",
-  "plugin.trustRisk": "This project contains JavaScript view plugins. If trusted, this code runs in the MindFS frontend context and can access browser APIs and MindFS interfaces. Only load plugins whose source and content you trust.",
+  "plugin.trustRisk": "This project contains JavaScript view plugins. If trusted, this code runs in the {appName} frontend context and can access browser APIs and {appName} interfaces. Only load plugins whose source and content you trust.",
   "plugin.trustRoot": "Project: {path}",
   "plugin.trustCount": "Plugins: {count}",
   "plugin.trustDisable": "Keep disabled",

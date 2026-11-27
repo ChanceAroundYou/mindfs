@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/brand"
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/session"
@@ -388,13 +389,13 @@ func buildSwitchReadHint(targets []switchReadTarget) string {
 	b.WriteString(switchHintPrefix)
 	b.WriteString("\nThese notes are optional hints for catching up; they are not a blocking requirement.\n")
 	if len(targets) == 0 {
-		b.WriteString("No MindFS-side history file could be located for this session.\n")
+		b.WriteString("No " + brand.Name() + "-side history file could be located for this session.\n")
 	} else {
 		b.WriteString("Candidate history files, newest lines first — try them in order and skip any that do not exist:\n")
 		for i, target := range targets {
-			label := "MindFS exchange log; turn metadata, text may be empty on newer sessions"
+			label := brand.Name() + " exchange log; turn metadata, text may be empty on newer sessions"
 			if target.Kind == "blocks" {
-				label = "MindFS block stream; carries the full message text"
+				label = brand.Name() + " block stream; carries the full message text"
 			}
 			fmt.Fprintf(&b, "%d. %s (%s); read about the last %d lines.\n", i+1, target.Path, label, target.Lines)
 		}

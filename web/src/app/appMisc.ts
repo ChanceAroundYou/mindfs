@@ -6,7 +6,8 @@
 import { rootNodeKey } from "./appPath";
 import { FILE_TOKEN_PATTERN } from "./appStorage";
 
-import {  MessageKey ,  MessageParams  } from "../i18n";
+import { MessageKey, MessageParams } from "../i18n";
+import { BRAND } from "../shared/brand";
 import {  PluginInput  } from "../plugins/manager";
 import {  FileEntry  } from "../services/prefs/directorySort";
 import {  FilePayload  } from "../services/file";
@@ -19,7 +20,7 @@ export const MULTI_PROJECT_SESSION_LIMIT = 6;
 
 export const SESSION_PAGE_SIZE = 50;
 
-export const APP_DOCUMENT_TITLE = "MindFS";
+export const APP_DOCUMENT_TITLE = BRAND.name;
 
 export type ManagedRootPayload = {
   id: string;

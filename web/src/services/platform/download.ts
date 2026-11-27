@@ -5,6 +5,7 @@ import { getNativeBridge } from "./nativeBridge";
 import { getApiBaseURL, isNativeShellRuntime, supportsCustomNativePlugins } from "./runtime";
 import { translateNow } from "../../i18n/index";
 import type { MessageKey } from "../../i18n/types";
+import { BRAND } from "../../shared/brand";
 
 type DownloadFileParams = {
   rootId: string;
@@ -85,7 +86,7 @@ function triggerBrowserDownload(url: string, filename: string): void {
 }
 
 // iOS 壳的落盘位置：<App 沙箱>/Documents/MindFS/<文件名>，在「文件」App 的「我的 iPad」下可见。
-const IOS_DOWNLOAD_DIR = "MindFS/";
+const IOS_DOWNLOAD_DIR = `${BRAND.name}/`;
 
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

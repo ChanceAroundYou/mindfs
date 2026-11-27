@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/brand"
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/kanban"
 
@@ -328,7 +329,7 @@ func (h *HTTPHandler) runWorkflowAuthoring(ctx context.Context, body workflowAut
 func buildWorkflowAuthoringPrompt(scope, revision string, graph kanban.WorkflowDefinition, instruction, constraint string) string {
 	graphJSON, _ := json.Marshal(graph)
 	lines := []string{
-		"You revise MindFS workflow graphs. Reply with ONE JSON object and nothing else.",
+		"You revise " + brand.Name() + " workflow graphs. Reply with ONE JSON object and nothing else.",
 		"Do not wrap the JSON in prose. Do not publish, apply, or invent fields.",
 		"",
 		"Required shape:",

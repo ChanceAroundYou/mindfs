@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/brand"
 	"mindfs/internal/deploy"
 )
 
@@ -54,11 +55,10 @@ type desktopShellConfig struct {
 	LogPath  string // 服务日志；错误页要把它显示出来
 }
 
+// title 必须始终包含产品名：Windows 的任务栏/Task View 用窗口标题当条目标签，
+// 只写节点名时用户看到的是一串设备名，认不出这是哪个应用。
 func (c desktopShellConfig) title() string {
-	if name := strings.TrimSpace(c.NodeName); name != "" {
-		return name
-	}
-	return "MindFS"
+	return brand.Title(c.NodeName)
 }
 
 // appURL 是壳窗口要加载的地址：`<scheme>://<host:port><prefix>/`。

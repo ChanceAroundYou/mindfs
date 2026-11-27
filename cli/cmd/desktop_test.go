@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mindfs/internal/brand"
 	"time"
 
 	"mindfs/internal/deploy"
@@ -75,12 +77,12 @@ func TestDesktopAppURLFollowsDeployPrefix(t *testing.T) {
 }
 
 func TestDesktopTitleFallsBackToProductName(t *testing.T) {
-	if got := (desktopShellConfig{NodeName: "  书房 PC  "}).title(); got != "书房 PC" {
-		t.Fatalf("title = %q, want trimmed node name", got)
+	if got, want := (desktopShellConfig{NodeName: "  书房 PC  "}).title(), brand.Name()+" · 书房 PC"; got != want {
+		t.Fatalf("title = %q, want %q", got, want)
 	}
 	// 未配对/老配置没有 node.name 时，标题不能是空字符串：空标题的窗口在任务栏里没法认。
-	if got := (desktopShellConfig{}).title(); got != "MindFS" {
-		t.Fatalf("title = %q, want MindFS fallback", got)
+	if got := (desktopShellConfig{}).title(); got != brand.Name() {
+		t.Fatalf("title = %q, want %q fallback", got, brand.Name())
 	}
 }
 

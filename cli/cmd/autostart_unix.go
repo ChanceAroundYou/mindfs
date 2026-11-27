@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"mindfs/internal/brand"
 )
 
 // launchAgentLabel is the macOS LaunchAgent identity this build installs.
@@ -140,7 +142,7 @@ func systemdUnitContent(exe string, args []string) string {
 	for _, arg := range append([]string{exe}, args...) {
 		parts = append(parts, systemdQuote(arg))
 	}
-	return "[Unit]\nDescription=MindFS background service\nAfter=network.target\n\n" +
+	return "[Unit]\nDescription=" + brand.Name() + " background service\nAfter=network.target\n\n" +
 		"[Service]\nType=simple\nExecStart=" + strings.Join(parts, " ") + "\nRestart=on-failure\nRestartSec=3\nKillMode=control-group\n\n" +
 		"[Install]\nWantedBy=default.target\n"
 }

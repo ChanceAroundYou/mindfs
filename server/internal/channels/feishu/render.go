@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"mindfs/internal/brand"
 )
 
 // Render builds the card as Feishu sees it (schema 2.0). A card changes only
@@ -59,7 +61,7 @@ func (c Card) title() string {
 	case c.Prompt != "":
 		return c.Prompt
 	default:
-		return "MindFS"
+		return brand.Name()
 	}
 }
 
@@ -258,11 +260,11 @@ func outcome(c Card) string {
 		if c.Summary != "" {
 			return c.Summary
 		}
-		return "处理失败，请到 MindFS 网页里完成。"
+		return "处理失败，请到 " + brand.Name() + " 网页里完成。"
 	case StateExpired:
-		return "这张卡已过期，请到 MindFS 网页里处理。"
+		return "这张卡已过期，请到 " + brand.Name() + " 网页里处理。"
 	case StateSuperseded:
-		return "这张卡已被新的一轮取代，请到 MindFS 网页里查看。"
+		return "这张卡已被新的一轮取代，请到 " + brand.Name() + " 网页里查看。"
 	default:
 		return "已处理。"
 	}

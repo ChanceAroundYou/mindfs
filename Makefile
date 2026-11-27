@@ -1,4 +1,4 @@
-.PHONY: help dev dev-backend dev-web build-web build build-android build-ios install uninstall build-all start start-server test test-web check-upstream mutate dist-clean publish-release-notes verify-release release tag
+.PHONY: help dev dev-backend dev-web build-web build build-android build-ios install uninstall build-all start start-server test test-web brand-sync brand-check check-upstream mutate dist-clean publish-release-notes verify-release release tag
 
 GO ?= go
 NPM ?= npm
@@ -21,6 +21,8 @@ help:
 		"  make dev-backend  # backend only on $(ADDR)" \
 		"  make dev-web      # Vite dev server only" \
 		"  make build-web    # build web assets into web/dist" \
+		"  make brand-sync   # regenerate brand artifacts from internal/brand/brand.json" \
+		"  make brand-check  # verify generated brand artifacts are in sync" \
 		"  make build        # build web assets and CLI binary" \
 		"  make build-android # build Android release APK into dist/" \
 		"  make build-ios    # sync the shared shell bundle into the iOS Xcode project (packaging needs a Mac)" \
@@ -57,6 +59,12 @@ dev-backend:
 
 dev-web:
 	cd $(WEB_DIR) && $(NPM) run dev
+
+brand-sync:
+	python3 scripts/brand-sync.py
+
+brand-check:
+	python3 scripts/brand-sync.py --check
 
 build-web:
 	cd $(WEB_DIR) && VITE_MIND_FS_BASE="$(MIND_FS_BASE)" $(NPM) run build

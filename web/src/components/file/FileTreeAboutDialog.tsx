@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useApkUpdateCheck } from "../../hooks/useApkUpdateCheck";
 import { useNativeShellAppVersion } from "../../hooks/useNativeShellAppVersion";
 import { useTestNativeReplyAlert } from "../../hooks/useTestNativeReplyAlert";
+import { BRAND } from "../../shared/brand";
 
 // 从 FileTreeHeaderOverlays 拆出（硬线 500 行）：关于弹窗。
 // 内容与样式逐字保留，只把「开/关」交给调用方，渲染位置不变（document.body portal）。
@@ -20,8 +21,8 @@ export function FileTreeAboutDialog({ open, isNativeApp, onClose }: FileTreeAbou
   return createPortal(
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--panel-bg)", color: "var(--text-primary)", borderRadius: "12px", padding: "16px", width: "min(360px, 90vw)" }}>
-        <h3 style={{ margin: "0 0 8px", fontSize: "14px" }}>关于 MindFS</h3>
-        <p style={{ margin: "0 0 12px", fontSize: "12px", color: "var(--text-secondary)" }}>MindFS — AI Agent Remote Access Gateway</p>
+        <h3 style={{ margin: "0 0 8px", fontSize: "14px" }}>关于 {BRAND.name}</h3>
+        <p style={{ margin: "0 0 12px", fontSize: "12px", color: "var(--text-secondary)" }}>{BRAND.name} — {BRAND.tagline}</p>
         <p style={{ margin: "0 0 8px", fontSize: "11px", color: "var(--text-secondary)" }}>版本：{appVersion || "web"}</p>
         <p style={{ margin: "0 0 12px", fontSize: "11px" }}><a href="https://github.com/ChanceAroundYou/mindfs" target="_blank" rel="noreferrer" style={{ color: "var(--accent-color)" }}>github.com/ChanceAroundYou/mindfs</a></p>
         {isNativeApp && apkUpdate.supported ? (

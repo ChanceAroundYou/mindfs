@@ -37,6 +37,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"mindfs/internal/brand"
 	"mindfs/internal/deploy"
 	"mindfs/server/internal/config"
 )
@@ -68,7 +69,7 @@ func requireElevation() {
 	}
 	if err := relaunchElevated(self); err != nil {
 		if errors.Is(err, windows.ERROR_CANCELLED) {
-			showMessage("MindFS setup needs administrator rights to register the background service.\n\n"+
+			showMessage(brand.Name()+" setup needs administrator rights to register the background service.\n\n"+
 				"The prompt was cancelled. Double-click the installer again and choose Yes when Windows asks for permission.", true)
 			os.Exit(1)
 		}
@@ -101,7 +102,7 @@ func relaunchElevated(exe string) error {
 func fatal(err error) {
 	// 安装器以 GUI 子系统启动（-H=windowsgui），没有控制台可打印 —— 落一个错误
 	// 对话框，否则用户看到的是「双击了，什么都没发生」。
-	showMessage("MindFS setup failed:\n\n"+err.Error(), true)
+	showMessage(brand.Name()+" setup failed:\n\n"+err.Error(), true)
 	os.Exit(1)
 }
 
@@ -268,7 +269,7 @@ func showMessage(text string, isError bool) {
 	}
 	user32 := windows.NewLazySystemDLL("user32.dll")
 	proc := user32.NewProc("MessageBoxW")
-	title, _ := windows.UTF16PtrFromString("MindFS setup")
+	title, _ := windows.UTF16PtrFromString(brand.Name() + " setup")
 	body, _ := windows.UTF16PtrFromString(text)
 	flags := uintptr(0x00000040) // MB_ICONINFORMATION
 	if isError {

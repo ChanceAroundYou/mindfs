@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BRAND } from "../shared/brand";
 
 // @json-render 三件套（core/react/shadcn）只用于 view-mode plugin 渲染，静态 import 会把整个
 // shadcn 组件库打进主 bundle。改为动态 import：首次真正需要时才加载，之后缓存 Promise。
@@ -14,7 +15,7 @@ export function getBaseCatalog(): Promise<any> {
           import("@json-render/shadcn/catalog"),
         ]);
       return defineCatalog(schema, {
-        name: "MindFS Base UI Catalog",
+        name: `${BRAND.name} Base UI Catalog`,
         components: shadcnComponentDefinitions as any,
         actions: {
           navigate: {

@@ -4,6 +4,8 @@ import (
 	"runtime"
 	"testing"
 	"unsafe"
+
+	"mindfs/internal/brand"
 )
 
 // 这三个结构是手工镜像的 Windows x64 布局（cbSize 按版本校验，布局错了 Shell_NotifyIconW 直接返回 false）。
@@ -90,11 +92,11 @@ func TestTrayIconRegistersForCallbackMessages(t *testing.T) {
 func TestTrayMenuBelongsToDesktopShell(t *testing.T) {
 	// 悬停提示带上节点名：一台机器上可能同时跑主控与边缘的多个入口，
 	// 只写 addr 在托盘里分不出谁是谁（托盘现在只剩套壳进程一个来源）。
-	if got := trayTooltip(trayOptions{Addr: "0.0.0.0:7332"}); got != "mindfs 0.0.0.0:7332" {
-		t.Fatalf("tooltip = %q, want the addr in it so a multi-node box is distinguishable", got)
+	if got, want := trayTooltip(trayOptions{Addr: "0.0.0.0:7332"}), brand.Name()+" · 0.0.0.0:7332"; got != want {
+		t.Fatalf("tooltip = %q, want %q (product name + addr)", got, want)
 	}
-	if got := trayTooltip(trayOptions{Addr: "0.0.0.0:7332", Label: "书房 PC"}); got != "书房 PC · mindfs 0.0.0.0:7332" {
-		t.Fatalf("tooltip = %q, want the node name first", got)
+	if got, want := trayTooltip(trayOptions{Addr: "0.0.0.0:7332", Label: "书房 PC"}), brand.Name()+" · 书房 PC · 0.0.0.0:7332"; got != want {
+		t.Fatalf("tooltip = %q, want %q", got, want)
 	}
 
 	// 托盘随套壳进程一起搬到登录会话：服务进程在 Session 0，图标根本不可见。
@@ -105,7 +107,7 @@ func TestTrayMenuBelongsToDesktopShell(t *testing.T) {
 		{ID: menuOpenBrowserID, Label: "在浏览器中打开"},
 		{ID: menuCheckUpdateID, Label: "检查更新"},
 		{ID: menuOpenDataDirID, Label: "打开数据目录"},
-		{ID: menuUninstallID, Label: "卸载 MindFS"},
+		{ID: menuUninstallID, Label: "卸载 " + brand.Name()},
 		{ID: menuQuitID, Label: "退出"},
 	}
 	if len(items) != len(want) {

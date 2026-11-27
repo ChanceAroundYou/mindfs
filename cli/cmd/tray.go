@@ -1,6 +1,10 @@
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"mindfs/internal/brand"
+)
 
 // 托盘菜单。2026-11 起托盘只属于**套壳进程**（desktop 模式，跑在登录会话里）：
 // 服务进程在 Session 0，托盘图标根本不可见。菜单项按用户可见动作组织，
@@ -21,7 +25,7 @@ const (
 type trayOptions struct {
 	Addr        string
 	UseTLS      bool
-	Label       string // 节点名；悬停提示与菜单标题
+	Label       string // 节点名；悬停提示里显示为「产品名 · 节点名 · 地址」
 	OpenWindow  func()
 	OpenBrowser func()
 	CheckUpdate func()
@@ -31,11 +35,12 @@ type trayOptions struct {
 }
 
 func trayTooltip(opts trayOptions) string {
-	label := strings.TrimSpace(opts.Label)
-	if label == "" {
-		return "mindfs " + opts.Addr
+	parts := []string{brand.Name()}
+	if label := strings.TrimSpace(opts.Label); label != "" {
+		parts = append(parts, label)
 	}
-	return label + " · mindfs " + opts.Addr
+	parts = append(parts, opts.Addr)
+	return strings.Join(parts, " · ")
 }
 
 // 注册图标时给的 uFlags。**NIF_MESSAGE 必须在里面**：少了它 shell 只把图标和悬停提示画出来、
@@ -57,7 +62,7 @@ func trayMenuItems() []trayMenuItem {
 		{ID: menuOpenBrowserID, Label: "在浏览器中打开"},
 		{ID: menuCheckUpdateID, Label: "检查更新"},
 		{ID: menuOpenDataDirID, Label: "打开数据目录"},
-		{ID: menuUninstallID, Label: "卸载 MindFS"},
+		{ID: menuUninstallID, Label: "卸载 " + brand.Name()},
 		{ID: menuQuitID, Label: "退出"},
 	}
 }

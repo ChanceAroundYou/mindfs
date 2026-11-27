@@ -1,5 +1,6 @@
 import React from "react";
 import { getStoredString, setStoredString } from "../services/prefs/storage";
+import { BRAND } from "../shared/brand";
 import { enUS } from "./locales/en-US";
 import { zhCN } from "./locales/zh-CN";
 import type { I18nContextValue, Locale, MessageKey, MessageParams, Messages } from "./types";
@@ -72,11 +73,10 @@ export function translateWithLocale(locale: Locale, key: MessageKey, params?: Me
   if (!dictionary[key] && locale !== "zh-CN" && typeof console !== "undefined") {
     console.warn(`[i18n] missing message: ${locale}:${key}`);
   }
-  if (!params) {
-    return template;
-  }
+  // appName 自动注入：文案里写 {appName} 就行，不需要每个调用点手动传品牌名。
+  const values: MessageParams = { appName: BRAND.name, ...params };
   return template.replace(/\{(\w+)\}/g, (match, name) => {
-    const value = params[name];
+    const value = values[name];
     return value === undefined || value === null ? match : String(value);
   });
 }

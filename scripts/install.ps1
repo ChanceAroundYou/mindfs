@@ -10,6 +10,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Generated from internal/brand/brand.json by scripts/brand-sync.py. Display name only.
+$BrandName = "MindFS"
 $Repo = "ChanceAroundYou/mindfs"   # must match internal/deploy.ReleaseRepo
 $ReleaseNotesUrl = "https://raw.githubusercontent.com/$Repo/main/release-notes.md"
 
@@ -77,7 +79,7 @@ function Uninstall-MindFS {
         Write-Host "  Project .mindfs directories were not removed."
     } else {
         Write-Host "  User config and project .mindfs data were kept."
-        Write-Host "  Re-run with -Uninstall -Purge to remove user-level MindFS config and logs."
+        Write-Host "  Re-run with -Uninstall -Purge to remove user-level $BrandName config and logs."
     }
     Write-Host "Done."
 }
@@ -243,7 +245,7 @@ try {
     $Sc.TargetPath = Join-Path $BinDir "mindfs.exe"
     $Sc.Arguments = ""
     $Sc.WorkingDirectory = $BinDir
-    $Sc.Description = "MindFS edge controller"
+    $Sc.Description = "$BrandName edge controller"
     $Sc.Save()
     if (-not (Test-Path $LinkPath -PathType Leaf)) {
         Write-Error "Shortcut was not created: $LinkPath"
