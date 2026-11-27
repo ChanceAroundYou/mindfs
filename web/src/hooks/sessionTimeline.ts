@@ -81,6 +81,35 @@ export function dedupeToolCards(items: TimelineItem[]): TimelineItem[] {
   return out;
 }
 
+/**
+ * 丢掉与已落定思考块内容完全相同的瞬时思考行。
+ *
+ * 持久行与瞬时行是两条来源：一轮落盘后，它的 reasoning 由 blocks 渲染（带 turnMeta），
+ * 而流式期间还留在缓存里的 seq=0 thought 行没有 turnMeta，内容与已渲染的那段一字不差。
+ * `computeTailOverlay` 只在两条行还带着同一个 mindfs_id 时按身份对账；一旦瞬时行缺
+ * 身份（或两边 id 形状不同），同一段 598 字思考就会在尾部出现两次。这里按「内容完全相同」
+ * 兜底 —— 只对没有 turnMeta 的 thought 生效，不会误删持久行或新一轮正文。
+ */
+export function dropDuplicatedTransientThoughts(items: TimelineItem[]): TimelineItem[] {
+  const persistedThoughts = new Set<string>();
+  for (const item of items) {
+    if (item.type === "thought" && item.turnMeta) {
+      const content = String(item.content || "").trim();
+      if (content) persistedThoughts.add(content);
+    }
+  }
+  if (!persistedThoughts.size) return items;
+  let changed = false;
+  const out = items.filter((item) => {
+    if (item.turnMeta || item.type !== "thought") return true;
+    const content = String(item.content || "").trim();
+    if (!content || !persistedThoughts.has(content)) return true;
+    changed = true;
+    return false;
+  });
+  return changed ? out : items;
+}
+
 export function settleRunningTools(items: TimelineItem[]): TimelineItem[] {
   return items.map((item) => {
     if (item.type !== "tool") return item;

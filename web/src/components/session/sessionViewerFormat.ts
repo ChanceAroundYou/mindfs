@@ -231,10 +231,17 @@ export function isAuxiliaryTimelineItem(item: TimelineItem | null): boolean {
  * 下一轮没有可渲染条目时只剩一行纯 turn_meta，上一轮也必须在这里收尾。
  */
 export function isAssistantFlowEnd(item: TimelineItem, next: TimelineItem | null): boolean {
-  return (
-    item.type !== "user_text" &&
-    (!next || next.type === "user_text" || next.type === "turn_meta")
-  );
+  if (item.type === "user_text") return false;
+  if (!next) return true;
+  if (next.type === "user_text" || next.type === "turn_meta") return true;
+  // 同一轮的条目共享同一个 turnMeta 引用（attachTurnFooter 逐条挂的是同一个对象）。
+  // 下一项仍然带着它 → 本轮还没结束。
+  if (item.turnMeta && next.turnMeta === item.turnMeta) return false;
+  // 两条都没有回合标记（旧数据 / 流式早期）：没有证据表明换轮，页脚留到流末。
+  if (!item.turnMeta && !next.turnMeta) return false;
+  // 下一项没有 turnMeta（在途瞬时行）或属于另一轮 → 本轮到此为止。
+  // 否则尾部一旦跟了一条还没落定的思考行，上一轮的模型/用量页脚就会被整条吞掉。
+  return true;
 }
 
 /**

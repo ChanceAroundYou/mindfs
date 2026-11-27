@@ -97,6 +97,18 @@ func (s *Service) startSubagentSubscription(in subagentSessionInput, child *sess
 			log.Printf("[subagent] subscription.unsupported root=%s session=%s receiver=%s", in.RootID, child.Key, receiverThreadID)
 			return
 		}
+		// receiver-thread 子会话与 Claude 合成子代理走同一张 pending 真相表：
+		// 不登记的话服务端永远报 idle，前端只能按流事件本地点亮，5 秒轮询又按服务端
+		// 真相把它抹掉 —— 同一轮里灯以轮询周期闪烁（事件回合 vs 用户回合互相覆盖）。
+		turnID := subagentTurnID(child, activeTurnID)
+		if in.OnSubAgentAttached != nil {
+			in.OnSubAgentAttached(child, turnID)
+		}
+		defer func() {
+			if in.OnSubAgentTurnFinished != nil {
+				in.OnSubAgentTurnFinished(child.Key, turnID)
+			}
+		}()
 		markDone := attachBackgroundSessionUpdates(ctx, in, child, runtime)
 		if err := subscriber.SubscribeThreadEvents(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("[subagent] subscription.error root=%s session=%s receiver=%s err=%v", in.RootID, child.Key, receiverThreadID, err)

@@ -141,6 +141,43 @@ export function computeTailOverlay(input: TailOverlayInput): OverlayExchange[] {
 }
 
 /**
+ * 合并窗口态与 tail overlay（CUSTOM(G-SJ)）。
+ *
+ * 两条来源里可能是同一个 exchange 对象（重锚定会把整份缓存装进窗口态）；持久行还
+ * 可能以**不同对象**的同一 seq 出现 —— 窗口与缓存各持一份。对象同一性拦不住后者，
+ * 而 blocks 以 seq 为键：两份都进时间线时同一段思考/正文会渲染两遍（2026-11-27
+ * 尾部重复的 598 字思考块即此）。因此持久行按 seq 去重（窗口优先），瞬时行仍按
+ * 对象同一性去重。
+ */
+export function composeWindowAndOverlay(
+  visibleExchanges: readonly OverlayExchange[],
+  tailOverlay: readonly OverlayExchange[],
+): OverlayExchange[] {
+  const inWindow = new Set<OverlayExchange>(visibleExchanges);
+  const seenSeq = new Set<number>();
+  const out: OverlayExchange[] = [];
+  for (const ex of visibleExchanges) {
+    const seq = seqOf(ex);
+    if (seq > 0) {
+      if (seenSeq.has(seq)) continue;
+      seenSeq.add(seq);
+    }
+    out.push(ex);
+  }
+  for (const ex of tailOverlay) {
+    const seq = seqOf(ex);
+    if (seq > 0) {
+      if (seenSeq.has(seq)) continue;
+      seenSeq.add(seq);
+    } else if (inWindow.has(ex)) {
+      continue;
+    }
+    out.push(ex);
+  }
+  return out;
+}
+
+/**
  * 给 overlay 行补窗口之外的块 / aux（`visibleBlocks` / `visibleAux` 的补充）。
  *
  * overlay 只追加「窗口还没追上」的持久行；这些 seq 天然不在窗口的两份映射里，而正文

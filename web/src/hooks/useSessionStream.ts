@@ -6,6 +6,7 @@ import { createTimelineChunkCache, buildTimelineIncremental } from "./sessionTim
 import {
   applySessionContextWindow,
   dedupeToolCards,
+  dropDuplicatedTransientThoughts,
   settleRunningTools,
   type ContextWindowLike,
   type ExchangeAuxMapLike,
@@ -89,7 +90,7 @@ export function useSessionStream(
     [transientExchanges],
   );
   const baseTimeline = useMemo(
-    () => [...persistedBaseTimeline, ...transientTimeline],
+    () => dropDuplicatedTransientThoughts([...persistedBaseTimeline, ...transientTimeline]),
     [persistedBaseTimeline, transientTimeline],
   );
 

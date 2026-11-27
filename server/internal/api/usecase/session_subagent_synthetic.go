@@ -56,9 +56,10 @@ func subagentTurnID(child *session.Session, attachID uint64) string {
 }
 
 type claudeSubagentRouter struct {
-	in       subagentSessionInput
-	byRef    map[string]*claudeSyntheticSubagent
-	children []*claudeSyntheticSubagent
+	in        subagentSessionInput
+	byRef     map[string]*claudeSyntheticSubagent
+	bySession map[string]*claudeSyntheticSubagent
+	children  []*claudeSyntheticSubagent
 }
 
 type claudeSyntheticSubagent struct {

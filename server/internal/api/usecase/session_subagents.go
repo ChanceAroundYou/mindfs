@@ -11,8 +11,9 @@ import (
 
 func newClaudeSubagentRouter(in subagentSessionInput) *claudeSubagentRouter {
 	return &claudeSubagentRouter{
-		in:    in,
-		byRef: make(map[string]*claudeSyntheticSubagent),
+		in:        in,
+		byRef:     make(map[string]*claudeSyntheticSubagent),
+		bySession: make(map[string]*claudeSyntheticSubagent),
 	}
 }
 
@@ -102,7 +103,16 @@ func (r *claudeSubagentRouter) handleSubagentTerminalSummary(ctx context.Context
 	} else {
 		return false
 	}
-	child := r.find(claudeSubagentRefFromUpdate(update))
+	ref := claudeSubagentRefFromUpdate(update)
+	child := r.find(ref)
+	if child == nil && ref.key() != "" {
+		// 终态摘要的 id 形状未必与 Task 调用一致（task-id / tool-use-id / 裸 id）。
+		// 按绑定找回子会话 key，再命中本轮已经 attach 的 wrapper —— 漏关的 wrapper
+		// 会让已完成的子代理一直亮到父回合结束。
+		if binding, err := r.claimedBinding(ctx, ref.key()); err == nil && binding != nil {
+			child = r.bySession[binding.SessionKey]
+		}
+	}
 	if child == nil && toolCall.RawType == "subagent_result" {
 		child = r.onlyOpenChild()
 	}
@@ -151,6 +161,14 @@ func (r *claudeSubagentRouter) ensure(ctx context.Context, ref claudeSubagentRef
 		return nil, err
 	}
 	if existing != nil {
+		// 同一个子会话可能先后以不同的 id 形状出现（Task 调用的 tool id、终态摘要里的
+		// task id、认领绑定的裸 id）。按 ref 找不到时，先看本轮是否已经为**这条子会话**
+		// attach 过：重复 attach 会给同一 key 发第二枚回合身份，先关闭的 wrapper 被身份
+		// 校验拒掉、另一个又收不到事件，pending 就残留到父回合结束。
+		if child := r.bySession[existing.SessionKey]; child != nil {
+			r.bindKeys(child, keys)
+			return child, nil
+		}
 		loaded, err := r.in.Manager.Get(ctx, existing.SessionKey, 0)
 		if err != nil {
 			return nil, err
@@ -260,6 +278,7 @@ func (r *claudeSubagentRouter) attach(child *session.Session, ref claudeSubagent
 	if in.OnSubAgentAttached != nil {
 		in.OnSubAgentAttached(child, attached.turnID)
 	}
+	r.bySession[child.Key] = attached
 	r.children = append(r.children, attached)
 	return attached
 }
