@@ -1,12 +1,13 @@
 package api
 
 import (
+	"html"
 	"io"
 	"mime/multipart"
 
+	"mindfs/internal/brand"
 	"mindfs/server/internal/api/usecase"
 )
-
 
 func buildUploadFiles(headers []*multipart.FileHeader) ([]usecase.UploadFile, error) {
 	files := make([]usecase.UploadFile, 0, len(headers))
@@ -35,12 +36,12 @@ func closeMultipartFiles(files []usecase.UploadFile) {
 	}
 }
 
-const indexHTML = `<!doctype html>
+var indexHTML = `<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MindFS</title>
+    <title>` + html.EscapeString(brand.Name()) + `</title>
     <style>
       :root {
         color-scheme: light;

@@ -17373,3 +17373,116 @@ groups:
       - 'web/src/components/session/AskUserQuestionCard.tsx:data-testid="ask-user-state"'
       - 'web/src/components/task/TaskQuestionCard.tsx:const closed = normalized === "cancelled" || normalized === "failed";'
       - 'web/tests/task-ask-state.test.mjs:test("已答复的提问卡标 answered 并显示答案摘要", () => {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SF
+    title: "Windows 边控端窗口图标与任务栏标题"
+    kind: fix
+    symptom: |
+      pc（Windows 边控端）的任务栏与 Task View 里，MindFS 窗口只显示一个空白方块：
+      exe、开始菜单快捷方式、NSIS 安装器都有图标，唯独窗口类是 NULL 图标。条目标签
+      也只写节点名（如「书房 PC」），用户认不出这是哪个应用。
+    why: |
+      go-webview2 在 WindowOptions.IconId==0 时加载 IDI_APPLICATION(32512)，而
+      cli/cmd/rsrc_windows_*.syso 只有 ID 为 1 的 RT_GROUP_ICON，LoadImageW 失败后
+      窗口类拿不到图标。上游若重写窗口创建或删掉 IconId，任务栏会立刻退回空白方块。
+      标题侧同理：服务端节点名回填时若直接 SetTitle(node)，产品名就会从任务栏消失。
+      常量与 .syso 的组图标 ID 由测试直接解析资源校验，防止两边各改各的。
+    files:
+      - cli/cmd/desktop.go
+      - cli/cmd/desktop_windows.go
+      - cli/cmd/desktop_icon.go
+      - cli/cmd/desktop_icon_test.go
+      - cli/cmd/desktop_test.go
+      - cli/cmd/tray.go
+      - cli/cmd/tray_test.go
+      - docs/superpowers/plans/2026-11-27-edge-taskbar-icon-and-brand-source.md
+    tests:
+      - cli/cmd/desktop_icon_test.go
+      - cli/cmd/desktop_test.go
+      - cli/cmd/tray_test.go
+    anchors:
+      - 'cli/cmd/desktop_icon.go:const desktopIconResourceID = 1'
+      - 'cli/cmd/desktop_windows.go:IconId: desktopIconResourceID,'
+      - 'cli/cmd/desktop.go:return brand.Title(c.NodeName)'
+      - 'cli/cmd/desktop_windows.go:s.wv.SetTitle(brand.Title(name))'
+      - 'cli/cmd/desktop_windows.go:Label:       strings.TrimSpace(s.cfg.NodeName),'
+      - 'cli/cmd/desktop_icon_test.go:func TestDesktopIconResourceIDMatchesWindowsResources(t *testing.T) {'
+  - id: G-SG
+    title: "对外展示的产品名收敛到 internal/brand/brand.json"
+    kind: feature
+    symptom: |
+      「MindFS」作为展示名散落在 Go 提示/对话框、前端 i18n、PWA/Android/iOS 清单、
+      NSIS 与 PowerShell 安装脚本里。改名要逐处搜索，漏一处就会在窗口标题、通知、
+      安装器或原生壳里看到新旧两个名字。
+    why: |
+      展示名必须有单一来源：Go 编译期 embed brand.json，前端与原生/安装器由
+      scripts/brand-sync.py 生成或回填，make brand-check 与 web 测试防止漂移。
+      同时要保留安装/协议身份不变（二进制名、配置目录、注册表键、计划任务、HTTP 头、
+      JSON 字段、桥对象、release notes 标题前缀、[MindFS live-compact] 标记），
+      否则升级、卸载或解析会断。上游合并若把这些身份也「统一」进品牌，会破坏兼容。
+    files:
+      - internal/brand/
+      - web/src/shared/brand.ts
+      - web/tests/brand-single-source.test.mjs
+      - scripts/brand-sync.py
+      - Makefile
+      - cli/cmd/autostart_unix.go
+      - cli/cmd/mindfs.go
+      - cli/cmd/service_control.go
+      - cli/cmd/tray.go
+      - internal/deploy/setup.go
+      - internal/deploy/windows_icon_test.go
+      - server/cmd/mindfs-setup-stub/main.go
+      - server/internal/api/http_files_upload.go
+      - server/internal/api/http_workflow_authoring.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_prompt.go
+      - server/internal/channels/feishu/render.go
+      - server/internal/controlsync/pairing.go
+      - server/internal/kanban/router_prompt.go
+      - server/internal/kanban/router_prompt.md
+      - server/internal/update/release_fetch.go
+      - web/index.html
+      - web/vite.config.ts
+      - web/capacitor.config.json
+      - web/public/manifest.webmanifest
+      - web/public/manifest-light.webmanifest
+      - web/public/offline.html
+      - web/android/app/src/main/res/values/strings.xml
+      - web/ios/App/App/Info.plist
+      - web/src/i18n/index.tsx
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - web/src/app/appMisc.ts
+      - web/src/components/file/FileTreeAboutDialog.tsx
+      - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/src/renderer/viewCatalog.ts
+      - web/src/services/net/replyPoller.ts
+      - web/src/services/platform/download.ts
+      - scripts/windows-installer/mindfs.nsi
+      - scripts/build-windows-installer.sh
+      - scripts/install.ps1
+      - scripts/windows-setup/setup.ps1
+      - scripts/pcwin/codex-switch.ps1
+      - docs/superpowers/plans/2026-11-27-edge-taskbar-icon-and-brand-source.md
+    tests:
+      - internal/brand/brand_test.go
+      - internal/deploy/windows_icon_test.go
+      - web/tests/brand-single-source.test.mjs
+    anchors:
+      - 'internal/brand/brand.json:"name": "MindFS",'
+      - 'internal/brand/brand.go://go:embed brand.json'
+      - 'scripts/brand-sync.py:def targets(brand: dict[str, str]) -> dict[Path, str]:'
+      - 'web/src/shared/brand.ts:export const BRAND = {'
+      - 'web/src/i18n/index.tsx:const values: MessageParams = { appName: BRAND.name, ...params };'
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:"app.name": "{appName}",'
+      - 'Makefile:brand-check:'
+      - 'scripts/windows-installer/mindfs.nsi:!define APP_ID "MindFS"'
+      - 'scripts/build-windows-installer.sh:-DAPP_NAME="${APP_NAME}"'
+      - 'server/internal/kanban/router_prompt.md:你是 {appName} 的**任务调度器（Router）**'

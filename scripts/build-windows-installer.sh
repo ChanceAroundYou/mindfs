@@ -110,10 +110,12 @@ if [[ "${BOOTSTRAPPER}" != /* ]]; then
 fi
 
 OUT="$(cd "${DIST_DIR}" && pwd)/mindfs_${VERSION}_windows_amd64-setup.exe"
+APP_NAME="$(python3 -c 'import json; print(json.load(open("internal/brand/brand.json"))["name"])')"
 echo "==> Building NSIS installer -> ${OUT}"
 "${MAKENSIS}" -V2 \
   -DVERSION="${VERSION}" \
   -DVERSION4="${VERSION4}" \
+  -DAPP_NAME="${APP_NAME}" \
   -DOUTFILE="${OUT}" \
   -DPAYLOAD="${PAYLOAD}" \
   -DWEBVIEW2_BOOTSTRAPPER="${BOOTSTRAPPER}" \

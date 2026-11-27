@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/brand"
 	"mindfs/server/internal/config"
 )
 
@@ -170,7 +171,7 @@ func probePrimaryHealth(ctx context.Context, client *http.Client, base *url.URL)
 		Role string `json:"role"`
 	}
 	if err := json.Unmarshal(body, &health); err != nil {
-		return fmt.Errorf("control_sync: %s is not a MindFS health payload: %w", endpoint.String(), err)
+		return fmt.Errorf("control_sync: %s is not a %s health payload: %w", endpoint.String(), brand.Name(), err)
 	}
 	if !health.OK {
 		return fmt.Errorf("control_sync: %s reports unhealthy", endpoint.String())

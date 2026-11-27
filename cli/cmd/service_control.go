@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/brand"
 	"mindfs/internal/deploy"
 	"mindfs/server/app"
 )
@@ -75,21 +76,21 @@ func printUninstallCommand() {
 	if runtime.GOOS == "windows" {
 		fmt.Fprintln(os.Stdout, "Run one of the following commands manually:")
 		fmt.Fprintln(os.Stdout, "")
-		fmt.Fprintln(os.Stdout, "Uninstall MindFS, keeping user config and project data:")
+		fmt.Fprintln(os.Stdout, "Uninstall "+brand.Name()+", keeping user config and project data:")
 		fmt.Fprintln(os.Stdout, "Download scripts/install.ps1 from "+deployReleaseRepoURL()+", then run it with -Uninstall.")
 		fmt.Fprintln(os.Stdout, "")
-		fmt.Fprintln(os.Stdout, "Purge MindFS, including user config and logs:")
+		fmt.Fprintln(os.Stdout, "Purge "+brand.Name()+", including user config and logs:")
 		fmt.Fprintln(os.Stdout, "Download scripts/install.ps1 from "+deployReleaseRepoURL()+", then run it with -Uninstall -Purge.")
 		return
 	}
 	fmt.Fprintln(os.Stdout, "Run one of the following commands manually:")
 	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "Uninstall MindFS, keeping user config and project data:")
+	fmt.Fprintln(os.Stdout, "Uninstall "+brand.Name()+", keeping user config and project data:")
 	fmt.Fprintln(os.Stdout, `installer="${TMPDIR:-/tmp}/mindfs-install.sh"`)
 	fmt.Fprintln(os.Stdout, rawInstallScriptCommand())
 	fmt.Fprintln(os.Stdout, `bash "$installer" --uninstall`)
 	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "Purge MindFS, including user config and logs:")
+	fmt.Fprintln(os.Stdout, "Purge "+brand.Name()+", including user config and logs:")
 	fmt.Fprintln(os.Stdout, `installer="${TMPDIR:-/tmp}/mindfs-install.sh"`)
 	fmt.Fprintln(os.Stdout, rawInstallScriptCommand())
 	fmt.Fprintln(os.Stdout, `bash "$installer" --uninstall --purge`)
@@ -118,7 +119,7 @@ func handleUpdateCommand(ctx context.Context, addr string, useTLS bool) error {
 		return nil
 	}
 	if result.Installed {
-		fmt.Fprintln(os.Stdout, "Restart MindFS to use the new version:")
+		fmt.Fprintln(os.Stdout, "Restart "+brand.Name()+" to use the new version:")
 		fmt.Fprintln(os.Stdout, "  mindfs -restart")
 	}
 	return nil

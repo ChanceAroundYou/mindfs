@@ -13,6 +13,8 @@ param(
     [string]$Addr = ""
 )
 $ErrorActionPreference = "Stop"
+# Generated from internal/brand/brand.json by scripts/brand-sync.py. Display name only.
+$BrandName = "MindFS"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $MindfsExe = Join-Path $ScriptDir "mindfs.exe"
@@ -76,7 +78,7 @@ function Show-RuntimeState {
     if ([Environment]::GetEnvironmentVariable("LLMUX_API_KEY", "User")) {
         Write-Host "LLMUX_API_KEY in user environment: present"
     } else {
-        Write-Host "LLMUX_API_KEY in user environment: absent (only MindFS-managed agents get it)"
+        Write-Host "LLMUX_API_KEY in user environment: absent (only $BrandName-managed agents get it)"
     }
 }
 
@@ -111,12 +113,12 @@ if ($null -eq $response) {
     exit 1
 }
 if ($response.needs_confirm) {
-    Write-Error "server asked for confirmation; switch from the MindFS web UI instead"
+    Write-Error "server asked for confirmation; switch from the $BrandName web UI instead"
     exit 1
 }
 Write-Host "switched to $target"
 if ($target -eq "shared:codex-llmux" -and -not [Environment]::GetEnvironmentVariable("LLMUX_API_KEY", "User")) {
     Write-Host "note: the Codex desktop app needs LLMUX_API_KEY in its own environment."
-    Write-Host "      MindFS injects it only into agent processes it starts."
+    Write-Host "      $BrandName injects it only into agent processes it starts."
 }
 Show-RuntimeState

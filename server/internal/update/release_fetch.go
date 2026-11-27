@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"mindfs/internal/brand"
 )
 
 func NewService(repo, currentVersion, executable string, args []string, interval time.Duration) *Service {
@@ -236,7 +238,7 @@ func (s *Service) InstallLatest(ctx context.Context) (Status, error) {
 	}
 	s.updateStatus(func(st *Status) {
 		st.Status = "installed"
-		st.Message = "Update installed. Restart MindFS to use the new version."
+		st.Message = "Update installed. Restart " + brand.Name() + " to use the new version."
 	})
 	return s.GetStatus(), nil
 }

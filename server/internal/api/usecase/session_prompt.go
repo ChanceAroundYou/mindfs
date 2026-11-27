@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"mindfs/internal/brand"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/session"
 )
@@ -23,7 +24,7 @@ func (s *Service) BuildPrompt(in BuildPromptInput) string {
 		prompt = appendReplyTips(prompt)
 	}
 	if in.IsInitial && in.Manager != nil && in.Session != nil {
-		prompt += fmt.Sprintf("\n\nMindFS context: root_id=%s session_key=%s", in.Manager.Root().ID, in.Session.Key)
+		prompt += fmt.Sprintf("\n\n%s context: root_id=%s session_key=%s", brand.Name(), in.Manager.Root().ID, in.Session.Key)
 		if in.Session.TaskID != "" {
 			prompt += " task_id=" + in.Session.TaskID
 		}

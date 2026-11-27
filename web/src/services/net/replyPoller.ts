@@ -3,6 +3,7 @@ import { appPath, appURL } from "./base";
 import { getNodes } from "./nodeRegistry";
 import { getNativeBridge } from "../platform/nativeBridge";
 import { isNativeShellRuntime, supportsCustomNativePlugins } from "../platform/runtime";
+import { BRAND } from "../../shared/brand";
 
 type ReplyPollerPlugin = {
   configure(options: {
@@ -312,7 +313,7 @@ export async function openAppBatterySettings(): Promise<string | null> {
 
 export function describeBatterySettingsPage(opened: string | null): string {
   if (!opened) {
-    return "当前 App 版本还不支持一键跳转：请到「设置 → 电池 → 应用耗电管理」里给 MindFS 打开「允许后台运行」。";
+    return `当前 App 版本还不支持一键跳转：请到「设置 → 电池 → 应用耗电管理」里给 ${BRAND.name} 打开「允许后台运行」。`;
   }
   const where =
     opened === "oplus-power"
@@ -320,7 +321,7 @@ export function describeBatterySettingsPage(opened: string | null): string {
       : opened === "app-details"
         ? "已打开本应用的系统详情页"
         : "已打开电池优化列表";
-  return `${where}：请找到 MindFS 并允许后台运行（OPPO/一加/realme 还需关掉「应用速冻」）。系统自带的电池优化豁免不等于这个名单，两个都要放行。`;
+  return `${where}：请找到 ${BRAND.name} 并允许后台运行（OPPO/一加/realme 还需关掉「应用速冻」）。系统自带的电池优化豁免不等于这个名单，两个都要放行。`;
 }
 
 export function describeBatteryExemption(ignoring: boolean | null): string {  if (ignoring === null) {

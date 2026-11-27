@@ -18,6 +18,8 @@ import (
 	"github.com/jchv/go-webview2"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"mindfs/internal/brand"
 )
 
 // Windows 套壳进程：单实例 → 拉起/等待服务 → WebView2 窗口 + 托盘。
@@ -139,6 +141,7 @@ func runDesktopShell(cfg desktopShellConfig) error {
 			Title:  cfg.title(),
 			Width:  uint(width),
 			Height: uint(height),
+			IconId: desktopIconResourceID,
 		},
 	})
 	if wv == nil {
@@ -254,7 +257,8 @@ func (s *desktopShellState) watchService() {
 
 func (s *desktopShellState) openApp() {
 	if name := fetchDesktopNodeName(s.cfg); name != "" {
-		s.wv.Dispatch(func() { s.wv.SetTitle(name) })
+		// 服务端节点名只提供后缀，窗口标题前缀始终是产品名。
+		s.wv.Dispatch(func() { s.wv.SetTitle(brand.Title(name)) })
 	}
 	s.wv.Dispatch(func() { s.wv.Navigate(s.cfg.appURL()) })
 }
@@ -316,7 +320,7 @@ func runDesktopTray(s *desktopShellState) {
 	err := runTray(trayOptions{
 		Addr:        s.cfg.Addr,
 		UseTLS:      s.cfg.UseTLS,
-		Label:       s.cfg.title(),
+		Label:       strings.TrimSpace(s.cfg.NodeName),
 		OpenWindow:  s.showWindow,
 		OpenBrowser: func() { _ = openTarget(s.cfg.Addr, s.cfg.UseTLS, "") },
 		CheckUpdate: func() { desktopCheckUpdateDialog(s.cfg) },
@@ -374,11 +378,11 @@ func ensureWebView2Runtime() bool {
 }
 
 func desktopWebView2Dialog() int32 {
-	text := "MindFS 需要 Microsoft Edge WebView2 运行时才能显示窗口。\n\n" +
+	text := brand.Name() + " 需要 Microsoft Edge WebView2 运行时才能显示窗口。\n\n" +
 		"是：打开官方下载页安装运行时（装完回到这里点「取消」重试）\n" +
-		"否：改用浏览器打开 MindFS\n" +
+		"否：改用浏览器打开 " + brand.Name() + "\n" +
 		"取消：重试检测"
-	ret, _ := windows.MessageBox(0, windows.StringToUTF16Ptr(text), windows.StringToUTF16Ptr("MindFS"),
+	ret, _ := windows.MessageBox(0, windows.StringToUTF16Ptr(text), windows.StringToUTF16Ptr(brand.Name()),
 		windows.MB_YESNOCANCEL|windows.MB_ICONWARNING)
 	return ret
 }
@@ -397,20 +401,22 @@ func desktopOpenPath(path string) {
 }
 
 func desktopRunUninstaller() {
+	// 卸载注册表键是安装身份，不随展示名变化（见 internal/brand 的边界说明）。
 	const keyPath = `Software\Microsoft\Windows\CurrentVersion\Uninstall\MindFS`
+	title := "卸载 " + brand.Name()
 	key, err := registry.OpenKey(registry.CURRENT_USER, keyPath, registry.QUERY_VALUE)
 	if err != nil {
-		desktopMessageBox("卸载 MindFS", "没有找到卸载信息。\n\n如果这是便携运行，直接删除程序目录即可；数据在 %APPDATA%\\mindfs。")
+		desktopMessageBox(title, "没有找到卸载信息。\n\n如果这是便携运行，直接删除程序目录即可；数据在 %APPDATA%\\mindfs。")
 		return
 	}
 	defer key.Close()
 	command, _, err := key.GetStringValue("UninstallString")
 	if err != nil || strings.TrimSpace(command) == "" {
-		desktopMessageBox("卸载 MindFS", "卸载程序未注册（UninstallString 为空）。")
+		desktopMessageBox(title, "卸载程序未注册（UninstallString 为空）。")
 		return
 	}
 	if err := windows.ShellExecute(0, strPtr("open"), windows.StringToUTF16Ptr(command), nil, nil, swShow); err != nil {
-		desktopMessageBox("卸载 MindFS", "无法启动卸载程序："+err.Error())
+		desktopMessageBox(title, "无法启动卸载程序："+err.Error())
 	}
 }
 

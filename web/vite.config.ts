@@ -4,6 +4,7 @@ import path from "node:path";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { BRAND } from "./src/shared/brand";
 
 /**
  * 单一规范化：与 web/src/services/prefix.ts 的 normalizePrefix 保持同一规则。
@@ -292,7 +293,7 @@ function appShellHTMLPlugin(opts: {
       const pwaMeta = [
         '    <meta name="apple-mobile-web-app-capable" content="yes" />',
         '    <meta name="apple-mobile-web-app-status-bar-style" content="default" />',
-        '    <meta name="apple-mobile-web-app-title" content="MindFS" />',
+        `    <meta name="apple-mobile-web-app-title" content="${BRAND.name}" />`,
         '    <meta name="mobile-web-app-capable" content="yes" />',
       ].join("\n");
       const appShell = process.env.VITE_APP_SHELL === "1";

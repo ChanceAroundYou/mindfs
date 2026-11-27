@@ -99,6 +99,28 @@ func TestWindowsInstallerPayloadIsAbsolute(t *testing.T) {
 	}
 }
 
+// 安装器的展示名必须来自 internal/brand（Scope: G-SG）：脚本读 brand.json 并传
+// -DAPP_NAME，.nsi 的默认值只是手动 makensis 的兜底；安装身份 APP_ID 固定不变。
+func TestWindowsInstallerBrandComesFromSingleSource(t *testing.T) {
+	script := readRepoFile(t, "scripts/build-windows-installer.sh")
+	if !strings.Contains(script, `json.load(open("internal/brand/brand.json"))["name"]`) {
+		t.Fatal("build-windows-installer.sh must read APP_NAME from internal/brand/brand.json")
+	}
+	if !strings.Contains(script, `-DAPP_NAME="${APP_NAME}"`) {
+		t.Fatal("build-windows-installer.sh must pass -DAPP_NAME to makensis")
+	}
+	nsi := readRepoFile(t, "scripts/windows-installer/mindfs.nsi")
+	if !strings.Contains(nsi, "!ifndef APP_NAME") {
+		t.Fatal("mindfs.nsi must allow APP_NAME to be overridden by the build")
+	}
+	if !strings.Contains(nsi, `!define APP_ID "MindFS"`) {
+		t.Fatal("mindfs.nsi must keep APP_ID as the stable install identity")
+	}
+	if !strings.Contains(nsi, `InstallDir "$LOCALAPPDATA\Programs\${APP_ID}"`) {
+		t.Fatal("install dir must use APP_ID, not the display name")
+	}
+}
+
 // 自解压安装器由 mindfs-setup-stub 编出来：那个包的 .syso 就是它的图标来源。
 func TestWindowsSetupStubBuildsFromIconPackage(t *testing.T) {
 	script := readRepoFile(t, "scripts/build-windows-setup.sh")

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf16"
+
+	"mindfs/internal/brand"
 )
 
 // SetupTrailerMagic 是「这个 exe 是自己人」的唯一凭证，安装器从文件尾部读它。
@@ -321,7 +323,7 @@ func BuildUpdateTaskXML(opt UpdateTaskOptions) (string, error) {
 		`<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
 		`  <RegistrationInfo>`,
 		`    <URI>\` + esc(name) + `</URI>`,
-		`    <Description>MindFS 自动更新：运行下载好的安装包（静默）</Description>`,
+		`    <Description>` + esc(brand.Name()) + ` 自动更新：运行下载好的安装包（静默）</Description>`,
 		`  </RegistrationInfo>`,
 		`  <Principals>`,
 		`    <Principal id="Author">`,

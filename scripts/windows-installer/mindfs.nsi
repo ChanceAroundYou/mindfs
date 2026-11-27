@@ -22,10 +22,15 @@ Unicode true
 !include "FileFunc.nsh"
 !include "nsDialogs.nsh"
 
-!define APP_NAME "MindFS"
+; APP_NAME 是展示名（可随品牌改）；APP_ID 是安装身份（注册表键、安装目录、快捷方式清理），
+; 改名会破坏旧版升级/卸载，因此固定不变。构建脚本从 internal/brand/brand.json 传入 APP_NAME。
+!ifndef APP_NAME
+  !define APP_NAME "MindFS"
+!endif
+!define APP_ID "MindFS"
 !define APP_EXE "mindfs.exe"
-!define APP_REG_KEY "Software\MindFS"
-!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MindFS"
+!define APP_REG_KEY "Software\${APP_ID}"
+!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
 !define TASK_NAME "mindfs"
 ; 自动更新由这个旁路任务执行：服务自己拉起安装包会跟着服务的 job 一起被终结。
 !define UPDATE_TASK_NAME "mindfs-update"
@@ -49,7 +54,7 @@ Unicode true
 
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
-InstallDir "$LOCALAPPDATA\Programs\MindFS"
+InstallDir "$LOCALAPPDATA\Programs\${APP_ID}"
 InstallDirRegKey HKCU "${APP_REG_KEY}" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
@@ -61,7 +66,7 @@ VIAddVersionKey "ProductName" "${APP_NAME}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "${APP_NAME} 安装程序"
 VIAddVersionKey "FileVersion" "${VERSION}"
-VIAddVersionKey "LegalCopyright" "MindFS"
+VIAddVersionKey "LegalCopyright" "${APP_NAME}"
 
 Var NodeNameInput
 Var NodeName
@@ -271,7 +276,7 @@ Function EnsureWebView2
     Return
   ${EndIf}
 
-  MessageBox MB_ICONEXCLAMATION|MB_YESNOCANCEL "无法自动安装 WebView2 运行时。$\r$\n$\r$\n是(Y)：重试$\r$\n否(N)：打开下载页$\r$\n取消：跳过（MindFS 窗口将打不开）" IDYES wv2_retry IDNO wv2_download
+  MessageBox MB_ICONEXCLAMATION|MB_YESNOCANCEL "无法自动安装 WebView2 运行时。$\r$\n$\r$\n是(Y)：重试$\r$\n否(N)：打开下载页$\r$\n取消：跳过（${APP_NAME} 窗口将打不开）" IDYES wv2_retry IDNO wv2_download
   Goto wv2_skip
   wv2_download:
     ExecShell "open" "https://developer.microsoft.com/microsoft-edge/webview2/"

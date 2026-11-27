@@ -28,6 +28,8 @@ param(
     [string]$TaskName = 'mindfs',
     [string]$Addr = '0.0.0.0:7332'
 )
+# Generated from internal/brand/brand.json by scripts/brand-sync.py. Display name only.
+$BrandName = 'MindFS'
 
 $ErrorActionPreference = 'Stop'
 
@@ -74,7 +76,7 @@ function Stop-RunningInstance([string]$Binary, [string]$TaskName) {
     Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
     if (Get-Process -Name $name -ErrorAction SilentlyContinue) {
-        throw "mindfs is still running and this installer could not stop it. Close MindFS (or sign out and back in) and run setup again."
+        throw "mindfs is still running and this installer could not stop it. Close $BrandName (or sign out and back in) and run setup again."
     }
 }
 
@@ -160,7 +162,7 @@ function Install-Shortcuts([string]$Binary) {
     $sc.TargetPath = $Binary
     $sc.Arguments = ''
     $sc.WorkingDirectory = Split-Path -Parent $Binary
-    $sc.Description = 'MindFS edge controller'
+    $sc.Description = "$BrandName edge controller"
     $sc.Save()
     # Save() is a COM call: it can return without the file existing (read-only
     # Start Menu, redirected profile). Say so instead of printing Done.
@@ -192,7 +194,7 @@ function Start-AndWait([string]$TaskName, [string]$Addr) {
     Write-Warning "service did not answer $url within 30 s; check: schtasks /query /tn $TaskName"
 }
 
-Write-Host "MindFS edge controller -> $Prefix"
+Write-Host "$BrandName edge controller -> $Prefix"
 
 Stop-RunningInstance $Binary $TaskName
 Install-Payload $StageDir $Prefix $Binary $Agents $Web
