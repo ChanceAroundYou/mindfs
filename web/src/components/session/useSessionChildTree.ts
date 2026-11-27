@@ -7,6 +7,37 @@ import type { SessionItem, VisibleSessionRow } from "./sessionListTypes";
 type Scope = { rootId?: string; nodeId?: string };
 type LoadChildren = (parent: SessionItem, options?: { beforeTime?: string }) => Promise<{ hasMore?: boolean } | void> | { hasMore?: boolean } | void;
 
+/**
+ * 这条子会话此刻算不算「在跑」。
+ *
+ * pending 是服务端真相表 + 本地事件给同一把灯；presence 是列表侧一次性算好的四态
+ * （delegating 不算自己在跑，它的后代仍会独立命中）。两处判据任一为真即可 ——
+ * 在跑的子会话必须可见，不能因为父会话没被选中、或折叠只取前 3 条而被埋掉。
+ */
+function isRunningSession(item: SessionItem): boolean {
+  return (
+    item.pending === true ||
+    item.presence === "running" ||
+    item.presence === "awaiting"
+  );
+}
+
+/**
+ * 折叠态要显示的 children：常规是前 N 条，另外把在跑的子会话一并纳入。
+ *
+ * 负责只取前 N 条时，一条 80 个子会话的父会话会把真正在跑的那条埋在第 4 名之外；
+ * 用户点开父会话只能看到「展开 N 条」，看不到哪一个子代理还活着。
+ */
+function collapsedChildSessions(children: SessionItem[]): SessionItem[] {
+  const head = children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT);
+  if (head.length === children.length) {
+    return head;
+  }
+  const shown = new Set(head.map((child) => child.key));
+  const running = children.filter((child) => !shown.has(child.key) && isRunningSession(child));
+  return running.length ? [...head, ...running] : head;
+}
+
 export function useSessionChildTree({
   sessions,
   selectedKey,
@@ -78,6 +109,17 @@ export function useSessionChildTree({
         parentKey = parentByKey.get(parentKey) || "";
       }
     }
+    // 在跑的子会话连同它的祖先链一起可见 —— 侧栏不是在跑会话的唯一入口，
+    // 父会话没被选中时也要能把活着的那条子代理露出来。
+    for (const item of items) {
+      if (!isRunningSession(item)) continue;
+      activeParents.add(item.key);
+      let parentKey = parentByKey.get(item.key) || "";
+      while (parentKey && !activeParents.has(parentKey)) {
+        activeParents.add(parentKey);
+        parentKey = parentByKey.get(parentKey) || "";
+      }
+    }
     const rows: VisibleSessionRow[] = [];
     const append = (item: SessionItem, nested = false, stripNamePrefix?: string) => {
       rows.push({ type: "session", session: item, nested, stripNamePrefix });
@@ -85,11 +127,15 @@ export function useSessionChildTree({
       const key = stateKey(item, scope);
       const expanded = !!expandedChildren[key];
       const active = activeParents.has(item.key);
-      const visible = active ? (expanded ? children : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)) : [];
+      const visible = active ? (expanded ? children : collapsedChildSessions(children)) : [];
       // 真正的子会话不带任务前缀：它们以自己的名字挂在父会话下面。
       visible.forEach((child) => append(child, nested));
       const collapsedBase = collapsedBaseCount[key] ?? children.length;
-      const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
+      // 展开基线只用于「加载更多」的计数；隐藏数必须按实际条数兜底 ——
+      // 折叠期间轮询补进来的新子会话不能因为基线没变就被少报。
+      const hiddenCount = expanded
+        ? 0
+        : Math.max(0, Math.max(collapsedBase, children.length) - visible.length);
       if (active && (hiddenCount > 0 || expanded || childrenHasMore[key])) {
         rows.push({ type: "child-toggle", parent: item, loadedChildCount: collapsedBase, hiddenCount, expanded });
       }
