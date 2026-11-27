@@ -136,15 +136,29 @@ func RepointTranscript(rootPath, previousAgentSessionID string) (RepointTranscri
 // 进程，而紧接着的 RepointTranscript 最常见、也最要命的失败就是「找不到转录」。
 // 不先验就掐，代价是一次「会话没了、状态却一点没改」——所以这个判据要能单独拿出来问。
 func HasTranscript(agentSessionID string) bool {
+	return hasTranscriptFor(agentSessionID, "")
+}
+
+// hasTranscriptFor 报告在指定配置目录下是否还能找到该 session 的转录。
+// configDir 为空时退回默认口径（CLAUDE_CONFIG_DIR 或 ~/.claude）。
+// resume 前必须过这一关：转录不在时 CLI 会立即退出且不回答 initialize。
+func hasTranscriptFor(agentSessionID, configDir string) bool {
 	id := strings.TrimSpace(agentSessionID)
 	if id == "" {
 		return false
 	}
-	projectsDir, err := claudeProjectsDir()
+	projectsDir, err := projectsDirForConfig(configDir)
 	if err != nil {
 		return false
 	}
 	return len(transcriptDirsForSession(projectsDir, id)) > 0
+}
+
+func projectsDirForConfig(configDir string) (string, error) {
+	if dir := strings.TrimSpace(configDir); dir != "" {
+		return filepath.Join(dir, "projects"), nil
+	}
+	return claudeProjectsDir()
 }
 
 // claudeProjectsDir 与 SDK 的 sessionsProjectsDir 同口径：CLAUDE_CONFIG_DIR 优先，

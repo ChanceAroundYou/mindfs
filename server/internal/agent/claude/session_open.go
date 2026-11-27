@@ -13,6 +13,10 @@ import (
 	claudeagent "github.com/roasbeef/claude-agent-sdk-go"
 )
 
+// ErrResumeTranscriptMissing 表示要 resume 的转录在本机已经不存在。
+// 调用方据此走「开新会话并重绑」的回退，而不是把 CLI 直接交给 --resume 去撞死。
+var ErrResumeTranscriptMissing = errors.New("claude resume transcript missing")
+
 type OpenOptions struct {
 	AgentName             string
 	SessionKey            string
@@ -87,6 +91,15 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 	}
 	forkSessionID := strings.TrimSpace(opts.ForkSessionID)
 	resumeMessageID := strings.TrimSpace(opts.ResumeMessageID)
+	// 转录已被清掉时绝不能把 id 交给 --resume：CLI 会立即退出且不回答 initialize，
+	// SDK 于是永久等待（事故形态）。这里提前判定，让调用方走「开新会话」回退。
+	if forkSessionID == "" {
+		if resumeID := strings.TrimSpace(opts.ResumeSessionID); resumeID != "" {
+			if !hasTranscriptFor(resumeID, opts.ConfigDir) {
+				return nil, fmt.Errorf("%w: %s", ErrResumeTranscriptMissing, resumeID)
+			}
+		}
+	}
 	explicitSessionID := ""
 	if forkSessionID != "" && resumeMessageID != "" {
 		forked, err := claudeagent.ForkSession(forkSessionID, &claudeagent.ForkSessionOptions{
@@ -122,11 +135,16 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 	if err != nil {
 		return nil, err
 	}
-	stream, err := client.Stream(ctx)
+	stream, cancelStream, err := awaitInitialized(ctx, claudeInitTimeout,
+		func(initCtx context.Context) (*claudeagent.Stream, error) {
+			return client.Stream(initCtx)
+		},
+		func() { _ = client.Close() },
+	)
 	if err != nil {
-		client.Close()
 		return nil, err
 	}
+	s.cancelStream = cancelStream
 
 	selectedModel := canonicalClaudeModel(opts.Model)
 	if selectedModel == "" && opts.ResumeSessionID == "" {

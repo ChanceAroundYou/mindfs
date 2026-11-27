@@ -17421,3 +17421,41 @@ groups:
       - 'server/internal/webpush/store_presence_test.go:func TestStoreMarkPresenceCapableFlipsLegacyWithoutChurn(t *testing.T) {'
       - 'server/internal/webpush/send_presence_test.go:func TestPresenceReportMarksLegacySubscriptionCapableAndStopsDelivery(t *testing.T) {'
       - 'server/internal/api/http_webpush_presence_test.go:func TestWebPushPresenceReportMarksLegacySubscriptionCapable(t *testing.T) {'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SH
+    title: Claude 初始化卡死拖垮整个协议组 + 缺失转录的 resume 永久重演
+    kind: fix
+    symptom: "一批看板任务同时停在 waiting_user，aux_session_error 全是 `agent pool closed`，排队 54–111 分钟才失败。对应用户看到「一堆任务卡死」：新消息发不出去，重启进程后任务也没有自己恢复。"
+    why: "绑定指向的转录被删/搬走后，`claude --resume <缺失 id>` 打印 No conversation found 立即退出，却不回答 initialize；SDK 的 Initialize 只在收到 control response 或 ctx 取消时返回，而打开会话用的是无 deadline 的 pool 生命周期 ctx，于是永久阻塞。每个 {agent, protocol} 只有一把不可取消的互斥锁，一次卡死就让同协议所有打开无上限排队，直到进程退出统一失败。回落新会话时旧 binding 又没清，下一回合继续 resume 死 id。必须保留的四道防线：① resume 前校验转录存在（缺失直接判失败，交上层开新会话）；② 初始化 90 s 上限并回收子进程（父 ctx 更短时以其为准）；③ 运行时组锁可取消、无 deadline 时 5 min 排队上限、超时逆序释放已拿到的锁（关闭/清理路径仍无条件等待）；④ 回落成功后清空 binding 的 agent_session_id/agent_ctx_seq（空 id = agent 已选定、尚无转录），让下一回合重新学习。合上游时任何一层被冲掉，都会回到「单个坏会话拖死整组」。"
+    files:
+      - server/internal/agent/claude/session_open.go
+      - server/internal/agent/claude/session_open_init.go
+      - server/internal/agent/claude/repoint.go
+      - server/internal/agent/claude/session.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_idle.go
+      - server/internal/api/usecase/session_agent_open.go
+      - server/internal/session/manager_agent_bindings.go
+      - server/internal/agent/claude/session_open_init_test.go
+      - server/internal/agent/claude/session_open_hang_test.go
+      - server/internal/agent/claude/repoint_transcript_test.go
+      - server/internal/agent/pool_lock_ctx_test.go
+      - server/internal/session/manager_agent_binding_test.go
+      - docs/superpowers/plans/2026-11-27-claude-init-hang-task-batch.md
+    tests:
+      - server/internal/agent/claude/session_open_init_test.go
+      - server/internal/agent/claude/session_open_hang_test.go
+      - server/internal/agent/claude/repoint_transcript_test.go
+      - server/internal/agent/pool_lock_ctx_test.go
+      - server/internal/session/manager_agent_binding_test.go
+    anchors:
+      - 'server/internal/agent/claude/session_open_init.go:var claudeInitTimeout = 90 * time.Second'
+      - 'server/internal/agent/claude/session_open_init.go:func awaitInitialized[T any]('
+      - 'server/internal/agent/claude/session_open.go:ErrResumeTranscriptMissing'
+      - 'server/internal/agent/claude/repoint.go:func hasTranscriptFor('
+      - 'server/internal/agent/pool_idle.go:func (p *Pool) lockRuntimeGroupsWithCap('
+      - 'server/internal/agent/pool_idle.go:const runtimeGroupLockWaitTimeout = 5 * time.Minute'
+      - 'server/internal/session/manager_agent_bindings.go:func (m *Manager) ClearAgentSessionID('
+      - 'server/internal/api/usecase/session_agent_open.go:rebind.clear'

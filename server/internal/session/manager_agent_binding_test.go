@@ -233,3 +233,46 @@ func TestManagerEnsureAgentBindingDoesNotLeakEmptyIDIntoAliases(t *testing.T) {
 		t.Fatalf("session_external_names 里有 %d 行空 agent_session_id", leaked)
 	}
 }
+
+// resume 失败改开新会话后必须清空旧 id：空 id 表示「agent 已选定、尚无转录」，
+// learned 路径据此把新 id 补写进来；否则下一轮会继续 resume 已失效的旧 id。
+func TestManagerClearAgentSessionIDAllowsRelearn(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	ctx := context.Background()
+
+	created, err := manager.Create(ctx, CreateInput{Type: TypeChat, Agent: "claude", Name: "Stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(ctx, created, "claude", 12, "stale-id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ClearAgentSessionID(ctx, created.Key, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := manager.FindAgentBinding(ctx, created.Key, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding == nil {
+		t.Fatal("binding row must survive the clear")
+	}
+	if binding.AgentSessionID != "" {
+		t.Fatalf("agent_session_id = %q, want empty", binding.AgentSessionID)
+	}
+	if binding.AgentCtxSeq != 0 {
+		t.Fatalf("agent_ctx_seq = %d, want 0", binding.AgentCtxSeq)
+	}
+	// 学到新 id 后应能写回。
+	if err := manager.UpdateAgentState(ctx, created, "claude", 0, "fresh-id"); err != nil {
+		t.Fatal(err)
+	}
+	binding, err = manager.FindAgentBinding(ctx, created.Key, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding == nil || binding.AgentSessionID != "fresh-id" {
+		t.Fatalf("binding after relearn = %+v, want fresh-id", binding)
+	}
+}
