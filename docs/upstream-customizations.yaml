@@ -17373,3 +17373,72 @@ groups:
       - 'web/src/components/session/AskUserQuestionCard.tsx:data-testid="ask-user-state"'
       - 'web/src/components/task/TaskQuestionCard.tsx:const closed = normalized === "cancelled" || normalized === "failed";'
       - 'web/tests/task-ask-state.test.mjs:test("已答复的提问卡标 answered 并显示答案摘要", () => {'
+
+  - id: G-SI
+    title: "在跑的子会话保持可见，且子代理回合身份统一发放与按 key 找回"
+    kind: fix
+    symptom: |
+      2026-11-27 pc-wsl / CMAI 活跃 Claude Code 会话实测的三个通病之前两条：
+      ① 子会话只在「选中会话的链路」上渲染，折叠态又只取列表前 3 条 ——
+      80 条子会话里正在跑的那条通常排在第 4 名之外，父会话没被选中时整段不显示。
+      ② 对话状态在「执行中 / 已完成」之间按 5 秒轮询周期反复跳：receiver-thread
+      （Codex collabToolCall）子会话服务端从不登记 pending，前端 markSessionPending
+      点亮后被轮询按服务端真值抹掉；同一个子会话先后以不同 ref 形状出现时会被
+      attach 两次，旧 wrapper 的 close 被回合身份校验拒掉，已完成子会话一直亮到
+      父回合结束。看板任务态读同一张表，残留条目让任务头继续报执行中。
+    why: |
+      这是本仓库自建的子会话展示与 pending 真相表：上游没有 Task 子代理合成会话、
+      没有 bySession/回合身份校验，也没有「折叠态补入在跑子会话」的可见性规则。
+      合上游后若按上游覆盖，会退回子代理不显示、状态灯循环跳变、任务头永不收尾；
+      修复依赖四条不变量：OnSubAgentAttached 在每条 attach 路径发放身份、
+      close 原样交还同一身份、router 按 sessionKey 去重 wrapper、终态摘要按
+      绑定/session 兜底找回已 attach 的 wrapper。
+    files:
+      - web/src/components/session/useSessionChildTree.ts
+      - server/internal/api/usecase/session_subagent_stream.go
+      - server/internal/api/usecase/session_subagent_synthetic.go
+      - server/internal/api/usecase/session_subagents.go
+    tests:
+      - web/tests/session-child-tree.test.mjs
+      - server/internal/api/usecase/session_subagent_reattach_test.go
+    anchors:
+      - 'web/src/components/session/useSessionChildTree.ts:function isRunningSession'
+      - 'web/src/components/session/useSessionChildTree.ts:collapsedChildSessions(children)'
+      - 'server/internal/api/usecase/session_subagent_stream.go:OnSubAgentAttached(child, turnID)'
+      - 'server/internal/api/usecase/session_subagent_synthetic.go:func subagentTurnID('
+      - 'server/internal/api/usecase/session_subagents.go:r.bySession[existing.SessionKey]'
+  - id: G-SJ
+    title: "会话尾部统计行保留，重复思考块按内容去重"
+    kind: fix
+    symptom: |
+      2026-11-27 CMAI 实测第三条：会话尾部不显示用量/模型统计行，直接跳到
+      「关联文件」；同一段 598 字思考块在尾部出现两次。持久数据（blocks 与
+      exchange jsonl）里没有重复块，重复来自前端组合：窗口与缓存各持一份不同
+      对象的同一 seq，composedExchanges 只按对象同一性去重；已落定的 thinking
+      经 blocks 渲染后，流式残留的 seq=0 thought 内容一字不差却没有 turnMeta。
+      同时尾部拖着一条无 meta 的瞬时行时，上一条持久行的 footer 被判为「未到
+      回合末」，统计行整体消失。
+    why: |
+      blocks 修订流 + 瞬时 overlay 是本仓库自建的分层；上游没有 blocksForSeq
+      的 seq 键渲染，也没有 turnMeta 引用共享的回合边界判据。合上游后若按上游
+      覆盖，窗口/overlay 会再次叠加出重复思考块，turn footer（模型、用量、耗时）
+      会在任何尾部瞬时行出现时消失。必须保留三条规则：持久行按 seq 去重（窗口
+      优先）、无 turnMeta 的瞬时 thought 与已持久内容相同时丢弃、isAssistantFlowEnd
+      以 turnMeta 引用判定同轮边界（无 meta 的后续条目视为新一轮）。
+    files:
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/sessionViewerFormat.ts
+      - web/src/hooks/sessionTimeline.ts
+      - web/src/hooks/useSessionStream.ts
+      - web/src/shared/sessionOverlay.ts
+    tests:
+      - web/tests/session-tail-dedup.test.mjs
+      - web/tests/session-window-overlay-dedup.test.mjs
+      - web/tests/session-window.test.mjs
+      - web/tests/use-session-stream.test.mjs
+    anchors:
+      - 'web/src/shared/sessionOverlay.ts:export function composeWindowAndOverlay'
+      - 'web/src/components/session/SessionViewer.tsx:composeWindowAndOverlay(visibleExchanges'
+      - 'web/src/components/session/sessionViewerFormat.ts:if (item.turnMeta && next.turnMeta === item.turnMeta) return false;'
+      - 'web/src/hooks/sessionTimeline.ts:export function dropDuplicatedTransientThoughts'
+      - 'web/src/hooks/useSessionStream.ts:dropDuplicatedTransientThoughts([...persistedBaseTimeline, ...transientTimeline])'
