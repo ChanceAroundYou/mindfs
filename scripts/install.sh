@@ -4,6 +4,9 @@
 # Usage:  bash install.sh [--version VERSION] [--prefix PREFIX] [--uninstall] [--purge]
 set -euo pipefail
 
+# Generated from internal/brand/brand.json by scripts/brand-sync.py. Display name only.
+BRAND_NAME="MindFS"
+
 # 仓库身份必须与 internal/deploy.ReleaseRepo 一致（web/tests/agent9-traces.test.mjs 钉这条）。
 REPO="ChanceAroundYou/mindfs"
 RELEASE_NOTES_URL="https://raw.githubusercontent.com/${REPO}/main/release-notes.md"
@@ -108,7 +111,7 @@ uninstall_mindfs() {
     echo "  Project .mindfs directories were not removed."
   else
     echo "  User config and project .mindfs data were kept."
-    echo "  Re-run with --uninstall --purge to remove user-level MindFS config and logs."
+    echo "  Re-run with --uninstall --purge to remove user-level $BRAND_NAME config and logs."
   fi
   echo "Done."
 }

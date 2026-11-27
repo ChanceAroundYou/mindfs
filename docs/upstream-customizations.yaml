@@ -17467,6 +17467,8 @@ groups:
       - scripts/windows-installer/mindfs.nsi
       - scripts/build-windows-installer.sh
       - scripts/install.ps1
+      - scripts/install.sh
+      - scripts/android-doctor.sh
       - scripts/windows-setup/setup.ps1
       - scripts/pcwin/codex-switch.ps1
       - docs/superpowers/plans/2026-11-27-edge-taskbar-icon-and-brand-source.md
@@ -17484,4 +17486,6 @@ groups:
       - 'Makefile:brand-check:'
       - 'scripts/windows-installer/mindfs.nsi:!define APP_ID "MindFS"'
       - 'scripts/build-windows-installer.sh:-DAPP_NAME="${APP_NAME}"'
+      - 'scripts/install.sh:BRAND_NAME="MindFS"'
+      - 'scripts/android-doctor.sh:BRAND_NAME="MindFS"'
       - 'server/internal/kanban/router_prompt.md:你是 {appName} 的**任务调度器（Router）**'

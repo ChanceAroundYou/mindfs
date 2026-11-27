@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -u
 
+# Generated from internal/brand/brand.json by scripts/brand-sync.py. Display name only.
+BRAND_NAME="MindFS"
+
 fail=0
 say() { printf '%s\n' "$*"; }
 ok() { say "  [OK] $*"; }
@@ -11,7 +14,7 @@ if [ -z "$JAVA_HOME" ] && command -v java >/dev/null 2>&1; then
   JAVA_HOME="$(java -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.home = //p' | head -1)"
 fi
 
-say "== MindFS Android doctor =="
+say "== $BRAND_NAME Android doctor =="
 
 # Java
 if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then

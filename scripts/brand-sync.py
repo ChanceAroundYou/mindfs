@@ -126,6 +126,16 @@ def patch_ps1(path: Path, brand: dict[str, str]) -> str:
     )
 
 
+def patch_shell(path: Path, brand: dict[str, str]) -> str:
+    text = path.read_text(encoding="utf-8")
+    return re.sub(
+        r'(?m)^(BRAND_NAME=)(["\']).*?\2',
+        lambda m: m.group(1) + m.group(2) + brand["name"] + m.group(2),
+        text,
+        count=1,
+    )
+
+
 def targets(brand: dict[str, str]) -> dict[Path, str]:
     return {
         ROOT / "web/src/shared/brand.ts": brand_ts(brand),
@@ -148,6 +158,8 @@ def targets(brand: dict[str, str]) -> dict[Path, str]:
         ROOT / "scripts/install.ps1": patch_ps1(ROOT / "scripts/install.ps1", brand),
         ROOT / "scripts/windows-setup/setup.ps1": patch_ps1(ROOT / "scripts/windows-setup/setup.ps1", brand),
         ROOT / "scripts/pcwin/codex-switch.ps1": patch_ps1(ROOT / "scripts/pcwin/codex-switch.ps1", brand),
+        ROOT / "scripts/install.sh": patch_shell(ROOT / "scripts/install.sh", brand),
+        ROOT / "scripts/android-doctor.sh": patch_shell(ROOT / "scripts/android-doctor.sh", brand),
     }
 
 
