@@ -155,17 +155,17 @@ def _send(page: Page, text: str) -> None:
     button.click()
 
 
-def _footer_count(page: Page) -> int:
-    return page.locator('[data-testid="turn-meta"]').count()
+def _actions_count(page: Page) -> int:
+    return page.locator('[data-testid="turn-actions"]').count()
 
 
-def _wait_for_new_footer(page: Page, previous: int, timeout_ms: int = TURN_TIMEOUT_MS) -> None:
+def _wait_for_new_actions(page: Page, previous: int, timeout_ms: int = TURN_TIMEOUT_MS) -> None:
     deadline = time.time() + timeout_ms / 1000
     while time.time() < deadline:
-        if _footer_count(page) > previous:
+        if _actions_count(page) > previous:
             return
         page.wait_for_timeout(500)
-    raise AssertionError(f"{timeout_ms}ms 内没有出现新的整轮页脚（上一轮计数 {previous}）")
+    raise AssertionError(f"{timeout_ms}ms 内没有出现新的轮次控件行（上一轮计数 {previous}）")
 
 
 def _current_root_id(page: Page) -> str:
@@ -217,9 +217,9 @@ def test_fork_requires_confirmation(page: Page) -> None:
     _show_chat(page)
     _select_ok_model(page)
 
-    base = _footer_count(page)
+    base = _actions_count(page)
     _send(page, "只回复 OK 两个字，不要调用任何工具。")
-    _wait_for_new_footer(page, base)
+    _wait_for_new_actions(page, base)
 
     root_id = _current_root_id(page)
     user_id = _current_user_id(page)
@@ -233,9 +233,9 @@ def test_fork_requires_confirmation(page: Page) -> None:
         else None,
     )
 
-    # 页脚最后一个 fork 图标（18×18 小图标，误触就是它）。
+    # 最后一个完整轮次的 fork 图标（18×18 小图标，误触就是它）。
     fork_button = (
-        page.locator('[data-testid="turn-meta"]')
+        page.locator('[data-testid="turn-actions"]')
         .last.get_by_role("button", name="从此消息 fork")
     )
     fork_button.click()

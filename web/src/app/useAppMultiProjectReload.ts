@@ -12,6 +12,7 @@ export function useAppMultiProjectReload({
   multiProjectPendingRef,
   multiProjectAwaitingRef,
   multiProjectSessionsEnabled,
+  onSelectedSessionCompleted,
   playCompletionSound,
   selectedSessionRef,
   setMultiProjectPendingByKey,
@@ -26,6 +27,7 @@ export function useAppMultiProjectReload({
   multiProjectPendingRef: React.RefObject<Record<string, boolean>>;
   multiProjectAwaitingRef: React.RefObject<Record<string, boolean>>;
   multiProjectSessionsEnabled: true;
+  onSelectedSessionCompleted?: (completed: { nodeId: string; rootId: string; sessionKey: string }) => void;
   playCompletionSound?: () => void;
   selectedSessionRef: UseAppSessionLayerParams["selectedSessionRef"];
   setMultiProjectPendingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
@@ -78,6 +80,7 @@ export function useAppMultiProjectReload({
     multiProjectPendingRef,
     multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
+    onSelectedSessionCompleted,
     playCompletionSound,
     scheduleMultiProjectSessionReload,
     selectedSessionRef,

@@ -67,16 +67,23 @@ test("a genuinely new transient thought is kept", () => {
   assert.deepEqual(out.map((item) => item.id), ["block:237:45", "transient-thought"]);
 });
 
-test("turn footer survives a trailing transient thought", () => {
-  const meta = { seq: 237 };
-  const text = { id: "block:237:46", type: "assistant_text", content: "结论", turnMeta: meta };
-  const sameTurn = { id: "block:237:47", type: "tool", toolCall: {}, turnMeta: meta };
+test("completed turns own exactly one control-row position, even with a trailing transient row", () => {
+  const turn237 = { seq: 237, turnKey: "s237", completed: true };
+  const turn239 = { seq: 239, turnKey: "s239", completed: true };
+  const running = { seq: 0, turnKey: "t30", completed: false };
+  const text = { id: "block:237:46", type: "assistant_text", content: "结论", turnMeta: turn237 };
+  const sameTurn = { id: "block:237:47", type: "tool", toolCall: {}, turnMeta: turn237 };
+  const nextTurn = { id: "block:239:0", type: "assistant_text", content: "下一轮", turnMeta: turn239 };
+  const runningText = { id: "t30:0", type: "assistant_text", content: "运行中", turnMeta: running };
   const transient = { id: "transient-thought", type: "thought", content: "下一轮" };
   const user = { id: "u", type: "user_text", content: "下一问" };
+  const items = [text, sameTurn, user, nextTurn, transient, runningText];
 
-  assert.equal(format.isAssistantFlowEnd(text, sameTurn), false, "same turn (same meta object) is not the end");
-  assert.equal(format.isAssistantFlowEnd(text, transient), true, "a meta-less transient row starts a new turn");
-  assert.equal(format.isAssistantFlowEnd(text, user), true);
-  assert.equal(format.isAssistantFlowEnd(text, null), true);
-  assert.equal(format.isAssistantFlowEnd(user, text), false);
+  const ends = format.collectCompletedTurnEndIndices(items);
+  assert.equal(ends.size, 2, "只有已完成的持久轮次拥有控件行位置");
+  assert.equal(ends.get("s237"), 1, "同一轮的最后一行才是收尾");
+  assert.equal(ends.get("s239"), 3);
+  assert.equal(ends.has("t30"), false, "运行中的瞬时轮次不得出现控件");
+  assert.equal(format.collectCompletedTurnEndIndices([text, transient]).get("s237"), 0,
+    "尾部瞬时行不改变上一轮的收尾位置");
 });

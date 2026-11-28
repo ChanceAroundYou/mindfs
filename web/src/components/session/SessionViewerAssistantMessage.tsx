@@ -4,7 +4,7 @@ import { MarkdownViewer } from "../common/MarkdownViewer";
 export function SessionViewerAssistantMessage(props: any) {
   const { item, rootId, onFileClickRef } = props;
   return (
-    // 页脚不在这里：它属于整轮（见 SessionViewerTurnMeta 的注释）。这里只画正文。
+    // 控件行不在这里：它属于整轮（见 SessionViewerTurnActions 的注释）。这里只画正文。
     <div
       style={{
         color: "var(--text-primary)",

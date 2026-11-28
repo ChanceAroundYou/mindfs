@@ -371,7 +371,7 @@ server/internal/api/canonical_turn_shadow_test.go → TestTerminalIsScopedToItsO
 | ⚠️ | `stableTimelineID` | `useSessionStream.ts:84` | React key（内容稳定） | `prefix:index:ts:agent:hash` |
 | ⚠️ | `settleRunningTools` | `useSessionStream.ts:140` | 把悬空 running 工具卡收成 complete | `ask_user`/`task` 豁免 |
 | ✅ | `isStreaming` / `streamVersion` / `streamStatusText` | `useSessionStream.ts:503` | 流式三件套（驱动「正在生成」与底部跟随） | chunk 合并成 30ms 一次 |
-| ⚠️ | `applySessionContextWindow` | `useSessionStream.ts:460` | 给末条 assistant 补 context_window | 与 `buildAssistantTimeline` 末尾**两处补同一字段** |
+| ✅ | `SessionViewerStatusBar` / `selectSessionStatus` | `shared/sessionStatus.ts` | 模型/上下文/缓存常驻状态条；每个字段取最近一次有值的 exchange，会话级兜底 | 2026-11-28 起统计不再挂逐轮 TurnMeta；控件行只含复制/fork/完成时间 |
 | ⚠️ | `activeAskUserCallId` | `:1976` | 找当前「等待回答」的 ask 卡 | 倒序扫；遇正文即停 |
 | ⚠️ | **两个 `SessionViewer` 挂载点** | `App.tsx:8254`（主区）/`:9722`（抽屉） | 同一会话可同时挂两处 | **各自独立持有 `visibleExchanges`，共享同一 App 缓存** |
 | ⚠️ | `normalizeOverlayText` + 两个阈值 | `:500/506/509` | overlay 对账的空白归一 | 尾行 3、短文本地板 32 字 |
@@ -437,7 +437,7 @@ server/internal/api/canonical_turn_shadow_test.go → TestTerminalIsScopedToItsO
 | ⑦ | 附件**两套载体**（正文 `[file: path]` token vs `context.selection` 结构化） | 1 套 | 二者互不感知，同一次发送可能两处都带上 | 视产品语义择一 |
 | ⑧ | plan mode **两通道**（文本 `/plan` 前缀三处解析 vs `session.plan_mode.set` 二进制） | 1 套 | `ActionBar`/`App`/服务端三处各解析一次前缀 | 文本前缀解析（或二进制通道） |
 | ⑨ | `selection` 变没变的**两处**（`compactContext` 的 cache vs 每次 `buildClientContext` 重建） | 1 处 | 同一判定两处实现 | `contextCache` |
-| ⑩ | `context_window` 补丁**两处**（`buildAssistantTimeline` 末尾 + `applySessionContextWindow`） | 1 处 | 同一字段两处补 | 后处理那一处 |
+| ⑩ | `context_window` 补丁**两处**（`buildAssistantTimeline` 末尾 + `applySessionContextWindow`） | **0 处**（2026-11-28 拆除：统计归常驻状态条，每轮 TurnMeta 不再带窗口/用量） | 同一字段两处补 | 两处都已删除 |
 | ⑪ | `appendSessionDelta` 与 `mergeSessionExchanges` 的 `seq>0` 过滤**重复** | 1 处 | 同一件事写两遍 | `appendSessionDelta` 的过滤 |
 
 ### 3.3 真独立、不能合并的（独特性在哪）

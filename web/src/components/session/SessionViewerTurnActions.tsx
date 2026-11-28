@@ -3,21 +3,20 @@ import type { TurnMeta } from "../../hooks/sessionBlocks";
 import type { MessageKey } from "../../i18n/index";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ForkIcon } from "./AskUserQuestionCard";
-import { ContextWindowBadge, TurnTokenUsage } from "./SessionViewerTokenViews";
 
 /**
- * 一轮 agent 回复的页脚：复制 / fork / agent 图标 / 模型·effort / 用量 / 时间 / 上下文。
+ * 一轮**已完整结束**的 agent 回复的控件行：复制 / fork / agent 图标 / 完成时间。
  *
- * 为什么从 `SessionViewerAssistantMessage` 里拆出来：页脚属于**整轮**，不属于某一段
- * 正文。一轮可能以工具卡或思考卡收尾（CLI 常见），也可能整轮没有正文（纯标点
- * reasoning 被过滤），只把页脚挂在 assistant_text 上时这些轮次就没有页脚。
- * 现在由时间线在「该轮最后一行」统一渲染这一行。
+ * 只放「作用于这一轮」的控件；模型、上下文、缓存命中属于会话的持续状态，放在消息
+ * 列表尾部的常驻状态条（`SessionViewerStatusBar`），不随每轮重复。
+ *
+ * 可见性由调用方按 `meta.completed`（服务端已持久化）与轮次末行位置判定 —— 不依赖
+ * 客户端的流式/轮询状态，运行中不会闪。
  */
-export type SessionViewerTurnMetaProps = {
+export type SessionViewerTurnActionsProps = {
   meta: TurnMeta;
   time: string;
   durationLabel: string;
-  exchangeMeta: string;
   copied: boolean;
   t: (key: MessageKey) => string;
   themeColor: string;
@@ -28,11 +27,10 @@ export type SessionViewerTurnMetaProps = {
   onFork?: () => void;
 };
 
-export function SessionViewerTurnMeta({
+export function SessionViewerTurnActions({
   meta,
   time,
   durationLabel,
-  exchangeMeta,
   copied,
   t,
   themeColor,
@@ -40,10 +38,10 @@ export function SessionViewerTurnMeta({
   marginTop,
   onCopy,
   onFork,
-}: SessionViewerTurnMetaProps) {
+}: SessionViewerTurnActionsProps) {
   return (
     <span
-      data-testid="turn-meta"
+      data-testid="turn-actions"
       style={{
         alignSelf: "flex-start",
         display: "inline-flex",
@@ -122,72 +120,19 @@ export function SessionViewerTurnMeta({
         />
       </span>
       <span
+        data-testid="turn-meta-time"
         style={{
           display: "inline-flex",
-          flex: "1 1 auto",
-          flexWrap: "wrap",
           alignItems: "center",
-          gap: "0 8px",
+          minHeight: "16px",
           minWidth: 0,
-          lineHeight: "16px",
+          maxWidth: "100%",
+          fontVariantNumeric: "tabular-nums",
+          overflowWrap: "anywhere",
         }}
       >
-        {exchangeMeta ? (
-          <span
-            data-testid="turn-meta-model"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              minHeight: "16px",
-              minWidth: 0,
-              maxWidth: "100%",
-              overflowWrap: "anywhere",
-            }}
-          >
-            {exchangeMeta}
-          </span>
-        ) : null}
-        <span
-          data-testid="turn-meta-usage"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            minHeight: "16px",
-            minWidth: 0,
-            maxWidth: "100%",
-            overflowWrap: "anywhere",
-          }}
-        >
-          <TurnTokenUsage usage={meta.tokenUsage} />
-        </span>
-        <span
-          data-testid="turn-meta-time"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            minHeight: "16px",
-            minWidth: 0,
-            maxWidth: "100%",
-            fontVariantNumeric: "tabular-nums",
-            overflowWrap: "anywhere",
-          }}
-        >
-          {time}
-          {durationLabel ? ` ${durationLabel}` : ""}
-        </span>
-        <span
-          data-testid="turn-meta-context"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            minHeight: "16px",
-            minWidth: 0,
-            maxWidth: "100%",
-            overflowWrap: "anywhere",
-          }}
-        >
-          <ContextWindowBadge contextWindow={meta.contextWindow} />
-        </span>
+        {time}
+        {durationLabel ? ` ${durationLabel}` : ""}
       </span>
     </span>
   );

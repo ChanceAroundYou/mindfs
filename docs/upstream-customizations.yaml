@@ -5904,7 +5904,7 @@ groups:
     title: 排队卡/会话尾遮挡与 assistant 复制透传
     kind: fix
     symptom: "排队消息卡的 ✎/删除/立即发送按钮下半被输入条盖住；滚到底时最后一条 user 消息的复制等按钮被悬浮输入条挡住半颗；assistant 消息点复制完全没反应。"
-    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；滚动容器缺 scroll-padding-bottom，滚到底时最后一条 user 的复制行被输入条压住；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈（复制接线 2026-11-15 随整轮页脚迁到 `renderTurnFooter`，见 G-LS；`C1` 改为断言新路径）。"
+    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；滚动容器缺 scroll-padding-bottom，滚到底时最后一条 user 的复制行被输入条压住；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈（复制接线现由 `SessionViewerTurnActions` 承担、位置由轮次身份决定（见 G-SK）；`C1` 断言该路径）。"
     boundary: "只改三处：排队列表底间隙 4px→8px；滚动容器加由 composerOverlayInset 派生的 scroll-padding-bottom；Timeline 给 Assistant 补齐 copy props。不动 composer 高、不动按钮尺寸、不改 clipboard 链。**内容区 padding 刻意保持 24px 常量，不要改回 composerOverlayInset 派生**（用户 2026-10-23 明确要求「关联文件与对话框之间太长」）：内容区与输入条是 AppShell 网格的 main/footer 两行，本就不重叠，实测 1500x1000 / 420x900 滚到底最后一条与输入条上沿仍有 25px 净空；真正防遮挡的是 scroll-padding，两者不是一回事。相关文件分隔块间距同步收紧（marginTop 18→8、paddingTop 14→8、表头 marginBottom 6→4）。"
     tests:
       - web/tests/queued-overlay-and-copy.test.mjs
@@ -5919,7 +5919,7 @@ groups:
       - "web/src/components/session/SessionViewer.tsx:padding: \"24px 16px\""
       - "web/src/components/session/SessionViewerRelatedFiles.tsx:marginTop: \"8px\""
       - "web/src/components/session/SessionViewerTimeline.tsx:copyResetTimersRef"
-      - "web/tests/queued-overlay-and-copy.test.mjs:C1: turn footer owns copy wiring"
+      - "web/tests/queued-overlay-and-copy.test.mjs:C1: turn actions own copy wiring"
 
   - id: G-IY
     title: 后端文件长度规则对齐前端（软 300 / 硬 500）+ 存量分批拆分
@@ -8537,41 +8537,20 @@ groups:
 
   # ── 整轮页脚（模型 / 用量 / 缓存 / 上下文）───────────────────────────────────
   - id: G-LS
-    title: 整轮页脚——每轮末尾都显示模型、用量与上下文窗口（含工具/打断/压缩收尾）
+    title: 会话操作栏发送/取消的稳定 data-state 测试钩子
     kind: fix
-    symptom: "页脚曾只挂在「该轮最后一个 assistant_text」上：一轮以工具卡、思考卡或纯 reasoning 收尾时整轮没有页脚（模型名、用量、缓存、上下文窗口全丢），用 opus 时甚至只看到被过滤后的空轮；用户报「对话最后的内容又丢了（模型 用量 缓存名字等），而是显示思考过程」。现在每个助手轮次的最后一行之后都有一行页脚，一轮没有任何可渲染内容时单独产出一行纯页脚；流式进行中仍不画（与旧行为一致）；被用户打断的轮次也保留页脚。"
-    why: "这是 fork 的会话可观测性契约，必须保留：① 页脚属于**整轮**而不是某个块——`attachTurnFooter` 把同一份 `TurnMeta` 挂到该轮每条 timeline item 上，渲染时只在「助手流末尾」画一次（`isAssistantFlowEnd`：下一项不存在或下一项是 `user_text`），所以工具/思考/纯标点收尾都能拿到页脚；② 一轮零可渲染条目时产出 `type: \"turn_meta\"` 的纯页脚行：有持久 seq 时 id 用 `block:<seq>:-1`（真实块 pos ≥ 0，不会撞键），seq 为 0 的瞬时行用 `turn_meta:<idToken>`，避免多条瞬时纯页脚共用同一个 key；`turn_meta` 同时是跨轮边界，助手流遇到它就应当画页脚；③ 页脚数据从 exchange 直接取 `model_display_name`/`effort`/`fast_service`/`context_window`/`token_usage`，不依赖 assistant 正文；④ 流式最后一行暂时不画，避免「先画后改」跳动；⑤ 复制/fork 的页脚身份用「条目 id + 时间戳」而不是 assistant_text 的 promptKey，纯页脚行也能复制；⑥ `ActionBarControls` 的发送键带 `data-state=send|cancel`，这是端到端测试判定「回合是否在运行 / 打断后是否归位」的唯一稳定钩子；⑦ 页脚上外边距按**上一行类型**取（`turnFooterMarginTop`）：正文用 -10px（markdown 段落自带下边距，负值正好收紧），思考块/工具卡/组卡/待办/计划/压缩块收尾用 4px —— 这些条目自带边框与内边距，恒定负外边距会把页脚拽进卡片里（2026-11-16 真机：`/compact` 那一轮的复制/fork 图标与 `78%-used` 被压缩块下沿吞掉）；⑧ `SessionViewerTurnMeta` 的 `marginTop` 是**必填** prop，接线漏传即类型报错，不允许回退成组件内硬编码。"
-    boundary: "只改前端会话时间线的页脚投影与渲染：`sessionBlocks.ts`/`sessionAssistantTimeline.ts`/`sessionTimeline.ts`/`sessionViewerFormat.ts` 负责把 `TurnMeta` 挂到条目并决定页脚行，`SessionViewerTimeline.tsx` 决定「只在助手流末尾画一次」，`SessionViewerTurnMeta.tsx` 只做展示。不改后端块流生成、不改 token 计量与上下文窗口推导（后端 `context_window` 事件与 `useSessionStreamCache` 的合并规则不变）、不改 reasoning 过滤（G-LR）、不改压缩事件卡（`CompactNoticeCard` 自身样式与 10px 内边距不变，只改页脚相对它的外边距）。`ActionBarControls.tsx` 的改动仅为测试钩子，控件行为与样式不变。"
+    symptom: "端到端测试需要在没有文案依赖的前提下判断「回合是否在运行 / 打断后是否归位」；当时会话页脚组（模型/用量/上下文）与本钩子混在同一组。2026-11-28 起页脚已拆成轮次控件行 + 常驻状态条（G-SK），本组只保留操作栏钩子。"
+    why: "`ActionBarControls` 的发送键带 `data-state=send|cancel`，是 e2e 判定运行态与打断归位的唯一稳定判据；上游没有这个钩子，合上游后相关 e2e 会因选择器消失而失败。"
+    boundary: "只保留 `ActionBarControls.tsx` 的 data-state 测试钩子，控件行为、样式与发送/取消逻辑均不改。轮次控件行、状态条、TurnMeta 身份与上下文归属由 G-SK 负责。"
     files:
-      - web/src/components/session/SessionViewerTurnMeta.tsx
-      - web/src/components/session/SessionViewerTimeline.tsx
-      - web/src/components/session/SessionViewerAssistantMessage.tsx
-      - web/src/components/session/sessionViewerFormat.ts
-      - web/src/hooks/sessionBlocks.ts
-      - web/src/hooks/sessionTimeline.ts
-      - web/src/hooks/sessionAssistantTimeline.ts
-      - web/src/app/useSessionStreamCache.ts
       - web/src/components/action/ActionBarControls.tsx
     tests:
-      - web/tests/session-blocks-render.test.mjs
-      - web/tests/session-timeline-seq.test.mjs
-      - web/tests/queued-overlay-and-copy.test.mjs
-      - web/tests/message-mechanism-merges.test.mjs
+      - e2e/test_compact_footer.py
+      - e2e/test_session_fork_confirm.py
+      - e2e/test_session_hygiene.py
     anchors:
-      - 'web/src/hooks/sessionBlocks.ts:export function attachTurnFooter('
-      - 'web/src/hooks/sessionBlocks.ts:type: "turn_meta"'
-      - 'web/src/components/session/sessionViewerFormat.ts:export function isAssistantFlowEnd('
-      - 'web/src/components/session/sessionViewerFormat.ts:export function turnFooterMarginTop('
-      - 'web/src/components/session/SessionViewerTimeline.tsx:marginTop={turnFooterMarginTop(item)}'
-      - 'web/src/components/session/SessionViewerTurnMeta.tsx:marginTop,'
-      - 'web/src/components/session/SessionViewerTimeline.tsx:const endsAssistantFlow = isAssistantFlowEnd('
-      - 'web/src/components/session/SessionViewerTimeline.tsx:const renderTurnFooter'
-      - 'web/src/components/session/SessionViewerTimeline.tsx:item.type === "turn_meta"'
-      - 'web/src/components/session/SessionViewerTurnMeta.tsx:data-testid="turn-meta"'
-      - 'web/src/components/session/SessionViewerTurnMeta.tsx:data-testid="turn-meta-context"'
       - 'web/src/components/action/ActionBarControls.tsx:data-state={showCancel ? "cancel" : "send"}'
 
-  # ── 任务对话里的提问卡与 HumanGate 审批卡（WP0）──────────────────────────────
   - id: G-LT
     title: 任务对话承载 ask_user 提问卡与 HumanGate 审批卡（可回答、可审批、待处理时挡输入）
     kind: feature
@@ -17626,14 +17605,13 @@ groups:
       回合末」，统计行整体消失。
     why: |
       blocks 修订流 + 瞬时 overlay 是本仓库自建的分层；上游没有 blocksForSeq
-      的 seq 键渲染，也没有 turnMeta 引用共享的回合边界判据。合上游后若按上游
-      覆盖，窗口/overlay 会再次叠加出重复思考块，turn footer（模型、用量、耗时）
-      会在任何尾部瞬时行出现时消失。必须保留三条规则：持久行按 seq 去重（窗口
-      优先）、无 turnMeta 的瞬时 thought 与已持久内容相同时丢弃、isAssistantFlowEnd
-      以 turnMeta 引用判定同轮边界（无 meta 的后续条目视为新一轮）。
+      的 seq 键渲染，也没有按轮次身份去重的尾部叠加。合上游后若按上游覆盖，
+      窗口/overlay 会再次叠加出重复思考块。必须保留两条规则：持久行按 seq
+      去重（窗口优先）、无 turnMeta 的瞬时 thought 与已持久内容相同时丢弃。
+      （回合边界判据已由 G-SK 改为 turnKey / completed，不再用 turnMeta 引用
+      反推相邻项关系。）
     files:
       - web/src/components/session/SessionViewer.tsx
-      - web/src/components/session/sessionViewerFormat.ts
       - web/src/hooks/sessionTimeline.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/shared/sessionOverlay.ts
@@ -17645,6 +17623,111 @@ groups:
     anchors:
       - 'web/src/shared/sessionOverlay.ts:export function composeWindowAndOverlay'
       - 'web/src/components/session/SessionViewer.tsx:composeWindowAndOverlay(visibleExchanges'
-      - 'web/src/components/session/sessionViewerFormat.ts:if (item.turnMeta && next.turnMeta === item.turnMeta) return false;'
       - 'web/src/hooks/sessionTimeline.ts:export function dropDuplicatedTransientThoughts'
       - 'web/src/hooks/useSessionStream.ts:dropDuplicatedTransientThoughts([...persistedBaseTimeline, ...transientTimeline])'
+
+  - id: G-SK
+    title: "会话尾部拆分：轮次控件行只在完整结束后出现，模型/上下文/缓存常驻状态条"
+    kind: fix
+    symptom: |
+      2026-11-28：会话底部的控件行（复制/fork/完成时间）与统计（模型、上下文、
+      缓存命中）时有时无、重复出现，运行中反复闪现/消失。具体坏法：
+      · 以 ≥5 张同类工具卡收尾的轮次，组卡丢了 turnMeta → 控件整条消失；
+      · 会话级 context_window 补丁只改最后一个条目 → 同一轮拆出两个边界 → 两条控件；
+      · 控件可见性依赖客户端 isStreaming（5 秒 pending 轮询会翻转）→ 已结束轮也闪；
+      · 空轮次合成 turn_meta 假行 → 同步后底部刷出一堆无内容控件行；
+      · 模型/上下文/缓存在每轮页脚重复渲染，各轮数据源不一致 → 有的轮有、有的轮没有。
+    why: |
+      这是本仓库对上游会话时间线的定制：上游没有 blocks 流、TurnMeta、尾部
+      overlay，也没有「轮次身份」概念。修复必须保留三条不变量，否则合上游后
+      同一类问题会原样回来：
+      ① 轮次身份是一等公民：TurnMeta.turnKey（持久 s<seq> / 瞬时 t<idToken>），
+         同一轮所有条目（含工具组卡）共用同一对象；分组绝不跨 turnKey。
+      ② 完成判据只看服务端持久化：completed = seq > 0；不看 isStreaming /
+         pending 轮询。控件行位置由 collectCompletedTurnEndIndices 唯一决定。
+      ③ 状态与控件分离：控件行只含复制/fork/完成时间；模型/上下文/缓存由底部
+         常驻 SessionViewerStatusBar 承担，每个字段各取最近一次有值的 exchange，
+         缺失沿用上一轮的值、无上报则隐藏。
+    files:
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/SessionViewerTurnActions.tsx
+      - web/src/components/session/SessionViewerStatusBar.tsx
+      - web/src/components/session/SessionViewerTokenViews.tsx
+      - web/src/components/session/sessionViewerFormat.ts
+      - web/src/components/session/sessionViewerTypes.ts
+      - web/src/hooks/sessionBlocks.ts
+      - web/src/hooks/sessionTimeline.ts
+      - web/src/hooks/useSessionStream.ts
+      - web/src/shared/sessionStatus.ts
+      - web/tests/session-status-bar.test.mjs
+      - web/tests/session-blocks-render.test.mjs
+      - web/tests/session-tail-dedup.test.mjs
+    tests:
+      - web/tests/session-status-bar.test.mjs
+      - web/tests/session-blocks-render.test.mjs
+      - web/tests/session-tail-dedup.test.mjs
+      - web/tests/thought-placeholder-filter.test.mjs
+      - web/tests/queued-overlay-and-copy.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/session-stream-timeline-split.test.mjs
+    anchors:
+      - 'web/src/hooks/sessionBlocks.ts:completed: seq > 0,'
+      - 'web/src/hooks/sessionBlocks.ts:if (items.length === 0) return items;'
+      - 'web/src/hooks/sessionTimeline.ts:if (next.turnMeta !== item.turnMeta) break;'
+      - 'web/src/hooks/sessionTimeline.ts:turnMeta: item.turnMeta,'
+      - 'web/src/components/session/sessionViewerFormat.ts:export function collectCompletedTurnEndIndices'
+      - 'web/src/components/session/sessionViewerFormat.ts:export function turnFooterMarginTop'
+      - 'web/src/components/session/SessionViewerTimeline.tsx:lastIndexByTurn.get(turnMeta.turnKey) === idx'
+      - 'web/src/components/session/SessionViewerTurnActions.tsx:data-testid="turn-actions"'
+      - 'web/src/shared/sessionStatus.ts:export function selectSessionStatus'
+      - 'web/src/components/session/SessionViewerStatusBar.tsx:data-testid="session-status-bar"'
+      - 'web/src/components/session/SessionViewer.tsx:<SessionViewerStatusBar'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SL
+    title: "查看远端会话时，完成信号必须用持久化窗口重锚（思考块尾部残留）"
+    kind: fix
+    symptom: |
+      2026-11-28：fn 节点 `CMAI / most申报优化` 的会话在回合结束 4 分钟后，消息底部
+      仍挂着一块 1400 字符的「思考过程」，正文的复制/fork 控件行停在它上方。
+      权威块流按 pos 排是思考在前、正文在后，所以这不是落库顺序问题：客户端一直停在
+      流式瞬时行上，从未用持久化块流重建该轮。
+    why: |
+      本仓库的会话视图同时承载「瞬时流」与「持久块流」两套数据，且浏览器只连激活节点的
+      一条 WS。查看远端节点（fn/pc）的会话时，该会话的 `session.done` 不会推过来，
+      唯一的完成通道是 `useReplyingSessionPoll` 的 5s 轮询。上游没有多节点旁路轮询，
+      也没有「seq=0 瞬时行 / 持久块」的分离，合上游时这段必须保留：
+      ① 轮询的 pending true→false 不只用于完成音/未读，还必须在**当前选中会话**
+         上触发重锚；只标未读会让瞬时尾巴永久残留。
+      ② 重锚序列与 WS done 相同：restoreActiveSession 换窗口 → 同步选中态 →
+         viewer 按 `_anchoredAt` 原子换窗；`pending=false` 时
+         `composeLoadedExchanges` 不接回 seq=0，思考尾巴随之退役。
+      ③ 跨节点条目的节点身份必须显式传递（`_nodeId` 优先于 root→node 反推），
+         否则同名项目存在于两个节点时会从错误的机器拉窗口。
+    files:
+      - web/src/app/useReplyingSessionPoll.ts
+      - web/src/app/useAppMultiProjectReload.ts
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/useAppSessionCore.ts
+      - web/src/app/useSessionLifecycle.ts
+      - web/src/app/useSessionSelection.ts
+      - web/src/shared/pendingCompletion.ts
+      - web/tests/thinking-tail-completion-reanchor.test.mjs
+      - docs/plans/2026-11-28-thinking-tail-completion-reanchor.md
+    tests:
+      - web/tests/thinking-tail-completion-reanchor.test.mjs
+      - web/tests/pending-completion-sub-session.test.mjs
+      - web/tests/session-list-time-refresh.test.mjs
+    anchors:
+      - 'web/src/shared/pendingCompletion.ts:export function selectCompletedSelectedSession'
+      - 'web/src/shared/pendingCompletion.ts:if (selectedNode && parsed.nodeId && selectedNode !== parsed.nodeId) continue;'
+      - 'web/src/app/useReplyingSessionPoll.ts:const selectedCompleted = selectCompletedSelectedSession('
+      - 'web/src/app/useReplyingSessionPoll.ts:reanchorSelectedRef.current?.(selectedCompleted);'
+      - 'web/src/app/useSessionLifecycle.ts:const reanchorSession = useCallback('
+      - 'web/src/app/useSessionLifecycle.ts:nodeId: resolvedNodeId,'
+      - 'web/src/app/useSessionLifecycle.ts:_nodeId: resolvedNodeId,'
+      - 'web/src/app/useAppSessionLayer.ts:void reanchorSession(completed.rootId, completed.sessionKey, completed.nodeId);'
+      - 'web/src/app/useAppMultiProjectReload.ts:onSelectedSessionCompleted,'
+      - 'web/tests/thinking-tail-completion-reanchor.test.mjs:test("pending=false 重锚组装必须丢掉 seq=0 的瞬时思考尾巴"'

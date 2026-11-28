@@ -44,6 +44,7 @@ import { SessionViewerRelatedFiles } from "./SessionViewerRelatedFiles";
 import { SessionViewerHeader } from "./SessionViewerHeader";
 import { SessionViewerLoadingState } from "./SessionViewerLoadingState";
 import { SessionViewerWaitingIndicator } from "./SessionViewerWaitingIndicator";
+import { SessionViewerStatusBar } from "./SessionViewerStatusBar";
 import { SessionViewerFloatingControls } from "./SessionViewerFloatingControls";
 import { buildUserMetaButtonStyle, sessionViewerAnimationStyles } from "./sessionViewerStyles";
 import { SessionViewerTimeline } from "./SessionViewerTimeline";
@@ -142,8 +143,8 @@ function SessionViewerInner({
   // 持久行只认「比窗口最新一条更新」的：下界由 computeTailOverlay 从 visibleExchanges 现算，
   // 不持有水位状态。手点「同步」时回包是 afterSeq 之后的整段历史（缓存缺失时就是整个会话），
   // App 缓存会因此装着窗口以下的几百条行；若把「不在窗口里」当成「新尾巴」，它们会被全部
-  // 追加到窗口之后，又因为不在 visibleBlocks 里、`content` 恒空而各自退化成 `turn_meta`
-  // 纯页脚（复制 / 模型 / 用量 / 时间 / 上下文胶囊）—— 就是「同步后底部一大堆控件」。
+  // 追加到窗口之后，又因为不在 visibleBlocks 里、`content` 恒空而各自退化成没有正文的
+  // 尾部行（旧实现还会再画一条只有页脚的控件行）—— 就是「同步后底部一大堆控件」。
   // 窗口以下的持久行一律交给 applyWindow（上翻分页）。
   //
   // 为什么不用 windowMeta 当这个下界：loadMore 与 targetSeq 取窗都会用旧/中段窗口的 meta
@@ -188,7 +189,6 @@ function SessionViewerInner({
     sessionKey,
     composedExchanges,
     effectiveAux,
-    session?.context_window,
     isAwaiting,
     effectiveBlocks,
   );
@@ -438,7 +438,7 @@ function SessionViewerInner({
             {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
             <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
             <SessionViewerLoadingState loadingMore={loadingMore} loading={loading} hasVisibleTimeline={hasVisibleTimeline} />
-            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} isStreaming={isStreaming} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} agents={agents} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} toolViewCache={toolViewCache} />
+            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} toolViewCache={toolViewCache} />
             {SessionViewerSlashCommandResult({
               slashCommandResult,
               hasVisibleTimeline,
@@ -453,6 +453,8 @@ function SessionViewerInner({
               isAwaiting={isAwaiting} isStreaming={isStreaming} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"}
               streamStatusText={streamStatusText} rootColor={rootColor} t={t}
             />
+
+            <SessionViewerStatusBar exchanges={composedExchanges} session={session} agents={agents} themeColor={themeColor} />
 
             <SessionViewerRelatedFiles
               relatedFiles={relatedFiles} relatedFileStatsByKey={relatedFileStatsByKey}

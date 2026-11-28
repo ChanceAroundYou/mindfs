@@ -8,6 +8,11 @@ export type SessionItem = {
   type?: string;
   name?: string;
   agent?: string;
+  // 运行中的实时模型信息（useSessionStreamRuntimeMeta 会写进会话缓存）。状态条用。
+  model?: string;
+  model_display_name?: string;
+  effort?: string;
+  fast_service?: string;
   context_window?: {
     totalTokens: number;
     modelContextWindow: number;

@@ -118,6 +118,7 @@ export function useAppSessionCore(params: UseAppSessionLayerParams) {
 
   const {
     restoreActiveSession,
+    reanchorSession,
     syncSessionHeaderFromListItem,
     loadSessionsForRoot,
     loadChildSessionsForParent,
@@ -279,7 +280,7 @@ export function useAppSessionCore(params: UseAppSessionLayerParams) {
     clearSlashCommandResultForSession, setMultiProjectSessionPending, resolveRootForSessionKey,
     getSessionSnapshot, resolvePendingForSession, clearLocalPendingForSession,
     markSessionStale, clearSessionStale, isSessionStale,
-    restoreActiveSession, syncSessionHeaderFromListItem, loadSessionsForRoot,
+    restoreActiveSession, reanchorSession, syncSessionHeaderFromListItem, loadSessionsForRoot,
     loadChildSessionsForParent, handleSelectSession, tryShowBoundSessionForRoot,
     handleRenameSession, handleSyncSession,
     updateSessionRelatedFilesForKey, updateSessionRelatedWorktreeForKey,

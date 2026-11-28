@@ -1,37 +1,30 @@
 import React from "react";
 import type { TokenUsage } from "../../shared/sessionTypes";
-import { formatCompactTokenCount, formatContextWindowPercent, formatTurnTokenCount } from "./sessionViewerFormat";
+import { formatCompactTokenCount, formatContextWindowPercent } from "./sessionViewerFormat";
 
-export function TurnTokenUsage({ usage }: { usage?: TokenUsage }) {
-  if (!usage) {
+/**
+ * 缓存命中率徽标（常驻状态条用）。
+ *
+ * 只显示 harness **确实上报** 的缓存读字段；没有 `cacheReadTokens` 时返回 null，
+ * 由状态条隐藏该项 —— 不能把「未上报」画成 0%。
+ */
+export function CacheHitBadge({ usage }: { usage?: TokenUsage }) {
+  if (!usage || !Number.isFinite(usage.cacheReadTokens)) {
     return null;
   }
   const inputTokens = Math.max(0, Number(usage.inputTokens || 0));
-  const outputTokens = Math.max(0, Number(usage.outputTokens || 0));
-  if (!inputTokens && !outputTokens) {
+  if (inputTokens <= 0) {
     return null;
   }
-  const cacheReadReported = Number.isFinite(usage.cacheReadTokens);
   const cacheReadTokens = Math.max(0, Number(usage.cacheReadTokens || 0));
-  const hitPercent = inputTokens > 0 && cacheReadReported
-    ? Math.round(Math.min(1, cacheReadTokens / inputTokens) * 100)
-    : null;
-  const cacheLabel = hitPercent === null ? "—" : `${hitPercent}%`;
+  const percent = Math.round(Math.min(1, cacheReadTokens / inputTokens) * 100);
   return (
     <span
-      title={`${inputTokens}(♻ ${cacheLabel})→${outputTokens}`}
-      style={{
-        display: "inline-flex",
-        alignItems: "baseline",
-        flexWrap: "wrap",
-        minWidth: 0,
-        fontVariantNumeric: "tabular-nums",
-      }}
+      data-testid="status-cache"
+      title={`♻ ${formatCompactTokenCount(cacheReadTokens)}/${formatCompactTokenCount(inputTokens)} cached`}
+      style={{ fontVariantNumeric: "tabular-nums" }}
     >
-      <span>{formatTurnTokenCount(inputTokens)}</span>
-      <span>{`(♻ ${cacheLabel})`}</span>
-      <span>→</span>
-      <span>{formatTurnTokenCount(outputTokens)}</span>
+      {`♻ ${percent}%`}
     </span>
   );
 }

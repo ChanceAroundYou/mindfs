@@ -87,7 +87,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     clearSlashCommandResultForSession, setMultiProjectSessionPending, resolveRootForSessionKey,
     getSessionSnapshot, resolvePendingForSession, clearLocalPendingForSession,
     markSessionStale, clearSessionStale, isSessionStale,
-    restoreActiveSession, syncSessionHeaderFromListItem, loadSessionsForRoot,
+    restoreActiveSession, reanchorSession, syncSessionHeaderFromListItem, loadSessionsForRoot,
     loadChildSessionsForParent, handleSelectSession, tryShowBoundSessionForRoot,
     handleRenameSession, handleSyncSession,
     updateSessionRelatedFilesForKey, updateSessionRelatedWorktreeForKey,
@@ -153,6 +153,17 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
 
 
 
+  // 跨节点完成信号 → 重锚当前会话。
+  // 浏览器只连激活节点的一条 WS，远端会话的 `session.done` 收不到；5s 旁路轮询的
+  // pending true→false 是唯一完成信号。只放完音/标未读会让视图永久停在流式瞬时行
+  //（正文之后残留思考块）。回调走 ref 进入轮询 hook，引用变化不会重启 5s 轮询。
+  const handleSelectedSessionCompleted = useCallback(
+    (completed: { nodeId: string; rootId: string; sessionKey: string }) => {
+      void reanchorSession(completed.rootId, completed.sessionKey, completed.nodeId);
+    },
+    [reanchorSession],
+  );
+
   const { scheduleMultiProjectSessionReload, refreshMultiProjectReplyingSessions } = useAppMultiProjectReload({
     MULTI_PROJECT_RELOAD_DEBOUNCE_MS,
     applyPendingToMultiProjectGroups,
@@ -162,6 +173,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     multiProjectPendingRef,
     multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
+    onSelectedSessionCompleted: handleSelectedSessionCompleted,
     playCompletionSound: () => playNotificationSound("complete"),
     selectedSessionRef,
     setMultiProjectPendingByKey,

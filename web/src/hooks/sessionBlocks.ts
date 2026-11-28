@@ -22,26 +22,25 @@ import {
 } from "../shared/thoughtText";
 
 /**
- * 一轮 agent 回复的页脚数据（模型、耗时、用量、上下文窗口）。
+ * 一轮 agent 回复的身份与页脚数据（时间、正文、完成判据）。
  *
  * 为什么挂在**每个条目**上而不是最后一个 assistant_text 上：一轮回复可能以工具卡或
- * 思考卡收尾（CLI 常见：最后一步先调工具，或只产出 reasoning），也可能整轮都被过滤
- * （纯标点 reasoning）。只贴 assistant_text 会让这些轮次**没有页脚**。时间线渲染时
- * 只在「该轮最后一行」画它，所以数据必须在每行都取得到。
+ * 思考卡收尾（CLI 常见：最后一步先调工具，或只产出 reasoning）。只贴 assistant_text
+ * 会让这些轮次**没有控件行**。时间线渲染时只在「该轮最后一行」画一次，所以数据必须
+ * 在每行都取得到，且所有条目共用**同一个对象**（分组、缓存都靠它认轮）。
+ *
+ * `completed` 直接取「服务端已持久化」（seq > 0）而不是客户端的 isStreaming：
+ * 轮次落盘就是回合结束的权威信号；流式期的瞬时行没有 seq，永远不会出现控件。
+ * 这样控件行既不依赖 5s 轮询的 pending 翻转（闪、消失），也不会在运行中出现。
  */
 export type TurnMeta = {
+  /** 轮次身份：持久行 `s<seq>`，瞬时行 `t<idToken>`。分组/收尾判据都按它。 */
+  turnKey: string;
+  /** 服务端已持久化 = 这一轮已完整结束。 */
+  completed: boolean;
   timestamp?: string;
   agent?: string;
-  model?: string;
-  modelDisplayName?: string;
-  effort?: string;
-  fastService?: string;
   seq?: number;
-  contextWindow?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  tokenUsage?: TokenUsage;
   /** 该轮的正文（复制按钮用）。 */
   content: string;
 };
@@ -62,18 +61,7 @@ export type TimelineItem =
   | { id: string; type: "tool_group"; kind: string; toolCalls: ToolCall[]; turnMeta?: TurnMeta }
   | { id: string; type: "todo"; todoUpdate: TodoUpdate; timestamp?: string; turnMeta?: TurnMeta }
   | { id: string; type: "plan"; planUpdate: PlanUpdate; timestamp?: string; turnMeta?: TurnMeta }
-  | { id: string; type: "compact"; compactNotice: CompactNotice; timestamp?: string; turnMeta?: TurnMeta }
-  /**
-   * 纯页脚行：整轮没有任何可渲染条目时（例如只有纯标点 reasoning 被过滤），
-   * 仍要让模型/用量/上下文可见，所以单独产出一行，只画页脚。
-   */
-  | {
-      id: string;
-      type: "turn_meta";
-      timestamp?: string;
-      seq?: number;
-      turnMeta: TurnMeta;
-    };
+  | { id: string; type: "compact"; compactNotice: CompactNotice; timestamp?: string; turnMeta?: TurnMeta };
 
 /**
  * 渲染块所需的那部分 exchange 字段。刻意不直接引 `Session` / `SessionItem`：
@@ -161,33 +149,34 @@ export function blocksTextContent(blocks: SessionBlock[]): string {
 }
 
 /**
- * 把 exchange 上的模型/用量/窗口字段收成一份页脚数据。
- * 各条目共用同一个对象引用：一轮只有一份页脚，渲染时只在最后一行用。
+ * 把 exchange 的身份与页脚字段收成一份数据。
+ *
+ * 持久行（seq > 0）用 `s<seq>` 认轮 —— seq 全会话唯一，跨重渲染稳定；瞬时行用调用方
+ * 传入的全数组位置 token，避免两轮流式内容撞成同一把 key。各条目共用同一个对象引用：
+ * 一轮只有一份控件行，分组与渲染都靠这个身份。
  */
 export function turnMetaFromExchange(
   ex: BlockExchangeLike,
   content: string,
+  idToken?: string,
 ): TurnMeta {
+  const seq = Number(ex.seq || 0);
   return {
+    turnKey: seq > 0 ? `s${seq}` : `t${idToken || ex.timestamp || "transient"}`,
+    completed: seq > 0,
     timestamp: ex.timestamp,
     agent: ex.agent,
-    model: ex.model,
-    modelDisplayName: ex.model_display_name,
-    effort: ex.effort,
-    fastService: ex.fast_service,
     seq: ex.seq,
-    contextWindow: ex.context_window,
-    tokenUsage: ex.token_usage,
     content,
   };
 }
 
 /**
- * 给一轮的所有条目挂上页脚数据；整轮没有任何条目时产出一行纯页脚。
+ * 给一轮的所有条目挂上轮次身份。
  *
- * 纯页脚行的 id 必须与真实块 id 不冲突：块 id 是 `block:<seq>:<pos>`（pos ≥ 0），
- * 这里用 -1。瞬时轮次没有 seq，必须用调用方传入的 idToken（全数组位置）——
- * 否则所有瞬时纯页脚行都会落到 `block:0:-1`，React/virtual key 重复。
+ * 整轮没有任何可渲染条目时返回空数组：控件行没有锚点，模型/上下文由常驻状态条
+ * 承载，不再为了「这一轮发生过」造一条只有页脚的假行（那正是同步后底部刷出一堆
+ * 控件、以及 turn_meta 边界把上一轮页脚吞掉的来源）。
  */
 export function attachTurnFooter(
   items: TimelineItem[],
@@ -195,23 +184,8 @@ export function attachTurnFooter(
   content: string,
   idToken?: string,
 ): TimelineItem[] {
-  const meta = turnMetaFromExchange(ex, content);
-  if (items.length === 0) {
-    const seq = Number(ex.seq || 0);
-    const stableID =
-      seq > 0
-        ? blockItemID(seq, -1)
-        : `turn_meta:${idToken || meta.timestamp || "transient"}`;
-    return [
-      {
-        id: stableID,
-        type: "turn_meta",
-        timestamp: meta.timestamp,
-        seq: meta.seq,
-        turnMeta: meta,
-      },
-    ];
-  }
+  if (items.length === 0) return items;
+  const meta = turnMetaFromExchange(ex, content, idToken);
   return items.map((item) => ({ ...item, turnMeta: meta }));
 }
 

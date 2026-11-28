@@ -97,12 +97,18 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
     async (
       rootID: string | null | undefined,
       sessionKey: string | null | undefined,
+      nodeID?: string | null,
     ): Promise<Session | null> => {
       const resolvedRoot = String(rootID || "");
       const resolvedKey = String(sessionKey || "");
       if (!resolvedRoot || !resolvedKey || resolvedKey.startsWith("pending-")) {
         return null;
       }
+      // 显式节点身份优先：跨节点列表/旁路轮询里的条目自带 `_nodeId`，让裸 rootId
+      // 决定命运会在「同名项目存在于两个节点」时解析到错误机器（根因与
+      // `getNodeIdForProject` 的注释相同）。未提供时才回退 root→node 映射。
+      const resolvedNodeId =
+        String(nodeID || "").trim() || getNodeIdForRoot(resolvedRoot) || undefined;
       const cacheKey = rootSessionKey(resolvedRoot, resolvedKey);
       const cachedBeforeSync = sessionCacheRef.current[cacheKey];
       // 加载前内存缓存里的行 —— 「在途内容（seq=0）」的唯一来源。
@@ -133,7 +139,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
           setWindowedView(resolvedKey, true);
           const win = await getSessionWindow(resolvedRoot, resolvedKey, {
             latest: SESSION_WINDOW_SIZE,
-            nodeId: getNodeIdForRoot(resolvedRoot),
+            nodeId: resolvedNodeId,
             // CUSTOM(G-JU): 紧接着挂载的 SessionViewer init effect 会拉同参数窗口；
             // 这里把结果留 2 秒可复用，让「打开会话」这条路只发一次请求。
             reuseWithinMs: OPEN_SESSION_WINDOW_REUSE_MS,
@@ -170,6 +176,9 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
               // CUSTOM(G-Z): 窗口/列表回包不带 root_id（root 只是请求参数），
               // 这里不补，缓存里就是「无主」会话 —— 二次跳转时归属会退化成当前根。
               root_id: resolvedRoot,
+              // 节点身份随会话走：后续 `toSessionItem` 是白名单构造器，丢了这格
+              // 远端会话再被选中/重锚时就只能靠 root→node 猜测。
+              _nodeId: resolvedNodeId,
               pending,
               // 加载时的唯一组装规则：服务端行并入缓存，在途时再把 seq=0 接回。
               // 判据是 `pending` —— 不在跑就没有在途内容，缓存里的 seq=0 全是残留
@@ -209,7 +218,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
         }
         // 回退：全量 syncSession（保持原有 pending/转瞬态逻辑）
         const syncResult = await syncSession(resolvedRoot, resolvedKey, {
-          nodeId: getNodeIdForRoot(resolvedRoot),
+          nodeId: resolvedNodeId,
         });
         let fullSession = syncResult?.session as any;
         if (!fullSession) {
@@ -255,6 +264,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
           key: resolvedKey,
           // CUSTOM(G-Z): 同窗口分支 —— 全量 sync 回包同样不带 root_id。
           root_id: resolvedRoot,
+          _nodeId: resolvedNodeId,
           pending,
           _windowMeta: anchoredMeta as any,
           _anchoredAt: anchorAt,
@@ -268,6 +278,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
           ...(fullSession as any),
           key: resolvedKey,
           root_id: resolvedRoot,
+          _nodeId: resolvedNodeId,
           pending,
           _windowMeta: anchoredMeta as any,
           _anchoredAt: anchorAt,
@@ -293,6 +304,63 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
       enforceSessionCacheBound,
       resolvePendingForSession,
       rootSessionKey,
+    ],
+  );
+  /**
+   * 完成即重锚：把「某会话已结束」的权威状态（持久化窗口/块流）装回当前视图。
+   *
+   * `restoreActiveSession` 只替换内存缓存；选中会话必须再把 state 换成新缓存，
+   * viewer 才会按 `_anchoredAt` 一次性应用，流式期间留下的 seq=0 瞬时尾巴
+   * （典型就是正文之后那块思考）也才会被丢掉。序列与 `useSessionRestore` 初次
+   * 加载、`useRealtimeEvents` 的 done 重放一致。
+   *
+   * 远端节点的 `session.done` 不会推到本节点 WS，5s 旁路轮询是唯一的完成信号，
+   * 所以这条序列必须能从轮询路径到达。
+   */
+  const reanchorSession = useCallback(
+    async (
+      rootID: string,
+      sessionKey: string,
+      nodeID?: string | null,
+    ): Promise<Session | null> => {
+      const restored = await restoreActiveSession(rootID, sessionKey, nodeID);
+      if (!restored) {
+        return null;
+      }
+      const cacheKey = rootSessionKey(rootID, sessionKey);
+      loadedSessionRef.current[cacheKey] = true;
+      clearSessionStale(rootID, sessionKey);
+      delete sessionLoadFailureRef.current[cacheKey];
+      setSelectedSession((prev) => {
+        const prevKey = prev?.key || prev?.session_key;
+        const prevRoot =
+          (prev?.root_id as string | undefined) || currentRootIdRef.current;
+        if (!prev || prevKey !== sessionKey || prevRoot !== rootID) {
+          return prev;
+        }
+        return toSessionItem(rootID, {
+          ...(prev as any),
+          ...(restored as any),
+          key: sessionKey,
+          session_key: sessionKey,
+          root_id: rootID,
+        });
+      });
+      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
+        setDrawerSessionForRoot(rootID, restored);
+      }
+      return restored;
+    },
+    [
+      boundSessionByRootRef,
+      clearSessionStale,
+      currentRootIdRef,
+      loadedSessionRef,
+      restoreActiveSession,
+      rootSessionKey,
+      scopedRootKey,
+      setDrawerSessionForRoot,
+      setSelectedSession,
     ],
   );
   const { syncSessionHeaderFromListItem, loadSessionsForRoot, loadChildSessionsForParent } = useSessionListLoading(params);
@@ -395,6 +463,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
 
   return {
     restoreActiveSession,
+    reanchorSession,
     syncSessionHeaderFromListItem,
     loadSessionsForRoot,
     loadChildSessionsForParent,

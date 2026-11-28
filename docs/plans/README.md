@@ -10,6 +10,8 @@ to resume their old TODOs or baselines.
 
 ## Active
 
+- [会话尾部重构：轮次控件行 · 常驻状态条](../superpowers/plans/2026-11-28-session-tail-controls-and-status-bar.md) — Plan 2026-11-28，Scope: G-SK，任务 #137。用户报底部控件/统计仍时有时无、重复、运行中闪现；复现出三个确定性根因：①会话级 `context_window` 补丁只改最后一个条目，拆散同一轮的 `TurnMeta` 对象 → 两条控件行；②≥5 张同类工具卡分组时丢掉 `turnMeta` → 以工具卡收尾的轮次没有控件行，且可跨轮合并；③控件可见性依赖客户端 `isStreaming`（5 秒 pending 轮询翻转）→ 已结束轮次也跟着闪。另有空轮次合成 `turn_meta` 假行、每轮重复渲染模型/用量。重构：`TurnMeta` 增加 `turnKey` 与 `completed`（`seq > 0` = 服务端已持久化），工具分组按身份合并并携带身份；控件位置由纯函数 `collectCompletedTurnEndIndices` 唯一决定，只显示复制/fork/完成时间；模型/上下文/缓存移到底部常驻 `SessionViewerStatusBar`（等待指示器之后、关联文件之前），每个字段各取最近一次有值的 exchange、会话级兜底、缺失隐藏。删除 `applySessionContextWindow`、`isAssistantFlowEnd`、`turn_meta` 假行与会话级窗口入参。全量 Web 门禁绿（1075 条），待 `build-web` / `check-upstream`；本机重启仍由用户执行，未 push / 未部署。
+
 - [提问卡可见性：看板即时刷新 · 等待/已答复/已关闭状态一致](../superpowers/plans/2026-11-27-ask-card-freshness-and-states.md) — Plan 2026-11-27，Scope: G-SD。重启后仍有 ask 延迟的取证结论：动作已不再被拒（12+ 条 decision 全 applied），但看板卡片只认 `task.updated` 而 Router ask 只广播 `task.activity.*`，等待徽标要等下一次无关事件；worker ask 在回合结束收口时又只收卡、不清 `aux_flags.ask_user_waiting`。修法：提问的出现/作答/收口三处各推一次任务卡刷新，收口同时清 aux 标志；前端把 waiting/answered/closed 三态做成统一胶囊与配色，已答复显示答案摘要、已关闭显示收口原因。
 
 - [发布 v0.5.6：NSIS payload 绝对路径](../superpowers/plans/2026-11-27-release-v056-nsis-payload.md) — Scope: G-SC。`make release` 在 NSIS 步报 `no files found`：相对 `dist/nsis-payload\*.*` 在 Linux makensis 上匹配为空（最小 .nsi 复现：相对失败、绝对成功）。构建脚本先把 DIST_DIR 转成绝对路径再传给 -DPAYLOAD；定向测试钉住该契约。

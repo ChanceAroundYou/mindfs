@@ -60,17 +60,17 @@ test("B1: session content bottom stays compact, clearance guard lives in scroll-
   assert.match(viewer, /scrollPaddingBottom: `\$\{composerOverlayInset \+ 20\}px`/);
 });
 
-test("C1: turn footer owns copy wiring", () => {
-  // 2026-11-15：页脚从最后一个 assistant_text 挪到整轮末尾（工具/思考收尾的轮次
-  // 原本没有页脚）。复制按钮的接线必须完整地活在新路径上，否则点复制同步抛
-  // TypeError 且无反馈。
-  const footer = read("src/components/session/SessionViewerTurnMeta.tsx");
-  assert.match(timeline, /renderTurnFooter/);
+test("C1: turn actions own copy wiring", () => {
+  // 2026-11-28：页脚拆成「轮次控件行 + 常驻状态条」。控件行只在已完成轮次后出现，
+  // 复制按钮的接线必须完整地活在 SessionViewerTurnActions 上。
+  const actions = read("src/components/session/SessionViewerTurnActions.tsx");
+  assert.match(timeline, /renderTurnActions/);
   assert.match(timeline, /copyText\(meta\.content\)/);
   assert.match(timeline, /setCopiedMessageKeys/);
   assert.match(timeline, /copyResetTimersRef/);
   assert.match(timeline, /reportError\(\s*"clipboard\.write_failed"/);
-  assert.match(footer, /onClick=\{onCopy\}/);
-  assert.match(footer, /aria-label=\{t\("session\.copyMarkdown"\)\}/);
-  assert.match(footer, /aria-label=\{t\("session\.forkFromMessage"\)\}/);
+  assert.match(timeline, /turnMeta\?\.completed && lastIndexByTurn\.get\(turnMeta\.turnKey\) === idx/);
+  assert.match(actions, /onClick=\{onCopy\}/);
+  assert.match(actions, /aria-label=\{t\("session\.copyMarkdown"\)\}/);
+  assert.match(actions, /aria-label=\{t\("session\.forkFromMessage"\)\}/);
 });
