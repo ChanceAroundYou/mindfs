@@ -54,7 +54,7 @@ export function useSessionViewerScrollState(activeScrollRef: RefObject<HTMLDivEl
 
 export function useSessionViewerScrollPositionEffects({
   activeScrollRef, interactionMode, isPrependingRef, lastSessionKeyRef,
-  scrollEndRef, scrollToRelatedFilesDividerRef, sessionKey, timelineLength,
+  scrollEndRef, sessionKey, timelineLength,
   timelineTailId, isStreaming, streamVersion, slashCommandResult, shouldStickToBottomRef,
   viewportStickFrameRef, stickSessionToBottom,
 }: {
@@ -63,7 +63,6 @@ export function useSessionViewerScrollPositionEffects({
   isPrependingRef: MutableRefObject<boolean>;
   lastSessionKeyRef: MutableRefObject<string | null>;
   scrollEndRef: RefObject<HTMLDivElement | null>;
-  scrollToRelatedFilesDividerRef: RefObject<(behavior?: ScrollBehavior) => void>;
   sessionKey: string | null;
   timelineLength: number;
   timelineTailId: string;
@@ -84,7 +83,7 @@ export function useSessionViewerScrollPositionEffects({
       if (interactionMode === "drawer" && shouldStickToBottomRef.current) {
         const frame = window.requestAnimationFrame(() => {
           const retry = activeScrollRef?.current;
-          if (retry && shouldStickToBottomRef.current) scrollToRelatedFilesDividerRef.current("auto");
+          if (retry && shouldStickToBottomRef.current) stickSessionToBottom("auto");
         });
         return () => window.cancelAnimationFrame(frame);
       }
@@ -100,7 +99,7 @@ export function useSessionViewerScrollPositionEffects({
       shouldStickToBottomRef.current = true;
     }
     if (shouldStickToBottomRef.current) {
-      scrollToRelatedFilesDividerRef.current("auto");
+      stickSessionToBottom("auto");
     }
   }, [sessionKey, timelineLength, timelineTailId, isStreaming, streamVersion, slashCommandResult]);
 

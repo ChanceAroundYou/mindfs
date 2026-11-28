@@ -1,5 +1,23 @@
 import React from "react";
 
+/**
+ * 等待提示是否占位。由底部栏与组件内部共用同一判据，避免「槽位显示控件、组件却渲染空」
+ * 这类两套条件漂移。
+ */
+export function hasSessionWaitingIndicator({
+  isAwaiting,
+  isStreaming,
+  isDelegating,
+  isAwaitingAnswer,
+}: {
+  isAwaiting: boolean;
+  isStreaming: boolean;
+  isDelegating?: boolean;
+  isAwaitingAnswer?: boolean;
+}): boolean {
+  return !!isAwaiting || !!isStreaming || !!isDelegating || !!isAwaitingAnswer;
+}
+
 export function SessionViewerWaitingIndicator({
   isAwaiting,
   isStreaming,
@@ -25,7 +43,7 @@ export function SessionViewerWaitingIndicator({
   if (!isAwaiting && !isStreaming && !hollow) return null;
   const awaitingColor = String(rootColor || "").trim() || "var(--accent-color)";
   return (
-    <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
       <span
         style={
           hollow

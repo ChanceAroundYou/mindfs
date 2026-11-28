@@ -1,34 +1,31 @@
 import React from "react";
-import type { TurnMeta } from "../../hooks/sessionBlocks";
 import type { MessageKey } from "../../i18n/index";
-import { AgentIcon } from "../agent/AgentIcon";
 import { ForkIcon } from "./AskUserQuestionCard";
 
 /**
- * 一轮**已完整结束**的 agent 回复的控件行：复制 / fork / agent 图标 / 完成时间。
+ * 一轮**已完整结束**的 agent 回复的控件行：复制 / fork / 完成时间。
  *
- * 只放「作用于这一轮」的控件；模型、上下文、缓存命中属于会话的持续状态，放在消息
- * 列表尾部的常驻状态条（`SessionViewerStatusBar`），不随每轮重复。
+ * 只放「作用于这一轮」的控件；模型、上下文、缓存命中属于会话的持续状态，放在同行的
+ * 右侧常驻状态条（`SessionViewerStatusBar`），不随每轮重复。agent 身份也在状态条里，
+ * 这里不再重复画图标。
  *
- * 可见性由调用方按 `meta.completed`（服务端已持久化）与轮次末行位置判定 —— 不依赖
- * 客户端的流式/轮询状态，运行中不会闪。
+ * 位置由 `SessionViewerBottomBar` 的左侧槽位决定：运行中/子代理运行中时整条隐藏，
+ * 让位给等待提示；同一时刻只显示最新一个已完成轮次的控件。
  */
 export type SessionViewerTurnActionsProps = {
-  meta: TurnMeta;
   time: string;
   durationLabel: string;
   copied: boolean;
   t: (key: MessageKey) => string;
   themeColor: string;
   userMetaButtonStyle: React.CSSProperties;
-  /** 距上一行的上外边距：文本流收紧、卡片收尾必须为正（见 turnFooterMarginTop）。 */
+  /** 距槽位上沿的外边距；底部栏传 0，由行容器统一控制间距。 */
   marginTop: string;
   onCopy: () => void;
   onFork?: () => void;
 };
 
 export function SessionViewerTurnActions({
-  meta,
   time,
   durationLabel,
   copied,
@@ -43,7 +40,7 @@ export function SessionViewerTurnActions({
     <span
       data-testid="turn-actions"
       style={{
-        alignSelf: "flex-start",
+        alignSelf: "center",
         display: "inline-flex",
         flexWrap: "nowrap",
         alignItems: "center",
@@ -114,10 +111,6 @@ export function SessionViewerTurnActions({
             <ForkIcon />
           </button>
         ) : null}
-        <AgentIcon
-          agentName={meta.agent || ""}
-          style={{ width: "12px", height: "12px", flexShrink: 0 }}
-        />
       </span>
       <span
         data-testid="turn-meta-time"

@@ -221,10 +221,11 @@ export function isAuxiliaryTimelineItem(item: TimelineItem | null): boolean {
 /**
  * 每个已完成轮次在时间线里的**唯一**收尾下标。
  *
- * 控件行的可见性只看这张表：`turnKey → 该轮最后一行`。
- * - 与 `isStreaming` 无关 —— pending 轮询翻转不会让控件闪；
+ * - 与 `isStreaming` 无关 —— pending 轮询翻转不会让轮次边界闪；
  * - 与相邻项类型无关 —— 工具卡分组、瞬时行都不会算错边界；
- * - 按轮次身份去重 —— 同一轮后面的瞬时时/持久行不会各画一次。
+ * - 按轮次身份去重 —— 同一轮后面的瞬时时/持久行不会各算一次。
+ *
+ * 底部控件槽只取其中最新的一项（见 findLatestCompletedTurnIndex）。
  */
 export function collectCompletedTurnEndIndices(
   items: readonly TimelineItem[],
@@ -238,25 +239,18 @@ export function collectCompletedTurnEndIndices(
 }
 
 /**
- * 轮次控件行离上一行的上外边距。
+ * 最新一个**已完整结束**轮次的收尾下标；没有则 -1。
  *
- * 正文是 markdown，段落自带约 10px 下边距，-10px 正好收紧、页脚紧贴段落底部；
- * 思考（ThinkingBlock）、工具卡、组卡、待办、计划、压缩块都是**自带边框与内边距的
- * 卡片**，没有段落下边距可抵，负外边距会把页脚拽进卡片里（2026-11-16 真机：
- * `/compact` 那一轮页脚的图标与 `78%-used` 被压缩块下沿吞掉）。
+ * 底部控件槽只显示一个轮次：运行中让位给等待提示，空闲时显示最新完成轮。
+ * 仍以 `turnMeta.completed` 为唯一判据 —— 客户端流式/轮询状态不参与，收尾后不会闪。
  */
-export function turnFooterMarginTop(item: TimelineItem | null): string {
-  switch (item?.type) {
-    case "thought":
-    case "tool":
-    case "tool_group":
-    case "todo":
-    case "plan":
-    case "compact":
-      return "4px";
-    default:
-      return "-10px";
+export function findLatestCompletedTurnIndex(
+  items: readonly TimelineItem[],
+): number {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    if (items[i]?.turnMeta?.completed) return i;
   }
+  return -1;
 }
 
 export function timelineItemSpacing(
@@ -270,10 +264,6 @@ export function timelineItemSpacing(
     return "6px";
   }
   return "16px";
-}
-
-export function shouldDefaultCollapseRelatedFiles(_isMobile?: boolean, _relatedFileCount?: number): boolean {
-  return true;
 }
 
 export const USER_MESSAGE_SUMMARY_LENGTH = 48;

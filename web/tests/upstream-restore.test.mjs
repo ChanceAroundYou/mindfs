@@ -41,8 +41,9 @@ const sessionSelection = readFileSync(new URL("../src/app/useSessionSelection.ts
 assert.match(taskDrawer, /handleSelectSession[\s\S]*?preserveTaskSelection/, "3951aa4 App should carry preserveTaskSelection");
 assert.match(sessionSelection, /if \(!options\?\.preserveTaskSelection\)[\s\S]*?setSelectedKanbanTaskId\(""\);/, "3951aa4 App should clear kanban task unless preserve");
 assert.match(taskDrawer, /handleSelectSession\(target as any, \{\s*preserveTaskSelection: true/, "3951aa4 App drawer should pass preserveTaskSelection");
-const relatedFilesHook = readFileSync(new URL("../src/components/session/useRelatedFiles.ts", import.meta.url), "utf8");
-assert.match(relatedFilesHook, /const displayFileGroups = groupRelatedFiles/, "3951aa4 useRelatedFiles should show all related files without slicing");
+// 会话底部的关联文件面板已于 2026-11-28 整体移除（G-SK），面板唯一入口改为左侧栏；
+// useRelatedFiles / SessionViewerRelatedFiles 不再存在，3951aa4 的「展示全部文件、不切片」
+// 约束随之失去载体，保留其上层契约即可。
 assert.doesNotMatch(viewer, /showAllFiles/, "3951aa4 SessionViewer should not have showAllFiles toggle");
 assert.doesNotMatch(viewer, /hasMoreFiles/, "3951aa4 SessionViewer should not have hasMoreFiles");
 assert.doesNotMatch(viewer, /session\.more/, "3951aa4 SessionViewer should not reference session.more");
@@ -70,14 +71,11 @@ assert.match(
 );
 
 // c0a4398 — related-file git-diff line stats hook wiring
+// 2026-11-28：会话底部关联文件面板移除后，这份 wiring 只剩左侧栏根视图一条路径（G-SK）。
 const rootContentView = readFileSync(new URL("../src/app/useRootContentView.ts", import.meta.url), "utf8");
 assert.match(rootContentView, /useRelatedFileStats/, "c0a4398 App should wire useRelatedFileStats");
 assert.match(rootContentView, /gitStatsRefreshKey/, "c0a4398 App should compute gitStatsRefreshKey");
 assert.match(rootRelatedView, /selectedRelatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 related-files view should resolve stats by relatedFileStatKey");
-const relatedFilesHook2 = readFileSync(new URL("../src/components/session/useRelatedFiles.ts", import.meta.url), "utf8");
-assert.match(relatedFilesHook2, /useRelatedFileStats/, "c0a4398 SessionViewer should wire useRelatedFileStats");
-const sessionViewerRelatedFiles = readFileSync(new URL("../src/components/session/SessionViewerRelatedFiles.tsx", import.meta.url), "utf8");
-assert.match(sessionViewerRelatedFiles, /relatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 SessionViewer should resolve stats by relatedFileStatKey");
 const hook = readFileSync(new URL("../src/hooks/useRelatedFileStats.ts", import.meta.url), "utf8");
 assert.match(hook, /export function useRelatedFileStats/, "c0a4398 hook should exist");
 
