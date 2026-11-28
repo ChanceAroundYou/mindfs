@@ -1,4 +1,4 @@
-"""真压缩 + 整轮页脚（模型/用量/上下文）端到端测试。
+"""真压缩 + 会话尾部双区（轮次控件行 · 常驻状态条）端到端测试。
 
 跑法（刻意不进常规门禁，会真调模型、真烧 token）：
 
@@ -9,7 +9,9 @@
 
 - 真打满 200k 窗口并触发 **真实自动压缩**（不是 mock）：选 Claude Code + `ok`
   模型（菜单里的 id 是 `haiku`，发送时映射成 `ok`），1M 开关关闭。
-- 页脚在各类轮次末尾都要在：正常文本收尾、工具收尾、**打断**、压缩之后。
+- 轮次控件行（复制/fork/完成时间）只在**已完整结束**的轮次后出现：正常文本收尾、
+  工具收尾、**打断**、压缩之后各一次，且运行中不出现。
+- 状态条常驻：模型名、上下文窗口（200k → 压缩后下降）在运行中与结束后都在。
 - 压缩链路真的经过 compact-strip 代理：`[proxy] session bound` / `first request`
   / `post-compact signal` / `compact-strip before→after` 四类日志。
 
@@ -19,9 +21,10 @@
 
 为什么这些断言长这样（踩过的坑）：
 
-- 页脚曾经只挂在「最后一个 assistant_text」上：工具卡/思考卡收尾的轮次没有页脚，
-  纯标点 reasoning 被过滤后整轮连行都没有。所以这里逐轮断言「该轮最后一行后面
-  有且只有一个页脚」，而不是全局找 `turn-meta`。
+- 旧页脚把模型/用量/上下文和复制按钮混在每轮末尾：统计随轮次缺失，控件又依赖
+  客户端流式状态而闪烁。2026-11-28 拆成 `turn-actions`（每轮一次，完成才出现）
+  与 `session-status-bar`（会话级常驻）。因此这里分别计数与断言，不再找一个
+  `turn-meta` 元素包办两件事。
 - compact-strip 代理曾经因为解析不到上游 base URL 而**整条链路静默不生效**
   （CLI 直接连 llmux，日志一行 `[proxy]` 都没有）。所以 `session bound` 与
   `first request` 是硬断言，不是参考信息。
@@ -196,28 +199,28 @@ def _send(page: Page, text: str) -> None:
     button.click()
 
 
-def _footer_count(page: Page) -> int:
-    return page.locator('[data-testid="turn-meta"]').count()
+def _actions_count(page: Page) -> int:
+    """已完整结束轮次的控件行数（运行中的轮次还没有 seq，不计数）。"""
+    return page.locator('[data-testid="turn-actions"]').count()
 
 
-def _wait_for_new_footer(page: Page, previous: int, timeout_ms: int = TURN_TIMEOUT_MS) -> None:
+def _wait_for_new_actions(page: Page, previous: int, timeout_ms: int = TURN_TIMEOUT_MS) -> None:
     deadline = time.time() + timeout_ms / 1000
     while time.time() < deadline:
-        if _footer_count(page) > previous:
+        if _actions_count(page) > previous:
             return
         page.wait_for_timeout(500)
-    raise AssertionError(f"{timeout_ms}ms 内没有出现新的整轮页脚（上一轮计数 {previous}）")
+    raise AssertionError(f"{timeout_ms}ms 内没有出现新的轮次控件行（上一轮计数 {previous}）")
 
 
-def _footer_text(page: Page, index: int) -> str:
-    return page.locator('[data-testid="turn-meta"]').nth(index).inner_text().strip()
+def _status_text(page: Page) -> str:
+    return page.locator('[data-testid="session-status-bar"]').inner_text().strip()
 
 
-def _context_badge(page: Page, index: int) -> str:
+def _context_badge(page: Page) -> str:
     return (
-        page.locator('[data-testid="turn-meta"]')
-        .nth(index)
-        .locator('[data-testid="turn-meta-context"]')
+        page.locator('[data-testid="session-status-bar"]')
+        .locator('[data-testid="status-context"]')
         .inner_text()
         .strip()
     )
@@ -251,30 +254,30 @@ def _fill_char_count() -> int:
 # ── 主测试 ─────────────────────────────────────────────────────────────────
 
 
-def test_real_compaction_and_turn_footer_states(page: Page) -> None:
+def test_real_compaction_and_turn_actions_states(page: Page) -> None:
     mark = _log_mark()
     _show_chat(page)
     _select_ok_model(page)
-    # 页脚按「本轮新增」计数：页面可能恢复了上一次会话，已有页脚不能算进来。
-    base = _footer_count(page)
+    # 控件行按「已完成轮次新增」计数：页面可能恢复了上一次会话，已有控件不能算进来。
+    base = _actions_count(page)
 
-    # ① 正常文本收尾的一轮：页脚必须有模型、用量、上下文窗口（200k）。
+    # ① 正常文本收尾的一轮：控件行 +1；状态条在会话底部常驻，显示模型与 200k 上下文。
     _send(page, "只回复 OK 两个字，不要调用任何工具。")
-    _wait_for_new_footer(page, base, timeout_ms=180_000)
-    footer = _footer_text(page, base)
-    assert "ok" in footer, f"页脚没有模型名：{footer!r}"
-    badge = _context_badge(page, base)
+    _wait_for_new_actions(page, base, timeout_ms=180_000)
+    assert _actions_count(page) == base + 1, "一轮只应有一个控件行"
+    status = _status_text(page)
+    assert "ok" in status, f"状态条没有模型名：{status!r}"
+    badge = _context_badge(page)
     assert re.search(r"/\s*200K", badge), f"上下文窗口不是 200k：{badge!r}"
 
-    # ② 工具收尾的一轮：让模型最后一步是调用工具。它若在工具后又写了总结，
-    #    页脚仍应落在该轮最后一行之后（这正是「整轮页脚」的契约）。
-    before = _footer_count(page)
+    # ② 工具收尾的一轮：让模型最后一步是调用工具。控件行仍应落在该轮最后一行之后。
+    before = _actions_count(page)
     _send(page, "用 Bash 工具执行：echo footcheck，然后不要再输出任何文字。")
-    _wait_for_new_footer(page, before, timeout_ms=TURN_TIMEOUT_MS)
-    assert _footer_count(page) == before + 1, "一轮只应有一个页脚"
+    _wait_for_new_actions(page, before, timeout_ms=TURN_TIMEOUT_MS)
+    assert _actions_count(page) == before + 1, "一轮只应有一个控件行"
 
     # ③ 打断：要求一长串输出，等开始流式后点停止。
-    before = _footer_count(page)
+    before = _actions_count(page)
     _send(page, "从 1 开始逐行输出数字，一直数到 50000，每行一个，不要省略。")
     cancel = _send_action(page)
     deadline = time.time() + 120
@@ -284,6 +287,9 @@ def test_real_compaction_and_turn_footer_states(page: Page) -> None:
         page.wait_for_timeout(300)
     else:
         raise AssertionError("回合没有进入运行态：data-state 一直是 send")
+    # 运行中：状态条必须仍然在；完整轮次的控件行不得增加。
+    assert page.locator('[data-testid="session-status-bar"]').is_visible(), "运行中状态条消失了"
+    assert _actions_count(page) == before, "运行中不该出现新轮次的控件行"
     page.wait_for_timeout(4_000)  # 让它真的吐出一些内容
     cancel.click()
     deadline = time.time() + 120
@@ -293,20 +299,19 @@ def test_real_compaction_and_turn_footer_states(page: Page) -> None:
         page.wait_for_timeout(300)
     else:
         raise AssertionError("打断后发送键没有回到 send 状态")
-    _wait_for_new_footer(page, before, timeout_ms=120_000)
-    interrupted_footer = _footer_text(page, _footer_count(page) - 1)
-    assert "ok" in interrupted_footer, f"打断的轮次页脚丢了模型：{interrupted_footer!r}"
+    _wait_for_new_actions(page, before, timeout_ms=120_000)
+    assert "ok" in _status_text(page), "打断后状态条丢了模型"
 
     # ④ 压缩前置：邀请几个技能。CLI 在压缩后会把「本会话之前调用过的 skill」
     #    整段重新注入；代理现在把整块删除（plan 只留路径行），所以只要压缩前
     #    加载过技能，压缩后的请求就应该看到 compact-strip。只让模型加载、不执行。
-    before = _footer_count(page)
+    before = _actions_count(page)
     _send(
         page,
         "请依次调用 Skill 工具加载这三个技能：humanizer-zh、ffmpeg-skill、quarkclouddrive。"
         "只加载，立刻只回复 PREFILL-OK，不要执行技能里的任何步骤，也不要改任何文件。",
     )
-    _wait_for_new_footer(page, before, timeout_ms=TURN_TIMEOUT_MS)
+    _wait_for_new_actions(page, before, timeout_ms=TURN_TIMEOUT_MS)
 
     # ⑤ 灌满上下文直到真实自动压缩。
     rounds = max(1, FILL_CHARS // _fill_char_count())
@@ -314,11 +319,11 @@ def test_real_compaction_and_turn_footer_states(page: Page) -> None:
     compacted_at = None
     max_total = 0
     for turn in range(MAX_FILL_TURNS):
-        before = _footer_count(page)
+        before = _actions_count(page)
         payload = payload or _fill_text(rounds)
         _send(page, f"这是第 {turn + 1} 批资料，只回复收到，不要总结：\n{payload}")
-        _wait_for_new_footer(page, before, timeout_ms=TURN_TIMEOUT_MS)
-        badge = _context_badge(page, _footer_count(page) - 1)
+        _wait_for_new_actions(page, before, timeout_ms=TURN_TIMEOUT_MS)
+        badge = _context_badge(page)
         total = _context_total(badge)
         max_total = max(max_total, total or 0)
         if page.get_by_text("Context compacted", exact=False).count() > 0:
@@ -327,17 +332,17 @@ def test_real_compaction_and_turn_footer_states(page: Page) -> None:
 
     assert compacted_at is not None, (
         "没有触发真实自动压缩：上下文没顶到 200k 窗口的阈值。"
-        f"峰值上下文={max_total}，最后一轮页脚={_context_badge(page, _footer_count(page) - 1)!r}"
+        f"峰值上下文={max_total}，当前状态条={_context_badge(page)!r}"
     )
     # 「真实打满」的证据：压缩前确实到过阈值附近，而不是一点上下文就压了。
     assert max_total > 120_000, f"压缩前上下文只有 {max_total}，没有真的打满"
 
-    # ⑥ 压缩后的页脚与代理证据。
+    # ⑥ 压缩后的状态条与代理证据。
     page.get_by_text("Context compacted", exact=False).first.wait_for(state="visible", timeout=60_000)
-    before = _footer_count(page)
+    before = _actions_count(page)
     _send(page, "压缩之后只回复 POST-COMPACT-OK，不要调用任何工具。")
-    _wait_for_new_footer(page, before, timeout_ms=TURN_TIMEOUT_MS)
-    post_badge = _context_badge(page, _footer_count(page) - 1)
+    _wait_for_new_actions(page, before, timeout_ms=TURN_TIMEOUT_MS)
+    post_badge = _context_badge(page)
     post_total = _context_total(post_badge)
     assert post_total is not None and post_total < 120_000, f"压缩后上下文没有下降：{post_badge!r}"
 

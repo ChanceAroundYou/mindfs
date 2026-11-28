@@ -170,17 +170,17 @@ def _send(page: Page, text: str) -> None:
     button.click()
 
 
-def _footer_count(page: Page) -> int:
-    return page.locator('[data-testid="turn-meta"]').count()
+def _actions_count(page: Page) -> int:
+    return page.locator('[data-testid="turn-actions"]').count()
 
 
-def _wait_for_new_footer(page: Page, previous: int, timeout_ms: int = TURN_TIMEOUT_MS) -> None:
+def _wait_for_new_actions(page: Page, previous: int, timeout_ms: int = TURN_TIMEOUT_MS) -> None:
     deadline = time.time() + timeout_ms / 1000
     while time.time() < deadline:
-        if _footer_count(page) > previous:
+        if _actions_count(page) > previous:
             return
         page.wait_for_timeout(500)
-    raise AssertionError(f"{timeout_ms}ms 内没有出现新的整轮页脚（上一轮计数 {previous}）")
+    raise AssertionError(f"{timeout_ms}ms 内没有出现新的轮次控件行（上一轮计数 {previous}）")
 
 
 # ── 读口：直接用浏览器里的登录态取 API ──────────────────────────────────────
@@ -259,12 +259,12 @@ def test_hint_then_real_harness_compaction(page: Page) -> None:
     mark = _log_mark()
     _show_chat(page)
     _select_ok_model(page)
-    base = _footer_count(page)
+    base = _actions_count(page)
 
     # ⓪ 「久」从第一次观测开始累计：第一轮只有起点、没有可算的间隔，第二轮结束才跨过
     #    阈值（阈值被压到 active_hours=0.0005 ≈ 1.8s，任何一次真实回合都够）。
     _send(page, "只回复 OK 两个字，不要调用任何工具。")
-    _wait_for_new_footer(page, base)
+    _wait_for_new_actions(page, base)
 
     root_id = _current_root_id(page)
     user_id = _current_user_id(page)
@@ -274,9 +274,9 @@ def test_hint_then_real_harness_compaction(page: Page) -> None:
     assert first["active_seconds"] == 0, first
 
     # ① 第二轮：跨过「久」的阈值，胶囊进入 hint 档（还剩 1 轮自动压缩）。
-    before = _footer_count(page)
+    before = _actions_count(page)
     _send(page, "再回复一次 OK，同样不要调用工具。")
-    _wait_for_new_footer(page, before)
+    _wait_for_new_actions(page, before)
 
     # 胶囊是提示的唯一载体：档位从 data-hygiene 读（文案随语言变，别拿中文找元素）。
     chip = page.locator('[data-testid="context-saving-chip"]')
@@ -295,9 +295,9 @@ def test_hint_then_real_harness_compaction(page: Page) -> None:
     assert hinted["auto_failed"] is False, hinted
 
     # ② 第三轮：回合结束后服务端自己补 /compact，harness 真的要压。
-    before = _footer_count(page)
+    before = _actions_count(page)
     _send(page, "第三次回复 OK，不要调用工具。")
-    _wait_for_new_footer(page, before)
+    _wait_for_new_actions(page, before)
 
     deadline = time.time() + AUTO_COMPACT_TIMEOUT_MS / 1000
     seen = ""
