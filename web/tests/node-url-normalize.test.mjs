@@ -84,8 +84,7 @@ const sessionViewer = fs.readFileSync(path.join(root, "src/components/session/Se
 assert.match(sessionViewer, /const sessionNodeId =\s*String\(\(session as any\)\?\._nodeId \|\| ""\)\.trim\(\) \|\| undefined;/, "SessionViewer must resolve the session's owning node");
 const sessionWindowing = fs.readFileSync(path.join(root, "src/components/session/useSessionWindowing.ts"), "utf8");
 assert.equal(sessionWindowing.match(/getSessionWindow\(\s*rootId \|\| "",\s*sessionKey,\s*\{[^}]*nodeId: sessionNodeId/g)?.length, 2, "all getSessionWindow calls (latest/beforeSeq) must carry the session node");
-const relatedFilesHook = fs.readFileSync(path.join(root, "src/components/session/useRelatedFiles.ts"), "utf8");
-assert.match(relatedFilesHook, /useRelatedFileStats\(\s*rootId,\s*relatedFiles,\s*gitStatsRefreshKey,\s*sessionNodeId,/, "related-file stats must route by the session node");
+// 会话底部的关联文件面板已移除（G-SK），这条 stats 路由只剩 App 侧的根视图路径（见下方）。
 
 const relatedHook = fs.readFileSync(path.join(root, "src/hooks/useRelatedFileStats.ts"), "utf8");
 assert.match(relatedHook, /refreshKey = "",\s*nodeId\?: string,/, "related-file stats hook must accept a node override");

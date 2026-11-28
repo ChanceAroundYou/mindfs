@@ -16,40 +16,35 @@ import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { copyText } from "../../platform/clipboard";
 import type { AgentStatus } from "../../shared/agentTypes";
 import { useI18n } from "../../i18n/index";
-import { formatSessionDuration } from "../../shared/sessionDuration";
 import {
   composeWindowAndOverlay,
   computeTailOverlay,
   supplementOverlayMap,
   type OverlayExchange,
 } from "../../shared/sessionOverlay";
-import {
-  relatedFileStatKey,
-  useRelatedFileStats,
-} from "../../hooks/useRelatedFileStats";
 
 import {
   extractUploadAttachments,
   formatTime,
   formatToolCallFallbackResult,
   normalizeUserMessageSummary,
-  shouldDefaultCollapseRelatedFiles,
   stripImageAttachmentTokens,
   stripUploadAttachmentTokens,
 } from "./sessionViewerFormat";
 import type { ExchangeArray, SessionItem, SessionViewerProps } from "./sessionViewerTypes";
 import { useSessionWindowing } from "./useSessionWindowing";
 import { SessionViewerSlashCommandResult } from "./SessionViewerSlashCommandResult";
-import { SessionViewerRelatedFiles } from "./SessionViewerRelatedFiles";
 import { SessionViewerHeader } from "./SessionViewerHeader";
 import { SessionViewerLoadingState } from "./SessionViewerLoadingState";
-import { SessionViewerWaitingIndicator } from "./SessionViewerWaitingIndicator";
+import { SessionViewerWaitingIndicator, hasSessionWaitingIndicator } from "./SessionViewerWaitingIndicator";
 import { SessionViewerStatusBar } from "./SessionViewerStatusBar";
+import { SessionViewerBottomBar } from "./SessionViewerBottomBar";
+import { SessionViewerTurnActionsSlot } from "./SessionViewerTurnActionsSlot";
 import { SessionViewerFloatingControls } from "./SessionViewerFloatingControls";
 import { buildUserMetaButtonStyle, sessionViewerAnimationStyles } from "./sessionViewerStyles";
 import { SessionViewerTimeline } from "./SessionViewerTimeline";
 import { useUserMessageSummaries } from "./useUserMessageSummaries";
-import { useRelatedFiles } from "./useRelatedFiles";
+import { findActiveAskUserCallId } from "./sessionViewerAskUser";
 import { useSessionViewerExchangeProjection } from "./useSessionViewerExchangeProjection";
 import type { ToolCallViewCache } from "../stream/useToolCallCard";
 
@@ -67,10 +62,8 @@ function SessionViewerInner({
   interactionMode = "main",
   targetSeq = 0,
   targetSeqRequestKey = "",
-  gitFileStatsByPath = {},
   onFileClick,
   onRootClick,
-  onRemoveRelatedFile,
   onAskUserAnswer,
   onEditUserMessage,
   onForkAgentMessage,
@@ -80,12 +73,6 @@ function SessionViewerInner({
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
   const { mergeVisibleExchanges, keepPersistedExchanges } = useSessionViewerExchangeProjection();
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    return window.matchMedia("(max-width: 767px)").matches;
-  });
   const [savedPromptKeys, setSavedPromptKeys] = useState<Record<string, true>>(
     {},
   );
@@ -196,7 +183,6 @@ function SessionViewerInner({
   // 对每个 assistant 项做 previousUserTimestamp 反向扫描 —— 两处都是 O(n²)，
   // 且每轮渲染都重算（流式输出 33 次/秒）。改成一次 O(n) 前向扫描，渲染里只查表。
   const timelineItemMeta = useMemo(() => buildTimelineItemMeta(timeline as any), [timeline]);
-  const scrollToRelatedFilesDividerRef = useRef<(behavior?: ScrollBehavior) => void>(() => {});
   // 时间线虚拟化（CUSTOM(G-JT)）：屏外条目不挂载；用户消息导航与 targetSeq 跳转
   // 都改走同一份索引，避免「画出来的」与「跳过去的」两套口径。
   const timelineNav = useSessionTimelineVirtualizer({
@@ -215,21 +201,6 @@ function SessionViewerInner({
   useEffect(() => {
     onFileClickRef.current = onFileClick;
   }, [onFileClick]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const media = window.matchMedia("(max-width: 767px)");
-    const handleChange = () => {
-      setIsMobile(media.matches);
-    };
-    handleChange();
-    media.addEventListener("change", handleChange);
-    return () => {
-      media.removeEventListener("change", handleChange);
-    };
-  }, []);
 
   useEffect(() => {
     setSavedPromptKeys({});
@@ -311,7 +282,7 @@ function SessionViewerInner({
 
   useSessionViewerScrollPositionEffects({
     activeScrollRef, interactionMode, isPrependingRef, lastSessionKeyRef,
-    scrollEndRef, scrollToRelatedFilesDividerRef, sessionKey,
+    scrollEndRef, sessionKey,
     timelineLength: timeline.length,
     timelineTailId: (timeline as any[])[(timeline as any[]).length - 1]?.id || "",
     isStreaming, streamVersion, slashCommandResult, shouldStickToBottomRef,
@@ -351,30 +322,11 @@ function SessionViewerInner({
     navigation: timelineNav,
   });
 
-  const {
-    relatedFiles,
-    relatedFileStatsByKey,
-    gitStatsRefreshKey,
-    scrollToRelatedFilesDivider,
-    activeAskUserCallId,
-    relatedFilesCollapsed,
-    setRelatedFilesCollapsed,
-    relatedFilesDividerRef,
-    displayFileGroups,
-  } = useRelatedFiles({
-    session,
-    timeline,
-    isAwaiting,
-    rootId,
-    rootPath,
-    gitFileStatsByPath,
-    sessionNodeId,
-    isMobile,
-    t,
-    interactionMode,
-    activeScrollRef,
-  });
-  scrollToRelatedFilesDividerRef.current = scrollToRelatedFilesDivider;
+  // 底部关联文件面板已移除（G-SK）：AskUser 卡片仍需要识别「当前在等回答的那一问」。
+  const activeAskUserCallId = useMemo(
+    () => findActiveAskUserCallId(timeline, isAwaiting),
+    [timeline, isAwaiting],
+  );
 
   if (!session) {
     return (
@@ -404,6 +356,15 @@ function SessionViewerInner({
     currentUserMessageIndex, refreshCurrentUserMessageIndex, scrollToUserMessageSummary,
     setUserSummaryHoverOpen, setUserSummaryPinnedOpen, windowMeta, visibleExchanges, themeColor,
   };
+  const isDelegating = !isAwaiting && presence === "delegating";
+  const isAwaitingAnswer = !isAwaiting && presence === "awaiting";
+  // 底部左侧槽位：运行中 > 子代理 > 上一轮控件，三态互斥。
+  const showWaiting = hasSessionWaitingIndicator({
+    isAwaiting,
+    isStreaming,
+    isDelegating,
+    isAwaitingAnswer,
+  });
 
   return (
     <div
@@ -417,7 +378,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"} onRootClick={onRootClick} menu={headerMenu} history={headerHistory} />
+        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={isDelegating} isAwaitingAnswer={isAwaitingAnswer} onRootClick={onRootClick} menu={headerMenu} history={headerHistory} />
       )}
 
       {/* 滚动容器 */}
@@ -438,7 +399,7 @@ function SessionViewerInner({
             {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
             <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
             <SessionViewerLoadingState loadingMore={loadingMore} loading={loading} hasVisibleTimeline={hasVisibleTimeline} />
-            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} toolViewCache={toolViewCache} />
+            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} toolViewCache={toolViewCache} />
             {SessionViewerSlashCommandResult({
               slashCommandResult,
               hasVisibleTimeline,
@@ -449,20 +410,25 @@ function SessionViewerInner({
               rootId,
               themeColor,
             })}
-            <SessionViewerWaitingIndicator
-              isAwaiting={isAwaiting} isStreaming={isStreaming} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"}
-              streamStatusText={streamStatusText} rootColor={rootColor} t={t}
-            />
-
-            <SessionViewerStatusBar exchanges={composedExchanges} session={session} agents={agents} themeColor={themeColor} />
-
-            <SessionViewerRelatedFiles
-              relatedFiles={relatedFiles} relatedFileStatsByKey={relatedFileStatsByKey}
-              gitFileStatsByPath={gitFileStatsByPath} relatedFilesCollapsed={relatedFilesCollapsed}
-              setRelatedFilesCollapsed={setRelatedFilesCollapsed} relatedFilesDividerRef={relatedFilesDividerRef}
-              displayFileGroups={displayFileGroups} rootPath={rootPath} onFileClickRef={onFileClickRef}
-              onRemoveRelatedFile={onRemoveRelatedFile} interactionMode={interactionMode} t={t}
-              relatedFileStatKey={relatedFileStatKey}
+            <SessionViewerBottomBar
+              left={
+                showWaiting ? (
+                  <SessionViewerWaitingIndicator
+                    isAwaiting={isAwaiting} isStreaming={isStreaming} isDelegating={isDelegating} isAwaitingAnswer={isAwaitingAnswer}
+                    streamStatusText={streamStatusText} rootColor={rootColor} t={t}
+                  />
+                ) : (
+                  <SessionViewerTurnActionsSlot
+                    timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale}
+                    copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef}
+                    setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor}
+                    userMetaButtonStyle={userMetaButtonStyle} onForkAgentMessage={onForkAgentMessage}
+                  />
+                )
+              }
+              right={
+                <SessionViewerStatusBar exchanges={composedExchanges} session={session} agents={agents} themeColor={themeColor} />
+              }
             />
             <div ref={scrollEndRef} style={{ height: "1px" }} />
           </div>
@@ -492,6 +458,5 @@ export const SessionViewer = memo(
     prev.targetSeq === next.targetSeq &&
     prev.targetSeqRequestKey === next.targetSeqRequestKey &&
     prev.composerOverlayInset === next.composerOverlayInset &&
-    prev.gitFileStatsByPath === next.gitFileStatsByPath &&
     prev.onRootClick === next.onRootClick,
 );
