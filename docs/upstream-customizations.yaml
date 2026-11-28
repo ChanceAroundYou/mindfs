@@ -38,6 +38,7 @@ groups:
       - .claude/rules/
       - docs/superpowers/
       - docs/features/
+      - docs/research/raven-aionui-mindfs.md
       - CHANGELOG.md
       - docs/main-view-switching-design.md
       - docs/capacitor-shell-prd.md
