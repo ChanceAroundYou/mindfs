@@ -61,18 +61,18 @@ test("B1: session content bottom stays compact, clearance guard lives in scroll-
 });
 
 test("C1: turn actions own copy wiring", () => {
-  // 2026-11-28：控件行从时间线末尾移到底部左侧槽位（运行中 > 子代理 > 控件）。
-  // 复制按钮的接线必须完整地活在 SessionViewerTurnActionsSlot 上，时间线不再持有它。
+  // 2026-11-28：每条已完成消息各自在收尾位置保留控件行；最新一轮提到消息流尾行，
+  // 与状态条同行。两处按钮共用同一份复制接线（useTurnCopyAction），不得各写一套。
   const actions = read("src/components/session/SessionViewerTurnActions.tsx");
+  const copyAction = read("src/components/session/useTurnCopyAction.ts");
+  const timeline = read("src/components/session/SessionViewerTimeline.tsx");
   const slot = read("src/components/session/SessionViewerTurnActionsSlot.tsx");
-  assert.doesNotMatch(timeline, /renderTurnActions/);
-  assert.doesNotMatch(timeline, /SessionViewerTurnActions/);
-  assert.doesNotMatch(timeline, /lastIndexByTurn/);
-  assert.match(slot, /findLatestCompletedTurnIndex/);
-  assert.match(slot, /copyText\(meta\.content\)/);
-  assert.match(slot, /setCopiedMessageKeys/);
-  assert.match(slot, /copyResetTimersRef/);
-  assert.match(slot, /reportError\(\s*"clipboard\.write_failed"/);
+  assert.match(copyAction, /copyText\(meta\.content\)/);
+  assert.match(copyAction, /setCopiedMessageKeys/);
+  assert.match(copyAction, /copyResetTimersRef/);
+  assert.match(copyAction, /reportError\(\s*"clipboard\.write_failed"/);
+  assert.match(timeline, /useTurnCopyAction/);
+  assert.match(slot, /useTurnCopyAction/);
   assert.match(actions, /onClick=\{onCopy\}/);
   assert.match(actions, /aria-label=\{t\("session\.copyMarkdown"\)\}/);
   assert.match(actions, /aria-label=\{t\("session\.forkFromMessage"\)\}/);

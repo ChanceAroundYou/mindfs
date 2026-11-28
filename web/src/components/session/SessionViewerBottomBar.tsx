@@ -2,14 +2,11 @@ import React from "react";
 import type { ReactNode } from "react";
 
 /**
- * 会话底部的一行：左侧是**唯一**的动态槽位，右侧是常驻状态条。
+ * 消息流里的最后一行：左侧是尾部动态内容，右侧是状态条。
  *
- * 左侧三态互斥、按优先级只显示一个：
- *   运行中（isAwaiting / isStreaming） > 子代理运行中（delegating） > 上一轮控件（复制/fork/时间）。
- * 具体选谁由调用方（SessionViewer）判定，本组件只保证「一个槽位、同一行、居左」。
- *
- * 右侧状态条不随运行状态消失，也不换行 —— 它描述会话的持续状态（模型/上下文/缓存），
- * 与轮次无关。
+ * 它不是固定悬浮条 —— 和消息一起滚动，上滚就离开视口。左侧三态互斥、按优先级只显示一个：
+ *   运行中（isAwaiting / isStreaming） > 子代理运行中（delegating） > 最新完成轮控件。
+ * 历史轮次的控件行仍在各自的时间线收尾位置，只有这一行带右侧状态。
  */
 export type SessionViewerBottomBarProps = {
   left: ReactNode;
