@@ -1,22 +1,29 @@
+import { useMemo } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { TimelineItem } from "../../hooks/useSessionStream";
+import type { TurnMeta } from "../../hooks/sessionBlocks";
 import type { RelatedFile } from "../../shared/sessionTypes";
 import type { Locale, MessageKey } from "../../i18n/index";
 import { useReportError } from "../../hooks/useReportError";
 import { useSessionViewerTimelineActions } from "./useSessionViewerTimelineActions";
+import { useTurnCopyAction } from "./useTurnCopyAction";
 import { copyText } from "../../platform/clipboard";
+import { formatSessionDuration } from "../../shared/sessionDuration";
 import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
 import { renderToolTimelineItem } from "./sessionViewerToolTimelineHelpers";
 import type { ToolCallViewCache } from "../stream/useToolCallCard";
 import { renderAuxiliaryTimelineItem } from "./sessionViewerAuxiliaryTimelineHelpers";
 import { SessionViewerUserMessage } from "./SessionViewerUserMessage";
 import { SessionViewerAssistantMessage } from "./SessionViewerAssistantMessage";
+import { SessionViewerTurnActions } from "./SessionViewerTurnActions";
 import {
+  collectCompletedTurnEndIndices,
   extractUploadAttachments,
   formatTime,
   stripImageAttachmentTokens,
   stripUploadAttachmentTokens,
   timelineItemSpacing,
+  turnFooterMarginTop,
 } from "./sessionViewerFormat";
 
 export type SessionViewerTimelineProps = {
@@ -31,6 +38,7 @@ export type SessionViewerTimelineProps = {
   onAskUserAnswer?: (input: any) => void | Promise<void>;
   onFileClickRef: MutableRefObject<((file: RelatedFile & { name?: string }) => void) | undefined>;
   onEditUserMessage?: (content: string) => void;
+  onForkAgentMessage?: (seq: number) => void | Promise<void>;
   savedPromptKeys: Record<string, true>;
   copiedMessageKeys: Record<string, true>;
   copyResetTimersRef: MutableRefObject<Record<string, number>>;
@@ -39,6 +47,11 @@ export type SessionViewerTimelineProps = {
   t: (key: MessageKey) => string;
   themeColor: string;
   userMetaButtonStyle: React.CSSProperties;
+  /**
+   * 最新一个已完成轮次的下标：它的控件行由底部尾行承担（与状态条同一行），
+   * 时间线里不再重复画。其它已完成轮次各自保留控件行。
+   */
+  skipActionsAtIndex?: number;
   /**
    * 虚拟化回调（CUSTOM(G-JT)）。给出时只渲染视口内的条目，屏外条目由上下占位高
    * 代替；不给则全量渲染（少条目路径与既有的源码级测试都走这条）。
@@ -59,28 +72,49 @@ export type SessionViewerTimelineVirtual = {
 export function SessionViewerTimeline({
   timeline, timelineItemMeta, locale, rootId, rootPath, sessionKey,
   sessionAgent, activeAskUserCallId, onAskUserAnswer, onFileClickRef,
-  onEditUserMessage, savedPromptKeys, copiedMessageKeys,
+  onEditUserMessage, onForkAgentMessage, savedPromptKeys, copiedMessageKeys,
   copyResetTimersRef, setSavedPromptKeys, setCopiedMessageKeys, t, themeColor,
-  userMetaButtonStyle, virtual = null, toolViewCache,
+  userMetaButtonStyle, skipActionsAtIndex = -1, virtual = null, toolViewCache,
 }: SessionViewerTimelineProps) {
   const reportError = useReportError();
   const { savePrompt } = useSessionViewerTimelineActions();
+  const turnCopy = useTurnCopyAction({
+    copiedMessageKeys,
+    copyResetTimersRef,
+    setCopiedMessageKeys,
+    t,
+  });
   const makePromptKey = (item: Extract<TimelineItem, { type: "user_text" | "assistant_text" }>) =>
     `${item.id}\n${item.timestamp || ""}\n${item.content || ""}`;
+
+  // 控件行的位置由「轮次身份」唯一决定：每个已完成轮次只在它最后一行的位置画一次。
+  // 最新那一轮（skipActionsAtIndex）交给底部尾行，与状态条同行。
+  const lastIndexByTurn = useMemo(
+    () => collectCompletedTurnEndIndices(timeline),
+    [timeline],
+  );
 
   const renderTimelineItem = (item: TimelineItem, idx: number, spacing = "0") => {
     const timelineItemKey = item.id || `${item.type}-${idx}`;
     const isUser = item.type === "user_text";
     const itemMeta = timelineItemMeta[idx];
+    const turnMeta = item.turnMeta;
+    const showActions =
+      !!turnMeta?.completed &&
+      lastIndexByTurn.get(turnMeta.turnKey) === idx &&
+      idx !== skipActionsAtIndex;
+    const actions = showActions && turnMeta
+      ? renderTurnActions(item, turnMeta, itemMeta.prevUserTs)
+      : null;
 
     if (item.type === "thought") {
-      return <SessionViewerThoughtItem item={item} timelineItemKey={timelineItemKey} spacing={spacing} />;
+      return <>{<SessionViewerThoughtItem item={item} timelineItemKey={timelineItemKey} spacing={spacing} />}{actions}</>;
     }
     if (item.type === "tool") {
-      return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer, toolViewCache });
+      return <>{renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent, activeAskUserCallId, onAskUserAnswer, toolViewCache })}{actions}</>;
     }
     if (item.type === "tool_group" || item.type === "todo" || item.type === "plan" || item.type === "compact") {
-      return renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, toolViewCache });
+      return <>{renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, toolViewCache })}{actions}</>;
     }
     const userMessageIndex = isUser ? itemMeta.userIndex : undefined;
     const time = formatTime(item.timestamp, locale);
@@ -93,7 +127,39 @@ export function SessionViewerTimeline({
     return (
       <div key={timelineItemKey} data-session-seq={item.seq || undefined} data-user-message-index={userMessageIndex} style={{ marginTop: spacing, alignSelf: isUser ? "flex-end" : "flex-start", width: isUser ? userMessageWidth : "100%", maxWidth: isUser ? "80%" : "100%", minWidth: 0, position: "relative", display: "flex", flexDirection: "column" }}>
         {isUser ? <SessionViewerUserMessage {...{ item, time, spacing, timelineItemKey, rootId, rootPath, displayContent, promptSaveContent, promptKey, promptSaved: !!savedPromptKeys[promptKey], copySucceeded: !!copiedMessageKeys[promptKey], imageAttachments, userMessageWidth, hasRichUserAttachments: imageAttachments.length > 0, onFileClickRef, onEditUserMessage, savePrompt, copyText, reportError, setSavedPromptKeys, setCopiedMessageKeys, copyResetTimersRef, pendingAck: item.pendingAck, t, themeColor, userMetaButtonStyle }} /> : <SessionViewerAssistantMessage {...{ item, rootId, onFileClickRef }} />}
+        {actions}
       </div>
+    );
+  };
+
+  /**
+   * 一轮的控件行：复制 / fork / 完成时间。
+   *
+   * 身份用 turnKey（`s<seq>`），不再用「条目 id + 时间戳」—— 同轮多个条目、分组卡、
+   * 缓存重建都只会得到同一个 key，复制反馈不会因为收尾条目换了而丢失或重复。
+   * 最新一轮不在这里画：底部尾行把它与状态条排在同一行（见 SessionViewer）。
+   */
+  const renderTurnActions = (item: TimelineItem, meta: TurnMeta, prevUserTs: string | undefined) => {
+    const { copied, onCopy } = turnCopy(meta);
+    const seq = Number(meta.seq || 0);
+    const onFork =
+      seq > 0 && onForkAgentMessage
+        ? () => {
+            void onForkAgentMessage(seq);
+          }
+        : undefined;
+    return (
+      <SessionViewerTurnActions
+        time={formatTime(meta.timestamp, locale)}
+        durationLabel={formatSessionDuration(prevUserTs, meta.timestamp)}
+        copied={copied}
+        t={t}
+        themeColor={themeColor}
+        userMetaButtonStyle={userMetaButtonStyle}
+        marginTop={turnFooterMarginTop(item)}
+        onCopy={onCopy}
+        onFork={onFork}
+      />
     );
   };
 

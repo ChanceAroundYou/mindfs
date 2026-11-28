@@ -2,18 +2,16 @@ import React, { useMemo } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { TimelineItem } from "../../hooks/useSessionStream";
 import type { MessageKey, Locale } from "../../i18n/index";
-import { useReportError } from "../../hooks/useReportError";
-import { copyText } from "../../platform/clipboard";
 import { formatSessionDuration } from "../../shared/sessionDuration";
 import { SessionViewerTurnActions } from "./SessionViewerTurnActions";
+import { useTurnCopyAction } from "./useTurnCopyAction";
 import { findLatestCompletedTurnIndex, formatTime } from "./sessionViewerFormat";
 
 /**
- * 底部控件槽：只展示**最新一个已完整结束**轮次的复制 / fork / 完成时间。
+ * 底部尾行的左侧内容：最新一个**已完整结束**轮次的复制 / fork / 完成时间。
  *
- * 不再逐轮挂在时间线末尾 —— 位置统一由 `SessionViewerBottomBar` 管理，运行中让位给
- * 等待提示（互斥的优先级见 SessionViewer）。复制反馈仍按 turnKey（`s<seq>`）记，
- * 同轮分组卡/缓存重建不会丢。
+ * 历史轮次的控件行仍在时间线各自的收尾位置；最新轮统一提到尾行，与右侧状态条同排，
+ * 运行中/子代理运行时让位给等待提示（互斥优先级见 SessionViewer）。
  */
 export type SessionViewerTurnActionsSlotProps = {
   timeline: TimelineItem[];
@@ -40,7 +38,12 @@ export function SessionViewerTurnActionsSlot({
   userMetaButtonStyle,
   onForkAgentMessage,
 }: SessionViewerTurnActionsSlotProps) {
-  const reportError = useReportError();
+  const turnCopy = useTurnCopyAction({
+    copiedMessageKeys,
+    copyResetTimersRef,
+    setCopiedMessageKeys,
+    t,
+  });
   const latestIndex = useMemo(
     () => findLatestCompletedTurnIndex(timeline),
     [timeline],
@@ -49,35 +52,7 @@ export function SessionViewerTurnActionsSlot({
   const meta = item?.turnMeta;
   if (!item || !meta?.completed) return null;
 
-  const footerKey = meta.turnKey;
-  const copied = !!copiedMessageKeys[footerKey];
-  const onCopy = () => {
-    if (!meta.content) {
-      reportError("clipboard.write_failed", t("session.emptyMessageCannotCopy"));
-      return;
-    }
-    void copyText(meta.content)
-      .then(() => {
-        setCopiedMessageKeys((prev) => ({ ...prev, [footerKey]: true }));
-        if (copyResetTimersRef.current[footerKey]) {
-          window.clearTimeout(copyResetTimersRef.current[footerKey]);
-        }
-        copyResetTimersRef.current[footerKey] = window.setTimeout(() => {
-          setCopiedMessageKeys((prev) => {
-            const next = { ...prev };
-            delete next[footerKey];
-            return next;
-          });
-          delete copyResetTimersRef.current[footerKey];
-        }, 1000);
-      })
-      .catch((err: unknown) => {
-        reportError(
-          "clipboard.write_failed",
-          String((err as Error)?.message || t("session.copyFailed")),
-        );
-      });
-  };
+  const { copied, onCopy } = turnCopy(meta);
   const seq = Number(meta.seq || 0);
   const onFork =
     seq > 0 && onForkAgentMessage

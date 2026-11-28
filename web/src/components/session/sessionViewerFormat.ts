@@ -253,6 +253,30 @@ export function findLatestCompletedTurnIndex(
   return -1;
 }
 
+/**
+ * 非尾行控件行离上一行的上外边距。
+ *
+ * 正文是 markdown，段落自带约 10px 下边距，-10px 正好收紧、页脚紧贴段落底部；
+ * 思考（ThinkingBlock）、工具卡、组卡、待办、计划、压缩块都是**自带边框与内边距的
+ * 卡片**，没有段落下边距可抵，负外边距会把页脚拽进卡片里（2026-11-16 真机：
+ * `/compact` 那一轮页脚的图标与 `78%-used` 被压缩块下沿吞掉）。
+ *
+ * 最新一轮的控件行在底部尾行里，由尾行统一控制间距，不经过这里。
+ */
+export function turnFooterMarginTop(item: TimelineItem | null): string {
+  switch (item?.type) {
+    case "thought":
+    case "tool":
+    case "tool_group":
+    case "todo":
+    case "plan":
+    case "compact":
+      return "4px";
+    default:
+      return "-10px";
+  }
+}
+
 export function timelineItemSpacing(
   previous: TimelineItem | null,
   current: TimelineItem,

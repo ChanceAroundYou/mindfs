@@ -25,6 +25,7 @@ import {
 
 import {
   extractUploadAttachments,
+  findLatestCompletedTurnIndex,
   formatTime,
   formatToolCallFallbackResult,
   normalizeUserMessageSummary,
@@ -358,13 +359,16 @@ function SessionViewerInner({
   };
   const isDelegating = !isAwaiting && presence === "delegating";
   const isAwaitingAnswer = !isAwaiting && presence === "awaiting";
-  // 底部左侧槽位：运行中 > 子代理 > 上一轮控件，三态互斥。
+  // 底部尾行左侧：运行中 > 子代理 > 最新完成轮控件，三态互斥。
   const showWaiting = hasSessionWaitingIndicator({
     isAwaiting,
     isStreaming,
     isDelegating,
     isAwaitingAnswer,
   });
+  // 空闲时最新完成轮的控件行由尾行接管（与状态条同行）；运行中尾行是等待提示，
+// 所有已完成轮（含最新一轮）都保留各自的时间线控件行。历史轮永远右侧无状态。
+  const latestCompletedIndex = findLatestCompletedTurnIndex(timeline);
 
   return (
     <div
@@ -399,7 +403,7 @@ function SessionViewerInner({
             {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
             <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
             <SessionViewerLoadingState loadingMore={loadingMore} loading={loading} hasVisibleTimeline={hasVisibleTimeline} />
-            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} virtual={timelineNav.virtual} toolViewCache={toolViewCache} />
+            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} skipActionsAtIndex={showWaiting ? -1 : latestCompletedIndex} virtual={timelineNav.virtual} toolViewCache={toolViewCache} />
             {SessionViewerSlashCommandResult({
               slashCommandResult,
               hasVisibleTimeline,

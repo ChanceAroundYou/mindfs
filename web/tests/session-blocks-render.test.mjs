@@ -265,9 +265,28 @@ test("零宽 text 块不产出条目，工具卡间距保持 6px", () => {
   );
 });
 
-// 2026-11-28：控件行移出时间线、统一到底部左侧槽位后，不再需要按上一行类型调外边距，
-// 2026-11-16 的「压缩块吞掉页脚」也不会再发生（页脚不在正文流里）。这里只保留控件
-// 自身的渲染契约：调用方给的外边距必须生效。
+// 历史轮（非尾行）的控件行仍挂在时间线收尾位置，必须按上一行类型调外边距。
+//
+// 2026-11-16 真机（手机截图 1080×2374）：/compact 之后那一轮的页脚（复制/fork 图标、
+// 模型、用量、`78%-used(782K/4M)`）被压进压缩块底部，卡片下边框从页脚中间穿过。
+// 页脚上外边距原本恒为 -10px，是按「上一行是正文段落」调的；工具卡/组卡/待办/计划/
+// 压缩块都是自带边框与 10px 内边距的卡片，负外边距必然把页脚拽进卡片里。
+// 最新一轮在消息流尾行，由尾行统一控制间距，不经过 turnFooterMarginTop。
+test("卡片收尾时历史轮控件行不压进卡片（真机：压缩块吞掉页脚）", async () => {
+  const { turnFooterMarginTop } = await import(
+    "../src/components/session/sessionViewerFormat.ts"
+  );
+  assert.equal(typeof turnFooterMarginTop, "function");
+  assert.equal(turnFooterMarginTop({ type: "assistant_text" }), "-10px");
+  for (const type of ["thought", "tool", "tool_group", "todo", "plan", "compact"]) {
+    assert.equal(
+      turnFooterMarginTop({ type }),
+      "4px",
+      `${type} 收尾时页脚必须在卡片下方，不能压在卡片上`,
+    );
+  }
+});
+
 test("SessionViewerTurnActions 使用调用方给的控件行外边距", async () => {
   const React = (await import("react")).default;
   const { renderToString } = await import("react-dom/server");

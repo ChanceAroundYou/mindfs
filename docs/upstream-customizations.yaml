@@ -5905,7 +5905,7 @@ groups:
     title: 排队卡/会话尾遮挡与 assistant 复制透传
     kind: fix
     symptom: "排队消息卡的 ✎/删除/立即发送按钮下半被输入条盖住；滚到底时最后一条 user 消息的复制等按钮被悬浮输入条挡住半颗；assistant 消息点复制完全没反应。"
-    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；滚动容器缺 scroll-padding-bottom，滚到底时最后一条 user 的复制行被输入条压住；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈（复制接线在 2026-11-28 布局重做后由底部槽位 `SessionViewerTurnActionsSlot` 承担，位置见 G-SK；`C1` 断言该路径）。"
+    why: "排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；滚动容器缺 scroll-padding-bottom，滚到底时最后一条 user 的复制行被输入条压住；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈（复制接线现收敛在 `useTurnCopyAction`，历史轮与尾行共用，见 G-SK；`C1` 断言该路径）。"
     boundary: "只改两处：排队列表底间隙 4px→8px；滚动容器加由 composerOverlayInset 派生的 scroll-padding-bottom。不动 composer 高、不动按钮尺寸、不改 clipboard 链。**内容区 padding 刻意保持 24px 常量，不要改回 composerOverlayInset 派生**（用户 2026-10-23 明确要求「关联文件与对话框之间太长」）：内容区与输入条是 AppShell 网格的 main/footer 两行，本就不重叠，实测 1500x1000 / 420x900 滚到底最后一条与输入条上沿仍有 25px 净空；真正防遮挡的是 scroll-padding，两者不是一回事。会话底部关联文件面板已于 2026-11-28 移除（G-SK），其间距约束随之删除。"
     tests:
       - web/tests/queued-overlay-and-copy.test.mjs
@@ -5918,7 +5918,7 @@ groups:
       - "web/src/components/action/QueuedMessagesList.tsx:padding: \"0 0 8px\""
       - "web/src/components/session/SessionViewer.tsx:scrollPaddingBottom"
       - "web/src/components/session/SessionViewer.tsx:padding: \"24px 16px\""
-      - "web/src/components/session/SessionViewerTurnActionsSlot.tsx:copyText(meta.content)"
+      - "web/src/components/session/useTurnCopyAction.ts:copyText(meta.content)"
       - "web/src/components/session/SessionViewerTimeline.tsx:copyResetTimersRef"
       - "web/tests/queued-overlay-and-copy.test.mjs:C1: turn actions own copy wiring"
 
@@ -17628,7 +17628,7 @@ groups:
       - 'web/src/hooks/useSessionStream.ts:dropDuplicatedTransientThoughts([...persistedBaseTimeline, ...transientTimeline])'
 
   - id: G-SK
-    title: "会话尾部：单一左侧槽位（运行中 > 子代理 > 控件）+ 常驻右侧状态条，底部关联文件移除"
+    title: "会话尾部：每轮各自控件行 + 消息流尾行（左等待/最新控件，右状态）"
     kind: fix
     symptom: |
       2026-11-28：会话底部的控件行（复制/fork/完成时间）与统计（模型、上下文、
@@ -17652,10 +17652,11 @@ groups:
       ③ 状态与控件分离并同行：控件行只含复制/fork/完成时间（agent 图标归状态条）；
          模型/上下文/缓存由 SessionViewerStatusBar 承担，每个字段各取最近一次有值
          的 exchange，缺失沿用上一轮的值、无上报则隐藏。
-      ④ 底部只有一个左侧槽位：运行中 > 子代理 > 控件，三态互斥、居左；状态条
-         常驻居右，同一行，不随运行状态消失。槽位判据 hasSessionWaitingIndicator
-         与指示器内部共用，避免两套条件漂移。关联文件面板彻底移出底部，唯一入口
-         是左侧栏文件树的 related 页签。
+      ④ 每条已完成消息各自拥有控件行（复制/fork/时间），不聚合。最新一轮在**空闲时**
+         由「消息流最后一行」接管：左侧控件、右侧状态条同一行；运行中/子代理运行时
+         尾行左侧换成等待提示，所有已完成轮（含最新）仍保留各自的时间线控件行。
+         尾行随消息流滚动、不悬浮；历史轮控件行右侧没有状态。关联文件面板彻底移出
+         底部，唯一入口是左侧栏文件树的 related 页签。
     files:
       - web/src/components/session/SessionViewer.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
@@ -17667,6 +17668,7 @@ groups:
       - web/src/components/session/SessionViewerTokenViews.tsx
       - web/src/components/session/sessionViewerFormat.ts
       - web/src/components/session/sessionViewerTypes.ts
+      - web/src/components/session/useTurnCopyAction.ts
       - web/src/hooks/sessionBlocks.ts
       - web/src/hooks/sessionTimeline.ts
       - web/src/hooks/useSessionStream.ts
@@ -17691,6 +17693,9 @@ groups:
       - 'web/src/hooks/sessionTimeline.ts:turnMeta: item.turnMeta,'
       - 'web/src/components/session/sessionViewerFormat.ts:export function collectCompletedTurnEndIndices'
       - 'web/src/components/session/sessionViewerFormat.ts:export function findLatestCompletedTurnIndex'
+      - 'web/src/components/session/sessionViewerFormat.ts:export function turnFooterMarginTop'
+      - 'web/src/components/session/SessionViewerTimeline.tsx:idx !== skipActionsAtIndex'
+      - 'web/src/components/session/useTurnCopyAction.ts:export function useTurnCopyAction'
       - 'web/src/components/session/SessionViewer.tsx:showWaiting ? ('
       - 'web/src/components/session/SessionViewerBottomBar.tsx:data-testid="session-bottom-bar"'
       - 'web/src/components/session/SessionViewerWaitingIndicator.tsx:export function hasSessionWaitingIndicator'
