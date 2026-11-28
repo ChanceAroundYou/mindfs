@@ -63,6 +63,19 @@ test("deploy-pcwin installs the helpers and registers the user PATH", () => {
   );
 });
 
+test("deploy-pcwin stops every process locking the target exe before replacing it", () => {
+  const deploy = read("scripts/deploy-pcwin.sh");
+  const install = deploy.slice(
+    deploy.indexOf('step "pc-win 安装"'),
+    deploy.indexOf('step "pc-win 辅助脚本与 PATH"'),
+  );
+  assert.match(install, /Get-Process -Name mindfs/, "must enumerate processes by name");
+  assert.match(install, /Stop-Process -Id \$p\.Id -Force/, "must stop the Session 1 tray instance too");
+  assert.match(install, /EncodedCommand/, "multiline PowerShell must go through -EncodedCommand");
+  assert.match(install, /Remove-Item[^\n]*-ErrorAction Stop/, "delete failure must be loud");
+  assert.match(install, /Stop-Process[\s\S]*Move-Item/, "all holders must be stopped before the binary is replaced");
+});
+
 test("register-user-path appends to the user PATH idempotently", () => {
   const ps1 = read("scripts/pcwin/register-user-path.ps1");
   assert.ok(ps1.includes('GetEnvironmentVariable("Path", "User")'), "reads the user PATH");

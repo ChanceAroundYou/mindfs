@@ -39,8 +39,27 @@ ok "产物已推送"
 
 step "pc-win 安装"
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" 'schtasks /end /tn mindfs' >/dev/null 2>&1 || true
-sleep 2
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershell -Command \"if (Test-Path 'C:/Users/10178/AppData/Local/Programs/mindfs/bin/mindfs.exe') { Remove-Item -Force 'C:/Users/10178/AppData/Local/Programs/mindfs/bin/mindfs.exe' }\"" >/dev/null 2>&1 || true
+# schtasks /end 只结束 S4U 计划任务启动的 Session 0 实例。Session 1 托盘启动的同名
+# mindfs.exe 也锁着目标文件（2026-11-28 实测：Move-Item 报 IOException），所以按目标
+# 路径停掉所有占用者；这里用 -EncodedCommand 跑多行 PowerShell，避免 ssh 引号吞掉 $_。
+stop_ps="/tmp/mindfs-pcwin-stop.ps1"
+cat > "$stop_ps" <<'PS'
+$target = 'C:\Users\10178\AppData\Local\Programs\MindFS\bin\mindfs.exe'
+$procs = @(Get-Process -Name mindfs -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $target })
+foreach ($p in $procs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+for ($i = 0; $i -lt 10; $i++) {
+  $left = @(Get-Process -Name mindfs -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $target })
+  if ($left.Count -eq 0) { exit 0 }
+  Start-Sleep -Milliseconds 500
+}
+exit 1
+PS
+stop_enc="$(iconv -f UTF-8 -t UTF-16LE "$stop_ps" | base64 -w0)"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershell -NoProfile -NonInteractive -EncodedCommand $stop_enc" \
+  || die "仍有 mindfs 进程占用目标二进制"
+rm -f "$stop_ps"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershell -NoProfile -Command \"Remove-Item -Force 'C:/Users/10178/AppData/Local/Programs/mindfs/bin/mindfs.exe' -ErrorAction Stop\"" >/dev/null 2>&1 \
+  || die "旧二进制删除失败（可能被占用）"
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$PC_HOST" "powershell -Command \"Move-Item -Force 'C:/Users/10178/mindfs.exe.new' 'C:/Users/10178/AppData/Local/Programs/mindfs/bin/mindfs.exe'\"" \
   || die "移动二进制失败"
 # 版本号必须在服务启动前读
