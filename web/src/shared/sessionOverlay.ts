@@ -80,8 +80,8 @@ export function computeTailOverlay(input: TailOverlayInput): OverlayExchange[] {
   // 整段历史：手点「同步」时回包是 `afterSeq` 之后的全部行（`handleSessionSync` 直接回
   // `sessionDetailPayload`），客户端把整份写进 `sessionCacheRef` / `selectedSession`，
   // 于是几百条历史行被追加到窗口**之后**；它们不在 `visibleBlocks` 里、`content` 又是
-  // S2d 之后恒空的，每条都退化成 `turn_meta` 纯页脚（复制 / 分支 / 模型 / 用量 / 时间 /
-  // 上下文胶囊）—— 就是「同步后底部刷出一大堆控件」。
+  // S2d 之后恒空的，每条都退化成没有正文的尾部行（旧实现还会再画一条只有页脚的
+  // 控件行）—— 就是「同步后底部刷出一大堆控件」。
   //
   // 这和已经被 retire 的 latestSeq 水位不是一回事：那个是**有状态的只增 latch**，会把
   // 尚未到达的 seq 永久记成「窗口已含」，真实行晚到就被吞掉（2026-09-28 用户消息消失；
@@ -181,8 +181,8 @@ export function composeWindowAndOverlay(
  * 给 overlay 行补窗口之外的块 / aux（`visibleBlocks` / `visibleAux` 的补充）。
  *
  * overlay 只追加「窗口还没追上」的持久行；这些 seq 天然不在窗口的两份映射里，而正文
- * 只活在块流（S2d 之后主日志 `content` 恒空）。不补的话，真正新到的一轮会以
- * `turn_meta` 纯页脚出现 —— 和「同步刷屏」是同一种症状。
+ * 只活在块流（S2d 之后主日志 `content` 恒空）。不补的话，真正新到的一轮会丢失正文，
+ * 只剩没有可渲染内容的尾部 —— 和「同步刷屏」是同一种症状。
  *
  * 只补 overlay 声明的 seq，且**绝不覆盖窗口已有的键**：同一 seq 两个 revision 并存
  * 会让正文 / 工具卡重复。没有可补的键时原样返回窗口那份引用，避免无意义的重渲染。

@@ -17,7 +17,9 @@ assert.match(hook, /export \{ groupConsecutiveToolCalls \} from "\.\/sessionTime
 assert.match(hook, /export type \{ TimelineItem \} from "\.\/sessionTimeline"/);
 assert.match(timeline, /export function buildBaseTimeline\(/);
 assert.match(timeline, /export function groupConsecutiveToolCalls\(/);
-assert.match(timeline, /export function applySessionContextWindow\(/);
+// 会话级 context_window 不再补丁进最后一个 turnMeta（那会拆散轮次身份、画出两条控件行）；
+// 状态条直接从 exchange/会话取。
+assert.doesNotMatch(timeline, /applySessionContextWindow/);
 assert.match(timeline, /buildAssistantTimeline\(/);
 assert.match(assistantTimeline, /export function buildAssistantTimeline\(/);
 assert.doesNotMatch(timeline, /from "react"/);

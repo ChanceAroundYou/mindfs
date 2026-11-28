@@ -90,7 +90,6 @@ function loadHook(runtime, dispatcher) {
         },
       };
       if (id.includes("sessionTimeline")) return {
-        applySessionContextWindow: (timeline) => timeline,
         buildBaseTimeline: (exchanges, _aux, blocks) => {
           if (globalThis.__onBuild) globalThis.__onBuild(exchanges, blocks);
           const timeline = [];
@@ -132,7 +131,7 @@ test("useSessionStream keeps streaming until authoritative session.done", () => 
     },
   };
   const useSessionStream = loadHook(runtime, dispatcher);
-  const render = (pending = true) => runtime.render(() => useSessionStream("s1", [], {}, undefined, pending));
+  const render = (pending = true) => runtime.render(() => useSessionStream("s1", [], {}, pending));
 
   render();
   assert.equal(render().isStreaming, true);
@@ -176,7 +175,7 @@ test("thought stream updates do not rebuild persisted block timeline", () => {
     { seq: 1, pos: 1, type: "text", text: "answer" },
   ] };
   const aux = {};
-  const render = () => runtime.render(() => useSessionStream("s1", exchanges, aux, undefined, true, blocks));
+  const render = () => runtime.render(() => useSessionStream("s1", exchanges, aux, true, blocks));
 
   const initial = render();
   assert.deepEqual([...initial.timeline.map((item) => item.content)], ["prompt", "stable reasoning", "answer"]);
@@ -192,6 +191,6 @@ test("thought stream updates do not rebuild persisted block timeline", () => {
 
   // blocks change -> rebuild
   const changedBlocks = { ...blocks, "1": [...blocks["1"], { seq: 1, pos: 2, type: "reasoning", text: "next stable" }] };
-  runtime.render(() => useSessionStream("s1", exchanges, {}, undefined, true, changedBlocks));
+  runtime.render(() => useSessionStream("s1", exchanges, {}, true, changedBlocks));
   assert.equal(buildCount, 2, "new persisted block window must rebuild the blocks-backed base timeline");
 });

@@ -91,21 +91,6 @@ export function formatCompactTokenCount(value: number) {
   return String(Math.round(value));
 }
 
-export function formatTurnTokenCount(value: number) {
-  const tokens = Math.max(0, Number(value || 0));
-  const compact = (amount: number, suffix: string) => {
-    const digits = amount >= 100 ? 0 : amount >= 10 ? 1 : 2;
-    return `${Number(amount.toFixed(digits))}${suffix}`;
-  };
-  if (tokens >= 1_000_000) {
-    return compact(tokens / 1_000_000, "m");
-  }
-  if (tokens >= 1_000) {
-    return compact(tokens / 1_000, "k");
-  }
-  return String(Math.round(tokens));
-}
-
 export function modelDisplayName(
   agents: AgentStatus[] | undefined,
   agentName?: string,
@@ -122,12 +107,19 @@ export function modelDisplayName(
   return `${match?.name || ""}`.trim() || model;
 }
 
-export function formatAssistantExchangeMeta(
-  item: TimelineItem,
+/** 模型信息的最小形状：轮次页脚与会话常驻状态条共用。 */
+export type ModelMetaLike = {
+  agent?: string;
+  model?: string;
+  modelDisplayName?: string;
+  effort?: string;
+  fastService?: string;
+};
+
+export function formatModelMeta(
+  meta: ModelMetaLike | undefined,
   agents?: AgentStatus[],
 ): string {
-  // 页脚数据挂在本轮每个条目上（见 TurnMeta）：工具/思考收尾的轮次也要能显示。
-  const meta = item.turnMeta;
   if (!meta) {
     return "";
   }
@@ -227,25 +219,26 @@ export function isAuxiliaryTimelineItem(item: TimelineItem | null): boolean {
 }
 
 /**
- * 页脚属于整轮，只在该轮最后一行之后画。user_text 与 turn_meta 都是跨轮边界：
- * 下一轮没有可渲染条目时只剩一行纯 turn_meta，上一轮也必须在这里收尾。
+ * 每个已完成轮次在时间线里的**唯一**收尾下标。
+ *
+ * 控件行的可见性只看这张表：`turnKey → 该轮最后一行`。
+ * - 与 `isStreaming` 无关 —— pending 轮询翻转不会让控件闪；
+ * - 与相邻项类型无关 —— 工具卡分组、瞬时行都不会算错边界；
+ * - 按轮次身份去重 —— 同一轮后面的瞬时时/持久行不会各画一次。
  */
-export function isAssistantFlowEnd(item: TimelineItem, next: TimelineItem | null): boolean {
-  if (item.type === "user_text") return false;
-  if (!next) return true;
-  if (next.type === "user_text" || next.type === "turn_meta") return true;
-  // 同一轮的条目共享同一个 turnMeta 引用（attachTurnFooter 逐条挂的是同一个对象）。
-  // 下一项仍然带着它 → 本轮还没结束。
-  if (item.turnMeta && next.turnMeta === item.turnMeta) return false;
-  // 两条都没有回合标记（旧数据 / 流式早期）：没有证据表明换轮，页脚留到流末。
-  if (!item.turnMeta && !next.turnMeta) return false;
-  // 下一项没有 turnMeta（在途瞬时行）或属于另一轮 → 本轮到此为止。
-  // 否则尾部一旦跟了一条还没落定的思考行，上一轮的模型/用量页脚就会被整条吞掉。
-  return true;
+export function collectCompletedTurnEndIndices(
+  items: readonly TimelineItem[],
+): Map<string, number> {
+  const last = new Map<string, number>();
+  items.forEach((item, index) => {
+    const meta = item.turnMeta;
+    if (meta?.completed) last.set(meta.turnKey, index);
+  });
+  return last;
 }
 
 /**
- * 整轮页脚离上一行的上外边距。
+ * 轮次控件行离上一行的上外边距。
  *
  * 正文是 markdown，段落自带约 10px 下边距，-10px 正好收紧、页脚紧贴段落底部；
  * 思考（ThinkingBlock）、工具卡、组卡、待办、计划、压缩块都是**自带边框与内边距的

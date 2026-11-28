@@ -4,11 +4,9 @@ import type { SessionBlockMapLike } from "./sessionBlocks";
 import { translateNow } from "../i18n";
 import { createTimelineChunkCache, buildTimelineIncremental } from "./sessionTimelineCache";
 import {
-  applySessionContextWindow,
   dedupeToolCards,
   dropDuplicatedTransientThoughts,
   settleRunningTools,
-  type ContextWindowLike,
   type ExchangeAuxMapLike,
   type ExchangeLike,
   type UseSessionStreamResult,
@@ -31,7 +29,6 @@ export function useSessionStream(
   sessionKey: string | null,
   exchanges: ExchangeLike[] = [],
   exchangeAux: ExchangeAuxMapLike = {},
-  sessionContextWindow?: ContextWindowLike,
   sessionPending = false,
   blocks: SessionBlockMapLike = {},
 ): UseSessionStreamResult {
@@ -61,10 +58,10 @@ export function useSessionStream(
     transientRef.current.every((item, i) => item === split.transient[i])
       ? transientRef.current
       : (transientRef.current = split.transient);
-  // 持久部分缓存：仅当持久 exchanges / aux / blocks / contextWindow 变化时重建。
+  // 持久部分缓存：仅当持久 exchanges / aux / blocks 变化时重建。
   const timelineCacheRef = useRef(createTimelineChunkCache());
   const persistedCacheRef = useRef<{ key: unknown[]; value: any } | null>(null);
-  const persistedKey = [persistedExchanges, exchangeAux, blocks, sessionContextWindow];
+  const persistedKey = [persistedExchanges, exchangeAux, blocks];
   const persistedChanged =
     !persistedCacheRef.current ||
     persistedCacheRef.current.key.length !== persistedKey.length ||
@@ -72,14 +69,11 @@ export function useSessionStream(
   if (persistedChanged) {
     persistedCacheRef.current = {
       key: persistedKey,
-      value: applySessionContextWindow(
-        buildTimelineIncremental(
-          persistedExchanges,
-          exchangeAux,
-          blocks,
-          timelineCacheRef.current,
-        ),
-        sessionContextWindow,
+      value: buildTimelineIncremental(
+        persistedExchanges,
+        exchangeAux,
+        blocks,
+        timelineCacheRef.current,
       ),
     };
   }

@@ -49,11 +49,6 @@ export type UseSessionStreamResult = {
   streamStatusText: string;
 };
 
-export type ContextWindowLike = {
-  totalTokens: number;
-  modelContextWindow: number;
-};
-
 
 function normalizeRole(role?: string): string {
   return (role || "").toLowerCase();
@@ -342,6 +337,9 @@ export function groupConsecutiveToolCalls(items: TimelineItem[]): TimelineItem[]
       const next = items[j];
       if (next.type !== "tool") break;
       if (`${next.toolCall?.kind || ""}`.toLowerCase() !== kind) break;
+      // 不跨轮分组：turnMeta 是每轮同一个对象，身份不同就是另一轮。
+      // 跨轮合并会把上一轮的控件行身份一起吞掉（或缺、或贴到别人轮末）。
+      if (next.turnMeta !== item.turnMeta) break;
       j += 1;
     }
     const run = items.slice(i, j) as Array<Extract<TimelineItem, { type: "tool" }>>;
@@ -355,49 +353,10 @@ export function groupConsecutiveToolCalls(items: TimelineItem[]): TimelineItem[]
       type: "tool_group",
       kind,
       toolCalls: run.map((entry) => entry.toolCall),
+      // 组的身份必须跟着这一轮走，否则以工具卡收尾的轮次没有控件行。
+      turnMeta: item.turnMeta,
     });
     i = j;
   }
   return out;
-}
-
-export function applySessionContextWindow(
-  items: TimelineItem[],
-  contextWindow?: ContextWindowLike,
-): TimelineItem[] {
-  const totalTokens = Math.max(0, Number(contextWindow?.totalTokens || 0));
-  const modelContextWindow = Math.max(
-    0,
-    Number(contextWindow?.modelContextWindow || 0),
-  );
-  if (!totalTokens || !modelContextWindow) {
-    return items;
-  }
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    // 页脚数据挂在本轮每个条目上，用最后一个条目的那份即可。
-    const meta = item.turnMeta;
-    if (!meta) {
-      continue;
-    }
-    if (
-      meta.contextWindow?.totalTokens &&
-      meta.contextWindow?.modelContextWindow
-    ) {
-      return items;
-    }
-    const next = [...items];
-    next[i] = {
-      ...item,
-      turnMeta: {
-        ...meta,
-        contextWindow: {
-          totalTokens,
-          modelContextWindow,
-        },
-      },
-    } as TimelineItem;
-    return next;
-  }
-  return items;
 }

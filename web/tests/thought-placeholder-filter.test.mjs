@@ -36,14 +36,15 @@ test("占位判据：空白/零宽/纯标点算占位，真实思考不算", () 
   assert.equal(hasMeaningfulChar("…所以"), true);
 });
 
-test("块流路径：只有占位 reasoning 的轮次只留整轮页脚（G-LS 契约不变）", () => {
+test("块流路径：只有占位 reasoning 的轮次不产出任何条目", () => {
+  // 控件行没有正文可复制、也没有锚点；模型/上下文由常驻状态条承载，
+  // 不再为「这一轮发生过」造一个只有页脚的假行。
   const items = buildAssistantTimelineFromBlocks(
     { seq: 7, agent: "claude", timestamp: T0, model: "opus5.5" },
     [{ seq: 7, pos: 0, type: "reasoning", text: "..." }],
     "s7",
   );
-  assert.equal(items.length, 1, "占位不应产出思考条目");
-  assert.equal(items[0].type, "turn_meta", "仍要有一行纯页脚，模型/用量不能丢");
+  assert.deepEqual(items, [], "占位既不能产出思考条目，也不产出纯页脚行");
 });
 
 test("块流路径：真实 reasoning 照常渲染", () => {

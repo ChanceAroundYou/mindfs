@@ -386,30 +386,34 @@ test("【红·⑮c】selection 的去重必须**按会话**且**按完整 select
   );
 });
 
-test("【红·⑮d】context_window 两处必须分工明确（按 exchange 优先，会话级只兜底）", () => {
-  // 2026-10-06 更正：原先判成「两处补同一字段，删一处」。核对后**不成立** —— 两者**数据源不同**：
-  //   · exchange 自己的 `context_window`（每轮真值）收进 TurnMeta，挂在该轮每个条目上；
-  //   · `applySessionContextWindow` 用**会话级** `context_window` 兜底，只在缺失时填。
-  // 删掉兜底会让「服务端早期没记 per-exchange 的那类行」永远没有 token 徽标。
-  //
-  // 2026-11-15：页脚从「最后一个 assistant_text」改成整轮页脚数据（TurnMeta），
-  // 因为工具/思考收尾、纯 reasoning 收尾的轮次原本没有 assistant_text 可挂。
+test("【红·⑮d】context_window 归常驻状态条：exchange 优先，会话级只兜底", () => {
+  // 2026-11-28 更正：上下文/用量不再挂进逐轮 TurnMeta（那会拆散轮次身份、画出两条
+  // 控件行，也逼着每轮页脚重复展示同一份会话状态）。现在归底部常驻状态条：
+  //   · 最新一条有 `context_window` 的 exchange（每轮真值 / message_done 回填）；
+  //   · 都没有时才用会话级 `context_window` 兜底。
+  // 控件行只保留复制 / fork / 完成时间，不含统计。
   const blocksFile = readFileSync(path.join(srcRoot, "hooks/sessionBlocks.ts"), "utf8");
   const fallbackFile = readFileSync(path.join(srcRoot, "hooks/sessionTimeline.ts"), "utf8");
-  assert.match(
+  const statusFile = readFileSync(path.join(srcRoot, "shared/sessionStatus.ts"), "utf8");
+  assert.doesNotMatch(
     blocksFile,
     /contextWindow: ex\.context_window,/,
-    "按 exchange 的那一路（优先级更高）missing",
+    "逐轮 TurnMeta 不再承载统计（否则又会长出每轮重复的统计行）",
+  );
+  assert.doesNotMatch(
+    fallbackFile,
+    /applySessionContextWindow/,
+    "会话级窗口补丁已删除：它只改最后一个条目的 meta，拆散了整轮身份",
   );
   assert.match(
-    fallbackFile,
-    /const meta = item\.turnMeta;/,
-    "会话级兜底必须认 TurnMeta，否则工具/思考收尾的轮次拿不到会话级窗口",
+    statusFile,
+    /!contextWindow && validContextWindow\(exchange\.context_window\)/,
+    "exchange 的窗口必须优先进入状态条",
   );
   assert.match(
-    fallbackFile,
-    /meta\.contextWindow\?\.totalTokens &&\s*meta\.contextWindow\?\.modelContextWindow/,
-    "会话级兜底必须**只在缺失时**填 —— 不得覆盖按 exchange 的那份真值",
+    statusFile,
+    /contextWindow: contextWindow \|\| sessionContextWindow/,
+    "会话级窗口只在前者缺失时兜底",
   );
 });
 
