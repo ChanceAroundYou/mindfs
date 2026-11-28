@@ -13,6 +13,7 @@ export type UseSessionSelectionParams = UseSessionLifecycleParams & {
   restoreActiveSession: (
     rootID: string | null | undefined,
     sessionKey: string | null | undefined,
+    nodeID?: string | null,
   ) => Promise<Session | null>;
 };
 
@@ -191,7 +192,7 @@ export function useSessionSelection(params: UseSessionSelectionParams) {
         }
       }
       try {
-        const restored = await restoreActiveSession(targetRoot, key);
+        const restored = await restoreActiveSession(targetRoot, key, nextNode || undefined);
         if (restored) {
           applySession(restored, { writeCache: false });
           loadedSessionRef.current[cacheKey] = true;

@@ -17683,3 +17683,51 @@ groups:
       - 'web/src/shared/sessionStatus.ts:export function selectSessionStatus'
       - 'web/src/components/session/SessionViewerStatusBar.tsx:data-testid="session-status-bar"'
       - 'web/src/components/session/SessionViewer.tsx:<SessionViewerStatusBar'
+
+  # ── scope-id claim 占位 ──────────────────────────────────────────────
+  # 断言 3/5 会因这些组变红，直到 title/why/files/tests/anchors 全部填齐。
+  - id: G-SL
+    title: "查看远端会话时，完成信号必须用持久化窗口重锚（思考块尾部残留）"
+    kind: fix
+    symptom: |
+      2026-11-28：fn 节点 `CMAI / most申报优化` 的会话在回合结束 4 分钟后，消息底部
+      仍挂着一块 1400 字符的「思考过程」，正文的复制/fork 控件行停在它上方。
+      权威块流按 pos 排是思考在前、正文在后，所以这不是落库顺序问题：客户端一直停在
+      流式瞬时行上，从未用持久化块流重建该轮。
+    why: |
+      本仓库的会话视图同时承载「瞬时流」与「持久块流」两套数据，且浏览器只连激活节点的
+      一条 WS。查看远端节点（fn/pc）的会话时，该会话的 `session.done` 不会推过来，
+      唯一的完成通道是 `useReplyingSessionPoll` 的 5s 轮询。上游没有多节点旁路轮询，
+      也没有「seq=0 瞬时行 / 持久块」的分离，合上游时这段必须保留：
+      ① 轮询的 pending true→false 不只用于完成音/未读，还必须在**当前选中会话**
+         上触发重锚；只标未读会让瞬时尾巴永久残留。
+      ② 重锚序列与 WS done 相同：restoreActiveSession 换窗口 → 同步选中态 →
+         viewer 按 `_anchoredAt` 原子换窗；`pending=false` 时
+         `composeLoadedExchanges` 不接回 seq=0，思考尾巴随之退役。
+      ③ 跨节点条目的节点身份必须显式传递（`_nodeId` 优先于 root→node 反推），
+         否则同名项目存在于两个节点时会从错误的机器拉窗口。
+    files:
+      - web/src/app/useReplyingSessionPoll.ts
+      - web/src/app/useAppMultiProjectReload.ts
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/useAppSessionCore.ts
+      - web/src/app/useSessionLifecycle.ts
+      - web/src/app/useSessionSelection.ts
+      - web/src/shared/pendingCompletion.ts
+      - web/tests/thinking-tail-completion-reanchor.test.mjs
+      - docs/plans/2026-11-28-thinking-tail-completion-reanchor.md
+    tests:
+      - web/tests/thinking-tail-completion-reanchor.test.mjs
+      - web/tests/pending-completion-sub-session.test.mjs
+      - web/tests/session-list-time-refresh.test.mjs
+    anchors:
+      - 'web/src/shared/pendingCompletion.ts:export function selectCompletedSelectedSession'
+      - 'web/src/shared/pendingCompletion.ts:if (selectedNode && parsed.nodeId && selectedNode !== parsed.nodeId) continue;'
+      - 'web/src/app/useReplyingSessionPoll.ts:const selectedCompleted = selectCompletedSelectedSession('
+      - 'web/src/app/useReplyingSessionPoll.ts:reanchorSelectedRef.current?.(selectedCompleted);'
+      - 'web/src/app/useSessionLifecycle.ts:const reanchorSession = useCallback('
+      - 'web/src/app/useSessionLifecycle.ts:nodeId: resolvedNodeId,'
+      - 'web/src/app/useSessionLifecycle.ts:_nodeId: resolvedNodeId,'
+      - 'web/src/app/useAppSessionLayer.ts:void reanchorSession(completed.rootId, completed.sessionKey, completed.nodeId);'
+      - 'web/src/app/useAppMultiProjectReload.ts:onSelectedSessionCompleted,'
+      - 'web/tests/thinking-tail-completion-reanchor.test.mjs:test("pending=false 重锚组装必须丢掉 seq=0 的瞬时思考尾巴"'

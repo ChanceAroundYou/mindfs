@@ -1,4 +1,4 @@
-import { sessionKeyNodeId } from "./scope";
+import { parseSessionScopeKey, sessionKeyNodeId } from "./scope";
 
 /**
  * 跨节点「刚完成」差分：从「回复中」真相表的两轮快照里找出**这一轮刚结束**的会话。
@@ -107,4 +107,30 @@ export function carrySubSessionKeys(
     if (key) next.add(key);
   }
   return next;
+}
+
+/**
+ * 从「刚完成」的 scoped key 里找出**当前选中会话**对应的那一条。
+ *
+ * 选中会话可能属于远端节点：`session.done` 不会推到本机 WS，只有 5s 轮询能看到
+ * true→false。找到后调用方必须用持久化窗口重锚，否则视图停在流式瞬时行上。
+ *
+ * 匹配条件：会话键必须一致；两侧都有节点身份时节点也必须一致（节点请求失败时
+ * `nodeId` 可能为空，此时退化为按会话键匹配——键本身带时间戳+随机段，跨节点撞键
+ * 的概率可以忽略）。
+ */
+export function selectCompletedSelectedSession(
+  completedKeys: Iterable<string>,
+  selected: { key?: string; session_key?: string; _nodeId?: string } | null | undefined,
+): { nodeId: string; rootId: string; sessionKey: string } | null {
+  const selectedKey = String(selected?.key || selected?.session_key || "").trim();
+  if (!selectedKey) return null;
+  const selectedNode = String(selected?._nodeId || "").trim();
+  for (const key of completedKeys) {
+    const parsed = parseSessionScopeKey(key);
+    if (!parsed || parsed.sessionKey !== selectedKey) continue;
+    if (selectedNode && parsed.nodeId && selectedNode !== parsed.nodeId) continue;
+    return parsed;
+  }
+  return null;
 }

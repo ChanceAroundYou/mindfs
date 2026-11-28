@@ -19,6 +19,7 @@ import {
   carrySubSessionKeys,
   completedPendingKeys,
   newlyCompletedPendingKeys,
+  selectCompletedSelectedSession,
 } from "../shared/pendingCompletion";
 import { unreadCompletedAdd, unreadKey } from "../shared/unreadCompleted";
 
@@ -36,7 +37,14 @@ export interface UseReplyingSessionPollParams {
   /** 远端会话刚跑完时放完成音（由调用方注入，保持本 hook 不依赖声音实现）。 */
   playCompletionSound?: () => void;
   /** 「正在看的会话」—— 与 WS 侧同一判据，正在看的完成后不标未读。 */
-  selectedSessionRef?: MutableRefObject<{ key?: string; session_key?: string } | null>;
+  selectedSessionRef?: MutableRefObject<{ key?: string; session_key?: string; _nodeId?: string } | null>;
+  /**
+   * 「正在看的会话」刚跑完时，用持久化窗口重锚当前视图。
+   *
+   * 远端节点（fn / pc）的 `session.done` 不会推到本节点 WS，5s 轮询是唯一的完成通道；
+   * 只标未读/放完音而不重锚，画面会一直停在流式瞬时行上（思考块留在正文之后）。
+   */
+  onSelectedSessionCompleted?: (completed: { nodeId: string; rootId: string; sessionKey: string }) => void;
   /** 会话列表数据的重拉入口（带合并窗口）。只在「有会话刚跑完」时调用。 */
   scheduleMultiProjectSessionReload?: () => void;
   setMultiProjectPendingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -53,6 +61,7 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     multiProjectPendingRef,
     multiProjectAwaitingRef,
     multiProjectSessionsEnabled,
+    onSelectedSessionCompleted,
     playCompletionSound,
     scheduleMultiProjectSessionReload,
     selectedSessionRef,
@@ -80,6 +89,12 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
   useEffect(() => {
     reloadListRef.current = scheduleMultiProjectSessionReload;
   }, [scheduleMultiProjectSessionReload]);
+
+  // 重锚回调同上：调用方内联箭头每次渲染换引用，不能进 refresh 的依赖。
+  const reanchorSelectedRef = useRef(onSelectedSessionCompleted);
+  useEffect(() => {
+    reanchorSelectedRef.current = onSelectedSessionCompleted;
+  }, [onSelectedSessionCompleted]);
 
   /**
    * 本轮要问的节点集合：与 loadMultiProjectSessionGroups 同源（getNodes() ∪
@@ -196,6 +211,16 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     setMultiProjectPendingByKey(nextPending);
     setMultiProjectAwaitingByKey(nextAwaiting);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, nextPending, nextAwaiting));
+    // 正在看的会话刚跑完：必须用持久化窗口重锚，不能只放完音/标未读。
+    // 远端节点的 done 不会推过来；即使本节点，WS 断线期间也可能错过 done。
+    // 放在状态表更新之后，重锚读到的是「已结束」的真相，merge 时才会丢掉 seq=0 残留。
+    const selectedCompleted = selectCompletedSelectedSession(
+      completedAnyNode,
+      selectedSessionRef?.current || null,
+    );
+    if (selectedCompleted) {
+      reanchorSelectedRef.current?.(selectedCompleted);
+    }
     if (completedAnyNode.length > 0) {
       reloadListRef.current?.();
     }
